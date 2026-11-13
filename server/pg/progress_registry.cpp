@@ -40,8 +40,6 @@ std::string_view ProgressCommandName(ProgressCommand command) {
       return "CREATE INDEX";
     case ProgressCommand::CreateTableAs:
       return "CREATE TABLE AS";
-    case ProgressCommand::Analyze:
-      return "ANALYZE";
     case ProgressCommand::Vacuum:
       return "VACUUM";
     case ProgressCommand::Reindex:
@@ -90,14 +88,6 @@ std::string_view ProgressPhaseName(ProgressCommand command, int64_t phase) {
           return "committing";
         case progress_phase::CreateTableAs::Finalizing:
           return "finalizing";
-      }
-      return "";
-    case ProgressCommand::Analyze:
-      switch (static_cast<progress_phase::Analyze>(phase)) {
-        case progress_phase::Analyze::Initializing:
-          return "initializing";
-        case progress_phase::Analyze::ComputingStatistics:
-          return "computing statistics";
       }
       return "";
     case ProgressCommand::Vacuum:

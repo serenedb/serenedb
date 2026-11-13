@@ -37,10 +37,6 @@ statement ok
 CREATE INDEX docs_topk_idx ON docs USING inverted(id, body en_topk);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) docs;
-
-
 query
 EXPLAIN SELECT id FROM docs_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_topk_idx.tableoid) ASC LIMIT 5;
 ----
@@ -52,7 +48,7 @@ QUERY PLAN
 ╰────────────────────────────┬────────────────────────────╯
 ╭─ IRESEARCH_SCAN ───────────┴────────────────────────────╮
 │ Index: docs_topk_idx                                    │
-│ Lookup: table                                           │
+│ Lookup: search                                          │
 │ Index Filter:                                           │
 │ ╭─ Term ──────────────╮                                 │
 │ │ Field: body(string) │                                 │
@@ -87,7 +83,7 @@ QUERY PLAN
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: docs_topk_idx                   │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Term ──────────────╮                │
 │ │ Field: body(string) │                │
@@ -113,7 +109,7 @@ QUERY PLAN
 ╰─────────────────────────────┬────────────────────────────╯
 ╭─ IRESEARCH_SCAN ────────────┴────────────────────────────╮
 │ Index: docs_topk_idx                                     │
-│ Lookup: table                                            │
+│ Lookup: search                                           │
 │ Index Filter:                                            │
 │ ╭─ Term ──────────────╮                                  │
 │ │ Field: body(string) │                                  │
@@ -137,7 +133,7 @@ QUERY PLAN
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: docs_topk_idx                   │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Term ──────────────╮                │
 │ │ Field: body(string) │                │
@@ -161,7 +157,7 @@ EXPLAIN SELECT id FROM docs_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM2
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: docs_topk_idx        │
-│ Lookup: table               │
+│ Lookup: search              │
 │ Index Filter:               │
 │ ╭─ Term ──────────────╮     │
 │ │ Field: body(string) │     │
@@ -198,7 +194,7 @@ QUERY PLAN
 ╰────────────────────┬───────────────────╯  ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮  ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: docs_topk_idx                   │  │ Index: docs_topk_idx                   │
-│ Lookup: table                          │  │ Lookup: table                          │
+│ Lookup: search                         │  │ Lookup: search                         │
 │ Index Filter:                          │  │ Index Filter:                          │
 │ ╭─ Term ──────────────╮                │  │ ╭─ Term ──────────────╮                │
 │ │ Field: body(string) │                │  │ │ Field: body(string) │                │
@@ -228,7 +224,7 @@ QUERY PLAN
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: docs_topk_idx                   │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Term ──────────────╮                │
 │ │ Field: body(string) │                │
@@ -312,10 +308,6 @@ INSERT INTO docs VALUES (18, 'yellow fox');
 
 statement count 1
 INSERT INTO docs VALUES (19, 'purple fox');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) docs;
 
 
 # Get expected results from full scan across two segments

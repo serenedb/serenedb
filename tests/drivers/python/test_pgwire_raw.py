@@ -980,6 +980,48 @@ def test_numeric_param_rounds_into_its_column(conn):
     conn.run_ok("drop table raw_numeric_param")
 
 
+def execute_named(conn, stmt, params, describe=False):
+    conn.bind("", stmt, params=params)
+    if describe:
+        conn.describe("P")
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    return m
+
+
+def test_untyped_params_run_one_statement_many_times(conn):
+    conn.run_ok("drop table if exists raw_untyped_reuse")
+    conn.run_ok("create table raw_untyped_reuse (id int, s text)")
+    conn.parse("ins", "insert into raw_untyped_reuse values ($1, 'v' || $2)")
+    for i in range(3):
+        execute_named(conn, "ins", (str(i).encode(), f"x{i}".encode()), i != 1)
+    m = conn.run_ok(
+        "select string_agg(id::text || s, ',' order by id) from raw_untyped_reuse"
+    )
+    assert first_field(m) == b"0vx0,1vx1,2vx2"
+    conn.run_ok("drop table raw_untyped_reuse")
+
+
+def test_numeric_params_of_any_scale_on_one_statement(conn):
+    conn.parse("num", "select $1::text", oids=(1700,))
+    for value in (b"1.5", b"123.4567", b"7", b"1.5"):
+        assert first_field(execute_named(conn, "num", (value,))) == value
+
+
+def test_untyped_params_follow_a_recreated_table(conn):
+    conn.run_ok("drop table if exists raw_untyped_ddl")
+    conn.run_ok("create table raw_untyped_ddl (a text)")
+    conn.parse("cnt", "select count(*) from raw_untyped_ddl where a = 'p' || $1")
+    assert first_field(execute_named(conn, "cnt", (b"x",))) == b"0"
+    conn.run_ok("drop table raw_untyped_ddl")
+    conn.run_ok("create table raw_untyped_ddl (a text, b int)")
+    conn.run_ok("insert into raw_untyped_ddl values ('px', 1)")
+    assert first_field(execute_named(conn, "cnt", (b"x",), True)) == b"1"
+    conn.run_ok("drop table raw_untyped_ddl")
+
+
 def parameter_types(msgs):
     for t, p in msgs:
         if t == "t":
@@ -3154,7 +3196,6 @@ def test_dml_then_ddl_one_implicit_block_inverted_index(conn):
     assert not errors(m), errors(m)
     assert statuses(m) == ["I"], statuses(m)
 
-    assert not errors(conn.run("VACUUM (REFRESH_TABLE) iidw"))
     m = conn.run(
         "SELECT id FROM iidw_idx WHERE body @@ ts_phrase('alpha bravo')"
     )

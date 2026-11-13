@@ -35,34 +35,6 @@
 
 namespace irs {
 
-class SingleInstanceLock : public IndexLock {
- public:
-  SingleInstanceLock(std::string_view name, MemoryDirectory* parent)
-    : _name{name}, _parent{parent} {
-    SDB_ASSERT(parent);
-  }
-
-  bool lock() final {
-    std::lock_guard lock{_parent->_llock};
-    return _parent->_locks.insert(_name).second;
-  }
-
-  bool is_locked(bool& result) const noexcept final {
-    std::lock_guard lock{_parent->_llock};
-    result = _parent->_locks.contains(_name);
-    return true;
-  }
-
-  bool unlock() noexcept final {
-    std::lock_guard lock{_parent->_llock};
-    return _parent->_locks.erase(_name) != 0;
-  }
-
- private:
-  std::string _name;
-  MemoryDirectory* _parent;
-};
-
 const byte_type* MemoryIndexInput::ReadStable(uint64_t count) noexcept {
   const auto* begin = _begin + count;
 
@@ -77,7 +49,9 @@ const byte_type* MemoryIndexInput::ReadStable(uint64_t count) noexcept {
 const byte_type* MemoryIndexInput::ReadStable(uint64_t offset,
                                               uint64_t count) noexcept {
   const auto idx = _file->buffer_offset(offset);
-  SDB_ASSERT(idx < _file->buffer_count());
+  if (idx >= _file->buffer_count()) {
+    return nullptr;
+  }
   const auto& buf = _file->get_buffer(idx);
   const auto begin = buf.data + offset - buf.offset;
   const auto end = begin + count;
@@ -281,7 +255,7 @@ IndexOutput::ptr MemoryDirectory::create(std::string_view name) {
         _files.erase(it);
       }
     };
-    file = std::make_unique<MemoryFile>(_files.get_allocator().Manager());
+    file = std::make_shared<MemoryFile>(_files.get_allocator().Manager());
   }
 
   return IndexOutput::ptr{new ChecksumMemoryIndexOutput{*file}};
@@ -300,13 +274,6 @@ bool MemoryDirectory::length(uint64_t& result,
   result = it->second->Length();
 
   return true;
-}
-
-IndexLock::ptr MemoryDirectory::make_lock(std::string_view name) noexcept try {
-  return IndexLock::ptr{new SingleInstanceLock{name, this}};
-} catch (...) {
-  SDB_ASSERT(false);
-  return nullptr;
 }
 
 bool MemoryDirectory::mtime(std::time_t& result,
@@ -329,7 +296,8 @@ IndexInput::ptr MemoryDirectory::open(std::string_view name,
       ERR_CODE(ERRCODE_UNDEFINED_FILE),
       ERR_MSG("Failed to open file '", name, "': No such file or directory"));
   }
-  return std::make_unique<MemoryIndexInput>(*it->second);
+  return std::make_unique<MemoryIndexInput>(
+    std::shared_ptr<const MemoryFile>{it->second});
 }
 
 bool MemoryDirectory::remove(std::string_view name) noexcept {

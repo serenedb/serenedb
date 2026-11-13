@@ -295,12 +295,26 @@ void BuildRowFilters(ScanGlobalState& state, const ScanBindData& bind_data) {
   }
 }
 
+void AddDualFilter(ScanGlobalState& state, std::span<const ColumnId> columns,
+                   std::span<const duckdb::LogicalType> types,
+                   const duckdb::TableFilter& filter) {
+  auto& cf = state.dual_filters.emplace_back();
+  if (columns.size() == 1) {
+    cf.field = columns.front();
+    BindExpressionFilter(cf, filter, types.front());
+    return;
+  }
+  cf.filter = &filter;
+  cf.row_fields.assign(columns.begin(), columns.end());
+  cf.row_types.assign(types.begin(), types.end());
+  cf.field = cf.row_fields.front();
+  cf.type = cf.row_types.front();
+}
+
 void BuildDualFilters(ScanGlobalState& state,
                       std::span<const RowFilter> duals) {
   for (const auto& dual : duals) {
-    auto& cf = state.dual_filters.emplace_back();
-    cf.field = dual.columns.front();
-    BindExpressionFilter(cf, *dual.filter, dual.types.front());
+    AddDualFilter(state, dual.columns, dual.types, *dual.filter);
   }
 }
 
@@ -316,6 +330,19 @@ std::optional<ColumnId> FetchableColumn(
     return std::nullopt;
   }
   return col_id;
+}
+
+void ApplyDeferredClaim(ScanGlobalState& state, DeferredBuild&& built) {
+  state.owned_where = std::move(built.filter);
+  state.owned_index_only = std::move(built.index_only);
+  state.owned_where_scorers = std::move(built.scorers);
+  for (auto& dual : built.dual_filters) {
+    const auto& owned =
+      state.deferred_filters.emplace_back(std::move(dual.filter));
+    AddDualFilter(state, dual.columns, dual.types, *owned);
+  }
+  state.deferred_checks = std::move(built.checks);
+  AddDeferredChecks(state, state.deferred_checks);
 }
 
 }  // namespace
@@ -406,21 +433,18 @@ void DecodeExtractPath(const duckdb::ColumnIndex& column_index,
   }
 }
 
-void ApplyDeferredClaim(ScanGlobalState& state, duckdb::ClientContext& context,
-                        const ScanBindData& bind_data) {
-  auto built = BuildDeferredFilter(context, bind_data, *state.snapshot);
-  state.owned_where = std::move(built.filter);
-  state.owned_index_only = std::move(built.index_only);
-  state.owned_where_scorers = std::move(built.scorers);
-  for (auto& dual : built.dual_filters) {
-    const auto& owned =
-      state.deferred_filters.emplace_back(std::move(dual.filter));
-    auto& cf = state.dual_filters.emplace_back();
-    cf.field = dual.column;
-    BindExpressionFilter(cf, *owned, std::move(dual.type));
+void AcquireScanSnapshot(ScanGlobalState& state, duckdb::ClientContext& context,
+                         const ScanBindData& bind_data) {
+  state.view = bind_data.Read(context);
+  std::optional<DeferredBuild> built;
+  if (bind_data.plan_cache.deferred) {
+    built = BuildDeferredFilter(context, bind_data, *state.view.reader);
   }
-  state.deferred_checks = std::move(built.checks);
-  AddDeferredChecks(state, state.deferred_checks);
+  state.reader = state.view.reader;
+  state.total_segments = state.view.reader->size();
+  if (built) {
+    ApplyDeferredClaim(state, std::move(*built));
+  }
 }
 
 void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,
@@ -472,6 +496,7 @@ void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,
       state.projected_types.push_back(file_index ? duckdb::LogicalType::UBIGINT
                                                  : duckdb::LogicalType::BIGINT);
     } else if (col_id == duckdb::COLUMN_IDENTIFIER_EMPTY) {
+      state.empty_output_idx = proj;
       state.projected_columns.push_back(duckdb::DConstants::INVALID_INDEX);
       state.projected_types.push_back(duckdb::LogicalType::BOOLEAN);
       continue;
@@ -681,6 +706,10 @@ void WriteVirtualColumns(ScanGlobalState& g, duckdb::idx_t num_rows,
       output.data[g.tableoid_output_idx]);
     std::fill_n(tableoid_data, num_rows, g.tableoid_value);
   }
+  if (g.empty_output_idx != duckdb::DConstants::INVALID_INDEX) {
+    output.data[g.empty_output_idx].Reference(
+      duckdb::Value{duckdb::LogicalType::BOOLEAN}, duckdb::count_t(num_rows));
+  }
   if (!g.ScanScore()) {
     return;
   }
@@ -823,10 +852,10 @@ duckdb::idx_t FinalizeBatch(duckdb::ClientContext& ctx, ScanGlobalState& g,
     return collected;
   }
   if (!f.index_source) {
-    f.index_source =
-      MakeIndexSource(ctx, g.Bind(), *g.snapshot, g.lookup_projected_columns,
-                      g.projected_types, g.Bind().columns.ids,
-                      const_cast<duckdb::TableFilterSet*>(g.pushed_filters));
+    f.index_source = MakeIndexSource(
+      ctx, g.Bind(), g.view.manifest, g.lookup_projected_columns,
+      g.projected_types, g.Bind().columns.ids,
+      const_cast<duckdb::TableFilterSet*>(g.pushed_filters));
   }
   SDB_ASSERT(f.pk_column);
   const auto rows =

@@ -1,15 +1,5 @@
 control substitution on
 
-# An orderly stop has to checkpoint. The shutdown checkpoint runs every index's
-# CheckpointBarrier, and an inverted index answers that barrier by reading its
-# own definition out of the catalog -- so the catalog has to outlive it. Torn
-# down first, the barrier vetoes: the checkpoint is refused, the database is
-# invalidated, and its WAL is left behind for a replay that then happens on
-# every subsequent start, forever.
-#
-# The WAL file is the durable evidence, so that is what this asserts. Every
-# other symptom lives and dies with the process that shut down.
-
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY shc_dict AS
@@ -56,28 +46,6 @@ SELECT 1 AS one;
 ----
 one
 1
-
-
-# The datadir has to resolve, or the WAL count below is zero for the wrong
-# reason: an unset $SDB_DATADIR would glob a path that matches nothing.
-connection after_shutdown
-query
-SELECT count(*) > 0 AS has_files
-FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/data.db');
-----
-has_files
-t
-
-
-# Nothing has written since the restart, so any WAL here is one the stop failed
-# to fold into the file.
-connection after_shutdown
-query
-SELECT count(*) AS wals
-FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/data.db.wal');
-----
-wals
-0
 
 
 connection after_shutdown

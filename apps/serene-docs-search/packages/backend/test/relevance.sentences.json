@@ -71,7 +71,7 @@
     {"cat":"sentence","q":"However, it is recommended to avoid using SereneDB's native database format in read-write mode on network-attached storage (NAS).","expect":["/docs/cookbook/performance/environment"]},
     {"cat":"sentence","q":"The CSV reader runs the CSV sniffer on all files.","expect":["/docs/cookbook/performance/file_formats"]},
     {"cat":"sentence","q":"It can also run queries where the intermediate results cannot fit into memory.","expect":["/docs/cookbook/performance/how_to_tune_workloads"]},
-    {"cat":"sentence","q":"Disabling index scans and re-attaching after changes can further decrease the impact of indexes on SereneDB's available memory.","expect":["/docs/cookbook/performance/indexing"]},
+    {"cat":"sentence","q":"This guide covers the indexes that affect analytical query performance: the automatic zonemaps and the indexes created with CREATE INDEX.","expect":["/docs/cookbook/performance/indexing"]},
     {"cat":"sentence","q":"This way, SereneDB builds a left-deep join tree following the order of JOIN clauses.","expect":["/docs/cookbook/performance/join_operations"]},
     {"cat":"sentence","q":"Network-attached disks (such as cloud block storage) cause write-intensive and larger than memory workloads to slow down.","expect":["/docs/cookbook/performance/my_workload_is_slow"]},
     {"cat":"sentence","q":"If you run in a memory-constrained environment, using smaller data types (e.g., TINYINT) can reduce the amount of memory and disk space required to complete a query.","expect":["/docs/cookbook/performance/oom","/docs/cookbook/performance/schema"]},
@@ -255,7 +255,7 @@
     {"cat":"sentence","q":"Filtered ANN is the right choice when the filter is meaningful (a category, a permission, a required keyword) and you only want similarity to order the matches.","expect":["/docs/sql/indexes/inverted/hybrid-search"]},
     {"cat":"sentence","q":"For the complete CREATE INDEX … USING inverted grammar — every operator-class option, INCLUDE codec, index WITH option and supported column type — see the statement reference.","expect":["/docs/sql/indexes/inverted"]},
     {"cat":"sentence","q":"The same cast must appear in the query so the planner matches it to the index.","expect":["/docs/sql/indexes/inverted/json"]},
-    {"cat":"sentence","q":"Explicitly — run VACUUM (REFRESH_TABLE) to publish pending writes immediately.","expect":["/docs/sql/indexes/inverted/maintenance"]},
+    {"cat":"sentence","q":"A committed row is found at once by every query, through the table and through each inverted index on it.","expect":["/docs/sql/indexes/inverted/maintenance"]},
     {"cat":"sentence","q":"This is where SereneDB's SQL model shines: every Elasticsearch aggregation maps to a SQL construct, run in the same query as the search filter.","expect":["/docs/sql/indexes/inverted/migrating-from-elasticsearch"]},
     {"cat":"sentence","q":"The raw value is kept in the index's columnstore so a query against the index can return it without a second lookup against the base table.","expect":["/docs/sql/indexes/inverted/modeling"]},
     {"cat":"sentence","q":"See Hybrid Search and the Reciprocal Rank Fusion recipe.","expect":["/docs/sql/indexes/inverted/ranking"]},
@@ -283,7 +283,7 @@
     {"cat":"sentence","q":"Here, recurring.counter gives access to all rows accumulated across all previous iterations, while counter in the FROM clause only contains the rows from the most recent iteration.","expect":["/docs/sql/query_syntax/with"]},
     {"cat":"sentence","q":"System sampling is a variant of bernoulli sampling with one crucial difference: every vector is included with a chance equal to the sampling percentage.","expect":["/docs/sql/samples"]},
     {"cat":"sentence","q":"CONNECTION LIMIT is accepted and stored but is not currently enforced at connect time.","expect":["/docs/sql/statements/alter_role"]},
-    {"cat":"sentence","q":"For a table created with WITH (storage = 'search'), SET (option = value, …) changes the background maintenance options it was created with, and RESET (option, …) returns them to the current session defaults.","expect":["/docs/sql/statements/alter_table"]},
+    {"cat":"sentence","q":"SET (option = value, …) changes the background maintenance options of a table, and RESET (option, …) returns them to the current session defaults.","expect":["/docs/sql/statements/alter_table"]},
     {"cat":"sentence","q":"The ALTER VIEW statement changes the schema of an existing view in the catalog.","expect":["/docs/sql/statements/alter_view"]},
     {"cat":"sentence","q":"It is therefore recommended to recompute these statistics for improved join orders, especially after performing large updates (inserts and/or deletes).","expect":["/docs/sql/statements/analyze"]},
     {"cat":"sentence","q":"For these, it creates a read-only connection by default.","expect":["/docs/sql/statements/attach/duckdb"]},
@@ -327,6 +327,6 @@
     {"cat":"sentence","q":"SereneDB implements both the SQL Standard UNPIVOT syntax and a simplified UNPIVOT syntax.","expect":["/docs/sql/statements/unpivot"]},
     {"cat":"sentence","q":"To select the rows to update, UPDATE statements can use the FROM clause and express joins via the WHERE clause.","expect":["/docs/sql/statements/update"]},
     {"cat":"sentence","q":"The USE statement sets the default database and/or schema for the current session.","expect":["/docs/sql/statements/use"]},
-    {"cat":"sentence","q":"On a standard table VACUUM does no work — it is accepted purely for PostgreSQL compatibility.","expect":["/docs/sql/statements/vacuum"]}
+    {"cat":"sentence","q":"Without options VACUUM does no work — it is accepted purely for PostgreSQL compatibility.","expect":["/docs/sql/statements/vacuum"]}
   ]
 }

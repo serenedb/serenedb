@@ -20,9 +20,10 @@
 
 #pragma once
 
+#include <absl/functional/function_ref.h>
+
 #include <cstdint>
 #include <duckdb/common/types.hpp>
-#include <duckdb/common/types/hyperloglog.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/types/vector_cache.hpp>
@@ -32,6 +33,8 @@
 
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/internal/write_context.hpp"
+#include "iresearch/formats/column/read_context.hpp"
+#include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/types.hpp"
 
@@ -44,11 +47,23 @@ struct WriteChunk {
   duckdb::idx_t count;
 };
 
+void UpdateDistinct(duckdb::DistinctStatistics& distinct, DistinctStats mode,
+                    const duckdb::Vector& values, duckdb::idx_t count,
+                    duckdb::Vector& hashes);
+
+struct StagedColumn {
+  field_id id;
+  duckdb::LogicalType type;
+  std::vector<WriteChunk> chunks;
+  DistinctStats distinct = DistinctStats::None;
+};
+
 class ColumnWriter final {
  public:
   ColumnWriter(ColWriter& owner, field_id id, duckdb::LogicalType type,
                bool skip_validity, uint32_t row_group_size,
-               duckdb::CompressionType forced, bool hyperloglog);
+               duckdb::CompressionType forced, DistinctStats distinct,
+               bool deferred);
 
   ColumnWriter(const ColumnWriter&) = delete;
   ColumnWriter& operator=(const ColumnWriter&) = delete;
@@ -66,14 +81,23 @@ class ColumnWriter final {
     ++back.count;
     duckdb::FlatVector::SetSize(back.data, back.count);
     ++_staged_rows;
-    if (_staged_rows == _row_group_size) {
+    if (!_deferred && _staged_rows == _row_group_size) {
       SealRowGroup();
     }
   }
 
   void PadNullsTo(uint64_t target_row);
 
-  void SetHyperLogLog(duckdb::shared_ptr<duckdb::HyperLogLog> hll);
+  bool CopyableFrom(const ColumnReader& column) const;
+  [[nodiscard]] bool CopyBlocks(const ColumnReader& column, ReadContext& source,
+                                absl::FunctionRef<bool()> progress);
+  void CopyRows(uint64_t start_row, const ColumnReader& column,
+                ReadContext& source, uint64_t first, uint64_t count);
+
+  std::vector<WriteChunk> Snapshot(uint64_t rows) const;
+  size_t StagedBytes() const noexcept;
+
+  void SetDistinct(duckdb::shared_ptr<duckdb::DistinctStatistics> distinct);
 
   field_id Id() const noexcept { return _id; }
   const duckdb::LogicalType& Type() const noexcept { return _type; }
@@ -85,6 +109,19 @@ class ColumnWriter final {
   void AppendDense(const duckdb::Vector& vec, duckdb::idx_t count);
   void PadNestedNulls(uint64_t count);
   WriteChunk& OpenChunk();
+
+  bool LayoutMatches(const ColumnReader& column) const noexcept;
+  duckdb::CompressionType ForcedCodec() const;
+  bool ValidityCopyable(const ColumnReader& column, uint64_t first,
+                        uint64_t end) const noexcept;
+  void CopyBlock(const ColumnBlockMeta& block, ReadContext& source,
+                 std::vector<ColumnBlockMeta>& sink,
+                 std::vector<byte_type>& buffer);
+  void CopyValidity(const ColumnReader& column, ReadContext& source,
+                    uint64_t first, uint64_t end,
+                    std::vector<byte_type>& buffer);
+  void DecodeRows(const ColumnReader& column, ReadContext& source,
+                  uint64_t first, uint64_t count);
 
   void SealRowGroup();
 
@@ -143,8 +180,9 @@ class ColumnWriter final {
   duckdb::idx_t _staged_chunks = 0;
   uint64_t _staged_rows = 0;
   uint64_t _row_start = 0;
-  bool _hll_auto = false;
-  duckdb::Vector _hll_hashes{duckdb::LogicalType::HASH, nullptr};
+  bool _deferred = false;
+  DistinctStats _distinct = DistinctStats::None;
+  duckdb::Vector _distinct_hashes{duckdb::LogicalType::HASH, nullptr};
   int64_t _variant_min_shred_size = -1;
   duckdb::LogicalType _force_variant_shredding;
   ColumnMeta _meta;

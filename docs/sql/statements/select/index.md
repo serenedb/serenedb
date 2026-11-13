@@ -122,14 +122,13 @@ For each table, the [`rowid` pseudocolumn](https://docs.oracle.com/cd/B19306_01/
 
 <SqlLogicTest id="sql/statements/select/index/example_010" />
 
-In the current storage, these identifiers are contiguous unsigned integers (0, 1, ...) if no rows were deleted.
-Deletions introduce gaps in the rowids which may be reclaimed later:
+The rows of one storage segment get consecutive identifiers (0, 1, ...) as long as none of them were deleted. Deletions introduce gaps in the rowids:
 
 <SqlLogicTest id="sql/statements/select/index/example_011" />
 
-On a regular table, the `rowid` values are stable within a transaction.
+In a table of an attached DuckDB database file, the `rowid` values are stable within a transaction.
 
-On a table created `WITH (storage = 'search')`, the `rowid` is the row's position in the snapshot the statement reads: the upper 32 bits number the storage segment that holds the row and the lower 32 bits the row within it. Every row has a distinct `rowid` within a snapshot, but a later snapshot can give the same value to another row: an `UPDATE` moves the rows it changes, and a commit, a [compaction](../../indexes/inverted/maintenance.md#background-compaction) or an index build can renumber the others. A `rowid` is therefore valid only within the statement that read it, and across statements only in a `REPEATABLE READ` transaction or once the transaction has changed data; a `rowid` carried from an earlier snapshot can update or delete a different row.
+On a table of a SereneDB database, the `rowid` is the row's position in the snapshot the statement reads: the upper 32 bits number the storage segment that holds the row and the lower 32 bits the row within it. Every row has a distinct `rowid` within a snapshot, but a later snapshot can give the same value to another row: an `UPDATE` moves the rows it changes, and a commit, a [compaction](../../indexes/inverted/maintenance.md#background-compaction) or an index build can renumber the others. A `rowid` is therefore valid only within the statement that read it, and across statements only in a `REPEATABLE READ` transaction or once the transaction has changed data; a `rowid` carried from an earlier snapshot can update or delete a different row.
 
 <DocCallout type="bestPractice">
 It is strongly advised to avoid using rowids as identifiers.

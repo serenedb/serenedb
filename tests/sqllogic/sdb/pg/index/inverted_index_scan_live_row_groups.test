@@ -5,7 +5,8 @@ CREATE TEXT SEARCH DICTIONARY ilr_words AS split_text(case := 'lower') WITH (fre
 
 
 statement ok
-CREATE TABLE ilr (id INTEGER PRIMARY KEY, k INTEGER, body TEXT, tags VARCHAR[], v VARIANT);
+CREATE TABLE ilr (id INTEGER PRIMARY KEY, k INTEGER, body TEXT, tags VARCHAR[], v VARIANT)
+  WITH (row_group_size = 2048);
 
 
 statement ok
@@ -19,12 +20,7 @@ FROM range(20480) t(i) ORDER BY i;
 
 
 statement ok
-CREATE INDEX ilr_idx ON ilr USING inverted (id, body ilr_words) INCLUDE (k, body, tags, v)
-  WITH (row_group_size = 2048);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) ilr;
+CREATE INDEX ilr_idx ON ilr USING inverted (id, body ilr_words) INCLUDE (k, body, tags, v);
 
 
 statement ok

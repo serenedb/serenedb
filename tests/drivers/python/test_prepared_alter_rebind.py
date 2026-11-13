@@ -45,8 +45,9 @@ def test_prepared_statements_survive_concurrent_alters(tmp_path: Path) -> None:
             pudge.execute("CREATE INDEX vjling_wards_b ON vjling_wards USING inverted (b)")
 
         stop = time.monotonic() + RUN_SECONDS
-        expected = (psycopg.errors.SerializationFailure, psycopg.errors.UndefinedColumn,
-                    psycopg.errors.UndefinedTable, psycopg.errors.DuplicateColumn)
+        expected = (psycopg.errors.SerializationFailure, psycopg.errors.ObjectInUse,
+                    psycopg.errors.UndefinedColumn, psycopg.errors.UndefinedTable,
+                    psycopg.errors.DuplicateColumn)
         failures: list[str] = []
 
         def run(work) -> None:
@@ -83,9 +84,31 @@ def test_prepared_statements_survive_concurrent_alters(tmp_path: Path) -> None:
 
         assert failures == []
         with _connect(server) as melstroi:
-            melstroi.execute("VACUUM (REFRESH_TABLE) vjling_wards")
             rows = melstroi.execute("SELECT count(*) FROM vjling_wards").fetchone()[0]
             docs = melstroi.execute("SELECT count(*) FROM vjling_wards_b").fetchone()[0]
             assert docs == rows
+    finally:
+        server.stop()
+
+
+def test_replanned_statement_counts_one_transaction(tmp_path: Path) -> None:
+    server = Serened(SERENED_BIN, datadir_root=str(tmp_path),
+                     log_path=str(tmp_path / "serened.log"))
+    try:
+        server.start()
+        with _connect(server) as tusk:
+            tusk.execute("CREATE DATABASE vjling_counted")
+            commits = "SELECT xact_commit FROM pg_stat_database WHERE datname = 'vjling_counted'"
+            with psycopg.connect(server.dsn(database="vjling_counted"), autocommit=True) as counted:
+                counted.execute("SELECT 1", prepare=True)
+                first = tusk.execute(commits).fetchone()[0]
+                counted.execute("SELECT 1", prepare=True)
+                quiet = tusk.execute(commits).fetchone()[0]
+                tusk.execute("CREATE TABLE vjling_epoch (i INTEGER)")
+                counted.execute("SELECT 2")
+                moved = tusk.execute(commits).fetchone()[0]
+                counted.execute("SELECT 1", prepare=True)
+                replanned = tusk.execute(commits).fetchone()[0]
+                assert replanned - moved == quiet - first
     finally:
         server.stop()

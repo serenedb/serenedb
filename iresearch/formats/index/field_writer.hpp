@@ -31,6 +31,7 @@
 #include <vector>
 
 #include "iresearch/formats/basic_term_reader.hpp"
+#include "iresearch/formats/field_sink.hpp"
 #include "iresearch/formats/flush_state.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
 #include "iresearch/formats/index/term_dict_format.hpp"
@@ -87,7 +88,7 @@ struct BlockBuilder {
   BlockKind kind = BlockKind::Var;
 };
 
-class FieldWriter final {
+class FieldWriter final : public FieldSink {
  public:
   explicit FieldWriter(bool compaction) noexcept : _compaction{compaction} {}
 
@@ -95,11 +96,12 @@ class FieldWriter final {
   FieldWriter& operator=(const FieldWriter&) = delete;
 
   void SetIdxWriter(IdxWriter& idx) noexcept { _idx = &idx; }
-  void prepare(const FlushState& state, uint64_t keyed_dicts);
-  void write(DictRef dict, const BasicTermReader& reader);
-  void WriteSlot(field_id id, DictRef dict, std::span<const doc_id_t> docs);
-  void WriteSlot(field_id id, DictRef dict, TermPostings& docs);
-  void end();
+  void prepare(const FlushState& state, uint64_t keyed_dicts) final;
+  void write(DictRef dict, const BasicTermReader& reader) final;
+  void WriteSlot(field_id id, DictRef dict,
+                 std::span<const doc_id_t> docs) final;
+  void WriteSlot(field_id id, DictRef dict, TermPostings& docs) final;
+  void end() final;
 
  private:
   void Begin(field_id id, DictRef dict) noexcept;

@@ -20,7 +20,7 @@ CREATE TEXT SEARCH DICTIONARY en_wtf AS
 
 
 statement ok
-CREATE TABLE wtf (id INTEGER PRIMARY KEY, n INTEGER, body VARCHAR);
+CREATE TABLE wtf (id INTEGER PRIMARY KEY, n INTEGER, body VARCHAR) WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 
 
 # doc length grows with id, so bm25('term') is strictly higher for shorter
@@ -35,12 +35,7 @@ INSERT INTO wtf VALUES
 
 
 statement ok
-CREATE INDEX wtf_idx ON wtf USING inverted(body en_wtf) INCLUDE (n)
-  WITH (optimize_top_k = 'bm25(1.2, 0.75)');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) wtf;
+CREATE INDEX wtf_idx ON wtf USING inverted(body en_wtf) INCLUDE (n);
 
 
 # --- Case 1: single Term (PruningIterator) + `.col` filter + top-k -----
@@ -51,6 +46,7 @@ EXPLAIN SELECT n FROM wtf_idx WHERE body @@ ts_phrase('term') AND n > 20 ORDER B
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: wtf_idx              │
+│ Lookup: search              │
 │ Index Filter:               │
 │ ╭─ Term ──────────────╮     │
 │ │ Field: body(string) │     │
@@ -80,6 +76,7 @@ EXPLAIN SELECT n FROM wtf_idx WHERE body @@ ts_any(['term', 'rare']) AND n > 20 
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: wtf_idx              │
+│ Lookup: search              │
 │ Index Filter:               │
 │ ╭─ Or ───────────────────╮  │
 │ ╰────────────┬───────────╯  │
@@ -121,7 +118,7 @@ QUERY PLAN
 ╰────────────────┬───────────────╯
 ╭─ IRESEARCH_SCAN ───────────────╮
 │ Index: wtf_idx                 │
-│ Lookup: table                  │
+│ Lookup: search                 │
 │ Index Filter:                  │
 │ ╭─ Term ──────────────╮        │
 │ │ Field: body(string) │        │
@@ -142,6 +139,7 @@ EXPLAIN SELECT n FROM wtf_idx WHERE body @@ ts_phrase('term') AND BM25(wtf_idx.t
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: wtf_idx              │
+│ Lookup: search              │
 │ Index Filter:               │
 │ ╭─ Term ──────────────╮     │
 │ │ Field: body(string) │     │
@@ -232,19 +230,14 @@ CREATE TEXT SEARCH DICTIONARY wtf_words AS split_text() WITH (frequency, norm);
 
 
 statement ok
-CREATE TABLE wtw AS
+CREATE TABLE wtw WITH (optimize_top_k = 'bm25(1.2, 0.75)', compaction_interval = 0) AS
 SELECT g AS id, (g // 300) % 2 AS n,
        'w' || (g % 7) || ' w' || (g % 11) || ' ' || repeat('w' || (g % 5) || ' ', g % 9) || 'w' || (g % 3) AS body
 FROM range(1, 40001) t(g);
 
 
 statement ok
-CREATE INDEX wtw_idx ON wtw USING inverted (id, body wtf_words) INCLUDE (n, body)
-  WITH (optimize_top_k = 'bm25(1.2, 0.75)', compaction_interval = 0);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) wtw;
+CREATE INDEX wtw_idx ON wtw USING inverted (id, body wtf_words) INCLUDE (n, body);
 
 
 query
@@ -255,6 +248,7 @@ ORDER BY BM25(wtw_idx.tableoid) DESC LIMIT 5;
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────╮
 │ Index: wtw_idx                        │
+│ Lookup: search                        │
 │ Index Filter:                         │
 │ ╭─ Or ─────────────────────╮          │
 │ ╰─────────────┬────────────╯          │
@@ -327,10 +321,6 @@ statement ok
 DELETE FROM wtw WHERE id % 1000 = 7;
 
 
-statement ok
-VACUUM (REFRESH_TABLE) wtw;
-
-
 query
 SELECT count(*), bool_and(n = 1), round(min(score)::numeric, 4), round(max(score)::numeric, 4) FROM (
   SELECT n, BM25(wtw_idx.tableoid) AS score FROM wtw_idx
@@ -349,6 +339,7 @@ ORDER BY BM25(wtw_idx.tableoid) DESC LIMIT 100;
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────╮
 │ Index: wtw_idx                            │
+│ Lookup: search                            │
 │ Index Filter:                             │
 │ ╭─ Phrase ──────────────────────────────╮ │
 │ │ Field: body(string)                   │ │

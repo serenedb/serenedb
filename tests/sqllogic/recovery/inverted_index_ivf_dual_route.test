@@ -15,7 +15,7 @@ CREATE MACRO ivf_route_vec(i) AS
 
 statement ok
 CREATE TABLE ivf_route (id INTEGER PRIMARY KEY, n INTEGER, emb FLOAT[16])
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 
 statement ok
@@ -30,7 +30,7 @@ FROM range(100000) t(i);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) ivf_route;
+VACUUM (FLUSH_TABLE) ivf_route;
 
 
 statement ok
@@ -66,7 +66,7 @@ DELETE FROM ivf_route WHERE id % 3 = 0;
 
 
 statement ok
-VACUUM (REFRESH_TABLE) ivf_route;
+VACUUM (FLUSH_TABLE) ivf_route;
 
 
 # Either way the rows returned pass the range and none of them is deleted.

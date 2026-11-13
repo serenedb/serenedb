@@ -60,6 +60,7 @@ struct SearchColumnInfo {
   bool nullable = false;
   irs::DictLayout layout = irs::DictLayout::String;
   irs::field_id text = irs::field_limits::invalid();
+  irs::field_id key_field = irs::field_limits::invalid();
   duckdb::LogicalType logical_type;
   catalog::ColumnTokenizer tokenizer;
   std::optional<uint32_t> levenshtein_max_terms;

@@ -84,6 +84,9 @@ class PgReplicationClient final : public SyncSession {
   bool SyncFailed() const noexcept {
     return _sync_failed.load(std::memory_order_acquire);
   }
+  bool Streaming() const noexcept {
+    return _streaming.load(std::memory_order_acquire);
+  }
   uint64_t ReceivedLsn() const noexcept {
     return _received_lsn.load(std::memory_order_relaxed);
   }
@@ -150,6 +153,7 @@ class PgReplicationClient final : public SyncSession {
   ReplStream _stream;
   std::atomic<bool> _connected{false};
   std::atomic<bool> _sync_failed{false};
+  std::atomic<bool> _streaming{false};
   std::atomic<bool> _apply_idle{true};
   std::atomic<uint64_t> _received_lsn{0};
   std::atomic<uint64_t> _flushed_lsn{0};

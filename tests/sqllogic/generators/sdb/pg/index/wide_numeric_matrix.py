@@ -131,13 +131,13 @@ for row in range(ROWS):
     rows.append(f"({row}, {', '.join(values)})")
 
 t.table("wnm", definition)
-t.table("wnm_s", definition, search=True)
+t.table("wnm_s", definition)
 t.index("wnm_idx", "wnm", keys)
 t.index("wnm_s_idx", "wnm_s", keys)
 t.insert("wnm", rows)
 t.statement("INSERT INTO wnm_s SELECT * FROM wnm")
-t.refresh("wnm")
-t.refresh("wnm_s")
+t.statement("VACUUM (FLUSH_TABLE) wnm")
+t.statement("VACUUM (FLUSH_TABLE) wnm_s")
 
 for column in COLUMNS:
     t.section(f"{column} {COLUMNS[column][0]}")

@@ -96,7 +96,7 @@ irs::TermClause Term(irs::field_id field, int64_t value) {
 
 class CountSingleValuedTest : public tests::IndexTestBase {
  protected:
-  void Build(irs::IndexWriter& writer) {
+  void Build(tests::IndexWriter& writer) {
     for (doc_id_t row = 0; row != kRows; ++row) {
       tests::Document doc;
       const auto add = [&](irs::field_id id, std::string_view name,
@@ -120,7 +120,7 @@ class CountSingleValuedTest : public tests::IndexTestBase {
     _live.assign(kRows, true);
   }
 
-  void Remove(irs::IndexWriter& writer, int64_t lo, int64_t hi) {
+  void Remove(tests::IndexWriter& writer, int64_t lo, int64_t hi) {
     const auto snapshot = writer.GetSnapshot();
     const auto removal = Range(kUnique, lo, hi);
     tests::PreparedFilter prepared{*removal, snapshot};
@@ -195,10 +195,10 @@ class CountSingleValuedTest : public tests::IndexTestBase {
     tests::PreparedFilter prepared{filter, reader};
     uint64_t actual = 0;
     for (size_t i = 0; i != reader.size(); ++i) {
-      const auto mask = reader[i].MaskedDocs();
+      const auto* mask = reader[i].docs_mask();
       auto docs = prepared.Execute(i);
       while (!irs::doc_limits::eof(docs->Next())) {
-        actual += !mask.Contains(docs->Value());
+        actual += !mask || !mask->Contains(docs->Value());
       }
     }
     ASSERT_EQ(expected, actual);
@@ -208,7 +208,7 @@ class CountSingleValuedTest : public tests::IndexTestBase {
 };
 
 TEST_P(CountSingleValuedTest, ranges_count_from_term_statistics) {
-  auto writer = open_writer(irs::kOmCreate);
+  auto writer = open_writer(tests::kOmCreate);
   Build(*writer);
   constexpr std::pair<int64_t, int64_t> kRanges[]{
     {0, 0},    {5, 5},       {0, 63},           {100, 4100},
@@ -225,7 +225,7 @@ TEST_P(CountSingleValuedTest, ranges_count_from_term_statistics) {
 }
 
 TEST_P(CountSingleValuedTest, disjunctions_sum_only_disjoint_clauses) {
-  auto writer = open_writer(irs::kOmCreate);
+  auto writer = open_writer(tests::kOmCreate);
   Build(*writer);
   {
     SCOPED_TRACE("distinct terms");
@@ -280,7 +280,7 @@ TEST_P(CountSingleValuedTest, disjunctions_sum_only_disjoint_clauses) {
 }
 
 TEST_P(CountSingleValuedTest, conjunctions_of_different_terms_are_empty) {
-  auto writer = open_writer(irs::kOmCreate);
+  auto writer = open_writer(tests::kOmCreate);
   Build(*writer);
   {
     irs::BooleanFilter filter;
@@ -305,7 +305,7 @@ TEST_P(CountSingleValuedTest, conjunctions_of_different_terms_are_empty) {
 }
 
 TEST_P(CountSingleValuedTest, negations_subtract_term_statistics) {
-  auto writer = open_writer(irs::kOmCreate);
+  auto writer = open_writer(tests::kOmCreate);
   Build(*writer);
   {
     SCOPED_TRACE("sparse range");
@@ -339,7 +339,7 @@ TEST_P(CountSingleValuedTest, negations_subtract_term_statistics) {
 }
 
 TEST_P(CountSingleValuedTest, deleted_documents_are_counted_out) {
-  auto writer = open_writer(irs::kOmCreate);
+  auto writer = open_writer(tests::kOmCreate);
   Build(*writer);
   Remove(*writer, 1000, 2999);
   CheckCount(*Range(kSingle, 100, 4100), SingleIn(100, 4100), false);
@@ -357,7 +357,7 @@ TEST_P(CountSingleValuedTest, deleted_documents_are_counted_out) {
 }
 
 TEST_P(CountSingleValuedTest, dense_ranges_visit_the_documents_they_match) {
-  auto writer = open_writer(irs::kOmCreate);
+  auto writer = open_writer(tests::kOmCreate);
   Build(*writer);
   constexpr std::pair<int64_t, int64_t> kRanges[]{
     {10, 8990}, {0, 9000}, {-5, kValues * 2}, {4500, 9000}, {100, 120}};
@@ -374,7 +374,7 @@ TEST_P(CountSingleValuedTest, dense_ranges_visit_the_documents_they_match) {
 }
 
 TEST_P(CountSingleValuedTest, dense_ranges_estimate_their_exact_count) {
-  auto writer = open_writer(irs::kOmCreate);
+  auto writer = open_writer(tests::kOmCreate);
   Build(*writer);
   auto reader = open_reader();
   ASSERT_EQ(1, reader.size());
@@ -393,7 +393,7 @@ TEST_P(CountSingleValuedTest, dense_ranges_estimate_their_exact_count) {
 
 TEST_P(CountSingleValuedTest,
        ranges_run_as_their_complement_past_three_fifths) {
-  auto writer = open_writer(irs::kOmCreate);
+  auto writer = open_writer(tests::kOmCreate);
   Build(*writer);
   auto reader = open_reader();
   ASSERT_EQ(1, reader.size());
@@ -417,7 +417,7 @@ TEST_P(CountSingleValuedTest,
 }
 
 TEST_P(CountSingleValuedTest, split_counts_fill_their_range_of_many_terms) {
-  auto writer = open_writer(irs::kOmCreate);
+  auto writer = open_writer(tests::kOmCreate);
   Build(*writer);
   auto reader = open_reader();
   ASSERT_EQ(1, reader.size());
@@ -456,7 +456,7 @@ TEST_P(CountSingleValuedTest, split_counts_fill_their_range_of_many_terms) {
 }
 
 TEST_P(CountSingleValuedTest, bitset_fills_skip_what_earlier_clauses_emptied) {
-  auto writer = open_writer(irs::kOmCreate);
+  auto writer = open_writer(tests::kOmCreate);
   Build(*writer);
   Remove(*writer, 2000, 2099);
   auto reader = open_reader();

@@ -13,8 +13,7 @@ RESET sdb_faults;
 
 
 statement ok
-CREATE TABLE ckpt_pk(i INTEGER PRIMARY KEY, t TEXT)
-  WITH (storage = 'search', refresh_interval = 0);
+CREATE TABLE ckpt_pk(i INTEGER PRIMARY KEY, t TEXT);
 
 
 statement ok
@@ -30,7 +29,8 @@ connection writer
 statement async error
 INSERT INTO ckpt_pk VALUES (9, 'parked');
 ----
-db error: ERROR: duplicate key value violates the primary key of table "ckpt_pk"
+db error: ERROR: duplicate key value violates unique constraint "ckpt_pk_pkey"
+DETAIL: Key (i)=(9) already exists.
 
 
 connection default
@@ -38,7 +38,6 @@ statement ok retry 40 backoff 250ms
 SET sdb_faults = '-search_commit_prepared:parked';
 
 
-# Somebody takes it, and with no refresh the key lives only in the WAL.
 connection other
 statement ok
 INSERT INTO ckpt_pk VALUES (9, 'winner');
@@ -105,7 +104,7 @@ RESET sdb_faults;
 
 
 statement ok
-VACUUM (REFRESH_TABLE) ckpt_pk;
+VACUUM (FLUSH_TABLE) ckpt_pk;
 
 
 query
@@ -125,8 +124,7 @@ CREATE DATABASE ckpt_fail;
 
 
 statement ok
-CREATE TABLE ckpt_fail.public.s(i INTEGER PRIMARY KEY, t TEXT)
-  WITH (storage = 'search', refresh_interval = 0);
+CREATE TABLE ckpt_fail.public.s(i INTEGER PRIMARY KEY, t TEXT);
 
 
 statement ok
@@ -159,7 +157,8 @@ INSERT INTO ckpt_fail.public.r VALUES (1);
 statement error
 INSERT INTO ckpt_fail.public.s VALUES (1, 'after');
 ----
-db error: ERROR: duplicate key value violates the primary key of table "s"
+db error: ERROR: duplicate key value violates unique constraint "s_pkey"
+DETAIL: Key (i)=(1) already exists.
 
 
 # A key of its own still goes in. What the table holds is not asked here: an

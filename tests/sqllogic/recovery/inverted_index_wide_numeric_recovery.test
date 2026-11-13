@@ -5,7 +5,7 @@ control substitution on
 
 statement ok
 CREATE TABLE wnr (id INTEGER PRIMARY KEY, d4 DECIMAL(9,2), d16 DECIMAL(38,5),
-  u UUID, ub UBIGINT, h HUGEINT, uh UHUGEINT) WITH (storage = 'search');
+  u UUID, ub UBIGINT, h HUGEINT, uh UHUGEINT);
 
 statement ok
 CREATE INDEX wnr_idx ON wnr USING inverted (id, d4, d16, u, ub, h, uh);
@@ -21,7 +21,7 @@ INSERT INTO wnr VALUES
    340282366920938463463374607431768211455);
 
 statement ok
-VACUUM (REFRESH_TABLE) wnr;
+VACUUM (FLUSH_TABLE) wnr;
 
 statement ok
 INSERT INTO wnr VALUES
@@ -29,7 +29,7 @@ INSERT INTO wnr VALUES
   (5, NULL, NULL, NULL, NULL, NULL, NULL);
 
 statement ok
-VACUUM (REFRESH_TABLE) wnr;
+VACUUM (FLUSH_TABLE) wnr;
 
 query
 SELECT id FROM wnr WHERE d4 @@ ts_lt(5.125) ORDER BY id;

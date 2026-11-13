@@ -79,7 +79,7 @@ A client can also declare parameter types when it prepares a statement over the 
 
 ## Plans
 
-An execution of a prepared statement skips parsing. A statement that reads only [inverted indexes](../indexes/inverted/index.md) and search tables (`storage = 'search'`) also keeps its plan between executions: it is planned again only by the first execution after an index it reads has changed, for example after [a refresh](../indexes/inverted/maintenance.md#visibility-and-the-refresh-model) made new rows searchable, and that execution's plan is kept in turn. A statement that reads a regular table is planned on every execution.
+An execution of a prepared statement skips parsing. A statement that reads only tables and [inverted indexes](../indexes/inverted/index.md) also keeps its plan between executions: it is planned again only by the first execution after a table or index it reads has changed, and that execution's plan is kept in turn. Every committed write to a table is such a change, so a statement over a table that receives writes between its executions is planned again on each of them. A statement that reads a table of an attached DuckDB database file is planned on every execution.
 
 The values the index takes over are read at execution, so one plan serves them all: the query vector, a full-text query, the conditions the index answers, `LIMIT` and `OFFSET`. A parameter in a condition the index cannot answer, one that is itself an operand of `AND` or `OR`, and any parameter of a statement that calls `ts_dict_agg` or `ts_offsets` is planned with its value, on every execution.
 

@@ -2,7 +2,7 @@ hash-threshold 100
 
 # Validity must round-trip through the cs segment merge for INCLUDE'd
 # composite types. We force the index into a multi-segment shape by
-# inserting in two batches separated by VACUUM (REFRESH_TABLE) -- each
+# inserting in two batches separated by VACUUM (FLUSH_TABLE) -- each
 # VACUUM commits a fresh segment -- then drive compaction via
 # VACUUM (COMPACT_TABLE) <table> and re-run the same
 # projection. The post-merge projection must match the pre-merge one,
@@ -38,7 +38,7 @@ INSERT INTO arr_c VALUES (3, 'alpha three', [-1.0, 0.0, 1.0])
 
 
 statement ok
-VACUUM (REFRESH_TABLE) arr_c
+VACUUM (FLUSH_TABLE) arr_c
 
 
 # Segment B: all non-null.
@@ -48,10 +48,6 @@ INSERT INTO arr_c VALUES (4, 'beta one', [4.0, 5.0, 6.0])
 
 statement ok
 INSERT INTO arr_c VALUES (5, 'beta two', [7.0, 8.0, 9.0])
-
-
-statement ok
-VACUUM (REFRESH_TABLE) arr_c
 
 
 # Baseline projection across both pre-merge segments.
@@ -153,7 +149,7 @@ INSERT INTO struct_c VALUES (3, 'alpha three', ROW(NULL, 30))
 
 
 statement ok
-VACUUM (REFRESH_TABLE) struct_c
+VACUUM (FLUSH_TABLE) struct_c
 
 
 # Segment B: also exercises a NULL field on the second slot.
@@ -163,10 +159,6 @@ INSERT INTO struct_c VALUES (4, 'beta one', ROW('delta', NULL))
 
 statement ok
 INSERT INTO struct_c VALUES (5, 'beta two', ROW('epsilon', 50))
-
-
-statement ok
-VACUUM (REFRESH_TABLE) struct_c
 
 
 query
@@ -264,7 +256,7 @@ INSERT INTO map_c VALUES (3, 'alpha three', MAP {})
 
 
 statement ok
-VACUUM (REFRESH_TABLE) map_c
+VACUUM (FLUSH_TABLE) map_c
 
 
 # Segment B: also exercises a NULL value inside a non-null map.
@@ -274,10 +266,6 @@ INSERT INTO map_c VALUES (4, 'beta one', MAP {'c': 3, 'd': 4})
 
 statement ok
 INSERT INTO map_c VALUES (5, 'beta two', MAP {'e': NULL, 'f': 5})
-
-
-statement ok
-VACUUM (REFRESH_TABLE) map_c
 
 
 query

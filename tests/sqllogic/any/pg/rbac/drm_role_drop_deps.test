@@ -86,7 +86,7 @@ onlyif serenedb
 statement error
 DROP ROLE drdd_babsky;
 ----
-db error: ERROR: Cannot drop entry "drdd_babsky" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "drdd_babsky" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 # Once the owned object is gone and grants revoked, the role drops.

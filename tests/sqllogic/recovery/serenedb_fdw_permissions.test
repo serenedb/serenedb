@@ -1,11 +1,10 @@
 control substitution on
 
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-CREATE TABLE postgres.public.sfp_docs(id INTEGER PRIMARY KEY, body VARCHAR);
+CREATE TABLE postgres.public.sfp_docs(id INTEGER PRIMARY KEY, body VARCHAR) WITH (compaction_interval = 0);
 
 statement ok
-CREATE INDEX sfp_docs_idx ON postgres.public.sfp_docs USING inverted(id, body)
-  WITH (refresh_interval = 0, compaction_interval = 0);
+CREATE INDEX sfp_docs_idx ON postgres.public.sfp_docs USING inverted(id, body);
 
 statement ok
 INSERT INTO postgres.public.sfp_docs VALUES (1, 'alpha'), (2, 'beta');
@@ -22,14 +21,23 @@ INSERT INTO sfp_live.public.sfp_secret VALUES (1, 'payroll');
 statement ok
 CREATE VIEW postgres.public.sfp_secret_v AS SELECT id, note FROM sfp_live.public.sfp_secret;
 
-statement ok
-CHECKPOINT postgres;
+connection holder
+query
+SELECT pg_backup_start('sfp') IS NOT NULL AS started;
+----
+started
+t
 
 system ok
-rm -rf $__TEST_DIR__/sfp_snap && mkdir $__TEST_DIR__/sfp_snap && cp -r ${SDB_DATADIR}/engine_v1/5 $__TEST_DIR__/sfp_snap/5 && cp ${SDB_DATADIR}/engine_v1/catalog.wal $__TEST_DIR__/sfp_snap/catalog.wal
+rm -rf $__TEST_DIR__/sfp_snap && mkdir -p $__TEST_DIR__/sfp_snap/engine_v1 && cp -r ${SDB_DATADIR}/engine_v1/wal $__TEST_DIR__/sfp_snap/engine_v1/ && cp -r ${SDB_DATADIR}/engine_v1/store $__TEST_DIR__/sfp_snap/engine_v1/ && cp ${SDB_DATADIR}/PG_VERSION $__TEST_DIR__/sfp_snap/
 
+connection holder
 statement ok
-CREATE SERVER sfp_snap FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfp_snap/5');
+SELECT * FROM pg_backup_stop();
+
+connection default
+statement ok
+CREATE SERVER sfp_snap FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfp_snap');
 
 statement ok
 CREATE ROLE sfp_reader LOGIN PASSWORD 'sfp_pw';
@@ -102,7 +110,7 @@ db error: ERROR: unrecognized privilege type: "BOGUS"
 
 connection default
 statement ok
-ATTACH '${__TEST_DIR__}/sfp_snap/5' AS sfp_session (TYPE serenedb, READ_ONLY);
+ATTACH '${__TEST_DIR__}/sfp_snap' AS sfp_session (TYPE serenedb, READ_ONLY);
 
 connection sfp_reader user=sfp_reader password=sfp_pw
 statement error

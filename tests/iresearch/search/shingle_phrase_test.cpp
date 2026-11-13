@@ -280,8 +280,8 @@ class Index : public tests::FamilyIndex {
   template<typename Words = WhitespaceTokenizer>
   Index(std::span<const std::string_view> docs, ShingleTokenizer& shingles,
         irs::IndexFeatures shingle_features, std::type_identity<Words> = {}) {
-    auto writer = irs::IndexWriter::Make(_dir, irs::kOmCreate,
-                                         irs::tests::DefaultWriterOptions());
+    auto writer = tests::IndexWriter::Make(_dir, tests::kOmCreate,
+                                           irs::tests::DefaultWriterOptions());
     EXPECT_NE(nullptr, writer);
     Words plain;
     Words positional;

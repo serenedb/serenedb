@@ -254,9 +254,6 @@ INSERT INTO g19_acc_t VALUES
      '"jvalue2"'::JSON,
      'vvalue2');
 
-statement ok
-VACUUM (REFRESH_TABLE) g19_acc_t;
-
 query
 SELECT count(*) FROM g19_acc_arr_ts;
 ----

@@ -11,7 +11,7 @@ split: page
 import DocCallout from "@site/src/components/DocCallout";
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
-This guide covers the indexes that affect analytical query performance: the automatic zonemaps and [ART indexes](../../sql/indexes/art.md). For full-text, vector and geospatial search, see the [inverted index](../../sql/indexes/inverted/index.md).
+This guide covers the indexes that affect analytical query performance: the automatic zonemaps and the indexes created with `CREATE INDEX`. For full-text, vector and geospatial search, see the [inverted index](../../sql/indexes/inverted/index.md).
 
 ## Zonemaps
 
@@ -46,62 +46,30 @@ Another practical way to exploit ordering is to use the `INTEGER` type with auto
 In a scenario where a table contains out-of-order `UUID`s, SereneDB has to scan many row groups to find a specific `UUID` value.
 An ordered `INTEGER` column allows skipping all row groups except those containing the value.
 
-## ART Indexes
+## Indexes
 
-SereneDB allows defining [Adaptive Radix Tree (ART) indexes](https://db.in.tum.de/~leis/papers/ART.pdf) in two ways.
-First, such an index is created implicitly for columns with `PRIMARY KEY`, `FOREIGN KEY`, and `UNIQUE` [constraints](./schema.md#constraints).
-Second, explicitly running the [`CREATE INDEX`](../../sql/indexes/index.md) statement creates an ART index on the target column(s).
+`PRIMARY KEY`, `FOREIGN KEY` and `UNIQUE` [constraints](./schema.md#constraints) are enforced by the table itself and need no index.
 
-The tradeoffs of having an ART index on a column are as follows:
-
-1. ART indexes enable constraint checking during changes (inserts, updates, and deletes).
-2. Changes on indexed tables perform worse than their non-indexed counterparts.
-That is because of index maintenance for these operations.
-3. For some use cases, _single-column ART indexes_ improve the performance of highly selective queries using the indexed column.
-
-An ART index does not affect the performance of join, aggregation, and sorting queries.
-
-### ART Index Scans
-
-ART index scans probe a single-column ART index for the requested data instead of scanning a table sequentially.
-Probing can improve the performance of some queries.
-SereneDB will try to use an index scan for equality and `IN(...)` conditions.
-It also pushes dynamic filters, e.g., from hash joins, into the scan, allowing dynamic index scans on these filters.
-
-Indexes are only eligible for index scans if they index a single column without expressions.
-E.g., the following index is eligible for index scans:
+The [`CREATE INDEX`](../../sql/indexes/index.md) statement creates an inverted index on the target column(s):
 
 <SqlLogicTest id="cookbook/performance/indexing/example_001" />
 
-A multi-column index is created but is **not** eligible for index scans. An index on an expression can also be created:
+An index can cover several columns, and an expression:
 
 <SqlLogicTest id="cookbook/performance/indexing/example_002" />
 
-The default threshold for index scans is `MAX(2048, 0.001 * table_cardinality)`.
-You can configure this threshold via `index_scan_percentage` and `index_scan_max_count`, or disable them by setting these values to zero.
-When in doubt, use [`EXPLAIN ANALYZE`](./profiling.md#the-explain-analyze-statement) to verify that your query plan uses the index scan.
+The tradeoffs of having an index are as follows:
 
-### Indexes and Memory
+1. Writes to an indexed table cost more, since every write also updates the index.
+2. Selective conditions on the indexed columns, and full-text, vector and geospatial searches, read only the matching rows.
 
-SereneDB registers index memory through its buffer manager.
-However, these index buffers are not yet buffer-managed.
-That means SereneDB does not yet destroy any index buffers if it has to evict memory.
-Thus, indexes can take up a significant portion of SereneDB's available memory, potentially affecting the performance of memory-intensive queries.
-Re-attaching (`DETACH` + `ATTACH`) the database containing indexes can mitigate this effect, as we deserialize index memory lazily.
-Disabling index scans and re-attaching after changes can further decrease the impact of indexes on SereneDB's available memory.
-
-### Indexes and Opening Databases
-
-Indexes are serialized to disk and deserialized lazily, i.e., when reopening the database.
-Operations using the index will only load the required parts of the index.
-Therefore, having an index will not cause any slowdowns when opening an existing database.
+Use [`EXPLAIN ANALYZE`](./profiling.md#the-explain-analyze-statement) to see how a query reads the table.
 
 <DocCallout type="bestPractice">
 
 We recommend following these guidelines:
 
 - Only use primary keys, foreign keys, or unique constraints, if these are necessary for enforcing constraints on your data.
-- Do not define explicit indexes unless you have highly selective queries and enough memory available.
-- If you define an ART index, do so after bulk loading the data to the table. Adding an index prior to loading, either explicitly or via primary/foreign keys, is [detrimental to load performance](./schema.md#the-effect-of-primary-keys).
+- Index the columns that selective queries filter on, and leave the others unindexed.
 
 </DocCallout>

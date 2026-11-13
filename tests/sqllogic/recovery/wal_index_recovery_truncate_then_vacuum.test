@@ -1,6 +1,5 @@
 control substitution on
 
-# WAL index recovery: VACUUM (REFRESH_TABLE) AFTER a TRUNCATE, then crash.
 #
 # Sequence inside the recovery range:
 #   1) seed + VACUUM            -> on-disk iresearch holds the seed.
@@ -33,7 +32,7 @@ CREATE INDEX gnusi_idx ON gnusi_t USING inverted(id, body gnusi_dict);
 
 # Phase 1: seed -> publish via vacuum.
 statement ok
-VACUUM (REFRESH_TABLE) gnusi_t;
+VACUUM (FLUSH_TABLE) gnusi_t;
 
 # Phase 2: write more, then publish via vacuum -- iresearch on-disk now holds
 # {phase1, phase2}.
@@ -41,7 +40,7 @@ statement ok
 INSERT INTO gnusi_t VALUES (3, 'phase2 charlie'), (4, 'phase2 delta');
 
 statement ok
-VACUUM (REFRESH_TABLE) gnusi_t;
+VACUUM (FLUSH_TABLE) gnusi_t;
 
 query
 SELECT count(*) FROM gnusi_idx WHERE body @@ ts_phrase('phase1 alpha');
@@ -58,10 +57,6 @@ count
 # Phase 3: truncate -- iresearch reset at this seq via the writer-locked path.
 statement ok
 TRUNCATE gnusi_t;
-
-# Block bg search commits so the post-truncate writes stay WAL-only.
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 # Phase 4: post-truncate writes.
 statement ok

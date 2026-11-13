@@ -8,6 +8,10 @@ statement ok
 INSERT INTO srr_docs VALUES (1, 'one'), (2, 'two');
 
 
+statement ok
+CREATE TABLE srr_boot AS SELECT pg_postmaster_start_time() AS t;
+
+
 connection before_shutdown
 query
 SELECT count(*) AS n FROM srr_docs;
@@ -26,7 +30,7 @@ SELECT 1;
 
 connection before_shutdown
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SELECT count(*) AS n FROM srr_docs;
+SELECT count(*) AS n FROM srr_docs WHERE pg_postmaster_start_time() > (SELECT t FROM srr_boot);
 ----
 n
 2
@@ -35,3 +39,8 @@ n
 connection before_shutdown
 statement ok
 DROP TABLE srr_docs;
+
+
+connection before_shutdown
+statement ok
+DROP TABLE srr_boot;

@@ -27,7 +27,6 @@
 #include <set>
 #include <utility>
 
-#include "iresearch/formats/segment_meta_writer.hpp"
 #include "iresearch/index/index_meta.hpp"
 
 namespace irs::index_utils {
@@ -89,14 +88,16 @@ struct CompactionCandidate {
 
   Range segments;
   size_t count = 0;
-  size_t size = 0;         // estimated size of the level
+  size_t size = 0;  // estimated size of the level
+  size_t floored = 0;
   double score = DBL_MIN;  // how good this permutation is
 };
 
 /// @returns score of the compaction bucket
 double CompactionScore(const CompactionCandidate& compaction,
                        const size_t segments_per_tier,
-                       const size_t floor_segment_bytes) noexcept {
+                       const size_t floor_segment_bytes,
+                       const double min_singleton_removals) noexcept {
   // to detect how skewed the compaction we do the following:
   // 1. evaluate coefficient of variation, less is better
   // 2. good candidates are in range [0;1]
@@ -111,13 +112,19 @@ double CompactionScore(const CompactionCandidate& compaction,
       return 0;
     case 1: {
       auto& meta = *compaction.segments.first->meta;
+      const auto dirty = meta.docs_count - meta.live_docs_count +
+                         compaction.segments.first->reader->PatchedDocs();
 
-      if (meta.docs_count == meta.live_docs_count) {
+      if (dirty == 0) {
         // singletone without removals makes no sense
         return 0;
       }
 
-      // FIXME honor number of deletes???
+      if (static_cast<double>(dirty) <
+          min_singleton_removals * static_cast<double>(meta.docs_count)) {
+        return 0;
+      }
+
       // signletone with removals makes sense if nothing better is found
       return DBL_MIN + DBL_EPSILON;
     }
@@ -171,21 +178,6 @@ double CompactionScore(const CompactionCandidate& compaction,
 }
 
 }  // namespace tier
-
-void PrepareFlush(IndexSegment& segment, bool increment_version) {
-  auto& meta = segment.meta;
-  SDB_ASSERT(meta.byte_size);  // Ensure segment size is estimated
-  SDB_ASSERT(segment.meta.docs_mask_size <= segment.meta.byte_size);
-
-  SDB_ASSERT(!meta.docs_mask || !meta.docs_mask->Empty());
-  meta.live_docs_count = meta.docs_count;
-  if (const auto removals = RemovalCount(meta); removals != 0) {
-    SDB_ASSERT(removals < meta.docs_count);
-    meta.live_docs_count -= removals;
-    meta.version += uint64_t{increment_version};
-  }
-}
-
 }  // namespace
 
 CompactionPolicy MakePolicy(const CompactionBytes& options) {
@@ -336,11 +328,13 @@ CompactionPolicy MakePolicy(const CompactionTier& options) {
     std::max<size_t>(1, options.floor_segment_bytes);
   // skip compaction that have score less than min_score
   const auto min_score = options.min_score;
+  const auto min_singleton_removals = options.min_singleton_removals;
+  const auto max_largest_share = options.max_largest_share;
 
   return [max_segments_per_tier, min_segments_per_tier, floor_segment_bytes,
-          max_segments_bytes,
-          min_score](Compaction& candidates, const IndexReader& reader,
-                     const CompactingSegments& compacting_segments) {
+          max_segments_bytes, min_score, min_singleton_removals,
+          max_largest_share](Compaction& candidates, const IndexReader& reader,
+                             const CompactingSegments& compacting_segments) {
     // total number of documents in index
     size_t total_docs_count = 0;
     // total number of live documents in index
@@ -383,7 +377,7 @@ CompactionPolicy MakePolicy(const CompactionTier& options) {
     const auto too_big_segments_threshold = max_segments_bytes / 2;
     std::erase_if(sorted_segments, [&](const auto& segment) {
       return segment.size > too_big_segments_threshold &&
-             segment.fill_factor > total_fill_factor;
+             segment.fill_factor >= total_fill_factor;
     });
 
     if (sorted_segments.size() < min_segments_per_tier) {
@@ -404,6 +398,8 @@ CompactionPolicy MakePolicy(const CompactionTier& options) {
 
       while (candidate.segments.second != end &&
              candidate.count < max_segments_per_tier) {
+        const auto largest =
+          std::max(candidate.segments.second->size, floor_segment_bytes);
         candidate.size += candidate.segments.second->size;
 
         if (candidate.size > max_segments_bytes) {
@@ -411,6 +407,7 @@ CompactionPolicy MakePolicy(const CompactionTier& options) {
           break;
         }
 
+        candidate.floored += largest;
         ++candidate.count;
         ++candidate.segments.second;
 
@@ -419,8 +416,15 @@ CompactionPolicy MakePolicy(const CompactionTier& options) {
           continue;
         }
 
-        candidate.score = tier::CompactionScore(
-          candidate, max_segments_per_tier, floor_segment_bytes);
+        if (candidate.count > 1 &&
+            static_cast<double>(largest) >
+              max_largest_share * static_cast<double>(candidate.floored)) {
+          continue;
+        }
+
+        candidate.score =
+          tier::CompactionScore(candidate, max_segments_per_tier,
+                                floor_segment_bytes, min_singleton_removals);
 
         if (candidate.score < min_score) {
           // score is too small
@@ -436,12 +440,6 @@ CompactionPolicy MakePolicy(const CompactionTier& options) {
     /// Stage 5: pick the best candidate
     absl::c_copy(best, std::back_inserter(candidates));
   };
-}
-
-void FlushIndexSegment(Directory& dir, IndexSegment& segment,
-                       bool increment_version) {
-  PrepareFlush(segment, increment_version);
-  segment_meta::Write(dir, segment.filename, segment.meta);
 }
 
 }  // namespace irs::index_utils

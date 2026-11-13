@@ -53,7 +53,8 @@ class ExactScanner {
       _matches = docs::MakeRoot(*prefilter, {});
     }
     if (const auto& column = query.Column();
-        column.HasValidity() && column.MergedStatistics().CanHaveNull()) {
+        (column.HasValidity() || column.InMemory()) &&
+        column.MergedStatistics().CanHaveNull()) {
       _validity.emplace(query.Columns(), column);
     }
   }

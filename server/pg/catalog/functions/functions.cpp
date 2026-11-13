@@ -23,27 +23,26 @@
 #include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_function_info.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
+#include <iresearch/utils/static_strings.hpp>
 
 namespace sdb::pg {
+namespace {
 
-void Register(duckdb::ExtensionLoader& loader, std::string_view schema,
-              duckdb::FunctionStability stability,
-              duckdb::ScalarFunctionSet set) {
+void Create(duckdb::ExtensionLoader& loader, std::string_view schema,
+            duckdb::FunctionStability stability, duckdb::ScalarFunctionSet set,
+            duckdb::OnCreateConflict on_conflict) {
   set.ApplyToFunctions([&](duckdb::ScalarFunction& function) {
     function.SetStability(stability);
   });
   duckdb::CreateScalarFunctionInfo info{std::move(set)};
   info.SetSchema(duckdb::Identifier{schema});
-  info.on_conflict = schema == DEFAULT_SCHEMA
-                       ? duckdb::OnCreateConflict::ALTER_ON_CONFLICT
-                       : duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;
+  info.on_conflict = on_conflict;
   loader.RegisterFunction(std::move(info));
 }
 
-void RegisterScalar(duckdb::ExtensionLoader& loader, std::string_view schema,
-                    std::string_view name, duckdb::FunctionStability stability,
-                    duckdb::init_local_state_t init,
-                    std::span<const duckdb::ScalarFunction> functions) {
+duckdb::ScalarFunctionSet MakeSet(
+  std::string_view name, duckdb::init_local_state_t init,
+  std::span<const duckdb::ScalarFunction> functions) {
   duckdb::ScalarFunctionSet set{duckdb::Identifier{name}};
   for (auto function : functions) {
     if (init) {
@@ -51,7 +50,32 @@ void RegisterScalar(duckdb::ExtensionLoader& loader, std::string_view schema,
     }
     set.AddFunction(std::move(function));
   }
-  Register(loader, schema, stability, std::move(set));
+  return set;
+}
+
+}  // namespace
+
+void Register(duckdb::ExtensionLoader& loader, std::string_view schema,
+              duckdb::FunctionStability stability,
+              duckdb::ScalarFunctionSet set) {
+  Create(loader, schema, stability, std::move(set),
+         duckdb::OnCreateConflict::REPLACE_ON_CONFLICT);
+}
+
+void RegisterScalar(duckdb::ExtensionLoader& loader, std::string_view schema,
+                    std::string_view name, duckdb::FunctionStability stability,
+                    duckdb::init_local_state_t init,
+                    std::span<const duckdb::ScalarFunction> functions) {
+  Register(loader, schema, stability, MakeSet(name, init, functions));
+}
+
+void ExtendScalar(duckdb::ExtensionLoader& loader, std::string_view name,
+                  duckdb::FunctionStability stability,
+                  duckdb::init_local_state_t init,
+                  std::span<const duckdb::ScalarFunction> functions) {
+  Create(loader, irs::StaticStrings::kPgCatalogSchema, stability,
+         MakeSet(name, init, functions),
+         duckdb::OnCreateConflict::ALTER_ON_CONFLICT);
 }
 
 void RegisterTable(duckdb::ExtensionLoader& loader, std::string_view schema,

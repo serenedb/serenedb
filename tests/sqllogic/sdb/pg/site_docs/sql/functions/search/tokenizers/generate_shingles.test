@@ -47,9 +47,6 @@ CREATE INDEX shingle_docs_idx ON shingle_docs
 statement ok
 INSERT INTO shingle_docs VALUES (1, 'quick brown fox'), (2, 'lazy dog sleeps');
 
-statement ok
-VACUUM (REFRESH_TABLE) shingle_docs;
-
 query
 SELECT count(*) FROM shingle_docs_idx;
 ----
@@ -88,9 +85,6 @@ statement ok
 INSERT INTO shingle_phrases VALUES
     (1, 'the quick brown fox'),
     (2, 'quick brown cat brown fox');
-
-statement ok
-VACUUM (REFRESH_TABLE) shingle_phrases;
 
 query
 SELECT pk FROM shingle_phrases_idx WHERE body @@ ts_phrase('quick brown') ORDER BY pk;
@@ -133,9 +127,6 @@ statement ok
 INSERT INTO shingle_notes VALUES
     (1, 'the quick brown fox jumps'),
     (2, 'quick brown cat and quick brown fox');
-
-statement ok
-VACUUM (REFRESH_TABLE) shingle_notes;
 
 query
 SELECT pk, ts_offsets(body) AS offsets, ts_highlight(body) AS snippet

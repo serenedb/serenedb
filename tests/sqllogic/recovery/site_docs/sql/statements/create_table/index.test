@@ -404,7 +404,8 @@ INSERT INTO t2 VALUES (1, 1);
 statement error
 INSERT INTO t2 VALUES (2, 2);
 ----
-db error: ERROR: Violates foreign key constraint because key "id: 2" does not exist in the referenced table
+db error: ERROR: insert or update on table "t2" violates foreign key constraint "t2_t1_id_fkey"
+DETAIL: Key (t1_id)=(2) is not present in table "t1".
 
 
 # DOCS_TEST: example_024
@@ -439,7 +440,8 @@ INSERT INTO t4 VALUES (1, 1, 'a');
 statement error
 INSERT INTO t4 VALUES (2, 1, 'b');
 ----
-db error: ERROR: Violates foreign key constraint because key "id: 1, j: b" does not exist in the referenced table
+db error: ERROR: insert or update on table "t4" violates foreign key constraint "t4_t3_id_t3_j_fkey"
+DETAIL: Key (t3_id, t3_j)=(1, b) is not present in table "t3".
 
 
 # DOCS_TEST: example_026

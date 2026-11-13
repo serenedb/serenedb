@@ -48,7 +48,6 @@ t.dictionary("wdm_kw3", "generate_wildcard_ngrams(keyword(), 3)")
 t.table("wdm", "id INTEGER PRIMARY KEY, msg VARCHAR")
 t.insert("wdm", (f"({i}, '{lit(word)}')" for i, word in enumerate(words)))
 t.index("wdm_kw3_idx", "wdm", "id, msg wdm_kw3")
-t.refresh("wdm")
 t.section("Whole values.")
 for pred, truth in predicates:
     t.same_rows(f"SELECT id FROM wdm_kw3_idx WHERE {pred}",

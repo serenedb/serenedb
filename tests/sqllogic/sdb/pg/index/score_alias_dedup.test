@@ -35,10 +35,6 @@ statement ok
 CREATE INDEX vedernikoff_alias_idx ON vedernikoff USING inverted(kostya, abramov kostya_dict);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) vedernikoff;
-
-
 # One Score: line, one sdb_inverted_index_score projection -- not two.
 query
 EXPLAIN SELECT kostya, bm25(vedernikoff_alias_idx.tableoid) AS s1, bm25(vedernikoff_alias_idx.tableoid) AS s2 FROM vedernikoff_alias_idx WHERE abramov @@ ts_phrase('clickclack') ORDER BY s1 DESC LIMIT 3;
@@ -46,7 +42,7 @@ EXPLAIN SELECT kostya, bm25(vedernikoff_alias_idx.tableoid) AS s1, bm25(vedernik
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────╮
 │ Index: vedernikoff_alias_idx           │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Term ─────────────────╮             │
 │ │ Field: abramov(string) │             │
@@ -105,7 +101,7 @@ QUERY PLAN
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: vedernikoff_alias_idx           │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Term ─────────────────╮             │
 │ │ Field: abramov(string) │             │
@@ -156,17 +152,13 @@ INSERT INTO deadinside VALUES
   (993, [50, 50, 100]::FLOAT[3]);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) deadinside;
-
-
 query
 EXPLAIN SELECT kostya, clickclack <-> [0.0, 0.0, 0.0]::FLOAT[3] AS d1, clickclack <-> [0.0, 0.0, 0.0]::FLOAT[3] AS d2 FROM deadinside_alias_idx ORDER BY d1 LIMIT 2;
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────╮
 │ Index: deadinside_alias_idx              │
-│ Lookup: table                            │
+│ Lookup: search                           │
 │ Score: l2_distance(clickclack, FLOAT[3]) │
 │ Top: 2                                   │
 │ Projections: kostya,                     │
@@ -231,10 +223,6 @@ INSERT INTO arelav VALUES
   (1, [0, 60, 80]::FLOAT[3]);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) arelav;
-
-
 query
 SELECT kostya FROM arelav_idx ORDER BY emb <-> [0.0, 0.0, 0.0]::FLOAT[3], kostya LIMIT 2;
 ----
@@ -272,7 +260,7 @@ QUERY PLAN
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: vedernikoff_alias_idx           │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Term ─────────────────╮             │
 │ │ Field: abramov(string) │             │
@@ -298,22 +286,23 @@ query
 EXPLAIN SELECT kostya FROM vedernikoff_alias_idx WHERE abramov @@ ts_phrase('clickclack') ORDER BY kostya ASC, bm25(vedernikoff_alias_idx.tableoid) DESC LIMIT 2;
 ----
 QUERY PLAN
-╭─ TOP_N ───────────────────────────────╮
-│ Top: 2                                │
-│ Order By: kostya ASC                  │
-│ ~1 row                                │
-╰───────────────────┬───────────────────╯
-╭─ IRESEARCH_SCAN ──┴───────────────────╮
-│ Index: vedernikoff_alias_idx          │
-│ Lookup: table                         │
-│ Index Filter:                         │
-│ ╭─ Term ─────────────────╮            │
-│ │ Field: abramov(string) │            │
-│ │ Value: clickclack      │            │
-│ ╰────────────────────────╯            │
-│ Column Filter:                        │
-│ optional: Dynamic Filter (kostya < ?) │
-│ Score: bm25(k1=1.2, b=0.75)           │
-│ Projections: kostya                   │
-│ ~1 row                                │
-╰───────────────────────────────────────╯
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 2                                 │
+│ Order By: kostya ASC, #1 DESC          │
+│ ~1 row                                 │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: vedernikoff_alias_idx           │
+│ Lookup: search                         │
+│ Index Filter:                          │
+│ ╭─ Term ─────────────────╮             │
+│ │ Field: abramov(string) │             │
+│ │ Value: clickclack      │             │
+│ ╰────────────────────────╯             │
+│ Column Filter:                         │
+│ optional: Dynamic Filter (kostya <= ?) │
+│ Score: bm25(k1=1.2, b=0.75)            │
+│ Projections: kostya,                   │
+│              sdb_inverted_index_score  │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯

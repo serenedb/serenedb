@@ -99,10 +99,6 @@ a
 5
 
 
-statement ok
-VACUUM (REFRESH_TABLE) tdx;
-
-
 query
 SELECT count(*) AS n FROM tdx_inv;
 ----

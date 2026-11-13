@@ -22,9 +22,11 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
+#include <absl/functional/any_invocable.h>
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/common/error_data.hpp>
@@ -33,19 +35,23 @@
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/storage/block_manager.hpp>
 #include <duckdb/storage/storage_manager.hpp>
-#include <duckdb/storage/table/table_log_storage.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
-#include <iresearch/formats/segment_meta_reader.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/doc_removal.hpp>
+#include <iresearch/index/segment_reader.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/store/directory_attributes.hpp>
+#include <iresearch/store/directory_cleaner.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/store/overlay_directory.hpp>
 #include <iresearch/utils/async.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/directory_utils.hpp>
+#include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -54,14 +60,21 @@
 #include <yaclib/coro/future.hpp>
 
 #include "catalog/catalog.h"
+#include "catalog/record.h"
+#include "catalog/transaction.h"
 #include "connector/column_id.h"
-#include "connector/duckdb_client_state.h"
+#include "connector/constraint_keys.h"
 #include "connector/search_sink_writer.hpp"
 #include "connector/term_dict.h"
 #include "pg/connection_context.h"
-#include "search/replay.h"
+#include "scheduler/background_scheduler.h"
+#include "search/log_entry.h"
 #include "search/scorer_options.h"
+#include "search/task.h"
+#include "search/version_chain.tpp"
+#include "server/utils/lifecycle.h"
 #include "storage_engine/search_engine.h"
+#include "utils/file_utils.h"
 
 namespace sdb::search {
 namespace {
@@ -81,7 +94,7 @@ catalog::CompressionByColumn DeclaredCompression(
 irs::containers::FlatHashSet<irs::field_id> TableColumns(
   const duckdb::ColumnList& columns) {
   irs::containers::FlatHashSet<irs::field_id> ids;
-  for (const auto& column : columns.Logical()) {
+  for (const auto& column : columns.Physical()) {
     ids.insert(connector::TableColumnId(column));
   }
   return ids;
@@ -89,10 +102,14 @@ irs::containers::FlatHashSet<irs::field_id> TableColumns(
 
 template<typename Config>
 std::vector<Config> WithConfig(std::vector<Config> configs, Config config) {
-  const auto it = absl::c_upper_bound(
+  const auto it = absl::c_lower_bound(
     configs, config.oid,
-    [](duckdb::idx_t oid, const Config& other) { return oid < other.oid; });
-  configs.insert(it, std::move(config));
+    [](const Config& other, duckdb::idx_t oid) { return other.oid < oid; });
+  if (it != configs.end() && it->oid == config.oid) {
+    *it = std::move(config);
+  } else {
+    configs.insert(it, std::move(config));
+  }
   return configs;
 }
 
@@ -102,15 +119,53 @@ uint64_t MillisSince(std::chrono::steady_clock::time_point begin) {
     .count();
 }
 
-}  // namespace
+bool RemoveFiles(irs::Directory& dir) {
+  auto& refs = dir.attributes().refs().refs();
+  SDB_IF_FAILURE("pause_removal_midway") {
+    std::string first;
+    refs.visit([&](const std::string& name, size_t) {
+      first = name;
+      return false;
+    });
+    if (!first.empty()) {
+      dir.remove(first);
+    }
+    SDB_PARK_ONCE_ON_FAILURE("pause_removal_midway");
+  }
+  SDB_IF_FAILURE("storage_removal_fails") { return false; }
+  irs::DirectoryCleaner::clean(dir);
+  return refs.empty();
+}
 
-struct Store::ReplaySession {
-  ReplaySession(duckdb::AttachedDatabase& db, Store& store)
-    : replay{db, store} {}
+absl::Status RemoveUnreferenced(irs::Directory& dir, duckdb::idx_t id,
+                                bool orphans) {
+  try {
+    if (orphans) {
+      irs::directory_utils::RemoveAllUnreferenced(dir);
+    } else {
+      duckdb::TaskScheduler::BlockingScope blocking;
+      irs::DirectoryCleaner::clean(dir);
+    }
+  } catch (const std::exception& e) {
+    return absl::InternalError(
+      absl::StrCat("caught exception while cleaning up ", id, ": ",
+                   duckdb::ErrorData{e}.RawMessage()));
+  }
+  return absl::OkStatus();
+}
 
-  Replay replay;
-  std::unique_ptr<connector::SearchSinkInsertBaseImpl> sink;
+struct RecoveryTask final : duckdb::BaseExecutorTask {
+  RecoveryTask(duckdb::TaskExecutor& executor, absl::AnyInvocable<void()> run)
+    : BaseExecutorTask{executor}, run{std::move(run)} {}
+
+  void ExecuteTask() final { run(); }
+
+  std::string TaskType() const final { return "SearchRecovery"; }
+
+  absl::AnyInvocable<void()> run;
 };
+
+}  // namespace
 
 Store::Store(std::shared_ptr<catalog::DatabaseDirectory> directory,
              bool in_memory, bool read_only, duckdb::idx_t db_id,
@@ -124,8 +179,7 @@ Store::Store(std::shared_ptr<catalog::DatabaseDirectory> directory,
     _is_new{is_new},
     _segment_memory_max{options.segment_memory_max},
     _segment_docs_max{options.segment_docs_max},
-    _topk_options{top_k_scorer},
-    _durability{db_id, absl::StrCat("inverted index ", id)} {
+    _topk_options{top_k_scorer} {
   SDB_ASSERT(id != 0);
   SetTasksSettings(options);
   if (_topk_options) {
@@ -148,9 +202,9 @@ Store::Store(std::shared_ptr<catalog::DatabaseDirectory> directory,
     _read_only{read_only},
     _is_new{is_new},
     _segment_memory_max{options.segment_memory_max},
-    _durability{db_id, absl::StrCat("search table ", id)},
     _table_columns{TableColumns(columns)},
     _row_group_size{options.row_group_size},
+    _block_size{options.block_size},
     _compression{DeclaredCompression(columns)} {
   if (!options.optimize_top_k.empty()) {
     _topk_options = ParseScorerExpression(nullptr, options.optimize_top_k);
@@ -158,18 +212,44 @@ Store::Store(std::shared_ptr<catalog::DatabaseDirectory> directory,
   }
   SetTasksSettings(options);
   RebuildConfig(std::vector<IndexConfig>{}, std::nullopt);
-  if (is_new) {
-    Open();
-  }
 }
 
 Store::~Store() {
-  _replay.reset();
+  const bool tidy = !OwnsFiles() || OwnerDropped() || CloseFiles();
+  _table.reset();
   _writer.reset();
-  _dir.reset();
-  if (_dropped.load(std::memory_order_acquire)) {
-    catalog::DatabaseDirectory::RemoveStorage(std::move(_directory), _id);
+  if (OwnerDropped() && OwnsFiles()) {
+    catalog::DatabaseDirectory::RemoveStorage(
+      std::move(_directory), _id, [dir = std::move(_dir)]() mutable {
+        const bool removed = RemoveFiles(*dir);
+        dir.reset();
+        return removed;
+      });
   }
+  _dir.reset();
+  if (OwnsFiles()) {
+    catalog::EndStorageWork(tidy);
+  }
+}
+
+bool Store::CloseFiles() {
+  if (!_table) {
+    return false;
+  }
+  const auto head = _table->HeadState();
+  _table.reset();
+  _writer.reset();
+  irs::DirectoryCleaner::clean(*_dir);
+  irs::containers::FlatHashSet<std::string> live;
+  for (const auto& unit : head->units) {
+    if (!unit->piece) {
+      for (auto& file : irs::SegmentFiles(unit->meta.name, unit->meta.kinds)) {
+        live.insert(std::move(file));
+      }
+    }
+  }
+  return _dir->attributes().refs().refs().visit(
+    [&](const std::string& name, size_t) { return live.contains(name); });
 }
 
 StorageDirectory OpenStorageDirectory(
@@ -193,17 +273,21 @@ irs::IndexReaderOptions Store::ReaderOptions() const {
   irs::IndexReaderOptions options;
   options.db = &irs::DuckDBEngine::Instance().instance();
   options.scorer = _topk_scorer.get();
+  options.hnsw_bases = _hnsw_bases.get();
   return options;
 }
 
 void Store::Open() {
-  _delete_log_open = _is_new;
   auto opened = OpenStorageDirectory(*_directory, _id, _is_new, _in_memory,
                                      irs::ResourceManagementOptions{});
   _dir = std::move(opened.directory);
   _absent = opened.absent;
-  if (_read_only) {
-    return;
+  _on_disk = opened.on_disk;
+  if (_read_only && _on_disk) {
+    _dir = std::make_unique<irs::OverlayDirectory>(std::move(_dir));
+  }
+  if (OwnsFiles()) {
+    catalog::BeginStorageWork();
   }
 
   irs::IndexWriterOptions writer_options;
@@ -212,68 +296,425 @@ void Store::Open() {
   writer_options.segment_docs_max = _segment_docs_max;
   writer_options.reader_options = ReaderOptions();
   writer_options.db = writer_options.reader_options.db;
-  IndexDurability::ManifestSource manifest;
-  if (IsSearchTable()) {
-    writer_options.cleanup_on_open = _is_new;
-    writer_options.lock_repository = false;
-  } else {
-#ifdef SDB_DEV
-    // Dev safety net: a second IndexWriter opening the same index directory (a
-    // lifecycle bug -- two storages/loops on one dir) fails to acquire the lock
-    // with a clean error instead of silently corrupting segment files.
-    writer_options.lock_repository = true;
-#else
-    writer_options.lock_repository = false;
-#endif
-    writer_options.key_column = connector::term_dict::kPKFieldId;
+  if (!IsSearchTable()) {
     SDB_IF_FAILURE("segment_1000_docs_max") {
       writer_options.segment_docs_max = 1000;
     }
-    if (IsBackupActive()) {
-      writer_options.cleanup_on_open = false;
-    }
-    manifest = [this] { return GetFileManifest(); };
   }
 
-  auto [writer, stamp] =
-    _durability.OpenWriter(*_dir, Path(), opened.on_disk, _is_new,
-                           std::move(writer_options), std::move(manifest));
-  _writer = std::move(writer);
-  SetFileManifest(std::move(stamp.manifest));
+  _writer = irs::IndexWriter::Make(*_dir, std::move(writer_options));
+  {
+    absl::MutexLock lock{&_layout_mutex};
+    _table =
+      std::make_unique<Table>(*_dir, ReaderOptions(), _layout.published_config);
+  }
+  if (IsSearchTable() && _writer) {
+    _piece_dir = std::make_unique<irs::MemoryDirectory>();
+    irs::IndexWriterOptions piece_options;
+    piece_options.ann_env = &AnnBuildEnv();
+    piece_options.reader_options = ReaderOptions();
+    piece_options.db = piece_options.reader_options.db;
+    _piece_writer =
+      irs::IndexWriter::Make(*_piece_dir, std::move(piece_options));
+  }
+}
 
-  if (IsSearchTable()) {
-    auto& db_manager =
-      duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance());
-    const auto claim = [&](irs::field_id id) {
-      if (id <= connector::kMaxRealColumnIdValue) {
-        db_manager.ClaimOid(id);
+void Store::EnsureOpen() {
+  if (!Opened()) {
+    Open();
+  }
+}
+
+void Store::ClaimColumnOids(const irs::DirectoryReader& reader) const {
+  auto& db_manager =
+    duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance());
+  const auto claim = [&](irs::field_id id) {
+    if (id <= connector::kMaxRealColumnIdValue) {
+      db_manager.ClaimOid(id);
+    }
+  };
+  for (const auto& segment : reader) {
+    for (const auto id : segment.field_ids()) {
+      claim(id);
+    }
+    if (const auto* columns = segment.GetColReader()) {
+      for (const auto& column : columns->Columns()) {
+        claim(column->Id());
+      }
+    }
+  }
+}
+
+void Store::SyncSegments() const {
+  if (_on_disk) {
+    utils::file_utils::SyncDirectory(Path());
+  }
+}
+
+void Store::PruneVersions(std::span<const Tick> running, Tick published) {
+  if (_table) {
+    _table->Versions().Prune(running, published);
+  }
+}
+
+bool Store::FreeVersions() {
+  return _table && _table->Versions().FreeRetired();
+}
+
+irs::DirectoryReader Store::BuildSnapshot() {
+  SDB_ASSERT(_table);
+  WriteOut();
+  return _table->ColdView();
+}
+
+bool Store::Settle() {
+  if (!_table || !_table->Unsettled()) {
+    return false;
+  }
+  WriteOut();
+  return true;
+}
+
+std::vector<OwnSegment> Store::OpenFlushed(
+  std::span<const irs::IndexWriter::FlushedSegment> flushed) const {
+  std::vector<OwnSegment> segments;
+  segments.reserve(flushed.size());
+  for (const auto& entry : flushed) {
+    segments.push_back(OpenOwn(entry.meta));
+  }
+  return segments;
+}
+
+OwnSegment Store::OpenOwn(irs::SegmentMeta meta) const {
+  auto reader = irs::SegmentReaderImpl::Open(*_dir, meta, ReaderOptions());
+  return {.meta = std::move(meta), .reader = std::move(reader)};
+}
+
+Store::Piece Store::StartPiece() {
+  SDB_ASSERT(_piece_writer);
+  Piece piece{.trx = _piece_writer->GetBatch(), .id = _writer->NextSegmentId()};
+  piece.trx.SetHot(piece.id);
+  return piece;
+}
+
+void Store::PiecesAdded() noexcept {
+  if (_table->PieceBytes() + _table->DirtyBytes() < _segment_memory_max &&
+      !_table->HasMergeRun()) {
+    return;
+  }
+  RunCoalesced(
+    &Store::_piece_requests, [](Store& store) { store.MaintainPieces(); },
+    "writing out the rows it holds in memory");
+}
+
+void Store::RunCoalesced(std::atomic<uint64_t> Store::* requests,
+                         void (*work)(Store&), std::string_view what) noexcept {
+  if (!BackgroundScheduler::gInstance || lifecycle::IsStopping() ||
+      BackgroundScheduler::instance().IsStopping() ||
+      (this->*requests).fetch_add(1, std::memory_order_acq_rel) != 0) {
+    return;
+  }
+  try {
+    BackgroundScheduler::instance()
+      .Run([weak = weak_from_this(), requests, work, what] {
+        const auto store = weak.lock();
+        if (!store) {
+          return;
+        }
+        auto& counter = (*store).*requests;
+        auto pending = counter.load(std::memory_order_acquire);
+        do {
+          try {
+            work(*store);
+          } catch (const std::exception& e) {
+            counter.store(0, std::memory_order_release);
+            SDB_WARN(SEARCH, "table ", store->_id, ": ", what,
+                     " failed: ", duckdb::ErrorData{e}.RawMessage());
+            return;
+          }
+          pending =
+            counter.fetch_sub(pending, std::memory_order_acq_rel) - pending;
+        } while (pending != 0);
+      })
+      .Detach();
+  } catch (...) {
+    (this->*requests).store(0, std::memory_order_release);
+  }
+}
+
+void Store::MaintainPieces() {
+  if (!_piece_writer || OwnerDropped()) {
+    return;
+  }
+  for (;;) {
+    {
+      absl::MutexLock lock{&_write_out_mutex};
+      const auto pieces = _table->PieceBytes();
+      const auto dirty = _table->DirtyBytes();
+      if (pieces + dirty < _segment_memory_max) {
+        const auto run = _table->MergeRun();
+        if (run.empty() || !MergePiecesLocked(run)) {
+          return;
+        }
+        continue;
+      }
+      if (pieces >= dirty) {
+        WriteOutLocked();
+        continue;
+      }
+    }
+    const auto dirty = _table->DirtyBytes();
+    if (!RewriteDirtiest() || _table->DirtyBytes() >= dirty) {
+      return;
+    }
+  }
+}
+
+bool Store::RewriteDirtiest() {
+  if (!_table || OwnerDropped()) {
+    return false;
+  }
+  std::string target;
+  uint64_t most = 0;
+  for (const auto& unit : _table->State()->units) {
+    if (unit->piece) {
+      continue;
+    }
+    uint64_t bytes = unit->deleted_bytes;
+    for (const auto& patch : unit->patches) {
+      bytes += patch.patch->Bytes();
+    }
+    if (bytes > most) {
+      most = bytes;
+      target = unit->meta.name;
+    }
+  }
+  const auto options = CompactionOptions();
+  if (target.empty() || !options) {
+    return false;
+  }
+  const irs::CompactionPolicy fold =
+    [&target](irs::Compaction& candidates, const irs::IndexReader& reader,
+              const irs::CompactingSegments& busy) {
+      for (size_t i = 0; i < reader.size(); ++i) {
+        if (reader[i].Meta().name == target && !busy.contains(target)) {
+          candidates.emplace_back(&reader[i]);
+          return;
+        }
       }
     };
-    for (const auto& segment : _writer->GetSnapshot()) {
-      for (const auto id : segment.field_ids()) {
-        claim(id);
+  bool empty = false;
+  const auto folded = irs::GetBlocking(CompactUnsafeAsync(
+    ClaimMaintenance(), fold, [] { return true; }, empty, options.get(),
+    &AnnBuildEnv()));
+  return folded.res.ok() && !empty;
+}
+
+bool Store::MergePiecesLocked(
+  std::span<const std::shared_ptr<const TableUnit>> pieces) {
+  const auto field_options = CompactionOptions();
+  SDB_ASSERT(field_options);
+  auto source = _table->PieceView(pieces, /*keep_deleted=*/true);
+  const auto id = _writer->NextSegmentId();
+  uint64_t docs = 0;
+  for (const auto& piece : pieces) {
+    docs += piece->docs;
+  }
+  irs::IndexWriter::Merged merged;
+  if (docs < field_options->row_group_size) {
+    merged =
+      _piece_writer->MergePieces(std::move(source), id, field_options.get());
+  } else {
+    merged = irs::GetBlocking(_piece_writer->WriteAsync(
+      std::move(source), id, field_options.get(), [] { return true; },
+      &AnnBuildEnv()));
+    auto& refs = _piece_dir->attributes().refs();
+    for (const auto& file :
+         irs::SegmentFiles(merged.meta.name, merged.meta.kinds)) {
+      _piece_dir->remove(file);
+      refs.remove(file);
+    }
+  }
+  if (!merged.reader) {
+    return false;
+  }
+  std::vector<uint64_t> ids;
+  std::vector<Tick> folded;
+  ids.reserve(pieces.size());
+  folded.reserve(pieces.size());
+  for (const auto& piece : pieces) {
+    ids.push_back(piece->id);
+    folded.push_back(piece->reader->PatchTick());
+  }
+  std::vector<std::shared_ptr<TableUnit>> added;
+  added.push_back(PieceUnit(std::move(merged.reader), pieces.front()->first));
+  CommitReplace(ids, folded, std::move(added), std::move(merged.maps), 0,
+                /*logged=*/false);
+  SDB_PARK_ONCE_ON_FAILURE("pause_search_pieces_merged");
+  return true;
+}
+
+std::shared_ptr<const TableState> Store::CommitReplace(
+  std::span<const uint64_t> replaced, std::span<const Tick> folded,
+  std::vector<std::shared_ptr<TableUnit>> added, std::vector<irs::DocMap> maps,
+  uint64_t memory_below, bool logged) {
+  SDB_ASSERT(!_read_only);
+  std::optional<Table::Replacement> prepared;
+  std::shared_ptr<const TableState> published;
+  catalog::Transactions::Get().CommitStorage(
+    _table->CommitMutex(),
+    [&] {
+      prepared.emplace(_table->PrepareReplace(
+        replaced, folded, std::move(added), std::move(maps), memory_below));
+      std::vector<uint8_t> record;
+      if (logged && !_in_memory && !OwnerDropped() && !Empty(prepared->delta)) {
+        record = catalog::SearchRecord(_db_id, _id, prepared->delta);
       }
-      if (const auto* columns = segment.GetColReader()) {
-        for (const auto& column : columns->Columns()) {
-          claim(column->Id());
+      return record;
+    },
+    [&](Tick tick) {
+      published = _table->Replace(tick, std::move(*prepared));
+      _storage_tick.store(tick, std::memory_order_release);
+      QueueReleaseCleanup(shared_from_this(), tick);
+    });
+  return published;
+}
+
+void Store::CommitUnlogged(absl::FunctionRef<void(Tick)> apply) {
+  catalog::Transactions::Get().CommitStorage(
+    _table->CommitMutex(), [] { return std::vector<uint8_t>{}; },
+    [&](Tick tick) {
+      apply(tick);
+      _storage_tick.store(tick, std::memory_order_release);
+    });
+}
+
+void Store::WriteOut() {
+  if (!_table || !_piece_writer || OwnerDropped()) {
+    return;
+  }
+  absl::MutexLock lock{&_write_out_mutex};
+  while (WriteOutLocked()) {
+  }
+}
+
+bool Store::WriteOutLocked() {
+  auto memory = _table->InMemory();
+  auto& pieces = memory.pieces;
+  if (pieces.empty()) {
+    return false;
+  }
+  bool rest = false;
+  uint64_t docs = 0;
+  for (size_t i = 0; i < pieces.size(); ++i) {
+    docs += pieces[i]->docs;
+    if (docs > irs::doc_limits::kMaxDocs) {
+      SDB_ASSERT(i != 0);
+      memory.end = pieces[i]->first;
+      pieces.resize(i);
+      rest = true;
+      break;
+    }
+  }
+  const auto field_options = CompactionOptions();
+  auto merged = irs::GetBlocking(_writer->WriteAsync(
+    _table->PieceView(pieces, /*keep_deleted=*/false), _writer->NextSegmentId(),
+    field_options.get(), [] { return true; }, &AnnBuildEnv()));
+  SDB_IF_FAILURE("search_cleanup_during_write_out") {
+    irs::directory_utils::RemoveAllUnreferenced(*_dir);
+  }
+  SDB_PARK_ONCE_ON_FAILURE("pause_search_write_out");
+  std::vector<uint64_t> ids;
+  std::vector<Tick> folded;
+  ids.reserve(pieces.size());
+  folded.reserve(pieces.size());
+  for (const auto& piece : pieces) {
+    ids.push_back(piece->id);
+    folded.push_back(piece->reader->PatchTick());
+  }
+  std::vector<std::shared_ptr<TableUnit>> added;
+  if (merged.reader) {
+    added.push_back(_table->SegmentUnit(OwnSegment{
+      .meta = std::move(merged.meta), .reader = std::move(merged.reader)}));
+  }
+  SyncSegments();
+  CommitReplace(ids, folded, std::move(added), std::move(merged.maps),
+                memory.end, /*logged=*/true);
+  NudgeCompaction();
+  return rest;
+}
+
+std::shared_ptr<const TableState> Store::SnapshotState(
+  Tick snapshot, catalog::WalkCounters& walks) {
+  EnsureOpen();
+  if (!_table || _in_memory) {
+    return nullptr;
+  }
+  const auto& version = _table->VersionAt(snapshot, walks);
+  return version.tick <= snapshot ? version.state : nullptr;
+}
+
+std::vector<uint8_t> Store::SnapshotRecord(const TableState& state) const {
+  irs::containers::FlatHashSet<irs::field_id> stored;
+  {
+    absl::ReaderMutexLock lock{&_layout_mutex};
+    if (_table_columns) {
+      stored = *_table_columns;
+    }
+  }
+  TableDelta delta;
+  MemoryDeletes memory;
+  for (const auto& unit : state.units) {
+    if (unit->deleted && !unit->deleted->Empty()) {
+      if (unit->piece) {
+        memory.Add(unit->first, unit->deleted);
+      } else {
+        delta.deletes.push_back({.segment = unit->id, .docs = unit->deleted});
+      }
+    }
+    if (!unit->piece) {
+      delta.add.push_back(
+        {.id = unit->id, .kinds = unit->meta.kinds, .rows = unit->docs});
+      for (const auto& patch : unit->patches) {
+        delta.updates.push_back({.segment = unit->id, .patch = patch});
+      }
+      continue;
+    }
+    auto& rows = delta.rows.emplace_back(LoggedRows{.first = unit->first});
+    std::vector<const irs::ColumnReader*> readers;
+    duckdb::vector<duckdb::LogicalType> types;
+    if (const auto* columns = unit->reader->GetColReader()) {
+      for (const auto* column : columns->Columns()) {
+        if (stored.contains(column->Id())) {
+          readers.push_back(column);
+          rows.columns.push_back(column->Id());
+          types.push_back(column->Type());
         }
       }
     }
+    irs::ReadContext ctx{*ReaderOptions().db};
+    std::vector<irs::ColumnReader::ScanState> scans;
+    scans.reserve(readers.size());
+    for (const auto* reader : readers) {
+      scans.push_back(reader->InitScan(ctx));
+    }
+    duckdb::DataChunk chunk;
+    chunk.Initialize(duckdb::Allocator::DefaultAllocator(), types);
+    for (irs::doc_id_t first = 0; first < unit->docs;) {
+      const auto count =
+        std::min<irs::doc_id_t>(unit->docs - first, STANDARD_VECTOR_SIZE);
+      chunk.Reset();
+      for (size_t i = 0; i < readers.size(); ++i) {
+        readers[i]->Scan(scans[i], chunk.data[i], count);
+      }
+      chunk.SetChildCardinality(count);
+      rows.chunks.push_back(LogChunk(chunk));
+      first += count;
+    }
   }
-  PublishSnapshot();
-}
-
-void Store::OpenReader() {
-  auto [reader, stamp] = IndexDurability::OpenReader(*_dir, ReaderOptions());
-  SetFileManifest(stamp.manifest);
-  std::atomic_store(&_snapshot,
-                    std::make_shared<StoreSnapshot>(std::move(reader),
-                                                    std::move(stamp.manifest)));
-}
-
-void Store::PublishSnapshot() {
-  std::atomic_store(&_snapshot, std::make_shared<StoreSnapshot>(
-                                  _writer->GetSnapshot(), GetFileManifest()));
+  std::move(memory).Finish(delta);
+  delta.manifest = state.manifest;
+  return catalog::SearchRecord(_db_id, _id, delta);
 }
 
 void Store::ApplyOptions(const catalog::InvertedIndexSettings& options) {
@@ -284,20 +725,25 @@ void Store::ApplyOptions(const catalog::InvertedIndexSettings& options) {
     return;
   }
   irs::SegmentOptions segment_options;
-  segment_options.segment_count_max = 0;
   segment_options.segment_memory_max = options.segment_memory_max;
   segment_options.segment_docs_max = options.segment_docs_max;
   _writer->Options(segment_options);
 }
 
 void Store::StartTasks() {
-  if (!_writer) {
+  if (!_writer || _read_only) {
     return;
   }
 #ifdef SDB_DEV
   const bool already = _tasks_started.exchange(true);
   SDB_ASSERT(!already, "Store::StartTasks called twice for store ", _id);
 #endif
+  _dir->attributes().refs().refs().OnRelease(
+    [weak = weak_from_this()](const std::string&) noexcept {
+      if (const auto store = weak.lock()) {
+        store->RequestCleanup();
+      }
+    });
   GetSearchEngine().StartTasks(shared_from_this());
 }
 
@@ -326,52 +772,36 @@ void Store::ReindexReleaser::operator()(Store* store) const noexcept {
   }
 }
 
-ResultWithTime Store::RefreshUnsafe(bool wait,
-                                    const irs::ProgressReportCallback& progress,
-                                    RefreshResult& code) {
-  SDB_ASSERT(_writer);
-  const auto begin = std::chrono::steady_clock::now();
-  const auto enabled = [&] {
-    return _tasks_settings.refresh_interval_msec.load() != 0;
-  };
-  const RefreshGate scheduled{_settings_mutex, enabled};
-  auto result = _durability.Refresh(
-    *_writer, wait, progress, code, [&] { PublishSnapshot(); },
-    [&] { PublishSnapshot(); }, wait ? nullptr : &scheduled);
-  const auto time_ms = MillisSince(begin);
-  SDB_IF_FAILURE("Search::FailOnCommit") {
-    result = absl::InternalError("debug failure point");
-  }
-  SDB_IF_FAILURE("Search::CrashAfterCommit") { SDB_IMMEDIATE_ABORT(); }
-  _maintenance.RecordCommit(result, code, time_ms);
-  return {std::move(result), time_ms};
-}
-
-absl::Status Store::Refresh(const irs::ProgressReportCallback& progress) {
-  RefreshResult code = RefreshResult::Undefined;
-  return RefreshUnsafe(/*wait=*/true, progress, code).res;
-}
-
-void Store::Publish() {
-  RefreshResult code = RefreshResult::Undefined;
-  const auto result = RefreshUnsafe(/*wait=*/true, nullptr, code);
-  if (!result.res.ok()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                    ERR_MSG("search store ", _id,
-                            ": publish failed: ", result.res.message()));
-  }
-}
-
-ResultWithTime Store::CleanupUnsafe() {
+ResultWithTime Store::CleanupUnsafe(bool orphans) {
   const auto maintenance = ClaimMaintenance();
   if (!maintenance) {
-    return {absl::OkStatus(), 0};
+    return {orphans ? BackupInProgressError() : absl::OkStatus(), 0};
   }
   const auto begin = std::chrono::steady_clock::now();
-  auto result = _durability.Cleanup(*_dir);
+  if (_table) {
+    auto& transactions = catalog::Transactions::Get();
+    const auto oldest = transactions.RefreshOldest();
+    if (!_read_only && _table->Collectable(oldest)) {
+      CommitUnlogged([&](Tick tick) { _table->Collect(tick, oldest); });
+    }
+    const auto running = transactions.RunningSnapshots();
+    const auto* own = FindSnapshots(running.stores, _id);
+    PruneVersions(own ? std::span<const Tick>{own->running} : running.snapshots,
+                  running.published);
+    transactions.AdvanceEpoch();
+    if (FreeVersions()) {
+      transactions.GarbageQueued();
+    }
+  }
+  auto result = RemoveUnreferenced(*_dir, _id, orphans);
+  SDB_PARK_ONCE_ON_FAILURE("search_cleanup_after_remove");
   const auto time_ms = MillisSince(begin);
   _maintenance.RecordCleanup(result, time_ms);
   return {std::move(result), time_ms};
+}
+
+void Store::RequestCleanup() noexcept {
+  RunCoalesced(&Store::_cleanup_requests, &DoCleanup, "cleaning up its files");
 }
 
 auto Store::CompactUnsafeAsync(utils::DrainGate::Pass maintenance,
@@ -406,29 +836,43 @@ auto Store::CompactUnsafeImpl(const irs::CompactionPolicy& policy,
                               const irs::AnnBuildEnv* env)
   -> yaclib::Future<absl::Status> {
   empty_compaction = false;
+  _merges.fetch_add(1, std::memory_order_relaxed);
+  absl::Cleanup counted = [this] {
+    _merges.fetch_sub(1, std::memory_order_acq_rel);
+    duckdb::ClientContext::Notify();
+  };
   SDB_PARK_ONCE_ON_FAILURE("search_compaction_before_selection");
-  const irs::CompactionPolicy current_config_policy =
-    [&](irs::Compaction& candidates, const irs::IndexReader& index,
-        const irs::CompactingSegments& compacting_segments) {
-      if (!IsSearchTable() || IsCurrentConfig(field_options)) {
-        policy(candidates, index, compacting_segments);
-      }
-    };
+  if (IsSearchTable() && !IsCurrentConfig(field_options)) {
+    empty_compaction = true;
+    co_return absl::OkStatus();
+  }
   try {
-    // iresearch serializes Compact against refresh/DML internally, so a long
-    // merge never blocks the refresh chain.
-    const auto res = co_await _writer->CompactAsync(
-      current_config_policy, field_options, progress, env);
-    if (res.error == irs::CompactionError::Fail) {
-      SDB_DEBUG(SEARCH, "compaction of search store ", _id,
-                " merged nothing: cancelled, or every document was removed");
+    auto merged = co_await _writer->MergeAsync(policy, _table->ColdView(),
+                                               field_options, progress, env);
+    if (!merged.reader) {
       empty_compaction = true;
-    } else if (res.error != irs::CompactionError::Busy) {
-      empty_compaction = res.size == 0;
+      co_return absl::OkStatus();
     }
+    SDB_PARK_ONCE_ON_FAILURE("pause_search_compact_before_publish");
+    std::vector<uint64_t> ids;
+    std::vector<Tick> folded;
+    ids.reserve(merged.claim.candidates.size());
+    folded.reserve(merged.claim.candidates.size());
+    for (const auto* candidate : merged.claim.candidates) {
+      const auto& impl =
+        *irs::utils::downCast<irs::SegmentReader>(*candidate).GetImpl();
+      ids.push_back(impl.Id());
+      folded.push_back(impl.PatchTick());
+    }
+    SyncSegments();
+    std::vector<std::shared_ptr<TableUnit>> added;
+    added.push_back(_table->SegmentUnit(OwnSegment{
+      .meta = std::move(merged.meta), .reader = std::move(merged.reader)}));
+    CommitReplace(ids, folded, std::move(added), std::move(merged.maps), 0,
+                  /*logged=*/true);
   } catch (const std::exception& e) {
     co_return absl::InternalError(
-      absl::StrCat("compaction of search store ", _id,
+      absl::StrCat("compaction of table ", _id,
                    " failed: ", duckdb::ErrorData{e}.RawMessage()));
   }
   co_return absl::OkStatus();
@@ -450,20 +894,14 @@ std::shared_ptr<const irs::IndexFieldOptions> Store::CompactionOptions() {
     if (attached->oid != _db_id) {
       continue;
     }
-    const auto entry = attached->GetCatalog()
-                         .Cast<catalog::SereneDBCatalog>()
-                         .FindIn<catalog::InvertedIndexEntry>(nullptr, _id);
+    const catalog::CommittedView view;
+    const auto entry =
+      attached->GetCatalog()
+        .Cast<catalog::SereneDBCatalog>()
+        .FindIn<catalog::InvertedIndexEntry>(view.Transaction(db), _id);
     return entry ? entry->Config() : nullptr;
   }
   return nullptr;
-}
-
-absl::Status Store::VacuumRefresh() {
-  RefreshResult code = RefreshResult::Undefined;
-  if (auto res = RefreshUnsafe(/*wait=*/true, nullptr, code).res; !res.ok()) {
-    return res;
-  }
-  return CleanupUnsafe().res;
 }
 
 absl::Status Store::VacuumCompact(duckdb::ClientContext& context,
@@ -472,16 +910,14 @@ absl::Status Store::VacuumCompact(duckdb::ClientContext& context,
     return !context.IsInterrupted();
   };
   const auto target = std::max<uint32_t>(1, target_segments);
-  RefreshResult code = RefreshResult::Undefined;
-  if (auto res = RefreshUnsafe(/*wait=*/true, nullptr, code).res; !res.ok()) {
-    return res;
-  }
+  GetSearchEngine().Maintenance().Enter(context).reset();
+  WriteOut();
   const ManualCompactionSlot slot;
   const irs::AnnBuildEnv* env = slot.AnnEnv();
   for (size_t pass = 0; pass < 8; ++pass) {
     std::vector<std::vector<std::string>> buckets;
     {
-      const auto snapshot = _writer->GetSnapshot();
+      const auto snapshot = _table->ColdView();
       if (snapshot.size() <= target) {
         break;
       }
@@ -493,13 +929,20 @@ absl::Status Store::VacuumCompact(duckdb::ClientContext& context,
     absl::Status status;
     bool merged = false;
     for (const auto& names : buckets) {
+      bool contended = false;
       const irs::CompactionPolicy bucket =
-        [&names](irs::Compaction& candidates, const irs::IndexReader& reader,
-                 const irs::CompactingSegments& busy) {
+        [&names, &contended](irs::Compaction& candidates,
+                             const irs::IndexReader& reader,
+                             const irs::CompactingSegments& busy) {
           for (size_t i = 0; i < reader.size(); ++i) {
             const auto& segment = reader[i];
             const auto& name = segment.Meta().name;
-            if (!busy.contains(name) && absl::c_linear_search(names, name)) {
+            if (!absl::c_linear_search(names, name)) {
+              continue;
+            }
+            if (busy.contains(name)) {
+              contended = true;
+            } else {
               candidates.emplace_back(&segment);
             }
           }
@@ -517,128 +960,93 @@ absl::Status Store::VacuumCompact(duckdb::ClientContext& context,
       context.InterruptCheck();
       status.Update(res);
       merged = merged || !empty;
+      if (contended) {
+        AwaitMerges(context);
+        merged = true;
+      }
     }
     if (!status.ok()) {
       return status;
-    }
-    SDB_PARK_ONCE_ON_FAILURE("pause_search_compact_before_publish");
-    if (auto res = RefreshUnsafe(/*wait=*/true, nullptr, code).res; !res.ok()) {
-      return res;
     }
     if (!merged) {
       break;
     }
   }
-  return CleanupUnsafe().res;
+  auto cleanup = CleanupUnsafe(false).res;
+  catalog::Transactions::Get().AwaitPublished(
+    _storage_tick.load(std::memory_order_acquire));
+  return cleanup;
+}
+
+void Store::AwaitMerges(duckdb::ClientContext& context) {
+  absl::MutexLock lock{&duckdb::ClientContext::AwaitMutex()};
+  context.Await([this] { return _merges.load() == 0; });
+}
+
+irs::IndexWriter::CompactionFloorGuard Store::ArmCompactionFloor(
+  duckdb::ClientContext& context) {
+  auto floor = _writer->ClaimCompactionFloor();
+  if (floor.Arm()) {
+    return floor;
+  }
+  SDB_PARK_ONCE_ON_FAILURE("pause_search_backfill_floor_retry");
+  {
+    absl::MutexLock lock{&duckdb::ClientContext::AwaitMutex()};
+    context.Await([this] { return !_writer->Compacting(); });
+  }
+  [[maybe_unused]] const bool armed = floor.Arm();
+  SDB_ASSERT(armed);
+  return floor;
 }
 
 StoreStats Store::GetStats() const {
-  auto stats = StoreStats::FromReader(GetDirectoryReader());
-  stats.numBufferedDocs = _writer ? _writer->BufferedDocs() : 0;
+  auto stats = _table->Stats();
   _maintenance.Fill(stats);
   return stats;
 }
 
-void Store::Clear(const irs::SourcePosition& position) {
-  _durability.Clear(*_writer, position);
-  PublishSnapshot();
-}
-
-void Store::ReplaceSegments(
+std::shared_ptr<const TableState> Store::ReplaceSegments(
   std::span<const irs::SubReader* const> replaced,
   std::vector<irs::IndexWriter::Replacement> replacements) {
-  _durability.ReplaceSegments(*_writer, replaced, std::move(replacements));
-  PublishSnapshot();
-}
-
-void Store::PrepareCheckpoint(uint64_t iteration) {
-  _durability.PrepareCheckpoint(*_writer, iteration);
-}
-
-void Store::FinishCheckpoint() {
-  if (_durability.FinishCheckpoint(*_writer)) {
-    PublishSnapshot();
+  SDB_ASSERT(_table);
+  std::vector<uint64_t> ids;
+  std::vector<Tick> folded;
+  ids.reserve(replaced.size());
+  folded.reserve(replaced.size());
+  for (const auto* sub : replaced) {
+    const auto& impl =
+      *irs::utils::downCast<irs::SegmentReader>(*sub).GetImpl();
+    ids.push_back(impl.Id());
+    folded.push_back(impl.PatchTick());
   }
-}
-
-void Store::FinishCheckpointIfIdle() {
-  if (_durability.FinishCheckpointIfIdle(*_writer)) {
-    PublishSnapshot();
-  }
-}
-
-template<typename Remove>
-void Store::CommitRemovalWith(const Remove& remove) {
-  auto trx = GetTransaction();
-  remove(trx);
-  if (!trx.Commit()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_OUT_OF_MEMORY),
-                    ERR_MSG("inverted index ", _id,
-                            ": failed to commit a removal: out of memory"));
-  }
-}
-
-void Store::CommitRemoval(std::shared_ptr<const irs::DocRemoval> removal) {
-  CommitRemovalWith([&](auto& trx) { trx.Remove(std::move(removal)); });
-}
-
-void Store::CommitRemoval(std::vector<irs::KeyRemoval> removals) {
-  CommitRemovalWith([&](auto& trx) {
-    for (auto& removal : removals) {
-      trx.Remove(std::move(removal));
+  std::vector<std::shared_ptr<TableUnit>> added;
+  std::vector<irs::DocMap> maps;
+  for (auto& replacement : replacements) {
+    auto opened = OpenOwn(std::move(replacement.meta));
+    const auto target = opened.reader->Id();
+    for (auto& map : replacement.absorbed) {
+      map.target = target;
+      maps.push_back(std::move(map));
     }
-  });
-}
-
-void Store::CommitRemoveAll() {
-  CommitRemovalWith([](auto& trx) { trx.RemoveAll(); });
-}
-
-std::vector<int64_t> Store::AppendDeleteLog(std::vector<int64_t> rows) {
-  absl::MutexLock lock{&_delete_log_mutex};
-  if (!_delete_log_open.load(std::memory_order_relaxed)) {
-    return rows;
+    added.push_back(_table->SegmentUnit(std::move(opened)));
   }
-  const auto end = _delete_log_rowid_end.load(std::memory_order_relaxed);
-  std::vector<int64_t> logged;
-  std::vector<int64_t> native;
-  for (const auto row : rows) {
-    (row >= end ? native : logged).push_back(row);
-  }
-  if (!logged.empty()) {
-    _delete_log.emplace_back(std::move(logged));
-  }
-  return native;
-}
-
-std::vector<irs::KeyRemoval> Store::TakeDeleteLog() {
-  absl::MutexLock lock{&_delete_log_mutex};
-  _delete_log_open.store(false, std::memory_order_release);
-  return std::exchange(_delete_log, {});
+  SyncSegments();
+  auto published = CommitReplace(ids, folded, std::move(added), std::move(maps),
+                                 0, /*logged=*/true);
+  _table->Rewritten(published->tick);
+  return published;
 }
 
 void Store::DrainPriorWriters(duckdb::ClientContext& context) {
-  _writers.Drain(context);
-}
-
-void Store::WatchTruncates() {
-  absl::MutexLock lock{&_truncate_mutex};
-  _build_truncate = {};
-}
-
-void Store::RecordTruncateForBuild(const irs::SourcePosition& position) {
-  absl::MutexLock lock{&_truncate_mutex};
-  _build_truncate = std::max(_build_truncate, position);
+  _writers.Drain(
+    context,
+    ConnectionContext::Get(context).Transaction().SearchTxn().Registration(
+      _id));
 }
 
 std::shared_ptr<const catalog::InvertedIndexConfig> Store::Config() const {
   absl::ReaderMutexLock lock{&_layout_mutex};
   return _layout.config;
-}
-
-std::shared_ptr<const catalog::InvertedIndexConfig> Store::ScanConfig() const {
-  absl::ReaderMutexLock lock{&_layout_mutex};
-  return _layout.scan_config;
 }
 
 bool Store::IsCurrentConfig(const irs::IndexFieldOptions* options) const {
@@ -651,26 +1059,41 @@ std::shared_ptr<const catalog::InvertedIndexConfig> Store::MergeConfigs(
   std::optional<duckdb::idx_t> skip) const {
   std::vector<catalog::InvertedIndexKey> keys;
   catalog::InvertedIndexFields fields;
+  auto constraint_keys = _constraint_keys;
   const auto add = [&](const IndexConfig& index) {
     for (const auto& [id, field] : index.config->fields) {
       fields.emplace(id, field);
     }
     keys.insert(keys.end(), index.config->keys.begin(),
                 index.config->keys.end());
+    constraint_keys.insert(constraint_keys.end(),
+                           index.config->constraint_keys.begin(),
+                           index.config->constraint_keys.end());
   };
   for (const auto& index : configs) {
-    if (index.oid != skip) {
+    if (index.oid != skip && index.oid != _id) {
       add(index);
     }
   }
   absl::c_for_each(retired, add);
+  for (const auto& index : configs) {
+    if (index.oid == _id) {
+      add(index);
+    }
+  }
+  for (const auto& key : constraint_keys) {
+    fields.emplace(key.field,
+                   catalog::InvertedIndexField{{.indexed_term_dict = true}});
+  }
   auto merged = std::make_shared<catalog::InvertedIndexConfig>(
     std::move(keys), std::move(fields));
   merged->pk = catalog::PkColumnKind::None;
   merged->top_k_scorer = _topk_options;
   merged->row_group_size = _row_group_size;
+  merged->block_size = _block_size;
   merged->declared_compression = _compression;
   merged->table_columns = *_table_columns;
+  merged->constraint_keys = std::move(constraint_keys);
   return merged;
 }
 
@@ -693,14 +1116,18 @@ void Store::RebuildConfig(Configs&& configs,
   _layout.scan_config = std::move(scan_config);
   _layout.compaction_config = std::move(compaction_config);
   _layout.compaction_stale = false;
+  ScanConfigChanged();
 }
 
-irs::SegmentReader Store::OpenSegment(std::string_view meta_file) const {
-  SDB_ASSERT(_dir);
-  irs::SegmentMeta meta;
-  irs::segment_meta::Read(*_dir, meta, meta_file);
-  return irs::SegmentReader{
-    irs::SegmentReaderImpl::Open(*_dir, meta, ReaderOptions())};
+void Store::ScanConfigChanged() {
+  if (_layout.owner != kNoLayoutOwner) {
+    _layout.owner_changed = true;
+    return;
+  }
+  _layout.published_config = _layout.scan_config;
+  if (_table) {
+    _table->SetConfig(_layout.published_config);
+  }
 }
 
 void Store::MergeIndexConfig(
@@ -714,22 +1141,28 @@ void Store::MergeIndexConfig(
 
 void Store::ClaimLayout(duckdb::ClientContext& context, std::string_view name,
                         TableChange change) {
-  auto* connection = connector::GetSereneDBContextPtr(context);
-  if (!connection) {
-    SDB_ASSERT(change == TableChange::Layout);
-    return;
-  }
-  if (change == TableChange::Schema &&
-      connection->SearchTxn().HasWritesFor(GetId())) {
+  if (Dropped()) {
     THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
-      ERR_MSG("ALTER TABLE on a search-backed table cannot run in a "
-              "transaction that has already written to \"",
-              name, "\""));
+      ERR_CODE(ERRCODE_T_R_SERIALIZATION_FAILURE),
+      ERR_MSG("could not serialize access due to concurrent update of \"", name,
+              "\""));
   }
-  connection->ClaimSearchLayout(
-    shared_from_this(),
-    duckdb::MetaTransaction::Get(context).global_transaction_id, name, change);
+  ConnectionContext::Get(context).Transaction().ClaimSearchLayout(
+    shared_from_this(), name, change);
+}
+
+void Store::ClaimExclusive(duckdb::ClientContext& context,
+                           std::string_view name, Exclusive kind) {
+  auto& session = ConnectionContext::Get(context).Transaction();
+  session.ClaimSearchLayout(shared_from_this(), name, TableChange::Layout);
+  session.SearchTxn().ClaimExclusive(shared_from_this(), kind);
+  absl::MutexLock lock{&_layout_mutex};
+  _layout.exclusive = kind;
+}
+
+Store::Exclusive Store::ExclusiveClaim() const {
+  absl::ReaderMutexLock lock{&_layout_mutex};
+  return _layout.owner == kNoLayoutOwner ? Exclusive::None : _layout.exclusive;
 }
 
 bool Store::AcquireLayout(duckdb::transaction_t owner, std::string_view name,
@@ -740,8 +1173,7 @@ bool Store::AcquireLayout(duckdb::transaction_t owner, std::string_view name,
   if (acquired && _layout.owner != kNoLayoutOwner) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_OBJECT_IN_USE),
-      ERR_MSG("search table \"", name,
-              "\" is being changed by another transaction"),
+      ERR_MSG("table \"", name, "\" is being changed by another transaction"),
       ERR_HINT("Retry once that transaction commits or rolls back."));
   }
   _layout.owner = owner;
@@ -752,6 +1184,7 @@ bool Store::AcquireLayout(duckdb::transaction_t owner, std::string_view name,
         .epoch = _schema_epoch.load(),
         .table_columns = *_table_columns,
         .compression = _compression,
+        .constraint_keys = _constraint_keys,
       };
     }
     _schema_epoch.fetch_add(1);
@@ -763,13 +1196,50 @@ void Store::ReleaseLayout(duckdb::transaction_t owner,
                           bool committed) noexcept {
   absl::MutexLock lock{&_layout_mutex};
   SDB_ASSERT(_layout.owner == owner);
+  if (committed) {
+    AdoptOwnConfig();
+  }
   _layout.owner = kNoLayoutOwner;
+  _layout.exclusive = Exclusive::None;
+  _layout.owner_changed = false;
   auto undo = std::exchange(_layout.schema_undo, std::nullopt);
   if (undo && !committed) {
     _schema_epoch.store(undo->epoch);
     _table_columns = std::move(undo->table_columns);
     _compression = std::move(undo->compression);
+    _constraint_keys = std::move(undo->constraint_keys);
     RebuildConfig(_layout.configs, _layout.building_index);
+  }
+}
+
+std::shared_ptr<const catalog::InvertedIndexConfig> Store::OwnScanConfig(
+  duckdb::transaction_t owner) const {
+  absl::ReaderMutexLock lock{&_layout_mutex};
+  return _layout.owner == owner && _layout.owner_changed ? _layout.scan_config
+                                                         : nullptr;
+}
+
+void Store::CommitLayout(duckdb::transaction_t owner) noexcept {
+  absl::MutexLock lock{&_layout_mutex};
+  if (_layout.owner == owner) {
+    AdoptOwnConfig();
+  }
+}
+
+void Store::PublishLayout(Tick commit) {
+  if (_table) {
+    _table->PublishConfig(commit);
+  }
+}
+
+void Store::AdoptOwnConfig() noexcept {
+  if (!_layout.owner_changed ||
+      _layout.published_config == _layout.scan_config) {
+    return;
+  }
+  _layout.published_config = _layout.scan_config;
+  if (_table) {
+    _table->SetConfig(_layout.published_config);
   }
 }
 
@@ -787,13 +1257,45 @@ void Store::SetTableColumns(const duckdb::ColumnList& columns) {
   RebuildConfig(_layout.configs, _layout.building_index);
 }
 
-void Store::SyncPublished() {
-  if (!_durability.SyncPublished()) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-      ERR_MSG("search store ", _id,
-              " cannot persist its rows, so its table cannot be altered"));
+void Store::SetConstraintKeys(std::vector<catalog::ConstraintKey> keys) {
+  absl::MutexLock lock{&_layout_mutex};
+  const auto same = [](const catalog::ConstraintKey& lhs,
+                       const catalog::ConstraintKey& rhs) {
+    return lhs.field == rhs.field && lhs.columns == rhs.columns &&
+           lhs.types == rhs.types && lhs.expressions == rhs.expressions;
+  };
+  if (absl::c_equal(keys, _constraint_keys, same)) {
+    return;
   }
+  _constraint_keys = std::move(keys);
+  RebuildConfig(_layout.configs, _layout.building_index);
+}
+
+void Store::AddReferencing(std::weak_ptr<const Referencing> referencing) {
+  absl::MutexLock lock{&_referencing_mutex};
+  std::erase_if(_referencing,
+                [](const auto& entry) { return entry.expired(); });
+  _referencing.push_back(std::move(referencing));
+}
+
+std::vector<std::shared_ptr<const Referencing>> Store::ReferencingKeys() const {
+  std::vector<std::shared_ptr<const Referencing>> live;
+  absl::MutexLock lock{&_referencing_mutex};
+  std::erase_if(_referencing, [&](const auto& entry) {
+    auto referencing = entry.lock();
+    if (!referencing) {
+      return true;
+    }
+    live.push_back(std::move(referencing));
+    return false;
+  });
+  return live;
+}
+
+bool Store::HasReferencing() const {
+  absl::ReaderMutexLock lock{&_referencing_mutex};
+  return absl::c_any_of(_referencing,
+                        [](const auto& entry) { return !entry.expired(); });
 }
 
 Store::BuildClaim Store::BeginIndexBuild(
@@ -815,6 +1317,7 @@ void Store::FinishIndexBuild(duckdb::idx_t index_oid) noexcept {
   }
   _layout.building_index.reset();
   _layout.scan_config = _layout.config;
+  ScanConfigChanged();
 }
 
 void Store::AbortIndexBuild(duckdb::idx_t index_oid) noexcept {
@@ -830,23 +1333,28 @@ void Store::AbortIndexBuild(duckdb::idx_t index_oid) noexcept {
   _layout.compaction_stale = true;
 }
 
-void Store::BuildClaim::Finish() noexcept { Release(/*finished=*/true); }
-
-void Store::BuildClaim::Release(bool finished) noexcept {
-  if (!_store) {
-    return;
-  }
-  if (finished) {
-    _store->FinishIndexBuild(_index_oid);
-  } else {
+Store::BuildClaim::~BuildClaim() {
+  if (_store) {
     _store->AbortIndexBuild(_index_oid);
   }
-  _store = nullptr;
+}
+
+void Store::BuildClaim::Finish() {
+  if (auto* store = std::exchange(_store, nullptr)) {
+    store->FinishIndexBuild(_index_oid);
+  }
 }
 
 bool Store::BuildInFlight() const {
   absl::ReaderMutexLock lock{&_layout_mutex};
   return static_cast<bool>(_layout.building_index);
+}
+
+bool Store::HasIndexes() const {
+  absl::ReaderMutexLock lock{&_layout_mutex};
+  return absl::c_any_of(_layout.configs, [&](const IndexConfig& index) {
+    return index.oid != _id;
+  });
 }
 
 void Store::RemoveIndexConfig(duckdb::idx_t index_oid) {
@@ -880,90 +1388,67 @@ void Store::ReleaseRetiredConfig(duckdb::idx_t index_oid) noexcept {
   }
 }
 
-bool Store::Replays(duckdb::AttachedDatabase& db) const {
-  if (!_writer) {
-    return false;
-  }
-  auto& manager = duckdb::DuckTransactionManager::Get(db);
-  const irs::SourcePosition position{manager.GetReplayGeneration(),
-                                     manager.GetReplayCommitOffset()};
-  SDB_ENSURE(position.offset != 0, "store ", _id,
-             ": a write outside a commit and a replay");
-  return !(position < _durability.Position());
+TableReplay* Store::Replay() {
+  EnsureOpen();
+  return _table ? &_replay : nullptr;
 }
 
-Store::ReplaySession* Store::BeginReplay(duckdb::AttachedDatabase& db) {
-  if (!Replays(db)) {
-    return nullptr;
-  }
-  if (!_replay) {
-    _replay = std::make_unique<ReplaySession>(db, *this);
-  }
-  return _replay.get();
-}
-
-void Store::ReplayInsert(duckdb::ClientContext& context,
-                         duckdb::Catalog& catalog,
-                         std::span<const connector::ColumnId> column_ids,
-                         duckdb::DataChunk& chunk) {
-  auto* session = BeginReplay(catalog.GetAttached());
-  if (!session) {
+void Store::ScheduleRecovery(duckdb::ClientContext& context,
+                             duckdb::TaskExecutor& executor, bool orphans) {
+  EnsureOpen();
+  if (!_table) {
     return;
   }
-  if (!session->sink) {
-    session->sink = connector::MakeSearchTableInsertSink(
-      session->replay.Slot(), *this, catalog, context);
+  _writer->ReserveSegmentId(_replay.Top());
+  if (orphans) {
+    _writer->ReserveSegmentId(irs::directory_utils::MaxSegmentId(*_dir));
   }
-  connector::WriteChunkToSearchSink(*session->sink, chunk, column_ids, _id,
-                                    context);
-}
-
-void Store::ReplayDeleteRowPositions(
-  duckdb::AttachedDatabase& db, std::shared_ptr<const duckdb::data_t> entry,
-  std::span<const duckdb::WALFrozenRowPositionGroup> groups) {
-  if (auto* session = BeginReplay(db)) {
-    session->replay.RemovePositions(std::move(entry), groups);
+  for (auto& [id, segment] : _replay.Segments()) {
+    executor.ScheduleTask(
+      duckdb::make_uniq<RecoveryTask>(executor, [this, id, &segment] {
+        segment.opened = _table->OpenSegment(id, segment.kinds, segment.rows);
+      }));
   }
-}
-
-void Store::ReplayRowPositionMaps(
-  duckdb::AttachedDatabase& db, std::shared_ptr<const duckdb::data_t> entry,
-  uint64_t source, std::span<const duckdb::WALFrozenRowPositionMap> maps) {
-  if (auto* session = BeginReplay(db)) {
-    session->replay.MapPositions(std::move(entry), source, maps);
+  for (auto& piece : _replay.Cut()) {
+    executor.ScheduleTask(
+      duckdb::make_uniq<RecoveryTask>(executor, [this, &context, &piece] {
+        piece.reader = ReplayPiece(context, _replay.Chunks(piece));
+      }));
   }
 }
 
-void Store::ReplayTruncate(duckdb::AttachedDatabase& db) {
-  if (auto* session = BeginReplay(db)) {
-    session->replay.Truncate();
+std::shared_ptr<const irs::SegmentReaderImpl> Store::ReplayPiece(
+  duckdb::ClientContext& context, std::span<const TableReplay::Chunk> chunks) {
+  auto piece = StartPiece();
+  uint64_t rows = 0;
+  {
+    const auto sink = connector::MakeSearchTableInsertSink(
+      piece.trx, *this, _replay.RowsCatalog(), context);
+    for (const auto& chunk : chunks) {
+      connector::WriteChunkToSearchSink(*sink, *chunk.rows, *chunk.columns, _id,
+                                        context);
+      rows += chunk.rows->size();
+    }
   }
-}
-
-void Store::ReplayAdoptSegments(duckdb::AttachedDatabase& db,
-                                std::vector<std::string> segments) {
-  if (auto* session = BeginReplay(db)) {
-    session->replay.Adopt(segments);
-  }
+  SDB_ENSURE(PieceDocs(piece.trx) == rows, "table ", _id, ": ", rows,
+             " rows of its log indexed into ", PieceDocs(piece.trx),
+             " documents");
+  return piece.trx.SealPiece(piece.id);
 }
 
 bool Store::FinishReplay() {
-  if (!_replay) {
+  EnsureOpen();
+  if (!_table) {
     return false;
   }
-  _replay->sink.reset();
-  _replay->replay.Finish();
-  _replay.reset();
-  return true;
-}
-
-void ThrowIfRefreshFailed(const absl::Status& status,
-                          std::string_view index_name) {
-  if (!status.ok()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                    ERR_MSG("failed to refresh index '", index_name,
-                            "': ", status.message()));
-  }
+  const bool replayed = _replay.Replayed();
+  const auto memory_end = _replay.MemoryEnd();
+  auto manifest = _replay.Manifest();
+  _table->Recover(std::move(_replay).Units(*_table), memory_end,
+                  std::move(manifest));
+  _replay = TableReplay{};
+  ClaimColumnOids(_table->State()->reader);
+  return replayed;
 }
 
 }  // namespace sdb::search

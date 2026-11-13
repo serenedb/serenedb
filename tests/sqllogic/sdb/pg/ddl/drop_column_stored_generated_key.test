@@ -9,7 +9,8 @@ INSERT INTO dcs_t (a) VALUES (1);
 statement error
 INSERT INTO dcs_t (a) VALUES (1);
 ----
-db error: ERROR: Duplicate key "a: 1" violates primary key constraint.
+db error: ERROR: duplicate key value violates unique constraint "dcs_t_pkey"
+DETAIL: Key (a)=(1) already exists.
 
 
 statement ok
@@ -19,7 +20,8 @@ ALTER TABLE dcs_t DROP COLUMN b;
 statement error
 INSERT INTO dcs_t (a) VALUES (1);
 ----
-db error: ERROR: Duplicate key "a: 1" violates primary key constraint.
+db error: ERROR: duplicate key value violates unique constraint "dcs_t_pkey"
+DETAIL: Key (a)=(1) already exists.
 
 
 query

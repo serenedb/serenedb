@@ -2,7 +2,7 @@ a4635b643e643df6
 	QUERY PLAN
 	╭─ IRESEARCH_SCAN ─────────╮
 	│ Index: vtm_idx           │
-	│ Lookup: table            │
+	│ Lookup: search           │
 	│ Top: 5                   │
 	│ Order: i DESC NULLS LAST │
 	│ Projections: i           │
@@ -12,7 +12,7 @@ a4635b643e643df6
 	QUERY PLAN
 	╭─ IRESEARCH_SCAN ─────────╮
 	│ Index: vtm_idx           │
-	│ Lookup: table            │
+	│ Lookup: search           │
 	│ Top: 5                   │
 	│ Order: b DESC NULLS LAST │
 	│ Projections: b           │
@@ -22,7 +22,7 @@ a4635b643e643df6
 	QUERY PLAN
 	╭─ IRESEARCH_SCAN ──────────╮
 	│ Index: vtm_idx            │
-	│ Lookup: table             │
+	│ Lookup: search            │
 	│ Top: 5                    │
 	│ Order: ub DESC NULLS LAST │
 	│ Projections: ub           │
@@ -32,7 +32,7 @@ a4635b643e643df6
 	QUERY PLAN
 	╭─ IRESEARCH_SCAN ─────────╮
 	│ Index: vtm_idx           │
-	│ Lookup: table            │
+	│ Lookup: search           │
 	│ Top: 5                   │
 	│ Order: h DESC NULLS LAST │
 	│ Projections: h           │
@@ -42,7 +42,7 @@ a4635b643e643df6
 	QUERY PLAN
 	╭─ IRESEARCH_SCAN ──────────╮
 	│ Index: vtm_idx            │
-	│ Lookup: table             │
+	│ Lookup: search            │
 	│ Top: 5                    │
 	│ Order: uh DESC NULLS LAST │
 	│ Projections: uh           │
@@ -52,7 +52,7 @@ add91ec9048fff13
 	QUERY PLAN
 	╭─ IRESEARCH_SCAN ─────────╮
 	│ Index: vtm_idx           │
-	│ Lookup: table            │
+	│ Lookup: search           │
 	│ Top: 5                   │
 	│ Order: f DESC NULLS LAST │
 	│ Projections: f           │
@@ -62,7 +62,7 @@ add91ec9048fff13
 	QUERY PLAN
 	╭─ IRESEARCH_SCAN ─────────╮
 	│ Index: vtm_idx           │
-	│ Lookup: table            │
+	│ Lookup: search           │
 	│ Top: 5                   │
 	│ Order: d DESC NULLS LAST │
 	│ Projections: d           │
@@ -72,7 +72,7 @@ ba25b3526c95cd45
 	QUERY PLAN
 	╭─ IRESEARCH_SCAN ──────────╮
 	│ Index: vtm_idx            │
-	│ Lookup: table             │
+	│ Lookup: search            │
 	│ Top: 5                    │
 	│ Order: dt DESC NULLS LAST │
 	│ Projections: dt           │
@@ -82,7 +82,7 @@ ba25b3526c95cd45
 	QUERY PLAN
 	╭─ IRESEARCH_SCAN ──────────╮
 	│ Index: vtm_idx            │
-	│ Lookup: table             │
+	│ Lookup: search            │
 	│ Top: 5                    │
 	│ Order: ts DESC NULLS LAST │
 	│ Projections: ts           │
@@ -92,7 +92,7 @@ ba25b3526c95cd45
 	QUERY PLAN
 	╭─ IRESEARCH_SCAN ──────────╮
 	│ Index: vtm_idx            │
-	│ Lookup: table             │
+	│ Lookup: search            │
 	│ Top: 5                    │
 	│ Order: tm DESC NULLS LAST │
 	│ Projections: tm           │
@@ -108,7 +108,7 @@ f970107808df5cba
 	╰────────────────┬────────────────╯
 	╭─ IRESEARCH_SCAN ────────────────╮
 	│ Index: vtm_idx                  │
-	│ Lookup: table                   │
+	│ Lookup: search                  │
 	│ Projections: tz                 │
 	│ ~65 rows                        │
 	╰─────────────────────────────────╯
@@ -116,7 +116,7 @@ f970107808df5cba
 	QUERY PLAN
 	╭─ IRESEARCH_SCAN ──────────╮
 	│ Index: vtm_idx            │
-	│ Lookup: table             │
+	│ Lookup: search            │
 	│ Top: 5                    │
 	│ Order: d4 DESC NULLS LAST │
 	│ Projections: d4           │
@@ -126,7 +126,7 @@ f970107808df5cba
 	QUERY PLAN
 	╭─ IRESEARCH_SCAN ───────────╮
 	│ Index: vtm_idx             │
-	│ Lookup: table              │
+	│ Lookup: search             │
 	│ Top: 5                     │
 	│ Order: d18 DESC NULLS LAST │
 	│ Projections: d18           │
@@ -136,7 +136,7 @@ f970107808df5cba
 	QUERY PLAN
 	╭─ IRESEARCH_SCAN ───────────╮
 	│ Index: vtm_idx             │
-	│ Lookup: table              │
+	│ Lookup: search             │
 	│ Top: 5                     │
 	│ Order: d38 DESC NULLS LAST │
 	│ Projections: d38           │
@@ -151,7 +151,7 @@ f970107808df5cba
 	╰─────────────────┬────────────────╯
 	╭─ IRESEARCH_SCAN ┴────────────────╮
 	│ Index: vtm_idx                   │
-	│ Lookup: table                    │
+	│ Lookup: search                   │
 	│ Projections: u                   │
 	│ Column Filter:                   │
 	│ optional: Dynamic Filter (u > ?) │
@@ -165,11 +165,10 @@ d3da17e639ff16bf
 	│ ~5 rows                                   │
 	╰─────────────────────┬─────────────────────╯
 	╭─ IRESEARCH_SCAN ────┴─────────────────────╮
-	│ Index: vtm_s                              │
-	│ Lookup: search                            │
+	│ Table: vtm_s                              │
 	│ Index Filter:                             │
 	│ ╭─ Granular Range ──────────────────────╮ │
-	│ │ Field: u                              │ │
+	│ │ Field: u(numeric)                     │ │
 	│ │ Range:                                │ │
 	│ │ >7fffffff-ffff-ffff-ffff-ffffffffffff │ │
 	│ ╰───────────────────────────────────────╯ │

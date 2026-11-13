@@ -230,17 +230,14 @@ ndb_pre_total=$((NATIVE_SIZE_PRE_MAIN + NATIVE_SIZE_PRE_WAL))
 		"$(human "${ndb}")" "$(human "${ndb_wal}")"
 	printf "serened data dir:         %12d bytes (%s)\n" \
 		"${total}" "$(human "${total}")"
-	declare -a exts=(doc pos pay cs csd csi ti tm sm)
+	declare -a exts=(col idx doc pos pay)
 	for ext in "${exts[@]}"; do
-		s=$(sum_ext "${SERENED_DATA_DIR}" "${ext}")
+		s=$(sum_ext "${SERENED_DATA_DIR}/engine_v1/store" "${ext}")
 		printf "  .%-7s %14d bytes (%s)\n" "${ext}" "${s}" "$(human "${s}")"
 	done
-	seg_total=$(sum_glob "${SERENED_DATA_DIR}" -name 'segments_*' -type f)
-	printf "  %-8s %14d bytes (%s)\n" "segments_*" \
-		"${seg_total}" "$(human "${seg_total}")"
-	rdb_total=$(sum_glob "${SERENED_DATA_DIR}/engine_rocksdb" -type f)
-	printf "  %-8s %14d bytes (%s)\n" "rocksdb" \
-		"${rdb_total}" "$(human "${rdb_total}")"
+	wal_total=$(sum_glob "${SERENED_DATA_DIR}/engine_v1/wal" -type f)
+	printf "  %-8s %14d bytes (%s)\n" "wal" \
+		"${wal_total}" "$(human "${wal_total}")"
 } | tee -a "${RUN_LOG}"
 
 # --- 4. Summary --------------------------------------------------------------
@@ -293,16 +290,16 @@ ratio() {
 			"$(ratio "${n}" "${i}")"
 	done
 	echo
-	cs_total=$(sum_ext "${SERENED_DATA_DIR}" "cs")
-	rdb_total=$(sum_glob "${SERENED_DATA_DIR}/engine_rocksdb" -type f)
+	col_total=$(sum_ext "${SERENED_DATA_DIR}/engine_v1/store" "col")
+	wal_total=$(sum_glob "${SERENED_DATA_DIR}/engine_v1/wal" -type f)
 	printf "%-26s %12s\n" "storage" "bytes"
 	printf "%-26s %12s\n" "--------------------------" "------------"
 	printf "%-26s %12s (%s)\n" "duckdb native (post-ckpt)" \
 		"${ndb_post_total}" "$(human "${ndb_post_total}")"
-	printf "%-26s %12s (%s)\n" "serened cs only (.cs)" \
-		"${cs_total}" "$(human "${cs_total}")"
-	printf "%-26s %12s (%s)\n" "serened rocksdb (base tbl)" \
-		"${rdb_total}" "$(human "${rdb_total}")"
+	printf "%-26s %12s (%s)\n" "serened columns (.col)" \
+		"${col_total}" "$(human "${col_total}")"
+	printf "%-26s %12s (%s)\n" "serened wal" \
+		"${wal_total}" "$(human "${wal_total}")"
 	printf "%-26s %12s (%s)\n" "serened data dir total" \
 		"${total}" "$(human "${total}")"
 	echo "========================================="

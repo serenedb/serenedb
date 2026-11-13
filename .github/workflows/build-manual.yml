@@ -264,6 +264,7 @@ jobs:
     if: inputs.BUGFIX && inputs.LOCATION != 'dev-only'
     runs-on:
       - linux-amd64
+      - build
     timeout-minutes: 240
     env:
       SDB_STORE_RESULTS: "false"

@@ -29,7 +29,6 @@
 #include <string>
 #include <vector>
 
-#include "connector/duckdb_client_state.h"
 #include "pg/commands/create_subscription.h"
 #include "pg/connection_context.h"
 
@@ -49,7 +48,7 @@ std::vector<std::string> Publications(const duckdb::vector<duckdb::Value>& args,
 void CreateSubscriptionPragma(duckdb::ClientContext& context,
                               const duckdb::FunctionParameters& params) {
   auto& args = params.values;
-  pg::CreateSubscription(GetSereneDBContext(context),
+  pg::CreateSubscription(ConnectionContext::Get(context),
                          args[0].GetValue<std::string>(),
                          args[1].GetValue<std::string>(), Publications(args, 2),
                          params.named_parameters);
@@ -58,7 +57,7 @@ void CreateSubscriptionPragma(duckdb::ClientContext& context,
 void DropSubscriptionPragma(duckdb::ClientContext& context,
                             const duckdb::FunctionParameters& params) {
   auto& args = params.values;
-  pg::DropSubscription(GetSereneDBContext(context),
+  pg::DropSubscription(ConnectionContext::Get(context),
                        args[0].GetValue<std::string>(),
                        args[1].GetValue<bool>(), args[2].GetValue<bool>());
 }
@@ -67,7 +66,7 @@ void AlterSubscriptionPragma(duckdb::ClientContext& context,
                              const duckdb::FunctionParameters& params) {
   auto& args = params.values;
   pg::AlterSubscription(
-    GetSereneDBContext(context), args[0].GetValue<std::string>(),
+    ConnectionContext::Get(context), args[0].GetValue<std::string>(),
     args[1].GetValue<std::string>(), args[2].GetValue<std::string>(),
     Publications(args, 3), params.named_parameters);
 }

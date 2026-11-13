@@ -16,7 +16,7 @@ control max-async-connections 16
 # If the pin regresses, serened crashes mid-round and the async statements / the
 # COUNT below fail.
 #
-# This is a timing-race stress guard (like wal_index_recovery_concurrent_refresh):
+# This is a timing-race stress guard:
 # the reset-vs-GroupSync window is an in-memory ordering window with no fault hook
 # to widen it, so it does not deterministically reproduce on every run -- it is
 # looped over several rounds of 16 writers to hit the window opportunistically.
@@ -26,6 +26,9 @@ control max-async-connections 16
 # their peers are mid-fsync.
 statement ok
 SET GLOBAL checkpoint_threshold = '256KB';
+
+statement ok
+SET GLOBAL max_wal_size = '256KB';
 
 statement ok
 CREATE TABLE wgc_t(id BIGINT, body TEXT);
@@ -379,6 +382,9 @@ count
 
 statement ok
 SET GLOBAL checkpoint_threshold = '16MB';
+
+statement ok
+RESET GLOBAL max_wal_size;
 
 statement ok
 DROP TABLE wgc_t;

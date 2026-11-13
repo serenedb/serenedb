@@ -1,5 +1,5 @@
 statement ok
-CREATE TABLE pe (id BIGINT, grp INT, v TEXT) WITH (storage = 'search', compaction_interval = 0, refresh_interval = 0);
+CREATE TABLE pe (id BIGINT, grp INT, v TEXT) WITH (compaction_interval = 0);
 
 statement ok
 SET threads = 1;
@@ -8,16 +8,13 @@ statement ok
 INSERT INTO pe SELECT i, i % 10, 'v' || i FROM generate_series(0, 9999) g(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) pe;
+VACUUM (FLUSH_TABLE) pe;
 
 statement ok
 INSERT INTO pe SELECT i, i % 10, 'v' || i FROM generate_series(10000, 19999) g(i);
 
 statement ok
 RESET threads;
-
-statement ok
-VACUUM (REFRESH_TABLE) pe;
 
 query
 SELECT count(*) = count(DISTINCT rowid) AS unique_positions, count(rowid) AS n FROM pe;
@@ -53,7 +50,7 @@ query
 SELECT min(rowid & 4294967295) AS first_doc, max(rowid & 4294967295) AS last_doc FROM pe;
 ----
 first_doc	last_doc
-1	20000
+0	19999
 
 query
 SELECT count(*) AS n, count(*) FILTER (WHERE pe.rowid = pe_before.pos) AS same FROM pe JOIN pe_before USING (id);
@@ -76,9 +73,6 @@ DELETE FROM pe WHERE id = 15005 RETURNING id, v;
 id	v
 15005	v15005
 
-statement ok
-VACUUM (REFRESH_TABLE) pe;
-
 query
 SELECT count(*) AS n FROM pe WHERE id IN (5, 15005);
 ----
@@ -90,9 +84,6 @@ UPDATE pe SET v = 'changed' WHERE id = 6 RETURNING id, grp, v;
 ----
 id	grp	v
 6	6	changed
-
-statement ok
-VACUUM (REFRESH_TABLE) pe;
 
 query
 SELECT id, v FROM pe WHERE id = 6;
@@ -109,9 +100,6 @@ DELETE FROM pe WHERE grp = 3;
 statement ok
 ROLLBACK;
 
-statement ok
-VACUUM (REFRESH_TABLE) pe;
-
 query
 SELECT count(*) AS n FROM pe WHERE grp = 3;
 ----
@@ -124,14 +112,11 @@ BEGIN;
 statement count 2000
 DELETE FROM pe WHERE grp = 3;
 
-statement count 2000
+statement count 0
 DELETE FROM pe WHERE grp = 3;
 
 statement ok
 COMMIT;
-
-statement ok
-VACUUM (REFRESH_TABLE) pe;
 
 query
 SELECT count(*) AS n, count(*) FILTER (WHERE grp = 3) AS g3 FROM pe;
@@ -148,9 +133,6 @@ INSERT INTO pe_keys SELECT i FROM generate_series(100, 199) g(i);
 statement ok
 DELETE FROM pe USING pe_keys WHERE pe.id = pe_keys.id;
 
-statement ok
-VACUUM (REFRESH_TABLE) pe;
-
 query
 SELECT count(*) AS n FROM pe WHERE id BETWEEN 100 AND 199;
 ----
@@ -159,9 +141,6 @@ n
 
 statement ok
 DELETE FROM pe WHERE id IN (SELECT id + 1000 FROM pe_keys);
-
-statement ok
-VACUUM (REFRESH_TABLE) pe;
 
 query
 SELECT count(*) AS n FROM pe WHERE id BETWEEN 1100 AND 1199;
@@ -172,9 +151,6 @@ n
 statement ok
 WITH doomed AS (SELECT id FROM pe WHERE id % 1000 = 999) DELETE FROM pe WHERE id IN (SELECT id FROM doomed);
 
-statement ok
-VACUUM (REFRESH_TABLE) pe;
-
 query
 SELECT count(*) AS n FROM pe WHERE id % 1000 = 999;
 ----
@@ -184,9 +160,6 @@ n
 statement ok
 DELETE FROM pe WHERE v LIKE 'v1%' AND id >= 10000;
 
-statement ok
-VACUUM (REFRESH_TABLE) pe;
-
 query
 SELECT count(*) AS n FROM pe WHERE id >= 10000 AND v LIKE 'v1%';
 ----
@@ -195,9 +168,6 @@ n
 
 statement ok
 DELETE FROM pe;
-
-statement ok
-VACUUM (REFRESH_TABLE) pe;
 
 query
 SELECT count(*) AS n FROM pe;
@@ -209,13 +179,10 @@ statement ok
 INSERT INTO pe SELECT i, i % 10, 'w' || i FROM generate_series(0, 99) g(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) pe;
+VACUUM (FLUSH_TABLE) pe;
 
 statement ok
 DELETE FROM pe WHERE id < 50;
-
-statement ok
-VACUUM (REFRESH_TABLE) pe;
 
 query
 SELECT count(*) AS n, min(id) AS lo FROM pe;
@@ -230,7 +197,7 @@ statement ok
 DROP TABLE pe_keys;
 
 statement ok
-CREATE TABLE pk (id BIGINT PRIMARY KEY, r TEXT) WITH (storage = 'search', compaction_interval = 0);
+CREATE TABLE pk (id BIGINT PRIMARY KEY, r TEXT) WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX pk_r ON pk USING inverted (r);
@@ -239,16 +206,13 @@ statement ok
 INSERT INTO pk SELECT i, 'r' || (i % 7) FROM generate_series(1, 7000) g(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) pk;
+VACUUM (FLUSH_TABLE) pk;
 
 statement ok
 DELETE FROM pk WHERE r = 'r3';
 
 statement ok
 DELETE FROM pk WHERE id = 7000;
-
-statement ok
-VACUUM (REFRESH_TABLE) pk;
 
 query
 SELECT count(*) AS n, count(*) FILTER (WHERE r = 'r3') AS r3, count(*) FILTER (WHERE id = 7000) AS last FROM pk;
@@ -265,9 +229,6 @@ n
 statement ok
 UPDATE pk SET r = 'moved' WHERE r = 'r4';
 
-statement ok
-VACUUM (REFRESH_TABLE) pk;
-
 query
 SELECT count(*) AS moved, (SELECT count(*) FROM pk_r WHERE r = 'r4') AS r4 FROM pk_r WHERE r = 'moved';
 ----
@@ -278,19 +239,19 @@ statement ok
 DROP TABLE pk;
 
 statement ok
-CREATE TABLE pc (id BIGINT, v TEXT) WITH (storage = 'search', compaction_interval = 0, refresh_interval = 0);
+CREATE TABLE pc (id BIGINT, v TEXT) WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO pc SELECT i, 'a' FROM generate_series(0, 4999) g(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) pc;
+VACUUM (FLUSH_TABLE) pc;
 
 statement ok
 INSERT INTO pc SELECT i, 'b' FROM generate_series(5000, 9999) g(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) pc;
+VACUUM (FLUSH_TABLE) pc;
 
 connection first
 statement ok
@@ -317,17 +278,17 @@ statement ok
 COMMIT;
 
 connection second
-statement ok
+statement error
 COMMIT;
+----
+db error: ERROR: could not serialize access due to concurrent update
 
-statement ok
-VACUUM (REFRESH_TABLE) pc;
 
 query
 SELECT count(*) AS n FROM pc;
 ----
 n
-9850
+9900
 
 connection reader
 statement ok
@@ -338,7 +299,7 @@ query
 SELECT count(*) AS n FROM pc;
 ----
 n
-9850
+9900
 
 statement ok
 VACUUM (COMPACT_TABLE) pc;
@@ -351,23 +312,17 @@ statement ok
 INSERT INTO pc SELECT i, 'c' FROM generate_series(10000, 10999) g(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) pc;
-
-statement ok
 VACUUM (COMPACT_TABLE) pc;
 
 connection reader
 statement ok
 COMMIT;
 
-statement ok
-VACUUM (REFRESH_TABLE) pc;
-
 query
 SELECT count(*) AS n, count(*) FILTER (WHERE id % 200 = 3 AND v <> 'c') AS gone, count(*) FILTER (WHERE id % 200 = 3 AND v = 'c') AS newer, count(*) FILTER (WHERE v = 'c') AS fresh FROM pc;
 ----
 n	gone	newer	fresh
-10800	0	5	1000
+10850	0	5	1000
 
 connection reader
 statement ok
@@ -382,9 +337,6 @@ n
 
 statement ok
 INSERT INTO pc SELECT i, 'c' FROM generate_series(20000, 20099) g(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) pc;
 
 connection reader
 query
@@ -401,13 +353,10 @@ statement ok
 DROP TABLE pc;
 
 statement ok
-CREATE TABLE pr (id BIGINT, v TEXT) WITH (storage = 'search', compaction_interval = 0, refresh_interval = 0);
+CREATE TABLE pr (id BIGINT, v TEXT) WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO pr SELECT i, 'v' || i FROM generate_series(1, 100) g(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) pr;
 
 statement ok
 SET VARIABLE pr_pos = (SELECT rowid FROM pr WHERE id = 42);
@@ -436,14 +385,11 @@ UPDATE pr SET v = 'changed' WHERE rowid = getvariable('pr_pos') RETURNING id, v;
 id	v
 42	changed
 
-statement ok
-VACUUM (REFRESH_TABLE) pr;
-
 query
 SELECT count(*) AS n FROM pr WHERE rowid = getvariable('pr_pos');
 ----
 n
-0
+1
 
 query
 SELECT id, v FROM pr WHERE v = 'changed';
@@ -459,9 +405,6 @@ DELETE FROM pr WHERE rowid = getvariable('pr_pos') RETURNING id;
 ----
 id
 7
-
-statement ok
-VACUUM (REFRESH_TABLE) pr;
 
 query
 SELECT count(*) AS n, count(*) FILTER (WHERE id = 7) AS seven FROM pr;

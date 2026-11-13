@@ -32,9 +32,6 @@ INSERT INTO m_b VALUES
     (2, '\x776f726c64'::BLOB),
     (3, '\xdeadbeef'::BLOB);
 
-statement ok
-VACUUM (REFRESH_TABLE) m_b;
-
 query
 SELECT pk FROM m_b_col_text_st  WHERE b @@ ts_like('\xdeadbeef'::BLOB) ORDER BY pk;
 ----
@@ -80,9 +77,6 @@ INSERT INTO m_bla VALUES
     (2, ['deadbeef'::BLOB],
         ['ddd'::BLOB, 'eee'::BLOB, 'fff'::BLOB],
         '\x776f726c64'::BLOB);
-
-statement ok
-VACUUM (REFRESH_TABLE) m_bla;
 
 query
 SELECT pk FROM m_bla_bs WHERE bs @@ ts_like('hello');

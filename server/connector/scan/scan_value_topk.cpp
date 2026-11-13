@@ -166,7 +166,7 @@ void CollectSegment(ScanGlobalState& g, ValueTopKLocalState& l) {
   const auto& spec = *g.Bind().value_order;
   const auto seg_idx = l.unit.seg;
   const auto& seg = (*g.reader)[seg_idx];
-  const auto mask = seg.MaskedDocs();
+  const auto* mask = seg.docs_mask();
   const auto limit = spec.limit;
   l.hits.clear();
   bool going = true;
@@ -175,7 +175,7 @@ void CollectSegment(ScanGlobalState& g, ValueTopKLocalState& l) {
       going = false;
       return false;
     }
-    if (!mask.Contains(hit.doc)) {
+    if (!mask || !mask->Contains(hit.doc)) {
       l.hits.push_back(hit);
     }
     going = l.hits.size() < limit;
@@ -287,8 +287,8 @@ std::optional<ValueOrderSpec> ValueOrderOf(
   if (bind.score.text || bind.score.vector || bind.score.order ||
       bind.score.HasTopK() || bind.offsets.Active() || bind.ts_dict.Active() ||
       bind.plan_cache.deferred || search.index_only ||
-      !search.deferred.empty() || !search.duals.empty() ||
-      !search.row_filters.empty()) {
+      !search.deferred.empty() || !search.row_filters.empty() ||
+      (!search.duals.empty() && !search.filter)) {
     return std::nullopt;
   }
   const auto info =

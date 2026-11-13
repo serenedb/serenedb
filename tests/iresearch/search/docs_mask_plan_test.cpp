@@ -261,7 +261,7 @@ class DocsMaskPlanTest : public tests::IndexTestBase {
   void Build(Pattern pattern, uint32_t segment_docs) {
     auto options = tests::CsDefaultWriterOptions();
     options.segment_docs_max = segment_docs;
-    auto writer = open_writer(irs::kOmCreate, std::move(options));
+    auto writer = open_writer(tests::kOmCreate, std::move(options));
     std::vector<std::shared_ptr<tests::StringField>> fields;
     tests::Document doc;
     for (const auto id :

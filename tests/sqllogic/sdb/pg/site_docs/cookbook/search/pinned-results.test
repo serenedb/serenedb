@@ -24,9 +24,6 @@ INSERT INTO products VALUES
 (7, 'Ground Coffee'),
 (8, 'Decaf Coffee Pods Variety Pack Assortment Box Forty Count');
 
-statement ok
-VACUUM (REFRESH_TABLE) products;
-
 # DOCS_TEST: example_001
 
 # DOCS_TEST_BODY

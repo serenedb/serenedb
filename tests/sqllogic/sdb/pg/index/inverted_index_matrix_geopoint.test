@@ -37,9 +37,6 @@ INSERT INTO g4_j VALUES
     (1, '{"name":"a","lat":55.703900,"lng":37.615895}'),
     (2, '{"name":"b","lat":55.704831,"lng":37.616297}');
 
-statement ok
-VACUUM (REFRESH_TABLE) g4_j;
-
 query
 SELECT count(*) FROM g4_j_col_geo_st;
 ----
@@ -133,9 +130,6 @@ statement ok
 INSERT INTO g12_j VALUES
     (1, '{"name":"a","lat":55.703900,"lng":37.615895}', 'north'),
     (2, '{"name":"b","lat":55.704831,"lng":37.616297}', 'south');
-
-statement ok
-VACUUM (REFRESH_TABLE) g12_j;
 
 query
 SELECT count(*) FROM g12_j_col_geo_st;

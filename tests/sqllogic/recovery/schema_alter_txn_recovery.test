@@ -36,7 +36,7 @@ connection w2
 statement error
 GRANT USAGE ON SCHEMA satr_s TO satr_r2;
 ----
-db error: ERROR: Catalog write-write conflict on alter with "satr_s"
+db error: ERROR: could not serialize access due to concurrent update of "satr_s"
 
 
 # Neither does a rolled-back holder.

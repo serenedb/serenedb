@@ -1300,51 +1300,47 @@ e254b3306f8b0e05	12
 dc7be8caeda27525	12
 a678eab2bdccb3d7
 	QUERY PLAN
-	╭─ IRESEARCH_SCAN ─╮
-	│ Index: wnm_s     │
-	│ Lookup: search   │
-	│ Index Filter:    │
-	│ ╭─ Term ──────╮  │
-	│ │ Field: d4   │  │
-	│ │ Value: 5.12 │  │
-	│ ╰─────────────╯  │
-	│ Projections: id  │
-	│ ~9 rows          │
-	╰──────────────────╯
+	╭─ IRESEARCH_SCAN ───────╮
+	│ Table: wnm_s           │
+	│ Index Filter:          │
+	│ ╭─ Term ─────────────╮ │
+	│ │ Field: d4(numeric) │ │
+	│ │ Value: 5.12        │ │
+	│ ╰────────────────────╯ │
+	│ Projections: id        │
+	│ ~9 rows                │
+	╰────────────────────────╯
 02aa5f5ff4c0bf94
 	QUERY PLAN
-	╭─ IRESEARCH_SCAN ─────╮
-	│ Index: wnm_s         │
-	│ Lookup: search       │
-	│ Index Filter:        │
-	│ ╭─ Granular Range ─╮ │
-	│ │ Field: d4        │ │
-	│ │ Range: <5.13     │ │
-	│ ╰──────────────────╯ │
-	│ Projections: id      │
-	│ ~9 rows              │
-	╰──────────────────────╯
+	╭─ IRESEARCH_SCAN ───────╮
+	│ Table: wnm_s           │
+	│ Index Filter:          │
+	│ ╭─ Granular Range ───╮ │
+	│ │ Field: d4(numeric) │ │
+	│ │ Range: <5.13       │ │
+	│ ╰────────────────────╯ │
+	│ Projections: id        │
+	│ ~9 rows                │
+	╰────────────────────────╯
 ae7e8a0ee1435b6c
 	QUERY PLAN
-	╭─ IRESEARCH_SCAN ───╮
-	│ Index: wnm_s       │
-	│ Lookup: search     │
-	│ Index Filter:      │
-	│ ╭─ Term ─────────╮ │
-	│ │ Field: d16     │ │
-	│ │ Value: 0.00000 │ │
-	│ ╰────────────────╯ │
-	│ Projections: id    │
-	│ ~9 rows            │
-	╰────────────────────╯
+	╭─ IRESEARCH_SCAN ────────╮
+	│ Table: wnm_s            │
+	│ Index Filter:           │
+	│ ╭─ Term ──────────────╮ │
+	│ │ Field: d16(numeric) │ │
+	│ │ Value: 0.00000      │ │
+	│ ╰─────────────────────╯ │
+	│ Projections: id         │
+	│ ~9 rows                 │
+	╰─────────────────────────╯
 4efb28b4565d97c4
 	QUERY PLAN
 	╭─ IRESEARCH_SCAN ─────────────────────────╮
-	│ Index: wnm_s                             │
-	│ Lookup: search                           │
+	│ Table: wnm_s                             │
 	│ Index Filter:                            │
 	│ ╭─ Term ───────────────────────────────╮ │
-	│ │ Field: u                             │ │
+	│ │ Field: u(numeric)                    │ │
 	│ │ Value:                               │ │
 	│ │ 80000000-0000-0000-0000-000000000000 │ │
 	│ ╰──────────────────────────────────────╯ │
@@ -1354,11 +1350,10 @@ ae7e8a0ee1435b6c
 15a7523bf01a90fc
 	QUERY PLAN
 	╭─ IRESEARCH_SCAN ────────────────╮
-	│ Index: wnm_s                    │
-	│ Lookup: search                  │
+	│ Table: wnm_s                    │
 	│ Index Filter:                   │
 	│ ╭─ Granular Range ────────────╮ │
-	│ │ Field: ub                   │ │
+	│ │ Field: ub(numeric)          │ │
 	│ │ Range: >9223372036854775807 │ │
 	│ ╰─────────────────────────────╯ │
 	│ Projections: id                 │
@@ -1366,40 +1361,37 @@ ae7e8a0ee1435b6c
 	╰─────────────────────────────────╯
 7c2650c9eca13f49
 	QUERY PLAN
-	╭─ IRESEARCH_SCAN ─╮
-	│ Index: wnm_s     │
-	│ Lookup: search   │
-	│ Index Filter:    │
-	│ ╭─ Term ────╮    │
-	│ │ Field: h  │    │
-	│ │ Value: -1 │    │
-	│ ╰───────────╯    │
-	│ Projections: id  │
-	│ ~9 rows          │
-	╰──────────────────╯
+	╭─ IRESEARCH_SCAN ──────╮
+	│ Table: wnm_s          │
+	│ Index Filter:         │
+	│ ╭─ Term ────────────╮ │
+	│ │ Field: h(numeric) │ │
+	│ │ Value: -1         │ │
+	│ ╰───────────────────╯ │
+	│ Projections: id       │
+	│ ~9 rows               │
+	╰───────────────────────╯
 8374c6062d2611a9
 	QUERY PLAN
-	╭─ IRESEARCH_SCAN ─────╮
-	│ Index: wnm_s         │
-	│ Lookup: search       │
-	│ Index Filter:        │
-	│ ╭─ Granular Range ─╮ │
-	│ │ Field: uh        │ │
-	│ │ Range: >=2       │ │
-	│ ╰──────────────────╯ │
-	│ Projections: id      │
-	│ ~9 rows              │
-	╰──────────────────────╯
+	╭─ IRESEARCH_SCAN ───────╮
+	│ Table: wnm_s           │
+	│ Index Filter:          │
+	│ ╭─ Granular Range ───╮ │
+	│ │ Field: uh(numeric) │ │
+	│ │ Range: >=2         │ │
+	│ ╰────────────────────╯ │
+	│ Projections: id        │
+	│ ~9 rows                │
+	╰────────────────────────╯
 4d7fa3ab0e3b4568
 	QUERY PLAN
-	╭─ IRESEARCH_SCAN ─────╮
-	│ Index: wnm_s         │
-	│ Lookup: search       │
-	│ Index Filter:        │
-	│ ╭─ Granular Range ─╮ │
-	│ │ Field: i         │ │
-	│ │ Range: <6        │ │
-	│ ╰──────────────────╯ │
-	│ Projections: id      │
-	│ ~9 rows              │
-	╰──────────────────────╯
+	╭─ IRESEARCH_SCAN ──────╮
+	│ Table: wnm_s          │
+	│ Index Filter:         │
+	│ ╭─ Granular Range ──╮ │
+	│ │ Field: i(numeric) │ │
+	│ │ Range: <6         │ │
+	│ ╰───────────────────╯ │
+	│ Projections: id       │
+	│ ~9 rows               │
+	╰───────────────────────╯

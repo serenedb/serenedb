@@ -34,6 +34,7 @@ inline constexpr std::string_view kDefaultUser = "postgres";
 // system schema names
 inline constexpr std::string_view kPublic = "public";
 inline constexpr std::string_view kPgCatalogSchema = "pg_catalog";
+inline constexpr std::string_view kPgTempSchema = "pg_temp";
 inline constexpr std::string_view kInformationSchema = "information_schema";
 inline constexpr std::string_view kDocsSchema = "sdb_docs";
 

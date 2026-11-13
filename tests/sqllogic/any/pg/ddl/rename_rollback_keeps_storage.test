@@ -1,0 +1,69 @@
+statement ok
+CREATE TABLE rrk_t (id INT, v TEXT)
+
+
+statement ok
+INSERT INTO rrk_t VALUES (1, 'a'), (2, 'b')
+
+
+statement ok
+CREATE INDEX rrk_v ON rrk_t (v)
+
+
+statement ok
+CREATE SCHEMA rrk_s
+
+
+statement ok
+BEGIN
+
+
+statement ok
+ALTER TABLE rrk_t RENAME TO rrk_t2
+
+
+statement ok
+ALTER INDEX rrk_v RENAME TO rrk_v2
+
+
+statement ok
+ROLLBACK
+
+
+statement ok
+BEGIN
+
+
+statement ok
+ALTER TABLE rrk_t SET SCHEMA rrk_s
+
+
+statement ok
+ROLLBACK
+
+
+statement ok
+INSERT INTO rrk_t VALUES (3, 'c')
+
+
+query
+SELECT id FROM rrk_t WHERE v = 'c'
+----
+id
+3
+
+
+query
+SELECT id, v FROM rrk_t ORDER BY id
+----
+id	v
+1	a
+2	b
+3	c
+
+
+query
+SELECT indexname FROM pg_indexes WHERE tablename = 'rrk_t'
+----
+indexname
+rrk_v

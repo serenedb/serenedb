@@ -3,10 +3,9 @@ control substitution on
 # UNION survives WAL replay through an inverted index's INCLUDE columnstore.
 #
 # A UNION INCLUDE column is stored in the .col file as a struct-backed column
-# (tag + member columns). The pre-crash row is made durable by a refresh; the
-# post-crash rows live only in the store WAL with the search commit faulted
-# off. On restart the index's cs must be rebuilt from the WAL so every payload
-# reads back from the index, rendering as the active member's text value.
+# (tag + member columns). On restart the index's cs must be rebuilt from the WAL
+# so every payload reads back from the index, rendering as the active member's
+# text value.
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY uni_rec_dict AS
@@ -21,23 +20,17 @@ statement ok
 CREATE INDEX uni_rec_idx ON uni_rec_t
   USING inverted(body uni_rec_dict) INCLUDE (payload);
 
-# Pre-crash row, made durable in the segments + cs by a refresh.
 statement ok
 INSERT INTO uni_rec_t VALUES (1, 'alpha bravo', union_value(num := 42));
 
 statement ok
-VACUUM (REFRESH_TABLE) uni_rec_t;
+VACUUM (FLUSH_TABLE) uni_rec_t;
 
 query
 SELECT id, payload FROM uni_rec_idx WHERE body @@ ts_phrase('alpha');
 ----
 id	payload
 1	42
-
-# Post-crash rows: suppress the index commit so they land only in the store
-# WAL, post-refresh and not yet durable in the segments.
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 statement ok
 INSERT INTO uni_rec_t VALUES
@@ -55,7 +48,7 @@ SELECT 1;
 
 connection uni_after
 statement ok retry 60 backoff 1s
-VACUUM (REFRESH_TABLE) uni_rec_t;
+SELECT 1;
 
 # Pre-crash row's UNION still served from cs.
 connection uni_after

@@ -41,6 +41,8 @@ namespace sdb::connector {
 std::vector<ColumnId> KeyColumnIds(const duckdb::CatalogEntry& relation,
                                    std::span<const duckdb::column_t> columns);
 
+bool TermDictIndexable(const duckdb::LogicalType& type);
+
 duckdb::optional_ptr<catalog::TokenizerCatalogEntry> ResolveOpclassTokenizer(
   duckdb::ClientContext& context, duckdb::SchemaCatalogEntry& schema,
   std::string_view name);

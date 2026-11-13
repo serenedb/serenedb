@@ -16,10 +16,6 @@ statement ok
 CREATE INDEX sif_t_idx ON sif_t USING inverted (id) INCLUDE (x, s)
 
 
-statement ok
-VACUUM (REFRESH_TABLE) sif_t
-
-
 query
 SELECT id, s FROM sif_t_idx WHERE x = 1 ORDER BY id LIMIT 3 OFFSET 1900
 ----
@@ -57,10 +53,6 @@ statement ok
 CREATE INDEX sif_nulls_idx ON sif_nulls USING inverted (id) INCLUDE (x, s)
 
 
-statement ok
-VACUUM (REFRESH_TABLE) sif_nulls
-
-
 query
 SELECT id, s FROM sif_nulls_idx WHERE x = 1 ORDER BY id LIMIT 3 OFFSET 1900
 ----
@@ -91,10 +83,6 @@ statement ok
 CREATE INDEX sif_nested_idx ON sif_nested USING inverted (id) INCLUDE (x, s)
 
 
-statement ok
-VACUUM (REFRESH_TABLE) sif_nested
-
-
 query
 SELECT count(*) AS n, count(*) FILTER (WHERE q.s IS DISTINCT FROM t.s) AS mismatched
 FROM (SELECT id, s FROM sif_nested_idx WHERE x = 1) q JOIN sif_nested t USING (id)
@@ -103,7 +91,7 @@ n	mismatched
 2852	0
 
 statement ok
-CREATE TABLE sif_null_block (id INTEGER PRIMARY KEY, s STRUCT(a INTEGER, b VARCHAR))
+CREATE TABLE sif_null_block (id INTEGER PRIMARY KEY, s STRUCT(a INTEGER, b VARCHAR)) WITH (row_group_size = 2048)
 
 
 statement ok
@@ -113,11 +101,7 @@ FROM range(0, 6000) t(g)
 
 
 statement ok
-CREATE INDEX sif_null_block_idx ON sif_null_block USING inverted (id) INCLUDE (s) WITH (row_group_size = 2048)
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sif_null_block
+CREATE INDEX sif_null_block_idx ON sif_null_block USING inverted (id) INCLUDE (s)
 
 
 query

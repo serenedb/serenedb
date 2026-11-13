@@ -28,10 +28,7 @@
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/index/segment_reader.hpp>
-#include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/store/memory_directory.hpp>
-#include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <limits>
 #include <roaring/roaring.hh>
@@ -93,7 +90,8 @@ class ReindexRemovesTest : public ::testing::Test {
     options.reader_options.db = &EngineDb();
     options.column_options = [](irs::field_id) { return irs::ColumnOptions{}; };
     options.row_group_size = kRowGroupSize;
-    _writer = irs::IndexWriter::Make(_dir, irs::kOmCreate, std::move(options));
+    _writer =
+      ::tests::IndexWriter::Make(_dir, ::tests::kOmCreate, std::move(options));
   }
 
   void TearDown() override { _writer.reset(); }
@@ -110,8 +108,8 @@ class ReindexRemovesTest : public ::testing::Test {
       row_numbers[i] = rows[i].second;
       values.emplace_back(rows[i].second);
     }
-    auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
-    test::WriteValues(trx, values, &key, catalog::PkColumnKind::Has);
+    auto trx = _writer->GetBatch();
+    test::WriteValues(trx.Native(), values, &key, catalog::PkColumnKind::Has);
     EXPECT_TRUE(trx.Commit());
     _writer->RefreshCommit();
     for (const auto segment : Segments()) {
@@ -155,8 +153,10 @@ class ReindexRemovesTest : public ::testing::Test {
     const std::vector<uint64_t>& deleted_files,
     const std::vector<IcebergObserve::DeleteMask>& masks = {},
     std::vector<Row> eq_rows = {}) const {
-    return test::RemovedDocs(*ResolveRemoves(
-      _writer->GetSnapshot(), deleted_files, masks, std::move(eq_rows)));
+    const auto snapshot = _writer->GetSnapshot();
+    return test::RemovedDocs(
+      *ResolveRemoves(snapshot, deleted_files, masks, std::move(eq_rows))
+         .Finish(snapshot));
   }
 
   static std::vector<Doc> DocsOf(uint64_t segment,
@@ -193,25 +193,21 @@ class ReindexRemovesTest : public ::testing::Test {
   }
 
   irs::MemoryDirectory _dir;
-  irs::IndexWriter::ptr _writer;
+  ::tests::IndexWriter::ptr _writer;
 };
 
-TEST_F(ReindexRemovesTest, ARemovalNamesItsSegmentsAndHoldsTheirDocMaps) {
+TEST_F(ReindexRemovesTest, ARemovalNamesItsSegments) {
   const auto segment = AddFile(1, Rows(0, 4));
   const auto snapshot = _writer->GetSnapshot();
   const std::vector<uint64_t> files{1};
-  const auto removal = ResolveRemoves(snapshot, files, {}, {});
+  const auto removal = ResolveRemoves(snapshot, files, {}, {}).Finish(snapshot);
   ASSERT_EQ(1, removal->groups.size());
   EXPECT_EQ(segment, removal->groups.front().segment);
-  EXPECT_EQ(
-    irs::utils::downCast<irs::SegmentReader>(snapshot[0]).GetImpl()->DocMaps(),
-    removal->groups.front().maps);
 }
 
 TEST_F(ReindexRemovesTest, NothingToRemoveIsNoRemoval) {
   AddFile(1, Rows(0, 4));
-  EXPECT_TRUE(
-    ResolveRemoves(_writer->GetSnapshot(), {}, {}, {})->groups.empty());
+  EXPECT_TRUE(ResolveRemoves(_writer->GetSnapshot(), {}, {}, {}).Empty());
   EXPECT_TRUE(Resolve({7}).empty());
   EXPECT_TRUE(Resolve({}, {}, {{7, 0}}).empty());
 }
@@ -222,10 +218,8 @@ TEST_F(ReindexRemovesTest, DeletedFilesRemoveEveryRowOfTheFile) {
   const std::vector<Row> second_rows{{0, 9}, {1, 3}, {3, 0}};
   const auto second = AddSegment(second_rows);
   Mask(std::vector<Doc>{{first, DocAt(1)}});
-  EXPECT_EQ((std::vector<Doc>{{first, DocAt(0)},
-                              {first, DocAt(1)},
-                              {first, DocAt(2)},
-                              {second, DocAt(1)}}),
+  EXPECT_EQ((std::vector<Doc>{
+              {first, DocAt(0)}, {first, DocAt(2)}, {second, DocAt(1)}}),
             Resolve({1, 9}));
   EXPECT_EQ((std::vector<Doc>{{second, DocAt(2)}}), Resolve({3}));
   EXPECT_TRUE(Resolve({}, {{.file_id = 0, .rows = DeadRowsOf({8})}}).empty());
@@ -241,6 +235,14 @@ TEST_F(ReindexRemovesTest, DeadRowsRemoveOnlyTheRowsTheirFileHas) {
               {segment, DocAt(1)}, {segment, DocAt(2)}, {other, DocAt(1)}}),
             Resolve({}, {{.file_id = 1, .rows = DeadRowsOf({1, 2, 3, 6, 9})},
                          {.file_id = 2, .rows = DeadRowsOf({1, 40})}}));
+}
+
+TEST_F(ReindexRemovesTest, RowsTheSnapshotAlreadyRemovedAreNotRemovedAgain) {
+  const auto segment = AddFile(1, Rows(0, 4));
+  Mask(std::vector<Doc>{{segment, DocAt(1)}});
+  EXPECT_EQ((std::vector<Doc>{{segment, DocAt(2)}}),
+            Resolve({}, {{.file_id = 1, .rows = DeadRowsOf({1, 2})}}));
+  EXPECT_EQ(DocsOf(segment, {0, 2, 3}), Resolve({1}));
 }
 
 TEST_F(ReindexRemovesTest, DeadRowsPastTheEndOfAFileFindNothing) {

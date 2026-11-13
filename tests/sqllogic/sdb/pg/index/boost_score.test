@@ -26,10 +26,6 @@ INSERT INTO bsc VALUES
   (1, 'quick fox'), (2, 'quick fox'), (3, 'lazy dog'), (4, 'grey turtle')
 
 
-statement ok
-VACUUM (REFRESH_TABLE) bsc;
-
-
 # --- Phrase (PhraseQuery) ---
 
 query IR

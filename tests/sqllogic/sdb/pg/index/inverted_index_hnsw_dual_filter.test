@@ -6,7 +6,7 @@
 statement ok
 CREATE TABLE hd (pk INTEGER PRIMARY KEY, emb FLOAT[8], cat INTEGER,
   num INTEGER, tag VARCHAR, extra INTEGER)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX hd_idx ON hd
@@ -17,31 +17,27 @@ INSERT INTO hd SELECT i, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8], i % 10, i,
   CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END, i % 13
 FROM range(3000) t(i);
 
-statement ok
-VACUUM (REFRESH_TABLE) hd;
-
 query
 EXPLAIN SELECT pk FROM hd WHERE cat = 4 AND num < 2000 AND tag @@ 'even'
   ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─────────────────────────────────────────╮
-│ Index: hd                                                │
-│ Lookup: search                                           │
-│ Index Filter:                                            │
-│ ╭─ And ──────╮                                           │
-│ ╰──────┬─────╯                                           │
-│        ├─────────────────┬────────────────────╮          │
-│ ╭─ Terms ────╮  ╭─ Terms ┴───────╮  ╭─ Granular Range ─╮ │
-│ │ Field: cat │  │ Field: tag     │  │ Field: num       │ │
-│ │ Values: 4  │  │ Values: 'even' │  │ Range: <2000     │ │
-│ ╰────────────╯  ╰────────────────╯  ╰──────────────────╯ │
-│ Index or Column Filter: num < 2000, cat = 4              │
-│ Score: l2_distance(emb, FLOAT[8])                        │
-│ Top: 4                                                   │
-│ Projections: pk                                          │
-│ ~600 rows                                                │
-╰──────────────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────────────╮
+│ Table: hd                                                                │
+│ Index Filter:                                                            │
+│ ╭─ And ───────────────╮                                                  │
+│ ╰──────────┬──────────╯                                                  │
+│            ├────────────────────────┬───────────────────────╮            │
+│ ╭─ Terms ──┴──────────╮  ╭─ Terms ──┴─────────╮  ╭─ Granular Range ────╮ │
+│ │ Field: cat(numeric) │  │ Field: tag(string) │  │ Field: num(numeric) │ │
+│ │ Values: 4           │  │ Values: 'even'     │  │ Range: <2000        │ │
+│ ╰─────────────────────╯  ╰────────────────────╯  ╰─────────────────────╯ │
+│ Index or Column Filter: num < 2000, cat = 4                              │
+│ Score: l2_distance(emb, FLOAT[8])                                        │
+│ Top: 4                                                                   │
+│ Projections: pk                                                          │
+│ ~600 rows                                                                │
+╰──────────────────────────────────────────────────────────────────────────╯
 
 query
 EXPLAIN SELECT pk FROM hd WHERE cat = 3 AND extra = 5
@@ -49,13 +45,12 @@ EXPLAIN SELECT pk FROM hd WHERE cat = 3 AND extra = 5
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────╮
-│ Index: hd                         │
-│ Lookup: search                    │
+│ Table: hd                         │
 │ Index Filter:                     │
-│ ╭─ Term ─────╮                    │
-│ │ Field: cat │                    │
-│ │ Value: 3   │                    │
-│ ╰────────────╯                    │
+│ ╭─ Term ──────────────╮           │
+│ │ Field: cat(numeric) │           │
+│ │ Value: 3            │           │
+│ ╰─────────────────────╯           │
 │ Column Filter: extra = 5          │
 │ Index or Column Filter: cat = 3   │
 │ Score: l2_distance(emb, FLOAT[8]) │
@@ -256,9 +251,6 @@ pk
 # Deleted rows stay out on both sides.
 statement ok
 DELETE FROM hd WHERE pk IN (1503, 1493);
-
-statement ok
-VACUUM (REFRESH_TABLE) hd;
 
 statement ok
 SET sdb_hnsw_filter_mode = 'walk';

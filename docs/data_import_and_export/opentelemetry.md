@@ -5,7 +5,7 @@ split: headings
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
-SereneDB stores OpenTelemetry logs, traces and metrics in a fixed set of **search tables**, so a log body is full-text searchable and rankable with BM25 without a second index relation to maintain.
+SereneDB stores OpenTelemetry logs, traces and metrics in a fixed set of tables with inverted indexes, so a log body is full-text searchable and rankable with BM25 as soon as its export commits.
 
 The schema ships in the repository as [`resources/otel/otel_schema.sql`](https://github.com/serenedb/serenedb/blob/main/resources/otel/otel_schema.sql). Apply it with `psql`, or let the `otel` listener create it at startup.
 
@@ -149,7 +149,7 @@ OTLP data is stored by these rules:
 
 The five metric tables exist because the OTLP metric shapes do not share a column set — a gauge carries one `DOUBLE PRECISION`, a histogram carries bucket arrays, a summary carries quantile pairs.
 
-Each table is created `WITH (storage = 'search')` and gets one inverted index covering what dashboards filter, group and facet on. Columns outside the index are still stored and retrievable; they are read with a columnstore scan.
+Each table gets one inverted index covering what dashboards filter, group and facet on. Columns outside the index are still stored and retrievable; they are read with a columnstore scan.
 
 ## Your own schema
 
@@ -160,7 +160,7 @@ serened ./data --listen 'postgres://0.0.0.0:7890,http://0.0.0.0:4318?api=otel&cr
 psql -h 127.0.0.1 -p 7890 -U postgres -d postgres -f my_otel_schema.sql
 ```
 
-With `create_schema=false`, startup creates nothing — no database, schema, table or index — so the listener's database must exist, or the server does not start. A missing or mismatched table is logged as a warning at startup instead of stopping the server. Create each table where it does not exist yet: a search table's columns [cannot change](#schema-evolution) once it exists, so the example below uses plain `CREATE`, which fails on a table that is already there instead of skipping it.
+With `create_schema=false`, startup creates nothing — no database, schema, table or index — so the listener's database must exist, or the server does not start. A missing or mismatched table is logged as a warning at startup instead of stopping the server. Create each table where it does not exist yet: the example below uses plain `CREATE`, which fails on a table that is already there instead of skipping it, so a table of another shape is noticed rather than left in place.
 
 Each table must keep every shipped column in its shipped type, in any order; column options that keep the type, such as `USING COMPRESSION`, and the index are yours to choose. An extra column is left `NULL` by ingest, even with a `DEFAULT`.
 
@@ -194,7 +194,7 @@ Facet the attribute with `GROUP BY` on the indexed expression, which the index a
 
 <SqlLogicTest id="data_import_and_export/opentelemetry/attribute_counts" />
 
-`pragma_storage_info` shows the codec of each column:
+`pragma_storage_info` shows the codec each column is stored with. The rows a table still holds in memory are not compressed until it writes them to its segments, so write them out first:
 
 <SqlLogicTest id="data_import_and_export/opentelemetry/body_compression" />
 
@@ -387,11 +387,7 @@ On a column indexed without a dictionary, such as `service_name` or `severity_te
 
 ## Visibility
 
-Search tables are commit-time visible: a row becomes visible to *any* query after the next refresh, governed by `refresh_interval` (1 s by default). Force it when you need determinism, for example in tests:
-
-```sql
-VACUUM (REFRESH_TABLE) otel_logs;
-```
+The rows of an export are visible, full-text matches with `@@` included, to every query whose snapshot is taken after the export commits. A `REPEATABLE READ` transaction that took its snapshot earlier does not see them; see [Isolation Level](../sql/statements/transactions.md#isolation-level).
 
 ## Retention
 
@@ -403,6 +399,6 @@ Telemetry arrives in roughly time order, so the rows a job deletes are mostly co
 
 ## Schema evolution
 
-A search table's schema is fixed. `ALTER TABLE ADD COLUMN`, `DROP COLUMN` and `ALTER COLUMN TYPE` are rejected; an inverted index can still be added later, and it indexes the rows already in the table. To change the schema, create a new table with `CREATE TABLE ... AS SELECT`, switch writers to it, and rename.
+The tables take [`ALTER TABLE`](../sql/statements/alter_table/index.md) like any other table: ingest leaves an added column `NULL`, and an inverted index added later indexes the rows already in the table. A shipped column must keep its shipped type, or exports to the table fail with `503` as described above.
 
 Re-running the shipped DDL is safe — every statement is `IF NOT EXISTS`, including on a table that already holds rows. Startup creates only the tables that are missing, so a restart of a complete schema does no work at all.

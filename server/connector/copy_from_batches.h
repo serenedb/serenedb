@@ -30,7 +30,7 @@
 namespace sdb::connector {
 
 bool BindCopyFrom(duckdb::ClientContext& context,
-                  duckdb::CopyFromFunctionBindInput& input, bool binary);
+                  duckdb::CopyFromFunctionBindInput& input);
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> InitCopyFromGlobal(
   duckdb::ClientContext& context, const std::string& path,

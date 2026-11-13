@@ -39,7 +39,7 @@ run_one() {
 	sql=$(sed "s/@N@/${ROWS}/g" "$(dirname "$0")/iresearch_sweep/cases/${CASE}.sql")
 	$psql <<<"$sql" >/dev/null
 	$psql -c "CREATE INDEX sweep_idx ON sweep_t USING inverted(${_idx_clause});" >/dev/null
-	$psql -c "VACUUM (REFRESH_TABLE) sweep_t;" >/dev/null
+	$psql -c "VACUUM (FLUSH_TABLE) sweep_t;" >/dev/null
 
 	read_cpu_ticks() {
 		local rest=${1#*) }

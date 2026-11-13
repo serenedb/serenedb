@@ -39,7 +39,7 @@ One inverted index can serve several kinds of search, each documented on its own
 
 ## Creating an inverted index
 
-An inverted index is created by adding `USING inverted` to [`CREATE INDEX`](../../statements/create_index/inverted.md). The example below indexes two text columns with a dictionary, then queries the index by name:
+An inverted index is created with [`CREATE INDEX`](../../statements/create_index/inverted.md); `USING inverted` names it explicitly and is optional. The example below indexes two text columns with a dictionary, then queries the index by name:
 
 <SqlLogicTest id="sql/indexes/inverted/index/example_001" />
 
@@ -49,7 +49,7 @@ A trailing `WHERE <predicate>` builds a [partial index](../../statements/create_
 
 <DocCallout type="tip">
 
-After loading data, run `VACUUM (REFRESH_TABLE) table_name` to make newly inserted rows visible to the index immediately. A background thread otherwise refreshes the index on an interval — see [Maintenance](./maintenance.md).
+The index is part of its table: a search sees the rows its transaction's snapshot sees, like a scan of the table, so it finds the rows committed before the snapshot was taken, and the transaction finds its own rows through the index before it commits. See [Maintenance](./maintenance.md) for visibility and compaction.
 
 </DocCallout>
 
@@ -73,7 +73,7 @@ Because operator classes are per-column, a single index can mix full-text, verba
 
 <DocCallout type="tip">
 
-**Field order does not matter.** This is a key difference from a regular composite (ART) index, where column order is significant and only a query constraining a *leading prefix* of the columns can use the index. An inverted index indexes each field independently: the order of fields in `USING inverted (...)` carries no meaning, and a query may constrain **any subset of the indexed fields, in any combination**, and still be served entirely by the index.
+**Field order does not matter.** Unlike a composite B-tree index, where column order is significant and only a query constraining a *leading prefix* of the columns can use the index, an inverted index indexes each field independently: the order of fields in `USING inverted (...)` carries no meaning, and a query may constrain **any subset of the indexed fields, in any combination**, and still be served entirely by the index.
 
 </DocCallout>
 
@@ -100,7 +100,7 @@ FROM articles_idx          -- the index, by name
 WHERE body @@ 'search';    -- @@ match on an indexed column
 ```
 
-On a regular table, a `TSQUERY` predicate (`@@`, `ST_*`, range functions) only resolves **against an inverted-indexed column inside the index relation** — issuing it against the table raises an error. A table created `WITH (storage = 'search')` also answers `@@` on itself, for the columns its inverted indexes cover. [Vector kNN](./vector-search.md) reads the index the same way: `ORDER BY emb <-> $q LIMIT k` against the base table still answers, but from a full scan of the table.
+A `TSQUERY` predicate (`@@`, `ST_*`, range functions) needs **a column an inverted index covers**: it resolves against the table itself and against the index relation, and raises an error on any other column. [Vector kNN](./vector-search.md) reads the index the same way: `ORDER BY emb <-> $q LIMIT k` against the base table still answers, but from a full scan of the table.
 
 <DocCallout type="tip">
 
@@ -120,7 +120,7 @@ See [What to Index](./modeling.md) for choosing indexed vs. `INCLUDE`d columns, 
 
 An inverted index can be built over a base **table** or a **view**:
 
-- **Base tables** need no `PRIMARY KEY`: the index identifies each row by the table's hidden row id, and the background refresh tracks inserts, updates and deletes.
+- **Tables** need no `PRIMARY KEY`: the index is part of the table and changes with it, transaction by transaction.
 - **Views** let you index data the database does not own a primary copy of — including [external Parquet/CSV/JSON files](./external-data.md) on disk or S3. A view-backed index holds a snapshot of its source that `REINDEX INDEX` or the `reindex_interval` option refreshes; see [Refreshing the index](./views.md#refreshing-the-index).
 
 <SqlLogicTest id="sql/indexes/inverted/index/example_005" />
@@ -129,12 +129,12 @@ See [Indexing Views](./views.md) and [Indexing External Data](./external-data.md
 
 ## Lifecycle
 
-An inverted index is **eventually consistent**: after a write, the new rows become searchable once the index is refreshed — immediately with `VACUUM (REFRESH_TABLE)`, or automatically by the background refresh thread. Compaction merges segments in the background. See [Maintenance & Introspection](./maintenance.md) for the full refresh / compaction / statistics model and how to inspect an index.
+An inverted index on a table is **transactional**: it changes in the same transactions as the table and at the same isolation level, so a search sees exactly the rows a scan of the table sees. Compaction merges segments in the background. See [Maintenance & Introspection](./maintenance.md) for compaction, statistics and how to inspect an index.
 
 ## Limitations
 
 - Indexed expressions cannot contain aggregates, window functions, subqueries, volatile functions (e.g. `random()`) or functions that read the clock, the session or the catalog (e.g. `now()`, `current_user`).
-- Columns of type `BIGNUM`, `INTERVAL`, `BIT`, `ENUM`, `MAP`, `UNION`, `VARIANT` or `STRUCT` (`ROW(...)`) cannot be searchable keys, and neither can arrays of these types, arrays of arrays or `GEOMETRY` arrays. A `GEOMETRY` column is a key only with a [geo dictionary](./geospatial-search.md). `INCLUDE` stores values of every one of these types.
+- Columns of type `BIGNUM`, `INTERVAL`, `BIT`, `ENUM`, `MAP`, `UNION`, `VARIANT` or `STRUCT` (`ROW(...)`) cannot be searchable keys, and neither can arrays of these types, arrays of arrays or `GEOMETRY` arrays. A `GEOMETRY` column is a key only with a [geo dictionary](./geospatial-search.md). `INCLUDE` stores values of every one of these types. With `USING inverted` such a column fails the statement; a `CREATE INDEX` on a table without `USING inverted` stores it in the index instead, and `CREATE UNIQUE INDEX` still enforces its uniqueness.
 - A column or expression is listed once as a searchable key, with one dictionary or none; besides that, only `included()` can list it again.
 
 ## See also

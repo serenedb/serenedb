@@ -89,7 +89,7 @@ onlyif serenedb
 statement error
 DROP ROLE dov_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dov_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dov_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 # A *grantee* of the view (not its owner) is also pinned by the dependency:
@@ -109,7 +109,7 @@ onlyif serenedb
 statement error
 DROP ROLE dov_kostya;
 ----
-db error: ERROR: Cannot drop entry "dov_kostya" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dov_kostya" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 # Revoke the grant -> dependency gone -> kostya drops.
@@ -142,7 +142,7 @@ onlyif serenedb
 statement error
 DROP ROLE dov_clickclack;
 ----
-db error: ERROR: Cannot drop entry "dov_clickclack" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dov_clickclack" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 # DROP VIEW removes the dependency -> clickclack drops.
@@ -195,7 +195,7 @@ onlyif serenedb
 statement error
 DROP ROLE dov_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dov_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dov_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 # DROP VIEW v1 RESTRICT is refused because v2 (a view) depends on it. This is an
@@ -224,7 +224,7 @@ onlyif serenedb
 statement error
 DROP ROLE dov_clickclack;
 ----
-db error: ERROR: Cannot drop entry "dov_clickclack" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dov_clickclack" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 # vedernikoff still owns the base view -> DROP ROLE refused.
@@ -239,7 +239,7 @@ onlyif serenedb
 statement error
 DROP ROLE dov_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dov_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dov_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 # DROP VIEW v1 CASCADE drops the dependent v2 too, clearing both ownerships.

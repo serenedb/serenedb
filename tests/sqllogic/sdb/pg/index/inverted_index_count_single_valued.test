@@ -7,11 +7,11 @@
 
 statement ok
 CREATE TABLE csv_t (id INT PRIMARY KEY, v INT, s VARCHAR)
+  WITH (compaction_interval = 0, row_group_size = 2048)
 
 
 statement ok
 CREATE INDEX csv_idx ON csv_t USING inverted (id, v, s)
-  WITH (compaction_interval = 0, row_group_size = 2048)
 
 
 statement ok
@@ -21,7 +21,7 @@ FROM generate_series(1, 20000) g(i)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) csv_t
+VACUUM (FLUSH_TABLE) csv_t
 
 
 statement ok
@@ -31,7 +31,7 @@ FROM generate_series(20001, 30000) g(i)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) csv_t
+VACUUM (FLUSH_TABLE) csv_t
 
 
 query
@@ -166,7 +166,7 @@ DELETE FROM csv_t WHERE id BETWEEN 5000 AND 9000
 
 
 statement ok
-VACUUM (REFRESH_TABLE) csv_t
+VACUUM (FLUSH_TABLE) csv_t
 
 
 query
@@ -289,6 +289,7 @@ QUERY PLAN
 ╰─────────────┬────────────╯
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: csv_idx           │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Granular Range ────╮  │
 │ │ Field: v(numeric)   │  │
@@ -317,6 +318,7 @@ QUERY PLAN
 ╰─────────────┒┎───────────╯
 ╭─ TABLE_SCAN ┚┖───────────╮
 │ Index: csv_idx           │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Granular Range ────╮  │
 │ │ Field: v(numeric)   │  │
@@ -331,11 +333,11 @@ QUERY PLAN
 # several overlapping clauses select still counts its rows once.
 statement ok
 CREATE TABLE csv_dup (id INT PRIMARY KEY, v INT)
+  WITH (compaction_interval = 0)
 
 
 statement ok
 CREATE INDEX csv_dup_idx ON csv_dup USING inverted (id, v)
-  WITH (compaction_interval = 0)
 
 
 statement ok
@@ -343,7 +345,7 @@ INSERT INTO csv_dup SELECT i, 1 + i % 100 FROM generate_series(0, 299) g(i)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) csv_dup
+VACUUM (FLUSH_TABLE) csv_dup
 
 
 query

@@ -23,7 +23,7 @@ CREATE INDEX wal_wild_ni_idx ON wal_wild_ni_t
   USING inverted(b wal_wild_ni_dict);
 
 statement ok
-VACUUM (REFRESH_TABLE) wal_wild_ni_t;
+VACUUM (FLUSH_TABLE) wal_wild_ni_t;
 
 # Plan: ts_like filter consults analyzer-output cs aux column;
 # `b` projection falls back to RocksDB lookup (no INCLUDE).
@@ -33,7 +33,7 @@ EXPLAIN SELECT pk, b FROM wal_wild_ni_idx WHERE b @@ ts_like('percent_alpha_one'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────╮
 │ Index: wal_wild_ni_idx                     │
-│ Lookup: table                              │
+│ Lookup: search                             │
 │ Index Filter:                              │
 │ ╭─ Wildcard NGram ───────────────────────╮ │
 │ │ Field: b(string)                       │ │
@@ -73,10 +73,6 @@ WHERE b @@ ts_like('percent_alpha_one');
 pk	b
 1	percent_alpha_one
 
-# Freeze iresearch commits before the post-crash batch.
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
-
 statement ok
 INSERT INTO wal_wild_ni_t VALUES (2, 'percent_beta_two'),
                                  (3, 'percent_gamma_three');
@@ -92,7 +88,7 @@ SELECT 1;
 
 connection wal_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (REFRESH_TABLE) wal_wild_ni_t;
+SELECT 1;
 
 # Pre-crash row queryable.
 connection wal_after

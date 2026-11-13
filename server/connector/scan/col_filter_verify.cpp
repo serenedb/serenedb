@@ -54,7 +54,7 @@ void ColFilterVerify::Begin(const irs::SubReader& seg,
   const auto* col_reader = seg.GetColReader();
   SDB_ENSURE(col_reader != nullptr,
              "`.col` table filter requires a columnstore segment");
-  if (_ctx) {
+  if (_ctx && _ctx->GetBlockAllocSize() == col_reader->BlockAllocSize()) {
     _ctx->Reset(*col_reader);
   } else {
     _ctx = std::make_unique<irs::ReadContext>(*col_reader);
@@ -202,12 +202,30 @@ void ClassifySegmentColFilters(
   }
 }
 
+bool UsesColumnForms(const ScanGlobalState& g, const irs::SubReader& seg) {
+  return g.vector_scorer == nullptr && !g.dual_filters.empty() &&
+         RowsOnlySegment(seg);
+}
+
 void ScanLocalState::Classify(ScanGlobalState& g, uint32_t seg) {
   if (classified_seg == seg) {
     return;
   }
-  ClassifySegmentColFilters((*g.reader)[seg], g, g.col_filters, filter_states,
-                            seg_cls, true);
+  const auto& segment = (*g.reader)[seg];
+  ClassifySegmentColFilters(segment, g, g.col_filters, filter_states, seg_cls,
+                            true);
+  if (!seg_cls.segment_dead && UsesColumnForms(g, segment)) {
+    ClassifySegmentColFilters(segment, g, g.dual_filters, filter_states,
+                              column_form_cls, true);
+    if (column_form_cls.segment_dead) {
+      seg_cls.segment_dead = true;
+      seg_cls.active.clear();
+    } else {
+      seg_cls.active.insert(seg_cls.active.end(),
+                            column_form_cls.active.begin(),
+                            column_form_cls.active.end());
+    }
+  }
   classified_seg = seg;
 }
 

@@ -95,14 +95,16 @@ t_pkey	i
 statement error
 DROP SEQUENCE csr_b.t_id_seq;
 ----
-db error: ERROR: Cannot drop entry "t_id_seq" because there are entries that depend on it.
+db error: ERROR: cannot drop sequence csr_b.t_id_seq because other objects depend on it
+DETAIL: default value for column id of table csr_b.t depends on sequence csr_b.t_id_seq
 <slt:ignore>
 
 
 statement error
 DROP TYPE csr_b.mood;
 ----
-db error: ERROR: Cannot drop entry "mood" because there are entries that depend on it.
+db error: ERROR: cannot drop type csr_b.mood because other objects depend on it
+DETAIL: column m of table csr_b.m depends on type csr_b.mood
 <slt:ignore>
 
 
@@ -112,7 +114,8 @@ ALTER TABLE csr_b.m ADD COLUMN extra INTEGER;
 statement error
 DROP TYPE csr_b.mood;
 ----
-db error: ERROR: Cannot drop entry "mood" because there are entries that depend on it.
+db error: ERROR: cannot drop type csr_b.mood because other objects depend on it
+DETAIL: column m of table csr_b.m depends on type csr_b.mood
 <slt:ignore>
 
 
@@ -149,18 +152,23 @@ statement ok
 INSERT INTO csr_b.t (v) VALUES (4);
 
 
-# A view stores the table's name as text, so it blocks the rename the way it
-# blocks a table rename.
 statement ok
 CREATE VIEW csr_b.v AS SELECT id FROM csr_b.t;
 
-statement error
-ALTER SCHEMA csr_b RENAME TO csr_c;
-----
-db error: ERROR: Cannot alter entry "csr_b" because there are entries that depend on it.
-view "v" depends on table "t".
-Drop the dependent entries first and recreate them after the change.
+statement ok
+BEGIN;
 
+statement ok
+ALTER SCHEMA csr_b RENAME TO csr_c;
+
+query
+SELECT count(*) AS n FROM csr_c.v;
+----
+n
+4
+
+statement ok
+ROLLBACK;
 
 statement ok
 DROP VIEW csr_b.v;
@@ -169,7 +177,7 @@ DROP VIEW csr_b.v;
 statement error
 ALTER SCHEMA csr_b RENAME TO public;
 ----
-db error: ERROR: Could not rename "csr_b" to "public": another entry with this name already exists!
+db error: ERROR: schema "public" already exists
 
 
 # Two renames of one schema conflict like any two alters of one entry, and the
@@ -186,7 +194,7 @@ connection s2
 statement error
 ALTER SCHEMA csr_b RENAME TO csr_d;
 ----
-db error: ERROR: Catalog write-write conflict on alter with "csr_b"
+db error: ERROR: could not serialize access due to concurrent update of "csr_b"
 
 
 connection s1
@@ -274,7 +282,7 @@ COPY FROM DATABASE ${__DATABASE__} TO csr_copy_${__DATABASE__};
 statement error
 DROP TYPE csr_copy_${__DATABASE__}.csr_copy_b.mood;
 ----
-db error: ERROR: Cannot drop entry "mood" because there are entries that depend on it.
+db error: ERROR: cannot drop type mood because other objects depend on it
 <slt:ignore>
 
 

@@ -21,20 +21,16 @@ CREATE TEXT SEARCH DICTIONARY ns_tx AS
 
 statement ok
 CREATE TABLE ns(id INTEGER PRIMARY KEY, scope VARCHAR, body VARCHAR,
-                pad VARCHAR NOT NULL)
+                pad VARCHAR NOT NULL) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX ns_idx ON ns USING inverted(scope ns_kw, body ns_tx, pad ns_kw)
-    WITH (refresh_interval = 0, compaction_interval = 0)
 
 statement ok
 INSERT INTO ns VALUES
   (1, 'a',  'red blue', 'p'),
   (2, NULL, NULL,       'p'),
   (3, 'y',  'red',      'p')
-
-statement ok
-VACUUM (REFRESH_TABLE) ns;
 
 query I
 SELECT id FROM ns WHERE scope != 'y' ORDER BY id
@@ -54,7 +50,7 @@ EXPLAIN SELECT id FROM ns_idx WHERE scope != 'y'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────╮
 │ Index: ns_idx                                    │
-│ Lookup: table                                    │
+│ Lookup: search                                   │
 │ Index Filter:                                    │
 │ ╭─ Not ────────────────╮                         │
 │ ╰───────────┬──────────╯                         │
@@ -85,7 +81,7 @@ EXPLAIN SELECT id FROM ns_idx WHERE scope NOT IN ('y', 'z')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────╮
 │ Index: ns_idx                                    │
-│ Lookup: table                                    │
+│ Lookup: search                                   │
 │ Index Filter:                                    │
 │ ╭─ Not ────────────────╮                         │
 │ ╰───────────┬──────────╯                         │
@@ -128,7 +124,7 @@ EXPLAIN SELECT id FROM ns_idx WHERE scope NOT LIKE 'y%'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────╮
 │ Index: ns_idx                                    │
-│ Lookup: table                                    │
+│ Lookup: search                                   │
 │ Index Filter:                                    │
 │ ╭─ Not ──────────────╮                           │
 │ ╰──────────┬─────────╯                           │
@@ -160,20 +156,14 @@ query
 EXPLAIN SELECT id FROM ns_idx WHERE scope IS DISTINCT FROM 'y'
 ----
 QUERY PLAN
-╭─ PROJECTION ───────────────────────────╮
-│ Projections: #1                        │
-│ ~1 row                                 │
-╰────────────────────┬───────────────────╯
-╭─ FILTER ───────────┴───────────────────╮
-│ Expression: scope IS DISTINCT FROM 'y' │
-│ ~1 row                                 │
-╰────────────────────┬───────────────────╯
-╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: ns_idx                          │
-│ Lookup: table                          │
-│ Projections: scope, id                 │
-│ ~3 rows                                │
-╰────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────────╮
+│ Index: ns_idx                  │
+│ Lookup: search                 │
+│ Projections: id                │
+│ Column Filter:                 │
+│ scope IS DISTINCT FROM 'y'     │
+│ ~1 row                         │
+╰────────────────────────────────╯
 
 query I
 SELECT id FROM ns WHERE scope IS NULL ORDER BY id
@@ -193,7 +183,7 @@ EXPLAIN SELECT id FROM ns_idx WHERE scope IS NULL
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────╮
 │ Index: ns_idx          │
-│ Lookup: table          │
+│ Lookup: search         │
 │ Index Filter:          │
 │ ╭─ Term ─────────────╮ │
 │ │ Field: scope(null) │ │
@@ -223,7 +213,7 @@ EXPLAIN SELECT id FROM ns_idx WHERE scope IS NOT NULL
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────╮
 │ Index: ns_idx          │
-│ Lookup: table          │
+│ Lookup: search         │
 │ Index Filter:          │
 │ ╭─ Not ──────────────╮ │
 │ ╰──────────┬─────────╯ │
@@ -248,7 +238,7 @@ EXPLAIN SELECT id FROM ns_idx WHERE NOT (body @@ 'blue')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────────╮
 │ Index: ns_idx                                  │
-│ Lookup: table                                  │
+│ Lookup: search                                 │
 │ Index Filter:                                  │
 │ ╭─ Not ───────────────╮                        │
 │ ╰──────────┬──────────╯                        │
@@ -292,7 +282,7 @@ EXPLAIN SELECT id FROM ns_idx WHERE body @@ !!(ts_any(['blue', 'green']))
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────────────╮
 │ Index: ns_idx                                      │
-│ Lookup: table                                      │
+│ Lookup: search                                     │
 │ Index Filter:                                      │
 │ ╭─ Not ───────────────────╮                        │
 │ ╰────────────┬────────────╯                        │
@@ -324,7 +314,7 @@ EXPLAIN SELECT id FROM ns_idx WHERE NOT (scope < 'y')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: ns_idx            │
-│ Lookup: table            │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Range ──────────────╮ │
 │ │ Field: scope(string) │ │
@@ -354,7 +344,7 @@ EXPLAIN SELECT id FROM ns_idx WHERE NOT (scope = 'y' OR pad = 'q')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────────────╮
 │ Index: ns_idx                                                            │
-│ Lookup: table                                                            │
+│ Lookup: search                                                           │
 │ Index Filter:                                                            │
 │ ╭─ Not ────────────────╮                                                 │
 │ ╰───────────┬──────────╯                                                 │
@@ -387,20 +377,13 @@ query
 EXPLAIN SELECT id FROM ns_idx WHERE pad IS NULL
 ----
 QUERY PLAN
-╭─ PROJECTION ────────────╮
-│ Projections: #1         │
-│ ~1 row                  │
-╰────────────┬────────────╯
-╭─ FILTER ───┴────────────╮
-│ Expression: pad IS NULL │
-│ ~1 row                  │
-╰────────────┬────────────╯
-╭─ IRESEARCH_SCAN ────────╮
-│ Index: ns_idx           │
-│ Lookup: table           │
-│ Projections: pad, id    │
-│ ~3 rows                 │
-╰─────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────╮
+│ Index: ns_idx              │
+│ Lookup: search             │
+│ Projections: id            │
+│ Column Filter: pad IS NULL │
+│ ~1 row                     │
+╰────────────────────────────╯
 
 query
 EXPLAIN SELECT id FROM ns_idx WHERE pad != 'q'
@@ -408,7 +391,7 @@ EXPLAIN SELECT id FROM ns_idx WHERE pad != 'q'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────╮
 │ Index: ns_idx          │
-│ Lookup: table          │
+│ Lookup: search         │
 │ Index Filter:          │
 │ ╭─ Not ──────────────╮ │
 │ ╰──────────┬─────────╯ │
@@ -439,7 +422,7 @@ EXPLAIN SELECT id FROM ns_idx WHERE scope NOT IN ('y', 'z', NULL)
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─╮
 │ Index: ns_idx    │
-│ Lookup: table    │
+│ Lookup: search   │
 │ Index Filter:    │
 │ ╭─ Empty ─╮      │
 │ ╰─────────╯      │
@@ -464,7 +447,7 @@ EXPLAIN SELECT id FROM ns_idx WHERE NOT (body @@ '')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────╮
 │ Index: ns_idx         │
-│ Lookup: table         │
+│ Lookup: search        │
 │ Index Filter:         │
 │ ╭─ Not ─────────────╮ │
 │ ╰─────────┬─────────╯ │
@@ -523,7 +506,7 @@ EXPLAIN SELECT id FROM ns_idx WHERE NOT (body @@ ts_lt(''))
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────╮
 │ Index: ns_idx         │
-│ Lookup: table         │
+│ Lookup: search        │
 │ Index Filter:         │
 │ ╭─ Not ─────────────╮ │
 │ ╰─────────┬─────────╯ │
@@ -538,17 +521,13 @@ QUERY PLAN
 # ---- Negated strict disjunction over an indexed EXPRESSION collects the
 # expression's own null marker (raw itself is not indexed; lower(raw) is).
 statement ok
-CREATE TABLE nse(id INTEGER PRIMARY KEY, raw VARCHAR)
+CREATE TABLE nse(id INTEGER PRIMARY KEY, raw VARCHAR) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX nse_idx ON nse USING inverted(id, (lower(raw)) ns_kw)
-    WITH (refresh_interval = 0, compaction_interval = 0)
 
 statement ok
 INSERT INTO nse VALUES (1, 'A'), (2, NULL), (3, 'C')
-
-statement ok
-VACUUM (REFRESH_TABLE) nse
 
 query I
 SELECT id FROM nse WHERE NOT (lower(raw) = 'a' OR lower(raw) = 'b')
@@ -571,7 +550,7 @@ WHERE NOT (lower(raw) = 'a' OR lower(raw) = 'b')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────────────────────╮
 │ Index: nse_idx                                             │
-│ Lookup: table                                              │
+│ Lookup: search                                             │
 │ Index Filter:                                              │
 │ ╭─ Not ─────────────────────╮                              │
 │ ╰─────────────┬─────────────╯                              │
@@ -591,11 +570,10 @@ QUERY PLAN
 # seed-12345 distribution; the drop needs this doc layout.
 statement ok
 CREATE TABLE nsx(id INTEGER PRIMARY KEY, kw VARCHAR, num INTEGER,
-                 pad VARCHAR NOT NULL)
+                 pad VARCHAR NOT NULL) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX nsx_idx ON nsx USING inverted(id, kw ns_kw, num, pad ns_kw)
-    WITH (refresh_interval = 0, compaction_interval = 0)
 
 statement ok
 INSERT INTO nsx VALUES
@@ -640,9 +618,6 @@ INSERT INTO nsx VALUES
   (39, 'c', 5, 'q'),
   (40, 'a', 6, 'p')
 
-statement ok
-VACUUM (REFRESH_TABLE) nsx
-
 query I
 SELECT id FROM nsx WHERE num > 3 AND ((num != 4 AND kw IS NULL) OR pad = 'q')
 ORDER BY id
@@ -676,11 +651,10 @@ id
 # in BitsetDocIterator::advance). Corpus is the fuzz seed-7 layout.
 statement ok
 CREATE TABLE nsx7(id INTEGER PRIMARY KEY, kw VARCHAR, num INTEGER,
-                  pad VARCHAR NOT NULL)
+                  pad VARCHAR NOT NULL) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX nsx7_idx ON nsx7 USING inverted(id, kw ns_kw, num, pad ns_kw)
-    WITH (refresh_interval = 0, compaction_interval = 0)
 
 statement ok
 INSERT INTO nsx7 VALUES
@@ -724,9 +698,6 @@ INSERT INTO nsx7 VALUES
   (38, 'a', NULL, 'q'),
   (39, 'd', 3, 'p'),
   (40, NULL, 6, 'p')
-
-statement ok
-VACUUM (REFRESH_TABLE) nsx7
 
 query I
 SELECT id FROM nsx7 WHERE (num < 6 OR num > 7) AND num BETWEEN 4 AND 9

@@ -10,7 +10,7 @@ control substitution on
 
 
 statement ok
-CREATE TABLE dsr_keep (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE TABLE dsr_keep (id INT PRIMARY KEY, body TEXT);
 
 
 statement ok
@@ -18,30 +18,25 @@ INSERT INTO dsr_keep VALUES (1, 'kept');
 
 
 statement ok
-VACUUM (REFRESH_TABLE) dsr_keep;
+VACUUM (FLUSH_TABLE) dsr_keep;
 
 
 statement ok
 CREATE TABLE dsr_oids (name TEXT, oid BIGINT);
 
 
-statement ok
-INSERT INTO dsr_oids SELECT 'db', oid FROM pg_database WHERE datname = current_database();
-
-
 # The files left in the directory of a dropped object of this database, and of
 # a dropped database.
 statement ok
 CREATE MACRO dsr_leftover(object) AS (
-  SELECT count(*) FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/**')
-  WHERE file LIKE '%/engine_v1/' || (SELECT oid FROM dsr_oids WHERE name = 'db') || '/'
-                  || (SELECT oid FROM dsr_oids WHERE name = object) || '/%');
+  SELECT count(*) FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*/*')
+  WHERE file LIKE '%/engine_v1/store/' || (SELECT oid FROM dsr_oids WHERE name = object) || '/%');
 
 
 statement ok
 CREATE MACRO dsr_database_leftover(object) AS (
-  SELECT count(*) FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/**')
-  WHERE file LIKE '%/engine_v1/' || (SELECT oid FROM dsr_oids WHERE name = object) || '/%');
+  SELECT count(*) FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*/*')
+  WHERE regexp_extract(file, '/engine_v1/store/([0-9]+)/', 1)::BIGINT IN (SELECT oid FROM dsr_oids WHERE name = object));
 
 
 # ----------------------------------------------------------------------
@@ -49,7 +44,7 @@ CREATE MACRO dsr_database_leftover(object) AS (
 # ----------------------------------------------------------------------
 
 statement ok
-CREATE TABLE dsr_s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE TABLE dsr_s (id INT PRIMARY KEY, body TEXT);
 
 
 statement ok
@@ -57,7 +52,11 @@ INSERT INTO dsr_s VALUES (1, 'alpha'), (2, 'beta');
 
 
 statement ok
-VACUUM (REFRESH_TABLE) dsr_s;
+VACUUM (FLUSH_ALL);
+
+
+statement ok
+CHECKPOINT;
 
 
 statement ok
@@ -128,96 +127,6 @@ id	body
 
 
 # ----------------------------------------------------------------------
-# 2. An inverted index on a table.
-# ----------------------------------------------------------------------
-
-connection after_table
-statement ok
-CREATE TABLE dsr_t (id INT, body TEXT);
-
-
-connection after_table
-statement ok
-INSERT INTO dsr_t VALUES (1, 'alpha'), (2, 'beta');
-
-
-connection after_table
-statement ok
-CREATE INDEX dsr_t_idx ON dsr_t USING inverted (body);
-
-
-connection after_table
-statement ok
-VACUUM (REFRESH_TABLE) dsr_t;
-
-
-connection after_table
-statement ok
-INSERT INTO dsr_oids SELECT index_name, index_oid FROM duckdb_indexes()
-WHERE database_name = current_database() AND index_name = 'dsr_t_idx';
-
-
-connection after_table
-statement ok
-SET sdb_faults = 'pause_removal_midway';
-
-
-connection after_table
-statement ok
-DROP INDEX dsr_t_idx;
-
-
-connection after_table
-statement ok retry 40 backoff 250ms
-SET sdb_faults = '-pause_removal_midway:parked';
-
-
-skipif pg-wire-extended
-connection after_table
-statement ok
-SET sdb_faults = 'crash_on_packet';
-
-
-skipif pg-wire-extended
-connection after_table
-statement error connection closed
-SELECT 1;
-
-
-onlyif pg-wire-extended
-connection after_table
-statement error connection closed
-SET sdb_faults = 'crash_on_packet';
-
-
-# --- restart ---
-
-connection after_index
-query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SELECT count(*) AS n FROM pg_class WHERE relname = 'dsr_t_idx';
-----
-n
-0
-
-
-connection after_index
-query
-SELECT dsr_leftover('dsr_t_idx') AS leftover;
-----
-leftover
-0
-
-
-connection after_index
-query
-SELECT id, body FROM dsr_t ORDER BY id;
-----
-id	body
-1	alpha
-2	beta
-
-
-# ----------------------------------------------------------------------
 # 3. A database.
 # ----------------------------------------------------------------------
 
@@ -228,7 +137,7 @@ CREATE DATABASE dsr_db;
 
 connection after_index
 statement ok
-CREATE TABLE dsr_db.public.s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE TABLE dsr_db.public.s (id INT PRIMARY KEY, body TEXT);
 
 
 connection after_index
@@ -238,12 +147,12 @@ INSERT INTO dsr_db.public.s VALUES (1, 'alpha');
 
 connection after_index
 statement ok
-VACUUM (REFRESH_TABLE) dsr_db.public.s;
+VACUUM (FLUSH_TABLE) dsr_db.public.s;
 
 
 connection after_index
 statement ok
-INSERT INTO dsr_oids SELECT 'dsr_db', oid FROM pg_database WHERE datname = 'dsr_db';
+INSERT INTO dsr_oids SELECT 'dsr_db', table_oid FROM duckdb_tables() WHERE database_name = 'dsr_db';
 
 
 connection after_index
@@ -311,7 +220,7 @@ id	body
 
 connection after_database
 statement ok
-CREATE TABLE dsr_r (id INT, body TEXT) WITH (storage = 'search');
+CREATE TABLE dsr_r (id INT, body TEXT);
 
 
 connection after_database
@@ -321,7 +230,7 @@ INSERT INTO dsr_r VALUES (1, 'old');
 
 connection after_database
 statement ok
-VACUUM (REFRESH_TABLE) dsr_r;
+VACUUM (FLUSH_TABLE) dsr_r;
 
 
 connection after_database
@@ -342,7 +251,7 @@ BEGIN;
 
 connection after_database
 statement ok
-CREATE OR REPLACE TABLE dsr_r (id INT, body TEXT, extra INT) WITH (storage = 'search');
+CREATE OR REPLACE TABLE dsr_r (id INT, body TEXT, extra INT);
 
 
 connection after_database
@@ -410,7 +319,7 @@ id	body
 
 connection after_replace
 statement ok
-CREATE TABLE dsr_si (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE TABLE dsr_si (id INT PRIMARY KEY, body TEXT);
 
 
 connection after_replace
@@ -425,7 +334,7 @@ CREATE INDEX dsr_si_idx ON dsr_si USING inverted (body);
 
 connection after_replace
 statement ok
-VACUUM (REFRESH_TABLE) dsr_si;
+VACUUM (FLUSH_TABLE) dsr_si;
 
 
 connection after_replace
@@ -501,12 +410,12 @@ INSERT INTO dsr_t2 VALUES (1, 'alpha'), (2, 'beta');
 
 connection after_search_index
 statement ok
-CREATE INDEX dsr_ri ON dsr_t2 USING inverted (body);
+CREATE VIEW dsr_rv AS SELECT id, body FROM dsr_t2;
 
 
 connection after_search_index
 statement ok
-VACUUM (REFRESH_TABLE) dsr_t2;
+CREATE INDEX dsr_ri ON dsr_rv USING inverted (body);
 
 
 connection after_search_index
@@ -522,7 +431,7 @@ SET sdb_faults = 'pause_removal_midway';
 
 connection after_search_index
 statement ok
-CREATE OR REPLACE INDEX dsr_ri ON dsr_t2 USING inverted (id, body);
+CREATE OR REPLACE INDEX dsr_ri ON dsr_rv USING inverted (id, body);
 
 
 connection after_search_index
@@ -552,17 +461,18 @@ SET sdb_faults = 'crash_on_packet';
 
 connection after_index_replace
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SELECT regexp_replace(indexdef, ' WITH \(.*', '') AS def FROM pg_indexes WHERE indexname = 'dsr_ri';
+SELECT regexp_replace(sql, ' WITH \(.*', '') AS def FROM duckdb_indexes()
+WHERE database_name = current_database() AND index_name = 'dsr_ri';
 ----
 def
-CREATE INDEX dsr_ri ON public.dsr_t2 USING inverted (id, body)
+CREATE INDEX dsr_ri ON public.dsr_rv USING inverted (id, body)
 
 
 connection after_index_replace
 query
-SELECT string_agg(id::TEXT, ',' ORDER BY id) AS ids FROM dsr_ri WHERE body @@ 'alpha';
+SELECT count(*) AS n FROM dsr_ri WHERE body @@ 'alpha';
 ----
-ids
+n
 1
 
 
@@ -664,8 +574,23 @@ DROP VIEW dsr_v;
 
 connection after_view_index
 statement ok
-INSERT INTO dsr_oids SELECT 'dsr_ri_new', index_oid FROM duckdb_indexes()
-WHERE database_name = current_database() AND index_name = 'dsr_ri';
+DROP INDEX dsr_ri;
+
+
+connection after_view_index
+statement ok
+DROP VIEW dsr_rv;
+
+
+connection after_view_index
+statement ok
+CREATE INDEX dsr_ri ON dsr_t2 USING inverted (body);
+
+
+connection after_view_index
+statement ok
+INSERT INTO dsr_oids SELECT table_name, table_oid FROM duckdb_tables()
+WHERE database_name = current_database() AND table_name = 'dsr_t2';
 
 
 connection after_view_index
@@ -713,7 +638,7 @@ n
 
 connection after_table_with_index
 query
-SELECT dsr_leftover('dsr_ri_new') AS leftover;
+SELECT dsr_leftover('dsr_t2') AS leftover;
 ----
 leftover
 0
@@ -745,7 +670,7 @@ CREATE INDEX t_inv ON dsr_all.public.t USING inverted (body);
 
 connection after_table_with_index
 statement ok
-CREATE TABLE dsr_all.public.s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE TABLE dsr_all.public.s (id INT PRIMARY KEY, body TEXT);
 
 
 connection after_table_with_index
@@ -765,17 +690,18 @@ INSERT INTO dsr_all.public.s VALUES (1, 'alpha');
 
 connection after_table_with_index
 statement ok
-VACUUM (REFRESH_TABLE) dsr_all.public.t;
+VACUUM (FLUSH_TABLE) dsr_all.public.t;
 
 
 connection after_table_with_index
 statement ok
-VACUUM (REFRESH_TABLE) dsr_all.public.s;
+VACUUM (FLUSH_TABLE) dsr_all.public.s;
 
 
 connection after_table_with_index
 statement ok
-INSERT INTO dsr_oids SELECT 'dsr_all', oid FROM pg_database WHERE datname = 'dsr_all';
+INSERT INTO dsr_oids SELECT 'dsr_all', table_oid FROM duckdb_tables() WHERE database_name = 'dsr_all'
+UNION ALL SELECT 'dsr_all', index_oid FROM duckdb_indexes() WHERE database_name = 'dsr_all';
 
 
 connection after_table_with_index

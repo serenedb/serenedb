@@ -41,7 +41,7 @@ CREATE MACRO one() AS (SELECT 1);
 # DOCS_TEST_BODY
 
 statement ok
-CREATE FUNCTION main.my_avg(x) AS sum(x) / count(x);
+CREATE FUNCTION public.my_avg(x) AS sum(x) / count(x);
 
 # DOCS_TEST: example_007
 

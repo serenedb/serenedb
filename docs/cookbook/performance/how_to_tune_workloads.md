@@ -19,7 +19,7 @@ When importing or exporting datasets (from/to the Parquet or CSV formats), which
 Out of Memory Error: failed to allocate data of size ... (.../... used)
 ```
 
-In these cases, consider setting the [`preserve_insertion_order` configuration option](../../configuration/overview.md) to `false`:
+In these cases, check that the [`preserve_insertion_order` configuration option](../../configuration/overview.md) is `false`, its default:
 
 <SqlLogicTest id="cookbook/performance/how_to_tune_workloads/example_001" />
 
@@ -49,10 +49,10 @@ The option applies to the current session, like other `SET` options.
 ### The Effect of Row Groups on Parallelism
 
 SereneDB parallelizes the workload based on _row groups,_ i.e., groups of rows that are stored together at the storage level.
-The default row group size in SereneDB's database format is 122,880 rows.
+The default row group size is 122,880 rows.
 Parallelism starts at the level of row groups, therefore, for a query to run on _k_ threads, it needs to scan at least _k_ \* 122,880 rows.
 
-The row group size can be specified as an option of the `ATTACH` statement: 
+A table's row group size is set with its [`row_group_size` option](../../sql/statements/create_table/index.md#table-options) or its database's `ROW_GROUP_SIZE`. For a DuckDB database file, it can be specified as an option of the `ATTACH` statement:
 
 <SqlLogicTest id="cookbook/performance/how_to_tune_workloads/example_002" />
 
@@ -71,7 +71,7 @@ This section explains the prerequisites, scope, and known limitations of larger-
 ### Spilling to Disk
 
 Larger-than-memory workloads are supported by spilling to disk.
-With the default configuration, SereneDB creates the `⟨database_file_name⟩.tmp`{:.language-sql .highlight} temporary directory (in persistent mode) or the `.tmp`{:.language-sql .highlight} directory (in in-memory mode). This directory can be changed using the [`temp_directory` configuration option](../../configuration/pragmas.md#temp-directory-for-spilling-data-to-disk), e.g.:
+With the default configuration, the server spills to the `tmp` directory of its data directory, and `serened shell` creates the `⟨database_file_name⟩.tmp`{:.language-sql .highlight} temporary directory (in persistent mode) or the `.tmp`{:.language-sql .highlight} directory (in in-memory mode). This directory can be changed using the [`temp_directory` configuration option](../../configuration/pragmas.md#temp-directory-for-spilling-data-to-disk), e.g.:
 
 <SqlLogicTest id="cookbook/performance/how_to_tune_workloads/example_003" />
 
@@ -114,7 +114,7 @@ Query plans can point to the root of performance issues. A few general direction
 
 ## Prepared Statements
 
-[Prepared statements](../../sql/query_syntax/prepared_statements.md) can improve performance when running the same query many times, but with different parameters. Every execution skips parsing, and a statement that reads only inverted indexes and search tables also skips planning while those indexes are unchanged ([Plans](../../sql/query_syntax/prepared_statements.md#plans)). This is beneficial mostly for repeatedly running small queries (with a runtime of < 100ms) with different sets of parameters.
+[Prepared statements](../../sql/query_syntax/prepared_statements.md) can improve performance when running the same query many times, but with different parameters. Every execution skips parsing, and a statement that reads only tables and inverted indexes also skips planning while those indexes are unchanged ([Plans](../../sql/query_syntax/prepared_statements.md#plans)). This is beneficial mostly for repeatedly running small queries (with a runtime of < 100ms) with different sets of parameters.
 
 Note that it is not a primary design goal for SereneDB to quickly execute many small queries concurrently. Rather, it is optimized for running larger, less frequent queries.
 
@@ -148,7 +148,7 @@ Using multiple connections can parallelize some operations, although it is typic
 
 ## Persistent vs. In-Memory Tables
 
-SereneDB supports lightweight compression techniques. By default, compression is only applied on persistent (on-disk) databases and not on in-memory tables.
+SereneDB supports lightweight compression techniques. In DuckDB databases, such as those of `serened shell`, compression is by default only applied on persistent (on-disk) databases and not on in-memory tables.
 
 In some cases, this can result in counter-intuitive performance results where queries are faster on on-disk tables compared to in-memory ones. Let's take Q1 of the TPC-H workload for example on the SF30 dataset:
 

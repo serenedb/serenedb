@@ -116,23 +116,23 @@ keys = ", ".join(["id", *COLUMNS])
 rows = [f"({row}, {', '.join(value(name, row) for name in COLUMNS)})"
         for row in range(ROWS)]
 
-t.table("vtm", definition)
-t.statement(f"CREATE TABLE vtm_s ({definition}) "
-            "WITH (storage = 'search', compaction_interval = 0)")
-t.statement(f"CREATE INDEX vtm_idx ON vtm USING inverted ({keys}) "
+t.statement(f"CREATE TABLE vtm ({definition}) "
             "WITH (compaction_interval = 0)")
+t.statement(f"CREATE TABLE vtm_s ({definition}) "
+            "WITH (compaction_interval = 0)")
+t.index("vtm_idx", "vtm", keys)
 t.index("vtm_s_idx", "vtm_s", keys)
 step = ROWS // BATCHES
 for start in range(0, ROWS, step):
     t.insert("vtm", rows[start:start + step])
     t.statement(f"INSERT INTO vtm_s SELECT * FROM vtm WHERE id >= {start} "
                 f"AND id < {start + step}")
-    t.refresh("vtm")
-    t.refresh("vtm_s")
+    t.statement("VACUUM (FLUSH_TABLE) vtm")
+    t.statement("VACUUM (FLUSH_TABLE) vtm_s")
 t.statement("DELETE FROM vtm WHERE id % 11 = 3")
 t.statement("DELETE FROM vtm_s WHERE id % 11 = 3")
-t.refresh("vtm")
-t.refresh("vtm_s")
+t.statement("VACUUM (FLUSH_TABLE) vtm")
+t.statement("VACUUM (FLUSH_TABLE) vtm_s")
 
 for column in COLUMNS:
     t.section(f"{column} {COLUMNS[column][0]}")

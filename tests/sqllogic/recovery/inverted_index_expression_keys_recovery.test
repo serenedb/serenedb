@@ -60,7 +60,7 @@ id
 onlyif serenedb
 connection after_crash
 statement ok
-VACUUM (REFRESH_TABLE) rek;
+VACUUM (FLUSH_TABLE) rek;
 
 onlyif serenedb
 connection after_crash
@@ -93,7 +93,7 @@ id
 onlyif serenedb
 connection after_crash
 statement ok
-VACUUM (REFRESH_TABLE) rekj;
+VACUUM (FLUSH_TABLE) rekj;
 
 onlyif serenedb
 connection after_crash

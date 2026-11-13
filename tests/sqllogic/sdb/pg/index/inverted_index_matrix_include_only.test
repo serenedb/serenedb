@@ -188,9 +188,6 @@ INSERT INTO g22_t VALUES
         [ROW(30)::STRUCT(a INTEGER)],
         ['world'::VARIANT]);
 
-statement ok
-VACUUM (REFRESH_TABLE) g22_t;
-
 query
 SELECT count(*) FROM g22_inc_vl;
 ----

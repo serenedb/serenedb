@@ -200,9 +200,7 @@ CREATE SEQUENCE 't3_key';
 
 query
 INSERT INTO t3
-    SELECT nextval('t3_key') AS i, 42 AS j
-    UNION ALL
-    SELECT nextval('t3_key') AS i, 43 AS j
+    VALUES (nextval('t3_key'), 42), (nextval('t3_key'), 43)
     RETURNING *;
 ----
 i	j

@@ -20,6 +20,9 @@
 
 #pragma once
 
+#include <duckdb/main/client_context.hpp>
+#include <duckdb/planner/logical_operator.hpp>
+
 namespace duckdb {
 
 struct DBConfig;
@@ -31,5 +34,8 @@ namespace sdb::connector {
 // trigger: the name is looked up as an index instead and rewritten into an
 // `iresearch_scan` over it.
 void RegisterIResearchReplacementScan(duckdb::DBConfig& config);
+
+void FilterPartialIndexScans(duckdb::ClientContext& context,
+                             duckdb::LogicalOperator& plan);
 
 }  // namespace sdb::connector

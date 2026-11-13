@@ -51,6 +51,7 @@
 #include <vector>
 
 #include "absl/strings/str_format.h"
+#include "index/test_index_writer.hpp"
 #include "insert_field.hpp"
 
 namespace {
@@ -150,8 +151,8 @@ const CachedIndex& IndexOf(size_t num_terms, Shape shape = Shape::Hex) {
   writer_opts.column_options = [](irs::field_id) -> irs::ColumnOptions {
     return {};
   };
-  auto writer =
-    irs::IndexWriter::Make(*cached.dir, irs::kOmCreate, std::move(writer_opts));
+  auto writer = tests::IndexWriter::Make(*cached.dir, tests::kOmCreate,
+                                         std::move(writer_opts));
 
   KeywordField field{.id = kKwFieldId};
   {
@@ -166,7 +167,7 @@ const CachedIndex& IndexOf(size_t num_terms, Shape shape = Shape::Hex) {
   writer->RefreshCommit();
 
   cached.reader =
-    irs::DirectoryReader{*cached.dir, irs::IndexReaderOptions{.db = db}};
+    tests::OpenReader(*cached.dir, irs::IndexReaderOptions{.db = db});
   return cached;
 }
 

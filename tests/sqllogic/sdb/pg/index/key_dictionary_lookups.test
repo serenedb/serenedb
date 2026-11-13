@@ -1,0 +1,433 @@
+statement ok
+CREATE TABLE kdl_uuid (id UUID PRIMARY KEY, v INTEGER);
+
+
+statement ok
+INSERT INTO kdl_uuid VALUES ('00000000-0000-0000-0000-000000000001', 1), ('00000000-0000-0000-0000-000000000002', 2), ('00000000-0000-0000-0000-000000000003', 3);
+
+
+query
+EXPLAIN SELECT v FROM kdl_uuid WHERE id = '00000000-0000-0000-0000-000000000002';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────╮
+│ Table: kdl_uuid                          │
+│ Index Filter:                            │
+│ ╭─ Term ───────────────────────────────╮ │
+│ │ Field: id(numeric)                   │ │
+│ │ Value:                               │ │
+│ │ 00000000-0000-0000-0000-000000000002 │ │
+│ ╰──────────────────────────────────────╯ │
+│ Projections: v                           │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
+
+
+query
+SELECT v FROM kdl_uuid WHERE id = '00000000-0000-0000-0000-000000000002';
+----
+v
+2
+
+
+query
+EXPLAIN SELECT v FROM kdl_uuid WHERE id IN ('00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000003');
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────────────────────────────────────────────╮
+│ Table: kdl_uuid                                                                │
+│ Index Filter:                                                                  │
+│ ╭─ Or ───────────────────────────────────────────────────────────────────────╮ │
+│ ╰──────────────────────────────────────┬─────────────────────────────────────╯ │
+│ ╭─ Terms ──────────────────────────────┴─────────────────────────────────────╮ │
+│ │ Field: id(numeric)                                                         │ │
+│ │ Values:                                                                    │ │
+│ │ 00000000-0000-0000-0000-000000000001, 00000000-0000-0000-0000-000000000003 │ │
+│ ╰────────────────────────────────────────────────────────────────────────────╯ │
+│ Projections: v                                                                 │
+│ ~2 rows                                                                        │
+╰────────────────────────────────────────────────────────────────────────────────╯
+
+
+query
+SELECT v FROM kdl_uuid WHERE id IN ('00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000009') ORDER BY v;
+----
+v
+1
+3
+
+
+query
+SELECT v FROM kdl_uuid WHERE id <> '00000000-0000-0000-0000-000000000002' ORDER BY v;
+----
+v
+1
+3
+
+
+query
+SELECT v FROM kdl_uuid WHERE id NOT IN ('00000000-0000-0000-0000-000000000001') ORDER BY v;
+----
+v
+2
+3
+
+
+statement ok
+PREPARE kdl_by_id(UUID) AS SELECT v FROM kdl_uuid WHERE id = $1;
+
+
+query
+EXECUTE kdl_by_id('00000000-0000-0000-0000-000000000003');
+----
+v
+3
+
+
+statement ok
+PREPARE kdl_bump(UUID) AS UPDATE kdl_uuid SET v = v + 10 WHERE id = $1;
+
+
+statement ok
+EXECUTE kdl_bump('00000000-0000-0000-0000-000000000001');
+
+
+statement ok
+VACUUM (FLUSH_TABLE) kdl_uuid;
+
+
+query
+EXECUTE kdl_by_id('00000000-0000-0000-0000-000000000001');
+----
+v
+11
+
+
+statement ok
+DELETE FROM kdl_uuid WHERE id = '00000000-0000-0000-0000-000000000002';
+
+
+query
+SELECT v FROM kdl_uuid ORDER BY v;
+----
+v
+3
+11
+
+
+statement ok
+CREATE TYPE kdl_mood AS ENUM ('happy', 'sad', 'ok');
+
+
+statement ok
+CREATE TABLE kdl_enum (m kdl_mood PRIMARY KEY, v INTEGER);
+
+
+statement ok
+INSERT INTO kdl_enum VALUES ('happy', 1), ('sad', 2), ('ok', 3);
+
+
+query
+EXPLAIN SELECT v FROM kdl_enum WHERE m = 'sad';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──╮
+│ Table: kdl_enum   │
+│ Index Filter:     │
+│ ╭─ Term ────────╮ │
+│ │ Field: m(key) │ │
+│ │ Value: sad    │ │
+│ ╰───────────────╯ │
+│ Projections: v    │
+│ ~1 row            │
+╰───────────────────╯
+
+
+query
+SELECT v FROM kdl_enum WHERE m IN ('sad', 'ok') ORDER BY v;
+----
+v
+2
+3
+
+
+statement ok
+CREATE TABLE kdl_dec (d DECIMAL(10, 2) PRIMARY KEY, v INTEGER);
+
+
+statement ok
+INSERT INTO kdl_dec VALUES (1.50, 1), (2.25, 2);
+
+
+query
+EXPLAIN SELECT v FROM kdl_dec WHERE d = 2.25;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────╮
+│ Table: kdl_dec        │
+│ Index Filter:         │
+│ ╭─ Term ────────────╮ │
+│ │ Field: d(numeric) │ │
+│ │ Value: 2.25       │ │
+│ ╰───────────────────╯ │
+│ Projections: v        │
+│ ~1 row                │
+╰───────────────────────╯
+
+
+query
+SELECT v FROM kdl_dec WHERE d = 2.25;
+----
+v
+2
+
+
+query
+SELECT v FROM kdl_dec WHERE d = 2.25::DOUBLE;
+----
+v
+2
+
+
+statement ok
+CREATE TABLE kdl_unique (n INTEGER, u UUID UNIQUE);
+
+
+statement ok
+INSERT INTO kdl_unique VALUES (1, '00000000-0000-0000-0000-000000000001'), (2, NULL), (3, '00000000-0000-0000-0000-000000000003');
+
+
+query
+EXPLAIN SELECT n FROM kdl_unique WHERE u = '00000000-0000-0000-0000-000000000001';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────╮
+│ Table: kdl_unique                        │
+│ Index Filter:                            │
+│ ╭─ Term ───────────────────────────────╮ │
+│ │ Field: u(key)                        │ │
+│ │ Value:                               │ │
+│ │ 00000000-0000-0000-0000-000000000001 │ │
+│ ╰──────────────────────────────────────╯ │
+│ Projections: n                           │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
+
+
+query
+SELECT n FROM kdl_unique WHERE u = '00000000-0000-0000-0000-000000000001';
+----
+n
+1
+
+
+query
+EXPLAIN SELECT n FROM kdl_unique WHERE u <> '00000000-0000-0000-0000-000000000001';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────────────────╮
+│ Table: kdl_unique                                 │
+│ Projections: n                                    │
+│ Column Filter:                                    │
+│ u != '00000000-0000-0000-0000-000000000001'::UUID │
+│ ~1 row                                            │
+╰───────────────────────────────────────────────────╯
+
+
+query
+SELECT n FROM kdl_unique WHERE u <> '00000000-0000-0000-0000-000000000001' ORDER BY n;
+----
+n
+3
+
+
+query
+SELECT n FROM kdl_unique WHERE u NOT IN ('00000000-0000-0000-0000-000000000003') ORDER BY n;
+----
+n
+1
+
+
+query
+SELECT n FROM kdl_unique WHERE u IS NULL;
+----
+n
+2
+
+
+statement ok
+CREATE TABLE kdl_parent (a INTEGER PRIMARY KEY, b INTEGER UNIQUE, s TEXT UNIQUE);
+
+
+statement ok
+INSERT INTO kdl_parent SELECT i, i * 10, 's' || i FROM range(1, 101) t(i);
+
+
+statement ok
+INSERT INTO kdl_parent VALUES (1000, NULL, NULL);
+
+
+query
+EXPLAIN SELECT b FROM kdl_parent WHERE a = 5;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────╮
+│ Table: kdl_parent     │
+│ Index Filter:         │
+│ ╭─ Term ────────────╮ │
+│ │ Field: a(numeric) │ │
+│ │ Value: 5          │ │
+│ ╰───────────────────╯ │
+│ Projections: b        │
+│ ~1 row                │
+╰───────────────────────╯
+
+
+query
+EXPLAIN SELECT a FROM kdl_parent WHERE b = 50;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──╮
+│ Table: kdl_parent │
+│ Index Filter:     │
+│ ╭─ Term ────────╮ │
+│ │ Field: b(key) │ │
+│ │ Value: 50     │ │
+│ ╰───────────────╯ │
+│ Projections: a    │
+│ ~1 row            │
+╰───────────────────╯
+
+
+query
+SELECT a FROM kdl_parent WHERE b = 50;
+----
+a
+5
+
+
+query
+EXPLAIN SELECT a FROM kdl_parent WHERE s IN ('s3', 's4');
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────╮
+│ Table: kdl_parent      │
+│ Index Filter:          │
+│ ╭─ Or ───────────────╮ │
+│ ╰──────────┬─────────╯ │
+│ ╭─ Terms ──┴─────────╮ │
+│ │ Field: s(key)      │ │
+│ │ Values: 's3', 's4' │ │
+│ ╰────────────────────╯ │
+│ Projections: a         │
+│ ~2 rows                │
+╰────────────────────────╯
+
+
+query
+SELECT a FROM kdl_parent WHERE s IN ('s3', 's4') ORDER BY a;
+----
+a
+3
+4
+
+
+query
+SELECT count(*) AS n FROM kdl_parent WHERE b <> 50;
+----
+n
+99
+
+
+query
+SELECT count(*) AS n FROM kdl_parent WHERE b > 950;
+----
+n
+5
+
+
+query
+SELECT min(b) AS lo, max(b) AS hi, count(DISTINCT b) AS distinct_b FROM kdl_parent;
+----
+lo	hi	distinct_b
+10	1000	100
+
+
+statement ok
+CREATE TABLE kdl_child (c INTEGER PRIMARY KEY, pa INTEGER REFERENCES kdl_parent (a), pu UUID REFERENCES kdl_uuid (id));
+
+
+statement ok
+INSERT INTO kdl_child SELECT i, i % 7 + 1, CASE WHEN i % 2 = 0 THEN '00000000-0000-0000-0000-000000000001'::UUID ELSE '00000000-0000-0000-0000-000000000003'::UUID END FROM range(1, 51) t(i);
+
+
+statement ok
+INSERT INTO kdl_child VALUES (100, NULL, NULL);
+
+
+query
+EXPLAIN SELECT c FROM kdl_child WHERE pa = 3;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───╮
+│ Table: kdl_child   │
+│ Index Filter:      │
+│ ╭─ Term ─────────╮ │
+│ │ Field: pa(key) │ │
+│ │ Value: 3       │ │
+│ ╰────────────────╯ │
+│ Projections: c     │
+│ ~10 rows           │
+╰────────────────────╯
+
+
+query
+SELECT c FROM kdl_child WHERE pa = 3 ORDER BY c;
+----
+c
+2
+9
+16
+23
+30
+37
+44
+
+
+query
+SELECT count(*) AS n FROM kdl_child WHERE pu IN ('00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000009');
+----
+n
+25
+
+
+query
+SELECT count(*) AS n FROM kdl_child WHERE pa <> 3;
+----
+n
+43
+
+
+query
+SELECT count(*) AS n FROM kdl_child WHERE pa IS NULL;
+----
+n
+1
+
+
+statement ok
+PREPARE kdl_children(INTEGER) AS SELECT count(*) AS n FROM kdl_child WHERE pa = $1;
+
+
+query
+EXECUTE kdl_children(3);
+----
+n
+7
+
+
+query
+SELECT count(*) AS n FROM kdl_child JOIN kdl_parent ON kdl_child.pa = kdl_parent.a WHERE kdl_parent.b = 30;
+----
+n
+7

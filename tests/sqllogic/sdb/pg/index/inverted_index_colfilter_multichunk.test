@@ -28,10 +28,6 @@ statement ok
 CREATE INDEX cf_idx ON cf USING inverted(id, body cf_en) INCLUDE (g, payload);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) cf;
-
-
 # Streaming (a `@@` term query is not match-all): the projected filter column g
 # (decoded once, then Sliced), payload (INCLUDE) and id (lookup) all track the
 # survivors even though the leading windows are fully dropped by g>=4000.

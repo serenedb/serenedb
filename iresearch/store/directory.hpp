@@ -35,33 +35,6 @@ namespace irs {
 
 class DirectoryAttributes;
 
-// An interface for abstract resource locking
-struct IndexLock : private util::Noncopyable {
-  IRS_USING_IO_PTR(IndexLock, unlock);
-
-  static constexpr size_t kLockWaitForever = std::numeric_limits<size_t>::max();
-
-  virtual ~IndexLock() = default;
-
-  // Checks whether the guarded resource is locked
-  // result - true if resource is already locked
-  // Returns call success
-  virtual bool is_locked(bool& result) const noexcept = 0;
-
-  // Locks the guarded resource
-  // Returns true on success
-  virtual bool lock() = 0;
-
-  // Tries to lock the guarded resource within the specified amount of time
-  // wait_timeout - timeout between different locking attempts
-  // Returns true on success
-  bool try_lock(size_t wait_timeout = 1000) noexcept;
-
-  // Unlocks the guarded resource
-  // Returns call success
-  virtual bool unlock() noexcept = 0;
-};
-
 // Defines access patterns for data in a directory
 enum class IOAdvice : uint32_t {
   // Indicates that caller expects to access data sequentially
@@ -96,11 +69,6 @@ struct Directory : private util::Noncopyable {
   // Returns call success
   virtual bool length(uint64_t& result,
                       std::string_view name) const noexcept = 0;
-
-  // Creates an index level lock with the specified name
-  // name - name of the lock
-  // Returns lock hande
-  virtual IndexLock::ptr make_lock(std::string_view name) noexcept = 0;
 
   // Returns modification time of the file specified by the given name
   // result - file last modified time

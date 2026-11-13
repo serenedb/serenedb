@@ -174,7 +174,6 @@ class Server:
     def count(self):
         with self.connect() as conn:
             cur = conn.cursor()
-            cur.execute(f"VACUUM (REFRESH_TABLE) es.{INDEX}")
             cur.execute(f"SELECT count(*) FROM es.{INDEX}")
             return cur.fetchone()[0]
 

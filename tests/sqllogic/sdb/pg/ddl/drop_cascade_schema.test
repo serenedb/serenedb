@@ -67,18 +67,18 @@ INSERT INTO clickclack_ops.query_plans VALUES (1, 'x');
 statement error
 DROP SCHEMA clickclack_ops;
 ----
-db error: ERROR: Cannot drop entry "clickclack_ops" because there are entries that depend on it.
-table "query_plans" depends on schema "clickclack_ops".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop schema clickclack_ops because other objects depend on it
+DETAIL: table clickclack_ops.query_plans depends on schema clickclack_ops
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
 statement error
 DROP SCHEMA clickclack_ops RESTRICT;
 ----
-db error: ERROR: Cannot drop entry "clickclack_ops" because there are entries that depend on it.
-table "query_plans" depends on schema "clickclack_ops".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop schema clickclack_ops because other objects depend on it
+DETAIL: table clickclack_ops.query_plans depends on schema clickclack_ops
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -135,9 +135,8 @@ INSERT INTO iceberg_warehouse.partitions VALUES (10, 'p');
 statement error
 DROP SCHEMA iceberg_warehouse RESTRICT;
 ----
-db error: ERROR: Cannot drop entry "iceberg_warehouse" because there are entries that depend on it.
+db error: ERROR: cannot drop schema iceberg_warehouse because other objects depend on it
 <slt:ignore>
-Use DROP...CASCADE to drop all dependents.
 
 
 
@@ -186,9 +185,8 @@ INSERT INTO clickclack_team.dashboard (payload) VALUES ('first');
 statement error
 DROP SCHEMA clickclack_team RESTRICT;
 ----
-db error: ERROR: Cannot drop entry "clickclack_team" because there are entries that depend on it.
+db error: ERROR: cannot drop schema clickclack_team because other objects depend on it
 <slt:ignore>
-Use DROP...CASCADE to drop all dependents.
 
 
 

@@ -19,6 +19,10 @@ control substitution on
 
 
 statement ok
+SET threads = 1;
+
+
+statement ok
 CREATE DATABASE dfeu WITH (ROW_GROUP_SIZE = 1048576);
 
 

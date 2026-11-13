@@ -20,9 +20,6 @@ INSERT INTO sentences VALUES
     (4, 'something else entirely', 'bar'),
     (5, 'plain note', NULL);
 
-statement ok
-VACUUM (REFRESH_TABLE) sentences;
-
 # DOCS_TEST_BODY
 
 query
@@ -42,7 +39,7 @@ EXPLAIN SELECT a FROM sentences_idx WHERE b @@ 'fox';
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────╮
 │ Index: sentences_idx │
-│ Lookup: table        │
+│ Lookup: search       │
 │ Index Filter:        │
 │ ╭─ Term ───────────╮ │
 │ │ Field: b(string) │ │
@@ -65,17 +62,18 @@ LIMIT 1;
 ----
 QUERY PLAN
 ╭─ LOOKUP_JOIN ───────────────────────────────────────────╮
-│ Key: iresearch_pk                                       │
+│ Key: rowid                                              │
 │ ~1 row                                                  │
 ╰────────────────────────────┬────────────────────────────╯
                              ├───────────────────────────────────────────╮
 ╭─ TOP_N ────────────────────┴────────────────────────────╮  ╭─ IRESEARCH_SCAN ─────╮
 │ Top: 1                                                  │  │ Index: sentences_idx │
-│ Order By: #0 ASC                                        │  │ Lookup: table        │
+│ Order By: #0 ASC                                        │  │ Lookup: search       │
 │ ~1 row                                                  │  │ Projections: b, a    │
 ╰────────────────────────────┬────────────────────────────╯  │ ~1 row               │
 ╭─ IRESEARCH_SCAN ───────────┴────────────────────────────╮  ╰──────────────────────╯
 │ Index: sentences_idx                                    │
+│ Lookup: search                                          │
 │ Index Filter:                                           │
 │ ╭─ Term ───────────╮                                    │
 │ │ Field: b(string) │                                    │
@@ -84,7 +82,7 @@ QUERY PLAN
 │ Column Filter:                                          │
 │ optional: Dynamic Filter (sdb_inverted_index_score < ?) │
 │ Score: bm25(k1=1.2, b=0.75)                             │
-│ Projections: sdb_inverted_index_score, iresearch_pk     │
+│ Projections: sdb_inverted_index_score, rowid            │
 │ ~1 row                                                  │
 ╰─────────────────────────────────────────────────────────╯
 
@@ -337,9 +335,6 @@ INSERT INTO products VALUES
     (1, 'cat'), (2, 'bat'), (3, 'car'),
     (4, 'dog'), (5, 'cats'), (6, 'act');
 
-statement ok
-VACUUM (REFRESH_TABLE) products;
-
 # DOCS_TEST_BODY
 
 query
@@ -369,9 +364,6 @@ statement ok
 INSERT INTO titles VALUES
     (1, 'hello'), (2, 'help'), (3, 'world'),
     (4, 'held'), (5, 'hero');
-
-statement ok
-VACUUM (REFRESH_TABLE) titles;
 
 # DOCS_TEST_BODY
 
@@ -416,9 +408,6 @@ CREATE TEXT SEARCH DICTIONARY basic_dict AS
 statement ok
 CREATE INDEX movies_idx ON movies
     USING inverted (id, title basic_dict, description basic_dict, genre);
-
-statement ok
-VACUUM (REFRESH_TABLE) movies;
 
 # DOCS_TEST_BODY
 
@@ -470,9 +459,6 @@ CREATE INDEX docs_idx ON docs USING inverted (id, body offsets_en);
 statement ok
 INSERT INTO docs VALUES (1, 'quick fox jumps'), (2, 'fox runs fast');
 
-statement ok
-VACUUM (REFRESH_TABLE) docs;
-
 # DOCS_TEST_BODY
 
 query
@@ -506,9 +492,6 @@ INSERT INTO notes VALUES
     (2, 'a brown fox and a quick dog'),
     (3, 'quick brown fox, quick brown fox');
 
-statement ok
-VACUUM (REFRESH_TABLE) notes;
-
 query
 SELECT id, BM25(notes_idx.tableoid) > 0 AS scored
 FROM notes_idx
@@ -529,7 +512,7 @@ EXPLAIN SELECT id FROM notes_idx WHERE body @@ ts_phrase('quick brown fox');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────────────╮
 │ Index: notes_idx                                         │
-│ Lookup: table                                            │
+│ Lookup: search                                           │
 │ Index Filter:                                            │
 │ ╭─ And ───────────────────────────╮                      │
 │ ╰────────────────┬────────────────╯                      │
@@ -563,7 +546,7 @@ INSERT INTO prices VALUES
     (3, 5.13, 7, '80000000-0000-0000-0000-000000000000');
 
 statement ok
-VACUUM (REFRESH_TABLE) prices;
+VACUUM (FLUSH_TABLE) prices;
 
 # DOCS_TEST_BODY
 
@@ -597,7 +580,7 @@ INSERT INTO readings VALUES
     (5, 9, 18.75);
 
 statement ok
-VACUUM (REFRESH_TABLE) readings;
+VACUUM (FLUSH_TABLE) readings;
 
 # DOCS_TEST_BODY
 
@@ -622,7 +605,7 @@ LIMIT 2;
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────╮
 │ Index: readings_idx            │
-│ Lookup: table                  │
+│ Lookup: search                 │
 │ Index Filter:                  │
 │ ╭─ Granular Range ────────╮    │
 │ │ Field: reading(numeric) │    │

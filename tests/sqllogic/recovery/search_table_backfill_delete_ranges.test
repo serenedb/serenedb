@@ -5,14 +5,14 @@ RESET sdb_faults;
 
 statement ok
 CREATE TABLE bdr (id BIGINT, tag TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0,
+  WITH (compaction_interval = 0,
         row_group_size = 8192);
 
 statement ok
 INSERT INTO bdr SELECT i, CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END FROM range(0, 50000) r(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) bdr;
+VACUUM (FLUSH_TABLE) bdr;
 
 statement ok
 SET sdb_faults = 'pause_search_backfill_before_swap';
@@ -35,7 +35,7 @@ DELETE FROM bdr WHERE id < 20000 OR id % 1000 = 7;
 
 connection default
 statement ok
-VACUUM (REFRESH_TABLE) bdr;
+VACUUM (FLUSH_TABLE) bdr;
 
 connection default
 statement ok
@@ -45,7 +45,7 @@ wait
 
 connection default
 statement ok
-VACUUM (REFRESH_TABLE) bdr;
+VACUUM (FLUSH_TABLE) bdr;
 
 connection default
 query

@@ -24,6 +24,10 @@ CREATE TABLE dfsb.ctrl AS
 
 
 statement ok
+VACUUM (FLUSH_ALL);
+
+
+statement ok
 CHECKPOINT dfsb;
 
 

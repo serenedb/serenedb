@@ -31,9 +31,8 @@ QUERY PLAN
 │ CAST(floor((d // 100)) AS BIGINT) │
 │ ~20,001 rows                      │
 ╰─────────────────┬─────────────────╯
-╭─ SEQ_SCAN ──────┴─────────────────╮
+╭─ IRESEARCH_SCAN ┴─────────────────╮
 │ Table: num                        │
-│ Type: Sequential Scan             │
 │ Projections: d                    │
 │ ~20,001 rows                      │
 ╰───────────────────────────────────╯
@@ -56,9 +55,8 @@ QUERY PLAN
 │ Projections: CAST(b AS UTINYINT) │
 │ ~20,001 rows                     │
 ╰─────────────────┬────────────────╯
-╭─ SEQ_SCAN ──────┴────────────────╮
+╭─ IRESEARCH_SCAN ┴────────────────╮
 │ Table: num                       │
-│ Type: Sequential Scan            │
 │ Projections: x                   │
 │ ~20,001 rows                     │
 ╰──────────────────────────────────╯
@@ -81,9 +79,8 @@ QUERY PLAN
 │ Projections: CAST(b AS BIGINT)          │
 │ ~20,001 rows                            │
 ╰────────────────────┬────────────────────╯
-╭─ SEQ_SCAN ─────────┴────────────────────╮
+╭─ IRESEARCH_SCAN ───┴────────────────────╮
 │ Table: num                              │
-│ Type: Sequential Scan                   │
 │ Projections: dec                        │
 │ ~20,001 rows                            │
 ╰─────────────────────────────────────────╯
@@ -105,9 +102,8 @@ QUERY PLAN
 │ Projections: x // 100    │
 │ ~20,001 rows             │
 ╰─────────────┬────────────╯
-╭─ SEQ_SCAN ──┴────────────╮
+╭─ IRESEARCH_SCAN ─────────╮
 │ Table: num               │
-│ Type: Sequential Scan    │
 │ Projections: x           │
 │ ~20,001 rows             │
 ╰──────────────────────────╯
@@ -125,9 +121,8 @@ QUERY PLAN
 │ Projections: b           │
 │ ~10,003 rows             │
 ╰─────────────┬────────────╯
-╭─ SEQ_SCAN ──┴────────────╮
+╭─ IRESEARCH_SCAN ─────────╮
 │ Table: nan               │
-│ Type: Sequential Scan    │
 │ Projections: d           │
 │ ~10,003 rows             │
 ╰──────────────────────────╯
@@ -150,9 +145,8 @@ QUERY PLAN
 │ __internal_date_trunc_bucket(ts, 3600000000, 0) │
 │ ~20,001 rows                                    │
 ╰────────────────────────┬────────────────────────╯
-╭─ SEQ_SCAN ─────────────┴────────────────────────╮
+╭─ IRESEARCH_SCAN ───────┴────────────────────────╮
 │ Table: num                                      │
-│ Type: Sequential Scan                           │
 │ Projections: ts                                 │
 │ ~20,001 rows                                    │
 ╰─────────────────────────────────────────────────╯
@@ -175,9 +169,8 @@ QUERY PLAN
 │ __internal_date_trunc_bucket(ts, 86400000000, 0) │
 │ ~20,001 rows                                     │
 ╰─────────────────────────┬────────────────────────╯
-╭─ SEQ_SCAN ──────────────┴────────────────────────╮
+╭─ IRESEARCH_SCAN ────────┴────────────────────────╮
 │ Table: num                                       │
-│ Type: Sequential Scan                            │
 │ Projections: ts                                  │
 │ ~20,001 rows                                     │
 ╰──────────────────────────────────────────────────╯
@@ -200,9 +193,8 @@ QUERY PLAN
 │ __internal_icu_date_trunc_bucket('hour', tstz) │
 │ ~20,001 rows                                   │
 ╰────────────────────────┬───────────────────────╯
-╭─ SEQ_SCAN ─────────────┴───────────────────────╮
+╭─ IRESEARCH_SCAN ───────┴───────────────────────╮
 │ Table: num                                     │
-│ Type: Sequential Scan                          │
 │ Projections: tstz                              │
 │ ~20,001 rows                                   │
 ╰────────────────────────────────────────────────╯
@@ -220,9 +212,8 @@ QUERY PLAN
 │ Projections: b           │
 │ ~20,001 rows             │
 ╰─────────────┬────────────╯
-╭─ SEQ_SCAN ──┴────────────╮
+╭─ IRESEARCH_SCAN ─────────╮
 │ Table: num               │
-│ Type: Sequential Scan    │
 │ Projections: tstz        │
 │ ~20,001 rows             │
 ╰──────────────────────────╯

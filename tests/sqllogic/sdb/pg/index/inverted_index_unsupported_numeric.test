@@ -68,7 +68,6 @@ statement ok
 CREATE INDEX sup_time_idx ON sup_time USING inverted(id, t, tz);
 
 
-
 # --- Indexed expressions returning HUGEINT / DECIMAL are accepted too
 
 statement ok
@@ -79,7 +78,6 @@ CREATE INDEX wide_jsondoc_huge ON wide_jsondoc USING inverted(id, ((content->'v'
 
 statement ok
 CREATE INDEX wide_jsondoc_dec ON wide_jsondoc USING inverted(id, ((content->'v')::DECIMAL(20,4)));
-
 
 # --- Filter-side: BIGINT-indexed column, HUGEINT/DECIMAL bound in the predicate
 #
@@ -95,9 +93,6 @@ CREATE INDEX filter_bigint_idx ON filter_bigint USING inverted(id, n);
 
 statement ok
 INSERT INTO filter_bigint VALUES (1, 100), (2, 200), (3, 300);
-
-statement ok
-VACUUM (REFRESH_TABLE) filter_bigint;
 
 # Sanity: same predicate with native BIGINT bound finds the row.
 query
@@ -163,7 +158,7 @@ statement ok
 INSERT INTO wide_ubigint VALUES (1, 0), (2, 18446744073709551615);
 
 statement ok
-VACUUM (REFRESH_TABLE) wide_ubigint;
+VACUUM (FLUSH_TABLE) wide_ubigint;
 
 query
 SELECT id FROM wide_ubigint_idx
@@ -186,7 +181,7 @@ INSERT INTO wide_hugeint
 SELECT i, (i * 3)::HUGEINT * 1000000000000000000000 FROM range(1000) r(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) wide_hugeint;
+VACUUM (FLUSH_TABLE) wide_hugeint;
 
 query
 SELECT id FROM wide_hugeint_idx
@@ -241,7 +236,7 @@ statement ok
 INSERT INTO real_bounds VALUES (1, 'inf'), (2, 'nan'), (3, '-inf'), (4, 1);
 
 statement ok
-VACUUM (REFRESH_TABLE) real_bounds;
+VACUUM (FLUSH_TABLE) real_bounds;
 
 query
 SELECT id FROM real_bounds WHERE f > 1e39 ORDER BY id;

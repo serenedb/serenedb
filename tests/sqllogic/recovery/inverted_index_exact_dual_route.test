@@ -15,7 +15,7 @@ CREATE MACRO exact_route_vec(i) AS
 
 statement ok
 CREATE TABLE exact_route (id INTEGER PRIMARY KEY, n INTEGER, emb FLOAT[16])
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 
 statement ok
@@ -30,7 +30,7 @@ FROM range(100000) t(i);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) exact_route;
+VACUUM (FLUSH_TABLE) exact_route;
 
 
 statement ok
@@ -66,7 +66,7 @@ DELETE FROM exact_route WHERE id % 3 = 0;
 
 
 statement ok
-VACUUM (REFRESH_TABLE) exact_route;
+VACUUM (FLUSH_TABLE) exact_route;
 
 
 # Either way the rows returned are the nearest ones that pass the range and

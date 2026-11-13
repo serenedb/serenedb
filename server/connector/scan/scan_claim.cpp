@@ -309,6 +309,9 @@ bool ConstantCount(const irs::Filter& filter) {
       } else {
         ++others;
       }
+      if (terms > 1 || others > 0) {
+        return false;
+      }
     }
   }
   return terms == 1 && others == 0;
@@ -335,6 +338,30 @@ bool CheapToPrepare(const irs::Filter& filter) {
     }
   }
   return true;
+}
+
+std::optional<uint64_t> UniqueBound(const ScanGlobalState& g,
+                                    const irs::Filter* where) {
+  const auto& bind = g.Bind();
+  std::optional<uint64_t> bound;
+  const auto tighten = [&](std::optional<uint64_t> rows) {
+    if (rows) {
+      bound = bound ? std::min(*bound, *rows) : *rows;
+    }
+  };
+  if (where) {
+    tighten(UniqueMatchBound(bind, *where));
+  }
+  for (const auto& cf : g.col_filters) {
+    if (!cf.is_score && !cf.zonemap_only && !cf.row_gather &&
+        cf.extract_path.empty() && cf.row_fields.empty()) {
+      tighten(UniqueColumnBound(bind, cf.field,
+                                *duckdb::ExpressionFilter::GetExpressionFilter(
+                                   *cf.filter, "UniqueBound")
+                                   .expr));
+    }
+  }
+  return bound;
 }
 
 void TakeUnit(ScanLocalState& l, ScanUnit unit) {
@@ -643,6 +670,59 @@ bool SegmentStaysWhole(ScanShape shape, const irs::QueryBuilder& query,
          STANDARD_VECTOR_SIZE;
 }
 
+struct PostingsEstimate {
+  ScanGlobalState& g;
+  std::vector<uint32_t> segments;
+  uint64_t enough = 0;
+  std::atomic_uint32_t next = 0;
+  std::atomic_uint64_t postings = 0;
+};
+
+void EstimatePostings(PostingsEstimate& estimate) {
+  const auto size = static_cast<uint32_t>(estimate.segments.size());
+  for (auto i = estimate.next.fetch_add(1, std::memory_order_relaxed);
+       i < size &&
+       estimate.postings.load(std::memory_order_relaxed) < estimate.enough;
+       i = estimate.next.fetch_add(1, std::memory_order_relaxed)) {
+    estimate.postings.fetch_add(
+      EnsureSegmentQuery(estimate.g, nullptr, estimate.segments[i]).Postings(),
+      std::memory_order_relaxed);
+  }
+}
+
+struct EstimateSlice final : duckdb::BaseExecutorTask {
+  EstimateSlice(duckdb::TaskExecutor& executor, PostingsEstimate& estimate)
+    : BaseExecutorTask{executor}, estimate{estimate} {}
+
+  void ExecuteTask() final { EstimatePostings(estimate); }
+
+  PostingsEstimate& estimate;
+};
+
+uint64_t CountPostings(PostingsEstimate& estimate,
+                       duckdb::ClientContext& context, uint64_t threads) {
+  const auto& reader = *estimate.g.reader;
+  const auto rg_size = estimate.g.rg_size;
+  const auto big = static_cast<uint64_t>(std::distance(
+    estimate.segments.begin(),
+    absl::c_stable_partition(estimate.segments, [&](uint32_t seg) {
+      return reader[seg].docs_count() > rg_size;
+    })));
+  const auto helpers = std::min(threads, big);
+  if (helpers <= 1) {
+    EstimatePostings(estimate);
+  } else {
+    duckdb::TaskExecutor executor{duckdb::TaskScheduler::GetScheduler(context),
+                                  context.GetSchedulerAccount()};
+    for (uint64_t i = 0; i != helpers; ++i) {
+      executor.ScheduleTask(
+        duckdb::make_uniq<EstimateSlice>(executor, estimate));
+    }
+    executor.WorkOnTasks();
+  }
+  return estimate.postings.load(std::memory_order_relaxed);
+}
+
 }  // namespace
 
 std::vector<LiveClaim> CutClaims(const irs::bitset& live, uint32_t threads) {
@@ -718,11 +798,18 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
   const bool constant_count = !eager && g.shape == ScanShape::Count &&
                               g.col_filters.empty() && where &&
                               ConstantCount(*where);
+  const bool sized_by_postings =
+    (g.shape == ScanShape::Count || g.shape == ScanShape::Stream) && where &&
+    !g.vector_scorer && !g.scorer_obj;
+  const auto unique = UniqueBound(g, where.get());
+  const bool single = unique && *unique <= STANDARD_VECTOR_SIZE;
   irs::ColFilterStateCache states;
   irs::ColFilterClassification cls;
   std::vector<LivePass> passes;
   uint64_t parallel = 0;
   uint64_t rgs = 0;
+  uint64_t whole = 0;
+  uint64_t whole_docs = 0;
   auto run_end = g.live_segments;
   for (auto i = g.live_segments; i-- != 0;) {
     const auto seg = g.segment_order[i];
@@ -745,8 +832,7 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
                      std::memory_order_relaxed);
     if (split) {
       run_end = i;
-      if (!ordered && !g.col_filters.empty() && threads > 1 &&
-          work.rg_count > threads) {
+      if (!ordered && !g.col_filters.empty() && threads > 1) {
         ClassifySegmentColFilters(sub, g, g.col_filters, states, cls, false);
         if (cls.segment_dead) {
           work.claims = {{.rg = work.rg_count}};
@@ -772,24 +858,45 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
     pass.work->claims = CutClaims(pass.live, static_cast<uint32_t>(threads));
   }
   uint32_t skipped = 0;
+  PostingsEstimate estimate{.g = g, .enough = threads * g.rg_size};
   for (uint32_t i = 0; i != g.live_segments; ++i) {
     const auto seg = g.segment_order[i];
     const auto& work = g.Segment(seg);
-    const auto live =
-      work.claim.load(std::memory_order_relaxed) == SegmentWork::kSplit
-        ? work.LiveCount()
-        : 1;
+    const bool split =
+      work.claim.load(std::memory_order_relaxed) == SegmentWork::kSplit;
+    const auto live = split ? work.LiveCount() : 1;
     if (live == 0) {
       ++skipped;
       continue;
     }
-    const auto& query = g.queries[seg];
-    parallel += query && query->Kind() == irs::QueryKind::Empty ? 0 : live;
     rgs += work.rg_count;
+    if (const auto& query = g.queries[seg];
+        query && query->Kind() == irs::QueryKind::Empty) {
+      continue;
+    }
+    const auto& sub = (*g.reader)[seg];
+    if (split) {
+      parallel += live;
+    } else {
+      ++whole;
+      whole_docs += sub.Meta().docs_count;
+    }
+    if (sized_by_postings &&
+        !(constant_count && sub.live_docs_count() == sub.docs_count())) {
+      estimate.segments.push_back(seg);
+    }
   }
   g.done_segments.store(skipped, std::memory_order_relaxed);
+  parallel += std::min(whole, (whole_docs + g.rg_size - 1) / g.rg_size);
+  if (sized_by_postings) {
+    parallel =
+      (CountPostings(estimate, context, threads) + g.rg_size - 1) / g.rg_size;
+  }
   if (g.stats_stage) {
     parallel = std::max<uint64_t>(parallel, g.total_segments);
+  }
+  if (single) {
+    parallel = 1;
   }
   g.workers = static_cast<uint32_t>(std::clamp<uint64_t>(
     std::min(threads, parallel), 1, std::numeric_limits<uint32_t>::max()));

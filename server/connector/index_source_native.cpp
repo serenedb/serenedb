@@ -30,7 +30,7 @@
 #include <duckdb/execution/execution_context.hpp>
 #include <duckdb/parallel/thread_context.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
-#include <duckdb/transaction/duck_transaction.hpp>
+#include <duckdb/transaction/transaction.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -62,7 +62,7 @@ duckdb::TableCatalogEntry& ResolveTableEntry(duckdb::ClientContext& context,
 NativeIndexSource::NativeIndexSource(
   duckdb::ClientContext& context, ViewFastPath fast_path,
   duckdb::optional_ptr<duckdb::TableCatalogEntry> table,
-  std::shared_ptr<const search::FileManifest> file_manifest,
+  const search::FileManifest* file_manifest,
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
   std::span<const ColumnId> bind_column_ids,
@@ -76,7 +76,7 @@ NativeIndexSource::NativeIndexSource(
     BindTable(context, ResolveTableEntry(context, _fast_path),
               projected_columns, projected_types, bind_column_ids, false);
   } else {
-    BindFiles(context, file_manifest.get(), projected_columns, projected_types,
+    BindFiles(context, file_manifest, projected_columns, projected_types,
               bind_column_ids);
   }
   if (_no_files) {
@@ -121,7 +121,7 @@ void NativeIndexSource::BindTable(
   std::span<const ColumnId> bind_column_ids, bool by_id) {
   // Registers the attached database with the meta transaction, keeping it
   // alive for the query even if it is detached concurrently.
-  duckdb::DuckTransaction::Get(context, table.ParentCatalog());
+  duckdb::Transaction::Get(context, table.ParentCatalog());
   _source = BindTableScan(
     context, table,
     duckdb::EntryLookupInfo{duckdb::CatalogType::TABLE_ENTRY,
@@ -158,16 +158,10 @@ void NativeIndexSource::BindTable(
       });
     return;
   }
-  // The table is its own storage now -- there is no separate store relation to
-  // resolve -- so physical positions are the entry's own column order minus
-  // the generated PK.
   irs::containers::FlatHashMap<duckdb::idx_t, duckdb::idx_t> id_to_pos;
   id_to_pos.reserve(columns.LogicalColumnCount());
   duckdb::idx_t pos = 0;
   for (const auto& col : columns.Logical()) {
-    if (TableColumnId(col) == kGeneratedPKId) {
-      continue;
-    }
     id_to_pos.emplace(TableColumnId(col), pos++);
   }
   InitProjection(

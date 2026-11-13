@@ -1,0 +1,70 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY itpk_words AS split_text() WITH (frequency, norm);
+
+
+statement ok
+CREATE TABLE itpk (s TEXT PRIMARY KEY, n INT);
+
+
+statement ok
+CREATE INDEX itpk_idx ON itpk USING inverted (s itpk_words);
+
+
+statement ok
+INSERT INTO itpk VALUES ('red fox', 1), ('red', 2), ('blue fox', 3);
+
+
+query
+SELECT s FROM itpk_idx WHERE s @@ 'fox' ORDER BY n;
+----
+s
+red fox
+blue fox
+
+
+query
+SELECT s FROM itpk WHERE s @@ 'fox' ORDER BY n;
+----
+s
+red fox
+blue fox
+
+
+query
+SELECT s FROM itpk WHERE s @@ 'fox' ORDER BY bm25(tableoid) DESC, n;
+----
+s
+red fox
+blue fox
+
+
+statement ok
+VACUUM (FLUSH_TABLE) itpk;
+
+
+query
+SELECT s FROM itpk WHERE s @@ 'fox' ORDER BY n;
+----
+s
+red fox
+blue fox
+
+
+statement error
+INSERT INTO itpk VALUES ('red fox', 4);
+----
+db error: ERROR: duplicate key value violates unique constraint "itpk_pkey"
+DETAIL: Key (s)=(red fox) already exists.
+
+
+statement ok
+INSERT INTO itpk VALUES ('fox red', 5);
+
+
+query
+SELECT s FROM itpk WHERE s @@ 'red' ORDER BY n;
+----
+s
+red fox
+red
+fox red

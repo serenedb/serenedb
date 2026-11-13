@@ -96,11 +96,6 @@ INSERT INTO t VALUES (2, 'bravo');
 
 
 onlyif serenedb
-statement ok
-VACUUM (REFRESH_TABLE) t;
-
-
-onlyif serenedb
 query
 SELECT count(*) FROM t;
 ----

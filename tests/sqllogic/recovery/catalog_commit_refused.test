@@ -32,15 +32,21 @@ CREATE TABLE ccr_new AS SELECT range AS x FROM range(1000)
 
 
 connection s2
-statement ok
+statement error
 DROP TABLE ccr_t
+----
+db error: ERROR: table "ccr_t" is being changed by another transaction
+HINT: Retry once that transaction commits or rolls back.
 
 
 connection s1
-statement error
-COMMIT
-----
-db error: ERROR: Failed to commit: Could not commit creation of dependency, subject "ccr_t" has been deleted
+statement ok
+ROLLBACK
+
+
+connection s2
+statement ok
+DROP TABLE ccr_t
 
 
 connection s1

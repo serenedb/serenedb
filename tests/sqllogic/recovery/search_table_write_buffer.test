@@ -8,7 +8,7 @@ SET GLOBAL checkpoint_threshold = '1MB';
 
 statement ok
 CREATE TABLE wbuf(a INTEGER, b TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 RESET sdb_faults;
@@ -28,7 +28,7 @@ statement ok
 INSERT INTO wbuf SELECT i, 'v' || i || repeat('x', 200) FROM range(5000) t(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) wbuf;
+VACUUM (FLUSH_TABLE) wbuf;
 
 query
 SELECT count(*) AS n, min(a) AS lo, max(a) AS hi, count(DISTINCT a) AS d FROM wbuf;
@@ -46,7 +46,7 @@ n	lo	hi	d
 
 statement ok
 CREATE TABLE wmulti(a INTEGER, b TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 BEGIN;
@@ -70,7 +70,7 @@ statement ok
 COMMIT;
 
 statement ok
-VACUUM (REFRESH_TABLE) wmulti;
+VACUUM (FLUSH_TABLE) wmulti;
 
 query
 SELECT count(*) AS n, count(DISTINCT a) AS d FROM wmulti;
@@ -98,7 +98,7 @@ DROP TABLE wmulti;
 
 statement ok
 CREATE TABLE wtrunc(a INTEGER, b TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO wtrunc SELECT i, 'seed' || i || repeat('x', 200) FROM range(3000) t(i);
@@ -119,7 +119,7 @@ statement ok
 COMMIT;
 
 statement ok
-VACUUM (REFRESH_TABLE) wtrunc;
+VACUUM (FLUSH_TABLE) wtrunc;
 
 # Neither the seed rows nor either statement's rows may be missing: 10000 total,
 # 5000 from each statement, and nothing left over from before the TRUNCATE.
@@ -149,22 +149,19 @@ DROP TABLE wtrunc;
 
 statement ok
 CREATE TABLE wupd(a INTEGER, b TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO wupd SELECT i, 'seed' || i || repeat('x', 200) FROM range(8000) t(i);
 
-# An UPDATE matches through the index, and a search table publishes rows only
-# on refresh -- without this the UPDATE below sees an empty table and silently
-# updates nothing.
 statement ok
-VACUUM (REFRESH_TABLE) wupd;
+VACUUM (FLUSH_TABLE) wupd;
 
 statement ok
 UPDATE wupd SET b = 'aupd' || a || repeat('y', 200);
 
 statement ok
-VACUUM (REFRESH_TABLE) wupd;
+VACUUM (FLUSH_TABLE) wupd;
 
 query
 SELECT count(*) AS n,
@@ -190,13 +187,13 @@ DROP TABLE wupd;
 # The UPDATE crosses, with the INSERT's rows buffered ahead of it.
 statement ok
 CREATE TABLE wmixa(a INTEGER, b TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO wmixa SELECT i, 'seed' || i || repeat('x', 200) FROM range(6000) t(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) wmixa;
+VACUUM (FLUSH_TABLE) wmixa;
 
 statement ok
 BEGIN;
@@ -211,7 +208,7 @@ statement ok
 COMMIT;
 
 statement ok
-VACUUM (REFRESH_TABLE) wmixa;
+VACUUM (FLUSH_TABLE) wmixa;
 
 query
 SELECT count(*) AS n,
@@ -230,13 +227,13 @@ DROP TABLE wmixa;
 # The INSERT crosses, with the UPDATE's remove/replace pair buffered ahead.
 statement ok
 CREATE TABLE wmixb(a INTEGER, b TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO wmixb SELECT i, 'seed' || i || repeat('x', 200) FROM range(2000) t(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) wmixb;
+VACUUM (FLUSH_TABLE) wmixb;
 
 statement ok
 BEGIN;
@@ -251,7 +248,7 @@ statement ok
 COMMIT;
 
 statement ok
-VACUUM (REFRESH_TABLE) wmixb;
+VACUUM (FLUSH_TABLE) wmixb;
 
 query
 SELECT count(*) AS n,
@@ -297,7 +294,7 @@ small_b
 
 connection small_after
 statement ok
-VACUUM (REFRESH_TABLE) wbuf;
+VACUUM (FLUSH_TABLE) wbuf;
 
 
 ###############################################################################
@@ -339,7 +336,7 @@ v15999	206
 
 connection after_commit
 statement ok
-VACUUM (REFRESH_TABLE) wbuf;
+VACUUM (FLUSH_TABLE) wbuf;
 
 
 ###############################################################################
@@ -407,7 +404,7 @@ INSERT INTO wbuf VALUES (30002, 'after_failure');
 
 connection before_commit
 statement ok
-VACUUM (REFRESH_TABLE) wbuf;
+VACUUM (FLUSH_TABLE) wbuf;
 
 connection before_commit
 query

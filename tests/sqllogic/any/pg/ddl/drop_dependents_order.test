@@ -1,0 +1,104 @@
+statement ok
+CREATE SEQUENCE ddo_seq;
+
+
+statement ok
+CREATE TABLE ddo_t1 (a BIGINT DEFAULT nextval('ddo_seq'), b BIGINT DEFAULT nextval('ddo_seq'), c INT, d BIGINT DEFAULT nextval('ddo_seq'));
+
+
+statement ok
+CREATE TABLE ddo_t0 (z BIGINT DEFAULT nextval('ddo_seq'));
+
+
+statement error
+DROP SEQUENCE ddo_seq;
+----
+db error: ERROR: cannot drop sequence ddo_seq because other objects depend on it
+DETAIL: default value for column a of table ddo_t1 depends on sequence ddo_seq
+default value for column b of table ddo_t1 depends on sequence ddo_seq
+default value for column d of table ddo_t1 depends on sequence ddo_seq
+default value for column z of table ddo_t0 depends on sequence ddo_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+
+
+statement ok
+CREATE TYPE ddo_mood AS ENUM ('a', 'b');
+
+
+statement ok
+CREATE TABLE ddo_t2 (m1 ddo_mood, x INT, m2 ddo_mood);
+
+
+statement ok
+CREATE TABLE ddo_t3 (m3 ddo_mood);
+
+
+statement error
+DROP TYPE ddo_mood;
+----
+db error: ERROR: cannot drop type ddo_mood because other objects depend on it
+DETAIL: column m2 of table ddo_t2 depends on type ddo_mood
+column m1 of table ddo_t2 depends on type ddo_mood
+column m3 of table ddo_t3 depends on type ddo_mood
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+
+
+statement ok
+CREATE TABLE ddo_base (id INT);
+
+
+statement ok
+CREATE VIEW ddo_v2 AS SELECT id FROM ddo_base;
+
+
+statement ok
+CREATE VIEW ddo_v1 AS SELECT id FROM ddo_base;
+
+
+statement ok
+CREATE VIEW ddo_vv AS SELECT id FROM ddo_v2;
+
+
+statement error
+DROP TABLE ddo_base;
+----
+db error: ERROR: cannot drop table ddo_base because other objects depend on it
+DETAIL: view ddo_v2 depends on table ddo_base
+view ddo_vv depends on view ddo_v2
+view ddo_v1 depends on table ddo_base
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+
+
+statement ok
+CREATE FUNCTION ddo_f(x INT) RETURNS INT LANGUAGE SQL AS 'SELECT x';
+
+
+statement ok
+CREATE TABLE ddo_t4 (a INT CHECK (ddo_f(a) > 0), b INT DEFAULT ddo_f(1), CONSTRAINT ddo_c2 CHECK (ddo_f(b) > 0));
+
+
+statement error
+DROP FUNCTION ddo_f(INT);
+----
+db error: ERROR: cannot drop function ddo_f(integer) because other objects depend on it
+DETAIL: default value for column b of table ddo_t4 depends on function ddo_f(integer)
+constraint ddo_t4_a_check on table ddo_t4 depends on function ddo_f(integer)
+constraint ddo_c2 on table ddo_t4 depends on function ddo_f(integer)
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+
+
+statement ok
+CREATE TABLE ddo_own (id SERIAL, id2 SERIAL);
+
+
+statement ok
+CREATE TABLE ddo_use (p BIGINT DEFAULT nextval('ddo_own_id2_seq'), q BIGINT DEFAULT nextval('ddo_own_id_seq'));
+
+
+statement error
+DROP TABLE ddo_own;
+----
+db error: ERROR: cannot drop table ddo_own because other objects depend on it
+DETAIL: default value for column q of table ddo_use depends on sequence ddo_own_id_seq
+default value for column p of table ddo_use depends on sequence ddo_own_id2_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.

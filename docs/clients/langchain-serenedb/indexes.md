@@ -23,7 +23,7 @@ This page covers the classes that describe that index, the store methods that bu
 | [`MetadataColumnIndex`](#metadatacolumnindex) | One typed metadata column to index. |
 | [`JsonFieldIndex`](#jsonfieldindex) | One JSON metadata sub-field to index. |
 | [`apply_vector_index()`](#apply_vector_index) and friends | Build, drop and inspect the index. |
-| [Recomputing index statistics](#statistics) | Running `VACUUM (RECOMPUTE_STATS_TABLE)` yourself. |
+| [Index statistics](#statistics) | Kept current by SereneDB, with nothing to run. |
 
 ## One index per collection {#one-index}
 
@@ -61,7 +61,7 @@ The IVF index configuration. Every field is optional.
 | `index_type` | `str` | `"ivf"` | Identifies the index kind. Leave it alone. |
 | `distance_strategy` | `DistanceStrategy` | `COSINE_DISTANCE` | Determines the emitted `metric`. Overwritten by the store when building. |
 | `partial_indexes` | `Optional[list[str]]` | `None` | Not supported -- a non-empty value raises. |
-| `quant` | `Optional[str]` | `None` | Vector quantization: `"sq8"`, `"sq4"`, `"pq"`, `"rabitq"` or `"none"`. Quantized modes require metric `l2` or `ip`. |
+| `quant` | `Optional[str]` | `None` | Vector quantization: `"sq8"`, `"sq4"`, `"pq"`, `"rabitq"` or `"none"`. Quantized modes require metric `l2`, `ip` or `cosine`, and `"rabitq"` requires `l2` or `ip`. |
 | `pq_m` | `Optional[int]` | `None` | Number of PQ sub-quantizers; must divide the vector dimension. Valid only with `quant="pq"`. |
 | `rabitq_bits` | `Optional[int]` | `None` | RaBitQ bit count, 1-9. Valid only with `quant="rabitq"`. |
 | `compression` | `Optional[bool]` | `None` | `False` stores index vectors uncompressed. The database default is `True`. |
@@ -78,7 +78,7 @@ IVFIndex(
 # "ivf (metric = 'l2', quant = 'sq8', compression = false)"
 ```
 
-Option combinations are validated by the database at `CREATE INDEX` time, not in Python, so an invalid pairing surfaces as a SereneDB error. `partial_indexes` is the exception -- it raises immediately, because SereneDB inverted indexes have no `CREATE INDEX ... WHERE` form.
+Option combinations are validated by the database at `CREATE INDEX` time, not in Python, so an invalid pairing surfaces as a SereneDB error. `partial_indexes` is the exception -- the integration does not build [partial indexes](../../sql/statements/create_index/inverted.md#partial-indexes), so a non-empty value raises immediately.
 
 `get_index_metric()` returns the metric string the current `distance_strategy` implies.
 
@@ -153,7 +153,7 @@ Issues `DROP INDEX IF EXISTS` for the derived index name. Subsequent dense searc
 store.reindex()  # raises NotImplementedError
 ```
 
-Would rebuild the store's index in place. **Not supported yet** -- the method raises `NotImplementedError`:
+Rebuilding the store's index in place is not supported: the method raises `NotImplementedError`:
 
 ```text
 SereneDB REINDEX currently supports views only, not the store's base table, so
@@ -161,9 +161,9 @@ reindexing in place is not available yet. Drop and recreate the index instead
 (drop_vector_index + apply_vector_index).
 ```
 
-SereneDB's [`REINDEX`](../../sql/indexes/inverted/views.md#refreshing-the-index) applies to view-backed indexes, where it runs a refresh pass against the view's source. A vector store lives in a base table, so there is nothing for it to act on here. The method exists, and raises rather than silently doing something else, so that the intent is unambiguous; it will perform a real reindex once SereneDB supports `REINDEX` on tables.
+SereneDB's [`REINDEX`](../../sql/indexes/inverted/views.md#refreshing-the-index) applies to view-backed indexes, where it runs a refresh pass against the view's source. A vector store lives in a base table, so there is nothing for it to act on here. The method exists, and raises rather than silently doing something else, so that the intent is unambiguous.
 
-To rebuild the index today, drop it and apply it again:
+To rebuild the index, drop it and apply it again:
 
 ```python
 store.drop_vector_index()
@@ -172,27 +172,9 @@ store.apply_vector_index(IVFIndex())
 
 See [`drop_vector_index()`](#drop_vector_index) and [`apply_vector_index()`](#apply_vector_index).
 
-### Recomputing index statistics {#statistics}
+### Index statistics {#statistics}
 
-Relevance scoring and query planning use per-term statistics that the index maintains. After a large shift in data distribution they can be recomputed with `VACUUM (RECOMPUTE_STATS_TABLE)`, which is a separate operation from rebuilding the index.
-
-The integration does not wrap this, so run it through any PostgreSQL client -- including [`serened psql`](../serened-psql.md):
-
-```sql
-VACUUM (RECOMPUTE_STATS_TABLE) "public"."my_docs";
-```
-
-or on a psycopg connection of your own:
-
-```python
-import psycopg
-
-with psycopg.connect("host=127.0.0.1 port=7890 user=postgres dbname=postgres") as conn:
-    conn.autocommit = True  # VACUUM cannot run inside a transaction
-    conn.execute('VACUUM (RECOMPUTE_STATS_TABLE) "public"."my_docs";')
-```
-
-Recomputing statistics is optional tuning -- it does not affect which rows match, only how they are scored and planned. See [Manual maintenance with `VACUUM`](../../sql/indexes/inverted/maintenance.md#manual-maintenance-with-vacuum) for the full family of operations, and [Publishing writes](./engine.md#eventual-consistency) for the refresh that makes new rows visible in the first place.
+Relevance scoring and query planning use statistics that SereneDB keeps current as rows are written and compacted, so they need no recomputing after a shift in data distribution, and the integration has nothing to wrap. See [Manual maintenance with `VACUUM`](../../sql/indexes/inverted/maintenance.md#manual-maintenance-with-vacuum) for the operations a table does accept.
 
 ### `is_valid_index()` {#is_valid_index}
 

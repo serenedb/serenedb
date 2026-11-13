@@ -3,13 +3,13 @@ RESET sdb_faults;
 
 statement ok
 CREATE TABLE brc (id BIGINT PRIMARY KEY, tag TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO brc SELECT i, 't' || (i % 5) FROM generate_series(1, 5000) g(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) brc;
+VACUUM (FLUSH_TABLE) brc;
 
 statement ok
 SET sdb_faults = 'SearchTable::RebuildConfig';
@@ -39,7 +39,7 @@ statement ok
 INSERT INTO brc VALUES (5001, 't1');
 
 statement ok
-VACUUM (REFRESH_TABLE) brc;
+VACUUM (FLUSH_TABLE) brc;
 
 statement ok
 CREATE INDEX brc_idx ON brc USING inverted (tag);

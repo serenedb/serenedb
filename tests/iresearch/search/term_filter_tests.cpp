@@ -577,7 +577,7 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
   void ByTermSchemas() {
     // write segments
     {
-      auto writer = open_writer(irs::kOmCreate);
+      auto writer = open_writer(tests::kOmCreate);
 
       std::vector<tests::DocGeneratorBase::ptr> gens;
       gens.emplace_back(new tests::JsonDocGenerator(

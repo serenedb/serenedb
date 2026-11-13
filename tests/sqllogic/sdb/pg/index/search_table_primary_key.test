@@ -1,9 +1,5 @@
-# Nothing is published until a refresh is asked for, so what a row is certified
-# against is the tier this file puts it in rather than whichever one a timer
-# got to first.
 statement ok
-CREATE TABLE pk_dup(i INTEGER PRIMARY KEY, t TEXT)
-  WITH (storage = 'search', refresh_interval = 0);
+CREATE TABLE pk_dup(i INTEGER PRIMARY KEY, t TEXT);
 
 
 statement ok
@@ -11,25 +7,26 @@ INSERT INTO pk_dup VALUES (1, 'a'), (2, 'b');
 
 
 statement ok
-VACUUM (REFRESH_TABLE) pk_dup;
+VACUUM (FLUSH_TABLE) pk_dup;
 
 
 # A key the index already holds.
 statement error
 INSERT INTO pk_dup VALUES (1, 'again');
 ----
-db error: ERROR: duplicate key value violates the primary key of table "pk_dup"
+db error: ERROR: duplicate key value violates unique constraint "pk_dup_pkey"
+DETAIL: Key (i)=(1) already exists.
 
 
 # Two rows of one statement carrying the same key.
 statement error
 INSERT INTO pk_dup VALUES (3, 'x'), (3, 'y');
 ----
-db error: ERROR: duplicate key value violates the primary key of table "pk_dup"
+db error: ERROR: duplicate key value violates unique constraint "pk_dup_pkey"
+DETAIL: Key (i)=(3) already exists.
 
 
-# A key committed but not published: the reader cannot answer for it, so the
-# WAL tail has to.
+# A key a just-committed statement wrote.
 statement ok
 INSERT INTO pk_dup VALUES (4, 'fresh');
 
@@ -38,17 +35,14 @@ query
 SELECT count(*) AS published FROM pk_dup WHERE i = 4;
 ----
 published
-0
+1
 
 
 statement error
 INSERT INTO pk_dup VALUES (4, 'again');
 ----
-db error: ERROR: duplicate key value violates the primary key of table "pk_dup"
-
-
-statement ok
-VACUUM (REFRESH_TABLE) pk_dup;
+db error: ERROR: duplicate key value violates unique constraint "pk_dup_pkey"
+DETAIL: Key (i)=(4) already exists.
 
 
 query
@@ -67,7 +61,7 @@ UPDATE pk_dup SET t = 'updated' WHERE i = 1;
 
 
 statement ok
-VACUUM (REFRESH_TABLE) pk_dup;
+VACUUM (FLUSH_TABLE) pk_dup;
 
 
 # The same within one transaction, spelled out.
@@ -87,10 +81,6 @@ statement ok
 COMMIT;
 
 
-statement ok
-VACUUM (REFRESH_TABLE) pk_dup;
-
-
 query
 SELECT i, t FROM pk_dup ORDER BY i;
 ----
@@ -106,15 +96,11 @@ DELETE FROM pk_dup WHERE i = 4;
 
 
 statement ok
-VACUUM (REFRESH_TABLE) pk_dup;
+VACUUM (FLUSH_TABLE) pk_dup;
 
 
 statement ok
 INSERT INTO pk_dup VALUES (4, 'taken again');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) pk_dup;
 
 
 query
@@ -131,8 +117,7 @@ i	t
 # other.
 statement ok
 CREATE TABLE pk_bool(tenant_id INTEGER, is_active BOOLEAN, note TEXT,
-                     PRIMARY KEY (tenant_id, is_active))
-  WITH (storage = 'search');
+                     PRIMARY KEY (tenant_id, is_active));
 
 
 statement ok
@@ -140,21 +125,18 @@ INSERT INTO pk_bool VALUES (1, true, 'on'), (1, false, 'off'), (2, true, 'two');
 
 
 statement ok
-VACUUM (REFRESH_TABLE) pk_bool;
+VACUUM (FLUSH_TABLE) pk_bool;
 
 
 statement error
 INSERT INTO pk_bool VALUES (1, true, 'again');
 ----
-db error: ERROR: duplicate key value violates the primary key of table "pk_bool"
+db error: ERROR: duplicate key value violates unique constraint "pk_bool_pkey"
+DETAIL: Key (tenant_id, is_active)=(1, true) already exists.
 
 
 statement ok
 INSERT INTO pk_bool VALUES (2, false, 'fits');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) pk_bool;
 
 
 query
@@ -186,10 +168,6 @@ statement ok
 COMMIT;
 
 
-statement ok
-VACUUM (REFRESH_TABLE) pk_dup;
-
-
 query
 SELECT i, t FROM pk_dup ORDER BY i;
 ----
@@ -197,9 +175,7 @@ i	t
 1	after truncate
 
 
-# What the truncate does not excuse is a key repeated after it. The keys are
-# certified where the transaction commits, so inside an explicit one that is
-# the COMMIT and not the statement that wrote the rows.
+# A key repeated after the truncate fails its statement.
 statement ok
 BEGIN;
 
@@ -208,18 +184,15 @@ statement ok
 TRUNCATE pk_dup;
 
 
-statement ok
-INSERT INTO pk_dup VALUES (5, 'x'), (5, 'y');
-
-
 statement error
-COMMIT;
+INSERT INTO pk_dup VALUES (5, 'x'), (5, 'y');
 ----
-db error: ERROR: duplicate key value violates the primary key of table "pk_dup"
+db error: ERROR: duplicate key value violates unique constraint "pk_dup_pkey"
+DETAIL: Key (i)=(5) already exists.
 
 
 statement ok
-VACUUM (REFRESH_TABLE) pk_dup;
+COMMIT;
 
 
 # The rolled-back truncate left the table as it was.
@@ -239,13 +212,7 @@ statement ok
 INSERT INTO pk_dup VALUES (1, 'taken once more');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) pk_dup;
-
-
-# The barrier reaches the tail as well as the reader: this key is committed and
-# unpublished when the truncate kills it, and taking it again is not a
-# duplicate.
+# A key the truncate removed can be taken again.
 statement ok
 INSERT INTO pk_dup VALUES (8, 'unpublished');
 
@@ -266,10 +233,6 @@ statement ok
 COMMIT;
 
 
-statement ok
-VACUUM (REFRESH_TABLE) pk_dup;
-
-
 query
 SELECT i, t FROM pk_dup ORDER BY i;
 ----
@@ -280,15 +243,11 @@ i	t
 # Without a declared key nothing is certified, and repeated values are rows
 # like any other.
 statement ok
-CREATE TABLE pk_none(i INTEGER, t TEXT) WITH (storage = 'search');
+CREATE TABLE pk_none(i INTEGER, t TEXT);
 
 
 statement ok
 INSERT INTO pk_none VALUES (1, 'a'), (1, 'b');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) pk_none;
 
 
 query
@@ -300,8 +259,7 @@ i	t
 
 
 statement ok
-CREATE TABLE pk_decimal(d DECIMAL(10, 2) PRIMARY KEY, w DECIMAL(30, 3), t TEXT)
-  WITH (storage = 'search', refresh_interval = 0);
+CREATE TABLE pk_decimal(d DECIMAL(10, 2) PRIMARY KEY, w DECIMAL(30, 3), t TEXT);
 
 
 statement ok
@@ -309,13 +267,14 @@ INSERT INTO pk_decimal VALUES (1.5, 1.5, 'a'), (-2.25, 2, 'b');
 
 
 statement ok
-VACUUM (REFRESH_TABLE) pk_decimal;
+VACUUM (FLUSH_TABLE) pk_decimal;
 
 
 statement error
 INSERT INTO pk_decimal VALUES (1.50, 3, 'again');
 ----
-db error: ERROR: duplicate key value violates the primary key of table "pk_decimal"
+db error: ERROR: duplicate key value violates unique constraint "pk_decimal_pkey"
+DETAIL: Key (d)=(1.50) already exists.
 
 
 statement ok
@@ -325,11 +284,12 @@ INSERT INTO pk_decimal VALUES (1.51, 4, 'c');
 statement error
 INSERT INTO pk_decimal VALUES (1.51, 5, 'unpublished');
 ----
-db error: ERROR: duplicate key value violates the primary key of table "pk_decimal"
+db error: ERROR: duplicate key value violates unique constraint "pk_decimal_pkey"
+DETAIL: Key (d)=(1.51) already exists.
 
 
 statement ok
-VACUUM (REFRESH_TABLE) pk_decimal;
+VACUUM (FLUSH_TABLE) pk_decimal;
 
 
 query
@@ -343,8 +303,7 @@ d	w	t
 
 statement ok
 CREATE TABLE pk_wide(u UUID, h HUGEINT, b UBIGINT, x UHUGEINT, t TEXT,
-                     PRIMARY KEY (u, h, b, x))
-  WITH (storage = 'search');
+                     PRIMARY KEY (u, h, b, x));
 
 
 statement ok
@@ -354,13 +313,14 @@ INSERT INTO pk_wide VALUES
 
 
 statement ok
-VACUUM (REFRESH_TABLE) pk_wide;
+VACUUM (FLUSH_TABLE) pk_wide;
 
 
 statement error
 INSERT INTO pk_wide VALUES ('00000000-0000-0000-0000-000000000001', -170141183460469231731687303715884105728, 18446744073709551615, 340282366920938463463374607431768211455, 'again');
 ----
-db error: ERROR: duplicate key value violates the primary key of table "pk_wide"
+db error: ERROR: duplicate key value violates unique constraint "pk_wide_pkey"
+DETAIL: Key (u, h, b, x)=(00000000-0000-0000-0000-000000000001, -170141183460469231731687303715884105728, 18446744073709551615, 340282366920938463463374607431768211455) already exists.
 
 
 statement ok
@@ -368,7 +328,7 @@ INSERT INTO pk_wide VALUES ('ffffffff-ffff-ffff-ffff-ffffffffffff', 1, 0, 1, 'fi
 
 
 statement ok
-VACUUM (REFRESH_TABLE) pk_wide;
+VACUUM (FLUSH_TABLE) pk_wide;
 
 
 query

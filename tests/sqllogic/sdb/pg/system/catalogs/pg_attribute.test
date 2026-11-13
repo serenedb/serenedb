@@ -429,7 +429,7 @@ ms	sven_att_mood[]	_sven_att_mood
 
 
 statement ok
-CREATE TABLE sven_att_search (txt text) WITH (storage = 'search');
+CREATE TABLE sven_att_search (txt text);
 
 
 query

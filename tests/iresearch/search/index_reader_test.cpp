@@ -21,8 +21,6 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/formats/segment_meta_reader.hpp>
-#include <iresearch/formats/segment_meta_writer.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
@@ -64,38 +62,13 @@ auto StoreName() {
 
 }  // namespace
 
-TEST(directory_reader_test, open_empty_directory) {
-  irs::MemoryDirectory dir;
-
-  // No index
-  ASSERT_SQL_ERROR((irs::DirectoryReader{dir}), ERRCODE_UNDEFINED_FILE);
-}
-
-TEST(directory_reader_test, open_empty_index) {
-  irs::MemoryDirectory dir;
-
-  // Create empty index
-  {
-    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
-                                         irs::tests::DefaultWriterOptions());
-    ASSERT_TRUE(writer->RefreshCommit());
-  }
-
-  auto rdr = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
-  ASSERT_FALSE(!rdr);
-  ASSERT_EQ(0, rdr.docs_count());
-  ASSERT_EQ(0, rdr.live_docs_count());
-  ASSERT_EQ(0, rdr.size());
-  ASSERT_EQ(rdr.end(), rdr.begin());
-}
-
 TEST(directory_reader_test, term_ranges_span_segments) {
   constexpr irs::field_id kBoth = 7;
   constexpr irs::field_id kFirst = 8;
   constexpr irs::field_id kAbsent = 9;
   irs::MemoryDirectory dir;
-  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
-                                       irs::tests::DefaultWriterOptions());
+  auto writer = tests::IndexWriter::Make(dir, tests::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
   const auto add = [&](std::string_view both, std::string_view first) {
     tests::Document doc;
     auto both_field = std::make_shared<tests::StringField>("both", both);
@@ -121,16 +94,19 @@ TEST(directory_reader_test, term_ranges_span_segments) {
   add("c", "");
   ASSERT_TRUE(writer->RefreshCommit());
 
-  const irs::DirectoryReader reader{dir, irs::tests::DefaultReaderOptions()};
+  const auto reader =
+    tests::OpenReader(dir, irs::tests::DefaultReaderOptions());
   ASSERT_EQ(2, reader.size());
   const auto* both = reader.GetTermRange(kBoth, irs::StringLayout::kStrings);
   ASSERT_TRUE(both);
   EXPECT_EQ(irs::ViewCast<char>(both->min), "a");
   EXPECT_EQ(irs::ViewCast<char>(both->max), "m");
+  EXPECT_EQ(both->docs, 4);
   const auto* first = reader.GetTermRange(kFirst, irs::StringLayout::kStrings);
   ASSERT_TRUE(first);
   EXPECT_EQ(irs::ViewCast<char>(first->min), "x");
   EXPECT_EQ(irs::ViewCast<char>(first->max), "x");
+  EXPECT_EQ(first->docs, 1);
   EXPECT_FALSE(reader.GetTermRange(kAbsent, irs::StringLayout::kStrings));
   EXPECT_FALSE(reader.GetTermRange(kBoth, irs::StringLayout::kNulls));
 }
@@ -162,8 +138,8 @@ TEST(directory_reader_test, open) {
   // create index
   {
     // open writer
-    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
-                                         irs::tests::DefaultWriterOptions());
+    auto writer = tests::IndexWriter::Make(dir, tests::kOmCreate,
+                                           irs::tests::DefaultWriterOptions());
 
     // add first segment
     {
@@ -199,7 +175,7 @@ TEST(directory_reader_test, open) {
     writer->RefreshCommit();
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
+      tests::OpenReader(dir, irs::tests::DefaultReaderOptions()));
 
     // add second segment
     {
@@ -245,7 +221,7 @@ TEST(directory_reader_test, open) {
     writer->RefreshCommit();
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
+      tests::OpenReader(dir, irs::tests::DefaultReaderOptions()));
 
     // add third segment
     {
@@ -271,17 +247,14 @@ TEST(directory_reader_test, open) {
     writer->RefreshCommit();
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
+      tests::OpenReader(dir, irs::tests::DefaultReaderOptions()));
   }
 
   // open reader
-  auto rdr = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
-  ASSERT_FALSE(!rdr);
+  auto rdr = tests::OpenReader(dir, irs::tests::DefaultReaderOptions());
   ASSERT_EQ(9, rdr.docs_count());
   ASSERT_EQ(9, rdr.live_docs_count());
   ASSERT_EQ(3, rdr.size());
-  ASSERT_EQ("segments_3", rdr.Meta().filename);
-  ASSERT_EQ(rdr.size(), rdr.Meta().index_meta.segments.size());
 
   // check subreaders
   auto sub = rdr.begin();
@@ -352,91 +325,6 @@ TEST(directory_reader_test, open) {
   ASSERT_EQ(rdr.end(), sub);
 }
 
-TEST(segment_reader_test, segment_reader_has) {
-  std::string filename;
-
-  // has none (default)
-  {
-    irs::MemoryDirectory dir;
-    irs::SegmentMeta expected;
-    expected.name = "_1";
-
-    irs::segment_meta::Write(dir, filename, expected);
-
-    irs::SegmentMeta meta;
-
-    irs::segment_meta::Read(dir, meta, filename);
-
-    ASSERT_EQ(expected, meta);
-    ASSERT_FALSE(irs::HasRemovals(meta));
-  }
-
-  // has column store
-  {
-    irs::MemoryDirectory dir;
-    irs::SegmentMeta expected;
-    expected.name = "_1";
-
-    irs::segment_meta::Write(dir, filename, expected);
-
-    irs::SegmentMeta meta;
-
-    irs::segment_meta::Read(dir, meta, filename);
-
-    ASSERT_EQ(expected, meta);
-    ASSERT_FALSE(irs::HasRemovals(meta));
-  }
-
-  // has document mask
-  {
-    irs::MemoryDirectory dir;
-    irs::SegmentMeta expected;
-    expected.name = "_1";
-
-    expected.docs_count = 43;
-    expected.live_docs_count = 42;
-    expected.version = 0;
-    expected.docs_mask = [&] {
-      irs::DocumentMaskBuilder docs_mask;
-      docs_mask.Add(4);
-      return std::make_shared<const irs::DocumentMask>(
-        std::move(docs_mask).Finish());
-    }();
-    irs::segment_meta::Write(dir, filename, expected);
-
-    irs::SegmentMeta meta;
-
-    irs::segment_meta::Read(dir, meta, filename);
-
-    ASSERT_EQ(expected, meta);
-    ASSERT_TRUE(irs::HasRemovals(meta));
-  }
-
-  // has all
-  {
-    irs::MemoryDirectory dir;
-    irs::SegmentMeta expected;
-    expected.name = "_1";
-
-    expected.docs_count = 43;
-    expected.live_docs_count = 42;
-    expected.version = 1;
-    expected.docs_mask = [&] {
-      irs::DocumentMaskBuilder docs_mask;
-      docs_mask.Add(4);
-      return std::make_shared<const irs::DocumentMask>(
-        std::move(docs_mask).Finish());
-    }();
-    irs::segment_meta::Write(dir, filename, expected);
-
-    irs::SegmentMeta meta;
-    irs::segment_meta::Read(dir, meta, filename);
-
-    ASSERT_EQ(expected, meta);
-    ASSERT_TRUE(irs::HasRemovals(meta));
-  }
-}
-
 TEST(segment_reader_test, open_invalid_segment) {
   irs::MemoryDirectory dir;
 
@@ -467,8 +355,8 @@ TEST(segment_reader_test, open) {
   irs::DirectoryReader writer_snapshot;
   {
     // open writer
-    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
-                                         irs::tests::DefaultWriterOptions());
+    auto writer = tests::IndexWriter::Make(dir, tests::kOmCreate,
+                                           irs::tests::DefaultWriterOptions());
 
     // add first segment
     {
@@ -530,8 +418,7 @@ TEST(segment_reader_test, open) {
     irs::SegmentMeta meta;
     meta.docs_count = 5;
     meta.live_docs_count = 5;
-    meta.name = "_1";
-    meta.version = 42;
+    meta.name = irs::FileName(1);
 
     auto rdr = irs::SegmentReaderImpl::Open(dir, meta,
                                             irs::tests::DefaultReaderOptions());

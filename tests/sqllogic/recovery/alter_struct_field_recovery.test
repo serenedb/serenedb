@@ -1,0 +1,83 @@
+control substitution on
+
+
+statement ok
+CREATE TABLE sfr (id INT, s STRUCT(i INT, j INT));
+
+
+statement ok
+INSERT INTO sfr VALUES (1, ROW(10, 20)), (2, NULL);
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+INSERT INTO sfr VALUES (3, ROW(30, 40));
+
+
+statement ok
+ALTER TABLE sfr ADD COLUMN s.k INT;
+
+
+statement ok
+INSERT INTO sfr VALUES (4, ROW(50, 60, 70));
+
+
+statement ok
+ALTER TABLE sfr RENAME COLUMN s.j TO v;
+
+
+statement ok
+ALTER TABLE sfr DROP COLUMN s.i;
+
+
+statement ok
+INSERT INTO sfr VALUES (5, ROW(80, 90));
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_crash
+query
+SELECT typeof(s) AS t FROM sfr LIMIT 1;
+----
+t
+STRUCT(v INTEGER, k INTEGER)
+
+
+connection after_crash
+query
+SELECT id, s.v AS v, s.k AS k FROM sfr ORDER BY id;
+----
+id	v	k
+1	20	NULL
+2	NULL	NULL
+3	40	NULL
+4	60	70
+5	80	90
+
+
+connection after_crash
+statement ok
+INSERT INTO sfr VALUES (6, ROW(100, 110));
+
+
+connection after_crash
+query
+SELECT id, s.v AS v, s.k AS k FROM sfr WHERE id = 6;
+----
+id	v	k
+6	100	110

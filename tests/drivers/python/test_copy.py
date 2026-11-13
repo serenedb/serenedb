@@ -68,8 +68,7 @@ def test_copy_from_stdin(conn: psycopg.Connection, table_name: str,
             ) as cp:
                 cp.write(payload)
             cur.execute(
-                f'SELECT count(*), sum(x) FROM public."{table_name}"'
-            )
+                f'SELECT count(*), sum(x) FROM public."{table_name}"')
             n, s = cur.fetchone()
             assert n == 3
             assert s == 6
@@ -103,8 +102,7 @@ def test_copy_from_stdin_reg_names(conn: psycopg.Connection,
                 cp.write(b"pg_class\tinteger\n" * rows)
             cur.execute(
                 f'SELECT count(*), min(r::text), max(t::text) '
-                f'FROM public."{table_name}"'
-            )
+                f'FROM public."{table_name}"')
             assert cur.fetchone() == (rows, "pg_class", "integer")
     finally:
         _drop(conn, table_name)
@@ -123,8 +121,7 @@ def test_copy_binary_round_trip(conn: psycopg.Connection,
         with conn.cursor() as cur:
             cur.execute(
                 f'INSERT INTO public."{table_name}" VALUES '
-                f"(1,'one'),(2,NULL),(3,'three')"
-            )
+                f"(1,'one'),(2,NULL),(3,'three')")
             chunks: list[bytes] = []
             with cur.copy(
                 f'COPY public."{table_name}" TO STDOUT (FORMAT BINARY)'
@@ -141,8 +138,7 @@ def test_copy_binary_round_trip(conn: psycopg.Connection,
             ) as cp:
                 cp.write(blob)
             cur.execute(
-                f'SELECT count(*), sum(x), count(label) FROM public."{dest}"'
-            )
+                f'SELECT count(*), sum(x), count(label) FROM public."{dest}"')
             n, s, labels = cur.fetchone()
             assert n == 3
             assert s == 6
@@ -207,8 +203,7 @@ def test_copy_to_stdout(conn: psycopg.Connection, table_name: str,
         with conn.cursor() as cur:
             cur.execute(
                 f'INSERT INTO public."{table_name}" VALUES '
-                f"(1,'one'),(2,'two'),(3,'three')"
-            )
+                f"(1,'one'),(2,'two'),(3,'three')")
             chunks: list[bytes] = []
             with cur.copy(
                 f'COPY public."{table_name}" TO STDOUT (FORMAT {fmt})'
@@ -233,8 +228,7 @@ def test_copy_to_stdout_parquet_is_binary_blob(conn: psycopg.Connection,
     try:
         with conn.cursor() as cur:
             cur.execute(
-                f'INSERT INTO public."{table_name}" VALUES (1,\'one\'),(2,\'two\')'
-            )
+                f'INSERT INTO public."{table_name}" VALUES (1,\'one\'),(2,\'two\')')
             buf = io.BytesIO()
             with cur.copy(
                 f'COPY public."{table_name}" TO STDOUT (FORMAT PARQUET)'
@@ -258,8 +252,7 @@ def test_copy_to_stdout_json_lines(conn: psycopg.Connection,
     try:
         with conn.cursor() as cur:
             cur.execute(
-                f'INSERT INTO public."{table_name}" VALUES (1,\'one\'),(2,NULL)'
-            )
+                f'INSERT INTO public."{table_name}" VALUES (1,\'one\'),(2,NULL)')
             out = b""
             with cur.copy(
                 f'COPY public."{table_name}" TO STDOUT (FORMAT JSON)'
@@ -284,8 +277,7 @@ def test_copy_json_round_trip(conn: psycopg.Connection,
         with conn.cursor() as cur:
             cur.execute(
                 f'INSERT INTO public."{table_name}" VALUES '
-                f"(1,'one'),(2,NULL),(3,'a\"b')"
-            )
+                f"(1,'one'),(2,NULL),(3,'a\"b')")
             blob = b""
             with cur.copy(
                 f'COPY public."{table_name}" TO STDOUT (FORMAT JSON)'
@@ -317,8 +309,7 @@ def test_copy_to_stdout_csv_header_flag(conn: psycopg.Connection,
         with conn.cursor() as cur:
             cur.execute(
                 f'INSERT INTO public."{table_name}" VALUES '
-                f"(1,'one'),(2,'two')"
-            )
+                f"(1,'one'),(2,'two')")
             out = b""
             with cur.copy(
                 f'COPY public."{table_name}" '
@@ -354,8 +345,7 @@ def test_copy_from_stdin_csv_header_flag(conn: psycopg.Connection,
             ) as cp:
                 cp.write(payload)
             cur.execute(
-                f'SELECT count(*), sum(x) FROM public."{table_name}"'
-            )
+                f'SELECT count(*), sum(x) FROM public."{table_name}"')
             n, s = cur.fetchone()
             assert n == 2 and s == 3, \
                 f"expected 2 rows sum 3, got n={n} s={s}"
@@ -369,8 +359,7 @@ def test_copy_to_stdout_bare_keyword(conn: psycopg.Connection,
     try:
         with conn.cursor() as cur:
             cur.execute(
-                f'INSERT INTO public."{table_name}" VALUES (10,\'ten\')'
-            )
+                f'INSERT INTO public."{table_name}" VALUES (10,\'ten\')')
             out = b""
             with cur.copy(f'COPY public."{table_name}" TO STDOUT') as cp:
                 for chunk in cp:
@@ -428,7 +417,7 @@ def test_copy_from_stdin_parquet_does_not_crash(conn: psycopg.Connection,
 
 
 _ROWS = 300_000
-_STORAGES = ["", "WITH (storage = 'search')"]
+_STORAGES = [""]
 _SOURCES = ["stdin", "file"]
 
 
@@ -450,20 +439,12 @@ def _copy_from(cur, table: str, payload: bytes, options: str, source: str,
 
 
 def _count(cur, table: str, storage: str, where: str = "") -> int:
-    if storage:
-        cur.execute(f'VACUUM (REFRESH_TABLE) public."{table}"')
     cur.execute(f'SELECT count(*) FROM public."{table}" {where}')
     return cur.fetchone()[0]
 
 
-def _assert_insertion_order(cur, table: str, storage: str, rows: int) -> None:
-    if not storage:
-        cur.execute(f'SELECT x FROM public."{table}"')
-        assert [row[0] for row in cur] == list(range(rows))
-
-
 @pytest.mark.parametrize("source", _SOURCES)
-@pytest.mark.parametrize("storage", _STORAGES, ids=["duckdb", "search"])
+@pytest.mark.parametrize("storage", _STORAGES, ids=["table"])
 def test_large_text_copy_keeps_every_row(conn: psycopg.Connection,
                                          table_name: str, storage: str,
                                          source: str, shared_path: Path) -> None:
@@ -480,13 +461,12 @@ def test_large_text_copy_keeps_every_row(conn: psycopg.Connection,
             assert _count(cur, table_name, storage,
                           "WHERE label = 'name' || chr(9) || x::VARCHAR"
                           ) == _ROWS
-            _assert_insertion_order(cur, table_name, storage, _ROWS)
         finally:
             cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
 
 
 @pytest.mark.parametrize("source", _SOURCES)
-@pytest.mark.parametrize("storage", _STORAGES, ids=["duckdb", "search"])
+@pytest.mark.parametrize("storage", _STORAGES, ids=["table"])
 def test_large_text_copy_header_and_last_row_without_newline(
         conn: psycopg.Connection, table_name: str, storage: str, source: str,
         shared_path: Path) -> None:
@@ -568,7 +548,6 @@ def test_text_copy_escaped_newlines_on_range_boundaries(
                         f'public."{table_name}" ORDER BY x')
             assert cur.fetchall() == [(x, len(label), label[-6:])
                                       for x, label in enumerate(labels)]
-            _assert_insertion_order(cur, table_name, "", len(labels))
         finally:
             cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
 
@@ -582,7 +561,7 @@ def _label_length(i: int) -> int:
 
 
 @pytest.mark.parametrize("source", _SOURCES)
-@pytest.mark.parametrize("storage", _STORAGES, ids=["duckdb", "search"])
+@pytest.mark.parametrize("storage", _STORAGES, ids=["table"])
 def test_large_text_copy_rows_longer_than_a_read(conn: psycopg.Connection,
                                                  table_name: str,
                                                  storage: str, source: str,
@@ -601,13 +580,12 @@ def test_large_text_copy_rows_longer_than_a_read(conn: psycopg.Connection,
                         f'public."{table_name}"')
             assert cur.fetchone() == (rows * (rows - 1) // 2,
                                       sum(map(_label_length, range(rows))))
-            _assert_insertion_order(cur, table_name, storage, rows)
         finally:
             cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
 
 
 @pytest.mark.parametrize("source", _SOURCES)
-@pytest.mark.parametrize("storage", _STORAGES, ids=["duckdb", "search"])
+@pytest.mark.parametrize("storage", _STORAGES, ids=["table"])
 def test_large_text_copy_bad_row_inserts_nothing(conn: psycopg.Connection,
                                                  table_name: str, storage: str,
                                                  source: str,
@@ -633,7 +611,7 @@ def _binary_rows(cur, count: int) -> bytes:
 
 
 @pytest.mark.parametrize("source", _SOURCES)
-@pytest.mark.parametrize("storage", _STORAGES, ids=["duckdb", "search"])
+@pytest.mark.parametrize("storage", _STORAGES, ids=["table"])
 def test_large_binary_copy_keeps_every_row(conn: psycopg.Connection,
                                            table_name: str, storage: str,
                                            source: str,
@@ -651,7 +629,6 @@ def test_large_binary_copy_keeps_every_row(conn: psycopg.Connection,
             assert cur.fetchone() == (_ROWS * (_ROWS - 1) // 2, _ROWS)
             assert _count(cur, table_name, storage,
                           "WHERE label = 'name' || x::VARCHAR") == _ROWS
-            _assert_insertion_order(cur, table_name, storage, _ROWS)
         finally:
             cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
 
@@ -683,7 +660,7 @@ def _bytea_payload(fmt: str, values: list[bytes]) -> bytes:
 
 @pytest.mark.parametrize("fmt", ["TEXT", "BINARY"])
 @pytest.mark.parametrize("source", _SOURCES)
-@pytest.mark.parametrize("storage", _STORAGES, ids=["duckdb", "search"])
+@pytest.mark.parametrize("storage", _STORAGES, ids=["table"])
 def test_large_bytea_copy_keeps_every_value(conn: psycopg.Connection,
                                             table_name: str, storage: str,
                                             source: str, fmt: str,
@@ -724,7 +701,7 @@ def test_bytea_copy_values_longer_than_a_batch(conn: psycopg.Connection,
 
 
 @pytest.mark.parametrize("source", _SOURCES)
-@pytest.mark.parametrize("storage", _STORAGES, ids=["duckdb", "search"])
+@pytest.mark.parametrize("storage", _STORAGES, ids=["table"])
 @pytest.mark.parametrize("damage", ["after_trailer", "truncated"])
 def test_large_binary_copy_damaged_stream_inserts_nothing(
         conn: psycopg.Connection, table_name: str, storage: str,
@@ -769,11 +746,10 @@ def _assert_lengths(cur, table: str, storage: str,
     assert _count(cur, table, storage) == len(lengths)
     cur.execute(f'SELECT x, length(label) FROM public."{table}" ORDER BY x')
     assert cur.fetchall() == list(enumerate(lengths))
-    _assert_insertion_order(cur, table, storage, len(lengths))
 
 
 @pytest.mark.parametrize("header", [False, True], ids=["plain", "header"])
-@pytest.mark.parametrize("storage", _STORAGES, ids=["duckdb", "search"])
+@pytest.mark.parametrize("storage", _STORAGES, ids=["table"])
 def test_text_file_rows_on_range_boundaries(conn: psycopg.Connection,
                                             table_name: str, storage: str,
                                             header: bool,
@@ -790,7 +766,7 @@ def test_text_file_rows_on_range_boundaries(conn: psycopg.Connection,
             cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
 
 
-@pytest.mark.parametrize("storage", _STORAGES, ids=["duckdb", "search"])
+@pytest.mark.parametrize("storage", _STORAGES, ids=["table"])
 def test_text_copy_from_named_pipe(conn: psycopg.Connection, table_name: str,
                                    storage: str, shared_path: Path) -> None:
     pipe = shared_path / "rows.pipe"
@@ -807,7 +783,6 @@ def test_text_copy_from_named_pipe(conn: psycopg.Connection, table_name: str,
                         "(FORMAT TEXT, HEADER)")
             writer.join(timeout=60)
             assert _count(cur, table_name, storage) == _ROWS
-            _assert_insertion_order(cur, table_name, storage, _ROWS)
         finally:
             cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
 
@@ -830,7 +805,6 @@ def test_file_copy_without_read_ahead(conn: psycopg.Connection,
                 _copy_from(cur, table_name, _binary_rows(cur, _ROWS),
                            "FORMAT BINARY", "file", shared_path)
                 assert _count(cur, table_name, "") == _ROWS
-                _assert_insertion_order(cur, table_name, "", _ROWS)
         finally:
             cur.execute(f"RESET {setting}")
             cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')

@@ -1,0 +1,102 @@
+statement error
+CREATE TABLE bsz_bad (id INT) WITH (block_size = 1000);
+----
+db error: ERROR: invalid value for parameter "block_size": "1000" (must be a power of two from 16384 to 262144)
+
+
+statement error
+CREATE TABLE bsz_bad (id INT) WITH (block_size = 524288);
+----
+db error: ERROR: invalid value for parameter "block_size": "524288" (must be a power of two from 16384 to 262144)
+
+
+statement ok
+CREATE TABLE bsz_small (id BIGINT, body TEXT) WITH (compaction_interval = 0, block_size = 16384);
+
+
+statement ok
+CREATE TABLE bsz_default (id BIGINT, body TEXT) WITH (compaction_interval = 0);
+
+
+statement ok
+CREATE INDEX bsz_small_idx ON bsz_small USING inverted (body);
+
+
+statement ok
+SET threads = 1;
+
+
+statement ok
+INSERT INTO bsz_small SELECT i, 'w' || (i % 7) FROM range(100000) t(i);
+
+
+statement ok
+INSERT INTO bsz_default SELECT i, 'w' || (i % 7) FROM range(100000) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) bsz_small;
+
+
+statement ok
+VACUUM (FLUSH_TABLE) bsz_default;
+
+
+statement ok
+RESET threads;
+
+
+query
+SELECT relname, reloptions FROM pg_class WHERE relname IN ('bsz_small', 'bsz_default') ORDER BY relname;
+----
+relname	reloptions
+bsz_default	{compaction_interval=0}
+bsz_small	{compaction_interval=0,block_size=16384}
+
+
+query
+SELECT (SELECT string_agg(DISTINCT compression, ',') FROM pragma_storage_info('bsz_small') WHERE column_name = 'id') AS small,
+       (SELECT string_agg(DISTINCT compression, ',') FROM pragma_storage_info('bsz_default') WHERE column_name = 'id') AS default_size;
+----
+small	default_size
+Uncompressed	BitPacking
+
+
+query
+SELECT count(*) AS n, sum(id) AS total FROM bsz_small WHERE body @@ 'w3';
+----
+n	total
+14286	714307143
+
+
+statement ok
+INSERT INTO bsz_small SELECT i, 'w' || (i % 7) FROM range(100000, 120000) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) bsz_small;
+
+
+statement ok
+VACUUM (COMPACT_TABLE) bsz_small;
+
+
+query
+SELECT count(*) AS n, sum(id) AS total FROM bsz_small;
+----
+n	total
+120000	7199940000
+
+
+statement error
+ALTER TABLE bsz_small SET (block_size = 32768);
+----
+db error: ERROR: option "block_size" cannot be changed with ALTER TABLE
+
+
+statement ok
+DROP TABLE bsz_small;
+
+
+statement ok
+DROP TABLE bsz_default;

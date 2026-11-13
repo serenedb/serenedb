@@ -25,7 +25,7 @@
 
 #include <algorithm>
 #include <chrono>
-#include <duckdb/catalog/duck_catalog.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database_manager.hpp>
@@ -41,8 +41,8 @@
 #include "backup/restore.h"
 #include "catalog/catalog.h"
 #include "catalog/entry/subscription.h"
-#include "connector/duckdb_client_state.h"
 #include "network/io_context.h"
+#include "pg/connection_context.h"
 #include "pg/types/mapping.h"
 #include "replication/settings.h"
 
@@ -68,8 +68,7 @@ duckdb::shared_ptr<duckdb::AttachedDatabase> FindDatabase(
   auto& manager =
     duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance());
   auto database = manager.GetDatabase(duckdb::Identifier{name});
-  if (!database || database->GetCatalog().GetCatalogType() !=
-                     catalog::SereneDBCatalog::kStorageType) {
+  if (!database || !catalog::IsSereneDB(database->GetCatalog())) {
     return nullptr;
   }
   return database;
@@ -79,9 +78,9 @@ template<typename Read>
 void ReadCommitted(duckdb::AttachedDatabase& attached,
                    duckdb::idx_t subscription, Read&& read) {
   attached.GetCatalog()
-    .Cast<duckdb::DuckCatalog>()
-    .GetCatalogSet(duckdb::CatalogType::SUBSCRIPTION_ENTRY)
-    .Scan([&](duckdb::CatalogEntry& entry) {
+    .Cast<catalog::SereneDBCatalog>()
+    .Subscriptions()
+    .ScanCommitted([&](duckdb::CatalogEntry& entry) {
       if (entry.oid == subscription) {
         read(entry.Cast<catalog::SubscriptionCatalogEntry>());
       }
@@ -186,9 +185,9 @@ void SubscriptionEngine::start() {
        catalog::SereneDBDatabases(duckdb::DatabaseManager::Get(
          irs::DuckDBEngine::Instance().instance()))) {
     database->GetCatalog()
-      .Cast<duckdb::DuckCatalog>()
-      .GetCatalogSet(duckdb::CatalogType::SUBSCRIPTION_ENTRY)
-      .Scan([&](duckdb::CatalogEntry& entry) {
+      .Cast<catalog::SereneDBCatalog>()
+      .Subscriptions()
+      .ScanCommitted([&](duckdb::CatalogEntry& entry) {
         const auto& config =
           entry.Cast<catalog::SubscriptionCatalogEntry>().Config();
         if (config.enabled) {
@@ -306,9 +305,9 @@ void SubscriptionEngine::ResetStats(std::optional<duckdb::idx_t> subscription) {
        catalog::SereneDBDatabases(duckdb::DatabaseManager::Get(
          irs::DuckDBEngine::Instance().instance()))) {
     database->GetCatalog()
-      .Cast<duckdb::DuckCatalog>()
-      .GetCatalogSet(duckdb::CatalogType::SUBSCRIPTION_ENTRY)
-      .Scan([&](duckdb::CatalogEntry& entry) {
+      .Cast<catalog::SereneDBCatalog>()
+      .Subscriptions()
+      .ScanCommitted([&](duckdb::CatalogEntry& entry) {
         if (!subscription || *subscription == entry.oid) {
           subscriptions.push_back(entry.oid);
         }
@@ -389,19 +388,16 @@ void SubscriptionEngine::Disable(std::string_view database,
   if (!attached) {
     return;
   }
-  connector::SystemConnection system{
-    {.user = irs::StaticStrings::kDefaultUser,
-     .role = pg::kRootUser,
-     .database = database,
-     .database_id = attached->oid},
-    {.what = "disabling subscription", .name = name}};
+  SystemConnection system{{.user = irs::StaticStrings::kDefaultUser,
+                           .role = pg::kRootUser,
+                           .database = database,
+                           .database_id = attached->oid},
+                          {.what = "disabling subscription", .name = name}};
   auto& context = *system.conn->context;
-  connector::SetDefaultSearchPath(context, database);
   context.RunFunctionInTransaction([&] {
     auto& catalog = attached->GetCatalog().Cast<catalog::SereneDBCatalog>();
     const auto transaction = catalog.GetCatalogTransaction(context);
-    auto entry =
-      catalog.GetOidIndex().GetVisible(subscription, transaction.view);
+    auto entry = catalog.LookupOid(transaction, subscription);
     if (!entry || entry->type != duckdb::CatalogType::SUBSCRIPTION_ENTRY) {
       return;
     }
@@ -500,10 +496,6 @@ yaclib::Task<> SubscriptionEngine::Supervise(duckdb::idx_t subscription,
                "' cannot start: ", ex.what());
     }
     if (!client) {
-      {
-        absl::MutexLock lock{&_mu};
-        ++StatsLocked(subscription).apply_error_count;
-      }
       if (!co_await Backoff(
             subscription, exec,
             std::chrono::milliseconds{WalRetrieveRetryIntervalMillis()})) {
@@ -513,16 +505,19 @@ yaclib::Task<> SubscriptionEngine::Supervise(duckdb::idx_t subscription,
     }
     co_await client->RunClient();
     co_await yaclib::On(exec);
-    const bool disable = client->DisableRequested();
-    if (disable) {
-      SDB_WARN(REPLICATION, "subscription \"", name,
-               "\" has been disabled because of an error");
+    const auto disable_subscription = [&] {
       try {
         Disable(database, subscription, name);
       } catch (const std::exception& ex) {
         SDB_WARN(REPLICATION, "subscription '", name,
                  "' disable failed: ", ex.what());
       }
+    };
+    const bool disable = client->DisableRequested();
+    if (disable) {
+      SDB_WARN(REPLICATION, "subscription \"", name,
+               "\" has been disabled because of an error");
+      disable_subscription();
     }
     bool restart = false;
     bool retry_now = false;
@@ -563,7 +558,7 @@ yaclib::Task<> SubscriptionEngine::Supervise(duckdb::idx_t subscription,
           }
         } else if (client->SyncFailed()) {
           ++stats.sync_error_count;
-        } else if (!client->Transient()) {
+        } else if (client->Streaming() && !client->Transient()) {
           ++stats.apply_error_count;
         }
       }
@@ -576,6 +571,12 @@ yaclib::Task<> SubscriptionEngine::Supervise(duckdb::idx_t subscription,
         delay = kTransientRetry * (1u << state.transient_failures);
       } else {
         state.transient_failures = 0;
+      }
+    }
+    SDB_IF_FAILURE("subscription_disable_after_failed_start") {
+      if (client->Connected() && !client->Streaming()) {
+        disable_subscription();
+        break;
       }
     }
     if (restart) {

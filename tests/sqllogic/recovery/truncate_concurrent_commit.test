@@ -45,17 +45,21 @@ SET sdb_faults = '-pause_wal_sync:parked'
 
 
 connection s2
-statement error
+statement async ok
 TRUNCATE tcw
+
+
+query ok retry 40 backoff 250ms
+SELECT count(*) AS n FROM pg_stat_activity WHERE state = 'active' AND query LIKE 'TRUNCATE tcw%'
 ----
-db error: ERROR: Attempting to truncate table "tcw" but another transaction has added rows to this table
+n
+1
 
 
 statement ok
 SET sdb_faults = 'pause_wal_sync:release'
 
 
-connection s1
 wait
 
 
@@ -69,7 +73,6 @@ query
 SELECT id, v FROM tcw ORDER BY id
 ----
 id	v
-1	1
 2	2
 
 

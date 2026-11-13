@@ -7,11 +7,11 @@
 statement ok
 CREATE TABLE vt (id INTEGER PRIMARY KEY, v BIGINT, w INTEGER, s INTEGER,
                  ts TIMESTAMP)
+  WITH (compaction_interval = 0)
 
 
 statement ok
 CREATE INDEX vt_idx ON vt USING inverted (id, v, w, ts) INCLUDE (s)
-  WITH (compaction_interval = 0)
 
 
 statement ok
@@ -22,7 +22,7 @@ FROM range(1, 201) r(i)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) vt
+VACUUM (FLUSH_TABLE) vt
 
 
 statement ok
@@ -33,7 +33,7 @@ FROM range(201, 401) r(i)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) vt
+VACUUM (FLUSH_TABLE) vt
 
 
 statement ok
@@ -41,7 +41,7 @@ DELETE FROM vt WHERE id % 13 = 0
 
 
 statement ok
-VACUUM (REFRESH_TABLE) vt
+VACUUM (FLUSH_TABLE) vt
 
 
 # --- The scan takes the TOP_N.
@@ -54,13 +54,14 @@ QUERY PLAN
 │ Key: rowid          │
 │ ~3 rows             │
 ╰──────────┬──────────╯
-           ├──────────────────────╮
-╭─ IRESEARCH_SCAN ────╮  ╭─ INDEX_SOURCE ──╮
-│ Index: vt_idx       │  │ Lookup: table   │
-│ Lookup: table       │  │ Projections: id │
-│ Top: 3              │  │ ~3 rows         │
-│ Order: v NULLS LAST │  ╰─────────────────╯
-│ Projections: v, pk  │
+           ├───────────────────────╮
+╭─ IRESEARCH_SCAN ────╮  ╭─ IRESEARCH_SCAN ─╮
+│ Index: vt_idx       │  │ Index: vt_idx    │
+│ Lookup: search      │  │ Lookup: search   │
+│ Top: 3              │  │ Projections: id  │
+│ Order: v NULLS LAST │  │ ~3 rows          │
+│ Projections: v,     │  ╰──────────────────╯
+│              rowid  │
 │ ~370 rows           │
 ╰─────────────────────╯
 
@@ -80,7 +81,7 @@ EXPLAIN SELECT v FROM vt_idx ORDER BY v DESC LIMIT 4 OFFSET 2;
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: vt_idx            │
-│ Lookup: table            │
+│ Lookup: search           │
 │ Top: 4, offset 2         │
 │ Order: v DESC NULLS LAST │
 │ Projections: v           │
@@ -125,18 +126,18 @@ QUERY PLAN
 │ Key: rowid            │
 │ ~5 rows               │
 ╰───────────┬───────────╯
-            ├───────────────────────╮
-╭─ IRESEARCH_SCAN ──────╮  ╭─ INDEX_SOURCE ──╮
-│ Index: vt_idx         │  │ Lookup: table   │
-│ Lookup: table         │  │ Projections: id │
-│ Index Filter:         │  │ ~5 rows         │
-│ ╭─ Granular Range ──╮ │  ╰─────────────────╯
-│ │ Field: v(numeric) │ │
+            ├────────────────────────╮
+╭─ IRESEARCH_SCAN ──────╮  ╭─ IRESEARCH_SCAN ─╮
+│ Index: vt_idx         │  │ Index: vt_idx    │
+│ Lookup: search        │  │ Lookup: search   │
+│ Index Filter:         │  │ Projections: id  │
+│ ╭─ Granular Range ──╮ │  │ ~5 rows          │
+│ │ Field: v(numeric) │ │  ╰──────────────────╯
 │ │ Range: >390       │ │
 │ ╰───────────────────╯ │
 │ Top: 5                │
 │ Order: v NULLS LAST   │
-│ Projections: v, pk    │
+│ Projections: v, rowid │
 │ ~74 rows              │
 ╰───────────────────────╯
 
@@ -181,7 +182,7 @@ EXPLAIN SELECT v FROM vt_idx WHERE v IS NOT NULL
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────╮
 │ Index: vt_idx             │
-│ Lookup: table             │
+│ Lookup: search            │
 │ Index Filter:             │
 │ ╭─ Not ──────────╮        │
 │ ╰────────┬───────╯        │
@@ -273,15 +274,15 @@ QUERY PLAN
 │ Key: rowid                                   │
 │ ~3 rows                                      │
 ╰───────────────────────┬──────────────────────╯
-                        ├──────────────────────────────────╮
-╭─ TOP_N ───────────────┴──────────────────────╮  ╭─ INDEX_SOURCE ──╮
-│ Top: 3                                       │  │ Lookup: table   │
-│ Order By: v ASC                              │  │ Projections: id │
-│ ~3 rows                                      │  │ ~3 rows         │
-╰───────────────────────┬──────────────────────╯  ╰─────────────────╯
-╭─ IRESEARCH_SCAN ──────┴──────────────────────╮
+                        ├───────────────────────────────────╮
+╭─ TOP_N ───────────────┴──────────────────────╮  ╭─ IRESEARCH_SCAN ─╮
+│ Top: 3                                       │  │ Index: vt_idx    │
+│ Order By: v ASC                              │  │ Lookup: search   │
+│ ~3 rows                                      │  │ Projections: id  │
+╰───────────────────────┬──────────────────────╯  │ ~3 rows          │
+╭─ IRESEARCH_SCAN ──────┴──────────────────────╮  ╰──────────────────╯
 │ Index: vt_idx                                │
-│ Lookup: table                                │
+│ Lookup: search                               │
 │ Index Filter:                                │
 │ ╭─ Bool ────────────╮                        │
 │ ╰─────────┬─────────╯                        │
@@ -294,7 +295,7 @@ QUERY PLAN
 │ ╰───────────────────╯  ╰───────────────────╯ │
 │ Column Filter:                               │
 │ optional: Dynamic Filter (v < ?)             │
-│ Projections: v, pk                           │
+│ Projections: v, rowid                        │
 │ ~74 rows                                     │
 ╰──────────────────────────────────────────────╯
 
@@ -316,15 +317,15 @@ QUERY PLAN
 │ Key: rowid                       │
 │ ~3 rows                          │
 ╰─────────────────┬────────────────╯
-                  ├────────────────────────────╮
-╭─ TOP_N ─────────┴────────────────╮  ╭─ INDEX_SOURCE ──╮
-│ Top: 3                           │  │ Lookup: table   │
-│ Order By: v ASC                  │  │ Projections: id │
-│ ~3 rows                          │  │ ~3 rows         │
-╰─────────────────┬────────────────╯  ╰─────────────────╯
-╭─ IRESEARCH_SCAN ┴────────────────╮
+                  ├─────────────────────────────╮
+╭─ TOP_N ─────────┴────────────────╮  ╭─ IRESEARCH_SCAN ─╮
+│ Top: 3                           │  │ Index: vt_idx    │
+│ Order By: v ASC                  │  │ Lookup: search   │
+│ ~3 rows                          │  │ Projections: id  │
+╰─────────────────┬────────────────╯  │ ~3 rows          │
+╭─ IRESEARCH_SCAN ┴────────────────╮  ╰──────────────────╯
 │ Index: vt_idx                    │
-│ Lookup: table                    │
+│ Lookup: search                   │
 │ Index Filter:                    │
 │ ╭─ Term ────────────╮            │
 │ │ Field: w(numeric) │            │
@@ -332,7 +333,7 @@ QUERY PLAN
 │ ╰───────────────────╯            │
 │ Column Filter:                   │
 │ optional: Dynamic Filter (v < ?) │
-│ Projections: v, pk               │
+│ Projections: v, rowid            │
 │ ~74 rows                         │
 ╰──────────────────────────────────╯
 
@@ -354,16 +355,16 @@ QUERY PLAN
 │ Key: rowid                        │
 │ ~3 rows                           │
 ╰─────────────────┬─────────────────╯
-                  ├─────────────────────────────╮
-╭─ TOP_N ─────────┴─────────────────╮  ╭─ INDEX_SOURCE ──╮
-│ Top: 3                            │  │ Lookup: table   │
-│ Order By: v ASC                   │  │ Projections: id │
-│ ~3 rows                           │  │ ~3 rows         │
-╰─────────────────┬─────────────────╯  ╰─────────────────╯
-╭─ IRESEARCH_SCAN ┴─────────────────╮
+                  ├──────────────────────────────╮
+╭─ TOP_N ─────────┴─────────────────╮  ╭─ IRESEARCH_SCAN ─╮
+│ Top: 3                            │  │ Index: vt_idx    │
+│ Order By: v ASC                   │  │ Lookup: search   │
+│ ~3 rows                           │  │ Projections: id  │
+╰─────────────────┬─────────────────╯  │ ~3 rows          │
+╭─ IRESEARCH_SCAN ┴─────────────────╮  ╰──────────────────╯
 │ Index: vt_idx                     │
-│ Lookup: table                     │
-│ Projections: v, pk                │
+│ Lookup: search                    │
+│ Projections: v, rowid             │
 │ Column Filter:                    │
 │ s > 100,                          │
 │ optional: Dynamic Filter (v < ?)  │
@@ -388,15 +389,15 @@ QUERY PLAN
 │ Key: rowid                       │
 │ ~2 rows                          │
 ╰─────────────────┬────────────────╯
-                  ├────────────────────────────╮
-╭─ TOP_N ─────────┴────────────────╮  ╭─ INDEX_SOURCE ──╮
-│ Top: 2                           │  │ Lookup: table   │
-│ Order By: v ASC                  │  │ Projections: id │
-│ ~2 rows                          │  │ ~2 rows         │
-╰─────────────────┬────────────────╯  ╰─────────────────╯
-╭─ IRESEARCH_SCAN ┴────────────────╮
+                  ├─────────────────────────────╮
+╭─ TOP_N ─────────┴────────────────╮  ╭─ IRESEARCH_SCAN ─╮
+│ Top: 2                           │  │ Index: vt_idx    │
+│ Order By: v ASC                  │  │ Lookup: search   │
+│ ~2 rows                          │  │ Projections: id  │
+╰─────────────────┬────────────────╯  │ ~2 rows          │
+╭─ IRESEARCH_SCAN ┴────────────────╮  ╰──────────────────╯
 │ Index: vt_idx                    │
-│ Lookup: table                    │
+│ Lookup: search                   │
 │ Index Filter:                    │
 │ ╭─ Or ────────────────╮          │
 │ ╰──────────┬──────────╯          │
@@ -406,7 +407,7 @@ QUERY PLAN
 │ ╰─────────────────────╯          │
 │ Column Filter:                   │
 │ optional: Dynamic Filter (v < ?) │
-│ Projections: v, pk               │
+│ Projections: v, rowid            │
 │ ~74 rows                         │
 ╰──────────────────────────────────╯
 
@@ -430,7 +431,7 @@ QUERY PLAN
 ╰─────────────────┬─────────────────╯
 ╭─ IRESEARCH_SCAN ┴─────────────────╮
 │ Index: vt_idx                     │
-│ Lookup: table                     │
+│ Lookup: search                    │
 │ Projections: id, v                │
 │ Column Filter:                    │
 │ optional: Dynamic Filter (v <= ?) │
@@ -456,7 +457,7 @@ QUERY PLAN
 ╰─────────┬────────╯
 ╭─ IRESEARCH_SCAN ─╮
 │ Index: vt_idx    │
-│ Lookup: table    │
+│ Lookup: search   │
 │ Projections: ts  │
 │ ~370 rows        │
 ╰──────────────────╯
@@ -482,6 +483,7 @@ QUERY PLAN
 ╰─────────────────┬────────────────╯
 ╭─ IRESEARCH_SCAN ┴────────────────╮
 │ Index: vt_idx                    │
+│ Lookup: search                   │
 │ Projections: s                   │
 │ Column Filter:                   │
 │ optional: Dynamic Filter (s < ?) │
@@ -508,7 +510,7 @@ QUERY PLAN
 ╰─────────┬─────────╯
 ╭─ IRESEARCH_SCAN ──╮
 │ Index: vt_idx     │
-│ Lookup: table     │
+│ Lookup: search    │
 │ Projections: id,  │
 │              v    │
 │ ~370 rows         │

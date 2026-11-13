@@ -50,7 +50,7 @@ The wrapper name selects the connector. Five are implemented:
 | `duckdb_fdw` | A DuckDB database file; see [DuckDB files](#duckdb-files) |
 | `iceberg_fdw` | An Iceberg REST catalog; its options and authentication are on [Iceberg Catalog Authentication](../../../configuration/iceberg_authentication.md) |
 | `postgres_fdw` | PostgreSQL, over the wire protocol |
-| `serenedb_fdw` | The directory of a database written by another SereneDB server, read-only; see [Read-only SereneDB databases](#read-only-serenedb-databases) |
+| `serenedb_fdw` | A database in the data directory of another SereneDB server, read-only; see [Read-only SereneDB databases](#read-only-serenedb-databases) |
 
 Any other wrapper name is rejected at `CREATE SERVER` time.
 
@@ -142,43 +142,45 @@ Without `read_only` a local file is opened for reading and writing, and a remote
 
 ## Read-only SereneDB databases
 
-`serenedb_fdw` attaches the directory of a database written by another SereneDB server — a copy of its data directory, a disk snapshot, or a volume of a server that is stopped — and serves it read-only. Its tables, views, inverted indexes and search tables are queried as usual:
+`serenedb_fdw` attaches a database from the data directory of another SereneDB server — the directory of a stopped server, a copy of it, or a disk snapshot — and serves it read-only. Its tables, views and inverted indexes are queried as usual:
 
 ```sql
 CREATE SERVER archive FOREIGN DATA WRAPPER serenedb_fdw
-  OPTIONS (path '/mnt/snapshots/shop/engine_v1/16390');
+  OPTIONS (path '/mnt/snapshots/shop', database 'shop');
 
 SELECT id FROM archive.public.docs WHERE body @@ 'invoice';
 ```
 
-`path` is required and names the database's directory inside the other server's data directory, `engine_v1/<database oid>`; on that server, `SELECT oid FROM pg_database WHERE datname = 'shop'` gives the oid. The database's definitions are read from that server's catalog log, `engine_v1/catalog.wal`, so a copy must keep it beside the database directory, both copied at the same moment. `ATTACH '<path>' AS archive (TYPE serenedb, READ_ONLY)` attaches the same directory until `DETACH` or a restart of the server.
+`path` is required and names the data directory, the directory the other server was started with. `database` names the database to attach and defaults to `postgres`. `ATTACH '<path>' AS archive (TYPE serenedb, READ_ONLY, DATABASE 'shop')` attaches the same database until `DETACH` or a restart of the server.
+
+A copy of the data directory is complete when it holds `engine_v1/wal` and, in `engine_v1/store`, the directories of the database's tables and of the inverted indexes on its views, named by their `pg_class.oid` on the other server. To copy the directory of a running server, run [`pg_backup_start`](../../../operations/backup.md) first, copy `engine_v1/wal` before `engine_v1/store`, and run `pg_backup_stop` once the copy is done.
 
 ### What a read-only database does
 
-- **Nothing on disk changes.** The database file and the catalog log are opened read-only, and inverted indexes and search tables without a writer. No refresh, compaction or cleanup runs on them, and nothing is written when the server stops.
-- **Search finds refreshed rows.** Rows not yet refreshed into a search table or an inverted index when the directory was last written are not returned by it. Run `VACUUM (REFRESH_TABLE)` before stopping the server to include them.
-- **Writes are refused.** `INSERT`, `UPDATE`, `DELETE`, `TRUNCATE`, `MERGE`, other DDL and `nextval` fail as on any read-only attachment, and `CREATE INDEX`, `VACUUM`, `REINDEX` and `es_refresh` fail with `it is attached read-only`.
+- **It shows every committed transaction.** The database reads the other server's log, so it holds every transaction that server committed before it stopped or before the copy was taken, also rows still kept in memory there. A copy taken while that server wrote shows the transactions committed before the copy reached the end of the log.
+- **Nothing on disk changes.** The data directory is only read: what the database writes while it serves queries stays in memory, and no compaction or other maintenance runs on it.
+- **Writes are refused.** `INSERT`, `UPDATE`, `DELETE`, `TRUNCATE`, `MERGE`, other DDL and `nextval` fail as on any read-only attachment, and `CREATE INDEX`, `VACUUM`, `REINDEX` and `es_refresh` fail with `it is attached read-only`. Jobs and subscriptions of the database do not run.
+- **Names resolve in this server.** A view of the database reads the relations it names without a database from the database itself; a relation it names with a database, its own name included, is read from the database of that name in this server.
 - **`USAGE` on the server is the only privilege checked on the database's own objects.** Owners and grants recorded in the directory belong to the other server's roles and are not used, so a view of the database reads with the privileges of the role that runs the query: a table outside the database that the view reads needs that role's `SELECT`. `has_table_privilege` and the other privilege functions report every privilege on the database's own objects. The system catalogs in its `pg_catalog` and `information_schema` keep the privileges they have in any database.
 - **`DROP SERVER` only detaches.** It never removes files from the directory.
 
 ### Many readers or one writer
 
-A database file and the catalog log beside it are locked for reading by every read-only attachment and for writing by the server that owns them, so the two exclude each other:
+The data directory's `PG_VERSION` file is locked shared by every read-only attachment and exclusively by the server that owns the directory, so the two exclude each other:
 
-- Any number of read-only attachments, in one server or in several, can read the same directory at once.
-- `CREATE SERVER` fails while a server runs on the data directory the database belongs to.
-- A server does not start while any database directory inside its data directory is attached read-only, in this server or another.
-- A server never attaches its own databases read-only, also through a symbolic link, a hard-linked copy or another mount of the same files.
+- Any number of read-only attachments, in one server or in several, can read the same data directory at once.
+- `CREATE SERVER` fails while a server runs on the data directory.
+- A server does not start while its data directory is attached read-only, in this server or another.
+- A server never attaches its own data directory read-only, also through a symbolic link, a hard-linked copy or another mount of the same files.
 
-The lock is the file system's: on a file system without POSIX locks nothing detects a running server, so attach a copy, a disk snapshot or the directory of a stopped server there.
+The lock is the file system's: on a file system without file locks nothing detects a running server, so attach a copy, a disk snapshot or the directory of a stopped server there.
 
-`CREATE SERVER` refuses a directory:
+`CREATE SERVER` refuses a data directory:
 
-- inside the data directory of a running server,
-- without the catalog log, `catalog.wal`, beside it,
-- missing the directory of one of its search tables or inverted indexes,
-- whose name is not a database oid, or
-- that belongs to the attaching server itself.
+- of a running server, the attaching server included,
+- without `PG_VERSION` or `engine_v1/wal`,
+- without a database of the given name, or
+- missing the directory of one of the database's tables or inverted indexes.
 
 ## Persistence and boot replay
 

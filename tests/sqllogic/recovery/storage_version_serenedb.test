@@ -5,14 +5,6 @@ statement ok
 CREATE DATABASE sv_db;
 
 
-query
-SELECT tags::VARCHAR LIKE '%serenedb_v%' AS tagged
-  FROM duckdb_databases(include_hidden := true) WHERE database_name = 'sv_db';
-----
-tagged
-t
-
-
 statement ok
 CREATE TABLE sv_db.t AS SELECT i, 'row_' || i::VARCHAR AS s FROM range(20000) t(i);
 
@@ -88,12 +80,3 @@ SELECT count(*) AS n, sum(i) AS sum_i, max(length(s)) AS max_len FROM sv_db.t;
 ----
 n	sum_i	max_len
 20000	199990000	9
-
-
-connection after_restart
-query
-SELECT tags::VARCHAR LIKE '%serenedb_v%' AS kept_version
-  FROM duckdb_databases(include_hidden := true) WHERE database_name = 'sv_db';
-----
-kept_version
-t

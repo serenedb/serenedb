@@ -1,0 +1,80 @@
+statement ok
+CREATE TYPE pit_mood AS ENUM ('sad', 'ok', 'happy');
+
+
+statement ok
+CREATE TABLE pit (id INT, amt DECIMAL(10, 2), u UUID, m pit_mood, d DECIMAL(38, 10));
+
+
+statement ok
+INSERT INTO pit VALUES
+  (1, 10.50, '00000000-0000-0000-0000-000000000001', 'ok', 1.5),
+  (2, 20.25, '00000000-0000-0000-0000-000000000002', 'happy', 2.5);
+
+
+statement ok
+CREATE INDEX pit_amt_idx ON pit (amt);
+
+
+statement ok
+CREATE INDEX pit_mix_idx ON pit (id, u, m, d);
+
+
+statement ok
+CREATE UNIQUE INDEX pit_amt_uidx ON pit (amt);
+
+
+statement error
+INSERT INTO pit VALUES (3, 10.50, NULL, NULL, NULL);
+----
+db error: ERROR: duplicate key value violates unique constraint "pit_amt_uidx"
+DETAIL: Key (amt)=(10.50) already exists.
+
+
+statement ok
+INSERT INTO pit VALUES (3, 30.75, '00000000-0000-0000-0000-000000000003', 'sad', 3.5);
+
+
+query
+SELECT indexname, indexdef FROM pg_indexes WHERE tablename = 'pit' ORDER BY indexname;
+----
+indexname	indexdef
+pit_amt_idx	CREATE INDEX pit_amt_idx ON public.pit USING inverted (amt)
+pit_amt_uidx	CREATE UNIQUE INDEX pit_amt_uidx ON public.pit USING inverted (amt)
+pit_mix_idx	CREATE INDEX pit_mix_idx ON public.pit USING inverted (id, u, m, d)
+
+
+query
+SELECT id FROM pit_mix_idx WHERE m = 'happy' AND u = '00000000-0000-0000-0000-000000000002';
+----
+id
+2
+
+
+query
+SELECT id FROM pit WHERE amt BETWEEN 20 AND 31 ORDER BY id;
+----
+id
+2
+3
+
+
+query
+SELECT id, d FROM pit_amt_idx WHERE amt = 30.75;
+----
+id	d
+3	3.5000000000
+
+
+statement error
+CREATE INDEX pit_inv ON pit USING inverted (m);
+----
+db error: ERROR: Column 'm' has unsupported type pit_mood and can not be indexed
+
+
+statement ok
+DROP TABLE pit;
+
+
+statement ok
+DROP TYPE pit_mood;

@@ -24,14 +24,11 @@
 #include <absl/strings/str_join.h>
 
 #include <duckdb/catalog/catalog.hpp>
-#include <duckdb/catalog/catalog_entry/replication_lsn_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
-#include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/execution/operator/helper/physical_set.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database_manager.hpp>
-#include <duckdb/transaction/duck_transaction.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -42,7 +39,7 @@
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/entry/subscription.h"
-#include "connector/duckdb_client_state.h"
+#include "catalog/transaction.h"
 #include "network/pg/wire_frames.h"
 #include "pg/commands/create_subscription.h"
 #include "pg/connection_context.h"
@@ -152,9 +149,8 @@ void SyncSession::FinishJobs() {
     _in_txn = false;
   }
   if (this->_connection_ctx) {
-    connector::HandNotices(
-      *this->_connection_ctx,
-      {.what = "subscription", .name = _target.subscription_name});
+    HandNotices(*this->_connection_ctx,
+                {.what = "subscription", .name = _target.subscription_name});
   }
   _jobs_closed.store(true, std::memory_order_seq_cst);
   if (const auto job = _job.exchange(Job::None, std::memory_order_seq_cst);
@@ -242,19 +238,17 @@ bool SyncSession::SetupApplyConnection() {
   if (!_database) {
     return false;
   }
-  this->_conn = irs::DuckDBEngine::Instance().CreateConnection();
-  duckdb::PhysicalSet::SetVariable(
-    *this->_conn->context, duckdb::Identifier{"session_replication_role"},
-    duckdb::SetScope::SESSION, duckdb::Value{"replica"});
+  this->_conn = MakeConnection(irs::DuckDBEngine::Instance().instance(),
+                               {.user = user,
+                                .role = role,
+                                .database = _target.database_name,
+                                .database_id = _target.database_oid});
+  this->_connection_ctx = &ConnectionContext::Get(*this->_conn->context);
+  this->_connection_ctx->SetSetting("session_replication_role", "replica",
+                                    false);
   this->_txn_state.emplace(this->_conn->context->transaction);
-  this->_connection_ctx = std::make_shared<ConnectionContext>(
-    *this->_conn->context, user, std::string_view{}, role,
-    _target.database_name, _target.database_oid, nullptr, 0, nullptr);
-  this->_client_state = &connector::SereneDBClientState::Register(
-    *this->_conn->context, this->_connection_ctx, false);
   this->_progress =
-    sdb::pg::ProgressRegistration{this->_client_state->progress_source};
-  connector::SetDefaultSearchPath(*this->_conn->context, _target.database_name);
+    sdb::pg::ProgressRegistration{this->_connection_ctx->ProgressSource()};
   return true;
 }
 
@@ -323,8 +317,8 @@ bool SyncSession::BeginSync() {
 }
 
 yaclib::Task<bool> SyncSession::RunLocalCopy() {
-  this->_client_state->copy_stdin_open_count = 0;
-  this->_client_state->copy_stdin_done = false;
+  this->_connection_ctx->copy_stdin_open_count = 0;
+  this->_connection_ctx->copy_stdin_done = false;
   auto* batches =
     this->_connection_ctx->GetSideChannel<sdb::pg::CopyInBatches>();
   bool ok = false;
@@ -345,7 +339,7 @@ yaclib::Task<bool> SyncSession::RunLocalCopy() {
 }
 
 bool SyncSession::CommitSync() {
-  duckdb::DuckTransaction::Get(*this->_conn->context, *_database)
+  catalog::SessionOf(*this->_conn->context, _database->GetCatalog())
     .PushRelationSync(RequireSubscription(), _sync_table->sync_id, _sync_lsn);
   _in_txn = false;
   if (auto error = this->_txn_state->Commit()) {
@@ -364,9 +358,9 @@ catalog::SereneDBCatalog& SyncSession::Catalog() const {
 
 catalog::SubscriptionCatalogEntry* SyncSession::VisibleSubscription() const {
   auto& catalog = Catalog();
-  auto entry = catalog.GetOidIndex().GetVisible(
-    _target.subscription_oid,
-    catalog.GetCatalogTransaction(*this->_conn->context).view);
+  auto entry =
+    catalog.LookupOid(catalog.GetCatalogTransaction(*this->_conn->context),
+                      _target.subscription_oid);
   if (!entry || entry->type != duckdb::CatalogType::SUBSCRIPTION_ENTRY) {
     return nullptr;
   }

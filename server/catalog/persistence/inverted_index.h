@@ -36,9 +36,7 @@ namespace sdb::catalog::persistence {
 
 struct InvertedIndexSettings {
   uint32_t row_group_size{122880};
-  uint32_t refresh_interval_ms{1000};
   uint32_t compaction_interval_ms{1000};
-  uint32_t cleanup_interval_step{1};
   uint64_t segment_memory_max{268435456};
   uint32_t segment_docs_max{0};
   uint32_t compaction_max_segments{10};
@@ -72,11 +70,18 @@ struct FieldRecord {
   duckdb::idx_t text_dictionary = 0;
 };
 
+struct UniqueKeyRecord {
+  irs::field_id field = irs::field_limits::invalid();
+  std::vector<irs::field_id> columns;
+  std::vector<std::string> expressions;
+};
+
 struct InvertedIndexData {
   PkColumnKind pk = PkColumnKind::Has;
   std::vector<KeyRecord> keys;
   irs::containers::NodeHashMap<irs::field_id, FieldRecord> fields;
   std::optional<irs::ScorerOptions> top_k_scorer;
+  std::optional<UniqueKeyRecord> unique_key;
 };
 
 }  // namespace sdb::catalog::persistence

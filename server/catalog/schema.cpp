@@ -777,7 +777,8 @@ void Schema::Drop(duckdb::CatalogTransaction transaction,
         continue;
       }
       if (auto owned = _sets->sequences.Get(transaction, dependency.entry.name);
-          owned && owned->oid == dependency.oid) {
+          owned && owned->oid == dependency.oid &&
+          SequenceOwnedByTable(*owned, entry)) {
         Drop(transaction, *owned);
       }
     }

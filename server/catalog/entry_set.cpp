@@ -435,10 +435,30 @@ void OidIndex::CheckDropped(const duckdb::SnapshotView& view,
         continue;
       }
     }
+    const bool local = dependent.index == this;
     dependent.index->VisitNewest(
       dependent.oid, [&](EntrySet& set, const duckdb::Identifier& name) {
         set.CheckNoLaterDependent(view, name, dependent.oid, dropped,
-                                  _database.GetName(), dependent.index == this);
+                                  _database.GetName(), local);
+      });
+    const duckdb::CatalogTransaction latest{
+      dependent.index->_database.GetDatabase(), view.transaction_id,
+      duckdb::VisibilityBound::AllCommitted()};
+    const auto table = dependent.index->Find(latest, dependent.oid);
+    if (!table || table->type != duckdb::CatalogType::TABLE_ENTRY) {
+      continue;
+    }
+    table->Cast<duckdb::TableCatalogEntry>().ScanTriggers(
+      latest, [&](duckdb::CatalogEntry& trigger) {
+        if (!view.Sees(trigger.timestamp) &&
+            DependsOn(trigger, dropped.oid, _database.GetName(), local)) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_T_R_SERIALIZATION_FAILURE),
+            ERR_MSG("Failed to commit: Could not commit DROP of \"",
+                    dropped.name.GetIdentifierName(),
+                    "\" because a dependency was created after the "
+                    "transaction started"));
+        }
       });
   }
 }

@@ -81,7 +81,8 @@ const irs::QueryBuilder& EnsureSegmentQuery(ScanGlobalState& g,
   return *g.queries[seg_idx];
 }
 
-bool RunPrepareStage(ScanGlobalState& g, ScanLocalState& l) {
+bool RunPrepareStage(duckdb::TableFunctionInput& input, ScanGlobalState& g,
+                     ScanLocalState& l) {
   if (!g.stats_stage) {
     return true;
   }
@@ -102,10 +103,13 @@ bool RunPrepareStage(ScanGlobalState& g, ScanLocalState& l) {
         if (g.collector) {
           g.collector->Finish();
         }
-        g.stats_barrier.Release();
+        g.stats_barrier.Release(input);
       }
     }
     std::move(abandon).Cancel();
+    if (g.stats_barrier.Park(input)) {
+      return false;
+    }
     g.stats_barrier.Wait();
   }
   return !g.stats_barrier.Failed();

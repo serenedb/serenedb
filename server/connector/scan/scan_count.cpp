@@ -41,7 +41,7 @@ void Emit(ScanGlobalState& g, CountLocalState& l, duckdb::DataChunk& output) {
   const auto batch = std::min<uint64_t>(l.local_count, STANDARD_VECTOR_SIZE);
   l.local_count -= batch;
   if (batch != 0) {
-    WriteVirtualColumns(g, l.empty_filled, batch, nullptr, output);
+    WriteVirtualColumns(g, batch, nullptr, output);
   }
   output.SetChildCardinality(batch);
 }

@@ -18,18 +18,63 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <duckdb/parallel/interrupt.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
+
 #include "connector/scan/scan_state.h"
 
 namespace sdb::connector {
 
-void ScanBarrier::Finish(State state) noexcept {
+bool ScanBarrier::Finish(State state) noexcept {
   auto open = State::Open;
-  if (_state.compare_exchange_strong(open, state, std::memory_order_acq_rel)) {
-    _state.notify_all();
+  if (!_state.compare_exchange_strong(open, state, std::memory_order_acq_rel)) {
+    return false;
+  }
+  _state.notify_all();
+  return true;
+}
+
+void ScanBarrier::Release(duckdb::TableFunctionInput& input) {
+  if (!input.blockable) {
+    Finish(State::Released);
+    return;
+  }
+  duckdb::vector<duckdb::InterruptState> parked;
+  {
+    duckdb::annotated_lock_guard<duckdb::annotated_mutex> guard{
+      input.blockable->lock};
+    if (!Finish(State::Released)) {
+      return;
+    }
+    parked = input.blockable->TakeBlockedTasks();
+  }
+  for (const auto& task : parked) {
+    task.Callback();
   }
 }
 
-void ScanBarrier::Wait() const noexcept {
+void ScanBarrier::Abandon() noexcept { Finish(State::Failed); }
+
+bool ScanBarrier::Park(duckdb::TableFunctionInput& input) {
+  if (!input.blockable || !input.interrupt_state ||
+      input.results_execution_mode !=
+        duckdb::AsyncResultsExecutionMode::TASK_EXECUTOR) {
+    return false;
+  }
+  duckdb::annotated_lock_guard<duckdb::annotated_mutex> guard{
+    input.blockable->lock};
+  if (Released() || !input.blockable->BlockTask(*input.interrupt_state)) {
+    return false;
+  }
+  input.async_result = duckdb::AsyncResultType::BLOCKED;
+  return true;
+}
+
+void ScanBarrier::Wait() const {
+  if (Released()) {
+    return;
+  }
+  duckdb::TaskScheduler::BlockingScope blocking;
   for (auto state = _state.load(std::memory_order_acquire);
        state == State::Open; state = _state.load(std::memory_order_acquire)) {
     _state.wait(State::Open, std::memory_order_acquire);

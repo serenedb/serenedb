@@ -32,7 +32,6 @@
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/fault_points.hpp>
-#include <duckdb/common/types/timestamp.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
@@ -44,15 +43,14 @@
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/system_compiler.hpp>
 
-#include "auth/role_closure.h"
-#include "catalog/cluster.h"
-#include "catalog/entry/role.h"
 #include "network/pg/bind_decoder.h"
 #include "network/pg/copy_eod_scanner.h"
 #include "network/pg/hba.h"
+#include "network/pg/login.h"
 #include "network/pg/scram_messages.h"
 #include "network/pg/startup_request.h"
 #include "pg/copy_batch_builder.h"
+#include "query/driven_query.h"
 #include "server/utils/lifecycle.h"
 #include "server/utils/metrics.h"
 
@@ -154,18 +152,10 @@ inline void ThrowIfDriveFailed(duckdb::QueryResult& pending,
   }
 }
 
-inline duckdb::QueryParameters DrivenQuery() {
-  duckdb::QueryParameters parameters;
-  parameters.result_eagerness = duckdb::ResultEagerness::FORCED;
-  parameters.caller_drives = true;
-  return parameters;
-}
-
 inline duckdb::unique_ptr<duckdb::QueryResult> FinishDrive(
   ClosingPending& pending) {
-  auto result = pending->TakeCollectorResult();
+  auto result = query::TakeDrivenResult(*pending);
   if (!result) {
-    pending->Complete();
     result = pending.Release();
   }
   ThrowIfError(*result);
@@ -448,36 +438,20 @@ bool PgWireSession<Kind>::SetupConnection() {
                      ERR_MSG("the database system is shutting down")));
     return false;
   }
-  duckdb::idx_t database_id = 0;
-  duckdb::Permissions permissions;
-  if (!catalog::ReadDatabase(
-        DatabaseName(), [&](const catalog::DatabaseCatalogEntry& database) {
-          database_id = database.oid;
-          permissions = database.permissions;
-        })) {
-    WriteFatalResponse(this->_send,
-                       SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_CATALOG_NAME),
-                                      ERR_MSG("database \"", DatabaseName(),
-                                              "\" is not accessible")));
-    return false;
-  }
-
   const std::string_view user = UserName();
-  auto login = sdb::pg::RequireLoginRole(user, DatabaseName(), permissions);
+  auto login = sdb::pg::RequireLogin(user, DatabaseName());
   if (!login.role) {
     WriteFatalResponse(this->_send, login.error);
     return false;
   }
-  const auto role = login.role;
-  const bool superuser = login.superuser;
 
   _conn =
     MakeConnection(irs::DuckDBEngine::Instance().instance(),
                    {.user = user,
                     .system_user = _system_user,
-                    .role = role,
+                    .role = login.role,
                     .database = DatabaseName(),
-                    .database_id = database_id,
+                    .database_id = login.database_id,
                     .send_buffer = &this->_send,
                     .backend_pid = static_cast<int32_t>(_cancel_key >> 32),
                     .cancel_registry = _cancel,
@@ -523,9 +497,7 @@ bool PgWireSession<Kind>::SetupConnection() {
       }
     };
 
-  _connection_ctx->SetSetting("session_authorization", std::string{UserName()},
-                              false);
-  _connection_ctx->SetSetting("is_superuser", superuser ? "on" : "off", false);
+  StartSession(*_connection_ctx, login.superuser);
 
   const auto apply = [&](const std::string& name, const std::string& value) {
     try {
@@ -630,14 +602,14 @@ PgWireSession<Kind>::PendingQueryEnsured(
     }
   }
   if (!wire) {
-    return prepared.Submit(values, DrivenQuery());
+    return prepared.Submit(values, query::DrivenQuery());
   }
   // Arm the collector hook for this execution. Snapshot must be set before
   // sinks can run (workers may pick tasks up during Submit), so fill the
   // serialization template here, after CatalogSnapshot.
   FillContext(*_connection_ctx, wire->proto);
   _connection_ctx->wire_sink = std::move(wire);
-  auto pending = prepared.Submit(values, DrivenQuery());
+  auto pending = prepared.Submit(values, query::DrivenQuery());
   _connection_ctx->wire_sink.reset();
   return pending;
 }
@@ -650,7 +622,7 @@ PgWireSession<Kind>::PendingStatementEnsured(
   StagePendingCopyProgress(*_connection_ctx, *statement);
   FillContext(*_connection_ctx, wire->proto);
   _connection_ctx->wire_sink = wire;
-  auto pending = _conn->Submit(std::move(statement), DrivenQuery());
+  auto pending = _conn->Submit(std::move(statement), query::DrivenQuery());
   _connection_ctx->wire_sink.reset();
   if (pending && !pending->HasError() &&
       _connection_ctx->IsExplicitTransaction()) {
@@ -934,46 +906,11 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
 
   // Consult the HBA ruleset first: it decides trust / reject / which method,
   // for every connection, regardless of whether a stored credential exists.
-  const hba::MembershipFn is_member = [](std::string_view user,
-                                         std::string_view group) {
-    duckdb::idx_t user_oid = 0;
-    duckdb::idx_t group_oid = 0;
-    if (!catalog::ReadRole(user,
-                           [&](const catalog::RoleCatalogEntry& role) {
-                             user_oid = role.oid;
-                           }) ||
-        !catalog::ReadRole(group, [&](const catalog::RoleCatalogEntry& role) {
-          group_oid = role.oid;
-        })) {
-      return false;  // missing_ok: unknown login role or target group
-    }
-    // NOSUPER: explicit (direct/indirect) membership only -- the closure is the
-    // membership set and does not implicitly include a superuser's non-members.
-    const auto closure = auth::ClosureFor(nullptr, user_oid);
-    return closure->IsMember(group_oid);
-  };
-
-  hba::ClientInfo client;
-  client.is_local = Kind == SocketKind::Unix;
-  client.is_ssl = this->_socket.IsTls();
-  client.is_gss = false;
-  if (!_peer_addr.is_unspecified()) {
-    if (_peer_addr.is_v4()) {
-      client.family = AF_INET;
-      const auto bytes = _peer_addr.to_v4().to_bytes();
-      std::copy(bytes.begin(), bytes.end(), client.addr.begin());
-    } else {
-      client.family = AF_INET6;
-      const auto bytes = _peer_addr.to_v6().to_bytes();
-      std::copy(bytes.begin(), bytes.end(), client.addr.begin());
-    }
-  }  // else: unix / no-IP -> family 0, addr zeroed (ClientInfo defaults)
-  client.is_replication = false;
-  client.user = UserName();
-  client.database = DatabaseName();
-
-  const auto ruleset = hba::GetHbaRuleset();
-  const hba::Decision decision = hba::Decide(*ruleset, client, is_member);
+  const hba::Decision decision =
+    DecideLogin({.address = _peer_addr,
+                 .is_local = Kind == SocketKind::Unix,
+                 .is_ssl = this->_socket.IsTls()},
+                UserName(), DatabaseName());
 
   using DKind = hba::Decision::Kind;
   hba::Method hba_method = hba::Method::ImplicitReject;
@@ -1060,14 +997,7 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
     co_return false;
   }
 
-  int64_t valid_until = 0;
-  catalog::ReadRole(UserName(), [&](const catalog::RoleCatalogEntry& role) {
-    if (role.HasValidUntil()) {
-      valid_until = role.ValidUntil();
-    }
-  });
-  if (valid_until != 0 &&
-      duckdb::Timestamp::GetCurrentTimestamp().value >= valid_until) {
+  if (ReadRoleLogin(UserName()).password_expired) {
     WriteFatalResponse(
       this->_send,
       SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_PASSWORD),
@@ -1112,20 +1042,7 @@ yaclib::Task<bool> PgWireSession<Kind>::AuthenticateCleartext(
   }
   const std::string given{payload};
   _frames.Consume(frame);
-  bool ok = false;
-  if (credential.cleartext) {
-    const std::string given_prepared = SaslPrep(given);
-    const std::string want = SaslPrep(*credential.cleartext);
-    ok = ConstantTimeEqual(
-      {reinterpret_cast<const uint8_t*>(given_prepared.data()),
-       given_prepared.size()},
-      {reinterpret_cast<const uint8_t*>(want.data()), want.size()});
-  } else if (credential.scram) {
-    ok = VerifyCleartextAgainstScram(*credential.scram, given);
-  } else if (credential.md5) {
-    ok = VerifyCleartextAgainstMd5(*credential.md5, UserName(), given);
-  }
-  if (!ok) {
+  if (!VerifyCleartext(credential, UserName(), given)) {
     WriteFatalResponse(
       this->_send,
       SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_PASSWORD),
@@ -3059,12 +2976,7 @@ yaclib::Future<> PgWireSession<Kind>::SessionMain() {
   };
   try {
     if (SetupConnection()) {
-      _cancel_token->role.store(_connection_ctx->GetLoginRoleId(),
-                                std::memory_order_relaxed);
-      {
-        absl::MutexLock lock{&_cancel_token->mu};
-        _cancel_token->ctx = _conn->context.get();
-      }
+      _cancel_token->Attach(*_conn->context, _connection_ctx->GetLoginRoleId());
       SendStartupBurst();
       this->KickSend();
       co_await RunCommandLoop();
@@ -3083,7 +2995,7 @@ yaclib::Future<> PgWireSession<Kind>::SessionMain() {
     _txn_state->Rollback();
   }
   if (_connection_ctx) {
-    _connection_ctx->ConsumeNotices([](const irs::pg::SqlErrorData&) {});
+    _connection_ctx->DiscardNotices();
   }
   // Last responses (e.g. up to the Terminate) may still be draining; closing
   // mid-write would truncate them, so drain first, then stop -- SendWriter (io)

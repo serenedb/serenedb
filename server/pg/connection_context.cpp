@@ -60,10 +60,20 @@
 
 namespace sdb::pg {
 
-LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname,
-                            const duckdb::Permissions& perm) {
+LoginCheck RequireLogin(std::string_view user, std::string_view dbname) {
   // No ClientContext yet -- the connection is still being established -- so
   // this reads the committed cluster state.
+  duckdb::idx_t database_id = 0;
+  duckdb::Permissions perm;
+  if (!catalog::ReadDatabase(
+        dbname, [&](const catalog::DatabaseCatalogEntry& database) {
+          database_id = database.oid;
+          perm = database.permissions;
+        })) {
+    return {.error = SQL_ERROR_DATA(
+              ERR_CODE(ERRCODE_INVALID_CATALOG_NAME),
+              ERR_MSG("database \"", dbname, "\" does not exist"))};
+  }
   struct {
     duckdb::idx_t oid = 0;
     bool can_login = false;
@@ -91,7 +101,8 @@ LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname,
               ERR_MSG("permission denied for database \"", dbname, "\""),
               ERR_DETAIL("User does not have CONNECT privilege."))};
   }
-  return {.role = role.oid, .superuser = role.superuser};
+  return {
+    .database_id = database_id, .role = role.oid, .superuser = role.superuser};
 }
 
 }  // namespace sdb::pg
@@ -412,8 +423,17 @@ bool ConnectionContext::EmitWarning(const char* message) {
 
 bool ConnectionContext::IsSettingVisible(const std::string& name) {
   static const irs::containers::FlatHashSet<std::string_view> kHidden = {
-    "sdb_faults", "debug_verification", "is_superuser", "role",
-    "session_authorization"};
+    "sdb_faults",
+    "debug_verification",
+    "is_superuser",
+    "role",
+    "session_authorization",
+    "quack_debug_drop_batch",
+    "quack_debug_duplicate_sends",
+    "quack_debug_emit_delay_ms",
+    "quack_debug_fetch_delay_ms",
+    "quack_debug_send_delay_ms",
+  };
   return !kHidden.contains(name);
 }
 
@@ -586,6 +606,38 @@ duckdb::unique_ptr<duckdb::Connection> MakeConnection(
   duckdb::DatabaseInstance& db, const SessionIdentity& identity) {
   return duckdb::make_uniq<duckdb::Connection>(
     duckdb::make_shared_ptr<ConnectionContext>(db, identity));
+}
+
+void StartSession(ConnectionContext& ctx, bool superuser) {
+  ctx.SetSetting("session_authorization", ctx.user(), false);
+  ctx.SetSetting("is_superuser", superuser ? "on" : "off", false);
+}
+
+duckdb::unique_ptr<duckdb::Connection> OpenClientSession(
+  std::string_view user, std::string_view database, int32_t backend_pid,
+  network::CancelRegistry* cancel_registry,
+  duckdb::shared_ptr<duckdb::SchedulerAccount> account) {
+  if (user.empty()) {
+    user = irs::StaticStrings::kDefaultUser;
+  }
+  if (database.empty()) {
+    database = irs::StaticStrings::kDefaultDatabase;
+  }
+  auto login = pg::RequireLogin(user, database);
+  if (!login.role) {
+    THROW_SQL_ERROR_FROM_DATA(std::move(login.error));
+  }
+  auto conn = MakeConnection(irs::DuckDBEngine::Instance().instance(),
+                             {.user = user,
+                              .role = login.role,
+                              .database = database,
+                              .database_id = login.database_id,
+                              .backend_pid = backend_pid,
+                              .cancel_registry = cancel_registry,
+                              .client_backend = true});
+  conn->context->SetSchedulerAccount(std::move(account));
+  StartSession(ConnectionContext::Get(*conn->context), login.superuser);
+  return conn;
 }
 
 void HandNotices(ConnectionContext& ctx, const NoticeTarget& target) {

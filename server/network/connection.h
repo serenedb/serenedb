@@ -123,12 +123,12 @@ class Transport : public TransportBase {
  public:
   explicit Transport(IoExecutor& exec)
     requires(Kind == SocketKind::Tcp || Kind == SocketKind::Unix)
-    : _socket{exec.Context()}, _ioexec{&exec}, _task{MakeResumer()} {}
+    : _socket{exec.Context()}, _ioexec{&exec}, _task{CpuResumer::Make()} {}
 
   Transport(IoExecutor& exec, asio_ns::ssl::context& ssl)
     requires(Kind == SocketKind::Ssl || Kind == SocketKind::MaybeTls ||
              Kind == SocketKind::Client)
-    : _socket{exec.Context(), ssl}, _ioexec{&exec}, _task{MakeResumer()} {}
+    : _socket{exec.Context(), ssl}, _ioexec{&exec}, _task{CpuResumer::Make()} {}
 
   void Close() noexcept { _socket.Close(); }
   auto& Lowest() noexcept { return _socket.Lowest(); }
@@ -148,6 +148,8 @@ class Transport : public TransportBase {
     _task->RequestRun();
     static_cast<Session*>(this)->OnStop();
   }
+
+  void Wake() final { _task->RequestRun(); }
 
  protected:
   // Kicks the send writer without waiting -- the hot path. Response bytes drain
@@ -383,13 +385,6 @@ class Transport : public TransportBase {
   const duckdb::shared_ptr<CpuResumer> _task;
   bool _handed_off = false;
   std::optional<std::string> _proxy_client;
-
- private:
-  static duckdb::shared_ptr<CpuResumer> MakeResumer() {
-    return duckdb::make_shared_ptr<CpuResumer>(
-      duckdb::TaskScheduler::GetScheduler(
-        irs::DuckDBEngine::Instance().instance()));
-  }
 };
 
 }  // namespace sdb::network

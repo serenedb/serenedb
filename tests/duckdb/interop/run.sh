@@ -7,6 +7,7 @@ WORKSPACE=$(cd "$SCRIPT_DIR/../../.." && pwd)
 
 : "${BUILD_DIR:=build}"
 : "${VANILLA_DUCKDB_TAG:=1.5.5}"
+: "${VANILLA_QUACK_DUCKDB_TAG:=2.0.0}"
 : "${INTEROP_STORAGE_VERSIONS:=v1.0.0 v1.5.0}"
 : "${INTEROP_COMPRESSIONS:=uncompressed rle dictionary bitpacking fsst alp alprd zstd roaring dict_fsst}"
 
@@ -16,20 +17,32 @@ if [[ ! -x "$SERENED" ]]; then
 	exit 1
 fi
 
+fetch_vanilla() {
+	local tag=$1 binary=$2 container copied
+	[[ -x "$binary" ]] && return 0
+	mkdir -p "$(dirname "$binary")"
+	container=$(docker create ${SDB_DOCKER_OWNER:+--label "serenedb.owner=$SDB_DOCKER_OWNER"} "duckdb/duckdb:$tag") || return 1
+	docker cp "$container:/duckdb" "$binary" >/dev/null
+	copied=$?
+	docker rm "$container" >/dev/null
+	return $copied
+}
+
 if [[ -z "${VANILLA_DUCKDB:-}" ]]; then
 	VANILLA_DUCKDB="$WORKSPACE/$BUILD_DIR/duckdb-$VANILLA_DUCKDB_TAG/duckdb"
-	if [[ ! -x "$VANILLA_DUCKDB" ]]; then
-		mkdir -p "$(dirname "$VANILLA_DUCKDB")"
-		container=$(docker create ${SDB_DOCKER_OWNER:+--label "serenedb.owner=$SDB_DOCKER_OWNER"} "duckdb/duckdb:$VANILLA_DUCKDB_TAG") || exit 1
-		docker cp "$container:/duckdb" "$VANILLA_DUCKDB" >/dev/null
-		copied=$?
-		docker rm "$container" >/dev/null
-		[[ $copied -eq 0 ]] || exit 1
-	fi
+	fetch_vanilla "$VANILLA_DUCKDB_TAG" "$VANILLA_DUCKDB" || exit 1
 fi
 
+if [[ -z "${VANILLA_QUACK_DUCKDB:-}" ]]; then
+	VANILLA_QUACK_DUCKDB="$WORKSPACE/$BUILD_DIR/duckdb-$VANILLA_QUACK_DUCKDB_TAG/duckdb"
+	fetch_vanilla "$VANILLA_QUACK_DUCKDB_TAG" "$VANILLA_QUACK_DUCKDB" || exit 1
+fi
+VANILLA_QUACK_HOME=$(dirname "$VANILLA_QUACK_DUCKDB")
+HOME="$VANILLA_QUACK_HOME" "$VANILLA_QUACK_DUCKDB" -bail :memory: -c "INSTALL quack" >/dev/null || exit 1
+
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/duckdb-interop.XXXXXX")
-trap 'rm -rf "$WORK"' EXIT
+quack_pids=()
+trap 'kill "${quack_pids[@]}" 2>/dev/null; rm -rf "$WORK"' EXIT
 
 cases=0
 failed=()
@@ -48,6 +61,15 @@ other() {
 show() {
 	echo "  $1"
 	tail -n 20 "$2" | sed 's/^/    /'
+}
+
+expect() {
+	local what=$1 got=$2 want=$3
+	if ! diff -u "$want" "$got" >"$got.diff"; then
+		echo "  $what:"
+		head -n 60 "$got.diff" | sed 's/^/    /'
+		return 1
+	fi
 }
 
 apply() {
@@ -134,11 +156,7 @@ check() {
 			return 1
 		fi
 	done
-	if ! diff -u "$WORK/$name.fork.csv" "$WORK/$name.vanilla.csv" >"$WORK/$name.diff"; then
-		echo "  fork and vanilla read $name differently:"
-		head -n 60 "$WORK/$name.diff" | sed 's/^/    /'
-		return 1
-	fi
+	expect "fork and vanilla read $name differently" "$WORK/$name.vanilla.csv" "$WORK/$name.fork.csv"
 }
 
 record() {
@@ -188,6 +206,110 @@ scenario() {
 	record "$name" $?
 }
 
+free_port() {
+	python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])'
+}
+
+wait_port() {
+	local deadline=$((SECONDS + 60))
+	until (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; do
+		((SECONDS < deadline)) || return 1
+		sleep 0.2
+	done
+}
+
+quack_vanilla_client() {
+	local pg quack pid remote
+	pg=$(free_port)
+	quack=$(free_port)
+	"$SERENED" "$WORK/quack-server" --listen="postgres://127.0.0.1:$pg,http://127.0.0.1:$quack?api=quack" \
+		>"$WORK/quack-server.log" 2>&1 &
+	pid=$!
+	quack_pids+=("$pid")
+	if ! wait_port "$quack"; then
+		show "serened did not start:" "$WORK/quack-server.log"
+		return 1
+	fi
+	remote="quack:127.0.0.1:$quack"
+	HOME="$VANILLA_QUACK_HOME" "$VANILLA_QUACK_DUCKDB" -bail -csv :memory: >"$WORK/quack-vanilla-client.csv" 2>&1 <<EOF
+LOAD quack;
+SELECT * FROM quack_query('$remote', 'CREATE TABLE v3 AS SELECT i AS id, ''n'' || i AS name FROM range(1000) r(i)', token := 'postgres:');
+SELECT * FROM quack_query('$remote', 'SELECT count(*) AS n, sum(id) AS s, count(DISTINCT name) AS d FROM v3', token := 'postgres:');
+SELECT * FROM quack_query('$remote', 'INSERT INTO v3 VALUES (1000, NULL)', token := 'postgres:');
+SELECT * FROM quack_query('$remote', 'SELECT id, name FROM v3 WHERE id >= 998 ORDER BY id', token := 'postgres:');
+ATTACH '$remote' AS s (TOKEN 'postgres:');
+SELECT count(*) AS n, max(name) AS m FROM s.public.v3;
+SELECT schema_name FROM duckdb_schemas() WHERE database_name = 's' AND schema_name IN ('public', 'pg_catalog', 'information_schema') ORDER BY schema_name;
+EOF
+	kill "$pid"
+	wait "$pid"
+	expect "a vanilla quack client reads serened differently" "$WORK/quack-vanilla-client.csv" <(
+		cat <<'EOF'
+Count
+1000
+n,s,d
+1000,499500,1000
+Count
+1
+id,name
+998,n998
+999,n999
+1000,NULL
+n,m
+1001,n999
+schema_name
+public
+EOF
+	)
+}
+
+quack_vanilla_server() {
+	local port pid feed
+	port=$(free_port)
+	mkfifo "$WORK/quack-vanilla.in"
+	HOME="$VANILLA_QUACK_HOME" "$VANILLA_QUACK_DUCKDB" -bail -csv :memory: <"$WORK/quack-vanilla.in" \
+		>"$WORK/quack-vanilla.log" 2>&1 &
+	pid=$!
+	quack_pids+=("$pid")
+	exec {feed}>"$WORK/quack-vanilla.in"
+	echo "LOAD quack;
+CREATE TABLE served AS SELECT i AS id, 'n' || i AS name FROM range(5000) r(i);
+CALL quack_serve('quack:127.0.0.1:$port', token := 'interop');" >&$feed
+	if ! wait_port "$port"; then
+		exec {feed}>&-
+		show "vanilla did not serve:" "$WORK/quack-vanilla.log"
+		return 1
+	fi
+	"$SERENED" shell -bail -csv :memory: >"$WORK/quack-fork-client.csv" 2>&1 <<EOF
+ATTACH 'quack:127.0.0.1:$port' AS v (TOKEN 'interop');
+SELECT count(*) AS n, sum(id) AS s FROM v.served;
+SELECT * FROM v.query('SELECT 42 AS answer');
+CREATE TABLE v.made_by_fork AS SELECT 7 AS x;
+INSERT INTO v.served VALUES (5000, 'last');
+SELECT count(*) AS n, max(name) AS name FROM v.served WHERE id >= 4999;
+SELECT x FROM v.made_by_fork;
+EOF
+	echo ".quit" >&$feed
+	exec {feed}>&-
+	wait "$pid"
+	expect "serened reads a vanilla quack server differently" "$WORK/quack-fork-client.csv" <(
+		cat <<'EOF'
+n,s
+5000,12497500
+answer
+42
+Count
+1
+Count
+1
+n,name
+2,n4999
+x
+7
+EOF
+	)
+}
+
 echo "===== [duckdb interop] fork: $SERENED"
 echo "===== [duckdb interop] vanilla: $("$VANILLA_DUCKDB" --version) ($VANILLA_DUCKDB)"
 for version in $INTEROP_STORAGE_VERSIONS; do
@@ -195,6 +317,12 @@ for version in $INTEROP_STORAGE_VERSIONS; do
 		scenario "$writer" "$version"
 	done
 done
+
+echo "===== [duckdb interop] quack vanilla: $("$VANILLA_QUACK_DUCKDB" --version) ($VANILLA_QUACK_DUCKDB)"
+quack_vanilla_client
+record "quack-vanilla-client" $?
+quack_vanilla_server
+record "quack-vanilla-server" $?
 
 echo "===== [duckdb interop] $((cases - ${#failed[@]}))/$cases passed"
 if [[ ${#failed[@]} -gt 0 ]]; then

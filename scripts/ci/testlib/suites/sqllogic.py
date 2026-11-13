@@ -366,10 +366,11 @@ def recovery_units(ctx, args, skips):
 
 def _recovery_run(ctx, args, rel):
     def run(r):
-        server = RestartingServer(ctx, r.dir / "server", profile_dir=r.profile_dir).start()
+        server = RestartingServer(ctx, r.dir / "server", profile_dir=r.profile_dir,
+                                  http_apis=("quack",)).start()
         r.stack_pids = lambda: (server.pid(),)
-        env = {"SDB_DATADIR": str(server.datadir), "RETRY_ATTEMPTS": "60",
-               "BACKOFF_DURATION": "500ms"}
+        env = {"SDB_DATADIR": str(server.datadir), "SDB_QUACK_PORT": str(server.server.http_port),
+               "RETRY_ATTEMPTS": "60", "BACKOFF_DURATION": "500ms"}
         try:
             res = r.exec(_runner_args(ctx, args, rel, "pg-wire-simple", server.server, r.env),
                          cwd=sqllogic_dir(ctx), env=env)

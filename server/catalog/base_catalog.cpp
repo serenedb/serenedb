@@ -45,6 +45,8 @@
 #include "catalog/dependency.h"
 #include "catalog/record.h"
 #include "catalog/transaction.h"
+#include "pg/catalog/oids.h"
+#include "pg/connection_context.h"
 
 namespace sdb::catalog {
 namespace {
@@ -235,6 +237,14 @@ duckdb::optional_ptr<duckdb::SchemaCatalogEntry> BaseCatalog::LookupSchema(
 void BaseCatalog::ScanSchemas(
   duckdb::ClientContext& context,
   std::function<void(duckdb::SchemaCatalogEntry&)> callback) {
+  if (!ConnectionContext::Get(context).lists_system_schemas) {
+    callback = [callback =
+                  std::move(callback)](duckdb::SchemaCatalogEntry& schema) {
+      if (!pg::FindSystemObject(pg::kSystemNamespaces, schema.oid)) {
+        callback(schema);
+      }
+    };
+  }
   const auto transaction = GetCatalogTransaction(context);
   _schemas.Scan(transaction, [&](duckdb::CatalogEntry& entry) {
     entry.Cast<Schema>().ScanSchemaTree(transaction, callback);

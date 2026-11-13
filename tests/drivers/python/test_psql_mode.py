@@ -1011,10 +1011,11 @@ def test_shell_accepts_psql_tuples_only() -> None:
 
 
 def _run_shell_as_agent(args: list[str]) -> subprocess.CompletedProcess:
+    env = {k: v for k, v in os.environ.items() if k != "DUCKDB_AGENT_MODE"}
     return subprocess.run(
         [SERENED_BIN, "shell", *args, "-c", "SELECT 1 AS id;"],
         capture_output=True, text=True, timeout=20.0,
-        env={**os.environ, "NO_COLOR": "1", "TERM": "dumb", "AI_AGENT": "1"},
+        env={**env, "NO_COLOR": "1", "TERM": "dumb", "AI_AGENT": "1"},
     )
 
 

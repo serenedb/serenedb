@@ -1,0 +1,60 @@
+{
+  "description": "SereneDB test-config for the vendored duckdb_quack test suite and DuckDB's tests that attach QUACK_SERVER. tests/duckdb/quack/run.sh runs each file against a serened of its own that serves quack, instead of the quack_serve server of the test's DuckDB process.",
+  "skip_tests": [
+    {
+      "reason": "serened serves quack from an HTTP listener (`?api=quack`), so the quack extension has no server to run from SQL: quack_serve, quack_stop, quack_server_list, quack_generate_keys, the quack_server_* settings and the quack_authentication_function / quack_authorization_function hooks do not exist. Every file below tests starting, stopping or configuring a server from SQL.",
+      "paths": [
+        "test/sql/authn_swap.test",
+        "test/sql/reconnects_ack_best_effort.test",
+        "test/sql/self_stop.test",
+        "test/sql/serve_canonical.test",
+        "test/sql/serve_create_secret.test",
+        "test/sql/serve_secret.test",
+        "test/sql/serve_ssl.test",
+        "test/sql/serve_token_from_secret.test",
+        "test/sql/server_connection_limits.test",
+        "test/sql/server_list.test",
+        "test/sql/token_validation.test"
+      ]
+    },
+    {
+      "reason": "A repeated output column name is renamed with a colon (x, x:1), which no unquoted identifier can collide with, and rpc_duplicate_columns.test expects DuckDB's x_1. It also starts its own server.",
+      "paths": [
+        "test/sql/rpc_duplicate_columns.test"
+      ]
+    },
+    {
+      "reason": "A quack PREPARE holds one command, as a prepared statement does in PostgreSQL, and fails with `cannot insert multiple commands into a prepared statement` otherwise: pgbench.test sends a whole transaction script in one query.",
+      "paths": [
+        "test/sql/pgbench.test"
+      ]
+    },
+    {
+      "reason": "A table scan without ORDER BY does not return a table's rows in the order they were inserted, and these files check the order of an INSERT or a CTAS by scanning the table.",
+      "paths": [
+        "test/sql/attach_insert_backpressure.test",
+        "test/sql/attach_insert_order.test",
+        "test/sql/fetch_async.test"
+      ]
+    },
+    {
+      "reason": "A row id is not the row's position in its table, and virtual_columns.test expects DuckDB's.",
+      "paths": [
+        "test/sql/virtual_columns.test"
+      ]
+    },
+    {
+      "reason": "dbgen fills DuckDB database files only.",
+      "paths": [
+        "test/remote_pushdown/remote_pushdown_tpch.test_slow"
+      ]
+    },
+    {
+      "reason": "The DuckDB unittest client sends a folded lambda or struct literal with its functions qualified by DuckDB's `system` catalog, which a SereneDB server does not have. serened and serened shell as clients send them unqualified.",
+      "paths": [
+        "test/remote_pushdown/remote_pushdown_advanced.test",
+        "test/remote_pushdown/remote_pushdown_ddl.test"
+      ]
+    }
+  ]
+}

@@ -73,6 +73,18 @@ ALTER TABLE public.acf_defaults ADD COLUMN d BIGINT DEFAULT acf_conv(7);
 
 
 statement ok
+CREATE TABLE public.acf_struct (id INT PRIMARY KEY, s STRUCT(a INT));
+
+
+statement ok
+INSERT INTO public.acf_struct VALUES (1, {'a': 1});
+
+
+statement ok
+ALTER TABLE public.acf_struct ADD COLUMN s.k BIGINT DEFAULT acf_conv(7);
+
+
+statement ok
 CREATE TABLE public.acf_generated (id INT PRIMARY KEY, a INT,
   v BIGINT GENERATED ALWAYS AS (acf_conv(a)) VIRTUAL, s BIGINT GENERATED ALWAYS AS (acf_conv(a)) STORED);
 
@@ -91,6 +103,22 @@ RESET search_path;
 
 statement ok
 CREATE DATABASE acf_app;
+
+
+statement ok
+CREATE FUNCTION acf_pub_pos(x INT) RETURNS BOOLEAN LANGUAGE sql IMMUTABLE AS 'SELECT x > 0';
+
+
+statement ok
+CREATE TABLE acf_app.public.acf_x (id INT PRIMARY KEY, a INT CHECK (acf_pub_pos(a)), b INT);
+
+
+statement ok
+INSERT INTO acf_app.public.acf_x VALUES (1, 1, 1);
+
+
+statement ok
+ALTER TABLE acf_app.public.acf_x DROP COLUMN b;
 
 
 connection app database=acf_app
@@ -210,3 +238,32 @@ statement error
 INSERT INTO acf_t VALUES (2, -1, 2);
 ----
 db error: ERROR: CHECK constraint failed on table "acf_t" with expression CHECK(acf_app_pos(a))
+
+
+connection restarted
+query
+SELECT id, s FROM acf_struct ORDER BY id;
+----
+id	s
+1	(1,70)
+
+
+connection restarted_app database=acf_app
+statement ok
+INSERT INTO acf_x VALUES (2, 2);
+
+
+connection restarted_app database=acf_app
+statement error
+INSERT INTO acf_x VALUES (3, -3);
+----
+db error: ERROR: CHECK constraint failed on table "acf_x" with expression CHECK(<slt:ignore>.public.acf_pub_pos(a))
+
+
+connection restarted
+query
+SELECT id, a FROM acf_app.public.acf_x ORDER BY id;
+----
+id	a
+1	1
+2	2

@@ -1,0 +1,63 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TABLE stvg_t (id INT PRIMARY KEY, a INT, v INT GENERATED ALWAYS AS (a + 1), note TEXT)
+WITH (compaction_interval = 0);
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+INSERT INTO stvg_t (id, a, note) VALUES (1, 5, 'x'), (2, 7, 'y');
+
+
+statement ok
+VACUUM (FLUSH_TABLE) stvg_t;
+
+
+statement ok
+UPDATE stvg_t SET a = 10 WHERE id = 1;
+
+
+statement ok
+INSERT INTO stvg_t (id, a, note) VALUES (3, 1, 'z');
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (FLUSH_TABLE) stvg_t;
+
+
+query
+SELECT id, a, v, note FROM stvg_t ORDER BY id;
+----
+id	a	v	note
+1	10	11	x
+2	7	8	y
+3	1	2	z
+
+
+statement ok
+UPDATE stvg_t SET a = 20 WHERE id = 3;
+
+
+statement ok
+VACUUM (FLUSH_TABLE) stvg_t;
+
+
+query
+SELECT id, a, v, note FROM stvg_t ORDER BY id;
+----
+id	a	v	note
+1	10	11	x
+2	7	8	y
+3	20	21	z

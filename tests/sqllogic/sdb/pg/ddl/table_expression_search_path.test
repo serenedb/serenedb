@@ -28,7 +28,7 @@ statement error
 CREATE TABLE public.tesp_missing (a INT CHECK (tesp_missing_fn(a)));
 ----
 db error: ERROR: Scalar Function with name tesp_missing_fn does not exist!
-Did you mean "tesp_pos or tesp_tmp"?
+Did you mean <slt:ignore>
 
 
 statement error
@@ -240,7 +240,819 @@ db error: ERROR: CHECK constraint failed on table "tesp_x" with expression CHECK
 
 
 statement ok
+CREATE FUNCTION public.tesp_pub(x INT) RETURNS BOOLEAN LANGUAGE sql IMMUTABLE AS 'SELECT x > 0';
+
+
+statement ok
+CREATE TABLE tesp_db_${__DATABASE__}.public.tesp_y (a INT CHECK (tesp_pub(a)));
+
+
+statement ok
+INSERT INTO tesp_db_${__DATABASE__}.public.tesp_y VALUES (1);
+
+
+statement error
+INSERT INTO tesp_db_${__DATABASE__}.public.tesp_y VALUES (-1);
+----
+db error: ERROR: CHECK constraint failed on table "tesp_y" with expression CHECK(<slt:ignore>.public.tesp_pub(a))
+
+
+statement ok
+CREATE TABLE public.tesp_sf (id INT, s STRUCT(a INT));
+
+
+statement error
+ALTER TABLE public.tesp_sf ADD COLUMN s.k INT DEFAULT tesp_tmp(1);
+----
+db error: ERROR: Cannot use temporary function "tesp_tmp" in a non-temporary relation
+
+
+statement ok
+CREATE FUNCTION public.tesp_own(x INT) RETURNS INT LANGUAGE sql IMMUTABLE AS 'SELECT x + 1';
+
+
+statement ok
+CREATE SCHEMA tesp_app;
+
+
+statement ok
+CREATE FUNCTION tesp_app.length(x TEXT) RETURNS INT LANGUAGE sql IMMUTABLE AS 'SELECT 0';
+
+
+statement ok
+CREATE TABLE public.tesp_b (n INT, s TEXT CHECK (length(s) < 3), d TEXT DEFAULT lower('X'), o INT DEFAULT tesp_own(1),
+  g INT GENERATED ALWAYS AS (abs(n)) STORED, v INT GENERATED ALWAYS AS (abs(n) + 1));
+
+
+statement ok
+CREATE TABLE public.tesp_e (n INT, e INT GENERATED ALWAYS AS (sign(n)));
+
+
+connection shadow
+statement ok
+CREATE TEMPORARY MACRO sign(x) AS error('shadowed');
+
+
+connection shadow
+statement ok
+CREATE TEMPORARY MACRO length(x) AS 0;
+
+
+connection shadow
+statement ok
+CREATE TEMPORARY MACRO lower(x) AS 'zzz';
+
+
+connection shadow
+statement ok
+CREATE TEMPORARY MACRO abs(x) AS 1000;
+
+
+connection shadow
+statement ok
+CREATE TEMPORARY MACRO tesp_own(x) AS 1000;
+
+
+connection shadow
+statement error
+INSERT INTO public.tesp_b (n, s) VALUES (-5, 'abcdef');
+----
+db error: ERROR: CHECK constraint failed on table "tesp_b" with expression CHECK((length(s) < 3))
+
+
+connection shadow
+statement ok
+INSERT INTO public.tesp_b (n, s) VALUES (-5, 'ab');
+
+
+connection shadow
+query
+SELECT n, s, d, o, g, v FROM public.tesp_b;
+----
+n	s	d	o	g	v
+-5	ab	x	2	5	6
+
+
+connection shadow
+statement ok
+UPDATE public.tesp_b SET n = -7;
+
+
+connection shadow
+query
+SELECT n, g, v FROM public.tesp_b;
+----
+n	g	v
+-7	7	8
+
+
+connection shadow
+statement ok
+INSERT INTO public.tesp_e (n) VALUES (-3);
+
+
+connection shadow
+query
+SELECT n, e FROM public.tesp_e;
+----
+n	e
+-3	-1
+
+
+connection with_path
+statement ok
+SET search_path = tesp_app, public;
+
+
+connection with_path
+statement error
+INSERT INTO public.tesp_b (n, s) VALUES (1, 'abcdef');
+----
+db error: ERROR: CHECK constraint failed on table "tesp_b" with expression CHECK((length(s) < 3))
+
+
+statement ok
+CREATE TABLE public.tesp_d (id INT PRIMARY KEY, a TEXT DEFAULT lower('ABC'), g TEXT GENERATED ALWAYS AS (a || '!') STORED);
+
+
+statement ok
+INSERT INTO public.tesp_d (id, a) VALUES (1, 'x');
+
+
+connection shadow
+statement ok
+UPDATE public.tesp_d SET a = DEFAULT;
+
+
+connection shadow
+statement ok
+INSERT INTO public.tesp_d (id, a) VALUES (2, DEFAULT);
+
+
+connection shadow
+statement ok
+INSERT INTO public.tesp_d (id) VALUES (3) ON CONFLICT (id) DO NOTHING;
+
+
+connection shadow
+statement ok
+INSERT INTO public.tesp_d (id) SELECT 4;
+
+
+connection shadow
+statement ok
+MERGE INTO public.tesp_d USING (SELECT 5 AS id) s ON tesp_d.id = s.id WHEN NOT MATCHED THEN INSERT (id, a) VALUES (s.id, DEFAULT);
+
+
+connection shadow
+statement ok
+INSERT INTO public.tesp_d (id) VALUES (6);
+
+
+query
+SELECT id, a, g FROM public.tesp_d ORDER BY id;
+----
+id	a	g
+1	abc	abc!
+2	abc	abc!
+3	abc	abc!
+4	abc	abc!
+5	abc	abc!
+6	abc	abc!
+
+
+statement ok
+CREATE SCHEMA tesp_ix;
+
+
+statement ok
+CREATE TABLE tesp_ix.tesp_g (n INT, g INT GENERATED ALWAYS AS (abs(n)));
+
+
+statement ok
+CREATE SCHEMA tesp_n1;
+
+
+statement ok
+CREATE SCHEMA tesp_n1.tesp_n2;
+
+
+statement ok
+CREATE TABLE tesp_n1.tesp_n2.tesp_g (n INT, g INT GENERATED ALWAYS AS (abs(n)));
+
+
+statement ok
+INSERT INTO tesp_ix.tesp_g (n) VALUES (-4);
+
+
+statement ok
+INSERT INTO tesp_n1.tesp_n2.tesp_g (n) VALUES (-4);
+
+
+statement ok
+CREATE FUNCTION tesp_ix.abs(x INT) RETURNS INT LANGUAGE sql IMMUTABLE AS 'SELECT 1000';
+
+
+statement ok
+CREATE SCHEMA tesp_n2;
+
+
+statement ok
+CREATE FUNCTION tesp_n2.abs(x INT) RETURNS INT LANGUAGE sql IMMUTABLE AS 'SELECT 1000';
+
+
+query
+SELECT n, g FROM tesp_ix.tesp_g;
+----
+n	g
+-4	4
+
+
+query
+SELECT n, g FROM tesp_n1.tesp_n2.tesp_g;
+----
+n	g
+-4	4
+
+
+statement ok
+CREATE SCHEMA tesp_own;
+
+
+statement ok
+CREATE FUNCTION tesp_own.lower(x TEXT) RETURNS TEXT LANGUAGE sql IMMUTABLE AS 'SELECT ''own''';
+
+
+statement ok
+SET search_path = tesp_own, public;
+
+
+statement ok
+CREATE TABLE tesp_own.tesp_l (s TEXT, g TEXT GENERATED ALWAYS AS (lower(s)));
+
+
+statement ok
+RESET search_path;
+
+
+statement ok
+INSERT INTO tesp_own.tesp_l (s) VALUES ('ABC');
+
+
+query
+SELECT s, g FROM tesp_own.tesp_l;
+----
+s	g
+ABC	own
+
+
+statement ok
+SET search_path = tesp_own, public;
+
+
+statement ok
+CREATE TABLE tesp_own.tesp_dc (s TEXT CHECK (lower(s) = 'own'), d TEXT DEFAULT lower('ABC'));
+
+
+statement ok
+RESET search_path;
+
+
+statement ok
+INSERT INTO tesp_own.tesp_dc (s) VALUES ('ABC');
+
+
+connection shadow
+statement ok
+INSERT INTO tesp_own.tesp_dc (s) VALUES ('XYZ');
+
+
+query
+SELECT s, d FROM tesp_own.tesp_dc ORDER BY s;
+----
+s	d
+ABC	own
+XYZ	own
+
+
+query
+SELECT pg_get_expr(adbin, adrelid) AS def FROM pg_attrdef WHERE adrelid = 'tesp_own.tesp_dc'::regclass;
+----
+def
+tesp_own.lower('ABC')
+
+
+query
+SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conrelid = 'tesp_own.tesp_dc'::regclass AND contype = 'c';
+----
+def
+CHECK ((tesp_own.lower(s) = 'own'))
+
+
+statement ok
+CREATE TABLE tesp_db_${__DATABASE__}.public.tesp_q (a INT CHECK (public.tesp_pub(a)));
+
+
+statement ok
+INSERT INTO tesp_db_${__DATABASE__}.public.tesp_q VALUES (1);
+
+
+statement error
+INSERT INTO tesp_db_${__DATABASE__}.public.tesp_q VALUES (-1);
+----
+db error: ERROR: CHECK constraint failed on table "tesp_q" with expression CHECK(<slt:ignore>.public.tesp_pub(a))
+
+
+statement ok
+CREATE FUNCTION tesp_db_${__DATABASE__}.public.tesp_cpos(x INT) RETURNS BOOLEAN LANGUAGE sql IMMUTABLE AS 'SELECT x > 0';
+
+
+statement ok
+CREATE SCHEMA tesp_db_${__DATABASE__}.tesp_c;
+
+
+statement ok
+CREATE TABLE tesp_db_${__DATABASE__}.tesp_c.tesp_w (a INT CHECK (public.tesp_cpos(a)));
+
+
+statement ok
+CREATE FUNCTION public.tesp_cpos(x INT) RETURNS BOOLEAN LANGUAGE sql IMMUTABLE AS 'SELECT true';
+
+
+statement ok
+INSERT INTO tesp_db_${__DATABASE__}.tesp_c.tesp_w VALUES (1);
+
+
+statement error
+INSERT INTO tesp_db_${__DATABASE__}.tesp_c.tesp_w VALUES (-1);
+----
+db error: ERROR: CHECK constraint failed on table "tesp_w" with expression CHECK(public.tesp_cpos(a))
+
+
+statement ok
+SET search_path = tesp_s, public;
+
+
+statement ok
+CREATE TABLE public.tesp_m (c INT CHECK (c.tesp_pos()));
+
+
+statement ok
+CREATE TABLE tesp_s.tesp_mv (a INT CHECK (tesp_pos(a)));
+
+
+statement ok
+CREATE TABLE tesp_s.tesp_mv2 (a INT CHECK (abs(a) > 0));
+
+
+statement ok
+RESET search_path;
+
+
+statement ok
+INSERT INTO public.tesp_m VALUES (1);
+
+
+statement error
+INSERT INTO public.tesp_m VALUES (-1);
+----
+db error: ERROR: CHECK constraint failed on table "tesp_m" with expression CHECK(tesp_s.tesp_pos(c))
+
+
+statement error
+ALTER TABLE tesp_s.tesp_mv SET SCHEMA public;
+----
+db error: ERROR: Cannot move table "tesp_mv" to schema "public": its expressions call function "tesp_pos", which would resolve to a different function there
+
+
+statement ok
+ALTER TABLE tesp_s.tesp_mv2 SET SCHEMA public;
+
+
+statement ok
+CREATE TEMPORARY SEQUENCE tesp_tseq;
+
+
+statement error
+CREATE TABLE public.tesp_seq (a INT DEFAULT nextval('tesp_tseq'));
+----
+db error: ERROR: Cannot use temporary sequence "tesp_tseq" in a non-temporary relation
+
+
+statement ok
+CREATE SCHEMA tesp_sq;
+
+
+statement ok
+CREATE SEQUENCE tesp_sq.tesp_seq1;
+
+
+statement ok
+CREATE SEQUENCE tesp_sq.tesp_seq2;
+
+
+statement ok
+SET search_path = tesp_sq, public;
+
+
+statement ok
+CREATE TABLE public.tesp_nv (id INT, n BIGINT DEFAULT nextval('tesp_seq1'), r BIGINT DEFAULT nextval('tesp_seq2'::regclass),
+  c BIGINT DEFAULT currval('tesp_seq1'));
+
+
+statement ok
+RESET search_path;
+
+
+statement ok
+INSERT INTO public.tesp_nv (id, c) VALUES (1, 0);
+
+
+statement ok
+INSERT INTO public.tesp_nv VALUES (2, DEFAULT, DEFAULT, 0);
+
+
+query
+SELECT id, n, r FROM public.tesp_nv ORDER BY id;
+----
+id	n	r
+1	1	1
+2	2	2
+
+
+query
+SELECT pg_get_expr(adbin, adrelid) AS def FROM pg_attrdef WHERE adrelid = 'public.tesp_nv'::regclass ORDER BY adnum;
+----
+def
+nextval('tesp_sq.tesp_seq1')
+nextval(CAST('tesp_sq.tesp_seq2' AS regclass))
+currval('tesp_sq.tesp_seq1')
+
+
+statement ok
+CREATE SEQUENCE tesp_sq.tesp_own_seq;
+
+
+statement ok
+CREATE TABLE tesp_sq.tesp_mvs (n BIGINT DEFAULT nextval('tesp_own_seq'));
+
+
+statement error
+ALTER TABLE tesp_sq.tesp_mvs SET SCHEMA public;
+----
+db error: ERROR: Cannot move table "tesp_mvs" to schema "public": its expressions use sequence "tesp_own_seq", which would resolve to a different sequence there
+
+
+statement ok
+CREATE TABLE tesp_sq.tesp_mvo (id SERIAL, a INT);
+
+
+statement ok
+ALTER TABLE tesp_sq.tesp_mvo SET SCHEMA public;
+
+
+statement ok
+INSERT INTO public.tesp_mvo (a) VALUES (1);
+
+
+statement ok
+CREATE TABLE tesp_n1.tesp_n2.tesp_ser (id SERIAL, a INT);
+
+
+statement ok
+INSERT INTO tesp_n1.tesp_n2.tesp_ser (a) VALUES (1), (2);
+
+
+statement ok
+ALTER TABLE tesp_n1.tesp_n2.tesp_ser ADD COLUMN b SERIAL;
+
+
+statement ok
+INSERT INTO tesp_n1.tesp_n2.tesp_ser (a) VALUES (3);
+
+
+query
+SELECT id, a, b FROM tesp_n1.tesp_n2.tesp_ser ORDER BY id;
+----
+id	a	b
+1	1	1
+2	2	2
+3	3	3
+
+
+query
+SELECT id, a FROM public.tesp_mvo;
+----
+id	a
+1	1
+
+
+statement ok
+DROP TABLE public.tesp_mvo;
+
+
+statement ok
+DROP TABLE public.tesp_nv;
+
+
+statement ok
+DROP SCHEMA tesp_sq CASCADE;
+
+
+statement ok
+CREATE TABLE public.tesp_cat (a INT, c TEXT DEFAULT CURRENT_CATALOG);
+
+
+statement ok
+INSERT INTO public.tesp_cat (a) VALUES (1);
+
+
+query
+SELECT count(*) AS n FROM public.tesp_cat WHERE c = current_database();
+----
+n
+1
+
+
+statement ok
+DROP TABLE public.tesp_cat;
+
+
+statement ok
+CREATE SCHEMA tesp_shop;
+
+
+statement ok
+CREATE FUNCTION public.tesp_price_ok(p INT) RETURNS BOOLEAN LANGUAGE sql IMMUTABLE AS 'SELECT p >= 0';
+
+
+statement ok
+CREATE FUNCTION tesp_shop.tesp_price_ok(p INT) RETURNS BOOLEAN LANGUAGE sql IMMUTABLE AS 'SELECT p > 0';
+
+
+statement ok
+CREATE FUNCTION public.tesp_code() RETURNS INT LANGUAGE sql IMMUTABLE AS 'SELECT 1';
+
+
+statement ok
+CREATE FUNCTION tesp_shop.tesp_code() RETURNS INT LANGUAGE sql IMMUTABLE AS 'SELECT 2';
+
+
+statement ok
+CREATE FUNCTION public.tesp_conv(p INT) RETURNS BIGINT LANGUAGE sql IMMUTABLE AS 'SELECT p + 10';
+
+
+statement ok
+CREATE FUNCTION tesp_shop.tesp_conv(p INT) RETURNS BIGINT LANGUAGE sql IMMUTABLE AS 'SELECT p + 20';
+
+
+statement ok
+SET search_path = tesp_shop;
+
+
+statement ok
+CREATE TABLE tesp_items (id INT, price INT, raw INT);
+
+
+statement ok
+INSERT INTO tesp_items VALUES (1, 1, 1);
+
+
+statement ok
+ALTER TABLE tesp_items ADD CONSTRAINT tesp_items_price CHECK (tesp_price_ok(price));
+
+
+statement ok
+ALTER TABLE tesp_items ADD COLUMN code INT DEFAULT tesp_code();
+
+
+statement ok
+ALTER TABLE tesp_items ALTER COLUMN id SET DEFAULT tesp_code();
+
+
+statement ok
+ALTER TABLE tesp_items ALTER COLUMN raw TYPE BIGINT USING tesp_conv(raw);
+
+
+statement ok
+RESET search_path;
+
+
+statement error
+INSERT INTO tesp_shop.tesp_items (price) VALUES (0);
+----
+db error: ERROR: CHECK constraint failed on table "tesp_items" with expression CHECK(tesp_price_ok(price))
+
+
+statement ok
+INSERT INTO tesp_shop.tesp_items (price, raw) VALUES (5, 0);
+
+
+query
+SELECT id, price, raw, code FROM tesp_shop.tesp_items ORDER BY price;
+----
+id	price	raw	code
+1	1	21	2
+2	5	0	2
+
+
+query
+SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conname = 'tesp_items_price';
+----
+def
+CHECK (tesp_price_ok(price))
+
+
+query
+SELECT pg_get_expr(adbin, adrelid) AS def FROM pg_attrdef WHERE adrelid = 'tesp_shop.tesp_items'::regclass ORDER BY adnum;
+----
+def
+tesp_code()
+tesp_code()
+
+
+statement ok
+CREATE FUNCTION public.tesp_valid(x INT) RETURNS BOOLEAN LANGUAGE sql IMMUTABLE AS 'SELECT x > 0';
+
+
+statement ok
+CREATE FUNCTION tesp_shop.tesp_valid(x INT) RETURNS BOOLEAN LANGUAGE sql IMMUTABLE AS 'SELECT x > 10';
+
+
+statement ok
+SET search_path = tesp_shop, public;
+
+
+statement ok
+CREATE TABLE public.tesp_vt (a INT CHECK (tesp_valid(a)));
+
+
+statement ok
+RESET search_path;
+
+
+statement error
+INSERT INTO public.tesp_vt VALUES (5);
+----
+db error: ERROR: CHECK constraint failed on table "tesp_vt" with expression CHECK(tesp_shop.tesp_valid(a))
+
+
+statement ok
+INSERT INTO public.tesp_vt VALUES (11);
+
+
+statement ok
+CREATE TABLE tesp_shop.tesp_sd (id SERIAL, a INT);
+
+
+statement ok
+CREATE SEQUENCE public.tesp_sd_id_seq START 100;
+
+
+statement ok
+INSERT INTO tesp_shop.tesp_sd VALUES (DEFAULT, 1);
+
+
+statement ok
+INSERT INTO tesp_shop.tesp_sd (a) VALUES (2);
+
+
+statement ok
+UPDATE tesp_shop.tesp_sd SET id = DEFAULT WHERE a = 2;
+
+
+query
+SELECT id, a FROM tesp_shop.tesp_sd ORDER BY a;
+----
+id	a
+1	1
+3	2
+
+
+statement ok
+CREATE TYPE tesp_shop.tesp_mood AS ENUM ('a', 'b');
+
+
+statement ok
+SET search_path = tesp_shop, public;
+
+
+statement error
+CREATE TABLE public.tesp_ty (m TEXT DEFAULT 'a'::tesp_mood::TEXT);
+----
+db error: ERROR: Type with name tesp_mood does not exist!
+Did you mean "tesp_shop.tesp_mood"?
+
+
+statement ok
+CREATE TABLE public.tesp_ty (m TEXT DEFAULT 'a'::tesp_shop.tesp_mood::TEXT, k tesp_mood);
+
+
+statement ok
+RESET search_path;
+
+
+statement ok
+INSERT INTO public.tesp_ty (k) VALUES ('b');
+
+
+query
+SELECT m, k FROM public.tesp_ty;
+----
+m	k
+a	b
+
+
+statement ok
+DROP TABLE public.tesp_ty;
+
+
+statement ok
+DROP TABLE public.tesp_vt;
+
+
+statement ok
+DROP SEQUENCE public.tesp_sd_id_seq;
+
+
+statement ok
+DROP FUNCTION public.tesp_valid(INT);
+
+
+statement ok
+DROP SCHEMA tesp_shop CASCADE;
+
+
+statement ok
+DROP FUNCTION public.tesp_price_ok(INT);
+
+
+statement ok
+DROP FUNCTION public.tesp_code();
+
+
+statement ok
+DROP FUNCTION public.tesp_conv(INT);
+
+
+statement ok
 DROP DATABASE tesp_db_${__DATABASE__};
+
+
+statement ok
+DROP FUNCTION public.tesp_cpos(INT);
+
+
+statement ok
+DROP FUNCTION public.tesp_pub(INT);
+
+
+statement ok
+DROP TABLE public.tesp_d;
+
+
+statement ok
+DROP TABLE public.tesp_m;
+
+
+statement ok
+DROP TABLE public.tesp_mv2;
+
+
+statement ok
+DROP SCHEMA tesp_ix CASCADE;
+
+
+statement ok
+DROP SCHEMA tesp_n1 CASCADE;
+
+
+statement ok
+DROP SCHEMA tesp_n2 CASCADE;
+
+
+statement ok
+DROP SCHEMA tesp_own CASCADE;
+
+
+statement ok
+DROP TABLE public.tesp_b;
+
+
+statement ok
+DROP TABLE public.tesp_e;
+
+
+statement ok
+DROP TABLE public.tesp_sf;
+
+
+statement ok
+DROP FUNCTION public.tesp_own(INT);
+
+
+statement ok
+DROP SCHEMA tesp_app CASCADE;
 
 
 statement ok

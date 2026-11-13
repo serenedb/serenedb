@@ -177,7 +177,7 @@ int RunServer(int argc, char** argv) {
       // it unless it can read its definition.
       stop("storage", [&] {
         irs::DuckDBEngine::Instance().CloseDatabases();
-        catalog::LogCleanShutdown();
+        catalog::CloseLog();
       });
       SDB_INFO(GENERAL, "SereneDB is shut down");
     };
@@ -288,7 +288,7 @@ void CloseShellEngine() {
   services.search.stop();
   services.background.stop();
   irs::DuckDBEngine::Instance().CloseDatabases();
-  catalog::LogCleanShutdown();
+  catalog::CloseLog();
   gShellServices.reset();
   irs::DuckDBEngine::Instance().Shutdown();
 }

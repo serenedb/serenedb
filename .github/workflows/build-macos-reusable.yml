@@ -85,7 +85,10 @@ jobs:
         run: |
           set -euo pipefail
           venv="$RUNNER_TEMP/fixture-venv"
-          python3 -m venv "$venv"
+          # The image's python3 follows Homebrew, now 3.15, which the pinned pyarrow has no wheel
+          # for, and building pyarrow from source needs Arrow C++.
+          brew install python@3.14
+          "$(brew --prefix python@3.14)/bin/python3.14" -m venv "$venv"
           grep -E '^(pyiceberg|pyarrow|fastavro)' scripts/ci/test-data-requirements.txt |
             xargs "$venv/bin/pip" install --quiet
           echo "$venv/bin" >> "$GITHUB_PATH"

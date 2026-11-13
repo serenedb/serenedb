@@ -68,6 +68,7 @@ jobs:
     name: build ${{ inputs.CONFIG }} (${{ inputs.LOCATION }})
     runs-on:
       - ${{ inputs.LOCATION }}
+      - build
     timeout-minutes: 660
     outputs:
       digest: ${{ steps.build.outputs.digest }}

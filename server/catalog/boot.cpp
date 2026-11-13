@@ -261,10 +261,12 @@ void InitCatalog(bool default_database, bool initialized) {
   }
 }
 
-void LogCleanShutdown() {
-  if (auto* log = Transactions::Get().GetLog(); log && StorageTidy()) {
+void CloseLog() {
+  auto& transactions = Transactions::Get();
+  if (auto* log = transactions.GetLog(); log && StorageTidy()) {
     log->Append(ShutdownRecord());
   }
+  transactions.Close();
 }
 
 }  // namespace sdb::catalog

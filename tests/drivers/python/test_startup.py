@@ -25,7 +25,8 @@ pytestmark = pytest.mark.skipif(
 
 
 class _Server:
-    def __init__(self, datadir: Path, listen: str | None = None) -> None:
+    def __init__(self, datadir: Path, listen: str | None = None,
+                 args: tuple[str, ...] = ()) -> None:
         self.reserved = reserve_port()
         self.port = self.reserved.getsockname()[1]
         if listen is None:
@@ -33,7 +34,7 @@ class _Server:
         self.log = datadir.parent / f"serened-{self.port}.log"
         with self.log.open("w") as out:
             self.proc = subprocess.Popen(
-                [SERENED_BIN, str(datadir), f"--listen={listen}"],
+                [SERENED_BIN, str(datadir), f"--listen={listen}", *args],
                 stdout=out, stderr=subprocess.STDOUT)
 
     def wait_ready(self, timeout: float = 60.0) -> bool:
@@ -89,6 +90,15 @@ def test_info_timeline(tmp_path: Path) -> None:
     second = _run_until_ready(datadir)
     assert "Created database directory" not in second.output(), second.output()
     assert "replayed the log" not in second.output(), second.output()
+
+
+def test_trace_logging_shuts_down_cleanly(tmp_path: Path) -> None:
+    server = _Server(tmp_path / "data", args=("--log_level=trace",))
+    try:
+        assert server.wait_ready(), server.output()
+    finally:
+        server.stop()
+    assert server.proc.returncode == 0, server.output()
 
 
 def test_recovery_summary_after_a_crash(tmp_path: Path) -> None:

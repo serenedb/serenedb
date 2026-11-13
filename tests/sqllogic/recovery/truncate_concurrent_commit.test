@@ -49,6 +49,13 @@ statement async ok
 TRUNCATE tcw
 
 
+query ok retry 40 backoff 250ms
+SELECT count(*) AS n FROM pg_stat_activity WHERE state = 'active' AND query LIKE 'TRUNCATE tcw%'
+----
+n
+1
+
+
 statement ok
 SET sdb_faults = 'pause_wal_sync:release'
 

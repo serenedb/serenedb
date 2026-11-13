@@ -77,7 +77,7 @@ duckdb::idx_t EmitFromUnit(ScanGlobalState& g, ColScanLocalState& l,
     if (produced != 0) {
       WriteRowPositions(g, l.unit.seg, first, scanner.Selection(), produced,
                         output);
-      WriteVirtualColumns(g, l.empty_filled, produced, nullptr, output);
+      WriteVirtualColumns(g, produced, nullptr, output);
       return produced;
     }
     output.Reset();

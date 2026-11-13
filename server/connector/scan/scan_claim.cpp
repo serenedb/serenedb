@@ -21,6 +21,7 @@
 #include <absl/algorithm/container.h>
 
 #include <algorithm>
+#include <cstring>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/table_filter_state.hpp>
@@ -66,133 +67,59 @@ irs::doc_id_t ScanGlobalState::UnitSpan(const ScanUnit& unit) const noexcept {
 
 namespace {
 
-bool OrderKeyBefore(const ScanOrderKey& l, const ScanOrderKey& r,
-                    const ScanOrderSpec& order) {
-  const bool ln = l.value.IsNull();
-  const bool rn = r.value.IsNull();
-  if (ln || rn) {
-    const bool nulls_first =
-      order.null_order == duckdb::OrderByNullType::NULLS_FIRST;
-    return ln != rn ? (ln ? nulls_first : !nulls_first) : l.id < r.id;
-  }
-  const bool asc = order.order_type == duckdb::OrderType::ASCENDING;
-  const auto& lo = asc ? l.value : r.value;
-  const auto& hi = asc ? r.value : l.value;
-  return lo != hi ? lo < hi : l.id < r.id;
+int CompareKeys(const ScanGlobalState& g, const ScanOrderKeyBytes& l,
+                const ScanOrderKeyBytes& r) {
+  return std::memcmp(l.data(), r.data(), g.order_key->Size());
 }
 
-void SortScanOrderKeys(std::vector<ScanOrderKey>& keys,
-                       const ScanOrderSpec& order) {
-  absl::c_sort(keys, [&](const ScanOrderKey& l, const ScanOrderKey& r) {
-    return OrderKeyBefore(l, r, order);
-  });
-}
-
-auto HeapOrder(const ScanOrderSpec& order) {
-  return [&order](const ScanOrderKey& l, const ScanOrderKey& r) {
-    return OrderKeyBefore(r, l, order);
+auto KeyBefore(const ScanGlobalState& g) {
+  return [&g](const ScanOrderKey& l, const ScanOrderKey& r) {
+    const auto cmp = CompareKeys(g, l.key, r.key);
+    return cmp != 0 ? cmp < 0 : l.id < r.id;
   };
 }
 
-struct RawKey {
-  uint32_t rg = 0;
-  size_t block = 0;
-  std::optional<long double> key;
-};
-
-bool RawStatType(const duckdb::BaseStatistics& stats) noexcept {
-  switch (stats.GetType().InternalType()) {
-    case duckdb::PhysicalType::INT8:
-    case duckdb::PhysicalType::INT16:
-    case duckdb::PhysicalType::INT32:
-    case duckdb::PhysicalType::INT64:
-    case duckdb::PhysicalType::UINT8:
-    case duckdb::PhysicalType::UINT16:
-    case duckdb::PhysicalType::UINT32:
-    case duckdb::PhysicalType::UINT64:
-    case duckdb::PhysicalType::FLOAT:
-    case duckdb::PhysicalType::DOUBLE:
-      return true;
-    default:
-      return false;
-  }
-}
-
-template<typename T>
-long double RawStat(const duckdb::BaseStatistics& stats, bool min) {
-  return min ? duckdb::NumericStats::GetMinUnsafe<T>(stats)
-             : duckdb::NumericStats::GetMaxUnsafe<T>(stats);
-}
-
-std::optional<long double> RawStat(const duckdb::BaseStatistics& stats,
-                                   bool min) {
-  if (!duckdb::NumericStats::HasMinMax(stats)) {
-    return std::nullopt;
-  }
-  switch (stats.GetType().InternalType()) {
-    case duckdb::PhysicalType::INT8:
-      return RawStat<int8_t>(stats, min);
-    case duckdb::PhysicalType::INT16:
-      return RawStat<int16_t>(stats, min);
-    case duckdb::PhysicalType::INT32:
-      return RawStat<int32_t>(stats, min);
-    case duckdb::PhysicalType::INT64:
-      return RawStat<int64_t>(stats, min);
-    case duckdb::PhysicalType::UINT8:
-      return RawStat<uint8_t>(stats, min);
-    case duckdb::PhysicalType::UINT16:
-      return RawStat<uint16_t>(stats, min);
-    case duckdb::PhysicalType::UINT32:
-      return RawStat<uint32_t>(stats, min);
-    case duckdb::PhysicalType::UINT64:
-      return RawStat<uint64_t>(stats, min);
-    case duckdb::PhysicalType::FLOAT:
-      return RawStat<float>(stats, min);
-    case duckdb::PhysicalType::DOUBLE:
-      return RawStat<double>(stats, min);
-    default:
-      return std::nullopt;
-  }
-}
-
-RawKey UnitRawKey(const irs::ColumnReader& reader, uint32_t rg, bool asc,
-                  bool min, uint64_t begin, uint64_t end) {
-  RawKey best{.rg = rg};
-  irs::BlockWindow w;
-  for (uint64_t row = begin; row < end; row = w.end) {
-    w = reader.Locate(row, w);
-    const auto v = RawStat(reader.RowGroupStatistics(w.block), min);
-    if (v && (!best.key || (asc ? *v < *best.key : *best.key < *v))) {
-      best.key = v;
-      best.block = w.block;
-    }
-  }
-  return best;
-}
-
-duckdb::Value UnitOrderKey(const irs::ColumnReader& reader,
-                           const ScanOrderSpec& order, uint64_t begin,
-                           uint64_t end) {
-  const bool asc = order.order_type == duckdb::OrderType::ASCENDING;
-  duckdb::Value best;
-  irs::BlockWindow w;
-  for (uint64_t row = begin; row < end; row = w.end) {
-    w = reader.Locate(row, w);
-    auto v = duckdb::RowGroupReorderer::RetrieveStat(
-      reader.RowGroupStatistics(w.block), order.order_by, order.column_type);
-    if (v.IsNull()) {
-      continue;
-    }
-    if (best.IsNull() || (asc ? v < best : best < v)) {
-      best = std::move(v);
-    }
-  }
-  return best;
+auto HeapOrder(const ScanGlobalState& g) {
+  return [before = KeyBefore(g)](const ScanOrderKey& l, const ScanOrderKey& r) {
+    return before(r, l);
+  };
 }
 
 const irs::ColumnReader* OrderColumn(const ScanGlobalState& g, uint32_t seg) {
   const auto* col_reader = (*g.reader)[seg].GetColReader();
-  return col_reader ? col_reader->Column(g.Bind().scan_order->column) : nullptr;
+  const auto* column =
+    col_reader ? col_reader->Column(g.Bind().scan_order->column) : nullptr;
+  return column && column->MergedStatistics().GetType() == g.order_type
+           ? column
+           : nullptr;
+}
+
+ScanOrderKeyBytes SegmentKey(const ScanGlobalState& g, uint32_t seg) {
+  ScanOrderKeyBytes key;
+  if (const auto* column = OrderColumn(g, seg)) {
+    g.order_key->Encode(column->MergedStatistics(), key.data());
+  } else {
+    g.order_key->Encode(duckdb::Value{}, key.data());
+  }
+  return key;
+}
+
+ScanOrderKeyBytes RowGroupKey(const ScanGlobalState& g,
+                              const irs::ColumnReader& column, uint64_t begin,
+                              uint64_t end, irs::BlockWindow& w) {
+  ScanOrderKeyBytes best;
+  ScanOrderKeyBytes block;
+  for (auto row = begin; row < end; row = w.end) {
+    w = column.Locate(row, w);
+    if (!g.order_key->Encode(column.RowGroupStatistics(w.block),
+                             block.data())) {
+      return block;
+    }
+    if (row == begin || CompareKeys(g, block, best) < 0) {
+      best = block;
+    }
+  }
+  return best;
 }
 
 duckdb::shared_ptr<duckdb::DynamicFilterData> FindOrderDynamicFilter(
@@ -238,28 +165,41 @@ duckdb::shared_ptr<duckdb::DynamicFilterData> FindOrderDynamicFilter(
   return nullptr;
 }
 
-duckdb::Value OrderBound(const ScanGlobalState& g) {
+const ScanOrderKeyBytes* OrderBound(ScanGlobalState& g) {
   const auto& dyn = g.order_dynamic_filter;
-  if (!dyn || dyn->version.load(std::memory_order_acquire) == 0) {
-    return duckdb::Value{};
+  if (!dyn) {
+    return nullptr;
   }
-  duckdb::lock_guard<duckdb::mutex> lock{dyn->lock};
-  return dyn->constant;
+  auto& bound = g.order_bound;
+  const auto version = dyn->version.load(std::memory_order_acquire);
+  if (version != bound.version) {
+    duckdb::Value constant;
+    {
+      duckdb::lock_guard<duckdb::mutex> lock{dyn->lock};
+      constant = dyn->constant;
+    }
+    bound.valid = g.order_key->Encode(constant, bound.key.data());
+    bound.version = version;
+  }
+  return bound.valid ? &bound.key : nullptr;
 }
 
-bool OrderPruned(const ScanGlobalState& g, const duckdb::Value& bound,
-                 const ScanOrderKey& best) {
-  return !bound.IsNull() && !best.value.IsNull() &&
-         !duckdb::DynamicFilterData::CompareValue(
-           g.order_dynamic_filter->comparison_type, bound, best.value);
+bool OrderPruned(const ScanGlobalState& g, const ScanOrderKeyBytes* bound,
+                 const ScanOrderKeyBytes& key) {
+  if (!bound || g.order_key->IsNull(key.data())) {
+    return false;
+  }
+  const auto cmp = CompareKeys(g, key, *bound);
+  return cmp > 0 || (cmp == 0 && g.order_strict);
 }
 
-bool DropPruned(ScanGlobalState& g, const duckdb::Value& bound) {
+bool DropPruned(ScanGlobalState& g, const ScanOrderKeyBytes* bound) {
   auto& heap = g.ordered_heap;
-  if (!heap.empty() && OrderPruned(g, bound, heap.front())) {
-    std::erase_if(heap,
-                  [](const ScanOrderKey& key) { return !key.value.IsNull(); });
-    absl::c_make_heap(heap, HeapOrder(*g.Bind().scan_order));
+  if (!heap.empty() && OrderPruned(g, bound, heap.front().key)) {
+    std::erase_if(heap, [&g](const ScanOrderKey& entry) {
+      return !g.order_key->IsNull(entry.key.data());
+    });
+    absl::c_make_heap(heap, HeapOrder(g));
   }
   return heap.empty();
 }
@@ -272,97 +212,71 @@ ScanUnit WholeUnit(uint32_t seg, const SegmentWork& work) {
           .whole = true};
 }
 
-std::unique_ptr<OrderedUnits> BuildSegmentOrderedUnits(ScanGlobalState& g,
-                                                       SegmentWork& work,
-                                                       uint32_t seg) {
-  const auto& order = *g.Bind().scan_order;
+std::unique_ptr<OrderedUnits> BuildSegmentOrderedUnits(
+  const ScanGlobalState& g, const SegmentWork& work, uint32_t seg,
+  const ScanOrderKeyBytes& segment_key) {
   auto built = std::make_unique<OrderedUnits>();
   if (work.claim.load(std::memory_order_relaxed) == SegmentWork::kWhole) {
-    duckdb::Value segment_key;
-    if (const auto* column = OrderColumn(g, seg)) {
-      segment_key = duckdb::RowGroupReorderer::RetrieveStat(
-        column->MergedStatistics(), order.order_by, order.column_type);
-    }
     built->units.push_back(WholeUnit(seg, work));
-    built->keys.push_back(std::move(segment_key));
+    built->keys.push_back(segment_key);
     return built;
   }
   const auto* column = OrderColumn(g, seg);
   const uint64_t docs = (*g.reader)[seg].Meta().docs_count;
-  if (column && order.column_type == duckdb::OrderByColumnType::NUMERIC &&
-      RawStatType(column->MergedStatistics())) {
-    const bool asc = order.order_type == duckdb::OrderType::ASCENDING;
-    const bool min = order.order_by == duckdb::OrderByStatistics::MIN;
-    const bool nulls_first =
-      order.null_order == duckdb::OrderByNullType::NULLS_FIRST;
-    std::vector<RawKey> raw;
-    raw.reserve(work.rg_count);
-    for (uint32_t rg = 0; rg < work.rg_count; ++rg) {
-      const auto begin = uint64_t{rg} * g.rg_size;
-      raw.push_back(UnitRawKey(*column, rg, asc, min, begin,
-                               std::min<uint64_t>(docs, begin + g.rg_size)));
-    }
-    absl::c_sort(raw, [&](const RawKey& l, const RawKey& r) {
-      if (!l.key || !r.key) {
-        return bool(l.key) != bool(r.key)
-                 ? (!l.key ? nulls_first : !nulls_first)
-                 : l.rg < r.rg;
-      }
-      if (*l.key != *r.key) {
-        return asc ? *l.key < *r.key : *r.key < *l.key;
-      }
-      return l.rg < r.rg;
-    });
-    built->units.reserve(raw.size());
-    built->keys.reserve(raw.size());
-    for (const auto& key : raw) {
-      built->units.push_back({.seg = seg,
-                              .rg_begin = key.rg,
-                              .rg_end = key.rg + 1,
-                              .live = 1,
-                              .whole = false});
-      built->keys.push_back(key.key ? duckdb::RowGroupReorderer::RetrieveStat(
-                                        column->RowGroupStatistics(key.block),
-                                        order.order_by, order.column_type)
-                                    : duckdb::Value{});
-    }
-    return built;
-  }
-  std::vector<ScanOrderKey> keys;
-  keys.reserve(work.rg_count);
+  std::vector<ScanOrderKey> rgs(work.rg_count);
+  irs::BlockWindow w;
   for (uint32_t rg = 0; rg < work.rg_count; ++rg) {
-    const auto begin = uint64_t{rg} * g.rg_size;
-    const auto end = std::min<uint64_t>(docs, begin + g.rg_size);
-    duckdb::Value v;
+    rgs[rg].id = rg;
     if (column) {
-      v = UnitOrderKey(*column, order, begin, end);
+      const auto begin = uint64_t{rg} * g.rg_size;
+      rgs[rg].key = RowGroupKey(g, *column, begin,
+                                std::min<uint64_t>(docs, begin + g.rg_size), w);
+    } else {
+      rgs[rg].key = segment_key;
     }
-    keys.push_back({rg, std::move(v)});
   }
-  SortScanOrderKeys(keys, order);
-  built->units.reserve(keys.size());
-  built->keys.reserve(keys.size());
-  for (auto& key : keys) {
+  absl::c_sort(rgs, KeyBefore(g));
+  built->units.reserve(rgs.size());
+  built->keys.reserve(rgs.size());
+  for (const auto& rg : rgs) {
     built->units.push_back({.seg = seg,
-                            .rg_begin = key.id,
-                            .rg_end = key.id + 1,
+                            .rg_begin = rg.id,
+                            .rg_end = rg.id + 1,
                             .live = 1,
                             .whole = false});
-    built->keys.push_back(std::move(key.value));
+    built->keys.push_back(rg.key);
   }
   return built;
 }
 
 void BuildOrderedHeap(ScanGlobalState& g) {
   g.order_dynamic_filter = FindOrderDynamicFilter(g);
-  g.ordered = true;
-  g.ordered_heap.reserve(g.segment_order.size());
-  for (const auto seg : g.segment_order) {
-    auto& work = g.Segment(seg);
-    work.ordered = BuildSegmentOrderedUnits(g, work, seg);
-    g.ordered_heap.push_back({seg, work.ordered->keys.front()});
+  if (g.order_dynamic_filter) {
+    const auto cmp = g.order_dynamic_filter->comparison_type;
+    g.order_strict = cmp == duckdb::ExpressionType::COMPARE_LESSTHAN ||
+                     cmp == duckdb::ExpressionType::COMPARE_GREATERTHAN;
   }
-  absl::c_make_heap(g.ordered_heap, HeapOrder(*g.Bind().scan_order));
+  g.ordered = true;
+  auto& heap = g.ordered_heap;
+  heap.reserve(g.segment_order.size());
+  for (const auto seg : g.segment_order) {
+    heap.push_back({seg, SegmentKey(g, seg)});
+  }
+  const auto heap_order = HeapOrder(g);
+  absl::c_make_heap(heap, heap_order);
+  if (heap.empty()) {
+    return;
+  }
+  absl::c_pop_heap(heap, heap_order);
+  auto& top = heap.back();
+  auto& work = g.Segment(top.id);
+  work.ordered = BuildSegmentOrderedUnits(g, work, top.id, top.key);
+  if (work.ordered->units.empty()) {
+    heap.pop_back();
+    return;
+  }
+  top.key = work.ordered->keys.front();
+  absl::c_push_heap(heap, heap_order);
 }
 
 bool ConstantCount(const irs::Filter& filter) {
@@ -551,27 +465,37 @@ bool Steal(ScanGlobalState& g, ScanLocalState& l) {
 }
 
 bool ClaimOrderedUnit(ScanGlobalState& g, ScanLocalState& l) {
-  const auto heap_order = HeapOrder(*g.Bind().scan_order);
-  auto& heap = g.ordered_heap;
   if (g.ordered_exhausted.load(std::memory_order_relaxed)) {
     return false;
   }
-  const auto bound = OrderBound(g);
+  const auto heap_order = HeapOrder(g);
+  auto& heap = g.ordered_heap;
   absl::MutexLock lock{&g.ordered_mutex};
-  if (DropPruned(g, bound)) {
-    g.ordered_exhausted.store(true, std::memory_order_relaxed);
-    return false;
+  for (;;) {
+    if (DropPruned(g, OrderBound(g))) {
+      g.ordered_exhausted.store(true, std::memory_order_relaxed);
+      return false;
+    }
+    absl::c_pop_heap(heap, heap_order);
+    const auto top = heap.back();
+    heap.pop_back();
+    auto& work = g.Segment(top.id);
+    if (!work.ordered) {
+      work.ordered = BuildSegmentOrderedUnits(g, work, top.id, top.key);
+      if (!work.ordered->units.empty()) {
+        heap.push_back({top.id, work.ordered->keys.front()});
+        absl::c_push_heap(heap, heap_order);
+      }
+      continue;
+    }
+    auto& ordered = *work.ordered;
+    TakeUnit(l, ordered.units[ordered.next++]);
+    if (ordered.next < ordered.units.size()) {
+      heap.push_back({top.id, ordered.keys[ordered.next]});
+      absl::c_push_heap(heap, heap_order);
+    }
+    return true;
   }
-  absl::c_pop_heap(heap, heap_order);
-  const auto seg = heap.back().id;
-  heap.pop_back();
-  auto& ordered = *g.Segment(seg).ordered;
-  TakeUnit(l, ordered.units[ordered.next++]);
-  if (ordered.next < ordered.units.size()) {
-    heap.push_back({seg, ordered.keys[ordered.next]});
-    absl::c_push_heap(heap, heap_order);
-  }
-  return true;
 }
 
 void PublishFinished(ScanGlobalState& g, ScanLocalState& l) {
@@ -681,9 +605,15 @@ bool ClaimStart(ScanGlobalState& g, ScanLocalState& l) {
 
 void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
   const auto& bind = g.Bind();
-  const bool ordered =
-    bind.scan_order.has_value() &&
-    (g.shape == ScanShape::Stream || g.shape == ScanShape::ColScan);
+  bool ordered = bind.scan_order.has_value() && (g.shape == ScanShape::Stream ||
+                                                 g.shape == ScanShape::ColScan);
+  if (ordered) {
+    const auto& order = *bind.scan_order;
+    g.order_type = bind.ColumnTypeById(order.column);
+    g.order_key.emplace(g.order_type, order.order_by, order.order_type,
+                        order.null_order);
+    ordered = g.order_key->Size() != 0;
+  }
 
   g.rg_size = bind.relation.row_group_size != 0 ? bind.relation.row_group_size
                                                 : DEFAULT_ROW_GROUP_SIZE;

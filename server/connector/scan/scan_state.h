@@ -23,12 +23,14 @@
 #include <absl/functional/function_ref.h>
 #include <absl/synchronization/mutex.h>
 
+#include <array>
 #include <atomic>
 #include <duckdb.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/filter/table_filter_functions.hpp>
 #include <duckdb/planner/table_filter.hpp>
+#include <duckdb/storage/table/row_group_reorderer.hpp>
 #include <iresearch/index/column_extract.hpp>
 #include <iresearch/index/docs_mask/docs_mask.hpp>
 #include <iresearch/index/hit_batcher.hpp>
@@ -87,15 +89,24 @@ struct UnitRows {
   uint64_t end = 0;
 };
 
+using ScanOrderKeyBytes =
+  std::array<uint8_t, duckdb::RowGroupOrderKey::MAX_SIZE>;
+
 struct ScanOrderKey {
   uint32_t id = 0;
-  duckdb::Value value;
+  ScanOrderKeyBytes key;
 };
 
 struct OrderedUnits {
   std::vector<ScanUnit> units;
-  std::vector<duckdb::Value> keys;
+  std::vector<ScanOrderKeyBytes> keys;
   uint32_t next = 0;
+};
+
+struct ScanOrderBound {
+  uint64_t version = 0;
+  bool valid = false;
+  ScanOrderKeyBytes key;
 };
 
 struct ABSL_CACHELINE_ALIGNED SegmentWork {
@@ -145,11 +156,13 @@ class ScanBarrier {
     return _state.load(std::memory_order_acquire) == State::Failed;
   }
 
-  void Release() noexcept { Finish(State::Released); }
+  void Release(duckdb::TableFunctionInput& input);
 
-  void Abandon() noexcept { Finish(State::Failed); }
+  void Abandon() noexcept;
 
-  void Wait() const noexcept;
+  bool Park(duckdb::TableFunctionInput& input);
+
+  void Wait() const;
 
  private:
   enum class State : uint32_t {
@@ -158,7 +171,7 @@ class ScanBarrier {
     Failed,
   };
 
-  void Finish(State state) noexcept;
+  bool Finish(State state) noexcept;
 
   std::atomic_uint32_t _arrived{0};
   uint32_t _total = 0;
@@ -268,6 +281,10 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   ABSL_CACHELINE_ALIGNED std::atomic_uint32_t done_segments{0};
   ABSL_CACHELINE_ALIGNED absl::Mutex ordered_mutex;
   ABSL_CACHELINE_ALIGNED std::atomic_bool ordered_exhausted{false};
+  duckdb::LogicalType order_type;
+  std::optional<duckdb::RowGroupOrderKey> order_key;
+  bool order_strict = false;
+  ScanOrderBound order_bound;
   std::vector<ScanOrderKey> ordered_heap;
 
   bool Ordered() const noexcept { return ordered; }
@@ -374,7 +391,6 @@ struct ScanLocalState : public duckdb::LocalTableFunctionState {
   bool starts_exhausted = false;
   uint64_t rg_units = 0;
   uint64_t produced_rows = 0;
-  bool* empty_filled = nullptr;
 
   void Classify(ScanGlobalState& g, uint32_t seg);
 };
@@ -386,7 +402,6 @@ struct FetchLocalState {
   uint32_t offsets_prepped_seg = std::numeric_limits<uint32_t>::max();
   std::shared_ptr<irs::IndexSource> index_source;
   duckdb::Vector* pk_column = nullptr;
-  bool* empty_filled = nullptr;
 
   void EnsureHitBatcher(const ScanGlobalState& g);
 };
@@ -463,7 +478,8 @@ struct TsDictLocalState;
 const irs::QueryBuilder& EnsureSegmentQuery(ScanGlobalState& g,
                                             ScanLocalState* l,
                                             uint32_t seg_idx);
-bool RunPrepareStage(ScanGlobalState& g, ScanLocalState& l);
+bool RunPrepareStage(duckdb::TableFunctionInput& input, ScanGlobalState& g,
+                     ScanLocalState& l);
 
 void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context);
 bool ClaimUnit(ScanGlobalState& g, ScanLocalState& l);
@@ -486,9 +502,8 @@ irs::detail::TableFilter* BeginColumnVerify(const irs::SubReader& seg,
                                             ScanGlobalState& g,
                                             AnnLocalState& l);
 
-void WriteVirtualColumns(ScanGlobalState& g, bool*& empty_filled,
-                         duckdb::idx_t num_rows, duckdb::Vector* scores,
-                         duckdb::DataChunk& output);
+void WriteVirtualColumns(ScanGlobalState& g, duckdb::idx_t num_rows,
+                         duckdb::Vector* scores, duckdb::DataChunk& output);
 void WriteRowPositions(const ScanGlobalState& g, uint32_t seg,
                        std::span<const irs::doc_id_t> docs,
                        duckdb::DataChunk& output);

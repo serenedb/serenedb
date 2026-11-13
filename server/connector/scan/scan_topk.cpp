@@ -489,10 +489,10 @@ void InitTopKLocal(ScanGlobalState& g, TopKLocalState& l,
   BuildOffsetsEntries(l, input, g.Bind());
 }
 
-void RunTopKScan(duckdb::ClientContext& ctx, duckdb::TableFunctionInput&,
+void RunTopKScan(duckdb::ClientContext& ctx, duckdb::TableFunctionInput& input,
                  ScanGlobalState& g, TopKLocalState& l,
                  duckdb::DataChunk& output) {
-  if (!RunPrepareStage(g, l)) {
+  if (!RunPrepareStage(input, g, l)) {
     return;
   }
   CollectRanked(g, l, [&] { CollectUnit(g, l); }, [&] { PublishHits(g, l); });

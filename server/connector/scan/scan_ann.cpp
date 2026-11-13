@@ -412,10 +412,10 @@ void InitAnnLocal(ScanGlobalState& g, AnnLocalState& l,
   BuildOffsetsEntries(l, input, g.Bind());
 }
 
-void RunAnnScan(duckdb::ClientContext& ctx, duckdb::TableFunctionInput&,
+void RunAnnScan(duckdb::ClientContext& ctx, duckdb::TableFunctionInput& input,
                 ScanGlobalState& g, AnnLocalState& l,
                 duckdb::DataChunk& output) {
-  if (!RunPrepareStage(g, l)) {
+  if (!RunPrepareStage(input, g, l)) {
     return;
   }
   CollectRanked(g, l, [&] { CollectUnit(g, l); }, [&] { PublishHits(g, l); });

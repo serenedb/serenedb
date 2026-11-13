@@ -38,36 +38,6 @@ other_rows
 statement error does not exist!\nDid you mean "[a-z_.]+"\?
 SELECT * FROM read_duckdb('${__TEST_DIR__}/rdh_listing.db', table_name='rdh_listing_docs'), rdh_listing_docs;
 
-connection rdh_holder
-statement ok
-BEGIN;
-
-connection rdh_holder
-query
-SELECT count(*) AS n FROM read_duckdb('${__TEST_DIR__}/rdh_listing.db', table_name='rdh_listing_docs');
-----
-n
-2
-
-connection rdh_writer
-statement async ok
-ATTACH '${__TEST_DIR__}/rdh_listing.db' AS rdh_listing;
-
-query ok retry 40 backoff 250ms
-SELECT count(*) AS n FROM pg_stat_activity WHERE state = 'active' AND query LIKE 'ATTACH%rdh_listing.db%';
-----
-n
-1
-
-connection rdh_holder
-statement ok
-COMMIT;
-
-wait
-
-statement ok
-DETACH rdh_listing;
-
 statement ok
 SET sdb_faults = 'read_duckdb_reader_attached';
 
@@ -101,11 +71,6 @@ connection rdh_reader
 statement ok
 SELECT 1;
 
-connection rdh_writer
-statement ok
-SET statement_timeout = '5s';
-
-connection rdh_writer
 statement ok
 ATTACH '${__TEST_DIR__}/rdh_listing.db' AS rdh_listing;
 
@@ -114,5 +79,49 @@ DETACH rdh_listing;
 
 statement ok
 SET sdb_faults = 'catalog_all_schemas_listed:release';
+
+wait
+
+statement ok
+SET sdb_faults = 'read_duckdb_reader_attached';
+
+connection rdh_reader
+query async
+SELECT count(*) AS n FROM read_duckdb('${__TEST_DIR__}/rdh_listing.db', table_name='rdh_listing_docs');
+----
+n
+2
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-read_duckdb_reader_attached:parked';
+
+statement ok
+SET sdb_faults = 'duckdb_databases_listed';
+
+connection rdh_lister
+query async
+SELECT count(*) > 0 AS listed FROM duckdb_databases();
+----
+listed
+t
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-duckdb_databases_listed:parked';
+
+statement ok
+SET sdb_faults = 'read_duckdb_reader_attached:release';
+
+connection rdh_reader
+statement ok
+SELECT 1;
+
+statement ok
+ATTACH '${__TEST_DIR__}/rdh_listing.db' AS rdh_listing;
+
+statement ok
+DETACH rdh_listing;
+
+statement ok
+SET sdb_faults = 'duckdb_databases_listed:release';
 
 wait

@@ -31,6 +31,7 @@
 
 #include "network/acceptor.h"
 #include "network/cancel_registry.h"
+#include "network/http/quack/service.h"
 #include "network/http/router.h"
 #include "network/http/session.h"
 #include "network/io_context.h"
@@ -68,6 +69,8 @@ class Server final {
   // StartIoPool().
   network::IoThreadPool* IoPool() noexcept { return _pool.get(); }
 
+  network::http::quack::Service* Quack() noexcept { return _quack.get(); }
+
  private:
   void SetupAuth();
   void AddListener(const network::ListenSpec& spec);
@@ -104,6 +107,7 @@ class Server final {
   std::unique_ptr<network::CredentialProvider> _credentials;
   std::unique_ptr<network::http::ApiKeyValidator> _api_key_validator;
   std::unique_ptr<network::http::BearerValidator> _bearer_validator;
+  std::unique_ptr<network::http::quack::Service> _quack;
 
   // Stable per-listener storage: acceptors hold references/pointers into these,
   // so deque (never relocates existing elements) not vector.

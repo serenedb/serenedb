@@ -67,7 +67,8 @@ def test_malformed_pdf_corpus_keeps_server_alive(pdf, own_server, tmp_path):
         for index, contents in enumerate(samples):
             path = tmp_path / f"malformed-{index}.pdf"
             path.write_bytes(contents)
-            for function in ("read_pdf", "read_pdf_blocks", "read_pdf_tables"):
+            for function in ("read_pdf", "read_pdf_blocks", "read_pdf_tables",
+                             "read_pdf_meta", "pdf_outline", "pdf_attachments"):
                 try:
                     connection.execute(f"SELECT count(*) FROM {function}(%s)", (str(path),)).fetchone()
                 except psycopg.Error as error:

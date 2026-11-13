@@ -26,7 +26,7 @@ def rc4(key, data):
     return bytes(result)
 
 
-def write_pdf(path, pages, password=None, unicode_map=False):
+def write_pdf(path, pages, password=None, unicode_map=False, inspection=0):
     objects = [b"", b""]
     objects.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
     document_id = hashlib.md5(b"SereneDB PDF fixtures").digest()
@@ -89,6 +89,69 @@ def write_pdf(path, pages, password=None, unicode_map=False):
         + b" ".join(str(kid).encode() + b" 0 R" for kid in kids) + b"] >>"
     )
     trailer = b"/Root 1 0 R"
+    if inspection:
+        if password is not None:
+            raise ValueError("inspection fixtures require unencrypted strings")
+        objects.append(
+            b"<< /Title (varusik report) /Author (varusik) /Subject (banochka) "
+            b"/Keywords (sopley) /Creator (varusik generator) /Producer (SereneDB) >>"
+        )
+        trailer += f" /Info {len(objects)} 0 R".encode()
+        attachment = stream(b"varusik\x00poesh\n")
+        objects[attachment - 1] = objects[attachment - 1].replace(
+            b"<< /Length", b"<< /Type /EmbeddedFile /Subtype /text#2Fplain /Length", 1
+        )
+        objects.append(
+            f"<< /Type /Filespec /F (varusik.txt) /UF (varusik.txt) /Desc (varusik attachment) "
+            f"/EF << /F {attachment} 0 R >> >>".encode()
+        )
+        filespec = len(objects)
+        objects.append(f"<< /Names [(varusik.txt) {filespec} 0 R] >>".encode())
+        names = len(objects)
+        if inspection < 0:
+            objects[-1] = f"<< /Kids [{names} 0 R] >>".encode()
+        elif inspection > 3:
+            entries = " ".join(f"(varusik-{i:06}) {filespec} 0 R" for i in range(inspection))
+            objects[-1] = f"<< /Names [{entries}] >>".encode()
+        outlines = len(objects) + 1
+        count = max(inspection, 3)
+        objects.append(
+            f"<< /Type /Outlines /First {outlines + 1} 0 R /Last {outlines + count} 0 R /Count {count} >>".encode()
+        )
+        for i in range(count):
+            obj = outlines + 1 + i
+            node = (
+                f"<< /Title (varusik {i + 1}) /Parent {outlines} 0 R "
+                f"/Dest [{kids[i % len(kids)]} 0 R /Fit]"
+            )
+            if i > 0:
+                node += f" /Prev {obj - 1} 0 R"
+            if i + 1 < count:
+                node += f" /Next {obj + 1} 0 R"
+            elif inspection < 0:
+                node += f" /Next {outlines + 1} 0 R"
+            objects.append((node + " >>").encode())
+        if inspection == 3:
+            objects[outlines] = (
+                f"<< /Title (varusik 1) /Parent {outlines} 0 R /Dest [{kids[0]} 0 R /Fit] "
+                f"/Next {outlines + 3} 0 R /First {outlines + 2} 0 R /Last {outlines + 2} 0 R /Count 1 >>".encode()
+            )
+            objects[outlines + 1] = (
+                f"<< /Title (varusik 2) /Parent {outlines + 1} 0 R "
+                f"/A << /S /GoTo /D (varusik-second) >> >>".encode()
+            )
+            objects[outlines + 2] = objects[outlines + 2].replace(
+                f"/Prev {outlines + 2} 0 R".encode(), f"/Prev {outlines + 1} 0 R".encode()
+            )
+            objects[outlines + 2] = objects[outlines + 2].replace(
+                f"/Dest [{kids[0]} 0 R /Fit]".encode(), b"/Dest /varusik-first"
+            )
+        objects[0] = (
+            f"<< /Type /Catalog /Pages 2 0 R /Outlines {outlines} 0 R "
+            f"/Dests << /varusik-first << /D [{kids[0]} 0 R /Fit] >> >> "
+            f"/Names << /EmbeddedFiles << /Kids [{names} 0 R] >> "
+            f"/Dests << /Names [(varusik-second) [{kids[-1]} 0 R /Fit]] >> >> >>".encode()
+        )
     if key is not None:
         objects.append(encryption)
         trailer += (
@@ -126,6 +189,9 @@ def generate(directory):
     varusik_pages = [varusik, b"BT /F1 12 Tf 72 720 Td (varusik poesh) Tj ET"]
     write_pdf(directory / "varusik.pdf", varusik_pages)
     write_pdf(directory / "varusik_encrypted.pdf", varusik_pages, password="varusik")
+    write_pdf(directory / "inspect_varusik.pdf", varusik_pages, inspection=3)
+    write_pdf(directory / "inspect_many.pdf", varusik_pages, inspection=2050)
+    write_pdf(directory / "inspect_cycle.pdf", varusik_pages, inspection=-1)
     write_pdf(directory / "invalid_path.pdf", [first + b"\n10 m"])
     write_pdf(directory / "more_text.pdf", [second])
     write_pdf(directory / "encrypted.pdf", [first], password="secret")

@@ -1,6 +1,29 @@
 control substitution on
 
 query
+SELECT title, author, pages, pdf_version, encrypted
+FROM read_pdf_meta('${RESOURCES}/tests/pdf/basic/inspect_varusik.pdf');
+----
+title	author	pages	pdf_version	encrypted
+varusik report	varusik	2	1.4	f
+
+query
+SELECT ord, depth, title, page
+FROM pdf_outline('${RESOURCES}/tests/pdf/basic/inspect_varusik.pdf') ORDER BY ord;
+----
+ord	depth	title	page
+1	1	varusik 1	1
+2	2	varusik 2	2
+3	1	varusik 3	1
+
+query
+SELECT name, description, size, mime_type
+FROM pdf_attachments('${RESOURCES}/tests/pdf/basic/inspect_varusik.pdf');
+----
+name	description	size	mime_type
+varusik.txt	varusik attachment	14	text/plain
+
+query
 SELECT page, replace(text, E'\n', '|') AS text, width, height, has_text_layer
 FROM read_pdf('${RESOURCES}/tests/pdf/basic/varusik.pdf')
 ORDER BY page;

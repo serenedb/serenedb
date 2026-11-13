@@ -41,6 +41,16 @@ The default `layout := 'auto'` groups text into lines and detects reading column
 
 The coordinate system has its origin at the bottom left and increases upward along the y-axis. One PDF point is 1/72 inch. The text origin is on its baseline; it is not the lower-left corner of the estimated bounding box. Page boxes with nonzero origins retain their offsets. Dimensions are approximate and are not suitable for redaction or exact glyph hit testing.
 
+## Inspect document metadata, bookmarks, and attachments
+
+`read_pdf_meta(path, password := '', ignore_errors := false)` returns one row per file, including files without text. Its columns are `filename`, `title`, `author`, `subject`, `keywords`, `creator`, `producer`, `pages` (`INTEGER`), `pdf_version`, and `encrypted` (`BOOLEAN`). Missing textual metadata is an empty string. Metadata comes from the PDF information dictionary.
+
+`pdf_outline(path, password := '', ignore_errors := false)` returns bookmarks in depth-first order. Its columns are `file`, `ord`, `depth`, `title`, and `page`. Ordinals, depths, and page numbers start at 1. An unresolved or external destination has a `NULL` page. Files without bookmarks produce no rows. Cyclic or excessively large bookmark trees raise an error.
+
+`pdf_attachments(path, password := '')` returns embedded files with columns `file`, `name`, `description`, `size` (`BIGINT`, bytes), `mime_type`, and `data` (`BLOB`). Attachment bytes are returned without writing files or executing their content. Files without attachments produce no rows.
+
+All three functions accept glob patterns. For `read_pdf_meta` and `pdf_outline`, `ignore_errors := true` skips files that cannot be opened or parsed; it does not suppress cancellation or errors while inspecting their contents.
+
 ## Passwords and page selection
 
 Provide `password` for password-protected documents. A missing or incorrect password produces an error. Page bounds are inclusive and start at 1. `last_page` is clipped to the document's page count. An invalid range or a `first_page` beyond the document's page count produces an error. Page selection applies separately to every matching file.

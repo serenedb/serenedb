@@ -1290,11 +1290,28 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterSetNotNull(
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                     ERR_MSG("Unsupported constraint for generated column!"));
   }
-  if (HasNotNull(GetConstraints(), column)) {
+  const auto& constraints = GetConstraints();
+  const auto existing = absl::c_find_if(
+    constraints,
+    [&](const auto& constraint) { return IsNotNullOn(*constraint, column); });
+  if (existing != constraints.end() &&
+      (!IsReplay(info) || (*existing)->oid == info.constraint_oid)) {
+    info.constraint_oid = (*existing)->oid;
     return Altered(context, info, Definition());
   }
-  return AddVerifiedConstraint(context, info,
-                               duckdb::NotNullConstraint{column});
+  if (!IsReplay(info)) {
+    info.constraint_oid = catalog.GetDatabase().GetDatabaseManager().NextOid();
+  }
+  duckdb::NotNullConstraint constraint{column};
+  constraint.oid = info.constraint_oid;
+  if (existing == constraints.end()) {
+    return AddVerifiedConstraint(context, info, constraint);
+  }
+  auto definition = Definition();
+  std::erase_if(definition->constraints,
+                [&](const auto& other) { return IsNotNullOn(*other, column); });
+  definition->constraints.push_back(constraint.Copy());
+  return Altered(context, info, std::move(definition));
 }
 
 duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterDropNotNull(

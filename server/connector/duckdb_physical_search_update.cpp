@@ -36,6 +36,7 @@
 #include <iresearch/utils/down_cast.hpp>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -86,6 +87,24 @@ struct SearchUpdateSourceState final : duckdb::GlobalSourceState {
   duckdb::ColumnDataScanState scan;
 };
 
+void AppendReturned(duckdb::ColumnDataCollection& returned,
+                    duckdb::DataChunk& new_row, duckdb::DataChunk& input,
+                    std::span<const duckdb::idx_t> old_row_columns) {
+  if (old_row_columns.empty()) {
+    returned.Append(new_row);
+    return;
+  }
+  duckdb::DataChunk row;
+  row.InitializeEmpty(returned.Types());
+  const auto columns = new_row.ColumnCount();
+  for (duckdb::idx_t c = 0; c < columns; ++c) {
+    row.data[c].Reference(new_row.data[c]);
+    row.data[columns + c].Reference(input.data[old_row_columns[c]]);
+  }
+  row.CheckCardinality(new_row.size());
+  returned.Append(row);
+}
+
 }  // namespace
 
 SereneDBSearchUpdate::SereneDBSearchUpdate(
@@ -95,6 +114,7 @@ SereneDBSearchUpdate::SereneDBSearchUpdate(
   duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>> constraints,
   duckdb::vector<duckdb::LogicalType> types,
   duckdb::idx_t estimated_cardinality, bool return_chunk,
+  duckdb::vector<duckdb::idx_t> old_row_columns,
   duckdb::RowIdHandling row_id_handling, bool patch,
   duckdb::idx_t update_column_count)
   : duckdb::PhysicalOperator(plan, duckdb::PhysicalOperatorType::EXTENSION,
@@ -103,6 +123,7 @@ SereneDBSearchUpdate::SereneDBSearchUpdate(
     _columns(std::move(columns)),
     _expressions(std::move(expressions)),
     _constraints(std::move(constraints)),
+    _old_row_columns(std::move(old_row_columns)),
     _return_chunk(return_chunk),
     _patch(patch),
     _update_column_count(update_column_count),
@@ -268,7 +289,7 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
       duckdb::DataChunk new_row;
       new_row.InitializeEmpty(gstate.table.types);
       new_row.ReferenceColumns(chunk, gstate.new_row_src);
-      lstate.returned->Append(new_row);
+      AppendReturned(*lstate.returned, new_row, chunk, _old_row_columns);
     }
     lstate.update_count += num_rows;
     return duckdb::SinkResultType::NEED_MORE_INPUT;
@@ -287,7 +308,7 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
   lstate.rows.Append(context.client, gstate.table, new_row);
 
   if (lstate.returned) {
-    lstate.returned->Append(new_row);
+    AppendReturned(*lstate.returned, new_row, chunk, _old_row_columns);
   }
   lstate.update_count += num_rows;
   return duckdb::SinkResultType::NEED_MORE_INPUT;

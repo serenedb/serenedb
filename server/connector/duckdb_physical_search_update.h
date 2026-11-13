@@ -44,6 +44,7 @@ class SereneDBSearchUpdate final : public duckdb::PhysicalOperator {
     duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>> constraints,
     duckdb::vector<duckdb::LogicalType> types,
     duckdb::idx_t estimated_cardinality, bool return_chunk,
+    duckdb::vector<duckdb::idx_t> old_row_columns,
     duckdb::RowIdHandling row_id_handling, bool patch,
     duckdb::idx_t update_column_count);
 
@@ -78,6 +79,7 @@ class SereneDBSearchUpdate final : public duckdb::PhysicalOperator {
   duckdb::vector<duckdb::PhysicalIndex> _columns;
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> _expressions;
   duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>> _constraints;
+  duckdb::vector<duckdb::idx_t> _old_row_columns;
   bool _return_chunk = false;
   bool _patch = false;
   duckdb::idx_t _update_column_count = 0;

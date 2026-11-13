@@ -1599,7 +1599,7 @@ void DropColumnReaders(duckdb::CatalogTransaction transaction,
 void FollowColumnOids(duckdb::CatalogTransaction transaction,
                       const duckdb::TableCatalogEntry& previous,
                       const duckdb::TableCatalogEntry& current) {
-  for (auto& owned : OwnedEntries(transaction, current)) {
+  for (auto& owned : OwnedEntries(transaction, previous)) {
     if (owned.get().type != duckdb::CatalogType::SEQUENCE_ENTRY) {
       continue;
     }

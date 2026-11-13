@@ -38,7 +38,6 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
-#include <iostream>
 #include <iresearch/formats/column/codecs/dictionary_cache.hpp>
 #include <iresearch/formats/column/codecs/numeric.hpp>
 #include <iresearch/formats/column/codecs/numeric_kernels.hpp>

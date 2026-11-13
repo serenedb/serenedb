@@ -3626,7 +3626,8 @@ TEST_F(ColCodecsTest, RoaringBooleanSegmentsCarryTheirOwnStats) {
   const auto value = [](uint64_t g) -> bool {
     return ((g * 0x9E3779B97F4A7C15ULL) >> 61) & 1;
   };
-  const auto seal = [&](std::span<const uint64_t> chunk_ends) {
+  const auto seal = [&](std::span<const uint64_t> chunk_ends,
+                        const auto& value) {
     irs::MemoryDirectory dir;
     auto out = dir.create("blocks");
     irs::WriteContext ctx{Db(), *out};
@@ -3663,7 +3664,7 @@ TEST_F(ColCodecsTest, RoaringBooleanSegmentsCarryTheirOwnStats) {
   for (uint64_t end = kChunk; end <= 3'000'000; end += kChunk) {
     ends.push_back(end);
   }
-  const auto probe = seal(ends);
+  const auto probe = seal(ends, value);
   ASSERT_GE(probe.size(), 2u);
   const uint64_t first = probe.front().rows;
   constexpr uint64_t kBefore = 5;
@@ -3673,7 +3674,7 @@ TEST_F(ColCodecsTest, RoaringBooleanSegmentsCarryTheirOwnStats) {
   }
   ends.push_back(first - kBefore);
   ends.push_back(first - kBefore + kChunk);
-  const auto flushed = seal(ends);
+  const auto flushed = seal(ends, value);
   ASSERT_EQ(flushed.size(), 2u);
   ASSERT_EQ(flushed[0].rows, first);
   ASSERT_EQ(flushed[1].rows, kChunk - kBefore);
@@ -3691,6 +3692,27 @@ TEST_F(ColCodecsTest, RoaringBooleanSegmentsCarryTheirOwnStats) {
     EXPECT_EQ(stats.IsConstant(), !(any_true && any_false));
     begin += rows;
   }
+  const auto runs = [](uint64_t g) -> bool { return g / 300 % 2 == 0; };
+  constexpr uint64_t kSizes[] = {1, 37, 64, 100, 5, kChunk, 1000, 63, 300, 2};
+  ends.clear();
+  for (uint64_t end = 0, i = 0; end < 40'000; ++i) {
+    end += kSizes[i % std::size(kSizes)];
+    ends.push_back(end);
+  }
+  begin = 0;
+  for (const auto& [stats, rows] : seal(ends, runs)) {
+    bool any_true = false;
+    bool any_false = false;
+    for (uint64_t g = begin; g < begin + rows; ++g) {
+      any_true |= runs(g);
+      any_false |= !runs(g);
+    }
+    SCOPED_TRACE(begin);
+    EXPECT_EQ(duckdb::NumericStats::Max(stats).GetValue<bool>(), any_true);
+    EXPECT_EQ(duckdb::NumericStats::Min(stats).GetValue<bool>(), !any_false);
+    begin += rows;
+  }
+  EXPECT_EQ(begin, ends.back());
 }
 
 TEST_F(ColCodecsTest, WideRowsStayNearTheSegmentTarget) {

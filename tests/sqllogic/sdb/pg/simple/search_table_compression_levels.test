@@ -380,6 +380,30 @@ CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION lz4(compre
 db error: ERROR: Compression option compression_level is specified more than once
 
 
+statement error
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION lz4(compression_level > 3));
+----
+db error: ERROR: Compression option must be written as name = value, got '(compression_level > 3)'
+
+
+statement error
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION lz4(1 = 2));
+----
+db error: ERROR: Compression option must be written as name = value, got '(1 = 2)'
+
+
+statement error
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION lz4(compression_level = other));
+----
+db error: ERROR: Compression option must be written as name = value, got '(compression_level = other)'
+
+
+statement error
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION lz4(compression_level = NULL));
+----
+db error: ERROR: compression_level must be an integer, got 'NULL'
+
+
 statement ok
 CREATE TABLE lvl_incl_bad (pk INTEGER PRIMARY KEY, body TEXT, p TEXT)
   WITH (compaction_interval = 0);
@@ -455,6 +479,39 @@ CREATE TABLE lvl_constant (a INTEGER PRIMARY KEY, v INTEGER USING COMPRESSION co
 ----
 db error: ERROR: Can't compress column "v" with type 'INTEGER' (physical: INT32) using compression type 'Constant'
 
+
+statement ok
+CREATE TYPE lvl_mood AS ENUM ('sad', 'ok', 'glad');
+
+statement error
+CREATE TABLE lvl_mood_text (a INTEGER PRIMARY KEY, m lvl_mood USING COMPRESSION dict_lz4);
+----
+db error: ERROR: Can't compress column "m" with type 'lvl_mood' (physical: UINT8) using compression type 'DICT_LZ4'
+
+
+statement ok
+CREATE TABLE lvl_moods (a INTEGER PRIMARY KEY, m lvl_mood USING COMPRESSION rle) WITH (compaction_interval = 0);
+
+statement ok
+INSERT INTO lvl_moods SELECT a, (ARRAY['sad', 'ok', 'glad'])[1 + (a // 700) % 3]::lvl_mood FROM range(20000) t(a);
+
+statement ok
+VACUUM (FLUSH_TABLE) lvl_moods;
+
+query
+SELECT string_agg(DISTINCT compression, ',') AS compression,
+       (SELECT count(*) FROM lvl_moods WHERE m::TEXT IS DISTINCT FROM (ARRAY['sad', 'ok', 'glad'])[1 + (a // 700) % 3]) AS wrong
+FROM pragma_storage_info('lvl_moods')
+WHERE column_name = 'm' AND segment_type <> 'VALIDITY';
+----
+compression	wrong
+RLE	0
+
+statement ok
+DROP TABLE lvl_moods;
+
+statement ok
+DROP TYPE lvl_mood;
 
 statement ok
 CREATE TEMP TABLE lvl_temp (a INTEGER, v TEXT USING COMPRESSION dict_lz4, z TEXT USING COMPRESSION zstd(compression_level = 3));

@@ -21,6 +21,7 @@
 #include "iresearch/formats/column/codecs/registry.hpp"
 
 #include <absl/algorithm/container.h>
+#include <absl/strings/match.h>
 
 #include <cstddef>
 #include <iterator>

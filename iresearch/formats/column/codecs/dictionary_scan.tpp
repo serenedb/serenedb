@@ -325,10 +325,6 @@ struct DictionaryScan final : SegmentScanState {
     return {Lower(key), Upper(key)};
   }
 
-  bool ResolveFilter(const duckdb::TableFilter& filter, EntryRanges& out) {
-    return Resolve(*filter.Cast<duckdb::ExpressionFilter>().expr, out);
-  }
-
   bool Resolve(const duckdb::Expression& expr, EntryRanges& out) {
     const uint32_t n = entries.header.entry_count;
     switch (expr.GetExpressionClass()) {
@@ -506,7 +502,8 @@ struct DictionaryScan final : SegmentScanState {
     const auto dict_count = entries.header.entry_count;
     const bool dense = sel_count * 4 >= vector_count;
     if (verdicts.Empty()) {
-      if (EntryRanges ranges; ResolveFilter(filter, ranges)) {
+      if (EntryRanges ranges;
+          Resolve(*filter.Cast<duckdb::ExpressionFilter>().expr, ranges)) {
         verdicts.Accept(ranges, dict_count);
       } else if (dict_count < kLazyFilterEntries || dense) {
         JudgeAll(filter_state);

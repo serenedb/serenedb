@@ -57,7 +57,7 @@ class UncompressedCompress {
     input.ToUnifiedFormat(data);
     idx_t offset = 0;
     idx_t remaining = input.size();
-    while (remaining > 0) {
+    while (true) {
       const auto appended =
         Appender::Append(*_checkpoint_data, _segment, data, offset, remaining);
       if (appended == remaining) {
@@ -220,7 +220,8 @@ constexpr idx_t kBitsPerEntry = duckdb::ValidityMask::BITS_PER_VALUE;
 constexpr validity_t kAllValid = ~validity_t{0};
 
 constexpr validity_t LowerMask(idx_t bits) noexcept {
-  return bits >= kBitsPerEntry ? kAllValid : (validity_t{1} << bits) - 1;
+  SDB_ASSERT(bits < kBitsPerEntry);
+  return (validity_t{1} << bits) - 1;
 }
 
 constexpr validity_t UpperMask(idx_t bits) noexcept {
@@ -273,6 +274,7 @@ idx_t ValidityAnalyze(std::span<const WriteChunk> chunks) {
 const validity_t* ValidityEntries(const ColumnSegment& segment,
                                   const_data_ptr_t base, idx_t start,
                                   idx_t count) {
+  SDB_ASSERT(count != 0);
   SDB_ASSERT(start <= segment.count && count <= segment.count - start);
   const auto last_entry = (start + count - 1) / kBitsPerEntry;
   if ((last_entry + 1) * sizeof(validity_t) > segment.size) [[unlikely]] {
@@ -326,9 +328,6 @@ void UnalignedScan(const validity_t* input, idx_t input_start,
 void ValidityScanPartial(const ColumnSegment& segment, ColumnScanState& state,
                          idx_t scan_count, duckdb::Vector& result,
                          idx_t result_offset) {
-  if (scan_count == 0) {
-    return;
-  }
   const auto start = state.GetPositionInSegment();
   const auto* input =
     ValidityEntries(segment, ScanBase(state), start, scan_count);
@@ -338,9 +337,6 @@ void ValidityScanPartial(const ColumnSegment& segment, ColumnScanState& state,
 
 void ValidityScan(const ColumnSegment& segment, ColumnScanState& state,
                   idx_t scan_count, duckdb::Vector& result) {
-  if (scan_count == 0) {
-    return;
-  }
   result.Flatten();
   const auto start = state.GetPositionInSegment();
   if (start % kBitsPerEntry != 0) {
@@ -370,9 +366,6 @@ void ValiditySelect(const ColumnSegment& segment, ColumnScanState& state,
                     idx_t vector_count, duckdb::Vector& result,
                     idx_t result_offset, const duckdb::SelectionVector& sel,
                     idx_t sel_count, duckdb::ScanVectorType) {
-  if (sel_count == 0) {
-    return;
-  }
   result.Flatten();
   const auto start = state.GetPositionInSegment();
   const auto* input =

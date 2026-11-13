@@ -97,11 +97,6 @@ class StringAccumulator {
       return *(*values)[code - 1] == value;
     }
 
-    bool operator()(const duckdb::string_t& value,
-                    uint32_t code) const noexcept {
-      return *(*values)[code - 1] == value;
-    }
-
     const Values* values;
   };
 

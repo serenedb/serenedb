@@ -236,6 +236,40 @@ class ColCodecPathsTest : public TestBase {
     }
   }
 
+  static void CheckSelections(const Case& c, const std::vector<Value>& rows,
+                              irs::ColReader& r, const irs::ColumnReader& col) {
+    for (const bool dense : {true, false}) {
+      for (const duckdb::idx_t stride :
+           {duckdb::idx_t{2}, duckdb::idx_t{9}, duckdb::idx_t{20},
+            duckdb::idx_t{41}, duckdb::idx_t{300}, duckdb::idx_t{1500}}) {
+        auto state = col.InitScan(r.Ctx());
+        for (uint64_t anchor = 0; anchor < c.rows;
+             anchor += STANDARD_VECTOR_SIZE) {
+          const auto span =
+            std::min<uint64_t>(c.rows - anchor, STANDARD_VECTOR_SIZE);
+          duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+          duckdb::idx_t hits = 0;
+          for (duckdb::idx_t i = stride / 2; i < span; i += stride) {
+            sel.set_index(hits++, i);
+          }
+          if (hits == 0) {
+            continue;
+          }
+          duckdb::Vector out{c.type, STANDARD_VECTOR_SIZE};
+          if (dense) {
+            col.GatherDense(state, anchor, sel, hits, span, out);
+          } else {
+            col.GatherScatter(state, anchor, sel, hits, out, 0);
+          }
+          for (duckdb::idx_t k = 0; k < hits; ++k) {
+            ASSERT_NO_FATAL_FAILURE(
+              ExpectRow(c, rows, out, k, anchor + sel.get_index(k)));
+          }
+        }
+      }
+    }
+  }
+
   static void CheckPoints(const Case& c, const std::vector<Value>& rows,
                           irs::ColReader& r, const irs::ColumnReader& col) {
     std::vector<uint64_t> order;
@@ -278,79 +312,6 @@ class ColCodecPathsTest : public TestBase {
             ExpectRow(c, rows, out, kOffset + k, batch[k]));
         }
         batch.clear();
-      }
-    }
-  }
-
-  static bool Matches(duckdb::ExpressionType cmp, const Value& value,
-                      const Value& probe) {
-    switch (cmp) {
-      case duckdb::ExpressionType::COMPARE_EQUAL:
-        return duckdb::ValueOperations::Equals(value, probe);
-      case duckdb::ExpressionType::COMPARE_NOTEQUAL:
-        return duckdb::ValueOperations::NotEquals(value, probe);
-      case duckdb::ExpressionType::COMPARE_LESSTHAN:
-        return duckdb::ValueOperations::LessThan(value, probe);
-      default:
-        return duckdb::ValueOperations::GreaterThanEquals(value, probe);
-    }
-  }
-
-  void CheckFilters(const Case& c, const std::vector<Value>& rows,
-                    irs::ColReader& r, const irs::ColumnReader& col) {
-    duckdb::Connection con{_db};
-    std::vector<Value> probes;
-    for (const uint64_t g : {uint64_t{1}, c.rows / 2, c.rows - 2}) {
-      for (auto at = g; at < c.rows; ++at) {
-        if (!rows[at].IsNull()) {
-          probes.push_back(rows[at]);
-          break;
-        }
-      }
-    }
-    for (const auto& probe : probes) {
-      for (const auto cmp :
-           {duckdb::ExpressionType::COMPARE_EQUAL,
-            duckdb::ExpressionType::COMPARE_NOTEQUAL,
-            duckdb::ExpressionType::COMPARE_LESSTHAN,
-            duckdb::ExpressionType::COMPARE_GREATERTHANOREQUALTO}) {
-        const duckdb::ExpressionFilter filter{
-          duckdb::BoundComparisonExpression::Create(
-            cmp, duckdb::make_uniq<duckdb::BoundReferenceExpression>(c.type, 0),
-            duckdb::make_uniq<duckdb::BoundConstantExpression>(probe))};
-        auto filter_state =
-          duckdb::TableFilterState::Initialize(*con.context, filter);
-        for (const duckdb::idx_t stride :
-             {duckdb::idx_t{1}, duckdb::idx_t{3}}) {
-          auto state = col.InitScan(r.Ctx());
-          for (uint64_t anchor = 0; anchor < c.rows;
-               anchor += STANDARD_VECTOR_SIZE) {
-            const auto span =
-              std::min<uint64_t>(c.rows - anchor, STANDARD_VECTOR_SIZE);
-            duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
-            duckdb::idx_t count = 0;
-            for (duckdb::idx_t i = 0; i < span; i += stride) {
-              sel.set_index(count++, i);
-            }
-            duckdb::Vector out{c.type, STANDARD_VECTOR_SIZE};
-            const auto kept =
-              col.GatherFilter(state, anchor, span, sel, count, filter,
-                               *filter_state, irs::NullCheckKind::None, out);
-            duckdb::idx_t next = 0;
-            for (duckdb::idx_t i = 0; i < span; i += stride) {
-              const auto& value = rows[anchor + i];
-              const bool expected =
-                !value.IsNull() && Matches(cmp, value, probe);
-              const bool got = next < kept && sel.get_index(next) == i;
-              next += got ? 1 : 0;
-              ASSERT_EQ(got, expected)
-                << c.name << " row " << anchor + i << " probe "
-                << probe.ToString() << " cmp "
-                << duckdb::ExpressionTypeToString(cmp) << " stride " << stride;
-            }
-            ASSERT_EQ(next, kept) << c.name;
-          }
-        }
       }
     }
   }
@@ -398,12 +359,19 @@ class ColCodecPathsTest : public TestBase {
   }
 
   static std::vector<Form> Forms(const Case& c, const Value& lo,
-                                 const Value& hi) {
+                                 const Value& hi, const Value& mid) {
     using enum duckdb::ExpressionType;
     const auto outside = [&] {
       return Operator(COMPARE_NOT_IN, Ref(c), Const(lo), Const(hi));
     };
     std::vector<Form> forms;
+    for (const auto cmp : {COMPARE_EQUAL, COMPARE_NOTEQUAL, COMPARE_LESSTHAN,
+                           COMPARE_LESSTHANOREQUALTO, COMPARE_GREATERTHAN,
+                           COMPARE_GREATERTHANOREQUALTO}) {
+      forms.emplace_back(
+        absl::StrCat(duckdb::ExpressionTypeToString(cmp), " a value"),
+        Compare(c, cmp, mid));
+    }
     forms.emplace_back("equals null", Compare(c, COMPARE_EQUAL, Value{c.type}));
     forms.emplace_back("distinct from a value",
                        Compare(c, COMPARE_DISTINCT_FROM, lo));
@@ -482,31 +450,27 @@ class ColCodecPathsTest : public TestBase {
   void CheckFilterForms(const Case& c, const std::vector<Value>& rows,
                         irs::ColReader& r, const irs::ColumnReader& col) {
     duckdb::Connection con{_db};
-    std::optional<Value> lo;
-    std::optional<Value> hi;
+    auto lo = c.value(0);
+    auto hi = lo;
+    auto mid = lo;
+    bool any = false;
     for (uint64_t g = 0; g < c.rows; g += 7) {
       const auto& v = rows[g];
       if (v.IsNull()) {
         continue;
       }
-      if (!lo || duckdb::ValueOperations::LessThan(v, *lo)) {
-        hi = hi ? hi : lo;
+      if (!any || duckdb::ValueOperations::LessThan(v, lo)) {
         lo = v;
-      } else if (duckdb::ValueOperations::GreaterThan(v, *lo) &&
-                 (!hi || duckdb::ValueOperations::LessThan(v, *hi))) {
+      }
+      if (!any || duckdb::ValueOperations::GreaterThan(v, hi)) {
         hi = v;
       }
-      if (g > c.rows / 3 && lo && hi) {
-        break;
+      if (!any || g <= c.rows / 2) {
+        mid = v;
       }
+      any = true;
     }
-    if (!lo) {
-      return;
-    }
-    if (!hi) {
-      hi = lo;
-    }
-    for (const auto& form : Forms(c, *lo, *hi)) {
+    for (const auto& form : Forms(c, lo, hi, mid)) {
       SCOPED_TRACE(form.name);
       const auto expected = Evaluate(*con.context, c, *form.expr, rows);
       const duckdb::ExpressionFilter filter{form.expr->Copy()};
@@ -581,8 +545,8 @@ class ColCodecPathsTest : public TestBase {
     }
     ASSERT_NO_FATAL_FAILURE(CheckScans(c, rows, r, *col));
     ASSERT_NO_FATAL_FAILURE(CheckGathers(c, rows, r, *col));
+    ASSERT_NO_FATAL_FAILURE(CheckSelections(c, rows, r, *col));
     ASSERT_NO_FATAL_FAILURE(CheckPoints(c, rows, r, *col));
-    ASSERT_NO_FATAL_FAILURE(CheckFilters(c, rows, r, *col));
     ASSERT_NO_FATAL_FAILURE(CheckFilterForms(c, rows, r, *col));
     DescribeBlocks(r, *col);
   }
@@ -630,6 +594,14 @@ TEST_F(ColCodecPathsTest, BitpackingReadsEveryIntegerTypeInEveryMode) {
       }
     }
     if (!AtLeast16Bits(type)) {
+      Check({name("steps"), type, CodecType::Bitpacking, All,
+             [&](uint64_t g) { return Int(type, 3 + (g % 2048) % 40 * 3); },
+             /*stored=*/false});
+      Check({name("small steps with noise"), type, CodecType::Bitpacking, All,
+             [&](uint64_t g) {
+               return Int(type, (g % 2048) % 50 * 2 + (g * 7919) % 2);
+             },
+             /*stored=*/false});
       continue;
     }
     if (!type.IsUnsigned() && size <= sizeof(int64_t)) {
@@ -819,6 +791,36 @@ TEST_F(ColCodecPathsTest, AutoReadsEveryNumericTypeAndShape) {
   }
 }
 
+TEST_F(ColCodecPathsTest, AutoReadsWideIntegers) {
+  for (const auto tier : {irs::WriteTier::Flush, irs::WriteTier::Merge}) {
+    for (const LogicalType type :
+         {LogicalType::HUGEINT, LogicalType::UHUGEINT}) {
+      const auto name = [&](std::string_view shape) {
+        return absl::StrCat(type.ToString(), " ", shape, " tier ",
+                            static_cast<int>(tier));
+      };
+      const auto item = [&](int64_t v) { return Int(type, v); };
+      Check({name("narrow"), type, CodecType::Auto, Periodic,
+             [&](uint64_t g) { return item((g * 7919) % 100); },
+             /*stored=*/false, tier});
+      Check({name("runs"), type, CodecType::Auto, NullRuns,
+             [&](uint64_t g) { return item((g / 37) % 11); },
+             /*stored=*/false, tier});
+      Check({name("steps"), type, CodecType::Auto, All,
+             [&](uint64_t g) { return item(11 + (g % 2048) * 3); },
+             /*stored=*/false, tier});
+      Check({name("sorted"), type, CodecType::Auto, All,
+             [&](uint64_t g) {
+               return item(static_cast<int64_t>(g) * 5 + (g * 7919) % 3);
+             },
+             /*stored=*/false, tier});
+      Check({name("wide"), type, CodecType::Auto, Periodic,
+             [&](uint64_t g) { return Wide(type, g); }, /*stored=*/false,
+             tier});
+    }
+  }
+}
+
 TEST_F(ColCodecPathsTest, TextCodecsReadEveryShape) {
   static constexpr CodecType kCodecs[] = {
     CodecType::DictLz4,    CodecType::Lz4,        CodecType::DictZstd,
@@ -853,6 +855,17 @@ TEST_F(ColCodecPathsTest, TextCodecsReadEveryShape) {
              /*stored=*/true, tier});
       Check({name("mostly null"), LogicalType::VARCHAR, codec, Rare,
              [](uint64_t g) { return Value{absl::StrCat("v", g % 9)}; },
+             /*stored=*/true, tier});
+      Check({name("all null"), LogicalType::VARCHAR, codec,
+             [](uint64_t) { return false; },
+             [](uint64_t) { return Value{"never stored"}; },
+             /*stored=*/false, tier});
+      Check({name("many values in no order"), LogicalType::VARCHAR, codec, All,
+             [&](uint64_t g) {
+               return Value{
+                 absl::StrCat("https://example.org/", Mix(Mix(g) % 3000), "/",
+                              std::string_view{filler}.substr(0, 40))};
+             },
              /*stored=*/true, tier});
     }
   }

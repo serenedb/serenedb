@@ -84,7 +84,8 @@ static_assert((1 << kRunContainerSizeWidth) - 1 >= kMaxRunIdx);
 static_assert((1 << kArrayContainerSizeWidth) - 1 >= kMaxArrayIdx + 1);
 
 constexpr validity_t LowerMask(idx_t bits) noexcept {
-  return bits >= kBitsPerValue ? kAllValid : (validity_t{1} << bits) - 1;
+  SDB_ASSERT(bits < kBitsPerValue);
+  return (validity_t{1} << bits) - 1;
 }
 
 constexpr validity_t UpperMask(idx_t bits) noexcept {

@@ -50,24 +50,14 @@ uint64_t StringWindow::Analyze(const Config& config) {
                        Split(rows, FrameShapeOf<Codec>(config.layout)),
                        CodesSize(rows), config.level, config.layout, _begin);
   };
-  switch (config.choice.leaf) {
-    case ByteCodec::Lz4:
-      if (EffectiveLevel<Lz4>(config.level) > 1) {
-        return price(_pricers.lz4_hc);
-      }
-      if (RawBound(config.choice.shape) <= kTrialRawBytes) {
-        return TrialCompress(config).Size();
-      }
-      return price(_pricers.lz4);
-    case ByteCodec::Zstd:
-    case ByteCodec::Zxc:
-    case ByteCodec::Fsst:
-    case ByteCodec::FsstPlus:
-    case ByteCodec::OnPair:
-    case ByteCodec::Fsst12:
-      break;
+  SDB_ASSERT(config.choice.leaf == ByteCodec::Lz4);
+  if (EffectiveLevel<Lz4>(config.level) > 1) {
+    return price(_pricers.lz4_hc);
   }
-  SDB_UNREACHABLE();
+  if (RawBound(config.choice.shape) <= kTrialRawBytes) {
+    return TrialCompress(config).Size();
+  }
+  return price(_pricers.lz4);
 }
 
 uint64_t StringWindow::RawBound(Shape shape) const noexcept {

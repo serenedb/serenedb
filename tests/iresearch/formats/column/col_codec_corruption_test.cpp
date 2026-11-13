@@ -76,7 +76,6 @@ struct Case {
   std::function<Value(uint64_t)> value;
   std::set<std::string> rejected;
   bool validity = false;
-  irs::WriteTier tier = irs::WriteTier::Flush;
   uint64_t rows = kRows;
 };
 
@@ -112,7 +111,7 @@ class ColCodecCorruptionTest : public TestBase {
              uint64_t& size) {
     irs::MMapDirectory dir{path};
     {
-      irs::ColWriter w{dir, kSeg, Db(), c.tier};
+      irs::ColWriter w{dir, kSeg, Db(), irs::WriteTier::Flush};
       auto& cw = w.OpenColumn(
         kField, c.type, {.row_group_size = kRgSize, .compression = c.codec});
       for (uint64_t pos = 0; pos < c.rows;) {
@@ -389,7 +388,6 @@ TEST_F(ColCodecCorruptionTest, SmallSegmentsRejectDamagedHeaders) {
       "Corrupted bitpacking segment: offset is outside the segment",
       "Corrupted bitpacking segment: unknown bitpacking mode"},
      /*validity=*/false,
-     irs::WriteTier::Flush,
      /*rows=*/300});
   Sweep(
     {"rle",
@@ -402,7 +400,6 @@ TEST_F(ColCodecCorruptionTest, SmallSegmentsRejectDamagedHeaders) {
       "Corrupted RLE segment: run count # exceeds the remaining row count #",
       "Corrupted RLE segment: run counts do not cover the segment row count"},
      /*validity=*/false,
-     irs::WriteTier::Flush,
      /*rows=*/300});
   Sweep({"alp",
          LogicalType::DOUBLE,
@@ -417,7 +414,6 @@ TEST_F(ColCodecCorruptionTest, SmallSegmentsRejectDamagedHeaders) {
           "Corrupted ALP segment: vector offset is outside the data region",
           "Corrupted ALP segment: vector offsets do not describe a data range"},
          /*validity=*/false,
-         irs::WriteTier::Flush,
          /*rows=*/300});
   Sweep(
     {"alprd",
@@ -437,7 +433,6 @@ TEST_F(ColCodecCorruptionTest, SmallSegmentsRejectDamagedHeaders) {
       "Corrupted ALPRD segment: vector offsets do not describe a data range",
       "Corrupted ALPRD vector: attempted to read past the end of the segment"},
      /*validity=*/false,
-     irs::WriteTier::Flush,
      /*rows=*/300});
 }
 

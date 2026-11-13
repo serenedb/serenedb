@@ -554,7 +554,7 @@ void FetchRows(const ColumnSegment& segment, ColumnFetchState& state,
 }
 
 template<typename Scan>
-constexpr CompressionFunction StringFunction(CodecType type) {
+consteval CompressionFunction StringFunction(CodecType type) {
   CompressionFunction f{
     .type = type,
     .framed = true,

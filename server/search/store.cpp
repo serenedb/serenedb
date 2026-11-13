@@ -86,7 +86,8 @@ catalog::CompressionByColumn DeclaredCompression(
   for (const auto& column : columns.Logical()) {
     const auto* codec = irs::codecs::FindCodec(
       duckdb::CompressionTypeToString(column.CompressionType()));
-    if (codec && codec->type != irs::codecs::CodecType::Auto) {
+    SDB_ASSERT(codec);
+    if (codec->type != irs::codecs::CodecType::Auto) {
       compression.emplace(
         connector::TableColumnId(column),
         catalog::DeclaredCodec{.type = codec->type,

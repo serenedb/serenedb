@@ -361,10 +361,10 @@ struct BitpackingAnalyze {
 
 template<typename T>
 idx_t AnalyzeChunks(std::span<const WriteChunk> chunks) {
+  static_assert(sizeof(T) * kMetadataGroupSize * 2 <= kBlockSize);
   const auto analyze = std::make_unique<BitpackingAnalyze<T>>();
   auto& state = analyze->state;
   NoWriter<T> writer;
-  static_assert(sizeof(T) * kMetadataGroupSize * 2 <= kBlockSize);
   for (const auto& chunk : chunks) {
     if (!state.Update(chunk.data.Values<T>(), writer)) {
       return kNone;
@@ -764,7 +764,8 @@ struct ScanState final : SegmentScanState {
 
   void Skip(idx_t skip_count) {
     const auto* active_group = std::get_if<Group<T>>(&group_state);
-    SDB_ASSERT(active_group || IsInitial());
+    SDB_ENSURE(active_group || IsInitial(),
+               "bitpacking: skip exceeds the segment row count");
     const idx_t group_index = active_group ? active_group->index : 0;
     const idx_t group_offset = active_group ? active_group->offset : 0;
     idx_t skipped = 0;

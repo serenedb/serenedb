@@ -141,6 +141,77 @@ total	wrong
 30000	0
 
 statement ok
+CREATE TABLE list_dict_records (a INTEGER PRIMARY KEY,
+                                points STRUCT(x INTEGER, label VARCHAR)[],
+                                triples INTEGER[3][])
+  WITH (compaction_interval = 0);
+
+statement ok
+INSERT INTO list_dict_records SELECT a,
+  CASE WHEN a % 11 = 0 THEN NULL
+       WHEN a % 17 = 0 THEN []
+       ELSE [{'x': a % 5, 'label': 'p' || (a % 3)}, CASE WHEN a % 4 = 0 THEN NULL ELSE {'x': NULL, 'label': 'q' || (a % 2)} END, {'x': a % 7, 'label': NULL}] END,
+  CASE WHEN a % 13 = 0 THEN NULL
+       ELSE [[a % 3, a % 2, 7], [a % 4, NULL, a % 5]] END
+FROM range(20000) t(a);
+
+statement ok
+VACUUM (FLUSH_TABLE) list_dict_records;
+
+query
+SELECT count(*) AS total, count(*) FILTER (WHERE
+     points IS DISTINCT FROM (CASE WHEN a % 11 = 0 THEN NULL
+                                   WHEN a % 17 = 0 THEN []
+                                   ELSE [{'x': a % 5, 'label': 'p' || (a % 3)}, CASE WHEN a % 4 = 0 THEN NULL ELSE {'x': NULL, 'label': 'q' || (a % 2)} END, {'x': a % 7, 'label': NULL}] END)
+  OR triples IS DISTINCT FROM (CASE WHEN a % 13 = 0 THEN NULL
+                                    ELSE [[a % 3, a % 2, 7], [a % 4, NULL, a % 5]] END)) AS wrong
+FROM list_dict_records;
+----
+total	wrong
+20000	0
+
+query
+SELECT points::VARCHAR AS points, triples::VARCHAR AS triples FROM list_dict_records WHERE a = 12346;
+----
+points	triples
+[{'x': 1, 'label': p1}, {'x': NULL, 'label': q0}, {'x': 5, 'label': NULL}]	[[1, 0, 7], [2, NULL, 1]]
+
+query
+SELECT points::VARCHAR AS points, triples::VARCHAR AS triples FROM list_dict_records WHERE a = 12348;
+----
+points	triples
+[{'x': 3, 'label': p0}, NULL, {'x': 0, 'label': NULL}]	[[0, 0, 7], [0, NULL, 3]]
+
+statement ok
+INSERT INTO list_dict_records SELECT a,
+  [{'x': a, 'label': 'unique-' || a}],
+  [[a, a + 1, a + 2]]
+FROM range(20000, 26000) t(a);
+
+statement ok
+VACUUM (FLUSH_TABLE) list_dict_records;
+
+statement ok
+VACUUM (COMPACT_TABLE) list_dict_records;
+
+query
+SELECT count(*) AS total, count(*) FILTER (WHERE
+     points IS DISTINCT FROM (CASE WHEN a >= 20000 THEN [{'x': a, 'label': 'unique-' || a}]
+                                   WHEN a % 11 = 0 THEN NULL
+                                   WHEN a % 17 = 0 THEN []
+                                   ELSE [{'x': a % 5, 'label': 'p' || (a % 3)}, CASE WHEN a % 4 = 0 THEN NULL ELSE {'x': NULL, 'label': 'q' || (a % 2)} END, {'x': a % 7, 'label': NULL}] END)
+  OR triples IS DISTINCT FROM (CASE WHEN a >= 20000 THEN [[a, a + 1, a + 2]]
+                                    WHEN a % 13 = 0 THEN NULL
+                                    ELSE [[a % 3, a % 2, 7], [a % 4, NULL, a % 5]] END)) AS wrong
+FROM list_dict_records;
+----
+total	wrong
+26000	0
+
+statement ok
+DROP TABLE list_dict_records;
+
+statement ok
 DROP TABLE list_dict_grouped;
 
 statement ok

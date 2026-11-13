@@ -1938,6 +1938,17 @@ TEST_F(ColumnReaderTest, NestedGathersMatchScan) {
                                RandomText(g, 8)}});
      },
      {"uncompressed", "dict_fsst"}},
+    {"struct with a nullable field in every other vector",
+     stype,
+     20000,
+     [stype](uint64_t g) {
+       const bool null = (g / STANDARD_VECTOR_SIZE) % 2 == 0 && g % 500 == 3;
+       return duckdb::Value::STRUCT(
+         stype, {null ? duckdb::Value{duckdb::LogicalType::BIGINT}
+                      : duckdb::Value::BIGINT(static_cast<int64_t>(g)),
+                 duckdb::Value{"value_" + std::to_string(g)}});
+     },
+     {"uncompressed"}},
     {"list",
      ltype,
      20000,

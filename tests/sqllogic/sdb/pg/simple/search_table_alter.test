@@ -178,6 +178,19 @@ db error: ERROR: Unknown compression option 'level', expected compression_level
 
 
 statement ok
+CREATE TABLE alc_struct (a INTEGER PRIMARY KEY, s STRUCT(f TEXT, g INTEGER));
+
+statement error
+ALTER TABLE alc_struct ALTER COLUMN s.f SET COMPRESSION zstd;
+----
+db error: ERROR: SET COMPRESSION is not supported on a struct field
+
+
+statement ok
+DROP TABLE alc_struct;
+
+
+statement ok
 DROP TABLE alc;
 
 

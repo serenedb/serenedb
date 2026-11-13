@@ -65,6 +65,16 @@ CREATE TABLE t_zstd(v VARCHAR USING COMPRESSION ZSTD);
 
 
 statement ok
+CREATE TABLE codecs_v13_${__DATABASE__}.main.t_generated (a INTEGER, b INTEGER GENERATED ALWAYS AS (a + 1) VIRTUAL);
+
+
+statement error
+ALTER TABLE codecs_v13_${__DATABASE__}.main.t_generated ALTER COLUMN b SET COMPRESSION uncompressed;
+----
+db error: ERROR: Cannot SET COMPRESSION for generated column "b"
+
+
+statement ok
 DETACH codecs_v13_${__DATABASE__};
 
 

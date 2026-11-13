@@ -1,9 +1,11 @@
-"""COPY ... FROM STDIN / TO STDOUT inside `serened shell`."""
+"""COPY inside `serened shell`: FROM STDIN, TO STDOUT and TO S3."""
 
 from __future__ import annotations
 
+import http.server
 import os
 import subprocess
+import threading
 import uuid
 from pathlib import Path
 
@@ -181,3 +183,44 @@ def test_shell_copy_one_shot_command(tmp_path: Path) -> None:
     lines = [l for l in out.stdout.splitlines() if l.strip()]
     assert "5" in lines and "6" in lines and "7" in lines, \
         f"unexpected stdout:\n{out.stdout}"
+
+
+S3_NO_SUCH_BUCKET = (
+    b'<?xml version="1.0" encoding="UTF-8"?><Error><Code>NoSuchBucket</Code>'
+    b"<Message>The specified bucket does not exist</Message></Error>")
+
+
+class _RefusingS3(http.server.BaseHTTPRequestHandler):
+    def _refuse(self) -> None:
+        self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        self.send_response(404)
+        self.send_header("Content-Type", "application/xml")
+        self.send_header("Content-Length", str(len(S3_NO_SUCH_BUCKET)))
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(S3_NO_SUCH_BUCKET)
+
+    do_HEAD = do_GET = do_PUT = do_POST = _refuse
+
+    def log_message(self, *args: object) -> None:
+        pass
+
+
+def test_shell_copy_to_s3_reports_the_server_error() -> None:
+    with http.server.ThreadingHTTPServer(("127.0.0.1", 0), _RefusingS3) as s3:
+        threading.Thread(target=s3.serve_forever, daemon=True).start()
+        try:
+            result = _run_shell(f"""
+SET s3_endpoint = '127.0.0.1:{s3.server_address[1]}';
+SET s3_use_ssl = false;
+SET s3_url_style = 'path';
+SET s3_access_key_id = 'key';
+SET s3_secret_access_key = 'secret';
+SET s3_uploader_max_filesize = '50MB';
+COPY (SELECT repeat('x', 1000) AS x FROM range(30000)) TO 's3://bucket/big.csv';
+""")
+        finally:
+            s3.shutdown()
+    output = result.stdout + result.stderr
+    assert "initializing multipart upload" in output, output
+    assert "NoSuchBucket: The specified bucket does not exist" in output, output

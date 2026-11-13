@@ -319,9 +319,7 @@ class Sender {
           result ? result->GetRequestError() : std::string{"no response"};
       } else {
         response.status = static_cast<uint16_t>(result->status);
-        response.body = request.buffer_out.empty()
-                          ? std::move(result->body)
-                          : std::move(request.buffer_out);
+        response.body = std::move(result->body);
         if (result->HasHeader("Retry-After")) {
           retry_after = result->GetHeaderValue("Retry-After");
         }

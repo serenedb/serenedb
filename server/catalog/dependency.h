@@ -50,6 +50,9 @@ std::vector<duckdb::Identifier> DropOwnedSequences(
   duckdb::CatalogTransaction transaction, duckdb::TableCatalogEntry& table,
   std::span<const duckdb::LogicalIndex> columns, bool cascade);
 
+bool SequenceOwnedByTable(const duckdb::CatalogEntry& sequence,
+                          const duckdb::CatalogEntry& table);
+
 duckdb::catalog_entry_vector_t OwnedEntries(
   duckdb::CatalogTransaction transaction, const duckdb::CatalogEntry& owner);
 

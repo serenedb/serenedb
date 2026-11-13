@@ -449,6 +449,17 @@ const WriterGenerations::Writer* Writes::Registration(
   return it == _writes.end() ? nullptr : &it->second.registration;
 }
 
+std::vector<const WriterGenerations*> Writes::Registrations() const {
+  absl::ReaderMutexLock lock{&_mutex};
+  std::vector<const WriterGenerations*> registrations;
+  for (const auto& [id, w] : _writes) {
+    if (w.registration) {
+      registrations.push_back(w.registration.get());
+    }
+  }
+  return registrations;
+}
+
 StoreWrites& Writes::EnsureStoreWrites(const std::shared_ptr<Store>& store) {
   absl::MutexLock lock{&_mutex};
   auto& w = _writes[store->GetId()];

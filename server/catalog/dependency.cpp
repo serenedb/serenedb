@@ -60,6 +60,7 @@
 #include <duckdb/parser/tableref/joinref.hpp>
 #include <duckdb/parser/tableref/subqueryref.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <optional>
@@ -1367,7 +1368,7 @@ void FollowReferencedColumnRename(duckdb::CatalogTransaction transaction,
                                   const duckdb::Identifier& new_column) {
   const duckdb::IdentifierEquality equals{
     table.ParentCatalog().IsCaseSensitive()};
-  absl::flat_hash_set<duckdb::idx_t> seen;
+  irs::containers::FlatHashSet<duckdb::idx_t> seen;
   for (const auto& edge : DirectDependents(transaction, table)) {
     auto& referencing = *edge.dependent;
     if (edge.part != Part::Constraint ||

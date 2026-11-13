@@ -685,7 +685,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::Copy(
 }
 
 duckdb::TableStorageInfo SearchTableEntry::GetStorageInfo(
-  duckdb::ClientContext&) {
+  duckdb::ClientContext& context) {
   duckdb::TableStorageInfo result;
   for (const auto& constraint : GetConstraints()) {
     if (constraint->type != duckdb::ConstraintType::UNIQUE) {
@@ -700,10 +700,15 @@ duckdb::TableStorageInfo SearchTableEntry::GetStorageInfo(
     }
     result.index_info.push_back(std::move(info));
   }
+  const auto transaction = catalog.GetCatalogTransaction(context);
+  auto& oids = catalog.Cast<BaseCatalog>().Oids();
   for (const auto& key : _storage->Config()->constraint_keys) {
-    if (absl::c_any_of(_keys, [&](const search::KeySpec& spec) {
-          return spec.key.field == key.field;
-        })) {
+    if (absl::c_any_of(_keys,
+                       [&](const search::KeySpec& spec) {
+                         return spec.key.field == key.field;
+                       }) ||
+        absl::c_linear_search(key.columns, irs::field_limits::invalid()) ||
+        !oids.Find(transaction, key.field)) {
       continue;
     }
     duckdb::IndexInfo info{

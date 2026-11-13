@@ -56,8 +56,8 @@ namespace irs {
 namespace {
 
 codecs::CodecType ForcedBySetting(const duckdb::DBConfig& config) {
-  const auto* codec = codecs::FindCodec(duckdb::CompressionTypeToString(
-    duckdb::Settings::Get<duckdb::ForceCompressionSetting>(config)));
+  const auto* codec = codecs::FindCodec(
+    duckdb::Settings::Get<duckdb::ForceCompressionSetting>(config));
   return codec ? codec->type : codecs::CodecType::Auto;
 }
 
@@ -297,17 +297,19 @@ bool ColumnWriter::SealString(const duckdb::LogicalType& type,
   auto& tuning = *meta.write_string_tuning;
   auto& blocks = WriteCtx().Blocks();
   auto& buffers = WriteCtx().Database().GetBufferManager();
+  bool all_dedup = true;
   const auto sink = [&](codecs::StringChoice choice,
                         duckdb::BaseStatistics stats, uint64_t rows,
                         std::string_view bytes) {
+    all_dedup = all_dedup && choice.shape == codecs::Shape::Dedup;
     const auto& codec =
       *codecs::GetCodec(codecs::TypeOf(choice), duckdb::PhysicalType::VARCHAR);
     CaptureBlock(codec, std::move(stats), rows, bytes, blocks, meta.data);
   };
   if (named && named->shape == codecs::Shape::Plain) {
-    return codecs::SealSegments(chunks, *named, _codec_params, type, tuning,
-                                buffers, sink)
-      .all_dedup;
+    codecs::SealSegments(chunks, *named, _codec_params, type, tuning, buffers,
+                         sink);
+    return all_dedup;
   }
   codecs::StringAccumulator acc;
   acc.Reserve(row_count, tuning.last_distinct);
@@ -315,10 +317,9 @@ bool ColumnWriter::SealString(const duckdb::LogicalType& type,
     acc.Add(c.data);
   }
   tuning.last_distinct = acc.values.size();
-  const auto outcome = codecs::SealSegments(acc, named, _codec_params, type,
-                                            tuning, buffers, sink);
-  if (outcome.sealed) {
-    return outcome.all_dedup;
+  if (codecs::SealSegments(acc, named, _codec_params, type, tuning, buffers,
+                           sink)) {
+    return all_dedup;
   }
   CompressStrings(type, chunks, meta.data);
   return false;
@@ -1046,8 +1047,7 @@ void ColumnWriter::SealRowGroup() {
   _method = _named == codecs::CodecType::Auto ? _global_method : _named;
   _disabled.reset();
   for (const auto disabled : config.GetDisabledCompressionMethods()) {
-    if (const auto* codec =
-          codecs::FindCodec(duckdb::CompressionTypeToString(disabled))) {
+    if (const auto* codec = codecs::FindCodec(disabled)) {
       _disabled.set(std::to_underlying(codec->type));
     }
   }

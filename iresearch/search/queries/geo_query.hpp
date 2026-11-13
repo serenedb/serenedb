@@ -47,7 +47,7 @@ class GeoVerifier {
     return MatchShape(_parser, _cursor.FetchDoc(doc), _shape, _acceptor);
   }
 
-  void Check(std::span<const doc_id_t> docs, std::span<bool> matched) {
+  void Check(std::span<const doc_id_t> docs, auto& matched) {
     _cursor.FetchDocs(docs);
     for (size_t i = 0; i < docs.size(); ++i) {
       matched[i] = MatchShape(_parser, _cursor.Fetched(i), _shape, _acceptor);

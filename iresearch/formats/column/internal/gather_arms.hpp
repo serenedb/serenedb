@@ -35,14 +35,19 @@ namespace irs::column_internal {
 
 inline constexpr duckdb::idx_t kPointDensity = 64;
 
-inline void FetchPoints(std::unique_ptr<ColumnReader::PointReader>& point,
+inline bool FetchSparse(std::unique_ptr<ColumnReader::PointReader>& point,
                         const ColReader& col_reader, const ColumnReader& column,
-                        std::span<const doc_id_t> docs, duckdb::Vector& out,
-                        duckdb::idx_t at) {
+                        std::span<const doc_id_t> docs, duckdb::idx_t span,
+                        duckdb::Vector& out, duckdb::idx_t at) {
+  const auto hits = static_cast<duckdb::idx_t>(docs.size());
+  if ((hits != 1 && hits * kPointDensity >= span) || column.Type().IsNested()) {
+    return false;
+  }
   if (!point) {
     point = std::make_unique<ColumnReader::PointReader>(col_reader, column);
   }
   point->FetchRows(docs, doc_limits::min(), out, at);
+  return true;
 }
 
 template<typename Kind>

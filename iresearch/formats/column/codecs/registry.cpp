@@ -153,6 +153,69 @@ const Codec* FindCodec(std::string_view name) noexcept {
   return it == std::end(kCodecs) ? nullptr : &*it;
 }
 
+const Codec* FindCodec(duckdb::CompressionType type) noexcept {
+  using enum duckdb::CompressionType;
+  const auto codec = [](CodecType ours) noexcept {
+    return &kCodecs[std::to_underlying(ours)];
+  };
+  switch (type) {
+    case COMPRESSION_AUTO:
+      return codec(CodecType::Auto);
+    case COMPRESSION_UNCOMPRESSED:
+      return codec(CodecType::Uncompressed);
+    case COMPRESSION_CONSTANT:
+      return codec(CodecType::Constant);
+    case COMPRESSION_RLE:
+      return codec(CodecType::Rle);
+    case COMPRESSION_BITPACKING:
+      return codec(CodecType::Bitpacking);
+    case COMPRESSION_FSST:
+      return codec(CodecType::Fsst);
+    case COMPRESSION_ALP:
+      return codec(CodecType::Alp);
+    case COMPRESSION_ALPRD:
+      return codec(CodecType::AlpRd);
+    case COMPRESSION_ZSTD:
+      return codec(CodecType::Zstd);
+    case COMPRESSION_ROARING:
+      return codec(CodecType::Roaring);
+    case COMPRESSION_EMPTY:
+      return codec(CodecType::Empty);
+    case COMPRESSION_DICT_FSST:
+      return codec(CodecType::DictFsst);
+    case COMPRESSION_DICT_LZ4:
+      return codec(CodecType::DictLz4);
+    case COMPRESSION_DICT_ZSTD:
+      return codec(CodecType::DictZstd);
+    case COMPRESSION_LZ4:
+      return codec(CodecType::Lz4);
+    case COMPRESSION_DICT_ZXC:
+      return codec(CodecType::DictZxc);
+    case COMPRESSION_ZXC:
+      return codec(CodecType::Zxc);
+    case COMPRESSION_COL_DICT_FSST_PLUS:
+      return codec(CodecType::DictFsstPlus);
+    case COMPRESSION_COL_FSST_PLUS:
+      return codec(CodecType::FsstPlus);
+    case COMPRESSION_COL_DICT_ONPAIR:
+      return codec(CodecType::DictOnPair);
+    case COMPRESSION_COL_ONPAIR:
+      return codec(CodecType::OnPair);
+    case COMPRESSION_COL_DICT_FSST12:
+      return codec(CodecType::DictFsst12);
+    case COMPRESSION_COL_FSST12:
+      return codec(CodecType::Fsst12);
+    case COMPRESSION_DICTIONARY:
+    case COMPRESSION_PFOR_DELTA:
+    case COMPRESSION_CHIMP:
+    case COMPRESSION_PATAS:
+    case ENUM_SIZE:
+    case COMPRESSION_SERENEDB_COUNT:
+      break;
+  }
+  return nullptr;
+}
+
 const StringChoice* ChoiceOf(CodecType type) noexcept {
   const auto index = std::to_underlying(type);
   return kTextBegin <= index && index < std::size(kCodecs)

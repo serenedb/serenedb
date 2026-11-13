@@ -363,11 +363,10 @@ void HitBatcher::MaterializeColumn(Column& c, uint64_t anchor,
     return;
   }
   const bool whole = dense && at == 0 && span <= STANDARD_VECTOR_SIZE;
-  if (!whole && hits * column_internal::kPointDensity < span &&
-      !c.out_type.IsNested()) {
-    column_internal::FetchPoints(
-      c.point, *_col_reader, *c.reader,
-      std::span<const irs::doc_id_t>{&_docs[first], hits}, out, at);
+  if (!whole &&
+      column_internal::FetchSparse(
+        c.point, *_col_reader, *c.reader,
+        std::span<const irs::doc_id_t>{&_docs[first], hits}, span, out, at)) {
     return;
   }
   column_internal::GatherSelected(*c.reader, *c.state, anchor, _sel, hits, span,

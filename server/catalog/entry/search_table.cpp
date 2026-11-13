@@ -277,9 +277,9 @@ std::shared_ptr<const InvertedIndexConfig> PrimaryKeyConfig(
                                                std::move(fields));
 }
 
-duckdb::vector<duckdb::PhysicalType> LeafPhysicalTypes(
+irs::containers::FlatHashSet<duckdb::PhysicalType> LeafPhysicalTypes(
   const duckdb::LogicalType& type) {
-  duckdb::vector<duckdb::PhysicalType> leaves;
+  irs::containers::FlatHashSet<duckdb::PhysicalType> leaves;
   const auto collect = [&](this const auto& self,
                            const duckdb::LogicalType& t) -> void {
     switch (t.id()) {
@@ -294,9 +294,7 @@ duckdb::vector<duckdb::PhysicalType> LeafPhysicalTypes(
         }
         return;
       default:
-        if (!absl::c_linear_search(leaves, t.InternalType())) {
-          leaves.emplace_back(t.InternalType());
-        }
+        leaves.emplace(t.InternalType());
     }
   };
   collect(type);
@@ -334,31 +332,10 @@ void CheckCompressionLevel(std::string_view column_name,
                           ") using compression type '", codec, "'"));
 }
 
-}  // namespace
-
-void RequireSearchTableIndexOption(std::string_view name) {
-  if (absl::c_contains(kSearchTableMaintenanceSettings, name)) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG(name, " is a table option"),
-      ERR_HINT("Change it with ALTER TABLE ... SET (", name, " = ...)."));
-  }
-  if (absl::c_contains(kSearchTableOptions, name)) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG(name, " is a table option"),
-      ERR_HINT("Set it in CREATE TABLE ... WITH (", name, " = ...)."));
-  }
-  if (name == kSegmentDocsMaxSetting) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    ERR_MSG(name, " does not apply to an index on a table"));
-  }
-}
-
-irs::codecs::CodecType CheckColumnCodec(
-  std::string_view column_name, std::string_view codec_name, uint32_t level,
-  const duckdb::LogicalType& column_type) {
-  const auto* codec = irs::codecs::FindCodec(codec_name);
+irs::codecs::CodecType CheckCodec(std::string_view column_name,
+                                  const irs::codecs::Codec* codec,
+                                  std::string_view codec_name, uint32_t level,
+                                  const duckdb::LogicalType& column_type) {
   if (!codec) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("Column \"", column_name,
@@ -385,6 +362,42 @@ irs::codecs::CodecType CheckColumnCodec(
     return codec->type;
   }
   ThrowCodecMismatch(column_name, codec->name, column_type, physical);
+}
+
+}  // namespace
+
+void RequireSearchTableIndexOption(std::string_view name) {
+  if (absl::c_contains(kSearchTableMaintenanceSettings, name)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG(name, " is a table option"),
+      ERR_HINT("Change it with ALTER TABLE ... SET (", name, " = ...)."));
+  }
+  if (absl::c_contains(kSearchTableOptions, name)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG(name, " is a table option"),
+      ERR_HINT("Set it in CREATE TABLE ... WITH (", name, " = ...)."));
+  }
+  if (name == kSegmentDocsMaxSetting) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG(name, " does not apply to an index on a table"));
+  }
+}
+
+irs::codecs::CodecType CheckColumnCodec(
+  std::string_view column_name, std::string_view codec_name, uint32_t level,
+  const duckdb::LogicalType& column_type) {
+  return CheckCodec(column_name, irs::codecs::FindCodec(codec_name), codec_name,
+                    level, column_type);
+}
+
+irs::codecs::CodecType CheckColumnCodec(
+  std::string_view column_name, duckdb::CompressionType compression,
+  uint32_t level, const duckdb::LogicalType& column_type) {
+  return CheckCodec(column_name, irs::codecs::FindCodec(compression),
+                    duckdb::CompressionTypeToString(compression), level,
+                    column_type);
 }
 
 SearchTableEntry::SearchTableEntry(
@@ -1677,7 +1690,7 @@ SearchTableEntry::AlterColumnCompression(
   auto definition = Definition();
   auto& column =
     definition->columns.GetColumnMutable(GetColumnIndex(info.column_name));
-  if (column.Generated()) {
+  if (column.Category() == duckdb::TableColumnType::GENERATED_VIRTUAL) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                     ERR_MSG("cannot SET COMPRESSION for generated column \"",
                             column.Name().GetIdentifierName(), "\""));

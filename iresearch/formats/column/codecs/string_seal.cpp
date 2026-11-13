@@ -65,70 +65,54 @@ void StringAccumulator::Add(const duckdb::Vector& input) {
       code = _last_code;
       continue;
     }
-    if (values.size() == values.capacity()) {
-      values.reserve(std::max<size_t>(kFirstValues, 2 * values.capacity()));
-    }
     code = *_distinct.lazy_emplace(value, [&](const auto& construct) noexcept {
-      values.push_back(&value);
-      construct(static_cast<uint32_t>(values.size()));
+      construct(static_cast<uint32_t>(values.size() + 1));
     });
+    if (code > values.size()) {
+      values.push_back(&value);
+    }
     _last = &value;
     _last_code = code;
   }
 }
 
-SealOutcome SealSegments(const StringAccumulator& acc,
-                         const StringChoice* named,
-                         const ColCodecParams& params,
-                         const duckdb::LogicalType& type, StringTuning& tuning,
-                         duckdb::BufferManager& buffers, SegmentSink sink) {
+bool SealSegments(const StringAccumulator& acc, const StringChoice* named,
+                  const ColCodecParams& params, const duckdb::LogicalType& type,
+                  StringTuning& tuning, duckdb::BufferManager& buffers,
+                  SegmentSink sink) {
   text::StringCompressor compressor{params, type, tuning.estimators, buffers};
-  SealOutcome outcome{.sealed = true};
-  const auto emit = [&](StringChoice choice, duckdb::BaseStatistics stats,
-                        uint64_t rows, std::string_view bytes) {
-    outcome.all_dedup = outcome.all_dedup && choice.shape == Shape::Dedup;
-    sink(choice, std::move(stats), rows, bytes);
-  };
   if (named) {
     const auto config = text::NamedConfig(*named, params);
     text::GetStringCompressionFunction(config).Compress(compressor, config, acc,
-                                                        0, emit);
-    return outcome;
+                                                        0, sink);
+    return true;
   }
   text::StringPicker picker{acc, params, tuning, compressor};
   auto first = picker.First();
   if (!first) {
-    return outcome;
+    return true;
   }
   if (first->Size() > PlainStorageBytes(*first)) {
-    return {};
+    return false;
   }
   const auto config = first->config;
   const auto rest = first->begin + first->rows;
-  emit(config.choice, std::move(*first->stats), first->rows,
+  sink(config.choice, std::move(*first->stats), first->rows,
        first->bytes.View());
   first.reset();
   text::GetStringCompressionFunction(config).Compress(compressor, config, acc,
-                                                      rest, emit);
-  return outcome;
+                                                      rest, sink);
+  return true;
 }
 
-SealOutcome SealSegments(std::span<const WriteChunk> chunks,
-                         const StringChoice& named,
-                         const ColCodecParams& params,
-                         const duckdb::LogicalType& type, StringTuning& tuning,
-                         duckdb::BufferManager& buffers, SegmentSink sink) {
+void SealSegments(std::span<const WriteChunk> chunks, const StringChoice& named,
+                  const ColCodecParams& params, const duckdb::LogicalType& type,
+                  StringTuning& tuning, duckdb::BufferManager& buffers,
+                  SegmentSink sink) {
   text::StringCompressor compressor{params, type, tuning.estimators, buffers};
-  SealOutcome outcome{.sealed = true};
   const auto config = text::NamedConfig(named, params);
-  text::GetStringCompressionFunction(config).CompressChunks(
-    compressor, config, chunks,
-    [&](StringChoice choice, duckdb::BaseStatistics stats, uint64_t rows,
-        std::string_view bytes) {
-      outcome.all_dedup = outcome.all_dedup && choice.shape == Shape::Dedup;
-      sink(choice, std::move(stats), rows, bytes);
-    });
-  return outcome;
+  text::GetStringCompressionFunction(config).CompressChunks(compressor, config,
+                                                            chunks, sink);
 }
 
 }  // namespace irs::codecs

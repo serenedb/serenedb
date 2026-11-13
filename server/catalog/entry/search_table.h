@@ -106,6 +106,10 @@ irs::codecs::CodecType CheckColumnCodec(std::string_view column_name,
                                         std::string_view codec_name,
                                         uint32_t level,
                                         const duckdb::LogicalType& column_type);
+irs::codecs::CodecType CheckColumnCodec(std::string_view column_name,
+                                        duckdb::CompressionType compression,
+                                        uint32_t level,
+                                        const duckdb::LogicalType& column_type);
 
 struct TableOption {
   std::string_view name;

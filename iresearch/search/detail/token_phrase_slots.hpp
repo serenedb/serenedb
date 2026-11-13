@@ -101,11 +101,8 @@ class PhraseRows {
     }
     auto& out = _out.Reset();
     const auto span = hits[n - 1] - hits[0] + 1;
-    if ((n == 1 || n * column_internal::kPointDensity < span) &&
-        !_column->Type().IsNested()) {
-      column_internal::FetchPoints(_point, *_col_reader, *_column,
-                                   hits.first(n), out, 0);
-    } else {
+    if (!column_internal::FetchSparse(_point, *_col_reader, *_column,
+                                      hits.first(n), span, out, 0)) {
       column_internal::GatherRows(*_column, _state, DocRows{hits.first(n)}, out,
                                   0);
     }

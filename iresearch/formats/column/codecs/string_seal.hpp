@@ -43,11 +43,6 @@
 
 namespace irs::codecs {
 
-struct SealOutcome {
-  bool sealed = false;
-  bool all_dedup = true;
-};
-
 class StringAccumulator {
  public:
   StringAccumulator() = default;
@@ -65,8 +60,6 @@ class StringAccumulator {
 
  private:
   using Values = std::vector<const duckdb::string_t*>;
-
-  static constexpr size_t kFirstValues = 64;
 
   struct Hash {
     using is_transparent = void;
@@ -110,16 +103,14 @@ using SegmentSink =
   absl::FunctionRef<void(StringChoice choice, duckdb::BaseStatistics stats,
                          uint64_t rows, std::string_view bytes)>;
 
-SealOutcome SealSegments(const StringAccumulator& acc,
-                         const StringChoice* named,
-                         const ColCodecParams& params,
-                         const duckdb::LogicalType& type, StringTuning& tuning,
-                         duckdb::BufferManager& buffers, SegmentSink sink);
+bool SealSegments(const StringAccumulator& acc, const StringChoice* named,
+                  const ColCodecParams& params, const duckdb::LogicalType& type,
+                  StringTuning& tuning, duckdb::BufferManager& buffers,
+                  SegmentSink sink);
 
-SealOutcome SealSegments(std::span<const WriteChunk> chunks,
-                         const StringChoice& named,
-                         const ColCodecParams& params,
-                         const duckdb::LogicalType& type, StringTuning& tuning,
-                         duckdb::BufferManager& buffers, SegmentSink sink);
+void SealSegments(std::span<const WriteChunk> chunks, const StringChoice& named,
+                  const ColCodecParams& params, const duckdb::LogicalType& type,
+                  StringTuning& tuning, duckdb::BufferManager& buffers,
+                  SegmentSink sink);
 
 }  // namespace irs::codecs

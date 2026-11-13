@@ -1142,16 +1142,15 @@ TEST_F(ColCodecsTest, NamedCodecSealsEverySegment) {
       rows += count;
     };
     auto& buffers = Db().GetBufferManager();
-    const auto outcome =
-      choice.shape == Shape::Dedup
-        ? irs::codecs::SealSegments(acc, &choice, params,
-                                    duckdb::LogicalType::VARCHAR, tuning,
-                                    buffers, sink)
-        : irs::codecs::SealSegments(write_chunks, choice, params,
-                                    duckdb::LogicalType::VARCHAR, tuning,
-                                    buffers, sink);
-    EXPECT_TRUE(outcome.sealed);
-    EXPECT_EQ(outcome.all_dedup, choice.shape == Shape::Dedup);
+    if (choice.shape == Shape::Dedup) {
+      EXPECT_TRUE(irs::codecs::SealSegments(acc, &choice, params,
+                                            duckdb::LogicalType::VARCHAR,
+                                            tuning, buffers, sink));
+    } else {
+      irs::codecs::SealSegments(write_chunks, choice, params,
+                                duckdb::LogicalType::VARCHAR, tuning, buffers,
+                                sink);
+    }
     EXPECT_GT(segments, 1u);
     EXPECT_EQ(rows, 20000u);
     EXPECT_FALSE(tuning.reuse.pick);
@@ -1178,12 +1177,12 @@ TEST_F(ColCodecsTest, AutoChoosesPerRowGroup) {
       acc.Add(*chunks[c]);
     }
     std::vector<Shape> shapes;
-    const auto outcome = irs::codecs::SealSegments(
+    const bool sealed = irs::codecs::SealSegments(
       acc, nullptr, irs::ColCodecParams{.segment_target = 16 * 1024},
       duckdb::LogicalType::VARCHAR, tuning, Db().GetBufferManager(),
       [&](irs::codecs::StringChoice choice, duckdb::BaseStatistics, uint64_t,
           std::string_view) { shapes.push_back(choice.shape); });
-    EXPECT_TRUE(outcome.sealed);
+    EXPECT_TRUE(sealed);
     return shapes;
   };
   const auto all = [](const std::vector<Shape>& shapes, Shape shape) {
@@ -1471,12 +1470,12 @@ TEST_F(ColCodecsTest, AutoTunesLevelsOnTheFirstRowGroupWithData) {
                         irs::codecs::StringTuning& tuning) {
     irs::codecs::StringAccumulator acc;
     Accumulate(acc, chunks);
-    const auto outcome = irs::codecs::SealSegments(
+    const bool sealed = irs::codecs::SealSegments(
       acc, nullptr, irs::ColCodecParams{}, duckdb::LogicalType::VARCHAR, tuning,
       Db().GetBufferManager(),
       [](irs::codecs::StringChoice, duckdb::BaseStatistics, uint64_t,
          std::string_view) {});
-    EXPECT_TRUE(outcome.sealed);
+    EXPECT_TRUE(sealed);
   };
   const auto levels = [](const irs::codecs::StringTuning& tuning) {
     std::vector<int> out;
@@ -2545,6 +2544,7 @@ TEST(ColCodecNames, ColumnstoreCompressionTypesRoundTrip) {
     ASSERT_NE(codec, nullptr);
     EXPECT_EQ(codec->name, name);
     EXPECT_EQ(irs::codecs::NameOf(codec->type), name);
+    EXPECT_EQ(irs::codecs::FindCodec(type), codec);
   }
   for (const auto type : {duckdb::CompressionType::COMPRESSION_UNCOMPRESSED,
                           duckdb::CompressionType::COMPRESSION_RLE,
@@ -2562,11 +2562,14 @@ TEST(ColCodecNames, ColumnstoreCompressionTypesRoundTrip) {
     const auto* codec = irs::codecs::FindCodec(name);
     ASSERT_NE(codec, nullptr);
     EXPECT_EQ(codec->name, name);
+    EXPECT_EQ(irs::codecs::FindCodec(type), codec);
   }
   const auto* automatic = irs::codecs::FindCodec(
     duckdb::CompressionTypeToString(duckdb::CompressionType::COMPRESSION_AUTO));
   ASSERT_NE(automatic, nullptr);
   EXPECT_EQ(automatic->type, irs::codecs::CodecType::Auto);
+  EXPECT_EQ(irs::codecs::FindCodec(duckdb::CompressionType::COMPRESSION_AUTO),
+            automatic);
   for (const auto type : {duckdb::CompressionType::COMPRESSION_DICTIONARY,
                           duckdb::CompressionType::COMPRESSION_PFOR_DELTA,
                           duckdb::CompressionType::COMPRESSION_CHIMP,
@@ -2574,6 +2577,7 @@ TEST(ColCodecNames, ColumnstoreCompressionTypesRoundTrip) {
     const auto name = duckdb::CompressionTypeToString(type);
     SCOPED_TRACE(name);
     EXPECT_EQ(irs::codecs::FindCodec(name), nullptr);
+    EXPECT_EQ(irs::codecs::FindCodec(type), nullptr);
   }
   const std::pair<std::string_view, duckdb::CompressionType> parsed[] = {
     {"dict_lz4", duckdb::CompressionType::COMPRESSION_DICT_LZ4},
@@ -2599,6 +2603,7 @@ TEST(ColCodecNames, ColumnstoreCompressionTypesRoundTrip) {
     const auto* codec = irs::codecs::FindCodec(name);
     ASSERT_NE(codec, nullptr);
     EXPECT_EQ(codec->name, duckdb::CompressionTypeToString(type));
+    EXPECT_EQ(irs::codecs::FindCodec(type), codec);
   }
 }
 
@@ -3717,12 +3722,12 @@ TEST_F(ColCodecsTest, AutoMeasuresLessOftenWhileItsCodecHolds) {
                         irs::codecs::StringTuning& tuning) {
     irs::codecs::StringAccumulator acc;
     Accumulate(acc, in);
-    const auto outcome = irs::codecs::SealSegments(
+    const bool sealed = irs::codecs::SealSegments(
       acc, nullptr, irs::ColCodecParams{}, duckdb::LogicalType::VARCHAR, tuning,
       Db().GetBufferManager(),
       [](irs::codecs::StringChoice, duckdb::BaseStatistics, uint64_t,
          std::string_view) {});
-    EXPECT_TRUE(outcome.sealed);
+    EXPECT_TRUE(sealed);
   };
   const Value urls = [](uint64_t g) -> std::optional<std::string> {
     return "https://example.org/section/" + std::to_string(g % 5000) +
@@ -3812,12 +3817,11 @@ TEST_F(ColCodecsTest, FsstSegmentsFollowAChangeInCompressibility) {
   std::vector<uint64_t> sizes;
   const irs::codecs::StringChoice fsst{irs::codecs::Shape::Plain,
                                        irs::codecs::ByteCodec::Fsst};
-  const auto outcome = irs::codecs::SealSegments(
+  irs::codecs::SealSegments(
     chunks, fsst, irs::ColCodecParams{.segment_target = kTarget},
     duckdb::LogicalType::VARCHAR, tuning, Db().GetBufferManager(),
     [&](irs::codecs::StringChoice, duckdb::BaseStatistics, uint64_t,
         std::string_view bytes) { sizes.push_back(bytes.size()); });
-  ASSERT_TRUE(outcome.sealed);
   ASSERT_GT(sizes.size(), 8u);
   const auto oversized = std::ranges::count_if(
     sizes, [](uint64_t bytes) { return bytes > kTarget * 3 / 2; });

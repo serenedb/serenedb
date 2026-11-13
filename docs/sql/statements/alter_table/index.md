@@ -231,7 +231,7 @@ The rows already in the table are checked against the new constraint: a duplicat
 
 ## `ALTER COLUMN ... SET COMPRESSION`
 
-`SET COMPRESSION codec`, optionally with `(compression_level = N)`, changes the codec a column is written with, as `USING COMPRESSION` sets it in `CREATE TABLE`; `SET COMPRESSION DEFAULT` returns the column to automatic selection. The same codecs and levels are accepted as at creation (see [Columnstore Storage & Compression](../../indexes/inverted/columnstore.md#choosing-a-codec)): the codec has to store the column's type, and only a codec that has levels takes one. Generated columns take no codec.
+`SET COMPRESSION codec`, optionally with `(compression_level = N)`, changes the codec a column is written with, as `USING COMPRESSION` sets it in `CREATE TABLE`; `SET COMPRESSION DEFAULT` returns the column to automatic selection. The same codecs and levels are accepted as at creation (see [Columnstore Storage & Compression](../../indexes/inverted/columnstore.md#choosing-a-codec)): the codec has to store the column's type, and only a codec that has levels takes one. A generated column takes a codec only when it is `STORED`.
 
 <SqlLogicTest id="sql/statements/alter_table/index/example_038" />
 

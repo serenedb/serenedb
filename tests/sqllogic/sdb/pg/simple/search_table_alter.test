@@ -207,6 +207,38 @@ db error: ERROR: cannot SET COMPRESSION for generated column "g"
 statement ok
 DROP TABLE alg;
 
+
+statement ok
+CREATE TABLE alg_stored (id INT PRIMARY KEY, v TEXT, g TEXT GENERATED ALWAYS AS (upper(v)) STORED);
+
+statement ok
+INSERT INTO alg_stored (id, v) SELECT i, 'value ' || (i % 100) FROM range(20000) t(i);
+
+statement ok
+ALTER TABLE alg_stored ALTER COLUMN g SET COMPRESSION dict_lz4;
+
+statement ok
+VACUUM (FLUSH_TABLE) alg_stored;
+
+statement ok
+VACUUM (COMPACT_TABLE) alg_stored;
+
+query
+SELECT DISTINCT compression FROM pragma_storage_info('alg_stored') WHERE column_name = 'g' AND segment_type <> 'VALIDITY';
+----
+compression
+DICT_LZ4
+
+query
+SELECT count(*) AS n FROM alg_stored WHERE g = upper(v);
+----
+n
+20000
+
+
+statement ok
+DROP TABLE alg_stored;
+
 statement ok
 CREATE TABLE alt_tx (a INTEGER, b INTEGER);
 

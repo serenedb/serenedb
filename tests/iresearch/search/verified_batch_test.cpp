@@ -63,7 +63,7 @@ class Approx {
 };
 
 struct Verifier {
-  void Check(std::span<const irs::doc_id_t> docs, std::span<bool> matched) {
+  void Check(std::span<const irs::doc_id_t> docs, auto& matched) {
     sizes.push_back(docs.size());
     for (size_t i = 0; i < docs.size(); ++i) {
       matched[i] = Accepts(docs[i]);

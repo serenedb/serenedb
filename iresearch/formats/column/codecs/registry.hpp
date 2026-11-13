@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/types.hpp>
 #include <span>
 #include <string_view>
@@ -71,6 +72,7 @@ const CompressionFunction* GetCodec(CodecType type,
 
 std::string_view NameOf(CodecType type) noexcept;
 const Codec* FindCodec(std::string_view name) noexcept;
+const Codec* FindCodec(duckdb::CompressionType type) noexcept;
 
 const StringChoice* ChoiceOf(CodecType type) noexcept;
 

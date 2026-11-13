@@ -122,6 +122,9 @@ bool VerifyClientProof(const ScramVerifier& verifier,
 bool VerifyCleartextAgainstScram(const ScramVerifier& verifier,
                                  std::string_view password);
 
+bool VerifyCleartext(const Credential& stored, std::string_view username,
+                     std::string_view password);
+
 // ServerSignature = HMAC(ServerKey, AuthMessage), for the server-final v=.
 std::array<uint8_t, kScramKeyLen> ScramServerSignature(
   const ScramVerifier& verifier, std::string_view auth_message);

@@ -34,10 +34,11 @@
 
 namespace sdb::network {
 
-// A stoppable session, as the registry sees it (Transport implements it).
+// A stoppable session, as the registry sees it.
 class TransportBase {
  public:
   virtual void Stop() = 0;
+  virtual void Wake() = 0;
 
   virtual ~TransportBase() = default;
 };
@@ -51,9 +52,8 @@ class TransportBase {
 // the registry and the session, so it outlives either.
 struct CancelToken {
   void Cancel() {
-    absl::MutexLock lock{&mu};
-    if (ctx) {
-      ctx->Interrupt();
+    if (auto locked = Interrupt()) {
+      locked->Wake();
     }
   }
   // pg_terminate_backend / server shutdown: interrupt the in-flight query and
@@ -61,22 +61,29 @@ struct CancelToken {
   // Cancel()) on a locked shared_ptr, so a session mid-teardown is kept alive
   // for the call and a torn-down one is skipped.
   void Terminate() {
-    duckdb::shared_ptr<TransportBase> locked;
-    {
-      absl::MutexLock lock{&mu};
-      if (ctx) {
-        ctx->Interrupt();
-      }
-      locked = session.lock();
-    }
-    if (locked) {
+    if (auto locked = Interrupt()) {
       locked->Stop();
     }
   }
+
+  void Attach(duckdb::ClientContext& context, duckdb::idx_t login_role) {
+    role.store(login_role, std::memory_order_relaxed);
+    absl::MutexLock lock{&mu};
+    ctx = &context;
+  }
+
   void Detach() {
     absl::MutexLock lock{&mu};
     ctx = nullptr;
     session.reset();
+  }
+
+  duckdb::shared_ptr<TransportBase> Interrupt() {
+    absl::MutexLock lock{&mu};
+    if (ctx) {
+      ctx->Interrupt();
+    }
+    return session.lock();
   }
 
   absl::Mutex mu;

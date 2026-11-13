@@ -54,7 +54,6 @@
 #include <yaclib/coro/future.hpp>
 #include <yaclib/coro/task.hpp>
 
-#include "catalog/cluster.h"
 #include "network/cancel_registry.h"
 #include "network/connection.h"
 #include "network/cpu_resumer.h"
@@ -68,6 +67,7 @@
 #include "network/io_executor.h"
 #include "network/socket.h"
 #include "pg/connection_context.h"
+#include "query/driven_query.h"
 #include "server/utils/asio_ns.h"
 #include "server/utils/message_buffer.h"
 #include "server/utils/metrics.h"
@@ -173,45 +173,7 @@ class HttpSession final
   // --- RequestContext -------------------------------------------------------
   duckdb::Connection& Connection() final {
     if (!_conn) {
-      const std::string_view dbname =
-        _database.empty() ? irs::StaticStrings::kDefaultDatabase : _database;
-      duckdb::idx_t database_id = 0;
-      duckdb::Permissions permissions;
-      if (!catalog::ReadDatabase(
-            dbname, [&](const catalog::DatabaseCatalogEntry& database) {
-              database_id = database.oid;
-              permissions = database.permissions;
-            })) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_CATALOG_NAME),
-                        ERR_MSG("database \"", dbname, "\" does not exist"));
-      }
-      const std::string_view user =
-        _user.empty() ? irs::StaticStrings::kDefaultUser : _user;
-      auto login = sdb::pg::RequireLoginRole(user, dbname, permissions);
-      if (!login.role) {
-        THROW_SQL_ERROR_FROM_DATA(std::move(login.error));
-      }
-      const auto& role = login.role;
-
-      _conn =
-        MakeConnection(irs::DuckDBEngine::Instance().instance(),
-                       {.user = user,
-                        .role = role,
-                        .database = dbname,
-                        .database_id = database_id,
-                        .backend_pid = static_cast<int32_t>(_cancel_key >> 32),
-                        .cancel_registry = _cancel,
-                        .client_backend = true});
-      _conn->context->SetSchedulerAccount(_task->Account());
-      _connection_ctx = &ConnectionContext::Get(*_conn->context);
-      _cancel_token->role.store(role, std::memory_order_relaxed);
-      {
-        absl::MutexLock lock{&_cancel_token->mu};
-        _cancel_token->ctx = _conn->context.get();
-      }
-      _progress =
-        sdb::pg::ProgressRegistration{_connection_ctx->ProgressSource()};
-      _conn_user = _user;
+      SetupConnection();
     }
     return *_conn;
   }
@@ -232,7 +194,7 @@ class HttpSession final
     // as an ErrorData result too, not an escaped exception.
     try {
       auto& conn = Connection();
-      co_return co_await Drive(conn.Submit(sql, MaterializedQuery()));
+      co_return co_await Drive(conn.Submit(sql, query::DrivenQuery()));
     } catch (const std::exception& ex) {
       co_return duckdb::make_uniq<duckdb::QueryResult>(duckdb::ErrorData{ex});
     }
@@ -242,7 +204,7 @@ class HttpSession final
     duckdb::PreparedStatement& statement) final {
     try {
       duckdb::vector<duckdb::Value> params;
-      co_return co_await Drive(statement.Submit(params, MaterializedQuery()));
+      co_return co_await Drive(statement.Submit(params, query::DrivenQuery()));
     } catch (const std::exception& ex) {
       co_return duckdb::make_uniq<duckdb::QueryResult>(duckdb::ErrorData{ex});
     }
@@ -253,20 +215,21 @@ class HttpSession final
     return _prepared[index];
   }
 
-  std::string_view User() const final { return _user; }
-
   std::string_view Schema() const final {
     return _schema.empty() ? std::string_view{"public"} : _schema;
   }
 
- private:
-  static duckdb::QueryParameters MaterializedQuery() {
-    duckdb::QueryParameters parameters;
-    parameters.result_eagerness = duckdb::ResultEagerness::FORCED;
-    parameters.caller_drives = true;
-    return parameters;
+  std::string_view Database() const final { return _database; }
+
+  http::AuthResult Authenticate(std::string_view credential) final {
+    return _auth.AuthenticateCredential(credential, _peer, _database);
   }
 
+  const duckdb::shared_ptr<CpuResumer>& Resumer() final { return _task; }
+
+  network::IoExecutor& Io() final { return *_ioexec; }
+
+ private:
   yaclib::Task<duckdb::unique_ptr<duckdb::QueryResult>> Drive(
     duckdb::unique_ptr<duckdb::QueryResult> pending) {
     try {
@@ -286,12 +249,8 @@ class HttpSession final
           }
         }
       }
-      auto result = pending->TakeCollectorResult();
-      if (!result) {
-        pending->Complete();
-        result = std::move(pending);
-      }
-      co_return result;
+      auto result = query::TakeDrivenResult(*pending);
+      co_return result ? std::move(result) : std::move(pending);
     } catch (const std::exception& ex) {
       co_return duckdb::make_uniq<duckdb::QueryResult>(duckdb::ErrorData{ex});
     }
@@ -338,6 +297,18 @@ class HttpSession final
 
   void WaitReadDeadline();
   void OnReadDeadline();
+
+  void SetupConnection() {
+    auto conn = OpenClientSession(_user, _database,
+                                  static_cast<int32_t>(_cancel_key >> 32),
+                                  _cancel, _task->Account());
+    auto& connection_ctx = ConnectionContext::Get(*conn->context);
+    _progress = sdb::pg::ProgressRegistration{connection_ctx.ProgressSource()};
+    _cancel_token->Attach(*conn->context, connection_ctx.GetLoginRoleId());
+    _connection_ctx = &connection_ctx;
+    _conn = std::move(conn);
+    _conn_user = _user;
+  }
 
   void ReleaseConnection() {
     {
@@ -386,7 +357,7 @@ class HttpSession final
   std::chrono::steady_clock::time_point _last_read;
   std::chrono::steady_clock::time_point _busy_at;
   size_t _written_seen = 0;
-  bool _peer_is_loopback = false;
+  pg::LoginPeer _peer;
   // Lazily created on first handler use; lives (and dies) on the session
   // task like the pg session's connection.
   duckdb::unique_ptr<duckdb::Connection> _conn;
@@ -449,7 +420,8 @@ yaclib::Task<> HttpSession<Kind>::Run() {
   yaclib::Future<> cpu;
   if (co_await Negotiate()) {
     const auto client = this->ClientAddress();
-    _peer_is_loopback = client && client->is_loopback();
+    _peer = {.address = client ? *client : asio_ns::ip::address{},
+             .is_ssl = _socket.IsTls()};
     cpu = SessionMain();
     _handed_off = true;
     _task->Start();
@@ -728,9 +700,14 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
           }
         }
 
-        auto auth = _auth.Authenticate(
-          request.Header(HttpHeader::Authorization), _peer_is_loopback);
-        _user = std::move(auth.context.user);
+        HttpHandler* handler = _router.Match(request);
+        const bool self_authenticating = handler && handler->SkipsHttpAuth();
+        http::AuthResult auth;
+        if (!self_authenticating) {
+          auth = _auth.Authenticate(request.Header(HttpHeader::Authorization),
+                                    _peer, _database);
+          _user = std::move(auth.context.user);
+        }
         if (auth.status != http::HttpStatus::None) {
           writer.Fixed(auth.status, http::kJsonContentType,
                        R"({"error":"unauthorized"})",
@@ -738,8 +715,8 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
         } else if (const auto decoding = DecodeRequestBody(request);
                    decoding.status != http::HttpStatus::None) {
           writer.Error(decoding.status, decoding.error);
-        } else if (HttpHandler* handler = _router.Match(request)) {
-          if (_conn && _user != _conn_user) {
+        } else if (handler) {
+          if (!self_authenticating && _conn && _user != _conn_user) {
             ReleaseConnection();
           }
           try {
@@ -762,10 +739,7 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
             writer.Error(http::HttpStatus::InternalError, "internal");
           }
           if (_connection_ctx) {
-            // No NoticeResponse equivalent on this protocol (and the
-            // ConnectionContext dtor asserts the queue is empty).
-            _connection_ctx->ConsumeNotices(
-              [](const irs::pg::SqlErrorData&) {});
+            _connection_ctx->DiscardNotices();
           }
         } else {
           writer.Error(http::HttpStatus::NotFound, "not_found");

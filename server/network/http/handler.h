@@ -32,8 +32,11 @@
 #include <yaclib/coro/future.hpp>
 #include <yaclib/coro/task.hpp>
 
+#include "network/cpu_resumer.h"
+#include "network/http/auth.h"
 #include "network/http/request.h"
 #include "network/http/response_writer.h"
+#include "network/io_executor.h"
 #include "query/prepared_cache.h"
 
 namespace duckdb {
@@ -93,8 +96,10 @@ class RequestContext {
   // prepares into it once and re-executes it on later requests.
   virtual PreparedCache& PreparedSlot(PreparedSlotId slot) = 0;
   virtual std::string_view Schema() const = 0;
-  // Authenticated user; empty = trust/anonymous.
-  virtual std::string_view User() const = 0;
+  virtual std::string_view Database() const = 0;
+  virtual http::AuthResult Authenticate(std::string_view credential) = 0;
+  virtual const duckdb::shared_ptr<CpuResumer>& Resumer() = 0;
+  virtual network::IoExecutor& Io() = 0;
 };
 
 // Runs on the session's duckdb task (NOT an io thread): handlers may drive
@@ -109,6 +114,8 @@ class HttpHandler {
   virtual yaclib::Task<> Handle(RequestContext& context,
                                 const HttpRequest& request,
                                 http::HttpResponseWriter& writer) = 0;
+
+  virtual bool SkipsHttpAuth() const noexcept { return false; }
 };
 
 }  // namespace sdb::network

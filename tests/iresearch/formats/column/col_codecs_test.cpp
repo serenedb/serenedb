@@ -2523,11 +2523,8 @@ TEST(ColCodecNames, ColumnstoreCompressionTypesRoundTrip) {
     {duckdb::CompressionType::COMPRESSION_DICT_LZ4, "DICT_LZ4"},
     {duckdb::CompressionType::COMPRESSION_DICT_ZSTD, "DICT_ZSTD"},
     {duckdb::CompressionType::COMPRESSION_LZ4, "LZ4"},
-    {duckdb::CompressionType::COMPRESSION_COL_DICT_FSST, "DICT_FSST"},
-    {duckdb::CompressionType::COMPRESSION_COL_FSST, "FSST"},
     {duckdb::CompressionType::COMPRESSION_DICT_ZXC, "DICT_ZXC"},
     {duckdb::CompressionType::COMPRESSION_ZXC, "ZXC"},
-    {duckdb::CompressionType::COMPRESSION_COL_ZSTD, "ZSTD"},
     {duckdb::CompressionType::COMPRESSION_COL_DICT_FSST_PLUS, "DICT_FSST_PLUS"},
     {duckdb::CompressionType::COMPRESSION_COL_FSST_PLUS, "FSST_PLUS"},
     {duckdb::CompressionType::COMPRESSION_COL_DICT_ONPAIR, "DICT_ONPAIR"},
@@ -2538,21 +2535,7 @@ TEST(ColCodecNames, ColumnstoreCompressionTypesRoundTrip) {
   EXPECT_EQ(
     static_cast<size_t>(duckdb::CompressionType::COMPRESSION_SERENEDB_COUNT) -
       static_cast<size_t>(duckdb::CompressionType::COMPRESSION_DICT_LZ4),
-    std::size(names) + 2);
-  EXPECT_TRUE(duckdb::IsSereneDBCompressionType(
-    duckdb::CompressionType::COMPRESSION_COL_SEQUENCE));
-  EXPECT_EQ(duckdb::CompressionTypeToString(
-              duckdb::CompressionType::COMPRESSION_COL_SEQUENCE),
-            "Sequence");
-  EXPECT_ANY_THROW(
-    duckdb::EnumUtil::FromString<duckdb::CompressionType>("sequence"));
-  EXPECT_TRUE(duckdb::IsSereneDBCompressionType(
-    duckdb::CompressionType::COMPRESSION_COL_NUMERIC));
-  EXPECT_EQ(duckdb::CompressionTypeToString(
-              duckdb::CompressionType::COMPRESSION_COL_NUMERIC),
-            "Numeric");
-  EXPECT_ANY_THROW(
-    duckdb::EnumUtil::FromString<duckdb::CompressionType>("numeric"));
+    std::size(names));
   for (const auto& [type, name] : names) {
     SCOPED_TRACE(name);
     EXPECT_TRUE(duckdb::IsSereneDBCompressionType(type));
@@ -2571,7 +2554,6 @@ TEST(ColCodecNames, ColumnstoreCompressionTypesRoundTrip) {
                           duckdb::CompressionType::COMPRESSION_ROARING,
                           duckdb::CompressionType::COMPRESSION_CONSTANT,
                           duckdb::CompressionType::COMPRESSION_EMPTY,
-                          duckdb::CompressionType::COMPRESSION_COL_NUMERIC,
                           duckdb::CompressionType::COMPRESSION_FSST,
                           duckdb::CompressionType::COMPRESSION_DICT_FSST,
                           duckdb::CompressionType::COMPRESSION_ZSTD}) {
@@ -2588,8 +2570,7 @@ TEST(ColCodecNames, ColumnstoreCompressionTypesRoundTrip) {
   for (const auto type : {duckdb::CompressionType::COMPRESSION_DICTIONARY,
                           duckdb::CompressionType::COMPRESSION_PFOR_DELTA,
                           duckdb::CompressionType::COMPRESSION_CHIMP,
-                          duckdb::CompressionType::COMPRESSION_PATAS,
-                          duckdb::CompressionType::COMPRESSION_COL_SEQUENCE}) {
+                          duckdb::CompressionType::COMPRESSION_PATAS}) {
     const auto name = duckdb::CompressionTypeToString(type);
     SCOPED_TRACE(name);
     EXPECT_EQ(irs::codecs::FindCodec(name), nullptr);

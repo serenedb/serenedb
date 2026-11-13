@@ -1,0 +1,59 @@
+statement ok
+CREATE TABLE ik_parent (k INTERVAL PRIMARY KEY)
+
+statement ok
+INSERT INTO ik_parent VALUES ('1 day')
+
+query
+SELECT count(*) AS n FROM ik_parent WHERE k = INTERVAL '24 hours'
+----
+n
+1
+
+statement error
+INSERT INTO ik_parent VALUES ('24 hours')
+----
+db error: ERROR: duplicate key value violates unique constraint "ik_parent_pkey"
+DETAIL: Key (k)=(1 day) already exists.
+
+
+statement ok
+CREATE TABLE ik_child (k INTERVAL REFERENCES ik_parent (k))
+
+statement ok
+INSERT INTO ik_child VALUES ('24 hours')
+
+statement error
+INSERT INTO ik_child VALUES ('25 hours')
+----
+db error: ERROR: insert or update on table "ik_child" violates foreign key constraint "ik_child_k_fkey"
+DETAIL: Key (k)=(1 day 01:00:00) is not present in table "ik_parent".
+
+
+statement ok
+CREATE TABLE ik_unique (k INTERVAL UNIQUE)
+
+statement error
+INSERT INTO ik_unique VALUES ('1 mon'), ('30 days')
+----
+db error: ERROR: duplicate key value violates unique constraint "ik_unique_k_key"
+DETAIL: Key (k)=(1 mon) already exists.
+
+
+statement ok
+INSERT INTO ik_unique VALUES ('1 mon'), ('29 days'), ('-1 day'), (NULL), (NULL)
+
+query
+SELECT count(*) AS n FROM ik_unique
+----
+n
+5
+
+statement ok
+DROP TABLE ik_unique
+
+statement ok
+DROP TABLE ik_child
+
+statement ok
+DROP TABLE ik_parent

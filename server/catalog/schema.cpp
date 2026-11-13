@@ -949,6 +949,13 @@ void Schema::Alter(duckdb::CatalogTransaction transaction,
       info.type == duckdb::AlterType::ALTER_TABLE) {
     FollowColumnOids(transaction, entry->Cast<duckdb::TableCatalogEntry>(),
                      result->Cast<duckdb::TableCatalogEntry>());
+    if (info.Cast<duckdb::AlterTableInfo>().alter_table_type ==
+        duckdb::AlterTableType::RENAME_COLUMN) {
+      const auto& rename = info.Cast<duckdb::RenameColumnInfo>();
+      FollowReferencedColumnRename(transaction,
+                                   result->Cast<duckdb::TableCatalogEntry>(),
+                                   rename.old_name, rename.new_name);
+    }
   }
   if (!replay && result && result->type == duckdb::CatalogType::TABLE_ENTRY &&
       info.type == duckdb::AlterType::ALTER_PERMISSIONS &&
@@ -1121,16 +1128,27 @@ void Schema::CreateDefaults(duckdb::CatalogTransaction transaction) {
   }
 }
 
+std::array<EntrySet*, 13> Schema::MemberSets() const {
+  auto& sets = *_sets;
+  return {
+    &sets.tables,         &sets.indexes,          &sets.table_functions,
+    &sets.copy_functions, &sets.pragma_functions, &sets.functions,
+    &sets.sequences,      &sets.collations,       &sets.coordinate_systems,
+    &sets.types,          &sets.tokenizers,       &sets.jobs,
+    &sets.schemas};
+}
+
 void Schema::ScanMembers(
   duckdb::CatalogTransaction transaction,
   absl::FunctionRef<void(duckdb::CatalogEntry&)> callback) {
-  auto& sets = *_sets;
-  for (auto* set :
-       {&sets.tables, &sets.indexes, &sets.table_functions,
-        &sets.copy_functions, &sets.pragma_functions, &sets.functions,
-        &sets.sequences, &sets.collations, &sets.coordinate_systems,
-        &sets.types, &sets.tokenizers, &sets.jobs, &sets.schemas}) {
+  for (auto* set : MemberSets()) {
     set->Scan(transaction, callback);
+  }
+}
+
+void Schema::CheckNoLaterMembers(const duckdb::SnapshotView& view) const {
+  for (auto* set : MemberSets()) {
+    set->CheckNoLaterEntry(view, *this);
   }
 }
 

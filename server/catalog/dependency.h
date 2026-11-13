@@ -97,6 +97,11 @@ void FollowColumnRename(duckdb::CatalogTransaction transaction,
                         const duckdb::Identifier& old_column,
                         const duckdb::Identifier& new_column);
 
+void FollowReferencedColumnRename(duckdb::CatalogTransaction transaction,
+                                  duckdb::TableCatalogEntry& table,
+                                  const duckdb::Identifier& old_column,
+                                  const duckdb::Identifier& new_column);
+
 void DropColumnReaders(duckdb::CatalogTransaction transaction,
                        duckdb::TableCatalogEntry& table,
                        std::span<const duckdb::LogicalIndex> columns,

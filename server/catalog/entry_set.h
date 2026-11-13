@@ -127,6 +127,8 @@ class OidIndex {
 
   void CheckCreated(const duckdb::CatalogEntry& version);
 
+  void CheckLive(duckdb::idx_t oid);
+
   void CheckDropped(const duckdb::SnapshotView& view,
                     const duckdb::CatalogEntry& dropped);
 
@@ -230,6 +232,9 @@ class EntrySet {
                              const duckdb::Identifier& name, duckdb::idx_t oid,
                              const duckdb::CatalogEntry& dropped,
                              const duckdb::Identifier& catalog, bool local);
+
+  void CheckNoLaterEntry(const duckdb::SnapshotView& view,
+                         const duckdb::CatalogEntry& dropped);
 
  private:
   duckdb::CatalogEntry& Push(duckdb::CatalogTransaction transaction,

@@ -401,28 +401,28 @@ void OidIndex::CheckCreated(const duckdb::CatalogEntry& version) {
       }
       index = &database->GetCatalog().Cast<BaseCatalog>().Oids();
     }
-    index->VisitNewest(subject,
-                       [&](EntrySet& set, const duckdb::Identifier& name) {
-                         set.CheckSubjectLive(name, subject);
-                       });
+    index->CheckLive(subject);
   });
   if (version.deleted || version.type == duckdb::CatalogType::ROLE_ENTRY) {
     return;
   }
   auto& roles = ClusterOf().Oids();
   const auto check_role = [&](duckdb::idx_t role) {
-    if (!role) {
-      return;
+    if (role) {
+      roles.CheckLive(role);
     }
-    roles.VisitNewest(role, [&](EntrySet& set, const duckdb::Identifier& name) {
-      set.CheckSubjectLive(name, role);
-    });
   };
   check_role(version.permissions.owner);
   for (const auto& item : version.permissions.acl) {
     check_role(item.grantee);
     check_role(item.grantor);
   }
+}
+
+void OidIndex::CheckLive(duckdb::idx_t oid) {
+  VisitNewest(oid, [&](EntrySet& set, const duckdb::Identifier& name) {
+    set.CheckSubjectLive(name, oid);
+  });
 }
 
 void OidIndex::CheckDropped(const duckdb::SnapshotView& view,
@@ -521,6 +521,28 @@ void EntrySet::CheckNoLaterDependent(const duckdb::SnapshotView& view,
                 dropped.name.GetIdentifierName(),
                 "\" because a dependency was created after the transaction "
                 "started"));
+    }
+  }
+}
+
+void EntrySet::CheckNoLaterEntry(const duckdb::SnapshotView& view,
+                                 const duckdb::CatalogEntry& dropped) {
+  absl::ReaderMutexLock lock{&_mutex};
+  for (const auto& [name, head] : _entries) {
+    for (auto* version = head.get(); version;
+         version = version->HasChild() ? &version->Child() : nullptr) {
+      if (version->timestamp >= duckdb::TRANSACTION_ID_START) {
+        continue;
+      }
+      if (!version->deleted && !view.Sees(version->timestamp)) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_T_R_SERIALIZATION_FAILURE),
+          ERR_MSG("Failed to commit: Could not commit DROP of \"",
+                  dropped.name.GetIdentifierName(), "\" because \"",
+                  name.GetIdentifierName(),
+                  "\" was created in it after the transaction started"));
+      }
+      break;
     }
   }
 }

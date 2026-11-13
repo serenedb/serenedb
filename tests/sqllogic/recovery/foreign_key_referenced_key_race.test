@@ -1,0 +1,133 @@
+control substitution on
+
+statement ok
+CREATE TABLE fkrk_p1 (id INT PRIMARY KEY);
+
+
+statement ok
+CREATE TABLE fkrk_p2 (id INT PRIMARY KEY);
+
+
+statement ok
+CREATE TABLE fkrk_p3 (id INT PRIMARY KEY);
+
+
+connection a
+statement ok
+BEGIN;
+
+
+connection a
+statement ok
+CREATE TABLE fkrk_c1 (pid INT REFERENCES fkrk_p1 (id));
+
+
+connection b
+statement ok
+ALTER TABLE fkrk_p1 DROP CONSTRAINT fkrk_p1_pkey;
+
+
+connection a
+statement error
+COMMIT;
+----
+db error: ERROR: Failed to commit: a foreign key of "fkrk_c1" references a key of "fkrk_p1" that another transaction changed
+
+
+connection a
+statement ok
+BEGIN;
+
+
+connection a
+statement ok
+CREATE TABLE fkrk_c2 (pid INT);
+
+
+connection a
+statement ok
+ALTER TABLE fkrk_c2 ADD FOREIGN KEY (pid) REFERENCES fkrk_p2 (id);
+
+
+connection b
+statement ok
+ALTER TABLE fkrk_p2 RENAME COLUMN id TO pid;
+
+
+connection a
+statement error
+COMMIT;
+----
+db error: ERROR: Failed to commit: a foreign key of "fkrk_c2" references a key of "fkrk_p2" that another transaction changed
+
+
+connection a
+statement ok
+BEGIN;
+
+
+connection a
+statement ok
+CREATE TABLE fkrk_c3 (pid INT REFERENCES fkrk_p3 (id));
+
+
+connection b
+statement ok
+BEGIN;
+
+
+connection b
+statement ok
+ALTER TABLE fkrk_p3 DROP CONSTRAINT fkrk_p3_pkey;
+
+
+connection a
+statement ok
+COMMIT;
+
+
+connection b
+statement error
+COMMIT;
+----
+db error: ERROR: Failed to commit: a foreign key of "fkrk_c3" references a key of "fkrk_p3" that another transaction changed
+
+
+statement ok
+INSERT INTO fkrk_p3 VALUES (1);
+
+
+statement ok
+INSERT INTO fkrk_c3 VALUES (1);
+
+
+statement ok
+SET sdb_faults = 'shutdown_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_restart
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT relname FROM pg_class WHERE relname LIKE 'fkrk_c%' ORDER BY relname;
+----
+relname
+fkrk_c3
+
+
+connection after_restart
+query
+SELECT conname FROM pg_constraint WHERE conrelid IN ('fkrk_p1'::regclass, 'fkrk_p3'::regclass) AND contype = 'p' ORDER BY conname;
+----
+conname
+fkrk_p3_pkey
+
+
+connection after_restart
+statement error
+INSERT INTO fkrk_c3 VALUES (2);
+----
+db error: ERROR: insert or update on table "fkrk_c3" violates foreign key constraint "fkrk_c3_pid_fkey"
+DETAIL: Key (pid)=(2) is not present in table "fkrk_p3".

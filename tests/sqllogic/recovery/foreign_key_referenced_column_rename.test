@@ -1,0 +1,60 @@
+control substitution on
+
+statement ok
+CREATE TABLE fkcr_p (id INT PRIMARY KEY, other INT);
+
+
+statement ok
+CREATE TABLE fkcr_c (x INT REFERENCES fkcr_p (id));
+
+
+statement ok
+ALTER TABLE fkcr_p RENAME COLUMN id TO pid;
+
+
+statement ok
+ALTER TABLE fkcr_c ADD COLUMN z INT;
+
+
+query
+SELECT pg_get_constraintdef(oid) AS fk FROM pg_constraint WHERE conrelid = 'fkcr_c'::regclass AND contype = 'f';
+----
+fk
+FOREIGN KEY (x) REFERENCES fkcr_p(pid)
+
+
+statement ok
+INSERT INTO fkcr_p VALUES (1, 10);
+
+
+statement ok
+INSERT INTO fkcr_c VALUES (1, NULL);
+
+
+statement ok
+SET sdb_faults = 'shutdown_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_restart
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+COMMENT ON TABLE fkcr_c IS 'children';
+
+
+connection after_restart
+statement error
+INSERT INTO fkcr_c VALUES (2, NULL);
+----
+db error: ERROR: insert or update on table "fkcr_c" violates foreign key constraint "fkcr_c_x_fkey"
+DETAIL: Key (x)=(2) is not present in table "fkcr_p".
+
+
+connection after_restart
+query
+SELECT x, z FROM fkcr_c;
+----
+x	z
+1	NULL

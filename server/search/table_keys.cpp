@@ -222,6 +222,28 @@ const catalog::SearchTableEntry* ReferencedTable(
                     transaction);
 }
 
+void CheckReferencedKeys(const catalog::SearchTableEntry& table,
+                         duckdb::CatalogTransaction transaction) {
+  for (const auto& constraint : table.GetConstraints()) {
+    if (constraint->type != duckdb::ConstraintType::FOREIGN_KEY) {
+      continue;
+    }
+    const auto& fk = constraint->Cast<duckdb::ForeignKeyConstraint>();
+    if (!fk.info.IsAppendConstraint()) {
+      continue;
+    }
+    const auto* parent = ReferencedTable(table, fk, transaction);
+    if (parent && !ReferencedKey(*parent, fk.pk_columns)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_T_R_SERIALIZATION_FAILURE),
+        ERR_MSG("Failed to commit: a foreign key of \"",
+                table.name.GetIdentifierName(), "\" references a key of \"",
+                parent->name.GetIdentifierName(),
+                "\" that another transaction changed"));
+    }
+  }
+}
+
 std::vector<ReferencingKey> LiveReferencing(
   const catalog::SearchTableEntry& table,
   std::span<const std::shared_ptr<const Referencing>> referencing,

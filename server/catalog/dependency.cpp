@@ -1337,6 +1337,48 @@ void FollowReferences(duckdb::CatalogTransaction transaction,
   follow(table);
 }
 
+void FollowReferencedColumnRename(duckdb::CatalogTransaction transaction,
+                                  duckdb::TableCatalogEntry& table,
+                                  const duckdb::Identifier& old_column,
+                                  const duckdb::Identifier& new_column) {
+  const duckdb::IdentifierEquality equals{
+    table.ParentCatalog().IsCaseSensitive()};
+  absl::flat_hash_set<duckdb::idx_t> seen;
+  for (const auto& edge : DirectDependents(transaction, table)) {
+    auto& referencing = *edge.dependent;
+    if (edge.part != Part::Constraint ||
+        referencing.type != duckdb::CatalogType::TABLE_ENTRY ||
+        referencing.oid == table.oid || !seen.insert(referencing.oid).second) {
+      continue;
+    }
+    auto info = referencing.GetInfo();
+    bool changed = false;
+    for (auto& constraint : info->Cast<duckdb::CreateTableInfo>().constraints) {
+      if (constraint->type != duckdb::ConstraintType::FOREIGN_KEY) {
+        continue;
+      }
+      auto& fk = constraint->Cast<duckdb::ForeignKeyConstraint>();
+      if (fk.info.type != duckdb::ForeignKeyType::FK_TYPE_FOREIGN_KEY_TABLE ||
+          ReferencedTableOid(referencing.Cast<duckdb::TableCatalogEntry>(),
+                             fk) != table.oid) {
+        continue;
+      }
+      for (auto& column : fk.pk_columns) {
+        if (equals(column, old_column)) {
+          column = new_column;
+          changed = true;
+        }
+      }
+    }
+    if (changed) {
+      auto& parent = referencing.ParentSchema(transaction);
+      info->SetQualifiedName(parent.GetQualifiedName(referencing.name));
+      duckdb::ReplaceDefinitionInfo replace{std::move(info)};
+      parent.Alter(transaction, replace);
+    }
+  }
+}
+
 duckdb::idx_t ReferencedTableOid(const duckdb::TableCatalogEntry& table,
                                  const duckdb::ForeignKeyConstraint& fk) {
   if (fk.info.type == duckdb::ForeignKeyType::FK_TYPE_SELF_REFERENCE_TABLE) {

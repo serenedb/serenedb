@@ -145,7 +145,7 @@ id
 statement ok
 DETACH IF EXISTS db6;
 
-statement ok retry 40 backoff 250ms
+statement ok
 ATTACH '${__TEST_DIR__}/db6.db' AS db6;
 
 

@@ -37,7 +37,7 @@
 #include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
-#include <iresearch/formats/column/codecs/duckdb_compression.hpp>
+#include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/segment_reader.hpp>
@@ -84,11 +84,12 @@ catalog::CompressionByColumn DeclaredCompression(
   const duckdb::ColumnList& columns) {
   catalog::CompressionByColumn compression;
   for (const auto& column : columns.Logical()) {
-    const auto codec = irs::codecs::FromDuckDB(column.CompressionType());
-    if (codec != irs::codecs::CodecType::Auto) {
+    const auto* codec = irs::codecs::FindCodec(
+      duckdb::CompressionTypeToString(column.CompressionType()));
+    if (codec && codec->type != irs::codecs::CodecType::Auto) {
       compression.emplace(
         connector::TableColumnId(column),
-        catalog::DeclaredCodec{.type = codec,
+        catalog::DeclaredCodec{.type = codec->type,
                                .compression_level = column.CompressionLevel()});
     }
   }

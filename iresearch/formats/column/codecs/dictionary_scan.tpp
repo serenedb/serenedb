@@ -79,8 +79,7 @@ struct DictionaryFetch final : SegmentScanState {
     for (idx_t i = 0; i < count; ++i) {
       SDB_ENSURE(rows[i] < h.row_count, "col codec: row out of range");
       const uint32_t code =
-        numeric.Fetch(rows[i], i == 0 ? kNoRow : rows[i - 1],
-                      i + 1 == count ? kNoRow : rows[i + 1]);
+        numeric.Fetch(rows[i], i + 1 == count ? kNoRow : rows[i + 1]);
       const auto at = offset + sel.get_index(i);
       if (code == 0) {
         validity.SetInvalid(at);
@@ -95,7 +94,7 @@ struct DictionaryFetch final : SegmentScanState {
   IRS_FORCE_INLINE uint32_t ReadOne(data_ptr_t base, idx_t row) {
     const auto& h = frames.header;
     SDB_ENSURE(row < h.row_count, "col codec: row out of range");
-    const auto code = Numeric(base).Fetch(row, kNoRow, kNoRow);
+    const auto code = Numeric(base).Fetch(row, kNoRow);
     SDB_ENSURE(code == 0 || code < h.entry_count,
                "col codec: corrupted row codes");
     return code;
@@ -327,9 +326,6 @@ struct DictionaryScan final : SegmentScanState {
   }
 
   bool ResolveFilter(const duckdb::TableFilter& filter, EntryRanges& out) {
-    if (filter.filter_type != duckdb::TableFilterType::EXPRESSION_FILTER) {
-      return false;
-    }
     return Resolve(*filter.Cast<duckdb::ExpressionFilter>().expr, out);
   }
 
@@ -338,31 +334,17 @@ struct DictionaryScan final : SegmentScanState {
     switch (expr.GetExpressionClass()) {
       case duckdb::ExpressionClass::BOUND_OPERATOR: {
         const auto& op = expr.Cast<duckdb::BoundOperatorExpression>();
-        const auto& children = op.GetChildren();
-        if (children.empty() ||
-            !duckdb::ExpressionFilter::IsSimpleFilterColumnRef(*children[0])) {
+        const auto type = op.GetExpressionType();
+        if ((type != duckdb::ExpressionType::OPERATOR_IS_NULL &&
+             type != duckdb::ExpressionType::OPERATOR_IS_NOT_NULL) ||
+            !duckdb::ExpressionFilter::IsSimpleFilterColumnRef(
+              *op.GetChildren()[0])) {
           return false;
         }
-        switch (op.GetExpressionType()) {
-          case duckdb::ExpressionType::OPERATOR_IS_NULL:
-          case duckdb::ExpressionType::OPERATOR_IS_NOT_NULL:
-            if (children.size() != 1) {
-              return false;
-            }
-            out =
-              op.GetExpressionType() == duckdb::ExpressionType::OPERATOR_IS_NULL
+        out = type == duckdb::ExpressionType::OPERATOR_IS_NULL
                 ? EntryRanges{{0, 1}}
                 : Normalize({{1, n}});
-            return true;
-          case duckdb::ExpressionType::COMPARE_IN:
-            if constexpr (Sorted(Leaf::kCodec)) {
-              return ResolveIn(children, out);
-            } else {
-              return false;
-            }
-          default:
-            return false;
-        }
+        return true;
       }
       case duckdb::ExpressionClass::BOUND_FUNCTION:
         if constexpr (Sorted(Leaf::kCodec)) {
@@ -376,9 +358,7 @@ struct DictionaryScan final : SegmentScanState {
           expr.Cast<duckdb::BoundConjunctionExpression>();
         const auto kind = conjunction.GetExpressionType();
         const auto& children = conjunction.GetChildren();
-        if ((kind != duckdb::ExpressionType::CONJUNCTION_AND &&
-             kind != duckdb::ExpressionType::CONJUNCTION_OR) ||
-            children.empty() || !Resolve(*children[0], out)) {
+        if (!Resolve(*children[0], out)) {
           return false;
         }
         EntryRanges ranges;
@@ -398,21 +378,6 @@ struct DictionaryScan final : SegmentScanState {
       default:
         return false;
     }
-  }
-
-  bool ResolveIn(const auto& children, EntryRanges& out) {
-    EntryRanges ranges;
-    for (size_t i = 1; i < children.size(); ++i) {
-      const auto* value = StringConstant(*children[i]);
-      if (!value) {
-        return false;
-      }
-      if (!value->IsNull()) {
-        ranges.emplace_back(EqualRange(duckdb::StringValue::Get(*value)));
-      }
-    }
-    out = Normalize(std::move(ranges));
-    return true;
   }
 
   bool ResolveComparison(const duckdb::BoundFunctionExpression& fn,

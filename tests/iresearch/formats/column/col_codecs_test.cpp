@@ -52,7 +52,6 @@
 #include <functional>
 #include <iresearch/formats/column/codecs/compression_function.hpp>
 #include <iresearch/formats/column/codecs/dictionary_cache.hpp>
-#include <iresearch/formats/column/codecs/duckdb_compression.hpp>
 #include <iresearch/formats/column/codecs/fsst.hpp>
 #include <iresearch/formats/column/codecs/onpair.hpp>
 #include <iresearch/formats/column/codecs/registry.hpp>
@@ -2559,7 +2558,10 @@ TEST(ColCodecNames, ColumnstoreCompressionTypesRoundTrip) {
     EXPECT_TRUE(duckdb::IsSereneDBCompressionType(type));
     EXPECT_EQ(duckdb::EnumUtil::ToString(type), name);
     EXPECT_EQ(duckdb::CompressionTypeToString(type), name);
-    EXPECT_EQ(irs::codecs::NameOf(irs::codecs::FromDuckDB(type)), name);
+    const auto* codec = irs::codecs::FindCodec(name);
+    ASSERT_NE(codec, nullptr);
+    EXPECT_EQ(codec->name, name);
+    EXPECT_EQ(irs::codecs::NameOf(codec->type), name);
   }
   for (const auto type : {duckdb::CompressionType::COMPRESSION_UNCOMPRESSED,
                           duckdb::CompressionType::COMPRESSION_RLE,
@@ -2573,18 +2575,24 @@ TEST(ColCodecNames, ColumnstoreCompressionTypesRoundTrip) {
                           duckdb::CompressionType::COMPRESSION_FSST,
                           duckdb::CompressionType::COMPRESSION_DICT_FSST,
                           duckdb::CompressionType::COMPRESSION_ZSTD}) {
-    SCOPED_TRACE(duckdb::CompressionTypeToString(type));
-    EXPECT_EQ(irs::codecs::NameOf(irs::codecs::FromDuckDB(type)),
-              duckdb::CompressionTypeToString(type));
+    const auto name = duckdb::CompressionTypeToString(type);
+    SCOPED_TRACE(name);
+    const auto* codec = irs::codecs::FindCodec(name);
+    ASSERT_NE(codec, nullptr);
+    EXPECT_EQ(codec->name, name);
   }
-  for (const auto type : {duckdb::CompressionType::COMPRESSION_AUTO,
-                          duckdb::CompressionType::COMPRESSION_DICTIONARY,
+  const auto* automatic = irs::codecs::FindCodec(duckdb::CompressionTypeToString(
+    duckdb::CompressionType::COMPRESSION_AUTO));
+  ASSERT_NE(automatic, nullptr);
+  EXPECT_EQ(automatic->type, irs::codecs::CodecType::Auto);
+  for (const auto type : {duckdb::CompressionType::COMPRESSION_DICTIONARY,
                           duckdb::CompressionType::COMPRESSION_PFOR_DELTA,
                           duckdb::CompressionType::COMPRESSION_CHIMP,
                           duckdb::CompressionType::COMPRESSION_PATAS,
                           duckdb::CompressionType::COMPRESSION_COL_SEQUENCE}) {
-    SCOPED_TRACE(duckdb::CompressionTypeToString(type));
-    EXPECT_EQ(irs::codecs::FromDuckDB(type), irs::codecs::CodecType::Auto);
+    const auto name = duckdb::CompressionTypeToString(type);
+    SCOPED_TRACE(name);
+    EXPECT_EQ(irs::codecs::FindCodec(name), nullptr);
   }
   const std::pair<std::string_view, duckdb::CompressionType> parsed[] = {
     {"dict_lz4", duckdb::CompressionType::COMPRESSION_DICT_LZ4},
@@ -2607,6 +2615,9 @@ TEST(ColCodecNames, ColumnstoreCompressionTypesRoundTrip) {
     EXPECT_EQ(
       duckdb::EnumUtil::FromString<duckdb::CompressionType>(std::string{name}),
       type);
+    const auto* codec = irs::codecs::FindCodec(name);
+    ASSERT_NE(codec, nullptr);
+    EXPECT_EQ(codec->name, duckdb::CompressionTypeToString(type));
   }
 }
 

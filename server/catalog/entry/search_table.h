@@ -29,7 +29,6 @@
 #include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/common/case_insensitive_map.hpp>
 #include <duckdb/common/constants.hpp>
-#include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/insertion_order_preserving_map.hpp>
 #include <duckdb/common/table_column.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
@@ -39,6 +38,7 @@
 #include <duckdb/planner/expression.hpp>
 #include <duckdb/storage/storage_info.hpp>
 #include <duckdb/storage/table_storage_info.hpp>
+#include <iresearch/formats/column/codecs/codec_type.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/types.hpp>
 #include <memory>
@@ -102,9 +102,10 @@ inline constexpr auto kSearchTableOptions = std::to_array({
 });
 
 void RequireSearchTableIndexOption(std::string_view name);
-void CheckColumnCodec(std::string_view column_name,
-                      duckdb::CompressionType type, uint32_t level,
-                      const duckdb::LogicalType& column_type);
+irs::codecs::CodecType CheckColumnCodec(std::string_view column_name,
+                                        std::string_view codec_name,
+                                        uint32_t level,
+                                        const duckdb::LogicalType& column_type);
 
 struct TableOption {
   std::string_view name;

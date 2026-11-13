@@ -70,6 +70,7 @@ const CompressionFunction* GetCodec(CodecType type,
                                     duckdb::PhysicalType physical);
 
 std::string_view NameOf(CodecType type) noexcept;
+const Codec* FindCodec(std::string_view name) noexcept;
 
 const StringChoice* ChoiceOf(CodecType type) noexcept;
 

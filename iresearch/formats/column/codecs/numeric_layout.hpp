@@ -131,7 +131,10 @@ struct NumericHeader {
           h.frame_log2 == kFforFrameLog2 && h.base == 0)) &&
         static_cast<uint8_t>(h.leaf) <=
           static_cast<uint8_t>(NumericLeaf::Zstd) &&
-        (h.transform != NumericTransform::Rle || NumericWidth(h.run_width)) &&
+        (h.transform != NumericTransform::Rle ||
+         (NumericWidth(h.run_width) && h.run_width <= sizeof(uint32_t))) &&
+        (h.transform != NumericTransform::Dict ||
+         h.stored <= sizeof(uint16_t)) &&
         Coded(h.transform) == (h.dict_count != 0) &&
         h.dict_count <= kNumericDictMax && h.off_frames >= kNumericHeaderSize &&
         h.off_frames +

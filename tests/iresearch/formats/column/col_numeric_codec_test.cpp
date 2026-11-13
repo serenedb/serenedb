@@ -18,6 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/strings/str_join.h>
+
 #include <algorithm>
 #include <bit>
 #include <cstdint>
@@ -51,6 +53,7 @@
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/store/mmap_directory.hpp>
 #include <iterator>
+#include <iostream>
 #include <limits>
 #include <optional>
 #include <set>
@@ -977,35 +980,55 @@ TEST_F(ColNumericCodecTest, ValidityIsRoaringOnlyBelowHalfTheBitmap) {
 
 TEST_F(ColNumericCodecTest, SparseReadsCacheDecodedFrames) {
   constexpr uint64_t kRows = 60000;
-  const Gen clustered = [](uint64_t g) {
-    return static_cast<int64_t>(1'700'000'000'000'000LL + (g / 4) * 1000 +
-                                Mix(g / 4) % 3 * 100);
+  struct Case {
+    const char* name;
+    Gen gen;
+    irs::WriteTier tier;
+    std::string_view stored;
   };
-  irs::MemoryDirectory dir{};
-  Write(dir, duckdb::LogicalType::BIGINT, {}, kRows, 65536, clustered);
-  const auto transforms = Transforms(dir);
-  ASSERT_TRUE(std::ranges::any_of(transforms, [](const auto& t) {
-    return t.ends_with("/zstd") || t.ends_with("/lz4");
-  }));
-  irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
-  const auto* col = r.Column(kField);
-  ASSERT_NE(col, nullptr);
-  const auto lookups = [&] {
-    irs::ColumnReader::PointReader cursor{r, *col};
-    duckdb::Vector out{duckdb::LogicalType::BIGINT, 1};
-    for (uint64_t g = 2501; g < kRows; g += 5003) {
-      duckdb::FlatVector::ValidityMutable(out).Reset();
-      ASSERT_TRUE(cursor.FetchRow(g, out, 0));
-      ExpectRow(out, 0, g, clustered, duckdb::LogicalType::BIGINT);
-    }
+  const Case cases[] = {
+    {"clustered runs",
+     [](uint64_t g) {
+       return static_cast<int64_t>(1'700'000'000'000'000LL + (g / 4) * 1000 +
+                                   Mix(g / 4) % 3 * 100);
+     },
+     irs::WriteTier::Merge,
+     {}},
+    {"periodic steps",
+     [](uint64_t g) { return static_cast<int64_t>(g * 1000 + g % 7); },
+     irs::WriteTier::Flush,
+     "delta/lz4"},
   };
-  lookups();
-  EXPECT_TRUE(CachedFrames(r, *col).empty());
-  lookups();
-  const auto admitted = CachedFrames(r, *col);
-  EXPECT_FALSE(admitted.empty());
-  lookups();
-  EXPECT_EQ(CachedFrames(r, *col), admitted);
+  for (const auto& c : cases) {
+    SCOPED_TRACE(c.name);
+    irs::MemoryDirectory dir{};
+    Write(dir, duckdb::LogicalType::BIGINT, {.tier = c.tier}, kRows, 65536,
+          c.gen);
+    const auto transforms = Transforms(dir);
+    ASSERT_TRUE(std::ranges::any_of(transforms, [&](const auto& t) {
+      return c.stored.empty() ? t.ends_with("/zstd") || t.ends_with("/lz4")
+                              : t == c.stored;
+    }));
+    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+    const auto* col = r.Column(kField);
+    ASSERT_NE(col, nullptr);
+    const auto lookups = [&] {
+      irs::ColumnReader::PointReader cursor{r, *col};
+      duckdb::Vector out{duckdb::LogicalType::BIGINT, 1};
+      for (uint64_t g = 2501; g < kRows; g += 5003) {
+        duckdb::FlatVector::ValidityMutable(out).Reset();
+        ASSERT_TRUE(cursor.FetchRow(g, out, 0));
+        ExpectRow(out, 0, g, c.gen, duckdb::LogicalType::BIGINT);
+      }
+    };
+    lookups();
+    EXPECT_TRUE(CachedFrames(r, *col).empty());
+    lookups();
+    const auto admitted = CachedFrames(r, *col);
+    EXPECT_FALSE(admitted.empty());
+    lookups();
+    EXPECT_EQ(CachedFrames(r, *col), admitted);
+  }
 }
 
 TEST_F(ColNumericCodecTest, PointReadsInDescendingOrder) {
@@ -1463,6 +1486,163 @@ TEST_F(ColNumericCodecTest, CorruptedFrameTableIsRejected) {
 #endif
 }
 
+TEST_F(ColNumericCodecTest, RareWidthsRunLengthsAndDictionarySizes) {
+  const auto adjacent = [](uint64_t k) {
+    return static_cast<int64_t>(((uint64_t{1} << 52) + k) * 16);
+  };
+  struct Case {
+    const char* name;
+    std::vector<duckdb::LogicalType> types;
+    uint32_t rg_size;
+    uint64_t rows;
+    Gen gen;
+    std::string_view flush;
+    std::string_view merge;
+  };
+  const Case cases[] = {
+    {"adjacent doubles",
+     {duckdb::LogicalType::DOUBLE},
+     8192,
+     20000,
+     [&](uint64_t g) { return adjacent(Mix(g) % 60000); },
+     "for/none@2",
+     "for/none@2"},
+    {"drifting adjacent doubles",
+     {duckdb::LogicalType::DOUBLE},
+     8192,
+     20000,
+     [&](uint64_t g) { return adjacent(g * 300 + Mix(g) % 5000); },
+     "delta/none@2",
+     "delta/none@2"},
+    {"runs of adjacent doubles",
+     {duckdb::LogicalType::DOUBLE},
+     8192,
+     20000,
+     [&](uint64_t g) { return adjacent(Mix(g / 8) % 60000); },
+     "rle/none@2",
+     "rle_ffor/none@8"},
+    {"runs of nearby doubles",
+     {duckdb::LogicalType::DOUBLE},
+     8192,
+     20000,
+     [&](uint64_t g) { return adjacent(Mix(g / 8) % (uint64_t{1} << 31)); },
+     "rle/none@4",
+     "rle/none@4"},
+    {"short runs of adjacent doubles",
+     {duckdb::LogicalType::DOUBLE},
+     8192,
+     20000,
+     [&](uint64_t g) { return adjacent(Mix(g / 3) % 60000); },
+     "rle/none@2",
+     "rle_ffor/none@8"},
+    {"short runs in a two byte range",
+     {duckdb::LogicalType::UBIGINT},
+     8192,
+     20000,
+     [](uint64_t g) {
+       return static_cast<int64_t>((uint64_t{1} << 40) + Mix(g / 3) % 60000);
+     },
+     "rle/lz4@2",
+     "rle/lz4@2"},
+    {"adjacent floats",
+     {duckdb::LogicalType::FLOAT},
+     8192,
+     20000,
+     [](uint64_t g) { return static_cast<int64_t>(65536 + Mix(g) % 512); },
+     "for/none@2",
+     "for/none@2"},
+    {"one long run",
+     {duckdb::LogicalType::FLOAT, duckdb::LogicalType::DOUBLE,
+      duckdb::LogicalType::UBIGINT},
+     131072,
+     140000,
+     [](uint64_t g) {
+       return g < 70000 ? int64_t{7} : static_cast<int64_t>(Mix(g / 2) % 1000);
+     },
+     {},
+     {}},
+    {"runs in a four byte range",
+     {duckdb::LogicalType::UBIGINT},
+     8192,
+     20000,
+     [](uint64_t g) {
+       return static_cast<int64_t>((uint64_t{1} << 40) +
+                                   Mix(g / 8) % 3'000'000'000ULL);
+     },
+     {},
+     {}},
+    {"256 wide values",
+     {duckdb::LogicalType::BIGINT},
+     8192,
+     20000,
+     [](uint64_t g) { return static_cast<int64_t>(Mix(Mix(g) % 256)); },
+     "dict/none@1",
+     "dict/none@1"},
+    {"200 wide values",
+     {duckdb::LogicalType::BIGINT},
+     8192,
+     20000,
+     [](uint64_t g) { return static_cast<int64_t>(Mix(Mix(g) % 200)); },
+     "dict/none@1",
+     "dict/none@1"},
+    {"noise then a pattern",
+     {duckdb::LogicalType::BIGINT},
+     40000,
+     32768 + 100,
+     [](uint64_t g) {
+       return static_cast<int64_t>(g % 32768 < 16384 ? Mix(g) : Mix(g % 8));
+     },
+     "raw/lz4@8",
+     "raw/lz4@8"},
+    {"many distinct values",
+     {duckdb::LogicalType::DOUBLE, duckdb::LogicalType::BIGINT,
+      duckdb::LogicalType::UBIGINT},
+     131072,
+     131072,
+     [](uint64_t g) { return static_cast<int64_t>(Mix(Mix(g) % 40000)); },
+     "dict/none@2",
+     "dict/none@2"},
+    {"periodic small values",
+     {duckdb::LogicalType::BIGINT},
+     65536,
+     60000,
+     [](uint64_t g) { return static_cast<int64_t>(5000 + g % 7 * 3); },
+     "delta/lz4@1",
+     "for/zstd@1"},
+    {"cycle of wide values",
+     {duckdb::LogicalType::BIGINT},
+     65536,
+     60000,
+     [](uint64_t g) { return static_cast<int64_t>(Mix(g % 1000)); },
+     "dict/lz4@2",
+     "dict/lz4@2"},
+  };
+  for (const auto tier : {irs::WriteTier::Flush, irs::WriteTier::Merge}) {
+    for (const auto& c : cases) {
+      for (const auto& type : c.types) {
+        SCOPED_TRACE(std::string{c.name} + " " + type.ToString() + " " +
+                     std::to_string(static_cast<int>(tier)));
+        irs::MemoryDirectory dir{};
+        Write(dir, type, {.tier = tier}, c.rows, c.rg_size, c.gen);
+        Verify(dir, type, c.rows, c.gen);
+        const auto expected = tier == irs::WriteTier::Flush ? c.flush : c.merge;
+        if (expected.empty()) {
+          continue;
+        }
+        const auto transforms = Transforms(dir);
+        const auto stored = SegmentInfo(dir, "stored");
+        ASSERT_EQ(transforms.size(), stored.size());
+        std::set<std::string> seen;
+        for (size_t i = 0; i < transforms.size(); ++i) {
+          seen.insert(transforms[i] + "@" + stored[i]);
+        }
+        EXPECT_TRUE(seen.contains(expected))
+          << expected << " not among " << absl::StrJoin(seen, " ");
+      }
+    }
+  }
+}
+
 TEST(ColNumericCodesTest, EstimateFollowsWhatTheEncoderWrote) {
   constexpr uint64_t kEntries = 300;
   for (const uint64_t run : {uint64_t{1}, uint64_t{64}}) {
@@ -1520,6 +1700,88 @@ TEST(ColNumericKernelsTest, PrefixSumOfEveryWidthAndLength) {
   };
   check.template operator()<uint64_t>();
   check.template operator()<uint32_t>();
+}
+
+TEST(ColNumericKernelsTest, PacksEveryWidthOfEveryType) {
+  const auto check = []<typename U>() {
+    using Word = irs::codecs::numeric::LaneWord<U>;
+    constexpr auto kValues = irs::codecs::numeric::kBlockValues;
+    constexpr auto kMaxBits = irs::codecs::numeric::kMaxBits<U>;
+    for (unsigned bits = 0; bits <= kMaxBits; ++bits) {
+      SCOPED_TRACE(testing::Message() << sizeof(U) << " " << bits);
+      const auto mask = bits == kMaxBits
+                          ? static_cast<U>(~U{0})
+                          : static_cast<U>((uint64_t{1} << bits) - 1);
+      const auto base = static_cast<U>(Mix(bits + 77 * sizeof(U)));
+      std::vector<U> values(kValues);
+      for (size_t i = 0; i != kValues; ++i) {
+        values[i] =
+          static_cast<U>(base + (static_cast<U>(Mix(i * 131 + bits)) & mask));
+      }
+      values[1] = base;
+      values[2] = static_cast<U>(base + mask);
+      std::vector<Word> packed(
+        irs::codecs::numeric::PackedBytes(bits) / sizeof(Word) +
+          irs::codecs::numeric::kLanes<U>,
+        Word{0});
+      irs::codecs::numeric::kPack<U>[bits](values.data(), packed.data(), base);
+      std::vector<U> unpacked(kValues, static_cast<U>(~base));
+      irs::codecs::numeric::kUnpack<U>[bits](packed.data(), unpacked.data(),
+                                             base);
+      ASSERT_EQ(unpacked, values);
+      const auto* bytes = reinterpret_cast<const uint8_t*>(packed.data());
+      for (uint32_t i = 0; i < kValues; i += 37) {
+        ASSERT_EQ(irs::codecs::numeric::UnpackValue<U>(bytes, bits, i, base),
+                  values[i])
+          << i;
+      }
+    }
+  };
+  check.template operator()<uint8_t>();
+  check.template operator()<uint16_t>();
+  check.template operator()<uint32_t>();
+  check.template operator()<uint64_t>();
+}
+
+TEST(ColNumericKernelsTest, NarrowsAndWidensEveryStoredWidth) {
+  static constexpr uint8_t kWidths[] = {1, 2, 4, 8};
+  const auto check = []<typename U>() {
+    for (const auto stored : kWidths) {
+      if (stored > sizeof(U)) {
+        continue;
+      }
+      for (const size_t n : {size_t{0}, size_t{1}, size_t{33}, size_t{1000}}) {
+        SCOPED_TRACE(testing::Message()
+                     << sizeof(U) << " " << int{stored} << " " << n);
+        const auto limit = stored == 8 ? ~uint64_t{0}
+                                       : (uint64_t{1} << (8 * stored)) - 1;
+        std::vector<U> values(n);
+        for (size_t i = 0; i != n; ++i) {
+          values[i] = static_cast<U>(Mix(i + n + stored) & limit);
+        }
+        std::vector<uint8_t> narrow(n * stored + 1, uint8_t{0x5a});
+        irs::codecs::numeric::Narrow<sizeof(U)>(
+          n, stored, narrow.data(), [&](size_t i) { return values[i]; });
+        EXPECT_EQ(narrow[n * stored], 0x5a);
+        std::vector<U> wide(n + 1, U{0x5a});
+        irs::codecs::numeric::Widen<U>(narrow.data(), n, stored, wide.data());
+        const auto base = static_cast<U>(Mix(n * 7 + stored));
+        std::vector<U> added(n + 1, U{0x5a});
+        irs::codecs::numeric::WidenAdd<U>(narrow.data(), n, stored, base,
+                                          added.data());
+        for (size_t i = 0; i != n; ++i) {
+          ASSERT_EQ(wide[i], values[i]) << i;
+          ASSERT_EQ(added[i], static_cast<U>(values[i] + base)) << i;
+        }
+        EXPECT_EQ(wide[n], U{0x5a});
+        EXPECT_EQ(added[n], U{0x5a});
+      }
+    }
+  };
+  check.template operator()<uint8_t>();
+  check.template operator()<uint16_t>();
+  check.template operator()<uint32_t>();
+  check.template operator()<uint64_t>();
 }
 
 }  // namespace

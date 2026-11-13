@@ -29,7 +29,6 @@
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry_retriever.hpp>
 #include <duckdb/common/enum_util.hpp>
-#include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/common/type_visitor.hpp>
 #include <duckdb/execution/expression_executor.hpp>
@@ -41,7 +40,7 @@
 #include <duckdb/planner/expression_iterator.hpp>
 #include <iresearch/analysis/geo_tokenizer.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/formats/column/codecs/duckdb_compression.hpp>
+#include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/hnsw/hnsw_graph.hpp>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/assert.hpp>
@@ -632,13 +631,12 @@ void ApplyIncludedOpclass(
     return;
   }
   uint32_t level = 0;
-  auto declared = duckdb::CompressionType::COMPRESSION_AUTO;
+  std::string declared{
+    irs::codecs::NameOf(irs::codecs::CodecType::Auto)};
   for (const auto& [key, raw_val] : *opts) {
     if (key == kCompressionField) {
-      declared = duckdb::EnumUtil::FromString<duckdb::CompressionType>(
-        GetIndexStringOption(catalog::kIncludedKind, owner_label, key,
-                             raw_val));
-      entry.column_options.compression = irs::codecs::FromDuckDB(declared);
+      declared = GetIndexStringOption(catalog::kIncludedKind, owner_label, key,
+                                      raw_val);
     } else if (key == kCompressionLevelField) {
       level = ParsePositiveUintOption(catalog::kIncludedKind, owner_label, key,
                                       raw_val);
@@ -655,7 +653,8 @@ void ApplyIncludedOpclass(
                 "'none')"));
     }
   }
-  catalog::CheckColumnCodec(owner_label, declared, level, value_type);
+  entry.column_options.compression =
+    catalog::CheckColumnCodec(owner_label, declared, level, value_type);
   entry.column_options.compression_level = static_cast<uint8_t>(level);
 }
 

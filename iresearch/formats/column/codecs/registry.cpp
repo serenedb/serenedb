@@ -145,6 +145,13 @@ std::string_view NameOf(CodecType type) noexcept {
   return kCodecs[std::to_underlying(type)].name;
 }
 
+const Codec* FindCodec(std::string_view name) noexcept {
+  const auto it = absl::c_find_if(kCodecs, [&](const Codec& codec) {
+    return absl::EqualsIgnoreCase(codec.name, name);
+  });
+  return it == std::end(kCodecs) ? nullptr : &*it;
+}
+
 const StringChoice* ChoiceOf(CodecType type) noexcept {
   const auto index = std::to_underlying(type);
   return kTextBegin <= index && index < std::size(kCodecs)

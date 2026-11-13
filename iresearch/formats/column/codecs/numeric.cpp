@@ -153,6 +153,32 @@ struct Candidate {
   uint32_t ItemBytes() const noexcept { return stored + run_width; }
 };
 
+bool FrameCopied(const Candidate& c) noexcept {
+  return c.transform == NumericTransform::Rle || c.shuffled;
+}
+
+std::span<const uint8_t> FrameRaw(const Candidate& c, uint32_t f, uint32_t per,
+                                  ScratchVector<uint8_t>& scratch) {
+  SDB_ASSERT(!BitPacked(c.transform));
+  const auto begin = f * per;
+  const auto k = std::min(c.items - begin, per);
+  const auto* values = c.values.data() + size_t{begin} * c.stored;
+  if (c.transform == NumericTransform::Rle) {
+    scratch.resize(size_t{k} * c.ItemBytes());
+    std::memcpy(scratch.data(), values, size_t{k} * c.stored);
+    std::memcpy(scratch.data() + size_t{k} * c.stored,
+                c.lengths.data() + size_t{begin} * c.run_width,
+                size_t{k} * c.run_width);
+    return scratch;
+  }
+  if (c.shuffled) {
+    scratch.resize(size_t{k} * c.stored);
+    numeric::Shuffle(values, k, c.stored, scratch.data());
+    return scratch;
+  }
+  return {values, size_t{k} * c.stored};
+}
+
 struct LeafSamples {
   std::vector<uint32_t> frames;
   std::vector<std::string> bytes;
@@ -266,6 +292,8 @@ template<typename T>
 class TypedSealer final : public NumericSealer {
   using U = numeric::Bits<sizeof(T)>;
   static constexpr uint8_t kWidth = sizeof(T);
+  static constexpr size_t kCodeBytes =
+    std::min<size_t>(kWidth / 2, numeric::BytesFor(kNumericDictMax - 1));
 
  public:
   TypedSealer(const duckdb::LogicalType& type, uint64_t rows) : _type{type} {
@@ -364,7 +392,7 @@ class TypedSealer final : public NumericSealer {
           best_price = price;
           best = &c;
           best_leaf = option;
-          if (option.leaf == NumericLeaf::None || BitPacked(c.transform)) {
+          if (option.leaf == NumericLeaf::None) {
             _best_samples.frames.clear();
           } else {
             std::swap(_samples, _best_samples);
@@ -519,19 +547,21 @@ class TypedSealer final : public NumericSealer {
       });
     }
 
-    if (wanted(NumericTransform::For) && for_stored < kWidth) {
-      _for.resize(size_t{n} * for_stored);
-      numeric::Narrow(n, for_stored, _for.data(),
-                      [v = _values.data(), lo](size_t i) {
-                        return static_cast<U>(v[i] - lo);
-                      });
-      AddWithShuffle({
-        .transform = NumericTransform::For,
-        .stored = for_stored,
-        .base = lo,
-        .items = n,
-        .values = _for,
-      });
+    if constexpr (kWidth > 1) {
+      if (wanted(NumericTransform::For) && for_stored < kWidth) {
+        _for.resize(size_t{n} * for_stored);
+        numeric::Narrow<kWidth / 2>(n, for_stored, _for.data(),
+                                    [v = _values.data(), lo](size_t i) {
+                                      return static_cast<U>(v[i] - lo);
+                                    });
+        AddWithShuffle({
+          .transform = NumericTransform::For,
+          .stored = for_stored,
+          .base = lo,
+          .items = n,
+          .values = _for,
+        });
+      }
     }
 
     if constexpr (std::is_integral_v<T>) {
@@ -548,10 +578,11 @@ class TypedSealer final : public NumericSealer {
     if (wanted(NumericTransform::Delta)) {
       _delta.resize(size_t{n} * delta_stored);
       std::memset(_delta.data(), 0, delta_stored);
-      numeric::Narrow(n - 1, delta_stored, _delta.data() + delta_stored,
-                      [v = _values.data(), delta_offset](size_t i) {
-                        return static_cast<U>(v[i + 1] - v[i] - delta_offset);
-                      });
+      numeric::Narrow<kWidth>(
+        n - 1, delta_stored, _delta.data() + delta_stored,
+        [v = _values.data(), delta_offset](size_t i) {
+          return static_cast<U>(v[i + 1] - v[i] - delta_offset);
+        });
       AddWithShuffle({
         .transform = NumericTransform::Delta,
         .stored = delta_stored,
@@ -569,12 +600,13 @@ class TypedSealer final : public NumericSealer {
           numeric::BytesFor(std::ranges::max(_run_lengths));
         _rle_values.resize(size_t{runs} * for_stored);
         _rle_lengths.resize(size_t{runs} * run_width);
-        numeric::Narrow(runs, for_stored, _rle_values.data(),
-                        [v = _run_values.data(), lo](size_t r) {
-                          return static_cast<U>(v[r] - lo);
-                        });
-        numeric::Narrow(runs, run_width, _rle_lengths.data(),
-                        [l = _run_lengths.data()](size_t r) { return l[r]; });
+        numeric::Narrow<kWidth>(runs, for_stored, _rle_values.data(),
+                                [v = _run_values.data(), lo](size_t r) {
+                                  return static_cast<U>(v[r] - lo);
+                                });
+        numeric::Narrow<sizeof(uint32_t)>(
+          runs, run_width, _rle_lengths.data(),
+          [l = _run_lengths.data()](size_t r) { return l[r]; });
         _candidates.push_back({
           .transform = NumericTransform::Rle,
           .stored = for_stored,
@@ -600,20 +632,21 @@ class TypedSealer final : public NumericSealer {
       }
     }
 
-    if ((wanted(NumericTransform::Dict) ||
-         wanted(NumericTransform::DictFfor)) &&
-        !_codes_only && for_stored > 1) {
-      const uint32_t cap = for_stored >= 4 ? kNumericDictMax : 256;
-      if (BuildDictionary(cap)) {
-        const auto dict_count = static_cast<uint32_t>(_dict.size());
-        const std::span<const uint8_t> dict{
-          reinterpret_cast<const uint8_t*>(_dict.data()),
-          size_t{dict_count} * kWidth};
-        if (wanted(NumericTransform::Dict)) {
-          const auto code_width = numeric::BytesFor(dict_count - 1);
-          if (code_width < for_stored) {
+    if constexpr (kWidth > 1) {
+      if ((wanted(NumericTransform::Dict) ||
+           wanted(NumericTransform::DictFfor)) &&
+          !_codes_only && for_stored > 1) {
+        const uint32_t cap = for_stored >= 4 ? kNumericDictMax : 256;
+        if (BuildDictionary(cap)) {
+          const auto dict_count = static_cast<uint32_t>(_dict.size());
+          const std::span<const uint8_t> dict{
+            reinterpret_cast<const uint8_t*>(_dict.data()),
+            size_t{dict_count} * kWidth};
+          if (wanted(NumericTransform::Dict)) {
+            const auto code_width = numeric::BytesFor(dict_count - 1);
+            SDB_ASSERT(code_width < for_stored);
             _codes.resize(size_t{n} * code_width);
-            numeric::Narrow(
+            numeric::Narrow<kCodeBytes>(
               n, code_width, _codes.data(),
               [k = _code_values.data()](size_t i) { return k[i]; });
             AddWithShuffle({
@@ -624,16 +657,16 @@ class TypedSealer final : public NumericSealer {
               .dict = dict,
             });
           }
-        }
-        if (wanted(NumericTransform::DictFfor)) {
-          _code_blocks.Plan(std::span<const uint32_t>{_code_values},
-                            std::less<uint32_t>{});
-          _candidates.push_back({
-            .transform = NumericTransform::DictFfor,
-            .stored = kWidth,
-            .items = n,
-            .dict = dict,
-          });
+          if (wanted(NumericTransform::DictFfor)) {
+            _code_blocks.Plan(std::span<const uint32_t>{_code_values},
+                              std::less<uint32_t>{});
+            _candidates.push_back({
+              .transform = NumericTransform::DictFfor,
+              .stored = kWidth,
+              .items = n,
+              .dict = dict,
+            });
+          }
         }
       }
     }
@@ -748,33 +781,6 @@ class TypedSealer final : public NumericSealer {
     }
   }
 
-  static bool FrameCopied(const Candidate& c) noexcept {
-    return c.transform == NumericTransform::Rle || c.shuffled;
-  }
-
-  static std::span<const uint8_t> FrameRaw(const Candidate& c, uint32_t f,
-                                           uint32_t per,
-                                           ScratchVector<uint8_t>& scratch) {
-    SDB_ASSERT(!BitPacked(c.transform));
-    const auto begin = f * per;
-    const auto k = std::min(c.items - begin, per);
-    const auto* values = c.values.data() + size_t{begin} * c.stored;
-    if (c.transform == NumericTransform::Rle) {
-      scratch.resize(size_t{k} * c.ItemBytes());
-      std::memcpy(scratch.data(), values, size_t{k} * c.stored);
-      std::memcpy(scratch.data() + size_t{k} * c.stored,
-                  c.lengths.data() + size_t{begin} * c.run_width,
-                  size_t{k} * c.run_width);
-      return scratch;
-    }
-    if (c.shuffled) {
-      scratch.resize(size_t{k} * c.stored);
-      numeric::Shuffle(values, k, c.stored, scratch.data());
-      return scratch;
-    }
-    return {values, size_t{k} * c.stored};
-  }
-
   std::span<const uint8_t> SampleRaw(const Candidate& c, uint32_t k, uint32_t f,
                                      uint32_t per) {
     if (!FrameCopied(c)) {
@@ -808,9 +814,7 @@ class TypedSealer final : public NumericSealer {
       raw +=
         uint64_t{std::min(c.items - frame(k) * g.per, g.per)} * c.ItemBytes();
     }
-    if (raw == 0) {
-      return g.off_data;
-    }
+    SDB_ASSERT(raw != 0);
     _samples.frames.clear();
     _samples.bytes.resize(samples);
     uint64_t comp = 0;
@@ -1056,19 +1060,17 @@ template<typename T>
 void Filter(const ColumnSegment& segment, ColumnScanState& state,
             idx_t vector_count, duckdb::Vector& result,
             duckdb::SelectionVector& sel, idx_t& sel_count,
-            const duckdb::TableFilter& filter,
+            const duckdb::TableFilter& /*filter*/,
             duckdb::TableFilterState& filter_state) {
   auto& scan = state.scan_state->Cast<ScanState<T>>();
   const uint64_t start = state.GetPositionInSegment();
   auto verdict = duckdb::FilterPropagateResult::NO_PRUNING_POSSIBLE;
   if constexpr (std::is_integral_v<T>) {
-    if (filter.filter_type == duckdb::TableFilterType::EXPRESSION_FILTER) {
-      const auto& checker =
-        *filter_state.Cast<duckdb::ExpressionFilterState>().zonemap_checker;
-      if (checker.IsFullyCompiled()) {
-        verdict = FramesVerdict(scan, segment.stats.GetType(), start,
-                                start + vector_count, checker);
-      }
+    const auto& checker =
+      *filter_state.Cast<duckdb::ExpressionFilterState>().zonemap_checker;
+    if (checker.IsFullyCompiled()) {
+      verdict = FramesVerdict(scan, segment.stats.GetType(), start,
+                              start + vector_count, checker);
     }
   }
   if (verdict == duckdb::FilterPropagateResult::FILTER_ALWAYS_FALSE ||
@@ -1105,14 +1107,11 @@ void FetchRows(const ColumnSegment& segment, ColumnFetchState& state,
   auto& frames = *cache.frames;
   auto* data = duckdb::FlatVector::GetDataMutable<T>(result);
   constexpr auto kNone = std::numeric_limits<uint64_t>::max();
-  uint64_t previous = kNone;
   for (idx_t i = 0; i < count; ++i) {
     const auto row = static_cast<uint64_t>(rows[i]);
     SDB_ENSURE(row < segment.count, "numeric codec: row out of range");
     const uint64_t next = i + 1 < count ? rows[i + 1] : kNone;
-    data[result_offset + result_sel.get_index(i)] =
-      frames.Fetch(row, previous, next);
-    previous = row;
+    data[result_offset + result_sel.get_index(i)] = frames.Fetch(row, next);
   }
 }
 

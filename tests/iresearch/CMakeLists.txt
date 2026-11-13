@@ -73,6 +73,8 @@ add_executable(
     analysis/wordnet_synonyms_tokenizer_tests.cpp
     duckdb/immutable_strings_tests.cpp
     duckdb/validity_mask_tests.cpp
+    formats/column/col_codec_corruption_test.cpp
+    formats/column/col_codec_paths_test.cpp
     formats/column/col_codecs_test.cpp
     formats/column/col_numeric_codec_test.cpp
     formats/column/column_reader_test.cpp

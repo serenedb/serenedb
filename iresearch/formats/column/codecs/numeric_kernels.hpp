@@ -35,6 +35,7 @@
 #include <type_traits>
 #include <utility>
 
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/shared.hpp"
 
 namespace irs::codecs::numeric {
@@ -59,17 +60,18 @@ constexpr uint8_t BytesFor(U max) noexcept {
   return 8;
 }
 
-template<typename F>
+template<size_t kMax, typename F>
 IRS_FORCE_INLINE decltype(auto) ResolveStored(uint8_t stored, F&& f) {
+  SDB_ASSERT(stored <= kMax);
   switch (stored) {
     case 1:
       return f.template operator()<uint8_t>();
     case 2:
-      return f.template operator()<uint16_t>();
+      return f.template operator()<Bits<std::min<size_t>(kMax, 2)>>();
     case 4:
-      return f.template operator()<uint32_t>();
+      return f.template operator()<Bits<std::min<size_t>(kMax, 4)>>();
     default:
-      return f.template operator()<uint64_t>();
+      return f.template operator()<Bits<kMax>>();
   }
 }
 
@@ -80,9 +82,9 @@ void NarrowAs(size_t n, uint8_t* out, F value) noexcept {
   }
 }
 
-template<typename F>
+template<size_t kMax, typename F>
 void Narrow(size_t n, uint8_t stored, uint8_t* out, F value) noexcept {
-  ResolveStored(stored, [&]<typename S> { NarrowAs<S>(n, out, value); });
+  ResolveStored<kMax>(stored, [&]<typename S> { NarrowAs<S>(n, out, value); });
 }
 
 template<typename U, typename S>
@@ -94,7 +96,8 @@ void WidenAs(const uint8_t* in, size_t n, U* out) noexcept {
 
 template<typename U>
 void Widen(const uint8_t* in, size_t n, uint8_t stored, U* out) noexcept {
-  ResolveStored(stored, [&]<typename S> { WidenAs<U, S>(in, n, out); });
+  ResolveStored<sizeof(U)>(stored,
+                           [&]<typename S> { WidenAs<U, S>(in, n, out); });
 }
 
 inline void Shuffle(const uint8_t* in, size_t n, uint8_t stored,
@@ -180,8 +183,6 @@ inline void Unshuffle(const uint8_t* in, size_t n, uint8_t stored,
     case 8:
       done = Unshuffle8(in, n, out);
       break;
-    default:
-      break;
   }
   for (uint8_t b = 0; b < stored; ++b) {
     const auto* lane = in + b * n;
@@ -202,8 +203,8 @@ void WidenAddAs(const uint8_t* in, size_t n, U base, U* out) noexcept {
 template<typename U>
 void WidenAdd(const uint8_t* in, size_t n, uint8_t stored, U base,
               U* out) noexcept {
-  ResolveStored(stored,
-                [&]<typename S> { WidenAddAs<U, S>(in, n, base, out); });
+  ResolveStored<sizeof(U)>(
+    stored, [&]<typename S> { WidenAddAs<U, S>(in, n, base, out); });
 }
 
 #ifdef __AVX2__
@@ -265,7 +266,7 @@ U WidenPrefixSumAs(const uint8_t* in, size_t n, U acc, U offset,
 template<bool kWrite, typename U>
 U WidenPrefixSum(const uint8_t* in, size_t n, uint8_t stored, U acc, U offset,
                  U* out) noexcept {
-  return ResolveStored(stored, [&]<typename S> {
+  return ResolveStored<sizeof(U)>(stored, [&]<typename S> {
     return WidenPrefixSumAs<U, S, kWrite>(in, n, acc, offset, out);
   });
 }
@@ -376,8 +377,7 @@ IRS_FORCE_INLINE void UnpackStep(const LaneWord<U>* IRS_RESTRICT in,
   constexpr unsigned kBit = J * W;
   constexpr unsigned kWord = kBit / kWordBits;
   constexpr unsigned kShift = kBit % kWordBits;
-  constexpr Word kMask =
-    W == kWordBits ? ~Word{0} : static_cast<Word>((Word{1} << W) - 1);
+  constexpr auto kMask = static_cast<Word>(~Word{0} >> (kWordBits - W));
   Word v = in[kWord * kLanes<U> + l] >> kShift;
   if constexpr (kShift + W > kWordBits) {
     v |= in[(kWord + 1) * kLanes<U> + l] << (kWordBits - kShift);
@@ -434,16 +434,22 @@ using PackFn = void (*)(const U*, LaneWord<U>*, U) noexcept;
 template<typename U>
 using UnpackFn = void (*)(const LaneWord<U>*, U*, U) noexcept;
 
-template<typename U>
-inline constexpr auto kPack =
-  []<unsigned... W>(std::integer_sequence<unsigned, W...>) {
-    return std::array<PackFn<U>, sizeof...(W)>{&PackBlock<U, W>...};
-  }(std::make_integer_sequence<unsigned, kMaxBits<U> + 1>{});
+template<typename U,
+         typename W = std::make_integer_sequence<unsigned, kMaxBits<U> + 1>>
+struct BlockKernels;
+
+template<typename U, unsigned... W>
+struct BlockKernels<U, std::integer_sequence<unsigned, W...>> {
+  static constexpr std::array<PackFn<U>, sizeof...(W)> kPack{
+    &PackBlock<U, W>...};
+  static constexpr std::array<UnpackFn<U>, sizeof...(W)> kUnpack{
+    &UnpackBlock<U, W>...};
+};
 
 template<typename U>
-inline constexpr auto kUnpack =
-  []<unsigned... W>(std::integer_sequence<unsigned, W...>) {
-    return std::array<UnpackFn<U>, sizeof...(W)>{&UnpackBlock<U, W>...};
-  }(std::make_integer_sequence<unsigned, kMaxBits<U> + 1>{});
+inline constexpr auto& kPack = BlockKernels<U>::kPack;
+
+template<typename U>
+inline constexpr auto& kUnpack = BlockKernels<U>::kUnpack;
 
 }  // namespace irs::codecs::numeric

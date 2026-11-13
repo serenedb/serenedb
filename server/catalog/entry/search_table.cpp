@@ -64,7 +64,6 @@
 #include <duckdb/storage/data_table.hpp>
 #include <duckdb/storage/storage_info.hpp>
 #include <duckdb/storage/table/row_group_collection.hpp>
-#include <iresearch/formats/column/codecs/duckdb_compression.hpp>
 #include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
@@ -304,25 +303,13 @@ duckdb::vector<duckdb::PhysicalType> LeafPhysicalTypes(
   return leaves;
 }
 
-duckdb::PhysicalType LeafPhysicalType(const duckdb::LogicalType& type) {
-  const auto leaves = LeafPhysicalTypes(type);
-  return leaves.size() == 1 ? leaves.front() : duckdb::PhysicalType::STRUCT;
-}
-
-bool TextCodecOnly(duckdb::CompressionType type) noexcept {
-  return duckdb::IsSereneDBCompressionType(type) ||
-         type == duckdb::CompressionType::COMPRESSION_FSST;
-}
-
 void CheckCompressionLevel(std::string_view column_name,
-                           duckdb::CompressionType type, uint32_t level) {
+                           const irs::codecs::Codec& codec, uint32_t level) {
   if (level == 0) {
     return;
   }
-  const uint32_t max_level =
-    irs::codecs::MaxLevel(irs::codecs::FromDuckDB(type));
-  const auto name =
-    duckdb::StringUtil::Lower(duckdb::CompressionTypeToString(type));
+  const uint32_t max_level = irs::codecs::MaxLevel(codec.type);
+  const auto name = duckdb::StringUtil::Lower(std::string{codec.name});
   if (max_level == 0) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("Column \"", column_name, "\": compression '", name,
@@ -337,15 +324,14 @@ void CheckCompressionLevel(std::string_view column_name,
 }
 
 [[noreturn]] void ThrowCodecMismatch(std::string_view column_name,
-                                     duckdb::CompressionType type,
+                                     std::string_view codec,
                                      const duckdb::LogicalType& column_type,
                                      duckdb::PhysicalType physical) {
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
                   ERR_MSG("Can't compress column \"", column_name,
                           "\" with type '", column_type.ToString(),
                           "' (physical: ", duckdb::EnumUtil::ToString(physical),
-                          ") using compression type '",
-                          duckdb::CompressionTypeToString(type), "'"));
+                          ") using compression type '", codec, "'"));
 }
 
 }  // namespace
@@ -369,49 +355,36 @@ void RequireSearchTableIndexOption(std::string_view name) {
   }
 }
 
-void CheckColumnCodec(std::string_view column_name,
-                      duckdb::CompressionType type, uint32_t level,
-                      const duckdb::LogicalType& column_type) {
-  CheckCompressionLevel(column_name, type, level);
-  if (TextCodecOnly(type)) {
-    const auto leaf = LeafPhysicalType(column_type);
-    if (leaf != duckdb::PhysicalType::VARCHAR) {
-      ThrowCodecMismatch(column_name, type, column_type, leaf);
-    }
-    return;
+irs::codecs::CodecType CheckColumnCodec(
+  std::string_view column_name, std::string_view codec_name, uint32_t level,
+  const duckdb::LogicalType& column_type) {
+  const auto* codec = irs::codecs::FindCodec(codec_name);
+  if (!codec) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("Column \"", column_name,
+                            "\": unknown compression '", codec_name, "'"));
   }
-  if (type == duckdb::CompressionType::COMPRESSION_AUTO) {
-    return;
+  CheckCompressionLevel(column_name, *codec, level);
+  if (codec->type == irs::codecs::CodecType::Auto) {
+    return codec->type;
   }
-  if (auto available = duckdb::CompressionTypeIsAvailable(
-        type, duckdb::StorageVersion::DUCKDB_LATEST);
-      !available.IsAvailable()) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG("Can't compress using user-provided compression type '",
-              duckdb::CompressionTypeToString(type), "', that type is ",
-              available.IsDeprecated()
-                ? "deprecated and only has decompress support"
-                : "not available yet"));
-  }
-  const auto codec = irs::codecs::FromDuckDB(type);
   const auto compresses = [&](duckdb::PhysicalType physical) {
     if (physical == duckdb::PhysicalType::VARCHAR &&
-        irs::codecs::ChoiceOf(codec)) {
+        irs::codecs::ChoiceOf(codec->type)) {
       return true;
     }
-    const auto* function = irs::codecs::GetCodec(codec, physical);
+    const auto* function = codec->function(physical);
     return function && function->compress;
   };
   const auto physical = column_type.InternalType();
   if (compresses(physical)) {
-    return;
+    return codec->type;
   }
   if (const auto leaves = LeafPhysicalTypes(column_type);
       !leaves.empty() && absl::c_all_of(leaves, compresses)) {
-    return;
+    return codec->type;
   }
-  ThrowCodecMismatch(column_name, type, column_type, physical);
+  ThrowCodecMismatch(column_name, codec->name, column_type, physical);
 }
 
 SearchTableEntry::SearchTableEntry(

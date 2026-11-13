@@ -111,10 +111,6 @@ GroupMeta DecodeMeta(uint32_t encoded) noexcept {
   Corrupted("group offsets do not describe a range in the data region");
 }
 
-[[noreturn]] void ReadPastEnd() {
-  Corrupted("read exceeds the segment row count");
-}
-
 void ValidateMode(BitpackingMode mode) {
   switch (mode) {
     case BitpackingMode::CONSTANT:
@@ -180,9 +176,7 @@ struct BitpackingState {
     if (maximum > static_cast<T>(duckdb::NumericLimits<S>::Maximum())) {
       return;
     }
-    if (compression_buffer_idx < 2) {
-      return;
-    }
+    SDB_ASSERT(compression_buffer_idx >= 2);
     if (!all_valid) {
       return;
     }
@@ -211,18 +205,16 @@ struct BitpackingState {
         }
       }
     }
-    can_do_delta = true;
     for (idx_t i = 1; i < compression_buffer_idx; i++) {
       maximum_delta = duckdb::MaxValue<S>(maximum_delta, delta_buffer[i]);
       minimum_delta = duckdb::MinValue<S>(minimum_delta, delta_buffer[i]);
     }
     delta_buffer[0] = minimum_delta;
     can_do_delta =
-      can_do_delta && duckdb::TrySubtractOperator::Operation(
-                        maximum_delta, minimum_delta, min_max_delta_diff);
-    can_do_delta =
-      can_do_delta && duckdb::TrySubtractOperator::Operation(
-                        static_cast<S>(buffer[0]), minimum_delta, delta_offset);
+      duckdb::TrySubtractOperator::Operation(maximum_delta, minimum_delta,
+                                             min_max_delta_diff) &&
+      duckdb::TrySubtractOperator::Operation(static_cast<S>(buffer[0]),
+                                             minimum_delta, delta_offset);
   }
 
   template<typename V>
@@ -335,7 +327,9 @@ struct BitpackingState {
       compression_buffer_idx += take;
       i += take;
       if (compression_buffer_idx == kMetadataGroupSize) {
-        success = Flush(writer) && success;
+        if (!Flush(writer)) {
+          success = false;
+        }
         Reset();
       }
     }
@@ -371,12 +365,8 @@ idx_t AnalyzeChunks(std::span<const WriteChunk> chunks) {
   const auto analyze = std::make_unique<BitpackingAnalyze<T>>();
   auto& state = analyze->state;
   NoWriter<T> writer;
+  static_assert(sizeof(T) * kMetadataGroupSize * 2 <= kBlockSize);
   for (const auto& chunk : chunks) {
-    const auto type_size =
-      duckdb::GetTypeIdSize(chunk.data.GetType().InternalType());
-    if (type_size * kMetadataGroupSize * 2 > kBlockSize) {
-      return kNone;
-    }
     if (!state.Update(chunk.data.Values<T>(), writer)) {
       return kNone;
     }
@@ -715,10 +705,6 @@ struct ScanState final : SegmentScanState {
     return std::holds_alternative<Group<T>>(group_state);
   }
 
-  bool IsFinished() const noexcept {
-    return std::holds_alternative<Finished>(group_state);
-  }
-
   void Finish() { group_state = Finished{}; }
 
   Group<T> ReadGroup(idx_t group_index) const {
@@ -739,29 +725,21 @@ struct ScanState final : SegmentScanState {
       case BitpackingMode::CONSTANT:
         group.constant = group_reader.template Read<T>();
         break;
-      case BitpackingMode::FOR:
       case BitpackingMode::CONSTANT_DELTA:
-      case BitpackingMode::DELTA_FOR:
         group.frame_of_reference = group_reader.template Read<T>();
-        break;
-      default:
-        UnknownMode();
-    }
-    switch (meta.mode) {
-      case BitpackingMode::CONSTANT_DELTA:
         group.constant = group_reader.template Read<T>();
         break;
       case BitpackingMode::FOR:
-      case BitpackingMode::DELTA_FOR:
+        group.frame_of_reference = group_reader.template Read<T>();
         group.width = ValidateWidth<T>(group_reader.template Read<T>());
         break;
-      case BitpackingMode::CONSTANT:
+      case BitpackingMode::DELTA_FOR:
+        group.frame_of_reference = group_reader.template Read<T>();
+        group.width = ValidateWidth<T>(group_reader.template Read<T>());
+        group.delta_offset = group_reader.template Read<T>();
         break;
       default:
         UnknownMode();
-    }
-    if (meta.mode == BitpackingMode::DELTA_FOR) {
-      group.delta_offset = group_reader.template Read<T>();
     }
     group.count = std::min<idx_t>(
       kMetadataGroupSize, segment_count - group_index * kMetadataGroupSize);
@@ -786,12 +764,6 @@ struct ScanState final : SegmentScanState {
   void LoadGroup(idx_t group_index) { group_state = ReadGroup(group_index); }
 
   void Skip(idx_t skip_count) {
-    if (IsFinished()) {
-      if (skip_count > 0) {
-        ReadPastEnd();
-      }
-      return;
-    }
     const auto* active_group = std::get_if<Group<T>>(&group_state);
     SDB_ASSERT(active_group || IsInitial());
     const idx_t group_index = active_group ? active_group->index : 0;
@@ -803,11 +775,10 @@ struct ScanState final : SegmentScanState {
       const idx_t target_group_index = group_index + meta_groups_to_skip;
       const bool skip_lands_exactly_on_group_boundary =
         (skip_count + group_offset) % kMetadataGroupSize == 0;
-      if (target_group_index > group_count ||
-          (target_group_index == group_count &&
-           !skip_lands_exactly_on_group_boundary)) {
-        ReadPastEnd();
-      }
+      SDB_ENSURE(target_group_index < group_count ||
+                   (target_group_index == group_count &&
+                    skip_lands_exactly_on_group_boundary),
+                 "bitpacking: skip exceeds the segment row count");
       const auto skipped_group_rows =
         meta_groups_to_skip * kMetadataGroupSize - group_offset;
       SDB_ASSERT(skipped_group_rows <= skip_count);
@@ -823,14 +794,10 @@ struct ScanState final : SegmentScanState {
       LoadGroup(0);
     }
     auto& current_group = CurrentGroup();
-    if (skipped > skip_count) {
-      ReadPastEnd();
-    }
+    SDB_ASSERT(skipped <= skip_count);
     const auto remaining_to_skip = skip_count - skipped;
-    if (current_group.offset > current_group.count ||
-        remaining_to_skip > current_group.count - current_group.offset) {
-      ReadPastEnd();
-    }
+    SDB_ENSURE(remaining_to_skip <= current_group.Remaining(),
+               "bitpacking: skip exceeds the segment row count");
     if (current_group.meta.mode == BitpackingMode::CONSTANT ||
         current_group.meta.mode == BitpackingMode::CONSTANT_DELTA ||
         current_group.meta.mode == BitpackingMode::FOR) {
@@ -859,7 +826,8 @@ struct ScanState final : SegmentScanState {
       }
     }
     SDB_ASSERT(skipped == skip_count);
-    if (current_group.AtEnd() && current_group.index + 1 == group_count) {
+    if (current_group.AtEnd()) {
+      SDB_ASSERT(current_group.index + 1 == group_count);
       Finish();
     }
   }
@@ -886,17 +854,13 @@ void ScanPartial(const ColumnSegment&, ColumnScanState& state, idx_t scan_count,
   using S = Signed<T>;
   using U = Unsigned<T>;
   auto& scan_state = state.scan_state->Cast<ScanState<T>>();
-  if (scan_count == 0) {
-    return;
-  }
   T* result_data = duckdb::FlatVector::GetDataMutable<T>(result);
   result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
   if (scan_state.IsInitial()) {
     scan_state.LoadGroup(0);
   }
-  if (!scan_state.HasCurrentGroup()) {
-    ReadPastEnd();
-  }
+  SDB_ENSURE(scan_state.HasCurrentGroup(),
+             "bitpacking: scan exceeds the segment row count");
   idx_t scanned = 0;
   while (scanned < scan_count) {
     auto& current_group = scan_state.CurrentGroup();
@@ -936,7 +900,7 @@ void ScanPartial(const ColumnSegment&, ColumnScanState& state, idx_t scan_count,
       scan_count - scanned, kAlgorithmGroupSize - offset_in_compression_group);
     to_scan = std::min(to_scan, current_group.Remaining());
     T* current_result_ptr = result_data + result_offset + scanned;
-    if (to_scan == kAlgorithmGroupSize && offset_in_compression_group == 0) {
+    if (to_scan == kAlgorithmGroupSize) {
       current_group.UnpackAlgorithmGroup(current_result_ptr, kSkipSignExtend);
     } else {
       current_group.UnpackAlgorithmGroup(scan_state.decompression_buffer,
@@ -1145,9 +1109,6 @@ void FetchRows(const ColumnSegment& segment, ColumnFetchState& state,
 
 template<typename T>
 void Skip(const ColumnSegment&, ColumnScanState& state, idx_t skip_count) {
-  if (skip_count == 0) {
-    return;
-  }
   state.scan_state->Cast<ScanState<T>>().Skip(skip_count);
 }
 
@@ -1180,9 +1141,7 @@ bool GroupBounds(const Group<T>& group, T& minimum, T& maximum) {
         maximum = duckdb::NumericLimits<T>::Maximum();
         if (width < sizeof(T) * 8) {
           const uint64_t packed_span = (uint64_t{1} << width) - 1;
-          if (packed_span >
-                static_cast<uint64_t>(duckdb::NumericLimits<T>::Maximum()) ||
-              !duckdb::TryAddOperator::Operation(
+          if (!duckdb::TryAddOperator::Operation(
                 minimum, static_cast<T>(packed_span), maximum)) {
             maximum = duckdb::NumericLimits<T>::Maximum();
           }
@@ -1200,10 +1159,6 @@ bool GroupBounds(const Group<T>& group, T& minimum, T& maximum) {
         const auto delta_min =
           static_cast<int64_t>(static_cast<S>(group.frame_of_reference));
         const uint64_t packed_span = (uint64_t{1} << width) - 1;
-        if (packed_span >
-            static_cast<uint64_t>(duckdb::NumericLimits<int64_t>::Maximum())) {
-          return false;
-        }
         int64_t delta_max = 0;
         if (!duckdb::TryAddOperator::Operation(
               delta_min, static_cast<int64_t>(packed_span), delta_max)) {
@@ -1235,7 +1190,7 @@ bool GroupBounds(const Group<T>& group, T& minimum, T& maximum) {
         return true;
       }
       default:
-        return false;
+        SDB_UNREACHABLE();
     }
   }
 }
@@ -1250,7 +1205,7 @@ void Filter(const ColumnSegment& segment, ColumnScanState& state,
   const auto& checker =
     *filter_state.Cast<duckdb::ExpressionFilterState>().zonemap_checker;
   auto verdict = FilterPropagateResult::NO_PRUNING_POSSIBLE;
-  if (checker.IsFullyCompiled() && !scan_state.IsFinished()) {
+  if (checker.IsFullyCompiled()) {
     idx_t group_index = 0;
     idx_t offset_in_group = 0;
     if (scan_state.HasCurrentGroup()) {
@@ -1270,7 +1225,7 @@ void Filter(const ColumnSegment& segment, ColumnScanState& state,
     auto& group_stats = *scan_state.filter_group_stats;
     idx_t remaining = vector_count;
     bool first = true;
-    while (remaining > 0 && group_index < scan_state.group_count) {
+    while (remaining > 0) {
       const auto group = scan_state.ReadGroup(group_index);
       auto group_verdict = FilterPropagateResult::NO_PRUNING_POSSIBLE;
       T minimum{};
@@ -1292,9 +1247,6 @@ void Filter(const ColumnSegment& segment, ColumnScanState& state,
       remaining -= std::min<idx_t>(remaining, group.count - offset_in_group);
       group_index++;
       offset_in_group = 0;
-    }
-    if (remaining > 0) {
-      verdict = FilterPropagateResult::NO_PRUNING_POSSIBLE;
     }
   }
   if (verdict == FilterPropagateResult::FILTER_ALWAYS_FALSE ||

@@ -129,9 +129,8 @@ class FrameDecoder {
     return At(row);
   }
 
-  T Fetch(uint64_t row, uint64_t previous, uint64_t next) {
-    if (Holds(row) || Runs(_h.transform) || Near(row, previous) ||
-        Near(row, next)) {
+  T Fetch(uint64_t row, uint64_t next) {
+    if (Holds(row) || Runs(_h.transform) || Near(row, next)) {
       return Get(row);
     }
     if (ReadsAlone()) {
@@ -646,18 +645,14 @@ class FrameDecoder {
       case NumericTransform::Dict:
         DecodeCodes(src, rows, out);
         break;
-      case NumericTransform::Raw:
-      case NumericTransform::Rle:
-      case NumericTransform::Ffor:
-      case NumericTransform::RleFfor:
-      case NumericTransform::DictFfor:
+      default:
         SDB_UNREACHABLE();
     }
   }
 
   void DecodeCodes(const uint8_t* src, uint32_t rows, U* out) const {
-    numeric::ResolveStored(_h.stored,
-                           [&]<typename C> { Gather<C>(src, rows, out); });
+    numeric::ResolveStored<sizeof(uint16_t)>(
+      _h.stored, [&]<typename C> { Gather<C>(src, rows, out); });
   }
 
   template<typename C>
@@ -768,7 +763,8 @@ class FrameDecoder {
   }
 
   uint32_t RunOf(uint32_t pos) const noexcept {
-    if (_hint < _run_ends.size() && pos < _run_ends[_hint] &&
+    SDB_ASSERT(_hint < _run_ends.size());
+    if (pos < _run_ends[_hint] &&
         (_hint == 0 || pos >= _run_ends[_hint - 1])) {
       return _hint;
     }

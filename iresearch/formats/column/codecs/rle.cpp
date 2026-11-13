@@ -148,10 +148,7 @@ bitpacking_width_t WidthForRange(T minimum, T maximum, T& frame) {
 template<typename T>
 bitpacking_width_t AnalyzeWidth(const T* values, idx_t count, T& frame) {
   if constexpr (kIntegral<T>) {
-    if (!count) {
-      frame = 0;
-      return 0;
-    }
+    SDB_ASSERT(count != 0);
     T minimum = values[0];
     T maximum = values[0];
     for (idx_t i = 1; i < count; ++i) {
@@ -238,9 +235,7 @@ void FlushRun(const RleState<T>& state, Sink&& sink) {
 template<typename T, typename Sink>
 void UpdateFlatValid(RleState<T>& state, const T* data, idx_t count,
                      Sink&& sink) {
-  if (!count) {
-    return;
-  }
+  SDB_ASSERT(count != 0);
   if (state.all_null) [[unlikely]] {
     state.last_value = data[0];
     state.all_null = false;
@@ -410,8 +405,10 @@ class RleCompressState {
     }
     for (idx_t i = 0; i < count; ++i) {
       const auto idx = vdata.sel->get_index(i);
-      if (kWriteStatistics && !vdata.validity.RowIsValid(idx)) {
-        _stats.SetHasNull();
+      if constexpr (kWriteStatistics) {
+        if (!vdata.validity.RowIsValid(idx)) {
+          _stats.SetHasNull();
+        }
       }
       Update(_state, data, vdata.validity, idx, writer);
     }

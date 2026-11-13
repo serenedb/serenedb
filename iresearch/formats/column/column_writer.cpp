@@ -44,7 +44,6 @@
 #include <string_view>
 #include <utility>
 
-#include "iresearch/formats/column/codecs/duckdb_compression.hpp"
 #include "iresearch/formats/column/codecs/numeric.hpp"
 #include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/formats/column/codecs/string_seal.hpp"
@@ -55,6 +54,12 @@
 
 namespace irs {
 namespace {
+
+codecs::CodecType ForcedBySetting(const duckdb::DBConfig& config) {
+  const auto* codec = codecs::FindCodec(duckdb::CompressionTypeToString(
+    duckdb::Settings::Get<duckdb::ForceCompressionSetting>(config)));
+  return codec ? codec->type : codecs::CodecType::Auto;
+}
 
 uint64_t AppendAligned(IndexOutput& out, std::string_view bytes) {
   constexpr byte_type kZeros[8]{};
@@ -847,9 +852,7 @@ bool ColumnWriter::LayoutMatches(const ColumnReader& column) const noexcept {
 codecs::CodecType ColumnWriter::ForcedCodec() const {
   auto forced = _named;
   if (forced == codecs::CodecType::Auto) {
-    forced =
-      codecs::FromDuckDB(duckdb::Settings::Get<duckdb::ForceCompressionSetting>(
-        duckdb::DBConfig::GetConfig(_owner->Database())));
+    forced = ForcedBySetting(duckdb::DBConfig::GetConfig(_owner->Database()));
   }
   if (forced == codecs::CodecType::Auto) {
     return forced;
@@ -1034,12 +1037,14 @@ void ColumnWriter::SealRowGroup() {
     }
   }
   const auto& config = duckdb::DBConfig::GetConfig(_owner->Database());
-  _global_method = codecs::FromDuckDB(
-    duckdb::Settings::Get<duckdb::ForceCompressionSetting>(config));
+  _global_method = ForcedBySetting(config);
   _method = _named == codecs::CodecType::Auto ? _global_method : _named;
   _disabled.reset();
   for (const auto disabled : config.GetDisabledCompressionMethods()) {
-    _disabled.set(std::to_underlying(codecs::FromDuckDB(disabled)));
+    if (const auto* codec =
+          codecs::FindCodec(duckdb::CompressionTypeToString(disabled))) {
+      _disabled.set(std::to_underlying(codec->type));
+    }
   }
   if (!_deferred) {
     SealStaged(chunks, _staged_rows);

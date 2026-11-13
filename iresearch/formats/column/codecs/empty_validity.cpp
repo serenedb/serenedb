@@ -40,10 +40,6 @@ void Select(const ColumnSegment&, ColumnScanState&, idx_t, duckdb::Vector&,
             idx_t, const duckdb::SelectionVector&, idx_t,
             duckdb::ScanVectorType) {}
 
-void Filter(const ColumnSegment&, ColumnScanState&, idx_t, duckdb::Vector&,
-            duckdb::SelectionVector&, idx_t&, const duckdb::TableFilter&,
-            duckdb::TableFilterState&) {}
-
 void FetchRows(const ColumnSegment&, ColumnFetchState&, const idx_t*, idx_t,
                duckdb::Vector&, const duckdb::SelectionVector&, idx_t) {}
 
@@ -53,7 +49,6 @@ constexpr CompressionFunction kFunction{
   .scan_vector = Scan,
   .scan_partial = ScanPartial,
   .select = Select,
-  .filter = Filter,
   .fetch_rows = FetchRows,
   .skip = EmptySkip,
 };

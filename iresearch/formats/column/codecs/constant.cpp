@@ -22,10 +22,10 @@
 #include <duckdb/common/types/uhugeint.hpp>
 #include <duckdb/common/vector/constant_vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
-#include <duckdb/function/compression/compression.hpp>
 #include <duckdb/storage/statistics/numeric_stats.hpp>
 
 #include "iresearch/formats/column/codecs/registry.hpp"
+#include "iresearch/utils/assert.hpp"
 
 namespace irs::codecs {
 namespace {
@@ -34,9 +34,7 @@ using duckdb::idx_t;
 
 void FillValidity(const ColumnSegment& segment, duckdb::Vector& result,
                   idx_t start, idx_t count) {
-  if (!segment.stats.CanHaveNull()) {
-    return;
-  }
+  SDB_ASSERT(segment.stats.CanHaveNull());
   auto& mask = duckdb::FlatVector::ValidityMutable(result);
   for (idx_t i = 0; i < count; ++i) {
     mask.SetInvalid(start + i);
@@ -72,9 +70,7 @@ void ScanPartial(const ColumnSegment& segment, ColumnScanState&,
 
 void ScanValidity(const ColumnSegment& segment, ColumnScanState&,
                   idx_t scan_count, duckdb::Vector& result) {
-  if (!segment.stats.CanHaveNull()) {
-    return;
-  }
+  SDB_ASSERT(segment.stats.CanHaveNull());
   if (result.GetType().InternalType() == duckdb::PhysicalType::STRUCT ||
       result.GetVectorType() == duckdb::VectorType::CONSTANT_VECTOR) {
     duckdb::ConstantVector::SetNull(result, duckdb::count_t(scan_count));
@@ -134,30 +130,12 @@ void Select(const ColumnSegment& segment, ColumnScanState& state,
   Fill<T>(segment, result, result_offset, sel_count);
 }
 
-void FilterValidity(const ColumnSegment& segment, ColumnScanState& state,
-                    idx_t vector_count, duckdb::Vector& result,
-                    duckdb::SelectionVector&, idx_t& sel_count,
-                    const duckdb::TableFilter& filter,
-                    duckdb::TableFilterState& filter_state) {
-  bool filters_nulls = false;
-  bool filters_valid_values = false;
-  duckdb::ConstantFun::FiltersNullValues(result.GetType(), filter,
-                                         filters_nulls, filters_valid_values,
-                                         filter_state);
-  if (segment.stats.CanHaveNull() ? filters_nulls : filters_valid_values) {
-    sel_count = 0;
-    return;
-  }
-  ScanValidity(segment, state, vector_count, result);
-}
-
 constexpr CompressionFunction kValidity{
   .type = CodecType::Constant,
   .init_scan = InitScan,
   .scan_vector = ScanValidity,
   .scan_partial = ScanPartialValidity,
   .select = SelectValidity,
-  .filter = FilterValidity,
   .fetch_rows = FetchRowsValidity,
   .skip = EmptySkip,
 };

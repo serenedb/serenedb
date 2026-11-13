@@ -44,7 +44,6 @@
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/table_filter_state.hpp>
 #include <functional>
-#include <iresearch/formats/column/codecs/duckdb_compression.hpp>
 #include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/column/codecs/string_tuning.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
@@ -1317,11 +1316,10 @@ TEST_F(ColumnReaderTest, GathersMatchScanAcrossBlocks) {
       ASSERT_NE(col, nullptr);
       ASSERT_EQ(col->RowCount(), c.rows);
       if (codec != "auto") {
-        const auto forced = irs::codecs::FromDuckDB(
-          duckdb::EnumUtil::FromString<duckdb::CompressionType>(
-            duckdb::StringUtil::Upper(codec)));
+        const auto* forced = irs::codecs::FindCodec(codec);
+        ASSERT_NE(forced, nullptr);
         EXPECT_TRUE(absl::c_any_of(col->DataBlocks(), [&](const auto& b) {
-          return b.codec->type == forced;
+          return b.codec->type == forced->type;
         }));
       }
       GatherStats stats;

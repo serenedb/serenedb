@@ -1,0 +1,87 @@
+statement ok
+CREATE SCHEMA psp_a;
+
+statement ok
+CREATE SCHEMA psp_b;
+
+statement ok
+CREATE TABLE psp_a.psp_t (pk INTEGER PRIMARY KEY, v INTEGER) WITH (compaction_interval = 0);
+
+statement ok
+CREATE TABLE psp_b.psp_t (pk INTEGER PRIMARY KEY, v INTEGER) WITH (compaction_interval = 0);
+
+statement ok
+INSERT INTO psp_a.psp_t VALUES (1, 10);
+
+statement ok
+INSERT INTO psp_b.psp_t VALUES (2, 20), (3, 30);
+
+statement ok
+CREATE TABLE psp_a.psp_log (id INTEGER);
+
+statement ok
+CREATE TABLE psp_b.psp_log (id INTEGER);
+
+statement ok
+CREATE SEQUENCE psp_a.psp_seq START 1;
+
+statement ok
+CREATE SEQUENCE psp_b.psp_seq START 100;
+
+statement ok
+SET search_path = psp_a;
+
+statement ok
+PREPARE psp_q1 AS SELECT pk FROM psp_t ORDER BY pk;
+
+statement ok
+PREPARE psp_q2 AS INSERT INTO psp_log VALUES (1);
+
+statement ok
+PREPARE psp_q3 AS SELECT nextval('psp_seq') AS n;
+
+query
+EXECUTE psp_q1;
+----
+pk
+1
+
+statement ok
+SET search_path = psp_b;
+
+query
+EXECUTE psp_q1;
+----
+pk
+2
+3
+
+statement ok
+EXECUTE psp_q2;
+
+query
+SELECT (SELECT count(*) FROM psp_a.psp_log) AS a, (SELECT count(*) FROM psp_b.psp_log) AS b;
+----
+a	b
+0	1
+
+query
+EXECUTE psp_q3;
+----
+n
+100
+
+statement ok
+SET search_path = psp_a;
+
+query
+EXECUTE psp_q1;
+----
+pk
+1
+
+statement ok
+DEALLOCATE ALL;
+
+statement ok
+RESET search_path;

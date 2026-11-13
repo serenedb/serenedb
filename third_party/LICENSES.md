@@ -39,6 +39,7 @@
 * [shapelib](https://github.com/OSGeo/shapelib) (vendored in `duckdb_spatial/src/third_party/shapelib`)
 * [duckdb-postgres](https://github.com/duckdb/postgres_scanner)
 * [duckdb_markdown](https://github.com/teaguesterling/duckdb_markdown)
+* [duckdb-quack](https://github.com/duckdb/duckdb-quack)
 * [database-connector](https://github.com/duckdb/database-connector)
 * [Azure SDK for C++](https://github.com/Azure/azure-sdk-for-cpp)
 * [libxml2](https://github.com/gnome/libxml2)

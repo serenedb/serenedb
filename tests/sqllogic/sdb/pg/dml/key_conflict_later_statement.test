@@ -1,0 +1,108 @@
+statement ok
+CREATE TABLE kcls (id INTEGER PRIMARY KEY, u INTEGER UNIQUE)
+
+connection a
+statement ok
+BEGIN
+
+connection a
+statement ok
+INSERT INTO kcls VALUES (1, 1)
+
+connection b
+statement ok
+INSERT INTO kcls VALUES (1, 101)
+
+connection a
+statement ok
+INSERT INTO kcls VALUES (2, 2)
+
+connection a
+statement error
+COMMIT
+----
+db error: ERROR: duplicate key value violates unique constraint "kcls_pkey"
+DETAIL: Key (id)=(1) already exists.
+
+
+connection a
+statement ok
+BEGIN
+
+connection a
+statement ok
+INSERT INTO kcls VALUES (3, 3)
+
+connection b
+statement ok
+INSERT INTO kcls VALUES (3, 103)
+
+connection a
+statement ok
+DELETE FROM kcls WHERE id = 99
+
+connection a
+statement error
+COMMIT
+----
+db error: ERROR: duplicate key value violates unique constraint "kcls_pkey"
+DETAIL: Key (id)=(3) already exists.
+
+
+connection a
+statement ok
+BEGIN
+
+connection a
+statement ok
+INSERT INTO kcls VALUES (4, 4)
+
+connection b
+statement ok
+INSERT INTO kcls VALUES (5, 4)
+
+connection a
+statement ok
+UPDATE kcls SET id = id WHERE id = 1000
+
+connection a
+statement error
+COMMIT
+----
+db error: ERROR: duplicate key value violates unique constraint "kcls_u_key"
+DETAIL: Key (u)=(4) already exists.
+
+
+connection a
+statement ok
+BEGIN
+
+connection a
+statement ok
+INSERT INTO kcls VALUES (6, 6)
+
+connection b
+statement ok
+INSERT INTO kcls VALUES (7, 7)
+
+connection a
+statement ok
+INSERT INTO kcls VALUES (8, 8)
+
+connection a
+statement ok
+COMMIT
+
+query
+SELECT id, u FROM kcls ORDER BY id
+----
+id	u
+1	101
+3	103
+5	4
+6	6
+7	7
+8	8
+
+statement ok
+DROP TABLE kcls

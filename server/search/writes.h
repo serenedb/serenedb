@@ -89,8 +89,8 @@ struct StoreWrites {
   bool dropping = false;
   // The keys the table enforces, and what this transaction's rows were
   // checked against: the keys of the rows it still buffers, how many of those
-  // rows and of its own segments were checked, and the committed rows the last
-  // check saw.
+  // rows and of its own segments were checked, and the committed rows all of
+  // them were checked against.
   std::vector<KeySpec> keys;
   HotKeys buffered_keys;
   duckdb::idx_t keyed_rows = 0;

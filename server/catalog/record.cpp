@@ -1029,10 +1029,10 @@ std::vector<std::vector<uint8_t>> CompactHistory(
     }
     for (auto& value : record.sequences) {
       const auto life = life_of(value.catalog, value.oid);
-      sequences.insert_or_assign(
-        state_key(life, value.catalog, value.oid, 0),
-        Slot<SequenceRecordValue>{
-          .record = r, .life = life, .value = std::move(value)});
+      auto& slot = sequences[state_key(life, value.catalog, value.oid, 0)];
+      if (slot.value.usage_count <= value.usage_count) {
+        slot = {.record = r, .life = life, .value = std::move(value)};
+      }
     }
     for (auto& secret : record.secrets) {
       auto name = secret.name;

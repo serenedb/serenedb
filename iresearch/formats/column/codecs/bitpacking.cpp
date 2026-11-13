@@ -210,11 +210,10 @@ struct BitpackingState {
       minimum_delta = duckdb::MinValue<S>(minimum_delta, delta_buffer[i]);
     }
     delta_buffer[0] = minimum_delta;
-    can_do_delta =
-      duckdb::TrySubtractOperator::Operation(maximum_delta, minimum_delta,
-                                             min_max_delta_diff) &&
-      duckdb::TrySubtractOperator::Operation(static_cast<S>(buffer[0]),
-                                             minimum_delta, delta_offset);
+    can_do_delta = duckdb::TrySubtractOperator::Operation(
+                     maximum_delta, minimum_delta, min_max_delta_diff) &&
+                   duckdb::TrySubtractOperator::Operation(
+                     static_cast<S>(buffer[0]), minimum_delta, delta_offset);
   }
 
   template<typename V>

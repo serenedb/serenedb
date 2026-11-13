@@ -631,12 +631,11 @@ void ApplyIncludedOpclass(
     return;
   }
   uint32_t level = 0;
-  std::string declared{
-    irs::codecs::NameOf(irs::codecs::CodecType::Auto)};
+  std::string declared{irs::codecs::NameOf(irs::codecs::CodecType::Auto)};
   for (const auto& [key, raw_val] : *opts) {
     if (key == kCompressionField) {
-      declared = GetIndexStringOption(catalog::kIncludedKind, owner_label, key,
-                                      raw_val);
+      declared =
+        GetIndexStringOption(catalog::kIncludedKind, owner_label, key, raw_val);
     } else if (key == kCompressionLevelField) {
       level = ParsePositiveUintOption(catalog::kIncludedKind, owner_label, key,
                                       raw_val);

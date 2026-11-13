@@ -38,6 +38,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <iostream>
 #include <iresearch/formats/column/codecs/dictionary_cache.hpp>
 #include <iresearch/formats/column/codecs/numeric.hpp>
 #include <iresearch/formats/column/codecs/numeric_kernels.hpp>
@@ -53,7 +54,6 @@
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/store/mmap_directory.hpp>
 #include <iterator>
-#include <iostream>
 #include <limits>
 #include <optional>
 #include <set>
@@ -996,8 +996,7 @@ TEST_F(ColNumericCodecTest, SparseReadsCacheDecodedFrames) {
      {}},
     {"periodic steps",
      [](uint64_t g) { return static_cast<int64_t>(g * 1000 + g % 7); },
-     irs::WriteTier::Flush,
-     "delta/lz4"},
+     irs::WriteTier::Flush, "delta/lz4"},
   };
   for (const auto& c : cases) {
     SCOPED_TRACE(c.name);
@@ -1753,8 +1752,8 @@ TEST(ColNumericKernelsTest, NarrowsAndWidensEveryStoredWidth) {
       for (const size_t n : {size_t{0}, size_t{1}, size_t{33}, size_t{1000}}) {
         SCOPED_TRACE(testing::Message()
                      << sizeof(U) << " " << int{stored} << " " << n);
-        const auto limit = stored == 8 ? ~uint64_t{0}
-                                       : (uint64_t{1} << (8 * stored)) - 1;
+        const auto limit =
+          stored == 8 ? ~uint64_t{0} : (uint64_t{1} << (8 * stored)) - 1;
         std::vector<U> values(n);
         for (size_t i = 0; i != n; ++i) {
           values[i] = static_cast<U>(Mix(i + n + stored) & limit);

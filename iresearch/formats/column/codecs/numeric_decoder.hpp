@@ -764,8 +764,7 @@ class FrameDecoder {
 
   uint32_t RunOf(uint32_t pos) const noexcept {
     SDB_ASSERT(_hint < _run_ends.size());
-    if (pos < _run_ends[_hint] &&
-        (_hint == 0 || pos >= _run_ends[_hint - 1])) {
+    if (pos < _run_ends[_hint] && (_hint == 0 || pos >= _run_ends[_hint - 1])) {
       return _hint;
     }
     if (_hint + 1 < _run_ends.size() && pos >= _run_ends[_hint] &&

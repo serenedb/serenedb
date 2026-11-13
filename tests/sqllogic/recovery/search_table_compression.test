@@ -687,7 +687,7 @@ count
 statement error
 CREATE TABLE search_mixed_map_codec (a INTEGER PRIMARY KEY, m MAP(TEXT, INTEGER) USING COMPRESSION dict_zstd) WITH (compaction_interval = 0);
 ----
-db error: ERROR: Can't compress column "m" with type 'MAP(VARCHAR, INTEGER)' (physical: STRUCT) using compression type 'DICT_ZSTD'
+db error: ERROR: Can't compress column "m" with type 'MAP(VARCHAR, INTEGER)' (physical: LIST) using compression type 'DICT_ZSTD'
 
 
 statement ok
@@ -765,7 +765,7 @@ CREATE TABLE search_internal_include (a INTEGER PRIMARY KEY, body TEXT, p TEXT) 
 statement error
 CREATE INDEX search_internal_include_idx ON search_internal_include USING inverted(body) INCLUDE (p included (compression = 'compression_col_numeric'));
 ----
-db error: ERROR: Enum value: unrecognized value "compression_col_numeric" for enum "CompressionType"<slt:ignore>
+db error: ERROR: Column "p": unknown compression 'compression_col_numeric'
 
 
 statement ok

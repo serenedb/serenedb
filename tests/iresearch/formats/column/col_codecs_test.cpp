@@ -2581,8 +2581,8 @@ TEST(ColCodecNames, ColumnstoreCompressionTypesRoundTrip) {
     ASSERT_NE(codec, nullptr);
     EXPECT_EQ(codec->name, name);
   }
-  const auto* automatic = irs::codecs::FindCodec(duckdb::CompressionTypeToString(
-    duckdb::CompressionType::COMPRESSION_AUTO));
+  const auto* automatic = irs::codecs::FindCodec(
+    duckdb::CompressionTypeToString(duckdb::CompressionType::COMPRESSION_AUTO));
   ASSERT_NE(automatic, nullptr);
   EXPECT_EQ(automatic->type, irs::codecs::CodecType::Auto);
   for (const auto type : {duckdb::CompressionType::COMPRESSION_DICTIONARY,

@@ -26,6 +26,7 @@
 #include <bit>
 #include <cmath>
 #include <duckdb/common/fault_points.hpp>
+#include <limits>
 #include <numeric>
 #include <optional>
 #include <span>
@@ -560,6 +561,30 @@ void HnswScanTopK(Docs&& docs, const HnswGraph& graph, Dist& dist, uint32_t ef,
   }
 }
 
+score_t EstimateFloor(const QuantizerCodeBound& bound, score_t threshold) {
+  const auto upper = [&bound](score_t estimate) {
+    score_t low;
+    score_t high;
+    bound.Bounds({&estimate, 1}, &low, &high);
+    return high;
+  };
+  auto below = threshold;
+  for (score_t step = 1; upper(below) >= threshold; step *= 2) {
+    below = threshold - step;
+    if (!std::isfinite(below)) {
+      return std::numeric_limits<score_t>::lowest();
+    }
+  }
+  auto above = threshold;
+  for (;;) {
+    const auto mid = below + (above - below) / 2;
+    if (mid <= below || mid >= above) {
+      return above;
+    }
+    (upper(mid) >= threshold ? above : below) = mid;
+  }
+}
+
 }  // namespace
 
 HnswQuery::HnswQuery(const SubReader& segment,
@@ -601,15 +626,17 @@ HnswQuery::HnswQuery(const SubReader& segment,
 template<typename Dist>
 void HnswQuery::RunRadius(Dist& dist, detail::TableFilter* table,
                           HnswSearchScratch& scratch) const {
-  ResolveBool(_inclusive, [&]<bool Inclusive>() {
+  const auto threshold =
+    _bound ? EstimateFloor(*_bound, _threshold) : _threshold;
+  ResolveBool(_inclusive || _bound, [&]<bool Inclusive>() {
     if (!_inner && !table) {
-      HnswSearchRadius<Inclusive>(_data->graph, dist, _threshold, _max_results,
+      HnswSearchRadius<Inclusive>(_data->graph, dist, threshold, _max_results,
                                   scratch);
       return;
     }
     auto set = detail::MakeDocSet(
       _inner.get(), static_cast<doc_id_t>(_segment.docs_count()), table);
-    HnswSearchRadius<Inclusive>(_data->graph, dist, _threshold, _max_results,
+    HnswSearchRadius<Inclusive>(_data->graph, dist, threshold, _max_results,
                                 scratch, AdmitIn(set));
   });
 }
@@ -750,6 +777,9 @@ void HnswQuery::PrepareDistance() const {
       _codebook = _ef == 0 ? _data->stats->MakeRangeCodebook(query)
                            : QueryCodebook(_cache, *_data->stats, query);
       SDB_ASSERT(_codebook);
+      if (_ef == 0 && _exact) {
+        _bound = _data->stats->MakeCodeBound(query, _metric);
+      }
     }
   });
 }

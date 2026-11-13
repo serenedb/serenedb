@@ -77,7 +77,7 @@ SELECT id FROM index_name WHERE emb <-> $query_vector < radius;
 
 The two forms combine: add `ORDER BY emb <-> $query_vector LIMIT k` to a range query to take the closest `k` *within* the radius.
 
-On a quantized index the codes pick the candidates and each candidate is then checked against its exact distance, so every returned row is inside the radius. A row whose code places it farther away than it really is can still be missed, more often with coarser codes. With [`sdb_ann_force_exact`](./maintenance.md#session-settings) on, the radius is answered by scoring every row from its stored vector, so no row inside it is missed.
+On a quantized index the codes pick the candidates and each candidate is then checked against its exact distance, so every returned row is inside the radius. With `sq8` and `usq8` codes the candidates are taken with a margin that covers the error of the codes, so no row is missed because of its code. With other quantizations a row whose code places it farther away than it really is can still be missed, more often with coarser codes. With [`sdb_ann_force_exact`](./maintenance.md#session-settings) on, the radius is answered by scoring every row from its stored vector, so no row inside it is missed.
 
 ### Distances without a limit
 

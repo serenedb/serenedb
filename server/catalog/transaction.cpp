@@ -39,9 +39,12 @@
 #include <string>
 
 #include "catalog/base_catalog.h"
+#include "catalog/entry/search_table.h"
 #include "catalog/record.h"
+#include "catalog/schema.h"
 #include "pg/connection_context.h"
 #include "scheduler/background_scheduler.h"
+#include "search/table_keys.h"
 #include "search/task.h"
 #include "search/wal_recovery.h"
 #include "server/utils/lifecycle.h"
@@ -112,10 +115,27 @@ void RequireLog(const ReplicationLsnEntry& entry) {
   }
 }
 
+void CheckReferencedKeys(const Change& change,
+                         duckdb::CatalogTransaction latest) {
+  auto& table = change.Subject().Cast<SearchTableEntry>();
+  search::CheckReferencedKeys(table, latest);
+  if (change.kind != ChangeKind::Alter) {
+    return;
+  }
+  change.set->Oids().ForEachDependent(
+    latest, table.oid, [&](duckdb::CatalogEntry& dependent) {
+      if (&dependent != &table && IsSearchTable(dependent)) {
+        search::CheckReferencedKeys(dependent.Cast<SearchTableEntry>(), latest);
+      }
+    });
+}
+
 void CheckDependencies(SessionTransaction& transaction) {
   const auto view = transaction.View();
   for (const auto& change : transaction.Changes()) {
-    if (change.Subject().ParentCatalog().GetAttached().IsReadOnly()) {
+    auto& subject = change.Subject();
+    auto& database = subject.ParentCatalog().GetAttached();
+    if (database.IsReadOnly()) {
       continue;
     }
     switch (change.kind) {
@@ -124,9 +144,21 @@ void CheckDependencies(SessionTransaction& transaction) {
         if (change.set->Members()) {
           change.set->Oids().CheckCreated(*change.version);
         }
+        if (const auto schema = subject.ParentSchemaOid();
+            schema && change.kind == ChangeKind::Create) {
+          change.set->Oids().CheckLive(schema);
+        }
+        if (IsSearchTable(subject)) {
+          CheckReferencedKeys(change,
+                              {database.GetDatabase(), transaction.Id(),
+                               duckdb::VisibilityBound::AllCommitted()});
+        }
         break;
       case ChangeKind::Drop:
-        change.set->Oids().CheckDropped(view, change.Subject());
+        change.set->Oids().CheckDropped(view, subject);
+        if (subject.type == duckdb::CatalogType::SCHEMA_ENTRY) {
+          subject.Cast<Schema>().CheckNoLaterMembers(view);
+        }
         break;
       case ChangeKind::Rename:
         break;

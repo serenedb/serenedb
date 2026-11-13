@@ -1,0 +1,112 @@
+control substitution on
+
+statement ok
+CREATE SCHEMA cids_s1;
+
+
+statement ok
+CREATE SCHEMA cids_s2;
+
+
+statement ok
+CREATE SCHEMA cids_s3;
+
+
+connection a
+statement ok
+BEGIN;
+
+
+connection a
+statement ok
+CREATE SEQUENCE cids_s1.q;
+
+
+connection b
+statement ok
+DROP SCHEMA cids_s1;
+
+
+connection a
+statement error
+COMMIT;
+----
+db error: ERROR: Failed to commit: Could not commit creation of dependency, subject "cids_s1" has been deleted
+
+
+connection a
+statement ok
+BEGIN;
+
+
+connection a
+statement ok
+CREATE VIEW cids_s2.v AS SELECT 1 AS one;
+
+
+connection b
+statement ok
+DROP SCHEMA cids_s2 CASCADE;
+
+
+connection a
+statement error
+COMMIT;
+----
+db error: ERROR: Failed to commit: Could not commit creation of dependency, subject "cids_s2" has been deleted
+
+
+connection a
+statement ok
+BEGIN;
+
+
+connection a
+statement ok
+CREATE SEQUENCE cids_s3.q;
+
+
+connection b
+statement ok
+BEGIN;
+
+
+connection b
+statement ok
+DROP SCHEMA cids_s3;
+
+
+connection a
+statement ok
+COMMIT;
+
+
+connection b
+statement error
+COMMIT;
+----
+db error: ERROR: Failed to commit: Could not commit DROP of "cids_s3" because "q" was created in it after the transaction started
+
+
+statement ok
+SET sdb_faults = 'shutdown_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_restart
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT nspname FROM pg_namespace WHERE nspname LIKE 'cids_%' ORDER BY nspname;
+----
+nspname
+cids_s3
+
+
+connection after_restart
+query
+SELECT nextval('cids_s3.q') AS n;
+----
+n
+1

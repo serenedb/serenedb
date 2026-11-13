@@ -53,6 +53,9 @@ const catalog::SearchTableEntry* ReferencedTable(
   const catalog::SearchTableEntry& table, const KeySpec& spec,
   duckdb::CatalogTransaction transaction);
 
+void CheckReferencedKeys(const catalog::SearchTableEntry& table,
+                         duckdb::CatalogTransaction transaction);
+
 struct ReferencingKey {
   catalog::SearchTableEntry* table = nullptr;
   const KeySpec* spec = nullptr;

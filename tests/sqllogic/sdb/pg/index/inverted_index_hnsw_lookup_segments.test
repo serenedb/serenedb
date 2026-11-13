@@ -1,0 +1,74 @@
+statement ok
+CREATE TABLE hls (pk INTEGER PRIMARY KEY, emb FLOAT[2], x BIGINT);
+
+statement ok
+CREATE INDEX hls_idx ON hls
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'none'))
+  WITH (compaction_interval = 0);
+
+statement ok
+INSERT INTO hls SELECT i, [i, 0]::FLOAT[2], i % 41 FROM range(1200) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) hls;
+
+statement ok
+INSERT INTO hls SELECT i, [i, 0]::FLOAT[2], i % 41 FROM range(1200, 1500) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) hls;
+
+query
+SELECT m.value FROM sdb_metrics m JOIN pg_class c ON c.oid = m.relation_id
+  WHERE c.relname = 'hls_idx' AND m.metric = 'num_segments';
+----
+value
+2
+
+query
+SELECT list(pk ORDER BY pk) AS pks FROM (SELECT pk FROM hls_idx WHERE x = 2
+  ORDER BY emb <-> [0.4, 0]::FLOAT[2] LIMIT 10) t;
+----
+pks
+{2,43,84,125,166,207,248,289,330,371}
+
+query
+SELECT list(pk ORDER BY pk) AS pks FROM (SELECT pk FROM hls_idx WHERE x = 2
+  ORDER BY emb <-> [600.4, 0]::FLOAT[2] LIMIT 10) t;
+----
+pks
+{412,453,494,535,576,617,658,699,740,781}
+
+query
+SELECT list(pk ORDER BY pk) AS pks FROM (SELECT pk FROM hls_idx WHERE x = 2
+  ORDER BY emb <-> [1300.4, 0]::FLOAT[2] LIMIT 10) t;
+----
+pks
+{1109,1150,1191,1232,1273,1314,1355,1396,1437,1478}
+
+query
+SELECT list(pk ORDER BY pk) AS pks FROM (SELECT pk FROM hls_idx WHERE x = 2
+  ORDER BY emb <-> [0.4, 0]::FLOAT[2] LIMIT 3 OFFSET 7) t;
+----
+pks
+{289,330,371}
+
+query
+SELECT list(pk ORDER BY pk) AS pks FROM (SELECT pk FROM hls_idx WHERE x = 2
+  ORDER BY emb <-> [0.4, 0]::FLOAT[2] LIMIT 12) t;
+----
+pks
+{2,43,84,125,166,207,248,289,330,371,412,453}
+
+statement ok
+DELETE FROM hls WHERE pk % 3 = 1;
+
+statement ok
+VACUUM (REFRESH_TABLE) hls;
+
+query
+SELECT list(pk ORDER BY pk) AS pks FROM (SELECT pk FROM hls_idx WHERE x = 2
+  ORDER BY emb <-> [0.4, 0]::FLOAT[2] LIMIT 10) t;
+----
+pks
+{2,84,125,207,248,330,371,453,494,576}

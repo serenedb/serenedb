@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <algorithm>
+#include <limits>
 #include <span>
 #include <utility>
 #include <vector>
@@ -39,17 +40,20 @@ class HnswHits : public Root {
  public:
   HnswHits(std::vector<ScoreDoc>&& hits, std::vector<score_t>&& spreads,
            const SubReader& segment, ColumnArgsFetcher& fetcher,
-           irs::detail::TableFilter* table, const irs::detail::ScoreArgs& args)
+           irs::detail::TableFilter* table, bool truncated,
+           const irs::detail::ScoreArgs& args)
     : _hits{std::move(hits)},
       _spreads{std::move(spreads)},
       _fetcher{fetcher},
       _table{table},
-      _boost{args.boost} {
+      _boost{args.boost},
+      _truncated{truncated} {
     _score = irs::detail::PrepareBlockScorer(
       args, segment, irs::detail::NoField(), _provider, _block);
   }
 
   void Run(Collector& collector) final {
+    auto unseen = std::numeric_limits<score_t>::max();
     for (size_t i = 0, total = _hits.size(); i < total;) {
       const auto n =
         static_cast<uint32_t>(std::min<size_t>(kScoreBlock, total - i));
@@ -60,6 +64,11 @@ class HnswHits : public Root {
       }
       _fetcher.Fetch(std::span<const doc_id_t>{_docs, n});
       _score.Score(_scores, static_cast<scores_size_t>(n));
+      if (_truncated) {
+        for (uint32_t j = 0; j < n; ++j) {
+          unseen = std::min(unseen, _scores[j] + _spread[j]);
+        }
+      }
       auto live = n;
       if (_table) {
         std::copy_n(_docs, n, _all);
@@ -73,6 +82,9 @@ class HnswHits : public Root {
       collector.Append(_docs, _scores, _spread, live);
       i += n;
     }
+    if (_truncated) {
+      collector.MarkUnseen(unseen);
+    }
   }
 
  private:
@@ -83,6 +95,7 @@ class HnswHits : public Root {
   ColumnArgsFetcher& _fetcher;
   irs::detail::TableFilter* _table;
   score_t _boost;
+  bool _truncated;
   score_t _block[kScoreBlock];
   score_t _scores[kScoreBlock];
   score_t _spread[kScoreBlock];
@@ -98,17 +111,20 @@ ann::Root::ptr HnswQuery::PlanAnn(const ann::Context& ctx) const {
   auto* const narrow =
     ctx.table && !ctx.table->Foldable() ? ctx.table : nullptr;
   std::vector<score_t> spreads;
-  auto hits = RunSearch(ctx.table, ctx.columns, &spreads);
+  size_t window = 0;
+  auto hits = RunSearch(ctx.table, ctx.columns, &spreads, &window);
   if (hits.empty()) {
     return ann::MakeEmpty();
   }
+  const bool truncated = _ef != 0 && window >= _ef;
   const auto record = Stats(ann::ScoredOf(ctx));
   const detail::ScoreArgs args{.scorer = record.scorer,
                                .stats = record.stats,
                                .fetcher = &ctx.fetcher,
                                .boost = Boost()};
   return memory::make_managed<ann::HnswHits>(
-    std::move(hits), std::move(spreads), Segment(), ctx.fetcher, narrow, args);
+    std::move(hits), std::move(spreads), Segment(), ctx.fetcher, narrow,
+    truncated, args);
 }
 
 }  // namespace irs

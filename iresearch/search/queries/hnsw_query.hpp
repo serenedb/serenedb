@@ -45,10 +45,10 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
             HnswSearchLimits limits, score_t boost, QueryBuilder::ptr&& inner,
             QueryBuilder::ptr&& index_only, AnnQueryCache* cache);
 
-  std::vector<ScoreDoc> RunSearch(
-    detail::TableFilter* table = nullptr,
-    detail::TableFilter* columns = nullptr,
-    std::vector<score_t>* spreads = nullptr) const;
+  std::vector<ScoreDoc> RunSearch(detail::TableFilter* table = nullptr,
+                                  detail::TableFilter* columns = nullptr,
+                                  std::vector<score_t>* spreads = nullptr,
+                                  size_t* window = nullptr) const;
 
   ann::Root::ptr PlanAnn(const ann::Context& ctx) const final;
 

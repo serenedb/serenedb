@@ -828,9 +828,10 @@ void HnswQuery::Widen(QuantizerReader& reader, HnswSearchScratch& scratch,
   nearest.resize(kept);
 }
 
-std::vector<ScoreDoc> HnswQuery::RunSearch(
-  detail::TableFilter* table, detail::TableFilter* columns,
-  std::vector<score_t>* spreads) const {
+std::vector<ScoreDoc> HnswQuery::RunSearch(detail::TableFilter* table,
+                                           detail::TableFilter* columns,
+                                           std::vector<score_t>* spreads,
+                                           size_t* window) const {
   HnswSearchScratch scratch;
   std::vector<score_t> widened;
   bool wide = false;
@@ -842,6 +843,9 @@ std::vector<ScoreDoc> HnswQuery::RunSearch(
   }
   if (!table && ScansByColumn()) {
     ScanColumn(scratch);
+    if (window) {
+      *window = scratch.nearest.size();
+    }
     return CollectHits(scratch.nearest, _segment);
   }
   PrepareDistance();
@@ -853,6 +857,9 @@ std::vector<ScoreDoc> HnswQuery::RunSearch(
                    RunFiltered(dist, table, columns, scratch);
                  } else {
                    HnswSearchTopK(_data->graph, dist, _ef, scratch);
+                 }
+                 if (window) {
+                   *window = scratch.nearest.size();
                  }
                  if constexpr (requires { dist.qr; }) {
                    if (spreads && _ef != 0 && _rescore_width > 0.f) {

@@ -89,6 +89,7 @@
 #include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
 #include "pg/progress_registry.h"
+#include "quack_storage.hpp"
 
 namespace sdb::auth {
 namespace {
@@ -1789,6 +1790,20 @@ void RequireSuperuser(duckdb::ClientContext& context,
 bool Unowned(const duckdb::CatalogEntry& entry) {
   return entry.permissions.owner == pg::kInvalidOid ||
          (!entry.internal && entry.ParentCatalog().GetAttached().IsReadOnly());
+}
+
+void InstallQuackAccessCheck(duckdb::DatabaseInstance& db) {
+  duckdb::QuackStorageExtensionInfo::GetState(db).access_check =
+    [](duckdb::ClientContext& context, duckdb::QuackAccess access) {
+      if (!ClosureFor(&context, ConnectionContext::Get(context).GetRoleId())
+             ->is_superuser) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                        ERR_MSG("must be superuser to ",
+                                access == duckdb::QuackAccess::CONNECT
+                                  ? "connect to a Quack server"
+                                  : "manage the Quack server"));
+      }
+    };
 }
 
 }  // namespace sdb::auth

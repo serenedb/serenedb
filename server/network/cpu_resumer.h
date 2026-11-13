@@ -25,6 +25,7 @@
 #include <cstdint>
 #include <duckdb/parallel/task.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <yaclib/exe/job.hpp>
 
 #include "network/io_executor.h"
@@ -61,6 +62,12 @@ class CpuResumer final : public duckdb::Task {
     : _scheduler{scheduler},
       _account{scheduler.CreateAccount(duckdb::SchedulerClass::FOREGROUND)},
       _producer{scheduler.CreateProducer(_account)} {}
+
+  static duckdb::shared_ptr<CpuResumer> Make() {
+    return duckdb::make_shared_ptr<CpuResumer>(
+      duckdb::TaskScheduler::GetScheduler(
+        irs::DuckDBEngine::Instance().instance()));
+  }
 
   const duckdb::shared_ptr<duckdb::SchedulerAccount>& Account() const noexcept {
     return _account;

@@ -382,6 +382,7 @@ TableTop TopThroughTable(const irs::DirectoryReader& reader,
                                      .fetcher = fetcher,
                                      .table = &rows,
                                      .prune = prune,
+                                     .bounds = true,
                                      .k = static_cast<uint32_t>(k)});
     if (!plan) {
       continue;

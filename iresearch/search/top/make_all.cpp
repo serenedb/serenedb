@@ -19,15 +19,14 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/top/all.hpp"
+#include "iresearch/search/lead/all_docs.hpp"
 #include "iresearch/search/top/family.hpp"
 
 namespace irs::top {
 
 Root::ptr Family::MakeAll(const SubReader& segment, const Context& ctx,
                           ScoreMergeType, score_t score) {
-  return MakeShape<All>(ctx, ctx.fetcher,
-                        static_cast<doc_id_t>(segment.docs_count()), score);
+  return Constant<lead::AllDocs>(ctx, score, segment);
 }
 
 }  // namespace irs::top

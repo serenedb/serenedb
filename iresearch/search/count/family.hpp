@@ -25,32 +25,28 @@
 #include <span>
 #include <utility>
 
-#include "iresearch/search/count/boolean_sparse.hpp"
 #include "iresearch/search/count/boolean_window.hpp"
 #include "iresearch/search/count/make.hpp"
 #include "iresearch/search/count/plan.hpp"
 #include "iresearch/search/count/walk.hpp"
 #include "iresearch/search/detail/plan.hpp"
+#include "iresearch/search/detail/root_family.hpp"
 #include "iresearch/search/filters/filter.hpp"
-#include "iresearch/search/lead/two_phase.hpp"
+#include "iresearch/search/lead/boolean_sparse.hpp"
 #include "iresearch/utils/empty.hpp"
 
 namespace irs::count {
 
-struct Family {
+struct Family : detail::RootFamily<Context> {
   using Result = Root::ptr;
   using DocsContext = Context;
-
-  template<typename Slots>
-  using TwoPhaseDocs = lead::TwoPhaseDocs<Slots>;
-
-  static uint64_t Interrogations(const Context&) noexcept { return 0; }
 
   template<typename Node, typename... Args>
   static Result Docs(const Context& ctx, Args&&... args) {
     return MakeShape<Walk, Node>(ctx, std::forward<Args>(args)...);
   }
 
+  static constexpr bool kWindowBatches = true;
   static constexpr bool kWindowNodes = true;
   static constexpr bool kWindowLeadDrains = false;
   static constexpr double kSparseLeadCost = 1.0;
@@ -68,7 +64,8 @@ struct Family {
            typename... Args>
   static Result MakeSparse(const Context& ctx, ScoreMergeType, utils::Empty,
                            Args&&... args) {
-    return MakeShape<BooleanSparse, Lead, Probes, Optional, Excludes>(
+    return MakeShape<Walk,
+                     lead::BooleanSparse<Lead, Probes, Optional, Excludes>>(
       ctx, std::piecewise_construct, std::forward<Args>(args)...);
   }
 

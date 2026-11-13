@@ -27,6 +27,7 @@
 
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/detail/boolean_groups.hpp"
+#include "iresearch/search/detail/boolean_window_base.hpp"
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/search/top/admit.hpp"
 #include "iresearch/search/top/root.hpp"
@@ -37,29 +38,38 @@
 namespace irs::top {
 
 template<typename Lead, typename Optional, typename Excludes, typename Table>
-class BooleanWindow : public Root {
+class BooleanWindow
+  : public Root,
+    irs::detail::WindowClauses<Lead, utils::Empty, Optional, Excludes> {
+  using Clauses =
+    irs::detail::WindowClauses<Lead, utils::Empty, Optional, Excludes>;
+  using Clauses::_excludes;
+  using Clauses::_lead;
+  using Clauses::_optional;
+
  public:
-  static constexpr bool kLead = !std::is_same_v<Lead, utils::Empty>;
-  static constexpr bool kOptional = !std::is_same_v<Optional, utils::Empty>;
-  static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
+  using Clauses::kExcludes;
+  using Clauses::kLead;
+  using Clauses::kOptional;
   static constexpr bool kTally = kOptional && irs::detail::Tallies<Optional>();
-  static_assert(kLead != kOptional);
+  static constexpr bool kScoredLead = kLead && kOptional;
+  static constexpr bool kConstant = kLead && !kOptional;
+  static_assert(kLead || kOptional);
   static_assert(!kTally || !kExcludes);
+  static_assert(!kScoredLead || (!kTally && !kExcludes));
 
   template<typename LeadArgs, typename OptionalArgs, typename ExcludesArgs>
-  BooleanWindow(Table table, std::piecewise_construct_t, LeadArgs&& lead,
-                OptionalArgs&& optional, ExcludesArgs&& excludes,
-                ScoreMergeType merge, score_t absorbed)
-    : _lead{std::make_from_tuple<Lead>(std::forward<LeadArgs>(lead))},
-      _optional{
-        std::make_from_tuple<Optional>(std::forward<OptionalArgs>(optional))},
-      _excludes{
-        std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))},
+  BooleanWindow(Table table, bool prune, std::piecewise_construct_t,
+                LeadArgs&& lead, OptionalArgs&& optional,
+                ExcludesArgs&& excludes, ScoreMergeType merge, score_t absorbed)
+    : Clauses{std::piecewise_construct, std::forward<LeadArgs>(lead),
+              std::tuple<>{}, std::forward<OptionalArgs>(optional),
+              std::forward<ExcludesArgs>(excludes)},
       _score{merge, absorbed},
-      _admit{table} {}
-
-  BooleanWindow(BooleanWindow&&) = delete;
-  BooleanWindow& operator=(BooleanWindow&&) = delete;
+      _admit{table},
+      _constant{merge == ScoreMergeType::Max ? std::max(score_t{0}, absorbed)
+                                             : absorbed},
+      _prune{prune} {}
 
   void Run(doc_id_t begin, doc_id_t end, LoserScoreCollector& collector) final {
     doc_id_t next = begin;
@@ -67,9 +77,17 @@ class BooleanWindow : public Root {
       if (!_admit.Skip(next) || next >= end) {
         break;
       }
+      if constexpr (kConstant) {
+        if (_prune && !collector.Admits(_constant)) {
+          break;
+        }
+      }
       const auto min = next;
       const auto max = std::min<doc_id_t>(min + irs::detail::kWindowDocs, end);
-      if constexpr (kLead) {
+      if constexpr (kScoredLead) {
+        next = _lead.Fill(min, max, _mask, _window);
+        _optional.AddMasked(min, max, _mask, _window);
+      } else if constexpr (kLead) {
         next = _lead.FillOr(min, max, _mask);
         if constexpr (kExcludes) {
           _excludes.Remove(min, max, _mask);
@@ -97,11 +115,10 @@ class BooleanWindow : public Root {
 
   ABSL_CACHELINE_ALIGNED uint64_t _mask[irs::detail::kWindowWords]{};
   ABSL_CACHELINE_ALIGNED score_t _window[irs::detail::kWindowDocs]{};
-  [[no_unique_address]] Lead _lead;
-  [[no_unique_address]] Optional _optional;
-  [[no_unique_address]] Excludes _excludes;
   irs::detail::RootWindowScore _score;
   [[no_unique_address]] Admit<Table> _admit;
+  [[no_unique_address]] utils::Need<kConstant, score_t> _constant;
+  bool _prune;
 };
 
 }  // namespace irs::top

@@ -227,11 +227,20 @@ class BlockIndex {
     return PairAt(_run_bound, r);
   }
 
-  uint32_t Find(uint32_t from, doc_id_t target) const noexcept {
-    const auto n = _blocks;
-    if (from >= n || Last(from) >= target) {
+  IRS_FORCE_INLINE uint32_t Find(uint32_t from,
+                                 doc_id_t target) const noexcept {
+    if (from >= _blocks || Last(from) >= target) {
       return from;
     }
+    return FindAfter(from, target);
+  }
+
+ private:
+  static constexpr uint32_t kWindow = 64;
+
+  IRS_NO_INLINE uint32_t FindAfter(uint32_t from,
+                                   doc_id_t target) const noexcept {
+    const auto n = _blocks;
     if (_narrow) {
       return FindNarrow(from, target);
     }
@@ -271,9 +280,6 @@ class BlockIndex {
     }
     return b;
   }
-
- private:
-  static constexpr uint32_t kWindow = 64;
 
   doc_id_t RunBase(uint32_t r) const noexcept {
     return r == 0 ? _base : _run_last[r - 1];
@@ -392,6 +398,18 @@ class BlockCursor {
 
   doc_id_t LandingDoc() const noexcept {
     return _block == 0 ? doc_limits::invalid() : _index.Last(_block - 1);
+  }
+
+  bool Pending() const noexcept { return _pending; }
+
+  uint32_t NextBlock(uint32_t left) const noexcept {
+    SDB_ASSERT(left <= _docs_count);
+    return (_docs_count - left) / doc_limits::kBlockSize;
+  }
+
+  uint64_t BlockStart(uint32_t block) const noexcept {
+    SDB_ASSERT(!_pending && block < _index.Size());
+    return _doc_start + (block == 0 ? 0 : _index.End(block - 1));
   }
 
   const BlockIndex& Index() const noexcept { return _index; }

@@ -63,6 +63,23 @@ class WrappedTermIterator : public TermIterator {
   SeekTermIterator::ptr _impl;
 };
 
+template<typename Derived>
+class SeekFirstTermIterator : public WrappedTermIterator {
+ protected:
+  using WrappedTermIterator::WrappedTermIterator;
+
+  bool Step() {
+    if (_started) {
+      return _impl->next();
+    }
+    _started = true;
+    return static_cast<Derived&>(*this).Start();
+  }
+
+ private:
+  bool _started = false;
+};
+
 inline void AssignAfterKey(bstring& out, bytes_view key) {
   out.reserve(key.size() + 1);
   out.assign(key);

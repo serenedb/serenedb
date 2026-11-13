@@ -165,26 +165,17 @@ std::shared_ptr<const RegexpAcceptor> WordAcceptor(bytes_view separator) {
 }
 
 template<typename Bounds>
-class WordIterator final : public WrappedTermIterator {
+class WordIterator final : public SeekFirstTermIterator<WordIterator<Bounds>> {
+  using Base = SeekFirstTermIterator<WordIterator<Bounds>>;
+  using Base::_impl;
+
  public:
   WordIterator(const TermReader& reader, Bounds bounds, bytes_view separator)
-    : WrappedTermIterator{reader.iterator()},
-      _bounds{bounds},
-      _separator{separator} {}
+    : Base{reader.iterator()}, _bounds{bounds}, _separator{separator} {}
 
-  bool next() final {
-    if (_started) {
-      if (!_impl->next()) {
-        return false;
-      }
-    } else {
-      _started = true;
-      if (!_bounds.Start(*_impl)) {
-        return false;
-      }
-    }
-    return SkipShingles();
-  }
+  bool Start() { return _bounds.Start(*_impl); }
+
+  bool next() final { return this->Step() && SkipShingles(); }
 
  private:
   bool SkipShingles() {
@@ -207,7 +198,6 @@ class WordIterator final : public WrappedTermIterator {
   Bounds _bounds;
   bytes_view _separator;
   bstring _upper;
-  bool _started = false;
 };
 
 class WordTermsVisitor final : public FilterVisitor {
@@ -409,11 +399,8 @@ void ApplyTermGroups(const ByPhraseOptions& options,
     positions[i].term_group = static_cast<uint32_t>(i);
   }
   const auto find = [&](uint32_t x) {
-    while (positions[x].term_group != x) {
-      positions[x].term_group = positions[positions[x].term_group].term_group;
-      x = positions[x].term_group;
-    }
-    return x;
+    return detail::slop::FindGroup(
+      [&](uint32_t i) -> uint32_t& { return positions[i].term_group; }, x);
   };
 
   absl::flat_hash_map<bytes_view, uint32_t> first_owner;

@@ -20,9 +20,16 @@
 
 #pragma once
 
+#ifdef __AVX2__
+#include <immintrin.h>
+#endif
+
 #include <algorithm>
 #include <bit>
+#include <cstdint>
+#include <span>
 
+#include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/detail/posting_leaf.hpp"
 #include "iresearch/search/detail/window.hpp"
@@ -33,364 +40,407 @@
 namespace irs::detail {
 
 template<typename InputType>
-class PostingFill : public PostingLeaf<InputType, kWindowShape> {
-  using Base = PostingLeaf<InputType, kWindowShape>;
+class PostingFill : public PostingLeaf<InputType, kFillShape> {
+  using Base = PostingLeaf<InputType, kFillShape>;
+  using Kind = block_io::FillLeaf::Kind;
 
-  using Base::_doc;
+  using Base::_cursor;
   using Base::_docs;
-  using Base::_hint;
   using Base::_last;
-  using Base::_left_in_leaf;
   using Base::_left_in_list;
-  using Base::Behind;
-  using Base::Enc;
-  using Base::In;
   using Base::kBits;
   using Base::kBlock;
-  using Base::SkipFreqs;
-  using Base::StableBitset;
+  using Base::ReadLeafFill;
+  using Base::SeekToLeaf;
 
  public:
   PostingFill() = default;
 
   PostingFill(const PostingMeta& meta, const IndexInput& doc_in,
-              IndexFeatures layout, bool has_score_bounds, bool has_freq) {
+              IndexFeatures layout, bool has_score_bounds, bool has_freq,
+              bool batches = true)
+    : _batches{batches} {
     Prepare(meta, doc_in, layout, has_score_bounds, has_freq);
   }
 
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
                IndexFeatures layout, bool has_score_bounds, bool has_freq) {
-    SDB_ASSERT(meta.docs_count != 0);
     this->SetFreqLen(has_freq);
-
-    if (meta.docs_count == 1) {
-      _doc = this->SetSingle(meta);
-      _leaf = {.bitset = nullptr,
-               .words = 0,
-               .max = _last,
-               .kind = block_io::FillLeaf::Kind::Docs};
-      _leaf_base = _last - 1;
-      _leaf_len = 1;
-      return;
+    if (!this->OpenList(meta, doc_in, layout, has_score_bounds)) {
+      _cursor.base = this->SetSingle(meta) - 1;
+      _at = kBlock - 1;
+      _len = 1;
     }
-
-    this->OpenInput(meta, doc_in, has_score_bounds);
-    this->ArmWalk(meta, layout, has_score_bounds);
   }
 
   doc_id_t FillOr(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask) {
-    return FillImpl<false, false>(min, max, mask,
-                                  [](size_t) IRS_FORCE_INLINE {});
+    return Walk(
+      min, max,
+      [&](size_t offset)
+        IRS_FORCE_INLINE { SetBit(mask[offset / kBits], offset % kBits); },
+      [&](uint32_t lo, uint32_t hi)
+        IRS_FORCE_INLINE { SetBitRange(mask, lo, hi); },
+      [&] {
+        if (Inside(min, max)) {
+          OrBitsetAt(mask, _cursor.base + 1 - min, _bitset, _words,
+                     _bitset[_words - 1]);
+          return;
+        }
+        Bits(min, max, [&](uint32_t w, uint64_t bits) IRS_FORCE_INLINE {
+          mask[w] |= bits;
+        });
+      });
   }
 
   doc_id_t FillAndNot(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask) {
-    return FillImpl<false, true>(min, max, mask,
-                                 [](size_t) IRS_FORCE_INLINE {});
-  }
-
-  doc_id_t FillSum(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
-                   score_t* IRS_RESTRICT scores, score_t constant) {
-    return FillImpl<true, false>(
-      min, max, mask, [=](size_t offset) IRS_FORCE_INLINE {
-        Merge<ScoreMergeType::Sum>(scores[offset], constant);
+    return Walk(
+      min, max,
+      [&](size_t offset)
+        IRS_FORCE_INLINE { UnsetBit(mask[offset / kBits], offset % kBits); },
+      [&](uint32_t lo, uint32_t hi)
+        IRS_FORCE_INLINE { ClearBitRange(mask, lo, hi); },
+      [&] {
+        if (Inside(min, max)) {
+          AndNotBitsetAt(mask, _cursor.base + 1 - min, _bitset, _words,
+                         _bitset[_words - 1]);
+          return;
+        }
+        Bits(min, max, [&](uint32_t w, uint64_t bits) IRS_FORCE_INLINE {
+          mask[w] &= ~bits;
+        });
       });
   }
 
-  doc_id_t FillMax(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
-                   score_t* IRS_RESTRICT scores, score_t constant) {
-    return FillImpl<true, false>(
-      min, max, mask, [=](size_t offset) IRS_FORCE_INLINE {
-        Merge<ScoreMergeType::Max>(scores[offset], constant);
-      });
+  template<ScoreMergeType M>
+  doc_id_t FillMerge(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
+                     score_t* IRS_RESTRICT scores, score_t constant) {
+    return FillScored(min, max, mask, [=](size_t offset) IRS_FORCE_INLINE {
+      Merge<M>(scores[offset], constant);
+    });
   }
 
-  template<bool Scored, bool Clear, typename Write>
-  doc_id_t FillImpl(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
-                    Write&& write) {
-    SDB_ASSERT(min < max);
-
-    if (!this->Start(min, max)) {
-      return _doc;
-    }
-
-    const auto* const end = std::cend(_docs);
-    if (_left_in_leaf != 0) {
-      const auto* begin = Behind(end - _left_in_leaf, end, min);
-      if (begin == end) {
-        _left_in_leaf = 0;
-      } else if (_last >= max) {
-        const auto* const it =
-          MarkUntil<Clear>(begin, end, min, max, mask, write);
-        _left_in_leaf = static_cast<uint32_t>(end - it);
-        return _doc = *it;
-      } else {
-        if (end - begin == kBlock) [[likely]] {
-          MarkBlock<Clear>(begin, min, mask, write);
-        } else {
-          MarkRange<Clear>(begin, end, min, mask, write);
-        }
-        _left_in_leaf = 0;
-      }
-    }
-
-    [[maybe_unused]] const byte_type* at = nullptr;
-    if constexpr (InputType::kVolatileAlways) {
-      if (_left_in_list != 0) {
-        at = In().Current();
-      }
-    }
-
-    for (;;) {
-      if (_left_in_list == 0) {
-        return _doc = doc_limits::eof();
-      }
-
-      const auto len = std::min(_left_in_list, kBlock);
-      const auto base = _last;
-      const auto leaf = ReadFill(at, len, base);
-      _left_in_list -= len;
-      _last = leaf.max;
-
-      if (leaf.max < min) {
-        SkipFreqsAfterFill(len);
-        continue;
-      }
-
-      if (leaf.Maskable()) {
-        if constexpr (!Scored) {
-          if (base >= min) [[likely]] {
-            const auto live = block_io::MaskLeaf<Clear>(
-              leaf, base, len, min, max, mask, std::end(_docs));
-            SkipFreqsAfterFill(len);
-            if (live == 0) {
-              continue;
-            }
-            _left_in_leaf = live;
-            return _doc = *(std::end(_docs) - live);
-          }
-        }
-        Materialize(leaf, base, len);
-      }
-
-      SkipFreqsAfterFill(len);
-
-      const auto* const begin = Behind(end - len, end, min);
-      if (leaf.max < max) {
-        if (begin != end) {
-          if (end - begin == kBlock) [[likely]] {
-            MarkBlock<Clear>(begin, min, mask, write);
-          } else {
-            MarkRange<Clear>(begin, end, min, mask, write);
-          }
-        }
-        continue;
-      }
-
-      const auto* const it =
-        MarkUntil<Clear>(begin, end, min, max, mask, write);
-      _left_in_leaf = static_cast<uint32_t>(end - it);
-      return _doc = *it;
-    }
+  uint32_t Keep(const doc_id_t* in, uint32_t n, doc_id_t* out) {
+    return Sift<true>(in, n, out);
   }
 
-  doc_id_t FillAnd(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask) {
-    SDB_ASSERT(min < max);
-    const uint64_t limit = max - min;
-    AndCursor cursor{.words = mask};
+  uint32_t Drop(const doc_id_t* in, uint32_t n, doc_id_t* out) {
+    return Sift<false>(in, n, out);
+  }
 
-    if (_doc >= max) {
-      cursor.Settle(limit);
-      return _doc;
+  IRS_FORCE_INLINE doc_id_t Seek(doc_id_t target) {
+    if (!Reach(target)) [[unlikely]] {
+      return doc_limits::eof();
     }
+    if (block_io::IsDocs(_kind)) [[likely]] {
+      _at = SeekIn(_at, target);
+      return _docs[_at];
+    }
+    if (_kind == Kind::Run) {
+      return std::max<doc_id_t>(target, _cursor.base + 1);
+    }
+    return NextBit(target);
+  }
 
-    if (_leaf_len != 0 && _last >= min) {
-      const auto at = AndLeaf(cursor, min, max);
-      if (_last >= max) {
-        cursor.Settle(limit);
-        return _doc = at;
-      }
+  IRS_FORCE_INLINE bool FillCostAbove(uint64_t cost, doc_id_t min,
+                                      doc_id_t max) {
+    if (!Reach(min)) {
+      return false;
     }
+    if (block_io::IsDocs(_kind)) {
+      return (cost + 1) * (_last - _cursor.base) <=
+             uint64_t{_len} * (max - min);
+    }
+    return cost < (max - min + kBits - 1) / kBits;
+  }
 
-    for (;;) {
-      if (_left_in_list == 0) {
-        cursor.Settle(limit);
-        return _doc = doc_limits::eof();
-      }
-      ReadLeaf();
-      if (_last < min) {
-        continue;
-      }
-      const auto at = AndLeaf(cursor, min, max);
-      if (_last >= max) {
-        cursor.Settle(limit);
-        return _doc = at;
-      }
-    }
+  IRS_FORCE_INLINE bool Batches() const noexcept {
+    return _batches && block_io::IsDocs(_kind) &&
+           (_len < kSparseWindow ||
+            uint64_t{_len} * kBatchInverse < _last - _cursor.base);
+  }
+
+  IRS_FORCE_INLINE std::span<const doc_id_t> Rest(doc_id_t end) const noexcept {
+    SDB_ASSERT(block_io::IsDocs(_kind));
+    SDB_ASSERT(_at < kBlock);
+    const auto stop = _last < end ? kBlock : SeekIn(_at, end);
+    return {_docs.data() + _at, _docs.data() + stop};
   }
 
  private:
-  IRS_FORCE_INLINE block_io::FillLeaf ReadFill(const byte_type*& at,
-                                               uint32_t len, doc_id_t base) {
-    _hint.Advance(In(), In().Position());
-    if constexpr (InputType::kVolatileAlways) {
-      return block_io::FillView(In(), at, len, this->Holes(), _docs, base,
-                                len == this->_freq_len.value);
-    } else {
-      return block_io::ReadTailForFill(len, In(), Enc(), this->Holes(), _docs,
-                                       base);
+  IRS_FORCE_INLINE bool Reach(doc_id_t target) {
+    if (target <= _last) [[likely]] {
+      return true;
     }
+    return SeekToLeaf(target,
+                      [this](doc_id_t prev) IRS_FORCE_INLINE { Load(prev); });
   }
 
-  IRS_FORCE_INLINE void SkipFreqsAfterFill(uint32_t len) {
-    if constexpr (!InputType::kVolatileAlways) {
-      SkipFreqs(len);
-    }
+  IRS_FORCE_INLINE void Load(doc_id_t prev) {
+    const auto read = ReadLeafFill(prev);
+    _kind = read.leaf.kind;
+    _bitset = read.bitset;
+    _words = read.leaf.words;
+    _len = read.len;
+    _at = kBlock - read.len;
   }
 
-  void ReadLeaf() {
-    const auto len = std::min(_left_in_list, kBlock);
-    _leaf_base = _last;
-    [[maybe_unused]] const byte_type* at = nullptr;
-    if constexpr (InputType::kVolatileAlways) {
-      at = In().Current();
+  IRS_FORCE_INLINE uint32_t SeekIn(uint32_t at,
+                                   doc_id_t target) const noexcept {
+    SDB_ASSERT(at < kBlock);
+    SDB_ASSERT(_docs[kBlock - 1] >= target);
+    if (_kind == Kind::DocsBlock) [[likely]] {
+      return static_cast<uint32_t>(
+        BranchlessLowerBound<kBlock>(_docs.data(), target) - _docs.data());
     }
-    _leaf = ReadFill(at, len, _leaf_base);
-    _leaf.bitset = StableBitset(_leaf);
-    _leaf_len = len;
-    _left_in_list -= len;
-    _last = _leaf.max;
-    SkipFreqsAfterFill(len);
+    return ScanIn(at, target);
   }
 
-  IRS_FORCE_INLINE bool Span(doc_id_t min, doc_id_t max, uint64_t& lo,
-                             uint64_t& hi) const noexcept {
-    const auto first = std::max<doc_id_t>(_leaf_base + 1, min);
-    const auto stop = std::min<doc_id_t>(_last + 1, max);
-    if (first >= stop) {
-      return false;
+  IRS_FORCE_INLINE uint32_t ScanIn(uint32_t at,
+                                   doc_id_t target) const noexcept {
+    SDB_ASSERT(at < kBlock);
+    SDB_ASSERT(_docs[kBlock - 1] >= target);
+#ifdef __AVX2__
+    const auto key = _mm256_set1_epi32(static_cast<int32_t>(target));
+    for (;; at += 8) {
+      const auto docs =
+        _mm256_loadu_si256(reinterpret_cast<const __m256i*>(_docs.data() + at));
+      const auto below = static_cast<uint32_t>(
+        _mm256_movemask_ps(_mm256_castsi256_ps(_mm256_cmpgt_epi32(key, docs))));
+      if (below != 0xFF) {
+        return at + static_cast<uint32_t>(std::countr_one(below));
+      }
     }
-    lo = first - min;
-    hi = stop - 1 - min;
-    return true;
+#else
+    while (_docs[at] < target) {
+      ++at;
+    }
+    return at;
+#endif
   }
 
-  doc_id_t AndLeaf(AndCursor& cursor, doc_id_t min, doc_id_t max) noexcept {
-    uint64_t lo = 0;
-    uint64_t hi = 0;
-    if (!Span(min, max, lo, hi)) {
-      return InLeafFrom(max);
-    }
-    if (_leaf.IsRun()) {
-      cursor.Keep(lo, hi);
-      return std::max<doc_id_t>(max, _leaf_base + 1);
-    }
-    if (_leaf.IsBitset()) {
-      cursor.And(
-        lo, hi,
-        static_cast<int64_t>(min) - static_cast<int64_t>(_leaf_base) - 1,
-        _leaf.bitset, _leaf.words);
-      return InLeafFrom(max);
-    }
-    const auto* const end = std::cend(_docs);
-    const auto* it = Behind(end - _leaf_len, end, min);
-    it = cursor.AndDocs(lo, hi, it, end, min);
-    return it != end ? *it : _last;
+  IRS_FORCE_INLINE bool HasBit(doc_id_t doc) const noexcept {
+    const uint32_t bit = doc - _cursor.base - 1;
+    const uint64_t word = _bitset[std::min(bit / kBits, _words - 1)];
+    return (bit < _words * kBits) & (((word >> (bit % kBits)) & 1) != 0);
   }
 
-  doc_id_t InLeafFrom(doc_id_t target) const noexcept {
-    SDB_ASSERT(target <= _last);
-    if (_leaf.IsRun()) {
-      return std::max<doc_id_t>(target, _leaf_base + 1);
+  doc_id_t NextBit(doc_id_t target) const noexcept {
+    const auto base = _cursor.base;
+    const uint32_t bit = target > base ? target - base - 1 : 0;
+    auto w = bit / kBits;
+    auto word = uint64_t{_bitset[w]} & (~uint64_t{0} << (bit % kBits));
+    while (word == 0) {
+      word = _bitset[++w];
     }
-    if (_leaf.IsBitset()) {
-      const auto total = uint32_t{_leaf.words} * kBits;
-      auto bit = target > _leaf_base ? target - _leaf_base - 1 : uint32_t{0};
-      while (bit < total) {
-        const auto word = bit / kBits;
-        const auto bits = _leaf.bitset[word] & (~uint64_t{0} << (bit % kBits));
-        if (bits != 0) {
-          return static_cast<doc_id_t>(_leaf_base + 1 + word * kBits +
-                                       std::countr_zero(bits));
+    return base + 1 + w * kBits + static_cast<uint32_t>(std::countr_zero(word));
+  }
+
+  template<typename Mark, typename OnRun, typename OnBits>
+  IRS_FORCE_INLINE doc_id_t Walk(doc_id_t min, doc_id_t max, Mark&& mark,
+                                 OnRun&& on_run, OnBits&& on_bits) {
+    SDB_ASSERT(min < max);
+    if (block_io::IsDocs(_kind) && max <= _last && _docs[_at] >= min) {
+      _at = MarkUntil(_at, min, max, mark);
+      return _docs[_at];
+    }
+    return WalkLeaves(min, max, mark, on_run, on_bits);
+  }
+
+  template<typename Mark, typename OnRun, typename OnBits>
+  IRS_FORCE_INLINE doc_id_t WalkLeaves(doc_id_t min, doc_id_t max, Mark& mark,
+                                       OnRun& on_run, OnBits& on_bits) {
+    if (!Reach(min)) {
+      return doc_limits::eof();
+    }
+    for (;;) {
+      const auto base = _cursor.base;
+      if (base + 1 >= max) {
+        return Seek(max);
+      }
+      if (block_io::IsDocs(_kind)) {
+        const auto first = _docs[_at] >= min ? _at : SeekIn(_at, min);
+        if (_last >= max) {
+          _at = MarkUntil(first, min, max, mark);
+          return _docs[_at];
         }
-        bit = (word + 1) * kBits;
+        Scatter(_docs.data() + first, kBlock - first, min, mark);
+        _at = kBlock;
+      } else if (_kind == Kind::Bitset) {
+        on_bits();
+        if (_last >= max) {
+          return NextBit(max);
+        }
+      } else {
+        const doc_id_t lo = std::max<doc_id_t>(min, base + 1);
+        const auto hi =
+          static_cast<doc_id_t>(std::min<uint64_t>(uint64_t{_last} + 1, max));
+        on_run(lo - min, hi - min);
+        if (_last >= max) {
+          return max;
+        }
       }
-      return _last;
-    }
-    const auto* const end = std::cend(_docs);
-    for (const auto* it = end - _leaf_len; it != end; ++it) {
-      if (*it >= target) {
-        return *it;
+      if (_left_in_list == 0) {
+        return doc_limits::eof();
       }
-    }
-    return _last;
-  }
-
-  void Materialize(const block_io::FillLeaf& leaf, doc_id_t base,
-                   uint32_t len) noexcept {
-    auto* const out = std::end(_docs) - len;
-    if (leaf.IsRun()) {
-      block_codec::FillProgression(out, len, base, 1);
-      return;
-    }
-    SDB_ASSERT(leaf.IsBitset());
-    block_io::MaterializeBitsetFrom(base, leaf.bitset, 0, leaf.bitset[0],
-                                    leaf.words, out);
-  }
-
-  template<bool Clear>
-  IRS_FORCE_INLINE static void Mark(uint64_t& word, size_t bit) noexcept {
-    if constexpr (Clear) {
-      UnsetBit(word, bit);
-    } else {
-      SetBit(word, bit);
+      Load(_last);
     }
   }
 
-  template<bool Clear, typename Write>
-  IRS_FORCE_INLINE static void MarkRange(const doc_id_t* begin,
-                                         const doc_id_t* end, doc_id_t min,
-                                         uint64_t* IRS_RESTRICT mask,
-                                         Write&& write) noexcept {
-    for (; begin != end; ++begin) {
-      const size_t offset = *begin - min;
-      Mark<Clear>(mask[offset / kBits], offset % kBits);
-      write(offset);
-    }
-  }
-
-  template<bool Clear, typename Write>
-  IRS_FORCE_INLINE static const doc_id_t* MarkUntil(const doc_id_t* begin,
-                                                    const doc_id_t* end,
-                                                    doc_id_t min, doc_id_t max,
-                                                    uint64_t* IRS_RESTRICT mask,
-                                                    Write&& write) noexcept {
-    for (; begin != end; ++begin) {
-      const auto doc = *begin;
-      if (doc >= max) {
-        break;
-      }
-      const size_t offset = doc - min;
-      Mark<Clear>(mask[offset / kBits], offset % kBits);
-      write(offset);
-    }
-    return begin;
-  }
-
-  template<bool Clear, typename Write>
-  IRS_FORCE_INLINE static void MarkBlock(const doc_id_t* begin, doc_id_t min,
-                                         uint64_t* IRS_RESTRICT mask,
-                                         Write&& write) noexcept {
-    VisitDocs<doc_limits::kBlockSize>(
-      doc_limits::kBlockSize, [&](uint32_t i) IRS_FORCE_INLINE {
-        const size_t offset = begin[i] - min;
-        Mark<Clear>(mask[offset / kBits], offset % kBits);
+  template<typename Write>
+  doc_id_t FillScored(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
+                      Write&& write) {
+    return Walk(
+      min, max,
+      [&](size_t offset) IRS_FORCE_INLINE {
+        SetBit(mask[offset / kBits], offset % kBits);
         write(offset);
+      },
+      [&](uint32_t lo, uint32_t hi) IRS_FORCE_INLINE {
+        SetBitRange(mask, lo, hi);
+        for (auto offset = lo; offset != hi; ++offset) {
+          write(offset);
+        }
+      },
+      [&] {
+        Bits(min, max, [&](uint32_t w, uint64_t bits) IRS_FORCE_INLINE {
+          mask[w] |= bits;
+          for (; bits != 0; bits = PopBit(bits)) {
+            write(size_t{w} * kBits +
+                  static_cast<size_t>(std::countr_zero(bits)));
+          }
+        });
       });
   }
 
-  block_io::FillLeaf _leaf{};
-  doc_id_t _leaf_base = 0;
-  uint32_t _leaf_len = 0;
+  template<typename Mark>
+  IRS_FORCE_INLINE uint32_t MarkUntil(uint32_t at, doc_id_t min, doc_id_t max,
+                                      Mark& mark) const noexcept {
+    for (auto doc = _docs[at]; doc < max; doc = _docs[++at]) {
+      mark(size_t{doc - min});
+    }
+    return at;
+  }
+
+  template<typename Mark>
+  IRS_FORCE_INLINE static void Scatter(const doc_id_t* IRS_RESTRICT docs,
+                                       uint32_t n, doc_id_t min,
+                                       Mark& mark) noexcept {
+    for (uint32_t i = 0; i != n; ++i) {
+      mark(size_t{docs[i] - min});
+    }
+  }
+
+  IRS_FORCE_INLINE bool Inside(doc_id_t min, doc_id_t max) const noexcept {
+    return _cursor.base >= min &&
+           uint64_t{_cursor.base} + 1 + uint64_t{_words} * kBits <= max;
+  }
+
+  IRS_FORCE_INLINE uint64_t LeafWord(int64_t i) const noexcept {
+    const auto clamped =
+      static_cast<uint32_t>(std::clamp<int64_t>(i, 0, _words - 1));
+    const uint64_t word = _bitset[clamped];
+    return i == clamped ? word : 0;
+  }
+
+  template<typename Visit>
+  IRS_FORCE_INLINE void Bits(doc_id_t min, doc_id_t max,
+                             Visit&& visit) const noexcept {
+    const auto base = _cursor.base;
+    const doc_id_t lo = std::max<doc_id_t>(min, base + 1) - min;
+    const auto hi =
+      static_cast<uint32_t>(std::min<uint64_t>(uint64_t{_last} + 1, max) - min);
+    SDB_ASSERT(lo < hi);
+    const auto first = lo / kBits;
+    const auto last = (hi - 1) / kBits;
+    const auto at = static_cast<int64_t>(uint64_t{first} * kBits) +
+                    static_cast<int64_t>(min) - base - 1;
+    const auto shift = static_cast<uint32_t>(at & (kBits - 1));
+    auto i = at >> 6;
+    const auto head = ~uint64_t{0} << (lo % kBits);
+    const auto tail = ~uint64_t{0} >> (kBits - 1 - (hi - 1) % kBits);
+    const auto clip = [&](uint32_t w, uint64_t bits) IRS_FORCE_INLINE {
+      bits &= w == first ? head : ~uint64_t{0};
+      bits &= w == last ? tail : ~uint64_t{0};
+      return bits;
+    };
+    if (shift == 0) {
+      for (auto w = first; w <= last; ++w, ++i) {
+        visit(w, clip(w, LeafWord(i)));
+      }
+      return;
+    }
+    auto low = LeafWord(i);
+    for (auto w = first; w <= last; ++w) {
+      const auto high = LeafWord(++i);
+      visit(w, clip(w, (low >> shift) | (high << (kBits - shift))));
+      low = high;
+    }
+  }
+
+  template<bool Keep>
+  IRS_FORCE_INLINE uint32_t Sift(const doc_id_t* in, uint32_t n,
+                                 doc_id_t* out) {
+    uint32_t blocks[kBlock];
+    const auto landings = n != 0 ? this->Landings(in, n, blocks) : 0;
+    uint32_t landed = 0;
+    uint32_t kept = 0;
+    uint32_t i = 0;
+    while (i != n) {
+      if (in[i] > _last && landed != landings) {
+        this->LandOn(blocks[landed++],
+                     [this](doc_id_t prev) IRS_FORCE_INLINE { Load(prev); });
+      } else if (!Reach(in[i])) [[unlikely]] {
+        if constexpr (!Keep) {
+          for (; i != n; ++i) {
+            out[kept++] = in[i];
+          }
+        }
+        return kept;
+      }
+      const auto last = _last;
+      const auto sweep = [&](auto&& contains) IRS_FORCE_INLINE {
+        do {
+          const auto doc = in[i];
+          out[kept] = doc;
+          kept += static_cast<uint32_t>(contains(doc) == Keep);
+        } while (++i != n && in[i] <= last);
+      };
+      if (_kind == Kind::DocsBlock) [[likely]] {
+        auto at = _at;
+        SDB_ASSERT(at < kBlock);
+        auto group = at / kLowerBoundGroup;
+        sweep([&](doc_id_t doc) IRS_FORCE_INLINE {
+          if (_docs[(group + 1) * kLowerBoundGroup - 1] < doc) {
+            group = LowerBoundGroup<kBlock>(_docs.data(), doc);
+          }
+          const auto base = static_cast<uint32_t>(group * kLowerBoundGroup);
+          at = base + CountLess<kLowerBoundGroup>(_docs.data() + base, doc);
+          return _docs[at] == doc;
+        });
+        _at = at;
+      } else if (_kind == Kind::DocsTail) {
+        auto at = _at;
+        sweep([&](doc_id_t doc) IRS_FORCE_INLINE {
+          at = ScanIn(at, doc);
+          return _docs[at] == doc;
+        });
+        _at = at;
+      } else if (_kind == Kind::Bitset) {
+        sweep([&](doc_id_t doc) IRS_FORCE_INLINE { return HasBit(doc); });
+      } else {
+        const auto base = _cursor.base;
+        sweep([&](doc_id_t doc) IRS_FORCE_INLINE { return doc > base; });
+      }
+    }
+    return kept;
+  }
+
+  const UnalignedWord* _bitset = nullptr;
+  uint32_t _words = 0;
+  uint32_t _len = 0;
+  uint32_t _at = kBlock;
+  Kind _kind = Kind::DocsTail;
+  bool _batches = true;
 };
 
 }  // namespace irs::detail

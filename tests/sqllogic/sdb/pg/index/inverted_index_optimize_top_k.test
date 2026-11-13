@@ -5,15 +5,14 @@ hash-threshold 100
 #
 # When set, the catalog InvertedIndex remembers the flag across restart, the
 # writer encodes per-block score bounds via a default BM25 scorer,
-# and `ORDER BY BM25(...) DESC LIMIT k` queries execute the iterator with
-# score_prune=true plus running heap-minimum threshold
-# feedback. EXPLAIN reflects the option by suffixing the `TopK` row in the
-# IRESEARCH_SCAN box with `, optimized` when score pruning is engaged.
+# and `ORDER BY BM25(...) DESC LIMIT k` queries prune with those bounds.
+# EXPLAIN reflects the option by suffixing the `TopK` row in the
+# IRESEARCH_SCAN box with `, optimized` when the stored bounds are used.
 #
 # `optimize_top_k` is a string-encoded scorer expression, e.g.
-# `'bm25(1.2, 0.75)'`, `'tfidf()'`, `'raw_tf()'`. Omitting the option leaves
-# pruning off. The catalog stores the parsed `ScorerOptions`; pruning fires
-# only when the index's stored scorer matches the ORDER BY scorer.
+# `'bm25(1.2, 0.75)'`, `'tfidf()'`, `'raw_tf()'`. Omitting the option stores
+# no bounds. The catalog stores the parsed `ScorerOptions`; the stored bounds
+# are used only when the index's stored scorer matches the ORDER BY scorer.
 #
 # Single-token `body @@ ts_phrase('x')` collapses to a ByTerm filter, which
 # is the simplest prune-eligible iterator (only needs Freq + Norm features).
@@ -229,9 +228,9 @@ QUERY PLAN
 ╰──────────────────────────────────────────────────────────╯
 
 
-# EXPLAIN: prune-enabled scan reports `TopK: <k>, optimized`; plain scan
-# reports `TopK: <k>` without the suffix. Pruning only applies on the top-K
-# path so the marker is bundled into the same row instead of a separate one.
+# EXPLAIN: a scan that prunes with stored bounds reports `TopK: <k>, optimized`;
+# plain scan reports `TopK: <k>` without the suffix. Pruning only applies on the
+# top-K path so the marker is bundled into the same row instead of a separate one.
 
 query
 EXPLAIN SELECT id FROM docs_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_topk_idx.tableoid) DESC LIMIT 3;
@@ -580,8 +579,8 @@ QUERY PLAN
 ╰────────────────────────────╯
 
 
-# Mismatched scorer -- index says BM25, query orders by TFIDF. Pruning off
-# (no `, optimized` suffix). Top-K still pulls up; results are correct.
+# Mismatched scorer -- index says BM25, query orders by TFIDF. Stored bounds
+# unused (no `, optimized` suffix). Top-K still pulls up; results are correct.
 
 query
 EXPLAIN SELECT id FROM docs_bm25_args_idx WHERE body @@ ts_phrase('fox') ORDER BY TFIDF(docs_bm25_args_idx.tableoid) DESC LIMIT 2;
@@ -649,3 +648,161 @@ CREATE INDEX docs_default_bad_keyword ON docs_default
 ----
 db error: ERROR: optimize_top_k is a table option
 HINT: Set it in CREATE TABLE ... WITH (optimize_top_k = ...).
+
+
+# ---------------------------------------------------------------------------
+# Without usable stored bounds -- no `optimize_top_k`, or an ORDER BY scorer
+# that can't use the stored ones -- top-K still prunes phrases and constant
+# scores, and returns what the query returns with the optimization disabled.
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE TABLE docs_unbounded (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement count 300
+INSERT INTO docs_unbounded
+SELECT i, repeat('red fox ', 1 + i % 4) || repeat('dog ', i)
+FROM generate_series(0, 299) AS g(i);
+
+
+statement ok
+CREATE INDEX docs_unbounded_idx ON docs_unbounded USING inverted(id, body en_topk);
+
+
+query
+SELECT id FROM docs_unbounded_idx
+WHERE body @@ ts_phrase('red fox')
+ORDER BY BM25(docs_unbounded_idx.tableoid) DESC
+LIMIT 5;
+----
+id
+3
+7
+11
+15
+19
+
+
+query
+SELECT count(DISTINCT BM25(docs_unbounded_idx.tableoid)) AS scores
+FROM docs_unbounded_idx
+WHERE body @@ ts_like('do%');
+----
+scores
+1
+
+
+query
+EXPLAIN SELECT id FROM docs_unbounded_idx WHERE body @@ ts_like('do%') ORDER BY BM25(docs_unbounded_idx.tableoid) DESC LIMIT 7;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────╮
+│ Index: docs_unbounded_idx   │
+│ Lookup: search              │
+│ Index Filter:               │
+│ ╭─ Starts With ───────╮     │
+│ │ Field: body(string) │     │
+│ │ Prefix: do          │     │
+│ ╰─────────────────────╯     │
+│ Score: bm25(k1=1.2, b=0.75) │
+│ Top: 7                      │
+│ Projections: id             │
+│ ~60 rows                    │
+╰─────────────────────────────╯
+
+
+query
+SELECT count(*) AS n, count(DISTINCT s) AS scores
+FROM (
+  SELECT BM25(docs_unbounded_idx.tableoid) AS s
+  FROM docs_unbounded_idx
+  WHERE body @@ ts_like('do%')
+  ORDER BY s DESC
+  LIMIT 7
+);
+----
+n	scores
+7	1
+
+
+statement ok
+CREATE TABLE docs_mismatched (id INTEGER PRIMARY KEY, body VARCHAR) WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+
+
+statement count 300
+INSERT INTO docs_mismatched SELECT id, body FROM docs_unbounded;
+
+
+statement ok
+CREATE INDEX docs_mismatched_idx ON docs_mismatched
+  USING inverted(id, body en_topk);
+
+
+query
+EXPLAIN SELECT id FROM docs_mismatched_idx WHERE body @@ ts_phrase('red fox') ORDER BY BM25(docs_mismatched_idx.tableoid, 1.2, 0.3) DESC LIMIT 5;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────────────────╮
+│ Index: docs_mismatched_idx                  │
+│ Lookup: search                              │
+│ Index Filter:                               │
+│ ╭─ Phrase ────────────────────────────────╮ │
+│ │ Field: body(string)                     │ │
+│ │ Parts: Term:red(0, 0); Term:fox(1, 1);  │ │
+│ ╰─────────────────────────────────────────╯ │
+│ Score: bm25(k1=1.2, b=0.3)                  │
+│ Top: 5                                      │
+│ Projections: id                             │
+│ ~60 rows                                    │
+╰─────────────────────────────────────────────╯
+
+
+query
+SELECT id FROM docs_mismatched_idx
+WHERE body @@ ts_phrase('red fox')
+ORDER BY BM25(docs_mismatched_idx.tableoid, 1.2, 0.3) DESC
+LIMIT 5;
+----
+id
+3
+7
+11
+15
+19
+
+
+statement ok
+SET sdb_disable_top_k_optimization = true;
+
+
+query
+SELECT id FROM docs_unbounded_idx
+WHERE body @@ ts_phrase('red fox')
+ORDER BY BM25(docs_unbounded_idx.tableoid) DESC
+LIMIT 5;
+----
+id
+3
+7
+11
+15
+19
+
+
+query
+SELECT id FROM docs_mismatched_idx
+WHERE body @@ ts_phrase('red fox')
+ORDER BY BM25(docs_mismatched_idx.tableoid, 1.2, 0.3) DESC
+LIMIT 5;
+----
+id
+3
+7
+11
+15
+19
+
+
+statement ok
+SET sdb_disable_top_k_optimization = false;

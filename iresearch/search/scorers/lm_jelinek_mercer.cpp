@@ -43,22 +43,16 @@
 namespace irs {
 namespace {
 
-template<ScoreMergeType MergeType, bool HasScale>
-IRS_FORCE_INLINE void LmJmImpl(
-  score_t* IRS_RESTRICT res, scores_size_t n, const uint32_t* IRS_RESTRICT freq,
-  const uint32_t* IRS_RESTRICT norm,
-  [[maybe_unused]] const score_t* IRS_RESTRICT scale, score_t num,
-  score_t denom_inv, score_t const_boost) noexcept {
-  for (scores_size_t i = 0; i != n; ++i) {
-    const score_t tf = ScaledFreq<HasScale>(freq, scale, i);
-    SDB_ASSERT(norm[i] != 0);
-    const score_t dl = TermCountToScore(norm[i]);
-    const score_t ratio = (num * tf / dl) * denom_inv;
-    score_t r = std::log1p(ratio);
-    r *= const_boost;
-    Merge<MergeType>(res[i], r);
+struct LmJmFormula {
+  IRS_FORCE_INLINE score_t operator()(score_t tf, score_t dl) const noexcept {
+    SDB_ASSERT(dl != 0.f);
+    return std::log1p((num * tf / dl) * denom_inv) * boost;
   }
-}
+
+  score_t boost;
+  score_t num;
+  score_t denom_inv;
+};
 
 template<bool HasScale>
 struct LmJmScore : public ScoreOperatorOf<LmJmScore<HasScale>> {
@@ -68,23 +62,19 @@ struct LmJmScore : public ScoreOperatorOf<LmJmScore<HasScale>> {
     : freq{freq},
       norm{norm},
       scale{scale},
-      boost{boost},
-      num{1.f - lambda},
-      denom_inv{1.f / (lambda * stats.collection_prob)} {}
+      formula{boost, 1.f - lambda, 1.f / (lambda * stats.collection_prob)} {}
 
   template<ScoreMergeType MergeType = ScoreMergeType::Noop>
   IRS_FORCE_INLINE void ScoreImpl(score_t* res,
                                   scores_size_t n) const noexcept {
-    LmJmImpl<MergeType, HasScale>(res, n, freq->value, norm, TryGetValue(scale),
-                                  num, denom_inv, boost);
+    ScoreFreqs<MergeType, HasScale>(res, n, freq->value, norm,
+                                    TryGetValue(scale), formula);
   }
 
   const FreqBlockAttr* freq;
   const uint32_t* norm;
   [[no_unique_address]] utils::Need<HasScale, const score_t*> scale;
-  score_t boost;
-  score_t num;
-  score_t denom_inv;
+  LmJmFormula formula;
 };
 
 }  // namespace

@@ -91,11 +91,10 @@ class ConstFillScored {
 
   doc_id_t Fill(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
                 score_t* IRS_RESTRICT window) {
-    if constexpr (MergeType == ScoreMergeType::Max) {
-      return _leaf.FillMax(min, max, mask, window, _value);
-    } else {
-      return _leaf.FillSum(min, max, mask, window, _value);
-    }
+    constexpr auto kMerge = MergeType == ScoreMergeType::Max
+                              ? ScoreMergeType::Max
+                              : ScoreMergeType::Sum;
+    return _leaf.template FillMerge<kMerge>(min, max, mask, window, _value);
   }
 
  private:
@@ -118,10 +117,11 @@ class PlainCountScored {
   doc_id_t Count(doc_id_t min, doc_id_t max, uint32_t* IRS_RESTRICT counts,
                  uint64_t* IRS_RESTRICT mask, score_t* IRS_RESTRICT) {
     const auto words = WindowWords(min, max);
-    Clear(_own.data(), words);
-    const auto next = _leaf.FillOr(min, max, _own.data());
+    Scratch own;
+    Clear(own.data(), words);
+    const auto next = _leaf.FillOr(min, max, own.data());
     for (size_t w = 0; w != words; ++w) {
-      auto word = _own[w];
+      auto word = own[w];
       if (word == 0) {
         continue;
       }
@@ -136,7 +136,6 @@ class PlainCountScored {
   }
 
  private:
-  Scratch _own{};
   PostingFill<InputType> _leaf;
 };
 
@@ -162,10 +161,11 @@ class ConstCountScored {
   doc_id_t Count(doc_id_t min, doc_id_t max, uint32_t* IRS_RESTRICT counts,
                  uint64_t* IRS_RESTRICT mask, score_t* IRS_RESTRICT window) {
     const auto words = WindowWords(min, max);
-    Clear(_own.data(), words);
-    const auto next = _leaf.FillOr(min, max, _own.data());
+    Scratch own;
+    Clear(own.data(), words);
+    const auto next = _leaf.FillOr(min, max, own.data());
     for (size_t w = 0; w != words; ++w) {
-      auto word = _own[w];
+      auto word = own[w];
       if (word == 0) {
         continue;
       }
@@ -183,7 +183,6 @@ class ConstCountScored {
   }
 
  private:
-  Scratch _own{};
   PostingFill<InputType> _leaf;
   score_t _value = 0;
 };

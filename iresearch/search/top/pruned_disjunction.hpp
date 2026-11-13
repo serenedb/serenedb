@@ -85,7 +85,7 @@ class PrunedDisjunction : public Root {
       for (;;) {
         UpdateWindowScores(window_min, window_max);
         if (!Split(collector.ScoreThreshold())) {
-          window_min = window_max;
+          window_min = SkipAlone(window_max, collector.ScoreThreshold());
           goto outer;
         }
         const doc_id_t next = ComputeOuterWindow(window_min);
@@ -119,20 +119,9 @@ class PrunedDisjunction : public Root {
         window_max = max;
       }
 
-      ProcessEssential([&](Entry* entry) {
-        if (entry->leaf.Value() < window_min) {
-          entry->leaf.Seek(window_min);
-        }
-      });
-
-      for (auto min = Top(); min < window_max; min = Top()) {
-        ScoreAndCollectWindow(collector, min, window_max);
-        if (collector.ScoreThreshold() >= _next_threshold) {
-          break;
-        }
-      }
-
-      window_min = std::min(Top(), window_max);
+      window_min = _first_essential == 0
+                     ? CollectAll(collector, window_min, window_max)
+                     : CollectEssential(collector, window_min, window_max);
       ++_num_outer_windows;
     }
     _admit.Flush(collector);
@@ -207,6 +196,15 @@ class PrunedDisjunction : public Root {
       entry.max_score = entry.leaf.MaxScore(max - 1);
       entry.ratio = static_cast<double>(entry.max_score) / entry.cost;
     }
+  }
+
+  doc_id_t SkipAlone(doc_id_t min, score_t threshold) {
+    const auto lead = FindLead(min);
+    if (lead.first == lead.second) {
+      return lead.first;
+    }
+    return lead.entry->leaf.SkipNonCompetitive(lead.first, lead.second,
+                                               threshold);
   }
 
   bool Split(score_t score_threshold) {
@@ -405,8 +403,82 @@ class PrunedDisjunction : public Root {
     return max;
   }
 
-  void ProcessSingleEssential(LoserScoreCollector& collector, doc_id_t max) {
-    auto& leaf = _sorted[_first_essential]->leaf;
+  struct Lead {
+    Entry* entry = nullptr;
+    doc_id_t first = doc_limits::eof();
+    doc_id_t second = doc_limits::eof();
+  };
+
+  Lead FindLead(doc_id_t min = 0) noexcept {
+    Lead lead;
+    for (auto& entry : _entries) {
+      const auto doc = std::max(entry.leaf.Value(), min);
+      if (doc < lead.first) {
+        lead.second = lead.first;
+        lead.first = doc;
+        lead.entry = &entry;
+      } else if (doc < lead.second) {
+        lead.second = doc;
+      }
+    }
+    return lead;
+  }
+
+  doc_id_t CollectAll(LoserScoreCollector& collector, doc_id_t min,
+                      doc_id_t max) {
+    for (auto& entry : _entries) {
+      if (entry.leaf.Value() < min) {
+        entry.leaf.Seek(min);
+      }
+    }
+    for (auto lead = FindLead(); lead.first < max; lead = FindLead()) {
+      if (lead.second >= lead.first + irs::detail::kWindowDocs / 2) {
+        ProcessSingleEssential(collector, lead.entry->leaf,
+                               std::min(max, lead.second));
+      } else {
+        CollectWindow(collector, lead.first,
+                      std::min(lead.first + irs::detail::kWindowDocs, max));
+      }
+      if (collector.ScoreThreshold() >= _next_threshold) {
+        break;
+      }
+    }
+    return std::min(FindLead().first, max);
+  }
+
+  IRS_NO_INLINE void CollectWindow(LoserScoreCollector& collector, doc_id_t min,
+                                   doc_id_t max) {
+    for (auto& entry : _entries) {
+      if (entry.leaf.Value() < max) {
+        entry.leaf.Fill(min, max, _mask, _scores);
+      }
+    }
+    if constexpr (kExcludes) {
+      _excludes.Remove(min, max, _mask, _scores, score_t{0});
+    }
+    const auto before = collector.TotalMatches();
+    _admit.Window(collector, _scores, _mask, min, irs::detail::kWindowWords);
+    _num_candidates += static_cast<uint32_t>(collector.TotalMatches() - before);
+  }
+
+  doc_id_t CollectEssential(LoserScoreCollector& collector, doc_id_t min,
+                            doc_id_t max) {
+    ProcessEssential([&](Entry* entry) {
+      if (entry->leaf.Value() < min) {
+        entry->leaf.Seek(min);
+      }
+    });
+    for (auto doc = Top(); doc < max; doc = Top()) {
+      ScoreAndCollectWindow(collector, doc, max);
+      if (collector.ScoreThreshold() >= _next_threshold) {
+        break;
+      }
+    }
+    return std::min(Top(), max);
+  }
+
+  void ProcessSingleEssential(LoserScoreCollector& collector, Leaf& leaf,
+                              doc_id_t max) {
     leaf.ForEachScoredBlock(
       max, [&](doc_id_t* IRS_RESTRICT docs, uint32_t len,
                score_t* IRS_RESTRICT scores) IRS_FORCE_INLINE {
@@ -429,13 +501,15 @@ class PrunedDisjunction : public Root {
 
   void ScoreAndCollectWindow(LoserScoreCollector& collector, doc_id_t min,
                              doc_id_t max) {
+    SDB_ASSERT(_has_non_essential);
+    auto& top = _sorted[_first_essential]->leaf;
     if (_num_essential == 1) {
-      ProcessSingleEssential(collector, max);
+      ProcessSingleEssential(collector, top, max);
       return;
     }
     if (const auto second = SecondEssentialDoc();
         second >= min + irs::detail::kWindowDocs / 2) {
-      ProcessSingleEssential(collector, std::min(max, second));
+      ProcessSingleEssential(collector, top, std::min(max, second));
       UpdateHeapTop();
       return;
     }
@@ -448,13 +522,6 @@ class PrunedDisjunction : public Root {
       _excludes.Remove(min, max, _mask, _scores, score_t{0});
     }
 
-    if (!_has_non_essential) {
-      const auto before = collector.TotalMatches();
-      _admit.Window(collector, _scores, _mask, min, irs::detail::kWindowWords);
-      _num_candidates +=
-        static_cast<uint32_t>(collector.TotalMatches() - before);
-      return;
-    }
     const auto count = DrainCandidates(min);
     View<doc_id_t> cand_docs{_cand_docs, count};
     View<score_t> cand_scores{_cand_scores, count};

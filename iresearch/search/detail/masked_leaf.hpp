@@ -26,11 +26,14 @@
 #include "iresearch/formats/posting/block_io.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/utils/bit_utils.hpp"
+#include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {
 
 class MaskedLeaf {
+  using Kind = block_io::FillLeaf::Kind;
+
  public:
   static constexpr uint32_t kBlock = doc_limits::kBlockSize;
 
@@ -38,7 +41,7 @@ class MaskedLeaf {
     _len = 1;
     _at = kBlock - 1;
     _index = kBlock - 1;
-    _packed = true;
+    _kind = Kind::DocsTail;
   }
 
   void Reset(const block_io::FillLeaf& leaf, const UnalignedWord* bitset,
@@ -47,75 +50,127 @@ class MaskedLeaf {
     _len = len;
     _at = kBlock - len;
     _words = leaf.words;
-    _prefix_word = 0;
-    _prefix_bits = 0;
-    _run = leaf.IsRun();
-    _packed = !leaf.Maskable();
+    _kind = leaf.kind;
+    auto rank = kBlock - len;
+    for (uint32_t w = 0; w != _words; ++w) {
+      _ranks[w] = static_cast<uint8_t>(rank);
+      rank += static_cast<uint32_t>(std::popcount(bitset[w]));
+    }
   }
 
   uint32_t Index() const noexcept { return _index; }
 
   uint32_t Len() const noexcept { return _len; }
 
+  template<bool Parked>
+  void Materialize(doc_id_t base, doc_id_t* out) const noexcept {
+    if (block_io::IsDocs(_kind)) {
+      return;
+    }
+    if (_kind == Kind::Run) {
+      block_codec::FillProgression(out, _len, base, 1);
+      return;
+    }
+    if constexpr (Parked) {
+      uint64_t words[block_codec::kMaxBitsetWords];
+      std::memcpy(words, _bitset, size_t{_words} * sizeof(uint64_t));
+      block_io::MaterializeBitset(base, words, _words, out);
+    } else {
+      block_io::MaterializeBitset(base, _bitset, _words, out);
+    }
+  }
+
   IRS_FORCE_INLINE doc_id_t Find(const doc_id_t* docs, doc_id_t base,
                                  doc_id_t target) noexcept {
-    if (_packed) [[likely]] {
-      if (_len == kBlock) [[likely]] {
-        const auto* const it = BranchlessLowerBound<kBlock>(docs, target);
-        _index = static_cast<uint32_t>(it - docs);
-        return *it;
-      }
-      for (auto i = _at;; ++i) {
-        if (target <= docs[i]) {
-          _at = i;
-          _index = i;
-          return docs[i];
-        }
-      }
+    if (_kind == Kind::DocsBlock) [[likely]] {
+      const auto* const it = BranchlessLowerBound<kBlock>(docs, target);
+      const auto doc = *it;
+      _index = static_cast<uint32_t>(it - docs);
+      return doc;
+    }
+    if (_kind == Kind::DocsTail) {
+      const auto* const it = ScanNotBelow(docs + _at, target);
+      const auto doc = *it;
+      _at = _index = static_cast<uint32_t>(it - docs);
+      return doc;
     }
     return FindMasked(base, target);
+  }
+
+  template<uint32_t N, typename Mask>
+  IRS_FORCE_INLINE doc_id_t Match(const doc_id_t* docs, doc_id_t base,
+                                  const doc_id_t* targets, uint32_t first,
+                                  uint32_t end, Mask& hits,
+                                  uint32_t* index) noexcept {
+    if (!block_io::IsDocs(_kind)) [[unlikely]] {
+      doc_id_t doc = 0;
+      for (auto i = first; i != end; ++i) {
+        doc = FindMasked(base, targets[i]);
+        hits |= static_cast<Mask>(doc == targets[i]) << i;
+        index[i] = _index;
+      }
+      return doc;
+    }
+    const auto from = LowerBound(docs, _at, targets[first]);
+    const auto to = LowerBound(docs, from, targets[end - 1] + 1);
+    if (to - from < end - first) {
+      for (auto at = from; at != to; ++at) {
+        const auto doc = docs[at];
+        const auto i = CountLess<N>(targets, doc);
+        hits |= static_cast<Mask>(targets[i] == doc) << i;
+        index[i] = at;
+      }
+    } else {
+      for (auto i = first, at = from; i != end; ++i) {
+        at = LowerBound(docs, at, targets[i]);
+        hits |= static_cast<Mask>(docs[at] == targets[i]) << i;
+        index[i] = at;
+      }
+    }
+    _at = _index = std::min(to, kBlock - 1);
+    return docs[_at];
   }
 
  private:
   static constexpr auto kBits = BitsRequired<uint64_t>();
 
+  IRS_FORCE_INLINE uint32_t LowerBound(const doc_id_t* docs, uint32_t from,
+                                       doc_id_t target) const noexcept {
+    return static_cast<uint32_t>(
+      LeafLowerBound<kBlock>(docs, _len, docs + from, target) - docs);
+  }
+
   IRS_NO_INLINE doc_id_t FindMasked(doc_id_t base, doc_id_t target) noexcept {
     const auto first = base + 1;
-    if (target < first) {
-      target = first;
+    const auto bit = std::max(target, first) - first;
+    if (_kind == Kind::Run) {
+      _index = kBlock - _len + bit;
+      return first + bit;
     }
-    if (_run) {
-      _index = kBlock - _len + (target - first);
-      return target;
+    auto w = bit / kBits;
+    const uint64_t word = _bitset[w];
+    const auto shift = bit % kBits;
+    _index = _ranks[w] + static_cast<uint32_t>(
+                           std::popcount(word & ((uint64_t{1} << shift) - 1)));
+    if (const auto rest = word >> shift; rest != 0) [[likely]] {
+      return first + bit + static_cast<uint32_t>(std::countr_zero(rest));
     }
-    auto bit = static_cast<uint64_t>(target) - first;
-    for (auto w = bit / kBits; w != _words; ++w) {
-      const auto word = _bitset[w] & (~uint64_t{0} << (bit % kBits));
-      if (word != 0) {
-        const auto tz = static_cast<uint32_t>(std::countr_zero(word));
-        for (; _prefix_word != w; ++_prefix_word) {
-          _prefix_bits +=
-            static_cast<uint32_t>(std::popcount(_bitset[_prefix_word]));
-        }
-        _index = kBlock - _len + _prefix_bits +
-                 static_cast<uint32_t>(
-                   std::popcount(_bitset[w] & ((uint64_t{1} << tz) - 1)));
-        return static_cast<doc_id_t>(first + w * kBits + tz);
+    while (++w != _words) {
+      if (const uint64_t next = _bitset[w]; next != 0) {
+        return static_cast<doc_id_t>(first + w * kBits +
+                                     std::countr_zero(next));
       }
-      bit = (w + 1) * kBits;
     }
     return doc_limits::eof();
   }
 
   const UnalignedWord* _bitset = nullptr;
-  uint64_t _prefix_word = 0;
   uint32_t _words = 0;
   uint32_t _len = 0;
   uint32_t _at = kBlock;
   uint32_t _index = kBlock - 1;
-  uint32_t _prefix_bits = 0;
-  bool _run = false;
-  bool _packed = true;
+  Kind _kind = Kind::DocsTail;
+  uint8_t _ranks[block_codec::kMaxBitsetWords];
 };
 
 }  // namespace irs::detail

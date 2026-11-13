@@ -37,32 +37,12 @@ class SingleDocs {
     return FillOrImpl(min, max, mask, [](size_t) noexcept {});
   }
 
-  doc_id_t FillSum(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
-                   score_t* IRS_RESTRICT scores, score_t constant) {
+  template<ScoreMergeType M>
+  doc_id_t FillMerge(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
+                     score_t* IRS_RESTRICT scores, score_t constant) {
     return FillOrImpl(min, max, mask, [=](size_t offset) IRS_FORCE_INLINE {
-      Merge<ScoreMergeType::Sum>(scores[offset], constant);
+      Merge<M>(scores[offset], constant);
     });
-  }
-
-  doc_id_t FillMax(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
-                   score_t* IRS_RESTRICT scores, score_t constant) {
-    return FillOrImpl(min, max, mask, [=](size_t offset) IRS_FORCE_INLINE {
-      Merge<ScoreMergeType::Max>(scores[offset], constant);
-    });
-  }
-
-  doc_id_t FillAnd(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask) {
-    const auto words = detail::WindowWords(min, max);
-    if (_doc < min || _doc >= max) {
-      detail::Clear(mask, words);
-      return _doc >= max ? _doc : (_doc = doc_limits::eof());
-    }
-    const size_t offset = _doc - min;
-    const auto word = mask[offset / detail::kWindowBits] &
-                      (uint64_t{1} << (offset % detail::kWindowBits));
-    detail::Clear(mask, words);
-    mask[offset / detail::kWindowBits] = word;
-    return _doc = doc_limits::eof();
   }
 
   doc_id_t FillAndNot(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask) {

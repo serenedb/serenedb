@@ -50,27 +50,30 @@ class HnswHits : public Root {
   }
 
   void Run(Collector& collector) final {
+    score_t scores[kScoreBlock];
+    score_t spread[kScoreBlock];
+    doc_id_t docs[kScoreBlock];
+    doc_id_t all[kScoreBlock];
     for (size_t i = 0, total = _hits.size(); i < total;) {
       const auto n =
         static_cast<uint32_t>(std::min<size_t>(kScoreBlock, total - i));
       for (uint32_t j = 0; j < n; ++j) {
         _block[j] = _hits[i + j].score;
-        _docs[j] = _hits[i + j].doc;
-        _spread[j] = _spreads.empty() ? 0.f : _boost * _spreads[i + j];
+        docs[j] = _hits[i + j].doc;
+        spread[j] = _spreads.empty() ? 0.f : _boost * _spreads[i + j];
       }
-      _fetcher.Fetch(std::span<const doc_id_t>{_docs, n});
-      _score.Score(_scores, static_cast<scores_size_t>(n));
+      FetchAndScore(_fetcher, _score, docs, scores, n);
       auto live = n;
       if (_table) {
-        std::copy_n(_docs, n, _all);
-        live = _table->Narrow(_docs, _scores, n);
+        std::copy_n(docs, n, all);
+        live = _table->Narrow(docs, scores, n);
         for (uint32_t k = 0, j = 0; j < live; ++k) {
-          if (_all[k] == _docs[j]) {
-            _spread[j++] = _spread[k];
+          if (all[k] == docs[j]) {
+            spread[j++] = spread[k];
           }
         }
       }
-      collector.Append(_docs, _scores, _spread, live);
+      collector.Append(docs, scores, spread, live);
       i += n;
     }
   }
@@ -84,10 +87,6 @@ class HnswHits : public Root {
   irs::detail::TableFilter* _table;
   score_t _boost;
   score_t _block[kScoreBlock];
-  score_t _scores[kScoreBlock];
-  score_t _spread[kScoreBlock];
-  doc_id_t _docs[kScoreBlock];
-  doc_id_t _all[kScoreBlock];
 };
 
 }  // namespace

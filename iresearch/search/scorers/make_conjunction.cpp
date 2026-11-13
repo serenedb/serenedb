@@ -30,7 +30,8 @@ namespace irs::detail {
 namespace {
 
 template<ScoreMergeType Inner>
-class ConjunctionScore : public ScoreOperator {
+class ConjunctionScore
+  : public ScoreOperatorOf<ConjunctionScore<Inner>, false> {
   static_assert(Inner != ScoreMergeType::Noop);
 
  public:
@@ -41,7 +42,7 @@ class ConjunctionScore : public ScoreOperator {
     SDB_ASSERT(_children.size() > 1);
   }
 
-  score_t Score() const noexcept final {
+  score_t ScoreOne() const noexcept {
     auto child = _children.begin();
     const auto end = _children.end();
 
@@ -52,28 +53,7 @@ class ConjunctionScore : public ScoreOperator {
     return res;
   }
 
-  void Score(score_t* res, scores_size_t n) const noexcept final {
-    ScoreImpl<ScoreMergeType::Noop>(res, n);
-  }
-  void ScoreSum(score_t* res, scores_size_t n) const noexcept final {
-    ScoreImpl<ScoreMergeType::Sum>(res, n);
-  }
-  void ScoreMax(score_t* res, scores_size_t n) const noexcept final {
-    ScoreImpl<ScoreMergeType::Max>(res, n);
-  }
-
-  void ScoreBlock(score_t* res) const noexcept final {
-    ScoreBlockImpl<ScoreMergeType::Noop>(res);
-  }
-  void ScoreSumBlock(score_t* res) const noexcept final {
-    ScoreBlockImpl<ScoreMergeType::Sum>(res);
-  }
-  void ScoreMaxBlock(score_t* res) const noexcept final {
-    ScoreBlockImpl<ScoreMergeType::Max>(res);
-  }
-
- private:
-  template<ScoreMergeType Outer>
+  template<ScoreMergeType Outer = ScoreMergeType::Noop>
   IRS_FORCE_INLINE void ScoreImpl(score_t* res,
                                   scores_size_t n) const noexcept {
     auto child = _children.begin();
@@ -96,11 +76,13 @@ class ConjunctionScore : public ScoreOperator {
     }
   }
 
+ private:
   containers::Fixed<ScoreFunction> _children;
 };
 
 template<ScoreMergeType Inner>
-class ConjunctionConstScore : public ScoreOperator {
+class ConjunctionConstScore
+  : public ScoreOperatorOf<ConjunctionConstScore<Inner>, false> {
   static_assert(Inner != ScoreMergeType::Noop);
 
  public:
@@ -114,7 +96,7 @@ class ConjunctionConstScore : public ScoreOperator {
     SDB_ASSERT(!_children.empty());
   }
 
-  score_t Score() const noexcept final {
+  score_t ScoreOne() const noexcept {
     auto child = _children.begin();
     const auto end = _children.end();
 
@@ -126,27 +108,17 @@ class ConjunctionConstScore : public ScoreOperator {
     return res;
   }
 
-  void Score(score_t* res, scores_size_t n) const noexcept final {
-    Gather(res, n);
-    for (scores_size_t i = 0; i != n; ++i) {
-      irs::Merge<Inner>(res[i], _constant);
+  template<ScoreMergeType Outer = ScoreMergeType::Noop>
+  IRS_FORCE_INLINE void ScoreImpl(score_t* res,
+                                  scores_size_t n) const noexcept {
+    if constexpr (Outer == ScoreMergeType::Noop) {
+      Gather(res, n);
+      for (scores_size_t i = 0; i != n; ++i) {
+        irs::Merge<Inner>(res[i], _constant);
+      }
+    } else {
+      Settle<Outer>(res, n);
     }
-  }
-  void ScoreSum(score_t* res, scores_size_t n) const noexcept final {
-    Settle<ScoreMergeType::Sum>(res, n);
-  }
-  void ScoreMax(score_t* res, scores_size_t n) const noexcept final {
-    Settle<ScoreMergeType::Max>(res, n);
-  }
-
-  void ScoreBlock(score_t* res) const noexcept final {
-    Score(res, kScoreBlock);
-  }
-  void ScoreSumBlock(score_t* res) const noexcept final {
-    Settle<ScoreMergeType::Sum>(res, kScoreBlock);
-  }
-  void ScoreMaxBlock(score_t* res) const noexcept final {
-    Settle<ScoreMergeType::Max>(res, kScoreBlock);
   }
 
  private:

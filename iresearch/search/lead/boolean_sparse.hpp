@@ -49,6 +49,7 @@ class BooleanSparse {
   static constexpr bool kInherited = std::is_same_v<Score, detail::Inherited>;
   static constexpr bool kDecides =
     kOptional && probe::OptionalDecides<Optional>();
+  static constexpr bool kTracksDoc = kOptional && !kDecides;
   static_assert(kProbes || kOptional || kExcludes);
   static_assert(kScored || kDecides || !kOptional);
   static_assert(!kInherited || (!kProbes && !kOptional));
@@ -69,13 +70,63 @@ class BooleanSparse {
   BooleanSparse(BooleanSparse&&) = delete;
   BooleanSparse& operator=(BooleanSparse&&) = delete;
 
-  doc_id_t Next() { return Converge(_lead.Next()); }
+  IRS_FORCE_INLINE doc_id_t Next(doc_id_t max = doc_limits::eof()) {
+    return Converge(_lead.Next(), max);
+  }
 
-  doc_id_t Seek(doc_id_t target) {
-    if (target <= _doc) {
-      return _doc;
+  IRS_FORCE_INLINE doc_id_t Seek(doc_id_t target,
+                                 doc_id_t max = doc_limits::eof()) {
+    return Converge(_lead.Seek(target), max);
+  }
+
+  uint64_t Count(doc_id_t min, doc_id_t max)
+    requires(!kScored && !kInherited)
+  {
+    if constexpr (!kProbes && !kOptional && LeafType<Lead>) {
+      return CountLeaves(
+        _lead, min, max, [&](const doc_id_t* docs, uint32_t len) {
+          return len - detail::CountExcluded(_excludes, docs, len);
+        });
+    } else {
+      uint64_t total = 0;
+      for (auto doc = _lead.Seek(min); doc < max;) {
+        if (!Aligned(doc)) {
+          continue;
+        }
+        total += static_cast<uint64_t>(detail::Kept(_excludes, doc));
+        doc = _lead.Next();
+      }
+      return total;
     }
-    return Converge(_lead.Seek(target));
+  }
+
+  uint32_t GatherAll(doc_id_t min, doc_id_t max, doc_id_t* IRS_RESTRICT out)
+    requires(!kScored && !kInherited)
+  {
+    auto doc = _lead.Seek(min);
+    return Gather<false>(doc, max, out, 0);
+  }
+
+  template<bool Capped = true>
+  IRS_FORCE_INLINE uint32_t Gather(doc_id_t& doc, doc_id_t max,
+                                   doc_id_t* IRS_RESTRICT out, uint32_t cap)
+    requires(!kScored && !kInherited)
+  {
+    uint32_t n = 0;
+    while (doc < max && (!Capped || n != cap)) {
+      if (!Aligned(doc)) {
+        continue;
+      }
+      out[n] = doc;
+      n += static_cast<uint32_t>(detail::Kept(_excludes, doc));
+      doc = _lead.Next();
+    }
+    if constexpr (Capped) {
+      if (doc < max) {
+        doc = Converge(doc, max);
+      }
+    }
+    return n;
   }
 
   IRS_FORCE_INLINE void FetchScoreArgs(uint32_t slot)
@@ -131,35 +182,46 @@ class BooleanSparse {
     }
   }
 
-  doc_id_t Converge(doc_id_t doc) {
-    while (!doc_limits::eof(doc)) {
-      if constexpr (kProbes) {
-        const auto probe = _probes.Probe(doc);
-        if (probe != doc) {
-          doc = _lead.Seek(probe);
-          continue;
-        }
+  IRS_FORCE_INLINE bool Aligned(doc_id_t& doc) {
+    if constexpr (kProbes) {
+      const auto probe = _probes.Probe(doc);
+      if (probe != doc) {
+        doc = _lead.Seek(probe);
+        return false;
       }
-      if constexpr (kDecides) {
-        const auto probe = _optional.Probe(doc);
-        if (probe != doc) {
-          doc = _lead.Seek(probe);
-          continue;
-        }
+    }
+    if constexpr (kDecides) {
+      const auto probe = _optional.Probe(doc);
+      if (probe != doc) {
+        doc = _lead.Seek(probe);
+        return false;
       }
-      if (detail::SkipExcluded(_excludes, _lead, doc)) {
+    }
+    return !detail::SkipSpan(_excludes, _lead, doc);
+  }
+
+  IRS_FORCE_INLINE doc_id_t Converge(doc_id_t doc, doc_id_t max) {
+    while (doc < max) {
+      if (!Aligned(doc)) {
         continue;
       }
-      break;
+      if (!detail::Kept(_excludes, doc)) {
+        doc = _lead.Next();
+        continue;
+      }
+      if constexpr (kTracksDoc) {
+        _doc = doc;
+      }
+      return doc;
     }
-    return _doc = doc;
+    return doc;
   }
 
   Lead _lead;
   [[no_unique_address]] Probes _probes;
   [[no_unique_address]] Optional _optional;
   [[no_unique_address]] Excludes _excludes;
-  doc_id_t _doc = doc_limits::invalid();
+  [[no_unique_address]] utils::Need<kTracksDoc, doc_id_t> _doc{};
   [[no_unique_address]] Score _score;
 };
 

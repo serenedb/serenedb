@@ -40,6 +40,10 @@ class Emit {
 
   IRS_FORCE_INLINE bool Pending() const noexcept { return _word != _words_end; }
 
+  IRS_FORCE_INLINE doc_id_t Next() const noexcept {
+    return _base + _word * detail::kWindowBits;
+  }
+
   IRS_FORCE_INLINE void SkipTo(doc_id_t begin) noexcept {
     if (begin <= _base) {
       return;

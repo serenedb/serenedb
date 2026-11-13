@@ -60,45 +60,39 @@ IRS_FORCE_INLINE score_t MeasureKernel(score_t diff,
   }
 }
 
-template<ScoreMergeType MergeType, DFIMeasure M, bool HasScale>
-IRS_FORCE_INLINE void DFIImpl(
-  score_t* IRS_RESTRICT res, scores_size_t n, const uint32_t* IRS_RESTRICT freq,
-  const uint32_t* IRS_RESTRICT norm,
-  [[maybe_unused]] const score_t* IRS_RESTRICT scale, score_t ratio,
-  score_t const_boost) noexcept {
-  constexpr score_t kInvLn2 = 1.4426950408889634f;
-  for (scores_size_t i = 0; i != n; ++i) {
-    const score_t tf = ScaledFreq<HasScale>(freq, scale, i);
-    const score_t dl = TermCountToScore(norm[i]);
+template<DFIMeasure M>
+struct DFIFormula {
+  IRS_FORCE_INLINE score_t operator()(score_t tf, score_t dl) const noexcept {
+    constexpr score_t kInvLn2 = 1.4426950408889634f;
     const score_t expected = ratio * dl;
     score_t r = 0.f;
     if (tf > expected && expected > 0.f) {
-      const score_t measure = MeasureKernel<M>(tf - expected, expected);
-      r = std::log1p(measure) * kInvLn2;
+      r = std::log1p(MeasureKernel<M>(tf - expected, expected)) * kInvLn2;
     }
-    r *= const_boost;
-    Merge<MergeType>(res[i], r);
+    return r * boost;
   }
-}
+
+  score_t boost;
+  score_t ratio;
+};
 
 template<DFIMeasure M, bool HasScale>
 struct DFIScore : public ScoreOperatorOf<DFIScore<M, HasScale>> {
   DFIScore(score_t boost, const DFIStats& stats, const FreqBlockAttr* freq,
            const uint32_t* norm, const score_t* scale) noexcept
-    : freq{freq}, norm{norm}, scale{scale}, boost{boost}, ratio{stats.ratio} {}
+    : freq{freq}, norm{norm}, scale{scale}, formula{boost, stats.ratio} {}
 
   template<ScoreMergeType MergeType = ScoreMergeType::Noop>
   IRS_FORCE_INLINE void ScoreImpl(score_t* res,
                                   scores_size_t n) const noexcept {
-    DFIImpl<MergeType, M, HasScale>(res, n, freq->value, norm,
-                                    TryGetValue(scale), ratio, boost);
+    ScoreFreqs<MergeType, HasScale>(res, n, freq->value, norm,
+                                    TryGetValue(scale), formula);
   }
 
   const FreqBlockAttr* freq;
   const uint32_t* norm;
   [[no_unique_address]] utils::Need<HasScale, const score_t*> scale;
-  score_t boost;
-  score_t ratio;
+  DFIFormula<M> formula;
 };
 
 template<DFIMeasure M>

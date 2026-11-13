@@ -41,16 +41,19 @@ namespace irs::fill {
 
 template<typename Lead, typename Others, typename Optional, typename Excludes,
          typename Score = utils::Empty>
-class BooleanWindow {
+class BooleanWindow : detail::WindowClauses<Lead, Others, Optional, Excludes> {
+  using Clauses = detail::WindowClauses<Lead, Others, Optional, Excludes>;
+  using Clauses::_optional;
+  using Clauses::FillClauses;
+
  public:
-  static constexpr bool kLead = !std::is_same_v<Lead, utils::Empty>;
-  static constexpr bool kOthers = !std::is_same_v<Others, utils::Empty>;
-  static constexpr bool kOptional = !std::is_same_v<Optional, utils::Empty>;
-  static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
+  using Clauses::kExcludes;
+  using Clauses::kLead;
+  using Clauses::kOptional;
+  using Clauses::kOthers;
   static constexpr bool kScored = std::is_same_v<Score, detail::Scored>;
   static constexpr bool kRetracts = kScored && detail::Retracts<Optional>();
   static_assert(kLead != kOptional);
-  static_assert(kLead || !kOthers);
   static_assert(!kScored || (kOptional && !kExcludes));
 
   template<typename LeadArgs, typename OthersArgs, typename OptionalArgs,
@@ -58,20 +61,15 @@ class BooleanWindow {
   BooleanWindow(std::piecewise_construct_t, LeadArgs&& lead,
                 OthersArgs&& others, OptionalArgs&& optional,
                 ExcludesArgs&& excludes, Score score = {})
-    : _lead{std::make_from_tuple<Lead>(std::forward<LeadArgs>(lead))},
-      _others{std::make_from_tuple<Others>(std::forward<OthersArgs>(others))},
-      _optional{
-        std::make_from_tuple<Optional>(std::forward<OptionalArgs>(optional))},
-      _excludes{
-        std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))},
+    : Clauses{std::piecewise_construct, std::forward<LeadArgs>(lead),
+              std::forward<OthersArgs>(others),
+              std::forward<OptionalArgs>(optional),
+              std::forward<ExcludesArgs>(excludes)},
       _score{score} {
     if constexpr (kRetracts) {
-      std::fill_n(_scores, detail::kWindowDocs, _score.absorbed);
+      std::fill_n(_scores.data(), detail::kWindowDocs, _score.absorbed);
     }
   }
-
-  BooleanWindow(BooleanWindow&&) = delete;
-  BooleanWindow& operator=(BooleanWindow&&) = delete;
 
   doc_id_t FillOr(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask)
     requires(!kScored)
@@ -80,29 +78,22 @@ class BooleanWindow {
       return _optional.Fill(min, max, mask);
     } else {
       const auto words = detail::WindowWords(min, max);
-      const auto next = Compute(min, max, words);
+      detail::Scratch own;
+      const auto next = Compute(min, max, words, own);
       for (size_t w = 0; w != words; ++w) {
-        mask[w] |= _own[w];
+        mask[w] |= own[w];
       }
       return next;
     }
-  }
-
-  doc_id_t FillAnd(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask)
-    requires(!kScored)
-  {
-    const auto words = detail::WindowWords(min, max);
-    const auto next = Compute(min, max, words);
-    detail::FoldAnd(mask, _own.data(), words);
-    return next;
   }
 
   doc_id_t FillAndNot(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask)
     requires(!kScored)
   {
     const auto words = detail::WindowWords(min, max);
-    const auto next = Compute(min, max, words);
-    detail::FoldAndNot(mask, _own.data(), words);
+    detail::Scratch own;
+    const auto next = Compute(min, max, words, own);
+    detail::FoldAndNot(mask, own.data(), words);
     return next;
   }
 
@@ -131,11 +122,10 @@ class BooleanWindow {
   }
 
  private:
-  doc_id_t Compute(doc_id_t min, doc_id_t max, size_t words) {
-    auto* const own = _own.data();
-    detail::Clear(own, words);
-    return detail::FillClauses(_lead, _others, _optional, _excludes, min, max,
-                               own);
+  doc_id_t Compute(doc_id_t min, doc_id_t max, size_t words,
+                   detail::Scratch& own) {
+    detail::Clear(own.data(), words);
+    return FillClauses(min, max, own.data());
   }
 
   template<ScoreMergeType Inner>
@@ -177,13 +167,9 @@ class BooleanWindow {
     }
   }
 
-  detail::Scratch _own{};
-  [[no_unique_address]] ABSL_CACHELINE_ALIGNED
-    utils::Need<kRetracts, score_t[detail::kWindowDocs]> _scores{};
-  [[no_unique_address]] Lead _lead;
-  [[no_unique_address]] Others _others;
-  [[no_unique_address]] Optional _optional;
-  [[no_unique_address]] Excludes _excludes;
+  [[no_unique_address]] utils::Need<kScored, detail::Scratch> _own{};
+  [[no_unique_address]] utils::Need<kRetracts, detail::WindowBuf<score_t>>
+    _scores{};
   [[no_unique_address]] Score _score;
 };
 

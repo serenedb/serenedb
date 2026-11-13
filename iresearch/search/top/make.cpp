@@ -53,7 +53,44 @@ Root::ptr MakeAnyPhrase(const Query& query, const Context& ctx) {
     });
 }
 
+template<typename Result, typename Make>
+Result MakePhraseOf(const QueryBuilder& query, Make&& make) {
+  if (query.Kind() != QueryKind::Phrase) {
+    return {};
+  }
+  const auto resolve = [&](const auto& phrase) {
+    return irs::detail::ResolveMatch(
+      phrase, [&]<irs::detail::PhraseMatch M> -> Result {
+        if constexpr (M != irs::detail::PhraseMatch::Slop) {
+          return make.template operator()<M>(phrase);
+        } else {
+          return {};
+        }
+      });
+  };
+  if (utils::downCast<PhraseQuery>(query).state.Fixed()) {
+    return resolve(utils::downCast<FixedPhraseQuery>(query));
+  }
+  return resolve(utils::downCast<VariadicPhraseQuery>(query));
+}
+
 }  // namespace
+
+UnionMember::ptr MakeUnionMember(const QueryBuilder& query,
+                                 const Context& ctx) {
+  return MakePhraseOf<UnionMember::ptr>(
+    query, [&]<irs::detail::PhraseMatch M>(const auto& phrase) {
+      return MakePhraseMember<M>(phrase, ctx);
+    });
+}
+
+PrunedClause::ptr MakeConjunctionClause(const QueryBuilder& query,
+                                        const Context& ctx) {
+  return MakePhraseOf<PrunedClause::ptr>(
+    query, [&]<irs::detail::PhraseMatch M>(const auto& phrase) {
+      return MakePhraseClause<M>(phrase, ctx);
+    });
+}
 
 Root::ptr MakeEmpty() { return memory::make_managed<Empty>(); }
 
@@ -74,7 +111,7 @@ Root::ptr Family::Make(const VariadicPhraseQuery& query, const Context& ctx) {
 }
 
 Root::ptr Family::Make(const TokenPhraseQuery& query, const Context& ctx) {
-  if (ctx.prune) {
+  if (PruneByBounds(ctx)) {
     if (auto pruned = MakeTokenPhrasePruned(query, ctx)) {
       return pruned;
     }
@@ -84,7 +121,7 @@ Root::ptr Family::Make(const TokenPhraseQuery& query, const Context& ctx) {
 }
 
 Root::ptr Family::Make(const TermQuery& query, const Context& ctx) {
-  if (ctx.prune && query.State().cookie.docs_count != 1) {
+  if (PruneByBounds(ctx) && query.State().cookie.docs_count != 1) {
     const irs::detail::PostingClause posting{
       .state = query.State(),
       .boost = query.Boost(),
@@ -98,7 +135,7 @@ Root::ptr Family::Make(const TermQuery& query, const Context& ctx) {
 }
 
 Root::ptr Family::Make(const MultiTermQuery& query, const Context& ctx) {
-  if (ctx.prune) {
+  if (PruneByBounds(ctx)) {
     const auto& state = query.State();
     const auto* const field = state.Reader();
     const auto* const scorer = query.Stats(ScoredOf(ctx)).scorer;

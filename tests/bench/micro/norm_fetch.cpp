@@ -282,7 +282,7 @@ struct PackedColumn {
                               uint32_t* IRS_RESTRICT out) noexcept {
     reader->GetPostingBlock(
       std::span<const irs::doc_id_t, kBlock>{docs, kBlock},
-      std::span<uint32_t, kBlock>{out, kBlock});
+      std::span<uint32_t, kBlock>{out, kBlock}, irs::doc_limits::invalid());
   }
 };
 

@@ -42,6 +42,13 @@
 
 namespace irs::top {
 
+struct LeafHits {
+  ABSL_CACHELINE_ALIGNED uint32_t slots[doc_limits::kBlockSize];
+  ABSL_CACHELINE_ALIGNED doc_id_t docs[doc_limits::kBlockSize];
+  ABSL_CACHELINE_ALIGNED uint32_t freqs[doc_limits::kBlockSize];
+  ABSL_CACHELINE_ALIGNED score_t scores[doc_limits::kBlockSize];
+};
+
 template<typename Leaf, size_t N = 0>
 class PrunedLeaves {
  public:
@@ -85,12 +92,22 @@ class PrunedLeaves {
     return reads;
   }
 
-  doc_id_t AdvanceTo(doc_id_t min) {
-    doc_id_t end = doc_limits::eof();
-    for (auto& leaf : _leaves) {
-      end = std::min(end, leaf.AdvanceBlock(min));
+  score_t RootMax() const noexcept {
+    if constexpr (requires(const Leaf& leaf) { leaf.RootScore(); }) {
+      score_t total = 0;
+      for (const auto& leaf : _leaves) {
+        total += leaf.RootScore();
+      }
+      return total;
+    } else {
+      return std::numeric_limits<score_t>::max();
     }
-    return end;
+  }
+
+  void AdvanceTo(doc_id_t min) {
+    for (auto& leaf : _leaves) {
+      leaf.AdvanceBlock(min);
+    }
   }
 
   score_t OpenWindow(doc_id_t min, doc_id_t last) {
@@ -130,10 +147,9 @@ class PrunedLeaves {
 
   void Fetch(const doc_id_t* docs, uint32_t len) {
     if (len == kScoreBlock) {
-      _fetcher.FetchScoreBlock(
-        std::span<const doc_id_t, kScoreBlock>{docs, kScoreBlock});
+      _fetcher.FetchBlock(docs);
     } else {
-      _fetcher.Fetch(std::span<const doc_id_t>{docs, len});
+      _fetcher.Fetch(docs, static_cast<scores_size_t>(len));
     }
   }
 
@@ -164,22 +180,12 @@ class PrunedLeaves {
           break;
         }
       }
-      auto& leaf = _leaves[_order[i]];
-      uint32_t out = 0;
-      for (uint32_t j = 0; j != len; ++j) {
-        const auto doc = docs[j];
-        const auto hit = static_cast<uint32_t>(leaf.Probe(doc) == doc);
-        docs[out] = doc;
-        scores[out] = scores[j];
-        leaf.FetchScoreArgs(out);
-        out += hit;
-      }
-      len = out;
+      len = Keep(_leaves[_order[i]], docs, scores, len);
       if (len == 0) {
         break;
       }
       if (fetched != len) {
-        _fetcher.Fetch(std::span<const doc_id_t>{docs, len});
+        _fetcher.Fetch(docs, static_cast<scores_size_t>(len));
         fetched = len;
       }
       _scorers[_order[i]].template Score<ScoreMergeType::Sum>(
@@ -200,6 +206,34 @@ class PrunedLeaves {
     return k;
   }
 
+  size_t Required(score_t lead_max, score_t threshold, uint64_t lead_cost) {
+    const auto count = _leaves.size();
+    if (count < 2 ||
+        lead_max + _remaining[_order[0]] + (count != 2 ? _suffix[2] : 0) >
+          threshold) {
+      return 0;
+    }
+    score_t before = 0;
+    size_t required = 0;
+    size_t sparse = 0;
+    while (required != count &&
+           lead_max + before +
+               (required + 1 != count ? _suffix[required + 1] : score_t{0}) <=
+             threshold) {
+      const auto leaf = _order[required];
+      before += _remaining[leaf];
+      if (_leaves[leaf].Cost() < lead_cost) {
+        _required[sparse++] = leaf;
+      }
+      ++required;
+    }
+    std::sort(_required.begin(), _required.begin() + sparse,
+              [&](uint32_t a, uint32_t b) noexcept {
+                return _leaves[a].Cost() < _leaves[b].Cost();
+              });
+    return sparse;
+  }
+
   uint64_t DriverCost(size_t drivers) const noexcept {
     uint64_t cost = 0;
     for (size_t i = 0; i != drivers; ++i) {
@@ -208,12 +242,30 @@ class PrunedLeaves {
     return cost;
   }
 
+  uint64_t RequiredCost() const noexcept {
+    return _leaves[_required[0]].Cost();
+  }
+
   IRS_FORCE_INLINE doc_id_t FirstOf(size_t drivers, doc_id_t target) {
     auto first = _leaves[_order[0]].Probe(target);
     for (size_t i = 1; i != drivers; ++i) {
       first = std::min(first, _leaves[_order[i]].Probe(target));
     }
     return first;
+  }
+
+  IRS_FORCE_INLINE doc_id_t AllOf(size_t sparse, doc_id_t target) {
+    SDB_ASSERT(sparse != 0);
+    if (sparse == 1) {
+      return _leaves[_required[0]].Probe(target);
+    }
+    for (size_t i = 0, agreed = 0; agreed != sparse;
+         i = i + 1 != sparse ? i + 1 : 0) {
+      const auto doc = _leaves[_required[i]].Probe(target);
+      agreed = doc == target ? agreed + 1 : 1;
+      target = doc;
+    }
+    return target;
   }
 
   IRS_FORCE_INLINE void Gather(doc_id_t doc, uint32_t slot) {
@@ -235,55 +287,65 @@ class PrunedLeaves {
 
   uint32_t AddOptional(doc_id_t* IRS_RESTRICT docs,
                        score_t* IRS_RESTRICT scores, uint32_t len,
-                       score_t threshold) {
-    SDB_ASSERT(len != 0 && len <= kScoreBlock);
-    const auto count = _leaves.size();
-    std::copy_n(scores, len, _running);
-    ScoreMask alive = len == BitsRequired<ScoreMask>()
-                        ? ~ScoreMask{0}
-                        : (ScoreMask{1} << len) - 1;
-    bool fetched = false;
-    for (size_t i = 0; i != count; ++i) {
+                       score_t threshold, LeafHits& matched) {
+    SDB_ASSERT(len <= doc_limits::kBlockSize);
+    for (size_t i = 0, count = _leaves.size(); i != count && len != 0; ++i) {
       if (const auto required = threshold - _suffix[i]; required > 0) {
-        ScoreMask keep = 0;
-        for (uint32_t j = 0; j != len; ++j) {
-          keep |= static_cast<ScoreMask>(_running[j] > required) << j;
+        len = irs::detail::FilterScores(docs, scores, len, required);
+        if (len == 0) {
+          break;
         }
-        alive &= keep;
-      }
-      if (alive == 0) {
-        break;
       }
       const auto c = _order[i];
       auto& leaf = _leaves[c];
-      ScoreMask hits = 0;
-      for (auto m = alive; m != 0; m &= m - 1) {
-        const auto j = static_cast<uint32_t>(std::countr_zero(m));
-        const auto doc = docs[j];
-        hits |= static_cast<ScoreMask>(leaf.Probe(doc) == doc) << j;
-        leaf.FetchScoreArgs(j);
+      uint32_t hits = 0;
+      for (uint32_t off = 0; off < len; off += kScoreBlock) {
+        const auto n = std::min<uint32_t>(kScoreBlock, len - off);
+        uint32_t freqs[kScoreBlock];
+        for (auto found = leaf.Hits(docs + off, n, freqs); found != 0;
+             found &= found - 1) {
+          const auto j = static_cast<uint32_t>(std::countr_zero(found));
+          matched.slots[hits] = off + j;
+          matched.docs[hits] = docs[off + j];
+          matched.freqs[hits] = freqs[j];
+          ++hits;
+        }
       }
       if (hits == 0) {
         continue;
       }
-      if (!fetched) {
-        _fetcher.Fetch(std::span<const doc_id_t>{docs, len});
-        fetched = true;
-      }
-      _held[c] = hits;
-      auto* const row = _rows[c].data();
-      _scorers[c].Score(row, static_cast<scores_size_t>(len));
-      for (uint32_t j = 0; j != len; ++j) {
-        _running[j] += ((hits >> j) & 1) != 0 ? row[j] : score_t{0};
+      _fetcher.Fetch(matched.docs, static_cast<scores_size_t>(hits));
+      leaf.ScoreWith(_scorers[c], matched.freqs, matched.scores, hits);
+      for (uint32_t h = 0; h != hits; ++h) {
+        scores[matched.slots[h]] += matched.scores[h];
       }
     }
-    if (fetched) {
-      AddHeld(scores, len);
-    }
-    return irs::detail::FilterScores(docs, scores, len, threshold);
+    return len == 0 ? 0
+                    : irs::detail::FilterScores(docs, scores, len, threshold);
   }
 
  private:
+  IRS_FORCE_INLINE static uint32_t Keep(Leaf& leaf, doc_id_t* IRS_RESTRICT docs,
+                                        score_t* IRS_RESTRICT scores,
+                                        uint32_t len) {
+    if constexpr (requires { leaf.Keep(docs, scores, len); }) {
+      return leaf.Keep(docs, scores, len);
+    } else {
+      uint32_t out = 0;
+      for (uint32_t j = 0; j != len; ++j) {
+        const auto doc = docs[j];
+        const bool hit = leaf.Probe(doc) == doc;
+        docs[out] = doc;
+        scores[out] = scores[j];
+        if (hit) {
+          leaf.FetchScoreArgs(out);
+        }
+        out += static_cast<uint32_t>(hit);
+      }
+      return out;
+    }
+  }
+
   static ScoreFunction Scorer(Leaf& leaf) {
     if constexpr (requires { leaf.PrepareScore(); }) {
       return leaf.PrepareScore();
@@ -311,10 +373,10 @@ class PrunedLeaves {
   irs::containers::Fixed<score_t, N> _remaining;
   irs::containers::Fixed<score_t, N> _suffix;
   irs::containers::Fixed<uint32_t, N> _order;
+  irs::containers::Fixed<uint32_t, N> _required{_leaves.size()};
   irs::containers::Fixed<ScoreMask, N> _held{_leaves.size()};
   irs::containers::Fixed<std::array<score_t, kScoreBlock>, N> _rows{
     _leaves.size()};
-  ABSL_CACHELINE_ALIGNED score_t _running[kScoreBlock];
   uint32_t _dropped = 0;
 };
 

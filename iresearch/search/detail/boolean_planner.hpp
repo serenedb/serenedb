@@ -112,6 +112,16 @@ Result<Family> MakeConjunction(
           return boosted;
         }
       }
+      if constexpr (kScoredLeadWindow<Family>) {
+        if (must_filters.empty() && should_filters.empty()) {
+          if (auto windowed = MakeScoredLeadWindow<Family>(
+                must, should, segment,
+                ScoringFor<Family>(segment, ctx, merge, uniformity), ctx,
+                absorbed)) {
+            return windowed;
+          }
+        }
+      }
       const auto recipe = RecipeOf<Family>(segment, ctx);
       return BuildProbeLeaves<Result<Family>>(
         should, should_filters, nullptr, segment,

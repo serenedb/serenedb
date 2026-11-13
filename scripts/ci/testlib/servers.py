@@ -276,9 +276,9 @@ class ServerPool(Fixture):
 
 
 class RestartingServer:
-    def __init__(self, ctx, home, threads=0, extra_args=(), profile_dir=None):
+    def __init__(self, ctx, home, threads=0, extra_args=(), profile_dir=None, http_apis=()):
         self.server = Server(ctx, home, threads=threads, extra_args=extra_args,
-                             profile_dir=profile_dir)
+                             profile_dir=profile_dir, http_apis=http_apis)
         self.exits = []
         self._stopping = threading.Event()
         self._thread = None

@@ -282,4 +282,20 @@ bool VerifyCleartextAgainstMd5(std::string_view stored_md5,
     {reinterpret_cast<const uint8_t*>(stored_md5.data()), stored_md5.size()});
 }
 
+bool VerifyCleartext(const Credential& stored, std::string_view username,
+                     std::string_view password) {
+  if (stored.cleartext) {
+    const std::string given = SaslPrep(password);
+    const std::string want = SaslPrep(*stored.cleartext);
+    return ConstantTimeEqual(
+      {reinterpret_cast<const uint8_t*>(given.data()), given.size()},
+      {reinterpret_cast<const uint8_t*>(want.data()), want.size()});
+  }
+  if (stored.scram) {
+    return VerifyCleartextAgainstScram(*stored.scram, password);
+  }
+  return stored.md5 &&
+         VerifyCleartextAgainstMd5(*stored.md5, username, password);
+}
+
 }  // namespace sdb::network

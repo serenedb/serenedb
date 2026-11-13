@@ -750,15 +750,20 @@ void ColumnWriter::CopyBlock(const ColumnBlockMeta& block, ReadContext& source,
   sink.push_back(std::move(m));
 }
 
-void ColumnWriter::CopyBlocks(const ColumnReader& column, ReadContext& source) {
+bool ColumnWriter::CopyBlocks(const ColumnReader& column, ReadContext& source,
+                              absl::FunctionRef<bool()> progress) {
   SDB_ASSERT(CopyableFrom(column));
   SealRowGroup();
   std::vector<byte_type> buffer;
   for (const auto& block : column.DataBlocks()) {
+    if (!progress()) {
+      return false;
+    }
     CopyBlock(block, source, _meta.data, buffer);
   }
   CopyValidity(column, source, 0, column.RowCount(), buffer);
   _row_start += column.RowCount();
+  return true;
 }
 
 bool ColumnWriter::ValidityCopyable(const ColumnReader& column, uint64_t first,

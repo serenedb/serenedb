@@ -20,9 +20,10 @@
 
 #pragma once
 
+#include <absl/functional/function_ref.h>
+
 #include <cstdint>
 #include <duckdb/main/database.hpp>
-#include <functional>
 #include <memory>
 #include <span>
 #include <vector>
@@ -46,7 +47,7 @@ struct MergeSource {
 
 bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
                const IndexFieldOptions* field_options,
-               const std::function<bool()>& progress = {});
+               absl::FunctionRef<bool()> progress);
 
 std::vector<std::unique_ptr<ColumnReader>> ConcatInMemory(
   duckdb::DatabaseInstance& db, std::span<const MergeSource> sources,

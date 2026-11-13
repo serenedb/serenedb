@@ -28,6 +28,7 @@
 #include <duckdb/common/allocator.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/unified_vector_format.hpp>
+#include <duckdb/common/vector_operations/unary_executor.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/function/create_sort_key.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
@@ -144,6 +145,16 @@ void ConstraintKeyEncoder::Encode(duckdb::DataChunk& chunk,
     }
   }
   input.SetCardinality(count);
+  for (auto& column : input.data) {
+    if (column.GetType().id() != duckdb::LogicalTypeId::INTERVAL) {
+      continue;
+    }
+    duckdb::Vector normalized{duckdb::LogicalType::INTERVAL, count};
+    duckdb::UnaryExecutor::Execute<duckdb::interval_t, duckdb::interval_t>(
+      column, normalized, count,
+      [](duckdb::interval_t value) { return value.Normalize(); });
+    column.Reference(normalized);
+  }
   duckdb::CreateSortKeyHelpers::CreateSortKey(input, modifiers, keys);
   duckdb::UnifiedVectorFormat format;
   for (duckdb::idx_t i = 0; i != input.ColumnCount(); ++i) {

@@ -44,6 +44,7 @@
 #include <iresearch/analysis/geo_tokenizer.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/formats/hnsw/hnsw_graph.hpp>
+#include <iresearch/index/vector_distance.hpp>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/attribute_provider.hpp>
@@ -909,11 +910,18 @@ uint32_t VectorDimension(const duckdb::LogicalType& type) noexcept {
 
 void ValidateVectorKey(std::string_view label, const duckdb::LogicalType& type,
                        std::string_view kind) {
-  if (VectorDimension(type) == 0) {
+  const auto dimension = VectorDimension(type);
+  if (dimension == 0) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
       ERR_MSG("Column '", label, "' must be FLOAT[N] to use the '", kind,
               "' opclass, not ", type.ToString()));
+  }
+  if (dimension > irs::kMaxVectorDimension) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+                    ERR_MSG("Column '", label, "' cannot have more than ",
+                            irs::kMaxVectorDimension, " dimensions for the '",
+                            kind, "' opclass"));
   }
 }
 

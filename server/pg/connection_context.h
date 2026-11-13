@@ -257,6 +257,7 @@ class ConnectionContext final : public duckdb::ClientContext {
   void OnTransactionCommit(duckdb::MetaTransaction& meta) final;
   void OnTransactionRollback(duckdb::MetaTransaction& meta) final;
   void OnBoundPlan(duckdb::Binder& binder, duckdb::LogicalOperator& plan) final;
+  duckdb::idx_t ActingRole() const final { return GetRoleId(); }
 
  private:
   struct NoticeNode {

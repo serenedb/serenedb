@@ -249,7 +249,8 @@ class ConnectionContext final : public duckdb::ClientContext {
   void ValidateIsolationLevel(duckdb::TransactionIsolationLevel level) final;
   bool EmitWarning(const char* message) final;
   bool IsSettingVisible(const std::string& name) final;
-  void OnSettingChange(const std::string& name, duckdb::SetScope scope) final;
+  void OnSettingChange(const std::string& name, duckdb::SetScope scope,
+                       const duckdb::Value& previous) final;
   void OnQueryBegin() final;
   void OnQueryEnd() final;
   void OnTransactionPreCommit(duckdb::MetaTransaction& meta) final;

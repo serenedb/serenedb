@@ -418,7 +418,8 @@ bool ConnectionContext::IsSettingVisible(const std::string& name) {
 }
 
 void ConnectionContext::OnSettingChange(const std::string& name,
-                                        duckdb::SetScope scope) {
+                                        duckdb::SetScope scope,
+                                        const duckdb::Value& previous) {
   if (IsUnchangeableSetting(name)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_CANT_CHANGE_RUNTIME_PARAM),
                     ERR_MSG("parameter \"", name, "\" cannot be changed"));
@@ -447,9 +448,7 @@ void ConnectionContext::OnSettingChange(const std::string& name,
   if (!IsExplicitTransaction() || IsNonTransactionalSetting(name)) {
     return;
   }
-  duckdb::Value old_value;
-  TryGetCurrentSetting(duckdb::Identifier{name}, old_value);
-  OnSet(name, scope == duckdb::SetScope::LOCAL, std::move(old_value));
+  OnSet(name, scope == duckdb::SetScope::LOCAL, previous);
 }
 
 void ConnectionContext::OnQueryBegin() {

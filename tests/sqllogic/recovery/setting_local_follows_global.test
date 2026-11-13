@@ -1,0 +1,54 @@
+# exclusive
+
+statement ok
+SET GLOBAL async_threads = 4;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+SET LOCAL async_threads = 0;
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+SET GLOBAL async_threads = 6;
+
+
+query
+SHOW async_threads;
+----
+async_threads
+6
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+SET async_threads = 2;
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+SET GLOBAL async_threads = 8;
+
+
+query
+SHOW async_threads;
+----
+async_threads
+8
+
+
+statement ok
+RESET GLOBAL async_threads;

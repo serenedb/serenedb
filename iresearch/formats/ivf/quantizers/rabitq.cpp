@@ -470,7 +470,7 @@ class RaBitQuantizerReader final : public QuantizerReader {
   void RefreshQuery() {
     SDB_ASSERT(_cluster);
     const std::span<const float> query = _cur->Query();
-    const auto d = static_cast<uint16_t>(query.size());
+    const auto d = query.size();
     const float* centroid = _cluster;
 
     _rot_centroid.resize(_rd);

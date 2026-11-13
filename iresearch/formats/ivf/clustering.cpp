@@ -207,12 +207,11 @@ namespace {
 template<VectorMetric Metric>
 uint32_t NearestCentroidT(const float* v, const float* centroids, uint32_t k,
                           uint32_t d) noexcept {
-  const auto dd = static_cast<uint16_t>(d);
   uint32_t best = 0;
   float best_score = -std::numeric_limits<float>::max();
   for (uint32_t s = 0; s < k; ++s) {
     const float score =
-      ComputeDistance<Metric>(v, centroids + static_cast<size_t>(s) * d, dd);
+      ComputeDistance<Metric>(v, centroids + static_cast<size_t>(s) * d, d);
     if (score > best_score) {
       best_score = score;
       best = s;

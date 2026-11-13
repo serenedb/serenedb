@@ -1140,6 +1140,7 @@ void Writes::CheckKeys(duckdb::ClientContext& context, const Store& store,
     w.keyed_rows = 0;
     w.keyed_generation = w.rows_generation;
   }
+  const bool checks_all = w.keyed_rows == 0 && w.checked_segments == 0;
   std::vector<std::vector<std::string>> fresh(w.keys.size());
   std::vector<KeyedRow> keyed;
   const duckdb::idx_t rows =
@@ -1218,7 +1219,9 @@ void Writes::CheckKeys(duckdb::ClientContext& context, const Store& store,
   w.checked_segments = w.own_segments.size();
   if (duckdb::GetReplicationRole(context) == duckdb::ReplicationRole::REPLICA) {
     w.removed_keys.clear();
-    w.checked.emplace(std::move(live));
+    if (checks_all) {
+      w.checked.emplace(std::move(live));
+    }
     return;
   }
   for (size_t spec = 0; spec != w.keys.size(); ++spec) {
@@ -1240,7 +1243,9 @@ void Writes::CheckKeys(duckdb::ClientContext& context, const Store& store,
     CheckReferences(context, w, key_spec, keys);
   }
   CheckRemovedKeys(context, w, false);
-  w.checked.emplace(std::move(live));
+  if (checks_all) {
+    w.checked.emplace(std::move(live));
+  }
 }
 
 std::shared_ptr<const TableState> Writes::VerifyAllReferences(

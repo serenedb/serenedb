@@ -6,3 +6,4 @@ fastavro==1.13.1
 boto3==1.43.110
 azure-storage-blob==12.31.0
 mitmproxy==12.2.3
+-r pdf-fixture-requirements.txt

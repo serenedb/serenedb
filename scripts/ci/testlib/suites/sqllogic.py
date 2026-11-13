@@ -156,7 +156,7 @@ def service_fixture_names(path, biglake):
 def service_factories(biglake):
     factories = {}
     for name in ("minio", "azurite", "iceberg", "ollama", "kev", "postgres", "clickhouse",
-                 "iceberg-data", "biglake"):
+                 "iceberg-data", "pdf-data", "biglake"):
         factories[f"svc:{name}"] = (lambda n: lambda ctx: ServicesFixture(ctx, [n]))(name)
     return factories
 

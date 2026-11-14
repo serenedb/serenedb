@@ -376,14 +376,12 @@ bool ClaimOwned(ScanGlobalState& g, ScanLocalState& l) {
     if (next >= end) {
       return false;
     }
-    const auto& work = g.Segment(l.owned_seg);
-    const auto take = std::min(end - next, work.chunk);
-    if (own.compare_exchange_weak(range, PackRange(next + take, end),
+    if (own.compare_exchange_weak(range, PackRange(next + 1, end),
                                   std::memory_order_relaxed,
                                   std::memory_order_relaxed)) {
-      l.claimed_end = next + take;
-      TakeUnit(l,
-               UnitOf(l.owned_seg, next - work.base, next + take - work.base));
+      const auto base = g.Segment(l.owned_seg).base;
+      l.claimed_end = next + 1;
+      TakeUnit(l, UnitOf(l.owned_seg, next - base, next + 1 - base));
       return true;
     }
   }
@@ -702,10 +700,6 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
   g.workers = static_cast<uint32_t>(std::clamp<uint64_t>(
     std::min(threads, parallel), 1, std::numeric_limits<uint32_t>::max()));
   g.ranges = std::make_unique<ScanGlobalState::RangeSlot[]>(g.workers);
-  for (const auto seg : g.split_segments) {
-    auto& work = g.Segment(seg);
-    work.chunk = std::max<uint32_t>(1, work.rg_count / g.workers);
-  }
   if (!ordered) {
     CutStarts(g, positions);
   }

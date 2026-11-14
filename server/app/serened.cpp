@@ -47,25 +47,25 @@
 #include <string>
 #include <utility>
 
+#include "app/process.h"
 #include "catalog/boot.h"
 #include "catalog/catalog.h"
 #include "connector/duckdb_copy_filesystem.h"
 #include "docs/docs_bootstrap.h"
 #include "docs/docs_shell_backend.h"
 #include "duckdb_shell.hpp"
+#include "jobs/scheduler.h"
 #include "network/server.h"
 #include "pg/catalog/oids.h"
 #include "query/config.h"
 #include "query/server_engine.h"
 #include "replication/subscription_engine.h"
 #include "runtime/runtime.h"
-#include "scheduler/job_scheduler.h"
-#include "server/utils/app_server.h"
+#include "search/engine.h"
 #include "server/utils/build.h"
 #include "server/utils/init.h"
 #include "server/utils/signals.h"
 #include "storage/storage.h"
-#include "storage_engine/search_engine.h"
 
 ABSL_FLAG(bool, remap_executable, SDB_REMAP_EXECUTABLE,
           "Copy the server's machine code into anonymous huge-page memory at "
@@ -100,8 +100,6 @@ int RunServer() {
     irs::CrashHandler::installCrashHandler();
     signals::InstallShutdownHandlers();
 
-    AppServer server;
-
     irs::CrashHandler::SetState("starting");
     absl::Cleanup shut_down = [] {
       SDB_INFO(GENERAL, "SereneDB is shut down");
@@ -120,7 +118,7 @@ int RunServer() {
     SDB_INFO(STARTUP, "SereneDB is ready for business. Have fun!");
 
     irs::CrashHandler::SetState("running");
-    server.wait();
+    app::WaitForShutdown();
     irs::CrashHandler::SetState("stopping");
     runtime.RequestStop();
     return EXIT_SUCCESS;
@@ -235,8 +233,8 @@ int main(int argc, char* argv[]) {
   //
   // CLI flags are parsed FIRST: ConfigureServerDBConfig reads --cpu_threads to
   // size the DuckDB pool at construction, so the flags must be live before
-  // Initialize (parseOptions is SDB_*-free precisely so it can run this early).
-  sdb::app::AppServer::parseOptions(argc, argv);
+  // Initialize (ParseOptions is SDB_*-free precisely so it can run this early).
+  sdb::app::ParseOptions(argc, argv);
   const auto remap =
     irs::RemapExecutable(absl::GetFlag(FLAGS_remap_executable));
   auto& engine = irs::DuckDBEngine::Instance();

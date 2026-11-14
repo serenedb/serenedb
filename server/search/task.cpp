@@ -53,10 +53,10 @@
 #include "catalog/entry/inverted_index.h"
 #include "catalog/transaction.h"
 #include "runtime/runtime.h"
+#include "search/engine.h"
 #include "search/store.h"
 #include "server/utils/lifecycle.h"
 #include "server/utils/metrics.h"
-#include "storage_engine/search_engine.h"
 
 namespace sdb::search {
 namespace {

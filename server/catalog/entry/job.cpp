@@ -28,8 +28,8 @@
 
 #include "catalog/catalog.h"
 #include "catalog/transaction.h"
+#include "jobs/scheduler.h"
 #include "pg/connection_context.h"
-#include "scheduler/job_scheduler.h"
 
 namespace sdb::catalog {
 

@@ -68,12 +68,12 @@
 #include "connector/term_dict.h"
 #include "pg/connection_context.h"
 #include "runtime/runtime.h"
+#include "search/engine.h"
 #include "search/log_entry.h"
 #include "search/scorer_options.h"
 #include "search/task.h"
 #include "search/version_chain.tpp"
 #include "server/utils/lifecycle.h"
-#include "storage_engine/search_engine.h"
 #include "utils/file_utils.h"
 
 namespace sdb::search {

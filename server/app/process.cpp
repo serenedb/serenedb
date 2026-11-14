@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "app_server.h"
+#include "app/process.h"
 
 #include <absl/flags/parse.h>
 #include <absl/flags/usage.h>
@@ -34,7 +34,7 @@
 
 namespace sdb::app {
 
-void AppServer::parseOptions(int argc, char* argv[]) {
+void ParseOptions(int argc, char* argv[]) {
   absl::FlagsUsageConfig usage_config;
   usage_config.contains_help_flags = [](std::string_view file) {
     return file.find("third_party/") == std::string_view::npos;
@@ -48,8 +48,7 @@ void AppServer::parseOptions(int argc, char* argv[]) {
     };
     static constexpr CategoryRule kRules[] = {
       {"server/storage/storage.cpp", "server"},
-      {"server/rest_server/serened.cpp", "server"},
-      {"server/storage_engine/search_engine.cpp", "server"},
+      {"server/app/serened.cpp", "server"},
       {"server/network/server.cpp", "server"},
       {"server/query/server_engine.cpp", "server"},
       {"server/runtime/runtime.cpp", "server"},
@@ -103,7 +102,7 @@ void AppServer::parseOptions(int argc, char* argv[]) {
   }
 }
 
-void AppServer::wait() {
+void WaitForShutdown() {
   lifecycle::WaitForShutdown();
   SDB_INFO(GENERAL, "received shutdown signal, beginning shut down sequence");
 #ifdef SDB_FAULT_INJECTION

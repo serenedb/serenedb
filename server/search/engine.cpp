@@ -19,7 +19,7 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "search_engine.h"
+#include "search/engine.h"
 
 #include <absl/strings/escaping.h>
 

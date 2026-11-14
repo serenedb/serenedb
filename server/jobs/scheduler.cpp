@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "scheduler/job_scheduler.h"
+#include "jobs/scheduler.h"
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/numeric/int128.h>

@@ -42,10 +42,10 @@
 #include "catalog/record.h"
 #include "pg/connection_context.h"
 #include "runtime/runtime.h"
+#include "search/engine.h"
 #include "search/task.h"
 #include "search/wal_recovery.h"
 #include "server/utils/lifecycle.h"
-#include "storage_engine/search_engine.h"
 
 namespace sdb::catalog {
 namespace {

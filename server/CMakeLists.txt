@@ -22,23 +22,23 @@ target_link_libraries(
 
 target_include_directories(sereneserver PUBLIC ${CMAKE_SOURCE_DIR}/server)
 
+add_subdirectory(app)
 add_subdirectory(auth)
 add_subdirectory(backup)
 add_subdirectory(catalog)
 add_subdirectory(connector)
 add_subdirectory(docs)
+add_subdirectory(jobs)
 add_subdirectory(network)
 add_subdirectory(otel)
 add_subdirectory(pg)
 add_subdirectory(query)
 add_subdirectory(replication)
 add_subdirectory(runtime)
-add_subdirectory(scheduler)
 add_subdirectory(storage)
-add_subdirectory(storage_engine)
 add_subdirectory(search)
 
-add_executable(serened rest_server/serened.cpp)
+add_executable(serened app/serened.cpp)
 target_compile_definitions(
     serened
     PRIVATE

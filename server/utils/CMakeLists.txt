@@ -3,7 +3,6 @@ configure_file(build.h.in build.h NEWLINE_STYLE UNIX)
 add_library(
     serene
     STATIC
-    app_server.cpp
     drain_gate.cpp
     file_utils.cpp
     files.cpp

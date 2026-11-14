@@ -50,8 +50,8 @@
 #include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
 #include "query/config.h"
+#include "search/engine.h"
 #include "search/store.h"
-#include "storage_engine/search_engine.h"
 
 namespace sdb::connector {
 namespace {

@@ -21,7 +21,7 @@
 #include <gtest/gtest.h>
 
 #include "runtime/runtime.h"
-#include "storage_engine/search_engine.h"
+#include "search/engine.h"
 
 namespace sdb::search {
 namespace {

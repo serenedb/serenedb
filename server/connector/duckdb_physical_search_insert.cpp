@@ -50,7 +50,6 @@
 #include "connector/search_sink_writer.hpp"
 #include "search/search_table_changes.h"
 #include "search/store.h"
-#include "server/utils/app_server.h"
 
 namespace sdb::connector {
 namespace {

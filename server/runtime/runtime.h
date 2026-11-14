@@ -29,6 +29,7 @@
 #include <duckdb/common/types/timestamp.hpp>
 #include <exception>
 #include <functional>
+#include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/log.hpp>
 #include <memory>
 #include <stop_token>
@@ -54,8 +55,10 @@ class Runtime final {
  public:
   using clock = std::chrono::steady_clock;
 
-  static Runtime* Current() noexcept { return gCurrent; }
-  static Runtime& Get() noexcept { return *gCurrent; }
+  static Runtime& Get() noexcept {
+    SDB_ASSERT(gCurrent);
+    return *gCurrent;
+  }
 
   explicit Runtime(const RuntimeConfig& config);
   ~Runtime();

@@ -409,14 +409,14 @@ void Store::PiecesAdded() noexcept {
 
 void Store::RunCoalesced(std::atomic<uint64_t> Store::* requests,
                          void (*work)(Store&), std::string_view what) noexcept {
-  auto* runtime = Runtime::Current();
-  if (!runtime || lifecycle::IsStopping() || runtime->IsStopping() ||
+  auto& runtime = Runtime::Get();
+  if (lifecycle::IsStopping() || runtime.IsStopping() ||
       (this->*requests).fetch_add(1, std::memory_order_acq_rel) != 0) {
     return;
   }
   try {
     runtime
-      ->Run([weak = weak_from_this(), requests, work, what] {
+      .Run([weak = weak_from_this(), requests, work, what] {
         const auto store = weak.lock();
         if (!store) {
           return;

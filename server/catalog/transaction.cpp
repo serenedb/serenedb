@@ -402,7 +402,7 @@ void Transactions::GarbageQueued() noexcept {
 }
 
 void Transactions::RequestCollect() noexcept {
-  if (!Runtime::Current() || lifecycle::IsStopping()) {
+  if (lifecycle::IsStopping()) {
     return;
   }
   auto state = _collect_state.load(std::memory_order_acquire);
@@ -652,7 +652,6 @@ void Transactions::MaintainLog(Lsn end) {
     return;
   }
   if (!_log->HasNext() && end - _log->NewestChunk() > Log::kChunkBytes / 2 &&
-      Runtime::Current() &&
       !_preparing_next.exchange(true, std::memory_order_acq_rel)) {
     Runtime::Get()
       .Run([this] {
@@ -691,7 +690,7 @@ void Transactions::SettleLog() {
 }
 
 void Transactions::TruncateInBackground() {
-  if (search::IsBackupActive() || !Runtime::Current() ||
+  if (search::IsBackupActive() ||
       _truncating.exchange(true, std::memory_order_acq_rel)) {
     return;
   }

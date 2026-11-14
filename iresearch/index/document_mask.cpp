@@ -65,10 +65,8 @@ size_t ByteCapacityOf(const roaring_bitmap_t& set) noexcept {
          size_t(set.high_low_container.allocation_size) * kSlotBytes;
 }
 
-uint64_t SpansAt(const roaring_bitmap_t& set, int32_t i) noexcept {
-  const auto& ra = set.high_low_container;
-  const auto* container = ra.containers[i];
-  switch (ra.typecodes[i]) {
+uint64_t SpansOf(const void* container, uint8_t type) noexcept {
+  switch (type) {
     case ARRAY_CONTAINER_TYPE:
       return static_cast<uint64_t>(
         static_cast<const roaring::internal::array_container_t*>(container)
@@ -84,6 +82,11 @@ uint64_t SpansAt(const roaring_bitmap_t& set, int32_t i) noexcept {
     default:
       SDB_UNREACHABLE();
   }
+}
+
+uint64_t SpansAt(const roaring_bitmap_t& set, int32_t i) noexcept {
+  const auto& ra = set.high_low_container;
+  return SpansOf(ra.containers[i], ra.typecodes[i]);
 }
 
 bool Densifies(const roaring_bitmap_t& set, uint32_t bitset_from) noexcept {
@@ -147,6 +150,61 @@ std::shared_ptr<const void> Own(container_t* container, uint8_t type) {
                     ERR_MSG("Failed to allocate a document mask container"));
   }
   return {container, ContainerFree{type}};
+}
+
+using OwnedContainer = std::unique_ptr<container_t, ContainerFree>;
+
+struct UnitedContainer {
+  OwnedContainer container;
+  uint8_t type = 0;
+  int64_t count = 0;
+  int64_t replaced = 0;
+  uint64_t spans = 0;
+  bool sparse = false;
+  bool to_run = false;
+};
+
+UnitedContainer Unite(const roaring::api::roaring_array_t& from, int32_t i,
+                      const roaring::api::roaring_array_t& with, int32_t j) {
+  UnitedContainer united;
+  uint8_t type = with.typecodes[j];
+  container_t* container = nullptr;
+  if (i < 0) {
+    container = roaring::internal::container_clone(with.containers[j], type);
+  } else {
+    united.replaced = roaring::internal::container_get_cardinality(
+      from.containers[i], from.typecodes[i]);
+    container = roaring::internal::container_or(
+      from.containers[i], from.typecodes[i], with.containers[j], type, &type);
+  }
+  if (container == nullptr) [[unlikely]] {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_OUT_OF_MEMORY),
+                    ERR_MSG("Failed to allocate a document mask container"));
+  }
+  if (type == BITSET_CONTAINER_TYPE) {
+    united.container = OwnedContainer{container, ContainerFree{type}};
+    united.type = type;
+    auto* bits = static_cast<roaring::internal::bitset_container_t*>(container);
+    united.count = bits->cardinality;
+    const auto runs = roaring::internal::bitset_container_number_of_runs(bits);
+    if (roaring::internal::run_container_serialized_size_in_bytes(runs) <
+        roaring::internal::bitset_container_serialized_size_in_bytes()) {
+      united.sparse = true;
+      united.spans = static_cast<uint64_t>(runs);
+      united.to_run = true;
+    }
+    return united;
+  }
+  container = roaring::internal::convert_run_optimize(container, type, &type);
+  roaring::internal::container_shrink_to_fit(container, type);
+  united.container = OwnedContainer{container, ContainerFree{type}};
+  united.type = type;
+  united.count = roaring::internal::container_get_cardinality(container, type);
+  if (type != BITSET_CONTAINER_TYPE) {
+    united.sparse = true;
+    united.spans = SpansOf(container, type);
+  }
+  return united;
 }
 
 MaskKind KindOf(const roaring_bitmap_t& set) noexcept {
@@ -271,105 +329,106 @@ DocumentMask::DocumentMask(std::shared_ptr<const byte_type> frozen,
 }
 
 DocumentMask DocumentMask::Union(
-  const std::shared_ptr<const DocumentMask>& base, const DocumentMask& added) {
+  const std::shared_ptr<const DocumentMask>& base, const DocumentMask& added,
+  ParallelFor parallel) {
   SDB_ASSERT(base);
+  static constexpr size_t kBlock = 16;
   const auto& from = base->_set.high_low_container;
   const auto& with = added._set.high_low_container;
+  struct Step {
+    uint16_t key = 0;
+    int32_t from = -1;
+    int32_t with = -1;
+  };
+  std::vector<Step> steps;
+  steps.reserve(static_cast<size_t>(from.size + with.size));
+  std::vector<size_t> touched;
+  touched.reserve(static_cast<size_t>(with.size));
+  for (int32_t i = 0, j = 0; i != from.size || j != with.size;) {
+    if (j == with.size || (i != from.size && from.keys[i] < with.keys[j])) {
+      steps.push_back({.key = from.keys[i], .from = i++});
+      continue;
+    }
+    touched.push_back(steps.size());
+    const bool both = i != from.size && from.keys[i] == with.keys[j];
+    steps.push_back({.key = with.keys[j], .from = both ? i++ : -1, .with = j});
+    ++j;
+  }
+  std::vector<UnitedContainer> united(touched.size());
+  parallel((touched.size() + kBlock - 1) / kBlock, [&](size_t block) {
+    const auto end = std::min(touched.size(), (block + 1) * kBlock);
+    for (auto t = block * kBlock; t != end; ++t) {
+      const auto& step = steps[touched[t]];
+      united[t] = Unite(from, step.from, with, step.with);
+    }
+  });
   DocumentMask out;
   auto& ra = out._set.high_low_container;
-  const auto capacity = static_cast<uint32_t>(from.size + with.size);
+  const auto capacity = static_cast<uint32_t>(steps.size());
   if (!roaring::internal::ra_init_with_capacity(&ra, capacity)) [[unlikely]] {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_OUT_OF_MEMORY),
                     ERR_MSG("Failed to allocate a document mask"));
   }
   out._owners.reserve(capacity);
-  const auto append = [&](uint16_t key, container_t* container, uint8_t type,
-                          std::shared_ptr<const void> owner) {
-    out._owners.push_back(std::move(owner));
-    roaring::internal::ra_append(&ra, key, container, type);
-  };
   auto count = static_cast<int64_t>(base->_count);
   uint64_t sparse = 0;
   uint64_t spans = 0;
-  std::vector<std::pair<int32_t, std::unique_ptr<container_t, ContainerFree>>>
-    to_runs;
-  int32_t i = 0;
-  int32_t j = 0;
-  while (i != from.size || j != with.size) {
-    if (j == with.size || (i != from.size && from.keys[i] < with.keys[j])) {
+  std::vector<std::pair<int32_t, size_t>> to_runs;
+  for (size_t t = 0; const auto& step : steps) {
+    if (step.with < 0) {
+      const auto i = step.from;
       if (from.typecodes[i] != BITSET_CONTAINER_TYPE) {
         ++sparse;
         spans += SpansAt(base->_set, i);
       }
       auto* shared = from.containers[i];
-      append(from.keys[i], shared, from.typecodes[i],
-             base->_owners.empty() ? std::shared_ptr<const void>{base, shared}
-                                   : base->_owners[i]);
-      ++i;
+      out._owners.push_back(base->_owners.empty()
+                              ? std::shared_ptr<const void>{base, shared}
+                              : base->_owners[i]);
+      roaring::internal::ra_append(&ra, step.key, shared, from.typecodes[i]);
       continue;
     }
-    uint8_t type = with.typecodes[j];
-    container_t* container = nullptr;
-    if (i == from.size || with.keys[j] < from.keys[i]) {
-      container = roaring::internal::container_clone(with.containers[j], type);
-    } else {
-      count -= roaring::internal::container_get_cardinality(from.containers[i],
-                                                            from.typecodes[i]);
-      container = roaring::internal::container_or(
-        from.containers[i], from.typecodes[i], with.containers[j], type, &type);
-      ++i;
-    }
-    if (container == nullptr) [[unlikely]] {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_OUT_OF_MEMORY),
-                      ERR_MSG("Failed to allocate a document mask container"));
-    }
-    if (type == BITSET_CONTAINER_TYPE) {
-      auto* bits =
-        static_cast<roaring::internal::bitset_container_t*>(container);
-      count += bits->cardinality;
-      const auto runs =
-        roaring::internal::bitset_container_number_of_runs(bits);
-      if (roaring::internal::run_container_serialized_size_in_bytes(runs) <
-          roaring::internal::bitset_container_serialized_size_in_bytes()) {
-        ++sparse;
-        spans += static_cast<uint64_t>(runs);
-        to_runs.emplace_back(ra.size,
-                             std::unique_ptr<container_t, ContainerFree>{
-                               container, ContainerFree{type}});
-        append(with.keys[j], container, type, nullptr);
-      } else {
-        append(with.keys[j], container, type, Own(container, type));
-      }
-      ++j;
-      continue;
-    }
-    container = roaring::internal::convert_run_optimize(container, type, &type);
-    roaring::internal::container_shrink_to_fit(container, type);
-    count += roaring::internal::container_get_cardinality(container, type);
-    append(with.keys[j], container, type, Own(container, type));
-    if (type != BITSET_CONTAINER_TYPE) {
+    auto& made = united[t++];
+    count += made.count - made.replaced;
+    if (made.sparse) {
       ++sparse;
-      spans += SpansAt(out._set, ra.size - 1);
+      spans += made.spans;
     }
-    ++j;
+    auto* container = made.container.get();
+    if (made.to_run) {
+      to_runs.emplace_back(ra.size, t - 1);
+      out._owners.emplace_back();
+    } else {
+      out._owners.emplace_back(std::move(made.container));
+    }
+    roaring::internal::ra_append(&ra, step.key, container, made.type);
   }
   out._count = static_cast<size_t>(count);
   if (sparse != 0 && spans >= sparse * DocumentMaskBuilder::kBitsetFrom) {
-    for (auto& [k, bits] : to_runs) {
-      out._owners[k] = std::shared_ptr<const void>{std::move(bits)};
+    for (const auto& [k, t] : to_runs) {
+      out._owners[k] =
+        std::shared_ptr<const void>{std::move(united[t].container)};
     }
-    for (int32_t k = 0; k != ra.size; ++k) {
-      if (auto* bits = ToBitset(out._set, k)) {
-        out._owners[k] = Own(bits, BITSET_CONTAINER_TYPE);
+    std::vector<OwnedContainer> dense(static_cast<size_t>(ra.size));
+    parallel((dense.size() + kBlock - 1) / kBlock, [&](size_t block) {
+      const auto end = std::min(dense.size(), (block + 1) * kBlock);
+      for (auto k = block * kBlock; k != end; ++k) {
+        dense[k] = OwnedContainer{ToBitset(out._set, static_cast<int32_t>(k)),
+                                  ContainerFree{BITSET_CONTAINER_TYPE}};
+      }
+    });
+    for (size_t k = 0; k != dense.size(); ++k) {
+      if (auto* bits = dense[k].get()) {
+        out._owners[k] = std::shared_ptr<const void>{std::move(dense[k])};
         ra.containers[k] = bits;
         ra.typecodes[k] = BITSET_CONTAINER_TYPE;
       }
     }
   } else {
-    for (auto& [k, bits] : to_runs) {
+    for (const auto& [k, t] : to_runs) {
       uint8_t type = BITSET_CONTAINER_TYPE;
-      auto* run =
-        roaring::internal::convert_run_optimize(bits.release(), type, &type);
+      auto* run = roaring::internal::convert_run_optimize(
+        united[t].container.release(), type, &type);
       roaring::internal::container_shrink_to_fit(run, type);
       ra.containers[k] = run;
       ra.typecodes[k] = type;
@@ -542,6 +601,51 @@ void DocumentMaskBuilder::Merge(const DocumentMaskBuilder& other) {
 
 void DocumentMaskBuilder::Merge(const DocumentMask& published) {
   roaring::api::roaring_bitmap_or_inplace(&_set, &published._set);
+}
+
+DocumentMaskBuilder DocumentMaskBuilder::Union(
+  std::span<DocumentMaskBuilder> parts) {
+  struct Entry {
+    uint16_t key = 0;
+    uint8_t type = 0;
+    container_t* container = nullptr;
+  };
+  size_t total = 0;
+  for (const auto& part : parts) {
+    total += static_cast<size_t>(part._set.high_low_container.size);
+  }
+  std::vector<Entry> entries;
+  entries.reserve(total);
+  for (auto& part : parts) {
+    auto& ra = part._set.high_low_container;
+    for (int32_t i = 0; i != ra.size; ++i) {
+      entries.push_back({.key = ra.keys[i],
+                         .type = ra.typecodes[i],
+                         .container = ra.containers[i]});
+    }
+    roaring::internal::ra_clear_without_containers(&ra);
+  }
+  absl::c_sort(entries, [](const Entry& lhs, const Entry& rhs) {
+    return lhs.key < rhs.key;
+  });
+  DocumentMaskBuilder out;
+  auto& ra = out._set.high_low_container;
+  for (size_t i = 0; i != entries.size();) {
+    auto [key, type, container] = entries[i];
+    for (++i; i != entries.size() && entries[i].key == key; ++i) {
+      uint8_t merged_type = 0;
+      auto* merged = roaring::internal::container_ior(
+        container, type, entries[i].container, entries[i].type, &merged_type);
+      if (merged != container) {
+        roaring::internal::container_free(container, type);
+      }
+      roaring::internal::container_free(entries[i].container, entries[i].type);
+      container = merged;
+      type = merged_type;
+    }
+    roaring::internal::ra_append(&ra, key, container, type);
+  }
+  return out;
 }
 
 void DocumentMaskBuilder::Subtract(const DocumentMask& mask) {

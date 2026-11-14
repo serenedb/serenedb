@@ -21,11 +21,13 @@
 #include "iresearch/index/doc_removal.hpp"
 
 #include <absl/algorithm/container.h>
+#include <absl/container/btree_map.h>
 
 #include <algorithm>
 #include <array>
 #include <optional>
 #include <utility>
+#include <vector>
 
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/index/segment_reader.hpp"
@@ -100,33 +102,42 @@ void DocRemovalBuilder::AddRange(uint32_t index, doc_id_t first,
   Group(index).AddRange(first, last);
 }
 
-void DocRemovalBuilder::Merge(DocRemovalBuilder&& other) {
-  for (auto& [index, docs] : other._groups) {
-    auto& group = Group(index);
-    if (group.Empty()) {
-      group = std::move(docs);
-    } else {
-      group.Merge(docs);
+DocRemovalBuilder DocRemovalBuilder::Union(std::span<DocRemovalBuilder> parts) {
+  absl::btree_map<uint32_t, std::vector<DocumentMaskBuilder>> indexed;
+  for (auto& part : parts) {
+    for (auto& [index, docs] : part._groups) {
+      indexed[index].push_back(std::move(docs));
     }
+    part._groups = {};
+    part._last = 0;
   }
-  other._groups = {};
-  other._last = 0;
+  DocRemovalBuilder out;
+  out._groups.reserve(indexed.size());
+  for (auto& [index, docs] : indexed) {
+    out._groups.emplace_back(index, docs.size() == 1
+                                      ? std::move(docs.front())
+                                      : DocumentMaskBuilder::Union(docs));
+  }
+  return out;
 }
 
 std::shared_ptr<const DocRemoval> DocRemovalBuilder::Finish(
-  const DirectoryReader& reader) && {
+  const DirectoryReader& reader, ParallelFor parallel) && {
+  std::erase_if(_groups,
+                [](const auto& group) { return group.second.Empty(); });
+  std::vector<std::optional<DocumentMask>> masks(_groups.size());
+  parallel(_groups.size(), [&](size_t i) {
+    masks[i].emplace(
+      std::move(_groups[i].second).Finish(DocumentMaskBuilder::kCanonical));
+  });
   auto removal = std::make_shared<DocRemoval>();
   removal->groups.reserve(_groups.size());
-  for (auto& [index, docs] : _groups) {
-    if (docs.Empty()) {
-      continue;
-    }
+  for (size_t i = 0; i != _groups.size(); ++i) {
+    const auto index = _groups[i].first;
     SDB_ASSERT(index < reader.size());
-    const auto& segment =
-      *utils::downCast<SegmentReader>(reader[index]).GetImpl();
     removal->groups.push_back(
-      {.segment = segment.Id(),
-       .docs = std::move(docs).Finish(DocumentMaskBuilder::kCanonical)});
+      {.segment = utils::downCast<SegmentReader>(reader[index]).GetImpl()->Id(),
+       .docs = std::move(*masks[i])});
   }
   _groups = {};
   _last = 0;

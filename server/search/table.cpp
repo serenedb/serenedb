@@ -116,9 +116,11 @@ void SetDeletes(TableUnit& unit, irs::DocumentMask&& mask) {
   }
 }
 
-void AddDeletes(TableUnit& unit, const irs::DocumentMask& docs) {
-  SetDeletes(unit, unit.deleted ? irs::DocumentMask::Union(unit.deleted, docs)
-                                : irs::DocumentMaskBuilder{docs}.Finish());
+void AddDeletes(TableUnit& unit, const irs::DocumentMask& docs,
+                irs::ParallelFor parallel) {
+  SetDeletes(unit, unit.deleted
+                     ? irs::DocumentMask::Union(unit.deleted, docs, parallel)
+                     : irs::DocumentMaskBuilder{docs}.Finish());
 }
 
 bool Dead(const TableUnit& unit) noexcept {
@@ -1097,7 +1099,7 @@ bool Table::Apply(duckdb::ClientContext& context, Tick tick,
     auto& change = changes[c];
     auto unit = std::make_shared<TableUnit>(*units[change.index]);
     for (const auto* docs : change.deletes) {
-      AddDeletes(*unit, *docs);
+      AddDeletes(*unit, *docs, parallel);
     }
     if (!change.patches.empty()) {
       ApplyPatches(*unit, change.patches, tick, parallel);

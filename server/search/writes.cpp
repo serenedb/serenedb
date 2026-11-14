@@ -808,7 +808,10 @@ void Writes::AddRemoval(duckdb::ClientContext& context,
                         const std::shared_ptr<Store>& store,
                         irs::DocRemovalBuilder&& positions) {
   const auto& reader = PinnedReader(context, *store);
-  auto removal = std::move(positions).Finish(reader);
+  auto removal = std::move(positions).Finish(
+    reader, [&](size_t count, absl::FunctionRef<void(size_t)> body) {
+      ParallelFor(context, count, body);
+    });
   auto& w = EnsureStoreWrites(store);
   std::vector<StoreWrites::RemovedKeys> removed;
   duckdb::StringHeap heap;

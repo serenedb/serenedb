@@ -841,8 +841,14 @@ void ColumnReader::SkipRows(ScanState& s, duckdb::idx_t count) const {
 }
 
 std::unique_ptr<ColumnReader> ColumnReader::Make(ColumnMeta&& meta) {
+  const auto id = meta.type.id();
+  const bool fieldless =
+    meta.children.empty() &&
+    (id == duckdb::LogicalTypeId::STRUCT ||
+     id == duckdb::LogicalTypeId::TUPLE || id == duckdb::LogicalTypeId::UNION);
   std::unique_ptr<ColumnReader> validity;
-  if (absl::c_any_of(meta.validity, [](const ColumnBlockMeta& m) {
+  if ((fieldless && !meta.validity.empty()) ||
+      absl::c_any_of(meta.validity, [](const ColumnBlockMeta& m) {
         return m.codec->type != duckdb::CompressionType::COMPRESSION_EMPTY;
       })) {
     validity.reset(new ColumnReader{

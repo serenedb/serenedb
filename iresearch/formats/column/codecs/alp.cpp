@@ -956,7 +956,7 @@ bool VectorFinished(const AlpScanState<T>& state) {
   return !(state.total_value_count % kVectorSize);
 }
 
-template<typename T, bool kSkip>
+template<typename T>
 void LoadVector(AlpScanState<T>& state, T* value_buffer) {
   auto& vector_state = state.vector_state;
   vector_state.index = 0;
@@ -968,14 +968,9 @@ void LoadVector(AlpScanState<T>& state, T* value_buffer) {
 
   vector_state.v_exponent = vector_reader.Read<uint8_t>();
   if (vector_state.v_exponent == kUncompressedModeSentinel) {
-    const idx_t value_buffer_copy_size = sizeof(T) * vector_size;
-    if constexpr (kSkip) {
-      vector_reader.Skip(value_buffer_copy_size);
-    } else {
-      vector_reader.ReadBytesInto(
-        reinterpret_cast<duckdb::data_ptr_t>(value_buffer),
-        value_buffer_copy_size);
-    }
+    vector_reader.ReadBytesInto(
+      reinterpret_cast<duckdb::data_ptr_t>(value_buffer),
+      sizeof(T) * vector_size);
     return;
   }
   if (vector_state.v_exponent > AlpTypedConstants<T>::kMaxExponent) {
@@ -1017,27 +1012,28 @@ void LoadVector(AlpScanState<T>& state, T* value_buffer) {
     }
   }
 
-  if constexpr (!kSkip) {
-    Decompress<T>(
-      reinterpret_cast<duckdb::const_data_ptr_t>(vector_state.for_encoded),
-      value_buffer, vector_size, vector_state.v_factor, vector_state.v_exponent,
-      vector_state.exceptions_count, vector_state.exceptions,
-      vector_state.exceptions_positions, vector_state.frame_of_reference,
-      vector_state.bit_width);
-  }
+  Decompress<T>(
+    reinterpret_cast<duckdb::const_data_ptr_t>(vector_state.for_encoded),
+    value_buffer, vector_size, vector_state.v_factor, vector_state.v_exponent,
+    vector_state.exceptions_count, vector_state.exceptions,
+    vector_state.exceptions_positions, vector_state.frame_of_reference,
+    vector_state.bit_width);
 }
 
 template<typename T, bool kSkip>
 void ScanVector(AlpScanState<T>& state, T* values, idx_t vector_size) {
   SDB_ASSERT(vector_size <= kVectorSize);
   SDB_ASSERT(vector_size <= LeftInVector(state));
-  if (VectorFinished(state) && state.total_value_count < state.count) {
-    if (vector_size == kVectorSize) {
-      LoadVector<T, kSkip>(state, values);
-      state.total_value_count += vector_size;
-      return;
+  if (VectorFinished(state)) {
+    SDB_ASSERT(state.total_value_count < state.count);
+    if constexpr (!kSkip) {
+      if (vector_size == kVectorSize) {
+        LoadVector(state, values);
+        state.total_value_count += vector_size;
+        return;
+      }
     }
-    LoadVector<T, false>(state, state.vector_state.decoded_values);
+    LoadVector(state, state.vector_state.decoded_values);
   }
   if constexpr (!kSkip) {
     std::memcpy(values,
@@ -1331,7 +1327,7 @@ void AlpFetchRows(const ColumnSegment& segment, ColumnFetchState& state,
         continue;
       }
       scan_state.total_value_count = vector_index * kVectorSize;
-      LoadVector<T, false>(scan_state, scan_state.vector_state.decoded_values);
+      LoadVector(scan_state, scan_state.vector_state.decoded_values);
       fetch_state.decoded_vector = vector_index;
     }
     std::memcpy(result_data + result_offset + result_sel.get_index(i),

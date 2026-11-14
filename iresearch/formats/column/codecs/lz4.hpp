@@ -84,10 +84,6 @@ struct Lz4 {
 
     bool Load(std::string_view stored, size_t size);
     bool LoadFrame(const char* src, size_t size, size_t raw_size);
-    void Clear() noexcept {
-      _window.clear();
-      _dictionary = 0;
-    }
     std::string_view Dictionary() const noexcept {
       return {_window.data(), _dictionary};
     }

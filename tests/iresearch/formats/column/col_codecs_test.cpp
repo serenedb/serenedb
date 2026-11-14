@@ -2579,6 +2579,11 @@ TEST(ColCodecNames, ColumnstoreCompressionTypesRoundTrip) {
     EXPECT_EQ(irs::codecs::FindCodec(name), nullptr);
     EXPECT_EQ(irs::codecs::FindCodec(type), nullptr);
   }
+  for (const auto count :
+       {duckdb::CompressionType::ENUM_SIZE,
+        duckdb::CompressionType::COMPRESSION_SERENEDB_COUNT}) {
+    EXPECT_EQ(irs::codecs::FindCodec(count), nullptr);
+  }
   const std::pair<std::string_view, duckdb::CompressionType> parsed[] = {
     {"dict_lz4", duckdb::CompressionType::COMPRESSION_DICT_LZ4},
     {"dict_zstd", duckdb::CompressionType::COMPRESSION_DICT_ZSTD},

@@ -521,3 +521,42 @@ ALTER TABLE lvl_temp ADD COLUMN w TEXT USING COMPRESSION dict_zstd;
 
 statement ok
 DROP TABLE lvl_temp;
+
+statement ok
+CREATE TABLE lvl_array (a INTEGER PRIMARY KEY, v INTEGER[3] USING COMPRESSION bitpacking) WITH (compaction_interval = 0);
+
+statement ok
+INSERT INTO lvl_array SELECT a, [a % 7, a % 11, a % 13]::INTEGER[3] FROM range(20000) t(a);
+
+statement ok
+VACUUM (FLUSH_TABLE) lvl_array;
+
+query
+SELECT string_agg(DISTINCT compression, ',') AS compression,
+       (SELECT count(*) FROM lvl_array WHERE v IS DISTINCT FROM [a % 7, a % 11, a % 13]::INTEGER[3]) AS wrong
+FROM pragma_storage_info('lvl_array')
+WHERE column_name = 'v' AND segment_type <> 'VALIDITY';
+----
+compression	wrong
+BitPacking	0
+
+statement ok
+DROP TABLE lvl_array;
+
+statement error
+CREATE TABLE lvl_array_text (a INTEGER PRIMARY KEY, v INTEGER[3] USING COMPRESSION dict_lz4);
+----
+db error: ERROR: Can't compress column "v" with type 'INTEGER[3]' (physical: ARRAY) using compression type 'DICT_LZ4'
+
+
+statement ok
+CREATE TABLE lvl_tuple AS SELECT 1 AS a, ROW() AS t WHERE false;
+
+statement error
+ALTER TABLE lvl_tuple ALTER COLUMN t SET COMPRESSION lz4;
+----
+db error: ERROR: Can't compress column "t" with type 'TUPLE' (physical: STRUCT) using compression type 'LZ4'
+
+
+statement ok
+DROP TABLE lvl_tuple;

@@ -2530,6 +2530,65 @@ TEST_F(ColumnReaderTest, PointReadsPrefetchTheirBlockUnlessRandomAccess) {
   EXPECT_TRUE(absl::c_any_of(prefetched, covers_block));
 }
 
+TEST_F(ColumnReaderTest, PointReaderReopensBlocksItClosed) {
+  constexpr uint32_t kRgSize = 4096;
+  constexpr uint64_t kGroups = 20;
+  constexpr uint64_t kRows = kGroups * kRgSize;
+  constexpr size_t kValueSize = 1024;
+  constexpr irs::field_id kS = 1;
+  const auto value = [](uint64_t row) {
+    std::string v(kValueSize, ' ');
+    std::mt19937_64 random{row};
+    for (auto& c : v) {
+      c = static_cast<char>('a' + random() % 26);
+    }
+    return v;
+  };
+  irs::MemoryDirectory mem;
+  {
+    irs::ColWriter w{mem, "seg", Db()};
+    auto& cw =
+      w.OpenColumn(kS, duckdb::LogicalType::VARCHAR,
+                   {.row_group_size = kRgSize,
+                    .compression = irs::codecs::CodecType::Uncompressed});
+    for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+      duckdb::Vector vs{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+      auto* ds = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(vs);
+      for (duckdb::idx_t k = 0; k < STANDARD_VECTOR_SIZE; ++k) {
+        ds[k] = duckdb::StringVector::AddString(vs, value(pos + k));
+      }
+      duckdb::FlatVector::SetSize(vs, STANDARD_VECTOR_SIZE);
+      cw.Append(vs, STANDARD_VECTOR_SIZE);
+    }
+    w.Commit(0);
+  }
+  irs::ColReader r{mem, "seg", Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto& col = *r.Column(kS);
+  std::vector<uint64_t> first_rows;
+  uint64_t stored = 0;
+  uint64_t rows = 0;
+  for (const auto& block : col.DataBlocks()) {
+    ASSERT_GT(block.tuple_count, 1);
+    first_rows.push_back(rows);
+    rows += block.tuple_count;
+    stored += block.byte_size;
+  }
+  ASSERT_EQ(rows, kRows);
+  ASSERT_GT(stored, uint64_t{64} << 20);
+  irs::ColumnReader::PointReader reader{r, col};
+  duckdb::Vector out{duckdb::LogicalType::VARCHAR, 1};
+  for (const uint64_t pass : {uint64_t{0}, uint64_t{1}}) {
+    for (const auto first : first_rows) {
+      const auto row = first + pass;
+      ASSERT_TRUE(reader.FetchRow(row, out, 0));
+      ASSERT_EQ(
+        duckdb::FlatVector::GetData<duckdb::string_t>(out)[0].GetString(),
+        value(row))
+        << "row " << row;
+    }
+  }
+}
+
 TEST_F(ColumnReaderTest, SameColumnsGiveTheSameFileSize) {
   constexpr irs::field_id kS = 1;
   constexpr uint64_t kRows = 1000;

@@ -41,7 +41,6 @@ class SegmentReader {
 
   duckdb::idx_t Size() const noexcept { return _size; }
   duckdb::idx_t Position() const noexcept { return _position; }
-  duckdb::idx_t Remaining() const noexcept { return _size - _position; }
 
   template<typename T>
   T Read() {

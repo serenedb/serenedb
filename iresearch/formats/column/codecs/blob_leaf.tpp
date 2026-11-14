@@ -49,14 +49,6 @@ namespace irs::codecs::text {
 template<typename Codec>
 class FrameInflater {
  public:
-  void Reset() noexcept {
-    if (_decoder) {
-      _decoder->Clear();
-    }
-    _ready = false;
-    _loaded = 0;
-  }
-
   std::string_view Inflate(const Header& h, duckdb::const_data_ptr_t base,
                            const FrameMeta& m, uint32_t f, char* dst,
                            size_t want) {
@@ -194,7 +186,6 @@ struct BlobFetch {
   void Reset(const Header&, duckdb::data_ptr_t) noexcept {
     frame = kNoFrame;
     decoded_total = 0;
-    inflater.Reset();
   }
 
   uint64_t Walked() const noexcept { return 0; }

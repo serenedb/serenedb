@@ -109,3 +109,34 @@ differing_segments
 
 statement ok
 RESET disabled_compression_methods;
+
+
+statement ok
+SET disabled_compression_methods = 'dictionary,rle';
+
+
+statement ok
+CREATE TABLE stdcm_foreign (a INTEGER PRIMARY KEY, runs BIGINT)
+WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO stdcm_foreign SELECT a, a // 1000 FROM range(20000) t(a);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) stdcm_foreign;
+
+
+query
+SELECT count(*) AS rle_segments,
+       (SELECT count(*) FROM stdcm_foreign WHERE runs IS DISTINCT FROM a // 1000) AS mismatches
+FROM pragma_storage_info('stdcm_foreign')
+WHERE compression = 'RLE';
+----
+rle_segments	mismatches
+0	0
+
+
+statement ok
+RESET disabled_compression_methods;

@@ -255,8 +255,6 @@ class SegmentRows {
 
   Shape SegmentShape() const noexcept { return _shape; }
 
-  const NumericTuning& CodesTuning() const noexcept { return _codes_tuning; }
-
   void Sort(SortScratch& scratch);
 
   std::span<uint32_t> Lengths() {

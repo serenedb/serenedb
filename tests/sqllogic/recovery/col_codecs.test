@@ -300,3 +300,16 @@ SELECT (SELECT count(*) FROM cc_named WHERE url IS DISTINCT FROM 'https://exampl
 ----
 named_mismatches	forced_mismatches	small_mismatches	idx_hits
 0	0	0	50
+
+
+connection after_crash
+statement ok
+RESET GLOBAL sdb_object_cache_size;
+
+
+connection after_crash
+query
+SELECT current_setting('sdb_object_cache_size') AS bytes;
+----
+bytes
+0

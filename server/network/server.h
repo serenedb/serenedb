@@ -43,30 +43,18 @@ namespace sdb {
 
 class Server final {
  public:
-  inline static Server* gInstance = nullptr;
-  static Server& instance() noexcept { return *gInstance; }
-
-  Server();
+  explicit Server(network::IoThreadPool& pool);
   ~Server();
 
-  // Two-phase start: bring the io worker pool up first (StartIoPool) so the
-  // background scheduler's Delay() has a timer host, then -- after the rest of
-  // the engine (search indexes) is ready -- begin accepting connections
-  // (StartListeners).
-  void StartIoPool();
   void StartListeners();
   // Two-phase stop, mirroring SearchEngine. RequestStop() is the signal:
   // listeners close (synchronously) and every session is terminated -- its
   // in-flight query interrupted, its socket closed by its own writer. stop()
   // is the join: waits until every session has fully completed (queries and
   // teardown run against the still-live engine, so it must precede store and
-  // catalog shutdown), then tears the io pool down.
+  // catalog shutdown).
   void RequestStop() noexcept;
   void stop();
-
-  // The io worker pool (sockets + reused for background timers); null until
-  // StartIoPool().
-  network::IoThreadPool* IoPool() noexcept { return _pool.get(); }
 
  private:
   void SetupAuth();
@@ -78,6 +66,7 @@ class Server final {
   // Per-listener HTTP router assembled from the listener's ?api= module set.
   network::HttpRouter& BuildRouter(const network::ListenSpec& spec);
 
+  network::IoThreadPool& _pool;
   std::vector<std::string> _listen;
   std::string _tls_cert;
   std::string _tls_key;
@@ -88,12 +77,11 @@ class Server final {
   std::string _api_key;
   std::string _bearer_token;
   std::string _cors_origins;
-  std::uint32_t _io_threads = 0;
   std::uint32_t _max_message = 0;
   std::uint32_t _max_connections = 0;
   std::chrono::milliseconds _auth_timeout{0};
 
-  // Declared before the per-listener deps + pool/acceptors so they outlive the
+  // Declared before the per-listener deps + acceptors so they outlive the
   // sessions that point at them via the per-listener contexts.
   network::CancelRegistry _cancel;
   std::atomic<std::uint32_t> _active{0};
@@ -112,7 +100,6 @@ class Server final {
   std::deque<network::pg::PgServerContext> _pg_ctxs;
   std::deque<network::HttpServerContext> _http_ctxs;
 
-  std::unique_ptr<network::IoThreadPool> _pool;
   std::vector<std::shared_ptr<network::AcceptorBase>> _acceptors;
 };
 

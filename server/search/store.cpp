@@ -67,7 +67,7 @@
 #include "connector/search_sink_writer.hpp"
 #include "connector/term_dict.h"
 #include "pg/connection_context.h"
-#include "scheduler/background_scheduler.h"
+#include "runtime/runtime.h"
 #include "search/log_entry.h"
 #include "search/scorer_options.h"
 #include "search/task.h"
@@ -409,14 +409,14 @@ void Store::PiecesAdded() noexcept {
 
 void Store::RunCoalesced(std::atomic<uint64_t> Store::* requests,
                          void (*work)(Store&), std::string_view what) noexcept {
-  if (!BackgroundScheduler::gInstance || lifecycle::IsStopping() ||
-      BackgroundScheduler::instance().IsStopping() ||
+  auto* runtime = Runtime::Current();
+  if (!runtime || lifecycle::IsStopping() || runtime->IsStopping() ||
       (this->*requests).fetch_add(1, std::memory_order_acq_rel) != 0) {
     return;
   }
   try {
-    BackgroundScheduler::instance()
-      .Run([weak = weak_from_this(), requests, work, what] {
+    runtime
+      ->Run([weak = weak_from_this(), requests, work, what] {
         const auto store = weak.lock();
         if (!store) {
           return;

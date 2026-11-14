@@ -52,7 +52,7 @@ void AppServer::parseOptions(int argc, char* argv[]) {
       {"server/storage_engine/search_engine.cpp", "server"},
       {"server/network/server.cpp", "server"},
       {"server/query/server_engine.cpp", "server"},
-      {"server/scheduler/background_scheduler.cpp", "server"},
+      {"server/runtime/runtime.cpp", "server"},
       {"iresearch/utils/log_flags.cpp", "log"},
     };
     for (const auto& [suffix, category] : kRules) {

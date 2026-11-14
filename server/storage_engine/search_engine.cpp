@@ -37,7 +37,7 @@
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
 #include "catalog/transaction.h"
-#include "scheduler/background_scheduler.h"
+#include "runtime/runtime.h"
 #include "search/store.h"
 #include "search/task.h"
 #include "search/wal_recovery.h"
@@ -53,14 +53,28 @@ int SearchEngine::MaxConcurrentCompactions() noexcept {
 }
 
 uint32_t SearchEngine::MaxAnnBuildWorkers() noexcept {
-  return static_cast<uint32_t>(BackgroundScheduler::AnnBuildBudget());
+  return static_cast<uint32_t>(std::max<int64_t>(1, CountLogicalCores()));
 }
 
+namespace {
+
+class BackgroundExecutor final : public yaclib::IExecutor {
+ public:
+  Type Tag() const noexcept final { return Type::Custom; }
+  bool Alive() const noexcept final { return true; }
+  void Submit(yaclib::Job& job) noexcept final {
+    Runtime::Get().Background().Submit(job);
+  }
+};
+
+BackgroundExecutor gBackgroundExecutor;
+
+}  // namespace
+
 const irs::AnnBuildEnv& AnnBuildEnv() {
-  static const irs::AnnBuildEnv env{
-    .executor = &BackgroundScheduler::instance().executor(),
-    .acquire = AnnAcquireWorkers,
-    .release = AnnReleaseWorkers};
+  static const irs::AnnBuildEnv env{.executor = &gBackgroundExecutor,
+                                    .acquire = AnnAcquireWorkers,
+                                    .release = AnnReleaseWorkers};
   return env;
 }
 

@@ -41,7 +41,7 @@
 #include "catalog/base_catalog.h"
 #include "catalog/record.h"
 #include "pg/connection_context.h"
-#include "scheduler/background_scheduler.h"
+#include "runtime/runtime.h"
 #include "search/task.h"
 #include "search/wal_recovery.h"
 #include "server/utils/lifecycle.h"
@@ -402,7 +402,7 @@ void Transactions::GarbageQueued() noexcept {
 }
 
 void Transactions::RequestCollect() noexcept {
-  if (!BackgroundScheduler::gInstance || lifecycle::IsStopping()) {
+  if (!Runtime::Current() || lifecycle::IsStopping()) {
     return;
   }
   auto state = _collect_state.load(std::memory_order_acquire);
@@ -421,7 +421,7 @@ void Transactions::RequestCollect() noexcept {
     }
   }
   try {
-    BackgroundScheduler::instance().Run([this] { RunCollector(); }).Detach();
+    Runtime::Get().Run([this] { RunCollector(); }).Detach();
   } catch (...) {
     _collect_state.store(CollectState::Idle, std::memory_order_release);
   }
@@ -652,9 +652,9 @@ void Transactions::MaintainLog(Lsn end) {
     return;
   }
   if (!_log->HasNext() && end - _log->NewestChunk() > Log::kChunkBytes / 2 &&
-      BackgroundScheduler::gInstance &&
+      Runtime::Current() &&
       !_preparing_next.exchange(true, std::memory_order_acq_rel)) {
-    BackgroundScheduler::instance()
+    Runtime::Get()
       .Run([this] {
         absl::Cleanup done = [this] {
           _preparing_next.store(false, std::memory_order_release);
@@ -691,11 +691,11 @@ void Transactions::SettleLog() {
 }
 
 void Transactions::TruncateInBackground() {
-  if (search::IsBackupActive() || !BackgroundScheduler::gInstance ||
+  if (search::IsBackupActive() || !Runtime::Current() ||
       _truncating.exchange(true, std::memory_order_acq_rel)) {
     return;
   }
-  BackgroundScheduler::instance()
+  Runtime::Get()
     .Run([this] {
       absl::Cleanup done = [this] {
         _truncating.store(false, std::memory_order_release);

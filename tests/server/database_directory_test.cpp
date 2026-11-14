@@ -29,7 +29,7 @@
 #include <thread>
 
 #include "catalog/database_directory.h"
-#include "scheduler/background_scheduler.h"
+#include "runtime/runtime.h"
 
 namespace sdb::catalog {
 namespace {
@@ -41,11 +41,10 @@ class DatabaseDirectoryTest : public ::testing::Test {
             absl::StrCat("database_directory_", ::getpid());
     std::filesystem::remove_all(_root);
     std::filesystem::create_directory(_root);
-    _scheduler.start();
   }
 
   void TearDown() final {
-    _scheduler.stop();
+    _runtime.DrainBackground();
     std::filesystem::remove_all(_root);
   }
 
@@ -62,7 +61,7 @@ class DatabaseDirectoryTest : public ::testing::Test {
   }
 
   std::filesystem::path _root;
-  BackgroundScheduler _scheduler;
+  Runtime _runtime{{.io_threads = 1}};
 };
 
 TEST_F(DatabaseDirectoryTest, CreatesOnceAndOpensOnlyWhatExists) {

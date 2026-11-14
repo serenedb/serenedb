@@ -61,7 +61,7 @@
 #include "query/server_engine.h"
 #include "replication/subscription_engine.h"
 #include "rest_server/database_path_feature.h"
-#include "scheduler/background_scheduler.h"
+#include "runtime/runtime.h"
 #include "scheduler/job_scheduler.h"
 #include "server/utils/app_server.h"
 #include "server/utils/build.h"
@@ -112,9 +112,9 @@ int RunServer(int argc, char** argv) {
     //    own flags, runs validation, and sets its static gInstance
     //    pointer; Feature::instance() works from here on.
     DatabasePathFeature db_path;
-    BackgroundScheduler background;
+    Runtime runtime{ReadRuntimeConfig()};
     search::SearchEngine search;
-    Server network;
+    Server network{runtime.IoPool()};
     std::optional<replication::SubscriptionEngine> subscriptions;
     JobScheduler jobs;
 
@@ -125,8 +125,7 @@ int RunServer(int argc, char** argv) {
     // afterwards still see a live SearchEngine. DuckDBEngine brackets all of
     // this from main(). The up_* flags let DOWN skip whatever never came UP
     // (start() threw).
-    bool up_background = false, up_search = false, up_subscriptions = false,
-         up_network = false;
+    bool up_search = false, up_subscriptions = false;
 
     absl::Cleanup down = [&]() noexcept {
       irs::CrashHandler::SetState("stopping");
@@ -144,34 +143,25 @@ int RunServer(int argc, char** argv) {
       if (up_search) {
         search.RequestStop();
       }
-      if (up_background) {
-        background.CancelDelays();
-      }
+      runtime.RequestStop();
       if (up_subscriptions) {
         stop("subscriptions signal", [&] { subscriptions->RequestStop(); });
       }
-      if (up_network) {
-        // Listeners close and every session is terminated: its in-flight query
-        // interrupted, its socket closed by its own writer.
-        stop("network signal", [&] { network.RequestStop(); });
-      }
+      // Listeners close and every session is terminated: its in-flight query
+      // interrupted, its socket closed by its own writer.
+      stop("network signal", [&] { network.RequestStop(); });
       // Joins, in dependency order.
       if (up_subscriptions) {
         stop("subscriptions", [&] { subscriptions->stop(); });
       }
-      if (up_network) {
-        // Sessions complete against the fully-live engine, then the io pool
-        // goes down.
-        stop("network", [&] { network.stop(); });
-      }
+      // Sessions complete against the fully-live engine.
+      stop("network", [&] { network.stop(); });
       backup::BackupSession::Instance().End();
       stop("jobs", [&] { jobs.Stop(); });
       if (up_search) {
         stop("search", [&] { search.stop(); });
       }
-      if (up_background) {
-        stop("background", [&] { background.stop(); });
-      }
+      runtime.DrainBackground();
       // The shutdown checkpoint of every attached database, taken here rather
       // than left to the DuckDB destructor in main(): an inverted index vetoes
       // it unless it can read its definition.
@@ -184,22 +174,14 @@ int RunServer(int argc, char** argv) {
 
     irs::CrashHandler::SetState("starting");
     network::pg::hba::SetHbaConfig(db_path.hbaConfigFile());
-    background.start();
-    up_background = true;
     catalog::InitCatalog(true, db_path.initialized());
-    network.StartIoPool();
-    up_network = true;
-    // Timers can be armed now. InitCatalog above already scheduled a drop per
-    // tombstone it read, and those parked in Delay() rather than spinning
-    // through their backoff against a pool that did not exist yet.
-    background.OpenDelays();
     search.start();
     up_search = true;
     jobs.Start();
     if (const auto bootstrapped = docs::RunDocsBootstrap()) {
       return *bootstrapped;
     }
-    subscriptions.emplace(*network.IoPool());
+    subscriptions.emplace(runtime.IoPool());
     subscriptions->start();
     up_subscriptions = true;
     // Accept connections only once the indexes are loaded and loops are
@@ -227,9 +209,8 @@ int RunServer(int argc, char** argv) {
 }
 
 struct ShellServices {
-  BackgroundScheduler background;
+  Runtime runtime{ReadRuntimeConfig()};
   search::SearchEngine search;
-  Server network;
   JobScheduler jobs;
 };
 
@@ -245,10 +226,7 @@ duckdb::shared_ptr<duckdb::DatabaseInstance> OpenShellEngine(
     engine.Initialize(&server::query::ConfigureShellDBConfig);
     server::query::RegisterServerExtensions(engine.instance());
     auto& services = gShellServices.emplace();
-    services.background.start();
     catalog::InitCatalog(!client, false);
-    services.network.StartIoPool();
-    services.background.OpenDelays();
     services.search.start();
     services.jobs.Start();
   }
@@ -281,12 +259,10 @@ void CloseShellEngine() {
   }
   auto& services = *gShellServices;
   services.search.RequestStop();
-  services.background.CancelDelays();
-  services.network.RequestStop();
-  services.network.stop();
+  services.runtime.RequestStop();
   services.jobs.Stop();
   services.search.stop();
-  services.background.stop();
+  services.runtime.DrainBackground();
   irs::DuckDBEngine::Instance().CloseDatabases();
   catalog::CloseLog();
   gShellServices.reset();

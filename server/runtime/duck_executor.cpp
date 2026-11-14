@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "scheduler/duck_executor.h"
+#include "runtime/duck_executor.h"
 
 #include <duckdb/parallel/task.hpp>
 

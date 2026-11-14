@@ -52,7 +52,7 @@
 #include "catalog/entry/job.h"
 #include "pg/connection_context.h"
 #include "query/config.h"
-#include "scheduler/background_scheduler.h"
+#include "runtime/runtime.h"
 
 namespace sdb {
 namespace {
@@ -292,8 +292,8 @@ void JobScheduler::Schedule(catalog::JobCatalogEntry& job) {
 }
 
 void JobScheduler::Arm(const std::shared_ptr<JobState>& state, uint64_t timer) {
-  BackgroundScheduler::instance().RunAt(
-    state->status.next_run, [this, state, timer] { Run(state, timer); });
+  Runtime::Get().RunAt(state->status.next_run,
+                       [this, state, timer] { Run(state, timer); });
 }
 
 void JobScheduler::Run(std::shared_ptr<JobState> state, uint64_t timer) {

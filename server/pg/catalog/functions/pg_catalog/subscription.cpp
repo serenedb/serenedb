@@ -244,7 +244,7 @@ duckdb::unique_ptr<duckdb::FunctionData> OriginStatusBind(
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> OriginStatusInit(
   duckdb::ClientContext& context, duckdb::TableFunctionInitInput&) {
   auto state = duckdb::make_uniq<OriginStatusState>();
-  state->origins = ReplicationOrigins(*context.db);
+  state->origins = ReplicationOrigins(context);
   return state;
 }
 

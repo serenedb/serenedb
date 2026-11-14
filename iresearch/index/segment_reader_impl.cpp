@@ -129,6 +129,7 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::WithDocsMask(
   reader->_id = _id;
   reader->_patch_tick = _patch_tick;
   reader->_patched_docs = _patched_docs;
+  reader->_patches = _patches;
   reader->_field_reader = _field_reader;
   reader->_pieces = _pieces;
   reader->_data = _data;
@@ -150,6 +151,7 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::WithPatches(
     reader->_data = root;
     return reader;
   }
+  reader->_patches.assign(patches.begin(), patches.end());
   std::vector<std::shared_ptr<const ColumnReader>> replaced;
   replaced.reserve(patches.size());
   for (const auto& [field, patch] : patches) {

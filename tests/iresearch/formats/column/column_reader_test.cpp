@@ -1271,13 +1271,13 @@ TEST_F(ColumnReaderTest, GatherFilterReleasesPassedBlocks) {
 
 std::shared_ptr<const irs::ColumnPatch> MergePatch(
   const irs::ColumnPatch* base, const duckdb::LogicalType& type,
-  const std::vector<uint64_t>& rows, const ValueOf& value_of, uint64_t tick) {
+  const std::vector<uint64_t>& rows, const ValueOf& value_of) {
   duckdb::Vector values{type, rows.size()};
   for (size_t i = 0; i < rows.size(); ++i) {
     values.SetValue(i, value_of(rows[i]));
   }
   duckdb::FlatVector::SetSize(values, rows.size());
-  return irs::ColumnPatch::Merge(base, type, rows, values, tick);
+  return irs::ColumnPatch::Merge(base, type, rows, values);
 }
 
 void CheckPatchedFilter(duckdb::ClientContext& context,
@@ -1401,9 +1401,8 @@ TEST_F(ColumnReaderTest, PatchedColumnsReadTheirPatchedValues) {
         }
         return in(first_rows, g) ? c.first(g) : base(g);
       };
-      const auto first = MergePatch(nullptr, c.type, first_rows, c.first, 1);
-      const auto patch =
-        MergePatch(first.get(), c.type, second_rows, c.second, 2);
+      const auto first = MergePatch(nullptr, c.type, first_rows, c.first);
+      const auto patch = MergePatch(first.get(), c.type, second_rows, c.second);
       std::vector<uint64_t> both;
       absl::c_set_union(first_rows, second_rows, std::back_inserter(both));
       ASSERT_EQ(first->Count(), first_rows.size());

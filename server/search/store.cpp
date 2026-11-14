@@ -545,12 +545,12 @@ bool Store::MergePiecesLocked(
     return false;
   }
   std::vector<uint64_t> ids;
-  std::vector<Tick> folded;
+  std::vector<std::span<const irs::FieldPatch>> folded;
   ids.reserve(pieces.size());
   folded.reserve(pieces.size());
   for (const auto& piece : pieces) {
     ids.push_back(piece->id);
-    folded.push_back(piece->reader->PatchTick());
+    folded.push_back(piece->reader->Patches());
   }
   std::vector<std::shared_ptr<TableUnit>> added;
   added.push_back(PieceUnit(std::move(merged.reader), pieces.front()->first));
@@ -561,7 +561,8 @@ bool Store::MergePiecesLocked(
 }
 
 std::shared_ptr<const TableState> Store::CommitReplace(
-  std::span<const uint64_t> replaced, std::span<const Tick> folded,
+  std::span<const uint64_t> replaced,
+  std::span<const std::span<const irs::FieldPatch>> folded,
   std::vector<std::shared_ptr<TableUnit>> added, std::vector<irs::DocMap> maps,
   uint64_t memory_below, bool logged) {
   SDB_ASSERT(!_read_only);
@@ -632,12 +633,12 @@ bool Store::WriteOutLocked() {
   }
   SDB_PARK_ONCE_ON_FAILURE("pause_search_write_out");
   std::vector<uint64_t> ids;
-  std::vector<Tick> folded;
+  std::vector<std::span<const irs::FieldPatch>> folded;
   ids.reserve(pieces.size());
   folded.reserve(pieces.size());
   for (const auto& piece : pieces) {
     ids.push_back(piece->id);
-    folded.push_back(piece->reader->PatchTick());
+    folded.push_back(piece->reader->Patches());
   }
   std::vector<std::shared_ptr<TableUnit>> added;
   if (merged.reader) {
@@ -867,14 +868,14 @@ auto Store::CompactUnsafeImpl(const irs::CompactionPolicy& policy,
     }
     SDB_PARK_ONCE_ON_FAILURE("pause_search_compact_before_publish");
     std::vector<uint64_t> ids;
-    std::vector<Tick> folded;
+    std::vector<std::span<const irs::FieldPatch>> folded;
     ids.reserve(merged.claim.candidates.size());
     folded.reserve(merged.claim.candidates.size());
     for (const auto* candidate : merged.claim.candidates) {
       const auto& impl =
         *irs::utils::downCast<irs::SegmentReader>(*candidate).GetImpl();
       ids.push_back(impl.Id());
-      folded.push_back(impl.PatchTick());
+      folded.push_back(impl.Patches());
     }
     SyncSegments();
     std::vector<std::shared_ptr<TableUnit>> added;
@@ -1025,14 +1026,14 @@ std::shared_ptr<const TableState> Store::ReplaceSegments(
   std::vector<irs::IndexWriter::Replacement> replacements) {
   SDB_ASSERT(_table);
   std::vector<uint64_t> ids;
-  std::vector<Tick> folded;
+  std::vector<std::span<const irs::FieldPatch>> folded;
   ids.reserve(replaced.size());
   folded.reserve(replaced.size());
   for (const auto* sub : replaced) {
     const auto& impl =
       *irs::utils::downCast<irs::SegmentReader>(*sub).GetImpl();
     ids.push_back(impl.Id());
-    folded.push_back(impl.PatchTick());
+    folded.push_back(impl.Patches());
   }
   std::vector<std::shared_ptr<TableUnit>> added;
   std::vector<irs::DocMap> maps;

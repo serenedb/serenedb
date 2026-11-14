@@ -51,27 +51,21 @@ class ColumnPatch final {
     Chunk(const duckdb::LogicalType& type, duckdb::idx_t capacity);
 
     std::vector<uint16_t> offsets;
-    std::vector<uint64_t> ticks;
     duckdb::Vector values;
     duckdb::BaseStatistics stats;
     uint64_t bytes = 0;
   };
 
-  struct Slot {
-    std::shared_ptr<const Chunk> chunk;
-    uint64_t tick = 0;
-
-    explicit operator bool() const noexcept { return chunk != nullptr; }
-    uint64_t Tick(size_t i) const noexcept {
-      return chunk->ticks.empty() ? tick : chunk->ticks[i];
-    }
-  };
-
   struct Group {
     explicit Group(const duckdb::LogicalType& type);
 
-    std::array<Slot, kGroupChunks> chunks;
+    std::array<std::shared_ptr<const Chunk>, kGroupChunks> chunks;
     duckdb::BaseStatistics stats;
+  };
+
+  struct Entries {
+    std::vector<uint64_t> rows;
+    duckdb::Vector values;
   };
 
   explicit ColumnPatch(duckdb::LogicalType type);
@@ -80,14 +74,7 @@ class ColumnPatch final {
 
   static std::shared_ptr<const ColumnPatch> Merge(
     const ColumnPatch* base, const duckdb::LogicalType& type,
-    std::span<const uint64_t> rows, const duckdb::Vector& values,
-    std::span<const uint64_t> ticks);
-  static std::shared_ptr<const ColumnPatch> Merge(
-    const ColumnPatch* base, const duckdb::LogicalType& type,
-    std::span<const uint64_t> rows, const duckdb::Vector& values,
-    uint64_t tick) {
-    return Merge(base, type, rows, values, std::span<const uint64_t>{&tick, 1});
-  }
+    std::span<const uint64_t> rows, const duckdb::Vector& values);
   static std::shared_ptr<const ColumnPatch> Merge(
     const ColumnPatch* base, const ColumnPatch& added, uint64_t tick,
     ParallelFor parallel = SerialFor);
@@ -98,8 +85,7 @@ class ColumnPatch final {
   uint64_t MaxTick() const noexcept { return _max_tick; }
   const duckdb::BaseStatistics& Stats() const noexcept { return _stats; }
 
-  void Entries(std::vector<uint64_t>& rows, duckdb::Vector& values,
-               std::vector<uint64_t>& ticks) const;
+  Entries EntriesSince(const ColumnPatch* since) const;
 
   const Chunk* FindChunk(uint64_t chunk) const noexcept;
   bool Overlaps(uint64_t first, uint64_t last) const noexcept;
@@ -121,22 +107,22 @@ class ColumnPatch final {
         return;
       }
       for (size_t c = 0; c < kGroupChunks; ++c) {
-        const auto& slot = it->second->chunks[c];
+        const auto* chunk = it->second->chunks[c].get();
         const uint64_t chunk_row = group_row + (uint64_t{c} << kChunkShift);
-        if (!slot || chunk_row + kChunkRows <= first) {
+        if (!chunk || chunk_row + kChunkRows <= first) {
           continue;
         }
         if (chunk_row >= last) {
           return;
         }
-        const auto& offsets = slot.chunk->offsets;
+        const auto& offsets = chunk->offsets;
         for (size_t i = 0; i < offsets.size(); ++i) {
           const uint64_t row = chunk_row + offsets[i];
           if (row >= last) {
             return;
           }
           if (row >= first) {
-            visit(row, slot, i);
+            visit(row, *chunk, i);
           }
         }
       }
@@ -147,10 +133,10 @@ class ColumnPatch final {
   void ForEachChunk(const Visit& visit) const {
     for (const auto& [group_id, group] : _groups) {
       for (size_t c = 0; c < kGroupChunks; ++c) {
-        if (const auto& slot = group->chunks[c]) {
+        if (const auto& chunk = group->chunks[c]) {
           visit((group_id << (kChunkShift + kGroupShift)) +
                   (uint64_t{c} << kChunkShift),
-                *slot.chunk);
+                *chunk);
         }
       }
     }

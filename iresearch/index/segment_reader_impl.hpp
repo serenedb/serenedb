@@ -86,6 +86,7 @@ class SegmentReaderImpl final : public SubReader {
 
   uint64_t Id() const noexcept { return _id; }
   uint64_t PatchTick() const noexcept { return _patch_tick; }
+  std::span<const FieldPatch> Patches() const noexcept { return _patches; }
 
   lead::Node::ptr docs_iterator() const final;
 
@@ -137,6 +138,7 @@ class SegmentReaderImpl final : public SubReader {
   uint64_t _id = 0;
   uint64_t _patch_tick = 0;
   uint64_t _patched_docs = 0;
+  std::vector<FieldPatch> _patches;
   std::shared_ptr<ColumnData> _data;
   std::shared_ptr<term_dict::FieldReader> _field_reader;
   std::shared_ptr<const PieceFields> _pieces;

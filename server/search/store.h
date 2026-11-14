@@ -380,7 +380,8 @@ class Store final : public std::enable_shared_from_this<Store>,
     return Dropped() || _directory->Dropped();
   }
   std::shared_ptr<const TableState> CommitReplace(
-    std::span<const uint64_t> replaced, std::span<const Tick> folded,
+    std::span<const uint64_t> replaced,
+    std::span<const std::span<const irs::FieldPatch>> folded,
     std::vector<std::shared_ptr<TableUnit>> added,
     std::vector<irs::DocMap> maps, uint64_t memory_below, bool logged);
   void CommitUnlogged(absl::FunctionRef<void(Tick)> apply);

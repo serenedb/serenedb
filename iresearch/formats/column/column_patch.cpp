@@ -43,26 +43,16 @@ struct Pick {
 
 uint64_t ChunkBytes(const ColumnPatch::Chunk& chunk) {
   return chunk.values.GetAllocationSize() +
-         chunk.offsets.size() * sizeof(uint16_t) +
-         chunk.ticks.size() * sizeof(uint64_t);
+         chunk.offsets.size() * sizeof(uint16_t);
 }
 
-struct MergedChunk {
-  std::shared_ptr<ColumnPatch::Chunk> chunk;
-  uint64_t tick = 0;
-};
-
-MergedChunk MergeChunk(const duckdb::LogicalType& type,
-                       const ColumnPatch::Chunk* old, uint64_t old_tick,
-                       uint64_t chunk_row, std::span<const uint64_t> rows,
-                       const duckdb::Vector& values, duckdb::idx_t values_at,
-                       std::span<const uint64_t> ticks) {
+std::shared_ptr<ColumnPatch::Chunk> MergeChunk(const duckdb::LogicalType& type,
+                                               const ColumnPatch::Chunk* old,
+                                               uint64_t chunk_row,
+                                               std::span<const uint64_t> rows,
+                                               const duckdb::Vector& values,
+                                               duckdb::idx_t values_at) {
   const size_t old_count = old ? old->offsets.size() : 0;
-  const bool uniform =
-    ticks.size() == 1 && (!old || (old->ticks.empty() && old_tick == ticks[0]));
-  const auto old_at = [&](size_t a) {
-    return old->ticks.empty() ? old_tick : old->ticks[a];
-  };
   size_t count = 0;
   for (size_t a = 0, b = 0; a < old_count || b < rows.size(); ++count) {
     const bool take_new =
@@ -79,9 +69,6 @@ MergedChunk MergeChunk(const duckdb::LogicalType& type,
   }
   auto chunk = std::make_shared<ColumnPatch::Chunk>(type, count);
   chunk->offsets.reserve(count);
-  if (!uniform) {
-    chunk->ticks.reserve(count);
-  }
   std::array<duckdb::sel_t, ColumnPatch::kChunkRows> picked;
   const duckdb::Vector* source = nullptr;
   size_t run = 0;
@@ -108,16 +95,10 @@ MergedChunk MergeChunk(const duckdb::LogicalType& type,
         ++a;
       }
       chunk->offsets.push_back(static_cast<uint16_t>(rows[b] - chunk_row));
-      if (!uniform) {
-        chunk->ticks.push_back(ticks.size() == 1 ? ticks[0] : ticks[b]);
-      }
       pick(values, values_at + b);
       ++b;
     } else {
       chunk->offsets.push_back(old->offsets[a]);
-      if (!uniform) {
-        chunk->ticks.push_back(old_at(a));
-      }
       pick(old->values, a);
       ++a;
     }
@@ -130,7 +111,7 @@ MergedChunk MergeChunk(const duckdb::LogicalType& type,
   const duckdb::Vector added{values, values_at, values_at + rows.size()};
   chunk->stats.Merge(ChunkStatistics(type, added, rows.size()));
   chunk->bytes = ChunkBytes(*chunk);
-  return {.chunk = std::move(chunk), .tick = uniform ? ticks[0] : 0};
+  return chunk;
 }
 
 template<typename Visit>
@@ -141,8 +122,8 @@ void ForEachRun(const ColumnPatch& patch, uint64_t first, uint64_t last,
   uint64_t row = 0;
   size_t length = 0;
   patch.ForEach(first, last,
-                [&](uint64_t at, const ColumnPatch::Slot& slot, size_t i) {
-                  const auto* in = slot.chunk.get();
+                [&](uint64_t at, const ColumnPatch::Chunk& from, size_t i) {
+                  const auto* in = &from;
                   if (length != 0 && in == chunk && i == index + length &&
                       at == row + length) {
                     ++length;
@@ -244,10 +225,8 @@ bool ColumnPatch::Patchable(const duckdb::LogicalType& type) noexcept {
 
 std::shared_ptr<const ColumnPatch> ColumnPatch::Merge(
   const ColumnPatch* base, const duckdb::LogicalType& type,
-  std::span<const uint64_t> rows, const duckdb::Vector& values,
-  std::span<const uint64_t> ticks) {
+  std::span<const uint64_t> rows, const duckdb::Vector& values) {
   SDB_ASSERT(rows.size() == values.size());
-  SDB_ASSERT(ticks.size() == 1 || ticks.size() == rows.size());
   auto next = std::make_shared<ColumnPatch>(type);
   if (base) {
     next->_groups = base->_groups;
@@ -256,7 +235,6 @@ std::shared_ptr<const ColumnPatch> ColumnPatch::Merge(
     next->_max_tick = base->_max_tick;
     next->_stats = base->_stats.Copy();
   }
-  next->_max_tick = std::max(next->_max_tick, *absl::c_max_element(ticks));
   for (size_t i = 0; i < rows.size();) {
     SDB_ASSERT(i == 0 || rows[i] > rows[i - 1]);
     const uint64_t group_id = rows[i] >> kGroupRowShift;
@@ -276,16 +254,14 @@ std::shared_ptr<const ColumnPatch> ColumnPatch::Merge(
         ++end;
       }
       auto& slot = group->chunks[chunk_id & (kGroupChunks - 1)];
-      const auto* old = slot.chunk.get();
-      auto merged = MergeChunk(
-        type, old, slot.tick, chunk_id << kChunkShift, rows.subspan(i, end - i),
-        values, i, ticks.size() == 1 ? ticks : ticks.subspan(i, end - i));
-      next->_count = next->_count - (old ? old->offsets.size() : 0) +
-                     merged.chunk->offsets.size();
-      next->_bytes =
-        next->_bytes - (old ? old->bytes : 0) + merged.chunk->bytes;
-      group->stats.Merge(merged.chunk->stats);
-      slot = {.chunk = std::move(merged.chunk), .tick = merged.tick};
+      const auto* old = slot.get();
+      auto merged = MergeChunk(type, old, chunk_id << kChunkShift,
+                               rows.subspan(i, end - i), values, i);
+      next->_count =
+        next->_count - (old ? old->offsets.size() : 0) + merged->offsets.size();
+      next->_bytes = next->_bytes - (old ? old->bytes : 0) + merged->bytes;
+      group->stats.Merge(merged->stats);
+      slot = std::move(merged);
       i = end;
     }
     next->_stats.Merge(group->stats);
@@ -310,8 +286,7 @@ std::shared_ptr<const ColumnPatch> ColumnPatch::Merge(const ColumnPatch* base,
     next->_max_tick = base->_max_tick;
     next->_stats = base->_stats.Copy();
   }
-  next->_max_tick = std::max(next->_max_tick, tick);
-  const bool keep_ticks = tick == 0 && added._max_tick == 0;
+  next->_max_tick = std::max({next->_max_tick, added._max_tick, tick});
   struct Touched {
     size_t at = 0;
     bool existing = false;
@@ -334,49 +309,43 @@ std::shared_ptr<const ColumnPatch> ColumnPatch::Merge(const ColumnPatch* base,
     auto& entry = touched[g];
     const auto* old =
       entry.existing ? next->_groups[entry.at].second.get() : nullptr;
-    if (!old && keep_ticks) {
-      for (const auto& slot : from->chunks) {
-        if (slot) {
-          entry.count += static_cast<int64_t>(slot.chunk->offsets.size());
-          entry.bytes += static_cast<int64_t>(slot.chunk->bytes);
+    if (!old) {
+      for (const auto& chunk : from->chunks) {
+        if (chunk) {
+          entry.count += static_cast<int64_t>(chunk->offsets.size());
+          entry.bytes += static_cast<int64_t>(chunk->bytes);
         }
       }
       entry.group = from;
       return;
     }
     auto group = std::make_shared<Group>(added._type);
-    if (old) {
-      group->chunks = old->chunks;
-      group->stats = old->stats.Copy();
-    }
+    group->chunks = old->chunks;
+    group->stats = old->stats.Copy();
     std::vector<uint64_t> rows;
     for (size_t c = 0; c != kGroupChunks; ++c) {
-      const auto& from_slot = from->chunks[c];
-      if (!from_slot) {
+      const auto& chunk = from->chunks[c];
+      if (!chunk) {
         continue;
       }
-      const auto& chunk = *from_slot.chunk;
       auto& slot = group->chunks[c];
-      const auto* prev = slot.chunk.get();
-      Slot merged = from_slot;
-      if (prev || (!keep_ticks && !chunk.ticks.empty())) {
+      const auto* prev = slot.get();
+      auto merged = chunk;
+      if (prev) {
         const uint64_t chunk_row =
           (group_id << kGroupRowShift) + (uint64_t{c} << kChunkShift);
         rows.clear();
-        for (const auto offset : chunk.offsets) {
+        for (const auto offset : chunk->offsets) {
           rows.push_back(chunk_row + offset);
         }
-        auto made = MergeChunk(added._type, prev, slot.tick, chunk_row, rows,
-                               chunk.values, 0, {&tick, 1});
-        merged = {.chunk = std::move(made.chunk), .tick = made.tick};
-      } else if (!keep_ticks) {
-        merged.tick = tick;
+        merged =
+          MergeChunk(added._type, prev, chunk_row, rows, chunk->values, 0);
       }
-      entry.count += static_cast<int64_t>(merged.chunk->offsets.size()) -
+      entry.count += static_cast<int64_t>(merged->offsets.size()) -
                      static_cast<int64_t>(prev ? prev->offsets.size() : 0);
-      entry.bytes += static_cast<int64_t>(merged.chunk->bytes) -
+      entry.bytes += static_cast<int64_t>(merged->bytes) -
                      static_cast<int64_t>(prev ? prev->bytes : 0);
-      group->stats.Merge(merged.chunk->stats);
+      group->stats.Merge(merged->stats);
       slot = std::move(merged);
     }
     entry.group = std::move(group);
@@ -404,26 +373,39 @@ std::shared_ptr<const ColumnPatch> ColumnPatch::Merge(const ColumnPatch* base,
   return next;
 }
 
-void ColumnPatch::Entries(std::vector<uint64_t>& rows, duckdb::Vector& values,
-                          std::vector<uint64_t>& ticks) const {
-  rows.reserve(rows.size() + _count);
-  ticks.reserve(ticks.size() + _count);
-  for (const auto& [group_id, group] : _groups) {
-    for (size_t c = 0; c < kGroupChunks; ++c) {
-      const auto& slot = group->chunks[c];
-      if (!slot) {
+auto ColumnPatch::EntriesSince(const ColumnPatch* since) const -> Entries {
+  const auto changed = [&](auto&& visit) {
+    auto old = since ? since->_groups.begin() : _groups.end();
+    const auto old_end = since ? since->_groups.end() : _groups.end();
+    for (const auto& [group_id, group] : _groups) {
+      while (old != old_end && old->first < group_id) {
+        ++old;
+      }
+      const Group* before =
+        old != old_end && old->first == group_id ? old->second.get() : nullptr;
+      if (before == group.get()) {
         continue;
       }
-      const auto& chunk = *slot.chunk;
-      const uint64_t chunk_row =
-        (group_id << kGroupRowShift) + (uint64_t{c} << kChunkShift);
-      for (size_t i = 0; i != chunk.offsets.size(); ++i) {
-        rows.push_back(chunk_row + chunk.offsets[i]);
-        ticks.push_back(slot.Tick(i));
+      for (size_t c = 0; c < kGroupChunks; ++c) {
+        const auto& chunk = group->chunks[c];
+        if (chunk && (!before || before->chunks[c] != chunk)) {
+          visit((group_id << kGroupRowShift) + (uint64_t{c} << kChunkShift),
+                *chunk);
+        }
       }
-      values.Append(chunk.values, chunk.values.size());
     }
-  }
+  };
+  size_t count = 0;
+  changed([&](uint64_t, const Chunk& chunk) { count += chunk.offsets.size(); });
+  Entries entries{.values = duckdb::Vector{_type, count}};
+  entries.rows.reserve(count);
+  changed([&](uint64_t chunk_row, const Chunk& chunk) {
+    for (const auto offset : chunk.offsets) {
+      entries.rows.push_back(chunk_row + offset);
+    }
+    entries.values.Append(chunk.values, chunk.values.size());
+  });
+  return entries;
 }
 
 const ColumnPatch::Chunk* ColumnPatch::FindChunk(
@@ -435,7 +417,7 @@ const ColumnPatch::Chunk* ColumnPatch::FindChunk(
   if (it == _groups.end() || it->first != group_id) {
     return nullptr;
   }
-  return it->second->chunks[chunk & (kGroupChunks - 1)].chunk.get();
+  return it->second->chunks[chunk & (kGroupChunks - 1)].get();
 }
 
 bool ColumnPatch::SameRows(const ColumnPatch& other) const noexcept {
@@ -449,8 +431,8 @@ bool ColumnPatch::SameRows(const ColumnPatch& other) const noexcept {
       return false;
     }
     for (size_t c = 0; c != kGroupChunks; ++c) {
-      const auto* lhs = group->chunks[c].chunk.get();
-      const auto* rhs = other_group->chunks[c].chunk.get();
+      const auto* lhs = group->chunks[c].get();
+      const auto* rhs = other_group->chunks[c].get();
       if (lhs != rhs && (!lhs || !rhs || lhs->offsets != rhs->offsets)) {
         return false;
       }
@@ -494,7 +476,6 @@ auto ColumnPatch::Builder::GroupOf(uint64_t id) -> Building& {
 void ColumnPatch::Builder::Add(std::span<const uint64_t> rows,
                                const duckdb::Vector& values) {
   SDB_ASSERT(rows.size() == values.size());
-  static constexpr uint64_t kOwnTick = 0;
   for (size_t i = 0; i < rows.size();) {
     const uint64_t chunk_id = rows[i] >> kChunkShift;
     size_t end = i + 1;
@@ -514,9 +495,7 @@ void ColumnPatch::Builder::Add(std::span<const uint64_t> rows,
                           duckdb::VectorAppendMode::ALLOW_RESIZE);
       slot->stats.Merge(ChunkStatistics(_type, added, taken.size()));
     } else {
-      slot = MergeChunk(_type, slot.get(), kOwnTick, chunk_row, taken, values,
-                        i, {&kOwnTick, 1})
-               .chunk;
+      slot = MergeChunk(_type, slot.get(), chunk_row, taken, values, i);
     }
     i = end;
   }
@@ -536,7 +515,7 @@ std::shared_ptr<const ColumnPatch> ColumnPatch::Builder::Finish() && {
       patch->_count += chunk->offsets.size();
       patch->_bytes += chunk->bytes;
       group->stats.Merge(chunk->stats);
-      group->chunks[c] = {.chunk = std::move(chunk)};
+      group->chunks[c] = std::move(chunk);
     }
     patch->_stats.Merge(group->stats);
     patch->_groups.emplace_back(building.id, std::move(group));
@@ -584,10 +563,10 @@ void ColumnPatch::MergeStats(uint64_t first, uint64_t last,
       continue;
     }
     for (size_t c = 0; c < kGroupChunks; ++c) {
-      const auto& slot = it->second->chunks[c];
+      const auto& chunk = it->second->chunks[c];
       const uint64_t chunk_row = group_row + (uint64_t{c} << kChunkShift);
-      if (slot && chunk_row < last && chunk_row + kChunkRows > first) {
-        stats.Merge(slot.chunk->stats);
+      if (chunk && chunk_row < last && chunk_row + kChunkRows > first) {
+        stats.Merge(chunk->stats);
       }
     }
   }

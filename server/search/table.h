@@ -70,6 +70,11 @@ constexpr uint64_t OwnRowsId(uint64_t generation) noexcept {
 
 irs::doc_id_t PieceDocs(const irs::IndexWriter::Transaction& trx) noexcept;
 
+struct PatchedRows {
+  Tick tick = 0;
+  std::shared_ptr<const irs::DocumentMask> rows;
+};
+
 struct TableUnit {
   uint64_t id = 0;
   irs::SegmentMeta meta;
@@ -78,6 +83,7 @@ struct TableUnit {
   std::shared_ptr<const irs::DocumentMask> deleted;
   uint64_t deleted_bytes = 0;
   std::vector<irs::FieldPatch> patches;
+  std::vector<PatchedRows> patched;
   uint64_t first = 0;
   bool piece = false;
 };
@@ -341,11 +347,11 @@ class Table final {
     std::vector<irs::DocMap> maps;
     TableDelta delta;
   };
-  Replacement PrepareReplace(std::span<const uint64_t> replaced,
-                             std::span<const Tick> folded,
-                             std::vector<std::shared_ptr<TableUnit>>&& added,
-                             std::vector<irs::DocMap>&& maps,
-                             uint64_t memory_below) const;
+  Replacement PrepareReplace(
+    std::span<const uint64_t> replaced,
+    std::span<const std::span<const irs::FieldPatch>> folded,
+    std::vector<std::shared_ptr<TableUnit>>&& added,
+    std::vector<irs::DocMap>&& maps, uint64_t memory_below) const;
   std::shared_ptr<const TableState> Replace(Tick tick,
                                             Replacement&& replacement);
   std::shared_ptr<TableUnit> SegmentUnit(OwnSegment&& segment) const;

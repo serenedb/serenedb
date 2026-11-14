@@ -430,7 +430,16 @@ void ColumnReader::Readahead(size_t block, ReadContext& ctx,
   if (block < s->advised_end) {
     return;
   }
+  uint64_t warm = in.Warm(first.file_offset, first.byte_size);
+  if (warm != 0 && file_utils::PollResidency(warm)) {
+    warm = 0;
+  }
+  if (warm == first.byte_size) {
+    s->advised_end = block + 1;
+    return;
+  }
   if (in.Resident(first.file_offset, first.byte_size)) {
+    in.MarkWarm(first.file_offset, first.byte_size);
     s->advised_end = block + 1;
     return;
   }

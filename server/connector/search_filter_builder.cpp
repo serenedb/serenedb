@@ -585,6 +585,19 @@ const SearchColumnInfo* FindKeyColumnInfo(const FilterContext& ctx,
 
 namespace {
 
+bool ReachesNullableKey(const FilterContext& ctx,
+                        const duckdb::Expression& expr) {
+  if (const auto* info = FindKeyColumnInfo(ctx, expr)) {
+    return info->nullable;
+  }
+  bool reaches = false;
+  duckdb::ExpressionIterator::EnumerateChildren(
+    expr, [&](const duckdb::Expression& child) {
+      reaches = reaches || ReachesNullableKey(ctx, child);
+    });
+  return reaches;
+}
+
 // UNKNOWN exactly on NULL operands; false for shapes whose null behavior
 // is not provably strict.
 bool IsStrictPredicate(const duckdb::Expression& expr) {
@@ -716,6 +729,12 @@ absl::Status MakeGroup(BoolTarget parent, const FilterContext& ctx,
     group_is_union = is_and;
     group = open(parent, group_is_union);
   } else if (ctx.negated) {
+    if (absl::c_any_of(conj.GetChildren(), [&](const auto& child) {
+          return ReachesNullableKey(ctx, *child);
+        })) {
+      return absl::UnimplementedError(
+        "a negated key lookup would admit the column's NULL rows");
+    }
     if (absl::c_any_of(conj.GetChildren(), [](const auto& child) {
           return ContainsNullConstant(*child);
         })) {

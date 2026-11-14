@@ -24,6 +24,7 @@
 #include "index_writer.hpp"
 
 #include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -126,12 +127,9 @@ void IndexWriter::Transaction::Flush() {
   if (!_segment) {
     return;
   }
-  try {
-    _segment->Flush();
-  } catch (...) {
-    _segment->Reset();
-    throw;
-  }
+  absl::Cleanup reset = [&] { _segment->Reset(); };
+  _segment->Flush();
+  std::move(reset).Cancel();
 }
 
 void IndexWriter::Transaction::UpdateSegment(doc_id_t batch_size) {

@@ -1,0 +1,135 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE pmg (id BIGINT PRIMARY KEY, n BIGINT, body TEXT)
+  WITH (compaction_interval = 0, row_group_size = 2048);
+
+
+statement ok
+SET sdb_faults = 'pause_search_pieces_merged';
+
+
+statement ok
+INSERT INTO pmg
+SELECT i, i * 7, CASE WHEN i % 5 = 1 THEN NULL ELSE 'body of the row number ' || i END
+FROM generate_series(1, 300) s(i);
+
+
+statement ok
+INSERT INTO pmg
+SELECT i, i * 7, CASE WHEN i % 5 = 1 THEN NULL ELSE 'body of the row number ' || i END
+FROM generate_series(301, 600) s(i);
+
+
+statement ok
+INSERT INTO pmg
+SELECT i, i * 7, CASE WHEN i % 5 = 1 THEN NULL ELSE 'body of the row number ' || i END
+FROM generate_series(601, 900) s(i);
+
+
+statement ok
+INSERT INTO pmg
+SELECT i, i * 7, CASE WHEN i % 5 = 1 THEN NULL ELSE 'body of the row number ' || i END
+FROM generate_series(901, 1200) s(i);
+
+
+statement ok
+INSERT INTO pmg
+SELECT i, i * 7, CASE WHEN i % 5 = 1 THEN NULL ELSE 'body of the row number ' || i END
+FROM generate_series(1201, 1500) s(i);
+
+
+statement ok
+INSERT INTO pmg
+SELECT i, i * 7, CASE WHEN i % 5 = 1 THEN NULL ELSE 'body of the row number ' || i END
+FROM generate_series(1501, 1800) s(i);
+
+
+statement ok
+INSERT INTO pmg
+SELECT i, i * 7, CASE WHEN i % 5 = 1 THEN NULL ELSE 'body of the row number ' || i END
+FROM generate_series(1801, 2100) s(i);
+
+
+statement ok
+INSERT INTO pmg
+SELECT i, i * 7, CASE WHEN i % 5 = 1 THEN NULL ELSE 'body of the row number ' || i END
+FROM generate_series(2101, 2400) s(i);
+
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_pieces_merged:parked';
+
+
+statement ok
+SET sdb_faults = 'pause_search_pieces_merged:release';
+
+
+statement ok
+DELETE FROM pmg WHERE id % 100 = 0;
+
+
+statement ok
+UPDATE pmg SET n = -id WHERE id % 250 = 7;
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+INSERT INTO pmg SELECT i, i * 7, 'late ' || i FROM generate_series(2401, 2500) s(i);
+
+
+statement ok
+DELETE FROM pmg WHERE id IN (1, 2048, 2049);
+
+
+query
+SELECT count(*) AS rows, sum(n) AS total, count(body) AS bodies,
+       count(*) FILTER (WHERE n IS DISTINCT FROM CASE WHEN id % 250 = 7 THEN -id ELSE id * 7 END) AS bad_n,
+       count(*) FILTER (WHERE body IS DISTINCT FROM CASE WHEN id > 2400 THEN 'late ' || id
+                                                         WHEN id % 5 = 1 THEN NULL
+                                                         ELSE 'body of the row number ' || id END) AS bad_body
+FROM pmg;
+----
+rows	total	bodies	bad_n	bad_body
+2473	21554504	1994	0	0
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS rows, sum(n) AS total, count(body) AS bodies,
+       count(*) FILTER (WHERE n IS DISTINCT FROM CASE WHEN id % 250 = 7 THEN -id ELSE id * 7 END) AS bad_n,
+       count(*) FILTER (WHERE body IS DISTINCT FROM CASE WHEN id > 2400 THEN 'late ' || id
+                                                         WHEN id % 5 = 1 THEN NULL
+                                                         ELSE 'body of the row number ' || id END) AS bad_body
+FROM pmg;
+----
+rows	total	bodies	bad_n	bad_body
+2473	21554504	1994	0	0
+
+
+connection after_crash
+query
+SELECT id, n, body FROM pmg WHERE id IN (1, 2, 6, 7, 2047, 2048, 2049, 2050, 2400, 2401) ORDER BY id;
+----
+id	n	body
+2	14	body of the row number 2
+6	42	NULL
+7	-7	body of the row number 7
+2047	14329	body of the row number 2047
+2050	14350	body of the row number 2050
+2401	16807	late 2401

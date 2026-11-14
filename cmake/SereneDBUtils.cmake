@@ -16,7 +16,7 @@ function(sdb_update_module)
     if(NOT SDB_UPDATE_SUBMODULES)
         return()
     endif()
-    set(cwd ${CMAKE_SOURCE_DIR}/third_party)
+    set(cwd ${serenedb_SOURCE_DIR}/third_party)
     foreach(module IN LISTS ARGN)
         execute_process(
             COMMAND ${GIT_EXECUTABLE} rev-parse @:./${module}
@@ -76,7 +76,7 @@ macro(sdb_add_module module)
         set(_sdb_add_module_DIR ${module})
     endif()
     set(_sdb_add_module_DIR
-        ${CMAKE_SOURCE_DIR}/third_party/${_sdb_add_module_DIR}
+        ${serenedb_SOURCE_DIR}/third_party/${_sdb_add_module_DIR}
     )
     sdb_update_module(${module})
     if(_sdb_add_module_EXCLUDE_FROM_ALL)
@@ -93,6 +93,18 @@ macro(sdb_add_module module)
 endmacro()
 
 function(sdb_link_duckdb_extensions target)
-    set(DUCKDB_MODULE_BASE_DIR ${CMAKE_SOURCE_DIR}/third_party/duckdb)
+    set(DUCKDB_MODULE_BASE_DIR ${serenedb_SOURCE_DIR}/third_party/duckdb)
     duckdb_link_extensions(${target} PRIVATE ${STATICALLY_LINK_EXTENSIONS})
+endfunction()
+
+function(sdb_server_executable target)
+    target_link_libraries(${target} PRIVATE serene_app)
+    sdb_link_duckdb_extensions(${target})
+    if(SDB_EMBEDDED_DOCS)
+        target_link_libraries(
+            ${target}
+            PRIVATE serene_docs_builder serene_docs_bootstrap serene_docs_index
+        )
+        sdb_build_docs_index(${target})
+    endif()
 endfunction()

@@ -20,13 +20,28 @@
 
 #pragma once
 
+#include <optional>
+
 namespace sdb::app {
+
+void PrepareProcess(char* argv0);
 
 // Parses the CLI (absl flags + the single positional data-dir). Free of SDB_*
 // logging so it can run in main() BEFORE the DuckDB engine is brought up --
 // ConfigureServerDBConfig reads flags (e.g. --cpu_threads) while sizing the
 // pool, which happens during engine init.
 void ParseOptions(int argc, char* argv[]);
+
+class ServerProcess final {
+ public:
+  ServerProcess(int argc, char* argv[]);
+  ~ServerProcess();
+
+  ServerProcess(const ServerProcess&) = delete;
+  ServerProcess& operator=(const ServerProcess&) = delete;
+};
+
+std::optional<int> RunShellCommand(int argc, char* argv[]);
 
 void WaitForShutdown();
 

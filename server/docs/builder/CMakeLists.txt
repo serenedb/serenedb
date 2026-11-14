@@ -2,13 +2,13 @@ if(NOT SDB_EMBEDDED_DOCS)
     add_library(serene_docs_corpus OBJECT docs_data_stub.cpp)
     target_include_directories(
         serene_docs_corpus
-        PRIVATE ${CMAKE_SOURCE_DIR}/server
+        PRIVATE ${serenedb_SOURCE_DIR}/server
     )
     return()
 endif()
 
-set(SDB_DOCS_DIR ${CMAKE_SOURCE_DIR}/docs)
-set(SDB_DOCS_TESTS_DIR ${CMAKE_SOURCE_DIR}/tests/sqllogic)
+set(SDB_DOCS_DIR ${serenedb_SOURCE_DIR}/docs)
+set(SDB_DOCS_TESTS_DIR ${serenedb_SOURCE_DIR}/tests/sqllogic)
 set(SDB_DOCS_GENERATED ${CMAKE_CURRENT_BINARY_DIR}/docs_data.cpp)
 set(SDB_DOCS_CORPUS
     ${CMAKE_CURRENT_BINARY_DIR}/docs_corpus.bin
@@ -40,7 +40,7 @@ file(
 add_custom_command(
     OUTPUT ${SDB_DOCS_GENERATED} ${SDB_DOCS_CORPUS}
     COMMAND
-        ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/generate_docs.py
+        ${Python3_EXECUTABLE} ${serenedb_SOURCE_DIR}/scripts/generate_docs.py
         ${SDB_DOCS_DIR} ${SDB_DOCS_GENERATED}.tmp --tests-dir
         ${SDB_DOCS_TESTS_DIR} --corpus ${SDB_DOCS_CORPUS}.tmp
     COMMAND
@@ -55,8 +55,8 @@ add_custom_command(
     DEPENDS
         ${SDB_DOCS_SOURCES}
         ${SDB_DOCS_SNIPPET_SOURCES}
-        ${CMAKE_SOURCE_DIR}/scripts/generate_docs.py
-        ${CMAKE_SOURCE_DIR}/scripts/sqllogic_snippets.py
+        ${serenedb_SOURCE_DIR}/scripts/generate_docs.py
+        ${serenedb_SOURCE_DIR}/scripts/sqllogic_snippets.py
     COMMENT "Generating embedded docs ${SDB_DOCS_GENERATED}"
     VERBATIM
 )
@@ -65,7 +65,7 @@ add_custom_target(serene_docs_corpus_file DEPENDS ${SDB_DOCS_CORPUS})
 add_library(serene_docs_corpus OBJECT ${SDB_DOCS_GENERATED})
 target_include_directories(
     serene_docs_corpus
-    PRIVATE ${CMAKE_SOURCE_DIR}/server
+    PRIVATE ${serenedb_SOURCE_DIR}/server
 )
 
 add_library(serene_docs_builder OBJECT docs_loader.cpp)
@@ -77,9 +77,12 @@ target_link_libraries(serene_docs_bootstrap PRIVATE sereneserver)
 add_library(
     serene_docs_index
     OBJECT
-    ${CMAKE_SOURCE_DIR}/server/docs/docs_index_image.cpp
+    ${serenedb_SOURCE_DIR}/server/docs/docs_index_image.cpp
 )
-target_include_directories(serene_docs_index PRIVATE ${CMAKE_SOURCE_DIR}/server)
+target_include_directories(
+    serene_docs_index
+    PRIVATE ${serenedb_SOURCE_DIR}/server
+)
 
 function(sdb_embed_docs_index TARGET)
     add_custom_command(
@@ -87,7 +90,7 @@ function(sdb_embed_docs_index TARGET)
         POST_BUILD
         COMMAND
             ${Python3_EXECUTABLE}
-            ${CMAKE_SOURCE_DIR}/scripts/embed_docs_index.py
+            ${serenedb_SOURCE_DIR}/scripts/embed_docs_index.py
             ${SDB_DOCS_INDEX_WORK}/index $<TARGET_FILE:${TARGET}>
         VERBATIM
     )
@@ -99,7 +102,7 @@ function(sdb_embed_docs_index TARGET)
             VERBATIM
         )
     else()
-        set(script ${CMAKE_SOURCE_DIR}/server/docs/docs_index.ld)
+        set(script ${serenedb_SOURCE_DIR}/server/docs/docs_index.ld)
         target_link_options(${TARGET} PRIVATE -Wl,-T,${script})
         set_property(TARGET ${TARGET} APPEND PROPERTY LINK_DEPENDS ${script})
     endif()

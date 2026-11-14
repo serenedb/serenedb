@@ -13,7 +13,7 @@ target_link_libraries(
 sdb_link_duckdb_extensions(serenedb-bench-micro)
 target_include_directories(
     serenedb-bench-micro
-    PRIVATE ${CMAKE_SOURCE_DIR}/tests/iresearch
+    PRIVATE ${serenedb_SOURCE_DIR}/tests/iresearch
 )
 
 function(add_bench name)
@@ -81,7 +81,7 @@ add_bench(http_compression)
 set_property(
     SOURCE http_compression.cpp
     APPEND
-    PROPERTY COMPILE_DEFINITIONS "SDB_DOCS_DIR=\"${CMAKE_SOURCE_DIR}/docs\""
+    PROPERTY COMPILE_DEFINITIONS "SDB_DOCS_DIR=\"${serenedb_SOURCE_DIR}/docs\""
 )
 add_bench(http_response)
 add_bench(http_router)

@@ -75,8 +75,8 @@ target_include_directories(
     sereneserver
     SYSTEM
     PRIVATE
-        "${CMAKE_SOURCE_DIR}/third_party/duckdb_iceberg/src/include"
-        "${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/yyjson/include"
+        "${serenedb_SOURCE_DIR}/third_party/duckdb_iceberg/src/include"
+        "${serenedb_SOURCE_DIR}/third_party/duckdb/third_party/yyjson/include"
 )
 
 add_subdirectory(functions)

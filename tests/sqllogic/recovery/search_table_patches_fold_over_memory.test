@@ -5,7 +5,7 @@ RESET sdb_faults;
 
 
 statement ok
-CREATE TABLE pfm (id BIGINT PRIMARY KEY, v INT, s TEXT) WITH (compaction_interval = 0, segment_memory_max = 1048576);
+CREATE TABLE pfm (id BIGINT PRIMARY KEY, v INT, s TEXT) WITH (compaction_interval = 0, segment_memory_max = 262144);
 
 
 statement ok

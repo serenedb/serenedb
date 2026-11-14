@@ -402,7 +402,11 @@ bool DeletesAll(const irs::DocumentMask* deleted, const irs::DocumentMask& docs,
                 irs::doc_id_t rows) {
   auto count = docs.Count();
   if (deleted) {
-    count += deleted->Count() - deleted->AndCount(docs);
+    count += deleted->Count();
+    if (count < rows) {
+      return false;
+    }
+    count -= deleted->AndCount(docs);
   }
   return count >= rows;
 }
@@ -959,6 +963,9 @@ void ThrowConcurrentUpdate() {
 
 Tick Table::Conflict(const irs::DocRemoval& removal, Tick snapshot) const {
   const auto state = State();
+  if (state->tick <= snapshot) {
+    return 0;
+  }
   return absl::c_any_of(removal.groups,
                         [&](const auto& group) {
                           return Conflicting(*state, group.segment, group.docs,
@@ -977,22 +984,27 @@ TableDelta Table::CommitDelta(const TableCommit& commit,
   absl::MutexLock lock{&_state_mutex};
   const auto& state = *Head().state;
   TableDelta delta;
-  Mapped removed;
-  for (const auto& removal : commit.removals) {
-    for (const auto& group : removal->groups) {
-      removed[group.segment].Merge(group.docs);
-    }
-  }
   irs::containers::FlatHashMap<uint64_t,
                                std::shared_ptr<const irs::DocumentMask>>
     deletes;
-  deletes.reserve(removed.size());
-  for (auto& [id, docs] : removed) {
-    if (!docs.Empty()) {
-      deletes.emplace(
-        id, std::make_shared<const irs::DocumentMask>(
-              std::move(docs).Finish(irs::DocumentMaskBuilder::kCanonical)));
+  Mapped removed;
+  for (const auto& removal : commit.removals) {
+    for (const auto& group : removal->groups) {
+      const auto [it, first] = deletes.try_emplace(
+        group.segment,
+        std::shared_ptr<const irs::DocumentMask>{removal, &group.docs});
+      if (!first) {
+        auto& docs = removed[group.segment];
+        if (docs.Empty()) {
+          docs.Merge(*it->second);
+        }
+        docs.Merge(group.docs);
+      }
     }
+  }
+  for (auto& [id, docs] : removed) {
+    deletes[id] = std::make_shared<const irs::DocumentMask>(
+      std::move(docs).Finish(irs::DocumentMaskBuilder::kCanonical));
   }
   irs::containers::FlatHashSet<uint64_t> own;
   irs::containers::FlatHashSet<uint64_t> dead;

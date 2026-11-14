@@ -93,6 +93,10 @@ cmake --build build_sbg -t search-benchmark-game
 - To skip it, configure with `-DSDB_EMBEDDED_DOCS=OFF`; that build has no documentation to read.
 - On macOS the index gets a fixed 4 MiB region. When the build fails because the index outgrew it, raise `kCapacity` in `server/docs/docs_index_image.cpp`.
 
+### The TPC data generators
+
+The `tpch` and `tpcds` extensions, linked by default, carry the TPC-H and TPC-DS data generators, which the TPC licenses under its End User License Agreement rather than an open source license: a binary that includes them may be distributed only for free and with that agreement. `-DSDB_TPC_EXTENSIONS=OFF` leaves both out.
+
 ### Launch
 
 ```bash

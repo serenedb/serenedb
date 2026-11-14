@@ -696,14 +696,18 @@ if(IRESEARCH_BENCH)
     set(STATICALLY_LINK_EXTENSIONS "icu" CACHE STRING "" FORCE)
     set(DUCKDB_EXTENSION_CONFIGS "" CACHE STRING "" FORCE)
 else()
+    set(SDB_TPC_EXTENSION_NAMES "")
+    if(SDB_TPC_EXTENSIONS)
+        set(SDB_TPC_EXTENSION_NAMES "tpch;tpcds;")
+    endif()
     set(BUILD_EXTENSIONS
-        "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner;autocomplete;icu;inet;azure;spatial"
+        "core_functions;parquet;${SDB_TPC_EXTENSION_NAMES}json;httpfs;avro;iceberg;postgres_scanner;autocomplete;icu;inet;azure;spatial"
         CACHE STRING
         ""
         FORCE
     )
     set(STATICALLY_LINK_EXTENSIONS
-        "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner;autocomplete;icu;inet;azure;spatial;markdown;clickhouse_scanner"
+        "core_functions;parquet;${SDB_TPC_EXTENSION_NAMES}json;httpfs;avro;iceberg;postgres_scanner;autocomplete;icu;inet;azure;spatial;markdown;clickhouse_scanner"
         CACHE STRING
         ""
         FORCE
@@ -792,13 +796,16 @@ if(NOT IRESEARCH_BENCH)
         PRIVATE OpenSSL::Crypto
     )
 
+    set(SDB_TPC_EXTENSION_TARGETS "")
+    if(SDB_TPC_EXTENSIONS)
+        set(SDB_TPC_EXTENSION_TARGETS tpch_extension tpcds_extension)
+    endif()
     target_link_libraries(
         duckdb_static
         PUBLIC
             core_functions_extension
             parquet_extension
-            tpch_extension
-            tpcds_extension
+            ${SDB_TPC_EXTENSION_TARGETS}
             json_extension
             httpfs_extension
             azure_extension

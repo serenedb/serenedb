@@ -106,6 +106,12 @@ option(
 
 option(SDB_EMBEDDED_DOCS "embed the documentation from docs/ into serened" ON)
 
+option(
+    SDB_TPC_EXTENSIONS
+    "link the tpch and tpcds extensions, whose data generators are under the TPC End User License Agreement"
+    ON
+)
+
 option(SDB_GTEST "build the gtest suites under tests/" OFF)
 
 option(

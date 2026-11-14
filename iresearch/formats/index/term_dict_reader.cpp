@@ -71,6 +71,36 @@ uint32_t Find(const BlockView& view, Probe key,
   return entry;
 }
 
+uint32_t Find(const BlockView& view, Probe key,
+              const duckdb_fsst_decoder_t* fsst, uint32_t from) noexcept {
+  if (!view.fixed || from == kNoEntry) {
+    return Find(view, key, fsst);
+  }
+  if (key.size != size_t{view.prefix} + view.stride ||
+      PaddedMismatch(Prefix(view).data(), key.data, view.prefix) !=
+        view.prefix) {
+    return kNoEntry;
+  }
+  const auto* rest = key.data + view.prefix;
+  const auto less = [&](size_t entry) {
+    return std::memcmp(FixedKey(view, static_cast<uint32_t>(entry)).data(),
+                       rest, view.stride) < 0;
+  };
+  size_t lo = from;
+  size_t bound = from;
+  for (size_t step = 1; bound < view.count && less(bound); step *= 2) {
+    lo = bound + 1;
+    bound += step;
+  }
+  const auto entry = static_cast<uint32_t>(
+    PartitionIndex(lo, std::min<size_t>(bound + 1, view.count), less));
+  if (entry == view.count || PaddedMismatch(FixedKey(view, entry).data(), rest,
+                                            view.stride) != view.stride) {
+    return kNoEntry;
+  }
+  return entry;
+}
+
 const byte_type* MapAt(IndexInput& in, uint64_t offset, uint64_t size,
                        bstring& copy) {
   if (const auto* p = in.ReadStable(offset, size)) {
@@ -476,6 +506,10 @@ void TermReaderImpl::LookupBatch(size_t count, TermAt term,
   BlockBuffer buffer;
   BlockView view{};
   uint32_t parsed = kNoBlock;
+  auto decoded = kNoEntry;
+  const byte_type* record = nullptr;
+  PostingMeta posting;
+  uint64_t inline_end = 0;
   for (const auto& probe : probes) {
     if (probe.block != parsed) {
       parsed = probe.block;
@@ -490,12 +524,29 @@ void TermReaderImpl::LookupBatch(size_t count, TermAt term,
         HintRanges(in, inlines, budget);
       }
       view = Parse(Block(parsed, buffer), Fsst());
+      decoded = kNoEntry;
     }
     const auto entry =
-      Find(view, Probe{keys.data() + probe.key, probe.size}, Fsst());
-    if (entry != kNoEntry) {
-      found(probe.index, DecodeRecord(*this, view, parsed, entry));
+      Find(view, Probe{keys.data() + probe.key, probe.size}, Fsst(), decoded);
+    if (entry == kNoEntry) {
+      continue;
     }
+    uint32_t count = 0;
+    if (decoded != kNoEntry && entry >= decoded &&
+        entry / kRecordInterval == decoded / kRecordInterval) {
+      count = entry - decoded;
+    } else {
+      record = FieldRecords(*this, view, parsed, entry, count);
+      posting = {};
+      inline_end = 0;
+    }
+    DecodeRecords(record, count, _meta.index_features, posting, inline_end);
+    decoded = entry;
+    auto result = posting;
+    if (result.inline_size != 0) {
+      result.inline_data = ResolveInline(inline_end, result.inline_size);
+    }
+    found(probe.index, result);
   }
 }
 

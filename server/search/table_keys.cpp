@@ -406,6 +406,36 @@ void KeyProbe::ForEach(std::string_view key,
   }
 }
 
+void KeyProbe::ForEachSorted(
+  std::span<const std::string_view> keys,
+  absl::FunctionRef<void(size_t index, const KeyHolder& holder)> visit) const {
+  for (const auto& source : _segments) {
+    source.field->LookupBatch(
+      keys.size(), [&](size_t i) { return Bytes(keys[i]); },
+      [&](size_t i, const irs::PostingMeta& meta) {
+        source.field->ReadDocs(meta, [&](irs::doc_id_t doc) {
+          if (source.masks.Contains(doc)) {
+            return true;
+          }
+          visit(i, {.unit = source.unit, .doc = doc});
+          return false;
+        });
+      });
+  }
+  for (const auto& hot : _hots) {
+    for (size_t i = 0; i != keys.size(); ++i) {
+      hot.keys->ForEach(_field, keys[i], [&](irs::doc_id_t doc) {
+        const auto row = doc - irs::doc_limits::min();
+        if (row >= hot.docs || (hot.removed && hot.removed->Contains(doc))) {
+          return true;
+        }
+        visit(i, {.unit = hot.unit, .doc = doc});
+        return false;
+      });
+    }
+  }
+}
+
 bool KeyProbe::Exists(std::string_view key) const {
   bool found = false;
   ForEach(key, [&](const KeyHolder&) {

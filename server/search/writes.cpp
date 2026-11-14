@@ -1425,32 +1425,46 @@ void ConflictArbiter::ForEachHolder(
   }
   const auto width = _arbiters.size();
   std::bitset<STANDARD_VECTOR_SIZE> found;
+  std::vector<std::pair<std::string_view, duckdb::idx_t>> rows;
+  std::vector<std::string_view> sorted;
+  rows.reserve(count);
+  sorted.reserve(count);
   for (size_t a = 0; a != width; ++a) {
     const auto& arbiter = _arbiters[a];
+    rows.clear();
     for (duckdb::idx_t row = 0; row != count; ++row) {
-      const auto key = keys.keys[row * width + a];
-      if (found[row] || !key.data()) {
+      if (const auto key = keys.keys[row * width + a];
+          !found[row] && key.data()) {
+        rows.emplace_back(key, row);
+      }
+    }
+    absl::c_sort(rows);
+    sorted.clear();
+    for (const auto& [key, row] : rows) {
+      sorted.push_back(key);
+    }
+    arbiter.held.ForEachSorted(sorted, [&](size_t i, const KeyHolder& holder) {
+      if (const auto row = rows[i].second; !found[row]) {
+        found.set(row);
+        visit(row, holder);
+      }
+    });
+    if (!own) {
+      continue;
+    }
+    for (const auto& [key, row] : rows) {
+      if (found[row]) {
         continue;
       }
-      std::optional<KeyHolder> holder;
-      arbiter.held.ForEach(key, [&](const KeyHolder& held) {
-        holder = held;
+      _w.buffered_keys.ForEach(arbiter.field, key, [&](irs::doc_id_t doc) {
+        if (doc - irs::doc_limits::min() >= _own->docs ||
+            (_own->removed && _own->removed->Contains(doc))) {
+          return true;
+        }
+        found.set(row);
+        visit(row, KeyHolder{.unit = _own->index, .doc = doc});
         return false;
       });
-      if (!holder && own) {
-        _w.buffered_keys.ForEach(arbiter.field, key, [&](irs::doc_id_t doc) {
-          if (doc - irs::doc_limits::min() >= _own->docs ||
-              (_own->removed && _own->removed->Contains(doc))) {
-            return true;
-          }
-          holder = KeyHolder{.unit = _own->index, .doc = doc};
-          return false;
-        });
-      }
-      if (holder) {
-        found.set(row);
-        visit(row, *holder);
-      }
     }
   }
 }

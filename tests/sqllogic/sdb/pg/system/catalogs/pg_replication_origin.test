@@ -48,3 +48,101 @@ SELECT pg_replication_origin_drop('sven_repo_cleave_${__DATABASE__}');
 connection default
 statement ok
 DROP ROLE sven_repo_cleave;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+SELECT pg_replication_origin_create('sven_repo_txn_${__DATABASE__}');
+
+
+query
+SELECT roident = pg_replication_origin_oid('sven_repo_txn_${__DATABASE__}') AS same_ident,
+       (SELECT count(*) FROM pg_replication_origin_status WHERE external_id = 'sven_repo_txn_${__DATABASE__}') AS status
+FROM pg_replication_origin WHERE roname = 'sven_repo_txn_${__DATABASE__}';
+----
+same_ident	status
+t	1
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+SELECT pg_replication_origin_drop('sven_repo_txn_${__DATABASE__}');
+
+
+query
+SELECT count(*) AS listed FROM pg_replication_origin WHERE roname = 'sven_repo_txn_${__DATABASE__}';
+----
+listed
+0
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT count(*) AS listed FROM pg_replication_origin WHERE roname = 'sven_repo_txn_${__DATABASE__}';
+----
+listed
+1
+
+
+statement ok
+SELECT pg_replication_origin_drop('sven_repo_txn_${__DATABASE__}');
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE SUBSCRIPTION sven_repo_sub CONNECTION 'host=localhost dbname=sven_repo' PUBLICATION sven_repo_pub WITH (connect = false, slot_name = NONE);
+
+
+query
+SELECT count(*) AS listed FROM pg_replication_origin
+WHERE roname = (SELECT 'pg_' || oid FROM pg_subscription WHERE subname = 'sven_repo_sub');
+----
+listed
+1
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+CREATE TABLE sven_repo_sub_oid AS SELECT oid FROM pg_subscription WHERE subname = 'sven_repo_sub';
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+DROP SUBSCRIPTION sven_repo_sub;
+
+
+query
+SELECT count(*) AS listed FROM pg_replication_origin WHERE roname = (SELECT 'pg_' || oid FROM sven_repo_sub_oid);
+----
+listed
+0
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+DROP TABLE sven_repo_sub_oid;

@@ -105,7 +105,8 @@ struct ReplicationOrigin {
   uint64_t remote_lsn;
 };
 
-std::vector<ReplicationOrigin> ReplicationOrigins(duckdb::DatabaseInstance& db);
+std::vector<ReplicationOrigin> ReplicationOrigins(
+  duckdb::ClientContext& context);
 std::string ArrayTypeName(duckdb::CatalogTransaction transaction,
                           const duckdb::CatalogEntry& element);
 

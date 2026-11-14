@@ -122,7 +122,6 @@ struct ABSL_CACHELINE_ALIGNED SegmentWork {
   uint32_t rg_count = 0;
   uint32_t run_end = 0;
   uint32_t base = 0;
-  uint32_t chunk = 1;
   uint32_t first_start = 0;
   uint32_t start_count = 0;
   std::atomic_uint8_t claim{kUnclaimed};

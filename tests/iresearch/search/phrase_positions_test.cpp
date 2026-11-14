@@ -685,7 +685,7 @@ TEST(PhrasePositionsTest, regexp_parts_lower_by_shape) {
   ASSERT_TRUE(std::holds_alternative<irs::ByTermOptions>(literal));
   EXPECT_EQ(Bytes("brown"),
             irs::bytes_view{std::get<irs::ByTermOptions>(literal).term});
-  const auto prefix = lowered("bro.*");
+  const auto prefix = lowered("(?s)bro.*");
   ASSERT_TRUE(std::holds_alternative<irs::ByPrefixOptions>(prefix));
   EXPECT_EQ(Bytes("bro"),
             irs::bytes_view{std::get<irs::ByPrefixOptions>(prefix).term});

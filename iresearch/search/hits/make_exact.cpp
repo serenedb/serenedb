@@ -32,7 +32,7 @@ class ExactHits : public Root {
  public:
   ExactHits(const ExactVectorQuery& query, const Context& ctx,
             const irs::detail::ScoreArgs& args)
-    : _scanner{query}, _fetcher{ctx.fetcher} {
+    : _scanner{query, true}, _fetcher{ctx.fetcher} {
     _score = irs::detail::PrepareBlockScorer(
       args, query.Segment(), irs::detail::NoField(), _provider, _block);
   }

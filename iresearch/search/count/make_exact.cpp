@@ -28,7 +28,7 @@ namespace {
 class ExactCount : public Root {
  public:
   ExactCount(const ExactVectorQuery& query, detail::TableFilter* table)
-    : _scanner{query}, _table{table} {}
+    : _scanner{query, true}, _table{table} {}
 
   uint64_t Run(doc_id_t min, doc_id_t max) final {
     _scanner.Reset(min, max);

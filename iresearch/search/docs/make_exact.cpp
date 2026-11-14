@@ -27,7 +27,7 @@ namespace {
 
 class ExactDocs : public Root {
  public:
-  explicit ExactDocs(const ExactVectorQuery& query) : _scanner{query} {}
+  explicit ExactDocs(const ExactVectorQuery& query) : _scanner{query, true} {}
 
   uint32_t Run(doc_id_t min, doc_id_t max, doc_id_t* IRS_RESTRICT out) final {
     _scanner.Reset(min, max);

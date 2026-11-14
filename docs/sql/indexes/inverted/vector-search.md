@@ -81,7 +81,7 @@ On a quantized index the codes pick the candidates and each candidate is then ch
 
 ### Distances without a limit
 
-A distance selected without `ORDER BY ... LIMIT` and without a radius, such as `SELECT id, emb <-> $query_vector FROM index_name` or an aggregate over it, is computed exactly from the stored vector of every row the `WHERE` admits. The index is not walked, and `EXPLAIN` shows the scan as `Exact`.
+A distance selected without `ORDER BY ... LIMIT` and without a radius, such as `SELECT id, emb <-> $query_vector FROM index_name` or an aggregate over it, is computed exactly from the stored vector of every row the `WHERE` admits; a row whose vector is `NULL` is returned with a `NULL` distance. The index is not walked, and `EXPLAIN` shows the scan as `Exact`.
 
 ## Quantization {#quantization}
 

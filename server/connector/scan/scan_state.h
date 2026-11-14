@@ -93,7 +93,7 @@ struct ScanOrderKey {
   duckdb::RowGroupOrderKey key;
   uint32_t id = 0;
 
-  friend auto operator<=>(const ScanOrderKey&, const ScanOrderKey&) = default;
+  auto operator<=>(const ScanOrderKey&) const = default;
 };
 
 struct OrderedUnits {

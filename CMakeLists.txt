@@ -669,6 +669,7 @@ if(SDB_COVERAGE)
     add_compile_options(${SDB_COVERAGE_FLAGS})
     add_compile_definitions(SDB_COVERAGE)
 endif()
+sdb_record_build_settings()
 
 add_subdirectory(iresearch)
 if(NOT IRESEARCH_BENCH)

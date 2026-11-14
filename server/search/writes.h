@@ -111,6 +111,7 @@ struct StoreWrites {
   };
   std::vector<RemovedKeys> removed_keys;
   bool removed_rows = false;
+  std::vector<std::vector<std::string>> statement_references;
   // The committed rows of a referenced or referencing table the first check
   // against it saw, by store.
   absl::flat_hash_map<duckdb::idx_t, std::shared_ptr<const TableState>>
@@ -187,13 +188,10 @@ class Writes {
 
   bool Empty() const noexcept { return _writes.empty(); }
 
-  // Refuses the statement whose rows of `store` hold a unique key a live row
-  // already holds, theirs or another of its own, or a foreign key the
-  // referenced table does not hold, and the statement that removed the last
-  // row holding a key a foreign key references. Runs once the statement has
-  // handed its rows over.
   void CheckKeys(duckdb::ClientContext& context, const Store& store,
                  bool merge_insert);
+
+  void CheckStatement(duckdb::ClientContext& context);
 
   // Refuses the rows of `table`, the whole table, whose reference key `spec`
   // the referenced table does not hold; the commit checks them again if the
@@ -258,6 +256,7 @@ class Writes {
   catalog::WalkCounters& _walks;
   mutable absl::Mutex _mutex;
   std::atomic<StoreWrites*> _listed{nullptr};
+  std::atomic<bool> _statement_checks{false};
   std::vector<ReferenceCheck> _reference_checks;
   Tick _conflict = 0;
   // Node-based: the entry is well past FlatHashMap's size cut-off, and the

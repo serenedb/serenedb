@@ -382,6 +382,10 @@ class DatabaseTransaction final : public duckdb::Transaction {
     return _session->View();
   }
 
+  void OnStatementEnd(duckdb::ClientContext& context) final {
+    _session->SearchTxn().CheckStatement(context);
+  }
+
   SessionTransaction& Session() const noexcept { return *_session; }
 
  private:

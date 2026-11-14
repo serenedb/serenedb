@@ -1236,27 +1236,55 @@ void Writes::CheckKeys(duckdb::ClientContext& context, const Store& store,
     }
     return;
   }
+  w.statement_references.resize(w.keys.size());
+  bool deferred = !w.removed_keys.empty();
   for (size_t spec = 0; spec != w.keys.size(); ++spec) {
     const auto& key_spec = w.keys[spec];
     if (key_spec.kind != KeyKind::Reference) {
       continue;
     }
-    auto& keys = fresh[spec];
+    auto& keys = w.statement_references[spec];
+    if (keys.empty()) {
+      keys = std::move(fresh[spec]);
+    } else {
+      absl::c_move(fresh[spec], std::back_inserter(keys));
+    }
     ForEachSegmentKey(segments, key_spec.key.field,
                       [&](std::string_view key, size_t) {
                         keys.emplace_back(key);
                         return true;
                       });
-    if (keys.empty()) {
-      continue;
-    }
-    absl::c_sort(keys);
-    keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
-    CheckReferences(context, w, key_spec, keys);
+    deferred = deferred || !keys.empty();
   }
-  CheckRemovedKeys(context, w, false);
+  if (deferred) {
+    _statement_checks.store(true, std::memory_order_relaxed);
+  }
   if (checks_all) {
     w.checked.emplace(std::move(live));
+  }
+}
+
+void Writes::CheckStatement(duckdb::ClientContext& context) {
+  if (!_statement_checks.exchange(false, std::memory_order_relaxed)) {
+    return;
+  }
+  absl::MutexLock all{&_mutex};
+  for (auto& [store_id, w] : _writes) {
+    if (!w.table) {
+      continue;
+    }
+    const LockedWrites locked{_writes, w};
+    for (size_t spec = 0; spec != w.statement_references.size(); ++spec) {
+      auto& keys = w.statement_references[spec];
+      if (keys.empty()) {
+        continue;
+      }
+      absl::c_sort(keys);
+      keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
+      CheckReferences(context, w, w.keys[spec], keys);
+      keys.clear();
+    }
+    CheckRemovedKeys(context, w, false);
   }
 }
 
@@ -1442,6 +1470,7 @@ TableRead Writes::LatestView(duckdb::ClientContext& context, Store& store) {
 }
 
 void Writes::PrepareCommit(duckdb::ClientContext& context) {
+  CheckStatement(context);
   for (const auto& [store_id, w] : _writes) {
     CheckChanged(w, w.changed);
   }

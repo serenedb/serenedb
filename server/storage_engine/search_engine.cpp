@@ -122,4 +122,23 @@ void SearchEngine::StartTasks(const std::shared_ptr<Store>& store) {
   AddMaintenanceTarget(store);
 }
 
+SearchTasks::SearchTasks(Runtime& runtime, SearchEngine& engine)
+  : _runtime{runtime},
+    _engine{engine},
+    _on_stop{runtime.StopToken(), [&engine] { engine.RequestStop(); }} {
+  try {
+    _engine.start();
+  } catch (...) {
+    _engine.stop();
+    throw;
+  }
+}
+
+SearchTasks::~SearchTasks() {
+  _runtime.RequestStop();
+  StopLogged("search", [this] { _engine.stop(); });
+  // Drop tasks draining here still see the live engine and the open storage.
+  _runtime.DrainBackground();
+}
+
 }  // namespace sdb::search

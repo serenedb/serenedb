@@ -25,10 +25,14 @@
 
 #include <chrono>
 #include <cstdint>
+#include <duckdb/common/error_data.hpp>
 #include <duckdb/common/types/timestamp.hpp>
+#include <exception>
 #include <functional>
+#include <iresearch/utils/log.hpp>
 #include <memory>
 #include <stop_token>
+#include <string_view>
 #include <utility>
 #include <yaclib/async/future.hpp>
 #include <yaclib/async/run.hpp>
@@ -95,5 +99,19 @@ class Runtime final {
   absl::Mutex _delays_mutex;
   absl::flat_hash_set<std::shared_ptr<asio_ns::steady_timer>> _delays;
 };
+
+using StopCallback = std::stop_callback<std::function<void()>>;
+
+template<typename Fn>
+void StopLogged(std::string_view what, Fn&& fn) noexcept {
+  try {
+    std::forward<Fn>(fn)();
+  } catch (const std::exception& ex) {
+    SDB_ERROR(GENERAL, "exception stopping ", what, ": ",
+              duckdb::ErrorData{ex}.RawMessage());
+  } catch (...) {
+    SDB_ERROR(GENERAL, "unknown exception stopping ", what);
+  }
+}
 
 }  // namespace sdb

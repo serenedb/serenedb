@@ -265,6 +265,24 @@ void VerifySchedule(const duckdb::JobSchedule& schedule) {
   NextRun(schedule, 0, duckdb::Timestamp::GetCurrentTimestamp());
 }
 
+JobScheduler::JobScheduler(Runtime& runtime) : _runtime{runtime} {
+  gInstance = this;
+  try {
+    Start();
+  } catch (...) {
+    _runtime.RequestStop();
+    Stop();
+    gInstance = nullptr;
+    throw;
+  }
+}
+
+JobScheduler::~JobScheduler() {
+  _runtime.RequestStop();
+  StopLogged("jobs", [this] { Stop(); });
+  gInstance = nullptr;
+}
+
 void JobScheduler::Start() {
   ForAllJobs([&](catalog::JobCatalogEntry& job) { Schedule(job); });
 }
@@ -292,8 +310,8 @@ void JobScheduler::Schedule(catalog::JobCatalogEntry& job) {
 }
 
 void JobScheduler::Arm(const std::shared_ptr<JobState>& state, uint64_t timer) {
-  Runtime::Get().RunAt(state->status.next_run,
-                       [this, state, timer] { Run(state, timer); });
+  _runtime.RunAt(state->status.next_run,
+                 [this, state, timer] { Run(state, timer); });
 }
 
 void JobScheduler::Run(std::shared_ptr<JobState> state, uint64_t timer) {

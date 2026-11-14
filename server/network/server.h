@@ -24,7 +24,9 @@
 #include <chrono>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <memory>
+#include <stop_token>
 #include <string>
 #include <vector>
 #include <yaclib/algo/wait_group.hpp>
@@ -41,11 +43,17 @@
 
 namespace sdb {
 
+class Runtime;
+
 class Server final {
  public:
-  explicit Server(network::IoThreadPool& pool);
+  explicit Server(Runtime& runtime);
   ~Server();
 
+  Server(const Server&) = delete;
+  Server& operator=(const Server&) = delete;
+
+ private:
   void StartListeners();
   // Two-phase stop, mirroring SearchEngine. RequestStop() is the signal:
   // listeners close (synchronously) and every session is terminated -- its
@@ -55,8 +63,6 @@ class Server final {
   // catalog shutdown).
   void RequestStop() noexcept;
   void stop();
-
- private:
   void SetupAuth();
   void AddListener(const network::ListenSpec& spec);
   void AddUnixListener(const network::ListenSpec& spec);
@@ -66,6 +72,7 @@ class Server final {
   // Per-listener HTTP router assembled from the listener's ?api= module set.
   network::HttpRouter& BuildRouter(const network::ListenSpec& spec);
 
+  Runtime& _runtime;
   network::IoThreadPool& _pool;
   std::vector<std::string> _listen;
   std::string _tls_cert;
@@ -101,6 +108,7 @@ class Server final {
   std::deque<network::HttpServerContext> _http_ctxs;
 
   std::vector<std::shared_ptr<network::AcceptorBase>> _acceptors;
+  std::stop_callback<std::function<void()>> _on_stop;
 };
 
 }  // namespace sdb

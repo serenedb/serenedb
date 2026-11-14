@@ -38,6 +38,7 @@
 #include <memory>
 #include <utility>
 
+#include "backup/backup_session.h"
 #include "catalog/catalog.h"
 #include "catalog/entry/role.h"
 #include "network/connection.h"
@@ -47,6 +48,7 @@
 #include "network/pg/hba.h"
 #include "network/socket.h"
 #include "network/tls_context.h"
+#include "runtime/runtime.h"
 
 ABSL_FLAG(
   std::vector<std::string>, listen, {"postgres://127.0.0.1:7890"},
@@ -144,8 +146,9 @@ class CatalogCredentialProvider final : public network::CredentialProvider {
 
 }  // namespace
 
-Server::Server(network::IoThreadPool& pool)
-  : _pool{pool},
+Server::Server(Runtime& runtime)
+  : _runtime{runtime},
+    _pool{runtime.IoPool()},
     _listen{absl::GetFlag(FLAGS_listen)},
     _tls_cert{absl::GetFlag(FLAGS_tls_cert)},
     _tls_key{absl::GetFlag(FLAGS_tls_key)},
@@ -154,7 +157,8 @@ Server::Server(network::IoThreadPool& pool)
     _tls_groups{absl::GetFlag(FLAGS_tls_groups)},
     _api_key{absl::GetFlag(FLAGS_auth_api_key)},
     _bearer_token{absl::GetFlag(FLAGS_auth_bearer_token)},
-    _cors_origins{absl::GetFlag(FLAGS_http_cors_origins)} {
+    _cors_origins{absl::GetFlag(FLAGS_http_cors_origins)},
+    _on_stop{runtime.StopToken(), [this] { RequestStop(); }} {
   const auto min_version = absl::GetFlag(FLAGS_tls_min_version);
   if (min_version == "1.2") {
     _tls_min_version = network::TlsMinVersion::Tls12;
@@ -187,9 +191,20 @@ Server::Server(network::IoThreadPool& pool)
       body > std::chrono::milliseconds::zero()) {
     network::gHttpBodyTimeout = body;
   }
+  try {
+    StartListeners();
+  } catch (...) {
+    RequestStop();
+    stop();
+    throw;
+  }
 }
 
-Server::~Server() = default;
+Server::~Server() {
+  _runtime.RequestStop();
+  StopLogged("network", [this] { stop(); });
+  backup::BackupSession::Instance().End();
+}
 
 void Server::SetupAuth() {
   // Auth resolves every connection through the catalog's per-role credentials

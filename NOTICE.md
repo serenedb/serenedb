@@ -25,3 +25,9 @@ Some code is based on [ArangoDB](https://github.com/arangodb/arangodb), specific
 The original work is licensed under the Apache 2.0 license.
 
 Modifications and new code added are licensed under corresponding [license](LICENSE).
+
+#### TPC-H dbgen and TPC-DS dsdgen
+
+THE TPC SOFTWARE IS AVAILABLE WITHOUT CHARGE FROM TPC.
+
+The `tpch` and `tpcds` extensions include the data generators of the TPC-H and TPC-DS benchmark kits, owned by the Transaction Processing Performance Council and licensed under its [End User License Agreement](third_party/duckdb/extension/tpch/dbgen/LICENSE), which `serenedb_licenses` returns with them.

@@ -72,7 +72,7 @@ WHERE name IN ('TPC-DS dsdgen', 'TPC-H dbgen')
 ORDER BY name;
 ----
 name	license	no_file
-TPC-DS dsdgen	NOASSERTION	t
+TPC-DS dsdgen	LicenseRef-TPC-EULA	f
 TPC-H dbgen	LicenseRef-TPC-EULA	f
 
 

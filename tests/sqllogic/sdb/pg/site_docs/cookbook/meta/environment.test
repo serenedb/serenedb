@@ -75,7 +75,7 @@ Zstandard	BSD-3-Clause OR GPL-2.0-only	third_party/zstd/LICENSE
 #| FROM serenedb_contributors;
 #| ----
 #| contributors
-#| 27
+#| 20
 
 # DOCS_TEST_BODY
 

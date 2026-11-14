@@ -1942,6 +1942,26 @@ bool IsPlainInteger(const duckdb::LogicalType& type) {
   }
 }
 
+bool StrictOverNull(const duckdb::Expression& expr) {
+  if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_FUNCTION ||
+      expr.GetExpressionType() == duckdb::ExpressionType::COMPARE_BETWEEN ||
+      expr.Cast<duckdb::BoundFunctionExpression>()
+          .Function()
+          .GetNullHandling() !=
+        duckdb::FunctionNullHandling::DEFAULT_NULL_HANDLING) {
+    return false;
+  }
+  return absl::c_any_of(
+    expr.Cast<duckdb::BoundFunctionExpression>().GetChildren(),
+    [](const auto& child) {
+      return child->GetExpressionClass() ==
+               duckdb::ExpressionClass::BOUND_CONSTANT &&
+             child->template Cast<duckdb::BoundConstantExpression>()
+               .GetValue()
+               .IsNull();
+    });
+}
+
 const duckdb::BoundColumnRefExpression* CastOfIntegerColumn(
   const duckdb::Expression& expr) {
   if (!duckdb::BoundCastExpression::IsCast(expr)) {
@@ -1967,6 +1987,9 @@ duckdb::unique_ptr<duckdb::Expression> CompareIntegerColumn(
       with, col.Copy(),
       duckdb::make_uniq<duckdb::BoundConstantExpression>(std::move(constant)));
   };
+  if (value.IsNull()) {
+    return compare(op, duckdb::Value{type});
+  }
   if (auto fitted = value.DefaultTryCastAs(type); fitted && !fitted->IsNull()) {
     return compare(op, std::move(*fitted));
   }
@@ -2043,8 +2066,8 @@ duckdb::unique_ptr<duckdb::Expression> FoldColumnCast(
     }
     const auto& lo = lower.Cast<duckdb::BoundConstantExpression>().GetValue();
     const auto& hi = upper.Cast<duckdb::BoundConstantExpression>().GetValue();
-    if (lo.IsNull() || hi.IsNull() || !IsPlainInteger(lo.type()) ||
-        !IsPlainInteger(hi.type())) {
+    if ((!lo.IsNull() && !IsPlainInteger(lo.type())) ||
+        (!hi.IsNull() && !IsPlainInteger(hi.type()))) {
       return expr;
     }
     const auto& type = col->GetReturnType();
@@ -2088,6 +2111,10 @@ duckdb::unique_ptr<duckdb::Expression> NormalizeClaimShape(
       return duckdb::make_uniq<duckdb::BoundConstantExpression>(
         std::move(folded));
     }
+  }
+  if (StrictOverNull(*expr)) {
+    return duckdb::make_uniq<duckdb::BoundConstantExpression>(
+      duckdb::Value{expr->GetReturnType()});
   }
   return FoldColumnCast(std::move(expr));
 }

@@ -522,12 +522,13 @@ bool AnyExprNode(const duckdb::Expression& expr, const Pred& pred) {
   return found;
 }
 
+bool IsNullConstant(const duckdb::Expression& expr) {
+  return expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_CONSTANT &&
+         expr.Cast<duckdb::BoundConstantExpression>().GetValue().IsNull();
+}
+
 bool ContainsNullConstant(const duckdb::Expression& expr) {
-  return AnyExprNode(expr, [](const duckdb::Expression& node) {
-    return node.GetExpressionClass() ==
-             duckdb::ExpressionClass::BOUND_CONSTANT &&
-           node.Cast<duckdb::BoundConstantExpression>().GetValue().IsNull();
-  });
+  return AnyExprNode(expr, IsNullConstant);
 }
 
 }  // namespace
@@ -722,7 +723,7 @@ absl::Status MakeGroup(BoolTarget parent, const FilterContext& ctx,
   bool null_aware_groups = false;
   if (ctx.negated && absl::c_all_of(conj.GetChildren(), [](const auto& child) {
         SDB_ASSERT(child);
-        return IsComparisonExpr(*child);
+        return IsComparisonExpr(*child) || IsNullConstant(*child);
       })) {
     // De Morgan's law: if we negate a group of comparisons, comparisons
     // consume negation by inversion so we can reduce NOT filters.
@@ -2499,6 +2500,12 @@ absl::Status FromExpression(BoolTarget filter, const FilterContext& ctx,
     case duckdb::ExpressionClass::BOUND_FUNCTION:
       return FromFunctionExpression(
         filter, ctx, expr.Cast<duckdb::BoundFunctionExpression>());
+    case duckdb::ExpressionClass::BOUND_CONSTANT:
+      if (expr.Cast<duckdb::BoundConstantExpression>().GetValue().IsNull()) {
+        AddFilter<irs::Empty>(filter);
+        return absl::OkStatus();
+      }
+      [[fallthrough]];
     default:
       return absl::UnimplementedError(
         absl::StrCat("Unsupported expression class: ",

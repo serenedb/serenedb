@@ -104,6 +104,8 @@ An `l2`, `ip` or `cosine` index stores its codes quantized with `sq8` unless `qu
 
 Quantization applies to `l2`, `ip` and `cosine` indexes; `l1` indexes are always unquantized.
 
+`fp16` holds components up to ±65504: a larger component is stored as infinity, and its row is left out of k-nearest answers. A vector with a `NaN` or infinite component, or with components so large that a squared distance overflows a float (beyond about 10^19), can be stored and indexed, but a k-nearest query on an index segment that holds one can return fewer rows than its `LIMIT`, or none.
+
 Quantization makes queries faster as well as the index smaller: a quantized `ivf` index scans its clusters faster, so [`sdb_ivf_search_nprobe`](./maintenance.md#session-settings) can probe more of them at the same latency.
 
 ### Re-scoring {#rescoring}

@@ -153,6 +153,10 @@ std::vector<float> GatherTrainingSample(const ColumnReader& vector_column,
     }
   }
   sample.resize(std::min<uint64_t>(seen, n_train) * d);
+  std::vector<float> kept;
+  if (TrainableRows(sample, d, kept).data() == kept.data()) {
+    return kept;
+  }
   return sample;
 }
 

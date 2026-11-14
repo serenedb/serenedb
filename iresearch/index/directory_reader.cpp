@@ -92,7 +92,7 @@ DirectoryReader::DirectoryReader(const DirectoryReader& base,
   for (const auto& reader : added) {
     AddTerms(*reader, /*keep_sorted=*/true);
   }
-  if (!removed.empty()) {
+  if (!removed.empty() && _docs != base._docs) {
     for (const auto& reader : _readers) {
       AddColumns(*reader, /*new_docs=*/true);
     }
@@ -106,6 +106,9 @@ DirectoryReader::DirectoryReader(const DirectoryReader& base,
                .merged = column.merged->ToUnique(),
                .distinct = column.distinct ? column.distinct->Copy() : nullptr,
                .docs = column.docs});
+  }
+  for (const auto& reader : removed) {
+    RemoveDocs(*reader);
   }
   for (const auto& reader : added) {
     AddColumns(*reader, /*new_docs=*/true);
@@ -200,6 +203,18 @@ void DirectoryReader::AddColumns(const SubReader& reader, bool new_docs) {
     if (new_docs) {
       stats.docs += reader.docs_count();
     }
+  }
+}
+
+void DirectoryReader::RemoveDocs(const SubReader& reader) {
+  const auto* col_reader = reader.GetColReader();
+  if (!col_reader) {
+    return;
+  }
+  for (const auto& column : col_reader->Columns()) {
+    const auto it = _columns.find(column->Id());
+    SDB_ASSERT(it != _columns.end() && it->second.docs >= reader.docs_count());
+    it->second.docs -= reader.docs_count();
   }
 }
 

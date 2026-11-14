@@ -361,8 +361,13 @@ void KeyProbe::Add(const Segment& segment) {
 }
 
 void KeyProbe::AddLive(const LiveUnits& live, const LiveUnits* since) {
+  AddLive(live, [&](uint64_t unit) { return since && since->Find(unit); });
+}
+
+void KeyProbe::AddLive(const LiveUnits& live,
+                       absl::FunctionRef<bool(uint64_t unit)> skip) {
   for (const auto& unit : live.Units()) {
-    if (since && since->Find(unit.unit->id)) {
+    if (skip(unit.unit->id)) {
       continue;
     }
     Add(Segment{.unit = unit.unit->id,

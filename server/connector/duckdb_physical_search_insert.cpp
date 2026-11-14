@@ -20,8 +20,11 @@
 
 #include "connector/duckdb_physical_search_insert.h"
 
+#include <absl/algorithm/container.h>
+#include <absl/strings/str_join.h>
 #include <absl/synchronization/mutex.h>
 
+#include <bitset>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
@@ -46,6 +49,7 @@
 #include "catalog/entry/search_table.h"
 #include "catalog/transaction.h"
 #include "connector/column_id.h"
+#include "connector/row_position.h"
 #include "connector/search_sink_rows.h"
 #include "connector/search_sink_writer.hpp"
 #include "search/search_table_changes.h"
@@ -86,6 +90,8 @@ struct SearchInsertLocalState : duckdb::LocalSinkState {
 struct SearchUpsertLocalState final : SearchInsertLocalState {
   duckdb::SelectionVector kept{STANDARD_VECTOR_SIZE};
   irs::DocRemovalBuilder replaced;
+  std::vector<std::pair<uint64_t, duckdb::sel_t>> order;
+  std::vector<search::UnitPatch> patches;
 };
 
 void ReportProgress(duckdb::ExecutionContext& context,
@@ -264,11 +270,12 @@ SereneDBSearchUpsert::SereneDBSearchUpsert(
   duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>> constraints,
   duckdb::vector<duckdb::LogicalType> types,
   duckdb::idx_t estimated_cardinality, bool return_chunk, bool replace,
-  std::vector<ColumnId> target)
+  std::vector<ColumnId> target, std::vector<ReplacedColumn> patched)
   : SereneDBSearchInsert(plan, table, std::move(constraints), std::move(types),
                          estimated_cardinality, return_chunk),
     _replace(replace),
-    _target(std::move(target)) {
+    _target(std::move(target)),
+    _patched(std::move(patched)) {
   _conflict = search::KeyConflict::Upsert;
 }
 
@@ -276,6 +283,17 @@ duckdb::InsertionOrderPreservingMap<std::string>
 SereneDBSearchUpsert::ParamsToString() const {
   duckdb::InsertionOrderPreservingMap<std::string> result;
   result["On Conflict"] = _replace ? "REPLACE" : "DO NOTHING";
+  if (!_patched.empty()) {
+    std::vector<std::string_view> names;
+    names.reserve(_patched.size());
+    for (const auto& column : _patched) {
+      names.push_back(_table->GetColumns()
+                        .GetColumn(duckdb::PhysicalIndex{column.input})
+                        .Name()
+                        .GetIdentifierName());
+    }
+    result["Patched Columns"] = absl::StrJoin(names, ", ");
+  }
   return result;
 }
 
@@ -308,32 +326,98 @@ duckdb::SinkResultType SereneDBSearchUpsert::Sink(
   ReportProgress(context, chunk);
   duckdb::DataTable::VerifyRowConstraints(context.client, *_table, _constraints,
                                           chunk);
-  if (_replace) {
-    gstate.arbiter->Replace(chunk, gstate.table.column_ids, lstate.replaced);
-  } else {
-    const auto kept =
-      gstate.arbiter->Admit(chunk, gstate.table.column_ids, lstate.kept);
+  const auto& column_ids = gstate.table.column_ids;
+  if (!_replace) {
+    const auto kept = gstate.arbiter->Admit(chunk, column_ids, lstate.kept);
     if (kept == 0) {
       return duckdb::SinkResultType::NEED_MORE_INPUT;
     }
     if (kept != chunk.size()) {
       chunk.Slice(lstate.kept, kept);
     }
+    AppendRows(context, gstate, lstate, chunk);
+    return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
-  AppendRows(context, gstate, lstate, chunk);
+  if (_patched.empty()) {
+    gstate.arbiter->Replace(
+      chunk, column_ids, [&](duckdb::idx_t, const search::KeyHolder& holder) {
+        lstate.replaced.Add(static_cast<uint32_t>(holder.unit), holder.doc);
+      });
+    AppendRows(context, gstate, lstate, chunk);
+    return duckdb::SinkResultType::NEED_MORE_INPUT;
+  }
+  lstate.order.clear();
+  gstate.arbiter->Replace(
+    chunk, column_ids, [&](duckdb::idx_t row, const search::KeyHolder& holder) {
+      lstate.order.emplace_back(
+        MakeRowPosition(static_cast<uint32_t>(holder.unit), holder.doc),
+        static_cast<duckdb::sel_t>(row));
+    });
+  if (lstate.order.empty()) {
+    AppendRows(context, gstate, lstate, chunk);
+    return duckdb::SinkResultType::NEED_MORE_INPUT;
+  }
+  if (lstate.returned) {
+    lstate.returned->Append(chunk);
+  }
+  lstate.insert_count += chunk.size();
+  std::bitset<STANDARD_VECTOR_SIZE> patched_rows;
+  for (const auto& [position, row] : lstate.order) {
+    patched_rows.set(row);
+  }
+  absl::c_sort(lstate.order);
+  search::ForEachUnitRows(
+    gstate.sdb_txn->SearchTxn().PinnedReader(context.client,
+                                             *gstate.table.store),
+    lstate.order,
+    [&](uint64_t unit, std::span<const uint64_t> rows,
+        const duckdb::SelectionVector& sel) {
+      for (const auto& column : _patched) {
+        const duckdb::Vector values{chunk.data[column.input], sel, rows.size()};
+        search::AddUnitPatch(lstate.patches, unit, column.field, column.type,
+                             rows, values);
+      }
+    });
+  duckdb::idx_t inserted = 0;
+  for (duckdb::idx_t row = 0; row != chunk.size(); ++row) {
+    if (!patched_rows[row]) {
+      lstate.kept.set_index(inserted++, row);
+    }
+  }
+  if (inserted != 0) {
+    chunk.Slice(lstate.kept, inserted);
+    lstate.rows.Append(context.client, gstate.table, chunk);
+  }
   return duckdb::SinkResultType::NEED_MORE_INPUT;
 }
 
 duckdb::SinkCombineResultType SereneDBSearchUpsert::Combine(
   duckdb::ExecutionContext& context,
   duckdb::OperatorSinkCombineInput& input) const {
-  if (auto& lstate = input.local_state.Cast<SearchUpsertLocalState>();
-      !lstate.replaced.Empty()) {
-    auto& gstate = input.global_state.Cast<SearchUpsertGlobalState>();
-    gstate.sdb_txn->SearchTxn().AddRemoval(context.client, gstate.table.store,
-                                           std::move(lstate.replaced));
+  auto& lstate = input.local_state.Cast<SearchUpsertLocalState>();
+  auto& gstate = input.global_state.Cast<SearchUpsertGlobalState>();
+  auto& search_txn = gstate.sdb_txn->SearchTxn();
+  if (!lstate.replaced.Empty()) {
+    search_txn.AddRemoval(context.client, gstate.table.store,
+                          std::move(lstate.replaced));
+  }
+  if (!lstate.patches.empty()) {
+    search_txn.AddPatches(gstate.table.store, std::move(lstate.patches));
   }
   return SereneDBSearchInsert::Combine(context, input);
+}
+
+duckdb::SinkFinalizeType SereneDBSearchUpsert::Finalize(
+  duckdb::Pipeline&, duckdb::Event&, duckdb::ClientContext& context,
+  duckdb::OperatorSinkFinalizeInput& input) const {
+  auto& gstate = input.global_state.Cast<SearchUpsertGlobalState>();
+  auto& search_txn = gstate.sdb_txn->SearchTxn();
+  if (!_patched.empty()) {
+    search_txn.CheckConflicts(*gstate.table.store);
+  }
+  search_txn.CheckKeys(context, *gstate.table.store, _conflict,
+                       gstate.arbiter.get());
+  return duckdb::SinkFinalizeType::READY;
 }
 
 }  // namespace sdb::connector

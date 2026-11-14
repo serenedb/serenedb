@@ -140,9 +140,14 @@ class ConflictArbiter {
   duckdb::idx_t Admit(duckdb::DataChunk& chunk,
                       std::span<const connector::ColumnId> column_ids,
                       duckdb::SelectionVector& kept);
-  void Replace(duckdb::DataChunk& chunk,
-               std::span<const connector::ColumnId> column_ids,
-               irs::DocRemovalBuilder& replaced);
+  void Replace(
+    duckdb::DataChunk& chunk, std::span<const connector::ColumnId> column_ids,
+    absl::FunctionRef<void(duckdb::idx_t row, const KeyHolder& holder)>
+      replaced);
+
+  const irs::containers::FlatHashSet<std::string>* Proposed(
+    irs::field_id field) const;
+  bool Probed(uint64_t unit) const { return _probed.contains(unit); }
 
  private:
   struct Arbiter {
@@ -173,6 +178,7 @@ class ConflictArbiter {
 
   const StoreWrites& _w;
   std::vector<Arbiter> _arbiters;
+  irs::containers::FlatHashSet<uint64_t> _probed;
   std::optional<OwnRows> _own;
   absl::Mutex _mutex;
 };
@@ -248,7 +254,8 @@ class Writes {
   bool Empty() const noexcept { return _writes.empty(); }
 
   void CheckKeys(duckdb::ClientContext& context, const Store& store,
-                 KeyConflict conflict);
+                 KeyConflict conflict,
+                 const ConflictArbiter* arbiter = nullptr);
 
   std::unique_ptr<ConflictArbiter> ArbitrateConflicts(
     duckdb::ClientContext& context, const std::shared_ptr<Store>& store,

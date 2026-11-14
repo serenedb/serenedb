@@ -68,7 +68,7 @@ class SereneDBSearchInsert : public duckdb::PhysicalOperator {
   duckdb::SinkFinalizeType Finalize(
     duckdb::Pipeline& pipeline, duckdb::Event& event,
     duckdb::ClientContext& context,
-    duckdb::OperatorSinkFinalizeInput& input) const final;
+    duckdb::OperatorSinkFinalizeInput& input) const override;
 
   duckdb::unique_ptr<duckdb::GlobalSourceState> GetGlobalSourceState(
     duckdb::ClientContext& context) const final;
@@ -98,6 +98,12 @@ class SereneDBSearchInsert : public duckdb::PhysicalOperator {
   duckdb::unique_ptr<duckdb::BoundCreateTableInfo> _ctas_info;
 };
 
+struct ReplacedColumn {
+  irs::field_id field = 0;
+  duckdb::LogicalType type;
+  duckdb::idx_t input = 0;
+};
+
 class SereneDBSearchUpsert final : public SereneDBSearchInsert {
  public:
   SereneDBSearchUpsert(
@@ -105,7 +111,7 @@ class SereneDBSearchUpsert final : public SereneDBSearchInsert {
     duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>> constraints,
     duckdb::vector<duckdb::LogicalType> types,
     duckdb::idx_t estimated_cardinality, bool return_chunk, bool replace,
-    std::vector<ColumnId> target);
+    std::vector<ColumnId> target, std::vector<ReplacedColumn> patched);
 
   duckdb::InsertionOrderPreservingMap<std::string> ParamsToString() const final;
 
@@ -119,10 +125,15 @@ class SereneDBSearchUpsert final : public SereneDBSearchInsert {
   duckdb::SinkCombineResultType Combine(
     duckdb::ExecutionContext& context,
     duckdb::OperatorSinkCombineInput& input) const final;
+  duckdb::SinkFinalizeType Finalize(
+    duckdb::Pipeline& pipeline, duckdb::Event& event,
+    duckdb::ClientContext& context,
+    duckdb::OperatorSinkFinalizeInput& input) const final;
 
  private:
   bool _replace;
   std::vector<ColumnId> _target;
+  std::vector<ReplacedColumn> _patched;
 };
 
 }  // namespace sdb::connector

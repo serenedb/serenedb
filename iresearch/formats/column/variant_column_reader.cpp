@@ -60,9 +60,9 @@ VariantColumnReader::VariantColumnReader(field_id id, duckdb::LogicalType type,
       duckdb::VariantStats::SetShreddedStats(rg_s,
                                              vrg.shredded->MergedStatistics());
       _row_group_columns.emplace_back(*vrg.shredded, 2, _row_count);
+    } else {
+      duckdb::VariantStats::MarkAsNotShredded(rg_s);
     }
-    // Like duckdb's checkpoint stats, an unshredded row group stays
-    // UNINITIALIZED so mixed segments merge to SHREDDED, not INCONSISTENT.
     stats.Merge(rg_s);
     _row_count += rg.row_count;
     _variant_offsets.push_back(_row_count);

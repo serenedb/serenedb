@@ -271,6 +271,12 @@ class ColumnReader {
 
   virtual uint64_t RowGroupEnd(uint64_t row) const noexcept;
 
+  virtual bool CachedUniformShreddedLeaf(ScanState&,
+                                         std::span<const std::string_view>,
+                                         duckdb::LogicalType&) const {
+    return false;
+  }
+
   std::unique_ptr<codecs::ColumnSegment> OpenSegment(size_t rg,
                                                      ReadContext& ctx) const {
     return Open(BlockWindow{rg, _offsets[rg], _offsets[rg + 1]}, ctx);

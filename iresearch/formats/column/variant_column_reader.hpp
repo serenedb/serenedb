@@ -69,7 +69,7 @@ class VariantColumnReader final : public ColumnReader {
 
   bool CachedUniformShreddedLeaf(ScanState& s,
                                  std::span<const std::string_view> path,
-                                 duckdb::LogicalType& leaf_type) const {
+                                 duckdb::LogicalType& leaf_type) const final {
     auto& vs = VariantState(s);
     if (vs.leaf_resolved < 0) {
       vs.leaf_resolved =

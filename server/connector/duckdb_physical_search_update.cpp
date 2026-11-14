@@ -28,6 +28,7 @@
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/execution/operator/persistent/physical_update.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/planner/constraints/bound_not_null_constraint.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
@@ -36,7 +37,6 @@
 #include <iresearch/utils/down_cast.hpp>
 #include <memory>
 #include <optional>
-#include <span>
 #include <string>
 #include <vector>
 
@@ -81,29 +81,12 @@ struct SearchUpdateLocalState final : duckdb::LocalSinkState {
   std::vector<search::UnitPatch> patches;
   duckdb::idx_t update_count = 0;
   std::optional<duckdb::ColumnDataCollection> returned;
+  duckdb::DataChunk combined;
 };
 
 struct SearchUpdateSourceState final : duckdb::GlobalSourceState {
   duckdb::ColumnDataScanState scan;
 };
-
-void AppendReturned(duckdb::ColumnDataCollection& returned,
-                    duckdb::DataChunk& new_row, duckdb::DataChunk& input,
-                    std::span<const duckdb::idx_t> old_row_columns) {
-  if (old_row_columns.empty()) {
-    returned.Append(new_row);
-    return;
-  }
-  duckdb::DataChunk row;
-  row.InitializeEmpty(returned.Types());
-  const auto columns = new_row.ColumnCount();
-  for (duckdb::idx_t c = 0; c < columns; ++c) {
-    row.data[c].Reference(new_row.data[c]);
-    row.data[columns + c].Reference(input.data[old_row_columns[c]]);
-  }
-  row.CheckCardinality(new_row.size());
-  returned.Append(row);
-}
 
 }  // namespace
 
@@ -113,7 +96,7 @@ SereneDBSearchUpdate::SereneDBSearchUpdate(
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> expressions,
   duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>> constraints,
   duckdb::vector<duckdb::LogicalType> types,
-  duckdb::idx_t estimated_cardinality, bool return_chunk,
+  duckdb::idx_t estimated_cardinality, bool return_chunk, bool capture_old_rows,
   duckdb::vector<duckdb::idx_t> old_row_columns,
   duckdb::RowIdHandling row_id_handling, bool patch,
   duckdb::idx_t update_column_count)
@@ -125,6 +108,7 @@ SereneDBSearchUpdate::SereneDBSearchUpdate(
     _constraints(std::move(constraints)),
     _old_row_columns(std::move(old_row_columns)),
     _return_chunk(return_chunk),
+    _capture_old_rows(capture_old_rows),
     _patch(patch),
     _update_column_count(update_column_count),
     _row_id_handling(row_id_handling) {}
@@ -218,6 +202,9 @@ SereneDBSearchUpdate::GetLocalSinkState(
   if (_return_chunk) {
     lstate->returned.emplace(context.client, GetTypes());
   }
+  if (_capture_old_rows) {
+    lstate->combined.InitializeEmpty(GetTypes());
+  }
   return lstate;
 }
 
@@ -230,6 +217,15 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
       gstate.updated_rows->Register(chunk, gstate.rowid.input_col_idx) == 0) {
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
+  const auto append_returned = [&](duckdb::DataChunk& new_row) {
+    if (_capture_old_rows) {
+      duckdb::PhysicalUpdate::AppendReturnRows(
+        *lstate.returned, lstate.combined, new_row, chunk,
+        new_row.ColumnCount(), _old_row_columns, new_row.size(), nullptr);
+    } else {
+      lstate.returned->Append(new_row);
+    }
+  };
   const auto num_rows = chunk.size();
   if (const auto& progress = duckdb::ClientConfig::GetConfig(context.client)
                                .sink_progress_callback) {
@@ -289,7 +285,7 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
       duckdb::DataChunk new_row;
       new_row.InitializeEmpty(gstate.table.types);
       new_row.ReferenceColumns(chunk, gstate.new_row_src);
-      AppendReturned(*lstate.returned, new_row, chunk, _old_row_columns);
+      append_returned(new_row);
     }
     lstate.update_count += num_rows;
     return duckdb::SinkResultType::NEED_MORE_INPUT;
@@ -308,7 +304,7 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
   lstate.rows.Append(context.client, gstate.table, new_row);
 
   if (lstate.returned) {
-    AppendReturned(*lstate.returned, new_row, chunk, _old_row_columns);
+    append_returned(new_row);
   }
   lstate.update_count += num_rows;
   return duckdb::SinkResultType::NEED_MORE_INPUT;

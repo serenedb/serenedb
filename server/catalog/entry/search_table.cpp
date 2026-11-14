@@ -1134,17 +1134,6 @@ duckdb::unique_ptr<SearchTableEntry> SearchTableEntry::Altered(
   auto bound = binder->BindCreateTableInfo(
     std::move(definition), ParentSchema(context),
     bound_defaults ? *bound_defaults : unused_defaults, info.bind_mode);
-  for (const auto& dependency : dependencies.Set()) {
-    if (!dependency.owned_by) {
-      continue;
-    }
-    if (auto owned =
-          catalog.Cast<BaseCatalog>().LookupOid(transaction, dependency.oid)) {
-      duckdb::LogicalDependency kept{*owned};
-      kept.owned_by = true;
-      bound->Base().dependencies.AddDependency(kept);
-    }
-  }
   return Successor(context, *bound);
 }
 

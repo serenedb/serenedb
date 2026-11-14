@@ -253,18 +253,6 @@ std::vector<Edge> DirectDependents(duckdb::CatalogTransaction transaction,
     return Sorted(std::move(direct));
   }
   auto& catalog = subject.ParentCatalog().Cast<BaseCatalog>();
-  if (subject.type == duckdb::CatalogType::TABLE_ENTRY) {
-    for (const auto& dependency :
-         subject.Cast<duckdb::StandardEntry>().dependencies.Set()) {
-      if (!dependency.owned_by) {
-        continue;
-      }
-      if (auto owned = catalog.LookupOid(transaction, dependency.oid);
-          owned && SequenceOwnedByTable(*owned, subject)) {
-        direct.push_back({owned.get(), &subject, Part::Owned, {}});
-      }
-    }
-  }
   const auto triggers = [&](duckdb::CatalogEntry& table, Part part) {
     table.Cast<duckdb::TableCatalogEntry>().ScanTriggers(
       transaction, [&](duckdb::CatalogEntry& trigger) {
@@ -1052,21 +1040,6 @@ void DropClosure(duckdb::CatalogTransaction transaction,
 
 }  // namespace
 
-bool SequenceOwnedByTable(const duckdb::CatalogEntry& sequence,
-                          const duckdb::CatalogEntry& table) {
-  if (sequence.type != duckdb::CatalogType::SEQUENCE_ENTRY ||
-      table.type != duckdb::CatalogType::TABLE_ENTRY) {
-    return true;
-  }
-  const auto owner = sequence.Cast<duckdb::SequenceCatalogEntry>().owner_column;
-  return owner.IsValid() &&
-         absl::c_any_of(
-           table.Cast<duckdb::TableCatalogEntry>().GetColumns().Logical(),
-           [&](const duckdb::ColumnDefinition& column) {
-             return column.CatalogOid() == owner.GetIndex();
-           });
-}
-
 void ScanSubjects(duckdb::CatalogTransaction transaction,
                   duckdb::CatalogEntry& dependent, EdgeVisitor visit) {
   if (dependent.type == duckdb::CatalogType::SCHEMA_ENTRY) {
@@ -1090,11 +1063,7 @@ void ScanSubjects(duckdb::CatalogTransaction transaction,
     auto subject = catalog.LookupOid(transaction, dependency.oid);
     if (subject && !subject->internal &&
         subject->type != duckdb::CatalogType::SCHEMA_ENTRY) {
-      auto flags = dependency.flags;
-      if (dependency.owned_by && SequenceOwnedByTable(*subject, dependent)) {
-        flags.SetOwnedBy();
-      }
-      visit(*subject, flags);
+      visit(*subject, dependency.flags);
     }
   }
 }
@@ -1179,27 +1148,11 @@ duckdb::catalog_entry_vector_t OwnedEntries(
   }
   auto& catalog =
     owner.Cast<duckdb::StandardEntry>().catalog.Cast<BaseCatalog>();
-  const auto add = [&](duckdb::CatalogEntry& entry) {
-    if (absl::c_none_of(owned, [&](const auto& seen) {
-          return seen.get().oid == entry.oid;
-        })) {
-      owned.emplace_back(entry);
-    }
-  };
-  for (const auto& dependency :
-       owner.Cast<duckdb::StandardEntry>().dependencies.Set()) {
-    if (dependency.owned_by) {
-      if (auto entry = catalog.LookupOid(transaction, dependency.oid);
-          entry && SequenceOwnedByTable(*entry, owner)) {
-        add(*entry);
-      }
-    }
-  }
   ForEachDependent(transaction, catalog, owner.oid,
                    [&](duckdb::CatalogEntry& member) {
                      if (member.type != duckdb::CatalogType::TABLE_ENTRY &&
                          OwnedBy(member, owner.oid)) {
-                       add(member);
+                       owned.emplace_back(member);
                      }
                    });
   return owned;
@@ -1212,23 +1165,13 @@ duckdb::optional_ptr<duckdb::CatalogEntry> OwnerOf(
   }
   auto& catalog =
     owned.Cast<duckdb::StandardEntry>().catalog.Cast<BaseCatalog>();
-  if (owned.type != duckdb::CatalogType::TABLE_ENTRY) {
-    for (const auto& dependency :
-         owned.Cast<duckdb::StandardEntry>().dependencies.Set()) {
-      if (dependency.owned_by) {
-        return catalog.LookupOid(transaction, dependency.oid);
-      }
+  for (const auto& dependency :
+       owned.Cast<duckdb::StandardEntry>().dependencies.Set()) {
+    if (dependency.owned_by) {
+      return catalog.LookupOid(transaction, dependency.oid);
     }
   }
-  duckdb::optional_ptr<duckdb::CatalogEntry> owner;
-  ForEachDependent(
-    transaction, catalog, owned.oid, [&](duckdb::CatalogEntry& member) {
-      if (member.type == duckdb::CatalogType::TABLE_ENTRY &&
-          OwnedBy(member, owned.oid) && SequenceOwnedByTable(owned, member)) {
-        owner = member;
-      }
-    });
-  return owner;
+  return nullptr;
 }
 
 void RefuseDependents(
@@ -1600,7 +1543,7 @@ void DropColumnReaders(duckdb::CatalogTransaction transaction,
 void FollowColumnOids(duckdb::CatalogTransaction transaction,
                       const duckdb::TableCatalogEntry& previous,
                       const duckdb::TableCatalogEntry& current) {
-  for (auto& owned : OwnedEntries(transaction, previous)) {
+  for (auto& owned : OwnedEntries(transaction, current)) {
     if (owned.get().type != duckdb::CatalogType::SEQUENCE_ENTRY) {
       continue;
     }

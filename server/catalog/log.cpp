@@ -60,6 +60,11 @@ struct LinkedChunk {
   Lsn begin = 0;
 };
 
+static_assert(sizeof(Header) == RecordBuffer::kFrameBytes);
+
+constexpr size_t kRecordMinGrowth = size_t{4} << 10;
+constexpr size_t kRecordMaxGrowth = size_t{64} << 20;
+
 constexpr std::string_view kChunkSuffix = ".log";
 constexpr std::string_view kSnapshotFile = "snapshot";
 constexpr std::string_view kSnapshotTemp = "snapshot.tmp";
@@ -163,18 +168,21 @@ class SnapshotWriter {
 
   void Record(std::span<const uint8_t> payload) {
     SDB_ASSERT(!payload.empty());
-    if (payload.size() > kMaxRecordBytes) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
-                      ERR_MSG("a log snapshot record would take ",
-                              payload.size(), " bytes, more than the ",
-                              kMaxRecordBytes, " a log record can hold"));
-    }
-    Header header{.size = static_cast<uint32_t>(payload.size())};
-    header.crc = static_cast<uint32_t>(
-      absl::ExtendCrc32c(RecordSeed(_position, header.size),
-                         View(payload.data(), payload.size())));
-    Put(&header, sizeof(header));
+    const auto size = Size(payload.size());
+    Put(Frame(size, absl::ExtendCrc32c(RecordSeed(_position, size),
+                                       View(payload.data(), payload.size()))));
     Put(payload.data(), payload.size());
+  }
+
+  void Record(const RecordBuffer& record) {
+    const auto size = Size(record.PayloadBytes());
+    auto crc = RecordSeed(_position, size);
+    record.ForEachPayload([&](std::span<const uint8_t> part) {
+      crc = absl::ExtendCrc32c(crc, View(part.data(), part.size()));
+    });
+    Put(Frame(size, crc));
+    record.ForEachPayload(
+      [&](std::span<const uint8_t> part) { Put(part.data(), part.size()); });
   }
 
   uint64_t Finish() {
@@ -183,6 +191,22 @@ class SnapshotWriter {
   }
 
  private:
+  static uint32_t Size(size_t payload) {
+    if (payload > kMaxRecordBytes) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+                      ERR_MSG("a log snapshot record would take ", payload,
+                              " bytes, more than the ", kMaxRecordBytes,
+                              " a log record can hold"));
+    }
+    return static_cast<uint32_t>(payload);
+  }
+
+  static Header Frame(uint32_t size, absl::crc32c_t crc) {
+    return {.crc = static_cast<uint32_t>(crc), .size = size};
+  }
+
+  void Put(const Header& header) { Put(&header, sizeof(header)); }
+
   void Put(const void* data, size_t size) {
     const auto* from = static_cast<const uint8_t*>(data);
     _position += size;
@@ -602,18 +626,37 @@ void Log::PrepareNext() {
   ready = true;
 }
 
-void Log::Write(const Range& range, std::span<const uint8_t> payload) {
-  SDB_ASSERT(range.end - range.begin == sizeof(Header) + payload.size());
-  const auto bytes = sizeof(Header) + payload.size();
-  const auto record = std::make_unique_for_overwrite<uint8_t[]>(bytes);
-  Header header{.size = static_cast<uint32_t>(payload.size())};
-  header.crc = static_cast<uint32_t>(
-    absl::MemcpyCrc32c(record.get() + sizeof(Header), payload.data(),
-                       payload.size(), RecordSeed(range.begin, header.size)));
-  std::memcpy(record.get(), &header, sizeof(Header));
+RecordBuffer::RecordBuffer()
+  : _buffer{std::make_unique<message::Buffer>(kRecordMinGrowth,
+                                              kRecordMaxGrowth)},
+    _writer{std::make_unique<message::Writer>(*_buffer)},
+    _frame{_writer->Alloc(kFrameBytes)} {}
+
+RecordBuffer::~RecordBuffer() {
+  if (_writer) {
+    _writer->Commit(false);
+  }
+}
+
+void Log::Write(const Range& range, RecordBuffer& record) {
+  const auto payload = record.PayloadBytes();
+  SDB_ASSERT(range.end - range.begin == sizeof(Header) + payload);
+  Header header{.size = static_cast<uint32_t>(payload)};
+  auto crc = RecordSeed(range.begin, header.size);
+  record.ForEachPayload([&](std::span<const uint8_t> part) {
+    crc = absl::ExtendCrc32c(crc, View(part.data(), part.size()));
+  });
+  header.crc = static_cast<uint32_t>(crc);
+  record.SetFrame(std::span<const uint8_t, sizeof(Header)>{
+    reinterpret_cast<const uint8_t*>(&header), sizeof(header)});
   try {
-    range.chunk->file->Write(duckdb::QueryContext{}, record.get(), bytes,
-                             range.begin - range.chunk->begin);
+    auto offset = range.begin - range.chunk->begin;
+    for (const auto part : record.Framed()) {
+      range.chunk->file->Write(duckdb::QueryContext{},
+                               const_cast<void*>(part.data()), part.size(),
+                               offset);
+      offset += part.size();
+    }
   } catch (const std::exception& e) {
     SDB_FATAL(GENERAL, "log '", _dir.string(),
               "': a committed record could not be written: ",
@@ -714,15 +757,14 @@ void Log::SyncTo(Lsn target) {
   _durable.store(std::max(durable, target), std::memory_order_release);
 }
 
-Lsn Log::Append(std::span<const uint8_t> payload) {
-  const auto range = Reserve(payload.size());
-  Write(range, payload);
+Lsn Log::Append(RecordBuffer record) {
+  const auto range = Reserve(record.PayloadBytes());
+  Write(range, record);
   Sync(range.end);
   return range.end;
 }
 
-void Log::WriteSnapshot(Lsn covered,
-                        std::span<const std::vector<uint8_t>> records,
+void Log::WriteSnapshot(Lsn covered, std::span<const RecordBuffer> records,
                         CatalogPart part, Compact compact) {
   struct Scan {
     std::shared_ptr<Chunk> chunk;

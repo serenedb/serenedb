@@ -57,6 +57,7 @@
 #include "catalog/database_directory.h"
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
+#include "catalog/log.h"
 #include "catalog/persistence/inverted_index.h"
 #include "connector/column_id.h"
 #include "connector/file_manifest.h"
@@ -328,7 +329,7 @@ class Store final : public std::enable_shared_from_this<Store>,
 
   std::shared_ptr<const TableState> SnapshotState(Tick snapshot,
                                                   catalog::WalkCounters& walks);
-  std::vector<uint8_t> SnapshotRecord(const TableState& state) const;
+  catalog::RecordBuffer SnapshotRecord(const TableState& state) const;
 
   // One REINDEX at a time per index, across all connections: claim the
   // store for the whole refresh (observe -> delta/rebuild -> publish).

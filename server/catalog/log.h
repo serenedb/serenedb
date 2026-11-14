@@ -25,18 +25,66 @@
 #include <absl/functional/function_ref.h>
 #include <absl/synchronization/mutex.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <cstring>
 #include <duckdb/common/file_system.hpp>
+#include <duckdb/common/serializer/write_stream.hpp>
 #include <filesystem>
 #include <memory>
 #include <span>
 #include <string>
 #include <vector>
 
+#include "server/utils/message_buffer.h"
+
 namespace sdb::catalog {
 
 using Lsn = uint64_t;
+
+class RecordBuffer final : public duckdb::WriteStream {
+ public:
+  static constexpr size_t kFrameBytes = 2 * sizeof(uint32_t);
+
+  RecordBuffer();
+  RecordBuffer(RecordBuffer&&) noexcept = default;
+  RecordBuffer& operator=(RecordBuffer&&) noexcept = default;
+  ~RecordBuffer() final;
+
+  void WriteData(duckdb::const_data_ptr_t data, duckdb::idx_t size) final {
+    _writer->Write({reinterpret_cast<const char*>(data), size});
+  }
+  [[nodiscard]] uint8_t* Reserve(size_t size) { return _writer->Alloc(size); }
+
+  size_t PayloadBytes() const noexcept {
+    return _writer->Written() - kFrameBytes;
+  }
+
+  void SetFrame(std::span<const uint8_t, kFrameBytes> frame) noexcept {
+    std::memcpy(_frame, frame.data(), kFrameBytes);
+  }
+
+  message::SequenceView Framed() const noexcept { return _buffer->Written(); }
+
+  template<typename Visit>
+  void ForEachPayload(const Visit& visit) const {
+    size_t skip = kFrameBytes;
+    for (const auto part : Framed()) {
+      const auto taken = std::min(skip, part.size());
+      skip -= taken;
+      if (taken != part.size()) {
+        visit(std::span{static_cast<const uint8_t*>(part.data()) + taken,
+                        part.size() - taken});
+      }
+    }
+  }
+
+ private:
+  std::unique_ptr<message::Buffer> _buffer;
+  std::unique_ptr<message::Writer> _writer;
+  uint8_t* _frame = nullptr;
+};
 
 class Log {
   struct Chunk;
@@ -70,12 +118,12 @@ class Log {
   void Replay(Apply apply, CatalogPart part);
 
   Range Reserve(size_t payload_size);
-  void Write(const Range& range, std::span<const uint8_t> payload);
+  void Write(const Range& range, RecordBuffer& record);
   void Sync(Lsn end);
 
-  Lsn Append(std::span<const uint8_t> payload);
+  Lsn Append(RecordBuffer record);
 
-  void WriteSnapshot(Lsn covered, std::span<const std::vector<uint8_t>> records,
+  void WriteSnapshot(Lsn covered, std::span<const RecordBuffer> records,
                      CatalogPart part, Compact compact);
   void DropCovered();
 

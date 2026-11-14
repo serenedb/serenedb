@@ -470,7 +470,42 @@ void DocumentMaskBuilder::AddRange(doc_id_t first, doc_id_t last) {
 
 void DocumentMaskBuilder::AddSorted(std::span<const doc_id_t> docs) {
   SDB_ASSERT(absl::c_is_sorted(docs));
-  roaring::api::roaring_bitmap_add_many(&_set, docs.size(), docs.data());
+  auto& ra = _set.high_low_container;
+  while (!docs.empty()) {
+    const auto key = static_cast<uint16_t>(docs.front() >> 16);
+    const auto values = docs.first(static_cast<size_t>(
+      absl::c_upper_bound(docs, (uint32_t{key} << 16) | 0xFFFF) -
+      docs.begin()));
+    docs = docs.subspan(values.size());
+    if (ra.size != 0 && ra.keys[ra.size - 1] >= key) {
+      roaring::api::roaring_bitmap_add_many(&_set, values.size(),
+                                            values.data());
+      continue;
+    }
+    if (values.size() > roaring::internal::DEFAULT_MAX_SIZE) {
+      auto bits = NewBitset();
+      for (const auto doc : values) {
+        bits->words[(doc & 0xFFFF) >> 6] |= uint64_t{1} << (doc & 63);
+      }
+      AppendBitset(key, std::move(bits));
+      continue;
+    }
+    auto* array = roaring::internal::array_container_create_given_capacity(
+      static_cast<int32_t>(values.size()));
+    if (!array) [[unlikely]] {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_OUT_OF_MEMORY),
+                      ERR_MSG("Failed to allocate a document mask container"));
+    }
+    int32_t count = 0;
+    for (const auto doc : values) {
+      const auto low = static_cast<uint16_t>(doc);
+      if (count == 0 || array->array[count - 1] != low) {
+        array->array[count++] = low;
+      }
+    }
+    array->cardinality = count;
+    roaring::internal::ra_append(&ra, key, array, ARRAY_CONTAINER_TYPE);
+  }
 }
 
 void DocumentMaskBuilder::AddShifted(const DocumentMask& mask,

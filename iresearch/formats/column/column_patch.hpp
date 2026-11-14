@@ -35,6 +35,7 @@
 
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/internal/gather_arms.hpp"
+#include "iresearch/index/document_mask.hpp"
 #include "iresearch/utils/parallel_for.hpp"
 
 namespace irs {
@@ -130,6 +131,37 @@ class ColumnPatch final {
       }
     }
   }
+
+  template<typename Visit>
+  void ForEachChunk(const Visit& visit) const {
+    for (const auto& [group_id, group] : _groups) {
+      for (size_t c = 0; c < kGroupChunks; ++c) {
+        if (const auto& chunk = group->chunks[c]) {
+          visit((group_id << (kChunkShift + kGroupShift)) +
+                  (uint64_t{c} << kChunkShift),
+                *chunk);
+        }
+      }
+    }
+  }
+
+  bool SameRows(const ColumnPatch& other) const noexcept;
+  void AddRows(DocumentMaskBuilder& docs) const;
+
+  class Builder {
+   public:
+    explicit Builder(duckdb::LogicalType type);
+
+    void Add(std::span<const uint64_t> rows, const duckdb::Vector& values);
+    std::shared_ptr<const ColumnPatch> Finish() &&;
+
+   private:
+    void Seal();
+
+    std::shared_ptr<ColumnPatch> _patch;
+    std::shared_ptr<Group> _group;
+    uint64_t _group_id = 0;
+  };
 
  private:
   duckdb::LogicalType _type;

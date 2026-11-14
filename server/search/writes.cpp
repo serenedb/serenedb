@@ -1941,10 +1941,7 @@ void Writes::PrepareCommit(duckdb::ClientContext& context) {
       const auto rows_id = OwnRowsId(w.rows_generation);
       auto removed = TakeRowRemovals(changes.removals, rows_id);
       auto piece = w.store->StartPiece();
-      const bool logged = Logged(w);
-      if (logged) {
-        w.rows.columns = changes.column_ids;
-      }
+      size_t chunks = 0;
       {
         const auto made = connector::MakeSearchTableInsertSink(
           piece.trx, *w.store, *changes.catalog, context);
@@ -1955,10 +1952,16 @@ void Writes::PrepareCommit(duckdb::ClientContext& context) {
           *changes.collection, removed.get(), [&](duckdb::DataChunk& chunk) {
             connector::WriteChunkToSearchSink(
               *made.sink, chunk, changes.column_ids, w.store->GetId(), context);
-            if (logged) {
-              w.rows.chunks.push_back(LogChunk(chunk));
-            }
+            ++chunks;
           });
+      }
+      if (Logged(w)) {
+        w.rows.columns = changes.column_ids;
+        w.rows.chunks = chunks;
+        w.rows.scan = [collection = std::move(changes.collection),
+                       removed](ChunkVisit visit) {
+          ForEachLiveChunk(*collection, removed.get(), visit);
+        };
       }
       const auto docs = PieceDocs(piece.trx);
       if (docs != 0) {

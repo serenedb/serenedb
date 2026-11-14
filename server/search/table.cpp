@@ -372,20 +372,6 @@ void CarryPatch(irs::field_id field, const irs::ColumnPatch& patch,
              duckdb::Vector{kept, sel, mapped.size()}, target_ticks);
 }
 
-void ShiftPatches(std::span<const irs::FieldPatch> patches, uint64_t offset,
-                  std::vector<irs::FieldPatch>& out) {
-  for (const auto& [field, patch] : patches) {
-    std::vector<uint64_t> rows;
-    std::vector<uint64_t> ticks;
-    duckdb::Vector values{patch->Type(), patch->Count()};
-    patch->Entries(rows, values, ticks);
-    for (auto& row : rows) {
-      row += offset;
-    }
-    MergeField(out, field, patch->Type(), rows, values, ticks);
-  }
-}
-
 void ApplyPatches(TableUnit& unit, std::span<const irs::FieldPatch> added,
                   Tick tick, irs::ParallelFor parallel) {
   MergePatches(unit.patches, added, tick, parallel);
@@ -463,31 +449,8 @@ void SlicePatches(std::span<const irs::FieldPatch> patches, uint64_t first,
 
 bool Empty(const TableDelta& delta) noexcept {
   return delta.drop.empty() && delta.drop_memory == 0 && delta.add.empty() &&
-         delta.rows.empty() && delta.deletes.empty() && !delta.memory_deletes &&
-         delta.updates.empty() && delta.memory_updates.empty() &&
+         delta.rows.empty() && delta.segments.empty() && delta.pieces.empty() &&
          !delta.manifest;
-}
-
-void MemoryDeletes::Finish(TableDelta& delta) && {
-  if (_pieces.empty()) {
-    return;
-  }
-  const auto base =
-    absl::c_min_element(_pieces, [](const Piece& lhs, const Piece& rhs) {
-      return lhs.first < rhs.first;
-    })->first;
-  irs::DocumentMaskBuilder docs;
-  for (const auto& piece : _pieces) {
-    const auto offset = piece.first - base;
-    SDB_ENSURE(
-      offset + piece.docs->Max() < std::numeric_limits<irs::doc_id_t>::max(),
-      "the in-memory rows of a table span more rows than a mask "
-      "can number");
-    docs.AddShifted(*piece.docs, static_cast<irs::doc_id_t>(offset));
-  }
-  delta.memory_base = base;
-  delta.memory_deletes = std::make_shared<const irs::DocumentMask>(
-    std::move(docs).Finish(irs::DocumentMaskBuilder::kCanonical));
 }
 
 std::shared_ptr<TableUnit> PieceUnit(
@@ -519,15 +482,8 @@ void AddUnitPatch(std::vector<UnitPatch>& patches, uint64_t unit,
 
 irs::DocumentMask PatchedDocs(const UnitPatch& patch) {
   irs::DocumentMaskBuilder docs;
-  std::vector<irs::doc_id_t> rows;
   for (const auto& [field, column] : patch.fields) {
-    rows.clear();
-    column->ForEach(0, std::numeric_limits<uint64_t>::max(),
-                    [&](uint64_t row, const irs::ColumnPatch::Chunk&, size_t) {
-                      rows.push_back(static_cast<irs::doc_id_t>(
-                        row + irs::doc_limits::min()));
-                    });
-    docs.AddSorted(rows);
+    column->AddRows(docs);
   }
   return std::move(docs).Finish(irs::DocumentMaskBuilder::kCanonical);
 }
@@ -1024,15 +980,30 @@ TableDelta Table::CommitDelta(const TableCommit& commit,
     delta.add.push_back({.id = id, .kinds = segment.meta.kinds, .rows = rows});
   }
   if (commit.piece) {
-    SDB_ASSERT(!rows.chunks.empty());
+    SDB_ASSERT(rows.chunks != 0);
     rows.first = state.memory_end;
     delta.rows.push_back(std::move(rows));
   }
-  MemoryDeletes memory;
+  irs::containers::FlatHashMap<uint64_t, size_t> segment_at;
+  irs::containers::FlatHashMap<uint64_t, size_t> piece_at;
+  const auto changed = [](auto& at, std::vector<UnitDelta>& units,
+                          uint64_t unit) -> UnitDelta& {
+    const auto [it, added] = at.try_emplace(unit, units.size());
+    if (added) {
+      units.push_back({.unit = unit});
+    }
+    return units[it->second];
+  };
+  const auto segment = [&](uint64_t id) -> UnitDelta& {
+    return changed(segment_at, delta.segments, id);
+  };
+  const auto piece = [&](uint64_t first) -> UnitDelta& {
+    return changed(piece_at, delta.pieces, first);
+  };
   for (auto& [id, docs] : deletes) {
     if (own.contains(id)) {
       if (!dead.contains(id)) {
-        delta.deletes.push_back({.segment = id, .docs = std::move(docs)});
+        segment(id).deleted = std::move(docs);
       }
       continue;
     }
@@ -1041,36 +1012,29 @@ TableDelta Table::CommitDelta(const TableCommit& commit,
       continue;
     }
     if (unit->piece) {
-      memory.Add(unit->first, std::move(docs));
+      piece(unit->first).deleted = std::move(docs);
     } else if (DeletesAll(unit->deleted.get(), *docs, unit->docs)) {
       delta.drop.push_back(id);
       dead.insert(id);
     } else {
-      delta.deletes.push_back({.segment = id, .docs = std::move(docs)});
+      segment(id).deleted = std::move(docs);
     }
   }
-  std::move(memory).Finish(delta);
   for (const auto& patch : commit.patches) {
     if (dead.contains(patch.unit)) {
       continue;
     }
+    UnitDelta* target = nullptr;
     if (commit.piece && patch.unit == commit.piece->Id()) {
-      ShiftPatches(patch.fields, state.memory_end, delta.memory_updates);
+      target = &piece(state.memory_end);
+    } else if (own.contains(patch.unit)) {
+      target = &segment(patch.unit);
+    } else if (const auto* unit = FindUnit(state, patch.unit)) {
+      target = unit->piece ? &piece(unit->first) : &segment(patch.unit);
+    } else {
       continue;
     }
-    if (!own.contains(patch.unit)) {
-      const auto* unit = FindUnit(state, patch.unit);
-      if (!unit) {
-        continue;
-      }
-      if (unit->piece) {
-        ShiftPatches(patch.fields, unit->first, delta.memory_updates);
-        continue;
-      }
-    }
-    for (const auto& field : patch.fields) {
-      delta.updates.push_back({.segment = patch.unit, .patch = field});
-    }
+    absl::c_copy(patch.fields, std::back_inserter(target->patches));
   }
   delta.manifest = commit.manifest;
   return delta;
@@ -1234,14 +1198,15 @@ Table::Replacement Table::PrepareReplace(
     }
     delta.add.push_back(
       {.id = unit->id, .kinds = unit->meta.kinds, .rows = unit->docs});
+    UnitDelta changes{.unit = unit->id};
     if (unit->deleted && !unit->deleted->Empty()) {
-      delta.deletes.push_back({.segment = unit->id, .docs = unit->deleted});
+      changes.deleted = unit->deleted;
     }
     if (auto it = logged_patches.find(unit->id); it != logged_patches.end()) {
-      for (auto& field : it->second) {
-        delta.updates.push_back(
-          {.segment = unit->id, .patch = std::move(field)});
-      }
+      changes.patches = std::move(it->second);
+    }
+    if (changes.deleted || !changes.patches.empty()) {
+      delta.segments.push_back(std::move(changes));
     }
   }
   return replacement;

@@ -410,6 +410,96 @@ const ColumnPatch::Chunk* ColumnPatch::FindChunk(
   return it->second->chunks[chunk & (kGroupChunks - 1)].get();
 }
 
+bool ColumnPatch::SameRows(const ColumnPatch& other) const noexcept {
+  if (_count != other._count || _groups.size() != other._groups.size()) {
+    return false;
+  }
+  for (size_t g = 0; g != _groups.size(); ++g) {
+    const auto& [id, group] = _groups[g];
+    const auto& [other_id, other_group] = other._groups[g];
+    if (id != other_id) {
+      return false;
+    }
+    for (size_t c = 0; c != kGroupChunks; ++c) {
+      const auto* lhs = group->chunks[c].get();
+      const auto* rhs = other_group->chunks[c].get();
+      if (lhs != rhs && (!lhs || !rhs || lhs->offsets != rhs->offsets)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+void ColumnPatch::AddRows(DocumentMaskBuilder& docs) const {
+  std::vector<doc_id_t> rows;
+  ForEachChunk([&](uint64_t first, const Chunk& chunk) {
+    for (const auto offset : chunk.offsets) {
+      const auto doc =
+        static_cast<doc_id_t>(first + offset + doc_limits::min());
+      if (!rows.empty() && doc >> 16 != rows.back() >> 16) {
+        docs.AddSorted(rows);
+        rows.clear();
+      }
+      rows.push_back(doc);
+    }
+  });
+  docs.AddSorted(rows);
+}
+
+ColumnPatch::Builder::Builder(duckdb::LogicalType type)
+  : _patch{std::make_shared<ColumnPatch>(std::move(type))} {}
+
+void ColumnPatch::Builder::Add(std::span<const uint64_t> rows,
+                               const duckdb::Vector& values) {
+  SDB_ASSERT(rows.size() == values.size());
+  const uint64_t tick = 0;
+  for (size_t i = 0; i < rows.size();) {
+    const uint64_t chunk_id = rows[i] >> kChunkShift;
+    size_t end = i + 1;
+    while (end < rows.size() && rows[end] >> kChunkShift == chunk_id) {
+      ++end;
+    }
+    const uint64_t group_id = rows[i] >> kGroupRowShift;
+    if (_group && group_id != _group_id) {
+      Seal();
+    }
+    if (!_group) {
+      SDB_ASSERT(_patch->_groups.empty() ||
+                 _patch->_groups.back().first < group_id);
+      _group = std::make_shared<Group>(_patch->_type);
+      _group_id = group_id;
+    }
+    auto& slot = _group->chunks[chunk_id & (kGroupChunks - 1)];
+    const auto* old = slot.get();
+    SDB_ASSERT(!old ||
+               ((chunk_id << kChunkShift) | old->offsets.back()) < rows[i]);
+    auto merged = MergeChunk(_patch->_type, old, chunk_id << kChunkShift,
+                             rows.subspan(i, end - i), values, i, {&tick, 1});
+    _patch->_count += merged->offsets.size() - (old ? old->offsets.size() : 0);
+    _patch->_bytes = _patch->_bytes + merged->bytes - (old ? old->bytes : 0);
+    slot = std::move(merged);
+    i = end;
+  }
+}
+
+void ColumnPatch::Builder::Seal() {
+  for (const auto& chunk : _group->chunks) {
+    if (chunk) {
+      _group->stats.Merge(chunk->stats);
+    }
+  }
+  _patch->_stats.Merge(_group->stats);
+  _patch->_groups.emplace_back(_group_id, std::move(_group));
+}
+
+std::shared_ptr<const ColumnPatch> ColumnPatch::Builder::Finish() && {
+  if (_group) {
+    Seal();
+  }
+  return std::move(_patch);
+}
+
 bool ColumnPatch::Overlaps(uint64_t first, uint64_t last) const noexcept {
   if (first >= last || _groups.empty()) {
     return false;

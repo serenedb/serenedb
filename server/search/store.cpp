@@ -572,7 +572,7 @@ std::shared_ptr<const TableState> Store::CommitReplace(
     [&] {
       prepared.emplace(_table->PrepareReplace(
         replaced, folded, std::move(added), std::move(maps), memory_below));
-      std::vector<uint8_t> record;
+      std::optional<catalog::RecordBuffer> record;
       if (logged && !_in_memory && !OwnerDropped() && !Empty(prepared->delta)) {
         record = catalog::SearchRecord(_db_id, _id, prepared->delta);
       }
@@ -588,7 +588,8 @@ std::shared_ptr<const TableState> Store::CommitReplace(
 
 void Store::CommitUnlogged(absl::FunctionRef<void(Tick)> apply) {
   catalog::Transactions::Get().CommitStorage(
-    _table->CommitMutex(), [] { return std::vector<uint8_t>{}; },
+    _table->CommitMutex(),
+    [] { return std::optional<catalog::RecordBuffer>{}; },
     [&](Tick tick) {
       apply(tick);
       _storage_tick.store(tick, std::memory_order_release);
@@ -660,7 +661,7 @@ std::shared_ptr<const TableState> Store::SnapshotState(
   return version.tick <= snapshot ? version.state : nullptr;
 }
 
-std::vector<uint8_t> Store::SnapshotRecord(const TableState& state) const {
+catalog::RecordBuffer Store::SnapshotRecord(const TableState& state) const {
   irs::containers::FlatHashSet<irs::field_id> stored;
   {
     absl::ReaderMutexLock lock{&_layout_mutex};
@@ -669,29 +670,25 @@ std::vector<uint8_t> Store::SnapshotRecord(const TableState& state) const {
     }
   }
   TableDelta delta;
-  MemoryDeletes memory;
   for (const auto& unit : state.units) {
-    if (unit->deleted && !unit->deleted->Empty()) {
-      if (unit->piece) {
-        memory.Add(unit->first, unit->deleted);
-      } else {
-        delta.deletes.push_back({.segment = unit->id, .docs = unit->deleted});
-      }
-    }
+    const auto deleted =
+      unit->deleted && !unit->deleted->Empty() ? unit->deleted : nullptr;
     if (!unit->piece) {
       delta.add.push_back(
         {.id = unit->id, .kinds = unit->meta.kinds, .rows = unit->docs});
-      for (const auto& patch : unit->patches) {
-        delta.updates.push_back({.segment = unit->id, .patch = patch});
+      if (deleted || !unit->patches.empty()) {
+        delta.segments.push_back(
+          {.unit = unit->id, .deleted = deleted, .patches = unit->patches});
       }
       continue;
+    }
+    if (deleted) {
+      delta.pieces.push_back({.unit = unit->first, .deleted = deleted});
     }
     auto& rows = delta.rows.emplace_back(LoggedRows{.first = unit->first});
     std::vector<const irs::ColumnReader*> readers;
     duckdb::vector<duckdb::LogicalType> types;
-    std::optional<irs::ReadContext> ctx;
     if (const auto* columns = unit->reader->GetColReader()) {
-      ctx.emplace(*columns);
       for (const auto* column : columns->Columns()) {
         if (stored.contains(column->Id())) {
           readers.push_back(column);
@@ -700,26 +697,34 @@ std::vector<uint8_t> Store::SnapshotRecord(const TableState& state) const {
         }
       }
     }
-    std::vector<irs::ColumnReader::ScanState> scans;
-    scans.reserve(readers.size());
-    for (const auto* reader : readers) {
-      scans.push_back(reader->InitScan(*ctx));
-    }
-    duckdb::DataChunk chunk;
-    chunk.Initialize(duckdb::Allocator::DefaultAllocator(), types);
-    for (irs::doc_id_t first = 0; first < unit->docs;) {
-      const auto count =
-        std::min<irs::doc_id_t>(unit->docs - first, STANDARD_VECTOR_SIZE);
-      chunk.Reset();
-      for (size_t i = 0; i < readers.size(); ++i) {
-        readers[i]->Scan(scans[i], chunk.data[i], count);
+    rows.chunks =
+      (uint64_t{unit->docs} + STANDARD_VECTOR_SIZE - 1) / STANDARD_VECTOR_SIZE;
+    rows.scan = [unit, readers = std::move(readers),
+                 types = std::move(types)](ChunkVisit visit) {
+      std::optional<irs::ReadContext> ctx;
+      if (const auto* columns = unit->reader->GetColReader()) {
+        ctx.emplace(*columns);
       }
-      chunk.SetChildCardinality(count);
-      rows.chunks.push_back(LogChunk(chunk));
-      first += count;
-    }
+      std::vector<irs::ColumnReader::ScanState> scans;
+      scans.reserve(readers.size());
+      for (const auto* reader : readers) {
+        scans.push_back(reader->InitScan(*ctx));
+      }
+      duckdb::DataChunk chunk;
+      chunk.Initialize(duckdb::Allocator::DefaultAllocator(), types);
+      for (irs::doc_id_t first = 0; first < unit->docs;) {
+        const auto count =
+          std::min<irs::doc_id_t>(unit->docs - first, STANDARD_VECTOR_SIZE);
+        chunk.Reset();
+        for (size_t i = 0; i < readers.size(); ++i) {
+          readers[i]->Scan(scans[i], chunk.data[i], count);
+        }
+        chunk.SetChildCardinality(count);
+        visit(chunk);
+        first += count;
+      }
+    };
   }
-  std::move(memory).Finish(delta);
   delta.manifest = state.manifest;
   return catalog::SearchRecord(_db_id, _id, delta);
 }

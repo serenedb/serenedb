@@ -592,7 +592,7 @@ void Transactions::Commit(SessionTransaction& transaction,
         change.version->Child().OnDrop();
       }
     }
-    writes.Apply(commit, layouts);
+    writes.Apply(context, commit, layouts);
   }
   if (range.end != 0) {
     _log->Write(range, record);

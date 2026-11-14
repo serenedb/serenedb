@@ -41,6 +41,7 @@
 #include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/store/directory_attributes.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
+#include <iresearch/utils/parallel_for.hpp>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -81,7 +82,8 @@ struct TableUnit {
 };
 
 void MergePatches(std::vector<irs::FieldPatch>& patches,
-                  std::span<const irs::FieldPatch> added, Tick tick);
+                  std::span<const irs::FieldPatch> added, Tick tick,
+                  irs::ParallelFor parallel = irs::SerialFor);
 void SlicePatches(std::span<const irs::FieldPatch> patches, uint64_t first,
                   uint64_t end, std::vector<irs::FieldPatch>& out);
 
@@ -317,7 +319,8 @@ class Table final {
   }
 
   TableDelta CommitDelta(const TableCommit& commit, LoggedRows&& rows) const;
-  [[nodiscard]] bool Apply(Tick tick, TableCommit&& commit);
+  [[nodiscard]] bool Apply(duckdb::ClientContext& context, Tick tick,
+                           TableCommit&& commit);
 
   struct Replacement {
     std::vector<uint64_t> replaced;

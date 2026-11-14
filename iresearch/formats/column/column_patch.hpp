@@ -35,6 +35,7 @@
 
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/internal/gather_arms.hpp"
+#include "iresearch/utils/parallel_for.hpp"
 
 namespace irs {
 
@@ -76,9 +77,9 @@ class ColumnPatch final {
     uint64_t tick) {
     return Merge(base, type, rows, values, std::span<const uint64_t>{&tick, 1});
   }
-  static std::shared_ptr<const ColumnPatch> Merge(const ColumnPatch* base,
-                                                  const ColumnPatch& added,
-                                                  uint64_t tick);
+  static std::shared_ptr<const ColumnPatch> Merge(
+    const ColumnPatch* base, const ColumnPatch& added, uint64_t tick,
+    ParallelFor parallel = SerialFor);
 
   const duckdb::LogicalType& Type() const noexcept { return _type; }
   uint64_t Count() const noexcept { return _count; }

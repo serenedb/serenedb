@@ -42,6 +42,7 @@
 #include <utility>
 
 #include "catalog/transaction.h"
+#include "search/parallel.h"
 #include "search/version_chain.tpp"
 
 namespace sdb::search {
@@ -386,8 +387,8 @@ void ShiftPatches(std::span<const irs::FieldPatch> patches, uint64_t offset,
 }
 
 void ApplyPatches(TableUnit& unit, std::span<const irs::FieldPatch> added,
-                  Tick tick) {
-  MergePatches(unit.patches, added, tick);
+                  Tick tick, irs::ParallelFor parallel) {
+  MergePatches(unit.patches, added, tick, parallel);
   unit.reader = unit.reader->WithPatches(unit.patches);
 }
 
@@ -414,18 +415,20 @@ bool DeletesAll(const irs::DocumentMask* deleted, const irs::DocumentMask& docs,
 }  // namespace
 
 void MergePatches(std::vector<irs::FieldPatch>& patches,
-                  std::span<const irs::FieldPatch> added, Tick tick) {
+                  std::span<const irs::FieldPatch> added, Tick tick,
+                  irs::ParallelFor parallel) {
   for (const auto& [field, patch] : added) {
     const auto it = absl::c_lower_bound(
       patches, field, [](const irs::FieldPatch& entry, irs::field_id id) {
         return entry.field < id;
       });
     if (it != patches.end() && it->field == field) {
-      it->patch = irs::ColumnPatch::Merge(it->patch.get(), *patch, tick);
+      it->patch =
+        irs::ColumnPatch::Merge(it->patch.get(), *patch, tick, parallel);
     } else {
-      patches.insert(it,
-                     {.field = field,
-                      .patch = irs::ColumnPatch::Merge(nullptr, *patch, tick)});
+      patches.insert(it, {.field = field,
+                          .patch = irs::ColumnPatch::Merge(nullptr, *patch,
+                                                           tick, parallel)});
     }
   }
 }
@@ -1073,15 +1076,11 @@ TableDelta Table::CommitDelta(const TableCommit& commit,
   return delta;
 }
 
-bool Table::Apply(Tick tick, TableCommit&& commit) {
+bool Table::Apply(duckdb::ClientContext& context, Tick tick,
+                  TableCommit&& commit) {
   absl::MutexLock lock{&_state_mutex};
   auto next = std::make_shared<TableState>(*Head().state);
   auto& units = next->units;
-  const auto rewrite = [&](size_t i, auto&& change) {
-    auto unit = std::make_shared<TableUnit>(*units[i]);
-    change(*unit);
-    units[i] = std::move(unit);
-  };
   if (commit.manifest) {
     next->manifest = std::move(commit.manifest);
   }
@@ -1097,18 +1096,52 @@ bool Table::Apply(Tick tick, TableCommit&& commit) {
   for (auto& segment : commit.segments) {
     units.push_back(SegmentUnit(std::move(segment)));
   }
+  struct UnitChange {
+    size_t index = 0;
+    std::vector<const irs::DocumentMask*> deletes;
+    std::span<const irs::FieldPatch> patches;
+    std::shared_ptr<TableUnit> rewritten;
+  };
+  std::vector<UnitChange> changes;
+  std::vector<size_t> change_of(units.size(), changes.max_size());
+  const auto change = [&](size_t i) -> UnitChange& {
+    if (change_of[i] == changes.max_size()) {
+      change_of[i] = changes.size();
+      changes.push_back({.index = i});
+    }
+    return changes[change_of[i]];
+  };
   for (const auto& removal : commit.removals) {
     for (const auto& group : removal->groups) {
       if (const auto i = IndexOf(units, group.segment); i != units.size()) {
-        rewrite(i, [&](TableUnit& unit) { AddDeletes(unit, group.docs); });
+        change(i).deletes.push_back(&group.docs);
       }
     }
   }
   for (const auto& patch : commit.patches) {
     if (const auto i = IndexOf(units, patch.unit); i != units.size()) {
-      rewrite(i,
-              [&](TableUnit& unit) { ApplyPatches(unit, patch.fields, tick); });
+      auto& unit = change(i);
+      SDB_ASSERT(unit.patches.empty());
+      unit.patches = patch.fields;
     }
+  }
+  const auto parallel = [&](size_t count,
+                            absl::FunctionRef<void(size_t)> body) {
+    ParallelFor(context, count, body);
+  };
+  parallel(changes.size(), [&](size_t c) {
+    auto& change = changes[c];
+    auto unit = std::make_shared<TableUnit>(*units[change.index]);
+    for (const auto* docs : change.deletes) {
+      AddDeletes(*unit, *docs);
+    }
+    if (!change.patches.empty()) {
+      ApplyPatches(*unit, change.patches, tick, parallel);
+    }
+    change.rewritten = std::move(unit);
+  });
+  for (auto& change : changes) {
+    units[change.index] = std::move(change.rewritten);
   }
   const bool emptied = LeaveDead(*next, tick);
   Publish(std::move(next), tick);

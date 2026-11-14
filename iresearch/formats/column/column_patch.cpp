@@ -277,12 +277,104 @@ std::shared_ptr<const ColumnPatch> ColumnPatch::Merge(
 
 std::shared_ptr<const ColumnPatch> ColumnPatch::Merge(const ColumnPatch* base,
                                                       const ColumnPatch& added,
-                                                      uint64_t tick) {
-  std::vector<uint64_t> rows;
-  std::vector<uint64_t> ticks;
-  duckdb::Vector values{added._type, added._count};
-  added.Entries(rows, values, ticks);
-  return Merge(base, added._type, rows, values, tick);
+                                                      uint64_t tick,
+                                                      ParallelFor parallel) {
+  auto next = std::make_shared<ColumnPatch>(added._type);
+  if (base) {
+    next->_groups = base->_groups;
+    next->_count = base->_count;
+    next->_bytes = base->_bytes;
+    next->_max_tick = base->_max_tick;
+    next->_stats = base->_stats.Copy();
+  }
+  next->_max_tick = std::max(next->_max_tick, tick);
+  const bool keep_ticks = tick == 0 && added._max_tick == 0;
+  struct Touched {
+    size_t at = 0;
+    bool existing = false;
+    std::shared_ptr<const Group> group;
+    int64_t count = 0;
+    int64_t bytes = 0;
+  };
+  std::vector<Touched> touched(added._groups.size());
+  for (size_t g = 0, at = 0; g != added._groups.size(); ++g) {
+    const auto group_id = added._groups[g].first;
+    while (at != next->_groups.size() && next->_groups[at].first < group_id) {
+      ++at;
+    }
+    touched[g].at = at;
+    touched[g].existing =
+      at != next->_groups.size() && next->_groups[at].first == group_id;
+  }
+  parallel(touched.size(), [&](size_t g) {
+    const auto& [group_id, from] = added._groups[g];
+    auto& entry = touched[g];
+    const auto* old =
+      entry.existing ? next->_groups[entry.at].second.get() : nullptr;
+    if (!old && keep_ticks) {
+      for (const auto& chunk : from->chunks) {
+        if (chunk) {
+          entry.count += static_cast<int64_t>(chunk->offsets.size());
+          entry.bytes += static_cast<int64_t>(chunk->bytes);
+        }
+      }
+      entry.group = from;
+      return;
+    }
+    auto group = std::make_shared<Group>(added._type);
+    if (old) {
+      group->chunks = old->chunks;
+      group->stats = old->stats.Copy();
+    }
+    std::vector<uint64_t> rows;
+    for (size_t c = 0; c != kGroupChunks; ++c) {
+      const auto& chunk = from->chunks[c];
+      if (!chunk) {
+        continue;
+      }
+      auto& slot = group->chunks[c];
+      const auto* prev = slot.get();
+      std::shared_ptr<const Chunk> merged = chunk;
+      if (prev || !keep_ticks) {
+        const uint64_t chunk_row =
+          (group_id << kGroupRowShift) + (uint64_t{c} << kChunkShift);
+        rows.clear();
+        for (const auto offset : chunk->offsets) {
+          rows.push_back(chunk_row + offset);
+        }
+        merged = MergeChunk(added._type, prev, chunk_row, rows, chunk->values,
+                            0, {&tick, 1});
+      }
+      entry.count += static_cast<int64_t>(merged->offsets.size()) -
+                     static_cast<int64_t>(prev ? prev->offsets.size() : 0);
+      entry.bytes += static_cast<int64_t>(merged->bytes) -
+                     static_cast<int64_t>(prev ? prev->bytes : 0);
+      group->stats.Merge(merged->stats);
+      slot = std::move(merged);
+    }
+    entry.group = std::move(group);
+  });
+  std::vector<std::pair<uint64_t, std::shared_ptr<const Group>>> groups;
+  groups.reserve(next->_groups.size() + touched.size());
+  size_t kept = 0;
+  for (size_t g = 0; g != touched.size(); ++g) {
+    auto& entry = touched[g];
+    for (; kept != entry.at; ++kept) {
+      groups.push_back(std::move(next->_groups[kept]));
+    }
+    if (entry.existing) {
+      ++kept;
+    }
+    next->_count += static_cast<uint64_t>(entry.count);
+    next->_bytes += static_cast<uint64_t>(entry.bytes);
+    next->_stats.Merge(entry.group->stats);
+    groups.emplace_back(added._groups[g].first, std::move(entry.group));
+  }
+  for (; kept != next->_groups.size(); ++kept) {
+    groups.push_back(std::move(next->_groups[kept]));
+  }
+  next->_groups = std::move(groups);
+  return next;
 }
 
 void ColumnPatch::Entries(std::vector<uint64_t>& rows, duckdb::Vector& values,

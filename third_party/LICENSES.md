@@ -81,6 +81,7 @@ SereneDB and the libraries below are built into serened. `SELECT * FROM serenedb
 
 ### LicenseRef-TPC-EULA
 
+* [TPC-DS dsdgen](https://www.tpc.org/tpcds): `resources/licenses/tpcds/LICENSE`
 * [TPC-H dbgen](https://www.tpc.org/tpch): `third_party/duckdb/extension/tpch/dbgen/LICENSE`
 
 ### MIT
@@ -121,10 +122,6 @@ SereneDB and the libraries below are built into serened. `SELECT * FROM serenedb
 ### MIT AND Unicode-DFS-2015
 
 * [utf8proc](https://github.com/JuliaStrings/utf8proc): `third_party/duckdb/third_party/utf8proc/LICENSE`
-
-### NOASSERTION
-
-* [TPC-DS dsdgen](https://www.tpc.org/tpcds): no license file
 
 ### PostgreSQL
 

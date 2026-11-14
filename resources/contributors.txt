@@ -6,15 +6,14 @@ Alexander Malandin
 Almaz Shaimerdanov
 Andrei Lobov
 Andrey Abramov
-codeworse
 deymon-d
 Egor Danilov
 Evgenii Orlov
-Ilya Vlasko
+Ilja Vlasko
 Konstantin Morozov
 Mikhail Kornaukhov
 Mr. Hook
 Pavel Ivanov
-Pavel Vedernikoff
 romanpovol
 Valerii Mironov
+Vlad Ostapenko

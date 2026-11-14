@@ -80,7 +80,7 @@ struct SearchUpdateLocalState final : duckdb::LocalSinkState {
   SearchSinkRows rows;
   irs::DocRemovalBuilder positions;
   search::UnitRows unit_rows;
-  std::vector<search::UnitPatch> patches;
+  std::optional<search::UnitPatchBuilder> patches;
   duckdb::idx_t update_count = 0;
   std::optional<duckdb::ColumnDataCollection> returned;
   duckdb::DataChunk combined;
@@ -265,17 +265,23 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
                          static_cast<duckdb::sel_t>(i));
     }
     absl::c_sort(order);
-    search::ForEachUnitRows(reader, lstate.unit_rows,
-                            [&](uint64_t unit, std::span<const uint64_t> rows,
-                                const duckdb::SelectionVector& sel) {
-                              for (const auto& column : gstate.patched) {
-                                const duckdb::Vector values{
-                                  chunk.data[column.input], sel, rows.size()};
-                                search::AddUnitPatch(lstate.patches, unit,
-                                                     column.field, column.type,
-                                                     rows, values);
-                              }
-                            });
+    if (!lstate.patches) {
+      std::vector<search::UnitPatchBuilder::Column> columns;
+      columns.reserve(gstate.patched.size());
+      for (const auto& column : gstate.patched) {
+        columns.push_back({.field = column.field, .type = column.type});
+      }
+      lstate.patches.emplace(std::move(columns));
+    }
+    search::ForEachUnitRows(
+      reader, lstate.unit_rows,
+      [&](uint64_t unit, std::span<const uint64_t> rows,
+          const duckdb::SelectionVector& sel) {
+        lstate.patches->Add(unit, rows, [&](size_t c) {
+          return duckdb::Vector{chunk.data[gstate.patched[c].input], sel,
+                                rows.size()};
+        });
+      });
     if (lstate.returned) {
       duckdb::DataChunk new_row;
       new_row.InitializeEmpty(gstate.table.types);
@@ -312,8 +318,9 @@ duckdb::SinkCombineResultType SereneDBSearchUpdate::Combine(
   auto& lstate = input.local_state.Cast<SearchUpdateLocalState>();
   lstate.rows.Flush();
   auto& search_txn = gstate.sdb_txn->SearchTxn();
-  if (!lstate.patches.empty()) {
-    search_txn.AddPatches(gstate.table.store, std::move(lstate.patches));
+  if (lstate.patches && !lstate.patches->Empty()) {
+    search_txn.AddPatches(gstate.table.store,
+                          std::move(*lstate.patches).Finish());
   }
   absl::MutexLock lock{&gstate.mutex};
   lstate.rows.HandOver(context.client, gstate.table, search_txn);

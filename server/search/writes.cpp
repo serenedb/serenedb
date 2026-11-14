@@ -911,11 +911,16 @@ void Writes::AddPatches(const std::shared_ptr<Store>& store,
   ++w.revision;
   const auto rows_id = OwnRowsId(w.rows_generation);
   auto changed = std::make_shared<irs::DocRemoval>();
+  changed->groups.reserve(patches.size());
   for (size_t p = 0; p != patches.size(); ++p) {
     auto& patch = patches[p];
     if (patch.unit < rows_id) {
-      changed->groups.push_back(
-        {.segment = patch.unit, .docs = std::move(patched[p])});
+      auto& group = changed->groups.emplace_back(irs::DocRemoval::Group{
+        .segment = patch.unit, .docs = std::move(patched[p])});
+      if (patch.same_rows) {
+        patch.rows = {
+          std::shared_ptr<const irs::DocumentMask>{changed, &group.docs}};
+      }
     }
     std::vector<UnitPatch> added;
     added.push_back(std::move(patch));
@@ -1978,6 +1983,8 @@ void Writes::PrepareCommit(duckdb::ClientContext& context) {
       CarryUnitPatches(changes.patches, rows_id, sealed);
       changes.ClearBufferedRows();
     }
+    ParallelFor(context, changes.patches.size(),
+                [&](size_t p) { UniteRows(changes.patches[p]); });
     if (!w.own_segments.empty()) {
       w.store->SyncSegments();
     }

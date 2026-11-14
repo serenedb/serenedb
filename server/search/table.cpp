@@ -215,9 +215,9 @@ bool PatchedAfter(const TableUnit& unit, const irs::DocumentMask& docs,
     }
     bool found = false;
     if (docs.Count() < patch->Count()) {
-      const auto newer = [&](uint64_t, const irs::ColumnPatch::Chunk& chunk,
+      const auto newer = [&](uint64_t, const irs::ColumnPatch::Slot& slot,
                              size_t i) {
-        found = found || chunk.ticks[i] > snapshot;
+        found = found || slot.Tick(i) > snapshot;
       };
       irs::DocumentMask::Cursor cursor{docs};
       std::array<irs::MaskRun, 64> runs;
@@ -234,8 +234,8 @@ bool PatchedAfter(const TableUnit& unit, const irs::DocumentMask& docs,
       auto mask = irs::MakeGenericDocsMask(&docs);
       patch->ForEach(
         0, unit.docs,
-        [&](uint64_t row, const irs::ColumnPatch::Chunk& chunk, size_t i) {
-          found = found || (chunk.ticks[i] > snapshot &&
+        [&](uint64_t row, const irs::ColumnPatch::Slot& slot, size_t i) {
+          found = found || (slot.Tick(i) > snapshot &&
                             mask.Test(static_cast<irs::doc_id_t>(
                               row + irs::doc_limits::min())));
         });
@@ -482,10 +482,66 @@ void AddUnitPatch(std::vector<UnitPatch>& patches, uint64_t unit,
   MergeField(it->fields, field, type, rows, values, {&own, 1});
 }
 
+void UnitPatchBuilder::Add(
+  uint64_t unit, std::span<const uint64_t> rows,
+  absl::FunctionRef<duckdb::Vector(size_t column)> values) {
+  if (_last >= _units.size() || _units[_last].unit != unit) {
+    const auto it = absl::c_find_if(
+      _units, [&](const Unit& entry) { return entry.unit == unit; });
+    _last = static_cast<size_t>(it - _units.begin());
+    if (it == _units.end()) {
+      auto& added = _units.emplace_back(Unit{.unit = unit});
+      added.columns.reserve(_columns.size());
+      for (const auto& column : _columns) {
+        added.columns.emplace_back(column.type);
+      }
+    }
+  }
+  auto& columns = _units[_last].columns;
+  for (size_t c = 0; c != columns.size(); ++c) {
+    columns[c].Add(rows, values(c));
+  }
+}
+
+std::vector<UnitPatch> UnitPatchBuilder::Finish() && {
+  std::vector<UnitPatch> patches;
+  patches.reserve(_units.size());
+  for (auto& [unit, columns] : _units) {
+    auto& patch =
+      patches.emplace_back(UnitPatch{.unit = unit, .same_rows = true});
+    patch.fields.reserve(columns.size());
+    for (size_t c = 0; c != columns.size(); ++c) {
+      patch.fields.push_back(
+        {.field = _columns[c].field, .patch = std::move(columns[c]).Finish()});
+    }
+    absl::c_sort(patch.fields, [](const auto& lhs, const auto& rhs) {
+      return lhs.field < rhs.field;
+    });
+  }
+  _units.clear();
+  _last = 0;
+  return patches;
+}
+
+void UniteRows(UnitPatch& patch) {
+  if (patch.rows.size() < 2) {
+    return;
+  }
+  irs::DocumentMaskBuilder united;
+  for (const auto& part : patch.rows) {
+    united.Merge(*part);
+  }
+  patch.rows = {std::make_shared<const irs::DocumentMask>(
+    std::move(united).Finish(irs::DocumentMaskBuilder::kCanonical))};
+}
+
 irs::DocumentMask PatchedDocs(const UnitPatch& patch) {
   irs::DocumentMaskBuilder docs;
   for (const auto& [field, column] : patch.fields) {
     column->AddRows(docs);
+    if (patch.same_rows) {
+      break;
+    }
   }
   return std::move(docs).Finish(irs::DocumentMaskBuilder::kCanonical);
 }
@@ -505,9 +561,19 @@ void MergeUnitPatches(std::vector<UnitPatch>& into,
       into, [&](const UnitPatch& entry) { return entry.unit == patch.unit; });
     if (it == into.end()) {
       into.push_back(std::move(patch));
-    } else {
-      MergePatches(it->fields, patch.fields, 0);
+      continue;
     }
+    it->same_rows = it->same_rows && patch.same_rows &&
+                    absl::c_equal(it->fields, patch.fields,
+                                  [](const auto& lhs, const auto& rhs) {
+                                    return lhs.field == rhs.field;
+                                  });
+    if (it->same_rows && !it->rows.empty() && !patch.rows.empty()) {
+      absl::c_move(patch.rows, std::back_inserter(it->rows));
+    } else {
+      it->rows.clear();
+    }
+    MergePatches(it->fields, patch.fields, 0);
   }
 }
 
@@ -1036,6 +1102,9 @@ TableDelta Table::CommitDelta(const TableCommit& commit,
     } else {
       continue;
     }
+    target->patched = target->patches.empty() && patch.rows.size() == 1
+                        ? patch.rows.front()
+                        : nullptr;
     absl::c_copy(patch.fields, std::back_inserter(target->patches));
   }
   delta.manifest = commit.manifest;

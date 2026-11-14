@@ -57,10 +57,20 @@ class ColumnPatch final {
     uint64_t bytes = 0;
   };
 
+  struct Slot {
+    std::shared_ptr<const Chunk> chunk;
+    uint64_t tick = 0;
+
+    explicit operator bool() const noexcept { return chunk != nullptr; }
+    uint64_t Tick(size_t i) const noexcept {
+      return chunk->ticks.empty() ? tick : chunk->ticks[i];
+    }
+  };
+
   struct Group {
     explicit Group(const duckdb::LogicalType& type);
 
-    std::array<std::shared_ptr<const Chunk>, kGroupChunks> chunks;
+    std::array<Slot, kGroupChunks> chunks;
     duckdb::BaseStatistics stats;
   };
 
@@ -111,21 +121,22 @@ class ColumnPatch final {
         return;
       }
       for (size_t c = 0; c < kGroupChunks; ++c) {
-        const auto& chunk = it->second->chunks[c];
+        const auto& slot = it->second->chunks[c];
         const uint64_t chunk_row = group_row + (uint64_t{c} << kChunkShift);
-        if (!chunk || chunk_row + kChunkRows <= first) {
+        if (!slot || chunk_row + kChunkRows <= first) {
           continue;
         }
         if (chunk_row >= last) {
           return;
         }
-        for (size_t i = 0; i < chunk->offsets.size(); ++i) {
-          const uint64_t row = chunk_row + chunk->offsets[i];
+        const auto& offsets = slot.chunk->offsets;
+        for (size_t i = 0; i < offsets.size(); ++i) {
+          const uint64_t row = chunk_row + offsets[i];
           if (row >= last) {
             return;
           }
           if (row >= first) {
-            visit(row, *chunk, i);
+            visit(row, slot, i);
           }
         }
       }
@@ -136,10 +147,10 @@ class ColumnPatch final {
   void ForEachChunk(const Visit& visit) const {
     for (const auto& [group_id, group] : _groups) {
       for (size_t c = 0; c < kGroupChunks; ++c) {
-        if (const auto& chunk = group->chunks[c]) {
+        if (const auto& slot = group->chunks[c]) {
           visit((group_id << (kChunkShift + kGroupShift)) +
                   (uint64_t{c} << kChunkShift),
-                *chunk);
+                *slot.chunk);
         }
       }
     }
@@ -156,11 +167,15 @@ class ColumnPatch final {
     std::shared_ptr<const ColumnPatch> Finish() &&;
 
    private:
-    void Seal();
+    struct Building {
+      uint64_t id = 0;
+      std::array<std::shared_ptr<Chunk>, kGroupChunks> chunks;
+    };
 
-    std::shared_ptr<ColumnPatch> _patch;
-    std::shared_ptr<Group> _group;
-    uint64_t _group_id = 0;
+    Building& GroupOf(uint64_t id);
+
+    duckdb::LogicalType _type;
+    std::vector<Building> _groups;
   };
 
  private:

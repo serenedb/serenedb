@@ -84,11 +84,12 @@ void WriteValues(Writer& column, const irs::ColumnPatch& patch) {
 }
 
 void WritePatches(Writer& unit, catalog::RecordBuffer& out,
-                  std::span<const irs::FieldPatch> patches) {
+                  std::span<const irs::FieldPatch> patches,
+                  const irs::DocumentMask* patched) {
   std::vector<std::vector<const irs::FieldPatch*>> groups;
   for (const auto& field : patches) {
     const auto it = absl::c_find_if(groups, [&](const auto& group) {
-      return group.front()->patch->SameRows(*field.patch);
+      return patched || group.front()->patch->SameRows(*field.patch);
     });
     if (it == groups.end()) {
       groups.push_back({&field});
@@ -100,10 +101,15 @@ void WritePatches(Writer& unit, catalog::RecordBuffer& out,
     102, "patches", groups.size(), [&](Writer::List& list, duckdb::idx_t g) {
       const auto& group = groups[g];
       list.WriteObject([&](Writer& object) {
-        irs::DocumentMaskBuilder rows;
-        group.front()->patch->AddRows(rows);
-        WriteMask(object, out, 100, "rows",
-                  std::move(rows).Finish(irs::DocumentMaskBuilder::kCanonical));
+        if (patched) {
+          WriteMask(object, out, 100, "rows", *patched);
+        } else {
+          irs::DocumentMaskBuilder rows;
+          group.front()->patch->AddRows(rows);
+          WriteMask(
+            object, out, 100, "rows",
+            std::move(rows).Finish(irs::DocumentMaskBuilder::kCanonical));
+        }
         object.WriteList(101, "columns", group.size(),
                          [&](Writer::List& columns, duckdb::idx_t c) {
                            const auto& [field, patch] = *group[c];
@@ -124,19 +130,19 @@ void WriteUnits(Writer& object, catalog::RecordBuffer& out,
   if (units.empty()) {
     return;
   }
-  object.WriteList(field, tag, units.size(),
-                   [&](Writer::List& list, duckdb::idx_t i) {
-                     const auto& changed = units[i];
-                     list.WriteObject([&](Writer& unit) {
-                       unit.WriteProperty<uint64_t>(100, "unit", changed.unit);
-                       if (changed.deleted) {
-                         WriteMask(unit, out, 101, "deleted", *changed.deleted);
-                       }
-                       if (!changed.patches.empty()) {
-                         WritePatches(unit, out, changed.patches);
-                       }
-                     });
-                   });
+  object.WriteList(
+    field, tag, units.size(), [&](Writer::List& list, duckdb::idx_t i) {
+      const auto& changed = units[i];
+      list.WriteObject([&](Writer& unit) {
+        unit.WriteProperty<uint64_t>(100, "unit", changed.unit);
+        if (changed.deleted) {
+          WriteMask(unit, out, 101, "deleted", *changed.deleted);
+        }
+        if (!changed.patches.empty()) {
+          WritePatches(unit, out, changed.patches, changed.patched.get());
+        }
+      });
+    });
 }
 
 void WriteRows(Writer& run, const LoggedRows& rows) {

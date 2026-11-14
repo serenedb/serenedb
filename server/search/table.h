@@ -107,6 +107,7 @@ struct UnitDelta {
   uint64_t unit = 0;
   std::shared_ptr<const irs::DocumentMask> deleted;
   std::vector<irs::FieldPatch> patches;
+  std::shared_ptr<const irs::DocumentMask> patched;
 };
 
 struct TableDelta {
@@ -124,11 +125,42 @@ bool Empty(const TableDelta& delta) noexcept;
 struct UnitPatch {
   uint64_t unit = 0;
   std::vector<irs::FieldPatch> fields;
+  bool same_rows = false;
+  std::vector<std::shared_ptr<const irs::DocumentMask>> rows;
 };
+
+void UniteRows(UnitPatch& patch);
 
 void AddUnitPatch(std::vector<UnitPatch>& patches, uint64_t unit,
                   irs::field_id field, const duckdb::LogicalType& type,
                   std::span<const uint64_t> rows, const duckdb::Vector& values);
+
+class UnitPatchBuilder {
+ public:
+  struct Column {
+    irs::field_id field = 0;
+    duckdb::LogicalType type;
+  };
+
+  explicit UnitPatchBuilder(std::vector<Column> columns)
+    : _columns{std::move(columns)} {}
+
+  void Add(uint64_t unit, std::span<const uint64_t> rows,
+           absl::FunctionRef<duckdb::Vector(size_t column)> values);
+  bool Empty() const noexcept { return _units.empty(); }
+  std::vector<UnitPatch> Finish() &&;
+
+ private:
+  struct Unit {
+    uint64_t unit = 0;
+    std::vector<irs::ColumnPatch::Builder> columns;
+  };
+
+  std::vector<Column> _columns;
+  std::vector<Unit> _units;
+  size_t _last = 0;
+};
+
 irs::DocumentMask PatchedDocs(const UnitPatch& patch);
 void MergeUnitPatches(std::vector<UnitPatch>& into,
                       std::vector<UnitPatch>&& added);

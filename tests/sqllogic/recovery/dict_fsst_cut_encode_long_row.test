@@ -1,20 +1,11 @@
-# dict_fsst cut sizing: one long row lands a raw segment far past the block, at default settings.
+# dict_fsst segment sizing: one long row in a column of short repeated values.
 #
-# Before a segment is FSST-encoded only its raw DICTIONARY layout is watched, with ENCODE_HEADROOM
-# (16KB) of slack. A single long row can move that layout by much more than 16KB in one step: it adds
-# its own bytes AND re-prices the string-lengths field of every entry, whose bitpacked width jumps from
-# bits(short) to bits(long) -- here 3 -> 14 bits over ~24k entries, 33KB on its own. The encode trigger
-# then fires on a layout already past the block, and the freshly encoded segment is past it too: the
-# rows are half duplicates, so the selection buffer survives encoding, and 6-char pseudo-random tokens
-# give FSST almost nothing to shrink. The encode-time cleave must resolve that on the spot: flush the
-# segment without the long row and start the next one with it. Before the fix this segment was left
-# uncertified, FlushRewind on it was a silent no-op, and the row-group end threw
-# "dict_fsst: refusing to write a ... segment layout ... past the 262136-byte block" out of the commit.
+# A long row adds its own bytes and widens the length of every entry of its segment. The segment is
+# not cut for it: a text segment is as long as its codec needs.
 #
 # Shape: 48,000 rows over 24,000 pseudo-random 6-char values (each twice, consecutively), then one
 # 16,000-char pseudo-random printable row, then 2,000 more short rows. Default row groups (one row
-# group), default block size. Deterministic: single source, ORDER BY. The first segment must end exactly
-# before the long row.
+# group), default block size. Deterministic: single source, ORDER BY.
 
 control substitution on
 
@@ -70,7 +61,7 @@ n	max_len	rows_match
 50001	16000	t
 
 
-# dict_fsst took the column, and the first segment ends right before the long row
+# dict_fsst took the column, and one segment holds every row, the long one included
 query
 SELECT (SELECT count(*) > 0 FROM pragma_storage_info('dfel.t', include_segment_info=true)
          WHERE column_name='s' AND compression='DICT_FSST') AS has_dict_fsst,
@@ -78,7 +69,7 @@ SELECT (SELECT count(*) > 0 FROM pragma_storage_info('dfel.t', include_segment_i
          WHERE column_name='s' AND segment_type='VARCHAR' ORDER BY row_group_id, segment_id LIMIT 1) AS first_segment_rows;
 ----
 has_dict_fsst	first_segment_rows
-t	48000
+t	50001
 
 
 statement ok

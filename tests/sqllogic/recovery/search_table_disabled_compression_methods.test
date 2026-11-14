@@ -1,0 +1,142 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SET force_compression = 'rle';
+
+statement ok
+SET threads = 1;
+
+
+statement ok
+CREATE TABLE stdcm_forced (a INTEGER PRIMARY KEY, runs BIGINT)
+WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO stdcm_forced SELECT a, a // 1000 FROM range(20000) t(a);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) stdcm_forced;
+
+
+query
+SELECT DISTINCT compression FROM pragma_storage_info('stdcm_forced')
+WHERE column_name = 'runs' AND segment_type <> 'VALIDITY';
+----
+compression
+RLE
+
+
+statement ok
+SET disabled_compression_methods = 'rle';
+
+
+statement ok
+CREATE TABLE stdcm_disabled (a INTEGER PRIMARY KEY, runs BIGINT, tags INTEGER[])
+WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO stdcm_disabled SELECT a, a // 1000, [a // 1000, 7] FROM range(20000) t(a);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) stdcm_disabled;
+
+
+query
+SELECT count(*) AS rle_segments FROM pragma_storage_info('stdcm_disabled')
+WHERE compression = 'RLE';
+----
+rle_segments
+0
+
+
+query
+SELECT count(*) AS mismatches FROM stdcm_disabled
+WHERE runs IS DISTINCT FROM a // 1000 OR tags IS DISTINCT FROM [a // 1000, 7];
+----
+mismatches
+0
+
+
+statement ok
+RESET force_compression;
+
+
+statement ok
+CREATE TABLE stdcm_auto (a INTEGER PRIMARY KEY, runs BIGINT, tags INTEGER[])
+WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO stdcm_auto SELECT a, a // 1000, [a // 1000, 7] FROM range(20000) t(a);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) stdcm_auto;
+
+
+query
+SELECT count(*) AS rle_segments FROM pragma_storage_info('stdcm_auto')
+WHERE compression = 'RLE';
+----
+rle_segments
+0
+
+
+query
+SELECT count(*) AS mismatches FROM stdcm_auto
+WHERE runs IS DISTINCT FROM a // 1000 OR tags IS DISTINCT FROM [a // 1000, 7];
+----
+mismatches
+0
+
+
+query
+SELECT count(*) AS differing_segments
+FROM (SELECT column_path, segment_type, string_agg(DISTINCT compression, ',' ORDER BY compression) AS compression
+      FROM pragma_storage_info('stdcm_disabled') GROUP BY ALL) AS forced
+FULL JOIN (SELECT column_path, segment_type, string_agg(DISTINCT compression, ',' ORDER BY compression) AS compression
+           FROM pragma_storage_info('stdcm_auto') GROUP BY ALL) AS plain
+USING (column_path, segment_type)
+WHERE forced.compression IS DISTINCT FROM plain.compression;
+----
+differing_segments
+0
+
+
+statement ok
+RESET disabled_compression_methods;
+
+
+statement ok
+SET disabled_compression_methods = 'dictionary,rle';
+
+
+statement ok
+CREATE TABLE stdcm_foreign (a INTEGER PRIMARY KEY, runs BIGINT)
+WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO stdcm_foreign SELECT a, a // 1000 FROM range(20000) t(a);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) stdcm_foreign;
+
+
+query
+SELECT count(*) AS rle_segments,
+       (SELECT count(*) FROM stdcm_foreign WHERE runs IS DISTINCT FROM a // 1000) AS mismatches
+FROM pragma_storage_info('stdcm_foreign')
+WHERE compression = 'RLE';
+----
+rle_segments	mismatches
+0	0
+
+
+statement ok
+RESET disabled_compression_methods;

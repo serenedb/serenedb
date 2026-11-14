@@ -38,6 +38,7 @@
 #include <duckdb/planner/expression.hpp>
 #include <duckdb/storage/storage_info.hpp>
 #include <duckdb/storage/table_storage_info.hpp>
+#include <iresearch/formats/column/codecs/codec_type.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/types.hpp>
 #include <memory>
@@ -101,6 +102,14 @@ inline constexpr auto kSearchTableOptions = std::to_array({
 });
 
 void RequireSearchTableIndexOption(std::string_view name);
+irs::codecs::CodecType CheckColumnCodec(std::string_view column_name,
+                                        std::string_view codec_name,
+                                        uint32_t level,
+                                        const duckdb::LogicalType& column_type);
+irs::codecs::CodecType CheckColumnCodec(std::string_view column_name,
+                                        duckdb::CompressionType compression,
+                                        uint32_t level,
+                                        const duckdb::LogicalType& column_type);
 
 struct TableOption {
   std::string_view name;
@@ -237,6 +246,8 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry {
     duckdb::ClientContext& context, duckdb::ChangeColumnTypeInfo& info);
   duckdb::unique_ptr<duckdb::CatalogEntry> AlterOptions(
     duckdb::ClientContext& context, duckdb::AlterTableInfo& info);
+  duckdb::unique_ptr<duckdb::CatalogEntry> AlterColumnCompression(
+    duckdb::ClientContext& context, duckdb::SetColumnCompressionInfo& info);
 
   duckdb::unique_ptr<duckdb::Expression> BindConversion(
     duckdb::Binder& binder, duckdb::ClientContext& context,

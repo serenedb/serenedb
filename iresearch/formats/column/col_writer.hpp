@@ -22,20 +22,25 @@
 
 #include <absl/functional/function_ref.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <duckdb/common/types/vector.hpp>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 #include <yaclib/async/future.hpp>
 
+#include "iresearch/formats/ann_build_env.hpp"
+#include "iresearch/formats/ann_writer.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/column_writer.hpp"
 #include "iresearch/formats/column/internal/write_context.hpp"
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/formats/hnsw/hnsw_bases.hpp"
+#include "iresearch/formats/index/idx_writer.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/store/directory.hpp"
@@ -44,14 +49,10 @@
 
 namespace irs {
 
-class AnnWriter;
-class IdxWriter;
-struct AnnBuildEnv;
-
 class ColWriter final {
  public:
   ColWriter(Directory& dir, std::string_view segment_name,
-            duckdb::DatabaseInstance& db);
+            duckdb::DatabaseInstance& db, WriteTier tier = WriteTier::Flush);
   ~ColWriter();
 
   ColWriter(const ColWriter&) = delete;
@@ -73,10 +74,7 @@ class ColWriter final {
   ColumnWriter& OpenColumn(field_id id, duckdb::LogicalType type);
 
   ColumnWriter& OpenColumn(field_id id, duckdb::LogicalType type,
-                           bool skip_validity, uint32_t row_group_size,
-                           duckdb::CompressionType compression =
-                             duckdb::CompressionType::COMPRESSION_AUTO,
-                           DistinctStats distinct = DistinctStats::None);
+                           ColumnWriterOptions options);
 
   AnnWriter& AttachAnn(field_id column_id, AnnInfo info);
 
@@ -100,7 +98,6 @@ class ColWriter final {
   void Rollback() noexcept;
 
   WriteContext& WriteCtx() const noexcept { return *_write_ctx; }
-  IndexOutput& Out() const noexcept { return *_out; }
   duckdb::DatabaseInstance& Database() const noexcept { return *_db; }
 
  private:
@@ -110,28 +107,31 @@ class ColWriter final {
     std::unique_ptr<AnnWriter> writer;
   };
 
+  struct ColumnEntry {
+    std::unique_ptr<ColumnWriter> writer;
+    ColumnMeta meta;
+  };
+
+  static void Close(ColumnEntry& entry);
+
   void EnsureOut();
   NormColumnWriter& AddNormColumn(field_id id, uint32_t row_group_size);
   bool Empty() const noexcept;
-  ColumnWriter& OpenColumnInternal(field_id id, duckdb::LogicalType type,
-                                   bool skip_validity, uint32_t row_group_size,
-                                   duckdb::CompressionType forced,
-                                   DistinctStats distinct);
 
   Directory* _dir;
   std::string _segment_name;
-  std::string _filename;
   duckdb::DatabaseInstance* _db;
+  WriteTier _tier;
   const IndexFieldOptions* _field_options = nullptr;
   HnswBases* _hnsw_bases = nullptr;
   IndexOutput::ptr _out;
   std::unique_ptr<WriteContext> _write_ctx;
-  std::vector<std::unique_ptr<ColumnWriter>> _columns;
-  irs::containers::FlatHashMap<field_id, ColumnWriter*> _by_id;
+  std::vector<ColumnEntry> _columns;
+  irs::containers::FlatHashMap<field_id, size_t> _by_id;
   std::vector<std::unique_ptr<NormColumnWriter>> _norms;
   irs::containers::FlatHashMap<field_id, NormColumnWriter*> _norm_by_id;
-  std::vector<std::unique_ptr<AnnEntry>> _ann_writers;
-  irs::containers::FlatHashMap<field_id, AnnEntry*> _ann_by_id;
+  std::vector<AnnEntry> _ann_writers;
+  irs::containers::FlatHashMap<field_id, size_t> _ann_by_id;
   bool _committed = false;
   bool _deferred = false;
 };

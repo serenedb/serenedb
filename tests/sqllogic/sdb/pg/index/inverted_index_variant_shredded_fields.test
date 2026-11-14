@@ -1,0 +1,169 @@
+statement ok
+CREATE TABLE vsf_fresh (pk INTEGER PRIMARY KEY, meta VARIANT) WITH (compaction_interval = 0);
+
+statement ok
+CREATE INDEX vsf_fresh_idx ON vsf_fresh USING inverted(pk) INCLUDE (meta);
+
+statement ok
+INSERT INTO vsf_fresh SELECT i, {'rank': i}::VARIANT FROM range(10) t(i);
+
+query
+SELECT count(*) AS sevens FROM vsf_fresh_idx WHERE (meta.rank)::BIGINT = 7;
+----
+sevens
+1
+
+query
+SELECT pk, (meta.rank)::BIGINT AS rank FROM vsf_fresh_idx WHERE pk IN (6, 7) ORDER BY pk;
+----
+pk	rank
+6	6
+7	7
+
+statement ok
+VACUUM (FLUSH_TABLE) vsf_fresh;
+
+statement ok
+UPDATE vsf_fresh SET meta = {'rank': 70}::VARIANT WHERE pk = 6;
+
+query
+SELECT pk, (meta.rank)::BIGINT AS rank FROM vsf_fresh_idx WHERE pk IN (6, 7) ORDER BY pk;
+----
+pk	rank
+6	70
+7	7
+
+query
+SELECT count(*) AS seventies FROM vsf_fresh_idx WHERE (meta.rank)::BIGINT = 70;
+----
+seventies
+1
+
+statement ok
+DROP TABLE vsf_fresh;
+
+statement ok
+CREATE TABLE vsf (pk INTEGER PRIMARY KEY, txt VARCHAR, meta VARIANT)
+  WITH (row_group_size = 32768, compaction_interval = 0);
+
+statement ok
+CREATE INDEX vsf_idx ON vsf USING inverted(pk, txt) INCLUDE (meta);
+
+statement ok
+SET threads = 1;
+
+statement ok
+INSERT INTO vsf
+SELECT i, 'w' || (i % 7)::VARCHAR,
+       {'rank': i, 'label': 'f' || (i % 100)::VARCHAR}::VARIANT
+FROM range(37768) t(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) vsf;
+
+query
+SELECT count(DISTINCT segment_type) AS typed_leaves
+FROM pragma_storage_info('vsf_idx')
+WHERE column_name = 'meta' AND segment_type = 'BIGINT';
+----
+typed_leaves
+1
+
+query
+SELECT pk, (meta.rank)::BIGINT AS rank, (meta.label)::VARCHAR AS label
+FROM vsf_idx WHERE pk IN (5, 32767, 32768, 37767) ORDER BY pk;
+----
+pk	rank	label
+5	5	f5
+32767	32767	f67
+32768	32768	f68
+37767	37767	f67
+
+query
+SELECT pk, (meta.rank)::INTEGER AS rank, (meta.rank)::VARCHAR AS digits
+FROM vsf_idx WHERE pk IN (5, 32767, 32768, 37767) ORDER BY pk;
+----
+pk	rank	digits
+5	5	5
+32767	32767	32767
+32768	32768	32768
+37767	37767	37767
+
+query
+SELECT count(*) AS above FROM vsf_idx WHERE (meta.rank)::BIGINT > 32767;
+----
+above
+5000
+
+query
+SELECT sum((meta.rank)::BIGINT) AS ranks, sum((meta.rank)::DOUBLE)::BIGINT AS doubles,
+       min((meta.label)::VARCHAR) AS first, max((meta.label)::VARCHAR) AS last, count(*) AS rows
+FROM vsf_idx;
+----
+ranks	doubles	first	last	rows
+713192028	713192028	f0	f99	37768
+
+query
+SELECT sum((meta.rank)::BIGINT) AS ranks, count(*) AS rows FROM vsf_idx WHERE txt = 'w3';
+----
+ranks	rows
+101868390	5395
+
+query
+SELECT count((meta.missing)::BIGINT) AS present, count(*) AS rows FROM vsf_idx;
+----
+present	rows
+0	37768
+
+query
+SELECT sum(length(meta::VARCHAR)) AS characters, count(*) AS rows FROM vsf_idx;
+----
+characters	rows
+1080382	37768
+
+query
+SELECT sum(length(meta::VARCHAR)) AS characters, count(*) AS rows FROM vsf;
+----
+characters	rows
+1080382	37768
+
+query
+SELECT pk, meta FROM vsf_idx WHERE pk IN (5, 32767, 32768, 37767) ORDER BY pk;
+----
+pk	meta
+5	{"label":"f5","rank":5}
+32767	{"label":"f67","rank":32767}
+32768	{"label":"f68","rank":32768}
+37767	{"label":"f67","rank":37767}
+
+statement ok
+INSERT INTO vsf
+SELECT 100000 + i, 'tail', {'rank': 100000 + i, 'label': 'tail'}::VARIANT
+FROM range(10) t(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) vsf;
+
+query
+SELECT count(*) AS above FROM vsf_idx WHERE (meta.rank)::BIGINT > 50000;
+----
+above
+10
+
+query
+SELECT pk, (meta.rank)::BIGINT AS rank, (meta.label)::VARCHAR AS label
+FROM vsf_idx WHERE pk >= 100008 ORDER BY pk;
+----
+pk	rank	label
+100008	100008	tail
+100009	100009	tail
+
+query
+SELECT min((meta.rank)::BIGINT) AS lowest, max((meta.rank)::BIGINT) AS highest, count(*) AS rows
+FROM vsf_idx;
+----
+lowest	highest	rows
+0	100009	37778
+
+statement ok
+DROP TABLE vsf;

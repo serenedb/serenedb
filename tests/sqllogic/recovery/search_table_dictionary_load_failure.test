@@ -1,0 +1,114 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE dlf (id INT PRIMARY KEY, body TEXT USING COMPRESSION dict_zstd)
+  WITH (compaction_interval = 0,
+        row_group_size = 8192);
+
+
+statement ok
+INSERT INTO dlf SELECT i, md5(i::text) || md5((i + 1)::text) || md5((i + 2)::text) || md5((i + 3)::text)
+FROM generate_series(1, 32768) s(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) dlf;
+
+
+statement ok
+INSERT INTO dlf SELECT i, md5(i::text) || md5((i + 1)::text) || md5((i + 2)::text) || md5((i + 3)::text)
+FROM generate_series(32769, 65536) s(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) dlf;
+
+
+statement ok
+DELETE FROM dlf WHERE id IN (1, 65536);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) dlf;
+
+
+statement ok
+VACUUM (COMPACT_TABLE) dlf;
+
+
+query
+SELECT value AS segments FROM sdb_metrics
+WHERE relation_id = 'dlf'::regclass AND metric = 'num_segments';
+----
+segments
+1
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry 60 backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM dlf;
+----
+n
+65534
+
+
+connection after_crash
+statement ok
+SET sdb_faults = 'SearchIncludeFetchFault';
+
+
+connection after_crash
+statement error
+SELECT sum(length(body)) AS bytes FROM dlf;
+----
+db error: ERROR: intentional debug error
+
+
+connection after_crash
+statement error
+SELECT sum(length(body)) AS bytes FROM dlf;
+----
+db error: ERROR: intentional debug error
+
+
+connection after_crash
+statement ok
+RESET sdb_faults;
+
+
+connection after_crash
+query
+SELECT sum(length(body)) AS bytes FROM dlf;
+----
+bytes
+8388352
+
+
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+
+connection after_second_crash
+query ok retry 60 backoff $BACKOFF_DURATION
+SELECT sum(length(body)) AS bytes, count(*) AS n FROM dlf;
+----
+bytes	n
+8388352	65534

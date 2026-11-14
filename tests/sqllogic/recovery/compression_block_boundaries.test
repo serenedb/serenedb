@@ -13,10 +13,9 @@
 #
 #   bitpacking  BIGINT magnitude staircase stepping 18 bits per 100k rows, then a 2^62 spike late
 #   rle         long runs collapsing to run-length-1 near the boundary, NULLs threaded through
-#   dictionary  the dict_fsst defect-4 shape (127 distinct values, then the 128th at ~292k rows).
-#               Legacy Dictionary is subsumed by DICT_FSST in this fork: forcing it FALLS BACK to
-#               Uncompressed, and this file pins that fallback so a silent revival gets noticed.
-#   fsst        all-unique strings with late length spikes. Same subsumption, same pinned fallback.
+#   dictionary  127 distinct values, then the 128th at ~292k rows. The columnstore has no codec of
+#               this name, so the writer chooses as under auto, and this file pins that it compresses.
+#   fsst        all-unique strings with late length spikes
 #   zstd        compressible prose flipping to incompressible digest soup near the boundary
 #   uncompressed strings crossing many blocks with a 60KB value dropped mid-stream
 #   alp         ALP-friendly decimals with a late burst of high-entropy exceptions
@@ -221,13 +220,12 @@ zstd	150000	t
 
 # the pins took effect: each column actually carries its forced codec (Constant may appear on
 # constant stretches; the forced codec must be present), and roaring landed on the VALIDITY layer.
-# Legacy 'dictionary' and 'fsst' are subsumed by DICT_FSST here, so forcing them falls back to
-# Uncompressed -- pinned as such; if either codec is ever revived these rows flip and say so.
+# 'dictionary' names no columnstore codec: that column is compressed with a codec of the writer's choice.
 query
 SELECT 'bitpacking' AS codec, bool_or(compression = 'BitPacking') AS used FROM pragma_storage_info('cbb.t_bitpacking', include_segment_info=true) WHERE column_name='v' AND segment_type != 'VALIDITY'
 UNION ALL SELECT 'rle', bool_or(compression = 'RLE') FROM pragma_storage_info('cbb.t_rle', include_segment_info=true) WHERE column_name='v' AND segment_type != 'VALIDITY'
-UNION ALL SELECT 'dictionary_fallback', bool_or(compression = 'Uncompressed') AND NOT bool_or(compression = 'Dictionary') FROM pragma_storage_info('cbb.t_dictionary', include_segment_info=true) WHERE column_name='v' AND segment_type != 'VALIDITY'
-UNION ALL SELECT 'fsst_fallback', bool_or(compression = 'Uncompressed') AND NOT bool_or(compression = 'FSST') FROM pragma_storage_info('cbb.t_fsst', include_segment_info=true) WHERE column_name='v' AND segment_type != 'VALIDITY'
+UNION ALL SELECT 'dictionary_left_to_writer', NOT bool_or(compression IN ('Uncompressed', 'Dictionary')) FROM pragma_storage_info('cbb.t_dictionary', include_segment_info=true) WHERE column_name='v' AND segment_type != 'VALIDITY'
+UNION ALL SELECT 'fsst', bool_or(compression = 'FSST') FROM pragma_storage_info('cbb.t_fsst', include_segment_info=true) WHERE column_name='v' AND segment_type != 'VALIDITY'
 UNION ALL SELECT 'zstd', bool_or(compression = 'ZSTD') FROM pragma_storage_info('cbb.t_zstd', include_segment_info=true) WHERE column_name='v' AND segment_type != 'VALIDITY'
 UNION ALL SELECT 'uncompressed', bool_or(compression = 'Uncompressed') FROM pragma_storage_info('cbb.t_uncompressed', include_segment_info=true) WHERE column_name='v' AND segment_type != 'VALIDITY'
 UNION ALL SELECT 'alp', bool_or(compression = 'ALP') FROM pragma_storage_info('cbb.t_alp', include_segment_info=true) WHERE column_name='v' AND segment_type != 'VALIDITY'
@@ -239,8 +237,8 @@ codec	used
 alp	t
 alprd	t
 bitpacking	t
-dictionary_fallback	t
-fsst_fallback	t
+dictionary_left_to_writer	t
+fsst	t
 rle	t
 roaring	t
 uncompressed	t

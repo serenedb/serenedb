@@ -27,12 +27,18 @@
 #include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/types/vector_cache.hpp>
+#include <duckdb/common/vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
+#include <duckdb/common/vector/unified_vector_format.hpp>
+#include <duckdb/storage/statistics/distinct_statistics.hpp>
+#include <memory>
 #include <span>
 #include <vector>
 
+#include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/internal/write_context.hpp"
+#include "iresearch/formats/column/list_ingest.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_output.hpp"
@@ -42,10 +48,7 @@ namespace irs {
 
 class ColWriter;
 
-struct WriteChunk {
-  duckdb::Vector data;
-  duckdb::idx_t count;
-};
+void EmitEmptyValidity(uint64_t rows, std::vector<ColumnBlockMeta>& sink);
 
 void UpdateDistinct(duckdb::DistinctStatistics& distinct, DistinctStats mode,
                     const duckdb::Vector& values, duckdb::idx_t count,
@@ -58,12 +61,18 @@ struct StagedColumn {
   DistinctStats distinct = DistinctStats::None;
 };
 
+struct ColumnWriterOptions {
+  bool skip_validity = false;
+  uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
+  codecs::CodecType compression = codecs::CodecType::Auto;
+  DistinctStats distinct = DistinctStats::None;
+  ColCodecParams codec_params;
+};
+
 class ColumnWriter final {
  public:
   ColumnWriter(ColWriter& owner, field_id id, duckdb::LogicalType type,
-               bool skip_validity, uint32_t row_group_size,
-               duckdb::CompressionType forced, DistinctStats distinct,
-               bool deferred);
+               const ColumnWriterOptions& options, bool deferred);
 
   ColumnWriter(const ColumnWriter&) = delete;
   ColumnWriter& operator=(const ColumnWriter&) = delete;
@@ -97,21 +106,28 @@ class ColumnWriter final {
   std::vector<WriteChunk> Snapshot(uint64_t rows) const;
   size_t StagedBytes() const noexcept;
 
+  void Finish() { SealRowGroup(); }
+
   void SetDistinct(duckdb::shared_ptr<duckdb::DistinctStatistics> distinct);
 
-  field_id Id() const noexcept { return _id; }
   const duckdb::LogicalType& Type() const noexcept { return _type; }
   const ColumnMeta& Meta() const noexcept { return _meta; }
 
  private:
   friend class ColWriter;
 
-  void AppendDense(const duckdb::Vector& vec, duckdb::idx_t count);
-  void PadNestedNulls(uint64_t count);
+  template<typename Fill>
+  void Stage(uint64_t count, Fill&& fill);
+  void AppendList(const duckdb::Vector& vec, duckdb::idx_t count);
+  void AppendStruct(const duckdb::Vector& vec, duckdb::idx_t count);
   WriteChunk& OpenChunk();
+  bool IngestsList() const noexcept {
+    return !_ingest.empty() &&
+           _type.InternalType() == duckdb::PhysicalType::LIST;
+  }
 
   bool LayoutMatches(const ColumnReader& column) const noexcept;
-  duckdb::CompressionType ForcedCodec() const;
+  codecs::CodecType ForcedCodec() const;
   bool ValidityCopyable(const ColumnReader& column, uint64_t first,
                         uint64_t end) const noexcept;
   void CopyBlock(const ColumnBlockMeta& block, ReadContext& source,
@@ -124,58 +140,85 @@ class ColumnWriter final {
                   uint64_t first, uint64_t count);
 
   void SealRowGroup();
+  void SealStaged(std::span<WriteChunk> chunks, uint64_t rows);
 
-  duckdb::optional_ptr<const duckdb::CompressionFunction> PickCodec(
-    const duckdb::LogicalType& codec_type, std::span<WriteChunk> chunks,
-    duckdb::CompressionType forced,
-    duckdb::unique_ptr<duckdb::AnalyzeState>& out_state);
+  template<typename Encode>
+  uint64_t WriteBlocks(const codecs::CompressionFunction& function,
+                       const duckdb::LogicalType& type,
+                       std::vector<ColumnBlockMeta>& sink, Encode&& encode);
 
-  void Compress(const duckdb::CompressionFunction& picked,
-                duckdb::unique_ptr<duckdb::AnalyzeState> state,
-                const duckdb::LogicalType& codec_type,
-                std::span<WriteChunk> chunks,
-                std::vector<ColumnBlockMeta>& sink);
+  uint64_t Compress(const codecs::CompressionFunction& function,
+                    const duckdb::LogicalType& type,
+                    std::span<const WriteChunk> chunks,
+                    std::vector<ColumnBlockMeta>& sink);
+
+  void CompressData(const duckdb::LogicalType& type,
+                    std::span<const WriteChunk> chunks,
+                    codecs::CodecType method,
+                    std::vector<ColumnBlockMeta>& sink);
+
+  void CompressStrings(const duckdb::LogicalType& type,
+                       std::span<const WriteChunk> chunks,
+                       std::vector<ColumnBlockMeta>& sink);
+
+  void CompressPlain(const duckdb::LogicalType& type, codecs::CodecType codec,
+                     std::span<WriteChunk> chunks,
+                     std::vector<ColumnBlockMeta>& sink);
+
+  bool SealString(const duckdb::LogicalType& type, std::span<WriteChunk> chunks,
+                  uint64_t row_count, ColumnMeta& meta);
+
+  void SealNumeric(const duckdb::LogicalType& type,
+                   std::span<WriteChunk> chunks, uint64_t row_count,
+                   ColumnMeta& meta);
 
   void SealValidity(std::span<WriteChunk> chunks, uint64_t row_count,
                     std::vector<ColumnBlockMeta>& sink);
+
+  void Claim(ColumnMeta& meta, const duckdb::LogicalType& type) const;
 
   void SealNestedValidity(std::span<WriteChunk> chunks, uint64_t row_count,
                           bool skip_validity, size_t child_count,
                           ColumnMeta& meta);
 
   void SealStruct(const duckdb::LogicalType& type, std::span<WriteChunk> chunks,
-                  uint64_t row_count, bool skip_validity,
-                  duckdb::CompressionType forced, ColumnMeta& meta);
+                  uint64_t row_count, bool skip_validity, ColumnMeta& meta,
+                  std::span<const std::unique_ptr<ListIngest>> ingest);
 
   void SealArray(const duckdb::LogicalType& type, std::span<WriteChunk> chunks,
-                 uint64_t row_count, bool skip_validity,
-                 duckdb::CompressionType forced, ColumnMeta& meta);
+                 uint64_t row_count, bool skip_validity, ColumnMeta& meta);
 
   void SealList(const duckdb::LogicalType& type, std::span<WriteChunk> chunks,
-                uint64_t row_count, bool skip_validity,
-                duckdb::CompressionType forced, ColumnMeta& meta);
+                uint64_t row_count, bool skip_validity, ColumnMeta& meta);
+
+  void SealListParts(const duckdb::LogicalType& type,
+                     std::span<WriteChunk> chunks, uint64_t row_count,
+                     bool skip_validity, ListIngest& ingest, ColumnMeta& meta);
 
   void SealVariant(const duckdb::LogicalType& type,
                    std::span<WriteChunk> chunks, uint64_t row_count,
-                   bool skip_validity, duckdb::CompressionType forced,
-                   ColumnMeta& meta);
+                   bool skip_validity, ColumnMeta& meta);
 
   void SealColumn(const duckdb::LogicalType& type, std::span<WriteChunk> chunks,
-                  uint64_t row_count, bool skip_validity,
-                  duckdb::CompressionType forced, ColumnMeta& meta);
+                  uint64_t row_count, bool skip_validity, ColumnMeta& meta,
+                  std::span<const std::unique_ptr<ListIngest>> ingest = {});
 
   WriteContext& WriteCtx() const noexcept;
-  IndexOutput& Out() const noexcept;
 
   ColWriter* _owner;
   field_id _id;
   duckdb::LogicalType _type;
   bool _skip_validity = false;
+  bool _ingest_lists = false;
   uint32_t _row_group_size = 0;
-  duckdb::CompressionType _forced = duckdb::CompressionType::COMPRESSION_AUTO;
+  codecs::CodecType _named = codecs::CodecType::Auto;
+  codecs::CodecType _method = codecs::CodecType::Auto;
+  codecs::CodecType _global_method = codecs::CodecType::Auto;
+  codecs::CodecSet _disabled;
+
+  ColCodecParams _codec_params;
   std::vector<WriteChunk> _staged;
   std::vector<duckdb::VectorCache> _staged_caches;
-  bool _is_nested = false;
   std::unique_ptr<duckdb::Vector> _null_pad;
   duckdb::idx_t _staged_chunks = 0;
   uint64_t _staged_rows = 0;
@@ -185,6 +228,8 @@ class ColumnWriter final {
   duckdb::Vector _distinct_hashes{duckdb::LogicalType::HASH, nullptr};
   int64_t _variant_min_shred_size = -1;
   duckdb::LogicalType _force_variant_shredding;
+  std::vector<std::unique_ptr<ListIngest>> _ingest;
+  std::vector<duckdb::UnifiedVectorFormat> _field_rows;
   ColumnMeta _meta;
 };
 

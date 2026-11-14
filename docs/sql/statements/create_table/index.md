@@ -116,7 +116,7 @@ It is not possible to create tables using CTAS statements with constraints (prim
 | `compaction_floor_segment_bytes` | `2097152` (2 MB) | Segments smaller than this count as equal-sized when choosing what to merge |
 | `segment_memory_max` | `268435456` (256 MB) | Committed rows, deletes and in-place updates the table holds in memory before writing them to disk; below 4 GiB |
 | `row_group_size` | `122880` | Rows in a row group of the table's columns; a multiple of 2048 |
-| `block_size` | `262144` | Size in bytes of the blocks the table's columns are compressed in; a power of two from 16384 to 262144 |
+| `block_size` | `262144` | Sets the size of the segments the table's text columns are compressed in, about twice this many bytes; a power of two from 16384 to 262144 |
 | `optimize_top_k` | — | Scorer expression enabling top-K (WAND) pruning, e.g. `'bm25(1.2, 0.75)'` |
 
 The settings of the same names give the defaults of a new table, and the `default_block_size` setting that of `block_size`; `row_group_size` and `block_size` take the database's `ROW_GROUP_SIZE` and `BLOCK_SIZE` first (see [`CREATE DATABASE`](../create_database/index.md#storage-options)). The four `compaction_*` options can be changed later with [`ALTER TABLE ... SET` and `RESET`](../alter_table/index.md#set--reset-table-options); the others are fixed when the table is created. Any other option fails with `unrecognized parameter "<name>"`. See [Maintenance](../../indexes/inverted/maintenance.md) for what the options trade.

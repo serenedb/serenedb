@@ -20,36 +20,25 @@
 
 #pragma once
 
-#include <tuple>
-#include <utility>
+#include <memory>
+#include <new>
+#include <type_traits>
+#include <vector>
 
-#include "iresearch/search/filters/wildcard_ngram_filter.hpp"
-#include "iresearch/utils/type_limits.hpp"
+namespace irs {
 
-namespace irs::detail {
+template<typename T>
+struct DefaultInitAllocator : std::allocator<T> {
+  using std::allocator<T>::allocator;
 
-template<typename NGrams>
-class WildcardNGramSlots {
- public:
-  using Recipe = WildcardNGramQuery::Recipe;
-
-  template<typename NGramsArgs>
-  WildcardNGramSlots(std::piecewise_construct_t, NGramsArgs&& ngrams,
-                     const Recipe& recipe)
-    : _ngrams{std::make_from_tuple<NGrams>(std::forward<NGramsArgs>(ngrams))},
-      _pattern{recipe.Make()} {}
-
-  doc_id_t Seek(doc_id_t target) { return _ngrams.Seek(target); }
-
-  doc_id_t Next(doc_id_t) { return _ngrams.Next(); }
-
-  doc_id_t Probe(doc_id_t target) { return _ngrams.Probe(target); }
-
-  bool Match(doc_id_t doc) { return _pattern.Check(doc); }
-
- private:
-  NGrams _ngrams;
-  WildcardNGramVerifier _pattern;
+  template<typename U>
+  // NOLINTNEXTLINE(readability-identifier-naming)
+  void construct(U* p) noexcept(std::is_nothrow_default_constructible_v<U>) {
+    ::new (static_cast<void*>(p)) U;
+  }
 };
 
-}  // namespace irs::detail
+template<typename T>
+using ScratchVector = std::vector<T, DefaultInitAllocator<T>>;
+
+}  // namespace irs

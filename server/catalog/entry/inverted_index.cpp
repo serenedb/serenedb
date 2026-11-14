@@ -251,15 +251,16 @@ std::vector<std::string> ParseKeyColumns(
 
 irs::ColumnOptions InvertedIndexConfig::GetColumnOptions(
   irs::field_id id) const {
-  auto declared = duckdb::CompressionType::COMPRESSION_AUTO;
+  DeclaredCodec declared;
   if (const auto it = declared_compression.find(id);
       it != declared_compression.end()) {
     declared = it->second;
   }
   if (const auto* entry = FindEntry(id)) {
     auto options = entry->column_options;
-    if (options.compression == duckdb::CompressionType::COMPRESSION_AUTO) {
-      options.compression = declared;
+    if (options.compression == irs::codecs::CodecType::Auto) {
+      options.compression = declared.type;
+      options.compression_level = declared.compression_level;
     }
     return options;
   }
@@ -271,20 +272,25 @@ irs::ColumnOptions InvertedIndexConfig::GetColumnOptions(
       if (!included || !included->IsStored()) {
         continue;
       }
-      distinct = std::max(distinct, included->column_options.distinct);
-      if (declared == duckdb::CompressionType::COMPRESSION_AUTO) {
-        declared = included->column_options.compression;
+      const auto& options = included->column_options;
+      distinct = std::max(distinct, options.distinct);
+      if (options.compression != irs::codecs::CodecType::Auto) {
+        declared.type = options.compression;
+        declared.compression_level = options.compression_level;
       }
     }
-    if (declared == duckdb::CompressionType::COMPRESSION_AUTO) {
+    if (declared.type == irs::codecs::CodecType::Auto) {
       for (const auto ann : AnnFields(id)) {
-        if (const auto compression = FindEntry(ann)->column_options.compression;
-            compression != duckdb::CompressionType::COMPRESSION_AUTO) {
-          declared = compression;
+        if (const auto& options = FindEntry(ann)->column_options;
+            options.compression != irs::codecs::CodecType::Auto) {
+          declared.type = options.compression;
+          declared.compression_level = options.compression_level;
         }
       }
     }
-    return {.compression = declared, .distinct = distinct};
+    return {.compression = declared.type,
+            .distinct = distinct,
+            .compression_level = declared.compression_level};
   }
   // The pk column is written for every row of every segment, so its validity
   // bitmap is always full. So is a sub-field's: it is only written where its

@@ -1,19 +1,10 @@
-# dict_fsst cut sizing: the rewind, under every candidate a segment can have committed to.
+# Text segment sizing when a column loses all-unique at its very end, on three shapes.
 #
-# fit_rows certifies a segment size FOR THE CANDIDATE it was measured under. When a later row pushes
-# the segment over the block the cut rewinds to that checkpoint and moves the excess rows to the next
-# segment -- which restores the exact state the certificate was taken in, INCLUDING all-unique when
-# the offending row is among the ones moved out. If the commitment has been poisoned in between (the
-# flip kills the row candidate), flushing under it writes a layout the certificate never priced:
-# sorted needs a per-row selection buffer the row cut did not pay for. FlushRewind therefore restores
-# fit_commit, the commitment the certificate belongs to.
+#   row order    -- row-ORDER neighbours share a prefix
+#   sorted order -- only SORTED neighbours share a prefix
+#   native       -- the same rows in an attached DuckDB file
 #
-# The three commitments reachable here, one shape each:
-#   PLUS_ROW    -- row-ORDER neighbours share a prefix, so the row cleave wins (no selection buffer)
-#   PLUS_SORTED -- only SORTED neighbours share a prefix, so the row cleave has nothing to group
-#   PLAIN       -- native attach, allow_plus false, so every cut runs CutPlain instead
-#
-# Each is driven over the block by a duplicate and again by a NULL, since both end all-unique.
+# Each is driven by a duplicate and again by a NULL, since both end all-unique.
 
 control substitution on
 
@@ -26,7 +17,7 @@ statement ok
 ATTACH '${__TEST_DIR__}/dfc_rewind_native.db' AS dfcn (TYPE duckdb);
 
 
-# --- PLUS_ROW: row-order neighbours share the 'cNNNNNNN<US>' prefix, all values unique ------------
+# --- row order: row-order neighbours share the 'cNNNNNNN<US>' prefix, all values unique ----------
 statement ok
 CREATE TABLE dfc.row_dup AS
   SELECT ord, CASE WHEN ord = 25000
@@ -42,7 +33,7 @@ CREATE TABLE dfc.row_null AS
   FROM range(25001) t(ord) ORDER BY ord;
 
 
-# the flip lands EARLY, so the rewind target is far behind the overshoot
+# the flip lands EARLY
 statement ok
 CREATE TABLE dfc.row_early_flip AS
   SELECT ord, CASE WHEN ord = 12000
@@ -51,7 +42,7 @@ CREATE TABLE dfc.row_early_flip AS
   FROM range(25001) t(ord) ORDER BY ord;
 
 
-# --- PLUS_SORTED: the prefix families exist only in sorted order, so row order cannot group --------
+# --- sorted order: the prefix families exist only in sorted order --------------------------------
 # ord is shuffled by hash so consecutive rows land in different families
 statement ok
 CREATE TABLE dfc.sorted_dup AS
@@ -68,7 +59,7 @@ CREATE TABLE dfc.sorted_null AS
   FROM range(25001) t(ord) ORDER BY hash(ord);
 
 
-# --- PLAIN: native storage, so the plus candidates never enter the decision -----------------------
+# --- native storage: DuckDB's dict_fsst, which cuts its segments at the block ---------------------
 statement ok
 CREATE TABLE dfcn.plain_dup AS
   SELECT ord, CASE WHEN ord = 25000
@@ -112,19 +103,18 @@ sorted_dup	25001	t
 sorted_null	25001	t
 
 
-# the row-order shapes really do reach a cleaved mode (that is what makes them commit to a plus
-# candidate and so exercise the rewind's restore), while native storage never writes one
+# both shapes are stored with an fsst codec, and native storage never writes a plus mode
 query
-SELECT (SELECT bool_or(segment_info LIKE '%PLUS%') FROM pragma_storage_info('dfc.row_dup', include_segment_info=true) WHERE column_name='s' AND segment_type='VARCHAR') AS row_has_plus,
-       (SELECT bool_or(segment_info LIKE '%PLUS%') FROM pragma_storage_info('dfc.sorted_dup', include_segment_info=true) WHERE column_name='s' AND segment_type='VARCHAR') AS sorted_has_plus,
+SELECT (SELECT bool_and(compression IN ('DICT_FSST', 'FSST')) FROM pragma_storage_info('dfc.row_dup', include_segment_info=true) WHERE column_name='s' AND segment_type='VARCHAR') AS row_fsst,
+       (SELECT bool_and(compression IN ('DICT_FSST', 'FSST')) FROM pragma_storage_info('dfc.sorted_dup', include_segment_info=true) WHERE column_name='s' AND segment_type='VARCHAR') AS sorted_fsst,
        (SELECT bool_or(segment_info LIKE '%PLUS%') FROM pragma_storage_info('dfcn.plain_dup', include_segment_info=true) WHERE column_name='s' AND segment_type='VARCHAR') AS native_has_plus;
 ----
-row_has_plus	sorted_has_plus	native_has_plus
+row_fsst	sorted_fsst	native_has_plus
 t	t	f
 
 
-# the duplicated value appears exactly twice and the NULL exactly once: a rewind that dropped or
-# double-counted the moved rows shows up here even when the byte comparison passes
+# the duplicated value appears exactly twice and the NULL exactly once: a segment end that dropped
+# or double-counted rows shows up here even when the byte comparison passes
 query
 SELECT (SELECT count(*) FROM dfc.row_dup WHERE s = 'c'||lpad('0',7,'0')||chr(31)||substr(md5('0'),1,12)) AS row_dup_hits,
        (SELECT count(*) FROM dfc.row_null WHERE s IS NULL) AS row_nulls,

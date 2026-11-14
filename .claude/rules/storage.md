@@ -33,7 +33,7 @@ Test a format change the way a release meets old data: a fault point makes the w
 A file with a DuckDB storage version (a plain `ATTACH`, `serened shell`) stays readable by that DuckDB release, and SereneDB reads what that release writes:
 
 - A SereneDB field of an upstream class takes 16384 plus the id upstream's numbering would give it; state DuckDB drops too is skipped in a DuckDB file (`"version": "serenedb_v1"`), anything else is refused there.
-- A SereneDB value of a stored upstream enum starts at 200 and is listed in `IsSereneDBEnumValue`.
+- A SereneDB value of a stored upstream enum starts at 200 and is listed in `IsSereneDBEnumValue`. Compression types are the exception: the columnstore's codec names are one block from 100, and a DuckDB table refuses them when it is bound, so they never reach a DuckDB file.
 - A new layout or compression is chosen only when the version written is SereneDB's; objects there get no owners or privileges.
 
 `scripts/ci/test.py --suite duckdb --duckdb-suite interop` checks both directions against the official DuckDB image; the steps for such a change are in [tests/duckdb/README.md](../../tests/duckdb/README.md).

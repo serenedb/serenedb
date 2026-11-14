@@ -1,10 +1,10 @@
-# Deterministic fuzz round-trip for the dict_fsst FSST+ modes. A single source
+# Deterministic fuzz round-trip for dict_fsst. A single source
 # table of pseudo-random strings (hash-driven lengths + byte content, shared
 # prefix families, embedded control bytes via chr(), multi-byte unicode, NULLs,
 # empty strings, and near-limit long strings) is copied into both a
-# serenedb-owned database (which may pick a _PLUS mode) and a native database
-# (restricted to modes 0-2). The two must read back byte-identical, which proves
-# the new compress + decompress paths are lossless on adversarial input.
+# SereneDB database (the columnstore's dict_fsst) and a native database
+# (DuckDB's, restricted to modes 0-2). The two must read back byte-identical, which proves
+# both compress + decompress paths are lossless on adversarial input.
 
 control substitution on
 
@@ -75,12 +75,12 @@ n
 0
 
 
-# owned storage exercised at least one _PLUS mode; native never did
+# the SereneDB table took the forced codec; native storage never wrote a _PLUS mode
 query
-SELECT (SELECT count(*) FROM pragma_storage_info('fown.t', include_segment_info=true) WHERE segment_info LIKE '%PLUS%') > 0 AS owned_has_plus,
+SELECT (SELECT bool_and(compression = 'DICT_FSST') FROM pragma_storage_info('fown.t', include_segment_info=true) WHERE column_name = 's' AND segment_type = 'VARCHAR') AS owned_dict_fsst,
        (SELECT count(*) FROM pragma_storage_info('fnat.t', include_segment_info=true) WHERE segment_info LIKE '%PLUS%') AS native_plus;
 ----
-owned_has_plus	native_plus
+owned_dict_fsst	native_plus
 t	0
 
 

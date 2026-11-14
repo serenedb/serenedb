@@ -26,11 +26,10 @@
 #include <span>
 #include <vector>
 
+#include "iresearch/store/data_output.hpp"
 #include "iresearch/types.hpp"
 
 namespace irs {
-
-class IndexOutput;
 
 inline constexpr uint32_t kNormCodes = 16;
 inline constexpr uint32_t kNormDirect = kNormCodes - 1;
@@ -110,8 +109,6 @@ class NormColumnWriter final {
  public:
   using Open = std::function<IndexOutput&()>;
 
-  NormColumnWriter(field_id id, uint32_t row_group_size, IndexOutput& out);
-
   NormColumnWriter(field_id id, uint32_t row_group_size, Open open);
 
   NormColumnWriter(const NormColumnWriter&) = delete;
@@ -139,23 +136,21 @@ class NormColumnWriter final {
 
  private:
   void FlushRowGroup();
-  void Begin(const NormLayout& layout, uint64_t rows, uint32_t max);
-  void Encode(std::span<const uint32_t> values);
+  void EncodeRowGroup(std::span<const uint32_t> values);
+  void Begin(const NormStats& planned);
+  void EncodeValues(std::span<const uint32_t> values, uint64_t first_row);
   template<size_t Bytes>
   void EncodeSlots(std::span<const uint32_t> values, uint64_t first_row);
   uint32_t Escape(uint64_t row, uint32_t value);
-  void End();
 
   field_id _id;
-  IndexOutput* _out = nullptr;
+  IndexOutput* _blocks = nullptr;
   Open _open;
   uint32_t _row_group_size;
   NormColumnMeta _meta;
   std::vector<uint32_t> _values;
   NormRegionMeta _region;
   bool _open_region = false;
-  uint64_t _bucket = 0;
-  uint32_t _local = 0;
   std::vector<uint32_t> _bases;
   std::vector<uint32_t> _direct;
   std::vector<uint32_t> _overflow_rows;

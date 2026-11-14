@@ -20,25 +20,25 @@
 
 #pragma once
 
+#include <atomic>
 #include <duckdb/common/memory_mapped_file.hpp>
-#include <duckdb/storage/checkpoint/string_checkpoint_state.hpp>
+#include <duckdb/common/types/string_type.hpp>
+#include <duckdb/common/types/vector.hpp>
+#include <duckdb/main/database.hpp>
+#include <duckdb/storage/object_cache.hpp>
+#include <memory>
+#include <string>
 #include <vector>
 
 #include "iresearch/formats/column/internal/block_manager.hpp"
 #include "iresearch/store/data_input.hpp"
+#include "iresearch/utils/assert.hpp"
 
-namespace duckdb {
-
-class DatabaseInstance;
-
-}  // namespace duckdb
 namespace irs {
 
 class ColReader;
 
-class ReadContext final : public BlockManager,
-                          public duckdb::OverflowStringReader,
-                          public duckdb::ColumnStreamReader {
+class ReadContext final : public BlockManager {
  public:
   explicit ReadContext(duckdb::DatabaseInstance& db) noexcept;
   explicit ReadContext(const ColReader& reader, bool random_access = false);
@@ -56,14 +56,22 @@ class ReadContext final : public BlockManager,
   const IndexInput& In() const noexcept { return *_in; }
   bool HasIn() const noexcept { return _in != nullptr; }
   bool RandomAccess() const noexcept { return _random_access; }
+  duckdb::ObjectCache* Cache() const noexcept { return _cache; }
 
   duckdb::string_t ReadString(duckdb::Vector& result, duckdb::block_id_t block,
-                              int32_t offset) final;
+                              int32_t offset);
 
   duckdb::const_data_ptr_t TryReadStable(duckdb::idx_t position,
-                                         duckdb::idx_t size) final;
+                                         duckdb::idx_t size);
   void Read(duckdb::idx_t position, duckdb::data_ptr_t target,
-            duckdb::idx_t size) final;
+            duckdb::idx_t size);
+
+  struct CacheSlot {
+    uint64_t file_id = 0;
+    uint64_t file_offset = 0;
+    std::atomic<bool>* touched = nullptr;
+    duckdb::ObjectCache* cache = nullptr;
+  };
 
   duckdb::shared_ptr<duckdb::BlockHandle> RegisterColBlock(uint64_t offset,
                                                            uint64_t size);
@@ -96,7 +104,17 @@ class ReadContext final : public BlockManager,
   duckdb::unique_ptr<duckdb::MemoryMappedFile> _mapping;
   std::vector<std::pair<uint64_t, uint64_t>> _ranges;
   bool _random_access = false;
-  size_t _live_handles = 0;
+  duckdb::ObjectCache* _cache;
+  std::atomic<size_t> _live_handles{0};
 };
+
+inline bool Touched(const ReadContext::CacheSlot& slot) noexcept {
+  return slot.touched->load(std::memory_order_relaxed);
+}
+
+inline bool SecondTouch(const ReadContext::CacheSlot& slot) noexcept {
+  return Touched(slot) ||
+         slot.touched->exchange(true, std::memory_order_relaxed);
+}
 
 }  // namespace irs

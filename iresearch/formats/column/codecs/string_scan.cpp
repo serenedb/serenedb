@@ -1,0 +1,188 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#include "iresearch/formats/column/codecs/string_scan.hpp"
+
+#include <absl/algorithm/container.h>
+#include <absl/strings/str_cat.h>
+
+#include <algorithm>
+#include <duckdb/common/helper.hpp>
+#include <duckdb/common/vector/flat_vector.hpp>
+#include <duckdb/common/vector/immutable_strings.hpp>
+#include <duckdb/common/vector/string_vector.hpp>
+#include <duckdb/main/database.hpp>
+#include <duckdb/planner/expression/bound_constant_expression.hpp>
+#include <duckdb/storage/buffer/buffer_handle.hpp>
+
+#include "iresearch/formats/column/codecs/byte_codec.hpp"
+#include "iresearch/formats/column/codecs/frame_meta.hpp"
+#include "iresearch/utils/enum_name.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
+
+namespace irs::codecs::text {
+
+using duckdb::string_t;
+
+duckdb::shared_ptr<DecodedDictionary> CachedDictionary(
+  const ReadContext::CacheSlot& slot) {
+  if (!slot.touched || !Touched(slot)) {
+    return nullptr;
+  }
+  return slot.cache->Get<DecodedDictionary>(
+    DictionaryCacheKey(slot.file_id, slot.file_offset));
+}
+
+Header SegmentHeader(duckdb::const_data_ptr_t base,
+                     const ColumnSegment& segment, Shape shape,
+                     ByteCodec codec) {
+  const auto h = Header::Parse(base, segment.size);
+  const uint64_t first_entry = shape == Shape::Dedup ? 1 : 0;
+  SDB_ENSURE(h.shape == shape && h.codec == codec &&
+               h.row_count == segment.count &&
+               uint64_t{h.entry_count} <= uint64_t{h.row_count} + first_entry &&
+               (shape == Shape::Dedup || h.entry_count == h.row_count),
+             "col codec: corrupted segment header");
+  return h;
+}
+
+NumericHeader CodesHeader(duckdb::const_data_ptr_t base, const Header& h) {
+  const auto codes =
+    NumericHeader::Parse(base + h.off_codes, h.off_symtab - h.off_codes);
+  SDB_ENSURE(codes.row_count == h.row_count && codes.leaf == NumericLeaf::None,
+             "col codec: corrupted row codes");
+  return codes;
+}
+
+EntryRanges Normalize(EntryRanges ranges) {
+  absl::c_sort(ranges);
+  size_t kept = 0;
+  for (const auto [lo, hi] : ranges) {
+    if (lo >= hi) {
+      continue;
+    }
+    if (kept != 0 && lo <= ranges[kept - 1].hi) {
+      ranges[kept - 1].hi = std::max(ranges[kept - 1].hi, hi);
+    } else {
+      ranges[kept++] = {lo, hi};
+    }
+  }
+  ranges.resize(kept);
+  return ranges;
+}
+
+EntryRanges Intersect(const EntryRanges& a, const EntryRanges& b) {
+  EntryRanges out;
+  size_t i = 0;
+  size_t j = 0;
+  while (i < a.size() && j < b.size()) {
+    const auto lo = std::max(a[i].lo, b[j].lo);
+    const auto hi = std::min(a[i].hi, b[j].hi);
+    if (lo < hi) {
+      out.emplace_back(lo, hi);
+    }
+    if (a[i].hi < b[j].hi) {
+      ++i;
+    } else {
+      ++j;
+    }
+  }
+  return out;
+}
+
+const duckdb::Value* StringConstant(const duckdb::Expression& expr) noexcept {
+  if (expr.GetExpressionType() != duckdb::ExpressionType::VALUE_CONSTANT) {
+    return nullptr;
+  }
+  const auto& value = expr.Cast<duckdb::BoundConstantExpression>().GetValue();
+  if (value.type().id() != duckdb::LogicalTypeId::VARCHAR) {
+    return nullptr;
+  }
+  return &value;
+}
+
+uint64_t TouchedBytes(const Header& h, duckdb::const_data_ptr_t base,
+                      std::span<const EntryAt> order) {
+  const auto* table = base + h.off_frames;
+  uint64_t bytes = 0;
+  uint32_t counted = h.frame_count;
+  for (const auto& [entry, at] : order) {
+    if (h.frame_count == 0 || (counted != h.frame_count &&
+                               FrameAt(table, counted).first_entry <= entry)) {
+      continue;
+    }
+    counted = FrameOfEntry(table, counted, entry);
+    bytes += FrameAt(table, counted).raw_len;
+  }
+  return bytes;
+}
+
+void ReferenceOnce(HeapReference& reference, const duckdb::Vector& source,
+                   duckdb::Vector& result) {
+  const auto& heap = source.GetBufferRef()->GetAuxiliaryData();
+  if (heap.get() == reference.source &&
+      reference.target.Holds(result.GetBufferRef()->GetAuxiliaryData())) {
+    return;
+  }
+  duckdb::StringVector::AddAuxiliaryData(
+    result, duckdb::ImmutableStrings::Reference(heap));
+  reference.target.Set(result.GetBufferRef()->GetAuxiliaryData());
+  reference.source = heap.get();
+}
+
+void EmitDecoded(const DecodedDictionary& decoded,
+                 std::span<const EntryAt> order, duckdb::Vector& result,
+                 HeapReference& reference) {
+  const auto& dictionary = decoded.Dictionary()->data;
+  ReferenceOnce(reference, dictionary, result);
+  const auto* values = duckdb::FlatVector::GetData<string_t>(dictionary);
+  auto* out = duckdb::FlatVector::GetDataMutable<string_t>(result);
+  for (size_t i = 0; i < order.size(); ++i) {
+    if (i + kFetchAhead < order.size()) {
+      __builtin_prefetch(values + order[i + kFetchAhead].entry);
+    }
+    out[order[i].at] = values[order[i].entry];
+  }
+}
+
+duckdb::InsertionOrderPreservingMap<std::string> SegmentInfo(
+  const ColumnSegment& segment) {
+  auto handle = segment.Pin();
+  const auto* base = handle.Ptr();
+  const auto h = Header::Parse(base, segment.size);
+  duckdb::InsertionOrderPreservingMap<std::string> info;
+  info["shape"] = std::string{SnakeCaseName(h.shape)};
+  info["codec"] = std::string{SnakeCaseName(h.codec)};
+  info["level"] = absl::StrCat(static_cast<uint32_t>(h.level));
+  if (h.shape == Shape::Dedup) {
+    const auto codes = CodesHeader(base, h);
+    info["codes_transform"] = std::string{SnakeCaseName(codes.transform)};
+  }
+  info["entries"] = absl::StrCat(h.entry_count);
+  info["frames"] = absl::StrCat(h.frame_count);
+  if (h.flags != FrameDictionary::None) {
+    info["dictionary"] = std::string{SnakeCaseName(h.flags)};
+  }
+  info["raw_bytes"] = absl::StrCat(h.raw_bytes);
+  info["data_bytes"] = absl::StrCat(h.data_size);
+  return info;
+}
+
+}  // namespace irs::codecs::text

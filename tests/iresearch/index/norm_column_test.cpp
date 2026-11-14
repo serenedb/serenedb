@@ -21,12 +21,6 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-// The legacy `irs::BufferedColumn` is being removed (task #6). The four
-// tests here keep the name+shape but exercise the surviving norm-column
-// write path (`irs::NormColumnWriter` via `Writer::Open
-// NormColumn`) -- BufferedColumn's role was to stage per-doc norm bytes
-// before flush, and the new NormColumnWriter replaces it.
-
 #include <gtest/gtest.h>
 
 #include <duckdb/common/types/vector.hpp>
@@ -35,6 +29,7 @@
 #include <iresearch/formats/column/column_writer.hpp>
 #include <iresearch/formats/column/norm_reader.hpp>
 #include <iresearch/formats/column/norm_writer.hpp>
+#include <iresearch/formats/format_utils.hpp>
 #include <iresearch/formats/norm_reader_impl.hpp>
 #include <iresearch/store/memory_directory.hpp>
 
@@ -43,7 +38,7 @@
 
 namespace {
 
-class BufferedColumnTestCase : public ::testing::TestWithParam<bool> {
+class NormColumnTest : public ::testing::Test {
  protected:
   duckdb::DatabaseInstance& Db() {
     return ::irs::DuckDBEngine::Instance().instance();
@@ -136,10 +131,8 @@ void AssertNormReads(const irs::NormColumnReader& col,
 
 }  // namespace
 
-TEST_P(BufferedColumnTestCase, Ctor) {
+TEST_F(NormColumnTest, Ctor) {
   // Fresh writer + fresh norm column => Id matches, RowCount == 0.
-  // Mirrors the legacy `Empty()`/`Size()` checks on a default-constructed
-  // BufferedColumn.
   irs::MemoryDirectory dir;
   {
     irs::ColWriter w{dir, "ctor_seg", Db()};
@@ -161,11 +154,7 @@ TEST_P(BufferedColumnTestCase, Ctor) {
   EXPECT_FALSE(HasCsFile(dir, "ctor_seg"));
 }
 
-TEST_P(BufferedColumnTestCase, FlushEmpty) {
-  // BufferedColumn::Flush on an empty buffer was a no-op + the segment's
-  // column meta wasn't written. New cs analogue: open the norm column,
-  // append nothing, Rollback() the writer => no .col file appears.
-
+TEST_F(NormColumnTest, FlushEmpty) {
   // --- (1) Rollback path on a norm-only writer ----------------------------
   {
     irs::MemoryDirectory dir;
@@ -205,7 +194,7 @@ TEST_P(BufferedColumnTestCase, FlushEmpty) {
   }
 }
 
-TEST_P(BufferedColumnTestCase, InsertDuplicates) {
+TEST_F(NormColumnTest, InsertDuplicates) {
   // Three sub-scenarios.
   //
   // (1) All-zero stream: NonZeroCount must be 0 and Sum() = 0 even though
@@ -303,7 +292,7 @@ TEST_P(BufferedColumnTestCase, InsertDuplicates) {
   }
 }
 
-TEST_P(BufferedColumnTestCase, RareLargeValues) {
+TEST_F(NormColumnTest, RareLargeValues) {
   constexpr uint32_t kRowGroupSize = 1024;
   constexpr uint64_t kRowCount = 3000;
   std::vector<uint32_t> expected(kRowCount);
@@ -340,7 +329,7 @@ TEST_P(BufferedColumnTestCase, RareLargeValues) {
   AssertNormReads(*col, expected);
 }
 
-TEST_P(BufferedColumnTestCase, RareLargeValuesEveryRowGroup) {
+TEST_F(NormColumnTest, RareLargeValuesEveryRowGroup) {
   constexpr uint64_t kRowCount = 2048;
   std::vector<uint32_t> expected(kRowCount);
   for (uint64_t i = 0; i < kRowCount; ++i) {
@@ -374,7 +363,7 @@ TEST_P(BufferedColumnTestCase, RareLargeValuesEveryRowGroup) {
   }
 }
 
-TEST_P(BufferedColumnTestCase, CrowdedBucketOverflows) {
+TEST_F(NormColumnTest, CrowdedBucketOverflows) {
   constexpr uint64_t kRowCount = 8192;
   std::vector<uint32_t> expected(kRowCount);
   for (uint64_t i = 0; i < kRowCount; ++i) {
@@ -406,7 +395,7 @@ TEST_P(BufferedColumnTestCase, CrowdedBucketOverflows) {
   AssertNormReads(*col, expected);
 }
 
-TEST_P(BufferedColumnTestCase, WideRegions) {
+TEST_F(NormColumnTest, WideRegions) {
   constexpr uint64_t kRowCount = 4096;
   std::vector<uint32_t> expected(kRowCount);
   for (uint64_t i = 0; i < 2048; ++i) {
@@ -440,7 +429,7 @@ TEST_P(BufferedColumnTestCase, WideRegions) {
   AssertNormReads(*col, expected);
 }
 
-TEST_P(BufferedColumnTestCase, StreamedRegions) {
+TEST_F(NormColumnTest, StreamedRegions) {
   const auto value = [](uint64_t i) -> uint32_t {
     if (i < 3000) {
       return i == 1500 ? 4000 : static_cast<uint32_t>(1 + i % 100);
@@ -498,16 +487,18 @@ TEST_P(BufferedColumnTestCase, StreamedRegions) {
 TEST(NormColumnReaderTest, CorruptExceptionIndexThrows) {
   constexpr uint32_t kRows = 4096;
   constexpr uint32_t kWideEvery = 512;
-  irs::MemoryFile written{irs::IResourceManager::gNoop};
+  irs::MemoryDirectory dir;
   irs::NormColumnMeta meta;
   {
-    irs::MemoryIndexOutput out{written};
-    irs::NormColumnWriter writer{1, kRows, out};
+    auto file = dir.create("norms");
+    irs::NormColumnWriter writer{1, kRows,
+                                 [&]() -> irs::IndexOutput& { return *file; }};
     for (uint32_t i = 0; i != kRows; ++i) {
       writer.Append(i, i % kWideEvery == 0 ? 70000 + i : 1 + i % 3);
     }
     writer.Finalize();
-    out.Flush();
+    irs::format_utils::WriteFooter(*file, [](duckdb::BinarySerializer&) {});
+    file.reset();
     meta = writer.Meta();
   }
   ASSERT_EQ(meta.regions.size(), 1u);
@@ -515,10 +506,12 @@ TEST(NormColumnReaderTest, CorruptExceptionIndexThrows) {
   ASSERT_NE(region.exceptions, 0u);
   ASSERT_EQ(region.overflow, 0u);
 
-  std::vector<irs::byte_type> bytes(written.Length());
+  std::vector<irs::byte_type> bytes;
   {
-    irs::MemoryIndexInput in{written};
-    in.ReadData(0, bytes.data(), bytes.size());
+    auto in = dir.open("norms", irs::IOAdvice::SEQUENTIAL);
+    ASSERT_NE(in, nullptr);
+    bytes.resize(in->Length());
+    in->ReadData(bytes.data(), bytes.size());
   }
   for (uint64_t b = 0; b != irs::NormBuckets(region); ++b) {
     absl::little_endian::Store32(bytes.data() + region.table_offset + b * 4,
@@ -540,12 +533,3 @@ TEST(NormColumnReaderTest, CorruptExceptionIndexThrows) {
   std::array<uint32_t, 2> values{};
   EXPECT_ANY_THROW(reader->Get(docs, values));
 }
-
-TEST_P(BufferedColumnTestCase, Sort) {
-  GTEST_SKIP()
-    << "BufferedColumn::Sort backed sorted-index inserts on the "
-       "legacy subsystem; sorted-index isn't supported on the new cs.";
-}
-
-INSTANTIATE_TEST_SUITE_P(BufferedColumnTest, BufferedColumnTestCase,
-                         ::testing::Values(false, true));

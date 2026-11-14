@@ -150,8 +150,8 @@ void ForEachRowKey(duckdb::ClientContext& context, duckdb::idx_t table_id,
     projections.push_back({.output_slot = i, .column_id = column_ids[i]});
   }
   irs::ColFilterStateCache filter_states;
-  connector::FullScanner scanner{
-    *columns, projections, {}, &context, filter_states};
+  connector::FullScanner scanner{*columns, projections,   {},
+                                 &context, filter_states, false};
   duckdb::DataChunk chunk;
   chunk.Initialize(duckdb::Allocator::Get(context), types);
   duckdb::SelectionVector rows{STANDARD_VECTOR_SIZE};

@@ -24,7 +24,6 @@
 
 #include <absl/container/inlined_vector.h>
 
-#include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/storage/storage_info.hpp>
 #include <functional>
 #include <memory>
@@ -32,6 +31,7 @@
 #include <span>
 #include <string_view>
 
+#include "iresearch/formats/column/codecs/codec_type.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/system_compiler.hpp"
@@ -186,10 +186,25 @@ enum class DistinctStats : uint8_t {
 
 struct ColumnOptions {
   bool skip_validity = false;
-  duckdb::CompressionType compression =
-    duckdb::CompressionType::COMPRESSION_AUTO;
+  codecs::CodecType compression = codecs::CodecType::Auto;
   std::optional<AnnInfo> ann_info;
   DistinctStats distinct = DistinctStats::None;
+  uint8_t compression_level = 0;
+};
+
+inline constexpr uint32_t kDefaultColSegmentTarget = 512 * 1024;
+
+enum class WriteTier : uint8_t {
+  Flush,
+  Merge,
+};
+
+struct ColCodecParams {
+  uint8_t compression_level = 0;
+  uint32_t segment_target = kDefaultColSegmentTarget;
+  WriteTier tier = WriteTier::Merge;
+
+  bool operator==(const ColCodecParams&) const = default;
 };
 
 using ColumnOptionsProvider = std::function<ColumnOptions(field_id)>;
@@ -205,7 +220,7 @@ using AnnFieldsByColumn =
 class IndexFieldOptions {
  public:
   uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
-  uint32_t block_size = DEFAULT_BLOCK_ALLOC_SIZE;
+  ColCodecParams codec_params;
   AnnFieldsByColumn anns;
 
   std::span<const field_id> AnnFields(field_id column) const noexcept {
@@ -217,6 +232,14 @@ class IndexFieldOptions {
   virtual ColumnOptions GetColumnOptions(field_id id) const = 0;
   virtual field_id GetNormColumnId(field_id id) const = 0;
   virtual FieldKind GetFieldKind(field_id) const { return FieldKind::Index; }
+
+  ColCodecParams CodecParams(const ColumnOptions& options) const noexcept {
+    auto params = codec_params;
+    if (options.compression_level != 0) {
+      params.compression_level = options.compression_level;
+    }
+    return params;
+  }
 
   // Segment reuse gate: two writes share a segment only if their options are
   // equal (a segment must not mix encodings). Default is pointer identity --

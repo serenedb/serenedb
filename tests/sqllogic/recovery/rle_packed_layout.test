@@ -1,9 +1,11 @@
 # RLE on serenedb storage frame-of-references and bitpacks both of its streams (the run values and
-# the run counts), where native duckdb storage keeps them raw. The two layouts live in the same code
-# and are told apart by the top bit of the leading uint64 -- natively a byte offset within one block,
-# so that bit is free. Every dataset below is written to both a serenedb-versioned and a native
-# database from one shared source and read back, so the packed layout has to agree with the raw one
-# value for value.
+# the run counts), where native duckdb storage keeps them raw. The two layouts are told apart by the
+# top bit of the leading uint64 -- natively a byte offset within one block, so that bit is free. Every
+# dataset below is written to both a serenedb database and a native one from one shared source and
+# read back, so the packed layout has to agree with the raw one value for value.
+#
+# Under auto the columnstore's numeric codec takes most run-heavy columns, so RLE is forced: the
+# layout is what this file pins, not the choice.
 #
 # The shapes are the ones that exercise the layout's edges: runs longer than the uint16 count can
 # hold, runs landing exactly on and one past a bitpacking group, nulls inside runs, all-null, a
@@ -24,7 +26,11 @@ statement ok
 ATTACH '${__TEST_DIR__}/rle_native.db' AS rle_nat (TYPE duckdb, STORAGE_VERSION 'v2.0.0');
 
 
-# --- integral types, run-heavy: RLE is picked by the analyze phase, unforced -----
+statement ok
+SET force_compression='rle';
+
+
+# --- integral types, run-heavy ---------------------------------------------------
 statement ok
 CREATE TABLE rle_src_ints AS SELECT
   ((i // 100) % 100)::TINYINT AS i8,
@@ -190,6 +196,10 @@ SELECT count(*) AS n, sum(v::HUGEINT) AS checksum FROM rle_own.multiseg;
 ----
 n	checksum
 2000000	99000000
+
+
+statement ok
+SET force_compression='auto';
 
 
 # --- and is not picked when every run is one value -------------------------------

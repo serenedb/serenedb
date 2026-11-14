@@ -119,6 +119,13 @@ class FSIndexOutput final : public IndexOutput {
   }
 
   void WriteDirect(const byte_type* b, size_t len) final {
+    if (len >= sizeof(_buf)) {
+      if (Length() != 0) {
+        Flush();
+      }
+      WriteHandle(b, len);
+      return;
+    }
     auto remain = Remain();
     SDB_ASSERT(len >= remain);
     const auto option =

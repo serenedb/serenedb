@@ -197,8 +197,9 @@ class PatchedColumnReader final : public ColumnReader {
   uint64_t RowGroupEnd(uint64_t row) const noexcept final {
     return _base.RowGroupEnd(row);
   }
-  ScanState InitScan(ReadContext& ctx) const final {
-    return _base.InitScan(ctx);
+  using ColumnReader::InitScan;
+  ScanState InitScan(std::shared_ptr<ReadContext> ctx) const final {
+    return _base.InitScan(std::move(ctx));
   }
   uint64_t GatherCursor(const ScanState& s) const noexcept final {
     return _base.GatherCursor(s);

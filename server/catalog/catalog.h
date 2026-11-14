@@ -193,6 +193,11 @@ class SereneDBCatalog final : public BaseCatalog {
 
   duckdb::ErrorData SupportsCreateTable(
     duckdb::BoundCreateTableInfo& info) final;
+  bool VerifyColumnCompression(
+    duckdb::ClientContext& context,
+    duckdb::optional_ptr<duckdb::StorageManager> storage_manager,
+    const duckdb::CreateTableInfo& info, const duckdb::ColumnDefinition& column,
+    const duckdb::LogicalType& type) const final;
 
  private:
   std::shared_ptr<DatabaseDirectory> _directory;

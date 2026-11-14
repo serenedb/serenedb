@@ -22,10 +22,15 @@
 
 #include <absl/base/internal/endian.h>
 
+#include <duckdb/common/type_visitor.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/main/database.hpp>
 #include <duckdb/storage/block.hpp>
+#include <duckdb/storage/buffer/block_handle.hpp>
+#include <duckdb/storage/storage_info.hpp>
 
+#include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -50,18 +55,18 @@ class ColMapping final : public duckdb::MemoryMappedFile {
 }  // namespace
 
 ReadContext::ReadContext(duckdb::DatabaseInstance& db) noexcept
-  : BlockManager{db, DEFAULT_BLOCK_ALLOC_SIZE, /*block_header_size=*/0} {}
+  : BlockManager{db, DEFAULT_BLOCK_ALLOC_SIZE, /*block_header_size=*/0},
+    _cache{&db.GetObjectCache()} {}
 
 ReadContext::ReadContext(const ColReader& reader, bool random_access)
-  : BlockManager{reader.Database(), reader.BlockAllocSize(),
-                 /*block_header_size=*/0} {
+  : ReadContext{reader.Database()} {
   _random_access = random_access;
   _in = reader.ReopenIn();
   ResetMapping();
 }
 
 ReadContext::ReadContext(duckdb::DatabaseInstance& db, IndexInput::ptr in)
-  : BlockManager{db, duckdb::optional_idx{}, /*block_header_size=*/0} {
+  : ReadContext{db} {
   _in = std::move(in);
   ResetMapping();
 }
@@ -75,7 +80,6 @@ void ReadContext::Reset(const ColReader& reader) {
   SDB_ASSERT(_db == &reader.Database(),
              "ReadContext::Reset: Database mismatch");
   SDB_ASSERT(_live_handles == 0, "ReadContext::Reset with live block handles");
-  SDB_ASSERT(GetBlockAllocSize() == reader.BlockAllocSize());
   _in = reader.ReopenIn();
   ResetMapping();
 }
@@ -99,9 +103,18 @@ duckdb::string_t ReadContext::ReadString(duckdb::Vector& result,
                                          int32_t offset) {
   SDB_ASSERT(offset == 0);
   const auto pos = static_cast<uint64_t>(block);
+  const uint64_t file_size = _in->Length();
   uint32_t len;
+  if (file_size < sizeof(len) || pos > file_size - sizeof(len)) {
+    codecs::ThrowCorrupted("uncompressed string",
+                           "overflow string is outside the file");
+  }
   _in->ReadData(pos, reinterpret_cast<byte_type*>(&len), sizeof(len));
   len = absl::little_endian::Load32(reinterpret_cast<byte_type*>(&len));
+  if (len > file_size - pos - sizeof(len)) {
+    codecs::ThrowCorrupted("uncompressed string",
+                           "overflow string runs past the end of the file");
+  }
   if (const auto* body = _in->ReadStable(pos + sizeof(len), len)) {
     return duckdb::string_t{reinterpret_cast<const char*>(body), len};
   }
@@ -134,7 +147,8 @@ duckdb::shared_ptr<duckdb::BlockHandle> ReadContext::RegisterColBlock(
   const auto id = static_cast<duckdb::block_id_t>(_ranges.size());
   _ranges.emplace_back(offset, size);
   ++_live_handles;
-  auto handle = RegisterBlock(id);
+  auto handle = RegisterBlock(
+    id, duckdb::AlignValue<duckdb::idx_t, duckdb::Storage::SECTOR_SIZE>(size));
   if (Maps(offset, size)) {
     handle->GetMemory().SetMemoryUsage(0);
   }
@@ -142,7 +156,7 @@ duckdb::shared_ptr<duckdb::BlockHandle> ReadContext::RegisterColBlock(
 }
 
 bool ReadContext::Maps(uint64_t offset, uint64_t size) const noexcept {
-  return _mapping && offset % 8 == 0 &&
+  return _mapping && duckdb::ValueIsAligned(offset) &&
          offset +
              duckdb::AlignValue<duckdb::idx_t, duckdb::Storage::SECTOR_SIZE>(
                size) <=
@@ -161,7 +175,6 @@ duckdb::unique_ptr<duckdb::Block> ReadContext::CreateBlock(
   if (id >= _ranges.size()) {
     return BlockManager::CreateBlock(block_id, source_buffer);
   }
-  SDB_ASSERT(source_buffer == nullptr);
   const auto [offset, size] = _ranges[id];
   if (Maps(offset, size)) {
     return duckdb::make_uniq<duckdb::Block>(*_allocator, block_id, *_mapping,

@@ -169,14 +169,14 @@ void HintWriteback(void* fd, uint64_t offset, size_t size) noexcept {
 }
 
 #ifndef _WIN32
-namespace {
-
-constexpr size_t kWillNeedChunk = 32 * 1024;
-
 size_t SystemPage() noexcept {
   static const size_t kPageSize = ::sysconf(_SC_PAGESIZE);
   return kPageSize;
 }
+
+namespace {
+
+constexpr size_t kWillNeedChunk = 32 * 1024;
 
 std::pair<uintptr_t, size_t> PageRange(const void* addr, size_t size) noexcept {
   const auto begin = reinterpret_cast<uintptr_t>(addr);

@@ -24,12 +24,15 @@
 
 #include <cstdint>
 #include <duckdb/common/serializer/serialization_traits.hpp>
+#include <duckdb/main/database.hpp>
 #include <memory>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "iresearch/formats/column/column_reader.hpp"
+#include "iresearch/formats/column/norm_column_reader.hpp"
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/column_info.hpp"
@@ -38,21 +41,12 @@
 #include "iresearch/types.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 
-namespace duckdb {
-
-class DatabaseInstance;
-
-}  // namespace duckdb
 namespace irs {
-
-class ColumnReader;
-class NormColumnReader;
 
 inline constexpr std::string_view kFormatExt = "col";
 
 inline constexpr duckdb::field_id_t kColFieldColumns = 0;
 inline constexpr duckdb::field_id_t kColFieldNormColumns = 1;
-inline constexpr duckdb::field_id_t kColFieldBlockSize = 2;
 
 inline std::string FileName(std::string_view segment_name) {
   return absl::StrCat(segment_name, ".", kFormatExt);
@@ -90,9 +84,6 @@ class ColReader final {
     return _ctx.HasIn() ? _ctx.In().Reopen() : nullptr;
   }
   duckdb::DatabaseInstance& Database() const noexcept { return *_db; }
-  duckdb::idx_t BlockAllocSize() const noexcept {
-    return _base ? _base->BlockAllocSize() : _ctx.GetBlockAllocSize();
-  }
 
  private:
   void Index(const ColumnReader& column);

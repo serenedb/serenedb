@@ -24,6 +24,7 @@
 #include <atomic>
 #include <duckdb.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
+#include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/ivf/centroids.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
@@ -66,8 +67,7 @@ inline constexpr uint32_t kDim = 4;
 // both execution paths expose distances to the vector scorer.
 
 irs::IndexWriterOptions MakeWriterOptions(
-  duckdb::CompressionType compression =
-    duckdb::CompressionType::COMPRESSION_AUTO,
+  irs::codecs::CodecType compression = irs::codecs::CodecType::Auto,
   uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE) {
   auto opts = irs::tests::DefaultWriterOptions();
   opts.row_group_size = row_group_size;
@@ -457,7 +457,7 @@ TEST_F(VectorSimilarityQueryTest, ExactRadius) {
 }
 
 class RerankExactDistancesTest
-  : public ::testing::TestWithParam<duckdb::CompressionType> {
+  : public ::testing::TestWithParam<irs::codecs::CodecType> {
  protected:
   static constexpr uint32_t kRowGroup = 64;
 
@@ -470,7 +470,8 @@ class RerankExactDistancesTest
     ASSERT_NE(nullptr, child);
     ASSERT_LT(1U, child->DataBlocks().size());
     for (const auto& block : child->DataBlocks()) {
-      ASSERT_EQ(GetParam(), block.codec->type);
+      ASSERT_EQ(irs::codecs::NameOf(GetParam()),
+                irs::codecs::NameOf(block.codec->type));
     }
   }
 
@@ -495,9 +496,8 @@ TEST_P(RerankExactDistancesTest, Rerank) {
   }
 }
 
-INSTANTIATE_TEST_SUITE_P(
-  Codec, RerankExactDistancesTest,
-  ::testing::Values(duckdb::CompressionType::COMPRESSION_UNCOMPRESSED,
-                    duckdb::CompressionType::COMPRESSION_ALP));
+INSTANTIATE_TEST_SUITE_P(Codec, RerankExactDistancesTest,
+                         ::testing::Values(irs::codecs::CodecType::Uncompressed,
+                                           irs::codecs::CodecType::Alp));
 
 }  // namespace

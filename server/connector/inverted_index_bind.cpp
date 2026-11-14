@@ -29,20 +29,18 @@
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry_retriever.hpp>
 #include <duckdb/common/enum_util.hpp>
-#include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/common/type_visitor.hpp>
 #include <duckdb/execution/expression_executor.hpp>
-#include <duckdb/function/compression_function.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
-#include <duckdb/main/config.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_lambda_expression.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
 #include <iresearch/analysis/geo_tokenizer.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/hnsw/hnsw_graph.hpp>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/assert.hpp>
@@ -89,6 +87,7 @@ constexpr std::string_view kQueryBitsField = "query_bits";
 constexpr std::string_view kMField = "m";
 constexpr std::string_view kEfConstructionField = "ef_construction";
 constexpr std::string_view kCompressionField = "compression";
+constexpr std::string_view kCompressionLevelField = "compression_level";
 constexpr std::string_view kDistinctField = "distinct";
 
 constexpr std::string_view kL2Metric = "l2";
@@ -229,72 +228,6 @@ void ParseBitsOption(std::string_view kind, std::string_view column_name,
   }
   quant.nb_bits = static_cast<uint32_t>(whole);
   quant.half_bit = frac != 0.0;
-}
-
-// Parse a user-supplied compression name into a duckdb::CompressionType.
-// "auto" is the writer default (analyze tournament). Other names map
-// 1:1 to duckdb codecs; the writer throws at flush time if the named
-// codec doesn't accept the column's physical type.
-duckdb::CompressionType ParseCompressionName(std::string_view column_name,
-                                             std::string_view name) {
-  const auto type = duckdb::EnumUtil::FromString<duckdb::CompressionType>(name);
-  if (!duckdb::CompressionTypeIsAvailable(type,
-                                          duckdb::StorageVersion::DUCKDB_LATEST)
-         .IsAvailable()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("Column '", column_name, "': compression '", name,
-                            "' is not available"));
-  }
-  return type;
-}
-
-// The "data" physical type that a forced codec must support. Composite
-// types (ARRAY/LIST) recurse to their child; the codec is only applied
-// to the leaf data column, while validity/length sub-columns inside
-// FlushNode keep COMPRESSION_AUTO regardless of `forced`.
-duckdb::PhysicalType LeafDataPhysicalType(const duckdb::LogicalType& type) {
-  switch (type.id()) {
-    case duckdb::LogicalTypeId::ARRAY:
-      return LeafDataPhysicalType(duckdb::ArrayType::GetChildType(type));
-    case duckdb::LogicalTypeId::LIST:
-      return LeafDataPhysicalType(duckdb::ListType::GetChildType(type));
-    default:
-      return type.InternalType();
-  }
-}
-
-// Reject the `compression` option if the named codec doesn't support
-// the column's leaf physical type. Without this check, the failure
-// surfaces only during the asynchronous segment commit (logged, not
-// returned), so CREATE INDEX would falsely report success.
-void ValidateColumnCompression(duckdb::ClientContext& context,
-                               std::string_view column_name,
-                               duckdb::CompressionType compression,
-                               const duckdb::LogicalType& column_type) {
-  if (compression == duckdb::CompressionType::COMPRESSION_AUTO) {
-    return;
-  }
-  const auto& db_config = duckdb::DBConfig::GetConfig(context);
-  const auto leaf = LeafDataPhysicalType(column_type);
-  auto fn = db_config.TryGetCompressionFunction(compression, leaf);
-  if (fn && fn->init_analyze) {
-    return;
-  }
-  THROW_SQL_ERROR(
-    ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
-    ERR_MSG("Column '", column_name, "': compression '",
-            duckdb::CompressionTypeToString(compression),
-            "' is not supported for type ", column_type.ToString()));
-}
-
-duckdb::CompressionType ParseCompressionOption(
-  duckdb::ClientContext& context, std::string_view kind,
-  std::string_view owner_label, std::string_view key, const duckdb::Value& v,
-  const duckdb::LogicalType& value_type) {
-  auto str = GetIndexStringOption(kind, owner_label, key, v);
-  auto parsed = ParseCompressionName(owner_label, str);
-  ValidateColumnCompression(context, owner_label, parsed, value_type);
-  return parsed;
 }
 
 irs::DistinctStats ParseDistinctOption(duckdb::ClientContext& context,
@@ -697,10 +630,15 @@ void ApplyIncludedOpclass(
   if (!opts) {
     return;
   }
+  uint32_t level = 0;
+  std::string declared{irs::codecs::NameOf(irs::codecs::CodecType::Auto)};
   for (const auto& [key, raw_val] : *opts) {
     if (key == kCompressionField) {
-      entry.column_options.compression = ParseCompressionOption(
-        context, catalog::kIncludedKind, owner_label, key, raw_val, value_type);
+      declared =
+        GetIndexStringOption(catalog::kIncludedKind, owner_label, key, raw_val);
+    } else if (key == kCompressionLevelField) {
+      level = ParsePositiveUintOption(catalog::kIncludedKind, owner_label, key,
+                                      raw_val);
     } else if (key == kDistinctField) {
       entry.column_options.distinct =
         ParseDistinctOption(context, owner_label, key, raw_val, value_type);
@@ -709,10 +647,14 @@ void ApplyIncludedOpclass(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
         ERR_MSG("Column '", owner_label, "': unknown included option '", key,
                 "'. Accepted options: compression (string, default 'auto'), "
+                "compression_level (integer, default the codec's), "
                 "distinct (string: 'none', 'sampled' or 'exact', default "
                 "'none')"));
     }
   }
+  entry.column_options.compression =
+    catalog::CheckColumnCodec(owner_label, declared, level, value_type);
+  entry.column_options.compression_level = static_cast<uint8_t>(level);
 }
 
 float ReadIVFSampleFactor(duckdb::ClientContext& context) {
@@ -730,9 +672,9 @@ uint32_t ReadIVFPostingSize(duckdb::ClientContext& context) {
 void FinishAnnOpclass(const irs::AnnInfo& cfg, bool compression,
                       catalog::InvertedIndexField& entry) {
   entry.column_options.ann_info = cfg;
-  entry.column_options.compression =
-    compression ? duckdb::CompressionType::COMPRESSION_AUTO
-                : duckdb::CompressionType::COMPRESSION_UNCOMPRESSED;
+  entry.column_options.compression = compression
+                                       ? irs::codecs::CodecType::Auto
+                                       : irs::codecs::CodecType::Uncompressed;
   entry.store_values = true;
 }
 

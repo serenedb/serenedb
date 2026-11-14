@@ -1366,7 +1366,7 @@ statement error
 CREATE INDEX inc_e_zstd_bad ON inc_e_num USING inverted(
     id, (a + b) included (compression='zstd'));
 ----
-db error: ERROR: Column '(a + b)': compression 'ZSTD' is not supported for type INTEGER
+db error: ERROR: Can't compress column "(a + b)" with type 'INTEGER' (physical: INT32) using compression type 'ZSTD'
 
 
 statement ok
@@ -1392,7 +1392,7 @@ statement error
 CREATE INDEX inc_e_bad ON inc_e_num USING inverted(
     id, (a + b) included (bogus='value'));
 ----
-db error: ERROR: Column '(a + b)': unknown included option 'bogus'. Accepted options: compression (string, default 'auto'), distinct (string: 'none', 'sampled' or 'exact', default 'none')
+db error: ERROR: Column '(a + b)': unknown included option 'bogus'. Accepted options: compression (string, default 'auto'), compression_level (integer, default the codec's), distinct (string: 'none', 'sampled' or 'exact', default 'none')
 
 
 statement error

@@ -31,6 +31,8 @@ inline constexpr std::string_view kCompactionIntervalSetting =
   "compaction_interval";
 inline constexpr std::string_view kSegmentMemoryMaxSetting =
   "segment_memory_max";
+inline constexpr std::string_view kObjectCacheSizeSetting =
+  "sdb_object_cache_size";
 inline constexpr std::string_view kSearchBackfillGroupBytesSetting =
   "search_backfill_group_bytes";
 inline constexpr std::string_view kOptimizeTopKSetting = "optimize_top_k";

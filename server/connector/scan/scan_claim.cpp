@@ -122,6 +122,8 @@ duckdb::Value UnitOrderKey(const irs::ColumnReader& reader,
   return best;
 }
 
+constexpr uint32_t kColScanClaimsPerWorker = 4;
+
 constexpr std::array<std::string_view, 3> kSplitModes{"tail", "always",
                                                       "never"};
 constexpr std::array<std::string_view, 3> kOrderModes{"smallest_first",
@@ -344,6 +346,10 @@ void TakeUnit(ScanLocalState& l, ScanUnit unit) {
   l.rg_units += unit.live;
 }
 
+uint32_t ClaimsPerWorker(const ScanGlobalState& g) noexcept {
+  return g.shape == ScanShape::ColScan ? kColScanClaimsPerWorker : 1;
+}
+
 bool ClaimRowGroups(ScanGlobalState& g, ScanLocalState& l, uint32_t seg) {
   auto& work = g.Segment(seg);
   if (const auto& claims = work.claims; !claims.empty()) {
@@ -363,8 +369,8 @@ bool ClaimRowGroups(ScanGlobalState& g, ScanLocalState& l, uint32_t seg) {
     if (begin >= work.rg_count) {
       return false;
     }
-    const auto take =
-      std::max<uint32_t>(1, (work.rg_count - begin) / g.workers);
+    const auto take = std::max<uint32_t>(
+      1, (work.rg_count - begin) / (ClaimsPerWorker(g) * g.workers));
     if (work.next_claim.compare_exchange_weak(begin, begin + take,
                                               std::memory_order_relaxed,
                                               std::memory_order_relaxed)) {
@@ -803,7 +809,8 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
   }
   MarkLiveRowGroups(passes, states, context, threads);
   for (const auto& pass : passes) {
-    pass.work->claims = CutClaims(pass.live, static_cast<uint32_t>(threads));
+    pass.work->claims =
+      CutClaims(pass.live, static_cast<uint32_t>(ClaimsPerWorker(g) * threads));
   }
   uint32_t skipped = 0;
   PostingsEstimate estimate{.g = g, .enough = threads * g.rg_size};

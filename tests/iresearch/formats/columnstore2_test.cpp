@@ -324,9 +324,8 @@ TEST_P(Columnstore2TestCase, sparse_mask_column) {
   constexpr uint32_t kRgSize = 512;
   {
     auto w = irs::tests::MakeCsWriter(_dir, kSegment);
-    auto& cw = w->OpenColumn(/*id=*/0, duckdb::LogicalType::BLOB,
-                             /*skip_validity=*/false, kRgSize,
-                             duckdb::CompressionType::COMPRESSION_AUTO);
+    auto& cw =
+      w->OpenColumn(0, duckdb::LogicalType::BLOB, {.row_group_size = kRgSize});
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; doc += 2) {
       irs::tests::AppendBlob(cw, doc, {});
     }
@@ -343,7 +342,7 @@ TEST_P(Columnstore2TestCase, sparse_mask_column) {
   // A nullable column tracks its nulls in a validity stream OR, when the data
   // codec self-carries them (dict_fsst absorb, mirror DuckDB), in the data
   // itself -- so HasValidity may be false while NullsInData is true.
-  EXPECT_TRUE(col->HasValidity() || col->NullsInData());
+  EXPECT_TRUE(col->HasValidity() || irs::tests::NullsInData(*col));
 
   // Helper: doc is "present" if it lies on the even-from-min lattice and
   // is not the trailing PadNullsTo row at kMax (which is always null).
@@ -521,9 +520,8 @@ TEST_P(Columnstore2TestCase, sparse_column_m) {
   constexpr uint32_t kRgSize = 512;
   {
     auto w = irs::tests::MakeCsWriter(_dir, kSegment);
-    auto& cw = w->OpenColumn(/*id=*/0, duckdb::LogicalType::BLOB,
-                             /*skip_validity=*/false, kRgSize,
-                             duckdb::CompressionType::COMPRESSION_AUTO);
+    auto& cw =
+      w->OpenColumn(0, duckdb::LogicalType::BLOB, {.row_group_size = kRgSize});
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; doc += 2) {
       const auto s = std::to_string(doc);
       irs::tests::AppendBlob(
@@ -679,9 +677,8 @@ TEST_P(Columnstore2TestCase, sparse_column_mr) {
   constexpr uint32_t kRgSize = 512;
   {
     auto w = irs::tests::MakeCsWriter(_dir, kSegment);
-    auto& cw = w->OpenColumn(/*id=*/0, duckdb::LogicalType::BLOB,
-                             /*skip_validity=*/false, kRgSize,
-                             duckdb::CompressionType::COMPRESSION_AUTO);
+    auto& cw =
+      w->OpenColumn(0, duckdb::LogicalType::BLOB, {.row_group_size = kRgSize});
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; doc += 2) {
       const auto s = std::to_string(doc);
       irs::tests::AppendBlob(
@@ -805,9 +802,8 @@ TEST_P(Columnstore2TestCase, SparseColumn) {
   constexpr uint32_t kRgSize = 512;
   {
     auto w = irs::tests::MakeCsWriter(_dir, kSegment);
-    auto& cw = w->OpenColumn(/*id=*/0, duckdb::LogicalType::BLOB,
-                             /*skip_validity=*/false, kRgSize,
-                             duckdb::CompressionType::COMPRESSION_AUTO);
+    auto& cw =
+      w->OpenColumn(0, duckdb::LogicalType::BLOB, {.row_group_size = kRgSize});
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; doc += 2) {
       const auto s = std::to_string(doc);
       irs::tests::AppendBlob(
@@ -824,7 +820,7 @@ TEST_P(Columnstore2TestCase, SparseColumn) {
   // A nullable column tracks its nulls in a validity stream OR, when the data
   // codec self-carries them (dict_fsst absorb, mirror DuckDB), in the data
   // itself -- so HasValidity may be false while NullsInData is true.
-  EXPECT_TRUE(col->HasValidity() || col->NullsInData());
+  EXPECT_TRUE(col->HasValidity() || irs::tests::NullsInData(*col));
 
   auto is_present = [](irs::doc_id_t doc) {
     return doc < kMax && (doc % 2) == (irs::doc_limits::min() % 2);
@@ -991,9 +987,8 @@ TEST_P(Columnstore2TestCase, sparse_column_gap) {
   constexpr irs::doc_id_t kGapEnd = 4500;
   {
     auto w = irs::tests::MakeCsWriter(_dir, kSegment);
-    auto& cw = w->OpenColumn(/*id=*/0, duckdb::LogicalType::BLOB,
-                             /*skip_validity=*/false, kRgSize,
-                             duckdb::CompressionType::COMPRESSION_AUTO);
+    auto& cw =
+      w->OpenColumn(0, duckdb::LogicalType::BLOB, {.row_group_size = kRgSize});
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; ++doc) {
       if (doc <= kGapBegin || doc > kGapEnd) {
         irs::tests::AppendBlob(
@@ -1168,9 +1163,8 @@ TEST_P(Columnstore2TestCase, sparse_column_tail_block) {
   constexpr irs::doc_id_t kTailBegin = 4096;  // exactly on an RG boundary.
   {
     auto w = irs::tests::MakeCsWriter(_dir, kSegment);
-    auto& cw = w->OpenColumn(/*id=*/0, duckdb::LogicalType::BLOB,
-                             /*skip_validity=*/false, kRgSize,
-                             duckdb::CompressionType::COMPRESSION_AUTO);
+    auto& cw =
+      w->OpenColumn(0, duckdb::LogicalType::BLOB, {.row_group_size = kRgSize});
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; ++doc) {
       irs::doc_id_t bytes[2] = {doc, doc};
       const size_t sz = (doc > kTailBegin) ? sizeof(bytes) : sizeof(bytes[0]);
@@ -1317,9 +1311,8 @@ TEST_P(Columnstore2TestCase, sparse_column_tail_block_last_value) {
   constexpr uint32_t kRgSize = 512;
   {
     auto w = irs::tests::MakeCsWriter(_dir, kSegment);
-    auto& cw = w->OpenColumn(/*id=*/0, duckdb::LogicalType::BLOB,
-                             /*skip_validity=*/false, kRgSize,
-                             duckdb::CompressionType::COMPRESSION_AUTO);
+    auto& cw =
+      w->OpenColumn(0, duckdb::LogicalType::BLOB, {.row_group_size = kRgSize});
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; ++doc) {
       irs::byte_type buf[sizeof(irs::doc_id_t) + 1];
       std::memcpy(buf, &doc, sizeof(doc));
@@ -1455,9 +1448,8 @@ TEST_P(Columnstore2TestCase, sparse_column_full_blocks) {
   constexpr std::string_view kValue{"aaaaaaaaaaaaaaaaaaaaaaaaaaa"};
   {
     auto w = irs::tests::MakeCsWriter(_dir, kSegment);
-    auto& cw = w->OpenColumn(/*id=*/0, duckdb::LogicalType::BLOB,
-                             /*skip_validity=*/false, kRgSize,
-                             duckdb::CompressionType::COMPRESSION_AUTO);
+    auto& cw =
+      w->OpenColumn(0, duckdb::LogicalType::BLOB, {.row_group_size = kRgSize});
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; ++doc) {
       std::string s{kValue.data(), kValue.size()};
       if (doc <= kTailBegin) {
@@ -1597,9 +1589,8 @@ TEST_P(Columnstore2TestCase, sparse_column_full_blocks_all_equal) {
   constexpr std::string_view kValue{"aaaaaaaaaaaaaaaaaaaaaaaaaaa"};
   {
     auto w = irs::tests::MakeCsWriter(_dir, kSegment);
-    auto& cw = w->OpenColumn(/*id=*/0, duckdb::LogicalType::BLOB,
-                             /*skip_validity=*/false, kRgSize,
-                             duckdb::CompressionType::COMPRESSION_AUTO);
+    auto& cw =
+      w->OpenColumn(0, duckdb::LogicalType::BLOB, {.row_group_size = kRgSize});
     const irs::byte_type* p =
       reinterpret_cast<const irs::byte_type*>(kValue.data());
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; ++doc) {
@@ -1715,9 +1706,8 @@ TEST_P(Columnstore2TestCase, dense_mask_column) {
   constexpr uint32_t kRgSize = 512;
   {
     auto w = irs::tests::MakeCsWriter(_dir, kSegment);
-    auto& cw = w->OpenColumn(/*id=*/0, duckdb::LogicalType::BLOB,
-                             /*skip_validity=*/false, kRgSize,
-                             duckdb::CompressionType::COMPRESSION_AUTO);
+    auto& cw =
+      w->OpenColumn(0, duckdb::LogicalType::BLOB, {.row_group_size = kRgSize});
     WriteEmptyBlobRange(cw, irs::doc_limits::min(), kMax);
     w->Commit(kMax);
   }
@@ -1841,9 +1831,8 @@ TEST_P(Columnstore2TestCase, dense_column) {
   constexpr uint32_t kRgSize = 512;
   {
     auto w = irs::tests::MakeCsWriter(_dir, kSegment);
-    auto& cw = w->OpenColumn(/*id=*/0, duckdb::LogicalType::BLOB,
-                             /*skip_validity=*/false, kRgSize,
-                             duckdb::CompressionType::COMPRESSION_AUTO);
+    auto& cw =
+      w->OpenColumn(0, duckdb::LogicalType::BLOB, {.row_group_size = kRgSize});
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; ++doc) {
       const auto s = std::to_string(doc);
       irs::tests::AppendBlob(
@@ -1974,9 +1963,8 @@ TEST_P(Columnstore2TestCase, dense_column_range) {
   constexpr irs::doc_id_t kMax = 8192;
   {
     auto w = irs::tests::MakeCsWriter(_dir, kSegment);
-    auto& cw = w->OpenColumn(/*id=*/0, duckdb::LogicalType::BLOB,
-                             /*skip_validity=*/false, kRgSize,
-                             duckdb::CompressionType::COMPRESSION_AUTO);
+    auto& cw =
+      w->OpenColumn(0, duckdb::LogicalType::BLOB, {.row_group_size = kRgSize});
     for (irs::doc_id_t doc = kMin; doc <= kMax; ++doc) {
       const auto s = std::to_string(doc);
       irs::tests::AppendBlob(
@@ -2132,12 +2120,10 @@ TEST_P(Columnstore2TestCase, dense_fixed_length_column_m) {
   constexpr uint32_t kRgSize = 512;
   {
     auto w = irs::tests::MakeCsWriter(_dir, kSegment);
-    auto& cw_a = w->OpenColumn(/*id=*/0, duckdb::LogicalType::BLOB,
-                               /*skip_validity=*/false, kRgSize,
-                               duckdb::CompressionType::COMPRESSION_AUTO);
-    auto& cw_b = w->OpenColumn(/*id=*/1, duckdb::LogicalType::BLOB,
-                               /*skip_validity=*/false, kRgSize,
-                               duckdb::CompressionType::COMPRESSION_AUTO);
+    auto& cw_a =
+      w->OpenColumn(0, duckdb::LogicalType::BLOB, {.row_group_size = kRgSize});
+    auto& cw_b =
+      w->OpenColumn(1, duckdb::LogicalType::BLOB, {.row_group_size = kRgSize});
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; ++doc) {
       irs::tests::AppendBlob(
         cw_a, doc,
@@ -2281,12 +2267,10 @@ TEST_P(Columnstore2TestCase, dense_fixed_length_column_mr) {
   constexpr uint32_t kRgSize = 512;
   {
     auto w = irs::tests::MakeCsWriter(_dir, kSegment);
-    auto& cw_a = w->OpenColumn(/*id=*/0, duckdb::LogicalType::BLOB,
-                               /*skip_validity=*/false, kRgSize,
-                               duckdb::CompressionType::COMPRESSION_AUTO);
-    auto& cw_b = w->OpenColumn(/*id=*/1, duckdb::LogicalType::BLOB,
-                               /*skip_validity=*/false, kRgSize,
-                               duckdb::CompressionType::COMPRESSION_AUTO);
+    auto& cw_a =
+      w->OpenColumn(0, duckdb::LogicalType::BLOB, {.row_group_size = kRgSize});
+    auto& cw_b =
+      w->OpenColumn(1, duckdb::LogicalType::BLOB, {.row_group_size = kRgSize});
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; ++doc) {
       irs::tests::AppendBlob(
         cw_a, doc,
@@ -2429,12 +2413,10 @@ TEST_P(Columnstore2TestCase, DenseFixedLengthColumn) {
   constexpr uint32_t kRgSize = 512;
   {
     auto w = irs::tests::MakeCsWriter(_dir, kSegment);
-    auto& cw_a = w->OpenColumn(/*id=*/0, duckdb::LogicalType::BLOB,
-                               /*skip_validity=*/false, kRgSize,
-                               duckdb::CompressionType::COMPRESSION_AUTO);
-    auto& cw_b = w->OpenColumn(/*id=*/1, duckdb::LogicalType::BLOB,
-                               /*skip_validity=*/false, kRgSize,
-                               duckdb::CompressionType::COMPRESSION_AUTO);
+    auto& cw_a =
+      w->OpenColumn(0, duckdb::LogicalType::BLOB, {.row_group_size = kRgSize});
+    auto& cw_b =
+      w->OpenColumn(1, duckdb::LogicalType::BLOB, {.row_group_size = kRgSize});
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; ++doc) {
       irs::tests::AppendBlob(
         cw_a, doc,
@@ -2577,12 +2559,10 @@ TEST_P(Columnstore2TestCase, dense_fixed_length_column_empty_tail) {
   constexpr uint32_t kRgSize = 512;
   {
     auto w = irs::tests::MakeCsWriter(_dir, kSegment);
-    auto& cw = w->OpenColumn(/*id=*/0, duckdb::LogicalType::BLOB,
-                             /*skip_validity=*/false, kRgSize,
-                             duckdb::CompressionType::COMPRESSION_AUTO);
-    w->OpenColumn(/*id=*/1, duckdb::LogicalType::BLOB,
-                  /*skip_validity=*/false, kRgSize,
-                  duckdb::CompressionType::COMPRESSION_AUTO);  // never written
+    auto& cw =
+      w->OpenColumn(0, duckdb::LogicalType::BLOB, {.row_group_size = kRgSize});
+    w->OpenColumn(1, duckdb::LogicalType::BLOB,
+                  {.row_group_size = kRgSize});  // never written
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; ++doc) {
       irs::tests::AppendBlob(
         cw, doc, {reinterpret_cast<const irs::byte_type*>(&doc), sizeof(doc)});
@@ -2712,9 +2692,8 @@ TEST_P(Columnstore2TestCase, dense_fixed_large_values) {
   constexpr uint32_t kRgSize = 128;
   {
     auto w = irs::tests::MakeCsWriter(_dir, kSegment);
-    auto& cw = w->OpenColumn(/*id=*/0, duckdb::LogicalType::BLOB,
-                             /*skip_validity=*/false, kRgSize,
-                             duckdb::CompressionType::COMPRESSION_AUTO);
+    auto& cw =
+      w->OpenColumn(0, duckdb::LogicalType::BLOB, {.row_group_size = kRgSize});
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; ++doc) {
       auto s = std::to_string(doc);
       s.resize(kValueSize, 'a');

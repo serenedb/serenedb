@@ -43,7 +43,8 @@ class FullScanner {
   FullScanner(const irs::ColReader& reader,
               std::span<const irs::ColumnstoreProjection> projections,
               std::span<const irs::ColFilterSpec> filters,
-              duckdb::ClientContext* context, irs::ColFilterStateCache& states);
+              duckdb::ClientContext* context, irs::ColFilterStateCache& states,
+              bool share_payloads);
 
   FullScanner(const FullScanner&) = delete;
   FullScanner& operator=(const FullScanner&) = delete;
@@ -81,7 +82,7 @@ class FullScanner {
     std::unique_ptr<irs::ExtractBinding> extract;
   };
 
-  irs::ReadContext _ctx;
+  std::shared_ptr<irs::ReadContext> _ctx;
   std::vector<Binding> _bound;
   std::vector<duckdb::idx_t> _absent;
   irs::ColFilterChain _filters;

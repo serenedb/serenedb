@@ -35,6 +35,7 @@
 #include <duckdb/storage/statistics/numeric_stats.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 
+#include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/formats/column/internal/gather_arms.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/lazy_bitset.hpp"
@@ -640,7 +641,7 @@ bool ColFilterChain::AdmitRows(uint64_t row) {
       }
       if (!r.points[j]) {
         r.points[j] = std::make_unique<irs::ColumnReader::PointReader>(
-          *_col_reader, *reader);
+          *_col_reader, *reader, true);
       }
       r.points[j]->FetchRow(row, vector, 0);
     }
@@ -692,9 +693,11 @@ duckdb::idx_t ColFilterChain::FilterDocs(irs::doc_id_t* docs,
 }
 
 detail::PointRead ColFilterChain::ClassifyPointReads() const noexcept {
-  const auto zstd = [](const irs::ColumnReader& reader) {
+  const auto frames = [](const irs::ColumnReader& reader) {
     return absl::c_any_of(reader.DataBlocks(), [](const auto& block) {
-      return block.codec->type == duckdb::CompressionType::COMPRESSION_ZSTD;
+      const auto* choice = codecs::ChoiceOf(block.codec->type);
+      return choice && choice->shape == codecs::Shape::Plain &&
+             !codecs::Sorted(choice->leaf);
     });
   };
   auto read = detail::PointRead::Row;
@@ -702,7 +705,7 @@ detail::PointRead ColFilterChain::ClassifyPointReads() const noexcept {
     if (c.nested) {
       return detail::PointRead::None;
     }
-    if (zstd(*c.reader)) {
+    if (frames(*c.reader)) {
       read = detail::PointRead::Vector;
     }
   }
@@ -714,7 +717,7 @@ detail::PointRead ColFilterChain::ClassifyPointReads() const noexcept {
       if (reader->Type().IsNested()) {
         return detail::PointRead::None;
       }
-      if (zstd(*reader)) {
+      if (frames(*reader)) {
         read = detail::PointRead::Vector;
       }
     }
@@ -726,8 +729,8 @@ bool ColFilterChain::AdmitRow(uint64_t row) {
   SDB_ASSERT(_col_reader);
   for (auto& f : _cols) {
     if (!f.point) {
-      f.point = std::make_unique<irs::ColumnReader::PointReader>(*_col_reader,
-                                                                 *f.reader);
+      f.point = std::make_unique<irs::ColumnReader::PointReader>(
+        *_col_reader, *f.reader, true);
       f.point_scratch =
         std::make_unique<irs::ColumnReader::VectorScratch>(f.reader->Type());
       f.point_heap =

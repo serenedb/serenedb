@@ -35,6 +35,8 @@
 #include <iresearch/utils/directory_utils.hpp>
 #include <iresearch/utils/file_utils_ext.hpp>
 #include <iresearch/utils/misc.hpp>
+#include <limits>
+#include <random>
 #include <string>
 #include <thread>
 #include <vector>
@@ -4354,6 +4356,34 @@ TEST_P(DirectoryTestCase, checksum_covers_bytes_since_previous_call) {
   EXPECT_EQ(footer_crc.checksum(), out->Checksum());
 
   EXPECT_EQ(irs::Crc32c{}.checksum(), out->Checksum());
+}
+
+TEST_P(DirectoryTestCase, large_writes_between_buffered_bytes_round_trip) {
+  std::mt19937_64 rng{17};
+  const size_t sizes[] = {100, 200000, 50, 64 * 1024, 7, 64 * 1024 + 3, 1};
+  std::vector<irs::byte_type> written;
+  irs::Crc32c crc;
+  {
+    auto out = _dir->create("mixed_writes");
+    ASSERT_FALSE(!out);
+    for (const auto size : sizes) {
+      std::vector<irs::byte_type> part(size);
+      for (auto& b : part) {
+        b = static_cast<irs::byte_type>(rng());
+      }
+      out->WriteData(part.data(), part.size());
+      written.insert(written.end(), part.begin(), part.end());
+      crc.process_bytes(part.data(), part.size());
+      ASSERT_EQ(written.size(), out->Position());
+    }
+    EXPECT_EQ(crc.checksum(), out->Checksum());
+  }
+  auto in = _dir->open("mixed_writes", irs::IOAdvice::SEQUENTIAL);
+  ASSERT_FALSE(!in);
+  ASSERT_EQ(written.size(), in->Length());
+  std::vector<irs::byte_type> read(written.size());
+  in->ReadData(read.data(), read.size());
+  EXPECT_EQ(written, read);
 }
 
 TEST_P(DirectoryTestCase, read_once_reads_range_and_advances) {

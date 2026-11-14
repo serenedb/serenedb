@@ -52,6 +52,7 @@
 #include <iresearch/index/inverter/columnar_flush.hpp>
 #include <iresearch/index/inverter/fields_inverter.hpp>
 #include <memory>
+#include <random>
 #include <span>
 #include <string>
 #include <string_view>

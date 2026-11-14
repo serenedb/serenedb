@@ -20,60 +20,30 @@
 
 #pragma once
 
-#include <duckdb/storage/checkpoint/string_checkpoint_state.hpp>
+#include <duckdb/common/types.hpp>
+#include <duckdb/common/types/string_type.hpp>
+#include <duckdb/main/database.hpp>
 
-#include "iresearch/formats/column/internal/block_manager.hpp"
 #include "iresearch/store/data_output.hpp"
 
-namespace duckdb {
-
-class DatabaseInstance;
-
-}  // namespace duckdb
 namespace irs {
 
-class WriteContext final : public BlockManager,
-                           public duckdb::OverflowStringWriter,
-                           public duckdb::ColumnStreamWriter {
+class WriteContext final {
  public:
-  WriteContext(duckdb::DatabaseInstance& db, IndexOutput& out,
-               duckdb::idx_t block_alloc_size);
-  ~WriteContext() final;
+  WriteContext(duckdb::DatabaseInstance& db, IndexOutput& blocks) noexcept
+    : _db{&db}, _blocks{&blocks} {}
 
   WriteContext(const WriteContext&) = delete;
   WriteContext& operator=(const WriteContext&) = delete;
-  WriteContext(WriteContext&&) = delete;
-  WriteContext& operator=(WriteContext&&) = delete;
 
-  IndexOutput& Out() noexcept { return *_out; }
+  duckdb::DatabaseInstance& Database() noexcept { return *_db; }
+  IndexOutput& Blocks() noexcept { return *_blocks; }
 
-  void WriteString(duckdb::UncompressedStringSegmentState& state,
-                   duckdb::string_t string, duckdb::block_id_t& result_block,
-                   int32_t& result_offset) final;
-  void Flush() final {}
-
-  duckdb::idx_t Position() const final;
-  void Append(duckdb::const_data_ptr_t data, duckdb::idx_t size) final;
-
-  duckdb::block_id_t GetFreeBlockId() final;
-  duckdb::block_id_t PeekFreeBlockId() final;
-  void Write(duckdb::FileBuffer& block, duckdb::block_id_t block_id) final;
-  void Write(duckdb::QueryContext context, duckdb::FileBuffer& block,
-             duckdb::block_id_t block_id) final;
-
-  void Read(duckdb::QueryContext context, duckdb::Block& block) final;
-  void ReadBlocks(duckdb::QueryContext context, duckdb::FileBuffer& buffer,
-                  duckdb::block_id_t start_block,
-                  duckdb::idx_t block_count) final;
-
-  bool IsRootBlock(duckdb::MetaBlockPointer root) final;
-  duckdb::idx_t GetMetaBlock() final;
-  void WriteHeader(duckdb::QueryContext context,
-                   duckdb::DatabaseHeader header) final;
-  duckdb::idx_t TotalBlocks() final;
+  duckdb::block_id_t WriteOverflowString(duckdb::string_t string);
 
  private:
-  IndexOutput* _out;
+  duckdb::DatabaseInstance* _db;
+  IndexOutput* _blocks;
 };
 
 }  // namespace irs

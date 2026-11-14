@@ -1,18 +1,8 @@
-# dict_fsst FSST+ rewind after a uniqueness flip: fit_rows is a certificate for the CANDIDATE it
-# was measured under, and the rewind must not flush a different one.
+# Text segment sizing after a uniqueness flip at the very end of a column.
 #
-# The shape that arms it: all-unique strings whose ROW-order neighbours share a prefix (grouped
-# keys with hash tails), so the row cleave wins and the segment commits PLUS_ROW -- a layout with
-# no selection buffer. Near the block, one duplicate breaks all-unique: the forced re-cleave can
-# only build the sorted candidate, which needs a selection buffer for every row and no longer
-# fits, so the cut rewinds to fit_rows. That rewind moves the duplicate out again, restoring the
-# exact all-unique state fit_rows was measured in -- but a commit poisoned to PLUS_SORTED kept the
-# row candidate dead, and the flush wrote a sorted layout the certificate never priced:
-# D_ASSERT(layout.total <= block_size) in WriteCleavedSegment, at checkpoint time.
-#
-# The duplicate sits at row 25000 so the flip lands inside the window where the row layout still
-# fits comfortably and the sorted one is already past the block. Found on the Highsail corpus,
-# where it fired on 3 of 3 fresh bootstraps; unlike the sibling tests this one needs only 25k rows.
+# The shape: all-unique strings whose ROW-order neighbours share a prefix (grouped keys with hash
+# tails), then one duplicate at row 25000, which breaks all-unique. Found on the Highsail corpus;
+# unlike the sibling tests this one needs only 25k rows.
 
 control substitution on
 
@@ -53,16 +43,16 @@ n	dn	bytes_match
 25001	25000	t
 
 
-# the data landed in a cleaved mode, so the rewind path under test is the one that ran
+# the column is stored with an fsst codec
 query
-SELECT count(*) > 0 AS has_plus FROM pragma_storage_info('dfr_own.grouped', include_segment_info=true)
-  WHERE compression='DICT_FSST' AND segment_info LIKE '%PLUS%';
+SELECT bool_and(compression IN ('DICT_FSST', 'FSST')) AS fsst FROM pragma_storage_info('dfr_own.grouped', include_segment_info=true)
+  WHERE column_name='c' AND segment_type='VARCHAR';
 ----
-has_plus
+fsst
 t
 
 
-# the duplicate and its original read back identically through the cleaved segments
+# the duplicate and its original read back identically
 query
 SELECT count(*) FROM dfr_own.grouped
   WHERE c = 'c' || lpad('0', 7, '0') || chr(31) || substr(md5('0'), 1, 12);

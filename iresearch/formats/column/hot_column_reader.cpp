@@ -37,6 +37,7 @@
 #include <optional>
 #include <utility>
 
+#include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -384,10 +385,8 @@ std::unique_ptr<HotColumnReader> HotColumnReader::Build(
   }
   std::vector<ColumnBlockMeta> blocks;
   if (HasOwnBlocks(column.type)) {
-    const auto codec =
-      duckdb::DBConfig::GetConfig(db).TryGetCompressionFunction(
-        duckdb::CompressionType::COMPRESSION_UNCOMPRESSED,
-        column.type.InternalType());
+    const auto* codec = codecs::GetCodec(codecs::CodecType::Uncompressed,
+                                         column.type.InternalType());
     SDB_ASSERT(codec);
     blocks.reserve(column.chunks.size());
     for (const auto& chunk : column.chunks) {
@@ -396,7 +395,7 @@ std::unique_ptr<HotColumnReader> HotColumnReader::Build(
                         ? stats->Get(column.type, chunk)
                         : duckdb::BaseStatistics::CreateUnknown(column.type),
         .tuple_count = chunk.count,
-        .codec = codec.get(),
+        .codec = codec,
       });
     }
   }

@@ -70,6 +70,7 @@ struct SearchUpdateGlobalState final : duckdb::GlobalSinkState {
   std::optional<RowPositionDeduplicator> updated_rows;
 
   absl::Mutex mutex;
+  irs::DocRemovalBuilder positions;
   duckdb::idx_t update_count = 0;
   // RETURNING only: the rows as this statement left them.
   std::optional<duckdb::ColumnDataCollection> returned;
@@ -313,10 +314,7 @@ duckdb::SinkCombineResultType SereneDBSearchUpdate::Combine(
   absl::MutexLock lock{&gstate.mutex};
   auto& search_txn = gstate.sdb_txn->SearchTxn();
   lstate.rows.HandOver(context.client, gstate.table, search_txn);
-  if (!lstate.positions.Empty()) {
-    search_txn.AddRemoval(context.client, gstate.table.store,
-                          std::move(lstate.positions));
-  }
+  gstate.positions.Merge(std::move(lstate.positions));
   if (!lstate.patches.empty()) {
     search_txn.AddPatches(gstate.table.store, std::move(lstate.patches));
   }
@@ -360,10 +358,11 @@ duckdb::SinkFinalizeType SereneDBSearchUpdate::Finalize(
   auto& gstate = input.global_state.Cast<SearchUpdateGlobalState>();
   auto& search_txn = gstate.sdb_txn->SearchTxn();
   if (!_patch && gstate.updated_rows) {
-    if (auto positions = std::move(*gstate.updated_rows).Positions();
-        !positions.Empty()) {
-      search_txn.AddRemoval(context, gstate.table.store, std::move(positions));
-    }
+    gstate.positions = std::move(*gstate.updated_rows).Positions();
+  }
+  if (!gstate.positions.Empty()) {
+    search_txn.AddRemoval(context, gstate.table.store,
+                          std::move(gstate.positions));
   }
   SDB_PARK_ONCE_ON_FAILURE("search_update_before_key_check");
   if (_patch) {

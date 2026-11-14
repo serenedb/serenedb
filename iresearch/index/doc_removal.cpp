@@ -100,6 +100,19 @@ void DocRemovalBuilder::AddRange(uint32_t index, doc_id_t first,
   Group(index).AddRange(first, last);
 }
 
+void DocRemovalBuilder::Merge(DocRemovalBuilder&& other) {
+  for (auto& [index, docs] : other._groups) {
+    auto& group = Group(index);
+    if (group.Empty()) {
+      group = std::move(docs);
+    } else {
+      group.Merge(docs);
+    }
+  }
+  other._groups = {};
+  other._last = 0;
+}
+
 std::shared_ptr<const DocRemoval> DocRemovalBuilder::Finish(
   const DirectoryReader& reader) && {
   auto removal = std::make_shared<DocRemoval>();

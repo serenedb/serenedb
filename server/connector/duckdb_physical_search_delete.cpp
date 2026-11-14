@@ -50,6 +50,7 @@ struct SearchTableDeleteState final : duckdb::GlobalSinkState {
   std::optional<RowPositionDeduplicator> deleted_rows;
   std::shared_ptr<search::Store> search_table;
   absl::Mutex mutex;
+  irs::DocRemovalBuilder positions;
   duckdb::idx_t delete_count = 0;
   // RETURNING only: the rows this statement removed.
   std::optional<duckdb::ColumnDataCollection> returned;
@@ -184,15 +185,12 @@ duckdb::SinkResultType SereneDBSearchDelete::Sink(
 }
 
 duckdb::SinkCombineResultType SereneDBSearchDelete::Combine(
-  duckdb::ExecutionContext& context,
+  duckdb::ExecutionContext& /*context*/,
   duckdb::OperatorSinkCombineInput& input) const {
   auto& gstate = input.global_state.Cast<SearchTableDeleteState>();
   auto& lstate = input.local_state.Cast<SearchDeleteLocalState>();
   absl::MutexLock lock{&gstate.mutex};
-  if (!lstate.positions.Empty()) {
-    gstate.sdb_txn->SearchTxn().AddRemoval(context.client, gstate.search_table,
-                                           std::move(lstate.positions));
-  }
+  gstate.positions.Merge(std::move(lstate.positions));
   gstate.delete_count += lstate.delete_count;
   if (lstate.returned && lstate.returned->Count() != 0) {
     gstate.returned->Combine(*lstate.returned);
@@ -206,10 +204,11 @@ duckdb::SinkFinalizeType SereneDBSearchDelete::Finalize(
   auto& gstate = input.global_state.Cast<SearchTableDeleteState>();
   auto& search_txn = gstate.sdb_txn->SearchTxn();
   if (gstate.deleted_rows) {
-    if (auto positions = std::move(*gstate.deleted_rows).Positions();
-        !positions.Empty()) {
-      search_txn.AddRemoval(context, gstate.search_table, std::move(positions));
-    }
+    gstate.positions = std::move(*gstate.deleted_rows).Positions();
+  }
+  if (!gstate.positions.Empty()) {
+    search_txn.AddRemoval(context, gstate.search_table,
+                          std::move(gstate.positions));
   }
   search_txn.CheckKeys(context, *gstate.search_table,
                        search::KeyConflict::Unique);

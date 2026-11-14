@@ -1776,15 +1776,21 @@ void Writes::CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w) {
   if (w.keys.empty() && !w.removed_rows && !w.changes.truncate) {
     return;
   }
-  LiveUnits now{w.store->GetTable().State(), w.changes.removals};
+  std::optional<LiveUnits> live;
+  const auto now = [&]() -> const LiveUnits& {
+    if (!live) {
+      live.emplace(w.store->GetTable().State(), w.changes.removals);
+    }
+    return *live;
+  };
   if (HasUniqueKeys(w) && (!w.own_segments.empty() || w.piece)) {
     std::vector<KeyProbe::Segment> segments;
     segments.reserve(w.own_segments.size() + 1);
     for (const auto& segment : w.own_segments) {
-      segments.push_back(OwnSegmentSource(segment, now));
+      segments.push_back(OwnSegmentSource(segment, now()));
     }
     if (w.piece) {
-      segments.push_back(OwnSegmentSource(w.piece, now));
+      segments.push_back(OwnSegmentSource(w.piece, now()));
     }
     for (size_t i = 0; i != w.keys.size(); ++i) {
       const auto& spec = w.keys[i];
@@ -1792,8 +1798,9 @@ void Writes::CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w) {
         continue;
       }
       KeyProbe fresh{spec.key.field};
-      fresh.AddLive(
-        now, w.checked && !spec.deferred && i < known ? &*w.checked : nullptr);
+      fresh.AddLive(now(), w.checked && !spec.deferred && i < known
+                             ? &*w.checked
+                             : nullptr);
       if (fresh.Empty() && !spec.deferred) {
         continue;
       }
@@ -1820,7 +1827,7 @@ void Writes::CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w) {
       }
     }
     duckdb::StringHeap heap;
-    const auto keys = OwnKeys(w, spec.key.field, now, heap);
+    const auto keys = OwnKeys(w, spec.key.field, now(), heap);
     if (keys.empty()) {
       continue;
     }
@@ -1881,11 +1888,11 @@ void Writes::CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w) {
                         });
         }
       };
-      for (const auto& unit : now.Units()) {
+      for (const auto& unit : now().Units()) {
         collect(*unit.unit->reader, unit.removed);
       }
       for (const auto& segment : w.own_segments) {
-        collect(*segment.reader, now.Removed(segment.reader->Id()));
+        collect(*segment.reader, now().Removed(segment.reader->Id()));
       }
       for (auto& child : w.related_checked) {
         child.second.reset();
@@ -1893,7 +1900,9 @@ void Writes::CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w) {
     }
     CheckRemovedKeys(context, w, true);
   }
-  w.checked.emplace(std::move(now));
+  if (live) {
+    w.checked.emplace(std::move(*live));
+  }
 }
 
 TableRead Writes::LatestView(duckdb::ClientContext& context, Store& store) {

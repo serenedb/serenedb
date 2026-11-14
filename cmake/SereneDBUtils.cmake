@@ -16,7 +16,7 @@ function(sdb_update_module)
     if(NOT SDB_UPDATE_SUBMODULES)
         return()
     endif()
-    set(cwd ${CMAKE_SOURCE_DIR}/third_party)
+    set(cwd ${serenedb_SOURCE_DIR}/third_party)
     foreach(module IN LISTS ARGN)
         execute_process(
             COMMAND ${GIT_EXECUTABLE} rev-parse @:./${module}
@@ -76,7 +76,7 @@ macro(sdb_add_module module)
         set(_sdb_add_module_DIR ${module})
     endif()
     set(_sdb_add_module_DIR
-        ${CMAKE_SOURCE_DIR}/third_party/${_sdb_add_module_DIR}
+        ${serenedb_SOURCE_DIR}/third_party/${_sdb_add_module_DIR}
     )
     sdb_update_module(${module})
     if(_sdb_add_module_EXCLUDE_FROM_ALL)
@@ -93,6 +93,85 @@ macro(sdb_add_module module)
 endmacro()
 
 function(sdb_link_duckdb_extensions target)
-    set(DUCKDB_MODULE_BASE_DIR ${CMAKE_SOURCE_DIR}/third_party/duckdb)
+    set(DUCKDB_MODULE_BASE_DIR ${serenedb_SOURCE_DIR}/third_party/duckdb)
     duckdb_link_extensions(${target} PRIVATE ${STATICALLY_LINK_EXTENSIONS})
+endfunction()
+
+set(SDB_BUILD_SETTINGS_VARIABLES
+    CMAKE_AR
+    CMAKE_RANLIB
+    CMAKE_C_ARCHIVE_CREATE
+    CMAKE_C_ARCHIVE_APPEND
+    CMAKE_CXX_ARCHIVE_CREATE
+    CMAKE_CXX_ARCHIVE_APPEND
+    CMAKE_ASM_ARCHIVE_CREATE
+    CMAKE_ASM_ARCHIVE_APPEND
+    CMAKE_C_FLAGS
+    CMAKE_CXX_FLAGS
+    CMAKE_EXE_LINKER_FLAGS
+    CMAKE_C_STANDARD_LIBRARIES
+    CMAKE_CXX_STANDARD_LIBRARIES
+    CMAKE_CXX_STANDARD_REQUIRED
+    CMAKE_CXX_EXTENSIONS
+    CMAKE_C_VISIBILITY_PRESET
+    CMAKE_CXX_VISIBILITY_PRESET
+    CMAKE_VISIBILITY_INLINES_HIDDEN
+    CMAKE_RUNTIME_OUTPUT_DIRECTORY
+    CACHE INTERNAL
+    ""
+)
+set(SDB_BUILD_SETTINGS_PROPERTIES
+    COMPILE_OPTIONS
+    COMPILE_DEFINITIONS
+    LINK_OPTIONS
+    LINK_LIBRARIES
+    INCLUDE_DIRECTORIES
+    CACHE INTERNAL
+    ""
+)
+
+function(sdb_record_build_settings)
+    foreach(variable IN LISTS SDB_BUILD_SETTINGS_VARIABLES)
+        if(DEFINED ${variable})
+            set_property(GLOBAL PROPERTY SDB_BUILD_${variable} "${${variable}}")
+        endif()
+    endforeach()
+    foreach(property IN LISTS SDB_BUILD_SETTINGS_PROPERTIES)
+        get_directory_property(value ${property})
+        set_property(GLOBAL PROPERTY SDB_BUILD_${property} "${value}")
+    endforeach()
+endfunction()
+
+macro(sdb_use_build_settings)
+    foreach(_sdb_variable IN LISTS SDB_BUILD_SETTINGS_VARIABLES)
+        get_property(
+            _sdb_recorded
+            GLOBAL
+            PROPERTY SDB_BUILD_${_sdb_variable}
+            SET
+        )
+        if(_sdb_recorded)
+            get_property(
+                ${_sdb_variable}
+                GLOBAL
+                PROPERTY SDB_BUILD_${_sdb_variable}
+            )
+        endif()
+    endforeach()
+    foreach(_sdb_property IN LISTS SDB_BUILD_SETTINGS_PROPERTIES)
+        get_property(_sdb_value GLOBAL PROPERTY SDB_BUILD_${_sdb_property})
+        set_property(DIRECTORY PROPERTY ${_sdb_property} "${_sdb_value}")
+    endforeach()
+endmacro()
+
+function(sdb_server_executable target)
+    target_link_libraries(${target} PRIVATE serene_app)
+    sdb_link_duckdb_extensions(${target})
+    if(SDB_EMBEDDED_DOCS)
+        target_link_libraries(
+            ${target}
+            PRIVATE serene_docs_builder serene_docs_bootstrap serene_docs_index
+        )
+        sdb_build_docs_index(${target})
+    endif()
 endfunction()

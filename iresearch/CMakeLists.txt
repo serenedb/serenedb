@@ -3,18 +3,18 @@ find_package(BISON)
 if(FLEX_FOUND AND BISON_FOUND)
     add_custom_command(
         OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_lexer.cpp
-        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        WORKING_DIRECTORY ${serenedb_SOURCE_DIR}
         COMMAND
-            ${CMAKE_SOURCE_DIR}/scripts/generate_c.sh ${FLEX_EXECUTABLE}
+            ${serenedb_SOURCE_DIR}/scripts/generate_c.sh ${FLEX_EXECUTABLE}
             iresearch/parser/lucene_lexer.cpp iresearch/parser/lucene_lexer.l
         MAIN_DEPENDENCY ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_lexer.l
         VERBATIM
     )
     add_custom_command(
         OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_parser.cpp
-        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        WORKING_DIRECTORY ${serenedb_SOURCE_DIR}
         COMMAND
-            ${CMAKE_SOURCE_DIR}/scripts/generate_c.sh ${BISON_EXECUTABLE}
+            ${serenedb_SOURCE_DIR}/scripts/generate_c.sh ${BISON_EXECUTABLE}
             iresearch/parser/lucene_parser.cpp iresearch/parser/lucene_parser.y
         MAIN_DEPENDENCY ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_parser.y
         VERBATIM
@@ -32,16 +32,16 @@ add_subdirectory(utils)
 
 target_include_directories(
     iresearch
-    PUBLIC ${CMAKE_SOURCE_DIR} ${CMAKE_BINARY_DIR}
+    PUBLIC ${serenedb_SOURCE_DIR} ${serenedb_BINARY_DIR}
 )
 target_include_directories(
     iresearch
     SYSTEM
-    PRIVATE ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/fastpforlib
+    PRIVATE ${serenedb_SOURCE_DIR}/third_party/duckdb/third_party/fastpforlib
     PUBLIC
-        ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/fsst
-        ${CMAKE_SOURCE_DIR}/third_party/stringzilla/include
-        ${CMAKE_SOURCE_DIR}/third_party/magic_enum
+        ${serenedb_SOURCE_DIR}/third_party/duckdb/third_party/fsst
+        ${serenedb_SOURCE_DIR}/third_party/stringzilla/include
+        ${serenedb_SOURCE_DIR}/third_party/magic_enum
 )
 
 if(ARCH_AMD64)
@@ -102,7 +102,7 @@ target_include_directories(
     iresearch
     SYSTEM
     PUBLIC
-        ${CMAKE_SOURCE_DIR}/third_party/duckdb/extension/core_functions/include
+        ${serenedb_SOURCE_DIR}/third_party/duckdb/extension/core_functions/include
 )
 target_link_libraries(
     iresearch

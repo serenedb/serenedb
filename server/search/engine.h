@@ -26,13 +26,18 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <iresearch/formats/ann_build_env.hpp>
 #include <memory>
+#include <stop_token>
 #include <yaclib/algo/wait_group.hpp>
 
 #include "utils/drain_gate.h"
 
 namespace sdb {
+
+class Runtime;
+
 namespace search {
 
 class Store;
@@ -132,6 +137,20 @@ class SearchEngine final {
   // loops come and go with CREATE/DROP, and a transient zero would complete the
   // group for good. stop() Done()s the token, then Waits.
   yaclib::WaitGroup<> _loops{1};
+};
+
+class SearchTasks final {
+ public:
+  SearchTasks(Runtime& runtime, SearchEngine& engine);
+  ~SearchTasks();
+
+  SearchTasks(const SearchTasks&) = delete;
+  SearchTasks& operator=(const SearchTasks&) = delete;
+
+ private:
+  Runtime& _runtime;
+  SearchEngine& _engine;
+  std::stop_callback<std::function<void()>> _on_stop;
 };
 
 inline SearchEngine& GetSearchEngine() { return *SearchEngine::gInstance; }

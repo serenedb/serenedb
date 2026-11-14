@@ -26,10 +26,12 @@
 #include <chrono>
 #include <duckdb/common/shared_ptr.hpp>
 #include <duckdb/common/types.hpp>
+#include <functional>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
 #include <memory>
 #include <optional>
+#include <stop_token>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -39,6 +41,9 @@
 #include "server/utils/asio_ns.h"
 
 namespace sdb {
+
+class Runtime;
+
 namespace network {
 
 class IoExecutor;
@@ -51,12 +56,13 @@ class SubscriptionEngine final {
  public:
   inline static SubscriptionEngine* gInstance = nullptr;
 
-  explicit SubscriptionEngine(network::IoThreadPool& pool);
+  explicit SubscriptionEngine(Runtime& runtime);
   ~SubscriptionEngine();
 
-  void start();
+  SubscriptionEngine(const SubscriptionEngine&) = delete;
+  SubscriptionEngine& operator=(const SubscriptionEngine&) = delete;
+
   void RequestStop() noexcept;
-  void stop();
 
   void Sync(std::string_view database, duckdb::idx_t subscription,
             bool restart = false);
@@ -125,7 +131,10 @@ class SubscriptionEngine final {
                            network::IoExecutor& exec);
   void Disable(std::string_view database, duckdb::idx_t subscription,
                std::string_view name);
+  void start();
+  void stop();
 
+  Runtime& _runtime;
   network::IoThreadPool& _pool;
   std::atomic<bool> _stopping{false};
   mutable absl::Mutex _mu;
@@ -133,6 +142,7 @@ class SubscriptionEngine final {
     ABSL_GUARDED_BY(_mu);
   irs::containers::FlatHashMap<duckdb::idx_t, SubStats> _stats
     ABSL_GUARDED_BY(_mu);
+  std::stop_callback<std::function<void()>> _on_stop;
 };
 
 }  // namespace replication

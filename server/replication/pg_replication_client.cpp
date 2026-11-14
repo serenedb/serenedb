@@ -68,7 +68,6 @@
 #include "catalog/transaction.h"
 #include "network/asio_awaitable.h"
 #include "network/pg/wire_frames.h"
-#include "network/server.h"
 #include "pg/commands/create_subscription.h"
 #include "pg/connection_context.h"
 #include "pg/protocol.h"
@@ -76,6 +75,7 @@
 #include "pg/types/mapping.h"
 #include "replication/repl_source.h"
 #include "replication/settings.h"
+#include "runtime/runtime.h"
 
 namespace sdb::replication {
 namespace {
@@ -428,7 +428,7 @@ yaclib::Task<bool> PgReplicationClient::SyncParallel(size_t workers) {
   auto target = _target;
   _target.relations = std::move(relations);
   target.conninfo.hosts = {_host};
-  auto* pool = Server::instance().IoPool();
+  auto* pool = &Runtime::Get().IoPool();
   std::vector<duckdb::shared_ptr<TableSyncWorker>> sessions;
   std::vector<yaclib::Future<bool>> results;
   sessions.reserve(workers);

@@ -69,8 +69,8 @@
 #include "catalog/entry/job.h"
 #include "catalog/entry/tokenizer.h"
 #include "catalog/record.h"
+#include "jobs/scheduler.h"
 #include "pg/tsdictionary.h"
-#include "scheduler/job_scheduler.h"
 
 namespace sdb::catalog {
 namespace {

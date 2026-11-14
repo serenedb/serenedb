@@ -20,36 +20,29 @@
 
 #pragma once
 
-#include <iresearch/utils/assert.hpp>
+#include <optional>
 
 namespace sdb::app {
 
-class AppServer {
+void PrepareProcess(char* argv0);
+
+// Parses the CLI (absl flags + the single positional data-dir). Free of SDB_*
+// logging so it can run in main() BEFORE the DuckDB engine is brought up --
+// ConfigureServerDBConfig reads flags (e.g. --cpu_threads) while sizing the
+// pool, which happens during engine init.
+void ParseOptions(int argc, char* argv[]);
+
+class ServerProcess final {
  public:
-  static AppServer& Instance() noexcept {
-    SDB_ASSERT(gInstance);
-    return *gInstance;
-  }
+  ServerProcess(int argc, char* argv[]);
+  ~ServerProcess();
 
-  AppServer() {
-    SDB_ASSERT(gInstance == nullptr, "AppServer is a singleton");
-    gInstance = this;
-  }
-  ~AppServer() { gInstance = nullptr; }
-
-  AppServer(const AppServer&) = delete;
-  AppServer& operator=(const AppServer&) = delete;
-
-  // Parses the CLI (absl flags + the single positional data-dir). Static and
-  // free of SDB_* logging so it can run in main() BEFORE the DuckDB engine is
-  // brought up -- ConfigureServerDBConfig reads flags (e.g. --cpu_threads)
-  // while sizing the pool, which happens during engine init.
-  static void parseOptions(int argc, char* argv[]);
-
-  void wait();
-
- private:
-  inline static AppServer* gInstance = nullptr;
+  ServerProcess(const ServerProcess&) = delete;
+  ServerProcess& operator=(const ServerProcess&) = delete;
 };
+
+std::optional<int> RunShellCommand(int argc, char* argv[]);
+
+void WaitForShutdown();
 
 }  // namespace sdb::app

@@ -1,8 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2014-2023 ArangoDB GmbH, Cologne, Germany
-/// Copyright 2004-2014 triAGENS GmbH, Cologne, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -16,37 +15,37 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is ArangoDB GmbH, Cologne, Germany
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
 
 #include <string>
-#include <string_view>
 
+#include "runtime/runtime.h"
 #include "server/utils/lockfile.h"
 
 namespace sdb {
 
-class DatabasePathFeature final {
+struct StorageConfig {
+  std::string directory;
+  std::string hba_config;
+  bool default_database = true;
+};
+
+StorageConfig ReadStorageConfig();
+
+class Storage final {
  public:
-  inline static DatabasePathFeature* gInstance = nullptr;
-  static DatabasePathFeature& instance() noexcept { return *gInstance; }
+  Storage(Runtime& runtime, const StorageConfig& config);
+  ~Storage();
 
-  DatabasePathFeature();
-  ~DatabasePathFeature();
-
-  const std::string& directory() const { return _directory; }
-
-  const std::string& hbaConfigFile() const { return _hba_config_file; }
-
-  bool initialized() const noexcept { return _initialized; }
+  Storage(const Storage&) = delete;
+  Storage& operator=(const Storage&) = delete;
 
  private:
-  std::string _directory;
-  std::string _hba_config_file;
+  Runtime& _runtime;
   FileLock _lock;
-  bool _initialized = false;
 };
 
 }  // namespace sdb

@@ -43,7 +43,7 @@
 
 #include "catalog/catalog.h"
 #include "catalog/entry/job.h"
-#include "scheduler/job_scheduler.h"
+#include "jobs/scheduler.h"
 
 namespace sdb::connector {
 namespace {

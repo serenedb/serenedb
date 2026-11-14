@@ -1,4 +1,4 @@
-set(IRS_TEST_RESOURCE_DIR ${CMAKE_SOURCE_DIR}/resources/tests/iresearch)
+set(IRS_TEST_RESOURCE_DIR ${serenedb_SOURCE_DIR}/resources/tests/iresearch)
 configure_file(tests_config.hpp.in tests_config.hpp)
 
 add_library(

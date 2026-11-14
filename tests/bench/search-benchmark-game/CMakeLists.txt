@@ -12,7 +12,7 @@ target_compile_definitions(
 )
 target_include_directories(
     search-benchmark-common
-    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/tests/iresearch
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${serenedb_SOURCE_DIR}/tests/iresearch
 )
 
 add_executable(search-benchmark-game-build build_index.cpp)

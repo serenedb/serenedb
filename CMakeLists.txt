@@ -89,7 +89,7 @@ project(
     VERSION ${SERENEDB_VERSION_MAJOR}.${SERENEDB_VERSION_MINOR}
 )
 
-list(PREPEND CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake)
+list(PREPEND CMAKE_MODULE_PATH ${serenedb_SOURCE_DIR}/cmake)
 include(SereneDBUtils)
 
 ################################################################################
@@ -363,14 +363,14 @@ string(
 file(
     RELATIVE_PATH
     SDB_SOURCE_FROM_BUILD
-    ${CMAKE_BINARY_DIR}
-    ${CMAKE_SOURCE_DIR}
+    ${serenedb_BINARY_DIR}
+    ${serenedb_SOURCE_DIR}
 )
 file(
     RELATIVE_PATH
     SDB_BUILD_FROM_SOURCE
-    ${CMAKE_SOURCE_DIR}
-    ${CMAKE_BINARY_DIR}
+    ${serenedb_SOURCE_DIR}
+    ${serenedb_BINARY_DIR}
 )
 if(SDB_BUILD_FROM_SOURCE STREQUAL "")
     message(
@@ -383,9 +383,9 @@ string(APPEND SDB_SOURCE_FROM_BUILD "/")
 
 add_compile_options(
     $<$<BOOL:${SDB_WERROR}>:-Werror>
-    -ffile-prefix-map=${CMAKE_SOURCE_DIR}/=
+    -ffile-prefix-map=${serenedb_SOURCE_DIR}/=
     -ffile-prefix-map=${SDB_SOURCE_FROM_BUILD}=
-    -fdebug-prefix-map=${CMAKE_SOURCE_DIR}/=${SDB_SOURCE_FROM_BUILD}
+    -fdebug-prefix-map=${serenedb_SOURCE_DIR}/=${SDB_SOURCE_FROM_BUILD}
     -fdebug-prefix-map=${SDB_SOURCE_FROM_BUILD}=${SDB_SOURCE_FROM_BUILD}
     -fdebug-compilation-dir=${SDB_BUILD_FROM_SOURCE}
     -fcoverage-compilation-dir=.
@@ -560,7 +560,7 @@ if(NOT SDB_SANITIZE STREQUAL "")
         set(SDB_SANITIZE_FLAGS -fsanitize=memory)
         set(SDB_SANITIZE_EXTRA
             -fsanitize-memory-use-after-dtor
-            -fsanitize-blacklist=${CMAKE_SOURCE_DIR}/resources/suppressions/msan.txt
+            -fsanitize-blacklist=${serenedb_SOURCE_DIR}/resources/suppressions/msan.txt
         )
         if(SDB_SANITIZE STREQUAL "MemoryWithOrigins")
             list(APPEND SDB_SANITIZE_EXTRA -fsanitize-memory-track-origins)
@@ -613,13 +613,13 @@ endif()
 
 include(GNUInstallDirs)
 install(
-    FILES ${CMAKE_SOURCE_DIR}/LICENSE
+    FILES ${serenedb_SOURCE_DIR}/LICENSE
     DESTINATION ${CMAKE_INSTALL_DOCDIR}
     RENAME LICENSE.txt
 )
 # glibc license files (required for static linking, see glibc LICENSES file)
 install(
-    DIRECTORY ${CMAKE_SOURCE_DIR}/resources/licenses/glibc/
+    DIRECTORY ${serenedb_SOURCE_DIR}/resources/licenses/glibc/
     DESTINATION ${CMAKE_INSTALL_DOCDIR}/glibc
 )
 install(DIRECTORY DESTINATION ${CMAKE_INSTALL_LOCALSTATEDIR}/lib/serenedb)
@@ -669,6 +669,7 @@ if(SDB_COVERAGE)
     add_compile_options(${SDB_COVERAGE_FLAGS})
     add_compile_definitions(SDB_COVERAGE)
 endif()
+sdb_record_build_settings()
 
 add_subdirectory(iresearch)
 if(NOT IRESEARCH_BENCH)

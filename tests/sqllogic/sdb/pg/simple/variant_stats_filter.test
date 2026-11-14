@@ -1,0 +1,58 @@
+# Filters on typed VARIANT fields read the segment statistics of the shredded
+# parts. A shredded VARIANT column has no validity payload and keeps its parts
+# per row group instead of as reader children, so FinishStats left its null
+# flags unset and every comparison pruned the segment (#2174).
+
+statement ok
+SET threads = 1
+
+statement ok
+CREATE TABLE variant_stats_t (pk INTEGER PRIMARY KEY, meta VARIANT) WITH (compaction_interval = 0)
+
+statement count 30000
+INSERT INTO variant_stats_t SELECT i, {'rank': i}::VARIANT FROM range(30000) r(i)
+
+query
+SELECT count(*) FROM variant_stats_t WHERE (meta.rank)::BIGINT >= 0
+----
+count
+30000
+
+query
+SELECT count(*) FROM variant_stats_t WHERE (meta.rank)::INTEGER > 50
+----
+count
+29949
+
+query
+SELECT pk FROM variant_stats_t WHERE (meta.rank)::BIGINT = 7
+----
+pk
+7
+
+query
+SELECT count(*) FILTER (WHERE (meta.rank)::BIGINT >= 0) FROM variant_stats_t
+----
+count
+30000
+
+query
+SELECT count(*) FROM variant_stats_t WHERE meta.rank = 7
+----
+count
+1
+
+statement count 1
+INSERT INTO variant_stats_t VALUES (30000, NULL)
+
+query
+SELECT count(*) FROM variant_stats_t WHERE meta IS NULL
+----
+count
+1
+
+query
+SELECT count(*) FROM variant_stats_t WHERE (meta.rank)::BIGINT >= 0
+----
+count
+30000

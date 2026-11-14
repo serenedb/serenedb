@@ -32,6 +32,16 @@ To retrieve the platform, use the following `PRAGMA`:
 
 The platform string combines the operating system and architecture — for example `osx_arm64` on macOS with Apple Silicon, `windows_amd64` on Windows on AMD64, or `linux_arm64` on Ubuntu Linux on ARM64.
 
+## Licenses and Contributors
+
+The `serenedb_licenses` table lists SereneDB and the third-party libraries the server was built with: each one's name, its license as an SPDX expression, its home page, and one row per license file with the file's path in the SereneDB source tree and its text. A library without a license file has the license `NOASSERTION` and no file or text.
+
+<SqlLogicTest id="cookbook/meta/environment/example_006" />
+
+The `serenedb_contributors` table lists the names of the people who wrote SereneDB's commits.
+
+<SqlLogicTest id="cookbook/meta/environment/example_007" />
+
 ## Meta Table Functions
 
 SereneDB has the following built-in table functions to obtain metadata about available catalog objects:

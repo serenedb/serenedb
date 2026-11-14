@@ -52,6 +52,8 @@ if(SDB_EMBEDDED_DOCS)
     )
     sdb_build_docs_index(serened)
 endif()
+include(Licenses)
+cmake_language(DEFER DIRECTORY ${serenedb_SOURCE_DIR} CALL sdb_licenses)
 
 install(TARGETS serened RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} OPTIONAL)
 configure_file(

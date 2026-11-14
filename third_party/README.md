@@ -1,4 +1,4 @@
-**Do not forget to update [LICENSES.md](LICENSES.md)!**
+**Add every library to [licenses.json](licenses.json) and run `scripts/licenses.py`, which rewrites [LICENSES.md](LICENSES.md)!**
 
 # Rules
 

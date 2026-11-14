@@ -42,6 +42,8 @@ constexpr SystemTable* kSystemTables[] = {
   &gSdbMetrics,
   &gSdbProgress,
   &gSdbSettings,
+  &gSerenedbContributors,
+  &gSerenedbLicenses,
 };
 constexpr SystemTable* kSystemTableFunctions[] = {
   &gPgHbaFileRules,

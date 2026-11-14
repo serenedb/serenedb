@@ -41,6 +41,8 @@ extern SystemTable gPgType;
 extern SystemTable gSdbMetrics;
 extern SystemTable gSdbProgress;
 extern SystemTable gSdbSettings;
+extern SystemTable gSerenedbContributors;
+extern SystemTable gSerenedbLicenses;
 extern SystemTable gPgHbaFileRules;
 extern SystemTable gPgPreparedStatement;
 extern SystemTable gPgShowAllSettings;

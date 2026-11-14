@@ -60,6 +60,8 @@ inline constexpr duckdb::idx_t kSdbMetricsTable = kMinSystem + 401;
 inline constexpr duckdb::idx_t kSdbProgressTable = kMinSystem + 402;
 inline constexpr duckdb::idx_t kPgStatProgressCreateTableAsView =
   kMinSystem + 403;
+inline constexpr duckdb::idx_t kSerenedbLicensesTable = kMinSystem + 404;
+inline constexpr duckdb::idx_t kSerenedbContributorsTable = kMinSystem + 405;
 
 struct SystemObject {
   duckdb::idx_t oid;

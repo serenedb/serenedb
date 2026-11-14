@@ -1,9 +1,14 @@
 configure_file(build.h.in build.h NEWLINE_STYLE UNIX)
+set_source_files_properties(
+    ${CMAKE_CURRENT_BINARY_DIR}/credits.cpp
+    PROPERTIES GENERATED TRUE
+)
 
 add_library(
     serene
     STATIC
     app_server.cpp
+    ${CMAKE_CURRENT_BINARY_DIR}/credits.cpp
     drain_gate.cpp
     file_utils.cpp
     files.cpp

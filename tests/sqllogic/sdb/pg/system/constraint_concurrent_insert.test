@@ -54,16 +54,16 @@ INSERT INTO cci VALUES (3, 3)
 
 
 connection s2
-statement async ok
+statement ok
 ALTER TABLE cci ADD CONSTRAINT cci_a_pos CHECK (a > 0)
 
 
 connection s1
-statement ok
+statement error
 COMMIT
-
-
-wait
+----
+db error: ERROR: table "cci" was altered by a concurrent transaction
+HINT: Retry the transaction.
 
 
 connection s2

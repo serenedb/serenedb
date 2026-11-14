@@ -179,7 +179,6 @@ class ColumnReader {
     std::unique_ptr<VariantScanState> variant;
     size_t opened_block = std::numeric_limits<size_t>::max();
     size_t advised_end = 0;
-    bool certified_dictionary = false;
     bool initialized = false;
     duckdb::SelectionVector sel;
     duckdb::SelectionVector piece;
@@ -487,7 +486,7 @@ class ColumnReader {
   bool _patched = false;
 
  private:
-  void CertifyStrings(ScanState& s, const codecs::ColumnSegment& segment,
+  void CertifyStrings(const ScanState& s, const codecs::ColumnSegment& segment,
                       duckdb::Vector& result) const;
   void Readahead(size_t block, ReadContext& ctx, ScanState* s) const noexcept;
   std::unique_ptr<codecs::ColumnSegment> Open(const BlockWindow& w,

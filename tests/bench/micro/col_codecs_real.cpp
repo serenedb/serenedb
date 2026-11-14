@@ -353,7 +353,8 @@ Built Measure(irs::Directory& dir, const ColArm& arm) {
     in->ReadData(file.data(), file.size());
     uint64_t parts[7]{};
     for (const auto& block : data_blocks) {
-      if (!block.codec || block.byte_size == 0 || !block.codec->framed) {
+      if (!block.codec || block.byte_size == 0 ||
+          !irs::codecs::ChoiceOf(block.codec->type)) {
         continue;
       }
       const auto* p = file.data() + block.file_offset;

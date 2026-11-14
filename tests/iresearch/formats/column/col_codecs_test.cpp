@@ -312,7 +312,8 @@ class ColCodecsTest : public TestBase {
     uint64_t row = 0;
     for (const auto& block : col->DataBlocks()) {
       std::string level;
-      if (block.codec->framed) {
+      if (irs::codecs::ChoiceOf(block.codec->type) ||
+          block.codec->type == irs::codecs::CodecType::Numeric) {
         window = col->Locate(row, window);
         auto seg = col->OpenSegment(window.block, ctx);
         auto info = seg->function.get_segment_info(*seg);

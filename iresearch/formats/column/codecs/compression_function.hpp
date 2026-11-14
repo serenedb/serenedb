@@ -132,7 +132,6 @@ class CompressedSegment {
 
 struct CompressionFunction {
   CodecType type = CodecType::Uncompressed;
-  bool framed = false;
   duckdb::idx_t (*analyze)(std::span<const WriteChunk> chunks) = nullptr;
   void (*compress)(ColumnDataCheckpointData& checkpoint_data,
                    std::span<const WriteChunk> chunks) = nullptr;

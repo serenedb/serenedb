@@ -4805,15 +4805,6 @@ TEST_F(ColumnReaderTest, FooterBlocksWithoutBytesAreIndexCorruption) {
     [](irs::ColumnMeta& meta) { meta.data.front().byte_size = 0; });
 }
 
-TEST_F(ColumnReaderTest, FooterBlocksLargerThanABlockAreIndexCorruption) {
-  FetchWithCorruptedFooter(
-    Db(), duckdb::LogicalType::BIGINT, irs::codecs::CodecType::Bitpacking,
-    "Corrupted BitPacking segment: segment is larger than a block", 10,
-    [](irs::ColumnMeta& meta) {
-      meta.data.front().byte_size = irs::codecs::kBlockSize + 8;
-    });
-}
-
 TEST_F(ColumnReaderTest, FooterRowCountsBeyondUncompressedBlocks) {
   constexpr uint64_t kCount = (uint64_t{1} << 61) + 512;
   FetchWithCorruptedFooter(

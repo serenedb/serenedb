@@ -118,8 +118,8 @@ void ReadBlockMetas(duckdb::BinaryDeserializer& d, duckdb::field_id_t id,
 }
 
 bool BorrowsBlockStrings(const codecs::ColumnSegment& segment) {
-  return segment.type.InternalType() == duckdb::PhysicalType::VARCHAR &&
-         !segment.function.framed;
+  return segment.function.type == codecs::CodecType::Uncompressed &&
+         segment.type.InternalType() == duckdb::PhysicalType::VARCHAR;
 }
 
 void ScanSegment(const codecs::ColumnSegment& segment,
@@ -403,18 +403,12 @@ std::unique_ptr<codecs::ColumnSegment> ColumnReader::Open(const BlockWindow& w,
     }
     return segment;
   }
-  if (!codec.framed && m.byte_size > codecs::kBlockSize) [[unlikely]] {
-    codecs::ThrowCorrupted(codecs::NameOf(codec.type),
-                           "segment is larger than a block");
-  }
-  if (codec.framed) {
-    auto& slot = segment->cache_slot;
-    slot.file_id = _file_id;
-    slot.file_offset = m.file_offset;
-    if (auto* cache = ctx.Cache()) {
-      slot.touched = &_touched[w.block];
-      slot.cache = cache;
-    }
+  auto& slot = segment->cache_slot;
+  slot.file_id = _file_id;
+  slot.file_offset = m.file_offset;
+  if (auto* cache = ctx.Cache()) {
+    slot.touched = &_touched[w.block];
+    slot.cache = cache;
   }
   segment->block = ctx.RegisterColBlock(m.file_offset, m.byte_size);
   return segment;
@@ -485,23 +479,16 @@ struct ScannedStrings final : duckdb::AuxiliaryDataHolder {
 
 }  // namespace
 
-void ColumnReader::CertifyStrings(ScanState& s,
+void ColumnReader::CertifyStrings(const ScanState& s,
                                   const codecs::ColumnSegment& segment,
                                   duckdb::Vector& result) const {
-  if (s.ctx.use_count() == 0 || !BorrowsBlockStrings(segment) ||
-      !segment.block) {
+  if (s.ctx.use_count() == 0 || !BorrowsBlockStrings(segment)) {
     return;
   }
-  auto* target = &result;
-  if (result.GetVectorType() == duckdb::VectorType::DICTIONARY_VECTOR) {
-    if (s.certified_dictionary) {
-      return;
-    }
-    s.certified_dictionary = true;
-    target = &duckdb::DictionaryVector::Child(result);
-  }
+  SDB_ASSERT(segment.block);
+  SDB_ASSERT(result.GetVectorType() == duckdb::VectorType::FLAT_VECTOR);
   duckdb::StringVector::AddAuxiliaryData(
-    *target, duckdb::make_uniq<ScannedStrings>(s.ctx, segment.Pin()));
+    result, duckdb::make_uniq<ScannedStrings>(s.ctx, segment.Pin()));
 }
 
 void ColumnReader::OpenScanSegment(ScanState& s) const {
@@ -510,7 +497,6 @@ void ColumnReader::OpenScanSegment(ScanState& s) const {
   }
   const auto& segment = *s.segments.emplace_back(Open(s.window, *s.ctx, &s));
   s.st.scan_state = segment.function.init_scan(segment);
-  s.certified_dictionary = false;
   s.st.internal_index = 0;
   s.initialized = true;
 }

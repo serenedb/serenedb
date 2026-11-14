@@ -115,6 +115,27 @@ SELECT count((meta.missing)::BIGINT) AS present, count(*) AS rows FROM vsf_idx;
 present	rows
 0	37768
 
+query
+SELECT sum(length(meta::VARCHAR)) AS characters, count(*) AS rows FROM vsf_idx;
+----
+characters	rows
+1080382	37768
+
+query
+SELECT sum(length(meta::VARCHAR)) AS characters, count(*) AS rows FROM vsf;
+----
+characters	rows
+1080382	37768
+
+query
+SELECT pk, meta FROM vsf_idx WHERE pk IN (5, 32767, 32768, 37767) ORDER BY pk;
+----
+pk	meta
+5	{"label":"f5","rank":5}
+32767	{"label":"f67","rank":32767}
+32768	{"label":"f68","rank":32768}
+37767	{"label":"f67","rank":37767}
+
 statement ok
 INSERT INTO vsf
 SELECT 100000 + i, 'tail', {'rank': 100000 + i, 'label': 'tail'}::VARIANT

@@ -379,6 +379,39 @@ void ApplyDeferredClaim(ScanGlobalState& state, DeferredBuild&& built) {
   AddDeferredChecks(state, state.deferred_checks);
 }
 
+void NullMissingDistances(FetchLocalState& f, const ScanGlobalState& g,
+                          uint32_t seg, std::span<const irs::doc_id_t> docs,
+                          duckdb::Vector& distances) {
+  if (seg != f.vector_validity_seg) {
+    f.vector_validity_seg = seg;
+    f.vector_validity.reset();
+    const auto& segment = (*g.reader)[seg];
+    const auto* column = segment.Column(g.vector_scorer->field_id);
+    const auto* columns = segment.GetColReader();
+    if (column && columns && (column->HasValidity() || column->InMemory()) &&
+        column->MergedStatistics().CanHaveNull()) {
+      f.vector_validity =
+        std::make_unique<irs::ColumnReader::PointReader>(*columns, *column);
+    }
+  }
+  if (!f.vector_validity) {
+    return;
+  }
+  bool owned = false;
+  for (size_t i = 0; i != docs.size(); ++i) {
+    if (f.vector_validity->ValidRow(docs[i] - irs::doc_limits::min(),
+                                    f.vector_validity_scratch)) {
+      continue;
+    }
+    auto& validity = duckdb::FlatVector::ValidityMutable(distances);
+    if (!owned) {
+      validity.Initialize(docs.size());
+      owned = true;
+    }
+    validity.SetInvalid(i);
+  }
+}
+
 }  // namespace
 
 const irs::Filter& MatchAllFilter() {
@@ -873,6 +906,10 @@ duckdb::idx_t EmitReadyBatch(duckdb::ClientContext&, ScanGlobalState& g,
   WriteChunkOffsets(f, g, batch.seg, batch.docs, output);
   WriteRowPositions(g, batch.seg, batch.docs, output);
   WriteVirtualColumns(g, batch.count, batch.score_vec, output);
+  if (g.ScanScore() && g.vector_scorer && g.vector_scorer->PerRow()) {
+    NullMissingDistances(f, g, batch.seg, batch.docs,
+                         output.data[g.score_output_idx]);
+  }
   return batch.count;
 }
 

@@ -101,9 +101,11 @@ CREATE INDEX jv_nulls_ivf ON jv_nulls_json USING inverted(emb ivf (metric = 'l2'
 
 query
 SELECT id, (emb <-> [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]::FLOAT[8])::INTEGER AS d
-FROM jv_nulls_ivf ORDER BY d;
+FROM jv_nulls_ivf ORDER BY d, id;
 ----
 id	d
 1	1
 3	3
 5	5
+2	NULL
+4	NULL

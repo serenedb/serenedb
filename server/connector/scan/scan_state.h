@@ -385,6 +385,9 @@ struct FetchLocalState {
   uint32_t offsets_prepped_seg = std::numeric_limits<uint32_t>::max();
   std::shared_ptr<irs::IndexSource> index_source;
   duckdb::Vector* pk_column = nullptr;
+  std::unique_ptr<irs::ColumnReader::PointReader> vector_validity;
+  uint32_t vector_validity_seg = std::numeric_limits<uint32_t>::max();
+  duckdb::Vector vector_validity_scratch{duckdb::LogicalType::BOOLEAN, 1};
 
   void EnsureHitBatcher(const ScanGlobalState& g);
 };

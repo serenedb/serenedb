@@ -89,6 +89,7 @@ inline constexpr duckdb::idx_t kPgTsParserTable = 3601;
 inline constexpr duckdb::idx_t kPgTsTemplateTable = 3764;
 inline constexpr duckdb::idx_t kPgTypeTable = 1247;
 inline constexpr duckdb::idx_t kPgUserMappingTable = 1418;
+inline constexpr duckdb::idx_t kPgConfigFunction = 3400;
 inline constexpr duckdb::idx_t kPgHbaFileRulesFunction = 3401;
 inline constexpr duckdb::idx_t kPgPreparedStatementFunction = 2510;
 inline constexpr duckdb::idx_t kPgShowAllSettingsFunction = 2084;

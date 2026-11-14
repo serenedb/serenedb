@@ -873,6 +873,11 @@ inline constexpr SystemSqlColumn kPgUserMappingColumns[] = {
   {"umoptions", kTextArray, kText, false, false, 950, 1, SystemKey::None},
 };
 inline constexpr SystemSql kPgUserMappingSql{kPgUserMappingTable, "pg_catalog", "pg_user_mapping", 10080, 10079, 'r', 'n', true, 0x0, false, kPgUserMappingColumns};
+inline constexpr SystemSqlColumn kPgConfigColumns[] = {
+  {"name", kText, 0, false, false, 100, 0, SystemKey::None},
+  {"setting", kText, 0, false, false, 100, 0, SystemKey::None},
+};
+inline constexpr SystemSql kPgConfigSql{kPgConfigFunction, "pg_catalog", "pg_config", 0, 0, '\0', '\0', true, 0x0, false, kPgConfigColumns};
 inline constexpr SystemSqlColumn kPgHbaFileRulesColumns[] = {
   {"rule_number", kInt4, 0, false, false, 0, 0, SystemKey::None},
   {"file_name", kText, 0, false, false, 100, 0, SystemKey::None},

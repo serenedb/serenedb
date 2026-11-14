@@ -88,7 +88,7 @@ template<typename Write>
 void WriteBlob(Writer& object, RecordBuffer& out, duckdb::field_id_t field,
                const char* tag, const Write& write) {
   object.OnPropertyBegin(field, tag);
-  auto* length = out.Reserve(kBlobLengthBytes);
+  auto* length = out.Alloc(kBlobLengthBytes);
   const auto begin = out.PayloadBytes();
   write();
   auto size = PartSize(out.PayloadBytes() - begin);
@@ -266,7 +266,7 @@ void WriteCatalogRecord(Writer& serializer, const CatalogRecord& record,
 
 template<typename Write>
 void WriteCatalogPart(RecordBuffer& out, bool present, const Write& write) {
-  auto* size = out.Reserve(sizeof(uint32_t));
+  auto* size = out.Alloc(sizeof(uint32_t));
   const auto begin = out.PayloadBytes();
   if (present) {
     Writer serializer{out};

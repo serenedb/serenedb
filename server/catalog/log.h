@@ -55,7 +55,9 @@ class RecordBuffer final : public duckdb::WriteStream {
   void WriteData(duckdb::const_data_ptr_t data, duckdb::idx_t size) final {
     _writer->Write({reinterpret_cast<const char*>(data), size});
   }
-  [[nodiscard]] uint8_t* Reserve(size_t size) { return _writer->Alloc(size); }
+  [[nodiscard]] duckdb::data_ptr_t Alloc(duckdb::idx_t size) final {
+    return _writer->Alloc(size);
+  }
 
   size_t PayloadBytes() const noexcept {
     return _writer->Written() - kFrameBytes;

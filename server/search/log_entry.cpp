@@ -57,7 +57,7 @@ void WriteMask(Writer& object, catalog::RecordBuffer& out,
   const auto size = mask.FrozenSize();
   object.OnPropertyBegin(field, tag);
   object.WriteValue(uint64_t{size});
-  mask.WriteFrozen(reinterpret_cast<char*>(out.Reserve(size)));
+  mask.WriteFrozen(reinterpret_cast<char*>(out.Alloc(size)));
   object.OnPropertyEnd();
 }
 
@@ -74,19 +74,13 @@ std::shared_ptr<const irs::DocumentMask> ReadMask(Reader& object) {
 }
 
 void WriteValues(Writer& column, const irs::ColumnPatch& patch) {
-  size_t chunks = 0;
-  patch.ForEachChunk(
-    [&](uint64_t, const irs::ColumnPatch::Chunk&) { ++chunks; });
-  column.OnPropertyBegin(102, "values");
-  column.OnListBegin(chunks);
+  std::vector<const duckdb::Vector*> parts;
   patch.ForEachChunk([&](uint64_t, const irs::ColumnPatch::Chunk& chunk) {
-    duckdb::Vector values{chunk.values.GetType(), chunk.values.GetBufferRef()};
-    column.OnObjectBegin();
-    values.Serialize(column);
-    column.OnObjectEnd();
+    parts.push_back(&chunk.values);
   });
-  column.OnListEnd();
-  column.OnPropertyEnd();
+  column.WriteObject(102, "values", [&](Writer& values) {
+    duckdb::Vector::SerializeParts(values, patch.Type(), parts);
+  });
 }
 
 void WritePatches(Writer& unit, catalog::RecordBuffer& out,
@@ -179,7 +173,7 @@ void ReadPatchGroup(Reader& group, uint64_t first,
     std::array<irs::doc_id_t, 1024> docs;
     while (const auto count = cursor.Read(docs)) {
       for (const auto doc : std::span{docs}.first(count)) {
-        rows.push_back(doc - irs::doc_limits::min());
+        rows.push_back(first + doc - irs::doc_limits::min());
       }
     }
   }
@@ -191,36 +185,16 @@ void ReadPatchGroup(Reader& group, uint64_t first,
       const auto field =
         static_cast<irs::field_id>(column.ReadProperty<uint64_t>(100, "field"));
       const auto type = column.ReadProperty<duckdb::LogicalType>(101, "type");
-      irs::ColumnPatch::Builder builder{type};
-      std::array<uint64_t, irs::ColumnPatch::kChunkRows> shifted;
-      size_t at = 0;
-      column.ReadList(102, "values", [&](Reader::List& list, duckdb::idx_t) {
-        if (at == rows.size()) {
-          Corrupted("a column patch with more values than rows");
-        }
-        const auto chunk = rows[at] >> irs::ColumnPatch::kChunkShift;
-        auto end = at + 1;
-        while (end < rows.size() &&
-               rows[end] >> irs::ColumnPatch::kChunkShift == chunk) {
-          ++end;
-        }
-        const auto count = end - at;
-        duckdb::Vector values{type, count};
-        list.ReadObject(
-          [&](Reader& vector) { values.Deserialize(vector, count); });
-        if (values.GetVectorType() == duckdb::VectorType::FLAT_VECTOR ||
-            values.GetVectorType() == duckdb::VectorType::CONSTANT_VECTOR) {
-          duckdb::FlatVector::SetSize(values, count);
-        }
-        for (size_t i = 0; i < count; ++i) {
-          shifted[i] = first + rows[at + i];
-        }
-        builder.Add({shifted.data(), count}, values);
-        at = end;
+      duckdb::Vector values{type, rows.size()};
+      column.ReadObject(102, "values", [&](Reader& vector) {
+        values.Deserialize(vector, rows.size());
       });
-      if (at != rows.size()) {
-        Corrupted("a column patch with fewer values than rows");
+      if (values.GetVectorType() == duckdb::VectorType::FLAT_VECTOR ||
+          values.GetVectorType() == duckdb::VectorType::CONSTANT_VECTOR) {
+        duckdb::FlatVector::SetSize(values, rows.size());
       }
+      irs::ColumnPatch::Builder builder{type};
+      builder.Add(rows, values);
       patches.push_back({.field = field, .patch = std::move(builder).Finish()});
     });
   });

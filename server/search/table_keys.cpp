@@ -21,8 +21,6 @@
 #include "search/table_keys.h"
 
 #include <absl/algorithm/container.h>
-#include <absl/strings/str_cat.h>
-#include <absl/strings/str_join.h>
 
 #include <duckdb/parser/constraints/foreign_key_constraint.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
@@ -55,13 +53,6 @@ const irs::TermReader* KeyField(const irs::SubReader& sub,
     }
   }
   return nullptr;
-}
-
-std::string DefaultName(const catalog::SearchTableEntry& table,
-                        std::span<const std::string> names,
-                        std::string_view suffix) {
-  return absl::StrCat(table.name.GetIdentifierName(), "_",
-                      absl::StrJoin(names, "_"), "_", suffix);
 }
 
 const catalog::SearchTableEntry* TableByOid(
@@ -133,12 +124,6 @@ TableKeys ResolveTableKeys(const catalog::SearchTableEntry& table,
       for (const auto index : unique.GetLogicalIndexes(columns)) {
         add_column(spec, columns.GetColumn(index));
       }
-      if (spec.constraint.empty()) {
-        spec.constraint =
-          unique.IsPrimaryKey()
-            ? absl::StrCat(table.name.GetIdentifierName(), "_pkey")
-            : DefaultName(table, spec.names, "key");
-      }
       keys.specs.push_back(std::move(spec));
       continue;
     }
@@ -153,13 +138,6 @@ TableKeys ResolveTableKeys(const catalog::SearchTableEntry& table,
                  .key = {.field = constraint->oid},
                  .constraint = constraint->constraint_name,
                  .referenced = fk.info.table};
-    if (spec.constraint.empty()) {
-      std::vector<std::string> names;
-      for (const auto& name : fk.fk_columns) {
-        names.push_back(name.GetIdentifierName());
-      }
-      spec.constraint = DefaultName(table, names, "fkey");
-    }
     const auto* parent = ReferencedTable(table, fk, transaction);
     const auto* referenced =
       parent ? ReferencedKey(*parent, fk.pk_columns) : nullptr;
@@ -220,28 +198,6 @@ const catalog::SearchTableEntry* ReferencedTable(
   return TableByOid(table,
                     spec.self_reference ? table.oid : spec.referenced_table,
                     transaction);
-}
-
-void CheckReferencedKeys(const catalog::SearchTableEntry& table,
-                         duckdb::CatalogTransaction transaction) {
-  for (const auto& constraint : table.GetConstraints()) {
-    if (constraint->type != duckdb::ConstraintType::FOREIGN_KEY) {
-      continue;
-    }
-    const auto& fk = constraint->Cast<duckdb::ForeignKeyConstraint>();
-    if (!fk.info.IsAppendConstraint()) {
-      continue;
-    }
-    const auto* parent = ReferencedTable(table, fk, transaction);
-    if (parent && !ReferencedKey(*parent, fk.pk_columns)) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_T_R_SERIALIZATION_FAILURE),
-        ERR_MSG("Failed to commit: a foreign key of \"",
-                table.name.GetIdentifierName(), "\" references a key of \"",
-                parent->name.GetIdentifierName(),
-                "\" that another transaction changed"));
-    }
-  }
 }
 
 std::vector<ReferencingKey> LiveReferencing(

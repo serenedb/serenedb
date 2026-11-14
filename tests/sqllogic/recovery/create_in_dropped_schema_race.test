@@ -85,7 +85,7 @@ connection b
 statement error
 COMMIT;
 ----
-db error: ERROR: Failed to commit: Could not commit DROP of "cids_s3" because "q" was created in it after the transaction started
+db error: ERROR: Failed to commit: Could not commit DROP of "cids_s3" because a dependency was created after the transaction started
 
 
 statement ok

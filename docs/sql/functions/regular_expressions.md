@@ -79,13 +79,13 @@ If `string` contains the regexp `pattern`, replaces the matching part with `repl
 
 #### `regexp_split_to_array(string, regex[, options])`
 
-Alias of `string_split_regex`. Splits the `string` along the `regex`. A set of optional [`options`](#options-for-regular-expression-functions) can be set.
+Alias of `string_split_regex`. Splits the `string` along the `regex`. A set of optional [`options`](#options-for-regular-expression-functions) can be set. A match of zero length at the start or the end of `string`, or right after the previous match, does not split it: `regexp_split_to_array('axb', 'x*')` is `{a,b}`.
 
 <SqlLogicTest id="sql/functions/regular_expressions/regexp_split_to_array" />
 
 #### `regexp_split_to_table(string, regex[, options])`
 
-Splits the `string` along the `regex` and returns a row for each part. A set of optional [`options`](#options-for-regular-expression-functions) can be set.
+Splits the `string` along the `regex` and returns a row for each part, skipping the same zero-length matches as `regexp_split_to_array`. A set of optional [`options`](#options-for-regular-expression-functions) can be set.
 
 <SqlLogicTest id="sql/functions/regular_expressions/regexp_split_to_table" />
 

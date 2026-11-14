@@ -127,6 +127,34 @@ regexp_split_to_array
 {one,two,three}
 
 
+query
+SELECT regexp_split_to_array('the quick brown', '\s*');
+----
+regexp_split_to_array
+{t,h,e,q,u,i,c,k,b,r,o,w,n}
+
+
+query
+SELECT
+    regexp_split_to_array('axb', 'x*') AS a,
+    regexp_split_to_array('abc', 'b*') AS b,
+    regexp_split_to_array('ab', '$') AS c,
+    regexp_split_to_array('aaa', '^a') AS d,
+    regexp_split_to_array('xab', 'x') AS e,
+    regexp_split_to_array('', 'x*') AS f;
+----
+a	b	c	d	e	f
+{a,b}	{a,c}	{ab}	{"",aa}	{"",ab}	{""}
+
+
+query
+SELECT part FROM regexp_split_to_table('a b', '\s*') AS t(part) ORDER BY part;
+----
+part
+a
+b
+
+
 # regexp_count with start position (3-arg)
 query
 SELECT regexp_count('123456789012', '\d\d\d', 2);

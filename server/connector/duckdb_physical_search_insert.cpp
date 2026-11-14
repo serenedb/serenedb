@@ -270,10 +270,12 @@ SereneDBSearchUpsert::SereneDBSearchUpsert(
   duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>> constraints,
   duckdb::vector<duckdb::LogicalType> types,
   duckdb::idx_t estimated_cardinality, bool return_chunk, bool replace,
-  std::vector<ColumnId> target, std::vector<ReplacedColumn> patched)
+  bool in_place, std::vector<ColumnId> target,
+  std::vector<ReplacedColumn> patched)
   : SereneDBSearchInsert(plan, table, std::move(constraints), std::move(types),
                          estimated_cardinality, return_chunk),
     _replace(replace),
+    _in_place(in_place),
     _target(std::move(target)),
     _patched(std::move(patched)) {
   _conflict = search::KeyConflict::Upsert;
@@ -338,7 +340,7 @@ duckdb::SinkResultType SereneDBSearchUpsert::Sink(
     AppendRows(context, gstate, lstate, chunk);
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
-  if (_patched.empty()) {
+  if (!_in_place) {
     gstate.arbiter->Replace(
       chunk, column_ids, [&](duckdb::idx_t, const search::KeyHolder& holder) {
         lstate.replaced.Add(static_cast<uint32_t>(holder.unit), holder.doc);
@@ -412,7 +414,7 @@ duckdb::SinkFinalizeType SereneDBSearchUpsert::Finalize(
   duckdb::OperatorSinkFinalizeInput& input) const {
   auto& gstate = input.global_state.Cast<SearchUpsertGlobalState>();
   auto& search_txn = gstate.sdb_txn->SearchTxn();
-  if (!_patched.empty()) {
+  if (_in_place) {
     search_txn.CheckConflicts(*gstate.table.store);
   }
   search_txn.CheckKeys(context, *gstate.table.store, _conflict,

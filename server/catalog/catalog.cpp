@@ -91,6 +91,39 @@ const SearchTableEntry& SearchTable(const duckdb::TableCatalogEntry& table) {
   return table.Cast<SearchTableEntry>();
 }
 
+bool ExactKeyType(const duckdb::LogicalType& type) {
+  switch (type.id()) {
+    case duckdb::LogicalTypeId::VARCHAR:
+      return duckdb::StringType::GetCollation(type).empty();
+    case duckdb::LogicalTypeId::BOOLEAN:
+    case duckdb::LogicalTypeId::TINYINT:
+    case duckdb::LogicalTypeId::SMALLINT:
+    case duckdb::LogicalTypeId::INTEGER:
+    case duckdb::LogicalTypeId::BIGINT:
+    case duckdb::LogicalTypeId::HUGEINT:
+    case duckdb::LogicalTypeId::UTINYINT:
+    case duckdb::LogicalTypeId::USMALLINT:
+    case duckdb::LogicalTypeId::UINTEGER:
+    case duckdb::LogicalTypeId::UBIGINT:
+    case duckdb::LogicalTypeId::UHUGEINT:
+    case duckdb::LogicalTypeId::DECIMAL:
+    case duckdb::LogicalTypeId::DATE:
+    case duckdb::LogicalTypeId::TIME:
+    case duckdb::LogicalTypeId::TIMESTAMP_SEC:
+    case duckdb::LogicalTypeId::TIMESTAMP_MS:
+    case duckdb::LogicalTypeId::TIMESTAMP:
+    case duckdb::LogicalTypeId::TIMESTAMP_NS:
+    case duckdb::LogicalTypeId::TIMESTAMP_TZ:
+    case duckdb::LogicalTypeId::UUID:
+    case duckdb::LogicalTypeId::BLOB:
+    case duckdb::LogicalTypeId::BIT:
+    case duckdb::LogicalTypeId::ENUM:
+      return true;
+    default:
+      return false;
+  }
+}
+
 bool IsReservedSchemaName(const duckdb::Identifier& name) {
   return !duckdb::DefaultSchemaGenerator::IsDefaultSchema(name) &&
          name.GetIdentifierName().starts_with("pg_");
@@ -405,21 +438,16 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
     return insert;
   }
   std::vector<connector::ColumnId> target;
-  std::vector<duckdb::PhysicalIndex> replaced;
   for (const auto& column : table.GetColumns().Physical()) {
     if (op.on_conflict_filter.contains(column.Physical().index)) {
       target.push_back(connector::TableColumnId(column));
-    } else {
-      replaced.push_back(column.Physical());
     }
   }
   const bool replace = op.action_type == duckdb::OnConflictAction::REPLACE;
+  const bool in_place = replace && op.replace_in_place;
   std::vector<connector::ReplacedColumn> patched;
-  if (replace && !replaced.empty() &&
-      !duckdb::Settings::Get<duckdb::ForceUpdateToDelAndInsertSetting>(
-        context) &&
-      table.PatchesColumns(replaced)) {
-    for (const auto index : replaced) {
+  if (in_place) {
+    for (const auto index : op.set_columns) {
       const auto& column = table.GetColumns().GetColumn(index);
       patched.push_back({.field = connector::TableColumnId(column),
                          .type = column.Type(),
@@ -428,9 +456,26 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
   }
   auto& upsert = planner.Make<connector::SereneDBSearchUpsert>(
     table, std::move(op.bound_constraints), op.types, op.estimated_cardinality,
-    op.return_chunk, replace, std::move(target), std::move(patched));
+    op.return_chunk, replace, in_place, std::move(target), std::move(patched));
   upsert.children.emplace_back(*plan);
   return upsert;
+}
+
+bool SereneDBCatalog::ReplacesInPlace(
+  duckdb::ClientContext& context, duckdb::TableCatalogEntry& table,
+  const duckdb::vector<duckdb::PhysicalIndex>& columns) {
+  return !duckdb::Settings::Get<duckdb::ForceUpdateToDelAndInsertSetting>(
+           context) &&
+         SearchTable(table).PatchesColumns(columns);
+}
+
+bool SereneDBCatalog::KeysMatchExactly(
+  duckdb::TableCatalogEntry& table,
+  const duckdb::unordered_set<duckdb::column_t>& key) {
+  const auto& columns = table.GetColumns();
+  return absl::c_all_of(key, [&](duckdb::column_t index) {
+    return ExactKeyType(columns.GetColumn(duckdb::PhysicalIndex{index}).Type());
+  });
 }
 
 duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(

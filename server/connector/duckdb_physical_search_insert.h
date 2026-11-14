@@ -111,7 +111,8 @@ class SereneDBSearchUpsert final : public SereneDBSearchInsert {
     duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>> constraints,
     duckdb::vector<duckdb::LogicalType> types,
     duckdb::idx_t estimated_cardinality, bool return_chunk, bool replace,
-    std::vector<ColumnId> target, std::vector<ReplacedColumn> patched);
+    bool in_place, std::vector<ColumnId> target,
+    std::vector<ReplacedColumn> patched);
 
   duckdb::InsertionOrderPreservingMap<std::string> ParamsToString() const final;
 
@@ -132,6 +133,7 @@ class SereneDBSearchUpsert final : public SereneDBSearchInsert {
 
  private:
   bool _replace;
+  bool _in_place;
   std::vector<ColumnId> _target;
   std::vector<ReplacedColumn> _patched;
 };

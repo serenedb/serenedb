@@ -1740,32 +1740,24 @@ std::unique_ptr<SegmentScanState> InitScan(const ColumnSegment& segment) {
   return std::make_unique<RoaringScanState>(segment);
 }
 
-void ScanPartialValidity(const ColumnSegment&, ColumnScanState& state,
-                         idx_t scan_count, duckdb::Vector& result,
-                         idx_t result_offset) {
+void ScanValidity(const ColumnSegment&, ColumnScanState& state,
+                  idx_t scan_count, duckdb::Vector& result, idx_t result_offset,
+                  duckdb::ScanVectorType scan_type) {
+  if (scan_type == duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR) {
+    result.Flatten();
+  }
   ScanPartial(
     state.scan_state->Cast<RoaringScanState>(), state.GetPositionInSegment(),
     duckdb::FlatVector::ValidityMutable(result), result_offset, scan_count);
 }
 
-void ScanValidity(const ColumnSegment& segment, ColumnScanState& state,
-                  idx_t scan_count, duckdb::Vector& result) {
-  result.Flatten();
-  ScanPartialValidity(segment, state, scan_count, result, 0);
-}
-
-void ScanPartialBoolean(const ColumnSegment&, ColumnScanState& state,
-                        idx_t scan_count, duckdb::Vector& result,
-                        idx_t result_offset) {
+void ScanBoolean(const ColumnSegment&, ColumnScanState& state, idx_t scan_count,
+                 duckdb::Vector& result, idx_t result_offset,
+                 duckdb::ScanVectorType) {
   ValidityMask mask{scan_count};
   ScanPartial(state.scan_state->Cast<RoaringScanState>(),
               state.GetPositionInSegment(), mask, 0, scan_count);
   ExtractValidityMaskToData(mask, result, result_offset, scan_count);
-}
-
-void ScanBoolean(const ColumnSegment& segment, ColumnScanState& state,
-                 idx_t scan_count, duckdb::Vector& result) {
-  ScanPartialBoolean(segment, state, scan_count, result, 0);
 }
 
 RoaringScanState& FetchScanState(const ColumnSegment& segment,
@@ -1806,10 +1798,8 @@ constexpr CompressionFunction kValidity{
   .analyze = AnalyzeChunks<duckdb::PhysicalType::BIT>,
   .compress = CompressChunks<duckdb::PhysicalType::BIT>,
   .init_scan = InitScan,
-  .scan_vector = ScanValidity,
-  .scan_partial = ScanPartialValidity,
+  .scan = ScanValidity,
   .fetch_rows = FetchRowsValidity,
-  .skip = EmptySkip,
 };
 
 constexpr CompressionFunction kBoolean{
@@ -1817,10 +1807,8 @@ constexpr CompressionFunction kBoolean{
   .analyze = AnalyzeChunks<duckdb::PhysicalType::BOOL>,
   .compress = CompressChunks<duckdb::PhysicalType::BOOL>,
   .init_scan = InitScan,
-  .scan_vector = ScanBoolean,
-  .scan_partial = ScanPartialBoolean,
+  .scan = ScanBoolean,
   .fetch_rows = FetchRowsBoolean,
-  .skip = EmptySkip,
 };
 
 }  // namespace

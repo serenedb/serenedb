@@ -877,9 +877,9 @@ std::unique_ptr<SegmentScanState> AlpRdInitScan(const ColumnSegment& segment) {
 }
 
 template<typename T>
-void AlpRdScanPartial(const ColumnSegment&, ColumnScanState& state,
-                      idx_t scan_count, duckdb::Vector& result,
-                      idx_t result_offset) {
+void AlpRdScan(const ColumnSegment&, ColumnScanState& state, idx_t scan_count,
+               duckdb::Vector& result, idx_t result_offset,
+               duckdb::ScanVectorType) {
   auto& scan_state = state.scan_state->Cast<AlpRdScanState<T>>();
   SDB_ASSERT(scan_state.total_value_count <= scan_state.count);
   SDB_ASSERT(scan_count <= scan_state.count - scan_state.total_value_count);
@@ -896,12 +896,6 @@ void AlpRdScanPartial(const ColumnSegment&, ColumnScanState& state,
     ScanVector<T, false>(scan_state, current_result_ptr + scanned, to_scan);
     scanned += to_scan;
   }
-}
-
-template<typename T>
-void AlpRdScan(const ColumnSegment& segment, ColumnScanState& state,
-               idx_t scan_count, duckdb::Vector& result) {
-  AlpRdScanPartial<T>(segment, state, scan_count, result, 0);
 }
 
 template<typename T>
@@ -1025,8 +1019,7 @@ constexpr CompressionFunction kFunction{
   .compress = AlpRdCompressChunks<T>,
   .accepts = HasRows,
   .init_scan = AlpRdInitScan<T>,
-  .scan_vector = AlpRdScan<T>,
-  .scan_partial = AlpRdScanPartial<T>,
+  .scan = AlpRdScan<T>,
   .fetch_rows = AlpRdFetchRows<T>,
   .skip = AlpRdSkip<T>,
 };

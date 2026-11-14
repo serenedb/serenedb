@@ -138,12 +138,10 @@ struct CompressionFunction {
   bool (*accepts)(std::span<const WriteChunk> chunks) = nullptr;
   std::unique_ptr<SegmentScanState> (*init_scan)(const ColumnSegment& segment) =
     nullptr;
-  void (*scan_vector)(const ColumnSegment& segment, ColumnScanState& state,
-                      duckdb::idx_t scan_count,
-                      duckdb::Vector& result) = nullptr;
-  void (*scan_partial)(const ColumnSegment& segment, ColumnScanState& state,
-                       duckdb::idx_t scan_count, duckdb::Vector& result,
-                       duckdb::idx_t result_offset) = nullptr;
+  void (*scan)(const ColumnSegment& segment, ColumnScanState& state,
+               duckdb::idx_t scan_count, duckdb::Vector& result,
+               duckdb::idx_t result_offset,
+               duckdb::ScanVectorType scan_type) = nullptr;
   void (*select)(const ColumnSegment& segment, ColumnScanState& state,
                  duckdb::idx_t vector_count, duckdb::Vector& result,
                  duckdb::idx_t result_offset,
@@ -165,9 +163,6 @@ struct CompressionFunction {
     const ColumnSegment& segment) = nullptr;
   CompressionValidity validity = CompressionValidity::RequiresValidity;
 };
-
-void EmptySkip(const ColumnSegment& segment, ColumnScanState& state,
-               duckdb::idx_t skip_count);
 
 duckdb::idx_t CountRows(std::span<const WriteChunk> chunks) noexcept;
 

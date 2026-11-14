@@ -778,7 +778,8 @@ void FillGroup(const RleScanState<T>& scan, T* result, idx_t& written,
 }
 
 template<typename T>
-void FillRuns(RleScanState<T>& scan, T* result, idx_t scan_count) {
+IRS_NO_INLINE void FillRuns(RleScanState<T>& scan, T* result,
+                            idx_t scan_count) {
   idx_t written = 0;
   while (written < scan_count) {
     if (scan.position_in_entry == 0) {
@@ -835,17 +836,12 @@ void Skip(const ColumnSegment& segment, ColumnScanState& state,
   SkipInternal(state.scan_state->Cast<RleScanState<T>>(), skip_count);
 }
 
-template<bool kEntireVector>
 bool CanEmitConstantVector(idx_t position, idx_t run_length, idx_t scan_count) {
-  if constexpr (!kEntireVector) {
+  if (scan_count != STANDARD_VECTOR_SIZE) {
     return false;
-  } else {
-    if (scan_count != STANDARD_VECTOR_SIZE) {
-      return false;
-    }
-    SDB_ASSERT(position < run_length);
-    return run_length - position >= scan_count;
   }
+  SDB_ASSERT(position < run_length);
+  return run_length - position >= scan_count;
 }
 
 template<typename T>
@@ -860,36 +856,22 @@ void ScanConstant(RleScanState<T>& scan, RleCount run_length, idx_t scan_count,
   }
 }
 
-template<typename T, bool kEntireVector>
-void ScanPartialInternal(const ColumnSegment& segment, ColumnScanState& state,
-                         idx_t scan_count, duckdb::Vector& result,
-                         idx_t result_offset) {
+template<typename T>
+void Scan(const ColumnSegment& segment, ColumnScanState& state,
+          idx_t scan_count, duckdb::Vector& result, idx_t result_offset,
+          duckdb::ScanVectorType scan_type) {
   SDB_ASSERT(state.GetPositionInSegment() <= segment.count &&
              scan_count <= segment.count - state.GetPositionInSegment());
   auto& scan = state.scan_state->Cast<RleScanState<T>>();
   const auto run_length = CurrentRunLength(scan);
-  if (scan.position_in_entry < run_length &&
-      CanEmitConstantVector<kEntireVector>(scan.position_in_entry, run_length,
-                                           scan_count)) {
+  if (scan_type == duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR &&
+      scan.position_in_entry < run_length &&
+      CanEmitConstantVector(scan.position_in_entry, run_length, scan_count)) {
     ScanConstant(scan, run_length, scan_count, result);
     return;
   }
   FillRuns(scan, duckdb::FlatVector::GetDataMutable<T>(result) + result_offset,
            scan_count);
-}
-
-template<typename T>
-void ScanPartial(const ColumnSegment& segment, ColumnScanState& state,
-                 idx_t scan_count, duckdb::Vector& result,
-                 idx_t result_offset) {
-  ScanPartialInternal<T, false>(segment, state, scan_count, result,
-                                result_offset);
-}
-
-template<typename T>
-void Scan(const ColumnSegment& segment, ColumnScanState& state,
-          idx_t scan_count, duckdb::Vector& result) {
-  ScanPartialInternal<T, true>(segment, state, scan_count, result, 0);
 }
 
 template<typename T>
@@ -901,8 +883,7 @@ void Select(const ColumnSegment&, ColumnScanState& state, idx_t vector_count,
   const auto run_length = CurrentRunLength(scan);
   if (scan_type == duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR &&
       scan.position_in_entry < run_length &&
-      CanEmitConstantVector<true>(scan.position_in_entry, run_length,
-                                  vector_count)) {
+      CanEmitConstantVector(scan.position_in_entry, run_length, vector_count)) {
     ScanConstant(scan, run_length, vector_count, result);
     return;
   }
@@ -1137,8 +1118,7 @@ constexpr CompressionFunction kFunction{
   .compress = CompressChunks<T, kWriteStatistics>,
   .accepts = HasRuns<T>,
   .init_scan = InitScan<T>,
-  .scan_vector = Scan<T>,
-  .scan_partial = ScanPartial<T>,
+  .scan = Scan<T>,
   .select = Select<T>,
   .filter = kPhysical == duckdb::PhysicalType::BOOL ? nullptr : Filter<T>,
   .fetch_rows = FetchRows<T>,

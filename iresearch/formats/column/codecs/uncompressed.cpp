@@ -35,6 +35,7 @@
 #include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
+#include "iresearch/utils/shared.hpp"
 
 namespace irs::codecs {
 namespace {
@@ -169,25 +170,20 @@ idx_t FixedSizeAnalyze(std::span<const WriteChunk> chunks) {
 }
 
 template<typename T>
-void FixedSizeScanPartial(const ColumnSegment& segment, ColumnScanState& state,
-                          idx_t scan_count, duckdb::Vector& result,
-                          idx_t result_offset) {
+void FixedSizeScan(const ColumnSegment& segment, ColumnScanState& state,
+                   idx_t scan_count, duckdb::Vector& result,
+                   idx_t result_offset, duckdb::ScanVectorType scan_type) {
   const auto* source = FixedSizeRows<T>(
     segment, ScanBase(state), state.GetPositionInSegment(), scan_count);
   result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
+  if (scan_type == duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR) {
+    duckdb::FlatVector::SetData(result,
+                                duckdb::data_ptr_cast(const_cast<T*>(source)),
+                                duckdb::count_t(scan_count));
+    return;
+  }
   auto* target = duckdb::FlatVector::GetDataMutable<T>(result);
   std::memcpy(target + result_offset, source, scan_count * sizeof(T));
-}
-
-template<typename T>
-void FixedSizeScan(const ColumnSegment& segment, ColumnScanState& state,
-                   idx_t scan_count, duckdb::Vector& result) {
-  const auto* source = FixedSizeRows<T>(
-    segment, ScanBase(state), state.GetPositionInSegment(), scan_count);
-  result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
-  duckdb::FlatVector::SetData(result,
-                              duckdb::data_ptr_cast(const_cast<T*>(source)),
-                              duckdb::count_t(scan_count));
 }
 
 template<typename T>
@@ -210,10 +206,8 @@ constexpr CompressionFunction kFixedSize{
   .analyze = FixedSizeAnalyze<std::conditional_t<kList, uint64_t, T>>,
   .compress = CompressChunks<FixedSizeAppender<T, kList>>,
   .init_scan = InitPinnedScan,
-  .scan_vector = FixedSizeScan<std::conditional_t<kList, uint64_t, T>>,
-  .scan_partial = FixedSizeScanPartial<std::conditional_t<kList, uint64_t, T>>,
+  .scan = FixedSizeScan<std::conditional_t<kList, uint64_t, T>>,
   .fetch_rows = FixedSizeFetchRows<std::conditional_t<kList, uint64_t, T>>,
-  .skip = EmptySkip,
 };
 
 constexpr idx_t kBitsPerEntry = duckdb::ValidityMask::BITS_PER_VALUE;
@@ -288,9 +282,9 @@ bool RowValid(const validity_t* entries, idx_t row) noexcept {
                                           row % kBitsPerEntry);
 }
 
-void UnalignedScan(const validity_t* input, idx_t input_start,
-                   duckdb::ValidityMask& result_mask, idx_t result_offset,
-                   idx_t scan_count) {
+IRS_NO_INLINE void UnalignedScan(const validity_t* input, idx_t input_start,
+                                 duckdb::ValidityMask& result_mask,
+                                 idx_t result_offset, idx_t scan_count) {
   auto* result_data = result_mask.GetData();
   auto result_entry = result_offset / kBitsPerEntry;
   auto result_idx = result_offset % kBitsPerEntry;
@@ -325,22 +319,19 @@ void UnalignedScan(const validity_t* input, idx_t input_start,
   }
 }
 
-void ValidityScanPartial(const ColumnSegment& segment, ColumnScanState& state,
-                         idx_t scan_count, duckdb::Vector& result,
-                         idx_t result_offset) {
-  const auto start = state.GetPositionInSegment();
-  const auto* input =
-    ValidityEntries(segment, ScanBase(state), start, scan_count);
-  UnalignedScan(input, start, duckdb::FlatVector::ValidityMutable(result),
-                result_offset, scan_count);
-}
-
 void ValidityScan(const ColumnSegment& segment, ColumnScanState& state,
-                  idx_t scan_count, duckdb::Vector& result) {
-  result.Flatten();
+                  idx_t scan_count, duckdb::Vector& result, idx_t result_offset,
+                  duckdb::ScanVectorType scan_type) {
   const auto start = state.GetPositionInSegment();
-  if (start % kBitsPerEntry != 0) {
-    ValidityScanPartial(segment, state, scan_count, result, 0);
+  const bool entire = scan_type == duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR;
+  if (entire) {
+    result.Flatten();
+  }
+  if (!entire || start % kBitsPerEntry != 0) {
+    const auto* input =
+      ValidityEntries(segment, ScanBase(state), start, scan_count);
+    UnalignedScan(input, start, duckdb::FlatVector::ValidityMutable(result),
+                  result_offset, scan_count);
     return;
   }
   const auto* input =
@@ -398,11 +389,9 @@ constexpr CompressionFunction kValidity{
   .analyze = ValidityAnalyze,
   .compress = CompressChunks<ValidityAppender>,
   .init_scan = InitPinnedScan,
-  .scan_vector = ValidityScan,
-  .scan_partial = ValidityScanPartial,
+  .scan = ValidityScan,
   .select = ValiditySelect,
   .fetch_rows = ValidityFetchRows,
-  .skip = EmptySkip,
 };
 
 constexpr uint32_t kDictionaryHeaderSize = 2 * sizeof(uint32_t);
@@ -591,9 +580,9 @@ duckdb::string_t ReadEntry(const ColumnSegment& segment, duckdb::Vector& result,
   return segment.ctx.ReadString(result, block, offset);
 }
 
-void StringScanPartial(const ColumnSegment& segment, ColumnScanState& state,
-                       idx_t scan_count, duckdb::Vector& result,
-                       idx_t result_offset) {
+void StringScan(const ColumnSegment& segment, ColumnScanState& state,
+                idx_t scan_count, duckdb::Vector& result, idx_t result_offset,
+                duckdb::ScanVectorType) {
   const StringLayout layout{segment, ScanBase(state)};
   const auto start = state.GetPositionInSegment();
   layout.Validate(start, scan_count);
@@ -602,11 +591,6 @@ void StringScanPartial(const ColumnSegment& segment, ColumnScanState& state,
     target[result_offset + i] =
       ReadEntry(segment, result, layout.Entry(start + i));
   }
-}
-
-void StringScan(const ColumnSegment& segment, ColumnScanState& state,
-                idx_t scan_count, duckdb::Vector& result) {
-  StringScanPartial(segment, state, scan_count, result, 0);
 }
 
 void StringSelect(const ColumnSegment& segment, ColumnScanState& state,
@@ -641,11 +625,9 @@ constexpr CompressionFunction kString{
   .type = CodecType::Uncompressed,
   .compress = CompressChunks<StringAppender>,
   .init_scan = InitPinnedScan,
-  .scan_vector = StringScan,
-  .scan_partial = StringScanPartial,
+  .scan = StringScan,
   .select = StringSelect,
   .fetch_rows = StringFetchRows,
-  .skip = EmptySkip,
 };
 
 }  // namespace

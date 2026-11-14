@@ -849,8 +849,8 @@ std::unique_ptr<SegmentScanState> InitScan(const ColumnSegment& segment) {
 }
 
 template<typename T>
-void ScanPartial(const ColumnSegment&, ColumnScanState& state, idx_t scan_count,
-                 duckdb::Vector& result, idx_t result_offset) {
+void Scan(const ColumnSegment&, ColumnScanState& state, idx_t scan_count,
+          duckdb::Vector& result, idx_t result_offset, duckdb::ScanVectorType) {
   using S = Signed<T>;
   using U = Unsigned<T>;
   auto& scan_state = state.scan_state->Cast<ScanState<T>>();
@@ -928,12 +928,6 @@ void ScanPartial(const ColumnSegment&, ColumnScanState& state, idx_t scan_count,
       current_group.index + 1 == scan_state.group_count) {
     scan_state.Finish();
   }
-}
-
-template<typename T>
-void Scan(const ColumnSegment& segment, ColumnScanState& state,
-          idx_t scan_count, duckdb::Vector& result) {
-  ScanPartial<T>(segment, state, scan_count, result, 0);
 }
 
 bool Near(idx_t row, idx_t other) noexcept {
@@ -1255,7 +1249,8 @@ void Filter(const ColumnSegment& segment, ColumnScanState& state,
     sel_count = 0;
     return;
   }
-  ScanPartial<T>(segment, state, vector_count, result, 0);
+  Scan<T>(segment, state, vector_count, result, 0,
+          duckdb::ScanVectorType::SCAN_FLAT_VECTOR);
   duckdb::FlatVector::SetSize(result, vector_count);
   if (verdict == FilterPropagateResult::FILTER_ALWAYS_TRUE) {
     return;
@@ -1292,8 +1287,7 @@ constexpr CompressionFunction kFunction{
   .compress = CompressChunks<T, kStats>,
   .accepts = Accepts<T>,
   .init_scan = InitScan<T>,
-  .scan_vector = Scan<T>,
-  .scan_partial = ScanPartial<T>,
+  .scan = Scan<T>,
   .filter = kFilter ? Filter<T> : nullptr,
   .fetch_rows = FetchRows<T>,
   .skip = Skip<T>,

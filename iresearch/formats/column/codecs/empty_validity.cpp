@@ -31,10 +31,8 @@ std::unique_ptr<SegmentScanState> InitScan(const ColumnSegment&) {
   return std::make_unique<EmptyScan>();
 }
 
-void Scan(const ColumnSegment&, ColumnScanState&, idx_t, duckdb::Vector&) {}
-
-void ScanPartial(const ColumnSegment&, ColumnScanState&, idx_t, duckdb::Vector&,
-                 idx_t) {}
+void Scan(const ColumnSegment&, ColumnScanState&, idx_t, duckdb::Vector&, idx_t,
+          duckdb::ScanVectorType) {}
 
 void Select(const ColumnSegment&, ColumnScanState&, idx_t, duckdb::Vector&,
             idx_t, const duckdb::SelectionVector&, idx_t,
@@ -46,11 +44,9 @@ void FetchRows(const ColumnSegment&, ColumnFetchState&, const idx_t*, idx_t,
 constexpr CompressionFunction kFunction{
   .type = CodecType::Empty,
   .init_scan = InitScan,
-  .scan_vector = Scan,
-  .scan_partial = ScanPartial,
+  .scan = Scan,
   .select = Select,
   .fetch_rows = FetchRows,
-  .skip = EmptySkip,
 };
 
 }  // namespace

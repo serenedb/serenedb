@@ -49,6 +49,7 @@
 #include "iresearch/utils/file_utils_ext.hpp"
 #include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
+#include "iresearch/utils/shared.hpp"
 
 namespace irs {
 namespace {
@@ -126,18 +127,17 @@ void ScanSegment(const codecs::ColumnSegment& segment,
                  codecs::ColumnScanState& st, duckdb::idx_t count,
                  duckdb::Vector& result, duckdb::idx_t result_offset,
                  duckdb::ScanVectorType scan_type) {
-  if (scan_type == duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR) {
-    SDB_ASSERT(result_offset == 0);
-    segment.function.scan_vector(segment, st, count, result);
-    return;
-  }
-  SDB_ASSERT(result.GetVectorType() == duckdb::VectorType::FLAT_VECTOR);
-  segment.function.scan_partial(segment, st, count, result, result_offset);
+  SDB_ASSERT(scan_type == duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR
+               ? result_offset == 0
+               : result.GetVectorType() == duckdb::VectorType::FLAT_VECTOR);
+  segment.function.scan(segment, st, count, result, result_offset, scan_type);
 }
 
 void SkipSegment(const codecs::ColumnSegment& segment,
                  codecs::ColumnScanState& st) {
-  segment.function.skip(segment, st, st.offset_in_column - st.internal_index);
+  if (segment.function.skip) {
+    segment.function.skip(segment, st, st.offset_in_column - st.internal_index);
+  }
   st.internal_index = st.offset_in_column;
 }
 
@@ -482,7 +482,8 @@ struct ScannedStrings final : duckdb::AuxiliaryDataHolder {
 void ColumnReader::CertifyStrings(const ScanState& s,
                                   const codecs::ColumnSegment& segment,
                                   duckdb::Vector& result) const {
-  if (s.ctx.use_count() == 0 || !BorrowsBlockStrings(segment)) {
+  SDB_ASSERT(BorrowsBlockStrings(segment));
+  if (s.ctx.use_count() == 0) {
     return;
   }
   SDB_ASSERT(segment.block);
@@ -516,12 +517,27 @@ void ColumnReader::BeginScanVector(ScanState& s) const {
   }
 }
 
-void ColumnReader::NewOutputVector(ScanState& s) const {
+namespace {
+
+bool HasRetired(const ColumnReader::ScanState& s) noexcept {
+  return !s.st.previous_states.empty() || !s.retired_fetches.empty() ||
+         !s.retired_states.empty() || s.segments.size() > 1;
+}
+
+IRS_NO_INLINE void DropRetired(ColumnReader::ScanState& s) {
   s.st.previous_states.clear();
   s.retired_fetches.clear();
   s.retired_states.clear();
   if (s.segments.size() > 1) {
     s.segments.erase(s.segments.begin(), s.segments.end() - 1);
+  }
+}
+
+}  // namespace
+
+void ColumnReader::NewOutputVector(ScanState& s) const {
+  if (HasRetired(s)) [[unlikely]] {
+    DropRetired(s);
   }
   if (_validity) {
     _validity->ColumnReader::NewOutputVector(s.child_states[0]);
@@ -556,9 +572,11 @@ duckdb::idx_t ColumnReader::ScanVector(ScanState& s, duckdb::Vector& result,
       remaining, (s.window.end - s.window.begin) - s.st.offset_in_column);
     const auto result_offset = base_result_offset + (initial - remaining);
     if (scan_count > 0) {
-      ScanSegment(*s.segments.back(), s.st, scan_count, result, result_offset,
-                  scan_type);
-      CertifyStrings(s, *s.segments.back(), result);
+      const auto& segment = *s.segments.back();
+      ScanSegment(segment, s.st, scan_count, result, result_offset, scan_type);
+      if (BorrowsBlockStrings(segment)) [[unlikely]] {
+        CertifyStrings(s, segment, result);
+      }
       s.st.offset_in_column += scan_count;
       remaining -= scan_count;
     }

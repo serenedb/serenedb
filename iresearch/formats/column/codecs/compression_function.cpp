@@ -43,8 +43,6 @@ duckdb::BufferHandle& ColumnFetchState::GetOrInsertHandle(
   return handle;
 }
 
-void EmptySkip(const ColumnSegment&, ColumnScanState&, duckdb::idx_t) {}
-
 duckdb::idx_t CountRows(std::span<const WriteChunk> chunks) noexcept {
   duckdb::idx_t rows = 0;
   for (const auto& chunk : chunks) {

@@ -55,21 +55,13 @@ std::unique_ptr<SegmentScanState> InitScan(const ColumnSegment&) {
   return nullptr;
 }
 
-void ScanPartialValidity(const ColumnSegment& segment, ColumnScanState&,
-                         idx_t scan_count, duckdb::Vector& result,
-                         idx_t result_offset) {
-  FillValidity(segment, result, result_offset, scan_count);
-}
-
-template<typename T>
-void ScanPartial(const ColumnSegment& segment, ColumnScanState&,
-                 idx_t scan_count, duckdb::Vector& result,
-                 idx_t result_offset) {
-  Fill<T>(segment, result, result_offset, scan_count);
-}
-
 void ScanValidity(const ColumnSegment& segment, ColumnScanState&,
-                  idx_t scan_count, duckdb::Vector& result) {
+                  idx_t scan_count, duckdb::Vector& result, idx_t result_offset,
+                  duckdb::ScanVectorType scan_type) {
+  if (scan_type != duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR) {
+    FillValidity(segment, result, result_offset, scan_count);
+    return;
+  }
   SDB_ASSERT(segment.stats.CanHaveNull());
   if (result.GetType().InternalType() == duckdb::PhysicalType::STRUCT ||
       result.GetVectorType() == duckdb::VectorType::CONSTANT_VECTOR) {
@@ -82,7 +74,12 @@ void ScanValidity(const ColumnSegment& segment, ColumnScanState&,
 
 template<typename T>
 void Scan(const ColumnSegment& segment, ColumnScanState&, idx_t scan_count,
-          duckdb::Vector& result) {
+          duckdb::Vector& result, idx_t result_offset,
+          duckdb::ScanVectorType scan_type) {
+  if (scan_type != duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR) {
+    Fill<T>(segment, result, result_offset, scan_count);
+    return;
+  }
   auto* data = duckdb::FlatVector::GetDataMutable<T>(result);
   data[0] = duckdb::NumericStats::GetMin<T>(segment.stats);
   result.SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
@@ -112,7 +109,7 @@ void SelectValidity(const ColumnSegment& segment, ColumnScanState& state, idx_t,
                     const duckdb::SelectionVector&, idx_t sel_count,
                     duckdb::ScanVectorType scan_type) {
   if (scan_type == duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR) {
-    ScanValidity(segment, state, sel_count, result);
+    ScanValidity(segment, state, sel_count, result, 0, scan_type);
     return;
   }
   FillValidity(segment, result, result_offset, sel_count);
@@ -124,7 +121,7 @@ void Select(const ColumnSegment& segment, ColumnScanState& state,
             const duckdb::SelectionVector&, idx_t sel_count,
             duckdb::ScanVectorType scan_type) {
   if (scan_type == duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR) {
-    Scan<T>(segment, state, vector_count, result);
+    Scan<T>(segment, state, vector_count, result, 0, scan_type);
     return;
   }
   Fill<T>(segment, result, result_offset, sel_count);
@@ -133,22 +130,18 @@ void Select(const ColumnSegment& segment, ColumnScanState& state,
 constexpr CompressionFunction kValidity{
   .type = CodecType::Constant,
   .init_scan = InitScan,
-  .scan_vector = ScanValidity,
-  .scan_partial = ScanPartialValidity,
+  .scan = ScanValidity,
   .select = SelectValidity,
   .fetch_rows = FetchRowsValidity,
-  .skip = EmptySkip,
 };
 
 template<typename T, duckdb::PhysicalType kPhysical>
 constexpr CompressionFunction kFunction{
   .type = CodecType::Constant,
   .init_scan = InitScan,
-  .scan_vector = Scan<T>,
-  .scan_partial = ScanPartial<T>,
+  .scan = Scan<T>,
   .select = Select<T>,
   .fetch_rows = FetchRows<T>,
-  .skip = EmptySkip,
 };
 
 }  // namespace

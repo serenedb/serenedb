@@ -1077,9 +1077,9 @@ std::unique_ptr<SegmentScanState> AlpInitScan(const ColumnSegment& segment) {
 }
 
 template<typename T>
-void AlpScanPartial(const ColumnSegment&, ColumnScanState& state,
-                    idx_t scan_count, duckdb::Vector& result,
-                    idx_t result_offset) {
+void AlpScan(const ColumnSegment&, ColumnScanState& state, idx_t scan_count,
+             duckdb::Vector& result, idx_t result_offset,
+             duckdb::ScanVectorType) {
   auto& scan_state = state.scan_state->Cast<AlpScanState<T>>();
   SDB_ASSERT(scan_state.total_value_count <= scan_state.count);
   SDB_ASSERT(scan_count <= scan_state.count - scan_state.total_value_count);
@@ -1095,12 +1095,6 @@ void AlpScanPartial(const ColumnSegment&, ColumnScanState& state,
     ScanVector<T, false>(scan_state, current_result_ptr + scanned, to_scan);
     scanned += to_scan;
   }
-}
-
-template<typename T>
-void AlpScan(const ColumnSegment& segment, ColumnScanState& state,
-             idx_t scan_count, duckdb::Vector& result) {
-  AlpScanPartial<T>(segment, state, scan_count, result, 0);
 }
 
 template<typename T>
@@ -1214,7 +1208,8 @@ void AlpFilter(const ColumnSegment& segment, ColumnScanState& state,
     sel_count = 0;
     return;
   }
-  AlpScanPartial<T>(segment, state, vector_count, result, 0);
+  AlpScan<T>(segment, state, vector_count, result, 0,
+             duckdb::ScanVectorType::SCAN_FLAT_VECTOR);
   duckdb::FlatVector::SetSize(result, duckdb::count_t(vector_count));
   if (verdict == duckdb::FilterPropagateResult::FILTER_ALWAYS_TRUE) {
     return;
@@ -1343,8 +1338,7 @@ constexpr CompressionFunction kFunction{
   .compress = AlpCompressChunks<T>,
   .accepts = HasRows,
   .init_scan = AlpInitScan<T>,
-  .scan_vector = AlpScan<T>,
-  .scan_partial = AlpScanPartial<T>,
+  .scan = AlpScan<T>,
   .filter = AlpFilter<T>,
   .fetch_rows = AlpFetchRows<T>,
   .skip = AlpSkip<T>,

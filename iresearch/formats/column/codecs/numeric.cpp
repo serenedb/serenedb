@@ -1001,17 +1001,11 @@ std::unique_ptr<SegmentScanState> InitScan(const ColumnSegment& segment) {
 }
 
 template<typename T>
-void ScanPartial(const ColumnSegment&, ColumnScanState& state, idx_t scan_count,
-                 duckdb::Vector& result, idx_t result_offset) {
+void Scan(const ColumnSegment&, ColumnScanState& state, idx_t scan_count,
+          duckdb::Vector& result, idx_t result_offset, duckdb::ScanVectorType) {
   state.scan_state->Cast<ScanState<T>>().frames.Read(
     state.GetPositionInSegment(), scan_count,
     duckdb::FlatVector::GetDataMutable<T>(result) + result_offset);
-}
-
-template<typename T>
-void ScanVector(const ColumnSegment& segment, ColumnScanState& state,
-                idx_t scan_count, duckdb::Vector& result) {
-  ScanPartial<T>(segment, state, scan_count, result, 0);
 }
 
 template<typename T>
@@ -1079,7 +1073,8 @@ void Filter(const ColumnSegment& segment, ColumnScanState& state,
     return;
   }
   result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
-  ScanPartial<T>(segment, state, vector_count, result, 0);
+  Scan<T>(segment, state, vector_count, result, 0,
+          duckdb::ScanVectorType::SCAN_FLAT_VECTOR);
   if (verdict == duckdb::FilterPropagateResult::FILTER_ALWAYS_TRUE) {
     return;
   }
@@ -1138,12 +1133,10 @@ constexpr CompressionFunction MakeFunction(duckdb::PhysicalType physical) {
   return {
     .type = CodecType::Numeric,
     .init_scan = InitScan<T>,
-    .scan_vector = ScanVector<T>,
-    .scan_partial = ScanPartial<T>,
+    .scan = Scan<T>,
     .select = Select<T>,
     .filter = Filter<T>,
     .fetch_rows = FetchRows<T>,
-    .skip = EmptySkip,
     .get_segment_info = SegmentInfo,
   };
 }

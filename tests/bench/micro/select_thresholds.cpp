@@ -27,8 +27,8 @@
 //   entire     -- decode the whole block + dictionary Slice of the hits;
 //                 no slice at full density (W <= 2048 scans straight into
 //                 the output, wider blocks scan flat into a big scratch)
-//   partial1   -- per-hit skip + scan_partial(1)
-//   partialrun -- run-coalesced skip + scan_partial(run)
+//   partial1   -- per-hit skip + a flat scan of one row
+//   partialrun -- run-coalesced skip + a flat scan of the run
 // Hits are 1 and 1..99..100% of the block, capped at one output chunk (2048).
 // Validity tracks are benched as segments of their own; a null column's arm
 // cost composes as data-segment cost + validity-segment cost.
@@ -207,7 +207,9 @@ void BenchArm(benchmark::State& state, size_t shape_idx, Arm arm) {
   const auto& segment = *blk.block;
   const auto& fn = segment.function;
   const auto skip = [&](irs::codecs::ColumnScanState& st) {
-    fn.skip(segment, st, st.offset_in_column - st.internal_index);
+    if (fn.skip) {
+      fn.skip(segment, st, st.offset_in_column - st.internal_index);
+    }
     st.internal_index = st.offset_in_column;
   };
   if (arm == Arm::Select && fn.select == nullptr) {
@@ -272,20 +274,22 @@ void BenchArm(benchmark::State& state, size_t shape_idx, Arm arm) {
       case Arm::Entire: {
         st.scan_state = fn.init_scan(segment);
         if (w <= kVec) {
-          fn.scan_vector(segment, st, w, out);
+          fn.scan(segment, st, w, out, 0,
+                  duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR);
           if (k < w) {
             out.Slice(sel, k);
           }
           break;
         }
         // duckdb's own scan loop granularity: <=2048-row flat scans into one
-        // big scratch, then a single dictionary slice of the hits. scan_partial
+        // big scratch, then a single dictionary slice of the hits. A flat scan
         // reads its start from the state, so advance it like
         // ColumnScanState::Next does.
         duckdb::FlatVector::ValidityMutable(scratch).Reset();
         for (uint64_t off = 0; off < w; off += kVec) {
           const auto n = std::min(kVec, w - off);
-          fn.scan_partial(segment, st, n, scratch, off);
+          fn.scan(segment, st, n, scratch, off,
+                  duckdb::ScanVectorType::SCAN_FLAT_VECTOR);
           st.offset_in_column += n;
           st.internal_index = st.offset_in_column;
         }
@@ -297,7 +301,8 @@ void BenchArm(benchmark::State& state, size_t shape_idx, Arm arm) {
         for (uint64_t j = 0; j < k; ++j) {
           st.offset_in_column = sel.get_index(j);
           skip(st);
-          fn.scan_partial(segment, st, 1, out, j);
+          fn.scan(segment, st, 1, out, j,
+                  duckdb::ScanVectorType::SCAN_FLAT_VECTOR);
           st.offset_in_column += 1;
           st.internal_index = st.offset_in_column;
         }
@@ -309,7 +314,8 @@ void BenchArm(benchmark::State& state, size_t shape_idx, Arm arm) {
         for (const auto& [start, len] : runs) {
           st.offset_in_column = start;
           skip(st);
-          fn.scan_partial(segment, st, len, out, out_off);
+          fn.scan(segment, st, len, out, out_off,
+                  duckdb::ScanVectorType::SCAN_FLAT_VECTOR);
           st.offset_in_column += len;
           st.internal_index = st.offset_in_column;
           out_off += len;

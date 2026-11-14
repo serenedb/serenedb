@@ -443,17 +443,16 @@ std::unique_ptr<SegmentScanState> InitScan(const ColumnSegment& segment) {
 }
 
 template<typename Scan>
-void ScanPartial(const ColumnSegment&, ColumnScanState& state, idx_t scan_count,
-                 duckdb::Vector& result, idx_t result_offset) {
-  state.scan_state->Cast<Scan>().ScanFlat(
-    result, result_offset, state.GetPositionInSegment(), scan_count);
-}
-
-template<typename Scan>
 void ScanVector(const ColumnSegment&, ColumnScanState& state, idx_t scan_count,
-                duckdb::Vector& result) {
-  state.scan_state->Cast<Scan>().ScanVector(
-    result, state.GetPositionInSegment(), scan_count);
+                duckdb::Vector& result, idx_t result_offset,
+                duckdb::ScanVectorType scan_type) {
+  auto& scan = state.scan_state->Cast<Scan>();
+  if (scan_type == duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR) {
+    scan.ScanVector(result, state.GetPositionInSegment(), scan_count);
+    return;
+  }
+  scan.ScanFlat(result, result_offset, state.GetPositionInSegment(),
+                scan_count);
 }
 
 template<typename Scan>
@@ -558,11 +557,9 @@ consteval CompressionFunction StringFunction(CodecType type) {
   CompressionFunction f{
     .type = type,
     .init_scan = InitScan<Scan>,
-    .scan_vector = ScanVector<Scan>,
-    .scan_partial = ScanPartial<Scan>,
+    .scan = ScanVector<Scan>,
     .select = Select<Scan>,
     .fetch_rows = FetchRows<Scan>,
-    .skip = EmptySkip,
     .get_segment_info = SegmentInfo,
     .validity = Scan::kValidity,
   };

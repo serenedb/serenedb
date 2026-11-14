@@ -990,3 +990,50 @@ WHERE NOT ((skills @@ 'gcp' OR bonus > 5)::min_match(3) OR tenure <= 10);
 
 statement ok
 DROP TABLE nm;
+
+
+statement ok
+CREATE TABLE nk (id INTEGER PRIMARY KEY, u INTEGER UNIQUE, v INTEGER UNIQUE NOT NULL);
+
+
+statement ok
+INSERT INTO nk VALUES (1, 10, 10), (2, NULL, 20), (3, 30, 30);
+
+
+query
+SELECT id FROM nk WHERE NOT (u = 10 OR id < 0) ORDER BY id;
+----
+id
+3
+
+
+statement error
+SELECT id FROM nk WHERE NOT ((u = 10 OR id > 100)::min_match(1) OR id < 0);
+----
+db error: ERROR: ::min_match(K) is only meaningful on an OR of predicates the inverted index answers.
+
+
+statement error
+SELECT id FROM nk WHERE NOT ((u = 10)::boost(2) OR id < 0);
+----
+db error: ERROR: ::boost(K) used on a predicate the inverted index could not claim -- boost is only meaningful inside an inverted-index match. Move the boost into an `@@` match or remove it.
+
+
+query
+SELECT id FROM nk WHERE NOT ((v = 10 OR id > 100)::min_match(1) OR id < 0) ORDER BY id;
+----
+id
+2
+3
+
+
+query
+SELECT id FROM nk WHERE NOT ((v = 10)::boost(2) OR id < 0) ORDER BY id;
+----
+id
+2
+3
+
+
+statement ok
+DROP TABLE nk;

@@ -20,14 +20,21 @@
 
 #pragma once
 
+#include <absl/functional/function_ref.h>
+
 #include <cstdint>
 #include <duckdb/common/types/column/column_data_collection.hpp>
+#include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/common/vector/vector_iterator.hpp>
+#include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/doc_removal.hpp>
+#include <iresearch/index/segment_reader.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/down_cast.hpp>
 #include <memory>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "connector/column_id.h"
@@ -54,6 +61,30 @@ inline void AddRowPositions(irs::DocRemovalBuilder& positions,
     const auto doc = connector::RowPositionDoc(first);
     positions.AddRange(connector::RowPositionIndex(first), doc,
                        static_cast<irs::doc_id_t>(doc + (end - first)));
+  }
+}
+
+inline void ForEachUnitRows(
+  const irs::DirectoryReader& reader,
+  std::span<const std::pair<uint64_t, duckdb::sel_t>> order,
+  absl::FunctionRef<void(uint64_t unit, std::span<const uint64_t> rows,
+                         const duckdb::SelectionVector& sel)>
+    visit) {
+  std::vector<uint64_t> rows;
+  duckdb::SelectionVector sel{order.size()};
+  for (size_t i = 0; i < order.size();) {
+    const auto index = connector::RowPositionIndex(order[i].first);
+    rows.clear();
+    for (; i < order.size() &&
+           connector::RowPositionIndex(order[i].first) == index;
+         ++i) {
+      sel.set_index(rows.size(), order[i].second);
+      rows.push_back(connector::RowPositionDoc(order[i].first) -
+                     irs::doc_limits::min());
+    }
+    visit(
+      irs::utils::downCast<irs::SegmentReader>(reader[index]).GetImpl()->Id(),
+      rows, sel);
   }
 }
 

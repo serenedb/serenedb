@@ -63,12 +63,13 @@ query
 EXPLAIN INSERT OR REPLACE INTO ua_rep VALUES (1, 1, 'e');
 ----
 QUERY PLAN
-╭─ INSERT ─────────────╮
-│ On Conflict: REPLACE │
-╰───────────┬──────────╯
-╭─ COLUMN_DATA_SCAN ───╮
-│ ~1 row               │
-╰──────────────────────╯
+╭─ INSERT ──────────────╮
+│ On Conflict: REPLACE  │
+│ Patched Columns: a, b │
+╰───────────┬───────────╯
+╭─ COLUMN_DATA_SCAN ────╮
+│ ~1 row                │
+╰───────────────────────╯
 
 
 query
@@ -146,6 +147,41 @@ QUERY PLAN
 │              rowid  │
 │ ~4 rows             │
 ╰─────────────────────╯
+
+
+statement ok
+SET debug_force_update_to_del_and_insert = true;
+
+
+query
+EXPLAIN INSERT OR REPLACE INTO ua_rep VALUES (1, 1, 'e');
+----
+QUERY PLAN
+╭─ INSERT ─────────────╮
+│ On Conflict: REPLACE │
+╰───────────┬──────────╯
+╭─ COLUMN_DATA_SCAN ───╮
+│ ~1 row               │
+╰──────────────────────╯
+
+
+statement count 2
+INSERT OR REPLACE INTO ua_rep VALUES (1, 13, 'xz'), (6, 60, 'u');
+
+
+statement ok
+RESET debug_force_update_to_del_and_insert;
+
+
+query
+SELECT k, a, b FROM ua_rep ORDER BY k;
+----
+k	a	b
+1	13	xz
+2	22	w
+3	31	z
+5	50	v
+6	60	u
 
 
 statement ok

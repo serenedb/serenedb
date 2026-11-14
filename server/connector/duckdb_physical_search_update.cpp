@@ -263,24 +263,17 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
                          static_cast<duckdb::sel_t>(i));
     }
     absl::c_sort(order);
-    std::vector<uint64_t> rows;
-    duckdb::SelectionVector sel{num_rows};
-    for (size_t i = 0; i < order.size();) {
-      const auto index = RowPositionIndex(order[i].first);
-      rows.clear();
-      for (; i < order.size() && RowPositionIndex(order[i].first) == index;
-           ++i) {
-        sel.set_index(rows.size(), order[i].second);
-        rows.push_back(RowPositionDoc(order[i].first) - irs::doc_limits::min());
-      }
-      const auto unit =
-        irs::utils::downCast<irs::SegmentReader>(reader[index]).GetImpl()->Id();
-      for (const auto& column : gstate.patched) {
-        const duckdb::Vector values{chunk.data[column.input], sel, rows.size()};
-        search::AddUnitPatch(lstate.patches, unit, column.field, column.type,
-                             rows, values);
-      }
-    }
+    search::ForEachUnitRows(reader, order,
+                            [&](uint64_t unit, std::span<const uint64_t> rows,
+                                const duckdb::SelectionVector& sel) {
+                              for (const auto& column : gstate.patched) {
+                                const duckdb::Vector values{
+                                  chunk.data[column.input], sel, rows.size()};
+                                search::AddUnitPatch(lstate.patches, unit,
+                                                     column.field, column.type,
+                                                     rows, values);
+                              }
+                            });
     if (lstate.returned) {
       duckdb::DataChunk new_row;
       new_row.InitializeEmpty(gstate.table.types);

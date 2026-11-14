@@ -392,7 +392,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SereneDBCatalog::MakeIndex(
 }
 
 duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
-  duckdb::ClientContext&, duckdb::PhysicalPlanGenerator& planner,
+  duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
   duckdb::LogicalInsert& op,
   duckdb::optional_ptr<duckdb::PhysicalOperator> plan) {
   SDB_ASSERT(plan);
@@ -405,15 +405,30 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
     return insert;
   }
   std::vector<connector::ColumnId> target;
+  std::vector<duckdb::PhysicalIndex> replaced;
   for (const auto& column : table.GetColumns().Physical()) {
     if (op.on_conflict_filter.contains(column.Physical().index)) {
       target.push_back(connector::TableColumnId(column));
+    } else {
+      replaced.push_back(column.Physical());
+    }
+  }
+  const bool replace = op.action_type == duckdb::OnConflictAction::REPLACE;
+  std::vector<connector::ReplacedColumn> patched;
+  if (replace && !replaced.empty() &&
+      !duckdb::Settings::Get<duckdb::ForceUpdateToDelAndInsertSetting>(
+        context) &&
+      table.PatchesColumns(replaced)) {
+    for (const auto index : replaced) {
+      const auto& column = table.GetColumns().GetColumn(index);
+      patched.push_back({.field = connector::TableColumnId(column),
+                         .type = column.Type(),
+                         .input = index.index});
     }
   }
   auto& upsert = planner.Make<connector::SereneDBSearchUpsert>(
     table, std::move(op.bound_constraints), op.types, op.estimated_cardinality,
-    op.return_chunk, op.action_type == duckdb::OnConflictAction::REPLACE,
-    std::move(target));
+    op.return_chunk, replace, std::move(target), std::move(patched));
   upsert.children.emplace_back(*plan);
   return upsert;
 }

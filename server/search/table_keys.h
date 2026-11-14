@@ -131,6 +131,8 @@ class KeyProbe {
   void Add(const Segment& segment);
   void Add(const Hot& hot) { _hots.push_back(hot); }
   void AddLive(const LiveUnits& live, const LiveUnits* since = nullptr);
+  void AddLive(const LiveUnits& live,
+               absl::FunctionRef<bool(uint64_t unit)> skip);
 
   bool Empty() const noexcept { return _segments.empty() && _hots.empty(); }
 

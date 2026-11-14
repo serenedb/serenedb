@@ -174,6 +174,6 @@ uint64_t SegmentKeyCount(std::span<const KeyProbe::Segment> segments,
 
 std::vector<std::string> SplitSegmentKeys(
   std::span<const KeyProbe::Segment> segments, irs::field_id field,
-  std::span<const std::string> keys, size_t parts);
+  std::span<const duckdb::string_t> keys, size_t parts);
 
 }  // namespace sdb::search

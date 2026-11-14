@@ -556,7 +556,7 @@ uint64_t SegmentKeyCount(std::span<const KeyProbe::Segment> segments,
 
 std::vector<std::string> SplitSegmentKeys(
   std::span<const KeyProbe::Segment> segments, irs::field_id field,
-  std::span<const std::string> keys, size_t parts) {
+  std::span<const duckdb::string_t> keys, size_t parts) {
   constexpr uint64_t kSamplesPerPart = 64;
   constexpr uint64_t kSampleRunBytes = 256;
   const auto total = SegmentKeyCount(segments, field) + keys.size();
@@ -580,7 +580,7 @@ std::vector<std::string> SplitSegmentKeys(
     const auto share = std::max<uint64_t>(1, wanted * keys.size() / total);
     const auto stride = std::max<uint64_t>(1, keys.size() / share);
     for (size_t i = 0; i < keys.size(); i += stride) {
-      samples.push_back(keys[i]);
+      samples.emplace_back(KeyView(keys[i]));
     }
   }
   absl::c_sort(samples);

@@ -22,7 +22,6 @@
 
 #include <absl/container/flat_hash_map.h>
 #include <absl/functional/function_ref.h>
-#include <absl/hash/hash.h>
 #include <absl/synchronization/mutex.h>
 
 #include <cstdint>
@@ -51,6 +50,7 @@
 #include "connector/column_id.h"
 #include "connector/constraint_keys.h"
 #include "connector/search_sink_writer.hpp"
+#include "search/hot_keys.h"
 #include "search/search_table_changes.h"
 #include "search/store.h"
 #include "search/table.h"
@@ -115,13 +115,19 @@ struct StoreWrites {
   // the commit reads them.
   struct RemovedKeys {
     irs::field_id field = 0;
-    std::vector<std::string> keys;
+    std::vector<duckdb::string_t> keys;
     size_t checked = 0;
     bool complete = true;
   };
   std::vector<RemovedKeys> removed_keys;
+  duckdb::StringHeap removed_heap;
   bool removed_rows = false;
-  std::vector<std::vector<std::string>> statement_references;
+  struct StatementReferences {
+    size_t spec = 0;
+    std::vector<duckdb::string_t> keys;
+  };
+  std::vector<StatementReferences> statement_references;
+  duckdb::StringHeap statement_heap;
   // The committed rows of a referenced or referencing table the first check
   // against it saw, by store.
   absl::flat_hash_map<duckdb::idx_t, std::shared_ptr<const TableState>>
@@ -134,29 +140,8 @@ enum class KeyConflict : uint8_t {
   UpsertUpdate,
 };
 
-struct ProposedKey {
-  duckdb::string_t key;
-  size_t hash = 0;
-};
-
-inline ProposedKey MakeProposedKey(std::string_view key) {
-  return {.key = {key.data(), static_cast<uint32_t>(key.size())},
-          .hash = absl::HashOf(key)};
-}
-
-struct ProposedKeyHash {
-  size_t operator()(const ProposedKey& key) const noexcept { return key.hash; }
-};
-
-struct ProposedKeyEq {
-  bool operator()(const ProposedKey& lhs,
-                  const ProposedKey& rhs) const noexcept {
-    return lhs.hash == rhs.hash && lhs.key == rhs.key;
-  }
-};
-
 using ProposedKeys =
-  irs::containers::FlatHashSet<ProposedKey, ProposedKeyHash, ProposedKeyEq>;
+  irs::containers::FlatHashSet<HashedKey, HashedKeyHash, HashedKeyEq>;
 
 class ConflictArbiter {
  public:
@@ -334,7 +319,8 @@ class Writes {
                                              const KeySpec& spec,
                                              std::string_view key, bool upsert);
   void CheckReferences(duckdb::ClientContext& context, StoreWrites& w,
-                       const KeySpec& spec, std::span<const std::string> keys);
+                       const KeySpec& spec,
+                       std::span<const duckdb::string_t> keys);
   void CheckRemovedKeys(duckdb::ClientContext& context, StoreWrites& w,
                         bool commit);
   void CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w);

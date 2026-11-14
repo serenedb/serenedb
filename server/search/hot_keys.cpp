@@ -26,7 +26,15 @@ void HotKeys::Add(irs::field_id field, std::string_view key,
                   irs::doc_id_t doc) {
   absl::MutexLock lock{&_mutex};
   auto& entry = _fields[field];
-  auto [it, inserted] = entry.newest.try_emplace(key, doc);
+  auto* keys = &_keys;
+  const auto probe = MakeHashedKey(key);
+  bool inserted = false;
+  const auto it = entry.newest.lazy_emplace(probe, [&](const auto& construct) {
+    inserted = true;
+    construct(HashedKey{.key = keys->AddBlob(key.data(), key.size()),
+                        .hash = probe.hash},
+              doc);
+  });
   if (!inserted) {
     entry.previous.emplace(doc, it->second);
     it->second = doc;
@@ -36,6 +44,7 @@ void HotKeys::Add(irs::field_id field, std::string_view key,
 void HotKeys::Clear() noexcept {
   absl::MutexLock lock{&_mutex};
   _fields.clear();
+  _keys.Destroy();
 }
 
 void HotKeys::ForEach(irs::field_id field, std::string_view key,
@@ -46,7 +55,7 @@ void HotKeys::ForEach(irs::field_id field, std::string_view key,
     return;
   }
   const auto& entry = found->second;
-  const auto it = entry.newest.find(key);
+  const auto it = entry.newest.find(MakeHashedKey(key));
   if (it == entry.newest.end()) {
     return;
   }

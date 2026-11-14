@@ -22,6 +22,7 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/functional/any_invocable.h>
+#include <absl/hash/hash.h>
 
 #include <bitset>
 #include <duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp>
@@ -226,7 +227,7 @@ void ForEachChunkKey(
 
 struct KeyedRow {
   irs::field_id field = 0;
-  std::string key;
+  duckdb::string_t key;
   irs::doc_id_t doc = 0;
 };
 
@@ -241,7 +242,7 @@ struct ArbitratedProbe {
   const ProposedKeys& proposed;
 
   bool Exists(std::string_view key) const {
-    return (proposed.contains(MakeProposedKey(key)) ? unseen : existing)
+    return (proposed.contains(MakeHashedKey(key)) ? unseen : existing)
       .Exists(key);
   }
 };
@@ -252,7 +253,8 @@ struct ArbitratedProbe {
 template<typename Probe>
 std::optional<Duplicate> FindDuplicateIn(
   const KeySpec& spec, std::span<const KeyProbe::Segment> segments,
-  std::span<const std::string> keys, const Probe& existing, KeyRange range) {
+  std::span<const duckdb::string_t> keys, const Probe& existing,
+  KeyRange range) {
   std::optional<Duplicate> found;
   size_t next = 0;
   const auto settle = [&](std::string_view key, size_t rows) {
@@ -272,14 +274,14 @@ std::optional<Duplicate> FindDuplicateIn(
   ForEachSegmentKey(
     segments, spec.key.field,
     [&](std::string_view key, size_t rows) {
-      while (next != keys.size() && keys[next] < key) {
+      while (next != keys.size() && KeyView(keys[next]) < key) {
         const auto run = take_run();
-        if (!settle(keys[next], run)) {
+        if (!settle(KeyView(keys[next]), run)) {
           return false;
         }
         next += run;
       }
-      while (next != keys.size() && keys[next] == key) {
+      while (next != keys.size() && KeyView(keys[next]) == key) {
         ++rows;
         ++next;
       }
@@ -288,7 +290,7 @@ std::optional<Duplicate> FindDuplicateIn(
     range);
   while (!found && next != keys.size()) {
     const auto run = take_run();
-    if (settle(keys[next], run)) {
+    if (settle(KeyView(keys[next]), run)) {
       next += run;
     }
   }
@@ -309,7 +311,7 @@ template<typename Probe>
 std::optional<Duplicate> FindDuplicate(
   duckdb::ClientContext& context, const KeySpec& spec,
   std::span<const KeyProbe::Segment> segments,
-  std::span<const std::string> keys, const Probe& existing) {
+  std::span<const duckdb::string_t> keys, const Probe& existing) {
   constexpr uint64_t kMinKeysPerCheck = 1 << 16;
   constexpr uint64_t kChecksPerThread = 4;
   const auto total = SegmentKeyCount(segments, spec.key.field) + keys.size();
@@ -327,10 +329,15 @@ std::optional<Duplicate> FindDuplicate(
     const KeyRange range{
       .from = part == 0 ? std::string_view{} : bounds[part - 1],
       .to = part == bounds.size() ? std::string_view{} : bounds[part]};
-    const auto begin =
-      range.from.empty() ? keys.begin() : absl::c_lower_bound(keys, range.from);
-    const auto end =
-      range.to.empty() ? keys.end() : absl::c_lower_bound(keys, range.to);
+    const auto below = [](const duckdb::string_t& key, std::string_view bound) {
+      return KeyView(key) < bound;
+    };
+    const auto begin = range.from.empty()
+                         ? keys.begin()
+                         : absl::c_lower_bound(keys, range.from, below);
+    const auto end = range.to.empty()
+                       ? keys.end()
+                       : absl::c_lower_bound(keys, range.to, below);
     executor.ScheduleTask(duckdb::make_uniq<DuplicateCheck>(
       executor,
       [&, range, slice = std::span{begin, end}, &result = found[part]] {
@@ -751,6 +758,7 @@ void Writes::AddRemoval(duckdb::ClientContext& context,
   auto removal = std::move(positions).Finish(reader);
   auto& w = EnsureStoreWrites(store);
   std::vector<StoreWrites::RemovedKeys> removed;
+  duckdb::StringHeap heap;
   if (const auto referencing = store->ReferencingKeys(); !referencing.empty()) {
     std::vector<KeySpec> specs;
     {
@@ -778,7 +786,9 @@ void Writes::AddRemoval(duckdb::ClientContext& context,
             it != segments.end()) {
           ForEachRowKey(
             context, store->GetId(), spec, *it->second, group.docs,
-            [&](std::string_view key) { keys.keys.emplace_back(key); });
+            [&](std::string_view key) {
+              keys.keys.push_back(heap.AddBlob(key.data(), key.size()));
+            });
         }
       }
     }
@@ -793,9 +803,10 @@ void Writes::AddRemoval(duckdb::ClientContext& context,
       keys.complete = !w.removed_rows;
       w.removed_keys.push_back(std::move(keys));
     } else {
-      absl::c_move(keys.keys, std::back_inserter(it->keys));
+      absl::c_copy(keys.keys, std::back_inserter(it->keys));
     }
   }
+  w.removed_heap.Move(heap);
   w.removed_rows = true;
   ++w.revision;
   const auto flushed_rows = [&](uint64_t id) {
@@ -1060,9 +1071,10 @@ class TableRows {
 };
 
 // The keys of the rows of `w` under `field` that are not committed yet.
-std::vector<std::string> OwnKeys(const StoreWrites& w, irs::field_id field,
-                                 const LiveUnits& live) {
-  std::vector<std::string> keys;
+std::vector<duckdb::string_t> OwnKeys(const StoreWrites& w, irs::field_id field,
+                                      const LiveUnits& live,
+                                      duckdb::StringHeap& heap) {
+  std::vector<duckdb::string_t> keys;
   std::vector<KeyProbe::Segment> segments;
   segments.reserve(w.own_segments.size() + 1);
   for (const auto& segment : w.own_segments) {
@@ -1072,7 +1084,7 @@ std::vector<std::string> OwnKeys(const StoreWrites& w, irs::field_id field,
     segments.push_back(OwnSegmentSource(w.piece, live));
   }
   ForEachSegmentKey(segments, field, [&](std::string_view key, size_t) {
-    keys.emplace_back(key);
+    keys.push_back(heap.AddBlob(key.data(), key.size()));
     return true;
   });
   absl::c_sort(keys);
@@ -1092,17 +1104,17 @@ StoreWrites* Writes::Related(const Store& store, StoreWrites& w) {
 
 void Writes::CheckReferences(duckdb::ClientContext& context, StoreWrites& w,
                              const KeySpec& spec,
-                             std::span<const std::string> keys) {
+                             std::span<const duckdb::string_t> keys) {
   const auto* parent = ReferencedTable(*w.table, spec, Latest(*w.table));
   if (!parent || spec.referenced_field == 0) {
-    ThrowMissingReference(context, *w.table, spec, keys.front());
+    ThrowMissingReference(context, *w.table, spec, KeyView(keys.front()));
   }
   const auto& store = *parent->Storage();
   const TableRows rows{store, Related(store, w)};
   auto probe = rows.Probe(spec.referenced_field);
   for (const auto& key : keys) {
-    if (!probe.Exists(key)) {
-      ThrowMissingReference(context, *w.table, spec, key);
+    if (!probe.Exists(KeyView(key))) {
+      ThrowMissingReference(context, *w.table, spec, KeyView(key));
     }
   }
   w.related_checked.try_emplace(store.GetId(), rows.Live().State());
@@ -1121,7 +1133,7 @@ void Writes::CheckRemovedKeys(duckdb::ClientContext& context, StoreWrites& w,
     const auto children =
       unique ? LiveReferencing(*w.table, referencing, removed.field, latest)
              : std::vector<ReferencingKey>{};
-    std::vector<std::string_view> keys;
+    std::vector<duckdb::string_t> keys;
     for (auto& child : children) {
       const auto& store = *child.table->Storage();
       const auto changed = [&] {
@@ -1139,8 +1151,8 @@ void Writes::CheckRemovedKeys(duckdb::ClientContext& context, StoreWrites& w,
       const TableRows rows{store, Related(store, w)};
       auto probe = rows.Probe(child.spec->key.field);
       std::optional<KeyProbe> held;
-      for (const auto key : keys) {
-        if (!probe.Exists(key)) {
+      for (const auto& key : keys) {
+        if (!probe.Exists(KeyView(key))) {
           continue;
         }
         if (!own) {
@@ -1149,8 +1161,8 @@ void Writes::CheckRemovedKeys(duckdb::ClientContext& context, StoreWrites& w,
         if (!held) {
           held.emplace(own->Probe(removed.field));
         }
-        if (!held->Exists(key)) {
-          ThrowStillReferenced(context, *w.table, *unique, child, key);
+        if (!held->Exists(KeyView(key))) {
+          ThrowStillReferenced(context, *w.table, *unique, child, KeyView(key));
         }
       }
       w.related_checked.try_emplace(store.GetId(), rows.Live().State());
@@ -1180,7 +1192,10 @@ void Writes::CheckKeys(duckdb::ClientContext& context, const Store& store,
     w.keyed_generation = w.rows_generation;
   }
   const bool checks_all = w.keyed_rows == 0 && w.checked_segments == 0;
-  std::vector<std::vector<std::string>> fresh(w.keys.size());
+  const bool replica =
+    duckdb::GetReplicationRole(context) == duckdb::ReplicationRole::REPLICA;
+  duckdb::StringHeap heap;
+  std::vector<std::vector<duckdb::string_t>> fresh(w.keys.size());
   std::vector<KeyedRow> keyed;
   const duckdb::idx_t rows =
     w.changes.HasBufferedRows() ? w.changes.collection->Count() : 0;
@@ -1203,6 +1218,9 @@ void Writes::CheckKeys(duckdb::ClientContext& context, const Store& store,
          more = collection.Scan(scan, chunk)) {
       const auto first = scan.current_row_index;
       for (size_t spec = 0; spec != w.keys.size(); ++spec) {
+        auto& keys = w.keys[spec].kind == KeyKind::Reference && !replica
+                       ? w.statement_heap
+                       : heap;
         ForEachChunkKey(
           chunk, w.changes.column_ids, encoders[spec],
           static_cast<irs::doc_id_t>(irs::doc_limits::min() + first),
@@ -1210,10 +1228,10 @@ void Writes::CheckKeys(duckdb::ClientContext& context, const Store& store,
             if (doc - irs::doc_limits::min() < w.keyed_rows) {
               return;
             }
-            fresh[spec].emplace_back(key);
-            keyed.push_back({.field = w.keys[spec].key.field,
-                             .key = std::string{key},
-                             .doc = doc});
+            const auto stored = keys.AddBlob(key.data(), key.size());
+            fresh[spec].push_back(stored);
+            keyed.push_back(
+              {.field = w.keys[spec].key.field, .key = stored, .doc = doc});
           });
       }
     }
@@ -1272,35 +1290,39 @@ void Writes::CheckKeys(duckdb::ClientContext& context, const Store& store,
     }
   }
   for (const auto& row : keyed) {
-    w.buffered_keys.Add(row.field, row.key, row.doc);
+    w.buffered_keys.Add(row.field, KeyView(row.key), row.doc);
   }
   w.keyed_rows = rows;
   w.checked_segments = w.own_segments.size();
-  if (duckdb::GetReplicationRole(context) == duckdb::ReplicationRole::REPLICA) {
+  if (replica) {
     w.removed_keys.clear();
     if (checks_all) {
       w.checked.emplace(std::move(live));
     }
     return;
   }
-  w.statement_references.resize(w.keys.size());
   bool deferred = !w.removed_keys.empty();
   for (size_t spec = 0; spec != w.keys.size(); ++spec) {
     const auto& key_spec = w.keys[spec];
     if (key_spec.kind != KeyKind::Reference) {
       continue;
     }
-    auto& keys = w.statement_references[spec];
-    if (keys.empty()) {
-      keys = std::move(fresh[spec]);
-    } else {
-      absl::c_move(fresh[spec], std::back_inserter(keys));
-    }
-    ForEachSegmentKey(segments, key_spec.key.field,
-                      [&](std::string_view key, size_t) {
-                        keys.emplace_back(key);
-                        return true;
+    auto it =
+      absl::c_find_if(w.statement_references,
+                      [&](const StoreWrites::StatementReferences& references) {
+                        return references.spec == spec;
                       });
+    if (it == w.statement_references.end()) {
+      it = w.statement_references.insert(
+        it, StoreWrites::StatementReferences{.spec = spec});
+    }
+    auto& keys = it->keys;
+    absl::c_copy(fresh[spec], std::back_inserter(keys));
+    ForEachSegmentKey(
+      segments, key_spec.key.field, [&](std::string_view key, size_t) {
+        keys.push_back(w.statement_heap.AddBlob(key.data(), key.size()));
+        return true;
+      });
     deferred = deferred || !keys.empty();
   }
   if (deferred) {
@@ -1321,16 +1343,17 @@ void Writes::CheckStatement(duckdb::ClientContext& context) {
       continue;
     }
     const LockedWrites locked{_writes, w};
-    for (size_t spec = 0; spec != w.statement_references.size(); ++spec) {
-      auto& keys = w.statement_references[spec];
+    for (auto& references : w.statement_references) {
+      auto& keys = references.keys;
       if (keys.empty()) {
         continue;
       }
       absl::c_sort(keys);
       keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
-      CheckReferences(context, w, w.keys[spec], keys);
+      CheckReferences(context, w, w.keys[references.spec], keys);
       keys.clear();
     }
+    w.statement_heap.Destroy();
     CheckRemovedKeys(context, w, false);
   }
 }
@@ -1482,9 +1505,9 @@ duckdb::idx_t ConflictArbiter::Admit(
                 [&](duckdb::idx_t row, const KeyHolder&) { held.set(row); });
   const auto width = _arbiters.size();
   const auto view = [&](size_t at) {
-    return ProposedKey{.key = {keys.keys[at].data(),
-                               static_cast<uint32_t>(keys.keys[at].size())},
-                       .hash = keys.hashes[at]};
+    return HashedKey{.key = {keys.keys[at].data(),
+                             static_cast<uint32_t>(keys.keys[at].size())},
+                     .hash = keys.hashes[at]};
   };
   duckdb::idx_t admitted = 0;
   absl::MutexLock lock{&_mutex};
@@ -1631,7 +1654,8 @@ void Writes::CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w) {
         continue;
       }
     }
-    const auto keys = OwnKeys(w, spec.key.field, now);
+    duckdb::StringHeap heap;
+    const auto keys = OwnKeys(w, spec.key.field, now, heap);
     if (keys.empty()) {
       continue;
     }
@@ -1685,9 +1709,11 @@ void Writes::CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w) {
       const auto collect = [&](const irs::SubReader& reader,
                                const irs::DocumentMask* removed) {
         if (removed) {
-          ForEachRowKey(
-            context, w.store->GetId(), *spec, reader, *removed,
-            [&](std::string_view key) { it->keys.emplace_back(key); });
+          ForEachRowKey(context, w.store->GetId(), *spec, reader, *removed,
+                        [&](std::string_view key) {
+                          it->keys.push_back(
+                            w.removed_heap.AddBlob(key.data(), key.size()));
+                        });
         }
       };
       for (const auto& unit : now.Units()) {

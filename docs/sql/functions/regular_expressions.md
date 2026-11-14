@@ -121,7 +121,7 @@ The `regexp_matches` operator will be optimized to the `LIKE` operator when poss
 
 ### Using `regexp_replace`
 
-The `regexp_replace` function can be used to replace the part of a string that matches the regexp pattern with a replacement string. The notation `\d` (where `d` is a number indicating the group) can be used to refer to groups captured in the regular expression in the replacement string. Note that by default, `regexp_replace` only replaces the first occurrence of the regular expression. To replace all occurrences, use the global replace (`g`) flag.
+The `regexp_replace` function can be used to replace the part of a string that matches the regexp pattern with a replacement string. In the replacement, `\1` to `\9` insert the text a capturing group matched, or nothing when the pattern has no such group, `\&` inserts the whole match and `\\` a backslash; any other backslash, `\0` included, stays as written. Note that by default, `regexp_replace` only replaces the first occurrence of the regular expression. To replace all occurrences, use the global replace (`g`) flag.
 
 Some examples for using `regexp_replace`:
 

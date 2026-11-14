@@ -52,3 +52,168 @@ async_threads
 
 statement ok
 RESET GLOBAL async_threads;
+
+
+statement ok
+SET GLOBAL threads = 3;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+SET LOCAL threads = 1;
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+SET GLOBAL threads = 5;
+
+
+query
+SHOW threads;
+----
+threads
+5
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+SET threads = 2;
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+SET GLOBAL threads = 6;
+
+
+query
+SHOW threads;
+----
+threads
+6
+
+
+statement ok
+SET threads = 6;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+RESET threads;
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+SET GLOBAL threads = 7;
+
+
+query
+SHOW threads;
+----
+threads
+6
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+RESET threads;
+
+
+statement ok
+COMMIT;
+
+
+query
+SHOW threads;
+----
+threads
+7
+
+
+statement ok
+RESET GLOBAL threads;
+
+
+statement ok
+SET GLOBAL disabled_optimizers = 'filter_pushdown';
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+SET LOCAL disabled_optimizers = 'join_order';
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+SET GLOBAL disabled_optimizers = 'build_side_probe_side';
+
+
+query
+SHOW disabled_optimizers;
+----
+disabled_optimizers
+build_side_probe_side
+
+
+statement ok
+SET disabled_optimizers = 'build_side_probe_side';
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+RESET disabled_optimizers;
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+RESET GLOBAL disabled_optimizers;
+
+
+query
+SHOW disabled_optimizers;
+----
+disabled_optimizers
+build_side_probe_side
+
+
+statement ok
+RESET disabled_optimizers;
+
+
+query
+SHOW disabled_optimizers;
+----
+disabled_optimizers
+(empty)

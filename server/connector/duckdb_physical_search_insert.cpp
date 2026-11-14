@@ -50,12 +50,14 @@
 #include "connector/search_sink_writer.hpp"
 #include "search/search_table_changes.h"
 #include "search/store.h"
+#include "search/table_keys.h"
+#include "search/writes.h"
 #include "server/utils/app_server.h"
 
 namespace sdb::connector {
 namespace {
 
-struct SearchInsertGlobalState final : duckdb::GlobalSinkState {
+struct SearchInsertGlobalState : duckdb::GlobalSinkState {
   SearchSinkTable table;
   catalog::SessionTransaction* sdb_txn = nullptr;
 
@@ -65,17 +67,47 @@ struct SearchInsertGlobalState final : duckdb::GlobalSinkState {
   std::optional<duckdb::ColumnDataCollection> returned;
 };
 
+struct SearchUpsertGlobalState final : SearchInsertGlobalState {
+  std::unique_ptr<search::ConflictArbiter> arbiter;
+};
+
 struct SearchInsertSourceState final : duckdb::GlobalSourceState {
   duckdb::ColumnDataScanState scan;
 };
 
-struct SearchInsertLocalState final : duckdb::LocalSinkState {
+struct SearchInsertLocalState : duckdb::LocalSinkState {
   SearchSinkRows rows;
   duckdb::idx_t insert_count = 0;
   // RETURNING only: collected per sink thread so a parallel insert does not
   // serialise on one collection, and merged on Combine.
   std::optional<duckdb::ColumnDataCollection> returned;
 };
+
+struct SearchUpsertLocalState final : SearchInsertLocalState {
+  duckdb::SelectionVector kept{STANDARD_VECTOR_SIZE};
+  irs::DocRemovalBuilder replaced;
+};
+
+void ReportProgress(duckdb::ExecutionContext& context,
+                    const duckdb::DataChunk& chunk) {
+  if (const auto& progress = duckdb::ClientConfig::GetConfig(context.client)
+                               .sink_progress_callback) {
+    progress(chunk.size(), chunk.GetAllocationSize());
+  }
+}
+
+void AppendRows(duckdb::ExecutionContext& context,
+                SearchInsertGlobalState& gstate, SearchInsertLocalState& lstate,
+                duckdb::DataChunk& chunk) {
+  lstate.rows.Append(context.client, gstate.table, chunk);
+  if (lstate.returned) {
+    // The chunk is the whole row in table-column order -- the defaults and the
+    // STORED generated columns were resolved into the plan below this sink --
+    // which is exactly what RETURNING projects over.
+    lstate.returned->Append(chunk);
+  }
+  lstate.insert_count += chunk.size();
+}
 
 }  // namespace
 
@@ -102,6 +134,13 @@ SereneDBSearchInsert::SereneDBSearchInsert(
 duckdb::unique_ptr<duckdb::GlobalSinkState>
 SereneDBSearchInsert::GetGlobalSinkState(duckdb::ClientContext& context) const {
   auto state = duckdb::make_uniq<SearchInsertGlobalState>();
+  InitSinkState(context, *state);
+  return state;
+}
+
+void SereneDBSearchInsert::InitSinkState(
+  duckdb::ClientContext& context, duckdb::GlobalSinkState& sink_state) const {
+  auto& state = sink_state.Cast<SearchInsertGlobalState>();
 
   auto table = _table;
   if (_ctas_info) {
@@ -111,7 +150,7 @@ SereneDBSearchInsert::GetGlobalSinkState(duckdb::ClientContext& context) const {
     table = &entry->Cast<catalog::SearchTableEntry>();
   }
 
-  auto& target = state->table;
+  auto& target = state.table;
   target.store = table->Storage();
   target.catalog = &table->catalog;
   target.table_id = table->oid;
@@ -130,12 +169,10 @@ SereneDBSearchInsert::GetGlobalSinkState(duckdb::ClientContext& context) const {
   }
   target.buffer_bytes = target.store->InlineRowsMax();
 
-  state->sdb_txn = &transaction;
+  state.sdb_txn = &transaction;
   if (_return_chunk) {
-    state->returned.emplace(context, GetTypes());
+    state.returned.emplace(context, GetTypes());
   }
-
-  return state;
 }
 
 duckdb::unique_ptr<duckdb::LocalSinkState>
@@ -154,27 +191,15 @@ duckdb::SinkResultType SereneDBSearchInsert::Sink(
   auto& gstate = input.global_state.Cast<SearchInsertGlobalState>();
   auto& lstate = input.local_state.Cast<SearchInsertLocalState>();
 
-  const auto num_rows = chunk.size();
-  if (num_rows == 0) {
+  if (chunk.size() == 0) {
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
-  if (const auto& progress = duckdb::ClientConfig::GetConfig(context.client)
-                               .sink_progress_callback) {
-    progress(num_rows, chunk.GetAllocationSize());
-  }
+  ReportProgress(context, chunk);
   if (_table) {
     duckdb::DataTable::VerifyRowConstraints(context.client, *_table,
                                             _constraints, chunk);
   }
-  lstate.rows.Append(context.client, gstate.table, chunk);
-
-  if (lstate.returned) {
-    // The chunk is the whole row in table-column order -- the defaults and the
-    // STORED generated columns were resolved into the plan below this sink --
-    // which is exactly what RETURNING projects over.
-    lstate.returned->Append(chunk);
-  }
-  lstate.insert_count += num_rows;
+  AppendRows(context, gstate, lstate, chunk);
   return duckdb::SinkResultType::NEED_MORE_INPUT;
 }
 
@@ -203,7 +228,7 @@ duckdb::SinkFinalizeType SereneDBSearchInsert::Finalize(
   }
   auto& gstate = input.global_state.Cast<SearchInsertGlobalState>();
   gstate.sdb_txn->SearchTxn().CheckKeys(context, *gstate.table.store,
-                                        _merge_insert);
+                                        _conflict);
   return duckdb::SinkFinalizeType::READY;
 }
 
@@ -232,6 +257,83 @@ duckdb::SourceResultType SereneDBSearchInsert::GetDataInternal(
   chunk.SetCardinality(1);
   chunk.SetValue(0, 0, duckdb::Value::BIGINT(gstate.insert_count));
   return duckdb::SourceResultType::FINISHED;
+}
+
+SereneDBSearchUpsert::SereneDBSearchUpsert(
+  duckdb::PhysicalPlan& plan, const catalog::SearchTableEntry& table,
+  duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>> constraints,
+  duckdb::vector<duckdb::LogicalType> types,
+  duckdb::idx_t estimated_cardinality, bool return_chunk, bool replace,
+  std::vector<ColumnId> target)
+  : SereneDBSearchInsert(plan, table, std::move(constraints), std::move(types),
+                         estimated_cardinality, return_chunk),
+    _replace(replace),
+    _target(std::move(target)) {
+  _conflict = search::KeyConflict::Upsert;
+}
+
+duckdb::InsertionOrderPreservingMap<std::string>
+SereneDBSearchUpsert::ParamsToString() const {
+  duckdb::InsertionOrderPreservingMap<std::string> result;
+  result["On Conflict"] = _replace ? "REPLACE" : "DO NOTHING";
+  return result;
+}
+
+duckdb::unique_ptr<duckdb::GlobalSinkState>
+SereneDBSearchUpsert::GetGlobalSinkState(duckdb::ClientContext& context) const {
+  auto state = duckdb::make_uniq<SearchUpsertGlobalState>();
+  InitSinkState(context, *state);
+  state->arbiter = state->sdb_txn->SearchTxn().ArbitrateConflicts(
+    context, state->table.store,
+    search::ConflictArbiters(*_table, _target,
+                             _table->catalog.GetCatalogTransaction(context)));
+  return state;
+}
+
+duckdb::unique_ptr<duckdb::LocalSinkState>
+SereneDBSearchUpsert::GetLocalSinkState(
+  duckdb::ExecutionContext& context) const {
+  auto lstate = duckdb::make_uniq<SearchUpsertLocalState>();
+  if (_return_chunk) {
+    lstate->returned.emplace(context.client, GetTypes());
+  }
+  return lstate;
+}
+
+duckdb::SinkResultType SereneDBSearchUpsert::Sink(
+  duckdb::ExecutionContext& context, duckdb::DataChunk& chunk,
+  duckdb::OperatorSinkInput& input) const {
+  auto& gstate = input.global_state.Cast<SearchUpsertGlobalState>();
+  auto& lstate = input.local_state.Cast<SearchUpsertLocalState>();
+  ReportProgress(context, chunk);
+  duckdb::DataTable::VerifyRowConstraints(context.client, *_table, _constraints,
+                                          chunk);
+  if (_replace) {
+    gstate.arbiter->Replace(chunk, gstate.table.column_ids, lstate.replaced);
+  } else {
+    const auto kept =
+      gstate.arbiter->Admit(chunk, gstate.table.column_ids, lstate.kept);
+    if (kept == 0) {
+      return duckdb::SinkResultType::NEED_MORE_INPUT;
+    }
+    if (kept != chunk.size()) {
+      chunk.Slice(lstate.kept, kept);
+    }
+  }
+  AppendRows(context, gstate, lstate, chunk);
+  return duckdb::SinkResultType::NEED_MORE_INPUT;
+}
+
+duckdb::SinkCombineResultType SereneDBSearchUpsert::Combine(
+  duckdb::ExecutionContext& context,
+  duckdb::OperatorSinkCombineInput& input) const {
+  if (auto& lstate = input.local_state.Cast<SearchUpsertLocalState>();
+      !lstate.replaced.Empty()) {
+    auto& gstate = input.global_state.Cast<SearchUpsertGlobalState>();
+    gstate.sdb_txn->SearchTxn().AddRemoval(context.client, gstate.table.store,
+                                           std::move(lstate.replaced));
+  }
+  return SereneDBSearchInsert::Combine(context, input);
 }
 
 }  // namespace sdb::connector

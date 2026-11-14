@@ -320,6 +320,37 @@ void VerifyUniqueKey(duckdb::ClientContext& context,
     });
 }
 
+std::vector<irs::field_id> ConflictArbiters(
+  const catalog::SearchTableEntry& table,
+  std::span<const connector::ColumnId> target,
+  duckdb::CatalogTransaction transaction) {
+  const auto arbitrates = [&](const catalog::ConstraintKey& key) {
+    return target.empty() ||
+           (key.expressions.empty() && key.columns.size() == target.size() &&
+            absl::c_all_of(key.columns, [&](connector::ColumnId column) {
+              return absl::c_linear_search(target, column);
+            }));
+  };
+  std::vector<irs::field_id> arbiters;
+  const auto& specs = table.KeySpecs();
+  for (const auto& spec : specs) {
+    if (spec.kind == KeyKind::Unique && !spec.deferred &&
+        arbitrates(spec.key)) {
+      arbiters.push_back(spec.key.field);
+    }
+  }
+  auto& oids = table.catalog.Cast<catalog::BaseCatalog>().Oids();
+  for (const auto& key : table.Storage()->Config()->constraint_keys) {
+    if (absl::c_none_of(
+          specs,
+          [&](const KeySpec& spec) { return spec.key.field == key.field; }) &&
+        arbitrates(key) && oids.Find(transaction, key.field)) {
+      arbiters.push_back(key.field);
+    }
+  }
+  return arbiters;
+}
+
 void KeyProbe::Add(const Segment& segment) {
   if (const auto* field = KeyField(*segment.sub, _field)) {
     _segments.push_back({.unit = segment.unit,

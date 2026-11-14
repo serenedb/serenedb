@@ -96,6 +96,10 @@ This raises a constraint error. The table will contain the row that was first in
 These error messages can be avoided by explicitly handling conflicts.
 SereneDB supports two such clauses: [`ON CONFLICT DO NOTHING`](#do-nothing-clause) and [`ON CONFLICT DO UPDATE SET ...`](#do-update-clause-upsert).
 
+Only conflicts on a unique key are handled: a `PRIMARY KEY` or `UNIQUE` constraint, or a unique index. A row that violates a `CHECK`, `NOT NULL` or foreign key constraint fails the statement as it does without the clause.
+
+The rows a statement proposes are decided one at a time, in the order the statement produces them: a row conflicts with the existing rows and with the rows the statement inserted before it. A key that holds a `NULL` never conflicts.
+
 A conflict is found against the rows of the statement's snapshot. When another transaction commits the same key after that snapshot was taken, the statement fails with `could not serialize access due to concurrent update`, at the statement or at its `COMMIT`, and a retry takes the conflict path; see [Isolation Level](../transactions.md#isolation-level).
 
 ### `DO NOTHING` Clause
@@ -106,6 +110,8 @@ For example:
 <SqlLogicTest id="sql/statements/insert/do_nothing/example_014" />
 
 These statements finish successfully and leave the table with the row `<i: 1, j: 42>`.
+
+A skipped row is not checked against foreign keys, and `RETURNING` returns only the inserted rows. On a table without a unique key, `DO NOTHING` inserts every row.
 
 #### `INSERT OR IGNORE INTO`
 
@@ -120,6 +126,8 @@ The `DO UPDATE` clause causes the `INSERT` to turn into an `UPDATE` on the confl
 The `SET` expressions that follow determine how these rows are updated. The expressions can use the special virtual table `EXCLUDED`, which contains the conflicting values for the row.
 Optionally you can provide an additional `WHERE` clause that can exclude certain rows from the update.
 The conflicts that don't meet this condition are ignored instead.
+
+A statement that proposes the same key twice fails with `ON CONFLICT DO UPDATE command cannot affect row a second time`, whether or not the key already exists.
 
 Because we need a way to refer to both the **to-be-inserted** tuple and the **existing** tuple, we introduce the special `EXCLUDED` qualifier.
 When the `EXCLUDED` qualifier is provided, the reference refers to the **to-be-inserted** tuple, otherwise, it refers to the **existing** tuple.
@@ -149,6 +157,8 @@ These statements are equivalent:
 
 <SqlLogicTest id="sql/statements/insert/insert_or_replace_equivalent/example_020" />
 
+With a column list, only the listed columns are replaced and the existing row keeps the values of the others. As with `DO UPDATE`, proposing the same key twice in one statement fails.
+
 #### Limitations
 
 When the `ON CONFLICT ... DO UPDATE` clause is used and a conflict occurs, only the columns named in the `SET` clause are updated. Columns that are unaffected by the conflict keep their existing values, so their `NOT NULL` constraints continue to hold. For example, the following upsert updates `val1` while preserving the existing `val2`:
@@ -163,7 +173,7 @@ When multiple columns need to be part of the uniqueness constraint, use a single
 
 ### Defining a Conflict Target
 
-A conflict target may be provided as `ON CONFLICT (conflict_target)`. This is a group of columns that an index or uniqueness/key constraint is defined on. If the conflict target is omitted, the `PRIMARY KEY` constraint(s) on the table are targeted.
+A conflict target may be provided as `ON CONFLICT (conflict_target)`. This is a group of columns that a unique index or a `PRIMARY KEY` or `UNIQUE` constraint is defined on. A conflict on another unique key of the table fails the statement. If the conflict target is omitted, every unique key of the table is targeted.
 
 Specifying a conflict target is optional unless using a [`DO UPDATE`](#do-update-clause-upsert) and there are multiple unique/primary key constraints on the table.
 

@@ -23,6 +23,9 @@
 #include <absl/algorithm/container.h>
 #include <absl/strings/match.h>
 
+#include <array>
+#include <duckdb/common/vector/vector_iterator.hpp>
+#include <duckdb/common/vector/vector_writer.hpp>
 #include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/optimizer/column_lifetime_analyzer.hpp>
 #include <duckdb/optimizer/optimizer.hpp>
@@ -65,7 +68,9 @@
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
 #include "connector/functions/search.h"
+#include "connector/functions/ts_common.hpp"
 #include "connector/functions/ts_offsets.h"
+#include "connector/functions/ts_query_codec.h"
 #include "connector/functions/vector.h"
 #include "connector/index_expression.hpp"
 #include "connector/optimizer/iresearch_plan_common.hpp"
@@ -2168,6 +2173,82 @@ duckdb::unique_ptr<duckdb::Expression> FoldColumnCast(
   return expr;
 }
 
+void MinMatchRows(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                  duckdb::Vector& result) {
+  const auto count = args.size();
+  const auto needed = args.data[0].Values<uint32_t>()[0].GetValue();
+  std::array<uint32_t, STANDARD_VECTOR_SIZE> matched{};
+  std::array<uint32_t, STANDARD_VECTOR_SIZE> unknown{};
+  for (duckdb::idx_t i = 1; i < args.ColumnCount(); ++i) {
+    for (const auto branch : args.data[i].Values<bool>()) {
+      if (!branch.IsValid()) {
+        ++unknown[branch.GetIndex()];
+      } else if (branch.GetValue()) {
+        ++matched[branch.GetIndex()];
+      }
+    }
+  }
+  auto writer = duckdb::FlatVector::Writer<bool>(result, count);
+  for (duckdb::idx_t row = 0; row < count; ++row) {
+    if (matched[row] >= needed) {
+      writer.WriteValue(true);
+    } else if (matched[row] + unknown[row] < needed) {
+      writer.WriteValue(false);
+    } else {
+      writer.WriteNull();
+    }
+  }
+}
+
+duckdb::unique_ptr<duckdb::Expression> MinMatchRowsOf(
+  uint32_t needed,
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> branches) {
+  duckdb::ScalarFunction fn(duckdb::Identifier{"sdb_min_match"},
+                            {duckdb::LogicalType::UINTEGER},
+                            duckdb::LogicalType::BOOLEAN, MinMatchRows, nullptr,
+                            nullptr, nullptr, duckdb::LogicalType::BOOLEAN);
+  fn.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> children;
+  children.reserve(branches.size() + 1);
+  children.push_back(duckdb::make_uniq<duckdb::BoundConstantExpression>(
+    duckdb::Value::UINTEGER(needed)));
+  for (auto& branch : branches) {
+    children.push_back(std::move(branch));
+  }
+  return duckdb::make_uniq<duckdb::BoundFunctionExpression>(
+    duckdb::BoundScalarFunction(fn), std::move(children), nullptr);
+}
+
+duckdb::unique_ptr<duckdb::Expression> RowValueOf(
+  duckdb::unique_ptr<duckdb::Expression> expr) {
+  if (duckdb::BoundCastExpression::IsCast(*expr)) {
+    auto& cast = expr->Cast<duckdb::BoundFunctionExpression>();
+    const auto& target = cast.GetReturnType();
+    auto& operand = duckdb::BoundCastExpression::ChildMutable(cast);
+    if (connector::IsTSQueryStructType(target) ||
+        connector::IsTSQueryStructType(operand->GetReturnType())) {
+      auto value = RowValueOf(std::move(operand));
+      SDB_ASSERT(value->GetReturnType().id() == duckdb::LogicalTypeId::BOOLEAN);
+      const auto needed = connector::TryGetMinMatchModifier(target);
+      if (!needed) {
+        SDB_ASSERT(target.id() == duckdb::LogicalTypeId::BOOLEAN ||
+                   connector::HasGroupModifier(target));
+        return value;
+      }
+      SDB_ASSERT(value->GetExpressionType() ==
+                 duckdb::ExpressionType::CONJUNCTION_OR);
+      return MinMatchRowsOf(
+        *needed, std::move(value->Cast<duckdb::BoundConjunctionExpression>()
+                             .GetChildrenMutable()));
+    }
+  }
+  duckdb::ExpressionIterator::EnumerateChildren(
+    *expr, [](duckdb::unique_ptr<duckdb::Expression>& child) {
+      child = RowValueOf(std::move(child));
+    });
+  return expr;
+}
+
 }  // namespace
 
 duckdb::unique_ptr<duckdb::Expression> NormalizeClaimShape(
@@ -2232,8 +2313,12 @@ duckdb::unique_ptr<duckdb::Expression> SubstituteParameters(
 }
 
 std::optional<RowForm> RowFormOf(const duckdb::Expression& conjunct) {
-  if (conjunct.IsVolatile() || conjunct.CanThrow() || conjunct.HasParameter() ||
+  if (conjunct.IsVolatile() || conjunct.HasParameter() ||
       conjunct.HasSubquery() || CallsSearchStub(conjunct)) {
+    return std::nullopt;
+  }
+  auto value = RowValueOf(conjunct.Copy());
+  if (value->CanThrow()) {
     return std::nullopt;
   }
   RowForm form;
@@ -2254,7 +2339,7 @@ std::optional<RowForm> RowFormOf(const duckdb::Expression& conjunct) {
   if (form.columns.empty()) {
     return std::nullopt;
   }
-  form.expr = conjunct.Copy();
+  form.expr = std::move(value);
   duckdb::ExpressionIterator::VisitExpressionMutable<
     duckdb::BoundColumnRefExpression>(
     form.expr, [&](duckdb::BoundColumnRefExpression& ref,

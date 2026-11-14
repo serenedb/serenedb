@@ -203,7 +203,7 @@ def test_a_component_failing_to_start_stops_the_ones_before_it(
 def _setting(server: _Server, name: str) -> str:
     with psycopg.connect(host="127.0.0.1", port=server.port, user="postgres",
                          dbname="postgres") as conn:
-        return conn.execute("SELECT setting FROM sdb_settings() WHERE name = %s",
+        return conn.execute("SELECT setting FROM sdb_settings WHERE name = %s",
                             (name,)).fetchone()[0]
 
 
@@ -251,6 +251,18 @@ def test_a_data_directory_that_cannot_be_created(tmp_path: Path) -> None:
     assert result.returncode != 0, result
     assert (f"Unable to create database directory '{datadir}'"
             in result.stdout + result.stderr), result
+
+
+def test_a_pg_version_that_cannot_be_checked(tmp_path: Path) -> None:
+    datadir = tmp_path / "data"
+    datadir.mkdir()
+    (datadir / "PG_VERSION").symlink_to("PG_VERSION")
+    result = subprocess.run([SERENED_BIN, str(datadir)], capture_output=True,
+                            text=True, timeout=60)
+    assert result.returncode != 0, result
+    assert (f"Unable to check '{datadir}/PG_VERSION'"
+            in result.stdout + result.stderr), result
+    assert not (datadir / "engine_v1").exists()
 
 
 @pytest.mark.parametrize("relative", [True, False])

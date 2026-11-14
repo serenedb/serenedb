@@ -155,6 +155,16 @@ a
 b
 
 
+query
+SELECT
+    octet_length((regexp_match('é', '([^a]+?)'))[1]) AS a,
+    octet_length((regexp_match('日本', '(.+?)'))[1]) AS b,
+    octet_length((regexp_match('日本', '(\D+?)'))[1]) AS c;
+----
+a	b	c
+2	3	3
+
+
 # regexp_count with start position (3-arg)
 query
 SELECT regexp_count('123456789012', '\d\d\d', 2);

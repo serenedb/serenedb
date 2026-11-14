@@ -22,12 +22,15 @@
 
 #include <absl/container/flat_hash_map.h>
 #include <absl/functional/function_ref.h>
+#include <absl/hash/hash.h>
 #include <absl/synchronization/mutex.h>
 
 #include <cstdint>
 #include <duckdb/common/identifier.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
+#include <duckdb/common/types/string_heap.hpp>
+#include <duckdb/common/types/string_type.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/doc_removal.hpp>
@@ -131,6 +134,30 @@ enum class KeyConflict : uint8_t {
   UpsertUpdate,
 };
 
+struct ProposedKey {
+  duckdb::string_t key;
+  size_t hash = 0;
+};
+
+inline ProposedKey MakeProposedKey(std::string_view key) {
+  return {.key = {key.data(), static_cast<uint32_t>(key.size())},
+          .hash = absl::HashOf(key)};
+}
+
+struct ProposedKeyHash {
+  size_t operator()(const ProposedKey& key) const noexcept { return key.hash; }
+};
+
+struct ProposedKeyEq {
+  bool operator()(const ProposedKey& lhs,
+                  const ProposedKey& rhs) const noexcept {
+    return lhs.hash == rhs.hash && lhs.key == rhs.key;
+  }
+};
+
+using ProposedKeys =
+  irs::containers::FlatHashSet<ProposedKey, ProposedKeyHash, ProposedKeyEq>;
+
 class ConflictArbiter {
  public:
   ConflictArbiter(duckdb::ClientContext& context, const StoreWrites& w,
@@ -145,8 +172,7 @@ class ConflictArbiter {
     absl::FunctionRef<void(duckdb::idx_t row, const KeyHolder& holder)>
       replaced);
 
-  const irs::containers::FlatHashSet<std::string>* Proposed(
-    irs::field_id field) const;
+  const ProposedKeys* Proposed(irs::field_id field) const;
   bool Probed(uint64_t unit) const { return _probed.contains(unit); }
 
  private:
@@ -154,7 +180,7 @@ class ConflictArbiter {
     irs::field_id field = 0;
     connector::ConstraintKeyEncoder encoder;
     KeyProbe held;
-    irs::containers::FlatHashSet<std::string> proposed;
+    ProposedKeys proposed;
   };
 
   struct OwnRows {
@@ -167,6 +193,7 @@ class ConflictArbiter {
   struct RowKeys {
     std::vector<duckdb::Vector> encoded;
     std::vector<std::string_view> keys;
+    std::vector<size_t> hashes;
   };
 
   RowKeys Encode(duckdb::DataChunk& chunk,
@@ -181,6 +208,7 @@ class ConflictArbiter {
   irs::containers::FlatHashSet<uint64_t> _probed;
   std::optional<OwnRows> _own;
   absl::Mutex _mutex;
+  duckdb::StringHeap _keys;
 };
 
 struct LogSection {

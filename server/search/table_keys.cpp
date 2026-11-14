@@ -26,6 +26,7 @@
 #include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <iresearch/index/docs_mask/docs_mask.hpp>
 #include <iresearch/utils/type_limits.hpp>
+#include <numeric>
 
 #include "catalog/base_catalog.h"
 #include "catalog/dependency.h"
@@ -409,27 +410,41 @@ void KeyProbe::ForEach(std::string_view key,
 void KeyProbe::ForEachSorted(
   std::span<const std::string_view> keys,
   absl::FunctionRef<void(size_t index, const KeyHolder& holder)> visit) const {
+  std::vector<uint32_t> rest(keys.size());
+  std::iota(rest.begin(), rest.end(), 0);
+  std::vector<bool> found(keys.size());
+  const auto hold = [&](uint32_t index, const KeyHolder& holder) {
+    found[index] = true;
+    visit(index, holder);
+  };
   for (const auto& source : _segments) {
+    if (rest.empty()) {
+      return;
+    }
     source.field->LookupBatch(
-      keys.size(), [&](size_t i) { return Bytes(keys[i]); },
+      rest.size(), [&](size_t i) { return Bytes(keys[rest[i]]); },
       [&](size_t i, const irs::PostingMeta& meta) {
         source.field->ReadDocs(meta, [&](irs::doc_id_t doc) {
           if (source.masks.Contains(doc)) {
             return true;
           }
-          visit(i, {.unit = source.unit, .doc = doc});
+          hold(rest[i], {.unit = source.unit, .doc = doc});
           return false;
         });
       });
+    std::erase_if(rest, [&](uint32_t index) { return found[index]; });
   }
   for (const auto& hot : _hots) {
-    for (size_t i = 0; i != keys.size(); ++i) {
-      hot.keys->ForEach(_field, keys[i], [&](irs::doc_id_t doc) {
+    for (const auto index : rest) {
+      if (found[index]) {
+        continue;
+      }
+      hot.keys->ForEach(_field, keys[index], [&](irs::doc_id_t doc) {
         const auto row = doc - irs::doc_limits::min();
         if (row >= hot.docs || (hot.removed && hot.removed->Contains(doc))) {
           return true;
         }
-        visit(i, {.unit = hot.unit, .doc = doc});
+        hold(index, {.unit = hot.unit, .doc = doc});
         return false;
       });
     }

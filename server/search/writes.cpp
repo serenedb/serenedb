@@ -238,10 +238,11 @@ struct Duplicate {
 struct ArbitratedProbe {
   const KeyProbe& existing;
   const KeyProbe& unseen;
-  const irs::containers::FlatHashSet<std::string>& proposed;
+  const ProposedKeys& proposed;
 
   bool Exists(std::string_view key) const {
-    return (proposed.contains(key) ? unseen : existing).Exists(key);
+    return (proposed.contains(MakeProposedKey(key)) ? unseen : existing)
+      .Exists(key);
   }
 };
 
@@ -1383,8 +1384,7 @@ ConflictArbiter::ConflictArbiter(duckdb::ClientContext& context,
   }
 }
 
-const irs::containers::FlatHashSet<std::string>* ConflictArbiter::Proposed(
-  irs::field_id field) const {
+const ProposedKeys* ConflictArbiter::Proposed(irs::field_id field) const {
   const auto it = absl::c_find_if(
     _arbiters, [&](const Arbiter& arbiter) { return arbiter.field == field; });
   return it == _arbiters.end() ? nullptr : &it->proposed;
@@ -1398,6 +1398,7 @@ ConflictArbiter::RowKeys ConflictArbiter::Encode(
   RowKeys result;
   result.encoded.reserve(width);
   result.keys.resize(count * width);
+  result.hashes.resize(count * width);
   for (size_t a = 0; a != width; ++a) {
     auto& encoded =
       result.encoded.emplace_back(duckdb::LogicalType::BLOB, count);
@@ -1406,7 +1407,9 @@ ConflictArbiter::RowKeys ConflictArbiter::Encode(
     for (duckdb::idx_t row = 0; row != count; ++row) {
       if (const auto entry = values[row]; entry.IsValid()) {
         const auto& value = entry.GetValue();
-        result.keys[row * width + a] = {value.GetData(), value.GetSize()};
+        const std::string_view key{value.GetData(), value.GetSize()};
+        result.keys[row * width + a] = key;
+        result.hashes[row * width + a] = absl::HashOf(key);
       }
     }
   }
@@ -1478,24 +1481,31 @@ duckdb::idx_t ConflictArbiter::Admit(
   ForEachHolder(keys, count,
                 [&](duckdb::idx_t row, const KeyHolder&) { held.set(row); });
   const auto width = _arbiters.size();
+  const auto view = [&](size_t at) {
+    return ProposedKey{.key = {keys.keys[at].data(),
+                               static_cast<uint32_t>(keys.keys[at].size())},
+                       .hash = keys.hashes[at]};
+  };
   duckdb::idx_t admitted = 0;
   absl::MutexLock lock{&_mutex};
   for (duckdb::idx_t row = 0; row != count; ++row) {
     if (held[row]) {
       continue;
     }
-    const auto row_keys = std::span{keys.keys}.subspan(row * width, width);
     bool proposed = false;
     for (size_t a = 0; a != width && !proposed; ++a) {
+      const auto at = row * width + a;
       proposed =
-        row_keys[a].data() && _arbiters[a].proposed.contains(row_keys[a]);
+        keys.keys[at].data() && _arbiters[a].proposed.contains(view(at));
     }
     if (proposed) {
       continue;
     }
     for (size_t a = 0; a != width; ++a) {
-      if (row_keys[a].data()) {
-        _arbiters[a].proposed.emplace(row_keys[a]);
+      if (const auto at = row * width + a; keys.keys[at].data()) {
+        _arbiters[a].proposed.insert(
+          {.key = _keys.AddBlob(keys.keys[at].data(), keys.keys[at].size()),
+           .hash = keys.hashes[at]});
       }
     }
     kept.set_index(admitted++, row);
@@ -1517,7 +1527,11 @@ void ConflictArbiter::Replace(
   absl::MutexLock lock{&_mutex};
   for (size_t i = 0; i != keys.keys.size(); ++i) {
     if (const auto key = keys.keys[i];
-        key.data() && !_arbiters[i % width].proposed.emplace(key).second) {
+        key.data() && !_arbiters[i % width]
+                         .proposed
+                         .insert({.key = _keys.AddBlob(key.data(), key.size()),
+                                  .hash = keys.hashes[i]})
+                         .second) {
       ThrowProposedTwice();
     }
   }

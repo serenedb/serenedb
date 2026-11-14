@@ -181,6 +181,7 @@ duckdb::InternalCatalog CreateInternalCatalog(duckdb::AttachedDatabase& db,
 
 void InitCatalog(bool default_database, bool initialized) {
   auto& instance = irs::DuckDBEngine::Instance().instance();
+  duckdb::DatabaseManager::Get(instance).UseExactNames();
   auto& cluster = ClusterOf(instance);
   const auto& layout = cluster.Layout();
   if (!layout.InMemory()) {

@@ -1,0 +1,38 @@
+control substitution on
+
+statement ok
+CREATE DATABASE dnc_${__DATABASE__};
+
+
+statement ok
+CREATE DATABASE "Dnc_${__DATABASE__}";
+
+
+query
+SELECT count(*) FILTER (WHERE datname = 'dnc_${__DATABASE__}') AS folded,
+       count(*) FILTER (WHERE datname = 'Dnc_${__DATABASE__}') AS quoted
+FROM pg_database;
+----
+folded	quoted
+1	1
+
+
+statement error already exists
+CREATE DATABASE "Dnc_${__DATABASE__}";
+
+
+statement ok
+DROP DATABASE "Dnc_${__DATABASE__}";
+
+
+query
+SELECT count(*) FILTER (WHERE datname = 'dnc_${__DATABASE__}') AS folded,
+       count(*) FILTER (WHERE datname = 'Dnc_${__DATABASE__}') AS quoted
+FROM pg_database;
+----
+folded	quoted
+1	0
+
+
+statement ok
+DROP DATABASE dnc_${__DATABASE__};

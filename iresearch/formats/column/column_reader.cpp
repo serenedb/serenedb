@@ -302,7 +302,7 @@ bool ColumnReader::NullsInData() const noexcept {
 void ColumnReader::FinishStats(duckdb::BaseStatistics stats) {
   if (_validity) {
     stats.Merge(_validity->MergedStatistics());
-  } else if (_row_count > 0 && !_children.empty()) {
+  } else if (_row_count > 0 && (!_children.empty() || _segments.empty())) {
     // A nested parent rebuilds its stats from CreateEmpty (its own blocks are
     // plumbing, e.g. list offsets), so the null flags only come from the
     // validity child -- and its absence means the writer counted every row

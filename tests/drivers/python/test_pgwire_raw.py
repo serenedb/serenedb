@@ -3847,3 +3847,14 @@ def test_invalid_regular_expression(conn, query, message):
     assert [(e["C"], e["M"]) for e in errors(m)] == [
         ("2201B", "invalid regular expression: " + message)
     ]
+
+
+def test_string_over_the_size_limit(conn):
+    m = conn.run(
+        "SELECT length(concat(r, r, r, r, r)) "
+        "FROM (SELECT repeat('x', 1073741824) AS r) AS t"
+    )
+    assert [(e["C"], e["M"]) for e in errors(m)] == [
+        ("54000", "Cannot create a string of size: '5368709120', the maximum "
+                  "supported string size is: '4294967295'")
+    ]

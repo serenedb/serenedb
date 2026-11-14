@@ -79,6 +79,8 @@ int DuckExceptionToErrcode(duckdb::ExceptionType type) {
       return ERRCODE_DATA_EXCEPTION;
     case duckdb::ExceptionType::OUT_OF_RANGE:
       return ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE;
+    case duckdb::ExceptionType::OBJECT_SIZE:
+      return ERRCODE_PROGRAM_LIMIT_EXCEEDED;
     // Bad input value/argument, setting value, or configuration are user
     // errors, not internal_error (XX000) -- e.g. SET with an uncastable value,
     // or an out-of-range option. PG report invalid_parameter_value here.

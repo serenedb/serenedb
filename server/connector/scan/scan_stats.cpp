@@ -164,11 +164,9 @@ duckdb::unique_ptr<duckdb::BaseStatistics> ColumnStats(
       stats = duckdb::StringStats::CreateUnknown(duckdb::LogicalType::VARCHAR)
                 .ToUnique();
     }
-    const auto min = duckdb::StringStats::Min(*bounds);
-    const auto max = duckdb::StringStats::Max(*bounds);
-    duckdb::StringStats::SetMin(*stats, duckdb::string_t{min},
+    duckdb::StringStats::SetMin(*stats, duckdb::StringStats::Min(*bounds),
                                 duckdb::StringStatsType::EXACT_STATS);
-    duckdb::StringStats::SetMax(*stats, duckdb::string_t{max},
+    duckdb::StringStats::SetMax(*stats, duckdb::StringStats::Max(*bounds),
                                 duckdb::StringStatsType::EXACT_STATS);
   }
   if (stats && stats->GetDistinctCount() == 0) {

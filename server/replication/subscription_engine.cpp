@@ -32,6 +32,7 @@
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <utility>
 #include <yaclib/async/contract.hpp>
@@ -226,6 +227,9 @@ void SubscriptionEngine::start() {
   }
   SDB_INFO(REPLICATION, "subscription engine started (", _subs.size(),
            " enabled subscriber(s))");
+  SDB_IF_FAILURE("subscriptions_start_throws") {
+    THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+  }
 }
 
 void SubscriptionEngine::RequestStop() noexcept {

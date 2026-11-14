@@ -24,6 +24,7 @@
 #include <absl/strings/escaping.h>
 
 #include <algorithm>
+#include <duckdb/common/fault_points.hpp>
 #include <iresearch/analysis/classification_tokenizer.hpp>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/analysis/nearest_neighbors_tokenizer.hpp>
@@ -107,6 +108,9 @@ void SearchEngine::start() {
   _loops.Consume(MaintenanceLoop(_loops));
   StartSearchStorageTasks();
   catalog::Transactions::Get().SettleLog();
+  SDB_IF_FAILURE("search_tasks_start_throws") {
+    THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+  }
 }
 
 void SearchEngine::stop() {

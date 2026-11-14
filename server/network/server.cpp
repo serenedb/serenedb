@@ -29,11 +29,13 @@
 #include <algorithm>
 #include <chrono>
 #include <duckdb/catalog/catalog_transaction.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <memory>
 #include <utility>
@@ -423,6 +425,9 @@ void Server::StartListeners() {
   }
   for (const auto& spec : specs) {
     AddListener(spec);
+  }
+  SDB_IF_FAILURE("listeners_start_throws") {
+    THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
 }
 

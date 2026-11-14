@@ -285,6 +285,9 @@ JobScheduler::~JobScheduler() {
 
 void JobScheduler::Start() {
   ForAllJobs([&](catalog::JobCatalogEntry& job) { Schedule(job); });
+  SDB_IF_FAILURE("jobs_start_throws") {
+    THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+  }
 }
 
 void JobScheduler::Schedule(catalog::JobCatalogEntry& job) {

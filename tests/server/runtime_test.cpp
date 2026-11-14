@@ -22,6 +22,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <stdexcept>
 #include <stop_token>
 #include <thread>
 #include <tuple>
@@ -74,6 +75,16 @@ TEST(RuntimeTest, RequestStopRunsTheStopCallbacks) {
   runtime.RequestStop();
   EXPECT_TRUE(stopped);
   EXPECT_TRUE(runtime.IsStopping());
+}
+
+TEST(RuntimeTest, ADelayOfNothingIsReadyAtOnce) {
+  Runtime runtime{{.io_threads = 1}};
+  EXPECT_TRUE(runtime.Delay(std::chrono::seconds{0}).Ready());
+}
+
+TEST(RuntimeTest, StopLoggedSwallowsWhatAStopThrows) {
+  EXPECT_NO_THROW(StopLogged("std", [] { throw std::runtime_error{"boom"}; }));
+  EXPECT_NO_THROW(StopLogged("other", [] { throw 1; }));
 }
 
 }  // namespace

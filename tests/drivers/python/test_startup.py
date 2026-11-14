@@ -26,7 +26,8 @@ pytestmark = pytest.mark.skipif(
 
 class _Server:
     def __init__(self, datadir: Path, listen: str | None = None,
-                 args: tuple[str, ...] = ()) -> None:
+                 args: tuple[str, ...] = (),
+                 env: dict[str, str] | None = None) -> None:
         self.reserved = reserve_port()
         self.port = self.reserved.getsockname()[1]
         if listen is None:
@@ -35,7 +36,8 @@ class _Server:
         with self.log.open("w") as out:
             self.proc = subprocess.Popen(
                 [SERENED_BIN, str(datadir), f"--listen={listen}", *args],
-                stdout=out, stderr=subprocess.STDOUT)
+                stdout=out, stderr=subprocess.STDOUT,
+                env={**os.environ, **env} if env else None)
 
     def wait_ready(self, timeout: float = 60.0) -> bool:
         deadline = time.monotonic() + timeout
@@ -172,6 +174,58 @@ def test_second_instance_on_the_same_datadir(tmp_path: Path) -> None:
             second.stop()
     finally:
         first.stop()
+
+
+SEARCH_TASKS_FAULT = "search_tasks_start_throws"
+JOBS_FAULT = "jobs_start_throws"
+SUBSCRIPTIONS_FAULT = "subscriptions_start_throws"
+LISTENERS_FAULT = "listeners_start_throws"
+
+
+@pytest.mark.faults
+@pytest.mark.parametrize("fault", [SEARCH_TASKS_FAULT, JOBS_FAULT,
+                                   SUBSCRIPTIONS_FAULT, LISTENERS_FAULT])
+def test_a_component_failing_to_start_stops_the_ones_before_it(
+        tmp_path: Path, fault: str) -> None:
+    server = _Server(tmp_path / "data", env={"SDB_FAULTS": fault})
+    try:
+        assert server.proc.wait(timeout=60) == 1, server.output()
+    finally:
+        server.stop()
+    output = server.output()
+    assert "serened terminated because of an exception" in output, output
+    assert "SereneDB is shut down" in output, output
+    assert "ready for business" not in output, output
+
+
+def test_a_data_directory_that_cannot_be_created(tmp_path: Path) -> None:
+    blocker = tmp_path / "file"
+    blocker.write_text("")
+    datadir = blocker / "data"
+    result = subprocess.run([SERENED_BIN, str(datadir)], capture_output=True,
+                            text=True, timeout=60)
+    assert result.returncode != 0, result
+    assert (f"Unable to create database directory '{datadir}'"
+            in result.stdout + result.stderr), result
+
+
+@pytest.mark.parametrize("relative", [True, False])
+def test_hba_config_resolves_against_the_data_directory(
+        tmp_path: Path, relative: bool) -> None:
+    datadir = tmp_path / "data"
+    hba = Path("custom_hba.conf") if relative else tmp_path / "custom_hba.conf"
+    server = _Server(datadir, args=(f"--hba_config={hba}",))
+    try:
+        assert server.wait_ready(), server.output()
+        with psycopg.connect(host="127.0.0.1", port=server.port,
+                             user="postgres", dbname="postgres",
+                             autocommit=True) as conn:
+            conn.execute("SET hba = 'host all all 127.0.0.1/32 trust'")
+    finally:
+        server.stop()
+    written = datadir / hba if relative else hba
+    assert "host all all 127.0.0.1/32 trust" in written.read_text(), (
+        server.output())
 
 
 def test_unknown_unix_socket_group(tmp_path: Path, socket_dir: Path) -> None:

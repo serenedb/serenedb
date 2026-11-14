@@ -23,12 +23,14 @@
 #include <absl/flags/parse.h>
 #include <absl/flags/usage.h>
 #include <absl/flags/usage_config.h>
+#include <absl/strings/str_split.h>
 
 #include <cstdio>
 #include <cstdlib>
 #include <duckdb/common/fault_points.hpp>
 #include <iresearch/utils/log.hpp>
 #include <string>
+#include <tuple>
 
 #include "server/utils/lifecycle.h"
 
@@ -100,6 +102,13 @@ void ParseOptions(int argc, char* argv[]) {
                stderr);
     irs::FatalErrorExit();
   }
+#ifdef SDB_FAULT_INJECTION
+  if (const char* faults = std::getenv("SDB_FAULTS")) {
+    for (const auto name : absl::StrSplit(faults, ',', absl::SkipEmpty())) {
+      std::ignore = duckdb::FaultPoints::Arm(std::string{name});
+    }
+  }
+#endif
 }
 
 void WaitForShutdown() {

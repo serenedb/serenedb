@@ -807,6 +807,7 @@ void Transactions::Publish(duckdb::transaction_t commit, bool catalog,
                                  version, next, std::memory_order_release,
                                  std::memory_order_relaxed)) {
       }
+      SDB_PARK_ONCE_ON_FAILURE("pause_catalog_version_ahead_of_commit");
     }
     if (_last_commit.compare_exchange_weak(published, next,
                                            std::memory_order_seq_cst)) {

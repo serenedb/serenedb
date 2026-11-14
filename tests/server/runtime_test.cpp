@@ -22,43 +22,35 @@
 
 #include <atomic>
 #include <chrono>
+#include <stdexcept>
+#include <stop_token>
 #include <thread>
+#include <tuple>
 #include <vector>
 
-#include "network/server.h"
-#include "scheduler/background_scheduler.h"
+#include "runtime/runtime.h"
 
 namespace sdb {
 namespace {
 
-TEST(BackgroundSchedulerTest, ADelayBeforeOpenDelaysParksUntilThen) {
-  Server server;
-  BackgroundScheduler scheduler;
-  scheduler.start();
-  auto parked = scheduler.Delay(std::chrono::hours{1});
-  EXPECT_FALSE(parked.Ready());
-  server.StartIoPool();
-  scheduler.OpenDelays();
-  EXPECT_TRUE(std::move(parked).Get());
-  scheduler.CancelDelays();
-  server.RequestStop();
-  server.stop();
-  scheduler.stop();
+TEST(RuntimeTest, RequestStopWakesAnArmedDelay) {
+  Runtime runtime{{.io_threads = 1}};
+  auto armed = runtime.Delay(std::chrono::hours{1});
+  EXPECT_FALSE(armed.Ready());
+  runtime.RequestStop();
+  EXPECT_TRUE(std::move(armed).Get());
+  EXPECT_TRUE(runtime.Delay(std::chrono::hours{1}).Get());
 }
 
-TEST(BackgroundSchedulerTest, DelaysRacingShutdownLeaveTheIoPoolAlone) {
-  Server server;
-  BackgroundScheduler scheduler;
-  scheduler.start();
-  server.StartIoPool();
-  scheduler.OpenDelays();
+TEST(RuntimeTest, DelaysRacingRequestStopAllComplete) {
+  Runtime runtime{{.io_threads = 2}};
   std::atomic_bool done = false;
   std::atomic_uint64_t delays = 0;
   std::vector<std::thread> loops;
   for (int i = 0; i < 4; ++i) {
     loops.emplace_back([&] {
       while (!done.load(std::memory_order_acquire)) {
-        std::ignore = scheduler.Delay(std::chrono::microseconds{1}).Get();
+        std::ignore = runtime.Delay(std::chrono::microseconds{1}).Get();
         delays.fetch_add(1, std::memory_order_relaxed);
       }
     });
@@ -66,15 +58,33 @@ TEST(BackgroundSchedulerTest, DelaysRacingShutdownLeaveTheIoPoolAlone) {
   while (delays.load(std::memory_order_relaxed) < 1000) {
     std::this_thread::yield();
   }
-  scheduler.CancelDelays();
-  server.RequestStop();
-  server.stop();
-  EXPECT_TRUE(scheduler.Delay(std::chrono::hours{1}).Get());
+  runtime.RequestStop();
+  EXPECT_TRUE(runtime.Delay(std::chrono::hours{1}).Get());
   done.store(true, std::memory_order_release);
   for (auto& loop : loops) {
     loop.join();
   }
-  scheduler.stop();
+}
+
+TEST(RuntimeTest, RequestStopRunsTheStopCallbacks) {
+  Runtime runtime{{.io_threads = 1}};
+  bool stopped = false;
+  const std::stop_callback callback{runtime.StopToken(),
+                                    [&] { stopped = true; }};
+  EXPECT_FALSE(stopped);
+  runtime.RequestStop();
+  EXPECT_TRUE(stopped);
+  EXPECT_TRUE(runtime.IsStopping());
+}
+
+TEST(RuntimeTest, ADelayOfNothingIsReadyAtOnce) {
+  Runtime runtime{{.io_threads = 1}};
+  EXPECT_TRUE(runtime.Delay(std::chrono::seconds{0}).Ready());
+}
+
+TEST(RuntimeTest, StopLoggedSwallowsWhatAStopThrows) {
+  EXPECT_NO_THROW(StopLogged("std", [] { throw std::runtime_error{"boom"}; }));
+  EXPECT_NO_THROW(StopLogged("other", [] { throw 1; }));
 }
 
 }  // namespace

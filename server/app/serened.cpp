@@ -47,27 +47,25 @@
 #include <string>
 #include <utility>
 
-#include "backup/backup_session.h"
+#include "app/process.h"
 #include "catalog/boot.h"
 #include "catalog/catalog.h"
 #include "connector/duckdb_copy_filesystem.h"
 #include "docs/docs_bootstrap.h"
 #include "docs/docs_shell_backend.h"
 #include "duckdb_shell.hpp"
-#include "network/pg/hba.h"
+#include "jobs/scheduler.h"
 #include "network/server.h"
 #include "pg/catalog/oids.h"
 #include "query/config.h"
 #include "query/server_engine.h"
 #include "replication/subscription_engine.h"
-#include "rest_server/database_path_feature.h"
-#include "scheduler/background_scheduler.h"
-#include "scheduler/job_scheduler.h"
-#include "server/utils/app_server.h"
+#include "runtime/runtime.h"
+#include "search/engine.h"
 #include "server/utils/build.h"
 #include "server/utils/init.h"
 #include "server/utils/signals.h"
-#include "storage_engine/search_engine.h"
+#include "storage/storage.h"
 
 ABSL_FLAG(bool, remap_executable, SDB_REMAP_EXECUTABLE,
           "Copy the server's machine code into anonymous huge-page memory at "
@@ -97,119 +95,32 @@ void SetSanitizerThreadStackSize() {
 #endif
 }
 
-int RunServer(int argc, char** argv) {
+int RunServer() {
   try {
     irs::CrashHandler::installCrashHandler();
     signals::InstallShutdownHandlers();
 
-    AppServer server;
-
-    // 1. CLI is already parsed (in main(), before engine.Initialize, so the
-    //    pool-sizing flags like --cpu_threads are visible while DuckDB is
-    //    built). Feature ctors below read their flags from the parsed state.
-
-    // 2. Construct features in dependency order. Each ctor reads its
-    //    own flags, runs validation, and sets its static gInstance
-    //    pointer; Feature::instance() works from here on.
-    DatabasePathFeature db_path;
-    BackgroundScheduler background;
-    search::SearchEngine search;
-    Server network;
-    std::optional<replication::SubscriptionEngine> subscriptions;
-    JobScheduler jobs;
-
-    // Lifecycle is two explicit, flat lists: bring features UP in dependency
-    // order, then take them DOWN in a dependency order that is deliberately
-    // NOT the reverse of startup. search.stop() does not destroy the engine
-    // (its dtor runs at end of scope), so drop tasks draining on the pool
-    // afterwards still see a live SearchEngine. DuckDBEngine brackets all of
-    // this from main(). The up_* flags let DOWN skip whatever never came UP
-    // (start() threw).
-    bool up_background = false, up_search = false, up_subscriptions = false,
-         up_network = false;
-
-    absl::Cleanup down = [&]() noexcept {
-      irs::CrashHandler::SetState("stopping");
-      auto stop = [](const char* what, auto&& fn) noexcept {
-        try {
-          fn();
-        } catch (const std::exception& ex) {
-          SDB_ERROR(GENERAL, "exception stopping ", what, ": ",
-                    duckdb::ErrorData{ex}.RawMessage());
-        } catch (...) {
-          SDB_ERROR(GENERAL, "unknown exception stopping ", what);
-        }
-      };
-      // Signals first, all cheap: every actor starts stopping at once.
-      if (up_search) {
-        search.RequestStop();
-      }
-      if (up_background) {
-        background.CancelDelays();
-      }
-      if (up_subscriptions) {
-        stop("subscriptions signal", [&] { subscriptions->RequestStop(); });
-      }
-      if (up_network) {
-        // Listeners close and every session is terminated: its in-flight query
-        // interrupted, its socket closed by its own writer.
-        stop("network signal", [&] { network.RequestStop(); });
-      }
-      // Joins, in dependency order.
-      if (up_subscriptions) {
-        stop("subscriptions", [&] { subscriptions->stop(); });
-      }
-      if (up_network) {
-        // Sessions complete against the fully-live engine, then the io pool
-        // goes down.
-        stop("network", [&] { network.stop(); });
-      }
-      backup::BackupSession::Instance().End();
-      stop("jobs", [&] { jobs.Stop(); });
-      if (up_search) {
-        stop("search", [&] { search.stop(); });
-      }
-      if (up_background) {
-        stop("background", [&] { background.stop(); });
-      }
-      // The shutdown checkpoint of every attached database, taken here rather
-      // than left to the DuckDB destructor in main(): an inverted index vetoes
-      // it unless it can read its definition.
-      stop("storage", [&] {
-        irs::DuckDBEngine::Instance().CloseDatabases();
-        catalog::CloseLog();
-      });
+    irs::CrashHandler::SetState("starting");
+    absl::Cleanup shut_down = [] {
       SDB_INFO(GENERAL, "SereneDB is shut down");
     };
-
-    irs::CrashHandler::SetState("starting");
-    network::pg::hba::SetHbaConfig(db_path.hbaConfigFile());
-    background.start();
-    up_background = true;
-    catalog::InitCatalog(true, db_path.initialized());
-    network.StartIoPool();
-    up_network = true;
-    // Timers can be armed now. InitCatalog above already scheduled a drop per
-    // tombstone it read, and those parked in Delay() rather than spinning
-    // through their backoff against a pool that did not exist yet.
-    background.OpenDelays();
-    search.start();
-    up_search = true;
-    jobs.Start();
+    Runtime runtime{ReadRuntimeConfig()};
+    search::SearchEngine search;
+    Storage storage{runtime, ReadStorageConfig()};
+    search::SearchTasks search_tasks{runtime, search};
+    JobScheduler jobs{runtime};
     if (const auto bootstrapped = docs::RunDocsBootstrap()) {
       return *bootstrapped;
     }
-    subscriptions.emplace(*network.IoPool());
-    subscriptions->start();
-    up_subscriptions = true;
-    // Accept connections only once the indexes are loaded and loops are
-    // running.
-    network.StartListeners();
+    replication::SubscriptionEngine subscriptions{runtime};
+    Server network{runtime};
 
     SDB_INFO(STARTUP, "SereneDB is ready for business. Have fun!");
 
     irs::CrashHandler::SetState("running");
-    server.wait();
+    app::WaitForShutdown();
+    irs::CrashHandler::SetState("stopping");
+    runtime.RequestStop();
     return EXIT_SUCCESS;
   } catch (const std::exception& ex) {
     // gLogger is still up (Shutdown runs in main() after RunServer
@@ -227,10 +138,14 @@ int RunServer(int argc, char** argv) {
 }
 
 struct ShellServices {
-  BackgroundScheduler background;
+  explicit ShellServices(bool client)
+    : storage{runtime, {.default_database = !client}} {}
+
+  Runtime runtime{ReadRuntimeConfig()};
   search::SearchEngine search;
-  Server network;
-  JobScheduler jobs;
+  Storage storage;
+  search::SearchTasks search_tasks{runtime, search};
+  JobScheduler jobs{runtime};
 };
 
 std::optional<ShellServices> gShellServices;
@@ -244,13 +159,7 @@ duckdb::shared_ptr<duckdb::DatabaseInstance> OpenShellEngine(
   if (!gShellServices) {
     engine.Initialize(&server::query::ConfigureShellDBConfig);
     server::query::RegisterServerExtensions(engine.instance());
-    auto& services = gShellServices.emplace();
-    services.background.start();
-    catalog::InitCatalog(!client, false);
-    services.network.StartIoPool();
-    services.background.OpenDelays();
-    services.search.start();
-    services.jobs.Start();
+    gShellServices.emplace(client);
   }
   auto& db = engine.instance();
   auto& manager = duckdb::DatabaseManager::Get(db);
@@ -279,16 +188,6 @@ void CloseShellEngine() {
   if (!gShellServices) {
     return;
   }
-  auto& services = *gShellServices;
-  services.search.RequestStop();
-  services.background.CancelDelays();
-  services.network.RequestStop();
-  services.network.stop();
-  services.jobs.Stop();
-  services.search.stop();
-  services.background.stop();
-  irs::DuckDBEngine::Instance().CloseDatabases();
-  catalog::CloseLog();
   gShellServices.reset();
   irs::DuckDBEngine::Instance().Shutdown();
 }
@@ -334,8 +233,8 @@ int main(int argc, char* argv[]) {
   //
   // CLI flags are parsed FIRST: ConfigureServerDBConfig reads --cpu_threads to
   // size the DuckDB pool at construction, so the flags must be live before
-  // Initialize (parseOptions is SDB_*-free precisely so it can run this early).
-  sdb::app::AppServer::parseOptions(argc, argv);
+  // Initialize (ParseOptions is SDB_*-free precisely so it can run this early).
+  sdb::app::ParseOptions(argc, argv);
   const auto remap =
     irs::RemapExecutable(absl::GetFlag(FLAGS_remap_executable));
   auto& engine = irs::DuckDBEngine::Instance();
@@ -351,7 +250,7 @@ int main(int argc, char* argv[]) {
             remap.locked >> 20, " MB locked, ", remap.populated >> 20,
             " MB pre-read",
             remap.skipped.empty() ? "" : "; remap skipped: ", remap.skipped);
-  int rc = RunServer(argc, argv);
+  int rc = RunServer();
 
   engine.Shutdown();
   return rc;

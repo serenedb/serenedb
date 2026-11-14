@@ -19,11 +19,12 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "search_engine.h"
+#include "search/engine.h"
 
 #include <absl/strings/escaping.h>
 
 #include <algorithm>
+#include <duckdb/common/fault_points.hpp>
 #include <iresearch/analysis/classification_tokenizer.hpp>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/analysis/nearest_neighbors_tokenizer.hpp>
@@ -37,7 +38,7 @@
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
 #include "catalog/transaction.h"
-#include "scheduler/background_scheduler.h"
+#include "runtime/runtime.h"
 #include "search/store.h"
 #include "search/task.h"
 #include "search/wal_recovery.h"
@@ -53,14 +54,28 @@ int SearchEngine::MaxConcurrentCompactions() noexcept {
 }
 
 uint32_t SearchEngine::MaxAnnBuildWorkers() noexcept {
-  return static_cast<uint32_t>(BackgroundScheduler::AnnBuildBudget());
+  return static_cast<uint32_t>(std::max<int64_t>(1, CountLogicalCores()));
 }
 
+namespace {
+
+class BackgroundExecutor final : public yaclib::IExecutor {
+ public:
+  Type Tag() const noexcept final { return Type::Custom; }
+  bool Alive() const noexcept final { return true; }
+  void Submit(yaclib::Job& job) noexcept final {
+    Runtime::Get().Background().Submit(job);
+  }
+};
+
+BackgroundExecutor gBackgroundExecutor;
+
+}  // namespace
+
 const irs::AnnBuildEnv& AnnBuildEnv() {
-  static const irs::AnnBuildEnv env{
-    .executor = &BackgroundScheduler::instance().executor(),
-    .acquire = AnnAcquireWorkers,
-    .release = AnnReleaseWorkers};
+  static const irs::AnnBuildEnv env{.executor = &gBackgroundExecutor,
+                                    .acquire = AnnAcquireWorkers,
+                                    .release = AnnReleaseWorkers};
   return env;
 }
 
@@ -93,6 +108,9 @@ void SearchEngine::start() {
   _loops.Consume(MaintenanceLoop(_loops));
   StartSearchStorageTasks();
   catalog::Transactions::Get().SettleLog();
+  SDB_IF_FAILURE("search_tasks_start_throws") {
+    THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+  }
 }
 
 void SearchEngine::stop() {
@@ -106,6 +124,25 @@ void SearchEngine::StartTasks(const std::shared_ptr<Store>& store) {
     return;
   }
   AddMaintenanceTarget(store);
+}
+
+SearchTasks::SearchTasks(Runtime& runtime, SearchEngine& engine)
+  : _runtime{runtime},
+    _engine{engine},
+    _on_stop{runtime.StopToken(), [&engine] { engine.RequestStop(); }} {
+  try {
+    _engine.start();
+  } catch (...) {
+    _engine.stop();
+    throw;
+  }
+}
+
+SearchTasks::~SearchTasks() {
+  _runtime.RequestStop();
+  StopLogged("search", [this] { _engine.stop(); });
+  // Drop tasks draining here still see the live engine and the open storage.
+  _runtime.DrainBackground();
 }
 
 }  // namespace sdb::search

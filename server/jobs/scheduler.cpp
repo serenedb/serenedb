@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "scheduler/job_scheduler.h"
+#include "jobs/scheduler.h"
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/numeric/int128.h>
@@ -52,7 +52,7 @@
 #include "catalog/entry/job.h"
 #include "pg/connection_context.h"
 #include "query/config.h"
-#include "scheduler/background_scheduler.h"
+#include "runtime/runtime.h"
 
 namespace sdb {
 namespace {
@@ -265,8 +265,29 @@ void VerifySchedule(const duckdb::JobSchedule& schedule) {
   NextRun(schedule, 0, duckdb::Timestamp::GetCurrentTimestamp());
 }
 
+JobScheduler::JobScheduler(Runtime& runtime) : _runtime{runtime} {
+  gInstance = this;
+  try {
+    Start();
+  } catch (...) {
+    _runtime.RequestStop();
+    Stop();
+    gInstance = nullptr;
+    throw;
+  }
+}
+
+JobScheduler::~JobScheduler() {
+  _runtime.RequestStop();
+  StopLogged("jobs", [this] { Stop(); });
+  gInstance = nullptr;
+}
+
 void JobScheduler::Start() {
   ForAllJobs([&](catalog::JobCatalogEntry& job) { Schedule(job); });
+  SDB_IF_FAILURE("jobs_start_throws") {
+    THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+  }
 }
 
 void JobScheduler::Schedule(catalog::JobCatalogEntry& job) {
@@ -292,8 +313,8 @@ void JobScheduler::Schedule(catalog::JobCatalogEntry& job) {
 }
 
 void JobScheduler::Arm(const std::shared_ptr<JobState>& state, uint64_t timer) {
-  BackgroundScheduler::instance().RunAt(
-    state->status.next_run, [this, state, timer] { Run(state, timer); });
+  _runtime.RunAt(state->status.next_run,
+                 [this, state, timer] { Run(state, timer); });
 }
 
 void JobScheduler::Run(std::shared_ptr<JobState> state, uint64_t timer) {

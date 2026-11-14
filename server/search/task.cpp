@@ -52,16 +52,16 @@
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
 #include "catalog/transaction.h"
-#include "scheduler/background_scheduler.h"
+#include "runtime/runtime.h"
+#include "search/engine.h"
 #include "search/store.h"
 #include "server/utils/lifecycle.h"
 #include "server/utils/metrics.h"
-#include "storage_engine/search_engine.h"
 
 namespace sdb::search {
 namespace {
 
-using Clock = BackgroundScheduler::clock;
+using Clock = Runtime::clock;
 
 constexpr Clock::duration kPoll = std::chrono::milliseconds{100};
 // Upper bound for the empty-compaction backoff: don't hammer compaction while
@@ -144,8 +144,8 @@ auto DoCompaction(std::shared_ptr<Store> idx, irs::CompactionPolicy policy,
 // acquired here and released only by its child, so if Run/push_back threw (OOM)
 // the slot would leak into the gate count -- fail fast instead.
 std::vector<yaclib::FutureOn<bool>> LaunchCompactionFanout(
-  BackgroundScheduler& s, SearchEngine& engine,
-  const std::weak_ptr<Store>& weak, bool idle) noexcept {
+  Runtime& s, SearchEngine& engine, const std::weak_ptr<Store>& weak,
+  bool idle) noexcept {
   std::vector<yaclib::FutureOn<bool>> runs;
   for (auto free = engine.FreeCompactionSlots();
        free > 0 && !ShouldStop() && !engine.IsBackupActive() &&
@@ -214,9 +214,9 @@ bool SettleIfIdle(Target& target) {
 }
 
 yaclib::Future<> Compact(std::shared_ptr<Target> target) {
-  auto& s = BackgroundScheduler::instance();
+  auto& s = Runtime::Get();
   auto& engine = GetSearchEngine();
-  co_await yaclib::On(s.executor());
+  co_await yaclib::On(s.Background());
   bool produced = false;
   try {
     if (!ShouldStop()) {
@@ -301,7 +301,7 @@ void AddMaintenanceTarget(const std::shared_ptr<Store>& store) {
 }
 
 yaclib::Future<> MaintenanceLoop(yaclib::WaitGroup<>& jobs) {
-  auto& s = BackgroundScheduler::instance();
+  auto& s = Runtime::Get();
   auto& targets = GetTargets();
   duckdb::transaction_t settled_commit = 0;
   try {

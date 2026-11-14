@@ -43,9 +43,9 @@
 #include "catalog/entry/search_table.h"
 #include "catalog/log.h"
 #include "catalog/transaction.h"
+#include "search/engine.h"
 #include "search/store.h"
 #include "search/task.h"
-#include "storage_engine/search_engine.h"
 #include "utils/file_utils.h"
 
 namespace sdb::backup {

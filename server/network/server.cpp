@@ -29,15 +29,18 @@
 #include <algorithm>
 #include <chrono>
 #include <duckdb/catalog/catalog_transaction.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <memory>
 #include <utility>
 
+#include "backup/backup_session.h"
 #include "catalog/catalog.h"
 #include "catalog/entry/role.h"
 #include "network/connection.h"
@@ -47,7 +50,7 @@
 #include "network/pg/hba.h"
 #include "network/socket.h"
 #include "network/tls_context.h"
-#include "server/utils/number_of_cores.h"
+#include "runtime/runtime.h"
 
 ABSL_FLAG(
   std::vector<std::string>, listen, {"postgres://127.0.0.1:7890"},
@@ -88,10 +91,6 @@ ABSL_FLAG(std::string, auth_bearer_token, "",
 ABSL_FLAG(uint64_t, pg_max_message_bytes, sdb::network::kDefaultMaxMessageBytes,
           "Maximum size of a single pg-wire message (statement text / bound "
           "parameter value). Bulk data should use COPY, which streams.");
-
-ABSL_FLAG(uint64_t, io_threads, 0,
-          "IO threads for HTTP and pg-wire connections (0 = max(1, "
-          "cpu_count / 4)).");
 
 ABSL_FLAG(uint64_t, max_connections, 0,
           "Max concurrent client connections across all listeners (0 = "
@@ -149,8 +148,10 @@ class CatalogCredentialProvider final : public network::CredentialProvider {
 
 }  // namespace
 
-Server::Server()
-  : _listen{absl::GetFlag(FLAGS_listen)},
+Server::Server(Runtime& runtime)
+  : _runtime{runtime},
+    _pool{runtime.IoPool()},
+    _listen{absl::GetFlag(FLAGS_listen)},
     _tls_cert{absl::GetFlag(FLAGS_tls_cert)},
     _tls_key{absl::GetFlag(FLAGS_tls_key)},
     _tls_ca{absl::GetFlag(FLAGS_tls_ca)},
@@ -159,16 +160,7 @@ Server::Server()
     _api_key{absl::GetFlag(FLAGS_auth_api_key)},
     _bearer_token{absl::GetFlag(FLAGS_auth_bearer_token)},
     _cors_origins{absl::GetFlag(FLAGS_http_cors_origins)},
-    _io_threads{static_cast<std::uint32_t>(absl::GetFlag(FLAGS_io_threads))} {
-  if (_io_threads == 0) {
-    // One independent single-threaded asio reactor per PHYSICAL core: the
-    // reactors are round-robin pinned with no shared queue (no contention, so
-    // no ceiling) and idle ones just park in epoll_wait, but hyper-thread
-    // siblings add nothing to epoll-bound reactors -- so physical, not logical,
-    // cores.
-    _io_threads = static_cast<std::uint32_t>(CountPhysicalCores());
-  }
-  absl::SetFlag(&FLAGS_io_threads, _io_threads);
+    _on_stop{runtime.StopToken(), [this] { RequestStop(); }} {
   const auto min_version = absl::GetFlag(FLAGS_tls_min_version);
   if (min_version == "1.2") {
     _tls_min_version = network::TlsMinVersion::Tls12;
@@ -184,10 +176,37 @@ Server::Server()
     absl::GetFlag(FLAGS_pg_max_message_bytes), 0xFFFFFFFFull));
   _max_connections = static_cast<std::uint32_t>(std::min<std::uint64_t>(
     absl::GetFlag(FLAGS_max_connections), 0xFFFFFFFFull));
-  gInstance = this;
+  // Validate the listen specs up front so a bad --listen fails before anything
+  // else comes up, even though the listeners themselves start later.
+  network::ParseListenSpecs(_listen);
+  _auth_timeout = absl::ToChronoMilliseconds(absl::GetFlag(FLAGS_auth_timeout));
+  if (_auth_timeout > std::chrono::milliseconds::zero()) {
+    network::gHttpHeaderTimeout = _auth_timeout;
+  }
+  if (const auto idle =
+        absl::ToChronoMilliseconds(absl::GetFlag(FLAGS_idle_session_timeout));
+      idle > std::chrono::milliseconds::zero()) {
+    network::gHttpKeepAliveTimeout = idle;
+  }
+  if (const auto body =
+        absl::ToChronoMilliseconds(absl::GetFlag(FLAGS_http_body_timeout));
+      body > std::chrono::milliseconds::zero()) {
+    network::gHttpBodyTimeout = body;
+  }
+  try {
+    StartListeners();
+  } catch (...) {
+    RequestStop();
+    stop();
+    throw;
+  }
 }
 
-Server::~Server() { gInstance = nullptr; }
+Server::~Server() {
+  _runtime.RequestStop();
+  StopLogged("network", [this] { stop(); });
+  backup::BackupSession::Instance().End();
+}
 
 void Server::SetupAuth() {
   // Auth resolves every connection through the catalog's per-role credentials
@@ -286,7 +305,7 @@ void Server::AddUnixListener(const network::ListenSpec& spec) {
   deps.proxy = spec.proxy;
   auto acceptor = std::make_shared<
     network::Acceptor<network::pg::PgWireSession<network::SocketKind::Unix>>>(
-    *_pool, ep, deps, opts);
+    _pool, ep, deps, opts);
   acceptor->Start();
   _acceptors.push_back(std::move(acceptor));
   SDB_INFO(STARTUP, "listening on ", spec.url,
@@ -329,11 +348,11 @@ void Server::AddListener(const network::ListenSpec& spec) {
     if (ssl) {
       acceptor = std::make_shared<network::Acceptor<
         network::pg::PgWireSession<network::SocketKind::MaybeTls>>>(
-        *_pool, spec.endpoint, deps, opts);
+        _pool, spec.endpoint, deps, opts);
     } else {
       acceptor = std::make_shared<network::Acceptor<
         network::pg::PgWireSession<network::SocketKind::Tcp>>>(
-        *_pool, spec.endpoint, deps, opts);
+        _pool, spec.endpoint, deps, opts);
     }
   } else {
     network::HttpRouter& router = BuildRouter(spec);
@@ -355,11 +374,11 @@ void Server::AddListener(const network::ListenSpec& spec) {
     if (ssl != nullptr) {
       acceptor = std::make_shared<
         network::Acceptor<network::HttpSession<network::SocketKind::Ssl>>>(
-        *_pool, spec.endpoint, deps, opts);
+        _pool, spec.endpoint, deps, opts);
     } else {
       acceptor = std::make_shared<
         network::Acceptor<network::HttpSession<network::SocketKind::Tcp>>>(
-        *_pool, spec.endpoint, deps, opts);
+        _pool, spec.endpoint, deps, opts);
     }
   }
   acceptor->Start();
@@ -367,28 +386,6 @@ void Server::AddListener(const network::ListenSpec& spec) {
   SDB_INFO(STARTUP, "listening on ", spec.url, " (",
            spec.endpoint.address().to_string(), ":", spec.endpoint.port(),
            ssl ? ", tls" : "", ")");
-}
-
-void Server::StartIoPool() {
-  // Validate the listen specs up front so a bad --listen fails before anything
-  // else comes up, even though the listeners themselves start later.
-  network::ParseListenSpecs(_listen);
-  _auth_timeout = absl::ToChronoMilliseconds(absl::GetFlag(FLAGS_auth_timeout));
-  if (_auth_timeout > std::chrono::milliseconds::zero()) {
-    network::gHttpHeaderTimeout = _auth_timeout;
-  }
-  if (const auto idle =
-        absl::ToChronoMilliseconds(absl::GetFlag(FLAGS_idle_session_timeout));
-      idle > std::chrono::milliseconds::zero()) {
-    network::gHttpKeepAliveTimeout = idle;
-  }
-  if (const auto body =
-        absl::ToChronoMilliseconds(absl::GetFlag(FLAGS_http_body_timeout));
-      body > std::chrono::milliseconds::zero()) {
-    network::gHttpBodyTimeout = body;
-  }
-  _pool = std::make_unique<network::IoThreadPool>(_io_threads);
-  _pool->Start();
 }
 
 void Server::StartListeners() {
@@ -429,6 +426,9 @@ void Server::StartListeners() {
   for (const auto& spec : specs) {
     AddListener(spec);
   }
+  SDB_IF_FAILURE("listeners_start_throws") {
+    THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+  }
 }
 
 void Server::RequestStop() noexcept {
@@ -440,14 +440,9 @@ void Server::RequestStop() noexcept {
 
 void Server::stop() {
   // Every session completes here: terminated by RequestStop(), it unwinds on
-  // the live io pool and DuckDB workers against the still-live engine. Only
-  // then can the pool go down -- nothing is parked on it anymore.
+  // the live io pool and DuckDB workers against the still-live engine.
   _sessions.Done();
   _sessions.Wait();
-  if (_pool) {
-    _pool->Stop();
-    _pool.reset();
-  }
   _acceptors.clear();
 }
 

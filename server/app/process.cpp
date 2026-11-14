@@ -18,23 +18,25 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "app_server.h"
+#include "app/process.h"
 
 #include <absl/flags/parse.h>
 #include <absl/flags/usage.h>
 #include <absl/flags/usage_config.h>
+#include <absl/strings/str_split.h>
 
 #include <cstdio>
 #include <cstdlib>
 #include <duckdb/common/fault_points.hpp>
 #include <iresearch/utils/log.hpp>
 #include <string>
+#include <tuple>
 
 #include "server/utils/lifecycle.h"
 
 namespace sdb::app {
 
-void AppServer::parseOptions(int argc, char* argv[]) {
+void ParseOptions(int argc, char* argv[]) {
   absl::FlagsUsageConfig usage_config;
   usage_config.contains_help_flags = [](std::string_view file) {
     return file.find("third_party/") == std::string_view::npos;
@@ -47,12 +49,11 @@ void AppServer::parseOptions(int argc, char* argv[]) {
       std::string_view category;
     };
     static constexpr CategoryRule kRules[] = {
-      {"server/rest_server/database_path_feature.cpp", "server"},
-      {"server/rest_server/serened.cpp", "server"},
-      {"server/storage_engine/search_engine.cpp", "server"},
+      {"server/storage/storage.cpp", "server"},
+      {"server/app/serened.cpp", "server"},
       {"server/network/server.cpp", "server"},
       {"server/query/server_engine.cpp", "server"},
-      {"server/scheduler/background_scheduler.cpp", "server"},
+      {"server/runtime/runtime.cpp", "server"},
       {"iresearch/utils/log_flags.cpp", "log"},
     };
     for (const auto& [suffix, category] : kRules) {
@@ -101,9 +102,16 @@ void AppServer::parseOptions(int argc, char* argv[]) {
                stderr);
     irs::FatalErrorExit();
   }
+#ifdef SDB_FAULT_INJECTION
+  if (const char* faults = std::getenv("SDB_FAULTS")) {
+    for (const auto name : absl::StrSplit(faults, ',', absl::SkipEmpty())) {
+      std::ignore = duckdb::FaultPoints::Arm(std::string{name});
+    }
+  }
+#endif
 }
 
-void AppServer::wait() {
+void WaitForShutdown() {
   lifecycle::WaitForShutdown();
   SDB_INFO(GENERAL, "received shutdown signal, beginning shut down sequence");
 #ifdef SDB_FAULT_INJECTION

@@ -43,9 +43,9 @@
 #include "network/io_context.h"
 #include "network/pg/scram_client.h"
 #include "network/pg/wire_frames.h"
-#include "network/server.h"
 #include "network/tls_context.h"
 #include "pg/protocol.h"
+#include "runtime/runtime.h"
 
 namespace sdb::replication {
 namespace {
@@ -673,8 +673,7 @@ yaclib::Task<> PublisherCall::Run(Body body,
 PublisherResult CallPublisher(const ConnInfo& conninfo,
                               std::string_view application_name,
                               bool require_password, PublisherCall::Body body) {
-  auto* pool = Server::instance().IoPool();
-  SDB_ASSERT(pool);
+  auto* pool = &Runtime::Get().IoPool();
   PublisherResult result;
   const auto seed = absl::Uniform<uint64_t>(absl::BitGen{});
   const bool fallback =

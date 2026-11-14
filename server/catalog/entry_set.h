@@ -56,6 +56,8 @@ struct DroppedSubject {
   duckdb::idx_t oid = 0;
   std::string_view name;
   bool role = false;
+  std::string_view change = "DROP";
+  bool columns = false;
 };
 
 struct Dependent {
@@ -138,7 +140,8 @@ class OidIndex {
   void CheckChangedParts(const duckdb::SnapshotView& view,
                          duckdb::CatalogEntry& version);
 
-  void CheckLive(const duckdb::SnapshotView& view, duckdb::idx_t oid);
+  void CheckLive(const duckdb::SnapshotView& view, duckdb::idx_t oid,
+                 bool columns);
 
   void CheckDropped(const duckdb::SnapshotView& view,
                     const DroppedSubject& dropped);
@@ -239,7 +242,7 @@ class EntrySet {
 
   void CheckSubjectLive(const duckdb::SnapshotView& view,
                         const duckdb::Identifier& name, duckdb::idx_t oid,
-                        duckdb::idx_t part);
+                        duckdb::idx_t part, bool columns);
 
   void CheckNoLaterDependent(const duckdb::SnapshotView& view,
                              const duckdb::Identifier& name, duckdb::idx_t oid,

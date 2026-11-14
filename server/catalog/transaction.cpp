@@ -137,6 +137,12 @@ void CheckDependencies(SessionTransaction& transaction) {
                  .role = subject.type == duckdb::CatalogType::ROLE_ENTRY});
         break;
       case ChangeKind::Rename:
+        if (subject.type != duckdb::CatalogType::ROLE_ENTRY) {
+          change.set->Oids().CheckDropped(
+            view, {.oid = subject.oid,
+                   .name = subject.name.GetIdentifierName(),
+                   .change = "ALTER"});
+        }
         break;
     }
   }

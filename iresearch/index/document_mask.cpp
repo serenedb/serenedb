@@ -289,10 +289,18 @@ DocumentMask DocumentMask::Union(
     roaring::internal::ra_append(&ra, key, container, type);
   };
   auto count = static_cast<int64_t>(base->_count);
+  uint64_t sparse = 0;
+  uint64_t spans = 0;
+  std::vector<std::pair<int32_t, std::unique_ptr<container_t, ContainerFree>>>
+    to_runs;
   int32_t i = 0;
   int32_t j = 0;
   while (i != from.size || j != with.size) {
     if (j == with.size || (i != from.size && from.keys[i] < with.keys[j])) {
+      if (from.typecodes[i] != BITSET_CONTAINER_TYPE) {
+        ++sparse;
+        spans += SpansAt(base->_set, i);
+      }
       auto* shared = from.containers[i];
       append(from.keys[i], shared, from.typecodes[i],
              base->_owners.empty() ? std::shared_ptr<const void>{base, shared}
@@ -315,20 +323,57 @@ DocumentMask DocumentMask::Union(
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_OUT_OF_MEMORY),
                       ERR_MSG("Failed to allocate a document mask container"));
     }
+    if (type == BITSET_CONTAINER_TYPE) {
+      auto* bits =
+        static_cast<roaring::internal::bitset_container_t*>(container);
+      count += bits->cardinality;
+      const auto runs =
+        roaring::internal::bitset_container_number_of_runs(bits);
+      if (roaring::internal::run_container_serialized_size_in_bytes(runs) <
+          roaring::internal::bitset_container_serialized_size_in_bytes()) {
+        ++sparse;
+        spans += static_cast<uint64_t>(runs);
+        to_runs.emplace_back(ra.size,
+                             std::unique_ptr<container_t, ContainerFree>{
+                               container, ContainerFree{type}});
+        append(with.keys[j], container, type, nullptr);
+      } else {
+        append(with.keys[j], container, type, Own(container, type));
+      }
+      ++j;
+      continue;
+    }
     container = roaring::internal::convert_run_optimize(container, type, &type);
     roaring::internal::container_shrink_to_fit(container, type);
     count += roaring::internal::container_get_cardinality(container, type);
     append(with.keys[j], container, type, Own(container, type));
+    if (type != BITSET_CONTAINER_TYPE) {
+      ++sparse;
+      spans += SpansAt(out._set, ra.size - 1);
+    }
     ++j;
   }
   out._count = static_cast<size_t>(count);
-  if (Densifies(out._set, DocumentMaskBuilder::kBitsetFrom)) {
+  if (sparse != 0 && spans >= sparse * DocumentMaskBuilder::kBitsetFrom) {
+    for (auto& [k, bits] : to_runs) {
+      out._owners[k] = std::shared_ptr<const void>{std::move(bits)};
+    }
     for (int32_t k = 0; k != ra.size; ++k) {
       if (auto* bits = ToBitset(out._set, k)) {
         out._owners[k] = Own(bits, BITSET_CONTAINER_TYPE);
         ra.containers[k] = bits;
         ra.typecodes[k] = BITSET_CONTAINER_TYPE;
       }
+    }
+  } else {
+    for (auto& [k, bits] : to_runs) {
+      uint8_t type = BITSET_CONTAINER_TYPE;
+      auto* run =
+        roaring::internal::convert_run_optimize(bits.release(), type, &type);
+      roaring::internal::container_shrink_to_fit(run, type);
+      ra.containers[k] = run;
+      ra.typecodes[k] = type;
+      out._owners[k] = Own(run, type);
     }
   }
   out._kind = KindOf(out._set);

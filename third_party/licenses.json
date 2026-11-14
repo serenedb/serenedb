@@ -22,11 +22,7 @@
       "name": "ALP",
       "url": "https://github.com/cwida/ALP",
       "license": "MIT",
-      "files": ["third_party/duckdb/src/include/duckdb/storage/compression/alp/algorithm/LICENSE"],
-      "paths": [
-        "third_party/duckdb/src/include/duckdb/storage/compression/alp",
-        "third_party/duckdb/src/include/duckdb/storage/compression/alprd"
-      ]
+      "files": ["third_party/duckdb/src/include/duckdb/storage/compression/alp/algorithm/LICENSE"]
     },
     {
       "name": "Apache Avro C",

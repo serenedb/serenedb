@@ -32,11 +32,12 @@ license_text	text	f
 query
 SELECT name, license, url, license_file
 FROM serenedb_licenses
-WHERE name IN ('Abseil', 'DuckDB', 'SereneDB')
-ORDER BY name, license_file;
+WHERE name IN ('Abseil', 'ALP', 'DuckDB', 'SereneDB')
+ORDER BY lower(name), license_file;
 ----
 name	license	url	license_file
 Abseil	Apache-2.0	https://abseil.io	third_party/abseil-cpp/LICENSE
+ALP	MIT	https://github.com/cwida/ALP	third_party/duckdb/src/include/duckdb/storage/compression/alp/algorithm/LICENSE
 DuckDB	MIT	https://duckdb.org	third_party/duckdb/LICENSE
 SereneDB	Apache-2.0	https://github.com/serenedb/serenedb	LICENSE
 SereneDB	Apache-2.0	https://github.com/serenedb/serenedb	NOTICE.md

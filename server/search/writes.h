@@ -57,6 +57,7 @@ struct StoreWrites {
   LocalTableChangesEntry changes;
   WriterGenerations::Writer registration;
   std::vector<OwnSegment> own_segments;
+  std::optional<uint64_t> flushed_layout;
   std::vector<irs::DocMap> own_maps;
   uint64_t rows_generation = 0;
   std::shared_ptr<const TableState> rebuilt;
@@ -128,18 +129,10 @@ class Writes {
     : _session{session}, _snapshot{snapshot}, _walks{walks} {}
   ~Writes() { Abort(); }
 
-  // Registers this transaction as a writer of `store`, once, before anything
-  // reads the store's index config -- so a rebuild that publishes a config can
-  // tell whether this transaction predates it. Called from the DML operators'
-  // GetGlobalSinkState: the bulk insert path builds its sink there, ahead of
-  // the Combine that hands over its iresearch transaction, so registering any
-  // later would let it straddle a swap unnoticed.
   void RegisterWriter(const std::shared_ptr<Store>& store,
                       const catalog::SearchTableEntry& table);
 
-  const WriterGenerations::Writer* Registration(duckdb::idx_t store_id) const;
-
-  std::vector<const WriterGenerations*> Registrations() const;
+  void FollowLayout(const Store& store, uint64_t before);
 
   void AdoptTable(const std::shared_ptr<Store>& store,
                   const catalog::SearchTableEntry& table);
@@ -154,10 +147,10 @@ class Writes {
   void Rebuilt(const std::shared_ptr<Store>& store,
                std::shared_ptr<const TableState> state, bool newer);
 
-  void AddOwnSegments(
-    const std::shared_ptr<Store>& store,
-    std::unique_ptr<irs::IndexWriter::Transaction> trx,
-    std::span<const irs::IndexWriter::FlushedSegment> flushed);
+  void AddOwnSegments(const std::shared_ptr<Store>& store,
+                      std::unique_ptr<irs::IndexWriter::Transaction> trx,
+                      std::span<const irs::IndexWriter::FlushedSegment> flushed,
+                      uint64_t layout);
 
   void AddInlineRows(duckdb::ClientContext& context,
                      const std::shared_ptr<Store>& store,

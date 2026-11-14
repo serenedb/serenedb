@@ -25,7 +25,6 @@
 #include <cstdint>
 #include <duckdb/main/client_context.hpp>
 #include <memory>
-#include <span>
 
 #include "iresearch/utils/assert.hpp"
 
@@ -45,8 +44,7 @@ class WriterGenerations final {
   using Writer = std::unique_ptr<WriterGenerations, Leaver>;
 
   [[nodiscard]] Writer Register() noexcept;
-  void Drain(duckdb::ClientContext& context, const Writer* own,
-             std::span<const WriterGenerations* const> written);
+  void Drain(duckdb::ClientContext& context);
 
  private:
   static constexpr uint64_t kGeneration = 1;

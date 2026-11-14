@@ -458,16 +458,16 @@ BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
 
 
 connection s1
-statement async ok
+statement ok
 ALTER TABLE sac_iso ADD COLUMN w INT DEFAULT 5;
 
 
 connection s2
-statement ok
+statement error
 COMMIT;
-
-
-wait
+----
+db error: ERROR: table "sac_iso" was altered by a concurrent transaction
+HINT: Retry the transaction.
 
 
 connection s1
@@ -477,7 +477,6 @@ SELECT id, w FROM sac_iso ORDER BY id;
 id	w
 1	5
 2	5
-3	5
 
 
 connection s1
@@ -495,7 +494,7 @@ query
 SELECT count(*) FROM sac_iso;
 ----
 count
-3
+2
 
 
 connection s2
@@ -515,7 +514,6 @@ SELECT id, w FROM sac_iso ORDER BY id;
 id	w
 1	5
 2	5
-3	5
 
 
 connection s1

@@ -1,0 +1,70 @@
+statement ok
+CREATE TABLE ck_nocase (s VARCHAR COLLATE NOCASE PRIMARY KEY);
+
+
+statement ok
+INSERT INTO ck_nocase VALUES ('a');
+
+
+statement error
+INSERT INTO ck_nocase VALUES ('A');
+----
+db error: ERROR: duplicate key value violates unique constraint "ck_nocase_pkey"
+DETAIL: Key (s)=(a) already exists.
+
+
+query
+SELECT count(*) AS n FROM ck_nocase WHERE s = 'A';
+----
+n
+1
+
+
+statement ok
+CREATE TABLE ck_noaccent (s VARCHAR COLLATE NOACCENT UNIQUE);
+
+
+statement ok
+INSERT INTO ck_noaccent VALUES ('é');
+
+
+statement error
+INSERT INTO ck_noaccent VALUES ('e');
+----
+db error: ERROR: duplicate key value violates unique constraint "ck_noaccent_s_key"
+DETAIL: Key (s)=(e) already exists.
+
+
+statement ok
+CREATE TABLE ck_child (id INT PRIMARY KEY, s VARCHAR COLLATE NOCASE REFERENCES ck_nocase (s));
+
+
+statement ok
+INSERT INTO ck_child VALUES (1, 'A');
+
+
+statement error
+INSERT INTO ck_child VALUES (2, 'b');
+----
+db error: ERROR: insert or update on table "ck_child" violates foreign key constraint "ck_child_s_fkey"
+DETAIL: Key (s)=(b) is not present in table "ck_nocase".
+
+
+statement error
+DELETE FROM ck_nocase WHERE s = 'a';
+----
+db error: ERROR: update or delete on table "ck_nocase" violates foreign key constraint "ck_child_s_fkey" on table "ck_child"
+DETAIL: Key (s)=(a) is still referenced from table "ck_child".
+
+
+statement ok
+INSERT INTO ck_nocase VALUES ('B'), ('c');
+
+
+query
+SELECT s FROM ck_nocase ORDER BY s;
+----
+s
+a
+B
+c

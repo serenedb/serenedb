@@ -53,3 +53,27 @@ platform
 statement ok
 SELECT *
 FROM sdb_extensions();
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_RAW
+#| SELECT name, setting
+#| FROM pg_config
+#| WHERE name LIKE 'SERENEDB%'
+#| ORDER BY name;
+#| ----
+#| name	setting
+#| SERENEDB_COMMIT	3f9c2a7d41b0e8c56d2f1a9b7e4c3d2a1f0e9b8c
+#| SERENEDB_VERSION	26.11.0
+
+# DOCS_TEST_BODY
+
+query
+SELECT name, setting
+FROM pg_config
+WHERE name LIKE 'SERENEDB%'
+ORDER BY name;
+----
+name	setting
+SERENEDB_COMMIT	<slt:ignore>
+SERENEDB_VERSION	<slt:ignore>

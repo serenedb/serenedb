@@ -9,6 +9,7 @@ the server actually booting.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -19,6 +20,9 @@ SERENED_BIN = os.environ.get(
     "SDB_DRV_SERENED_BIN",
     str(Path(__file__).resolve().parents[3] / "build" / "bin" / "serened"),
 )
+
+VERSION_LINE = re.compile(
+    r"serened \(SereneDB\) \d+\.\d+\.\S+ \([0-9a-f]{40}(-dirty)?\)\n")
 
 
 def _have_binary() -> bool:
@@ -55,7 +59,13 @@ def test_flagfile_is_parsed(tmp_path: Path) -> None:
     ff.write_text("--version\n")
     r = _run([f"--flagfile={ff}"])
     assert r.returncode == 0, r.stderr
-    assert r.stdout.splitlines()[0] == "serened", r.stdout
+    assert VERSION_LINE.fullmatch(r.stdout), r.stdout
+
+
+def test_version_names_the_release_and_the_commit() -> None:
+    r = _run(["--version"])
+    assert r.returncode == 0, r.stderr
+    assert VERSION_LINE.fullmatch(r.stdout), r.stdout
 
 
 def test_flagfile_tokens_reach_parser(tmp_path: Path) -> None:

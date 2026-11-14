@@ -44,6 +44,7 @@ constexpr SystemTable* kSystemTables[] = {
   &gSdbSettings,
 };
 constexpr SystemTable* kSystemTableFunctions[] = {
+  &gPgConfig,
   &gPgHbaFileRules,
   &gPgPreparedStatement,
   &gPgShowAllSettings,

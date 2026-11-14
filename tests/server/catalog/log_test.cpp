@@ -240,5 +240,44 @@ TEST_F(LogTest, ARecordCopiedToAnotherLsnIsNotReplayed) {
   EXPECT_EQ(_records, (std::vector{Payload('A'), Payload('B')}));
 }
 
+TEST_F(LogTest, ANewLogStartsWithoutFillingAChunk) {
+  Lsn a = 0;
+  {
+    auto log = Open();
+    EXPECT_EQ(std::filesystem::file_size(Chunk(0)), 0U);
+    EXPECT_TRUE(log->ShouldPrepareNext(log->End()));
+    a = log->Append(Bytes(Payload('A')));
+  }
+  EXPECT_EQ(std::filesystem::file_size(Chunk(0)), a);
+  auto log = Open();
+  EXPECT_EQ(_records, std::vector{Payload('A')});
+  EXPECT_EQ(std::filesystem::file_size(Chunk(0)), a);
+  EXPECT_TRUE(log->ShouldPrepareNext(a));
+}
+
+TEST_F(LogTest, APreparedChunkTakesOverFromOneThatIsNot) {
+  {
+    auto log = Open();
+    const auto a = log->Append(Bytes(Payload('A')));
+    log->PrepareNext();
+    EXPECT_EQ(std::filesystem::file_size(Chunk(1)), Log::kChunkBytes);
+    EXPECT_FALSE(log->ShouldPrepareNext(a));
+    const auto b = log->Append(Bytes(Payload('B')));
+    EXPECT_EQ(std::filesystem::file_size(Chunk(0)), a);
+    EXPECT_NE(Find(1, Payload('B')), std::string::npos);
+    EXPECT_FALSE(log->ShouldPrepareNext(b));
+    const auto d = log->Append(Bytes(Half('D')));
+    EXPECT_TRUE(log->ShouldPrepareNext(d));
+    log->PrepareNext();
+    EXPECT_FALSE(log->ShouldPrepareNext(d));
+    log->Append(Bytes(Payload('C')));
+  }
+  EXPECT_NE(Find(1, Payload('C')), std::string::npos);
+  Open();
+  EXPECT_EQ(_records,
+            (std::vector{Payload('A'), Payload('B'), Half('D'), Payload('C')}));
+  EXPECT_FALSE(std::filesystem::exists(Chunk(2)));
+}
+
 }  // namespace
 }  // namespace sdb::catalog

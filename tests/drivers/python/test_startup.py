@@ -144,6 +144,56 @@ def test_search_table_recovery_summary_after_a_crash(tmp_path: Path) -> None:
             in restarted.output()), restarted.output()
 
 
+LOG_FILE_BYTES = 16 << 20
+
+
+def _log_file(datadir: Path, number: int) -> Path:
+    return datadir / "engine_v1" / "wal" / f"{number:016x}.log"
+
+
+def _holds_a_record(path: Path) -> bool:
+    try:
+        with path.open("rb") as file:
+            header = file.read(8)
+    except FileNotFoundError:
+        return False
+    return len(header) == 8 and header != bytes(8)
+
+
+def test_a_new_data_directory_starts_without_filling_a_log_file(
+        tmp_path: Path) -> None:
+    datadir = tmp_path / "data"
+    first, second = _log_file(datadir, 0), _log_file(datadir, 1)
+    server = _Server(datadir)
+    try:
+        assert server.wait_ready(), server.output()
+        assert first.stat().st_size < LOG_FILE_BYTES
+        with psycopg.connect(host="127.0.0.1", port=server.port,
+                             user="postgres", dbname="postgres",
+                             autocommit=True) as conn:
+            conn.execute("CREATE TABLE t (id INT)")
+            rows = 0
+            deadline = time.monotonic() + 60
+            while not _holds_a_record(second):
+                assert time.monotonic() < deadline, server.output()
+                conn.execute("INSERT INTO t VALUES (%s)", (rows,))
+                rows += 1
+        assert first.stat().st_size < LOG_FILE_BYTES
+        assert second.stat().st_size == LOG_FILE_BYTES
+    finally:
+        server.proc.kill()
+        server.proc.wait(timeout=60)
+
+    restarted = _Server(datadir)
+    try:
+        assert restarted.wait_ready(), restarted.output()
+        with psycopg.connect(host="127.0.0.1", port=restarted.port,
+                             user="postgres", dbname="postgres") as conn:
+            assert conn.execute("SELECT count(*) FROM t").fetchone() == (rows,)
+    finally:
+        restarted.stop()
+
+
 def test_terminate_while_starting(tmp_path: Path) -> None:
     server = _Server(tmp_path / "data")
     deadline = time.monotonic() + 60

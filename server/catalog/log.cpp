@@ -487,14 +487,10 @@ void Log::Replay(Apply apply, CatalogPart part) {
     removed = true;
   }
   auto& last = *chunks.rbegin()->second->file;
-  const auto size = static_cast<uint64_t>(last.GetFileSize());
+  const bool prepared =
+    static_cast<uint64_t>(last.GetFileSize()) >= kChunkBytes;
   if (scanned.torn_to > scanned.torn_from) {
     ZeroFill(last, scanned.torn_from, scanned.torn_to);
-  }
-  if (size < kChunkBytes) {
-    ZeroFill(last, size, kChunkBytes);
-  }
-  if (scanned.torn_to > scanned.torn_from || size < kChunkBytes) {
     last.Sync();
   }
   std::filesystem::remove(_dir / kSnapshotTemp);
@@ -510,6 +506,7 @@ void Log::Replay(Apply apply, CatalogPart part) {
   _next_number = next;
   _oldest.store(chunks.begin()->first, std::memory_order_relaxed);
   _newest.store(chunks.rbegin()->first, std::memory_order_relaxed);
+  _newest_prepared.store(prepared, std::memory_order_relaxed);
   _chunks = std::move(chunks);
   _replayed = end;
   _reserved = end;
@@ -530,10 +527,14 @@ Log::Range Log::Reserve(size_t payload_size) {
   SDB_ASSERT(!_chunks.empty());
   for (;;) {
     const auto current = _chunks.rbegin()->first;
-    if (_reserved == current || _reserved - current + bytes <= kChunkBytes) {
+    if (_reserved == current) {
       break;
     }
-    if (_preparing) {
+    const bool fits = _reserved - current + bytes <= kChunkBytes;
+    if (fits && (!_next || _newest_prepared.load(std::memory_order_relaxed))) {
+      break;
+    }
+    if (!fits && _preparing) {
       _mutex.Await(absl::Condition{this, &Log::NotPreparing});
       continue;
     }
@@ -557,6 +558,7 @@ void Log::StartChunk() {
   }
   auto file = std::exchange(_next, nullptr);
   _has_next.store(false, std::memory_order_relaxed);
+  const bool prepared = file != nullptr;
   if (!file) {
     file = OpenChunk(number, true);
     ++_directory_changes;
@@ -568,6 +570,7 @@ void Log::StartChunk() {
                              }));
   _next_number = number + 1;
   _newest.store(_reserved, std::memory_order_relaxed);
+  _newest_prepared.store(prepared, std::memory_order_relaxed);
 }
 
 void Log::PrepareNext() {

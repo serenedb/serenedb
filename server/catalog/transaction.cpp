@@ -651,8 +651,7 @@ void Transactions::MaintainLog(Lsn end) {
     }
     return;
   }
-  if (!_log->HasNext() && end - _log->NewestChunk() > Log::kChunkBytes / 2 &&
-      BackgroundScheduler::gInstance &&
+  if (_log->ShouldPrepareNext(end) && BackgroundScheduler::gInstance &&
       !_preparing_next.exchange(true, std::memory_order_acq_rel)) {
     BackgroundScheduler::instance()
       .Run([this] {

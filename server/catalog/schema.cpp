@@ -1146,12 +1146,6 @@ void Schema::ScanMembers(
   }
 }
 
-void Schema::CheckNoLaterMembers(const duckdb::SnapshotView& view) const {
-  for (auto* set : MemberSets()) {
-    set->CheckNoLaterEntry(view, *this);
-  }
-}
-
 void Schema::ScanTree(duckdb::CatalogTransaction transaction,
                       absl::FunctionRef<void(duckdb::CatalogEntry&)> callback) {
   ScanMembers(transaction, [&](duckdb::CatalogEntry& member) {

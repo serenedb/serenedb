@@ -142,8 +142,6 @@ class Schema final : public duckdb::SchemaCatalogEntry {
   void ScanMembers(duckdb::CatalogTransaction transaction,
                    absl::FunctionRef<void(duckdb::CatalogEntry&)> callback);
 
-  void CheckNoLaterMembers(const duckdb::SnapshotView& view) const;
-
   void ScanTree(duckdb::CatalogTransaction transaction,
                 absl::FunctionRef<void(duckdb::CatalogEntry&)> callback);
 

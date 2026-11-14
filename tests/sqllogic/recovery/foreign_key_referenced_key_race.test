@@ -31,7 +31,7 @@ connection a
 statement error
 COMMIT;
 ----
-db error: ERROR: Failed to commit: a foreign key of "fkrk_c1" references a key of "fkrk_p1" that another transaction changed
+db error: ERROR: Failed to commit: Could not commit creation of dependency, constraint "fkrk_p1_pkey" of "fkrk_p1" was changed by another transaction
 
 
 connection a
@@ -58,7 +58,7 @@ connection a
 statement error
 COMMIT;
 ----
-db error: ERROR: Failed to commit: a foreign key of "fkrk_c2" references a key of "fkrk_p2" that another transaction changed
+db error: ERROR: Failed to commit: Could not commit creation of dependency, constraint "fkrk_p2_pkey" of "fkrk_p2" was changed by another transaction
 
 
 connection a
@@ -90,7 +90,7 @@ connection b
 statement error
 COMMIT;
 ----
-db error: ERROR: Failed to commit: a foreign key of "fkrk_c3" references a key of "fkrk_p3" that another transaction changed
+db error: ERROR: Failed to commit: Could not commit DROP of "fkrk_p3_pkey" because a dependency was created after the transaction started
 
 
 statement ok

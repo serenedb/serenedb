@@ -253,20 +253,6 @@ std::vector<Edge> DirectDependents(duckdb::CatalogTransaction transaction,
     return Sorted(std::move(direct));
   }
   auto& catalog = subject.ParentCatalog().Cast<BaseCatalog>();
-  const auto triggers = [&](duckdb::CatalogEntry& table, Part part) {
-    table.Cast<duckdb::TableCatalogEntry>().ScanTriggers(
-      transaction, [&](duckdb::CatalogEntry& trigger) {
-        for (const auto& dependency :
-             trigger.Cast<duckdb::StandardEntry>().dependencies.Set()) {
-          if (dependency.oid == subject.oid) {
-            direct.push_back({&trigger, &subject, part, {}, dependency.flags});
-          }
-        }
-      });
-  };
-  if (subject.type == duckdb::CatalogType::TABLE_ENTRY) {
-    triggers(subject, Part::Owned);
-  }
   ForEachDependent(
     transaction, catalog, subject.oid, [&](duckdb::CatalogEntry& member) {
       if (member.type == duckdb::CatalogType::INDEX_ENTRY &&
@@ -274,17 +260,17 @@ std::vector<Edge> DirectDependents(duckdb::CatalogTransaction transaction,
         direct.push_back({&member, &subject, Part::Owned, {}});
         return;
       }
-      if (member.type == duckdb::CatalogType::TABLE_ENTRY) {
-        triggers(member, Part::Whole);
-      }
+      const bool own_trigger =
+        member.type == duckdb::CatalogType::TRIGGER_ENTRY &&
+        catalog.Oids().SetOwner(member.oid) == subject.oid;
       const auto& dependencies =
         member.Cast<duckdb::StandardEntry>().dependencies.Set();
       for (const auto& dependency : dependencies) {
         if (dependency.oid != subject.oid) {
           continue;
         }
-        if (dependency.owned_by &&
-            member.type != duckdb::CatalogType::TABLE_ENTRY) {
+        if (own_trigger || (dependency.owned_by &&
+                            member.type != duckdb::CatalogType::TABLE_ENTRY)) {
           direct.push_back(
             {&member, &subject, Part::Owned, {}, dependency.flags});
           continue;

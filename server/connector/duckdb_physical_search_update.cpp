@@ -375,7 +375,8 @@ duckdb::SinkFinalizeType SereneDBSearchUpdate::Finalize(
   if (_patch) {
     search_txn.CheckConflicts(*gstate.table.store);
   } else {
-    search_txn.CheckKeys(context, *gstate.table.store, /*merge_insert=*/false);
+    search_txn.CheckKeys(context, *gstate.table.store,
+                         search::KeyConflict::Unique);
   }
   return duckdb::SinkFinalizeType::READY;
 }

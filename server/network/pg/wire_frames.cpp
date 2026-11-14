@@ -141,6 +141,9 @@ int DuckExceptionToErrcode(const duckdb::ErrorData& error) {
   if (subtype == "STATEMENT_TOO_COMPLEX") {
     return ERRCODE_STATEMENT_TOO_COMPLEX;
   }
+  if (subtype == "CARDINALITY_VIOLATION") {
+    return ERRCODE_CARDINALITY_VIOLATION;
+  }
   if (error.Type() == duckdb::ExceptionType::CATALOG) {
     if (subtype == "WRONG_OBJECT_TYPE") {
       return ERRCODE_WRONG_OBJECT_TYPE;

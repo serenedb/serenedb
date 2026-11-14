@@ -145,6 +145,8 @@ class SereneDBCatalog final : public BaseCatalog {
     duckdb::CatalogTransaction transaction, Schema& schema,
     duckdb::CreateIndexInfo& info, duckdb::CatalogEntry& relation) final;
 
+  bool SupportsInsertOnConflict() const final { return true; }
+
   duckdb::PhysicalOperator& PlanInsert(
     duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
     duckdb::LogicalInsert& op,

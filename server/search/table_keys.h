@@ -38,6 +38,7 @@
 
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
+#include "connector/column_id.h"
 #include "search/hot_keys.h"
 #include "search/key_spec.h"
 #include "search/table.h"
@@ -86,6 +87,11 @@ std::optional<KeySpec> IndexKeySpec(const catalog::SearchTableEntry& table,
 // Refuses rows of `reader` sharing unique key `spec`, as a new index on it.
 void VerifyUniqueKey(duckdb::ClientContext& context,
                      const irs::DirectoryReader& reader, const KeySpec& spec);
+
+std::vector<irs::field_id> ConflictArbiters(
+  const catalog::SearchTableEntry& table,
+  std::span<const connector::ColumnId> target,
+  duckdb::CatalogTransaction transaction);
 
 // Whether a row is gone: deleted by a commit, or removed by the transaction
 // asking.

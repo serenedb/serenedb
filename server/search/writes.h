@@ -26,20 +26,27 @@
 
 #include <cstdint>
 #include <duckdb/common/identifier.hpp>
+#include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
 #include "connector/column_id.h"
+#include "connector/constraint_keys.h"
 #include "connector/search_sink_writer.hpp"
 #include "search/search_table_changes.h"
 #include "search/store.h"
@@ -118,6 +125,58 @@ struct StoreWrites {
     related_checked;
 };
 
+enum class KeyConflict : uint8_t {
+  Unique,
+  Upsert,
+  UpsertUpdate,
+};
+
+class ConflictArbiter {
+ public:
+  ConflictArbiter(duckdb::ClientContext& context, const StoreWrites& w,
+                  const irs::DirectoryReader& reader,
+                  std::span<const irs::field_id> fields);
+
+  duckdb::idx_t Admit(duckdb::DataChunk& chunk,
+                      std::span<const connector::ColumnId> column_ids,
+                      duckdb::SelectionVector& kept);
+  void Replace(duckdb::DataChunk& chunk,
+               std::span<const connector::ColumnId> column_ids,
+               irs::DocRemovalBuilder& replaced);
+
+ private:
+  struct Arbiter {
+    irs::field_id field = 0;
+    connector::ConstraintKeyEncoder encoder;
+    KeyProbe held;
+    irs::containers::FlatHashSet<std::string> proposed;
+  };
+
+  struct OwnRows {
+    uint32_t index = 0;
+    irs::doc_id_t docs = 0;
+    const irs::DocumentMask* removed = nullptr;
+    uint64_t generation = 0;
+  };
+
+  struct RowKeys {
+    std::vector<duckdb::Vector> encoded;
+    std::vector<std::string_view> keys;
+  };
+
+  RowKeys Encode(duckdb::DataChunk& chunk,
+                 std::span<const connector::ColumnId> column_ids) const;
+  void ForEachHolder(
+    const RowKeys& keys, duckdb::idx_t count,
+    absl::FunctionRef<void(duckdb::idx_t row, const KeyHolder& holder)> visit)
+    const;
+
+  const StoreWrites& _w;
+  std::vector<Arbiter> _arbiters;
+  std::optional<OwnRows> _own;
+  absl::Mutex _mutex;
+};
+
 struct LogSection {
   const duckdb::CatalogEntry* owner = nullptr;
   TableDelta delta;
@@ -189,7 +248,11 @@ class Writes {
   bool Empty() const noexcept { return _writes.empty(); }
 
   void CheckKeys(duckdb::ClientContext& context, const Store& store,
-                 bool merge_insert);
+                 KeyConflict conflict);
+
+  std::unique_ptr<ConflictArbiter> ArbitrateConflicts(
+    duckdb::ClientContext& context, const std::shared_ptr<Store>& store,
+    std::span<const irs::field_id> fields);
 
   void CheckStatement(duckdb::ClientContext& context);
 
@@ -234,8 +297,7 @@ class Writes {
   [[noreturn]] void ThrowDuplicateOrConflict(duckdb::ClientContext& context,
                                              const StoreWrites& w,
                                              const KeySpec& spec,
-                                             std::string_view key,
-                                             bool merge_insert);
+                                             std::string_view key, bool upsert);
   void CheckReferences(duckdb::ClientContext& context, StoreWrites& w,
                        const KeySpec& spec, std::span<const std::string> keys);
   void CheckRemovedKeys(duckdb::ClientContext& context, StoreWrites& w,

@@ -30,8 +30,11 @@
 #include <duckdb/common/vector/unified_vector_format.hpp>
 #include <duckdb/common/vector_operations/unary_executor.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
+#include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/function/create_sort_key.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
+#include <duckdb/planner/expression/bound_reference_expression.hpp>
+#include <duckdb/planner/expression_binder.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
 #include <iresearch/utils/assert.hpp>
 
@@ -59,6 +62,21 @@ duckdb::vector<duckdb::Value> DecodeKey(
     values.push_back(column.GetValue(0));
   }
   return values;
+}
+
+duckdb::unique_ptr<duckdb::Expression> CollationOf(
+  duckdb::ClientContext& context, const duckdb::LogicalType& type) {
+  if (type.id() != duckdb::LogicalTypeId::VARCHAR ||
+      duckdb::StringType::GetCollation(type).empty()) {
+    return nullptr;
+  }
+  duckdb::unique_ptr<duckdb::Expression> collation =
+    duckdb::make_uniq<duckdb::BoundReferenceExpression>(type, 0);
+  if (!duckdb::ExpressionBinder::PushCollation(
+        context, collation, type, duckdb::CollationType::EQUALITY_COLLATIONS)) {
+    return nullptr;
+  }
+  return collation;
 }
 
 }  // namespace
@@ -146,14 +164,22 @@ void ConstraintKeyEncoder::Encode(duckdb::DataChunk& chunk,
   }
   input.SetCardinality(count);
   for (auto& column : input.data) {
-    if (column.GetType().id() != duckdb::LogicalTypeId::INTERVAL) {
-      continue;
+    if (column.GetType().id() == duckdb::LogicalTypeId::INTERVAL) {
+      duckdb::Vector normalized{duckdb::LogicalType::INTERVAL, count};
+      duckdb::UnaryExecutor::Execute<duckdb::interval_t, duckdb::interval_t>(
+        column, normalized, count,
+        [](duckdb::interval_t value) { return value.Normalize(); });
+      column.Reference(normalized);
+    } else if (auto collation = CollationOf(*_context, column.GetType())) {
+      duckdb::DataChunk single;
+      single.InitializeEmpty({column.GetType()});
+      single.data[0].Reference(column);
+      single.SetCardinality(count);
+      duckdb::Vector collated{collation->GetReturnType(), count};
+      duckdb::ExpressionExecutor executor{*_context, *collation};
+      executor.ExecuteExpression(single, collated);
+      column.Reference(collated);
     }
-    duckdb::Vector normalized{duckdb::LogicalType::INTERVAL, count};
-    duckdb::UnaryExecutor::Execute<duckdb::interval_t, duckdb::interval_t>(
-      column, normalized, count,
-      [](duckdb::interval_t value) { return value.Normalize(); });
-    column.Reference(normalized);
   }
   duckdb::CreateSortKeyHelpers::CreateSortKey(input, modifiers, keys);
   duckdb::UnifiedVectorFormat format;
@@ -175,7 +201,13 @@ std::string ConstraintKeyText(duckdb::ClientContext& context,
                               std::string_view key,
                               std::span<const std::string> names,
                               std::span<const duckdb::LogicalType> types) {
-  const auto values = DecodeKey(key, types);
+  duckdb::vector<duckdb::LogicalType> encoded;
+  encoded.reserve(types.size());
+  for (const auto& type : types) {
+    const auto collation = CollationOf(context, type);
+    encoded.push_back(collation ? collation->GetReturnType() : type);
+  }
+  const auto values = DecodeKey(key, encoded);
   std::string out = absl::StrCat("(", absl::StrJoin(names, ", "), ")=(");
   for (size_t i = 0; i != values.size(); ++i) {
     if (i != 0) {

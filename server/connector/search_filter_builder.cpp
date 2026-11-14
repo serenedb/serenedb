@@ -878,6 +878,10 @@ absl::Status FromKeyLookup(BoolTarget filter, const FilterContext& ctx,
     return absl::UnimplementedError(
       "a negated key lookup would admit the column's NULL rows");
   }
+  if (!duckdb::StringType::GetCollation(info.logical_type).empty()) {
+    return absl::UnimplementedError(
+      "a key lookup on a collated column compares the collation's form");
+  }
   std::vector<irs::bstring> terms;
   terms.reserve(values.size());
   for (const auto* value : values) {

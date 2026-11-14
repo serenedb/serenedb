@@ -937,7 +937,8 @@ const duckdb::Expression& PeelArrayToListCast(const duckdb::Expression& expr) {
 
 duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
   duckdb::BoundFunctionExpression& func, const AnnFunctionInfo& info,
-  duckdb::LogicalOperator& root, duckdb::ClientContext& context) {
+  duckdb::LogicalOperator& root, duckdb::ClientContext& context,
+  std::span<const connector::ScanBindData* const> text_scans) {
   const auto [col_arg, value_arg] =
     [&] -> std::pair<duckdb::Expression*, duckdb::Expression*> {
     if (info.is_norm) {
@@ -974,7 +975,8 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
     return nullptr;
   }
   auto& ss = *found->bind_data;
-  if (ss.score.text || ss.offsets.Active()) {
+  if (ss.score.text || ss.offsets.Active() ||
+      absl::c_linear_search(text_scans, found->bind_data)) {
     return nullptr;
   }
 
@@ -1218,7 +1220,73 @@ struct RewriteScope {
   bool search_scan = false;
   bool stored_expressions = false;
   const duckdb::LogicalOperator* op = nullptr;
+  std::span<const connector::ScanBindData* const> text_scans;
 };
+
+void CollectTextScanCalls(const duckdb::Expression& expr,
+                          duckdb::LogicalOperator& root,
+                          std::vector<const connector::ScanBindData*>& scans) {
+  if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_FUNCTION) {
+    const auto& func = expr.Cast<duckdb::BoundFunctionExpression>();
+    const auto& name = func.Function().GetName().GetIdentifierName();
+    const auto* anchor =
+      func.GetChildren().empty() ||
+          func.GetChildren()[0]->GetExpressionClass() !=
+            duckdb::ExpressionClass::BOUND_COLUMN_REF
+        ? nullptr
+        : &func.GetChildren()[0]->Cast<duckdb::BoundColumnRefExpression>();
+    if (anchor && IsScorerFunctionName(name)) {
+      if (auto found = FindIResearchScan(root, anchor->Binding().table_index)) {
+        scans.push_back(found->bind_data);
+      }
+    } else if (anchor && name == connector::kOffsets) {
+      if (auto column = ResolveIResearchScanColumn(root, anchor->Binding())) {
+        scans.push_back(column->found.bind_data);
+      }
+    }
+  }
+  duckdb::ExpressionIterator::EnumerateChildren(
+    expr, [&](const duckdb::Expression& child) {
+      CollectTextScanCalls(child, root, scans);
+    });
+}
+
+void CollectTextScans(duckdb::LogicalOperator& op,
+                      duckdb::LogicalOperator& root,
+                      std::vector<const connector::ScanBindData*>& scans) {
+  if (op.type == duckdb::LogicalOperatorType::LOGICAL_DELETE ||
+      op.type == duckdb::LogicalOperatorType::LOGICAL_UPDATE ||
+      op.type == duckdb::LogicalOperatorType::LOGICAL_MERGE_INTO) {
+    return;
+  }
+  for (auto& child : op.children) {
+    CollectTextScans(*child, root, scans);
+  }
+  switch (op.type) {
+    case duckdb::LogicalOperatorType::LOGICAL_FILTER:
+    case duckdb::LogicalOperatorType::LOGICAL_PROJECTION:
+    case duckdb::LogicalOperatorType::LOGICAL_WINDOW:
+      for (const auto& e : op.expressions) {
+        CollectTextScanCalls(*e, root, scans);
+      }
+      break;
+    case duckdb::LogicalOperatorType::LOGICAL_ORDER_BY:
+      for (const auto& o : op.Cast<duckdb::LogicalOrder>().orders) {
+        CollectTextScanCalls(*o.expression, root, scans);
+      }
+      break;
+    case duckdb::LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY:
+      for (const auto& g : op.Cast<duckdb::LogicalAggregate>().groups) {
+        CollectTextScanCalls(*g, root, scans);
+      }
+      for (const auto& e : op.expressions) {
+        CollectTextScanCalls(*e, root, scans);
+      }
+      break;
+    default:
+      break;
+  }
+}
 
 void RewriteCallInExpr(duckdb::unique_ptr<duckdb::Expression>& expr,
                        duckdb::LogicalOperator& root,
@@ -1251,7 +1319,8 @@ void RewriteCallInExpr(duckdb::unique_ptr<duckdb::Expression>& expr,
         return;
       }
     } else if (auto info = GetAnnFunctionInfo(func)) {
-      if (auto repl = PushdownDistanceCall(func, *info, root, context)) {
+      if (auto repl = PushdownDistanceCall(func, *info, root, context,
+                                           scope.text_scans)) {
         expr = std::move(repl);
         return;
       }
@@ -1669,8 +1738,12 @@ bool TryClaimSearchFilter(
 void RewriteSearchCallsToColumnRefs(
   duckdb::OptimizerExtensionInput& input,
   duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
+  std::vector<const connector::ScanBindData*> text_scans;
+  CollectTextScans(*plan, *plan, text_scans);
+  auto scope = ScopeOf(*plan);
+  scope.text_scans = text_scans;
   RewriteIResearchExpressions(input.context, plan, plan, input.optimizer.binder,
-                              ScopeOf(*plan));
+                              scope);
 }
 
 void LimitTsDictScans(duckdb::OptimizerExtensionInput&,
@@ -1942,6 +2015,26 @@ bool IsPlainInteger(const duckdb::LogicalType& type) {
   }
 }
 
+bool StrictOverNull(const duckdb::Expression& expr) {
+  if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_FUNCTION ||
+      expr.GetExpressionType() == duckdb::ExpressionType::COMPARE_BETWEEN ||
+      expr.Cast<duckdb::BoundFunctionExpression>()
+          .Function()
+          .GetNullHandling() !=
+        duckdb::FunctionNullHandling::DEFAULT_NULL_HANDLING) {
+    return false;
+  }
+  return absl::c_any_of(
+    expr.Cast<duckdb::BoundFunctionExpression>().GetChildren(),
+    [](const auto& child) {
+      return child->GetExpressionClass() ==
+               duckdb::ExpressionClass::BOUND_CONSTANT &&
+             child->template Cast<duckdb::BoundConstantExpression>()
+               .GetValue()
+               .IsNull();
+    });
+}
+
 const duckdb::BoundColumnRefExpression* CastOfIntegerColumn(
   const duckdb::Expression& expr) {
   if (!duckdb::BoundCastExpression::IsCast(expr)) {
@@ -1967,6 +2060,9 @@ duckdb::unique_ptr<duckdb::Expression> CompareIntegerColumn(
       with, col.Copy(),
       duckdb::make_uniq<duckdb::BoundConstantExpression>(std::move(constant)));
   };
+  if (value.IsNull()) {
+    return compare(op, duckdb::Value{type});
+  }
   if (auto fitted = value.DefaultTryCastAs(type); fitted && !fitted->IsNull()) {
     return compare(op, std::move(*fitted));
   }
@@ -2043,8 +2139,8 @@ duckdb::unique_ptr<duckdb::Expression> FoldColumnCast(
     }
     const auto& lo = lower.Cast<duckdb::BoundConstantExpression>().GetValue();
     const auto& hi = upper.Cast<duckdb::BoundConstantExpression>().GetValue();
-    if (lo.IsNull() || hi.IsNull() || !IsPlainInteger(lo.type()) ||
-        !IsPlainInteger(hi.type())) {
+    if ((!lo.IsNull() && !IsPlainInteger(lo.type())) ||
+        (!hi.IsNull() && !IsPlainInteger(hi.type()))) {
       return expr;
     }
     const auto& type = col->GetReturnType();
@@ -2088,6 +2184,10 @@ duckdb::unique_ptr<duckdb::Expression> NormalizeClaimShape(
       return duckdb::make_uniq<duckdb::BoundConstantExpression>(
         std::move(folded));
     }
+  }
+  if (StrictOverNull(*expr)) {
+    return duckdb::make_uniq<duckdb::BoundConstantExpression>(
+      duckdb::Value{expr->GetReturnType()});
   }
   return FoldColumnCast(std::move(expr));
 }

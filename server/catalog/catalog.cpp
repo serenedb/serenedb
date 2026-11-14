@@ -67,6 +67,7 @@
 #include "catalog/foreign_database.h"
 #include "catalog/record.h"
 #include "catalog/transaction.h"
+#include "connector/column_id.h"
 #include "connector/duckdb_physical_search_delete.h"
 #include "connector/duckdb_physical_search_insert.h"
 #include "connector/duckdb_physical_search_truncate.h"
@@ -77,6 +78,8 @@
 #include "pg/catalog/oids.h"
 #include "query/config.h"
 #include "search/store.h"
+#include "search/table_keys.h"
+#include "search/writes.h"
 
 namespace sdb::catalog {
 namespace {
@@ -389,15 +392,45 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SereneDBCatalog::MakeIndex(
 }
 
 duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
-  duckdb::ClientContext&, duckdb::PhysicalPlanGenerator& planner,
+  duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
   duckdb::LogicalInsert& op,
   duckdb::optional_ptr<duckdb::PhysicalOperator> plan) {
   SDB_ASSERT(plan);
-  auto& insert = planner.Make<connector::SereneDBSearchInsert>(
-    SearchTable(op.table), std::move(op.bound_constraints), op.types,
-    op.estimated_cardinality, op.return_chunk);
-  insert.children.emplace_back(*plan);
-  return insert;
+  const auto& table = SearchTable(op.table);
+  if (op.action_type == duckdb::OnConflictAction::THROW) {
+    auto& insert = planner.Make<connector::SereneDBSearchInsert>(
+      table, std::move(op.bound_constraints), op.types,
+      op.estimated_cardinality, op.return_chunk);
+    insert.children.emplace_back(*plan);
+    return insert;
+  }
+  std::vector<connector::ColumnId> target;
+  std::vector<duckdb::PhysicalIndex> replaced;
+  for (const auto& column : table.GetColumns().Physical()) {
+    if (op.on_conflict_filter.contains(column.Physical().index)) {
+      target.push_back(connector::TableColumnId(column));
+    } else {
+      replaced.push_back(column.Physical());
+    }
+  }
+  const bool replace = op.action_type == duckdb::OnConflictAction::REPLACE;
+  std::vector<connector::ReplacedColumn> patched;
+  if (replace && !replaced.empty() &&
+      !duckdb::Settings::Get<duckdb::ForceUpdateToDelAndInsertSetting>(
+        context) &&
+      table.PatchesColumns(replaced)) {
+    for (const auto index : replaced) {
+      const auto& column = table.GetColumns().GetColumn(index);
+      patched.push_back({.field = connector::TableColumnId(column),
+                         .type = column.Type(),
+                         .input = index.index});
+    }
+  }
+  auto& upsert = planner.Make<connector::SereneDBSearchUpsert>(
+    table, std::move(op.bound_constraints), op.types, op.estimated_cardinality,
+    op.return_chunk, replace, std::move(target), std::move(patched));
+  upsert.children.emplace_back(*plan);
+  return upsert;
 }
 
 duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
@@ -431,8 +464,8 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
   auto& update = planner.Make<connector::SereneDBSearchUpdate>(
     SearchTable(op.table), op.columns, std::move(op.expressions),
     std::move(op.bound_constraints), op.types, op.estimated_cardinality,
-    op.return_chunk, op.row_id_handling, !op.update_is_del_and_insert,
-    op.update_column_count);
+    op.return_chunk, op.capture_old_rows, std::move(op.old_row_columns),
+    op.row_id_handling, !op.update_is_del_and_insert, op.update_column_count);
   update.children.emplace_back(plan);
   return update;
 }
@@ -444,7 +477,9 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanMergeInto(
                   .Cast<duckdb::PhysicalMergeInto>();
   for (const auto& action : merge.actions) {
     if (action->action_type == duckdb::MergeActionType::MERGE_INSERT) {
-      action->op->Cast<connector::SereneDBSearchInsert>().MarkMergeInsert();
+      action->op->Cast<connector::SereneDBSearchInsert>().MarkMergeInsert(
+        action->on_conflict_update ? search::KeyConflict::UpsertUpdate
+                                   : search::KeyConflict::Upsert);
     }
   }
   return merge;

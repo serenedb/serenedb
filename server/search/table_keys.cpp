@@ -21,8 +21,6 @@
 #include "search/table_keys.h"
 
 #include <absl/algorithm/container.h>
-#include <absl/strings/str_cat.h>
-#include <absl/strings/str_join.h>
 
 #include <duckdb/parser/constraints/foreign_key_constraint.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
@@ -55,13 +53,6 @@ const irs::TermReader* KeyField(const irs::SubReader& sub,
     }
   }
   return nullptr;
-}
-
-std::string DefaultName(const catalog::SearchTableEntry& table,
-                        std::span<const std::string> names,
-                        std::string_view suffix) {
-  return absl::StrCat(table.name.GetIdentifierName(), "_",
-                      absl::StrJoin(names, "_"), "_", suffix);
 }
 
 const catalog::SearchTableEntry* TableByOid(
@@ -133,12 +124,6 @@ TableKeys ResolveTableKeys(const catalog::SearchTableEntry& table,
       for (const auto index : unique.GetLogicalIndexes(columns)) {
         add_column(spec, columns.GetColumn(index));
       }
-      if (spec.constraint.empty()) {
-        spec.constraint =
-          unique.IsPrimaryKey()
-            ? absl::StrCat(table.name.GetIdentifierName(), "_pkey")
-            : DefaultName(table, spec.names, "key");
-      }
       keys.specs.push_back(std::move(spec));
       continue;
     }
@@ -153,13 +138,6 @@ TableKeys ResolveTableKeys(const catalog::SearchTableEntry& table,
                  .key = {.field = constraint->oid},
                  .constraint = constraint->constraint_name,
                  .referenced = fk.info.table};
-    if (spec.constraint.empty()) {
-      std::vector<std::string> names;
-      for (const auto& name : fk.fk_columns) {
-        names.push_back(name.GetIdentifierName());
-      }
-      spec.constraint = DefaultName(table, names, "fkey");
-    }
     const auto* parent = ReferencedTable(table, fk, transaction);
     const auto* referenced =
       parent ? ReferencedKey(*parent, fk.pk_columns) : nullptr;
@@ -342,6 +320,37 @@ void VerifyUniqueKey(duckdb::ClientContext& context,
     });
 }
 
+std::vector<irs::field_id> ConflictArbiters(
+  const catalog::SearchTableEntry& table,
+  std::span<const connector::ColumnId> target,
+  duckdb::CatalogTransaction transaction) {
+  const auto arbitrates = [&](const catalog::ConstraintKey& key) {
+    return target.empty() ||
+           (key.expressions.empty() && key.columns.size() == target.size() &&
+            absl::c_all_of(key.columns, [&](connector::ColumnId column) {
+              return absl::c_linear_search(target, column);
+            }));
+  };
+  std::vector<irs::field_id> arbiters;
+  const auto& specs = table.KeySpecs();
+  for (const auto& spec : specs) {
+    if (spec.kind == KeyKind::Unique && !spec.deferred &&
+        arbitrates(spec.key)) {
+      arbiters.push_back(spec.key.field);
+    }
+  }
+  auto& oids = table.catalog.Cast<catalog::BaseCatalog>().Oids();
+  for (const auto& key : table.Storage()->Config()->constraint_keys) {
+    if (absl::c_none_of(
+          specs,
+          [&](const KeySpec& spec) { return spec.key.field == key.field; }) &&
+        arbitrates(key) && oids.Find(transaction, key.field)) {
+      arbiters.push_back(key.field);
+    }
+  }
+  return arbiters;
+}
+
 void KeyProbe::Add(const Segment& segment) {
   if (const auto* field = KeyField(*segment.sub, _field)) {
     _segments.push_back({.unit = segment.unit,
@@ -352,8 +361,13 @@ void KeyProbe::Add(const Segment& segment) {
 }
 
 void KeyProbe::AddLive(const LiveUnits& live, const LiveUnits* since) {
+  AddLive(live, [&](uint64_t unit) { return since && since->Find(unit); });
+}
+
+void KeyProbe::AddLive(const LiveUnits& live,
+                       absl::FunctionRef<bool(uint64_t unit)> skip) {
   for (const auto& unit : live.Units()) {
-    if (since && since->Find(unit.unit->id)) {
+    if (skip(unit.unit->id)) {
       continue;
     }
     Add(Segment{.unit = unit.unit->id,

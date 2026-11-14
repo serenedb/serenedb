@@ -25,12 +25,15 @@
 #include <duckdb/planner/bound_constraint.hpp>
 #include <duckdb/planner/parsed_data/bound_create_table_info.hpp>
 #include <memory>
+#include <vector>
 
 #include "catalog/entry/search_table.h"
+#include "connector/column_id.h"
+#include "search/writes.h"
 
 namespace sdb::connector {
 
-class SereneDBSearchInsert final : public duckdb::PhysicalOperator {
+class SereneDBSearchInsert : public duckdb::PhysicalOperator {
  public:
   // Insert mode: pre-existing target table. `return_chunk` is RETURNING: the
   // operator then hands back the rows it inserted rather than their count, and
@@ -53,6 +56,66 @@ class SereneDBSearchInsert final : public duckdb::PhysicalOperator {
   bool IsSink() const final { return true; }
   bool ParallelSink() const final { return true; }
   duckdb::unique_ptr<duckdb::GlobalSinkState> GetGlobalSinkState(
+    duckdb::ClientContext& context) const override;
+  duckdb::unique_ptr<duckdb::LocalSinkState> GetLocalSinkState(
+    duckdb::ExecutionContext& context) const override;
+  duckdb::SinkResultType Sink(duckdb::ExecutionContext& context,
+                              duckdb::DataChunk& chunk,
+                              duckdb::OperatorSinkInput& input) const override;
+  duckdb::SinkCombineResultType Combine(
+    duckdb::ExecutionContext& context,
+    duckdb::OperatorSinkCombineInput& input) const override;
+  duckdb::SinkFinalizeType Finalize(
+    duckdb::Pipeline& pipeline, duckdb::Event& event,
+    duckdb::ClientContext& context,
+    duckdb::OperatorSinkFinalizeInput& input) const override;
+
+  duckdb::unique_ptr<duckdb::GlobalSourceState> GetGlobalSourceState(
+    duckdb::ClientContext& context) const final;
+  duckdb::SourceResultType GetDataInternal(
+    duckdb::ExecutionContext& context, duckdb::DataChunk& chunk,
+    duckdb::OperatorSourceInput& input) const final;
+  bool IsSource() const final { return true; }
+
+  void MarkMergeInsert(search::KeyConflict conflict) noexcept {
+    _conflict = conflict;
+  }
+
+ protected:
+  void InitSinkState(duckdb::ClientContext& context,
+                     duckdb::GlobalSinkState& state) const;
+
+  // Insert mode: the pre-existing target. Unset in CTAS mode, where the table
+  // does not exist until the sink runs.
+  duckdb::optional_ptr<const catalog::SearchTableEntry> _table;
+  duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>> _constraints;
+  bool _return_chunk = false;
+  search::KeyConflict _conflict = search::KeyConflict::Unique;
+
+ private:
+  // CTAS mode only -- mutually exclusive with _table; null in insert mode.
+  // It carries the target schema, so nothing has to resolve one.
+  duckdb::unique_ptr<duckdb::BoundCreateTableInfo> _ctas_info;
+};
+
+struct ReplacedColumn {
+  irs::field_id field = 0;
+  duckdb::LogicalType type;
+  duckdb::idx_t input = 0;
+};
+
+class SereneDBSearchUpsert final : public SereneDBSearchInsert {
+ public:
+  SereneDBSearchUpsert(
+    duckdb::PhysicalPlan& plan, const catalog::SearchTableEntry& table,
+    duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>> constraints,
+    duckdb::vector<duckdb::LogicalType> types,
+    duckdb::idx_t estimated_cardinality, bool return_chunk, bool replace,
+    std::vector<ColumnId> target, std::vector<ReplacedColumn> patched);
+
+  duckdb::InsertionOrderPreservingMap<std::string> ParamsToString() const final;
+
+  duckdb::unique_ptr<duckdb::GlobalSinkState> GetGlobalSinkState(
     duckdb::ClientContext& context) const final;
   duckdb::unique_ptr<duckdb::LocalSinkState> GetLocalSinkState(
     duckdb::ExecutionContext& context) const final;
@@ -67,27 +130,10 @@ class SereneDBSearchInsert final : public duckdb::PhysicalOperator {
     duckdb::ClientContext& context,
     duckdb::OperatorSinkFinalizeInput& input) const final;
 
-  duckdb::unique_ptr<duckdb::GlobalSourceState> GetGlobalSourceState(
-    duckdb::ClientContext& context) const final;
-  duckdb::SourceResultType GetDataInternal(
-    duckdb::ExecutionContext& context, duckdb::DataChunk& chunk,
-    duckdb::OperatorSourceInput& input) const final;
-  bool IsSource() const final { return true; }
-
-  void MarkMergeInsert() noexcept { _merge_insert = true; }
-
  private:
-  // Insert mode: the pre-existing target. Unset in CTAS mode, where the table
-  // does not exist until the sink runs.
-  duckdb::optional_ptr<const catalog::SearchTableEntry> _table;
-  duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>> _constraints;
-
-  // CTAS mode only -- mutually exclusive with _table; null in insert mode.
-  // It carries the target schema, so nothing has to resolve one.
-  duckdb::unique_ptr<duckdb::BoundCreateTableInfo> _ctas_info;
-
-  bool _return_chunk = false;
-  bool _merge_insert = false;
+  bool _replace;
+  std::vector<ColumnId> _target;
+  std::vector<ReplacedColumn> _patched;
 };
 
 }  // namespace sdb::connector

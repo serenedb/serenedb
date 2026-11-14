@@ -60,6 +60,7 @@
 #include <duckdb/parser/tableref/joinref.hpp>
 #include <duckdb/parser/tableref/subqueryref.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <optional>
@@ -252,31 +253,6 @@ std::vector<Edge> DirectDependents(duckdb::CatalogTransaction transaction,
     return Sorted(std::move(direct));
   }
   auto& catalog = subject.ParentCatalog().Cast<BaseCatalog>();
-  if (subject.type == duckdb::CatalogType::TABLE_ENTRY) {
-    for (const auto& dependency :
-         subject.Cast<duckdb::StandardEntry>().dependencies.Set()) {
-      if (!dependency.owned_by) {
-        continue;
-      }
-      if (auto owned = catalog.LookupOid(transaction, dependency.oid)) {
-        direct.push_back({owned.get(), &subject, Part::Owned, {}});
-      }
-    }
-  }
-  const auto triggers = [&](duckdb::CatalogEntry& table, Part part) {
-    table.Cast<duckdb::TableCatalogEntry>().ScanTriggers(
-      transaction, [&](duckdb::CatalogEntry& trigger) {
-        for (const auto& dependency :
-             trigger.Cast<duckdb::StandardEntry>().dependencies.Set()) {
-          if (dependency.oid == subject.oid) {
-            direct.push_back({&trigger, &subject, part, {}, dependency.flags});
-          }
-        }
-      });
-  };
-  if (subject.type == duckdb::CatalogType::TABLE_ENTRY) {
-    triggers(subject, Part::Owned);
-  }
   ForEachDependent(
     transaction, catalog, subject.oid, [&](duckdb::CatalogEntry& member) {
       if (member.type == duckdb::CatalogType::INDEX_ENTRY &&
@@ -284,17 +260,17 @@ std::vector<Edge> DirectDependents(duckdb::CatalogTransaction transaction,
         direct.push_back({&member, &subject, Part::Owned, {}});
         return;
       }
-      if (member.type == duckdb::CatalogType::TABLE_ENTRY) {
-        triggers(member, Part::Whole);
-      }
+      const bool own_trigger =
+        member.type == duckdb::CatalogType::TRIGGER_ENTRY &&
+        catalog.Oids().SetOwner(member.oid) == subject.oid;
       const auto& dependencies =
         member.Cast<duckdb::StandardEntry>().dependencies.Set();
       for (const auto& dependency : dependencies) {
         if (dependency.oid != subject.oid) {
           continue;
         }
-        if (dependency.owned_by &&
-            member.type != duckdb::CatalogType::TABLE_ENTRY) {
+        if (own_trigger || (dependency.owned_by &&
+                            member.type != duckdb::CatalogType::TABLE_ENTRY)) {
           direct.push_back(
             {&member, &subject, Part::Owned, {}, dependency.flags});
           continue;
@@ -1073,11 +1049,7 @@ void ScanSubjects(duckdb::CatalogTransaction transaction,
     auto subject = catalog.LookupOid(transaction, dependency.oid);
     if (subject && !subject->internal &&
         subject->type != duckdb::CatalogType::SCHEMA_ENTRY) {
-      auto flags = dependency.flags;
-      if (dependency.owned_by) {
-        flags.SetOwnedBy();
-      }
-      visit(*subject, flags);
+      visit(*subject, dependency.flags);
     }
   }
 }
@@ -1162,14 +1134,6 @@ duckdb::catalog_entry_vector_t OwnedEntries(
   }
   auto& catalog =
     owner.Cast<duckdb::StandardEntry>().catalog.Cast<BaseCatalog>();
-  for (const auto& dependency :
-       owner.Cast<duckdb::StandardEntry>().dependencies.Set()) {
-    if (dependency.owned_by) {
-      if (auto entry = catalog.LookupOid(transaction, dependency.oid)) {
-        owned.emplace_back(*entry);
-      }
-    }
-  }
   ForEachDependent(transaction, catalog, owner.oid,
                    [&](duckdb::CatalogEntry& member) {
                      if (member.type != duckdb::CatalogType::TABLE_ENTRY &&
@@ -1187,23 +1151,13 @@ duckdb::optional_ptr<duckdb::CatalogEntry> OwnerOf(
   }
   auto& catalog =
     owned.Cast<duckdb::StandardEntry>().catalog.Cast<BaseCatalog>();
-  if (owned.type != duckdb::CatalogType::TABLE_ENTRY) {
-    for (const auto& dependency :
-         owned.Cast<duckdb::StandardEntry>().dependencies.Set()) {
-      if (dependency.owned_by) {
-        return catalog.LookupOid(transaction, dependency.oid);
-      }
+  for (const auto& dependency :
+       owned.Cast<duckdb::StandardEntry>().dependencies.Set()) {
+    if (dependency.owned_by) {
+      return catalog.LookupOid(transaction, dependency.oid);
     }
   }
-  duckdb::optional_ptr<duckdb::CatalogEntry> owner;
-  ForEachDependent(transaction, catalog, owned.oid,
-                   [&](duckdb::CatalogEntry& member) {
-                     if (member.type == duckdb::CatalogType::TABLE_ENTRY &&
-                         OwnedBy(member, owned.oid)) {
-                       owner = member;
-                     }
-                   });
-  return owner;
+  return nullptr;
 }
 
 void RefuseDependents(
@@ -1335,6 +1289,48 @@ void FollowReferences(duckdb::CatalogTransaction transaction,
     }
   }
   follow(table);
+}
+
+void FollowReferencedColumnRename(duckdb::CatalogTransaction transaction,
+                                  duckdb::TableCatalogEntry& table,
+                                  const duckdb::Identifier& old_column,
+                                  const duckdb::Identifier& new_column) {
+  const duckdb::IdentifierEquality equals{
+    table.ParentCatalog().IsCaseSensitive()};
+  irs::containers::FlatHashSet<duckdb::idx_t> seen;
+  for (const auto& edge : DirectDependents(transaction, table)) {
+    auto& referencing = *edge.dependent;
+    if (edge.part != Part::Constraint ||
+        referencing.type != duckdb::CatalogType::TABLE_ENTRY ||
+        referencing.oid == table.oid || !seen.insert(referencing.oid).second) {
+      continue;
+    }
+    auto info = referencing.GetInfo();
+    bool changed = false;
+    for (auto& constraint : info->Cast<duckdb::CreateTableInfo>().constraints) {
+      if (constraint->type != duckdb::ConstraintType::FOREIGN_KEY) {
+        continue;
+      }
+      auto& fk = constraint->Cast<duckdb::ForeignKeyConstraint>();
+      if (fk.info.type != duckdb::ForeignKeyType::FK_TYPE_FOREIGN_KEY_TABLE ||
+          ReferencedTableOid(referencing.Cast<duckdb::TableCatalogEntry>(),
+                             fk) != table.oid) {
+        continue;
+      }
+      for (auto& column : fk.pk_columns) {
+        if (equals(column, old_column)) {
+          column = new_column;
+          changed = true;
+        }
+      }
+    }
+    if (changed) {
+      auto& parent = referencing.ParentSchema(transaction);
+      info->SetQualifiedName(parent.GetQualifiedName(referencing.name));
+      duckdb::ReplaceDefinitionInfo replace{std::move(info)};
+      parent.Alter(transaction, replace);
+    }
+  }
 }
 
 duckdb::idx_t ReferencedTableOid(const duckdb::TableCatalogEntry& table,

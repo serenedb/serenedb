@@ -83,7 +83,7 @@ An inverted index pins every column it reads, including columns reached only thr
 - **`DROP COLUMN`** on a pinned column -- allowed; it drops every index that covers the column.
 - **`DROP COLUMN`** on any other column -- allowed, including one that comes before a pinned column.
 
-See [Rewrites and concurrent changes](../../statements/alter_table/index.md#rewrites-and-concurrent-changes) in the `ALTER TABLE` reference for how these statements wait for writers.
+See [Rewrites and concurrent changes](../../statements/alter_table/index.md#rewrites-and-concurrent-changes) in the `ALTER TABLE` reference for how these statements treat concurrent writers.
 
 ## Performance
 

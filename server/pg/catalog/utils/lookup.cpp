@@ -378,26 +378,26 @@ uint64_t ArrayElementOid(const Session& session, uint64_t oid) {
 }
 
 std::vector<ReplicationOrigin> ReplicationOrigins(
-  duckdb::DatabaseInstance& db) {
+  duckdb::ClientContext& context) {
   std::vector<ReplicationOrigin> origins;
   for (const auto& database :
-       catalog::SereneDBDatabases(duckdb::DatabaseManager::Get(db))) {
-    database->GetCatalog()
-      .Cast<catalog::SereneDBCatalog>()
-      .Subscriptions()
-      .ScanCommitted([&](duckdb::CatalogEntry& entry) {
+       catalog::SereneDBDatabases(duckdb::DatabaseManager::Get(context))) {
+    auto& catalog = database->GetCatalog().Cast<catalog::SereneDBCatalog>();
+    catalog.Subscriptions().Scan(
+      catalog.GetCatalogTransaction(context), [&](duckdb::CatalogEntry& entry) {
         origins.emplace_back(
           entry.oid, absl::StrCat("pg_", entry.oid),
           entry.Cast<catalog::SubscriptionCatalogEntry>().RemoteLsn());
       });
   }
-  catalog::ClusterOf(db)
-    .Set(duckdb::CatalogType::REPLICATION_ORIGIN_ENTRY)
-    .ScanCommitted([&](duckdb::CatalogEntry& entry) {
-      origins.emplace_back(
-        entry.oid, entry.name.GetIdentifierName(),
-        entry.Cast<catalog::ReplicationLsnEntry>().RemoteLsn());
-    });
+  auto& cluster = catalog::ClusterOf(context);
+  cluster.Set(duckdb::CatalogType::REPLICATION_ORIGIN_ENTRY)
+    .Scan(cluster.GetCatalogTransaction(context),
+          [&](duckdb::CatalogEntry& entry) {
+            origins.emplace_back(
+              entry.oid, entry.name.GetIdentifierName(),
+              entry.Cast<catalog::ReplicationLsnEntry>().RemoteLsn());
+          });
   return origins;
 }
 

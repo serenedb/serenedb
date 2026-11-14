@@ -134,6 +134,7 @@ struct CreateIndexGlobalState final : public duckdb::GlobalSinkState {
 
 struct CreateIndexLocalState final : public duckdb::LocalSinkState {
   std::unique_ptr<irs::IndexWriter::Transaction> search_trx;
+  uint64_t layout = 0;
   std::unique_ptr<DuckDBSearchSinkInsertWriter> writer;
   // Per-chunk scratch, kept at high-water mark: Sink runs once per 2048 rows,
   // so anything rebuilt on the stack there is an allocation per chunk.
@@ -422,6 +423,7 @@ SereneDBPhysicalCreateIndex::GetLocalSinkState(
   auto lstate = duckdb::make_uniq<CreateIndexLocalState>();
   lstate->search_trx = std::make_unique<irs::IndexWriter::Transaction>(
     inverted_storage.GetTransaction());
+  lstate->layout = inverted_storage.LayoutVersion();
   lstate->search_trx->SetFieldOptions(gstate.config);
   lstate->writer = std::make_unique<DuckDBSearchSinkInsertWriter>(
     *lstate->search_trx,
@@ -519,8 +521,8 @@ duckdb::SinkCombineResultType SereneDBPhysicalCreateIndex::Combine(
   ConnectionContext::Get(context.client)
     .Transaction()
     .SearchTxn()
-    .AddOwnSegments(gstate.index_storage, std::move(lstate.search_trx),
-                    flushed);
+    .AddOwnSegments(gstate.index_storage, std::move(lstate.search_trx), flushed,
+                    lstate.layout);
   return duckdb::SinkCombineResultType::FINISHED;
 }
 

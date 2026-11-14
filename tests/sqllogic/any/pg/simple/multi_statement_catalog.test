@@ -1,0 +1,105 @@
+skipif pg-wire-extended
+statement ok
+CREATE TABLE msc_serial (v int); INSERT INTO msc_serial VALUES (1), (2); ALTER TABLE IF EXISTS msc_serial ADD COLUMN id serial;
+
+
+skipif pg-wire-extended
+query
+SELECT v, id FROM msc_serial ORDER BY v;
+----
+v	id
+1	1
+2	2
+
+
+skipif pg-wire-extended
+query
+SELECT is_nullable, pg_get_serial_sequence('msc_serial', 'id') AS sequence FROM information_schema.columns WHERE table_name = 'msc_serial' AND column_name = 'id';
+----
+is_nullable	sequence
+NO	public.msc_serial_id_seq
+
+
+skipif pg-wire-extended
+statement ok
+CREATE TABLE msc_not_null (v int); INSERT INTO msc_not_null VALUES (1); ALTER TABLE IF EXISTS msc_not_null ADD COLUMN c int NOT NULL DEFAULT 7;
+
+
+skipif pg-wire-extended
+query
+SELECT c, is_nullable FROM msc_not_null, information_schema.columns WHERE table_name = 'msc_not_null' AND column_name = 'c';
+----
+c	is_nullable
+7	NO
+
+
+skipif pg-wire-extended
+statement ok
+CREATE TABLE msc_exists (v int, id int); INSERT INTO msc_exists VALUES (1, 42); ALTER TABLE msc_exists ADD COLUMN IF NOT EXISTS id serial;
+
+
+skipif pg-wire-extended
+query
+SELECT v, id FROM msc_exists;
+----
+v	id
+1	42
+
+
+skipif pg-wire-extended
+query
+SELECT to_regclass('msc_exists_id_seq') IS NULL AS no_sequence;
+----
+no_sequence
+t
+
+
+skipif pg-wire-extended
+statement ok
+CREATE TEMP TABLE msc_temp (v int); ALTER TABLE msc_temp ADD COLUMN id serial; INSERT INTO msc_temp (v) VALUES (5);
+
+
+skipif pg-wire-extended
+query
+SELECT v, id FROM msc_temp;
+----
+v	id
+5	1
+
+
+skipif pg-wire-extended
+statement ok
+CREATE SEQUENCE msc_taken_id_seq; CREATE TABLE msc_taken (v int); ALTER TABLE msc_taken ADD COLUMN id serial;
+
+
+skipif pg-wire-extended
+query
+SELECT pg_get_serial_sequence('msc_taken', 'id') AS sequence;
+----
+sequence
+public.msc_taken_id_seq1
+
+
+skipif pg-wire-extended
+statement ok
+CREATE TABLE msc_truncate (id serial, v int); INSERT INTO msc_truncate (v) VALUES (1), (2); TRUNCATE msc_truncate RESTART IDENTITY; INSERT INTO msc_truncate (v) VALUES (3);
+
+
+skipif pg-wire-extended
+query
+SELECT id, v FROM msc_truncate;
+----
+id	v
+1	3
+
+
+skipif pg-wire-extended
+statement error syntax error at or near
+CREATE TABLE msc_syntax (v int); COMMIT; SELEC 1;
+
+
+query
+SELECT to_regclass('msc_syntax') IS NULL AS absent;
+----
+absent
+t

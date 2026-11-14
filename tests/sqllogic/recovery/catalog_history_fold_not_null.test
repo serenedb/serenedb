@@ -1,0 +1,100 @@
+control substitution on
+
+statement ok
+CREATE TABLE chfnn_t (a INT, b INT, c INT NOT NULL, d INT);
+
+
+statement ok
+ALTER TABLE chfnn_t ALTER COLUMN a SET NOT NULL;
+
+
+statement ok
+COMMENT ON COLUMN chfnn_t.b IS 'b1';
+
+
+statement ok
+ALTER TABLE chfnn_t ALTER COLUMN b SET DEFAULT 7;
+
+
+statement ok
+ALTER TABLE chfnn_t ALTER COLUMN d SET NOT NULL;
+
+
+statement ok
+ALTER TABLE chfnn_t ALTER COLUMN a DROP NOT NULL;
+
+
+statement ok
+ALTER TABLE chfnn_t ALTER COLUMN c DROP NOT NULL;
+
+
+statement ok
+COMMENT ON COLUMN chfnn_t.b IS 'b2';
+
+
+statement ok
+ALTER TABLE chfnn_t ALTER COLUMN c SET NOT NULL;
+
+
+statement ok
+INSERT INTO chfnn_t (a, c, d) VALUES (NULL, 1, 2);
+
+
+statement ok
+CREATE TABLE chfnn_oids AS SELECT conname, oid FROM pg_constraint WHERE conrelid = 'chfnn_t'::regclass;
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+SET sdb_faults = 'shutdown_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_restart
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT a, b, c, d, col_description('chfnn_t'::regclass, 2) AS comment FROM chfnn_t;
+----
+a	b	c	d	comment
+NULL	7	1	2	b2
+
+
+connection after_restart
+query
+SELECT o.conname, c.oid = o.oid AS same_oid FROM chfnn_oids o LEFT JOIN pg_constraint c ON c.conrelid = 'chfnn_t'::regclass AND c.conname = o.conname ORDER BY o.conname;
+----
+conname	same_oid
+chfnn_t_c_not_null	t
+chfnn_t_d_not_null	t
+
+
+connection after_restart
+statement error
+INSERT INTO chfnn_t (a, c, d) VALUES (1, NULL, 2);
+----
+db error: ERROR: NOT NULL constraint failed: chfnn_t.c
+
+
+connection after_restart
+statement error
+INSERT INTO chfnn_t (a, c, d) VALUES (1, 2, NULL);
+----
+db error: ERROR: NOT NULL constraint failed: chfnn_t.d
+
+
+connection after_restart
+statement ok
+INSERT INTO chfnn_t (a, c, d) VALUES (NULL, 3, 4);
+
+
+connection after_restart
+query
+SELECT count(*) AS n FROM chfnn_t WHERE a IS NULL;
+----
+n
+2

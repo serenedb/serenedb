@@ -141,6 +141,9 @@ int DuckExceptionToErrcode(const duckdb::ErrorData& error) {
   if (subtype == "STATEMENT_TOO_COMPLEX") {
     return ERRCODE_STATEMENT_TOO_COMPLEX;
   }
+  if (subtype == "CARDINALITY_VIOLATION") {
+    return ERRCODE_CARDINALITY_VIOLATION;
+  }
   if (error.Type() == duckdb::ExceptionType::CATALOG) {
     if (subtype == "WRONG_OBJECT_TYPE") {
       return ERRCODE_WRONG_OBJECT_TYPE;
@@ -165,7 +168,7 @@ int DuckExceptionToErrcode(const duckdb::ErrorData& error) {
     if (kind.find("Function") != std::string_view::npos) {
       return dup ? ERRCODE_DUPLICATE_FUNCTION : ERRCODE_UNDEFINED_FUNCTION;
     }
-    if (kind == "Type") {
+    if (kind == "Type" || kind == "Constraint") {
       return dup ? ERRCODE_DUPLICATE_OBJECT : ERRCODE_UNDEFINED_OBJECT;
     }
     if (kind == "prepared statement") {

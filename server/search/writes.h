@@ -26,20 +26,27 @@
 
 #include <cstdint>
 #include <duckdb/common/identifier.hpp>
+#include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
 #include "connector/column_id.h"
+#include "connector/constraint_keys.h"
 #include "connector/search_sink_writer.hpp"
 #include "search/search_table_changes.h"
 #include "search/store.h"
@@ -57,6 +64,7 @@ struct StoreWrites {
   LocalTableChangesEntry changes;
   WriterGenerations::Writer registration;
   std::vector<OwnSegment> own_segments;
+  std::optional<uint64_t> flushed_layout;
   std::vector<irs::DocMap> own_maps;
   uint64_t rows_generation = 0;
   std::shared_ptr<const TableState> rebuilt;
@@ -89,8 +97,8 @@ struct StoreWrites {
   bool dropping = false;
   // The keys the table enforces, and what this transaction's rows were
   // checked against: the keys of the rows it still buffers, how many of those
-  // rows and of its own segments were checked, and the committed rows the last
-  // check saw.
+  // rows and of its own segments were checked, and the committed rows all of
+  // them were checked against.
   std::vector<KeySpec> keys;
   HotKeys buffered_keys;
   duckdb::idx_t keyed_rows = 0;
@@ -110,10 +118,69 @@ struct StoreWrites {
   };
   std::vector<RemovedKeys> removed_keys;
   bool removed_rows = false;
+  std::vector<std::vector<std::string>> statement_references;
   // The committed rows of a referenced or referencing table the first check
   // against it saw, by store.
   absl::flat_hash_map<duckdb::idx_t, std::shared_ptr<const TableState>>
     related_checked;
+};
+
+enum class KeyConflict : uint8_t {
+  Unique,
+  Upsert,
+  UpsertUpdate,
+};
+
+class ConflictArbiter {
+ public:
+  ConflictArbiter(duckdb::ClientContext& context, const StoreWrites& w,
+                  const irs::DirectoryReader& reader,
+                  std::span<const irs::field_id> fields);
+
+  duckdb::idx_t Admit(duckdb::DataChunk& chunk,
+                      std::span<const connector::ColumnId> column_ids,
+                      duckdb::SelectionVector& kept);
+  void Replace(
+    duckdb::DataChunk& chunk, std::span<const connector::ColumnId> column_ids,
+    absl::FunctionRef<void(duckdb::idx_t row, const KeyHolder& holder)>
+      replaced);
+
+  const irs::containers::FlatHashSet<std::string>* Proposed(
+    irs::field_id field) const;
+  bool Probed(uint64_t unit) const { return _probed.contains(unit); }
+
+ private:
+  struct Arbiter {
+    irs::field_id field = 0;
+    connector::ConstraintKeyEncoder encoder;
+    KeyProbe held;
+    irs::containers::FlatHashSet<std::string> proposed;
+  };
+
+  struct OwnRows {
+    uint32_t index = 0;
+    irs::doc_id_t docs = 0;
+    const irs::DocumentMask* removed = nullptr;
+    uint64_t generation = 0;
+  };
+
+  struct RowKeys {
+    std::vector<duckdb::Vector> encoded;
+    std::vector<std::string_view> keys;
+  };
+
+  RowKeys Encode(duckdb::DataChunk& chunk,
+                 std::span<const connector::ColumnId> column_ids) const;
+  void ForEachHolder(
+    const RowKeys& keys, duckdb::idx_t count,
+    absl::FunctionRef<void(duckdb::idx_t row, const KeyHolder& holder)> visit)
+    const;
+
+  const StoreWrites& _w;
+  std::vector<Arbiter> _arbiters;
+  irs::containers::FlatHashSet<uint64_t> _probed;
+  std::optional<OwnRows> _own;
+  absl::Mutex _mutex;
 };
 
 struct LogSection {
@@ -128,16 +195,10 @@ class Writes {
     : _session{session}, _snapshot{snapshot}, _walks{walks} {}
   ~Writes() { Abort(); }
 
-  // Registers this transaction as a writer of `store`, once, before anything
-  // reads the store's index config -- so a rebuild that publishes a config can
-  // tell whether this transaction predates it. Called from the DML operators'
-  // GetGlobalSinkState: the bulk insert path builds its sink there, ahead of
-  // the Combine that hands over its iresearch transaction, so registering any
-  // later would let it straddle a swap unnoticed.
   void RegisterWriter(const std::shared_ptr<Store>& store,
                       const catalog::SearchTableEntry& table);
 
-  const WriterGenerations::Writer* Registration(duckdb::idx_t store_id) const;
+  void FollowLayout(const Store& store, uint64_t before);
 
   void AdoptTable(const std::shared_ptr<Store>& store,
                   const catalog::SearchTableEntry& table);
@@ -152,10 +213,10 @@ class Writes {
   void Rebuilt(const std::shared_ptr<Store>& store,
                std::shared_ptr<const TableState> state, bool newer);
 
-  void AddOwnSegments(
-    const std::shared_ptr<Store>& store,
-    std::unique_ptr<irs::IndexWriter::Transaction> trx,
-    std::span<const irs::IndexWriter::FlushedSegment> flushed);
+  void AddOwnSegments(const std::shared_ptr<Store>& store,
+                      std::unique_ptr<irs::IndexWriter::Transaction> trx,
+                      std::span<const irs::IndexWriter::FlushedSegment> flushed,
+                      uint64_t layout);
 
   void AddInlineRows(duckdb::ClientContext& context,
                      const std::shared_ptr<Store>& store,
@@ -192,13 +253,15 @@ class Writes {
 
   bool Empty() const noexcept { return _writes.empty(); }
 
-  // Refuses the statement whose rows of `store` hold a unique key a live row
-  // already holds, theirs or another of its own, or a foreign key the
-  // referenced table does not hold, and the statement that removed the last
-  // row holding a key a foreign key references. Runs once the statement has
-  // handed its rows over.
   void CheckKeys(duckdb::ClientContext& context, const Store& store,
-                 bool merge_insert);
+                 KeyConflict conflict,
+                 const ConflictArbiter* arbiter = nullptr);
+
+  std::unique_ptr<ConflictArbiter> ArbitrateConflicts(
+    duckdb::ClientContext& context, const std::shared_ptr<Store>& store,
+    std::span<const irs::field_id> fields);
+
+  void CheckStatement(duckdb::ClientContext& context);
 
   // Refuses the rows of `table`, the whole table, whose reference key `spec`
   // the referenced table does not hold; the commit checks them again if the
@@ -241,8 +304,7 @@ class Writes {
   [[noreturn]] void ThrowDuplicateOrConflict(duckdb::ClientContext& context,
                                              const StoreWrites& w,
                                              const KeySpec& spec,
-                                             std::string_view key,
-                                             bool merge_insert);
+                                             std::string_view key, bool upsert);
   void CheckReferences(duckdb::ClientContext& context, StoreWrites& w,
                        const KeySpec& spec, std::span<const std::string> keys);
   void CheckRemovedKeys(duckdb::ClientContext& context, StoreWrites& w,
@@ -263,6 +325,7 @@ class Writes {
   catalog::WalkCounters& _walks;
   mutable absl::Mutex _mutex;
   std::atomic<StoreWrites*> _listed{nullptr};
+  std::atomic<bool> _statement_checks{false};
   std::vector<ReferenceCheck> _reference_checks;
   Tick _conflict = 0;
   // Node-based: the entry is well past FlatHashMap's size cut-off, and the

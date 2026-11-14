@@ -357,12 +357,38 @@ void QualifyInLoggedSchema(BaseCatalog& catalog,
     catalog.GetName(), std::move(path), std::move(name)));
 }
 
+struct CreatedConstraint {
+  std::string name;
+  duckdb::idx_t oid = 0;
+};
+
 struct ChangeContent {
   duckdb::unique_ptr<duckdb::CreateInfo> info;
   std::string alter;
   duckdb::LogicalDependencyList dependencies;
-  duckdb::vector<duckdb::idx_t> constraints;
+  std::vector<CreatedConstraint> created_constraints;
 };
+
+std::vector<CreatedConstraint> CreatedConstraints(const Change& change) {
+  std::vector<CreatedConstraint> created;
+  auto& version = *change.version;
+  if (!version.HasChild() ||
+      version.Child().type != duckdb::CatalogType::TABLE_ENTRY) {
+    return created;
+  }
+  const auto& before =
+    version.Child().Cast<duckdb::TableCatalogEntry>().GetConstraints();
+  for (const auto& constraint :
+       version.Cast<duckdb::TableCatalogEntry>().GetConstraints()) {
+    if (absl::c_none_of(before, [&](const auto& old) {
+          return old->oid == constraint->oid;
+        })) {
+      created.push_back(
+        {.name = constraint->constraint_name, .oid = constraint->oid});
+    }
+  }
+  return created;
+}
 
 duckdb::vector<duckdb::idx_t> References(const Change& change) {
   const auto& subject = change.Subject();
@@ -619,13 +645,19 @@ std::string ChangeBody(const Change& change) {
   } else {
     serializer.WritePropertyWithDefault(101, "alter", change.alter);
     if (subject.type == duckdb::CatalogType::TABLE_ENTRY) {
-      const auto& table = subject.Cast<duckdb::TableCatalogEntry>();
-      serializer.WriteProperty(102, "dependencies", table.dependencies);
-      duckdb::vector<duckdb::idx_t> constraints;
-      for (const auto& constraint : table.GetConstraints()) {
-        constraints.push_back(constraint->oid);
+      serializer.WriteProperty(
+        102, "dependencies",
+        subject.Cast<duckdb::TableCatalogEntry>().dependencies);
+      if (const auto created = CreatedConstraints(change); !created.empty()) {
+        serializer.WriteList(
+          104, "created_constraints", created.size(),
+          [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
+            list.WriteObject([&](duckdb::Serializer& object) {
+              object.WriteProperty(100, "name", created[i].name);
+              object.WriteProperty(101, "oid", created[i].oid);
+            });
+          });
       }
-      serializer.WriteProperty(103, "constraints", constraints);
     }
   }
   serializer.End();
@@ -653,9 +685,15 @@ ChangeContent ReadChangeBody(duckdb::ClientContext& context,
   content.dependencies =
     deserializer.ReadPropertyWithExplicitDefault<duckdb::LogicalDependencyList>(
       102, "dependencies", duckdb::LogicalDependencyList{});
-  content.constraints =
-    deserializer.ReadPropertyWithExplicitDefault<duckdb::vector<duckdb::idx_t>>(
-      103, "constraints", duckdb::vector<duckdb::idx_t>{});
+  deserializer.ReadOptionalList(
+    104, "created_constraints",
+    [&](duckdb::Deserializer::List& list, duckdb::idx_t) {
+      list.ReadObject([&](duckdb::Deserializer& object) {
+        content.created_constraints.push_back(
+          {.name = object.ReadProperty<std::string>(100, "name"),
+           .oid = object.ReadProperty<duckdb::idx_t>(101, "oid")});
+      });
+    });
   deserializer.End();
   return content;
 }
@@ -691,17 +729,23 @@ void ReplayChange(duckdb::ClientContext& context, ReplayTarget target,
         table.dependencies = std::move(content.dependencies);
         catalog.Oids().AddDependents(table, table.oid);
       }
-      if (const auto& constraints = content.constraints; !constraints.empty()) {
-        const auto& current =
-          LoggedTable(catalog, transaction, oid).GetConstraints();
-        SDB_ENSURE(current.size() == constraints.size(), "the log gives table ",
-                   oid, " ", constraints.size(), " constraints, replay made ",
-                   current.size());
+      if (!content.created_constraints.empty()) {
         auto& oids = catalog.GetDatabase().GetDatabaseManager();
-        for (size_t i = 0; i < current.size(); ++i) {
-          current[i]->oid = constraints[i];
-          oids.ClaimOid(constraints[i]);
+        std::vector<duckdb::idx_t> restored;
+        auto& constraints =
+          LoggedTable(catalog, transaction, oid).GetConstraints();
+        for (const auto& created : content.created_constraints) {
+          const auto it = absl::c_find_if(constraints, [&](const auto& made) {
+            return made->constraint_name == created.name;
+          });
+          SDB_ENSURE(it != constraints.end(), "the log creates constraint \"",
+                     created.name, "\" on table ", oid,
+                     " that replay did not make");
+          (*it)->oid = created.oid;
+          oids.ClaimOid(created.oid);
+          restored.push_back(created.oid);
         }
+        catalog.Oids().Alias(restored, oid);
       }
       return;
     }
@@ -997,10 +1041,10 @@ std::vector<std::vector<uint8_t>> CompactHistory(
     }
     for (auto& value : record.sequences) {
       const auto life = life_of(value.catalog, value.oid);
-      sequences.insert_or_assign(
-        state_key(life, value.catalog, value.oid, 0),
-        Slot<SequenceRecordValue>{
-          .record = r, .life = life, .value = std::move(value)});
+      auto& slot = sequences[state_key(life, value.catalog, value.oid, 0)];
+      if (slot.value.usage_count <= value.usage_count) {
+        slot = {.record = r, .life = life, .value = std::move(value)};
+      }
     }
     for (auto& secret : record.secrets) {
       auto name = secret.name;

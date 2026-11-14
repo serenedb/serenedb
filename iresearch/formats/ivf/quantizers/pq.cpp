@@ -375,8 +375,8 @@ class ProductQuantizerReader final : public QuantizerReader {
     const std::span<const float> query = _cb->Query();
     // IP(q, c + r) = IP(q, c) + IP(q, r); the packed LUT for IP(q, r) is
     // query-only and precomputed once per query in the codebook.
-    _qc = ComputeDistance<VectorMetric::InnerProduct>(
-      query.data(), centroid, static_cast<uint16_t>(query.size()));
+    _qc = ComputeDistance<VectorMetric::InnerProduct>(query.data(), centroid,
+                                                      query.size());
   }
 
   void ComputeBlock(std::span<const byte_type> block, score_t /*threshold*/,

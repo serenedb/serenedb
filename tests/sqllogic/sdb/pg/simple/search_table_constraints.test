@@ -288,18 +288,21 @@ INSERT INTO sc_race VALUES (1, NULL);
 
 
 connection s2
-statement async error
+statement ok
 ALTER TABLE sc_race ALTER COLUMN b SET NOT NULL;
-----
-db error: ERROR: column "b" of relation "sc_race" contains null values
 
 
 connection s1
-statement ok
+statement error
 COMMIT;
+----
+db error: ERROR: table "sc_race" was altered by a concurrent transaction
+HINT: Retry the transaction.
 
 
-wait
+connection s2
+statement ok
+ALTER TABLE sc_race ALTER COLUMN b DROP NOT NULL;
 
 
 connection s2

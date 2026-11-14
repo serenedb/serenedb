@@ -1,0 +1,49 @@
+# A catalog listing with include_hidden runs while another listing of the same
+# statement is still walking the statement's databases: both return their rows.
+
+statement ok
+CREATE DATABASE listing_hidden_extra;
+
+statement ok
+SET sdb_faults = 'pause_procedure_in_after_find';
+
+statement ok
+SET sdb_faults = 'catalog_all_schemas_listed';
+
+connection listing_hidden_lister
+query async
+SELECT count(*) AS listings, bool_and(listed) AS all_listed
+FROM (
+  SELECT count(*) > 0 AS listed FROM duckdb_schemas()
+  WHERE to_regprocedure(database_name || '(integer)') IS NULL
+  UNION ALL
+  SELECT count(*) > 0 FROM (SELECT pg_sleep(2) AS z) d, duckdb_schemas(include_hidden := true) s
+  WHERE d.z IS NULL
+) u;
+----
+listings	all_listed
+2	t
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_procedure_in_after_find:parked';
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-catalog_all_schemas_listed:parked';
+
+connection default
+statement ok
+SET sdb_faults = 'catalog_all_schemas_listed:release';
+
+connection default
+statement ok
+SET sdb_faults = 'pause_procedure_in_after_find:release';
+
+wait
+
+query
+SELECT count(*) > 0 AS listed FROM duckdb_schemas();
+----
+listed
+t

@@ -1,0 +1,87 @@
+# Vector indexes on FLOAT[N] with N above 65535 compute distances over all N
+# dimensions. Every vector is zero except dimensions 0, 1, 2 and 65536, so each
+# true distance to the zero query is an exact integer.
+
+statement ok
+SET sdb_ivf_search_nprobe = 1000
+
+statement ok
+CREATE MACRO wide_vec(a, b, c, z) AS
+  list_transform(range(65537),
+                 lambda x: (CASE WHEN x = 0 THEN a
+                            WHEN x = 1 THEN b
+                            WHEN x = 2 THEN c
+                            WHEN x = 65536 THEN z
+                            ELSE 0 END)::FLOAT)::FLOAT[65537];
+
+statement ok
+CREATE TABLE wide_hnsw (pk INTEGER PRIMARY KEY, emb FLOAT[65537]);
+
+statement ok
+CREATE INDEX wide_hnsw_idx ON wide_hnsw
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'sq8'));
+
+statement ok
+CREATE TABLE wide_ivf (pk INTEGER PRIMARY KEY, emb FLOAT[65537]);
+
+statement ok
+CREATE INDEX wide_ivf_idx ON wide_ivf
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8'));
+
+statement count 3
+INSERT INTO wide_hnsw VALUES
+  (1, wide_vec(3, 0, 0, 4)),
+  (2, wide_vec(0, 6, 8, 0)),
+  (3, wide_vec(12, 0, 0, 0));
+
+statement count 3
+INSERT INTO wide_ivf SELECT * FROM wide_hnsw;
+
+query
+SELECT pk, emb <-> wide_vec(0, 0, 0, 0) AS d FROM wide_hnsw ORDER BY pk;
+----
+pk	d
+1	5
+2	10
+3	12
+
+query
+SELECT pk, emb <-> wide_vec(0, 0, 0, 0) AS d FROM wide_hnsw_idx ORDER BY d LIMIT 3;
+----
+pk	d
+1	5
+2	10
+3	12
+
+query
+SELECT pk, emb <-> wide_vec(0, 0, 0, 0) AS d FROM wide_hnsw_idx ORDER BY pk;
+----
+pk	d
+1	5
+2	10
+3	12
+
+query
+SELECT pk, emb <-> wide_vec(0, 0, 0, 0) AS d FROM wide_ivf_idx ORDER BY d LIMIT 3;
+----
+pk	d
+1	5
+2	10
+3	12
+
+query
+SELECT pk, emb <-> wide_vec(0, 0, 0, 0) AS d FROM wide_ivf_idx ORDER BY pk;
+----
+pk	d
+1	5
+2	10
+3	12
+
+statement ok
+DROP TABLE wide_hnsw;
+
+statement ok
+DROP TABLE wide_ivf;
+
+statement ok
+DROP MACRO wide_vec;

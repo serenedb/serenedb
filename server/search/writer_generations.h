@@ -44,7 +44,7 @@ class WriterGenerations final {
   using Writer = std::unique_ptr<WriterGenerations, Leaver>;
 
   [[nodiscard]] Writer Register() noexcept;
-  void Drain(duckdb::ClientContext& context, const Writer* own);
+  void Drain(duckdb::ClientContext& context);
 
  private:
   static constexpr uint64_t kGeneration = 1;

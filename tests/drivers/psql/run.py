@@ -283,7 +283,7 @@ def main() -> int:
 
     # The unfiltered \du and \dg goldens list every role in the cluster, so no
     # concurrent lane may hold one while this suite runs.
-    shared = Path(os.environ.get("SDB_DRV_SHARED_DIR") or tempfile.gettempdir())
+    shared = Path(os.environ.get("SDB_DRV_SHARED_DIR") or Path(tempfile.gettempdir()) / f"sdb-drivers-{os.getuid()}")
     shared.mkdir(parents=True, exist_ok=True)
     roles_lock = open(shared / "sdb-drivers-global-roles.lock", "w")
     fcntl.flock(roles_lock, fcntl.LOCK_EX)

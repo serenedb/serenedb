@@ -1,0 +1,47 @@
+# A job whose next run is centuries away waits for it: the scheduler must not
+# start (or retry) the run before its time. pause_job_before_run parks the
+# first thread that enters a scheduled run, so it stays unparked while the job
+# waits for its first grid point in the year 2370.
+
+statement ok
+CREATE TABLE far_job_log (a int);
+
+
+statement ok
+SET sdb_faults = 'pause_job_before_run';
+
+
+statement ok
+CREATE JOB far_job EVERY 400 YEARS AS INSERT INTO far_job_log VALUES (1);
+
+
+query
+SELECT next_run FROM sdb_jobs() WHERE job_name = 'far_job';
+----
+next_run
+2370-01-01 00:00:00+00
+
+
+statement ok
+SELECT pg_sleep(1);
+
+
+statement error
+SET sdb_faults = '-pause_job_before_run:parked';
+----
+db error: ERROR: failure point '-pause_job_before_run:parked' not set
+
+
+statement ok
+DROP JOB far_job;
+
+
+statement ok
+RESET sdb_faults;
+
+
+query
+SELECT count(*) AS n FROM far_job_log;
+----
+n
+0

@@ -34,6 +34,7 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace sdb::catalog {
@@ -50,6 +51,12 @@ class OidIndex;
 
 void ForEachSubject(const duckdb::CatalogEntry& version,
                     absl::FunctionRef<void(duckdb::idx_t)> visit);
+
+struct DroppedSubject {
+  duckdb::idx_t oid = 0;
+  std::string_view name;
+  bool role = false;
+};
 
 struct Dependent {
   duckdb::idx_t oid = 0;
@@ -125,10 +132,16 @@ class OidIndex {
     duckdb::CatalogTransaction transaction,
     absl::FunctionRef<void(duckdb::CatalogEntry&)> callback);
 
-  void CheckCreated(const duckdb::CatalogEntry& version);
+  void CheckCreated(const duckdb::SnapshotView& view,
+                    const duckdb::CatalogEntry& version);
+
+  void CheckChangedParts(const duckdb::SnapshotView& view,
+                         duckdb::CatalogEntry& version);
+
+  void CheckLive(const duckdb::SnapshotView& view, duckdb::idx_t oid);
 
   void CheckDropped(const duckdb::SnapshotView& view,
-                    const duckdb::CatalogEntry& dropped);
+                    const DroppedSubject& dropped);
 
  private:
   struct Slot {
@@ -224,11 +237,13 @@ class EntrySet {
 
   OidIndex& Oids() noexcept { return _oids; }
 
-  void CheckSubjectLive(const duckdb::Identifier& name, duckdb::idx_t oid);
+  void CheckSubjectLive(const duckdb::SnapshotView& view,
+                        const duckdb::Identifier& name, duckdb::idx_t oid,
+                        duckdb::idx_t part);
 
   void CheckNoLaterDependent(const duckdb::SnapshotView& view,
                              const duckdb::Identifier& name, duckdb::idx_t oid,
-                             const duckdb::CatalogEntry& dropped,
+                             const DroppedSubject& dropped,
                              const duckdb::Identifier& catalog, bool local);
 
  private:

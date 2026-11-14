@@ -35,18 +35,12 @@ auto WriterGenerations::Register() noexcept -> Writer {
   return Writer{this, Leaver{slot}};
 }
 
-void WriterGenerations::Drain(duckdb::ClientContext& context,
-                              const Writer* own) {
-  SDB_ASSERT(!own || !*own || own->get() == this);
-  const auto others = [&](unsigned slot) {
-    const bool mine = own && *own && own->get_deleter().slot == slot;
-    return Writers(_state.load(), slot) - (mine ? 1 : 0);
-  };
+void WriterGenerations::Drain(duckdb::ClientContext& context) {
   absl::MutexLock lock{&duckdb::ClientContext::AwaitMutex()};
   const auto prior = static_cast<unsigned>(_state.load() & kGeneration);
-  context.Await([&] { return others(prior ^ 1U) == 0; });
+  context.Await([&] { return Writers(_state.load(), prior ^ 1U) == 0; });
   _state.fetch_xor(kGeneration);
-  context.Await([&] { return others(prior) == 0; });
+  context.Await([&] { return Writers(_state.load(), prior) == 0; });
 }
 
 void WriterGenerations::Leave(unsigned slot) noexcept {

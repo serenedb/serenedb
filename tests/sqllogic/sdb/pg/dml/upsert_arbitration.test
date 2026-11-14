@@ -1,0 +1,354 @@
+statement ok
+CREATE TABLE ua_rep (k INT PRIMARY KEY, a INT, b TEXT DEFAULT 'd');
+
+
+statement ok
+INSERT INTO ua_rep VALUES (1, 10, 'x'), (2, 20, 'y');
+
+
+statement count 2
+INSERT OR REPLACE INTO ua_rep VALUES (1, 11, 'xx'), (3, 30, 'z');
+
+
+query
+SELECT k, a, b FROM ua_rep ORDER BY k;
+----
+k	a	b
+1	11	xx
+2	20	y
+3	30	z
+
+
+statement error
+INSERT OR REPLACE INTO ua_rep VALUES (4, 40, 'p'), (4, 41, 'q');
+----
+db error: ERROR: ON CONFLICT DO UPDATE command cannot affect row a second time
+HINT: Ensure that no rows proposed for insertion within the same command have duplicate constrained values.
+
+
+statement error
+INSERT OR REPLACE INTO ua_rep VALUES (2, 21, 'p'), (2, 22, 'q');
+----
+db error: ERROR: ON CONFLICT DO UPDATE command cannot affect row a second time
+HINT: Ensure that no rows proposed for insertion within the same command have duplicate constrained values.
+
+
+query ??? rowsort
+INSERT OR REPLACE INTO ua_rep VALUES (2, 22, 'w'), (5, 50, 'v') RETURNING k, a, b;
+----
+k	a	b
+2	22	w
+5	50	v
+
+
+statement count 1
+INSERT OR REPLACE INTO ua_rep (a, k, b) VALUES (12, 1, 'xy');
+
+
+statement count 1
+INSERT OR REPLACE INTO ua_rep (k, a) VALUES (3, 31);
+
+
+query
+SELECT k, a, b FROM ua_rep ORDER BY k;
+----
+k	a	b
+1	12	xy
+2	22	w
+3	31	z
+5	50	v
+
+
+query
+EXPLAIN INSERT OR REPLACE INTO ua_rep VALUES (1, 1, 'e');
+----
+QUERY PLAN
+╭─ INSERT ──────────────╮
+│ On Conflict: REPLACE  │
+│ Patched Columns: a, b │
+╰───────────┬───────────╯
+╭─ COLUMN_DATA_SCAN ────╮
+│ ~1 row                │
+╰───────────────────────╯
+
+
+query
+EXPLAIN INSERT OR REPLACE INTO ua_rep (k, a) VALUES (1, 1);
+----
+QUERY PLAN
+╭─ MERGE_INTO ──────────────────────╮
+╰─────────────────┬─────────────────╯
+                  ├──────────────────────────────────────┬───────────────────────────────────────╮
+╭─ PROJECTION ────┴─────────────────╮  ╭─ UPDATE ────────┴────────────────╮  ╭─ INSERT ──────────┴──────────────────╮
+│ Projections: k, a, b, a, rowid    │  │ Table: ua_rep                    │  ╰───────────────────┬──────────────────╯
+│ ~1 row                            │  │ Row Ids: ASSUME_UNIQUE           │  ╭─ PROJECTION ──────┴──────────────────╮
+╰─────────────────┬─────────────────╯  │ Patched Columns: a               │  │ Projections: #0, #1, #2              │
+╭─ PROJECTION ────┴─────────────────╮  ╰─────────────────┬────────────────╯  │ ~1 row                               │
+│ Projections:                      │  ╭─ PROJECTION ────┴────────────────╮  ╰───────────────────┬──────────────────╯
+│ #0, #1, #2,                       │  │ Projections: #3, #4              │  ╭─ MERGE_ACTION_SOURCE ────────────────╮
+│ __internal_decompress_string(#3)  │  │ ~1 row                           │  │ Action: WHEN NOT MATCHED THEN INSERT │
+│ ~1 row                            │  ╰─────────────────┬────────────────╯  │ ~1 row                               │
+╰─────────────────┬─────────────────╯  ╭─ MERGE_ACTION_SOURCE ────────────╮  ╰──────────────────────────────────────╯
+╭─ HASH_JOIN ─────┴─────────────────╮  │ Action: WHEN MATCHED THEN UPDATE │
+│ Join Type: RIGHT                  │  │ ~1 row                           │
+│ Conditions: k = k                 │  ╰──────────────────────────────────╯
+│ ~1 row                            │
+╰─────────────────┬─────────────────╯
+                  ├──────────────────────────────────────────╮
+╭─ IRESEARCH_SCAN ┴─────────────────╮  ╭─ PROJECTION ────────┴────────────────────╮
+│ Table: ua_rep                     │  │ Projections:                             │
+│ Projections: k, rowid             │  │ #0, #1,                                  │
+│ ~4 rows                           │  │ __internal_compress_string_utinyint(#2)  │
+╰───────────────────────────────────╯  │ ~1 row                                   │
+                                       ╰─────────────────────┬────────────────────╯
+                                       ╭─ PROJECTION ────────┴────────────────────╮
+                                       │ Projections: k, a, 'd'                   │
+                                       │ ~1 row                                   │
+                                       ╰─────────────────────┬────────────────────╯
+                                       ╭─ COLUMN_DATA_SCAN ──┴────────────────────╮
+                                       │ ~1 row                                   │
+                                       ╰──────────────────────────────────────────╯
+
+
+query
+EXPLAIN INSERT INTO ua_rep VALUES (1, 1, 'e') ON CONFLICT DO NOTHING;
+----
+QUERY PLAN
+╭─ INSERT ────────────────╮
+│ On Conflict: DO NOTHING │
+╰────────────┬────────────╯
+╭─ COLUMN_DATA_SCAN ──────╮
+│ ~1 row                  │
+╰─────────────────────────╯
+
+
+query
+EXPLAIN INSERT INTO ua_rep VALUES (1, 1, 'e') ON CONFLICT (k) DO UPDATE SET a = excluded.a;
+----
+QUERY PLAN
+╭─ MERGE_INTO ────────╮
+╰──────────┬──────────╯
+           ├───────────────────────────────────────────────────────┬───────────────────────────────────────╮
+╭─ PROJECTION ────────╮                          ╭─ UPDATE ────────┴────────────────╮  ╭─ INSERT ──────────┴──────────────────╮
+│ Projections: k, a,  │                          │ Table: ua_rep                    │  ╰───────────────────┬──────────────────╯
+│              b, a,  │                          │ Row Ids: ASSUME_UNIQUE           │  ╭─ PROJECTION ──────┴──────────────────╮
+│              rowid  │                          │ Patched Columns: a               │  │ Projections: #0, #1, #2              │
+│ ~1 row              │                          ╰─────────────────┬────────────────╯  │ ~1 row                               │
+╰──────────┬──────────╯                          ╭─ PROJECTION ────┴────────────────╮  ╰───────────────────┬──────────────────╯
+╭─ HASH_JOIN ─────────╮                          │ Projections: #3, #4              │  ╭─ MERGE_ACTION_SOURCE ────────────────╮
+│ Join Type: RIGHT    │                          │ ~1 row                           │  │ Action: WHEN NOT MATCHED THEN INSERT │
+│ Conditions: k = k   │                          ╰─────────────────┬────────────────╯  │ ~1 row                               │
+│ ~1 row              │                          ╭─ MERGE_ACTION_SOURCE ────────────╮  ╰──────────────────────────────────────╯
+╰──────────┬──────────╯                          │ Action: WHEN MATCHED THEN UPDATE │
+           ├────────────────────────╮            │ ~1 row                           │
+╭─ IRESEARCH_SCAN ────╮  ╭─ COLUMN_DATA_SCAN ─╮  ╰──────────────────────────────────╯
+│ Table: ua_rep       │  │ ~1 row             │
+│ Projections: k,     │  ╰────────────────────╯
+│              rowid  │
+│ ~4 rows             │
+╰─────────────────────╯
+
+
+statement ok
+SET debug_force_update_to_del_and_insert = true;
+
+
+query
+EXPLAIN INSERT OR REPLACE INTO ua_rep VALUES (1, 1, 'e');
+----
+QUERY PLAN
+╭─ INSERT ─────────────╮
+│ On Conflict: REPLACE │
+╰───────────┬──────────╯
+╭─ COLUMN_DATA_SCAN ───╮
+│ ~1 row               │
+╰──────────────────────╯
+
+
+statement count 2
+INSERT OR REPLACE INTO ua_rep VALUES (1, 13, 'xz'), (6, 60, 'u');
+
+
+statement ok
+RESET debug_force_update_to_del_and_insert;
+
+
+query
+SELECT k, a, b FROM ua_rep ORDER BY k;
+----
+k	a	b
+1	13	xz
+2	22	w
+3	31	z
+5	50	v
+6	60	u
+
+
+statement ok
+CREATE TABLE ua_gen (k INT PRIMARY KEY, a INT, s INT GENERATED ALWAYS AS (a * 2) STORED);
+
+
+statement ok
+INSERT INTO ua_gen (k, a) VALUES (1, 1), (2, 2);
+
+
+statement count 1
+INSERT OR REPLACE INTO ua_gen (k, a, s) VALUES (1, 5, DEFAULT);
+
+
+statement count 1
+INSERT OR REPLACE INTO ua_gen BY NAME SELECT 2 AS k, 9 AS a;
+
+
+query
+SELECT k, a, s FROM ua_gen ORDER BY k;
+----
+k	a	s
+1	5	10
+2	9	18
+
+
+statement ok
+CREATE TABLE ua_null (id INT, u INT UNIQUE);
+
+
+statement count 3
+INSERT OR REPLACE INTO ua_null VALUES (1, NULL), (2, NULL), (3, 3);
+
+
+statement count 2
+INSERT OR REPLACE INTO ua_null VALUES (4, NULL), (5, 3);
+
+
+query
+SELECT id, u FROM ua_null ORDER BY id;
+----
+id	u
+1	NULL
+2	NULL
+4	NULL
+5	3
+
+
+statement ok
+CREATE TABLE ua_txn (k INT PRIMARY KEY, v TEXT);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO ua_txn VALUES (1, 'a'), (2, 'b');
+
+
+statement ok
+INSERT OR REPLACE INTO ua_txn VALUES (1, 'aa'), (3, 'c');
+
+
+statement ok
+DELETE FROM ua_txn WHERE k = 2;
+
+
+statement ok
+INSERT OR REPLACE INTO ua_txn VALUES (2, 'bb'), (3, 'cc');
+
+
+query
+SELECT k, v FROM ua_txn ORDER BY k;
+----
+k	v
+1	aa
+2	bb
+3	cc
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT k, v FROM ua_txn ORDER BY k;
+----
+k	v
+1	aa
+2	bb
+3	cc
+
+
+statement ok
+CREATE TABLE ua_parent (id INT PRIMARY KEY, v INT);
+
+
+statement ok
+CREATE TABLE ua_child (id INT PRIMARY KEY, parent INT REFERENCES ua_parent (id));
+
+
+statement ok
+INSERT INTO ua_parent VALUES (1, 1);
+
+
+statement ok
+INSERT INTO ua_child VALUES (1, 1);
+
+
+statement count 1
+INSERT OR REPLACE INTO ua_parent VALUES (1, 2);
+
+
+statement error
+INSERT OR REPLACE INTO ua_child VALUES (1, 7);
+----
+db error: ERROR: insert or update on table "ua_child" violates foreign key constraint "ua_child_parent_fkey"
+DETAIL: Key (parent)=(7) is not present in table "ua_parent".
+
+
+query
+SELECT p.id, p.v, c.id AS child FROM ua_parent p JOIN ua_child c ON c.parent = p.id;
+----
+id	v	child
+1	2	1
+
+
+statement ok
+CREATE TABLE ua_many (k INT PRIMARY KEY, v INT);
+
+
+statement ok
+INSERT INTO ua_many SELECT i, 0 FROM generate_series(1, 3000) t(i);
+
+
+statement count 1000
+INSERT INTO ua_many SELECT i % 4000 + 1, i FROM generate_series(2000, 7999) t(i) ON CONFLICT DO NOTHING;
+
+
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE v = 0) AS kept FROM ua_many;
+----
+n	kept
+4000	3000
+
+
+statement count 4000
+INSERT OR REPLACE INTO ua_many SELECT i, -i FROM generate_series(1, 4000) t(i);
+
+
+query
+SELECT count(*) AS n, sum(v) AS s FROM ua_many;
+----
+n	s
+4000	-8002000
+
+
+statement error
+INSERT OR REPLACE INTO ua_many SELECT i % 3000 + 1, i FROM generate_series(1, 5000) t(i);
+----
+db error: ERROR: ON CONFLICT DO UPDATE command cannot affect row a second time
+HINT: Ensure that no rows proposed for insertion within the same command have duplicate constrained values.
+
+
+query
+SELECT count(*) AS n, sum(v) AS s FROM ua_many;
+----
+n	s
+4000	-8002000

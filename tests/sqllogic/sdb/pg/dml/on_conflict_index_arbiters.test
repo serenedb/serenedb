@@ -1,0 +1,81 @@
+statement ok
+CREATE TABLE ocia_t (id INT PRIMARY KEY, x INT)
+
+statement ok
+INSERT INTO ocia_t VALUES (1, 10)
+
+connection a
+statement ok
+BEGIN
+
+connection a
+statement ok
+CREATE UNIQUE INDEX ocia_t_x ON ocia_t (x)
+
+connection b
+statement error
+INSERT INTO ocia_t VALUES (4, 10) ON CONFLICT (x) DO UPDATE SET id = 99
+----
+db error: ERROR: The specified columns as conflict target are not referenced by a UNIQUE/PRIMARY KEY CONSTRAINT or INDEX
+
+
+connection b
+statement error
+INSERT INTO ocia_t VALUES (2, 10) ON CONFLICT DO NOTHING
+----
+db error: ERROR: duplicate key value violates unique constraint "ocia_t_x"
+DETAIL: Key (x)=(10) already exists.
+
+
+connection a
+statement ok
+ROLLBACK
+
+connection b
+statement ok
+INSERT INTO ocia_t VALUES (2, 10) ON CONFLICT DO NOTHING
+
+query
+SELECT id, x FROM ocia_t ORDER BY id
+----
+id	x
+1	10
+2	10
+
+statement ok
+CREATE TABLE ocia_u (id INT PRIMARY KEY, team INT, email TEXT)
+
+statement ok
+CREATE UNIQUE INDEX ocia_u_team_email ON ocia_u (team, lower(email))
+
+statement ok
+INSERT INTO ocia_u VALUES (1, 1, 'a@x')
+
+statement ok
+INSERT INTO ocia_u VALUES (2, 1, 'b@x') ON CONFLICT DO NOTHING
+
+statement error
+INSERT INTO ocia_u VALUES (3, 1, 'c@x') ON CONFLICT (team) DO UPDATE SET email = excluded.email
+----
+db error: ERROR: The specified columns as conflict target are not referenced by a UNIQUE/PRIMARY KEY CONSTRAINT or INDEX
+
+
+statement error
+INSERT INTO ocia_u VALUES (4, 1, 'A@X')
+----
+db error: ERROR: duplicate key value violates unique constraint "ocia_u_team_email"
+DETAIL: Key (team, lower(email))=(1, a@x) already exists.
+
+
+query
+SELECT id, team, email FROM ocia_u ORDER BY id
+----
+id	team	email
+1	1	a@x
+2	1	b@x
+
+statement ok
+DROP TABLE ocia_u
+
+statement ok
+DROP TABLE ocia_t

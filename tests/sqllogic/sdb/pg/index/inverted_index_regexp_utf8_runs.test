@@ -1,0 +1,45 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY irur_w AS generate_wildcard_ngrams(keyword(), 3)
+
+
+statement ok
+CREATE TABLE irur (id INT PRIMARY KEY, msg VARCHAR)
+
+
+statement ok
+INSERT INTO irur VALUES (1, 'é'), (2, 'ab'), (3, 'Жук'), (4, 'x')
+
+
+statement ok
+CREATE INDEX irur_idx ON irur USING inverted (id, msg irur_w)
+
+
+query
+SELECT id FROM irur_idx WHERE msg @@ ts_regexp('.+.') ORDER BY id
+----
+id
+2
+3
+
+
+query
+SELECT id FROM irur_idx WHERE msg ~ '^.+.$' ORDER BY id
+----
+id
+2
+3
+
+
+query
+SELECT id FROM irur WHERE msg ~ '^.+.$' ORDER BY id
+----
+id
+2
+3
+
+
+query
+SELECT 'é' ~ '^.+.$' AS two_or_more, 'Жук' ~ '^.+...$' AS four_or_more, 'é' ~ '^(.+){2}$' AS two_runs, 'éé' ~ '^(.+){2}$' AS two_chars
+----
+two_or_more	four_or_more	two_runs	two_chars
+f	f	f	t

@@ -78,3 +78,55 @@ statement error
 EXECUTE pdo_doc;
 ----
 db error: ERROR: cached plan must not change result type
+
+
+statement ok
+CREATE VIEW pdo_view AS SELECT 1 AS x;
+
+
+statement ok
+PREPARE pdo_from_view AS SELECT * FROM pdo_view;
+
+
+query
+EXECUTE pdo_from_view;
+----
+x
+1
+
+
+statement ok
+DROP VIEW pdo_view;
+
+
+statement error
+EXECUTE pdo_from_view;
+----
+db error: ERROR: Table with name pdo_view does not exist!
+Did you mean "pdo_t"?
+
+
+statement ok
+CREATE FUNCTION pdo_fn() RETURNS int AS $$ SELECT 41 + 1 $$ LANGUAGE sql;
+
+
+statement ok
+PREPARE pdo_call AS SELECT pdo_fn() AS v;
+
+
+query
+EXECUTE pdo_call;
+----
+v
+42
+
+
+statement ok
+DROP FUNCTION pdo_fn;
+
+
+statement error
+EXECUTE pdo_call;
+----
+db error: ERROR: Scalar Function with name pdo_fn does not exist!
+Did you mean "point_left"?

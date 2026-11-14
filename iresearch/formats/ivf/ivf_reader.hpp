@@ -48,8 +48,7 @@ inline void EncodeCentroidTerm(uint32_t id, byte_type* out) noexcept {
   irs::WriteBE<uint32_t>(id, p);
 }
 
-using VectorDistanceFn = float (*)(const byte_type*, const byte_type*,
-                                   uint16_t);
+using VectorDistanceFn = float (*)(const byte_type*, const byte_type*, size_t);
 
 VectorDistanceFn ResolveScoringDistance(VectorMetric metric);
 

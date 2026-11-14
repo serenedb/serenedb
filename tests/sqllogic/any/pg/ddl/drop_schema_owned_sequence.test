@@ -1,0 +1,21 @@
+statement ok
+CREATE SCHEMA dsos;
+
+
+statement ok
+CREATE TABLE dsos.t (id INT, v INT);
+
+
+statement ok
+CREATE SEQUENCE dsos.dsos_owned OWNED BY dsos.t.v;
+
+
+statement ok
+DROP SCHEMA dsos CASCADE;
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname IN ('t', 'dsos_owned');
+----
+n
+0

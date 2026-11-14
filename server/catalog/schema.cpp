@@ -237,6 +237,19 @@ duckdb::unique_ptr<duckdb::AlterInfo> StructFieldRetype(
     std::move(remap.new_type), std::move(remap.remap_expression));
 }
 
+void OwnSequence(duckdb::SequenceCatalogEntry& sequence,
+                 duckdb::TableCatalogEntry& table,
+                 const duckdb::Identifier& column) {
+  duckdb::LogicalDependency dependency{table};
+  dependency.owned_by = true;
+  dependency.subdependencies.insert(
+    duckdb::SubDependency{duckdb::AlterTableType::REMOVE_COLUMN, column});
+  sequence.dependencies.AddDependency(dependency);
+  if (const auto oid = table.GetColumn(column).CatalogOid()) {
+    sequence.owner_column = oid;
+  }
+}
+
 }  // namespace
 
 SchemaSets::SchemaSets(bool case_sensitive, OidIndex& oids)
@@ -600,7 +613,6 @@ duckdb::optional_ptr<duckdb::CatalogEntry> Schema::CreateTable(
     auto& sequence = CreateSequence(transaction, sequence_info)
                        ->Cast<duckdb::SequenceCatalogEntry>();
     duckdb::LogicalDependency dependency{sequence};
-    dependency.owned_by = true;
     for (const auto& dependent : serial.dependents) {
       dependency.subdependencies.insert(
         duckdb::SubDependency{duckdb::AlterTableType::SET_DEFAULT, dependent});
@@ -609,11 +621,11 @@ duckdb::optional_ptr<duckdb::CatalogEntry> Schema::CreateTable(
     serials.emplace_back(&sequence, serial.column);
   }
   auto table = catalog.Cast<BaseCatalog>().MakeTable(transaction, *this, info);
-  const auto& columns = table->Cast<duckdb::TableCatalogEntry>();
+  auto& oids = catalog.Cast<BaseCatalog>().Oids();
   for (auto& [sequence, column] : serials) {
-    if (const auto oid = columns.GetColumn(column).CatalogOid()) {
-      sequence->owner_column = oid;
-    }
+    oids.RemoveDependents(*sequence, sequence->oid);
+    OwnSequence(*sequence, table->Cast<duckdb::TableCatalogEntry>(), column);
+    oids.AddDependents(*sequence, sequence->oid);
   }
   return Add(transaction, std::move(table), base.on_conflict);
 }
@@ -771,14 +783,9 @@ void Schema::Drop(duckdb::CatalogTransaction transaction,
     for (const auto& index : indexes) {
       _sets->indexes.Drop(transaction, index);
     }
-    for (const auto& dependency :
-         entry.Cast<duckdb::StandardEntry>().dependencies.Set()) {
-      if (!dependency.owned_by) {
-        continue;
-      }
-      if (auto owned = _sets->sequences.Get(transaction, dependency.entry.name);
-          owned && owned->oid == dependency.oid) {
-        Drop(transaction, *owned);
+    for (auto& owned : OwnedEntries(transaction, entry)) {
+      if (owned.get().type == duckdb::CatalogType::SEQUENCE_ENTRY) {
+        Drop(transaction, owned.get());
       }
     }
   }
@@ -949,6 +956,13 @@ void Schema::Alter(duckdb::CatalogTransaction transaction,
       info.type == duckdb::AlterType::ALTER_TABLE) {
     FollowColumnOids(transaction, entry->Cast<duckdb::TableCatalogEntry>(),
                      result->Cast<duckdb::TableCatalogEntry>());
+    if (info.Cast<duckdb::AlterTableInfo>().alter_table_type ==
+        duckdb::AlterTableType::RENAME_COLUMN) {
+      const auto& rename = info.Cast<duckdb::RenameColumnInfo>();
+      FollowReferencedColumnRename(transaction,
+                                   result->Cast<duckdb::TableCatalogEntry>(),
+                                   rename.old_name, rename.new_name);
+    }
   }
   if (!replay && result && result->type == duckdb::CatalogType::TABLE_ENTRY &&
       info.type == duckdb::AlterType::ALTER_PERMISSIONS &&
@@ -1096,21 +1110,14 @@ void Schema::Own(duckdb::CatalogTransaction transaction,
       ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
       ERR_MSG("sequence must have same owner as table it is linked to"));
   }
-  const auto& columns = table->Cast<duckdb::TableCatalogEntry>();
+  auto& columns = table->Cast<duckdb::TableCatalogEntry>();
   if (!columns.ColumnExists(column)) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
       ERR_MSG("column \"", column.GetIdentifierName(), "\" of relation \"",
               table_name.GetIdentifierName(), "\" does not exist"));
   }
-  duckdb::LogicalDependency dependency{*table};
-  dependency.owned_by = true;
-  dependency.subdependencies.insert(
-    duckdb::SubDependency{duckdb::AlterTableType::REMOVE_COLUMN, column});
-  sequence.dependencies.AddDependency(dependency);
-  if (const auto oid = columns.GetColumn(column).CatalogOid()) {
-    sequence.owner_column = oid;
-  }
+  OwnSequence(sequence, columns, column);
 }
 
 void Schema::CreateDefaults(duckdb::CatalogTransaction transaction) {
@@ -1121,15 +1128,20 @@ void Schema::CreateDefaults(duckdb::CatalogTransaction transaction) {
   }
 }
 
+std::array<EntrySet*, 13> Schema::MemberSets() const {
+  auto& sets = *_sets;
+  return {
+    &sets.tables,         &sets.indexes,          &sets.table_functions,
+    &sets.copy_functions, &sets.pragma_functions, &sets.functions,
+    &sets.sequences,      &sets.collations,       &sets.coordinate_systems,
+    &sets.types,          &sets.tokenizers,       &sets.jobs,
+    &sets.schemas};
+}
+
 void Schema::ScanMembers(
   duckdb::CatalogTransaction transaction,
   absl::FunctionRef<void(duckdb::CatalogEntry&)> callback) {
-  auto& sets = *_sets;
-  for (auto* set :
-       {&sets.tables, &sets.indexes, &sets.table_functions,
-        &sets.copy_functions, &sets.pragma_functions, &sets.functions,
-        &sets.sequences, &sets.collations, &sets.coordinate_systems,
-        &sets.types, &sets.tokenizers, &sets.jobs, &sets.schemas}) {
+  for (auto* set : MemberSets()) {
     set->Scan(transaction, callback);
   }
 }

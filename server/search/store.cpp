@@ -55,6 +55,7 @@
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <optional>
 #include <utility>
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/future.hpp>
@@ -683,7 +684,9 @@ std::vector<uint8_t> Store::SnapshotRecord(const TableState& state) const {
     auto& rows = delta.rows.emplace_back(LoggedRows{.first = unit->first});
     std::vector<const irs::ColumnReader*> readers;
     duckdb::vector<duckdb::LogicalType> types;
+    std::optional<irs::ReadContext> ctx;
     if (const auto* columns = unit->reader->GetColReader()) {
+      ctx.emplace(*columns);
       for (const auto* column : columns->Columns()) {
         if (stored.contains(column->Id())) {
           readers.push_back(column);
@@ -692,11 +695,10 @@ std::vector<uint8_t> Store::SnapshotRecord(const TableState& state) const {
         }
       }
     }
-    irs::ReadContext ctx{*ReaderOptions().db};
     std::vector<irs::ColumnReader::ScanState> scans;
     scans.reserve(readers.size());
     for (const auto* reader : readers) {
-      scans.push_back(reader->InitScan(ctx));
+      scans.push_back(reader->InitScan(*ctx));
     }
     duckdb::DataChunk chunk;
     chunk.Initialize(duckdb::Allocator::DefaultAllocator(), types);
@@ -1038,10 +1040,10 @@ std::shared_ptr<const TableState> Store::ReplaceSegments(
 }
 
 void Store::DrainPriorWriters(duckdb::ClientContext& context) {
-  _writers.Drain(
-    context,
-    ConnectionContext::Get(context).Transaction().SearchTxn().Registration(
-      _id));
+  const auto before = _layout_version.fetch_add(1);
+  ConnectionContext::Get(context).Transaction().SearchTxn().FollowLayout(
+    *this, before);
+  _writers.Drain(context);
 }
 
 std::shared_ptr<const catalog::InvertedIndexConfig> Store::Config() const {

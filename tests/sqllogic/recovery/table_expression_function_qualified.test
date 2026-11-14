@@ -1,0 +1,93 @@
+control substitution on
+
+statement ok
+CREATE FUNCTION tefq_pos(x INT) RETURNS BOOLEAN LANGUAGE sql IMMUTABLE AS 'SELECT x > 0';
+
+
+statement ok
+CREATE DATABASE tefq_db;
+
+
+statement ok
+CREATE TABLE tefq_db.public.tefq_t (id INT, a INT CHECK (tefq_pos(a)), b INT);
+
+
+statement ok
+INSERT INTO tefq_db.public.tefq_t VALUES (1, 1, 1);
+
+
+statement ok
+ALTER TABLE tefq_db.public.tefq_t DROP COLUMN b;
+
+
+statement ok
+CREATE SCHEMA tefq_fs;
+
+
+statement ok
+CREATE FUNCTION tefq_fs.tefq_seven() RETURNS INT LANGUAGE sql IMMUTABLE AS 'SELECT 7';
+
+
+statement ok
+CREATE TABLE tefq_st (id INT, s STRUCT(a INT));
+
+
+statement ok
+INSERT INTO tefq_st VALUES (1, {'a': 1});
+
+
+statement ok
+SET search_path = tefq_fs, public;
+
+
+statement ok
+ALTER TABLE public.tefq_st ADD COLUMN s.k INT DEFAULT tefq_seven();
+
+
+statement ok
+RESET search_path;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection restarted
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id, a FROM tefq_db.public.tefq_t ORDER BY id;
+----
+id	a
+1	1
+
+
+connection restarted
+query
+SELECT id, s FROM tefq_st ORDER BY id;
+----
+id	s
+1	(1,7)
+
+
+connection restarted_db database=tefq_db
+statement ok
+INSERT INTO tefq_t VALUES (2, 2);
+
+
+connection restarted_db database=tefq_db
+statement error
+INSERT INTO tefq_t VALUES (3, -3);
+----
+db error: ERROR: CHECK constraint failed on table "tefq_t" with expression <slt:ignore>
+
+
+connection restarted
+query
+SELECT id, a FROM tefq_db.public.tefq_t ORDER BY id;
+----
+id	a
+1	1
+2	2

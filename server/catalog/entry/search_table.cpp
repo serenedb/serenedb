@@ -685,7 +685,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::Copy(
 }
 
 duckdb::TableStorageInfo SearchTableEntry::GetStorageInfo(
-  duckdb::ClientContext&) {
+  duckdb::ClientContext& context) {
   duckdb::TableStorageInfo result;
   for (const auto& constraint : GetConstraints()) {
     if (constraint->type != duckdb::ConstraintType::UNIQUE) {
@@ -700,10 +700,15 @@ duckdb::TableStorageInfo SearchTableEntry::GetStorageInfo(
     }
     result.index_info.push_back(std::move(info));
   }
+  const auto transaction = catalog.GetCatalogTransaction(context);
+  auto& oids = catalog.Cast<BaseCatalog>().Oids();
   for (const auto& key : _storage->Config()->constraint_keys) {
-    if (absl::c_any_of(_keys, [&](const search::KeySpec& spec) {
-          return spec.key.field == key.field;
-        })) {
+    if (absl::c_any_of(_keys,
+                       [&](const search::KeySpec& spec) {
+                         return spec.key.field == key.field;
+                       }) ||
+        absl::c_linear_search(key.columns, irs::field_limits::invalid()) ||
+        !oids.Find(transaction, key.field)) {
       continue;
     }
     duckdb::IndexInfo info{
@@ -1129,17 +1134,6 @@ duckdb::unique_ptr<SearchTableEntry> SearchTableEntry::Altered(
   auto bound = binder->BindCreateTableInfo(
     std::move(definition), ParentSchema(context),
     bound_defaults ? *bound_defaults : unused_defaults, info.bind_mode);
-  for (const auto& dependency : dependencies.Set()) {
-    if (!dependency.owned_by) {
-      continue;
-    }
-    if (auto owned =
-          catalog.Cast<BaseCatalog>().LookupOid(transaction, dependency.oid)) {
-      duckdb::LogicalDependency kept{*owned};
-      kept.owned_by = true;
-      bound->Base().dependencies.AddDependency(kept);
-    }
-  }
   return Successor(context, *bound);
 }
 

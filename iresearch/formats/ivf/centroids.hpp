@@ -92,7 +92,7 @@ struct CentroidsNode {
                      std::vector<LayerBuffers>& layers,
                      std::vector<Candidate>& leaves) {
     SDB_ASSERT(!nodes.empty());
-    const uint16_t d = query.size();
+    const auto d = query.size();
     const float* q = query.data();
 
     struct Scored {

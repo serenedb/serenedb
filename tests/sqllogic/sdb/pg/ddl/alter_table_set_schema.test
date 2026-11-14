@@ -317,6 +317,29 @@ DROP DATABASE atss_far_${__DATABASE__};
 
 
 statement ok
+CREATE TABLE mrbeast.retyped (id SERIAL, v INT);
+
+
+statement ok
+ALTER TABLE mrbeast.retyped ALTER COLUMN id TYPE BIGINT;
+
+
+statement ok
+ALTER TABLE mrbeast.retyped SET SCHEMA feastables;
+
+
+statement ok
+INSERT INTO feastables.retyped (v) VALUES (1);
+
+
+query
+SELECT id, v, pg_get_serial_sequence('feastables.retyped', 'id') AS seq FROM feastables.retyped;
+----
+id	v	seq
+1	1	feastables.retyped_id_seq
+
+
+statement ok
 DROP SCHEMA feastables CASCADE;
 
 

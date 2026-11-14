@@ -28,6 +28,7 @@
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/execution/operator/persistent/physical_update.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/planner/constraints/bound_not_null_constraint.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
@@ -80,6 +81,7 @@ struct SearchUpdateLocalState final : duckdb::LocalSinkState {
   std::vector<search::UnitPatch> patches;
   duckdb::idx_t update_count = 0;
   std::optional<duckdb::ColumnDataCollection> returned;
+  duckdb::DataChunk combined;
 };
 
 struct SearchUpdateSourceState final : duckdb::GlobalSourceState {
@@ -94,7 +96,8 @@ SereneDBSearchUpdate::SereneDBSearchUpdate(
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> expressions,
   duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>> constraints,
   duckdb::vector<duckdb::LogicalType> types,
-  duckdb::idx_t estimated_cardinality, bool return_chunk,
+  duckdb::idx_t estimated_cardinality, bool return_chunk, bool capture_old_rows,
+  duckdb::vector<duckdb::idx_t> old_row_columns,
   duckdb::RowIdHandling row_id_handling, bool patch,
   duckdb::idx_t update_column_count)
   : duckdb::PhysicalOperator(plan, duckdb::PhysicalOperatorType::EXTENSION,
@@ -103,7 +106,9 @@ SereneDBSearchUpdate::SereneDBSearchUpdate(
     _columns(std::move(columns)),
     _expressions(std::move(expressions)),
     _constraints(std::move(constraints)),
+    _old_row_columns(std::move(old_row_columns)),
     _return_chunk(return_chunk),
+    _capture_old_rows(capture_old_rows),
     _patch(patch),
     _update_column_count(update_column_count),
     _row_id_handling(row_id_handling) {}
@@ -197,6 +202,9 @@ SereneDBSearchUpdate::GetLocalSinkState(
   if (_return_chunk) {
     lstate->returned.emplace(context.client, GetTypes());
   }
+  if (_capture_old_rows) {
+    lstate->combined.InitializeEmpty(GetTypes());
+  }
   return lstate;
 }
 
@@ -209,6 +217,15 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
       gstate.updated_rows->Register(chunk, gstate.rowid.input_col_idx) == 0) {
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
+  const auto append_returned = [&](duckdb::DataChunk& new_row) {
+    if (_capture_old_rows) {
+      duckdb::PhysicalUpdate::AppendReturnRows(
+        *lstate.returned, lstate.combined, new_row, chunk,
+        new_row.ColumnCount(), _old_row_columns, new_row.size(), nullptr);
+    } else {
+      lstate.returned->Append(new_row);
+    }
+  };
   const auto num_rows = chunk.size();
   if (const auto& progress = duckdb::ClientConfig::GetConfig(context.client)
                                .sink_progress_callback) {
@@ -246,29 +263,22 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
                          static_cast<duckdb::sel_t>(i));
     }
     absl::c_sort(order);
-    std::vector<uint64_t> rows;
-    duckdb::SelectionVector sel{num_rows};
-    for (size_t i = 0; i < order.size();) {
-      const auto index = RowPositionIndex(order[i].first);
-      rows.clear();
-      for (; i < order.size() && RowPositionIndex(order[i].first) == index;
-           ++i) {
-        sel.set_index(rows.size(), order[i].second);
-        rows.push_back(RowPositionDoc(order[i].first) - irs::doc_limits::min());
-      }
-      const auto unit =
-        irs::utils::downCast<irs::SegmentReader>(reader[index]).GetImpl()->Id();
-      for (const auto& column : gstate.patched) {
-        const duckdb::Vector values{chunk.data[column.input], sel, rows.size()};
-        search::AddUnitPatch(lstate.patches, unit, column.field, column.type,
-                             rows, values);
-      }
-    }
+    search::ForEachUnitRows(reader, order,
+                            [&](uint64_t unit, std::span<const uint64_t> rows,
+                                const duckdb::SelectionVector& sel) {
+                              for (const auto& column : gstate.patched) {
+                                const duckdb::Vector values{
+                                  chunk.data[column.input], sel, rows.size()};
+                                search::AddUnitPatch(lstate.patches, unit,
+                                                     column.field, column.type,
+                                                     rows, values);
+                              }
+                            });
     if (lstate.returned) {
       duckdb::DataChunk new_row;
       new_row.InitializeEmpty(gstate.table.types);
       new_row.ReferenceColumns(chunk, gstate.new_row_src);
-      lstate.returned->Append(new_row);
+      append_returned(new_row);
     }
     lstate.update_count += num_rows;
     return duckdb::SinkResultType::NEED_MORE_INPUT;
@@ -287,7 +297,7 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
   lstate.rows.Append(context.client, gstate.table, new_row);
 
   if (lstate.returned) {
-    lstate.returned->Append(new_row);
+    append_returned(new_row);
   }
   lstate.update_count += num_rows;
   return duckdb::SinkResultType::NEED_MORE_INPUT;
@@ -358,7 +368,8 @@ duckdb::SinkFinalizeType SereneDBSearchUpdate::Finalize(
   if (_patch) {
     search_txn.CheckConflicts(*gstate.table.store);
   } else {
-    search_txn.CheckKeys(context, *gstate.table.store, /*merge_insert=*/false);
+    search_txn.CheckKeys(context, *gstate.table.store,
+                         search::KeyConflict::Unique);
   }
   return duckdb::SinkFinalizeType::READY;
 }

@@ -115,18 +115,26 @@ void RequireLog(const ReplicationLsnEntry& entry) {
 void CheckDependencies(SessionTransaction& transaction) {
   const auto view = transaction.View();
   for (const auto& change : transaction.Changes()) {
-    if (change.Subject().ParentCatalog().GetAttached().IsReadOnly()) {
+    auto& subject = change.Subject();
+    auto& database = subject.ParentCatalog().GetAttached();
+    if (database.IsReadOnly()) {
       continue;
     }
     switch (change.kind) {
       case ChangeKind::Create:
       case ChangeKind::Alter:
         if (change.set->Members()) {
-          change.set->Oids().CheckCreated(*change.version);
+          change.set->Oids().CheckCreated(view, *change.version);
+        }
+        if (change.kind == ChangeKind::Alter) {
+          change.set->Oids().CheckChangedParts(view, *change.version);
         }
         break;
       case ChangeKind::Drop:
-        change.set->Oids().CheckDropped(view, change.Subject());
+        change.set->Oids().CheckDropped(
+          view, {.oid = subject.oid,
+                 .name = subject.name.GetIdentifierName(),
+                 .role = subject.type == duckdb::CatalogType::ROLE_ENTRY});
         break;
       case ChangeKind::Rename:
         break;
@@ -799,6 +807,7 @@ void Transactions::Publish(duckdb::transaction_t commit, bool catalog,
                                  version, next, std::memory_order_release,
                                  std::memory_order_relaxed)) {
       }
+      SDB_PARK_ONCE_ON_FAILURE("pause_catalog_version_ahead_of_commit");
     }
     if (_last_commit.compare_exchange_weak(published, next,
                                            std::memory_order_seq_cst)) {

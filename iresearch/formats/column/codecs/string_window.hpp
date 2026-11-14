@@ -22,9 +22,9 @@
 
 #include <cstdint>
 #include <optional>
-#include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "iresearch/formats/column/codecs/blob_frames.hpp"
@@ -40,14 +40,15 @@ namespace irs::codecs::text {
 class StringWindow {
  public:
   StringWindow(const StringAccumulator& acc, StringCompressor& compressor,
-               Segment& first, const NumericTuning& codes)
+               PooledSegment first, const NumericTuning& codes)
     : _acc{acc},
       _compressor{compressor},
       _codes{codes},
-      _first{first},
-      _begin{first.begin},
-      _end{first.begin + first.rows},
-      _encoded{&first} {}
+      _first{*first},
+      _begin{first->begin},
+      _end{first->begin + first->rows} {
+    _encoded.emplace_back(std::move(first));
+  }
 
   StringWindow(const StringWindow&) = delete;
   StringWindow& operator=(const StringWindow&) = delete;
@@ -55,16 +56,20 @@ class StringWindow {
   uint64_t Analyze(const Config& config);
 
   bool Exact(const Config& config) const noexcept {
-    return static_cast<bool>(Encoded(config));
+    return Find(config) != _encoded.size();
   }
 
   uint64_t Entries();
 
-  Segment& TrialCompress(const Config& config);
+  size_t TrialCompress(const Config& config);
 
-  std::span<Segment* const> Encodings() const noexcept { return _encoded; }
+  size_t Encodings() const noexcept { return _encoded.size(); }
 
-  PooledSegment Take(const Segment& seg);
+  const Segment& At(size_t index) const noexcept { return *_encoded[index]; }
+
+  PooledSegment Take(size_t index) && noexcept {
+    return std::move(_encoded[index]);
+  }
 
  private:
   struct Spans {
@@ -89,7 +94,7 @@ class StringWindow {
     std::optional<BlobPricer<Lz4Hc>> lz4_hc;
   };
 
-  Segment* Encoded(const Config& config) const noexcept;
+  size_t Find(const Config& config) const noexcept;
 
   uint64_t RawBound(Shape shape) const noexcept;
 
@@ -107,8 +112,7 @@ class StringWindow {
   const Segment& _first;
   uint64_t _begin;
   uint64_t _end;
-  std::vector<Segment*> _encoded;
-  std::vector<PooledSegment> _owned;
+  std::vector<PooledSegment> _encoded;
   DedupScratch _dedup;
   Measured _measured[2];
   Pricers _pricers;

@@ -38,7 +38,9 @@ constexpr uint64_t kEncodeSlack = 8;
 
 Analysis AnalyzeFsst(const AnalyzeInput& input) {
   const Config config{.choice = {input.shape, ByteCodec::Fsst}};
-  return {.config = config, .score = input.window.TrialCompress(config).Size()};
+  auto& window = input.window;
+  return {.config = config,
+          .score = window.At(window.TrialCompress(config)).Size()};
 }
 
 const StringCompressionFunction& FsstCompressionFunction() {

@@ -162,7 +162,9 @@ PooledSegment StringPicker::DetectBestCompressionMethod(PooledSegment first,
                                                         bool drift) {
   const auto input = first->input;
   const auto values = first->rows - first->nulls;
-  StringWindow window{_acc, _compressor, *first, _tuning.estimators.codes};
+  const auto lengths = Packed(first->rows, first->max_len);
+  StringWindow window{_acc, _compressor, std::move(first),
+                      _tuning.estimators.codes};
   const auto entries = window.Entries();
   const auto slack = [&](Shape shape) {
     return window.Exact(Fast(shape)) ? 0.0 : kShapeSlack;
@@ -171,16 +173,15 @@ PooledSegment StringPicker::DetectBestCompressionMethod(PooledSegment first,
   auto dedup = static_cast<double>(window.Analyze(Fast(Shape::Dedup)));
   if (PlainWins(
         entries, values, dedup * (1.0 + slack(Shape::Dedup)),
-        static_cast<double>(kHeaderSize + Packed(first->rows, first->max_len) +
-                            input / kLz4MaxRatio))) {
+        static_cast<double>(kHeaderSize + lengths + input / kLz4MaxRatio))) {
     auto plain = static_cast<double>(window.Analyze(Fast(Shape::Plain)));
     const auto margin = std::max(slack(Shape::Dedup), slack(Shape::Plain));
     if (PlainWins(entries, values, dedup * (1.0 - margin), plain) !=
         PlainWins(entries, values, dedup * (1.0 + margin), plain)) {
-      dedup =
-        static_cast<double>(window.TrialCompress(Fast(Shape::Dedup)).Size());
-      plain =
-        static_cast<double>(window.TrialCompress(Fast(Shape::Plain)).Size());
+      dedup = static_cast<double>(
+        window.At(window.TrialCompress(Fast(Shape::Dedup))).Size());
+      plain = static_cast<double>(
+        window.At(window.TrialCompress(Fast(Shape::Plain))).Size());
     }
     if (PlainWins(entries, values, dedup, plain)) {
       shape = Shape::Plain;
@@ -220,30 +221,36 @@ PooledSegment StringPicker::DetectBestCompressionMethod(PooledSegment first,
   if (tune) {
     tuned.done = true;
   }
-  auto* picked = &window.TrialCompress(scored[best].config);
+  auto picked = window.TrialCompress(scored[best].config);
   for (size_t i = 0; i < count; ++i) {
     if (scored[i].trial &&
         scored[i].score <= scored[best].score * (1.0 + kScoreSlack)) {
       window.TrialCompress(scored[i].config);
     }
   }
-  for (auto* seg : window.Encodings()) {
-    if (seg->config.choice.shape == shape && seg->Size() < picked->Size()) {
-      picked = seg;
+  for (size_t i = 0; i < window.Encodings(); ++i) {
+    const auto& seg = window.At(i);
+    if (seg.config.choice.shape == shape &&
+        seg.Size() < window.At(picked).Size()) {
+      picked = i;
     }
   }
-  if (fsst_preference > 0 && picked->config.choice.leaf != ByteCodec::Fsst) {
-    auto& fsst = window.TrialCompress({.choice = {shape, ByteCodec::Fsst}});
-    if (static_cast<double>(fsst.Size()) <=
-        static_cast<double>(picked->Size()) * (1.0 + fsst_preference)) {
-      picked = &fsst;
+  if (fsst_preference > 0 &&
+      window.At(picked).config.choice.leaf != ByteCodec::Fsst) {
+    const auto fsst =
+      window.TrialCompress({.choice = {shape, ByteCodec::Fsst}});
+    if (static_cast<double>(window.At(fsst).Size()) <=
+        static_cast<double>(window.At(picked).Size()) *
+          (1.0 + fsst_preference)) {
+      picked = fsst;
     }
   }
   auto& reuse = _tuning.reuse;
-  const bool kept = reuse.pick && reuse.pick->choice == picked->config.choice;
-  reuse.Settle(picked->config, kept && !drift,
-               static_cast<double>(picked->Size()), static_cast<double>(input));
-  return picked == first.get() ? std::move(first) : window.Take(*picked);
+  const auto& seg = window.At(picked);
+  const bool kept = reuse.pick && reuse.pick->choice == seg.config.choice;
+  reuse.Settle(seg.config, kept && !drift, static_cast<double>(seg.Size()),
+               static_cast<double>(input));
+  return std::move(window).Take(picked);
 }
 
 }  // namespace irs::codecs::text

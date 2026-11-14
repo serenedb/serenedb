@@ -23,6 +23,7 @@
 #include <absl/algorithm/container.h>
 
 #include <algorithm>
+#include <span>
 
 #include "iresearch/formats/column/codecs/string_compression_function.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -35,8 +36,8 @@ constexpr uint64_t kTrialRawBytes = 512 * 1024;
 }  // namespace
 
 uint64_t StringWindow::Analyze(const Config& config) {
-  if (const auto* seg = Encoded(config)) {
-    return seg->Size();
+  if (const auto index = Find(config); index != _encoded.size()) {
+    return At(index).Size();
   }
   const auto price =
     [&]<typename Codec>(std::optional<BlobPricer<Codec>>& slot) -> uint64_t {
@@ -55,7 +56,7 @@ uint64_t StringWindow::Analyze(const Config& config) {
     return price(_pricers.lz4_hc);
   }
   if (RawBound(config.choice.shape) <= kTrialRawBytes) {
-    return TrialCompress(config).Size();
+    return At(TrialCompress(config)).Size();
   }
   return price(_pricers.lz4);
 }
@@ -68,7 +69,7 @@ uint64_t StringWindow::RawBound(Shape shape) const noexcept {
 }
 
 uint64_t StringWindow::Entries() {
-  for (const auto* seg : _encoded) {
+  for (const auto& seg : _encoded) {
     if (seg->config.choice.shape == Shape::Dedup) {
       return seg->entries;
     }
@@ -76,28 +77,19 @@ uint64_t StringWindow::Entries() {
   return Rows(Shape::Dedup).profile.codes.size();
 }
 
-Segment& StringWindow::TrialCompress(const Config& config) {
-  if (auto* seg = Encoded(config)) {
-    return *seg;
-  }
-  auto& seg =
-    *_owned.emplace_back(GetStringCompressionFunction(config).TrialCompress(
+size_t StringWindow::TrialCompress(const Config& config) {
+  const auto index = Find(config);
+  if (index == _encoded.size()) {
+    _encoded.emplace_back(GetStringCompressionFunction(config).TrialCompress(
       _compressor, config, _acc, _begin, _end));
-  _encoded.emplace_back(&seg);
-  return seg;
+  }
+  return index;
 }
 
-Segment* StringWindow::Encoded(const Config& config) const noexcept {
+size_t StringWindow::Find(const Config& config) const noexcept {
   const auto it = absl::c_find_if(
-    _encoded, [&](const Segment* seg) { return seg->config == config; });
-  return it == _encoded.end() ? nullptr : *it;
-}
-
-PooledSegment StringWindow::Take(const Segment& seg) {
-  const auto it = absl::c_find_if(
-    _owned, [&](const PooledSegment& owned) { return owned.get() == &seg; });
-  SDB_ASSERT(it != _owned.end());
-  return std::move(*it);
+    _encoded, [&](const PooledSegment& seg) { return seg->config == config; });
+  return static_cast<size_t>(it - _encoded.begin());
 }
 
 StringWindow::Measured& StringWindow::Rows(Shape shape) {

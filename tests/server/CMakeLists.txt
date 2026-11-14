@@ -50,6 +50,7 @@ add_executable(
     serializer_binary_test.cpp
     serializer_test.cpp
     storage_version_test.cpp
+    striped_counters_test.cpp
     catalog/log_test.cpp
     catalog/entry/tokenizer_test.cpp
     catalog/entry/inverted_index_config_test.cpp

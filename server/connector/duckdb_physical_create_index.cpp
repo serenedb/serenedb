@@ -490,7 +490,7 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
   FeedChunk(*writer, num_rows, pk, chunk, columns, gstate.expression_slots);
 
   gstate.backfill_count_atomic.fetch_add(num_rows, std::memory_order_relaxed);
-  pg::ProgressMetrics::Add(gstate.progress.tuples_processed, num_rows);
+  gstate.progress.AddTuples(static_cast<int64_t>(num_rows));
   SDB_WAIT_ON_FAILURE("pause_create_index_mid_build");
   return duckdb::SinkResultType::NEED_MORE_INPUT;
 }

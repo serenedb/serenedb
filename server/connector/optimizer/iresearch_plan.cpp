@@ -24,6 +24,7 @@
 #include <absl/strings/match.h>
 
 #include <array>
+#include <cmath>
 #include <duckdb/common/vector/vector_iterator.hpp>
 #include <duckdb/common/vector/vector_writer.hpp>
 #include <duckdb/execution/expression_executor.hpp>
@@ -1540,7 +1541,7 @@ bool TryClaimAnnRange(
           return std::nullopt;
       }
     }();
-    if (!bound) {
+    if (!bound || std::isnan(*bound)) {
       continue;
     }
 

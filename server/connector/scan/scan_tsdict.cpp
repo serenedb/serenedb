@@ -18,6 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
+
 #include <array>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/index/index_reader.hpp>
@@ -161,22 +163,18 @@ class MinMaxTermsIterator : public irs::TermIterator {
 void BuildTsDictSlots(TsDictLocalState& lstate,
                       duckdb::TableFunctionInitInput& input,
                       const ScanBindData& bd) {
-  using duckdb::DConstants;
-  using Req = TsDictRequest;
   using Field = TsDictLocalState::FieldState;
 
   struct SlotKind {
     ColumnId cat;
-    duckdb::idx_t Req::* req;
     duckdb::idx_t Field::* slot;
-    size_t next = 0;
   };
-  std::array<SlotKind, 5> kinds{{
-    {kInvertedIndexTermId, &Req::term_col_idx, &Field::term_slot},
-    {kInvertedIndexTermRawId, &Req::term_raw_col_idx, &Field::term_raw_slot},
-    {kInvertedIndexTermCountId, &Req::count_col_idx, &Field::count_slot},
-    {kInvertedIndexTermFreqId, &Req::freq_col_idx, &Field::freq_slot},
-    {kInvertedIndexTermScoreId, &Req::score_col_idx, &Field::score_slot},
+  static constexpr std::array<SlotKind, 5> kKinds{{
+    {kInvertedIndexTermId, &Field::term_slot},
+    {kInvertedIndexTermRawId, &Field::term_raw_slot},
+    {kInvertedIndexTermCountId, &Field::count_slot},
+    {kInvertedIndexTermFreqId, &Field::freq_slot},
+    {kInvertedIndexTermScoreId, &Field::score_slot},
   }};
 
   duckdb::idx_t out_slot = 0;
@@ -190,15 +188,16 @@ void BuildTsDictSlots(TsDictLocalState& lstate,
       continue;
     }
     const auto cat = bd.columns.ids[col_id];
-    for (auto& kind : kinds) {
+    for (const auto& kind : kKinds) {
       if (cat != kind.cat) {
         continue;
       }
-      while (bd.ts_dict.requests[kind.next].*kind.req ==
-             DConstants::INVALID_INDEX) {
-        ++kind.next;
+      for (size_t r = 0; r < bd.ts_dict.requests.size(); ++r) {
+        if (absl::c_linear_search(bd.ts_dict.requests[r].bind_cols, col_id)) {
+          lstate.fields[r].*kind.slot = out_slot;
+          break;
+        }
       }
-      lstate.fields[kind.next++].*kind.slot = out_slot;
       break;
     }
     ++out_slot;

@@ -1,0 +1,105 @@
+# A WHERE on the score that casts it, or compares it with NaN, keeps its own
+# meaning when the query also takes the top rows by score: the cast rounds the
+# score, and nothing exceeds NaN. A distance compared with NaN is no radius.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sfc_dict AS split_text() WITH (frequency, norm);
+
+statement ok
+CREATE TABLE sfc (id INTEGER PRIMARY KEY, n INTEGER, body VARCHAR);
+
+statement ok
+INSERT INTO sfc VALUES
+  (1, 10, 'term'),
+  (2, 20, 'term fill'),
+  (3, 30, 'term fill fill'),
+  (4, 40, 'term fill fill fill rare'),
+  (5, 50, 'term fill fill fill fill rare'),
+  (6, 60, 'other');
+
+statement ok
+CREATE INDEX sfc_idx ON sfc USING inverted (body sfc_dict) INCLUDE (n);
+
+statement ok
+VACUUM (FLUSH_TABLE) sfc;
+
+query
+SELECT n, BM25(sfc_idx.tableoid)::INTEGER AS si, BM25(sfc_idx.tableoid)::DECIMAL(10,1) AS sd
+FROM sfc_idx WHERE body @@ 'term' ORDER BY n;
+----
+n	si	sd
+10	0	0.2
+20	0	0.1
+30	0	0.1
+40	0	0.1
+50	0	0.1
+
+query
+SELECT n FROM sfc_idx
+WHERE body @@ 'term' AND BM25(sfc_idx.tableoid)::INTEGER > 0
+ORDER BY BM25(sfc_idx.tableoid) DESC LIMIT 10;
+----
+n
+
+query
+SELECT n FROM sfc_idx
+WHERE body @@ 'term' AND BM25(sfc_idx.tableoid)::DECIMAL(10,1) >= 0.2
+ORDER BY BM25(sfc_idx.tableoid) DESC LIMIT 10;
+----
+n
+10
+
+query
+SELECT n FROM sfc_idx
+WHERE body @@ 'term' AND BM25(sfc_idx.tableoid) > 'NaN'::FLOAT
+ORDER BY BM25(sfc_idx.tableoid) DESC LIMIT 10;
+----
+n
+
+query
+SELECT n FROM sfc_idx
+WHERE body @@ 'term' AND BM25(sfc_idx.tableoid) > 0.1
+ORDER BY BM25(sfc_idx.tableoid) DESC LIMIT 10;
+----
+n
+10
+20
+30
+
+query
+SELECT n FROM sfc_idx
+WHERE body @@ 'term' AND BM25(sfc_idx.tableoid) > 0.1
+ORDER BY BM25(sfc_idx.tableoid) DESC;
+----
+n
+10
+20
+30
+
+statement ok
+CREATE TABLE sfc_vec (pk INTEGER PRIMARY KEY, emb FLOAT[2]);
+
+statement ok
+CREATE INDEX sfc_vec_idx ON sfc_vec USING inverted(pk, emb hnsw (metric = 'l2', quant = 'none'));
+
+statement ok
+INSERT INTO sfc_vec VALUES (1, [0, 0]), (2, [1, 1]), (3, [5, 5]);
+
+statement ok
+VACUUM (FLUSH_TABLE) sfc_vec;
+
+query
+SELECT pk FROM sfc_vec WHERE emb <-> [0, 0]::FLOAT[2] < 'NaN'::DOUBLE ORDER BY pk;
+----
+pk
+1
+2
+3
+
+query
+SELECT pk FROM sfc_vec_idx WHERE emb <-> [0, 0]::FLOAT[2] < 'NaN'::DOUBLE ORDER BY pk;
+----
+pk
+1
+2
+3

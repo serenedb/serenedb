@@ -57,78 +57,94 @@ class RegexpUtilsTest : public TestBase {
 // ComputeRegexpType - pattern classification
 
 TEST_F(RegexpUtilsTest, regexp_type_empty) {
-  ASSERT_EQ(irs::RegexpType::Literal, irs::ComputeRegexpType(ToBytesView("")));
+  ASSERT_EQ(irs::RegexpType::Literal,
+            irs::ComputeRegexpType(ToBytesView(""), irs::RegexpSyntax::Perl));
 }
 
 TEST_F(RegexpUtilsTest, regexp_type_literal) {
-  ASSERT_EQ(irs::RegexpType::Literal,
-            irs::ComputeRegexpType(ToBytesView("foo")));
-  ASSERT_EQ(irs::RegexpType::Literal,
-            irs::ComputeRegexpType(ToBytesView("hello world")));
-  ASSERT_EQ(irs::RegexpType::Literal,
-            irs::ComputeRegexpType(ToBytesView("123abc")));
-  ASSERT_EQ(irs::RegexpType::LiteralEscaped,
-            irs::ComputeRegexpType(ToBytesView("foo\\.bar")));
-  ASSERT_EQ(irs::RegexpType::LiteralEscaped,
-            irs::ComputeRegexpType(ToBytesView("a\\*b")));
-  ASSERT_EQ(irs::RegexpType::LiteralEscaped,
-            irs::ComputeRegexpType(ToBytesView("a\\+b\\?c")));
+  for (const auto syntax :
+       {irs::RegexpSyntax::Perl, irs::RegexpSyntax::PosixEre}) {
+    ASSERT_EQ(irs::RegexpType::Literal,
+              irs::ComputeRegexpType(ToBytesView("foo"), syntax));
+    ASSERT_EQ(irs::RegexpType::Literal,
+              irs::ComputeRegexpType(ToBytesView("hello world"), syntax));
+    ASSERT_EQ(irs::RegexpType::Literal,
+              irs::ComputeRegexpType(ToBytesView("123abc"), syntax));
+    ASSERT_EQ(irs::RegexpType::LiteralEscaped,
+              irs::ComputeRegexpType(ToBytesView("foo\\.bar"), syntax));
+    ASSERT_EQ(irs::RegexpType::LiteralEscaped,
+              irs::ComputeRegexpType(ToBytesView("a\\*b"), syntax));
+    ASSERT_EQ(irs::RegexpType::LiteralEscaped,
+              irs::ComputeRegexpType(ToBytesView("a\\+b\\?c"), syntax));
+  }
 }
 
 TEST_F(RegexpUtilsTest, regexp_type_prefix) {
+  const auto perl = irs::RegexpSyntax::Perl;
   ASSERT_EQ(irs::RegexpType::Prefix,
-            irs::ComputeRegexpType(ToBytesView("foo.*")));
+            irs::ComputeRegexpType(ToBytesView("(?s)foo.*"), perl));
   ASSERT_EQ(irs::RegexpType::Prefix,
-            irs::ComputeRegexpType(ToBytesView("abc.*")));
+            irs::ComputeRegexpType(ToBytesView("(?s)x.*"), perl));
   ASSERT_EQ(irs::RegexpType::Prefix,
-            irs::ComputeRegexpType(ToBytesView("x.*")));
+            irs::ComputeRegexpType(ToBytesView("(?s)hello world.*"), perl));
   ASSERT_EQ(irs::RegexpType::Prefix,
-            irs::ComputeRegexpType(ToBytesView("hello world.*")));
+            irs::ComputeRegexpType(ToBytesView("(?s).*"), perl));
 }
 
 TEST_F(RegexpUtilsTest, regexp_type_prefix_escaped) {
+  const auto perl = irs::RegexpSyntax::Perl;
   ASSERT_EQ(irs::RegexpType::PrefixEscaped,
-            irs::ComputeRegexpType(ToBytesView("foo\\.bar.*")));
+            irs::ComputeRegexpType(ToBytesView("(?s)foo\\.bar.*"), perl));
   ASSERT_EQ(irs::RegexpType::PrefixEscaped,
-            irs::ComputeRegexpType(ToBytesView("a\\*b.*")));
+            irs::ComputeRegexpType(ToBytesView("(?s)a\\*b.*"), perl));
 }
 
 TEST_F(RegexpUtilsTest, regexp_type_complex) {
+  for (const auto syntax :
+       {irs::RegexpSyntax::Perl, irs::RegexpSyntax::PosixEre}) {
+    ASSERT_EQ(irs::RegexpType::Complex,
+              irs::ComputeRegexpType(ToBytesView("fo+"), syntax));
+    ASSERT_EQ(irs::RegexpType::Complex,
+              irs::ComputeRegexpType(ToBytesView("a|b"), syntax));
+    ASSERT_EQ(irs::RegexpType::Complex,
+              irs::ComputeRegexpType(ToBytesView(".*foo"), syntax));
+    ASSERT_EQ(irs::RegexpType::Complex,
+              irs::ComputeRegexpType(ToBytesView("a.*b"), syntax));
+    ASSERT_EQ(irs::RegexpType::Complex,
+              irs::ComputeRegexpType(ToBytesView("[abc]"), syntax));
+    ASSERT_EQ(irs::RegexpType::Complex,
+              irs::ComputeRegexpType(ToBytesView("a?b"), syntax));
+    ASSERT_EQ(irs::RegexpType::Complex,
+              irs::ComputeRegexpType(ToBytesView("(ab)+"), syntax));
+    ASSERT_EQ(irs::RegexpType::Complex,
+              irs::ComputeRegexpType(ToBytesView("fo+.*"), syntax));
+    ASSERT_EQ(irs::RegexpType::Complex,
+              irs::ComputeRegexpType(ToBytesView("a|b.*"), syntax));
+    ASSERT_EQ(irs::RegexpType::Complex,
+              irs::ComputeRegexpType(ToBytesView("foo.*"), syntax));
+    ASSERT_EQ(irs::RegexpType::Complex,
+              irs::ComputeRegexpType(ToBytesView(".*"), syntax));
+    ASSERT_EQ(irs::RegexpType::Complex,
+              irs::ComputeRegexpType(ToBytesView("(?s)foo"), syntax));
+    ASSERT_EQ(irs::RegexpType::Complex,
+              irs::ComputeRegexpType(ToBytesView("(?s)fo+.*"), syntax));
+  }
   ASSERT_EQ(irs::RegexpType::Complex,
-            irs::ComputeRegexpType(ToBytesView("fo+")));
-  ASSERT_EQ(irs::RegexpType::Complex,
-            irs::ComputeRegexpType(ToBytesView("a|b")));
-  ASSERT_EQ(irs::RegexpType::Complex,
-            irs::ComputeRegexpType(ToBytesView(".*foo")));
-  ASSERT_EQ(irs::RegexpType::Complex,
-            irs::ComputeRegexpType(ToBytesView("a.*b")));
-  ASSERT_EQ(irs::RegexpType::Complex,
-            irs::ComputeRegexpType(ToBytesView("[abc]")));
-  ASSERT_EQ(irs::RegexpType::Complex,
-            irs::ComputeRegexpType(ToBytesView("a?b")));
-  ASSERT_EQ(irs::RegexpType::Complex,
-            irs::ComputeRegexpType(ToBytesView("(ab)+")));
-  // .* is classified as Prefix with empty prefix
-  ASSERT_EQ(irs::RegexpType::Prefix, irs::ComputeRegexpType(ToBytesView(".*")));
-  ASSERT_EQ(irs::RegexpType::Complex,
-            irs::ComputeRegexpType(ToBytesView("fo+.*")));
-  ASSERT_EQ(irs::RegexpType::Complex,
-            irs::ComputeRegexpType(ToBytesView("a|b.*")));
+            irs::ComputeRegexpType(ToBytesView("(?s)foo.*"),
+                                   irs::RegexpSyntax::PosixEre));
 }
 
 // ExtractRegexpPrefix
 
 TEST_F(RegexpUtilsTest, extract_prefix) {
+  EXPECT_EQ("foo", irs::ViewCast<char>(
+                     irs::ExtractRegexpPrefix(ToBytesView("(?s)foo.*"))));
   EXPECT_EQ(
-    "foo", irs::ViewCast<char>(irs::ExtractRegexpPrefix(ToBytesView("foo.*"))));
+    "x", irs::ViewCast<char>(irs::ExtractRegexpPrefix(ToBytesView("(?s)x.*"))));
   EXPECT_EQ(
-    "abc", irs::ViewCast<char>(irs::ExtractRegexpPrefix(ToBytesView("abc.*"))));
-  EXPECT_EQ("x",
-            irs::ViewCast<char>(irs::ExtractRegexpPrefix(ToBytesView("x.*"))));
-  EXPECT_EQ("",
-            irs::ViewCast<char>(irs::ExtractRegexpPrefix(ToBytesView(".*"))));
+    "", irs::ViewCast<char>(irs::ExtractRegexpPrefix(ToBytesView("(?s).*"))));
   EXPECT_EQ("hello world", irs::ViewCast<char>(irs::ExtractRegexpPrefix(
-                             ToBytesView("hello world.*"))));
+                             ToBytesView("(?s)hello world.*"))));
 }
 
 // UnescapeRegexp

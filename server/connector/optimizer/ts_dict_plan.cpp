@@ -169,6 +169,7 @@ duckdb::idx_t EnsureTsDictCol(connector::ScanBindData& bind_data,
     col_idx = AppendVirtualGetColumn(
       bind_data, get, col.virtual_id, duckdb::LogicalType{col.type},
       TsDictColName(bind_data, req.display_id, kind));
+    req.bind_cols.push_back(bind_data.columns.ids.size() - 1);
   }
   return col_idx;
 }

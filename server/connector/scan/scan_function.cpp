@@ -548,7 +548,8 @@ void IResearchSetScanOrder(
     return;
   }
   if (bd.score.vector) {
-    if (options->order_type != bd.score.vector->natural_order) {
+    if (options->order_type != bd.score.vector->natural_order ||
+        options->null_order == duckdb::OrderByNullType::NULLS_FIRST) {
       return;
     }
     take_limit();

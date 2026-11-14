@@ -112,7 +112,7 @@ bool RegexpSimplifyRule::Apply(Filter::ptr& slot, const OptimizeContext&) {
   const auto target = TargetOf(node);
   bstring buf;
   auto lowered = ExecuteRegexp(
-    buf, node.options().pattern,
+    buf, node.options().pattern, node.options().syntax,
     [&](bytes_view term) { return target.Term(term); },
     [&](bytes_view prefix) { return target.Prefix(prefix); },
     [](bytes_view) -> Filter::ptr { return nullptr; });

@@ -453,8 +453,13 @@ float StaticScoreFloor(const duckdb::Expression& expr, bool& exact) {
     return kNone;
   }
   while (duckdb::BoundCastExpression::IsCast(*ref)) {
-    ref = &duckdb::BoundCastExpression::Child(
+    const auto& child = duckdb::BoundCastExpression::Child(
       ref->Cast<duckdb::BoundFunctionExpression>());
+    if (ref->GetReturnType().id() != duckdb::LogicalTypeId::DOUBLE ||
+        child.GetReturnType().id() != duckdb::LogicalTypeId::FLOAT) {
+      return kNone;
+    }
+    ref = &child;
   }
   if (ref->GetExpressionClass() != duckdb::ExpressionClass::BOUND_REF ||
       cst->GetExpressionClass() != duckdb::ExpressionClass::BOUND_CONSTANT) {
@@ -465,6 +470,9 @@ float StaticScoreFloor(const duckdb::Expression& expr, bool& exact) {
     return kNone;
   }
   const double c = val.GetValue<double>();
+  if (std::isnan(c)) {
+    return kNone;
+  }
   const bool strict = type == duckdb::ExpressionType::COMPARE_GREATERTHAN;
   float t = static_cast<float>(c);
   if (strict ? static_cast<double>(t) > c : static_cast<double>(t) >= c) {

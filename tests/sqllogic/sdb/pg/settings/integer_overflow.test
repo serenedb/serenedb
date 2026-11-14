@@ -56,3 +56,174 @@ statement error
 SELECT i * 9223372036854775807 FROM range(3) t(i);
 ----
 db error: ERROR: Overflow in multiplication of INT64 (2 * 9223372036854775807)!
+
+
+statement ok
+CREATE TABLE wrap_i (x INTEGER);
+
+
+statement ok
+INSERT INTO wrap_i VALUES (-2147483648), (-2147483643), (5), (2147483647);
+
+
+statement ok
+CREATE TABLE wrap_u (x UINTEGER);
+
+
+statement ok
+INSERT INTO wrap_u VALUES (0), (5), (4294967294);
+
+
+statement ok
+PREPARE wrap_filter AS SELECT x FROM wrap_i WHERE x + 1 < 0 ORDER BY x;
+
+
+query
+EXECUTE wrap_filter;
+----
+x
+-2147483648
+-2147483643
+
+
+statement ok
+SET integer_overflow = 'wrap';
+
+
+query
+EXECUTE wrap_filter;
+----
+x
+-2147483648
+-2147483643
+2147483647
+
+
+query
+SELECT x, x + 1 AS y, x + 1 < 0 AS negative, -x AS n FROM wrap_i ORDER BY x;
+----
+x	y	negative	n
+-2147483648	-2147483647	t	-2147483648
+-2147483643	-2147483642	t	2147483643
+5	6	f	-5
+2147483647	-2147483648	t	-2147483647
+
+
+query
+SELECT x FROM wrap_i WHERE x * 2 = 10 ORDER BY x;
+----
+x
+-2147483643
+5
+
+
+query
+SELECT x FROM wrap_i WHERE x - 1 > 0 ORDER BY x;
+----
+x
+-2147483648
+5
+2147483647
+
+
+query
+SELECT x FROM wrap_i WHERE -x > 0 ORDER BY x;
+----
+x
+-2147483643
+
+
+query
+SELECT x FROM wrap_i WHERE -x = -2147483648 ORDER BY x;
+----
+x
+-2147483648
+
+
+query
+SELECT x FROM wrap_i WHERE -x > (-2147483648)::INTEGER ORDER BY x;
+----
+x
+-2147483643
+5
+2147483647
+
+
+query
+SELECT sum(x + 1) AS s FROM wrap_i;
+----
+s
+-6442450931
+
+
+query
+SELECT x + 1 AS g, count(*) AS n FROM wrap_i GROUP BY g ORDER BY g;
+----
+g	n
+-2147483648	1
+-2147483647	1
+-2147483642	1
+6	1
+
+
+query
+SELECT -x AS g, count(*) AS n FROM wrap_i GROUP BY g ORDER BY g;
+----
+g	n
+-2147483648	1
+-2147483647	1
+-5	1
+2147483643	1
+
+
+query
+SELECT x, -x AS n FROM wrap_u ORDER BY x;
+----
+x	n
+0	0
+5	4294967291
+4294967294	2
+
+
+query
+SELECT x FROM wrap_u WHERE x + 5 = 3 ORDER BY x;
+----
+x
+4294967294
+
+
+statement ok
+PREPARE wrap_constant AS SELECT 9223372036854775807::BIGINT + 1 AS v;
+
+
+query
+EXECUTE wrap_constant;
+----
+v
+-9223372036854775808
+
+
+statement ok
+RESET integer_overflow;
+
+
+statement error
+EXECUTE wrap_constant;
+----
+db error: ERROR: Overflow in addition of INT64 (9223372036854775807 + 1)!
+
+
+query
+EXECUTE wrap_filter;
+----
+x
+-2147483648
+-2147483643
+
+
+statement ok
+DEALLOCATE wrap_constant;
+
+
+statement ok
+DEALLOCATE wrap_filter;

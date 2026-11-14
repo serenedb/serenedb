@@ -111,6 +111,7 @@ class DirectoryReader final : public IndexReader {
   void AddTerms(const SubReader& reader, bool keep_sorted);
   void RemoveTerms(const SubReader& reader);
   void AddColumns(const SubReader& reader, bool new_docs);
+  void RemoveDocs(const SubReader& reader);
   void Publish();
 
   const Directory* _dir = nullptr;

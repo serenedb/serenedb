@@ -1,0 +1,90 @@
+statement ok
+CREATE TABLE lrv (x INT);
+
+
+statement ok
+INSERT INTO lrv VALUES (1), (2), (3), (4), (5);
+
+
+query
+SELECT x FROM lrv ORDER BY x LIMIT 2.5;
+----
+x
+1
+2
+3
+
+
+query
+SELECT x FROM lrv ORDER BY x LIMIT (SELECT 2.5);
+----
+x
+1
+2
+3
+
+
+query
+SELECT x FROM lrv ORDER BY x DESC LIMIT (SELECT count(*) * 0.5 FROM lrv);
+----
+x
+5
+4
+3
+
+
+query
+SELECT x FROM lrv ORDER BY x OFFSET (SELECT 0.5);
+----
+x
+2
+3
+4
+5
+
+
+query
+SELECT x FROM lrv ORDER BY x LIMIT 9223372036854775807;
+----
+x
+1
+2
+3
+4
+5
+
+
+query
+SELECT x FROM lrv ORDER BY x LIMIT (SELECT 9223372036854775807);
+----
+x
+1
+2
+3
+4
+5
+
+
+query
+SELECT x FROM lrv ORDER BY x OFFSET (SELECT 9223372036854775807);
+----
+x
+
+
+statement ok
+PREPARE lrv_page(BIGINT) AS SELECT x FROM lrv ORDER BY x LIMIT $1;
+
+
+query
+EXECUTE lrv_page(9223372036854775807);
+----
+x
+1
+2
+3
+4
+5
+
+
+statement ok
+DEALLOCATE lrv_page;

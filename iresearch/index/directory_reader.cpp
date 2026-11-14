@@ -72,7 +72,7 @@ DirectoryReader::DirectoryReader(const Directory& dir,
 DirectoryReader::DirectoryReader(const DirectoryReader& base,
                                  std::vector<SegmentReader> readers,
                                  std::span<const SegmentReader> added,
-                                 std::span<const SegmentReader> patched,
+                                 std::span<const PatchedReader> patched,
                                  std::span<const SegmentReader> removed)
   : _dir{base._dir},
     _opts{base._opts},
@@ -108,13 +108,14 @@ DirectoryReader::DirectoryReader(const DirectoryReader& base,
                .docs = column.docs});
   }
   for (const auto& reader : removed) {
-    RemoveDocs(*reader);
+    RemoveColumns(*reader);
   }
   for (const auto& reader : added) {
     AddColumns(*reader, /*new_docs=*/true);
   }
-  for (const auto& reader : patched) {
-    AddColumns(*reader, /*new_docs=*/false);
+  for (const auto& [before, after] : patched) {
+    RemoveColumns(*before);
+    AddColumns(*after, /*new_docs=*/true);
   }
   Publish();
 }
@@ -206,7 +207,7 @@ void DirectoryReader::AddColumns(const SubReader& reader, bool new_docs) {
   }
 }
 
-void DirectoryReader::RemoveDocs(const SubReader& reader) {
+void DirectoryReader::RemoveColumns(const SubReader& reader) {
   const auto* col_reader = reader.GetColReader();
   if (!col_reader) {
     return;
@@ -214,7 +215,13 @@ void DirectoryReader::RemoveDocs(const SubReader& reader) {
   for (const auto& column : col_reader->Columns()) {
     const auto it = _columns.find(column->Id());
     SDB_ASSERT(it != _columns.end() && it->second.docs >= reader.docs_count());
-    it->second.docs -= reader.docs_count();
+    auto& stats = it->second;
+    stats.docs -= reader.docs_count();
+    stats.merged->SubtractAdditiveStatistics(column->MergedStatistics());
+    if (const auto* distinct = column->Distinct()) {
+      SDB_ASSERT(stats.distinct);
+      stats.distinct->SubtractCounts(*distinct);
+    }
   }
 }
 

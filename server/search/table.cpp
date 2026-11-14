@@ -658,7 +658,7 @@ irs::DirectoryReader Table::BuildReader(const TableState& prev,
     before.emplace(unit->id, unit.get());
   }
   std::vector<irs::SegmentReader> added;
-  std::vector<irs::SegmentReader> patched;
+  std::vector<irs::PatchedReader> patched;
   for (const auto& unit : next.units) {
     const auto it = before.find(unit->id);
     if (it == before.end()) {
@@ -666,7 +666,8 @@ irs::DirectoryReader Table::BuildReader(const TableState& prev,
       continue;
     }
     if (it->second->reader->PatchTick() != unit->reader->PatchTick()) {
-      patched.emplace_back(unit->reader);
+      patched.push_back({.before = irs::SegmentReader{it->second->reader},
+                         .after = irs::SegmentReader{unit->reader}});
     }
     before.erase(it);
   }
@@ -774,7 +775,7 @@ irs::DirectoryReader Table::Build(const TableState& state, const OwnWrites& own,
       return Masked(base, std::move(mask));
     };
   std::vector<irs::SegmentReader> added;
-  std::vector<irs::SegmentReader> patched;
+  std::vector<irs::PatchedReader> patched;
   std::vector<UnitPatch> followed;
   auto own_patches = own.patches;
   if (!PatchesCurrent(state, own_patches)) {
@@ -791,16 +792,19 @@ irs::DirectoryReader Table::Build(const TableState& state, const OwnWrites& own,
       }
       std::vector<irs::FieldPatch> fields{committed.begin(), committed.end()};
       MergePatches(fields, it->fields, 0);
-      auto patched_reader = reader->WithPatches(fields);
-      patched.emplace_back(patched_reader);
-      return patched_reader;
+      return reader->WithPatches(fields);
     };
   for (const auto& unit : state.units) {
     if (scope == Scope::Cold && unit->piece) {
       continue;
     }
-    add(with_patches(unit->id, unit->patches,
-                     with_own(unit->id, unit->deleted, unit->reader)));
+    auto visible = with_own(unit->id, unit->deleted, unit->reader);
+    auto reader = with_patches(unit->id, unit->patches, visible);
+    if (reader != visible) {
+      patched.push_back({.before = irs::SegmentReader{unit->reader},
+                         .after = irs::SegmentReader{reader}});
+    }
+    add(std::move(reader));
   }
   for (const auto& segment : own.segments) {
     const auto id = segment.reader->Id();

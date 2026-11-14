@@ -89,24 +89,23 @@ struct UnitRows {
   uint64_t end = 0;
 };
 
-using ScanOrderKeyBytes =
-  std::array<uint8_t, duckdb::RowGroupOrderKey::MAX_SIZE>;
-
 struct ScanOrderKey {
+  duckdb::RowGroupOrderKey key;
   uint32_t id = 0;
-  ScanOrderKeyBytes key;
+
+  friend auto operator<=>(const ScanOrderKey&, const ScanOrderKey&) = default;
 };
 
 struct OrderedUnits {
   std::vector<ScanUnit> units;
-  std::vector<ScanOrderKeyBytes> keys;
+  std::vector<duckdb::RowGroupOrderKey> keys;
   uint32_t next = 0;
 };
 
 struct ScanOrderBound {
   uint64_t version = 0;
   bool valid = false;
-  ScanOrderKeyBytes key;
+  duckdb::RowGroupOrderKey key;
 };
 
 struct ABSL_CACHELINE_ALIGNED SegmentWork {
@@ -281,7 +280,6 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   ABSL_CACHELINE_ALIGNED absl::Mutex ordered_mutex;
   ABSL_CACHELINE_ALIGNED std::atomic_bool ordered_exhausted{false};
   duckdb::LogicalType order_type;
-  std::optional<duckdb::RowGroupOrderKey> order_key;
   bool order_strict = false;
   ScanOrderBound order_bound;
   std::vector<ScanOrderKey> ordered_heap;

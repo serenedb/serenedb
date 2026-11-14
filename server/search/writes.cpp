@@ -899,14 +899,20 @@ void Writes::AddRemoval(duckdb::ClientContext& context,
 void Writes::AddPatches(const std::shared_ptr<Store>& store,
                         std::vector<UnitPatch>&& patches) {
   auto& w = EnsureStoreWrites(store);
+  std::vector<irs::DocumentMask> patched;
+  patched.reserve(patches.size());
+  for (const auto& patch : patches) {
+    patched.push_back(PatchedDocs(patch));
+  }
   absl::MutexLock lock{&w.mutex};
   ++w.revision;
   const auto rows_id = OwnRowsId(w.rows_generation);
   auto changed = std::make_shared<irs::DocRemoval>();
-  for (auto& patch : patches) {
+  for (size_t p = 0; p != patches.size(); ++p) {
+    auto& patch = patches[p];
     if (patch.unit < rows_id) {
       changed->groups.push_back(
-        {.segment = patch.unit, .docs = PatchedDocs(patch)});
+        {.segment = patch.unit, .docs = std::move(patched[p])});
     }
     std::vector<UnitPatch> added;
     added.push_back(std::move(patch));

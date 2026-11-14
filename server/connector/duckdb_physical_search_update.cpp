@@ -311,13 +311,13 @@ duckdb::SinkCombineResultType SereneDBSearchUpdate::Combine(
   auto& gstate = input.global_state.Cast<SearchUpdateGlobalState>();
   auto& lstate = input.local_state.Cast<SearchUpdateLocalState>();
   lstate.rows.Flush();
-  absl::MutexLock lock{&gstate.mutex};
   auto& search_txn = gstate.sdb_txn->SearchTxn();
-  lstate.rows.HandOver(context.client, gstate.table, search_txn);
-  gstate.positions.Merge(std::move(lstate.positions));
   if (!lstate.patches.empty()) {
     search_txn.AddPatches(gstate.table.store, std::move(lstate.patches));
   }
+  absl::MutexLock lock{&gstate.mutex};
+  lstate.rows.HandOver(context.client, gstate.table, search_txn);
+  gstate.positions.Merge(std::move(lstate.positions));
   gstate.update_count += lstate.update_count;
   if (lstate.returned && lstate.returned->Count() != 0) {
     gstate.returned->Combine(*lstate.returned);

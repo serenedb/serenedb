@@ -26,7 +26,7 @@ The log holds every committed transaction of the server: the changes to the cata
 
 A server keeps its log and its tables under `engine_v1` in its data directory:
 
-- `engine_v1/wal/`: the log, in files of 16 MiB named by their position in the log, the next one prepared ahead; and `snapshot`, which holds the catalog and the state of every table as of the oldest log file kept.
+- `engine_v1/wal/`: the log, in files named by their position in the log, and `snapshot`, which holds the catalog and the state of every table as of the oldest log file kept. The server creates each log file at 16 MiB ahead of the commits it will hold; until one is ready, such as right after starting on a new data directory, commits go to a file that grows as they fill it.
 - `engine_v1/store/<oid>/`: one directory for each table and each inverted index on a view, of every database, named by the object's `pg_class.oid`, with that object's index files.
 
 Beside `engine_v1`, the root of the data directory holds:

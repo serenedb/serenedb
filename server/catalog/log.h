@@ -113,8 +113,10 @@ class Log {
   }
   uint64_t Size() const { return End() - Oldest(); }
 
-  bool HasNext() const noexcept {
-    return _has_next.load(std::memory_order_relaxed);
+  bool ShouldPrepareNext(Lsn end) const noexcept {
+    return !_has_next.load(std::memory_order_relaxed) &&
+           (!_newest_prepared.load(std::memory_order_relaxed) ||
+            end - NewestChunk() > kChunkBytes / 2);
   }
   void PrepareNext();
 
@@ -165,6 +167,7 @@ class Log {
   std::atomic<bool> _has_next{false};
   std::atomic<Lsn> _oldest{0};
   std::atomic<Lsn> _newest{0};
+  std::atomic<bool> _newest_prepared{false};
   std::atomic<Lsn> _covered{0};
   std::atomic<uint64_t> _covered_number{0};
   std::atomic<uint64_t> _snapshot_bytes{0};

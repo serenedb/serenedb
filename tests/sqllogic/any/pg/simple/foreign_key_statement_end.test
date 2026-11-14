@@ -1,0 +1,45 @@
+statement ok
+CREATE TABLE fks_parent (id INT PRIMARY KEY);
+
+
+statement ok
+CREATE TABLE fks_child (id INT PRIMARY KEY, pid INT REFERENCES fks_parent (id));
+
+
+statement ok
+WITH c AS (INSERT INTO fks_child VALUES (1, 10) RETURNING id)
+INSERT INTO fks_parent VALUES (10);
+
+
+query
+SELECT c.id, p.id AS pid FROM fks_child c JOIN fks_parent p ON p.id = c.pid ORDER BY c.id;
+----
+id	pid
+1	10
+
+
+statement ok
+WITH c AS (DELETE FROM fks_child WHERE id = 1 RETURNING id)
+DELETE FROM fks_parent WHERE id = 10;
+
+
+query
+SELECT (SELECT count(*) FROM fks_parent) AS parents, (SELECT count(*) FROM fks_child) AS children;
+----
+parents	children
+0	0
+
+
+statement error
+WITH c AS (INSERT INTO fks_child VALUES (2, 20) RETURNING id)
+INSERT INTO fks_parent VALUES (21);
+----
+db error: ERROR: insert or update on table "fks_child" violates foreign key constraint "fks_child_pid_fkey"
+DETAIL: Key (pid)=(20) is not present in table "fks_parent".
+
+
+query
+SELECT (SELECT count(*) FROM fks_parent) AS parents, (SELECT count(*) FROM fks_child) AS children;
+----
+parents	children
+0	0

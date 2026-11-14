@@ -58,8 +58,11 @@ std::string Half(char fill) {
   return std::string(catalog::Log::kChunkBytes / 2, fill);
 }
 
-std::span<const uint8_t> Bytes(const std::string& payload) {
-  return {reinterpret_cast<const uint8_t*>(payload.data()), payload.size()};
+catalog::RecordBuffer Bytes(const std::string& payload) {
+  catalog::RecordBuffer record;
+  record.WriteData(reinterpret_cast<const uint8_t*>(payload.data()),
+                   payload.size());
+  return record;
 }
 
 std::vector<std::vector<uint8_t>> Keep(

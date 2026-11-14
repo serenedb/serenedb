@@ -262,6 +262,7 @@ class Store final : public std::enable_shared_from_this<Store>,
   Exclusive ExclusiveClaim() const;
 
   uint64_t SchemaEpoch() const noexcept { return _schema_epoch.load(); }
+  uint64_t LayoutVersion() const noexcept { return _layout_version.load(); }
   void AddTableColumns(const duckdb::ColumnList& columns);
   void SetTableColumns(const duckdb::ColumnList& columns);
   void SetConstraintKeys(std::vector<catalog::ConstraintKey> keys);
@@ -445,6 +446,7 @@ class Store final : public std::enable_shared_from_this<Store>,
   mutable std::vector<std::weak_ptr<const Referencing>> _referencing
     ABSL_GUARDED_BY(_referencing_mutex);
   std::atomic<uint64_t> _schema_epoch{0};
+  std::atomic<uint64_t> _layout_version{0};
   WriterGenerations _writers;
   std::unique_ptr<Table> _table;
   bool _on_disk = false;

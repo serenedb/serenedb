@@ -411,6 +411,9 @@ void FlushRows(duckdb::ClientContext& context, StoreWrites& w) {
   const auto mask = TakeRowRemovals(changes.removals, rows_id);
   auto trx =
     std::make_unique<irs::IndexWriter::Transaction>(store.GetTransaction());
+  if (!w.flushed_layout) {
+    w.flushed_layout = store.LayoutVersion();
+  }
   {
     const auto sink = connector::MakeSearchTableInsertSink(
       *trx, store, *changes.catalog, context);
@@ -442,22 +445,19 @@ void FlushRows(duckdb::ClientContext& context, StoreWrites& w) {
 
 }  // namespace
 
-const WriterGenerations::Writer* Writes::Registration(
-  duckdb::idx_t store_id) const {
-  absl::ReaderMutexLock lock{&_mutex};
-  const auto it = _writes.find(store_id);
-  return it == _writes.end() ? nullptr : &it->second.registration;
-}
-
-std::vector<const WriterGenerations*> Writes::Registrations() const {
-  absl::ReaderMutexLock lock{&_mutex};
-  std::vector<const WriterGenerations*> registrations;
-  for (const auto& [id, w] : _writes) {
-    if (w.registration) {
-      registrations.push_back(w.registration.get());
-    }
+void Writes::FollowLayout(const Store& store, uint64_t before) {
+  auto* w = FindStoreWrites(store.GetId());
+  if (!w) {
+    return;
   }
-  return registrations;
+  absl::MutexLock lock{&w->mutex};
+  if (!w->flushed_layout) {
+    return;
+  }
+  if (*w->flushed_layout != before) {
+    ThrowConcurrentUpdate();
+  }
+  w->flushed_layout = before + 1;
 }
 
 StoreWrites& Writes::EnsureStoreWrites(const std::shared_ptr<Store>& store) {
@@ -529,18 +529,18 @@ void Writes::RegisterWriter(const std::shared_ptr<Store>& store,
   if (!w.dropping && store->ExclusiveClaim() == Store::Exclusive::Drop) {
     refuse("is dropping");
   }
-  if (!w.registration) {
-    w.registration = store->RegisterWriter();
-  }
 }
 
 void Writes::AddOwnSegments(
   const std::shared_ptr<Store>& store,
   std::unique_ptr<irs::IndexWriter::Transaction> trx,
-  std::span<const irs::IndexWriter::FlushedSegment> flushed) {
+  std::span<const irs::IndexWriter::FlushedSegment> flushed, uint64_t layout) {
   auto segments = store->OpenFlushed(flushed);
   auto& w = EnsureStoreWrites(store);
   absl::MutexLock lock{&w.mutex};
+  if (!w.flushed_layout || layout < *w.flushed_layout) {
+    w.flushed_layout = layout;
+  }
   for (auto& segment : segments) {
     w.own_segments.push_back(std::move(segment));
   }
@@ -587,6 +587,7 @@ void Writes::RewriteOwn(
     const auto read = store->Read(OwnOf(w));
     auto trx =
       std::make_unique<irs::IndexWriter::Transaction>(store->GetTransaction());
+    w.flushed_layout = store->LayoutVersion();
     {
       const auto sink =
         connector::MakeSearchTableInsertSink(*trx, *store, catalog, context);
@@ -1449,6 +1450,15 @@ void Writes::PrepareCommit(duckdb::ClientContext& context) {
     if (!w.owner ||
         (changes.Empty() && w.own_segments.empty() && !w.manifest)) {
       continue;
+    }
+    w.registration = w.store->RegisterWriter();
+    if (w.table && (changes.HasBufferedRows() || !changes.patches.empty() ||
+                    !w.own_segments.empty())) {
+      w.table->RequireCurrentSchema();
+    }
+    if (!w.own_segments.empty() &&
+        w.flushed_layout != w.store->LayoutVersion()) {
+      ThrowConcurrentUpdate();
     }
     if (changes.HasBufferedRows() || !changes.removals.empty()) {
       SDB_IF_FAILURE("search_feed_pending_fails") {

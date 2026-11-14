@@ -1038,9 +1038,10 @@ std::shared_ptr<const TableState> Store::ReplaceSegments(
 }
 
 void Store::DrainPriorWriters(duckdb::ClientContext& context) {
-  const auto& writes =
-    ConnectionContext::Get(context).Transaction().SearchTxn();
-  _writers.Drain(context, writes.Registration(_id), writes.Registrations());
+  const auto before = _layout_version.fetch_add(1);
+  ConnectionContext::Get(context).Transaction().SearchTxn().FollowLayout(
+    *this, before);
+  _writers.Drain(context);
 }
 
 std::shared_ptr<const catalog::InvertedIndexConfig> Store::Config() const {

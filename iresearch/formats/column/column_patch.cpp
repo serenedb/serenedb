@@ -445,6 +445,15 @@ PatchedColumnReader::PatchedColumnReader(
 duckdb::idx_t PatchedColumnReader::Scan(ScanState& s, duckdb::Vector& result,
                                         duckdb::idx_t count) const {
   const auto first = _base.GatherCursor(s);
+  if (result.GetVectorType() == duckdb::VectorType::FLAT_VECTOR &&
+      _patch->Overlaps(first, first + count)) {
+    ResetOutput(_base, s);
+    const auto n = _base.ScanCount(s, result, count, 0);
+    if (n != 0) {
+      ApplyRange(*_patch, first, n, result, 0);
+    }
+    return n;
+  }
   const auto n = _base.Scan(s, result, count);
   if (n != 0 && _patch->Overlaps(first, first + n)) {
     Own(result, n);

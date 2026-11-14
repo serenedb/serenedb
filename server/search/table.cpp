@@ -900,7 +900,14 @@ std::vector<std::shared_ptr<const TableUnit>> Table::MergeRun() const {
     if (begin == i) {
       continue;
     }
-    pieces.erase(pieces.begin() + i + 1, pieces.end());
+    auto end = i + 1;
+    for (; end != pieces.size() && Adjacent(*pieces[end - 1], *pieces[end]) &&
+           Mergeable(*pieces[end]) && PieceTier(pieces[end]->docs) <= tier &&
+           docs + pieces[end]->docs <= irs::doc_limits::kMaxDocs;
+         ++end) {
+      docs += pieces[end]->docs;
+    }
+    pieces.erase(pieces.begin() + end, pieces.end());
     pieces.erase(pieces.begin(), pieces.begin() + begin);
     return pieces;
   }

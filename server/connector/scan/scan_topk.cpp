@@ -23,7 +23,7 @@
 #include <algorithm>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
-#include <duckdb/parallel/task_scheduler.hpp>
+#include <duckdb/parallel/task_executor.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/top/make.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -163,7 +163,7 @@ void AppendBatch(duckdb::ClientContext& ctx, ScanGlobalState& g,
 }  // namespace
 
 FetchedHits FetchHits(duckdb::ClientContext& ctx, ScanGlobalState& g,
-                      RankedLocalState& l, uint32_t seg,
+                      FetchLocalState& l, duckdb::DataChunk& tmp, uint32_t seg,
                       std::span<const irs::ScoreDoc> hits, bool rebind) {
   const auto& t = g.topk;
   SDB_IF_FAILURE("TopKFetchBudget") {
@@ -178,10 +178,9 @@ FetchedHits FetchHits(duckdb::ClientContext& ctx, ScanGlobalState& g,
   }
   auto chunk = duckdb::make_uniq<duckdb::DataChunk>();
   chunk->Initialize(ctx, g.projected_types, hits.size());
-  if (l.fetch_tmp.ColumnCount() == 0) {
-    l.fetch_tmp.Initialize(ctx, g.projected_types);
+  if (tmp.ColumnCount() == 0) {
+    tmp.Initialize(ctx, g.projected_types);
   }
-  auto& tmp = l.fetch_tmp;
   std::unique_ptr<duckdb::Vector> pk;
   duckdb::idx_t appended = 0;
   AppendHits(ctx, g, l, tmp, seg, hits, rebind, *chunk, pk, appended);
@@ -243,14 +242,60 @@ void AppendHits(duckdb::ClientContext& ctx, ScanGlobalState& g,
 
 namespace {
 
-void FetchUnit(duckdb::ClientContext& ctx, ScanGlobalState& g,
-               RankedLocalState& l, uint32_t index) {
+void FetchUnits(duckdb::ClientContext& ctx, ScanGlobalState& g,
+                FetchLocalState& l, duckdb::DataChunk& tmp) {
   auto& t = g.topk;
-  const auto& fu = t.fetch_units[index];
-  auto fetched =
-    FetchHits(ctx, g, l, fu.seg, {t.answer.data() + fu.first, fu.count}, false);
-  t.fetched[index] = std::move(fetched.chunk);
-  t.fetched_pk[index] = std::move(fetched.pk);
+  for (auto i = t.next_fetch_unit.fetch_add(1, std::memory_order_relaxed);
+       i < t.fetch_units.size();
+       i = t.next_fetch_unit.fetch_add(1, std::memory_order_relaxed)) {
+    const auto& fu = t.fetch_units[i];
+    auto fetched = FetchHits(ctx, g, l, tmp, fu.seg,
+                             {t.answer.data() + fu.first, fu.count}, false);
+    t.fetched[i] = std::move(fetched.chunk);
+    t.fetched_pk[i] = std::move(fetched.pk);
+  }
+}
+
+class FetchTask final : public duckdb::BaseExecutorTask {
+ public:
+  FetchTask(duckdb::TaskExecutor& executor, duckdb::ClientContext& ctx,
+            ScanGlobalState& g, std::span<const FieldEntry> offsets)
+    : BaseExecutorTask{executor}, _ctx{ctx}, _g{g} {
+    _fetch.offsets_entries.reserve(offsets.size());
+    for (const auto& entry : offsets) {
+      _fetch.offsets_entries.push_back(
+        {.output_idx = entry.output_idx, .id = entry.id, .limit = entry.limit});
+    }
+  }
+
+  void ExecuteTask() final {
+    SDB_IF_FAILURE("topk_fetch_task_fails") {
+      THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+    }
+    FetchUnits(_ctx, _g, _fetch, _tmp);
+  }
+
+ private:
+  duckdb::ClientContext& _ctx;
+  ScanGlobalState& _g;
+  FetchLocalState _fetch;
+  duckdb::DataChunk _tmp;
+};
+
+void FetchAnswer(duckdb::ClientContext& ctx, ScanGlobalState& g,
+                 RankedLocalState& l) {
+  const auto fetchers = std::min<size_t>(g.topk.fetch_units.size(), g.workers);
+  if (fetchers < 2) {
+    FetchUnits(ctx, g, l, l.fetch_tmp);
+    return;
+  }
+  duckdb::TaskExecutor executor{ctx};
+  for (size_t i = 1; i < fetchers; ++i) {
+    executor.ScheduleTask(
+      duckdb::make_uniq<FetchTask>(executor, ctx, g, l.offsets_entries));
+  }
+  FetchUnits(ctx, g, l, l.fetch_tmp);
+  executor.WorkOnTasks();
 }
 
 }  // namespace
@@ -381,52 +426,44 @@ void PlanFetch(ScanGlobalState& g) {
   t.fetched_pk.resize(t.fetch_units.size());
 }
 
-void RunAnswerStages(duckdb::ClientContext& ctx,
-                     duckdb::TableFunctionInput& input, ScanGlobalState& g,
+void CollectRanked(ScanGlobalState& g, RankedLocalState& l,
+                   absl::FunctionRef<void()> collect,
+                   absl::FunctionRef<void()> publish) {
+  if (l.published) {
+    return;
+  }
+  while (NextLiveUnit(g, l)) {
+    if (!l.claimed) {
+      l.claimed = true;
+      g.topk.claimers.fetch_add(1, std::memory_order_acq_rel);
+    }
+    collect();
+    FinishUnit(g, l);
+  }
+  publish();
+  l.published = true;
+  if (l.claimed) {
+    g.topk.published.fetch_add(1, std::memory_order_acq_rel);
+  }
+}
+
+void RunAnswerStages(duckdb::ClientContext& ctx, ScanGlobalState& g,
                      RankedLocalState& l, duckdb::DataChunk& output,
                      absl::FunctionRef<void()> merge) {
   auto& t = g.topk;
-  if (!t.merge_barrier.Released()) {
+  if (!l.emitter) {
     const bool collected =
       g.done_segments.load(std::memory_order_acquire) == g.live_segments &&
       t.published.load(std::memory_order_acquire) ==
-        g.worker_count.load(std::memory_order_acquire);
-    if (collected && !t.merge_taken.exchange(true, std::memory_order_acq_rel)) {
-      merge();
-      t.merge_barrier.Release(input);
-    } else {
-      if (!t.shared_fetch &&
-          duckdb::TaskScheduler::GetScheduler(ctx).GetNumberOfTasks() != 0) {
-        output.SetChildCardinality(0);
-        return;
-      }
-      if (t.merge_barrier.Park(input, ctx)) {
-        l.parked_on = &t.merge_barrier;
-        return;
-      }
-      if (!t.merge_barrier.Released()) {
-        output.SetChildCardinality(0);
-        return;
-      }
+        t.claimers.load(std::memory_order_acquire);
+    if (!collected || t.merge_taken.exchange(true, std::memory_order_acq_rel)) {
+      output.SetChildCardinality(0);
+      return;
     }
-  }
-  for (;;) {
-    const auto i = t.next_fetch_unit.fetch_add(1, std::memory_order_relaxed);
-    if (i >= t.fetch_units.size()) {
-      break;
-    }
-    FetchUnit(ctx, g, l, i);
-    if (t.fetch_done.fetch_add(1, std::memory_order_acq_rel) + 1 ==
-        t.fetch_units.size()) {
-      if (!t.emit_taken.exchange(true, std::memory_order_acq_rel)) {
-        l.emitter = true;
-        BuildAnswer(ctx, g, l);
-      }
-    }
-  }
-  if (!l.emitter) {
-    output.SetChildCardinality(0);
-    return;
+    merge();
+    FetchAnswer(ctx, g, l);
+    BuildAnswer(ctx, g, l);
+    l.emitter = true;
   }
   EmitNext(l, output);
 }
@@ -435,7 +472,6 @@ void InitTopKGlobal(ScanGlobalState& g, duckdb::ClientContext& /*context*/) {
   auto& t = g.topk;
   t.limit = *g.top_k;
   t.offset = g.top_offset;
-  t.shared_fetch = t.limit > STANDARD_VECTOR_SIZE;
   const auto k = static_cast<double>(*g.top_k);
   t.pool = ClampCandidates(k, k, g.reader->live_docs_count());
   t.hits.resize(size_t{g.workers} * t.pool);
@@ -459,16 +495,8 @@ void RunTopKScan(duckdb::ClientContext& ctx, duckdb::TableFunctionInput& input,
   if (!RunPrepareStage(input, g, l)) {
     return;
   }
-  if (!l.published) {
-    while (NextLiveUnit(g, l)) {
-      CollectUnit(g, l);
-      FinishUnit(g, l);
-    }
-    PublishHits(g, l);
-    l.published = true;
-    g.topk.published.fetch_add(1, std::memory_order_acq_rel);
-  }
-  RunAnswerStages(ctx, input, g, l, output, [&] { Merge(g); });
+  CollectRanked(g, l, [&] { CollectUnit(g, l); }, [&] { PublishHits(g, l); });
+  RunAnswerStages(ctx, g, l, output, [&] { Merge(g); });
 }
 
 }  // namespace sdb::connector

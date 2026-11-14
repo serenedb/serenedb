@@ -738,8 +738,8 @@ void WriteVirtualColumns(ScanGlobalState& g, duckdb::idx_t num_rows,
     std::fill_n(tableoid_data, num_rows, g.tableoid_value);
   }
   if (g.empty_output_idx != duckdb::DConstants::INVALID_INDEX) {
-    output.data[g.empty_output_idx].Reference(
-      duckdb::Value{duckdb::LogicalType::BOOLEAN}, duckdb::count_t(num_rows));
+    duckdb::ConstantVector::SetNull(output.data[g.empty_output_idx],
+                                    duckdb::count_t(num_rows));
   }
   if (!g.ScanScore()) {
     return;

@@ -1,0 +1,99 @@
+# A scored scan's workers wait until every segment is prepared, so the scores
+# use the statistics of the whole index; afterwards, the worker that merges the
+# top-k answer fetches its rows together with tasks it schedules for that. A
+# worker or task that fails must not leave the others waiting: the query fails
+# with its error instead of hanging, and the next query runs.
+#
+# Four one-row-group segments give the scan four workers: the one that prepares
+# the last segment fails while the others wait for it. An answer spanning the
+# four segments has four fetch units, so the merging worker schedules three
+# fetch tasks, and they fail.
+#
+# Fault points and `threads` are server-wide, hence the recovery subtree.
+
+statement ok
+SET threads = 16;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY swe_en AS split_text_csv(' ')
+  WITH (frequency, position)
+
+
+statement ok
+CREATE TABLE swe (id INT PRIMARY KEY, body TEXT) WITH (compaction_interval = 0)
+
+
+statement ok
+CREATE INDEX swe_idx ON swe USING inverted (id, body swe_en)
+
+
+statement ok
+INSERT INTO swe SELECT i, repeat('fox ', 1 + (i % 7)) FROM range(2000) t(i)
+
+statement ok
+VACUUM (FLUSH_TABLE) swe
+
+statement ok
+INSERT INTO swe SELECT i, repeat('fox ', 1 + (i % 7)) FROM range(2000, 4000) t(i)
+
+statement ok
+VACUUM (FLUSH_TABLE) swe
+
+statement ok
+INSERT INTO swe SELECT i, repeat('fox ', 1 + (i % 7)) FROM range(4000, 6000) t(i)
+
+statement ok
+VACUUM (FLUSH_TABLE) swe
+
+statement ok
+INSERT INTO swe SELECT i, repeat('fox ', 1 + (i % 7)) FROM range(6000, 8000) t(i)
+
+statement ok
+VACUUM (FLUSH_TABLE) swe
+
+
+statement ok
+SET sdb_faults = 'scan_prepare_fails_last_segment';
+
+
+statement error
+SELECT id FROM swe_idx WHERE body @@ 'fox'
+  ORDER BY bm25(swe_idx.tableoid) DESC LIMIT 10;
+----
+db error: ERROR: intentional debug error
+
+
+statement ok
+RESET sdb_faults;
+
+
+query
+SELECT count(*) AS n FROM (SELECT id FROM swe_idx WHERE body @@ 'fox'
+  ORDER BY bm25(swe_idx.tableoid) DESC LIMIT 10) t;
+----
+n
+10
+
+
+statement ok
+SET sdb_faults = 'topk_fetch_task_fails';
+
+
+statement error
+SELECT id FROM swe_idx WHERE body @@ 'fox'
+  ORDER BY bm25(swe_idx.tableoid) DESC LIMIT 3000;
+----
+db error: ERROR: intentional debug error
+
+
+statement ok
+RESET sdb_faults;
+
+
+query
+SELECT count(*) AS n, count(DISTINCT id) AS ids FROM (SELECT id FROM swe_idx
+  WHERE body @@ 'fox' ORDER BY bm25(swe_idx.tableoid) DESC LIMIT 3000) t;
+----
+n	ids
+3000	3000

@@ -22,13 +22,15 @@
 
 #include <absl/functional/function_ref.h>
 #include <absl/synchronization/mutex.h>
-#include <absl/synchronization/notification.h>
 
+#include <array>
 #include <atomic>
 #include <duckdb.hpp>
 #include <duckdb/function/table_function.hpp>
+#include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/filter/table_filter_functions.hpp>
 #include <duckdb/planner/table_filter.hpp>
+#include <duckdb/storage/table/row_group_reorderer.hpp>
 #include <iresearch/index/column_extract.hpp>
 #include <iresearch/index/docs_mask/docs_mask.hpp>
 #include <iresearch/index/hit_batcher.hpp>
@@ -74,18 +76,6 @@ enum class ScanShape : uint8_t {
   Stream,
 };
 
-enum class SplitMode : uint8_t {
-  Tail,
-  Always,
-  Never,
-};
-
-enum class OrderMode : uint8_t {
-  SmallestFirst,
-  LargestFirst,
-  Order,
-};
-
 struct ScanUnit {
   uint32_t seg = 0;
   uint32_t rg_begin = 0;
@@ -100,19 +90,22 @@ struct UnitRows {
 };
 
 struct ScanOrderKey {
+  duckdb::RowGroupOrderKey key;
   uint32_t id = 0;
-  duckdb::Value value;
+
+  auto operator<=>(const ScanOrderKey&) const = default;
 };
 
 struct OrderedUnits {
   std::vector<ScanUnit> units;
-  std::vector<duckdb::Value> keys;
+  std::vector<duckdb::RowGroupOrderKey> keys;
   uint32_t next = 0;
 };
 
-struct LiveClaim {
-  uint32_t rg = 0;
-  uint32_t live = 0;
+struct ScanOrderBound {
+  uint64_t version = 0;
+  bool valid = false;
+  duckdb::RowGroupOrderKey key;
 };
 
 struct ABSL_CACHELINE_ALIGNED SegmentWork {
@@ -127,24 +120,19 @@ struct ABSL_CACHELINE_ALIGNED SegmentWork {
 
   uint32_t rg_count = 0;
   uint32_t run_end = 0;
-  std::atomic_uint32_t next_claim{0};
-  std::atomic_uint32_t done_rgs{0};
+  uint32_t base = 0;
+  uint32_t first_start = 0;
+  uint32_t start_count = 0;
   std::atomic_uint8_t claim{kUnclaimed};
   std::atomic_uint8_t prepare{kUnprepared};
-  std::vector<LiveClaim> claims;
+  bool dead = false;
   std::unique_ptr<OrderedUnits> ordered;
+  ABSL_CACHELINE_ALIGNED std::atomic_uint32_t next_start{0};
+  ABSL_CACHELINE_ALIGNED std::atomic_uint32_t done_rgs{0};
 
-  uint32_t LiveCount() const noexcept {
-    return claims.empty() ? rg_count : claims.back().live;
-  }
+  uint32_t LiveCount() const noexcept { return dead ? 0 : rg_count; }
 
-  uint32_t LiveLeft(uint32_t next) const noexcept {
-    if (claims.empty()) {
-      return next < rg_count ? rg_count - next : 0;
-    }
-    return next < claims.size() - 1 ? claims.back().live - claims[next].live
-                                    : 0;
-  }
+  uint32_t Units() const noexcept { return LiveCount(); }
 };
 
 class ScanBarrier {
@@ -159,23 +147,33 @@ class ScanBarrier {
   }
 
   bool Released() const noexcept {
-    return _released.load(std::memory_order_acquire);
+    return _state.load(std::memory_order_acquire) != State::Open;
+  }
+
+  bool Failed() const noexcept {
+    return _state.load(std::memory_order_acquire) == State::Failed;
   }
 
   void Release(duckdb::TableFunctionInput& input);
 
-  bool Park(duckdb::TableFunctionInput& input, duckdb::ClientContext& context);
+  void Abandon() noexcept;
 
-  void Resume() const noexcept;
+  bool Park(duckdb::TableFunctionInput& input);
 
-  void Wait();
+  void Wait() const;
 
  private:
+  enum class State : uint32_t {
+    Open,
+    Released,
+    Failed,
+  };
+
+  bool Finish(State state) noexcept;
+
   std::atomic_uint32_t _arrived{0};
   uint32_t _total = 0;
-  std::atomic_bool _released{false};
-  std::atomic_int64_t _released_at{0};
-  absl::Notification _notification;
+  std::atomic<State> _state{State::Open};
 };
 
 struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
@@ -259,9 +257,6 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   ScanBarrier stats_barrier;
 
   ScanShape shape = ScanShape::Stream;
-  SplitMode split = SplitMode::Tail;
-  OrderMode order = OrderMode::LargestFirst;
-  uint32_t no_split_rgs = 1;
   bool splittable = true;
   uint32_t workers = 1;
   uint64_t rg_size = 0;
@@ -270,13 +265,23 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
 
   std::vector<uint32_t> segment_order;
   std::unique_ptr<SegmentWork[]> segments;
-  std::unique_ptr<std::atomic_uint32_t[]> joinable;
+  struct ABSL_CACHELINE_ALIGNED RangeSlot {
+    std::atomic_uint64_t range{0};
+  };
+  std::unique_ptr<RangeSlot[]> ranges;
+  std::vector<uint32_t> split_bases;
+  std::vector<uint32_t> split_segments;
+  std::vector<uint64_t> starts;
   uint32_t live_segments = 0;
   bool ordered = false;
+  ABSL_CACHELINE_ALIGNED std::atomic_uint32_t arrivals{0};
   ABSL_CACHELINE_ALIGNED std::atomic_uint32_t next_segment{0};
   ABSL_CACHELINE_ALIGNED std::atomic_uint32_t done_segments{0};
   ABSL_CACHELINE_ALIGNED absl::Mutex ordered_mutex;
   ABSL_CACHELINE_ALIGNED std::atomic_bool ordered_exhausted{false};
+  duckdb::LogicalType order_type;
+  bool order_strict = false;
+  ScanOrderBound order_bound;
   std::vector<ScanOrderKey> ordered_heap;
 
   bool Ordered() const noexcept { return ordered; }
@@ -305,10 +310,9 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
     uint32_t pool = 0;
     std::vector<irs::ScoreDoc> hits;
     std::unique_ptr<std::atomic_uint32_t[]> accepted;
+    std::atomic_uint32_t claimers{0};
     std::atomic_uint32_t published{0};
-    ScanBarrier merge_barrier;
     std::atomic_bool merge_taken{false};
-    bool shared_fetch = false;
 
     struct FetchUnit {
       uint32_t seg;
@@ -320,10 +324,8 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
     uint32_t verify_first = std::numeric_limits<uint32_t>::max();
     std::vector<FetchUnit> fetch_units;
     std::atomic_uint32_t next_fetch_unit{0};
-    std::atomic_uint32_t fetch_done{0};
     std::vector<std::unique_ptr<duckdb::DataChunk>> fetched;
     std::vector<std::unique_ptr<duckdb::Vector>> fetched_pk;
-    std::atomic_bool emit_taken{false};
     duckdb::idx_t offset = 0;
     duckdb::idx_t limit = 0;
   };
@@ -356,6 +358,13 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   irs::doc_id_t UnitSpan(const ScanUnit& unit) const noexcept;
 };
 
+struct RowGroupCheck {
+  const irs::ColumnReader* reader;
+  const duckdb::ExpressionFilter* filter;
+  duckdb::TableFilterState* state;
+  irs::BlockWindow window;
+};
+
 struct ScanLocalState : public duckdb::LocalTableFunctionState {
   duckdb::DataChunk scan_chunk;
   uint32_t worker = std::numeric_limits<uint32_t>::max();
@@ -364,14 +373,19 @@ struct ScanLocalState : public duckdb::LocalTableFunctionState {
   uint32_t classified_seg = std::numeric_limits<uint32_t>::max();
   irs::ColFilterClassification seg_cls;
   irs::ColFilterClassification column_form_cls;
+  uint32_t checked_seg = std::numeric_limits<uint32_t>::max();
+  std::vector<RowGroupCheck> rg_checks;
   uint32_t current_seg = std::numeric_limits<uint32_t>::max();
+  uint32_t owned_seg = std::numeric_limits<uint32_t>::max();
+  uint32_t claimed_end = 0;
+  std::atomic_uint64_t private_range{0};
   uint32_t batch_next = 0;
   uint32_t batch_end = 0;
   uint32_t finished_segments = 0;
-  const ScanBarrier* parked_on = nullptr;
   bool has_unit = false;
   ScanUnit unit;
   bool units_exhausted = false;
+  bool starts_exhausted = false;
   uint64_t rg_units = 0;
   uint64_t produced_rows = 0;
 
@@ -391,7 +405,7 @@ struct FetchLocalState {
 
 struct CountLocalState final : public ScanLocalState {
   uint64_t local_count = 0;
-  uint64_t local_emitted = 0;
+  bool whole_backlog = false;
   ColFilterVerify col_verify;
   irs::memory::managed_ptr<irs::memory::Managed> root;
   uint32_t root_seg = std::numeric_limits<uint32_t>::max();
@@ -426,6 +440,7 @@ struct RankedLocalState : public ScanLocalState, FetchLocalState {
   irs::memory::managed_ptr<irs::memory::Managed> root;
   uint32_t root_seg = std::numeric_limits<uint32_t>::max();
   irs::doc_id_t root_end = 0;
+  bool claimed = false;
   bool published = false;
   bool emitter = false;
   duckdb::idx_t emitted = 0;
@@ -463,7 +478,6 @@ const irs::QueryBuilder& EnsureSegmentQuery(ScanGlobalState& g,
 bool RunPrepareStage(duckdb::TableFunctionInput& input, ScanGlobalState& g,
                      ScanLocalState& l);
 
-std::vector<LiveClaim> CutClaims(const irs::bitset& live, uint32_t threads);
 void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context);
 bool ClaimUnit(ScanGlobalState& g, ScanLocalState& l);
 bool NextLiveUnit(ScanGlobalState& g, ScanLocalState& l);
@@ -545,7 +559,7 @@ std::vector<ScanGlobalState::TopKState::FetchUnit> FetchUnitsOf(
   std::span<const irs::ScoreDoc> hits, uint64_t rg_size);
 void PlanFetch(ScanGlobalState& g);
 FetchedHits FetchHits(duckdb::ClientContext& ctx, ScanGlobalState& g,
-                      RankedLocalState& l, uint32_t seg,
+                      FetchLocalState& l, duckdb::DataChunk& tmp, uint32_t seg,
                       std::span<const irs::ScoreDoc> hits, bool rebind);
 void MaterializeHits(duckdb::ClientContext& ctx, const ScanGlobalState& g,
                      RankedLocalState& l, const duckdb::DataChunk& fetched,
@@ -554,8 +568,10 @@ void MaterializeHits(duckdb::ClientContext& ctx, const ScanGlobalState& g,
                      std::vector<irs::ScoreDoc>& row_hits);
 void VerifyMore(duckdb::ClientContext& ctx, ScanGlobalState& g,
                 RankedLocalState& l, std::vector<irs::ScoreDoc>& row_hits);
-void RunAnswerStages(duckdb::ClientContext& ctx,
-                     duckdb::TableFunctionInput& input, ScanGlobalState& g,
+void CollectRanked(ScanGlobalState& g, RankedLocalState& l,
+                   absl::FunctionRef<void()> collect,
+                   absl::FunctionRef<void()> publish);
+void RunAnswerStages(duckdb::ClientContext& ctx, ScanGlobalState& g,
                      RankedLocalState& l, duckdb::DataChunk& output,
                      absl::FunctionRef<void()> merge);
 

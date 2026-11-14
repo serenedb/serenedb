@@ -95,12 +95,63 @@ statement ok
 SET threads = 3
 
 
-statement ok
-SET sdb_scan_order = 'auto'
+query
+SELECT count(*) FROM so_idx WHERE body @@ 'dog';
+----
+count
+365000
 
 
-statement ok
-SET sdb_scan_split = 'tail'
+query
+SELECT count(*) FROM so_idx WHERE body @@ 'dog' AND g < 1000;
+----
+count
+36666
+
+
+query
+SELECT count(*), sum(g) FROM so_idx;
+----
+count	sum
+1095000	5461957500
+
+
+query
+SELECT id FROM so_idx WHERE body @@ 'fox'
+ORDER BY bm25(so_idx.tableoid) DESC LIMIT 3;
+----
+id
+500000
+250000
+1000000
+
+
+query
+SELECT id FROM so_wand WHERE body @@ 'fox'
+ORDER BY bm25(so_wand.tableoid) DESC LIMIT 3;
+----
+id
+500000
+250000
+1000000
+
+
+query
+SELECT id FROM so_idx WHERE body @@ 'fox'
+ORDER BY bm25(so_idx.tableoid) DESC LIMIT 2 OFFSET 1;
+----
+id
+250000
+1000000
+
+
+query
+SELECT g FROM so_idx ORDER BY g DESC LIMIT 3;
+----
+g
+9999
+9999
+9999
 
 
 query
@@ -162,12 +213,63 @@ g
 9999
 
 
-statement ok
-SET sdb_scan_order = 'smallest_first'
+query
+SELECT count(*) FROM so_idx WHERE body @@ 'dog';
+----
+count
+365000
 
 
-statement ok
-SET sdb_scan_split = 'tail'
+query
+SELECT count(*) FROM so_idx WHERE body @@ 'dog' AND g < 1000;
+----
+count
+36666
+
+
+query
+SELECT count(*), sum(g) FROM so_idx;
+----
+count	sum
+1095000	5461957500
+
+
+query
+SELECT id FROM so_idx WHERE body @@ 'fox'
+ORDER BY bm25(so_idx.tableoid) DESC LIMIT 3;
+----
+id
+500000
+250000
+1000000
+
+
+query
+SELECT id FROM so_wand WHERE body @@ 'fox'
+ORDER BY bm25(so_wand.tableoid) DESC LIMIT 3;
+----
+id
+500000
+250000
+1000000
+
+
+query
+SELECT id FROM so_idx WHERE body @@ 'fox'
+ORDER BY bm25(so_idx.tableoid) DESC LIMIT 2 OFFSET 1;
+----
+id
+250000
+1000000
+
+
+query
+SELECT g FROM so_idx ORDER BY g DESC LIMIT 3;
+----
+g
+9999
+9999
+9999
 
 
 query
@@ -229,14 +331,6 @@ g
 9999
 
 
-statement ok
-SET sdb_scan_order = 'largest_first'
-
-
-statement ok
-SET sdb_scan_split = 'tail'
-
-
 query
 SELECT count(*) FROM so_idx WHERE body @@ 'dog';
 ----
@@ -294,148 +388,6 @@ g
 9999
 9999
 9999
-
-
-statement ok
-SET sdb_scan_order = 'auto'
-
-
-statement ok
-SET sdb_scan_split = 'always'
-
-
-query
-SELECT count(*) FROM so_idx WHERE body @@ 'dog';
-----
-count
-365000
-
-
-query
-SELECT count(*) FROM so_idx WHERE body @@ 'dog' AND g < 1000;
-----
-count
-36666
-
-
-query
-SELECT count(*), sum(g) FROM so_idx;
-----
-count	sum
-1095000	5461957500
-
-
-query
-SELECT id FROM so_idx WHERE body @@ 'fox'
-ORDER BY bm25(so_idx.tableoid) DESC LIMIT 3;
-----
-id
-500000
-250000
-1000000
-
-
-query
-SELECT id FROM so_wand WHERE body @@ 'fox'
-ORDER BY bm25(so_wand.tableoid) DESC LIMIT 3;
-----
-id
-500000
-250000
-1000000
-
-
-query
-SELECT id FROM so_idx WHERE body @@ 'fox'
-ORDER BY bm25(so_idx.tableoid) DESC LIMIT 2 OFFSET 1;
-----
-id
-250000
-1000000
-
-
-query
-SELECT g FROM so_idx ORDER BY g DESC LIMIT 3;
-----
-g
-9999
-9999
-9999
-
-
-statement ok
-SET sdb_scan_order = 'auto'
-
-
-statement ok
-SET sdb_scan_split = 'never'
-
-
-query
-SELECT count(*) FROM so_idx WHERE body @@ 'dog';
-----
-count
-365000
-
-
-query
-SELECT count(*) FROM so_idx WHERE body @@ 'dog' AND g < 1000;
-----
-count
-36666
-
-
-query
-SELECT count(*), sum(g) FROM so_idx;
-----
-count	sum
-1095000	5461957500
-
-
-query
-SELECT id FROM so_idx WHERE body @@ 'fox'
-ORDER BY bm25(so_idx.tableoid) DESC LIMIT 3;
-----
-id
-500000
-250000
-1000000
-
-
-query
-SELECT id FROM so_wand WHERE body @@ 'fox'
-ORDER BY bm25(so_wand.tableoid) DESC LIMIT 3;
-----
-id
-500000
-250000
-1000000
-
-
-query
-SELECT id FROM so_idx WHERE body @@ 'fox'
-ORDER BY bm25(so_idx.tableoid) DESC LIMIT 2 OFFSET 1;
-----
-id
-250000
-1000000
-
-
-query
-SELECT g FROM so_idx ORDER BY g DESC LIMIT 3;
-----
-g
-9999
-9999
-9999
-
-
-statement ok
-RESET sdb_scan_split
-
-
-statement ok
-RESET sdb_scan_order
 
 
 statement ok

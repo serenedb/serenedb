@@ -3828,3 +3828,22 @@ def test_like_and_similar_to_escape_errors(conn, query, sqlstate, message, hint)
     assert [(e["C"], e["M"], e.get("H")) for e in errors(m)] == [
         (sqlstate, message, hint)
     ]
+
+
+@pytest.mark.parametrize(
+    "query, message",
+    [
+        ("SELECT 'abc' ~ '('", "missing ): ("),
+        ("SELECT 'abc' ~ p FROM (VALUES ('(')) AS t(p)", "missing ): ("),
+        ("SELECT regexp_replace('abc', '(', 'x')", "missing ): ("),
+        ("SELECT regexp_split_to_array('abc', '(')", "missing ): ("),
+        ("SELECT substring('abc' from '(')", "missing ): ("),
+        ("SELECT 'abc' SIMILAR TO '('", "missing ): ^(?:(?:)$"),
+        ("SELECT regexp_match('abc', '(')", "missing ): ("),
+    ],
+)
+def test_invalid_regular_expression(conn, query, message):
+    m = conn.run(query)
+    assert [(e["C"], e["M"]) for e in errors(m)] == [
+        ("2201B", "invalid regular expression: " + message)
+    ]

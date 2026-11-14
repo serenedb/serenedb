@@ -17,6 +17,8 @@ as well as support for regular expressions via functions.
 
 SereneDB uses the [RE2 library](https://github.com/google/re2) as its regular expression engine. For the regular expression syntax, see the [RE2 docs](https://github.com/google/re2/wiki/Syntax).
 
+A pattern that is not valid RE2 syntax, or is too large to compile, fails the query with `invalid regular expression: …` and SQLSTATE `2201B`, whether the pattern is a constant or comes from a column.
+
 ## Functions
 
 All functions accept an optional set of [options](#options-for-regular-expression-functions).

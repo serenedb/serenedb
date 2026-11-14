@@ -1560,8 +1560,8 @@ std::string TSRegexpPattern(std::string_view literal) {
   re2::RegexpStatus status;
   auto* re = ParseRegexp(literal, status);
   if (!re) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG(status.Text()));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_REGULAR_EXPRESSION),
+                    ERR_MSG("invalid regular expression: ", status.Text()));
   }
   const bool at_start = AnchoredAtText(re, true);
   const bool at_end = AnchoredAtText(re, false);

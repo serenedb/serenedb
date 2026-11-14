@@ -316,6 +316,42 @@ SELECT regexp_match(txt, '(') FROM regexp_match_rows
 db error: ERROR: invalid regular expression: <slt:ignore>
 
 
+statement error
+SELECT 'abc' ~ '('
+----
+db error: ERROR: invalid regular expression: <slt:ignore>
+
+
+statement error
+SELECT txt ~ p FROM regexp_match_rows, (VALUES ('(')) AS t(p)
+----
+db error: ERROR: invalid regular expression: <slt:ignore>
+
+
+statement error
+SELECT regexp_replace('abc', '(', 'x')
+----
+db error: ERROR: invalid regular expression: <slt:ignore>
+
+
+statement error
+SELECT regexp_split_to_array('abc', '(')
+----
+db error: ERROR: invalid regular expression: <slt:ignore>
+
+
+statement error
+SELECT substring('abc' from '(')
+----
+db error: ERROR: invalid regular expression: <slt:ignore>
+
+
+statement error
+SELECT 'abc' SIMILAR TO '('
+----
+db error: ERROR: invalid regular expression: <slt:ignore>
+
+
 query
 SELECT CASE WHEN false THEN regexp_instr('abc', (1 / 0)::text) ELSE 0 END AS r;
 ----

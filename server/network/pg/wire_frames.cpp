@@ -132,6 +132,9 @@ int DuckExceptionToErrcode(const duckdb::ErrorData& error) {
   if (subtype == "INVALID_USE_OF_ESCAPE_CHARACTER") {
     return ERRCODE_INVALID_USE_OF_ESCAPE_CHARACTER;
   }
+  if (subtype == "INVALID_REGULAR_EXPRESSION") {
+    return ERRCODE_INVALID_REGULAR_EXPRESSION;
+  }
   if (subtype == "NUMERIC_VALUE_OUT_OF_RANGE") {
     return ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE;
   }

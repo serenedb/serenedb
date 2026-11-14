@@ -2962,7 +2962,7 @@ id
 statement error
 EXECUTE tsq_rx_quoted('(');
 ----
-db error: ERROR: missing ): (
+db error: ERROR: invalid regular expression: missing ): (
 
 
 statement ok

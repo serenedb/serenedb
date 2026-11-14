@@ -1,4 +1,8 @@
 configure_file(build.h.in build.h NEWLINE_STYLE UNIX)
+set_source_files_properties(
+    ${CMAKE_CURRENT_BINARY_DIR}/credits.cpp
+    PROPERTIES GENERATED TRUE
+)
 
 function(sdb_build_flags out)
     string(JOIN " " flags ${ARGN})
@@ -66,6 +70,7 @@ add_library(
     serene
     STATIC
     build_info.cpp
+    ${CMAKE_CURRENT_BINARY_DIR}/credits.cpp
     drain_gate.cpp
     file_utils.cpp
     files.cpp

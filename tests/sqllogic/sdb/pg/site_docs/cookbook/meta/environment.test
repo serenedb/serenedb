@@ -77,3 +77,35 @@ ORDER BY name;
 name	setting
 SERENEDB_COMMIT	<slt:ignore>
 SERENEDB_VERSION	<slt:ignore>
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+query
+SELECT name, license, license_file
+FROM serenedb_licenses
+WHERE name IN ('DuckDB', 'Zstandard')
+ORDER BY name;
+----
+name	license	license_file
+DuckDB	MIT	third_party/duckdb/LICENSE
+Zstandard	BSD-3-Clause OR GPL-2.0-only	third_party/zstd/LICENSE
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_RAW
+#| SELECT count(*) AS contributors
+#| FROM serenedb_contributors;
+#| ----
+#| contributors
+#| 27
+
+# DOCS_TEST_BODY
+
+query
+SELECT count(*) AS contributors
+FROM serenedb_contributors;
+----
+contributors
+<slt:ignore>

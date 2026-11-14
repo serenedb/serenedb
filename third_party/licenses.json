@@ -1,0 +1,561 @@
+{
+  "own": [
+    "third_party/duckdb_clickhouse",
+    "third_party/duckdb_versions"
+  ],
+  "components": [
+    {
+      "name": "Abseil",
+      "url": "https://abseil.io",
+      "license": "Apache-2.0",
+      "files": ["third_party/abseil-cpp/LICENSE"],
+      "paths": ["third_party/abseil-cpp"]
+    },
+    {
+      "name": "ada",
+      "url": "https://github.com/ada-url/ada",
+      "license": "Apache-2.0 OR MIT",
+      "files": ["third_party/ada/LICENSE-APACHE", "third_party/ada/LICENSE-MIT"],
+      "paths": ["third_party/ada"]
+    },
+    {
+      "name": "ALP",
+      "url": "https://github.com/cwida/ALP",
+      "license": "MIT",
+      "files": ["third_party/duckdb/src/include/duckdb/storage/compression/alp/algorithm/LICENSE"],
+      "paths": [
+        "third_party/duckdb/src/include/duckdb/storage/compression/alp",
+        "third_party/duckdb/src/include/duckdb/storage/compression/alprd"
+      ]
+    },
+    {
+      "name": "Apache Avro C",
+      "url": "https://avro.apache.org",
+      "license": "Apache-2.0",
+      "files": ["third_party/avro/lang/c/LICENSE", "third_party/avro/lang/c/NOTICE"],
+      "paths": ["third_party/avro"]
+    },
+    {
+      "name": "Apache Parquet",
+      "url": "https://parquet.apache.org",
+      "license": "Apache-2.0",
+      "files": ["third_party/duckdb/third_party/parquet/LICENSE"],
+      "paths": ["third_party/duckdb/third_party/parquet"]
+    },
+    {
+      "name": "Apache Thrift",
+      "url": "https://thrift.apache.org",
+      "license": "Apache-2.0",
+      "files": ["third_party/duckdb/third_party/thrift/thrift/LICENSE"],
+      "paths": ["third_party/duckdb/third_party/thrift"]
+    },
+    {
+      "name": "Azure SDK for C++",
+      "url": "https://github.com/Azure/azure-sdk-for-cpp",
+      "license": "MIT",
+      "files": [
+        "third_party/azure-sdk-for-cpp/LICENSE.txt",
+        "third_party/azure-sdk-for-cpp/sdk/core/azure-core/NOTICE.txt",
+        "third_party/azure-sdk-for-cpp/sdk/identity/azure-identity/NOTICE.txt",
+        "third_party/azure-sdk-for-cpp/sdk/storage/azure-storage-blobs/NOTICE.txt",
+        "third_party/azure-sdk-for-cpp/sdk/storage/azure-storage-common/NOTICE.txt",
+        "third_party/azure-sdk-for-cpp/sdk/storage/azure-storage-files-datalake/NOTICE.txt"
+      ],
+      "paths": ["third_party/azure-cmake", "third_party/azure-sdk-for-cpp"]
+    },
+    {
+      "name": "Boost",
+      "url": "https://www.boost.org",
+      "license": "BSL-1.0",
+      "files": ["third_party/boost/LICENSE_1_0.txt"],
+      "paths": ["third_party/boost"]
+    },
+    {
+      "name": "Brotli",
+      "url": "https://github.com/google/brotli",
+      "license": "MIT",
+      "files": ["third_party/brotli/LICENSE"],
+      "paths": ["third_party/brotli"]
+    },
+    {
+      "name": "CityHash",
+      "url": "https://github.com/google/cityhash",
+      "license": "MIT",
+      "files": ["third_party/clickhouse-cpp/clickhouse/cityhash/COPYING"],
+      "paths": ["third_party/clickhouse-cpp/clickhouse/cityhash"]
+    },
+    {
+      "name": "clickhouse-cpp",
+      "url": "https://github.com/ClickHouse/clickhouse-cpp",
+      "license": "Apache-2.0",
+      "files": ["third_party/clickhouse-cpp/LICENSE"],
+      "paths": ["third_party/clickhouse-cpp"]
+    },
+    {
+      "name": "cmark-gfm",
+      "url": "https://github.com/github/cmark-gfm",
+      "license": "BSD-2-Clause",
+      "files": ["third_party/cmark-gfm/COPYING"],
+      "paths": ["third_party/cmark-gfm"]
+    },
+    {
+      "name": "concurrentqueue",
+      "url": "https://github.com/cameron314/concurrentqueue",
+      "license": "BSD-2-Clause OR BSL-1.0",
+      "files": ["third_party/duckdb/third_party/concurrentqueue/LICENSE"],
+      "paths": ["third_party/duckdb/third_party/concurrentqueue"]
+    },
+    {
+      "name": "CRoaring",
+      "url": "https://github.com/RoaringBitmap/CRoaring",
+      "license": "Apache-2.0 OR MIT",
+      "files": ["third_party/croaring/LICENSE"],
+      "paths": ["third_party/croaring"]
+    },
+    {
+      "name": "curl",
+      "url": "https://curl.se",
+      "license": "curl",
+      "files": ["third_party/curl/COPYING"],
+      "paths": ["third_party/curl"]
+    },
+    {
+      "name": "database-connector",
+      "url": "https://github.com/duckdb/database-connector",
+      "license": "MIT",
+      "files": ["third_party/database-connector/LICENSE"],
+      "paths": ["third_party/database-connector"]
+    },
+    {
+      "name": "DuckDB",
+      "url": "https://duckdb.org",
+      "license": "MIT",
+      "files": ["third_party/duckdb/LICENSE"],
+      "paths": ["third_party/duckdb"]
+    },
+    {
+      "name": "duckdb-avro",
+      "url": "https://github.com/duckdb/duckdb-avro",
+      "license": "MIT",
+      "files": ["third_party/duckdb_avro/LICENSE"],
+      "paths": ["third_party/duckdb_avro"]
+    },
+    {
+      "name": "duckdb-azure",
+      "url": "https://github.com/duckdb/duckdb-azure",
+      "license": "MIT",
+      "files": ["third_party/duckdb_azure/LICENSE"],
+      "paths": ["third_party/duckdb_azure"]
+    },
+    {
+      "name": "duckdb-httpfs",
+      "url": "https://github.com/duckdb/duckdb-httpfs",
+      "license": "MIT",
+      "files": ["third_party/duckdb_httpfs/LICENSE"],
+      "paths": ["third_party/duckdb_httpfs"]
+    },
+    {
+      "name": "duckdb-iceberg",
+      "url": "https://github.com/duckdb/duckdb-iceberg",
+      "license": "MIT",
+      "files": ["third_party/duckdb_iceberg/LICENSE"],
+      "paths": ["third_party/duckdb_iceberg"]
+    },
+    {
+      "name": "duckdb-inet",
+      "url": "https://github.com/duckdb/duckdb-inet",
+      "license": "MIT",
+      "files": ["third_party/duckdb_inet/LICENSE"],
+      "paths": ["third_party/duckdb_inet"]
+    },
+    {
+      "name": "duckdb-markdown",
+      "url": "https://github.com/teaguesterling/duckdb_markdown",
+      "license": "MIT",
+      "files": ["third_party/duckdb_markdown/LICENSE"],
+      "paths": ["third_party/duckdb_markdown"]
+    },
+    {
+      "name": "duckdb-postgres",
+      "url": "https://github.com/duckdb/duckdb-postgres",
+      "license": "MIT",
+      "files": ["third_party/duckdb_postgres/LICENSE"],
+      "paths": ["third_party/duckdb_postgres"]
+    },
+    {
+      "name": "duckdb-spatial",
+      "url": "https://github.com/duckdb/duckdb-spatial",
+      "license": "MIT",
+      "files": ["third_party/duckdb_spatial/LICENSE"],
+      "paths": ["third_party/duckdb_spatial"]
+    },
+    {
+      "name": "Faiss",
+      "url": "https://github.com/facebookresearch/faiss",
+      "license": "MIT",
+      "files": ["third_party/faiss/LICENSE"],
+      "paths": ["third_party/faiss"]
+    },
+    {
+      "name": "fast_float",
+      "url": "https://github.com/fastfloat/fast_float",
+      "license": "Apache-2.0 OR BSL-1.0 OR MIT",
+      "files": [
+        "third_party/fast_float/LICENSE-APACHE",
+        "third_party/fast_float/LICENSE-BOOST",
+        "third_party/fast_float/LICENSE-MIT"
+      ],
+      "paths": ["third_party/fast_float"]
+    },
+    {
+      "name": "FastPFor",
+      "url": "https://github.com/lemire/FastPFor",
+      "license": "Apache-2.0",
+      "files": ["third_party/duckdb/third_party/fastpforlib/LICENSE"],
+      "paths": ["third_party/duckdb/third_party/fastpforlib"]
+    },
+    {
+      "name": "fastText",
+      "url": "https://github.com/facebookresearch/fastText",
+      "license": "MIT",
+      "files": ["third_party/fastText/LICENSE"],
+      "paths": ["third_party/fastText"]
+    },
+    {
+      "name": "fmt",
+      "url": "https://fmt.dev",
+      "license": "MIT",
+      "files": ["third_party/fmt/LICENSE"],
+      "paths": ["third_party/fmt"]
+    },
+    {
+      "name": "FSST",
+      "url": "https://github.com/cwida/fsst",
+      "license": "MIT",
+      "files": ["third_party/duckdb/third_party/fsst/LICENSE"],
+      "paths": ["third_party/duckdb/third_party/fsst"]
+    },
+    {
+      "name": "GeographicLib",
+      "url": "https://geographiclib.sourceforge.io",
+      "license": "MIT",
+      "files": ["third_party/geographiclib-c/LICENSE.txt"],
+      "paths": ["third_party/geographiclib-c"]
+    },
+    {
+      "name": "GNU C Library",
+      "url": "https://www.gnu.org/software/libc",
+      "license": "LGPL-2.1-or-later",
+      "files": [
+        "resources/licenses/glibc/COPYING.LESSERv2",
+        "resources/licenses/glibc/COPYINGv2",
+        "resources/licenses/glibc/LICENSES"
+      ]
+    },
+    {
+      "name": "HyperLogLog",
+      "url": "https://github.com/duckdb/duckdb/tree/main/third_party/hyperloglog",
+      "license": "MIT",
+      "files": ["third_party/duckdb/third_party/hyperloglog/LICENSE"],
+      "paths": ["third_party/duckdb/third_party/hyperloglog"]
+    },
+    {
+      "name": "ICU and Unicode data",
+      "url": "https://icu.unicode.org",
+      "license": "Unicode-3.0",
+      "files": ["resources/licenses/icu/LICENSE"],
+      "paths": ["third_party/duckdb/extension/icu"]
+    },
+    {
+      "name": "IResearch",
+      "url": "https://github.com/iresearch-toolkit/iresearch",
+      "license": "Apache-2.0",
+      "files": ["iresearch/LICENSE"]
+    },
+    {
+      "name": "Jansson",
+      "url": "https://github.com/akheron/jansson",
+      "license": "MIT",
+      "files": ["third_party/jansson/LICENSE"],
+      "paths": ["third_party/jansson"]
+    },
+    {
+      "name": "Jaro-Winkler",
+      "url": "https://github.com/maxbachmann/jarowinkler-cpp",
+      "license": "MIT",
+      "files": ["third_party/duckdb/third_party/jaro_winkler/LICENSE"],
+      "paths": ["third_party/duckdb/third_party/jaro_winkler"]
+    },
+    {
+      "name": "jemalloc",
+      "url": "https://jemalloc.net",
+      "license": "BSD-2-Clause",
+      "files": ["third_party/jemalloc/COPYING"],
+      "paths": ["third_party/jemalloc", "third_party/jemalloc-cmake"]
+    },
+    {
+      "name": "LAPACK",
+      "url": "https://www.netlib.org/lapack",
+      "license": "BSD-3-Clause",
+      "files": ["third_party/OpenBLAS/lapack-netlib/LICENSE"],
+      "paths": ["third_party/OpenBLAS/lapack-netlib"]
+    },
+    {
+      "name": "libpq",
+      "url": "https://www.postgresql.org",
+      "license": "PostgreSQL",
+      "files": ["third_party/postgres/COPYRIGHT"],
+      "paths": ["third_party/postgres"]
+    },
+    {
+      "name": "libxml2",
+      "url": "https://gitlab.gnome.org/GNOME/libxml2",
+      "license": "MIT",
+      "files": ["third_party/libxml2/Copyright"],
+      "paths": ["third_party/libxml2", "third_party/libxml2-cmake"]
+    },
+    {
+      "name": "linenoise",
+      "url": "https://github.com/antirez/linenoise",
+      "license": "BSD-2-Clause",
+      "files": ["third_party/duckdb/tools/shell/linenoise/LICENSE"],
+      "paths": ["third_party/duckdb/tools/shell/linenoise"]
+    },
+    {
+      "name": "llhttp",
+      "url": "https://github.com/nodejs/llhttp",
+      "license": "MIT",
+      "files": ["third_party/llhttp/LICENSE"],
+      "paths": ["third_party/llhttp"]
+    },
+    {
+      "name": "LLVM libc++, libc++abi and libunwind",
+      "url": "https://libcxx.llvm.org",
+      "license": "Apache-2.0 WITH LLVM-exception",
+      "files": ["third_party/llvm-project/libcxx/LICENSE.TXT"],
+      "paths": ["third_party/llvm-project"]
+    },
+    {
+      "name": "LZ4",
+      "url": "https://lz4.org",
+      "license": "BSD-2-Clause",
+      "files": ["third_party/lz4/lib/LICENSE"],
+      "paths": ["third_party/lz4"]
+    },
+    {
+      "name": "magic_enum",
+      "url": "https://github.com/Neargye/magic_enum",
+      "license": "MIT",
+      "files": ["third_party/magic_enum/LICENSE"],
+      "paths": ["third_party/magic_enum"]
+    },
+    {
+      "name": "Mbed TLS",
+      "url": "https://www.trustedfirmware.org/projects/mbed-tls",
+      "license": "Apache-2.0 OR GPL-2.0-or-later",
+      "files": ["third_party/duckdb/third_party/mbedtls/LICENSE"],
+      "paths": ["third_party/duckdb/third_party/mbedtls"]
+    },
+    {
+      "name": "OpenBLAS",
+      "url": "https://www.openblas.net",
+      "license": "BSD-3-Clause",
+      "files": ["third_party/OpenBLAS/LICENSE"],
+      "paths": ["third_party/OpenBLAS"]
+    },
+    {
+      "name": "OpenSSL",
+      "url": "https://www.openssl.org",
+      "license": "Apache-2.0",
+      "files": ["third_party/openssl/LICENSE.txt"],
+      "paths": ["third_party/openssl", "third_party/openssl-cmake"]
+    },
+    {
+      "name": "PCG",
+      "url": "https://www.pcg-random.org",
+      "license": "MIT",
+      "files": ["third_party/duckdb/third_party/pcg/LICENSE"],
+      "paths": ["third_party/duckdb/third_party/pcg"]
+    },
+    {
+      "name": "pdqsort",
+      "url": "https://github.com/orlp/pdqsort",
+      "license": "Zlib",
+      "files": ["third_party/duckdb/third_party/pdqsort/LICENSE"],
+      "paths": ["third_party/duckdb/third_party/pdqsort"]
+    },
+    {
+      "name": "protozero",
+      "url": "https://github.com/mapbox/protozero",
+      "license": "BSD-2-Clause",
+      "files": ["third_party/protozero/LICENSE.md"],
+      "paths": ["third_party/protozero"]
+    },
+    {
+      "name": "RE2",
+      "url": "https://github.com/google/re2",
+      "license": "BSD-3-Clause",
+      "files": ["third_party/re2/LICENSE"],
+      "paths": ["third_party/re2"]
+    },
+    {
+      "name": "S2 Geometry",
+      "url": "https://s2geometry.io",
+      "license": "Apache-2.0",
+      "files": ["third_party/s2geometry/LICENSE", "third_party/s2geometry/NOTICE"],
+      "paths": ["third_party/s2geometry"]
+    },
+    {
+      "name": "SereneDB",
+      "url": "https://github.com/serenedb/serenedb",
+      "license": "Apache-2.0",
+      "files": ["LICENSE", "NOTICE.md"]
+    },
+    {
+      "name": "shapelib",
+      "url": "https://github.com/OSGeo/shapelib",
+      "license": "MIT",
+      "files": ["third_party/duckdb_spatial/src/third_party/shapelib/LICENSE-MIT"],
+      "paths": ["third_party/duckdb_spatial/src/third_party/shapelib"]
+    },
+    {
+      "name": "simdjson",
+      "url": "https://simdjson.org",
+      "license": "Apache-2.0 OR MIT",
+      "files": ["third_party/simdjson/LICENSE", "third_party/simdjson/LICENSE-MIT"],
+      "paths": ["third_party/simdjson"]
+    },
+    {
+      "name": "simdutf",
+      "url": "https://github.com/simdutf/simdutf",
+      "license": "Apache-2.0 OR MIT",
+      "files": ["third_party/simdutf/LICENSE-APACHE", "third_party/simdutf/LICENSE-MIT"],
+      "paths": ["third_party/simdutf"]
+    },
+    {
+      "name": "ska_sort",
+      "url": "https://github.com/skarupke/ska_sort",
+      "license": "BSL-1.0",
+      "files": ["third_party/duckdb/third_party/ska_sort/LICENSE"],
+      "paths": ["third_party/duckdb/third_party/ska_sort"]
+    },
+    {
+      "name": "skiplist",
+      "url": "https://github.com/paulross/skiplist",
+      "license": "MIT",
+      "files": ["third_party/duckdb/third_party/skiplist/LICENSE"],
+      "paths": ["third_party/duckdb/third_party/skiplist"]
+    },
+    {
+      "name": "Snappy",
+      "url": "https://github.com/google/snappy",
+      "license": "BSD-3-Clause",
+      "files": ["third_party/snappy/COPYING"],
+      "paths": ["third_party/snappy"]
+    },
+    {
+      "name": "Snowball",
+      "url": "https://snowballstem.org",
+      "license": "BSD-3-Clause",
+      "files": ["third_party/libstemmer_c/COPYING"],
+      "paths": ["third_party/libstemmer_c", "third_party/libstemmer_c-cmake"]
+    },
+    {
+      "name": "sse2neon",
+      "url": "https://github.com/DLTcollab/sse2neon",
+      "license": "MIT",
+      "files": ["third_party/sse2neon/LICENSE"],
+      "paths": ["third_party/sse2neon"]
+    },
+    {
+      "name": "StringZilla",
+      "url": "https://github.com/ashvardanian/StringZilla",
+      "license": "Apache-2.0",
+      "files": ["third_party/stringzilla/LICENSE"],
+      "paths": ["third_party/stringzilla"]
+    },
+    {
+      "name": "t-digest",
+      "url": "https://github.com/duckdb/duckdb/tree/main/third_party/tdigest",
+      "license": "Apache-2.0",
+      "files": ["third_party/duckdb/third_party/tdigest/LICENSE"],
+      "paths": ["third_party/duckdb/third_party/tdigest"]
+    },
+    {
+      "name": "TCMalloc",
+      "url": "https://github.com/google/tcmalloc",
+      "license": "Apache-2.0",
+      "files": ["third_party/tcmalloc/LICENSE"],
+      "paths": ["third_party/tcmalloc"]
+    },
+    {
+      "name": "TPC-DS dsdgen",
+      "url": "https://www.tpc.org/tpcds",
+      "license": "NOASSERTION",
+      "files": [],
+      "paths": ["third_party/duckdb/extension/tpcds/dsdgen"]
+    },
+    {
+      "name": "TPC-H dbgen",
+      "url": "https://www.tpc.org/tpch",
+      "license": "LicenseRef-TPC-EULA",
+      "files": ["third_party/duckdb/extension/tpch/dbgen/LICENSE"],
+      "paths": ["third_party/duckdb/extension/tpch/dbgen"]
+    },
+    {
+      "name": "utf8proc",
+      "url": "https://github.com/JuliaStrings/utf8proc",
+      "license": "MIT AND Unicode-DFS-2015",
+      "files": ["third_party/duckdb/third_party/utf8proc/LICENSE"],
+      "paths": ["third_party/duckdb/third_party/utf8proc"]
+    },
+    {
+      "name": "vergesort",
+      "url": "https://github.com/Morwenn/vergesort",
+      "license": "MIT",
+      "files": ["third_party/duckdb/third_party/vergesort/LICENSE"],
+      "paths": ["third_party/duckdb/third_party/vergesort"]
+    },
+    {
+      "name": "wyhash",
+      "url": "https://github.com/wangyi-fudan/wyhash",
+      "license": "Unlicense",
+      "files": ["resources/licenses/wyhash/LICENSE"]
+    },
+    {
+      "name": "YACLib",
+      "url": "https://github.com/YACLib/YACLib",
+      "license": "MIT",
+      "files": ["third_party/yaclib/LICENSE"],
+      "paths": ["third_party/yaclib"]
+    },
+    {
+      "name": "yyjson",
+      "url": "https://github.com/ibireme/yyjson",
+      "license": "MIT",
+      "files": ["third_party/duckdb/third_party/yyjson/LICENSE"],
+      "paths": ["third_party/duckdb/third_party/yyjson"]
+    },
+    {
+      "name": "zlib-ng",
+      "url": "https://github.com/zlib-ng/zlib-ng",
+      "license": "Zlib",
+      "files": ["third_party/zlib-ng/LICENSE.md"],
+      "paths": ["third_party/zlib-ng"]
+    },
+    {
+      "name": "Zstandard",
+      "url": "https://facebook.github.io/zstd",
+      "license": "BSD-3-Clause OR GPL-2.0-only",
+      "files": ["third_party/zstd/LICENSE"],
+      "paths": ["third_party/zstd"]
+    },
+    {
+      "name": "ZXC",
+      "url": "https://github.com/serenedb/zxc",
+      "license": "BSD-3-Clause",
+      "files": ["third_party/zxc/LICENSE"],
+      "paths": ["third_party/zxc"]
+    }
+  ]
+}

@@ -1,0 +1,56 @@
+query
+SELECT name, setting <> '' AS set FROM pg_config ORDER BY name;
+----
+name	set
+BINDIR	t
+CC	t
+CFLAGS	t
+CONFIGURE	t
+CXX	t
+CXXFLAGS	t
+LDFLAGS	t
+SERENEDB_COMMIT	t
+SERENEDB_VERSION	t
+SYSCONFDIR	t
+VERSION	t
+
+
+query
+SELECT setting = 'PostgreSQL ' || current_setting('server_version') AS matches
+FROM pg_config WHERE name = 'VERSION';
+----
+matches
+t
+
+
+query
+SELECT (SELECT setting FROM pg_config WHERE name = 'VERSION') || ' (SereneDB ' ||
+       (SELECT setting FROM pg_config WHERE name = 'SERENEDB_VERSION') || ')' =
+       version() AS matches;
+----
+matches
+t
+
+
+query
+SELECT setting ~ '^[0-9a-f]{40}(-dirty)?$' AS commit
+FROM pg_config WHERE name = 'SERENEDB_COMMIT';
+----
+commit
+t
+
+
+query
+SELECT setting LIKE '-DCMAKE_BUILD_TYPE=%' AND setting LIKE '% -DSDB_ALLOC=%'
+  AS options
+FROM pg_config WHERE name = 'CONFIGURE';
+----
+options
+t
+
+
+query
+SELECT count(*) AS n FROM pg_config() WHERE name = 'SERENEDB_COMMIT';
+----
+n
+1

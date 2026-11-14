@@ -23,6 +23,7 @@
 #include <absl/flags/parse.h>
 #include <absl/flags/usage.h>
 #include <absl/flags/usage_config.h>
+#include <absl/strings/str_cat.h>
 #include <absl/strings/str_split.h>
 
 #include <cstdio>
@@ -32,12 +33,16 @@
 #include <string>
 #include <tuple>
 
+#include "server/utils/build_info.h"
 #include "server/utils/lifecycle.h"
 
 namespace sdb::app {
 
 void ParseOptions(int argc, char* argv[]) {
   absl::FlagsUsageConfig usage_config;
+  usage_config.version_string = [] {
+    return absl::StrCat(build::VersionLine(), "\n");
+  };
   usage_config.contains_help_flags = [](std::string_view file) {
     return file.find("third_party/") == std::string_view::npos;
   };

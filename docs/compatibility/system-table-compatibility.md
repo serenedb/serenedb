@@ -98,7 +98,7 @@ System views provide convenient access to system information. System tables ofte
 | pg_available_extensions | 🟡 | Lists available extensions. |
 | pg_available_extension_versions | 🟡 | Shows available versions of extensions. |
 | pg_backend_memory_contexts | 🟡 | Displays memory contexts of the backend. |
-| pg_config | 🟡 | Provides access to compile-time configuration parameters. |
+| pg_config | 🟢 | How the server was built, readable by superusers as in PostgreSQL: `BINDIR`, `SYSCONFDIR`, `CONFIGURE` (the CMake options of the build), `CC`, `CXX`, `CFLAGS`, `CXXFLAGS`, `LDFLAGS`, `VERSION` (the PostgreSQL version SereneDB reports), `SERENEDB_VERSION` and `SERENEDB_COMMIT` (the commit the server was built from, ending in `-dirty` when the source differed from it). |
 | pg_cursors | 🟡 | Lists open cursors. |
 | pg_file_settings | 🟡 | Summarizes contents of configuration files. |
 | pg_group | 🟢 | Displays groups of database users. |

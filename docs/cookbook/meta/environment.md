@@ -23,6 +23,14 @@ Using a `PRAGMA`:
 
 <SqlLogicTest id="cookbook/meta/environment/example_002" />
 
+## Build
+
+`serened --version` prints the release and the commit the server was built from, such as `serened (SereneDB) 26.11.0 (3f9c2a7d41b0e8c56d2f1a9b7e4c3d2a1f0e9b8c)`. The commit ends in `-dirty` when the source the server was built from differed from it.
+
+The `pg_config` view, which superusers can read, lists the same and how the server was built: the compilers, their flags and the CMake options of the build. The [system table compatibility](../../compatibility/system-table-compatibility.md) page lists its rows.
+
+<SqlLogicTest id="cookbook/meta/environment/example_005" />
+
 ## Platform
 
 The platform information consists of the operating system, system architecture, and, optionally, the compiler.

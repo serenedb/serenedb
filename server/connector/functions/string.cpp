@@ -32,6 +32,7 @@
 #include <simdutf.h>
 #include <zlib.h>
 
+#include <algorithm>
 #include <array>
 #include <duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp>
 #include <duckdb/common/string_util.hpp>
@@ -49,6 +50,7 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/utf8_utils.hpp>
+#include <optional>
 
 #include "connector/common.h"
 #include "pg/catalog/oids.h"
@@ -1119,23 +1121,137 @@ void RegexpMatchFunction(duckdb::DataChunk& args,
   }
 }
 
+duckdb::string_t AsBytes(std::string_view bytes) {
+  return {bytes.data(), static_cast<uint32_t>(bytes.size())};
+}
+
+template<bool kLeft, bool kRight>
 std::string_view TrimBytes(std::string_view bytes, std::string_view set) {
   if (set.empty()) {
     return bytes;
   }
-  bytes.remove_prefix(std::min(bytes.find_first_not_of(set), bytes.size()));
-  return bytes.substr(0, bytes.find_last_not_of(set) + 1);
+  if constexpr (kLeft) {
+    bytes.remove_prefix(std::min(bytes.find_first_not_of(set), bytes.size()));
+  }
+  if constexpr (kRight) {
+    bytes = bytes.substr(0, bytes.find_last_not_of(set) + 1);
+  }
+  return bytes;
 }
 
+template<bool kLeft, bool kRight>
 void ByteaTrimFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                        duckdb::Vector& result) {
   duckdb::BinaryExecutor::Execute<duckdb::string_t, duckdb::string_t,
                                   duckdb::string_t>(
     args.data[0], args.data[1], result, args.size(),
-    [&](duckdb::string_t data, duckdb::string_t set) {
-      const auto bytes = TrimBytes(AsView(data), AsView(set));
-      return duckdb::StringVector::AddStringOrBlob(result, bytes.data(),
-                                                   bytes.size());
+    [](duckdb::string_t data, duckdb::string_t set) {
+      return AsBytes(TrimBytes<kLeft, kRight>(AsView(data), AsView(set)));
+    });
+  duckdb::StringVector::AddHeapReference(result, args.data[0]);
+}
+
+std::string_view ByteaSubstring(std::string_view bytes, int64_t start) {
+  const auto offset = static_cast<size_t>(std::max<int64_t>(start, 1) - 1);
+  return offset < bytes.size() ? bytes.substr(offset) : std::string_view{};
+}
+
+std::string_view ByteaSubstring(std::string_view bytes, int64_t start,
+                                int64_t length) {
+  if (length < 0) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_SUBSTRING_ERROR),
+                    ERR_MSG("negative substring length not allowed"));
+  }
+  int64_t end = 0;
+  if (__builtin_add_overflow(start, length, &end)) {
+    return ByteaSubstring(bytes, start);
+  }
+  if (end < 1) {
+    return {};
+  }
+  const auto from = std::max<int64_t>(start, 1);
+  const auto offset = static_cast<size_t>(from - 1);
+  return offset < bytes.size()
+           ? bytes.substr(offset, static_cast<size_t>(end - from))
+           : std::string_view{};
+}
+
+void ByteaSubstringFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                            duckdb::Vector& result) {
+  if (args.ColumnCount() == 2) {
+    duckdb::BinaryExecutor::Execute<duckdb::string_t, int64_t,
+                                    duckdb::string_t>(
+      args.data[0], args.data[1], result, args.size(),
+      [](duckdb::string_t data, int64_t start) {
+        return AsBytes(ByteaSubstring(AsView(data), start));
+      });
+  } else {
+    duckdb::TernaryExecutor::Execute<duckdb::string_t, int64_t, int64_t,
+                                     duckdb::string_t>(
+      args.data[0], args.data[1], args.data[2], result, args.size(),
+      [](duckdb::string_t data, int64_t start, int64_t length) {
+        return AsBytes(ByteaSubstring(AsView(data), start, length));
+      });
+  }
+  duckdb::StringVector::AddHeapReference(result, args.data[0]);
+}
+
+void ByteaOverlayFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                          duckdb::Vector& result) {
+  const auto datas = args.data[0].Values<duckdb::string_t>();
+  const auto placings = args.data[1].Values<duckdb::string_t>();
+  const auto starts = args.data[2].Values<int64_t>();
+  std::optional<duckdb::VectorIterator<int64_t>> lengths;
+  if (args.ColumnCount() == 4) {
+    lengths = args.data[3].Values<int64_t>();
+  }
+  auto writer =
+    duckdb::FlatVector::Writer<duckdb::string_t>(result, args.size());
+  for (duckdb::idx_t row = 0; row < args.size(); ++row) {
+    const auto data = datas[row];
+    const auto placing = placings[row];
+    const auto start = starts[row];
+    if (!data.IsValid() || !placing.IsValid() || !start.IsValid()) {
+      writer.WriteNull();
+      continue;
+    }
+    const auto replacement = AsView(placing.GetValue());
+    auto length = static_cast<int64_t>(replacement.size());
+    if (lengths) {
+      const auto entry = (*lengths)[row];
+      if (!entry.IsValid()) {
+        writer.WriteNull();
+        continue;
+      }
+      length = entry.GetValue();
+    }
+    if (start.GetValue() <= 0) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_SUBSTRING_ERROR),
+                      ERR_MSG("negative substring length not allowed"));
+    }
+    int64_t after = 0;
+    if (__builtin_add_overflow(start.GetValue(), length, &after)) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                      ERR_MSG("integer out of range"));
+    }
+    const auto bytes = AsView(data.GetValue());
+    const auto head = ByteaSubstring(bytes, 1, start.GetValue() - 1);
+    const auto tail = ByteaSubstring(bytes, after);
+    auto& out =
+      writer.WriteEmptyString(head.size() + replacement.size() + tail.size());
+    auto* ptr = out.GetDataWriteable();
+    ptr = std::copy(head.begin(), head.end(), ptr);
+    ptr = std::copy(replacement.begin(), replacement.end(), ptr);
+    std::copy(tail.begin(), tail.end(), ptr);
+    out.Finalize();
+  }
+}
+
+void ByteaBitLengthFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                            duckdb::Vector& result) {
+  duckdb::UnaryExecutor::Execute<duckdb::string_t, int64_t>(
+    args.data[0], result, args.size(), [](duckdb::string_t data) {
+      return static_cast<int64_t>(data.GetSize()) * 8;
     });
 }
 
@@ -1650,16 +1766,41 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
 
   const auto blob = duckdb::LogicalType::BLOB;
   const auto text = duckdb::LogicalType::VARCHAR;
+  const auto bigint = duckdb::LogicalType::BIGINT;
+  loader.RegisterFunction(duckdb::ScalarFunction{
+    "trim", {blob, blob}, blob, ByteaTrimFunction<true, true>});
+  loader.RegisterFunction(duckdb::ScalarFunction{
+    "ltrim", {blob, blob}, blob, ByteaTrimFunction<true, false>});
+  loader.RegisterFunction(duckdb::ScalarFunction{
+    "rtrim", {blob, blob}, blob, ByteaTrimFunction<false, true>});
   {
     duckdb::ScalarFunctionSet set{"btrim"};
     for (const auto& function :
          loader.GetFunction(duckdb::Identifier{"trim"}).functions.functions) {
       set.AddFunction(function);
     }
-    set.AddFunction(
-      duckdb::ScalarFunction{set.name, {blob, blob}, blob, ByteaTrimFunction});
     loader.RegisterFunction(set);
   }
+  for (const std::string_view name : {"substring", "substr"}) {
+    loader.RegisterFunction(duckdb::ScalarFunction{
+      duckdb::Identifier{name}, {blob, bigint}, blob, ByteaSubstringFunction});
+    duckdb::ScalarFunction with_length{duckdb::Identifier{name},
+                                       {blob, bigint, bigint},
+                                       blob,
+                                       ByteaSubstringFunction};
+    with_length.SetFallible();
+    loader.RegisterFunction(std::move(with_length));
+  }
+  for (auto arguments :
+       {duckdb::vector<duckdb::LogicalType>{blob, blob, bigint},
+        duckdb::vector<duckdb::LogicalType>{blob, blob, bigint, bigint}}) {
+    duckdb::ScalarFunction overlay{"overlay", std::move(arguments), blob,
+                                   ByteaOverlayFunction};
+    overlay.SetFallible();
+    loader.RegisterFunction(std::move(overlay));
+  }
+  loader.RegisterFunction(duckdb::ScalarFunction{
+    "bit_length", {blob}, bigint, ByteaBitLengthFunction});
 
   struct OperatorAlias {
     std::string_view name;

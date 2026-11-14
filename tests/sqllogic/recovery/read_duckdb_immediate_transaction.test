@@ -1,0 +1,60 @@
+# A transaction begun in immediate mode while read_duckdb reads a file does not
+# hold the reader's hidden database: the file attaches once the read is done.
+
+control substitution on
+
+statement ok
+ATTACH '${__TEST_DIR__}/immediate_reader.db' AS immediate_reader;
+
+statement ok
+CREATE TABLE immediate_reader.main.immediate_docs(id INTEGER);
+
+statement ok
+INSERT INTO immediate_reader.main.immediate_docs VALUES (1), (2);
+
+statement ok
+DETACH immediate_reader;
+
+statement ok
+SET sdb_faults = 'read_duckdb_reader_attached';
+
+connection immediate_reader_scan
+query async
+SELECT count(*) AS n FROM read_duckdb('${__TEST_DIR__}/immediate_reader.db', table_name='immediate_docs');
+----
+n
+2
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-read_duckdb_reader_attached:parked';
+
+connection immediate_reader_other
+statement ok
+SET immediate_transaction_mode = true;
+
+connection immediate_reader_other
+statement ok
+BEGIN;
+
+connection default
+statement ok
+SET sdb_faults = 'read_duckdb_reader_attached:release';
+
+connection immediate_reader_scan
+statement ok
+SELECT 1;
+
+connection default
+statement ok
+ATTACH '${__TEST_DIR__}/immediate_reader.db' AS immediate_reader;
+
+connection default
+statement ok
+DETACH immediate_reader;
+
+connection immediate_reader_other
+statement ok
+COMMIT;
+
+wait

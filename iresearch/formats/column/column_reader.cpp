@@ -29,6 +29,7 @@
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/vector/dictionary_vector.hpp>
+#include <duckdb/common/vector/immutable_strings.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/main/database.hpp>
@@ -959,7 +960,103 @@ duckdb::idx_t ColumnReader::GatherFilter(
   SDB_ASSERT(span <= STANDARD_VECTOR_SIZE);
   SkipTo(s, anchor);
   BeginScanVector(s);
+  if (FiltersByBlock(s, anchor, span, null_check)) {
+    return FilterBlocks(s, anchor, span, sel, sel_count, filter, filter_state,
+                        null_check, result);
+  }
+  return FilterBlock(s, anchor, span, sel, sel_count, filter, filter_state,
+                     null_check, result);
+}
+
+bool ColumnReader::FiltersByBlock(const ScanState& s, uint64_t anchor,
+                                  duckdb::idx_t span,
+                                  NullCheckKind null_check) const noexcept {
+  const uint64_t end = anchor + span;
+  if (end <= s.window.end || end > _offsets.back()) {
+    return false;
+  }
+  if (null_check != NullCheckKind::None) {
+    return true;
+  }
+  for (size_t block = s.window.block; _offsets[block] < end; ++block) {
+    if (_segments[block].codec->filter) {
+      return true;
+    }
+  }
+  return false;
+}
+
+IRS_NO_INLINE duckdb::idx_t ColumnReader::FilterBlocks(
+  ScanState& s, uint64_t anchor, duckdb::idx_t span,
+  duckdb::SelectionVector& sel, duckdb::idx_t sel_count,
+  const duckdb::TableFilter& filter, duckdb::TableFilterState& filter_state,
+  NullCheckKind null_check, duckdb::Vector& result) const {
+  if (!s.scanned || s.scanned->vector.GetType() != result.GetType()) {
+    s.scanned = std::make_unique<VectorScratch>(result.GetType());
+  }
+  if (!s.piece.IsSet()) {
+    s.piece.Initialize(STANDARD_VECTOR_SIZE);
+  }
+  if (!s.window_sel.IsSet()) {
+    s.window_sel.Initialize(STANDARD_VECTOR_SIZE);
+  }
+  auto& rows = s.window_sel;
+  for (duckdb::idx_t i = 0; i < sel_count; ++i) {
+    rows.set_index(i, sel.get_index(i));
+  }
+  ResetAllValid(result, span);
+  const uint64_t end = anchor + span;
+  duckdb::idx_t kept = 0;
+  duckdb::idx_t next = 0;
+  size_t block = s.window.block;
+  for (uint64_t pos = anchor; pos < end; ++block) {
+    const auto count =
+      static_cast<duckdb::idx_t>(std::min(end, _offsets[block + 1]) - pos);
+    const auto base = static_cast<duckdb::idx_t>(pos - anchor);
+    pos += count;
+    duckdb::idx_t offered = 0;
+    for (; next < sel_count && rows.get_index(next) < base + count; ++next) {
+      s.piece.set_index(offered++, rows.get_index(next) - base);
+    }
+    if (offered == 0) {
+      ColumnReader::Skip(s, count);
+      continue;
+    }
+    BeginScanVector(s);
+    auto& part = s.scanned->Reset();
+    duckdb::SelectionVector part_rows{s.piece};
+    const auto approved =
+      FilterBlock(s, anchor + base, count, part_rows, offered, filter,
+                  filter_state, null_check, part);
+    for (duckdb::idx_t i = 0; i < approved;) {
+      const auto first = part_rows.get_index(i);
+      auto run = i + 1;
+      while (run < approved && part_rows.get_index(run) == first + (run - i)) {
+        ++run;
+      }
+      if (null_check == NullCheckKind::None) {
+        duckdb::ImmutableStrings::Copy(part, result, first + (run - i), first,
+                                       base + first);
+      }
+
+      for (; i < run; ++i) {
+        rows.set_index(kept++, base + part_rows.get_index(i));
+      }
+    }
+  }
+  for (duckdb::idx_t i = 0; i < kept; ++i) {
+    sel.set_index(i, rows.get_index(i));
+  }
+  return kept;
+}
+
+duckdb::idx_t ColumnReader::FilterBlock(
+  ScanState& s, uint64_t anchor, duckdb::idx_t span,
+  duckdb::SelectionVector& sel, duckdb::idx_t sel_count,
+  const duckdb::TableFilter& filter, duckdb::TableFilterState& filter_state,
+  NullCheckKind null_check, duckdb::Vector& result) const {
   const auto& seg = *s.segments.back();
+
   const auto& codec = seg.function;
   duckdb::idx_t approved = sel_count;
   const bool within_segment =

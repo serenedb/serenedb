@@ -522,6 +522,14 @@ class ColCodecPathsTest : public TestBase {
             EXPECT_TRUE(agrees) << c.name << " row " << anchor + i << " value "
                                 << rows[anchor + i].ToString() << " stride "
                                 << stride << " kept " << got;
+            if (agrees && got && form.null_check == irs::NullCheckKind::None) {
+              agrees =
+                Value::NotDistinctFrom(out.GetValue(i), rows[anchor + i]);
+              EXPECT_TRUE(agrees)
+                << c.name << " row " << anchor + i << " holds "
+                << out.GetValue(i).ToString() << " for "
+                << rows[anchor + i].ToString() << " stride " << stride;
+            }
           }
           if (agrees) {
             agrees = next == kept;
@@ -1043,6 +1051,47 @@ TEST_F(ColCodecPathsTest, TextCodecsReadEveryShape) {
            },
            /*stored=*/true, irs::WriteTier::Flush, 2 * kLargeGroup + 517,
            kLargeGroup});
+  }
+}
+
+TEST_F(ColCodecPathsTest, FiltersSplitAVectorAtBlockBoundaries) {
+  constexpr uint32_t kUnaligned = 1000;
+  static_assert(STANDARD_VECTOR_SIZE % kUnaligned != 0);
+  const std::string filler(40, 'w');
+  for (const auto codec : {CodecType::DictFsst, CodecType::DictLz4,
+                           CodecType::Fsst, CodecType::Lz4, CodecType::Auto}) {
+    const auto name = [&](std::string_view shape) {
+      return absl::StrCat(irs::codecs::NameOf(codec), " ", shape);
+    };
+    Check({name("categories"), LogicalType::VARCHAR, codec, Periodic,
+           [](uint64_t g) { return Value{absl::StrCat("category_", g % 50)}; },
+           /*stored=*/false, irs::WriteTier::Flush, kRows, kUnaligned});
+    Check({name("many values in no order"), LogicalType::VARCHAR, codec, All,
+           [&](uint64_t g) {
+             return Value{absl::StrCat("https://example.org/",
+                                       Mix(Mix(g) % 3000), "/", filler)};
+           },
+           /*stored=*/false, irs::WriteTier::Flush, kRows, kUnaligned});
+    Check({name("values between null runs"), LogicalType::VARCHAR, codec,
+           NullRuns,
+           [](uint64_t g) { return Value{absl::StrCat("v", g % 211)}; },
+           /*stored=*/false, irs::WriteTier::Flush, kRows, kUnaligned});
+  }
+  for (const auto codec :
+       {CodecType::Rle, CodecType::Bitpacking, CodecType::Auto}) {
+    const auto name = [&](std::string_view shape) {
+      return absl::StrCat(irs::codecs::NameOf(codec), " ", shape);
+    };
+    Check({name("runs"), LogicalType::BIGINT, codec, All,
+           [](uint64_t g) { return Int(LogicalType::BIGINT, (g / 37) % 11); },
+           /*stored=*/false, irs::WriteTier::Flush, kRows, kUnaligned});
+    Check({name("runs with nulls"), LogicalType::BIGINT, codec, Periodic,
+           [](uint64_t g) { return Int(LogicalType::BIGINT, (g / 13) % 100); },
+           /*stored=*/false, irs::WriteTier::Flush, kRows, kUnaligned});
+    Check(
+      {name("values between null runs"), LogicalType::BIGINT, codec, NullRuns,
+       [](uint64_t g) { return Int(LogicalType::BIGINT, (g * 7919) % 1000); },
+       /*stored=*/false, irs::WriteTier::Flush, kRows, kUnaligned});
   }
 }
 

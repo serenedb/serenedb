@@ -504,6 +504,23 @@ class ColumnReader {
   // validity child): the data segment alone is validity-complete there.
   bool ValiditySpanAllValid(ScanState& s, uint64_t anchor,
                             duckdb::idx_t span) const;
+  bool FiltersByBlock(const ScanState& s, uint64_t anchor, duckdb::idx_t span,
+                      NullCheckKind null_check) const noexcept;
+  duckdb::idx_t FilterBlock(ScanState& s, uint64_t anchor, duckdb::idx_t span,
+                            duckdb::SelectionVector& sel,
+                            duckdb::idx_t sel_count,
+                            const duckdb::TableFilter& filter,
+                            duckdb::TableFilterState& filter_state,
+                            NullCheckKind null_check,
+                            duckdb::Vector& result) const;
+  duckdb::idx_t FilterBlocks(ScanState& s, uint64_t anchor, duckdb::idx_t span,
+                             duckdb::SelectionVector& sel,
+                             duckdb::idx_t sel_count,
+                             const duckdb::TableFilter& filter,
+                             duckdb::TableFilterState& filter_state,
+                             NullCheckKind null_check,
+                             duckdb::Vector& result) const;
+
   void BeginScanVector(ScanState& s) const;
   void GatherWindow(ScanState& s, uint64_t anchor,
                     const duckdb::SelectionVector& sel, duckdb::idx_t hits,

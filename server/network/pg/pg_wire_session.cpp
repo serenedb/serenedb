@@ -50,11 +50,11 @@
 #include "catalog/cluster.h"
 #include "catalog/entry/role.h"
 #include "network/pg/bind_decoder.h"
-#include "network/pg/copy_eod_scanner.h"
 #include "network/pg/hba.h"
 #include "network/pg/scram_messages.h"
 #include "network/pg/startup_request.h"
 #include "pg/copy_batch_builder.h"
+#include "pg/copy_eod_scanner.h"
 #include "server/utils/lifecycle.h"
 #include "server/utils/metrics.h"
 
@@ -1809,7 +1809,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
     }
   };
   constexpr size_t kHeader = 1 + sizeof(uint32_t);
-  CopyEodScanner scanner;
+  sdb::pg::CopyEodScanner scanner;
   sdb::pg::CopyBatchBuilder builder{is_text ? sdb::pg::CopyBatchFormat::Text
                                     : format == CopyFormat::Binary
                                       ? sdb::pg::CopyBatchFormat::Binary

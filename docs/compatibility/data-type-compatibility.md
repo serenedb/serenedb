@@ -89,7 +89,7 @@ The coordinates of the geometric types print as `float8` values do, so `point(1e
 | tid                          | 🟢            |         |
 | time                         | 🟡            | A precision such as `time(2)` is not accepted. |
 | timestamp                    | 🟡            | A precision keeps milliseconds or microseconds: `timestamp(2)` keeps three fractional digits. |
-| timestamptz                  | 🟡            | A precision such as `timestamptz(2)` is not accepted. |
+| timestamptz                  | 🟡            | A precision is ignored: `timestamptz(2)` keeps six fractional digits. |
 | timetz                       | 🟢            |         |
 | tsmultirange                 | 🟡            | A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. |
 | tsquery                      | 🟡            | SereneDB's own [`TSQUERY`](../sql/data_types/tsquery.md), a query for inverted-index search, not PostgreSQL's. |

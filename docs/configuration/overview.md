@@ -227,6 +227,7 @@ Wire-protocol and session state that PostgreSQL clients read or set.
 | `archive_mode` | Not used. Added for PostgreSQL compatibility only. | `VARCHAR` | `SESSION` | `off` |
 | `bytea_output` | Sets the output format for bytea. | `VARCHAR` | `SESSION` | `hex` |
 | `Calendar` | The current calendar | `VARCHAR` | `SESSION` | `gregorian` |
+| `check_function_bodies` | Not used. Added for PostgreSQL compatibility only. Setting `off` is accepted with a warning that SereneDB still checks function bodies. | `BOOLEAN` | `SESSION` | `on` |
 | `checkpoint_timeout` | Not used. Added for PostgreSQL compatibility only. | `INTEGER` | `SESSION` | `300` |
 | `client_encoding` | Sets the client's character set encoding. | `VARCHAR` | `SESSION` | `UTF8` |
 | `client_min_messages` | Sets the message levels that are sent to the client. | `VARCHAR` | `SESSION` | `notice` |
@@ -234,6 +235,8 @@ Wire-protocol and session state that PostgreSQL clients read or set.
 | `custom_user_agent` | Metadata from SereneDB callers | `VARCHAR` | `GLOBAL` |  |
 | `data_directory` | Shows the data directory. Read-only. | `VARCHAR` | `SESSION` | The directory the server was started with |
 | `DateStyle` | Sets the display format for date and time values. | `VARCHAR` | `SESSION` | `ISO, MDY` |
+| `default_table_access_method` | Not used. Added for PostgreSQL compatibility only. Another value is accepted with a warning that it is not enforced. | `VARCHAR` | `SESSION` | `heap` |
+| `default_tablespace` | Not used. Added for PostgreSQL compatibility only. A non-empty value is accepted with a warning that it is not enforced. | `VARCHAR` | `SESSION` |  |
 | `default_transaction_invalidation_policy` | When to invalidate transactions when errors occur (SYNTACTIC_ERRORS_DO_NOT_INVALIDATE, i.e. parser and binder exceptions do not invalidate, or ALL_ERRORS_INVALIDATE_TRANSACTION). | `VARCHAR` | `GLOBAL` | `ALL_ERRORS_INVALIDATE_TRANSACTION` |
 | `default_transaction_isolation` | Sets the transaction isolation level of each new transaction. | `VARCHAR` | `SESSION` | `repeatable read` |
 | `default_transaction_read_only` | Sets the default read-only status of new transactions. | `BOOLEAN` | `SESSION` | `off` |
@@ -242,18 +245,21 @@ Wire-protocol and session state that PostgreSQL clients read or set.
 | `error_on_division_by_zero` | Deprecated. Throw an error instead of returning NULL when dividing by zero. | `BOOLEAN` | `SESSION` | `true` |
 | `errors_as_json` | Output error messages as structured `JSON` instead of as a raw string | `BOOLEAN` | `SESSION` | `false` |
 | `extra_float_digits` | Sets the number of digits displayed for floating-point values. | `INTEGER` | `SESSION` | `1` |
+| `idle_in_transaction_session_timeout` | Not used. Added for PostgreSQL compatibility only. A value other than `0` is accepted with a warning that it is not enforced. | `VARCHAR` | `SESSION` | `0` |
 | `immediate_transaction_mode` | Whether transactions should be started lazily when needed, or immediately when BEGIN TRANSACTION is called | `BOOLEAN` | `GLOBAL` | `false` |
 | `in_hot_standby` | Shows whether hot standby is currently active. | `BOOLEAN` | `SESSION` | `off` |
 | `integer_datetimes` | Shows whether datetimes are integer based. | `BOOLEAN` | `SESSION` | `on` |
 | `IntervalStyle` | Sets the display format for interval values. | `VARCHAR` | `SESSION` | `postgres` |
 | `is_superuser` | Shows whether the current session's user is a superuser. | `BOOLEAN` | `SESSION` | `on` |
 | `lock_configuration` | Whether or not configurations can be altered | `BOOLEAN` | `GLOBAL` | `false` |
+| `lock_timeout` | Not used. Added for PostgreSQL compatibility only. A value other than `0` is accepted with a warning that it is not enforced. | `VARCHAR` | `SESSION` | `0` |
 | `max_execution_time` | The maximum execution time per query in milliseconds (0 = no limit). | `BIGINT` | `SESSION` | `0` |
 | `max_identifier_length` | Shows the maximum identifier length. SereneDB keeps longer identifiers in full. Read-only. | `INTEGER` | `SESSION` | `63` |
 | `max_index_keys` | Shows the maximum number of index keys. Clients read it as the bound of index and constraint key arrays, such as `pg_index.indkey` and `pg_constraint.conkey`. Read-only. | `INTEGER` | `SESSION` | `32` |
 | `max_parallel_workers_per_gather` | Not used. Added for PostgreSQL compatibility only. | `INTEGER` | `SESSION` | `2` |
 | `regex_match_operator_semantics` | Deprecated. Configures whether regex match operators use partial or full string matching. | `VARCHAR` | `SESSION` | `partial` |
 | `role` | Sets the current role. | `VARCHAR` | `SESSION` | `none` |
+| `row_security` | Not used. Added for PostgreSQL compatibility only. | `BOOLEAN` | `SESSION` | `on` |
 | `search_path` | Sets the default catalog search path as a comma-separated list of values | `VARCHAR` | `SESSION` | `"$user", public` |
 | `server_encoding` | Shows the server (database) character set encoding. | `VARCHAR` | `SESSION` | `UTF8` |
 | `server_version` | Shows the server version. | `VARCHAR` | `SESSION` | `18.6` |
@@ -263,9 +269,11 @@ Wire-protocol and session state that PostgreSQL clients read or set.
 | `show_behavior` | Configures how `SHOW` resolves a bare identifier: `auto` describes a table if one exists, else a setting (deprecated); `table` always describes a table; `setting` always describes a setting. | `VARCHAR` | `SESSION` | `SETTING` |
 | `standard_conforming_strings` | Causes '...' strings to treat backslashes literally. | `BOOLEAN` | `SESSION` | `on` |
 | `statement_timeout` | Aborts any statement that takes more than the specified amount of time (milliseconds without a unit; units `us`, `ms`, `s`, `min`, `h`, `d`) with SQLSTATE `57014`, as in PostgreSQL. 0 disables the timeout. Sets `max_execution_time` for the same scope. | `VARCHAR` | `SESSION` | `0` |
+| `synchronize_seqscans` | Not used. Added for PostgreSQL compatibility only. | `BOOLEAN` | `SESSION` | `on` |
 | `table_function_identifier_conversion` | Deprecated. Configures the use of deprecated implicit conversion of unbound identifiers to strings in table function arguments. | `VARCHAR` | `SESSION` | `DISABLE_IMPLICIT_STRING` |
 | `TimeZone` | Sets the time zone for displaying and interpreting time stamps. | `VARCHAR` | `SESSION` | `Etc/UTC` |
 | `transaction_isolation` | Sets the current transaction's isolation level. | `VARCHAR` | `SESSION` | `repeatable read` |
+| `transaction_timeout` | Not used. Added for PostgreSQL compatibility only. A value other than `0` is accepted with a warning that it is not enforced. | `VARCHAR` | `SESSION` | `0` |
 | `xmloption` | Whether text read as `xml`, and the argument of `xml_is_well_formed`, must be an XML `document` or may be `content`. | `VARCHAR` | `SESSION` | `content` |
 
 PostgreSQL settings that are not listed here, such as `work_mem`, `lock_timeout` or `shared_buffers`, do not exist in SereneDB: `SET` and `SHOW` fail with `unrecognized configuration parameter`. This includes several of the `SET` lines at the top of a `pg_dump` script.

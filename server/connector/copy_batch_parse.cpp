@@ -110,6 +110,9 @@ std::string_view DecodeFieldView(std::string_view field, std::string& out) {
         out.push_back(static_cast<char>(value & 0xFF));
         break;
       }
+      case '.':
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
+                        ERR_MSG("end-of-copy marker is not alone on its line"));
       default:
         out.push_back(e);  // `\<anyotherchar>` -> drop the backslash
         break;
@@ -248,6 +251,10 @@ duckdb::idx_t CopyBatchParser::ParseText(duckdb::DataChunk& output,
     _pos += end == std::string_view::npos ? rest.size() : end + 1;
     if (std::exchange(_skip, false)) {
       continue;
+    }
+    if (line == "\\.") {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
+                      ERR_MSG("end-of-copy marker is followed by data"));
     }
     ProcessTextRow(line, _target.delim, _target.null_str, _deserializers, _dctx,
                    output, row, _field_buf);

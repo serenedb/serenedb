@@ -1,0 +1,196 @@
+control substitution on
+
+statement ok
+CREATE TABLE marker (id INT, v TEXT);
+
+
+statement ok
+COPY (SELECT ('1' || chr(9) || 'six' || chr(10) || '2' || chr(9) || '\\N' || chr(10) || '\\.' || chr(10) || chr(10) || chr(10))::BLOB)
+TO '${__TEST_DIR__}/marker_dump.dat' (FORMAT BLOB);
+
+
+statement count 2
+COPY marker FROM '${__TEST_DIR__}/marker_dump.dat';
+
+
+statement count 2
+COPY marker FROM '${__TEST_DIR__}/marker_dump.dat' (FORMAT text);
+
+
+query
+SELECT id, coalesce(v, '<null>') AS v FROM marker ORDER BY id;
+----
+id	v
+1	six
+1	six
+2	<null>
+2	<null>
+
+
+statement ok
+TRUNCATE marker;
+
+
+statement ok
+COPY (SELECT ('1' || chr(9) || 'six' || chr(10) || '2' || chr(9) || '\\N' || chr(10) || '\\.' || chr(10) || chr(10) || chr(10))::BLOB)
+TO '${__TEST_DIR__}/marker_dump.dat.gz' (FORMAT BLOB);
+
+
+statement count 2
+COPY marker FROM '${__TEST_DIR__}/marker_dump.dat.gz';
+
+
+query
+SELECT id, coalesce(v, '<null>') AS v FROM marker ORDER BY id;
+----
+id	v
+1	six
+2	<null>
+
+
+statement ok
+TRUNCATE marker;
+
+
+statement ok
+COPY (SELECT ('1' || chr(9) || 'six' || chr(13) || chr(10) || '\\.' || chr(13) || chr(10) || chr(13) || chr(10))::BLOB)
+TO '${__TEST_DIR__}/marker_crlf.dat' (FORMAT BLOB);
+
+
+statement count 1
+COPY marker FROM '${__TEST_DIR__}/marker_crlf.dat';
+
+
+statement ok
+COPY (SELECT ('2' || chr(9) || 'seven' || chr(10) || '\\.')::BLOB)
+TO '${__TEST_DIR__}/marker_at_end.dat' (FORMAT BLOB);
+
+
+statement count 1
+COPY marker FROM '${__TEST_DIR__}/marker_at_end.dat';
+
+
+statement ok
+COPY (SELECT ('\\.' || chr(10))::BLOB)
+TO '${__TEST_DIR__}/marker_only.dat' (FORMAT BLOB);
+
+
+statement count 0
+COPY marker FROM '${__TEST_DIR__}/marker_only.dat';
+
+
+statement ok
+COPY (SELECT ('3' || chr(9) || '\\\\.' || chr(10))::BLOB)
+TO '${__TEST_DIR__}/marker_escaped.dat' (FORMAT BLOB);
+
+
+statement count 1
+COPY marker FROM '${__TEST_DIR__}/marker_escaped.dat';
+
+
+query
+SELECT id, v FROM marker ORDER BY id;
+----
+id	v
+1	six
+2	seven
+3	\\.
+
+
+statement ok
+COPY (SELECT ('1' || chr(9) || 'six' || chr(10) || '\\.' || chr(10) || '2' || chr(9) || 'seven' || chr(10))::BLOB)
+TO '${__TEST_DIR__}/marker_then_data.dat' (FORMAT BLOB);
+
+
+statement error
+COPY marker FROM '${__TEST_DIR__}/marker_then_data.dat';
+----
+db error: ERROR: end-of-copy marker is followed by data
+
+
+statement ok
+COPY (SELECT ('1' || chr(9) || 'six' || chr(10) || '\\.' || chr(10) || chr(10) || '2' || chr(9) || 'seven' || chr(10))::BLOB)
+TO '${__TEST_DIR__}/marker_then_data.dat.gz' (FORMAT BLOB);
+
+
+statement error
+COPY marker FROM '${__TEST_DIR__}/marker_then_data.dat.gz';
+----
+db error: ERROR: end-of-copy marker is followed by data
+
+
+statement ok
+COPY (SELECT ('1' || chr(9) || 'si\\.x' || chr(10))::BLOB)
+TO '${__TEST_DIR__}/marker_in_value.dat' (FORMAT BLOB);
+
+
+statement error
+COPY marker FROM '${__TEST_DIR__}/marker_in_value.dat';
+----
+db error: ERROR: end-of-copy marker is not alone on its line
+
+
+statement ok
+COPY (SELECT ('1' || chr(9) || 'six' || chr(10) || '\\.x' || chr(10))::BLOB)
+TO '${__TEST_DIR__}/marker_with_tail.dat' (FORMAT BLOB);
+
+
+statement error
+COPY marker FROM '${__TEST_DIR__}/marker_with_tail.dat';
+----
+db error: ERROR: end-of-copy marker is not alone on its line
+
+
+statement ok
+COPY (SELECT ('1' || chr(9) || 'six\\' || chr(10) || '\\.' || chr(10))::BLOB)
+TO '${__TEST_DIR__}/marker_after_escaped_newline.dat' (FORMAT BLOB);
+
+
+statement error
+COPY marker FROM '${__TEST_DIR__}/marker_after_escaped_newline.dat';
+----
+db error: ERROR: end-of-copy marker is not alone on its line
+
+
+query
+SELECT count(*) AS n FROM marker;
+----
+n
+3
+
+
+statement ok
+CREATE TABLE marker_lines (v TEXT);
+
+
+statement ok
+COPY (SELECT ('six' || chr(10) || chr(10))::BLOB)
+TO '${__TEST_DIR__}/marker_empty_lines.dat' (FORMAT BLOB);
+
+
+statement count 2
+COPY marker_lines FROM '${__TEST_DIR__}/marker_empty_lines.dat';
+
+
+query
+SELECT v, length(v) AS len FROM marker_lines ORDER BY v;
+----
+v	len
+(empty)	0
+six	3
+
+
+statement ok
+COPY (SELECT (repeat('7' || chr(9) || 'x' || chr(10), 2200000) || '\\.' || chr(10) || chr(10) || chr(10))::BLOB)
+TO '${__TEST_DIR__}/marker_ranges.dat' (FORMAT BLOB);
+
+
+statement count 2200000
+COPY marker FROM '${__TEST_DIR__}/marker_ranges.dat';
+
+
+query
+SELECT id, v, count(*) AS n FROM marker WHERE id = 7 GROUP BY ALL;
+----
+id	v	n
+7	x	2200000

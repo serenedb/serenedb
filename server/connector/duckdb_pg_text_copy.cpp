@@ -162,7 +162,8 @@ duckdb::unique_ptr<duckdb::GlobalFunctionData> InitGlobal(
   // present, otherwise from the client context's catalog.
   result->handle = duckdb::FileSystem::GetFileSystem(context).OpenFile(
     file_path, duckdb::FileFlags::FILE_FLAGS_WRITE |
-                 duckdb::FileFlags::FILE_FLAGS_FILE_CREATE);
+                 duckdb::FileFlags::FILE_FLAGS_FILE_CREATE |
+                 duckdb::FileCompressionType::AUTO_DETECT);
   result->file_buffer =
     duckdb::make_uniq<message::Buffer>(64u * 1024, 1u << 20);
   sdb::pg::FillContext(ConnectionContext::Get(context), result->ctx);

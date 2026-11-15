@@ -387,7 +387,8 @@ PhraseQuery::Positions MakePositions(const ByPhraseOptions& options) {
   for (const auto& word : options) {
     position->offs_max = word.offs_max;
     position->offs_min = word.offs_min;
-    position->lead_offset = look_back += word.offs_max;
+    position->lead_offset = look_back +=
+      pos_limits::IsOpenGap(word.offs_max) ? word.offs_min : word.offs_max;
     ++position;
   }
   return positions;

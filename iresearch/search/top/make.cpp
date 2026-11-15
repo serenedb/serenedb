@@ -41,7 +41,7 @@ template<typename Query>
 Root::ptr MakeAnyPhrase(const Query& query, const Context& ctx) {
   return irs::detail::ResolveMatch(
     query, [&]<irs::detail::PhraseMatch M> -> Root::ptr {
-      if constexpr (M != irs::detail::PhraseMatch::Slop) {
+      if constexpr (!irs::detail::IsScaled(M)) {
         if (ctx.prune) {
           if (auto pruned = MakePhrasePruned<M>(query, ctx)) {
             return pruned;
@@ -61,7 +61,7 @@ Result MakePhraseOf(const QueryBuilder& query, Make&& make) {
   const auto resolve = [&](const auto& phrase) {
     return irs::detail::ResolveMatch(
       phrase, [&]<irs::detail::PhraseMatch M> -> Result {
-        if constexpr (M != irs::detail::PhraseMatch::Slop) {
+        if constexpr (!irs::detail::IsScaled(M)) {
           return make.template operator()<M>(phrase);
         } else {
           return {};

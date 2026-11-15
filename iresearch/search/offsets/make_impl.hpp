@@ -46,7 +46,7 @@ Root::ptr MakePhrase(const Query& query) {
   if (!query.state.handles.HasOffsets()) {
     return {};
   }
-  static constexpr bool kCount = M == detail::PhraseMatch::Slop;
+  static constexpr bool kCount = detail::IsScaled(M);
   return detail::BuildPhrase<M, kCount, true, false>(
     query, [&]<typename Slots>(auto&&... args) -> Root::ptr {
       return memory::make_managed<Impl<Phrase<Slots>>>(

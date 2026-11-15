@@ -100,66 +100,86 @@ target_sources(
         make/ngram/top_threshold.cpp
         make/phrase/count_fixed.cpp
         make/phrase/count_fixed_intervals.cpp
+        make/phrase/count_fixed_open_gap.cpp
         make/phrase/count_fixed_slop.cpp
         make/phrase/count_variadic.cpp
         make/phrase/count_variadic_intervals.cpp
+        make/phrase/count_variadic_open_gap.cpp
         make/phrase/count_variadic_slop.cpp
         make/phrase/docs_fixed.cpp
         make/phrase/docs_fixed_intervals.cpp
+        make/phrase/docs_fixed_open_gap.cpp
         make/phrase/docs_fixed_slop.cpp
         make/phrase/docs_variadic.cpp
         make/phrase/docs_variadic_intervals.cpp
+        make/phrase/docs_variadic_open_gap.cpp
         make/phrase/docs_variadic_slop.cpp
         make/phrase/fill_fixed_docs.cpp
         make/phrase/fill_fixed_intervals_docs.cpp
         make/phrase/fill_fixed_intervals_scored.cpp
+        make/phrase/fill_fixed_open_gap_docs.cpp
+        make/phrase/fill_fixed_open_gap_scored.cpp
         make/phrase/fill_fixed_scored.cpp
         make/phrase/fill_fixed_slop_docs.cpp
         make/phrase/fill_fixed_slop_scored.cpp
         make/phrase/fill_variadic_docs.cpp
         make/phrase/fill_variadic_intervals_docs.cpp
         make/phrase/fill_variadic_intervals_scored.cpp
+        make/phrase/fill_variadic_open_gap_docs.cpp
+        make/phrase/fill_variadic_open_gap_scored.cpp
         make/phrase/fill_variadic_scored.cpp
         make/phrase/fill_variadic_slop_docs.cpp
         make/phrase/fill_variadic_slop_scored.cpp
         make/phrase/hits_fixed.cpp
         make/phrase/hits_fixed_intervals.cpp
+        make/phrase/hits_fixed_open_gap.cpp
         make/phrase/hits_fixed_slop.cpp
         make/phrase/hits_variadic.cpp
         make/phrase/hits_variadic_intervals.cpp
+        make/phrase/hits_variadic_open_gap.cpp
         make/phrase/hits_variadic_slop.cpp
         make/phrase/lead_fixed_docs.cpp
         make/phrase/lead_fixed_intervals_docs.cpp
         make/phrase/lead_fixed_intervals_scored.cpp
+        make/phrase/lead_fixed_open_gap_docs.cpp
+        make/phrase/lead_fixed_open_gap_scored.cpp
         make/phrase/lead_fixed_scored.cpp
         make/phrase/lead_fixed_slop_docs.cpp
         make/phrase/lead_fixed_slop_scored.cpp
         make/phrase/lead_variadic_docs.cpp
         make/phrase/lead_variadic_intervals_docs.cpp
         make/phrase/lead_variadic_intervals_scored.cpp
+        make/phrase/lead_variadic_open_gap_docs.cpp
+        make/phrase/lead_variadic_open_gap_scored.cpp
         make/phrase/lead_variadic_scored.cpp
         make/phrase/lead_variadic_slop_docs.cpp
         make/phrase/lead_variadic_slop_scored.cpp
         make/phrase/probe_fixed_docs.cpp
         make/phrase/probe_fixed_intervals_docs.cpp
         make/phrase/probe_fixed_intervals_scored.cpp
+        make/phrase/probe_fixed_open_gap_docs.cpp
+        make/phrase/probe_fixed_open_gap_scored.cpp
         make/phrase/probe_fixed_scored.cpp
         make/phrase/probe_fixed_slop_docs.cpp
         make/phrase/probe_fixed_slop_scored.cpp
         make/phrase/probe_variadic_docs.cpp
         make/phrase/probe_variadic_intervals_docs.cpp
         make/phrase/probe_variadic_intervals_scored.cpp
+        make/phrase/probe_variadic_open_gap_docs.cpp
+        make/phrase/probe_variadic_open_gap_scored.cpp
         make/phrase/probe_variadic_scored.cpp
         make/phrase/probe_variadic_slop_docs.cpp
         make/phrase/probe_variadic_slop_scored.cpp
         make/phrase/top_fixed.cpp
         make/phrase/top_fixed_intervals.cpp
         make/phrase/top_fixed_intervals_pruned.cpp
+        make/phrase/top_fixed_open_gap.cpp
         make/phrase/top_fixed_pruned.cpp
         make/phrase/top_fixed_slop.cpp
         make/phrase/top_variadic.cpp
         make/phrase/top_variadic_intervals.cpp
         make/phrase/top_variadic_intervals_pruned.cpp
+        make/phrase/top_variadic_open_gap.cpp
         make/phrase/top_variadic_pruned.cpp
         make/phrase/top_variadic_slop.cpp
         make/query/all.cpp
@@ -292,9 +312,11 @@ target_sources(
         make/ngram/offsets_threshold.cpp
         make/phrase/offsets_fixed.cpp
         make/phrase/offsets_fixed_intervals.cpp
+        make/phrase/offsets_fixed_open_gap.cpp
         make/phrase/offsets_fixed_slop.cpp
         make/phrase/offsets_variadic.cpp
         make/phrase/offsets_variadic_intervals.cpp
+        make/phrase/offsets_variadic_open_gap.cpp
         make/phrase/offsets_variadic_slop.cpp
         offsets/make.cpp
         offsets/make_posting.cpp

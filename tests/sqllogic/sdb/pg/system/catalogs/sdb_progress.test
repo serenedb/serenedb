@@ -77,7 +77,8 @@ WHERE datname = current_database() AND (pid IS NULL
    OR backend_start_us IS NULL
    OR state_change_us < backend_start_us
    OR (state = 'idle' AND (xact_start_us IS NOT NULL OR command IS NOT NULL))
-   OR (state LIKE 'idle in transaction%' AND (xact_start_us IS NULL OR command IS NOT NULL))
+   OR (state = 'idle in transaction' AND (xact_start_us IS NULL OR command IS NOT NULL))
+   OR (state = 'idle in transaction (aborted)' AND (xact_start_us IS NOT NULL OR command IS NOT NULL))
    OR (state = 'active' AND (query_start_us IS NULL OR xact_start_us > query_start_us))
    OR percent < 0);
 ----

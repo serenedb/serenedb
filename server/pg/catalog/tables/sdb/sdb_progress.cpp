@@ -82,11 +82,10 @@ std::string_view SessionState(const ProgressSnapshot& s) {
   if (s.active) {
     return "active";
   }
-  if (s.xact_start_us == 0) {
-    return "idle";
+  if (s.xact_aborted) {
+    return "idle in transaction (aborted)";
   }
-  return s.xact_aborted ? "idle in transaction (aborted)"
-                        : "idle in transaction";
+  return s.xact_start_us == 0 ? "idle" : "idle in transaction";
 }
 
 std::optional<int64_t> MicrosOrNull(int64_t micros) {

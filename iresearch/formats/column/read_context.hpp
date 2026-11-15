@@ -83,7 +83,6 @@ class ReadContext final : public BlockManager {
   void ReadBlocks(duckdb::QueryContext context, duckdb::FileBuffer& buffer,
                   duckdb::block_id_t start_block,
                   duckdb::idx_t block_count) final;
-  void UnregisterBlock(duckdb::block_id_t id) final;
 
   duckdb::block_id_t GetFreeBlockId() final;
   duckdb::block_id_t PeekFreeBlockId() final;
@@ -105,7 +104,6 @@ class ReadContext final : public BlockManager {
   std::vector<std::pair<uint64_t, uint64_t>> _ranges;
   bool _random_access = false;
   duckdb::ObjectCache* _cache;
-  std::atomic<size_t> _live_handles{0};
 };
 
 inline bool Touched(const ReadContext::CacheSlot& slot) noexcept {

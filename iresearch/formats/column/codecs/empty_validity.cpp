@@ -25,10 +25,8 @@ namespace {
 
 using duckdb::idx_t;
 
-struct EmptyScan final : SegmentScanState {};
-
 std::unique_ptr<SegmentScanState> InitScan(const ColumnSegment&) {
-  return std::make_unique<EmptyScan>();
+  return nullptr;
 }
 
 void Scan(const ColumnSegment&, ColumnScanState&, idx_t, duckdb::Vector&, idx_t,

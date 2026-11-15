@@ -74,11 +74,6 @@ constexpr Codec kCodecs[] = {
    "ZSTD",
    Text<kZstdFunction>,
    {Shape::Plain, ByteCodec::Zstd}},
-  {CodecType::DictZxc,
-   "DICT_ZXC",
-   Text<kDictZxcFunction>,
-   {Shape::Dedup, ByteCodec::Zxc}},
-  {CodecType::Zxc, "ZXC", Text<kZxcFunction>, {Shape::Plain, ByteCodec::Zxc}},
   {CodecType::DictFsst,
    "DICT_FSST",
    Text<kDictFsstFunction>,
@@ -87,6 +82,11 @@ constexpr Codec kCodecs[] = {
    "FSST",
    Text<kFsstFunction>,
    {Shape::Plain, ByteCodec::Fsst}},
+  {CodecType::DictZxc,
+   "DICT_ZXC",
+   Text<kDictZxcFunction>,
+   {Shape::Dedup, ByteCodec::Zxc}},
+  {CodecType::Zxc, "ZXC", Text<kZxcFunction>, {Shape::Plain, ByteCodec::Zxc}},
   {CodecType::DictFsstPlus,
    "DICT_FSST_PLUS",
    Text<kDictFsstPlusFunction>,
@@ -129,7 +129,20 @@ constexpr size_t kTextBegin = std::to_underlying(CodecType::DictLz4);
 
 constexpr std::span<const Codec> kAnalyzed =
   std::span{kCodecs}.subspan(kAnalyzedBegin, kInternalBegin - kAnalyzedBegin);
-constexpr std::span<const Codec> kText = std::span{kCodecs}.subspan(kTextBegin);
+
+constexpr size_t IndexOf(StringChoice choice) noexcept {
+  return kTextBegin + 2 * std::to_underlying(choice.leaf) +
+         std::to_underlying(choice.shape);
+}
+
+static_assert([] {
+  for (size_t i = kTextBegin; i < std::size(kCodecs); ++i) {
+    if (IndexOf(kCodecs[i].choice) != i) {
+      return false;
+    }
+  }
+  return true;
+}());
 
 }  // namespace
 
@@ -224,10 +237,9 @@ const StringChoice* ChoiceOf(CodecType type) noexcept {
 }
 
 CodecType TypeOf(StringChoice choice) noexcept {
-  const auto it = absl::c_find_if(
-    kText, [&](const Codec& codec) { return codec.choice == choice; });
-  SDB_ASSERT(it != kText.end());
-  return it->type;
+  const auto index = IndexOf(choice);
+  SDB_ASSERT(index < std::size(kCodecs));
+  return kCodecs[index].type;
 }
 
 uint8_t MaxLevel(CodecType type) noexcept {

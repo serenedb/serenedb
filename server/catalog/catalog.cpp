@@ -592,7 +592,10 @@ bool SereneDBCatalog::VerifyColumnCompression(
   duckdb::ClientContext&, duckdb::optional_ptr<duckdb::StorageManager>,
   const duckdb::CreateTableInfo&, const duckdb::ColumnDefinition& column,
   const duckdb::LogicalType& type) const {
-  CheckColumnCodec(column.Name().GetIdentifierName(), column.CompressionType(),
+  const auto compression = column.CompressionType();
+  CheckColumnCodec(column.Name().GetIdentifierName(),
+                   irs::codecs::FindCodec(compression),
+                   duckdb::CompressionTypeToString(compression),
                    column.CompressionLevel(), type);
   return true;
 }

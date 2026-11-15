@@ -652,8 +652,8 @@ void ApplyIncludedOpclass(
                 "'none')"));
     }
   }
-  entry.column_options.compression =
-    catalog::CheckColumnCodec(owner_label, declared, level, value_type);
+  entry.column_options.compression = catalog::CheckColumnCodec(
+    owner_label, irs::codecs::FindCodec(declared), declared, level, value_type);
   entry.column_options.compression_level = static_cast<uint8_t>(level);
 }
 

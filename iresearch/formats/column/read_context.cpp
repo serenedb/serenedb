@@ -71,15 +71,11 @@ ReadContext::ReadContext(duckdb::DatabaseInstance& db, IndexInput::ptr in)
   ResetMapping();
 }
 
-ReadContext::~ReadContext() {
-  SDB_ASSERT(_live_handles == 0,
-             "block handles must not outlive their ReadContext");
-}
+ReadContext::~ReadContext() = default;
 
 void ReadContext::Reset(const ColReader& reader) {
   SDB_ASSERT(_db == &reader.Database(),
              "ReadContext::Reset: Database mismatch");
-  SDB_ASSERT(_live_handles == 0, "ReadContext::Reset with live block handles");
   _in = reader.ReopenIn();
   ResetMapping();
 }
@@ -146,7 +142,6 @@ duckdb::shared_ptr<duckdb::BlockHandle> ReadContext::RegisterColBlock(
   uint64_t offset, uint64_t size) {
   const auto id = static_cast<duckdb::block_id_t>(_ranges.size());
   _ranges.emplace_back(offset, size);
-  ++_live_handles;
   auto handle = RegisterBlock(
     id, duckdb::AlignValue<duckdb::idx_t, duckdb::Storage::SECTOR_SIZE>(size));
   if (Maps(offset, size)) {
@@ -161,12 +156,6 @@ bool ReadContext::Maps(uint64_t offset, uint64_t size) const noexcept {
              duckdb::AlignValue<duckdb::idx_t, duckdb::Storage::SECTOR_SIZE>(
                size) <=
            _mapping->Size();
-}
-
-void ReadContext::UnregisterBlock(duckdb::block_id_t id) {
-  SDB_ASSERT(_live_handles != 0);
-  --_live_handles;
-  duckdb::BlockManager::UnregisterBlock(id);
 }
 
 duckdb::unique_ptr<duckdb::Block> ReadContext::CreateBlock(

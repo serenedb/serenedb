@@ -30,20 +30,20 @@ namespace irs {
 
 class WriteContext final {
  public:
-  WriteContext(duckdb::DatabaseInstance& db, IndexOutput& blocks) noexcept
-    : _db{&db}, _blocks{&blocks} {}
+  WriteContext(duckdb::DatabaseInstance& db, IndexOutput& out) noexcept
+    : _db{&db}, _out{&out} {}
 
   WriteContext(const WriteContext&) = delete;
   WriteContext& operator=(const WriteContext&) = delete;
 
   duckdb::DatabaseInstance& Database() noexcept { return *_db; }
-  IndexOutput& Blocks() noexcept { return *_blocks; }
+  IndexOutput& Out() noexcept { return *_out; }
 
   duckdb::block_id_t WriteOverflowString(duckdb::string_t string);
 
  private:
   duckdb::DatabaseInstance* _db;
-  IndexOutput* _blocks;
+  IndexOutput* _out;
 };
 
 }  // namespace irs

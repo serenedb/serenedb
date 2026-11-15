@@ -332,10 +332,31 @@ void CheckCompressionLevel(std::string_view column_name,
                           ") using compression type '", codec, "'"));
 }
 
-irs::codecs::CodecType CheckCodec(std::string_view column_name,
-                                  const irs::codecs::Codec* codec,
-                                  std::string_view codec_name, uint32_t level,
-                                  const duckdb::LogicalType& column_type) {
+}  // namespace
+
+void RequireSearchTableIndexOption(std::string_view name) {
+  if (absl::c_contains(kSearchTableMaintenanceSettings, name)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG(name, " is a table option"),
+      ERR_HINT("Change it with ALTER TABLE ... SET (", name, " = ...)."));
+  }
+  if (absl::c_contains(kSearchTableOptions, name)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG(name, " is a table option"),
+      ERR_HINT("Set it in CREATE TABLE ... WITH (", name, " = ...)."));
+  }
+  if (name == kSegmentDocsMaxSetting) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG(name, " does not apply to an index on a table"));
+  }
+}
+
+irs::codecs::CodecType CheckColumnCodec(
+  std::string_view column_name, const irs::codecs::Codec* codec,
+  std::string_view codec_name, uint32_t level,
+  const duckdb::LogicalType& column_type) {
   if (!codec) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("Column \"", column_name,
@@ -362,42 +383,6 @@ irs::codecs::CodecType CheckCodec(std::string_view column_name,
     return codec->type;
   }
   ThrowCodecMismatch(column_name, codec->name, column_type, physical);
-}
-
-}  // namespace
-
-void RequireSearchTableIndexOption(std::string_view name) {
-  if (absl::c_contains(kSearchTableMaintenanceSettings, name)) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG(name, " is a table option"),
-      ERR_HINT("Change it with ALTER TABLE ... SET (", name, " = ...)."));
-  }
-  if (absl::c_contains(kSearchTableOptions, name)) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG(name, " is a table option"),
-      ERR_HINT("Set it in CREATE TABLE ... WITH (", name, " = ...)."));
-  }
-  if (name == kSegmentDocsMaxSetting) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    ERR_MSG(name, " does not apply to an index on a table"));
-  }
-}
-
-irs::codecs::CodecType CheckColumnCodec(
-  std::string_view column_name, std::string_view codec_name, uint32_t level,
-  const duckdb::LogicalType& column_type) {
-  return CheckCodec(column_name, irs::codecs::FindCodec(codec_name), codec_name,
-                    level, column_type);
-}
-
-irs::codecs::CodecType CheckColumnCodec(
-  std::string_view column_name, duckdb::CompressionType compression,
-  uint32_t level, const duckdb::LogicalType& column_type) {
-  return CheckCodec(column_name, irs::codecs::FindCodec(compression),
-                    duckdb::CompressionTypeToString(compression), level,
-                    column_type);
 }
 
 SearchTableEntry::SearchTableEntry(

@@ -239,7 +239,7 @@ uint64_t ColumnWriter::WriteBlocks(const codecs::CompressionFunction& function,
   const auto flush = [&](duckdb::BaseStatistics stats, uint64_t rows,
                          std::string_view bytes) {
     written += bytes.size();
-    CaptureBlock(function, std::move(stats), rows, bytes, ctx.Blocks(), sink);
+    CaptureBlock(function, std::move(stats), rows, bytes, ctx.Out(), sink);
   };
   codecs::ColumnDataCheckpointData checkpoint_data{
     .type = type,
@@ -295,7 +295,7 @@ bool ColumnWriter::SealString(const duckdb::LogicalType& type,
     meta.write_string_tuning = std::make_unique<codecs::StringTuning>();
   }
   auto& tuning = *meta.write_string_tuning;
-  auto& blocks = WriteCtx().Blocks();
+  auto& blocks = WriteCtx().Out();
   auto& buffers = WriteCtx().Database().GetBufferManager();
   bool all_dedup = true;
   const auto sink = [&](codecs::StringChoice choice,
@@ -348,8 +348,7 @@ void ColumnWriter::SealNumeric(const duckdb::LogicalType& type,
       reuse.clock.Restart();
     }
     CaptureBlock(*codecs::GetCodec(codecs::CodecType::Constant, physical),
-                 std::move(stats), row_count, {}, WriteCtx().Blocks(),
-                 meta.data);
+                 std::move(stats), row_count, {}, WriteCtx().Out(), meta.data);
     return;
   }
   const auto price_analyzed = [&] {
@@ -401,7 +400,7 @@ void ColumnWriter::SealNumeric(const duckdb::LogicalType& type,
   }
   CaptureBlock(*codecs::GetCodec(codecs::CodecType::Numeric, physical),
                std::move(segment.stats), row_count, segment.bytes,
-               WriteCtx().Blocks(), meta.data);
+               WriteCtx().Out(), meta.data);
 }
 
 void ColumnWriter::SealValidity(std::span<WriteChunk> chunks,
@@ -898,7 +897,7 @@ void ColumnWriter::CopyBlock(const ColumnBlockMeta& block, ReadContext& source,
       bytes = buffer.data();
     }
     m.file_offset =
-      AppendAligned(WriteCtx().Blocks(),
+      AppendAligned(WriteCtx().Out(),
                     {reinterpret_cast<const char*>(bytes), block.byte_size});
     m.byte_size = block.byte_size;
   }

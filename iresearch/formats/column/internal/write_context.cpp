@@ -34,10 +34,9 @@ duckdb::block_id_t WriteContext::WriteOverflowString(duckdb::string_t string) {
              "string too long for overflow format");
   byte_type length[sizeof(uint32_t)];
   absl::little_endian::Store32(length, static_cast<uint32_t>(size));
-  const auto block = static_cast<duckdb::block_id_t>(_blocks->Position());
-  _blocks->WriteData(length, sizeof(length));
-  _blocks->WriteData(reinterpret_cast<const byte_type*>(string.GetData()),
-                     size);
+  const auto block = static_cast<duckdb::block_id_t>(_out->Position());
+  _out->WriteData(length, sizeof(length));
+  _out->WriteData(reinterpret_cast<const byte_type*>(string.GetData()), size);
   return block;
 }
 

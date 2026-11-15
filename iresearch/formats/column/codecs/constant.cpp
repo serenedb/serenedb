@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <algorithm>
 #include <duckdb/common/types/hugeint.hpp>
 #include <duckdb/common/types/uhugeint.hpp>
 #include <duckdb/common/vector/constant_vector.hpp>
@@ -44,11 +45,8 @@ void FillValidity(const ColumnSegment& segment, duckdb::Vector& result,
 template<typename T>
 void Fill(const ColumnSegment& segment, duckdb::Vector& result, idx_t start,
           idx_t count) {
-  auto* data = duckdb::FlatVector::GetDataMutable<T>(result);
-  const auto value = duckdb::NumericStats::GetMin<T>(segment.stats);
-  for (idx_t i = 0; i < count; ++i) {
-    data[start + i] = value;
-  }
+  std::fill_n(duckdb::FlatVector::GetDataMutable<T>(result) + start, count,
+              duckdb::NumericStats::GetMin<T>(segment.stats));
 }
 
 std::unique_ptr<SegmentScanState> InitScan(const ColumnSegment&) {

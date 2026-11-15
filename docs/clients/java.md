@@ -86,7 +86,7 @@ cm.copyIn("COPY articles FROM STDIN WITH (FORMAT CSV, HEADER TRUE)", reader);
 ## Differences from PostgreSQL
 
 - `conn.setSavepoint()` fails, because SereneDB has no `SAVEPOINT`.
-- `setFetchSize` works inside a transaction, as with PostgreSQL.
+- `setFetchSize` works inside a transaction, as with PostgreSQL, until another statement runs on the same connection: that closes the open result set, and its next fetch fails with SQLSTATE `22023`.
 
 ## Cleanup
 

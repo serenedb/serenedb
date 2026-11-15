@@ -130,6 +130,12 @@ db error: ERROR: REJECT_LIMIT (0) must be greater than zero
 
 
 statement error
+COPY cto_ints FROM '${__TEST_DIR__}/cto_mixed.txt' (FORMAT text, ON_ERROR IGNORE, REJECT_LIMIT);
+----
+db error: ERROR: reject_limit requires a numeric value
+
+
+statement error
 COPY cto_ints FROM '${__TEST_DIR__}/cto_mixed.txt' (FORMAT text, REJECT_LIMIT 5);
 ----
 db error: ERROR: COPY REJECT_LIMIT requires ON_ERROR to be set to IGNORE
@@ -145,6 +151,22 @@ statement error
 COPY cto_ints FROM '${__TEST_DIR__}/cto_mixed.txt' (FORMAT binary, ON_ERROR IGNORE);
 ----
 db error: ERROR: only ON_ERROR STOP is allowed in BINARY mode
+
+
+statement error
+COPY cto_ints TO '${__TEST_DIR__}/cto_out.bin' (FORMAT binary, ON_ERROR IGNORE);
+----
+db error: ERROR: COPY ON_ERROR cannot be used with COPY TO
+
+
+statement error
+COPY cto_ints FROM '${__TEST_DIR__}/cto_mixed.txt' (FORMAT binary, REJECT_LIMIT 5);
+----
+db error: ERROR: COPY REJECT_LIMIT requires ON_ERROR to be set to IGNORE
+
+
+statement error option "bogus" not recognized
+COPY cto_ints FROM '${__TEST_DIR__}/cto_mixed.txt' (FORMAT binary, bogus 1);
 
 
 statement error

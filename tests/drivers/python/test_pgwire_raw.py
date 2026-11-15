@@ -2146,6 +2146,43 @@ def test_copy_csv_keeps_eod_marker_as_data(conn):
         conn.run_ok("drop table if exists smoke_csv_eod")
 
 
+def test_copy_text_eod_marker_across_frames(conn):
+    marker_alone = "end-of-copy marker is not alone on its line"
+    cases = [
+        ([b"1\tone\n\\", b".\n"], (1, 1), None),
+        ([b"1\tone\r\n\\.", b"\r\n"], (1, 1), None),
+        ([b"1\tone\r\n\\.\r", b"\n"], (1, 1), None),
+        ([b"1\tone\n\\", b".", b"\n"], (1, 1), None),
+        ([b"1\tone\n\\."], (1, 1), None),
+        ([b"1\tone\n\\.\n", b"2\ttwo\n"], (1, 1), None),
+        ([b"1\tone\n\\", b"N\ttwo\n"], (2, 1), None),
+        ([b"\\N\tone\n"], (1, 0), None),
+        ([b"1\tone\n\\.x\n"], None, marker_alone),
+        ([b"1\tone\n\\.\rx\n"], None, marker_alone),
+        ([b"1\ta\\.b\n"], None, marker_alone),
+    ]
+    conn.run_ok("drop table if exists smoke_copy_eod_frames")
+    assert "E" not in types(conn.run("create table smoke_copy_eod_frames(a int, b text)"))
+    try:
+        for frames, counts, error in cases:
+            conn.run_ok("delete from smoke_copy_eod_frames")
+            conn.send("Q", _cstr("copy smoke_copy_eod_frames from stdin"))
+            assert conn.read_msg()[0] == "G", frames
+            for frame in frames:
+                conn.send("d", frame)
+            conn.send("c")
+            m = conn.drain_to_ready()
+            if error:
+                assert [e.get("M") for e in errors(m)] == [error], (frames, errors(m))
+                continue
+            assert tags(m) == [f"COPY {counts[0]}\x00".encode()], (frames, errors(m))
+            m = conn.run("select count(*), count(a), min(b) from smoke_copy_eod_frames")
+            assert all_fields(m) == [str(counts[0]).encode(), str(counts[1]).encode(),
+                                     b"one"], (frames, all_fields(m))
+    finally:
+        conn.run_ok("drop table if exists smoke_copy_eod_frames")
+
+
 def test_copy_binary_data_after_eof_marker_rejected(conn):
     # PG requires CopyDone to follow the PGCOPY -1 trailer immediately; any bytes
     # between the trailer and CopyDone are rejected with 22P04. Regression:

@@ -194,3 +194,114 @@ SELECT id, v, count(*) AS n FROM marker WHERE id = 7 GROUP BY ALL;
 ----
 id	v	n
 7	x	2200000
+
+
+statement ok
+DELETE FROM marker;
+
+
+statement ok
+COPY (SELECT ('1' || chr(9) || 'six' || chr(10) || '\\.' || chr(10) || repeat(chr(10), 100000))::BLOB)
+TO '${__TEST_DIR__}/marker_long_tail.dat.gz' (FORMAT BLOB);
+
+
+statement count 1
+COPY marker FROM '${__TEST_DIR__}/marker_long_tail.dat.gz';
+
+
+statement ok
+COPY (SELECT ('1' || chr(9) || 'six' || chr(10) || '\\.' || chr(10) || repeat(chr(10), 100000) || '2' || chr(9) || 'seven' || chr(10))::BLOB)
+TO '${__TEST_DIR__}/marker_late_data.dat.gz' (FORMAT BLOB);
+
+
+statement error
+COPY marker FROM '${__TEST_DIR__}/marker_late_data.dat.gz';
+----
+db error: ERROR: end-of-copy marker is followed by data
+
+
+statement ok
+COPY (SELECT ('2' || chr(9) || 'two' || chr(10) || '\\.' || chr(10) || repeat(chr(10), 100))::BLOB)
+TO '${__TEST_DIR__}/marker_blank_tail.dat' (FORMAT BLOB);
+
+
+statement count 1
+COPY marker FROM '${__TEST_DIR__}/marker_blank_tail.dat';
+
+
+statement ok
+COPY (SELECT ('3' || chr(9) || 'six' || chr(10) || '\\.' || repeat(chr(10), 63))::BLOB)
+TO '${__TEST_DIR__}/marker_dot_at_tail_start.dat' (FORMAT BLOB);
+
+
+statement count 1
+COPY marker FROM '${__TEST_DIR__}/marker_dot_at_tail_start.dat';
+
+
+statement ok
+COPY (SELECT ('4' || chr(9) || 'six' || chr(10) || '\\.' || repeat(chr(10), 62))::BLOB)
+TO '${__TEST_DIR__}/marker_at_tail_start.dat' (FORMAT BLOB);
+
+
+statement count 1
+COPY marker FROM '${__TEST_DIR__}/marker_at_tail_start.dat';
+
+
+statement ok
+COPY (SELECT ('5' || chr(9) || 'x' || repeat('\\', 80) || chr(10) || '\\.' || chr(10))::BLOB)
+TO '${__TEST_DIR__}/marker_after_backslashes.dat' (FORMAT BLOB);
+
+
+statement count 1
+COPY marker FROM '${__TEST_DIR__}/marker_after_backslashes.dat';
+
+
+statement ok
+COPY (SELECT ('6' || chr(9) || 'six.' || chr(10))::BLOB)
+TO '${__TEST_DIR__}/marker_dot_only.dat' (FORMAT BLOB);
+
+
+statement count 1
+COPY marker FROM '${__TEST_DIR__}/marker_dot_only.dat';
+
+
+query
+SELECT id, left(replace(v, chr(92), '/'), 4) AS head, length(v) AS len FROM marker ORDER BY id;
+----
+id	head	len
+1	six	3
+2	two	3
+3	six	3
+4	six	3
+5	x///	41
+6	six.	4
+
+
+statement ok
+DELETE FROM marker_lines;
+
+
+statement ok
+COPY (SELECT chr(10)::BLOB)
+TO '${__TEST_DIR__}/marker_newline_only.dat' (FORMAT BLOB);
+
+
+statement count 1
+COPY marker_lines FROM '${__TEST_DIR__}/marker_newline_only.dat';
+
+
+statement ok
+COPY (SELECT ('\\\\' || chr(10) || '\\.' || chr(10))::BLOB)
+TO '${__TEST_DIR__}/marker_after_escaped_backslash.dat' (FORMAT BLOB);
+
+
+statement count 1
+COPY marker_lines FROM '${__TEST_DIR__}/marker_after_escaped_backslash.dat';
+
+
+query
+SELECT replace(v, chr(92), '/') AS v, length(v) AS len FROM marker_lines ORDER BY v;
+----
+v	len
+(empty)	0
+/	1

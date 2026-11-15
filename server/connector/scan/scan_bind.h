@@ -265,6 +265,7 @@ struct ScanBindData final : duckdb::FunctionData {
   bool Equals(const duckdb::FunctionData& other) const final;
   bool ReadsParametersAtExecution() const final;
   bool RegistersDataVersions() const final { return true; }
+  bool IsPointRead() const final;
 
   search::ReadView Read(duckdb::ClientContext& context) const;
 

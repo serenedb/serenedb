@@ -172,6 +172,48 @@ std::optional<uint64_t> UniqueMatches(const irs::Filter& filter,
   return rows;
 }
 
+bool IsSingleColumnUniqueKey(const ScanBindData& bind, ColumnId column) {
+  return absl::c_any_of(
+    bind.relation.table_entry->Cast<catalog::SearchTableEntry>().KeySpecs(),
+    [&](const search::KeySpec& spec) {
+      return spec.kind == search::KeyKind::Unique &&
+             catalog::IsSingleColumnKey(spec.key) &&
+             spec.key.columns.front() == column;
+    });
+}
+
+bool PinsUniqueKey(const ScanBindData& bind, const DeferredClaim& claim) {
+  if (!claim.columns) {
+    return false;
+  }
+  return absl::c_any_of(
+    claim.conjuncts,
+    [&](const std::shared_ptr<const duckdb::Expression>& conjunct) {
+      if (conjunct->GetExpressionType() !=
+            duckdb::ExpressionType::COMPARE_EQUAL ||
+          !duckdb::BoundComparisonExpression::IsComparison(*conjunct)) {
+        return false;
+      }
+      const auto& comparison =
+        conjunct->Cast<duckdb::BoundFunctionExpression>();
+      const auto& left = duckdb::BoundComparisonExpression::Left(comparison);
+      const auto& right = duckdb::BoundComparisonExpression::Right(comparison);
+      const bool column_left =
+        left.GetExpressionClass() == duckdb::ExpressionClass::BOUND_COLUMN_REF;
+      const auto& column = column_left ? left : right;
+      const auto& value = column_left ? right : left;
+      if (column.GetExpressionClass() !=
+            duckdb::ExpressionClass::BOUND_COLUMN_REF ||
+          !value.IsScalar() || value.IsVolatile()) {
+        return false;
+      }
+      const auto it = claim.columns->find(MakeBindingKey(
+        column.Cast<duckdb::BoundColumnRefExpression>().Binding()));
+      return it != claim.columns->end() &&
+             IsSingleColumnUniqueKey(bind, it->second.column);
+    });
+}
+
 uint64_t EstimateFilterMatchCount(const irs::Filter& filter, uint64_t live_docs,
                                   const FieldSet& unique) {
   const auto type = filter.type();
@@ -563,10 +605,28 @@ std::string_view ScanBindData::RelationName() const {
               : relation.table_entry->name.GetIdentifierName();
 }
 
+bool ScanBindData::IsPointRead() const {
+  if (!relation.IsSearchTable() || view || score.vector || score.HasTopK() ||
+      ts_dict.Active() || offsets.Active()) {
+    return false;
+  }
+  if (plan_cache.deferred) {
+    return PinsUniqueKey(*this, *plan_cache.deferred);
+  }
+  if (!search.filter) {
+    return false;
+  }
+  const auto bound = UniqueMatchBound(*this, *search.filter);
+  return bound && *bound <= 1;
+}
+
 duckdb::unique_ptr<duckdb::NodeStatistics> ScanBindData::Cardinality(
   duckdb::ClientContext& context) const {
   if (ts_dict.Active()) {
     return TsDictEstimation(context, *this);
+  }
+  if (IsPointRead()) {
+    return duckdb::make_uniq<duckdb::NodeStatistics>(1, 1);
   }
   const auto live = Read(context).reader->live_docs_count();
   const auto* filter = search.filter.get();

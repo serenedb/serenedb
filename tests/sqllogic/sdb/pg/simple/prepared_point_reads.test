@@ -1,0 +1,151 @@
+statement ok
+CREATE TABLE ppr (id INT PRIMARY KEY, v INT);
+
+
+statement ok
+INSERT INTO ppr SELECT i, i FROM generate_series(1, 1000) g(i);
+
+
+statement ok
+PREPARE ppr_upd(INT, INT) AS UPDATE ppr SET v = v + $2 WHERE id = $1;
+
+
+statement ok
+EXECUTE ppr_upd(5, 10);
+
+
+statement ok
+EXECUTE ppr_upd(5, 10);
+
+
+statement ok
+INSERT INTO ppr VALUES (2000, 1);
+
+
+statement ok
+EXECUTE ppr_upd(2000, 5);
+
+
+query
+SELECT id, v FROM ppr WHERE id IN (5, 2000) ORDER BY id;
+----
+id	v
+5	25
+2000	6
+
+
+statement ok
+PREPARE ppr_del(INT) AS DELETE FROM ppr WHERE id = $1;
+
+
+statement ok
+EXECUTE ppr_del(6);
+
+
+statement ok
+EXECUTE ppr_del(2000);
+
+
+query
+SELECT count(*) AS n FROM ppr WHERE id IN (6, 2000);
+----
+n
+0
+
+
+statement ok
+PREPARE ppr_get AS SELECT v FROM ppr WHERE id = 3000;
+
+
+query
+EXECUTE ppr_get;
+----
+v
+
+
+statement ok
+INSERT INTO ppr VALUES (3000, 7);
+
+
+query
+EXECUTE ppr_get;
+----
+v
+7
+
+
+statement ok
+PREPARE ppr_count(INT) AS SELECT count(*) AS n FROM ppr WHERE id = $1;
+
+
+query
+EXPLAIN EXECUTE ppr_count(5);
+----
+QUERY PLAN
+╭─ EXECUTE ────────────────╮
+╰─────────────┬────────────╯
+╭─ UNGROUPED_AGGREGATE ────╮
+│ Aggregates: count_star() │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Table: ppr               │
+│ Index Filter:            │
+│ ╭─ Bool ─╮               │
+│ ╰────────╯               │
+│ Output: row-count only   │
+│ ~1 row                   │
+╰──────────────────────────╯
+
+
+statement ok
+PREPARE ppr_stats AS SELECT count(*) AS n, max(v) AS m FROM ppr;
+
+
+query
+EXECUTE ppr_stats;
+----
+n	m
+1000	1000
+
+
+statement ok
+INSERT INTO ppr VALUES (4000, 99999);
+
+
+query
+EXECUTE ppr_stats;
+----
+n	m
+1001	99999
+
+
+statement ok
+CREATE TABLE ppr_side (x INT);
+
+
+statement ok
+INSERT INTO ppr_side SELECT i FROM generate_series(1, 500) g(i);
+
+
+statement ok
+PREPARE ppr_union(INT) AS SELECT v AS r FROM ppr WHERE id = $1 UNION ALL SELECT x FROM ppr_side WHERE x > 1000;
+
+
+query ? rowsort
+EXECUTE ppr_union(1);
+----
+r
+1
+
+
+statement ok
+INSERT INTO ppr_side VALUES (2000);
+
+
+query ? rowsort
+EXECUTE ppr_union(1);
+----
+r
+1
+2000

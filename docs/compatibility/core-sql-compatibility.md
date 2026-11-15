@@ -87,7 +87,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | Scheduled Jobs             | Yes           | SereneDB extension, not PostgreSQL syntax: [`CREATE JOB`](../sql/statements/create_job/index.md) |
 | Functions & Procedures     | Yes           |  |
 | Custom Types               | Yes           |                                                 |
-| Triggers                   | No            |                                                 |
+| Triggers                   | Partial       | The body of `CREATE TRIGGER` is one `INSERT`, `UPDATE`, `DELETE` or `MERGE` statement, which reads the row through `NEW` and `OLD` and the statement's rows through `REFERENCING NEW TABLE` and `OLD TABLE`; `EXECUTE FUNCTION` is not supported. A table has either `FOR EACH ROW` or `FOR EACH STATEMENT` triggers, not both. The body of an `AFTER ... FOR EACH STATEMENT` trigger reads its table as it was before the statement, where PostgreSQL's sees the rows the statement wrote; its transition tables hold them. |
 | Prepared Statements        | Yes           |                                                 |
 | Advisory Locks             | No            |                                                 |
 

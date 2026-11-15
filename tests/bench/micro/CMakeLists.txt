@@ -76,6 +76,7 @@ add_bench(path_hierarchy_tokenizer)
 add_bench(regexp_vs_wildcard)
 add_bench(regexp_engines)
 add_bench(packed_key_agg)
+add_bench(order_keys)
 add_bench(http_codecs)
 add_bench(http_compression)
 set_property(

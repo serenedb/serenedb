@@ -70,8 +70,8 @@ namespace {
 duckdb::RowGroupOrderKey OrderKey(const ScanGlobalState& g,
                                   const duckdb::BaseStatistics& stats) {
   const auto& order = *g.Bind().scan_order;
-  return duckdb::RowGroupOrderKey::Get(stats, order.order_by, order.order_type,
-                                       order.null_order);
+  return duckdb::RowGroupOrderKeys::Get(stats, order.order_by, order.order_type,
+                                        order.null_order);
 }
 
 const irs::ColumnReader* OrderColumn(const ScanGlobalState& g, uint32_t seg) {
@@ -87,18 +87,23 @@ duckdb::RowGroupOrderKey SegmentKey(const ScanGlobalState& g, uint32_t seg) {
   if (const auto* column = OrderColumn(g, seg)) {
     return OrderKey(g, column->MergedStatistics());
   }
-  return duckdb::RowGroupOrderKey::Null(g.Bind().scan_order->null_order);
+  return duckdb::RowGroupOrderKeys::Null(g.Bind().scan_order->null_order);
+}
+
+bool IsNullKey(const ScanGlobalState& g, const duckdb::RowGroupOrderKey& key) {
+  return duckdb::RowGroupOrderKeys::IsNull(key,
+                                           g.Bind().scan_order->null_order);
 }
 
 duckdb::RowGroupOrderKey RowGroupKey(const ScanGlobalState& g,
                                      const irs::ColumnReader& column,
                                      uint64_t begin, uint64_t end,
                                      irs::BlockWindow& w) {
-  duckdb::RowGroupOrderKey best;
+  auto best = duckdb::RowGroupOrderKey();
   for (auto row = begin; row < end; row = w.end) {
     w = column.Locate(row, w);
     const auto block = OrderKey(g, column.RowGroupStatistics(w.block));
-    if (block.IsNull()) {
+    if (IsNullKey(g, block)) {
       return block;
     }
     if (row == begin || block < best) {
@@ -180,7 +185,7 @@ const duckdb::RowGroupOrderKey* OrderBound(ScanGlobalState& g) {
 bool OrderPruned(const ScanGlobalState& g,
                  const duckdb::RowGroupOrderKey* bound,
                  const duckdb::RowGroupOrderKey& key) {
-  if (!bound || key.IsNull()) {
+  if (!bound || IsNullKey(g, key)) {
     return false;
   }
   return key > *bound || (key == *bound && g.order_strict);
@@ -189,8 +194,9 @@ bool OrderPruned(const ScanGlobalState& g,
 bool DropPruned(ScanGlobalState& g, const duckdb::RowGroupOrderKey* bound) {
   auto& heap = g.ordered_heap;
   if (!heap.empty() && OrderPruned(g, bound, heap.front().key)) {
-    std::erase_if(
-      heap, [](const ScanOrderKey& entry) { return !entry.key.IsNull(); });
+    std::erase_if(heap, [&](const ScanOrderKey& entry) {
+      return !IsNullKey(g, entry.key);
+    });
     absl::c_make_heap(heap, std::greater{});
   }
   return heap.empty();

@@ -120,9 +120,13 @@ TEST(ProgressRegistryTest, TransactionBlockLifecycle) {
   ASSERT_TRUE(snap.has_value());
   EXPECT_FALSE(snap->active);
   EXPECT_TRUE(snap->xact_aborted);
-  EXPECT_EQ(snap->xact_start_us, began);
+  EXPECT_EQ(snap->xact_start_us, 0);
 
   source->BeginQuery("ROLLBACK");
+  snap = FindByPid(1007);
+  ASSERT_TRUE(snap.has_value());
+  EXPECT_TRUE(snap->active);
+  EXPECT_EQ(snap->xact_start_us, 0);
   source->EndTransaction();
   source->EndQuery(false);
   snap = FindByPid(1007);
@@ -138,6 +142,7 @@ TEST(ProgressRegistryTest, TransactionBlockLifecycle) {
   snap = FindByPid(1007);
   ASSERT_TRUE(snap.has_value());
   EXPECT_TRUE(snap->xact_aborted);
+  EXPECT_EQ(snap->xact_start_us, 0);
   EXPECT_GE(snap->state_change_us, rebegan);
   source->EndTransaction();
 

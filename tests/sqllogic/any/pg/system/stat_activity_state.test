@@ -49,11 +49,11 @@ SELECT * FROM stat_activity_missing;
 
 connection observer
 query
-SELECT state, xact_start IS NOT NULL AS in_transaction
+SELECT state, xact_start IS NULL AS no_xact_start
 FROM pg_stat_activity
 WHERE pid = (SELECT pid FROM stat_activity_holder);
 ----
-state	in_transaction
+state	no_xact_start
 idle in transaction (aborted)	t
 
 

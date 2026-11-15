@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -51,6 +52,8 @@ class BearerValidator {
   virtual ~BearerValidator() = default;
   virtual std::optional<AuthContext> Validate(std::string_view token) const = 0;
 };
+
+void RegisterBearerValidator(std::unique_ptr<BearerValidator> validator);
 
 // Default flag-configured backends (one static credential each), the same
 // shape as the flag-configured Basic password. The "real" stores (a catalog

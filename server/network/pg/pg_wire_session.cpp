@@ -783,6 +783,7 @@ auto PgWireSession<Kind>::FunnelError(const std::exception& exception,
   // it reads 'E' and subsequent statements surface 25P02.
   if (!RollbackImplicitBlock() && _txn_state->Explicit()) {
     _txn_state->AbortBlock();
+    _connection_ctx->ProgressSource()->AbortTransaction();
   }
   return IsExtended(type) ? PostError::DiscardUntilSync : PostError::Resync;
 }

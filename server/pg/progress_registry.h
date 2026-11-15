@@ -133,9 +133,11 @@ struct ProgressMetrics {
 };
 
 // One row of sdb_progress: a live connection. Immutable identity fields are
-// set at registration; query + ctx are guarded by mu (the same detach pattern
-// as CancelToken: a snapshotting thread must never touch the ClientContext
-// after the owning session started tearing down).
+// set at registration; query, ctx and the session state (whether a statement
+// runs, when it and the transaction started, the last state change, an aborted
+// transaction) change under mu, so a snapshot never mixes two states (the same
+// detach pattern as CancelToken: a snapshotting thread must never touch the
+// ClientContext after the owning session started tearing down).
 struct ProgressSource {
   int32_t pid{0};
   int64_t datid{0};
@@ -147,6 +149,10 @@ struct ProgressSource {
   absl::Mutex mu;
   std::string query;
   duckdb::ClientContext* ctx{nullptr};
+  bool active{false};
+  int64_t xact_start_us{0};
+  int64_t state_change_us{0};
+  bool xact_aborted{false};
 
   std::atomic<int64_t> query_start_us{0};
   std::atomic<int64_t> xact_commit{0};
@@ -154,7 +160,9 @@ struct ProgressSource {
   ProgressMetrics metrics;
 
   void BeginQuery(std::string query_text);
-  void EndQuery();
+  void EndQuery(bool aborted);
+  void AbortTransaction();
+  void EndTransaction() noexcept;
   void Detach();
 };
 
@@ -172,7 +180,11 @@ struct ProgressSnapshot {
   std::string database;
   std::string query;
   int64_t backend_start_us{0};
+  int64_t xact_start_us{0};
   int64_t query_start_us{0};
+  int64_t state_change_us{0};
+  bool active{false};
+  bool xact_aborted{false};
   double percent{-1};
   int64_t rows_processed{0};
   int64_t rows_total{0};

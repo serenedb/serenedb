@@ -76,14 +76,75 @@ TEST(ProgressRegistryTest, QueryLifecycle) {
   auto snap = FindByPid(1002);
   ASSERT_TRUE(snap.has_value());
   EXPECT_EQ(snap->query, "SELECT 1");
+  EXPECT_TRUE(snap->active);
   EXPECT_GT(snap->query_start_us, 0);
+  EXPECT_EQ(snap->xact_start_us, snap->query_start_us);
+  EXPECT_EQ(snap->state_change_us, snap->query_start_us);
+  const auto started = snap->query_start_us;
 
-  source->EndQuery();
+  source->EndTransaction();
+  source->EndQuery(false);
   snap = FindByPid(1002);
   ASSERT_TRUE(snap.has_value());
-  // last statement text stays visible, only the start timestamp is cleared
   EXPECT_EQ(snap->query, "SELECT 1");
-  EXPECT_EQ(snap->query_start_us, 0);
+  EXPECT_FALSE(snap->active);
+  EXPECT_EQ(snap->query_start_us, started);
+  EXPECT_EQ(snap->xact_start_us, 0);
+  EXPECT_GE(snap->state_change_us, started);
+
+  ProgressRegistry::Instance().Unregister(source.get());
+}
+
+TEST(ProgressRegistryTest, TransactionBlockLifecycle) {
+  auto source = MakeSource(1007);
+  ProgressRegistry::Instance().Register(source);
+
+  source->BeginQuery("BEGIN");
+  source->EndQuery(false);
+  auto snap = FindByPid(1007);
+  ASSERT_TRUE(snap.has_value());
+  const auto began = snap->xact_start_us;
+  EXPECT_GT(began, 0);
+  EXPECT_FALSE(snap->active);
+  EXPECT_FALSE(snap->xact_aborted);
+
+  source->BeginQuery("SELECT 1/0");
+  snap = FindByPid(1007);
+  ASSERT_TRUE(snap.has_value());
+  EXPECT_TRUE(snap->active);
+  EXPECT_EQ(snap->xact_start_us, began);
+  EXPECT_GE(snap->query_start_us, began);
+
+  source->EndQuery(true);
+  snap = FindByPid(1007);
+  ASSERT_TRUE(snap.has_value());
+  EXPECT_FALSE(snap->active);
+  EXPECT_TRUE(snap->xact_aborted);
+  EXPECT_EQ(snap->xact_start_us, began);
+
+  source->BeginQuery("ROLLBACK");
+  source->EndTransaction();
+  source->EndQuery(false);
+  snap = FindByPid(1007);
+  ASSERT_TRUE(snap.has_value());
+  EXPECT_FALSE(snap->xact_aborted);
+  EXPECT_EQ(snap->xact_start_us, 0);
+  EXPECT_GE(snap->state_change_us, snap->query_start_us);
+
+  source->BeginQuery("BEGIN");
+  source->EndQuery(false);
+  const auto rebegan = FindByPid(1007)->state_change_us;
+  source->AbortTransaction();
+  snap = FindByPid(1007);
+  ASSERT_TRUE(snap.has_value());
+  EXPECT_TRUE(snap->xact_aborted);
+  EXPECT_GE(snap->state_change_us, rebegan);
+  source->EndTransaction();
+
+  source->BeginQuery("SELECT 2");
+  snap = FindByPid(1007);
+  ASSERT_TRUE(snap.has_value());
+  EXPECT_EQ(snap->xact_start_us, snap->query_start_us);
 
   ProgressRegistry::Instance().Unregister(source.get());
 }
@@ -109,7 +170,7 @@ TEST(ProgressRegistryTest, BeginQueryResetsMetrics) {
   EXPECT_EQ(snap->tuples_processed, 150);
   EXPECT_EQ(snap->bytes_processed, 4096);
 
-  source->EndQuery();
+  source->EndQuery(false);
   source->BeginQuery("SELECT 1");
   snap = FindByPid(1003);
   ASSERT_TRUE(snap.has_value());

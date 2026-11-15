@@ -23,6 +23,7 @@
 #include <duckdb/common/types/uhugeint.hpp>
 #include <duckdb/common/vector/constant_vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
+#include <duckdb/storage/compression/roaring/roaring.hpp>
 #include <duckdb/storage/statistics/numeric_stats.hpp>
 
 #include "iresearch/formats/column/codecs/registry.hpp"
@@ -36,9 +37,9 @@ using duckdb::idx_t;
 void FillValidity(const ColumnSegment& segment, duckdb::Vector& result,
                   idx_t start, idx_t count) {
   SDB_ASSERT(segment.stats.CanHaveNull());
-  auto& mask = duckdb::FlatVector::ValidityMutable(result);
-  for (idx_t i = 0; i < count; ++i) {
-    mask.SetInvalid(start + i);
+  if (count != 0) {
+    duckdb::roaring::SetInvalidRange(
+      duckdb::FlatVector::ValidityMutable(result), start, start + count);
   }
 }
 
@@ -88,8 +89,10 @@ void FetchRowsValidity(const ColumnSegment& segment, ColumnFetchState&,
                        const idx_t*, idx_t count, duckdb::Vector& result,
                        const duckdb::SelectionVector& result_sel,
                        idx_t result_offset) {
+  SDB_ASSERT(segment.stats.CanHaveNull());
+  auto& mask = duckdb::FlatVector::ValidityMutable(result);
   for (idx_t i = 0; i < count; ++i) {
-    FillValidity(segment, result, result_offset + result_sel.get_index(i), 1);
+    mask.SetInvalid(result_offset + result_sel.get_index(i));
   }
 }
 

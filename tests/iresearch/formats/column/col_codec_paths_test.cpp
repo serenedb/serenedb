@@ -1054,6 +1054,26 @@ TEST_F(ColCodecPathsTest, TextCodecsReadEveryShape) {
   }
 }
 
+TEST_F(ColCodecPathsTest, AllNullBlocksFillTheirPartOfAVector) {
+  constexpr uint32_t kUnaligned = 1000;
+  static_assert(kUnaligned % 64 != 0);
+  const auto every_other_block = [](uint64_t g) {
+    return (g / kUnaligned) % 2 == 0;
+  };
+  Check({"numbers between all-null blocks", LogicalType::BIGINT,
+         CodecType::Auto, every_other_block,
+         [](uint64_t g) { return Int(LogicalType::BIGINT, (g * 7919) % 1000); },
+         /*stored=*/false, irs::WriteTier::Flush, kRows, kUnaligned});
+  Check({"text between all-null blocks", LogicalType::VARCHAR, CodecType::Auto,
+         every_other_block,
+         [](uint64_t g) { return Value{absl::StrCat("v", g % 211)}; },
+         /*stored=*/false, irs::WriteTier::Flush, kRows, kUnaligned});
+  Check({"a column that starts with all-null blocks", LogicalType::BIGINT,
+         CodecType::Auto, [](uint64_t g) { return g >= 3 * kUnaligned + 17; },
+         [](uint64_t g) { return Int(LogicalType::BIGINT, g % 50); },
+         /*stored=*/false, irs::WriteTier::Flush, kRows, kUnaligned});
+}
+
 TEST_F(ColCodecPathsTest, FiltersSplitAVectorAtBlockBoundaries) {
   constexpr uint32_t kUnaligned = 1000;
   static_assert(STANDARD_VECTOR_SIZE % kUnaligned != 0);

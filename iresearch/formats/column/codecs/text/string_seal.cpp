@@ -27,9 +27,9 @@
 #include <utility>
 
 #include "iresearch/formats/column/codecs/registry.hpp"
+#include "iresearch/formats/column/codecs/text/string_auto.hpp"
 #include "iresearch/formats/column/codecs/text/string_compressor.hpp"
 #include "iresearch/formats/column/codecs/text/string_layout.hpp"
-#include "iresearch/formats/column/codecs/text/string_picker.hpp"
 #include "iresearch/utils/assert.hpp"
 
 namespace irs::codecs {
@@ -39,6 +39,17 @@ using duckdb::string_t;
 
 uint64_t PlainStorageBytes(const text::Segment& seg) noexcept {
   return kHeaderSize + seg.input + seg.rows * sizeof(int32_t);
+}
+
+text::Config NamedConfig(Shape shape, ByteCodec leaf,
+                         const ColCodecParams& params) noexcept {
+  return {
+    .shape = shape,
+    .leaf = leaf,
+    .level = params.compression_level,
+    .layout = params.tier == WriteTier::Flush ? FrameLayout::FirstFrame
+                                              : FrameLayout::Local,
+  };
 }
 
 void Accumulate(StringAccumulator& acc, std::span<const WriteChunk> chunks,
@@ -62,8 +73,7 @@ bool SealSegments(const StringAccumulator& acc, const ColCodecParams& params,
                   const duckdb::LogicalType& type, StringTuning& tuning,
                   duckdb::BufferManager& buffers, SegmentSink sink) {
   text::StringCompressor compressor{params, type, tuning.estimators, buffers};
-  text::StringPicker picker{acc, params, tuning, compressor};
-  auto first = picker.First();
+  auto first = text::CompressFirstSegment(acc, params, tuning, compressor);
   if (!first) {
     return true;
   }
@@ -122,7 +132,7 @@ void CompressStrings(Shape shape, ByteCodec leaf,
   auto& tuning = data.tuning->strings;
   text::StringCompressor compressor{data.params, data.type, tuning.estimators,
                                     data.ctx.BufferManager()};
-  const auto config = text::NamedConfig(shape, leaf, data.params);
+  const auto config = NamedConfig(shape, leaf, data.params);
   const auto sink = FlushTo(data);
   if (shape == Shape::Plain) {
     compressor.CompressChunks(config, chunks, sink);

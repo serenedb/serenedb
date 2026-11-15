@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include "iresearch/formats/column/codecs/bytes/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/text/segment_rows.hpp"
 #include "iresearch/formats/column/codecs/text/string_compressor.hpp"
 #include "iresearch/formats/column/codecs/text/string_seal.hpp"
@@ -28,28 +27,9 @@
 
 namespace irs::codecs::text {
 
-Config NamedConfig(Shape shape, ByteCodec leaf,
-                   const ColCodecParams& params) noexcept;
-
-class StringPicker {
- public:
-  StringPicker(const StringAccumulator& acc, const ColCodecParams& params,
-               StringTuning& tuning, StringCompressor& compressor)
-    : _acc{acc}, _params{params}, _tuning{tuning}, _compressor{compressor} {}
-
-  PooledSegment First();
-
- private:
-  Config Current() const noexcept;
-
-  bool Drifted(const Segment& seg) const noexcept;
-
-  PooledSegment DetectBestCompressionMethod(PooledSegment first, bool drift);
-
-  const StringAccumulator& _acc;
-  const ColCodecParams& _params;
-  StringTuning& _tuning;
-  StringCompressor& _compressor;
-};
+PooledSegment CompressFirstSegment(const StringAccumulator& acc,
+                                   const ColCodecParams& params,
+                                   StringTuning& tuning,
+                                   StringCompressor& compressor);
 
 }  // namespace irs::codecs::text

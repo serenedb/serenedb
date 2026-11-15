@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/formats/column/codecs/text/string_picker.hpp"
+#include "iresearch/formats/column/codecs/text/string_auto.hpp"
 
 #include <absl/algorithm/container.h>
 
@@ -200,54 +200,31 @@ Config Fast(Shape shape) noexcept {
   return {.shape = shape, .leaf = ByteCodec::Lz4, .level = kLz4Fast};
 }
 
-}  // namespace
-
-Config NamedConfig(Shape shape, ByteCodec leaf,
-                   const ColCodecParams& params) noexcept {
-  return {
-    .shape = shape,
-    .leaf = leaf,
-    .level = params.compression_level,
-    .layout = params.tier == WriteTier::Flush ? FrameLayout::FirstFrame
-                                              : FrameLayout::Local,
-  };
-}
-
-PooledSegment StringPicker::First() {
-  const bool due = _tuning.reuse.Due();
-  if (_acc.Rows() == 0) {
-    return {};
+Config Current(const StringAccumulator& acc,
+               const StringTuning& tuning) noexcept {
+  if (tuning.reuse.pick) {
+    return *tuning.reuse.pick;
   }
-  const auto current = Current();
-  auto first = _compressor.CompressSegment(current, _acc, 0);
-  if (const bool drift = !due && Drifted(*first); due || drift) {
-    return DetectBestCompressionMethod(std::move(first), drift);
-  }
-  return first;
-}
-
-Config StringPicker::Current() const noexcept {
-  if (_tuning.reuse.pick) {
-    return *_tuning.reuse.pick;
-  }
-  return Fast(Repeats(_acc.values.size(), _acc.Rows() - _acc.null_count)
+  return Fast(Repeats(acc.values.size(), acc.Rows() - acc.null_count)
                 ? Shape::Dedup
                 : Shape::Plain);
 }
 
-bool StringPicker::Drifted(const Segment& seg) const noexcept {
-  return seg.input != 0 &&
-         _tuning.reuse.Drifted(static_cast<double>(seg.Size()),
-                               static_cast<double>(seg.input));
+bool Drifted(const StringTuning& tuning, const Segment& seg) noexcept {
+  return seg.input != 0 && tuning.reuse.Drifted(static_cast<double>(seg.Size()),
+                                                static_cast<double>(seg.input));
 }
 
-PooledSegment StringPicker::DetectBestCompressionMethod(PooledSegment first,
-                                                        bool drift) {
+PooledSegment DetectBestCompressionMethod(const StringAccumulator& acc,
+                                          const ColCodecParams& params,
+                                          StringTuning& tuning,
+                                          StringCompressor& compressor,
+                                          PooledSegment first, bool drift) {
   const auto input = first->input;
   const auto values = first->rows - first->nulls;
   const auto lengths = Packed(first->rows, first->max_len);
-  StringWindow window{_acc, _compressor, std::move(first),
-                      _tuning.estimators.codes};
+  StringWindow window{acc, compressor, std::move(first),
+                      tuning.estimators.codes};
   const auto entries = window.Entries();
   const auto slack = [&](Shape shape) {
     return window.Exact(Fast(shape)) ? 0.0 : kShapeSlack;
@@ -270,9 +247,9 @@ PooledSegment StringPicker::DetectBestCompressionMethod(PooledSegment first,
       shape = Shape::Plain;
     }
   }
-  auto& tuned = _tuning.tuned;
+  auto& tuned = tuning.tuned;
   const bool tune = entries >= kTuneMinEntries && !tuned.done;
-  const auto& tier = CandidatesOf(_params.tier);
+  const auto& tier = CandidatesOf(params.tier);
   const double fsst_preference = shape == Shape::Plain
                                    ? tier.plain_fsst_preference
                                    : tier.dedup_fsst_preference;
@@ -326,13 +303,31 @@ PooledSegment StringPicker::DetectBestCompressionMethod(PooledSegment first,
       picked = fsst;
     }
   }
-  auto& reuse = _tuning.reuse;
+  auto& reuse = tuning.reuse;
   const auto& seg = window.At(picked);
   const bool kept = reuse.pick && reuse.pick->shape == seg.config.shape &&
                     reuse.pick->leaf == seg.config.leaf;
   reuse.Settle(seg.config, kept && !drift, static_cast<double>(seg.Size()),
                static_cast<double>(input));
   return std::move(window).Take(picked);
+}
+
+}  // namespace
+
+PooledSegment CompressFirstSegment(const StringAccumulator& acc,
+                                   const ColCodecParams& params,
+                                   StringTuning& tuning,
+                                   StringCompressor& compressor) {
+  const bool due = tuning.reuse.Due();
+  if (acc.Rows() == 0) {
+    return {};
+  }
+  auto first = compressor.CompressSegment(Current(acc, tuning), acc, 0);
+  if (const bool drift = !due && Drifted(tuning, *first); due || drift) {
+    return DetectBestCompressionMethod(acc, params, tuning, compressor,
+                                       std::move(first), drift);
+  }
+  return first;
 }
 
 }  // namespace irs::codecs::text

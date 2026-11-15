@@ -423,7 +423,9 @@ struct FetchFrames {
     const auto* table = base + header.off_frames;
     const auto lo = FrameOfEntry(table, header.frame_count, entry);
     const auto f = FrameAt(table, lo);
-    SDB_ENSURE(f.first_entry <= entry, "col codec: corrupted frame table");
+    SDB_ENSURE(f.first_entry <= entry && f.raw_len <= header.raw_bytes &&
+                 uint64_t{f.comp_off} + f.comp_len <= header.data_size,
+               "col codec: corrupted frame table");
     leaf.Emit(segment, header, base, lengths, lo, f, entry, result, at,
               batched);
   }

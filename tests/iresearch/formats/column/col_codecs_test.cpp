@@ -3127,6 +3127,71 @@ TEST_F(ColCodecsTest, CorruptedFsst12TablesAreRejected) {
   }
 }
 
+TEST_F(ColCodecsTest, CorruptedFrameRangesAreRejectedByPointReads) {
+  using irs::codecs::CodecType;
+  const Value values = [](uint64_t g) -> std::optional<std::string> {
+    return "https://example.org/users/" + std::to_string(g % 5000) + "/profile";
+  };
+  for (const auto codec :
+       {CodecType::FsstPlus, CodecType::DictFsstPlus, CodecType::OnPair,
+        CodecType::DictOnPair, CodecType::Fsst, CodecType::DictFsst,
+        CodecType::Fsst12, CodecType::Lz4, CodecType::DictLz4}) {
+    SCOPED_TRACE(irs::codecs::NameOf(codec));
+    const auto path = test_dir() / absl::StrCat("col_codecs_corrupt_frame_",
+                                                irs::codecs::NameOf(codec));
+    std::filesystem::create_directories(path);
+    uint64_t offset = 0;
+    uint64_t size = 0;
+    {
+      irs::MMapDirectory dir{path};
+      Write(dir, codec, {}, 20000, DEFAULT_ROW_GROUP_SIZE, values);
+      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+      const auto* col = r.Column(kField);
+      ASSERT_NE(col, nullptr);
+      const auto& block = col->DataBlocks().front();
+      ASSERT_EQ(irs::codecs::NameOf(block.codec->type),
+                irs::codecs::NameOf(codec));
+      offset = block.file_offset;
+      size = block.byte_size;
+    }
+    const auto file = path / irs::FileName(kSeg);
+    std::string bytes;
+    {
+      std::ifstream in{file, std::ios::binary};
+      bytes.assign(std::istreambuf_iterator<char>{in}, {});
+    }
+    ASSERT_LE(offset + size, bytes.size());
+    auto* block = reinterpret_cast<duckdb::data_ptr_t>(bytes.data() + offset);
+    const auto h = irs::codecs::Header::Parse(block, size);
+    ASSERT_NE(h.frame_count, 0u);
+    for (uint32_t f = 0; f < h.frame_count; ++f) {
+      auto* at = block + h.off_frames + f * irs::codecs::kFrameMetaSize;
+      auto frame = duckdb::Load<irs::codecs::FrameMeta>(at);
+      ASSERT_NE(frame.comp_len, 0u);
+      frame.comp_off = h.data_size;
+      duckdb::Store(frame, at);
+    }
+    {
+      std::ofstream out{file, std::ios::binary | std::ios::trunc};
+      out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    }
+    irs::MMapDirectory dir{path};
+    const auto fetch = [&] {
+      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::RANDOM};
+      const auto* col = r.Column(kField);
+      irs::ColumnReader::PointReader cursor{r, *col};
+      duckdb::Vector out{duckdb::LogicalType::VARCHAR, 1};
+      cursor.FetchRow(7, out, 0);
+    };
+#ifdef SDB_DEV
+    GTEST_FLAG_SET(death_test_style, "threadsafe");
+    EXPECT_DEATH(fetch(), "corrupted frame table");
+#else
+    EXPECT_ANY_THROW(fetch());
+#endif
+  }
+}
+
 TEST_F(ColCodecsTest, CorruptedSegmentCountsAreRejectedByPointReads) {
   struct Case {
     std::string_view name;

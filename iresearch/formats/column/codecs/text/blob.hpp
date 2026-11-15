@@ -695,8 +695,6 @@ struct Fetch {
     if (!batched && (hits > 1 || dense)) {
       want = f.raw_len;
     }
-    SDB_ENSURE(static_cast<uint64_t>(f.comp_off) + f.comp_len <= h.data_size,
-               "col codec: corrupted frame table");
     const auto got = inflater.Inflate(h, base, f, lo, raw.data(), want);
     SDB_ENSURE(got.size() >= want, "col codec: corrupted frame");
     frame_data = got.data();

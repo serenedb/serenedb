@@ -276,6 +276,26 @@ def test_an_inference_test_waits_for_the_shared_model_server(monkeypatch, tmp_pa
     assert units["sqllogic:pg-wire-simple:sdb/b_ollama.test_slow"].timeout == sqllogic.INFERENCE_TIMEOUT
 
 
+def test_an_override_has_time_to_run_every_retry_of_its_file_to_the_end(monkeypatch, tmp_path):
+    base = tmp_path / "tests" / "sqllogic"
+    (base / "sdb").mkdir(parents=True)
+    (base / "recovery").mkdir()
+    (base / "sdb" / "a.test").write_text(
+        "statement ok retry 4 backoff 250ms\nSELECT 1\n\n"
+        "query ok retry 2 backoff 1s500ms\nSELECT 2\n----\n?column?\n2\n")
+    (base / "recovery" / "b.test").write_text(
+        "query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION\nSELECT 1\n----\n?column?\n1\n")
+    monkeypatch.setattr(sqllogic.subprocess, "run", lambda *args, **kwargs: None)
+    ctx = SimpleNamespace(root=tmp_path, timing=Timing({}), skips=[], timeout_floor=180.0,
+                          config=SimpleNamespace(slowdown=1.0))
+    args = SimpleNamespace(server=None, corpus=False, fast=False, biglake=False, override=True)
+    assert [u.timeout for u in sqllogic.sqllogic_units(ctx, args, [])] == [180.0 + 4 * 0.25 + 2 * 1.5]
+    assert [u.timeout for u in sqllogic.recovery_units(ctx, args, [])] == [180.0 + 60 * 0.5]
+    args.override = False
+    assert [u.timeout for u in sqllogic.sqllogic_units(ctx, args, [])] == [180.0, 180.0]
+    assert [u.timeout for u in sqllogic.recovery_units(ctx, args, [])] == [180.0]
+
+
 def test_extension_test_ids_do_not_depend_on_the_checkout():
     ctx = SimpleNamespace(root=Path("/somewhere/serenedb"))
     assert duckdb._relative(ctx, "avro", "/somewhere/serenedb/third_party/duckdb_avro/test/sql/a.test") \

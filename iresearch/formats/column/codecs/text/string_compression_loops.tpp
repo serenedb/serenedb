@@ -98,47 +98,6 @@ IRS_NO_INLINE void CompressRange(State& state, const Config& config,
 }
 
 template<typename State>
-PooledSegment CompressSegmentWith(StringCompressor& compressor,
-                                  const Config& config,
-                                  const StringAccumulator& acc,
-                                  uint64_t begin) {
-  auto seg = compressor.Acquire();
-  CutRows(compressor.StateOf<State>(), config, acc, begin, compressor.Target(),
-          *seg);
-  return seg;
-}
-
-template<typename State>
-void CompressWith(StringCompressor& compressor, const Config& config,
-                  const StringAccumulator& acc, uint64_t begin,
-                  SegmentSink sink) {
-  if (begin >= acc.Rows()) {
-    return;
-  }
-  const auto seg = compressor.Acquire();
-  CompressRows(compressor.StateOf<State>(), config, acc, begin,
-               compressor.Target(), *seg, sink);
-}
-
-template<typename State>
-PooledSegment TrialCompressWith(StringCompressor& compressor,
-                                const Config& config,
-                                const StringAccumulator& acc, uint64_t begin,
-                                uint64_t end) {
-  auto seg = compressor.Acquire();
-  CompressRange(compressor.StateOf<State>(), config, acc, begin, end, *seg);
-  return seg;
-}
-
-template<typename State>
-void CompressChunksWith(StringCompressor& compressor, const Config& config,
-                        std::span<const WriteChunk> chunks, SegmentSink sink) {
-  const auto seg = compressor.Acquire();
-  SealRows(compressor.StateOf<State>(), config, chunks, compressor.Target(),
-           *seg, sink);
-}
-
-template<typename State>
 struct CompressionFunctionOf final : StringCompressionFunction {
   constexpr CompressionFunctionOf() = default;
 
@@ -146,26 +105,38 @@ struct CompressionFunctionOf final : StringCompressionFunction {
                                 const Config& config,
                                 const StringAccumulator& acc,
                                 uint64_t begin) const final {
-    return CompressSegmentWith<State>(compressor, config, acc, begin);
+    auto seg = compressor.Acquire();
+    CutRows(compressor.StateOf<State>(), config, acc, begin,
+            compressor.Target(), *seg);
+    return seg;
   }
 
   void Compress(StringCompressor& compressor, const Config& config,
                 const StringAccumulator& acc, uint64_t begin,
                 SegmentSink sink) const final {
-    CompressWith<State>(compressor, config, acc, begin, sink);
+    if (begin >= acc.Rows()) {
+      return;
+    }
+    const auto seg = compressor.Acquire();
+    CompressRows(compressor.StateOf<State>(), config, acc, begin,
+                 compressor.Target(), *seg, sink);
   }
 
   PooledSegment TrialCompress(StringCompressor& compressor,
                               const Config& config,
                               const StringAccumulator& acc, uint64_t begin,
                               uint64_t end) const final {
-    return TrialCompressWith<State>(compressor, config, acc, begin, end);
+    auto seg = compressor.Acquire();
+    CompressRange(compressor.StateOf<State>(), config, acc, begin, end, *seg);
+    return seg;
   }
 
   void CompressChunks(StringCompressor& compressor, const Config& config,
                       std::span<const WriteChunk> chunks,
                       SegmentSink sink) const final {
-    CompressChunksWith<State>(compressor, config, chunks, sink);
+    const auto seg = compressor.Acquire();
+    SealRows(compressor.StateOf<State>(), config, chunks, compressor.Target(),
+             *seg, sink);
   }
 };
 

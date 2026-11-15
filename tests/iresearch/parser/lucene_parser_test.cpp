@@ -2004,6 +2004,18 @@ TEST_F(LuceneParserTest, PhraseWithGap) {
   EXPECT_EQ(2, phrase.options().size());
 }
 
+TEST_F(LuceneParserTest, PhraseGapOutOfRangeIsRefused) {
+  for (const auto* query :
+       {"\"a 1-4294967296 b\"", "\"a 99999999999-1 b\"", "\"a 5-2 b\""}) {
+    SCOPED_TRACE(query);
+    irs::BooleanFilter fresh;
+    irs::ParserContext fresh_ctx{fresh, kFieldId, irs::StringLayout::kStrings,
+                                 *tokenizer};
+    fresh_ctx.fields = &any_field;
+    EXPECT_FALSE(irs::ParseQuery(fresh_ctx, query));
+  }
+}
+
 TEST_F(LuceneParserTest, PhraseWithPrefixPart) {
   ASSERT_TRUE(irs::ParseQuery(ctx, "\"alpha bet*\""));
   ASSERT_EQ(1, Optional().size());

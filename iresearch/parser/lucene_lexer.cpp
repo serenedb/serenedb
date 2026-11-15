@@ -1210,15 +1210,18 @@ case 44:
 YY_RULE_SETUP
 {
                               /* A gap: how far the part after it may sit from
-                                 the part before it, rather than next to it.
-                                 The pattern already said both are digits, so
-                                 neither conversion can fail. */
+                                 the part before it, rather than next to it. */
                               const char* dash = std::strchr(yytext, '-');
                               const char* end = yytext + yyleng;
-                              fast_float::from_chars(yytext, dash,
-                                                     yylval->gap.min);
-                              fast_float::from_chars(dash + 1, end,
-                                                     yylval->gap.max);
+                              if (fast_float::from_chars(yytext, dash,
+                                                         yylval->gap.min)
+                                      .ec != std::errc{} ||
+                                  fast_float::from_chars(dash + 1, end,
+                                                         yylval->gap.max)
+                                      .ec != std::errc{} ||
+                                  yylval->gap.min > yylval->gap.max) {
+                                return YYUNDEF;
+                              }
                               return GAP;
                             }
 	YY_BREAK

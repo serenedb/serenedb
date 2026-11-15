@@ -96,14 +96,39 @@ while read -r sha fork number branch; do
 	echo "land $fork#$number: $branch -> $sha${fork_review:+ ($fork_review)}"
 	landings+=("$fork $branch $sha")
 done < <(sed -n 's/^.*: gitlink \([0-9a-f]*\) is pending: head of open \([^#]*\)#\([0-9]*\) into \(.*\)$/\1 \2 \3 \4/p' <<<"$out")
+
+branch_sha() {
+	gh api "repos/$1/git/matching-refs/heads/$2" --jq ".[] | select(.ref == \"refs/heads/$2\") | .object.sha"
+}
+
+creations=()
+wips=()
+while read -r sha fork version; do
+	[[ -n "$sha" ]] || continue
+	existing=$(branch_sha "$fork" "$version")
+	if [[ -z "$existing" ]]; then
+		echo "land $fork $version-wip: new $version -> $sha"
+		creations+=("$fork $version $sha")
+	elif [[ "$existing" == "$sha" ]]; then
+		echo "land $fork $version-wip: $version is at $sha already"
+	else
+		die "$fork already has $version at $existing, not at $sha: rename $version-wip to an unused date and land again"
+	fi
+	wips+=("$fork $version-wip $sha")
+done < <(sed -n 's/^.*: gitlink \([0-9a-f]*\) is pending: head of \([^ ]*\) \(v[0-9.]*\)-wip$/\1 \2 \3/p' <<<"$out")
+
 run=
-if ((${#landings[@]})) || [[ -n "$waiting" ]]; then
+if ((${#landings[@]} + ${#wips[@]})) || [[ -n "$waiting" ]]; then
 	run=$(gh run list -R "$repo" --workflow simple.yml --event pull_request --commit "$head" --limit 1 \
 		--json databaseId --jq '.[0].databaseId')
 	[[ -n "$run" ]] || die "#$pr: no pre-commit run for $head"
 	echo "rerun pre-commit run $run"
 fi
 echo "squash-merge #$pr at $head"
+for wip in "${wips[@]}"; do
+	read -r fork branch _ <<<"$wip"
+	echo "delete $fork $branch"
+done
 
 if [[ "$yes" != true ]]; then
 	echo "dry run: rerun with --yes to land"
@@ -114,6 +139,12 @@ for landing in "${landings[@]}"; do
 	read -r fork branch sha <<<"$landing"
 	gh api -X PATCH "repos/$fork/git/refs/heads/$branch" -f sha="$sha" -F force=false >/dev/null
 	echo "landed $fork $branch at $sha"
+done
+
+for creation in "${creations[@]}"; do
+	read -r fork version sha <<<"$creation"
+	gh api -X POST "repos/$fork/git/refs" -f ref="refs/heads/$version" -f sha="$sha" >/dev/null
+	echo "created $fork $version at $sha"
 done
 
 if [[ -n "$run" ]]; then
@@ -132,3 +163,14 @@ if [[ -n "$run" ]]; then
 fi
 
 gh api -X PUT "repos/$repo/pulls/$pr/merge" -f merge_method=squash -f sha="$head" --jq .message
+
+for wip in "${wips[@]}"; do
+	read -r fork branch sha <<<"$wip"
+	tip=$(branch_sha "$fork" "$branch")
+	if [[ "$tip" != "$sha" ]]; then
+		echo "kept $fork $branch: it is at ${tip:-no commit}, not $sha"
+		continue
+	fi
+	gh api -X DELETE "repos/$fork/git/refs/heads/$branch"
+	echo "deleted $fork $branch"
+done

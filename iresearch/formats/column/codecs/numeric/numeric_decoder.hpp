@@ -160,9 +160,6 @@ class FrameDecoder {
     if (_h.Shuffled()) {
       return ReadLanes(row);
     }
-    if (_h.transform == NumericTransform::Raw && _h.leaf == NumericLeaf::None) {
-      return Get(row);
-    }
     return ReadSource(row);
   }
 
@@ -270,10 +267,8 @@ class FrameDecoder {
       _sum = static_cast<U>(MetaAt(f).base);
     }
     _sum = static_cast<U>(
-
       _sum + uint64_t{at + 1 - _summed} * _h.base +
       numeric::ShuffledSum(_source, rows, _h.stored, _summed, at + 1));
-
     _summed = at + 1;
     return Scaled(_sum);
   }

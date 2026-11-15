@@ -18,7 +18,9 @@ target_include_directories(
 target_include_directories(
     serenedb-bench-micro
     SYSTEM
-    PRIVATE ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/fsst
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/fsst
+        ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/fastpforlib
 )
 
 function(add_bench name)

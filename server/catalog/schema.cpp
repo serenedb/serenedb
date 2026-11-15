@@ -101,6 +101,19 @@ bool InKind(const duckdb::CatalogEntry& entry, duckdb::CatalogType kind) {
   }
 }
 
+bool ChangesReturnType(const duckdb::CatalogEntry& current,
+                       const duckdb::CreateInfo& info) {
+  const auto& existing = current.Cast<duckdb::MacroCatalogEntry>().macros;
+  return absl::c_any_of(info.Cast<duckdb::CreateMacroInfo>().macros,
+                        [&](const auto& macro) {
+                          const auto parameters = macro->ParameterTypes();
+                          return absl::c_any_of(existing, [&](const auto& old) {
+                            return old->ParameterTypes() == parameters &&
+                                   old->return_types != macro->return_types;
+                          });
+                        });
+}
+
 void AlterAllInSchema(Schema& schema, duckdb::CatalogTransaction transaction,
                       duckdb::AlterPermissionsInfo& info) {
   const auto kind = info.entry_catalog_type;
@@ -472,9 +485,10 @@ bool Schema::AlterExisting(duckdb::CatalogTransaction transaction,
   }
   if (!current->internal &&
       InKind(*current, duckdb::CatalogType::MACRO_ENTRY)) {
+    const bool retyped = ChangesReturnType(*current, info);
     RefuseDependents(
-      transaction, *current, [](const duckdb::CatalogEntry& dependent) {
-        return dependent.type == duckdb::CatalogType::INDEX_ENTRY;
+      transaction, *current, [&](const duckdb::CatalogEntry& dependent) {
+        return retyped || dependent.type == duckdb::CatalogType::INDEX_ENTRY;
       });
   }
   auto alter = info.GetAlterInfo();

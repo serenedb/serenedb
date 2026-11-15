@@ -413,6 +413,8 @@ def check(path: str, override_sha: str | None, rev: str | None) -> str:
             "on it, or at the head of a newer vYYYY.MM.DD-wip branch.",
             file=sys.stderr,
         )
+    elif wip is not None and heads.get(wip[1]) == gitlink:
+        print(f"{path}: gitlink {gitlink} is on {wip[1]}, and {wip[0]} still heads it")
     return status
 
 

@@ -116,9 +116,10 @@ def check(request, tmp_path, monkeypatch, checker, fork):
     return lambda gitlink: checker.check("dep", gitlink, None)
 
 
-def test_a_commit_on_mains_version_branch_passes(check, fork):
+def test_a_commit_on_mains_version_branch_passes(check, fork, capsys):
     _, shas, _ = fork
     assert check(shas["on main"]) == "ok"
+    assert capsys.readouterr() == ("", "")
 
 
 def test_the_head_of_an_open_fork_pr_into_mains_version_branch_is_pending(check, fork, capsys):
@@ -145,6 +146,16 @@ def test_a_commit_behind_a_wip_head_fails(check, fork, capsys):
     _, shas, _ = fork
     assert check(shas["rebased"]) == "fail"
     assert "not reachable from any version branch" in capsys.readouterr().err
+
+
+def test_a_gitlink_on_the_version_branch_its_wip_branch_still_heads_passes_and_names_the_wip_branch(
+        check, checker, fork, monkeypatch, capsys):
+    repo, shas, branches = fork
+    git("update-ref", "refs/heads/v2026.11.15", shas["wip"], cwd=repo)
+    monkeypatch.setattr(checker, "remote_heads", lambda url: branches | {"v2026.11.15": shas["wip"]})
+    assert check(shas["wip"]) == "ok"
+    assert capsys.readouterr().out == \
+        f"dep: gitlink {shas['wip']} is on v2026.11.15, and serenedb/fork v2026.11.15-wip still heads it\n"
 
 
 def test_a_new_submodule_whose_fork_has_only_its_wip_branch_is_pending(check, checker, fork, monkeypatch, capsys):

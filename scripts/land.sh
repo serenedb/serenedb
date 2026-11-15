@@ -115,7 +115,8 @@ while read -r sha fork version; do
 		die "$fork already has $version at $existing, not at $sha: rename $version-wip to an unused date and land again"
 	fi
 	wips+=("$fork $version-wip $sha")
-done < <(sed -n 's/^.*: gitlink \([0-9a-f]*\) is pending: head of \([^ ]*\) \(v[0-9.]*\)-wip$/\1 \2 \3/p' <<<"$out")
+done < <(sed -n -e 's/^.*: gitlink \([0-9a-f]*\) is pending: head of \([^ ]*\) \(v[0-9.]*\)-wip$/\1 \2 \3/p' \
+	-e 's/^.*: gitlink \([0-9a-f]*\) is on v[0-9.]*, and \([^ ]*\) \(v[0-9.]*\)-wip still heads it$/\1 \2 \3/p' <<<"$out")
 
 run=
 if ((${#landings[@]} + ${#wips[@]})) || [[ -n "$waiting" ]]; then

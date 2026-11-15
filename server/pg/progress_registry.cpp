@@ -139,7 +139,7 @@ void ProgressSource::BeginQuery(std::string query_text) {
   query = std::move(query_text);
   query_start_us.store(now, std::memory_order_relaxed);
   active = true;
-  if (xact_start_us == 0) {
+  if (xact_start_us == 0 && !xact_aborted) {
     xact_start_us = now;
   }
   state_change_us = now;
@@ -149,6 +149,9 @@ void ProgressSource::EndQuery(bool aborted) {
   const auto now = duckdb::Timestamp::GetCurrentTimestamp().value;
   absl::MutexLock lock{&mu};
   active = false;
+  if (aborted) {
+    xact_start_us = 0;
+  }
   xact_aborted = aborted;
   state_change_us = now;
 }
@@ -156,6 +159,7 @@ void ProgressSource::EndQuery(bool aborted) {
 void ProgressSource::AbortTransaction() {
   const auto now = duckdb::Timestamp::GetCurrentTimestamp().value;
   absl::MutexLock lock{&mu};
+  xact_start_us = 0;
   xact_aborted = true;
   state_change_us = now;
 }

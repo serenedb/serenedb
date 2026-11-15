@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <absl/algorithm/container.h>
-
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -44,6 +42,7 @@
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
+#include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/system_compiler.hpp"
 
@@ -815,8 +814,17 @@ class FrameDecoder {
         pos < _run_ends[_hint + 1]) {
       return _hint + 1;
     }
-    return static_cast<uint32_t>(absl::c_upper_bound(_run_ends, pos) -
-                                 _run_ends.begin());
+    return FindRun(pos);
+  }
+
+  IRS_NO_INLINE uint32_t FindRun(uint32_t pos) const noexcept {
+    const auto* ends = _run_ends.data();
+    const auto before = [&](size_t r) { return ends[r] <= pos; };
+    if (pos >= ends[_hint]) {
+      return static_cast<uint32_t>(
+        GallopIndex(_hint + 1, _run_ends.size(), before));
+    }
+    return static_cast<uint32_t>(PartitionIndex(0, _hint, before));
   }
 
   duckdb::const_data_ptr_t _base;

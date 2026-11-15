@@ -173,14 +173,15 @@ CopyDeserializers MakeCopyDeserializers(
 // reaches the decoder as a zero-copy view straight into `line`; only an escaped
 // field is materialized through `field_buf`. The field count is validated
 // against the column count.
-void ProcessTextRow(std::string_view line, char delim,
-                    std::string_view null_str,
+bool ProcessTextRow(std::string_view line, char delim,
+                    std::string_view null_str, bool ignore_errors,
                     const CopyDeserializers& deserializers,
                     pg::DeserializeContext& dctx, duckdb::DataChunk& output,
                     duckdb::idx_t row, std::string& field_buf) {
   const auto columns = deserializers.size();
   duckdb::idx_t column = 0;
   size_t pos = 0;
+  bool converted = true;
   for (;;) {
     bool had_escape = false;
     const auto end = ScanField(line, delim, pos, had_escape);
@@ -193,13 +194,16 @@ void ProcessTextRow(std::string_view line, char delim,
     auto& vec = output.data[column];
     if (raw == null_str) {
       duckdb::FlatVector::SetNull(vec, row, true);
-    } else {
+    } else if (converted) {
       const auto field = had_escape ? DecodeFieldView(raw, field_buf) : raw;
       pg::VectorSink sink{vec, row};
       if (!deserializers[column](dctx, field, sink)) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
-          ERR_MSG("COPY FROM: invalid input for column ", column + 1));
+        if (!ignore_errors) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
+            ERR_MSG("COPY FROM: invalid input for column ", column + 1));
+        }
+        converted = false;
       }
     }
     ++column;
@@ -213,13 +217,48 @@ void ProcessTextRow(std::string_view line, char delim,
       ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
       ERR_MSG("COPY FROM: row has ", column, " fields, expected ", columns));
   }
+  return converted;
 }
 
 CopyBatchParser::CopyBatchParser(duckdb::ClientContext& context,
-                                 pg::CopyInTarget target)
+                                 pg::CopyInTarget target,
+                                 std::atomic<uint64_t>& rejected)
   : _target{std::move(target)},
-    _deserializers{MakeCopyDeserializers(_target.types, _target.binary)} {
+    _deserializers{MakeCopyDeserializers(_target.types, _target.binary)},
+    _rejected{rejected} {
   pg::FillDeserializeContext(context, _dctx);
+}
+
+void CopyBatchParser::Reject(duckdb::idx_t row) {
+  _rejected_rows.push_back(row);
+  const auto rejected = _rejected.fetch_add(1, std::memory_order_relaxed) + 1;
+  if (_target.reject_limit != 0 && rejected > _target.reject_limit) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+      ERR_MSG("skipped more than REJECT_LIMIT (", _target.reject_limit,
+              ") rows due to data type incompatibility"));
+  }
+}
+
+bool CopyBatchParser::DropRejected(duckdb::DataChunk& output) {
+  if (_rejected_rows.empty()) {
+    return false;
+  }
+  const auto rows = output.size();
+  duckdb::SelectionVector kept_rows{rows};
+  duckdb::idx_t kept = 0;
+  auto rejected = _rejected_rows.begin();
+  for (duckdb::idx_t row = 0; row < rows; ++row) {
+    if (rejected != _rejected_rows.end() && *rejected == row) {
+      ++rejected;
+    } else {
+      kept_rows.set_index(kept++, row);
+    }
+  }
+  _rejected_rows.clear();
+  output.Slice(kept_rows, kept);
+  output.Flatten();
+  return true;
 }
 
 void CopyBatchParser::Start(const pg::CopyBatch& batch) {
@@ -256,8 +295,11 @@ duckdb::idx_t CopyBatchParser::ParseText(duckdb::DataChunk& output,
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
                       ERR_MSG("end-of-copy marker is followed by data"));
     }
-    ProcessTextRow(line, _target.delim, _target.null_str, _deserializers, _dctx,
-                   output, row, _field_buf);
+    if (!ProcessTextRow(line, _target.delim, _target.null_str,
+                        _target.ignore_errors, _deserializers, _dctx, output,
+                        row, _field_buf)) {
+      Reject(row);
+    }
     ++row;
   }
   return row;

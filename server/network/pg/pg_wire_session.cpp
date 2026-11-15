@@ -49,6 +49,7 @@
 #include "auth/role_closure.h"
 #include "catalog/cluster.h"
 #include "catalog/entry/role.h"
+#include "connector/duckdb_pg_binary_copy.h"
 #include "network/pg/bind_decoder.h"
 #include "network/pg/hba.h"
 #include "network/pg/scram_messages.h"
@@ -320,19 +321,6 @@ inline bool IsNativeCopyFormat(CopyFormat format) {
 // tests.
 inline bool IsBinaryWireFormat(CopyFormat format) {
   return format == CopyFormat::Binary || format == CopyFormat::Parquet;
-}
-
-inline void RejectBinaryCopyOptions(const duckdb::CopyInfo& info) {
-  for (const auto& entry : info.options) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    ERR_MSG("COPY option \"", entry.first.GetIdentifierName(),
-                            "\" is not supported in BINARY mode"));
-  }
-  for (const auto& entry : info.parsed_options) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    ERR_MSG("COPY option \"", entry.first.GetIdentifierName(),
-                            "\" is not supported in BINARY mode"));
-  }
 }
 
 // The runnable inner query for a COPY ... TO. `select_statement` is the parsed
@@ -1602,7 +1590,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
   // target table's column count (PG sends natts + one per-column format code).
   const auto& copy_info = *statement->Cast<duckdb::CopyStatement>().info;
   if (format == CopyFormat::Binary) {
-    RejectBinaryCopyOptions(copy_info);
+    sdb::connector::CheckBinaryCopyOptions(copy_info, true);
   }
   auto copy_columns = static_cast<int16_t>(copy_info.select_list.size());
   if (copy_columns == 0) {
@@ -1671,7 +1659,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyToStdout(
   const bool binary = format == CopyFormat::Binary;
   auto& copy = statement->Cast<duckdb::CopyStatement>();
   if (binary) {
-    RejectBinaryCopyOptions(*copy.info);
+    sdb::connector::CheckBinaryCopyOptions(*copy.info, false);
   }
   auto inner = ExtractCopyToQuery(copy);
   auto prepared = PrepareInternal(std::move(inner));
@@ -1707,12 +1695,13 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyToStdout(
     auto opts =
       sdb::connector::ResolveTextCopyOptions(copy.info->parsed_options);
     sdb::connector::ResolveTextCopyOptions(copy.info->options, opts);
+    sdb::connector::CheckTextCopyOptions(opts, false);
     wire->proto.copy_delim = opts.delim;
     wire->proto.copy_null = opts.null_str;
     // PG-compat: COPY ... TO STDOUT (FORMAT text, HEADER) emits the column-name
     // header line before the rows (committed here, before the drive arms).
     if (opts.header) {
-      WriteCopyTextHeader(this->_send, prepared->GetNames(), opts.delim);
+      WriteCopyTextHeader(this->_send, prepared->GetNames(), wire->proto);
     }
   }
   duckdb::vector<duckdb::Value> params;

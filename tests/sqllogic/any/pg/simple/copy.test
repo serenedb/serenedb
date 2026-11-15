@@ -351,18 +351,16 @@ statement count 1
 COPY (SELECT 1 as header, 2 as header) TO '${__TEST_DIR__}/headers.tsv' WITH (HEADER 1)
 
 
-skipif serenedb # TODO(Pasha) copy option to disable sniffer? explicit say about header?
 statement count 2
 COPY header_eater FROM '${__TEST_DIR__}/headers.tsv';
 
 
-skipif serenedb # TODO(Pasha) copy option to disable sniffer? explicit say about header?
 query
-SELECT * FROM header_eater;
+SELECT * FROM header_eater ORDER BY header1;
 ----
 header1	header2
-header	header
 1	2
+header	header
 
 
 statement error

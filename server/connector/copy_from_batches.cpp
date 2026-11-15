@@ -216,6 +216,7 @@ struct CopyFromGlobalState : public duckdb::GlobalTableFunctionState {
   CopyFromSource source;
   pg::CopyInTarget target;
   bool ordered;
+  std::atomic<uint64_t> rejected{0};
 };
 
 struct CopyFromLocalState : public duckdb::LocalTableFunctionState {
@@ -336,37 +337,43 @@ void ScanBatches(duckdb::ClientContext& context,
   auto& g = input.global_state->Cast<BatchesGlobalState>();
   auto& l = input.local_state->Cast<BatchesLocalState>();
   if (!l.parser) {
-    l.parser.emplace(context, g.target);
+    l.parser.emplace(context, g.target, g.rejected);
   }
   auto& parser = *l.parser;
-  duckdb::idx_t row = 0;
-  while (row < STANDARD_VECTOR_SIZE) {
-    if (!parser.Active()) {
-      if (l.next == l.run.size()) {
-        l.run.clear();
-        l.next = 0;
-        if (row != 0) {
-          if (g.ordered || !g.queue.TryTake(1, l.run)) {
+  for (;;) {
+    duckdb::idx_t row = 0;
+    while (row < STANDARD_VECTOR_SIZE) {
+      if (!parser.Active()) {
+        if (l.next == l.run.size()) {
+          l.run.clear();
+          l.next = 0;
+          if (row != 0) {
+            if (g.ordered || !g.queue.TryTake(1, l.run)) {
+              break;
+            }
+          } else if (g.queue.Take(input, g.ordered ? kOrderedRun : 1, l.run) !=
+                     pg::CopyTake::Batches) {
             break;
           }
-        } else if (g.queue.Take(input, g.ordered ? kOrderedRun : 1, l.run) !=
-                   pg::CopyTake::Batches) {
-          break;
+          l.batch_index = l.run.front()->seq;
         }
-        l.batch_index = l.run.front()->seq;
+        parser.Start(*l.run[l.next++]);
       }
-      parser.Start(*l.run[l.next++]);
-    }
-    row = parser.Parse(output, row);
-    if (parser.Exhausted()) {
-      parser.Stop();
-      l.run[l.next - 1].Reset();
-      if (g.reader) {
-        g.reader->Resume();
+      row = parser.Parse(output, row);
+      if (parser.Exhausted()) {
+        parser.Stop();
+        l.run[l.next - 1].Reset();
+        if (g.reader) {
+          g.reader->Resume();
+        }
       }
     }
+    output.SetChildCardinality(row);
+    if (!parser.DropRejected(output) || output.size() != 0) {
+      return;
+    }
+    output.Reset();
   }
-  output.SetChildCardinality(row);
 }
 
 size_t ReadAt(RangesGlobalState& g, std::string& buffer, uint64_t location,
@@ -511,24 +518,30 @@ void ScanRanges(duckdb::ClientContext& context,
   auto& g = input.global_state->Cast<RangesGlobalState>();
   auto& l = input.local_state->Cast<RangesLocalState>();
   if (!l.parser) {
-    l.parser.emplace(context, g.target);
+    l.parser.emplace(context, g.target, g.rejected);
   }
   auto& parser = *l.parser;
-  duckdb::idx_t row = 0;
-  while (row < STANDARD_VECTOR_SIZE) {
-    if (!parser.Active()) {
-      if (row != 0 || !NextRange(context, input, g, l)) {
-        break;
+  for (;;) {
+    duckdb::idx_t row = 0;
+    while (row < STANDARD_VECTOR_SIZE) {
+      if (!parser.Active()) {
+        if (row != 0 || !NextRange(context, input, g, l)) {
+          break;
+        }
+        parser.Start(l.batch);
       }
-      parser.Start(l.batch);
+      row = parser.Parse(output, row);
+      if (parser.Exhausted()) {
+        parser.Stop();
+        l.job.reset();
+      }
     }
-    row = parser.Parse(output, row);
-    if (parser.Exhausted()) {
-      parser.Stop();
-      l.job.reset();
+    output.SetChildCardinality(row);
+    if (!parser.DropRejected(output) || output.size() != 0) {
+      return;
     }
+    output.Reset();
   }
-  output.SetChildCardinality(row);
 }
 
 }  // namespace

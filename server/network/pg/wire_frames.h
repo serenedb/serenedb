@@ -96,7 +96,8 @@ void WriteCopyOutResponse(message::Buffer& out, bool binary, int16_t columns);
 // names, delimiter-separated and newline-terminated, with PG text escaping.
 // Sent after CopyOutResponse and before the row frames when HEADER is set.
 void WriteCopyTextHeader(message::Buffer& out,
-                         std::span<const duckdb::Identifier> names, char delim);
+                         std::span<const duckdb::Identifier> names,
+                         sdb::pg::SerializationContext& context);
 
 // The int16 -1 PGCOPY trailer as its own CopyData frame (end of the rows).
 void WriteCopyBinaryFooter(message::Buffer& out, bool binary_header);

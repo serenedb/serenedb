@@ -2987,11 +2987,12 @@ def test_copy_binary_rejects_format_options(conn):
     conn.run_ok("drop table if exists smoke_copy_binopt")
     assert "E" not in types(conn.run("create table smoke_copy_binopt(x int)"))
     try:
-        for opt in ("delimiter ','", "header", "null 'x'", "quote '\"'"):
+        for opt, sqlstate in (("delimiter ','", "42601"), ("header", "0A000"),
+                              ("null 'x'", "42601"), ("quote '\"'", "0A000")):
             conn.send("Q", _cstr(f"COPY smoke_copy_binopt TO STDOUT (FORMAT binary, {opt})"))
             m = conn.drain_to_ready()
             assert "H" not in types(m), (opt, types(m))  # no CopyOutResponse
-            assert sqlstates(m) == ["0A000"], (opt, sqlstates(m))
+            assert sqlstates(m) == [sqlstate], (opt, sqlstates(m))
     finally:
         conn.run_ok("drop table if exists smoke_copy_binopt")
 

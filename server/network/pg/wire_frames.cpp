@@ -192,39 +192,13 @@ void WriteCopyBinaryHeader(message::Buffer& out, message::Chain& first) {
 
 void WriteCopyTextHeader(message::Buffer& out,
                          std::span<const duckdb::Identifier> names,
-                         char delim) {
+                         sdb::pg::SerializationContext& context) {
   message::Writer w{out};
   const auto start = w.Written();
   auto* prefix = w.Alloc(kFrameHeader);
-  bool first = true;
-  for (const auto& name : names) {
-    if (!first) {
-      *w.Alloc(1) = delim;
-    }
-    first = false;
-    for (const char c : name.GetIdentifierName()) {
-      switch (c) {
-        case '\\':
-          w.Write("\\\\");
-          break;
-        case '\n':
-          w.Write("\\n");
-          break;
-        case '\r':
-          w.Write("\\r");
-          break;
-        case '\t':
-          w.Write("\\t");
-          break;
-        default:
-          if (c == delim) {
-            *w.Alloc(1) = '\\';
-          }
-          *w.Alloc(1) = c;
-      }
-    }
-  }
-  *w.Alloc(1) = '\n';
+  auto* const writer = std::exchange(context.writer, &w);
+  sdb::pg::SerializeCopyTextHeader(context, names);
+  context.writer = writer;
   prefix[0] = PQ_MSG_COPY_DATA;
   absl::big_endian::Store32(
     prefix + kFrameTag, static_cast<int32_t>(w.Written() - start - kFrameTag));

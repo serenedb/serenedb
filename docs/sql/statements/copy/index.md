@@ -115,6 +115,8 @@ In the `text` format a row ends at a newline or at a carriage return followed by
 
 In the `text` format a line holding only `\.` ends the data. Over STDIN anything after it is ignored. In a file only empty lines may follow it, so the data files of a `pg_dump` directory or tar archive load as they are; any other line after it fails the `COPY` with `end-of-copy marker is followed by data`. A `\.` elsewhere in a line fails with `end-of-copy marker is not alone on its line`. In the `csv` format `\.` is data.
 
+In the `text` format `ON_ERROR IGNORE` skips a row whose value cannot be converted to its column's type, and `REJECT_LIMIT n` fails the `COPY` with `skipped more than REJECT_LIMIT (n) rows due to data type incompatibility` once more than `n` rows are skipped. A row with more or fewer values than the table has columns fails the `COPY` either way. `REJECT_LIMIT` requires `ON_ERROR IGNORE`, and neither is allowed in `COPY ... TO`. The `binary` format allows only `ON_ERROR STOP` and no `DELIMITER`, `NULL`, `HEADER` or CSV option.
+
 ### Syntax
 
 <RailroadDiagram source={RailroadSource} production="rrdiagram1" />
@@ -144,6 +146,8 @@ Copy the contents of the `lineitem` table to the file `lineitem.tbl`, where the 
 Write the `lineitem` table to `lineitem.tsv` in the `text` format, with tab separators and no header:
 
 <SqlLogicTest id="sql/statements/copy/index/example_026" />
+
+With `HEADER`, a `text` file starts with a line of the column names as the query gives them, separated and escaped like the values.
 
 Copy the l_orderkey column of the `lineitem` table to the file `orderkey.tbl`:
 

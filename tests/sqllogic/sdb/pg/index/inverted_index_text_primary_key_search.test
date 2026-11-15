@@ -1,0 +1,34 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY text_pk_words AS split_text() WITH (frequency, norm);
+
+
+statement ok
+CREATE TABLE text_pk(s TEXT PRIMARY KEY, n INTEGER);
+
+
+statement ok
+CREATE INDEX text_pk_idx ON text_pk USING inverted (s text_pk_words);
+
+
+statement ok
+INSERT INTO text_pk VALUES ('red fox', 1), ('red', 2), ('blue fox', 3);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) text_pk;
+
+
+query
+SELECT s, n FROM text_pk_idx WHERE s @@ 'fox' ORDER BY n;
+----
+s	n
+red fox	1
+blue fox	3
+
+
+query
+SELECT s, n FROM text_pk WHERE s @@ 'fox' ORDER BY n;
+----
+s	n
+red fox	1
+blue fox	3

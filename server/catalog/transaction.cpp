@@ -123,7 +123,7 @@ void CheckDependencies(SessionTransaction& transaction) {
     switch (change.kind) {
       case ChangeKind::Create:
       case ChangeKind::Alter:
-        if (change.set->Members()) {
+        if (change.set->Members() && !change.version->HasParent()) {
           change.set->Oids().CheckCreated(view, *change.version);
         }
         if (change.kind == ChangeKind::Alter) {

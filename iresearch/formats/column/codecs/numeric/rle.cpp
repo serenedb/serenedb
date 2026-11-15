@@ -399,19 +399,21 @@ class RleCompressState {
     const auto writer = [this](T value, RleCount run, bool is_null) {
       WriteValue(value, run, is_null);
     };
+    auto state = _state;
     if (!vdata.sel->IsSet() && vdata.validity.CannotHaveNull()) {
-      UpdateFlatValid(_state, data, count, writer);
-      return;
-    }
-    for (idx_t i = 0; i < count; ++i) {
-      const auto idx = vdata.sel->get_index(i);
-      if constexpr (kWriteStatistics) {
-        if (!vdata.validity.RowIsValid(idx)) {
-          _stats.SetHasNull();
+      UpdateFlatValid(state, data, count, writer);
+    } else {
+      for (idx_t i = 0; i < count; ++i) {
+        const auto idx = vdata.sel->get_index(i);
+        if constexpr (kWriteStatistics) {
+          if (!vdata.validity.RowIsValid(idx)) {
+            _stats.SetHasNull();
+          }
         }
+        Update(state, data, vdata.validity, idx, writer);
       }
-      Update(_state, data, vdata.validity, idx, writer);
     }
+    _state = state;
   }
 
   void Finalize() {
@@ -486,14 +488,13 @@ class RleCompressState {
 template<typename T, bool kWriteStatistics>
 void CompressChunks(ColumnDataCheckpointData& checkpoint_data,
                     std::span<const WriteChunk> chunks) {
-  const auto state =
-    std::make_unique<RleCompressState<T, kWriteStatistics>>(checkpoint_data);
+  RleCompressState<T, kWriteStatistics> state{checkpoint_data};
   for (const auto& chunk : chunks) {
     duckdb::UnifiedVectorFormat vdata;
     chunk.data.ToUnifiedFormat(vdata);
-    state->Append(vdata, chunk.data.size());
+    state.Append(vdata, chunk.data.size());
   }
-  state->Finalize();
+  state.Finalize();
 }
 
 template<typename T>

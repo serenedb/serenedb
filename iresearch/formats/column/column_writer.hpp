@@ -51,6 +51,8 @@ class ColWriter;
 
 void EmitEmptyValidity(uint64_t rows, std::vector<ColumnBlockMeta>& sink);
 
+void DropAllValidMask(WriteChunk& chunk);
+
 void UpdateDistinct(duckdb::DistinctStatistics& distinct, DistinctStats mode,
                     const duckdb::Vector& values, duckdb::idx_t count,
                     duckdb::Vector& hashes);
@@ -96,6 +98,9 @@ class ColumnWriter final {
     auto& back = OpenChunk();
     fill(back.data, back.count);
     ++back.count;
+    if (back.count == duckdb::idx_t{STANDARD_VECTOR_SIZE}) {
+      DropAllValidMask(back);
+    }
     duckdb::FlatVector::SetSize(back.data, back.count);
     ++_staged_rows;
     if (!_deferred && _staged_rows == _row_group_size) {

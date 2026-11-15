@@ -177,6 +177,13 @@ void EmitEmptyValidity(uint64_t rows, std::vector<ColumnBlockMeta>& sink) {
   sink.push_back(std::move(m));
 }
 
+void DropAllValidMask(WriteChunk& chunk) {
+  auto& validity = duckdb::FlatVector::ValidityMutable(chunk.data);
+  if (validity.CheckAllValid(chunk.count)) {
+    validity.Reset();
+  }
+}
+
 WriteContext& ColumnWriter::WriteCtx() const noexcept {
   return _owner->WriteCtx();
 }
@@ -551,6 +558,7 @@ void ColumnWriter::Stage(uint64_t count, Fill&& fill) {
     fill(back, static_cast<duckdb::idx_t>(off), take);
     back.count += take;
     if (back.count == duckdb::idx_t{STANDARD_VECTOR_SIZE}) {
+      DropAllValidMask(back);
       for (auto& ingest : _ingest) {
         if (ingest) {
           ingest->CheckDistinct();

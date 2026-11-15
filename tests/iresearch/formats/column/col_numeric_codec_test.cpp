@@ -1880,4 +1880,110 @@ TEST(ColNumericKernelsTest, NarrowsAndWidensEveryStoredWidth) {
   check.template operator()<uint64_t>();
 }
 
+template<typename T>
+void ExpectRleAnalysesAgree(const duckdb::LogicalType& type,
+                            const std::vector<T>& values) {
+  const auto* rle =
+    irs::codecs::GetCodec(irs::codecs::CodecType::Rle, type.InternalType());
+  ASSERT_NE(rle, nullptr);
+  std::vector<duckdb::Vector> plain;
+  std::vector<duckdb::Vector> masked;
+  const auto parts = values.size() / STANDARD_VECTOR_SIZE + 1;
+  plain.reserve(parts);
+  masked.reserve(parts);
+  for (size_t pos = 0; pos < values.size(); pos += STANDARD_VECTOR_SIZE) {
+    const auto n = std::min<size_t>(values.size() - pos, STANDARD_VECTOR_SIZE);
+    for (auto* out : {&plain, &masked}) {
+      auto& v = out->emplace_back(type, STANDARD_VECTOR_SIZE);
+      std::memcpy(duckdb::FlatVector::GetDataMutable<T>(v), values.data() + pos,
+                  n * sizeof(T));
+      duckdb::FlatVector::SetSize(v, n);
+    }
+    duckdb::FlatVector::ValidityMutable(masked.back())
+      .Initialize(STANDARD_VECTOR_SIZE);
+  }
+  const auto chunks = [](const std::vector<duckdb::Vector>& vectors) {
+    std::vector<irs::WriteChunk> out;
+    for (const auto& v : vectors) {
+      out.push_back(irs::RefChunk(v, v.size()));
+    }
+    return out;
+  };
+  EXPECT_EQ(rle->analyze(chunks(plain)), rle->analyze(chunks(masked)));
+}
+
+TEST(ColNumericKernelsTest, RleAnalysisWithoutNullsMatchesTheRowByRowOne) {
+  const auto check = []<typename T>(const duckdb::LogicalType& type) {
+    const auto value = [](uint64_t k) {
+      if constexpr (std::is_floating_point_v<T>) {
+        static constexpr T kSpecials[] = {
+          T(0),
+          -T(0),
+          std::numeric_limits<T>::quiet_NaN(),
+          -std::numeric_limits<T>::quiet_NaN(),
+          std::numeric_limits<T>::infinity(),
+          -std::numeric_limits<T>::infinity(),
+          std::numeric_limits<T>::max(),
+          std::numeric_limits<T>::lowest(),
+        };
+        return k % 5 == 0 ? kSpecials[(k / 5) % std::size(kSpecials)]
+                          : static_cast<T>(Mix(k) % 1000) / T(7);
+      } else {
+        return static_cast<T>(Mix(k));
+      }
+    };
+    const auto runs = [&](size_t rows, auto&& length) {
+      std::vector<T> values;
+      values.reserve(rows);
+      for (uint64_t run = 0; values.size() < rows; ++run) {
+        const auto n = std::min<size_t>(length(run), rows - values.size());
+        values.insert(values.end(), n, value(run));
+      }
+      return values;
+    };
+    const size_t rows = 3 * STANDARD_VECTOR_SIZE + 77;
+    const std::pair<const char*, std::vector<T>> cases[] = {
+      {"no repeats", runs(rows, [](uint64_t) { return 1; })},
+      {"one value", runs(rows, [](uint64_t) { return ~size_t{0}; })},
+      {"runs of 1..5", runs(rows, [](uint64_t r) { return 1 + Mix(r) % 5; })},
+      {"runs of 3", runs(rows, [](uint64_t) { return 3; })},
+      {"runs of 4", runs(rows, [](uint64_t) { return 4; })},
+      {"mostly single, a long run now and then",
+       runs(rows, [](uint64_t r) { return r % 97 == 0 ? 300 : 1; })},
+      {"a vector of one run between vectors without repeats",
+       runs(rows,
+            [](uint64_t r) { return r == 2048 ? STANDARD_VECTOR_SIZE : 1; })},
+      {"a run that ends on a vector boundary",
+       runs(rows,
+            [](uint64_t r) { return r == 0 ? STANDARD_VECTOR_SIZE : 2; })},
+      {"a run past the longest count, then no repeats",
+       runs(70000 + 3000, [](uint64_t r) { return r == 0 ? 70000 : 1; })},
+      {"no repeats up to the longest count, then one value",
+       runs(65530 + 5000, [](uint64_t r) { return r < 65530 ? 1 : 5000; })},
+      {"one row", runs(1, [](uint64_t) { return 1; })},
+      {"two equal rows", runs(2, [](uint64_t) { return 2; })},
+      {"two different rows", runs(2, [](uint64_t) { return 1; })},
+    };
+    for (const auto& [name, values] : cases) {
+      SCOPED_TRACE(testing::Message() << type.ToString() << ": " << name);
+      ExpectRleAnalysesAgree<T>(type, values);
+    }
+    auto alternating = runs(rows, [](uint64_t) { return 1; });
+    for (size_t i = 0; i < alternating.size(); ++i) {
+      alternating[i] = value(i % 2);
+    }
+    SCOPED_TRACE(testing::Message()
+                 << type.ToString() << ": two values in turn");
+    ExpectRleAnalysesAgree<T>(type, alternating);
+  };
+  check.template operator()<int8_t>(duckdb::LogicalType::TINYINT);
+  check.template operator()<int16_t>(duckdb::LogicalType::SMALLINT);
+  check.template operator()<int32_t>(duckdb::LogicalType::INTEGER);
+  check.template operator()<int64_t>(duckdb::LogicalType::BIGINT);
+  check.template operator()<uint16_t>(duckdb::LogicalType::USMALLINT);
+  check.template operator()<uint64_t>(duckdb::LogicalType::UBIGINT);
+  check.template operator()<float>(duckdb::LogicalType::FLOAT);
+  check.template operator()<double>(duckdb::LogicalType::DOUBLE);
+}
+
 }  // namespace

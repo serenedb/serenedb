@@ -93,6 +93,7 @@ duckdb:core:test/sql/copy/parquet/writer/parquet_write_tpcds.test_slow	slow	take
 duckdb:core:test/sql/copy/partitioned/partitioned_write_tpch.test_slow	slow	takes 3 min under msan; dev runs it
 duckdb:core:test/sql/cte/recursive_cte_aoc2022.test_slow	slow	takes 4 min under msan; dev runs it
 duckdb:core:test/sql/cte/recursive_cte_research.test_slow	slow	takes 4 min under msan; dev runs it
+duckdb:core:test/sql/function/string/test_string_size_limit.test_slow	slow	takes 4 min and 80 GB under msan; dev runs it
 duckdb:core:test/sql/function/string/test_translate_large.test_slow	slow	takes 10 min under msan; dev runs it
 duckdb:core:test/sql/json/table/read_json_many_files.test_slow	slow	takes 4 min under msan; dev runs it
 duckdb:core:test/sql/json/test_json_struct_projection_pushdown.test_slow	slow	takes 5 min under msan; dev runs it

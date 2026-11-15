@@ -487,8 +487,8 @@ bool PgWireSession<Kind>::SetupConnection() {
   client_config.sink_progress_callback =
     [state = _connection_ctx](duckdb::idx_t rows, duckdb::idx_t bytes) {
       auto& metrics = state->Progress();
-      metrics.AddTuples(static_cast<int64_t>(rows));
-      metrics.AddBytes(static_cast<int64_t>(bytes));
+      metrics.AddProcessed(static_cast<int64_t>(rows),
+                           static_cast<int64_t>(bytes));
       const auto command = static_cast<sdb::pg::ProgressCommand>(
         metrics.command.load(std::memory_order_relaxed));
       SDB_IF_FAILURE("pause_copy_from_mid_stream") {

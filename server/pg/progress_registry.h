@@ -132,8 +132,10 @@ struct ProgressMetrics {
   static void Add(std::atomic<int64_t>& slot, int64_t delta) {
     slot.fetch_add(delta, std::memory_order_relaxed);
   }
-  void AddTuples(int64_t tuples) noexcept { processed.Add(kTuples, tuples); }
-  void AddBytes(int64_t bytes) noexcept { processed.Add(kBytes, bytes); }
+  void AddTuples(int64_t tuples) noexcept { processed.Add({tuples}); }
+  void AddProcessed(int64_t tuples, int64_t bytes) noexcept {
+    processed.Add({tuples, bytes});
+  }
   int64_t Tuples() const noexcept { return processed.Read(kTuples); }
   int64_t Bytes() const noexcept { return processed.Read(kBytes); }
 

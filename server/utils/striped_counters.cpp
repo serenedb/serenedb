@@ -21,6 +21,7 @@
 #include "server/utils/striped_counters.h"
 
 #include <duckdb/parallel/task_scheduler.hpp>
+#include <iresearch/utils/assert.hpp>
 
 #include "server/utils/number_of_cores.h"
 
@@ -29,10 +30,13 @@ namespace sdb {
 StripedCounters::StripedCounters()
   : _lines(static_cast<size_t>(CountLogicalCores())) {}
 
-void StripedCounters::Add(size_t counter, int64_t delta) noexcept {
-  _lines[duckdb::TaskScheduler::GetEstimatedCPUId() % _lines.size()]
-    .values[counter]
-    .fetch_add(delta, std::memory_order_relaxed);
+void StripedCounters::Add(std::span<const int64_t> deltas) noexcept {
+  SDB_ASSERT(deltas.size() <= kCounters);
+  auto& line =
+    _lines[duckdb::TaskScheduler::GetEstimatedCPUId() % _lines.size()];
+  for (size_t i = 0; i != deltas.size(); ++i) {
+    line.values[i].fetch_add(deltas[i], std::memory_order_relaxed);
+  }
 }
 
 int64_t StripedCounters::Read(size_t counter) const noexcept {

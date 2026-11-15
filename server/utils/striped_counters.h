@@ -26,6 +26,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <vector>
 
 namespace sdb {
@@ -37,7 +38,7 @@ class StripedCounters {
 
   StripedCounters();
 
-  void Add(size_t counter, int64_t delta) noexcept;
+  void Add(std::span<const int64_t> deltas) noexcept;
   int64_t Read(size_t counter) const noexcept;
   void Reset() noexcept;
 

@@ -20,6 +20,7 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
 #include <cstdint>
 #include <thread>
 #include <vector>
@@ -36,12 +37,14 @@ TEST(StripedCounters, ConcurrentAddsSumExactly) {
   StripedCounters counters;
   constexpr int64_t kThreads = 16;
   constexpr int64_t kAdds = 10000;
+  std::array<int64_t, StripedCounters::kCounters> deltas{};
+  deltas[0] = 1;
+  deltas[kLast] = 3;
   std::vector<std::jthread> threads;
   for (int64_t t = 0; t < kThreads; ++t) {
     threads.emplace_back([&] {
       for (int64_t i = 0; i < kAdds; ++i) {
-        counters.Add(0, 1);
-        counters.Add(kLast, 3);
+        counters.Add(deltas);
       }
     });
   }
@@ -51,15 +54,26 @@ TEST(StripedCounters, ConcurrentAddsSumExactly) {
   EXPECT_EQ(counters.Read(kLast), 3 * kThreads * kAdds);
 }
 
+TEST(StripedCounters, AddTouchesOnlyTheLeadingCounters) {
+  StripedCounters counters;
+  counters.Add({-5, 7});
+  counters.Add({2});
+  EXPECT_EQ(counters.Read(0), -3);
+  EXPECT_EQ(counters.Read(1), 7);
+  EXPECT_EQ(counters.Read(2), 0);
+}
+
 TEST(StripedCounters, ResetZeroesEveryCounter) {
   StripedCounters counters;
-  counters.Add(0, -5);
-  counters.Add(kLast, 7);
+  std::array<int64_t, StripedCounters::kCounters> deltas{};
+  deltas[0] = -5;
+  deltas[kLast] = 7;
+  counters.Add(deltas);
   EXPECT_EQ(counters.Read(0), -5);
   counters.Reset();
   EXPECT_EQ(counters.Read(0), 0);
   EXPECT_EQ(counters.Read(kLast), 0);
-  counters.Add(0, 2);
+  counters.Add({2});
   EXPECT_EQ(counters.Read(0), 2);
 }
 

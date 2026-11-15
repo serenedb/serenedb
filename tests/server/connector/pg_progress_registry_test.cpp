@@ -98,8 +98,7 @@ TEST(ProgressRegistryTest, BeginQueryResetsMetrics) {
   m.SetIoType(ProgressIoType::Pipe);
   ProgressMetrics::Set(m.relid, 42);
   m.AddTuples(100);
-  m.AddTuples(50);
-  m.AddBytes(4096);
+  m.AddProcessed(50, 4096);
 
   auto snap = FindByPid(1003);
   ASSERT_TRUE(snap.has_value());

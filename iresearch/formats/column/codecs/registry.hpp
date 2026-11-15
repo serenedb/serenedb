@@ -61,6 +61,8 @@ const CompressionFunction* BitpackingFunction(duckdb::PhysicalType physical);
 const CompressionFunction* AlpFunction(duckdb::PhysicalType physical);
 const CompressionFunction* AlpRdFunction(duckdb::PhysicalType physical);
 const CompressionFunction* RoaringFunction(duckdb::PhysicalType physical);
+const CompressionFunction* AutoFunction(duckdb::PhysicalType physical);
+const CompressionFunction& CheapestFunction() noexcept;
 
 bool CompressRoaringValidity(ColumnDataCheckpointData& checkpoint_data,
                              std::span<const WriteChunk> chunks,
@@ -68,6 +70,13 @@ bool CompressRoaringValidity(ColumnDataCheckpointData& checkpoint_data,
 
 const CompressionFunction* GetCodec(CodecType type,
                                     duckdb::PhysicalType physical);
+
+const CompressionFunction* EnabledCodec(CodecType type,
+                                        duckdb::PhysicalType physical,
+                                        const CodecSet& disabled);
+
+bool Accepts(const CompressionFunction& function,
+             std::span<const WriteChunk> chunks);
 
 std::string_view NameOf(CodecType type) noexcept;
 const Codec* FindCodec(std::string_view name) noexcept;

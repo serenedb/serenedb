@@ -1,6 +1,7 @@
 target_sources(
     iresearch
     PRIVATE
+        column/codecs/auto.cpp
         column/codecs/bytes/lz4.cpp
         column/codecs/bytes/segment_dictionary.cpp
         column/codecs/bytes/zstd.cpp

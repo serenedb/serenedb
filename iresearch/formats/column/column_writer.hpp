@@ -142,33 +142,20 @@ class ColumnWriter final {
   void SealRowGroup();
   void SealStaged(std::span<WriteChunk> chunks, uint64_t rows);
 
-  template<typename Encode>
-  uint64_t WriteBlocks(const codecs::CompressionFunction& function,
-                       const duckdb::LogicalType& type,
-                       std::vector<ColumnBlockMeta>& sink,
-                       codecs::StringTuning* strings, Encode&& encode);
+  bool Compress(const codecs::CompressionFunction& function,
+                const duckdb::LogicalType& type,
+                std::span<const WriteChunk> chunks,
+                codecs::ColumnTuning* tuning,
+                std::vector<ColumnBlockMeta>& sink);
 
-  uint64_t Compress(const codecs::CompressionFunction& function,
-                    const duckdb::LogicalType& type,
-                    std::span<const WriteChunk> chunks,
-                    std::vector<ColumnBlockMeta>& sink,
-                    codecs::StringTuning* strings = nullptr);
-
-  void CompressData(const duckdb::LogicalType& type,
-                    std::span<const WriteChunk> chunks,
-                    codecs::CodecType method,
-                    std::vector<ColumnBlockMeta>& sink);
+  bool Compress(const duckdb::LogicalType& type,
+                std::span<const WriteChunk> chunks, codecs::CodecType method,
+                codecs::ColumnTuning* tuning,
+                std::vector<ColumnBlockMeta>& sink);
 
   void CompressPlain(const duckdb::LogicalType& type, codecs::CodecType codec,
                      std::span<WriteChunk> chunks,
                      std::vector<ColumnBlockMeta>& sink);
-
-  bool SealString(const duckdb::LogicalType& type, std::span<WriteChunk> chunks,
-                  uint64_t row_count, ColumnMeta& meta);
-
-  void SealNumeric(const duckdb::LogicalType& type,
-                   std::span<WriteChunk> chunks, uint64_t row_count,
-                   ColumnMeta& meta);
 
   void SealValidity(std::span<WriteChunk> chunks, uint64_t row_count,
                     std::vector<ColumnBlockMeta>& sink);

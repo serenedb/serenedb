@@ -37,14 +37,16 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "iresearch/formats/column/codecs/codec_type.hpp"
-#include "iresearch/formats/column/codecs/text/string_tuning.hpp"
+#include "iresearch/formats/column/codecs/tuning.hpp"
 #include "iresearch/formats/column/internal/write_chunk.hpp"
 #include "iresearch/formats/column/internal/write_context.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/column_info.hpp"
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/down_cast.hpp"
 
 namespace irs::codecs {
@@ -104,14 +106,25 @@ struct ColumnFetchState {
 };
 
 using FlushSegmentFn = absl::FunctionRef<void(
-  duckdb::BaseStatistics stats, uint64_t rows, std::string_view bytes)>;
+  const CompressionFunction& function, duckdb::BaseStatistics stats,
+  uint64_t rows, std::string_view bytes)>;
 
 struct ColumnDataCheckpointData {
+  void FlushSegment(duckdb::BaseStatistics stats, uint64_t rows,
+                    std::string_view bytes) {
+    SDB_ASSERT(function);
+    written += bytes.size();
+    flush(*function, std::move(stats), rows, bytes);
+  }
+
   const duckdb::LogicalType& type;
   WriteContext& ctx;
   FlushSegmentFn flush;
   ColCodecParams params;
-  StringTuning* strings = nullptr;
+  ColumnTuning* tuning = nullptr;
+  CodecSet disabled;
+  const CompressionFunction* function = nullptr;
+  uint64_t written = 0;
 };
 
 inline constexpr uint64_t kBlockSize = duckdb::Storage::DEFAULT_BLOCK_SIZE;

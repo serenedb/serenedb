@@ -48,10 +48,8 @@ const CompressionFunction* EmptyFunction(PhysicalType physical) {
   return physical == PhysicalType::BIT ? &EmptyValidityFunction() : nullptr;
 }
 
-const CompressionFunction* NoFunction(PhysicalType) { return nullptr; }
-
 constexpr Codec kCodecs[] = {
-  {CodecType::Auto, "Auto", NoFunction},
+  {CodecType::Auto, "Auto", AutoFunction},
   {CodecType::Uncompressed, "Uncompressed", UncompressedFunction},
   {CodecType::Rle, "RLE", RleFunction},
   {CodecType::Bitpacking, "BitPacking", BitpackingFunction},

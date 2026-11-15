@@ -47,8 +47,7 @@ namespace irs {
 namespace {
 
 void DropTuning(ColumnMeta& meta) {
-  meta.write_string_tuning.reset();
-  meta.write_numeric_tuning.reset();
+  meta.write_tuning.reset();
   for (auto& child : meta.children) {
     DropTuning(child);
   }

@@ -5112,7 +5112,7 @@ TEST_F(ColumnReaderTest, VariantRoundTripUnshredded) {
 
 uint32_t LargestCalibrationGap(const irs::ColumnMeta& meta) {
   uint32_t gap =
-    meta.write_string_tuning ? meta.write_string_tuning->reuse.clock.gap : 0;
+    meta.write_tuning ? meta.write_tuning->strings.reuse.clock.gap : 0;
   for (const auto& child : meta.children) {
     gap = std::max(gap, LargestCalibrationGap(child));
   }
@@ -6667,41 +6667,48 @@ TEST_F(ColumnReaderTest, VectorColumnForcedUncompressed) {
 }
 
 TEST_F(ColumnReaderTest, UnknownCompressionIsRefused) {
-  auto unknown = *irs::codecs::GetCodec(irs::codecs::CodecType::Uncompressed,
-                                        duckdb::PhysicalType::INT64);
-  unknown.type = irs::codecs::CodecType{200};
+  for (const auto type :
+       {irs::codecs::CodecType{200}, irs::codecs::CodecType::Auto}) {
+    const auto id = static_cast<uint32_t>(type);
+    SCOPED_TRACE(id);
+    auto unknown = *irs::codecs::GetCodec(irs::codecs::CodecType::Uncompressed,
+                                          duckdb::PhysicalType::INT64);
+    unknown.type = type;
 
-  irs::ColumnMeta meta;
-  meta.id = 7;
-  meta.type = duckdb::LogicalType::BIGINT;
-  meta.data.push_back(irs::ColumnBlockMeta{
-    .statistics =
-      duckdb::BaseStatistics::CreateEmpty(duckdb::LogicalType::BIGINT),
-    .tuple_count = 1,
-    .byte_size = sizeof(int64_t),
-    .codec = &unknown,
-  });
+    irs::ColumnMeta meta;
+    meta.id = 7;
+    meta.type = duckdb::LogicalType::BIGINT;
+    meta.data.push_back(irs::ColumnBlockMeta{
+      .statistics =
+        duckdb::BaseStatistics::CreateEmpty(duckdb::LogicalType::BIGINT),
+      .tuple_count = 1,
+      .byte_size = sizeof(int64_t),
+      .codec = &unknown,
+    });
 
-  duckdb::MemoryStream stream;
-  duckdb::BinarySerializer serializer{stream};
-  serializer.Begin();
-  irs::SerializeColumnMeta(serializer, meta);
-  serializer.End();
+    duckdb::MemoryStream stream;
+    duckdb::BinarySerializer serializer{stream};
+    serializer.Begin();
+    irs::SerializeColumnMeta(serializer, meta);
+    serializer.End();
 
-  stream.Rewind();
-  duckdb::BinaryDeserializer deserializer{stream};
-  deserializer.Set<duckdb::DatabaseInstance&>(Db());
-  deserializer.Begin();
-  std::string message;
-  try {
-    irs::DeserializeColumnMeta(deserializer);
-  } catch (const irs::SqlException& e) {
-    EXPECT_EQ(e.error().errcode, ERRCODE_FEATURE_NOT_SUPPORTED);
-    message = e.what();
+    stream.Rewind();
+    duckdb::BinaryDeserializer deserializer{stream};
+    deserializer.Set<duckdb::DatabaseInstance&>(Db());
+    deserializer.Begin();
+    std::string message;
+    try {
+      irs::DeserializeColumnMeta(deserializer);
+    } catch (const irs::SqlException& e) {
+      EXPECT_EQ(e.error().errcode, ERRCODE_FEATURE_NOT_SUPPORTED);
+      message = e.what();
+    }
+    EXPECT_NE(std::string::npos,
+              message.find(absl::StrCat("compression ", id, ",")))
+      << message;
+    EXPECT_NE(std::string::npos, message.find("written by a newer release"))
+      << message;
   }
-  EXPECT_NE(std::string::npos, message.find("compression 200")) << message;
-  EXPECT_NE(std::string::npos, message.find("written by a newer release"))
-    << message;
 }
 
 }  // namespace

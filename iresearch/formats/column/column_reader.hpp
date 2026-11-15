@@ -37,8 +37,7 @@
 #include <vector>
 
 #include "iresearch/formats/column/codecs/compression_function.hpp"
-#include "iresearch/formats/column/codecs/numeric/numeric.hpp"
-#include "iresearch/formats/column/codecs/text/string_tuning.hpp"
+#include "iresearch/formats/column/codecs/tuning.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -114,8 +113,7 @@ struct ColumnMeta {
   duckdb::shared_ptr<duckdb::DistinctStatistics> distinct;
   uint8_t compression_level = 0;
   uint64_t write_list_running = 0;
-  std::unique_ptr<codecs::StringTuning> write_string_tuning;
-  std::unique_ptr<codecs::NumericTuning> write_numeric_tuning;
+  std::unique_ptr<codecs::ColumnTuning> write_tuning;
   uint64_t write_list_distinct = 0;
 };
 

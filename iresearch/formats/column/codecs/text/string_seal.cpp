@@ -26,6 +26,7 @@
 #include <string_view>
 #include <utility>
 
+#include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/formats/column/codecs/text/string_compressor.hpp"
 #include "iresearch/formats/column/codecs/text/string_layout.hpp"
 #include "iresearch/formats/column/codecs/text/string_picker.hpp"
@@ -38,6 +39,44 @@ using duckdb::string_t;
 
 uint64_t PlainStorageBytes(const text::Segment& seg) noexcept {
   return kHeaderSize + seg.input + seg.rows * sizeof(int32_t);
+}
+
+void Accumulate(StringAccumulator& acc, std::span<const WriteChunk> chunks,
+                StringTuning& tuning) {
+  acc.Reserve(CountRows(chunks), tuning.last_distinct);
+  for (const auto& chunk : chunks) {
+    acc.Add(chunk.data);
+  }
+  tuning.last_distinct = acc.values.size();
+}
+
+auto FlushTo(ColumnDataCheckpointData& data) {
+  return [&data](CodecType type, duckdb::BaseStatistics stats, uint64_t rows,
+                 std::string_view bytes) {
+    data.function = GetCodec(type, duckdb::PhysicalType::VARCHAR);
+    data.FlushSegment(std::move(stats), rows, bytes);
+  };
+}
+
+bool SealSegments(const StringAccumulator& acc, const ColCodecParams& params,
+                  const duckdb::LogicalType& type, StringTuning& tuning,
+                  duckdb::BufferManager& buffers, SegmentSink sink) {
+  text::StringCompressor compressor{params, type, tuning.estimators, buffers};
+  text::StringPicker picker{acc, params, tuning, compressor};
+  auto first = picker.First();
+  if (!first) {
+    return true;
+  }
+  if (first->Size() > PlainStorageBytes(*first)) {
+    return false;
+  }
+  const auto config = first->config;
+  const auto rest = first->begin + first->rows;
+  sink(TextCodec(config.shape, config.leaf), std::move(*first->stats),
+       first->rows, first->bytes.View());
+  first.reset();
+  compressor.Compress(config, acc, rest, sink);
+  return true;
 }
 
 }  // namespace
@@ -76,50 +115,37 @@ void StringAccumulator::Add(const duckdb::Vector& input) {
   }
 }
 
-bool SealSegments(const StringAccumulator& acc, const ColCodecParams& params,
-                  const duckdb::LogicalType& type, StringTuning& tuning,
-                  duckdb::BufferManager& buffers, SegmentSink sink) {
-  text::StringCompressor compressor{params, type, tuning.estimators, buffers};
-  text::StringPicker picker{acc, params, tuning, compressor};
-  auto first = picker.First();
-  if (!first) {
-    return true;
-  }
-  if (first->Size() > PlainStorageBytes(*first)) {
-    return false;
-  }
-  const auto config = first->config;
-  const auto rest = first->begin + first->rows;
-  sink(TextCodec(config.shape, config.leaf), std::move(*first->stats),
-       first->rows, first->bytes.View());
-  first.reset();
-  compressor.Compress(config, acc, rest, sink);
-  return true;
-}
-
 void CompressStrings(Shape shape, ByteCodec leaf,
                      ColumnDataCheckpointData& data,
                      std::span<const WriteChunk> chunks) {
-  SDB_ASSERT(data.strings);
-  auto& tuning = *data.strings;
+  SDB_ASSERT(data.tuning);
+  auto& tuning = data.tuning->strings;
   text::StringCompressor compressor{data.params, data.type, tuning.estimators,
                                     data.ctx.BufferManager()};
   const auto config = text::NamedConfig(shape, leaf, data.params);
-  const auto sink = [&](CodecType, duckdb::BaseStatistics stats, uint64_t rows,
-                        std::string_view bytes) {
-    data.flush(std::move(stats), rows, bytes);
-  };
+  const auto sink = FlushTo(data);
   if (shape == Shape::Plain) {
     compressor.CompressChunks(config, chunks, sink);
     return;
   }
   StringAccumulator acc;
-  acc.Reserve(CountRows(chunks), tuning.last_distinct);
-  for (const auto& chunk : chunks) {
-    acc.Add(chunk.data);
-  }
-  tuning.last_distinct = acc.values.size();
+  Accumulate(acc, chunks, tuning);
   compressor.Compress(config, acc, 0, sink);
+}
+
+void CompressAutoStrings(ColumnDataCheckpointData& data,
+                         std::span<const WriteChunk> chunks) {
+  SDB_ASSERT(data.tuning);
+  auto& tuning = data.tuning->strings;
+  StringAccumulator acc;
+  Accumulate(acc, chunks, tuning);
+  if (SealSegments(acc, data.params, data.type, tuning,
+                   data.ctx.BufferManager(), FlushTo(data))) {
+    return;
+  }
+  data.function =
+    GetCodec(CodecType::Uncompressed, duckdb::PhysicalType::VARCHAR);
+  data.function->compress(data, chunks);
 }
 
 }  // namespace irs::codecs

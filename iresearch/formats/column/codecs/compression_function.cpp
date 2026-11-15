@@ -75,8 +75,9 @@ void CompressedSegment::Reset() {
 void CompressedSegment::Flush(ColumnDataCheckpointData& checkpoint_data,
                               uint64_t size) {
   SDB_ASSERT(size <= kBlockSize);
-  checkpoint_data.flush(std::move(stats), count,
-                        {reinterpret_cast<const char*>(_buffer.get()), size});
+  checkpoint_data.FlushSegment(
+    std::move(stats), count,
+    {reinterpret_cast<const char*>(_buffer.get()), size});
   Reset();
 }
 

@@ -19,6 +19,15 @@ middle	rest	before_start	ends_at_start	past_end	long_length
 
 
 query
+SELECT
+    substring('\x0102'::bytea FROM -5 FOR 2) AS ends_before_start,
+    overlay('\x0102'::bytea PLACING '\xff'::bytea FROM 1 FOR NULL) AS null_length;
+----
+ends_before_start	null_length
+\\x	NULL
+
+
+query
 SELECT substr('\x0102030405'::bytea, 4) AS rest, substr('\x0102030405'::bytea, 2, 3) AS middle;
 ----
 rest	middle

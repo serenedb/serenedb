@@ -24,7 +24,6 @@
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/table_filter_state.hpp>
-#include <duckdb/storage/storage_info.hpp>
 #include <duckdb/storage/table/row_group_reorderer.hpp>
 #include <functional>
 #include <iresearch/formats/column/col_reader.hpp>
@@ -38,6 +37,7 @@
 #include <optional>
 #include <vector>
 
+#include "connector/scan/scan_function.h"
 #include "connector/scan/scan_state.h"
 
 namespace sdb::connector {
@@ -221,17 +221,22 @@ std::unique_ptr<OrderedUnits> BuildSegmentOrderedUnits(
   }
   const auto* column = OrderColumn(g, seg);
   const uint64_t docs = (*g.reader)[seg].Meta().docs_count;
-  std::vector<ScanOrderKey> rgs(work.rg_count);
+  std::vector<ScanOrderKey> rgs;
+  rgs.reserve(work.LiveCount());
   irs::BlockWindow w;
+  auto skipped = work.skipped_rgs.begin();
   for (uint32_t rg = 0; rg < work.rg_count; ++rg) {
-    rgs[rg].id = rg;
-    if (column) {
-      const auto begin = uint64_t{rg} * g.rg_size;
-      rgs[rg].key = RowGroupKey(g, *column, begin,
-                                std::min<uint64_t>(docs, begin + g.rg_size), w);
-    } else {
-      rgs[rg].key = segment_key;
+    if (skipped != work.skipped_rgs.end() && *skipped == rg) {
+      ++skipped;
+      continue;
     }
+    const auto begin = uint64_t{rg} * g.rg_size;
+    rgs.push_back(
+      {.key = column
+                ? RowGroupKey(g, *column, begin,
+                              std::min<uint64_t>(docs, begin + g.rg_size), w)
+                : segment_key,
+       .id = rg});
   }
   absl::c_sort(rgs);
   built->units.reserve(rgs.size());
@@ -258,7 +263,9 @@ void BuildOrderedHeap(ScanGlobalState& g) {
   auto& heap = g.ordered_heap;
   heap.reserve(g.segment_order.size());
   for (const auto seg : g.segment_order) {
-    heap.push_back({SegmentKey(g, seg), seg});
+    if (g.Segment(seg).LiveCount() != 0) {
+      heap.push_back({SegmentKey(g, seg), seg});
+    }
   }
   absl::c_make_heap(heap, std::greater{});
   if (heap.empty()) {
@@ -605,14 +612,18 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
     g.order_type = bind.ColumnTypeById(bind.scan_order->column);
   }
 
-  g.rg_size = bind.relation.row_group_size != 0 ? bind.relation.row_group_size
-                                                : DEFAULT_ROW_GROUP_SIZE;
+  g.rg_size = bind.relation.RowGroupSize();
 
   const auto threads =
     static_cast<uint64_t>(duckdb::TaskScheduler::QueryThreads(context));
 
   g.segments = std::make_unique<SegmentWork[]>(g.total_segments);
   g.live_segments = static_cast<uint32_t>(g.segment_order.size());
+  if (ordered && bind.scan_order->Skips()) {
+    for (const auto [seg, rg] : OffsetSkippedRowGroups(bind, *g.reader)) {
+      g.Segment(seg).skipped_rgs.push_back(rg);
+    }
+  }
 
   if (!ordered) {
     const auto& reader = *g.reader;
@@ -644,6 +655,9 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
     const bool split =
       g.splittable && work.rg_count > 1 &&
       !(constant_count && sub.live_docs_count() == sub.docs_count());
+    SDB_ASSERT(split || work.LiveCount() == 0 || work.skipped_rgs.empty());
+    work.done_rgs.store(static_cast<uint32_t>(work.skipped_rgs.size()),
+                        std::memory_order_relaxed);
     work.claim.store(split ? SegmentWork::kSplit : SegmentWork::kWhole,
                      std::memory_order_relaxed);
     if (split) {
@@ -662,7 +676,7 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
     auto& work = g.Segment(seg);
     const bool split =
       work.claim.load(std::memory_order_relaxed) == SegmentWork::kSplit;
-    const auto live = split ? work.LiveCount() : 1;
+    const auto live = split ? work.LiveCount() : std::min(work.LiveCount(), 1U);
     if (live == 0) {
       ++skipped;
       continue;

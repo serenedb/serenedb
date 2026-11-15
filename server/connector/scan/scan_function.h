@@ -24,6 +24,8 @@
 #include <duckdb/common/explain_value.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/storage/table/row_group_reorderer.hpp>
+#include <iresearch/index/index_reader.hpp>
+#include <vector>
 
 #include "connector/scan/scan_plan.h"
 
@@ -85,6 +87,16 @@ duckdb::unique_ptr<duckdb::BaseStatistics> IResearchScanStatistics(
 
 duckdb::vector<duckdb::PartitionStatistics> IResearchScanPartitionStats(
   duckdb::ClientContext& context, duckdb::GetPartitionStatsInput& input);
+
+struct ScanRowGroup {
+  uint32_t seg = 0;
+  uint32_t rg = 0;
+
+  auto operator<=>(const ScanRowGroup&) const = default;
+};
+
+std::vector<ScanRowGroup> OffsetSkippedRowGroups(
+  const ScanBindData& bind, const irs::IndexReader& reader);
 
 duckdb::vector<duckdb::column_t> IResearchGetRowIdColumns(
   duckdb::ClientContext& context,

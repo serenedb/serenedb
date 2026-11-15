@@ -26,6 +26,7 @@
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/planner/table_filter.hpp>
+#include <duckdb/storage/storage_info.hpp>
 #include <functional>
 #include <iresearch/search/filters/filter.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
@@ -106,6 +107,13 @@ struct ScanOrderSpec {
   duckdb::OrderByNullType null_order;
   duckdb::OrderByStatistics order_by;
   duckdb::OrderByColumnType column_type;
+  duckdb::StorageIndex storage;
+  duckdb::idx_t skipped_groups = 0;
+  duckdb::idx_t skipped_null_groups = 0;
+
+  bool Skips() const noexcept {
+    return skipped_groups != 0 || skipped_null_groups != 0;
+  }
 };
 
 struct OffsetsRequest {
@@ -219,6 +227,9 @@ struct RelationSpec {
   ScanEntryKind kind = ScanEntryKind::InvertedIndex;
   uint32_t row_group_size = 0;
 
+  uint64_t RowGroupSize() const noexcept {
+    return row_group_size != 0 ? row_group_size : DEFAULT_ROW_GROUP_SIZE;
+  }
   bool IsInvertedIndex() const noexcept {
     return kind != ScanEntryKind::SearchTable;
   }

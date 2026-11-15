@@ -1,0 +1,493 @@
+statement ok
+CREATE TABLE op (k INT, v INT, s TEXT, p TEXT)
+WITH (compaction_interval = 0, row_group_size = 2048)
+
+
+statement ok
+INSERT INTO op SELECT i, i % 7, lpad(i::TEXT, 5, '0') || repeat('x', 20), repeat('p', 20) || lpad(i::TEXT, 5, '0') FROM range(0, 1000) t(i)
+
+
+statement ok
+VACUUM (FLUSH_TABLE) op
+
+
+statement ok
+INSERT INTO op SELECT i, i % 7, lpad(i::TEXT, 5, '0') || repeat('x', 20), repeat('p', 20) || lpad(i::TEXT, 5, '0') FROM range(1000, 3000) t(i)
+
+
+statement ok
+VACUUM (FLUSH_TABLE) op
+
+
+statement ok
+INSERT INTO op SELECT i, i % 7, lpad(i::TEXT, 5, '0') || repeat('x', 20), repeat('p', 20) || lpad(i::TEXT, 5, '0') FROM range(3000, 10000) t(i)
+
+
+statement ok
+VACUUM (FLUSH_TABLE) op
+
+
+query
+EXPLAIN SELECT k FROM op ORDER BY k LIMIT 3 OFFSET 3500
+----
+QUERY PLAN
+╭─ TOP_N ──────────────────────────╮
+│ Top: 3                           │
+│ Offset: 500                      │
+│ Order By: k ASC                  │
+│ ~3 rows                          │
+╰─────────────────┬────────────────╯
+╭─ IRESEARCH_SCAN ┴────────────────╮
+│ Table: op                        │
+│ Projections: k                   │
+│ Column Filter:                   │
+│ optional: Dynamic Filter (k < ?) │
+│ ~10,000 rows                     │
+╰──────────────────────────────────╯
+
+
+query
+SELECT k FROM op ORDER BY k LIMIT 3 OFFSET 3500
+----
+k
+3500
+3501
+3502
+
+
+query
+EXPLAIN SELECT k FROM op ORDER BY k DESC LIMIT 3 OFFSET 3500
+----
+QUERY PLAN
+╭─ TOP_N ──────────────────────────╮
+│ Top: 3                           │
+│ Offset: 596                      │
+│ Order By: k DESC                 │
+│ ~3 rows                          │
+╰─────────────────┬────────────────╯
+╭─ IRESEARCH_SCAN ┴────────────────╮
+│ Table: op                        │
+│ Projections: k                   │
+│ Column Filter:                   │
+│ optional: Dynamic Filter (k > ?) │
+│ ~10,000 rows                     │
+╰──────────────────────────────────╯
+
+
+query
+SELECT k FROM op ORDER BY k DESC LIMIT 3 OFFSET 3500
+----
+k
+6499
+6498
+6497
+
+
+query
+SELECT count(*) AS n, min(k) AS lo, max(k) AS hi FROM (SELECT k FROM op ORDER BY k OFFSET 3500)
+----
+n	lo	hi
+6500	3500	9999
+
+
+query
+SELECT k, v FROM op ORDER BY k LIMIT 2 OFFSET 9998
+----
+k	v
+9998	2
+9999	3
+
+
+query
+SELECT count(*) AS n FROM (SELECT k FROM op ORDER BY k LIMIT 5 OFFSET 10000)
+----
+n
+0
+
+
+query
+EXPLAIN SELECT s FROM op ORDER BY s LIMIT 2 OFFSET 3500
+----
+QUERY PLAN
+╭─ TOP_N ──────────────────────────╮
+│ Top: 2                           │
+│ Offset: 500                      │
+│ Order By: s ASC                  │
+│ ~2 rows                          │
+╰─────────────────┬────────────────╯
+╭─ IRESEARCH_SCAN ┴────────────────╮
+│ Table: op                        │
+│ Projections: s                   │
+│ Column Filter:                   │
+│ optional: Dynamic Filter (s < ?) │
+│ ~10,000 rows                     │
+╰──────────────────────────────────╯
+
+
+query
+SELECT s FROM op ORDER BY s LIMIT 2 OFFSET 3500
+----
+s
+03500xxxxxxxxxxxxxxxxxxxx
+03501xxxxxxxxxxxxxxxxxxxx
+
+
+query
+EXPLAIN SELECT p FROM op ORDER BY p LIMIT 2 OFFSET 3500
+----
+QUERY PLAN
+╭─ TOP_N ──────────────────────────╮
+│ Top: 2                           │
+│ Offset: 3500                     │
+│ Order By: p ASC                  │
+│ ~2 rows                          │
+╰─────────────────┬────────────────╯
+╭─ IRESEARCH_SCAN ┴────────────────╮
+│ Table: op                        │
+│ Projections: p                   │
+│ Column Filter:                   │
+│ optional: Dynamic Filter (p < ?) │
+│ ~10,000 rows                     │
+╰──────────────────────────────────╯
+
+
+query
+SELECT p FROM op ORDER BY p LIMIT 2 OFFSET 3500
+----
+p
+pppppppppppppppppppp03500
+pppppppppppppppppppp03501
+
+
+# A filter drops rows the row-group counts include, so the offset is not
+# pruned by them.
+query
+EXPLAIN SELECT k FROM op WHERE v = 0 ORDER BY k LIMIT 3 OFFSET 1000
+----
+QUERY PLAN
+╭─ TOP_N ───────────────────────────╮
+│ Top: 3                            │
+│ Offset: 1000                      │
+│ Order By: k ASC                   │
+│ ~3 rows                           │
+╰─────────────────┬─────────────────╯
+╭─ IRESEARCH_SCAN ┴─────────────────╮
+│ Table: op                         │
+│ Projections: k                    │
+│ Column Filter:                    │
+│ v = 0,                            │
+│ optional: Dynamic Filter (k < ?)  │
+│ ~1,429 rows                       │
+╰───────────────────────────────────╯
+
+
+query
+SELECT k FROM op WHERE v = 0 ORDER BY k LIMIT 3 OFFSET 1000
+----
+k
+7000
+7007
+7014
+
+
+statement ok
+PREPARE op_q AS SELECT k FROM op ORDER BY k LIMIT 3 OFFSET 3500
+
+
+query
+EXPLAIN EXECUTE op_q
+----
+QUERY PLAN
+╭─ EXECUTE ────────────────────────╮
+╰─────────────────┬────────────────╯
+╭─ TOP_N ─────────┴────────────────╮
+│ Top: 3                           │
+│ Offset: 500                      │
+│ Order By: k ASC                  │
+│ ~3 rows                          │
+╰─────────────────┬────────────────╯
+╭─ IRESEARCH_SCAN ┴────────────────╮
+│ Table: op                        │
+│ Projections: k                   │
+│ Column Filter:                   │
+│ optional: Dynamic Filter (k < ?) │
+│ ~10,000 rows                     │
+╰──────────────────────────────────╯
+
+
+query
+EXECUTE op_q
+----
+k
+3500
+3501
+3502
+
+
+# Compaction regroups the same rows: the prepared plan pruned row groups that
+# are gone, so it plans again.
+statement ok
+VACUUM (COMPACT_TABLE) op
+
+
+query
+EXPLAIN EXECUTE op_q
+----
+QUERY PLAN
+╭─ EXECUTE ────────────────────────╮
+╰─────────────────┬────────────────╯
+╭─ TOP_N ─────────┴────────────────╮
+│ Top: 3                           │
+│ Offset: 1452                     │
+│ Order By: k ASC                  │
+│ ~3 rows                          │
+╰─────────────────┬────────────────╯
+╭─ IRESEARCH_SCAN ┴────────────────╮
+│ Table: op                        │
+│ Projections: k                   │
+│ Column Filter:                   │
+│ optional: Dynamic Filter (k < ?) │
+│ ~10,000 rows                     │
+╰──────────────────────────────────╯
+
+
+query
+EXECUTE op_q
+----
+k
+3500
+3501
+3502
+
+
+query
+EXPLAIN SELECT count(*) AS n, min(k) AS lo, max(k) AS hi FROM op
+----
+QUERY PLAN
+╭─ COLUMN_DATA_SCAN ─╮
+│ ~1 row             │
+╰────────────────────╯
+
+
+query
+SELECT count(*) AS n, min(k) AS lo, max(k) AS hi FROM op
+----
+n	lo	hi
+10000	0	9999
+
+
+statement ok
+DELETE FROM op WHERE k BETWEEN 100 AND 199
+
+
+query
+SELECT count(*) AS n, min(k) AS lo, max(k) AS hi FROM op
+----
+n	lo	hi
+9900	0	9999
+
+
+query
+SELECT k FROM op ORDER BY k LIMIT 3 OFFSET 3500
+----
+k
+3600
+3601
+3602
+
+
+statement ok
+DELETE FROM op WHERE k < 2048
+
+
+query
+EXPLAIN SELECT count(*) AS n, min(k) AS lo, max(k) AS hi FROM op
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ─────╮
+│ Aggregates: count_star(), │
+│             min(#0),      │
+│             max(#0)       │
+│ ~1 row                    │
+╰─────────────┬─────────────╯
+╭─ IRESEARCH_SCAN ──────────╮
+│ Table: op                 │
+│ Projections: k            │
+│ ~7,952 rows               │
+╰───────────────────────────╯
+
+
+query
+SELECT count(*) AS n, min(k) AS lo, max(k) AS hi FROM op
+----
+n	lo	hi
+7952	2048	9999
+
+
+query
+EXPLAIN SELECT k FROM op ORDER BY k LIMIT 3 OFFSET 3500
+----
+QUERY PLAN
+╭─ TOP_N ──────────────────────────╮
+│ Top: 3                           │
+│ Offset: 3500                     │
+│ Order By: k ASC                  │
+│ ~3 rows                          │
+╰─────────────────┬────────────────╯
+╭─ IRESEARCH_SCAN ┴────────────────╮
+│ Table: op                        │
+│ Projections: k                   │
+│ Column Filter:                   │
+│ optional: Dynamic Filter (k < ?) │
+│ ~7,952 rows                      │
+╰──────────────────────────────────╯
+
+
+query
+SELECT k FROM op ORDER BY k LIMIT 3 OFFSET 3500
+----
+k
+5548
+5549
+5550
+
+
+statement ok
+CREATE TABLE opn (k1 INT, k2 INT)
+WITH (compaction_interval = 0, row_group_size = 2048)
+
+
+statement ok
+INSERT INTO opn SELECT NULL, i FROM range(2048, 4096) t(i)
+
+
+statement ok
+VACUUM (FLUSH_TABLE) opn
+
+
+statement ok
+INSERT INTO opn SELECT NULL, i FROM range(0, 2048) t(i)
+
+
+statement ok
+VACUUM (FLUSH_TABLE) opn
+
+
+statement ok
+INSERT INTO opn SELECT i, i FROM range(10000, 12048) t(i)
+
+
+statement ok
+VACUUM (FLUSH_TABLE) opn
+
+
+# Every NULL ties on a single key, so any all-NULL row group can be skipped.
+query
+EXPLAIN SELECT k1 FROM opn ORDER BY k1 NULLS FIRST LIMIT 3 OFFSET 2050
+----
+QUERY PLAN
+╭─ TOP_N ─────────────────────────────────────────────╮
+│ Top: 3                                              │
+│ Offset: 2                                           │
+│ Order By: k1 ASC                                    │
+│ ~3 rows                                             │
+╰──────────────────────────┬──────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────┴──────────────────────────╮
+│ Table: opn                                          │
+│ Projections: k1                                     │
+│ Column Filter:                                      │
+│ optional: ((k1 IS NULL) OR Dynamic Filter (k1 < ?)) │
+│ ~6,144 rows                                         │
+╰─────────────────────────────────────────────────────╯
+
+
+query
+SELECT count(*) AS n FROM (SELECT k1 FROM opn ORDER BY k1 NULLS FIRST LIMIT 3000 OFFSET 2050) WHERE k1 IS NULL
+----
+n
+2046
+
+
+query
+SELECT k1 FROM opn ORDER BY k1 NULLS FIRST LIMIT 3 OFFSET 4100
+----
+k1
+10004
+10005
+10006
+
+
+# A second key orders the NULLs, so all-NULL row groups are skipped only when
+# all of them are.
+query
+EXPLAIN SELECT k1, k2 FROM opn ORDER BY k1 NULLS FIRST, k2 LIMIT 3 OFFSET 2048
+----
+QUERY PLAN
+╭─ TOP_N ──────────────────────────────────────────────╮
+│ Top: 3                                               │
+│ Offset: 2048                                         │
+│ Order By: k1 ASC, k2 ASC                             │
+│ ~3 rows                                              │
+╰───────────────────────────┬──────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
+│ Table: opn                                           │
+│ Projections: k1, k2                                  │
+│ Column Filter:                                       │
+│ optional: ((k1 IS NULL) OR Dynamic Filter (k1 <= ?)) │
+│ ~6,144 rows                                          │
+╰──────────────────────────────────────────────────────╯
+
+
+query
+SELECT k1, k2 FROM opn ORDER BY k1 NULLS FIRST, k2 LIMIT 3 OFFSET 2048
+----
+k1	k2
+NULL	2048
+NULL	2049
+NULL	2050
+
+
+query
+EXPLAIN SELECT k1, k2 FROM opn ORDER BY k1 NULLS FIRST, k2 LIMIT 3 OFFSET 4100
+----
+QUERY PLAN
+╭─ TOP_N ──────────────────────────────────────────────╮
+│ Top: 3                                               │
+│ Offset: 4                                            │
+│ Order By: k1 ASC, k2 ASC                             │
+│ ~3 rows                                              │
+╰───────────────────────────┬──────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
+│ Table: opn                                           │
+│ Projections: k1, k2                                  │
+│ Column Filter:                                       │
+│ optional: ((k1 IS NULL) OR Dynamic Filter (k1 <= ?)) │
+│ ~6,144 rows                                          │
+╰──────────────────────────────────────────────────────╯
+
+
+query
+SELECT k1, k2 FROM opn ORDER BY k1 NULLS FIRST, k2 LIMIT 3 OFFSET 4100
+----
+k1	k2
+10004	10004
+10005	10005
+10006	10006
+
+
+query
+SELECT k1, k2 FROM opn ORDER BY k1 DESC NULLS LAST, k2 LIMIT 3 OFFSET 2050
+----
+k1	k2
+NULL	2
+NULL	3
+NULL	4
+
+
+query
+SELECT k1 FROM opn ORDER BY k1 NULLS LAST LIMIT 3 OFFSET 2040
+----
+k1
+12040
+12041
+12042

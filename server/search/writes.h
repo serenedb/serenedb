@@ -294,6 +294,7 @@ class Writes {
 
   ReadView Read(duckdb::ClientContext& context, Store& store);
   Tick PlanVersion(const Store& store);
+  Tick LayoutVersion(const Store& store);
   const irs::DirectoryReader& PinnedReader(duckdb::ClientContext& context,
                                            Store& store);
   void ResetPins(bool all) noexcept;
@@ -337,6 +338,7 @@ class Writes {
  private:
   StoreWrites& EnsureStoreWrites(const std::shared_ptr<Store>& store);
   StoreWrites* FindStoreWrites(duckdb::idx_t store_id) const;
+  bool HasOwnWrites(const Store& store);
   const StoreWrites::Pin& EnsurePin(duckdb::ClientContext& context,
                                     StoreWrites& w);
   Tick Snapshot() const noexcept {

@@ -775,15 +775,26 @@ ReadView Writes::Read(duckdb::ClientContext& context, Store& store) {
           .manifest = version.state->manifest.get()};
 }
 
-Tick Writes::PlanVersion(const Store& store) {
-  bool own = false;
-  if (auto* w = FindStoreWrites(store.GetId())) {
-    absl::MutexLock lock{&w->mutex};
-    own = w->rebuilt || HasOwn(OwnOf(*w));
+bool Writes::HasOwnWrites(const Store& store) {
+  auto* w = FindStoreWrites(store.GetId());
+  if (!w) {
+    return false;
   }
+  absl::MutexLock lock{&w->mutex};
+  return w->rebuilt || HasOwn(OwnOf(*w));
+}
+
+Tick Writes::PlanVersion(const Store& store) {
   const auto last = store.GetTable().LastWrite();
-  return own || last > Snapshot() ? catalog::Transactions::Get().NextId()
-                                  : last;
+  return HasOwnWrites(store) || last > Snapshot()
+           ? catalog::Transactions::Get().NextId()
+           : last;
+}
+
+Tick Writes::LayoutVersion(const Store& store) {
+  return HasOwnWrites(store)
+           ? catalog::Transactions::Get().NextId()
+           : store.GetTable().VersionAt(Snapshot(), _walks).tick;
 }
 
 const irs::DirectoryReader& Writes::PinnedReader(duckdb::ClientContext& context,

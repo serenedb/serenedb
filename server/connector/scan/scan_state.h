@@ -149,10 +149,13 @@ struct ABSL_CACHELINE_ALIGNED SegmentWork {
   std::atomic_uint8_t prepare{kUnprepared};
   bool dead = false;
   std::unique_ptr<OrderedUnits> ordered;
+  std::vector<uint32_t> skipped_rgs;
   ABSL_CACHELINE_ALIGNED std::atomic_uint32_t next_start{0};
   ABSL_CACHELINE_ALIGNED std::atomic_uint32_t done_rgs{0};
 
-  uint32_t LiveCount() const noexcept { return dead ? 0 : rg_count; }
+  uint32_t LiveCount() const noexcept {
+    return dead ? 0 : rg_count - static_cast<uint32_t>(skipped_rgs.size());
+  }
 
   uint32_t Units() const noexcept { return LiveCount(); }
 };

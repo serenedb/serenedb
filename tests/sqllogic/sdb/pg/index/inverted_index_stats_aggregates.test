@@ -536,9 +536,6 @@ QUERY PLAN
 ╰─────────┬────────╯
 ╭─ IRESEARCH_SCAN ─╮
 │ Table: sag_nul   │
-│ Index Filter:    │
-│ ╭─ Empty ─╮      │
-│ ╰─────────╯      │
 │ Projections: n   │
 │ ~100 rows        │
 ╰──────────────────╯

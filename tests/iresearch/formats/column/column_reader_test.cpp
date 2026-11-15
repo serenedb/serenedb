@@ -59,10 +59,12 @@
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/file_utils_ext.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <latch>
+#include <limits>
 #include <numeric>
 #include <random>
 #include <span>
@@ -2407,11 +2409,19 @@ struct PrefetchRange {
   uint64_t size = 0;
 };
 
+struct ResidencyScript {
+  std::vector<PrefetchRange> prefetched;
+  std::vector<PrefetchRange> probed;
+  std::vector<bool> warm;
+  uint32_t epoch = 0;
+  uint64_t resident_end = 0;
+};
+
 class PrefetchRecordingInput final : public irs::IndexInput {
  public:
   PrefetchRecordingInput(irs::IndexInput::ptr impl,
-                         std::vector<PrefetchRange>& prefetched) noexcept
-    : _impl{std::move(impl)}, _prefetched{&prefetched} {}
+                         ResidencyScript& script) noexcept
+    : _impl{std::move(impl)}, _script{&script} {}
 
   const irs::byte_type* ReadStable(uint64_t count) final {
     return _impl->ReadStable(count);
@@ -2447,11 +2457,10 @@ class PrefetchRecordingInput final : public irs::IndexInput {
   uint64_t Length() const noexcept final { return _impl->Length(); }
   bool IsEOF() const noexcept final { return _impl->IsEOF(); }
   ptr Dup() const final {
-    return std::make_unique<PrefetchRecordingInput>(_impl->Dup(), *_prefetched);
+    return std::make_unique<PrefetchRecordingInput>(_impl->Dup(), *_script);
   }
   ptr Reopen() const final {
-    return std::make_unique<PrefetchRecordingInput>(_impl->Reopen(),
-                                                    *_prefetched);
+    return std::make_unique<PrefetchRecordingInput>(_impl->Reopen(), *_script);
   }
   void Skip(uint64_t count) final { _impl->Skip(count); }
   void Seek(uint64_t pos) final { _impl->Seek(pos); }
@@ -2459,28 +2468,51 @@ class PrefetchRecordingInput final : public irs::IndexInput {
     return _impl->Checksum(offset);
   }
   void Prefetch(uint64_t offset, uint64_t size) const noexcept final {
-    _prefetched->emplace_back(offset, size);
+    _script->prefetched.emplace_back(offset, size);
+  }
+  bool Resident(uint64_t offset, uint64_t size) const noexcept final {
+    _script->probed.emplace_back(offset, size);
+    return size != 0 && offset + size <= _script->resident_end;
+  }
+  uint64_t Warm(uint64_t offset, uint64_t size) const noexcept final {
+    if (_script->epoch != irs::file_utils::ResidencyEpoch()) {
+      return 0;
+    }
+    uint64_t warm = 0;
+    while (warm < size && offset + warm < _script->warm.size() &&
+           _script->warm[offset + warm]) {
+      ++warm;
+    }
+    return warm;
+  }
+  void MarkWarm(uint64_t offset, uint64_t size) const noexcept final {
+    const auto epoch = irs::file_utils::ResidencyEpoch();
+    if (_script->epoch != epoch) {
+      _script->epoch = epoch;
+      _script->warm.clear();
+    }
+    _script->warm.resize(std::max<size_t>(_script->warm.size(), offset + size));
+    std::fill_n(_script->warm.begin() + offset, size, true);
   }
 
  private:
   irs::IndexInput::ptr _impl;
-  std::vector<PrefetchRange>* _prefetched;
+  ResidencyScript* _script;
 };
 
 class PrefetchRecordingDirectory final : public tests::DirectoryMock {
  public:
-  PrefetchRecordingDirectory(irs::Directory& impl,
-                             std::vector<PrefetchRange>& prefetched)
-    : DirectoryMock{impl}, _prefetched{&prefetched} {}
+  PrefetchRecordingDirectory(irs::Directory& impl, ResidencyScript& script)
+    : DirectoryMock{impl}, _script{&script} {}
 
   irs::IndexInput::ptr open(std::string_view name,
                             irs::IOAdvice advice) const final {
     return std::make_unique<PrefetchRecordingInput>(
-      DirectoryMock::open(name, advice), *_prefetched);
+      DirectoryMock::open(name, advice), *_script);
   }
 
  private:
-  std::vector<PrefetchRange>* _prefetched;
+  ResidencyScript* _script;
 };
 
 TEST_F(ColumnReaderTest, PointReadsPrefetchTheirBlockUnlessRandomAccess) {
@@ -2506,8 +2538,9 @@ TEST_F(ColumnReaderTest, PointReadsPrefetchTheirBlockUnlessRandomAccess) {
     w.Commit(0);
   }
 
-  std::vector<PrefetchRange> prefetched;
-  PrefetchRecordingDirectory dir{mem, prefetched};
+  ResidencyScript script;
+  auto& prefetched = script.prefetched;
+  PrefetchRecordingDirectory dir{mem, script};
   irs::ColReader r{dir, "seg", Db(), irs::IOAdvice::SEQUENTIAL};
   const auto& col = *r.Column(kS);
   const auto& block = col.DataBlocks().back();
@@ -2528,6 +2561,123 @@ TEST_F(ColumnReaderTest, PointReadsPrefetchTheirBlockUnlessRandomAccess) {
   irs::ColumnReader::PointReader reader{r, col};
   ASSERT_TRUE(reader.FetchRow(kRows - 1, out, 0));
   EXPECT_TRUE(absl::c_any_of(prefetched, covers_block));
+}
+
+TEST_F(ColumnReaderTest, ScansTrustTheWarmMapBetweenTwoResidentEnds) {
+  constexpr uint32_t kRgSize = STANDARD_VECTOR_SIZE;
+  constexpr uint64_t kRows = 48 * kRgSize;
+  constexpr uint64_t kRun = 32 * irs::file_utils::kPage;
+  constexpr uint64_t kEverything = std::numeric_limits<uint64_t>::max();
+  constexpr irs::field_id kPlain = 1;
+  constexpr irs::field_id kRuns = 2;
+  const auto plain = [](uint64_t row) { return static_cast<int64_t>(row * 7); };
+  const auto runs = [](uint64_t row) {
+    const auto group = row / kRgSize;
+    return static_cast<int64_t>(group % 2 == 0 ? row * 3 : group);
+  };
+  irs::MemoryDirectory mem;
+  {
+    irs::ColWriter w{mem, "seg", Db(), irs::WriteTier::Merge};
+    auto& plain_writer =
+      w.OpenColumn(kPlain, duckdb::LogicalType::BIGINT,
+                   {.row_group_size = kRgSize,
+                    .compression = irs::codecs::CodecType::Uncompressed});
+    auto& runs_writer = w.OpenColumn(kRuns, duckdb::LogicalType::BIGINT,
+                                     {.row_group_size = kRgSize});
+    for (uint64_t pos = 0; pos < kRows; pos += kRgSize) {
+      duckdb::Vector plain_values{duckdb::LogicalType::BIGINT, kRgSize};
+      duckdb::Vector runs_values{duckdb::LogicalType::BIGINT, kRgSize};
+      auto* plain_data =
+        duckdb::FlatVector::GetDataMutable<int64_t>(plain_values);
+      auto* runs_data =
+        duckdb::FlatVector::GetDataMutable<int64_t>(runs_values);
+      for (duckdb::idx_t k = 0; k < kRgSize; ++k) {
+        plain_data[k] = plain(pos + k);
+        runs_data[k] = runs(pos + k);
+      }
+      duckdb::FlatVector::SetSize(plain_values, kRgSize);
+      duckdb::FlatVector::SetSize(runs_values, kRgSize);
+      plain_writer.Append(plain_values, kRgSize);
+      runs_writer.Append(runs_values, kRgSize);
+    }
+    ASSERT_TRUE(w.Commit(0));
+  }
+
+  ResidencyScript script;
+  PrefetchRecordingDirectory dir{mem, script};
+  irs::ColReader r{dir, "seg", Db(), irs::IOAdvice::SEQUENTIAL};
+  ASSERT_TRUE(absl::c_any_of(r.Column(kRuns)->DataBlocks(),
+                             [](const auto& b) { return b.byte_size == 0; }));
+  const auto check = [&](irs::field_id field,
+                         const std::function<int64_t(uint64_t)>& value_of) {
+    const auto& col = *r.Column(field);
+    std::vector<PrefetchRange> blocks;
+    for (const auto& b : col.DataBlocks()) {
+      if (b.byte_size != 0) {
+        blocks.emplace_back(b.file_offset, b.byte_size);
+      }
+    }
+    ASSERT_GE(blocks.size(), 8);
+    const auto scan = [&] {
+      script.probed.clear();
+      script.prefetched.clear();
+      VerifyBigint(
+        col, r.Ctx(), kRows, [](uint64_t) { return true; }, value_of);
+    };
+    const auto probed = [&](const PrefetchRange& b) {
+      return absl::c_any_of(script.probed, [&](const PrefetchRange& p) {
+        return p.offset == b.offset && p.size == b.size;
+      });
+    };
+    const auto prefetched = [&](const PrefetchRange& b) {
+      return absl::c_any_of(script.prefetched, [&](const PrefetchRange& p) {
+        return p.offset <= b.offset && b.offset + b.size <= p.offset + p.size;
+      });
+    };
+
+    script.resident_end = kEverything;
+    auto epoch = irs::file_utils::ResidencyEpoch();
+    ASSERT_NO_FATAL_FAILURE(scan());
+    EXPECT_EQ(irs::file_utils::ResidencyEpoch(), epoch);
+    EXPECT_TRUE(absl::c_none_of(blocks, prefetched));
+    EXPECT_TRUE(absl::c_all_of(blocks, probed));
+
+    ASSERT_NO_FATAL_FAILURE(scan());
+    EXPECT_EQ(irs::file_utils::ResidencyEpoch(), epoch);
+    EXPECT_TRUE(absl::c_none_of(blocks, prefetched));
+    EXPECT_LT(static_cast<size_t>(absl::c_count_if(blocks, probed)),
+              blocks.size() / 2);
+    EXPECT_TRUE(probed(blocks.front()));
+    EXPECT_TRUE(probed(blocks.back()));
+    uint64_t trusted = 0;
+    for (const auto& b : blocks) {
+      trusted = probed(b) ? 0 : trusted + b.size;
+      EXPECT_LE(trusted, kRun);
+    }
+
+    const auto half = blocks.size() / 2 + 1;
+    script.resident_end = blocks[half].offset;
+    ASSERT_NO_FATAL_FAILURE(scan());
+    EXPECT_NE(irs::file_utils::ResidencyEpoch(), epoch);
+    for (size_t b = 0; b < blocks.size(); ++b) {
+      EXPECT_EQ(prefetched(blocks[b]), b >= half) << "block " << b;
+    }
+
+    script.resident_end = kEverything;
+    ASSERT_NO_FATAL_FAILURE(scan());
+    epoch = irs::file_utils::ResidencyEpoch();
+    script.resident_end = 0;
+    ASSERT_NO_FATAL_FAILURE(scan());
+    EXPECT_NE(irs::file_utils::ResidencyEpoch(), epoch);
+    EXPECT_TRUE(absl::c_all_of(blocks, prefetched));
+
+    epoch = irs::file_utils::ResidencyEpoch();
+    ASSERT_NO_FATAL_FAILURE(scan());
+    EXPECT_EQ(irs::file_utils::ResidencyEpoch(), epoch);
+    EXPECT_TRUE(absl::c_all_of(blocks, prefetched));
+  };
+  ASSERT_NO_FATAL_FAILURE(check(kPlain, plain));
+  ASSERT_NO_FATAL_FAILURE(check(kRuns, runs));
 }
 
 TEST_F(ColumnReaderTest, PointReaderReopensBlocksItClosed) {

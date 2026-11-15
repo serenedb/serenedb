@@ -253,12 +253,24 @@ uint32_t SegmentTarget() {
   return target;
 }
 
+uint32_t RowGroupSize() {
+  static const uint32_t size = [] {
+    if (const char* e = std::getenv("SDB_BENCH_ROW_GROUP")) {
+      return static_cast<uint32_t>(std::strtoul(e, nullptr, 10));
+    }
+    return static_cast<uint32_t>(DEFAULT_ROW_GROUP_SIZE);
+  }();
+  return size;
+}
+
 irs::WriteTier Tier() {
   return std::getenv("SDB_BENCH_REFRESH") ? irs::WriteTier::Flush
                                           : irs::WriteTier::Merge;
 }
 
 bool Cold() { return std::getenv("SDB_BENCH_COLD") != nullptr; }
+
+bool Stale() { return std::getenv("SDB_BENCH_STALE") != nullptr; }
 
 struct ColSeg {
   std::unique_ptr<irs::Directory> dir;
@@ -294,8 +306,63 @@ void OpenReader(ColSeg& seg) {
   }
 }
 
+void EvictUnderWarmMap(ColSeg& seg) {
+  {
+    irs::ReadContext ctx{*seg.reader};
+    auto st = seg.col->InitScan(ctx);
+    duckdb::VectorCache cache{duckdb::Allocator::DefaultAllocator(),
+                              Data().type, STANDARD_VECTOR_SIZE};
+    duckdb::Vector batch{cache};
+    const auto rows = Data().rows;
+    for (uint64_t pos = 0; pos < rows;) {
+      const auto take = std::min<uint64_t>(rows - pos, STANDARD_VECTOR_SIZE);
+      batch.ResetFromCache(cache);
+      seg.col->Scan(st, batch, take);
+      pos += take;
+    }
+  }
+  for (const auto& entry : std::filesystem::directory_iterator(seg.path)) {
+    const int fd = ::open(entry.path().c_str(), O_RDONLY);
+    if (fd < 0) {
+      continue;
+    }
+    ::fdatasync(fd);
+    ::close(fd);
+  }
+  irs::ReadContext ctx{*seg.reader};
+  auto& in = ctx.In();
+  const uint64_t length = in.Length();
+  uint64_t from = 0;
+  if (const char* e = std::getenv("SDB_BENCH_STALE_FROM")) {
+    from = length * std::strtoull(e, nullptr, 10) / 100;
+  }
+  uint64_t bytes = length - from;
+  if (const char* e = std::getenv("SDB_BENCH_STALE_BYTES")) {
+    bytes = std::min<uint64_t>(bytes, std::strtoull(e, nullptr, 10));
+  }
+  in.Evict(from, bytes);
+  static bool reported = false;
+  if (!reported) {
+    reported = true;
+    std::fprintf(stderr,
+                 "stale: evicted from %llu of %llu, resident after evict %d, "
+                 "warm bytes %llu\n",
+                 static_cast<unsigned long long>(from),
+                 static_cast<unsigned long long>(length),
+                 static_cast<int>(in.Resident(from, bytes)),
+                 static_cast<unsigned long long>(in.Warm(0, length)));
+  }
+}
+
 void Evict(ColSeg& seg) {
-  if (!Cold() || seg.path.empty()) {
+  if (seg.path.empty()) {
+    return;
+  }
+  if (Stale()) {
+    EvictUnderWarmMap(seg);
+    return;
+  }
+  if (!Cold()) {
     return;
   }
   seg.col = nullptr;
@@ -322,7 +389,8 @@ void ColBuild(irs::Directory& dir, const ColArm& arm) {
   irs::ColWriter w{dir, kSeg, CsDb(), Tier()};
   auto& cw = w.OpenColumn(
     kField, data.type,
-    {.compression = arm.codec,
+    {.row_group_size = RowGroupSize(),
+     .compression = arm.codec,
      .codec_params = irs::ColCodecParams{.compression_level = arm.level,
                                          .segment_target = SegmentTarget()}});
   uint64_t pos = 0;

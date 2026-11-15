@@ -55,6 +55,7 @@ namespace irs {
 namespace {
 
 constexpr duckdb::idx_t kMaxFetchHits = 64;
+constexpr uint64_t kTrustedRunBytes = 32 * file_utils::kPage;
 
 void SerializeColumnBlockMeta(duckdb::BinarySerializer& s,
                               const ColumnBlockMeta& m) {
@@ -427,21 +428,36 @@ void ColumnReader::Readahead(size_t block, ReadContext& ctx,
   }
   const bool sequential = block != 0 && s->opened_block + 1 == block;
   s->opened_block = block;
-  if (block < s->advised_end) {
-    return;
-  }
-  uint64_t warm = in.Warm(first.file_offset, first.byte_size);
-  if (warm != 0 && file_utils::PollResidency(warm)) {
-    warm = 0;
-  }
-  if (warm == first.byte_size) {
-    s->advised_end = block + 1;
+  if (block < s->advised_end || first.byte_size == 0) {
     return;
   }
   if (in.Resident(first.file_offset, first.byte_size)) {
-    in.MarkWarm(first.file_offset, first.byte_size);
-    s->advised_end = block + 1;
+    if (first.byte_size <= kTrustedRunBytes) {
+      in.MarkWarm(first.file_offset, first.byte_size);
+    }
+    auto end = block + 1;
+    auto tail = block;
+    for (uint64_t budget = kTrustedRunBytes; end < _segments.size(); ++end) {
+      const auto& next = _segments[end];
+      if (next.byte_size > budget ||
+          in.Warm(next.file_offset, next.byte_size) != next.byte_size) {
+        break;
+      }
+      budget -= next.byte_size;
+      if (next.byte_size != 0) {
+        tail = end;
+      }
+    }
+    if (tail != block &&
+        !in.Resident(_segments[tail].file_offset, _segments[tail].byte_size)) {
+      file_utils::InvalidateResidency();
+      end = block + 1;
+    }
+    s->advised_end = end;
     return;
+  }
+  if (in.Warm(first.file_offset, first.byte_size) == first.byte_size) {
+    file_utils::InvalidateResidency();
   }
   uint64_t budget = sequential ? file_utils::kMaxReadahead : 0;
   auto b = block;

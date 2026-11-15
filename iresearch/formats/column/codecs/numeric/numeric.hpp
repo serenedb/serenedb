@@ -67,18 +67,10 @@ uint64_t EstimateCodes(const NumericTuning& tuning, uint64_t rows,
 std::string EncodeCodes(std::span<const uint32_t> codes, uint64_t entries,
                         uint64_t runs, NumericTuning& tuning);
 
-class NumericSealer {
- public:
-  static std::unique_ptr<NumericSealer> Make(const duckdb::LogicalType& type,
-                                             uint64_t rows);
-
-  virtual ~NumericSealer() = default;
-
-  virtual void Add(const duckdb::Vector& input) = 0;
-
-  virtual NumericSegment Seal(const ColCodecParams& params,
-                              uint64_t analyzed_bytes, NumericTuning& tuning,
-                              bool due) = 0;
-};
+NumericSegment SealNumeric(const duckdb::LogicalType& type,
+                           std::span<const WriteChunk> chunks, uint64_t rows,
+                           const ColCodecParams& params, NumericTuning& tuning,
+                           bool due, uint64_t analyzed_bytes,
+                           absl::FunctionRef<uint64_t()> analyze);
 
 }  // namespace irs::codecs

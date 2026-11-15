@@ -385,15 +385,11 @@ void ColumnWriter::SealNumeric(const duckdb::LogicalType& type,
   } else if (due || merge) {
     analyzed = price_analyzed();
   }
-  const auto sealer = codecs::NumericSealer::Make(type, row_count);
-  for (const auto& c : chunks) {
-    sealer->Add(c.data);
-  }
-  auto segment = sealer->Seal(_codec_params, analyzed.bytes, tuning, search);
-  if (segment.bytes.empty() && !analyzed.function) {
-    analyzed = price_analyzed();
-    segment = sealer->Seal(_codec_params, analyzed.bytes, tuning, true);
-  }
+  auto segment = codecs::SealNumeric(type, chunks, row_count, _codec_params,
+                                     tuning, search, analyzed.bytes, [&] {
+                                       analyzed = price_analyzed();
+                                       return analyzed.bytes;
+                                     });
   if (segment.bytes.empty()) {
     Compress(*analyzed.function, type, chunks, meta.data);
     return;

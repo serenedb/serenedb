@@ -289,7 +289,7 @@ class Blocks {
 };
 
 template<typename T>
-class TypedSealer final : public NumericSealer {
+class TypedSealer {
   using U = numeric::Bits<sizeof(T)>;
   static constexpr uint8_t kWidth = sizeof(T);
   static constexpr size_t kCodeBytes =
@@ -306,15 +306,16 @@ class TypedSealer final : public NumericSealer {
       _any_valid{!codes.empty()},
       _codes_only{true} {}
 
-  void Add(const duckdb::Vector& input) final {
+  void Add(const duckdb::Vector& input) {
+    auto stats = _stats;
     for (const auto value : input.Values<T>()) {
       if (!value.IsValid()) {
-        _stats.SetHasNull();
+        stats.SetHasNull();
         _owned.push_back(_last);
         continue;
       }
       const T v = value.GetValue();
-      _stats.Update(v);
+      stats.Update(v);
       const auto bits = std::bit_cast<U>(v);
       if (!_any_valid) {
         absl::c_fill(_owned, bits);
@@ -323,10 +324,11 @@ class TypedSealer final : public NumericSealer {
       _last = bits;
       _owned.push_back(bits);
     }
+    _stats = stats;
   }
 
   NumericSegment Seal(const ColCodecParams& params, uint64_t analyzed_bytes,
-                      NumericTuning& tuning, bool due) final {
+                      NumericTuning& tuning, bool due) {
     if (std::is_floating_point_v<T>) {
       return SealWith(kLeaflessPlan, analyzed_bytes, tuning, due);
     }
@@ -1227,13 +1229,26 @@ bool UpdateConstant(const duckdb::Vector& input,
                          });
 }
 
-std::unique_ptr<NumericSealer> NumericSealer::Make(
-  const duckdb::LogicalType& type, uint64_t rows) {
-  return WithNumericType(
+NumericSegment SealNumeric(const duckdb::LogicalType& type,
+                           std::span<const WriteChunk> chunks, uint64_t rows,
+                           const ColCodecParams& params, NumericTuning& tuning,
+                           bool due, uint64_t analyzed_bytes,
+                           absl::FunctionRef<uint64_t()> analyze) {
+  auto segment = WithNumericType(
     type.InternalType(),
-    [&]<typename T>(std::type_identity<T>) -> std::unique_ptr<NumericSealer> {
-      return std::make_unique<TypedSealer<T>>(type, rows);
+    [&]<typename T>(std::type_identity<T>) -> std::optional<NumericSegment> {
+      TypedSealer<T> sealer{type, rows};
+      for (const auto& chunk : chunks) {
+        sealer.Add(chunk.data);
+      }
+      auto sealed = sealer.Seal(params, analyzed_bytes, tuning, due);
+      if (sealed.bytes.empty() && analyzed_bytes == kNotAnalyzed) {
+        sealed = sealer.Seal(params, analyze(), tuning, true);
+      }
+      return sealed;
     });
+  SDB_ASSERT(segment);
+  return std::move(*segment);
 }
 
 const CompressionFunction* NumericFunction(duckdb::PhysicalType physical) {

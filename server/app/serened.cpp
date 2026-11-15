@@ -85,7 +85,8 @@ int RunServer() {
 
 int main(int argc, char* argv[]) {
   sdb::app::PrepareProcess(argv[0]);
-  if (const auto rc = sdb::app::RunShellCommand(argc, argv)) {
+  sdb::app::RegisterShellCommands();
+  if (const auto rc = sdb::app::RunCommand(argc, argv)) {
     return *rc;
   }
   const sdb::app::ServerProcess process{argc, argv};

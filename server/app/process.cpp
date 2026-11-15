@@ -25,9 +25,11 @@
 #include <absl/flags/parse.h>
 #include <absl/flags/usage.h>
 #include <absl/flags/usage_config.h>
+#include <absl/strings/str_cat.h>
 #include <absl/strings/str_split.h>
 #include <pthread.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <duckdb/common/fault_points.hpp>
@@ -150,12 +152,22 @@ void ParseOptions(int argc, char* argv[]) {
     return std::string{file};
   };
   absl::SetFlagsUsageConfig(usage_config);
-  absl::SetProgramUsageMessage(
+  std::string usage =
     "serened -- SereneDB pg-wire server\n\n"
     "Usage:\n"
-    "  serened <data-dir> [--flag=value ...]\n"
-    "  serened shell [duckdb-shell args ...]\n"
-    "  serened psql  [psql args ...]\n\n"
+    "  serened <data-dir> [--flag=value ...]\n";
+  size_t width = 0;
+  for (const auto& command : Commands()) {
+    width = std::max(width, command.name.size());
+  }
+  for (const auto& command : Commands()) {
+    absl::StrAppend(&usage, "  serened ", command.name,
+                    std::string(width - command.name.size() + 1, ' '),
+                    command.usage, "\n");
+  }
+  absl::StrAppend(
+    &usage,
+    "\n"
     "Flag sources (absl built-in, full definitions under --helpfull):\n"
     "  --flagfile=path1,path2     Read flags from one or more files (one\n"
     "                             '--flag=value' per line, '#' comments OK).\n"
@@ -173,6 +185,7 @@ void ParseOptions(int argc, char* argv[]) {
     "  --helpshort                Project-defined flags only (no absl/gtest).\n"
     "  --helppackage              Flags grouped by source-tree location.\n"
     "  --version                  Print the build banner and exit.");
+  absl::SetProgramUsageMessage(usage);
 
   auto positionals = absl::ParseCommandLine(argc, argv);
   if (positionals.size() == 2) {

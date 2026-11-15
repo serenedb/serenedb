@@ -57,19 +57,12 @@ enum class ProxyMode : uint8_t {
   Require,
 };
 
-enum class HttpApi {
+enum class HttpApi : uint8_t {
   Es,
   Test,
   Mcp,
   Otel,
 };
-
-constexpr std::array<std::pair<std::string_view, HttpApi>, 4> kHttpApis{{
-  {"es", HttpApi::Es},
-  {"test", HttpApi::Test},
-  {"mcp", HttpApi::Mcp},
-  {"otel", HttpApi::Otel},
-}};
 
 struct ListenSpec {
   std::string url;

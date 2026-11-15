@@ -22,7 +22,6 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/strings/ascii.h>
-#include <absl/strings/str_join.h>
 #include <absl/strings/str_split.h>
 #include <ada.h>
 #include <fast_float/fast_float.h>
@@ -31,6 +30,8 @@
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/string_utils.hpp>
 #include <set>
+
+#include "network/http/apis.h"
 
 namespace sdb::network {
 namespace {
@@ -129,19 +130,13 @@ void ApplyParam(ListenSpec& spec, std::string_view key,
       SDB_FATAL(GENERAL, "'api' is only valid on an http endpoint '", url, "'");
     }
     for (std::string_view a : absl::StrSplit(value, ',', absl::SkipEmpty())) {
-      const auto it = absl::c_find_if(
-        kHttpApis, [&](const auto& api) { return api.first == a; });
-      if (it == kHttpApis.end()) {
+      const auto api = http::FindApi(a);
+      if (!api) {
         SDB_FATAL(GENERAL, "unknown api '", a, "' in endpoint '", url,
-                  "' (known: ",
-                  absl::StrJoin(kHttpApis, ", ",
-                                [](std::string* out, const auto& api) {
-                                  absl::StrAppend(out, api.first);
-                                }),
-                  ")");
+                  "' (known: ", http::ApiNames(), ")");
       }
-      if (!absl::c_linear_search(spec.apis, it->second)) {
-        spec.apis.push_back(it->second);
+      if (!absl::c_linear_search(spec.apis, *api)) {
+        spec.apis.push_back(*api);
       }
     }
   } else if (key == "db") {

@@ -162,9 +162,12 @@ TEST(NetworkRouter, UrlPatternSyntax) {
 }
 
 TEST(NetworkRouter, RouteTableIsFilteredByApi) {
-  for (const auto& route : http::Routes()) {
+  for (const auto api :
+       {HttpApi::Es, HttpApi::Test, HttpApi::Mcp, HttpApi::Otel}) {
     HttpRouter router;
-    router.Add(route.method, route.pattern, route.make());
+    for (const auto& route : http::GetApi(api).routes) {
+      router.Add(route.method, route.pattern, route.make());
+    }
   }
 
   HttpRouter otel;
@@ -188,6 +191,43 @@ TEST(NetworkRouter, RouteTableIsFilteredByApi) {
   request.target = "/my-index";
   EXPECT_NE(both.Match(request), nullptr);
   EXPECT_EQ(request.Param("index"), "my-index");
+}
+
+namespace {
+
+std::unique_ptr<HttpHandler> MakeRegisteredHandler() {
+  return std::make_unique<NamedHandler>("registered");
+}
+
+constexpr std::array kRegisteredRoutes{
+  http::Route{HttpMethod::Get, "/_registered/:item", MakeRegisteredHandler},
+};
+
+}  // namespace
+
+TEST(NetworkRouter, RegisteredApiServesItsRoutes) {
+  EXPECT_EQ(http::FindApi("es"), HttpApi::Es);
+  EXPECT_EQ(http::FindApi("otel"), HttpApi::Otel);
+  EXPECT_FALSE(http::FindApi("router-test"));
+
+  const auto api = http::RegisterApi(
+    {.name = "router-test", .routes = kRegisteredRoutes, .max_body_bytes = 7});
+  EXPECT_EQ(http::FindApi("router-test"), api);
+  EXPECT_EQ(http::GetApi(api).name, "router-test");
+  EXPECT_NE(http::ApiNames().find("router-test"), std::string::npos);
+  EXPECT_EQ(http::MaxBodyBytes(std::array{api}), 7u);
+  EXPECT_EQ(http::MaxBodyBytes(std::array{api, HttpApi::Mcp}),
+            uint64_t{4} << 20);
+
+  HttpRouter router;
+  http::AddRoutes(router, std::array{api});
+  HttpRequest request;
+  const auto* handler =
+    MatchRoute(router, HttpMethod::Get, "/_registered/apples", request);
+  ASSERT_NE(handler, nullptr);
+  EXPECT_EQ(handler->name, "registered");
+  EXPECT_EQ(request.Param("item"), "apples");
+  EXPECT_EQ(MatchRoute(router, HttpMethod::Get, "/_mcp", request), nullptr);
 }
 
 TEST(NetworkRouter, BodyLimitIsTheLargestOfTheApis) {

@@ -18,7 +18,6 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <cstring>
 #include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/logging/log_manager.hpp>
@@ -28,7 +27,9 @@
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <optional>
+#include <span>
 #include <string>
+#include <vector>
 
 #include "app/process.h"
 #include "catalog/boot.h"
@@ -110,16 +111,42 @@ int RunSubcommand(int argc, char* argv[],
     {.open = &OpenShellEngine, .close = &CloseShellEngine});
 }
 
+int RunShell(int argc, char* argv[]) {
+  return RunSubcommand(argc, argv, duckdb_shell::ShellSubcommand::SHELL);
+}
+
+int RunPsql(int argc, char* argv[]) {
+  return RunSubcommand(argc, argv, duckdb_shell::ShellSubcommand::PSQL);
+}
+
+std::vector<Command>& Registry() {
+  static std::vector<Command> commands;
+  return commands;
+}
+
 }  // namespace
 
-std::optional<int> RunShellCommand(int argc, char* argv[]) {
-  if (argc >= 2 && std::strcmp(argv[1], "shell") == 0) {
-    return RunSubcommand(argc, argv, duckdb_shell::ShellSubcommand::SHELL);
+void RegisterCommand(const Command& command) { Registry().push_back(command); }
+
+std::span<const Command> Commands() { return Registry(); }
+
+std::optional<int> RunCommand(int argc, char* argv[]) {
+  if (argc < 2) {
+    return std::nullopt;
   }
-  if (argc >= 2 && std::strcmp(argv[1], "psql") == 0) {
-    return RunSubcommand(argc, argv, duckdb_shell::ShellSubcommand::PSQL);
+  for (const auto& command : Registry()) {
+    if (command.name == argv[1]) {
+      return command.run(argc, argv);
+    }
   }
   return std::nullopt;
+}
+
+void RegisterShellCommands() {
+  RegisterCommand(
+    {.name = "shell", .usage = "[duckdb-shell args ...]", .run = &RunShell});
+  RegisterCommand(
+    {.name = "psql", .usage = "[psql args ...]", .run = &RunPsql});
 }
 
 }  // namespace sdb::app

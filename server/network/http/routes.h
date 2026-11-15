@@ -21,24 +21,14 @@
 #pragma once
 
 #include <cstdint>
-#include <memory>
 #include <span>
-#include <string_view>
 
+#include "network/http/apis.h"
 #include "network/http/handler.h"
 #include "network/http/router.h"
 #include "network/listen_spec.h"
 
 namespace sdb::network::http {
-
-struct Route {
-  HttpApi api;
-  HttpMethod method;
-  std::string_view pattern;
-  std::unique_ptr<HttpHandler> (*make)();
-};
-
-std::span<const Route> Routes();
 
 void AddRoutes(HttpRouter& router, std::span<const HttpApi> apis);
 

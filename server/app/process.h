@@ -21,8 +21,24 @@
 #pragma once
 
 #include <optional>
+#include <span>
+#include <string_view>
 
 namespace sdb::app {
+
+struct Command {
+  std::string_view name;
+  std::string_view usage;
+  int (*run)(int argc, char* argv[]);
+};
+
+void RegisterCommand(const Command& command);
+
+std::span<const Command> Commands();
+
+std::optional<int> RunCommand(int argc, char* argv[]);
+
+void RegisterShellCommands();
 
 void PrepareProcess(char* argv0);
 
@@ -40,8 +56,6 @@ class ServerProcess final {
   ServerProcess(const ServerProcess&) = delete;
   ServerProcess& operator=(const ServerProcess&) = delete;
 };
-
-std::optional<int> RunShellCommand(int argc, char* argv[]);
 
 void WaitForShutdown();
 

@@ -71,11 +71,13 @@ auto FlushTo(ColumnDataCheckpointData& data) {
 
 bool SealSegments(const StringAccumulator& acc, const ColCodecParams& params,
                   const duckdb::LogicalType& type, StringTuning& tuning,
-                  duckdb::BufferManager& buffers, SegmentSink sink) {
+                  duckdb::BufferManager& buffers, const CodecSet& disabled,
+                  SegmentSink sink) {
   text::StringCompressor compressor{params, type, tuning.estimators, buffers};
-  auto first = text::CompressFirstSegment(acc, params, tuning, compressor);
+  auto first =
+    text::CompressFirstSegment(acc, params, tuning, disabled, compressor);
   if (!first) {
-    return true;
+    return acc.Rows() == 0;
   }
   if (first->Size() > PlainStorageBytes(*first)) {
     return false;
@@ -150,7 +152,7 @@ void CompressAutoStrings(ColumnDataCheckpointData& data,
   StringAccumulator acc;
   Accumulate(acc, chunks, tuning);
   if (SealSegments(acc, data.params, data.type, tuning,
-                   data.ctx.BufferManager(), FlushTo(data))) {
+                   data.ctx.BufferManager(), data.disabled, FlushTo(data))) {
     return;
   }
   data.function =

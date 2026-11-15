@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include "iresearch/formats/column/codecs/codec_type.hpp"
 #include "iresearch/formats/column/codecs/text/segment_rows.hpp"
 #include "iresearch/formats/column/codecs/text/string_compressor.hpp"
 #include "iresearch/formats/column/codecs/text/string_seal.hpp"
@@ -30,6 +31,7 @@ namespace irs::codecs::text {
 PooledSegment CompressFirstSegment(const StringAccumulator& acc,
                                    const ColCodecParams& params,
                                    StringTuning& tuning,
+                                   const CodecSet& disabled,
                                    StringCompressor& compressor);
 
 }  // namespace irs::codecs::text

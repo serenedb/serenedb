@@ -82,7 +82,7 @@ An index on a table has no columnstore of its own: its `INCLUDE`d columns are th
 
 The global `force_compression` setting wins over `auto` and loses to a codec named on the column. A forced codec applies only to the columns it can store and leaves the others to `auto`: text takes none of DuckDB's codecs for numbers, so `rle` or `dictionary` leave text columns to `auto` while `uncompressed` stores them as-is, and a codec for text only, such as `zstd`, leaves numeric columns to `auto`, whose candidates include the [numeric codec](#numeric-columns). A codec that cannot encode the column's type is rejected at `CREATE TABLE` / `ALTER TABLE`. A table in an attached [DuckDB file](../../statements/attach/duckdb.md) takes DuckDB's own compressions only, and no `compression_level`.
 
-The global `disabled_compression_methods` setting removes the DuckDB compressions it lists from what `auto` considers, and a forced compression it disables falls back to `auto`.
+The global `disabled_compression_methods` setting removes the compressions it lists from what `auto` considers, for text as for numbers, and a forced compression it disables falls back to `auto`. A text row group whose every candidate is disabled is stored uncompressed.
 
 ## Inspecting storage
 

@@ -1077,7 +1077,8 @@ std::vector<irs::WriteChunk> WriteChunks(
 
 std::vector<irs::codecs::CodecType> SealAuto(
   duckdb::DatabaseInstance& db, std::span<const irs::WriteChunk> chunks,
-  const irs::ColCodecParams& params, irs::codecs::ColumnTuning& tuning) {
+  const irs::ColCodecParams& params, irs::codecs::ColumnTuning& tuning,
+  const irs::codecs::CodecSet& disabled = {}) {
   irs::MemoryDirectory dir;
   auto out = dir.create("blocks");
   irs::WriteContext ctx{db.GetBufferManager(), *out};
@@ -1093,6 +1094,7 @@ std::vector<irs::codecs::CodecType> SealAuto(
     .flush = flush,
     .params = params,
     .tuning = &tuning,
+    .disabled = disabled,
     .function = function,
   };
   function->compress(checkpoint, chunks);
@@ -1233,6 +1235,57 @@ TEST_F(ColCodecsTest, AutoChoosesPerRowGroup) {
 
   RoundTrip(irs::codecs::CodecType::Auto, {.segment_target = 16 * 1024},
             3 * kSwitch, DEFAULT_ROW_GROUP_SIZE, value);
+}
+
+TEST_F(ColCodecsTest, AutoLeavesDisabledTextCodecsOut) {
+  using irs::codecs::CodecType;
+  using irs::codecs::Shape;
+  const Value urls = [](uint64_t g) -> std::optional<std::string> {
+    return "https://example.org/section/" + std::to_string(g % 5000) +
+           "/page?id=" + std::to_string((g * 7919) % 100003);
+  };
+  const auto chunks = Chunks(4 * STANDARD_VECTOR_SIZE, urls);
+  const auto write_chunks = WriteChunks(chunks);
+  const auto without = [](std::initializer_list<CodecType> types) {
+    irs::codecs::CodecSet disabled;
+    for (const auto type : types) {
+      disabled.set(std::to_underlying(type));
+    }
+    return disabled;
+  };
+  const auto seal = [&](irs::codecs::ColumnTuning& tuning,
+                        const irs::codecs::CodecSet& disabled) {
+    const auto types = SealAuto(Db(), write_chunks, {}, tuning, disabled);
+    return std::set<CodecType>{types.begin(), types.end()};
+  };
+
+  irs::codecs::ColumnTuning kept;
+  const auto all = seal(kept, {});
+  ASSERT_EQ(all.size(), 1u);
+  const auto first = *all.begin();
+  ASSERT_TRUE(irs::codecs::IsText(first)) << irs::codecs::NameOf(first);
+  const auto shape = irs::codecs::ShapeOf(first);
+
+  const auto second = seal(kept, without({first}));
+  ASSERT_EQ(second.size(), 1u);
+  EXPECT_NE(*second.begin(), first);
+  EXPECT_TRUE(irs::codecs::IsText(*second.begin()));
+  EXPECT_EQ(irs::codecs::ShapeOf(*second.begin()), shape);
+
+  const auto other = shape == Shape::Plain ? Shape::Dedup : Shape::Plain;
+  irs::codecs::ColumnTuning fresh;
+  const auto shaped =
+    seal(fresh,
+         without({irs::codecs::TextCodec(shape, irs::codecs::ByteCodec::Fsst),
+                  irs::codecs::TextCodec(shape, irs::codecs::ByteCodec::Lz4)}));
+  ASSERT_EQ(shaped.size(), 1u);
+  ASSERT_TRUE(irs::codecs::IsText(*shaped.begin()));
+  EXPECT_EQ(irs::codecs::ShapeOf(*shaped.begin()), other);
+
+  irs::codecs::ColumnTuning none;
+  EXPECT_EQ(seal(none, without({CodecType::Fsst, CodecType::Lz4,
+                                CodecType::DictFsst, CodecType::DictLz4})),
+            std::set<CodecType>{CodecType::Uncompressed});
 }
 
 TEST_F(ColCodecsTest, PointReadsAlternateBlocksOfDifferentCodecs) {

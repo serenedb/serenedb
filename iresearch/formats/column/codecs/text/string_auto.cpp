@@ -200,6 +200,17 @@ Config Fast(Shape shape) noexcept {
   return {.shape = shape, .leaf = ByteCodec::Lz4, .level = kLz4Fast};
 }
 
+bool Enabled(const CodecSet& disabled, Shape shape, ByteCodec leaf) noexcept {
+  return !disabled.test(std::to_underlying(TextCodec(shape, leaf)));
+}
+
+bool Enabled(const CodecSet& disabled, const TierCandidates& tier,
+             Shape shape) noexcept {
+  return absl::c_any_of(tier.candidates, [&](const Candidate& candidate) {
+    return Enabled(disabled, shape, candidate.leaf);
+  });
+}
+
 Config Current(const StringAccumulator& acc,
                const StringTuning& tuning) noexcept {
   if (tuning.reuse.pick) {
@@ -218,6 +229,7 @@ bool Drifted(const StringTuning& tuning, const Segment& seg) noexcept {
 PooledSegment DetectBestCompressionMethod(const StringAccumulator& acc,
                                           const ColCodecParams& params,
                                           StringTuning& tuning,
+                                          const CodecSet& disabled,
                                           StringCompressor& compressor,
                                           PooledSegment first, bool drift) {
   const auto input = first->input;
@@ -250,6 +262,10 @@ PooledSegment DetectBestCompressionMethod(const StringAccumulator& acc,
   auto& tuned = tuning.tuned;
   const bool tune = entries >= kTuneMinEntries && !tuned.done;
   const auto& tier = CandidatesOf(params.tier);
+  if (!Enabled(disabled, tier, shape)) {
+    shape = shape == Shape::Dedup ? Shape::Plain : Shape::Dedup;
+  }
+  SDB_ASSERT(Enabled(disabled, tier, shape));
   const double fsst_preference = shape == Shape::Plain
                                    ? tier.plain_fsst_preference
                                    : tier.dedup_fsst_preference;
@@ -257,6 +273,9 @@ PooledSegment DetectBestCompressionMethod(const StringAccumulator& acc,
   size_t count = 0;
   size_t best = 0;
   for (const auto& candidate : tier.candidates) {
+    if (!Enabled(disabled, shape, candidate.leaf)) {
+      continue;
+    }
     const auto analysis = candidate.analyze({
       .window = window,
       .shape = shape,
@@ -278,7 +297,7 @@ PooledSegment DetectBestCompressionMethod(const StringAccumulator& acc,
     }
     ++count;
   }
-  if (tune) {
+  if (tune && count == tier.candidates.size()) {
     tuned.done = true;
   }
   auto picked = window.TrialCompress(scored[best].config);
@@ -290,11 +309,14 @@ PooledSegment DetectBestCompressionMethod(const StringAccumulator& acc,
   }
   for (size_t i = 0; i < window.Encodings(); ++i) {
     const auto& seg = window.At(i);
-    if (seg.config.shape == shape && seg.Size() < window.At(picked).Size()) {
+    if (seg.config.shape == shape &&
+        Enabled(disabled, shape, seg.config.leaf) &&
+        seg.Size() < window.At(picked).Size()) {
       picked = i;
     }
   }
-  if (fsst_preference > 0 && window.At(picked).config.leaf != ByteCodec::Fsst) {
+  if (fsst_preference > 0 && Enabled(disabled, shape, ByteCodec::Fsst) &&
+      window.At(picked).config.leaf != ByteCodec::Fsst) {
     const auto fsst =
       window.TrialCompress({.shape = shape, .leaf = ByteCodec::Fsst});
     if (static_cast<double>(window.At(fsst).Size()) <=
@@ -317,15 +339,21 @@ PooledSegment DetectBestCompressionMethod(const StringAccumulator& acc,
 PooledSegment CompressFirstSegment(const StringAccumulator& acc,
                                    const ColCodecParams& params,
                                    StringTuning& tuning,
+                                   const CodecSet& disabled,
                                    StringCompressor& compressor) {
   const bool due = tuning.reuse.Due();
-  if (acc.Rows() == 0) {
+  const auto& tier = CandidatesOf(params.tier);
+  if (acc.Rows() == 0 || (!Enabled(disabled, tier, Shape::Dedup) &&
+                          !Enabled(disabled, tier, Shape::Plain))) {
     return {};
   }
-  auto first = compressor.CompressSegment(Current(acc, tuning), acc, 0);
-  if (const bool drift = !due && Drifted(tuning, *first); due || drift) {
-    return DetectBestCompressionMethod(acc, params, tuning, compressor,
-                                       std::move(first), drift);
+  const auto current = Current(acc, tuning);
+  auto first = compressor.CompressSegment(current, acc, 0);
+  const bool enabled = Enabled(disabled, current.shape, current.leaf);
+  if (const bool drift = !due && Drifted(tuning, *first);
+      due || drift || !enabled) {
+    return DetectBestCompressionMethod(acc, params, tuning, disabled,
+                                       compressor, std::move(first), drift);
   }
   return first;
 }

@@ -227,7 +227,7 @@ bool ColumnWriter::Compress(const duckdb::LogicalType& type,
   const auto physical = type.InternalType();
   const auto* function = codecs::GetCodec(method, physical);
   if (!function || !function->compress ||
-      (function->analyze && _disabled.test(std::to_underlying(method)))) {
+      _disabled.test(std::to_underlying(method))) {
     function = codecs::GetCodec(codecs::CodecType::Auto, physical);
   } else if (!codecs::Accepts(*function, chunks)) {
     function = codecs::GetCodec(codecs::CodecType::Uncompressed, physical);

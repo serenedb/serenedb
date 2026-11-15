@@ -1,4 +1,8 @@
 statement ok
+SET disabled_optimizers = 'compressed_materialization';
+
+
+statement ok
 CREATE TABLE ua_rep (k INT PRIMARY KEY, a INT, b TEXT DEFAULT 'd');
 
 
@@ -376,43 +380,35 @@ query
 EXPLAIN INSERT OR REPLACE INTO ua_part (k, a) VALUES (3, 31) RETURNING b;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────╮
-│ Projections: b                    │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ MERGE_INTO ────┴─────────────────╮
-╰─────────────────┬─────────────────╯
-                  ├────────────────────────────────────────────────────────────────────────────────────┬───────────────────────────────────────╮
-╭─ PROJECTION ────┴─────────────────╮                                                ╭─ PROJECTION ────┴────────────────╮  ╭─ PROJECTION ──────┴──────────────────╮
-│ Projections: k, a, b, a, #0, #1,  │                                                │ Projections: #0, #1, #2,         │  │ Projections: #0, #1, #2, 'INSERT'    │
-│              rowid                │                                                │              'UPDATE'            │  │ ~1 row                               │
-│ ~1 row                            │                                                │ ~1 row                           │  ╰───────────────────┬──────────────────╯
-╰─────────────────┬─────────────────╯                                                ╰─────────────────┬────────────────╯  ╭─ INSERT ──────────┴──────────────────╮
-╭─ PROJECTION ────┴─────────────────╮                                                ╭─ UPDATE ────────┴────────────────╮  ╰───────────────────┬──────────────────╯
-│ Projections:                      │                                                │ Table: ua_part                   │  ╭─ PROJECTION ──────┴──────────────────╮
-│ #0, #1, #2, #3, #4,               │                                                │ Row Ids: ASSUME_UNIQUE           │  │ Projections: #0, #1, #2              │
-│ __internal_decompress_string(#5)  │                                                │ Patched Columns: a               │  │ ~1 row                               │
-│ ~1 row                            │                                                ╰─────────────────┬────────────────╯  ╰───────────────────┬──────────────────╯
-╰─────────────────┬─────────────────╯                                                ╭─ PROJECTION ────┴────────────────╮  ╭─ MERGE_ACTION_SOURCE ────────────────╮
-╭─ HASH_JOIN ─────┴─────────────────╮                                                │ Projections: #3, #4, #5, #6      │  │ Action: WHEN NOT MATCHED THEN INSERT │
-│ Join Type: RIGHT                  │                                                │ ~1 row                           │  │ ~1 row                               │
-│ Conditions: k = k                 │                                                ╰─────────────────┬────────────────╯  ╰──────────────────────────────────────╯
-│ ~1 row                            │                                                ╭─ MERGE_ACTION_SOURCE ────────────╮
-╰─────────────────┬─────────────────╯                                                │ Action: WHEN MATCHED THEN UPDATE │
-                  ├──────────────────────────────────────────╮                       │ ~1 row                           │
-╭─ IRESEARCH_SCAN ┴─────────────────╮  ╭─ PROJECTION ────────┴────────────────────╮  ╰──────────────────────────────────╯
-│ Table: ua_part                    │  │ Projections:                             │
-│ Projections: k, k, b, rowid       │  │ #0, #1,                                  │
-│ ~5 rows                           │  │ __internal_compress_string_utinyint(#2)  │
-╰───────────────────────────────────╯  │ ~1 row                                   │
-                                       ╰─────────────────────┬────────────────────╯
-                                       ╭─ PROJECTION ────────┴────────────────────╮
-                                       │ Projections: k, a, 'd'                   │
-                                       │ ~1 row                                   │
-                                       ╰─────────────────────┬────────────────────╯
-                                       ╭─ COLUMN_DATA_SCAN ──┴────────────────────╮
-                                       │ ~1 row                                   │
-                                       ╰──────────────────────────────────────────╯
+╭─ PROJECTION ────────╮
+│ Projections: b      │
+│ ~1 row              │
+╰──────────┬──────────╯
+╭─ MERGE_INTO ────────╮
+╰──────────┬──────────╯
+           ├───────────────────────────────────────────────────────┬───────────────────────────────────────╮
+╭─ PROJECTION ────────╮                          ╭─ PROJECTION ────┴────────────────╮  ╭─ PROJECTION ──────┴──────────────────╮
+│ Projections: k, a,  │                          │ Projections: #0, #1, #2,         │  │ Projections: #0, #1, #2, 'INSERT'    │
+│              b, a,  │                          │              'UPDATE'            │  │ ~1 row                               │
+│              #0,    │                          │ ~1 row                           │  ╰───────────────────┬──────────────────╯
+│              #1,    │                          ╰─────────────────┬────────────────╯  ╭─ INSERT ──────────┴──────────────────╮
+│              rowid  │                          ╭─ UPDATE ────────┴────────────────╮  ╰───────────────────┬──────────────────╯
+│ ~1 row              │                          │ Table: ua_part                   │  ╭─ PROJECTION ──────┴──────────────────╮
+╰──────────┬──────────╯                          │ Row Ids: ASSUME_UNIQUE           │  │ Projections: #0, #1, #2              │
+╭─ HASH_JOIN ─────────╮                          │ Patched Columns: a               │  │ ~1 row                               │
+│ Join Type: RIGHT    │                          ╰─────────────────┬────────────────╯  ╰───────────────────┬──────────────────╯
+│ Conditions: k = k   │                          ╭─ PROJECTION ────┴────────────────╮  ╭─ MERGE_ACTION_SOURCE ────────────────╮
+│ ~1 row              │                          │ Projections: #3, #4, #5, #6      │  │ Action: WHEN NOT MATCHED THEN INSERT │
+╰──────────┬──────────╯                          │ ~1 row                           │  │ ~1 row                               │
+           ├────────────────────────╮            ╰─────────────────┬────────────────╯  ╰──────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ────╮  ╭─ PROJECTION ───────╮  ╭─ MERGE_ACTION_SOURCE ────────────╮
+│ Table: ua_part      │  │ Projections: k, a, │  │ Action: WHEN MATCHED THEN UPDATE │
+│ Projections: k, k,  │  │              'd'   │  │ ~1 row                           │
+│              b,     │  │ ~1 row             │  ╰──────────────────────────────────╯
+│              rowid  │  ╰──────────┬─────────╯
+│ ~5 rows             │  ╭─ COLUMN_DATA_SCAN ─╮
+╰─────────────────────╯  │ ~1 row             │
+                         ╰────────────────────╯
 
 
 query ??? rowsort
@@ -431,39 +427,31 @@ query
 EXPLAIN INSERT OR REPLACE INTO ua_part (k, a) VALUES (1, 11);
 ----
 QUERY PLAN
-╭─ MERGE_INTO ──────────────────────╮
-╰─────────────────┬─────────────────╯
-                  ├──────────────────────────────────────┬───────────────────────────────────────╮
-╭─ PROJECTION ────┴─────────────────╮  ╭─ UPDATE ────────┴────────────────╮  ╭─ INSERT ──────────┴──────────────────╮
-│ Projections: k, a, b, a, #0, #1,  │  │ Table: ua_part                   │  ╰───────────────────┬──────────────────╯
-│              rowid                │  │ Row Ids: ASSUME_UNIQUE           │  ╭─ PROJECTION ──────┴──────────────────╮
-│ ~1 row                            │  ╰─────────────────┬────────────────╯  │ Projections: #0, #1, #2              │
-╰─────────────────┬─────────────────╯  ╭─ PROJECTION ────┴────────────────╮  │ ~1 row                               │
-╭─ PROJECTION ────┴─────────────────╮  │ Projections: #3, #4, #5, #6      │  ╰───────────────────┬──────────────────╯
-│ Projections:                      │  │ ~1 row                           │  ╭─ MERGE_ACTION_SOURCE ────────────────╮
-│ #0, #1, #2, #3, #4,               │  ╰─────────────────┬────────────────╯  │ Action: WHEN NOT MATCHED THEN INSERT │
-│ __internal_decompress_string(#5)  │  ╭─ MERGE_ACTION_SOURCE ────────────╮  │ ~1 row                               │
-│ ~1 row                            │  │ Action: WHEN MATCHED THEN UPDATE │  ╰──────────────────────────────────────╯
-╰─────────────────┬─────────────────╯  │ ~1 row                           │
-╭─ HASH_JOIN ─────┴─────────────────╮  ╰──────────────────────────────────╯
-│ Join Type: RIGHT                  │
-│ Conditions: k = k                 │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-                  ├──────────────────────────────────────────╮
-╭─ IRESEARCH_SCAN ┴─────────────────╮  ╭─ PROJECTION ────────┴────────────────────╮
-│ Table: ua_part                    │  │ Projections:                             │
-│ Projections: k, k, b, rowid       │  │ #0, #1,                                  │
-│ ~6 rows                           │  │ __internal_compress_string_utinyint(#2)  │
-╰───────────────────────────────────╯  │ ~1 row                                   │
-                                       ╰─────────────────────┬────────────────────╯
-                                       ╭─ PROJECTION ────────┴────────────────────╮
-                                       │ Projections: k, a, 'd'                   │
-                                       │ ~1 row                                   │
-                                       ╰─────────────────────┬────────────────────╯
-                                       ╭─ COLUMN_DATA_SCAN ──┴────────────────────╮
-                                       │ ~1 row                                   │
-                                       ╰──────────────────────────────────────────╯
+╭─ MERGE_INTO ────────╮
+╰──────────┬──────────╯
+           ├───────────────────────────────┬───────────────────────────────────────╮
+╭─ PROJECTION ────────╮  ╭─ UPDATE ────────┴────────────────╮  ╭─ INSERT ──────────┴──────────────────╮
+│ Projections: k, a,  │  │ Table: ua_part                   │  ╰───────────────────┬──────────────────╯
+│              b, a,  │  │ Row Ids: ASSUME_UNIQUE           │  ╭─ PROJECTION ──────┴──────────────────╮
+│              #0,    │  ╰─────────────────┬────────────────╯  │ Projections: #0, #1, #2              │
+│              #1,    │  ╭─ PROJECTION ────┴────────────────╮  │ ~1 row                               │
+│              rowid  │  │ Projections: #3, #4, #5, #6      │  ╰───────────────────┬──────────────────╯
+│ ~1 row              │  │ ~1 row                           │  ╭─ MERGE_ACTION_SOURCE ────────────────╮
+╰──────────┬──────────╯  ╰─────────────────┬────────────────╯  │ Action: WHEN NOT MATCHED THEN INSERT │
+╭─ HASH_JOIN ─────────╮  ╭─ MERGE_ACTION_SOURCE ────────────╮  │ ~1 row                               │
+│ Join Type: RIGHT    │  │ Action: WHEN MATCHED THEN UPDATE │  ╰──────────────────────────────────────╯
+│ Conditions: k = k   │  │ ~1 row                           │
+│ ~1 row              │  ╰──────────────────────────────────╯
+╰──────────┬──────────╯
+           ├────────────────────────╮
+╭─ IRESEARCH_SCAN ────╮  ╭─ PROJECTION ───────╮
+│ Table: ua_part      │  │ Projections: k, a, │
+│ Projections: k, k,  │  │              'd'   │
+│              b,     │  │ ~1 row             │
+│              rowid  │  ╰──────────┬─────────╯
+│ ~6 rows             │  ╭─ COLUMN_DATA_SCAN ─╮
+╰─────────────────────╯  │ ~1 row             │
+                         ╰────────────────────╯
 
 
 statement count 1
@@ -540,39 +528,31 @@ query
 EXPLAIN INSERT OR REPLACE INTO ua_check (k, a) VALUES (1, 2);
 ----
 QUERY PLAN
-╭─ MERGE_INTO ──────────────────────╮
-╰─────────────────┬─────────────────╯
-                  ├──────────────────────────────────────┬───────────────────────────────────────╮
-╭─ PROJECTION ────┴─────────────────╮  ╭─ UPDATE ────────┴────────────────╮  ╭─ INSERT ──────────┴──────────────────╮
-│ Projections: k, a, b, a, #0, #1,  │  │ Table: ua_check                  │  ╰───────────────────┬──────────────────╯
-│              rowid                │  │ Row Ids: ASSUME_UNIQUE           │  ╭─ PROJECTION ──────┴──────────────────╮
-│ ~1 row                            │  ╰─────────────────┬────────────────╯  │ Projections: #0, #1, #2              │
-╰─────────────────┬─────────────────╯  ╭─ PROJECTION ────┴────────────────╮  │ ~1 row                               │
-╭─ PROJECTION ────┴─────────────────╮  │ Projections: #3, #4, #5, #6      │  ╰───────────────────┬──────────────────╯
-│ Projections:                      │  │ ~1 row                           │  ╭─ MERGE_ACTION_SOURCE ────────────────╮
-│ #0, #1, #2, #3, #4,               │  ╰─────────────────┬────────────────╯  │ Action: WHEN NOT MATCHED THEN INSERT │
-│ __internal_decompress_string(#5)  │  ╭─ MERGE_ACTION_SOURCE ────────────╮  │ ~1 row                               │
-│ ~1 row                            │  │ Action: WHEN MATCHED THEN UPDATE │  ╰──────────────────────────────────────╯
-╰─────────────────┬─────────────────╯  │ ~1 row                           │
-╭─ HASH_JOIN ─────┴─────────────────╮  ╰──────────────────────────────────╯
-│ Join Type: RIGHT                  │
-│ Conditions: k = k                 │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-                  ├──────────────────────────────────────────╮
-╭─ IRESEARCH_SCAN ┴─────────────────╮  ╭─ PROJECTION ────────┴────────────────────╮
-│ Table: ua_check                   │  │ Projections:                             │
-│ Projections: k, k, b, rowid       │  │ #0, #1,                                  │
-│ ~1 row                            │  │ __internal_compress_string_utinyint(#2)  │
-╰───────────────────────────────────╯  │ ~1 row                                   │
-                                       ╰─────────────────────┬────────────────────╯
-                                       ╭─ PROJECTION ────────┴────────────────────╮
-                                       │ Projections: k, a, NULL::VARCHAR         │
-                                       │ ~1 row                                   │
-                                       ╰─────────────────────┬────────────────────╯
-                                       ╭─ COLUMN_DATA_SCAN ──┴────────────────────╮
-                                       │ ~1 row                                   │
-                                       ╰──────────────────────────────────────────╯
+╭─ MERGE_INTO ────────╮
+╰──────────┬──────────╯
+           ├───────────────────────────────┬───────────────────────────────────────╮
+╭─ PROJECTION ────────╮  ╭─ UPDATE ────────┴────────────────╮  ╭─ INSERT ──────────┴──────────────────╮
+│ Projections: k, a,  │  │ Table: ua_check                  │  ╰───────────────────┬──────────────────╯
+│              b, a,  │  │ Row Ids: ASSUME_UNIQUE           │  ╭─ PROJECTION ──────┴──────────────────╮
+│              #0,    │  ╰─────────────────┬────────────────╯  │ Projections: #0, #1, #2              │
+│              #1,    │  ╭─ PROJECTION ────┴────────────────╮  │ ~1 row                               │
+│              rowid  │  │ Projections: #3, #4, #5, #6      │  ╰───────────────────┬──────────────────╯
+│ ~1 row              │  │ ~1 row                           │  ╭─ MERGE_ACTION_SOURCE ────────────────╮
+╰──────────┬──────────╯  ╰─────────────────┬────────────────╯  │ Action: WHEN NOT MATCHED THEN INSERT │
+╭─ HASH_JOIN ─────────╮  ╭─ MERGE_ACTION_SOURCE ────────────╮  │ ~1 row                               │
+│ Join Type: RIGHT    │  │ Action: WHEN MATCHED THEN UPDATE │  ╰──────────────────────────────────────╯
+│ Conditions: k = k   │  │ ~1 row                           │
+│ ~1 row              │  ╰──────────────────────────────────╯
+╰──────────┬──────────╯
+           ├────────────────────────────╮
+╭─ IRESEARCH_SCAN ────╮  ╭─ PROJECTION ─┴──────────────╮
+│ Table: ua_check     │  │ Projections: k, a,          │
+│ Projections: k, k,  │  │              NULL::VARCHAR  │
+│              b,     │  │ ~1 row                      │
+│              rowid  │  ╰──────────────┬──────────────╯
+│ ~1 row              │  ╭─ COLUMN_DATA_SCAN ──────────╮
+╰─────────────────────╯  │ ~1 row                      │
+                         ╰─────────────────────────────╯
 
 
 statement count 1

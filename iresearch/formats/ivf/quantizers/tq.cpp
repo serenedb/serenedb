@@ -21,6 +21,7 @@
 #include <faiss/impl/ScalarQuantizer.h>
 #include <faiss/utils/random.h>
 
+#include <cmath>
 #include <core_functions/array_kernels.hpp>
 #include <limits>
 #include <numbers>
@@ -1048,8 +1049,8 @@ class TurboQuantizerCodebook final : public QuantizerCodebook {
     const float scale_q = maxq > 0.f ? 127.f / maxq : 0.f;
     _qi.resize(lay.rd);
     for (uint32_t j = 0; j < lay.rd; ++j) {
-      _qi[j] = static_cast<int8_t>(
-        std::clamp(std::nearbyint(_rot_query[j] * scale_q), -127.f, 127.f));
+      _qi[j] = static_cast<int8_t>(std::fmin(
+        std::fmax(std::nearbyint(_rot_query[j] * scale_q), -127.f), 127.f));
     }
     const bool uniform = lay.bits_hi == lay.bits_lo;
     _nsegs = uniform ? 1 : 2;

@@ -20,6 +20,7 @@
 
 #include <absl/random/distributions.h>
 
+#include <cmath>
 #include <limits>
 #include <pcg_random.hpp>
 
@@ -695,7 +696,7 @@ class BinaryQuantizerCodebook final : public QuantizerCodebook {
     constexpr auto kTop = static_cast<float>(kBqQueryTop);
     for (size_t k = 0; k < w.size(); ++k) {
       q[k] = static_cast<int8_t>(
-        std::clamp(std::nearbyint(w[k] * scale), -kTop, kTop));
+        std::fmin(std::fmax(std::nearbyint(w[k] * scale), -kTop), kTop));
     }
   }
 

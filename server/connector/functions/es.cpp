@@ -361,7 +361,8 @@ void CreateTextIndex(duckdb::ClientContext& context,
   index_entry.SetConfig(BindInvertedIndexConfig(context, index_entry, table,
                                                 bound_expressions,
                                                 duckdb::LogicalType::INVALID));
-  storage->BeginIndexBuild(index_entry.oid, index_entry.Config()).Finish();
+  storage->BeginIndexBuild(context, index_entry.oid, index_entry.Config())
+    .Finish();
 }
 
 void EsCreateIndexExecute(duckdb::ClientContext& context,

@@ -340,24 +340,20 @@ bool ColWriter::Commit(uint64_t target_row,
     Close(entry);
   }
   format_utils::WriteFooter(*_out, [&](duckdb::BinarySerializer& footer) {
-    if (!_columns.empty()) {
-      footer.WriteList(
-        kColFieldColumns, "columns", _columns.size(),
-        [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-          list.WriteObject([&](duckdb::BinarySerializer& obj) {
-            SerializeColumnMeta(obj, _columns[i].meta);
-          });
+    footer.WriteOptionalList(
+      kColFieldColumns, "columns", _columns.size(),
+      [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+        list.WriteObject([&](duckdb::BinarySerializer& obj) {
+          SerializeColumnMeta(obj, _columns[i].meta);
         });
-    }
-    if (!norms.empty()) {
-      footer.WriteList(
-        kColFieldNormColumns, "norm_columns", norms.size(),
-        [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-          list.WriteObject([&](duckdb::BinarySerializer& obj) {
-            SerializeNormColumn(obj, *norms[i]);
-          });
+      });
+    footer.WriteOptionalList(
+      kColFieldNormColumns, "norm_columns", norms.size(),
+      [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+        list.WriteObject([&](duckdb::BinarySerializer& obj) {
+          SerializeNormColumn(obj, *norms[i]);
         });
-    }
+      });
   });
   _out.reset();
   _committed = true;

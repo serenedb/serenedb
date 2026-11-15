@@ -92,14 +92,12 @@ ColumnBlockMeta DeserializeColumnBlockMeta(duckdb::BinaryDeserializer& d,
 template<typename T, typename Write>
 void WriteObjects(duckdb::BinarySerializer& s, duckdb::field_id_t id,
                   const char* tag, const std::vector<T>& items, Write&& write) {
-  if (items.empty()) {
-    return;
-  }
-  s.WriteList(id, tag, items.size(),
-              [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-                list.WriteObject(
-                  [&](duckdb::BinarySerializer& obj) { write(obj, items[i]); });
-              });
+  s.WriteOptionalList(
+    id, tag, items.size(),
+    [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+      list.WriteObject(
+        [&](duckdb::BinarySerializer& obj) { write(obj, items[i]); });
+    });
 }
 
 template<typename Read>
@@ -248,12 +246,11 @@ void SerializeColumnMeta(duckdb::BinarySerializer& s, const ColumnMeta& meta) {
                    1, "unshredded", [&](duckdb::BinarySerializer& unshredded) {
                      SerializeColumnMeta(unshredded, *rg.unshredded);
                    });
-                 if (rg.shredded) {
-                   obj.WriteObject(
-                     2, "shredded", [&](duckdb::BinarySerializer& shredded) {
-                       SerializeColumnMeta(shredded, *rg.shredded);
-                     });
-                 }
+                 obj.WriteOptionalObject(
+                   2, "shredded", rg.shredded != nullptr,
+                   [&](duckdb::BinarySerializer& shredded) {
+                     SerializeColumnMeta(shredded, *rg.shredded);
+                   });
                });
   s.WritePropertyWithDefault(7, "distinct", meta.distinct);
   s.WritePropertyWithDefault<uint8_t>(8, "compression_level",
@@ -337,7 +334,7 @@ ColumnReader::ColumnReader(field_id id, duckdb::LogicalType type,
 void ColumnReader::FinishStats(duckdb::BaseStatistics stats) {
   if (_validity) {
     stats.Merge(_validity->MergedStatistics());
-  } else if (_row_count > 0 && !_children.empty()) {
+  } else if (_row_count > 0 && (!_children.empty() || _segments.empty())) {
     SDB_ASSERT(!stats.CanHaveNull(),
                "column without a validity payload carries null-bearing stats");
     stats.SetHasNoNull();
@@ -1159,8 +1156,14 @@ void ColumnReader::SkipRows(ScanState& s, duckdb::idx_t count) const {
 
 std::unique_ptr<ColumnReader> ColumnReader::Make(ColumnMeta&& meta,
                                                  uint64_t file_id) {
+  const auto id = meta.type.id();
+  const bool fieldless =
+    meta.children.empty() &&
+    (id == duckdb::LogicalTypeId::STRUCT ||
+     id == duckdb::LogicalTypeId::TUPLE || id == duckdb::LogicalTypeId::UNION);
   std::unique_ptr<ColumnReader> validity;
-  if (absl::c_any_of(meta.validity, [](const ColumnBlockMeta& m) {
+  if ((fieldless && !meta.validity.empty()) ||
+      absl::c_any_of(meta.validity, [](const ColumnBlockMeta& m) {
         return m.codec->type != codecs::CodecType::Empty;
       })) {
     validity.reset(new ColumnReader{

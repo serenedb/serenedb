@@ -7,34 +7,16 @@ dexp	dexp	dexp	?column?	dexp	dexp	dexp	dexp
 1	2.718281828459045	0.36787944117144233	t	0	Infinity	NaN	NULL
 
 
-onlyif postgres
 statement error
 SELECT dexp(710);
 ----
 db error: ERROR: value out of range: overflow
 
 
-skipif postgres
-query
-SELECT dexp(710);
-----
-dexp
-Infinity
-
-
-onlyif postgres
 statement error
 SELECT dexp(-746);
 ----
 db error: ERROR: value out of range: underflow
-
-
-skipif postgres
-query
-SELECT dexp(-746);
-----
-dexp
-0
 
 
 # dlog1
@@ -168,17 +150,8 @@ SELECT numeric_log(0, 10);
 db error: ERROR: cannot take logarithm of zero
 
 
-onlyif postgres
 statement error (value overflows numeric format|value out of range: overflow)
 SELECT numeric_exp(100000);
-
-
-skipif postgres
-query
-SELECT numeric_exp(100000);
-----
-numeric_exp
-Infinity
 
 
 # dsqrt

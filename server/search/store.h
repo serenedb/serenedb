@@ -64,7 +64,6 @@
 #include "search/store_stats.h"
 #include "search/table.h"
 #include "search/table_replay.h"
-#include "search/writer_generations.h"
 #include "utils/drain_gate.h"
 
 namespace duckdb {
@@ -237,6 +236,11 @@ class Store final : public std::enable_shared_from_this<Store>,
   // A search table's merged index layout: the configs of its indexes, with a
   // build in flight hidden from scans until it finishes.
   std::shared_ptr<const catalog::InvertedIndexConfig> Config() const;
+  struct VersionedConfig {
+    std::shared_ptr<const catalog::InvertedIndexConfig> config;
+    uint64_t version = 0;
+  };
+  VersionedConfig ConfigToWrite() const;
   void MergeIndexConfig(
     duckdb::idx_t index_oid,
     std::shared_ptr<const catalog::InvertedIndexConfig> config);
@@ -262,6 +266,8 @@ class Store final : public std::enable_shared_from_this<Store>,
   Exclusive ExclusiveClaim() const;
 
   uint64_t SchemaEpoch() const noexcept { return _schema_epoch.load(); }
+  uint64_t Version() const noexcept { return _version.load(); }
+  void AdvanceVersion(duckdb::ClientContext& context);
   void AddTableColumns(const duckdb::ColumnList& columns);
   void SetTableColumns(const duckdb::ColumnList& columns);
   void SetConstraintKeys(std::vector<catalog::ConstraintKey> keys);
@@ -302,15 +308,10 @@ class Store final : public std::enable_shared_from_this<Store>,
   };
 
   BuildClaim BeginIndexBuild(
-    duckdb::idx_t index_oid,
+    duckdb::ClientContext& context, duckdb::idx_t index_oid,
     std::shared_ptr<const catalog::InvertedIndexConfig> config);
   bool BuildInFlight() const;
   bool HasIndexes() const;
-
-  [[nodiscard]] WriterGenerations::Writer RegisterWriter() noexcept {
-    return _writers.Register();
-  }
-  void DrainPriorWriters(duckdb::ClientContext& context);
 
   irs::IndexWriter::CompactionFloorGuard ArmCompactionFloor(
     duckdb::ClientContext& context);
@@ -445,7 +446,7 @@ class Store final : public std::enable_shared_from_this<Store>,
   mutable std::vector<std::weak_ptr<const Referencing>> _referencing
     ABSL_GUARDED_BY(_referencing_mutex);
   std::atomic<uint64_t> _schema_epoch{0};
-  WriterGenerations _writers;
+  std::atomic<uint64_t> _version{0};
   std::unique_ptr<Table> _table;
   bool _on_disk = false;
   std::atomic<uint64_t> _piece_requests{0};

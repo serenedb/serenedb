@@ -9,4 +9,11 @@ statement ok
 INSERT INTO tbl VALUES (1, 42);
 
 statement ok
-INSERT INTO tbl VALUES (1, 52), (1, 62) ON CONFLICT DO UPDATE SET j = EXCLUDED.j;
+INSERT INTO tbl VALUES (1, 52), (2, 62) ON CONFLICT DO UPDATE SET j = EXCLUDED.j;
+
+query
+SELECT i, j FROM tbl ORDER BY i;
+----
+i	j
+1	52
+2	62

@@ -67,6 +67,7 @@
 #include "catalog/foreign_database.h"
 #include "catalog/record.h"
 #include "catalog/transaction.h"
+#include "connector/column_id.h"
 #include "connector/duckdb_physical_search_delete.h"
 #include "connector/duckdb_physical_search_insert.h"
 #include "connector/duckdb_physical_search_truncate.h"
@@ -78,6 +79,8 @@
 #include "pg/catalog/oids.h"
 #include "query/config.h"
 #include "search/store.h"
+#include "search/table_keys.h"
+#include "search/writes.h"
 
 namespace sdb::catalog {
 namespace {
@@ -87,6 +90,39 @@ const SearchTableEntry& SearchTable(const duckdb::TableCatalogEntry& table) {
     RefuseSystemCatalog(table);
   }
   return table.Cast<SearchTableEntry>();
+}
+
+bool ExactKeyType(const duckdb::LogicalType& type) {
+  switch (type.id()) {
+    case duckdb::LogicalTypeId::VARCHAR:
+      return duckdb::StringType::GetCollation(type).empty();
+    case duckdb::LogicalTypeId::BOOLEAN:
+    case duckdb::LogicalTypeId::TINYINT:
+    case duckdb::LogicalTypeId::SMALLINT:
+    case duckdb::LogicalTypeId::INTEGER:
+    case duckdb::LogicalTypeId::BIGINT:
+    case duckdb::LogicalTypeId::HUGEINT:
+    case duckdb::LogicalTypeId::UTINYINT:
+    case duckdb::LogicalTypeId::USMALLINT:
+    case duckdb::LogicalTypeId::UINTEGER:
+    case duckdb::LogicalTypeId::UBIGINT:
+    case duckdb::LogicalTypeId::UHUGEINT:
+    case duckdb::LogicalTypeId::DECIMAL:
+    case duckdb::LogicalTypeId::DATE:
+    case duckdb::LogicalTypeId::TIME:
+    case duckdb::LogicalTypeId::TIMESTAMP_SEC:
+    case duckdb::LogicalTypeId::TIMESTAMP_MS:
+    case duckdb::LogicalTypeId::TIMESTAMP:
+    case duckdb::LogicalTypeId::TIMESTAMP_NS:
+    case duckdb::LogicalTypeId::TIMESTAMP_TZ:
+    case duckdb::LogicalTypeId::UUID:
+    case duckdb::LogicalTypeId::BLOB:
+    case duckdb::LogicalTypeId::BIT:
+    case duckdb::LogicalTypeId::ENUM:
+      return true;
+    default:
+      return false;
+  }
 }
 
 bool IsReservedSchemaName(const duckdb::Identifier& name) {
@@ -390,16 +426,62 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SereneDBCatalog::MakeIndex(
 }
 
 duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
-  duckdb::ClientContext&, duckdb::PhysicalPlanGenerator& planner,
+  duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
   duckdb::LogicalInsert& op,
   duckdb::optional_ptr<duckdb::PhysicalOperator> plan) {
   SDB_ASSERT(plan);
-  auto& insert = planner.Make<connector::SereneDBSearchInsert>(
-    SearchTable(op.table), std::move(op.bound_constraints), op.types,
-    op.estimated_cardinality, op.return_chunk);
-  insert.children.emplace_back(*plan);
-  connector::ShareScanPayloads(*plan);
-  return insert;
+  const auto& table = SearchTable(op.table);
+  if (op.action_type == duckdb::OnConflictAction::THROW) {
+    auto& insert = planner.Make<connector::SereneDBSearchInsert>(
+      table, std::move(op.bound_constraints), op.types,
+      op.estimated_cardinality, op.return_chunk);
+    insert.children.emplace_back(*plan);
+    connector::ShareScanPayloads(*plan);
+    return insert;
+  }
+  std::vector<connector::ColumnId> target;
+  for (const auto& column : table.GetColumns().Physical()) {
+    if (op.on_conflict_filter.contains(column.Physical().index)) {
+      target.push_back(connector::TableColumnId(column));
+    }
+  }
+  const bool replace = op.action_type == duckdb::OnConflictAction::REPLACE;
+  const bool in_place = replace && op.replace_in_place;
+  std::vector<connector::ReplacedColumn> patched;
+  if (in_place) {
+    for (const auto index : op.set_columns) {
+      const auto& column = table.GetColumns().GetColumn(index);
+      patched.push_back({
+        .field = connector::TableColumnId(column),
+        .type = column.Type(),
+        .input = index.index,
+      });
+    }
+  }
+  auto& upsert = planner.Make<connector::SereneDBSearchUpsert>(
+    table, std::move(op.bound_constraints), op.types, op.estimated_cardinality,
+    op.return_chunk, replace, in_place, std::move(target), std::move(patched));
+  upsert.children.emplace_back(*plan);
+  return upsert;
+}
+
+duckdb::ConflictReplace SereneDBCatalog::GetConflictReplace(
+  duckdb::ClientContext& context, duckdb::TableCatalogEntry& table,
+  const duckdb::unordered_set<duckdb::column_t>& key,
+  const duckdb::vector<duckdb::PhysicalIndex>& columns) {
+  const auto& definitions = table.GetColumns();
+  return {
+    .in_place =
+      !duckdb::Settings::Get<duckdb::ForceUpdateToDelAndInsertSetting>(
+        context) &&
+      SearchTable(table).PatchesColumns(columns),
+    .exact_key = absl::c_all_of(
+      key,
+      [&](duckdb::column_t index) {
+        return ExactKeyType(
+          definitions.GetColumn(duckdb::PhysicalIndex{index}).Type());
+      }),
+  };
 }
 
 duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
@@ -434,8 +516,8 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
   auto& update = planner.Make<connector::SereneDBSearchUpdate>(
     SearchTable(op.table), op.columns, std::move(op.expressions),
     std::move(op.bound_constraints), op.types, op.estimated_cardinality,
-    op.return_chunk, op.row_id_handling, !op.update_is_del_and_insert,
-    op.update_column_count);
+    op.return_chunk, op.capture_old_rows, std::move(op.old_row_columns),
+    op.row_id_handling, !op.update_is_del_and_insert, op.update_column_count);
   update.children.emplace_back(plan);
   connector::ShareScanPayloads(plan);
   return update;
@@ -448,7 +530,9 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanMergeInto(
                   .Cast<duckdb::PhysicalMergeInto>();
   for (const auto& action : merge.actions) {
     if (action->action_type == duckdb::MergeActionType::MERGE_INSERT) {
-      action->op->Cast<connector::SereneDBSearchInsert>().MarkMergeInsert();
+      action->op->Cast<connector::SereneDBSearchInsert>().MarkMergeInsert(
+        action->on_conflict_update ? search::KeyConflict::UpsertUpdate
+                                   : search::KeyConflict::Upsert);
     }
   }
   return merge;

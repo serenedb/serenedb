@@ -749,7 +749,7 @@ bool ByPhraseOptions::LowerParts() {
       bstring buf;
       const auto kind = RegexpPattern(r->syntax);
       info.part = ExecuteRegexp(
-        buf, bytes_view{r->pattern},
+        buf, bytes_view{r->pattern}, r->syntax,
         [](bytes_view term) -> PhrasePart {
           return ByTermOptions{bstring{term}};
         },

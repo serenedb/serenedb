@@ -36,6 +36,7 @@
 #include <duckdb/transaction/transaction_context.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/error_mapping.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>
 #include <optional>
@@ -472,7 +473,7 @@ class ImplicitTxnState {
       _txn.Commit();
       return std::nullopt;
     } catch (const std::exception& exception) {
-      return ToSqlError(exception);
+      return irs::pg::ToSqlError(exception);
     }
   }
 

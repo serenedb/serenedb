@@ -1,0 +1,217 @@
+# Vectors with huge, infinite or NaN components neither crash nor fail an
+# index build, a flush or a merge. Training leaves them out, so IVF and PQ
+# still answer with the nearest rows; what the other quantizers answer for a
+# segment holding such a vector is not defined.
+
+statement ok
+SET sdb_ivf_posting_size = 16;
+
+statement ok
+CREATE TABLE aev (pk INTEGER PRIMARY KEY, emb FLOAT[2]);
+
+statement ok
+INSERT INTO aev SELECT g, [g, g + 1]::FLOAT[2] FROM generate_series(1, 400) g;
+
+statement ok
+INSERT INTO aev VALUES
+  (1000, [1e20, 0]::FLOAT[2]),
+  (1001, [3e38, 0]::FLOAT[2]),
+  (1002, [-3e38, 0]::FLOAT[2]),
+  (1003, ['Infinity'::FLOAT, 0]::FLOAT[2]),
+  (1004, ['NaN'::FLOAT, 0]::FLOAT[2]),
+  (1005, ['-Infinity'::FLOAT, 'NaN'::FLOAT]::FLOAT[2]);
+
+statement ok
+CREATE INDEX aev_ivf ON aev USING inverted(pk, emb ivf (metric = 'l2'));
+
+statement ok
+CREATE INDEX aev_ivf_none ON aev USING inverted(pk, emb ivf (metric = 'l2', quant = 'none'));
+
+statement ok
+CREATE INDEX aev_ivf_pq ON aev USING inverted(pk, emb ivf (metric = 'l2', quant = 'pq'));
+
+statement ok
+CREATE INDEX aev_ivf_rabitq ON aev USING inverted(pk, emb ivf (metric = 'l2', quant = 'rabitq'));
+
+statement ok
+CREATE INDEX aev_ivf_cos ON aev USING inverted(pk, emb ivf (metric = 'cosine'));
+
+statement ok
+CREATE INDEX aev_pq ON aev USING inverted(pk, emb hnsw (metric = 'l2', quant = 'pq'));
+
+statement ok
+CREATE INDEX aev_none ON aev USING inverted(pk, emb hnsw (metric = 'l2', quant = 'none'));
+
+statement ok
+CREATE INDEX aev_sq8 ON aev USING inverted(pk, emb hnsw (metric = 'l2'));
+
+statement ok
+CREATE INDEX aev_usq8 ON aev USING inverted(pk, emb hnsw (metric = 'ip', quant = 'usq8'));
+
+statement ok
+CREATE INDEX aev_rabitq ON aev USING inverted(pk, emb hnsw (metric = 'l2', quant = 'rabitq'));
+
+statement ok
+CREATE INDEX aev_tq ON aev USING inverted(pk, emb hnsw (metric = 'l2', quant = 'tq'));
+
+statement ok
+CREATE INDEX aev_osq ON aev USING inverted(pk, emb hnsw (metric = 'l2', quant = 'osq'));
+
+statement ok
+CREATE INDEX aev_bq ON aev USING inverted(pk, emb hnsw (metric = 'l2', quant = 'bq'));
+
+statement ok
+CREATE INDEX aev_fp16 ON aev USING inverted(pk, emb hnsw (metric = 'l2', quant = 'fp16'));
+
+statement ok
+VACUUM (FLUSH_TABLE) aev;
+
+query
+SELECT pk FROM aev_ivf ORDER BY emb <-> [0, 0]::FLOAT[2] LIMIT 3;
+----
+pk
+1
+2
+3
+
+query
+SELECT pk FROM aev_ivf_none ORDER BY emb <-> [0, 0]::FLOAT[2] LIMIT 3;
+----
+pk
+1
+2
+3
+
+query
+SELECT pk FROM aev_ivf_pq ORDER BY emb <-> [0, 0]::FLOAT[2] LIMIT 3;
+----
+pk
+1
+2
+3
+
+query
+SELECT pk FROM aev_ivf_rabitq ORDER BY emb <-> [0, 0]::FLOAT[2] LIMIT 3;
+----
+pk
+1
+2
+3
+
+query
+SELECT pk FROM aev_pq ORDER BY emb <-> [0, 0]::FLOAT[2] LIMIT 3;
+----
+pk
+1
+2
+3
+
+query
+SELECT pk FROM aev_none ORDER BY emb <-> [0, 0]::FLOAT[2] LIMIT 3;
+----
+pk
+1
+2
+3
+
+statement ok
+SELECT pk FROM aev_ivf_cos ORDER BY emb <=> [1, 1]::FLOAT[2] LIMIT 3;
+
+statement ok
+SELECT pk FROM aev_sq8 ORDER BY emb <-> [0, 0]::FLOAT[2] LIMIT 3;
+
+statement ok
+SELECT pk FROM aev_usq8 ORDER BY emb <#> [0, 1]::FLOAT[2] LIMIT 3;
+
+statement ok
+SELECT pk FROM aev_rabitq ORDER BY emb <-> [0, 0]::FLOAT[2] LIMIT 3;
+
+statement ok
+SELECT pk FROM aev_tq ORDER BY emb <-> [0, 0]::FLOAT[2] LIMIT 3;
+
+statement ok
+SELECT pk FROM aev_osq ORDER BY emb <-> [0, 0]::FLOAT[2] LIMIT 3;
+
+statement ok
+SELECT pk FROM aev_bq ORDER BY emb <-> [0, 0]::FLOAT[2] LIMIT 3;
+
+statement ok
+SELECT pk FROM aev_fp16 ORDER BY emb <-> [0, 0]::FLOAT[2] LIMIT 3;
+
+statement ok
+SELECT pk FROM aev_ivf ORDER BY emb <-> ['NaN'::FLOAT, 0]::FLOAT[2] LIMIT 3;
+
+# A merge builds the indexes again from every row.
+statement ok
+INSERT INTO aev SELECT g, [g, g + 1]::FLOAT[2] FROM generate_series(401, 500) g;
+
+statement ok
+VACUUM (FLUSH_TABLE) aev;
+
+statement ok
+VACUUM (COMPACT_TABLE) aev;
+
+query
+SELECT pk FROM aev_ivf ORDER BY emb <-> [500, 501]::FLOAT[2] LIMIT 2;
+----
+pk
+500
+499
+
+query
+SELECT pk FROM aev_pq ORDER BY emb <-> [500, 501]::FLOAT[2] LIMIT 2;
+----
+pk
+500
+499
+
+statement ok
+SELECT pk FROM aev_sq8 ORDER BY emb <-> [500, 501]::FLOAT[2] LIMIT 2;
+
+# A segment whose vectors are all equal has a zero range: usq8 still answers.
+statement ok
+CREATE TABLE aev_flat (pk INTEGER PRIMARY KEY, emb FLOAT[4]);
+
+statement ok
+CREATE INDEX aev_flat_cos ON aev_flat
+  USING inverted(pk, emb hnsw (metric = 'cosine', quant = 'usq8'));
+
+statement ok
+CREATE INDEX aev_flat_ip ON aev_flat
+  USING inverted(pk, emb hnsw (metric = 'ip', quant = 'usq8'));
+
+statement ok
+INSERT INTO aev_flat SELECT g, [2, 2, 2, 2]::FLOAT[4] FROM generate_series(1, 10) g;
+
+statement ok
+VACUUM (FLUSH_TABLE) aev_flat;
+
+query
+SELECT count(*) AS n FROM (SELECT pk FROM aev_flat_cos ORDER BY emb <=> [1, 2, 3, 4]::FLOAT[4] LIMIT 5);
+----
+n
+5
+
+query
+SELECT count(*) AS n FROM (SELECT pk FROM aev_flat_ip ORDER BY emb <#> [1, 2, 3, 4]::FLOAT[4] LIMIT 5);
+----
+n
+5
+
+statement ok
+CREATE TABLE aev_untrainable (pk INTEGER PRIMARY KEY, emb FLOAT[2]);
+
+statement ok
+CREATE INDEX aev_untrainable_ivf ON aev_untrainable USING inverted(pk, emb ivf (metric = 'l2'));
+
+statement ok
+INSERT INTO aev_untrainable VALUES
+  (1, ['NaN'::FLOAT, 0]::FLOAT[2]),
+  (2, ['Infinity'::FLOAT, 1]::FLOAT[2]),
+  (3, [3e38, 0]::FLOAT[2]);
+
+statement ok
+VACUUM (FLUSH_TABLE) aev_untrainable;
+
+statement ok
+SELECT pk FROM aev_untrainable_ivf ORDER BY emb <-> [0, 0]::FLOAT[2] LIMIT 3;

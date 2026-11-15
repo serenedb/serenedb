@@ -2472,8 +2472,7 @@ bool GeometricToText(duckdb::Vector& source, duckdb::Vector& result,
     text.clear();
     WriteGeometric(K, values, index, extra_float_digits,
                    [&](std::string_view part) { text.append(part); });
-    writer.WriteValue(
-      duckdb::string_t{text.data(), static_cast<uint32_t>(text.size())});
+    writer.WriteValue(duckdb::string_t::Safe(text));
   }
   return true;
 }

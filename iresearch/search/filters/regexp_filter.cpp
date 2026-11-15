@@ -38,7 +38,7 @@ Filter::ptr LowerRegexp(irs::field_id id, DictRef dict, bytes_view pattern,
   const FieldTarget target{.id = id, .dict = dict, .boost = boost};
   bstring buf;
   return ExecuteRegexp(
-    buf, pattern, [&](bytes_view term) { return target.Term(term); },
+    buf, pattern, syntax, [&](bytes_view term) { return target.Term(term); },
     [&](bytes_view prefix) { return target.Prefix(prefix); },
     [&](bytes_view pattern) {
       return target.Automaton(pattern, RegexpPattern(syntax, bytes));
@@ -60,7 +60,7 @@ Filter::ptr CreateByRegexp(irs::field_id id, DictRef dict, bytes_view pattern,
 TermPredicate::ptr ByRegexp::CompileTermPredicate() const {
   bstring buf;
   return ExecuteRegexp(
-    buf, options().pattern,
+    buf, options().pattern, options().syntax,
     [](bytes_view term) -> TermPredicate::ptr {
       return MakeTermPredicate(
         [term = bstring{term}](bytes_view key) { return key == term; });

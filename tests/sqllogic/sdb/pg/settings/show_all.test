@@ -65,6 +65,7 @@ ch_pool_max_connections	<slt:ignore>	Maximum number of connections that are allo
 ch_pool_max_lifetime_millis	0	Maximum number of milliseconds a connection can be kept open; checked on lease/return and, with the reaper thread enabled, in the background
 ch_pool_wait_timeout_millis	30000	Maximum number of milliseconds to wait when acquiring a connection from a pool where all available connections are already taken
 ch_statement_timeout_millis	NULL	Maximum milliseconds a ClickHouse scan/execute query may run (0 = unlimited)
+check_function_bodies	on	Not used. Added for PostgreSQL compatibility only.
 checkpoint_on_detach	DEFAULT	Override checkpoint behavior when detaching a database. ENABLED requests a checkpoint, but the checkpoint does not occur if another connection still references the database. DISABLED never checkpoints, DEFAULT defers to the global checkpoint_on_shutdown setting.
 checkpoint_threshold	16.0 MiB	The WAL size threshold at which to automatically trigger a checkpoint, e.g. 1GB.
 checkpoint_timeout	300	Not used. Added for PostgreSQL compatibility only.
@@ -86,6 +87,8 @@ default_collation	(empty)	The collation setting used when none is specified.
 default_null_order	NULLS_LAST	The NULL ordering used when none is specified (NULLS_FIRST or NULLS_LAST).
 default_order	ASCENDING	The order type used when none is specified (ASC or DESC).
 default_secret_storage	local_file	Allows switching the default storage for secrets.
+default_table_access_method	heap	Not used. Added for PostgreSQL compatibility only.
+default_tablespace	(empty)	Not used. Added for PostgreSQL compatibility only.
 default_transaction_invalidation_policy	ALL_ERRORS_INVALIDATE_TRANSACTION	When to invalidate transactions when errors occur. SYNTACTIC_ERRORS_DO_NOT_INVALIDATE means that parser and binder exceptions do not invalidate. ALL_ERRORS_INVALIDATE_TRANSACTION means all errors invalidate a transaction.
 default_transaction_isolation	repeatable read	Sets the transaction isolation level of each new transaction.
 default_transaction_read_only	off	Sets the default read-only status of new transactions.
@@ -164,6 +167,7 @@ iceberg_test_force_token_expiry	off	DEBUG SETTING: force OAuth2 token expiry for
 iceberg_unsafe_skip_puffin_verification	off	Skip structural Puffin verification for deletion-vector files. This unsafe compatibility option permits reading invalid bare-blob files written by DuckDB Iceberg 1.5.3.
 iceberg_use_metadata_log	off	Use metadata-log to select table metadata as of the transaction start for snapshot isolation. Disable to accept the latest table metadata resolved by the transaction instead
 iceberg_use_server_side_scan_planning	off	Whether or not to use server-side scanning planning (if available)
+idle_in_transaction_session_timeout	0	Not used. Added for PostgreSQL compatibility only.
 ieee_floating_point_ops	off	Use IEEE 754 behavior for supported floating point operations, returning NAN/INF instead of errors/NULL.
 ignore_unknown_crs	off	Ignore unknown Coordinate Reference Systems (CRS) when creating geometry types or importing geospatial data.
 immediate_transaction_mode	off	Whether transactions should be started lazily when needed, or immediately when BEGIN TRANSACTION is called.
@@ -180,6 +184,7 @@ late_materialization_lookup_max_rows	2048	The maximum amount of rows in the LIMI
 late_materialization_max_rows	50	The maximum amount of rows in the LIMIT/SAMPLE operator for which we trigger late materialization.
 legacy_disable_null_type	off	When enabled, prevent the NULL type from leaving the binder. This was the default behavior prior to DuckDB v2.0.
 lock_configuration	off	Whether configurations can be altered.
+lock_timeout	0	Not used. Added for PostgreSQL compatibility only.
 log_query_path	(empty)	Specifies the path to which queries should be logged. The default is NULL, meaning queries are not logged.
 logging_level	<slt:ignore>	Determines which 'severity' of log messages will be logged.
 logging_mode	<slt:ignore>	Determines which types of log messages are logged.
@@ -249,6 +254,7 @@ read_ahead_depth	-1	The number of scan jobs prefetched ahead of decoding. -1 = a
 regex_match_operator_semantics	partial	Configures whether regex match operators use partial or full string matching.
 reindex_interval	0	Periodic reindex interval (ms) for newly created VIEW-backed inverted indexes: a non-zero value creates a job named after the index that runs the ordinary REINDEX road (up_to_date / delta / rebuild) as the index owner, AFTER the interval. Per-index WITH (reindex_interval = ...) overrides; ALTER INDEX SET retunes, creates or drops the job. 0 disables it. Hint-less iceberg sources refresh from the background only when the GLOBAL unsafe_enable_version_guessing is set. Default: 0.
 row_group_size	122880	Default columnstore row-group size for newly created tables and inverted indexes over views. Their WITH (row_group_size = ...) overrides it. Reads from existing ones are unaffected. Default: 122'880.
+row_security	on	Not used. Added for PostgreSQL compatibility only.
 rtree_index_scan_min_rows	8192	always allow an R-tree index scan when the estimated number of matching rows is at or below this count, regardless of rtree_index_scan_ratio
 rtree_index_scan_ratio	0.075	the maximum estimated fraction of a table's rows that a bounding-box filter may match for an R-tree index scan to be used instead of a full table scan
 s3_access_key_id	NULL	S3 Access Key ID
@@ -320,6 +326,7 @@ statement_timeout	0	Aborts any statement that takes more than the specified amou
 storage_block_prefetch	REMOTE_ONLY	Configures the scenario in which to use storage block prefetching.
 storage_compatibility_version	latest	Sets the DuckDB version for which data is serialized to the DuckDB file during checkpointing. Can differ from the version of the DuckDB instance.
 streaming_buffer_size	10.0 MiB	The maximum number of bytes a streaming query result buffers (e.g. 1GB). Queued output stays under this cap, and each engine thread may hold, beyond the queue, the units it is still building or handing over from its current chunk.
+synchronize_seqscans	on	Not used. Added for PostgreSQL compatibility only.
 table_function_identifier_conversion	DISABLE_IMPLICIT_STRING	Configures the use of deprecated implicit conversion of unbound identifiers to strings in table function arguments.
 temp_directory	<slt:ignore>	Set the directory to which temporary files are written.
 temp_file_encryption	off	Encrypt all temporary files, if the database is encrypted.
@@ -327,6 +334,7 @@ threads	<slt:ignore>	The number of total background threads used by the system; 
 TimeZone	Etc/UTC	Sets the time zone for displaying and interpreting time stamps.
 tracked_metrics	[*]	A list of metric glob patterns to enable for collection, e.g. ['query.*', 'optimizer.*'].
 transaction_isolation	repeatable read	Sets the current transaction's isolation level.
+transaction_timeout	0	Not used. Added for PostgreSQL compatibility only.
 unsafe_disable_etag_checks	off	Disable checks on ETag consistency
 unsafe_enable_version_guessing	off	Enable globbing the filesystem (if possible) to find the latest version metadata. This could result in reading an uncommitted version.
 validate_external_file_cache	VALIDATE_ALL	The cache validation mode. VALIDATE_ALL is the default, it validates all cache entries., VALIDATE_REMOTE only validates remote cache entries. NO_VALIDATION disables cache validation.
@@ -415,6 +423,7 @@ ch_pool_max_connections	<slt:ignore>	Maximum number of connections that are allo
 ch_pool_max_lifetime_millis	0	Maximum number of milliseconds a connection can be kept open; checked on lease/return and, with the reaper thread enabled, in the background
 ch_pool_wait_timeout_millis	30000	Maximum number of milliseconds to wait when acquiring a connection from a pool where all available connections are already taken
 ch_statement_timeout_millis	NULL	Maximum milliseconds a ClickHouse scan/execute query may run (0 = unlimited)
+check_function_bodies	on	Not used. Added for PostgreSQL compatibility only.
 checkpoint_on_detach	DEFAULT	Override checkpoint behavior when detaching a database. ENABLED requests a checkpoint, but the checkpoint does not occur if another connection still references the database. DISABLED never checkpoints, DEFAULT defers to the global checkpoint_on_shutdown setting.
 checkpoint_threshold	16.0 MiB	The WAL size threshold at which to automatically trigger a checkpoint, e.g. 1GB.
 checkpoint_timeout	300	Not used. Added for PostgreSQL compatibility only.
@@ -436,6 +445,8 @@ default_collation	(empty)	The collation setting used when none is specified.
 default_null_order	NULLS_LAST	The NULL ordering used when none is specified (NULLS_FIRST or NULLS_LAST).
 default_order	ASCENDING	The order type used when none is specified (ASC or DESC).
 default_secret_storage	local_file	Allows switching the default storage for secrets.
+default_table_access_method	heap	Not used. Added for PostgreSQL compatibility only.
+default_tablespace	(empty)	Not used. Added for PostgreSQL compatibility only.
 default_transaction_invalidation_policy	ALL_ERRORS_INVALIDATE_TRANSACTION	When to invalidate transactions when errors occur. SYNTACTIC_ERRORS_DO_NOT_INVALIDATE means that parser and binder exceptions do not invalidate. ALL_ERRORS_INVALIDATE_TRANSACTION means all errors invalidate a transaction.
 default_transaction_isolation	read committed	Sets the transaction isolation level of each new transaction.
 default_transaction_read_only	off	Sets the default read-only status of new transactions.
@@ -514,6 +525,7 @@ iceberg_test_force_token_expiry	off	DEBUG SETTING: force OAuth2 token expiry for
 iceberg_unsafe_skip_puffin_verification	off	Skip structural Puffin verification for deletion-vector files. This unsafe compatibility option permits reading invalid bare-blob files written by DuckDB Iceberg 1.5.3.
 iceberg_use_metadata_log	off	Use metadata-log to select table metadata as of the transaction start for snapshot isolation. Disable to accept the latest table metadata resolved by the transaction instead
 iceberg_use_server_side_scan_planning	off	Whether or not to use server-side scanning planning (if available)
+idle_in_transaction_session_timeout	0	Not used. Added for PostgreSQL compatibility only.
 ieee_floating_point_ops	off	Use IEEE 754 behavior for supported floating point operations, returning NAN/INF instead of errors/NULL.
 ignore_unknown_crs	off	Ignore unknown Coordinate Reference Systems (CRS) when creating geometry types or importing geospatial data.
 immediate_transaction_mode	off	Whether transactions should be started lazily when needed, or immediately when BEGIN TRANSACTION is called.
@@ -530,6 +542,7 @@ late_materialization_lookup_max_rows	2048	The maximum amount of rows in the LIMI
 late_materialization_max_rows	50	The maximum amount of rows in the LIMIT/SAMPLE operator for which we trigger late materialization.
 legacy_disable_null_type	off	When enabled, prevent the NULL type from leaving the binder. This was the default behavior prior to DuckDB v2.0.
 lock_configuration	off	Whether configurations can be altered.
+lock_timeout	0	Not used. Added for PostgreSQL compatibility only.
 log_query_path	(empty)	Specifies the path to which queries should be logged. The default is NULL, meaning queries are not logged.
 logging_level	<slt:ignore>	Determines which 'severity' of log messages will be logged.
 logging_mode	<slt:ignore>	Determines which types of log messages are logged.
@@ -599,6 +612,7 @@ read_ahead_depth	-1	The number of scan jobs prefetched ahead of decoding. -1 = a
 regex_match_operator_semantics	partial	Configures whether regex match operators use partial or full string matching.
 reindex_interval	0	Periodic reindex interval (ms) for newly created VIEW-backed inverted indexes: a non-zero value creates a job named after the index that runs the ordinary REINDEX road (up_to_date / delta / rebuild) as the index owner, AFTER the interval. Per-index WITH (reindex_interval = ...) overrides; ALTER INDEX SET retunes, creates or drops the job. 0 disables it. Hint-less iceberg sources refresh from the background only when the GLOBAL unsafe_enable_version_guessing is set. Default: 0.
 row_group_size	122880	Default columnstore row-group size for newly created tables and inverted indexes over views. Their WITH (row_group_size = ...) overrides it. Reads from existing ones are unaffected. Default: 122'880.
+row_security	on	Not used. Added for PostgreSQL compatibility only.
 rtree_index_scan_min_rows	8192	always allow an R-tree index scan when the estimated number of matching rows is at or below this count, regardless of rtree_index_scan_ratio
 rtree_index_scan_ratio	0.075	the maximum estimated fraction of a table's rows that a bounding-box filter may match for an R-tree index scan to be used instead of a full table scan
 s3_access_key_id	NULL	S3 Access Key ID
@@ -670,6 +684,7 @@ statement_timeout	0	Aborts any statement that takes more than the specified amou
 storage_block_prefetch	REMOTE_ONLY	Configures the scenario in which to use storage block prefetching.
 storage_compatibility_version	latest	Sets the DuckDB version for which data is serialized to the DuckDB file during checkpointing. Can differ from the version of the DuckDB instance.
 streaming_buffer_size	10.0 MiB	The maximum number of bytes a streaming query result buffers (e.g. 1GB). Queued output stays under this cap, and each engine thread may hold, beyond the queue, the units it is still building or handing over from its current chunk.
+synchronize_seqscans	on	Not used. Added for PostgreSQL compatibility only.
 table_function_identifier_conversion	DISABLE_IMPLICIT_STRING	Configures the use of deprecated implicit conversion of unbound identifiers to strings in table function arguments.
 temp_directory	<slt:ignore>	Set the directory to which temporary files are written.
 temp_file_encryption	off	Encrypt all temporary files, if the database is encrypted.
@@ -677,6 +692,7 @@ threads	<slt:ignore>	The number of total background threads used by the system; 
 TimeZone	Etc/UTC	Sets the time zone for displaying and interpreting time stamps.
 tracked_metrics	[*]	A list of metric glob patterns to enable for collection, e.g. ['query.*', 'optimizer.*'].
 transaction_isolation	read committed	Sets the current transaction's isolation level.
+transaction_timeout	0	Not used. Added for PostgreSQL compatibility only.
 unsafe_disable_etag_checks	off	Disable checks on ETag consistency
 unsafe_enable_version_guessing	off	Enable globbing the filesystem (if possible) to find the latest version metadata. This could result in reading an uncommitted version.
 validate_external_file_cache	VALIDATE_ALL	The cache validation mode. VALIDATE_ALL is the default, it validates all cache entries., VALIDATE_REMOTE only validates remote cache entries. NO_VALIDATION disables cache validation.

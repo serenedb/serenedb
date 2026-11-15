@@ -53,6 +53,24 @@
 namespace irs {
 namespace {
 
+void ZeroNullArrays(duckdb::Vector& arrays, duckdb::idx_t from,
+                    duckdb::idx_t count) {
+  const auto& validity = duckdb::FlatVector::Validity(arrays);
+  auto& child = duckdb::ArrayVector::GetChildMutable(arrays);
+  const auto child_type = child.GetType().InternalType();
+  if (!duckdb::TypeIsConstantSize(child_type)) {
+    return;
+  }
+  const auto bytes = duckdb::ArrayType::GetSize(arrays.GetType()) *
+                     duckdb::GetTypeIdSize(child_type);
+  auto* data = duckdb::FlatVector::GetDataMutable(child);
+  for (auto row = from; row != from + count; ++row) {
+    if (!validity.RowIsValid(row)) {
+      std::memset(data + row * bytes, 0, bytes);
+    }
+  }
+}
+
 codecs::CodecType ForcedBySetting(const duckdb::DBConfig& config) {
   const auto* codec = codecs::FindCodec(
     duckdb::Settings::Get<duckdb::ForceCompressionSetting>(config));
@@ -628,11 +646,14 @@ void ColumnWriter::Append(const duckdb::Vector& vec, duckdb::idx_t count) {
       duckdb::VectorOperations::Copy(vec, back.data, off + take,
                                      /*source_offset=*/off,
                                      /*target_offset=*/back.count);
-      return;
+    } else {
+      duckdb::ImmutableStrings::Copy(vec, back.data, off + take,
+                                     /*source_offset=*/off,
+                                     /*target_offset=*/back.count);
     }
-    duckdb::ImmutableStrings::Copy(vec, back.data, off + take,
-                                   /*source_offset=*/off,
-                                   /*target_offset=*/back.count);
+    if (_type.id() == duckdb::LogicalTypeId::ARRAY) {
+      ZeroNullArrays(back.data, back.count, take);
+    }
   });
 }
 

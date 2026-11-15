@@ -219,12 +219,18 @@ std::optional<std::string> ConnectionContext::Get(std::string_view key) {
 void ConnectionContext::SetSetting(std::string_view key, std::string value,
                                    bool) {
   auto& db_config = duckdb::DBConfig::GetConfig(*db);
+  const duckdb::Identifier setting{key};
   duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
-  auto setting_index =
-    db_config.TryGetSettingIndex(duckdb::Identifier{key}, option);
-  if (setting_index.IsValid()) {
-    config.user_settings.SetUserSetting(setting_index.GetIndex(),
-                                        duckdb::Value{std::move(value)});
+  auto setting_index = db_config.TryGetSettingIndex(setting, option);
+  if (!setting_index.IsValid()) {
+    return;
+  }
+  config.user_settings.SetUserSetting(setting_index.GetIndex(),
+                                      duckdb::Value{std::move(value)});
+  duckdb::ExtensionOption ext;
+  if (option ? option->rebind
+             : db_config.TryGetExtensionOption(setting, ext) && ext.rebind) {
+    BumpBindingGeneration();
   }
 }
 
@@ -327,6 +333,9 @@ void ConnectionContext::RestoreValue(std::string_view key,
         config.user_settings.SetUserSetting(setting_index.GetIndex(),
                                             std::move(value));
       }
+      if (option->rebind) {
+        BumpBindingGeneration();
+      }
       return;
     }
     duckdb::ExtensionOption ext;
@@ -340,15 +349,18 @@ void ConnectionContext::RestoreValue(std::string_view key,
       if (ext.setting_index.IsValid()) {
         config.user_settings.ClearSetting(ext.setting_index.GetIndex());
       }
-      return;
+    } else {
+      auto typed = value.CastAs(*this, ext.type);
+      if (ext.set_function) {
+        ext.set_function(*this, duckdb::SetScope::SESSION, typed);
+      }
+      if (ext.setting_index.IsValid()) {
+        config.user_settings.SetUserSetting(ext.setting_index.GetIndex(),
+                                            std::move(typed));
+      }
     }
-    auto typed = value.CastAs(*this, ext.type);
-    if (ext.set_function) {
-      ext.set_function(*this, duckdb::SetScope::SESSION, typed);
-    }
-    if (ext.setting_index.IsValid()) {
-      config.user_settings.SetUserSetting(ext.setting_index.GetIndex(),
-                                          std::move(typed));
+    if (ext.rebind) {
+      BumpBindingGeneration();
     }
   } catch (const std::exception& e) {
     WarnUser(absl::StrCat("could not restore setting \"", key,
@@ -418,7 +430,8 @@ bool ConnectionContext::IsSettingVisible(const std::string& name) {
 }
 
 void ConnectionContext::OnSettingChange(const std::string& name,
-                                        duckdb::SetScope scope) {
+                                        duckdb::SetScope scope,
+                                        const duckdb::Value& previous) {
   if (IsUnchangeableSetting(name)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_CANT_CHANGE_RUNTIME_PARAM),
                     ERR_MSG("parameter \"", name, "\" cannot be changed"));
@@ -447,9 +460,7 @@ void ConnectionContext::OnSettingChange(const std::string& name,
   if (!IsExplicitTransaction() || IsNonTransactionalSetting(name)) {
     return;
   }
-  duckdb::Value old_value;
-  TryGetCurrentSetting(duckdb::Identifier{name}, old_value);
-  OnSet(name, scope == duckdb::SetScope::LOCAL, std::move(old_value));
+  OnSet(name, scope == duckdb::SetScope::LOCAL, previous);
 }
 
 void ConnectionContext::OnQueryBegin() {

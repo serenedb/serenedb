@@ -752,7 +752,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::Copy(
 }
 
 duckdb::TableStorageInfo SearchTableEntry::GetStorageInfo(
-  duckdb::ClientContext&) {
+  duckdb::ClientContext& context) {
   duckdb::TableStorageInfo result;
   for (const auto& constraint : GetConstraints()) {
     if (constraint->type != duckdb::ConstraintType::UNIQUE) {
@@ -767,10 +767,15 @@ duckdb::TableStorageInfo SearchTableEntry::GetStorageInfo(
     }
     result.index_info.push_back(std::move(info));
   }
+  const auto transaction = catalog.GetCatalogTransaction(context);
+  auto& oids = catalog.Cast<BaseCatalog>().Oids();
   for (const auto& key : _storage->Config()->constraint_keys) {
-    if (absl::c_any_of(_keys, [&](const search::KeySpec& spec) {
-          return spec.key.field == key.field;
-        })) {
+    if (absl::c_any_of(_keys,
+                       [&](const search::KeySpec& spec) {
+                         return spec.key.field == key.field;
+                       }) ||
+        absl::c_linear_search(key.columns, irs::field_limits::invalid()) ||
+        !oids.Find(transaction, key.field)) {
       continue;
     }
     duckdb::IndexInfo info{
@@ -1196,17 +1201,6 @@ duckdb::unique_ptr<SearchTableEntry> SearchTableEntry::Altered(
   auto bound = binder->BindCreateTableInfo(
     std::move(definition), ParentSchema(context),
     bound_defaults ? *bound_defaults : unused_defaults, info.bind_mode);
-  for (const auto& dependency : dependencies.Set()) {
-    if (!dependency.owned_by) {
-      continue;
-    }
-    if (auto owned =
-          catalog.Cast<BaseCatalog>().LookupOid(transaction, dependency.oid)) {
-      duckdb::LogicalDependency kept{*owned};
-      kept.owned_by = true;
-      bound->Base().dependencies.AddDependency(kept);
-    }
-  }
   return Successor(context, *bound);
 }
 
@@ -1725,7 +1719,7 @@ void SearchTableEntry::BeginSchemaChange(duckdb::ClientContext& context) {
   _storage->ClaimLayout(context, name.GetIdentifierName(),
                         search::TableChange::Schema);
   _schema_epoch = _storage->SchemaEpoch();
-  _storage->DrainPriorWriters(context);
+  _storage->AdvanceVersion(context);
 }
 
 connector::SearchBackfillTarget SearchTableEntry::BackfillTarget(
@@ -1824,7 +1818,19 @@ void SearchTableEntry::AlterTriggers(duckdb::ClientContext& context,
   const bool firing =
     info.alter_table_type == duckdb::AlterTableType::SET_TRIGGER_FIRING;
   for (auto& target : targets) {
-    auto altered = target.get().AlterEntry(transaction, info);
+    duckdb::unique_ptr<duckdb::CatalogEntry> altered;
+    if (info.alter_table_type == duckdb::AlterTableType::RENAME_COLUMN) {
+      const auto& rename = info.Cast<duckdb::RenameColumnInfo>();
+      auto definition = target.get().GetInfo();
+      auto& trigger = definition->Cast<duckdb::CreateTriggerInfo>();
+      if (FollowTriggerColumnRename(transaction, target.get(), trigger, *this,
+                                    rename.old_name, rename.new_name)) {
+        altered = duckdb::make_uniq<duckdb::TriggerCatalogEntry>(
+          catalog, ParentSchema(transaction), trigger);
+      }
+    } else {
+      altered = target.get().AlterEntry(transaction, info);
+    }
     if (!altered) {
       continue;
     }
@@ -1875,6 +1881,33 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SearchTableEntry::GetTrigger(
   duckdb::CatalogTransaction transaction,
   const duckdb::Identifier& name) const {
   return _triggers->Get(transaction, name);
+}
+
+void SearchTableEntry::ReplaceTrigger(duckdb::CatalogTransaction transaction,
+                                      duckdb::CreateTriggerInfo& info) {
+  const auto existing = _triggers->Get(transaction, info.GetTriggerName());
+  SDB_ASSERT(existing);
+  auto record = SerializeAlter(duckdb::ReplaceDefinitionInfo{info.Copy()});
+  auto replacement = duckdb::make_uniq<duckdb::TriggerCatalogEntry>(
+    catalog, ParentSchema(transaction), info);
+  replacement->oid = existing->oid;
+  DeclareModified(transaction, catalog);
+  _triggers->Alter(transaction, std::move(replacement), std::move(record));
+}
+
+void SearchTableEntry::MoveTriggers(duckdb::CatalogTransaction transaction) {
+  std::vector<std::reference_wrapper<duckdb::CatalogEntry>> triggers;
+  _triggers->Scan(transaction, [&](duckdb::CatalogEntry& trigger) {
+    triggers.emplace_back(trigger);
+  });
+  auto& schema = ParentSchema(transaction);
+  for (auto& trigger : triggers) {
+    auto info = trigger.get().GetInfo();
+    auto moved = duckdb::make_uniq<duckdb::TriggerCatalogEntry>(
+      catalog, schema, info->Cast<duckdb::CreateTriggerInfo>());
+    moved->oid = trigger.get().oid;
+    _triggers->Alter(transaction, std::move(moved), {});
+  }
 }
 
 bool SearchTableEntry::DropTrigger(duckdb::CatalogTransaction transaction,

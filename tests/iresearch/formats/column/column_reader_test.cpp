@@ -3243,7 +3243,7 @@ TEST_F(ColumnReaderTest, SegmentRoundTripArray) {
       for (duckdb::idx_t i = 0; i < kDim; ++i) {
         if (elem_valid(g, i)) {
           ASSERT_TRUE(cv.RowIsValid(k * kDim + i)) << "elem " << g << ":" << i;
-          EXPECT_EQ(cd[k * kDim + i], elem_val(g, i))
+          EXPECT_EQ(cd[k * kDim + i], arr_valid(g) ? elem_val(g, i) : 0)
             << "elem " << g << ":" << i;
         } else {
           EXPECT_FALSE(cv.RowIsValid(k * kDim + i)) << "elem " << g << ":" << i;
@@ -3317,7 +3317,8 @@ TEST_F(ColumnReaderTest, GatherArrayAcrossRowGroups) {
     const auto g = rows[i];
     EXPECT_EQ(av.RowIsValid(i), arr_valid(g)) << "array row " << g;
     for (duckdb::idx_t e = 0; e < kDim; ++e) {
-      EXPECT_EQ(cd[i * kDim + e], elem_val(g, e)) << "elem " << g << ":" << e;
+      EXPECT_EQ(cd[i * kDim + e], arr_valid(g) ? elem_val(g, e) : 0)
+        << "elem " << g << ":" << e;
     }
   }
 }

@@ -1,0 +1,81 @@
+control substitution on
+
+statement ok
+CREATE TABLE scc_t (id SERIAL PRIMARY KEY, v INT);
+
+
+statement ok
+INSERT INTO scc_t (v) VALUES (1);
+
+
+statement ok
+COMMENT ON SEQUENCE scc_t_id_seq IS 'ids';
+
+
+statement ok
+INSERT INTO scc_t (v) SELECT g FROM range(10) t(g);
+
+
+statement ok
+CREATE SEQUENCE scc_restart;
+
+
+statement ok
+SELECT nextval('scc_restart') FROM range(5);
+
+
+statement ok
+ALTER SEQUENCE scc_restart RESTART WITH 100;
+
+
+statement ok
+COMMENT ON SEQUENCE scc_restart IS 'restarted';
+
+
+statement ok
+CREATE SEQUENCE scc_setval;
+
+
+statement ok
+SELECT nextval('scc_setval') FROM range(3);
+
+
+statement ok
+SELECT setval('scc_setval', 1);
+
+
+statement ok
+COMMENT ON SEQUENCE scc_setval IS 'set back';
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+SET sdb_faults = 'shutdown_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_restart
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+INSERT INTO scc_t (v) VALUES (99);
+
+
+connection after_restart
+query
+SELECT count(*) AS n, count(DISTINCT id) AS ids, min(id) FILTER (WHERE v = 99) > 11 AS fresh FROM scc_t;
+----
+n	ids	fresh
+12	12	t
+
+
+connection after_restart
+query
+SELECT nextval('scc_restart') AS restarted, nextval('scc_setval') AS set_back;
+----
+restarted	set_back
+100	2

@@ -102,6 +102,10 @@ PhraseGap ParsePhraseGap(const duckdb::Value& val, std::string_view label,
             children.size(), " elements");
     }
     auto min = coerce(children[0]);
+    if (children[1].IsNull()) {
+      return {.min = static_cast<size_t>(min) + 1,
+              .max = irs::pos_limits::kOpenGap};
+    }
     auto max = coerce(children[1]);
     if (min > max) {
       error(" interval gap must satisfy 0 <= min <= max, got [", min, ", ", max,

@@ -1662,6 +1662,17 @@ db error: ERROR: ts_phrase phrase is too wide: its gaps add up to 2147483648 pos
 HINT: Narrow the gaps: a column value holds at most 2147483647 token positions.
 
 
+query
+SELECT id FROM test_shingle_wide_idx WHERE body @@ ts_phrase('the quick brown', [0, NULL], 'fox') ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM test_shingle_wide_idx WHERE body @@ ts_phrase('the quick brown', [2147483644, NULL], 'fox') ORDER BY id
+----
+id
+
 statement ok
 DROP TABLE test_shingle_wide
 

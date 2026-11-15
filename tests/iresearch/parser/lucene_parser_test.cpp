@@ -2006,7 +2006,9 @@ TEST_F(LuceneParserTest, PhraseWithGap) {
 
 TEST_F(LuceneParserTest, PhraseGapOutOfRangeIsRefused) {
   for (const auto* query :
-       {"\"a 1-4294967296 b\"", "\"a 99999999999-1 b\"", "\"a 5-2 b\""}) {
+       {"\"a 4294967296-* b\"", "\"a 7-* b 4294967296-* c\"",
+        "\"a 4294967295-* b\"", "\"a 1-4294967296 b\"", "\"a 99999999999-1 b\"",
+        "\"a 0-4294967295 b\"", "\"a 5-2 b\""}) {
     SCOPED_TRACE(query);
     irs::BooleanFilter fresh;
     irs::ParserContext fresh_ctx{fresh, kFieldId, irs::StringLayout::kStrings,
@@ -2024,6 +2026,92 @@ TEST_F(LuceneParserTest, PhraseTooWideIsRefused) {
   fresh_ctx.fields = &any_field;
   EXPECT_ANY_THROW(
     irs::ParseQuery(fresh_ctx, "\"a 2147483647-2147483647 b 1-1 c\""));
+}
+
+TEST_F(LuceneParserTest, PhraseGapAtTheLimit) {
+  ASSERT_TRUE(irs::ParseQuery(ctx, "\"a 2147483646-* b 0-1 c\""));
+  ASSERT_EQ(1, Optional().filters.size());
+  const auto& phrase =
+    irs::utils::downCast<irs::ByPhrase>(*Optional().filters[0]);
+  ASSERT_EQ(3, phrase.options().size());
+  const auto& b = *std::next(phrase.options().begin());
+  EXPECT_EQ(2147483646U, b.offs_min);
+  EXPECT_EQ(irs::pos_limits::kOpenGap, b.offs_max);
+  const auto& c = *std::next(phrase.options().begin(), 2);
+  EXPECT_EQ(0U, c.offs_min);
+  EXPECT_EQ(1U, c.offs_max);
+}
+
+TEST_F(LuceneParserTest, PhraseWithOpenGap) {
+  ASSERT_TRUE(irs::ParseQuery(ctx, "\"alpha 1-* beta\""));
+  ASSERT_EQ(1, Optional().filters.size());
+  const auto& phrase =
+    irs::utils::downCast<irs::ByPhrase>(*Optional().filters[0]);
+  ASSERT_EQ(2, phrase.options().size());
+  const auto& beta = *std::next(phrase.options().begin());
+  EXPECT_EQ(1, beta.offs_min);
+  EXPECT_EQ(irs::pos_limits::kOpenGap, beta.offs_max);
+}
+
+TEST_F(LuceneParserTest, PhraseWithZeroOpenGap) {
+  ASSERT_TRUE(irs::ParseQuery(ctx, "\"alpha 0-* beta\""));
+  ASSERT_EQ(1, Optional().filters.size());
+  const auto& phrase =
+    irs::utils::downCast<irs::ByPhrase>(*Optional().filters[0]);
+  ASSERT_EQ(2, phrase.options().size());
+  const auto& beta = *std::next(phrase.options().begin());
+  EXPECT_EQ(0, beta.offs_min);
+  EXPECT_EQ(irs::pos_limits::kOpenGap, beta.offs_max);
+}
+
+TEST_F(LuceneParserTest, PhraseWithOpenAndBoundedGaps) {
+  ASSERT_TRUE(irs::ParseQuery(ctx, "\"a 2-* b 1-3 c\""));
+  ASSERT_EQ(1, Optional().filters.size());
+  const auto& phrase =
+    irs::utils::downCast<irs::ByPhrase>(*Optional().filters[0]);
+  ASSERT_EQ(3, phrase.options().size());
+  const auto& b = *std::next(phrase.options().begin());
+  const auto& c = *std::next(phrase.options().begin(), 2);
+  EXPECT_EQ(2, b.offs_min);
+  EXPECT_EQ(irs::pos_limits::kOpenGap, b.offs_max);
+  EXPECT_EQ(1, c.offs_min);
+  EXPECT_EQ(3, c.offs_max);
+}
+
+TEST_F(LuceneParserTest, FnOrderedJunctionsAreOpen) {
+  ASSERT_TRUE(irs::ParseQuery(ctx, "fn:ordered(a b c)"));
+  ASSERT_EQ(1, Optional().filters.size());
+  const auto& phrase =
+    irs::utils::downCast<irs::ByPhrase>(*Optional().filters[0]);
+  ASSERT_EQ(3, phrase.options().size());
+  for (auto it = std::next(phrase.options().begin());
+       it != phrase.options().end(); ++it) {
+    EXPECT_EQ(1, it->offs_min);
+    EXPECT_EQ(irs::pos_limits::kOpenGap, it->offs_max);
+  }
+}
+
+TEST_F(LuceneParserTest, PhraseDigitsDashStarIsAGapUnlessEscaped) {
+  ASSERT_TRUE(irs::ParseQuery(ctx, "\"covid 19-* cases\""));
+  ASSERT_EQ(1, Optional().filters.size());
+  const auto& gap = irs::utils::downCast<irs::ByPhrase>(*Optional().filters[0]);
+  ASSERT_EQ(2, gap.options().size());
+  const auto& cases = *std::next(gap.options().begin());
+  EXPECT_EQ(19, cases.offs_min);
+  EXPECT_EQ(irs::pos_limits::kOpenGap, cases.offs_max);
+
+  irs::BooleanFilter fresh;
+  irs::ParserContext fresh_ctx{fresh, kFieldId, irs::StringLayout::kStrings,
+                               *tokenizer};
+  fresh_ctx.fields = &any_field;
+  ASSERT_TRUE(irs::ParseQuery(fresh_ctx, "\"covid 19\\-* cases\""));
+  const auto& filters = fresh.Bucket(irs::Occur::Should).filters;
+  ASSERT_EQ(1, filters.size());
+  const auto& prefix = irs::utils::downCast<irs::ByPhrase>(*filters[0]);
+  ASSERT_EQ(3, prefix.options().size());
+  for (const auto& part : prefix.options()) {
+    EXPECT_NE(irs::pos_limits::kOpenGap, part.offs_max);
+  }
 }
 
 TEST_F(LuceneParserTest, PhraseWithPrefixPart) {
@@ -2089,7 +2177,7 @@ TEST_F(LuceneParserTest, FnOrderedStacksSynonymsAtOnePosition) {
   ASSERT_EQ(2, phrase.options().size());
   const auto& car = *std::next(phrase.options().begin());
   EXPECT_EQ(1, car.offs_min);
-  EXPECT_EQ(irs::ParserContext::kAnyGap, car.offs_max);
+  EXPECT_EQ(irs::pos_limits::kOpenGap, car.offs_max);
   EXPECT_EQ((std::vector<std::string>{"auto", "automobile", "car"}),
             SetTerms(car.part));
 }
@@ -2219,6 +2307,7 @@ TEST_F(LuceneParserTest, MaxGapsOverMoreThanAPairIsRefused) {
 TEST_F(LuceneParserTest, SlopOverAnIntervalGapIsRefused) {
   EXPECT_ANY_THROW(irs::ParseQuery(ctx, "\"alpha 1-3 beta\"~2"));
   EXPECT_ANY_THROW(irs::ParseQuery(ctx, "\"alpha 1-3 beta\"^2~2"));
+  EXPECT_ANY_THROW(irs::ParseQuery(ctx, "\"a 1-* b\"~2"));
   EXPECT_ANY_THROW(irs::ParseQuery(ctx, "fn:ordered(alpha beta)^2~2"));
 }
 

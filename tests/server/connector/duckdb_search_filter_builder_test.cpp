@@ -2295,12 +2295,76 @@ TEST_F(SearchFilterBuilderTest, test_PhraseGapRangeMinExceedsMaxError) {
     "ts_phrase interval gap must satisfy 0 <= min <= max, got [3, 1]");
 }
 
+TEST_F(SearchFilterBuilderTest, test_PhraseOpenGap) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::BooleanFilter expected;
+  auto& phrase = AddChild<irs::ByPhrase>(expected);
+  *phrase.mutable_field_id() = ExpectedFieldId(1);
+  phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"a"});
+  phrase.mutable_options()
+    ->push_back<irs::ByTermOptions>(1, irs::pos_limits::kOpenGap)
+    .term = irs::ViewCast<irs::byte_type>(std::string_view{"b"});
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE category @@ ts_phrase('a', [0, NULL], 'b')",
+    columns, true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_PhraseOpenGapMin) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::BooleanFilter expected;
+  auto& phrase = AddChild<irs::ByPhrase>(expected);
+  *phrase.mutable_field_id() = ExpectedFieldId(1);
+  phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"a"});
+  phrase.mutable_options()
+    ->push_back<irs::ByTermOptions>(3, irs::pos_limits::kOpenGap)
+    .term = irs::ViewCast<irs::byte_type>(std::string_view{"b"});
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE category @@ ts_phrase('a', [2, NULL], 'b')",
+    columns, true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_PhraseSeqOpenGap) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::BooleanFilter expected;
+  auto& phrase = AddChild<irs::ByPhrase>(expected);
+  *phrase.mutable_field_id() = ExpectedFieldId(1);
+  phrase.mutable_options()->push_back<irs::ByTermOptions>(0, 0).term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"a"});
+  phrase.mutable_options()
+    ->push_back<irs::ByTermOptions>(1, irs::pos_limits::kOpenGap)
+    .term = irs::ViewCast<irs::byte_type>(std::string_view{"b"});
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE category @@ ('a'::TSQUERY ## [0, NULL] "
+               "## 'b'::TSQUERY)",
+               columns, true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_PhraseOpenGapNullMinError) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  AssertFilter(irs::BooleanFilter{},
+               "SELECT * FROM foo WHERE category @@ "
+               "ts_phrase('a', [NULL, 3], 'b')",
+               columns, false, SegmentationAnalyzerProvider,
+               "ts_phrase gap must be a non-null non-negative integer");
+}
+
 TEST_F(SearchFilterBuilderTest, test_PhraseGapTooLargeError) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
   for (const auto* where :
        {"ts_phrase('a', 4294967296, 'b')", "ts_phrase('a', 2147483647, 'b')",
-        "ts_phrase('a', [0, 2147483647], 'b')"}) {
+        "ts_phrase('a', [0, 2147483647], 'b')",
+        "ts_phrase('a', [4294967296, NULL], 'b')",
+        "ts_phrase('a', [2147483647, NULL], 'b')",
+        "('a'::TSQUERY ## [4294967296, NULL] ## 'b'::TSQUERY)"}) {
     SCOPED_TRACE(where);
     AssertFilter(irs::BooleanFilter{},
                  absl::StrCat("SELECT * FROM foo WHERE category @@ ", where),
@@ -2317,11 +2381,11 @@ TEST_F(SearchFilterBuilderTest, test_PhraseGapAtTheLimit) {
   phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
     irs::ViewCast<irs::byte_type>(std::string_view{"a"});
   phrase.mutable_options()
-    ->push_back<irs::ByTermOptions>(2147483647, 2147483647)
+    ->push_back<irs::ByTermOptions>(2147483647, irs::pos_limits::kOpenGap)
     .term = irs::ViewCast<irs::byte_type>(std::string_view{"b"});
   AssertFilter(expected,
                "SELECT * FROM foo WHERE category @@ "
-               "ts_phrase('a', 2147483646, 'b')",
+               "ts_phrase('a', [2147483646, NULL], 'b')",
                columns, true, SegmentationAnalyzerProvider);
 }
 
@@ -2347,6 +2411,27 @@ TEST_F(SearchFilterBuilderTest, test_TsqueryPhraseDistanceTooLargeError) {
                "tsquery_phrase(ts_phrase('a'), ts_phrase('b'), 2147483648)",
                columns, false, SegmentationAnalyzerProvider,
                "tsquery_phrase distance too large");
+}
+
+TEST_F(SearchFilterBuilderTest, test_PhraseScalarNullGapMatchesNothing) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::BooleanFilter expected;
+  AddChild<irs::Empty>(expected);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE category @@ "
+               "ts_phrase('a', NULL, 'b')",
+               columns, true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_PhraseOpenGapWithSlopError) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  AssertFilter(irs::BooleanFilter{},
+               "SELECT * FROM foo WHERE category @@ "
+               "ts_phrase('a', [0, NULL], 'b', slop := 2)",
+               columns, false, SegmentationAnalyzerProvider,
+               "incompatible with interval gaps");
 }
 
 TEST_F(SearchFilterBuilderTest, test_PhraseGap_DateTimestampRejected) {

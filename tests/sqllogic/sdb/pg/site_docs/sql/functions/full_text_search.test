@@ -1019,6 +1019,66 @@ id
 1
 2
 
+# DOCS_TEST: ts_phrase_open_gap
+# DOCS_TEST_BODY
+query
+SELECT id
+FROM docs_idx
+WHERE body @@ ts_phrase('quick', [2, NULL], 'dog')
+ORDER BY id;
+----
+id
+1
+2
+
+# DOCS_TEST: a--b-phrase-open
+# DOCS_TEST_BODY
+query
+SELECT id
+FROM docs_idx
+WHERE body @@ ('fox' ## [0, NULL] ## 'dog')
+ORDER BY id;
+----
+id
+1
+2
+
+# DOCS_TEST: to_tsquery_gaps
+# DOCS_TEST_BODY
+query
+SELECT id
+FROM docs_idx
+WHERE body @@ to_tsquery('"quick 2-4 fox"')
+ORDER BY id;
+----
+id
+1
+2
+
+# DOCS_TEST: to_tsquery_open_gap
+# DOCS_TEST_BODY
+query
+SELECT id
+FROM docs_idx
+WHERE body @@ to_tsquery('"quick 4-* dog"')
+ORDER BY id;
+----
+id
+1
+2
+
+# DOCS_TEST: to_tsquery_ordered
+# DOCS_TEST_BODY
+query
+SELECT id
+FROM docs_idx
+WHERE body @@ to_tsquery('fn:ordered(fox lazy dog)')
+ORDER BY id;
+----
+id
+1
+2
+
 # DOCS_TEST: ts_regexp_posix
 # DOCS_TEST_BODY
 query

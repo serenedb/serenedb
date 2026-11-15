@@ -875,12 +875,11 @@ class AlpCompressionState {
 template<typename T>
 void AlpCompressChunks(ColumnDataCheckpointData& checkpoint_data,
                        std::span<const WriteChunk> chunks) {
-  const auto state = std::make_unique<AlpCompressionState<T>>(
-    checkpoint_data, *AlpSampleRowGroup<T>(chunks));
+  AlpCompressionState<T> state{checkpoint_data, *AlpSampleRowGroup<T>(chunks)};
   for (const auto& chunk : chunks) {
-    state->Append(chunk.data);
+    state.Append(chunk.data);
   }
-  state->Finalize();
+  state.Finalize();
 }
 
 template<typename T>

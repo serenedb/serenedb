@@ -637,12 +637,11 @@ void AlpRdCompressChunks(ColumnDataCheckpointData& checkpoint_data,
   }
   FindBestDictionary<T>(analyze_state.rowgroup_sample,
                         analyze_state.dictionary);
-  const auto state =
-    std::make_unique<AlpRdCompressionState<T>>(checkpoint_data, analyze_state);
+  AlpRdCompressionState<T> state{checkpoint_data, analyze_state};
   for (const auto& chunk : chunks) {
-    state->Append(chunk.data);
+    state.Append(chunk.data);
   }
-  state->Finalize();
+  state.Finalize();
 }
 
 template<typename T>

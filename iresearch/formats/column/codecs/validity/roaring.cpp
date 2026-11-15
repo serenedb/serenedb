@@ -1700,9 +1700,7 @@ template<duckdb::PhysicalType kPhysical>
 void EncodeChunks(ColumnDataCheckpointData& checkpoint_data,
                   std::span<const WriteChunk> chunks,
                   const RoaringAnalyzeState& analyze_state) {
-  const auto compress =
-    std::make_unique<RoaringCompressState>(checkpoint_data, analyze_state);
-  auto& state = *compress;
+  RoaringCompressState state{checkpoint_data, analyze_state};
   for (const auto& chunk : chunks) {
     const auto count = chunk.data.size();
     duckdb::UnifiedVectorFormat unified;

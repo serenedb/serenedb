@@ -355,15 +355,9 @@ struct BitpackingState {
 };
 
 template<typename T>
-struct BitpackingAnalyze {
-  BitpackingState<T> state;
-};
-
-template<typename T>
 idx_t AnalyzeChunks(std::span<const WriteChunk> chunks) {
   static_assert(sizeof(T) * kMetadataGroupSize * 2 <= kBlockSize);
-  const auto analyze = std::make_unique<BitpackingAnalyze<T>>();
-  auto& state = analyze->state;
+  BitpackingState<T> state;
   NoWriter<T> writer;
   for (const auto& chunk : chunks) {
     if (!state.Update(chunk.data.Values<T>(), writer)) {
@@ -514,12 +508,11 @@ class BitpackingCompress {
 template<typename T, bool kStats>
 void CompressChunks(ColumnDataCheckpointData& checkpoint_data,
                     std::span<const WriteChunk> chunks) {
-  const auto state =
-    std::make_unique<BitpackingCompress<T, kStats>>(checkpoint_data);
+  BitpackingCompress<T, kStats> state{checkpoint_data};
   for (const auto& chunk : chunks) {
-    state->Append(chunk.data);
+    state.Append(chunk.data);
   }
-  state->Finalize();
+  state.Finalize();
 }
 
 template<typename T>

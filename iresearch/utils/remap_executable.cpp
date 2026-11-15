@@ -24,12 +24,16 @@
 #include <absl/debugging/internal/symbolize.h>
 #include <fast_float/fast_float.h>
 
+#include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
+#include <span>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 #if defined(__linux__)
@@ -133,6 +137,31 @@ size_t Lock(const Mapping& mapping) {
     return 0;
   }
   return size;
+}
+
+void ReadInParallel(std::span<const Mapping> mappings) {
+  constexpr uintptr_t kChunk = uintptr_t{2} << 20;
+  constexpr size_t kThreads = 32;
+  std::vector<Mapping> chunks;
+  for (const auto& mapping : mappings) {
+    for (auto at = mapping.begin; at < mapping.end; at += kChunk) {
+      chunks.push_back(
+        {.begin = at, .end = std::min(at + kChunk, mapping.end)});
+    }
+  }
+  std::atomic_size_t next{0};
+  const auto count = std::min(kThreads, chunks.size());
+  std::vector<std::jthread> threads;
+  threads.reserve(count);
+  for (size_t i = 0; i != count; ++i) {
+    threads.emplace_back([&] {
+      for (auto chunk = next.fetch_add(1, std::memory_order_relaxed);
+           chunk < chunks.size();
+           chunk = next.fetch_add(1, std::memory_order_relaxed)) {
+        Populate(chunks[chunk]);
+      }
+    });
+  }
 }
 
 #endif
@@ -268,6 +297,7 @@ ExecutableRemap RemapExecutable(bool remap_text) {
     remap.skipped = "cannot read the executable's mappings";
     return remap;
   }
+  ReadInParallel(mappings);
   for (const auto& mapping : mappings) {
     if (!mapping.exec) {
       remap.populated += Populate(mapping);

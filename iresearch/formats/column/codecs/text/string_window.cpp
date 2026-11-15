@@ -40,7 +40,7 @@ uint64_t StringWindow::Analyze(const Config& config) {
     return At(index).Size();
   }
   const auto price =
-    [&]<typename Codec>(std::optional<BlobPricer<Codec>>& slot) -> uint64_t {
+    [&]<typename Codec>(std::optional<blob::Pricer<Codec>>& slot) -> uint64_t {
     auto& rows = Rows(config.choice.shape);
     if (!slot) {
       slot.emplace();
@@ -48,7 +48,7 @@ uint64_t StringWindow::Analyze(const Config& config) {
     const auto whole =
       config.layout == FrameLayout::Local ? Bytes(rows) : std::string_view{};
     return slot->Price(rows.profile, whole,
-                       Split(rows, FrameShapeOf<Codec>(config.layout)),
+                       Split(rows, blob::FrameShapeOf<Codec>(config.layout)),
                        CodesSize(rows), config.level, config.layout, _begin);
   };
   SDB_ASSERT(config.choice.leaf == ByteCodec::Lz4);
@@ -168,7 +168,8 @@ std::string_view StringWindow::Bytes(Measured& rows) {
   return rows.bytes;
 }
 
-const FrameSpans& StringWindow::Split(Measured& rows, FrameShape frame) {
+const blob::FrameSpans& StringWindow::Split(Measured& rows,
+                                            blob::FrameShape frame) {
   const auto it = absl::c_find_if(rows.spans, [&](const Spans& s) {
     return s.frame.frame == frame.frame && s.frame.first == frame.first;
   });

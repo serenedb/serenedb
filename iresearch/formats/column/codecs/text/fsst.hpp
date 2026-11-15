@@ -36,33 +36,33 @@
 #include "iresearch/formats/column/codecs/text/segment_rows.hpp"
 #include "iresearch/formats/column/codecs/text/string_tuning.hpp"
 
-namespace irs::codecs {
+namespace irs::codecs::text::fsst {
 
-inline constexpr size_t kFsstMaxExpansion = 8;
+inline constexpr size_t kMaxExpansion = 8;
 
-struct FsstFree {
+struct Free {
   void operator()(duckdb_fsst_encoder_t* encoder) const noexcept {
     duckdb_fsst_destroy(encoder);
   }
 };
 
-struct FsstEncoded {
+struct Encoded {
   size_t strings = 0;
   size_t bytes = 0;
 };
 
-class FsstEncoder {
+class Encoder {
  public:
-  FsstEncoded Encode(std::span<const duckdb::string_t> strings,
-                     std::span<const uint32_t> skip, char* out, size_t capacity,
-                     std::span<uint32_t> lengths);
+  Encoded Encode(std::span<const duckdb::string_t> strings,
+                 std::span<const uint32_t> skip, char* out, size_t capacity,
+                 std::span<uint32_t> lengths);
 
   std::string_view SymbolTable() const noexcept {
     return {reinterpret_cast<const char*>(_table), _table_size};
   }
 
  private:
-  std::unique_ptr<duckdb_fsst_encoder_t, FsstFree> _encoder;
+  std::unique_ptr<duckdb_fsst_encoder_t, Free> _encoder;
   unsigned char _table[sizeof(duckdb_fsst_decoder_t)];
   size_t _table_size = 0;
   std::vector<size_t> _in_lengths;
@@ -71,7 +71,7 @@ class FsstEncoder {
   std::vector<unsigned char*> _out_ptrs;
 };
 
-class FsstDecoder {
+class Decoder {
  public:
   bool Import(std::string_view table) noexcept;
 
@@ -87,15 +87,12 @@ class FsstDecoder {
   duckdb_fsst_decoder_t _decoder{};
 };
 
-}  // namespace irs::codecs
-namespace irs::codecs::text {
-
-class FsstCompressionState {
+class CompressionState {
  public:
   static constexpr ByteCodec kCodec = ByteCodec::Fsst;
 
-  FsstCompressionState(const duckdb::LogicalType& type, DedupScratch& dedup,
-                       EstimatorState& estimators, uint32_t target)
+  CompressionState(const duckdb::LogicalType& type, DedupScratch& dedup,
+                   EstimatorState& estimators, uint32_t target)
     : _rows{type, dedup, estimators.codes},
       _history{estimators.history[static_cast<size_t>(kCodec)]},
       _target{target} {}
@@ -132,10 +129,10 @@ class FsstCompressionState {
   SortScratch _sort;
   RatioHistory* _history;
   uint32_t _target;
-  FsstEncoder _codec;
+  Encoder _codec;
   Segment* _out = nullptr;
   std::vector<FrameMeta> _frames;
   std::vector<uint32_t> _lcp_stream;
 };
 
-}  // namespace irs::codecs::text
+}  // namespace irs::codecs::text::fsst

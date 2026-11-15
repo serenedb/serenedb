@@ -76,14 +76,14 @@ class StringCompressor {
   uint32_t Target() const noexcept { return _params.segment_target; }
 
  private:
-  using States = std::tuple<std::optional<BlobCompressionState<Lz4>>,
-                            std::optional<BlobCompressionState<Lz4Hc>>,
-                            std::optional<BlobCompressionState<Zstd>>,
-                            std::optional<BlobCompressionState<Zxc>>,
-                            std::optional<FsstCompressionState>,
-                            std::optional<FsstPlusCompressionState>,
-                            std::optional<OnPairCompressionState>,
-                            std::optional<Fsst12CompressionState>>;
+  using States = std::tuple<std::optional<blob::CompressionState<Lz4>>,
+                            std::optional<blob::CompressionState<Lz4Hc>>,
+                            std::optional<blob::CompressionState<Zstd>>,
+                            std::optional<blob::CompressionState<Zxc>>,
+                            std::optional<fsst::CompressionState>,
+                            std::optional<fsst_plus::CompressionState>,
+                            std::optional<onpair::CompressionState>,
+                            std::optional<fsst12::CompressionState>>;
 
   const ColCodecParams& _params;
   const duckdb::LogicalType& _type;

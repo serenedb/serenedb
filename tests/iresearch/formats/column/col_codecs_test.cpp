@@ -508,7 +508,7 @@ TEST(FsstEncoderTest, BatchesEncodeLikeSingleStrings) {
     total += s.size();
   }
 
-  irs::codecs::FsstEncoder encoder;
+  irs::codecs::text::fsst::Encoder encoder;
   std::string batch(2 * total + 8, '\0');
   std::vector<uint32_t> lengths(values.size());
   const auto all =
@@ -516,7 +516,7 @@ TEST(FsstEncoderTest, BatchesEncodeLikeSingleStrings) {
   ASSERT_EQ(values.size(), all.strings);
   batch.resize(all.bytes);
 
-  irs::codecs::FsstDecoder decoder;
+  irs::codecs::text::fsst::Decoder decoder;
   ASSERT_TRUE(decoder.Import(encoder.SymbolTable()));
   std::string single;
   uint32_t single_length = 0;
@@ -558,7 +558,7 @@ TEST(FsstEncoderTest, ResumesWhereTheOutputRanOut) {
   }
   const std::vector<uint32_t> skip(values.size(), 1);
 
-  irs::codecs::FsstEncoder whole;
+  irs::codecs::text::fsst::Encoder whole;
   std::string expected(2 * total + 8, '\0');
   std::vector<uint32_t> expected_lengths(values.size());
   const auto all = whole.Encode(values, skip, expected.data(), expected.size(),
@@ -566,7 +566,7 @@ TEST(FsstEncoderTest, ResumesWhereTheOutputRanOut) {
   ASSERT_EQ(values.size(), all.strings);
   expected.resize(all.bytes);
 
-  irs::codecs::FsstEncoder resumed;
+  irs::codecs::text::fsst::Encoder resumed;
   std::string out(total / 2, '\0');
   std::vector<uint32_t> lengths(values.size());
   const auto first =
@@ -2932,7 +2932,7 @@ TEST_F(ColCodecsTest, CorruptedOnPairDictionariesAreRejected) {
      "corrupted symbol table"},
     {"token lengths",
      [](irs::codecs::Header& h, duckdb::data_ptr_t block) {
-       block[h.off_symtab + irs::codecs::kOnPairSideHeader] ^= 0x0F;
+       block[h.off_symtab + irs::codecs::text::onpair::kSideHeader] ^= 0x0F;
      },
      "corrupted symbol table"},
   };

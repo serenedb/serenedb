@@ -85,11 +85,12 @@ stores the rest of its codes.
 +------------------------------------------------------+
 */
 
-namespace irs::codecs::text {
+namespace irs::codecs::text::fsst_plus {
 
-class FsstPlusPrefixes {
+class Prefixes {
  public:
-  bool Open(std::string_view side, uint32_t table_size, FsstDecoder& decoder) {
+  bool Open(std::string_view side, uint32_t table_size,
+            fsst::Decoder& decoder) {
     if (side.size() < static_cast<uint64_t>(table_size) + sizeof(uint32_t) ||
         (table_size != 0 && !decoder.Import(side.substr(0, table_size)))) {
       return false;
@@ -148,10 +149,10 @@ inline uint64_t EntryOffset(ChainGroups& groups, PackedReader& lengths,
   return offset;
 }
 
-inline std::string_view DecodePlusEntry(const FsstDecoder& fsst,
-                                        std::string_view prefix, const char* in,
-                                        uint64_t enc, std::string& buf) {
-  if (const auto need = prefix.size() + enc * kFsstMaxExpansion;
+inline std::string_view DecodeEntry(const fsst::Decoder& fsst,
+                                    std::string_view prefix, const char* in,
+                                    uint64_t enc, std::string& buf) {
+  if (const auto need = prefix.size() + enc * fsst::kMaxExpansion;
       buf.size() < need) {
     buf.resize(std::max<uint64_t>(need, buf.size() * 2));
   }
@@ -165,11 +166,11 @@ inline std::string_view DecodePlusEntry(const FsstDecoder& fsst,
   return {buf.data(), prefix.size() + dec};
 }
 
-struct FsstPlusScan {
+struct Scan {
   static constexpr uint32_t kEntryGroup = 1;
 
   template<typename Frames>
-  FsstPlusScan(const ColumnSegment&, const Frames& s)
+  Scan(const ColumnSegment&, const Frames& s)
     : ids{s.base + s.header.off_lcps, s.header.lcp_width} {
     SDB_ENSURE(prefixes.Open(SideSection(s.header, s.base),
                              s.header.dictionary_size, decoder),
@@ -178,7 +179,7 @@ struct FsstPlusScan {
     for (uint32_t id = 1; id <= prefixes.Count(); ++id) {
       const auto encoded = prefixes.Encoded(id);
       const auto at = heap.size();
-      heap.resize(at + encoded.size() * kFsstMaxExpansion);
+      heap.resize(at + encoded.size() * fsst::kMaxExpansion);
       const auto room = heap.size() - at;
       const auto n =
         decoder.Decode(encoded.data(), encoded.size(), heap.data() + at, room);
@@ -244,7 +245,7 @@ struct FsstPlusScan {
       id <= prefixes.Count() &&
         enc_off + enc <= static_cast<uint64_t>(m.comp_off) + m.comp_len,
       "col codec: corrupted entry");
-    return DecodePlusEntry(decoder, Prefix(id), s.Data() + enc_off, enc, buf);
+    return DecodeEntry(decoder, Prefix(id), s.Data() + enc_off, enc, buf);
   }
 
   template<typename Frames>
@@ -282,8 +283,8 @@ struct FsstPlusScan {
 
   uint64_t HeapBytes() const noexcept { return entry_heap_bytes + heap.size(); }
 
-  FsstDecoder decoder;
-  FsstPlusPrefixes prefixes;
+  fsst::Decoder decoder;
+  Prefixes prefixes;
   PackedReader ids{nullptr, 0};
   ChainGroups groups;
   std::string heap;
@@ -293,7 +294,7 @@ struct FsstPlusScan {
   std::string probe;
 };
 
-struct FsstPlusFetch {
+struct Fetch {
   void Reset(const Header& h, duckdb::data_ptr_t base) {
     decoder.reset();
     groups.Clear();
@@ -322,13 +323,12 @@ struct FsstPlusFetch {
     std::string_view prefix;
     if (id != 0) {
       const auto encoded = prefixes.Encoded(id);
-      prefix =
-        DecodePlusEntry(*decoder, {}, encoded.data(), encoded.size(), head);
+      prefix = DecodeEntry(*decoder, {}, encoded.data(), encoded.size(), head);
     }
-    const auto value = DecodePlusEntry(
-      *decoder, prefix,
-      reinterpret_cast<const char*>(base + h.off_data) + enc_off, enc,
-      value_buf);
+    const auto value =
+      DecodeEntry(*decoder, prefix,
+                  reinterpret_cast<const char*>(base + h.off_data) + enc_off,
+                  enc, value_buf);
     ++walked;
     auto* out = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
     out[result_idx] =
@@ -347,8 +347,8 @@ struct FsstPlusFetch {
     });
   }
 
-  std::optional<FsstDecoder> decoder;
-  FsstPlusPrefixes prefixes;
+  std::optional<fsst::Decoder> decoder;
+  Prefixes prefixes;
   PackedReader ids{nullptr, 0};
   ChainGroups groups;
   std::string head;
@@ -356,25 +356,12 @@ struct FsstPlusFetch {
   uint64_t walked = 0;
 };
 
-struct FsstPlusLeaf {
+struct Leaf {
   static constexpr ByteCodec kCodec = ByteCodec::FsstPlus;
-  using Scan = FsstPlusScan;
-  using Fetch = FsstPlusFetch;
+  using Scan = fsst_plus::Scan;
+  using Fetch = fsst_plus::Fetch;
 };
 
-}  // namespace irs::codecs::text
-namespace irs::codecs {
-
-constinit const CompressionFunction kFsstPlusFunction =
-  text::StringFunction<text::PlainScan<text::FsstPlusLeaf>>(
-    CodecType::FsstPlus);
-
-constinit const CompressionFunction kDictFsstPlusFunction =
-  text::StringFunction<text::DictionaryScan<text::FsstPlusLeaf>>(
-    CodecType::DictFsstPlus);
-
-}  // namespace irs::codecs
-namespace irs::codecs::text {
 namespace {
 
 constexpr uint32_t kNoNode = std::numeric_limits<uint32_t>::max();
@@ -398,7 +385,7 @@ void AppendU32(std::string& out, uint32_t value) {
 
 }  // namespace
 
-void FsstPlusCompressionState::FinalizeCompress() {
+void CompressionState::FinalizeCompress() {
   if (_rows.SegmentShape() == Shape::Dedup) {
     _rows.Sort(_sort);
   }
@@ -413,7 +400,7 @@ void FsstPlusCompressionState::FinalizeCompress() {
   for (const auto& entry : entries) {
     total += entry.GetSize();
   }
-  FsstEncoded encoded;
+  fsst::Encoded encoded;
   _encoded.resize_and_overwrite(
     kEncodeExpansion * total + kEncodeSlack, [&](char* out, size_t capacity) {
       encoded =
@@ -485,7 +472,7 @@ void FsstPlusCompressionState::FinalizeCompress() {
     *_out);
 }
 
-void FsstPlusCompressionState::Cleave(uint32_t first_entry) {
+void CompressionState::Cleave(uint32_t first_entry) {
   const auto n = static_cast<uint32_t>(_codes.size());
   if (n < 2) {
     return;
@@ -566,10 +553,24 @@ void FsstPlusCompressionState::Cleave(uint32_t first_entry) {
   }
 }
 
+}  // namespace irs::codecs::text::fsst_plus
+namespace irs::codecs::text {
+
 const StringCompressionFunction& FsstPlusCompressionFunction() {
   static constexpr auto kFunction =
-    CompressionFunctionOf<FsstPlusCompressionState>();
+    CompressionFunctionOf<fsst_plus::CompressionState>();
   return kFunction;
 }
 
 }  // namespace irs::codecs::text
+namespace irs::codecs {
+
+constinit const CompressionFunction kFsstPlusFunction =
+  text::StringFunction<text::PlainScan<text::fsst_plus::Leaf>>(
+    CodecType::FsstPlus);
+
+constinit const CompressionFunction kDictFsstPlusFunction =
+  text::StringFunction<text::DictionaryScan<text::fsst_plus::Leaf>>(
+    CodecType::DictFsstPlus);
+
+}  // namespace irs::codecs

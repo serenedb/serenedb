@@ -49,27 +49,26 @@
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
 
-namespace irs::codecs::text {
+namespace irs::codecs::text::fsst12 {
 
-struct Fsst12ChainEnd {
+struct ChainEnd {
   uint64_t written;
   uint64_t enc_off;
 };
 
-inline uint64_t Fsst12ChainCapacity(PackedReader& lengths, PackedReader& lcps,
-                                    uint32_t first, uint32_t end) {
+inline uint64_t ChainCapacity(PackedReader& lengths, PackedReader& lcps,
+                              uint32_t first, uint32_t end) {
   uint64_t capacity = 0;
   for (auto e = first; e < end; ++e) {
-    capacity += (e == first ? 0 : lcps.At(e)) +
-                uint64_t{lengths.At(e)} * kFsst12MaxExpansion;
+    capacity +=
+      (e == first ? 0 : lcps.At(e)) + uint64_t{lengths.At(e)} * kMaxExpansion;
   }
   return capacity;
 }
 
-inline uint64_t Fsst12DecodeSuffix(const Fsst12Decoder& fsst, const char* in,
-                                   uint64_t enc, uint64_t lcp,
-                                   std::string& buf) {
-  if (const auto need = lcp + enc * kFsst12MaxExpansion; buf.size() < need) {
+inline uint64_t DecodeSuffix(const Decoder& fsst, const char* in, uint64_t enc,
+                             uint64_t lcp, std::string& buf) {
+  if (const auto need = lcp + enc * kMaxExpansion; buf.size() < need) {
     buf.resize(std::max<uint64_t>(need, buf.size() * 2));
   }
   const auto room = buf.size() - lcp;
@@ -79,11 +78,10 @@ inline uint64_t Fsst12DecodeSuffix(const Fsst12Decoder& fsst, const char* in,
 }
 
 template<typename Visit>
-Fsst12ChainEnd Fsst12WalkChain(const Fsst12Decoder& fsst, const char* in,
-                               PackedReader& lengths, PackedReader& lcps,
-                               uint32_t first, uint32_t end, uint64_t enc_off,
-                               uint64_t enc_end, char* out, uint64_t capacity,
-                               Visit&& visit) {
+ChainEnd WalkChain(const Decoder& fsst, const char* in, PackedReader& lengths,
+                   PackedReader& lcps, uint32_t first, uint32_t end,
+                   uint64_t enc_off, uint64_t enc_end, char* out,
+                   uint64_t capacity, Visit&& visit) {
   uint64_t off = 0;
   uint64_t prev_off = 0;
   uint64_t prev_len = 0;
@@ -111,17 +109,17 @@ Fsst12ChainEnd Fsst12WalkChain(const Fsst12Decoder& fsst, const char* in,
 }
 
 template<typename Visit>
-uint32_t Fsst12WalkInPlace(const Fsst12Decoder& fsst, const char* in,
-                           PackedReader& lengths, PackedReader& lcps,
-                           uint32_t first, uint32_t end, uint64_t enc_off,
-                           uint64_t enc_end, std::string& buf, Visit&& visit) {
+uint32_t WalkInPlace(const Decoder& fsst, const char* in, PackedReader& lengths,
+                     PackedReader& lcps, uint32_t first, uint32_t end,
+                     uint64_t enc_off, uint64_t enc_end, std::string& buf,
+                     Visit&& visit) {
   uint64_t len = 0;
   for (auto e = first; e < end; ++e) {
     const uint64_t lcp = e == first ? 0 : lcps.At(e);
     const uint64_t enc = lengths.At(e);
     SDB_ENSURE(lcp <= len && enc_off + enc <= enc_end,
                "col codec: corrupted front coding");
-    len = Fsst12DecodeSuffix(fsst, in + enc_off, enc, lcp, buf);
+    len = DecodeSuffix(fsst, in + enc_off, enc, lcp, buf);
     if (!visit(e, std::string_view{buf.data(), len})) {
       return e;
     }
@@ -130,10 +128,11 @@ uint32_t Fsst12WalkInPlace(const Fsst12Decoder& fsst, const char* in,
   return end;
 }
 
-inline std::string_view Fsst12DecodeChained(
-  const Fsst12Decoder& fsst, const char* in, PackedReader& lengths,
-  PackedReader& lcps, uint32_t restart, uint32_t entry, uint64_t enc_off,
-  uint64_t enc_end, std::string& buf, uint64_t& walked) {
+inline std::string_view DecodeChained(const Decoder& fsst, const char* in,
+                                      PackedReader& lengths, PackedReader& lcps,
+                                      uint32_t restart, uint32_t entry,
+                                      uint64_t enc_off, uint64_t enc_end,
+                                      std::string& buf, uint64_t& walked) {
   const uint32_t n = entry - restart + 1;
   SDB_ASSERT(n <= kChainRestart);
   std::array<uint64_t, kChainRestart + 1> off;
@@ -160,18 +159,17 @@ inline std::string_view Fsst12DecodeChained(
   while (count != 0) {
     const auto i = used[--count];
     SDB_ENSURE(lcp[i] <= len, "col codec: corrupted front coding");
-    len =
-      Fsst12DecodeSuffix(fsst, in + off[i], off[i + 1] - off[i], lcp[i], buf);
+    len = DecodeSuffix(fsst, in + off[i], off[i + 1] - off[i], lcp[i], buf);
     ++walked;
   }
   return {buf.data(), len};
 }
 
-struct Fsst12Scan {
+struct Scan {
   static constexpr uint32_t kEntryGroup = kChainRestart;
 
   template<typename Frames>
-  Fsst12Scan(const ColumnSegment&, const Frames& s)
+  Scan(const ColumnSegment&, const Frames& s)
     : lcps{s.base + s.header.off_lcps, s.header.lcp_width} {
     SDB_ENSURE(s.header.symtab_size == 0 ||
                  decoder.Import(std::string_view{
@@ -188,9 +186,9 @@ struct Fsst12Scan {
   void WalkFrame(Frames& s, uint32_t f, char* out, Visit&& visit) {
     const auto& m = s.frames[f];
     const uint64_t enc_end = static_cast<uint64_t>(m.comp_off) + m.comp_len;
-    const auto chain = Fsst12WalkChain(decoder, s.Data(), s.length_reader, lcps,
-                                       m.first_entry, s.FrameEnd(f), m.comp_off,
-                                       enc_end, out, m.raw_len, visit);
+    const auto chain =
+      WalkChain(decoder, s.Data(), s.length_reader, lcps, m.first_entry,
+                s.FrameEnd(f), m.comp_off, enc_end, out, m.raw_len, visit);
     SDB_ENSURE(chain.written == m.raw_len && chain.enc_off == enc_end,
                "col codec: corrupted frame");
   }
@@ -252,7 +250,7 @@ struct Fsst12Scan {
       sources |= source << i;
       used |= decode << i;
       need = wanted != 0 ? (source != 0 ? 0 : lcp[i]) : need;
-      capacity += decode * (lcp[i] + uint64_t{enc[i]} * kFsst12MaxExpansion);
+      capacity += decode * (lcp[i] + uint64_t{enc[i]} * kMaxExpansion);
     }
     if (group.size() < capacity) {
       group.resize(capacity);
@@ -325,7 +323,7 @@ struct Fsst12Scan {
       const uint32_t decode = (rows >> i & 1) | uint32_t{lcp[i] < need};
       used |= decode << i;
       need = decode != 0 ? lcp[i] : need;
-      capacity += decode * (lcp[i] + uint64_t{enc[i]} * kFsst12MaxExpansion);
+      capacity += decode * (lcp[i] + uint64_t{enc[i]} * kMaxExpansion);
     }
     auto* out = duckdb::char_ptr_cast(arena.Allocate(capacity));
     uint64_t written = 0;
@@ -358,13 +356,12 @@ struct Fsst12Scan {
   void DecodeGroup(Frames& s, uint32_t f, uint32_t g) {
     const auto first = s.frames[f].first_entry + g * kChainRestart;
     const auto end = std::min<uint32_t>(first + kChainRestart, s.FrameEnd(f));
-    const auto capacity =
-      Fsst12ChainCapacity(s.length_reader, lcps, first, end);
+    const auto capacity = ChainCapacity(s.length_reader, lcps, first, end);
     if (group.size() < capacity) {
       group.resize(capacity);
     }
     std::array<uint64_t, kChainRestart> ends;
-    const auto chain = Fsst12WalkChain(
+    const auto chain = WalkChain(
       decoder, s.Data(), s.length_reader, lcps, first, end,
       groups.Offset(s.length_reader, s.frames[f], f, g), s.header.data_size,
       group.data(), capacity, [&](uint32_t e, std::string_view v) {
@@ -394,13 +391,12 @@ struct Fsst12Scan {
       return View(s.values[e]);
     }
     std::string_view head;
-    Fsst12WalkInPlace(decoder, s.Data(), s.length_reader, lcps, e, e + 1,
-                      groups.Offset(s.length_reader, s.frames[f], f, g),
-                      s.header.data_size, probe,
-                      [&](uint32_t, std::string_view v) {
-                        head = v;
-                        return true;
-                      });
+    WalkInPlace(decoder, s.Data(), s.length_reader, lcps, e, e + 1,
+                groups.Offset(s.length_reader, s.frames[f], f, g),
+                s.header.data_size, probe, [&](uint32_t, std::string_view v) {
+                  head = v;
+                  return true;
+                });
     return head;
   }
 
@@ -430,15 +426,15 @@ struct Fsst12Scan {
       }
       return end;
     }
-    return Fsst12WalkInPlace(
-      decoder, s.Data(), s.length_reader, lcps, first, end,
-      groups.Offset(s.length_reader, s.frames[f], f, g), s.header.data_size,
-      probe, [&](uint32_t, std::string_view v) { return before(v); });
+    return WalkInPlace(decoder, s.Data(), s.length_reader, lcps, first, end,
+                       groups.Offset(s.length_reader, s.frames[f], f, g),
+                       s.header.data_size, probe,
+                       [&](uint32_t, std::string_view v) { return before(v); });
   }
 
   uint64_t HeapBytes() const noexcept { return group_heap_bytes; }
 
-  Fsst12Decoder decoder;
+  Decoder decoder;
   PackedReader lcps{nullptr, 0};
   ChainGroups groups;
   std::vector<uint8_t> group_decoded;
@@ -449,7 +445,7 @@ struct Fsst12Scan {
   std::string probe;
 };
 
-struct Fsst12Fetch {
+struct Fetch {
   void Reset(const Header& h, duckdb::data_ptr_t base) {
     decoder.reset();
     groups.Clear();
@@ -471,7 +467,7 @@ struct Fsst12Fetch {
     const auto* in = reinterpret_cast<const char*>(base + h.off_data);
     const uint32_t group = (entry - f.first_entry) / kChainRestart;
     const uint32_t restart = f.first_entry + group * kChainRestart;
-    const auto value = Fsst12DecodeChained(
+    const auto value = DecodeChained(
       *decoder, in, lengths, lcps, restart, entry,
       groups.Offset(lengths, f, lo, group), h.data_size, chain, walked);
     auto* out = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
@@ -494,33 +490,22 @@ struct Fsst12Fetch {
     });
   }
 
-  std::optional<Fsst12Decoder> decoder;
+  std::optional<Decoder> decoder;
   PackedReader lcps{nullptr, 0};
   ChainGroups groups;
   std::string chain;
   uint64_t walked = 0;
 };
 
-struct Fsst12Leaf {
+struct Leaf {
   static constexpr ByteCodec kCodec = ByteCodec::Fsst12;
-  using Scan = Fsst12Scan;
-  using Fetch = Fsst12Fetch;
+  using Scan = fsst12::Scan;
+  using Fetch = fsst12::Fetch;
 };
 
-}  // namespace irs::codecs::text
-namespace irs::codecs {
-
-constinit const CompressionFunction kFsst12Function =
-  text::StringFunction<text::PlainScan<text::Fsst12Leaf>>(CodecType::Fsst12);
-
-constinit const CompressionFunction kDictFsst12Function =
-  text::StringFunction<text::DictionaryScan<text::Fsst12Leaf>>(
-    CodecType::DictFsst12);
-
-Fsst12Encoded Fsst12Encoder::Encode(std::span<const duckdb::string_t> strings,
-                                    std::span<const uint32_t> skip, char* out,
-                                    size_t capacity,
-                                    std::span<uint32_t> lengths) {
+Encoded Encoder::Encode(std::span<const duckdb::string_t> strings,
+                        std::span<const uint32_t> skip, char* out,
+                        size_t capacity, std::span<uint32_t> lengths) {
   SDB_ASSERT(skip.size() == strings.size());
   SDB_ASSERT(lengths.size() >= strings.size());
   const size_t n = strings.size();
@@ -555,14 +540,12 @@ Fsst12Encoded Fsst12Encoder::Encode(std::span<const duckdb::string_t> strings,
   return {.strings = done, .bytes = used};
 }
 
-bool Fsst12Decoder::Import(std::string_view table) noexcept {
+bool Decoder::Import(std::string_view table) noexcept {
   return duckdb_fsst12_import(
            &_decoder, reinterpret_cast<const unsigned char*>(table.data()),
            table.size()) == table.size();
 }
 
-}  // namespace irs::codecs
-namespace irs::codecs::text {
 namespace {
 
 constexpr uint64_t kEncodeExpansion = 2;
@@ -570,7 +553,7 @@ constexpr uint64_t kEncodeSlack = 8;
 
 }  // namespace
 
-void Fsst12CompressionState::FinalizeCompress() {
+void CompressionState::FinalizeCompress() {
   if (_rows.SegmentShape() == Shape::Dedup) {
     _rows.Sort(_sort);
   }
@@ -656,10 +639,23 @@ void Fsst12CompressionState::FinalizeCompress() {
     *_out);
 }
 
+}  // namespace irs::codecs::text::fsst12
+namespace irs::codecs::text {
+
 const StringCompressionFunction& Fsst12CompressionFunction() {
   static constexpr auto kFunction =
-    CompressionFunctionOf<Fsst12CompressionState>();
+    CompressionFunctionOf<fsst12::CompressionState>();
   return kFunction;
 }
 
 }  // namespace irs::codecs::text
+namespace irs::codecs {
+
+constinit const CompressionFunction kFsst12Function =
+  text::StringFunction<text::PlainScan<text::fsst12::Leaf>>(CodecType::Fsst12);
+
+constinit const CompressionFunction kDictFsst12Function =
+  text::StringFunction<text::DictionaryScan<text::fsst12::Leaf>>(
+    CodecType::DictFsst12);
+
+}  // namespace irs::codecs

@@ -32,14 +32,14 @@
 #include "iresearch/formats/column/codecs/text/segment_rows.hpp"
 #include "iresearch/formats/column/codecs/text/string_tuning.hpp"
 
-namespace irs::codecs::text {
+namespace irs::codecs::text::fsst_plus {
 
-class FsstPlusCompressionState {
+class CompressionState {
  public:
   static constexpr ByteCodec kCodec = ByteCodec::FsstPlus;
 
-  FsstPlusCompressionState(const duckdb::LogicalType& type, DedupScratch& dedup,
-                           EstimatorState& estimators, uint32_t target)
+  CompressionState(const duckdb::LogicalType& type, DedupScratch& dedup,
+                   EstimatorState& estimators, uint32_t target)
     : _rows{type, dedup, estimators.codes},
       _history{estimators.history[static_cast<size_t>(kCodec)]},
       _target{target} {}
@@ -91,7 +91,7 @@ class FsstPlusCompressionState {
   SortScratch _sort;
   RatioHistory* _history;
   uint32_t _target;
-  FsstEncoder _codec;
+  fsst::Encoder _codec;
   Segment* _out = nullptr;
   std::vector<FrameMeta> _frames;
   std::string _encoded;
@@ -111,4 +111,4 @@ class FsstPlusCompressionState {
   std::vector<Range> _ranges;
 };
 
-}  // namespace irs::codecs::text
+}  // namespace irs::codecs::text::fsst_plus

@@ -51,16 +51,15 @@
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/system_compiler.hpp"
 
-namespace irs::codecs::text {
+namespace irs::codecs::text::onpair {
 
-inline std::string_view OnPairSide(const Header& h,
-                                   duckdb::const_data_ptr_t base) noexcept {
+inline std::string_view Side(const Header& h,
+                             duckdb::const_data_ptr_t base) noexcept {
   return {reinterpret_cast<const char*>(base + h.off_symtab), h.symtab_size};
 }
 
 inline FrameMeta TokenFrame(const FrameMeta& m, uint8_t bits) noexcept {
-  const auto stream =
-    m.comp_len < kOnPairPadding ? 0 : m.comp_len - kOnPairPadding;
+  const auto stream = m.comp_len < kPadding ? 0 : m.comp_len - kPadding;
   return {m.first_entry, m.raw_len, 0,
           static_cast<uint32_t>(uint64_t{stream} * 8 / bits)};
 }
@@ -75,12 +74,12 @@ inline uint64_t FirstToken(ChainGroups& groups, PackedReader& counts,
   return first;
 }
 
-struct OnPairScan {
+struct Scan {
   static constexpr uint32_t kEntryGroup = 1;
 
   template<typename Frames>
-  OnPairScan(const ColumnSegment&, const Frames& s) {
-    SDB_ENSURE(table.Open(OnPairSide(s.header, s.base)),
+  Scan(const ColumnSegment&, const Frames& s) {
+    SDB_ENSURE(table.Open(Side(s.header, s.base)),
                "col codec: corrupted symbol table");
     groups.Reset(static_cast<uint32_t>(s.frames.size()), [&](uint32_t f) {
       return std::pair{s.frames[f].first_entry, s.FrameEnd(f)};
@@ -166,14 +165,14 @@ struct OnPairScan {
     return entry_heap_bytes + table.Bytes();
   }
 
-  OnPairTable table;
+  Table table;
   ChainGroups groups;
   std::vector<uint8_t> entry_decoded;
   uint64_t entry_heap_bytes = 0;
   std::string probe;
 };
 
-struct OnPairFetch {
+struct Fetch {
   void Reset(const Header&, duckdb::data_ptr_t) {
     table.reset();
     groups.Clear();
@@ -209,8 +208,7 @@ struct OnPairFetch {
 
   void Open(const Header& h, duckdb::const_data_ptr_t base) {
     table.emplace();
-    SDB_ENSURE(table->Open(OnPairSide(h, base)),
-               "col codec: corrupted symbol table");
+    SDB_ENSURE(table->Open(Side(h, base)), "col codec: corrupted symbol table");
     const auto* frames = base + h.off_frames;
     groups.Reset(h.frame_count, [&](uint32_t i) {
       return std::pair{FrameAt(frames, i).first_entry,
@@ -220,20 +218,18 @@ struct OnPairFetch {
     });
   }
 
-  std::optional<OnPairTable> table;
+  std::optional<Table> table;
   ChainGroups groups;
   std::string buf;
   uint64_t walked = 0;
 };
 
-struct OnPairLeaf {
+struct Leaf {
   static constexpr ByteCodec kCodec = ByteCodec::OnPair;
-  using Scan = OnPairScan;
-  using Fetch = OnPairFetch;
+  using Scan = onpair::Scan;
+  using Fetch = onpair::Fetch;
 };
 
-}  // namespace irs::codecs::text
-namespace irs::codecs {
 namespace {
 
 constexpr double kTrainFraction = 0.15;
@@ -300,8 +296,8 @@ class Controller {
 
 }  // namespace
 
-bool OnPairTable::Open(std::string_view side) {
-  if (side.size() < kOnPairSideHeader) {
+bool Table::Open(std::string_view side) {
+  if (side.size() < kSideHeader) {
     return false;
   }
   _bits = static_cast<uint8_t>(side[0]);
@@ -311,7 +307,7 @@ bool OnPairTable::Open(std::string_view side) {
       count > (uint64_t{1} << _bits)) {
     return false;
   }
-  const auto rest = side.substr(kOnPairSideHeader);
+  const auto rest = side.substr(kSideHeader);
   const auto nibbles = (uint64_t{count} + 1) / 2;
   if (rest.size() < nibbles) {
     return false;
@@ -329,21 +325,20 @@ bool OnPairTable::Open(std::string_view side) {
     return false;
   }
   _bytes.assign(bytes);
-  _bytes.append(kOnPairMaxToken, '\0');
+  _bytes.append(kMaxToken, '\0');
   _count = count;
   _mask = static_cast<uint32_t>((uint64_t{1} << _bits) - 1);
   return true;
 }
 
-void OnPairTable::Corrupted() {
+void Table::Corrupted() {
   SDB_ENSURE(false, "col codec: corrupted entry");
   SDB_UNREACHABLE();
 }
 
-OnPairCodec::OnPairCodec()
-  : _lengths{std::make_unique<std::array<uint16_t, 65536>>()} {}
+Codec::Codec() : _lengths{std::make_unique<std::array<uint16_t, 65536>>()} {}
 
-void OnPairCodec::Reset() {
+void Codec::Reset() {
   _ids.clear();
   _tokens.clear();
   _pairs.clear();
@@ -354,7 +349,7 @@ void OnPairCodec::Reset() {
   }
 }
 
-uint32_t OnPairCodec::Insert(std::string_view token) {
+uint32_t Codec::Insert(std::string_view token) {
   const auto [it, fresh] =
     _ids.try_emplace(token, static_cast<uint32_t>(_tokens.size()));
   if (!fresh) {
@@ -369,11 +364,11 @@ uint32_t OnPairCodec::Insert(std::string_view token) {
   return it->second;
 }
 
-OnPairCodec::Match OnPairCodec::Longest(const char* rest, size_t left) const {
+Codec::Match Codec::Longest(const char* rest, size_t left) const {
   if (left > 1) {
     uint32_t lengths = (*_lengths)[static_cast<uint8_t>(rest[0]) |
                                    (static_cast<uint8_t>(rest[1]) << 8)] &
-                       ((1u << std::min<size_t>(left, kOnPairMaxToken)) - 1);
+                       ((1u << std::min<size_t>(left, kMaxToken)) - 1);
     while (lengths > 1) {
       const auto len = static_cast<uint32_t>(std::bit_width(lengths));
       if (const auto it = _ids.find(std::string_view{rest, len});
@@ -386,10 +381,9 @@ OnPairCodec::Match OnPairCodec::Longest(const char* rest, size_t left) const {
   return {_ids.find(std::string_view{rest, 1})->second, 1};
 }
 
-void OnPairCodec::Train(std::span<const duckdb::string_t> entries,
-                        uint64_t raw) {
+void Codec::Train(std::span<const duckdb::string_t> entries, uint64_t raw) {
   Reset();
-  const uint32_t cap = uint32_t{1} << kOnPairDictionaryBits;
+  const uint32_t cap = uint32_t{1} << kDictionaryBits;
   const uint64_t budget = std::min(
     raw, std::max<uint64_t>(
            static_cast<uint64_t>(static_cast<double>(raw) * kTrainFraction),
@@ -418,7 +412,7 @@ void OnPairCodec::Train(std::span<const duckdb::string_t> entries,
           break;
         }
         const auto pair_len = prev.len + cur.len;
-        if (pair_len <= kOnPairMaxToken) {
+        if (pair_len <= kMaxToken) {
           const auto key = PairKey(prev.id, cur.id);
           auto& count = _pairs[key];
           count = count == kMaxThreshold ? count : count + 1;
@@ -443,7 +437,7 @@ void OnPairCodec::Train(std::span<const duckdb::string_t> entries,
   Finalize();
 }
 
-void OnPairCodec::Finalize() {
+void Codec::Finalize() {
   _order.resize(_tokens.size());
   std::iota(_order.begin(), _order.end(), 0);
   absl::c_stable_sort(
@@ -484,27 +478,27 @@ void OnPairCodec::Finalize() {
     for (const auto s : _stack) {
       const auto len = _tokens[s].size();
       chain.lens |= static_cast<uint16_t>(1u << (len - 1));
-      for (auto l = len; l <= kOnPairMaxToken; ++l) {
+      for (auto l = len; l <= kMaxToken; ++l) {
         chain.ids[l - 1] = static_cast<uint16_t>(s);
       }
     }
   }
 }
 
-OnPairCodec::Key OnPairCodec::KeyOf(std::string_view bytes) noexcept {
-  if (bytes.size() >= kOnPairMaxToken) {
+Codec::Key Codec::KeyOf(std::string_view bytes) noexcept {
+  if (bytes.size() >= kMaxToken) {
     return (Key{absl::big_endian::Load64(bytes.data())} << 64) |
            absl::big_endian::Load64(bytes.data() + 8);
   }
-  char buf[kOnPairMaxToken] = {};
+  char buf[kMaxToken] = {};
   std::memcpy(buf, bytes.data(), bytes.size());
   return (Key{absl::big_endian::Load64(buf)} << 64) |
          absl::big_endian::Load64(buf + 8);
 }
 
-void OnPairCodec::Encode(std::span<const duckdb::string_t> entries,
-                         std::span<uint16_t> codes,
-                         std::span<uint32_t> counts) const {
+void Codec::Encode(std::span<const duckdb::string_t> entries,
+                   std::span<uint16_t> codes,
+                   std::span<uint32_t> counts) const {
   struct Lane {
     const char* rest;
     size_t left;
@@ -548,7 +542,7 @@ void OnPairCodec::Encode(std::span<const duckdb::string_t> entries,
         continue;
       }
       const auto& lane = lanes[k];
-      key[k] = KeyOf({lane.rest, std::min(lane.left, kOnPairMaxToken)});
+      key[k] = KeyOf({lane.rest, std::min(lane.left, kMaxToken)});
       const auto prefix = static_cast<uint32_t>(key[k] >> 112);
       lo[k] = _firsts[prefix] == 0 ? 0 : _firsts[prefix] - 1;
       n[k] = _firsts[prefix + 1] - lo[k];
@@ -565,9 +559,8 @@ void OnPairCodec::Encode(std::span<const duckdb::string_t> entries,
     for (size_t k = 0; k < active;) {
       auto& lane = lanes[k];
       const auto diff = keys[lo[k]] ^ key[k];
-      const auto common = diff == 0
-                            ? kOnPairMaxToken
-                            : static_cast<size_t>(std::countl_zero(diff) / 8);
+      const auto common =
+        diff == 0 ? kMaxToken : static_cast<size_t>(std::countl_zero(diff) / 8);
       const auto& chain = _chains[lo[k]];
       const auto fits = chain.lens & ((1u << std::min(common, lane.left)) - 1);
       const auto len = static_cast<uint32_t>(std::bit_width(fits));
@@ -589,8 +582,8 @@ void OnPairCodec::Encode(std::span<const duckdb::string_t> entries,
   }
 }
 
-void OnPairCodec::Export(std::string& side) const {
-  side.assign(kOnPairSideHeader, '\0');
+void Codec::Export(std::string& side) const {
+  side.assign(kSideHeader, '\0');
   side[0] = static_cast<char>(_bits);
   duckdb::Store<uint32_t>(
     static_cast<uint32_t>(_tokens.size()),
@@ -608,17 +601,7 @@ void OnPairCodec::Export(std::string& side) const {
   }
 }
 
-constinit const CompressionFunction kOnPairFunction =
-  text::StringFunction<text::PlainScan<text::OnPairLeaf>>(CodecType::OnPair);
-
-constinit const CompressionFunction kDictOnPairFunction =
-  text::StringFunction<text::DictionaryScan<text::OnPairLeaf>>(
-    CodecType::DictOnPair);
-
-}  // namespace irs::codecs
-namespace irs::codecs::text {
-
-void OnPairCompressionState::FinalizeCompress() {
+void CompressionState::FinalizeCompress() {
   if (_rows.SegmentShape() == Shape::Dedup) {
     _rows.Sort(_sort);
   }
@@ -675,16 +658,16 @@ void OnPairCompressionState::FinalizeCompress() {
     *_out);
 }
 
-void OnPairCompressionState::Pack(std::span<const duckdb::string_t> entries,
-                                  std::span<const uint32_t> lengths,
-                                  size_t first, size_t end, uint64_t region) {
+void CompressionState::Pack(std::span<const duckdb::string_t> entries,
+                            std::span<const uint32_t> lengths, size_t first,
+                            size_t end, uint64_t region) {
   const auto bits = _codec.Bits();
   uint64_t count = 0;
   for (auto e = first; e < end; ++e) {
     count += lengths[e];
   }
   const uint64_t bytes = (count * bits + 7) / 8;
-  auto* out = _out->bytes.Extend(bytes + kOnPairPadding);
+  auto* out = _out->bytes.Extend(bytes + kPadding);
   uint64_t acc = 0;
   uint32_t fill = 0;
   for (auto e = first; e < end; ++e) {
@@ -703,13 +686,26 @@ void OnPairCompressionState::Pack(std::span<const duckdb::string_t> entries,
   if (fill != 0) {
     *out++ = static_cast<char>(acc & 0xFF);
   }
-  std::memset(out, 0, kOnPairPadding);
+  std::memset(out, 0, kPadding);
 }
+
+}  // namespace irs::codecs::text::onpair
+namespace irs::codecs::text {
 
 const StringCompressionFunction& OnPairCompressionFunction() {
   static constexpr auto kFunction =
-    CompressionFunctionOf<OnPairCompressionState>();
+    CompressionFunctionOf<onpair::CompressionState>();
   return kFunction;
 }
 
 }  // namespace irs::codecs::text
+namespace irs::codecs {
+
+constinit const CompressionFunction kOnPairFunction =
+  text::StringFunction<text::PlainScan<text::onpair::Leaf>>(CodecType::OnPair);
+
+constinit const CompressionFunction kDictOnPairFunction =
+  text::StringFunction<text::DictionaryScan<text::onpair::Leaf>>(
+    CodecType::DictOnPair);
+
+}  // namespace irs::codecs

@@ -154,7 +154,7 @@ encoded bytes:
 Sections start at 8-byte boundaries.
 */
 
-namespace irs::codecs::text {
+namespace irs::codecs::text::fsst {
 
 struct ChainEnd {
   uint64_t written;
@@ -165,15 +165,15 @@ inline uint64_t ChainCapacity(PackedReader& lengths, PackedReader& lcps,
                               uint32_t first, uint32_t end) {
   uint64_t capacity = 0;
   for (auto e = first; e < end; ++e) {
-    capacity += (e == first ? 0 : lcps.At(e)) +
-                uint64_t{lengths.At(e)} * kFsstMaxExpansion;
+    capacity +=
+      (e == first ? 0 : lcps.At(e)) + uint64_t{lengths.At(e)} * kMaxExpansion;
   }
   return capacity;
 }
 
-inline uint64_t DecodeSuffix(const FsstDecoder& fsst, const char* in,
-                             uint64_t enc, uint64_t lcp, std::string& buf) {
-  if (const auto need = lcp + enc * kFsstMaxExpansion; buf.size() < need) {
+inline uint64_t DecodeSuffix(const Decoder& fsst, const char* in, uint64_t enc,
+                             uint64_t lcp, std::string& buf) {
+  if (const auto need = lcp + enc * kMaxExpansion; buf.size() < need) {
     buf.resize(std::max<uint64_t>(need, buf.size() * 2));
   }
   const auto room = buf.size() - lcp;
@@ -183,9 +183,9 @@ inline uint64_t DecodeSuffix(const FsstDecoder& fsst, const char* in,
 }
 
 template<typename Visit>
-ChainEnd WalkChain(const FsstDecoder& fsst, const char* in,
-                   PackedReader& lengths, PackedReader& lcps, uint32_t first,
-                   uint32_t end, uint64_t enc_off, uint64_t enc_end, char* out,
+ChainEnd WalkChain(const Decoder& fsst, const char* in, PackedReader& lengths,
+                   PackedReader& lcps, uint32_t first, uint32_t end,
+                   uint64_t enc_off, uint64_t enc_end, char* out,
                    uint64_t capacity, Visit&& visit) {
   uint64_t off = 0;
   uint64_t prev_off = 0;
@@ -214,10 +214,10 @@ ChainEnd WalkChain(const FsstDecoder& fsst, const char* in,
 }
 
 template<typename Visit>
-uint32_t WalkInPlace(const FsstDecoder& fsst, const char* in,
-                     PackedReader& lengths, PackedReader& lcps, uint32_t first,
-                     uint32_t end, uint64_t enc_off, uint64_t enc_end,
-                     std::string& buf, Visit&& visit) {
+uint32_t WalkInPlace(const Decoder& fsst, const char* in, PackedReader& lengths,
+                     PackedReader& lcps, uint32_t first, uint32_t end,
+                     uint64_t enc_off, uint64_t enc_end, std::string& buf,
+                     Visit&& visit) {
   uint64_t len = 0;
   for (auto e = first; e < end; ++e) {
     const uint64_t lcp = e == first ? 0 : lcps.At(e);
@@ -233,7 +233,7 @@ uint32_t WalkInPlace(const FsstDecoder& fsst, const char* in,
   return end;
 }
 
-inline std::string_view DecodeChained(const FsstDecoder& fsst, const char* in,
+inline std::string_view DecodeChained(const Decoder& fsst, const char* in,
                                       PackedReader& lengths, PackedReader& lcps,
                                       uint32_t restart, uint32_t entry,
                                       uint64_t enc_off, uint64_t enc_end,
@@ -270,11 +270,11 @@ inline std::string_view DecodeChained(const FsstDecoder& fsst, const char* in,
   return {buf.data(), len};
 }
 
-struct FsstScan {
+struct Scan {
   static constexpr uint32_t kEntryGroup = kChainRestart;
 
   template<typename Frames>
-  FsstScan(const ColumnSegment&, const Frames& s)
+  Scan(const ColumnSegment&, const Frames& s)
     : lcps{s.base + s.header.off_lcps, s.header.lcp_width} {
     SDB_ENSURE(s.header.symtab_size == 0 ||
                  decoder.Import(std::string_view{
@@ -355,7 +355,7 @@ struct FsstScan {
       sources |= source << i;
       used |= decode << i;
       need = wanted != 0 ? (source != 0 ? 0 : lcp[i]) : need;
-      capacity += decode * (lcp[i] + uint64_t{enc[i]} * kFsstMaxExpansion);
+      capacity += decode * (lcp[i] + uint64_t{enc[i]} * kMaxExpansion);
     }
     if (group.size() < capacity) {
       group.resize(capacity);
@@ -428,7 +428,7 @@ struct FsstScan {
       const uint32_t decode = (rows >> i & 1) | uint32_t{lcp[i] < need};
       used |= decode << i;
       need = decode != 0 ? lcp[i] : need;
-      capacity += decode * (lcp[i] + uint64_t{enc[i]} * kFsstMaxExpansion);
+      capacity += decode * (lcp[i] + uint64_t{enc[i]} * kMaxExpansion);
     }
     auto* out = duckdb::char_ptr_cast(arena.Allocate(capacity));
     uint64_t written = 0;
@@ -539,7 +539,7 @@ struct FsstScan {
 
   uint64_t HeapBytes() const noexcept { return group_heap_bytes; }
 
-  FsstDecoder decoder;
+  Decoder decoder;
   PackedReader lcps{nullptr, 0};
   ChainGroups groups;
   std::vector<uint8_t> group_decoded;
@@ -550,7 +550,7 @@ struct FsstScan {
   std::string probe;
 };
 
-struct FsstFetch {
+struct Fetch {
   void Reset(const Header& h, duckdb::data_ptr_t base) {
     decoder.reset();
     groups.Clear();
@@ -595,32 +595,22 @@ struct FsstFetch {
     });
   }
 
-  std::optional<FsstDecoder> decoder;
+  std::optional<Decoder> decoder;
   PackedReader lcps{nullptr, 0};
   ChainGroups groups;
   std::string chain;
   uint64_t walked = 0;
 };
 
-struct FsstLeaf {
+struct Leaf {
   static constexpr ByteCodec kCodec = ByteCodec::Fsst;
-  using Scan = FsstScan;
-  using Fetch = FsstFetch;
+  using Scan = fsst::Scan;
+  using Fetch = fsst::Fetch;
 };
 
-}  // namespace irs::codecs::text
-namespace irs::codecs {
-
-constinit const CompressionFunction kFsstFunction =
-  text::StringFunction<text::PlainScan<text::FsstLeaf>>(CodecType::Fsst);
-
-constinit const CompressionFunction kDictFsstFunction =
-  text::StringFunction<text::DictionaryScan<text::FsstLeaf>>(
-    CodecType::DictFsst);
-
-FsstEncoded FsstEncoder::Encode(std::span<const duckdb::string_t> strings,
-                                std::span<const uint32_t> skip, char* out,
-                                size_t capacity, std::span<uint32_t> lengths) {
+Encoded Encoder::Encode(std::span<const duckdb::string_t> strings,
+                        std::span<const uint32_t> skip, char* out,
+                        size_t capacity, std::span<uint32_t> lengths) {
   SDB_ASSERT(skip.size() == strings.size());
   SDB_ASSERT(lengths.size() >= strings.size());
   const size_t n = strings.size();
@@ -654,14 +644,12 @@ FsstEncoded FsstEncoder::Encode(std::span<const duckdb::string_t> strings,
   return {.strings = done, .bytes = used};
 }
 
-bool FsstDecoder::Import(std::string_view table) noexcept {
+bool Decoder::Import(std::string_view table) noexcept {
   return duckdb_fsst_import(
            &_decoder, reinterpret_cast<const unsigned char*>(table.data()),
            table.size()) == table.size();
 }
 
-}  // namespace irs::codecs
-namespace irs::codecs::text {
 namespace {
 
 constexpr uint64_t kEncodeExpansion = 2;
@@ -669,20 +657,7 @@ constexpr uint64_t kEncodeSlack = 8;
 
 }  // namespace
 
-Analysis AnalyzeFsst(const AnalyzeInput& input) {
-  const Config config{.choice = {input.shape, ByteCodec::Fsst}};
-  auto& window = input.window;
-  return {.config = config,
-          .score = window.At(window.TrialCompress(config)).Size()};
-}
-
-const StringCompressionFunction& FsstCompressionFunction() {
-  static constexpr auto kFunction =
-    CompressionFunctionOf<FsstCompressionState>();
-  return kFunction;
-}
-
-void FsstCompressionState::FinalizeCompress() {
+void CompressionState::FinalizeCompress() {
   if (_rows.SegmentShape() == Shape::Dedup) {
     _rows.Sort(_sort);
   }
@@ -768,4 +743,30 @@ void FsstCompressionState::FinalizeCompress() {
     *_out);
 }
 
+}  // namespace irs::codecs::text::fsst
+namespace irs::codecs::text {
+
+Analysis AnalyzeFsst(const AnalyzeInput& input) {
+  const Config config{.choice = {input.shape, ByteCodec::Fsst}};
+  auto& window = input.window;
+  return {.config = config,
+          .score = window.At(window.TrialCompress(config)).Size()};
+}
+
+const StringCompressionFunction& FsstCompressionFunction() {
+  static constexpr auto kFunction =
+    CompressionFunctionOf<fsst::CompressionState>();
+  return kFunction;
+}
+
 }  // namespace irs::codecs::text
+namespace irs::codecs {
+
+constinit const CompressionFunction kFsstFunction =
+  text::StringFunction<text::PlainScan<text::fsst::Leaf>>(CodecType::Fsst);
+
+constinit const CompressionFunction kDictFsstFunction =
+  text::StringFunction<text::DictionaryScan<text::fsst::Leaf>>(
+    CodecType::DictFsst);
+
+}  // namespace irs::codecs

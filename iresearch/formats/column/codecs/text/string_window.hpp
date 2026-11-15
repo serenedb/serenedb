@@ -72,8 +72,8 @@ class StringWindow {
 
  private:
   struct Spans {
-    FrameShape frame;
-    FrameSpans spans;
+    blob::FrameShape frame;
+    blob::FrameSpans spans;
   };
 
   struct Measured {
@@ -89,8 +89,8 @@ class StringWindow {
   };
 
   struct Pricers {
-    std::optional<BlobPricer<Lz4>> lz4;
-    std::optional<BlobPricer<Lz4Hc>> lz4_hc;
+    std::optional<blob::Pricer<Lz4>> lz4;
+    std::optional<blob::Pricer<Lz4Hc>> lz4_hc;
   };
 
   size_t Find(const Config& config) const noexcept;
@@ -103,7 +103,7 @@ class StringWindow {
 
   uint64_t CodesSize(Measured& rows);
 
-  const FrameSpans& Split(Measured& rows, FrameShape frame);
+  const blob::FrameSpans& Split(Measured& rows, blob::FrameShape frame);
 
   const StringAccumulator& _acc;
   StringCompressor& _compressor;

@@ -96,25 +96,25 @@ Analysis AnalyzeLz4(const AnalyzeInput& input) {
 
 const StringCompressionFunction& Lz4CompressionFunction() {
   static constexpr auto kFunction =
-    CompressionFunctionOf<BlobCompressionState<Lz4>>();
+    CompressionFunctionOf<blob::CompressionState<Lz4>>();
   return kFunction;
 }
 
 const StringCompressionFunction& Lz4HcCompressionFunction() {
   static constexpr auto kFunction =
-    CompressionFunctionOf<BlobCompressionState<Lz4Hc>>();
+    CompressionFunctionOf<blob::CompressionState<Lz4Hc>>();
   return kFunction;
 }
 
 const StringCompressionFunction& ZstdCompressionFunction() {
   static constexpr auto kFunction =
-    CompressionFunctionOf<BlobCompressionState<Zstd>>();
+    CompressionFunctionOf<blob::CompressionState<Zstd>>();
   return kFunction;
 }
 
 const StringCompressionFunction& ZxcCompressionFunction() {
   static constexpr auto kFunction =
-    CompressionFunctionOf<BlobCompressionState<Zxc>>();
+    CompressionFunctionOf<blob::CompressionState<Zxc>>();
   return kFunction;
 }
 

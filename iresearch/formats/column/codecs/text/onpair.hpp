@@ -37,26 +37,24 @@
 #include "iresearch/formats/column/codecs/text/segment_rows.hpp"
 #include "iresearch/formats/column/codecs/text/string_tuning.hpp"
 
-namespace irs::codecs {
+namespace irs::codecs::text::onpair {
 
-inline constexpr size_t kOnPairMaxToken = 16;
-inline constexpr size_t kOnPairSideHeader = 8;
-inline constexpr size_t kOnPairPadding = 2;
-inline constexpr uint8_t kOnPairDictionaryBits = 12;
+inline constexpr size_t kMaxToken = 16;
+inline constexpr size_t kSideHeader = 8;
+inline constexpr size_t kPadding = 2;
+inline constexpr uint8_t kDictionaryBits = 12;
 
-class OnPairTable {
+class Table {
  public:
   bool Open(std::string_view side);
 
   uint8_t Bits() const noexcept { return _bits; }
   uint64_t Bytes() const noexcept { return _bytes.size(); }
-  uint64_t Capacity(uint64_t codes) const noexcept {
-    return codes * kOnPairMaxToken;
-  }
+  uint64_t Capacity(uint64_t codes) const noexcept { return codes * kMaxToken; }
 
   uint64_t Decode(const uint8_t* stream, uint64_t first, uint64_t count,
                   char* out, uint64_t capacity) const {
-    if (count * kOnPairMaxToken <= capacity) {
+    if (count * kMaxToken <= capacity) {
       return Copy<false>(stream, first, count, out, capacity);
     }
     return Copy<true>(stream, first, count, out, capacity);
@@ -76,7 +74,7 @@ class OnPairTable {
     const auto end = (first + count) * bits;
     if constexpr (!kTail) {
       const uint64_t batch = (64 - 7) / bits;
-      const auto readable = (end + 7) / 8 + kOnPairPadding;
+      const auto readable = (end + 7) / 8 + kPadding;
       while (bit + batch * bits <= end &&
              bit / 8 + sizeof(uint64_t) <= readable) {
         uint64_t word;
@@ -89,7 +87,7 @@ class OnPairTable {
             Corrupted();
           }
           const auto token = tokens[code];
-          std::memcpy(out + off, bytes + (token & 0xFFFFFF), kOnPairMaxToken);
+          std::memcpy(out + off, bytes + (token & 0xFFFFFF), kMaxToken);
           off += token >> 24;
         }
         bit += batch * bits;
@@ -109,13 +107,13 @@ class OnPairTable {
         if (off + len > capacity) [[unlikely]] {
           Corrupted();
         }
-        if (off + kOnPairMaxToken > capacity) {
+        if (off + kMaxToken > capacity) {
           std::memcpy(out + off, from, len);
           off += len;
           continue;
         }
       }
-      std::memcpy(out + off, from, kOnPairMaxToken);
+      std::memcpy(out + off, from, kMaxToken);
       off += len;
     }
     return off;
@@ -130,9 +128,9 @@ class OnPairTable {
   uint8_t _bits = 0;
 };
 
-class OnPairCodec {
+class Codec {
  public:
-  OnPairCodec();
+  Codec();
 
   void Train(std::span<const duckdb::string_t> entries, uint64_t raw);
 
@@ -151,7 +149,7 @@ class OnPairCodec {
 
   struct Chain {
     uint16_t lens;
-    uint16_t ids[kOnPairMaxToken];
+    uint16_t ids[kMaxToken];
   };
 
   using Key = unsigned __int128;
@@ -175,15 +173,12 @@ class OnPairCodec {
   uint8_t _bits = 8;
 };
 
-}  // namespace irs::codecs
-namespace irs::codecs::text {
-
-class OnPairCompressionState {
+class CompressionState {
  public:
   static constexpr ByteCodec kCodec = ByteCodec::OnPair;
 
-  OnPairCompressionState(const duckdb::LogicalType& type, DedupScratch& dedup,
-                         EstimatorState& estimators, uint32_t target)
+  CompressionState(const duckdb::LogicalType& type, DedupScratch& dedup,
+                   EstimatorState& estimators, uint32_t target)
     : _rows{type, dedup, estimators.codes},
       _history{estimators.history[static_cast<size_t>(kCodec)]},
       _target{target} {}
@@ -226,11 +221,11 @@ class OnPairCompressionState {
   SortScratch _sort;
   RatioHistory* _history;
   uint32_t _target;
-  OnPairCodec _codec;
+  Codec _codec;
   Segment* _out = nullptr;
   std::vector<FrameMeta> _frames;
   std::string _side;
   std::vector<uint16_t> _codes;
 };
 
-}  // namespace irs::codecs::text
+}  // namespace irs::codecs::text::onpair

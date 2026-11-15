@@ -53,7 +53,7 @@
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
 
-namespace irs::codecs::text {
+namespace irs::codecs::text::blob {
 
 inline constexpr size_t kPriceFrames = 8;
 inline constexpr size_t kProbeFrames = 1;
@@ -176,7 +176,7 @@ size_t CompressedSize(std::string_view raw, std::string& scratch,
 }
 
 template<typename Codec>
-class BlobPricer {
+class Pricer {
  public:
   static constexpr ByteCodec kCodec = Codec::kCodec;
   static_assert(!Sorted(kCodec));
@@ -261,13 +261,13 @@ class BlobPricer {
 inline constexpr uint64_t kLocalDictionaryPacking = 2;
 
 template<typename Codec>
-class BlobCompressionState {
+class CompressionState {
  public:
   static constexpr ByteCodec kCodec = Codec::kCodec;
   static_assert(!Sorted(kCodec));
 
-  BlobCompressionState(const duckdb::LogicalType& type, DedupScratch& dedup,
-                       EstimatorState& estimators)
+  CompressionState(const duckdb::LogicalType& type, DedupScratch& dedup,
+                   EstimatorState& estimators)
     : _rows{type, dedup, estimators.codes},
       _history{estimators.history[static_cast<size_t>(kCodec)]} {}
 
@@ -391,7 +391,7 @@ class BlobCompressionState {
     if (auto& hist = History(); hist.raw == 0) {
       const auto raw = Slice(_spans.size() - 1);
       hist.raw += raw.size();
-      hist.comp += text::CompressedSize<Codec>(raw, _scratch, *_codec);
+      hist.comp += blob::CompressedSize<Codec>(raw, _scratch, *_codec);
     }
   }
 
@@ -442,7 +442,7 @@ class BlobCompressionState {
     const auto first = Slice(0);
     _probe->Clear();
     const auto first_plain =
-      text::CompressedSize<Codec>(first, _scratch, *_probe);
+      blob::CompressedSize<Codec>(first, _scratch, *_probe);
     _probe->Use(first);
     uint64_t sampled_raw = 0;
     uint64_t sampled_trained = 0;
@@ -453,7 +453,7 @@ class BlobCompressionState {
         const auto raw = Slice(i);
         sampled_raw += raw.size();
         sampled_trained += _frames[i].comp_len;
-        sampled_first += text::CompressedSize<Codec>(raw, _scratch, *_probe);
+        sampled_first += blob::CompressedSize<Codec>(raw, _scratch, *_probe);
       });
     const auto rest_raw = _frame.size() - first.size();
     return _frames[0].comp_len + _codec->Stored().size() +
@@ -539,9 +539,9 @@ class FrameInflater {
 };
 
 template<typename Codec>
-struct BlobScan {
+struct Scan {
   template<typename Frames>
-  BlobScan(const ColumnSegment&, const Frames&) {}
+  Scan(const ColumnSegment&, const Frames&) {}
 
   template<typename Frames>
   void DecodeFrame(Frames& s, uint32_t f, char* out) {
@@ -624,7 +624,7 @@ struct BlobScan {
 };
 
 template<typename Codec>
-struct BlobFetch {
+struct Fetch {
   void Reset(const Header&, duckdb::data_ptr_t) noexcept {
     frame = kNoFrame;
     decoded_total = 0;
@@ -718,10 +718,10 @@ struct BlobFetch {
 };
 
 template<typename Codec>
-struct BlobLeaf {
+struct Leaf {
   static constexpr ByteCodec kCodec = Codec::kCodec;
-  using Scan = BlobScan<Codec>;
-  using Fetch = BlobFetch<Codec>;
+  using Scan = blob::Scan<Codec>;
+  using Fetch = blob::Fetch<Codec>;
 };
 
-}  // namespace irs::codecs::text
+}  // namespace irs::codecs::text::blob

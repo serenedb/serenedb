@@ -16,12 +16,13 @@ A list or map column stores each distinct value of a row group once. Columns who
 
 ## Codecs
 
-A column's codec is either picked automatically (`auto`, the default: a row group takes the smallest of the candidates measured on its first rows; while one codec keeps winning, later row groups reuse it and measure only now and then, and a row group whose data compresses differently is measured again) or named explicitly. Numeric columns use DuckDB's lightweight codecs and, under `auto`, the columnstore's [numeric codec](#numeric-columns); text columns use the columnstore's own string codecs, which differ in their *shape* (a dictionary of distinct values with row codes, or one entry per row) and their *leaf* (how the entry bytes are encoded):
+A column's codec is either picked automatically (`auto`, the default: a row group takes the smallest of the candidates measured on its first rows; while one codec keeps winning, later row groups reuse it and measure only now and then, and a row group whose data compresses differently is measured again) or named explicitly. Numeric columns use DuckDB's lightweight codecs and the columnstore's [numeric codec](#numeric-columns); text columns use the columnstore's own string codecs, which differ in their *shape* (a dictionary of distinct values with row codes, or one entry per row) and their *leaf* (how the entry bytes are encoded):
 
 | Codec | Types | Shape and leaf |
 | :--- | :--- | :--- |
 | `uncompressed` | any | values as-is |
 | `bitpacking`, `rle`, `alp`, `alprd`, `roaring` | numeric / boolean | DuckDB's codecs of these names |
+| `numeric` | numeric | the columnstore's [numeric codec](#numeric-columns): one transform per row group, with or without a byte codec |
 | `dict_fsst` | text | sorted dictionary, front-coded, FSST-encoded |
 | `fsst` | text | one entry per row, front-coded against the previous row, FSST-encoded |
 | `dict_fsst_plus` | text | sorted dictionary, a prefix shared by neighbouring entries stored once, FSST-encoded; reading one entry decodes only that entry |
@@ -47,7 +48,7 @@ A dictionary decoded in full, and the parts of a numeric column that scans and l
 
 ## Numeric columns
 
-Under `auto`, a numeric column (integers, decimals, floating point, dates and timestamps) chooses, row group by row group, between DuckDB's lightweight codecs and the columnstore's numeric codec. The numeric codec rewrites a row group with one transform; the bit-packed transforms store every block of values in as many bits as the block needs:
+Under `auto`, a numeric column (integers, decimals, floating point, dates and timestamps) chooses, row group by row group, between DuckDB's lightweight codecs and the columnstore's numeric codec; a column declared `USING COMPRESSION numeric` takes the numeric codec for every row group that has a value. The numeric codec rewrites a row group with one transform; the bit-packed transforms store every block of values in as many bits as the block needs:
 
 | Transform | Stores | Suits |
 | :--- | :--- | :--- |

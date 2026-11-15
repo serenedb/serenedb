@@ -77,6 +77,10 @@ void CompressCheapest(ColumnDataCheckpointData& data,
 
 void CompressNumbers(ColumnDataCheckpointData& data,
                      std::span<const WriteChunk> chunks) {
+  if (data.disabled.test(std::to_underlying(CodecType::Numeric))) {
+    CompressCheapest(data, chunks);
+    return;
+  }
   SDB_ASSERT(data.tuning);
   const auto& type = data.type;
   const auto physical = type.InternalType();

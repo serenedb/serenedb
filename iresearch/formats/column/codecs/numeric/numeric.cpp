@@ -1146,10 +1146,27 @@ duckdb::InsertionOrderPreservingMap<std::string> SegmentInfo(
   return info;
 }
 
+void CompressNumeric(ColumnDataCheckpointData& data,
+                     std::span<const WriteChunk> chunks) {
+  SDB_ASSERT(data.tuning);
+  auto& tuning = data.tuning->numeric;
+  const auto rows = CountRows(chunks);
+  auto segment =
+    SealNumeric(data.type, chunks, rows, data.params, tuning,
+                tuning.reuse.Due(), kNotAnalyzed, [] { return kNotAnalyzed; });
+  if (segment.bytes.empty()) {
+    data.function = GetCodec(CodecType::Uncompressed, data.type.InternalType());
+    data.function->compress(data, chunks);
+    return;
+  }
+  data.FlushSegment(std::move(segment.stats), rows, segment.bytes);
+}
+
 template<typename T>
 constexpr CompressionFunction MakeFunction(duckdb::PhysicalType physical) {
   return {
     .type = CodecType::Numeric,
+    .compress = CompressNumeric,
     .init_scan = InitScan<T>,
     .scan = Scan<T>,
     .select = Select<T>,

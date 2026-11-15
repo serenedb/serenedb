@@ -697,7 +697,7 @@ codecs::CodecType ColumnWriter::ForcedCodec() const {
     return codecs::IsText(forced) ? forced : codecs::CodecType::Auto;
   }
   const auto* function = codecs::GetCodec(forced, physical);
-  return function && function->analyze ? forced : codecs::CodecType::Auto;
+  return function && function->compress ? forced : codecs::CodecType::Auto;
 }
 
 bool ColumnWriter::CopyableFrom(const ColumnReader& column) const {

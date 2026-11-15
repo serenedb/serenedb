@@ -909,6 +909,47 @@ TEST_F(ColNumericCodecTest, ForcedRleLeavesRowGroupsWithoutRepeatsPlain) {
   }
 }
 
+TEST_F(ColNumericCodecTest, NamedNumericTakesEveryRowGroupWithAValue) {
+  constexpr uint32_t kRowGroup = 4096;
+  constexpr uint64_t kRows = 5 * kRowGroup + 700;
+  const Gen unique = [](uint64_t g) -> std::optional<int64_t> {
+    return static_cast<int64_t>(Mix(g));
+  };
+  const Gen runs = [](uint64_t g) -> std::optional<int64_t> {
+    return static_cast<int64_t>(g / 64);
+  };
+  const Gen null_group = [](uint64_t g) -> std::optional<int64_t> {
+    if (g / kRowGroup == 2) {
+      return std::nullopt;
+    }
+    return static_cast<int64_t>(g * 3 + 1);
+  };
+  const auto codecs = [&](const Gen& gen, irs::WriteTier tier) {
+    irs::MemoryDirectory dir{};
+    Write(dir, duckdb::LogicalType::BIGINT, {.tier = tier}, kRows, kRowGroup,
+          gen, irs::codecs::CodecType::Numeric);
+    Verify(dir, duckdb::LogicalType::BIGINT, kRows, gen);
+    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+    const auto* col = r.Column(kField);
+    EXPECT_NE(col, nullptr);
+    std::vector<irs::codecs::CodecType> types;
+    for (const auto& block : col->DataBlocks()) {
+      types.push_back(block.codec->type);
+    }
+    return types;
+  };
+  using irs::codecs::CodecType;
+  for (const auto tier : {irs::WriteTier::Flush, irs::WriteTier::Merge}) {
+    SCOPED_TRACE(tier == irs::WriteTier::Flush ? "flush" : "merge");
+    EXPECT_EQ(codecs(unique, tier), std::vector(6, CodecType::Numeric));
+    EXPECT_EQ(codecs(runs, tier), std::vector(6, CodecType::Numeric));
+    const std::vector without_values{CodecType::Numeric,  CodecType::Numeric,
+                                     CodecType::Constant, CodecType::Numeric,
+                                     CodecType::Numeric,  CodecType::Numeric};
+    EXPECT_EQ(codecs(null_group, tier), without_values);
+  }
+}
+
 TEST_F(ColNumericCodecTest, ForcedBitpackingLeavesAnOverflowingRangePlain) {
   constexpr uint32_t kRowGroup = 4096;
   constexpr uint64_t kRows = 4 * kRowGroup;

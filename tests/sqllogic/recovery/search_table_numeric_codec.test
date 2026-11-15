@@ -1,0 +1,117 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SET threads = 1;
+
+
+statement ok
+CREATE TABLE stnc_named (a INTEGER PRIMARY KEY,
+                         n BIGINT USING COMPRESSION numeric,
+                         d DOUBLE USING COMPRESSION numeric,
+                         tags BIGINT[] USING COMPRESSION numeric)
+WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO stnc_named SELECT a, (a * 7919) % 100003, a / 7.0, [a, a % 7] FROM range(20000) t(a);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) stnc_named;
+
+
+query
+SELECT column_name, string_agg(DISTINCT compression, ',' ORDER BY compression) AS compression
+FROM pragma_storage_info('stnc_named')
+WHERE column_name IN ('n', 'd') AND segment_type <> 'VALIDITY'
+GROUP BY ALL ORDER BY column_name;
+----
+column_name	compression
+d	Numeric
+n	Numeric
+
+
+query
+SELECT count(*) AS mismatches FROM stnc_named
+WHERE n IS DISTINCT FROM (a * 7919) % 100003 OR d IS DISTINCT FROM a / 7.0 OR tags IS DISTINCT FROM [a, a % 7];
+----
+mismatches
+0
+
+
+statement error
+CREATE TABLE stnc_text (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION numeric);
+----
+db error: ERROR: Can't compress column "v" with type 'VARCHAR' (physical: VARCHAR) using compression type 'Numeric'
+
+
+statement ok
+SET force_compression = 'numeric';
+
+
+statement ok
+CREATE TABLE stnc_forced (a INTEGER PRIMARY KEY, n BIGINT, v TEXT)
+WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO stnc_forced SELECT a, (a * 7919) % 100003, 'https://example.org/page/' || a FROM range(20000) t(a);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) stnc_forced;
+
+
+query
+SELECT column_name, string_agg(DISTINCT compression, ',' ORDER BY compression) AS compression
+FROM pragma_storage_info('stnc_forced')
+WHERE column_name IN ('n', 'v') AND segment_type <> 'VALIDITY'
+GROUP BY ALL ORDER BY column_name;
+----
+column_name	compression
+n	Numeric
+v	FSST
+
+
+query
+SELECT count(*) AS mismatches FROM stnc_forced
+WHERE n IS DISTINCT FROM (a * 7919) % 100003 OR v IS DISTINCT FROM 'https://example.org/page/' || a;
+----
+mismatches
+0
+
+
+statement ok
+RESET force_compression;
+
+
+statement ok
+SET disabled_compression_methods = 'numeric';
+
+
+statement ok
+CREATE TABLE stnc_disabled (a INTEGER PRIMARY KEY, auto_n BIGINT, named_n BIGINT USING COMPRESSION numeric)
+WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO stnc_disabled SELECT a, (a * 7919) % 100003, (a * 7919) % 100003 FROM range(20000) t(a);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) stnc_disabled;
+
+
+query
+SELECT count(*) AS numeric_segments,
+       (SELECT count(*) FROM stnc_disabled
+        WHERE auto_n IS DISTINCT FROM (a * 7919) % 100003 OR named_n IS DISTINCT FROM (a * 7919) % 100003) AS mismatches
+FROM pragma_storage_info('stnc_disabled')
+WHERE compression = 'Numeric';
+----
+numeric_segments	mismatches
+0	0
+
+
+statement ok
+RESET disabled_compression_methods;

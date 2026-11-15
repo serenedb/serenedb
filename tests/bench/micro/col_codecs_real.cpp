@@ -192,6 +192,7 @@ constexpr ColArm kNumArms[] = {
   {"rle", irs::codecs::CodecType::Rle, 0},
   {"alp", irs::codecs::CodecType::Alp, 0},
   {"alprd", irs::codecs::CodecType::AlpRd, 0},
+  {"numeric", irs::codecs::CodecType::Numeric, 0},
   {"uncompressed", irs::codecs::CodecType::Uncompressed, 0},
 };
 

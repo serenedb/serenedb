@@ -165,6 +165,8 @@ const Codec* FindCodec(duckdb::CompressionType type) noexcept {
       return codec(CodecType::DictFsst12);
     case COMPRESSION_COL_FSST12:
       return codec(CodecType::Fsst12);
+    case COMPRESSION_COL_NUMERIC:
+      return codec(CodecType::Numeric);
     case COMPRESSION_DICTIONARY:
     case COMPRESSION_PFOR_DELTA:
     case COMPRESSION_CHIMP:

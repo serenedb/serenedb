@@ -187,13 +187,13 @@ class ScanPartition final : public duckdb::PartitionRowGroup {
   ScanPartition(const ScanBindData& bind, const irs::DirectoryReader& reader)
     : _bind{bind}, _reader{reader} {}
 
-  duckdb::unique_ptr<duckdb::BaseStatistics> GetColumnStatistics(
-    const duckdb::StorageIndex& index) final {
+  duckdb::optionally_owned_ptr<const duckdb::BaseStatistics>
+  GetColumnStatistics(const duckdb::StorageIndex& index) final {
     if (index.HasChildren()) {
-      return nullptr;
+      return {};
     }
-    return ColumnStats(_bind, _reader,
-                       ScanColumnOfStorage(_bind, index.GetPrimaryIndex()));
+    return duckdb::unique_ptr<const duckdb::BaseStatistics>(ColumnStats(
+      _bind, _reader, ScanColumnOfStorage(_bind, index.GetPrimaryIndex())));
   }
 
   bool MinMaxIsExact(const duckdb::StorageIndex&) final { return true; }

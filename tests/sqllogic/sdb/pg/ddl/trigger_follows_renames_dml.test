@@ -1,0 +1,189 @@
+statement ok
+CREATE TABLE tfd_cnt (id INT, cnt INT);
+
+
+statement ok
+INSERT INTO tfd_cnt VALUES (1, 0);
+
+
+statement ok
+CREATE TABLE tfd_ev (id INT, v INT);
+
+
+statement ok
+CREATE TABLE tfd_kk (id INT, inc INT);
+
+
+statement ok
+INSERT INTO tfd_kk VALUES (1, 100);
+
+
+statement ok
+CREATE TABLE tfd_up (id INT PRIMARY KEY, n INT);
+
+
+statement ok
+CREATE TABLE tfd_log (id INT, n INT);
+
+
+statement ok
+CREATE TRIGGER tfd_upd AFTER INSERT ON tfd_ev FOR EACH STATEMENT
+  UPDATE tfd_cnt SET cnt = tfd_cnt.cnt + kk.inc FROM tfd_kk kk WHERE kk.id = tfd_cnt.id RETURNING cnt;
+
+
+statement ok
+CREATE TRIGGER tfd_ups AFTER INSERT ON tfd_ev FOR EACH STATEMENT
+  INSERT INTO tfd_up SELECT id, inc FROM tfd_kk
+  ON CONFLICT (id) DO UPDATE SET n = tfd_up.n + excluded.n WHERE tfd_up.n < 1000 RETURNING n;
+
+
+statement ok
+CREATE TRIGGER tfd_del AFTER INSERT ON tfd_ev FOR EACH STATEMENT
+  DELETE FROM tfd_log USING tfd_kk WHERE tfd_kk.id = tfd_log.id AND tfd_log.n > tfd_kk.inc RETURNING n;
+
+
+statement ok
+ALTER TABLE tfd_cnt RENAME COLUMN cnt TO total;
+
+
+statement ok
+ALTER TABLE tfd_kk RENAME COLUMN inc TO step;
+
+
+statement ok
+ALTER TABLE tfd_up RENAME COLUMN n TO acc;
+
+
+statement ok
+ALTER TABLE tfd_up RENAME COLUMN id TO key;
+
+
+statement ok
+ALTER TABLE tfd_log RENAME COLUMN n TO amount;
+
+
+statement ok
+INSERT INTO tfd_log VALUES (1, 500), (2, 50);
+
+
+statement ok
+INSERT INTO tfd_ev VALUES (1, 5);
+
+
+statement ok
+INSERT INTO tfd_ev VALUES (2, 7);
+
+
+query
+SELECT id, total FROM tfd_cnt;
+----
+id	total
+1	200
+
+
+query
+SELECT key, acc FROM tfd_up;
+----
+key	acc
+1	200
+
+
+query
+SELECT id, amount FROM tfd_log ORDER BY id;
+----
+id	amount
+2	50
+
+
+query
+SELECT trigger_name, sql FROM duckdb_triggers()
+WHERE trigger_name IN ('tfd_upd', 'tfd_ups', 'tfd_del')
+ORDER BY trigger_name;
+----
+trigger_name	sql
+tfd_del	CREATE TRIGGER tfd_del AFTER INSERT ON tfd_ev FOR EACH STATEMENT DELETE FROM tfd_log USING tfd_kk WHERE ((tfd_kk.id = tfd_log.id) AND (tfd_log.amount > tfd_kk.step)) RETURNING amount;
+tfd_upd	CREATE TRIGGER tfd_upd AFTER INSERT ON tfd_ev FOR EACH STATEMENT UPDATE tfd_cnt SET total = (tfd_cnt.total + kk.step) FROM tfd_kk AS kk WHERE (kk.id = tfd_cnt.id) RETURNING total;
+tfd_ups	CREATE TRIGGER tfd_ups AFTER INSERT ON tfd_ev FOR EACH STATEMENT INSERT INTO tfd_up SELECT id, step AS inc FROM tfd_kk ON CONFLICT (key ) DO UPDATE SET acc = (tfd_up.acc + excluded.acc) WHERE (tfd_up.acc < 1000) RETURNING acc;
+
+
+statement ok
+CREATE TABLE tfd_na (id INT, k INT);
+
+
+statement ok
+CREATE TABLE tfd_nb (id INT, k INT);
+
+
+statement ok
+CREATE TRIGGER tfd_nat AFTER INSERT ON tfd_ev FOR EACH STATEMENT
+  UPDATE tfd_log SET amount = 0 FROM tfd_na JOIN tfd_nb USING (k) WHERE tfd_na.id = tfd_log.id;
+
+
+statement error
+ALTER TABLE tfd_na RENAME COLUMN k TO k2;
+----
+db error: ERROR: cannot rename column k of table tfd_na because other objects depend on it
+DETAIL: trigger tfd_nat on table tfd_ev refers to the column where its rename cannot be followed
+
+
+statement ok
+DROP TRIGGER tfd_nat ON tfd_ev;
+
+
+statement ok
+CREATE TRIGGER tfd_natd AFTER INSERT ON tfd_ev FOR EACH STATEMENT
+  DELETE FROM tfd_log USING tfd_na NATURAL JOIN tfd_nb WHERE tfd_na.id = tfd_log.id;
+
+
+statement error
+ALTER TABLE tfd_nb RENAME COLUMN k TO k2;
+----
+db error: ERROR: cannot rename column k of table tfd_nb because other objects depend on it
+DETAIL: trigger tfd_natd on table tfd_ev refers to the column where its rename cannot be followed
+
+
+statement ok
+DROP TRIGGER tfd_natd ON tfd_ev;
+
+
+statement ok
+ALTER TABLE tfd_na RENAME COLUMN k TO k2;
+
+
+statement ok
+CREATE TABLE tfd_oa (id INT, k INT);
+
+
+statement ok
+CREATE TABLE tfd_ob (id INT, k INT);
+
+
+statement ok
+CREATE TRIGGER tfd_own AFTER INSERT ON tfd_oa FOR EACH ROW
+  DELETE FROM tfd_log USING tfd_oa JOIN tfd_ob USING (k) WHERE tfd_log.id = NEW.id;
+
+
+statement error
+ALTER TABLE tfd_oa RENAME COLUMN k TO k2;
+----
+db error: ERROR: cannot rename column k of table tfd_oa because other objects depend on it
+DETAIL: trigger tfd_own on table tfd_oa refers to the column where its rename cannot be followed
+
+
+statement ok
+CREATE TABLE tfd_ma (id INT, k INT);
+
+
+statement ok
+CREATE TABLE tfd_mb (id INT, k INT);
+
+
+statement ok
+CREATE MACRO tfd_mac() AS TABLE SELECT * FROM tfd_ma JOIN tfd_mb USING (k);
+
+
+statement error
+ALTER TABLE tfd_ma RENAME COLUMN k TO k2;
+----
+db error: ERROR: cannot rename column k of table tfd_ma because other objects depend on it
+DETAIL: function tfd_mac() refers to the column where its rename cannot be followed

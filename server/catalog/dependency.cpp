@@ -768,9 +768,6 @@ class ColumnRewriter {
         Rewrite(*conflict->set_info->condition);
       }
     }
-    if (conflict && conflict->condition) {
-      Rewrite(*conflict->condition);
-    }
     for (auto& expression : insert.returning_list) {
       Rewrite(*expression);
     }

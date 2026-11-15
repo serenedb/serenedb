@@ -67,10 +67,12 @@ def fork(tmp_path):
     shas["on main"] = commit("on main's version branch", shas["main"])
     shas["pr"] = commit("open fork PR", shas["on main"])
     shas["old wip"] = commit("update older than main's version branch")
+    shas["same wip"] = commit("update dated as main's version branch")
     shas["rebased"] = commit("our commit rebased onto the new upstream head", commit("new upstream head"))
     shas["wip"] = commit("regen", shas["rebased"])
     branches = {"v2026.09.12": shas["older"], "v2026.10.20": shas["on main"], "mbkkt/fix": shas["pr"],
-                "v2026.10.01-wip": shas["old wip"], "v2026.11.15-wip": shas["wip"]}
+                "v2026.10.01-wip": shas["old wip"], "v2026.10.20-wip": shas["same wip"],
+                "v2026.11.15-wip": shas["wip"]}
     for name, sha in branches.items():
         git("update-ref", f"refs/heads/{name}", sha, cwd=repo)
     return repo, shas, branches
@@ -138,7 +140,14 @@ def test_the_head_of_a_wip_branch_newer_than_mains_version_branch_is_pending(che
 def test_the_head_of_a_wip_branch_older_than_mains_version_branch_fails(check, fork, capsys):
     _, shas, _ = fork
     assert check(shas["old wip"]) == "fail"
-    assert "is the head of serenedb/fork v2026.10.01-wip, older than main's gitlink branch v2026.10.20" in \
+    assert "is the head of serenedb/fork v2026.10.01-wip, not newer than main's gitlink branch v2026.10.20" in \
+        capsys.readouterr().err
+
+
+def test_the_head_of_a_wip_branch_dated_as_mains_version_branch_fails(check, fork, capsys):
+    _, shas, _ = fork
+    assert check(shas["same wip"]) == "fail"
+    assert "is the head of serenedb/fork v2026.10.20-wip, not newer than main's gitlink branch v2026.10.20" in \
         capsys.readouterr().err
 
 

@@ -17,7 +17,7 @@ satisfy rule 1.
 
 A gitlink that breaks rule 1 is pending, not failed, when it is the head
 of an open fork PR into main's version branch or a newer one, or the
-head of a fork branch vYYYY.MM.DD-wip whose vYYYY.MM.DD compares >=
+head of a fork branch vYYYY.MM.DD-wip whose vYYYY.MM.DD is newer than
 main's version branch (an upstream update, which scripts/land.sh turns
 into the version branch vYYYY.MM.DD): the PR is waiting for it to land:
 the script exits 3, which the PR's pre-commit job turns into a pending
@@ -163,7 +163,7 @@ def verdict(
         pr = fork_pr()
         if pr is not None and (ver_main is None or pr[1] >= ver_main):
             return "pending", f"head of open {pr[0]}"
-        if wip is not None and (ver_main is None or wip[1] >= ver_main):
+        if wip is not None and (ver_main is None or wip[1] > ver_main):
             return "pending", f"head of {wip[0]}"
         older = [n for n in names if n not in current]
         ver_old = next((n for n in older if contains(n, gitlink)), None)
@@ -177,7 +177,7 @@ def verdict(
         if wip is not None:
             return (
                 "fail",
-                f"is the head of {wip[0]}, older than main's gitlink branch {ver_main}",
+                f"is the head of {wip[0]}, not newer than main's gitlink branch {ver_main}",
             )
         return (
             "fail",

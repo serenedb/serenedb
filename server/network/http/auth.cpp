@@ -23,10 +23,19 @@
 #include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
 
+#include <memory>
+#include <utility>
+#include <vector>
+
 #include "network/http/common.h"
 
 namespace sdb::network::http {
 namespace {
+
+std::vector<std::unique_ptr<BearerValidator>>& BearerValidators() {
+  static std::vector<std::unique_ptr<BearerValidator>> validators;
+  return validators;
+}
 
 // "Basic dXNlcjpwYXNz" -> scheme + payload; scheme match is case-insensitive
 // (RFC 9110 11.1), payload keeps its exact bytes.
@@ -133,15 +142,22 @@ AuthResult HttpAuthenticator::ApiKey(std::string_view payload) const {
   return {.context = std::move(*context)};
 }
 
+void RegisterBearerValidator(std::unique_ptr<BearerValidator> validator) {
+  BearerValidators().push_back(std::move(validator));
+}
+
 AuthResult HttpAuthenticator::Bearer(std::string_view payload) const {
-  if (_bearer == nullptr) {
-    return {.status = HttpStatus::Unauthorized};
+  if (_bearer != nullptr) {
+    if (auto context = _bearer->Validate(payload)) {
+      return {.context = std::move(*context)};
+    }
   }
-  auto context = _bearer->Validate(payload);
-  if (!context) {
-    return {.status = HttpStatus::Unauthorized};
+  for (const auto& validator : BearerValidators()) {
+    if (auto context = validator->Validate(payload)) {
+      return {.context = std::move(*context)};
+    }
   }
-  return {.context = std::move(*context)};
+  return {.status = HttpStatus::Unauthorized};
 }
 
 namespace {

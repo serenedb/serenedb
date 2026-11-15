@@ -171,7 +171,7 @@ GatherBands BandsFor(codecs::CodecType codec,
     case codecs::CodecType::Rle:
       return {2, 70};
     case codecs::CodecType::Numeric:
-      return {10, 1000};
+      return {10, 200};
     case codecs::CodecType::Lz4:
       return {0, 1000};
     default:

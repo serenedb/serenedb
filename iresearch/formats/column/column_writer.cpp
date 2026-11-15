@@ -45,7 +45,6 @@
 #include <utility>
 
 #include "iresearch/formats/column/codecs/registry.hpp"
-#include "iresearch/formats/column/codecs/tuning.hpp"
 #include "iresearch/formats/column/col_writer.hpp"
 #include "iresearch/formats/column/immutable_payloads.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -160,16 +159,12 @@ bool InCodec(codecs::CodecType forced, const ColumnBlockMeta& block) noexcept {
   return forced == codecs::CodecType::Auto || block.codec->type == forced;
 }
 
-ColumnMeta TuningOf(ColumnMeta& from) {
-  ColumnMeta to;
-  to.id = from.id;
-  to.type = from.type;
-  to.write_tuning = std::move(from.write_tuning);
-  to.children.reserve(from.children.size());
-  for (auto& child : from.children) {
-    to.children.emplace_back(TuningOf(child));
+void RestartLists(ColumnWriteState& state) noexcept {
+  state.list_running = 0;
+  state.list_distinct = 0;
+  for (auto& child : state.children) {
+    RestartLists(child);
   }
-  return to;
 }
 
 }  // namespace
@@ -259,20 +254,23 @@ void ColumnWriter::Claim(ColumnMeta& meta,
 
 void ColumnWriter::SealNestedValidity(std::span<WriteChunk> chunks,
                                       uint64_t row_count, bool skip_validity,
-                                      size_t child_count, ColumnMeta& meta) {
+                                      size_t child_count, ColumnMeta& meta,
+                                      ColumnWriteState& state) {
   if (!skip_validity) {
     SealValidity(chunks, row_count, meta.validity);
   }
   meta.children.resize(child_count);
+  state.children.resize(child_count);
 }
 
 void ColumnWriter::SealStruct(
   const duckdb::LogicalType& type, std::span<WriteChunk> chunks,
   uint64_t row_count, bool skip_validity, ColumnMeta& meta,
+  ColumnWriteState& state,
   std::span<const std::unique_ptr<ListIngest>> ingest) {
   const auto& child_types = duckdb::StructType::GetChildTypes(type);
-  SealNestedValidity(chunks, row_count, skip_validity, child_types.size(),
-                     meta);
+  SealNestedValidity(chunks, row_count, skip_validity, child_types.size(), meta,
+                     state);
   for (size_t i = 0; i < child_types.size(); ++i) {
     std::vector<WriteChunk> field_chunks;
     field_chunks.reserve(chunks.size());
@@ -281,7 +279,7 @@ void ColumnWriter::SealStruct(
         RefChunk(duckdb::StructVector::GetEntries(c.data)[i], c.count));
     }
     SealColumn(child_types[i].second, field_chunks, row_count,
-               /*skip_validity=*/false, meta.children[i],
+               /*skip_validity=*/false, meta.children[i], state.children[i],
                i < ingest.size() && ingest[i] ? ingest.subspan(i, 1)
                                               : decltype(ingest){});
   }
@@ -289,8 +287,9 @@ void ColumnWriter::SealStruct(
 
 void ColumnWriter::SealArray(const duckdb::LogicalType& type,
                              std::span<WriteChunk> chunks, uint64_t row_count,
-                             bool skip_validity, ColumnMeta& meta) {
-  SealNestedValidity(chunks, row_count, skip_validity, 1, meta);
+                             bool skip_validity, ColumnMeta& meta,
+                             ColumnWriteState& state) {
+  SealNestedValidity(chunks, row_count, skip_validity, 1, meta, state);
   const auto array_size =
     static_cast<uint64_t>(duckdb::ArrayType::GetSize(type));
   std::vector<WriteChunk> elem_chunks;
@@ -299,33 +298,37 @@ void ColumnWriter::SealArray(const duckdb::LogicalType& type,
                 c.count * array_size);
   }
   SealColumn(duckdb::ArrayType::GetChildType(type), elem_chunks,
-             row_count * array_size, /*skip_validity=*/false, meta.children[0]);
+             row_count * array_size, /*skip_validity=*/false, meta.children[0],
+             state.children[0]);
 }
 
 void ColumnWriter::SealList(const duckdb::LogicalType& type,
                             std::span<WriteChunk> chunks, uint64_t row_count,
-                            bool skip_validity, ColumnMeta& meta) {
-  ListIngest ingest{type, /*borrow=*/true, meta.write_list_distinct,
-                    meta.write_list_running};
+                            bool skip_validity, ColumnMeta& meta,
+                            ColumnWriteState& state) {
+  ListIngest ingest{type, /*borrow=*/true, state.list_distinct,
+                    state.list_running};
   for (const auto& c : chunks) {
     ingest.Add(c.data, 0, c.count);
     ingest.CheckDistinct();
   }
-  SealListParts(type, chunks, row_count, skip_validity, ingest, meta);
+  SealListParts(type, chunks, row_count, skip_validity, ingest, meta, state);
 }
 
 void ColumnWriter::SealListParts(const duckdb::LogicalType& type,
                                  std::span<WriteChunk> chunks,
                                  uint64_t row_count, bool skip_validity,
-                                 ListIngest& ingest, ColumnMeta& meta) {
-  SealNestedValidity(chunks, row_count, skip_validity, 2, meta);
+                                 ListIngest& ingest, ColumnMeta& meta,
+                                 ColumnWriteState& state) {
+  SealNestedValidity(chunks, row_count, skip_validity, 2, meta, state);
   auto parts = ingest.Take();
-  meta.write_list_running = parts.running;
-  meta.write_list_distinct = parts.next_code;
+  state.list_running = parts.running;
+  state.list_distinct = parts.next_code;
   auto code_chunks = ViewChunks(parts.codes);
   CompressPlain(type, CodesCodec(parts, row_count), code_chunks, meta.data);
   SealColumn(duckdb::ListType::GetChildType(type), parts.elems,
-             parts.elem_count, /*skip_validity=*/false, meta.children[0]);
+             parts.elem_count, /*skip_validity=*/false, meta.children[0],
+             state.children[0]);
   auto& ends = meta.children[1];
   Claim(ends, duckdb::LogicalType::UBIGINT);
   auto end_chunks = ViewChunks(parts.ends);
@@ -351,7 +354,8 @@ void ColumnWriter::CompressPlain(const duckdb::LogicalType& type,
 
 void ColumnWriter::SealVariant(const duckdb::LogicalType& type,
                                std::span<WriteChunk> chunks, uint64_t row_count,
-                               bool skip_validity, ColumnMeta& meta) {
+                               bool skip_validity, ColumnMeta& meta,
+                               ColumnWriteState& state) {
   if (!skip_validity) {
     SealValidity(chunks, row_count, meta.validity);
   }
@@ -374,18 +378,25 @@ void ColumnWriter::SealVariant(const duckdb::LogicalType& type,
     prev_unshredded = meta.variant_rgs.back().unshredded.get();
     prev_shredded = meta.variant_rgs.back().shredded.get();
   }
-  const auto carried = [](ColumnMeta* prev, const duckdb::LogicalType& type) {
-    return std::make_unique<ColumnMeta>(
-      prev && prev->type == type ? TuningOf(*prev) : ColumnMeta{});
+  state.children.resize(2);
+  const auto next = [](ColumnWriteState& state, const ColumnMeta* prev,
+                       const duckdb::LogicalType& type) -> ColumnWriteState& {
+    if (prev && prev->type == type) {
+      RestartLists(state);
+    } else {
+      state = {};
+    }
+    return state;
   };
   auto& layout = meta.variant_rgs.emplace_back();
   layout.row_count = row_count;
   if (shredded_type.id() != duckdb::LogicalTypeId::STRUCT ||
       duckdb::StructType::GetChildCount(shredded_type) != 2) {
     const auto unshredded_type = duckdb::VariantShredding::GetUnshreddedType();
-    layout.unshredded = carried(prev_unshredded, unshredded_type);
+    layout.unshredded = std::make_unique<ColumnMeta>();
     SealColumn(unshredded_type, chunks, row_count,
-               /*skip_validity=*/true, *layout.unshredded);
+               /*skip_validity=*/true, *layout.unshredded,
+               next(state.children[0], prev_unshredded, unshredded_type));
     return;
   }
 
@@ -406,49 +417,51 @@ void ColumnWriter::SealVariant(const duckdb::LogicalType& type,
 
   const auto& shredded_children =
     duckdb::StructType::GetChildTypes(shredded_type);
-  layout.unshredded = carried(prev_unshredded, shredded_children[0].second);
-  layout.shredded = carried(prev_shredded, shredded_children[1].second);
-  SealColumn(shredded_children[0].second, unshredded_chunks, row_count,
-             /*skip_validity=*/false, *layout.unshredded);
-  SealColumn(shredded_children[1].second, shredded_chunks, row_count,
-             /*skip_validity=*/false, *layout.shredded);
+  const auto& unshredded_type = shredded_children[0].second;
+  const auto& typed_type = shredded_children[1].second;
+  layout.unshredded = std::make_unique<ColumnMeta>();
+  layout.shredded = std::make_unique<ColumnMeta>();
+  SealColumn(unshredded_type, unshredded_chunks, row_count,
+             /*skip_validity=*/false, *layout.unshredded,
+             next(state.children[0], prev_unshredded, unshredded_type));
+  SealColumn(typed_type, shredded_chunks, row_count, /*skip_validity=*/false,
+             *layout.shredded,
+             next(state.children[1], prev_shredded, typed_type));
 }
 
 void ColumnWriter::SealColumn(
   const duckdb::LogicalType& type, std::span<WriteChunk> chunks,
   uint64_t row_count, bool skip_validity, ColumnMeta& meta,
+  ColumnWriteState& state,
   std::span<const std::unique_ptr<ListIngest>> ingest) {
   Claim(meta, type);
   if (type.id() == duckdb::LogicalTypeId::VARIANT) {
-    SealVariant(type, chunks, row_count, skip_validity, meta);
+    SealVariant(type, chunks, row_count, skip_validity, meta, state);
     return;
   }
   if (duckdb::StructType::IsStruct(type) ||
       type.id() == duckdb::LogicalTypeId::UNION) {
-    SealStruct(type, chunks, row_count, skip_validity, meta, ingest);
+    SealStruct(type, chunks, row_count, skip_validity, meta, state, ingest);
     return;
   }
   if (type.id() == duckdb::LogicalTypeId::ARRAY) {
-    SealArray(type, chunks, row_count, skip_validity, meta);
+    SealArray(type, chunks, row_count, skip_validity, meta, state);
     return;
   }
   if (type.id() == duckdb::LogicalTypeId::LIST ||
       type.id() == duckdb::LogicalTypeId::MAP) {
     if (ingest.empty()) {
-      SealList(type, chunks, row_count, skip_validity, meta);
+      SealList(type, chunks, row_count, skip_validity, meta, state);
     } else {
       SealListParts(type, chunks, row_count, skip_validity, *ingest.front(),
-                    meta);
+                    meta, state);
     }
     return;
   }
 
   SDB_ASSERT(row_count == codecs::CountRows(chunks));
-  if (!meta.write_tuning) {
-    meta.write_tuning = std::make_unique<codecs::ColumnTuning>();
-  }
   const bool nulls_covered_by_data =
-    Compress(type, chunks, _method, meta.write_tuning.get(), meta.data);
+    Compress(type, chunks, _method, &state.tuning, meta.data);
   if (skip_validity) {
     return;
   }
@@ -839,7 +852,7 @@ void ColumnWriter::CopyRows(uint64_t start_row, const ColumnReader& column,
 }
 
 void ColumnWriter::SealStaged(std::span<WriteChunk> chunks, uint64_t rows) {
-  SealColumn(_type, chunks, rows, _skip_validity, _meta, _ingest);
+  SealColumn(_type, chunks, rows, _skip_validity, _meta, _state, _ingest);
   _row_start += rows;
 }
 

@@ -46,21 +46,6 @@
 namespace irs {
 namespace {
 
-void DropTuning(ColumnMeta& meta) {
-  meta.write_tuning.reset();
-  for (auto& child : meta.children) {
-    DropTuning(child);
-  }
-  for (auto& layout : meta.variant_rgs) {
-    if (layout.unshredded) {
-      DropTuning(*layout.unshredded);
-    }
-    if (layout.shredded) {
-      DropTuning(*layout.shredded);
-    }
-  }
-}
-
 void SerializeNormRegion(duckdb::BinarySerializer& s, const NormRegionMeta& r) {
   s.WriteProperty(0, "rows", r.stats.rows);
   s.WriteProperty(1, "sum", r.stats.sum);
@@ -179,7 +164,6 @@ void ColWriter::Close(ColumnEntry& entry) {
   entry.writer->Finish();
   entry.meta = std::move(entry.writer->_meta);
   entry.writer.reset();
-  DropTuning(entry.meta);
 }
 
 NormColumnWriter& ColWriter::AddNormColumn(field_id id,

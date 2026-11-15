@@ -5110,10 +5110,9 @@ TEST_F(ColumnReaderTest, VariantRoundTripUnshredded) {
   ExpectVariantValuesEqual(expected, ScanVariantAll(*col, r.Ctx()));
 }
 
-uint32_t LargestCalibrationGap(const irs::ColumnMeta& meta) {
-  uint32_t gap =
-    meta.write_tuning ? meta.write_tuning->strings.reuse.clock.gap : 0;
-  for (const auto& child : meta.children) {
+uint32_t LargestCalibrationGap(const irs::ColumnWriteState& state) {
+  uint32_t gap = state.tuning.strings.reuse.clock.gap;
+  for (const auto& child : state.children) {
     gap = std::max(gap, LargestCalibrationGap(child));
   }
   return gap;
@@ -5141,7 +5140,7 @@ TEST_F(ColumnReaderTest, VariantRowGroupsKeepTheirStringTuning) {
     }
     const auto& rgs = cw.Meta().variant_rgs;
     ASSERT_GT(rgs.size(), 2u);
-    EXPECT_GT(LargestCalibrationGap(*rgs.back().unshredded), 1u);
+    EXPECT_GT(LargestCalibrationGap(cw.State()), 1u);
     ASSERT_TRUE(w.Commit(0));
   }
   irs::ColReader r{dir, "vtune", Db(), irs::IOAdvice::SEQUENTIAL};

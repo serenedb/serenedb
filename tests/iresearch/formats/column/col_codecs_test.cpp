@@ -3993,9 +3993,8 @@ TEST_F(ColCodecsTest, TheWritersTierDecidesOverTheColumnsParams) {
                       .compression = irs::codecs::CodecType::Auto,
                       .codec_params = {.tier = irs::WriteTier::Merge}});
       AppendValues(cw, 120000, value);
-      ASSERT_TRUE(cw.Meta().write_tuning);
       const auto lz4 =
-        cw.Meta().write_tuning->strings.tuned.level[static_cast<size_t>(
+        cw.State().tuning.strings.tuned.level[static_cast<size_t>(
           irs::codecs::ByteCodec::Lz4)];
       EXPECT_EQ(tier == irs::WriteTier::Merge, lz4 > 1);
       ASSERT_TRUE(w.Commit(0));

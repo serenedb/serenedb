@@ -37,7 +37,6 @@
 #include <vector>
 
 #include "iresearch/formats/column/codecs/compression_function.hpp"
-#include "iresearch/formats/column/codecs/tuning.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -112,9 +111,6 @@ struct ColumnMeta {
   std::vector<VariantRgMeta> variant_rgs;
   duckdb::shared_ptr<duckdb::DistinctStatistics> distinct;
   uint8_t compression_level = 0;
-  uint64_t write_list_running = 0;
-  std::unique_ptr<codecs::ColumnTuning> write_tuning;
-  uint64_t write_list_distinct = 0;
 };
 
 void SerializeColumnMeta(duckdb::BinarySerializer& s, const ColumnMeta& meta);

@@ -36,6 +36,7 @@
 #include <vector>
 
 #include "iresearch/formats/column/codecs/registry.hpp"
+#include "iresearch/formats/column/codecs/tuning.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/internal/write_context.hpp"
 #include "iresearch/formats/column/list_ingest.hpp"
@@ -67,6 +68,13 @@ struct ColumnWriterOptions {
   codecs::CodecType compression = codecs::CodecType::Auto;
   DistinctStats distinct = DistinctStats::None;
   ColCodecParams codec_params;
+};
+
+struct ColumnWriteState {
+  codecs::ColumnTuning tuning;
+  uint64_t list_running = 0;
+  uint64_t list_distinct = 0;
+  std::vector<ColumnWriteState> children;
 };
 
 class ColumnWriter final {
@@ -112,6 +120,7 @@ class ColumnWriter final {
 
   const duckdb::LogicalType& Type() const noexcept { return _type; }
   const ColumnMeta& Meta() const noexcept { return _meta; }
+  const ColumnWriteState& State() const noexcept { return _state; }
 
  private:
   friend class ColWriter;
@@ -164,28 +173,34 @@ class ColumnWriter final {
 
   void SealNestedValidity(std::span<WriteChunk> chunks, uint64_t row_count,
                           bool skip_validity, size_t child_count,
-                          ColumnMeta& meta);
+                          ColumnMeta& meta, ColumnWriteState& state);
 
   void SealStruct(const duckdb::LogicalType& type, std::span<WriteChunk> chunks,
                   uint64_t row_count, bool skip_validity, ColumnMeta& meta,
+                  ColumnWriteState& state,
                   std::span<const std::unique_ptr<ListIngest>> ingest);
 
   void SealArray(const duckdb::LogicalType& type, std::span<WriteChunk> chunks,
-                 uint64_t row_count, bool skip_validity, ColumnMeta& meta);
+                 uint64_t row_count, bool skip_validity, ColumnMeta& meta,
+                 ColumnWriteState& state);
 
   void SealList(const duckdb::LogicalType& type, std::span<WriteChunk> chunks,
-                uint64_t row_count, bool skip_validity, ColumnMeta& meta);
+                uint64_t row_count, bool skip_validity, ColumnMeta& meta,
+                ColumnWriteState& state);
 
   void SealListParts(const duckdb::LogicalType& type,
                      std::span<WriteChunk> chunks, uint64_t row_count,
-                     bool skip_validity, ListIngest& ingest, ColumnMeta& meta);
+                     bool skip_validity, ListIngest& ingest, ColumnMeta& meta,
+                     ColumnWriteState& state);
 
   void SealVariant(const duckdb::LogicalType& type,
                    std::span<WriteChunk> chunks, uint64_t row_count,
-                   bool skip_validity, ColumnMeta& meta);
+                   bool skip_validity, ColumnMeta& meta,
+                   ColumnWriteState& state);
 
   void SealColumn(const duckdb::LogicalType& type, std::span<WriteChunk> chunks,
                   uint64_t row_count, bool skip_validity, ColumnMeta& meta,
+                  ColumnWriteState& state,
                   std::span<const std::unique_ptr<ListIngest>> ingest = {});
 
   WriteContext& WriteCtx() const noexcept;
@@ -216,6 +231,7 @@ class ColumnWriter final {
   std::vector<std::unique_ptr<ListIngest>> _ingest;
   std::vector<duckdb::UnifiedVectorFormat> _field_rows;
   ColumnMeta _meta;
+  ColumnWriteState _state;
 };
 
 }  // namespace irs

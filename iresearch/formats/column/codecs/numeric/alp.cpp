@@ -53,6 +53,7 @@
 #include "iresearch/formats/column/codecs/numeric/segment_reader.hpp"
 #include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
 
@@ -1287,19 +1288,20 @@ IRS_NO_INLINE T FetchValue(const AlpScanState<T>& scan_state, idx_t row) {
     const auto exceptions = reader.ReadBytes(exceptions_count * sizeof(T));
     const auto positions =
       reader.ReadBytes(exceptions_count * kExceptionPositionSize);
-    idx_t found = exceptions_count;
-    for (idx_t i = 0; i < exceptions_count; ++i) {
-      const auto position =
-        duckdb::Load<uint16_t>(positions.data() + i * kExceptionPositionSize);
+    const auto position_at = [&](idx_t i) {
+      return duckdb::Load<uint16_t>(positions.data() +
+                                    i * kExceptionPositionSize);
+    };
+    const auto found = PartitionIndex(
+      0, exceptions_count, [&](size_t i) { return position_at(i) < index; });
+    if (found < exceptions_count) {
+      const auto position = position_at(found);
       if (position >= vector_size) {
         ThrowAlpExceptionPositionOutOfRange(position, vector_size);
       }
       if (position == index) {
-        found = i;
+        return duckdb::Load<T>(exceptions.data() + found * sizeof(T));
       }
-    }
-    if (found < exceptions_count) {
-      return duckdb::Load<T>(exceptions.data() + found * sizeof(T));
     }
   }
   return DecodeValue<T>(static_cast<int64_t>(encoded + frame_of_reference),

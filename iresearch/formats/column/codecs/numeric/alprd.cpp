@@ -48,6 +48,7 @@
 #include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
+#include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
 
@@ -943,22 +944,23 @@ IRS_NO_INLINE alp::ExactType<T> FetchValue(const AlpRdScanState<T>& scan_state,
     const auto exceptions = reader.ReadBytes(exceptions_count * kExceptionSize);
     const auto positions =
       reader.ReadBytes(exceptions_count * kExceptionPositionSize);
-    idx_t found = exceptions_count;
-    for (idx_t i = 0; i < exceptions_count; ++i) {
-      const auto position =
-        duckdb::Load<uint16_t>(positions.data() + i * kExceptionPositionSize);
+    const auto position_at = [&](idx_t i) {
+      return duckdb::Load<uint16_t>(positions.data() +
+                                    i * kExceptionPositionSize);
+    };
+    const auto found = PartitionIndex(
+      0, exceptions_count, [&](size_t i) { return position_at(i) < index; });
+    if (found < exceptions_count) {
+      const auto position = position_at(found);
       if (position >= vector_size) {
         ThrowAlpRdExceptionPositionOutOfRange(position, vector_size);
       }
       if (position == index) {
-        found = i;
+        const auto exception =
+          duckdb::Load<uint16_t>(exceptions.data() + found * kExceptionSize);
+        return (static_cast<Exact>(exception) << vector_state.right_bit_width) |
+               right_value;
       }
-    }
-    if (found < exceptions_count) {
-      const auto exception =
-        duckdb::Load<uint16_t>(exceptions.data() + found * kExceptionSize);
-      return (static_cast<Exact>(exception) << vector_state.right_bit_width) |
-             right_value;
     }
   }
   const auto code = duckdb::BitpackingPrimitives::UnPackValue<uint16_t>(

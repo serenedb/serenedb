@@ -31,18 +31,10 @@
 
 #include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_layout.hpp"
-#include "iresearch/formats/column/codecs/reuse_policy.hpp"
+#include "iresearch/formats/column/codecs/numeric/numeric_tuning.hpp"
 #include "iresearch/index/column_info.hpp"
 
 namespace irs::codecs {
-
-struct NumericChoice {
-  NumericTransform transform = NumericTransform::Raw;
-  NumericLeaf leaf = NumericLeaf::None;
-  bool shuffled = false;
-
-  bool operator==(const NumericChoice&) const = default;
-};
 
 struct NumericSegment {
   duckdb::BaseStatistics stats;
@@ -50,12 +42,6 @@ struct NumericSegment {
 };
 
 inline constexpr uint64_t kNotAnalyzed = std::numeric_limits<uint64_t>::max();
-
-struct NumericTuning {
-  ReusePolicy<NumericChoice> reuse;
-  double codes_ratio = 1;
-  const CompressionFunction* analyzed = nullptr;
-};
 
 uint64_t Packed(uint64_t count, uint64_t max_value) noexcept;
 

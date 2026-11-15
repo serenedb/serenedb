@@ -233,6 +233,7 @@ template<typename Encode>
 uint64_t ColumnWriter::WriteBlocks(const codecs::CompressionFunction& function,
                                    const duckdb::LogicalType& type,
                                    std::vector<ColumnBlockMeta>& sink,
+                                   codecs::StringTuning* strings,
                                    Encode&& encode) {
   auto& ctx = WriteCtx();
   uint64_t written = 0;
@@ -245,6 +246,8 @@ uint64_t ColumnWriter::WriteBlocks(const codecs::CompressionFunction& function,
     .type = type,
     .ctx = ctx,
     .flush = flush,
+    .params = _codec_params,
+    .strings = strings,
   };
   encode(checkpoint_data);
   return written;
@@ -253,8 +256,9 @@ uint64_t ColumnWriter::WriteBlocks(const codecs::CompressionFunction& function,
 uint64_t ColumnWriter::Compress(const codecs::CompressionFunction& function,
                                 const duckdb::LogicalType& type,
                                 std::span<const WriteChunk> chunks,
-                                std::vector<ColumnBlockMeta>& sink) {
-  return WriteBlocks(function, type, sink,
+                                std::vector<ColumnBlockMeta>& sink,
+                                codecs::StringTuning* strings) {
+  return WriteBlocks(function, type, sink, strings,
                      [&](codecs::ColumnDataCheckpointData& checkpoint_data) {
                        function.compress(checkpoint_data, chunks);
                      });
@@ -275,26 +279,19 @@ void ColumnWriter::CompressData(const duckdb::LogicalType& type,
   Compress(*function, type, chunks, sink);
 }
 
-void ColumnWriter::CompressStrings(const duckdb::LogicalType& type,
-                                   std::span<const WriteChunk> chunks,
-                                   std::vector<ColumnBlockMeta>& sink) {
-  Compress(*codecs::GetCodec(codecs::CodecType::Uncompressed,
-                             duckdb::PhysicalType::VARCHAR),
-           type, chunks, sink);
-}
-
 bool ColumnWriter::SealString(const duckdb::LogicalType& type,
                               std::span<WriteChunk> chunks, uint64_t row_count,
                               ColumnMeta& meta) {
-  if (_method == codecs::CodecType::Uncompressed) {
-    CompressStrings(type, chunks, meta.data);
-    return false;
-  }
-  const auto* named = codecs::ChoiceOf(_method);
   if (!meta.write_string_tuning) {
     meta.write_string_tuning = std::make_unique<codecs::StringTuning>();
   }
   auto& tuning = *meta.write_string_tuning;
+  if (const auto* named =
+        codecs::GetCodec(_method, duckdb::PhysicalType::VARCHAR)) {
+    Compress(*named, type, chunks, meta.data, &tuning);
+    const auto* choice = codecs::ChoiceOf(named->type);
+    return choice && choice->shape == codecs::Shape::Dedup;
+  }
   auto& blocks = WriteCtx().Out();
   auto& buffers = WriteCtx().BufferManager();
   bool all_dedup = true;
@@ -306,22 +303,18 @@ bool ColumnWriter::SealString(const duckdb::LogicalType& type,
       *codecs::GetCodec(codecs::TypeOf(choice), duckdb::PhysicalType::VARCHAR);
     CaptureBlock(codec, std::move(stats), rows, bytes, blocks, meta.data);
   };
-  if (named && named->shape == codecs::Shape::Plain) {
-    codecs::SealSegments(chunks, *named, _codec_params, type, tuning, buffers,
-                         sink);
-    return all_dedup;
-  }
   codecs::StringAccumulator acc;
   acc.Reserve(row_count, tuning.last_distinct);
   for (auto& c : chunks) {
     acc.Add(c.data);
   }
   tuning.last_distinct = acc.values.size();
-  if (codecs::SealSegments(acc, named, _codec_params, type, tuning, buffers,
-                           sink)) {
+  if (codecs::SealSegments(acc, _codec_params, type, tuning, buffers, sink)) {
     return all_dedup;
   }
-  CompressStrings(type, chunks, meta.data);
+  Compress(*codecs::GetCodec(codecs::CodecType::Uncompressed,
+                             duckdb::PhysicalType::VARCHAR),
+           type, chunks, meta.data);
   return false;
 }
 
@@ -353,7 +346,7 @@ void ColumnWriter::SealNumeric(const duckdb::LogicalType& type,
   }
   const auto price_analyzed = [&] {
     const auto cheapest = Cheapest(type, chunks, _disabled);
-    tuning.analyzed = cheapest.function;
+    tuning.analyzed = cheapest.function->type;
     return cheapest;
   };
 
@@ -362,9 +355,9 @@ void ColumnWriter::SealNumeric(const duckdb::LogicalType& type,
   if (const bool reused = !due && !reuse.pick; reused) {
     const auto rows = static_cast<double>(std::max<uint64_t>(row_count, 1));
     const auto* held =
-      merge || !tuning.analyzed
+      merge || tuning.analyzed == codecs::CodecType::Auto
         ? nullptr
-        : EnabledFunction(tuning.analyzed->type, physical, _disabled);
+        : EnabledFunction(tuning.analyzed, physical, _disabled);
     if (held && Accepts(*held, chunks)) {
       const auto bytes = Compress(*held, type, chunks, meta.data);
       if (reuse.Grew(static_cast<double>(bytes), rows)) {
@@ -372,9 +365,9 @@ void ColumnWriter::SealNumeric(const duckdb::LogicalType& type,
       }
       return;
     }
-    const auto* kept = tuning.analyzed;
+    const auto kept = tuning.analyzed;
     analyzed = price_analyzed();
-    if (merge && analyzed.function == kept) {
+    if (merge && analyzed.function->type == kept) {
       if (reuse.Grew(static_cast<double>(analyzed.bytes), rows)) {
         reuse.clock.Restart();
       }
@@ -422,7 +415,7 @@ void ColumnWriter::SealValidity(std::span<WriteChunk> chunks,
     codecs::GetCodec(codecs::CodecType::Uncompressed, physical);
   SDB_ASSERT(bitmap);
   bool encoded = false;
-  WriteBlocks(*roaring, type, sink,
+  WriteBlocks(*roaring, type, sink, nullptr,
               [&](codecs::ColumnDataCheckpointData& checkpoint_data) {
                 encoded = codecs::CompressRoaringValidity(
                   checkpoint_data, chunks, bitmap->analyze(chunks));

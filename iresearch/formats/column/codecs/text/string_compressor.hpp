@@ -24,6 +24,7 @@
 #include <duckdb/common/types.hpp>
 #include <memory>
 #include <optional>
+#include <span>
 #include <tuple>
 #include <vector>
 
@@ -58,6 +59,20 @@ class StringCompressor {
       _estimators{estimators},
       _buffers{buffers} {}
 
+  PooledSegment CompressSegment(const Config& config,
+                                const StringAccumulator& acc, uint64_t begin);
+
+  PooledSegment TrialCompress(const Config& config,
+                              const StringAccumulator& acc, uint64_t begin,
+                              uint64_t end);
+
+  void Compress(const Config& config, const StringAccumulator& acc,
+                uint64_t begin, SegmentSink sink);
+
+  void CompressChunks(const Config& config, std::span<const WriteChunk> chunks,
+                      SegmentSink sink);
+
+ private:
   template<typename State>
   State& StateOf() {
     auto& slot = std::get<std::optional<State>>(_states);
@@ -71,11 +86,11 @@ class StringCompressor {
     return *slot;
   }
 
+  template<typename Visit>
+  void WithState(const Config& config, Visit&& visit);
+
   PooledSegment Acquire();
 
-  uint32_t Target() const noexcept { return _params.segment_target; }
-
- private:
   using States = std::tuple<std::optional<blob::CompressionState<Lz4>>,
                             std::optional<blob::CompressionState<Lz4Hc>>,
                             std::optional<blob::CompressionState<Zstd>>,

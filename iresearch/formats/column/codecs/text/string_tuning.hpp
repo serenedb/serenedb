@@ -23,7 +23,7 @@
 #include <cstdint>
 
 #include "iresearch/formats/column/codecs/bytes/byte_codec.hpp"
-#include "iresearch/formats/column/codecs/numeric/numeric.hpp"
+#include "iresearch/formats/column/codecs/numeric/numeric_tuning.hpp"
 #include "iresearch/formats/column/codecs/reuse_policy.hpp"
 
 namespace irs::codecs {

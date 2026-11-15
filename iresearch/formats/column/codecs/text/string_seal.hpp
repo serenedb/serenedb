@@ -35,6 +35,7 @@
 #include <vector>
 
 #include "iresearch/formats/column/codecs/bytes/byte_codec.hpp"
+#include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/text/string_tuning.hpp"
 #include "iresearch/formats/column/list_ingest.hpp"
 #include "iresearch/index/column_info.hpp"
@@ -103,14 +104,17 @@ using SegmentSink =
   absl::FunctionRef<void(StringChoice choice, duckdb::BaseStatistics stats,
                          uint64_t rows, std::string_view bytes)>;
 
-bool SealSegments(const StringAccumulator& acc, const StringChoice* named,
-                  const ColCodecParams& params, const duckdb::LogicalType& type,
-                  StringTuning& tuning, duckdb::BufferManager& buffers,
-                  SegmentSink sink);
+bool SealSegments(const StringAccumulator& acc, const ColCodecParams& params,
+                  const duckdb::LogicalType& type, StringTuning& tuning,
+                  duckdb::BufferManager& buffers, SegmentSink sink);
 
-void SealSegments(std::span<const WriteChunk> chunks, const StringChoice& named,
-                  const ColCodecParams& params, const duckdb::LogicalType& type,
-                  StringTuning& tuning, duckdb::BufferManager& buffers,
-                  SegmentSink sink);
+void CompressStrings(StringChoice choice, ColumnDataCheckpointData& data,
+                     std::span<const WriteChunk> chunks);
+
+template<Shape kShape, ByteCodec kLeaf>
+void CompressStrings(ColumnDataCheckpointData& data,
+                     std::span<const WriteChunk> chunks) {
+  CompressStrings(StringChoice{kShape, kLeaf}, data, chunks);
+}
 
 }  // namespace irs::codecs

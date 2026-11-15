@@ -40,9 +40,11 @@
 #include <vector>
 
 #include "iresearch/formats/column/codecs/codec_type.hpp"
+#include "iresearch/formats/column/codecs/text/string_tuning.hpp"
 #include "iresearch/formats/column/internal/write_chunk.hpp"
 #include "iresearch/formats/column/internal/write_context.hpp"
 #include "iresearch/formats/column/read_context.hpp"
+#include "iresearch/index/column_info.hpp"
 #include "iresearch/utils/down_cast.hpp"
 
 namespace irs::codecs {
@@ -108,6 +110,8 @@ struct ColumnDataCheckpointData {
   const duckdb::LogicalType& type;
   WriteContext& ctx;
   FlushSegmentFn flush;
+  ColCodecParams params;
+  StringTuning* strings = nullptr;
 };
 
 inline constexpr uint64_t kBlockSize = duckdb::Storage::DEFAULT_BLOCK_SIZE;

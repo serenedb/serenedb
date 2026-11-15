@@ -41,8 +41,6 @@
 #include "iresearch/formats/column/codecs/text/dictionary_scan.tpp"
 #include "iresearch/formats/column/codecs/text/fsst.hpp"
 #include "iresearch/formats/column/codecs/text/plain_scan.tpp"
-#include "iresearch/formats/column/codecs/text/string_compression_function.hpp"
-#include "iresearch/formats/column/codecs/text/string_compression_loops.tpp"
 #include "iresearch/formats/column/codecs/text/string_layout.hpp"
 #include "iresearch/formats/column/codecs/text/string_scan.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -554,15 +552,6 @@ void CompressionState::Cleave(uint32_t first_entry) {
 }
 
 }  // namespace irs::codecs::text::fsst_plus
-namespace irs::codecs::text {
-
-const StringCompressionFunction& FsstPlusCompressionFunction() {
-  static constexpr auto kFunction =
-    CompressionFunctionOf<fsst_plus::CompressionState>();
-  return kFunction;
-}
-
-}  // namespace irs::codecs::text
 namespace irs::codecs {
 
 constinit const CompressionFunction kFsstPlusFunction =

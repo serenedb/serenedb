@@ -145,21 +145,19 @@ class ColumnWriter final {
   template<typename Encode>
   uint64_t WriteBlocks(const codecs::CompressionFunction& function,
                        const duckdb::LogicalType& type,
-                       std::vector<ColumnBlockMeta>& sink, Encode&& encode);
+                       std::vector<ColumnBlockMeta>& sink,
+                       codecs::StringTuning* strings, Encode&& encode);
 
   uint64_t Compress(const codecs::CompressionFunction& function,
                     const duckdb::LogicalType& type,
                     std::span<const WriteChunk> chunks,
-                    std::vector<ColumnBlockMeta>& sink);
+                    std::vector<ColumnBlockMeta>& sink,
+                    codecs::StringTuning* strings = nullptr);
 
   void CompressData(const duckdb::LogicalType& type,
                     std::span<const WriteChunk> chunks,
                     codecs::CodecType method,
                     std::vector<ColumnBlockMeta>& sink);
-
-  void CompressStrings(const duckdb::LogicalType& type,
-                       std::span<const WriteChunk> chunks,
-                       std::vector<ColumnBlockMeta>& sink);
 
   void CompressPlain(const duckdb::LogicalType& type, codecs::CodecType codec,
                      std::span<WriteChunk> chunks,

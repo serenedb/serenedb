@@ -20,7 +20,6 @@ target_sources(
         column/codecs/text/onpair.cpp
         column/codecs/text/segment_buffer.cpp
         column/codecs/text/segment_rows.cpp
-        column/codecs/text/string_compression_function.cpp
         column/codecs/text/string_compressor.cpp
         column/codecs/text/string_picker.cpp
         column/codecs/text/string_scan.cpp

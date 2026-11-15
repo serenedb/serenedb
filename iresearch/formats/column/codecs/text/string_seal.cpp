@@ -26,10 +26,10 @@
 #include <string_view>
 #include <utility>
 
-#include "iresearch/formats/column/codecs/text/string_compression_function.hpp"
 #include "iresearch/formats/column/codecs/text/string_compressor.hpp"
 #include "iresearch/formats/column/codecs/text/string_layout.hpp"
 #include "iresearch/formats/column/codecs/text/string_picker.hpp"
+#include "iresearch/utils/assert.hpp"
 
 namespace irs::codecs {
 namespace {
@@ -76,17 +76,10 @@ void StringAccumulator::Add(const duckdb::Vector& input) {
   }
 }
 
-bool SealSegments(const StringAccumulator& acc, const StringChoice* named,
-                  const ColCodecParams& params, const duckdb::LogicalType& type,
-                  StringTuning& tuning, duckdb::BufferManager& buffers,
-                  SegmentSink sink) {
+bool SealSegments(const StringAccumulator& acc, const ColCodecParams& params,
+                  const duckdb::LogicalType& type, StringTuning& tuning,
+                  duckdb::BufferManager& buffers, SegmentSink sink) {
   text::StringCompressor compressor{params, type, tuning.estimators, buffers};
-  if (named) {
-    const auto config = text::NamedConfig(*named, params);
-    text::GetStringCompressionFunction(config).Compress(compressor, config, acc,
-                                                        0, sink);
-    return true;
-  }
   text::StringPicker picker{acc, params, tuning, compressor};
   auto first = picker.First();
   if (!first) {
@@ -100,19 +93,32 @@ bool SealSegments(const StringAccumulator& acc, const StringChoice* named,
   sink(config.choice, std::move(*first->stats), first->rows,
        first->bytes.View());
   first.reset();
-  text::GetStringCompressionFunction(config).Compress(compressor, config, acc,
-                                                      rest, sink);
+  compressor.Compress(config, acc, rest, sink);
   return true;
 }
 
-void SealSegments(std::span<const WriteChunk> chunks, const StringChoice& named,
-                  const ColCodecParams& params, const duckdb::LogicalType& type,
-                  StringTuning& tuning, duckdb::BufferManager& buffers,
-                  SegmentSink sink) {
-  text::StringCompressor compressor{params, type, tuning.estimators, buffers};
-  const auto config = text::NamedConfig(named, params);
-  text::GetStringCompressionFunction(config).CompressChunks(compressor, config,
-                                                            chunks, sink);
+void CompressStrings(StringChoice choice, ColumnDataCheckpointData& data,
+                     std::span<const WriteChunk> chunks) {
+  SDB_ASSERT(data.strings);
+  auto& tuning = *data.strings;
+  text::StringCompressor compressor{data.params, data.type, tuning.estimators,
+                                    data.ctx.BufferManager()};
+  const auto config = text::NamedConfig(choice, data.params);
+  const auto sink = [&](StringChoice, duckdb::BaseStatistics stats,
+                        uint64_t rows, std::string_view bytes) {
+    data.flush(std::move(stats), rows, bytes);
+  };
+  if (choice.shape == Shape::Plain) {
+    compressor.CompressChunks(config, chunks, sink);
+    return;
+  }
+  StringAccumulator acc;
+  acc.Reserve(CountRows(chunks), tuning.last_distinct);
+  for (const auto& chunk : chunks) {
+    acc.Add(chunk.data);
+  }
+  tuning.last_distinct = acc.values.size();
+  compressor.Compress(config, acc, 0, sink);
 }
 
 }  // namespace irs::codecs

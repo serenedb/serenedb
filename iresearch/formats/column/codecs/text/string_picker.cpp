@@ -26,7 +26,6 @@
 #include <span>
 
 #include "iresearch/formats/column/codecs/numeric/numeric.hpp"
-#include "iresearch/formats/column/codecs/text/string_compression_function.hpp"
 #include "iresearch/formats/column/codecs/text/string_layout.hpp"
 #include "iresearch/formats/column/codecs/text/string_window.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -135,8 +134,7 @@ PooledSegment StringPicker::First() {
     return {};
   }
   const auto current = Current();
-  auto first = GetStringCompressionFunction(current).CompressSegment(
-    _compressor, current, _acc, 0);
+  auto first = _compressor.CompressSegment(current, _acc, 0);
   if (const bool drift = !due && Drifted(*first); due || drift) {
     return DetectBestCompressionMethod(std::move(first), drift);
   }

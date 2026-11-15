@@ -42,6 +42,7 @@
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
 #include "iresearch/formats/column/codecs/text/string_layout.hpp"
 #include "iresearch/formats/column/codecs/text/string_scan.hpp"
+#include "iresearch/formats/column/codecs/text/string_seal.hpp"
 #include "iresearch/formats/column/immutable_payloads.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
@@ -558,6 +559,7 @@ template<typename Scan>
 consteval CompressionFunction StringFunction(CodecType type) {
   CompressionFunction f{
     .type = type,
+    .compress = CompressStrings<Scan::kShape, Scan::kCodec>,
     .init_scan = InitScan<Scan>,
     .scan = ScanVector<Scan>,
     .select = Select<Scan>,

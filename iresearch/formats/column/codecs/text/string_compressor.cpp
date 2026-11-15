@@ -20,7 +20,155 @@
 
 #include "iresearch/formats/column/codecs/text/string_compressor.hpp"
 
+#include <duckdb/common/vector/vector_iterator.hpp>
+#include <utility>
+
+#include "iresearch/utils/assert.hpp"
+
 namespace irs::codecs::text {
+namespace {
+
+template<typename State>
+IRS_NO_INLINE void CutRows(State& state, const Config& config,
+                           const StringAccumulator& acc, uint64_t begin,
+                           uint32_t target, Segment& seg) {
+  const std::span<const uint32_t> codes = acc.codes;
+  const std::span<const duckdb::string_t* const> values = acc.values;
+  state.InitCompression(config, begin, values.size(), seg);
+  for (auto row = begin; row < codes.size();) {
+    state.Compress(codes[row++], values);
+    if (state.Full(target)) {
+      break;
+    }
+  }
+  state.FinalizeCompress();
+}
+
+template<typename State>
+IRS_NO_INLINE void SealRows(State& state, const Config& config,
+                            std::span<const WriteChunk> chunks, uint32_t target,
+                            Segment& seg, SegmentSink sink) {
+  const auto seal = [&] {
+    state.FinalizeCompress();
+    sink(seg.config.choice, std::move(*seg.stats), seg.rows, seg.bytes.View());
+  };
+  uint64_t row = 0;
+  uint64_t first = 0;
+  state.InitCompression(config, first, 0, seg);
+  for (const auto& chunk : chunks) {
+    for (const auto entry : chunk.data.Values<duckdb::string_t>()) {
+      state.Compress(entry.IsValid() ? &entry.GetValueUnsafe() : nullptr);
+      ++row;
+      if (state.Full(target)) {
+        seal();
+        first = row;
+        state.InitCompression(config, first, 0, seg);
+      }
+    }
+  }
+  if (row != first) {
+    seal();
+  }
+}
+
+template<typename State>
+IRS_NO_INLINE void CompressRows(State& state, const Config& config,
+                                const StringAccumulator& acc, uint64_t begin,
+                                uint32_t target, Segment& seg,
+                                SegmentSink sink) {
+  for (auto row = begin; row < acc.Rows(); row = seg.begin + seg.rows) {
+    CutRows(state, config, acc, row, target, seg);
+    sink(seg.config.choice, std::move(*seg.stats), seg.rows, seg.bytes.View());
+  }
+}
+
+template<typename State>
+IRS_NO_INLINE void CompressRange(State& state, const Config& config,
+                                 const StringAccumulator& acc, uint64_t begin,
+                                 uint64_t end, Segment& seg) {
+  const std::span<const uint32_t> codes = acc.codes;
+  const std::span<const duckdb::string_t* const> values = acc.values;
+  state.InitCompression(config, begin, values.size(), seg);
+  for (auto row = begin; row < end; ++row) {
+    state.Compress(codes[row], values);
+  }
+  state.FinalizeCompress();
+}
+
+}  // namespace
+
+template<typename Visit>
+void StringCompressor::WithState(const Config& config, Visit&& visit) {
+  switch (config.choice.leaf) {
+    case ByteCodec::Lz4:
+      if (EffectiveLevel<Lz4>(config.level) > 1) {
+        visit(StateOf<blob::CompressionState<Lz4Hc>>());
+      } else {
+        visit(StateOf<blob::CompressionState<Lz4>>());
+      }
+      return;
+    case ByteCodec::Zstd:
+      visit(StateOf<blob::CompressionState<Zstd>>());
+      return;
+    case ByteCodec::Zxc:
+      visit(StateOf<blob::CompressionState<Zxc>>());
+      return;
+    case ByteCodec::Fsst:
+      visit(StateOf<fsst::CompressionState>());
+      return;
+    case ByteCodec::FsstPlus:
+      visit(StateOf<fsst_plus::CompressionState>());
+      return;
+    case ByteCodec::OnPair:
+      visit(StateOf<onpair::CompressionState>());
+      return;
+    case ByteCodec::Fsst12:
+      visit(StateOf<fsst12::CompressionState>());
+      return;
+  }
+  SDB_UNREACHABLE();
+}
+
+PooledSegment StringCompressor::CompressSegment(const Config& config,
+                                                const StringAccumulator& acc,
+                                                uint64_t begin) {
+  auto seg = Acquire();
+  WithState(config, [&](auto& state) {
+    CutRows(state, config, acc, begin, _params.segment_target, *seg);
+  });
+  return seg;
+}
+
+PooledSegment StringCompressor::TrialCompress(const Config& config,
+                                              const StringAccumulator& acc,
+                                              uint64_t begin, uint64_t end) {
+  auto seg = Acquire();
+  WithState(config, [&](auto& state) {
+    CompressRange(state, config, acc, begin, end, *seg);
+  });
+  return seg;
+}
+
+void StringCompressor::Compress(const Config& config,
+                                const StringAccumulator& acc, uint64_t begin,
+                                SegmentSink sink) {
+  if (begin >= acc.Rows()) {
+    return;
+  }
+  const auto seg = Acquire();
+  WithState(config, [&](auto& state) {
+    CompressRows(state, config, acc, begin, _params.segment_target, *seg, sink);
+  });
+}
+
+void StringCompressor::CompressChunks(const Config& config,
+                                      std::span<const WriteChunk> chunks,
+                                      SegmentSink sink) {
+  const auto seg = Acquire();
+  WithState(config, [&](auto& state) {
+    SealRows(state, config, chunks, _params.segment_target, *seg, sink);
+  });
+}
 
 PooledSegment StringCompressor::Acquire() {
   if (_free.empty()) {

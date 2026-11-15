@@ -39,8 +39,6 @@
 #include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/formats/column/codecs/text/dictionary_scan.tpp"
 #include "iresearch/formats/column/codecs/text/plain_scan.tpp"
-#include "iresearch/formats/column/codecs/text/string_compression_function.hpp"
-#include "iresearch/formats/column/codecs/text/string_compression_loops.tpp"
 #include "iresearch/formats/column/codecs/text/string_layout.hpp"
 #include "iresearch/formats/column/codecs/text/string_scan.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -640,15 +638,6 @@ void CompressionState::FinalizeCompress() {
 }
 
 }  // namespace irs::codecs::text::fsst12
-namespace irs::codecs::text {
-
-const StringCompressionFunction& Fsst12CompressionFunction() {
-  static constexpr auto kFunction =
-    CompressionFunctionOf<fsst12::CompressionState>();
-  return kFunction;
-}
-
-}  // namespace irs::codecs::text
 namespace irs::codecs {
 
 constinit const CompressionFunction kFsst12Function =

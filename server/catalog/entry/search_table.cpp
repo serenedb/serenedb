@@ -367,10 +367,6 @@ irs::codecs::CodecType CheckColumnCodec(
     return codec->type;
   }
   const auto compresses = [&](duckdb::PhysicalType physical) {
-    if (physical == duckdb::PhysicalType::VARCHAR &&
-        irs::codecs::ChoiceOf(codec->type)) {
-      return true;
-    }
     const auto* function = codec->function(physical);
     return function && function->compress;
   };

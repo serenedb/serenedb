@@ -220,6 +220,7 @@ template<typename Leaf>
 struct DictionaryScan final : SegmentScanState {
   using Fetch = DictionaryFetch<Leaf>;
   static constexpr Shape kShape = Shape::Dedup;
+  static constexpr ByteCodec kCodec = Leaf::kCodec;
   static constexpr auto kValidity = CompressionValidity::NoValidityRequired;
 
   DictionaryScan(const ColumnSegment& segment, duckdb::BufferHandle handle)

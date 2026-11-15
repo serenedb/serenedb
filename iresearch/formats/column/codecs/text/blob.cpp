@@ -29,8 +29,7 @@
 #include "iresearch/formats/column/codecs/bytes/lz4.hpp"
 #include "iresearch/formats/column/codecs/bytes/zstd.hpp"
 #include "iresearch/formats/column/codecs/bytes/zxc.hpp"
-#include "iresearch/formats/column/codecs/text/string_compression_function.hpp"
-#include "iresearch/formats/column/codecs/text/string_compression_loops.tpp"
+#include "iresearch/formats/column/codecs/text/string_picker.hpp"
 #include "iresearch/utils/assert.hpp"
 
 namespace irs::codecs::text {
@@ -92,30 +91,6 @@ Analysis AnalyzeLz4(const AnalyzeInput& input) {
   tuned.level[leaf] = state.config.level;
   tuned.layout[leaf] = state.config.layout;
   return state;
-}
-
-const StringCompressionFunction& Lz4CompressionFunction() {
-  static constexpr auto kFunction =
-    CompressionFunctionOf<blob::CompressionState<Lz4>>();
-  return kFunction;
-}
-
-const StringCompressionFunction& Lz4HcCompressionFunction() {
-  static constexpr auto kFunction =
-    CompressionFunctionOf<blob::CompressionState<Lz4Hc>>();
-  return kFunction;
-}
-
-const StringCompressionFunction& ZstdCompressionFunction() {
-  static constexpr auto kFunction =
-    CompressionFunctionOf<blob::CompressionState<Zstd>>();
-  return kFunction;
-}
-
-const StringCompressionFunction& ZxcCompressionFunction() {
-  static constexpr auto kFunction =
-    CompressionFunctionOf<blob::CompressionState<Zxc>>();
-  return kFunction;
 }
 
 }  // namespace irs::codecs::text

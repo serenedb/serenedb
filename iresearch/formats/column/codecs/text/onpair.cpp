@@ -42,8 +42,6 @@
 #include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/formats/column/codecs/text/dictionary_scan.tpp"
 #include "iresearch/formats/column/codecs/text/plain_scan.tpp"
-#include "iresearch/formats/column/codecs/text/string_compression_function.hpp"
-#include "iresearch/formats/column/codecs/text/string_compression_loops.tpp"
 #include "iresearch/formats/column/codecs/text/string_layout.hpp"
 #include "iresearch/formats/column/codecs/text/string_scan.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -690,15 +688,6 @@ void CompressionState::Pack(std::span<const duckdb::string_t> entries,
 }
 
 }  // namespace irs::codecs::text::onpair
-namespace irs::codecs::text {
-
-const StringCompressionFunction& OnPairCompressionFunction() {
-  static constexpr auto kFunction =
-    CompressionFunctionOf<onpair::CompressionState>();
-  return kFunction;
-}
-
-}  // namespace irs::codecs::text
 namespace irs::codecs {
 
 constinit const CompressionFunction kOnPairFunction =

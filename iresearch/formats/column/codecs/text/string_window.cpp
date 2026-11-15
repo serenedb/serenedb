@@ -25,7 +25,6 @@
 #include <algorithm>
 #include <span>
 
-#include "iresearch/formats/column/codecs/text/string_compression_function.hpp"
 #include "iresearch/utils/assert.hpp"
 
 namespace irs::codecs::text {
@@ -80,8 +79,8 @@ uint64_t StringWindow::Entries() {
 size_t StringWindow::TrialCompress(const Config& config) {
   const auto index = Find(config);
   if (index == _encoded.size()) {
-    _encoded.emplace_back(GetStringCompressionFunction(config).TrialCompress(
-      _compressor, config, _acc, _begin, _end));
+    _encoded.emplace_back(
+      _compressor.TrialCompress(config, _acc, _begin, _end));
   }
   return index;
 }

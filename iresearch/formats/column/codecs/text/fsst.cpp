@@ -40,9 +40,8 @@
 #include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/formats/column/codecs/text/dictionary_scan.tpp"
 #include "iresearch/formats/column/codecs/text/plain_scan.tpp"
-#include "iresearch/formats/column/codecs/text/string_compression_function.hpp"
-#include "iresearch/formats/column/codecs/text/string_compression_loops.tpp"
 #include "iresearch/formats/column/codecs/text/string_layout.hpp"
+#include "iresearch/formats/column/codecs/text/string_picker.hpp"
 #include "iresearch/formats/column/codecs/text/string_scan.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
@@ -751,12 +750,6 @@ Analysis AnalyzeFsst(const AnalyzeInput& input) {
   auto& window = input.window;
   return {.config = config,
           .score = window.At(window.TrialCompress(config)).Size()};
-}
-
-const StringCompressionFunction& FsstCompressionFunction() {
-  static constexpr auto kFunction =
-    CompressionFunctionOf<fsst::CompressionState>();
-  return kFunction;
 }
 
 }  // namespace irs::codecs::text

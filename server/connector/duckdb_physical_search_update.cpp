@@ -273,15 +273,15 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
       }
       lstate.patches.emplace(std::move(columns));
     }
-    search::ForEachUnitRows(
-      reader, lstate.unit_rows,
-      [&](uint64_t unit, std::span<const uint64_t> rows,
-          const duckdb::SelectionVector& sel) {
-        lstate.patches->Add(unit, rows, [&](size_t c) {
-          return duckdb::Vector{chunk.data[gstate.patched[c].input], sel,
-                                rows.size()};
-        });
-      });
+    search::ForEachUnitRows(reader, lstate.unit_rows,
+                            [&](uint64_t unit, std::span<const uint64_t> rows,
+                                const duckdb::SelectionVector& sel) {
+                              lstate.patches->Add(unit, rows, [&](size_t c) {
+                                return duckdb::Vector{
+                                  chunk.data[gstate.patched[c].input], sel,
+                                  rows.size()};
+                              });
+                            });
     if (lstate.returned) {
       duckdb::DataChunk new_row;
       new_row.InitializeEmpty(gstate.table.types);

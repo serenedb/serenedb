@@ -12,7 +12,7 @@ duckdb:core:test/sql/copy/csv/test_multiple_big_compressed_csvs.test_slow	slow	t
 duckdb:core:test/sql/copy/parquet/parquet_encrypted_tpch_httpfs.test_slow	slow	takes 3 min under asan; dev runs it
 duckdb:core:test/sql/copy/parquet/parquet_encryption_tpch.test_slow	slow	takes 4 min under asan; dev runs it
 duckdb:core:test/sql/copy/parquet/writer/parquet_write_tpcds.test_slow	slow	takes 5 min under asan; dev runs it
-duckdb:core:test/sql/cte/recursive_cte_limit.test	slow	hard-codes a 5 s max_execution_time, which asan under load exceeded in run 43713730929; dev runs it
+duckdb:core:test/sql/cte/recursive_cte_limit.test	slow	hard-codes a 5 s max_execution_time, which asan under load exceeds; dev runs it
 duckdb:core:test/sql/function/string/test_string_size_limit.test_slow	slow	takes 6 min under asan; dev runs it
 duckdb:core:test/sql/function/string/test_translate_large.test_slow	slow	takes 7 min under asan; dev runs it
 duckdb:core:test/sql/index/art/types/test_art_smallint.test_slow	slow	takes 3 min under asan; dev runs it

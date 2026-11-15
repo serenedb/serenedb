@@ -89,7 +89,7 @@ class ConstraintKeyEncoder {
 std::string ConstraintKeyText(duckdb::ClientContext& context,
                               std::string_view key,
                               std::span<const std::string> names,
-                              std::span<const duckdb::LogicalType> types);
+                              const duckdb::vector<duckdb::LogicalType>& types);
 
 std::string EncodeKeyValue(const duckdb::Value& value);
 

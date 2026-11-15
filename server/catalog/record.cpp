@@ -366,7 +366,7 @@ struct ChangeContent {
   duckdb::unique_ptr<duckdb::CreateInfo> info;
   std::string alter;
   duckdb::LogicalDependencyList dependencies;
-  std::vector<CreatedConstraint> created_constraints;
+  std::vector<CreatedConstraint> constraints;
 };
 
 std::vector<CreatedConstraint> CreatedConstraints(const Change& change) {
@@ -687,7 +687,7 @@ ChangeContent ReadChangeBody(duckdb::ClientContext& context,
   deserializer.ReadOptionalList(
     103, "constraints", [&](duckdb::Deserializer::List& list, duckdb::idx_t) {
       list.ReadObject([&](duckdb::Deserializer& object) {
-        content.created_constraints.push_back({
+        content.constraints.push_back({
           .name = object.ReadProperty<std::string>(100, "name"),
           .oid = object.ReadProperty<duckdb::idx_t>(101, "oid"),
         });
@@ -736,18 +736,19 @@ void ReplayChange(duckdb::ClientContext& context, ReplayTarget target,
         table.dependencies = std::move(content.dependencies);
         catalog.Oids().AddDependents(table, table.oid);
       }
-      if (!content.created_constraints.empty()) {
+      if (!content.constraints.empty()) {
         auto& oids = catalog.GetDatabase().GetDatabaseManager();
         std::vector<duckdb::idx_t> restored;
-        auto& constraints =
+        auto& made_constraints =
           LoggedTable(catalog, transaction, oid).GetConstraints();
-        for (const auto& created : content.created_constraints) {
-          const auto it = absl::c_find_if(constraints, [&](const auto& made) {
-            return made->constraint_name == created.name;
-          });
-          SDB_ENSURE(it != constraints.end(), "the log creates constraint \"",
-                     created.name, "\" on table ", oid,
-                     " that replay did not make");
+        for (const auto& created : content.constraints) {
+          const auto it =
+            absl::c_find_if(made_constraints, [&](const auto& made) {
+              return made->constraint_name == created.name;
+            });
+          SDB_ENSURE(it != made_constraints.end(),
+                     "the log creates constraint \"", created.name,
+                     "\" on table ", oid, " that replay did not make");
           (*it)->oid = created.oid;
           oids.ClaimOid(created.oid);
           restored.push_back(created.oid);

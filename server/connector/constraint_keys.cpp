@@ -60,21 +60,6 @@ duckdb::vector<duckdb::Value> DecodeKey(
   return values;
 }
 
-duckdb::unique_ptr<duckdb::Expression> CollationOf(
-  duckdb::ClientContext& context, const duckdb::LogicalType& type) {
-  if (type.id() != duckdb::LogicalTypeId::VARCHAR ||
-      duckdb::StringType::GetCollation(type).empty()) {
-    return nullptr;
-  }
-  duckdb::unique_ptr<duckdb::Expression> collation =
-    duckdb::make_uniq<duckdb::BoundReferenceExpression>(type, 0);
-  if (!duckdb::ExpressionBinder::PushCollation(
-        context, collation, type, duckdb::CollationType::EQUALITY_COLLATIONS)) {
-    return nullptr;
-  }
-  return collation;
-}
-
 }  // namespace
 
 void CollectReads(const duckdb::Expression& expr, std::vector<KeyRead>& reads) {
@@ -144,6 +129,7 @@ void ConstraintKeyEncoder::Prepare(const duckdb::DataChunk& chunk,
                !duckdb::StringType::GetCollation(type).empty()) {
       duckdb::ExpressionBinder::PushCollation(
         *_context, part, type, duckdb::CollationType::EQUALITY_COLLATIONS);
+      SDB_ASSERT(part->GetReturnType().InternalType() == type.InternalType());
     }
     types.push_back(part->GetReturnType());
     prepared.executor.AddExpression(*part);
@@ -198,17 +184,11 @@ const duckdb::Vector& ConstraintKeyEncoder::Encode(
   return keys;
 }
 
-std::string ConstraintKeyText(duckdb::ClientContext& context,
-                              std::string_view key,
-                              std::span<const std::string> names,
-                              std::span<const duckdb::LogicalType> types) {
-  duckdb::vector<duckdb::LogicalType> encoded;
-  encoded.reserve(types.size());
-  for (const auto& type : types) {
-    const auto collation = CollationOf(context, type);
-    encoded.push_back(collation ? collation->GetReturnType() : type);
-  }
-  const auto values = DecodeKey(key, encoded);
+std::string ConstraintKeyText(
+  duckdb::ClientContext& context, std::string_view key,
+  std::span<const std::string> names,
+  const duckdb::vector<duckdb::LogicalType>& types) {
+  const auto values = DecodeKey(key, types);
   std::string out = absl::StrCat("(", absl::StrJoin(names, ", "), ")=(");
   for (size_t i = 0; i != values.size(); ++i) {
     if (i != 0) {

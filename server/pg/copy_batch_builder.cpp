@@ -102,12 +102,7 @@ CopyBatch& CopyBatchBuilder::Current() {
 }
 
 std::unique_ptr<CopyBatch> CopyBatchBuilder::Take() {
-  if (_sealed.empty()) {
-    return std::move(_batch);
-  }
-  auto batch = std::move(_sealed.front());
-  _sealed.pop_front();
-  return batch;
+  return std::move(_sealed ? _sealed : _batch);
 }
 
 void CopyBatchBuilder::AddRows(std::string_view rows, bool stable) {
@@ -121,7 +116,7 @@ void CopyBatchBuilder::AddRows(std::string_view rows, bool stable) {
       batch.AddOwned(std::string{part});
     }
   };
-  if (_join_blank_lines && Full()) {
+  if (_join_blank_lines && !_sealed && Full()) {
     const auto blank = BlankLines(rows);
     if (blank != 0) {
       add(*_batch, rows.substr(0, blank));
@@ -130,18 +125,18 @@ void CopyBatchBuilder::AddRows(std::string_view rows, bool stable) {
         return;
       }
     }
-    _sealed.push_back(std::move(_batch));
+    _sealed = std::move(_batch);
   }
   add(Current(), rows);
 }
 
 void CopyBatchBuilder::AddRow(std::string row) {
-  if (_join_blank_lines && Full()) {
+  if (_join_blank_lines && !_sealed && Full()) {
     if (BlankLines(row) == row.size()) {
       _batch->AddOwned(std::move(row));
       return;
     }
-    _sealed.push_back(std::move(_batch));
+    _sealed = std::move(_batch);
   }
   Current().AddOwned(std::move(row));
 }

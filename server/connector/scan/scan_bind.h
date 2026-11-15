@@ -117,7 +117,6 @@ struct OffsetsRequest {
 
 struct OffsetsSpec {
   std::vector<OffsetsRequest> requests;
-  std::shared_ptr<OffsetsFilter> claimed;
 
   bool Active() const noexcept { return !requests.empty(); }
 };

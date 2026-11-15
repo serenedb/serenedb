@@ -39,10 +39,6 @@ std::shared_ptr<irs::Filter> BuildFilterFromTSQuery(
   duckdb::ClientContext& context, const duckdb::Expression& tsquery_expr,
   ColumnId column_id, const catalog::TokenizerRef& dict_tokenizer);
 
-struct OffsetsFilter {
-  std::shared_ptr<irs::Filter> filter;
-};
-
 struct OffsetsBindData final : duckdb::FunctionData {
   std::shared_ptr<const catalog::InvertedIndexConfig> config;
   catalog::IndexTokenizers tokenizers;
@@ -51,7 +47,7 @@ struct OffsetsBindData final : duckdb::FunctionData {
   catalog::TokenizerRef dict_tokenizer;
 
   size_t limit = 0;
-  std::shared_ptr<const OffsetsFilter> filter;
+  std::shared_ptr<const irs::Filter> filter;
 
   bool IsStandalone() const noexcept {
     return static_cast<bool>(dict_tokenizer);

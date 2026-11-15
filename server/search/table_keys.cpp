@@ -163,7 +163,7 @@ TableKeys ResolveTableKeys(const catalog::SearchTableEntry& table,
     spec.referenced_table = parent->oid;
     spec.referenced_field = referenced->oid;
     const auto& parent_columns = parent->GetColumns();
-    std::vector<duckdb::LogicalType> own_types;
+    duckdb::vector<duckdb::LogicalType> own_types;
     for (const auto index :
          referenced->Cast<duckdb::UniqueConstraint>().GetLogicalIndexes(
            parent_columns)) {

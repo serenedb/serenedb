@@ -23,7 +23,6 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <deque>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -57,10 +56,10 @@ class CopyBatchBuilder {
   void Finish();
 
   bool Ready() const noexcept {
-    return !_sealed.empty() || (!_join_blank_lines && Full());
+    return _sealed || (!_join_blank_lines && Full());
   }
   bool HasRows() const noexcept {
-    return !_sealed.empty() || (_batch && !_batch->Empty());
+    return _sealed || (_batch && !_batch->Empty());
   }
   bool Ended() const noexcept { return _ended; }
   std::unique_ptr<CopyBatch> Take();
@@ -85,7 +84,7 @@ class CopyBatchBuilder {
   const size_t _target;
   const bool _join_blank_lines;
   std::unique_ptr<CopyBatch> _batch;
-  std::deque<std::unique_ptr<CopyBatch>> _sealed;
+  std::unique_ptr<CopyBatch> _sealed;
   std::string _partial;
   std::string _header;
   std::array<char, 4> _scratch{};

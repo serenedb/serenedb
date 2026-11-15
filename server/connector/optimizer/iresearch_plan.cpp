@@ -42,6 +42,7 @@
 #include <duckdb/planner/expression/bound_window_expression.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
+#include <duckdb/planner/logical_operator_visitor.hpp>
 #include <duckdb/planner/operator/logical_aggregate.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/planner/operator/logical_join.hpp>
@@ -926,16 +927,11 @@ duckdb::unique_ptr<duckdb::Expression> PushdownOffsetsCall(
   const auto read_field = config->TermField(target_col_id);
 
   if (is_text && !offs_stored) {
-    auto& claimed = search_scan.offsets.claimed;
-    if (!claimed) {
-      claimed = std::make_shared<connector::OffsetsFilter>();
-    }
     auto bind = duckdb::make_uniq<connector::OffsetsBindData>();
     bind->config = config;
     bind->tokenizers = search_scan.relation.ResolveTokenizers(context);
     bind->column_id = read_field;
     bind->limit = limit;
-    bind->filter = claimed;
     search_scan.offsets.requests.push_back(
       {.column_id = read_field, .display_id = target_col_id, .limit = limit});
     func.BindInfoMutable() = std::move(bind);
@@ -1491,9 +1487,6 @@ bool ClaimSearchConjuncts(
   scan.search.deferred = connector::MakeChecks(std::move(deferral));
 
   scan.search.filter_scorers = std::move(filter_scorers);
-  if (scan.offsets.claimed) {
-    scan.offsets.claimed->filter = scan.search.filter;
-  }
   return true;
 }
 
@@ -1519,9 +1512,56 @@ void RewriteSearchCallsToColumnRefs(
   RewriteSearchCalls(plan, plan, rewrite);
 }
 
-void LimitTsDictScans(duckdb::OptimizerExtensionInput&,
-                      duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
+bool HasRowOffsets(duckdb::LogicalOperator& op) {
+  if (const auto* bind = SearchBindOf(op);
+      bind && absl::c_any_of(bind->offsets.requests, [](const auto& request) {
+        return request.bind_column == duckdb::DConstants::INVALID_INDEX;
+      })) {
+    return true;
+  }
+  return absl::c_any_of(
+    op.children, [](const auto& child) { return HasRowOffsets(*child); });
+}
+
+void GiveOffsetsTheirFilter(duckdb::Expression& expr, PlanIndex& index) {
+  if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_FUNCTION) {
+    auto& func = expr.Cast<duckdb::BoundFunctionExpression>();
+    if (func.Function().GetName().GetIdentifierName() == connector::kOffsets &&
+        func.BindInfo() && func.GetChildren().size() == 2 &&
+        func.GetChildren()[1]->GetExpressionClass() ==
+          duckdb::ExpressionClass::BOUND_COLUMN_REF) {
+      auto& bind = func.BindInfoMutable()->Cast<connector::OffsetsBindData>();
+      const auto column =
+        index.Column(func.GetChildren()[1]
+                       ->Cast<duckdb::BoundColumnRefExpression>()
+                       .Binding());
+      if (!bind.IsStandalone() && column) {
+        bind.filter = column.scan->Bind().search.filter;
+      }
+    }
+  }
+  duckdb::ExpressionIterator::EnumerateChildren(
+    expr,
+    [&](duckdb::Expression& child) { GiveOffsetsTheirFilter(child, index); });
+}
+
+void GiveOffsetsTheirFilter(duckdb::LogicalOperator& op, PlanIndex& index) {
+  for (auto& child : op.children) {
+    GiveOffsetsTheirFilter(*child, index);
+  }
+  duckdb::LogicalOperatorVisitor::EnumerateExpressions(
+    op, [&](duckdb::unique_ptr<duckdb::Expression>* expr) {
+      GiveOffsetsTheirFilter(**expr, index);
+    });
+}
+
+void FinishSearchScans(duckdb::OptimizerExtensionInput&,
+                       duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   LimitTsDictEnumerations(*plan);
+  if (HasRowOffsets(*plan)) {
+    PlanIndex index{*plan};
+    GiveOffsetsTheirFilter(*plan, index);
+  }
 }
 
 bool StoredColumn(const duckdb::LogicalGet& get,
@@ -2163,7 +2203,7 @@ void RegisterIResearchPlanOptimizer(duckdb::DatabaseInstance& db) {
                });
   duckdb::OptimizerExtension::Register(
     db.config, duckdb::OptimizerExtension{
-                 .rule = &LimitTsDictScans,
+                 .rule = &FinishSearchScans,
                  .anchor = duckdb::OptimizerType::FILTER_PUSHDOWN,
                  .where = duckdb::OptimizerHookPosition::After,
                });

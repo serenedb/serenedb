@@ -45,6 +45,7 @@
 #include <limits>
 #include <memory>
 #include <span>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -539,18 +540,37 @@ void Decompress(duckdb::const_data_ptr_t for_encoded, T* output, idx_t count,
     .exponent = vector_exponent,
     .factor = vector_factor,
   };
-  ABSL_CACHELINE_ALIGNED uint64_t for_decoded[kVectorSize] = {};
-  if (bit_width) {
-    duckdb::BitpackingPrimitives::UnPackBuffer<uint64_t>(
-      reinterpret_cast<duckdb::data_ptr_t>(for_decoded), for_encoded, count,
+  if (const auto base = static_cast<int64_t>(frame_of_reference);
+      std::is_same_v<T, double> && bit_width != 0 && bit_width < 32 &&
+      base >= std::numeric_limits<int32_t>::min() &&
+      base <=
+        std::numeric_limits<int32_t>::max() - ((int64_t{1} << bit_width) - 1)) {
+    ABSL_CACHELINE_ALIGNED uint32_t narrow[kVectorSize];
+    duckdb::BitpackingPrimitives::UnPackBuffer<uint32_t>(
+      reinterpret_cast<duckdb::data_ptr_t>(narrow), for_encoded, count,
       bit_width);
-  }
-  for (idx_t i = 0; i < count; ++i) {
-    for_decoded[i] += frame_of_reference;
-  }
-  for (idx_t i = 0; i < count; ++i) {
-    const auto encoded_integer = static_cast<int64_t>(for_decoded[i]);
-    output[i] = DecodeValue<T>(encoded_integer, encoding_indices);
+    const auto first = static_cast<uint32_t>(base);
+    const auto factor = static_cast<T>(kFactArr[vector_factor]);
+    const auto fraction = AlpTypedConstants<T>::kFracArr[vector_exponent];
+#pragma clang loop vectorize_width(2)
+    for (idx_t i = 0; i < count; ++i) {
+      output[i] = static_cast<T>(static_cast<int32_t>(narrow[i] + first)) *
+                  factor * fraction;
+    }
+  } else {
+    ABSL_CACHELINE_ALIGNED uint64_t for_decoded[kVectorSize] = {};
+    if (bit_width) {
+      duckdb::BitpackingPrimitives::UnPackBuffer<uint64_t>(
+        reinterpret_cast<duckdb::data_ptr_t>(for_decoded), for_encoded, count,
+        bit_width);
+    }
+    for (idx_t i = 0; i < count; ++i) {
+      for_decoded[i] += frame_of_reference;
+    }
+    for (idx_t i = 0; i < count; ++i) {
+      const auto encoded_integer = static_cast<int64_t>(for_decoded[i]);
+      output[i] = DecodeValue<T>(encoded_integer, encoding_indices);
+    }
   }
   for (idx_t i = 0; i < exceptions_count; ++i) {
     output[exceptions_positions[i]] = exceptions[i];

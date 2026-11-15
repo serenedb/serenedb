@@ -20,6 +20,9 @@ CORPUS = "any/sqlite/"
 CORPUS_SECONDS_PER_MB = 18.0
 PART_SECONDS = 10.0
 MAX_PARTS = 64
+RECOVERY_RETRY = {"RETRY_ATTEMPTS": "60", "BACKOFF_DURATION": "500ms"}
+RETRY = re.compile(r"^(?:statement|query|system)\s.*\sretry\s+(\S+)\s+backoff\s+(\S+)\s*$", re.M)
+DURATION_UNIT_SECONDS = {"ms": 0.001, "s": 1.0, "m": 60.0, "h": 3600.0}
 _runner_lock = threading.Lock()
 _runner_path = None
 
@@ -201,6 +204,20 @@ def default_seconds(path, rel):
     return 30.0 if rel.endswith(".test_slow") else 2.0
 
 
+def retry_seconds(path, env):
+    seconds = 0.0
+    for attempts, backoff in RETRY.findall(path.read_text()):
+        attempts, backoff = (env.get(v[1:], v) if v.startswith("$") else v for v in (attempts, backoff))
+        if attempts.isdigit():
+            seconds += int(attempts) * sum(int(n) * DURATION_UNIT_SECONDS[unit]
+                                           for n, unit in re.findall(r"(\d+)(ms|s|m|h)", backoff))
+    return seconds
+
+
+def unit_timeout(args, timeout, path, env=None):
+    return timeout + retry_seconds(path, env or {}) if args.override else timeout
+
+
 def check_out_corpus(ctx):
     subprocess.run(["git", "-C", str(ctx.root), "submodule", "update", "--init", "--checkout",
                     "--depth=1", "tests/sqllogic/any/pg/sqlite"], check=True)
@@ -239,6 +256,7 @@ def sqllogic_units(ctx, args, skips):
                 ctx.skips.append((uid, skip))
                 continue
             cost, timeout = plan(ctx, uid, default_seconds(path, rel))
+            timeout = unit_timeout(args, timeout, path)
             if CORPUS not in rel:
                 inference = [f for f in fixtures if f in INFERENCE_CPUS]
                 cpus = 1 + sum(INFERENCE_CPUS[f] for f in inference)
@@ -275,6 +293,7 @@ def postgres_units(ctx, args, skips):
                 ctx.skips.append((uid, skip))
                 continue
             cost, timeout = plan(ctx, uid, default_seconds(path, rel))
+            timeout = unit_timeout(args, timeout, path)
             units.append(Unit(uid, "postgres", _shared_run(ctx, args, rel, engine, "pgref", "postgres"),
                               cpus=1, mem_gb=0.3, fixtures=("pgref",), cost=cost, timeout=timeout,
                               group=f"postgres:{rel}"))
@@ -359,6 +378,7 @@ def recovery_units(ctx, args, skips):
             ctx.skips.append((uid, skip))
             continue
         cost, timeout = plan(ctx, uid, 60.0 if rel.endswith(".test_slow") else 10.0)
+        timeout = unit_timeout(args, timeout, path, RECOVERY_RETRY)
         units.append(Unit(uid, "recovery", _recovery_run(ctx, args, rel), cpus=2, mem_gb=1.5,
                           fixtures=fixtures, cost=cost, timeout=timeout))
     return units
@@ -368,8 +388,7 @@ def _recovery_run(ctx, args, rel):
     def run(r):
         server = RestartingServer(ctx, r.dir / "server", profile_dir=r.profile_dir).start()
         r.stack_pids = lambda: (server.pid(),)
-        env = {"SDB_DATADIR": str(server.datadir), "RETRY_ATTEMPTS": "60",
-               "BACKOFF_DURATION": "500ms"}
+        env = {"SDB_DATADIR": str(server.datadir), **RECOVERY_RETRY}
         try:
             res = r.exec(_runner_args(ctx, args, rel, "pg-wire-simple", server.server, r.env),
                          cwd=sqllogic_dir(ctx), env=env)

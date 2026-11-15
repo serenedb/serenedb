@@ -13,7 +13,7 @@ scripts/ci/test.py --build-dir build_clangd --suite sqllogic --list
 
 The summary lands in `out/test/summary.txt`, every file's result in `out/test/results.jsonl`, and a failed file's runner log under `out/test/units/`.
 
-`--server` runs the files against a server you started, for an edit-run loop, and `--override` rewrites them with the results it gives, on one wire engine:
+`--server` runs the files against a server you started, for an edit-run loop, and `--override` runs them on one wire engine and rewrites the records whose outcome differs from their expectation, leaving every other line as it is; a record it can't rewrite, such as a statement with a typo, fails the unit:
 
 ```bash
 scripts/ci/test.py --suite sqllogic --server 127.0.0.1:7777 --test 'sqllogic:*:sdb/pg/any/simple/setop.test'

@@ -109,6 +109,29 @@ inline void Shuffle(const uint8_t* in, size_t n, uint8_t stored,
   }
 }
 
+inline uint64_t ShuffledItem(const uint8_t* in, size_t n, uint8_t stored,
+                             size_t at) noexcept {
+  uint64_t v = 0;
+  for (uint8_t b = 0; b < stored; ++b) {
+    v |= uint64_t{in[b * n + at]} << (8 * b);
+  }
+  return v;
+}
+
+inline uint64_t ShuffledSum(const uint8_t* in, size_t n, uint8_t stored,
+                            size_t begin, size_t end) noexcept {
+  uint64_t sum = 0;
+  for (uint8_t b = 0; b < stored; ++b) {
+    const auto* lane = in + b * n;
+    uint64_t bytes = 0;
+    for (size_t i = begin; i < end; ++i) {
+      bytes += lane[i];
+    }
+    sum += bytes << (8 * b);
+  }
+  return sum;
+}
+
 inline __m128i Lane(const uint8_t* in, size_t n, size_t b, size_t i) noexcept {
   return _mm_loadu_si128(reinterpret_cast<const __m128i*>(in + b * n + i));
 }

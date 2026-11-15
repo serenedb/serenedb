@@ -129,19 +129,11 @@ class FrameDecoder {
     return At(row);
   }
 
-  T Fetch(uint64_t row, uint64_t next) {
-    if (Holds(row) || Runs(_h.transform) || Near(row, next)) {
-      return Get(row);
+  IRS_FORCE_INLINE T Fetch(uint64_t row, uint64_t next) {
+    if (Holds(row)) {
+      return At(row);
     }
-    if (ReadsAlone()) {
-      Prefetch(next);
-      return ReadAlone(row);
-    }
-    if (_h.Shuffled() || (_h.transform == NumericTransform::Raw &&
-                          _h.leaf == NumericLeaf::None)) {
-      return Get(row);
-    }
-    return ReadSource(row);
+    return FetchApart(row, next);
   }
 
  private:
@@ -156,6 +148,23 @@ class FrameDecoder {
 
   static constexpr uint64_t kNearShare = 32;
   static constexpr uint64_t kScanCacheDivisor = 2;
+
+  IRS_NO_INLINE T FetchApart(uint64_t row, uint64_t next) {
+    if (Runs(_h.transform) || Near(row, next)) {
+      return Get(row);
+    }
+    if (ReadsAlone()) {
+      Prefetch(next);
+      return ReadAlone(row);
+    }
+    if (_h.Shuffled()) {
+      return ReadLanes(row);
+    }
+    if (_h.transform == NumericTransform::Raw && _h.leaf == NumericLeaf::None) {
+      return Get(row);
+    }
+    return ReadSource(row);
+  }
 
   void Seek(uint64_t row) {
     if (Holds(row)) {
@@ -230,6 +239,41 @@ class FrameDecoder {
     _sum = numeric::WidenPrefixSum<false>(
       _source + size_t{_summed} * _h.stored, size_t{at} + 1 - _summed,
       _h.stored, _sum, static_cast<U>(_h.base), static_cast<U*>(nullptr));
+    _summed = at + 1;
+    return Scaled(_sum);
+  }
+
+  IRS_NO_INLINE T ReadLanes(uint64_t row) {
+    if (Near(row, _fetched)) {
+      return Get(row);
+    }
+    _fetched = row;
+    const auto f = FrameOf(row);
+    const auto first = uint64_t{f} * _per_frame;
+    const auto at = static_cast<uint32_t>(row - first);
+    const auto rows = static_cast<uint32_t>(EndRow(f) - first);
+    const size_t need = size_t{rows} * _h.stored;
+    if (f != _source_frame || need > _source_len) {
+      OpenSource(f, Meta(f), need, false);
+    }
+    if (_h.transform != NumericTransform::Delta) {
+      const auto v = numeric::ShuffledItem(_source, rows, _h.stored, at);
+      if (_h.transform == NumericTransform::Dict) {
+        return Entry(static_cast<uint32_t>(v));
+      }
+      return Scaled(static_cast<U>(v + _h.base));
+    }
+    if (at + 1 < _summed) {
+      _summed = 0;
+    }
+    if (_summed == 0) {
+      _sum = static_cast<U>(MetaAt(f).base);
+    }
+    _sum = static_cast<U>(
+
+      _sum + uint64_t{at + 1 - _summed} * _h.base +
+      numeric::ShuffledSum(_source, rows, _h.stored, _summed, at + 1));
+
     _summed = at + 1;
     return Scaled(_sum);
   }
@@ -791,7 +835,9 @@ class FrameDecoder {
   duckdb::shared_ptr<DecodedFrame> _source_held;
   uint32_t _summed = 0;
   U _sum = 0;
+  uint64_t _fetched = std::numeric_limits<uint64_t>::max();
   uint64_t _begin = 0;
+
   uint64_t _end = 0;
   uint64_t _next = 0;
   bool _scan = false;

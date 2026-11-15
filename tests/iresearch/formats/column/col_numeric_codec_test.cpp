@@ -1032,6 +1032,101 @@ TEST_F(ColNumericCodecTest, SparseReadsCacheDecodedFrames) {
   }
 }
 
+TEST_F(ColNumericCodecTest, PointReadsOnByteShuffledFrames) {
+  constexpr uint64_t kRows = 60000;
+  struct Case {
+    const char* name;
+    Gen gen;
+    std::string_view transform;
+    duckdb::LogicalType type = duckdb::LogicalType::BIGINT;
+  };
+  const auto entry = [](uint64_t k) {
+    return static_cast<int64_t>((k << 48) + (Mix(k) & 0xFFFFFFFFFFFFULL));
+  };
+  const Case cases[] = {
+    {"noisy steps with jumps",
+     [](uint64_t g) {
+       return static_cast<int64_t>(g * 1000 + Mix(g) % 256 +
+                                   (g / 997) * 1'000'000'000);
+     },
+     "delta"},
+    {"descending noisy steps with jumps",
+     [](uint64_t g) {
+       return -static_cast<int64_t>(g * 1000 + Mix(g) % 256 +
+                                    (g / 997) * 1'000'000'000);
+     },
+     "delta"},
+    {"wide noisy steps with jumps",
+     [](uint64_t g) {
+       return static_cast<int64_t>(g * 100'000 + Mix(g) % 65536 +
+                                   (g / 997) * 1'000'000'000'000LL);
+     },
+     "delta"},
+    {"offsets on two levels",
+     [](uint64_t g) {
+       return static_cast<int64_t>(1'000'000 + (Mix(g / 64) % 200) * 256 +
+                                   Mix(g) % 4);
+     },
+     "for"},
+    {"offsets on two levels in 32 bits",
+     [](uint64_t g) {
+       return static_cast<int64_t>(1'000'000 + (Mix(g / 64) % 200) * 256 +
+                                   Mix(g) % 4);
+     },
+     "for", duckdb::LogicalType::INTEGER},
+    {"hashes with repeating low bytes",
+     [](uint64_t g) {
+       return static_cast<int64_t>((Mix(g / 16) << 16) | (g % 7));
+     },
+     "raw"},
+    {"dictionary entries in clusters",
+     [&](uint64_t g) { return entry(Mix(g / 7) % 16 * 256 + g % 251); },
+     "dict"},
+  };
+  for (const auto tier : {irs::WriteTier::Flush, irs::WriteTier::Merge}) {
+    for (const auto& c : cases) {
+      SCOPED_TRACE(std::string{c.name} + " " +
+                   std::to_string(static_cast<int>(tier)));
+      irs::MemoryDirectory dir{};
+      Write(dir, c.type, {.tier = tier}, kRows, 65536, c.gen);
+      const auto transforms = Transforms(dir);
+      ASSERT_EQ(transforms.size(), 1);
+      ASSERT_EQ(transforms[0].substr(0, transforms[0].find('/')), c.transform);
+      ASSERT_EQ(SegmentInfo(dir, "shuffled"), std::vector<std::string>{"true"});
+      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+      const auto* col = r.Column(kField);
+      ASSERT_NE(col, nullptr);
+      irs::ColumnReader::PointReader cursor{r, *col};
+      duckdb::Vector out{c.type, 1};
+      const auto expect = [&](uint64_t g) {
+        duckdb::FlatVector::ValidityMutable(out).Reset();
+        ASSERT_TRUE(cursor.FetchRow(g, out, 0)) << g;
+        ExpectRow(out, 0, g, c.gen, c.type);
+      };
+      for (uint64_t g = 3; g < kRows; g += 1531) {
+        expect(g);
+      }
+      for (uint64_t g = kRows - 1; g > 2777; g -= 2777) {
+        expect(g);
+      }
+      for (const uint64_t g :
+           {uint64_t{0}, kRows - 1, uint64_t{0}, uint64_t{100}, uint64_t{101},
+            uint64_t{164}, uint64_t{40000}, uint64_t{40001}, uint64_t{99}}) {
+        expect(g);
+      }
+      std::vector<uint32_t> picked;
+      for (uint64_t g = 7; g < kRows; g += 1531) {
+        picked.push_back(static_cast<uint32_t>(g));
+      }
+      duckdb::Vector batch{c.type, STANDARD_VECTOR_SIZE};
+      cursor.FetchRows(std::span<const uint32_t>{picked}, 0, batch, 0);
+      for (size_t k = 0; k < picked.size(); ++k) {
+        ExpectRow(batch, k, picked[k], c.gen, c.type);
+      }
+    }
+  }
+}
+
 TEST_F(ColNumericCodecTest, PointReadsInDescendingOrder) {
   constexpr uint64_t kRows = 50000;
   for (const auto tier : {irs::WriteTier::Flush, irs::WriteTier::Merge}) {

@@ -810,6 +810,13 @@ TEST_F(ColCodecPathsTest, AlpCodecsReadFloatsAndDoubles) {
              [&](uint64_t g) {
                return item(0x1p63 - 0x1p20 * static_cast<double>(1 + g % 1000));
              }});
+      for (const double edge :
+           {2147483647.0, 2147483648.0, -2147482625.0, -2147482626.0}) {
+        Check({name("alp integers on and past the 32-bit limits"), type,
+               CodecType::Alp, All, [&, edge](uint64_t g) {
+                 return item(edge - static_cast<double>(g % 1024));
+               }});
+      }
     }
     Check({name("alp a value that rounds past the limit"), type, CodecType::Alp,
            All, [&](uint64_t g) {

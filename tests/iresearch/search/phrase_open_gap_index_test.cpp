@@ -229,3 +229,37 @@ TEST(PhraseOpenGapIndexTest, matches_agree_with_the_reference) {
     EXPECT_FALSE(top.scores.empty());
   }
 }
+
+TEST(PhraseOpenGapIndexTest, pruned_top_matches_full_top) {
+  const irs::BM25 scorer;
+  const PositionalIndex index{Corpus(20000), scorer};
+  struct Case {
+    std::vector<Slot> slots;
+    bool prunes;
+  };
+  const Case cases[] = {
+    {{{"a", 0}, {"r", 1}}, true},
+    {{{"b", 0}, {"r", 1}}, true},
+    {{{"a", 0}, {"b", 1}, {"r", 1}}, true},
+    {{{"a", 0}, {"c", 2}, {"r", 1}}, true},
+    {{{"r", 0}, {"a", 1}}, true},
+    {{{"a", 0}, {"b", 1}}, false},
+    {{{"a", 0}, {"b", 1}, {"c", 1}}, false},
+  };
+  for (const auto& [slots, prunes] : cases) {
+    SCOPED_TRACE(prunes);
+    const auto filter = Lowered(OpenPhrase(slots));
+    const auto full = TopOf(index, *filter, scorer, false);
+    const auto pruned = TopOf(index, *filter, scorer, true);
+    ASSERT_EQ(tests::kTop, full.scores.size());
+    ASSERT_EQ(full.scores.size(), pruned.scores.size());
+    for (size_t i = 0; i != full.scores.size(); ++i) {
+      EXPECT_FLOAT_EQ(full.scores[i], pruned.scores[i]) << i;
+    }
+    if (prunes) {
+      EXPECT_LT(pruned.reached, full.reached);
+    } else {
+      EXPECT_LE(pruned.reached, full.reached);
+    }
+  }
+}

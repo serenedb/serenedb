@@ -174,12 +174,14 @@ target_sources(
         make/phrase/top_fixed_intervals.cpp
         make/phrase/top_fixed_intervals_pruned.cpp
         make/phrase/top_fixed_open_gap.cpp
+        make/phrase/top_fixed_open_gap_pruned.cpp
         make/phrase/top_fixed_pruned.cpp
         make/phrase/top_fixed_slop.cpp
         make/phrase/top_variadic.cpp
         make/phrase/top_variadic_intervals.cpp
         make/phrase/top_variadic_intervals_pruned.cpp
         make/phrase/top_variadic_open_gap.cpp
+        make/phrase/top_variadic_open_gap_pruned.cpp
         make/phrase/top_variadic_pruned.cpp
         make/phrase/top_variadic_slop.cpp
         make/query/all.cpp

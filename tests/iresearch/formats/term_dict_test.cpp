@@ -1962,10 +1962,10 @@ TEST_P(TermDictTest, headers_take_the_smaller_layout_per_block) {
       ASSERT_FALSE(view.fixed);
       if (cursor.BlockIndex() != block) {
         block = cursor.BlockIndex();
-        if (view.packed) {
+        if (view.headers.codes) {
           ++packed;
           entries += view.count;
-          escaped += view.escaped;
+          escaped += view.headers.escaped;
         } else {
           ++columns;
         }
@@ -1975,7 +1975,7 @@ TEST_P(TermDictTest, headers_take_the_smaller_layout_per_block) {
       const auto key = cursor.Key();
       const auto header = irs::term_dict::HeaderAt(view, entry);
       if (entry == 0) {
-        ASSERT_EQ(view.packed ? view.lcp_base : 0, header.lcp);
+        ASSERT_EQ(view.headers.codes ? view.headers.lcp_base : 0, header.lcp);
       } else if (last + 1 == entry) {
         ASSERT_EQ(irs::CommonPrefixLength(irs::bytes_view{previous}, key),
                   header.lcp);
@@ -2010,8 +2010,8 @@ TEST(TermDictBlockTest, block_headers_decode_and_refuse_corruption) {
   for (const auto* block : {&packed, &columns}) {
     const auto view = irs::term_dict::Parse(block->data(), nullptr);
     ASSERT_EQ(2, view.count);
-    ASSERT_EQ(block == &packed, view.packed);
-    ASSERT_EQ(block == &packed ? 1 : 0, view.escaped);
+    ASSERT_EQ(block == &packed, static_cast<bool>(view.headers.codes));
+    ASSERT_EQ(block == &packed ? 1 : 0, view.headers.escaped);
     const auto first = irs::term_dict::HeaderAt(view, 0);
     ASSERT_EQ(0, first.lcp);
     ASSERT_EQ(300, first.len);
@@ -2130,33 +2130,45 @@ TEST_P(TermDictTest, footer_refuses_corrupt_fields) {
       object.WriteProperty<uint64_t>(2, "norm", 7);
     });
   };
-  const auto numeric = [](duckdb::BinarySerializer& field, auto&& write_dict) {
+  const auto member = [](duckdb::BinarySerializer& field, duckdb::field_id_t id,
+                         const char* tag, auto&& write_dict) {
+    field.WriteObject(2, "dicts", [&](duckdb::BinarySerializer& dicts) {
+      dicts.WriteObject(id, tag, write_dict);
+    });
+  };
+  const auto numeric = [&](duckdb::BinarySerializer& field, auto&& write_dict) {
     field.WriteProperty<uint64_t>(0, "id", 1);
     field.WriteProperty<uint8_t>(
       1, "layout", static_cast<uint8_t>(irs::DictLayout::Numeric));
-    field.WriteObject(3, "numeric", write_dict);
+    member(field, 1, "numeric", write_dict);
   };
   refused_field([](duckdb::BinarySerializer& field) {
     field.WriteProperty<uint64_t>(0, "id", 1);
-  });
-  refused_field([](duckdb::BinarySerializer& field) {
-    field.WriteProperty<uint64_t>(0, "id", 1);
-    field.WriteObject(6, "sql_null", [](duckdb::BinarySerializer& dict) {
-      dict.WriteProperty(0, "record", std::string{});
-    });
+    field.WriteObject(2, "dicts", [](duckdb::BinarySerializer&) {});
   });
   refused_field(
     [](duckdb::BinarySerializer& field) {
       field.WriteProperty<uint64_t>(0, "id", 1);
-      field.WriteObject(6, "sql_null", [](duckdb::BinarySerializer& dict) {
+    },
+    ERRCODE_FEATURE_NOT_SUPPORTED);
+  refused_field([&](duckdb::BinarySerializer& field) {
+    field.WriteProperty<uint64_t>(0, "id", 1);
+    member(field, 4, "sql_null", [](duckdb::BinarySerializer& dict) {
+      dict.WriteProperty(0, "record", std::string{});
+    });
+  });
+  refused_field(
+    [&](duckdb::BinarySerializer& field) {
+      field.WriteProperty<uint64_t>(0, "id", 1);
+      member(field, 4, "sql_null", [](duckdb::BinarySerializer& dict) {
         dict.WriteProperty(0, "record", std::string{"r"});
         dict.WriteProperty<uint32_t>(2, "features", 1);
       });
     },
     ERRCODE_FEATURE_NOT_SUPPORTED);
-  refused_field([](duckdb::BinarySerializer& field) {
+  refused_field([&](duckdb::BinarySerializer& field) {
     field.WriteProperty<uint64_t>(0, "id", 1);
-    field.WriteObject(2, "string", [](duckdb::BinarySerializer& dict) {
+    member(field, 0, "string", [](duckdb::BinarySerializer& dict) {
       dict.WriteProperty<uint64_t>(1, "term_count", 0);
     });
   });
@@ -2180,7 +2192,7 @@ TEST_P(TermDictTest, footer_refuses_corrupt_fields) {
   refused_field(
     [&](duckdb::BinarySerializer& field) {
       field.WriteProperty<uint64_t>(0, "id", 1);
-      field.WriteObject(2, "string", [&](duckdb::BinarySerializer& dict) {
+      member(field, 0, "string", [&](duckdb::BinarySerializer& dict) {
         single_record(dict);
         ranges(dict);
       });
@@ -2188,14 +2200,14 @@ TEST_P(TermDictTest, footer_refuses_corrupt_fields) {
     ERRCODE_FEATURE_NOT_SUPPORTED);
   refused_field([&](duckdb::BinarySerializer& field) {
     field.WriteProperty<uint64_t>(0, "id", 1);
-    field.WriteObject(2, "string", [&](duckdb::BinarySerializer& dict) {
+    member(field, 0, "string", [&](duckdb::BinarySerializer& dict) {
       single_record(dict);
       text(dict);
     });
   });
   refused_field([&](duckdb::BinarySerializer& field) {
     field.WriteProperty<uint64_t>(0, "id", 1);
-    field.WriteObject(2, "string", [&](duckdb::BinarySerializer& dict) {
+    member(field, 0, "string", [&](duckdb::BinarySerializer& dict) {
       single_record(dict);
       dict.WriteProperty(18, "fsst_table", std::string{"table"});
     });
@@ -2204,7 +2216,7 @@ TEST_P(TermDictTest, footer_refuses_corrupt_fields) {
     [&](duckdb::BinarySerializer& field) {
       field.WriteProperty<uint64_t>(0, "id", 1);
       field.WriteProperty<uint8_t>(1, "layout", irs::kDictLayouts);
-      field.WriteObject(2, "string", single_record);
+      member(field, 0, "string", single_record);
     },
     ERRCODE_FEATURE_NOT_SUPPORTED);
 

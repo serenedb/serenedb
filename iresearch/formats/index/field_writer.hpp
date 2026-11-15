@@ -79,7 +79,6 @@ struct BlockBuilder {
   VarColumns columns;
   uint64_t size = 0;
   uint64_t deferred = 0;
-  uint32_t deferred_lcp = 0;
   uint32_t deferred_len = 0;
   uint32_t coded = 0;
   uint32_t width = 0;

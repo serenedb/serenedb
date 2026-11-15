@@ -71,7 +71,8 @@ uint32_t Find(const BlockView& view, Probe key,
   const auto* rest = key.data + view.prefix;
   const bool equal =
     PacksKeys(view.stride)
-      ? view.key_base + PackedKey(view, entry) == LoadStride(rest, view.stride)
+      ? view.packed_keys.base + PackedKey(view, entry) ==
+          LoadStride(rest, view.stride)
       : PaddedMismatch(view.keys + uint64_t{entry} * view.stride, rest,
                        view.stride) == view.stride;
   return equal ? entry : kNoEntry;

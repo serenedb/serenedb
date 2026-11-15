@@ -32,8 +32,8 @@
 namespace irs::ann {
 namespace {
 
-inline constexpr double kColumnCheckCost = 400;
-inline constexpr double kProbeCandidateCost = 5;
+inline constexpr double kColumnCheckCost = 250;
+inline constexpr double kProbeCandidateCost = 20;
 
 double ProbeCost(const QueryBuilder* query, double candidates,
                  doc_id_t docs_count) noexcept {

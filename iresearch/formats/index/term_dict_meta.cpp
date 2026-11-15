@@ -55,13 +55,10 @@ constexpr duckdb::field_id_t kSpanExtraPages = 1;
 
 constexpr duckdb::field_id_t kFieldId = 0;
 constexpr duckdb::field_id_t kFieldLayout = 1;
-constexpr duckdb::field_id_t kFieldFirstDict = 2;
-constexpr size_t kFieldDictSlots = 32;
-static_assert(kDictMembers <= kFieldDictSlots);
+constexpr duckdb::field_id_t kFieldDicts = 2;
 
 constexpr duckdb::field_id_t DictProperty(DictMember member) noexcept {
-  return static_cast<duckdb::field_id_t>(kFieldFirstDict +
-                                         static_cast<size_t>(member));
+  return static_cast<duckdb::field_id_t>(member);
 }
 
 constexpr std::string_view kMemberTags[kDictMembers]{
@@ -219,18 +216,20 @@ void WriteField(duckdb::BinarySerializer& out,
   out.WritePropertyWithDefault<uint8_t>(
     kFieldLayout, "layout", static_cast<uint8_t>(layout),
     static_cast<uint8_t>(DictLayout::String));
-  for (const auto& head : dicts) {
-    SDB_ASSERT(head.layout == layout &&
-               Contains({.layout = layout, .member = head.member}));
-    out.WriteObject(DictProperty(head.member), MemberTag(head.member),
-                    [&](duckdb::BinarySerializer& object) {
-                      if (IsTermMember(head.member)) {
-                        WriteKeyed(object, head);
-                      } else {
-                        WriteSlot(object, head);
-                      }
-                    });
-  }
+  out.WriteObject(kFieldDicts, "dicts", [&](duckdb::BinarySerializer& members) {
+    for (const auto& head : dicts) {
+      SDB_ASSERT(head.layout == layout &&
+                 Contains({.layout = layout, .member = head.member}));
+      members.WriteObject(DictProperty(head.member), MemberTag(head.member),
+                          [&](duckdb::BinarySerializer& object) {
+                            if (IsTermMember(head.member)) {
+                              WriteKeyed(object, head);
+                            } else {
+                              WriteSlot(object, head);
+                            }
+                          });
+    }
+  });
 }
 
 void ReadSlot(duckdb::BinaryDeserializer& in, FieldHead& head) {
@@ -345,20 +344,23 @@ void ReadField(duckdb::BinaryDeserializer& in, std::vector<FieldHead>& fields) {
     Unsupported("dictionary layout", layout);
   }
   const auto first = fields.size();
-  for (const auto member : LayoutMembers(static_cast<DictLayout>(layout))) {
-    in.ReadOptionalObject(DictProperty(member), MemberTag(member),
-                          [&](duckdb::BinaryDeserializer& object) {
-                            auto& head = fields.emplace_back();
-                            head.id = id;
-                            head.layout = static_cast<DictLayout>(layout);
-                            head.member = member;
-                            if (IsTermMember(member)) {
-                              ReadKeyed(object, head);
-                            } else {
-                              ReadSlot(object, head);
-                            }
-                          });
-  }
+  in.ReadObject(kFieldDicts, "dicts", [&](duckdb::BinaryDeserializer& members) {
+    for (const auto member : LayoutMembers(static_cast<DictLayout>(layout))) {
+      members.ReadOptionalObject(DictProperty(member), MemberTag(member),
+                                 [&](duckdb::BinaryDeserializer& object) {
+                                   auto& head = fields.emplace_back();
+                                   head.id = id;
+                                   head.layout =
+                                     static_cast<DictLayout>(layout);
+                                   head.member = member;
+                                   if (IsTermMember(member)) {
+                                     ReadKeyed(object, head);
+                                   } else {
+                                     ReadSlot(object, head);
+                                   }
+                                 });
+    }
+  });
   if (fields.size() == first) {
     Corrupted("empty field", id);
   }

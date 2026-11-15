@@ -52,31 +52,40 @@ enum class Position : uint8_t {
   After,
 };
 
+struct Column {
+  const byte_type* data;
+  uint32_t width;
+};
+
+struct PackedHeaders {
+  const byte_type* codes;
+  const byte_type* escaped_entries;
+  uint32_t escaped;
+  uint32_t lcp_base;
+  uint32_t len_bits;
+};
+
+struct PackedKeys {
+  uint64_t base;
+  uint64_t mask;
+  uint32_t bits;
+};
+
 struct BlockView {
   bool fixed;
   bool coded;
-  bool packed;
   uint32_t count;
   uint32_t restarts;
   uint32_t stride;
   uint32_t prefix;
   uint32_t head_skip;
-  uint32_t lcp_width;
-  uint32_t len_width;
-  uint32_t lcp_base;
-  uint32_t len_bits;
-  uint32_t len_mask;
-  uint32_t escaped;
-  uint32_t key_bits;
-  uint64_t key_mask;
-  uint64_t key_base;
+  Column lcps;
+  Column lens;
+  PackedHeaders headers;
+  PackedKeys packed_keys;
   const byte_type* table;
   const byte_type* heads;
   const byte_type* record_offsets;
-  const byte_type* headers;
-  const byte_type* escaped_entries;
-  const byte_type* lcps;
-  const byte_type* lens;
   const byte_type* suffixes;
   const byte_type* keys;
   const byte_type* records;
@@ -106,17 +115,18 @@ inline constexpr uint32_t kWordKeyBits = 64 - 7;
 template<bool Wide = true>
 IRS_FORCE_INLINE inline uint64_t PackedKey(const BlockView& view,
                                            uint32_t entry) noexcept {
-  SDB_ASSERT(Wide || view.key_bits <= kWordKeyBits);
-  const uint64_t bit = uint64_t{entry} * view.key_bits;
+  const auto& packed = view.packed_keys;
+  SDB_ASSERT(Wide || packed.bits <= kWordKeyBits);
+  const uint64_t bit = uint64_t{entry} * packed.bits;
   const auto* p = view.keys + bit / 8;
   const auto shift = static_cast<uint32_t>(bit % 8);
   uint64_t word = absl::little_endian::Load64(p) >> shift;
   if constexpr (Wide) {
-    if (view.key_bits + shift > 64) [[unlikely]] {
+    if (packed.bits + shift > 64) [[unlikely]] {
       word |= uint64_t{p[sizeof(uint64_t)]} << (64 - shift);
     }
   }
-  return word & view.key_mask;
+  return word & packed.mask;
 }
 
 using StrideBuffer = std::array<byte_type, sizeof(uint64_t)>;
@@ -127,7 +137,7 @@ inline bytes_view FixedKey(const BlockView& view, uint32_t entry,
     return {view.keys + uint64_t{entry} * view.stride, view.stride};
   }
   absl::big_endian::Store64(buffer.data(),
-                            (view.key_base + PackedKey(view, entry))
+                            (view.packed_keys.base + PackedKey(view, entry))
                               << (8 * (sizeof(uint64_t) - view.stride)));
   return {buffer.data(), view.stride};
 }
@@ -161,41 +171,43 @@ inline BlockView Parse(const byte_type* p, const duckdb_fsst_decoder_t* fsst) {
       }
       return width;
     };
-    view.lcp_width = width();
-    view.len_width = width();
+    view.lcps.width = width();
+    view.lens.width = width();
     const auto suffixes = vread<uint64_t>(p);
     view.head_skip = vread<uint32_t>(p);
     if (view.head_skip > suffixes) [[unlikely]] {
       corrupted("head skip", view.head_skip);
     }
     const uint32_t layout = *p++;
-    view.packed = layout != kColumnHeaders;
+    const bool packed = layout != kColumnHeaders;
+    auto& headers = view.headers;
     uint32_t columns = view.count;
-    if (view.packed) {
+    if (packed) {
       if (layout > kHeaderBits) [[unlikely]] {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
                         ERR_MSG("term dictionary: header layout ", layout));
       }
-      view.len_bits = layout;
-      view.len_mask = (uint32_t{1} << layout) - 1;
-      view.lcp_base = vread<uint32_t>(p);
-      view.escaped = vread<uint32_t>(p);
-      if (view.escaped > view.count) [[unlikely]] {
-        corrupted("escaped headers", view.escaped);
+      headers.len_bits = layout;
+      headers.lcp_base = vread<uint32_t>(p);
+      headers.escaped = vread<uint32_t>(p);
+      if (headers.escaped > view.count) [[unlikely]] {
+        corrupted("escaped headers", headers.escaped);
       }
-      columns = view.escaped;
+      columns = headers.escaped;
     }
     view.table = p;
     view.heads = p + kVarRestart * view.restarts;
     view.record_offsets = view.heads + kHeadBytes * view.restarts;
-    view.lcps = view.record_offsets + kRecordOffset * RecordGroups(view.count);
-    if (view.packed) {
-      view.headers = view.lcps;
-      view.escaped_entries = view.headers + view.count;
-      view.lcps = view.escaped_entries + kEscapedEntry * view.escaped;
+    view.lcps.data =
+      view.record_offsets + kRecordOffset * RecordGroups(view.count);
+    if (packed) {
+      headers.codes = view.lcps.data;
+      headers.escaped_entries = headers.codes + view.count;
+      view.lcps.data =
+        headers.escaped_entries + kEscapedEntry * headers.escaped;
     }
-    view.lens = view.lcps + uint64_t{columns} * view.lcp_width;
-    view.suffixes = view.lens + uint64_t{columns} * view.len_width;
+    view.lens.data = view.lcps.data + uint64_t{columns} * view.lcps.width;
+    view.suffixes = view.lens.data + uint64_t{columns} * view.lens.width;
     view.records = view.suffixes + suffixes;
     return view;
   }
@@ -207,14 +219,15 @@ inline BlockView Parse(const byte_type* p, const duckdb_fsst_decoder_t* fsst) {
     view.stride = vread<uint32_t>(p);
     view.prefix = vread<uint32_t>(p);
     const bool packs = PacksKeys(view.stride);
+    auto& packed = view.packed_keys;
     if (packs) {
-      view.key_bits = *p++;
-      if (view.key_bits > 8 * view.stride) [[unlikely]] {
-        corrupted("key bits", view.key_bits);
+      packed.bits = *p++;
+      if (packed.bits > 8 * view.stride) [[unlikely]] {
+        corrupted("key bits", packed.bits);
       }
-      view.key_mask = view.key_bits == 64 ? std::numeric_limits<uint64_t>::max()
-                                          : (uint64_t{1} << view.key_bits) - 1;
-      view.key_base = LoadStride(p, view.stride);
+      packed.mask = packed.bits == 64 ? std::numeric_limits<uint64_t>::max()
+                                      : (uint64_t{1} << packed.bits) - 1;
+      packed.base = LoadStride(p, view.stride);
       p += view.stride;
     }
     view.table = p + view.prefix;
@@ -223,7 +236,7 @@ inline BlockView Parse(const byte_type* p, const duckdb_fsst_decoder_t* fsst) {
     view.heads = view.record_offsets + kRecordOffset * groups;
     view.keys = view.heads + FixedHeadBytes(view.stride) * groups;
     if (packs) {
-      view.records = view.keys + PackedKeyBytes(view.count, view.key_bits);
+      view.records = view.keys + PackedKeyBytes(view.count, packed.bits);
     } else {
       view.records = view.keys + uint64_t{view.count} * view.stride;
     }
@@ -239,51 +252,52 @@ struct Header {
   uint32_t len;
 };
 
-IRS_FORCE_INLINE inline uint32_t ColumnAt(const byte_type* column,
-                                          uint32_t width,
+IRS_FORCE_INLINE inline uint32_t ColumnAt(Column column,
                                           uint32_t entry) noexcept {
-  if (width == 1) [[likely]] {
-    return column[entry];
+  if (column.width == 1) [[likely]] {
+    return column.data[entry];
   }
-  if (width == 2) {
-    return absl::little_endian::Load16(column + 2 * uint64_t{entry});
+  if (column.width == 2) {
+    return absl::little_endian::Load16(column.data + 2 * uint64_t{entry});
   }
-  return absl::little_endian::Load32(column + 4 * uint64_t{entry});
+  return absl::little_endian::Load32(column.data + 4 * uint64_t{entry});
 }
 
 IRS_FORCE_INLINE inline Header ColumnsAt(const BlockView& view,
                                          uint32_t i) noexcept {
   return {
-    .lcp = ColumnAt(view.lcps, view.lcp_width, i),
-    .len = ColumnAt(view.lens, view.len_width, i),
+    .lcp = ColumnAt(view.lcps, i),
+    .len = ColumnAt(view.lens, i),
   };
 }
 
 IRS_NO_INLINE inline Header EscapedHeaderAt(const BlockView& view,
                                             uint32_t entry) noexcept {
+  const auto& headers = view.headers;
   const auto at =
-    static_cast<uint32_t>(PartitionIndex(0, view.escaped, [&](size_t i) {
-      return absl::little_endian::Load16(view.escaped_entries +
+    static_cast<uint32_t>(PartitionIndex(0, headers.escaped, [&](size_t i) {
+      return absl::little_endian::Load16(headers.escaped_entries +
                                          kEscapedEntry * i) < entry;
     }));
-  SDB_ASSERT(at < view.escaped &&
-             absl::little_endian::Load16(view.escaped_entries +
+  SDB_ASSERT(at < headers.escaped &&
+             absl::little_endian::Load16(headers.escaped_entries +
                                          kEscapedEntry * at) == entry);
   return ColumnsAt(view, at);
 }
 
 IRS_FORCE_INLINE inline Header HeaderAt(const BlockView& view,
                                         uint32_t entry) noexcept {
+  const auto& headers = view.headers;
   Header header;
-  if (!view.packed) {
+  if (!headers.codes) {
     header = ColumnsAt(view, entry);
-  } else if (const uint32_t code = view.headers[entry]; code == kEscapedHeader)
+  } else if (const uint32_t code = headers.codes[entry]; code == kEscapedHeader)
     [[unlikely]] {
     header = EscapedHeaderAt(view, entry);
   } else {
     header = {
-      .lcp = view.lcp_base + (code >> view.len_bits),
-      .len = code & view.len_mask,
+      .lcp = headers.lcp_base + (code >> headers.len_bits),
+      .len = code & ((uint32_t{1} << headers.len_bits) - 1),
     };
   }
   if (entry % kRestartInterval == 0) {
@@ -626,18 +640,19 @@ inline uint32_t FixedLowerBound(const BlockView& view, Probe probe,
   }
   if (PacksKeys(stride)) {
     const uint64_t value = LoadStride(rest.data, stride);
-    if (value < view.key_base) {
+    if (value < view.packed_keys.base) {
       return 0;
     }
-    const uint64_t delta = value - view.key_base;
+    const uint64_t delta = value - view.packed_keys.base;
     const auto packed = [&]<bool Wide> {
       return search.template operator()<true>([&](size_t i) {
         const uint64_t key = PackedKey<Wide>(view, static_cast<uint32_t>(i));
         return key < delta || (longer && key == delta);
       });
     };
-    return view.key_bits <= kWordKeyBits ? packed.template operator()<false>()
-                                         : packed.template operator()<true>();
+    return view.packed_keys.bits <= kWordKeyBits
+             ? packed.template operator()<false>()
+             : packed.template operator()<true>();
   }
   if (stride <= 2 * sizeof(uint64_t)) {
     const uint32_t shift = 8 * (2 * sizeof(uint64_t) - stride);

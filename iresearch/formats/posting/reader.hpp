@@ -156,12 +156,10 @@ inline IRS_FORCE_INLINE size_t PostingsReader::DecodeAs(
   SDB_ASSERT(Pos == (IndexFeatures::None != (features & IndexFeatures::Pos)));
 
   const uint64_t next = uint64_t{posting_meta.pos_offset} + posting_meta.freq;
-  constexpr bool has_freq = Freq;
-  constexpr bool has_pos = Pos;
-  constexpr auto layout = RecordLayoutOf(has_freq, has_pos);
+  constexpr auto layout = RecordLayoutOf(Freq, Pos);
   const auto head = Padded ? ReadPaddedVarint(p) : vread<uint64_t>(p);
   const bool single = (head & 1) != 0;
-  const bool follows = has_pos && (head >> layout.follows & 1) != 0;
+  const bool follows = Pos && (head >> layout.follows & 1) != 0;
   const auto payload = head >> layout.payload;
   if (single) {
     posting_meta.docs_count = 1;
@@ -169,7 +167,7 @@ inline IRS_FORCE_INLINE size_t PostingsReader::DecodeAs(
   } else {
     posting_meta.docs_count = static_cast<uint32_t>(payload >> 1);
   }
-  if constexpr (has_freq) {
+  if constexpr (Freq) {
     posting_meta.freq =
       posting_meta.docs_count + ((head & 2) != 0 ? 0 : 1 + vread<uint32_t>(p));
   }
@@ -184,7 +182,7 @@ inline IRS_FORCE_INLINE size_t PostingsReader::DecodeAs(
       posting_meta.doc_start += vread<uint64_t>(p);
     }
   }
-  if constexpr (has_pos) {
+  if constexpr (Pos) {
     if (!follows || next >= PosGroup::kPositions) {
       posting_meta.pos_start += vread<uint64_t>(p);
       if (IndexFeatures::None != (features & IndexFeatures::Offs)) {
@@ -202,7 +200,7 @@ inline IRS_FORCE_INLINE size_t PostingsReader::DecodeAs(
     posting_meta.doc_delta = vread<uint32_t>(p);
   }
 
-  if (has_pos && pos_limits::kBlockSize < posting_meta.freq) {
+  if (Pos && pos_limits::kBlockSize < posting_meta.freq) {
     posting_meta.pos_extent = vread<uint32_t>(p);
     if (IndexFeatures::None != (features & IndexFeatures::Offs)) {
       posting_meta.pay_extent = vread<uint32_t>(p);

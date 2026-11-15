@@ -281,7 +281,6 @@ void Clear(BlockBuilder& block) noexcept {
   Clear(block.columns);
   block.size = 0;
   block.deferred = 0;
-  block.deferred_lcp = 0;
   block.deferred_len = 0;
   block.coded = 0;
   block.width = 0;
@@ -617,7 +616,6 @@ void FieldWriter::EncodeDeferred() {
   EncodeEntries(block.columns, block.coded, count, nullptr);
   block.coded = count;
   block.deferred = 0;
-  block.deferred_lcp = 0;
   block.deferred_len = 0;
 }
 
@@ -927,11 +925,10 @@ bool FieldWriter::AppendCodedKey(const VarEntry& entry, uint64_t records) {
   const auto count = static_cast<uint32_t>(block.ends.size());
   const uint64_t worst = entry.suffix.size() * (entry.restart ? 1 : 2);
   const auto lcp = static_cast<uint32_t>(entry.lcp);
-  const auto deferred_lcp = std::max(block.deferred_lcp, lcp);
   const auto deferred_len =
     std::max(block.deferred_len, static_cast<uint32_t>(worst));
   const Shape shape{
-    .lcp_width = ColumnWidth(std::max(block.columns.max_lcp, deferred_lcp)),
+    .lcp_width = ColumnWidth(std::max(block.columns.max_lcp, lcp)),
     .len_width = ColumnWidth(std::max(block.columns.max_len, deferred_len)),
     .packing = PackingBound(block.columns, lcp, count + 1 - block.coded),
   };
@@ -940,8 +937,8 @@ bool FieldWriter::AppendCodedKey(const VarEntry& entry, uint64_t records) {
     block.columns.suffixes.size() + block.deferred + worst, records, shape);
   if (bound <= kPage) {
     Lower(block.columns, lcp);
+    block.columns.max_lcp = std::max(block.columns.max_lcp, lcp);
     block.deferred += worst;
-    block.deferred_lcp = deferred_lcp;
     block.deferred_len = deferred_len;
     block.size = bound;
     block.head_skip = entry.head_skip;

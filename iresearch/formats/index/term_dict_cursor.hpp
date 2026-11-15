@@ -328,6 +328,17 @@ inline size_t DecodeInto(const duckdb_fsst_decoder_t& decoder, bytes_view codes,
   return pos;
 }
 
+inline size_t DecodeAll(const duckdb_fsst_decoder_t& decoder, bytes_view codes,
+                        byte_type* out) noexcept {
+  size_t pos = 0;
+  for (size_t i = 0; i != codes.size();) {
+    const auto symbol = NextSymbol(decoder, codes.data(), i);
+    absl::little_endian::Store64(out + pos, symbol.word);
+    pos += symbol.len;
+  }
+  return pos;
+}
+
 inline void DecodeRange(const duckdb_fsst_decoder_t& decoder, bytes_view codes,
                         size_t from, size_t to, byte_type* out) noexcept {
   size_t pos = 0;
@@ -1265,8 +1276,11 @@ class Cursor {
       std::memcpy(Reserve(lcp + size) + lcp, suffix.data(), size);
       return size;
     }
-    auto* key = Reserve(lcp + suffix.size() * sizeof(uint64_t));
-    return DecodeInto(*_field->Fsst(), suffix, key + lcp, need);
+    auto* key = Reserve(lcp + suffix.size() * sizeof(uint64_t)) + lcp;
+    if (need == std::numeric_limits<uint32_t>::max()) {
+      return DecodeAll(*_field->Fsst(), suffix, key);
+    }
+    return DecodeInto(*_field->Fsst(), suffix, key, need);
   }
 
   uint32_t SetFixed(uint32_t entry) {

@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <array>
+#include <duckdb/common/types/string_heap.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/count/term_counts.hpp>
@@ -211,8 +212,8 @@ struct TsDictEmitContext {
   int32_t* count_data;
   int64_t* freq_data;
   float* score_data;
-  duckdb::Vector* term_vec;
-  duckdb::Vector* raw_vec;
+  duckdb::StringHeap* term_heap;
+  duckdb::StringHeap* raw_heap;
   bool needs_meta;
   const irs::TermBoost* boost;
   TsDictLocalState* state;
@@ -228,12 +229,10 @@ struct TsDictEmitter {
     const auto row = ctx.row;
     const auto* p = reinterpret_cast<const char*>(term.data());
     if (ctx.term_data) {
-      ctx.term_data[row] =
-        duckdb::StringVector::AddString(*ctx.term_vec, p, term.size());
+      ctx.term_data[row] = ctx.term_heap->AddString(p, term.size());
     }
     if (ctx.raw_data) {
-      ctx.raw_data[row] =
-        duckdb::StringVector::AddStringOrBlob(*ctx.raw_vec, p, term.size());
+      ctx.raw_data[row] = ctx.raw_heap->AddBlob(p, term.size());
     }
     if (ctx.count_data) {
       ctx.count_data[row] = static_cast<int32_t>(docs);
@@ -626,8 +625,10 @@ duckdb::idx_t TsDictLocalState::EmitField(duckdb::DataChunk& output,
     return v ? duckdb::FlatVector::GetDataMutable<T>(*v) : nullptr;
   };
 
-  auto* term_vec = vec(field.term_slot);
-  auto* raw_vec = vec(field.term_raw_slot);
+  const auto heap = [&](duckdb::idx_t slot) -> duckdb::StringHeap* {
+    auto* v = vec(slot);
+    return v ? &duckdb::StringVector::GetStringHeap(*v) : nullptr;
+  };
   auto* term_data = data.operator()<duckdb::string_t>(field.term_slot);
   auto* raw_data = data.operator()<duckdb::string_t>(field.term_raw_slot);
   auto* count_data = data.operator()<int32_t>(field.count_slot);
@@ -645,8 +646,8 @@ duckdb::idx_t TsDictLocalState::EmitField(duckdb::DataChunk& output,
       .count_data = count_data,
       .freq_data = freq_data,
       .score_data = score_data,
-      .term_vec = term_vec,
-      .raw_vec = raw_vec,
+      .term_heap = heap(field.term_slot),
+      .raw_heap = heap(field.term_raw_slot),
       .needs_meta = count_data || freq_data,
       .boost = score_data ? irs::get<irs::TermBoost>(*_cursor) : nullptr,
       .state = this,

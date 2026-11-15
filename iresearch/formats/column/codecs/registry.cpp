@@ -61,56 +61,20 @@ constexpr Codec kCodecs[] = {
   {CodecType::Constant, "Constant", ConstantFunction},
   {CodecType::Empty, "Empty Validity", EmptyFunction},
   {CodecType::Numeric, "Numeric", NumericFunction},
-  {CodecType::DictLz4,
-   "DICT_LZ4",
-   Text<kDictLz4Function>,
-   {Shape::Dedup, ByteCodec::Lz4}},
-  {CodecType::Lz4, "LZ4", Text<kLz4Function>, {Shape::Plain, ByteCodec::Lz4}},
-  {CodecType::DictZstd,
-   "DICT_ZSTD",
-   Text<kDictZstdFunction>,
-   {Shape::Dedup, ByteCodec::Zstd}},
-  {CodecType::Zstd,
-   "ZSTD",
-   Text<kZstdFunction>,
-   {Shape::Plain, ByteCodec::Zstd}},
-  {CodecType::DictFsst,
-   "DICT_FSST",
-   Text<kDictFsstFunction>,
-   {Shape::Dedup, ByteCodec::Fsst}},
-  {CodecType::Fsst,
-   "FSST",
-   Text<kFsstFunction>,
-   {Shape::Plain, ByteCodec::Fsst}},
-  {CodecType::DictZxc,
-   "DICT_ZXC",
-   Text<kDictZxcFunction>,
-   {Shape::Dedup, ByteCodec::Zxc}},
-  {CodecType::Zxc, "ZXC", Text<kZxcFunction>, {Shape::Plain, ByteCodec::Zxc}},
-  {CodecType::DictFsstPlus,
-   "DICT_FSST_PLUS",
-   Text<kDictFsstPlusFunction>,
-   {Shape::Dedup, ByteCodec::FsstPlus}},
-  {CodecType::FsstPlus,
-   "FSST_PLUS",
-   Text<kFsstPlusFunction>,
-   {Shape::Plain, ByteCodec::FsstPlus}},
-  {CodecType::DictOnPair,
-   "DICT_ONPAIR",
-   Text<kDictOnPairFunction>,
-   {Shape::Dedup, ByteCodec::OnPair}},
-  {CodecType::OnPair,
-   "ONPAIR",
-   Text<kOnPairFunction>,
-   {Shape::Plain, ByteCodec::OnPair}},
-  {CodecType::DictFsst12,
-   "DICT_FSST12",
-   Text<kDictFsst12Function>,
-   {Shape::Dedup, ByteCodec::Fsst12}},
-  {CodecType::Fsst12,
-   "FSST12",
-   Text<kFsst12Function>,
-   {Shape::Plain, ByteCodec::Fsst12}},
+  {CodecType::DictLz4, "DICT_LZ4", Text<kDictLz4Function>},
+  {CodecType::Lz4, "LZ4", Text<kLz4Function>},
+  {CodecType::DictZstd, "DICT_ZSTD", Text<kDictZstdFunction>},
+  {CodecType::Zstd, "ZSTD", Text<kZstdFunction>},
+  {CodecType::DictFsst, "DICT_FSST", Text<kDictFsstFunction>},
+  {CodecType::Fsst, "FSST", Text<kFsstFunction>},
+  {CodecType::DictZxc, "DICT_ZXC", Text<kDictZxcFunction>},
+  {CodecType::Zxc, "ZXC", Text<kZxcFunction>},
+  {CodecType::DictFsstPlus, "DICT_FSST_PLUS", Text<kDictFsstPlusFunction>},
+  {CodecType::FsstPlus, "FSST_PLUS", Text<kFsstPlusFunction>},
+  {CodecType::DictOnPair, "DICT_ONPAIR", Text<kDictOnPairFunction>},
+  {CodecType::OnPair, "ONPAIR", Text<kOnPairFunction>},
+  {CodecType::DictFsst12, "DICT_FSST12", Text<kDictFsst12Function>},
+  {CodecType::Fsst12, "FSST12", Text<kFsst12Function>},
 };
 
 static_assert(std::size(kCodecs) == magic_enum::enum_count<CodecType>());
@@ -125,24 +89,9 @@ static_assert([] {
 
 constexpr size_t kAnalyzedBegin = std::to_underlying(CodecType::Uncompressed);
 constexpr size_t kInternalBegin = std::to_underlying(CodecType::Constant);
-constexpr size_t kTextBegin = std::to_underlying(CodecType::DictLz4);
 
 constexpr std::span<const Codec> kAnalyzed =
   std::span{kCodecs}.subspan(kAnalyzedBegin, kInternalBegin - kAnalyzedBegin);
-
-constexpr size_t IndexOf(StringChoice choice) noexcept {
-  return kTextBegin + 2 * std::to_underlying(choice.leaf) +
-         std::to_underlying(choice.shape);
-}
-
-static_assert([] {
-  for (size_t i = kTextBegin; i < std::size(kCodecs); ++i) {
-    if (IndexOf(kCodecs[i].choice) != i) {
-      return false;
-    }
-  }
-  return true;
-}());
 
 }  // namespace
 
@@ -229,25 +178,11 @@ const Codec* FindCodec(duckdb::CompressionType type) noexcept {
   return nullptr;
 }
 
-const StringChoice* ChoiceOf(CodecType type) noexcept {
-  const auto index = std::to_underlying(type);
-  return kTextBegin <= index && index < std::size(kCodecs)
-           ? &kCodecs[index].choice
-           : nullptr;
-}
-
-CodecType TypeOf(StringChoice choice) noexcept {
-  const auto index = IndexOf(choice);
-  SDB_ASSERT(index < std::size(kCodecs));
-  return kCodecs[index].type;
-}
-
 uint8_t MaxLevel(CodecType type) noexcept {
-  const auto* choice = ChoiceOf(type);
-  if (!choice) {
+  if (!IsText(type)) {
     return 0;
   }
-  switch (choice->leaf) {
+  switch (LeafOf(type)) {
     case ByteCodec::Lz4:
       return Lz4::kMaxLevel;
     case ByteCodec::Zstd:

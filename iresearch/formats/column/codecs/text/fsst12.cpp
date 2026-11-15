@@ -641,10 +641,9 @@ void CompressionState::FinalizeCompress() {
 namespace irs::codecs {
 
 constinit const CompressionFunction kFsst12Function =
-  text::StringFunction<text::PlainScan<text::fsst12::Leaf>>(CodecType::Fsst12);
+  text::StringFunction<text::PlainScan<text::fsst12::Leaf>>();
 
 constinit const CompressionFunction kDictFsst12Function =
-  text::StringFunction<text::DictionaryScan<text::fsst12::Leaf>>(
-    CodecType::DictFsst12);
+  text::StringFunction<text::DictionaryScan<text::fsst12::Leaf>>();
 
 }  // namespace irs::codecs

@@ -13,7 +13,6 @@ target_sources(
         column/codecs/numeric/numeric.cpp
         column/codecs/numeric/rle.cpp
         column/codecs/registry.cpp
-        column/codecs/text/blob.cpp
         column/codecs/text/fsst.cpp
         column/codecs/text/fsst12.cpp
         column/codecs/text/fsst_plus.cpp

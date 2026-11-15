@@ -289,18 +289,17 @@ bool ColumnWriter::SealString(const duckdb::LogicalType& type,
   if (const auto* named =
         codecs::GetCodec(_method, duckdb::PhysicalType::VARCHAR)) {
     Compress(*named, type, chunks, meta.data, &tuning);
-    const auto* choice = codecs::ChoiceOf(named->type);
-    return choice && choice->shape == codecs::Shape::Dedup;
+    return codecs::IsText(named->type) &&
+           codecs::ShapeOf(named->type) == codecs::Shape::Dedup;
   }
   auto& blocks = WriteCtx().Out();
   auto& buffers = WriteCtx().BufferManager();
   bool all_dedup = true;
-  const auto sink = [&](codecs::StringChoice choice,
-                        duckdb::BaseStatistics stats, uint64_t rows,
-                        std::string_view bytes) {
-    all_dedup = all_dedup && choice.shape == codecs::Shape::Dedup;
+  const auto sink = [&](codecs::CodecType sealed, duckdb::BaseStatistics stats,
+                        uint64_t rows, std::string_view bytes) {
+    all_dedup = all_dedup && codecs::ShapeOf(sealed) == codecs::Shape::Dedup;
     const auto& codec =
-      *codecs::GetCodec(codecs::TypeOf(choice), duckdb::PhysicalType::VARCHAR);
+      *codecs::GetCodec(sealed, duckdb::PhysicalType::VARCHAR);
     CaptureBlock(codec, std::move(stats), rows, bytes, blocks, meta.data);
   };
   codecs::StringAccumulator acc;
@@ -849,7 +848,7 @@ codecs::CodecType ColumnWriter::ForcedCodec() const {
   const auto physical = _type.InternalType();
   if (physical == duckdb::PhysicalType::VARCHAR &&
       forced != codecs::CodecType::Uncompressed) {
-    return codecs::ChoiceOf(forced) ? forced : codecs::CodecType::Auto;
+    return codecs::IsText(forced) ? forced : codecs::CodecType::Auto;
   }
   const auto* function = codecs::GetCodec(forced, physical);
   return function && function->analyze ? forced : codecs::CodecType::Auto;

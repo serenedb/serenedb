@@ -20,41 +20,15 @@
 
 #pragma once
 
-#include <cstdint>
-#include <span>
-
 #include "iresearch/formats/column/codecs/bytes/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/text/segment_rows.hpp"
 #include "iresearch/formats/column/codecs/text/string_compressor.hpp"
 #include "iresearch/formats/column/codecs/text/string_seal.hpp"
 #include "iresearch/formats/column/codecs/text/string_tuning.hpp"
-#include "iresearch/formats/column/codecs/text/string_window.hpp"
 
 namespace irs::codecs::text {
 
-struct CompressionMethod {
-  std::span<const uint8_t> levels;
-  bool local = false;
-  uint8_t max_trial_level = 0;
-};
-
-struct AnalyzeInput {
-  StringWindow& window;
-  Shape shape;
-  const CompressionMethod& method;
-  bool tune = false;
-  TunedParameters& tuned;
-};
-
-struct Analysis {
-  Config config;
-  uint64_t score = 0;
-};
-
-Analysis AnalyzeLz4(const AnalyzeInput& input);
-Analysis AnalyzeFsst(const AnalyzeInput& input);
-
-Config NamedConfig(const StringChoice& named,
+Config NamedConfig(Shape shape, ByteCodec leaf,
                    const ColCodecParams& params) noexcept;
 
 class StringPicker {

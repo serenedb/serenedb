@@ -312,7 +312,7 @@ class ColCodecsTest : public TestBase {
     uint64_t row = 0;
     for (const auto& block : col->DataBlocks()) {
       std::string level;
-      if (irs::codecs::ChoiceOf(block.codec->type) ||
+      if (irs::codecs::IsText(block.codec->type) ||
           block.codec->type == irs::codecs::CodecType::Numeric) {
         window = col->Locate(row, window);
         auto seg = col->OpenSegment(window.block, ctx);
@@ -1116,7 +1116,11 @@ const Value kVocabulary = [](uint64_t g) -> std::optional<std::string> {
 TEST_F(ColCodecsTest, NamedCodecSealsEverySegment) {
   using irs::codecs::ByteCodec;
   using irs::codecs::Shape;
-  const irs::codecs::StringChoice choices[] = {
+  struct Choice {
+    Shape shape;
+    ByteCodec leaf;
+  };
+  const Choice choices[] = {
     {Shape::Dedup, ByteCodec::Fsst},     {Shape::Dedup, ByteCodec::Lz4},
     {Shape::Dedup, ByteCodec::Zstd},     {Shape::Dedup, ByteCodec::Zxc},
     {Shape::Dedup, ByteCodec::FsstPlus}, {Shape::Dedup, ByteCodec::OnPair},
@@ -1146,8 +1150,9 @@ TEST_F(ColCodecsTest, NamedCodecSealsEverySegment) {
       .params = {.segment_target = 16 * 1024},
       .strings = &tuning,
     };
-    const auto* function = irs::codecs::GetCodec(irs::codecs::TypeOf(choice),
-                                                 duckdb::PhysicalType::VARCHAR);
+    const auto* function =
+      irs::codecs::GetCodec(irs::codecs::TextCodec(choice.shape, choice.leaf),
+                            duckdb::PhysicalType::VARCHAR);
     ASSERT_NE(function, nullptr);
     function->compress(checkpoint, write_chunks);
     EXPECT_GT(segments, 1u);
@@ -1179,8 +1184,8 @@ TEST_F(ColCodecsTest, AutoChoosesPerRowGroup) {
     const bool sealed = irs::codecs::SealSegments(
       acc, irs::ColCodecParams{.segment_target = 16 * 1024},
       duckdb::LogicalType::VARCHAR, tuning, Db().GetBufferManager(),
-      [&](irs::codecs::StringChoice choice, duckdb::BaseStatistics, uint64_t,
-          std::string_view) { shapes.push_back(choice.shape); });
+      [&](irs::codecs::CodecType type, duckdb::BaseStatistics, uint64_t,
+          std::string_view) { shapes.push_back(irs::codecs::ShapeOf(type)); });
     EXPECT_TRUE(sealed);
     return shapes;
   };
@@ -1199,7 +1204,7 @@ TEST_F(ColCodecsTest, AutoChoosesPerRowGroup) {
   EXPECT_GT(mixed.size(), 1u);
   EXPECT_TRUE(all(mixed, Shape::Plain)) << ::testing::PrintToString(mixed);
   ASSERT_TRUE(tuning.reuse.pick);
-  EXPECT_EQ(tuning.reuse.pick->choice.shape, Shape::Plain);
+  EXPECT_EQ(tuning.reuse.pick->shape, Shape::Plain);
 
   RoundTrip(irs::codecs::CodecType::Auto, {.segment_target = 16 * 1024},
             3 * kSwitch, DEFAULT_ROW_GROUP_SIZE, value);
@@ -1472,7 +1477,7 @@ TEST_F(ColCodecsTest, AutoTunesLevelsOnTheFirstRowGroupWithData) {
     const bool sealed = irs::codecs::SealSegments(
       acc, irs::ColCodecParams{}, duckdb::LogicalType::VARCHAR, tuning,
       Db().GetBufferManager(),
-      [](irs::codecs::StringChoice, duckdb::BaseStatistics, uint64_t,
+      [](irs::codecs::CodecType, duckdb::BaseStatistics, uint64_t,
          std::string_view) {});
     EXPECT_TRUE(sealed);
   };
@@ -3841,7 +3846,7 @@ TEST_F(ColCodecsTest, AutoMeasuresLessOftenWhileItsCodecHolds) {
     const bool sealed = irs::codecs::SealSegments(
       acc, irs::ColCodecParams{}, duckdb::LogicalType::VARCHAR, tuning,
       Db().GetBufferManager(),
-      [](irs::codecs::StringChoice, duckdb::BaseStatistics, uint64_t,
+      [](irs::codecs::CodecType, duckdb::BaseStatistics, uint64_t,
          std::string_view) {});
     EXPECT_TRUE(sealed);
   };
@@ -3863,7 +3868,7 @@ TEST_F(ColCodecsTest, AutoMeasuresLessOftenWhileItsCodecHolds) {
   expected.resize(32, 16);
   EXPECT_EQ(gaps, expected);
   ASSERT_TRUE(tuning.reuse.pick);
-  EXPECT_EQ(tuning.reuse.pick->choice.shape, Shape::Plain);
+  EXPECT_EQ(tuning.reuse.pick->shape, Shape::Plain);
 
   const Value repeated = [](uint64_t g) -> std::optional<std::string> {
     std::mt19937_64 rng{g + 1};
@@ -3873,7 +3878,7 @@ TEST_F(ColCodecsTest, AutoMeasuresLessOftenWhileItsCodecHolds) {
   seal(changed, tuning);
   EXPECT_EQ(tuning.reuse.clock.gap, 1u);
   ASSERT_TRUE(tuning.reuse.pick);
-  EXPECT_EQ(tuning.reuse.pick->choice.shape, Shape::Dedup);
+  EXPECT_EQ(tuning.reuse.pick->shape, Shape::Dedup);
   gaps.clear();
   for (int rg = 0; rg < 4; ++rg) {
     seal(changed, tuning);
@@ -3884,7 +3889,7 @@ TEST_F(ColCodecsTest, AutoMeasuresLessOftenWhileItsCodecHolds) {
   seal(steady, tuning);
   EXPECT_EQ(tuning.reuse.clock.gap, 1u);
   ASSERT_TRUE(tuning.reuse.pick);
-  EXPECT_EQ(tuning.reuse.pick->choice.shape, Shape::Plain);
+  EXPECT_EQ(tuning.reuse.pick->shape, Shape::Plain);
 }
 
 TEST_F(ColCodecsTest, AutoFollowsAChangeBetweenRowGroups) {
@@ -3904,10 +3909,11 @@ TEST_F(ColCodecsTest, AutoFollowsAChangeBetweenRowGroups) {
   ASSERT_NE(col, nullptr);
   uint64_t row = 0;
   for (const auto& block : col->DataBlocks()) {
-    const auto* choice = irs::codecs::ChoiceOf(block.codec->type);
-    ASSERT_NE(choice, nullptr) << irs::codecs::NameOf(block.codec->type);
-    EXPECT_EQ(choice->shape, row < kSteady ? irs::codecs::Shape::Dedup
-                                           : irs::codecs::Shape::Plain)
+    ASSERT_TRUE(irs::codecs::IsText(block.codec->type))
+      << irs::codecs::NameOf(block.codec->type);
+    EXPECT_EQ(
+      irs::codecs::ShapeOf(block.codec->type),
+      row < kSteady ? irs::codecs::Shape::Dedup : irs::codecs::Shape::Plain)
       << "block at row " << row;
     row += block.tuple_count;
   }

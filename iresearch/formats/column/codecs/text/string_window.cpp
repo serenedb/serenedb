@@ -40,7 +40,7 @@ uint64_t StringWindow::Analyze(const Config& config) {
   }
   const auto price =
     [&]<typename Codec>(std::optional<blob::Pricer<Codec>>& slot) -> uint64_t {
-    auto& rows = Rows(config.choice.shape);
+    auto& rows = Rows(config.shape);
     if (!slot) {
       slot.emplace();
     }
@@ -50,18 +50,18 @@ uint64_t StringWindow::Analyze(const Config& config) {
                        Split(rows, blob::FrameShapeOf<Codec>(config.layout)),
                        CodesSize(rows), config.level, config.layout, _begin);
   };
-  SDB_ASSERT(config.choice.leaf == ByteCodec::Lz4);
+  SDB_ASSERT(config.leaf == ByteCodec::Lz4);
   if (EffectiveLevel<Lz4>(config.level) > 1) {
     return price(_pricers.lz4_hc);
   }
-  if (RawBound(config.choice.shape) <= kTrialRawBytes) {
+  if (RawBound(config.shape) <= kTrialRawBytes) {
     return At(TrialCompress(config)).Size();
   }
   return price(_pricers.lz4);
 }
 
 uint64_t StringWindow::RawBound(Shape shape) const noexcept {
-  if (shape == Shape::Dedup && _first.config.choice.shape == Shape::Dedup) {
+  if (shape == Shape::Dedup && _first.config.shape == Shape::Dedup) {
     return std::min(_first.input, _first.entries * _first.max_len);
   }
   return _first.input;
@@ -69,7 +69,7 @@ uint64_t StringWindow::RawBound(Shape shape) const noexcept {
 
 uint64_t StringWindow::Entries() {
   for (const auto& seg : _encoded) {
-    if (seg->config.choice.shape == Shape::Dedup) {
+    if (seg->config.shape == Shape::Dedup) {
       return seg->entries;
     }
   }

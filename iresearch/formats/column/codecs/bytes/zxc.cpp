@@ -59,11 +59,10 @@ std::unique_ptr<zxc_cctx, ZxcFree> NewContext(uint8_t level) {
 }  // namespace
 
 constinit const CompressionFunction kZxcFunction =
-  text::StringFunction<text::PlainScan<text::blob::Leaf<Zxc>>>(CodecType::Zxc);
+  text::StringFunction<text::PlainScan<text::blob::Leaf<Zxc>>>();
 
 constinit const CompressionFunction kDictZxcFunction =
-  text::StringFunction<text::DictionaryScan<text::blob::Leaf<Zxc>>>(
-    CodecType::DictZxc);
+  text::StringFunction<text::DictionaryScan<text::blob::Leaf<Zxc>>>();
 
 Zxc::Compressor::Compressor(uint8_t level)
   : _level{level}, _ctx{NewContext(level)} {}

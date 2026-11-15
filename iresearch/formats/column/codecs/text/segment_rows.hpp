@@ -174,7 +174,7 @@ class SegmentRows {
     : _stats{type}, _type{type}, _dedup{dedup}, _codes_tuning{codes_tuning} {}
 
   void Begin(const Config& config, uint64_t first_row, size_t distinct) {
-    _shape = config.choice.shape;
+    _shape = config.shape;
     _level = config.level;
     _layout = config.layout;
     _next = first_row;

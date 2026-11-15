@@ -41,7 +41,6 @@
 #include "iresearch/formats/column/codecs/text/dictionary_scan.tpp"
 #include "iresearch/formats/column/codecs/text/plain_scan.tpp"
 #include "iresearch/formats/column/codecs/text/string_layout.hpp"
-#include "iresearch/formats/column/codecs/text/string_picker.hpp"
 #include "iresearch/formats/column/codecs/text/string_scan.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
@@ -743,23 +742,12 @@ void CompressionState::FinalizeCompress() {
 }
 
 }  // namespace irs::codecs::text::fsst
-namespace irs::codecs::text {
-
-Analysis AnalyzeFsst(const AnalyzeInput& input) {
-  const Config config{.choice = {input.shape, ByteCodec::Fsst}};
-  auto& window = input.window;
-  return {.config = config,
-          .score = window.At(window.TrialCompress(config)).Size()};
-}
-
-}  // namespace irs::codecs::text
 namespace irs::codecs {
 
 constinit const CompressionFunction kFsstFunction =
-  text::StringFunction<text::PlainScan<text::fsst::Leaf>>(CodecType::Fsst);
+  text::StringFunction<text::PlainScan<text::fsst::Leaf>>();
 
 constinit const CompressionFunction kDictFsstFunction =
-  text::StringFunction<text::DictionaryScan<text::fsst::Leaf>>(
-    CodecType::DictFsst);
+  text::StringFunction<text::DictionaryScan<text::fsst::Leaf>>();
 
 }  // namespace irs::codecs

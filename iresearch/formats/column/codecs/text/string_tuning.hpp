@@ -49,7 +49,8 @@ enum class FrameLayout : uint8_t {
 namespace text {
 
 struct Config {
-  StringChoice choice{};
+  Shape shape = Shape::Dedup;
+  ByteCodec leaf = ByteCodec::Lz4;
   uint8_t level = 0;
   FrameLayout layout = FrameLayout::FirstFrame;
 

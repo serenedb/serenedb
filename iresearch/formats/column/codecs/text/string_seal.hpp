@@ -101,20 +101,21 @@ class StringAccumulator {
 };
 
 using SegmentSink =
-  absl::FunctionRef<void(StringChoice choice, duckdb::BaseStatistics stats,
+  absl::FunctionRef<void(CodecType type, duckdb::BaseStatistics stats,
                          uint64_t rows, std::string_view bytes)>;
 
 bool SealSegments(const StringAccumulator& acc, const ColCodecParams& params,
                   const duckdb::LogicalType& type, StringTuning& tuning,
                   duckdb::BufferManager& buffers, SegmentSink sink);
 
-void CompressStrings(StringChoice choice, ColumnDataCheckpointData& data,
+void CompressStrings(Shape shape, ByteCodec leaf,
+                     ColumnDataCheckpointData& data,
                      std::span<const WriteChunk> chunks);
 
 template<Shape kShape, ByteCodec kLeaf>
 void CompressStrings(ColumnDataCheckpointData& data,
                      std::span<const WriteChunk> chunks) {
-  CompressStrings(StringChoice{kShape, kLeaf}, data, chunks);
+  CompressStrings(kShape, kLeaf, data, chunks);
 }
 
 }  // namespace irs::codecs

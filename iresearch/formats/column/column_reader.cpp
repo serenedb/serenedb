@@ -865,8 +865,9 @@ bool ColumnReader::SelectsAcross(const ScanState& s,
   }
   for (size_t block = s.window.block;
        block < _segments.size() && _offsets[block] < end; ++block) {
-    const auto* choice = codecs::ChoiceOf(_segments[block].codec->type);
-    if (!choice || choice->shape != codecs::Shape::Plain) {
+    const auto type = _segments[block].codec->type;
+    if (!codecs::IsText(type) ||
+        codecs::ShapeOf(type) != codecs::Shape::Plain) {
       return false;
     }
   }

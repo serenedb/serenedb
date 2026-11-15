@@ -22,6 +22,10 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <magic_enum/magic_enum.hpp>
+#include <utility>
+
+#include "iresearch/formats/column/codecs/codec_type.hpp"
 
 namespace irs::codecs {
 
@@ -52,11 +56,29 @@ enum class Shape : uint8_t {
   Plain = 1,
 };
 
-struct StringChoice {
-  Shape shape;
-  ByteCodec leaf;
+constexpr bool IsText(CodecType type) noexcept {
+  return type >= CodecType::DictLz4;
+}
 
-  bool operator==(const StringChoice&) const = default;
-};
+constexpr CodecType TextCodec(Shape shape, ByteCodec leaf) noexcept {
+  return static_cast<CodecType>(std::to_underlying(CodecType::DictLz4) +
+                                2 * std::to_underlying(leaf) +
+                                std::to_underlying(shape));
+}
+
+constexpr Shape ShapeOf(CodecType type) noexcept {
+  return static_cast<Shape>(
+    (std::to_underlying(type) - std::to_underlying(CodecType::DictLz4)) % 2);
+}
+
+constexpr ByteCodec LeafOf(CodecType type) noexcept {
+  return static_cast<ByteCodec>(
+    (std::to_underlying(type) - std::to_underlying(CodecType::DictLz4)) / 2);
+}
+
+static_assert(TextCodec(Shape::Dedup, ByteCodec::Lz4) == CodecType::DictLz4);
+static_assert(TextCodec(Shape::Plain, ByteCodec::Fsst12) == CodecType::Fsst12);
+static_assert(magic_enum::enum_count<CodecType>() ==
+              std::to_underlying(CodecType::DictLz4) + 2 * kByteCodecCount);
 
 }  // namespace irs::codecs

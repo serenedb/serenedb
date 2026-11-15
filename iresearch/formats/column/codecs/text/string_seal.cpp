@@ -90,25 +90,26 @@ bool SealSegments(const StringAccumulator& acc, const ColCodecParams& params,
   }
   const auto config = first->config;
   const auto rest = first->begin + first->rows;
-  sink(config.choice, std::move(*first->stats), first->rows,
-       first->bytes.View());
+  sink(TextCodec(config.shape, config.leaf), std::move(*first->stats),
+       first->rows, first->bytes.View());
   first.reset();
   compressor.Compress(config, acc, rest, sink);
   return true;
 }
 
-void CompressStrings(StringChoice choice, ColumnDataCheckpointData& data,
+void CompressStrings(Shape shape, ByteCodec leaf,
+                     ColumnDataCheckpointData& data,
                      std::span<const WriteChunk> chunks) {
   SDB_ASSERT(data.strings);
   auto& tuning = *data.strings;
   text::StringCompressor compressor{data.params, data.type, tuning.estimators,
                                     data.ctx.BufferManager()};
-  const auto config = text::NamedConfig(choice, data.params);
-  const auto sink = [&](StringChoice, duckdb::BaseStatistics stats,
-                        uint64_t rows, std::string_view bytes) {
+  const auto config = text::NamedConfig(shape, leaf, data.params);
+  const auto sink = [&](CodecType, duckdb::BaseStatistics stats, uint64_t rows,
+                        std::string_view bytes) {
     data.flush(std::move(stats), rows, bytes);
   };
-  if (choice.shape == Shape::Plain) {
+  if (shape == Shape::Plain) {
     compressor.CompressChunks(config, chunks, sink);
     return;
   }

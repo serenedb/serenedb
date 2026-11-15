@@ -50,7 +50,8 @@ IRS_NO_INLINE void SealRows(State& state, const Config& config,
                             Segment& seg, SegmentSink sink) {
   const auto seal = [&] {
     state.FinalizeCompress();
-    sink(seg.config.choice, std::move(*seg.stats), seg.rows, seg.bytes.View());
+    sink(TextCodec(seg.config.shape, seg.config.leaf), std::move(*seg.stats),
+         seg.rows, seg.bytes.View());
   };
   uint64_t row = 0;
   uint64_t first = 0;
@@ -78,7 +79,8 @@ IRS_NO_INLINE void CompressRows(State& state, const Config& config,
                                 SegmentSink sink) {
   for (auto row = begin; row < acc.Rows(); row = seg.begin + seg.rows) {
     CutRows(state, config, acc, row, target, seg);
-    sink(seg.config.choice, std::move(*seg.stats), seg.rows, seg.bytes.View());
+    sink(TextCodec(seg.config.shape, seg.config.leaf), std::move(*seg.stats),
+         seg.rows, seg.bytes.View());
   }
 }
 
@@ -99,7 +101,7 @@ IRS_NO_INLINE void CompressRange(State& state, const Config& config,
 
 template<typename Visit>
 void StringCompressor::WithState(const Config& config, Visit&& visit) {
-  switch (config.choice.leaf) {
+  switch (config.leaf) {
     case ByteCodec::Lz4:
       if (EffectiveLevel<Lz4>(config.level) > 1) {
         visit(StateOf<blob::CompressionState<Lz4Hc>>());

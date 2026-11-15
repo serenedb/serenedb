@@ -185,7 +185,8 @@ void SegmentRows::Write(const EncodedFrames& frames, Segment& out) {
 
   _stats.Merge(out.stats.emplace(duckdb::BaseStatistics::CreateEmpty(_type)));
   out.config = {
-    .choice = {_shape, frames.codec},
+    .shape = _shape,
+    .leaf = frames.codec,
     .level = _level,
     .layout = _layout,
   };

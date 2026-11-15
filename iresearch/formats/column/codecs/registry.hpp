@@ -34,7 +34,6 @@ struct Codec {
   CodecType type;
   std::string_view name;
   const CompressionFunction* (&function)(duckdb::PhysicalType physical);
-  StringChoice choice{};
 };
 
 std::span<const Codec> AnalyzedCodecs() noexcept;
@@ -73,10 +72,6 @@ const CompressionFunction* GetCodec(CodecType type,
 std::string_view NameOf(CodecType type) noexcept;
 const Codec* FindCodec(std::string_view name) noexcept;
 const Codec* FindCodec(duckdb::CompressionType type) noexcept;
-
-const StringChoice* ChoiceOf(CodecType type) noexcept;
-
-CodecType TypeOf(StringChoice choice) noexcept;
 
 uint8_t MaxLevel(CodecType type) noexcept;
 

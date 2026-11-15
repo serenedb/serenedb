@@ -83,12 +83,11 @@ class UncompressedCompress {
 template<typename Appender>
 void CompressChunks(ColumnDataCheckpointData& checkpoint_data,
                     std::span<const WriteChunk> chunks) {
-  const auto state =
-    std::make_unique<UncompressedCompress<Appender>>(checkpoint_data);
+  UncompressedCompress<Appender> state{checkpoint_data};
   for (const auto& chunk : chunks) {
-    state->Append(chunk.data);
+    state.Append(chunk.data);
   }
-  state->Flush();
+  state.Flush();
 }
 
 struct PinnedScan final : SegmentScanState {
@@ -110,6 +109,43 @@ template<typename T, bool kList>
 struct FixedSizeAppender {
   using Stored = std::conditional_t<kList, uint64_t, T>;
 
+  struct SegmentStats {
+    void SetHasNull() { stats.SetHasNullFast(); }
+    void SetHasValid() { stats.SetHasNoNullFast(); }
+    void UpdateMinMax(const T& value) { stats.UpdateNumericStats<T>(value); }
+
+    duckdb::BaseStatistics& stats;
+  };
+
+  template<typename Stats>
+  IRS_FORCE_INLINE static void Copy(Stats& stats,
+                                    const duckdb::UnifiedVectorFormat& data,
+                                    const T* source, T* target, idx_t offset,
+                                    idx_t count) {
+    if (data.validity.CanHaveNull()) {
+      for (idx_t i = 0; i < count; ++i) {
+        const auto source_idx = data.sel->get_index(offset + i);
+        if (!data.validity.RowIsValid(source_idx)) {
+          stats.SetHasNull();
+          target[i] = duckdb::NullValue<T>();
+          continue;
+        }
+        stats.SetHasValid();
+        stats.UpdateMinMax(source[source_idx]);
+        target[i] = source[source_idx];
+      }
+      return;
+    }
+    for (idx_t i = 0; i < count; ++i) {
+      const auto value = source[data.sel->get_index(offset + i)];
+      stats.UpdateMinMax(value);
+      target[i] = value;
+    }
+    if (count != 0) {
+      stats.SetHasValid();
+    }
+  }
+
   static void Begin(CompressedSegment&) {}
 
   static idx_t Append(ColumnDataCheckpointData&, CompressedSegment& segment,
@@ -119,30 +155,17 @@ struct FixedSizeAppender {
     const auto copy = std::min<idx_t>(count, kMaxRows - segment.count);
     const auto* source = duckdb::UnifiedVectorFormat::GetData<Stored>(data);
     auto* target = reinterpret_cast<Stored*>(segment.Data()) + segment.count;
-    auto& stats = segment.stats;
     if constexpr (kList) {
       for (idx_t i = 0; i < copy; ++i) {
         target[i] = source[data.sel->get_index(offset + i)];
       }
-    } else if (data.validity.CanHaveNull()) {
-      for (idx_t i = 0; i < copy; ++i) {
-        const auto source_idx = data.sel->get_index(offset + i);
-        if (!data.validity.RowIsValid(source_idx)) {
-          stats.SetHasNullFast();
-          target[i] = duckdb::NullValue<T>();
-          continue;
-        }
-        stats.SetHasNoNullFast();
-        stats.UpdateNumericStats<T>(source[source_idx]);
-        target[i] = source[source_idx];
-      }
+    } else if constexpr (std::is_integral_v<T>) {
+      duckdb::StatsWriter<T> stats;
+      Copy(stats, data, source, target, offset, copy);
+      stats.Merge(segment.stats);
     } else {
-      stats.SetHasNoNullFast();
-      for (idx_t i = 0; i < copy; ++i) {
-        const auto value = source[data.sel->get_index(offset + i)];
-        stats.UpdateNumericStats<T>(value);
-        target[i] = value;
-      }
+      SegmentStats stats{segment.stats};
+      Copy(stats, data, source, target, offset, copy);
     }
     segment.count += copy;
     return copy;

@@ -147,13 +147,10 @@ class SereneDBCatalog final : public BaseCatalog {
 
   bool SupportsInsertOnConflict() const final { return true; }
 
-  bool ReplacesInPlace(
+  duckdb::ConflictReplace GetConflictReplace(
     duckdb::ClientContext& context, duckdb::TableCatalogEntry& table,
+    const duckdb::unordered_set<duckdb::column_t>& key,
     const duckdb::vector<duckdb::PhysicalIndex>& columns) final;
-
-  bool KeysMatchExactly(
-    duckdb::TableCatalogEntry& table,
-    const duckdb::unordered_set<duckdb::column_t>& key) final;
 
   duckdb::PhysicalOperator& PlanInsert(
     duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,

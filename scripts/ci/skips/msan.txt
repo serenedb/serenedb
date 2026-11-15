@@ -27,6 +27,7 @@ duckdb:core:test/sql/outofcore/out_of_core_sort.test_slow	issue	temporary files 
 duckdb:core:test/sql/pragma/profiling/test_custom_profiling_memory_and_temp_dir.test_slow	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:core:test/sql/profiling/test_spilled_bytes_metric.test	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:core:test/sql/storage/buffer_manager_temp_dir.test	issue	temporary files hold buffer bytes nothing wrote (#1883)
+duckdb:core:test/sql/storage/compression/zstd/zstd_giant_string.test_slow	memory	peaks at 16 GB RSS in dev, before msan shadows every byte, against the 3 GB a batch slot reserves per test; dev runs it
 duckdb:core:test/sql/storage/encryption/temp_files/*	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:core:test/sql/storage/evict_unpinned_without_temp_directory.test	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:core:test/sql/storage/external_file_cache/external_file_cache_eviction_queue.test_slow	issue	temporary files hold buffer bytes nothing wrote (#1883)

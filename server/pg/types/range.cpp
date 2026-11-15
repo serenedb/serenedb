@@ -260,7 +260,7 @@ bool RangeToText(duckdb::Vector& source, duckdb::Vector& result,
       AppendBound(text, AsView(uppers[row].GetValue()));
     }
     text.push_back(flags & kRangeUpperInclusive ? ']' : ')');
-    writer.WriteValue(duckdb::string_t::Checked(text));
+    writer.WriteValue(duckdb::string_t::Unsafe(text));
   }
   return true;
 }

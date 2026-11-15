@@ -80,7 +80,7 @@ std::optional<irs::pg::SqlErrorData> TryParseOidAt(std::string_view text,
   }
   const auto token = text.substr(pos, end - pos);
   if (!duckdb::TryCast::Operation<duckdb::string_t, int64_t>(
-        duckdb::string_t::Checked(token), value)) {
+        duckdb::string_t::Unsafe(token), value)) {
     return SQL_ERROR_DATA(
       ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
       ERR_MSG("invalid input syntax for type oid: \"", token, "\""));

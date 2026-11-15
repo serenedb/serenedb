@@ -22,6 +22,8 @@
 
 #include <duckdb/common/error_data.hpp>
 #include <exception>
+#include <source_location>
+#include <string_view>
 
 #include "iresearch/utils/pg/sql_error.hpp"
 
@@ -30,5 +32,9 @@ namespace irs::pg {
 SqlErrorData ToSqlError(const std::exception& exception);
 
 SqlErrorData ToSqlError(const duckdb::ErrorData& error);
+
+[[noreturn]] void ThrowWithContext(
+  std::string_view context, const std::exception& exception,
+  std::source_location location = std::source_location::current());
 
 }  // namespace irs::pg

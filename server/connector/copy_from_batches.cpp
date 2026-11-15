@@ -44,7 +44,6 @@
 #include "connector/copy_batch_parse.h"
 #include "pg/connection_context.h"
 #include "pg/copy_batch_builder.h"
-#include "pg/copy_eod_scanner.h"
 
 namespace sdb::connector {
 namespace {
@@ -52,24 +51,14 @@ namespace {
 constexpr std::string_view kCopyStdinPath = "/dev/stdin";
 constexpr size_t kOrderedRun = 16;
 constexpr uint64_t kCopyFileRangeBytes = 8 << 20;
-constexpr uint64_t kTextTailBytes = 64;
-constexpr std::string_view kLineEnds = "\r\n";
-
-void CheckAfterEndMarker(std::string_view bytes) {
-  if (bytes.find_first_not_of(kLineEnds) != std::string_view::npos) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
-                    ERR_MSG("end-of-copy marker is followed by data"));
-  }
-}
 
 class CopyFileReader {
  public:
   CopyFileReader(duckdb::ClientContext& context,
                  std::unique_ptr<duckdb::FileHandle> file, bool binary)
     : _file{std::move(file)},
-      _builder{binary ? pg::CopyBatchFormat::Binary
-                      : pg::CopyBatchFormat::Text},
-      _text{!binary},
+      _builder{binary ? pg::CopyBatchFormat::Binary : pg::CopyBatchFormat::Text,
+               pg::kCopyBatchBytes, !binary},
       _memory{context},
       _fixed_budget{duckdb::TaskScheduler::QueryThreads(context) * kOrderedRun *
                     pg::kCopyBatchBytes},
@@ -149,34 +138,14 @@ class CopyFileReader {
         FinishFile();
         return;
       }
-      Feed({_chunk.data(), got});
+      _builder.Feed({_chunk.data(), got}, false);
     }
     Push(_builder.Take());
   }
 
-  void Feed(std::string_view bytes) {
-    if (!_text) {
-      _builder.Feed(bytes, false);
-      return;
-    }
-    if (_eod.Ended()) {
-      CheckAfterEndMarker(bytes);
-      return;
-    }
-    const auto scanned = _eod.Scan(bytes);
-    _builder.Feed(scanned.carry, false);
-    _builder.Feed(scanned.data, false);
-    if (_eod.Ended()) {
-      CheckAfterEndMarker(scanned.rest);
-    }
-  }
-
   void FinishFile() {
-    if (_text && !_eod.Ended()) {
-      _builder.Feed(_eod.Finish(), false);
-    }
     _builder.Finish();
-    if (_builder.HasRows()) {
+    while (_builder.HasRows()) {
       Push(_builder.Take());
     }
     _ended.store(true, std::memory_order_release);
@@ -191,8 +160,6 @@ class CopyFileReader {
 
   std::unique_ptr<duckdb::FileHandle> _file;
   pg::CopyBatchBuilder _builder;
-  const bool _text;
-  pg::CopyEodScanner _eod;
   pg::CopyInBatches _batches;
   duckdb::ManagedAsyncMemoryGovernor _memory;
   const size_t _fixed_budget;
@@ -216,6 +183,7 @@ struct CopyFromGlobalState : public duckdb::GlobalTableFunctionState {
   CopyFromSource source;
   pg::CopyInTarget target;
   bool ordered;
+  CopyTextEnd end;
   std::atomic<uint64_t> rejected{0};
 };
 
@@ -260,49 +228,13 @@ struct RangeJobState {
 
 using RangeJob = duckdb::ScanReadAheadJobWrapper<RangeJobState>;
 
-uint64_t TextDataEnd(duckdb::FileHandle& file) {
-  const uint64_t size = file.GetFileSize();
-  std::string tail;
-  for (uint64_t span = std::min(size, kTextTailBytes);;
-       span = std::min(size, span * 2)) {
-    tail.resize(span);
-    file.Read(tail.data(), span, size - span);
-    const auto last = tail.find_last_not_of(kLineEnds);
-    if (last == std::string::npos || last == 0) {
-      if (span == size) {
-        return size;
-      }
-      continue;
-    }
-    if (tail[last] != '.' || tail[last - 1] != '\\') {
-      return size;
-    }
-    const auto marker = last - 1;
-    if (marker == 0) {
-      if (span == size) {
-        return 0;
-      }
-      continue;
-    }
-    if (tail[marker - 1] != '\n') {
-      return size;
-    }
-    const std::string_view before{tail.data(), marker - 1};
-    const auto slashes = pg::TrailingBackslashes(before);
-    if (slashes == before.size() && span != size) {
-      continue;
-    }
-    return slashes % 2 == 0 ? size - span + marker : size;
-  }
-}
-
 struct RangesGlobalState final : public CopyFromGlobalState {
   RangesGlobalState(duckdb::ClientContext& context,
                     std::unique_ptr<duckdb::FileHandle> file,
                     pg::CopyInTarget target, bool ordered)
     : CopyFromGlobalState{CopyFromSource::Ranges, std::move(target), ordered},
       file{std::move(file)},
-      size{TextDataEnd(*this->file)},
+      size{this->file->GetFileSize()},
       range_count{(size + kCopyFileRangeBytes - 1) / kCopyFileRangeBytes},
       read_ahead{duckdb::ScanReadAhead::Create(context)} {}
 
@@ -337,43 +269,37 @@ void ScanBatches(duckdb::ClientContext& context,
   auto& g = input.global_state->Cast<BatchesGlobalState>();
   auto& l = input.local_state->Cast<BatchesLocalState>();
   if (!l.parser) {
-    l.parser.emplace(context, g.target, g.rejected);
+    l.parser.emplace(context, g.target, g.end, g.rejected);
   }
   auto& parser = *l.parser;
-  for (;;) {
-    duckdb::idx_t row = 0;
-    while (row < STANDARD_VECTOR_SIZE) {
-      if (!parser.Active()) {
-        if (l.next == l.run.size()) {
-          l.run.clear();
-          l.next = 0;
-          if (row != 0) {
-            if (g.ordered || !g.queue.TryTake(1, l.run)) {
-              break;
-            }
-          } else if (g.queue.Take(input, g.ordered ? kOrderedRun : 1, l.run) !=
-                     pg::CopyTake::Batches) {
+  duckdb::idx_t row = 0;
+  while (row < STANDARD_VECTOR_SIZE) {
+    if (!parser.Active()) {
+      if (l.next == l.run.size()) {
+        l.run.clear();
+        l.next = 0;
+        if (row != 0) {
+          if (g.ordered || !g.queue.TryTake(1, l.run)) {
             break;
           }
-          l.batch_index = l.run.front()->seq;
+        } else if (g.queue.Take(input, g.ordered ? kOrderedRun : 1, l.run) !=
+                   pg::CopyTake::Batches) {
+          break;
         }
-        parser.Start(*l.run[l.next++]);
+        l.batch_index = l.run.front()->seq;
       }
-      row = parser.Parse(output, row);
-      if (parser.Exhausted()) {
-        parser.Stop();
-        l.run[l.next - 1].Reset();
-        if (g.reader) {
-          g.reader->Resume();
-        }
+      parser.Start(*l.run[l.next++]);
+    }
+    row = parser.Parse(output, row);
+    if (parser.Exhausted()) {
+      parser.Stop();
+      l.run[l.next - 1].Reset();
+      if (g.reader) {
+        g.reader->Resume();
       }
     }
-    output.SetChildCardinality(row);
-    if (!parser.DropRejected(output) || output.size() != 0) {
-      return;
-    }
-    output.Reset();
   }
+  output.SetChildCardinality(row);
 }
 
 size_t ReadAt(RangesGlobalState& g, std::string& buffer, uint64_t location,
@@ -395,6 +321,24 @@ size_t FindCut(std::string_view bytes, size_t from) {
     }
   }
   return std::string_view::npos;
+}
+
+size_t SkipBlankLines(std::string_view bytes, size_t cut) {
+  for (;;) {
+    if (cut + 1 < bytes.size() && bytes[cut + 1] == '\n') {
+      ++cut;
+    } else if (cut + 2 < bytes.size() && bytes[cut + 1] == '\r' &&
+               bytes[cut + 2] == '\n') {
+      cut += 2;
+    } else {
+      return cut;
+    }
+  }
+}
+
+bool BlankRunOpen(std::string_view bytes, size_t cut) {
+  return cut + 1 == bytes.size() ||
+         (cut + 2 == bytes.size() && bytes[cut + 1] == '\r');
 }
 
 uint64_t RangeFrom(uint64_t range) {
@@ -431,8 +375,12 @@ bool CutRange(RangesGlobalState& g, RangeJobState& job, pg::CopyBatch& batch) {
   }
   size_t first = 0;
   if (job.range != 0) {
-    const auto cut = FindCut(buffer, 1);
-    if (cut == std::string::npos || cut + 1 == buffer.size()) {
+    auto cut = FindCut(buffer, 1);
+    if (cut == std::string::npos) {
+      return false;
+    }
+    cut = SkipBlankLines(buffer, cut);
+    if (BlankRunOpen(buffer, cut)) {
       return false;
     }
     first = cut + 1;
@@ -445,6 +393,11 @@ bool CutRange(RangesGlobalState& g, RangeJobState& job, pg::CopyBatch& batch) {
       break;
     }
     last = FindCut(buffer, scanned);
+  }
+  for (last = SkipBlankLines(buffer, last);
+       BlankRunOpen(buffer, last) &&
+       ReadAt(g, buffer, from + buffer.size(), pg::kCopyBatchBytes) != 0;
+       last = SkipBlankLines(buffer, last)) {
   }
   batch.segments.clear();
   batch.bytes = 0;
@@ -518,30 +471,24 @@ void ScanRanges(duckdb::ClientContext& context,
   auto& g = input.global_state->Cast<RangesGlobalState>();
   auto& l = input.local_state->Cast<RangesLocalState>();
   if (!l.parser) {
-    l.parser.emplace(context, g.target, g.rejected);
+    l.parser.emplace(context, g.target, g.end, g.rejected);
   }
   auto& parser = *l.parser;
-  for (;;) {
-    duckdb::idx_t row = 0;
-    while (row < STANDARD_VECTOR_SIZE) {
-      if (!parser.Active()) {
-        if (row != 0 || !NextRange(context, input, g, l)) {
-          break;
-        }
-        parser.Start(l.batch);
+  duckdb::idx_t row = 0;
+  while (row < STANDARD_VECTOR_SIZE) {
+    if (!parser.Active()) {
+      if (row != 0 || !NextRange(context, input, g, l)) {
+        break;
       }
-      row = parser.Parse(output, row);
-      if (parser.Exhausted()) {
-        parser.Stop();
-        l.job.reset();
-      }
+      parser.Start(l.batch);
     }
-    output.SetChildCardinality(row);
-    if (!parser.DropRejected(output) || output.size() != 0) {
-      return;
+    row = parser.Parse(output, row);
+    if (parser.Exhausted()) {
+      parser.Stop();
+      l.job.reset();
     }
-    output.Reset();
   }
+  output.SetChildCardinality(row);
 }
 
 }  // namespace

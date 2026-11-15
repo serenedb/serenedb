@@ -196,6 +196,25 @@ id	d
 2	NULL
 3	5
 
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO pj_null_search VALUES (4, NULL), (5, [6, 8]);
+
+query
+SELECT id, emb <-> [0, 0]::FLOAT[2] AS d FROM pj_null_search ORDER BY id;
+----
+id	d
+1	0
+2	NULL
+3	5
+4	NULL
+5	10
+
+statement ok
+ROLLBACK;
+
 query
 SELECT id FROM pj_null_hnsw WHERE emb <-> [0, 0]::FLOAT[2] < 6 ORDER BY id;
 ----

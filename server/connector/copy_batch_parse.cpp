@@ -25,6 +25,8 @@
 
 #include <algorithm>
 #include <duckdb/common/types/vector.hpp>
+#include <duckdb/common/vector/array_vector.hpp>
+#include <duckdb/common/vector/struct_vector.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <utility>
@@ -154,6 +156,32 @@ std::string_view TrimCarriageReturn(std::string_view line) {
   return pg::TrailingBackslashes(body) % 2 == 0 ? body : line;
 }
 
+[[noreturn]] void ThrowDataAfterMarker() {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
+                  ERR_MSG("end-of-copy marker is followed by data"));
+}
+
+void ResetNulls(duckdb::Vector& vec, duckdb::idx_t row) {
+  duckdb::FlatVector::SetNull(vec, row, false);
+  switch (vec.GetType().InternalType()) {
+    case duckdb::PhysicalType::STRUCT:
+      for (auto& child : duckdb::StructVector::GetEntries(vec)) {
+        ResetNulls(child, row);
+      }
+      break;
+    case duckdb::PhysicalType::ARRAY: {
+      const auto size = duckdb::ArrayType::GetSize(vec.GetType());
+      auto& child = duckdb::ArrayVector::GetChildMutable(vec);
+      for (auto i = row * size; i != (row + 1) * size; ++i) {
+        ResetNulls(child, i);
+      }
+      break;
+    }
+    default:
+      break;
+  }
+}
+
 }  // namespace
 
 CopyDeserializers MakeCopyDeserializers(
@@ -221,18 +249,19 @@ bool ProcessTextRow(std::string_view line, char delim,
 }
 
 CopyBatchParser::CopyBatchParser(duckdb::ClientContext& context,
-                                 pg::CopyInTarget target,
+                                 pg::CopyInTarget target, CopyTextEnd& end,
                                  std::atomic<uint64_t>& rejected)
   : _target{std::move(target)},
     _deserializers{MakeCopyDeserializers(_target.types, _target.binary)},
+    _end{end},
     _rejected{rejected} {
   pg::FillDeserializeContext(context, _dctx);
 }
 
-void CopyBatchParser::Reject(duckdb::idx_t row) {
-  _rejected_rows.push_back(row);
-  const auto rejected = _rejected.fetch_add(1, std::memory_order_relaxed) + 1;
-  if (_target.reject_limit != 0 && rejected > _target.reject_limit) {
+void CopyBatchParser::CountRejected(uint64_t rejected) {
+  const auto total =
+    _rejected.fetch_add(rejected, std::memory_order_relaxed) + rejected;
+  if (total > _target.reject_limit) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
       ERR_MSG("skipped more than REJECT_LIMIT (", _target.reject_limit,
@@ -240,32 +269,33 @@ void CopyBatchParser::Reject(duckdb::idx_t row) {
   }
 }
 
-bool CopyBatchParser::DropRejected(duckdb::DataChunk& output) {
-  if (_rejected_rows.empty()) {
-    return false;
+void CopyBatchParser::EndMarker() {
+  _ended = true;
+  const auto seq = _batch->seq;
+  for (auto marker = _end.marker.load();
+       seq < marker && !_end.marker.compare_exchange_weak(marker, seq);) {
   }
-  const auto rows = output.size();
-  duckdb::SelectionVector kept_rows{rows};
-  duckdb::idx_t kept = 0;
-  auto rejected = _rejected_rows.begin();
-  for (duckdb::idx_t row = 0; row < rows; ++row) {
-    if (rejected != _rejected_rows.end() && *rejected == row) {
-      ++rejected;
-    } else {
-      kept_rows.set_index(kept++, row);
-    }
+  if (_end.latest.load() > seq) {
+    ThrowDataAfterMarker();
   }
-  _rejected_rows.clear();
-  output.Slice(kept_rows, kept);
-  output.Flatten();
-  return true;
 }
 
 void CopyBatchParser::Start(const pg::CopyBatch& batch) {
   _batch = &batch;
   _segment = 0;
   _pos = 0;
+  _ended = false;
   _skip = _target.header && !_target.binary && batch.seq == 0;
+  if (_target.binary) {
+    return;
+  }
+  for (auto latest = _end.latest.load();
+       latest < batch.seq &&
+       !_end.latest.compare_exchange_weak(latest, batch.seq);) {
+  }
+  if (_end.marker.load() < batch.seq) {
+    ThrowDataAfterMarker();
+  }
 }
 
 duckdb::idx_t CopyBatchParser::Parse(duckdb::DataChunk& output,
@@ -276,6 +306,7 @@ duckdb::idx_t CopyBatchParser::Parse(duckdb::DataChunk& output,
 duckdb::idx_t CopyBatchParser::ParseText(duckdb::DataChunk& output,
                                          duckdb::idx_t row) {
   const auto& segments = _batch->segments;
+  uint64_t rejected = 0;
   while (row < STANDARD_VECTOR_SIZE && _segment != segments.size()) {
     const auto data = segments[_segment];
     if (_pos == data.size()) {
@@ -291,16 +322,29 @@ duckdb::idx_t CopyBatchParser::ParseText(duckdb::DataChunk& output,
     if (std::exchange(_skip, false)) {
       continue;
     }
+    if (_ended) {
+      if (!line.empty()) {
+        ThrowDataAfterMarker();
+      }
+      continue;
+    }
     if (line == "\\.") {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
-                      ERR_MSG("end-of-copy marker is followed by data"));
+      EndMarker();
+      continue;
     }
-    if (!ProcessTextRow(line, _target.delim, _target.null_str,
-                        _target.ignore_errors, _deserializers, _dctx, output,
-                        row, _field_buf)) {
-      Reject(row);
+    if (ProcessTextRow(line, _target.delim, _target.null_str,
+                       _target.ignore_errors, _deserializers, _dctx, output,
+                       row, _field_buf)) {
+      ++row;
+      continue;
     }
-    ++row;
+    for (auto& column : output.data) {
+      ResetNulls(column, row);
+    }
+    ++rejected;
+  }
+  if (rejected != 0 && _target.reject_limit != 0) {
+    CountRejected(rejected);
   }
   return row;
 }

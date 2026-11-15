@@ -185,14 +185,22 @@ void NormalizeRows(float* data, size_t n, uint32_t d) {
   }
 }
 
-std::span<const float> TrainableRows(std::span<const float> rows, size_t d,
-                                     std::vector<float>& kept) {
+namespace {
+
+auto TrainablePredicate(size_t d) {
   const float bound = std::sqrt(std::numeric_limits<float>::max() /
                                 (4.f * static_cast<float>(d)));
-  const auto trainable = [&](const float* row) {
+  return [bound, d](const float* row) {
     return absl::c_all_of(std::span{row, d},
                           [&](float x) { return std::abs(x) <= bound; });
   };
+}
+
+}  // namespace
+
+std::span<const float> TrainableRows(std::span<const float> rows, size_t d,
+                                     std::vector<float>& kept) {
+  const auto trainable = TrainablePredicate(d);
   const size_t n = rows.size() / d;
   size_t i = 0;
   while (i != n && trainable(rows.data() + i * d)) {
@@ -211,6 +219,26 @@ std::span<const float> TrainableRows(std::span<const float> rows, size_t d,
     kept.assign(d, 0.f);
   }
   return kept;
+}
+
+void KeepTrainableRows(std::vector<float>& rows, size_t d) {
+  const auto trainable = TrainablePredicate(d);
+  const size_t n = rows.size() / d;
+  size_t kept = 0;
+  for (size_t i = 0; i != n; ++i) {
+    const float* row = rows.data() + i * d;
+    if (!trainable(row)) {
+      continue;
+    }
+    if (kept != i) {
+      std::copy_n(row, d, rows.data() + kept * d);
+    }
+    ++kept;
+  }
+  rows.resize(kept * d);
+  if (kept == 0 && n != 0) {
+    rows.assign(d, 0.f);
+  }
 }
 
 std::vector<float> TrainCentroids(VectorMetric metric, const float* data,

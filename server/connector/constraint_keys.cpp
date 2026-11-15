@@ -24,14 +24,13 @@
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 
-#include <deque>
 #include <duckdb/common/allocator.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/unified_vector_format.hpp>
 #include <duckdb/common/vector_operations/unary_executor.hpp>
-#include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/function/create_sort_key.hpp>
+#include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <duckdb/planner/expression_binder.hpp>
@@ -47,13 +46,11 @@ const duckdb::OrderModifiers kKeyOrder{duckdb::OrderType::ASCENDING,
                                        duckdb::OrderByNullType::NULLS_LAST};
 
 duckdb::vector<duckdb::Value> DecodeKey(
-  std::string_view key, std::span<const duckdb::LogicalType> types) {
+  std::string_view key, const duckdb::vector<duckdb::LogicalType>& types) {
   duckdb::DataChunk chunk;
-  chunk.Initialize(
-    duckdb::Allocator::DefaultAllocator(),
-    duckdb::vector<duckdb::LogicalType>{types.begin(), types.end()}, 1);
+  chunk.Initialize(duckdb::Allocator::DefaultAllocator(), types, 1);
   duckdb::vector<duckdb::OrderModifiers> modifiers(types.size(), kKeyOrder);
-  duckdb::CreateSortKeyHelpers::DecodeSortKey(duckdb::string_t::Checked(key),
+  duckdb::CreateSortKeyHelpers::DecodeSortKey(duckdb::string_t::Unsafe(key),
                                               chunk, 0, modifiers);
   duckdb::vector<duckdb::Value> values;
   values.reserve(types.size());
@@ -117,73 +114,77 @@ std::vector<KeyRead> ConstraintKeyEncoder::ExpressionReads() const {
   return reads;
 }
 
-void ConstraintKeyEncoder::Encode(duckdb::DataChunk& chunk,
-                                  std::span<const ColumnId> column_ids,
-                                  duckdb::Vector& keys) const {
-  const auto count = chunk.size();
+void ConstraintKeyEncoder::Prepare(const duckdb::DataChunk& chunk,
+                                   std::span<const ColumnId> column_ids) {
+  _prepared = std::make_unique<Prepared>(*_context);
+  auto& prepared = *_prepared;
   const auto parts = _key.columns.size();
-  std::deque<EvaluatedExpression> evaluated;
-  std::vector<duckdb::Vector*> values;
-  values.reserve(parts);
   duckdb::vector<duckdb::LogicalType> types;
-  types.reserve(parts);
+  duckdb::vector<duckdb::LogicalType> intervals;
   for (size_t i = 0; i != parts; ++i) {
+    duckdb::unique_ptr<duckdb::Expression> part;
     if (i < _expressions.size() && _expressions[i]) {
-      values.push_back(&evaluated
-                          .emplace_back(*_expressions[i], chunk, _table_id,
-                                        column_ids, *_context)
-                          .Result());
+      part = ResolveOverChunk(*_expressions[i], chunk, _table_id, column_ids);
     } else {
       const auto slot =
         absl::c_find(column_ids, _key.columns[i]) - column_ids.begin();
       SDB_ASSERT(static_cast<size_t>(slot) < column_ids.size());
-      values.push_back(&chunk.data[slot]);
+      part = duckdb::make_uniq<duckdb::BoundReferenceExpression>(
+        chunk.data[slot].GetType(), static_cast<duckdb::idx_t>(slot));
     }
-    types.push_back(values.back()->GetType());
+    if (!_key.types.empty() && part->GetReturnType() != _key.types[i]) {
+      part = duckdb::BoundCastExpression::AddDefaultCastToType(std::move(part),
+                                                               _key.types[i]);
+    }
+    const auto type = part->GetReturnType();
+    if (type.id() == duckdb::LogicalTypeId::INTERVAL) {
+      prepared.intervals.push_back(i);
+      intervals.push_back(type);
+    } else if (type.id() == duckdb::LogicalTypeId::VARCHAR &&
+               !duckdb::StringType::GetCollation(type).empty()) {
+      duckdb::ExpressionBinder::PushCollation(
+        *_context, part, type, duckdb::CollationType::EQUALITY_COLLATIONS);
+    }
+    types.push_back(part->GetReturnType());
+    prepared.executor.AddExpression(*part);
+    prepared.parts.push_back(std::move(part));
   }
-  const duckdb::vector<duckdb::OrderModifiers> modifiers(parts, kKeyOrder);
-  duckdb::DataChunk input;
-  if (_key.types.empty()) {
-    input.InitializeEmpty(types);
-    for (size_t i = 0; i != parts; ++i) {
-      input.data[i].Reference(*values[i]);
-    }
-  } else {
-    input.Initialize(
-      duckdb::Allocator::DefaultAllocator(),
-      duckdb::vector<duckdb::LogicalType>{_key.types.begin(), _key.types.end()},
-      count);
-    for (size_t i = 0; i != parts; ++i) {
-      if (types[i] == _key.types[i]) {
-        input.data[i].Reference(*values[i]);
-      } else {
-        duckdb::VectorOperations::DefaultCast(*values[i], input.data[i], count);
-      }
-    }
+  auto& allocator = duckdb::Allocator::Get(*_context);
+  prepared.input.Initialize(allocator, types);
+  if (!intervals.empty()) {
+    prepared.normalized.Initialize(allocator, intervals);
   }
-  input.SetCardinality(count);
-  for (auto& column : input.data) {
-    if (column.GetType().id() == duckdb::LogicalTypeId::INTERVAL) {
-      duckdb::Vector normalized{duckdb::LogicalType::INTERVAL, count};
+  prepared.modifiers.assign(parts, kKeyOrder);
+  prepared.keys.Initialize(allocator, {duckdb::LogicalType::BLOB});
+}
+
+const duckdb::Vector& ConstraintKeyEncoder::Encode(
+  duckdb::DataChunk& chunk, std::span<const ColumnId> column_ids) {
+  if (!_prepared) {
+    Prepare(chunk, column_ids);
+  }
+  auto& prepared = *_prepared;
+  const auto count = chunk.size();
+  auto& input = prepared.input;
+  input.Reset();
+  prepared.keys.Reset();
+  auto& keys = prepared.keys.data[0];
+  prepared.executor.Execute(&chunk, input);
+  if (!prepared.intervals.empty()) {
+    prepared.normalized.Reset();
+    for (size_t i = 0; i != prepared.intervals.size(); ++i) {
+      auto& column = input.data[prepared.intervals[i]];
+      auto& normalized = prepared.normalized.data[i];
       duckdb::UnaryExecutor::Execute<duckdb::interval_t, duckdb::interval_t>(
         column, normalized, count,
         [](duckdb::interval_t value) { return value.Normalize(); });
       column.Reference(normalized);
-    } else if (auto collation = CollationOf(*_context, column.GetType())) {
-      duckdb::DataChunk single;
-      single.InitializeEmpty({column.GetType()});
-      single.data[0].Reference(column);
-      single.SetCardinality(count);
-      duckdb::Vector collated{collation->GetReturnType(), count};
-      duckdb::ExpressionExecutor executor{*_context, *collation};
-      executor.ExecuteExpression(single, collated);
-      column.Reference(collated);
     }
   }
-  duckdb::CreateSortKeyHelpers::CreateSortKey(input, modifiers, keys);
-  duckdb::UnifiedVectorFormat format;
-  for (duckdb::idx_t i = 0; i != input.ColumnCount(); ++i) {
-    input.data[i].ToUnifiedFormat(count, format);
+  duckdb::CreateSortKeyHelpers::CreateSortKey(input, prepared.modifiers, keys);
+  auto& format = prepared.format;
+  for (auto& column : input.data) {
+    column.ToUnifiedFormat(count, format);
     if (format.validity.CheckAllValid(count)) {
       continue;
     }
@@ -194,6 +195,7 @@ void ConstraintKeyEncoder::Encode(duckdb::DataChunk& chunk,
       }
     }
   }
+  return keys;
 }
 
 std::string ConstraintKeyText(duckdb::ClientContext& context,
@@ -231,7 +233,9 @@ std::string EncodeKeyValue(const duckdb::Value& value) {
 
 std::string KeyValueText(std::string_view key,
                          const duckdb::LogicalType& type) {
-  return DecodeKey(key, {&type, 1}).front().ToString();
+  return DecodeKey(key, duckdb::vector<duckdb::LogicalType>{type})
+    .front()
+    .ToString();
 }
 
 }  // namespace sdb::connector

@@ -239,7 +239,7 @@ struct JsonBin {
 struct BlobBin {
   template<typename Sink>
   static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
-    sink.Blob(duckdb::string_t::Checked(data));
+    sink.Blob(duckdb::string_t::Unsafe(data));
     return true;
   }
 };
@@ -913,7 +913,7 @@ struct BlobText {
   template<typename Sink>
   static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
     if (!data.contains('\\')) {
-      sink.Blob(duckdb::string_t::Checked(data));
+      sink.Blob(duckdb::string_t::Unsafe(data));
       return true;
     }
     return sink.ByteaText(data);
@@ -1075,7 +1075,7 @@ struct HugeintText {
   static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
     duckdb::hugeint_t result;
     if (!duckdb::TryCast::Operation<duckdb::string_t, duckdb::hugeint_t>(
-          duckdb::string_t::Checked(data), result, /*strict=*/true)) {
+          duckdb::string_t::Unsafe(data), result, /*strict=*/true)) {
       return false;
     }
     sink.Fixed(result);
@@ -1088,7 +1088,7 @@ struct UhugeintText {
   static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
     duckdb::uhugeint_t result;
     if (!duckdb::TryCast::Operation<duckdb::string_t, duckdb::uhugeint_t>(
-          duckdb::string_t::Checked(data), result, /*strict=*/true)) {
+          duckdb::string_t::Unsafe(data), result, /*strict=*/true)) {
       return false;
     }
     sink.Fixed(result);
@@ -1106,7 +1106,7 @@ struct DecimalText {
     duckdb::CastParameters params(/*strict=*/true, nullptr);
     Phys result;
     if (!duckdb::TryCastToDecimal::Operation<duckdb::string_t, Phys>(
-          duckdb::string_t::Checked(data), result, params, width, scale)) {
+          duckdb::string_t::Unsafe(data), result, params, width, scale)) {
       return false;
     }
     sink.template Decimal<Phys>(result, width, scale);
@@ -1123,7 +1123,7 @@ struct CastText {
   static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
     T result;
     if (!duckdb::TryCast::Operation<duckdb::string_t, T>(
-          duckdb::string_t::Checked(data), result, /*strict=*/true)) {
+          duckdb::string_t::Unsafe(data), result, /*strict=*/true)) {
       return false;
     }
     sink.Fixed(result);
@@ -1155,7 +1155,7 @@ struct EnumCore {
   static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
     const auto& type = sink.Type();
     const auto pos =
-      duckdb::EnumType::GetPos(type, duckdb::string_t::Checked(data));
+      duckdb::EnumType::GetPos(type, duckdb::string_t::Unsafe(data));
     if (pos < 0) {
       return false;
     }

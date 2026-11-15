@@ -187,3 +187,64 @@ ALTER TABLE tfd_ma RENAME COLUMN k TO k2;
 ----
 db error: ERROR: cannot rename column k of table tfd_ma because other objects depend on it
 DETAIL: function tfd_mac() refers to the column where its rename cannot be followed
+
+
+statement ok
+CREATE TABLE tfd_jev (id INT);
+
+
+statement ok
+CREATE TABLE tfd_jlog (id INT, amount INT);
+
+
+statement ok
+CREATE TABLE tfd_ja (id INT, k INT);
+
+
+statement ok
+CREATE TABLE tfd_jb (id INT, k INT);
+
+
+statement ok
+CREATE TRIGGER tfd_jupd AFTER INSERT ON tfd_jev FOR EACH STATEMENT
+  UPDATE tfd_jlog SET amount = 1 FROM tfd_ja JOIN tfd_jb ON tfd_ja.k = tfd_jb.k WHERE tfd_ja.id = tfd_jlog.id;
+
+
+statement ok
+CREATE TRIGGER tfd_jdel AFTER INSERT ON tfd_jev FOR EACH STATEMENT
+  DELETE FROM tfd_jlog USING tfd_ja JOIN tfd_jb ON tfd_ja.k = tfd_jb.k WHERE tfd_jb.id = tfd_jlog.id AND tfd_jlog.amount = 0;
+
+
+statement ok
+ALTER TABLE tfd_ja RENAME COLUMN k TO k2;
+
+
+query
+SELECT trigger_name, sql FROM duckdb_triggers() WHERE trigger_name IN ('tfd_jupd', 'tfd_jdel') ORDER BY trigger_name;
+----
+trigger_name	sql
+tfd_jdel	CREATE TRIGGER tfd_jdel AFTER INSERT ON tfd_jev FOR EACH STATEMENT DELETE FROM tfd_jlog USING (tfd_ja INNER JOIN tfd_jb ON ((tfd_ja.k2 = tfd_jb.k))) WHERE ((tfd_jb.id = tfd_jlog.id) AND (tfd_jlog.amount = 0));
+tfd_jupd	CREATE TRIGGER tfd_jupd AFTER INSERT ON tfd_jev FOR EACH STATEMENT UPDATE tfd_jlog SET amount = 1 FROM (tfd_ja INNER JOIN tfd_jb ON ((tfd_ja.k2 = tfd_jb.k))) WHERE (tfd_ja.id = tfd_jlog.id);
+
+
+statement ok
+INSERT INTO tfd_ja VALUES (1, 10), (2, 20);
+
+
+statement ok
+INSERT INTO tfd_jb VALUES (1, 10), (2, 30);
+
+
+statement ok
+INSERT INTO tfd_jlog VALUES (1, 0), (2, 0);
+
+
+statement ok
+INSERT INTO tfd_jev VALUES (1);
+
+
+query
+SELECT id, amount FROM tfd_jlog ORDER BY id;
+----
+id	amount
+2	0

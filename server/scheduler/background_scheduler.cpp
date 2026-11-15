@@ -21,7 +21,6 @@
 #include "scheduler/background_scheduler.h"
 
 #include <algorithm>
-#include <duckdb/common/types/timestamp.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
@@ -92,21 +91,6 @@ yaclib::Future<> BackgroundScheduler::Delay(clock::duration d) {
     });
   _delays.insert(std::move(timer));
   return std::move(f);
-}
-
-void BackgroundScheduler::RunAt(duckdb::timestamp_t at,
-                                std::function<void()> task) {
-  constexpr auto kLimit = std::chrono::duration_cast<std::chrono::microseconds>(
-    clock::duration::max());
-  const auto delay = std::clamp(
-    std::chrono::microseconds{at.value -
-                              duckdb::Timestamp::GetCurrentTimestamp().value},
-    -kLimit, kLimit);
-  Delay(delay).Detach(*_executor, [this, task = std::move(task)] {
-    if (!IsStopping()) {
-      task();
-    }
-  });
 }
 
 void BackgroundScheduler::OpenDelays() {

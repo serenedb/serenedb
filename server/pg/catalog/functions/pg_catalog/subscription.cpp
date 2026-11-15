@@ -51,7 +51,7 @@ struct SubscriptionStats {
 
 void WriteLsn(duckdb::VectorWriter<duckdb::string_t>& writer, uint64_t lsn) {
   const auto text = FormatLsn(lsn);
-  writer.WriteValue(duckdb::string_t::Checked(text));
+  writer.WriteValue(duckdb::string_t::Unsafe(text));
 }
 
 void WriteTime(duckdb::VectorWriter<duckdb::timestamp_tz_t>& writer,

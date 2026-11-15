@@ -21,7 +21,8 @@
 #pragma once
 
 #include <algorithm>
-#include <bitset>
+#include <array>
+#include <limits>
 #include <optional>
 #include <span>
 
@@ -124,30 +125,47 @@ class ExactScanner {
   }
 
   void Distances(std::span<const doc_id_t> docs, score_t* dists) {
-    if (_validity && _keep_missing) {
-      std::bitset<kRun> missing;
-      for (size_t i = 0; i < docs.size(); ++i) {
-        missing[i] = !_validity->reader.ValidRow(
-          static_cast<uint64_t>(docs[i]) - doc_limits::min(),
-          _validity->scratch);
-      }
-      if (missing.any()) {
-        for (size_t i = 0; i < docs.size(); ++i) {
-          dists[i] = missing[i] ? 0 : _reader.ComputeDistance(docs[i], nullptr);
-        }
-        return;
+    if (!_validity || !_keep_missing) {
+      _reader.ComputeDistances(docs, {dists, docs.size()});
+      return;
+    }
+    auto& present = _validity->present;
+    uint32_t count = 0;
+    for (uint32_t i = 0; i < docs.size(); ++i) {
+      if (_validity->reader.ValidRow(
+            static_cast<uint64_t>(docs[i]) - doc_limits::min(),
+            _validity->scratch)) {
+        present.docs[count] = docs[i];
+        present.slots[count] = i;
+        ++count;
       }
     }
-    _reader.ComputeDistances(docs, {dists, docs.size()});
+    if (count == docs.size()) {
+      _reader.ComputeDistances(docs, {dists, docs.size()});
+      return;
+    }
+    _reader.ComputeDistances({present.docs.data(), count},
+                             {present.dists.data(), count});
+    std::fill_n(dists, docs.size(), std::numeric_limits<score_t>::quiet_NaN());
+    for (uint32_t i = 0; i < count; ++i) {
+      dists[present.slots[i]] = present.dists[i];
+    }
   }
 
  private:
+  struct Present {
+    std::array<doc_id_t, kRun> docs{};
+    std::array<uint32_t, kRun> slots{};
+    std::array<score_t, kRun> dists{};
+  };
+
   struct Validity {
     Validity(const ColReader& columns, const ColumnReader& column)
       : reader{columns, column} {}
 
     ColumnReader::PointReader reader;
     duckdb::Vector scratch{duckdb::LogicalType::BOOLEAN, 1};
+    Present present;
   };
 
   uint32_t Collect(doc_id_t* docs) {

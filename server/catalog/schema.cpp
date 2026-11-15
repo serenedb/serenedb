@@ -1148,7 +1148,8 @@ std::array<EntrySet*, 13> Schema::MemberSets() const {
     &sets.copy_functions, &sets.pragma_functions, &sets.functions,
     &sets.sequences,      &sets.collations,       &sets.coordinate_systems,
     &sets.types,          &sets.tokenizers,       &sets.jobs,
-    &sets.schemas};
+    &sets.schemas,
+  };
 }
 
 void Schema::ScanMembers(

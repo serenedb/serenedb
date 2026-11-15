@@ -71,7 +71,7 @@ bool TextToMultirange(duckdb::Vector& source, duckdb::Vector& result,
       auto writer =
         duckdb::FlatVector::Writer<duckdb::string_t>(range_text, range_count);
       for (const auto text : texts) {
-        writer.WriteValue(duckdb::string_t::Checked(text));
+        writer.WriteValue(duckdb::string_t::Unsafe(text));
       }
     }
     converted &=
@@ -141,7 +141,7 @@ bool MultirangeToText(duckdb::Vector& source, duckdb::Vector& result,
       text.append(AsView(texts[entry.offset + i].GetValue()));
     }
     text.push_back('}');
-    writer.WriteValue(duckdb::string_t::Checked(text));
+    writer.WriteValue(duckdb::string_t::Safe(text));
   }
   return true;
 }

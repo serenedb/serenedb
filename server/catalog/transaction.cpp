@@ -132,16 +132,20 @@ void CheckDependencies(SessionTransaction& transaction) {
         break;
       case ChangeKind::Drop:
         change.set->Oids().CheckDropped(
-          view, {.oid = subject.oid,
-                 .name = subject.name.GetIdentifierName(),
-                 .role = subject.type == duckdb::CatalogType::ROLE_ENTRY});
+          view, {
+                  .oid = subject.oid,
+                  .name = subject.name.GetIdentifierName(),
+                  .role = subject.type == duckdb::CatalogType::ROLE_ENTRY,
+                });
         break;
       case ChangeKind::Rename:
         if (subject.type != duckdb::CatalogType::ROLE_ENTRY) {
           change.set->Oids().CheckDropped(
-            view, {.oid = subject.oid,
-                   .name = subject.name.GetIdentifierName(),
-                   .change = "ALTER"});
+            view, {
+                    .oid = subject.oid,
+                    .name = subject.name.GetIdentifierName(),
+                    .change = "ALTER",
+                  });
         }
         break;
     }

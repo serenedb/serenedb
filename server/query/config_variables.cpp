@@ -1589,10 +1589,12 @@ constexpr std::pair<std::string_view, VariableDescription>
     {
       "session_replication_role",
       {
-        LogicalTypeId::VARCHAR,
-        "Sets the session's behavior for triggers and rewrite rules.",
-        [] { return duckdb::Value{"origin"}; },
-        SetReplicationRole,
+        .type = LogicalTypeId::VARCHAR,
+        .description =
+          "Sets the session's behavior for triggers and rewrite rules.",
+        .default_value = [] { return duckdb::Value{"origin"}; },
+        .set_callback = SetReplicationRole,
+        .rebind = true,
       },
     },
     {
@@ -1748,7 +1750,7 @@ void TryRegister(duckdb::DBConfig& config, std::string_view name,
     setting, std::string{desc.description}, duckdb::LogicalType{desc.type},
     desc.default_value ? desc.default_value() : duckdb::Value{},
     desc.set_callback, desc.reset_callback, desc.scope,
-    IsUnchangeableSetting(name));
+    IsUnchangeableSetting(name), desc.rebind);
 }
 
 }  // namespace

@@ -24,6 +24,7 @@
 #include <absl/functional/function_ref.h>
 #include <absl/synchronization/mutex.h>
 
+#include <array>
 #include <cstdint>
 #include <duckdb/common/identifier.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
@@ -65,9 +66,8 @@ struct StoreWrites {
   const catalog::SearchTableEntry* table = nullptr;
   std::vector<std::unique_ptr<irs::IndexWriter::Transaction>> transactions;
   LocalTableChangesEntry changes;
-  WriterGenerations::Writer registration;
   std::vector<OwnSegment> own_segments;
-  std::optional<uint64_t> flushed_layout;
+  std::optional<uint64_t> version;
   std::vector<irs::DocMap> own_maps;
   uint64_t rows_generation = 0;
   std::shared_ptr<const TableState> rebuilt;
@@ -122,11 +122,7 @@ struct StoreWrites {
   std::vector<RemovedKeys> removed_keys;
   duckdb::StringHeap removed_heap;
   bool removed_rows = false;
-  struct StatementReferences {
-    size_t spec = 0;
-    std::vector<duckdb::string_t> keys;
-  };
-  std::vector<StatementReferences> statement_references;
+  std::vector<std::vector<duckdb::string_t>> statement_references;
   duckdb::StringHeap statement_heap;
   // The committed rows of a referenced or referencing table the first check
   // against it saw, by store.
@@ -140,22 +136,55 @@ enum class KeyConflict : uint8_t {
   UpsertUpdate,
 };
 
-using ProposedKeys =
-  irs::containers::FlatHashSet<HashedKey, HashedKeyHash, HashedKeyEq>;
+class ProposedKeys {
+ public:
+  static constexpr unsigned kShardBits = 6;
+
+  struct Shard {
+    mutable absl::Mutex mutex;
+    irs::containers::FlatHashSet<HashedKey, HashedKeyHash, HashedKeyEq> keys
+      ABSL_GUARDED_BY(mutex);
+    duckdb::StringHeap heap ABSL_GUARDED_BY(mutex);
+
+    bool Insert(std::string_view key, size_t hash)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex);
+  };
+
+  Shard& Of(size_t hash) noexcept { return _shards[ShardIndex(hash)]; }
+  bool Contains(const HashedKey& key) const;
+
+ private:
+  static constexpr size_t ShardIndex(size_t hash) noexcept {
+    return hash >> (64 - kShardBits);
+  }
+
+  std::array<Shard, size_t{1} << kShardBits> _shards;
+};
 
 class ConflictArbiter {
  public:
+  struct Scratch {
+    std::vector<connector::ConstraintKeyEncoder> encoders;
+    std::vector<std::string_view> keys;
+    std::vector<size_t> hashes;
+    std::vector<std::pair<std::string_view, duckdb::idx_t>> rows;
+    std::vector<std::string_view> sorted;
+    std::vector<uint32_t> rest;
+    std::vector<std::pair<duckdb::idx_t, KeyHolder>> holders;
+  };
+
   ConflictArbiter(duckdb::ClientContext& context, const StoreWrites& w,
                   const irs::DirectoryReader& reader,
                   std::span<const irs::field_id> fields);
 
   duckdb::idx_t Admit(duckdb::DataChunk& chunk,
                       std::span<const connector::ColumnId> column_ids,
-                      duckdb::SelectionVector& kept);
+                      duckdb::SelectionVector& kept, Scratch& scratch);
   void Replace(
     duckdb::DataChunk& chunk, std::span<const connector::ColumnId> column_ids,
     absl::FunctionRef<void(duckdb::idx_t row, const KeyHolder& holder)>
-      replaced);
+      replaced,
+    Scratch& scratch);
 
   const ProposedKeys* Proposed(irs::field_id field) const;
   bool Probed(uint64_t unit) const { return _probed.contains(unit); }
@@ -163,9 +192,9 @@ class ConflictArbiter {
  private:
   struct Arbiter {
     irs::field_id field = 0;
-    connector::ConstraintKeyEncoder encoder;
+    catalog::ConstraintKey key;
     KeyProbe held;
-    ProposedKeys proposed;
+    std::unique_ptr<ProposedKeys> proposed;
   };
 
   struct OwnRows {
@@ -175,25 +204,21 @@ class ConflictArbiter {
     uint64_t generation = 0;
   };
 
-  struct RowKeys {
-    std::vector<duckdb::Vector> encoded;
-    std::vector<std::string_view> keys;
-    std::vector<size_t> hashes;
-  };
-
-  RowKeys Encode(duckdb::DataChunk& chunk,
-                 std::span<const connector::ColumnId> column_ids) const;
+  void Encode(duckdb::DataChunk& chunk,
+              std::span<const connector::ColumnId> column_ids,
+              Scratch& scratch) const;
   void ForEachHolder(
-    const RowKeys& keys, duckdb::idx_t count,
+    Scratch& scratch, duckdb::idx_t count,
     absl::FunctionRef<void(duckdb::idx_t row, const KeyHolder& holder)> visit)
     const;
+  bool Propose(const Scratch& scratch,
+               duckdb::idx_t row) ABSL_NO_THREAD_SAFETY_ANALYSIS;
 
+  duckdb::ClientContext& _context;
   const StoreWrites& _w;
   std::vector<Arbiter> _arbiters;
   irs::containers::FlatHashSet<uint64_t> _probed;
   std::optional<OwnRows> _own;
-  absl::Mutex _mutex;
-  duckdb::StringHeap _keys;
 };
 
 struct LogSection {
@@ -211,7 +236,7 @@ class Writes {
   void RegisterWriter(const std::shared_ptr<Store>& store,
                       const catalog::SearchTableEntry& table);
 
-  void FollowLayout(const Store& store, uint64_t before);
+  void FollowVersion(const Store& store, uint64_t before);
 
   void AdoptTable(const std::shared_ptr<Store>& store,
                   const catalog::SearchTableEntry& table);
@@ -229,7 +254,7 @@ class Writes {
   void AddOwnSegments(const std::shared_ptr<Store>& store,
                       std::unique_ptr<irs::IndexWriter::Transaction> trx,
                       std::span<const irs::IndexWriter::FlushedSegment> flushed,
-                      uint64_t layout);
+                      uint64_t version);
 
   void AddInlineRows(duckdb::ClientContext& context,
                      const std::shared_ptr<Store>& store,

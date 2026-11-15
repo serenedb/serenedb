@@ -682,7 +682,7 @@ statement ok
 INSERT INTO ua_interval VALUES (INTERVAL '1 day', 1);
 
 
-query ??
+query
 INSERT OR REPLACE INTO ua_interval VALUES (INTERVAL '24 hours', 2) RETURNING k, a;
 ----
 k	a

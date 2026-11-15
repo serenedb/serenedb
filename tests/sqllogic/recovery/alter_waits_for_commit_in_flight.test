@@ -1,5 +1,7 @@
-# ALTER TABLE waits only for a commit of the table that is already being
-# published: the committed row is part of the table the ALTER rewrites.
+# ALTER TABLE waits for a commit of the table that is already validated and
+# being installed: the committed row is part of the table the ALTER rewrites.
+# A commit that only prepared before the ALTER fails instead: its rows were
+# written for the table the ALTER changed.
 
 statement ok
 CREATE TABLE awcif (a INT);
@@ -13,14 +15,14 @@ statement ok
 INSERT INTO awcif VALUES (1);
 
 statement ok
-SET sdb_faults = 'search_commit_prepared';
+SET sdb_faults = 'search_commit_validated';
 
 connection awcif_writer
 statement async ok
 COMMIT;
 
 statement ok retry 40 backoff 250ms
-SET sdb_faults = '-search_commit_prepared:parked';
+SET sdb_faults = '-search_commit_validated:parked';
 
 connection awcif_alter
 statement async ok
@@ -34,7 +36,7 @@ altering
 1
 
 statement ok
-SET sdb_faults = 'search_commit_prepared:release';
+SET sdb_faults = 'search_commit_validated:release';
 
 wait
 
@@ -43,3 +45,40 @@ SELECT a, c FROM awcif;
 ----
 a	c
 1	7
+
+connection awcif_writer
+statement ok
+BEGIN;
+
+connection awcif_writer
+statement ok
+INSERT INTO awcif VALUES (2, 2);
+
+statement ok
+SET sdb_faults = 'search_commit_prepared';
+
+connection awcif_writer
+statement async error
+COMMIT;
+----
+db error: ERROR: table "awcif" was altered by a concurrent transaction
+HINT: Retry the transaction.
+
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-search_commit_prepared:parked';
+
+connection awcif_alter
+statement ok
+ALTER TABLE awcif ADD COLUMN d INT DEFAULT 8;
+
+statement ok
+SET sdb_faults = 'search_commit_prepared:release';
+
+wait
+
+query
+SELECT a, c, d FROM awcif;
+----
+a	c	d
+1	7	8

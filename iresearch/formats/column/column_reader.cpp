@@ -103,12 +103,13 @@ ColumnBlockMeta DeserializeColumnBlockMeta(duckdb::BinaryDeserializer& d,
 void SerializeBlockMetas(duckdb::BinarySerializer& s, duckdb::field_id_t id,
                          const char* tag,
                          const std::vector<ColumnBlockMeta>& blocks) {
-  s.WriteList(id, tag, blocks.size(),
-              [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-                list.WriteObject([&](duckdb::BinarySerializer& obj) {
-                  SerializeColumnBlockMeta(obj, blocks[i]);
-                });
-              });
+  s.WriteOptionalList(
+    id, tag, blocks.size(),
+    [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+      list.WriteObject([&](duckdb::BinarySerializer& obj) {
+        SerializeColumnBlockMeta(obj, blocks[i]);
+      });
+    });
 }
 
 struct GatherBands {
@@ -171,40 +172,31 @@ bool ScatterWins(const ColumnBlockMeta& block, const duckdb::LogicalType& type,
 void SerializeColumnMeta(duckdb::BinarySerializer& s, const ColumnMeta& meta) {
   s.WriteProperty(0, "id", meta.id);
   s.WriteProperty(1, "type", meta.type);
-  if (!meta.data.empty()) {
-    SerializeBlockMetas(s, 2, "data", meta.data);
-  }
-  if (!meta.validity.empty()) {
-    SerializeBlockMetas(s, 3, "validity", meta.validity);
-  }
-  if (!meta.children.empty()) {
-    s.WriteList(4, "children", meta.children.size(),
-                [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-                  list.WriteObject([&](duckdb::BinarySerializer& obj) {
-                    SerializeColumnMeta(obj, meta.children[i]);
-                  });
-                });
-  }
-  if (!meta.variant_rgs.empty()) {
-    s.WriteList(5, "variant_rgs", meta.variant_rgs.size(),
-                [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-                  const auto& rg = meta.variant_rgs[i];
-                  list.WriteObject([&](duckdb::BinarySerializer& obj) {
-                    obj.WriteProperty(0, "row_count", rg.row_count);
-                    obj.WriteObject(1, "unshredded",
-                                    [&](duckdb::BinarySerializer& unshredded) {
-                                      SerializeColumnMeta(unshredded,
-                                                          *rg.unshredded);
-                                    });
-                    if (rg.shredded) {
-                      obj.WriteObject(
-                        2, "shredded", [&](duckdb::BinarySerializer& shredded) {
-                          SerializeColumnMeta(shredded, *rg.shredded);
+  SerializeBlockMetas(s, 2, "data", meta.data);
+  SerializeBlockMetas(s, 3, "validity", meta.validity);
+  s.WriteOptionalList(
+    4, "children", meta.children.size(),
+    [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+      list.WriteObject([&](duckdb::BinarySerializer& obj) {
+        SerializeColumnMeta(obj, meta.children[i]);
+      });
+    });
+  s.WriteOptionalList(
+    5, "variant_rgs", meta.variant_rgs.size(),
+    [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+      const auto& rg = meta.variant_rgs[i];
+      list.WriteObject([&](duckdb::BinarySerializer& obj) {
+        obj.WriteProperty(0, "row_count", rg.row_count);
+        obj.WriteObject(1, "unshredded",
+                        [&](duckdb::BinarySerializer& unshredded) {
+                          SerializeColumnMeta(unshredded, *rg.unshredded);
                         });
-                    }
-                  });
-                });
-  }
+        obj.WriteOptionalObject(2, "shredded", rg.shredded != nullptr,
+                                [&](duckdb::BinarySerializer& shredded) {
+                                  SerializeColumnMeta(shredded, *rg.shredded);
+                                });
+      });
+    });
   s.WritePropertyWithDefault(7, "distinct", meta.distinct);
 }
 

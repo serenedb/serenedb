@@ -25,6 +25,7 @@
 #include <cstdint>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -36,6 +37,11 @@ namespace sdb::connector {
 
 using CopyDeserializers =
   std::vector<pg::DeserializationFunction<pg::VectorSink>>;
+
+struct CopyTextEnd {
+  std::atomic<uint64_t> marker{std::numeric_limits<uint64_t>::max()};
+  std::atomic<uint64_t> latest{0};
+};
 
 CopyDeserializers MakeCopyDeserializers(
   const std::vector<duckdb::LogicalType>& types, bool binary);
@@ -49,7 +55,7 @@ bool ProcessTextRow(std::string_view line, char delim,
 class CopyBatchParser {
  public:
   CopyBatchParser(duckdb::ClientContext& context, pg::CopyInTarget target,
-                  std::atomic<uint64_t>& rejected);
+                  CopyTextEnd& end, std::atomic<uint64_t>& rejected);
 
   void Start(const pg::CopyBatch& batch);
   bool Active() const noexcept { return static_cast<bool>(_batch); }
@@ -59,23 +65,24 @@ class CopyBatchParser {
   uint64_t Seq() const noexcept { return _batch->seq; }
   void Stop() noexcept { _batch = nullptr; }
   duckdb::idx_t Parse(duckdb::DataChunk& output, duckdb::idx_t row);
-  bool DropRejected(duckdb::DataChunk& output);
 
  private:
   duckdb::idx_t ParseText(duckdb::DataChunk& output, duckdb::idx_t row);
   duckdb::idx_t ParseBinary(duckdb::DataChunk& output, duckdb::idx_t row);
-  void Reject(duckdb::idx_t row);
+  void EndMarker();
+  void CountRejected(uint64_t rejected);
 
   pg::CopyInTarget _target;
   CopyDeserializers _deserializers;
   pg::DeserializeContext _dctx;
   std::string _field_buf;
-  std::vector<duckdb::idx_t> _rejected_rows;
+  CopyTextEnd& _end;
   std::atomic<uint64_t>& _rejected;
   const pg::CopyBatch* _batch = nullptr;
   size_t _segment = 0;
   size_t _pos = 0;
   bool _skip = false;
+  bool _ended = false;
 };
 
 }  // namespace sdb::connector

@@ -50,7 +50,7 @@ db error: ERROR: pattern is too complex
 statement error
 SELECT count(*) FROM regexp_large WHERE k @@ ts_regexp('(?:' || repeat('.', 1100000) || '){2}')
 ----
-db error: ERROR: invalid regular expression: invalid repetition size: {2}
+db error: ERROR: invalid regular expression: regular expression is too complex
 
 
 statement ok

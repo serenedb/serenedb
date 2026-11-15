@@ -90,7 +90,8 @@ struct SearchInsertLocalState : duckdb::LocalSinkState {
 struct SearchUpsertLocalState final : SearchInsertLocalState {
   duckdb::SelectionVector kept{STANDARD_VECTOR_SIZE};
   irs::DocRemovalBuilder replaced;
-  std::vector<std::pair<uint64_t, duckdb::sel_t>> order;
+  search::UnitRows unit_rows;
+  search::ConflictArbiter::Scratch conflict;
   std::vector<search::UnitPatch> patches;
 };
 
@@ -330,7 +331,8 @@ duckdb::SinkResultType SereneDBSearchUpsert::Sink(
                                           chunk);
   const auto& column_ids = gstate.table.column_ids;
   if (!_replace) {
-    const auto kept = gstate.arbiter->Admit(chunk, column_ids, lstate.kept);
+    const auto kept =
+      gstate.arbiter->Admit(chunk, column_ids, lstate.kept, lstate.conflict);
     if (kept == 0) {
       return duckdb::SinkResultType::NEED_MORE_INPUT;
     }
@@ -342,20 +344,25 @@ duckdb::SinkResultType SereneDBSearchUpsert::Sink(
   }
   if (!_in_place) {
     gstate.arbiter->Replace(
-      chunk, column_ids, [&](duckdb::idx_t, const search::KeyHolder& holder) {
+      chunk, column_ids,
+      [&](duckdb::idx_t, const search::KeyHolder& holder) {
         lstate.replaced.Add(static_cast<uint32_t>(holder.unit), holder.doc);
-      });
+      },
+      lstate.conflict);
     AppendRows(context, gstate, lstate, chunk);
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
-  lstate.order.clear();
+  auto& order = lstate.unit_rows.order;
+  order.clear();
   gstate.arbiter->Replace(
-    chunk, column_ids, [&](duckdb::idx_t row, const search::KeyHolder& holder) {
-      lstate.order.emplace_back(
+    chunk, column_ids,
+    [&](duckdb::idx_t row, const search::KeyHolder& holder) {
+      order.emplace_back(
         MakeRowPosition(static_cast<uint32_t>(holder.unit), holder.doc),
         static_cast<duckdb::sel_t>(row));
-    });
-  if (lstate.order.empty()) {
+    },
+    lstate.conflict);
+  if (order.empty()) {
     AppendRows(context, gstate, lstate, chunk);
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
@@ -364,14 +371,14 @@ duckdb::SinkResultType SereneDBSearchUpsert::Sink(
   }
   lstate.insert_count += chunk.size();
   std::bitset<STANDARD_VECTOR_SIZE> patched_rows;
-  for (const auto& [position, row] : lstate.order) {
+  for (const auto& [position, row] : order) {
     patched_rows.set(row);
   }
-  absl::c_sort(lstate.order);
+  absl::c_sort(order);
   search::ForEachUnitRows(
     gstate.sdb_txn->SearchTxn().PinnedReader(context.client,
                                              *gstate.table.store),
-    lstate.order,
+    lstate.unit_rows,
     [&](uint64_t unit, std::span<const uint64_t> rows,
         const duckdb::SelectionVector& sel) {
       for (const auto& column : _patched) {

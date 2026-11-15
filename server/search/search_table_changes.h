@@ -64,14 +64,20 @@ inline void AddRowPositions(irs::DocRemovalBuilder& positions,
   }
 }
 
+struct UnitRows {
+  std::vector<std::pair<uint64_t, duckdb::sel_t>> order;
+  std::vector<uint64_t> rows;
+  duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+};
+
 inline void ForEachUnitRows(
-  const irs::DirectoryReader& reader,
-  std::span<const std::pair<uint64_t, duckdb::sel_t>> order,
+  const irs::DirectoryReader& reader, UnitRows& scratch,
   absl::FunctionRef<void(uint64_t unit, std::span<const uint64_t> rows,
                          const duckdb::SelectionVector& sel)>
     visit) {
-  std::vector<uint64_t> rows;
-  duckdb::SelectionVector sel{order.size()};
+  const auto& order = scratch.order;
+  auto& rows = scratch.rows;
+  auto& sel = scratch.sel;
   for (size_t i = 0; i < order.size();) {
     const auto index = connector::RowPositionIndex(order[i].first);
     rows.clear();

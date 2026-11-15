@@ -305,3 +305,23 @@ SELECT replace(v, chr(92), '/') AS v, length(v) AS len FROM marker_lines ORDER B
 v	len
 (empty)	0
 /	1
+
+
+statement ok
+COPY (SELECT (repeat('7' || chr(9) || 'x' || chr(10), 2097151) || '\\.' || chr(10) || repeat(chr(10), 10))::BLOB)
+TO '${__TEST_DIR__}/marker_blank_tail_across_ranges.dat' (FORMAT BLOB);
+
+
+statement count 2097151
+COPY marker FROM '${__TEST_DIR__}/marker_blank_tail_across_ranges.dat';
+
+
+statement ok
+COPY (SELECT (repeat('7' || chr(9) || 'x' || chr(10), 2097150) || '7' || chr(9) || 'xx' || chr(10) || '\\.' || chr(10) || repeat('8' || chr(9) || 'y' || chr(10), 1000))::BLOB)
+TO '${__TEST_DIR__}/marker_data_in_next_range.dat' (FORMAT BLOB);
+
+
+statement error
+COPY marker FROM '${__TEST_DIR__}/marker_data_in_next_range.dat';
+----
+db error: ERROR: end-of-copy marker is followed by data

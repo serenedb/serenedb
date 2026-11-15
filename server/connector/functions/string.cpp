@@ -799,7 +799,7 @@ void QuoteNullableFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
       }
     }
     quoted += '\'';
-    out.WriteValue(duckdb::string_t::Checked(quoted));
+    out.WriteValue(duckdb::string_t::Safe(quoted));
   }
 }
 
@@ -1092,7 +1092,7 @@ void RegexpMatchFunction(duckdb::DataChunk& args,
       }
       VerifyWholeCharacters(match, input);
       for (auto& child : rows.WriteList(1)) {
-        child.WriteValue(duckdb::string_t::Checked(match));
+        child.WriteValue(duckdb::string_t::Unsafe(match));
       }
       continue;
     }
@@ -1389,7 +1389,7 @@ void ParseIdentFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     size_t i = 0;
     for (auto& child : rows.WriteList(size)) {
       const auto& part = parts[i++];
-      child.WriteValue(duckdb::string_t::Checked(part));
+      child.WriteValue(duckdb::string_t::Unsafe(part));
     }
   }
 }
@@ -1780,16 +1780,19 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
   for (const std::string_view name : {"substring", "substr"}) {
     loader.RegisterFunction(duckdb::ScalarFunction{
       duckdb::Identifier{name}, {blob, bigint}, blob, ByteaSubstringFunction});
-    duckdb::ScalarFunction with_length{duckdb::Identifier{name},
-                                       {blob, bigint, bigint},
-                                       blob,
-                                       ByteaSubstringFunction};
+    duckdb::ScalarFunction with_length{
+      duckdb::Identifier{name},
+      {blob, bigint, bigint},
+      blob,
+      ByteaSubstringFunction,
+    };
     with_length.SetFallible();
     loader.RegisterFunction(std::move(with_length));
   }
-  for (auto arguments :
-       {duckdb::vector<duckdb::LogicalType>{blob, blob, bigint},
-        duckdb::vector<duckdb::LogicalType>{blob, blob, bigint, bigint}}) {
+  for (auto arguments : {
+         duckdb::vector<duckdb::LogicalType>{blob, blob, bigint},
+         duckdb::vector<duckdb::LogicalType>{blob, blob, bigint, bigint},
+       }) {
     duckdb::ScalarFunction overlay{"overlay", std::move(arguments), blob,
                                    ByteaOverlayFunction};
     overlay.SetFallible();

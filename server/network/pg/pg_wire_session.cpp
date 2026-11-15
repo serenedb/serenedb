@@ -51,11 +51,11 @@
 #include "catalog/entry/role.h"
 #include "connector/duckdb_pg_binary_copy.h"
 #include "network/pg/bind_decoder.h"
+#include "network/pg/copy_eod_scanner.h"
 #include "network/pg/hba.h"
 #include "network/pg/scram_messages.h"
 #include "network/pg/startup_request.h"
 #include "pg/copy_batch_builder.h"
-#include "pg/copy_eod_scanner.h"
 #include "server/utils/lifecycle.h"
 #include "server/utils/metrics.h"
 
@@ -1409,6 +1409,7 @@ yaclib::Task<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
       }
     }
   };
+  duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>> peel;
   for (size_t i = 0; i != parsed.size(); ++i) {
     // In an aborted transaction block PG rejects every statement except
     // COMMIT/ROLLBACK with 25P02 before parse-analysis. Mirror the extended
@@ -1417,7 +1418,7 @@ yaclib::Task<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
     if (!_txn_state->GuardNotAborted(*parsed[i])) {
       ThrowAbortedTransaction();
     }
-    duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>> peel;
+    peel.clear();
     peel.push_back(std::move(parsed[i]));
     _conn->context->PreprocessStatements(peel, nullptr, /*wrap_multi=*/false);
     if (peel.empty()) {
@@ -1798,7 +1799,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
     }
   };
   constexpr size_t kHeader = 1 + sizeof(uint32_t);
-  sdb::pg::CopyEodScanner scanner;
+  CopyEodScanner scanner;
   sdb::pg::CopyBatchBuilder builder{is_text ? sdb::pg::CopyBatchFormat::Text
                                     : format == CopyFormat::Binary
                                       ? sdb::pg::CopyBatchFormat::Binary

@@ -61,14 +61,6 @@ duckdb::LogicalTypeId ElementType(const duckdb::LogicalType& type) noexcept {
            : type.id();
 }
 
-[[noreturn]] void ThrowFromOwner(std::string_view owner,
-                                 const std::exception& e) {
-  auto error = irs::pg::ToSqlError(e);
-  error.errmsg = absl::StrCat(owner, ": ", error.errmsg);
-  error.cursorpos = -1;
-  THROW_SQL_ERROR_FROM_DATA(std::move(error));
-}
-
 void ValidateParsed(std::string_view owner, duckdb::ParsedExpression& expr) {
   switch (expr.GetExpressionClass()) {
     case duckdb::ExpressionClass::SUBQUERY:
@@ -114,7 +106,7 @@ std::unique_ptr<duckdb::ParsedExpression> ParseInputExpression(
   try {
     exprs = duckdb::Parser::GetBuiltinParser().ParseExpressionList(text);
   } catch (const std::exception& e) {
-    ThrowFromOwner(owner, e);
+    irs::pg::ThrowWithContext(owner, e);
   }
   if (exprs.size() != 1) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
@@ -166,7 +158,7 @@ duckdb::unique_ptr<duckdb::Expression> BindInputExpression(
   try {
     bound = check_binder.Bind(expr);
   } catch (const std::exception& e) {
-    ThrowFromOwner(owner, e);
+    irs::pg::ThrowWithContext(owner, e);
   }
   if (bound->IsVolatile()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_OBJECT_DEFINITION),
@@ -427,7 +419,7 @@ void SqlTokenizer::Bind(duckdb::ClientContext& ctx) {
   try {
     _call = std::make_unique<SqlCall>(ctx, expr);
   } catch (const std::exception& e) {
-    ThrowFromOwner("sql", e);
+    irs::pg::ThrowWithContext("sql", e);
   }
 }
 
@@ -513,7 +505,7 @@ void SqlPredicate::Bind(duckdb::ClientContext& ctx) {
   try {
     _call = std::make_unique<SqlCall>(ctx, expr);
   } catch (const std::exception& e) {
-    ThrowFromOwner(_owner, e);
+    irs::pg::ThrowWithContext(_owner, e);
   }
 }
 

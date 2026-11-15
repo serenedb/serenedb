@@ -1631,7 +1631,7 @@ void SearchTableEntry::BeginSchemaChange(duckdb::ClientContext& context) {
   _storage->ClaimLayout(context, name.GetIdentifierName(),
                         search::TableChange::Schema);
   _schema_epoch = _storage->SchemaEpoch();
-  _storage->DrainPriorWriters(context);
+  _storage->AdvanceVersion(context);
 }
 
 connector::SearchBackfillTarget SearchTableEntry::BackfillTarget(

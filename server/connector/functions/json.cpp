@@ -1332,7 +1332,7 @@ std::string_view WriteJsonObject(simdjson::builder::string_builder& out,
 
 void WriteJsonObjectValue(duckdb::VectorWriter<duckdb::string_t>& writer,
                           std::string_view object) {
-  writer.WriteValue(duckdb::string_t::Checked(object));
+  writer.WriteValue(duckdb::string_t::Safe(object));
 }
 
 void JsonObjectFromPairsFunction(duckdb::DataChunk& args,

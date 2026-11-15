@@ -27,6 +27,19 @@ ends_before_start	null_length
 \\x	NULL
 
 
+onlyif serenedb
+query
+SELECT substring('\x0102'::bytea FROM 2 FOR 9223372036854775807) AS rest;
+----
+rest
+\\x02
+
+
+skipif serenedb
+statement error function .*substring\(bytea, integer, bigint\) does not exist
+SELECT substring('\x0102'::bytea FROM 2 FOR 9223372036854775807) AS rest;
+
+
 query
 SELECT substr('\x0102030405'::bytea, 4) AS rest, substr('\x0102030405'::bytea, 2, 3) AS middle;
 ----

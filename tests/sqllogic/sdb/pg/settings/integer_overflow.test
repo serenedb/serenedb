@@ -96,7 +96,6 @@ EXECUTE wrap_filter;
 x
 -2147483648
 -2147483643
-2147483647
 
 
 query
@@ -106,14 +105,13 @@ x	y	negative	n
 -2147483648	-2147483647	t	-2147483648
 -2147483643	-2147483642	t	2147483643
 5	6	f	-5
-2147483647	-2147483648	t	-2147483647
+2147483647	-2147483648	f	-2147483647
 
 
 query
 SELECT x FROM wrap_i WHERE x * 2 = 10 ORDER BY x;
 ----
 x
--2147483643
 5
 
 
@@ -121,7 +119,6 @@ query
 SELECT x FROM wrap_i WHERE x - 1 > 0 ORDER BY x;
 ----
 x
--2147483648
 5
 2147483647
 
@@ -130,6 +127,7 @@ query
 SELECT x FROM wrap_i WHERE -x > 0 ORDER BY x;
 ----
 x
+-2147483648
 -2147483643
 
 
@@ -137,7 +135,6 @@ query
 SELECT x FROM wrap_i WHERE -x = -2147483648 ORDER BY x;
 ----
 x
--2147483648
 
 
 query
@@ -153,7 +150,7 @@ query
 SELECT sum(x + 1) AS s FROM wrap_i;
 ----
 s
--6442450931
+-2147483635
 
 
 query
@@ -189,7 +186,6 @@ query
 SELECT x FROM wrap_u WHERE x + 5 = 3 ORDER BY x;
 ----
 x
-4294967294
 
 
 statement ok

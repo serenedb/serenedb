@@ -140,7 +140,7 @@ class KeyProbe {
   void ForEach(std::string_view key,
                absl::FunctionRef<bool(const KeyHolder&)> visit) const;
   void ForEachSorted(
-    std::span<const std::string_view> keys,
+    std::span<const std::string_view> keys, std::vector<uint32_t>& rest,
     absl::FunctionRef<void(size_t index, const KeyHolder& holder)> visit) const;
   bool Exists(std::string_view key) const;
 

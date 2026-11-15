@@ -648,16 +648,15 @@ std::string ChangeBody(const Change& change) {
       serializer.WriteProperty(
         102, "dependencies",
         subject.Cast<duckdb::TableCatalogEntry>().dependencies);
-      if (const auto created = CreatedConstraints(change); !created.empty()) {
-        serializer.WriteList(
-          104, "created_constraints", created.size(),
-          [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
-            list.WriteObject([&](duckdb::Serializer& object) {
-              object.WriteProperty(100, "name", created[i].name);
-              object.WriteProperty(101, "oid", created[i].oid);
-            });
+      const auto created = CreatedConstraints(change);
+      serializer.WriteOptionalList(
+        103, "constraints", created.size(),
+        [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
+          list.WriteObject([&](duckdb::Serializer& object) {
+            object.WriteProperty(100, "name", created[i].name);
+            object.WriteProperty(101, "oid", created[i].oid);
           });
-      }
+        });
     }
   }
   serializer.End();
@@ -686,12 +685,12 @@ ChangeContent ReadChangeBody(duckdb::ClientContext& context,
     deserializer.ReadPropertyWithExplicitDefault<duckdb::LogicalDependencyList>(
       102, "dependencies", duckdb::LogicalDependencyList{});
   deserializer.ReadOptionalList(
-    104, "created_constraints",
-    [&](duckdb::Deserializer::List& list, duckdb::idx_t) {
+    103, "constraints", [&](duckdb::Deserializer::List& list, duckdb::idx_t) {
       list.ReadObject([&](duckdb::Deserializer& object) {
-        content.created_constraints.push_back(
-          {.name = object.ReadProperty<std::string>(100, "name"),
-           .oid = object.ReadProperty<duckdb::idx_t>(101, "oid")});
+        content.created_constraints.push_back({
+          .name = object.ReadProperty<std::string>(100, "name"),
+          .oid = object.ReadProperty<duckdb::idx_t>(101, "oid"),
+        });
       });
     });
   deserializer.End();

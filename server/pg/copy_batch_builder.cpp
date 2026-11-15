@@ -47,6 +47,20 @@ bool EndsRow(std::string_view bytes, size_t pos,
   return (run == pos ? run + backslashes_before : run) % 2 == 0;
 }
 
+size_t BlankLines(std::string_view rows) noexcept {
+  size_t blank = 0;
+  for (;;) {
+    const auto rest = rows.substr(blank);
+    if (rest.starts_with('\n')) {
+      blank += 1;
+    } else if (rest.starts_with("\r\n")) {
+      blank += 2;
+    } else {
+      return blank;
+    }
+  }
+}
+
 }  // namespace
 
 size_t TrailingBackslashes(std::string_view bytes) noexcept {
@@ -87,15 +101,49 @@ CopyBatch& CopyBatchBuilder::Current() {
   return *_batch;
 }
 
+std::unique_ptr<CopyBatch> CopyBatchBuilder::Take() {
+  if (_sealed.empty()) {
+    return std::move(_batch);
+  }
+  auto batch = std::move(_sealed.front());
+  _sealed.pop_front();
+  return batch;
+}
+
 void CopyBatchBuilder::AddRows(std::string_view rows, bool stable) {
   if (rows.empty()) {
     return;
   }
-  if (stable) {
-    Current().AddView(rows);
-  } else {
-    Current().AddOwned(std::string{rows});
+  const auto add = [stable](CopyBatch& batch, std::string_view part) {
+    if (stable) {
+      batch.AddView(part);
+    } else {
+      batch.AddOwned(std::string{part});
+    }
+  };
+  if (_join_blank_lines && Full()) {
+    const auto blank = BlankLines(rows);
+    if (blank != 0) {
+      add(*_batch, rows.substr(0, blank));
+      rows.remove_prefix(blank);
+      if (rows.empty()) {
+        return;
+      }
+    }
+    _sealed.push_back(std::move(_batch));
   }
+  add(Current(), rows);
+}
+
+void CopyBatchBuilder::AddRow(std::string row) {
+  if (_join_blank_lines && Full()) {
+    if (BlankLines(row) == row.size()) {
+      _batch->AddOwned(std::move(row));
+      return;
+    }
+    _sealed.push_back(std::move(_batch));
+  }
+  Current().AddOwned(std::move(row));
 }
 
 void CopyBatchBuilder::Feed(std::string_view bytes, bool stable) {
@@ -121,7 +169,7 @@ void CopyBatchBuilder::FeedText(std::string_view bytes, bool stable) {
         return;
       }
       _partial.append(bytes.data(), end + 1);
-      Current().AddOwned(std::exchange(_partial, {}));
+      AddRow(std::exchange(_partial, {}));
       bytes.remove_prefix(end + 1);
       continue;
     }
@@ -305,7 +353,7 @@ void CopyBatchBuilder::Finish() {
     return;
   }
   if (!_partial.empty()) {
-    Current().AddOwned(std::exchange(_partial, {}));
+    AddRow(std::exchange(_partial, {}));
   }
 }
 

@@ -650,7 +650,7 @@ c_uint8
 1
 
 # BLOB IN list matches both rows.
-query ?
+query
 SELECT c_uint8 FROM chexp.chtest.types_all WHERE c_fixedstr IN ('abcd'::BLOB, 'wxyz'::BLOB) ORDER BY c_uint8;
 ----
 c_uint8

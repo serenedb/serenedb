@@ -51,6 +51,27 @@
 namespace irs {
 namespace {
 
+void ZeroNullArrays(duckdb::Vector& arrays, duckdb::idx_t from,
+                    duckdb::idx_t count) {
+  const auto& validity = duckdb::FlatVector::Validity(arrays);
+  if (validity.CannotHaveNull()) {
+    return;
+  }
+  auto& child = duckdb::ArrayVector::GetChildMutable(arrays);
+  const auto child_type = child.GetType().InternalType();
+  if (!duckdb::TypeIsConstantSize(child_type)) {
+    return;
+  }
+  const auto bytes = duckdb::ArrayType::GetSize(arrays.GetType()) *
+                     duckdb::GetTypeIdSize(child_type);
+  auto* data = duckdb::FlatVector::GetDataMutable(child);
+  for (auto row = from; row != from + count; ++row) {
+    if (!validity.RowIsValid(row)) {
+      std::memset(data + row * bytes, 0, bytes);
+    }
+  }
+}
+
 void CaptureSegment(duckdb::ColumnSegment& segment, duckdb::idx_t segment_size,
                     const uint8_t* bytes, IndexOutput& out,
                     std::vector<ColumnBlockMeta>& sink) {
@@ -654,6 +675,9 @@ void ColumnWriter::AppendDense(const duckdb::Vector& vec, duckdb::idx_t count) {
     duckdb::ImmutableStrings::Copy(vec, back.data, off + take,
                                    /*source_offset=*/off,
                                    /*target_offset=*/back.count);
+    if (_type.id() == duckdb::LogicalTypeId::ARRAY) {
+      ZeroNullArrays(back.data, back.count, take);
+    }
     back.count += take;
     duckdb::FlatVector::SetSize(back.data, back.count);
     _staged_rows += take;

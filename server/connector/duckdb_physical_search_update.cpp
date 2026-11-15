@@ -78,6 +78,7 @@ struct SearchUpdateGlobalState final : duckdb::GlobalSinkState {
 struct SearchUpdateLocalState final : duckdb::LocalSinkState {
   SearchSinkRows rows;
   irs::DocRemovalBuilder positions;
+  search::UnitRows unit_rows;
   std::vector<search::UnitPatch> patches;
   duckdb::idx_t update_count = 0;
   std::optional<duckdb::ColumnDataCollection> returned;
@@ -256,14 +257,14 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
       context.client, *gstate.table.store);
     const auto positions =
       chunk.data[gstate.rowid.input_col_idx].Values<int64_t>();
-    std::vector<std::pair<uint64_t, duckdb::sel_t>> order;
-    order.reserve(num_rows);
+    auto& order = lstate.unit_rows.order;
+    order.clear();
     for (duckdb::idx_t i = 0; i < num_rows; ++i) {
       order.emplace_back(static_cast<uint64_t>(positions.GetValueUnsafe(i)),
                          static_cast<duckdb::sel_t>(i));
     }
     absl::c_sort(order);
-    search::ForEachUnitRows(reader, order,
+    search::ForEachUnitRows(reader, lstate.unit_rows,
                             [&](uint64_t unit, std::span<const uint64_t> rows,
                                 const duckdb::SelectionVector& sel) {
                               for (const auto& column : gstate.patched) {

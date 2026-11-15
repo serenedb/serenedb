@@ -22,6 +22,7 @@
 
 #include <absl/strings/match.h>
 #include <absl/strings/numbers.h>
+#include <absl/strings/str_cat.h>
 
 #include <duckdb/common/exception.hpp>
 #include <string_view>
@@ -230,16 +231,22 @@ SqlErrorData DuckErrorToSqlData(const duckdb::ErrorData& error) {
     const std::string_view subtype =
       subtype_it != extra.end() ? subtype_it->second : std::string_view{};
     if (subtype == "CROSS_DATABASE_WRITE") {
-      return SqlErrorData{.errcode = ERRCODE_FEATURE_NOT_SUPPORTED,
-                          .errmsg = error.RawMessage()};
+      return SqlErrorData{
+        .errcode = ERRCODE_FEATURE_NOT_SUPPORTED,
+        .errmsg = error.RawMessage(),
+      };
     }
     if (subtype == "READ_ONLY") {
-      return SqlErrorData{.errcode = ERRCODE_READ_ONLY_SQL_TRANSACTION,
-                          .errmsg = error.RawMessage()};
+      return SqlErrorData{
+        .errcode = ERRCODE_READ_ONLY_SQL_TRANSACTION,
+        .errmsg = error.RawMessage(),
+      };
     }
     if (subtype == "TRANSACTION_LOCAL_CHANGES") {
-      return SqlErrorData{.errcode = ERRCODE_ACTIVE_SQL_TRANSACTION,
-                          .errmsg = error.RawMessage()};
+      return SqlErrorData{
+        .errcode = ERRCODE_ACTIVE_SQL_TRANSACTION,
+        .errmsg = error.RawMessage(),
+      };
     }
   }
   // An interrupted query is DuckDB "Interrupted!"; report postgres's wording.
@@ -281,8 +288,10 @@ SqlErrorData ToSqlError(const std::exception& exception) {
   if (const auto* duck = dynamic_cast<const duckdb::Exception*>(&exception)) {
     return DuckErrorToSqlData(duckdb::ErrorData{*duck});
   }
-  return SqlErrorData{.errcode = ERRCODE_INTERNAL_ERROR,
-                      .errmsg = exception.what()};
+  return SqlErrorData{
+    .errcode = ERRCODE_INTERNAL_ERROR,
+    .errmsg = exception.what(),
+  };
 }
 
 SqlErrorData ToSqlError(const duckdb::ErrorData& error) {
@@ -293,6 +302,14 @@ SqlErrorData ToSqlError(const duckdb::ErrorData& error) {
   } catch (...) {
   }
   return DuckErrorToSqlData(error);
+}
+
+void ThrowWithContext(std::string_view context, const std::exception& exception,
+                      std::source_location location) {
+  auto error = ToSqlError(exception);
+  error.errmsg = absl::StrCat(context, ": ", error.errmsg);
+  error.cursorpos = -1;
+  throw irs::SqlException{std::move(error), location};
 }
 
 }  // namespace irs::pg

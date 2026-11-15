@@ -22,6 +22,8 @@
 
 #include <absl/algorithm/container.h>
 
+#include <bitset>
+#include <duckdb/common/vector_size.hpp>
 #include <duckdb/parser/constraints/foreign_key_constraint.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <iresearch/index/docs_mask/docs_mask.hpp>
@@ -408,15 +410,13 @@ void KeyProbe::ForEach(std::string_view key,
 }
 
 void KeyProbe::ForEachSorted(
-  std::span<const std::string_view> keys,
+  std::span<const std::string_view> keys, std::vector<uint32_t>& rest,
   absl::FunctionRef<void(size_t index, const KeyHolder& holder)> visit) const {
-  std::vector<uint32_t> rest(keys.size());
+  SDB_ASSERT(keys.size() <= STANDARD_VECTOR_SIZE);
+  SDB_ASSERT(_hots.empty());
+  rest.resize(keys.size());
   std::iota(rest.begin(), rest.end(), 0);
-  std::vector<bool> found(keys.size());
-  const auto hold = [&](uint32_t index, const KeyHolder& holder) {
-    found[index] = true;
-    visit(index, holder);
-  };
+  std::bitset<STANDARD_VECTOR_SIZE> found;
   for (const auto& source : _segments) {
     if (rest.empty()) {
       return;
@@ -428,26 +428,12 @@ void KeyProbe::ForEachSorted(
           if (source.masks.Contains(doc)) {
             return true;
           }
-          hold(rest[i], {.unit = source.unit, .doc = doc});
+          found[rest[i]] = true;
+          visit(rest[i], {.unit = source.unit, .doc = doc});
           return false;
         });
       });
     std::erase_if(rest, [&](uint32_t index) { return found[index]; });
-  }
-  for (const auto& hot : _hots) {
-    for (const auto index : rest) {
-      if (found[index]) {
-        continue;
-      }
-      hot.keys->ForEach(_field, keys[index], [&](irs::doc_id_t doc) {
-        const auto row = doc - irs::doc_limits::min();
-        if (row >= hot.docs || (hot.removed && hot.removed->Contains(doc))) {
-          return true;
-        }
-        hold(index, {.unit = hot.unit, .doc = doc});
-        return false;
-      });
-    }
   }
 }
 

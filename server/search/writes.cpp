@@ -21,6 +21,8 @@
 #include "search/writes.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
+#include <absl/container/inlined_vector.h>
 #include <absl/functional/any_invocable.h>
 #include <absl/hash/hash.h>
 
@@ -52,8 +54,6 @@
 
 namespace sdb::search {
 namespace {
-
-void ReleaseWriter(StoreWrites& w) noexcept { w.registration.reset(); }
 
 [[noreturn]] void ThrowDuplicate(duckdb::ClientContext& context,
                                  const KeySpec& spec, std::string_view key) {
@@ -135,7 +135,7 @@ void ForEachRowKey(duckdb::ClientContext& context, duckdb::idx_t table_id,
   if (!columns || docs.Empty()) {
     return;
   }
-  const connector::ConstraintKeyEncoder encoder{
+  connector::ConstraintKeyEncoder encoder{
     context,
     table_id,
     {.field = spec.key.field,
@@ -177,9 +177,7 @@ void ForEachRowKey(duckdb::ClientContext& context, duckdb::idx_t table_id,
       window, std::min<uint64_t>(STANDARD_VECTOR_SIZE, docs_count - window),
       chunk, &rows, count);
     chunk.SetCardinality(scanned);
-    duckdb::Vector keys{duckdb::LogicalType::BLOB, scanned};
-    encoder.Encode(chunk, column_ids, keys);
-    auto values = keys.Values<duckdb::string_t>();
+    auto values = encoder.Encode(chunk, column_ids).Values<duckdb::string_t>();
     for (duckdb::idx_t row = 0; row != scanned; ++row) {
       if (const auto entry = values[row]; entry.IsValid()) {
         const auto& value = entry.GetValue();
@@ -208,12 +206,10 @@ void ForEachRowKey(duckdb::ClientContext& context, duckdb::idx_t table_id,
 // the document each row is: `first` for the first row.
 void ForEachChunkKey(
   duckdb::DataChunk& chunk, std::span<const connector::ColumnId> column_ids,
-  const connector::ConstraintKeyEncoder& key, irs::doc_id_t first,
+  connector::ConstraintKeyEncoder& key, irs::doc_id_t first,
   absl::FunctionRef<void(std::string_view key, irs::doc_id_t doc)> visit) {
   const auto count = chunk.size();
-  duckdb::Vector keys{duckdb::LogicalType::BLOB, count};
-  key.Encode(chunk, column_ids, keys);
-  auto values = keys.Values<duckdb::string_t>();
+  auto values = key.Encode(chunk, column_ids).Values<duckdb::string_t>();
   for (duckdb::idx_t row = 0; row != count; ++row) {
     const auto entry = values[row];
     if (!entry.IsValid()) {
@@ -242,7 +238,7 @@ struct ArbitratedProbe {
   const ProposedKeys& proposed;
 
   bool Exists(std::string_view key) const {
-    return (proposed.contains(MakeHashedKey(key)) ? unseen : existing)
+    return (proposed.Contains(MakeHashedKey(key)) ? unseen : existing)
       .Exists(key);
   }
 };
@@ -445,15 +441,15 @@ void FlushRows(duckdb::ClientContext& context, StoreWrites& w) {
   const auto mask = TakeRowRemovals(changes.removals, rows_id);
   auto trx =
     std::make_unique<irs::IndexWriter::Transaction>(store.GetTransaction());
-  if (!w.flushed_layout) {
-    w.flushed_layout = store.LayoutVersion();
-  }
   {
-    const auto sink = connector::MakeSearchTableInsertSink(
+    const auto made = connector::MakeSearchTableInsertSink(
       *trx, store, *changes.catalog, context);
+    if (!w.version) {
+      w.version = made.version;
+    }
     ForEachLiveChunk(
       *changes.collection, mask.get(), [&](duckdb::DataChunk& chunk) {
-        connector::WriteChunkToSearchSink(*sink, chunk, changes.column_ids,
+        connector::WriteChunkToSearchSink(*made.sink, chunk, changes.column_ids,
                                           store.GetId(), context);
       });
   }
@@ -479,19 +475,19 @@ void FlushRows(duckdb::ClientContext& context, StoreWrites& w) {
 
 }  // namespace
 
-void Writes::FollowLayout(const Store& store, uint64_t before) {
+void Writes::FollowVersion(const Store& store, uint64_t before) {
   auto* w = FindStoreWrites(store.GetId());
   if (!w) {
     return;
   }
   absl::MutexLock lock{&w->mutex};
-  if (!w->flushed_layout) {
+  if (!w->version) {
     return;
   }
-  if (*w->flushed_layout != before) {
+  if (*w->version != before) {
     ThrowConcurrentUpdate();
   }
-  w->flushed_layout = before + 1;
+  w->version = before + 1;
 }
 
 StoreWrites& Writes::EnsureStoreWrites(const std::shared_ptr<Store>& store) {
@@ -568,12 +564,12 @@ void Writes::RegisterWriter(const std::shared_ptr<Store>& store,
 void Writes::AddOwnSegments(
   const std::shared_ptr<Store>& store,
   std::unique_ptr<irs::IndexWriter::Transaction> trx,
-  std::span<const irs::IndexWriter::FlushedSegment> flushed, uint64_t layout) {
+  std::span<const irs::IndexWriter::FlushedSegment> flushed, uint64_t version) {
   auto segments = store->OpenFlushed(flushed);
   auto& w = EnsureStoreWrites(store);
   absl::MutexLock lock{&w.mutex};
-  if (!w.flushed_layout || layout < *w.flushed_layout) {
-    w.flushed_layout = layout;
+  if (!w.version || version < *w.version) {
+    w.version = version;
   }
   for (auto& segment : segments) {
     w.own_segments.push_back(std::move(segment));
@@ -621,15 +617,15 @@ void Writes::RewriteOwn(
     const auto read = store->Read(OwnOf(w));
     auto trx =
       std::make_unique<irs::IndexWriter::Transaction>(store->GetTransaction());
-    w.flushed_layout = store->LayoutVersion();
     {
-      const auto sink =
+      const auto made =
         connector::MakeSearchTableInsertSink(*trx, *store, catalog, context);
+      w.version = made.version;
       for (const auto& sub : read.Reader()) {
         if (absl::c_linear_search(
               own,
               irs::utils::downCast<irs::SegmentReader>(sub).GetImpl()->Id())) {
-          feed(sub, *sink);
+          feed(sub, *made.sink);
         }
       }
     }
@@ -1087,8 +1083,6 @@ std::vector<duckdb::string_t> OwnKeys(const StoreWrites& w, irs::field_id field,
     keys.push_back(heap.AddBlob(key.data(), key.size()));
     return true;
   });
-  absl::c_sort(keys);
-  keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
   return keys;
 }
 
@@ -1256,11 +1250,12 @@ void Writes::CheckKeys(duckdb::ClientContext& context, const Store& store,
         probe.Add(OwnSegmentSource(w.own_segments[i], live));
       }
       if (w.keyed_rows != 0) {
-        probe.Add(
-          KeyProbe::Hot{.unit = rows_id,
-                        .keys = &w.buffered_keys,
-                        .docs = static_cast<irs::doc_id_t>(w.keyed_rows),
-                        .removed = live.Removed(rows_id)});
+        probe.Add(KeyProbe::Hot{
+          .unit = rows_id,
+          .keys = &w.buffered_keys,
+          .docs = static_cast<irs::doc_id_t>(w.keyed_rows),
+          .removed = live.Removed(rows_id),
+        });
       }
     };
     KeyProbe existing{key_spec.key.field};
@@ -1274,10 +1269,12 @@ void Writes::CheckKeys(duckdb::ClientContext& context, const Store& store,
       unseen.AddLive(live,
                      [&](uint64_t unit) { return arbiter->Probed(unit); });
       add_own(unseen);
-      duplicate = FindDuplicate(
-        context, key_spec, segments, keys,
-        ArbitratedProbe{
-          .existing = existing, .unseen = unseen, .proposed = *proposed});
+      duplicate = FindDuplicate(context, key_spec, segments, keys,
+                                ArbitratedProbe{
+                                  .existing = existing,
+                                  .unseen = unseen,
+                                  .proposed = *proposed,
+                                });
     } else {
       duplicate = FindDuplicate(context, key_spec, segments, keys, existing);
     }
@@ -1302,21 +1299,15 @@ void Writes::CheckKeys(duckdb::ClientContext& context, const Store& store,
     return;
   }
   bool deferred = !w.removed_keys.empty();
+  if (w.statement_references.size() < w.keys.size()) {
+    w.statement_references.resize(w.keys.size());
+  }
   for (size_t spec = 0; spec != w.keys.size(); ++spec) {
     const auto& key_spec = w.keys[spec];
     if (key_spec.kind != KeyKind::Reference) {
       continue;
     }
-    auto it =
-      absl::c_find_if(w.statement_references,
-                      [&](const StoreWrites::StatementReferences& references) {
-                        return references.spec == spec;
-                      });
-    if (it == w.statement_references.end()) {
-      it = w.statement_references.insert(
-        it, StoreWrites::StatementReferences{.spec = spec});
-    }
-    auto& keys = it->keys;
+    auto& keys = w.statement_references[spec];
     absl::c_copy(fresh[spec], std::back_inserter(keys));
     ForEachSegmentKey(
       segments, key_spec.key.field, [&](std::string_view key, size_t) {
@@ -1343,14 +1334,14 @@ void Writes::CheckStatement(duckdb::ClientContext& context) {
       continue;
     }
     const LockedWrites locked{_writes, w};
-    for (auto& references : w.statement_references) {
-      auto& keys = references.keys;
+    for (size_t spec = 0; spec != w.statement_references.size(); ++spec) {
+      auto& keys = w.statement_references[spec];
       if (keys.empty()) {
         continue;
       }
       absl::c_sort(keys);
       keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
-      CheckReferences(context, w, w.keys[references.spec], keys);
+      CheckReferences(context, w, w.keys[spec], keys);
       keys.clear();
     }
     w.statement_heap.Destroy();
@@ -1371,7 +1362,7 @@ ConflictArbiter::ConflictArbiter(duckdb::ClientContext& context,
                                  const StoreWrites& w,
                                  const irs::DirectoryReader& reader,
                                  std::span<const irs::field_id> fields)
-  : _w{w} {
+  : _context{context}, _w{w} {
   _arbiters.reserve(fields.size());
   for (const auto& spec : w.keys) {
     if (spec.kind != KeyKind::Unique ||
@@ -1380,9 +1371,10 @@ ConflictArbiter::ConflictArbiter(duckdb::ClientContext& context,
     }
     auto& arbiter = _arbiters.emplace_back(Arbiter{
       .field = spec.key.field,
-      .encoder =
-        connector::ConstraintKeyEncoder{context, w.store->GetId(), spec.key},
-      .held = KeyProbe{spec.key.field}});
+      .key = spec.key,
+      .held = KeyProbe{spec.key.field},
+      .proposed = std::make_unique<ProposedKeys>(),
+    });
     for (uint32_t i = 0; i < reader.size(); ++i) {
       arbiter.held.Add({.unit = i, .sub = &reader[i]});
     }
@@ -1398,10 +1390,12 @@ ConflictArbiter::ConflictArbiter(duckdb::ClientContext& context,
   for (uint32_t i = 0; i < reader.size(); ++i) {
     if (irs::utils::downCast<irs::SegmentReader>(reader[i]).GetImpl()->Id() ==
         rows_id) {
-      _own.emplace(OwnRows{.index = i,
-                           .docs = static_cast<irs::doc_id_t>(w.keyed_rows),
-                           .removed = reader[i].docs_mask(),
-                           .generation = w.keyed_generation});
+      _own.emplace(OwnRows{
+        .index = i,
+        .docs = static_cast<irs::doc_id_t>(w.keyed_rows),
+        .removed = reader[i].docs_mask(),
+        .generation = w.keyed_generation,
+      });
       return;
     }
   }
@@ -1410,37 +1404,38 @@ ConflictArbiter::ConflictArbiter(duckdb::ClientContext& context,
 const ProposedKeys* ConflictArbiter::Proposed(irs::field_id field) const {
   const auto it = absl::c_find_if(
     _arbiters, [&](const Arbiter& arbiter) { return arbiter.field == field; });
-  return it == _arbiters.end() ? nullptr : &it->proposed;
+  return it == _arbiters.end() ? nullptr : it->proposed.get();
 }
 
-ConflictArbiter::RowKeys ConflictArbiter::Encode(
-  duckdb::DataChunk& chunk,
-  std::span<const connector::ColumnId> column_ids) const {
+void ConflictArbiter::Encode(duckdb::DataChunk& chunk,
+                             std::span<const connector::ColumnId> column_ids,
+                             Scratch& scratch) const {
   const auto count = chunk.size();
   const auto width = _arbiters.size();
-  RowKeys result;
-  result.encoded.reserve(width);
-  result.keys.resize(count * width);
-  result.hashes.resize(count * width);
+  if (scratch.encoders.empty()) {
+    scratch.encoders.reserve(width);
+    for (const auto& arbiter : _arbiters) {
+      scratch.encoders.emplace_back(_context, _w.store->GetId(), arbiter.key);
+    }
+  }
+  scratch.keys.assign(count * width, {});
+  scratch.hashes.resize(count * width);
   for (size_t a = 0; a != width; ++a) {
-    auto& encoded =
-      result.encoded.emplace_back(duckdb::LogicalType::BLOB, count);
-    _arbiters[a].encoder.Encode(chunk, column_ids, encoded);
-    const auto values = encoded.Values<duckdb::string_t>();
+    const auto values =
+      scratch.encoders[a].Encode(chunk, column_ids).Values<duckdb::string_t>();
     for (duckdb::idx_t row = 0; row != count; ++row) {
       if (const auto entry = values[row]; entry.IsValid()) {
         const auto& value = entry.GetValue();
         const std::string_view key{value.GetData(), value.GetSize()};
-        result.keys[row * width + a] = key;
-        result.hashes[row * width + a] = absl::HashOf(key);
+        scratch.keys[row * width + a] = key;
+        scratch.hashes[row * width + a] = absl::HashOf(key);
       }
     }
   }
-  return result;
 }
 
 void ConflictArbiter::ForEachHolder(
-  const RowKeys& keys, duckdb::idx_t count,
+  Scratch& scratch, duckdb::idx_t count,
   absl::FunctionRef<void(duckdb::idx_t row, const KeyHolder& holder)> visit)
   const {
   std::optional<absl::ReaderMutexLock> lock;
@@ -1451,15 +1446,13 @@ void ConflictArbiter::ForEachHolder(
   }
   const auto width = _arbiters.size();
   std::bitset<STANDARD_VECTOR_SIZE> found;
-  std::vector<std::pair<std::string_view, duckdb::idx_t>> rows;
-  std::vector<std::string_view> sorted;
-  rows.reserve(count);
-  sorted.reserve(count);
+  auto& rows = scratch.rows;
+  auto& sorted = scratch.sorted;
   for (size_t a = 0; a != width; ++a) {
     const auto& arbiter = _arbiters[a];
     rows.clear();
     for (duckdb::idx_t row = 0; row != count; ++row) {
-      if (const auto key = keys.keys[row * width + a];
+      if (const auto key = scratch.keys[row * width + a];
           !found[row] && key.data()) {
         rows.emplace_back(key, row);
       }
@@ -1469,12 +1462,13 @@ void ConflictArbiter::ForEachHolder(
     for (const auto& [key, row] : rows) {
       sorted.push_back(key);
     }
-    arbiter.held.ForEachSorted(sorted, [&](size_t i, const KeyHolder& holder) {
-      if (const auto row = rows[i].second; !found[row]) {
-        found.set(row);
-        visit(row, holder);
-      }
-    });
+    arbiter.held.ForEachSorted(
+      sorted, scratch.rest, [&](size_t i, const KeyHolder& holder) {
+        if (const auto row = rows[i].second; !found[row]) {
+          found.set(row);
+          visit(row, holder);
+        }
+      });
     if (!own) {
       continue;
     }
@@ -1495,66 +1489,106 @@ void ConflictArbiter::ForEachHolder(
   }
 }
 
+bool ProposedKeys::Shard::Insert(std::string_view key, size_t hash) {
+  const auto [it, inserted] = keys.insert({
+    .key = {key.data(), static_cast<uint32_t>(key.size())},
+    .hash = hash,
+  });
+  if (inserted) {
+    absl::Cleanup erase = [&] ABSL_NO_THREAD_SAFETY_ANALYSIS {
+      keys.erase(it);
+    };
+    it->key = heap.AddBlob(key.data(), key.size());
+    std::move(erase).Cancel();
+  }
+  return inserted;
+}
+
+bool ProposedKeys::Contains(const HashedKey& key) const {
+  const auto& shard = _shards[ShardIndex(key.hash)];
+  absl::ReaderMutexLock lock{&shard.mutex};
+  return shard.keys.contains(key);
+}
+
+bool ConflictArbiter::Propose(const Scratch& scratch, duckdb::idx_t row) {
+  const auto width = _arbiters.size();
+  absl::InlinedVector<ProposedKeys::Shard*, 4> shards;
+  for (size_t a = 0; a != width; ++a) {
+    if (const auto at = row * width + a; scratch.keys[at].data()) {
+      shards.push_back(&_arbiters[a].proposed->Of(scratch.hashes[at]));
+    }
+  }
+  absl::c_sort(shards);
+  shards.erase(std::ranges::unique(shards).begin(), shards.end());
+  for (auto* shard : shards) {
+    shard->mutex.lock();
+  }
+  absl::Cleanup unlock = [&] ABSL_NO_THREAD_SAFETY_ANALYSIS {
+    for (auto* shard : shards) {
+      shard->mutex.unlock();
+    }
+  };
+  for (size_t a = 0; a != width; ++a) {
+    const auto at = row * width + a;
+    const auto key = scratch.keys[at];
+    if (key.data() &&
+        _arbiters[a]
+          .proposed->Of(scratch.hashes[at])
+          .keys.contains(HashedKey{
+            .key = {key.data(), static_cast<uint32_t>(key.size())},
+            .hash = scratch.hashes[at],
+          })) {
+      return false;
+    }
+  }
+  for (size_t a = 0; a != width; ++a) {
+    if (const auto at = row * width + a; scratch.keys[at].data()) {
+      _arbiters[a]
+        .proposed->Of(scratch.hashes[at])
+        .Insert(scratch.keys[at], scratch.hashes[at]);
+    }
+  }
+  return true;
+}
+
 duckdb::idx_t ConflictArbiter::Admit(
   duckdb::DataChunk& chunk, std::span<const connector::ColumnId> column_ids,
-  duckdb::SelectionVector& kept) {
+  duckdb::SelectionVector& kept, Scratch& scratch) {
   const auto count = chunk.size();
-  const auto keys = Encode(chunk, column_ids);
+  Encode(chunk, column_ids, scratch);
   std::bitset<STANDARD_VECTOR_SIZE> held;
-  ForEachHolder(keys, count,
+  ForEachHolder(scratch, count,
                 [&](duckdb::idx_t row, const KeyHolder&) { held.set(row); });
-  const auto width = _arbiters.size();
-  const auto view = [&](size_t at) {
-    return HashedKey{.key = {keys.keys[at].data(),
-                             static_cast<uint32_t>(keys.keys[at].size())},
-                     .hash = keys.hashes[at]};
-  };
   duckdb::idx_t admitted = 0;
-  absl::MutexLock lock{&_mutex};
   for (duckdb::idx_t row = 0; row != count; ++row) {
-    if (held[row]) {
-      continue;
+    if (!held[row] && Propose(scratch, row)) {
+      kept.set_index(admitted++, row);
     }
-    bool proposed = false;
-    for (size_t a = 0; a != width && !proposed; ++a) {
-      const auto at = row * width + a;
-      proposed =
-        keys.keys[at].data() && _arbiters[a].proposed.contains(view(at));
-    }
-    if (proposed) {
-      continue;
-    }
-    for (size_t a = 0; a != width; ++a) {
-      if (const auto at = row * width + a; keys.keys[at].data()) {
-        _arbiters[a].proposed.insert(
-          {.key = _keys.AddBlob(keys.keys[at].data(), keys.keys[at].size()),
-           .hash = keys.hashes[at]});
-      }
-    }
-    kept.set_index(admitted++, row);
   }
   return admitted;
 }
 
 void ConflictArbiter::Replace(
   duckdb::DataChunk& chunk, std::span<const connector::ColumnId> column_ids,
-  absl::FunctionRef<void(duckdb::idx_t row, const KeyHolder& holder)>
-    replaced) {
+  absl::FunctionRef<void(duckdb::idx_t row, const KeyHolder& holder)> replaced,
+  Scratch& scratch) {
   const auto count = chunk.size();
-  const auto keys = Encode(chunk, column_ids);
-  std::vector<std::pair<duckdb::idx_t, KeyHolder>> holders;
-  ForEachHolder(keys, count, [&](duckdb::idx_t row, const KeyHolder& holder) {
-    holders.emplace_back(row, holder);
-  });
+  Encode(chunk, column_ids, scratch);
+  auto& holders = scratch.holders;
+  holders.clear();
+  ForEachHolder(scratch, count,
+                [&](duckdb::idx_t row, const KeyHolder& holder) {
+                  holders.emplace_back(row, holder);
+                });
   const auto width = _arbiters.size();
-  absl::MutexLock lock{&_mutex};
-  for (size_t i = 0; i != keys.keys.size(); ++i) {
-    if (const auto key = keys.keys[i];
-        key.data() && !_arbiters[i % width]
-                         .proposed
-                         .insert({.key = _keys.AddBlob(key.data(), key.size()),
-                                  .hash = keys.hashes[i]})
-                         .second) {
+  for (size_t i = 0; i != scratch.keys.size(); ++i) {
+    const auto key = scratch.keys[i];
+    if (!key.data()) {
+      continue;
+    }
+    auto& shard = _arbiters[i % width].proposed->Of(scratch.hashes[i]);
+    absl::MutexLock lock{&shard.mutex};
+    if (!shard.Insert(key, scratch.hashes[i])) {
       ThrowProposedTwice();
     }
   }
@@ -1758,15 +1792,6 @@ void Writes::PrepareCommit(duckdb::ClientContext& context) {
         (changes.Empty() && w.own_segments.empty() && !w.manifest)) {
       continue;
     }
-    w.registration = w.store->RegisterWriter();
-    if (w.table && (changes.HasBufferedRows() || !changes.patches.empty() ||
-                    !w.own_segments.empty())) {
-      w.table->RequireCurrentSchema();
-    }
-    if (!w.own_segments.empty() &&
-        w.flushed_layout != w.store->LayoutVersion()) {
-      ThrowConcurrentUpdate();
-    }
     if (changes.HasBufferedRows() || !changes.removals.empty()) {
       SDB_IF_FAILURE("search_feed_pending_fails") {
         THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
@@ -1790,12 +1815,15 @@ void Writes::PrepareCommit(duckdb::ClientContext& context) {
         w.rows.columns = changes.column_ids;
       }
       {
-        const auto sink = connector::MakeSearchTableInsertSink(
+        const auto made = connector::MakeSearchTableInsertSink(
           piece.trx, *w.store, *changes.catalog, context);
+        if (!w.version) {
+          w.version = made.version;
+        }
         ForEachLiveChunk(
           *changes.collection, removed.get(), [&](duckdb::DataChunk& chunk) {
-            connector::WriteChunkToSearchSink(*sink, chunk, changes.column_ids,
-                                              w.store->GetId(), context);
+            connector::WriteChunkToSearchSink(
+              *made.sink, chunk, changes.column_ids, w.store->GetId(), context);
             if (logged) {
               w.rows.chunks.push_back(LogChunk(chunk));
             }
@@ -1837,6 +1865,14 @@ std::vector<LogSection> Writes::TakeLog(duckdb::ClientContext& context) {
                 w.owner->name.GetIdentifierName(), " but another transaction ",
                 w.store->Dropped() ? "dropped" : "is dropping", " it"));
     }
+    if (w.table &&
+        (w.piece || !w.changes.patches.empty() || !w.own_segments.empty())) {
+      w.table->RequireCurrentSchema();
+    }
+    if (w.version && *w.version != w.store->Version()) {
+      ThrowConcurrentUpdate();
+    }
+    SDB_PARK_ONCE_ON_FAILURE("search_commit_validated");
     auto& table = w.store->GetTable();
     CheckChanged(w, w.changed);
     for (auto& removal : w.changes.removals) {
@@ -1920,7 +1956,6 @@ void Writes::Apply(Tick tick,
   }
   for (auto& [store_id, w] : _writes) {
     if (!w.owner) {
-      ReleaseWriter(w);
       continue;
     }
     if (w.prepared) {
@@ -1971,7 +2006,6 @@ void Writes::Finish() noexcept {
       }
       w.store->PiecesAdded();
     }
-    ReleaseWriter(w);
   }
 }
 
@@ -1979,7 +2013,6 @@ void Writes::Abort() noexcept {
   for (auto& [store_id, w] : _writes) {
     w.piece.reset();
     w.transactions.clear();
-    ReleaseWriter(w);
   }
   _listed.store(nullptr, std::memory_order_relaxed);
   _writes.clear();

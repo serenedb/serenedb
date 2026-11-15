@@ -24,10 +24,9 @@
 #include <string>
 #include <string_view>
 
-namespace sdb::pg {
+namespace sdb::network::pg {
 
-// End-of-data scanner for COPY FROM in TEXT format, over STDIN and over a file
-// read in order. PostgreSQL treats a
+// End-of-data scanner for COPY FROM STDIN in TEXT format. PostgreSQL treats a
 // line consisting of exactly "\." as the end-of-data marker and discards
 // everything after it. The COPY body is streamed to us in arbitrary chunks (a
 // recv-buffer slice; a marker can straddle a chunk OR a CopyData-frame
@@ -43,12 +42,11 @@ class CopyEodScanner {
   // The publishable output of one Scan(): `carry` (held-over bytes from a
   // previous chunk that turned out to be data) must be published BEFORE `data`
   // (a borrowed prefix of the chunk just passed in). Both views stay valid
-  // until the next Scan()/Finish() call. `rest` is what followed the marker in
-  // the chunk that ended the data.
+  // until the next Scan()/Finish() call. `ended` means the marker was consumed.
   struct Result {
     std::string_view carry;
     std::string_view data;
-    std::string_view rest;
+    bool ended = false;
   };
 
   // Feed one streamed chunk of COPY body bytes.
@@ -65,7 +63,6 @@ class CopyEodScanner {
       if (_pending == "\\.\n" || _pending == "\\.\r\n") {
         _ended = true;
         _pending.clear();
-        r.rest = chunk.substr(1);
         return r;  // marker (and its prefix bytes) discarded
       }
       if (IsMarkerPrefix(_pending)) {
@@ -85,7 +82,7 @@ class CopyEodScanner {
       // Chunk exhausted while the prefix is still ambiguous; hold and wait.
       return r;
     }
-    r.data = ScanChunk(chunk, r.rest);
+    r.data = ScanChunk(chunk);
     return r;
   }
 
@@ -112,7 +109,7 @@ class CopyEodScanner {
   // Scan a chunk (no pending prefix) for the marker, returning the leading data
   // bytes to publish. A marker ends the data; a trailing ambiguous prefix at a
   // line start is moved into _pending for the next chunk.
-  std::string_view ScanChunk(std::string_view chunk, std::string_view& rest) {
+  std::string_view ScanChunk(std::string_view chunk) {
     size_t pos = 0;
     while (pos < chunk.size()) {
       // Marker candidates start only at a line start with a backslash.
@@ -120,7 +117,6 @@ class CopyEodScanner {
         const auto verdict = ClassifyAt(chunk.substr(pos));
         if (verdict.marker) {
           _ended = true;
-          rest = chunk.substr(pos + verdict.marker);
           return chunk.substr(0, pos);  // publish up to the marker
         }
         if (verdict.partial) {
@@ -143,7 +139,7 @@ class CopyEodScanner {
   }
 
   struct Verdict {
-    size_t marker = 0;
+    bool marker = false;
     bool partial = false;
   };
 
@@ -160,14 +156,14 @@ class CopyEodScanner {
       return {.partial = true};  // "\." -- need terminator
     }
     if (s[2] == '\n') {
-      return {.marker = 3};  // "\.\n"
+      return {.marker = true};  // "\.\n"
     }
     if (s[2] == '\r') {
       if (s.size() == 3) {
         return {.partial = true};  // "\.\r" -- need '\n'
       }
       if (s[3] == '\n') {
-        return {.marker = 4};  // "\.\r\n"
+        return {.marker = true};  // "\.\r\n"
       }
     }
     return {};  // "\.x" -- not the canonical marker, pass through as data
@@ -180,4 +176,4 @@ class CopyEodScanner {
   bool _ended = false;
 };
 
-}  // namespace sdb::pg
+}  // namespace sdb::network::pg

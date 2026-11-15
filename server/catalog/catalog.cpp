@@ -449,9 +449,11 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
   if (in_place) {
     for (const auto index : op.set_columns) {
       const auto& column = table.GetColumns().GetColumn(index);
-      patched.push_back({.field = connector::TableColumnId(column),
-                         .type = column.Type(),
-                         .input = index.index});
+      patched.push_back({
+        .field = connector::TableColumnId(column),
+        .type = column.Type(),
+        .input = index.index,
+      });
     }
   }
   auto& upsert = planner.Make<connector::SereneDBSearchUpsert>(
@@ -461,21 +463,23 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
   return upsert;
 }
 
-bool SereneDBCatalog::ReplacesInPlace(
+duckdb::ConflictReplace SereneDBCatalog::GetConflictReplace(
   duckdb::ClientContext& context, duckdb::TableCatalogEntry& table,
+  const duckdb::unordered_set<duckdb::column_t>& key,
   const duckdb::vector<duckdb::PhysicalIndex>& columns) {
-  return !duckdb::Settings::Get<duckdb::ForceUpdateToDelAndInsertSetting>(
-           context) &&
-         SearchTable(table).PatchesColumns(columns);
-}
-
-bool SereneDBCatalog::KeysMatchExactly(
-  duckdb::TableCatalogEntry& table,
-  const duckdb::unordered_set<duckdb::column_t>& key) {
-  const auto& columns = table.GetColumns();
-  return absl::c_all_of(key, [&](duckdb::column_t index) {
-    return ExactKeyType(columns.GetColumn(duckdb::PhysicalIndex{index}).Type());
-  });
+  const auto& definitions = table.GetColumns();
+  return {
+    .in_place =
+      !duckdb::Settings::Get<duckdb::ForceUpdateToDelAndInsertSetting>(
+        context) &&
+      SearchTable(table).PatchesColumns(columns),
+    .exact_key = absl::c_all_of(
+      key,
+      [&](duckdb::column_t index) {
+        return ExactKeyType(
+          definitions.GetColumn(duckdb::PhysicalIndex{index}).Type());
+      }),
+  };
 }
 
 duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(

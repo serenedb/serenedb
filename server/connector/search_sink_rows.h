@@ -62,7 +62,7 @@ class SearchSinkRows {
   std::unique_ptr<irs::IndexWriter::Transaction> _trx;
   std::unique_ptr<SearchSinkInsertBaseImpl> _sink;
   std::span<const irs::IndexWriter::FlushedSegment> _flushed;
-  uint64_t _layout = 0;
+  uint64_t _version = 0;
 };
 
 }  // namespace sdb::connector

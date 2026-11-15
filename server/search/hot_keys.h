@@ -40,13 +40,15 @@ inline std::string_view KeyView(const duckdb::string_t& key) noexcept {
 }
 
 struct HashedKey {
-  duckdb::string_t key;
+  mutable duckdb::string_t key;
   size_t hash = 0;
 };
 
 inline HashedKey MakeHashedKey(std::string_view key) {
-  return {.key = {key.data(), static_cast<uint32_t>(key.size())},
-          .hash = absl::HashOf(key)};
+  return {
+    .key = {key.data(), static_cast<uint32_t>(key.size())},
+    .hash = absl::HashOf(key),
+  };
 }
 
 struct HashedKeyHash {

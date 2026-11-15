@@ -693,10 +693,10 @@ class BinaryQuantizerCodebook final : public QuantizerCodebook {
  private:
   static void Quantize(std::span<const float> w, float scale,
                        std::vector<int8_t>& q) noexcept {
-    constexpr auto kTop = static_cast<float>(kBqQueryTop);
+    constexpr int64_t kTop = kBqQueryTop;
     for (size_t k = 0; k < w.size(); ++k) {
       q[k] = static_cast<int8_t>(
-        std::fmin(std::fmax(std::nearbyint(w[k] * scale), -kTop), kTop));
+        std::clamp<int64_t>(std::lrint(w[k] * scale), -kTop, kTop));
     }
   }
 

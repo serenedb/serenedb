@@ -77,7 +77,7 @@ QUERY PLAN
 ╰──────────────────────╯
 
 
-query ??
+query
 INSERT OR REPLACE INTO ukt_s VALUES (1, 5) RETURNING k + 1 AS next, a * 2 AS twice;
 ----
 next	twice

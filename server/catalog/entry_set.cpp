@@ -163,7 +163,7 @@ const duckdb::Constraint* FindConstraint(const duckdb::CatalogEntry& table,
 
 bool Redefined(const duckdb::Constraint& before,
                const duckdb::Constraint* after) {
-  return !after || before.ToString() != after->ToString();
+  return !after || !before.Equals(*after);
 }
 
 bool ReadsColumns(const duckdb::CatalogEntry& dependent) {
@@ -504,10 +504,12 @@ void OidIndex::CheckChangedParts(const duckdb::SnapshotView& view,
     return;
   }
   if (ColumnsChanged(version.Child(), version)) {
-    CheckDropped(view, {.oid = version.oid,
-                        .name = version.name.GetIdentifierName(),
-                        .change = "ALTER",
-                        .columns = true});
+    CheckDropped(view, {
+                         .oid = version.oid,
+                         .name = version.name.GetIdentifierName(),
+                         .change = "ALTER",
+                         .columns = true,
+                       });
   }
   if (version.type != duckdb::CatalogType::TABLE_ENTRY ||
       version.Child().type != duckdb::CatalogType::TABLE_ENTRY) {

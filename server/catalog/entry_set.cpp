@@ -451,6 +451,19 @@ void OidIndex::CheckCreated(const duckdb::SnapshotView& view,
       index = &database->GetCatalog().Cast<BaseCatalog>().Oids();
     }
     index->CheckLive(view, subject, columns);
+    if (!dependency) {
+      return;
+    }
+    duckdb::idx_t schema = 0;
+    index->VisitNewest(subject,
+                       [&](EntrySet& set, const duckdb::Identifier& name) {
+                         if (const auto entry = set.GetCommitted(name)) {
+                           schema = entry->ParentSchemaOid();
+                         }
+                       });
+    if (schema && schema != subject) {
+      index->CheckLive(view, schema, false);
+    }
   });
   if (version.deleted || version.type == duckdb::CatalogType::ROLE_ENTRY) {
     return;

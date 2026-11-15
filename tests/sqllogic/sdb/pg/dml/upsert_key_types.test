@@ -98,3 +98,25 @@ INSERT OR REPLACE INTO ukt_c VALUES ('a', 2), ('A', 3) RETURNING k, a;
 k	a
 A	3
 a	2
+
+
+query
+SELECT k, a FROM ukt_c WHERE k = 'A';
+----
+k	a
+A	3
+
+
+statement ok
+CREATE TABLE ukt_n (k TEXT COLLATE NOCASE PRIMARY KEY, a INT);
+
+
+statement ok
+INSERT INTO ukt_n VALUES ('A', 1);
+
+
+query
+SELECT k, a FROM ukt_n WHERE k = 'a';
+----
+k	a
+A	1

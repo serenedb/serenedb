@@ -51,6 +51,14 @@ n
 
 query
 SELECT n FROM sfc_idx
+WHERE body @@ 'term' AND BM25(sfc_idx.tableoid)::DOUBLE > 0.15
+ORDER BY BM25(sfc_idx.tableoid) DESC LIMIT 10;
+----
+n
+10
+
+query
+SELECT n FROM sfc_idx
 WHERE body @@ 'term' AND BM25(sfc_idx.tableoid) > 'NaN'::FLOAT
 ORDER BY BM25(sfc_idx.tableoid) DESC LIMIT 10;
 ----

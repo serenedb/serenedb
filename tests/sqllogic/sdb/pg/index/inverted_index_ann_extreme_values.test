@@ -197,3 +197,21 @@ SELECT count(*) AS n FROM (SELECT pk FROM aev_flat_ip ORDER BY emb <#> [1, 2, 3,
 ----
 n
 5
+
+statement ok
+CREATE TABLE aev_untrainable (pk INTEGER PRIMARY KEY, emb FLOAT[2]);
+
+statement ok
+CREATE INDEX aev_untrainable_ivf ON aev_untrainable USING inverted(pk, emb ivf (metric = 'l2'));
+
+statement ok
+INSERT INTO aev_untrainable VALUES
+  (1, ['NaN'::FLOAT, 0]::FLOAT[2]),
+  (2, ['Infinity'::FLOAT, 1]::FLOAT[2]),
+  (3, [3e38, 0]::FLOAT[2]);
+
+statement ok
+VACUUM (FLUSH_TABLE) aev_untrainable;
+
+statement ok
+SELECT pk FROM aev_untrainable_ivf ORDER BY emb <-> [0, 0]::FLOAT[2] LIMIT 3;

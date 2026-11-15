@@ -183,6 +183,7 @@ class ColumnReader {
     duckdb::SelectionVector sel;
     duckdb::SelectionVector piece;
     duckdb::SelectionVector window_sel;
+    std::unique_ptr<VectorScratch> scanned;
     std::unique_ptr<ListScanState> list;
     struct Fetch {
       std::unique_ptr<codecs::ColumnSegment> segment;
@@ -515,6 +516,9 @@ class ColumnReader {
   void SelectAcross(ScanState& s, const duckdb::SelectionVector& sel,
                     duckdb::idx_t hits, duckdb::idx_t span, duckdb::Vector& out,
                     duckdb::idx_t at) const;
+  void SelectScanned(ScanState& s, const duckdb::SelectionVector& sel,
+                     duckdb::idx_t hits, duckdb::idx_t span,
+                     duckdb::Vector& out, duckdb::idx_t at) const;
   void OpenScanSegment(ScanState& s) const;
   void SkipTo(ScanState& s, uint64_t row) const;
   void SkipValidity(ScanState& s, duckdb::idx_t count) const;

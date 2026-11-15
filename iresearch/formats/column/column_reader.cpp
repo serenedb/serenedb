@@ -30,6 +30,7 @@
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/vector/dictionary_vector.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
+#include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/storage/buffer/buffer_handle.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
@@ -215,6 +216,11 @@ bool SelectsNatively(const ColumnBlockMeta& block,
                      duckdb::idx_t span) noexcept {
   return block.codec->select &&
          hits * 1000 <= BandsFor(block.codec->type, type).native * span;
+}
+
+bool ScansWindows(const duckdb::LogicalType& type) noexcept {
+  return type.id() != duckdb::LogicalTypeId::VALIDITY &&
+         type.InternalType() != duckdb::PhysicalType::VARCHAR;
 }
 
 duckdb::ValidityMask& ResetAllValid(duckdb::Vector& v, duckdb::idx_t count) {
@@ -740,6 +746,7 @@ void ColumnReader::GatherScatter(ScanState& s, uint64_t anchor,
     return;
   }
   const auto span = sel.get_index(hits - 1) - sel.get_index(0) + 1;
+  const bool windows = ScansWindows(_type);
   for (duckdb::idx_t i = 0; i < hits;) {
     const auto first = sel.get_index(i);
     if (anchor + first >= _row_count) {
@@ -747,17 +754,19 @@ void ColumnReader::GatherScatter(ScanState& s, uint64_t anchor,
       return;
     }
     auto end = i + 1;
-    if (const auto block = Locate(anchor + first, s.window);
-        !SelectsNatively(_segments[block.block], _type, hits, span)) {
-      if (anchor + sel.get_index(hits - 1) < block.end) {
-        end = hits;
+    if (!windows) {
+      const auto block = Locate(anchor + first, s.window);
+      if (!SelectsNatively(_segments[block.block], _type, hits, span)) {
+        if (anchor + sel.get_index(hits - 1) < block.end) {
+          end = hits;
+        }
+        while (end < hits && anchor + sel.get_index(end) < block.end) {
+          ++end;
+        }
+        column_internal::ScatterRuns(*this, s, anchor, sel, i, end, out, at);
+        i = end;
+        continue;
       }
-      while (end < hits && anchor + sel.get_index(end) < block.end) {
-        ++end;
-      }
-      column_internal::ScatterRuns(*this, s, anchor, sel, i, end, out, at);
-      i = end;
-      continue;
     }
     while (end < hits && sel.get_index(end) - first < STANDARD_VECTOR_SIZE) {
       ++end;
@@ -794,8 +803,25 @@ void ColumnReader::GatherWindow(ScanState& s, uint64_t anchor,
                      duckdb::ScanVectorType::SCAN_FLAT_VECTOR)) {
       return;
     }
+    if (ScansWindows(_type)) {
+      SelectScanned(s, sel, hits, span, out, at);
+      return;
+    }
   }
   column_internal::ScatterRuns(*this, s, anchor, sel, 0, hits, out, at);
+}
+
+void ColumnReader::SelectScanned(ScanState& s,
+                                 const duckdb::SelectionVector& sel,
+                                 duckdb::idx_t hits, duckdb::idx_t span,
+                                 duckdb::Vector& out, duckdb::idx_t at) const {
+  if (!s.scanned || s.scanned->vector.GetType() != out.GetType()) {
+    s.scanned = std::make_unique<VectorScratch>(out.GetType());
+  }
+  auto& window = s.scanned->Reset();
+  ColumnReader::ScanCount(s, window, span, 0);
+  out.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
+  duckdb::VectorOperations::Copy(window, out, sel, hits, 0, at);
 }
 
 void ColumnReader::GatherDense(ScanState& s, uint64_t anchor,

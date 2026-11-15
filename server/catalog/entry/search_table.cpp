@@ -1730,7 +1730,19 @@ void SearchTableEntry::AlterTriggers(duckdb::ClientContext& context,
   const bool firing =
     info.alter_table_type == duckdb::AlterTableType::SET_TRIGGER_FIRING;
   for (auto& target : targets) {
-    auto altered = target.get().AlterEntry(transaction, info);
+    duckdb::unique_ptr<duckdb::CatalogEntry> altered;
+    if (info.alter_table_type == duckdb::AlterTableType::RENAME_COLUMN) {
+      const auto& rename = info.Cast<duckdb::RenameColumnInfo>();
+      auto definition = target.get().GetInfo();
+      auto& trigger = definition->Cast<duckdb::CreateTriggerInfo>();
+      if (FollowTriggerColumnRename(transaction, target.get(), trigger, *this,
+                                    rename.old_name, rename.new_name)) {
+        altered = duckdb::make_uniq<duckdb::TriggerCatalogEntry>(
+          catalog, ParentSchema(transaction), trigger);
+      }
+    } else {
+      altered = target.get().AlterEntry(transaction, info);
+    }
     if (!altered) {
       continue;
     }
@@ -1781,6 +1793,18 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SearchTableEntry::GetTrigger(
   duckdb::CatalogTransaction transaction,
   const duckdb::Identifier& name) const {
   return _triggers->Get(transaction, name);
+}
+
+void SearchTableEntry::ReplaceTrigger(duckdb::CatalogTransaction transaction,
+                                      duckdb::CreateTriggerInfo& info) {
+  const auto existing = _triggers->Get(transaction, info.GetTriggerName());
+  SDB_ASSERT(existing);
+  auto record = SerializeAlter(duckdb::ReplaceDefinitionInfo{info.Copy()});
+  auto replacement = duckdb::make_uniq<duckdb::TriggerCatalogEntry>(
+    catalog, ParentSchema(transaction), info);
+  replacement->oid = existing->oid;
+  DeclareModified(transaction, catalog);
+  _triggers->Alter(transaction, std::move(replacement), std::move(record));
 }
 
 bool SearchTableEntry::DropTrigger(duckdb::CatalogTransaction transaction,

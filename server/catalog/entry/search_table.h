@@ -185,6 +185,8 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry {
     const duckdb::Identifier& name) const final;
   bool DropTrigger(duckdb::CatalogTransaction transaction,
                    const duckdb::Identifier& name, bool cascade) final;
+  void ReplaceTrigger(duckdb::CatalogTransaction transaction,
+                      duckdb::CreateTriggerInfo& info);
   duckdb::vector<std::reference_wrapper<duckdb::TableCatalogEntry>>
   ReferencingTables(duckdb::ClientContext& context) final;
 

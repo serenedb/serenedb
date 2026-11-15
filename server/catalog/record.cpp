@@ -722,6 +722,14 @@ void ReplayChange(duckdb::ClientContext& context, ReplayTarget target,
     case ChangeKind::Alter: {
       auto info = DeserializeAlter(context, content.alter);
       info->bind_mode = duckdb::AlterBindMode::SKIP_BINDING;
+      if (change.owner && info->type == duckdb::AlterType::REPLACE_DEFINITION) {
+        LoggedTable(catalog, transaction, change.owner)
+          .Cast<SearchTableEntry>()
+          .ReplaceTrigger(transaction,
+                          info->Cast<duckdb::ReplaceDefinitionInfo>()
+                            .definition->Cast<duckdb::CreateTriggerInfo>());
+        return;
+      }
       catalog.Alter(context, *info);
       if (!content.dependencies.Set().empty()) {
         auto& table = LoggedTable(catalog, transaction, oid);

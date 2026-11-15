@@ -28,6 +28,7 @@
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/catalog/dependency.hpp>
 #include <duckdb/parser/constraints/foreign_key_constraint.hpp>
+#include <duckdb/parser/parsed_data/create_trigger_info.hpp>
 #include <duckdb/parser/parsed_expression.hpp>
 #include <span>
 #include <vector>
@@ -96,6 +97,13 @@ void FollowColumnRename(duckdb::CatalogTransaction transaction,
                         duckdb::CatalogEntry& table,
                         const duckdb::Identifier& old_column,
                         const duckdb::Identifier& new_column);
+
+bool FollowTriggerColumnRename(duckdb::CatalogTransaction transaction,
+                               duckdb::CatalogEntry& trigger,
+                               duckdb::CreateTriggerInfo& info,
+                               duckdb::CatalogEntry& table,
+                               const duckdb::Identifier& old_column,
+                               const duckdb::Identifier& new_column);
 
 void FollowReferencedColumnRename(duckdb::CatalogTransaction transaction,
                                   duckdb::TableCatalogEntry& table,

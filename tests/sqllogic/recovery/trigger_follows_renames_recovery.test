@@ -1,0 +1,95 @@
+control substitution on
+
+
+statement ok
+CREATE TABLE tfrr_t (id INT, v INT);
+
+
+statement ok
+CREATE TABLE tfrr_a (x INT, y INT);
+
+
+statement ok
+CREATE TABLE tfrr_k (id INT, k INT);
+
+
+statement ok
+INSERT INTO tfrr_k VALUES (1, 100), (2, 200);
+
+
+statement ok
+CREATE TRIGGER tfrr_row AFTER INSERT ON tfrr_t FOR EACH ROW
+  INSERT INTO tfrr_a (x, y) SELECT NEW.v, k FROM tfrr_k WHERE tfrr_k.id = NEW.id;
+
+
+statement ok
+ALTER TABLE tfrr_t RENAME COLUMN v TO w;
+
+
+statement ok
+ALTER TABLE tfrr_a RENAME COLUMN y TO y2;
+
+
+statement ok
+ALTER TABLE tfrr_k RENAME COLUMN k TO k2;
+
+
+statement ok
+ALTER TABLE tfrr_a RENAME TO tfrr_a2;
+
+
+statement ok
+ALTER TABLE tfrr_t RENAME TO tfrr_t2;
+
+
+statement ok
+INSERT INTO tfrr_t2 VALUES (1, 10);
+
+
+query
+SELECT x, y2 FROM tfrr_a2 ORDER BY x;
+----
+x	y2
+10	100
+
+
+query
+SELECT table_name, sql FROM duckdb_triggers() WHERE trigger_name = 'tfrr_row';
+----
+table_name	sql
+tfrr_t2	CREATE TRIGGER tfrr_row AFTER INSERT ON tfrr_t2 FOR EACH ROW INSERT INTO tfrr_a2 (x, y2) SELECT "new".w AS v, k2 AS k FROM tfrr_k WHERE (tfrr_k.id = "new".id);
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_crash
+query
+SELECT table_name, sql FROM duckdb_triggers() WHERE trigger_name = 'tfrr_row';
+----
+table_name	sql
+tfrr_t2	CREATE TRIGGER tfrr_row AFTER INSERT ON tfrr_t2 FOR EACH ROW INSERT INTO tfrr_a2 (x, y2) SELECT "new".w AS v, k2 AS k FROM tfrr_k WHERE (tfrr_k.id = "new".id);
+
+
+connection after_crash
+statement ok
+INSERT INTO tfrr_t2 VALUES (2, 20);
+
+
+connection after_crash
+query
+SELECT x, y2 FROM tfrr_a2 ORDER BY x;
+----
+x	y2
+10	100
+20	200

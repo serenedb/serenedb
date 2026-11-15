@@ -38,26 +38,28 @@ uint64_t StringWindow::Analyze(const Config& config) {
   if (const auto index = Find(config); index != _encoded.size()) {
     return At(index).Size();
   }
-  const auto price =
-    [&]<typename Codec>(std::optional<blob::Pricer<Codec>>& slot) -> uint64_t {
+  const auto estimate =
+    [&]<typename Codec>(
+      std::optional<blob::SizeEstimator<Codec>>& slot) -> uint64_t {
     auto& rows = Rows(config.shape);
     if (!slot) {
       slot.emplace();
     }
     const auto whole =
       config.layout == FrameLayout::Local ? Bytes(rows) : std::string_view{};
-    return slot->Price(rows.profile, whole,
-                       Split(rows, blob::FrameShapeOf<Codec>(config.layout)),
-                       CodesSize(rows), config.level, config.layout, _begin);
+    return slot->EstimateSize(
+      rows.profile, whole,
+      Split(rows, blob::FrameShapeOf<Codec>(config.layout)), CodesSize(rows),
+      config.level, config.layout, _begin);
   };
   SDB_ASSERT(config.leaf == ByteCodec::Lz4);
   if (EffectiveLevel<Lz4>(config.level) > 1) {
-    return price(_pricers.lz4_hc);
+    return estimate(_size_estimators.lz4_hc);
   }
   if (RawBound(config.shape) <= kTrialRawBytes) {
     return At(TrialCompress(config)).Size();
   }
-  return price(_pricers.lz4);
+  return estimate(_size_estimators.lz4);
 }
 
 uint64_t StringWindow::RawBound(Shape shape) const noexcept {

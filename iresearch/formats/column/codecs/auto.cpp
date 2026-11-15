@@ -96,7 +96,7 @@ void CompressNumbers(ColumnDataCheckpointData& data,
     data.FlushSegment(std::move(stats), row_count, {});
     return;
   }
-  const auto price_analyzed = [&] {
+  const auto analyze = [&] {
     const auto cheapest = Cheapest(data, chunks);
     tuning.analyzed = cheapest.function->type;
     return cheapest;
@@ -118,7 +118,7 @@ void CompressNumbers(ColumnDataCheckpointData& data,
       return;
     }
     const auto kept = tuning.analyzed;
-    analyzed = price_analyzed();
+    analyzed = analyze();
     if (merge && analyzed.function->type == kept) {
       if (reuse.Grew(static_cast<double>(analyzed.bytes), rows)) {
         reuse.clock.Restart();
@@ -128,11 +128,11 @@ void CompressNumbers(ColumnDataCheckpointData& data,
     }
     search = true;
   } else if (due || merge) {
-    analyzed = price_analyzed();
+    analyzed = analyze();
   }
   auto segment = SealNumeric(type, chunks, row_count, data.params, tuning,
                              search, analyzed.bytes, [&] {
-                               analyzed = price_analyzed();
+                               analyzed = analyze();
                                return analyzed.bytes;
                              });
   if (segment.bytes.empty()) {

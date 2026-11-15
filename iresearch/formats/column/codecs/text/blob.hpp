@@ -55,7 +55,7 @@
 
 namespace irs::codecs::text::blob {
 
-inline constexpr size_t kPriceFrames = 8;
+inline constexpr size_t kSampleFrames = 8;
 inline constexpr size_t kProbeFrames = 1;
 inline constexpr size_t kLocalMinFrames = 8;
 
@@ -176,14 +176,14 @@ size_t CompressedSize(std::string_view raw, std::string& scratch,
 }
 
 template<typename Codec>
-class Pricer {
+class SizeEstimator {
  public:
   static constexpr ByteCodec kCodec = Codec::kCodec;
   static_assert(!Sorted(kCodec));
 
-  uint64_t Price(const Profile& p, std::string_view bytes,
-                 const FrameSpans& spans, uint64_t codes_bytes, uint8_t level,
-                 FrameLayout layout, uint64_t begin) {
+  uint64_t EstimateSize(const Profile& p, std::string_view bytes,
+                        const FrameSpans& spans, uint64_t codes_bytes,
+                        uint8_t level, FrameLayout layout, uint64_t begin) {
     if (!_codec || _level != level) {
       _codec.emplace(level);
       _level = level;
@@ -219,7 +219,7 @@ class Pricer {
       uint64_t sampled_raw = 0;
       uint64_t sampled = 0;
       spans.Sample(
-        kPriceFrames, [&](size_t j) { return Jitter(begin, j); },
+        kSampleFrames, [&](size_t j) { return Jitter(begin, j); },
         [&](size_t i) {
           const auto raw = frame(i);
           sampled_raw += raw.size();

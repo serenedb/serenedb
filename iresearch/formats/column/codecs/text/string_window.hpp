@@ -88,9 +88,9 @@ class StringWindow {
     std::vector<Spans> spans;
   };
 
-  struct Pricers {
-    std::optional<blob::Pricer<Lz4>> lz4;
-    std::optional<blob::Pricer<Lz4Hc>> lz4_hc;
+  struct SizeEstimators {
+    std::optional<blob::SizeEstimator<Lz4>> lz4;
+    std::optional<blob::SizeEstimator<Lz4Hc>> lz4_hc;
   };
 
   size_t Find(const Config& config) const noexcept;
@@ -114,7 +114,7 @@ class StringWindow {
   std::vector<PooledSegment> _encoded;
   DedupScratch _dedup;
   Measured _measured[2];
-  Pricers _pricers;
+  SizeEstimators _size_estimators;
 };
 
 }  // namespace irs::codecs::text

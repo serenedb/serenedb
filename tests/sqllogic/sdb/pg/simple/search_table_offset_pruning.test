@@ -159,8 +159,6 @@ pppppppppppppppppppp03500
 pppppppppppppppppppp03501
 
 
-# A filter drops rows the row-group counts include, so the offset is not
-# pruned by them.
 query
 EXPLAIN SELECT k FROM op WHERE v = 0 ORDER BY k LIMIT 3 OFFSET 1000
 ----
@@ -224,8 +222,6 @@ k
 3502
 
 
-# Compaction regroups the same rows: the prepared plan pruned row groups that
-# are gone, so it plans again.
 statement ok
 VACUUM (COMPACT_TABLE) op
 
@@ -381,7 +377,6 @@ statement ok
 VACUUM (FLUSH_TABLE) opn
 
 
-# Every NULL ties on a single key, so any all-NULL row group can be skipped.
 query
 EXPLAIN SELECT k1 FROM opn ORDER BY k1 NULLS FIRST LIMIT 3 OFFSET 2050
 ----
@@ -417,8 +412,6 @@ k1
 10006
 
 
-# A second key orders the NULLs, so all-NULL row groups are skipped only when
-# all of them are.
 query
 EXPLAIN SELECT k1, k2 FROM opn ORDER BY k1 NULLS FIRST, k2 LIMIT 3 OFFSET 2048
 ----

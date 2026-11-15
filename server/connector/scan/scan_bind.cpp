@@ -495,8 +495,7 @@ bool ScanBindData::HasPushdowns() const noexcept {
          score.HasTopK() || score.top_offset_expr || score.top_offset != 0 ||
          score.top_n_consumed || score.order ||
          score.static_floor != std::numeric_limits<float>::lowest() ||
-         scan_order || offsets.Active() || ts_dict.Active() ||
-         plan_cache.deferred;
+         offsets.Active() || ts_dict.Active() || plan_cache.deferred;
 }
 
 bool ScanBindData::ReadsParametersAtExecution() const {

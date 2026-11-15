@@ -524,14 +524,8 @@ void IResearchSetScanOrder(
     bd.scan_order = order();
     return;
   }
-  if (!options->single_order_key ||
-      (!options->row_limit.IsValid() && !options->row_limit_expression)) {
-    return;
-  }
-  if (GetBoolSetting(context, "sdb_disable_top_k_optimization")) {
-    return;
-  }
-  if (order_col >= bd.columns.ids.size()) {
+  if (GetBoolSetting(context, "sdb_disable_top_k_optimization") ||
+      order_col >= bd.columns.ids.size()) {
     return;
   }
   const auto col_id = bd.columns.ids[order_col];
@@ -541,7 +535,9 @@ void IResearchSetScanOrder(
     }
     return;
   }
-  if (bd.score.HasTopK()) {
+  if (!options->single_order_key ||
+      (!options->row_limit.IsValid() && !options->row_limit_expression) ||
+      bd.score.HasTopK()) {
     return;
   }
   const auto take_limit = [&] {

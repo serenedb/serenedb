@@ -134,18 +134,38 @@ void ProgressMetrics::Reset() {
 
 void ProgressSource::BeginQuery(std::string query_text) {
   metrics.Reset();
-  {
-    absl::MutexLock lock{&mu};
-    query = std::move(query_text);
+  const auto now = duckdb::Timestamp::GetCurrentTimestamp().value;
+  absl::MutexLock lock{&mu};
+  query = std::move(query_text);
+  query_start_us.store(now, std::memory_order_relaxed);
+  active = true;
+  if (xact_start_us == 0) {
+    xact_start_us = now;
   }
-  query_start_us.store(duckdb::Timestamp::GetCurrentTimestamp().value,
-                       std::memory_order_relaxed);
+  state_change_us = now;
 }
 
-void ProgressSource::EndQuery() {
-  // PG keeps the last statement's text visible with state=idle; only the
-  // start timestamp is cleared.
-  query_start_us.store(0, std::memory_order_relaxed);
+void ProgressSource::EndQuery(bool aborted) {
+  const auto now = duckdb::Timestamp::GetCurrentTimestamp().value;
+  absl::MutexLock lock{&mu};
+  active = false;
+  xact_aborted = aborted;
+  state_change_us = now;
+}
+
+void ProgressSource::AbortTransaction() {
+  const auto now = duckdb::Timestamp::GetCurrentTimestamp().value;
+  absl::MutexLock lock{&mu};
+  xact_aborted = true;
+  state_change_us = now;
+}
+
+void ProgressSource::EndTransaction() noexcept {
+  const auto now = duckdb::Timestamp::GetCurrentTimestamp().value;
+  absl::MutexLock lock{&mu};
+  xact_start_us = 0;
+  xact_aborted = false;
+  state_change_us = now;
 }
 
 namespace {
@@ -279,7 +299,6 @@ std::vector<ProgressSnapshot> ProgressRegistry::GetSnapshots() const {
     s.user = source->user;
     s.database = source->database;
     s.backend_start_us = source->backend_start_us;
-    s.query_start_us = source->query_start_us.load(std::memory_order_relaxed);
 
     const auto& m = source->metrics;
     s.command = m.command.load(std::memory_order_relaxed);
@@ -300,7 +319,12 @@ std::vector<ProgressSnapshot> ProgressRegistry::GetSnapshots() const {
 
     absl::MutexLock lock{&source->mu};
     s.query = source->query;
-    if (source->ctx && s.query_start_us != 0) {
+    s.query_start_us = source->query_start_us.load(std::memory_order_relaxed);
+    s.active = source->active;
+    s.xact_start_us = source->xact_start_us;
+    s.state_change_us = source->state_change_us;
+    s.xact_aborted = source->xact_aborted;
+    if (source->ctx && s.active) {
       auto progress = source->ctx->GetQueryProgress();
       s.percent = progress.GetPercentage();
       s.rows_processed = static_cast<int64_t>(progress.GetRowsProcessed());

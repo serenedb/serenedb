@@ -12,7 +12,7 @@ FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
 WHERE c.relname = 'sdb_progress';
 ----
 relkind	nspname	relnatts
-r	pg_catalog	26
+r	pg_catalog	28
 
 
 query
@@ -29,7 +29,9 @@ datname	name	f
 state	text	f
 query	text	f
 backend_start_us	bigint	f
+xact_start_us	bigint	f
 query_start_us	bigint	f
+state_change_us	bigint	f
 percent	double precision	f
 rows_processed	bigint	f
 rows_total	bigint	f
@@ -58,22 +60,25 @@ SELECT count(*) AS mine,
        bool_and(state = 'active') AS active,
        bool_and(query LIKE '%pudge_progress_self_probe%') AS my_query,
        bool_and(query_start_us >= backend_start_us AND backend_start_us > 0) AS started,
+       bool_and(xact_start_us = query_start_us AND state_change_us = query_start_us) AS one_statement,
        bool_and(command IS NULL AND phase IS NULL AND relid IS NULL) AS no_command
 FROM sdb_progress
 WHERE pid = pg_backend_pid() AND 'pudge_progress_self_probe' IS NOT NULL;
 ----
-mine	my_user	my_database	my_datid	active	my_query	started	no_command
-1	t	t	t	t	t	t	t
+mine	my_user	my_database	my_datid	active	my_query	started	one_statement	no_command
+1	t	t	t	t	t	t	t	t
 
 
 query
 SELECT count(*) AS bad_rows
 FROM sdb_progress
 WHERE datname = current_database() AND (pid IS NULL
-   OR state NOT IN ('active', 'idle')
+   OR state NOT IN ('active', 'idle', 'idle in transaction', 'idle in transaction (aborted)')
    OR backend_start_us IS NULL
-   OR (state = 'idle' AND (query_start_us IS NOT NULL OR command IS NOT NULL))
-   OR (state = 'active' AND query_start_us IS NULL)
+   OR state_change_us < backend_start_us
+   OR (state = 'idle' AND (xact_start_us IS NOT NULL OR command IS NOT NULL))
+   OR (state LIKE 'idle in transaction%' AND (xact_start_us IS NULL OR command IS NOT NULL))
+   OR (state = 'active' AND (query_start_us IS NULL OR xact_start_us > query_start_us))
    OR percent < 0);
 ----
 bad_rows
@@ -99,12 +104,13 @@ chopa
 
 connection default
 query
-SELECT usename, datname = current_database() AS my_database, state, query_start_us, command
+SELECT usename, datname = current_database() AS my_database, state,
+       query_start_us >= backend_start_us AS last_query_start, xact_start_us, state_change_us >= query_start_us AS changed_after, command
 FROM sdb_progress
 WHERE query = 'SELECT ''chopa'' AS rampage_progress_marker;';
 ----
-usename	my_database	state	query_start_us	command
-tango_progress_courier	t	idle	NULL	NULL
+usename	my_database	state	last_query_start	xact_start_us	changed_after	command
+tango_progress_courier	t	idle	t	NULL	t	NULL
 
 
 connection tango_progress user=tango_progress_courier password=tango_progress_pw

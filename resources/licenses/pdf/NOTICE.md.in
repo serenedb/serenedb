@@ -1,5 +1,10 @@
 # PDF dependencies
 
+SereneDB's PDF extension is licensed under Apache-2.0; see `duckdb_pdf/LICENSE`.
+Copyright 2026 SereneDB GmbH, Berlin, Germany.
+Extension source:
+https://github.com/serenedb/duckdb-pdf/tree/@PDF_EXTENSION_REVISION@
+
 PoDoFo is used under the Mozilla Public License 2.0 (MPL-2.0).
 The license and upstream notices are in `podofo/COPYING.MPL` and `podofo/NOTICE`.
 The corresponding library source, including modifications, is available under
@@ -12,6 +17,14 @@ https://github.com/serenedb/podofo/archive/@PDF_PODOFO_REVISION@.tar.gz
 
 The bundled component license notices are in `podofo/THIRD_PARTY.txt`,
 `podofo/pdfium/LICENSE`, and `podofo/numerics/LICENSE`.
+
+PoDoFo's bundled LiberaLean fonts are used under the SIL Open Font License 1.1;
+see `podofo/LiberaLean/LICENSE.txt` for the license and attribution.
+
+PoDoFo also includes Symbol and Zapf Dingbats font data in
+`src/podofo/private/FoxitFonts`, from PDFium.
+Copyright 2014 The PDFium Authors. Original code copyright 2014 Foxit Software Inc.
+The applicable BSD license is included in `podofo/pdfium/LICENSE`.
 
 The reader shares DuckDB's utf8proc library. Its license and attribution are
 in `utf8proc/LICENSE`.

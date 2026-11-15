@@ -1,0 +1,157 @@
+control substitution on
+
+query
+SELECT page, ends_with(file, '/varusik_p' || page::VARCHAR || '.pdf') AS name_matches
+FROM pdf_split('${RESOURCES}/tests/pdf/basic/varusik.pdf', '${__TEST_DIR__}/varusik_parts') ORDER BY page;
+----
+page	name_matches
+1	t
+2	t
+
+query
+SELECT text FROM read_pdf('${__TEST_DIR__}/varusik_parts/varusik_p2.pdf');
+----
+text
+varusik poesh
+
+query
+SELECT count(DISTINCT filename) AS files, count(*) AS pages
+FROM read_pdf('${__TEST_DIR__}/varusik_parts/*.pdf');
+----
+files	pages
+2	2
+
+statement error
+SELECT * FROM pdf_split(NULL, '${__TEST_DIR__}/varusik_parts');
+----
+paths must not be NULL
+
+query
+SELECT pdf_merge(['${RESOURCES}/tests/pdf/basic/varusik.pdf',
+                  '${RESOURCES}/tests/pdf/basic/varusik.pdf'],
+                 '${__TEST_DIR__}/varusik_merged.pdf') = '${__TEST_DIR__}/varusik_merged.pdf' AS written;
+----
+written
+t
+
+query
+SELECT page, replace(text, E'\n', '|') AS text
+FROM read_pdf('${__TEST_DIR__}/varusik_merged.pdf') ORDER BY page;
+----
+page	text
+1	varusik banochka|sopley 42
+2	varusik poesh
+3	varusik banochka|sopley 42
+4	varusik poesh
+
+query
+SELECT pdf_pages('${__TEST_DIR__}/varusik_merged.pdf', '${__TEST_DIR__}/varusik_selected.pdf',
+                 'z-r2,1,1') = '${__TEST_DIR__}/varusik_selected.pdf' AS written;
+----
+written
+t
+
+query
+SELECT page, replace(text, E'\n', '|') AS text
+FROM read_pdf('${__TEST_DIR__}/varusik_selected.pdf') ORDER BY page;
+----
+page	text
+1	varusik poesh
+2	varusik banochka|sopley 42
+3	varusik banochka|sopley 42
+4	varusik banochka|sopley 42
+
+query
+SELECT pdf_rotate('${RESOURCES}/tests/pdf/basic/varusik.pdf', '${__TEST_DIR__}/varusik_rotated.pdf',
+                  -90, '1') = '${__TEST_DIR__}/varusik_rotated.pdf' AS written;
+----
+written
+t
+
+query
+SELECT page, width, height FROM read_pdf('${__TEST_DIR__}/varusik_rotated.pdf') ORDER BY page;
+----
+page	width	height
+1	792	612
+2	612	792
+
+query
+SELECT pdf_encrypt('${RESOURCES}/tests/pdf/basic/varusik.pdf', '${__TEST_DIR__}/varusik_locked.pdf',
+                   'varusik', 'banochka') = '${__TEST_DIR__}/varusik_locked.pdf' AS written;
+----
+written
+t
+
+query
+SELECT pages, encrypted FROM read_pdf_meta('${__TEST_DIR__}/varusik_locked.pdf', password := 'varusik');
+----
+pages	encrypted
+2	t
+
+query
+SELECT text FROM read_pdf('${__TEST_DIR__}/varusik_locked.pdf', password := 'banochka', first_page := 2);
+----
+text
+varusik poesh
+
+query
+SELECT pdf_decrypt('${__TEST_DIR__}/varusik_locked.pdf', '${__TEST_DIR__}/varusik_plain.pdf',
+                   'varusik') = '${__TEST_DIR__}/varusik_plain.pdf' AS written;
+----
+written
+t
+
+query
+SELECT pages, encrypted FROM read_pdf_meta('${__TEST_DIR__}/varusik_plain.pdf');
+----
+pages	encrypted
+2	f
+
+query
+SELECT pdf_encrypt(NULL, '${__TEST_DIR__}/varusik_null.pdf', 'varusik') IS NULL AS null_input,
+       pdf_rotate('${RESOURCES}/tests/pdf/basic/varusik.pdf', NULL, 90) IS NULL AS null_output,
+       pdf_pages('${RESOURCES}/tests/pdf/basic/varusik.pdf', '${__TEST_DIR__}/varusik_null.pdf', NULL) IS NULL AS null_range;
+----
+null_input	null_output	null_range
+t	t	t
+
+statement error
+SELECT pdf_merge([], '${__TEST_DIR__}/varusik_bad.pdf');
+----
+input list must not be empty
+
+statement error
+SELECT pdf_merge(['${RESOURCES}/tests/pdf/basic/varusik.pdf', NULL], '${__TEST_DIR__}/varusik_bad.pdf');
+----
+input paths must not be NULL
+
+statement error
+SELECT pdf_pages('${RESOURCES}/tests/pdf/basic/varusik.pdf', '${__TEST_DIR__}/varusik_bad.pdf', '0');
+----
+invalid page number
+
+statement error
+SELECT pdf_pages('${RESOURCES}/tests/pdf/basic/varusik.pdf', '${__TEST_DIR__}/varusik_bad.pdf', '1,');
+----
+invalid page number
+
+statement error
+SELECT pdf_rotate('${RESOURCES}/tests/pdf/basic/varusik.pdf', '${__TEST_DIR__}/varusik_bad.pdf', 45);
+----
+multiple of 90
+
+statement error
+SELECT pdf_decrypt('${__TEST_DIR__}/varusik_locked.pdf', '${__TEST_DIR__}/varusik_bad.pdf', 'wrong');
+----
+InvalidPassword
+
+statement error
+SELECT pdf_pages('${__TEST_DIR__}/varusik_plain.pdf', '${__TEST_DIR__}/./varusik_plain.pdf', '1');
+----
+must differ from every input file
+
+query
+SELECT pages FROM read_pdf_meta('${__TEST_DIR__}/varusik_plain.pdf');
+----
+pages
+2

@@ -160,6 +160,113 @@ def generate(directory, previews):
     writer.write(directory / "offset_page.pdf")
 
 
+def generate_info(directory):
+    directory.mkdir(parents=True, exist_ok=True)
+    document = pikepdf.Pdf.new()
+    font = document.make_indirect(pikepdf.Dictionary(
+        Type=pikepdf.Name.Font, Subtype=pikepdf.Name.Type1,
+        BaseFont=pikepdf.Name.Helvetica,
+    ))
+    for rotation in (0, 90, 180, 270):
+        page = document.add_blank_page(page_size=(612, 792))
+        page.CropBox = pikepdf.Array([20, 30, 420, 630])
+        page.Rotate = rotation
+        page.Resources = pikepdf.Dictionary(Font=pikepdf.Dictionary(F1=font))
+        page.Contents = document.make_stream(
+            f"BT /F1 12 Tf 50 550 Td (varusik rotation {rotation}) Tj ET".encode()
+        )
+    document.pages[1].Dur = 2.5
+    document.Root.PageLabels = document.make_indirect(pikepdf.Dictionary(Kids=pikepdf.Array([
+        document.make_indirect(pikepdf.Dictionary(Nums=pikepdf.Array([
+            0, pikepdf.Dictionary(S=pikepdf.Name.r, P=pikepdf.String("varusik-"), St=1),
+        ]))),
+        document.make_indirect(pikepdf.Dictionary(Nums=pikepdf.Array([
+            2, pikepdf.Dictionary(S=pikepdf.Name.A, St=1),
+        ]))),
+    ])))
+    document.docinfo.Title = "varusik geometry"
+    document.docinfo.Author = "varusik"
+    document.docinfo.CreationDate = "D:20260102153000+03'00'"
+    document.docinfo.ModDate = "D:20260203120000Z"
+
+    def metadata(value):
+        document.Root.Metadata = document.make_stream(value)
+        document.Root.Metadata.Type = pikepdf.Name.Metadata
+        document.Root.Metadata.Subtype = pikepdf.Name.XML
+
+    def save(name, **options):
+        document.save(directory / name, static_id=True, fix_metadata_version=False, **options)
+
+    prefix = b'<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:pdfaid="http://www.aiim.org/pdfa/ns/id/"'
+    suffix = b'</rdf:Description></rdf:RDF></x:xmpmeta>'
+    metadata(prefix + b'><pdfaid:part>2</pdfaid:part><pdfaid:conformance>B</pdfaid:conformance>' + suffix)
+    save("inspect_geometry.pdf")
+    save("inspect_linearized.pdf", linearize=True)
+    metadata(prefix + b' pdfaid:part="3" pdfaid:conformance="A">' + suffix)
+    save("inspect_xmp_attributes.pdf")
+    metadata(prefix + b'><pdfaid:part>4</pdfaid:part>' + suffix)
+    save("inspect_xmp_partial.pdf")
+    metadata(b'<!DOCTYPE x [<!ENTITY forbidden SYSTEM "file:///nonexistent-varusik-secret">]>'
+             + prefix + b'><pdfaid:part>2</pdfaid:part><pdfaid:conformance>&forbidden;</pdfaid:conformance>' + suffix)
+    save("inspect_xmp_untrusted.pdf")
+    metadata(b'<broken><pdfaid:part>2</pdfaid:part>')
+    save("inspect_xmp_invalid.pdf")
+    metadata(prefix.replace(b'http://www.aiim.org/pdfa/ns/id/', b'urn:varusik:not-pdfa')
+             + b'><pdfaid:part>2</pdfaid:part><pdfaid:conformance>B</pdfaid:conformance>' + suffix)
+    save("inspect_xmp_namespace.pdf")
+    del document.Root.Metadata
+    document.docinfo.CreationDate = "varusik is not a timestamp"
+    document.docinfo.ModDate = "D:garbage"
+    save("inspect_bad_dates.pdf")
+    document.Root.PageLabels = document.make_indirect(pikepdf.Dictionary())
+    document.Root.PageLabels.Kids = pikepdf.Array([document.Root.PageLabels])
+    save("inspect_label_cycle.pdf")
+
+
+def generate_inventory(directory):
+    import pikepdf
+
+    document = pikepdf.Pdf.new()
+    page = document.add_blank_page(page_size=(612, 792))
+    font = document.make_indirect(pikepdf.Dictionary(
+        Type=pikepdf.Name.Font, Subtype=pikepdf.Name.Type1,
+        BaseFont=pikepdf.Name.Helvetica,
+    ))
+    page.Resources = pikepdf.Dictionary(Font=pikepdf.Dictionary(F1=font))
+    page.Contents = document.make_stream(b"BT /F1 12 Tf 72 720 Td (varusik inventory) Tj ET")
+    page.Annots = pikepdf.Array([
+        document.make_indirect(pikepdf.Dictionary(
+            Type=pikepdf.Name.Annot, Subtype=pikepdf.Name.Link,
+            Rect=pikepdf.Array([10, 20, 110, 40]), Contents="varusik link",
+            A=pikepdf.Dictionary(S=pikepdf.Name.URI, URI="https://example.com/varusik"),
+        )),
+        document.make_indirect(pikepdf.Dictionary(
+            Type=pikepdf.Name.Annot, Subtype=pikepdf.Name.Text,
+            Rect=pikepdf.Array([50, 60, 70, 80]), Contents="varusik note",
+        )),
+    ])
+    form = document.make_stream(b"BT /F2 10 Tf 0 0 Td (varusik nested) Tj ET")
+    form.Type = pikepdf.Name.XObject
+    form.Subtype = pikepdf.Name.Form
+    form.BBox = pikepdf.Array([0, 0, 100, 30])
+    form.Resources = pikepdf.Dictionary(Font=pikepdf.Dictionary(F2=document.make_indirect(
+        pikepdf.Dictionary(Type=pikepdf.Name.Font, Subtype=pikepdf.Name.Type1, BaseFont=pikepdf.Name.Courier)
+    )))
+    page.Resources.XObject = pikepdf.Dictionary(Varusik=form)
+    document.Root.OpenAction = pikepdf.Dictionary(S=pikepdf.Name.JavaScript, JS="varusik")
+    document.Root.PageMode = pikepdf.Name.UseOutlines
+    document.Root.PageLayout = pikepdf.Name.TwoColumnLeft
+    document.Root.AcroForm = pikepdf.Dictionary(Fields=pikepdf.Array())
+    document.save(directory / "inventory_varusik.pdf", static_id=True)
+    document.save(directory / "inventory_encrypted.pdf", static_id=True, encryption=pikepdf.Encryption(
+        owner="varusik-owner", user="reader-secret", R=6,
+        allow=pikepdf.Permissions(extract=False, modify_annotation=False, modify_assembly=False,
+                                 modify_form=False, modify_other=False, print_lowres=False, print_highres=False),
+    ))
+    page.Annots = pikepdf.Array([page.Annots[0]] * 2050)
+    document.save(directory / "inventory_many.pdf", static_id=True)
+
+
 def validate(directory):
     for path in sorted(directory.glob("*.pdf")):
         password = "aIX" if path.stem == "protected_unicode" else "reader-secret"
@@ -206,4 +313,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if not args.check_only:
         generate(args.directory, args.previews)
+        generate_info(args.directory)
+        generate_inventory(args.directory)
     validate(args.directory)

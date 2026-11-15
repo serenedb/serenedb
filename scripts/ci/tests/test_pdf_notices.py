@@ -11,8 +11,10 @@ def test_pdf_notices_in_binary_install(tmp_path):
     source = tmp_path / "source"
     shutil.copytree(ROOT / "resources/licenses/pdf", source / "resources/licenses/pdf")
     licenses = {
+        "duckdb_pdf": ["LICENSE"],
         "podofo": ["COPYING.MPL", "NOTICE", "3rdparty/chromium/pdfium/LICENSE",
-                   "3rdparty/chromium/numerics/LICENSE"],
+                   "3rdparty/chromium/numerics/LICENSE",
+                   "src/podofo/private/LiberaLean/LICENSE.txt"],
         "freetype": ["LICENSE.TXT", "docs/FTL.TXT"],
         "duckdb": ["third_party/utf8proc/LICENSE"],
     }
@@ -50,16 +52,19 @@ def test_pdf_notices_in_binary_install(tmp_path):
 
     notices = destination / "share/doc/serenedb/pdf"
     source_notice = (notices / "NOTICE.md").read_text()
-    for dependency in ("podofo", "freetype"):
+    for dependency in ("podofo", "freetype", "duckdb_pdf"):
         revision = subprocess.check_output(
             ["git", "-C", str(source / "third_party" / dependency), "rev-parse", "HEAD"],
             text=True, timeout=10,
         ).strip()
-        assert f"https://github.com/serenedb/{dependency}/tree/{revision}" in source_notice
+        repository = dependency.replace("_", "-")
+        assert f"https://github.com/serenedb/{repository}/tree/{revision}" in source_notice
     assert "@PDF_" not in source_notice
     for installed, original in (
+        ("duckdb_pdf/LICENSE", "duckdb_pdf/LICENSE"),
         ("podofo/COPYING.MPL", "podofo/COPYING.MPL"),
         ("podofo/NOTICE", "podofo/NOTICE"),
+        ("podofo/LiberaLean/LICENSE.txt", "podofo/src/podofo/private/LiberaLean/LICENSE.txt"),
         ("podofo/pdfium/LICENSE", "podofo/3rdparty/chromium/pdfium/LICENSE"),
         ("podofo/numerics/LICENSE", "podofo/3rdparty/chromium/numerics/LICENSE"),
         ("freetype/FTL.TXT", "freetype/docs/FTL.TXT"),

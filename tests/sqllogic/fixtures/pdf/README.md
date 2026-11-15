@@ -1,5 +1,7 @@
 # PDF fixtures
 
+`signing/` contains public, test-only RSA and EC credentials with the name `varusik public test key`. The encrypted keys use the password `varusik`. They belong only in tests and do not establish trust or identify a real signer.
+
 PDFs are generated under the ignored `resources/tests/pdf/` directory. Do not commit them. The SQL test runner prepares them on demand; container runners prepare them on the host before starting containers, like the Iceberg fixtures.
 
 `basic/` covers structural boundaries and errors. `rendered/` contains ten realistic documents (30 pages) for the PDF reader tests:

@@ -1,0 +1,51 @@
+control substitution on
+
+query
+SELECT is_encrypted, is_locked, perm_copy, has_javascript, form_type, page_mode, page_layout
+FROM pdf_permissions('${RESOURCES}/tests/pdf/rendered/inventory_varusik.pdf');
+----
+is_encrypted	is_locked	perm_copy	has_javascript	form_type	page_mode	page_layout
+f	f	t	t	acro	use_outlines	two_column_left
+
+query
+SELECT is_encrypted, perm_copy, perm_print, perm_change
+FROM pdf_permissions('${RESOURCES}/tests/pdf/rendered/inventory_encrypted.pdf', password := 'reader-secret');
+----
+is_encrypted	perm_copy	perm_print	perm_change
+t	f	f	f
+
+query
+SELECT page, name, type, embedded, subset
+FROM pdf_fonts('${RESOURCES}/tests/pdf/rendered/inventory_varusik.pdf') ORDER BY name;
+----
+page	name	type	embedded	subset
+1	Courier	type1	f	f
+1	Helvetica	type1	f	f
+
+query
+SELECT page, subtype, contents, uri, rect_x0, rect_y0, rect_x1, rect_y1
+FROM pdf_annotations('${RESOURCES}/tests/pdf/rendered/inventory_varusik.pdf') ORDER BY subtype;
+----
+page	subtype	contents	uri	rect_x0	rect_y0	rect_x1	rect_y1
+1	Link	varusik link	https://example.com/varusik	10	20	110	40
+1	Text	varusik note	NULL	50	60	70	80
+
+query
+SELECT count(*) AS annotations FROM pdf_annotations('${RESOURCES}/tests/pdf/rendered/inventory_many.pdf');
+----
+annotations
+2050
+
+query
+SELECT count(*) AS annotations FROM pdf_annotations([
+  '${RESOURCES}/tests/pdf/rendered/inventory_varusik.pdf',
+  '${RESOURCES}/tests/pdf/rendered/inventory_varusik.pdf']);
+----
+annotations
+4
+
+statement error PDF is encrypted
+SELECT * FROM pdf_permissions('${RESOURCES}/tests/pdf/rendered/inventory_encrypted.pdf');
+
+statement error password must not be NULL
+SELECT * FROM pdf_fonts('${RESOURCES}/tests/pdf/rendered/inventory_varusik.pdf', password := NULL);

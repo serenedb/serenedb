@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 SCRIPTS = Path(__file__).resolve().parents[1]
-ARCH = {"x86_64": "amd64", "aarch64": "arm64"}[platform.machine()]
+ARCH = {"x86_64": "amd64", "aarch64": "arm64", "arm64": "arm64"}[platform.machine()]
 OTHER = {"amd64": "arm64", "arm64": "amd64"}[ARCH]
 DOCKER_STUB = r"""#!/usr/bin/env python3
 import json, os, sys

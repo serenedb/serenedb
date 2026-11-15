@@ -1,0 +1,67 @@
+control substitution on
+
+query
+SELECT page_number, element_idx, element_type, text, font_size
+FROM read_pdf_elements('${RESOURCES}/tests/pdf/basic/semantic_varusik.pdf', last_page := 1)
+ORDER BY element_idx;
+----
+page_number	element_idx	element_type	text	font_size
+1	1	heading	Varusik chapter	24
+1	2	paragraph	varusik reads banochka and sopley alpha beta gamma delta epsilon	12
+1	3	list_item	- varusik takes a spoon	12
+1	4	list_item	2. varusik reads more pages	12
+1	5	heading	VARUSIK RULES	12
+1	6	paragraph	varusik continues reading this paragraph with more words	12
+
+query
+SELECT element_type, count(*) AS elements
+FROM read_pdf_elements('${RESOURCES}/tests/pdf/basic/repeated_varusik.pdf')
+WHERE text = 'VARUSIK REPORT' GROUP BY element_type ORDER BY element_type;
+----
+element_type	elements
+heading	1
+other	5
+
+query
+SELECT chunk_idx, page_start, heading, page_end, n_chars = length(text) AS valid_length
+FROM pdf_chunks('${RESOURCES}/tests/pdf/basic/semantic_varusik.pdf');
+----
+chunk_idx	page_start	heading	page_end	valid_length
+1	1	Varusik chapter	2	t
+
+query
+SELECT chunk_idx, page_start, page_end, replace(text, chr(10), '|') AS text
+FROM pdf_chunks('${RESOURCES}/tests/pdf/basic/chunk_varusik.pdf', chunk_size := 32, overlap := 10)
+ORDER BY chunk_idx;
+----
+chunk_idx	page_start	page_end	text
+1	1	1	varusik banochka||sopley 42
+2	1	2	sopley 42||varusik poesh
+
+query
+SELECT string_agg(text, '' ORDER BY chunk_idx) AS text
+FROM pdf_chunks('${RESOURCES}/tests/pdf/basic/unicode.pdf', chunk_size := 1, overlap := 0);
+----
+text
+П中
+
+query
+SELECT text FROM read_pdf_elements('${RESOURCES}/tests/pdf/basic/varusik_encrypted.pdf', password := 'varusik', first_page := 2);
+----
+text
+varusik poesh
+
+query
+SELECT count(*) AS chunks FROM pdf_chunks('${RESOURCES}/tests/pdf/basic/blank.pdf');
+----
+chunks
+0
+
+statement error overlap must be smaller than chunk_size
+SELECT * FROM pdf_chunks('${RESOURCES}/tests/pdf/basic/varusik.pdf', chunk_size := 10, overlap := 10);
+
+statement error invalid page or chunk size
+SELECT * FROM pdf_chunks('${RESOURCES}/tests/pdf/basic/varusik.pdf', chunk_size := 0);
+
+statement error PDF is encrypted
+SELECT * FROM read_pdf_elements('${RESOURCES}/tests/pdf/basic/varusik_encrypted.pdf');

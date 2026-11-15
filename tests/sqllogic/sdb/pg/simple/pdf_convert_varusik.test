@@ -1,0 +1,140 @@
+control substitution on
+
+query
+SELECT replace(pdf_to_text('${RESOURCES}/tests/pdf/basic/varusik.pdf'), E'\n', '|') AS body;
+----
+body
+varusik banochka|sopley 42||varusik poesh
+
+query
+SELECT replace(pdf_to_text('${RESOURCES}/tests/pdf/basic/convert_order.pdf', 'raw'), E'\n', '|') AS raw_text,
+       pdf_to_text('${RESOURCES}/tests/pdf/basic/convert_order.pdf', 'physical') LIKE 'left1%right1%left2%right2%right3' AS physical,
+       strpos(pdf_to_text('${RESOURCES}/tests/pdf/basic/convert_order.pdf', 'physical'), '  ') > 0 AS aligned;
+----
+raw_text	physical	aligned
+right2|left1|right1|left2|right3	t	t
+
+query
+SELECT pdf_to_text(content) = pdf_to_text(filename) AS text_matches,
+       pdf_to_text(content, 'physical') = pdf_to_text(filename, 'physical') AS physical_matches,
+       pdf_to_text(content, 'raw') = pdf_to_text(filename, 'raw') AS raw_matches,
+       pdf_to_html(content) = pdf_to_html(filename) AS html_matches,
+       pdf_to_xml(content) = pdf_to_xml(filename) AS xml_matches
+FROM read_blob('${RESOURCES}/tests/pdf/basic/varusik.pdf');
+----
+text_matches	physical_matches	raw_matches	html_matches	xml_matches
+t	t	t	t	t
+
+query
+SELECT strpos(md, '# Varusik report') > 0 AS heading,
+       strpos(md, '## Small heading') > 0 AS subheading,
+       strpos(md, '**varusik bold**') > 0 AS bold,
+       strpos(md, 'varusik reads banochka and sopley') > 0 AS paragraph,
+       strpos(md, '- varusik bullet') > 0 AS bullet,
+       strpos(md, '1. varusik numbered') > 0 AS numbered
+FROM (SELECT pdf_to_markdown('${RESOURCES}/tests/pdf/basic/convert_varusik.pdf') AS md) AS varusik;
+----
+heading	subheading	bold	paragraph	bullet	numbered
+t	t	t	t	t	t
+
+query
+SELECT strpos(md, E'| name | count |\n| --- | --- |\n| varusik | 42 |') > 0 AS pipe_table,
+       strpos(md, E'\n\nvarusik second page') > 0 AS second_page,
+       strpos(md, '\[link\]') > 0 AS link_escaped,
+       strpos(md, '\*stars\*') > 0 AS stars_escaped,
+       strpos(md, 'a\|b') > 0 AS pipe_escaped
+FROM (SELECT pdf_to_markdown('${RESOURCES}/tests/pdf/basic/convert_varusik.pdf') AS md) AS varusik;
+----
+pipe_table	second_page	link_escaped	stars_escaped	pipe_escaped
+t	t	t	t	t
+
+query
+SELECT strpos(html, 'position:absolute') > 0 AS positioned,
+       strpos(html, 'id="page2"') > 0 AS second_page,
+       strpos(html, '&lt;tag&gt;') > 0 AS tag_escaped,
+       strpos(html, '&amp;') > 0 AS ampersand_escaped,
+       strpos(html, '&quot;quotes&quot;') > 0 AS quotes_escaped,
+       strpos(html, '&apos;apostrophe&apos;') > 0 AS apostrophe_escaped
+FROM (SELECT pdf_to_html('${RESOURCES}/tests/pdf/basic/convert_varusik.pdf') AS html) AS varusik;
+----
+positioned	second_page	tag_escaped	ampersand_escaped	quotes_escaped	apostrophe_escaped
+t	t	t	t	t	t
+
+query
+SELECT strpos(xml, '<?xml version="1.0"') = 1 AS declaration,
+       strpos(xml, '<page number="2"') > 0 AS second_page,
+       strpos(xml, '<text top="') > 0 AS top_coordinate,
+       strpos(xml, ' left="') > 0 AS left_coordinate,
+       strpos(xml, '&lt;tag&gt;') > 0 AS escaped
+FROM (SELECT pdf_to_xml('${RESOURCES}/tests/pdf/basic/convert_varusik.pdf') AS xml) AS varusik;
+----
+declaration	second_page	top_coordinate	left_coordinate	escaped
+t	t	t	t	t
+
+query
+SELECT id, pdf_to_text(path) IS NULL AS text_null, pdf_to_markdown(path) IS NULL AS markdown_null,
+       pdf_to_html(path) IS NULL AS html_null, pdf_to_xml(path) IS NULL AS xml_null
+FROM (VALUES (0, NULL::text), (1, '${RESOURCES}/tests/pdf/basic/varusik.pdf'),
+             (2, '${RESOURCES}/tests/pdf/basic/convert_varusik.pdf'), (3, NULL::text)) AS varusik(id, path)
+ORDER BY id;
+----
+id	text_null	markdown_null	html_null	xml_null
+0	t	t	t	t
+1	f	f	f	f
+2	f	f	f	f
+3	t	t	t	t
+
+query
+SELECT count(pdf_to_text(path)) AS text_count, count(pdf_to_markdown(path)) AS markdown_count,
+       count(pdf_to_html(path)) AS html_count, count(pdf_to_xml(path)) AS xml_count
+FROM (VALUES (NULL::text), (NULL::text)) AS varusik(path);
+----
+text_count	markdown_count	html_count	xml_count
+0	0	0	0
+
+query
+SELECT pdf_to_text('${RESOURCES}/tests/pdf/basic/varusik.pdf', NULL) IS NULL AS null_layout,
+       pdf_to_text('${RESOURCES}/tests/pdf/basic/blank.pdf') = '' AS blank_text,
+       pdf_to_markdown('${RESOURCES}/tests/pdf/basic/blank.pdf') = '' AS blank_markdown;
+----
+null_layout	blank_text	blank_markdown
+t	t	t
+
+query
+SELECT strpos(pdf_to_text('${RESOURCES}/tests/pdf/basic/unicode.pdf'), 'П中') > 0 AS text_unicode,
+       strpos(pdf_to_markdown('${RESOURCES}/tests/pdf/basic/unicode.pdf'), 'П中') > 0 AS markdown_unicode,
+       strpos(pdf_to_html('${RESOURCES}/tests/pdf/basic/unicode.pdf'), 'П中') > 0 AS html_unicode,
+       strpos(pdf_to_xml('${RESOURCES}/tests/pdf/basic/unicode.pdf'), 'П中') > 0 AS xml_unicode;
+----
+text_unicode	markdown_unicode	html_unicode	xml_unicode
+t	t	t	t
+
+statement error
+SELECT pdf_to_text('${RESOURCES}/tests/pdf/basic/varusik.pdf', 'varusik');
+
+statement error
+SELECT pdf_to_text('${RESOURCES}/tests/pdf/basic/invalid.pdf');
+
+statement error
+SELECT pdf_to_markdown('${RESOURCES}/tests/pdf/basic/invalid.pdf');
+
+statement error
+SELECT pdf_to_html('${RESOURCES}/tests/pdf/basic/invalid.pdf');
+
+statement error
+SELECT pdf_to_xml('${RESOURCES}/tests/pdf/basic/invalid.pdf');
+
+statement error
+SELECT pdf_to_text('${RESOURCES}/tests/pdf/basic/varusik_encrypted.pdf');
+
+statement error
+SELECT pdf_to_markdown('${RESOURCES}/tests/pdf/basic/varusik_encrypted.pdf');
+
+statement error
+SELECT pdf_to_html('${RESOURCES}/tests/pdf/basic/varusik_encrypted.pdf');
+
+statement error
+SELECT pdf_to_xml('${RESOURCES}/tests/pdf/basic/varusik_encrypted.pdf');
+
+statement error
+SELECT pdf_to_markdown('${RESOURCES}/tests/pdf/basic/no_varusik.pdf');

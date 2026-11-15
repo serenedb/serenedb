@@ -26,9 +26,11 @@ def rc4(key, data):
     return bytes(result)
 
 
-def write_pdf(path, pages, password=None, unicode_map=False, inspection=0):
+def write_pdf(path, pages, password=None, unicode_map=False, inspection=0, bold_font=False):
     objects = [b"", b""]
     objects.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+    if bold_font:
+        objects[2] = b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"
     document_id = hashlib.md5(b"SereneDB PDF fixtures").digest()
     key = None
     encryption = b""
@@ -75,12 +77,18 @@ def write_pdf(path, pages, password=None, unicode_map=False, inspection=0):
             + str(cmap).encode() + b" 0 R >>"
         )
     kids = []
+    bold = None
+    if bold_font:
+        objects.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>")
+        bold = len(objects)
     for content in pages:
         content_number = stream(content)
         kids.append(len(objects) + 1)
         objects.append(
             b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
-            b"/Resources << /Font << /F1 3 0 R >> >> /Contents "
+            b"/Resources << /Font << /F1 3 0 R "
+            + (f"/F2 {bold} 0 R ".encode() if bold else b"")
+            + b">> >> /Contents "
             + str(content_number).encode() + b" 0 R >>"
         )
     objects[0] = b"<< /Type /Catalog /Pages 2 0 R >>"
@@ -187,6 +195,10 @@ def generate(directory):
         b"BT /F1 12 Tf 260 670 Td (42) Tj ET"
     )
     varusik_pages = [varusik, b"BT /F1 12 Tf 72 720 Td (varusik poesh) Tj ET"]
+    for partition in ("one", "two"):
+        partition_dir = directory / "partitions" / f"varusik={partition}"
+        partition_dir.mkdir(parents=True, exist_ok=True)
+        write_pdf(partition_dir / "document.pdf", varusik_pages)
     write_pdf(directory / "varusik.pdf", varusik_pages)
     write_pdf(directory / "varusik_encrypted.pdf", varusik_pages, password="varusik")
     write_pdf(directory / "inspect_varusik.pdf", varusik_pages, inspection=3)
@@ -230,6 +242,50 @@ def generate(directory):
         b"BT 0 Tc /F1 8 Tf 1 0 0 1 20 80 Tm (A) Tj 40 0 Td (B) Tj 40 0 Td (C) Tj ET"
     )
     write_pdf(directory / "spaced_table.pdf", [spaced_table])
+    write_pdf(directory / "convert_varusik.pdf", [
+        b"BT /F1 24 Tf 60 740 Td (Varusik report) Tj ET\n"
+        b"BT /F1 16 Tf 60 710 Td (Small heading) Tj ET\n"
+        b"BT /F1 12 Tf 60 680 Td (varusik reads) Tj ET\n"
+        b"BT /F1 12 Tf 60 664 Td (banochka and sopley) Tj ET\n"
+        b"BT /F2 12 Tf 60 630 Td (varusik bold) Tj ET\n"
+        b"BT /F1 12 Tf 60 600 Td (- varusik bullet) Tj ET\n"
+        b"BT /F1 12 Tf 60 575 Td (1. varusik numbered) Tj ET\n"
+        b"BT /F1 12 Tf 60 540 Td (name) Tj 200 0 Td (count) Tj ET\n"
+        b"BT /F1 12 Tf 60 520 Td (varusik) Tj 200 0 Td (42) Tj ET\n"
+        b"BT /F1 12 Tf 60 480 Td (varusik <tag> & \"quotes\" 'apostrophe' [link] *stars* a|b) Tj ET",
+        b"BT /F1 12 Tf 72 720 Td (varusik second page) Tj ET",
+    ], bold_font=True)
+    write_pdf(directory / "convert_order.pdf", [
+        b"BT /F1 12 Tf 260 680 Td (right2) Tj ET\n"
+        b"BT /F1 12 Tf 60 710 Td (left1) Tj ET\n"
+        b"BT /F1 12 Tf 260 710 Td (right1) Tj ET\n"
+        b"BT /F1 12 Tf 60 680 Td (left2) Tj ET\n"
+        b"BT /F1 12 Tf 260 650 Td (right3) Tj ET"
+    ])
+    write_pdf(directory / "semantic_varusik.pdf", [
+        b"BT /F1 24 Tf 60 740 Td (Varusik chapter) Tj ET\n"
+        b"BT /F1 12 Tf 60 700 Td (varusik reads banochka and sopley) Tj ET\n"
+        b"BT /F1 12 Tf 60 684 Td (alpha beta gamma delta epsilon) Tj ET\n"
+        b"BT /F1 12 Tf 60 640 Td (- varusik takes a spoon) Tj ET\n"
+        b"BT /F1 12 Tf 60 600 Td (2. varusik reads more pages) Tj ET\n"
+        b"BT /F2 12 Tf 60 560 Td (VARUSIK RULES) Tj ET\n"
+        b"BT /F1 12 Tf 60 530 Td (varusik continues reading this paragraph with more words) Tj ET",
+        b"BT /F1 12 Tf 60 700 Td (varusik second page has useful words) Tj ET\n"
+        b"BT /F1 12 Tf 60 660 Td (varusikvarusikvarusikvarusikvarusikvarusikvarusikvarusik) Tj ET",
+    ], bold_font=True)
+    write_pdf(directory / "chunk_varusik.pdf", [
+        b"BT /F1 12 Tf 60 710 Td (varusik banochka) Tj ET\n"
+        b"BT /F1 12 Tf 60 680 Td (sopley 42) Tj ET",
+        b"BT /F1 12 Tf 72 720 Td (varusik poesh) Tj ET",
+    ])
+    repeated = (
+        b"BT /F1 20 Tf 60 755 Td (VARUSIK REPORT) Tj ET\n"
+        b"BT /F1 12 Tf 60 400 Td (varusik reads many useful words here) Tj ET"
+    )
+    write_pdf(directory / "repeated_varusik.pdf", [repeated] * 5 + [
+        b"BT /F1 20 Tf 60 450 Td (VARUSIK REPORT) Tj ET\n"
+        b"BT /F1 12 Tf 60 400 Td (varusik reads many useful words here) Tj ET"
+    ])
     write_pdf(directory / "many_pages.pdf", [first] * 2050)
     table = []
     for row in range(34):

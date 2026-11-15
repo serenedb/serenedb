@@ -1,0 +1,82 @@
+control substitution on
+
+query
+SELECT title, author, creation_date, mod_date, page_count, is_encrypted,
+       is_linearized, width, height, file_size > 0 AS has_size, pdfa_part, pdfa_conformance
+FROM pdf_info('${RESOURCES}/tests/pdf/rendered/inspect_geometry.pdf');
+----
+title	author	creation_date	mod_date	page_count	is_encrypted	is_linearized	width	height	has_size	pdfa_part	pdfa_conformance
+varusik geometry	varusik	2026-01-02 12:30:00	2026-02-03 12:00:00	4	f	f	612	792	t	2	B
+
+query
+SELECT is_linearized, page_count
+FROM pdf_info('${RESOURCES}/tests/pdf/rendered/inspect_linearized.pdf');
+----
+is_linearized	page_count
+t	4
+
+query
+SELECT pdfa_part, pdfa_conformance
+FROM pdf_info('${RESOURCES}/tests/pdf/rendered/inspect_xmp_attributes.pdf');
+----
+pdfa_part	pdfa_conformance
+3	A
+
+query
+SELECT pdfa_part, pdfa_conformance
+FROM pdf_info('${RESOURCES}/tests/pdf/rendered/inspect_xmp_partial.pdf');
+----
+pdfa_part	pdfa_conformance
+4	NULL
+
+query
+SELECT count(*) AS files FROM pdf_info([
+  '${RESOURCES}/tests/pdf/rendered/inspect_xmp_invalid.pdf',
+  '${RESOURCES}/tests/pdf/rendered/inspect_xmp_untrusted.pdf',
+  '${RESOURCES}/tests/pdf/rendered/inspect_xmp_namespace.pdf'])
+WHERE pdfa_part IS NULL AND pdfa_conformance IS NULL;
+----
+files
+3
+
+query
+SELECT creation_date IS NULL AND mod_date IS NULL AS missing_dates
+FROM pdf_info('${RESOURCES}/tests/pdf/rendered/inspect_bad_dates.pdf');
+----
+missing_dates
+t
+
+query
+SELECT page, page_count, width, height, media_width, media_height, crop_width, crop_height,
+       rotation, orientation, label, duration
+FROM pdf_pages_info('${RESOURCES}/tests/pdf/rendered/inspect_geometry.pdf') ORDER BY page;
+----
+page	page_count	width	height	media_width	media_height	crop_width	crop_height	rotation	orientation	label	duration
+1	4	400	600	612	792	400	600	0	portrait	varusik-i	NULL
+2	4	400	600	612	792	400	600	90	landscape	varusik-ii	2.5
+3	4	400	600	612	792	400	600	180	upside_down	A	NULL
+4	4	400	600	612	792	400	600	270	seascape	B	NULL
+
+query
+SELECT count(*) AS pages, count(label) AS labels, count(duration) AS durations
+FROM pdf_pages_info('${RESOURCES}/tests/pdf/basic/varusik.pdf');
+----
+pages	labels	durations
+2	0	0
+
+query
+SELECT count(*) AS pages, count(DISTINCT file) AS files
+FROM pdf_pages_info('${RESOURCES}/tests/pdf/basic/varusik*.pdf', password := 'varusik');
+----
+pages	files
+4	2
+
+statement error
+SELECT * FROM pdf_pages_info('${RESOURCES}/tests/pdf/rendered/inspect_label_cycle.pdf');
+----
+cyclic or oversized page label tree
+
+statement error
+SELECT * FROM pdf_info('${RESOURCES}/tests/pdf/basic/varusik_encrypted.pdf', password := 'wrong');
+----
+PDF is encrypted

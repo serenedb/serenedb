@@ -1,0 +1,167 @@
+control substitution on
+
+query
+SELECT field_name FROM pdf_sign('${RESOURCES}/tests/pdf/basic/varusik.pdf', '${__TEST_DIR__}/varusik_rsa_signed.pdf',
+ '${RESOURCES}/tests/pdf/signing/varusik_rsa_cert.pem', '${RESOURCES}/tests/pdf/signing/varusik_rsa_key.pem',
+ reason := 'varusik approves', location := 'banochka', signer_name := 'varusik');
+----
+field_name
+Signature1
+
+query
+SELECT field_name, subfilter, signer_name, reason, location,
+       signing_time IS NOT NULL AS has_date, covers_whole_file, verified
+FROM pdf_signatures('${__TEST_DIR__}/varusik_rsa_signed.pdf');
+----
+field_name	subfilter	signer_name	reason	location	has_date	covers_whole_file	verified
+Signature1	adbe.pkcs7.detached	varusik	varusik approves	banochka	t	t	t
+
+query
+SELECT count(*) AS pages FROM read_pdf('${__TEST_DIR__}/varusik_rsa_signed.pdf');
+----
+pages
+2
+
+query
+SELECT field_name FROM pdf_sign('${RESOURCES}/tests/pdf/basic/varusik.pdf', '${__TEST_DIR__}/varusik_pkcs1_signed.pdf',
+ '${RESOURCES}/tests/pdf/signing/varusik_rsa_cert.pem', '${RESOURCES}/tests/pdf/signing/varusik_rsa_pkcs1_key.pem',
+ field_name := 'varusik');
+----
+field_name
+varusik
+
+query
+SELECT field_name, covers_whole_file, verified FROM pdf_signatures('${__TEST_DIR__}/varusik_pkcs1_signed.pdf');
+----
+field_name	covers_whole_file	verified
+varusik	t	t
+
+query
+SELECT field_name FROM pdf_sign('${RESOURCES}/tests/pdf/basic/varusik.pdf', '${__TEST_DIR__}/varusik_rsa_encrypted_signed.pdf',
+ '${RESOURCES}/tests/pdf/signing/varusik_rsa_cert.pem', '${RESOURCES}/tests/pdf/signing/varusik_rsa_encrypted_key.pem',
+ key_password := 'varusik');
+----
+field_name
+Signature1
+
+query
+SELECT covers_whole_file, verified FROM pdf_signatures('${__TEST_DIR__}/varusik_rsa_encrypted_signed.pdf');
+----
+covers_whole_file	verified
+t	t
+
+query
+SELECT field_name FROM pdf_sign('${RESOURCES}/tests/pdf/basic/varusik.pdf', '${__TEST_DIR__}/varusik_ec_signed.pdf',
+ '${RESOURCES}/tests/pdf/signing/varusik_ec_cert.pem', '${RESOURCES}/tests/pdf/signing/varusik_ec_key.pem');
+----
+field_name
+Signature1
+
+query
+SELECT covers_whole_file, verified FROM pdf_signatures('${__TEST_DIR__}/varusik_ec_signed.pdf');
+----
+covers_whole_file	verified
+t	t
+
+query
+SELECT field_name FROM pdf_sign('${RESOURCES}/tests/pdf/basic/varusik.pdf', '${__TEST_DIR__}/varusik_ec_encrypted_signed.pdf',
+ '${RESOURCES}/tests/pdf/signing/varusik_ec_cert.pem', '${RESOURCES}/tests/pdf/signing/varusik_ec_encrypted_key.pem',
+ key_password := 'varusik');
+----
+field_name
+Signature1
+
+query
+SELECT covers_whole_file, verified FROM pdf_signatures('${__TEST_DIR__}/varusik_ec_encrypted_signed.pdf');
+----
+covers_whole_file	verified
+t	t
+
+query
+SELECT field_name FROM pdf_sign('${__TEST_DIR__}/varusik_rsa_signed.pdf', '${__TEST_DIR__}/varusik_twice_signed.pdf',
+ '${RESOURCES}/tests/pdf/signing/varusik_ec_cert.pem', '${RESOURCES}/tests/pdf/signing/varusik_ec_key.pem',
+ field_name := 'Signature2');
+----
+field_name
+Signature2
+
+query
+SELECT field_name, covers_whole_file, verified FROM pdf_signatures('${__TEST_DIR__}/varusik_twice_signed.pdf')
+ORDER BY field_name;
+----
+field_name	covers_whole_file	verified
+Signature1	f	t
+Signature2	t	t
+
+query
+SELECT field_name FROM pdf_sign('${RESOURCES}/tests/pdf/basic/varusik_encrypted.pdf', '${__TEST_DIR__}/varusik_encrypted_signed.pdf',
+ '${RESOURCES}/tests/pdf/signing/varusik_rsa_cert.pem', '${RESOURCES}/tests/pdf/signing/varusik_rsa_key.pem',
+ password := 'varusik');
+----
+field_name
+Signature1
+
+query
+SELECT covers_whole_file, verified FROM pdf_signatures('${__TEST_DIR__}/varusik_encrypted_signed.pdf', password := 'varusik');
+----
+covers_whole_file	verified
+t	t
+
+query
+SELECT count(*) AS signatures FROM pdf_signatures('${RESOURCES}/tests/pdf/basic/varusik.pdf');
+----
+signatures
+0
+
+statement error
+SELECT * FROM pdf_sign('${RESOURCES}/tests/pdf/basic/varusik.pdf', '${__TEST_DIR__}/varusik_error.pdf',
+ '${RESOURCES}/tests/pdf/signing/varusik_rsa_cert.pem', '${RESOURCES}/tests/pdf/signing/varusik_ec_key.pem');
+
+statement error
+SELECT * FROM pdf_sign('${RESOURCES}/tests/pdf/basic/varusik.pdf', '${__TEST_DIR__}/varusik_error.pdf',
+ '${RESOURCES}/tests/pdf/signing/varusik_rsa_cert.pem', '${RESOURCES}/tests/pdf/signing/varusik_rsa_encrypted_key.pem',
+ key_password := 'wrong');
+
+statement error
+SELECT * FROM pdf_sign('${RESOURCES}/tests/pdf/basic/varusik.pdf', '${__TEST_DIR__}/varusik_error.pdf',
+ '${RESOURCES}/tests/pdf/basic/invalid.pdf', '${RESOURCES}/tests/pdf/signing/varusik_rsa_key.pem');
+
+statement error
+SELECT * FROM pdf_sign('${RESOURCES}/tests/pdf/basic/varusik.pdf', '${__TEST_DIR__}/varusik_error.pdf',
+ '${RESOURCES}/tests/pdf/signing/varusik_rsa_cert.pem', '${RESOURCES}/tests/pdf/basic/invalid.pdf');
+
+statement error
+SELECT * FROM pdf_sign('${RESOURCES}/tests/pdf/basic/invalid.pdf', '${__TEST_DIR__}/varusik_error.pdf',
+ '${RESOURCES}/tests/pdf/signing/varusik_rsa_cert.pem', '${RESOURCES}/tests/pdf/signing/varusik_rsa_key.pem');
+
+statement error
+SELECT * FROM pdf_sign('${RESOURCES}/tests/pdf/basic/varusik_encrypted.pdf', '${__TEST_DIR__}/varusik_error.pdf',
+ '${RESOURCES}/tests/pdf/signing/varusik_rsa_cert.pem', '${RESOURCES}/tests/pdf/signing/varusik_rsa_key.pem');
+
+statement error
+SELECT * FROM pdf_sign('${RESOURCES}/tests/pdf/basic/varusik.pdf', '${RESOURCES}/tests/pdf/basic/./varusik.pdf',
+ '${RESOURCES}/tests/pdf/signing/varusik_rsa_cert.pem', '${RESOURCES}/tests/pdf/signing/varusik_rsa_key.pem');
+
+statement error
+SELECT * FROM pdf_sign('${__TEST_DIR__}/varusik_rsa_signed.pdf', '${__TEST_DIR__}/varusik_error.pdf',
+ '${RESOURCES}/tests/pdf/signing/varusik_rsa_cert.pem', '${RESOURCES}/tests/pdf/signing/varusik_rsa_key.pem');
+
+statement error
+SELECT * FROM pdf_sign('${RESOURCES}/tests/pdf/basic/varusik.pdf', '${__TEST_DIR__}/varusik_error.pdf',
+ '${RESOURCES}/tests/pdf/signing/varusik_rsa_cert.pem', '${RESOURCES}/tests/pdf/signing/varusik_rsa_key.pem',
+ field_name := '');
+
+statement error
+SELECT * FROM pdf_sign('${RESOURCES}/tests/pdf/basic/varusik.pdf', '${__TEST_DIR__}/varusik_error.pdf',
+ '${RESOURCES}/tests/pdf/signing/varusik_rsa_cert.pem', '${RESOURCES}/tests/pdf/signing/varusik_rsa_key.pem',
+ reason := NULL);
+
+statement error
+SELECT * FROM pdf_sign(NULL, '${__TEST_DIR__}/varusik_error.pdf',
+ '${RESOURCES}/tests/pdf/signing/varusik_rsa_cert.pem', '${RESOURCES}/tests/pdf/signing/varusik_rsa_key.pem');
+
+statement error
+SELECT * FROM pdf_signatures('${RESOURCES}/tests/pdf/basic/invalid.pdf');
+
+statement error
+SELECT * FROM pdf_signatures('${RESOURCES}/tests/pdf/basic/varusik.pdf', password := NULL);

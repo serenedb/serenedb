@@ -1,0 +1,194 @@
+control substitution on
+
+query
+SELECT DISTINCT page, label FROM read_pdf_words('${RESOURCES}/tests/pdf/rendered/inspect_geometry.pdf') ORDER BY page;
+----
+page	label
+1	varusik-i
+2	varusik-ii
+3	A
+4	B
+
+query
+SELECT DISTINCT page, label FROM read_pdf_lines('${RESOURCES}/tests/pdf/rendered/inspect_geometry.pdf') ORDER BY page;
+----
+page	label
+1	varusik-i
+2	varusik-ii
+3	A
+4	B
+
+query
+SELECT page, line, text FROM read_pdf_lines('${RESOURCES}/tests/pdf/basic/varusik.pdf') ORDER BY page, line;
+----
+page	line	text
+1	1	varusik banochka
+1	2	sopley 42
+2	1	varusik poesh
+
+query
+SELECT page, word, round(x0) AS x, font_name, font_size, source, confidence IS NULL AS native,
+       x1 > x0 AND y1 > y0 AS bounds, label IS NULL AS unlabeled
+FROM read_pdf_words('${RESOURCES}/tests/pdf/basic/varusik.pdf') ORDER BY page, y0, x0;
+----
+page	word	x	font_name	font_size	source	native	bounds	unlabeled
+1	varusik	60	Helvetica	12	text	t	t	t
+1	banochka	260	Helvetica	12	text	t	t	t
+1	sopley	60	Helvetica	12	text	t	t	t
+1	42	260	Helvetica	12	text	t	t	t
+2	varusik	72	Helvetica	12	text	t	t	t
+2	poesh	114	Helvetica	12	text	t	t	t
+
+query
+SELECT count(*) AS differences FROM (
+  (SELECT * FROM read_pdf_words('${RESOURCES}/tests/pdf/basic/varusik.pdf')
+   EXCEPT SELECT * FROM read_pdf_layout('${RESOURCES}/tests/pdf/basic/varusik.pdf'))
+  UNION ALL
+  (SELECT * FROM read_pdf_layout('${RESOURCES}/tests/pdf/basic/varusik.pdf')
+   EXCEPT SELECT * FROM read_pdf_words('${RESOURCES}/tests/pdf/basic/varusik.pdf'))
+) AS varusik;
+----
+differences
+0
+
+query
+SELECT line, text FROM read_pdf_lines('${RESOURCES}/tests/pdf/basic/varusik.pdf', last_page := 1, layout := 'raw');
+----
+line	text
+1	varusik
+2	banochka
+3	sopley
+4	42
+
+query
+SELECT count(*) AS lines, bool_and(strpos(text, '  ') > 0) AS aligned
+FROM read_pdf_lines('${RESOURCES}/tests/pdf/basic/varusik.pdf', last_page := 1, parse_tables := true);
+----
+lines	aligned
+2	t
+
+query
+SELECT page, line, text FROM read_pdf_lines('${RESOURCES}/tests/pdf/basic/varusik_encrypted.pdf', password := 'varusik', first_page := 2);
+----
+page	line	text
+2	1	varusik poesh
+
+query
+SELECT count(DISTINCT filename) AS files, count(*) AS words
+FROM read_pdf_words(['${RESOURCES}/tests/pdf/basic/varusik.pdf', '${RESOURCES}/tests/pdf/basic/varusik_encrypted.pdf'], password := 'varusik');
+----
+files	words
+2	12
+
+query
+SELECT column_index, min(line) AS first_line, max(line) AS last_line
+FROM read_pdf_words('${RESOURCES}/tests/pdf/basic/layout.pdf', last_page := 1)
+GROUP BY column_index ORDER BY column_index;
+----
+column_index	first_line	last_line
+0	1	8
+1	9	16
+
+query
+SELECT text FROM read_pdf_lines('${RESOURCES}/tests/pdf/basic/layout.pdf', first_page := 2) ORDER BY line;
+----
+text
+A hyphenated word
+Last line-
+
+query
+SELECT word FROM read_pdf_words('${RESOURCES}/tests/pdf/basic/unicode.pdf');
+----
+word
+П中
+
+query
+SELECT count(*) AS words, count(DISTINCT file_row_number) AS row_ids, sum(line) AS line_sum
+FROM read_pdf_words('${RESOURCES}/tests/pdf/basic/many_blocks.pdf', file_row_number := true);
+----
+words	row_ids	line_sum
+2050	2050	2102275
+
+query
+SELECT count(*) AS lines, count(DISTINCT file_row_number) AS row_ids, sum(line) AS line_sum
+FROM read_pdf_lines('${RESOURCES}/tests/pdf/basic/many_blocks.pdf', file_row_number := true);
+----
+lines	row_ids	line_sum
+2050	2050	2102275
+
+query
+SELECT file_row_number, page, word
+FROM read_pdf_words('${RESOURCES}/tests/pdf/basic/varusik.pdf', first_page := 2, file_row_number := true)
+ORDER BY file_row_number;
+----
+file_row_number	page	word
+4294967296	2	varusik
+4294967297	2	poesh
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pdf_text_varusik_analyzer AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm);
+
+statement ok
+CREATE VIEW pdf_text_varusik_words AS
+SELECT * FROM read_pdf_words('${RESOURCES}/tests/pdf/basic/varusik*.pdf', password := 'varusik');
+
+statement ok
+CREATE INDEX pdf_text_varusik_words_idx ON pdf_text_varusik_words
+USING inverted(word pdf_text_varusik_analyzer, page) INCLUDE(page);
+
+query
+SELECT page, word, count(DISTINCT filename) AS files, min(font_size) AS font_size, min(page_width) AS width
+FROM pdf_text_varusik_words_idx WHERE word @@ ts_phrase('poesh') GROUP BY page, word;
+----
+page	word	files	font_size	width
+2	poesh	2	12	612
+
+statement ok
+CREATE VIEW pdf_text_varusik_lines AS
+SELECT * FROM read_pdf_lines('${RESOURCES}/tests/pdf/basic/partitions/*/*.pdf', hive_partitioning := true);
+
+statement ok
+CREATE INDEX pdf_text_varusik_lines_idx ON pdf_text_varusik_lines
+USING inverted(text pdf_text_varusik_analyzer, page) INCLUDE(page);
+
+query
+SELECT varusik, page, line, text FROM pdf_text_varusik_lines_idx
+WHERE text @@ ts_phrase('poesh') ORDER BY varusik;
+----
+varusik	page	line	text
+one	2	1	varusik poesh
+two	2	1	varusik poesh
+
+statement ok
+CREATE VIEW pdf_text_varusik_layout AS
+SELECT * FROM read_pdf_layout('${RESOURCES}/tests/pdf/basic/varusik.pdf');
+
+statement ok
+CREATE INDEX pdf_text_varusik_layout_idx ON pdf_text_varusik_layout
+USING inverted(word pdf_text_varusik_analyzer, page) INCLUDE(page);
+
+query
+SELECT page, word, font_name, font_size FROM pdf_text_varusik_layout_idx WHERE word @@ ts_phrase('poesh');
+----
+page	word	font_name	font_size
+2	poesh	Helvetica	12
+
+statement error
+SELECT * FROM read_pdf_words('${RESOURCES}/tests/pdf/basic/varusik.pdf', ocr := true);
+
+statement error
+SELECT * FROM read_pdf_lines('${RESOURCES}/tests/pdf/basic/varusik.pdf', auto_ocr := true);
+
+statement error
+SELECT * FROM read_pdf_layout('${RESOURCES}/tests/pdf/basic/varusik.pdf', password := NULL);
+
+statement error
+SELECT * FROM read_pdf_words('${RESOURCES}/tests/pdf/basic/varusik_encrypted.pdf');
+
+statement error
+SELECT * FROM read_pdf_lines('${RESOURCES}/tests/pdf/basic/varusik.pdf', first_page := 2, last_page := 1);
+
+statement error
+SELECT * FROM read_pdf_words('${RESOURCES}/tests/pdf/basic/invalid.pdf');

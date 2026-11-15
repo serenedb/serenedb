@@ -31,6 +31,11 @@ class FixtureGenerationTest(unittest.TestCase):
         self.scripts = [self.source / name for name in ("generate.py", "generate_rendered.py")]
         for path in self.scripts:
             path.write_text(generator)
+        signing = self.source / "signing"
+        signing.mkdir()
+        self.key = signing / "varusik.pem"
+        self.key.write_bytes(b"public test fixture")
+        self.scripts.append(self.key)
         for name, value in (("SOURCE", self.source), ("OUT", self.output), ("INPUTS", self.scripts)):
             patcher = patch.object(fixture, name, value)
             patcher.start()
@@ -59,6 +64,13 @@ class FixtureGenerationTest(unittest.TestCase):
             script.write("(directory / 'extra.pdf').write_bytes(b'extra')\n")
         fixture.ensure_fixture()
         self.assertEqual((self.output / "basic/extra.pdf").read_bytes(), b"extra")
+        self.assertEqual((self.output / "signing/varusik.pem").read_bytes(), b"public test fixture")
+        self.key.write_bytes(b"replacement public fixture")
+        fixture.ensure_fixture()
+        self.assertEqual((self.output / "signing/varusik.pem").read_bytes(), b"replacement public fixture")
+        (self.output / "signing/varusik.pem").write_bytes(b"damaged fixture")
+        fixture.ensure_fixture()
+        self.assertEqual((self.output / "signing/varusik.pem").read_bytes(), b"replacement public fixture")
 
     def test_failure_does_not_publish_partial_fixtures(self):
         self.scripts[1].write_text("raise SystemExit(1)\n")

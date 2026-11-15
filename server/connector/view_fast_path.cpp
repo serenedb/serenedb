@@ -87,6 +87,46 @@ const RegistryEntry kRegistry[] = {
     .glob_pk_spec = PkSpec::FileIndexPlusOffset,
   },
   {
+    .function_name = "read_pdf",
+    .single_pk_spec = PkSpec::FileRowNumber,
+    .glob_pk_spec = PkSpec::FileIndexPlusRowNumber,
+  },
+  {
+    .function_name = "read_pdf_blocks",
+    .single_pk_spec = PkSpec::FileRowNumber,
+    .glob_pk_spec = PkSpec::FileIndexPlusRowNumber,
+  },
+  {
+    .function_name = "read_pdf_tables",
+    .single_pk_spec = PkSpec::FileRowNumber,
+    .glob_pk_spec = PkSpec::FileIndexPlusRowNumber,
+  },
+  {
+    .function_name = "read_pdf_lines",
+    .single_pk_spec = PkSpec::FileRowNumber,
+    .glob_pk_spec = PkSpec::FileIndexPlusRowNumber,
+  },
+  {
+    .function_name = "read_pdf_words",
+    .single_pk_spec = PkSpec::FileRowNumber,
+    .glob_pk_spec = PkSpec::FileIndexPlusRowNumber,
+  },
+  {
+    .function_name = "read_pdf_layout",
+    .single_pk_spec = PkSpec::FileRowNumber,
+    .glob_pk_spec = PkSpec::FileIndexPlusRowNumber,
+  },
+  {
+    .function_name = "read_pdf_elements",
+    .single_pk_spec = PkSpec::FileRowNumber,
+    .glob_pk_spec = PkSpec::FileIndexPlusRowNumber,
+  },
+  {
+    .function_name = "pdf_chunks",
+    .single_pk_spec = PkSpec::FileRowNumber,
+    .glob_pk_spec = PkSpec::FileIndexPlusRowNumber,
+  },
+  {
     .function_name = "read_json",
     .single_pk_spec = PkSpec::FileOffset,
     .glob_pk_spec = PkSpec::FileIndexPlusOffset,
@@ -434,26 +474,37 @@ std::optional<ViewFastPath> ResolveFunctionSource(duckdb::Binder& binder,
       named_params[param_name] = std::move(value);
     }
   }
-  if (args.size() != 1 ||
-      args[0].type().id() != duckdb::LogicalTypeId::VARCHAR) {
+  if (args.size() != 1 || args[0].IsNull()) {
     return std::nullopt;
+  }
+  const auto is_list =
+    args[0].type() == duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
+  if (!is_list && args[0].type().id() != duckdb::LogicalTypeId::VARCHAR) {
+    return std::nullopt;
+  }
+  std::span<const duckdb::Value> paths{&args[0], 1};
+  if (is_list) {
+    paths = duckdb::ListValue::GetChildren(args[0]);
   }
   static constexpr std::string_view kJsonReaders[] = {
     "read_json", "read_ndjson", "read_json_objects", "read_ndjson_objects"};
-  if (absl::c_contains(kJsonReaders, entry->function_name) &&
-      IsCompressedJson(args[0].GetValue<std::string>(), named_params)) {
-    return std::nullopt;
+  for (const auto& path : paths) {
+    if (path.IsNull() ||
+        (absl::c_contains(kJsonReaders, entry->function_name) &&
+         IsCompressedJson(path.GetValue<std::string>(), named_params))) {
+      return std::nullopt;
+    }
   }
   ViewFastPath out;
   out.function_name = entry->function_name;
   out.args = std::move(args);
   out.named_params = std::move(named_params);
   out.is_glob =
-    duckdb::FileSystem::HasGlob(out.args[0].GetValue<std::string>());
+    is_list || duckdb::FileSystem::HasGlob(out.args[0].GetValue<std::string>());
   out.projection_columns = std::move(body.projection_columns);
   out.pk_spec = out.is_glob ? entry->glob_pk_spec : entry->single_pk_spec;
   out.supports_filters = entry->supports_filters;
-  out.supports_delta = IsGlobPK(out.pk_spec) &&
+  out.supports_delta = !is_list && IsGlobPK(out.pk_spec) &&
                        !out.named_params.contains("union_by_name") &&
                        !body.has_limit;
   return out;

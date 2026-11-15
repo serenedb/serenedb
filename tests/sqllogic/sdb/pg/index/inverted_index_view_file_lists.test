@@ -1,0 +1,99 @@
+control substitution on
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY list_varusik_words AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+statement count 1
+COPY (SELECT 1 AS id, 'varusik banochka' AS body, 'first file payload' AS payload)
+TO '${__TEST_DIR__}/list_varusik_a.csv' (FORMAT csv, HEADER);
+
+statement count 1
+COPY (SELECT 2 AS id, 'varusik poesh' AS body, 'second file payload' AS payload)
+TO '${__TEST_DIR__}/list_varusik_b.csv' (FORMAT csv, HEADER);
+
+statement ok
+CREATE VIEW list_varusik_csv AS
+SELECT * FROM read_csv(['${__TEST_DIR__}/list_varusik_b.csv', '${__TEST_DIR__}/list_varusik_a.csv']);
+
+statement ok
+CREATE INDEX list_varusik_csv_idx ON list_varusik_csv USING inverted(body list_varusik_words, id) INCLUDE(id);
+
+query
+SELECT id, body, payload FROM list_varusik_csv_idx
+WHERE body @@ ts_phrase('varusik') ORDER BY id;
+----
+id	body	payload
+1	varusik banochka	first file payload
+2	varusik poesh	second file payload
+
+statement count 1
+COPY (SELECT 1 AS id, 'varusik banochka' AS body, 'first file payload' AS payload)
+TO '${__TEST_DIR__}/list_varusik_a.parquet' (FORMAT parquet);
+
+statement count 1
+COPY (SELECT 2 AS id, 'varusik poesh' AS body, 'second file payload' AS payload)
+TO '${__TEST_DIR__}/list_varusik_b.parquet' (FORMAT parquet);
+
+statement ok
+CREATE VIEW list_varusik_parquet AS
+SELECT * FROM read_parquet(['${__TEST_DIR__}/list_varusik_b.parquet', '${__TEST_DIR__}/list_varusik_a.parquet']);
+
+statement ok
+CREATE INDEX list_varusik_parquet_idx ON list_varusik_parquet USING inverted(body list_varusik_words, id) INCLUDE(id);
+
+query
+SELECT id, body, payload FROM list_varusik_parquet_idx
+WHERE body @@ ts_phrase('varusik') ORDER BY id;
+----
+id	body	payload
+1	varusik banochka	first file payload
+2	varusik poesh	second file payload
+
+statement ok
+CREATE VIEW list_varusik_duplicates AS
+SELECT * FROM read_csv(['${__TEST_DIR__}/list_varusik_a.csv', '${__TEST_DIR__}/list_varusik_a.csv']);
+
+statement ok
+CREATE INDEX list_varusik_duplicates_idx ON list_varusik_duplicates USING inverted(body list_varusik_words, id) INCLUDE(id);
+
+query
+SELECT id, body, payload FROM list_varusik_duplicates_idx
+WHERE body @@ ts_phrase('varusik') ORDER BY id;
+----
+id	body	payload
+1	varusik banochka	first file payload
+1	varusik banochka	first file payload
+
+statement count 1
+COPY (SELECT 3 AS id, 'varusik sopley' AS body, 'replacement file payload' AS payload)
+TO '${__TEST_DIR__}/list_varusik_a.csv' (FORMAT csv, HEADER);
+
+query
+SELECT action FROM serenedb_reindex('list_varusik_duplicates_idx');
+----
+action
+rebuild
+
+query
+SELECT id, body, payload FROM list_varusik_duplicates_idx
+WHERE body @@ ts_phrase('varusik') ORDER BY id;
+----
+id	body	payload
+3	varusik sopley	replacement file payload
+3	varusik sopley	replacement file payload
+
+query
+SELECT action FROM serenedb_reindex('list_varusik_csv_idx');
+----
+action
+rebuild
+
+query
+SELECT id, body, payload FROM list_varusik_csv_idx
+WHERE body @@ ts_phrase('varusik') ORDER BY id;
+----
+id	body	payload
+2	varusik poesh	second file payload
+3	varusik sopley	replacement file payload

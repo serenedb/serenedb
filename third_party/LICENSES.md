@@ -17,6 +17,7 @@
 * [Apache Avro](https://github.com/apache/avro)
 * [clickhouse-cpp](https://github.com/ClickHouse/clickhouse-cpp)
 * [StringZilla](https://github.com/ashvardanian/StringZilla)
+* [SereneDB PDF extension](https://github.com/serenedb/duckdb-pdf) (the PoDoFo implementation; the original GPL implementation is not bundled)
 
 ### [Boost Software License, Version 1.0](http://www.boost.org/LICENSE_1_0.txt)
 

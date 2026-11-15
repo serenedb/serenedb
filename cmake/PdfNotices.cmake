@@ -1,6 +1,7 @@
 set(PDF_PODOFO_SOURCE "${PROJECT_SOURCE_DIR}/third_party/podofo")
 set(PDF_FREETYPE_SOURCE "${PROJECT_SOURCE_DIR}/third_party/freetype")
-foreach(dependency PODOFO FREETYPE)
+set(PDF_EXTENSION_SOURCE "${PROJECT_SOURCE_DIR}/third_party/duckdb_pdf")
+foreach(dependency PODOFO FREETYPE EXTENSION)
     execute_process(
         COMMAND
             "${GIT_EXECUTABLE}" -C "${PDF_${dependency}_SOURCE}" rev-parse HEAD
@@ -20,8 +21,16 @@ install(
     DESTINATION "${CMAKE_INSTALL_DOCDIR}/pdf"
 )
 install(
+    FILES "${PDF_EXTENSION_SOURCE}/LICENSE"
+    DESTINATION "${CMAKE_INSTALL_DOCDIR}/pdf/duckdb_pdf"
+)
+install(
     FILES "${PDF_PODOFO_SOURCE}/COPYING.MPL" "${PDF_PODOFO_SOURCE}/NOTICE"
     DESTINATION "${CMAKE_INSTALL_DOCDIR}/pdf/podofo"
+)
+install(
+    FILES "${PDF_PODOFO_SOURCE}/src/podofo/private/LiberaLean/LICENSE.txt"
+    DESTINATION "${CMAKE_INSTALL_DOCDIR}/pdf/podofo/LiberaLean"
 )
 install(
     FILES "${PROJECT_SOURCE_DIR}/resources/licenses/pdf/THIRD_PARTY.txt"

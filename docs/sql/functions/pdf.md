@@ -1,5 +1,5 @@
 ---
-title: PDF Readers
+title: PDF Functions
 split: headings
 ---
 
@@ -9,7 +9,7 @@ The PDF readers are available in SereneDB SQL and in `serened shell`, with no se
 
 ## Read page text
 
-`read_pdf(path, password := '', first_page := 1, last_page := ..., layout := 'auto')` returns one row per selected PDF page. The path can name a file or contain a glob pattern. Local paths are relative to the server's working directory and refer to files accessible to the server.
+`read_pdf(path, password := '', first_page := 1, last_page := ..., layout := 'auto')` returns one row per selected PDF page. The path can name a file, contain a glob pattern, or be a list of paths and patterns. Local paths are relative to the server's working directory and refer to files accessible to the server.
 
 <SqlLogicTest id="sql/functions/pdf/read_pages" />
 
@@ -57,6 +57,85 @@ Provide `password` for password-protected documents. A missing or incorrect pass
 
 <SqlLogicTest id="sql/functions/pdf/page_range" />
 
+## Multiple files and indexed views
+
+`read_pdf`, `read_pdf_blocks`, `read_pdf_tables`, `read_pdf_words`, `read_pdf_lines`, and `read_pdf_layout` accept lists and glob patterns, including Hive partition directories with `hive_partitioning := true`. `union_by_name := true` combines columns by name. Duplicate paths in a list produce duplicate rows.
+
+These readers support lookup for selective queries and inverted indexes on file-backed views. `file_row_number := true` exposes a zero-based row identifier within a file; use the file identity with it when reading multiple files. Page text uses the zero-based page number. Fragment, table, word, and line identifiers combine the page number with the row within that page. Identifiers are valid for the same file contents and extraction options; rebuild indexes after replacing input files. List-backed views rebuild their file set on reindexing.
+
+## Words and lines
+
+`read_pdf_words(path)` and `read_pdf_layout(path)` return positioned words with columns `filename`, `page`, `word`, `x0`, `y0`, `x1`, `y1`, `font_name`, `font_size`, `source`, `confidence`, `line`, `column_index`, `page_width`, `page_height`, and `label`. Coordinates are PDF points measured from the top-left of the rotated crop box. `source` is `text`; `confidence` is `NULL` for extracted text. Printed page labels are `NULL` when absent.
+
+`read_pdf_lines(path)` returns `filename`, `page`, `line`, `text`, and `label`. Page and line numbers start at 1. These functions accept `password`, `first_page`, and `last_page`. `read_pdf_lines` accepts `layout := 'reading'`, `'physical'`, or `'raw'`; `parse_tables := true` preserves spacing between aligned words. OCR options must be false. Pages without text produce no rows.
+
+## Whole-document converters
+
+| Function | Result |
+| --- | --- |
+| `pdf_to_text(path_or_blob [, layout])` | Plain text for the whole document. Layout is `reading` (default), `physical`, or `raw`. |
+| `pdf_to_markdown(path)` | Markdown with inferred headings, bold spans, lists, and tables. |
+| `pdf_to_html(path_or_blob)` | Positioned HTML with escaped text. |
+| `pdf_to_xml(path_or_blob)` | XML with per-word bounding boxes and escaped text. |
+
+Converters return one `VARCHAR`, preserve `NULL` input, and accept raw PDF bytes through the BLOB overloads except for Markdown. Physical layout retains approximate horizontal spacing; raw layout follows content order. Layout and Markdown classification are approximate. Missing, malformed, or encrypted input raises an error; the scalar converters do not accept a password.
+
+## Document and page information
+
+`pdf_info(path, password := '')` returns one row per file: `file`, `title`, `author`, `subject`, `keywords`, `creator`, `producer`, `creation_date`, `mod_date`, `page_count`, `is_encrypted`, `is_linearized`, `pdf_version`, `width`, `height`, `file_size`, `pdfa_part`, and `pdfa_conformance`. Dates are timestamps; missing metadata and dates are `NULL`. Width and height describe the first page's media box in PDF points. PDF/A values are metadata claims, not a conformance check.
+
+`pdf_pages_info(path, password := '')` returns one row per page with crop and media dimensions, rotation, orientation, printed label, and presentation duration. Both information functions accept lists and glob patterns.
+
+`pdf_permissions(path, password := '')` reports encryption and permission flags, JavaScript presence, form type, page display preferences, and permanent/update document IDs. It inspects JavaScript without executing it. An encrypted document requires the correct password. Permission flags describe the PDF's restrictions; they are not an operating-system access control policy.
+
+`pdf_fonts(path, password := '')` returns `file`, `page`, `name`, `type`, `embedded`, `subset`, and `font_file`, including fonts in nested form resources. `font_file` is NULL when there is no resolved external font file. `pdf_annotations(path, password := '')` returns `file`, `page`, `subtype`, `contents`, `uri`, `rect_x0`, `rect_y0`, `rect_x1`, and `rect_y1`; URI is set for URI link actions. Annotation bounds retain the document's PDF coordinates. All three accept file lists and globs.
+
+## Semantic elements and chunks
+
+`read_pdf_elements(path, password := '', first_page := 1, last_page := ...)` returns `file`, `page_number`, `element_idx`, `element_type`, `text`, `font_size`, `bbox_x0`, `bbox_y0`, `bbox_x1`, `bbox_y1`, and `font_name`. Element types include `heading`, `paragraph`, `list_item`, and `other`. Bounds are measured from the top-left of the rotated crop box. Heading and paragraph classification is approximate; repeated margin headings on at least five pages are classified as `other`.
+
+`pdf_chunks(path, chunk_size := 1200, overlap := 150, password := '', first_page := 1, last_page := ...)` returns `file`, `chunk_idx`, `text`, `page_start`, `page_end`, `n_chars`, and `heading`. Indexes and page numbers start at 1. Sizes count Unicode characters, not bytes. Chunk size must be positive, and overlap must be nonnegative and smaller than the chunk size. A heading stays with following content, and overlap is taken at a word boundary; these can make a chunk exceed the target size. Blank documents produce no rows. Both functions accept lists and globs and support lookup; their file row numbers identify the extracted element or chunk within the selected document.
+
+## Create PDF documents
+
+`write_pdf(text [, output])` writes text to a PDF and returns its path. Without an output path it creates a unique file in the system temporary directory; the caller is responsible for removing it. `NULL` arguments return `NULL`. Text wraps and continues onto additional pages.
+
+`COPY ... TO 'output.pdf' (FORMAT pdf)` writes query rows as a PDF. Values are converted to text and columns are separated by ` | `; NULL values are empty. An empty result produces a one-page blank PDF. Options are case-insensitive; unknown options and invalid types or values raise an error.
+
+| Option | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `TITLE` | `VARCHAR` | Unset | Document title. |
+| `AUTHOR` | `VARCHAR` | Unset | Document author. |
+| `FONT_SIZE` | Numeric | `10` | Body font size in points, from 4 to 72. |
+| `PAGE_SIZE` | `VARCHAR` | `letter` | `letter`, `a4`, or `legal`. |
+| `MARGIN` | Numeric | `54` | Margin in points, from 0 to 216. |
+| `HEADER` | `VARCHAR` | Unset | Centered text in the top margin of every page. |
+| `FOOTER` | `VARCHAR` | Unset | Centered bottom text; `{page}` expands to the one-based page number. |
+
+## Modify PDF documents
+
+| Function | Purpose |
+| --- | --- |
+| `pdf_merge(paths, output)` | Concatenate documents in list order. |
+| `pdf_pages(input, output, range)` | Select and reorder pages. |
+| `pdf_rotate(input, output, degrees [, range])` | Add a multiple of 90 degrees to selected page rotations. |
+| `pdf_encrypt(input, output, user_password [, owner_password])` | Write an AES-256 encrypted document; the owner password defaults to the user password. |
+| `pdf_decrypt(input, output, password)` | Write an unencrypted copy. |
+| `pdf_watermark(input, output, text [, opacity])` | Add a diagonal gray text watermark to every page; opacity defaults to 0.30 and must be between 0 and 1. |
+| `pdf_bates(input, output, prefix, start)` | Add sequential numbers with a prefix and at least six digits. The starting number must be nonnegative. |
+
+These scalar functions return the output path and propagate NULL arguments. Output paths must be local and differ from every input, including symbolic or hard-link aliases. Existing output files are overwritten. Watermarks and Bates labels remain selectable text and are not redaction.
+
+Page ranges accept `all`, single one-based numbers, inclusive ranges such as `1-3`, comma-separated selections, `z` for the last page, and `rN` for the Nth page counted from the end. Descending ranges and repeated pages are allowed.
+
+`pdf_split(input, directory)` writes one PDF per page and returns `page` and `file`. Names use `<stem>_p<N>.pdf`, with page numbers padded to the number of digits in the total page count.
+
+## Digital signatures
+
+`pdf_sign(input, output, cert_path, key_path)` signs a PDF with a PEM certificate and matching RSA or EC private key and returns `output` and `field_name`. Named options are `key_password`, `password` for the input PDF, `field_name` (default `Signature1`), `reason`, `location`, and `signer_name`. An existing field with the same name raises an error. Paths must be local, and the output must differ from the PDF, certificate, and key files. A further signature can be added with a different field name and output path.
+
+`pdf_signatures(path, password := '')` returns `file`, `field_name`, `subfilter`, `signing_time`, `signer_name`, `reason`, `location`, `covers_whole_file`, and `verified`. Unsigned files produce no rows. `verified` checks cryptographic integrity of the signed bytes; it does not establish certificate-chain trust. A valid signature can have `covers_whole_file = false` if data was appended after signing.
+
 ## Read ruled tables
 
 `read_pdf_tables(path, password := '', first_page := 1, last_page := ...)` returns one row per detected table row. It accepts the same file paths, globs, passwords, and inclusive page bounds as `read_pdf`.
@@ -83,4 +162,4 @@ Files must be nonempty and seekable. Each PDF must fit in memory along with its 
 
 ## Licenses
 
-The PDF readers are distributed under Apache-2.0, with PoDoFo under MPL-2.0 and FreeType under the FreeType License. Binary packages include dependency licenses, attribution, and source links in the `pdf/` directory under the installed SereneDB documentation directory.
+The PDF extension is distributed under Apache-2.0, with PoDoFo under MPL-2.0, FreeType under the FreeType License, and bundled LiberaLean fonts under SIL OFL 1.1. Binary packages include dependency licenses, attribution, and source links in the `pdf/` directory under the installed SereneDB documentation directory.

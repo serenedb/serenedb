@@ -1,0 +1,121 @@
+control substitution on
+
+query
+SELECT pdf_watermark('${RESOURCES}/tests/pdf/basic/inspect_varusik.pdf', '${__TEST_DIR__}/varusik_watermark.pdf', 'varusik DRAFT') = '${__TEST_DIR__}/varusik_watermark.pdf' AS correct_path;
+----
+correct_path
+t
+
+query
+SELECT count(DISTINCT page) AS pages, count(*) FILTER (WHERE text = 'varusik DRAFT') = 2 AS stamped
+FROM read_pdf_blocks('${__TEST_DIR__}/varusik_watermark.pdf');
+----
+pages	stamped
+2	t
+
+query
+SELECT title, author FROM read_pdf_meta('${__TEST_DIR__}/varusik_watermark.pdf');
+----
+title	author
+varusik report	varusik
+
+query
+SELECT (SELECT count(*) FROM pdf_outline('${__TEST_DIR__}/varusik_watermark.pdf')) AS bookmarks,
+       (SELECT size FROM pdf_attachments('${__TEST_DIR__}/varusik_watermark.pdf')) AS attachment_bytes;
+----
+bookmarks	attachment_bytes
+3	14
+
+statement ok
+SELECT pdf_watermark('${RESOURCES}/tests/pdf/basic/varusik.pdf', '${__TEST_DIR__}/varusik_explicit.pdf', 'varusik (draft)', 0.6);
+
+query
+SELECT count(DISTINCT page) = 2 AS stamped FROM read_pdf_blocks('${__TEST_DIR__}/varusik_explicit.pdf') WHERE text = 'varusik (draft)';
+----
+stamped
+t
+
+statement ok
+SELECT pdf_bates('${RESOURCES}/tests/pdf/basic/varusik.pdf', '${__TEST_DIR__}/varusik_bates.pdf', 'VARUSIK-', 100);
+
+query
+SELECT page, text LIKE '%VARUSIK-' || lpad((99 + page)::text, 6, '0') || '%' AS stamped,
+       text LIKE CASE page WHEN 1 THEN '%banochka%' ELSE '%poesh%' END AS original_text
+FROM read_pdf('${__TEST_DIR__}/varusik_bates.pdf') ORDER BY page;
+----
+page	stamped	original_text
+1	t	t
+2	t	t
+
+statement ok
+SELECT pdf_bates('${RESOURCES}/tests/pdf/basic/varusik.pdf', '${__TEST_DIR__}/varusik_big.pdf', 'varusik', 1234567);
+
+query
+SELECT page, text LIKE '%varusik' || (1234566 + page)::text || '%' AS stamped
+FROM read_pdf('${__TEST_DIR__}/varusik_big.pdf') ORDER BY page;
+----
+page	stamped
+1	t
+2	t
+
+statement ok
+COPY (SELECT 'varusik letter' AS text) TO '${__TEST_DIR__}/varusik_letter.pdf' (FORMAT pdf, PAGE_SIZE 'letter');
+
+statement ok
+COPY (SELECT 'varusik legal' AS text) TO '${__TEST_DIR__}/varusik_legal.pdf' (FORMAT pdf, PAGE_SIZE 'legal');
+
+statement ok
+SELECT pdf_merge(ARRAY['${__TEST_DIR__}/varusik_letter.pdf', '${__TEST_DIR__}/varusik_legal.pdf'], '${__TEST_DIR__}/varusik_mixed.pdf');
+
+statement ok
+SELECT pdf_watermark('${__TEST_DIR__}/varusik_mixed.pdf', '${__TEST_DIR__}/varusik_mixed_stamp.pdf', 'varusik DRAFT');
+
+query
+SELECT (SELECT count(DISTINCT height) FROM read_pdf('${__TEST_DIR__}/varusik_mixed_stamp.pdf')) AS page_sizes,
+       count(DISTINCT page) = 2 AS stamped
+FROM read_pdf_blocks('${__TEST_DIR__}/varusik_mixed_stamp.pdf') WHERE text = 'varusik DRAFT';
+----
+page_sizes	stamped
+2	t
+
+query
+SELECT pdf_watermark(NULL, '${__TEST_DIR__}/varusik_no_stamp.pdf', 'varusik') IS NULL AS null_source,
+       pdf_watermark('${RESOURCES}/tests/pdf/basic/varusik.pdf', NULL, 'varusik') IS NULL AS null_output,
+       pdf_watermark('${RESOURCES}/tests/pdf/basic/varusik.pdf', '${__TEST_DIR__}/varusik_no_stamp.pdf', NULL) IS NULL AS null_text,
+       pdf_watermark('${RESOURCES}/tests/pdf/basic/varusik.pdf', '${__TEST_DIR__}/varusik_no_stamp.pdf', 'varusik', NULL) IS NULL AS null_opacity;
+----
+null_source	null_output	null_text	null_opacity
+t	t	t	t
+
+query
+SELECT pdf_bates(NULL, '${__TEST_DIR__}/varusik_no_stamp.pdf', 'varusik', 1) IS NULL AS null_source,
+       pdf_bates('${RESOURCES}/tests/pdf/basic/varusik.pdf', NULL, 'varusik', 1) IS NULL AS null_output,
+       pdf_bates('${RESOURCES}/tests/pdf/basic/varusik.pdf', '${__TEST_DIR__}/varusik_no_stamp.pdf', NULL, 1) IS NULL AS null_prefix,
+       pdf_bates('${RESOURCES}/tests/pdf/basic/varusik.pdf', '${__TEST_DIR__}/varusik_no_stamp.pdf', 'varusik', NULL) IS NULL AS null_start;
+----
+null_source	null_output	null_prefix	null_start
+t	t	t	t
+
+statement error
+SELECT pdf_watermark('${RESOURCES}/tests/pdf/basic/varusik.pdf', '${__TEST_DIR__}/varusik_no_stamp.pdf', 'varusik', 0);
+
+statement error
+SELECT pdf_watermark('${RESOURCES}/tests/pdf/basic/varusik.pdf', '${__TEST_DIR__}/varusik_no_stamp.pdf', 'varusik', 1.1);
+
+statement error
+SELECT pdf_watermark('${RESOURCES}/tests/pdf/basic/varusik.pdf', '${__TEST_DIR__}/varusik_no_stamp.pdf', 'varusik', 'NaN'::double precision);
+
+statement error
+SELECT pdf_bates('${RESOURCES}/tests/pdf/basic/varusik.pdf', '${__TEST_DIR__}/varusik_no_stamp.pdf', 'varusik', -1);
+
+statement error
+SELECT pdf_bates('${RESOURCES}/tests/pdf/basic/varusik.pdf', '${__TEST_DIR__}/varusik_no_stamp.pdf', 'varusik', 9223372036854775807);
+
+statement error
+SELECT pdf_watermark('${RESOURCES}/tests/pdf/basic/invalid.pdf', '${__TEST_DIR__}/varusik_no_stamp.pdf', 'varusik');
+
+statement error
+SELECT pdf_watermark('${RESOURCES}/tests/pdf/basic/varusik.pdf', '${RESOURCES}/tests/pdf/basic/./varusik.pdf', 'varusik');
+
+statement error
+SELECT pdf_bates('${RESOURCES}/tests/pdf/basic/varusik.pdf', '${RESOURCES}/tests/pdf/basic/./varusik.pdf', 'varusik', 1);

@@ -1,0 +1,132 @@
+control substitution on
+
+statement ok
+COPY (SELECT 'varusik' AS name, 42 AS jars, NULL::text AS absent) TO '${__TEST_DIR__}/varusik_default.pdf' (FORMAT pdf);
+
+query
+SELECT width, height, text LIKE '%varusik%' AS has_name, text LIKE '%42%' AS has_jars
+FROM read_pdf('${__TEST_DIR__}/varusik_default.pdf');
+----
+width	height	has_name	has_jars
+612	792	t	t
+
+query
+SELECT title, author, pages FROM read_pdf_meta('${__TEST_DIR__}/varusik_default.pdf');
+----
+title	author	pages
+		1
+
+statement ok
+COPY (SELECT 'varusik banochka' AS name) TO '${__TEST_DIR__}/varusik_options.pdf'
+(FORMAT pdf, TiTlE 'varusik report', AuThOr 'varusik', FoNt_SiZe 12, PaGe_SiZe 'A4', MaRgIn 72,
+ HeAdEr 'varusik header', FoOtEr 'varusik page {page}');
+
+query
+SELECT title, author, pages FROM read_pdf_meta('${__TEST_DIR__}/varusik_options.pdf');
+----
+title	author	pages
+varusik report	varusik	1
+
+query
+SELECT round(width) AS width, round(height) AS height,
+       text LIKE '%varusik banochka%' AS has_name,
+       text LIKE '%varusik header%' AS has_header,
+       text LIKE '%varusik page 1%' AS has_footer
+FROM read_pdf('${__TEST_DIR__}/varusik_options.pdf');
+----
+width	height	has_name	has_header	has_footer
+595	842	t	t	t
+
+statement ok
+COPY (SELECT 'varusik' AS name) TO '${__TEST_DIR__}/varusik_legal.pdf'
+(FORMAT pdf, PAGE_SIZE 'legal', MARGIN 0, FONT_SIZE 4);
+
+query
+SELECT width, height FROM read_pdf('${__TEST_DIR__}/varusik_legal.pdf');
+----
+width	height
+612	1008
+
+query
+SELECT round(min(x)) AS margin FROM read_pdf_blocks('${__TEST_DIR__}/varusik_legal.pdf');
+----
+margin
+0
+
+statement ok
+COPY (SELECT 'varusik' AS name) TO '${__TEST_DIR__}/varusik_large.pdf'
+(FORMAT pdf, PAGE_SIZE 'letter', MARGIN 216, FONT_SIZE 72);
+
+query
+SELECT round(min(x)) AS margin FROM read_pdf_blocks('${__TEST_DIR__}/varusik_large.pdf');
+----
+margin
+216
+
+query
+SELECT (SELECT max(height) FROM read_pdf_blocks('${__TEST_DIR__}/varusik_large.pdf')) >
+       (SELECT max(height) FROM read_pdf_blocks('${__TEST_DIR__}/varusik_legal.pdf')) AS larger_font;
+----
+larger_font
+t
+
+statement ok
+COPY (SELECT 'varusik ' || i::text AS name FROM generate_series(1, 200) t(i) ORDER BY i)
+TO '${__TEST_DIR__}/varusik_pages.pdf' (FORMAT pdf, HEADER 'varusik header', FOOTER 'page {page} of varusik');
+
+query
+SELECT count(*) > 1 AS multiple_pages,
+       bool_and(text LIKE '%varusik header%') AS headers,
+       bool_and(text LIKE '%page ' || page::text || ' of varusik%') AS footers
+FROM read_pdf('${__TEST_DIR__}/varusik_pages.pdf');
+----
+multiple_pages	headers	footers
+t	t	t
+
+statement ok
+COPY (SELECT NULL::text AS name WHERE false) TO '${__TEST_DIR__}/varusik_empty.pdf' (FORMAT pdf);
+
+query
+SELECT pages FROM read_pdf_meta('${__TEST_DIR__}/varusik_empty.pdf');
+----
+pages
+1
+
+statement error
+COPY (SELECT 1) TO '${__TEST_DIR__}/varusik_invalid.pdf' (FORMAT pdf, FONT_SIZE 3.9);
+
+statement error
+COPY (SELECT 1) TO '${__TEST_DIR__}/varusik_invalid.pdf' (FORMAT pdf, FONT_SIZE 72.1);
+
+statement error
+COPY (SELECT 1) TO '${__TEST_DIR__}/varusik_invalid.pdf' (FORMAT pdf, MARGIN -1);
+
+statement error
+COPY (SELECT 1) TO '${__TEST_DIR__}/varusik_invalid.pdf' (FORMAT pdf, MARGIN 217);
+
+statement error
+COPY (SELECT 1) TO '${__TEST_DIR__}/varusik_invalid.pdf' (FORMAT pdf, PAGE_SIZE 'a0');
+
+statement error
+COPY (SELECT 1) TO '${__TEST_DIR__}/varusik_invalid.pdf' (FORMAT pdf, VARUSIK true);
+
+statement error
+COPY (SELECT 1) TO '${__TEST_DIR__}/varusik_invalid.pdf' (FORMAT pdf, TITLE 12);
+
+statement error
+COPY (SELECT 1) TO '${__TEST_DIR__}/varusik_invalid.pdf' (FORMAT pdf, AUTHOR 12);
+
+statement error
+COPY (SELECT 1) TO '${__TEST_DIR__}/varusik_invalid.pdf' (FORMAT pdf, HEADER true);
+
+statement error
+COPY (SELECT 1) TO '${__TEST_DIR__}/varusik_invalid.pdf' (FORMAT pdf, FOOTER 12);
+
+statement error
+COPY (SELECT 1) TO '${__TEST_DIR__}/varusik_invalid.pdf' (FORMAT pdf, FONT_SIZE 'varusik');
+
+statement error
+COPY (SELECT 1) TO '${__TEST_DIR__}/varusik_invalid.pdf' (FORMAT pdf, MARGIN 'varusik');
+
+statement error
+COPY (SELECT 1) TO '${__TEST_DIR__}/varusik_invalid.pdf' (FORMAT pdf, TITLE NULL);

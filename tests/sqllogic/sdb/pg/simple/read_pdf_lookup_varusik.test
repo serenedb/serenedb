@@ -1,0 +1,163 @@
+control substitution on
+
+query
+SELECT file_row_number, page, replace(text, E'\n', '|') AS text
+FROM read_pdf('${RESOURCES}/tests/pdf/basic/varusik.pdf', file_row_number := true)
+ORDER BY page;
+----
+file_row_number	page	text
+0	1	varusik banochka|sopley 42
+1	2	varusik poesh
+
+query
+SELECT count(DISTINCT filename) AS files, count(*) AS pages
+FROM read_pdf(['${RESOURCES}/tests/pdf/basic/varusik_encrypted.pdf',
+               '${RESOURCES}/tests/pdf/basic/varusik.pdf'], password := 'varusik');
+----
+files	pages
+2	4
+
+query
+SELECT file_row_number, page, block, text
+FROM read_pdf_blocks('${RESOURCES}/tests/pdf/basic/varusik.pdf', file_row_number := true)
+ORDER BY page, block;
+----
+file_row_number	page	block	text
+0	1	1	varusik
+1	1	2	banochka
+2	1	3	sopley
+3	1	4	42
+4294967296	2	1	varusik poesh
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pdf_varusik_words AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm);
+
+statement ok
+CREATE VIEW pdf_varusik_pages AS
+SELECT * FROM read_pdf('${RESOURCES}/tests/pdf/basic/varusik.pdf');
+
+statement ok
+CREATE INDEX pdf_varusik_pages_idx ON pdf_varusik_pages USING inverted(text pdf_varusik_words, page) INCLUDE(page);
+
+query
+SELECT page, replace(text, E'\n', '|') AS text, width, height
+FROM pdf_varusik_pages_idx WHERE text @@ ts_phrase('varusik') ORDER BY page DESC;
+----
+page	text	width	height
+2	varusik poesh	612	792
+1	varusik banochka|sopley 42	612	792
+
+query
+SELECT page, text FROM pdf_varusik_pages_idx
+WHERE text @@ ts_phrase('poesh') AND width = 612 ORDER BY page LIMIT 1;
+----
+page	text
+2	varusik poesh
+
+query
+SELECT count(*) AS matches FROM pdf_varusik_pages_idx
+WHERE text @@ ts_phrase('varusik') AND width = 1;
+----
+matches
+0
+
+statement ok
+CREATE VIEW pdf_varusik_glob AS
+SELECT * FROM read_pdf('${RESOURCES}/tests/pdf/basic/varusik*.pdf', password := 'varusik');
+
+statement ok
+CREATE INDEX pdf_varusik_glob_idx ON pdf_varusik_glob USING inverted(text pdf_varusik_words, page) INCLUDE(page);
+
+query
+SELECT count(DISTINCT filename) AS files, count(*) AS pages,
+       min(text) AS text, min(width) AS width
+FROM pdf_varusik_glob_idx WHERE text @@ ts_phrase('poesh');
+----
+files	pages	text	width
+2	2	varusik poesh	612
+
+statement ok
+CREATE VIEW pdf_varusik_list AS
+SELECT * FROM read_pdf(['${RESOURCES}/tests/pdf/basic/varusik_encrypted.pdf',
+                       '${RESOURCES}/tests/pdf/basic/varusik.pdf'],
+                      password := 'varusik', first_page := 2, last_page := 2);
+
+statement ok
+CREATE INDEX pdf_varusik_list_idx ON pdf_varusik_list USING inverted(text pdf_varusik_words, page) INCLUDE(page);
+
+query
+SELECT count(DISTINCT filename) AS files, count(*) AS pages, min(page) AS page,
+       min(text) AS text
+FROM pdf_varusik_list_idx WHERE text @@ ts_phrase('varusik');
+----
+files	pages	page	text
+2	2	2	varusik poesh
+
+statement ok
+CREATE VIEW pdf_varusik_blocks AS
+SELECT * FROM read_pdf_blocks('${RESOURCES}/tests/pdf/basic/varusik*.pdf', password := 'varusik');
+
+statement ok
+CREATE INDEX pdf_varusik_blocks_idx ON pdf_varusik_blocks USING inverted(text pdf_varusik_words, page, block) INCLUDE(page, block);
+
+query
+SELECT page, block, text, count(DISTINCT filename) AS files,
+       min(x) AS x, min(y) AS y
+FROM pdf_varusik_blocks_idx WHERE text @@ ts_phrase('varusik')
+GROUP BY page, block, text ORDER BY page DESC;
+----
+page	block	text	files	x	y
+2	1	varusik poesh	2	72	720
+1	1	varusik	2	60	710
+
+statement ok
+CREATE VIEW pdf_varusik_tables AS
+SELECT * FROM read_pdf_tables('${RESOURCES}/tests/pdf/basic/varusik*.pdf', password := 'varusik');
+
+statement ok
+CREATE INDEX pdf_varusik_tables_idx ON pdf_varusik_tables USING inverted(page, row_index) INCLUDE(page, row_index);
+
+query
+SELECT page, row_index, cells[1] AS first, cells[2] AS second,
+       count(DISTINCT filename) AS files
+FROM pdf_varusik_tables_idx WHERE row_index = 2
+GROUP BY page, row_index, cells ORDER BY page, row_index;
+----
+page	row_index	first	second	files
+1	2	sopley	42	2
+
+query
+SELECT count(*) AS mismatches FROM (
+  (SELECT filename, page, text, width, height, has_text_layer FROM pdf_varusik_glob_idx
+   EXCEPT SELECT * FROM pdf_varusik_glob)
+  UNION ALL
+  (SELECT * FROM pdf_varusik_glob
+   EXCEPT SELECT filename, page, text, width, height, has_text_layer FROM pdf_varusik_glob_idx)
+) AS differences;
+----
+mismatches
+0
+
+statement ok
+CREATE VIEW pdf_varusik_partitions AS
+SELECT * FROM read_pdf('${RESOURCES}/tests/pdf/basic/partitions/*/*.pdf', hive_partitioning := true);
+
+statement ok
+CREATE INDEX pdf_varusik_partitions_idx ON pdf_varusik_partitions USING inverted(text pdf_varusik_words, page) INCLUDE(page);
+
+query
+SELECT varusik, page, text FROM pdf_varusik_partitions_idx
+WHERE text @@ ts_phrase('poesh') ORDER BY varusik;
+----
+varusik	page	text
+one	2	varusik poesh
+two	2	varusik poesh
+
+query
+SELECT varusik, text FROM pdf_varusik_partitions_idx
+WHERE text @@ ts_phrase('varusik') AND varusik = 'two' ORDER BY page DESC LIMIT 1;
+----
+varusik	text
+two	varusik poesh

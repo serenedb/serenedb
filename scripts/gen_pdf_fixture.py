@@ -18,6 +18,7 @@ INPUTS = [
     SOURCE / "generate.py",
     SOURCE / "generate_rendered.py",
     REPO / "scripts/ci/pdf-fixture-requirements.txt",
+    *sorted((SOURCE / "signing").glob("*.pem")),
 ]
 
 
@@ -62,8 +63,9 @@ def ensure_fixture():
         for generator, target in (("generate.py", "basic"), ("generate_rendered.py", "rendered")):
             subprocess.run(command + [str(SOURCE / generator), str(directory / target)],
                            check=True, timeout=120)
+        shutil.copytree(SOURCE / "signing", directory / "signing")
         files = {str(path.relative_to(directory)): digest(path)
-                 for path in sorted(directory.rglob("*.pdf"))}
+                 for path in sorted(directory.rglob("*")) if path.is_file()}
         (directory / ".generated").write_text(json.dumps({"inputs": fingerprint, "files": files}))
         for path in [directory, *directory.rglob("*")]:
             path.chmod(0o755 if path.is_dir() else 0o644)

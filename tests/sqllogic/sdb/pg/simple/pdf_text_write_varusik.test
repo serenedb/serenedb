@@ -1,0 +1,80 @@
+control substitution on
+
+query
+SELECT write_pdf(NULL) IS NULL AS null_text, write_pdf('varusik', NULL) IS NULL AS null_path,
+       write_pdf(NULL, '${__TEST_DIR__}/varusik_null.pdf') IS NULL AS no_file;
+----
+null_text	null_path	no_file
+t	t	t
+
+query
+SELECT write_pdf('varusik' || chr(10) || 'poesh' || chr(9) || 'banochku sopley',
+ '${__TEST_DIR__}/varusik_write.pdf') = '${__TEST_DIR__}/varusik_write.pdf' AS correct_path;
+----
+correct_path
+t
+
+query
+SELECT width, height, text LIKE '%varusik%' AS has_name,
+       text LIKE '%poesh%' AS has_action, text LIKE '%banochku sopley%' AS has_object
+FROM read_pdf('${__TEST_DIR__}/varusik_write.pdf');
+----
+width	height	has_name	has_action	has_object
+612	792	t	t	t
+
+statement ok
+SELECT write_pdf('varusik start' || chr(10) || repeat('varusik poesh banochku sopley ', 500) || chr(10) || 'varusik finish',
+ '${__TEST_DIR__}/varusik_write_long.pdf');
+
+query
+SELECT count(*) > 1 AS multiple_pages,
+       bool_or(text LIKE '%varusik start%') AS has_start,
+       bool_or(text LIKE '%varusik finish%') AS has_finish
+FROM read_pdf('${__TEST_DIR__}/varusik_write_long.pdf');
+----
+multiple_pages	has_start	has_finish
+t	t	t
+
+statement ok
+SELECT write_pdf('', '${__TEST_DIR__}/varusik_write_empty.pdf');
+
+query
+SELECT pages FROM read_pdf_meta('${__TEST_DIR__}/varusik_write_empty.pdf');
+----
+pages
+1
+
+statement ok
+CREATE TEMP TABLE varusik_texts(i integer, content text);
+
+statement ok
+INSERT INTO varusik_texts VALUES (1, NULL), (2, 'varusik dictionary vector has a longer than inline string'), (3, NULL), (4, 'banochka');
+
+query
+SELECT count(write_pdf(content, '${__TEST_DIR__}/varusik_vector_' || i::text || '.pdf')) AS written,
+       count(*) AS input_rows FROM varusik_texts WHERE i <> 3;
+----
+written	input_rows
+2	3
+
+query
+SELECT text LIKE '%varusik dictionary vector%' AS has_text FROM read_pdf('${__TEST_DIR__}/varusik_vector_2.pdf');
+----
+has_text
+t
+
+query
+SELECT count(write_pdf(content, '${__TEST_DIR__}/varusik_never.pdf')) AS written
+FROM varusik_texts WHERE content IS NULL;
+----
+written
+0
+
+statement error
+SELECT write_pdf('varusik', '');
+
+statement error
+SELECT write_pdf('varusik', '${__TEST_DIR__}/missing_directory/varusik.pdf');
+
+statement ok
+DROP TABLE varusik_texts;

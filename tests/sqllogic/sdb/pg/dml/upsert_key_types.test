@@ -1,0 +1,100 @@
+statement ok
+CREATE TABLE ukt_b (k BOOLEAN PRIMARY KEY, a INT);
+
+
+statement ok
+CREATE TABLE ukt_t (k TINYINT PRIMARY KEY, a INT);
+
+
+statement ok
+CREATE TABLE ukt_s (k SMALLINT PRIMARY KEY, a INT);
+
+
+statement ok
+INSERT INTO ukt_b VALUES (true, 1);
+
+
+statement ok
+INSERT INTO ukt_t VALUES (1, 1);
+
+
+statement ok
+INSERT INTO ukt_s VALUES (1, 1);
+
+
+query
+EXPLAIN INSERT OR REPLACE INTO ukt_s VALUES (1, 2) RETURNING k, a;
+----
+QUERY PLAN
+╭─ INSERT ─────────────╮
+│ On Conflict: REPLACE │
+│ Patched Columns: a   │
+╰───────────┬──────────╯
+╭─ COLUMN_DATA_SCAN ───╮
+│ ~1 row               │
+╰──────────────────────╯
+
+
+query ?? rowsort
+INSERT OR REPLACE INTO ukt_b VALUES (true, 2), (false, 3) RETURNING k, a;
+----
+k	a
+f	3
+t	2
+
+
+query ?? rowsort
+INSERT OR REPLACE INTO ukt_t VALUES (1, 2), (2, 3) RETURNING k, a;
+----
+k	a
+1	2
+2	3
+
+
+query ?? rowsort
+INSERT OR REPLACE INTO ukt_s VALUES (1, 2), (2, 3) RETURNING k, a;
+----
+k	a
+1	2
+2	3
+
+
+query
+EXPLAIN INSERT OR REPLACE INTO ukt_s VALUES (1, 5) RETURNING k + 1 AS next, a * 2 AS twice;
+----
+QUERY PLAN
+╭─ PROJECTION ─────────╮
+│ Projections: next,   │
+│              twice   │
+│ ~1 row               │
+╰───────────┬──────────╯
+╭─ INSERT ──┴──────────╮
+│ On Conflict: REPLACE │
+│ Patched Columns: a   │
+╰───────────┬──────────╯
+╭─ COLUMN_DATA_SCAN ───╮
+│ ~1 row               │
+╰──────────────────────╯
+
+
+query ??
+INSERT OR REPLACE INTO ukt_s VALUES (1, 5) RETURNING k + 1 AS next, a * 2 AS twice;
+----
+next	twice
+2	10
+
+
+statement ok
+CREATE TABLE ukt_c (k TEXT COLLATE "C" PRIMARY KEY, a INT);
+
+
+statement ok
+INSERT INTO ukt_c VALUES ('a', 1);
+
+
+query ?? rowsort
+INSERT OR REPLACE INTO ukt_c VALUES ('a', 2), ('A', 3) RETURNING k, a;
+----
+k	a
+A	3
+a	2

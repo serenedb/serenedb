@@ -798,11 +798,6 @@ void Schema::Drop(duckdb::CatalogTransaction transaction,
     for (const auto& index : indexes) {
       _sets->indexes.Drop(transaction, index);
     }
-    for (auto& owned : OwnedEntries(transaction, entry)) {
-      if (owned.get().type == duckdb::CatalogType::SEQUENCE_ENTRY) {
-        Drop(transaction, owned.get());
-      }
-    }
   }
   Set(entry.type).Drop(transaction, entry.name);
 }

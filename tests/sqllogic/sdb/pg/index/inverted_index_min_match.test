@@ -876,7 +876,7 @@ query
 SELECT ts_offsets('mm_words', 'quick blue fox', 'quick red grey'::min_match(2)::tokenize('mm_words')) AS offsets;
 ----
 offsets
-{}
+{0,5}
 
 
 query
@@ -884,6 +884,27 @@ SELECT ts_offsets('mm_words', 'quick red fox', 'quick red grey'::min_match(2)::t
 ----
 offsets
 {0,5,6,9}
+
+
+query
+SELECT id, ts_offsets('mm_words', body, 'quick red grey'::min_match(2)::tokenize('mm_words')) AS offsets
+FROM (VALUES (1, 'quick blue fox'), (2, 'quick red fox'), (3, 'grey red')) t(id, body)
+ORDER BY id;
+----
+id	offsets
+1	{0,5}
+2	{0,5,6,9}
+3	{0,4,5,8}
+
+
+query
+SELECT id, ts_offsets('mm_words', body, 'quick'::TSQUERY && 'red') AS offsets
+FROM (VALUES (1, 'quick blue fox'), (2, 'quick red fox')) t(id, body)
+ORDER BY id;
+----
+id	offsets
+1	{0,5}
+2	{0,5,6,9}
 
 
 query

@@ -3894,6 +3894,8 @@ def test_invalid_regular_expression(conn, query, message):
         ("split_by_pattern('(')", "2201B"),
         ("split_by_pattern('')", "22023"),
         ("split_by_pattern('a', group := 2)", "22023"),
+        ("remove_stopwords(stopwords_path := '/nonexistent/drv_stopwords')", "F0000"),
+        ("classify_text(model_location := '/nonexistent/drv_model.bin')", "F0000"),
         ("split_text_csv(',') | lambda x: x || random()::text", "42P17"),
         ("split_text_csv(',') | lambda x: x || (SELECT 'a')", "0A000"),
         ("split_text_csv(',') | lambda x: no_such_fn(x)", "42P17"),

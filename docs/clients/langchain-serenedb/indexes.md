@@ -191,7 +191,7 @@ Per-query IVF tuning, passed once as `index_query_options` to the store factory 
 | Parameter | Type | Default | Meaning |
 | :--- | :--- | :--- | :--- |
 | `nprobe` | `Optional[int]` | `None` | IVF cluster lists scanned per query, as `sdb_ivf_search_nprobe`. Higher means better recall and slower queries. |
-| `rerank_factor` | `Optional[int]` | `None` | For a **quantized** index, the exact-distance rescore pool is `rerank_factor * k`, as `sdb_ann_oversample`. `0` answers from the codes; ignored for unquantized indexes. |
+| `rescore_width` | `Optional[float]` | `None` | For a **quantized** index, as `sdb_ann_rescore_width`: a candidate is re-read at full precision while its code score plus `rescore_width` times the code's estimated error could still beat the `k`-th best exact score. Larger values rescore more candidates and miss fewer neighbours; `0` answers from the codes; ignored for unquantized indexes. |
 
 A field left `None` is omitted, so SereneDB's own default applies (`-1` for both, which lets the engine choose).
 
@@ -207,7 +207,7 @@ store = SereneDBVectorStore.create_sync(
 
 ```python
 IVFQueryOptions().to_parameter()                            # []
-IVFQueryOptions(nprobe=10, rerank_factor=4).to_parameter()  # ["sdb_ivf_search_nprobe = 10", "sdb_ann_oversample = 4"]
+IVFQueryOptions(nprobe=10, rescore_width=3).to_parameter()  # ["sdb_ivf_search_nprobe = 10", "sdb_ann_rescore_width = 3"]
 ```
 
 `to_string()` is **deprecated** -- it joins the same values with `"; "` and emits a `DeprecationWarning`. Use `to_parameter()`.

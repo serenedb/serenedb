@@ -604,9 +604,7 @@ std::vector<std::string> Analyze(irs::analysis::Tokenizer& tokenizer,
                                  std::string_view text) {
   irs::ValueAnalyzer analyzer;
   irs::ValueTokens<> tokens;
-  analyzer.Analyze(
-    tokenizer,
-    duckdb::string_t{text.data(), static_cast<uint32_t>(text.size())}, tokens);
+  analyzer.Analyze(tokenizer, duckdb::string_t::Checked(text), tokens);
   return tokens.terms() | std::views::transform(&duckdb::string_t::GetString) |
          std::ranges::to<std::vector>();
 }

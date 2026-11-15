@@ -837,8 +837,7 @@ bool TextToRange(duckdb::Vector& source, duckdb::Vector& result,
       if (range.flags & (kRangeEmpty | infinite)) {
         writer.WriteNull();
       } else {
-        writer.WriteValue(
-          duckdb::string_t{bound.data(), static_cast<uint32_t>(bound.size())});
+        writer.WriteValue(duckdb::string_t::Checked(bound));
       }
     };
     ParsedRange range;

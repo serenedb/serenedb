@@ -43,6 +43,7 @@
 #include <duckdb/parser/statement/transaction_statement.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/log.hpp>
+#include <iresearch/utils/pg/error_mapping.hpp>
 #include <iresearch/utils/system_compiler.hpp>
 
 #include "auth/role_closure.h"
@@ -541,7 +542,7 @@ bool PgWireSession<Kind>::SetupConnection() {
                                  "\" is not supported; using \"UTF8\"")));
         return true;
       }
-      WriteFatalResponse(this->_send, ToSqlError(exception));
+      WriteFatalResponse(this->_send, irs::pg::ToSqlError(exception));
       return false;
     }
     return true;
@@ -777,7 +778,7 @@ auto PgWireSession<Kind>::FunnelError(const std::exception& exception,
   // Notices accumulated before the failure go out ahead of the error, as PG
   // orders them (the post-dispatch drain would otherwise emit them after).
   DrainNotices();
-  WriteErrorResponse(this->_send, ToSqlError(exception));
+  WriteErrorResponse(this->_send, irs::pg::ToSqlError(exception));
   // Roll back the implicit block inline (postgres aborts at the error, not at
   // the Sync): the Sync then finds nothing open -> status 'I'. If we don't own
   // a block but the user does, the explicit transaction is aborted instead so
@@ -2897,7 +2898,7 @@ yaclib::Task<bool> PgWireSession<Kind>::Negotiate() {
       co_return false;
     }
   } catch (const std::exception& exception) {
-    WriteFatalResponse(this->_send, ToSqlError(exception));
+    WriteFatalResponse(this->_send, irs::pg::ToSqlError(exception));
     this->KickSend();
     co_return false;
   }
@@ -3074,7 +3075,7 @@ yaclib::Future<> PgWireSession<Kind>::SessionMain() {
       co_await RunCommandLoop();
     }
   } catch (const std::exception& exception) {
-    WriteFatalResponse(this->_send, ToSqlError(exception));
+    WriteFatalResponse(this->_send, irs::pg::ToSqlError(exception));
   }
   // Teardown runs where everything was created: results/portals die on a duck
   // worker; their cleanup may emit notices that must be stolen before

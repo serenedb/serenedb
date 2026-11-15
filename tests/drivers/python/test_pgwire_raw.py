@@ -3840,6 +3840,7 @@ def test_like_and_similar_to_escape_errors(conn, query, sqlstate, message, hint)
         ("SELECT substring('abc' from '(')", "missing ): ("),
         ("SELECT 'abc' SIMILAR TO '('", "missing ): ^(?:(?:)$"),
         ("SELECT regexp_match('abc', '(')", "missing ): ("),
+        ("SELECT COLUMNS('(') FROM (VALUES (1)) AS t(a)", "missing ): ("),
     ],
 )
 def test_invalid_regular_expression(conn, query, message):
@@ -3847,6 +3848,24 @@ def test_invalid_regular_expression(conn, query, message):
     assert [(e["C"], e["M"]) for e in errors(m)] == [
         ("2201B", "invalid regular expression: " + message)
     ]
+
+
+@pytest.mark.parametrize(
+    "definition, sqlstate",
+    [
+        ("split_by_pattern('(')", "2201B"),
+        ("split_by_pattern('')", "22023"),
+        ("split_by_pattern('a', group := 2)", "22023"),
+        ("split_text_csv(',') | lambda x: x || random()::text", "42P17"),
+        ("split_text_csv(',') | lambda x: x || (SELECT 'a')", "0A000"),
+        ("split_text_csv(',') | lambda x: no_such_fn(x)", "42P17"),
+        ("split_text_csv(',') | lambda x: upper(x) || y", "42703"),
+        ("split_text_csv(',') | lambda x: x::int", "42804"),
+    ],
+)
+def test_text_search_dictionary_errors(conn, definition, sqlstate):
+    m = conn.run(f"CREATE TEXT SEARCH DICTIONARY drv_bad_dictionary AS {definition}")
+    assert [e["C"] for e in errors(m)] == [sqlstate]
 
 
 def test_string_over_the_size_limit(conn):

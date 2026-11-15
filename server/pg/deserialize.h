@@ -111,9 +111,8 @@ struct VectorSink {
   bool Bit(std::string_view bits) {
     duckdb::CastParameters params(/*strict=*/true, nullptr);
     duckdb::string_t result;
-    if (!duckdb::TryCastToBit::Operation(
-          duckdb::string_t{bits.data(), static_cast<uint32_t>(bits.size())},
-          result, vec, params)) {
+    if (!duckdb::TryCastToBit::Operation(duckdb::string_t::Checked(bits),
+                                         result, vec, params)) {
       return false;
     }
     duckdb::FlatVector::GetDataMutable<duckdb::string_t>(vec)[row] = result;
@@ -167,9 +166,8 @@ struct ValueSink {
     duckdb::Vector scratch{duckdb::LogicalType::BIT, 1};
     duckdb::CastParameters params(/*strict=*/true, nullptr);
     duckdb::string_t result;
-    if (!duckdb::TryCastToBit::Operation(
-          duckdb::string_t{bits.data(), static_cast<uint32_t>(bits.size())},
-          result, scratch, params)) {
+    if (!duckdb::TryCastToBit::Operation(duckdb::string_t::Checked(bits),
+                                         result, scratch, params)) {
       return false;
     }
     out = duckdb::Value::BIT(duckdb::const_data_ptr_cast(result.GetData()),

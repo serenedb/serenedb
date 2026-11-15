@@ -778,8 +778,7 @@ void XmlConcatFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
       continue;
     }
     const auto xml = XmlConcat(values);
-    writer.WriteValue(
-      duckdb::string_t{xml.data(), static_cast<uint32_t>(xml.size())});
+    writer.WriteValue(duckdb::string_t::Checked(xml));
   }
 }
 

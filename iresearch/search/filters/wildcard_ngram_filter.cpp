@@ -88,10 +88,8 @@ ByPhraseOptions SplitGrams(analysis::Tokenizer& ngram,
                            ValueAnalyzer& value_analyzer, ValueTokens<>& tokens,
                            std::string_view value) {
   ByPhraseOptions part;
-  if (!value_analyzer.Analyze(
-        ngram,
-        duckdb::string_t{value.data(), static_cast<uint32_t>(value.size())},
-        tokens)) {
+  if (!value_analyzer.Analyze(ngram, duckdb::string_t::Checked(value),
+                              tokens)) {
     return part;
   }
   for (const auto& token : tokens.terms()) {

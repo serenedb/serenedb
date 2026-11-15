@@ -24,7 +24,6 @@
 
 #include <array>
 #include <duckdb/catalog/catalog.hpp>
-#include <duckdb/common/error_data.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/vector_cache.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
@@ -46,6 +45,7 @@
 #include <memory>
 #include <vector>
 
+#include "iresearch/utils/pg/error_mapping.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/static_strings.hpp"
 
@@ -61,12 +61,22 @@ duckdb::LogicalTypeId ElementType(const duckdb::LogicalType& type) noexcept {
            : type.id();
 }
 
+[[noreturn]] void ThrowFromOwner(std::string_view owner,
+                                 const std::exception& e) {
+  auto error = irs::pg::ToSqlError(e);
+  error.errmsg = absl::StrCat(owner, ": ", error.errmsg);
+  error.cursorpos = -1;
+  THROW_SQL_ERROR_FROM_DATA(std::move(error));
+}
+
 void ValidateParsed(std::string_view owner, duckdb::ParsedExpression& expr) {
   switch (expr.GetExpressionClass()) {
     case duckdb::ExpressionClass::SUBQUERY:
-      THROW_SQL_ERROR(ERR_MSG(owner, ": subqueries are not allowed"));
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      ERR_MSG(owner, ": subqueries are not allowed"));
     case duckdb::ExpressionClass::PARAMETER:
-      THROW_SQL_ERROR(ERR_MSG(owner, ": parameters are not allowed"));
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                      ERR_MSG(owner, ": parameters are not allowed"));
     case duckdb::ExpressionClass::FUNCTION: {
       auto& func = expr.Cast<duckdb::FunctionExpression>();
       const auto& name = func.GetQualifiedName();
@@ -74,15 +84,18 @@ void ValidateParsed(std::string_view owner, duckdb::ParsedExpression& expr) {
           (!name.Catalog().empty() ||
            (!name.Schema().empty() &&
             name.Schema() != irs::StaticStrings::kPgCatalogSchema))) {
-        THROW_SQL_ERROR(ERR_MSG(owner, ": function \"",
-                                name.Name().GetIdentifierName(),
-                                "\": only built-in functions are allowed"));
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_OBJECT_DEFINITION),
+          ERR_MSG(owner, ": function \"", name.Name().GetIdentifierName(),
+                  "\": only built-in functions are allowed"));
       }
       if (name.Name().GetIdentifierName().starts_with("ts_")) {
-        THROW_SQL_ERROR(ERR_MSG(
-          owner, ": text-search function \"", name.Name().GetIdentifierName(),
-          "\" is not allowed in a ", owner,
-          " tokenizer expression (it would recurse into the tokenizer)"));
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_OBJECT_DEFINITION),
+          ERR_MSG(
+            owner, ": text-search function \"", name.Name().GetIdentifierName(),
+            "\" is not allowed in a ", owner,
+            " tokenizer expression (it would recurse into the tokenizer)"));
       }
       func.SetQualifiedName(duckdb::QualifiedName{name.Name()});
       func.BuiltinMutable() = true;
@@ -101,10 +114,11 @@ std::unique_ptr<duckdb::ParsedExpression> ParseInputExpression(
   try {
     exprs = duckdb::Parser::GetBuiltinParser().ParseExpressionList(text);
   } catch (const std::exception& e) {
-    THROW_SQL_ERROR(ERR_MSG(owner, ": ", e.what()));
+    ThrowFromOwner(owner, e);
   }
   if (exprs.size() != 1) {
-    THROW_SQL_ERROR(ERR_MSG(owner, ": expected exactly one expression"));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                    ERR_MSG(owner, ": expected exactly one expression"));
   }
   ValidateParsed(owner, *exprs[0]);
   return std::move(exprs[0]);
@@ -123,7 +137,8 @@ void VerifyFunctionsExist(duckdb::ClientContext& ctx, std::string_view owner,
     if (!exists(duckdb::CatalogType::SCALAR_FUNCTION_ENTRY) &&
         !exists(duckdb::CatalogType::MACRO_ENTRY) &&
         !exists(duckdb::CatalogType::AGGREGATE_FUNCTION_ENTRY)) {
-      THROW_SQL_ERROR(ERR_MSG(owner, ": function \"", name.GetIdentifierName(),
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_OBJECT_DEFINITION),
+                      ERR_MSG(owner, ": function \"", name.GetIdentifierName(),
                               "\": only built-in functions are allowed"));
     }
   }
@@ -151,10 +166,11 @@ duckdb::unique_ptr<duckdb::Expression> BindInputExpression(
   try {
     bound = check_binder.Bind(expr);
   } catch (const std::exception& e) {
-    THROW_SQL_ERROR(ERR_MSG(owner, ": ", duckdb::ErrorData{e}.RawMessage()));
+    ThrowFromOwner(owner, e);
   }
   if (bound->IsVolatile()) {
-    THROW_SQL_ERROR(ERR_MSG(owner, ": volatile expressions are not allowed"));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_OBJECT_DEFINITION),
+                    ERR_MSG(owner, ": volatile expressions are not allowed"));
   }
   return bound;
 }
@@ -401,15 +417,17 @@ void SqlTokenizer::Bind(duckdb::ClientContext& ctx) {
   const auto element = ElementType(type);
   if (element != duckdb::LogicalTypeId::VARCHAR &&
       element != duckdb::LogicalTypeId::BLOB) {
-    THROW_SQL_ERROR(ERR_MSG(
-      "sql: expression must return VARCHAR, BLOB, or a list of them, got ",
-      type.ToString()));
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+      ERR_MSG(
+        "sql: expression must return VARCHAR, BLOB, or a list of them, got ",
+        type.ToString()));
   }
   _expr = &expr;
   try {
     _call = std::make_unique<SqlCall>(ctx, expr);
   } catch (const std::exception& e) {
-    THROW_SQL_ERROR(ERR_MSG("sql: ", e.what()));
+    ThrowFromOwner("sql", e);
   }
 }
 
@@ -488,13 +506,14 @@ SqlPredicate::~SqlPredicate() = default;
 void SqlPredicate::Bind(duckdb::ClientContext& ctx) {
   const auto& expr = _expression->Bind(ctx);
   if (expr.GetReturnType() != duckdb::LogicalType::BOOLEAN) {
-    THROW_SQL_ERROR(ERR_MSG(_owner, ": the lambda must return BOOLEAN, got ",
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+                    ERR_MSG(_owner, ": the lambda must return BOOLEAN, got ",
                             expr.GetReturnType().ToString()));
   }
   try {
     _call = std::make_unique<SqlCall>(ctx, expr);
   } catch (const std::exception& e) {
-    THROW_SQL_ERROR(ERR_MSG(_owner, ": ", e.what()));
+    ThrowFromOwner(_owner, e);
   }
 }
 

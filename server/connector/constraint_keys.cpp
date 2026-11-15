@@ -53,9 +53,8 @@ duckdb::vector<duckdb::Value> DecodeKey(
     duckdb::Allocator::DefaultAllocator(),
     duckdb::vector<duckdb::LogicalType>{types.begin(), types.end()}, 1);
   duckdb::vector<duckdb::OrderModifiers> modifiers(types.size(), kKeyOrder);
-  duckdb::CreateSortKeyHelpers::DecodeSortKey(
-    duckdb::string_t{key.data(), static_cast<uint32_t>(key.size())}, chunk, 0,
-    modifiers);
+  duckdb::CreateSortKeyHelpers::DecodeSortKey(duckdb::string_t::Checked(key),
+                                              chunk, 0, modifiers);
   duckdb::vector<duckdb::Value> values;
   values.reserve(types.size());
   for (auto& column : chunk.data) {

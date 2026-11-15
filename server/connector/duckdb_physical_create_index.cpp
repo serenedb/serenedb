@@ -28,7 +28,6 @@
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
-#include <duckdb/common/error_data.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
@@ -60,6 +59,7 @@
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/error_mapping.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/system_compiler.hpp>
 #include <optional>
@@ -507,16 +507,12 @@ duckdb::SinkCombineResultType SereneDBPhysicalCreateIndex::Combine(
   std::span<const irs::IndexWriter::FlushedSegment> flushed;
   try {
     flushed = lstate.search_trx->FlushAndFsync();
-  } catch (const irs::SqlException& e) {
-    lstate.search_trx.reset();
-    THROW_SQL_ERROR(ERR_CODE(e.error().errcode),
-                    ERR_MSG("failed to flush index '", gstate.index_name,
-                            "': ", e.message()));
   } catch (const std::exception& e) {
     lstate.search_trx.reset();
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                    ERR_MSG("failed to flush index '", gstate.index_name,
-                            "': ", duckdb::ErrorData{e}.RawMessage()));
+    auto error = irs::pg::ToSqlError(e);
+    error.errmsg = absl::StrCat("failed to flush index '", gstate.index_name,
+                                "': ", error.errmsg);
+    THROW_SQL_ERROR_FROM_DATA(std::move(error));
   }
   ConnectionContext::Get(context.client)
     .Transaction()

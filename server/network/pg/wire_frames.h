@@ -21,7 +21,6 @@
 #pragma once
 
 #include <cstdint>
-#include <duckdb/common/error_data.hpp>
 #include <duckdb/common/identifier.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
@@ -151,19 +150,6 @@ void WriteCopyData(message::Buffer& out, std::string_view data);
 
 void WriteNoticeResponse(message::Buffer& out,
                          const irs::pg::SqlErrorData& notice);
-
-// Maps a DuckDB error to a pg SqlErrorData with a real SQLSTATE (the DuckDB
-// ExceptionType -> errcode mapping), instead of flattening every error to
-// XX000.
-irs::pg::SqlErrorData DuckErrorToSqlData(const duckdb::ErrorData& error);
-
-// Funnels any exception caught at the command-loop boundary into pg
-// SqlErrorData: a serenedb irs::SqlException keeps its sqlstate/detail/hint, a
-// DuckDB exception maps via DuckErrorToSqlData, anything else is XX000
-// internal.
-irs::pg::SqlErrorData ToSqlError(const std::exception& exception);
-
-irs::pg::SqlErrorData ToSqlError(const duckdb::ErrorData& error);
 
 void WriteReadyForQuery(message::Buffer& out, char txn_status);
 

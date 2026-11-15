@@ -173,8 +173,7 @@ void FormatTypeFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
       typmod.IsValid() ? std::optional<int32_t>{typmod.GetValue()}
                        : std::nullopt);
     const auto view = AsView(text);
-    writer.WriteValue(
-      duckdb::string_t{view.data(), static_cast<uint32_t>(view.size())});
+    writer.WriteValue(duckdb::string_t::Checked(view));
   }
 }
 

@@ -61,10 +61,8 @@ template<typename Tokens>
 void AnalyzeText(irs::analysis::Tokenizer& analyzer, std::string_view text,
                  Tokens& tokens) {
   irs::ValueAnalyzer value_analyzer;
-  if (!value_analyzer.Analyze(
-        analyzer,
-        duckdb::string_t{text.data(), static_cast<uint32_t>(text.size())},
-        tokens)) {
+  if (!value_analyzer.Analyze(analyzer, duckdb::string_t::Checked(text),
+                              tokens)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("Failed to analyse '", text, "'"),
                     ERR_HINT("The column's analyzer rejected the input text."));

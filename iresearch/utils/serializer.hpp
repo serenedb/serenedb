@@ -57,12 +57,12 @@ static_assert(false);
 #endif
 static_assert(BOOST_PFR_ENABLED);
 
-#include <duckdb/common/error_data.hpp>
 #include <duckdb/common/serializer/serialization_traits.hpp>
 #include <duckdb/common/types/string_type.hpp>
 
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
+#include "iresearch/utils/pg/error_mapping.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::utils {
@@ -231,8 +231,7 @@ void WriteString(Sink& sink, std::string_view v) {
   if constexpr (requires { sink.WriteValue(v); }) {
     sink.WriteValue(v);
   } else {
-    sink.WriteValue(
-      duckdb::string_t{v.data(), static_cast<uint32_t>(v.size())});
+    sink.WriteValue(duckdb::string_t::Checked(v));
   }
 }
 
@@ -594,8 +593,10 @@ void ReadTuple(Source& src, U& out, const A& arg = {}) {
         }
       } catch (const std::exception& e) {
         src.OnListEnd();
-        THROW_SQL_ERROR(ERR_MSG("Failed to read element ", element_idx, ": ",
-                                duckdb::ErrorData{e}.RawMessage()));
+        auto error = irs::pg::ToSqlError(e);
+        error.errmsg = absl::StrCat("Failed to read element ", element_idx,
+                                    ": ", error.errmsg);
+        THROW_SQL_ERROR_FROM_DATA(std::move(error));
       } catch (...) {
         src.OnListEnd();
         THROW_SQL_ERROR(ERR_MSG("Failed to read element ", element_idx,

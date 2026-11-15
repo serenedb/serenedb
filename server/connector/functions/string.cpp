@@ -528,8 +528,7 @@ void DecodeFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
           *out++ = static_cast<char>((h1 << 4) | h2);
         }
         target.Finalize();
-        return duckdb::StringVector::AddStringOrBlob(
-          result, duckdb::string_t(target.GetDataWriteable(), blob_size));
+        return target;
       }
       if (format == "base64") {
         auto blob = duckdb::Blob::FromBase64(data);
@@ -800,8 +799,7 @@ void QuoteNullableFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
       }
     }
     quoted += '\'';
-    out.WriteValue(
-      duckdb::string_t{quoted.data(), static_cast<uint32_t>(quoted.size())});
+    out.WriteValue(duckdb::string_t::Checked(quoted));
   }
 }
 
@@ -1094,8 +1092,7 @@ void RegexpMatchFunction(duckdb::DataChunk& args,
       }
       VerifyWholeCharacters(match, input);
       for (auto& child : rows.WriteList(1)) {
-        child.WriteValue(
-          duckdb::string_t{match.data(), static_cast<uint32_t>(match.size())});
+        child.WriteValue(duckdb::string_t::Checked(match));
       }
       continue;
     }
@@ -1392,8 +1389,7 @@ void ParseIdentFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     size_t i = 0;
     for (auto& child : rows.WriteList(size)) {
       const auto& part = parts[i++];
-      child.WriteValue(
-        duckdb::string_t{part.data(), static_cast<uint32_t>(part.size())});
+      child.WriteValue(duckdb::string_t::Checked(part));
     }
   }
 }

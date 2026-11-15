@@ -218,6 +218,56 @@ x
 
 
 statement ok
+BEGIN;
+
+
+statement ok
+SET LOCAL integer_overflow = 'wrap';
+
+
+query
+EXECUTE wrap_constant;
+----
+v
+-9223372036854775808
+
+
+statement ok
+COMMIT;
+
+
+statement error
+EXECUTE wrap_constant;
+----
+db error: ERROR: Overflow in addition of INT64 (9223372036854775807 + 1)!
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+SET integer_overflow = 'wrap';
+
+
+query
+EXECUTE wrap_constant;
+----
+v
+-9223372036854775808
+
+
+statement ok
+ROLLBACK;
+
+
+statement error
+EXECUTE wrap_constant;
+----
+db error: ERROR: Overflow in addition of INT64 (9223372036854775807 + 1)!
+
+
+statement ok
 DEALLOCATE wrap_constant;
 
 

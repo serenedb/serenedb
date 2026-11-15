@@ -181,7 +181,12 @@ TableKeys ResolveTableKeys(const catalog::SearchTableEntry& table,
       spec.types.push_back(parent_column.Type());
       own_types.push_back(column.Type());
     }
-    if (own_types != spec.types) {
+    if (!absl::c_equal(own_types, spec.types,
+                       [](const auto& own, const auto& referenced) {
+                         return own == referenced &&
+                                duckdb::StringType::GetCollation(own) ==
+                                  duckdb::StringType::GetCollation(referenced);
+                       })) {
       spec.key.types = spec.types;
     }
     auto referencing = std::make_shared<const Referencing>(

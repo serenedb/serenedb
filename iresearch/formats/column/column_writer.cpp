@@ -54,9 +54,6 @@ namespace {
 void ZeroNullArrays(duckdb::Vector& arrays, duckdb::idx_t from,
                     duckdb::idx_t count) {
   const auto& validity = duckdb::FlatVector::Validity(arrays);
-  if (validity.CannotHaveNull()) {
-    return;
-  }
   auto& child = duckdb::ArrayVector::GetChildMutable(arrays);
   const auto child_type = child.GetType().InternalType();
   if (!duckdb::TypeIsConstantSize(child_type)) {

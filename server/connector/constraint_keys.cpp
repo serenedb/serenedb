@@ -121,7 +121,8 @@ void ConstraintKeyEncoder::Prepare(const duckdb::DataChunk& chunk,
       part = duckdb::BoundCastExpression::AddDefaultCastToType(std::move(part),
                                                                _key.types[i]);
     }
-    const auto type = part->GetReturnType();
+    const auto type =
+      _key.types.empty() ? part->GetReturnType() : _key.types[i];
     if (type.id() == duckdb::LogicalTypeId::INTERVAL) {
       prepared.intervals.push_back(i);
       intervals.push_back(type);

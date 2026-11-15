@@ -422,3 +422,49 @@ DROP TABLE fk_late_c;
 
 statement ok
 DROP TABLE fk_late_p;
+
+
+statement ok
+CREATE TABLE fk_coll_p (id VARCHAR COLLATE NOCASE PRIMARY KEY);
+
+
+statement ok
+CREATE TABLE fk_coll_c (pid VARCHAR REFERENCES fk_coll_p (id));
+
+
+statement ok
+INSERT INTO fk_coll_p VALUES ('Abc');
+
+
+statement ok
+INSERT INTO fk_coll_c VALUES ('abc'), ('ABC');
+
+
+statement error
+INSERT INTO fk_coll_c VALUES ('xyz');
+----
+db error: ERROR: insert or update on table "fk_coll_c" violates foreign key constraint "fk_coll_c_pid_fkey"
+DETAIL: Key (pid)=(xyz) is not present in table "fk_coll_p".
+
+
+statement error
+DELETE FROM fk_coll_p WHERE id = 'ABC';
+----
+db error: ERROR: update or delete on table "fk_coll_p" violates foreign key constraint "fk_coll_c_pid_fkey" on table "fk_coll_c"
+DETAIL: Key (id)=(abc) is still referenced from table "fk_coll_c".
+
+
+query
+SELECT pid FROM fk_coll_c ORDER BY pid;
+----
+pid
+ABC
+abc
+
+
+statement ok
+DROP TABLE fk_coll_c;
+
+
+statement ok
+DROP TABLE fk_coll_p;

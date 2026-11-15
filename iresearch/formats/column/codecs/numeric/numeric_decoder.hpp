@@ -147,6 +147,7 @@ class FrameDecoder {
 
   static constexpr uint64_t kNearShare = 32;
   static constexpr uint64_t kScanCacheDivisor = 2;
+  static constexpr size_t kNearRuns = 32;
 
   IRS_NO_INLINE T FetchApart(uint64_t row, uint64_t next) {
     if (Runs(_h.transform) || Near(row, next)) {
@@ -820,11 +821,18 @@ class FrameDecoder {
   IRS_NO_INLINE uint32_t FindRun(uint32_t pos) const noexcept {
     const auto* ends = _run_ends.data();
     const auto before = [&](size_t r) { return ends[r] <= pos; };
-    if (pos >= ends[_hint]) {
-      return static_cast<uint32_t>(
-        GallopIndex(_hint + 1, _run_ends.size(), before));
+    if (pos < ends[_hint]) {
+      return static_cast<uint32_t>(PartitionIndex(0, _hint, before));
     }
-    return static_cast<uint32_t>(PartitionIndex(0, _hint, before));
+    size_t from = _hint + 1;
+    if (from + kNearRuns <= _run_ends.size()) {
+      const auto skipped = CountLess<kNearRuns>(ends + from, pos + 1);
+      if (skipped != kNearRuns) {
+        return static_cast<uint32_t>(from + skipped);
+      }
+      from += kNearRuns;
+    }
+    return static_cast<uint32_t>(GallopIndex(from, _run_ends.size(), before));
   }
 
   duckdb::const_data_ptr_t _base;

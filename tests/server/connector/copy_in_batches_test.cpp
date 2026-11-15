@@ -20,6 +20,7 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
+#include <absl/strings/str_join.h>
 #include <gtest/gtest.h>
 
 #include <cstddef>
@@ -133,6 +134,33 @@ TEST(PgCopyBatchBuilder, TextKeepsEveryByteAcrossPieces) {
         EXPECT_EQ(Drain(builder, input, piece, stable), input)
           << "piece=" << piece << " stable=" << stable << " target=" << target;
       }
+    }
+  }
+}
+
+TEST(PgCopyBatchBuilder, JoinedBlankLinesStayWithTheRowsBeforeThem) {
+  const std::string input = "a\n\n\r\n\nb\n\n";
+  for (const size_t piece : {1, 2, 3, 5, 64}) {
+    CopyBatchBuilder builder{CopyBatchFormat::Text, 1, true};
+    std::vector<std::string> batches;
+    for (size_t pos = 0; pos < input.size(); pos += piece) {
+      builder.Feed(std::string_view{input}.substr(pos, piece), false);
+      while (builder.Ready()) {
+        batches.push_back(Join(*builder.Take()));
+      }
+    }
+    builder.Finish();
+    while (builder.HasRows()) {
+      batches.push_back(Join(*builder.Take()));
+    }
+    EXPECT_EQ(absl::StrJoin(batches, ""), input) << "piece=" << piece;
+    for (size_t i = 1; i < batches.size(); ++i) {
+      EXPECT_FALSE(batches[i].starts_with('\n') ||
+                   batches[i].starts_with("\r\n"))
+        << "piece=" << piece << " batch=" << i;
+    }
+    if (piece < input.size()) {
+      EXPECT_EQ(batches.back(), "b\n\n") << "piece=" << piece;
     }
   }
 }

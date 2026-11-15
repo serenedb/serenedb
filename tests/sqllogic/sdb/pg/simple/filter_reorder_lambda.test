@@ -1,0 +1,37 @@
+statement ok
+CREATE TABLE frl (id BIGINT, items VARCHAR[]);
+
+
+statement ok
+INSERT INTO frl SELECT i, ['company ' || (i % 50), 'x' || i] FROM range(1000) r(i);
+
+
+query
+EXPLAIN SELECT count(*) FROM frl
+WHERE ((NOT (len(list_filter(items, lambda x: coalesce(regexp_matches(x, '(?i)^(the\s+)?company 1[0-9]\b'), FALSE))) > 0)) OR id IS NULL)
+  AND ((len(list_filter(items, lambda x: x = 'x7')) > 0) OR id IS NULL);
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Aggregates: count_star()                                                                                                                                               │
+│ ~1 row                                                                                                                                                                 │
+╰────────────────────────────────────────────────────────────────────────────────────┬───────────────────────────────────────────────────────────────────────────────────╯
+╭─ FILTER ───────────────────────────────────────────────────────────────────────────┴───────────────────────────────────────────────────────────────────────────────────╮
+│ Expression:                                                                                                                                                            │
+│ (len(list_filter(items, lambda x: (x = 'x7'))) > 0) AND (len(list_filter(items, lambda x: COALESCE(regexp_matches(x, '(?i)^(the\\s+)?company 1[0-9]\\b'), false))) <= 0) │
+│ ~200 rows                                                                                                                                                              │
+╰────────────────────────────────────────────────────────────────────────────────────┬───────────────────────────────────────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────────────────────────────────────────────────────────────┴───────────────────────────────────────────────────────────────────────────────────╮
+│ Table: frl                                                                                                                                                             │
+│ Projections: items                                                                                                                                                     │
+│ ~1,000 rows                                                                                                                                                            │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+
+query
+SELECT count(*) AS n FROM frl
+WHERE ((NOT (len(list_filter(items, lambda x: coalesce(regexp_matches(x, '(?i)^(the\s+)?company 1[0-9]\b'), FALSE))) > 0)) OR id IS NULL)
+  AND ((len(list_filter(items, lambda x: x = 'x7')) > 0) OR id IS NULL);
+----
+n
+1

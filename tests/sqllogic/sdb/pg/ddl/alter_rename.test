@@ -319,6 +319,48 @@ ALTER TABLE constr_test RENAME CONSTRAINT constr_test_positive TO constr_test_po
 
 
 statement ok
+CREATE TABLE constr_dup (id INT PRIMARY KEY, a INT CHECK (a > 0), CONSTRAINT constr_dup_named CHECK (a < 100));
+
+
+statement error
+ALTER TABLE constr_dup RENAME CONSTRAINT constr_dup_named TO constr_dup_a_check;
+----
+db error: ERROR: constraint "constr_dup_a_check" for relation "constr_dup" already exists
+
+
+statement error
+ALTER TABLE constr_dup ADD CONSTRAINT constr_dup_named CHECK (a < 50);
+----
+db error: ERROR: constraint "constr_dup_named" for relation "constr_dup" already exists
+
+
+statement error
+ALTER TABLE constr_dup ADD CONSTRAINT constr_dup_pkey CHECK (a < 50);
+----
+db error: ERROR: constraint "constr_dup_pkey" for relation "constr_dup" already exists
+
+
+statement error
+CREATE TABLE constr_dup2 (a INT CONSTRAINT constr_dup2_c CHECK (a > 0), b INT CONSTRAINT constr_dup2_c CHECK (b > 0));
+----
+db error: ERROR: constraint "constr_dup2_c" for relation "constr_dup2" already exists
+
+
+query
+SELECT conname FROM pg_constraint WHERE conrelid = 'constr_dup'::regclass ORDER BY conname;
+----
+conname
+constr_dup_a_check
+constr_dup_id_not_null
+constr_dup_named
+constr_dup_pkey
+
+
+statement ok
+DROP TABLE constr_dup;
+
+
+statement ok
 DROP TABLE constr_test;
 
 

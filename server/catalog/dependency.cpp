@@ -53,13 +53,21 @@
 #include <duckdb/parser/parsed_data/create_view_info.hpp>
 #include <duckdb/parser/parsed_expression_iterator.hpp>
 #include <duckdb/parser/query_node.hpp>
+#include <duckdb/parser/query_node/delete_query_node.hpp>
+#include <duckdb/parser/query_node/insert_query_node.hpp>
 #include <duckdb/parser/query_node/recursive_cte_node.hpp>
 #include <duckdb/parser/query_node/select_node.hpp>
 #include <duckdb/parser/query_node/set_operation_node.hpp>
+#include <duckdb/parser/query_node/update_query_node.hpp>
+#include <duckdb/parser/statement/insert_statement.hpp>
+#include <duckdb/parser/statement/update_statement.hpp>
 #include <duckdb/parser/tableref/basetableref.hpp>
+#include <duckdb/parser/tableref/expressionlistref.hpp>
 #include <duckdb/parser/tableref/joinref.hpp>
 #include <duckdb/parser/tableref/subqueryref.hpp>
+#include <duckdb/planner/binder.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <optional>
@@ -68,6 +76,7 @@
 #include <vector>
 
 #include "catalog/base_catalog.h"
+#include "catalog/entry/search_table.h"
 #include "catalog/schema.h"
 #include "pg/catalog/functions/pg_catalog/objectaddress.h"
 #include "pg/connection_context.h"
@@ -252,31 +261,6 @@ std::vector<Edge> DirectDependents(duckdb::CatalogTransaction transaction,
     return Sorted(std::move(direct));
   }
   auto& catalog = subject.ParentCatalog().Cast<BaseCatalog>();
-  if (subject.type == duckdb::CatalogType::TABLE_ENTRY) {
-    for (const auto& dependency :
-         subject.Cast<duckdb::StandardEntry>().dependencies.Set()) {
-      if (!dependency.owned_by) {
-        continue;
-      }
-      if (auto owned = catalog.LookupOid(transaction, dependency.oid)) {
-        direct.push_back({owned.get(), &subject, Part::Owned, {}});
-      }
-    }
-  }
-  const auto triggers = [&](duckdb::CatalogEntry& table, Part part) {
-    table.Cast<duckdb::TableCatalogEntry>().ScanTriggers(
-      transaction, [&](duckdb::CatalogEntry& trigger) {
-        for (const auto& dependency :
-             trigger.Cast<duckdb::StandardEntry>().dependencies.Set()) {
-          if (dependency.oid == subject.oid) {
-            direct.push_back({&trigger, &subject, part, {}, dependency.flags});
-          }
-        }
-      });
-  };
-  if (subject.type == duckdb::CatalogType::TABLE_ENTRY) {
-    triggers(subject, Part::Owned);
-  }
   ForEachDependent(
     transaction, catalog, subject.oid, [&](duckdb::CatalogEntry& member) {
       if (member.type == duckdb::CatalogType::INDEX_ENTRY &&
@@ -284,17 +268,17 @@ std::vector<Edge> DirectDependents(duckdb::CatalogTransaction transaction,
         direct.push_back({&member, &subject, Part::Owned, {}});
         return;
       }
-      if (member.type == duckdb::CatalogType::TABLE_ENTRY) {
-        triggers(member, Part::Whole);
-      }
+      const bool own_trigger =
+        member.type == duckdb::CatalogType::TRIGGER_ENTRY &&
+        catalog.Oids().SetOwner(member.oid) == subject.oid;
       const auto& dependencies =
         member.Cast<duckdb::StandardEntry>().dependencies.Set();
       for (const auto& dependency : dependencies) {
         if (dependency.oid != subject.oid) {
           continue;
         }
-        if (dependency.owned_by &&
-            member.type != duckdb::CatalogType::TABLE_ENTRY) {
+        if (own_trigger || (dependency.owned_by &&
+                            member.type != duckdb::CatalogType::TABLE_ENTRY)) {
           direct.push_back(
             {&member, &subject, Part::Owned, {}, dependency.flags});
           continue;
@@ -450,8 +434,17 @@ class Rewriter {
 
   bool changed = false;
 
+  void VisitTarget(duckdb::QualifiedName& name) {
+    if (_kind == Kind::Relation) {
+      Rename(name);
+    }
+  }
+
   void Visit(duckdb::QueryNode& node) {
     CollectCtes(node);
+    if (node.type == duckdb::QueryNodeType::INSERT_QUERY_NODE) {
+      VisitTarget(node.Cast<duckdb::InsertQueryNode>().qualified_name);
+    }
     duckdb::ParsedExpressionIterator::EnumerateQueryNodeChildren(
       node,
       [&](duckdb::unique_ptr<duckdb::ParsedExpression>& child) {
@@ -592,6 +585,32 @@ class ColumnRewriter {
   bool expands_all = false;
   bool uncertain = false;
 
+  void VisitTrigger(duckdb::CreateTriggerInfo& trigger, bool own) {
+    Scope row;
+    if (own) {
+      RenameColumns(trigger.columns);
+      for (const auto* alias :
+           {&trigger.referencing_new_table, &trigger.referencing_old_table}) {
+        if (!alias->empty()) {
+          _transitions.push_back(*alias);
+        }
+      }
+    }
+    if (trigger.for_each == duckdb::TriggerForEach::ROW) {
+      const duckdb::Identifier name{
+        duckdb::Binder::RowScopeName(trigger.event_type)};
+      if (own) {
+        row.qualifiers.push_back(name);
+      } else {
+        row.others.push_back(name);
+        row.known = false;
+      }
+    }
+    _scopes.push_back(&row);
+    absl::Cleanup pop = [&] { _scopes.pop_back(); };
+    Visit(*trigger.trigger_action);
+  }
+
   void Visit(duckdb::QueryNode& node) {
     for (auto& [name, cte] : node.cte_map.map) {
       if (cte->query_node) {
@@ -601,6 +620,15 @@ class ColumnRewriter {
     switch (node.type) {
       case duckdb::QueryNodeType::SELECT_NODE:
         VisitSelect(node.Cast<duckdb::SelectNode>());
+        break;
+      case duckdb::QueryNodeType::INSERT_QUERY_NODE:
+        VisitInsert(node.Cast<duckdb::InsertQueryNode>());
+        break;
+      case duckdb::QueryNodeType::UPDATE_QUERY_NODE:
+        VisitUpdate(node.Cast<duckdb::UpdateQueryNode>());
+        break;
+      case duckdb::QueryNodeType::DELETE_QUERY_NODE:
+        VisitDelete(node.Cast<duckdb::DeleteQueryNode>());
         break;
       case duckdb::QueryNodeType::SET_OPERATION_NODE:
         for (auto& child : node.Cast<duckdb::SetOperationNode>().children) {
@@ -671,32 +699,152 @@ class ColumnRewriter {
       });
   }
 
+  void RenameColumns(duckdb::vector<duckdb::Identifier>& columns) {
+    for (auto& column : columns) {
+      if (_equals(column, _old_column)) {
+        column = _new_column;
+        changed = true;
+      }
+    }
+  }
+
+  void AddBase(const duckdb::QualifiedName& name,
+               const duckdb::Identifier& alias, Scope& scope) {
+    const auto& qualifier = alias.empty() ? name.Name() : alias;
+    if (name.Catalog().empty() && name.Schema().empty() &&
+        absl::c_any_of(_transitions, [&](const duckdb::Identifier& t) {
+          return _equals(t, name.Name());
+        })) {
+      scope.qualifiers.push_back(qualifier);
+      return;
+    }
+    auto found =
+      Resolve(_transaction, _dependent, duckdb::CatalogType::TABLE_ENTRY, name);
+    if (!found && !name.Catalog().empty() && !name.Schema().empty() &&
+        _equals(name.Catalog(), _table.ParentCatalog().GetName()) &&
+        _equals(name.Schema(), _table.ParentSchema(_transaction).name) &&
+        _equals(name.Name(), _table.name)) {
+      found = &_table;
+    }
+    if (found && found->oid == _table.oid) {
+      scope.qualifiers.push_back(qualifier);
+      return;
+    }
+    scope.others.push_back(qualifier);
+    if (!found || found->type != duckdb::CatalogType::TABLE_ENTRY) {
+      scope.known = false;
+    } else if (found->Cast<duckdb::TableCatalogEntry>().ColumnExists(
+                 _old_column)) {
+      scope.other_has_column = true;
+    }
+  }
+
+  void VisitInsert(duckdb::InsertQueryNode& insert) {
+    if (insert.select_statement) {
+      Visit(*insert.select_statement->node);
+    }
+    Scope scope;
+    AddBase(insert.qualified_name,
+            insert.table_ref ? insert.table_ref->alias : duckdb::Identifier{},
+            scope);
+    auto* conflict = insert.on_conflict_info.get();
+    if (!scope.qualifiers.empty()) {
+      RenameColumns(insert.columns);
+      if (conflict) {
+        RenameColumns(conflict->indexed_columns);
+        if (conflict->set_info) {
+          RenameColumns(conflict->set_info->columns);
+        }
+      }
+      scope.qualifiers.push_back(duckdb::Identifier{"excluded"});
+    }
+    _scopes.push_back(&scope);
+    absl::Cleanup pop = [&] { _scopes.pop_back(); };
+    if (conflict && conflict->set_info) {
+      for (auto& expression : conflict->set_info->expressions) {
+        Rewrite(*expression);
+      }
+      if (conflict->set_info->condition) {
+        Rewrite(*conflict->set_info->condition);
+      }
+    }
+    for (auto& expression : insert.returning_list) {
+      Rewrite(*expression);
+    }
+  }
+
+  void VisitUpdate(duckdb::UpdateQueryNode& update) {
+    Scope scope;
+    if (update.table) {
+      VisitFrom(*update.table, scope);
+    }
+    const bool target = !scope.qualifiers.empty();
+    if (update.from_table) {
+      VisitFrom(*update.from_table, scope);
+    }
+    if (scope.merged) {
+      uncertain = true;
+    }
+    if (target && update.set_info) {
+      RenameColumns(update.set_info->columns);
+    }
+    _scopes.push_back(&scope);
+    absl::Cleanup pop = [&] { _scopes.pop_back(); };
+    for (auto* condition : scope.conditions) {
+      Rewrite(*condition);
+    }
+    if (update.set_info) {
+      for (auto& expression : update.set_info->expressions) {
+        Rewrite(*expression);
+      }
+      if (update.set_info->condition) {
+        Rewrite(*update.set_info->condition);
+      }
+    }
+    for (auto& expression : update.returning_list) {
+      Rewrite(*expression);
+    }
+  }
+
+  void VisitDelete(duckdb::DeleteQueryNode& del) {
+    Scope scope;
+    if (del.table) {
+      VisitFrom(*del.table, scope);
+    }
+    for (auto& clause : del.using_clauses) {
+      VisitFrom(*clause, scope);
+    }
+    if (scope.merged) {
+      uncertain = true;
+    }
+    _scopes.push_back(&scope);
+    absl::Cleanup pop = [&] { _scopes.pop_back(); };
+    for (auto* condition : scope.conditions) {
+      Rewrite(*condition);
+    }
+    if (del.condition) {
+      Rewrite(*del.condition);
+    }
+    for (auto& expression : del.returning_list) {
+      Rewrite(*expression);
+    }
+  }
+
   void VisitFrom(duckdb::TableRef& ref, Scope& scope) {
     switch (ref.type) {
-      case duckdb::TableReferenceType::BASE_TABLE: {
-        const auto& name = ref.Cast<duckdb::BaseTableRef>().GetQualifiedName();
-        auto found = Resolve(_transaction, _dependent,
-                             duckdb::CatalogType::TABLE_ENTRY, name);
-        if (!found && !name.Catalog().empty() && !name.Schema().empty() &&
-            _equals(name.Catalog(), _table.ParentCatalog().GetName()) &&
-            _equals(name.Schema(), _table.ParentSchema(_transaction).name) &&
-            _equals(name.Name(), _table.name)) {
-          found = &_table;
-        }
-        const auto& qualifier = ref.alias.empty() ? name.Name() : ref.alias;
-        if (found && found->oid == _table.oid) {
-          scope.qualifiers.push_back(qualifier);
-          break;
-        }
-        scope.others.push_back(qualifier);
-        if (!found || found->type != duckdb::CatalogType::TABLE_ENTRY) {
-          scope.known = false;
-        } else if (found->Cast<duckdb::TableCatalogEntry>().ColumnExists(
-                     _old_column)) {
-          scope.other_has_column = true;
-        }
+      case duckdb::TableReferenceType::BASE_TABLE:
+        AddBase(ref.Cast<duckdb::BaseTableRef>().GetQualifiedName(), ref.alias,
+                scope);
         break;
-      }
+      case duckdb::TableReferenceType::EXPRESSION_LIST:
+        for (auto& row : ref.Cast<duckdb::ExpressionListRef>().values) {
+          for (auto& value : row) {
+            Rewrite(*value);
+          }
+        }
+        scope.others.push_back(ref.alias);
+        scope.known = false;
+        break;
       case duckdb::TableReferenceType::JOIN: {
         auto& join = ref.Cast<duckdb::JoinRef>();
         const auto ours = scope.qualifiers.size();
@@ -789,7 +937,36 @@ class ColumnRewriter {
   const duckdb::Identifier& _old_column;
   const duckdb::Identifier& _new_column;
   std::vector<const Scope*> _scopes;
+  std::vector<duckdb::Identifier> _transitions;
 };
+
+SearchTableEntry& TriggerTable(duckdb::CatalogTransaction transaction,
+                               duckdb::CatalogEntry& trigger) {
+  auto& catalog = trigger.ParentCatalog().Cast<BaseCatalog>();
+  auto table =
+    catalog.LookupOid(transaction, catalog.Oids().SetOwner(trigger.oid));
+  SDB_ASSERT(table);
+  return table->Cast<SearchTableEntry>();
+}
+
+void ReplaceTrigger(duckdb::CatalogTransaction transaction,
+                    duckdb::CatalogEntry& trigger,
+                    duckdb::CreateTriggerInfo& info) {
+  TriggerTable(transaction, trigger).ReplaceTrigger(transaction, info);
+}
+
+[[noreturn]] void RefuseColumnRename(duckdb::CatalogTransaction transaction,
+                                     const duckdb::CatalogEntry& table,
+                                     const duckdb::Identifier& old_column,
+                                     const duckdb::CatalogEntry& dependent) {
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+    ERR_MSG("cannot rename column ", old_column.GetIdentifierName(),
+            " of table ", table.name.GetIdentifierName(),
+            " because other objects depend on it"),
+    ERR_DETAIL(pg::DescribeObject(transaction.GetContext(), dependent),
+               " refers to the column where its rename cannot be followed"));
+}
 
 void Rewrite(duckdb::CatalogTransaction transaction, const Edge& edge,
              Kind kind, const duckdb::Identifier& new_schema,
@@ -833,6 +1010,18 @@ void Rewrite(duckdb::CatalogTransaction transaction, const Edge& edge,
     }
     if (rewriter.changed) {
       schema.Alter(transaction, *info->GetAlterInfo());
+    }
+    return;
+  }
+  if (dependent.type == duckdb::CatalogType::TRIGGER_ENTRY) {
+    auto info = dependent.GetInfo();
+    auto& trigger = info->Cast<duckdb::CreateTriggerInfo>();
+    if (edge.part == Part::Owned) {
+      rewriter.VisitTarget(trigger.base_table->GetQualifiedNameMutable());
+    }
+    rewriter.Visit(*trigger.trigger_action);
+    if (rewriter.changed) {
+      ReplaceTrigger(transaction, dependent, trigger);
     }
     return;
   }
@@ -895,7 +1084,7 @@ std::string DependsLine(const duckdb::CatalogEntry& dependent,
 
 bool Unfollowable(const Edge& edge, bool rewrites) {
   if (edge.dependent->type == duckdb::CatalogType::TRIGGER_ENTRY) {
-    return edge.flags.IsAlterBlocking();
+    return !rewrites && edge.flags.IsAlterBlocking();
   }
   if (edge.part == Part::Owned) {
     return false;
@@ -1073,11 +1262,7 @@ void ScanSubjects(duckdb::CatalogTransaction transaction,
     auto subject = catalog.LookupOid(transaction, dependency.oid);
     if (subject && !subject->internal &&
         subject->type != duckdb::CatalogType::SCHEMA_ENTRY) {
-      auto flags = dependency.flags;
-      if (dependency.owned_by) {
-        flags.SetOwnedBy();
-      }
-      visit(*subject, flags);
+      visit(*subject, dependency.flags);
     }
   }
 }
@@ -1162,14 +1347,6 @@ duckdb::catalog_entry_vector_t OwnedEntries(
   }
   auto& catalog =
     owner.Cast<duckdb::StandardEntry>().catalog.Cast<BaseCatalog>();
-  for (const auto& dependency :
-       owner.Cast<duckdb::StandardEntry>().dependencies.Set()) {
-    if (dependency.owned_by) {
-      if (auto entry = catalog.LookupOid(transaction, dependency.oid)) {
-        owned.emplace_back(*entry);
-      }
-    }
-  }
   ForEachDependent(transaction, catalog, owner.oid,
                    [&](duckdb::CatalogEntry& member) {
                      if (member.type != duckdb::CatalogType::TABLE_ENTRY &&
@@ -1187,23 +1364,13 @@ duckdb::optional_ptr<duckdb::CatalogEntry> OwnerOf(
   }
   auto& catalog =
     owned.Cast<duckdb::StandardEntry>().catalog.Cast<BaseCatalog>();
-  if (owned.type != duckdb::CatalogType::TABLE_ENTRY) {
-    for (const auto& dependency :
-         owned.Cast<duckdb::StandardEntry>().dependencies.Set()) {
-      if (dependency.owned_by) {
-        return catalog.LookupOid(transaction, dependency.oid);
-      }
+  for (const auto& dependency :
+       owned.Cast<duckdb::StandardEntry>().dependencies.Set()) {
+    if (dependency.owned_by) {
+      return catalog.LookupOid(transaction, dependency.oid);
     }
   }
-  duckdb::optional_ptr<duckdb::CatalogEntry> owner;
-  ForEachDependent(transaction, catalog, owned.oid,
-                   [&](duckdb::CatalogEntry& member) {
-                     if (member.type == duckdb::CatalogType::TABLE_ENTRY &&
-                         OwnedBy(member, owned.oid)) {
-                       owner = member;
-                     }
-                   });
-  return owner;
+  return nullptr;
 }
 
 void RefuseDependents(
@@ -1229,16 +1396,6 @@ void FollowRename(duckdb::CatalogTransaction transaction,
   const bool rewrites = KindOf(entry.type).has_value();
   const auto edges = DirectDependents(transaction, entry);
   RefuseUnfollowable(entry, edges, {}, rewrites);
-  std::vector<std::string> triggers;
-  for (const auto& edge : edges) {
-    if (edge.dependent->type == duckdb::CatalogType::TRIGGER_ENTRY &&
-        edge.part == Part::Owned) {
-      triggers.push_back(DependsLine(*edge.dependent, entry));
-    }
-  }
-  if (!triggers.empty()) {
-    ThrowDependents(entry, triggers);
-  }
   if (rewrites) {
     Follow(transaction, entry, entry.ParentSchema(transaction).name, new_name,
            defaults);
@@ -1337,6 +1494,48 @@ void FollowReferences(duckdb::CatalogTransaction transaction,
   follow(table);
 }
 
+void FollowReferencedColumnRename(duckdb::CatalogTransaction transaction,
+                                  duckdb::TableCatalogEntry& table,
+                                  const duckdb::Identifier& old_column,
+                                  const duckdb::Identifier& new_column) {
+  const duckdb::IdentifierEquality equals{
+    table.ParentCatalog().IsCaseSensitive()};
+  irs::containers::FlatHashSet<duckdb::idx_t> seen;
+  for (const auto& edge : DirectDependents(transaction, table)) {
+    auto& referencing = *edge.dependent;
+    if (edge.part != Part::Constraint ||
+        referencing.type != duckdb::CatalogType::TABLE_ENTRY ||
+        referencing.oid == table.oid || !seen.insert(referencing.oid).second) {
+      continue;
+    }
+    auto info = referencing.GetInfo();
+    bool changed = false;
+    for (auto& constraint : info->Cast<duckdb::CreateTableInfo>().constraints) {
+      if (constraint->type != duckdb::ConstraintType::FOREIGN_KEY) {
+        continue;
+      }
+      auto& fk = constraint->Cast<duckdb::ForeignKeyConstraint>();
+      if (fk.info.type != duckdb::ForeignKeyType::FK_TYPE_FOREIGN_KEY_TABLE ||
+          ReferencedTableOid(referencing.Cast<duckdb::TableCatalogEntry>(),
+                             fk) != table.oid) {
+        continue;
+      }
+      for (auto& column : fk.pk_columns) {
+        if (equals(column, old_column)) {
+          column = new_column;
+          changed = true;
+        }
+      }
+    }
+    if (changed) {
+      auto& parent = referencing.ParentSchema(transaction);
+      info->SetQualifiedName(parent.GetQualifiedName(referencing.name));
+      duckdb::ReplaceDefinitionInfo replace{std::move(info)};
+      parent.Alter(transaction, replace);
+    }
+  }
+}
+
 duckdb::idx_t ReferencedTableOid(const duckdb::TableCatalogEntry& table,
                                  const duckdb::ForeignKeyConstraint& fk) {
   if (fk.info.type == duckdb::ForeignKeyType::FK_TYPE_SELF_REFERENCE_TABLE) {
@@ -1420,23 +1619,27 @@ void FollowColumnRename(duckdb::CatalogTransaction transaction,
       }
       continue;
     }
-    const auto refuse = [&] {
-      auto& context = transaction.GetContext();
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
-        ERR_MSG("cannot rename column ", old_column.GetIdentifierName(),
-                " of table ", table.name.GetIdentifierName(),
-                " because other objects depend on it"),
-        ERR_DETAIL(pg::DescribeObject(context, dependent),
-                   " refers to the column where its rename cannot be "
-                   "followed"));
-    };
+    if (dependent.type == duckdb::CatalogType::TRIGGER_ENTRY) {
+      if (edge.part == Part::Owned) {
+        continue;
+      }
+      auto info = dependent.GetInfo();
+      auto& trigger = info->Cast<duckdb::CreateTriggerInfo>();
+      rewriter.VisitTrigger(trigger, false);
+      if (rewriter.uncertain) {
+        RefuseColumnRename(transaction, table, old_column, dependent);
+      }
+      if (rewriter.changed) {
+        ReplaceTrigger(transaction, dependent, trigger);
+      }
+      continue;
+    }
     if (dependent.type == duckdb::CatalogType::VIEW_ENTRY) {
       auto info = dependent.GetInfo();
       auto& view = info->Cast<duckdb::CreateViewInfo>();
       rewriter.Visit(*view.query->node);
       if (rewriter.uncertain) {
-        refuse();
+        RefuseColumnRename(transaction, table, old_column, dependent);
       }
       const duckdb::IdentifierEquality equals{
         table.ParentCatalog().IsCaseSensitive()};
@@ -1461,12 +1664,26 @@ void FollowColumnRename(duckdb::CatalogTransaction transaction,
       rewriter.Visit(*macro->Cast<duckdb::TableMacroFunction>().query_node);
     }
     if (rewriter.uncertain) {
-      refuse();
+      RefuseColumnRename(transaction, table, old_column, dependent);
     }
     if (rewriter.changed) {
       schema.Alter(transaction, *info->GetAlterInfo());
     }
   }
+}
+
+bool FollowTriggerColumnRename(duckdb::CatalogTransaction transaction,
+                               duckdb::CatalogEntry& trigger,
+                               duckdb::CreateTriggerInfo& info,
+                               duckdb::CatalogEntry& table,
+                               const duckdb::Identifier& old_column,
+                               const duckdb::Identifier& new_column) {
+  ColumnRewriter rewriter{transaction, trigger, table, old_column, new_column};
+  rewriter.VisitTrigger(info, true);
+  if (rewriter.uncertain) {
+    RefuseColumnRename(transaction, table, old_column, trigger);
+  }
+  return rewriter.changed;
 }
 
 void DropColumnReaders(duckdb::CatalogTransaction transaction,
@@ -1493,6 +1710,10 @@ void DropColumnReaders(duckdb::CatalogTransaction transaction,
         for (auto& macro : info->Cast<duckdb::CreateMacroInfo>().macros) {
           reads.Visit(*macro->Cast<duckdb::TableMacroFunction>().query_node);
         }
+      } else if (dependent.type == duckdb::CatalogType::TRIGGER_ENTRY) {
+        auto info = dependent.GetInfo();
+        reads.VisitTrigger(info->Cast<duckdb::CreateTriggerInfo>(),
+                           edge.part == Part::Owned);
       } else {
         continue;
       }
@@ -1525,6 +1746,11 @@ void DropColumnReaders(duckdb::CatalogTransaction transaction,
     ConnectionContext::Get(context).AddNotice(SQL_ERROR_DATA(
       ERR_CODE(ERRCODE_SUCCESSFUL_COMPLETION),
       ERR_MSG("drop cascades to ", pg::DescribeObject(context, *reader))));
+    if (reader->type == duckdb::CatalogType::TRIGGER_ENTRY) {
+      TriggerTable(transaction, *reader)
+        .DropTrigger(transaction, reader->name, false);
+      continue;
+    }
     DropDependents(transaction, *reader, true);
     reader->ParentSchema(transaction).Cast<Schema>().Drop(transaction, *reader);
   }

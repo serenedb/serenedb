@@ -675,63 +675,63 @@ ab9067062ebdb9f4	14	32	12288	108335	924723345
 e4a8bc4a7a678162	1111936	0	1114111	620504726118	460954989499721820
 a1cafffd17d1a9bc	64	40	65378	1074347	39998288277
 ba05d27bcdde4927	64	41	65379	1074415	40000698895
-33ff846b8012be7d	error	db error: ERROR: invalid character class range: \\p{InPC=NA}
-9ecb46ec2b72d297	error	db error: ERROR: invalid character class range: \\p{InPC=Bottom}
-d0ab4bf9299e7d83	error	db error: ERROR: invalid character class range: \\p{InPC=Bottom_And_Left}
-a6ee7af472c44fe4	error	db error: ERROR: invalid character class range: \\p{InPC=Bottom_And_Right}
-0ff3530e0c50a433	error	db error: ERROR: invalid character class range: \\p{InPC=Left}
-cf654a2ff73c6f6a	error	db error: ERROR: invalid character class range: \\p{InPC=Left_And_Right}
-706dd7c88af03185	error	db error: ERROR: invalid character class range: \\p{InPC=Overstruck}
-09a5179aaa407a1b	error	db error: ERROR: invalid character class range: \\p{InPC=Right}
-80289f29a55f7195	error	db error: ERROR: invalid character class range: \\p{InPC=Top}
-007397bba43b3dea	error	db error: ERROR: invalid character class range: \\p{InPC=Top_And_Bottom}
-2c5f9fbc3e71def0	error	db error: ERROR: invalid character class range: \\p{InPC=Top_And_Bottom_And_Right}
-808bc3df3b282bed	error	db error: ERROR: invalid character class range: \\p{InPC=Top_And_Left}
-2c9948251101e721	error	db error: ERROR: invalid character class range: \\p{InPC=Top_And_Left_And_Right}
-358426125bd3d3a2	error	db error: ERROR: invalid character class range: \\p{InPC=Top_And_Right}
-f2221cc3698bf489	error	db error: ERROR: invalid character class range: \\p{InPC=Visual_Order_Left}
-5810382531c485b9	error	db error: ERROR: invalid character class range: \\p{InPC=Top_And_Bottom_And_Left}
-9d6051d05d7b5da0	error	db error: ERROR: invalid character class range: \\p{InSC=Other}
-fdb2a60e05f3ed92	error	db error: ERROR: invalid character class range: \\p{InSC=Avagraha}
-7b40f00faa3713b8	error	db error: ERROR: invalid character class range: \\p{InSC=Bindu}
-4b35608ac95b440e	error	db error: ERROR: invalid character class range: \\p{InSC=Brahmi_Joining_Number}
-25a12666be51d60f	error	db error: ERROR: invalid character class range: \\p{InSC=Cantillation_Mark}
-956a81e039f7fefa	error	db error: ERROR: invalid character class range: \\p{InSC=Consonant}
-836da6f2fe97bd5f	error	db error: ERROR: invalid character class range: \\p{InSC=Consonant_Dead}
-4b8d8d3b61e91a6d	error	db error: ERROR: invalid character class range: \\p{InSC=Consonant_Final}
-002d2ede494a43b5	error	db error: ERROR: invalid character class range: \\p{InSC=Consonant_Head_Letter}
-66b5286a90417a66	error	db error: ERROR: invalid character class range: \\p{InSC=Consonant_Initial_Postfixed}
-3f526b24dcceaf64	error	db error: ERROR: invalid character class range: \\p{InSC=Consonant_Killer}
-d5f6eb632205e7f9	error	db error: ERROR: invalid character class range: \\p{InSC=Consonant_Medial}
-70cadada5cdf8e39	error	db error: ERROR: invalid character class range: \\p{InSC=Consonant_Placeholder}
-31e7f6e86a1c1fdb	error	db error: ERROR: invalid character class range: \\p{InSC=Consonant_Preceding_Repha}
-7df5333dd94c939f	error	db error: ERROR: invalid character class range: \\p{InSC=Consonant_Prefixed}
-5e0335b09338ca25	error	db error: ERROR: invalid character class range: \\p{InSC=Consonant_Subjoined}
-fe8325a79cb76605	error	db error: ERROR: invalid character class range: \\p{InSC=Consonant_Succeeding_Repha}
-76daa9d012fa925a	error	db error: ERROR: invalid character class range: \\p{InSC=Consonant_With_Stacker}
-ec3d6036ca873d31	error	db error: ERROR: invalid character class range: \\p{InSC=Gemination_Mark}
-66d1a01bb39cdd53	error	db error: ERROR: invalid character class range: \\p{InSC=Invisible_Stacker}
-672c57061d7071c7	error	db error: ERROR: invalid character class range: \\p{InSC=Joiner}
-67b1a403cbe4e55d	error	db error: ERROR: invalid character class range: \\p{InSC=Modifying_Letter}
-9d7b01304e296fa0	error	db error: ERROR: invalid character class range: \\p{InSC=Non_Joiner}
-b1d610ccd99df7a4	error	db error: ERROR: invalid character class range: \\p{InSC=Nukta}
-0cba316f20ef895b	error	db error: ERROR: invalid character class range: \\p{InSC=Number}
-cc6ba1f61ad30697	error	db error: ERROR: invalid character class range: \\p{InSC=Number_Joiner}
-7678fb5c97e99046	error	db error: ERROR: invalid character class range: \\p{InSC=Pure_Killer}
-388306d41340fca7	error	db error: ERROR: invalid character class range: \\p{InSC=Register_Shifter}
-b44be75818fdbb01	error	db error: ERROR: invalid character class range: \\p{InSC=Syllable_Modifier}
-d87160636c66e2b4	error	db error: ERROR: invalid character class range: \\p{InSC=Tone_Letter}
-1a1e96cfd7587d5d	error	db error: ERROR: invalid character class range: \\p{InSC=Tone_Mark}
-e87f44ef20b741e1	error	db error: ERROR: invalid character class range: \\p{InSC=Virama}
-cf0e74599a201682	error	db error: ERROR: invalid character class range: \\p{InSC=Visarga}
-f03d59dd49c1a68d	error	db error: ERROR: invalid character class range: \\p{InSC=Vowel}
-09af32977366f260	error	db error: ERROR: invalid character class range: \\p{InSC=Vowel_Dependent}
-f69140a27861bfbb	error	db error: ERROR: invalid character class range: \\p{InSC=Vowel_Independent}
-31264bd806982b60	error	db error: ERROR: invalid character class range: \\p{InSC=Reordering_Killer}
-b8c17bc265265c7b	error	db error: ERROR: invalid character class range: \\p{vo=R}
-13b3650b7cf75bdc	error	db error: ERROR: invalid character class range: \\p{vo=Tr}
-8a24fe3965a8d328	error	db error: ERROR: invalid character class range: \\p{vo=Tu}
-8530adde3e99892f	error	db error: ERROR: invalid character class range: \\p{vo=U}
+33ff846b8012be7d	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InPC=NA}
+9ecb46ec2b72d297	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InPC=Bottom}
+d0ab4bf9299e7d83	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InPC=Bottom_And_Left}
+a6ee7af472c44fe4	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InPC=Bottom_And_Right}
+0ff3530e0c50a433	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InPC=Left}
+cf654a2ff73c6f6a	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InPC=Left_And_Right}
+706dd7c88af03185	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InPC=Overstruck}
+09a5179aaa407a1b	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InPC=Right}
+80289f29a55f7195	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InPC=Top}
+007397bba43b3dea	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InPC=Top_And_Bottom}
+2c5f9fbc3e71def0	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InPC=Top_And_Bottom_And_Right}
+808bc3df3b282bed	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InPC=Top_And_Left}
+2c9948251101e721	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InPC=Top_And_Left_And_Right}
+358426125bd3d3a2	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InPC=Top_And_Right}
+f2221cc3698bf489	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InPC=Visual_Order_Left}
+5810382531c485b9	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InPC=Top_And_Bottom_And_Left}
+9d6051d05d7b5da0	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InSC=Other}
+fdb2a60e05f3ed92	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InSC=Avagraha}
+7b40f00faa3713b8	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InSC=Bindu}
+4b35608ac95b440e	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InSC=Brahmi_Joining_Number}
+25a12666be51d60f	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InSC=Cantillation_Mark}
+956a81e039f7fefa	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InSC=Consonant}
+836da6f2fe97bd5f	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InSC=Consonant_Dead}
+4b8d8d3b61e91a6d	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InSC=Consonant_Final}
+002d2ede494a43b5	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InSC=Consonant_Head_Letter}
+66b5286a90417a66	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InSC=Consonant_Initial_Postfixed}
+3f526b24dcceaf64	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InSC=Consonant_Killer}
+d5f6eb632205e7f9	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InSC=Consonant_Medial}
+70cadada5cdf8e39	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InSC=Consonant_Placeholder}
+31e7f6e86a1c1fdb	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InSC=Consonant_Preceding_Repha}
+7df5333dd94c939f	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InSC=Consonant_Prefixed}
+5e0335b09338ca25	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InSC=Consonant_Subjoined}
+fe8325a79cb76605	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InSC=Consonant_Succeeding_Repha}
+76daa9d012fa925a	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InSC=Consonant_With_Stacker}
+ec3d6036ca873d31	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InSC=Gemination_Mark}
+66d1a01bb39cdd53	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InSC=Invisible_Stacker}
+672c57061d7071c7	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InSC=Joiner}
+67b1a403cbe4e55d	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InSC=Modifying_Letter}
+9d7b01304e296fa0	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InSC=Non_Joiner}
+b1d610ccd99df7a4	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InSC=Nukta}
+0cba316f20ef895b	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InSC=Number}
+cc6ba1f61ad30697	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InSC=Number_Joiner}
+7678fb5c97e99046	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InSC=Pure_Killer}
+388306d41340fca7	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InSC=Register_Shifter}
+b44be75818fdbb01	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InSC=Syllable_Modifier}
+d87160636c66e2b4	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InSC=Tone_Letter}
+1a1e96cfd7587d5d	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InSC=Tone_Mark}
+e87f44ef20b741e1	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InSC=Virama}
+cf0e74599a201682	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InSC=Visarga}
+f03d59dd49c1a68d	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InSC=Vowel}
+09af32977366f260	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InSC=Vowel_Dependent}
+f69140a27861bfbb	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InSC=Vowel_Independent}
+31264bd806982b60	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InSC=Reordering_Killer}
+b8c17bc265265c7b	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{vo=R}
+13b3650b7cf75bdc	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{vo=Tr}
+8a24fe3965a8d328	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{vo=Tu}
+8530adde3e99892f	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{vo=U}
 a8dc290394d99dd0	1078273	0	1114111	619328689666	460906666566815076
 423a9065963d9854	33791	39	171416	1178185214	48402931893916
 a41027b2e60521ae	1108916	0	1114111	620088413694	460662944346259018
@@ -908,21 +908,21 @@ fa25d0d743b02492	97	48	130032	5208683	473293145719
 4d6ac4abce50210c	158	49	133418	8883359	765237831647
 126b4d607e74efa0	20	189	126268	1154528	92400820474
 32ca0e20b7504ca7	1	3891	3891	3891	15139881
-d43d7fff33cdb035	error	db error: ERROR: invalid character class range: \\p{nv=1/2}
+d43d7fff33cdb035	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{nv=1/2}
 03a5ac6cb5460533	2	20806	93025	113831	9086540261
 28a4245ce09a9b5d	9	8555	119532	387475	37871210037
 c7e6983dfcf9567e	1110041	0	1114111	620390251106	460944781069536710
 2632085f93b1451d	8	2553	119536	372930	37734040684
 38b50d4399476184	22	3058	126236	1177511	89527004589
-820be3a59d73975d	error	db error: ERROR: invalid character class range: \\p{nv=abc}
+820be3a59d73975d	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{nv=abc}
 000087417e00c696	546	768	125257	16903033	1529202081227
 590e2a0302b5b517	546	768	125257	16903033	1529202081227
-ede7b0ee93dd2829	error	db error: ERROR: invalid character class range: \\p{ccc=230 }
+ede7b0ee93dd2829	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{ccc=230 }
 87ca6cd697ff38ca	1	1462	1462	1462	2137444
 5be8e8fe5b0f63f7	546	768	125257	16903033	1529202081227
-68ebafea14ee6733	error	db error: ERROR: invalid character class range: \\p{ccc=256}
-4f7b95c29702a03f	error	db error: ERROR: invalid character class range: \\p{ccc=-1}
-30920cffd016fa05	error	db error: ERROR: invalid character class range: \\p{ccc=1.5}
+68ebafea14ee6733	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{ccc=256}
+4f7b95c29702a03f	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{ccc=-1}
+30920cffd016fa05	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{ccc=1.5}
 b7d6bac19fffb793	546	768	125257	16903033	1529202081227
 87c433af4c857b0c	145672	65	210041	16169005246	2426022152861254
 e0e0ac3327023148	1886	65	125217	89399941	8847081614423
@@ -959,25 +959,25 @@ a5416f031ed02f4b	1886	65	125217	89399941	8847081614423
 6638e86ed98819cd	1492	65	122666	27636580	1574803610196
 4b2fcfc5f7e3b316	128	0	127	8128	690880
 d9db144b0c254837	128	0	127	8128	690880
-ea676bd95e618aac	error	db error: ERROR: invalid character class range: \\p{Name=LATIN SMALL LETTER A}
-24bac4877a0a1826	error	db error: ERROR: invalid character class range: \\p{na1=X}
-be3a8da4d54869f6	error	db error: ERROR: invalid character class range: \\p{InPC}
-8c3f70b77bbda845	error	db error: ERROR: invalid character class range: \\p{bmg=X}
-8103bebcc6bf967e	error	db error: ERROR: invalid character class range: \\p{Script}
-4586f04cc865b49a	error	db error: ERROR: invalid character class range: \\p{Script=}
-57719aaca74ef416	error	db error: ERROR: invalid character class range: \\p{=L}
+ea676bd95e618aac	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{Name=LATIN SMALL LETTER A}
+24bac4877a0a1826	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{na1=X}
+be3a8da4d54869f6	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InPC}
+8c3f70b77bbda845	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{bmg=X}
+8103bebcc6bf967e	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{Script}
+4586f04cc865b49a	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{Script=}
+57719aaca74ef416	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{=L}
 ecada09c306f58b8	145672	65	210041	16169005246	2426022152861254
-de4cc5f5da3fdda7	error	db error: ERROR: invalid character class range: \\p{Alphabetic=Lu}
+de4cc5f5da3fdda7	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{Alphabetic=Lu}
 821f5b648270e7a7	147421	65	210041	16244122866	2431990139423828
 e6bcaf127dd9c335	147421	65	210041	16244122866	2431990139423828
-33e911bf54df0900	error	db error: ERROR: invalid character class range: \\p{nonsense}
-b2f1e5c8a6ef346a	error	db error: ERROR: invalid character class range: \\p{L#}
-b69495f638209d4c	error	db error: ERROR: invalid character class range: \\p{L@}
-0f226b467bc8e9e9	error	db error: ERROR: invalid character class range: \\p{L$}
-a49a3f77f87ff2c4	error	db error: ERROR: invalid character class range: \\p{Llé}
-7cbff9379986ed43	error	db error: ERROR: invalid character class range: \\p{InGreek}
-f5b61d79a5e15084	error	db error: ERROR: invalid character class range: \\p{isL}
-0747a04445db6d64	error	db error: ERROR: invalid character class range: \\p{Is_Alphabetic}
+33e911bf54df0900	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{nonsense}
+b2f1e5c8a6ef346a	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{L#}
+b69495f638209d4c	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{L@}
+0f226b467bc8e9e9	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{L$}
+a49a3f77f87ff2c4	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{Llé}
+7cbff9379986ed43	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{InGreek}
+f5b61d79a5e15084	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{isL}
+0747a04445db6d64	error	db error: ERROR: invalid regular expression: invalid character class range: \\p{Is_Alphabetic}
 e385bbfad17311fc	145672	65	210041	16169005246
 c467c4c4d2db3e0b	966392	0	1114111	604337869634
 c2eaf8d6df7fdc18	966392	0	1114111	604337869634

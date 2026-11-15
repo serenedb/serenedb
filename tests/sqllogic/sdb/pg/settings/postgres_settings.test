@@ -88,65 +88,67 @@ db error: ERROR: unrecognized configuration parameter "synchronous_commit"<slt:i
 statement error
 SET row_security = 'banana'
 ----
-db error: ERROR: unrecognized configuration parameter "row_security"<slt:ignore>
+db error: ERROR: Failed to cast value: Could not convert string 'banana' to BOOL
 
 
-statement error
+statement ok
 SET row_security = false
-----
-db error: ERROR: unrecognized configuration parameter "row_security"<slt:ignore>
 
 
-query error
+query
 SHOW row_security
 ----
-db error: ERROR: unrecognized configuration parameter "row_security"<slt:ignore>
+row_security
+off
 
 
-statement error
+statement ok
 RESET row_security
+
+
+query
+SHOW row_security
 ----
-db error: ERROR: unrecognized configuration parameter "row_security"<slt:ignore>
+row_security
+on
 
 
-statement error
+statement ok
 SET lock_timeout = 5000
-----
-db error: ERROR: unrecognized configuration parameter "lock_timeout"<slt:ignore>
 
 
-query error
+query
 SHOW lock_timeout
 ----
-db error: ERROR: unrecognized configuration parameter "lock_timeout"<slt:ignore>
+lock_timeout
+5000
 
 
-statement error
+statement ok
 RESET lock_timeout
+
+
+query
+SHOW lock_timeout
 ----
-db error: ERROR: unrecognized configuration parameter "lock_timeout"<slt:ignore>
+lock_timeout
+0
 
 
 statement ok
 SET statement_timeout = 0
 
 
-statement error
+statement ok
 SET lock_timeout = 0
-----
-db error: ERROR: unrecognized configuration parameter "lock_timeout"<slt:ignore>
 
 
-statement error
+statement ok
 SET idle_in_transaction_session_timeout = 0
-----
-db error: ERROR: unrecognized configuration parameter "idle_in_transaction_session_timeout"<slt:ignore>
 
 
-statement error
+statement ok
 SET transaction_timeout = 0
-----
-db error: ERROR: unrecognized configuration parameter "transaction_timeout"<slt:ignore>
 
 
 statement ok
@@ -161,10 +163,8 @@ statement ok
 SELECT pg_catalog.set_config('search_path', '', false)
 
 
-statement error
+statement ok
 SET check_function_bodies = false
-----
-db error: ERROR: unrecognized configuration parameter "check_function_bodies"<slt:ignore>
 
 
 statement ok
@@ -175,22 +175,35 @@ statement ok
 SET client_min_messages = warning
 
 
-statement error
+statement ok
 SET row_security = off
-----
-db error: ERROR: unrecognized configuration parameter "row_security"<slt:ignore>
 
 
-statement error
+statement ok
 SET default_tablespace = ''
-----
-db error: ERROR: unrecognized configuration parameter "default_tablespace"<slt:ignore>
 
 
-statement error
+statement ok
 SET default_table_access_method = heap
+
+
+statement ok
+SET synchronize_seqscans TO off
+
+
+query
+SELECT
+  current_setting('lock_timeout') AS lock_timeout,
+  current_setting('idle_in_transaction_session_timeout') AS idle,
+  current_setting('transaction_timeout') AS transaction_timeout,
+  current_setting('check_function_bodies') AS check_function_bodies,
+  current_setting('row_security') AS row_security,
+  current_setting('default_tablespace') AS default_tablespace,
+  current_setting('default_table_access_method') AS access_method,
+  current_setting('synchronize_seqscans') AS synchronize_seqscans
 ----
-db error: ERROR: unrecognized configuration parameter "default_table_access_method"<slt:ignore>
+lock_timeout	idle	transaction_timeout	check_function_bodies	row_security	default_tablespace	access_method	synchronize_seqscans
+0	0	0	off	off	(empty)	heap	off
 
 
 statement ok

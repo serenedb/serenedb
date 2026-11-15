@@ -36,7 +36,7 @@ class ExactChain : public Root {
  public:
   ExactChain(const ExactVectorQuery& query, const Context& ctx,
              const irs::detail::ScoreArgs& score)
-    : _scanner{query},
+    : _scanner{query, false},
       _codes{query.Codes()},
       _fetcher{ctx.fetcher},
       _table{ctx.table},

@@ -1,0 +1,30 @@
+statement ok
+CREATE DATABASE drop_db_cascade_defaults;
+
+
+statement ok
+CREATE SEQUENCE drop_db_cascade_defaults.public.s;
+
+
+statement ok
+CREATE TABLE drop_db_cascade_defaults_t (c BIGINT DEFAULT nextval('drop_db_cascade_defaults.public.s'), d BIGINT DEFAULT nextval('drop_db_cascade_defaults.public.s'));
+
+
+statement ok
+DROP DATABASE drop_db_cascade_defaults CASCADE;
+
+
+statement ok
+INSERT INTO drop_db_cascade_defaults_t VALUES (1, 2);
+
+
+statement ok
+INSERT INTO drop_db_cascade_defaults_t DEFAULT VALUES;
+
+
+query
+SELECT c, d FROM drop_db_cascade_defaults_t ORDER BY c NULLS LAST;
+----
+c	d
+1	2
+NULL	NULL

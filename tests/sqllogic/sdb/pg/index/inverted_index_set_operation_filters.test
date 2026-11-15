@@ -1,0 +1,39 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY setop_dict AS split_text(case := 'lower') WITH (frequency, position, offset);
+
+
+statement ok
+CREATE TABLE setop (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+INSERT INTO setop VALUES (1, 'alpha beta'), (2, 'alpha'), (3, 'beta');
+
+
+statement ok
+CREATE INDEX setop_idx ON setop USING inverted (id, body setop_dict) INCLUDE (body);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) setop;
+
+
+query
+SELECT id, body FROM setop_idx WHERE body @@ 'alpha' EXCEPT SELECT id, body FROM setop;
+----
+id	body
+
+
+query
+SELECT id, body FROM setop_idx WHERE body @@ 'alpha' INTERSECT SELECT id, body FROM setop ORDER BY id;
+----
+id	body
+1	alpha beta
+2	alpha
+
+
+query
+SELECT id, body FROM setop_idx WHERE body @@ ts_phrase('alpha beta') EXCEPT ALL SELECT id, body FROM setop WHERE id = 2;
+----
+id	body
+1	alpha beta

@@ -1,0 +1,61 @@
+statement ok
+CREATE TABLE offsets_mixed (id INTEGER PRIMARY KEY, a VARCHAR, b VARCHAR);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY offsets_mixed_offs AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, offset);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY offsets_mixed_plain AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+statement ok
+CREATE INDEX offsets_mixed_idx ON offsets_mixed
+    USING inverted(a offsets_mixed_plain, b offsets_mixed_offs);
+
+statement ok
+INSERT INTO offsets_mixed VALUES
+    (1, 'red fox', 'quick brown fox jumps'),
+    (2, 'fox den', 'a fox and a fox'),
+    (3, 'no match', 'nothing here');
+
+query
+SELECT id, ts_offsets(a) AS ao, ts_offsets(b) AS bo
+FROM offsets_mixed_idx
+WHERE a @@ 'fox' OR b @@ 'fox'
+ORDER BY id;
+----
+id	ao	bo
+1	{4,7}	{12,15}
+2	{0,3}	{2,5,12,15}
+
+query
+SELECT id, ts_offsets(b) AS bo, ts_offsets(a) AS ao
+FROM offsets_mixed_idx
+WHERE a @@ 'fox' OR b @@ 'fox'
+ORDER BY id;
+----
+id	bo	ao
+1	{12,15}	{4,7}
+2	{2,5,12,15}	{0,3}
+
+query
+SELECT id, ts_offsets(a, 1) AS ao, ts_offsets(b, 1) AS bo
+FROM offsets_mixed_idx
+WHERE a @@ 'fox' OR b @@ 'fox'
+ORDER BY id;
+----
+id	ao	bo
+1	{4,7}	{12,15}
+2	{0,3}	{2,5}
+
+statement ok
+DROP TABLE offsets_mixed CASCADE;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY offsets_mixed_offs;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY offsets_mixed_plain;

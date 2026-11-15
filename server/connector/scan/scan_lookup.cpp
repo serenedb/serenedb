@@ -49,6 +49,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> LookupInitGlobal(
   state->workers =
     duckdb::TaskScheduler::GetScheduler(context).NumberOfThreads();
   ClassifyColumnstoreProjections(*state, bind);
+  BuildFetchedCopy(*state);
   return state;
 }
 

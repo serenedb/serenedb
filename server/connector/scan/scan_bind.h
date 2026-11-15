@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <array>
 #include <duckdb.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/function/table_function.hpp>
@@ -30,16 +31,19 @@
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <limits>
+#include <magic_enum/magic_enum.hpp>
 #include <map>
 #include <memory>
 #include <optional>
 #include <set>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "catalog/entry/inverted_index.h"
 #include "connector/column_id.h"
+#include "connector/functions/ts_offsets.h"
 #include "connector/score_emit.h"
 #include "connector/view_fast_path.h"
 #include "search/store.h"
@@ -50,8 +54,6 @@ class SearchTableEntry;
 
 }  // namespace sdb::catalog
 namespace sdb::connector {
-
-struct OffsetsBindData;
 
 enum class ScanEntryKind : uint8_t {
   InvertedIndex,
@@ -110,8 +112,7 @@ struct OffsetsRequest {
   ColumnId column_id;
   ColumnId display_id = kInvalidColumnId;
   size_t limit = std::numeric_limits<size_t>::max();
-  duckdb::idx_t get_col_idx = 0;
-  OffsetsBindData* bind = nullptr;
+  duckdb::idx_t bind_column = duckdb::DConstants::INVALID_INDEX;
 };
 
 struct OffsetsSpec {
@@ -129,15 +130,41 @@ enum class TsDictTermUses : uint8_t {
 
 ENABLE_BITMASK_ENUM(TsDictTermUses);
 
+enum class TsDictColumn : uint8_t {
+  Term,
+  TermRaw,
+  Count,
+  Freq,
+  Score,
+};
+
+class TsDictColumns {
+ public:
+  auto& operator[](this auto& self, TsDictColumn kind) noexcept {
+    return self._columns[std::to_underlying(kind)];
+  }
+
+  auto begin() const noexcept { return _columns.begin(); }
+  auto end() const noexcept { return _columns.end(); }
+
+ private:
+  using Columns =
+    std::array<duckdb::idx_t, magic_enum::enum_count<TsDictColumn>()>;
+
+  static constexpr Columns kNone = [] {
+    Columns none{};
+    none.fill(duckdb::DConstants::INVALID_INDEX);
+    return none;
+  }();
+
+  Columns _columns = kNone;
+};
+
 struct TsDictRequest {
   irs::field_id field_id = irs::field_limits::invalid();
   irs::field_id display_id = irs::field_limits::invalid();
   std::shared_ptr<irs::Filter> having_filter;
-  duckdb::idx_t term_col_idx = duckdb::DConstants::INVALID_INDEX;
-  duckdb::idx_t term_raw_col_idx = duckdb::DConstants::INVALID_INDEX;
-  duckdb::idx_t count_col_idx = duckdb::DConstants::INVALID_INDEX;
-  duckdb::idx_t freq_col_idx = duckdb::DConstants::INVALID_INDEX;
-  duckdb::idx_t score_col_idx = duckdb::DConstants::INVALID_INDEX;
+  TsDictColumns bind_columns;
   TsDictTermUses term_uses = TsDictTermUses::None;
   irs::DictLayout layout = irs::DictLayout::String;
   bool nulls = false;

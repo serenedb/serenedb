@@ -150,6 +150,18 @@ TSQueryRowView ComposeParts(const TSQueryRowView& inner,
                           "against an inverted-indexed column."));
 }
 
+[[noreturn]] bool ThrowingPredicateScoreCast(duckdb::Vector&, duckdb::Vector&,
+                                             duckdb::idx_t,
+                                             duckdb::CastParameters&) {
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+    ERR_MSG("::score(...) is only meaningful on a predicate the inverted "
+            "index answers."),
+    ERR_HINT("A predicate the index does not answer, such as IN (subquery), "
+             "is checked after the search and adds nothing to the score: "
+             "remove ::score from it."));
+}
+
 [[noreturn]] bool ThrowingMinMatchCast(duckdb::Vector&, duckdb::Vector&,
                                        duckdb::idx_t, duckdb::CastParameters&) {
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -748,6 +760,15 @@ void RegisterTSQueryBoolCasts(duckdb::ExtensionLoader& loader) {
     if (TryGetMinMatchModifier(source) || TryGetMinMatchModifier(target)) {
       return {ThrowingMinMatchCast,
               duckdb::make_uniq<TSQueryCastData>(TSQueryParts{})};
+    }
+    if (HasScoreModifier(source) || HasScoreModifier(target)) {
+      return duckdb::BoundCastInfo(ThrowingPredicateScoreCast);
+    }
+    if (HasTokenizerModifier(source) || HasTokenizerModifier(target)) {
+      return duckdb::BoundCastInfo(ThrowingTokenizeCast);
+    }
+    if (HasSlopModifier(source) || HasSlopModifier(target)) {
+      return duckdb::BoundCastInfo(ThrowingSlopCast);
     }
     return duckdb::BoundCastInfo(+[](duckdb::Vector&, duckdb::Vector&,
                                      duckdb::idx_t,

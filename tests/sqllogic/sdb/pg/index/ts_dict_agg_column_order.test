@@ -1,0 +1,43 @@
+# ts_dict aggregates over two columns fill each list from its own column,
+# whatever order the aggregates are listed in.
+
+statement ok
+CREATE TABLE tdco (id INTEGER PRIMARY KEY, a VARCHAR NOT NULL, b VARCHAR NOT NULL);
+
+statement ok
+CREATE INDEX tdco_idx ON tdco USING inverted (a, b);
+
+statement ok
+INSERT INTO tdco VALUES (1, 'a1', 'b1'), (2, 'a2', 'b1'), (3, 'a2', 'b2'), (4, 'a3', 'b3');
+
+statement ok
+VACUUM (FLUSH_TABLE) tdco;
+
+query
+SELECT list_sort(ts_dict_agg(a)) AS a_terms, list_sort(ts_dict_count(b)) AS b_counts FROM tdco_idx;
+----
+a_terms	b_counts
+{a1,a2,a3}	{1,1,2}
+
+query
+SELECT list_sort(ts_dict_count(b)) AS b_counts, list_sort(ts_dict_agg(a)) AS a_terms FROM tdco_idx;
+----
+b_counts	a_terms
+{1,1,2}	{a1,a2,a3}
+
+query
+SELECT list_sort(ts_dict_agg(b)) AS b_terms, list_sort(ts_dict_agg(a)) AS a_terms FROM tdco_idx;
+----
+b_terms	a_terms
+{b1,b2,b3}	{a1,a2,a3}
+
+query
+SELECT s.t, s.c FROM (
+  SELECT unnest(d.at) AS t, unnest(d.ac) AS c
+  FROM (SELECT ts_dict_count(b) AS bc, ts_dict_agg(a) AS at, ts_dict_count(a) AS ac FROM tdco_idx) d
+) s ORDER BY s.t;
+----
+t	c
+a1	1
+a2	2
+a3	1

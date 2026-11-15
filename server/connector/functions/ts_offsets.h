@@ -47,7 +47,7 @@ struct OffsetsBindData final : duckdb::FunctionData {
   catalog::TokenizerRef dict_tokenizer;
 
   size_t limit = 0;
-  std::shared_ptr<irs::Filter> stored_filter;
+  std::shared_ptr<const irs::Filter> filter;
 
   bool IsStandalone() const noexcept {
     return static_cast<bool>(dict_tokenizer);

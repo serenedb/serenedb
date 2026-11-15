@@ -57,8 +57,8 @@ class CopyFileReader {
   CopyFileReader(duckdb::ClientContext& context,
                  std::unique_ptr<duckdb::FileHandle> file, bool binary)
     : _file{std::move(file)},
-      _builder{binary ? pg::CopyBatchFormat::Binary
-                      : pg::CopyBatchFormat::Text},
+      _builder{binary ? pg::CopyBatchFormat::Binary : pg::CopyBatchFormat::Text,
+               pg::kCopyBatchBytes, !binary},
       _memory{context},
       _fixed_budget{duckdb::TaskScheduler::QueryThreads(context) * kOrderedRun *
                     pg::kCopyBatchBytes},
@@ -145,7 +145,7 @@ class CopyFileReader {
 
   void FinishFile() {
     _builder.Finish();
-    if (_builder.HasRows()) {
+    while (_builder.HasRows()) {
       Push(_builder.Take());
     }
     _ended.store(true, std::memory_order_release);
@@ -183,6 +183,8 @@ struct CopyFromGlobalState : public duckdb::GlobalTableFunctionState {
   CopyFromSource source;
   pg::CopyInTarget target;
   bool ordered;
+  CopyTextEnd end;
+  std::atomic<uint64_t> rejected{0};
 };
 
 struct CopyFromLocalState : public duckdb::LocalTableFunctionState {
@@ -267,7 +269,7 @@ void ScanBatches(duckdb::ClientContext& context,
   auto& g = input.global_state->Cast<BatchesGlobalState>();
   auto& l = input.local_state->Cast<BatchesLocalState>();
   if (!l.parser) {
-    l.parser.emplace(context, g.target);
+    l.parser.emplace(context, g.target, g.end, g.rejected);
   }
   auto& parser = *l.parser;
   duckdb::idx_t row = 0;
@@ -321,6 +323,24 @@ size_t FindCut(std::string_view bytes, size_t from) {
   return std::string_view::npos;
 }
 
+size_t SkipBlankLines(std::string_view bytes, size_t cut) {
+  for (;;) {
+    if (cut + 1 < bytes.size() && bytes[cut + 1] == '\n') {
+      ++cut;
+    } else if (cut + 2 < bytes.size() && bytes[cut + 1] == '\r' &&
+               bytes[cut + 2] == '\n') {
+      cut += 2;
+    } else {
+      return cut;
+    }
+  }
+}
+
+bool BlankRunOpen(std::string_view bytes, size_t cut) {
+  return cut + 1 == bytes.size() ||
+         (cut + 2 == bytes.size() && bytes[cut + 1] == '\r');
+}
+
 uint64_t RangeFrom(uint64_t range) {
   const uint64_t begin = range * kCopyFileRangeBytes;
   return begin == 0 ? 0 : begin - 2;
@@ -355,8 +375,12 @@ bool CutRange(RangesGlobalState& g, RangeJobState& job, pg::CopyBatch& batch) {
   }
   size_t first = 0;
   if (job.range != 0) {
-    const auto cut = FindCut(buffer, 1);
-    if (cut == std::string::npos || cut + 1 == buffer.size()) {
+    auto cut = FindCut(buffer, 1);
+    if (cut == std::string::npos) {
+      return false;
+    }
+    cut = SkipBlankLines(buffer, cut);
+    if (BlankRunOpen(buffer, cut)) {
       return false;
     }
     first = cut + 1;
@@ -369,6 +393,11 @@ bool CutRange(RangesGlobalState& g, RangeJobState& job, pg::CopyBatch& batch) {
       break;
     }
     last = FindCut(buffer, scanned);
+  }
+  for (last = SkipBlankLines(buffer, last);
+       BlankRunOpen(buffer, last) &&
+       ReadAt(g, buffer, from + buffer.size(), pg::kCopyBatchBytes) != 0;
+       last = SkipBlankLines(buffer, last)) {
   }
   batch.segments.clear();
   batch.bytes = 0;
@@ -442,7 +471,7 @@ void ScanRanges(duckdb::ClientContext& context,
   auto& g = input.global_state->Cast<RangesGlobalState>();
   auto& l = input.local_state->Cast<RangesLocalState>();
   if (!l.parser) {
-    l.parser.emplace(context, g.target);
+    l.parser.emplace(context, g.target, g.end, g.rejected);
   }
   auto& parser = *l.parser;
   duckdb::idx_t row = 0;
@@ -490,10 +519,11 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> InitCopyFromGlobal(
     return duckdb::make_uniq<BatchesGlobalState>(context, *queue,
                                                  std::move(target), ordered);
   }
-  const auto flags = target.binary
-                       ? duckdb::FileFlags::FILE_FLAGS_READ
-                       : duckdb::FileFlags::FILE_FLAGS_READ |
-                           duckdb::FileFlags::FILE_FLAGS_PARALLEL_ACCESS;
+  const auto flags =
+    (target.binary ? duckdb::FileFlags::FILE_FLAGS_READ
+                   : duckdb::FileFlags::FILE_FLAGS_READ |
+                       duckdb::FileFlags::FILE_FLAGS_PARALLEL_ACCESS) |
+    duckdb::FileCompressionType::AUTO_DETECT;
   auto file = duckdb::FileSystem::GetFileSystem(context).OpenFile(path, flags);
   if (target.binary || !file->CanSeek()) {
     return duckdb::make_uniq<BatchesGlobalState>(context, std::move(file),

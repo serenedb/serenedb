@@ -14,9 +14,11 @@ db error: ERROR: split_by_pattern(): required option "pattern" not given
 
 # --- Invalid regex pattern ---
 
-statement error pattern: invalid regex
+statement error
 CREATE TEXT SEARCH DICTIONARY pat_err2 AS
     split_by_pattern('(')
+----
+db error: ERROR: split_by_pattern: invalid regular expression: missing ): (
 
 
 # --- Pattern option not applicable to other tokenizers ---

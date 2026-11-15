@@ -133,7 +133,8 @@ namespace irs::analysis {
 
 Tokenizer::ptr IcuTextTokenizer::Make(Options options) {
   if (options.locale.IsBogus()) {
-    THROW_SQL_ERROR(ERR_MSG("split_text_icu: locale is required"));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("split_text_icu: locale is required"));
   }
   using Separate = Options::Separate;
   switch (options.separate) {

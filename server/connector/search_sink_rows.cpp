@@ -51,8 +51,10 @@ void SearchSinkRows::Append(duckdb::ClientContext& context,
   // must not also carry a previous transaction's documents.
   _trx = std::make_unique<irs::IndexWriter::Transaction>(
     table.store->GetTransaction());
-  _sink =
+  auto made =
     MakeSearchTableInsertSink(*_trx, *table.store, *table.catalog, context);
+  _sink = std::move(made.sink);
+  _version = made.version;
   for (auto& chunk : _rows->Chunks()) {
     WriteChunkToSearchSink(*_sink, chunk, table.column_ids, table.table_id,
                            context);
@@ -74,7 +76,7 @@ void SearchSinkRows::HandOver(duckdb::ClientContext& context,
                               const SearchSinkTable& table,
                               search::Writes& writes) {
   if (_trx) {
-    writes.AddOwnSegments(table.store, std::move(_trx), _flushed);
+    writes.AddOwnSegments(table.store, std::move(_trx), _flushed, _version);
     _flushed = {};
   }
   if (!_rows) {

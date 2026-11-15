@@ -1,0 +1,60 @@
+control substitution on
+
+statement ok
+CREATE DATABASE cdfk_src_${__DATABASE__};
+
+
+statement ok
+CREATE TABLE cdfk_src_${__DATABASE__}.public.z_parent (id INT PRIMARY KEY);
+
+
+statement ok
+CREATE TABLE cdfk_src_${__DATABASE__}.public.a_child (id INT PRIMARY KEY, pid INT REFERENCES z_parent (id));
+
+
+statement ok
+INSERT INTO cdfk_src_${__DATABASE__}.public.z_parent VALUES (1), (2);
+
+
+statement ok
+INSERT INTO cdfk_src_${__DATABASE__}.public.a_child VALUES (10, 1), (20, 2);
+
+
+statement ok
+CREATE DATABASE cdfk_dst_${__DATABASE__};
+
+
+statement ok
+COPY FROM DATABASE cdfk_src_${__DATABASE__} TO cdfk_dst_${__DATABASE__};
+
+
+query
+SELECT c.id, c.pid FROM cdfk_dst_${__DATABASE__}.public.a_child c JOIN cdfk_dst_${__DATABASE__}.public.z_parent p ON p.id = c.pid ORDER BY c.id;
+----
+id	pid
+10	1
+20	2
+
+
+statement ok
+CREATE TABLE cdfk_src_${__DATABASE__}.public.cyc_a (id INT PRIMARY KEY, b INT);
+
+
+statement ok
+CREATE TABLE cdfk_src_${__DATABASE__}.public.cyc_b (id INT PRIMARY KEY, a INT REFERENCES cyc_a (id));
+
+
+statement ok
+ALTER TABLE cdfk_src_${__DATABASE__}.public.cyc_a ADD FOREIGN KEY (b) REFERENCES cyc_b (id);
+
+
+statement ok
+EXPORT DATABASE cdfk_src_${__DATABASE__} TO '${__TEST_DIR__}/cdfk_export';
+
+
+statement ok
+DROP DATABASE cdfk_dst_${__DATABASE__};
+
+
+statement ok
+DROP DATABASE cdfk_src_${__DATABASE__};

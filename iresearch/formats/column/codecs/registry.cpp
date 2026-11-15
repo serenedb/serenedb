@@ -29,9 +29,9 @@
 #include <span>
 #include <utility>
 
-#include "iresearch/formats/column/codecs/lz4.hpp"
-#include "iresearch/formats/column/codecs/zstd.hpp"
-#include "iresearch/formats/column/codecs/zxc.hpp"
+#include "iresearch/formats/column/codecs/bytes/lz4.hpp"
+#include "iresearch/formats/column/codecs/bytes/zstd.hpp"
+#include "iresearch/formats/column/codecs/bytes/zxc.hpp"
 #include "iresearch/utils/assert.hpp"
 
 namespace irs::codecs {

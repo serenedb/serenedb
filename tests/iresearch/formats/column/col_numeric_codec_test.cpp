@@ -39,11 +39,11 @@
 #include <fstream>
 #include <functional>
 #include <iresearch/formats/column/codecs/dictionary_cache.hpp>
-#include <iresearch/formats/column/codecs/numeric.hpp>
-#include <iresearch/formats/column/codecs/numeric_kernels.hpp>
-#include <iresearch/formats/column/codecs/numeric_layout.hpp>
+#include <iresearch/formats/column/codecs/numeric/numeric.hpp>
+#include <iresearch/formats/column/codecs/numeric/numeric_kernels.hpp>
+#include <iresearch/formats/column/codecs/numeric/numeric_layout.hpp>
 #include <iresearch/formats/column/codecs/registry.hpp>
-#include <iresearch/formats/column/codecs/string_layout.hpp>
+#include <iresearch/formats/column/codecs/text/string_layout.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/column_reader.hpp>

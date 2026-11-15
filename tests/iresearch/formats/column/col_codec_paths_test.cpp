@@ -37,9 +37,9 @@
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/table_filter_state.hpp>
 #include <functional>
-#include <iresearch/formats/column/codecs/alp_primitives.hpp>
+#include <iresearch/formats/column/codecs/numeric/alp_primitives.hpp>
 #include <iresearch/formats/column/codecs/registry.hpp>
-#include <iresearch/formats/column/codecs/string_scan.hpp>
+#include <iresearch/formats/column/codecs/text/string_scan.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/column_reader.hpp>

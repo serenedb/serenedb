@@ -37,8 +37,8 @@
 #include <vector>
 
 #include "iresearch/formats/column/codecs/compression_function.hpp"
-#include "iresearch/formats/column/codecs/numeric.hpp"
-#include "iresearch/formats/column/codecs/string_tuning.hpp"
+#include "iresearch/formats/column/codecs/numeric/numeric.hpp"
+#include "iresearch/formats/column/codecs/text/string_tuning.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/utils/assert.hpp"

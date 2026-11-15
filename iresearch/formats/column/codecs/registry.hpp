@@ -25,7 +25,7 @@
 #include <span>
 #include <string_view>
 
-#include "iresearch/formats/column/codecs/byte_codec.hpp"
+#include "iresearch/formats/column/codecs/bytes/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/compression_function.hpp"
 
 namespace irs::codecs {

@@ -1,19 +1,19 @@
 Abhishek Bansal
-afigor2701
-aksel2904
 Albert Zhemukov
 Alexander Malandin
 Almaz Shaimerdanov
+Andrei Akselrod
 Andrei Lobov
 Andrey Abramov
 deymon-d
 Egor Danilov
 Evgenii Orlov
+Igor Afanasev
 Ilja Vlasko
 Konstantin Morozov
 Mikhail Kornaukhov
 Mr. Hook
 Pavel Ivanov
-romanpovol
+Roman Povolotskii
 Valerii Mironov
 Vlad Ostapenko

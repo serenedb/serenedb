@@ -869,8 +869,6 @@ void Scan(const ColumnSegment&, ColumnScanState& state, idx_t scan_count,
       scan_state.LoadGroup(current_group.index + 1);
       continue;
     }
-    const idx_t offset_in_compression_group =
-      current_group.offset % kAlgorithmGroupSize;
     if (current_group.meta.mode == BitpackingMode::CONSTANT) {
       const idx_t remaining = scan_count - scanned;
       const idx_t to_scan = std::min(remaining, current_group.Remaining());
@@ -896,18 +894,27 @@ void Scan(const ColumnSegment&, ColumnScanState& state, idx_t scan_count,
     }
     SDB_ASSERT(current_group.meta.mode == BitpackingMode::FOR ||
                current_group.meta.mode == BitpackingMode::DELTA_FOR);
-    idx_t to_scan = std::min<idx_t>(
-      scan_count - scanned, kAlgorithmGroupSize - offset_in_compression_group);
-    to_scan = std::min(to_scan, current_group.Remaining());
+    const idx_t to_scan =
+      std::min(scan_count - scanned, current_group.Remaining());
     T* current_result_ptr = result_data + result_offset + scanned;
-    if (to_scan == kAlgorithmGroupSize) {
-      current_group.UnpackAlgorithmGroup(current_result_ptr, kSkipSignExtend);
-    } else {
-      current_group.UnpackAlgorithmGroup(scan_state.decompression_buffer,
-                                         kSkipSignExtend);
-      std::memcpy(current_result_ptr,
-                  scan_state.decompression_buffer + offset_in_compression_group,
-                  to_scan * sizeof(T));
+    for (idx_t unpacked = 0; unpacked < to_scan;) {
+      const idx_t offset_in_compression_group =
+        current_group.offset % kAlgorithmGroupSize;
+      const idx_t step = std::min(
+        to_scan - unpacked, kAlgorithmGroupSize - offset_in_compression_group);
+      if (step == kAlgorithmGroupSize) {
+        current_group.UnpackAlgorithmGroup(current_result_ptr + unpacked,
+                                           kSkipSignExtend);
+      } else {
+        current_group.UnpackAlgorithmGroup(scan_state.decompression_buffer,
+                                           kSkipSignExtend);
+        std::memcpy(
+          current_result_ptr + unpacked,
+          scan_state.decompression_buffer + offset_in_compression_group,
+          step * sizeof(T));
+      }
+      current_group.Advance(step);
+      unpacked += step;
     }
     if (current_group.meta.mode == BitpackingMode::DELTA_FOR) {
       const std::span<S> current_results{
@@ -921,7 +928,6 @@ void Scan(const ColumnSegment&, ColumnScanState& state, idx_t scan_count,
                                current_group.frame_of_reference);
     }
     scanned += to_scan;
-    current_group.Advance(to_scan);
   }
   const auto& current_group = scan_state.CurrentGroup();
   if (current_group.AtEnd() &&

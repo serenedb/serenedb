@@ -129,15 +129,13 @@ void ApplyParam(ListenSpec& spec, std::string_view key,
     if (!is_http) {
       SDB_FATAL(GENERAL, "'api' is only valid on an http endpoint '", url, "'");
     }
-    for (std::string_view a : absl::StrSplit(value, ',', absl::SkipEmpty())) {
-      const auto api = http::FindApi(a);
-      if (!api) {
-        SDB_FATAL(GENERAL, "unknown api '", a, "' in endpoint '", url,
-                  "' (known: ", http::ApiNames(), ")");
-      }
-      if (!absl::c_linear_search(spec.apis, *api)) {
-        spec.apis.push_back(*api);
-      }
+    const auto api = http::FindApi(value);
+    if (!api) {
+      SDB_FATAL(GENERAL, "unknown api '", value, "' in endpoint '", url,
+                "' (known: ", http::ApiNames(), ")");
+    }
+    if (!absl::c_linear_search(spec.apis, *api)) {
+      spec.apis.push_back(*api);
     }
   } else if (key == "db") {
     if (!is_http) {

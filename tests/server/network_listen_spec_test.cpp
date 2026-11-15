@@ -104,11 +104,20 @@ TEST(ListenSpec, HttpRepeatedApiListedOnce) {
 TEST(ListenSpec, HttpRegisteredApi) {
   const auto api = http::RegisterApi({.name = "listen-spec-test"});
   const auto specs = Parse(
-    {"http://127.0.0.1:9300?api=listen-spec-test,es&api=listen-spec-test"});
+    {"http://127.0.0.1:9300?api=listen-spec-test&api=es&api=listen-spec-test"});
   ASSERT_EQ(specs.size(), 1u);
   ASSERT_EQ(specs[0].apis.size(), 2u);
   EXPECT_EQ(specs[0].apis[0], api);
   EXPECT_EQ(specs[0].apis[1], network::HttpApi::Es);
+}
+
+TEST(ListenSpec, UnknownApiIsRejected) {
+  EXPECT_DEATH(
+    {
+      dup2(STDERR_FILENO, STDOUT_FILENO);
+      Parse({"http://127.0.0.1:9300?api=no-such-api"});
+    },
+    "unknown api 'no-such-api'");
 }
 
 TEST(ListenSpec, HttpDatabaseParam) {

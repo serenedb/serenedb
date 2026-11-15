@@ -334,6 +334,61 @@ auto AnalyzeSink(RleRuns<T>& runs) {
 }
 
 template<typename T>
+idx_t EqualNeighbours(const T* data, idx_t count) noexcept {
+  idx_t equal = 0;
+  for (idx_t i = 1; i < count; ++i) {
+    equal += ValueEqual(data[i], data[i - 1]);
+  }
+  return equal;
+}
+
+template<typename T>
+void AnalyzeFlatValid(RleState<T>& state, RleRuns<T>& runs, const T* data,
+                      idx_t count) {
+  SDB_ASSERT(count != 0);
+  if (state.last_seen_count + count >= kMaxRunCount ||
+      EqualNeighbours(data, count) >= count - count / 4) {
+    UpdateFlatValid(state, data, count, AnalyzeSink(runs));
+    return;
+  }
+  if (state.all_null) [[unlikely]] {
+    state.last_value = data[0];
+    state.all_null = false;
+  }
+  T last = state.last_value;
+  uint32_t length = state.last_seen_count;
+  const bool started = runs.run_count != 0;
+  const T first = length != 0 && !ValueEqual(data[0], last) ? last : data[0];
+  T lo = started ? runs.min_value : first;
+  T hi = started ? runs.max_value : first;
+  uint32_t shortest = started ? runs.min_count : kMaxRunCount;
+  uint32_t longest = started ? runs.max_count : 0;
+  idx_t ended = 0;
+  for (idx_t i = 0; i < count; ++i) {
+    const T value = data[i];
+    const bool equal = ValueEqual(value, last);
+    const bool ends = !equal && length != 0;
+    ended += ends;
+    shortest = ends ? std::min(shortest, length) : shortest;
+    longest = ends ? std::max(longest, length) : longest;
+    lo = ends ? duckdb::MinValue<T>(lo, last) : lo;
+    hi = ends ? duckdb::MaxValue<T>(hi, last) : hi;
+    length = equal ? length + 1 : 1;
+    last = value;
+  }
+  state.last_value = last;
+  state.last_seen_count = static_cast<RleCount>(length);
+  if (ended == 0) {
+    return;
+  }
+  runs.run_count += ended;
+  runs.min_value = lo;
+  runs.max_value = hi;
+  runs.min_count = static_cast<RleCount>(shortest);
+  runs.max_count = static_cast<RleCount>(longest);
+}
+
+template<typename T>
 IRS_NO_INLINE void AnalyzeVector(RleAnalyzeState<T>& analyze,
                                  const duckdb::Vector& input) {
   duckdb::UnifiedVectorFormat vdata;
@@ -344,7 +399,7 @@ IRS_NO_INLINE void AnalyzeVector(RleAnalyzeState<T>& analyze,
   auto runs = analyze.runs;
   const auto sink = AnalyzeSink(runs);
   if (!vdata.sel->IsSet() && vdata.validity.CannotHaveNull()) {
-    UpdateFlatValid(run_state, data, count, sink);
+    AnalyzeFlatValid(run_state, runs, data, count);
   } else {
     for (idx_t i = 0; i < count; ++i) {
       Update(run_state, data, vdata.validity, vdata.sel->get_index(i), sink);

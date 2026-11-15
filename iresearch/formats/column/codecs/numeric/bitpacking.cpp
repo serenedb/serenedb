@@ -254,7 +254,9 @@ struct BitpackingState {
       const bool prefer_for =
         can_do_for && delta_required_bitwidth >= regular_required_bitwidth;
       if (!prefer_for) {
-        SubtractFrameOfReference(delta_buffer, minimum_delta);
+        if constexpr (!std::is_same_v<Writer, NoWriter<T>>) {
+          SubtractFrameOfReference(delta_buffer, minimum_delta);
+        }
         writer.WriteDeltaFor(
           reinterpret_cast<T*>(delta_buffer), delta_required_bitwidth,
           static_cast<T>(minimum_delta), delta_offset, compression_buffer_idx);
@@ -269,7 +271,9 @@ struct BitpackingState {
     if (can_do_for) {
       const auto width =
         BitpackingPrimitives::MinimumBitWidth<T, false>(min_max_diff);
-      SubtractFrameOfReference(buffer, minimum);
+      if constexpr (!std::is_same_v<Writer, NoWriter<T>>) {
+        SubtractFrameOfReference(buffer, minimum);
+      }
       writer.WriteFor(buffer, width, minimum, compression_buffer_idx);
       total_size +=
         BitpackingPrimitives::GetRequiredSize(compression_buffer_idx, width);

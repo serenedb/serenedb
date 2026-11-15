@@ -749,30 +749,45 @@ class TypedSealer {
     const auto n = static_cast<uint32_t>(_values.size());
     _dict_map.clear();
     _dict.clear();
-    for (uint32_t i = 0; i < n; ++i) {
-      if (i != 0 && _values[i] == _values[i - 1]) {
-        continue;
-      }
-      if (_dict_map.try_emplace(_values[i], 0).second) {
-        if (_dict_map.size() > cap) {
-          return false;
-        }
-        _dict.push_back(_values[i]);
-      }
-    }
-    absl::c_sort(_dict, [](U a, U b) { return Less(a, b); });
-    for (uint32_t k = 0; k < _dict.size(); ++k) {
-      _dict_map[_dict[k]] = k;
-    }
     _code_values.resize(n);
-    uint32_t last_code = 0;
+    uint32_t entry = 0;
     for (uint32_t i = 0; i < n; ++i) {
       if (i == 0 || _values[i] != _values[i - 1]) {
-        last_code = _dict_map.find(_values[i])->second;
+        const auto [it, added] = _dict_map.try_emplace(
+          _values[i], static_cast<uint32_t>(_dict.size()));
+        if (added) {
+          if (_dict_map.size() > cap) {
+            return false;
+          }
+          _dict.push_back(_values[i]);
+        }
+        entry = it->second;
       }
-      _code_values[i] = last_code;
+      _code_values[i] = entry;
+    }
+    SortDictionary();
+    _dict_codes.resize(_dict.size());
+    for (uint32_t k = 0; k < _dict.size(); ++k) {
+      _dict_codes[_dict_map.find(_dict[k])->second] = k;
+    }
+    for (uint32_t i = 0; i < n; ++i) {
+      _code_values[i] = _dict_codes[_code_values[i]];
     }
     return true;
+  }
+
+  void SortDictionary() {
+    if constexpr (std::is_integral_v<T> && std::is_signed_v<T>) {
+      std::span keys{reinterpret_cast<std::make_signed_t<U>*>(_dict.data()),
+                     _dict.size()};
+      if (!absl::c_is_sorted(keys)) {
+        absl::c_sort(keys);
+      }
+    } else {
+      if (!absl::c_is_sorted(_dict)) {
+        absl::c_sort(_dict);
+      }
+    }
   }
 
   void AddWithShuffle(Candidate c) {
@@ -966,6 +981,7 @@ class TypedSealer {
   ScratchVector<uint8_t> _codes;
   ScratchVector<uint32_t> _code_values;
   std::vector<U> _dict;
+  std::vector<uint32_t> _dict_codes;
   containers::FlatHashMap<U, uint32_t> _dict_map;
   ScratchVector<uint8_t> _frame;
   Leaves _leaves;

@@ -80,8 +80,7 @@ class LiveTermCount : public Root,
       return;
     }
     this->SetFreqLen(freq);
-    this->OpenInput(meta, doc, bounds);
-    this->ArmWalk(meta, layout, bounds);
+    this->OpenList(meta, doc, layout, bounds);
   }
 
   uint64_t Run(doc_id_t min, doc_id_t max) final {

@@ -52,21 +52,6 @@ class Impl : public Node {
     }
   }
 
-  doc_id_t FillAnd(doc_id_t min, doc_id_t max,
-                   uint64_t* IRS_RESTRICT mask) final {
-    if constexpr (!Producer<Leaf>) {
-      SDB_UNREACHABLE();
-    } else if constexpr (kRestricts) {
-      return _leaf.FillAnd(min, max, mask);
-    } else {
-      const auto words = detail::WindowWords(min, max);
-      detail::Clear(_own.data(), words);
-      const auto next = _leaf.FillOr(min, max, _own.data());
-      detail::FoldAnd(mask, _own.data(), words);
-      return next;
-    }
-  }
-
   doc_id_t FillAndNot(doc_id_t min, doc_id_t max,
                       uint64_t* IRS_RESTRICT mask) final {
     if constexpr (!Producer<Leaf>) {
@@ -91,6 +76,22 @@ class Impl : public Node {
     }
   }
 
+  uint32_t Keep(const doc_id_t* in, uint32_t n, doc_id_t* out) final {
+    return Sift<true>(in, n, out);
+  }
+
+  uint32_t Drop(const doc_id_t* in, uint32_t n, doc_id_t* out) final {
+    return Sift<false>(in, n, out);
+  }
+
+  bool FillCostAbove(uint64_t cost, doc_id_t min, doc_id_t max) final {
+    if constexpr (requires { _leaf.FillCostAbove(cost, min, max); }) {
+      return _leaf.FillCostAbove(cost, min, max);
+    } else {
+      return false;
+    }
+  }
+
   detail::BitsetStorage* Folded() noexcept final {
     if constexpr (requires(Leaf& leaf) { leaf.Folded(); }) {
       return _leaf.Folded();
@@ -100,6 +101,19 @@ class Impl : public Node {
   }
 
  private:
+  template<bool Keep>
+  uint32_t Sift(const doc_id_t* in, uint32_t n, doc_id_t* out) {
+    if constexpr (Keep && requires { _leaf.Keep(in, n, out); }) {
+      return _leaf.Keep(in, n, out);
+    } else if constexpr (!Keep && requires { _leaf.Drop(in, n, out); }) {
+      return _leaf.Drop(in, n, out);
+    } else if constexpr (Producer<Leaf>) {
+      return detail::SiftByFill<Keep>(_leaf, in, n, out);
+    } else {
+      SDB_UNREACHABLE();
+    }
+  }
+
   [[no_unique_address]] utils::Need<Producer<Leaf> && !kRestricts,
                                     detail::Scratch> _own;
   Leaf _leaf;
@@ -116,11 +130,6 @@ class Erased {
     return _node->FillOr(min, max, mask);
   }
 
-  IRS_FORCE_INLINE doc_id_t FillAnd(doc_id_t min, doc_id_t max,
-                                    uint64_t* IRS_RESTRICT mask) {
-    return _node->FillAnd(min, max, mask);
-  }
-
   IRS_FORCE_INLINE doc_id_t FillAndNot(doc_id_t min, doc_id_t max,
                                        uint64_t* IRS_RESTRICT mask) {
     return _node->FillAndNot(min, max, mask);
@@ -130,6 +139,21 @@ class Erased {
                                  uint64_t* IRS_RESTRICT mask,
                                  score_t* IRS_RESTRICT scores) {
     return _node->Fill(min, max, mask, scores);
+  }
+
+  IRS_FORCE_INLINE uint32_t Keep(const doc_id_t* in, uint32_t n,
+                                 doc_id_t* out) {
+    return _node->Keep(in, n, out);
+  }
+
+  IRS_FORCE_INLINE uint32_t Drop(const doc_id_t* in, uint32_t n,
+                                 doc_id_t* out) {
+    return _node->Drop(in, n, out);
+  }
+
+  IRS_FORCE_INLINE bool FillCostAbove(uint64_t cost, doc_id_t min,
+                                      doc_id_t max) {
+    return _node->FillCostAbove(cost, min, max);
   }
 
   IRS_FORCE_INLINE bool Valid() const noexcept { return _node != nullptr; }

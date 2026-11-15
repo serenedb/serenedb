@@ -57,7 +57,7 @@ class BitsetDocs {
     if (word >= _count) [[unlikely]] {
       return false;
     }
-    return ((_words[word] >> (offset % kBits)) & 1) != 0;
+    return CheckBit(_words[word], offset % kBits);
   }
 
  private:

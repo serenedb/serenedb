@@ -49,11 +49,7 @@ Root::ptr MakePrunedReqOpt(const irs::detail::PostingClause& required,
       const auto& own = *posting.state.reader;
       SDB_ASSERT(irs::detail::DocOf(own) == doc);
       leaf.Prepare(posting.state.cookie, *doc, irs::detail::LayoutOf(own),
-                   segment, own,
-                   irs::detail::ScoreArgs{.scorer = posting.stats.scorer,
-                                          .stats = posting.stats.stats,
-                                          .fetcher = &ctx.fetcher,
-                                          .boost = posting.boost});
+                   segment, own, posting.Args(&ctx.fetcher));
     };
     if (size == 2) {
       return MakeShape<PrunedReqOpt, Lead, PrunedLeaves<Clause, 1>>(

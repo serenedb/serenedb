@@ -76,16 +76,6 @@ class TopKHeap : private util::Noncopyable {
     other.Clear();
   }
 
-  void PushUnsafe(TopKHeap&& other) {
-    if (_capacity == 0) {
-      other.Clear();
-      return;
-    }
-    _items.insert(_items.end(), std::make_move_iterator(other._items.begin()),
-                  std::make_move_iterator(other._items.end()));
-    other.Clear();
-  }
-
   std::vector<T>& Finalize() {
     Trim();
     return _items;

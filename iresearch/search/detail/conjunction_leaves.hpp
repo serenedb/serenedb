@@ -20,18 +20,88 @@
 
 #pragma once
 
+#ifdef __AVX2__
+#include <immintrin.h>
+#endif
+
 #include <absl/algorithm/container.h>
 
+#include <bit>
+#include <span>
 #include <utility>
 
 #include "iresearch/utils/containers/fixed.hpp"
+#include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {
 
+inline constexpr size_t kMergeBlock = 8;
+
+inline IRS_FORCE_INLINE uint32_t CommonLanes(const doc_id_t* a,
+                                             const doc_id_t* b) noexcept {
+#ifdef __AVX2__
+  const auto lanes = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(a));
+  auto common =
+    _mm256_cmpeq_epi32(lanes, _mm256_set1_epi32(static_cast<int32_t>(b[0])));
+  for (size_t k = 1; k != kMergeBlock; ++k) {
+    common = _mm256_or_si256(
+      common,
+      _mm256_cmpeq_epi32(lanes, _mm256_set1_epi32(static_cast<int32_t>(b[k]))));
+  }
+  return static_cast<uint32_t>(_mm256_movemask_epi8(common));
+#else
+  uint32_t common = 0;
+  for (size_t k = 0; k != kMergeBlock; ++k) {
+    for (size_t l = 0; l != kMergeBlock; ++l) {
+      common |= static_cast<uint32_t>(a[l] == b[k]) << (l * sizeof(doc_id_t));
+    }
+  }
+  return common;
+#endif
+}
+
+inline IRS_FORCE_INLINE bool WithinBlock(std::span<const doc_id_t> docs,
+                                         doc_id_t doc) noexcept {
+  SDB_ASSERT(!docs.empty());
+  if (docs.size() < kMergeBlock) {
+    return docs.front() == doc;
+  }
+#ifdef __AVX2__
+  const auto lanes =
+    _mm256_loadu_si256(reinterpret_cast<const __m256i*>(docs.data()));
+  return _mm256_movemask_epi8(_mm256_cmpeq_epi32(
+           lanes, _mm256_set1_epi32(static_cast<int32_t>(doc)))) != 0;
+#else
+  return absl::c_linear_search(docs.first(kMergeBlock), doc);
+#endif
+}
+
+inline doc_id_t FirstCommon(std::span<const doc_id_t> a,
+                            std::span<const doc_id_t> b) noexcept {
+  SDB_ASSERT(!b.empty());
+  const auto* a_scalar = a.data();
+  asm("" : "+r"(a_scalar));
+  size_t i = 0;
+  size_t j = 0;
+  while (i + kMergeBlock <= a.size() && j + kMergeBlock <= b.size()) {
+    if (const auto common = CommonLanes(a.data() + i, b.data() + j);
+        common != 0) [[unlikely]] {
+      return a[i + std::countr_zero(common) / sizeof(doc_id_t)];
+    }
+    const auto a_last = a_scalar[i + kMergeBlock - 1];
+    const auto b_last = b[j + kMergeBlock - 1];
+    i += kMergeBlock * static_cast<size_t>(a_last < b_last);
+    j += kMergeBlock * static_cast<size_t>(b_last < a_last);
+  }
+  return j < b.size() ? b[j] : b.back() + 1;
+}
+
 template<typename Leaf, size_t N = 0>
 class ConjunctionLeaves {
+  static constexpr bool kMergeable = requires(Leaf& leaf) { leaf.Onward(); };
+
  public:
   template<typename Estimate, typename Make, typename Emit>
   ConjunctionLeaves(size_t size, Estimate&& estimate, Make&& make, Emit&& emit)
@@ -41,6 +111,15 @@ class ConjunctionLeaves {
                                      }},
                                estimate),
                         make, emit} {}
+
+  template<typename Estimate, typename Make, typename Emit>
+  ConjunctionLeaves(std::span<const uint32_t> indices, Estimate&& estimate,
+                    Make&& make, Emit&& emit)
+    : ConjunctionLeaves{
+        SortBy(Order{indices.size(),
+                     [&](uint32_t& j, size_t i) noexcept { j = indices[i]; }},
+               estimate),
+        make, emit} {}
 
   ConjunctionLeaves(ConjunctionLeaves&&) = delete;
   ConjunctionLeaves& operator=(ConjunctionLeaves&&) = delete;
@@ -55,9 +134,15 @@ class ConjunctionLeaves {
 
   doc_id_t Next() { return Agree(Lead().Next()); }
 
+  template<typename Consult>
+  doc_id_t Next(doc_id_t end, Consult& consult) {
+    return Agree(Lead().Next(), end, consult);
+  }
+
+  template<bool Merging = true>
   IRS_FORCE_INLINE doc_id_t ProbeRest(doc_id_t target) {
     for (auto it = _leaves.begin() + 1, end = _leaves.end(); it != end; ++it) {
-      if (const auto probe = it->Probe(target); probe != target) {
+      if (const auto probe = ProbeLeaf<Merging>(*it, target); probe != target) {
         return probe;
       }
     }
@@ -92,20 +177,108 @@ class ConjunctionLeaves {
     for (size_t i = 0; i != _leaves.size(); ++i) {
       emit(order[i], _leaves[i]);
     }
+    if constexpr (kMergeable) {
+      if (_leaves.size() > 1) {
+        const uint64_t lead = Lead().Estimate();
+        const auto second = _leaves[1].Estimate();
+        _merges = second < 4 * lead;
+        _near = second < 2 * lead;
+      }
+    }
+  }
+
+  IRS_FORCE_INLINE bool Merges() const noexcept {
+    if constexpr (kMergeable) {
+      return _merges;
+    } else {
+      return false;
+    }
+  }
+
+  template<bool Merging = true>
+  IRS_FORCE_INLINE doc_id_t ProbeLeaf(Leaf& leaf, doc_id_t target) {
+    if constexpr (Merging && kMergeable) {
+      if (const auto upcoming = leaf.Upcoming();
+          _near && leaf.Value() < target && !upcoming.empty() &&
+          target <= upcoming.front()) {
+        return leaf.Next();
+      }
+    }
+    return leaf.Probe(target);
   }
 
   doc_id_t Agree(doc_id_t doc) {
+    return Merges() ? AgreeOf<true>(doc) : AgreeOf<false>(doc);
+  }
+
+  template<bool Merging>
+  doc_id_t AgreeOf(doc_id_t doc) {
     while (!doc_limits::eof(doc)) {
-      const auto probe = ProbeRest(doc);
+      const auto probe = ProbeRest<Merging>(doc);
       if (probe == doc) {
         return doc;
       }
-      doc = Lead().Seek(probe);
+      doc = Pass<Merging>(probe);
+    }
+    return doc;
+  }
+
+  template<bool Merging>
+  IRS_FORCE_INLINE doc_id_t Pass(doc_id_t probe) {
+    if constexpr (Merging && kMergeable) {
+      if (_leaves[1].Value() == probe && !doc_limits::eof(probe)) {
+        const auto upcoming = Lead().Upcoming();
+        return !upcoming.empty() &&
+                   WithinBlock(_leaves[1].Onward(), upcoming.front())
+                 ? Lead().Next()
+                 : Merge();
+      }
+    }
+    return Lead().Seek(probe);
+  }
+
+  IRS_NO_INLINE doc_id_t Merge() {
+    return ProbeLeaf(Lead(),
+                     FirstCommon(Lead().Upcoming(), _leaves[1].Onward()));
+  }
+
+  template<typename Consult>
+  doc_id_t Agree(doc_id_t doc, doc_id_t end, Consult& consult) {
+    return Merges() ? AgreeOf<true>(doc, end, consult)
+                    : AgreeOf<false>(doc, end, consult);
+  }
+
+  template<bool Merging, typename Consult>
+  doc_id_t AgreeOf(doc_id_t doc, doc_id_t end, Consult& consult) {
+    const auto size = _leaves.size();
+    while (doc < end) {
+      size_t i = 1;
+      for (; i != size; ++i) {
+        auto& leaf = _leaves[i];
+        const bool consulted = !leaf.Covers(doc);
+        if (consulted && !consult.Admits(doc, i)) {
+          doc = Lead().Next();
+          break;
+        }
+        const auto probe = ProbeLeaf<Merging>(leaf, doc);
+        if (consulted) {
+          consult.Probed(i, probe == doc);
+        }
+        if (probe != doc) {
+          doc = Pass<Merging>(probe);
+          break;
+        }
+      }
+      if (i == size) {
+        return doc;
+      }
     }
     return doc;
   }
 
   containers::Fixed<Leaf, N> _leaves;
+  [[no_unique_address]] utils::Need<kMergeable, bool> _merges{};
+  [[no_unique_address]] utils::Need<kMergeable, bool> _near{};
 };
 
 }  // namespace irs::detail

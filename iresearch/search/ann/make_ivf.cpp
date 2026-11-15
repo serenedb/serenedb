@@ -57,8 +57,16 @@ class VectorChain : public Root {
  private:
   static constexpr uint32_t kRun = Cluster::kRun;
 
+  struct Batch {
+    ABSL_CACHELINE_ALIGNED score_t scores[kRun];
+    ABSL_CACHELINE_ALIGNED doc_id_t docs[kRun];
+    ABSL_CACHELINE_ALIGNED score_t spread[kRun];
+    ABSL_CACHELINE_ALIGNED doc_id_t all[kRun];
+  };
+
   template<bool Errors>
   void Scan(Collector& collector) {
+    Batch batch;
     for (size_t i = 0, n = _clusters.size(); i != n; ++i) {
       auto& cluster = _clusters[i];
       if (_table && i != 0) {
@@ -70,18 +78,17 @@ class VectorChain : public Root {
         if (!cluster.NextRun()) {
           break;
         }
-        auto n = Widen<Errors>(floor, cluster.RunDocs(), cluster.RunScores(),
-                               cluster.RunErrors());
-        _fetcher.Fetch(std::span<const doc_id_t>{_own, n});
-        _score.Score(_scores, static_cast<scores_size_t>(n));
-        n = Spread(n);
-        collector.Append(_own, _scores, _spread, n);
+        auto n = Widen<Errors>(batch, floor, cluster.RunDocs(),
+                               cluster.RunScores(), cluster.RunErrors());
+        FetchAndScore(_fetcher, _score, batch.docs, batch.scores, n);
+        n = Spread(batch, n);
+        collector.Append(batch.docs, batch.scores, batch.spread, n);
       }
     }
   }
 
   template<bool Errors>
-  uint32_t Widen(score_t floor, std::span<const doc_id_t> docs,
+  uint32_t Widen(Batch& batch, score_t floor, std::span<const doc_id_t> docs,
                  std::span<const score_t> scores,
                  std::span<const score_t> errors) {
     const auto n = static_cast<uint32_t>(docs.size());
@@ -104,10 +111,10 @@ class VectorChain : public Root {
       const auto control = LeftPackControl(mask);
       const auto ids =
         _mm256_loadu_si256(reinterpret_cast<const __m256i*>(docs.data() + i));
-      _mm256_storeu_si256(reinterpret_cast<__m256i*>(_own + kept),
+      _mm256_storeu_si256(reinterpret_cast<__m256i*>(batch.docs + kept),
                           _mm256_permutevar8x32_epi32(ids, control));
       _mm256_storeu_ps(_block + kept, _mm256_permutevar8x32_ps(score, control));
-      _mm256_storeu_ps(_spread + kept,
+      _mm256_storeu_ps(batch.spread + kept,
                        _mm256_permutevar8x32_ps(spread, control));
       kept += static_cast<uint32_t>(std::popcount(mask));
     }
@@ -117,36 +124,32 @@ class VectorChain : public Root {
       if constexpr (Errors) {
         spread = _width * errors[i];
       }
-      _own[kept] = docs[i];
+      batch.docs[kept] = docs[i];
       _block[kept] = scores[i];
-      _spread[kept] = spread;
+      batch.spread[kept] = spread;
       kept += static_cast<uint32_t>(!(scores[i] + spread < floor));
     }
     return kept;
   }
 
-  uint32_t Spread(uint32_t n) {
+  uint32_t Spread(Batch& batch, uint32_t n) {
     if (_table == nullptr) {
       for (uint32_t i = 0; i < n; ++i) {
-        _spread[i] *= _boost;
+        batch.spread[i] *= _boost;
       }
       return n;
     }
-    std::copy_n(_own, n, _all);
-    const auto live = _table->Narrow(_own, _scores, n);
+    std::copy_n(batch.docs, n, batch.all);
+    const auto live = _table->Narrow(batch.docs, batch.scores, n);
     for (uint32_t i = 0, j = 0; j < live; ++i) {
-      if (_all[i] == _own[j]) {
-        _spread[j++] = _boost * _spread[i];
+      if (batch.all[i] == batch.docs[j]) {
+        batch.spread[j++] = _boost * batch.spread[i];
       }
     }
     return live;
   }
 
   ABSL_CACHELINE_ALIGNED score_t _block[kRun];
-  ABSL_CACHELINE_ALIGNED score_t _scores[kRun];
-  ABSL_CACHELINE_ALIGNED doc_id_t _own[kRun];
-  ABSL_CACHELINE_ALIGNED score_t _spread[kRun];
-  ABSL_CACHELINE_ALIGNED doc_id_t _all[kRun];
   irs::detail::VectorClusters<Cluster> _clusters;
   irs::detail::ScaleProvider _provider;
   ScoreFunction _score;

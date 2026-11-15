@@ -37,6 +37,7 @@
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/empty.hpp"
+#include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::hits {
@@ -100,9 +101,7 @@ class BoostTerm {
  private:
   void Flush(score_t* IRS_RESTRICT scores, uint32_t held) {
     std::fill(_cand + held, _cand + kScoreBlock, _cand[held - 1]);
-    _fetcher.FetchScoreBlock(
-      std::span<const doc_id_t, kScoreBlock>{_cand, kScoreBlock});
-    _score.ScoreBlock(_boosts);
+    FetchAndScoreBlock(_fetcher, _score, _cand, _boosts);
     for (uint32_t i = 0; i != held; ++i) {
       scores[_pos[i]] += _boosts[i];
     }
@@ -147,8 +146,7 @@ class Posting : public Root, public irs::detail::PostingBatch<InputType, true> {
                const irs::detail::ScoreArgs& args, IndexFeatures layout,
                bool bounds) {
     SDB_ASSERT(meta.docs_count > 1, "a single document has its own root");
-    this->OpenInput(meta, doc_in, bounds);
-    this->ArmWalk(meta, layout, bounds);
+    this->OpenList(meta, doc_in, layout, bounds);
     this->MakeScore(segment, field, args);
   }
 
@@ -156,10 +154,17 @@ class Posting : public Root, public irs::detail::PostingBatch<InputType, true> {
 
   uint32_t Run(doc_id_t min, doc_id_t max, doc_id_t* IRS_RESTRICT docs,
                score_t* IRS_RESTRICT scores) final {
-    uint32_t emitted = Drain(docs, scores, min, max);
+    const uint32_t emitted = Drain(docs, scores, min, max);
     if (_at != _len) {
       return emitted;
     }
+    return Refill(docs, scores, emitted, min, max);
+  }
+
+ private:
+  IRS_NO_INLINE uint32_t Refill(doc_id_t* IRS_RESTRICT docs,
+                                score_t* IRS_RESTRICT scores, uint32_t emitted,
+                                doc_id_t min, doc_id_t max) {
     if (!this->Start(min)) {
       return emitted;
     }
@@ -189,10 +194,8 @@ class Posting : public Root, public irs::detail::PostingBatch<InputType, true> {
         emitted += kept;
         continue;
       }
-      uint32_t stop = 0;
-      while (stop != kept && dest[stop] < max) {
-        ++stop;
-      }
+      const auto stop = static_cast<uint32_t>(
+        LeafLowerBound<kBlock>(dest, kept, dest, max) - dest);
       _len = kept - stop;
       _at = 0;
       std::copy_n(dest + stop, _len, _block.data());
@@ -202,7 +205,6 @@ class Posting : public Root, public irs::detail::PostingBatch<InputType, true> {
     return emitted;
   }
 
- private:
   IRS_FORCE_INLINE uint32_t Fill(doc_id_t* IRS_RESTRICT dest,
                                  score_t* IRS_RESTRICT out, uint32_t len) {
     ReadDocs(dest, len);

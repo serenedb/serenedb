@@ -37,12 +37,10 @@ namespace irs::count {
 template<template<typename...> typename Shape, typename... Parts,
          typename... Args>
 Root::ptr MakeShape(const Context& ctx, Args&&... args) {
-  if (ctx.table != nullptr) {
-    return memory::make_managed<Shape<Parts..., detail::TableFilter*>>(
-      ctx.table, std::forward<Args>(args)...);
-  }
-  return memory::make_managed<Shape<Parts..., utils::Empty>>(
-    utils::Empty{}, std::forward<Args>(args)...);
+  return detail::WithTable(ctx.table, [&](auto table) -> Root::ptr {
+    return memory::make_managed<Shape<Parts..., decltype(table)>>(
+      table, std::forward<Args>(args)...);
+  });
 }
 
 }  // namespace irs::count

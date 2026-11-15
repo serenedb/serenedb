@@ -137,6 +137,8 @@ class PhraseVariadicPositions {
 
   uint32_t DocFreq() { return _freq; }
 
+  bool Empty() const noexcept { return _size == 0; }
+
  private:
   IRS_FORCE_INLINE void Won([[maybe_unused]] uint32_t i) noexcept {
     if constexpr (kOffsets) {
@@ -170,7 +172,9 @@ class PhraseVariadicPos {
       _begin{begin},
       _boosts{boosts},
       _heap{count == 1 ? 0 : count,
-            [begin](Leaf*& slot, size_t i) noexcept { slot = begin + i; }},
+            [begin](Entry& slot, size_t i) noexcept {
+              slot = {.doc = begin[i].Value(), .leaf = begin + i};
+            }},
       _stack{count == 1 ? 0 : 2 * size_t{count} + 1},
       _live_count{_heap.size()},
       _count{count} {
@@ -178,9 +182,15 @@ class PhraseVariadicPos {
     std::make_heap(_heap.begin(), _heap.end(), Greater);
   }
 
+  std::span<Leaf> Leaves() const noexcept { return {_begin, _count}; }
+
   Position& Positions() noexcept { return _positions; }
 
   Leaf* Single() noexcept { return _count == 1 ? _begin : nullptr; }
+
+  bool Covers(doc_id_t target) const noexcept {
+    return target <= _doc || (_count == 1 && _begin[0].Covers(target));
+  }
 
   doc_id_t Next() {
     if (_count == 1) [[likely]] {
@@ -210,54 +220,58 @@ class PhraseVariadicPos {
   }
 
   void OnMatch() {
-    if (!doc_limits::eof(_doc)) {
+    if (!doc_limits::eof(_doc) && _positions.Empty()) {
       CollectLive(_doc);
     }
   }
 
  private:
-  static bool Greater(const Leaf* lhs, const Leaf* rhs) noexcept {
-    return lhs->Value() > rhs->Value();
+  struct Entry {
+    doc_id_t doc;
+    Leaf* leaf;
+  };
+
+  static bool Greater(const Entry& lhs, const Entry& rhs) noexcept {
+    return lhs.doc > rhs.doc;
   }
 
   doc_id_t Converge(doc_id_t target) {
     SDB_ASSERT(_count > 1);
     while (_live_count != 0) {
-      auto* top = _heap.front();
-      if (top->Value() >= target) {
-        return top->Value();
+      const auto top = _heap.front();
+      if (top.doc >= target) {
+        return top.doc;
       }
-      const auto doc = top->Probe(target);
+      const auto doc = top.leaf->Probe(target);
       if (doc_limits::eof(doc)) [[unlikely]] {
         std::pop_heap(_heap.begin(), _heap.begin() + _live_count, Greater);
         --_live_count;
       } else {
-        SinkTop();
+        SinkTop({.doc = doc, .leaf = top.leaf});
       }
     }
     return doc_limits::eof();
   }
 
-  void SinkTop() noexcept {
+  void SinkTop(Entry item) noexcept {
+    auto* const heap = _heap.data();
     const auto size = _live_count;
-    auto* item = _heap.front();
     size_t i = 0;
     for (;;) {
       auto child = 2 * i + 1;
       if (child >= size) {
         break;
       }
-      if (child + 1 != size &&
-          _heap[child + 1]->Value() < _heap[child]->Value()) {
+      if (child + 1 != size && heap[child + 1].doc < heap[child].doc) {
         ++child;
       }
-      if (!(_heap[child]->Value() < item->Value())) {
+      if (!(heap[child].doc < item.doc)) {
         break;
       }
-      _heap[i] = _heap[child];
+      heap[i] = heap[child];
       i = child;
     }
-    _heap[i] = item;
+    heap[i] = item;
   }
 
   doc_id_t Settle(doc_id_t doc) {
@@ -274,10 +288,11 @@ class PhraseVariadicPos {
     _stack[depth++] = 0;
     while (depth != 0) {
       const auto i = _stack[--depth];
-      if (i >= _live_count || _heap[i]->Value() != doc) {
+      if (i >= _live_count || _heap[i].doc != doc) {
         continue;
       }
-      _positions.Add(_heap[i]->Positions(), BoostOf(_heap[i]));
+      auto* const leaf = _heap[i].leaf;
+      _positions.Add(leaf->Positions(), BoostOf(leaf));
       _stack[depth++] = 2 * i + 1;
       _stack[depth++] = 2 * i + 2;
     }
@@ -294,7 +309,7 @@ class PhraseVariadicPos {
   Position _positions;
   Leaf* _begin;
   [[no_unique_address]] utils::Need<HasBoost, const score_t*> _boosts;
-  containers::Fixed<Leaf*> _heap;
+  containers::Fixed<Entry> _heap;
   containers::Fixed<uint32_t> _stack;
   size_t _live_count = 0;
   uint32_t _count;
@@ -302,30 +317,3 @@ class PhraseVariadicPos {
 };
 
 }  // namespace irs::detail
-namespace irs {
-
-template<typename Leaf, bool HasBoost>
-struct TermPositionTraits<
-  std::pair<detail::PhraseVariadicPositions<Leaf, HasBoost>*, TermInterval>> {
-  using T =
-    std::pair<detail::PhraseVariadicPositions<Leaf, HasBoost>*, TermInterval>;
-  using PositionImpl = detail::PhraseVariadicPositions<Leaf, HasBoost>;
-
-  static PosAttr::value_t Position(T& pos) noexcept {
-    return pos.first->value();
-  }
-
-  static const TermInterval& Interval(const T& pos) noexcept {
-    return pos.second;
-  }
-
-  static void ResetPos(const T& pos) { pos.first->reset(); }
-
-  static const OffsAttr& Offsets(const T& pos) noexcept {
-    return pos.first->Offsets();
-  }
-
-  static score_t Boost(const T& pos) noexcept { return pos.first->Boost(); }
-};
-
-}  // namespace irs

@@ -1772,6 +1772,53 @@ TEST_F(ColCodecsTest, DecodedDictionaryIsCachedAcrossScans) {
   scan_all(reopened, *col);
 }
 
+TEST_F(ColCodecsTest, ScanAdoptsTheDictionaryCachedAfterItOpenedTheBlock) {
+  const auto& value = kLowCardinalityWithNulls;
+  constexpr uint64_t kRows = 20000;
+  irs::MemoryDirectory dir{};
+  Write(dir, irs::codecs::CodecType::DictLz4, {}, kRows, 8192, value);
+  auto& cache = Db().GetObjectCache();
+  irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto* col = r.Column(kField);
+  ASSERT_NE(col, nullptr);
+  const auto key = CacheKeys(r, *col).front();
+  const auto scan = [&](irs::ColumnReader::ScanState& state, uint64_t pos,
+                        duckdb::idx_t count, duckdb::Vector& out) {
+    col->Scan(state, out, count);
+    duckdb::Vector flat{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+    flat.Reference(out);
+    flat.Flatten(count);
+    for (duckdb::idx_t k = 0; k < count; ++k) {
+      ExpectRow(flat, k, pos + k, value);
+    }
+  };
+  {
+    auto first = col->InitScan(r.Ctx());
+    duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+    scan(first, 0, STANDARD_VECTOR_SIZE, out);
+  }
+  auto late = col->InitScan(r.Ctx());
+  {
+    duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+    scan(late, 0, 1, out);
+  }
+  ASSERT_EQ(cache.Get<irs::codecs::DecodedDictionary>(key), nullptr);
+  {
+    auto second = col->InitScan(r.Ctx());
+    duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+    scan(second, 0, STANDARD_VECTOR_SIZE, out);
+  }
+  const auto cached = cache.Get<irs::codecs::DecodedDictionary>(key);
+  ASSERT_NE(cached, nullptr);
+  duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+  scan(late, 1, STANDARD_VECTOR_SIZE, out);
+  ASSERT_EQ(out.GetVectorType(), duckdb::VectorType::DICTIONARY_VECTOR);
+  EXPECT_EQ(
+    duckdb::FlatVector::GetData<duckdb::string_t>(
+      duckdb::DictionaryVector::Child(out)),
+    duckdb::FlatVector::GetData<duckdb::string_t>(cached->Dictionary()->data));
+}
+
 TEST_F(ColCodecsTest, DictionaryCompletedByPartialScansIsCached) {
   const auto& value = kLowCardinalityWithNulls;
   constexpr uint64_t kRows = 20000;

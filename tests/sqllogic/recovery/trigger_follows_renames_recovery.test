@@ -61,6 +61,29 @@ tfrr_t2	CREATE TRIGGER tfrr_row AFTER INSERT ON tfrr_t2 FOR EACH ROW INSERT INTO
 
 
 statement ok
+CREATE SCHEMA tfrr_s;
+
+
+statement ok
+CREATE TABLE tfrr_m (n INT);
+
+
+statement ok
+CREATE TRIGGER tfrr_move AFTER INSERT ON tfrr_m FOR EACH STATEMENT INSERT INTO tfrr_a2 (x, y2) VALUES (0, 0);
+
+
+statement ok
+ALTER TABLE tfrr_m SET SCHEMA tfrr_s;
+
+
+query
+SELECT schema_name, table_name FROM duckdb_triggers() WHERE trigger_name = 'tfrr_move';
+----
+schema_name	table_name
+tfrr_s	tfrr_m
+
+
+statement ok
 SET sdb_faults = 'crash_on_packet';
 
 
@@ -91,5 +114,28 @@ query
 SELECT x, y2 FROM tfrr_a2 ORDER BY x;
 ----
 x	y2
+10	100
+20	200
+
+
+connection after_crash
+query
+SELECT schema_name, table_name FROM duckdb_triggers() WHERE trigger_name = 'tfrr_move';
+----
+schema_name	table_name
+tfrr_s	tfrr_m
+
+
+connection after_crash
+statement ok
+INSERT INTO tfrr_s.tfrr_m VALUES (1);
+
+
+connection after_crash
+query
+SELECT x, y2 FROM tfrr_a2 ORDER BY x;
+----
+x	y2
+0	0
 10	100
 20	200

@@ -1807,6 +1807,21 @@ void SearchTableEntry::ReplaceTrigger(duckdb::CatalogTransaction transaction,
   _triggers->Alter(transaction, std::move(replacement), std::move(record));
 }
 
+void SearchTableEntry::MoveTriggers(duckdb::CatalogTransaction transaction) {
+  std::vector<std::reference_wrapper<duckdb::CatalogEntry>> triggers;
+  _triggers->Scan(transaction, [&](duckdb::CatalogEntry& trigger) {
+    triggers.emplace_back(trigger);
+  });
+  auto& schema = ParentSchema(transaction);
+  for (auto& trigger : triggers) {
+    auto info = trigger.get().GetInfo();
+    auto moved = duckdb::make_uniq<duckdb::TriggerCatalogEntry>(
+      catalog, schema, info->Cast<duckdb::CreateTriggerInfo>());
+    moved->oid = trigger.get().oid;
+    _triggers->Alter(transaction, std::move(moved), {});
+  }
+}
+
 bool SearchTableEntry::DropTrigger(duckdb::CatalogTransaction transaction,
                                    const duckdb::Identifier& name, bool) {
   DeclareModified(transaction, catalog);

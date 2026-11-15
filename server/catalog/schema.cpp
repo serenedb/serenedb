@@ -67,6 +67,7 @@
 #include "catalog/base_catalog.h"
 #include "catalog/dependency.h"
 #include "catalog/entry/job.h"
+#include "catalog/entry/search_table.h"
 #include "catalog/entry/tokenizer.h"
 #include "catalog/record.h"
 #include "pg/tsdictionary.h"
@@ -1043,6 +1044,9 @@ void Schema::Move(duckdb::CatalogTransaction transaction, EntrySet& set,
       ThrowEntryExists(item.entry.type, item.entry.name);
     }
     result->SetAsRoot(&transaction, &item.entry);
+    if (result->type == duckdb::CatalogType::TABLE_ENTRY) {
+      result->Cast<SearchTableEntry>().MoveTriggers(transaction);
+    }
   }
   if (!replay) {
     SetDefaults(transaction, catalog, defaults);

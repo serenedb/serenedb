@@ -262,6 +262,13 @@ tgname	rel
 drops_log	feastables.drops
 
 
+query
+SELECT schema_name, table_name FROM duckdb_triggers() WHERE trigger_name = 'drops_log';
+----
+schema_name	table_name
+feastables	drops
+
+
 statement ok
 CREATE TABLE mrbeast.tally (n INT);
 
@@ -290,7 +297,7 @@ query
 SELECT schema_name, table_name, sql FROM duckdb_triggers() WHERE trigger_name = 'tally_log';
 ----
 schema_name	table_name	sql
-mrbeast	tally	CREATE TRIGGER tally_log AFTER INSERT ON feastables.tally FOR EACH STATEMENT INSERT INTO mrbeast.drop_log SELECT CAST(count_star() AS text) FROM feastables.tally;
+feastables	tally	CREATE TRIGGER tally_log AFTER INSERT ON feastables.tally FOR EACH STATEMENT INSERT INTO mrbeast.drop_log SELECT CAST(count_star() AS text) FROM feastables.tally;
 
 
 statement error

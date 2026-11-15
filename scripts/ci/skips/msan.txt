@@ -75,6 +75,7 @@ duckdb:core:test/sql/storage/types/variant/test_all_types.test	issue	the VARIANT
 duckdb:core:test/sql/storage/types/variant/test_all_types_single_object.test	issue	the VARIANT sizing pass leaves blob bytes unwritten (#1356)
 duckdb:core:test/sql/storage/types/variant/test_all_types_single_table.test	issue	the VARIANT sizing pass leaves blob bytes unwritten (#1356)
 duckdb:core:test/sql/storage/types/variant/test_all_types_variant.test	issue	the VARIANT sizing pass leaves blob bytes unwritten (#1356)
+duckdb:iceberg:catalog	issue	the VARIANT sizing pass leaves blob bytes unwritten (#1356)
 duckdb:iceberg:test/sql/local/iceberg_scans/scan_plan_path.test	issue	the VARIANT sizing pass leaves blob bytes unwritten (#1356)
 duckdb:iceberg:test/sql/local/scan_tasks_execution.test	issue	the VARIANT sizing pass leaves blob bytes unwritten (#1356)
 duckdb:core:test/sql/storage/compression/alp/alp_tpcds.test_slow	issue	a transient segment reaches the file with its unwritten tail (#1282)
@@ -82,7 +83,6 @@ duckdb:core:test/sql/storage/compression/alprd/alprd_tpcds.test_slow	issue	a tra
 duckdb:core:test/sql/storage/tpcds/tpcds_storage.test_slow	issue	a transient segment reaches the file with its unwritten tail (#1282)
 duckdb:core:test/sql/storage/types/variant/tpcds_sf001.test_slow	issue	a transient segment reaches the file with its unwritten tail (#1282)
 duckdb:cpp:Test TPC-DS dsdgen rollback after interrupted optimistic write	issue	a transient segment reaches the file with its unwritten tail (#1282)
-duckdb:iceberg:catalog	issue	in_filter.test hashes struct child strings nothing wrote (#2191)
 duckdb:core:test/optimizer/partitioned_execution.test_slow	slow	takes 7 min under msan; dev runs it
 duckdb:core:test/parquet/variant/variant_roundtrip.test_slow	slow	takes 5 min under msan; dev runs it
 duckdb:core:test/sql/aoc24/aoc24.test_slow	slow	takes 4 min under msan; dev runs it

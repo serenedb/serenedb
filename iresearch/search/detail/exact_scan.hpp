@@ -21,6 +21,7 @@
 #pragma once
 
 #include <algorithm>
+#include <bitset>
 #include <optional>
 #include <span>
 
@@ -40,7 +41,8 @@ class ExactScanner {
     : _reader{query.Column(), query.Columns(),
               static_cast<uint32_t>(query.Column().ArraySize())},
       _threshold{query.Threshold()},
-      _inclusive{query.Inclusive()} {
+      _inclusive{query.Inclusive()},
+      _keep_missing{admits_missing && !_threshold} {
     _reader.SetQuery(query.Query(), query.Metric());
     const auto rows = static_cast<doc_id_t>(query.Segment().docs_count());
     _last = doc_limits::min() + rows;
@@ -50,7 +52,6 @@ class ExactScanner {
       _matches = docs::MakeRoot(*inner, {});
     }
     if (const auto& column = query.Column();
-        (!admits_missing || _threshold) &&
         (column.HasValidity() || column.InMemory()) &&
         column.MergedStatistics().CanHaveNull()) {
       _validity.emplace(query.Columns(), column);
@@ -105,7 +106,7 @@ class ExactScanner {
   uint32_t NextDocs(doc_id_t* docs) {
     for (;;) {
       auto n = Collect(docs);
-      if (n == 0 || !_validity) {
+      if (n == 0 || !_validity || _keep_missing) {
         return n;
       }
       uint32_t kept = 0;
@@ -123,6 +124,20 @@ class ExactScanner {
   }
 
   void Distances(std::span<const doc_id_t> docs, score_t* dists) {
+    if (_validity && _keep_missing) {
+      std::bitset<kRun> missing;
+      for (size_t i = 0; i < docs.size(); ++i) {
+        missing[i] = !_validity->reader.ValidRow(
+          static_cast<uint64_t>(docs[i]) - doc_limits::min(),
+          _validity->scratch);
+      }
+      if (missing.any()) {
+        for (size_t i = 0; i < docs.size(); ++i) {
+          dists[i] = missing[i] ? 0 : _reader.ComputeDistance(docs[i], nullptr);
+        }
+        return;
+      }
+    }
     _reader.ComputeDistances(docs, {dists, docs.size()});
   }
 
@@ -166,6 +181,7 @@ class ExactScanner {
   std::optional<Validity> _validity;
   std::optional<score_t> _threshold;
   bool _inclusive;
+  bool _keep_missing;
   doc_id_t _doc;
   doc_id_t _end;
   doc_id_t _last;

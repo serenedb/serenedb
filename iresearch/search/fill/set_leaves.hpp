@@ -50,6 +50,13 @@ class SetLeaves {
   size_t Live() const noexcept { return _live_count; }
 
   template<typename Op>
+  void Each(Op&& op) {
+    for (size_t i = 0; i != _live_count; ++i) {
+      op(*_live[i]);
+    }
+  }
+
+  template<typename Op>
   doc_id_t Visit(doc_id_t max, Op&& op) {
     doc_id_t next = doc_limits::eof();
     for (size_t i = 0; i < _live_count;) {
@@ -93,6 +100,12 @@ class MixedSetLeaves {
   bool Empty() const noexcept { return _first.Empty() && _second.Empty(); }
 
   size_t Live() const noexcept { return _first.Live() + _second.Live(); }
+
+  template<typename Op>
+  void Each(Op&& op) {
+    _first.Each(op);
+    _second.Each(op);
+  }
 
   template<typename Op>
   doc_id_t Visit(doc_id_t max, Op&& op) {

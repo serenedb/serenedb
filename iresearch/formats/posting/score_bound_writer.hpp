@@ -237,7 +237,8 @@ class FreqNormProducer {
       if (docs.size() == kPostingBlock) {
         _norm_it->GetPostingBlock(
           std::span<const doc_id_t, kPostingBlock>{docs.data(), kPostingBlock},
-          std::span<uint32_t, kPostingBlock>{norms, kPostingBlock});
+          std::span<uint32_t, kPostingBlock>{norms, kPostingBlock},
+          doc_limits::invalid());
       } else {
         _norm_it->Get(docs, std::span<uint32_t>{norms, docs.size()});
       }

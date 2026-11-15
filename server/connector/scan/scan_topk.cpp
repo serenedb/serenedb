@@ -56,7 +56,8 @@ void CollectUnit(ScanGlobalState& g, TopKLocalState& l) {
       {.scorer = *g.scorer_obj,
        .fetcher = l.score_fetcher,
        .table = table,
-       .prune = g.prune_scorer != nullptr && g.stats_scorer == g.prune_scorer,
+       .prune = true,
+       .bounds = g.prune_scorer != nullptr && g.stats_scorer == g.prune_scorer,
        .k = static_cast<uint32_t>(l.hit_slice.size()),
        .span = g.UnitSpan(unit)});
     EnsurePlanned(plan != nullptr);

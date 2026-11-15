@@ -96,22 +96,24 @@ class DisjunctionLead {
 
   template<typename Visitor>
   void ForEachScoredBlock(doc_id_t max, Visitor&& visit) {
+    ABSL_CACHELINE_ALIGNED uint64_t mask[irs::detail::kWindowWords];
+    ABSL_CACHELINE_ALIGNED score_t window[irs::detail::kWindowDocs];
     while (_doc < max) {
       const auto min = _doc;
       const auto end = max - min > irs::detail::kWindowDocs
                          ? min + irs::detail::kWindowDocs
                          : max;
-      std::fill_n(_mask, irs::detail::kWindowWords, uint64_t{0});
-      std::fill_n(_window, irs::detail::kWindowDocs, score_t{0});
+      std::fill_n(mask, irs::detail::kWindowWords, uint64_t{0});
+      std::fill_n(window, irs::detail::kWindowDocs, score_t{0});
       for (auto& leaf : _leaves) {
         if (leaf.Value() < min) {
           leaf.Seek(min);
         }
         if (leaf.Value() < end) {
-          leaf.Fill(min, end, _mask, _window);
+          leaf.Fill(min, end, mask, window);
         }
       }
-      Emit(min, visit);
+      Emit(min, mask, window, visit);
       auto next = doc_limits::eof();
       for (const auto& leaf : _leaves) {
         next = std::min(next, leaf.Value());
@@ -122,32 +124,31 @@ class DisjunctionLead {
 
  private:
   template<typename Visitor>
-  void Emit(doc_id_t min, Visitor&& visit) {
+  static void Emit(doc_id_t min, const uint64_t* IRS_RESTRICT mask,
+                   const score_t* IRS_RESTRICT window, Visitor&& visit) {
+    ABSL_CACHELINE_ALIGNED doc_id_t docs[doc_limits::kBlockSize];
+    ABSL_CACHELINE_ALIGNED score_t scores[doc_limits::kBlockSize];
     uint32_t len = 0;
     for (size_t w = 0; w != irs::detail::kWindowWords; ++w) {
-      auto word = _mask[w];
+      auto word = mask[w];
       while (word != 0) {
         const auto offset =
           static_cast<uint32_t>(w * irs::detail::kWindowBits) +
           static_cast<uint32_t>(std::countr_zero(word));
         word &= word - 1;
-        _docs[len] = min + offset;
-        _scores[len] = _window[offset];
+        docs[len] = min + offset;
+        scores[len] = window[offset];
         if (++len == doc_limits::kBlockSize) {
-          visit(_docs, len, _scores);
+          visit(docs, len, scores);
           len = 0;
         }
       }
     }
     if (len != 0) {
-      visit(_docs, len, _scores);
+      visit(docs, len, scores);
     }
   }
 
-  ABSL_CACHELINE_ALIGNED uint64_t _mask[irs::detail::kWindowWords]{};
-  ABSL_CACHELINE_ALIGNED score_t _window[irs::detail::kWindowDocs]{};
-  ABSL_CACHELINE_ALIGNED doc_id_t _docs[doc_limits::kBlockSize]{};
-  ABSL_CACHELINE_ALIGNED score_t _scores[doc_limits::kBlockSize]{};
   irs::containers::Fixed<Leaf> _leaves;
   doc_id_t _doc = doc_limits::invalid();
 };

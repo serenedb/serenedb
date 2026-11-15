@@ -41,48 +41,36 @@
 namespace irs {
 namespace {
 
-class ByPrefixIterator : public WrappedTermIterator {
+class ByPrefixIterator : public SeekFirstTermIterator<ByPrefixIterator> {
  public:
   ByPrefixIterator(const TermReader& reader, bytes_view prefix)
-    : WrappedTermIterator{reader.IteratorUntil(UpperBoundOf(prefix))},
+    : SeekFirstTermIterator{reader.IteratorUntil(UpperBoundOf(prefix))},
       _prefix{prefix} {}
 
+  bool Start() { return SeekResult::End != _impl->seek_ge(_prefix); }
+
   bool next() final {
-    if (_started) {
-      if (!_impl->next()) {
-        return false;
-      }
-    } else {
-      _started = true;
-      if (SeekResult::End == _impl->seek_ge(_prefix)) {
-        return false;
-      }
-    }
-    return PrefixAcceptor{_prefix}(_impl->value());
+    return Step() && PrefixAcceptor{_prefix}(_impl->value());
   }
 
  private:
   bytes_view _prefix;
-  bool _started{false};
 };
 
-class ByPrefixesIterator : public WrappedTermIterator {
+class ByPrefixesIterator : public SeekFirstTermIterator<ByPrefixesIterator> {
  public:
   ByPrefixesIterator(const TermReader& reader,
                      std::span<const bstring> prefixes)
-    : WrappedTermIterator{reader.iterator()}, _prefixes{prefixes} {}
+    : SeekFirstTermIterator{reader.iterator()}, _prefixes{prefixes} {}
+
+  bool Start() {
+    return !_prefixes.empty() &&
+           SeekResult::End != _impl->seek_ge(_prefixes.front());
+  }
 
   bool next() final {
-    if (_started) {
-      if (!_impl->next()) {
-        return false;
-      }
-    } else {
-      _started = true;
-      if (_prefixes.empty() ||
-          SeekResult::End == _impl->seek_ge(_prefixes.front())) {
-        return false;
-      }
+    if (!Step()) {
+      return false;
     }
     while (true) {
       const auto term = _impl->value();
@@ -103,7 +91,6 @@ class ByPrefixesIterator : public WrappedTermIterator {
  private:
   std::span<const bstring> _prefixes;
   size_t _current{0};
-  bool _started{false};
 };
 
 struct PrefixesAcceptor {
@@ -163,10 +150,7 @@ QueryBuilder::ptr ByPrefix::PrepareSegment(const SubReader& segment,
 PrepareCollector::ptr ByPrefix::MakeCollectorImpl(const Scorer* scorer,
                                                   StatsArena& stats,
                                                   uint32_t threads) const {
-  if (!ScoresPerDoc(scorer)) {
-    return std::make_unique<AllCollector>(scorer, stats);
-  }
-  return std::make_unique<MultiTermCollector>(scorer, stats, threads);
+  return MakeMultiTermCollector(scorer, stats, threads);
 }
 
 void ByPrefix::visit(const SubReader& segment, const TermReader& reader,
@@ -211,10 +195,7 @@ QueryBuilder::ptr ByPrefixes::PrepareSegment(const SubReader& segment,
 PrepareCollector::ptr ByPrefixes::MakeCollectorImpl(const Scorer* scorer,
                                                     StatsArena& stats,
                                                     uint32_t threads) const {
-  if (!ScoresPerDoc(scorer)) {
-    return std::make_unique<AllCollector>(scorer, stats);
-  }
-  return std::make_unique<MultiTermCollector>(scorer, stats, threads);
+  return MakeMultiTermCollector(scorer, stats, threads);
 }
 
 TermPredicate::ptr ByPrefixes::CompileTermPredicate() const {

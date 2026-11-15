@@ -72,7 +72,7 @@ SELF=$(realpath "${BASH_SOURCE[0]}")
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 THIRD_PARTY="$REPO_ROOT/third_party"
 DUCKDB="$THIRD_PARTY/duckdb"
-SUBMODULES=(duckdb duckdb_avro duckdb_azure duckdb_httpfs duckdb_iceberg duckdb_inet duckdb_markdown duckdb_postgres
+SUBMODULES=(duckdb duckdb_avro duckdb_azure duckdb_httpfs duckdb_iceberg duckdb_inet duckdb_markdown duckdb_pdf duckdb_postgres
 	duckdb_spatial database-connector)
 INTREE=(duckdb_clickhouse)
 CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/serenedb-duckdb"
@@ -434,7 +434,7 @@ fetch_change() {
 	for i in "${!moved[@]}"; do
 		fetch_dir "${moved[i]}" "${news[i]}" "${olds[i]}"
 	done
-	if ((${#moved[@]})) || ! git -C "$REPO_ROOT" diff --quiet "$rev" HEAD -- third_party/duckdb_clickhouse; then
+	if ((${#moved[@]})) || ! git -C "$REPO_ROOT" diff --quiet "$rev" HEAD -- "${INTREE[@]/#/third_party/}"; then
 		fetch_dir duckdb "$(gitlink HEAD duckdb)"
 	fi
 }

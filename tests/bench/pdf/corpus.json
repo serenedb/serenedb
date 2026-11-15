@@ -1,0 +1,66 @@
+{
+  "source": "https://raw.githubusercontent.com/jsvine/pdfplumber/4c64b92d5caccd71c645e98e0fabb0c4dba7ff45/tests/pdfs/",
+  "text_documents": [
+    {
+      "name": "chinese.pdf",
+      "url": "https://github.com/user-attachments/files/16128506/chinese.pdf",
+      "sha256": "1dbe1458dfdaefc07c1cc0e25c721a7c59963c9ccab05ed64c0f57aa2a7ac272",
+      "pages": 30,
+      "ordered_snippets": [
+        [1, ["文档智能分析与识别前沿：回顾与展望", "关键词：", "Frontiers of intelligent document"]],
+        [3, ["文档（含有文字", "一个完整的文档识别系统", "骤：图像预处理", "性能不足的地方"]]
+      ]
+    }
+  ],
+  "documents": [
+    {
+      "name": "federal-register-2020-17221.pdf",
+      "sha256": "ac419e4e084ea7a7a33a7be3f129dd07bc705b1a9e45ad751e33357f17d60f5c",
+      "pages": 15,
+      "tables": {"5": 1, "6": 1},
+      "cells": [
+        [5, 1, 1, 1, "Action"],
+        [5, 1, 1, 2, "Labor cost"],
+        [5, 1, 1, 3, "Parts cost"],
+        [5, 1, 1, 4, "Cost per\nproduct"],
+        [5, 1, 1, 5, "Cost on U.S.\noperators"],
+        [6, 1, 1, 1, "Action"],
+        [6, 1, 1, 2, "Labor cost"],
+        [6, 1, 1, 3, "Parts cost"],
+        [6, 1, 1, 4, "Cost per\nproduct"],
+        [6, 1, 1, 5, "Cost on U.S.\noperators"]
+      ]
+    },
+    {
+      "name": "nics-background-checks-2015-11.pdf",
+      "sha256": "4f0ae6e017b0e97de211da8fd97316e55bd927af5740d6ce95e1b7b1539f9407",
+      "pages": 1,
+      "tables": {"1": 1},
+      "cells": [
+        [1, 1, 1, 1, "NICS Firearm Background Checks\nNovember - 2015"],
+        [1, 1, 2, 1, "State / Territory"],
+        [1, 1, 3, 1, "Alabama\nAlaska\nArizona\nArkansas\nCalifornia"],
+        [1, 1, 3, 2, "18,870\n209\n2,303\n3,298\n98 452"],
+        [1, 1, 3, 7, "0\n0\n0\n0\n0"],
+        [1, 1, 4, 11, "0\n0\n17\n0\n2,248"],
+        [1, 1, 4, 12, "0\n0\n12\n0\n1,135"]
+      ]
+    },
+    {
+      "name": "senate-expenditures.pdf",
+      "sha256": "16921f0fc9b2c6039b23b694e0317917118ad7dd2b3a95a88518b7e144df527c",
+      "pages": 1,
+      "tables": {"1": 1},
+      "cells": [
+        [1, 1, 1, 1, "DOCUMENT NO."],
+        [1, 1, 1, 2, "DATE\nPOSTED"],
+        [1, 1, 1, 3, "PAYEE NAME"],
+        [1, 1, 1, 4, "OBLIGATION/SERVICE\nDATES"],
+        [1, 1, 1, 6, "DESCRIPTION"],
+        [1, 1, 1, 7, "AMOUNT ($)"],
+        [1, 1, 2, 4, "START"],
+        [1, 1, 2, 5, "END"]
+      ]
+    }
+  ]
+}

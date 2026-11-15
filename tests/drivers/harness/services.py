@@ -60,8 +60,11 @@ def services_for_test(path):
                 raise ValueError(f"{path}: a test that starts a service must be named *.test_slow")
             found = list(services)
     try:
-        if "${RESOURCES}/tests/iceberg" in Path(path).read_text(errors="replace"):
+        text = Path(path).read_text(errors="replace")
+        if "${RESOURCES}/tests/iceberg" in text:
             found.append("iceberg-data")
+        if "${RESOURCES}/tests/pdf" in text:
+            found.append("pdf-data")
     except OSError:
         pass
     return found
@@ -201,6 +204,9 @@ class ServiceSet:
 
     def _start_iceberg_data(self):
         subprocess.run([str(REPO / "scripts" / "ensure_iceberg_fixture.sh")], check=True)
+
+    def _start_pdf_data(self):
+        subprocess.run([str(REPO / "scripts" / "ensure_pdf_fixture.sh")], check=True)
 
     def _start_biglake(self):
         self.env.update(biglake_env())

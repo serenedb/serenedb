@@ -16,7 +16,7 @@ changed="$(git diff --name-only "${BASE_REF}...HEAD")"
 #
 # Directories that affect no DuckDB suite -- iresearch and the rest of the serenedb
 # stack -- deliberately fall through to none here; they have their own gates.
-ALL_SUITES="core cpp avro azure httpfs iceberg inet markdown postgres_scanner spatial interop"
+ALL_SUITES="core cpp avro azure httpfs iceberg inet markdown pdf postgres_scanner spatial interop"
 ALL_SUITES_DIRS="abseil-cpp ada brotli fast_float fmt jemalloc jemalloc-cmake llvm-project lz4 re2 simdutf snappy tcmalloc zlib-ng zstd"
 
 # dir -> space-separated suite list
@@ -27,8 +27,8 @@ declare -A SUITE_OF_DIR=(
 	[duckdb_azure]="azure"
 	[azure-sdk-for-cpp]="azure"
 	[azure-cmake]="azure"
-	[libxml2]="azure"
-	[libxml2-cmake]="azure"
+	[libxml2]="azure pdf"
+	[libxml2-cmake]="azure pdf"
 	[duckdb_avro]="avro iceberg"
 	[avro]="avro iceberg"
 	[jansson]="avro iceberg"
@@ -39,10 +39,15 @@ declare -A SUITE_OF_DIR=(
 	[database-connector]="postgres_scanner"
 	[duckdb_inet]="inet"
 	[duckdb_markdown]="markdown"
+	[duckdb_pdf]="pdf"
+	[podofo]="pdf"
+	[podofo-cmake]="pdf"
+	[freetype]="pdf"
+	[freetype-cmake]="pdf"
 	[cmark-gfm]="markdown"
 	[curl]="httpfs iceberg postgres_scanner"
-	[openssl]="httpfs azure iceberg postgres_scanner"
-	[openssl-cmake]="httpfs azure iceberg postgres_scanner"
+	[openssl]="httpfs azure iceberg pdf postgres_scanner"
+	[openssl-cmake]="httpfs azure iceberg pdf postgres_scanner"
 )
 
 iresearch=false other_tp=false re2=false croaring=false pg=false everything=false

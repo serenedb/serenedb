@@ -23,6 +23,7 @@
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/storage/arena_allocator.hpp>
+#include <limits>
 #include <memory>
 #include <span>
 #include <utility>
@@ -96,6 +97,14 @@ class PhraseCheck final : public TokenConsumer {
       uint32_t pos = 0;
     };
 
+    struct WaysFrame {
+      size_t at = 0;
+      size_t cursor = 0;
+      uint64_t ways = 0;
+      uint64_t accepted = std::numeric_limits<uint64_t>::max();
+      uint32_t slot = 0;
+    };
+
     const duckdb::string_t& TermAt(size_t at) const noexcept {
       SDB_ASSERT(at >= _carry_base && at < _end);
       return at < _batch_base ? _carry[at - _carry_base].term
@@ -112,6 +121,9 @@ class PhraseCheck final : public TokenConsumer {
     bool Hit(size_t at, State& state);
     template<bool Right>
     uint64_t Ways(uint32_t slot, size_t at, State& state);
+    template<bool Right>
+    IRS_FORCE_INLINE bool NextNeighbor(WaysFrame& frame, State& state);
+    bool ResumeParent(WaysFrame& frame, bool count);
     bool Over(State& state) noexcept;
 
     std::span<const duckdb::string_t, TokenBatch::kCapacity> _batch_terms;
@@ -122,6 +134,7 @@ class PhraseCheck final : public TokenConsumer {
     std::vector<Token> _carry;
     duckdb::ArenaAllocator _arena{duckdb::Allocator::DefaultAllocator()};
     std::vector<size_t> _pending;
+    std::vector<WaysFrame> _frames;
     uint32_t _last = 0;
     uint32_t _anchors = 0;
     uint64_t _steps = 0;

@@ -242,39 +242,69 @@ bool PhraseCheck::AnchorMatch::Hit(size_t at, State& state) {
 template<bool Right>
 uint64_t PhraseCheck::AnchorMatch::Ways(uint32_t slot, size_t at,
                                         State& state) {
-  const auto& phrase = *state.phrase;
-  if (slot == (Right ? phrase.slots.size() - 1 : 0)) {
+  const auto end_slot =
+    static_cast<uint32_t>(Right ? state.phrase->slots.size() - 1 : 0);
+  if (slot == end_slot) {
     return 1;
   }
-  const auto other = Right ? slot + 1 : slot - 1;
-  const auto& next = phrase.slots[other];
-  const auto& gap = Right ? next : phrase.slots[slot];
-  const uint64_t pos = PosAt(at);
-  uint64_t ways = 0;
-  uint64_t accepted = std::numeric_limits<uint64_t>::max();
-  for (auto j = at; Right ? ++j < _end : j-- > _carry_base;) {
-    const uint64_t p = PosAt(j);
-    const auto distance = Right ? p - pos : pos - p;
-    if (distance > gap.offs_max) {
-      break;
+  _frames.clear();
+  WaysFrame frame{.at = at, .cursor = at, .slot = slot};
+  while (true) {
+    if (NextNeighbor<Right>(frame, state)) {
+      const auto next = Right ? frame.slot + 1 : frame.slot - 1;
+      if (next != end_slot) {
+        _frames.push_back(frame);
+        frame = {.at = frame.cursor, .cursor = frame.cursor, .slot = next};
+        continue;
+      }
+      ++frame.ways;
+      if (state.count) {
+        continue;
+      }
     }
-    if (Over(state)) {
-      return 0;
-    }
-    if (distance < gap.offs_min || p == accepted ||
-        !Accepts(phrase, next, TermAt(j))) {
-      continue;
-    }
-    accepted = p;
-    ways += Ways<Right>(other, j, state);
     if (_overran) {
       return 0;
     }
-    if (!state.count && ways != 0) {
-      return 1;
+    if (!ResumeParent(frame, state.count)) {
+      return frame.ways;
     }
   }
-  return ways;
+}
+
+template<bool Right>
+bool PhraseCheck::AnchorMatch::NextNeighbor(WaysFrame& frame, State& state) {
+  const auto& phrase = *state.phrase;
+  const auto& next = phrase.slots[Right ? frame.slot + 1 : frame.slot - 1];
+  const auto& gap = Right ? next : phrase.slots[frame.slot];
+  const uint64_t pos = PosAt(frame.at);
+  for (auto j = frame.cursor; Right ? ++j < _end : j-- > _carry_base;) {
+    const uint64_t p = PosAt(j);
+    const auto distance = Right ? p - pos : pos - p;
+    if (distance > gap.offs_max || Over(state)) {
+      return false;
+    }
+    if (distance < gap.offs_min || p == frame.accepted ||
+        !Accepts(phrase, next, TermAt(j))) {
+      continue;
+    }
+    frame.accepted = p;
+    frame.cursor = j;
+    return true;
+  }
+  return false;
+}
+
+bool PhraseCheck::AnchorMatch::ResumeParent(WaysFrame& frame, bool count) {
+  while (!_frames.empty()) {
+    const auto ways = frame.ways;
+    frame = _frames.back();
+    _frames.pop_back();
+    frame.ways += ways;
+    if (count || frame.ways == 0) {
+      return true;
+    }
+  }
+  return false;
 }
 
 bool PhraseCheck::AnchorMatch::Over(State& state) noexcept {

@@ -557,6 +557,17 @@ TEST(PhraseCheckTest, adversarial_repetition_restarts) {
   EXPECT_EQ(expected, out.freq);
 }
 
+TEST(PhraseCheckTest, long_phrase_keeps_the_stack_flat) {
+  constexpr size_t kWords = 200'000;
+  const auto phrase = Phrase(Repeat("w", kWords));
+  const irs::CompiledPhrase compiled{phrase, {}, {}};
+  ASSERT_TRUE(compiled.anchor);
+  EXPECT_EQ(0U, compiled.anchor->slot);
+  EXPECT_TRUE(
+    Check<DenseWords>(phrase, Repeat("w", kWords + 1), false, std::nullopt, {})
+      .matched);
+}
+
 TEST(PhraseCheckTest, empty_value_matches_nothing) {
   const auto out = Verify(Phrase("a b"), "");
   EXPECT_FALSE(out.matched);

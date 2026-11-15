@@ -2652,6 +2652,7 @@ TEST(ColCodecNames, ColumnstoreCompressionTypesRoundTrip) {
     {duckdb::CompressionType::COMPRESSION_COL_ONPAIR, "ONPAIR"},
     {duckdb::CompressionType::COMPRESSION_COL_DICT_FSST12, "DICT_FSST12"},
     {duckdb::CompressionType::COMPRESSION_COL_FSST12, "FSST12"},
+    {duckdb::CompressionType::COMPRESSION_COL_NUMERIC, "Numeric"},
   };
   EXPECT_EQ(
     static_cast<size_t>(duckdb::CompressionType::COMPRESSION_SERENEDB_COUNT) -

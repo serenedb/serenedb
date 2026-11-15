@@ -670,8 +670,9 @@ void PrintSegmentInfo(const ColArm& arm, const ColSeg& seg) {
       window = seg.col->Locate(row, window);
       auto segment = seg.col->OpenSegment(window.block, ctx);
       auto info = block.codec->get_segment_info(*segment);
-      for (const auto* name : {"transform", "leaf", "codec", "shape",
-                               "dictionary", "codes_transform"}) {
+      for (const auto* name :
+           {"transform", "leaf", "stored", "shuffled", "codec", "shape",
+            "dictionary", "codes_transform"}) {
         if (info.contains(name)) {
           key += std::string{" "} + name + "=" + info[name];
         }

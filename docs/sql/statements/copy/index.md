@@ -113,6 +113,8 @@ Over the PostgreSQL wire protocol, `COPY ... FROM STDIN` in the `text` and `bina
 
 In the `text` format a row ends at a newline or at a carriage return followed by a newline, as in PostgreSQL. A newline or carriage return preceded by a backslash is part of the value, not the end of the row.
 
+A line holding only `\.` ends the data of `COPY ... FROM STDIN`, as in PostgreSQL. In a file, `COPY ... FROM 'file'` reads such a line as a row and goes on reading after it, where PostgreSQL ends the data there: remove the line, and anything after it, from a file cut out of a plain `pg_dump` script before loading it.
+
 ### Syntax
 
 <RailroadDiagram source={RailroadSource} production="rrdiagram1" />

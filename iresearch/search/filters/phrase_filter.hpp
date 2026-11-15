@@ -144,6 +144,14 @@ class ByPhraseOptions {
 
   size_t size() const noexcept { return _phrase.size(); }
 
+  uint64_t MaxWidth() const noexcept {
+    uint64_t width = 0;
+    for (const auto& info : _phrase) {
+      width += info.offs_max;
+    }
+    return width;
+  }
+
   auto begin() const noexcept { return _phrase.begin(); }
 
   auto end() const noexcept { return _phrase.end(); }

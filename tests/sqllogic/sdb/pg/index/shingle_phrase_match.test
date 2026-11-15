@@ -1626,3 +1626,44 @@ DROP TABLE test_shingle_alpha
 
 statement ok
 DROP TEXT SEARCH DICTIONARY shingle_alpha
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY shingle_wide AS
+    generate_shingles(split_text_csv(' '), 2, 3)
+    WITH (frequency, position)
+
+statement ok
+CREATE TABLE test_shingle_wide (id INTEGER PRIMARY KEY, body VARCHAR)
+
+statement ok
+CREATE INDEX test_shingle_wide_idx ON test_shingle_wide USING inverted(id, body shingle_wide)
+
+statement ok
+INSERT INTO test_shingle_wide VALUES (1, 'the quick brown fox'), (2, 'the quick brown dog')
+
+statement ok
+VACUUM (FLUSH_TABLE) test_shingle_wide
+
+query
+SELECT id FROM test_shingle_wide_idx WHERE body @@ ts_phrase('the quick brown', 0, 'fox') ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM test_shingle_wide_idx WHERE body @@ ts_phrase('the quick brown', 2147483644, 'fox') ORDER BY id
+----
+id
+
+query error
+SELECT id FROM test_shingle_wide_idx WHERE body @@ ts_phrase('the quick brown', 2147483645, 'fox') ORDER BY id
+----
+db error: ERROR: ts_phrase phrase is too wide: its gaps add up to 2147483648 positions (at most 2147483647)
+HINT: Narrow the gaps: a column value holds at most 2147483647 token positions.
+
+
+statement ok
+DROP TABLE test_shingle_wide
+
+statement ok
+DROP TEXT SEARCH DICTIONARY shingle_wide

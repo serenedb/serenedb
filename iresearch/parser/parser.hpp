@@ -47,6 +47,7 @@
 #include "iresearch/search/filters/wildcard_filter.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/type_id.hpp"
+#include "iresearch/utils/type_limits.hpp"
 #include "iresearch/utils/utf8_utils.hpp"
 #include "iresearch/utils/wildcard_utils.hpp"
 
@@ -257,6 +258,15 @@ struct ParserContext {
     SDB_ASSERT(phrase != nullptr);
     auto& f = *phrase;
     phrase = nullptr;
+    if (const auto width = f.options().MaxWidth();
+        width > irs::pos_limits::max()) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("the phrase is too wide: its gaps add up to ", width,
+                " positions (at most ", irs::pos_limits::max(), ")"),
+        ERR_HINT("Narrow the gaps: a column value holds at most ",
+                 irs::pos_limits::max(), " token positions."));
+    }
     return f;
   }
 

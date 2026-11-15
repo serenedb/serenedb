@@ -189,6 +189,29 @@ query error ts_phrase interval gap must satisfy 0 <= min <= max, got \[3, 1\] \(
 SELECT a FROM foo_idx WHERE b @@ ts_phrase('quick', ARRAY[3,1], 'fox');
 
 
+# Error: a gap no position can span is refused, not narrowed or wrapped
+query error
+SELECT a FROM foo_idx WHERE b @@ ts_phrase('quick', 4294967296, 'fox');
+----
+db error: ERROR: ts_phrase gap too large: 4294967296 (at most 2147483646) (argument 1)
+HINT: Example: ts_phrase('quick brown fox') or ts_phrase('a', 1, 'b', slop := 2). INTEGER / INTEGER[] gap allowed between text args; `slop := N` is a non-negative budget for position rearrangements (incompatible with interval gaps).
+
+
+query error
+SELECT a FROM foo_idx WHERE b @@ ts_phrase('quick', 4294967293, 'fox');
+----
+db error: ERROR: ts_phrase gap too large: 4294967293 (at most 2147483646) (argument 1)
+HINT: Example: ts_phrase('quick brown fox') or ts_phrase('a', 1, 'b', slop := 2). INTEGER / INTEGER[] gap allowed between text args; `slop := N` is a non-negative budget for position rearrangements (incompatible with interval gaps).
+
+
+# Error: the gaps of one phrase add up to more positions than a value holds
+query error
+SELECT a FROM foo_idx WHERE b @@ ts_phrase('quick', 2147483646, 'brown', 0, 'fox');
+----
+db error: ERROR: ts_phrase phrase is too wide: its gaps add up to 2147483648 positions (at most 2147483647)
+HINT: Narrow the gaps: a column value holds at most 2147483647 token positions.
+
+
 statement ok
 DROP TABLE foo;
 

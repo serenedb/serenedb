@@ -2016,6 +2016,16 @@ TEST_F(LuceneParserTest, PhraseGapOutOfRangeIsRefused) {
   }
 }
 
+TEST_F(LuceneParserTest, PhraseTooWideIsRefused) {
+  ASSERT_TRUE(irs::ParseQuery(ctx, "\"a 2147483647-2147483647 b\""));
+  irs::BooleanFilter fresh;
+  irs::ParserContext fresh_ctx{fresh, kFieldId, irs::StringLayout::kStrings,
+                               *tokenizer};
+  fresh_ctx.fields = &any_field;
+  EXPECT_ANY_THROW(
+    irs::ParseQuery(fresh_ctx, "\"a 2147483647-2147483647 b 1-1 c\""));
+}
+
 TEST_F(LuceneParserTest, PhraseWithPrefixPart) {
   ASSERT_TRUE(irs::ParseQuery(ctx, "\"alpha bet*\""));
   ASSERT_EQ(1, Optional().size());

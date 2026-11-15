@@ -2295,6 +2295,60 @@ TEST_F(SearchFilterBuilderTest, test_PhraseGapRangeMinExceedsMaxError) {
     "ts_phrase interval gap must satisfy 0 <= min <= max, got [3, 1]");
 }
 
+TEST_F(SearchFilterBuilderTest, test_PhraseGapTooLargeError) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  for (const auto* where :
+       {"ts_phrase('a', 4294967296, 'b')", "ts_phrase('a', 2147483647, 'b')",
+        "ts_phrase('a', [0, 2147483647], 'b')"}) {
+    SCOPED_TRACE(where);
+    AssertFilter(irs::BooleanFilter{},
+                 absl::StrCat("SELECT * FROM foo WHERE category @@ ", where),
+                 columns, false, SegmentationAnalyzerProvider, "gap too large");
+  }
+}
+
+TEST_F(SearchFilterBuilderTest, test_PhraseGapAtTheLimit) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::BooleanFilter expected;
+  auto& phrase = AddChild<irs::ByPhrase>(expected);
+  *phrase.mutable_field_id() = ExpectedFieldId(1);
+  phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"a"});
+  phrase.mutable_options()
+    ->push_back<irs::ByTermOptions>(2147483647, 2147483647)
+    .term = irs::ViewCast<irs::byte_type>(std::string_view{"b"});
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE category @@ "
+               "ts_phrase('a', 2147483646, 'b')",
+               columns, true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_PhraseTooWideError) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  for (const auto* where :
+       {"ts_phrase('a', 2147483646, 'b', 0, 'c')",
+        "ts_phrase('a', [0, 1073741823], 'b', [0, 1073741823], 'c')"}) {
+    SCOPED_TRACE(where);
+    AssertFilter(irs::BooleanFilter{},
+                 absl::StrCat("SELECT * FROM foo WHERE category @@ ", where),
+                 columns, false, SegmentationAnalyzerProvider,
+                 "phrase is too wide");
+  }
+}
+
+TEST_F(SearchFilterBuilderTest, test_TsqueryPhraseDistanceTooLargeError) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  AssertFilter(irs::BooleanFilter{},
+               "SELECT * FROM foo WHERE category @@ "
+               "tsquery_phrase(ts_phrase('a'), ts_phrase('b'), 2147483648)",
+               columns, false, SegmentationAnalyzerProvider,
+               "tsquery_phrase distance too large");
+}
+
 TEST_F(SearchFilterBuilderTest, test_PhraseGap_DateTimestampRejected) {
   // DATE / TIMESTAMP cast to BIGINT in DuckDB (days / microseconds),
   // but a date literal as a phrase-gap offset is nonsense. Reject at

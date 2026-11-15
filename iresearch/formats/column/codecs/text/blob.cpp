@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/formats/column/codecs/text/blob_compression_state.tpp"
+#include "iresearch/formats/column/codecs/text/blob.hpp"
 
 #include <absl/algorithm/container.h>
 

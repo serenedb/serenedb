@@ -18,10 +18,36 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "iresearch/formats/column/codecs/text/fsst_plus.hpp"
+
+#include <absl/strings/match.h>
+
+#include <algorithm>
+#include <cstring>
+#include <duckdb/common/bitpacking.hpp>
+#include <duckdb/common/types.hpp>
+#include <duckdb/common/vector/flat_vector.hpp>
+#include <duckdb/common/vector/string_vector.hpp>
+#include <limits>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
+#include "iresearch/formats/column/codecs/bytes/byte_codec.hpp"
+#include "iresearch/formats/column/codecs/frame_meta.hpp"
 #include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/formats/column/codecs/text/dictionary_scan.tpp"
-#include "iresearch/formats/column/codecs/text/fsst_plus_leaf.tpp"
+#include "iresearch/formats/column/codecs/text/fsst.hpp"
 #include "iresearch/formats/column/codecs/text/plain_scan.tpp"
+#include "iresearch/formats/column/codecs/text/string_compression_function.hpp"
+#include "iresearch/formats/column/codecs/text/string_compression_loops.tpp"
+#include "iresearch/formats/column/codecs/text/string_layout.hpp"
+#include "iresearch/formats/column/codecs/text/string_scan.hpp"
+#include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/lower_bound.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 /*
 FSST+ segments (fsst_plus, dict_fsst_plus) keep the layout of the fsst
@@ -59,6 +85,284 @@ stores the rest of its codes.
 +------------------------------------------------------+
 */
 
+namespace irs::codecs::text {
+
+class FsstPlusPrefixes {
+ public:
+  bool Open(std::string_view side, uint32_t table_size, FsstDecoder& decoder) {
+    if (side.size() < static_cast<uint64_t>(table_size) + sizeof(uint32_t) ||
+        (table_size != 0 && !decoder.Import(side.substr(0, table_size)))) {
+      return false;
+    }
+    const auto rest = side.substr(table_size);
+    _count = duckdb::Load<uint32_t>(
+      reinterpret_cast<duckdb::const_data_ptr_t>(rest.data()));
+    const auto head = sizeof(uint32_t) * (uint64_t{_count} + 1);
+    if (head > rest.size() || (table_size == 0 && _count != 0)) {
+      return false;
+    }
+    _ends = rest.data() + sizeof(uint32_t);
+    _bytes = rest.substr(head);
+    uint32_t prev = 0;
+    for (uint32_t g = 0; g < _count; ++g) {
+      const auto end = End(g);
+      if (end <= prev || end > _bytes.size()) {
+        return false;
+      }
+      prev = end;
+    }
+    return prev == _bytes.size();
+  }
+
+  uint32_t Count() const noexcept { return _count; }
+
+  std::string_view Encoded(uint32_t id) const noexcept {
+    SDB_ASSERT(id != 0 && id <= _count);
+    const auto from = id == 1 ? 0 : End(id - 2);
+    return _bytes.substr(from, End(id - 1) - from);
+  }
+
+ private:
+  uint32_t End(uint32_t g) const noexcept {
+    return duckdb::Load<uint32_t>(
+      reinterpret_cast<duckdb::const_data_ptr_t>(_ends + g * sizeof(uint32_t)));
+  }
+
+  const char* _ends = nullptr;
+  std::string_view _bytes;
+  uint32_t _count = 0;
+};
+
+inline std::string_view SideSection(const Header& h,
+                                    duckdb::const_data_ptr_t base) noexcept {
+  return {reinterpret_cast<const char*>(base + h.off_symtab), h.symtab_size};
+}
+
+inline uint64_t EntryOffset(ChainGroups& groups, PackedReader& lengths,
+                            const FrameMeta& m, uint32_t f, uint32_t e) {
+  const auto g = (e - m.first_entry) / kChainRestart;
+  uint64_t offset = groups.Offset(lengths, m, f, g);
+  for (auto k = m.first_entry + g * kChainRestart; k < e; ++k) {
+    offset += lengths.At(k);
+  }
+  return offset;
+}
+
+inline std::string_view DecodePlusEntry(const FsstDecoder& fsst,
+                                        std::string_view prefix, const char* in,
+                                        uint64_t enc, std::string& buf) {
+  if (const auto need = prefix.size() + enc * kFsstMaxExpansion;
+      buf.size() < need) {
+    buf.resize(std::max<uint64_t>(need, buf.size() * 2));
+  }
+  if (!prefix.empty()) {
+    std::memcpy(buf.data(), prefix.data(), prefix.size());
+  }
+  const auto room = buf.size() - prefix.size();
+  const auto dec =
+    enc == 0 ? 0 : fsst.Decode(in, enc, buf.data() + prefix.size(), room);
+  SDB_ENSURE(dec <= room, "col codec: corrupted entry");
+  return {buf.data(), prefix.size() + dec};
+}
+
+struct FsstPlusScan {
+  static constexpr uint32_t kEntryGroup = 1;
+
+  template<typename Frames>
+  FsstPlusScan(const ColumnSegment&, const Frames& s)
+    : ids{s.base + s.header.off_lcps, s.header.lcp_width} {
+    SDB_ENSURE(prefixes.Open(SideSection(s.header, s.base),
+                             s.header.dictionary_size, decoder),
+               "col codec: corrupted symbol table");
+    prefix_ends.assign(prefixes.Count() + 1, 0);
+    for (uint32_t id = 1; id <= prefixes.Count(); ++id) {
+      const auto encoded = prefixes.Encoded(id);
+      const auto at = heap.size();
+      heap.resize(at + encoded.size() * kFsstMaxExpansion);
+      const auto room = heap.size() - at;
+      const auto n =
+        decoder.Decode(encoded.data(), encoded.size(), heap.data() + at, room);
+      SDB_ENSURE(n <= room, "col codec: corrupted prefix");
+      heap.resize(at + n);
+      prefix_ends[id] = heap.size();
+    }
+    groups.Reset(static_cast<uint32_t>(s.frames.size()), [&](uint32_t f) {
+      return std::pair{s.frames[f].first_entry, s.FrameEnd(f)};
+    });
+    entry_decoded.assign(s.header.entry_count, 0);
+  }
+
+  std::string_view Prefix(uint32_t id) const noexcept {
+    return id == 0
+             ? std::string_view{}
+             : std::string_view{heap}.substr(
+                 prefix_ends[id - 1], prefix_ends[id] - prefix_ends[id - 1]);
+  }
+
+  template<typename Frames>
+  void DecodeFrame(Frames& s, uint32_t f, char* out) {
+    const auto& m = s.frames[f];
+    const auto end = s.FrameEnd(f);
+    const uint64_t enc_end = static_cast<uint64_t>(m.comp_off) + m.comp_len;
+    uint64_t enc_off = m.comp_off;
+    uint64_t off = 0;
+    for (auto e = m.first_entry; e < end; ++e) {
+      const auto id = ids.At(e);
+      const uint64_t enc = s.length_reader.At(e);
+      SDB_ENSURE(id <= prefixes.Count() && enc_off + enc <= enc_end,
+                 "col codec: corrupted entry");
+      const auto prefix = Prefix(id);
+      SDB_ENSURE(off + prefix.size() <= m.raw_len,
+                 "col codec: corrupted frame");
+      if (!prefix.empty()) {
+        std::memcpy(out + off, prefix.data(), prefix.size());
+      }
+      const auto room = m.raw_len - off - prefix.size();
+      const auto dec = enc == 0
+                         ? 0
+                         : decoder.Decode(s.Data() + enc_off, enc,
+                                          out + off + prefix.size(), room);
+      SDB_ENSURE(dec <= room, "col codec: corrupted entry");
+      const std::string_view v{out + off, prefix.size() + dec};
+      SDB_ASSERT(!Frames::kDedup || e == m.first_entry ||
+                 View(s.values[e - 1]) < v);
+      s.Keep(e, v);
+      off += v.size();
+      enc_off += enc;
+    }
+    SDB_ENSURE(off == m.raw_len && enc_off == enc_end,
+               "col codec: corrupted frame");
+  }
+
+  template<typename Frames>
+  std::string_view Decode(Frames& s, uint32_t e, uint32_t f, std::string& buf) {
+    const auto& m = s.frames[f];
+    const auto enc_off = EntryOffset(groups, s.length_reader, m, f, e);
+    const uint64_t enc = s.length_reader.At(e);
+    const auto id = ids.At(e);
+    SDB_ENSURE(
+      id <= prefixes.Count() &&
+        enc_off + enc <= static_cast<uint64_t>(m.comp_off) + m.comp_len,
+      "col codec: corrupted entry");
+    return DecodePlusEntry(decoder, Prefix(id), s.Data() + enc_off, enc, buf);
+  }
+
+  template<typename Frames>
+  void EnsureEntry(Frames& s, uint32_t e, uint32_t f) {
+    if (entry_decoded[e]) {
+      return;
+    }
+    const auto v = Decode(s, e, f, probe);
+    char* out = duckdb::char_ptr_cast(
+      duckdb::StringVector::GetStringAllocator(s.dictionary->data)
+        .Allocate(v.size()));
+    if (!v.empty()) {
+      std::memcpy(out, v.data(), v.size());
+    }
+    s.Keep(e, std::string_view{out, v.size()});
+    entry_heap_bytes += v.size();
+    entry_decoded[e] = 1;
+  }
+
+  template<typename Frames, typename Before>
+  uint32_t Bound(Frames& s, Before before) {
+    if (s.frames.empty()) {
+      return s.header.entry_count;
+    }
+    return static_cast<uint32_t>(PartitionIndex(
+      s.frames[0].first_entry, s.header.entry_count, [&](size_t i) {
+        const auto e = static_cast<uint32_t>(i);
+        const auto f = s.FrameOf(e);
+        if (s.decoded[f] || entry_decoded[e]) {
+          return before(View(s.values[e]));
+        }
+        return before(Decode(s, e, f, probe));
+      }));
+  }
+
+  uint64_t HeapBytes() const noexcept { return entry_heap_bytes + heap.size(); }
+
+  FsstDecoder decoder;
+  FsstPlusPrefixes prefixes;
+  PackedReader ids{nullptr, 0};
+  ChainGroups groups;
+  std::string heap;
+  std::vector<uint64_t> prefix_ends;
+  std::vector<uint8_t> entry_decoded;
+  uint64_t entry_heap_bytes = 0;
+  std::string probe;
+};
+
+struct FsstPlusFetch {
+  void Reset(const Header& h, duckdb::data_ptr_t base) {
+    decoder.reset();
+    groups.Clear();
+    ids = PackedReader{base + h.off_lcps, h.lcp_width};
+    walked = 0;
+  }
+
+  uint64_t Walked() const noexcept { return walked; }
+
+  uint64_t DecodedBytes() const noexcept { return 0; }
+
+  void Emit(const ColumnSegment&, const Header& h, duckdb::data_ptr_t base,
+            PackedReader& lengths, uint32_t lo, const FrameMeta& f,
+            uint32_t entry, duckdb::Vector& result, duckdb::idx_t result_idx,
+            bool) {
+    if (groups.Empty()) {
+      Open(h, base);
+    }
+    const auto enc_off = EntryOffset(groups, lengths, f, lo, entry);
+    const uint64_t enc = lengths.At(entry);
+    const auto id = ids.At(entry);
+    SDB_ENSURE(
+      id <= prefixes.Count() &&
+        enc_off + enc <= static_cast<uint64_t>(f.comp_off) + f.comp_len,
+      "col codec: corrupted entry");
+    std::string_view prefix;
+    if (id != 0) {
+      const auto encoded = prefixes.Encoded(id);
+      prefix =
+        DecodePlusEntry(*decoder, {}, encoded.data(), encoded.size(), head);
+    }
+    const auto value = DecodePlusEntry(
+      *decoder, prefix,
+      reinterpret_cast<const char*>(base + h.off_data) + enc_off, enc,
+      value_buf);
+    ++walked;
+    auto* out = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
+    out[result_idx] =
+      duckdb::StringVector::AddStringOrBlob(result, value.data(), value.size());
+  }
+
+  void Open(const Header& h, duckdb::const_data_ptr_t base) {
+    decoder.emplace();
+    SDB_ENSURE(prefixes.Open(SideSection(h, base), h.dictionary_size, *decoder),
+               "col codec: corrupted symbol table");
+    const auto* table = base + h.off_frames;
+    groups.Reset(h.frame_count, [&](uint32_t i) {
+      return std::pair{FrameAt(table, i).first_entry,
+                       i + 1 < h.frame_count ? FrameAt(table, i + 1).first_entry
+                                             : h.entry_count};
+    });
+  }
+
+  std::optional<FsstDecoder> decoder;
+  FsstPlusPrefixes prefixes;
+  PackedReader ids{nullptr, 0};
+  ChainGroups groups;
+  std::string head;
+  std::string value_buf;
+  uint64_t walked = 0;
+};
+
+struct FsstPlusLeaf {
+  static constexpr ByteCodec kCodec = ByteCodec::FsstPlus;
+  using Scan = FsstPlusScan;
+  using Fetch = FsstPlusFetch;
+};
+
+}  // namespace irs::codecs::text
 namespace irs::codecs {
 
 constinit const CompressionFunction kFsstPlusFunction =
@@ -70,3 +374,202 @@ constinit const CompressionFunction kDictFsstPlusFunction =
     CodecType::DictFsstPlus);
 
 }  // namespace irs::codecs
+namespace irs::codecs::text {
+namespace {
+
+constexpr uint32_t kNoNode = std::numeric_limits<uint32_t>::max();
+constexpr uint64_t kGroupCost = sizeof(uint32_t);
+constexpr uint64_t kEncodeExpansion = 2;
+constexpr uint64_t kEncodeSlack = 8;
+
+size_t SharedCodes(std::string_view a, std::string_view b) noexcept {
+  auto n = absl::FindLongestCommonPrefix(a, b).size();
+  while (n != 0 && static_cast<uint8_t>(a[n - 1]) == FSST_ESC) {
+    --n;
+  }
+  return n;
+}
+
+void AppendU32(std::string& out, uint32_t value) {
+  char bytes[sizeof(uint32_t)];
+  duckdb::Store<uint32_t>(value, duckdb::data_ptr_cast(bytes));
+  out.append(bytes, sizeof(bytes));
+}
+
+}  // namespace
+
+void FsstPlusCompressionState::FinalizeCompress() {
+  if (_rows.SegmentShape() == Shape::Dedup) {
+    _rows.Sort(_sort);
+  }
+  const auto lengths = _rows.Lengths();
+  const auto rows = _rows.View();
+  const auto entries = rows.entries;
+  const auto first_entry = rows.first_entry;
+  const auto n = entries.size();
+  _shared.assign(n, 0);
+  _encoded_lengths.resize(n);
+  uint64_t total = 0;
+  for (const auto& entry : entries) {
+    total += entry.GetSize();
+  }
+  FsstEncoded encoded;
+  _encoded.resize_and_overwrite(
+    kEncodeExpansion * total + kEncodeSlack, [&](char* out, size_t capacity) {
+      encoded =
+        _codec.Encode(entries, _shared, out, capacity, _encoded_lengths);
+      return encoded.bytes;
+    });
+  SDB_ENSURE(encoded.strings == n, "fsst: compression ran out of space");
+  _codes.resize(n);
+  uint64_t at = 0;
+  for (size_t i = 0; i < n; ++i) {
+    _codes[i] = std::string_view{_encoded}.substr(at, _encoded_lengths[i]);
+    at += _encoded_lengths[i];
+  }
+  _ids.assign(first_entry + n, 0);
+  _ends.clear();
+  _prefixes.clear();
+  Cleave(first_entry);
+  _frames.clear();
+  uint32_t max_length = 0;
+  uint64_t frame_raw = 0;
+  uint64_t frame_first = 0;
+  uint64_t frame_off = 0;
+  const auto close = [&](uint64_t end) {
+    _frames.emplace_back(static_cast<uint32_t>(frame_first + first_entry),
+                         static_cast<uint32_t>(frame_raw),
+                         static_cast<uint32_t>(frame_off),
+                         static_cast<uint32_t>(end - frame_off));
+  };
+  for (size_t i = 0; i < n; ++i) {
+    const auto size = entries[i].GetSize();
+    if (frame_raw != 0 && frame_raw + size > kFsstFrameRawBytes) {
+      close(Written());
+      frame_raw = 0;
+      frame_first = i;
+      frame_off = Written();
+    }
+    const auto suffix = _codes[i].substr(_shared[i]);
+    std::memcpy(_out->bytes.Extend(suffix.size()), suffix.data(),
+                suffix.size());
+    lengths[i] = static_cast<uint32_t>(suffix.size());
+    max_length = std::max(max_length, lengths[i]);
+    frame_raw += size;
+  }
+  if (n != 0) {
+    close(Written());
+  }
+  const auto table = _codec.SymbolTable();
+  _side.assign(table);
+  AppendU32(_side, static_cast<uint32_t>(_ends.size()));
+  for (const auto end : _ends) {
+    AppendU32(_side, end);
+  }
+  _side.append(_prefixes);
+  _ids.resize(
+    duckdb::BitpackingPrimitives::RoundUpToAlgorithmGroupSize(EntryCount(rows)),
+    0);
+  RecordRatio(_history[static_cast<size_t>(_rows.SegmentShape())], rows.raw,
+              Written() + _side.size(), _target);
+  _rows.Write(
+    {
+      .codec = kCodec,
+      .frames = _frames,
+      .max_length = max_length,
+      .lcps = _ids,
+      .max_lcp = static_cast<uint32_t>(_ends.size()),
+      .symtab = _side,
+      .dictionary_size = static_cast<uint32_t>(table.size()),
+    },
+    *_out);
+}
+
+void FsstPlusCompressionState::Cleave(uint32_t first_entry) {
+  const auto n = static_cast<uint32_t>(_codes.size());
+  if (n < 2) {
+    return;
+  }
+  const uint32_t m = n - 1;
+  _lcp.resize(m);
+  for (uint32_t i = 0; i < m; ++i) {
+    _lcp[i] = static_cast<uint32_t>(SharedCodes(_codes[i], _codes[i + 1]));
+  }
+  _tree.assign(m, {kNoNode, kNoNode});
+  _order.clear();
+  uint32_t root = 0;
+  for (uint32_t i = 0; i < m; ++i) {
+    uint32_t last = kNoNode;
+    while (!_order.empty() && _lcp[_order.back()] > _lcp[i]) {
+      last = _order.back();
+      _order.pop_back();
+    }
+    _tree[i].left = last;
+    if (_order.empty()) {
+      root = i;
+    } else {
+      _tree[_order.back()].right = i;
+    }
+    _order.push_back(i);
+  }
+  _order.clear();
+  _ranges.clear();
+  _ranges.push_back({0, 0, root});
+  while (!_ranges.empty()) {
+    const auto i = _ranges.back().node;
+    _ranges.pop_back();
+    _order.push_back(i);
+    for (const auto child : {_tree[i].left, _tree[i].right}) {
+      if (child != kNoNode) {
+        _ranges.push_back({0, 0, child});
+      }
+    }
+  }
+  _size.resize(m);
+  _saved.resize(m);
+  _whole.assign(m, 0);
+  for (auto it = _order.rbegin(); it != _order.rend(); ++it) {
+    const auto i = *it;
+    const auto [left, right] = _tree[i];
+    const uint64_t below = (left == kNoNode ? 0 : _saved[left]) +
+                           (right == kNoNode ? 0 : _saved[right]);
+    _size[i] = 1 + (left == kNoNode ? 0 : _size[left]) +
+               (right == kNoNode ? 0 : _size[right]);
+    const uint64_t whole = uint64_t{_size[i]} * _lcp[i];
+    if (whole >= below + kGroupCost) {
+      _saved[i] = whole - kGroupCost;
+      _whole[i] = 1;
+    } else {
+      _saved[i] = below;
+    }
+  }
+  _ranges.clear();
+  _ranges.push_back({0, m, root});
+  while (!_ranges.empty()) {
+    const auto [first, last, mid] = _ranges.back();
+    _ranges.pop_back();
+    if (first == last) {
+      continue;
+    }
+    if (!_whole[mid]) {
+      _ranges.push_back({mid + 1, last, _tree[mid].right});
+      _ranges.push_back({first, mid, _tree[mid].left});
+      continue;
+    }
+    const auto id = static_cast<uint32_t>(_ends.size()) + 1;
+    _prefixes.append(_codes[first].substr(0, _lcp[mid]));
+    _ends.push_back(static_cast<uint32_t>(_prefixes.size()));
+    for (auto i = first; i <= last; ++i) {
+      _shared[i] = _lcp[mid];
+      _ids[first_entry + i] = id;
+    }
+  }
+}
+
+const StringCompressionFunction& FsstPlusCompressionFunction() {
+  static constexpr auto kFunction =
+    CompressionFunctionOf<FsstPlusCompressionState>();
+  return kFunction;
+}
+
+}  // namespace irs::codecs::text

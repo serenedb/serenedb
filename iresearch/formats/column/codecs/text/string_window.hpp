@@ -28,8 +28,7 @@
 #include <vector>
 
 #include "iresearch/formats/column/codecs/bytes/lz4.hpp"
-#include "iresearch/formats/column/codecs/text/blob_frames.hpp"
-#include "iresearch/formats/column/codecs/text/blob_pricer.tpp"
+#include "iresearch/formats/column/codecs/text/blob.hpp"
 #include "iresearch/formats/column/codecs/text/segment_rows.hpp"
 #include "iresearch/formats/column/codecs/text/string_compressor.hpp"
 #include "iresearch/formats/column/codecs/text/string_seal.hpp"

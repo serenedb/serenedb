@@ -13,15 +13,11 @@ target_sources(
         column/codecs/numeric/numeric.cpp
         column/codecs/numeric/rle.cpp
         column/codecs/registry.cpp
-        column/codecs/text/blob_compression_state.cpp
+        column/codecs/text/blob.cpp
         column/codecs/text/fsst.cpp
         column/codecs/text/fsst12.cpp
-        column/codecs/text/fsst12_compression_state.cpp
-        column/codecs/text/fsst_compression_state.cpp
         column/codecs/text/fsst_plus.cpp
-        column/codecs/text/fsst_plus_compression_state.cpp
         column/codecs/text/onpair.cpp
-        column/codecs/text/onpair_compression_state.cpp
         column/codecs/text/segment_buffer.cpp
         column/codecs/text/segment_rows.cpp
         column/codecs/text/string_compression_function.cpp

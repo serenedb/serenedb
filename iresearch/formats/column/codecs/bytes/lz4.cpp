@@ -30,7 +30,7 @@
 #include <utility>
 
 #include "iresearch/formats/column/codecs/registry.hpp"
-#include "iresearch/formats/column/codecs/text/blob_leaf.tpp"
+#include "iresearch/formats/column/codecs/text/blob.hpp"
 #include "iresearch/formats/column/codecs/text/dictionary_scan.tpp"
 #include "iresearch/formats/column/codecs/text/plain_scan.tpp"
 #include "iresearch/utils/assert.hpp"

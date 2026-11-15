@@ -25,6 +25,7 @@
 #include <array>
 #include <bit>
 #include <duckdb/common/vector/list_vector.hpp>
+#include <duckdb/optimizer/expression_heuristics.hpp>
 #include <duckdb/planner/expression/bound_comparison_expression.hpp>
 #include <duckdb/planner/expression/bound_conjunction_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
@@ -379,6 +380,10 @@ void ColFilterChain::FinishBind() {
   if (can_reorder) {
     // The learned order survives rebinding onto the next segment as long as
     // the active filter count is unchanged.
+    absl::c_stable_sort(_cols, [](const Col& lhs, const Col& rhs) {
+      return duckdb::ExpressionHeuristics::Cost(*lhs.filter) <
+             duckdb::ExpressionHeuristics::Cost(*rhs.filter);
+    });
     if (!_adaptive || _adaptive->GetPermutation().size() != _cols.size()) {
       _adaptive = duckdb::make_uniq<duckdb::AdaptiveFilter>(_cols.size());
     }

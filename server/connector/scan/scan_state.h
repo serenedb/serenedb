@@ -245,7 +245,7 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
     const duckdb::TableFilter* filter;
     bool is_score = false;
     bool is_dynamic = false;
-    bool zonemap_only = false;
+    bool optional = false;
     bool row_gather = false;
     irs::NullCheckKind null_check = irs::NullCheckKind::None;
     duckdb::LogicalType type;
@@ -258,6 +258,7 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   std::vector<ColFilter> col_filters;
   std::vector<ColFilter> dual_filters;
   std::vector<duckdb::unique_ptr<duckdb::TableFilter>> emit_score_filters;
+  std::vector<duckdb::unique_ptr<duckdb::TableFilter>> dynamic_filters;
   std::vector<duckdb::unique_ptr<duckdb::TableFilter>> deferred_filters;
   std::vector<DeferredCheck> deferred_checks;
   duckdb::shared_ptr<duckdb::DynamicFilterData> score_dynamic_filter;

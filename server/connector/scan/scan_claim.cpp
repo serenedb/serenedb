@@ -316,7 +316,7 @@ std::optional<uint64_t> UniqueBound(const ScanGlobalState& g,
     tighten(UniqueMatchBound(bind, *where));
   }
   for (const auto& cf : g.col_filters) {
-    if (!cf.is_score && !cf.zonemap_only && !cf.row_gather &&
+    if (!cf.is_score && !cf.optional && !cf.row_gather &&
         cf.extract_path.empty() && cf.row_fields.empty()) {
       tighten(UniqueColumnBound(bind, cf.field,
                                 *duckdb::ExpressionFilter::GetExpressionFilter(

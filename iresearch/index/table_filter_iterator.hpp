@@ -76,12 +76,7 @@ struct ColFilterSpec {
   // a dynamic filter's bound tightens while the scan runs -- its zonemap
   // verdict is re-evaluated per window instead of cached.
   bool is_dynamic = false;
-  // Root non-selectivity optional filter (e.g. the TOP_N dynamic filter):
-  // advisory, so classification keeps it active on ALWAYS_TRUE (a dynamic
-  // bound may tighten) and never swaps it for IS NOT NULL (it must not drop
-  // null order keys). Evaluation is a no-op pass-through; the win is the
-  // codec filters' group-granular consult of the live bound.
-  bool zonemap_only = false;
+  bool optional = false;
   // Bare IS [NOT] NULL: evaluated on the validity child alone where the block
   // codec keeps validity separate (see ColumnReader::GatherFilter).
   irs::NullCheckKind null_check = irs::NullCheckKind::None;

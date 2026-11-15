@@ -40,6 +40,7 @@
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
+#include <duckdb/planner/filter/table_filter_functions.hpp>
 #include <duckdb/planner/table_filter_set.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -103,6 +104,53 @@ duckdb::unique_ptr<duckdb::TableFilter> MakeNotNullReplacement(
     duckdb::make_uniq<duckdb::BoundReferenceExpression>(type, 0ULL),
     duckdb::ExpressionType::OPERATOR_IS_NOT_NULL);
   return duckdb::make_uniq<duckdb::ExpressionFilter>(std::move(not_null));
+}
+
+bool IsOptionalDynamicFilter(const duckdb::Expression& expr) {
+  return expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_FUNCTION &&
+         expr.Cast<duckdb::BoundFunctionExpression>().Function().GetName() ==
+           duckdb::OptionalFilterScalarFun::NAME &&
+         duckdb::ExpressionFilter::GetOptionalDynamicFilterData(expr);
+}
+
+bool HasOptionalDynamicFilter(const duckdb::Expression& expr) {
+  if (IsOptionalDynamicFilter(expr)) {
+    return true;
+  }
+  if (expr.GetExpressionType() != duckdb::ExpressionType::CONJUNCTION_AND) {
+    return false;
+  }
+  return absl::c_any_of(
+    expr.Cast<duckdb::BoundConjunctionExpression>().GetChildren(),
+    [](const auto& child) { return HasOptionalDynamicFilter(*child); });
+}
+
+duckdb::unique_ptr<duckdb::Expression> EvaluateDynamicFilters(
+  const duckdb::Expression& expr) {
+  if (expr.GetExpressionType() == duckdb::ExpressionType::CONJUNCTION_AND) {
+    auto result = duckdb::make_uniq<duckdb::BoundConjunctionExpression>(
+      duckdb::ExpressionType::CONJUNCTION_AND);
+    for (const auto& child :
+         expr.Cast<duckdb::BoundConjunctionExpression>().GetChildren()) {
+      result->GetChildrenMutable().push_back(EvaluateDynamicFilters(*child));
+    }
+    return result;
+  }
+  if (!IsOptionalDynamicFilter(expr)) {
+    return expr.Copy();
+  }
+  const auto child = duckdb::ExpressionFilter::GetOptionalFilterChild(expr);
+  float threshold = 0;
+  duckdb::idx_t vectors_to_check = 0;
+  duckdb::GetThresholdAndVectorsToCheck(
+    duckdb::SelectivityOptionalFilterType::MIN_MAX, threshold,
+    vectors_to_check);
+  return duckdb::CreateSelectivityOptionalFilterExpression(
+    child->Copy(),
+    expr.Cast<duckdb::BoundFunctionExpression>()
+      .GetChildren()[0]
+      ->GetReturnType(),
+    threshold, vectors_to_check);
 }
 
 irs::NullCheckKind DetectNullCheck(const duckdb::Expression& expr) {
@@ -246,9 +294,18 @@ void BuildTableFilter(ScanGlobalState& state, const ScanBindData& bind_data,
                             .expr;
       cf.is_dynamic = duckdb::ExpressionFilter::ContainsInternalFunction(
         expr, duckdb::DynamicFilterScalarFun::NAME);
-      cf.zonemap_only =
+      cf.optional =
         duckdb::ExpressionFilter::IsRootNonSelectivityOptionalFilter(
           entry.Filter());
+      if (HasOptionalDynamicFilter(expr)) {
+        const auto& per_row = state.dynamic_filters.emplace_back(
+          duckdb::make_uniq<duckdb::ExpressionFilter>(
+            EvaluateDynamicFilters(expr),
+            duckdb::ExpressionFilter::GetExpressionFilter(entry.Filter(),
+                                                          "BuildTableFilter")
+              .column_indexes));
+        cf.filter = per_row.get();
+      }
       cf.null_check = DetectNullCheck(expr);
       cf.type = bind_data.columns.types[bind_index];
       if (proj_idx < state.projected_column_indexes.size()) {
@@ -323,7 +380,7 @@ void AddDeferredColumnFilter(ScanGlobalState& state,
   using ColFilter = ScanGlobalState::ColFilter;
   auto existing = absl::c_find_if(state.col_filters, [&](const ColFilter& cf) {
     return cf.field == deferred.column && !cf.is_score && !cf.is_dynamic &&
-           !cf.zonemap_only && !cf.row_gather && cf.extract_path.empty() &&
+           !cf.optional && !cf.row_gather && cf.extract_path.empty() &&
            cf.row_fields.empty();
   });
   if (existing != state.col_filters.end()) {

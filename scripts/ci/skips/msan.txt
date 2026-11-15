@@ -100,6 +100,7 @@ duckdb:core:test/sql/function/string/test_translate_large.test_slow	slow	takes 1
 duckdb:core:test/sql/json/table/read_json_many_files.test_slow	slow	takes 4 min under msan; dev runs it
 duckdb:core:test/sql/json/test_json_struct_projection_pushdown.test_slow	slow	takes 5 min under msan; dev runs it
 duckdb:core:test/sql/merge/merge_into_tpch.test_slow	slow	takes 5 min under msan; dev runs it
+duckdb:core:test/sql/overflow/deep_plan_passes.test	slow	no result after 27 min under msan, whose 64 MB stacks let it plan 4700 joins; dev runs it
 duckdb:core:test/sql/storage/compression/alp/alp_tpch.test_slow	slow	takes 7 min under msan; dev runs it
 duckdb:core:test/sql/storage/compression/alprd/alprd_tpch.test_slow	slow	takes 7 min under msan; dev runs it
 duckdb:core:test/sql/storage/compression/bitpacking/bitpacking_compression_ratio.test_slow	slow	takes 4 min under msan; dev runs it

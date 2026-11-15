@@ -21,6 +21,7 @@ duckdb:core:test/sql/outofcore/out_of_core_aggregation.test_slow	slow	takes 4 mi
 duckdb:core:test/sql/outofcore/out_of_core_asof_join.test_slow	slow	takes 8 min under asan; dev runs it
 duckdb:core:test/sql/outofcore/out_of_core_hash_join.test_slow	slow	takes 6 min under asan; dev runs it
 duckdb:core:test/sql/outofcore/out_of_core_ie_join.test_slow	slow	takes 9 min under asan; dev runs it
+duckdb:core:test/sql/overflow/deep_plan_passes.test	slow	takes 4 min under asan, whose 64 MB stacks let it plan 4700 joins; dev runs it
 duckdb:core:test/sql/storage/compression/alp/alp_tpcds.test_slow	slow	takes 7 min under asan; dev runs it
 duckdb:core:test/sql/storage/compression/alp/alp_tpch.test_slow	slow	takes 10 min under asan; dev runs it
 duckdb:core:test/sql/storage/compression/alprd/alprd_tpcds.test_slow	slow	takes 7 min under asan; dev runs it

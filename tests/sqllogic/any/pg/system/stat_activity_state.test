@@ -1,0 +1,84 @@
+query
+SELECT state, xact_start <= query_start AS began_with_statement, state_change >= query_start AS changed_at_start
+FROM pg_stat_activity
+WHERE pid = pg_backend_pid();
+----
+state	began_with_statement	changed_at_start
+active	t	t
+
+
+statement ok
+CREATE TABLE stat_activity_holder (pid integer);
+
+
+connection holder
+statement ok
+INSERT INTO stat_activity_holder VALUES (pg_backend_pid());
+
+
+connection holder
+statement ok
+BEGIN;
+
+
+connection holder
+query
+SELECT 'stat_activity_block' AS marker;
+----
+marker
+stat_activity_block
+
+
+connection observer
+query
+SELECT state,
+       backend_start <= xact_start AS after_backend,
+       xact_start <= query_start AS block_before_query,
+       query_start <= state_change AS changed_after_query
+FROM pg_stat_activity
+WHERE pid = (SELECT pid FROM stat_activity_holder);
+----
+state	after_backend	block_before_query	changed_after_query
+idle in transaction	t	t	t
+
+
+connection holder
+statement error (relation "stat_activity_missing" does not exist|Table with name stat_activity_missing does not exist)
+SELECT * FROM stat_activity_missing;
+
+
+connection observer
+query
+SELECT state, xact_start IS NOT NULL AS in_transaction
+FROM pg_stat_activity
+WHERE pid = (SELECT pid FROM stat_activity_holder);
+----
+state	in_transaction
+idle in transaction (aborted)	t
+
+
+connection holder
+statement ok
+ROLLBACK;
+
+
+connection holder
+query
+SELECT 'stat_activity_after' AS marker;
+----
+marker
+stat_activity_after
+
+
+connection observer
+query
+SELECT state, xact_start IS NULL AS no_transaction, query_start <= state_change AS changed_after_query
+FROM pg_stat_activity
+WHERE pid = (SELECT pid FROM stat_activity_holder);
+----
+state	no_transaction	changed_after_query
+idle	t	t
+
+
+statement ok
+DROP TABLE stat_activity_holder;

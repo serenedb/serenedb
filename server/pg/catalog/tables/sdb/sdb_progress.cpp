@@ -18,7 +18,9 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <cstdint>
 #include <memory>
+#include <optional>
 #include <string_view>
 
 #include "auth/role_closure.h"
@@ -37,7 +39,9 @@ constexpr SystemSqlColumn kSdbProgressColumns[] = {
   {"state", kText, 0, false, false, kCCollation, 0, SystemKey::None},
   {"query", kText, 0, false, false, kCCollation, 0, SystemKey::None},
   {"backend_start_us", kInt8, 0, false, false, 0, 0, SystemKey::None},
+  {"xact_start_us", kInt8, 0, false, false, 0, 0, SystemKey::None},
   {"query_start_us", kInt8, 0, false, false, 0, 0, SystemKey::None},
+  {"state_change_us", kInt8, 0, false, false, 0, 0, SystemKey::None},
   {"percent", kFloat8, 0, false, false, 0, 0, SystemKey::None},
   {"rows_processed", kInt8, 0, false, false, 0, 0, SystemKey::None},
   {"rows_total", kInt8, 0, false, false, 0, 0, SystemKey::None},
@@ -74,15 +78,32 @@ constexpr std::tuple kProgressBase{Col<"pid">(&ProgressSnapshot::pid),
                                    Col<"usename">(&ProgressSnapshot::user),
                                    Col<"datname">(&ProgressSnapshot::database)};
 
+std::string_view SessionState(const ProgressSnapshot& s) {
+  if (s.active) {
+    return "active";
+  }
+  if (s.xact_start_us == 0) {
+    return "idle";
+  }
+  return s.xact_aborted ? "idle in transaction (aborted)"
+                        : "idle in transaction";
+}
+
+std::optional<int64_t> MicrosOrNull(int64_t micros) {
+  return micros == 0 ? std::nullopt : std::optional<int64_t>{micros};
+}
+
 constexpr std::tuple kProgressSession{
-  Col<"state">([](const auto& s) {
-    return std::string_view{s.query_start_us != 0 ? "active" : "idle"};
-  }),
+  Col<"state">([](const auto& s) { return SessionState(s); }),
   Col<"query">(&ProgressSnapshot::query),
-  Col<"backend_start_us">(&ProgressSnapshot::backend_start_us)};
+  Col<"backend_start_us">(&ProgressSnapshot::backend_start_us),
+  Col<"xact_start_us">(
+    [](const auto& s) { return MicrosOrNull(s.xact_start_us); }),
+  Col<"query_start_us">(
+    [](const auto& s) { return MicrosOrNull(s.query_start_us); }),
+  Col<"state_change_us">(&ProgressSnapshot::state_change_us)};
 
 constexpr std::tuple kProgressActive{
-  Col<"query_start_us">(&ProgressSnapshot::query_start_us),
   Col<"rows_processed">(&ProgressSnapshot::rows_processed),
   Col<"rows_total">(&ProgressSnapshot::rows_total),
   Col<"tuples_processed">(&ProgressSnapshot::tuples_processed),
@@ -141,7 +162,7 @@ class SdbProgress final : public SystemTableScan<kSdbProgressSql> {
         return;
       }
     }
-    if (s.query_start_us == 0) {
+    if (!s.active) {
       Emit<kIdle>(s);
     } else if (static_cast<ProgressCommand>(s.command) ==
                ProgressCommand::None) {

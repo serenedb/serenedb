@@ -3734,7 +3734,7 @@ TEST_F(ColCodecsTest, RoaringBooleanSegmentsCarryTheirOwnStats) {
                         const auto& value) {
     irs::MemoryDirectory dir;
     auto out = dir.create("blocks");
-    irs::WriteContext ctx{Db(), *out};
+    irs::WriteContext ctx{Db().GetBufferManager(), *out};
     std::vector<duckdb::Vector> chunks;
     uint64_t pos = 0;
     for (const auto end : chunk_ends) {

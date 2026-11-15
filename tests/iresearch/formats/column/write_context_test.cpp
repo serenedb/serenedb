@@ -40,7 +40,7 @@ TEST_P(WriteContextTest, OverflowStringsFollowWhatTheFileHolds) {
   auto out = dir().create(kFile);
   ASSERT_NE(out, nullptr);
   {
-    irs::WriteContext ctx{*db.instance, *out};
+    irs::WriteContext ctx{db.instance->GetBufferManager(), *out};
     constexpr std::string_view kHead = "abstream";
     out->WriteData(reinterpret_cast<const irs::byte_type*>(kHead.data()),
                    kHead.size());

@@ -296,7 +296,7 @@ bool ColumnWriter::SealString(const duckdb::LogicalType& type,
   }
   auto& tuning = *meta.write_string_tuning;
   auto& blocks = WriteCtx().Out();
-  auto& buffers = WriteCtx().Database().GetBufferManager();
+  auto& buffers = WriteCtx().BufferManager();
   bool all_dedup = true;
   const auto sink = [&](codecs::StringChoice choice,
                         duckdb::BaseStatistics stats, uint64_t rows,

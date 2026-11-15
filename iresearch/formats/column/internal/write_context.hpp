@@ -22,7 +22,7 @@
 
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/string_type.hpp>
-#include <duckdb/main/database.hpp>
+#include <duckdb/storage/buffer_manager.hpp>
 
 #include "iresearch/store/data_output.hpp"
 
@@ -30,19 +30,19 @@ namespace irs {
 
 class WriteContext final {
  public:
-  WriteContext(duckdb::DatabaseInstance& db, IndexOutput& out) noexcept
-    : _db{&db}, _out{&out} {}
+  WriteContext(duckdb::BufferManager& buffers, IndexOutput& out) noexcept
+    : _buffers{&buffers}, _out{&out} {}
 
   WriteContext(const WriteContext&) = delete;
   WriteContext& operator=(const WriteContext&) = delete;
 
-  duckdb::DatabaseInstance& Database() noexcept { return *_db; }
+  duckdb::BufferManager& BufferManager() noexcept { return *_buffers; }
   IndexOutput& Out() noexcept { return *_out; }
 
   duckdb::block_id_t WriteOverflowString(duckdb::string_t string);
 
  private:
-  duckdb::DatabaseInstance* _db;
+  duckdb::BufferManager* _buffers;
   IndexOutput* _out;
 };
 

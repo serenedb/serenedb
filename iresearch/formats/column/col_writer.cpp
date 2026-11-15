@@ -114,7 +114,7 @@ void ColWriter::EnsureOut() {
     return;
   }
   _out = _dir->create(FileName(_segment_name));
-  _write_ctx = std::make_unique<WriteContext>(*_db, *_out);
+  _write_ctx = std::make_unique<WriteContext>(_db->GetBufferManager(), *_out);
 }
 
 bool ColWriter::Empty() const noexcept {

@@ -334,7 +334,7 @@ TEST(store_utils_tests, zvfloat_read_write) {
 
   /* NaN case */
   tests::detail::ReadWriteCoreNan<float>(tests::ReadZvfloat,
-                                           tests::WriteZvfloat);
+                                         tests::WriteZvfloat);
 }
 
 TEST(store_utils_tests, zvdouble_read_write) {
@@ -359,7 +359,7 @@ TEST(store_utils_tests, zvdouble_read_write) {
 
   /* NaN case */
   tests::detail::ReadWriteCoreNan<double>(tests::ReadZvdouble,
-                                            tests::WriteZvdouble);
+                                          tests::WriteZvdouble);
 }
 
 static void WriteSize(DataOutput& out, size_t size) { out.WriteU64(size); }

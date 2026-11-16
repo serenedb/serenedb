@@ -31,10 +31,10 @@
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/formats/reader_state.hpp"
-#include "iresearch/store/directory.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
+#include "iresearch/store/directory.hpp"
 #include "iresearch/utils/bytes_output.hpp"
 #include "iresearch/utils/containers/bitset.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -296,9 +296,9 @@ class PostingsWriter final {
   IndexOutput::ptr _pay_out;  // Payload (pay + offs)
   const Directory* _dir{};
   PostingsInputs _inputs;
-  DocBuffer _doc;             // Document stream
-  PosBuffer _pos;             // Proximity stream
-  PayBuffer _pay;             // Payloads and offsets stream
+  DocBuffer _doc;  // Document stream
+  PosBuffer _pos;  // Proximity stream
+  PayBuffer _pay;  // Payloads and offsets stream
   BlockGroup _pos_group;
   BlockGroup _pay_group;
   const NormProvider* _norms{};

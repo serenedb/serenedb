@@ -106,9 +106,9 @@ void MMapHandle::Map(uint64_t size, std::string_view file) {
   if (MAP_FAILED == addr) {
     const int error = errno;
     close();
-    THROW_SQL_ERROR(ERR_CODE(pg::ErrcodeForFileAccess(error)),
-                    ERR_MSG("Failed to mmap file '", file, "': ",
-                            std::strerror(error)));
+    THROW_SQL_ERROR(
+      ERR_CODE(pg::ErrcodeForFileAccess(error)),
+      ERR_MSG("Failed to mmap file '", file, "': ", std::strerror(error)));
   }
 
   _addr = addr;

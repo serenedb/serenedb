@@ -247,7 +247,8 @@ class SpanDirectory final : public irs::Directory {
                             "\": the documentation index is read-only"));
   }
 
-  irs::IndexInput::ptr Finish(irs::IndexOutput::ptr, irs::IOAdvice) const final {
+  irs::IndexInput::ptr Finish(irs::IndexOutput::ptr,
+                              irs::IOAdvice) const final {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
                     ERR_MSG("the documentation index is read-only"));
   }

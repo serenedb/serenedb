@@ -181,10 +181,9 @@ bool NGramSimilarityLowerRule::Apply(Filter::ptr& slot,
   }
   const auto terms_count = ngrams.size();
   const auto threshold = std::clamp(node.options().threshold, 0.F, 1.F);
-  const auto min_match =
-    std::clamp(static_cast<size_t>(
-                 std::ceil(static_cast<float>(terms_count) * threshold)),
-               size_t{1}, terms_count);
+  const auto min_match = std::clamp(
+    static_cast<size_t>(std::ceil(static_cast<float>(terms_count) * threshold)),
+    size_t{1}, terms_count);
   if (terms_count == 1) {
     auto by_term = std::make_unique<ByTerm>();
     *by_term->mutable_field_id() = node.field_id();

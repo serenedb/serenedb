@@ -34,9 +34,9 @@ namespace irs {
 
 size_t MinMatchCount(size_t terms_count, float threshold) noexcept {
   threshold = std::clamp(threshold, 0.f, 1.f);
-  return std::clamp(static_cast<size_t>(
-                      std::ceil(static_cast<float>(terms_count) * threshold)),
-                    size_t{1}, terms_count);
+  return std::clamp(
+    static_cast<size_t>(std::ceil(static_cast<float>(terms_count) * threshold)),
+    size_t{1}, terms_count);
 }
 
 QueryBuilder::ptr ByNGramSimilarity::PrepareSegment(

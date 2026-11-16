@@ -49,7 +49,7 @@ namespace irs {
 ////////////////////////////////////////////////////////////////////////////////
 template<typename T, bool search_semantics>
 float ngram_similarity(const T* target, size_t target_size, const T* src,
-                         size_t src_size, size_t ngram_size) {
+                       size_t src_size, size_t ngram_size) {
   if (ngram_size == 0) {
     return 0.f;
   }

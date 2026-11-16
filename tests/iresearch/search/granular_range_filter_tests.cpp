@@ -1178,16 +1178,15 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
       switch (field) {
         case 0: {
           constexpr double kSpecial[]{std::numeric_limits<int32_t>::min(),
-                                        std::numeric_limits<int32_t>::max(), -1,
-                                        0, 1};
+                                      std::numeric_limits<int32_t>::max(), -1,
+                                      0, 1};
           return special ? kSpecial[rng() % std::size(kSpecial)]
                          : static_cast<double>(rng() % 2001) - 1000;
         }
         case 1:
           return rng() % 100 < 85
                    ? 0
-                   : static_cast<double>(rng() % 2000000000001) -
-                       1000000000000;
+                   : static_cast<double>(rng() % 2000000000001) - 1000000000000;
         case 2: {
           constexpr double kSpecial[]{
             -kInf,
@@ -1213,9 +1212,8 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
             std::numeric_limits<double>::lowest(),
             std::numeric_limits<double>::max(),
           };
-          return special
-                   ? kSpecial[rng() % std::size(kSpecial)]
-                   : (static_cast<double>(rng() % 4000001) - 2000000) / 2;
+          return special ? kSpecial[rng() % std::size(kSpecial)]
+                         : (static_cast<double>(rng() % 4000001) - 2000000) / 2;
         }
       }
     };
@@ -1750,8 +1748,7 @@ TEST_P(GranularRangeFilterTestCase, by_range_order_multiple_sorts) {
 
     irs::ByGranularRange q;
     *q.mutable_field_id() = kSeq;
-    irs::SetGranularNumericTerm(q.mutable_options()->range.min,
-                                (double)begin);
+    irs::SetGranularNumericTerm(q.mutable_options()->range.min, (double)begin);
     q.mutable_options()->range.min_type = irs::BoundType::Inclusive;
 
     q.SetScorer(order.front().get());

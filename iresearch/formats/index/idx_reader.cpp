@@ -83,8 +83,7 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
                   .tree_offset = obj.ReadProperty<uint64_t>(1, "tree_offset"),
                   .tree_byte_size =
                     obj.ReadProperty<uint64_t>(2, "tree_byte_size"),
-                  .stats_offset =
-                    obj.ReadProperty<uint64_t>(3, "stats_offset"),
+                  .stats_offset = obj.ReadProperty<uint64_t>(3, "stats_offset"),
                   .stats_byte_size =
                     obj.ReadProperty<uint64_t>(4, "stats_byte_size"),
                   .root_byte_size =

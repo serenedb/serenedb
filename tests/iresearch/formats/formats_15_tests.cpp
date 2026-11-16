@@ -524,9 +524,8 @@ void Format15TestCase::AssertDocsSeq(irs::PostingsReader& reader, DocsView docs,
   ASSERT_TRUE(irs::doc_limits::eof(actual->Seek(docs.back().first + 42)));
 }
 
-Format15TestCase::Docs Format15TestCase::GenerateDocs(size_t count,
-                                                      float mean, float dev,
-                                                      size_t step) {
+Format15TestCase::Docs Format15TestCase::GenerateDocs(size_t count, float mean,
+                                                      float dev, size_t step) {
   std::vector<std::pair<irs::doc_id_t, uint32_t>> docs;
   docs.reserve(count);
   std::generate_n(

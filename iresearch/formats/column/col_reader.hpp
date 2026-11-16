@@ -70,8 +70,7 @@ class ColReader final {
  public:
   ColReader(const Directory& dir, std::string_view segment_name,
             duckdb::DatabaseInstance& db, IOAdvice advice);
-  ColReader(duckdb::DatabaseInstance& db, IndexInput::ptr in,
-            ColFooter footer);
+  ColReader(duckdb::DatabaseInstance& db, IndexInput::ptr in, ColFooter footer);
   ColReader(duckdb::DatabaseInstance& db,
             std::vector<std::unique_ptr<ColumnReader>> columns);
   ColReader(duckdb::DatabaseInstance& db,

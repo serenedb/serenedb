@@ -60,6 +60,11 @@ class DirectoryUtilsTests : public ::testing::Test {
                       ERR_MSG("cannot open ", name));
     }
 
+    irs::IndexInput::ptr Finish(irs::IndexOutput::ptr,
+                                irs::IOAdvice) const final {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR), ERR_MSG("cannot finish"));
+    }
+
     bool remove(std::string_view) noexcept final { return false; }
 
     bool rename(std::string_view, std::string_view) noexcept final {
@@ -248,6 +253,10 @@ TEST_F(DirectoryUtilsTests, test_ref_tracking_dir) {
                               irs::IOAdvice) const final {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
                       ERR_MSG("cannot open ", name));
+    }
+    irs::IndexInput::ptr Finish(irs::IndexOutput::ptr,
+                                irs::IOAdvice) const final {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR), ERR_MSG("cannot finish"));
     }
     bool remove(std::string_view) noexcept final { return false; }
     bool rename(std::string_view, std::string_view) noexcept final {

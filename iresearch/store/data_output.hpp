@@ -194,6 +194,8 @@ class IndexOutput : public BufferedOutput {
   }
 
  protected:
+  void Closed(uint64_t size) { _on_close(size); }
+
   uint64_t _offset = 0;
 
  private:

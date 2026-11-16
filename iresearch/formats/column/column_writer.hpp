@@ -102,6 +102,7 @@ class ColumnWriter final {
   field_id Id() const noexcept { return _id; }
   const duckdb::LogicalType& Type() const noexcept { return _type; }
   const ColumnMeta& Meta() const noexcept { return _meta; }
+  ColumnMeta TakeMeta() noexcept { return std::move(_meta); }
 
  private:
   friend class ColWriter;

@@ -28,10 +28,12 @@
 #include <span>
 #include <vector>
 
+#include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/column_patch.hpp"
 #include "iresearch/formats/index/field_reader.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/piece_fields.hpp"
+#include "iresearch/formats/reader_state.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
@@ -40,8 +42,13 @@
 
 namespace irs {
 
-class ColReader;
 class NormColumnReader;
+
+struct SegmentInputs {
+  std::unique_ptr<ColReader> col;
+  std::unique_ptr<IdxReader> idx;
+  PostingsInputs postings;
+};
 
 class SegmentReaderImpl final : public SubReader {
   struct PrivateTag final {
@@ -59,6 +66,10 @@ class SegmentReaderImpl final : public SubReader {
   static std::shared_ptr<const SegmentReaderImpl> Open(
     const Directory& dir, const SegmentMeta& meta,
     const IndexReaderOptions& options);
+
+  static std::shared_ptr<const SegmentReaderImpl> Open(
+    const Directory& dir, const SegmentMeta& meta,
+    const IndexReaderOptions& options, SegmentInputs inputs);
 
   static std::shared_ptr<const SegmentReaderImpl> OpenInMemory(
     const SegmentMeta& meta, uint64_t id, std::unique_ptr<ColReader> columns);
@@ -128,8 +139,6 @@ class SegmentReaderImpl final : public SubReader {
     const IdxReader* Idx() const noexcept {
       return idx_reader ? idx_reader.get() : base ? base->Idx() : nullptr;
     }
-    void Open(const Directory& dir, const SegmentMeta& meta,
-              const IndexReaderOptions& options, bool keep_terms);
   };
 
   FileRefs _refs;

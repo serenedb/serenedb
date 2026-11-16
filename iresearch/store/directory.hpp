@@ -83,6 +83,9 @@ struct Directory : private util::Noncopyable {
   virtual IndexInput::ptr open(std::string_view name,
                                IOAdvice advice) const = 0;
 
+  virtual IndexInput::ptr Finish(IndexOutput::ptr out,
+                                 IOAdvice advice) const = 0;
+
   // Removes the file specified by the given name from directory
   // name - name of the file
   // Rreturns true if file has been removed

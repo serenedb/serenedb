@@ -31,6 +31,7 @@
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 #include "iresearch/utils/crc.hpp"
+#include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
@@ -178,8 +179,10 @@ void MemoryIndexOutput::WriteDirect(const byte_type* b, size_t len) {
 
 class ChecksumMemoryIndexOutput final : public MemoryIndexOutput {
  public:
-  explicit ChecksumMemoryIndexOutput(MemoryFile& file) noexcept
-    : MemoryIndexOutput{file}, _crc_begin{_pos} {}
+  explicit ChecksumMemoryIndexOutput(std::shared_ptr<MemoryFile> file) noexcept
+    : MemoryIndexOutput{*file}, _crc_begin{_pos}, _owner{std::move(file)} {}
+
+  const std::shared_ptr<MemoryFile>& Owner() const noexcept { return _owner; }
 
   uint32_t Checksum() noexcept final {
     Flush();
@@ -220,6 +223,7 @@ class ChecksumMemoryIndexOutput final : public MemoryIndexOutput {
 
   byte_type* _crc_begin;
   Crc32c _crc;
+  std::shared_ptr<MemoryFile> _owner;
 };
 
 MemoryDirectory::MemoryDirectory(DirectoryAttributes attrs,
@@ -260,7 +264,15 @@ IndexOutput::ptr MemoryDirectory::create(std::string_view name) {
     file = std::make_shared<MemoryFile>(_files.get_allocator().Manager());
   }
 
-  return IndexOutput::ptr{new ChecksumMemoryIndexOutput{*file}};
+  return IndexOutput::ptr{new ChecksumMemoryIndexOutput{file}};
+}
+
+IndexInput::ptr MemoryDirectory::Finish(IndexOutput::ptr out,
+                                        IOAdvice /*advice*/) const {
+  std::shared_ptr<const MemoryFile> file =
+    utils::downCast<ChecksumMemoryIndexOutput>(*out).Owner();
+  out.reset();
+  return std::make_unique<MemoryIndexInput>(std::move(file));
 }
 
 bool MemoryDirectory::length(uint64_t& result,

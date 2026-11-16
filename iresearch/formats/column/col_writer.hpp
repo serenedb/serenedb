@@ -48,6 +48,11 @@ class AnnWriter;
 class IdxWriter;
 struct AnnBuildEnv;
 
+struct SealedNorms {
+  std::vector<NormColumnSpec> columns;
+  IndexInput::ptr in;
+};
+
 class ColWriter final {
  public:
   ColWriter(Directory& dir, std::string_view segment_name,
@@ -74,7 +79,7 @@ class ColWriter final {
   uint64_t RowGroupRows(uint64_t row, uint64_t uniform) const noexcept;
 
   std::vector<StagedColumn> Snapshot(uint64_t rows) const;
-  std::vector<NormColumnSpec> SealNorms(uint64_t rows);
+  SealedNorms SealNorms(uint64_t rows);
   size_t StagedBytes() const noexcept;
 
   ColumnWriter& OpenColumn(field_id id, duckdb::LogicalType type);
@@ -96,6 +101,10 @@ class ColWriter final {
   NormColumnWriter& StreamNormColumn(field_id id);
 
   std::vector<std::unique_ptr<AnnWriter>> TakeAnnWriters() noexcept;
+
+  std::unique_ptr<ColReader> TakeReader() noexcept {
+    return std::move(_reader);
+  }
 
   bool Commit(uint64_t target_row);
   bool Commit(uint64_t target_row, absl::FunctionRef<bool()> progress);
@@ -132,6 +141,7 @@ class ColWriter final {
   const IndexFieldOptions* _field_options = nullptr;
   HnswBases* _hnsw_bases = nullptr;
   IndexOutput::ptr _out;
+  std::unique_ptr<ColReader> _reader;
   std::unique_ptr<WriteContext> _write_ctx;
   std::vector<std::unique_ptr<ColumnWriter>> _columns;
   irs::containers::FlatHashMap<field_id, ColumnWriter*> _by_id;

@@ -77,6 +77,18 @@ std::shared_ptr<MMapHandle> OpenHandle(const std::filesystem::path& dir,
   return OpenHandle(path.c_str(), advice, rm);
 }
 
+std::shared_ptr<MMapHandle> AdoptHandle(file_utils::handle_t file,
+                                        uint64_t size, IOAdvice advice,
+                                        IResourceManager& rm) {
+  auto handle = std::make_shared<MMapHandle>(rm);
+  handle->Adopt(std::move(file), size);
+  if (size != 0 && !handle->advise(GetPosixMadvice(advice))) {
+    SDB_ERROR(IRESEARCH, "Failed to madvise a file just written, error ",
+              errno);
+  }
+  return handle;
+}
+
 #ifdef __linux__
 size_t BytesInCache(uint8_t* addr, size_t length) {
   static const size_t kPageSize = sysconf(_SC_PAGESIZE);
@@ -204,6 +216,12 @@ IndexInput::ptr MMapDirectory::open(std::string_view name,
                                     IOAdvice advice) const {
   return std::make_unique<MMapIndexInput>(
     OpenHandle(path(), name, advice, *ResourceManager().file_descriptors));
+}
+
+IndexInput::ptr MMapDirectory::Adopt(file_utils::handle_t file, uint64_t size,
+                                     IOAdvice advice) const {
+  return std::make_unique<MMapIndexInput>(AdoptHandle(
+    std::move(file), size, advice, *ResourceManager().file_descriptors));
 }
 
 }  // namespace irs

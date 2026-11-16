@@ -638,7 +638,7 @@ handle_t Open(const path_char_t* path, OpenMode mode, int advice) noexcept {
 #else
   auto posix_mode = (((OpenMode::Read & mode) == OpenMode::Read)
                        ? O_RDONLY
-                       : (O_CREAT | O_TRUNC | O_WRONLY));
+                       : (O_CREAT | O_TRUNC | O_RDWR));
   auto fd = ::open(path ? path : "/dev/null", posix_mode, S_IRUSR | S_IWUSR);
   if (fd < 0) {
     return handle_t(nullptr);

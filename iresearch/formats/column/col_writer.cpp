@@ -70,9 +70,9 @@ void SerializeNormRegion(duckdb::BinarySerializer& s, const NormRegionMeta& r) {
 }
 
 void SerializeNormColumn(duckdb::BinarySerializer& s,
-                         const NormColumnWriter& nw) {
-  const auto& meta = nw.Meta();
-  s.WriteProperty(0, "id", static_cast<uint64_t>(nw.Id()));
+                         const NormColumnSpec& norm) {
+  const auto& meta = norm.meta;
+  s.WriteProperty(0, "id", static_cast<uint64_t>(norm.id));
   s.WriteList(1, "regions", meta.regions.size(),
               [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
                 list.WriteObject([&](duckdb::BinarySerializer& obj) {
@@ -254,7 +254,10 @@ std::vector<std::unique_ptr<AnnWriter>> ColWriter::TakeAnnWriters() noexcept {
   return out;
 }
 
-void ColWriter::Rollback() noexcept { _out.reset(); }
+void ColWriter::Rollback() noexcept {
+  _reader.reset();
+  _out.reset();
+}
 
 std::vector<StagedColumn> ColWriter::Snapshot(uint64_t rows) const {
   std::vector<StagedColumn> columns;
@@ -268,25 +271,25 @@ std::vector<StagedColumn> ColWriter::Snapshot(uint64_t rows) const {
   return columns;
 }
 
-std::vector<NormColumnSpec> ColWriter::SealNorms(uint64_t rows) {
-  std::vector<NormColumnSpec> norms;
-  norms.reserve(_norms.size());
+SealedNorms ColWriter::SealNorms(uint64_t rows) {
+  SealedNorms sealed;
+  sealed.columns.reserve(_norms.size());
   for (auto& writer : _norms) {
     if (writer->RowCount() < rows) {
       writer->PadTo(rows);
     }
     writer->Finalize();
     if (!writer->Meta().regions.empty()) {
-      norms.push_back({.id = writer->Id(), .meta = writer->Meta()});
+      sealed.columns.push_back({.id = writer->Id(), .meta = writer->Meta()});
     }
   }
-  if (!norms.empty()) {
+  if (!sealed.columns.empty()) {
     EnsureOut();
-  }
-  if (_out) {
+    sealed.in = _dir->Finish(std::move(_out), IOAdvice::RANDOM);
+  } else if (_out) {
     _out->Flush();
   }
-  return norms;
+  return sealed;
 }
 
 size_t ColWriter::StagedBytes() const noexcept {
@@ -319,7 +322,7 @@ bool ColWriter::Commit(uint64_t target_row,
   if (_committed) {
     return true;
   }
-  std::vector<const NormColumnWriter*> norms;
+  ColFooter footer;
   for (auto& writer : _norms) {
     if (writer->RowCount() < target_row) {
       writer->PadTo(target_row);
@@ -329,10 +332,11 @@ bool ColWriter::Commit(uint64_t target_row,
                "ColWriter::Commit: norm column ", writer->Id(), " holds ",
                writer->Meta().row_count, " rows, segment ", target_row);
     if (!writer->Meta().regions.empty()) {
-      norms.push_back(writer.get());
+      footer.norms.push_back({.id = writer->Id(), .meta = writer->TakeMeta()});
     }
   }
-  if (Empty() && !_out && norms.empty()) {
+  if (Empty() && !_out && footer.norms.empty()) {
+    _reader = std::make_unique<ColReader>(*_db, nullptr, ColFooter{});
     _committed = true;
     return true;
   }
@@ -346,31 +350,40 @@ bool ColWriter::Commit(uint64_t target_row,
   auto row_groups =
     _row_group_starts.empty() ? size_t{0} : _row_group_starts.size() - 1;
   SDB_IF_FAILURE("irs::ColWriterOmitsRowGroupStarts") { row_groups = 0; }
-  format_utils::WriteFooter(*_out, [&](duckdb::BinarySerializer& footer) {
-    footer.WriteOptionalList(
-      kColFieldColumns, "columns", _columns.size(),
+  footer.block_size = _write_ctx->GetBlockAllocSize();
+  footer.row_group_starts.assign(_row_group_starts.begin(),
+                                 _row_group_starts.begin() + row_groups);
+  footer.columns.reserve(_columns.size());
+  for (auto& cw : _columns) {
+    footer.columns.push_back(cw->TakeMeta());
+  }
+  format_utils::WriteFooter(*_out, [&](duckdb::BinarySerializer& out) {
+    out.WriteOptionalList(
+      kColFieldColumns, "columns", footer.columns.size(),
       [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
         list.WriteObject([&](duckdb::BinarySerializer& obj) {
-          SerializeColumnMeta(obj, _columns[i]->Meta());
+          SerializeColumnMeta(obj, footer.columns[i]);
         });
       });
-    footer.WriteOptionalList(
-      kColFieldNormColumns, "norm_columns", norms.size(),
+    out.WriteOptionalList(
+      kColFieldNormColumns, "norm_columns", footer.norms.size(),
       [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
         list.WriteObject([&](duckdb::BinarySerializer& obj) {
-          SerializeNormColumn(obj, *norms[i]);
+          SerializeNormColumn(obj, footer.norms[i]);
         });
       });
-    footer.WritePropertyWithDefault<uint64_t>(kColFieldBlockSize, "block_size",
-                                              _write_ctx->GetBlockAllocSize(),
-                                              DEFAULT_BLOCK_ALLOC_SIZE);
-    footer.WriteOptionalList(
-      kColFieldRowGroupStarts, "row_group_starts", row_groups,
+    out.WritePropertyWithDefault<uint64_t>(kColFieldBlockSize, "block_size",
+                                           footer.block_size,
+                                           DEFAULT_BLOCK_ALLOC_SIZE);
+    out.WriteOptionalList(
+      kColFieldRowGroupStarts, "row_group_starts",
+      footer.row_group_starts.size(),
       [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-        list.WriteElement(_row_group_starts[i]);
+        list.WriteElement(footer.row_group_starts[i]);
       });
   });
-  _out.reset();
+  _reader = std::make_unique<ColReader>(
+    *_db, _dir->Finish(std::move(_out), IOAdvice::RANDOM), std::move(footer));
   _committed = true;
   return true;
 }
@@ -380,7 +393,9 @@ yaclib::Task<bool> ColWriter::ComputeAnn(const AnnBuildEnv* env,
   if (!_committed || _ann_writers.empty()) {
     co_return true;
   }
-  ColReader reader{*_dir, _segment_name, *_db, IOAdvice::SEQUENTIAL};
+  SDB_ASSERT(_reader);
+  const auto& reader = *_reader;
+  ReadContext ctx{reader};
   for (auto& entry : _ann_writers) {
     if (!progress()) {
       co_return false;
@@ -389,7 +404,7 @@ yaclib::Task<bool> ColWriter::ComputeAnn(const AnnBuildEnv* env,
     if (!col) {
       continue;
     }
-    co_await entry->writer->Compute(*col, reader.Ctx(), env);
+    co_await entry->writer->Compute(*col, ctx, env);
   }
   co_return true;
 }

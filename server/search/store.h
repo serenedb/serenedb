@@ -173,7 +173,6 @@ class Store final : public std::enable_shared_from_this<Store>,
   irs::IndexWriter& Writer() noexcept { return *_writer; }
   std::vector<OwnSegment> OpenFlushed(
     std::span<const irs::IndexWriter::FlushedSegment> flushed) const;
-  OwnSegment OpenOwn(irs::SegmentMeta meta) const;
 
   struct Piece {
     irs::IndexWriter::Transaction trx;

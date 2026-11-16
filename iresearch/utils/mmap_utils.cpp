@@ -80,27 +80,39 @@ void MMapHandle::open(const path_char_t* path) {
               "': ", std::strerror(error)));
   }
 
-  if (size) {
-    _size = size;
+  Map(size, file_utils::ToStr(path));
+}
 
-    // TODO(mbkkt) Needs benchmark?
-    //  1. MAP_SHARED can make more sense than MAP_PRIVATE
-    //     both ok for us, because file is read only
-    //     but with it we probably can avoid COW kernel overhead.
-    //  2. MAP_POPULATE | MAP_LOCKED instead of read to vector stuff?
-    void* addr = mmap(nullptr, size, PROT_READ, MAP_PRIVATE, fd, 0);
+void MMapHandle::Adopt(file_utils::handle_t file, uint64_t size) {
+  SDB_ASSERT(file);
+  close();
+  _fd = HANDLE_CAST(file.release());
+  Map(size, "just written");
+}
 
-    if (MAP_FAILED == addr) {
-      const int error = errno;
-      close();
-      THROW_SQL_ERROR(ERR_CODE(pg::ErrcodeForFileAccess(error)),
-                      ERR_MSG("Failed to mmap file '", file_utils::ToStr(path),
-                              "': ", std::strerror(error)));
-    }
-
-    _addr = addr;
-    _residency.Reset((size + file_utils::kPage - 1) / file_utils::kPage);
+void MMapHandle::Map(uint64_t size, std::string_view file) {
+  if (size == 0) {
+    return;
   }
+  _size = size;
+
+  // TODO(mbkkt) Needs benchmark?
+  //  1. MAP_SHARED can make more sense than MAP_PRIVATE
+  //     both ok for us, because file is read only
+  //     but with it we probably can avoid COW kernel overhead.
+  //  2. MAP_POPULATE | MAP_LOCKED instead of read to vector stuff?
+  void* addr = mmap(nullptr, size, PROT_READ, MAP_PRIVATE, _fd, 0);
+
+  if (MAP_FAILED == addr) {
+    const int error = errno;
+    close();
+    THROW_SQL_ERROR(ERR_CODE(pg::ErrcodeForFileAccess(error)),
+                    ERR_MSG("Failed to mmap file '", file, "': ",
+                            std::strerror(error)));
+  }
+
+  _addr = addr;
+  _residency.Reset((size + file_utils::kPage - 1) / file_utils::kPage);
 }
 
 }  // namespace irs::mmap_utils

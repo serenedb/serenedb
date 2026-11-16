@@ -276,7 +276,7 @@ void Write(irs::Directory& dir, const Terms& terms, Ladder ladder,
   writer.prepare(state, 1);
   writer.write(irs::NumericLayout::kNumbers, TermsReader{terms, ladder});
   writer.end();
-  idx.Commit();
+  idx.Commit(nullptr);
 }
 
 uint64_t DirectoryBytes(const irs::Directory& dir) {

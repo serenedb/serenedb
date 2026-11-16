@@ -366,7 +366,7 @@ TEST_P(FormatTestCase, fields_read_write) {
     writer.prepare(state, 1);
     writer.write(irs::StringLayout::kStrings, term_reader);
     writer.end();
-    idx.Commit();
+    idx.Commit(nullptr);
   }
 
   // read field

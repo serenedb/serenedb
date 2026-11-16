@@ -87,6 +87,11 @@ class DirectoryMock : public irs::Directory {
     return _impl.open(name, advice);
   }
 
+  irs::IndexInput::ptr Finish(irs::IndexOutput::ptr out,
+                              irs::IOAdvice advice) const override {
+    return _impl.Finish(std::move(out), advice);
+  }
+
   bool remove(std::string_view name) noexcept override {
     return _impl.remove(name);
   }

@@ -178,7 +178,12 @@ IndexWriter::SegmentContext::SegmentContext(Directory& dir,
                                             const SegmentWriterOptions& options)
   : dir{dir},
     flushed{{options.resource_manager}},
-    writer{SegmentWriter::make(this->dir, options)} {}
+    writer{SegmentWriter::make(this->dir, options)},
+    reader_options{
+      .scorer = options.scorer,
+      .db = options.db,
+      .hnsw_bases = options.hnsw_bases,
+    } {}
 
 IndexWriter::SegmentContext::ptr IndexWriter::SegmentContext::make(
   Directory& dir, const SegmentWriterOptions& options) {
@@ -201,13 +206,16 @@ void IndexWriter::SegmentContext::Flush() {
   SDB_IF_FAILURE("IndexWriter::Flush") {
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
-  writer->flush(writer_meta, docs_mask);
+  auto inputs = writer->flush(writer_meta, docs_mask);
   if (writer_meta.live_docs_count == 0) {
     return;
   }
   SDB_ASSERT(writer_meta.kinds != 0);
   SDB_ASSERT(writer_meta.live_docs_count <= writer_meta.docs_count);
-  flushed.emplace_back(std::move(writer_meta), std::move(docs_mask));
+  auto reader = SegmentReaderImpl::Open(dir, writer_meta, reader_options,
+                                        std::move(inputs));
+  flushed.emplace_back(std::move(writer_meta), std::move(docs_mask),
+                       std::move(reader));
 }
 
 void IndexWriter::SegmentContext::Prepare(uint64_t segment_id) {
@@ -395,7 +403,8 @@ auto IndexWriter::FlushMerge(Merged merged, uint64_t id,
   if (!(co_await merger.Flush(meta, progress, env))) {
     co_return merged;
   }
-  merged.reader = SegmentReaderImpl::Open(_dir, meta, merged.source.Options());
+  merged.reader = SegmentReaderImpl::Open(_dir, meta, merged.source.Options(),
+                                          merger.TakeInputs());
   merged.maps = MergeMaps(candidates, merger, *merged.reader);
   SyncSegment(dir, meta);
   merged.refs = dir.GetRefs();

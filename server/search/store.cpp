@@ -389,14 +389,10 @@ std::vector<OwnSegment> Store::OpenFlushed(
   std::vector<OwnSegment> segments;
   segments.reserve(flushed.size());
   for (const auto& entry : flushed) {
-    segments.push_back(OpenOwn(entry.meta));
+    SDB_ASSERT(entry.reader);
+    segments.push_back({.meta = entry.meta, .reader = entry.reader});
   }
   return segments;
-}
-
-OwnSegment Store::OpenOwn(irs::SegmentMeta meta) const {
-  auto reader = irs::SegmentReaderImpl::Open(*_dir, meta, ReaderOptions());
-  return {.meta = std::move(meta), .reader = std::move(reader)};
 }
 
 Store::Piece Store::StartPiece() {
@@ -1060,7 +1056,9 @@ std::shared_ptr<const TableState> Store::ReplaceSegments(
   std::vector<std::shared_ptr<TableUnit>> added;
   std::vector<irs::DocMap> maps;
   for (auto& replacement : replacements) {
-    auto opened = OpenOwn(std::move(replacement.meta));
+    SDB_ASSERT(replacement.reader);
+    OwnSegment opened{.meta = std::move(replacement.meta),
+                      .reader = std::move(replacement.reader)};
     const auto target = opened.reader->Id();
     for (auto& map : replacement.absorbed) {
       map.target = target;

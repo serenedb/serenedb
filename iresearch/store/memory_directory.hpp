@@ -253,6 +253,8 @@ class MemoryDirectory final : public Directory {
 
   IndexInput::ptr open(std::string_view name, IOAdvice advice) const final;
 
+  IndexInput::ptr Finish(IndexOutput::ptr out, IOAdvice advice) const final;
+
   bool remove(std::string_view name) noexcept final;
 
   bool rename(std::string_view src, std::string_view dst) noexcept final;

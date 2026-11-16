@@ -31,6 +31,7 @@
 #include "iresearch/store/directory_attributes.hpp"
 #include "iresearch/store/directory_cleaner.hpp"
 #include "iresearch/utils/crc.hpp"
+#include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/file_utils_ext.hpp"
 #include "iresearch/utils/log.hpp"
 #include "iresearch/utils/object_pool.hpp"
@@ -95,6 +96,14 @@ class FSIndexOutput final : public IndexOutput {
     return ptr;
   }
 
+  file_utils::handle_t Release() {
+    Flush();
+    Closed(Position());
+    _crc = Crc32c{};
+    _offset = 0;
+    return std::move(_handle);
+  }
+
  private:
   void Flush() final {
     WriteHandle(_buf, Length());
@@ -107,6 +116,9 @@ class FSIndexOutput final : public IndexOutput {
   }
 
   uint64_t CloseImpl() final {
+    if (!_handle) {
+      return 0;
+    }
     Flush();
     const auto size = Position();
 
@@ -261,6 +273,17 @@ class FsIndexInput : public BufferedIndexInput {
     ptr input{new FsIndexInput(std::move(handle), pool_size)};
     descriptors = 0;
     return input;
+  }
+
+  static IndexInput::ptr Adopt(file_utils::handle_t file, uint64_t size,
+                               size_t pool_size, IOAdvice advice,
+                               const ResourceManagementOptions& rm) {
+    auto handle = FileHandle::make(rm);
+    handle->io_advice = advice;
+    handle->handle = std::move(file);
+    handle->size = size;
+    handle->pos = size;
+    return ptr{new FsIndexInput(std::move(handle), pool_size)};
   }
 
  protected:
@@ -472,6 +495,20 @@ FSDirectory::FSDirectory(std::filesystem::path dir, DirectoryAttributes attrs,
 IndexOutput::ptr FSDirectory::create(std::string_view name) {
   const auto path = _dir / name;
   return FSIndexOutput::Open(path.c_str(), ResourceManager());
+}
+
+IndexInput::ptr FSDirectory::Finish(IndexOutput::ptr out,
+                                    IOAdvice advice) const {
+  const auto size = out->Position();
+  auto file = utils::downCast<FSIndexOutput>(*out).Release();
+  out.reset();
+  return Adopt(std::move(file), size, advice);
+}
+
+IndexInput::ptr FSDirectory::Adopt(file_utils::handle_t file, uint64_t size,
+                                   IOAdvice advice) const {
+  return FsIndexInput::Adopt(std::move(file), size, _fd_pool_size, advice,
+                             ResourceManager());
 }
 
 const std::filesystem::path& FSDirectory::path() const noexcept { return _dir; }

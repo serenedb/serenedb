@@ -30,6 +30,7 @@
 #include <string_view>
 #include <vector>
 
+#include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/column_info.hpp"
@@ -45,7 +46,6 @@ class DatabaseInstance;
 }  // namespace duckdb
 namespace irs {
 
-class ColumnReader;
 class NormColumnReader;
 
 inline constexpr std::string_view kFormatExt = "col";
@@ -59,10 +59,19 @@ inline std::string FileName(std::string_view segment_name) {
   return absl::StrCat(segment_name, ".", kFormatExt);
 }
 
+struct ColFooter {
+  std::vector<ColumnMeta> columns;
+  std::vector<NormColumnSpec> norms;
+  uint64_t block_size = DEFAULT_BLOCK_ALLOC_SIZE;
+  std::vector<uint64_t> row_group_starts;
+};
+
 class ColReader final {
  public:
   ColReader(const Directory& dir, std::string_view segment_name,
             duckdb::DatabaseInstance& db, IOAdvice advice);
+  ColReader(duckdb::DatabaseInstance& db, IndexInput::ptr in,
+            ColFooter footer);
   ColReader(duckdb::DatabaseInstance& db,
             std::vector<std::unique_ptr<ColumnReader>> columns);
   ColReader(duckdb::DatabaseInstance& db,
@@ -100,6 +109,7 @@ class ColReader final {
 
  private:
   void Index(const ColumnReader& column);
+  void Adopt(ColFooter footer);
 
   duckdb::DatabaseInstance* _db;
   ReadContext _ctx;

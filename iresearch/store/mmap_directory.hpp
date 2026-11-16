@@ -34,6 +34,10 @@ class MMapDirectory : public FSDirectory {
     const ResourceManagementOptions& rm = ResourceManagementOptions::gDefault);
 
   IndexInput::ptr open(std::string_view name, IOAdvice advice) const override;
+
+ protected:
+  IndexInput::ptr Adopt(file_utils::handle_t file, uint64_t size,
+                        IOAdvice advice) const override;
 };
 
 }  // namespace irs

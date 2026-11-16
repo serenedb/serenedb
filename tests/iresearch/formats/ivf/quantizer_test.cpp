@@ -1655,13 +1655,9 @@ bool ExpectFineBytesReadOnlyWhenMarked(const AnnInfo::Quantizer& quant,
       if (marks[r] != 0) {
         continue;
       }
-      const size_t at = r / gs * group + coarse_bytes;
-      if (setting.fine_record_size == 0) {
-        Poison(unmarked, at, setting.fine_bytes);
-      } else {
-        Poison(unmarked, at + r % gs * setting.fine_record_size,
-               setting.fine_record_size);
-      }
+      Poison(unmarked,
+             r / gs * group + coarse_bytes + r % gs * setting.fine_record_size,
+             setting.fine_record_size);
     }
     reader->ComputeFine(unmarked, marks.data(), coarse.data());
     EXPECT_EQ(want, coarse) << "threshold " << threshold;
@@ -1695,11 +1691,6 @@ TEST(rabitq_quantizer_test, one_bit_has_no_fine_part) {
   ASSERT_NE(writer, nullptr);
   EXPECT_EQ(writer->BlockSetting().fine_bytes, 0U);
   EXPECT_EQ(writer->BlockSetting().fine_record_size, 0U);
-}
-
-TEST(tq_quantizer_test, fine_bytes_read_only_when_marked) {
-  ExpectFineBytesReadOnlyWhenMarked(
-    {.kind = VectorQuantization::TQ, .nb_bits = 5}, 96, VectorMetric::L2Sqr);
 }
 
 namespace {

@@ -35,6 +35,7 @@ namespace irs::quantizers {
 namespace {
 
 constexpr uint32_t kPanoramaLevelWidth = 32;
+constexpr size_t kPanoramaBatch = 32;
 
 constexpr size_t kPcaMinRows = 1024;
 constexpr size_t kPcaTrainRows = 4096;
@@ -77,7 +78,7 @@ class PanoramaQuantizerWriter final : public QuantizerWriter {
     }
     _rotation = TrainPcaRotation(vecs, n, _d);
     SDB_ASSERT(!_rotation.A.empty());
-    _pano = MakePanorama(_d, faiss::Panorama::kDefaultBatchSize);
+    _pano = MakePanorama(_d, kPanoramaBatch);
     SDB_ASSERT(_pano->n_levels == PanoramaLevels(_d));
   }
 
@@ -219,7 +220,7 @@ class PanoramaQuantizerCodebook final : public QuantizerCodebook {
     _query.resize(d);
     RotateVector(reinterpret_cast<const float*>(_stats->Rotation()),
                  query.data(), _query.data(), d);
-    _pano = MakePanorama(d, faiss::Panorama::kDefaultBatchSize);
+    _pano = MakePanorama(d, kPanoramaBatch);
     _cums.resize(_levels + 1);
     _pano->compute_query_cum_sums(_query.data(), _cums.data());
   }

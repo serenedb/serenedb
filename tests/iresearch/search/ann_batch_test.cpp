@@ -372,21 +372,6 @@ TEST(VectorBlockReaderTest, HintsTheFineRunsOfMarkedRecords) {
   EXPECT_EQ(want, hints);
 }
 
-TEST(VectorBlockReaderTest, HintsTheWholeTailOfAMarkedGroup) {
-  const irs::bstring file(1 << 20, 0);
-  std::vector<irs::FileRange> hints;
-  auto setting = kSplit;
-  setting.fine_record_size = 0;
-  irs::detail::VectorBlockReader pay{
-    std::make_unique<RecordingInput>(file, hints), setting};
-  std::vector<uint8_t> marks(2 * 32, 0);
-  marks[32 + 7] = 1;
-  pay.HintFine(0, marks);
-  const uint64_t fine = setting.GroupBytes() + setting.CoarseBytes();
-  const std::vector<irs::FileRange> want{{fine, fine + setting.fine_bytes}};
-  EXPECT_EQ(want, hints);
-}
-
 irs::PostingMeta ClusterMeta(uint64_t doc_start, uint64_t pay_start,
                              uint16_t lane, uint32_t docs) {
   irs::PostingMeta meta;

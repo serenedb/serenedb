@@ -278,9 +278,11 @@ void ScanIvfClusters(const IndexInput& doc_in, const IndexInput& payload,
           const auto block = pay.Read(first, window);
           if (readers.front()->ComputeBlocks(readers, block, floors,
                                              scores.data(), marks.data())) {
-            fine.assign(window, 0);
-            for (size_t i = 0; i < marks.size(); ++i) {
-              fine[i % window] |= marks[i];
+            fine.assign(marks.begin(), marks.begin() + window);
+            for (size_t i = window; i < marks.size(); i += window) {
+              for (size_t j = 0; j < window; ++j) {
+                fine[j] |= marks[i + j];
+              }
             }
             pay.HintFine(first, fine);
             for (size_t i = 0; i < group.size(); ++i) {

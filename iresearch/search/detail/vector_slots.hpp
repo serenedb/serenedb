@@ -93,17 +93,12 @@ class VectorBlockReader {
     SDB_ASSERT(first % gs == 0);
     SDB_ASSERT(marks.size() % gs == 0);
     const uint64_t record = _setting.fine_record_size;
+    SDB_ASSERT(record != 0);
     for (size_t g = 0; g < marks.size(); g += gs) {
       const uint64_t fine = _base +
                             (first + g) * uint64_t{_setting.record_size} +
                             _setting.CoarseBytes();
       const auto group = marks.subspan(g, gs);
-      if (record == 0) {
-        if (absl::c_any_of(group, [](uint8_t mark) { return mark != 0; })) {
-          file_utils::Hint(*_in, fine, _setting.fine_bytes);
-        }
-        continue;
-      }
       for (size_t i = 0; i < gs;) {
         if (group[i] == 0) {
           ++i;

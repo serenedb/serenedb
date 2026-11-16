@@ -18,7 +18,6 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <absl/algorithm/container.h>
 #include <faiss/impl/ScalarQuantizer.h>
 #include <faiss/utils/random.h>
 
@@ -259,15 +258,12 @@ struct TurboQuantLayout {
     return RowGammaOffset() + (full ? sizeof(float) : 0);
   }
 
-  uint32_t NormOffset() const noexcept { return group1_bytes; }
+  uint32_t NormOffset() const noexcept { return group1_bytes + group2_bytes; }
   uint32_t GammaOffset() const noexcept {
     return NormOffset() + kFastScanBbs * sizeof(float);
   }
   uint32_t BiasOffset() const noexcept {
     return GammaOffset() + (full ? kFastScanBbs * sizeof(float) : 0);
-  }
-  uint32_t Code2Offset() const noexcept {
-    return BiasOffset() + kFastScanBbs * sizeof(float);
   }
   uint32_t GroupBytes() const noexcept { return kFastScanBbs * record_size; }
   PayloadBlockSetting BlockSetting() const noexcept {
@@ -275,7 +271,6 @@ struct TurboQuantLayout {
       .group_size = row_major ? 1U : uint32_t{kFastScanBbs},
       .record_size = record_size,
       .alignment = row_major ? 1U : uint32_t{alignof(float)},
-      .fine_bytes = row_major ? 0U : group2_bytes,
     };
   }
 };
@@ -847,17 +842,17 @@ class TurboQuantizerWriter final : public QuantizerWriter {
                           kFastScanBbs, _lay.nsq1, _packed1.data(),
                           _lay.code1_bytes);
     out.WriteData(_packed1.data(), _packed1.size());
-    WriteFloats(out, _norms, count);
-    if (_lay.full) {
-      WriteFloats(out, _gammas, count);
-    }
-    WriteFloats(out, _bias, count);
     if (_lay.full) {
       faiss::pq4_pack_codes(_code2.data(), count, _lay.m2, kFastScanBbs,
                             kFastScanBbs, _lay.nsq2, _packed2.data(),
                             _lay.code2_bytes);
       out.WriteData(_packed2.data(), _packed2.size());
     }
+    WriteFloats(out, _norms, count);
+    if (_lay.full) {
+      WriteFloats(out, _gammas, count);
+    }
+    WriteFloats(out, _bias, count);
     std::fill(_code1.begin(), _code1.end(), 0);
     std::fill(_code2.begin(), _code2.end(), 0);
     _lane = 0;
@@ -1252,49 +1247,6 @@ class TurboQuantizerReader final : public QuantizerReader {
     }
   }
 
-  bool ComputeCoarse(std::span<const byte_type> block, score_t threshold,
-                     score_t* out, uint8_t* marks) final {
-    if (_lay.row_major || !_lay.full) {
-      ComputeBlock(block, threshold, out);
-      return false;
-    }
-    const size_t group_bytes = _lay.GroupBytes();
-    SDB_ASSERT(block.size() % group_bytes == 0);
-    _block_ip.resize(block.size() / group_bytes * kFastScanBbs);
-    bool fine = false;
-    for (size_t off = 0, at = 0; off < block.size();
-         off += group_bytes, at += kFastScanBbs) {
-      const byte_type* codes = block.data() + off;
-      const auto t = TermsOf(codes);
-      const bool refine = CoarseLanes(codes, t.norms, t.gammas, t.bias,
-                                      kFastScanBbs, threshold, out + at);
-      std::fill_n(marks + at, kFastScanBbs, uint8_t{refine});
-      if (refine) {
-        absl::c_copy(_ip, _block_ip.begin() + at);
-        fine = true;
-      }
-    }
-    return fine;
-  }
-
-  void ComputeFine(std::span<const byte_type> block, const uint8_t* marks,
-                   score_t* out) final {
-    SDB_ASSERT(!_lay.row_major && _lay.full);
-    const size_t group_bytes = _lay.GroupBytes();
-    SDB_ASSERT(block.size() % group_bytes == 0);
-    for (size_t off = 0, at = 0; off < block.size();
-         off += group_bytes, at += kFastScanBbs) {
-      if (marks[at] == 0) {
-        continue;
-      }
-      const byte_type* codes = block.data() + off;
-      const auto t = TermsOf(codes);
-      std::copy_n(_block_ip.begin() + at, kFastScanBbs, _ip.begin());
-      FineLanes(codes + _lay.Code2Offset(), t.norms, t.gammas, t.bias,
-                kFastScanBbs, out + at);
-    }
-  }
-
   bool Decode(const byte_type* code, float* out) const final {
     if (!_lay.row_major || !_cluster) {
       return false;
@@ -1665,30 +1617,37 @@ class TurboQuantizerReader final : public QuantizerReader {
   }
 #endif
 
-  bool CoarseLanes(const byte_type* c1, const float* norms, const float* gammas,
-                   const float* bias, size_t count, score_t threshold,
-                   score_t* out) {
+  void ScoreLanes(const byte_type* c1, const byte_type* c2, const float* norms,
+                  const float* gammas, const float* bias, size_t count,
+                  score_t threshold, score_t* out) {
     Accumulate(c1, _cur->Lut1(), _cur->Chunks1());
     for (size_t i = 0; i < count; ++i) {
       _ip[i] = norms[i] * _sum[i] * _inv_sqrt_rd;
-      out[i] = ScoreFrom(_ip[i], i, bias);
     }
     if (!_lay.full) {
-      return false;
+      for (size_t i = 0; i < count; ++i) {
+        out[i] = ScoreFrom(_ip[i], i, bias);
+      }
+      return;
     }
+
     const float err = _cur->QjlErrorCoeff();
     const float slack = _cur->MseSlack();
+    bool refine = false;
     for (size_t i = 0; i < count; ++i) {
       const float bound = norms[i] * (err * gammas[i] + slack);
       if (ScoreFrom(_ip[i] + bound, i, bias) > threshold) {
-        return true;
+        refine = true;
+        break;
       }
     }
-    return false;
-  }
+    if (!refine) {
+      for (size_t i = 0; i < count; ++i) {
+        out[i] = ScoreFrom(_ip[i], i, bias);
+      }
+      return;
+    }
 
-  void FineLanes(const byte_type* c2, const float* norms, const float* gammas,
-                 const float* bias, size_t count, score_t* out) {
     Accumulate(c2, _cur->Lut2(), _cur->Chunks2());
     const float qjl_sum = _cur->QjlSum();
     for (size_t i = 0; i < count; ++i) {
@@ -1698,33 +1657,15 @@ class TurboQuantizerReader final : public QuantizerReader {
     }
   }
 
-  void ScoreLanes(const byte_type* c1, const byte_type* c2, const float* norms,
-                  const float* gammas, const float* bias, size_t count,
-                  score_t threshold, score_t* out) {
-    if (CoarseLanes(c1, norms, gammas, bias, count, threshold, out)) {
-      FineLanes(c2, norms, gammas, bias, count, out);
-    }
-  }
-
-  struct GroupTerms {
-    const float* norms;
-    const float* gammas;
-    const float* bias;
-  };
-
-  GroupTerms TermsOf(const byte_type* codes) const noexcept {
-    return {
-      .norms = reinterpret_cast<const float*>(codes + _lay.NormOffset()),
-      .gammas = _lay.full
-                  ? reinterpret_cast<const float*>(codes + _lay.GammaOffset())
-                  : nullptr,
-      .bias = reinterpret_cast<const float*>(codes + _lay.BiasOffset()),
-    };
-  }
-
   void ScoreGroup(const byte_type* codes, score_t threshold, score_t* out) {
-    const auto t = TermsOf(codes);
-    ScoreLanes(codes, codes + _lay.Code2Offset(), t.norms, t.gammas, t.bias,
+    const auto* norms =
+      reinterpret_cast<const float*>(codes + _lay.NormOffset());
+    const auto* bias =
+      reinterpret_cast<const float*>(codes + _lay.BiasOffset());
+    const auto* gammas =
+      _lay.full ? reinterpret_cast<const float*>(codes + _lay.GammaOffset())
+                : nullptr;
+    ScoreLanes(codes, codes + _lay.group1_bytes, norms, gammas, bias,
                kFastScanBbs, threshold, out);
   }
 
@@ -1800,7 +1741,6 @@ class TurboQuantizerReader final : public QuantizerReader {
   std::array<uint16_t, kFastScanBbs> _accu{};
   std::array<float, kFastScanBbs> _sum{};
   std::array<float, kFastScanBbs> _ip{};
-  std::vector<float> _block_ip;
 };
 
 template<VectorMetric M>

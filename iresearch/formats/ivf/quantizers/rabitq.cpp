@@ -769,13 +769,14 @@ class RaBitQuantizerReader final : public QuantizerReader {
     bool fine = false;
     for (size_t i = 0; i < count; ++i) {
       const float normalized = lut.Decode(accu[i]) - cs[i];
-      faiss::rabitq_utils::SignBitFactorsWithError fac;
-      std::memcpy(&fac, factors(i), _lay.factor_size);
+      const auto* fac =
+        reinterpret_cast<const faiss::rabitq_utils::SignBitFactorsWithError*>(
+          factors(i));
       const float dist = faiss::rabitq_utils::compute_1bit_adjusted_distance(
-        normalized, fac, _qf, kRaBitQCentered, kRaBitQQueryBits, _rd);
+        normalized, *fac, _qf, kRaBitQCentered, kRaBitQQueryBits, _rd);
       if (_lay.ex_bits > 0) {
         marks[i] = faiss::rabitq_utils::should_refine_candidate(
-          dist, fac.f_error, _qf.g_error, mt, M != VectorMetric::L2Sqr);
+          dist, fac->f_error, _qf.g_error, mt, M != VectorMetric::L2Sqr);
         fine |= marks[i] != 0;
       }
       out[i] = M == VectorMetric::L2Sqr ? -dist : dist;

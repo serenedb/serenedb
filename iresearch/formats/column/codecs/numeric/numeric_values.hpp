@@ -79,9 +79,7 @@ class Values final : public State {
 
   std::span<const U> Get() const noexcept { return _values; }
 
-  bool Usable() const noexcept {
-    return _any_valid && _values.size() <= std::numeric_limits<uint32_t>::max();
-  }
+  bool Usable() const noexcept { return _any_valid; }
 
   bool CodesOnly() const noexcept { return _codes_only; }
 

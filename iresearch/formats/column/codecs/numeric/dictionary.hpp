@@ -36,13 +36,17 @@
 namespace irs::codecs {
 
 template<typename T>
+inline constexpr size_t kDictionaryCodeBytes =
+  std::min<size_t>(sizeof(T) / 2, numeric::BytesFor(kNumericDictMax - 1));
+
+template<typename T>
 class DictionaryFrames final : public Frames<T> {
+  static_assert(sizeof(T) > 1);
   using Base = Frames<T>;
   using Base::kWidth;
   using typename Base::U;
 
-  static constexpr size_t kCodeBytes =
-    std::min<size_t>(kWidth / 2, numeric::BytesFor(kNumericDictMax - 1));
+  static constexpr size_t kCodeBytes = kDictionaryCodeBytes<T>;
 
  public:
   explicit DictionaryFrames(ColumnDataCheckpointData& data)
@@ -50,46 +54,44 @@ class DictionaryFrames final : public Frames<T> {
 
  private:
   void Build(const NumericTransform* only) final {
-    if constexpr (kWidth > 1) {
-      const bool bytes = Base::Wanted(only, NumericTransform::Dict);
-      const bool packed = Base::Wanted(only, NumericTransform::DictFfor);
-      const auto& facts = this->_values.GetFacts();
-      if ((!bytes && !packed) || this->_values.CodesOnly() ||
-          (!this->_named && facts.for_stored <= 1) ||
-          !BuildEntries(this->_named || facts.for_stored >= 4 ? kNumericDictMax
-                                                              : 256)) {
-        return;
-      }
-      const auto n = static_cast<uint32_t>(_codes.size());
-      const auto entries = static_cast<uint32_t>(_entries.size());
-      const std::span<const uint8_t> dict{
-        reinterpret_cast<const uint8_t*>(_entries.data()),
-        size_t{entries} * kWidth};
-      if (const auto code_width = numeric::BytesFor(entries - 1);
-          bytes && code_width <= kCodeBytes) {
-        SDB_ASSERT(this->_named || code_width < facts.for_stored);
-        _code_bytes.resize(size_t{n} * code_width);
-        numeric::Narrow<kCodeBytes>(
-          n, code_width, _code_bytes.data(),
-          [k = _codes.data()](size_t i) { return k[i]; });
-        this->AddWithShuffle({
-          .transform = NumericTransform::Dict,
-          .stored = code_width,
-          .items = n,
-          .values = _code_bytes,
-          .dict = dict,
-        });
-      }
-      if (packed) {
-        _code_blocks.Plan(std::span<const uint32_t>{_codes},
-                          std::less<uint32_t>{});
-        this->Add({
-          .transform = NumericTransform::DictFfor,
-          .stored = kWidth,
-          .items = n,
-          .dict = dict,
-        });
-      }
+    const bool bytes = Base::Wanted(only, NumericTransform::Dict);
+    const bool packed = Base::Wanted(only, NumericTransform::DictFfor);
+    const auto& facts = this->_values.GetFacts();
+    SDB_ASSERT(bytes || packed);
+    if (this->_values.CodesOnly() || (!this->_named && facts.for_stored <= 1) ||
+        !BuildEntries(this->_named || facts.for_stored >= 4 ? kNumericDictMax
+                                                            : 256)) {
+      return;
+    }
+    const auto n = static_cast<uint32_t>(_codes.size());
+    const auto entries = static_cast<uint32_t>(_entries.size());
+    const std::span<const uint8_t> dict{
+      reinterpret_cast<const uint8_t*>(_entries.data()),
+      size_t{entries} * kWidth};
+    if (const auto code_width = numeric::BytesFor(entries - 1);
+        bytes && code_width <= kCodeBytes) {
+      SDB_ASSERT(this->_named || code_width < facts.for_stored);
+      _code_bytes.resize(size_t{n} * code_width);
+      numeric::Narrow<kCodeBytes>(
+        n, code_width, _code_bytes.data(),
+        [k = _codes.data()](size_t i) { return k[i]; });
+      this->AddWithShuffle({
+        .transform = NumericTransform::Dict,
+        .stored = code_width,
+        .items = n,
+        .values = _code_bytes,
+        .dict = dict,
+      });
+    }
+    if (packed) {
+      _code_blocks.Plan(std::span<const uint32_t>{_codes},
+                        std::less<uint32_t>{});
+      this->Add({
+        .transform = NumericTransform::DictFfor,
+        .stored = kWidth,
+        .items = n,
+        .dict = dict,
+      });
     }
   }
 
@@ -175,7 +177,7 @@ class DictionaryReader final : public FrameReader<T> {
     SDB_ENSURE(
       frames.shape == NumericShape::Dictionary && _own.count != 0 &&
         _own.count <= kNumericDictMax &&
-        (this->Packed() || frames.stored <= sizeof(uint16_t)) &&
+        (this->Packed() || frames.stored <= kDictionaryCodeBytes<T>) &&
         uint64_t{frames.off_frames} +
             uint64_t{frames.frame_count} * kNumericFrameMetaSize <=
           _own.offset &&
@@ -272,9 +274,9 @@ class DictionaryReader final : public FrameReader<T> {
     if (_codes.size() < numeric::kBlockValues) {
       _codes.resize(numeric::kBlockValues);
     }
-    numeric::kUnpack<uint32_t>[bits](
-      this->template Words<uint32_t>(packed, bits), _codes.data(),
-      static_cast<uint32_t>(base));
+    numeric::kUnpack<uint32_t>[bits](this->template Words<uint32_t>(packed),
+                                     _codes.data(),
+                                     static_cast<uint32_t>(base));
     const auto largest =
       uint64_t{static_cast<uint32_t>(base)} + (uint64_t{1} << bits) - 1;
     Gather<uint32_t>(reinterpret_cast<const uint8_t*>(_codes.data()),
@@ -298,7 +300,7 @@ class DictionaryReader final : public FrameReader<T> {
   }
 
   void DecodeCodes(const uint8_t* src, uint32_t rows, U* out) const {
-    numeric::ResolveStored<sizeof(uint16_t)>(
+    numeric::ResolveStored<kDictionaryCodeBytes<T>>(
       this->_f.stored, [&]<typename C> { Gather<C>(src, rows, out); });
   }
 

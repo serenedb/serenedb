@@ -191,8 +191,7 @@ class PlainReader final : public FrameReader<T> {
 
   void UnpackBlock(uint64_t first, uint64_t rows, U* out) {
     const auto [packed, base, bits] = this->BlockAt(first);
-    const auto* words =
-      this->template Words<numeric::LaneWord<U>>(packed, bits);
+    const auto* words = this->template Words<numeric::LaneWord<U>>(packed);
     if (rows == numeric::kBlockValues) {
       numeric::kUnpack<U>[bits](words, out, static_cast<U>(base));
       return;

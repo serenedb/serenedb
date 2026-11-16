@@ -75,7 +75,9 @@ add_executable(
     duckdb/validity_mask_tests.cpp
     formats/column/col_codec_corruption_test.cpp
     formats/column/col_codec_paths_test.cpp
+    formats/column/col_byte_codecs_test.cpp
     formats/column/col_codecs_test.cpp
+    formats/column/col_compression_function_test.cpp
     formats/column/col_numeric_codec_test.cpp
     formats/column/column_reader_test.cpp
     formats/column/write_context_test.cpp
@@ -215,7 +217,11 @@ add_executable(
 )
 target_link_libraries(
     iresearch-tests
-    PRIVATE iresearch-test-support iresearch-test-writer search-benchmark-common
+    PRIVATE
+        iresearch-test-support
+        iresearch-test-writer
+        search-benchmark-common
+        zxc::zxc_lib
 )
 target_include_directories(
     iresearch-tests

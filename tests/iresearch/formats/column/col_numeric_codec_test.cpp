@@ -711,6 +711,85 @@ TEST_F(ColNumericCodecTest, PacksRunsAndCodesBelowByteWidths) {
   }
 }
 
+TEST_F(ColNumericCodecTest, CodesOfNoRowsEncodeToNothing) {
+  irs::codecs::NumericTuning tuning;
+  EXPECT_TRUE(irs::codecs::EncodeCodes({}, 0, 0, tuning).empty());
+}
+
+TEST_F(ColNumericCodecTest, FrameHeadersWithImpossibleWidthsAreRejected) {
+  struct Corruption {
+    std::string_view name;
+    duckdb::LogicalType type;
+    irs::codecs::CodecType codec;
+    Gen gen;
+    std::function<void(irs::codecs::FrameHeader&)> patch;
+  };
+  const Gen narrow = [](uint64_t g) -> std::optional<int64_t> {
+    return static_cast<int64_t>(Mix(g) % 200);
+  };
+  const Corruption cases[] = {
+    {"a value width of three bytes", duckdb::LogicalType::BIGINT,
+     irs::codecs::CodecType::Ffor, narrow,
+     [](irs::codecs::FrameHeader& h) { h.width = 3; }},
+    {"two-byte codes of a two-byte dictionary", duckdb::LogicalType::SMALLINT,
+     irs::codecs::CodecType::DictFfor, narrow,
+     [](irs::codecs::FrameHeader& h) {
+       ASSERT_EQ(irs::codecs::TransformOf(h),
+                 irs::codecs::NumericTransform::Dict);
+       h.stored = 2;
+     }},
+  };
+  for (const auto& c : cases) {
+    SCOPED_TRACE(c.name);
+    const auto path = test_dir() / "col_numeric_corrupt_widths";
+    std::filesystem::remove_all(path);
+    std::filesystem::create_directories(path);
+    uint64_t offset = 0;
+    uint64_t size = 0;
+    {
+      irs::MMapDirectory dir{path};
+      Write(dir, c.type, {.tier = irs::WriteTier::Flush}, 4096, 4096, c.gen,
+            c.codec);
+      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+      const auto* col = r.Column(kField);
+      ASSERT_NE(col, nullptr);
+      const auto& block = col->DataBlocks().front();
+      ASSERT_EQ(block.codec->type, c.codec);
+      offset = block.file_offset;
+      size = block.byte_size;
+    }
+    const auto file = path / irs::FileName(kSeg);
+    std::string bytes;
+    {
+      std::ifstream in{file, std::ios::binary};
+      bytes.assign(std::istreambuf_iterator<char>{in}, {});
+    }
+    ASSERT_LE(offset + size, bytes.size());
+    auto* block = reinterpret_cast<duckdb::data_ptr_t>(bytes.data() + offset);
+    auto h = irs::codecs::ParseFrames(block, size);
+    ASSERT_NO_FATAL_FAILURE(c.patch(h));
+    duckdb::Store(h, block);
+    {
+      std::ofstream out{file, std::ios::binary | std::ios::trunc};
+      out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    }
+    irs::MMapDirectory dir{path};
+    const auto scan = [&] {
+      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+      const auto* col = r.Column(kField);
+      auto state = col->InitScan(r.Ctx());
+      duckdb::Vector out{c.type, STANDARD_VECTOR_SIZE};
+      col->Scan(state, out, STANDARD_VECTOR_SIZE);
+    };
+#ifdef SDB_DEV
+    GTEST_FLAG_SET(death_test_style, "threadsafe");
+    EXPECT_DEATH(scan(), "numeric codec: corrupted segment header");
+#else
+    EXPECT_ANY_THROW(scan());
+#endif
+  }
+}
+
 TEST_F(ColNumericCodecTest, CorruptedRunCountIsRejected) {
   const auto path = test_dir() / "col_numeric_corrupt_runs";
   std::filesystem::create_directories(path);

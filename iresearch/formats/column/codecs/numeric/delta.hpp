@@ -202,8 +202,8 @@ class DeltaReader final : public FrameReader<T> {
     const auto [packed, base, bits] = this->BlockAt(first);
     this->_block.resize(numeric::kBlockValues);
     numeric::kUnpack<U>[bits](
-      this->template Words<numeric::LaneWord<U>>(packed, bits),
-      this->_block.data(), U{0});
+      this->template Words<numeric::LaneWord<U>>(packed), this->_block.data(),
+      U{0});
     const auto step = static_cast<U>(_own.base);
     auto value = static_cast<U>(base);
     out[0] = value;

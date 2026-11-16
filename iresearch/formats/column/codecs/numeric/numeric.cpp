@@ -318,15 +318,24 @@ uint64_t CodesBound(uint64_t rows, uint64_t entries, uint64_t runs) noexcept {
 }
 
 template<typename T>
+consteval const CompressionFunction* DictionaryFunction() {
+  if constexpr (sizeof(T) > 1) {
+    return &kShapeFunction<DictionaryFrames<T>>;
+  } else {
+    return nullptr;
+  }
+}
+
+template<typename T>
 inline constexpr const CompressionFunction* kFunctions[] = {
   &kShapeFunction<PlainFrames<T>>,
   &kShapeFunction<DeltaFrames<T>>,
   &kShapeFunction<RunFrames<T>>,
-  &kShapeFunction<DictionaryFrames<T>>,
+  DictionaryFunction<T>(),
 };
 
 template<typename R>
-constexpr Codec MakeCodec(CodecType type, const CompressionFunction* function) {
+consteval Codec MakeCodec(CodecType type, const CompressionFunction* function) {
   return {
     .type = type,
     .function = function,
@@ -340,12 +349,12 @@ constexpr Codec MakeCodec(CodecType type, const CompressionFunction* function) {
 }
 
 template<typename T>
-constexpr auto kCodecs = [] {
+constexpr auto kCodecs = []() consteval {
   constexpr auto kLeaves = std::size(kNumericCodecs[0]);
   constexpr auto kShapes = std::size(kNumericCodecs) - (sizeof(T) == 1);
   std::array<Codec, kShapes * kLeaves> codecs;
   for (size_t leaf = 0; leaf < kLeaves; ++leaf) {
-    const auto add = [&]<typename R>(NumericShape shape) {
+    const auto add = [&]<typename R>(NumericShape shape) consteval {
       const auto s = static_cast<size_t>(shape);
       codecs[s * kLeaves + leaf] =
         MakeCodec<R>(kNumericCodecs[s][leaf], kFunctions<T>[s]);

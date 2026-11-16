@@ -393,20 +393,9 @@ class FrameReader {
   }
 
   template<typename W>
-  const W* Words(const uint8_t* packed, unsigned bits) {
-    if (reinterpret_cast<uintptr_t>(packed) % alignof(W) == 0) {
-      return reinterpret_cast<const W*>(packed);
-    }
-    auto& words = [&]() -> ScratchVector<W>& {
-      if constexpr (sizeof(W) == sizeof(uint32_t)) {
-        return _words32;
-      } else {
-        return _words64;
-      }
-    }();
-    words.resize(numeric::PackedBytes(8 * sizeof(W)) / sizeof(W));
-    std::memcpy(words.data(), packed, numeric::PackedBytes(bits));
-    return words.data();
+  static const W* Words(const uint8_t* packed) noexcept {
+    SDB_ASSERT(reinterpret_cast<uintptr_t>(packed) % alignof(W) == 0);
+    return reinterpret_cast<const W*>(packed);
   }
 
   template<typename V>
@@ -421,7 +410,7 @@ class FrameReader {
       SDB_ENSURE(
         bits <= numeric::kMaxBits<V> && off + numeric::PackedBytes(bits) <= len,
         "numeric codec: corrupted blocks");
-      numeric::kUnpack<V>[bits](Words<numeric::LaneWord<V>>(src + off, bits),
+      numeric::kUnpack<V>[bits](Words<numeric::LaneWord<V>>(src + off),
                                 out + b * numeric::kBlockValues,
                                 static_cast<V>(duckdb::Load<uint64_t>(meta)));
       off += numeric::PackedBytes(bits);
@@ -493,8 +482,6 @@ class FrameReader {
   ScratchVector<U> _rows;
   ScratchVector<uint8_t> _raw;
   ScratchVector<uint8_t> _shuffled;
-  ScratchVector<uint32_t> _words32;
-  ScratchVector<uint64_t> _words64;
   const FforFrame* _ffor = nullptr;
   uint32_t _ffor_frame = kNoFrame;
   std::vector<FforFrame> _ffor_frames;

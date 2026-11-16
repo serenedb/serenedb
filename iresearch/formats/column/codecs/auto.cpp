@@ -107,8 +107,9 @@ class Contest {
   }
 
   bool Reuse() {
-    const auto* held = _reuse.pick ? _reuse.pick->function : nullptr;
-    if (!held || !absl::c_linear_search(_functions, held)) {
+    SDB_ASSERT(_reuse.pick);
+    const auto* held = _reuse.pick->function;
+    if (!absl::c_linear_search(_functions, held)) {
       return false;
     }
     if (_exact && held->exact) {

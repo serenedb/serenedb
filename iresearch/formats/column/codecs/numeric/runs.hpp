@@ -52,7 +52,8 @@ class RunFrames final : public Frames<T> {
     const auto& facts = this->_values.GetFacts();
     const auto n = static_cast<uint32_t>(values.size());
     const auto runs = facts.runs;
-    if ((!bytes && !packed) || (this->_named ? runs == n : runs * 2 > n)) {
+    SDB_ASSERT(bytes || packed);
+    if (this->_named ? runs == n : runs * 2 > n) {
       return;
     }
     _run_values.clear();

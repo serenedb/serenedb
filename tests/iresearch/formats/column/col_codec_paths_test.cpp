@@ -21,6 +21,7 @@
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <duckdb.hpp>
@@ -725,6 +726,100 @@ TEST_F(ColCodecPathsTest, RleReadsRunsOfEveryType) {
       {name("runs that turn single"), type, CodecType::Rle, All,
        [&](uint64_t g) { return item(g % kRgSize < 3000 ? g / 500 : g % 90); },
        /*stored=*/false});
+  }
+}
+
+TEST_F(ColCodecPathsTest, NumericCodecsReadEveryTypeThroughEveryPath) {
+  const LogicalType types[] = {
+    LogicalType::TINYINT,   LogicalType::UTINYINT, LogicalType::SMALLINT,
+    LogicalType::USMALLINT, LogicalType::INTEGER,  LogicalType::UINTEGER,
+    LogicalType::BIGINT,    LogicalType::UBIGINT,  LogicalType::FLOAT,
+    LogicalType::DOUBLE,
+  };
+  using Gen = std::function<Value(uint64_t)>;
+  for (const auto& type : types) {
+    const bool real = type.id() == duckdb::LogicalTypeId::FLOAT ||
+                      type.id() == duckdb::LogicalTypeId::DOUBLE;
+    const auto item = [&](int64_t v) {
+      return real
+               ? Value::DOUBLE(static_cast<double>(v) / 4).DefaultCastAs(type)
+               : Int(type, v);
+    };
+    const auto wide = [&](uint64_t k) {
+      return real ? Value::DOUBLE(static_cast<double>(Mix(k) % 1000003) / 7)
+                      .DefaultCastAs(type)
+                  : Wide(type, k);
+    };
+    const auto check = [&](CodecType codec, std::string_view shape,
+                           const Gen& value, bool (*valid)(uint64_t) = All) {
+      Check({absl::StrCat(type.ToString(), " ", irs::codecs::NameOf(codec), " ",
+                          shape),
+             type, codec, valid, value});
+    };
+    const auto bits = [&](uint64_t offset) {
+      return type.id() == duckdb::LogicalTypeId::FLOAT
+               ? Value::FLOAT(std::bit_cast<float>(
+                   static_cast<uint32_t>(0x3f800000 + offset)))
+               : Value::DOUBLE(
+                   std::bit_cast<double>(0x3ff0000000000000ULL + offset));
+    };
+    const Gen narrow = [&](uint64_t g) {
+      return real
+               ? bits(Mix(g) % 200)
+               : item(static_cast<int64_t>((g / 1024) % 4 * 25 + Mix(g) % 16));
+    };
+    const Gen spread = [&](uint64_t g) { return wide(g); };
+    for (const auto codec :
+         {CodecType::Ffor, CodecType::Lz4, CodecType::Zstd}) {
+      check(codec, "narrow", narrow);
+      check(codec, "spread", spread);
+      check(codec, "narrow with nulls", narrow, Periodic);
+    }
+    if (real) {
+      const uint64_t mid = type.id() == duckdb::LogicalTypeId::FLOAT
+                             ? 40000
+                             : uint64_t{4000000000};
+      check(CodecType::Ffor, "close bit patterns",
+            [&](uint64_t g) { return bits(Mix(g) % mid); });
+    }
+    const Gen steps = [&](uint64_t g) {
+      return item(static_cast<int64_t>(g / 1000));
+    };
+    const Gen noisy = [&](uint64_t g) {
+      return item(static_cast<int64_t>((g / 100 + Mix(g) % 3) % 100));
+    };
+    for (const auto codec :
+         {CodecType::DeltaFfor, CodecType::DeltaLz4, CodecType::DeltaZstd}) {
+      check(codec, "steps", steps);
+      check(codec, "noisy steps", noisy);
+      check(codec, "steps with nulls", steps, Periodic);
+    }
+    const Gen runs = [&](uint64_t g) {
+      return item(static_cast<int64_t>((g / 37) % 11));
+    };
+    for (const auto codec :
+         {CodecType::RleFfor, CodecType::RleLz4, CodecType::RleZstd}) {
+      check(codec, "runs", runs);
+      check(codec, "runs with null runs", runs, NullRuns);
+    }
+    Check({absl::StrCat(type.ToString(), " RLE_LZ4 a run of 70000 rows"), type,
+           CodecType::RleLz4, All,
+           [&](uint64_t g) { return item(g < 70000 ? 3 : 5); },
+           /*stored=*/true, irs::WriteTier::Flush, /*rows=*/140000,
+           /*rg_size=*/131072});
+    if (duckdb::GetTypeIdSize(type.InternalType()) == 1) {
+      continue;
+    }
+    const Gen fifty = [&](uint64_t g) { return wide(Mix(g) % 50); };
+    const Gen two_hundred = [&](uint64_t g) { return wide(Mix(g) % 200); };
+    const Gen three_hundred = [&](uint64_t g) { return wide(Mix(g) % 300); };
+    for (const auto codec :
+         {CodecType::DictFfor, CodecType::DictLz4, CodecType::DictZstd}) {
+      check(codec, "50 values", fifty);
+      check(codec, "200 values", two_hundred);
+      check(codec, "300 values", three_hundred);
+      check(codec, "50 values with nulls", fifty, Periodic);
+    }
   }
 }
 

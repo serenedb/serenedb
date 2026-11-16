@@ -52,10 +52,6 @@ constexpr bool Runs(NumericTransform t) noexcept {
   return t == NumericTransform::Rle || t == NumericTransform::RleFfor;
 }
 
-constexpr bool Coded(NumericTransform t) noexcept {
-  return t == NumericTransform::Dict || t == NumericTransform::DictFfor;
-}
-
 enum class NumericLeaf : uint8_t {
   None = 0,
   Lz4 = 1,
@@ -234,9 +230,12 @@ inline FrameHeader ParseFrames(duckdb::const_data_ptr_t p, uint64_t size) {
       NumericWidth(f.width) && NumericWidth(f.stored) && f.stored <= f.width &&
       (f.flags & ~(kNumericShuffled | kNumericPacked)) == 0 &&
       f.leaf <= NumericLeaf::Zstd &&
+      (!(f.flags & kNumericShuffled) || f.stored > 1) &&
       (!packed ||
        (f.leaf == NumericLeaf::None && !(f.flags & kNumericShuffled) &&
-        f.stored == f.width && f.frame_log2 == kFforFrameLog2)) &&
+        f.stored == f.width && f.frame_log2 == kFforFrameLog2 &&
+        (reinterpret_cast<uintptr_t>(p) + f.off_data) % sizeof(uint64_t) ==
+          0)) &&
       f.off_frames >= HeaderSize(f.shape) &&
       f.off_frames + uint64_t{f.frame_count} * kNumericFrameMetaSize <=
         f.off_data &&

@@ -306,7 +306,8 @@ class Frames : public State {
     auto& choice = data.tuning->numeric;
     const LeafSamples* samples = &_best_samples;
     if (!pick) {
-      if (!_values.Usable() || ShapeOf(choice.transform) != _shape) {
+      SDB_ASSERT(ShapeOf(choice.transform) == _shape);
+      if (!_values.Usable()) {
         return {};
       }
       Rebuild(&choice.transform);
@@ -314,7 +315,7 @@ class Frames : public State {
       const auto option = absl::c_find_if(
         plan, [&](const auto& o) { return o.leaf == choice.leaf; });
       const auto candidate = absl::c_find_if(_candidates, [&](const auto& c) {
-        return c.transform == choice.transform && c.shuffled == choice.shuffled;
+        return c.shuffled == choice.shuffled;
       });
       if (candidate == _candidates.end() || option == plan.end() ||
           !Enabled(data, option->leaf)) {
@@ -323,7 +324,7 @@ class Frames : public State {
       _best = &*candidate;
       _leaf = *option;
       samples = nullptr;
-    } else if (!_best || NumericCodec(_shape, _leaf.leaf) != pick->codec) {
+    } else if (!_best) {
       Estimate best;
       for (uint8_t round = 0; round < kRounds; ++round) {
         if (const auto estimate = Analyze(data, best.Score(), round);
@@ -379,10 +380,10 @@ class Frames : public State {
 
   virtual void Build(const NumericTransform* only) = 0;
 
-  virtual uint64_t PackedBlocks(const Candidate&) const noexcept { return 0; }
+  virtual uint64_t PackedBlocks(const Candidate&) const noexcept = 0;
 
-  virtual void AppendBlocks(const Candidate&, size_t /*first*/,
-                            size_t /*blocks*/, std::string&) {}
+  virtual void AppendBlocks(const Candidate&, size_t first, size_t blocks,
+                            std::string& out) = 0;
 
   virtual void StoreHeader(const Candidate& c, uint32_t off_dict,
                            duckdb::data_ptr_t own) const = 0;
@@ -426,7 +427,10 @@ class Frames : public State {
     if (data.only != CodecType::Auto) {
       return kCompactionPlan;
     }
-    if (std::is_floating_point_v<T> || _values.CodesOnly()) {
+    if constexpr (std::is_floating_point_v<T>) {
+      return kLeaflessPlan;
+    }
+    if (_values.CodesOnly()) {
       return kLeaflessPlan;
     }
     if (data.params.tier == WriteTier::Flush) {
@@ -550,7 +554,8 @@ class Frames : public State {
     h.scale = _values.Scale() > 1 ? _values.Scale() : 0;
     const uint32_t off_dict = h.off_frames + frames * kNumericFrameMetaSize;
 
-    const bool direct = option.leaf == NumericLeaf::None && !c.shuffled;
+    const bool direct = option.leaf == NumericLeaf::None;
+    SDB_ASSERT(!direct || !c.shuffled);
     if (direct) {
       out.reserve(h.off_data +
                   (BitPacked(c.transform) ? PackedBlocks(c) : h.raw_bytes));

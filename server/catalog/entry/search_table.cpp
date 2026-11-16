@@ -844,7 +844,8 @@ bool ConstraintUsesColumn(duckdb::ClientContext& context,
       return IsNotNullOn(constraint, column);
     case duckdb::ConstraintType::CHECK:
       return !columns.GetColumn(column).Generated() &&
-             SchemaBinder(context, table)
+             duckdb::Binder::CreateTableBinder(context,
+                                               table.ParentSchema(context))
                ->BindConstraint(constraint, table.name, columns)
                ->Cast<duckdb::BoundCheckConstraint>()
                .bound_columns.contains(columns.LogicalToPhysical(column));
@@ -1166,9 +1167,10 @@ SearchTableEntry::AddVerifiedConstraint(duckdb::ClientContext& context,
   if (!IsReplay(info)) {
     altered->BeginSchemaChange(context);
     altered->VerifyExistingRows(
-      context, *SchemaBinder(context, *this)
-                  ->BindConstraint(*altered->GetConstraints().back(), name,
-                                   altered->_columns));
+      context,
+      *duckdb::Binder::CreateTableBinder(context, ParentSchema(context))
+         ->BindConstraint(*altered->GetConstraints().back(), name,
+                          altered->_columns));
     altered->AdoptAsWritten(context);
   }
   return altered;

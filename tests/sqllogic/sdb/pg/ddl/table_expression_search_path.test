@@ -372,6 +372,26 @@ db error: ERROR: CHECK constraint failed on table "tesp_b" with expression CHECK
 
 
 statement ok
+CREATE TABLE public.tesp_dc (n INT, s TEXT CHECK (length(s) < 3));
+
+
+connection shadow
+statement ok
+ALTER TABLE public.tesp_dc DROP COLUMN s;
+
+
+statement ok
+INSERT INTO public.tesp_dc VALUES (1);
+
+
+query
+SELECT n FROM public.tesp_dc;
+----
+n
+1
+
+
+statement ok
 CREATE TABLE public.tesp_d (id INT PRIMARY KEY, a TEXT DEFAULT lower('ABC'), g TEXT GENERATED ALWAYS AS (a || '!') STORED);
 
 

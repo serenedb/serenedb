@@ -51,6 +51,45 @@ id	ao	bo
 1	{4,7}	{12,15}
 2	{0,3}	{2,5}
 
+query
+SELECT id, ts_offsets(a) AS ao, ts_offsets(b) AS bo
+FROM offsets_mixed_idx
+WHERE a @@ 'fox' AND b @@ 'fox'
+ORDER BY id;
+----
+id	ao	bo
+1	{4,7}	{12,15}
+2	{0,3}	{2,5,12,15}
+
+query
+SELECT id, ts_offsets(a) AS ao
+FROM offsets_mixed_idx
+WHERE (a @@ 'fox' OR a @@ 'den') AND b @@ 'fox'
+ORDER BY id;
+----
+id	ao
+1	{4,7}
+2	{0,3,4,7}
+
+query
+SELECT id, ts_offsets(a) AS ao
+FROM offsets_mixed_idx
+WHERE b @@ 'fox' AND NOT a @@ 'red'
+ORDER BY id;
+----
+id	ao
+2	{}
+
+query
+SELECT id, ts_highlight(a) AS ah
+FROM offsets_mixed_idx
+WHERE a @@ 'fox' AND b @@ 'fox'
+ORDER BY id;
+----
+id	ah
+1	red <b>fox</b>
+2	<b>fox</b> den
+
 statement ok
 DROP TABLE offsets_mixed CASCADE;
 

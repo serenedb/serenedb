@@ -21,6 +21,7 @@
 #include "connector/functions/ts_offsets.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
@@ -153,6 +154,7 @@ struct IndexField {
 struct OffsetsLocalState final : duckdb::FunctionLocalState {
   highlight::MemoryIndex memory_index;
   IndexField field;
+  std::vector<irs::QueryBuilder::ptr> leaves;
 };
 
 auto& EnsureField(duckdb::ClientContext& context,
@@ -240,11 +242,14 @@ void OffsetsScalarFn(duckdb::DataChunk& args, duckdb::ExpressionState& state,
     }
   });
 
+  auto& leaves = local_state.leaves;
+  absl::Cleanup clear_leaves = [&] { leaves.clear(); };
+  irs::PreparePositiveLeaves(
+    *bind.filter, *segment, {.needs_terms = true},
+    [&](irs::QueryBuilder::ptr query) { leaves.push_back(std::move(query)); });
   FieldEntry entry{.id = field.Id()};
-  const auto query =
-    bind.filter->PrepareSegment(*segment, {.needs_terms = true});
-  if (query) {
-    OffsetsCollector visitor{std::span{&entry, 1}};
+  OffsetsCollector visitor{std::span{&entry, 1}};
+  for (const auto& query : leaves) {
     query->Visit(visitor, irs::kNoBoost);
   }
 

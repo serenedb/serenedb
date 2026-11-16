@@ -109,6 +109,11 @@ struct StoreWrites {
   size_t checked_segments = 0;
   std::optional<LiveUnits> checked;
   bool merge_inserted = false;
+  struct VerifiedKey {
+    KeySpec spec;
+    std::shared_ptr<const TableState> state;
+  };
+  std::vector<VerifiedKey> verified_keys;
   // The unique keys of the rows this transaction removed, for every unique
   // key a foreign key references, and how many of them were checked; a key
   // first referenced after the transaction removed rows misses theirs until
@@ -308,6 +313,10 @@ class Writes {
                         const catalog::SearchTableEntry& table,
                         const KeySpec& spec);
 
+  void VerifyUniqueKey(duckdb::ClientContext& context,
+                       const std::shared_ptr<Store>& store,
+                       const KeySpec& spec);
+
   void PrepareCommit(duckdb::ClientContext& context);
   std::vector<LogSection> TakeLog(duckdb::ClientContext& context);
   bool CrossTable() const;
@@ -329,6 +338,7 @@ class Writes {
     return _snapshot.load(std::memory_order_acquire);
   }
   void Adopt(StoreWrites& w, const catalog::SearchTableEntry& table);
+  void AddIndexKeys(StoreWrites& w, const catalog::SearchTableEntry& table);
   void Flush(duckdb::ClientContext& context, StoreWrites& w);
   StoreWrites* Related(const Store& store, StoreWrites& w);
   // The catalog as it is now, with this transaction's own changes.

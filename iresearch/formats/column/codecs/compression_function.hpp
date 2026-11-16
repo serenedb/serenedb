@@ -164,6 +164,11 @@ struct CompressionFunction {
   bool (*compress)(ColumnDataCheckpointData& data) = nullptr;
 };
 
+struct Contender {
+  const CompressionFunction* function;
+  CodecSet codecs;
+};
+
 inline constexpr uint64_t kBlockSize = duckdb::Storage::DEFAULT_BLOCK_SIZE;
 
 class CompressedSegment {
@@ -261,7 +266,7 @@ inline constexpr CompressionFunction kStreamed{
   .compress = Streamed<kType, kAnalyze, kCompress, kAccepts>::Compress,
 };
 
-void Contest(std::span<const CompressionFunction* const> functions,
+void Contest(std::span<const Contender> contenders,
              ColumnDataCheckpointData& data);
 
 const CompressionFunction& UncompressedCompression(

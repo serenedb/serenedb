@@ -68,14 +68,9 @@ static_assert([] {
   return true;
 }());
 
-struct Candidate {
-  const CompressionFunction* function;
-  CodecSet codecs;
-};
-
-const std::vector<Candidate>& CandidatesOf(PhysicalType physical) {
+const std::vector<Contender>& ContendersOf(PhysicalType physical) {
   static const auto kCandidates = [] {
-    std::array<std::vector<Candidate>, 256> all;
+    std::array<std::vector<Contender>, 256> all;
     for (size_t index = 0; index < all.size(); ++index) {
       auto& list = all[index];
       const auto add = [&](CodecType type) {
@@ -83,11 +78,11 @@ const std::vector<Candidate>& CandidatesOf(PhysicalType physical) {
         if (!codec || !codec->compression) {
           return;
         }
-        auto it = absl::c_find_if(list, [&](const Candidate& candidate) {
-          return candidate.function == codec->compression;
+        auto it = absl::c_find_if(list, [&](const Contender& contender) {
+          return contender.function == codec->compression;
         });
         if (it == list.end()) {
-          it = list.insert(list.end(), Candidate{codec->compression, {}});
+          it = list.insert(list.end(), Contender{codec->compression, {}});
         }
         it->codecs.set(std::to_underlying(type));
       };
@@ -100,31 +95,26 @@ const std::vector<Candidate>& CandidatesOf(PhysicalType physical) {
   return kCandidates[std::to_underlying(physical)];
 }
 
-const CompressionFunction* Held(
-  const ColumnDataCheckpointData& data,
-  std::span<const CompressionFunction* const> functions) {
-  const auto pick = data.tuning->reuse.pick;
-  if (data.disabled.test(std::to_underlying(pick))) {
+const CompressionFunction* Held(const ColumnDataCheckpointData& data,
+                                std::span<const Contender> contenders) {
+  const auto pick = std::to_underlying(data.tuning->reuse.pick);
+  if (data.disabled.test(pick)) {
     return nullptr;
   }
-  const auto* codec = GetCodec(pick, data.type.InternalType());
-  SDB_ASSERT(codec && codec->compression);
-  return absl::c_linear_search(functions, codec->compression)
-           ? codec->compression
-           : nullptr;
+  const auto it = absl::c_find_if(contenders, [&](const Contender& contender) {
+    return contender.codecs.test(pick);
+  });
+  return it == contenders.end() ? nullptr : it->function;
 }
 
 bool CompressAuto(ColumnDataCheckpointData& data) {
   if (CompressConstant(data)) {
     return true;
   }
-  absl::InlinedVector<const CompressionFunction*,
-                      magic_enum::enum_count<CodecType>()>
-    enabled;
-  for (const auto& [function, codecs] :
-       CandidatesOf(data.type.InternalType())) {
-    if ((codecs & ~data.disabled).any()) {
-      enabled.push_back(function);
+  absl::InlinedVector<Contender, magic_enum::enum_count<CodecType>()> enabled;
+  for (const auto& contender : ContendersOf(data.type.InternalType())) {
+    if ((contender.codecs & ~data.disabled).any()) {
+      enabled.push_back(contender);
     }
   }
   Contest(enabled, data);
@@ -137,12 +127,12 @@ constexpr Codec kAutoCodec{.type = CodecType::Auto, .compression = &kAuto};
 
 }  // namespace
 
-void Contest(std::span<const CompressionFunction* const> functions,
+void Contest(std::span<const Contender> contenders,
              ColumnDataCheckpointData& data) {
   SDB_ASSERT(data.tuning);
   auto& reuse = data.tuning->reuse;
   const auto input = static_cast<double>(RawInput(data));
-  if (const auto* held = reuse.Due() ? nullptr : Held(data, functions)) {
+  if (const auto* held = reuse.Due() ? nullptr : Held(data, contenders)) {
     const auto written = data.written;
     if (held->compress(data)) {
       if (reuse.Grew(static_cast<double>(data.written - written), input)) {
@@ -153,7 +143,7 @@ void Contest(std::span<const CompressionFunction* const> functions,
   }
   Estimate best;
   const CompressionFunction* winner = nullptr;
-  for (const auto* function : functions) {
+  for (const auto& [function, codecs] : contenders) {
     if (const auto estimate = function->analyze(data, best.score);
         estimate.score < best.score) {
       best = estimate;

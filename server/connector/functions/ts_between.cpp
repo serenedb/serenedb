@@ -172,8 +172,8 @@ RangeArgs ParseRangeArgs(const duckdb::BoundFunctionExpression& func) {
   GetBoolArg(*func.GetChildren()[3], out.max_incl,
              {"ts_between max_incl", kSyntaxHint});
   if (out.min && out.max && out.min->type().id() != out.max->type().id() &&
-      !(IsRangeNumericValueType(out.min->type().id()) &&
-        IsRangeNumericValueType(out.max->type().id()))) {
+      !(term_dict::IsNumeric(out.min->type().id()) &&
+        term_dict::IsNumeric(out.max->type().id()))) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("ts_between bounds have mismatched types: ",

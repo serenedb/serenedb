@@ -342,8 +342,7 @@ doc_id_t ReadPosting(Input& in, uint32_t* IRS_RESTRICT enc,
       if (leaf.IsRun()) {
         block_codec::FillProgression(first, len, prev, 1);
       } else if (leaf.IsBitset()) {
-        block_io::MaterializeBitsetFrom(prev, leaf.bitset, 0, leaf.bitset[0],
-                                        leaf.words, first);
+        block_io::MaterializeBitset(prev, leaf.bitset, leaf.words, first);
       }
       for (const auto* it = first; it != docs + kBlock; ++it) {
         if (*it >= max) {

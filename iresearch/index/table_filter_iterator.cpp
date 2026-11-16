@@ -87,6 +87,23 @@ duckdb::TableFilterState& ColFilterStateCache::State(
   return *e.state;
 }
 
+bool ColFilterStateCache::AdmitsNull(duckdb::ClientContext& context,
+                                     const duckdb::TableFilter& filter,
+                                     const duckdb::LogicalType& type) {
+  auto& e = Find(filter);
+  if (!e.admits_null) {
+    duckdb::Vector null_row{type, 1};
+    null_row.SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
+    duckdb::ConstantVector::SetNull(null_row, true);
+    duckdb::SelectionVector sel;
+    duckdb::idx_t approved = 1;
+    duckdb::ColumnSegment::FilterSelection(sel, null_row,
+                                           State(context, filter), 1, approved);
+    e.admits_null = approved != 0;
+  }
+  return *e.admits_null;
+}
+
 irs::ColumnReader::VectorScratch& ColFilterStateCache::Scratch(
   const duckdb::TableFilter& filter, const duckdb::LogicalType& type) {
   auto& e = Find(filter);

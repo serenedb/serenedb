@@ -159,13 +159,7 @@ void ClassifySegmentColFilters(
       continue;
     }
     if (reader == nullptr) {
-      duckdb::Vector null_row{duckdb::Value{cf.type}, duckdb::count_t{1}};
-      duckdb::SelectionVector sel;
-      duckdb::idx_t approved = 1;
-      duckdb::ColumnSegment::FilterSelection(
-        sel, null_row, states.State(*g.client_context, *spec.filter), 1,
-        approved);
-      if (approved == 0) {
+      if (!states.AdmitsNull(*g.client_context, *spec.filter, cf.type)) {
         out.segment_dead = true;
         out.active.clear();
         return;

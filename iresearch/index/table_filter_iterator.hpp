@@ -105,6 +105,9 @@ class ColFilterStateCache {
  public:
   duckdb::TableFilterState& State(duckdb::ClientContext& context,
                                   const duckdb::TableFilter& filter);
+  bool AdmitsNull(duckdb::ClientContext& context,
+                  const duckdb::TableFilter& filter,
+                  const duckdb::LogicalType& type);
   irs::ColumnReader::VectorScratch& Scratch(const duckdb::TableFilter& filter,
                                             const duckdb::LogicalType& type);
   duckdb::DataChunk& Chunk(duckdb::ClientContext& context,
@@ -121,6 +124,7 @@ class ColFilterStateCache {
     std::unique_ptr<irs::ColumnReader::VectorScratch> scratch;
     std::unique_ptr<duckdb::DataChunk> chunk;
     std::vector<ColFilterLeaf> leaves;
+    std::optional<bool> admits_null;
   };
 
   Entry& Find(const duckdb::TableFilter& filter);

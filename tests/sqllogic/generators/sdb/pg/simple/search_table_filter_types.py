@@ -53,6 +53,8 @@ COLUMNS = [
      lambda b: (b - 50) / 4.0, f"{PIVOT / 4.0}::REAL", PIVOT / 4.0),
     ("c_f64", "DOUBLE", f"{K} / 8.0",
      lambda b: (b - 50) / 8.0, f"{PIVOT / 8.0}::DOUBLE", PIVOT / 8.0),
+    ("c_dec", "DECIMAL(18, 3)", f"({K} / 8.0)::DECIMAL(18, 3)",
+     lambda b: (b - 50) / 8.0, f"{PIVOT / 8.0}::DECIMAL(18, 3)", PIVOT / 8.0),
     ("c_iv", "INTERVAL", f"{K} * INTERVAL '1 minute'",
      lambda b: b - 50, f"INTERVAL '{PIVOT} minutes'", PIVOT),
     ("c_s", "VARCHAR",

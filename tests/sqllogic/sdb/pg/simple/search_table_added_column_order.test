@@ -73,3 +73,17 @@ SELECT count(*) AS n FROM sac WHERE tag IN ('t1_a_suffix_longer_than_twelve', 't
 ----
 n
 2144
+
+
+query
+SELECT count(*) AS n, min(id) AS lo, max(id) AS hi FROM sac WHERE k IS NULL;
+----
+n	lo	hi
+5000	0	4999
+
+
+query
+SELECT count(*) AS n FROM sac WHERE k IS NULL OR k = 7;
+----
+n
+5050

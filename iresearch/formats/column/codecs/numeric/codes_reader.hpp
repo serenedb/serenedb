@@ -76,7 +76,7 @@ class CodesReader {
   Shape _shape = Shape::Plain;
   std::optional<PlainReader<uint32_t>> _plain;
   std::optional<DeltaReader<uint32_t>> _delta;
-  std::optional<RunReader<uint32_t>> _runs;
+  std::optional<RunsReader<uint32_t>> _runs;
 };
 
 }  // namespace irs::codecs

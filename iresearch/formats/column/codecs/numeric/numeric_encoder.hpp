@@ -28,15 +28,14 @@
 #include <cstring>
 #include <duckdb/common/helper.hpp>
 #include <limits>
-#include <optional>
 #include <span>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "iresearch/formats/column/codecs/bytes/lz4.hpp"
-#include "iresearch/formats/column/codecs/bytes/zstd.hpp"
 #include "iresearch/formats/column/codecs/compression_function.hpp"
+#include "iresearch/formats/column/codecs/numeric/ffor_blocks.hpp"
+#include "iresearch/formats/column/codecs/numeric/leaves.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_kernels.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_layout.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_values.hpp"
@@ -46,38 +45,15 @@
 namespace irs::codecs {
 
 inline constexpr size_t kSampleFrames = 4;
-inline constexpr uint8_t kLeafLevel = 1;
 
-struct LeafOption {
-  ByteCodec leaf = ByteCodec::None;
-  double penalty = 0;
+inline constexpr double kLeafPenalty[] = {0, 0.05, 0.15};
 
-  double Price(uint64_t bytes) const noexcept {
-    return static_cast<double>(bytes) * (1.0 + penalty);
-  }
-};
+static_assert(std::size(kLeafPenalty) == kNumericLeafCount);
 
-inline constexpr LeafOption kLeaflessPlan[] = {{ByteCodec::None, 0}};
-inline constexpr LeafOption kRefreshPlan[] = {{ByteCodec::None, 0},
-                                              {ByteCodec::Lz4, 0.05}};
-inline constexpr LeafOption kCompactionPlan[] = {
-  {ByteCodec::None, 0},
-  {ByteCodec::Lz4, 0.05},
-  {ByteCodec::Zstd, 0.15},
-};
-
-static_assert([] {
-  for (size_t i = 0; i < std::size(kCompactionPlan); ++i) {
-    if (std::to_underlying(kCompactionPlan[i].leaf) != i ||
-        (i < std::size(kRefreshPlan) &&
-         kRefreshPlan[i].leaf != kCompactionPlan[i].leaf) ||
-        (i < std::size(kLeaflessPlan) &&
-         kLeaflessPlan[i].leaf != kCompactionPlan[i].leaf)) {
-      return false;
-    }
-  }
-  return true;
-}());
+inline double Price(ByteCodec leaf, uint64_t bytes) noexcept {
+  return static_cast<double>(bytes) *
+         (1.0 + kLeafPenalty[std::to_underlying(leaf)]);
+}
 
 struct Candidate {
   bool packed = false;
@@ -132,139 +108,8 @@ struct SampleFrames {
   ScratchVector<uint8_t> bytes[kSampleFrames];
 };
 
-class Leaves final : public State {
- public:
-  explicit Leaves(ColumnDataCheckpointData& data)
-    : _level{data.method != CodecType::Auto && data.params.compression_level
-               ? data.params.compression_level
-               : kLeafLevel} {}
-
-  uint8_t Level() const noexcept { return _level; }
-
-  size_t Compress(ByteCodec leaf, const uint8_t* src, size_t size) {
-    const auto bound =
-      leaf == ByteCodec::Lz4 ? Lz4::Bound(size) : Zstd::Bound(size);
-    if (_out.size() < bound) {
-      _out.resize(bound);
-    }
-    const auto* in = reinterpret_cast<const char*>(src);
-    if (leaf == ByteCodec::Lz4 && _level > 1) {
-      auto& lz4 = _lz4_hc ? *_lz4_hc : _lz4_hc.emplace(_level);
-      return lz4.Compress(in, size, _out.data(), _out.size());
-    }
-    if (leaf == ByteCodec::Lz4) {
-      auto& lz4 = _lz4 ? *_lz4 : _lz4.emplace(_level);
-      return lz4.Compress(in, size, _out.data(), _out.size());
-    }
-    auto& zstd = _zstd ? *_zstd : _zstd.emplace(_level);
-    return zstd.Compress(in, size, _out.data(), _out.size());
-  }
-
-  const char* Out() const noexcept { return _out.data(); }
-
- private:
-  std::optional<Lz4::Compressor> _lz4;
-  std::optional<Lz4Hc::Compressor> _lz4_hc;
-  std::optional<Zstd::Compressor> _zstd;
-  ScratchVector<char> _out;
-  uint8_t _level;
-};
-
-template<typename V>
-class Blocks {
- public:
-  template<typename Less>
-  void Plan(std::span<const V> v, Less less) {
-    const size_t blocks =
-      (v.size() + numeric::kBlockValues - 1) / numeric::kBlockValues;
-    _base.resize(blocks);
-    _bits.resize(blocks);
-    for (size_t b = 0; b < blocks; ++b) {
-      const size_t begin = b * numeric::kBlockValues;
-      const size_t end = std::min(v.size(), begin + numeric::kBlockValues);
-      V lo = v[begin];
-      V hi = lo;
-      for (size_t i = begin + 1; i < end; ++i) {
-        if (less(v[i], lo)) {
-          lo = v[i];
-        }
-        if (less(hi, v[i])) {
-          hi = v[i];
-        }
-      }
-      _base[b] = lo;
-      _bits[b] = static_cast<uint8_t>(std::bit_width(static_cast<V>(hi - lo)));
-    }
-  }
-
-  uint64_t Bytes(size_t first, size_t count) const noexcept {
-    uint64_t bytes = count * kFforBlockMetaBytes;
-    for (size_t b = first; b < first + count; ++b) {
-      bytes += numeric::PackedBytes(_bits[b]);
-    }
-    return bytes;
-  }
-
-  uint64_t Bytes() const noexcept { return Bytes(0, _bits.size()); }
-
-  void PlanDeltas(std::span<const V> deltas, std::span<const V> values) {
-    const size_t blocks =
-      (deltas.size() + numeric::kBlockValues - 1) / numeric::kBlockValues;
-    _base.assign(blocks, 0);
-    _bits.resize(blocks);
-    _first.resize(blocks);
-    for (size_t b = 0; b < blocks; ++b) {
-      const size_t begin = b * numeric::kBlockValues;
-      const size_t end = std::min(deltas.size(), begin + numeric::kBlockValues);
-      V hi = 0;
-      for (size_t i = begin + 1; i < end; ++i) {
-        hi = std::max(hi, deltas[i]);
-      }
-      _first[b] = values[begin];
-      _bits[b] = static_cast<uint8_t>(std::bit_width(hi));
-    }
-  }
-
-  void Append(std::span<const V> v, size_t first, size_t count,
-              std::string& out) {
-    _scratch.resize(numeric::kBlockValues);
-    const size_t at = out.size();
-    out.resize_and_overwrite(at + Bytes(first, count), [&](char* buf,
-                                                           size_t size) {
-      auto* meta = reinterpret_cast<uint8_t*>(buf + at);
-      auto* packed = meta + count * kFforBlockMetaBytes;
-      for (size_t b = 0; b < count; ++b) {
-        const size_t g = first + b;
-        const uint64_t stored_base = _first.empty() ? _base[g] : _first[g];
-        std::memset(meta, 0, kFforBlockMetaBytes);
-        duckdb::Store(stored_base, meta);
-        meta[sizeof(stored_base)] = _bits[g];
-        const size_t begin = g * numeric::kBlockValues;
-        const size_t n = std::min(numeric::kBlockValues, v.size() - begin);
-        const V* in = v.data() + begin;
-        if (n < numeric::kBlockValues) {
-          std::memcpy(_scratch.data(), in, n * sizeof(V));
-          std::fill_n(_scratch.data() + n, numeric::kBlockValues - n, _base[g]);
-          in = _scratch.data();
-        }
-        numeric::kPack<V>[_bits[g]](
-          in, reinterpret_cast<numeric::LaneWord<V>*>(packed), _base[g]);
-        meta += kFforBlockMetaBytes;
-        packed += numeric::PackedBytes(_bits[g]);
-      }
-      return size;
-    });
-  }
-
- private:
-  std::vector<V> _base;
-  std::vector<V> _first;
-  std::vector<uint8_t> _bits;
-  ScratchVector<V> _scratch;
-};
-
 template<typename T>
-class Frames : public State {
+class NumericEncoder : public State {
  public:
   using U = numeric::Bits<sizeof(T)>;
   static constexpr uint8_t kWidth = sizeof(T);
@@ -277,26 +122,24 @@ class Frames : public State {
     if (!_complete) {
       Rebuild(nullptr);
     }
-    const auto* offered = Offered(data, leaf);
-    if (!offered) {
+    if (!Offers(data, leaf)) {
       return {};
     }
-    const auto& option = *offered;
     const auto rows = static_cast<double>(_values.Get().size());
     auto best_price = bound * rows;
     bool improved = false;
     for (const auto& c : _candidates) {
-      if (option.leaf == ByteCodec::None ? c.shuffled : c.packed) {
+      if (leaf == ByteCodec::None ? c.shuffled : c.packed) {
         continue;
       }
-      const auto bytes = EstimateBytes(c, option, best_price);
-      if (const auto price = option.Price(bytes); price < best_price) {
+      const auto bytes = EstimateBytes(c, leaf, best_price);
+      if (const auto price = Price(leaf, bytes); price < best_price) {
         best_price = price;
         improved = true;
         _best = &c;
-        _leaf = option;
+        _leaf = leaf;
         _estimated = bytes;
-        if (option.leaf == ByteCodec::None) {
+        if (leaf == ByteCodec::None) {
           _best_samples.frames.clear();
         } else {
           std::swap(_samples, _best_samples);
@@ -307,8 +150,9 @@ class Frames : public State {
       return {};
     }
     return {
-      .codec = CodecOf(_shape, _leaf.leaf),
-      .score = static_cast<double>(_estimated) / rows * (1.0 + _leaf.penalty),
+      .codec = CodecOf(_shape, _leaf),
+      .score = static_cast<double>(_estimated) / rows *
+               (1.0 + kLeafPenalty[std::to_underlying(_leaf)]),
     };
   }
 
@@ -329,15 +173,14 @@ class Frames : public State {
         return false;
       }
       Rebuild(&choice);
-      const auto* option = Offered(data, leaf);
       const auto candidate = absl::c_find_if(_candidates, [&](const auto& c) {
         return c.shuffled == choice.shuffled;
       });
-      if (candidate == _candidates.end() || !option) {
+      if (candidate == _candidates.end() || !Offers(data, leaf)) {
         return false;
       }
       _best = &*candidate;
-      _leaf = *option;
+      _leaf = leaf;
       samples = nullptr;
     }
     _out.clear();
@@ -347,7 +190,7 @@ class Frames : public State {
       static_cast<double>(_out.size()) /
       std::max(static_cast<double>(PackedBound(data)) / 8, 1.0);
     if (held &&
-        ((_leaf.leaf == ByteCodec::None && choice.bound_ratio != 0 &&
+        ((_leaf == ByteCodec::None && choice.bound_ratio != 0 &&
           ratio > choice.bound_ratio * kDrift) ||
          data.tuning->reuse.Grew(static_cast<double>(_out.size()),
                                  static_cast<double>(RawInput(data))))) {
@@ -357,11 +200,11 @@ class Frames : public State {
       .shape = _shape,
       .packed = _best->packed,
       .narrowed = _best->narrowed,
-      .leaf = _leaf.leaf,
+      .leaf = _leaf,
       .shuffled = _best->shuffled,
       .bound_ratio = held ? choice.bound_ratio : ratio,
     };
-    data.FlushSegment(CodecOf(_shape, _leaf.leaf), _values.Stats(data.type),
+    data.FlushSegment(CodecOf(_shape, _leaf), _values.Stats(data.type),
                       _values.Get().size(), _out);
     return true;
   }
@@ -395,9 +238,9 @@ class Frames : public State {
   }
 
  protected:
-  Frames(ColumnDataCheckpointData& data, Shape shape)
+  NumericEncoder(ColumnDataCheckpointData& data, Shape shape)
     : _values{data.Get<Values<T>>()},
-      _named{data.method != CodecType::Auto},
+      _forced{data.method != CodecType::Auto},
       _leaves{data.Get<Leaves>()},
       _shape{shape} {}
 
@@ -416,7 +259,7 @@ class Frames : public State {
     }
   }
 
-  virtual void Build(const NumericChoice* only) = 0;
+  virtual void AddCandidates(const NumericChoice* only) = 0;
 
   virtual uint64_t PackedBlocks(const Candidate&) const noexcept = 0;
 
@@ -427,7 +270,7 @@ class Frames : public State {
                            duckdb::data_ptr_t own) const = 0;
 
   Values<T>& _values;
-  bool _named;
+  bool _forced;
 
  private:
   struct Geometry {
@@ -437,13 +280,12 @@ class Frames : public State {
     uint64_t off_data;
   };
 
-  Geometry GeometryOf(const Candidate& c,
-                      const LeafOption& option) const noexcept {
+  Geometry GeometryOf(const Candidate& c, ByteCodec leaf) const noexcept {
     uint8_t log2 = kFforFrameLog2;
     uint32_t per = _shape == Shape::Runs ? kRleFforFrameRuns : kFforFrameRows;
     if (!c.packed) {
-      log2 = option.leaf == ByteCodec::None ? kNumericFrameLog2
-                                            : kNumericLeafFrameLog2;
+      log2 =
+        leaf == ByteCodec::None ? kNumericFrameLog2 : kNumericLeafFrameLog2;
       per = (uint32_t{1} << log2) / c.ItemBytes();
     }
     const uint32_t frames = (c.items + per - 1) / per;
@@ -458,25 +300,15 @@ class Frames : public State {
     };
   }
 
-  std::span<const LeafOption> Plan(
-    const ColumnDataCheckpointData& data) const noexcept {
+  bool Offers(const ColumnDataCheckpointData& data,
+              ByteCodec leaf) const noexcept {
     if (data.method != CodecType::Auto) {
-      return kCompactionPlan;
+      return true;
     }
     if constexpr (std::is_floating_point_v<T>) {
-      return kLeaflessPlan;
+      return leaf == ByteCodec::None;
     }
-    if (data.params.tier == WriteTier::Flush) {
-      return kRefreshPlan;
-    }
-    return kCompactionPlan;
-  }
-
-  const LeafOption* Offered(const ColumnDataCheckpointData& data,
-                            ByteCodec leaf) const noexcept {
-    const auto plan = Plan(data);
-    const auto index = std::to_underlying(leaf);
-    return index < plan.size() ? &plan[index] : nullptr;
+    return data.params.tier != WriteTier::Flush || leaf != ByteCodec::Zstd;
   }
 
   bool Smallest(ByteCodec leaf) {
@@ -500,7 +332,7 @@ class Frames : public State {
       return false;
     }
     _best = best;
-    _leaf = kCompactionPlan[std::to_underlying(leaf)];
+    _leaf = leaf;
     _best_samples.frames.clear();
     return true;
   }
@@ -509,7 +341,7 @@ class Frames : public State {
     _complete = !only;
     _candidates.clear();
     _best = nullptr;
-    Build(only);
+    AddCandidates(only);
     _sample_frames.resize(_candidates.size());
     for (auto& frames : _sample_frames) {
       frames.ready = 0;
@@ -548,14 +380,13 @@ class Frames : public State {
     return FrameRaw(c, f, per, cached.bytes[k]);
   }
 
-  uint64_t EstimateBytes(const Candidate& c, const LeafOption& option,
-                         double bound) {
-    const auto g = GeometryOf(c, option);
+  uint64_t EstimateBytes(const Candidate& c, ByteCodec leaf, double bound) {
+    const auto g = GeometryOf(c, leaf);
     if (c.packed) {
       return g.off_data + PackedBlocks(c);
     }
     const uint64_t total = uint64_t{c.items} * c.ItemBytes();
-    if (option.leaf == ByteCodec::None) {
+    if (leaf == ByteCodec::None) {
       return g.off_data + total;
     }
     const auto samples = std::min<uint32_t>(g.frames, kSampleFrames);
@@ -576,7 +407,7 @@ class Frames : public State {
       SDB_ASSERT(bytes.size() ==
                  uint64_t{std::min(c.items - frame(k) * g.per, g.per)} *
                    c.ItemBytes());
-      const auto n = _leaves.Compress(option.leaf, bytes.data(), bytes.size());
+      const auto n = _leaves.Compress(leaf, bytes.data(), bytes.size());
       comp += std::min<uint64_t>(n, bytes.size());
       _samples.frames.push_back(frame(k));
       if (n < bytes.size()) {
@@ -585,21 +416,21 @@ class Frames : public State {
         _samples.bytes[k].clear();
       }
       if (const auto least = g.off_data + total * comp / raw;
-          option.Price(least) >= bound) {
+          Price(leaf, least) >= bound) {
         return least;
       }
     }
     return g.off_data + total * comp / raw;
   }
 
-  void Write(const Candidate& c, const LeafOption& option,
-             const LeafSamples* samples, std::string& out) {
+  void Write(const Candidate& c, ByteCodec leaf, const LeafSamples* samples,
+             std::string& out) {
     const auto values = _values.Get();
-    const auto [log2, per, frames, off_data] = GeometryOf(c, option);
+    const auto [log2, per, frames, off_data] = GeometryOf(c, leaf);
     FrameHeader h;
     h.width = kWidth;
     h.stored = c.stored;
-    h.level = option.leaf == ByteCodec::None ? uint8_t{0} : _leaves.Level();
+    h.level = leaf == ByteCodec::None ? uint8_t{0} : _leaves.Level();
     h.flags = static_cast<uint8_t>((c.shuffled ? kNumericShuffled : 0) |
                                    (c.packed ? kNumericPacked : 0));
     h.frame_log2 = log2;
@@ -611,7 +442,7 @@ class Frames : public State {
     h.scale = _values.Scale() > 1 ? _values.Scale() : 0;
     const uint32_t off_dict = h.off_frames + frames * kNumericFrameMetaSize;
 
-    const bool direct = option.leaf == ByteCodec::None;
+    const bool direct = leaf == ByteCodec::None;
     SDB_ASSERT(!direct || !c.shuffled);
     if (direct) {
       out.reserve(h.off_data + (c.packed ? PackedBlocks(c) : h.raw_bytes));
@@ -641,7 +472,7 @@ class Frames : public State {
         m.frame.comp_len = m.frame.raw_len;
         continue;
       }
-      bool compressible = option.leaf != ByteCodec::None;
+      bool compressible = leaf != ByteCodec::None;
       if (samples && sample < samples->frames.size() &&
           samples->frames[sample] == f) {
         const auto& stored = samples->bytes[sample++];
@@ -657,8 +488,7 @@ class Frames : public State {
       const auto bytes = FrameRaw(c, f, per, _frame);
       m.frame.raw_len = static_cast<uint32_t>(bytes.size());
       if (compressible) {
-        const auto n =
-          _leaves.Compress(option.leaf, bytes.data(), bytes.size());
+        const auto n = _leaves.Compress(leaf, bytes.data(), bytes.size());
         if (n < bytes.size()) {
           out.append(_leaves.Out(), n);
           m.frame.comp_len = static_cast<uint32_t>(n);
@@ -702,7 +532,7 @@ class Frames : public State {
   std::vector<SampleFrames> _sample_frames;
   const Candidate* _best = nullptr;
   bool _complete = false;
-  LeafOption _leaf;
+  ByteCodec _leaf = ByteCodec::None;
   uint64_t _estimated = 0;
   LeafSamples _samples;
   LeafSamples _best_samples;

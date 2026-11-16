@@ -24,24 +24,24 @@
 #include <string>
 #include <type_traits>
 
-#include "iresearch/formats/column/codecs/numeric/numeric_frames.hpp"
+#include "iresearch/formats/column/codecs/numeric/numeric_encoder.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_reader.hpp"
 
 namespace irs::codecs {
 
 template<typename T>
-class PlainFrames final : public Frames<T> {
-  using Base = Frames<T>;
+class PlainEncoder final : public NumericEncoder<T> {
+  using Base = NumericEncoder<T>;
   using Base::kWidth;
   using typename Base::U;
 
  public:
   static constexpr Shape kShape = Shape::Plain;
 
-  explicit PlainFrames(ColumnDataCheckpointData& data) : Base{data, kShape} {}
+  explicit PlainEncoder(ColumnDataCheckpointData& data) : Base{data, kShape} {}
 
  private:
-  void Build(const NumericChoice* only) final {
+  void AddCandidates(const NumericChoice* only) final {
     const auto values = this->_values.Get();
     const auto& facts = this->_values.GetFacts();
     const auto n = static_cast<uint32_t>(values.size());
@@ -97,7 +97,7 @@ class PlainFrames final : public Frames<T> {
   }
 
   ScratchVector<uint8_t> _for;
-  Blocks<U> _ffor;
+  FforBlocks<U> _ffor;
 };
 
 template<typename T>

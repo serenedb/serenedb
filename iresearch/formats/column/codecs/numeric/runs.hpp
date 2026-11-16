@@ -26,25 +26,25 @@
 #include <string>
 #include <vector>
 
-#include "iresearch/formats/column/codecs/numeric/numeric_frames.hpp"
+#include "iresearch/formats/column/codecs/numeric/numeric_encoder.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_reader.hpp"
 #include "iresearch/utils/lower_bound.hpp"
 
 namespace irs::codecs {
 
 template<typename T>
-class RunFrames final : public Frames<T> {
-  using Base = Frames<T>;
+class RunsEncoder final : public NumericEncoder<T> {
+  using Base = NumericEncoder<T>;
   using Base::kWidth;
   using typename Base::U;
 
  public:
   static constexpr Shape kShape = Shape::Runs;
 
-  explicit RunFrames(ColumnDataCheckpointData& data) : Base{data, kShape} {}
+  explicit RunsEncoder(ColumnDataCheckpointData& data) : Base{data, kShape} {}
 
  private:
-  void Build(const NumericChoice* only) final {
+  void AddCandidates(const NumericChoice* only) final {
     const bool bytes = Base::Wanted(only, false);
     const bool packed = Base::Wanted(only, true);
     const auto values = this->_values.Get();
@@ -52,7 +52,7 @@ class RunFrames final : public Frames<T> {
     const auto n = static_cast<uint32_t>(values.size());
     const auto runs = facts.runs;
     SDB_ASSERT(bytes || packed);
-    if (this->_named ? runs == n : runs * 2 > n) {
+    if (this->_forced ? runs == n : runs * 2 > n) {
       return;
     }
     _run_values.clear();
@@ -127,12 +127,12 @@ class RunFrames final : public Frames<T> {
   std::vector<uint32_t> _rows;
   ScratchVector<uint8_t> _value_bytes;
   ScratchVector<uint8_t> _length_bytes;
-  Blocks<U> _value_blocks;
-  Blocks<uint32_t> _length_blocks;
+  FforBlocks<U> _value_blocks;
+  FforBlocks<uint32_t> _length_blocks;
 };
 
 template<typename T>
-class RunReader final : public FrameReader<T> {
+class RunsReader final : public FrameReader<T> {
   using Base = FrameReader<T>;
   using typename Base::U;
   static constexpr uint32_t kBurst = 32 / sizeof(T);
@@ -140,8 +140,8 @@ class RunReader final : public FrameReader<T> {
   static constexpr size_t kNearRuns = 32;
 
  public:
-  RunReader(duckdb::const_data_ptr_t base, const FrameHeader& frames,
-            CodecType codec, const ReadContext::CacheSlot& slot = {})
+  RunsReader(duckdb::const_data_ptr_t base, const FrameHeader& frames,
+             CodecType codec, const ReadContext::CacheSlot& slot = {})
     : Base{base, frames, codec, slot},
       _own{duckdb::Load<RunsHeader>(base + sizeof(FrameHeader))} {
     SDB_ENSURE((this->Packed() ? _own.base == 0

@@ -29,7 +29,7 @@
 #include <type_traits>
 #include <vector>
 
-#include "iresearch/formats/column/codecs/numeric/numeric_frames.hpp"
+#include "iresearch/formats/column/codecs/numeric/numeric_encoder.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_reader.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 
@@ -40,9 +40,9 @@ inline constexpr size_t kDictionaryCodeBytes =
   std::min<size_t>(sizeof(T) / 2, numeric::BytesFor(kNumericDictMax - 1));
 
 template<typename T>
-class DictionaryFrames final : public Frames<T> {
+class DictionaryEncoder final : public NumericEncoder<T> {
   static_assert(sizeof(T) > 1);
-  using Base = Frames<T>;
+  using Base = NumericEncoder<T>;
   using Base::kWidth;
   using typename Base::U;
 
@@ -51,18 +51,18 @@ class DictionaryFrames final : public Frames<T> {
  public:
   static constexpr Shape kShape = Shape::Dictionary;
 
-  explicit DictionaryFrames(ColumnDataCheckpointData& data)
+  explicit DictionaryEncoder(ColumnDataCheckpointData& data)
     : Base{data, kShape} {}
 
  private:
-  void Build(const NumericChoice* only) final {
+  void AddCandidates(const NumericChoice* only) final {
     const bool bytes = Base::Wanted(only, false);
     const bool packed = Base::Wanted(only, true);
     const auto& facts = this->_values.GetFacts();
     SDB_ASSERT(bytes || packed);
-    if ((!this->_named && facts.for_stored <= 1) ||
-        !BuildEntries(this->_named || facts.for_stored >= 4 ? kNumericDictMax
-                                                            : 256)) {
+    if ((!this->_forced && facts.for_stored <= 1) ||
+        !BuildEntries(this->_forced || facts.for_stored >= 4 ? kNumericDictMax
+                                                             : 256)) {
       return;
     }
     const auto n = static_cast<uint32_t>(_codes.size());
@@ -72,7 +72,7 @@ class DictionaryFrames final : public Frames<T> {
       size_t{entries} * kWidth};
     if (const auto code_width = numeric::BytesFor(entries - 1);
         bytes && code_width <= kCodeBytes) {
-      SDB_ASSERT(this->_named || code_width < facts.for_stored);
+      SDB_ASSERT(this->_forced || code_width < facts.for_stored);
       _code_bytes.resize(size_t{n} * code_width);
       numeric::Narrow<kCodeBytes>(
         n, code_width, _code_bytes.data(),
@@ -162,7 +162,7 @@ class DictionaryFrames final : public Frames<T> {
   containers::FlatHashMap<U, uint32_t> _index;
   ScratchVector<uint32_t> _codes;
   ScratchVector<uint8_t> _code_bytes;
-  Blocks<uint32_t> _code_blocks;
+  FforBlocks<uint32_t> _code_blocks;
 };
 
 template<typename T>

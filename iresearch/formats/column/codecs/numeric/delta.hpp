@@ -25,29 +25,29 @@
 #include <string>
 #include <type_traits>
 
-#include "iresearch/formats/column/codecs/numeric/numeric_frames.hpp"
+#include "iresearch/formats/column/codecs/numeric/numeric_encoder.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_reader.hpp"
 
 namespace irs::codecs {
 
 template<typename T>
-class DeltaFrames final : public Frames<T> {
-  using Base = Frames<T>;
+class DeltaEncoder final : public NumericEncoder<T> {
+  using Base = NumericEncoder<T>;
   using Base::kWidth;
   using typename Base::U;
 
  public:
   static constexpr Shape kShape = Shape::Delta;
 
-  explicit DeltaFrames(ColumnDataCheckpointData& data) : Base{data, kShape} {}
+  explicit DeltaEncoder(ColumnDataCheckpointData& data) : Base{data, kShape} {}
 
  private:
-  void Build(const NumericChoice* only) final {
+  void AddCandidates(const NumericChoice* only) final {
     const auto values = this->_values.Get();
     const auto& facts = this->_values.GetFacts();
     const auto n = static_cast<uint32_t>(values.size());
     if constexpr (std::is_integral_v<T>) {
-      if (Base::Wanted(only, true) && this->_named &&
+      if (Base::Wanted(only, true) && this->_forced &&
           facts.delta_bits < facts.for_bits) {
         _wide.resize(n);
         for (uint32_t i = 0; i < n; ++i) {
@@ -99,7 +99,7 @@ class DeltaFrames final : public Frames<T> {
 
   ScratchVector<uint8_t> _delta;
   ScratchVector<U> _wide;
-  Blocks<U> _blocks;
+  FforBlocks<U> _blocks;
 };
 
 template<typename T>

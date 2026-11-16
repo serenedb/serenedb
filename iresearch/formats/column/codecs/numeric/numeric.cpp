@@ -47,17 +47,17 @@ constexpr const Codec* kCodecs[] = {
 template<typename T>
 const Codec* FormCodec(Shape shape, ByteCodec leaf) {
   const auto index = std::to_underlying(leaf);
-  SDB_ASSERT(index < std::size(kCodecs<PlainFrames<T>, PlainReader<T>>));
+  SDB_ASSERT(index < std::size(kCodecs<PlainEncoder<T>, PlainReader<T>>));
   switch (shape) {
     case Shape::Plain:
-      return kCodecs<PlainFrames<T>, PlainReader<T>>[index];
+      return kCodecs<PlainEncoder<T>, PlainReader<T>>[index];
     case Shape::Delta:
-      return kCodecs<DeltaFrames<T>, DeltaReader<T>>[index];
+      return kCodecs<DeltaEncoder<T>, DeltaReader<T>>[index];
     case Shape::Runs:
-      return kCodecs<RunFrames<T>, RunReader<T>>[index];
+      return kCodecs<RunsEncoder<T>, RunsReader<T>>[index];
     case Shape::Dictionary:
       if constexpr (sizeof(T) > 1) {
-        return kCodecs<DictionaryFrames<T>, DictionaryReader<T>>[index];
+        return kCodecs<DictionaryEncoder<T>, DictionaryReader<T>>[index];
       }
       break;
   }

@@ -556,10 +556,8 @@ void FetchRows(const ColumnSegment& segment, ColumnFetchState& state,
 }
 
 template<typename Scan>
-consteval Codec StringFunction() {
-  Codec f{
-    .type = TextCodec(Scan::kShape, Scan::kCodec),
-    .function = &kStringsFunction,
+inline constexpr DecompressionFunction kStringDecompression = [] consteval {
+  DecompressionFunction f{
     .init_scan = InitScan<Scan>,
     .scan = ScanVector<Scan>,
     .select = Select<Scan>,
@@ -571,6 +569,15 @@ consteval Codec StringFunction() {
     f.filter = Filter<Scan>;
   }
   return f;
+}();
+
+template<typename Scan>
+consteval Codec StringFunction() {
+  return {
+    .type = TextCodec(Scan::kShape, Scan::kCodec),
+    .compression = &kStringsFunction,
+    .decompression = &kStringDecompression<Scan>,
+  };
 }
 
 }  // namespace irs::codecs::text

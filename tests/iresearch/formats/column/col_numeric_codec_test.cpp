@@ -407,7 +407,7 @@ class ColNumericCodecTest : public TestBase {
       if (irs::codecs::IsNumeric(block.codec->type)) {
         window = col->Locate(row, window);
         auto seg = col->OpenSegment(window.block, ctx);
-        out.emplace_back(seg->codec.get_segment_info(*seg)[key]);
+        out.emplace_back(seg->function.get_segment_info(*seg)[key]);
       }
       row += block.tuple_count;
     }
@@ -437,7 +437,7 @@ class ColNumericCodecTest : public TestBase {
       if (irs::codecs::IsNumeric(block.codec->type)) {
         window = col->Locate(row, window);
         auto seg = col->OpenSegment(window.block, ctx);
-        auto info = seg->codec.get_segment_info(*seg);
+        auto info = seg->function.get_segment_info(*seg);
         out.emplace_back(info["transform"] + "/" + info["leaf"]);
       }
       row += block.tuple_count;
@@ -586,7 +586,7 @@ TEST_F(ColNumericCodecTest, ANamedLeafCodecCompressesAtTheColumnsLevel) {
         ASSERT_EQ(block.codec->type, codec);
         window = col->Locate(row, window);
         auto seg = col->OpenSegment(window.block, ctx);
-        auto info = seg->codec.get_segment_info(*seg);
+        auto info = seg->function.get_segment_info(*seg);
         EXPECT_EQ(info["level"], level ? "9" : "1");
         bytes[level != 0] += std::stoull(info["data_bytes"]);
         row += block.tuple_count;
@@ -2192,7 +2192,7 @@ void ExpectRleAnalysesAgree(const duckdb::LogicalType& type,
       .rows = values.size(),
       .input = values.size(),
     };
-    return rle->function
+    return rle->compression
       ->analyze(data, std::numeric_limits<double>::infinity(), 0)
       .ratio;
   };

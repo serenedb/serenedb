@@ -1810,20 +1810,28 @@ void FetchRowsBoolean(const ColumnSegment& segment, ColumnFetchState& state,
   }
 }
 
-constexpr Codec kValidity{
-  .type = CodecType::Roaring,
-  .function = &kFunction<duckdb::PhysicalType::BIT>,
+constexpr DecompressionFunction kValidityDecompression{
   .init_scan = InitScan,
   .scan = ScanValidity,
   .fetch_rows = FetchRowsValidity,
 };
 
-constexpr Codec kBoolean{
+constexpr Codec kValidity{
   .type = CodecType::Roaring,
-  .function = &kFunction<duckdb::PhysicalType::BOOL>,
+  .compression = &kFunction<duckdb::PhysicalType::BIT>,
+  .decompression = &kValidityDecompression,
+};
+
+constexpr DecompressionFunction kBooleanDecompression{
   .init_scan = InitScan,
   .scan = ScanBoolean,
   .fetch_rows = FetchRowsBoolean,
+};
+
+constexpr Codec kBoolean{
+  .type = CodecType::Roaring,
+  .compression = &kFunction<duckdb::PhysicalType::BOOL>,
+  .decompression = &kBooleanDecompression,
 };
 
 }  // namespace

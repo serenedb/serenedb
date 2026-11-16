@@ -127,7 +127,7 @@ FrameHeader SegmentFrames(const_data_ptr_t base, const ColumnSegment& segment) {
   const auto frames = ParseFrames(base, segment.size);
   SDB_ENSURE(frames.row_count == segment.count,
              "numeric codec: row count mismatch");
-  SDB_ENSURE(NumericCodec(frames.shape, frames.leaf) == segment.codec.type,
+  SDB_ENSURE(NumericCodec(frames.shape, frames.leaf) == segment.codec,
              "numeric codec: the segment is not of its block's codec");
   return frames;
 }
@@ -335,18 +335,14 @@ inline constexpr const CompressionFunction* kFunctions[] = {
 };
 
 template<typename R>
-consteval Codec MakeCodec(CodecType type, const CompressionFunction* function) {
-  return {
-    .type = type,
-    .function = function,
-    .init_scan = InitScan<R>,
-    .scan = Scan<R>,
-    .select = Select<R>,
-    .filter = Filter<R>,
-    .fetch_rows = FetchRows<R>,
-    .get_segment_info = SegmentInfo,
-  };
-}
+constexpr DecompressionFunction kDecompression{
+  .init_scan = InitScan<R>,
+  .scan = Scan<R>,
+  .select = Select<R>,
+  .filter = Filter<R>,
+  .fetch_rows = FetchRows<R>,
+  .get_segment_info = SegmentInfo,
+};
 
 template<typename T>
 constexpr auto kCodecs = []() consteval {
@@ -356,8 +352,11 @@ constexpr auto kCodecs = []() consteval {
   for (size_t leaf = 0; leaf < kLeaves; ++leaf) {
     const auto add = [&]<typename R>(NumericShape shape) consteval {
       const auto s = static_cast<size_t>(shape);
-      codecs[s * kLeaves + leaf] =
-        MakeCodec<R>(kNumericCodecs[s][leaf], kFunctions<T>[s]);
+      codecs[s * kLeaves + leaf] = {
+        .type = kNumericCodecs[s][leaf],
+        .compression = kFunctions<T>[s],
+        .decompression = &kDecompression<R>,
+      };
     };
     add.template operator()<PlainReader<T>>(NumericShape::Plain);
     add.template operator()<DeltaReader<T>>(NumericShape::Delta);

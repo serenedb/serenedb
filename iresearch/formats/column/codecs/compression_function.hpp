@@ -55,6 +55,7 @@ namespace irs::codecs {
 
 struct Codec;
 struct CompressionFunction;
+struct DecompressionFunction;
 
 enum class CompressionValidity : uint8_t {
   RequiresValidity,
@@ -64,7 +65,7 @@ enum class CompressionValidity : uint8_t {
 struct ColumnSegment {
   duckdb::BufferHandle Pin() const;
 
-  const Codec& codec;
+  const DecompressionFunction& function;
   const duckdb::LogicalType& type;
   const duckdb::BaseStatistics& stats;
   ReadContext& ctx;
@@ -72,6 +73,7 @@ struct ColumnSegment {
   ReadContext::CacheSlot cache_slot;
   uint64_t count = 0;
   uint64_t size = 0;
+  CodecType codec = CodecType::Uncompressed;
 };
 
 struct SegmentScanState {
@@ -218,9 +220,7 @@ class CompressedSegment {
   std::unique_ptr<duckdb::data_t[]> _buffer;
 };
 
-struct Codec {
-  CodecType type = CodecType::Uncompressed;
-  const CompressionFunction* function = nullptr;
+struct DecompressionFunction {
   std::unique_ptr<SegmentScanState> (*init_scan)(const ColumnSegment& segment) =
     nullptr;
   void (*scan)(const ColumnSegment& segment, ColumnScanState& state,
@@ -247,6 +247,12 @@ struct Codec {
   duckdb::InsertionOrderPreservingMap<std::string> (*get_segment_info)(
     const ColumnSegment& segment) = nullptr;
   CompressionValidity validity = CompressionValidity::RequiresValidity;
+};
+
+struct Codec {
+  CodecType type = CodecType::Uncompressed;
+  const CompressionFunction* compression = nullptr;
+  const DecompressionFunction* decompression = nullptr;
 };
 
 duckdb::idx_t CountRows(std::span<const WriteChunk> chunks) noexcept;

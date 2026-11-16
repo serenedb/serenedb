@@ -226,10 +226,10 @@ void PrintSegmentInfo(const Seg& seg, const irs::ColumnReader& col,
   uint64_t row = 0;
   for (const auto& block : col.DataBlocks()) {
     std::string key{irs::codecs::NameOf(block.codec->type)};
-    if (block.codec->get_segment_info && block.byte_size != 0) {
+    if (block.codec->decompression->get_segment_info && block.byte_size != 0) {
       window = col.Locate(row, window);
       auto segment = col.OpenSegment(window.block, ctx);
-      auto info = block.codec->get_segment_info(*segment);
+      auto info = block.codec->decompression->get_segment_info(*segment);
       for (const auto* name :
            {"transform", "leaf", "stored", "shuffled", "codec", "shape",
             "dictionary", "codes_transform"}) {

@@ -1283,17 +1283,22 @@ duckdb::InsertionOrderPreservingMap<std::string> SegmentInfo(
   return result;
 }
 
-template<typename T, duckdb::PhysicalType kPhysical, bool kStats, bool kFilter>
-constexpr Codec kFunction{
-  .type = CodecType::Bitpacking,
-  .function = &kStreamed<CodecType::Bitpacking, AnalyzeChunks<T>,
-                         CompressChunks<T, kStats>, Accepts<T>>,
+template<typename T, bool kFilter>
+constexpr DecompressionFunction kDecompression{
   .init_scan = InitScan<T>,
   .scan = Scan<T>,
   .filter = kFilter ? Filter<T> : nullptr,
   .fetch_rows = FetchRows<T>,
   .skip = Skip<T>,
   .get_segment_info = SegmentInfo<T>,
+};
+
+template<typename T, duckdb::PhysicalType kPhysical, bool kStats, bool kFilter>
+constexpr Codec kFunction{
+  .type = CodecType::Bitpacking,
+  .compression = &kStreamed<CodecType::Bitpacking, AnalyzeChunks<T>,
+                            CompressChunks<T, kStats>, Accepts<T>>,
+  .decompression = &kDecompression<T, kFilter>,
 };
 
 }  // namespace

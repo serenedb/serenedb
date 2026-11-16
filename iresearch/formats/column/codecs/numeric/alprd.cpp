@@ -1013,15 +1013,20 @@ void AlpRdFetchRows(const ColumnSegment& segment, ColumnFetchState& state,
   }
 }
 
-template<typename T, duckdb::PhysicalType kPhysical>
-constexpr Codec kFunction{
-  .type = CodecType::AlpRd,
-  .function = &kStreamed<CodecType::AlpRd, AlpRdAnalyzeChunks<T>,
-                         AlpRdCompressChunks<T>, HasRows>,
+template<typename T>
+constexpr DecompressionFunction kDecompression{
   .init_scan = AlpRdInitScan<T>,
   .scan = AlpRdScan<T>,
   .fetch_rows = AlpRdFetchRows<T>,
   .skip = AlpRdSkip<T>,
+};
+
+template<typename T, duckdb::PhysicalType kPhysical>
+constexpr Codec kFunction{
+  .type = CodecType::AlpRd,
+  .compression = &kStreamed<CodecType::AlpRd, AlpRdAnalyzeChunks<T>,
+                            AlpRdCompressChunks<T>, HasRows>,
+  .decompression = &kDecompression<T>,
 };
 
 }  // namespace

@@ -131,21 +131,30 @@ void Select(const ColumnSegment& segment, ColumnScanState& state,
   Fill<T>(segment, result, result_offset, sel_count);
 }
 
-constexpr Codec kValidity{
-  .type = CodecType::Constant,
+constexpr DecompressionFunction kValidityDecompression{
   .init_scan = InitScan,
   .scan = ScanValidity,
   .select = SelectValidity,
   .fetch_rows = FetchRowsValidity,
 };
 
-template<typename T, duckdb::PhysicalType kPhysical>
-constexpr Codec kFunction{
+constexpr Codec kValidity{
   .type = CodecType::Constant,
+  .decompression = &kValidityDecompression,
+};
+
+template<typename T>
+constexpr DecompressionFunction kDecompression{
   .init_scan = InitScan,
   .scan = Scan<T>,
   .select = Select<T>,
   .fetch_rows = FetchRows<T>,
+};
+
+template<typename T, duckdb::PhysicalType kPhysical>
+constexpr Codec kFunction{
+  .type = CodecType::Constant,
+  .decompression = &kDecompression<T>,
 };
 
 }  // namespace

@@ -316,7 +316,7 @@ class ColCodecsTest : public TestBase {
           irs::codecs::IsNumeric(block.codec->type)) {
         window = col->Locate(row, window);
         auto seg = col->OpenSegment(window.block, ctx);
-        auto info = seg->codec.get_segment_info(*seg);
+        auto info = seg->function.get_segment_info(*seg);
         level = info["level"];
       }
       levels.emplace_back(block.codec->type, std::move(level));
@@ -337,7 +337,7 @@ class ColCodecsTest : public TestBase {
     for (const auto& block : col->DataBlocks()) {
       window = col->Locate(row, window);
       auto seg = col->OpenSegment(window.block, ctx);
-      auto info = seg->codec.get_segment_info(*seg);
+      auto info = seg->function.get_segment_info(*seg);
       values.emplace_back(info[key]);
       row += block.tuple_count;
     }
@@ -757,7 +757,7 @@ TEST_F(ColCodecsTest, ColumnLevelOverridesTableLevel) {
     irs::BlockWindow window{};
     window = col->Locate(0, window);
     auto seg = col->OpenSegment(window.block, ctx);
-    auto info = seg->codec.get_segment_info(*seg);
+    auto info = seg->function.get_segment_info(*seg);
     return info["level"];
   };
   for (const uint8_t column_level : {uint8_t{0}, uint8_t{9}}) {
@@ -2547,9 +2547,9 @@ TEST_F(ColCodecsTest, RleLookupsInEveryOrder) {
   const auto fetch = [&](const irs::codecs::ColumnSegment& segment,
                          irs::codecs::ColumnFetchState& state, uint64_t g) {
     const duckdb::idx_t row = g;
-    segment.codec.fetch_rows(segment, state, &row, 1, out,
-                             *duckdb::FlatVector::IncrementalSelectionVector(),
-                             0);
+    segment.function.fetch_rows(
+      segment, state, &row, 1, out,
+      *duckdb::FlatVector::IncrementalSelectionVector(), 0);
     return duckdb::FlatVector::GetData<int64_t>(out)[0];
   };
   for (uint64_t g = 0; g < 4096; g += 37) {

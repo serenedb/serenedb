@@ -369,7 +369,7 @@ irs::codecs::CodecType CheckColumnCodec(
   }
   const auto compresses = [&](duckdb::PhysicalType physical) {
     const auto* written = codec->function(physical);
-    return written && written->function;
+    return written && written->compression;
   };
   const auto physical = column_type.InternalType();
   if (compresses(physical)) {
@@ -504,9 +504,10 @@ void AppendIResearchBlockRows(
     info.block_offset = meta.file_offset;
     info.segment_info = absl::StrCat("byte_size: ", meta.byte_size);
     if (read && meta.byte_size != 0 && meta.codec &&
-        meta.codec->get_segment_info) {
+        meta.codec->decompression->get_segment_info) {
       const auto opened = node.OpenSegment(block, *read);
-      for (const auto& [mode, count] : meta.codec->get_segment_info(*opened)) {
+      for (const auto& [mode, count] :
+           meta.codec->decompression->get_segment_info(*opened)) {
         absl::StrAppend(&info.segment_info, ", ", mode, ": ", count);
       }
     }

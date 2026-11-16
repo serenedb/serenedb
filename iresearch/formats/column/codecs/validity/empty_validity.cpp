@@ -39,12 +39,16 @@ void Select(const ColumnSegment&, ColumnScanState&, idx_t, duckdb::Vector&,
 void FetchRows(const ColumnSegment&, ColumnFetchState&, const idx_t*, idx_t,
                duckdb::Vector&, const duckdb::SelectionVector&, idx_t) {}
 
-constexpr Codec kFunction{
-  .type = CodecType::Empty,
+constexpr DecompressionFunction kDecompression{
   .init_scan = InitScan,
   .scan = Scan,
   .select = Select,
   .fetch_rows = FetchRows,
+};
+
+constexpr Codec kFunction{
+  .type = CodecType::Empty,
+  .decompression = &kDecompression,
 };
 
 }  // namespace

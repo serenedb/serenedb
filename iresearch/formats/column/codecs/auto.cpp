@@ -52,9 +52,9 @@ std::span<const CompressionFunction* const> FunctionsOf(PhysicalType physical) {
       auto& list = functions[physical];
       const auto add = [&](CodecType type) {
         const auto* codec = GetCodec(type, static_cast<PhysicalType>(physical));
-        if (codec && codec->function &&
-            !absl::c_linear_search(list, codec->function)) {
-          list.push_back(codec->function);
+        if (codec && codec->compression &&
+            !absl::c_linear_search(list, codec->compression)) {
+          list.push_back(codec->compression);
         }
       };
       for (const auto type : kOrder) {
@@ -181,10 +181,10 @@ class Contest {
     if (!winner || encoded.Failed()) {
       const auto* uncompressed =
         GetCodec(CodecType::Uncompressed, _data.type.InternalType());
-      SDB_ENSURE(uncompressed && uncompressed->function,
+      SDB_ENSURE(uncompressed && uncompressed->compression,
                  "column writer: no codec accepted the row group for ",
                  _data.type.ToString());
-      winner = uncompressed->function;
+      winner = uncompressed->compression;
       best = {.codec = CodecType::Uncompressed};
       encoded = {.streams = true};
     }
@@ -243,9 +243,9 @@ void Compress(CodecType method, ColumnDataCheckpointData& data) {
   data.input = std::max<uint64_t>(data.rows, 1);
   if (method != CodecType::Auto) {
     const auto* codec = GetCodec(method, physical);
-    SDB_ASSERT(codec && codec->function);
+    SDB_ASSERT(codec && codec->compression);
     data.only = method;
-    const CompressionFunction* const functions[] = {codec->function};
+    const CompressionFunction* const functions[] = {codec->compression};
     Compress(functions, data);
     return;
   }
@@ -262,7 +262,7 @@ bool Writes(CodecType type, PhysicalType physical,
     return false;
   }
   const auto* codec = GetCodec(type, physical);
-  return codec && codec->function;
+  return codec && codec->compression;
 }
 
 }  // namespace irs::codecs

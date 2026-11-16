@@ -216,11 +216,11 @@ bool ColumnWriter::Compress(const duckdb::LogicalType& type,
   const auto flush = [&](const codecs::Codec& codec,
                          duckdb::BaseStatistics stats, uint64_t rows,
                          std::string_view bytes) {
-    SDB_ASSERT(codec.init_scan);
+    SDB_ASSERT(codec.decompression);
     flushed = true;
     needs_validity =
-      needs_validity ||
-      codec.validity == codecs::CompressionValidity::RequiresValidity;
+      needs_validity || codec.decompression->validity ==
+                          codecs::CompressionValidity::RequiresValidity;
     CaptureBlock(codec, std::move(stats), rows, bytes, ctx.Out(), sink);
   };
   codecs::ColumnDataCheckpointData data{
@@ -698,7 +698,7 @@ codecs::CodecType ColumnWriter::ForcedCodec() const {
     return codecs::IsText(forced) ? forced : codecs::CodecType::Auto;
   }
   const auto* codec = codecs::GetCodec(forced, physical);
-  return codec && codec->function ? forced : codecs::CodecType::Auto;
+  return codec && codec->compression ? forced : codecs::CodecType::Auto;
 }
 
 bool ColumnWriter::CopyableFrom(const ColumnReader& column) const {

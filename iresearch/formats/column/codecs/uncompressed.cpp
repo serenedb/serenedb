@@ -223,16 +223,22 @@ void FixedSizeFetchRows(const ColumnSegment& segment, ColumnFetchState& state,
   }
 }
 
+template<typename T>
+constexpr DecompressionFunction kFixedSizeDecompression{
+  .init_scan = InitPinnedScan,
+  .scan = FixedSizeScan<T>,
+  .fetch_rows = FixedSizeFetchRows<T>,
+};
+
 template<typename T, bool kList, duckdb::PhysicalType kPhysical>
 constexpr Codec kFixedSize{
   .type = CodecType::Uncompressed,
-  .function =
+  .compression =
     &kStreamed<CodecType::Uncompressed,
                FixedSizeAnalyze<std::conditional_t<kList, uint64_t, T>>,
                CompressChunks<FixedSizeAppender<T, kList>>>,
-  .init_scan = InitPinnedScan,
-  .scan = FixedSizeScan<std::conditional_t<kList, uint64_t, T>>,
-  .fetch_rows = FixedSizeFetchRows<std::conditional_t<kList, uint64_t, T>>,
+  .decompression =
+    &kFixedSizeDecompression<std::conditional_t<kList, uint64_t, T>>,
 };
 
 constexpr idx_t kBitsPerEntry = duckdb::ValidityMask::BITS_PER_VALUE;
@@ -409,14 +415,18 @@ void ValidityFetchRows(const ColumnSegment& segment, ColumnFetchState& state,
   }
 }
 
-constexpr Codec kValidity{
-  .type = CodecType::Uncompressed,
-  .function = &kStreamed<CodecType::Uncompressed, ValidityAnalyze,
-                         CompressChunks<ValidityAppender>>,
+constexpr DecompressionFunction kValidityDecompression{
   .init_scan = InitPinnedScan,
   .scan = ValidityScan,
   .select = ValiditySelect,
   .fetch_rows = ValidityFetchRows,
+};
+
+constexpr Codec kValidity{
+  .type = CodecType::Uncompressed,
+  .compression = &kStreamed<CodecType::Uncompressed, ValidityAnalyze,
+                            CompressChunks<ValidityAppender>>,
+  .decompression = &kValidityDecompression,
 };
 
 constexpr uint32_t kDictionaryHeaderSize = 2 * sizeof(uint32_t);
@@ -646,14 +656,18 @@ void StringFetchRows(const ColumnSegment& segment, ColumnFetchState& state,
   }
 }
 
-constexpr Codec kString{
-  .type = CodecType::Uncompressed,
-  .function = &kStreamed<CodecType::Uncompressed, nullptr,
-                         CompressChunks<StringAppender>>,
+constexpr DecompressionFunction kStringDecompression{
   .init_scan = InitPinnedScan,
   .scan = StringScan,
   .select = StringSelect,
   .fetch_rows = StringFetchRows,
+};
+
+constexpr Codec kString{
+  .type = CodecType::Uncompressed,
+  .compression = &kStreamed<CodecType::Uncompressed, nullptr,
+                            CompressChunks<StringAppender>>,
+  .decompression = &kStringDecompression,
 };
 
 }  // namespace

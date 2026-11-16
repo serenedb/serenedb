@@ -78,7 +78,7 @@ ColumnBlockMeta DeserializeColumnBlockMeta(duckdb::BinaryDeserializer& d,
   auto stats = d.ReadProperty<duckdb::BaseStatistics>(4, "statistics");
   const auto* codec =
     codecs::GetCodec(codecs::CodecType{compression_type}, physical);
-  if (!codec || !codec->init_scan) [[unlikely]] {
+  if (!codec || !codec->decompression) [[unlikely]] {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
       ERR_MSG("Column block uses compression ",
@@ -121,7 +121,7 @@ void ReadBlockMetas(duckdb::BinaryDeserializer& d, duckdb::field_id_t id,
 }
 
 bool BorrowsBlockStrings(const codecs::ColumnSegment& segment) {
-  return segment.codec.type == codecs::CodecType::Uncompressed &&
+  return segment.codec == codecs::CodecType::Uncompressed &&
          segment.type.InternalType() == duckdb::PhysicalType::VARCHAR;
 }
 
@@ -132,13 +132,13 @@ void ScanSegment(const codecs::ColumnSegment& segment,
   SDB_ASSERT(scan_type == duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR
                ? result_offset == 0
                : result.GetVectorType() == duckdb::VectorType::FLAT_VECTOR);
-  segment.codec.scan(segment, st, count, result, result_offset, scan_type);
+  segment.function.scan(segment, st, count, result, result_offset, scan_type);
 }
 
 void SkipSegment(const codecs::ColumnSegment& segment,
                  codecs::ColumnScanState& st) {
-  if (segment.codec.skip) {
-    segment.codec.skip(segment, st, st.offset_in_column - st.internal_index);
+  if (segment.function.skip) {
+    segment.function.skip(segment, st, st.offset_in_column - st.internal_index);
   }
   st.internal_index = st.offset_in_column;
 }
@@ -153,8 +153,8 @@ void FetchSegmentRows(const codecs::ColumnSegment& segment,
     return;
   }
   SDB_ASSERT(rows[count - 1] < segment.count);
-  segment.codec.fetch_rows(segment, state, rows, count, result, result_sel,
-                           result_offset);
+  segment.function.fetch_rows(segment, state, rows, count, result, result_sel,
+                              result_offset);
 }
 
 struct GatherBands {
@@ -208,13 +208,14 @@ bool ScatterWins(const ColumnBlockMeta& block, const duckdb::LogicalType& type,
   if (hits * 1000 <= BandsFor(block.codec->type, type).flat * span) {
     return true;
   }
-  return !block.codec->select && FewStringRuns(type, sel, hits, span);
+  return !block.codec->decompression->select &&
+         FewStringRuns(type, sel, hits, span);
 }
 
 bool SelectsNatively(const ColumnBlockMeta& block,
                      const duckdb::LogicalType& type, duckdb::idx_t hits,
                      duckdb::idx_t span) noexcept {
-  return block.codec->select &&
+  return block.codec->decompression->select &&
          hits * 1000 <= BandsFor(block.codec->type, type).native * span;
 }
 
@@ -394,12 +395,13 @@ std::unique_ptr<codecs::ColumnSegment> ColumnReader::Open(const BlockWindow& w,
   const auto& m = _segments[w.block];
   const auto& codec = *m.codec;
   auto segment = std::make_unique<codecs::ColumnSegment>(codecs::ColumnSegment{
-    .codec = codec,
+    .function = *codec.decompression,
     .type = m.statistics.GetType(),
     .stats = m.statistics,
     .ctx = ctx,
     .count = m.tuple_count,
     .size = m.byte_size,
+    .codec = codec.type,
   });
   if (m.byte_size == 0) {
     if (codec.type != codecs::CodecType::Constant &&
@@ -527,7 +529,7 @@ void ColumnReader::OpenScanSegment(ScanState& s) const {
     s.st.previous_states.emplace_back(std::move(s.st.scan_state));
   }
   const auto& segment = *s.segments.emplace_back(Open(s.window, *s.ctx, &s));
-  s.st.scan_state = segment.codec.init_scan(segment);
+  s.st.scan_state = segment.function.init_scan(segment);
   s.st.internal_index = 0;
   s.initialized = true;
 }
@@ -896,8 +898,8 @@ void ColumnReader::SelectAcross(ScanState& s,
       s.piece.set_index(k - i, sel.get_index(k) - row);
     }
     const auto& segment = *s.segments.back();
-    segment.codec.select(segment, s.st, rows, out, at + i, s.piece, end - i,
-                         duckdb::ScanVectorType::SCAN_FLAT_VECTOR);
+    segment.function.select(segment, s.st, rows, out, at + i, s.piece, end - i,
+                            duckdb::ScanVectorType::SCAN_FLAT_VECTOR);
     const auto taken = sel.get_index(end - 1) + 1 - row;
     s.st.offset_in_column += taken;
     s.st.internal_index = s.st.offset_in_column;
@@ -916,23 +918,24 @@ bool ColumnReader::SelectNative(ScanState& s,
   const bool within =
     (s.window.end - s.window.begin) - s.st.offset_in_column >= span;
   const auto& codec = *_segments[s.window.block].codec;
+  const auto& function = *codec.decompression;
   if (hits * 1000 > BandsFor(codec.type, _type).native * span ||
-      !codec.select || (!within && !SelectsAcross(s, span))) {
+      !function.select || (!within && !SelectsAcross(s, span))) {
     return false;
   }
   const bool self_valid =
-    codec.validity == codecs::CompressionValidity::NoValidityRequired;
+    function.validity == codecs::CompressionValidity::NoValidityRequired;
   if (_validity && !self_valid) {
     auto& vs = s.child_states[0];
     _validity->BeginScanVector(vs);
     if ((vs.window.end - vs.window.begin) - vs.st.offset_in_column < span ||
-        !_validity->_segments[vs.window.block].codec->select) {
+        !_validity->_segments[vs.window.block].codec->decompression->select) {
       return false;
     }
   }
   if (within) {
     const auto& segment = *s.segments.back();
-    segment.codec.select(segment, s.st, span, out, at, sel, hits, scan_type);
+    segment.function.select(segment, s.st, span, out, at, sel, hits, scan_type);
     s.st.offset_in_column += span;
     s.st.internal_index = s.st.offset_in_column;
   } else {
@@ -943,7 +946,8 @@ bool ColumnReader::SelectNative(ScanState& s,
   } else if (_validity) {
     auto& vs = s.child_states[0];
     const auto& validity = *vs.segments.back();
-    validity.codec.select(validity, vs.st, span, out, at, sel, hits, scan_type);
+    validity.function.select(validity, vs.st, span, out, at, sel, hits,
+                             scan_type);
     vs.st.offset_in_column += span;
     vs.st.internal_index = vs.st.offset_in_column;
   }
@@ -978,7 +982,7 @@ bool ColumnReader::FiltersByBlock(const ScanState& s, uint64_t anchor,
     return true;
   }
   for (size_t block = s.window.block; _offsets[block] < end; ++block) {
-    if (_segments[block].codec->filter) {
+    if (_segments[block].codec->decompression->filter) {
       return true;
     }
   }
@@ -1056,12 +1060,12 @@ duckdb::idx_t ColumnReader::FilterBlock(
   NullCheckKind null_check, duckdb::Vector& result) const {
   const auto& seg = *s.segments.back();
 
-  const auto& codec = seg.codec;
+  const auto& function = seg.function;
   duckdb::idx_t approved = sel_count;
   const bool within_segment =
     (s.window.end - s.window.begin) - s.st.offset_in_column >= span;
   const bool self_valid =
-    codec.validity == codecs::CompressionValidity::NoValidityRequired;
+    function.validity == codecs::CompressionValidity::NoValidityRequired;
   // The codec filter needs the data segment alone to be validity-complete for
   // the span: either the codec self-describes nulls (dict_fsst evaluates its
   // dictionary once and filters rows by code), or the span's validity block is
@@ -1069,14 +1073,15 @@ duckdb::idx_t ColumnReader::FilterBlock(
   // rows by run flag). Bare null checks keep the validity-only arm below, and
   // null-bearing spans keep the decode arm.
   const bool codec_filter =
-    within_segment && codec.filter && !filter_state.can_throw &&
+    within_segment && function.filter && !filter_state.can_throw &&
     (self_valid || (null_check == NullCheckKind::None &&
                     ValiditySpanAllValid(s, anchor, span)));
   if (codec_filter) {
     if (!self_valid) {
       ResetAllValid(result, span);
     }
-    codec.filter(seg, s.st, span, result, sel, approved, filter, filter_state);
+    function.filter(seg, s.st, span, result, sel, approved, filter,
+                    filter_state);
     s.st.offset_in_column += span;
     s.st.internal_index = s.st.offset_in_column;
     // Codecs are picked per block: a later block of the same column may need

@@ -235,8 +235,8 @@ class ColCodecCorruptionTest : public TestBase {
       const auto& described = c.validity ? *col->Validity() : *col;
       irs::ReadContext ctx{r};
       const auto segment = described.OpenSegment(0, ctx);
-      if (segment->codec.get_segment_info) {
-        segment->codec.get_segment_info(*segment);
+      if (segment->function.get_segment_info) {
+        segment->function.get_segment_info(*segment);
       }
     });
   }

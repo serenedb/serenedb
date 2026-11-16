@@ -185,6 +185,22 @@ INSERT INTO tesr_sn1.tesr_sn2.tesr_ser (a) VALUES (1);
 
 
 statement ok
+CREATE FUNCTION tesr_n1.tesr_n2.tesr_f(x INT) RETURNS INT LANGUAGE sql IMMUTABLE AS 'SELECT x + 7';
+
+
+statement ok
+CREATE TABLE public.tesr_nf (a INT CHECK (tesr_n1.tesr_n2.tesr_f(a) > 0), b INT);
+
+
+statement ok
+ALTER TABLE public.tesr_nf ADD CONSTRAINT tesr_nf_b CHECK (tesr_n1.tesr_n2.tesr_f(b) > 0);
+
+
+statement ok
+INSERT INTO public.tesr_nf VALUES (1, 1);
+
+
+statement ok
 SET sdb_faults = 'crash_on_packet';
 
 
@@ -330,3 +346,31 @@ SELECT count(*) AS rows, count(DISTINCT id) AS ids, min(id) AS first FROM tesr_s
 ----
 rows	ids	first
 2	2	1
+
+
+connection plain
+statement ok
+INSERT INTO public.tesr_nf VALUES (2, 2);
+
+
+connection plain
+statement error
+INSERT INTO public.tesr_nf VALUES (-10, 3);
+----
+db error: ERROR: CHECK constraint failed on table "tesr_nf" with expression CHECK((<slt:ignore>.tesr_n1.tesr_n2.tesr_f(a) > 0))
+
+
+connection plain
+statement error
+INSERT INTO public.tesr_nf VALUES (3, -10);
+----
+db error: ERROR: CHECK constraint failed on table "tesr_nf" with expression CHECK((<slt:ignore>.tesr_n1.tesr_n2.tesr_f(b) > 0))
+
+
+connection plain
+query
+SELECT a, b FROM public.tesr_nf ORDER BY a;
+----
+a	b
+1	1
+2	2

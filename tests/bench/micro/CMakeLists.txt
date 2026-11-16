@@ -32,6 +32,7 @@ function(add_bench name)
 endfunction()
 
 add_bench(bm25_byte_norm)
+add_bench(numeric_term_encoding)
 add_bench(ascii_probe)
 add_bench(vector_access)
 add_bench(crc32c)

@@ -1679,12 +1679,6 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyToStdout(
   wire->row_encoding = binary ? RowEncoding::CopyBinary : RowEncoding::CopyText;
   wire->copy_binary_header = binary;
   if (!binary) {
-    // COPY text fields escape inline through the reused Text serializers
-    // (SerializationContext::copy_text); backslash_count = 2 is the COPY
-    // base (a literal backslash -> \\), which array/record depth doubling
-    // composes on top of.
-    wire->proto.copy_text = true;
-    wire->proto.backslash_count = 2;
     // The parser splits COPY options: value-form options (DELIMITER '|') land
     // in info->options, while NULL / HEADER / FORCE_* land in parsed_options.
     // Consult both before bind so every text option (and the csv-only
@@ -1693,8 +1687,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyToStdout(
       sdb::connector::ResolveTextCopyOptions(copy.info->parsed_options);
     sdb::connector::ResolveTextCopyOptions(copy.info->options, opts);
     sdb::connector::CheckTextCopyOptions(opts, false);
-    wire->proto.copy_delim = opts.delim;
-    wire->proto.copy_null = opts.null_str;
+    sdb::pg::SetCopyText(wire->proto, opts.delim, std::move(opts.null_str));
     // PG-compat: COPY ... TO STDOUT (FORMAT text, HEADER) emits the column-name
     // header line before the rows (committed here, before the drive arms).
     if (opts.header) {

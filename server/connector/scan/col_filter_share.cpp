@@ -48,7 +48,7 @@ struct Domain {
 
 std::optional<Domain> DomainOf(const duckdb::BaseStatistics& stats) {
   Domain domain{.min = 0, .max = 0, .integral = stats.GetType().IsIntegral()};
-  if (!duckdb::NumericStats::TryGetDoubleRange(stats, domain.min, domain.max)) {
+  if (!duckdb::NumericStats::TryCastRange(stats, domain.min, domain.max)) {
     return std::nullopt;
   }
   return domain;

@@ -22,8 +22,8 @@
 
 #include <cmath>
 #include <duckdb/common/types/variant.hpp>
+#include <duckdb/function/cast/cast_statistics.hpp>
 #include <duckdb/storage/statistics/base_statistics.hpp>
-#include <duckdb/storage/statistics/numeric_stats.hpp>
 #include <duckdb/storage/statistics/string_stats.hpp>
 #include <duckdb/storage/statistics/struct_stats.hpp>
 #include <duckdb/storage/statistics/variant_stats.hpp>
@@ -467,17 +467,8 @@ duckdb::unique_ptr<duckdb::BaseStatistics> IResearchScanStatistics(
   if (leaf->GetType() == want) {
     return leaf->ToUnique();
   }
-  if (leaf->GetType().IsNumeric() && want.IsNumeric() &&
-      duckdb::NumericStats::HasMinMax(*leaf)) {
-    const auto cmin = duckdb::NumericStats::Min(*leaf).DefaultTryCastAs(want);
-    const auto cmax = duckdb::NumericStats::Max(*leaf).DefaultTryCastAs(want);
-    if (cmin && cmax) {
-      auto casted = duckdb::NumericStats::CreateEmpty(want);
-      casted.CopyValidity(*leaf);
-      duckdb::NumericStats::SetMin(casted, *cmin);
-      duckdb::NumericStats::SetMax(casted, *cmax);
-      return casted.ToUnique();
-    }
+  if (leaf->GetType().IsNumeric() && want.IsNumeric()) {
+    return duckdb::CastStatistics::TryPropagate(*leaf, leaf->GetType(), want);
   }
   return nullptr;
 }

@@ -85,7 +85,10 @@ class BooleanWindow : public Root,
         return _found.data()[_at];
       }
     }
-    return Next();
+    if (_emit.Pending()) {
+      return doc_limits::invalid();
+    }
+    return _spent ? doc_limits::eof() : _min;
   }
 
  private:

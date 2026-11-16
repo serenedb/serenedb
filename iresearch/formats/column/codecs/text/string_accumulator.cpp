@@ -18,13 +18,11 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/formats/column/codecs/text/string_seal.hpp"
+#include "iresearch/formats/column/codecs/text/string_accumulator.hpp"
 
 #include <algorithm>
 #include <duckdb/common/types/string_type.hpp>
 #include <duckdb/common/vector/vector_iterator.hpp>
-
-#include "iresearch/formats/column/codecs/text/string_auto.hpp"
 
 namespace irs::codecs {
 
@@ -63,14 +61,5 @@ void StringAccumulator::Add(const duckdb::Vector& input) {
     _last_code = code;
   }
 }
-
-const CompressionFunction kStringsFunction{
-  .analyze = [](ColumnDataCheckpointData& data,
-                double) { return data.Get<text::Strings>().Analyze(data); },
-  .compress =
-    [](ColumnDataCheckpointData& data) {
-      return data.Get<text::Strings>().Compress(data);
-    },
-};
 
 }  // namespace irs::codecs

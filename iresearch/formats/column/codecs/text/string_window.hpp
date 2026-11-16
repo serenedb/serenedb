@@ -30,8 +30,8 @@
 #include "iresearch/formats/column/codecs/bytes/lz4.hpp"
 #include "iresearch/formats/column/codecs/text/blob.hpp"
 #include "iresearch/formats/column/codecs/text/segment_rows.hpp"
+#include "iresearch/formats/column/codecs/text/string_accumulator.hpp"
 #include "iresearch/formats/column/codecs/text/string_compressor.hpp"
-#include "iresearch/formats/column/codecs/text/string_seal.hpp"
 #include "iresearch/formats/column/codecs/text/string_tuning.hpp"
 
 namespace irs::codecs::text {

@@ -37,7 +37,7 @@
 #include "iresearch/formats/column/codecs/text/fsst_plus.hpp"
 #include "iresearch/formats/column/codecs/text/onpair.hpp"
 #include "iresearch/formats/column/codecs/text/segment_rows.hpp"
-#include "iresearch/formats/column/codecs/text/string_seal.hpp"
+#include "iresearch/formats/column/codecs/text/string_accumulator.hpp"
 
 namespace irs::codecs::text {
 
@@ -67,10 +67,9 @@ class StringCompressor {
                               uint64_t end);
 
   void Compress(const Config& config, const StringAccumulator& acc,
-                uint64_t begin, SegmentSink sink);
+                uint64_t begin, ColumnDataCheckpointData& data);
 
-  void CompressChunks(const Config& config, std::span<const WriteChunk> chunks,
-                      SegmentSink sink);
+  void CompressChunks(const Config& config, ColumnDataCheckpointData& data);
 
  private:
   template<typename State>

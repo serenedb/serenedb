@@ -56,9 +56,9 @@
 #include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/column/codecs/text/fsst.hpp>
 #include <iresearch/formats/column/codecs/text/onpair.hpp>
+#include <iresearch/formats/column/codecs/text/string_accumulator.hpp>
 #include <iresearch/formats/column/codecs/text/string_layout.hpp>
 #include <iresearch/formats/column/codecs/text/string_scan.hpp>
-#include <iresearch/formats/column/codecs/text/string_seal.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/column_reader.hpp>

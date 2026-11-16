@@ -18,16 +18,14 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/formats/column/codecs/text/string_auto.hpp"
+#include "iresearch/formats/column/codecs/text/strings.hpp"
 
 #include <absl/algorithm/container.h>
 
 #include <algorithm>
 #include <array>
-#include <iterator>
 #include <limits>
 #include <span>
-#include <string_view>
 #include <utility>
 
 #include "iresearch/formats/column/codecs/registry.hpp"
@@ -44,48 +42,52 @@ constexpr uint64_t kDedupMinRepeat = 2;
 constexpr uint64_t kLz4MaxRatio = 255;
 constexpr uint64_t kTuneMinEntries = 2;
 constexpr uint8_t kLz4Fast = 1;
+constexpr uint8_t kLz4TrialLevel = 1;
 constexpr double kShapeSlack = 0.08;
 constexpr double kScoreSlack = 0.02;
 constexpr double kLevelTolerance = 0.02;
 constexpr double kWideFramesGain = 0.03;
 constexpr size_t kMaxLevels = 4;
 
-struct CompressionMethod {
-  std::span<const uint8_t> levels;
-  bool local = false;
-  uint8_t max_trial_level = 0;
+struct Tier {
+  std::span<const uint8_t> lz4_levels;
+  bool lz4_local = false;
+  double dedup_fsst_preference = 0;
+  double plain_fsst_preference = 0;
 };
 
-struct AnalyzeInput {
-  StringWindow& window;
-  Shape shape;
-  const CompressionMethod& method;
-  bool tune = false;
-  TunedParameters& tuned;
+constexpr uint8_t kLz4FlushLevels[] = {1};
+constexpr uint8_t kLz4MergeLevels[] = {1, 4, 6};
+
+constexpr Tier kFlush{
+  .lz4_levels = kLz4FlushLevels,
+  .dedup_fsst_preference = 0.05,
+  .plain_fsst_preference = 0.05,
 };
+
+constexpr Tier kMerge{
+  .lz4_levels = kLz4MergeLevels,
+  .lz4_local = true,
+  .plain_fsst_preference = 0.05,
+};
+
+const Tier& TierOf(WriteTier tier) noexcept {
+  return tier == WriteTier::Flush ? kFlush : kMerge;
+}
 
 struct Analysis {
   Config config;
   uint64_t score = 0;
 };
 
-Analysis AnalyzeFsst(const AnalyzeInput& input) {
-  const Config config{.shape = input.shape, .leaf = ByteCodec::Fsst};
-  auto& window = input.window;
-  return {.config = config,
-          .score = window.At(window.TrialCompress(config)).Size()};
-}
-
-Analysis AnalyzeLz4(const AnalyzeInput& input) {
-  Analysis state{.config = {.shape = input.shape, .leaf = ByteCodec::Lz4}};
-  auto& window = input.window;
-  const auto& method = input.method;
-  const auto levels = method.levels;
+Analysis AnalyzeLz4(StringWindow& window, Shape shape, const Tier& tier,
+                    bool tune, TunedParameters& tuned) {
+  Analysis state{.config = {.shape = shape, .leaf = ByteCodec::Lz4}};
+  const auto levels = tier.lz4_levels;
   SDB_ASSERT(!levels.empty() && levels.size() <= kMaxLevels);
   const auto leaf = static_cast<size_t>(state.config.leaf);
-  auto& tuned = input.tuned;
   auto config = state.config;
-  if (!input.tune) {
+  if (!tune) {
     config.level = absl::c_linear_search(levels, tuned.level[leaf])
                      ? tuned.level[leaf]
                      : levels.front();
@@ -119,70 +121,13 @@ Analysis AnalyzeLz4(const AnalyzeInput& input) {
       state.score = candidate_score;
     }
   };
-  if (method.local) {
+  if (tier.lz4_local) {
     analyze_layout(FrameDictionary::Local, 0.0);
   }
   analyze_layout(FrameDictionary::None, kWideFramesGain);
   tuned.level[leaf] = state.config.level;
   tuned.layout[leaf] = state.config.layout;
   return state;
-}
-
-struct Candidate {
-  ByteCodec leaf = ByteCodec::Lz4;
-  Analysis (*analyze)(const AnalyzeInput& input) = nullptr;
-  CompressionMethod method;
-};
-
-struct TierCandidates {
-  std::span<const Candidate> candidates;
-  double dedup_fsst_preference = 0;
-  double plain_fsst_preference = 0;
-};
-
-constexpr uint8_t kLz4FlushLevels[] = {1};
-constexpr uint8_t kLz4MergeLevels[] = {1, 4, 6};
-
-constexpr Candidate kFlushCandidates[] = {
-  {.leaf = ByteCodec::Fsst, .analyze = AnalyzeFsst},
-  {
-    .leaf = ByteCodec::Lz4,
-    .analyze = AnalyzeLz4,
-    .method = {.levels = kLz4FlushLevels, .max_trial_level = 1},
-  },
-};
-
-constexpr Candidate kMergeCandidates[] = {
-  {.leaf = ByteCodec::Fsst, .analyze = AnalyzeFsst},
-  {
-    .leaf = ByteCodec::Lz4,
-    .analyze = AnalyzeLz4,
-    .method = {.levels = kLz4MergeLevels, .local = true, .max_trial_level = 1},
-  },
-};
-
-constexpr TierCandidates kFlush{
-  .candidates = kFlushCandidates,
-  .dedup_fsst_preference = 0.05,
-  .plain_fsst_preference = 0.05,
-};
-
-constexpr TierCandidates kMerge{
-  .candidates = kMergeCandidates,
-  .plain_fsst_preference = 0.05,
-};
-
-constexpr size_t kMaxCandidates =
-  std::max(std::size(kFlushCandidates), std::size(kMergeCandidates));
-
-struct Scored {
-  Config config;
-  double score = 0;
-  bool trial = false;
-};
-
-const TierCandidates& CandidatesOf(WriteTier tier) noexcept {
-  return tier == WriteTier::Flush ? kFlush : kMerge;
 }
 
 bool Repeats(uint64_t entries, uint64_t values) noexcept {
@@ -206,6 +151,11 @@ bool Enabled(const CodecSet& disabled, Shape shape, ByteCodec leaf) noexcept {
   return !disabled.test(std::to_underlying(CodecOf(shape, leaf)));
 }
 
+bool AnyEnabled(const CodecSet& disabled, Shape shape) noexcept {
+  return Enabled(disabled, shape, ByteCodec::Fsst) ||
+         Enabled(disabled, shape, ByteCodec::Lz4);
+}
+
 uint64_t PlainStorageBytes(const Segment& seg) noexcept {
   return kHeaderSize + seg.input + seg.rows * sizeof(int32_t);
 }
@@ -221,18 +171,96 @@ Config NamedConfig(Shape shape, ByteCodec leaf,
   };
 }
 
-auto FlushTo(ColumnDataCheckpointData& data) {
-  return [&data](CodecType type, duckdb::BaseStatistics stats, uint64_t rows,
-                 std::string_view bytes) {
-    data.FlushSegment(type, std::move(stats), rows, bytes);
+Shape ChooseShape(StringWindow& window, uint64_t entries, uint64_t values,
+                  double plain_bound) {
+  const auto slack = [&](Shape shape) {
+    return window.Exact(Fast(shape)) ? 0.0 : kShapeSlack;
   };
+  auto dedup = static_cast<double>(window.Analyze(Fast(Shape::Dictionary)));
+  if (!PlainWins(entries, values, dedup * (1.0 + slack(Shape::Dictionary)),
+                 plain_bound)) {
+    return Shape::Dictionary;
+  }
+  auto plain = static_cast<double>(window.Analyze(Fast(Shape::Plain)));
+  const auto margin = std::max(slack(Shape::Dictionary), slack(Shape::Plain));
+  if (PlainWins(entries, values, dedup * (1.0 - margin), plain) !=
+      PlainWins(entries, values, dedup * (1.0 + margin), plain)) {
+    dedup = static_cast<double>(
+      window.At(window.TrialCompress(Fast(Shape::Dictionary))).Size());
+    plain = static_cast<double>(
+      window.At(window.TrialCompress(Fast(Shape::Plain))).Size());
+  }
+  return PlainWins(entries, values, dedup, plain) ? Shape::Plain
+                                                  : Shape::Dictionary;
 }
 
-bool Enabled(const CodecSet& disabled, const TierCandidates& tier,
-             Shape shape) noexcept {
-  return absl::c_any_of(tier.candidates, [&](const Candidate& candidate) {
-    return Enabled(disabled, shape, candidate.leaf);
-  });
+struct Scored {
+  Config config;
+  double score = 0;
+  bool trial = false;
+};
+
+size_t ChooseEncoding(StringWindow& window, Shape shape, const Tier& tier,
+                      const CodecSet& disabled, bool tune,
+                      TunedParameters& tuned) {
+  const double fsst_preference = shape == Shape::Plain
+                                   ? tier.plain_fsst_preference
+                                   : tier.dedup_fsst_preference;
+  std::array<Scored, 2> scored;
+  size_t count = 0;
+  if (Enabled(disabled, shape, ByteCodec::Fsst)) {
+    const Config config{.shape = shape, .leaf = ByteCodec::Fsst};
+    scored[count++] = {
+      .config = config,
+      .score =
+        static_cast<double>(window.At(window.TrialCompress(config)).Size()),
+      .trial = true,
+    };
+  }
+  if (Enabled(disabled, shape, ByteCodec::Lz4)) {
+    const auto lz4 = AnalyzeLz4(window, shape, tier, tune, tuned);
+    scored[count++] = {
+      .config = lz4.config,
+      .score = static_cast<double>(lz4.score) * (1.0 + fsst_preference),
+      .trial = lz4.config.level <= kLz4TrialLevel,
+    };
+  }
+  SDB_ASSERT(count != 0);
+  if (tune && count == scored.size()) {
+    tuned.done = true;
+  }
+  size_t best = 0;
+  for (size_t i = 1; i < count; ++i) {
+    if (scored[i].score < scored[best].score) {
+      best = i;
+    }
+  }
+  auto picked = window.TrialCompress(scored[best].config);
+  for (size_t i = 0; i < count; ++i) {
+    if (scored[i].trial &&
+        scored[i].score <= scored[best].score * (1.0 + kScoreSlack)) {
+      window.TrialCompress(scored[i].config);
+    }
+  }
+  for (size_t i = 0; i < window.Encodings(); ++i) {
+    const auto& seg = window.At(i);
+    if (seg.config.shape == shape &&
+        Enabled(disabled, shape, seg.config.leaf) &&
+        seg.Size() < window.At(picked).Size()) {
+      picked = i;
+    }
+  }
+  if (fsst_preference > 0 && Enabled(disabled, shape, ByteCodec::Fsst) &&
+      window.At(picked).config.leaf != ByteCodec::Fsst) {
+    const auto fsst =
+      window.TrialCompress({.shape = shape, .leaf = ByteCodec::Fsst});
+    if (static_cast<double>(window.At(fsst).Size()) <=
+        static_cast<double>(window.At(picked).Size()) *
+          (1.0 + fsst_preference)) {
+      picked = fsst;
+    }
+  }
+  return picked;
 }
 
 }  // namespace
@@ -269,14 +297,13 @@ Estimate Strings::Analyze(ColumnDataCheckpointData& data) {
 }
 
 bool Strings::Compress(ColumnDataCheckpointData& data) {
-  const auto sink = FlushTo(data);
   if (data.method != CodecType::Auto) {
     const auto config =
       NamedConfig(ShapeOf(data.method), LeafOf(data.method), data.params);
     if (config.shape == Shape::Plain) {
-      _compressor.CompressChunks(config, data.chunks, sink);
+      _compressor.CompressChunks(config, data);
     } else {
-      _compressor.Compress(config, Accumulated(data.chunks), 0, sink);
+      _compressor.Compress(config, Accumulated(data.chunks), 0, data);
     }
     return true;
   }
@@ -300,10 +327,11 @@ bool Strings::Compress(ColumnDataCheckpointData& data) {
   }
   const auto config = _first->config;
   const auto rest = _first->begin + _first->rows;
-  sink(CodecOf(config.shape, config.leaf), std::move(*_first->stats),
-       _first->rows, _first->bytes.View());
+  data.FlushSegment(CodecOf(config.shape, config.leaf),
+                    std::move(*_first->stats), _first->rows,
+                    _first->bytes.View());
   _first.reset();
-  _compressor.Compress(config, _acc, rest, sink);
+  _compressor.Compress(config, _acc, rest, data);
   return true;
 }
 
@@ -312,9 +340,8 @@ PooledSegment Strings::DetectBestCompressionMethod(
   const auto& acc = Accumulated(data.chunks);
   const auto& disabled = data.disabled;
   auto first = std::move(_first);
-  const auto& tier = CandidatesOf(data.params.tier);
-  if (acc.Rows() == 0 || (!Enabled(disabled, tier, Shape::Dictionary) &&
-                          !Enabled(disabled, tier, Shape::Plain))) {
+  if (acc.Rows() == 0 || (!AnyEnabled(disabled, Shape::Dictionary) &&
+                          !AnyEnabled(disabled, Shape::Plain))) {
     return {};
   }
   if (!first) {
@@ -332,94 +359,28 @@ PooledSegment Strings::DetectBestCompressionMethod(
   StringWindow window{acc, _compressor, std::move(first),
                       _tuning.estimators.codes};
   const auto entries = window.Entries();
-  const auto slack = [&](Shape shape) {
-    return window.Exact(Fast(shape)) ? 0.0 : kShapeSlack;
-  };
-  auto shape = Shape::Dictionary;
-  auto dedup = static_cast<double>(window.Analyze(Fast(Shape::Dictionary)));
-  if (PlainWins(
-        entries, values, dedup * (1.0 + slack(Shape::Dictionary)),
-        static_cast<double>(kHeaderSize + lengths + input / kLz4MaxRatio))) {
-    auto plain = static_cast<double>(window.Analyze(Fast(Shape::Plain)));
-    const auto margin = std::max(slack(Shape::Dictionary), slack(Shape::Plain));
-    if (PlainWins(entries, values, dedup * (1.0 - margin), plain) !=
-        PlainWins(entries, values, dedup * (1.0 + margin), plain)) {
-      dedup = static_cast<double>(
-        window.At(window.TrialCompress(Fast(Shape::Dictionary))).Size());
-      plain = static_cast<double>(
-        window.At(window.TrialCompress(Fast(Shape::Plain))).Size());
-    }
-    if (PlainWins(entries, values, dedup, plain)) {
-      shape = Shape::Plain;
-    }
-  }
+  auto shape = ChooseShape(
+    window, entries, values,
+    static_cast<double>(kHeaderSize + lengths + input / kLz4MaxRatio));
   auto& tuned = _tuning.tuned;
   const bool tune = entries >= kTuneMinEntries && !tuned.done;
-  if (!Enabled(disabled, tier, shape)) {
+  if (!AnyEnabled(disabled, shape)) {
     shape = shape == Shape::Dictionary ? Shape::Plain : Shape::Dictionary;
   }
-  SDB_ASSERT(Enabled(disabled, tier, shape));
-  const double fsst_preference = shape == Shape::Plain
-                                   ? tier.plain_fsst_preference
-                                   : tier.dedup_fsst_preference;
-  std::array<Scored, kMaxCandidates> scored;
-  size_t count = 0;
-  size_t best = 0;
-  for (const auto& candidate : tier.candidates) {
-    if (!Enabled(disabled, shape, candidate.leaf)) {
-      continue;
-    }
-    const auto analysis = candidate.analyze({
-      .window = window,
-      .shape = shape,
-      .method = candidate.method,
-      .tune = tune,
-      .tuned = tuned,
-    });
-    auto score = static_cast<double>(analysis.score);
-    if (candidate.leaf != ByteCodec::Fsst) {
-      score *= 1.0 + fsst_preference;
-    }
-    scored[count] = {
-      .config = analysis.config,
-      .score = score,
-      .trial = analysis.config.level <= candidate.method.max_trial_level,
-    };
-    if (score < scored[best].score) {
-      best = count;
-    }
-    ++count;
-  }
-  if (tune && count == tier.candidates.size()) {
-    tuned.done = true;
-  }
-  auto picked = window.TrialCompress(scored[best].config);
-  for (size_t i = 0; i < count; ++i) {
-    if (scored[i].trial &&
-        scored[i].score <= scored[best].score * (1.0 + kScoreSlack)) {
-      window.TrialCompress(scored[i].config);
-    }
-  }
-  for (size_t i = 0; i < window.Encodings(); ++i) {
-    const auto& seg = window.At(i);
-    if (seg.config.shape == shape &&
-        Enabled(disabled, shape, seg.config.leaf) &&
-        seg.Size() < window.At(picked).Size()) {
-      picked = i;
-    }
-  }
-  if (fsst_preference > 0 && Enabled(disabled, shape, ByteCodec::Fsst) &&
-      window.At(picked).config.leaf != ByteCodec::Fsst) {
-    const auto fsst =
-      window.TrialCompress({.shape = shape, .leaf = ByteCodec::Fsst});
-    if (static_cast<double>(window.At(fsst).Size()) <=
-        static_cast<double>(window.At(picked).Size()) *
-          (1.0 + fsst_preference)) {
-      picked = fsst;
-    }
-  }
+  SDB_ASSERT(AnyEnabled(disabled, shape));
+  const auto picked = ChooseEncoding(window, shape, TierOf(data.params.tier),
+                                     disabled, tune, tuned);
   _tuning.config = window.At(picked).config;
   return std::move(window).Take(picked);
 }
+
+const CompressionFunction kStringsFunction{
+  .analyze = [](ColumnDataCheckpointData& data,
+                double) { return data.Get<Strings>().Analyze(data); },
+  .compress =
+    [](ColumnDataCheckpointData& data) {
+      return data.Get<Strings>().Compress(data);
+    },
+};
 
 }  // namespace irs::codecs::text

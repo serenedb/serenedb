@@ -46,17 +46,17 @@ IRS_NO_INLINE void CutRows(State& state, const Config& config,
 
 template<typename State>
 IRS_NO_INLINE void SealRows(State& state, const Config& config,
-                            std::span<const WriteChunk> chunks, uint32_t target,
-                            Segment& seg, SegmentSink sink) {
+                            ColumnDataCheckpointData& data, uint32_t target,
+                            Segment& seg) {
   const auto seal = [&] {
     state.FinalizeCompress();
-    sink(CodecOf(seg.config.shape, seg.config.leaf), std::move(*seg.stats),
-         seg.rows, seg.bytes.View());
+    data.FlushSegment(CodecOf(seg.config.shape, seg.config.leaf),
+                      std::move(*seg.stats), seg.rows, seg.bytes.View());
   };
   uint64_t row = 0;
   uint64_t first = 0;
   state.InitCompression(config, first, 0, seg);
-  for (const auto& chunk : chunks) {
+  for (const auto& chunk : data.chunks) {
     for (const auto entry : chunk.data.Values<duckdb::string_t>()) {
       state.Compress(entry.IsValid() ? &entry.GetValueUnsafe() : nullptr);
       ++row;
@@ -76,11 +76,11 @@ template<typename State>
 IRS_NO_INLINE void CompressRows(State& state, const Config& config,
                                 const StringAccumulator& acc, uint64_t begin,
                                 uint32_t target, Segment& seg,
-                                SegmentSink sink) {
+                                ColumnDataCheckpointData& data) {
   for (auto row = begin; row < acc.Rows(); row = seg.begin + seg.rows) {
     CutRows(state, config, acc, row, target, seg);
-    sink(CodecOf(seg.config.shape, seg.config.leaf), std::move(*seg.stats),
-         seg.rows, seg.bytes.View());
+    data.FlushSegment(CodecOf(seg.config.shape, seg.config.leaf),
+                      std::move(*seg.stats), seg.rows, seg.bytes.View());
   }
 }
 
@@ -155,22 +155,21 @@ PooledSegment StringCompressor::TrialCompress(const Config& config,
 
 void StringCompressor::Compress(const Config& config,
                                 const StringAccumulator& acc, uint64_t begin,
-                                SegmentSink sink) {
+                                ColumnDataCheckpointData& data) {
   if (begin >= acc.Rows()) {
     return;
   }
   const auto seg = Acquire();
   WithState(config, [&](auto& state) {
-    CompressRows(state, config, acc, begin, _params.segment_target, *seg, sink);
+    CompressRows(state, config, acc, begin, _params.segment_target, *seg, data);
   });
 }
 
 void StringCompressor::CompressChunks(const Config& config,
-                                      std::span<const WriteChunk> chunks,
-                                      SegmentSink sink) {
+                                      ColumnDataCheckpointData& data) {
   const auto seg = Acquire();
   WithState(config, [&](auto& state) {
-    SealRows(state, config, chunks, _params.segment_target, *seg, sink);
+    SealRows(state, config, data, _params.segment_target, *seg);
   });
 }
 

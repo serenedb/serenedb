@@ -25,8 +25,8 @@
 #include "iresearch/formats/column/codecs/codec_type.hpp"
 #include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/text/segment_rows.hpp"
+#include "iresearch/formats/column/codecs/text/string_accumulator.hpp"
 #include "iresearch/formats/column/codecs/text/string_compressor.hpp"
-#include "iresearch/formats/column/codecs/text/string_seal.hpp"
 #include "iresearch/formats/column/codecs/text/string_tuning.hpp"
 
 namespace irs::codecs::text {
@@ -49,5 +49,7 @@ class Strings final : public State {
   PooledSegment _first;
   bool _accumulated = false;
 };
+
+extern const CompressionFunction kStringsFunction;
 
 }  // namespace irs::codecs::text

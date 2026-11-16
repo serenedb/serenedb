@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <absl/functional/function_ref.h>
 #include <absl/hash/hash.h>
 
 #include <array>
@@ -99,11 +98,5 @@ class StringAccumulator {
   uint32_t _last_code = 0;
   const duckdb::string_t* _last = nullptr;
 };
-
-using SegmentSink =
-  absl::FunctionRef<void(CodecType type, duckdb::BaseStatistics stats,
-                         uint64_t rows, std::string_view bytes)>;
-
-extern const CompressionFunction kStringsFunction;
 
 }  // namespace irs::codecs

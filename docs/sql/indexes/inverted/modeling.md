@@ -18,7 +18,7 @@ A column can play one of two roles:
 
 An index on a table returns every column of its table without `INCLUDE`, since the table keeps all of them; what follows about storing columns matters for an index over a [view](./views.md).
 
-Use `INCLUDE` for columns you frequently *return or filter on* but never *full-text search* -- ids, URLs, prices, timestamps, JSON payloads. An indexed numeric or temporal column serves range filters and [`ORDER BY` with a `LIMIT`](./full-text-search.md#numeric-top-k) from the index; to return it from the index as well, `INCLUDE` it too.
+Use `INCLUDE` for columns you frequently *return or filter on* but never *full-text search* -- ids, URLs, prices, timestamps, JSON payloads. An indexed numeric or temporal column serves range filters from the index; to return it or sort by it from the index as well, `INCLUDE` it too.
 
 <DocCallout type="tip">
 

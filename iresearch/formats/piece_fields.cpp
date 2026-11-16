@@ -263,25 +263,16 @@ void PieceTermReader::ReadDocs(const PostingMeta& meta,
   ReadPostingDocs(*this, meta, acceptor);
 }
 
-bool PieceTermReader::VisitRange(bytes_view from, bytes_view to,
-                                 bool descending, TermVisitor visit) const {
+bool PieceTermReader::CoverRange(bytes_view from, bytes_view to,
+                                 TermVisitor visit) const {
   const size_t begin = from.empty() ? 0 : LowerBound(from);
   const size_t end = to.empty() ? _entries.size() : LowerBound(to);
-  if (descending) {
-    for (auto i = end; i > begin;) {
-      --i;
-      if (!visit(TermOf(i), _entries[i].meta)) {
-        return false;
-      }
-    }
-    return true;
-  }
   for (auto i = begin; i < end; ++i) {
     if (!visit(TermOf(i), _entries[i].meta)) {
-      return false;
+      break;
     }
   }
-  return true;
+  return false;
 }
 
 void PieceTermReader::SampleTerms(

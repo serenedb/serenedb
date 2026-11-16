@@ -79,18 +79,6 @@ class BooleanWindow : public Root,
     return Slow(begin, end, out);
   }
 
-  doc_id_t NextDoc() const noexcept final {
-    if constexpr (kBatches) {
-      if (_at != _size) {
-        return _found.data()[_at];
-      }
-    }
-    if (_emit.Pending()) {
-      return doc_limits::invalid();
-    }
-    return _spent ? doc_limits::eof() : _min;
-  }
-
  private:
   IRS_NO_INLINE uint32_t Drain(doc_id_t begin, doc_id_t end,
                                doc_id_t* IRS_RESTRICT out) {

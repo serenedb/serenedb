@@ -36,7 +36,6 @@
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/planner/bound_result_modifier.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
-#include <duckdb/planner/filter/expression_filter.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/filters/nested_filter.hpp>
 #include <iresearch/search/scorers/vector_similarity_scorer.hpp>
@@ -144,15 +143,6 @@ bool SameLimit(const duckdb::BoundLimitNode& node,
   }
 }
 
-bool HasRequiredFilter(const duckdb::TableFilterSet& filters) {
-  for (const auto& entry : filters) {
-    if (!duckdb::ExpressionFilter::IsOptionalFilter(entry.Filter())) {
-      return true;
-    }
-  }
-  return false;
-}
-
 std::vector<float> EvaluateQueryVector(duckdb::ClientContext& context,
                                        const VectorScorerOptions& vs) {
   const auto target =
@@ -254,9 +244,6 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
 
   ClassifyColumnstoreProjections(*state, bind_data);
   state->shape = DecideShape(*state, ss);
-  SDB_ENSURE(state->shape != ScanShape::ValueTopK ||
-               (state->col_filters.empty() && !state->has_lookup_filter),
-             "a scan that orders by an indexed value takes no column filters");
 
   if (state->shape == ScanShape::TsDict) {
     const auto& out = state->output_projection_ids;
@@ -328,8 +315,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
 
   ClassifySegments(*state);
 
-  state->splittable = !(where && HasNested(*where)) && !ss.score.vector &&
-                      state->shape != ScanShape::ValueTopK;
+  state->splittable = !(where && HasNested(*where)) && !ss.score.vector;
 
   if (state->shape == ScanShape::Count) {
     BuildClaimPlan(*state, context);
@@ -393,9 +379,6 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   if (state->shape == ScanShape::TopK) {
     BuildFetchedCopy(*state);
     InitTopKGlobal(*state, context);
-  } else if (state->shape == ScanShape::ValueTopK) {
-    BuildFetchedCopy(*state);
-    InitValueTopKGlobal(*state);
   } else if (state->shape == ScanShape::Ann) {
     BuildFetchedCopy(*state);
     InitAnnGlobal(*state, context);
@@ -423,10 +406,6 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> IResearchScanInitLocal(
       l->worker = worker;
       InitTopKLocal(g, *l);
       result = std::move(l);
-      break;
-    }
-    case ScanShape::ValueTopK: {
-      result = duckdb::make_uniq<ValueTopKLocalState>();
       break;
     }
     case ScanShape::Ann: {
@@ -465,10 +444,6 @@ void RunShape(duckdb::ClientContext& context, duckdb::TableFunctionInput& data,
     case ScanShape::TopK:
       RunTopKScan(context, data, g, data.local_state->Cast<TopKLocalState>(),
                   out);
-      break;
-    case ScanShape::ValueTopK:
-      RunValueTopKScan(context, data, g,
-                       data.local_state->Cast<ValueTopKLocalState>(), out);
       break;
     case ScanShape::Ann:
       RunAnnScan(context, data, g, data.local_state->Cast<AnnLocalState>(),
@@ -584,8 +559,9 @@ void IResearchSetScanOrder(
       (!options->row_limit.IsValid() && !options->row_limit_expression)) {
     return;
   }
-  const bool disabled =
-    GetBoolSetting(context, "sdb_disable_top_k_optimization");
+  if (GetBoolSetting(context, "sdb_disable_top_k_optimization")) {
+    return;
+  }
   const auto order_col =
     ScanColumnOfStorage(bd, options->column_idx.GetPrimaryIndex());
   if (order_col >= bd.columns.ids.size()) {
@@ -593,17 +569,11 @@ void IResearchSetScanOrder(
   }
   const auto col_id = bd.columns.ids[order_col];
   if (col_id != kInvertedIndexScoreId) {
-    if (!disabled && bd.relation.Stores(col_id) && !bd.scan_order) {
+    if (bd.relation.Stores(col_id) && !bd.scan_order) {
       bd.scan_order =
         ScanOrderSpec{col_id, options->order_type, options->null_order,
                       options->order_by, options->column_type};
     }
-    if (!bd.value_order) {
-      bd.value_order = ValueOrderOf(context, bd, col_id, *options);
-    }
-    return;
-  }
-  if (disabled) {
     return;
   }
   if (bd.score.HasTopK()) {
@@ -635,13 +605,10 @@ void IResearchSetScanOrder(
 
 bool IResearchConsumeTopN(duckdb::ClientContext&,
                           duckdb::FunctionData& bind_data,
-                          const duckdb::TableFilterSet& filters,
+                          const duckdb::TableFilterSet&,
                           const duckdb::BoundLimitNode& limit,
                           const duckdb::BoundLimitNode& offset) {
   auto& bd = bind_data.Cast<ScanBindData>();
-  if (bd.value_order && HasRequiredFilter(filters)) {
-    return false;
-  }
   if (bd.score.top_k_expr) {
     if (!SameLimit(limit, bd.score.top_k_expr.get()) ||
         !SameLimit(offset, bd.score.top_offset_expr.get())) {
@@ -655,13 +622,9 @@ bool IResearchConsumeTopN(duckdb::ClientContext&,
     const auto skip = offset.Type() == duckdb::LimitNodeType::CONSTANT_VALUE
                         ? offset.GetConstantValue()
                         : duckdb::idx_t{0};
-    const auto taken = bd.value_order
-                         ? std::optional<size_t>{bd.value_order->limit}
-                         : bd.score.top_k;
-    if (!taken || *taken != limit.GetConstantValue() + skip) {
+    if (!bd.score.top_k || *bd.score.top_k != limit.GetConstantValue() + skip) {
       return false;
     }
-    bd.score.top_k = taken;
     bd.score.top_offset = skip;
   }
   bd.score.top_n_consumed = true;

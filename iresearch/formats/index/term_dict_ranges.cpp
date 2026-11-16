@@ -24,14 +24,12 @@
 #include <absl/base/internal/endian.h>
 
 #include <algorithm>
-#include <array>
 #include <cstring>
 #include <vector>
 
 #include "iresearch/formats/index/field_reader.hpp"
 #include "iresearch/formats/index/term_dict_cursor.hpp"
 #include "iresearch/utils/bytes_output.hpp"
-#include "iresearch/utils/containers/small_vector.hpp"
 #include "iresearch/utils/lower_bound.hpp"
 
 namespace irs::term_dict {
@@ -82,68 +80,6 @@ bool Ascending(Cursor& cursor, bytes_view from, bytes_view to,
       return false;
     }
   } while (cursor.Advance());
-  return true;
-}
-
-struct BufferedTerm {
-  uint32_t key;
-  uint32_t size;
-  PostingMeta meta;
-};
-
-bool Descending(const TermReaderImpl& field, bytes_view from, bytes_view to,
-                TermReader::TermVisitor visit) {
-  Cursor cursor{field};
-  PaddedKey probe;
-  const uint32_t last = to.empty()
-                          ? field.Blocks() - 1
-                          : field.BlockOf(probe.Assign(field.KeyPrefix(), to));
-  containers::SmallVector<byte_type, kRestartInterval * kMaxStride> keys;
-  std::array<BufferedTerm, kRestartInterval> terms;
-  for (uint32_t block = last + 1; block-- != 0;) {
-    cursor.Load(block);
-    const uint32_t first = block == 0 ? field.FirstEntry() : 0;
-    const uint32_t stop = cursor.Stop();
-    for (uint32_t group = (stop - 1) / kRestartInterval + 1;
-         group-- != first / kRestartInterval;) {
-      const uint32_t end = std::min((group + 1) * kRestartInterval, stop);
-      cursor.Group(group);
-      while (cursor.Entry() < first) {
-        cursor.Next();
-      }
-      keys.clear();
-      uint32_t count = 0;
-      bool below = false;
-      for (;;) {
-        const bytes_view term = cursor.Term();
-        if (!to.empty() && term >= to) {
-          break;
-        }
-        if (!from.empty() && term < from) {
-          below = true;
-        } else {
-          terms[count++] = {.key = static_cast<uint32_t>(keys.size()),
-                            .size = static_cast<uint32_t>(term.size()),
-                            .meta = cursor.Meta()};
-          keys.insert(keys.end(), term.begin(), term.end());
-        }
-        if (cursor.Entry() + 1 == end) {
-          break;
-        }
-        cursor.Next();
-      }
-      while (count != 0) {
-        const auto& buffered = terms[--count];
-        if (!visit({keys.data() + buffered.key, buffered.size},
-                   buffered.meta)) {
-          return false;
-        }
-      }
-      if (below) {
-        return true;
-      }
-    }
-  }
   return true;
 }
 
@@ -430,22 +366,6 @@ void RangeWriter::Clear() noexcept {
   }
   _pw = nullptr;
   _height = 0;
-}
-
-bool TermReaderImpl::VisitRange(bytes_view from, bytes_view to, bool descending,
-                                TermVisitor visit) const {
-  if (Point(from, to)) {
-    const auto meta = Lookup(from);
-    return meta.docs_count == 0 || visit(from, meta);
-  }
-  if (!Narrow(*this, from, to)) {
-    return true;
-  }
-  if (descending) {
-    return Descending(*this, from, to, visit);
-  }
-  Cursor cursor{*this};
-  return Ascending(cursor, from, to, visit);
 }
 
 bool TermReaderImpl::CoverRange(bytes_view from, bytes_view to,

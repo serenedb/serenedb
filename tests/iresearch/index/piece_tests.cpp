@@ -559,27 +559,18 @@ TEST(PieceTest, SeeksAndRangesFollowTheSortedTerms) {
   const auto from = ViewCast<byte_type>(std::string_view{terms[2]});
   const auto to = ViewCast<byte_type>(std::string_view{terms[6]});
   std::vector<std::string> visited;
-  EXPECT_TRUE(field.VisitRange(from, to, false,
-                               [&](bytes_view term, const PostingMeta& meta) {
-                                 EXPECT_NE(0, meta.docs_count);
-                                 visited.emplace_back(ViewCast<char>(term));
-                                 return true;
-                               }));
+  EXPECT_FALSE(
+    field.CoverRange(from, to, [&](bytes_view term, const PostingMeta& meta) {
+      EXPECT_NE(0, meta.docs_count);
+      visited.emplace_back(ViewCast<char>(term));
+      return true;
+    }));
   EXPECT_EQ(std::vector<std::string>(terms.begin() + 2, terms.begin() + 6),
             visited);
 
-  std::vector<std::string> descending;
-  EXPECT_TRUE(
-    field.VisitRange(from, to, true, [&](bytes_view term, const PostingMeta&) {
-      descending.emplace_back(ViewCast<char>(term));
-      return true;
-    }));
-  EXPECT_EQ(std::vector<std::string>(visited.rbegin(), visited.rend()),
-            descending);
-
   std::vector<std::string> stopped;
   EXPECT_FALSE(
-    field.VisitRange(from, to, false, [&](bytes_view term, const PostingMeta&) {
+    field.CoverRange(from, to, [&](bytes_view term, const PostingMeta&) {
       stopped.emplace_back(ViewCast<char>(term));
       return stopped.size() < 2;
     }));

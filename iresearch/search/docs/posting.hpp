@@ -81,14 +81,6 @@ class Posting : public Root, public detail::PostingBatch<InputType, false> {
     return Refill(out, n, min, max);
   }
 
-  doc_id_t NextDoc() const noexcept final {
-    if (doc_limits::valid(_next)) {
-      return _next;
-    }
-    return this->_left_in_list == 0 && _at == _len ? doc_limits::eof()
-                                                   : doc_limits::invalid();
-  }
-
  private:
   static constexpr uint32_t kBulk = 64;
 
@@ -121,6 +113,7 @@ class Posting : public Root, public detail::PostingBatch<InputType, false> {
   IRS_NO_INLINE uint32_t Refill(doc_id_t* IRS_RESTRICT out, uint32_t emitted,
                                 doc_id_t min, doc_id_t max) {
     if (!this->Start(min)) {
+      _next = doc_limits::eof();
       return emitted;
     }
     const auto capacity = static_cast<uint32_t>(max - min);
@@ -135,7 +128,7 @@ class Posting : public Root, public detail::PostingBatch<InputType, false> {
         _next = _block[0];
         emitted += Drain(out + emitted, min, max);
         if (_at != _len) {
-          break;
+          return emitted;
         }
         continue;
       }
@@ -162,6 +155,7 @@ class Posting : public Root, public detail::PostingBatch<InputType, false> {
       _next = _block[0];
       return emitted + stop;
     }
+    _next = doc_limits::eof();
     return emitted;
   }
 

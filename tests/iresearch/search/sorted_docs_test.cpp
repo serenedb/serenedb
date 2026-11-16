@@ -166,7 +166,7 @@ TEST(sorted_docs_test, lead_gathers_up_to_cap_below_max) {
   }
 }
 
-TEST(sorted_docs_test, docs_root_emits_each_window_and_reports_the_next) {
+TEST(sorted_docs_test, docs_root_emits_each_window) {
   constexpr doc_id_t kEnd = 20001;
   std::mt19937 rng{3};
   std::uniform_int_distribution<doc_id_t> pick{doc_limits::min(), kEnd - 1};
@@ -186,17 +186,20 @@ TEST(sorted_docs_test, docs_root_emits_each_window_and_reports_the_next) {
           std::vector<doc_id_t>{docs}};
         std::vector<doc_id_t> buf(window + doc_limits::kDocsSlack);
         std::vector<doc_id_t> actual;
-        for (doc_id_t min = doc_limits::min(); min < kEnd;) {
+        std::vector<doc_id_t> want;
+        uint32_t step = 0;
+        for (doc_id_t min = doc_limits::min(); min < kEnd;
+             min += window, ++step) {
+          if (skip && step % 3 == 1) {
+            continue;
+          }
           const auto max = min + window;
           const auto n = root.Run(min, max, buf.data());
           actual.insert(actual.end(), buf.begin(), buf.begin() + n);
-          const auto next = root.NextDoc();
-          ASSERT_GE(next, max);
-          ASSERT_EQ(absl::c_lower_bound(expected, max),
-                    absl::c_lower_bound(expected, next));
-          min = skip ? std::min(next, kEnd) : max;
+          want.insert(want.end(), absl::c_lower_bound(expected, min),
+                      absl::c_lower_bound(expected, max));
         }
-        ASSERT_EQ(expected, actual);
+        ASSERT_EQ(want, actual);
       }
     }
   }

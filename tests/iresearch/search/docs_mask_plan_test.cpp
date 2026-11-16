@@ -564,24 +564,20 @@ class DocsMaskPlanTest : public tests::IndexTestBase {
         constexpr doc_id_t kWindow = 3000;
         std::vector<doc_id_t> buf(kWindow + irs::doc_limits::kDocsSlack);
         std::vector<doc_id_t> actual;
-        for (doc_id_t min = irs::doc_limits::min(); min < end;) {
+        std::vector<doc_id_t> want;
+        uint32_t window = 0;
+        for (doc_id_t min = irs::doc_limits::min(); min < end;
+             min += kWindow, ++window) {
+          if (skip && window % 3 == 1) {
+            continue;
+          }
           const auto max = std::min(min + kWindow, end);
           const auto n = docs->Run(min, max, buf.data());
           actual.insert(actual.end(), buf.begin(), buf.begin() + n);
-          min = max;
-          const auto next = docs->NextDoc();
-          if (!irs::doc_limits::valid(next)) {
-            continue;
-          }
-          ASSERT_GE(next, max);
-          ASSERT_EQ(absl::c_lower_bound(expected, max),
-                    absl::c_lower_bound(expected, next))
-            << max << ' ' << next;
-          if (skip) {
-            min = std::min(next, end);
-          }
+          want.insert(want.end(), absl::c_lower_bound(expected, min),
+                      absl::c_lower_bound(expected, max));
         }
-        ASSERT_EQ(expected, actual);
+        ASSERT_EQ(want, actual);
       }
     }
 

@@ -24,7 +24,6 @@
 #include <absl/synchronization/mutex.h>
 #include <absl/synchronization/notification.h>
 
-#include <array>
 #include <atomic>
 #include <duckdb.hpp>
 #include <duckdb/function/table_function.hpp>
@@ -44,7 +43,6 @@
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/containers/bitset.hpp>
-#include <iresearch/utils/numeric_utils.hpp>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -71,16 +69,9 @@ enum class ScanShape : uint8_t {
   TsDict,
   Count,
   TopK,
-  ValueTopK,
   Ann,
   ColScan,
   Stream,
-};
-
-struct ValueHit {
-  std::array<irs::byte_type, 1 + irs::numeric_utils::kNumericTermMaxSize> key{};
-  uint32_t seg = 0;
-  irs::doc_id_t doc = irs::doc_limits::eof();
 };
 
 enum class SplitMode : uint8_t {
@@ -365,14 +356,6 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   };
   TopKState topk;
 
-  struct ValueTopKState {
-    ABSL_CACHELINE_ALIGNED absl::Mutex mutex;
-    std::vector<ValueHit> best ABSL_GUARDED_BY(mutex);
-    ValueHit bound ABSL_GUARDED_BY(mutex);
-    std::atomic_uint32_t bound_version{0};
-  };
-  ValueTopKState value;
-
   struct AnnState {
     bool rescore = false;
     std::optional<irs::ann::SharedFloor> floor;
@@ -484,14 +467,6 @@ struct RankedLocalState : public ScanLocalState, FetchLocalState {
 struct TopKLocalState final : public RankedLocalState {
   std::span<irs::ScoreDoc> hit_slice;
   std::optional<irs::LoserScoreCollector> collector;
-};
-
-struct ValueTopKLocalState final : public RankedLocalState {
-  std::vector<ValueHit> hits;
-  std::vector<ValueHit> best;
-  std::vector<ValueHit> merged;
-  ValueHit bound;
-  uint32_t bound_version = 0;
 };
 
 struct AnnLocalState final : public RankedLocalState {
@@ -618,10 +593,6 @@ void RunTopKScan(duckdb::ClientContext& ctx, duckdb::TableFunctionInput& input,
                  duckdb::DataChunk& output);
 void InitTopKGlobal(ScanGlobalState& g, duckdb::ClientContext& context);
 void InitTopKLocal(ScanGlobalState& g, TopKLocalState& l);
-void RunValueTopKScan(duckdb::ClientContext& ctx,
-                      duckdb::TableFunctionInput& input, ScanGlobalState& g,
-                      ValueTopKLocalState& l, duckdb::DataChunk& output);
-void InitValueTopKGlobal(ScanGlobalState& g);
 void RunAnnScan(duckdb::ClientContext& ctx, duckdb::TableFunctionInput& input,
                 ScanGlobalState& g, AnnLocalState& l,
                 duckdb::DataChunk& output);

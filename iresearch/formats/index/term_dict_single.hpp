@@ -51,13 +51,8 @@ class SingleTermReader final : public TermReader {
   void ReadDocs(const PostingMeta& meta, Acceptor acceptor) const final {
     ReadPostingDocs(*this, meta, acceptor);
   }
-  bool VisitRange(bytes_view from, bytes_view to, bool,
-                  TermVisitor visit) const final;
   bool CoverRange(bytes_view from, bytes_view to,
-                  TermVisitor visit) const final {
-    VisitRange(from, to, false, visit);
-    return false;
-  }
+                  TermVisitor visit) const final;
 
   std::unique_ptr<IndexInput> ReopenPayload() const final;
   PostingsHandles Handles() const noexcept final;
@@ -77,7 +72,7 @@ class SingleTermReader final : public TermReader {
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final;
 
   TermPostings::ptr PostingsOf(IndexFeatures features, const PostingMeta& meta,
-                               TermPostings::ptr reuse) const final;
+                               TermPostings::ptr reuse) const;
   const PostingMeta& SingleMeta() const noexcept { return _single; }
 
  private:

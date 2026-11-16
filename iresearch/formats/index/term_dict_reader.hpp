@@ -75,8 +75,6 @@ class TermReaderImpl final : public TermReader {
   void ReadDocs(const PostingMeta& meta, Acceptor acceptor) const final {
     ReadPostingDocs(*this, meta, acceptor);
   }
-  bool VisitRange(bytes_view from, bytes_view to, bool descending,
-                  TermVisitor visit) const final;
   bool CoverRange(bytes_view from, bytes_view to,
                   TermVisitor visit) const final;
 
@@ -100,7 +98,7 @@ class TermReaderImpl final : public TermReader {
 
   const FieldReader& Owner() const noexcept { return *_owner; }
   TermPostings::ptr PostingsOf(IndexFeatures features, const PostingMeta& meta,
-                               TermPostings::ptr reuse) const final;
+                               TermPostings::ptr reuse) const;
   uint32_t Blocks() const noexcept { return _blocks; }
   bool Small() const noexcept { return _blocks == 1; }
   const duckdb_fsst_decoder_t* Fsst() const noexcept { return _fsst.get(); }

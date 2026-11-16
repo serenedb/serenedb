@@ -26,7 +26,6 @@
 
 #include <memory>
 #include <span>
-#include <utility>
 
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/iterators.hpp"
@@ -85,15 +84,8 @@ struct TermReader : public AttributeProvider {
   virtual void LookupBatch(size_t count, TermAt term,
                            FoundTerm found) const = 0;
 
-  virtual bool VisitRange(bytes_view from, bytes_view to, bool descending,
-                          TermVisitor visit) const = 0;
-
   virtual bool CoverRange(bytes_view from, bytes_view to,
                           TermVisitor visit) const = 0;
-
-  virtual TermPostings::ptr PostingsOf(IndexFeatures features,
-                                       const PostingMeta& meta,
-                                       TermPostings::ptr reuse) const = 0;
 
   virtual SeekTermIterator::ptr iterator(
     const RegexpAcceptor& acceptor) const = 0;
@@ -139,8 +131,7 @@ struct TermReader : public AttributeProvider {
 
 template<typename Field>
 void ReadPostingDocs(const Field& field, const PostingMeta& meta,
-                     TermReader::Acceptor acceptor,
-                     TermPostings::ptr& docs_it) {
+                     TermReader::Acceptor acceptor) {
   if (meta.docs_count == 0) {
     return;
   }
@@ -148,7 +139,7 @@ void ReadPostingDocs(const Field& field, const PostingMeta& meta,
     acceptor(doc_limits::min() + meta.doc_delta);
     return;
   }
-  docs_it = field.PostingsOf(IndexFeatures::None, meta, std::move(docs_it));
+  auto docs_it = field.PostingsOf(IndexFeatures::None, meta, {});
   doc_id_t docs[doc_limits::kBlockSize];
   while (const auto n = docs_it->NextDocs(docs, nullptr)) {
     for (uint32_t i = 0; i != n; ++i) {
@@ -158,13 +149,6 @@ void ReadPostingDocs(const Field& field, const PostingMeta& meta,
       }
     }
   }
-}
-
-template<typename Field>
-void ReadPostingDocs(const Field& field, const PostingMeta& meta,
-                     TermReader::Acceptor acceptor) {
-  TermPostings::ptr docs_it;
-  ReadPostingDocs(field, meta, acceptor, docs_it);
 }
 
 }  // namespace irs

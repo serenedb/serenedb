@@ -26,6 +26,7 @@
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
+#include <array>
 #include <duckdb/common/allocator.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
@@ -39,6 +40,7 @@
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/docs_mask/docs_mask.hpp>
+#include <iresearch/index/document_mask.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/segment_reader.hpp>
@@ -62,6 +64,7 @@
 #include "connector/constraint_keys.h"
 #include "connector/full_scanner.h"
 #include "connector/index_expression.hpp"
+#include "connector/search_sink_rows.h"
 #include "connector/search_sink_writer.hpp"
 #include "pg/connection_context.h"
 #include "pg/progress_registry.h"
@@ -517,6 +520,72 @@ std::shared_ptr<const search::TableState> RebuildGroup(
   return published;
 }
 
+void AddLiveRows(irs::DocRemovalBuilder& positions, size_t index, uint64_t row,
+                 uint64_t count, std::span<const duckdb::sel_t> live) {
+  const auto add = [&](uint64_t first, uint64_t end) {
+    positions.AddRange(
+      static_cast<uint32_t>(index),
+      static_cast<irs::doc_id_t>(irs::doc_limits::min() + first),
+      static_cast<irs::doc_id_t>(irs::doc_limits::min() + end));
+  };
+  if (live.empty()) {
+    add(row, row + count);
+    return;
+  }
+  for (size_t i = 0; i < live.size();) {
+    auto j = i + 1;
+    while (j < live.size() && live[j] == live[j - 1] + 1) {
+      ++j;
+    }
+    add(row + live[i], row + live[j - 1] + 1);
+    i = j;
+  }
+}
+
+void RewriteIndexedPatches(duckdb::ClientContext& context,
+                           const SearchBackfillTarget& target) {
+  auto& writes = ConnectionContext::Get(context).Transaction().SearchTxn();
+  SearchSinkTable table{.store = target.shard,
+                        .catalog = target.catalog,
+                        .table_id = target.table_id,
+                        .column_ids = target.column_ids,
+                        .types = target.column_types,
+                        .buffer_bytes = target.shard->InlineRowsMax()};
+  SearchSinkRows rows;
+  irs::DocRemovalBuilder positions;
+  std::optional<RowSource> source;
+  writes.TakeIndexedPatches(
+    context, *target.shard,
+    [&](const irs::DirectoryReader& reader, size_t index,
+        const irs::DocumentMask& docs) {
+      if (!source) {
+        InitRowSource(context, target, source.emplace());
+      }
+      irs::DocumentMask::Cursor cursor{docs};
+      std::array<irs::MaskRun, 64> runs;
+      while (const auto count = cursor.ReadRuns(runs)) {
+        for (const auto& run : std::span{runs}.first(count)) {
+          ScanLiveRows(context, reader[index], run.min - irs::doc_limits::min(),
+                       run.max + 1 - irs::doc_limits::min(),
+                       source->projections, source->filter_states, source->live,
+                       source->chunk,
+                       [&](duckdb::DataChunk& chunk, uint64_t row,
+                           std::span<const duckdb::sel_t> live) {
+                         rows.Append(context, table, chunk);
+                         AddLiveRows(positions, index, row, chunk.size(), live);
+                         return true;
+                       });
+        }
+      }
+    });
+  if (positions.Empty()) {
+    return;
+  }
+  rows.Flush();
+  writes.AddRemoval(context, target.shard, std::move(positions));
+  rows.HandOver(context, table, writes);
+}
+
 }  // namespace
 
 uint64_t SearchBackfillGroupBytes(duckdb::ClientContext& context) {
@@ -535,6 +604,9 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
   SDB_ASSERT(target.shard);
   auto& shard = *target.shard;
 
+  if (target.added.empty()) {
+    RewriteIndexedPatches(context, target);
+  }
   shard.WriteOut();
   const auto floor = shard.ArmCompactionFloor(context);
 

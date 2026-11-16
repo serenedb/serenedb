@@ -194,6 +194,7 @@ class Store final : public std::enable_shared_from_this<Store>,
     return GetTasksSettings().compaction_floor_segment_bytes.load(
       std::memory_order_relaxed);
   }
+  void SyncSegments() const;
   bool RewriteDirtiest();
 
   irs::IndexWriter::Transaction GetTransaction() {
@@ -374,7 +375,6 @@ class Store final : public std::enable_shared_from_this<Store>,
   bool OwnsFiles() const noexcept { return _on_disk && !_read_only; }
   bool CloseFiles();
   void ClaimColumnOids(const irs::DirectoryReader& reader) const;
-  void SyncSegments() const;
   bool OwnerDropped() const noexcept {
     return Dropped() || _directory->Dropped();
   }

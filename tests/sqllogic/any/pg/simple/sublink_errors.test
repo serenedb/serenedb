@@ -24,6 +24,14 @@ member	outsider
 f	t
 
 
+onlyif serenedb
+query
+SELECT NULL IN () AS member, NULL NOT IN () AS outsider, NULL::int IN () AS typed;
+----
+member	outsider	typed
+f	t	f
+
+
 skipif serenedb
 statement error syntax error at or near "ROW"
 SELECT 1 IN ROW(1, 2);

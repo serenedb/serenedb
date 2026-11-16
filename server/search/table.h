@@ -190,6 +190,8 @@ struct TableRead {
 };
 
 size_t VersionBytes(const TableState& state) noexcept;
+std::vector<UnitPatch> ResolvePatches(const TableState& state,
+                                      std::vector<UnitPatch>&& patches);
 
 using TableVersion = Version<TableState>;
 

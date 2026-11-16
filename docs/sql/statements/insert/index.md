@@ -98,7 +98,7 @@ SereneDB supports two such clauses: [`ON CONFLICT DO NOTHING`](#do-nothing-claus
 
 Only conflicts on a unique key are handled: a `PRIMARY KEY` or `UNIQUE` constraint, or a unique index. A row that violates a `CHECK`, `NOT NULL` or foreign key constraint fails the statement as it does without the clause.
 
-The rows a statement proposes are decided one at a time, in the order the statement produces them: a row conflicts with the existing rows and with the rows the statement inserted before it. A key that holds a `NULL` never conflicts.
+The rows a statement proposes are decided one at a time: a row conflicts with the existing rows and with the rows the statement inserted before it. When the statement's own rows repeat a key, `DO NOTHING` inserts one of them and skips the others, and which one is not defined: a large statement decides its rows in parallel, so an `ORDER BY` in its query does not choose the first. A key that holds a `NULL` never conflicts.
 
 A conflict is found against the rows of the statement's snapshot. When another transaction commits the same key after that snapshot was taken, the statement fails with `could not serialize access due to concurrent update`, at the statement or at its `COMMIT`, and a retry takes the conflict path; see [Isolation Level](../transactions.md#isolation-level).
 
@@ -128,6 +128,8 @@ Optionally you can provide an additional `WHERE` clause that can exclude certain
 The conflicts that don't meet this condition are ignored instead.
 
 A statement that proposes the same key twice fails with `ON CONFLICT DO UPDATE command cannot affect row a second time`, whether or not the key already exists.
+
+With `DO UPDATE`, `RETURNING` returns the updated rows and the inserted rows in an order that is not defined: it can differ from the order of the statement's rows. To match returned rows to the rows you proposed, return the conflict key and join on it.
 
 Because we need a way to refer to both the **to-be-inserted** tuple and the **existing** tuple, we introduce the special `EXCLUDED` qualifier.
 When the `EXCLUDED` qualifier is provided, the reference refers to the **to-be-inserted** tuple, otherwise, it refers to the **existing** tuple.

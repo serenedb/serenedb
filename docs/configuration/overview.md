@@ -195,7 +195,7 @@ Planning, rewriting and the shape of query output.
 | `enable_caching_operators` | Enables caching operators that cache intermediate results. | `BOOLEAN` | `SESSION` | `on` |
 | `enable_optimizer` | Whether or not query optimization is enabled. | `BOOLEAN` | `GLOBAL` | `on` |
 | `explain_output` | Output of EXPLAIN statements (`ALL`, `OPTIMIZED_ONLY`, `PHYSICAL_ONLY`) | `VARCHAR` | `SESSION` | `PHYSICAL_ONLY` |
-| `explain_output_format` | Column shape of EXPLAIN output (DUCKDB_NATIVE = native two-column key/value, PG = single QUERY PLAN column with one row per line of a text or compact plan and one row per plan in other formats). | `VARCHAR` | `SESSION` | `PG` |
+| `explain_output_format` | Column shape of EXPLAIN output (`CLI` = two columns, key and value, as `serened shell` and `serened psql` print them; `SERVER` = single QUERY PLAN column with one row per line of a text or compact plan and one row per plan in other formats). | `VARCHAR` | `SESSION` | `SERVER` |
 | `filter_reorder` | How far filter reordering may move conditions that can fail (`never`, `safe`, `fast` or `always`) | `VARCHAR` | `SESSION` | `fast` |
 | `late_materialization_lookup_max_rows` | The maximum amount of rows in the LIMIT/TOP_N/SAMPLE for which a scan that can look up rows by their row id is late materialized through a `LOOKUP_JOIN`. `0` disables the `LOOKUP_JOIN`: late materialization then joins on the row ids, up to `late_materialization_max_rows`. | `UBIGINT` | `SESSION` | `2048` |
 | `late_materialization_max_rows` | The maximum amount of rows in the LIMIT/SAMPLE for which we trigger late materialization | `UBIGINT` | `SESSION` | `50` |

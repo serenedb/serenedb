@@ -1,0 +1,24 @@
+statement ok
+CREATE DATABASE jdd_jobs;
+
+
+statement ok
+CREATE JOB jdd_jobs.public.jdd_sleeper EVERY 1 SECOND CONCURRENT AS SELECT sleep_ms(2500);
+
+
+query ok retry 80 backoff 250ms
+SELECT running FROM sdb_jobs() WHERE database_name = 'jdd_jobs' AND job_name = 'jdd_sleeper';
+----
+running
+t
+
+
+statement ok
+DROP DATABASE jdd_jobs;
+
+
+query
+SELECT count(*) AS jobs FROM sdb_jobs() WHERE database_name = 'jdd_jobs';
+----
+jobs
+0

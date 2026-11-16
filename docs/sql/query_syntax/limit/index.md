@@ -40,3 +40,8 @@ Select 10% of the rows from the addresses table:
 ## Syntax
 
 <RailroadDiagram source={RailroadSource} production="rrdiagram" />
+
+## Limitations
+
+- In a correlated subquery, such as a `LATERAL` subquery, `LIMIT` and `OFFSET` take only literal values: a parameter, a subquery or a column of the outer query fails with `Non-constant limit not supported in correlated subquery` or `Correlated columns not supported in LIMIT/OFFSET`.
+- On a `UNION`, `INTERSECT` or `EXCEPT`, `LIMIT` and `OFFSET` cannot be subqueries; a literal or a parameter works.

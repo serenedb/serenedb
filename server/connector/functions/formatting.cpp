@@ -4022,7 +4022,9 @@ uint8_t ExtractScale(ExtractSource source, DateUnit unit) {
   return 0;
 }
 
-template<ExtractSource kSource>
+template<ExtractSource kSource, typename T,
+         std::optional<Extracted> (*kExtract)(FormattingState&,
+                                              std::string_view, DateUnit, T)>
 duckdb::unique_ptr<duckdb::FunctionData> BindExtract(
   duckdb::BindScalarFunctionInput& input) {
   auto scale = kSecondScale;
@@ -4031,6 +4033,23 @@ duckdb::unique_ptr<duckdb::FunctionData> BindExtract(
   }
   input.GetBoundFunction().SetReturnType(
     duckdb::LogicalType::DECIMAL(kNumericWidth, scale));
+  bool safe = false;
+  if (const auto unit = input.TryGetConstant(0);
+      unit && kSource != ExtractSource::kTimestampTz) {
+    safe = unit->IsNull();
+    if (!safe) {
+      const auto text = unit->ToString();
+      FormattingState probe;
+      try {
+        kExtract(probe, text, DecodeDateUnit(text), T{});
+        safe = true;
+      } catch (const irs::SqlException&) {
+      }
+    }
+  }
+  if (!safe) {
+    input.GetBoundFunction().SetFallible();
+  }
   if constexpr (kSource == ExtractSource::kTimestampTz) {
     return duckdb::ICUDateFunc::Bind(input);
   } else {
@@ -4156,34 +4175,40 @@ void RegisterPgFormattingFunctions(duckdb::DatabaseInstance& db) {
     };
     duckdb::ScalarFunctionSet set{"extract"};
     for (const auto& overload : {
-           ExtractOverload{LogicalType::DATE,
-                           ExtractFunction<duckdb::date_t, ExtractFromDate>,
-                           BindExtract<ExtractSource::kDate>,
-                           InitFormattingState, CONSISTENT},
+           ExtractOverload{
+             LogicalType::DATE,
+             ExtractFunction<duckdb::date_t, ExtractFromDate>,
+             BindExtract<ExtractSource::kDate, duckdb::date_t, ExtractFromDate>,
+             InitFormattingState, CONSISTENT},
            ExtractOverload{LogicalType::TIME,
                            ExtractFunction<duckdb::dtime_t, ExtractFromTime>,
-                           BindExtract<ExtractSource::kTime>,
+                           BindExtract<ExtractSource::kTime, duckdb::dtime_t,
+                                       ExtractFromTime>,
                            InitFormattingState, CONSISTENT},
            ExtractOverload{
              LogicalType::TIME_TZ,
              ExtractFunction<duckdb::dtime_tz_t, ExtractFromTimeTz>,
-             BindExtract<ExtractSource::kTimeTz>, InitFormattingState,
-             CONSISTENT},
+             BindExtract<ExtractSource::kTimeTz, duckdb::dtime_tz_t,
+                         ExtractFromTimeTz>,
+             InitFormattingState, CONSISTENT},
            ExtractOverload{
              LogicalType::TIMESTAMP,
              ExtractFunction<duckdb::timestamp_t, ExtractFromTimestamp>,
-             BindExtract<ExtractSource::kTimestamp>, InitFormattingState,
-             CONSISTENT},
+             BindExtract<ExtractSource::kTimestamp, duckdb::timestamp_t,
+                         ExtractFromTimestamp>,
+             InitFormattingState, CONSISTENT},
            ExtractOverload{
              LogicalType::TIMESTAMP_TZ,
              ExtractFunction<duckdb::timestamp_tz_t, ExtractFromTimestampTz>,
-             BindExtract<ExtractSource::kTimestampTz>, InitZonedFormattingState,
-             CONSISTENT_WITHIN_QUERY},
+             BindExtract<ExtractSource::kTimestampTz, duckdb::timestamp_tz_t,
+                         ExtractFromTimestampTz>,
+             InitZonedFormattingState, CONSISTENT_WITHIN_QUERY},
            ExtractOverload{
              LogicalType::INTERVAL,
              ExtractFunction<duckdb::interval_t, ExtractFromInterval>,
-             BindExtract<ExtractSource::kInterval>, InitFormattingState,
-             CONSISTENT},
+             BindExtract<ExtractSource::kInterval, duckdb::interval_t,
+                         ExtractFromInterval>,
+             InitFormattingState, CONSISTENT},
          }) {
       duckdb::ScalarFunction function{
         "extract",
@@ -4196,7 +4221,6 @@ void RegisterPgFormattingFunctions(duckdb::DatabaseInstance& db) {
       function.SetStability(overload.stability);
       set.AddFunction(std::move(function));
     }
-    set.SetFallible();
     loader.RegisterFunction(std::move(set));
   }
 

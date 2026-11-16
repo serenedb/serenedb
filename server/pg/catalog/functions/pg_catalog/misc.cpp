@@ -1489,6 +1489,7 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
     duckdb::ScalarFunction function{
       {text, boolean}, text, CurrentSetting2Function};
     function.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
+    function.SetFallible();
     ExtendScalar(loader, "current_setting", CONSISTENT_WITHIN_QUERY, nullptr,
                  {function});
   }
@@ -1511,12 +1512,17 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
   ExtendScalar(loader, "pg_backend_pid", CONSISTENT_WITHIN_QUERY, nullptr,
                {duckdb::ScalarFunction{{}, int4, PgBackendPidFunction}});
 
-  ExtendScalar(
-    loader, "pg_cancel_backend", VOLATILE, nullptr,
-    {duckdb::ScalarFunction{{int4}, boolean, SignalBackendFunction<false>}});
-  ExtendScalar(
-    loader, "pg_terminate_backend", VOLATILE, nullptr,
-    {duckdb::ScalarFunction{{int4}, boolean, SignalBackendFunction<true>}});
+  {
+    duckdb::ScalarFunction cancel{
+      {int4}, boolean, SignalBackendFunction<false>};
+    cancel.SetFallible();
+    ExtendScalar(loader, "pg_cancel_backend", VOLATILE, nullptr, {cancel});
+    duckdb::ScalarFunction terminate{
+      {int4}, boolean, SignalBackendFunction<true>};
+    terminate.SetFallible();
+    ExtendScalar(loader, "pg_terminate_backend", VOLATILE, nullptr,
+                 {terminate});
+  }
 
   {
     duckdb::ScalarFunction function{{any}, int4, CountNullsFunction<false>};

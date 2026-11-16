@@ -29,6 +29,7 @@
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/operator/cast_operators.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/error_mapping.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <string>
 
@@ -190,17 +191,11 @@ std::optional<irs::pg::SqlErrorData> TextInput::Error(duckdb::string_t text) {
     try {
       Cast(text, nullptr);
     } catch (const duckdb::Exception& exception) {
-      const duckdb::ErrorData error{exception};
-      if (error.Type() != duckdb::ExceptionType::CONVERSION) {
+      if (duckdb::ErrorData{exception}.Type() !=
+          duckdb::ExceptionType::CONVERSION) {
         throw;
       }
-      auto data = SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
-                                 ERR_MSG(error.RawMessage()));
-      if (auto it = error.ExtraInfo().find("detail");
-          it != error.ExtraInfo().end()) {
-        data.errdetail = it->second;
-      }
-      return data;
+      return irs::pg::ToSqlError(exception);
     }
     return std::nullopt;
   }

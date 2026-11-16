@@ -1,0 +1,44 @@
+statement ok
+CREATE TABLE scds (id BIGINT, body TEXT) WITH (compaction_interval = 0);
+
+
+statement ok
+SET sdb_faults = 'search_sync_segments_fails';
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO scds SELECT i, repeat('x', 100) FROM range(100000) t(i);
+
+
+statement error intentional debug error
+COMMIT;
+
+
+statement ok
+RESET sdb_faults;
+
+
+query
+SELECT count(*) AS n FROM scds;
+----
+n
+0
+
+
+statement ok
+INSERT INTO scds SELECT i, 'x' FROM range(100000) t(i);
+
+
+query
+SELECT count(*) AS n FROM scds;
+----
+n
+100000
+
+
+statement ok
+DROP TABLE scds;

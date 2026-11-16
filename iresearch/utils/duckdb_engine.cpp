@@ -78,7 +78,7 @@ void DuckDBEngine::Configure(duckdb::DBConfig& config) {
   config.options.case_sensitive_database_names = true;
   config.SetOptionByName("preserve_identifier_case", duckdb::Value{false});
   config.SetOptionByName("disable_database_invalidation", duckdb::Value{true});
-  config.SetOptionByName("explain_output_format", duckdb::Value{"PG"});
+  config.SetOptionByName("explain_output_format", duckdb::Value{"SERVER"});
   config.SetOptionByName("table_function_identifier_conversion",
                          duckdb::Value{"DISABLE_IMPLICIT_STRING"});
   // Dependency edges are built from what the binder resolved

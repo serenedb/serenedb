@@ -45,6 +45,58 @@ CREATE TABLE chfnn_oids AS SELECT conname, oid FROM pg_constraint WHERE conrelid
 
 
 statement ok
+CREATE TABLE chfnn_r (id INT, v INT NOT NULL, x INT NOT NULL, n INT);
+
+
+statement ok
+INSERT INTO chfnn_r VALUES (1, 10, 20, 30);
+
+
+statement ok
+ALTER TABLE chfnn_r RENAME COLUMN v TO w;
+
+
+statement ok
+ALTER TABLE chfnn_r ALTER COLUMN w DROP NOT NULL;
+
+
+statement ok
+ALTER TABLE chfnn_r ALTER COLUMN w SET NOT NULL;
+
+
+statement ok
+ALTER TABLE chfnn_r RENAME COLUMN x TO y;
+
+
+statement ok
+ALTER TABLE chfnn_r ALTER COLUMN y DROP NOT NULL;
+
+
+statement ok
+ALTER TABLE chfnn_r ALTER COLUMN y SET NOT NULL;
+
+
+statement ok
+ALTER TABLE chfnn_r ALTER COLUMN y DROP NOT NULL;
+
+
+statement ok
+ALTER TABLE chfnn_r ALTER COLUMN y SET NOT NULL;
+
+
+statement ok
+ALTER TABLE chfnn_r ALTER COLUMN n SET NOT NULL;
+
+
+statement ok
+ALTER TABLE chfnn_r ALTER COLUMN n DROP NOT NULL;
+
+
+statement ok
+CREATE TABLE chfnn_r_oids AS SELECT conname, oid FROM pg_constraint WHERE conrelid = 'chfnn_r'::regclass;
+
+
+statement ok
 CHECKPOINT;
 
 
@@ -98,3 +150,43 @@ SELECT count(*) AS n FROM chfnn_t WHERE a IS NULL;
 ----
 n
 2
+
+
+connection after_restart
+query
+SELECT o.conname, c.oid = o.oid AS same_oid FROM chfnn_r_oids o LEFT JOIN pg_constraint c ON c.conrelid = 'chfnn_r'::regclass AND c.conname = o.conname ORDER BY o.conname;
+----
+conname	same_oid
+chfnn_r_w_not_null	t
+chfnn_r_y_not_null	t
+
+
+connection after_restart
+query
+SELECT conname FROM pg_constraint WHERE conrelid = 'chfnn_r'::regclass ORDER BY conname;
+----
+conname
+chfnn_r_w_not_null
+chfnn_r_y_not_null
+
+
+connection after_restart
+statement error
+INSERT INTO chfnn_r VALUES (2, NULL, 21, 31);
+----
+db error: ERROR: NOT NULL constraint failed: chfnn_r.w
+
+
+connection after_restart
+statement error
+INSERT INTO chfnn_r VALUES (2, 11, NULL, 31);
+----
+db error: ERROR: NOT NULL constraint failed: chfnn_r.y
+
+
+connection after_restart
+query
+INSERT INTO chfnn_r VALUES (2, 11, 21, NULL) RETURNING id, w, y, n;
+----
+id	w	y	n
+2	11	21	NULL

@@ -1,0 +1,265 @@
+control substitution on
+
+
+statement ok
+CREATE TABLE jbrt_t (a INT, b TEXT);
+
+
+statement ok
+CREATE TABLE jbrt_div (via TEXT, v TEXT);
+
+
+statement ok
+CREATE TABLE jbrt_mixed (v INT);
+
+
+statement ok
+CREATE ROLE jbrt_r;
+
+
+statement ok
+CREATE ROLE jbrt_g;
+
+
+statement ok
+CREATE DATABASE jbrt_db;
+
+
+statement ok
+CREATE JOB jbrt_01 AFTER 1 HOUR AS GRANT SELECT ON jbrt_t TO jbrt_r WITH GRANT OPTION;
+
+
+statement ok
+CREATE JOB jbrt_02 AFTER 1 HOUR AS REVOKE GRANT OPTION FOR SELECT ON jbrt_t FROM jbrt_r CASCADE;
+
+
+statement ok
+CREATE JOB jbrt_03 AFTER 1 HOUR AS GRANT jbrt_g TO jbrt_r WITH ADMIN OPTION, INHERIT FALSE;
+
+
+statement ok
+CREATE JOB jbrt_04 AFTER 1 HOUR AS REVOKE ADMIN OPTION FOR jbrt_g FROM jbrt_r;
+
+
+statement ok
+CREATE JOB jbrt_05 AFTER 1 HOUR AS CREATE ROLE jbrt_r2 LOGIN CREATEDB NOINHERIT PASSWORD 'p''w' CONNECTION LIMIT 3 VALID UNTIL 'infinity' IN ROLE jbrt_g;
+
+
+statement ok
+CREATE JOB jbrt_06 AFTER 1 HOUR AS CREATE SUBSCRIPTION jbrt_s CONNECTION 'host=localhost' PUBLICATION p WITH (copy_data = false, enabled = false, connect = false);
+
+
+statement ok
+CREATE JOB jbrt_07 AFTER 1 HOUR AS RESET ALL;
+
+
+statement ok
+CREATE JOB jbrt_08 AFTER 1 HOUR AS SET search_path = public, "Mixed Schema";
+
+
+statement ok
+CREATE JOB jbrt_09 AFTER 1 HOUR AS GRANT SELECT, INSERT, UPDATE (a) ON jbrt_t TO jbrt_r;
+
+
+statement ok
+CREATE JOB jbrt_10 AFTER 1 HOUR AS GRANT ALL PRIVILEGES ON jbrt_t TO PUBLIC;
+
+
+statement ok
+CREATE JOB jbrt_11 AFTER 1 HOUR AS GRANT SELECT ON ALL TABLES IN SCHEMA public TO jbrt_r GRANTED BY jbrt_g;
+
+
+statement ok
+CREATE JOB jbrt_12 AFTER 1 HOUR AS DEALLOCATE ALL;
+
+
+statement ok
+CREATE JOB jbrt_13 AFTER 1 HOUR AS GRANT CONNECT, TEMPORARY ON DATABASE jbrt_db TO jbrt_r;
+
+
+statement ok
+CREATE JOB jbrt_14 AFTER 1 HOUR AS ALTER DEFAULT PRIVILEGES FOR ROLE jbrt_g IN SCHEMA public GRANT SELECT ON TABLES TO jbrt_r WITH GRANT OPTION;
+
+
+statement ok
+CREATE JOB jbrt_15 AFTER 1 HOUR AS ALTER DEFAULT PRIVILEGES REVOKE GRANT OPTION FOR EXECUTE ON FUNCTIONS FROM PUBLIC CASCADE;
+
+
+statement ok
+CREATE JOB jbrt_16 AFTER 1 HOUR AS DROP DATABASE IF EXISTS jbrt_gone;
+
+
+statement ok
+CREATE JOB jbrt_17 AFTER 1 HOUR AS DROP ROLE IF EXISTS jbrt_gone;
+
+
+statement ok
+CREATE JOB jbrt_18 AFTER 1 HOUR AS DROP TEXT SEARCH DICTIONARY IF EXISTS jbrt_dict CASCADE;
+
+
+statement ok
+CREATE JOB jbrt_19 AFTER 1 HOUR AS ALTER ROLE jbrt_r LOGIN NOCREATEDB CONNECTION LIMIT 5 PASSWORD NULL;
+
+
+statement ok
+CREATE JOB jbrt_20 AFTER 1 HOUR AS ALTER ROLE jbrt_r RENAME TO jbrt_r3;
+
+
+statement ok
+CREATE JOB jbrt_21 AFTER 1 HOUR AS ALTER ROLE jbrt_r SET search_path = 'jbrt, public';
+
+
+statement ok
+CREATE JOB jbrt_22 AFTER 1 HOUR AS ALTER ROLE jbrt_r RESET ALL;
+
+
+statement ok
+CREATE JOB jbrt_23 AFTER 1 HOUR AS ALTER TABLE jbrt_t OWNER TO CURRENT_USER;
+
+
+statement ok
+CREATE JOB jbrt_24 AFTER 1 HOUR AS 'INSERT INTO jbrt_div SELECT ''one'', (7 / 2)::TEXT';
+
+
+statement ok
+CREATE JOB jbrt_25 AFTER 1 HOUR AS 'INSERT INTO jbrt_div SELECT ''script'', (7 / 2)::TEXT; INSERT INTO JBRT_Mixed VALUES (1);';
+
+
+statement ok
+CREATE JOB jbrt_26 AFTER 1 HOUR AS GRANT USAGE ON FOREIGN SERVER jbrt_srv TO "Jbrt Quoted";
+
+
+query
+SELECT job_name, body FROM sdb_jobs() WHERE starts_with(job_name, 'jbrt_') ORDER BY job_name;
+----
+job_name	body
+jbrt_01	GRANT SELECT ON TABLE jbrt_t TO jbrt_r WITH GRANT OPTION;
+jbrt_02	REVOKE GRANT OPTION FOR SELECT ON TABLE jbrt_t FROM jbrt_r CASCADE;
+jbrt_03	GRANT jbrt_g TO jbrt_r WITH ADMIN TRUE, INHERIT FALSE;
+jbrt_04	REVOKE ADMIN OPTION FOR jbrt_g FROM jbrt_r;
+jbrt_05	CREATE ROLE jbrt_r2 WITH NOINHERIT CREATEDB LOGIN CONNECTION LIMIT 3 VALID UNTIL 'infinity' PASSWORD 'p''w' IN ROLE jbrt_g;
+jbrt_06	PRAGMA create_subscription('jbrt_s', 'host=localhost', 'p', "connect" = false, copy_data = false, enabled = false);
+jbrt_07	RESET ALL;
+jbrt_08	SET search_path TO public, "Mixed Schema";
+jbrt_09	GRANT SELECT, INSERT, UPDATE (a) ON TABLE jbrt_t TO jbrt_r;
+jbrt_10	GRANT ALL PRIVILEGES ON TABLE jbrt_t TO PUBLIC;
+jbrt_11	GRANT SELECT ON ALL TABLES IN SCHEMA public TO jbrt_r GRANTED BY jbrt_g;
+jbrt_12	DEALLOCATE ALL;
+jbrt_13	GRANT TEMPORARY, CONNECT ON DATABASE jbrt_db TO jbrt_r;
+jbrt_14	ALTER DEFAULT PRIVILEGES FOR ROLE jbrt_g IN SCHEMA public GRANT SELECT ON TABLES TO jbrt_r WITH GRANT OPTION;
+jbrt_15	ALTER DEFAULT PRIVILEGES REVOKE GRANT OPTION FOR ALL PRIVILEGES ON FUNCTIONS FROM PUBLIC CASCADE;
+jbrt_16	DROP DATABASE IF EXISTS jbrt_gone;
+jbrt_17	DROP ROLE IF EXISTS jbrt_gone;
+jbrt_18	DROP TEXT SEARCH DICTIONARY IF EXISTS jbrt_dict CASCADE;
+jbrt_19	ALTER ROLE jbrt_r WITH NOCREATEDB LOGIN CONNECTION LIMIT 5 PASSWORD NULL;
+jbrt_20	ALTER ROLE jbrt_r RENAME TO jbrt_r3;
+jbrt_21	ALTER ROLE jbrt_r SET search_path = 'jbrt, public';
+jbrt_22	ALTER ROLE jbrt_r RESET ALL;
+jbrt_23	ALTER TABLE jbrt_t OWNER TO CURRENT_USER;
+jbrt_24	INSERT INTO jbrt_div SELECT 'one', CAST((7 // 2) AS text)
+jbrt_25	INSERT INTO jbrt_div SELECT 'script', (7 / 2)::TEXT; INSERT INTO JBRT_Mixed VALUES (1);
+jbrt_26	GRANT ALL PRIVILEGES ON FOREIGN SERVER jbrt_srv TO "Jbrt Quoted";
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection r1
+query retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT job_name, body FROM sdb_jobs() WHERE starts_with(job_name, 'jbrt_') ORDER BY job_name;
+----
+job_name	body
+jbrt_01	GRANT SELECT ON TABLE jbrt_t TO jbrt_r WITH GRANT OPTION;
+jbrt_02	REVOKE GRANT OPTION FOR SELECT ON TABLE jbrt_t FROM jbrt_r CASCADE;
+jbrt_03	GRANT jbrt_g TO jbrt_r WITH ADMIN TRUE, INHERIT FALSE;
+jbrt_04	REVOKE ADMIN OPTION FOR jbrt_g FROM jbrt_r;
+jbrt_05	CREATE ROLE jbrt_r2 WITH NOINHERIT CREATEDB LOGIN CONNECTION LIMIT 3 VALID UNTIL 'infinity' PASSWORD 'p''w' IN ROLE jbrt_g;
+jbrt_06	PRAGMA create_subscription('jbrt_s', 'host=localhost', 'p', "connect" = false, copy_data = false, enabled = false);
+jbrt_07	RESET ALL;
+jbrt_08	SET search_path TO public, "Mixed Schema";
+jbrt_09	GRANT SELECT, INSERT, UPDATE (a) ON TABLE jbrt_t TO jbrt_r;
+jbrt_10	GRANT ALL PRIVILEGES ON TABLE jbrt_t TO PUBLIC;
+jbrt_11	GRANT SELECT ON ALL TABLES IN SCHEMA public TO jbrt_r GRANTED BY jbrt_g;
+jbrt_12	DEALLOCATE ALL;
+jbrt_13	GRANT TEMPORARY, CONNECT ON DATABASE jbrt_db TO jbrt_r;
+jbrt_14	ALTER DEFAULT PRIVILEGES FOR ROLE jbrt_g IN SCHEMA public GRANT SELECT ON TABLES TO jbrt_r WITH GRANT OPTION;
+jbrt_15	ALTER DEFAULT PRIVILEGES REVOKE GRANT OPTION FOR ALL PRIVILEGES ON FUNCTIONS FROM PUBLIC CASCADE;
+jbrt_16	DROP DATABASE IF EXISTS jbrt_gone;
+jbrt_17	DROP ROLE IF EXISTS jbrt_gone;
+jbrt_18	DROP TEXT SEARCH DICTIONARY IF EXISTS jbrt_dict CASCADE;
+jbrt_19	ALTER ROLE jbrt_r WITH NOCREATEDB LOGIN CONNECTION LIMIT 5 PASSWORD NULL;
+jbrt_20	ALTER ROLE jbrt_r RENAME TO jbrt_r3;
+jbrt_21	ALTER ROLE jbrt_r SET search_path = 'jbrt, public';
+jbrt_22	ALTER ROLE jbrt_r RESET ALL;
+jbrt_23	ALTER TABLE jbrt_t OWNER TO CURRENT_USER;
+jbrt_24	INSERT INTO jbrt_div SELECT 'one', CAST((7 // 2) AS text)
+jbrt_25	INSERT INTO jbrt_div SELECT 'script', (7 / 2)::TEXT; INSERT INTO JBRT_Mixed VALUES (1);
+jbrt_26	GRANT ALL PRIVILEGES ON FOREIGN SERVER jbrt_srv TO "Jbrt Quoted";
+
+
+connection r1
+statement ok
+EXECUTE JOB jbrt_01;
+
+
+connection r1
+statement ok
+EXECUTE JOB jbrt_02;
+
+
+connection r1
+query
+SELECT has_table_privilege('jbrt_r', 'jbrt_t', 'SELECT') AS sel, has_table_privilege('jbrt_r', 'jbrt_t', 'SELECT WITH GRANT OPTION') AS grant_option;
+----
+sel	grant_option
+t	f
+
+
+connection r1
+statement ok
+EXECUTE JOB jbrt_03;
+
+
+connection r1
+statement ok
+EXECUTE JOB jbrt_04;
+
+
+connection r1
+query
+SELECT m.admin_option, m.inherit_option FROM pg_auth_members m WHERE m.roleid = 'jbrt_g'::regrole AND m.member = 'jbrt_r'::regrole;
+----
+admin_option	inherit_option
+f	f
+
+
+connection r1
+statement ok
+EXECUTE JOB jbrt_24;
+
+
+connection r1
+statement ok
+EXECUTE JOB jbrt_25;
+
+
+connection r1
+query
+SELECT via, v FROM jbrt_div ORDER BY via;
+----
+via	v
+one	3
+script	3
+
+
+connection r1
+query
+SELECT v FROM jbrt_mixed;
+----
+v
+1

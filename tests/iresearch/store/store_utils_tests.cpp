@@ -776,6 +776,19 @@ TEST(store_utils_tests, delta_encode_decode) {
   tests::detail::DeltaEncodeDecodeCore(1000, 1);  // step = 1000, count = 1
 }
 
+TEST(store_utils_tests, bytes_view_short_read) {
+  const irs::byte_type data[] = {1, 2, 3};
+  irs::BytesViewInput in{irs::bytes_view{data, sizeof data}};
+  irs::byte_type buf[4]{};
+  EXPECT_ANY_THROW(in.ReadData(buf, 4));
+  EXPECT_ANY_THROW(in.ReadData(1, buf, 3));
+  EXPECT_ANY_THROW(in.ReadData(4, buf, 0));
+  in.ReadData(1, buf, 2);
+  EXPECT_EQ(2, buf[0]);
+  EXPECT_EQ(3, buf[1]);
+  EXPECT_EQ(3, in.Position());
+}
+
 TEST(store_utils_tests, test_remapped_bytes_view) {
   std::array<irs::byte_type, 15> data = {0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8,
                                          0x9, 0xA, 0xB, 0xC, 0xD, 0xE, 0xF};

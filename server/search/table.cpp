@@ -525,6 +525,14 @@ irs::DocumentMask PatchedDocs(const UnitPatch& patch) {
   return std::move(docs).Finish(irs::DocumentMaskBuilder::kCanonical);
 }
 
+std::vector<UnitPatch> ResolvePatches(const TableState& state,
+                                      std::vector<UnitPatch>&& patches) {
+  if (PatchesCurrent(state, patches)) {
+    return std::move(patches);
+  }
+  return FollowPatches(state, patches);
+}
+
 void MergeUnitPatches(std::vector<UnitPatch>& into,
                       std::vector<UnitPatch>&& added) {
   for (auto& patch : added) {
@@ -950,11 +958,7 @@ Tick Table::Conflict(const irs::DocRemoval& removal, Tick snapshot) const {
 }
 
 std::vector<UnitPatch> Table::Resolve(std::vector<UnitPatch>&& patches) const {
-  const auto state = State();
-  if (PatchesCurrent(*state, patches)) {
-    return std::move(patches);
-  }
-  return FollowPatches(*state, patches);
+  return ResolvePatches(*State(), std::move(patches));
 }
 
 TableDelta Table::CommitDelta(const TableCommit& commit,

@@ -35,6 +35,7 @@
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/main/database_manager.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/storage/block_manager.hpp>
 #include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
@@ -59,6 +60,7 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <optional>
 #include <utility>
+#include <yaclib/async/wait.hpp>
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/future.hpp>
 
@@ -72,6 +74,7 @@
 #include "pg/connection_context.h"
 #include "scheduler/background_scheduler.h"
 #include "search/log_entry.h"
+#include "search/parallel.h"
 #include "search/scorer_options.h"
 #include "search/task.h"
 #include "search/version_chain.tpp"
@@ -942,44 +945,28 @@ absl::Status Store::VacuumCompact(duckdb::ClientContext& context,
         buckets[i % target].emplace_back(snapshot[i].Meta().name);
       }
     }
+    std::vector<yaclib::Future<GroupCompaction>> groups(buckets.size());
+    ParallelFor(context, buckets.size(), [&](size_t b) {
+      groups[b] = CompactGroupAsync(context, buckets[b], progress, env);
+    });
+    for (auto& group : groups) {
+      if (!group.Ready()) {
+        duckdb::TaskScheduler::BlockingScope blocking;
+        yaclib::Wait(group);
+      }
+    }
     absl::Status status;
     bool merged = false;
-    for (const auto& names : buckets) {
-      bool contended = false;
-      const irs::CompactionPolicy bucket =
-        [&names, &contended](irs::Compaction& candidates,
-                             const irs::IndexReader& reader,
-                             const irs::CompactingSegments& busy) {
-          for (size_t i = 0; i < reader.size(); ++i) {
-            const auto& segment = reader[i];
-            const auto& name = segment.Meta().name;
-            if (!absl::c_linear_search(names, name)) {
-              continue;
-            }
-            if (busy.contains(name)) {
-              contended = true;
-            } else {
-              candidates.emplace_back(&segment);
-            }
-          }
-        };
-      bool empty = false;
-      absl::Status res;
-      do {
-        const auto field_options = CompactionOptions();
-        res =
-          irs::GetBlocking(CompactUnsafeAsync(
-                             GetSearchEngine().Maintenance().Enter(context),
-                             bucket, progress, empty, field_options.get(), env))
-            .res;
-      } while (absl::IsUnavailable(res));
-      context.InterruptCheck();
-      status.Update(res);
-      merged = merged || !empty;
-      if (contended) {
-        AwaitMerges(context);
-        merged = true;
-      }
+    bool contended = false;
+    for (auto& group : groups) {
+      const auto result = irs::GetReady(std::move(group));
+      status.Update(result.status);
+      merged = merged || result.merged || result.contended;
+      contended = contended || result.contended;
+    }
+    context.InterruptCheck();
+    if (contended) {
+      AwaitMerges(context);
     }
     if (!status.ok()) {
       return status;
@@ -992,6 +979,41 @@ absl::Status Store::VacuumCompact(duckdb::ClientContext& context,
   catalog::Transactions::Get().AwaitPublished(
     _storage_tick.load(std::memory_order_acquire));
   return cleanup;
+}
+
+auto Store::CompactGroupAsync(duckdb::ClientContext& context,
+                              std::span<const std::string> names,
+                              const irs::MergeWriter::FlushProgress& progress,
+                              const irs::AnnBuildEnv* env)
+  -> yaclib::Future<GroupCompaction> {
+  GroupCompaction result;
+  const irs::CompactionPolicy group = [names, &result](
+                                        irs::Compaction& candidates,
+                                        const irs::IndexReader& reader,
+                                        const irs::CompactingSegments& busy) {
+    for (size_t i = 0; i < reader.size(); ++i) {
+      const auto& segment = reader[i];
+      const auto& name = segment.Meta().name;
+      if (!absl::c_linear_search(names, name)) {
+        continue;
+      }
+      if (busy.contains(name)) {
+        result.contended = true;
+      } else {
+        candidates.emplace_back(&segment);
+      }
+    }
+  };
+  bool empty = false;
+  do {
+    const auto field_options = CompactionOptions();
+    result.status = (co_await CompactUnsafeAsync(
+                       GetSearchEngine().Maintenance().Enter(context), group,
+                       progress, empty, field_options.get(), env))
+                      .res;
+  } while (absl::IsUnavailable(result.status));
+  result.merged = !empty;
+  co_return result;
 }
 
 void Store::AwaitMerges(duckdb::ClientContext& context) {

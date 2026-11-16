@@ -345,6 +345,18 @@ class Store final : public std::enable_shared_from_this<Store>,
   static constexpr uint32_t kReindexing = 1;
   static constexpr uint32_t kReindexWaiter = 2;
 
+  struct GroupCompaction {
+    absl::Status status;
+    bool merged = false;
+    bool contended = false;
+  };
+
+  auto CompactGroupAsync(duckdb::ClientContext& context,
+                         std::span<const std::string> names,
+                         const irs::MergeWriter::FlushProgress& progress,
+                         const irs::AnnBuildEnv* env)
+    -> yaclib::Future<GroupCompaction>;
+
   struct IndexConfig {
     duckdb::idx_t oid;
     std::shared_ptr<const catalog::InvertedIndexConfig> config;

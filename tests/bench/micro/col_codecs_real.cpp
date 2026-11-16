@@ -192,7 +192,18 @@ constexpr ColArm kNumArms[] = {
   {"rle", irs::codecs::CodecType::Rle, 0},
   {"alp", irs::codecs::CodecType::Alp, 0},
   {"alprd", irs::codecs::CodecType::AlpRd, 0},
-  {"numeric", irs::codecs::CodecType::Numeric, 0},
+  {"ffor", irs::codecs::CodecType::Ffor, 0},
+  {"lz4", irs::codecs::CodecType::Lz4, 0},
+  {"zstd", irs::codecs::CodecType::Zstd, 0},
+  {"delta_ffor", irs::codecs::CodecType::DeltaFfor, 0},
+  {"delta_lz4", irs::codecs::CodecType::DeltaLz4, 0},
+  {"delta_zstd", irs::codecs::CodecType::DeltaZstd, 0},
+  {"rle_ffor", irs::codecs::CodecType::RleFfor, 0},
+  {"rle_lz4", irs::codecs::CodecType::RleLz4, 0},
+  {"rle_zstd", irs::codecs::CodecType::RleZstd, 0},
+  {"dict_ffor", irs::codecs::CodecType::DictFfor, 0},
+  {"dict_lz4", irs::codecs::CodecType::DictLz4, 0},
+  {"dict_zstd", irs::codecs::CodecType::DictZstd, 0},
   {"uncompressed", irs::codecs::CodecType::Uncompressed, 0},
 };
 
@@ -469,7 +480,7 @@ Built Measure(irs::Directory& dir, const ColArm& arm) {
   Built built;
   for (const auto& block : data_blocks) {
     built.bytes += block.byte_size;
-    if (block.codec && block.codec->type == irs::codecs::CodecType::Numeric) {
+    if (block.codec && irs::codecs::IsNumeric(block.codec->type)) {
       built.ours += block.tuple_count;
     }
   }

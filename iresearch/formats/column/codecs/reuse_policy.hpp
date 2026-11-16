@@ -25,7 +25,18 @@
 #include <optional>
 #include <utility>
 
+#include "iresearch/formats/column/codecs/codec_type.hpp"
+
 namespace irs::codecs {
+
+struct CompressionFunction;
+
+struct HeldCodec {
+  const CompressionFunction* function = nullptr;
+  CodecType codec = CodecType::Auto;
+
+  bool operator==(const HeldCodec&) const = default;
+};
 
 inline constexpr double kDrift = 1.25;
 
@@ -52,13 +63,10 @@ struct ReusePolicy {
 
   bool Due() noexcept { return !calibrated || clock.Due(); }
 
-  bool Grew(double bytes, double input) const noexcept {
-    return bytes > reference * input * kDrift;
-  }
-
-  bool Drifted(double bytes, double input) const noexcept {
+  bool Drifted(double bytes, double input, bool growth_only) const noexcept {
     const auto ratio = bytes / input;
-    return ratio > reference * kDrift || ratio * kDrift < reference;
+    return ratio > reference * kDrift ||
+           (!growth_only && ratio * kDrift < reference);
   }
 
   void Settle(std::optional<Pick> next, bool kept, double bytes,

@@ -554,10 +554,10 @@ void CompressionState::Cleave(uint32_t first_entry) {
 }  // namespace irs::codecs::text::fsst_plus
 namespace irs::codecs {
 
-constinit const CompressionFunction kFsstPlusFunction =
+constinit const Codec kFsstPlusFunction =
   text::StringFunction<text::PlainScan<text::fsst_plus::Leaf>>();
 
-constinit const CompressionFunction kDictFsstPlusFunction =
+constinit const Codec kDictFsstPlusFunction =
   text::StringFunction<text::DictionaryScan<text::fsst_plus::Leaf>>();
 
 }  // namespace irs::codecs

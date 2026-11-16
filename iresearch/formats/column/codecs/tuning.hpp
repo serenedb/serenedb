@@ -26,7 +26,8 @@
 namespace irs::codecs {
 
 struct ColumnTuning {
-  NumericTuning numeric;
+  ReusePolicy<HeldCodec> reuse;
+  NumericChoice numeric;
   StringTuning strings;
 };
 

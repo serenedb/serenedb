@@ -211,19 +211,10 @@ bool Enabled(const CodecSet& disabled, const TierCandidates& tier,
   });
 }
 
-Config Current(const StringAccumulator& acc,
-               const StringTuning& tuning) noexcept {
-  if (tuning.reuse.pick) {
-    return *tuning.reuse.pick;
-  }
-  return Fast(Repeats(acc.values.size(), acc.Rows() - acc.null_count)
-                ? Shape::Dedup
-                : Shape::Plain);
-}
+}  // namespace
 
-bool Drifted(const StringTuning& tuning, const Segment& seg) noexcept {
-  return seg.input != 0 && tuning.reuse.Drifted(static_cast<double>(seg.Size()),
-                                                static_cast<double>(seg.input));
+bool Enabled(const CodecSet& disabled, const Config& config) noexcept {
+  return Enabled(disabled, config.shape, config.leaf);
 }
 
 PooledSegment DetectBestCompressionMethod(const StringAccumulator& acc,
@@ -231,7 +222,21 @@ PooledSegment DetectBestCompressionMethod(const StringAccumulator& acc,
                                           StringTuning& tuning,
                                           const CodecSet& disabled,
                                           StringCompressor& compressor,
-                                          PooledSegment first, bool drift) {
+                                          PooledSegment first) {
+  const auto& tier = CandidatesOf(params.tier);
+  if (acc.Rows() == 0 || (!Enabled(disabled, tier, Shape::Dedup) &&
+                          !Enabled(disabled, tier, Shape::Plain))) {
+    return {};
+  }
+  if (!first) {
+    first = compressor.CompressSegment(
+      tuning.config
+        ? *tuning.config
+        : Fast(Repeats(acc.values.size(), acc.Rows() - acc.null_count)
+                 ? Shape::Dedup
+                 : Shape::Plain),
+      acc, 0);
+  }
   const auto input = first->input;
   const auto values = first->rows - first->nulls;
   const auto lengths = Packed(first->rows, first->max_len);
@@ -261,7 +266,6 @@ PooledSegment DetectBestCompressionMethod(const StringAccumulator& acc,
   }
   auto& tuned = tuning.tuned;
   const bool tune = entries >= kTuneMinEntries && !tuned.done;
-  const auto& tier = CandidatesOf(params.tier);
   if (!Enabled(disabled, tier, shape)) {
     shape = shape == Shape::Dedup ? Shape::Plain : Shape::Dedup;
   }
@@ -325,37 +329,8 @@ PooledSegment DetectBestCompressionMethod(const StringAccumulator& acc,
       picked = fsst;
     }
   }
-  auto& reuse = tuning.reuse;
-  const auto& seg = window.At(picked);
-  const bool kept = reuse.pick && reuse.pick->shape == seg.config.shape &&
-                    reuse.pick->leaf == seg.config.leaf;
-  reuse.Settle(seg.config, kept && !drift, static_cast<double>(seg.Size()),
-               static_cast<double>(input));
+  tuning.config = window.At(picked).config;
   return std::move(window).Take(picked);
-}
-
-}  // namespace
-
-PooledSegment CompressFirstSegment(const StringAccumulator& acc,
-                                   const ColCodecParams& params,
-                                   StringTuning& tuning,
-                                   const CodecSet& disabled,
-                                   StringCompressor& compressor) {
-  const bool due = tuning.reuse.Due();
-  const auto& tier = CandidatesOf(params.tier);
-  if (acc.Rows() == 0 || (!Enabled(disabled, tier, Shape::Dedup) &&
-                          !Enabled(disabled, tier, Shape::Plain))) {
-    return {};
-  }
-  const auto current = Current(acc, tuning);
-  auto first = compressor.CompressSegment(current, acc, 0);
-  const bool enabled = Enabled(disabled, current.shape, current.leaf);
-  if (const bool drift = !due && Drifted(tuning, *first);
-      due || drift || !enabled) {
-    return DetectBestCompressionMethod(acc, params, tuning, disabled,
-                                       compressor, std::move(first), drift);
-  }
-  return first;
 }
 
 }  // namespace irs::codecs::text

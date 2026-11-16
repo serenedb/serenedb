@@ -313,10 +313,10 @@ class ColCodecsTest : public TestBase {
     for (const auto& block : col->DataBlocks()) {
       std::string level;
       if (irs::codecs::IsText(block.codec->type) ||
-          block.codec->type == irs::codecs::CodecType::Numeric) {
+          irs::codecs::IsNumeric(block.codec->type)) {
         window = col->Locate(row, window);
         auto seg = col->OpenSegment(window.block, ctx);
-        auto info = seg->function.get_segment_info(*seg);
+        auto info = seg->codec.get_segment_info(*seg);
         level = info["level"];
       }
       levels.emplace_back(block.codec->type, std::move(level));
@@ -337,7 +337,7 @@ class ColCodecsTest : public TestBase {
     for (const auto& block : col->DataBlocks()) {
       window = col->Locate(row, window);
       auto seg = col->OpenSegment(window.block, ctx);
-      auto info = seg->function.get_segment_info(*seg);
+      auto info = seg->codec.get_segment_info(*seg);
       values.emplace_back(info[key]);
       row += block.tuple_count;
     }
@@ -757,7 +757,7 @@ TEST_F(ColCodecsTest, ColumnLevelOverridesTableLevel) {
     irs::BlockWindow window{};
     window = col->Locate(0, window);
     auto seg = col->OpenSegment(window.block, ctx);
-    auto info = seg->function.get_segment_info(*seg);
+    auto info = seg->codec.get_segment_info(*seg);
     return info["level"];
   };
   for (const uint8_t column_level : {uint8_t{0}, uint8_t{9}}) {
@@ -1083,21 +1083,19 @@ std::vector<irs::codecs::CodecType> SealAuto(
   auto out = dir.create("blocks");
   irs::WriteContext ctx{db.GetBufferManager(), *out};
   std::vector<irs::codecs::CodecType> types;
-  const auto flush = [&](const irs::codecs::CompressionFunction& function,
+  const auto flush = [&](const irs::codecs::Codec& codec,
                          duckdb::BaseStatistics, uint64_t,
-                         std::string_view) { types.push_back(function.type); };
-  const auto* function = irs::codecs::GetCodec(irs::codecs::CodecType::Auto,
-                                               duckdb::PhysicalType::VARCHAR);
+                         std::string_view) { types.push_back(codec.type); };
   irs::codecs::ColumnDataCheckpointData checkpoint{
     .type = duckdb::LogicalType::VARCHAR,
-    .ctx = ctx,
+    .chunks = chunks,
+    .ctx = &ctx,
     .flush = flush,
     .params = params,
     .tuning = &tuning,
     .disabled = disabled,
-    .function = function,
   };
-  function->compress(checkpoint, chunks);
+  irs::codecs::Compress(irs::codecs::CodecType::Auto, checkpoint);
   return types;
 }
 
@@ -1163,28 +1161,24 @@ TEST_F(ColCodecsTest, NamedCodecSealsEverySegment) {
     irs::codecs::ColumnTuning tuning;
     uint64_t segments = 0;
     uint64_t rows = 0;
-    const auto flush = [&](const irs::codecs::CompressionFunction&,
-                           duckdb::BaseStatistics, uint64_t count,
-                           std::string_view) {
+    const auto flush = [&](const irs::codecs::Codec&, duckdb::BaseStatistics,
+                           uint64_t count, std::string_view) {
       ++segments;
       rows += count;
     };
-    const auto* function =
-      irs::codecs::GetCodec(irs::codecs::TextCodec(choice.shape, choice.leaf),
-                            duckdb::PhysicalType::VARCHAR);
-    ASSERT_NE(function, nullptr);
     irs::codecs::ColumnDataCheckpointData checkpoint{
       .type = duckdb::LogicalType::VARCHAR,
-      .ctx = ctx,
+      .chunks = write_chunks,
+      .ctx = &ctx,
       .flush = flush,
       .params = {.segment_target = 16 * 1024},
       .tuning = &tuning,
-      .function = function,
     };
-    function->compress(checkpoint, write_chunks);
+    irs::codecs::Compress(irs::codecs::TextCodec(choice.shape, choice.leaf),
+                          checkpoint);
     EXPECT_GT(segments, 1u);
     EXPECT_EQ(rows, 20000u);
-    EXPECT_FALSE(tuning.strings.reuse.pick);
+    EXPECT_FALSE(tuning.strings.config);
   }
 }
 
@@ -1230,8 +1224,8 @@ TEST_F(ColCodecsTest, AutoChoosesPerRowGroup) {
   const auto mixed = seal(5, 15);
   EXPECT_GT(mixed.size(), 1u);
   EXPECT_TRUE(all(mixed, Shape::Plain)) << ::testing::PrintToString(mixed);
-  ASSERT_TRUE(tuning.strings.reuse.pick);
-  EXPECT_EQ(tuning.strings.reuse.pick->shape, Shape::Plain);
+  ASSERT_TRUE(tuning.strings.config);
+  EXPECT_EQ(tuning.strings.config->shape, Shape::Plain);
 
   RoundTrip(irs::codecs::CodecType::Auto, {.segment_target = 16 * 1024},
             3 * kSwitch, DEFAULT_ROW_GROUP_SIZE, value);
@@ -2513,8 +2507,7 @@ TEST_F(ColCodecsTest, RleLookupsInEveryOrder) {
   for (const auto& block : c_rle->DataBlocks()) {
     ASSERT_EQ(block.codec->type, irs::codecs::CodecType::Rle);
   }
-  ASSERT_EQ(c_num->DataBlocks().front().codec->type,
-            irs::codecs::CodecType::Numeric);
+  ASSERT_TRUE(irs::codecs::IsNumeric(c_num->DataBlocks().front().codec->type));
 
   std::vector<std::vector<uint64_t>> orders(5);
   for (uint64_t g = 0; g < kRows; g += 7) {
@@ -2554,9 +2547,9 @@ TEST_F(ColCodecsTest, RleLookupsInEveryOrder) {
   const auto fetch = [&](const irs::codecs::ColumnSegment& segment,
                          irs::codecs::ColumnFetchState& state, uint64_t g) {
     const duckdb::idx_t row = g;
-    segment.function.fetch_rows(
-      segment, state, &row, 1, out,
-      *duckdb::FlatVector::IncrementalSelectionVector(), 0);
+    segment.codec.fetch_rows(segment, state, &row, 1, out,
+                             *duckdb::FlatVector::IncrementalSelectionVector(),
+                             0);
     return duckdb::FlatVector::GetData<int64_t>(out)[0];
   };
   for (uint64_t g = 0; g < 4096; g += 37) {
@@ -2652,7 +2645,14 @@ TEST(ColCodecNames, ColumnstoreCompressionTypesRoundTrip) {
     {duckdb::CompressionType::COMPRESSION_COL_ONPAIR, "ONPAIR"},
     {duckdb::CompressionType::COMPRESSION_COL_DICT_FSST12, "DICT_FSST12"},
     {duckdb::CompressionType::COMPRESSION_COL_FSST12, "FSST12"},
-    {duckdb::CompressionType::COMPRESSION_COL_NUMERIC, "Numeric"},
+    {duckdb::CompressionType::COMPRESSION_COL_FFOR, "FFOR"},
+    {duckdb::CompressionType::COMPRESSION_COL_DELTA_FFOR, "DELTA_FFOR"},
+    {duckdb::CompressionType::COMPRESSION_COL_RLE_FFOR, "RLE_FFOR"},
+    {duckdb::CompressionType::COMPRESSION_COL_DICT_FFOR, "DICT_FFOR"},
+    {duckdb::CompressionType::COMPRESSION_COL_DELTA_LZ4, "DELTA_LZ4"},
+    {duckdb::CompressionType::COMPRESSION_COL_RLE_LZ4, "RLE_LZ4"},
+    {duckdb::CompressionType::COMPRESSION_COL_DELTA_ZSTD, "DELTA_ZSTD"},
+    {duckdb::CompressionType::COMPRESSION_COL_RLE_ZSTD, "RLE_ZSTD"},
   };
   EXPECT_EQ(
     static_cast<size_t>(duckdb::CompressionType::COMPRESSION_SERENEDB_COUNT) -
@@ -2722,6 +2722,14 @@ TEST(ColCodecNames, ColumnstoreCompressionTypesRoundTrip) {
     {"onpair", duckdb::CompressionType::COMPRESSION_COL_ONPAIR},
     {"dict_fsst12", duckdb::CompressionType::COMPRESSION_COL_DICT_FSST12},
     {"fsst12", duckdb::CompressionType::COMPRESSION_COL_FSST12},
+    {"ffor", duckdb::CompressionType::COMPRESSION_COL_FFOR},
+    {"delta_ffor", duckdb::CompressionType::COMPRESSION_COL_DELTA_FFOR},
+    {"rle_ffor", duckdb::CompressionType::COMPRESSION_COL_RLE_FFOR},
+    {"dict_ffor", duckdb::CompressionType::COMPRESSION_COL_DICT_FFOR},
+    {"delta_lz4", duckdb::CompressionType::COMPRESSION_COL_DELTA_LZ4},
+    {"rle_lz4", duckdb::CompressionType::COMPRESSION_COL_RLE_LZ4},
+    {"delta_zstd", duckdb::CompressionType::COMPRESSION_COL_DELTA_ZSTD},
+    {"rle_zstd", duckdb::CompressionType::COMPRESSION_COL_RLE_ZSTD},
   };
   for (const auto& [name, type] : parsed) {
     SCOPED_TRACE(name);
@@ -2766,8 +2774,7 @@ TEST_F(ColCodecsTest, CorruptedDictionaryCodesAreRejected) {
   auto* block = reinterpret_cast<duckdb::data_ptr_t>(bytes.data() + offset);
   const auto h = irs::codecs::Header::Parse(block, size);
   ASSERT_EQ(h.shape, irs::codecs::Shape::Dedup);
-  auto codes = irs::codecs::NumericHeader::Parse(block + h.off_codes,
-                                                 h.off_symtab - h.off_codes);
+  auto codes = duckdb::Load<irs::codecs::FrameHeader>(block + h.off_codes);
   codes.scale = h.entry_count;
   duckdb::Store(codes, block + h.off_codes);
   {
@@ -3478,8 +3485,7 @@ TEST_F(ColCodecsTest, CorruptedNumericCodesAreRejected) {
     const auto h = irs::codecs::Header::Parse(block, size);
     ASSERT_EQ(h.shape, irs::codecs::Shape::Dedup);
     if (leaf) {
-      auto codes = irs::codecs::NumericHeader::Parse(
-        block + h.off_codes, h.off_symtab - h.off_codes);
+      auto codes = duckdb::Load<irs::codecs::FrameHeader>(block + h.off_codes);
       codes.leaf = irs::codecs::NumericLeaf::Zstd;
       duckdb::Store(codes, block + h.off_codes);
     } else {
@@ -3825,20 +3831,17 @@ TEST_F(ColCodecsTest, RoaringBooleanSegmentsCarryTheirOwnStats) {
     for (const auto& v : chunks) {
       rows.push_back(irs::RefChunk(v, v.size()));
     }
-    EXPECT_NE(fn.analyze(rows), duckdb::DConstants::INVALID_INDEX);
     std::vector<Flushed> flushed;
-    const auto flush = [&](const irs::codecs::CompressionFunction&,
-                           duckdb::BaseStatistics stats, uint64_t n,
-                           std::string_view) {
-      flushed.push_back({std::move(stats), n});
-    };
+    const auto flush =
+      [&](const irs::codecs::Codec&, duckdb::BaseStatistics stats, uint64_t n,
+          std::string_view) { flushed.push_back({std::move(stats), n}); };
     irs::codecs::ColumnDataCheckpointData checkpoint{
       .type = duckdb::LogicalType::BOOLEAN,
-      .ctx = ctx,
+      .chunks = rows,
+      .ctx = &ctx,
       .flush = flush,
-      .function = &fn,
     };
-    fn.compress(checkpoint, rows);
+    irs::codecs::Compress(fn.type, checkpoint);
     return flushed;
   };
   std::vector<uint64_t> ends;
@@ -3923,7 +3926,8 @@ TEST_F(ColCodecsTest, AutoMeasuresLessOftenWhileItsCodecHolds) {
   };
   const auto steady = Chunks(4096, urls);
   irs::codecs::ColumnTuning tuning;
-  const auto& reuse = tuning.strings.reuse;
+  const auto& reuse = tuning.reuse;
+  const auto& config = tuning.strings.config;
   std::vector<uint32_t> gaps;
   for (int rg = 0; rg < 32; ++rg) {
     seal(steady, tuning);
@@ -3935,8 +3939,8 @@ TEST_F(ColCodecsTest, AutoMeasuresLessOftenWhileItsCodecHolds) {
   expected.resize(15, 8);
   expected.resize(32, 16);
   EXPECT_EQ(gaps, expected);
-  ASSERT_TRUE(reuse.pick);
-  EXPECT_EQ(reuse.pick->shape, Shape::Plain);
+  ASSERT_TRUE(config);
+  EXPECT_EQ(config->shape, Shape::Plain);
 
   const Value repeated = [](uint64_t g) -> std::optional<std::string> {
     std::mt19937_64 rng{g + 1};
@@ -3945,8 +3949,8 @@ TEST_F(ColCodecsTest, AutoMeasuresLessOftenWhileItsCodecHolds) {
   const auto changed = Chunks(4096, repeated);
   seal(changed, tuning);
   EXPECT_EQ(reuse.clock.gap, 1u);
-  ASSERT_TRUE(reuse.pick);
-  EXPECT_EQ(reuse.pick->shape, Shape::Dedup);
+  ASSERT_TRUE(config);
+  EXPECT_EQ(config->shape, Shape::Dedup);
   gaps.clear();
   for (int rg = 0; rg < 4; ++rg) {
     seal(changed, tuning);
@@ -3956,8 +3960,8 @@ TEST_F(ColCodecsTest, AutoMeasuresLessOftenWhileItsCodecHolds) {
 
   seal(steady, tuning);
   EXPECT_EQ(reuse.clock.gap, 1u);
-  ASSERT_TRUE(reuse.pick);
-  EXPECT_EQ(reuse.pick->shape, Shape::Plain);
+  ASSERT_TRUE(config);
+  EXPECT_EQ(config->shape, Shape::Plain);
 }
 
 TEST_F(ColCodecsTest, AutoFollowsAChangeBetweenRowGroups) {
@@ -4008,20 +4012,19 @@ TEST_F(ColCodecsTest, FsstSegmentsFollowAChangeInCompressibility) {
   irs::MemoryDirectory dir;
   auto out = dir.create("blocks");
   irs::WriteContext ctx{Db().GetBufferManager(), *out};
-  const auto flush =
-    [&](const irs::codecs::CompressionFunction&, duckdb::BaseStatistics,
-        uint64_t, std::string_view bytes) { sizes.push_back(bytes.size()); };
-  const auto* fsst = irs::codecs::GetCodec(irs::codecs::CodecType::Fsst,
-                                           duckdb::PhysicalType::VARCHAR);
+  const auto flush = [&](const irs::codecs::Codec&, duckdb::BaseStatistics,
+                         uint64_t, std::string_view bytes) {
+    sizes.push_back(bytes.size());
+  };
   irs::codecs::ColumnDataCheckpointData checkpoint{
     .type = duckdb::LogicalType::VARCHAR,
-    .ctx = ctx,
+    .chunks = chunks,
+    .ctx = &ctx,
     .flush = flush,
     .params = {.segment_target = kTarget},
     .tuning = &tuning,
-    .function = fsst,
   };
-  fsst->compress(checkpoint, chunks);
+  irs::codecs::Compress(irs::codecs::CodecType::Fsst, checkpoint);
   ASSERT_GT(sizes.size(), 8u);
   const auto oversized = std::ranges::count_if(
     sizes, [](uint64_t bytes) { return bytes > kTarget * 3 / 2; });

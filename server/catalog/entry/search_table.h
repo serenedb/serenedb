@@ -103,7 +103,7 @@ inline constexpr auto kSearchTableOptions = std::to_array({
 
 void RequireSearchTableIndexOption(std::string_view name);
 irs::codecs::CodecType CheckColumnCodec(std::string_view column_name,
-                                        const irs::codecs::Codec* codec,
+                                        const irs::codecs::CodecInfo* codec,
                                         std::string_view codec_name,
                                         uint32_t level,
                                         const duckdb::LogicalType& column_type);

@@ -28,10 +28,13 @@
 
 namespace irs::codecs::text {
 
-PooledSegment CompressFirstSegment(const StringAccumulator& acc,
-                                   const ColCodecParams& params,
-                                   StringTuning& tuning,
-                                   const CodecSet& disabled,
-                                   StringCompressor& compressor);
+bool Enabled(const CodecSet& disabled, const Config& config) noexcept;
+
+PooledSegment DetectBestCompressionMethod(const StringAccumulator& acc,
+                                          const ColCodecParams& params,
+                                          StringTuning& tuning,
+                                          const CodecSet& disabled,
+                                          StringCompressor& compressor,
+                                          PooledSegment first);
 
 }  // namespace irs::codecs::text

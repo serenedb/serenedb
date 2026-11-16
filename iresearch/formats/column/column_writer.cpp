@@ -87,10 +87,9 @@ uint64_t AppendAligned(IndexOutput& out, std::string_view bytes) {
   return offset;
 }
 
-void CaptureBlock(const codecs::CompressionFunction& codec,
-                  duckdb::BaseStatistics stats, uint64_t tuple_count,
-                  std::string_view bytes, IndexOutput& blocks,
-                  std::vector<ColumnBlockMeta>& sink) {
+void CaptureBlock(const codecs::Codec& codec, duckdb::BaseStatistics stats,
+                  uint64_t tuple_count, std::string_view bytes,
+                  IndexOutput& blocks, std::vector<ColumnBlockMeta>& sink) {
   if (tuple_count == 0) {
     return;
   }
@@ -206,15 +205,15 @@ WriteContext& ColumnWriter::WriteCtx() const noexcept {
   return _owner->WriteCtx();
 }
 
-bool ColumnWriter::Compress(const codecs::CompressionFunction& function,
-                            const duckdb::LogicalType& type,
+bool ColumnWriter::Compress(const duckdb::LogicalType& type,
                             std::span<const WriteChunk> chunks,
+                            codecs::CodecType method,
                             codecs::ColumnTuning* tuning,
                             std::vector<ColumnBlockMeta>& sink) {
   auto& ctx = WriteCtx();
   bool flushed = false;
   bool needs_validity = false;
-  const auto flush = [&](const codecs::CompressionFunction& codec,
+  const auto flush = [&](const codecs::Codec& codec,
                          duckdb::BaseStatistics stats, uint64_t rows,
                          std::string_view bytes) {
     SDB_ASSERT(codec.init_scan);
@@ -224,34 +223,20 @@ bool ColumnWriter::Compress(const codecs::CompressionFunction& function,
       codec.validity == codecs::CompressionValidity::RequiresValidity;
     CaptureBlock(codec, std::move(stats), rows, bytes, ctx.Out(), sink);
   };
-  codecs::ColumnDataCheckpointData checkpoint_data{
+  codecs::ColumnDataCheckpointData data{
     .type = type,
-    .ctx = ctx,
+    .chunks = chunks,
+    .ctx = &ctx,
     .flush = flush,
     .params = _codec_params,
     .tuning = tuning,
     .disabled = _disabled,
-    .function = &function,
   };
-  function.compress(checkpoint_data, chunks);
+  codecs::Compress(codecs::Writes(method, type.InternalType(), _disabled)
+                     ? method
+                     : codecs::CodecType::Auto,
+                   data);
   return flushed && !needs_validity;
-}
-
-bool ColumnWriter::Compress(const duckdb::LogicalType& type,
-                            std::span<const WriteChunk> chunks,
-                            codecs::CodecType method,
-                            codecs::ColumnTuning* tuning,
-                            std::vector<ColumnBlockMeta>& sink) {
-  const auto physical = type.InternalType();
-  const auto* function = codecs::GetCodec(method, physical);
-  if (!function || !function->compress ||
-      _disabled.test(std::to_underlying(method))) {
-    function = codecs::GetCodec(codecs::CodecType::Auto, physical);
-  } else if (!codecs::Accepts(*function, chunks)) {
-    function = codecs::GetCodec(codecs::CodecType::Uncompressed, physical);
-  }
-  SDB_ASSERT(function);
-  return Compress(*function, type, chunks, tuning, sink);
 }
 
 void ColumnWriter::SealValidity(std::span<WriteChunk> chunks,
@@ -365,15 +350,10 @@ void ColumnWriter::CompressPlain(const duckdb::LogicalType& type,
                                  codecs::CodecType codec,
                                  std::span<WriteChunk> chunks,
                                  std::vector<ColumnBlockMeta>& sink) {
-  const auto physical = type.InternalType();
-  const auto* function =
-    codecs::EnabledCodec(_global_method, physical, _disabled);
-  if (!function) {
-    function = codecs::EnabledCodec(codec, physical, _disabled);
-  } else if (!codecs::Accepts(*function, chunks)) {
-    function = codecs::GetCodec(codecs::CodecType::Uncompressed, physical);
-  }
-  Compress(function ? *function : codecs::CheapestFunction(), type, chunks,
+  Compress(type, chunks,
+           codecs::Writes(_global_method, type.InternalType(), _disabled)
+             ? _global_method
+             : codec,
            nullptr, sink);
 }
 
@@ -717,8 +697,8 @@ codecs::CodecType ColumnWriter::ForcedCodec() const {
       forced != codecs::CodecType::Uncompressed) {
     return codecs::IsText(forced) ? forced : codecs::CodecType::Auto;
   }
-  const auto* function = codecs::GetCodec(forced, physical);
-  return function && function->compress ? forced : codecs::CodecType::Auto;
+  const auto* codec = codecs::GetCodec(forced, physical);
+  return codec && codec->function ? forced : codecs::CodecType::Auto;
 }
 
 bool ColumnWriter::CopyableFrom(const ColumnReader& column) const {

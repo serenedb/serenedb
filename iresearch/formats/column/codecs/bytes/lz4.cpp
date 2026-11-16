@@ -45,10 +45,10 @@ same frames, each compressed with the segment's trained dictionary; or
 
 namespace irs::codecs {
 
-constinit const CompressionFunction kLz4Function =
+constinit const Codec kLz4Function =
   text::StringFunction<text::PlainScan<text::blob::Leaf<Lz4>>>();
 
-constinit const CompressionFunction kDictLz4Function =
+constinit const Codec kDictLz4Function =
   text::StringFunction<text::DictionaryScan<text::blob::Leaf<Lz4>>>();
 
 size_t Lz4::Bound(size_t raw_size) noexcept {

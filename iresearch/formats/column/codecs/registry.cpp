@@ -39,17 +39,30 @@ namespace {
 
 using duckdb::PhysicalType;
 
-template<const CompressionFunction& kFunction>
-const CompressionFunction* Text(PhysicalType physical) {
+template<const Codec& kFunction>
+const Codec* Text(PhysicalType physical) {
   return physical == PhysicalType::VARCHAR ? &kFunction : nullptr;
 }
 
-const CompressionFunction* EmptyFunction(PhysicalType physical) {
+template<const Codec& kText, CodecType kType>
+const Codec* TextOrNumeric(PhysicalType physical) {
+  return physical == PhysicalType::VARCHAR ? &kText
+                                           : NumericCodecOf(kType, physical);
+}
+
+template<CodecType kType>
+const Codec* Numeric(PhysicalType physical) {
+  return NumericCodecOf(kType, physical);
+}
+
+const Codec* EmptyFunction(PhysicalType physical) {
   return physical == PhysicalType::BIT ? &EmptyValidityFunction() : nullptr;
 }
 
-constexpr Codec kCodecs[] = {
-  {CodecType::Auto, "Auto", AutoFunction},
+const Codec* NoCodec(PhysicalType) { return nullptr; }
+
+constexpr CodecInfo kCodecs[] = {
+  {CodecType::Auto, "Auto", NoCodec},
   {CodecType::Uncompressed, "Uncompressed", UncompressedFunction},
   {CodecType::Rle, "RLE", RleFunction},
   {CodecType::Bitpacking, "BitPacking", BitpackingFunction},
@@ -58,11 +71,13 @@ constexpr Codec kCodecs[] = {
   {CodecType::Roaring, "Roaring", RoaringFunction},
   {CodecType::Constant, "Constant", ConstantFunction},
   {CodecType::Empty, "Empty Validity", EmptyFunction},
-  {CodecType::Numeric, "Numeric", NumericFunction},
-  {CodecType::DictLz4, "DICT_LZ4", Text<kDictLz4Function>},
-  {CodecType::Lz4, "LZ4", Text<kLz4Function>},
-  {CodecType::DictZstd, "DICT_ZSTD", Text<kDictZstdFunction>},
-  {CodecType::Zstd, "ZSTD", Text<kZstdFunction>},
+  {CodecType::Ffor, "FFOR", Numeric<CodecType::Ffor>},
+  {CodecType::DictLz4, "DICT_LZ4",
+   TextOrNumeric<kDictLz4Function, CodecType::DictLz4>},
+  {CodecType::Lz4, "LZ4", TextOrNumeric<kLz4Function, CodecType::Lz4>},
+  {CodecType::DictZstd, "DICT_ZSTD",
+   TextOrNumeric<kDictZstdFunction, CodecType::DictZstd>},
+  {CodecType::Zstd, "ZSTD", TextOrNumeric<kZstdFunction, CodecType::Zstd>},
   {CodecType::DictFsst, "DICT_FSST", Text<kDictFsstFunction>},
   {CodecType::Fsst, "FSST", Text<kFsstFunction>},
   {CodecType::DictZxc, "DICT_ZXC", Text<kDictZxcFunction>},
@@ -73,6 +88,13 @@ constexpr Codec kCodecs[] = {
   {CodecType::OnPair, "ONPAIR", Text<kOnPairFunction>},
   {CodecType::DictFsst12, "DICT_FSST12", Text<kDictFsst12Function>},
   {CodecType::Fsst12, "FSST12", Text<kFsst12Function>},
+  {CodecType::DeltaFfor, "DELTA_FFOR", Numeric<CodecType::DeltaFfor>},
+  {CodecType::RleFfor, "RLE_FFOR", Numeric<CodecType::RleFfor>},
+  {CodecType::DictFfor, "DICT_FFOR", Numeric<CodecType::DictFfor>},
+  {CodecType::DeltaLz4, "DELTA_LZ4", Numeric<CodecType::DeltaLz4>},
+  {CodecType::RleLz4, "RLE_LZ4", Numeric<CodecType::RleLz4>},
+  {CodecType::DeltaZstd, "DELTA_ZSTD", Numeric<CodecType::DeltaZstd>},
+  {CodecType::RleZstd, "RLE_ZSTD", Numeric<CodecType::RleZstd>},
 };
 
 static_assert(std::size(kCodecs) == magic_enum::enum_count<CodecType>());
@@ -85,17 +107,9 @@ static_assert([] {
   return true;
 }());
 
-constexpr size_t kAnalyzedBegin = std::to_underlying(CodecType::Uncompressed);
-constexpr size_t kInternalBegin = std::to_underlying(CodecType::Constant);
-
-constexpr std::span<const Codec> kAnalyzed =
-  std::span{kCodecs}.subspan(kAnalyzedBegin, kInternalBegin - kAnalyzedBegin);
-
 }  // namespace
 
-std::span<const Codec> AnalyzedCodecs() noexcept { return kAnalyzed; }
-
-const CompressionFunction* GetCodec(CodecType type, PhysicalType physical) {
+const Codec* GetCodec(CodecType type, PhysicalType physical) {
   const auto index = std::to_underlying(type);
   return index < std::size(kCodecs) ? kCodecs[index].function(physical)
                                     : nullptr;
@@ -106,14 +120,14 @@ std::string_view NameOf(CodecType type) noexcept {
   return kCodecs[std::to_underlying(type)].name;
 }
 
-const Codec* FindCodec(std::string_view name) noexcept {
-  const auto it = absl::c_find_if(kCodecs, [&](const Codec& codec) {
+const CodecInfo* FindCodec(std::string_view name) noexcept {
+  const auto it = absl::c_find_if(kCodecs, [&](const CodecInfo& codec) {
     return absl::EqualsIgnoreCase(codec.name, name);
   });
   return it == std::end(kCodecs) ? nullptr : &*it;
 }
 
-const Codec* FindCodec(duckdb::CompressionType type) noexcept {
+const CodecInfo* FindCodec(duckdb::CompressionType type) noexcept {
   using enum duckdb::CompressionType;
   const auto codec = [](CodecType ours) noexcept {
     return &kCodecs[std::to_underlying(ours)];
@@ -165,8 +179,22 @@ const Codec* FindCodec(duckdb::CompressionType type) noexcept {
       return codec(CodecType::DictFsst12);
     case COMPRESSION_COL_FSST12:
       return codec(CodecType::Fsst12);
-    case COMPRESSION_COL_NUMERIC:
-      return codec(CodecType::Numeric);
+    case COMPRESSION_COL_FFOR:
+      return codec(CodecType::Ffor);
+    case COMPRESSION_COL_DELTA_FFOR:
+      return codec(CodecType::DeltaFfor);
+    case COMPRESSION_COL_RLE_FFOR:
+      return codec(CodecType::RleFfor);
+    case COMPRESSION_COL_DICT_FFOR:
+      return codec(CodecType::DictFfor);
+    case COMPRESSION_COL_DELTA_LZ4:
+      return codec(CodecType::DeltaLz4);
+    case COMPRESSION_COL_RLE_LZ4:
+      return codec(CodecType::RleLz4);
+    case COMPRESSION_COL_DELTA_ZSTD:
+      return codec(CodecType::DeltaZstd);
+    case COMPRESSION_COL_RLE_ZSTD:
+      return codec(CodecType::RleZstd);
     case COMPRESSION_DICTIONARY:
     case COMPRESSION_PFOR_DELTA:
     case COMPRESSION_CHIMP:
@@ -179,6 +207,14 @@ const Codec* FindCodec(duckdb::CompressionType type) noexcept {
 }
 
 uint8_t MaxLevel(CodecType type) noexcept {
+  for (const auto& shape : kNumericCodecs) {
+    if (type == shape[std::to_underlying(NumericLeaf::Lz4)]) {
+      return Lz4::kMaxLevel;
+    }
+    if (type == shape[std::to_underlying(NumericLeaf::Zstd)]) {
+      return Zstd::kMaxLevel;
+    }
+  }
   if (!IsText(type)) {
     return 0;
   }

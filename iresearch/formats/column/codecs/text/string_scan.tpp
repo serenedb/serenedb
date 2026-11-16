@@ -556,10 +556,10 @@ void FetchRows(const ColumnSegment& segment, ColumnFetchState& state,
 }
 
 template<typename Scan>
-consteval CompressionFunction StringFunction() {
-  CompressionFunction f{
+consteval Codec StringFunction() {
+  Codec f{
     .type = TextCodec(Scan::kShape, Scan::kCodec),
-    .compress = CompressStrings<Scan::kShape, Scan::kCodec>,
+    .function = &kStringsFunction,
     .init_scan = InitScan<Scan>,
     .scan = ScanVector<Scan>,
     .select = Select<Scan>,

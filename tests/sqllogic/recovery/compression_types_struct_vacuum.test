@@ -137,7 +137,7 @@ lo	hi	band_left
 query
 SELECT 'uuid_clean_bitpacks' AS combo, (SELECT bool_or(compression = 'BitPacking') FROM pragma_storage_info('cw.uuid_enum', include_segment_info=true) WHERE column_name='u2' AND segment_type NOT IN ('VALIDITY')) AS ok
 UNION ALL SELECT 'uuid_spike_debitpacks', (SELECT NOT bool_or(compression = 'BitPacking') FROM pragma_storage_info('cw.uuid_enum', include_segment_info=true) WHERE column_name='u' AND segment_type NOT IN ('VALIDITY'))
-UNION ALL SELECT 'enum_numeric', (SELECT bool_and(compression = 'Numeric') FROM pragma_storage_info('cw.uuid_enum', include_segment_info=true) WHERE column_name='m' AND segment_type NOT IN ('VALIDITY'))
+UNION ALL SELECT 'enum_numeric', (SELECT bool_and(compression IN ('FFOR', 'LZ4', 'ZSTD', 'DELTA_FFOR', 'DELTA_LZ4', 'DELTA_ZSTD', 'RLE_FFOR', 'RLE_LZ4', 'RLE_ZSTD', 'DICT_FFOR', 'DICT_LZ4', 'DICT_ZSTD')) FROM pragma_storage_info('cw.uuid_enum', include_segment_info=true) WHERE column_name='m' AND segment_type NOT IN ('VALIDITY'))
 UNION ALL SELECT 'struct_children_dict_fsst', (SELECT count(DISTINCT column_path) = 2 FROM pragma_storage_info('cw.struct_map', include_segment_info=true) WHERE column_name='st' AND segment_type='VARCHAR' AND compression='DICT_FSST')
 UNION ALL SELECT 'map_children_dict_fsst', (SELECT count(DISTINCT column_path) = 2 FROM pragma_storage_info('cw.struct_map', include_segment_info=true) WHERE column_name='mp' AND segment_type='VARCHAR' AND compression='DICT_FSST')
 UNION ALL SELECT 'vacuumed_dict_fsst', (SELECT bool_or(compression = 'DICT_FSST') FROM pragma_storage_info('cv.vac', include_segment_info=true) WHERE column_name='v' AND segment_type='VARCHAR')

@@ -5112,7 +5112,7 @@ TEST_F(ColumnReaderTest, VariantRoundTripUnshredded) {
 }
 
 uint32_t LargestCalibrationGap(const irs::ColumnWriteState& state) {
-  uint32_t gap = state.tuning.strings.reuse.clock.gap;
+  uint32_t gap = state.tuning.reuse.clock.gap;
   for (const auto& child : state.children) {
     gap = std::max(gap, LargestCalibrationGap(child));
   }
@@ -6580,7 +6580,7 @@ TEST_F(ColumnReaderTest, VectorColumnAutoPicksFloatCodec) {
     const auto codec = blocks[rg].codec->type;
     EXPECT_TRUE(codec == irs::codecs::CodecType::Alp ||
                 codec == irs::codecs::CodecType::AlpRd ||
-                codec == irs::codecs::CodecType::Numeric)
+                irs::codecs::IsNumeric(codec))
       << "row-group " << rg << " codec=" << irs::codecs::NameOf(codec);
   }
 }

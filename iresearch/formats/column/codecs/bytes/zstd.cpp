@@ -45,10 +45,10 @@ same frames, each compressed with the segment's trained dictionary; or
 
 namespace irs::codecs {
 
-constinit const CompressionFunction kZstdFunction =
+constinit const Codec kZstdFunction =
   text::StringFunction<text::PlainScan<text::blob::Leaf<Zstd>>>();
 
-constinit const CompressionFunction kDictZstdFunction =
+constinit const Codec kDictZstdFunction =
   text::StringFunction<text::DictionaryScan<text::blob::Leaf<Zstd>>>();
 
 Zstd::Compressor::Compressor(uint8_t level)

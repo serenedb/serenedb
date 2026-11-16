@@ -1168,11 +1168,10 @@ void FetchRows(const ColumnSegment& segment, ColumnFetchState& state,
 
 template<typename T, duckdb::PhysicalType kPhysical,
          bool kWriteStatistics = true>
-constexpr CompressionFunction kFunction{
+constexpr Codec kFunction{
   .type = CodecType::Rle,
-  .analyze = AnalyzeChunks<T>,
-  .compress = CompressChunks<T, kWriteStatistics>,
-  .accepts = HasRuns<T>,
+  .function = &kStreamed<CodecType::Rle, AnalyzeChunks<T>,
+                         CompressChunks<T, kWriteStatistics>, HasRuns<T>>,
   .init_scan = InitScan<T>,
   .scan = Scan<T>,
   .select = Select<T>,
@@ -1183,7 +1182,7 @@ constexpr CompressionFunction kFunction{
 
 }  // namespace
 
-const CompressionFunction* RleFunction(duckdb::PhysicalType physical) {
+const Codec* RleFunction(duckdb::PhysicalType physical) {
   using enum duckdb::PhysicalType;
   switch (physical) {
     case BOOL:

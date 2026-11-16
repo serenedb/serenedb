@@ -36,7 +36,7 @@ enum class CodecType : uint8_t {
   Roaring,
   Constant,
   Empty,
-  Numeric,
+  Ffor,
   DictLz4,
   Lz4,
   DictZstd,
@@ -51,6 +51,13 @@ enum class CodecType : uint8_t {
   OnPair,
   DictFsst12,
   Fsst12,
+  DeltaFfor,
+  RleFfor,
+  DictFfor,
+  DeltaLz4,
+  RleLz4,
+  DeltaZstd,
+  RleZstd,
 };
 
 using CodecSet = std::bitset<magic_enum::enum_count<CodecType>()>;

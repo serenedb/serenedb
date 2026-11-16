@@ -40,6 +40,7 @@
 #include <utility>
 
 #include "iresearch/formats/column/array_column_reader.hpp"
+#include "iresearch/formats/column/codecs/numeric/numeric_layout.hpp"
 #include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/internal/gather_arms.hpp"
@@ -120,7 +121,7 @@ void ReadBlockMetas(duckdb::BinaryDeserializer& d, duckdb::field_id_t id,
 }
 
 bool BorrowsBlockStrings(const codecs::ColumnSegment& segment) {
-  return segment.function.type == codecs::CodecType::Uncompressed &&
+  return segment.codec.type == codecs::CodecType::Uncompressed &&
          segment.type.InternalType() == duckdb::PhysicalType::VARCHAR;
 }
 
@@ -131,13 +132,13 @@ void ScanSegment(const codecs::ColumnSegment& segment,
   SDB_ASSERT(scan_type == duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR
                ? result_offset == 0
                : result.GetVectorType() == duckdb::VectorType::FLAT_VECTOR);
-  segment.function.scan(segment, st, count, result, result_offset, scan_type);
+  segment.codec.scan(segment, st, count, result, result_offset, scan_type);
 }
 
 void SkipSegment(const codecs::ColumnSegment& segment,
                  codecs::ColumnScanState& st) {
-  if (segment.function.skip) {
-    segment.function.skip(segment, st, st.offset_in_column - st.internal_index);
+  if (segment.codec.skip) {
+    segment.codec.skip(segment, st, st.offset_in_column - st.internal_index);
   }
   st.internal_index = st.offset_in_column;
 }
@@ -152,8 +153,8 @@ void FetchSegmentRows(const codecs::ColumnSegment& segment,
     return;
   }
   SDB_ASSERT(rows[count - 1] < segment.count);
-  segment.function.fetch_rows(segment, state, rows, count, result, result_sel,
-                              result_offset);
+  segment.codec.fetch_rows(segment, state, rows, count, result, result_sel,
+                           result_offset);
 }
 
 struct GatherBands {
@@ -163,19 +164,19 @@ struct GatherBands {
 
 GatherBands BandsFor(codecs::CodecType codec,
                      const duckdb::LogicalType& type) noexcept {
+  const bool text = type.InternalType() == duckdb::PhysicalType::VARCHAR;
+  if (!text && codecs::IsNumeric(codec)) {
+    return {10, 200};
+  }
   switch (codec) {
     case codecs::CodecType::Constant:
       return {0, 1000};
     case codecs::CodecType::Rle:
       return {2, 70};
-    case codecs::CodecType::Numeric:
-      return {10, 200};
     case codecs::CodecType::Lz4:
       return {0, 1000};
     default:
-      return type.InternalType() == duckdb::PhysicalType::VARCHAR
-               ? GatherBands{10, 1000}
-               : GatherBands{10, 0};
+      return text ? GatherBands{10, 1000} : GatherBands{10, 0};
   }
 }
 
@@ -393,7 +394,7 @@ std::unique_ptr<codecs::ColumnSegment> ColumnReader::Open(const BlockWindow& w,
   const auto& m = _segments[w.block];
   const auto& codec = *m.codec;
   auto segment = std::make_unique<codecs::ColumnSegment>(codecs::ColumnSegment{
-    .function = codec,
+    .codec = codec,
     .type = m.statistics.GetType(),
     .stats = m.statistics,
     .ctx = ctx,
@@ -526,7 +527,7 @@ void ColumnReader::OpenScanSegment(ScanState& s) const {
     s.st.previous_states.emplace_back(std::move(s.st.scan_state));
   }
   const auto& segment = *s.segments.emplace_back(Open(s.window, *s.ctx, &s));
-  s.st.scan_state = segment.function.init_scan(segment);
+  s.st.scan_state = segment.codec.init_scan(segment);
   s.st.internal_index = 0;
   s.initialized = true;
 }
@@ -857,7 +858,8 @@ void ColumnReader::GatherDense(ScanState& s, uint64_t anchor,
 bool ColumnReader::SelectsAcross(const ScanState& s,
                                  duckdb::idx_t span) const noexcept {
   const uint64_t end = s.window.begin + s.st.offset_in_column + span;
-  if (end > _offsets.back()) {
+  if (_type.InternalType() != duckdb::PhysicalType::VARCHAR ||
+      end > _offsets.back()) {
     return false;
   }
   for (size_t block = s.window.block;
@@ -894,8 +896,8 @@ void ColumnReader::SelectAcross(ScanState& s,
       s.piece.set_index(k - i, sel.get_index(k) - row);
     }
     const auto& segment = *s.segments.back();
-    segment.function.select(segment, s.st, rows, out, at + i, s.piece, end - i,
-                            duckdb::ScanVectorType::SCAN_FLAT_VECTOR);
+    segment.codec.select(segment, s.st, rows, out, at + i, s.piece, end - i,
+                         duckdb::ScanVectorType::SCAN_FLAT_VECTOR);
     const auto taken = sel.get_index(end - 1) + 1 - row;
     s.st.offset_in_column += taken;
     s.st.internal_index = s.st.offset_in_column;
@@ -930,7 +932,7 @@ bool ColumnReader::SelectNative(ScanState& s,
   }
   if (within) {
     const auto& segment = *s.segments.back();
-    segment.function.select(segment, s.st, span, out, at, sel, hits, scan_type);
+    segment.codec.select(segment, s.st, span, out, at, sel, hits, scan_type);
     s.st.offset_in_column += span;
     s.st.internal_index = s.st.offset_in_column;
   } else {
@@ -941,8 +943,7 @@ bool ColumnReader::SelectNative(ScanState& s,
   } else if (_validity) {
     auto& vs = s.child_states[0];
     const auto& validity = *vs.segments.back();
-    validity.function.select(validity, vs.st, span, out, at, sel, hits,
-                             scan_type);
+    validity.codec.select(validity, vs.st, span, out, at, sel, hits, scan_type);
     vs.st.offset_in_column += span;
     vs.st.internal_index = vs.st.offset_in_column;
   }
@@ -1055,7 +1056,7 @@ duckdb::idx_t ColumnReader::FilterBlock(
   NullCheckKind null_check, duckdb::Vector& result) const {
   const auto& seg = *s.segments.back();
 
-  const auto& codec = seg.function;
+  const auto& codec = seg.codec;
   duckdb::idx_t approved = sel_count;
   const bool within_segment =
     (s.window.end - s.window.begin) - s.st.offset_in_column >= span;

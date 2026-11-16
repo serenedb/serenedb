@@ -302,7 +302,8 @@ irs::containers::FlatHashSet<duckdb::PhysicalType> LeafPhysicalTypes(
 }
 
 void CheckCompressionLevel(std::string_view column_name,
-                           const irs::codecs::Codec& codec, uint32_t level) {
+                           const irs::codecs::CodecInfo& codec,
+                           uint32_t level) {
   if (level == 0) {
     return;
   }
@@ -354,7 +355,7 @@ void RequireSearchTableIndexOption(std::string_view name) {
 }
 
 irs::codecs::CodecType CheckColumnCodec(
-  std::string_view column_name, const irs::codecs::Codec* codec,
+  std::string_view column_name, const irs::codecs::CodecInfo* codec,
   std::string_view codec_name, uint32_t level,
   const duckdb::LogicalType& column_type) {
   if (!codec) {
@@ -367,8 +368,8 @@ irs::codecs::CodecType CheckColumnCodec(
     return codec->type;
   }
   const auto compresses = [&](duckdb::PhysicalType physical) {
-    const auto* function = codec->function(physical);
-    return function && function->compress;
+    const auto* written = codec->function(physical);
+    return written && written->function;
   };
   const auto physical = column_type.InternalType();
   if (compresses(physical)) {

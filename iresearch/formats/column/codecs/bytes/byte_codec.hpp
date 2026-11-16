@@ -57,7 +57,7 @@ enum class Shape : uint8_t {
 };
 
 constexpr bool IsText(CodecType type) noexcept {
-  return type >= CodecType::DictLz4;
+  return type >= CodecType::DictLz4 && type <= CodecType::Fsst12;
 }
 
 constexpr CodecType TextCodec(Shape shape, ByteCodec leaf) noexcept {
@@ -78,7 +78,7 @@ constexpr ByteCodec LeafOf(CodecType type) noexcept {
 
 static_assert(TextCodec(Shape::Dedup, ByteCodec::Lz4) == CodecType::DictLz4);
 static_assert(TextCodec(Shape::Plain, ByteCodec::Fsst12) == CodecType::Fsst12);
-static_assert(magic_enum::enum_count<CodecType>() ==
+static_assert(std::to_underlying(CodecType::Fsst12) + 1 ==
               std::to_underlying(CodecType::DictLz4) + 2 * kByteCodecCount);
 
 }  // namespace irs::codecs

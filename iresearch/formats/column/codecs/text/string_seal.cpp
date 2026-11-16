@@ -52,43 +52,96 @@ text::Config NamedConfig(Shape shape, ByteCodec leaf,
   };
 }
 
-void Accumulate(StringAccumulator& acc, std::span<const WriteChunk> chunks,
-                StringTuning& tuning) {
-  acc.Reserve(CountRows(chunks), tuning.last_distinct);
-  for (const auto& chunk : chunks) {
-    acc.Add(chunk.data);
-  }
-  tuning.last_distinct = acc.values.size();
-}
-
 auto FlushTo(ColumnDataCheckpointData& data) {
   return [&data](CodecType type, duckdb::BaseStatistics stats, uint64_t rows,
                  std::string_view bytes) {
-    data.function = GetCodec(type, duckdb::PhysicalType::VARCHAR);
+    data.codec = GetCodec(type, duckdb::PhysicalType::VARCHAR);
     data.FlushSegment(std::move(stats), rows, bytes);
   };
 }
 
-bool SealSegments(const StringAccumulator& acc, const ColCodecParams& params,
-                  const duckdb::LogicalType& type, StringTuning& tuning,
-                  duckdb::BufferManager& buffers, const CodecSet& disabled,
-                  SegmentSink sink) {
-  text::StringCompressor compressor{params, type, tuning.estimators, buffers};
-  auto first =
-    text::CompressFirstSegment(acc, params, tuning, disabled, compressor);
-  if (!first) {
-    return acc.Rows() == 0;
+struct Strings final : State {
+  explicit Strings(ColumnDataCheckpointData& data)
+    : tuning{data.tuning->strings},
+      compressor{data.params, data.type, tuning.estimators,
+                 data.ctx->BufferManager()} {}
+
+  const StringAccumulator& Accumulated(std::span<const WriteChunk> chunks) {
+    if (!accumulated) {
+      accumulated = true;
+      acc.Reserve(CountRows(chunks), tuning.last_distinct);
+      for (const auto& chunk : chunks) {
+        acc.Add(chunk.data);
+      }
+      tuning.last_distinct = acc.values.size();
+    }
+    return acc;
   }
-  if (first->Size() > PlainStorageBytes(*first)) {
-    return false;
+
+  StringTuning& tuning;
+  text::StringCompressor compressor;
+  StringAccumulator acc;
+  text::PooledSegment first;
+  bool accumulated = false;
+};
+
+Estimate Analyze(ColumnDataCheckpointData& data, double, uint8_t) {
+  auto& strings = data.Get<Strings>();
+  strings.first = text::DetectBestCompressionMethod(
+    strings.Accumulated(data.chunks), data.params, strings.tuning,
+    data.disabled, strings.compressor, std::move(strings.first));
+  if (!strings.first) {
+    return {};
   }
+  const auto& seg = *strings.first;
+  return {
+    .codec = TextCodec(seg.config.shape, seg.config.leaf),
+    .ratio = static_cast<double>(seg.Size()) /
+             static_cast<double>(std::max<uint64_t>(seg.input, 1)),
+  };
+}
+
+Encoded Encode(ColumnDataCheckpointData& data, const Estimate* pick) {
+  if (data.only != CodecType::Auto) {
+    return {.streams = true};
+  }
+  auto& strings = data.Get<Strings>();
+  if (!pick) {
+    const auto& config = strings.tuning.config;
+    const auto& acc = strings.Accumulated(data.chunks);
+    if (!config || !text::Enabled(data.disabled, *config) || acc.Rows() == 0) {
+      return {};
+    }
+    strings.first = strings.compressor.CompressSegment(*config, acc, 0);
+  }
+  const auto& seg = *strings.first;
+  if (seg.Size() > PlainStorageBytes(seg)) {
+    return {};
+  }
+  return {.bytes = seg.Size(), .input = seg.input, .buffered = true};
+}
+
+void Flush(ColumnDataCheckpointData& data) {
+  auto& strings = data.Get<Strings>();
+  const auto sink = FlushTo(data);
+  if (data.only != CodecType::Auto) {
+    const auto config =
+      NamedConfig(ShapeOf(data.only), LeafOf(data.only), data.params);
+    if (config.shape == Shape::Plain) {
+      strings.compressor.CompressChunks(config, data.chunks, sink);
+    } else {
+      strings.compressor.Compress(config, strings.Accumulated(data.chunks), 0,
+                                  sink);
+    }
+    return;
+  }
+  auto& first = strings.first;
   const auto config = first->config;
   const auto rest = first->begin + first->rows;
   sink(TextCodec(config.shape, config.leaf), std::move(*first->stats),
        first->rows, first->bytes.View());
   first.reset();
-  compressor.Compress(config, acc, rest, sink);
-  return true;
+  strings.compressor.Compress(config, strings.acc, rest, sink);
 }
 
 }  // namespace
@@ -127,37 +180,10 @@ void StringAccumulator::Add(const duckdb::Vector& input) {
   }
 }
 
-void CompressStrings(Shape shape, ByteCodec leaf,
-                     ColumnDataCheckpointData& data,
-                     std::span<const WriteChunk> chunks) {
-  SDB_ASSERT(data.tuning);
-  auto& tuning = data.tuning->strings;
-  text::StringCompressor compressor{data.params, data.type, tuning.estimators,
-                                    data.ctx.BufferManager()};
-  const auto config = NamedConfig(shape, leaf, data.params);
-  const auto sink = FlushTo(data);
-  if (shape == Shape::Plain) {
-    compressor.CompressChunks(config, chunks, sink);
-    return;
-  }
-  StringAccumulator acc;
-  Accumulate(acc, chunks, tuning);
-  compressor.Compress(config, acc, 0, sink);
-}
-
-void CompressAutoStrings(ColumnDataCheckpointData& data,
-                         std::span<const WriteChunk> chunks) {
-  SDB_ASSERT(data.tuning);
-  auto& tuning = data.tuning->strings;
-  StringAccumulator acc;
-  Accumulate(acc, chunks, tuning);
-  if (SealSegments(acc, data.params, data.type, tuning,
-                   data.ctx.BufferManager(), data.disabled, FlushTo(data))) {
-    return;
-  }
-  data.function =
-    GetCodec(CodecType::Uncompressed, duckdb::PhysicalType::VARCHAR);
-  data.function->compress(data, chunks);
-}
+const CompressionFunction kStringsFunction{
+  .analyze = Analyze,
+  .encode = Encode,
+  .flush = Flush,
+};
 
 }  // namespace irs::codecs

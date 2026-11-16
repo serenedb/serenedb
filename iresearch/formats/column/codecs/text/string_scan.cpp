@@ -63,14 +63,6 @@ Header SegmentHeader(duckdb::const_data_ptr_t base,
   return h;
 }
 
-NumericHeader CodesHeader(duckdb::const_data_ptr_t base, const Header& h) {
-  const auto codes =
-    NumericHeader::Parse(base + h.off_codes, h.off_symtab - h.off_codes);
-  SDB_ENSURE(codes.row_count == h.row_count && codes.leaf == NumericLeaf::None,
-             "col codec: corrupted row codes");
-  return codes;
-}
-
 EntryRanges Normalize(EntryRanges ranges) {
   absl::c_sort(ranges);
   size_t kept = 0;
@@ -172,8 +164,8 @@ duckdb::InsertionOrderPreservingMap<std::string> SegmentInfo(
   info["codec"] = std::string{SnakeCaseName(h.codec)};
   info["level"] = absl::StrCat(static_cast<uint32_t>(h.level));
   if (h.shape == Shape::Dedup) {
-    const auto codes = CodesHeader(base, h);
-    info["codes_transform"] = std::string{SnakeCaseName(codes.transform)};
+    info["codes_transform"] = std::string{SnakeCaseName(TransformOf(
+      ParseFrames(base + h.off_codes, h.off_symtab - h.off_codes)))};
   }
   info["entries"] = absl::StrCat(h.entry_count);
   info["frames"] = absl::StrCat(h.frame_count);

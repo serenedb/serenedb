@@ -35,9 +35,9 @@ struct NumericChoice {
 };
 
 struct NumericTuning {
-  ReusePolicy<NumericChoice> reuse;
+  ReusePolicy<HeldCodec> reuse;
+  NumericChoice choice;
   double codes_ratio = 1;
-  CodecType analyzed = CodecType::Auto;
 };
 
 }  // namespace irs::codecs

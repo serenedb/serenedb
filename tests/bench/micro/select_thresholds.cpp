@@ -145,7 +145,7 @@ std::unique_ptr<Blk> BuildBlk(const Shape& shape, uint64_t w) {
   blk->ctx = std::make_unique<irs::ReadContext>(*blk->reader);
   blk->block = col->OpenSegment(0, *blk->ctx);
   blk->rows = blk->block->count;
-  const auto& fn = blk->block->function;
+  const auto& fn = blk->block->codec;
   std::fprintf(stderr,
                "shape %-12s W=%-6llu type=%-10s blocks=%zu block0=%llu "
                "codec=%s select=%d fetch=%d\n",
@@ -205,7 +205,7 @@ void BenchArm(benchmark::State& state, size_t shape_idx, Arm arm) {
     return;
   }
   const auto& segment = *blk.block;
-  const auto& fn = segment.function;
+  const auto& fn = segment.codec;
   const auto skip = [&](irs::codecs::ColumnScanState& st) {
     if (fn.skip) {
       fn.skip(segment, st, st.offset_in_column - st.internal_index);

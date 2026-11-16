@@ -39,7 +39,7 @@ void Select(const ColumnSegment&, ColumnScanState&, idx_t, duckdb::Vector&,
 void FetchRows(const ColumnSegment&, ColumnFetchState&, const idx_t*, idx_t,
                duckdb::Vector&, const duckdb::SelectionVector&, idx_t) {}
 
-constexpr CompressionFunction kFunction{
+constexpr Codec kFunction{
   .type = CodecType::Empty,
   .init_scan = InitScan,
   .scan = Scan,
@@ -49,6 +49,6 @@ constexpr CompressionFunction kFunction{
 
 }  // namespace
 
-const CompressionFunction& EmptyValidityFunction() { return kFunction; }
+const Codec& EmptyValidityFunction() { return kFunction; }
 
 }  // namespace irs::codecs

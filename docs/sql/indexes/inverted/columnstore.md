@@ -16,13 +16,18 @@ A list or map column stores each distinct value of a row group once. Columns who
 
 ## Codecs
 
-A column's codec is either picked automatically (`auto`, the default: a row group takes the smallest of the candidates measured on its first rows; while one codec keeps winning, later row groups reuse it and measure only now and then, and a row group whose data compresses differently is measured again) or named explicitly. Numeric columns use DuckDB's lightweight codecs and the columnstore's [numeric codec](#numeric-columns); text columns use the columnstore's own string codecs, which differ in their *shape* (a dictionary of distinct values with row codes, or one entry per row) and their *leaf* (how the entry bytes are encoded):
+A column's codec is either picked automatically (`auto`, the default: a row group takes the smallest of the candidates measured on its first rows; while one codec keeps winning, later row groups reuse it and measure only now and then, and a row group whose data compresses differently is measured again) or named explicitly. Numeric columns use DuckDB's lightweight codecs and the columnstore's [numeric codecs](#numeric-columns); text columns use the columnstore's own string codecs, which differ in their *shape* (a dictionary of distinct values with row codes, or one entry per row) and their *leaf* (how the entry bytes are encoded):
 
 | Codec | Types | Shape and leaf |
 | :--- | :--- | :--- |
 | `uncompressed` | any | values as-is |
 | `bitpacking`, `rle`, `alp`, `alprd`, `roaring` | numeric / boolean | DuckDB's codecs of these names |
-| `numeric` | numeric | the columnstore's [numeric codec](#numeric-columns): one transform per row group, with or without a byte codec |
+| `ffor` | numeric | the values as they are or minus the smallest, in whole bytes or bit-packed |
+| `delta_ffor` | numeric | each value minus the previous one, in whole bytes or bit-packed |
+| `rle_ffor` | numeric | each run of equal values once with its length, in whole bytes or bit-packed |
+| `dict_ffor` | numeric | a code into the row group's sorted distinct values, in whole bytes or bit-packed |
+| `lz4`, `delta_lz4`, `rle_lz4`, `dict_lz4` | numeric | the same four in whole bytes, compressed with lz4 |
+| `zstd`, `delta_zstd`, `rle_zstd`, `dict_zstd` | numeric | the same four in whole bytes, compressed with zstd |
 | `dict_fsst` | text | sorted dictionary, front-coded, FSST-encoded |
 | `fsst` | text | one entry per row, front-coded against the previous row, FSST-encoded |
 | `dict_fsst_plus` | text | sorted dictionary, a prefix shared by neighbouring entries stored once, FSST-encoded; reading one entry decodes only that entry |
@@ -48,7 +53,7 @@ A dictionary decoded in full, and the parts of a numeric column that scans and l
 
 ## Numeric columns
 
-Under `auto`, a numeric column (integers, decimals, floating point, dates and timestamps) chooses, row group by row group, between DuckDB's lightweight codecs and the columnstore's numeric codec; a column declared `USING COMPRESSION numeric` takes the numeric codec for every row group that has a value. The numeric codec rewrites a row group with one transform; the bit-packed transforms store every block of values in as many bits as the block needs:
+Under `auto`, a numeric column (integers, decimals, floating point, dates and timestamps) chooses, row group by row group, between DuckDB's lightweight codecs and the columnstore's numeric codecs. `lz4`, `zstd`, `dict_lz4` and `dict_zstd` name a text codec on a text column and a numeric one on a numeric column. A numeric codec named on a column stores every row group it can; a row group it cannot store that way, such as one without repeated neighbours under `rle_ffor` or with too many distinct values under `dict_ffor`, is stored `uncompressed`. Each codec rewrites a row group with one transform; the bit-packed transforms store every block of values in as many bits as the block needs:
 
 | Transform | Stores | Suits |
 | :--- | :--- | :--- |
@@ -56,6 +61,7 @@ Under `auto`, a numeric column (integers, decimals, floating point, dates and ti
 | frame of reference | each value minus the row group's smallest | values within a narrow range |
 | bit-packed frame of reference | each value minus the smallest of its block | integers that vary less within a block than across the row group |
 | delta | each value minus the previous one | sorted or clustered values, such as timestamps and row ids |
+| bit-packed delta | the same differences, bit-packed | sorted or clustered integers whose steps fit in a few bits; used only when `delta_ffor` is named, since `auto` stores such columns smaller with `bitpacking` |
 | run length | each run of equal values once, with its length | long runs of repeated values |
 | bit-packed run length | each run's value and length, bit-packed | runs of small integers, short runs of wide values such as identifiers repeated over a few rows, and the row codes of text dictionaries |
 | dictionary | a code into the row group's sorted distinct values | few distinct wide values, such as repeated hashes |
@@ -63,17 +69,17 @@ Under `auto`, a numeric column (integers, decimals, floating point, dates and ti
 
 Integer values that share a common factor, such as timestamps that hold whole seconds or decimals with unused precision, are stored divided by it, which saves the bits that only ever hold zeros. Each frame of a numeric segment records the range of its values, so a filter on an integer, decimal, date or timestamp column skips the frames whose range cannot match, and a point lookup or sparse read decodes only the frames it touches.
 
-A statement that writes its rows straight to segments stores the transformed values as they are or compressed with `lz4`. The background write of in-memory rows, and a compaction for the rows it writes anew, also try `zstd`, which decodes several times slower than bit-packing and wins only where it shrinks a row group noticeably, as on timestamps, hashes and timings. Floating-point columns usually take `alp` or `alprd`, which decode about as fast as bit-packing and compress floats better than a byte codec. `pragma_storage_info` names the codec `Numeric`.
+A statement that writes its rows straight to segments stores the transformed values as they are or compressed with `lz4`. The background write of in-memory rows, and a compaction for the rows it writes anew, also try `zstd`, which decodes several times slower than bit-packing and wins only where it shrinks a row group noticeably, as on timestamps, hashes and timings. Floating-point columns usually take `alp` or `alprd`, which decode about as fast as bit-packing and compress floats better than a byte codec. `pragma_storage_info` names the codec of every row group, such as `RLE_ZSTD`.
 
 ## Choosing a codec
 
-Name the codec on the column with `USING COMPRESSION`, optionally with a level in parentheses, as in `USING COMPRESSION zstd(compression_level = 9)`. A named codec is used as named: it is not measured against other codecs, and without a level it runs at its default level (1 for `lz4` and `zstd`, 3 for `zxc`). Two of DuckDB's codecs leave a row group they cannot serve `uncompressed`: `rle` when it holds no `NULL` and no two neighbouring rows are equal, and `bitpacking` on a signed integer column when the row group's values lie further apart than the type's largest value. `lz4` and `dict_lz4` take levels 1 to 12, `zstd` and `dict_zstd` 1 to 22, `zxc` and `dict_zxc` 1 to 7; `fsst`, `dict_fsst`, `fsst_plus`, `dict_fsst_plus`, `onpair`, `dict_onpair`, `fsst12` and `dict_fsst12` take none. A `zstd` frame decodes several times slower than an `fsst` or `lz4` one, which shows on point lookups and cold scans; `zxc` reads like `fsst` at levels 3 to 5 and trades read and write speed for size at 6 and 7.
+Name the codec on the column with `USING COMPRESSION`, optionally with a level in parentheses, as in `USING COMPRESSION zstd(compression_level = 9)`. A named codec is used as named: it is not measured against other codecs, and without a level it runs at its default level (1 for `lz4` and `zstd`, 3 for `zxc`). Two of DuckDB's codecs leave a row group they cannot serve `uncompressed`: `rle` when it holds no `NULL` and no two neighbouring rows are equal, and `bitpacking` on a signed integer column when the row group's values lie further apart than the type's largest value. `lz4`, `dict_lz4`, `delta_lz4` and `rle_lz4` take levels 1 to 12, `zstd`, `dict_zstd`, `delta_zstd` and `rle_zstd` 1 to 22, `zxc` and `dict_zxc` 1 to 7; `fsst`, `dict_fsst`, `fsst_plus`, `dict_fsst_plus`, `onpair`, `dict_onpair`, `fsst12`, `dict_fsst12`, `ffor`, `delta_ffor`, `rle_ffor` and `dict_ffor` take none. A `zstd` frame decodes several times slower than an `fsst` or `lz4` one, which shows on point lookups and cold scans; `zxc` reads like `fsst` at levels 3 to 5 and trades read and write speed for size at 6 and 7.
 
 <SqlLogicTest id="sql/indexes/inverted/columnstore/example_001" />
 
 Under `auto`, a text column whose values seldom repeat is stored with `lz4` or `fsst`, which are small and fast to scan. To read a row, `lz4` decompresses the rows stored before it in its frame, while `fsst` decodes little more than the row itself. A query that reads a small share of such a column's rows, such as the rows a filter on other columns keeps, reads them several times faster from `fsst`, `onpair` or `fsst_plus` than from `lz4`: name one of them on such a column. All three scan slower than `lz4` and usually take more space; of the three, `onpair` is the smallest and `fsst_plus` the largest.
 
-A codec named on a list, map or struct column applies to the values inside it. A column whose values are all text takes the text codecs, and the codec then compresses every string inside it, the keys and the values of a map alike; a column whose values are all numbers takes the numeric codecs, such as `alp` on a `DOUBLE[]` column. Naming a codec on a nested column suits attribute maps that queries return but seldom filter on: name `dict_zstd` on them to store them smaller, and leave the text columns that queries search or filter on to `auto`, whose codecs decode faster.
+A codec named on a list, map or struct column applies to the values inside it. A column whose values are all text takes the text codecs, and the codec then compresses every string inside it, the keys and the values of a map alike; a column whose values are all numbers takes the numeric codecs, such as `alp` on a `DOUBLE[]` column; a column that holds both, such as a `MAP(TEXT, INTEGER)`, takes the codecs both have: `uncompressed`, `lz4`, `zstd`, `dict_lz4` and `dict_zstd`. Naming a codec on a nested column suits attribute maps that queries return but seldom filter on: name `dict_zstd` on them to store them smaller, and leave the text columns that queries search or filter on to `auto`, whose codecs decode faster.
 
 On an inverted index, an `INCLUDE`d column takes the same names through `included (compression = '...')`, and a level through `compression_level`, as in `included (compression = 'dict_zstd', compression_level = 9)`:
 
@@ -81,7 +87,7 @@ On an inverted index, an `INCLUDE`d column takes the same names through `include
 
 An index on a table has no columnstore of its own: its `INCLUDE`d columns are the table's, and a codec named there applies to the table's column, overriding the column's own `USING COMPRESSION` for the segments written while the index exists. Dropping the index hands the column back to its own declaration.
 
-The global `force_compression` setting wins over `auto` and loses to a codec named on the column. A forced codec applies only to the columns it can store and leaves the others to `auto`: text takes none of DuckDB's codecs for numbers, so `rle` or `dictionary` leave text columns to `auto` while `uncompressed` stores them as-is, and a codec for text only, such as `zstd`, leaves numeric columns to `auto`, whose candidates include the [numeric codec](#numeric-columns). A codec that cannot encode the column's type is rejected at `CREATE TABLE` / `ALTER TABLE`. A table in an attached [DuckDB file](../../statements/attach/duckdb.md) takes DuckDB's own compressions only, and no `compression_level`.
+The global `force_compression` setting wins over `auto` and loses to a codec named on the column. A forced codec applies only to the columns it can store and leaves the others to `auto`: text takes none of DuckDB's codecs for numbers, so `rle` or `dictionary` leave text columns to `auto` while `uncompressed` stores them as-is, and a codec for text only, such as `fsst`, leaves numeric columns to `auto`. A codec that cannot encode the column's type is rejected at `CREATE TABLE` / `ALTER TABLE`. A table in an attached [DuckDB file](../../statements/attach/duckdb.md) takes DuckDB's own compressions only, and no `compression_level`.
 
 The global `disabled_compression_methods` setting removes the compressions it lists from what `auto` considers, for text as for numbers, and a forced compression it disables falls back to `auto`. A text row group whose every candidate is disabled is stored uncompressed.
 

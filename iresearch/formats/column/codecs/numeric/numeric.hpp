@@ -36,13 +36,6 @@
 
 namespace irs::codecs {
 
-struct NumericSegment {
-  duckdb::BaseStatistics stats;
-  std::string bytes;
-};
-
-inline constexpr uint64_t kNotAnalyzed = std::numeric_limits<uint64_t>::max();
-
 uint64_t Packed(uint64_t count, uint64_t max_value) noexcept;
 
 bool UpdateConstant(const duckdb::Vector& input, duckdb::BaseStatistics& stats);
@@ -52,11 +45,5 @@ uint64_t EstimateCodes(const NumericTuning& tuning, uint64_t rows,
 
 std::string EncodeCodes(std::span<const uint32_t> codes, uint64_t entries,
                         uint64_t runs, NumericTuning& tuning);
-
-NumericSegment SealNumeric(const duckdb::LogicalType& type,
-                           std::span<const WriteChunk> chunks, uint64_t rows,
-                           const ColCodecParams& params, NumericTuning& tuning,
-                           bool due, uint64_t analyzed_bytes,
-                           absl::FunctionRef<uint64_t()> analyze);
 
 }  // namespace irs::codecs

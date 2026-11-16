@@ -18,6 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
+
 #include <algorithm>
 #include <duckdb/common/types/hugeint.hpp>
 #include <duckdb/common/types/uhugeint.hpp>
@@ -26,6 +28,7 @@
 #include <duckdb/storage/compression/roaring/roaring.hpp>
 #include <duckdb/storage/statistics/numeric_stats.hpp>
 
+#include "iresearch/formats/column/codecs/numeric/numeric.hpp"
 #include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/utils/assert.hpp"
 
@@ -128,7 +131,7 @@ void Select(const ColumnSegment& segment, ColumnScanState& state,
   Fill<T>(segment, result, result_offset, sel_count);
 }
 
-constexpr CompressionFunction kValidity{
+constexpr Codec kValidity{
   .type = CodecType::Constant,
   .init_scan = InitScan,
   .scan = ScanValidity,
@@ -137,7 +140,7 @@ constexpr CompressionFunction kValidity{
 };
 
 template<typename T, duckdb::PhysicalType kPhysical>
-constexpr CompressionFunction kFunction{
+constexpr Codec kFunction{
   .type = CodecType::Constant,
   .init_scan = InitScan,
   .scan = Scan<T>,
@@ -147,7 +150,23 @@ constexpr CompressionFunction kFunction{
 
 }  // namespace
 
-const CompressionFunction* ConstantFunction(duckdb::PhysicalType physical) {
+bool CompressConstant(ColumnDataCheckpointData& data) {
+  const auto* codec = GetCodec(CodecType::Constant, data.type.InternalType());
+  if (!codec || data.rows == 0) {
+    return false;
+  }
+  auto stats = duckdb::BaseStatistics::CreateEmpty(data.type);
+  if (!absl::c_all_of(data.chunks, [&](const WriteChunk& chunk) {
+        return UpdateConstant(chunk.data, stats);
+      })) {
+    return false;
+  }
+  data.codec = codec;
+  data.FlushSegment(std::move(stats), data.rows, {});
+  return true;
+}
+
+const Codec* ConstantFunction(duckdb::PhysicalType physical) {
   using enum duckdb::PhysicalType;
   switch (physical) {
     case BIT:

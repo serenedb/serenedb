@@ -1364,9 +1364,9 @@ id	s
 
 statement error
 CREATE INDEX inc_e_zstd_bad ON inc_e_num USING inverted(
-    id, (a + b) included (compression='zstd'));
+    id, (a + b) included (compression='fsst'));
 ----
-db error: ERROR: Can't compress column "(a + b)" with type 'INTEGER' (physical: INT32) using compression type 'ZSTD'
+db error: ERROR: Can't compress column "(a + b)" with type 'INTEGER' (physical: INT32) using compression type 'FSST'
 
 
 statement ok

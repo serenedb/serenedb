@@ -1284,11 +1284,10 @@ duckdb::InsertionOrderPreservingMap<std::string> SegmentInfo(
 }
 
 template<typename T, duckdb::PhysicalType kPhysical, bool kStats, bool kFilter>
-constexpr CompressionFunction kFunction{
+constexpr Codec kFunction{
   .type = CodecType::Bitpacking,
-  .analyze = AnalyzeChunks<T>,
-  .compress = CompressChunks<T, kStats>,
-  .accepts = Accepts<T>,
+  .function = &kStreamed<CodecType::Bitpacking, AnalyzeChunks<T>,
+                         CompressChunks<T, kStats>, Accepts<T>>,
   .init_scan = InitScan<T>,
   .scan = Scan<T>,
   .filter = kFilter ? Filter<T> : nullptr,
@@ -1299,7 +1298,7 @@ constexpr CompressionFunction kFunction{
 
 }  // namespace
 
-const CompressionFunction* BitpackingFunction(duckdb::PhysicalType physical) {
+const Codec* BitpackingFunction(duckdb::PhysicalType physical) {
   using enum duckdb::PhysicalType;
   switch (physical) {
     case BOOL:

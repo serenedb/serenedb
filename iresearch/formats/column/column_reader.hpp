@@ -91,7 +91,7 @@ struct ColumnBlockMeta {
   uint64_t tuple_count = 0;
   uint64_t file_offset = 0;
   uint64_t byte_size = 0;
-  const codecs::CompressionFunction* codec = nullptr;
+  const codecs::Codec* codec = nullptr;
 };
 
 struct ColumnMeta;

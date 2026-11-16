@@ -156,12 +156,6 @@ class ColumnWriter final {
   void SealRowGroup();
   void SealStaged(std::span<WriteChunk> chunks, uint64_t rows);
 
-  bool Compress(const codecs::CompressionFunction& function,
-                const duckdb::LogicalType& type,
-                std::span<const WriteChunk> chunks,
-                codecs::ColumnTuning* tuning,
-                std::vector<ColumnBlockMeta>& sink);
-
   bool Compress(const duckdb::LogicalType& type,
                 std::span<const WriteChunk> chunks, codecs::CodecType method,
                 codecs::ColumnTuning* tuning,

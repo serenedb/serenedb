@@ -239,9 +239,9 @@ mismatches
 
 
 statement error
-CREATE TABLE cc_int (a INTEGER PRIMARY KEY, v INTEGER USING COMPRESSION dict_lz4);
+CREATE TABLE cc_int (a INTEGER PRIMARY KEY, v INTEGER USING COMPRESSION dict_fsst);
 ----
-db error: ERROR: Can't compress column "v" with type 'INTEGER' (physical: INT32) using compression type 'DICT_LZ4'
+db error: ERROR: Can't compress column "v" with type 'INTEGER' (physical: INT32) using compression type 'DICT_FSST'
 
 
 statement ok
@@ -253,9 +253,9 @@ ALTER TABLE cc_plain ADD COLUMN w TEXT USING COMPRESSION lz4;
 
 
 statement error
-ALTER TABLE cc_plain ADD COLUMN y INTEGER USING COMPRESSION dict_lz4;
+ALTER TABLE cc_plain ADD COLUMN y INTEGER USING COMPRESSION dict_fsst;
 ----
-db error: ERROR: Can't compress column "y" with type 'INTEGER' (physical: INT32) using compression type 'DICT_LZ4'
+db error: ERROR: Can't compress column "y" with type 'INTEGER' (physical: INT32) using compression type 'DICT_FSST'
 
 
 statement ok

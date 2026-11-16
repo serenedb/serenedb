@@ -47,7 +47,7 @@
 #include <vector>
 
 #include "iresearch/formats/column/codecs/dictionary_cache.hpp"
-#include "iresearch/formats/column/codecs/numeric/numeric_decoder.hpp"
+#include "iresearch/formats/column/codecs/numeric/codes_reader.hpp"
 #include "iresearch/formats/column/codecs/text/string_layout.hpp"
 #include "iresearch/formats/column/codecs/text/string_scan.hpp"
 #include "iresearch/formats/column/codecs/text/string_scan.tpp"
@@ -72,23 +72,26 @@ struct DictionaryFetch final : SegmentScanState {
     const auto& h = frames.header;
     auto& order = frames.order;
     order.resize(count);
-    auto* out = order.data();
     auto& validity = duckdb::FlatVector::ValidityMutable(result);
-    idx_t kept = 0;
-    auto& numeric = Numeric(base);
-    for (idx_t i = 0; i < count; ++i) {
-      SDB_ENSURE(rows[i] < h.row_count, "col codec: row out of range");
-      const uint32_t code =
-        numeric.Fetch(rows[i], i + 1 == count ? kNoRow : rows[i + 1]);
-      const auto at = offset + sel.get_index(i);
-      if (code == 0) {
-        validity.SetInvalid(at);
-        continue;
+    order.resize(Numeric(base).Visit([&](auto& codes) IRS_FORCE_INLINE {
+      auto* out = order.data();
+      const uint64_t row_count = h.row_count;
+      const uint32_t entries = h.entry_count;
+      idx_t kept = 0;
+      for (idx_t i = 0; i < count; ++i) {
+        SDB_ENSURE(rows[i] < row_count, "col codec: row out of range");
+        const uint32_t code =
+          codes.Fetch(rows[i], i + 1 == count ? kNoRow : rows[i + 1]);
+        const auto at = offset + sel.get_index(i);
+        if (code == 0) {
+          validity.SetInvalid(at);
+          continue;
+        }
+        SDB_ENSURE(code < entries, "col codec: corrupted row codes");
+        out[kept++] = {.entry = code, .at = at};
       }
-      SDB_ENSURE(code < h.entry_count, "col codec: corrupted row codes");
-      out[kept++] = {.entry = code, .at = at};
-    }
-    order.resize(kept);
+      return kept;
+    }));
   }
 
   IRS_FORCE_INLINE uint32_t ReadOne(data_ptr_t base, idx_t row) {
@@ -100,10 +103,11 @@ struct DictionaryFetch final : SegmentScanState {
     return code;
   }
 
-  FrameDecoder<uint32_t>& Numeric(data_ptr_t base) {
+  CodesReader& Numeric(data_ptr_t base) {
     if (!code_frames) {
-      code_frames.emplace(base + frames.header.off_codes,
-                          CodesHeader(base, frames.header));
+      const auto& h = frames.header;
+      code_frames.emplace(base + h.off_codes, h.off_symtab - h.off_codes,
+                          h.row_count);
     }
     return *code_frames;
   }
@@ -124,7 +128,7 @@ struct DictionaryFetch final : SegmentScanState {
   }
 
   FetchFrames<Leaf> frames;
-  std::optional<FrameDecoder<uint32_t>> code_frames;
+  std::optional<CodesReader> code_frames;
 };
 
 class FilterVerdicts {
@@ -232,7 +236,8 @@ struct DictionaryScan final : SegmentScanState {
     : entries{segment, std::move(handle), !cached},
       cache_slot{segment.cache_slot},
       code_frames{entries.base + entries.header.off_codes,
-                  CodesHeader(entries.base, entries.header)} {
+                  entries.header.off_symtab - entries.header.off_codes,
+                  entries.header.row_count} {
     if (cached) {
       AdoptDictionary(*cached);
       return;
@@ -617,7 +622,7 @@ struct DictionaryScan final : SegmentScanState {
   bool full = false;
   duckdb::buffer_ptr<duckdb::SelectionVector> code_sel;
   idx_t code_sel_size = 0;
-  FrameDecoder<uint32_t> code_frames;
+  CodesReader code_frames;
   FilterVerdicts verdicts;
 };
 

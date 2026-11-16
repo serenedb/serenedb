@@ -547,8 +547,8 @@ class ColCodecPathsTest : public TestBase {
     for (const auto& block : col.DataBlocks()) {
       window = col.Locate(row, window);
       const auto segment = col.OpenSegment(window.block, ctx);
-      if (segment->function.get_segment_info) {
-        EXPECT_FALSE(segment->function.get_segment_info(*segment).empty())
+      if (segment->codec.get_segment_info) {
+        EXPECT_FALSE(segment->codec.get_segment_info(*segment).empty())
           << irs::codecs::NameOf(block.codec->type) << " block at row " << row;
       }
       row += block.tuple_count;

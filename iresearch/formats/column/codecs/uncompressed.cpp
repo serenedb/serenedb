@@ -224,10 +224,12 @@ void FixedSizeFetchRows(const ColumnSegment& segment, ColumnFetchState& state,
 }
 
 template<typename T, bool kList, duckdb::PhysicalType kPhysical>
-constexpr CompressionFunction kFixedSize{
+constexpr Codec kFixedSize{
   .type = CodecType::Uncompressed,
-  .analyze = FixedSizeAnalyze<std::conditional_t<kList, uint64_t, T>>,
-  .compress = CompressChunks<FixedSizeAppender<T, kList>>,
+  .function =
+    &kStreamed<CodecType::Uncompressed,
+               FixedSizeAnalyze<std::conditional_t<kList, uint64_t, T>>,
+               CompressChunks<FixedSizeAppender<T, kList>>>,
   .init_scan = InitPinnedScan,
   .scan = FixedSizeScan<std::conditional_t<kList, uint64_t, T>>,
   .fetch_rows = FixedSizeFetchRows<std::conditional_t<kList, uint64_t, T>>,
@@ -407,10 +409,10 @@ void ValidityFetchRows(const ColumnSegment& segment, ColumnFetchState& state,
   }
 }
 
-constexpr CompressionFunction kValidity{
+constexpr Codec kValidity{
   .type = CodecType::Uncompressed,
-  .analyze = ValidityAnalyze,
-  .compress = CompressChunks<ValidityAppender>,
+  .function = &kStreamed<CodecType::Uncompressed, ValidityAnalyze,
+                         CompressChunks<ValidityAppender>>,
   .init_scan = InitPinnedScan,
   .scan = ValidityScan,
   .select = ValiditySelect,
@@ -474,7 +476,7 @@ struct StringAppender {
       remaining -= required;
       auto* position = base + dictionary_end - *dictionary_size;
       if (overflow) {
-        const auto block = checkpoint_data.ctx.WriteOverflowString(value);
+        const auto block = checkpoint_data.ctx->WriteOverflowString(value);
         const int32_t block_offset = 0;
         std::memcpy(position, &block, sizeof(block));
         std::memcpy(position + sizeof(block), &block_offset,
@@ -644,9 +646,10 @@ void StringFetchRows(const ColumnSegment& segment, ColumnFetchState& state,
   }
 }
 
-constexpr CompressionFunction kString{
+constexpr Codec kString{
   .type = CodecType::Uncompressed,
-  .compress = CompressChunks<StringAppender>,
+  .function = &kStreamed<CodecType::Uncompressed, nullptr,
+                         CompressChunks<StringAppender>>,
   .init_scan = InitPinnedScan,
   .scan = StringScan,
   .select = StringSelect,
@@ -655,7 +658,7 @@ constexpr CompressionFunction kString{
 
 }  // namespace
 
-const CompressionFunction* UncompressedFunction(duckdb::PhysicalType physical) {
+const Codec* UncompressedFunction(duckdb::PhysicalType physical) {
   using enum duckdb::PhysicalType;
   switch (physical) {
     case BOOL:

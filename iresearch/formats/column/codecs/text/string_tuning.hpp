@@ -21,6 +21,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 
 #include "iresearch/formats/column/codecs/bytes/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_tuning.hpp"
@@ -71,7 +72,7 @@ struct EstimatorState {
 };
 
 struct StringTuning {
-  ReusePolicy<text::Config> reuse;
+  std::optional<text::Config> config;
   TunedParameters tuned;
   EstimatorState estimators;
   uint64_t last_distinct = 0;

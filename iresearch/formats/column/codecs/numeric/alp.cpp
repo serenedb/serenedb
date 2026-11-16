@@ -1353,11 +1353,10 @@ void AlpFetchRows(const ColumnSegment& segment, ColumnFetchState& state,
 }
 
 template<typename T, duckdb::PhysicalType kPhysical>
-constexpr CompressionFunction kFunction{
+constexpr Codec kFunction{
   .type = CodecType::Alp,
-  .analyze = AlpAnalyzeChunks<T>,
-  .compress = AlpCompressChunks<T>,
-  .accepts = HasRows,
+  .function = &kStreamed<CodecType::Alp, AlpAnalyzeChunks<T>,
+                         AlpCompressChunks<T>, HasRows>,
   .init_scan = AlpInitScan<T>,
   .scan = AlpScan<T>,
   .filter = AlpFilter<T>,
@@ -1367,7 +1366,7 @@ constexpr CompressionFunction kFunction{
 
 }  // namespace
 
-const CompressionFunction* AlpFunction(duckdb::PhysicalType physical) {
+const Codec* AlpFunction(duckdb::PhysicalType physical) {
   switch (physical) {
     case duckdb::PhysicalType::FLOAT:
       return &kFunction<float, duckdb::PhysicalType::FLOAT>;

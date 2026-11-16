@@ -104,17 +104,6 @@ using SegmentSink =
   absl::FunctionRef<void(CodecType type, duckdb::BaseStatistics stats,
                          uint64_t rows, std::string_view bytes)>;
 
-void CompressStrings(Shape shape, ByteCodec leaf,
-                     ColumnDataCheckpointData& data,
-                     std::span<const WriteChunk> chunks);
-
-template<Shape kShape, ByteCodec kLeaf>
-void CompressStrings(ColumnDataCheckpointData& data,
-                     std::span<const WriteChunk> chunks) {
-  CompressStrings(kShape, kLeaf, data, chunks);
-}
-
-void CompressAutoStrings(ColumnDataCheckpointData& data,
-                         std::span<const WriteChunk> chunks);
+extern const CompressionFunction kStringsFunction;
 
 }  // namespace irs::codecs

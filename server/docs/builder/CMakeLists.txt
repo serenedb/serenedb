@@ -84,14 +84,14 @@ target_include_directories(
     PRIVATE ${serenedb_SOURCE_DIR}/server
 )
 
-function(sdb_embed_docs_index TARGET)
+function(sdb_embed_docs_index TARGET BUILDER)
     add_custom_command(
         TARGET ${TARGET}
         POST_BUILD
         COMMAND
             Python3::Interpreter
             ${serenedb_SOURCE_DIR}/scripts/embed_docs_index.py
-            ${SDB_DOCS_INDEX_WORK}/index $<TARGET_FILE:${TARGET}>
+            ${SDB_DOCS_INDEX_WORK}/${BUILDER}/index $<TARGET_FILE:${TARGET}>
         VERBATIM
     )
     if(APPLE)
@@ -109,17 +109,17 @@ function(sdb_embed_docs_index TARGET)
 endfunction()
 
 function(sdb_build_docs_index TARGET)
+    set(work ${SDB_DOCS_INDEX_WORK}/${TARGET})
     add_dependencies(${TARGET} serene_docs_corpus_file)
     add_custom_command(
         TARGET ${TARGET}
         POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E rm -rf ${SDB_DOCS_INDEX_WORK}
+        COMMAND ${CMAKE_COMMAND} -E rm -rf ${work}
         COMMAND
-            $<TARGET_FILE:${TARGET}> ${SDB_DOCS_INDEX_WORK}/datadir
-            --build_docs_index=${SDB_DOCS_INDEX_WORK}/index
-            --docs_corpus=${SDB_DOCS_CORPUS}
-        COMMAND ${CMAKE_COMMAND} -E rm -rf ${SDB_DOCS_INDEX_WORK}/datadir
+            $<TARGET_FILE:${TARGET}> ${work}/datadir
+            --build_docs_index=${work}/index --docs_corpus=${SDB_DOCS_CORPUS}
+        COMMAND ${CMAKE_COMMAND} -E rm -rf ${work}/datadir
         VERBATIM
     )
-    sdb_embed_docs_index(${TARGET})
+    sdb_embed_docs_index(${TARGET} ${TARGET})
 endfunction()

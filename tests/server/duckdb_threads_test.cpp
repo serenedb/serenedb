@@ -46,6 +46,8 @@
 #include <thread>
 #include <vector>
 
+#include "search/parallel.h"
+
 namespace {
 
 constexpr int64_t kRows = 10'000'000;
@@ -147,6 +149,35 @@ TEST(DuckDBThreads, SessionValueCapsItsQueries) {
   Exec(con, "RESET threads");
   EXPECT_EQ(CurrentThreads(con), duckdb::Value::BIGINT(4));
   EXPECT_EQ(db.NumberOfThreads(), 4U);
+}
+
+TEST(DuckDBThreads, SearchParallelForKeepsToTheSessionValue) {
+  duckdb::DBConfig config;
+  config.options.maximum_threads = 8;
+  duckdb::DuckDB db{nullptr, &config};
+  duckdb::Connection con{db};
+  const auto peak = [&con] {
+    std::atomic<size_t> running{0};
+    std::atomic<size_t> peak{0};
+    sdb::search::ParallelFor(*con.context, 64, [&](size_t) {
+      const auto now = ++running;
+      for (auto seen = peak.load();
+           now > seen && !peak.compare_exchange_weak(seen, now);) {
+      }
+      const auto until =
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(1);
+      while (std::chrono::steady_clock::now() < until) {
+      }
+      --running;
+    });
+    return peak.load();
+  };
+
+  Exec(con, "SET threads = 1");
+  EXPECT_EQ(peak(), 1U);
+
+  Exec(con, "SET threads = 3");
+  EXPECT_LE(peak(), 3U);
 }
 
 class FunctionTask final : public duckdb::Task {

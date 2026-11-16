@@ -312,9 +312,9 @@ std::optional<Duplicate> FindDuplicate(
   constexpr uint64_t kMinKeysPerCheck = 1 << 16;
   constexpr uint64_t kChecksPerThread = 4;
   const auto total = SegmentKeyCount(segments, spec.key.field) + keys.size();
-  auto& scheduler = duckdb::TaskScheduler::GetScheduler(context);
   const auto parts = std::min<uint64_t>(
-    kChecksPerThread * static_cast<uint64_t>(scheduler.NumberOfThreads()),
+    kChecksPerThread *
+      static_cast<uint64_t>(duckdb::TaskScheduler::QueryThreads(context)),
     total / kMinKeysPerCheck);
   if (parts < 2) {
     return FindDuplicateIn(spec, segments, keys, existing, {});

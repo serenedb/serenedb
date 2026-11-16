@@ -42,8 +42,8 @@ struct ParallelForTask final : duckdb::BaseExecutorTask {
 void ParallelFor(duckdb::ClientContext& context, size_t count,
                  absl::FunctionRef<void(size_t)> body) {
   auto& scheduler = duckdb::TaskScheduler::GetScheduler(context);
-  const auto tasks =
-    std::min<size_t>(count, static_cast<size_t>(scheduler.NumberOfThreads()));
+  const auto tasks = std::min<size_t>(
+    count, static_cast<size_t>(duckdb::TaskScheduler::QueryThreads(context)));
   if (tasks < 2) {
     for (size_t i = 0; i != count; ++i) {
       body(i);

@@ -530,8 +530,8 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
     RunSearchTableBackfill(context, *gstate.search_backfill, &gstate.progress);
     const auto& table = _relation.Cast<catalog::SearchTableEntry>();
     if (gstate.unique_key) {
-      search::VerifyUniqueKey(context, table.RowsWithOwn(context).Reader(),
-                              *gstate.unique_key);
+      ConnectionContext::Get(context).Transaction().SearchTxn().VerifyUniqueKey(
+        context, table.Storage(), *gstate.unique_key);
     }
     table.AdoptAsWritten(context);
     gstate.build_claim.Finish();

@@ -439,7 +439,8 @@ bool TryFoldExpression(duckdb::ClientContext& context, duckdb::Expression& expr,
   if (!expr.IsFoldable()) {
     return false;
   }
-  if (!duckdb::ExpressionExecutor::TryEvaluateScalar(context, expr, out)) {
+  if (!duckdb::ExpressionExecutor::TryEvaluateFoldable(
+        context, expr, out, duckdb::NumericLimits<duckdb::idx_t>::Maximum())) {
     return false;
   }
   return !out.IsNull();
@@ -592,6 +593,26 @@ bool IsScoreColumn(const ScanColumn& column) {
          column.scan->IdOf(column.binding) == connector::kInvertedIndexScoreId;
 }
 
+bool StrictOverNull(const duckdb::Expression& expr) {
+  if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_FUNCTION ||
+      expr.GetExpressionType() == duckdb::ExpressionType::COMPARE_BETWEEN ||
+      expr.Cast<duckdb::BoundFunctionExpression>()
+          .Function()
+          .GetNullHandling() !=
+        duckdb::FunctionNullHandling::DEFAULT_NULL_HANDLING) {
+    return false;
+  }
+  return absl::c_any_of(
+    expr.Cast<duckdb::BoundFunctionExpression>().GetChildren(),
+    [](const auto& child) {
+      return child->GetExpressionClass() ==
+               duckdb::ExpressionClass::BOUND_CONSTANT &&
+             child->template Cast<duckdb::BoundConstantExpression>()
+               .GetValue()
+               .IsNull();
+    });
+}
+
 bool TrySetScorer(std::optional<catalog::ScorerOptions>& scorer,
                   const duckdb::BoundFunctionExpression& func,
                   std::string_view name) {
@@ -656,9 +677,10 @@ duckdb::unique_ptr<duckdb::Expression> PushdownScorerCall(
   if (ss.score.vector) {
     return nullptr;
   }
-  if (!TrySetScorer(ss.score.text, func,
-                    func.Function().GetName().GetIdentifierName())) {
-    return nullptr;
+  const auto& name = func.Function().GetName().GetIdentifierName();
+  if (!TrySetScorer(ss.score.text, func, name)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG(name, "() arguments must be constants"));
   }
   auto ref = MakeScoreRef(index, *scan, anchor->Binding().table_index);
   if (!func.GetAlias().empty()) {
@@ -1033,6 +1055,11 @@ void RewriteCallInExpr(duckdb::unique_ptr<duckdb::Expression>& expr,
     auto& func = expr->Cast<duckdb::BoundFunctionExpression>();
     const auto& name = func.Function().GetName().GetIdentifierName();
     if (IsScorerFunctionName(name)) {
+      if (StrictOverNull(func)) {
+        expr = duckdb::make_uniq<duckdb::BoundConstantExpression>(
+          duckdb::Value{func.GetReturnType()});
+        return;
+      }
       if (auto repl = PushdownScorerCall(func, index)) {
         expr = std::move(repl);
         return;
@@ -1732,26 +1759,6 @@ bool IsPlainInteger(const duckdb::LogicalType& type) {
   }
 }
 
-bool StrictOverNull(const duckdb::Expression& expr) {
-  if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_FUNCTION ||
-      expr.GetExpressionType() == duckdb::ExpressionType::COMPARE_BETWEEN ||
-      expr.Cast<duckdb::BoundFunctionExpression>()
-          .Function()
-          .GetNullHandling() !=
-        duckdb::FunctionNullHandling::DEFAULT_NULL_HANDLING) {
-    return false;
-  }
-  return absl::c_any_of(
-    expr.Cast<duckdb::BoundFunctionExpression>().GetChildren(),
-    [](const auto& child) {
-      return child->GetExpressionClass() ==
-               duckdb::ExpressionClass::BOUND_CONSTANT &&
-             child->template Cast<duckdb::BoundConstantExpression>()
-               .GetValue()
-               .IsNull();
-    });
-}
-
 const duckdb::BoundColumnRefExpression* CastOfIntegerColumn(
   const duckdb::Expression& expr) {
   if (!duckdb::BoundCastExpression::IsCast(expr)) {
@@ -1988,7 +1995,9 @@ duckdb::unique_ptr<duckdb::Expression> NormalizeClaimShape(
       expr->GetExpressionClass() != duckdb::ExpressionClass::BOUND_LAMBDA &&
       expr->IsFoldable()) {
     duckdb::Value folded;
-    if (duckdb::ExpressionExecutor::TryEvaluateScalar(context, *expr, folded)) {
+    if (duckdb::ExpressionExecutor::TryEvaluateFoldable(
+          context, *expr, folded,
+          duckdb::NumericLimits<duckdb::idx_t>::Maximum())) {
       return duckdb::make_uniq<duckdb::BoundConstantExpression>(
         std::move(folded));
     }

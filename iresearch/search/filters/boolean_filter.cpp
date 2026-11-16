@@ -469,4 +469,28 @@ bool ContainsNegation(Filter& filter) {
   return found;
 }
 
+void PreparePositiveLeaves(const Filter& filter, const SubReader& segment,
+                           const PrepareContext& ctx,
+                           absl::FunctionRef<void(QueryBuilder::ptr)> sink) {
+  SDB_ASSERT(!ctx.collector);
+  if (filter.type() != Type<BooleanFilter>::id()) {
+    if (auto query = filter.PrepareSegment(segment, ctx)) {
+      sink(std::move(query));
+    }
+    return;
+  }
+  const auto& boolean = utils::downCast<BooleanFilter>(filter);
+  for (const auto occur : {Occur::Must, Occur::Should}) {
+    for (const auto& term : boolean.Terms(occur)) {
+      if (auto query = ByTerm::PrepareSegment(
+            segment, ctx, segment.field(term.field, term.dict), term.term)) {
+        sink(std::move(query));
+      }
+    }
+    for (const auto& child : boolean.Filters(occur)) {
+      PreparePositiveLeaves(*child, segment, ctx, sink);
+    }
+  }
+}
+
 }  // namespace irs

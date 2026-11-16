@@ -802,8 +802,11 @@ bool IsReplay(const duckdb::AlterInfo& info) {
 
 bool IsNullConstant(duckdb::ClientContext& context,
                     const duckdb::Expression& expr) {
+  duckdb::Value value;
   return expr.IsFoldable() &&
-         duckdb::ExpressionExecutor::EvaluateScalar(context, expr).IsNull();
+         duckdb::ExpressionExecutor::TryEvaluateFoldable(context, expr,
+                                                         value) &&
+         value.IsNull();
 }
 
 duckdb::shared_ptr<duckdb::Binder> SchemaBinder(
@@ -1678,7 +1681,9 @@ void SearchTableEntry::VerifyKey(duckdb::ClientContext& context,
       .VerifyReferences(context, *this, spec);
     return;
   }
-  search::VerifyUniqueKey(context, RowsWithOwn(context).Reader(), spec);
+  SessionOf(context, catalog)
+    .SearchTxn()
+    .VerifyUniqueKey(context, _storage, spec);
 }
 
 void SearchTableEntry::ReplaceStoreColumnsAtCommit(

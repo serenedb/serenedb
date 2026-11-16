@@ -74,6 +74,17 @@ namespace {
              "command have duplicate constrained values."));
 }
 
+[[noreturn]] void ThrowNotUnique(duckdb::ClientContext& context,
+                                 const KeySpec& spec, std::string_view key) {
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
+    ERR_MSG("could not create unique index \"", spec.constraint, "\""),
+    ERR_DETAIL(
+      "Key ",
+      connector::ConstraintKeyText(context, key, spec.names, spec.types),
+      " is duplicated."));
+}
+
 void AddChanged(StoreWrites& w, Tick snapshot,
                 std::shared_ptr<const irs::DocRemoval> rows) {
   if (w.changed.empty() || w.changed.back().snapshot != snapshot) {
@@ -519,17 +530,23 @@ StoreWrites* Writes::FindStoreWrites(duckdb::idx_t store_id) const {
 
 void Writes::Adopt(StoreWrites& w, const catalog::SearchTableEntry& table) {
   w.keys = table.KeySpecs();
+  AddIndexKeys(w, table);
+  w.table = &table;
+  w.owner = &table;
+}
+
+void Writes::AddIndexKeys(StoreWrites& w,
+                          const catalog::SearchTableEntry& table) {
+  const auto latest = Latest(table);
   for (const auto& key : w.store->Config()->constraint_keys) {
     if (absl::c_none_of(w.keys, [&](const KeySpec& spec) {
           return spec.key.field == key.field;
         })) {
-      if (auto spec = IndexKeySpec(table, key, Latest(table))) {
+      if (auto spec = IndexKeySpec(table, key, latest)) {
         w.keys.push_back(std::move(*spec));
       }
     }
   }
-  w.table = &table;
-  w.owner = &table;
 }
 
 void Writes::AdoptTable(const std::shared_ptr<Store>& store,
@@ -1084,6 +1101,38 @@ std::vector<duckdb::string_t> OwnKeys(const StoreWrites& w, irs::field_id field,
     return true;
   });
   return keys;
+}
+
+void CheckVerifiedKeys(duckdb::ClientContext& context, const StoreWrites& w) {
+  if (w.verified_keys.empty()) {
+    return;
+  }
+  const LiveUnits now{w.store->GetTable().State(), w.changes.removals};
+  for (const auto& verified : w.verified_keys) {
+    if (verified.state == now.State()) {
+      continue;
+    }
+    const LiveUnits seen{verified.state, {}};
+    const auto added = [&](uint64_t unit) { return !seen.Find(unit); };
+    std::vector<KeyProbe::Segment> segments;
+    for (const auto& unit : now.Units()) {
+      if (added(unit.unit->id)) {
+        segments.push_back({.unit = unit.unit->id,
+                            .sub = unit.unit->reader.get(),
+                            .removed = unit.removed});
+      }
+    }
+    if (segments.empty()) {
+      continue;
+    }
+    KeyProbe existing{verified.spec.key.field};
+    existing.AddLive(now, added);
+    AddOwnRows(existing, w, now);
+    if (auto duplicate =
+          FindDuplicate(context, verified.spec, segments, {}, existing)) {
+      ThrowNotUnique(context, verified.spec, duplicate->key);
+    }
+  }
 }
 
 }  // namespace
@@ -1643,8 +1692,33 @@ void Writes::VerifyReferences(duckdb::ClientContext& context,
     {.table = &table, .spec = spec, .referenced = std::move(referenced)});
 }
 
+void Writes::VerifyUniqueKey(duckdb::ClientContext& context,
+                             const std::shared_ptr<Store>& store,
+                             const KeySpec& spec) {
+  auto read = LatestView(context, *store);
+  std::vector<KeyProbe::Segment> segments;
+  for (const auto& segment : read.Reader()) {
+    segments.push_back({.sub = &segment});
+  }
+  ForEachSegmentKey(segments, spec.key.field,
+                    [&](std::string_view key, size_t rows) {
+                      if (rows > 1) {
+                        ThrowNotUnique(context, spec, key);
+                      }
+                      return true;
+                    });
+  auto& w = EnsureStoreWrites(store);
+  absl::MutexLock lock{&w.mutex};
+  w.verified_keys.push_back({.spec = spec, .state = std::move(read.state)});
+}
+
 void Writes::CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w) {
-  if (!w.table || (w.keys.empty() && !w.removed_rows && !w.changes.truncate)) {
+  if (!w.table) {
+    return;
+  }
+  const auto known = w.keys.size();
+  AddIndexKeys(w, *w.table);
+  if (w.keys.empty() && !w.removed_rows && !w.changes.truncate) {
     return;
   }
   LiveUnits now{w.store->GetTable().State(), w.changes.removals};
@@ -1657,12 +1731,14 @@ void Writes::CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w) {
     if (w.piece) {
       segments.push_back(OwnSegmentSource(w.piece, now));
     }
-    for (const auto& spec : w.keys) {
+    for (size_t i = 0; i != w.keys.size(); ++i) {
+      const auto& spec = w.keys[i];
       if (spec.kind != KeyKind::Unique) {
         continue;
       }
       KeyProbe fresh{spec.key.field};
-      fresh.AddLive(now, w.checked && !spec.deferred ? &*w.checked : nullptr);
+      fresh.AddLive(
+        now, w.checked && !spec.deferred && i < known ? &*w.checked : nullptr);
       if (fresh.Empty() && !spec.deferred) {
         continue;
       }
@@ -1886,6 +1962,7 @@ std::vector<LogSection> Writes::TakeLog(duckdb::ClientContext& context) {
     if (w.prepared) {
       CatchUpKeys(context, w);
     }
+    CheckVerifiedKeys(context, w);
   }
   const auto latest = [&](const ReferenceCheck& check) {
     const auto* parent =
@@ -1935,7 +2012,7 @@ std::vector<absl::Mutex*> Writes::CommitMutexes(
   std::span<const std::shared_ptr<Store>> layouts) const {
   std::vector<absl::Mutex*> mutexes;
   for (const auto& [store_id, w] : _writes) {
-    if (w.prepared) {
+    if (w.prepared || !w.verified_keys.empty()) {
       mutexes.push_back(&w.store->GetTable().CommitMutex());
     }
   }

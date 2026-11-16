@@ -376,11 +376,13 @@ bool IsStringishTypeId(duckdb::LogicalTypeId id) {
          id == duckdb::LogicalTypeId::STRING_LITERAL;
 }
 
-std::optional<duckdb::Value> TryEvaluateScalar(duckdb::ClientContext& context,
-                                               const duckdb::Expression& expr) {
+std::optional<duckdb::Value> TryFold(duckdb::ClientContext& context,
+                                     const duckdb::Expression& expr) {
   duckdb::Value result;
   if (!expr.IsFoldable() ||
-      !duckdb::ExpressionExecutor::TryEvaluateScalar(context, expr, result)) {
+      !duckdb::ExpressionExecutor::TryEvaluateFoldable(
+        context, expr, result,
+        duckdb::NumericLimits<duckdb::idx_t>::Maximum())) {
     return std::nullopt;
   }
   return result;
@@ -488,7 +490,7 @@ void FoldStructuredConstants(duckdb::ClientContext& context,
                                !IsTSQueryStructType(type) &&
                                duckdb::BoundCastExpression::IsCast(*expr);
   if (!IsTSQueryishType(type) || list_of_tsquery) {
-    if (auto value = TryEvaluateScalar(context, *expr)) {
+    if (auto value = TryFold(context, *expr)) {
       auto alias = expr->GetAlias();
       expr =
         duckdb::make_uniq<duckdb::BoundConstantExpression>(std::move(*value));
@@ -533,7 +535,7 @@ std::optional<std::string> RenderTSQueryExpression(
   if (IsTSQueryishType(expr.GetReturnType())) {
     return std::nullopt;
   }
-  if (auto value = TryEvaluateScalar(context, expr)) {
+  if (auto value = TryFold(context, expr)) {
     return RenderPlainValue(*value);
   }
   return std::nullopt;
@@ -571,7 +573,7 @@ std::optional<std::string> RenderTSQueryCall(
         return std::nullopt;
       }
       auto inner = RenderTSQueryExpression(context, *children[0]);
-      auto factor = TryEvaluateScalar(context, *children[1]);
+      auto factor = TryFold(context, *children[1]);
       if (!inner || !factor || factor->IsNull()) {
         return std::nullopt;
       }

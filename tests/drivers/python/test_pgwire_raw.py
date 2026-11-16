@@ -3894,6 +3894,8 @@ def test_invalid_regular_expression(conn, query, message):
         ("split_by_pattern('(')", "2201B"),
         ("split_by_pattern('')", "22023"),
         ("split_by_pattern('a', group := 2)", "22023"),
+        ("remove_stopwords(stopwords_path := '/nonexistent/drv_stopwords')", "F0000"),
+        ("classify_text(model_location := '/nonexistent/drv_model.bin')", "F0000"),
         ("split_text_csv(',') | lambda x: x || random()::text", "42P17"),
         ("split_text_csv(',') | lambda x: x || (SELECT 'a')", "0A000"),
         ("split_text_csv(',') | lambda x: no_such_fn(x)", "42P17"),
@@ -3904,6 +3906,16 @@ def test_invalid_regular_expression(conn, query, message):
 def test_text_search_dictionary_errors(conn, definition, sqlstate):
     m = conn.run(f"CREATE TEXT SEARCH DICTIONARY drv_bad_dictionary AS {definition}")
     assert [e["C"] for e in errors(m)] == [sqlstate]
+
+
+def test_on_conflict_target_without_unique_key(conn):
+    assert not errors(conn.run("DROP TABLE IF EXISTS drv_on_conflict"))
+    assert not errors(
+        conn.run("CREATE TABLE drv_on_conflict (id INT PRIMARY KEY, x INT)")
+    )
+    m = conn.run("INSERT INTO drv_on_conflict VALUES (1, 1) ON CONFLICT (x) DO NOTHING")
+    assert [e["C"] for e in errors(m)] == ["42P10"]
+    assert not errors(conn.run("DROP TABLE drv_on_conflict"))
 
 
 def test_string_over_the_size_limit(conn):

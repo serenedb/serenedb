@@ -145,7 +145,7 @@ struct ContainerFree {
 };
 
 std::shared_ptr<const void> Own(container_t* container, uint8_t type) {
-  if (container == nullptr) [[unlikely]] {
+  if (!container) [[unlikely]] {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_OUT_OF_MEMORY),
                     ERR_MSG("Failed to allocate a document mask container"));
   }
@@ -177,7 +177,7 @@ UnitedContainer Unite(const roaring::api::roaring_array_t& from, int32_t i,
     container = roaring::internal::container_or(
       from.containers[i], from.typecodes[i], with.containers[j], type, &type);
   }
-  if (container == nullptr) [[unlikely]] {
+  if (!container) [[unlikely]] {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_OUT_OF_MEMORY),
                     ERR_MSG("Failed to allocate a document mask container"));
   }
@@ -373,7 +373,11 @@ DocumentMask DocumentMask::Union(
   auto count = static_cast<int64_t>(base->_count);
   uint64_t sparse = 0;
   uint64_t spans = 0;
-  std::vector<std::pair<int32_t, size_t>> to_runs;
+  struct ToRun {
+    int32_t slot = 0;
+    size_t united = 0;
+  };
+  std::vector<ToRun> to_runs;
   for (size_t t = 0; const auto& step : steps) {
     if (step.with < 0) {
       const auto i = step.from;
@@ -396,7 +400,7 @@ DocumentMask DocumentMask::Union(
     }
     auto* container = made.container.get();
     if (made.to_run) {
-      to_runs.emplace_back(ra.size, t - 1);
+      to_runs.push_back({.slot = ra.size, .united = t - 1});
       out._owners.emplace_back();
     } else {
       out._owners.emplace_back(std::move(made.container));

@@ -182,7 +182,7 @@ void ClassifySegmentColFilters(
         }
         break;
       case duckdb::FilterPropagateResult::FILTER_TRUE_OR_NULL:
-        if (!spec.optional && !spec.is_dynamic && spec.not_null != nullptr) {
+        if (!spec.optional && !spec.is_dynamic && spec.not_null) {
           spec.filter = spec.not_null;
           spec.null_check = irs::NullCheckKind::IsNotNull;
         }

@@ -106,25 +106,6 @@ duckdb::unique_ptr<duckdb::TableFilter> MakeNotNullReplacement(
   return duckdb::make_uniq<duckdb::ExpressionFilter>(std::move(not_null));
 }
 
-bool IsOptionalDynamicFilter(const duckdb::Expression& expr) {
-  return expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_FUNCTION &&
-         expr.Cast<duckdb::BoundFunctionExpression>().Function().GetName() ==
-           duckdb::OptionalFilterScalarFun::NAME &&
-         duckdb::ExpressionFilter::GetOptionalDynamicFilterData(expr);
-}
-
-bool HasOptionalDynamicFilter(const duckdb::Expression& expr) {
-  if (IsOptionalDynamicFilter(expr)) {
-    return true;
-  }
-  if (expr.GetExpressionType() != duckdb::ExpressionType::CONJUNCTION_AND) {
-    return false;
-  }
-  return absl::c_any_of(
-    expr.Cast<duckdb::BoundConjunctionExpression>().GetChildren(),
-    [](const auto& child) { return HasOptionalDynamicFilter(*child); });
-}
-
 duckdb::unique_ptr<duckdb::Expression> EvaluateDynamicFilters(
   const duckdb::Expression& expr) {
   if (expr.GetExpressionType() == duckdb::ExpressionType::CONJUNCTION_AND) {
@@ -136,7 +117,7 @@ duckdb::unique_ptr<duckdb::Expression> EvaluateDynamicFilters(
     }
     return result;
   }
-  if (!IsOptionalDynamicFilter(expr)) {
+  if (!duckdb::ExpressionFilter::GetOptionalDynamicFilterData(expr)) {
     return expr.Copy();
   }
   const auto child = duckdb::ExpressionFilter::GetOptionalFilterChild(expr);
@@ -247,25 +228,9 @@ void BuildTableFilter(ScanGlobalState& state, const ScanBindData& bind_data,
     }
     state.col_filters.push_back(
       {.field = 0, .filter = pushed, .is_score = true});
-    const auto& expr = *duckdb::ExpressionFilter::GetExpressionFilter(
-                          *pushed, "BuildTableFilter")
-                          .expr;
     if (auto dyn =
-          duckdb::ExpressionFilter::GetOptionalDynamicFilterData(expr)) {
+          duckdb::ExpressionFilter::GetOptionalDynamicFilterData(*pushed)) {
       state.score_dynamic_filter = std::move(dyn);
-      return;
-    }
-    if (expr.GetExpressionClass() ==
-          duckdb::ExpressionClass::BOUND_CONJUNCTION &&
-        expr.GetExpressionType() == duckdb::ExpressionType::CONJUNCTION_AND) {
-      for (const auto& child :
-           expr.Cast<duckdb::BoundConjunctionExpression>().GetChildren()) {
-        if (auto dyn =
-              duckdb::ExpressionFilter::GetOptionalDynamicFilterData(*child)) {
-          state.score_dynamic_filter = std::move(dyn);
-          return;
-        }
-      }
     }
   };
   for (const auto& entry : filters) {
@@ -297,7 +262,7 @@ void BuildTableFilter(ScanGlobalState& state, const ScanBindData& bind_data,
       cf.optional =
         duckdb::ExpressionFilter::IsRootNonSelectivityOptionalFilter(
           entry.Filter());
-      if (HasOptionalDynamicFilter(expr)) {
+      if (duckdb::ExpressionFilter::GetOptionalDynamicFilterData(expr)) {
         const auto& per_row = state.dynamic_filters.emplace_back(
           duckdb::make_uniq<duckdb::ExpressionFilter>(
             EvaluateDynamicFilters(expr),

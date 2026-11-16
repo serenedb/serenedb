@@ -133,22 +133,8 @@ duckdb::shared_ptr<duckdb::DynamicFilterData> FindOrderDynamicFilter(
     if (!cf.is_dynamic || cf.field != order.column) {
       continue;
     }
-    const auto& expr = *duckdb::ExpressionFilter::GetExpressionFilter(
-                          *cf.filter, "FindOrderDynamicFilter")
-                          .expr;
-    auto dyn = duckdb::ExpressionFilter::GetOptionalDynamicFilterData(expr);
-    if (!dyn &&
-        expr.GetExpressionClass() ==
-          duckdb::ExpressionClass::BOUND_CONJUNCTION &&
-        expr.GetExpressionType() == duckdb::ExpressionType::CONJUNCTION_AND) {
-      for (const auto& child :
-           expr.Cast<duckdb::BoundConjunctionExpression>().GetChildren()) {
-        if ((dyn = duckdb::ExpressionFilter::GetOptionalDynamicFilterData(
-               *child))) {
-          break;
-        }
-      }
-    }
+    auto dyn =
+      duckdb::ExpressionFilter::GetOptionalDynamicFilterData(*cf.filter);
     if (!dyn) {
       continue;
     }
@@ -184,7 +170,9 @@ const duckdb::RowGroupOrderKey* OrderBound(ScanGlobalState& g) {
     }
     bound.valid = !constant.IsNull();
     if (bound.valid) {
-      bound.key = OrderKey(g, duckdb::BaseStatistics::FromConstant(constant));
+      const auto& order = *g.Bind().scan_order;
+      bound.key = duckdb::RowGroupOrderKeys::Get(constant, order.order_type,
+                                                 order.null_order);
     }
     bound.version = version;
   }
@@ -612,8 +600,8 @@ bool ClaimStart(ScanGlobalState& g, ScanLocalState& l) {
 
 void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
   const auto& bind = g.Bind();
-  bool ordered = bind.scan_order.has_value() && (g.shape == ScanShape::Stream ||
-                                                 g.shape == ScanShape::ColScan);
+  bool ordered = bind.scan_order && (g.shape == ScanShape::Stream ||
+                                     g.shape == ScanShape::ColScan);
   if (ordered) {
     g.order_type = bind.ColumnTypeById(bind.scan_order->column);
   }

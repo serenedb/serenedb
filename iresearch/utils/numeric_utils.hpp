@@ -51,8 +51,6 @@ inline constexpr size_t kNumericTermSize = 1 + sizeof(T);
 
 inline constexpr size_t kNumericTermMaxSize = kNumericTermSize<int64_t>;
 
-// Numeric terms are DuckDB radix keys (Radix::EncodeData, as ART keys are):
-// a new term format keeps them instead of encoding numbers its own way.
 template<typename T>
 bytes_view EncodeNumericTerm(byte_type* buf, T value) {
   buf[0] = kNumericTermMagic<T>;

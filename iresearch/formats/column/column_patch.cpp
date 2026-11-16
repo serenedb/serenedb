@@ -350,7 +350,7 @@ std::shared_ptr<const ColumnPatch> ColumnPatch::Merge(const ColumnPatch* base,
     }
     entry.group = std::move(group);
   });
-  std::vector<std::pair<uint64_t, std::shared_ptr<const Group>>> groups;
+  decltype(next->_groups) groups;
   groups.reserve(next->_groups.size() + touched.size());
   size_t kept = 0;
   for (size_t g = 0; g != touched.size(); ++g) {

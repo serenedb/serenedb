@@ -125,12 +125,11 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::Open(
   reader->_field_reader =
     std::make_shared<term_dict::FieldReader>(*dir.ResourceManager().readers);
   if (options.index) {
-    const bool written = inputs.postings.doc != nullptr;
     reader->_field_reader->prepare(ReaderState{
       .dir = &dir,
       .meta = &meta,
       .idx = reader->_data->idx_reader.get(),
-      .postings = written ? &inputs.postings : nullptr,
+      .postings = inputs.postings.doc ? &inputs.postings : nullptr,
     });
   }
   return reader;

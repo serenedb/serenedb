@@ -844,6 +844,15 @@ class IndexTestCase : public tests::IndexTestBase {
                           const SyncF& sync)
           : ForwardingIndexInput(std::move(impl)), _name(name), _sync(&sync) {}
 
+        ptr Dup() const final {
+          return std::make_unique<OverrideSyncInput>(
+            ForwardingIndexInput::Dup(), _name, *_sync);
+        }
+        ptr Reopen() const final {
+          return std::make_unique<OverrideSyncInput>(
+            ForwardingIndexInput::Reopen(), _name, *_sync);
+        }
+
         bool Sync() const noexcept final {
           try {
             if ((*_sync)(_name)) {

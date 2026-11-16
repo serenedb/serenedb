@@ -35,6 +35,7 @@
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/main/secret/secret_manager.hpp>
+#include <duckdb/parser/constraints/not_null_constraint.hpp>
 #include <duckdb/parser/parsed_data/alter_job_info.hpp>
 #include <duckdb/parser/parsed_data/alter_sequence_info.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
@@ -335,6 +336,28 @@ duckdb::TableCatalogEntry& LoggedTable(BaseCatalog& catalog,
   SDB_ENSURE(table && table->type == duckdb::CatalogType::TABLE_ENTRY,
              "the log changes a missing table ", oid);
   return table->Cast<duckdb::TableCatalogEntry>();
+}
+
+duckdb::vector<duckdb::unique_ptr<duckdb::Constraint>>::const_iterator
+ColumnNotNull(
+  const duckdb::AlterInfo& info, const duckdb::TableCatalogEntry& table,
+  const duckdb::vector<duckdb::unique_ptr<duckdb::Constraint>>& constraints) {
+  if (info.type != duckdb::AlterType::ALTER_TABLE ||
+      info.Cast<duckdb::AlterTableInfo>().alter_table_type !=
+        duckdb::AlterTableType::SET_NOT_NULL) {
+    return constraints.end();
+  }
+  const auto& path = info.Cast<duckdb::SetNotNullInfo>().column_path;
+  const auto& columns = table.GetColumns();
+  if (path.size() != 1 || !columns.ColumnExists(path.front())) {
+    return constraints.end();
+  }
+  const auto index = columns.GetColumn(path.front()).Logical();
+  return absl::c_find_if(
+    constraints, [&](const duckdb::unique_ptr<duckdb::Constraint>& constraint) {
+      return constraint->type == duckdb::ConstraintType::NOT_NULL &&
+             constraint->Cast<duckdb::NotNullConstraint>().index == index;
+    });
 }
 
 void QualifyInLoggedSchema(BaseCatalog& catalog,
@@ -739,16 +762,19 @@ void ReplayChange(duckdb::ClientContext& context, ReplayTarget target,
       if (!content.constraints.empty()) {
         auto& oids = catalog.GetDatabase().GetDatabaseManager();
         std::vector<duckdb::idx_t> restored;
-        auto& made_constraints =
-          LoggedTable(catalog, transaction, oid).GetConstraints();
+        auto& table = LoggedTable(catalog, transaction, oid);
+        auto& made_constraints = table.GetConstraints();
         for (const auto& created : content.constraints) {
-          const auto it =
-            absl::c_find_if(made_constraints, [&](const auto& made) {
-              return made->constraint_name == created.name;
-            });
+          auto it = absl::c_find_if(made_constraints, [&](const auto& made) {
+            return made->constraint_name == created.name;
+          });
+          if (it == made_constraints.end()) {
+            it = ColumnNotNull(*info, table, made_constraints);
+          }
           SDB_ENSURE(it != made_constraints.end(),
                      "the log creates constraint \"", created.name,
                      "\" on table ", oid, " that replay did not make");
+          (*it)->constraint_name = created.name;
           (*it)->oid = created.oid;
           oids.ClaimOid(created.oid);
           restored.push_back(created.oid);

@@ -4298,6 +4298,10 @@ TEST_P(DirectoryTestCase, smoke_store) {
       // 'sizeof buf' already read above
       in->ReadData(buf, in->Length() - sizeof buf);
       ASSERT_TRUE(in->IsEOF());
+      EXPECT_ANY_THROW(in->ReadData(buf, 1));
+      EXPECT_ANY_THROW(in->ReadData(in->Length() - 10, buf, 20));
+      in->Seek(in->Length() - 10);
+      EXPECT_ANY_THROW(in->ReadData(buf, 20));
     }
 
     ASSERT_TRUE(dir.remove("nonempty_file"));

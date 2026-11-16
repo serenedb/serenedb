@@ -76,6 +76,13 @@ enum class JsonOutputType {
                   ERR_DETAIL(simdjson::error_message(error)));
 }
 
+simdjson::ondemand::parser JsonValueParser() {
+  simdjson::ondemand::parser parser;
+  parser.allow_trailing_commas = true;
+  parser.allow_inf_and_nan = true;
+  return parser;
+}
+
 template<typename T>
 T Unwrap(simdjson::simdjson_result<T>&& result) {
   T value;
@@ -215,7 +222,7 @@ class JsonParser {
     return str;
   }
 
-  simdjson::ondemand::parser _parser;
+  simdjson::ondemand::parser _parser = JsonValueParser();
   simdjson::padded_string _padded_input;
 };
 
@@ -483,7 +490,7 @@ void JsonTypeofFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     args.data[0], result, args.size(),
     [&](duckdb::string_t input) -> duckdb::string_t {
       std::string_view sv(input.GetData(), input.GetSize());
-      simdjson::ondemand::parser parser;
+      auto parser = JsonValueParser();
       simdjson::padded_string padded(sv);
       auto doc = parser.iterate(padded);
       auto tp = doc.type();
@@ -573,7 +580,7 @@ void JsonStripNullsFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     args.data[0], result, args.size(),
     [&](duckdb::string_t input) -> duckdb::string_t {
       std::string_view sv(input.GetData(), input.GetSize());
-      simdjson::ondemand::parser parser;
+      auto parser = JsonValueParser();
       simdjson::padded_string padded(sv);
       simdjson::ondemand::document doc;
       if (parser.iterate(padded).get(doc) != simdjson::SUCCESS) {

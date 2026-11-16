@@ -1,0 +1,40 @@
+statement ok
+CREATE TABLE collate_quantile(s VARCHAR, ip INET);
+
+
+statement ok
+INSERT INTO collate_quantile VALUES ('B', '10.0.0.1/8'), ('a', '10.0.0.0/16'), ('c', '10.0.0.5/16'), (NULL, NULL);
+
+
+query
+SELECT min(s COLLATE NOCASE) AS mn, percentile_disc(0) WITHIN GROUP (ORDER BY s COLLATE NOCASE) AS p0, percentile_disc(0.5) WITHIN GROUP (ORDER BY s COLLATE NOCASE DESC) AS p50_desc, percentile_disc(ARRAY[0, 1]) WITHIN GROUP (ORDER BY s COLLATE NOCASE) AS ps FROM collate_quantile;
+----
+mn	p0	p50_desc	ps
+a	a	B	{a,c}
+
+
+query
+SELECT quantile_disc(s COLLATE NOCASE, 0.5) AS q, median(s COLLATE NOCASE) AS m, median(ip) AS m_ip, quantile_disc(ip, [0, 1]) AS q_ip FROM collate_quantile;
+----
+q	m	m_ip	q_ip
+B	B	10.0.0.0/16	{10.0.0.1/8,10.0.0.5/16}
+
+
+query
+SELECT g, percentile_disc(1) WITHIN GROUP (ORDER BY s COLLATE NOCASE) AS p1 FROM (VALUES (1, 'b'), (1, 'A'), (2, 'Z'), (2, 'y'), (3, NULL)) t(g, s) GROUP BY g ORDER BY g;
+----
+g	p1
+1	b
+2	Z
+3	NULL
+
+
+query
+SELECT DISTINCT quantile_disc(ip, 0) OVER () AS w FROM collate_quantile;
+----
+w
+10.0.0.1/8
+
+
+statement ok
+DROP TABLE collate_quantile;

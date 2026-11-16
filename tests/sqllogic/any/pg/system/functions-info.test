@@ -643,6 +643,47 @@ sql_error_code
 
 
 query
+SELECT * FROM pg_input_error_info('1000000000000 years', 'interval');
+----
+message	detail	hint	sql_error_code
+interval field value out of range: "1000000000000 years"	NULL	NULL	22015
+
+
+query
+SELECT * FROM pg_input_error_info('2147483647 months 1 month', 'interval');
+----
+message	detail	hint	sql_error_code
+interval field value out of range: "2147483647 months 1 month"	NULL	NULL	22015
+
+
+query
+SELECT * FROM pg_input_error_info('-2147483648 days ago', 'interval');
+----
+message	detail	hint	sql_error_code
+interval field value out of range: "-2147483648 days ago"	NULL	NULL	22015
+
+
+query
+SELECT * FROM pg_input_error_info('9223372036854775810 msecs', 'interval');
+----
+message	detail	hint	sql_error_code
+interval field value out of range: "9223372036854775810 msecs"	NULL	NULL	22015
+
+
+query
+SELECT pg_input_is_valid('1000000000000 years', 'interval') AS valid;
+----
+valid
+f
+
+
+statement error
+SELECT '1000000000000 years'::interval;
+----
+db error: ERROR: interval field value out of range: "1000000000000 years"
+
+
+query
 SELECT pg_column_compression(1);
 ----
 pg_column_compression

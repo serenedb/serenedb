@@ -72,8 +72,10 @@ const byte_type* MemoryIndexInput::ReadStable(uint64_t offset,
 void MemoryIndexInput::ReadData(byte_type* b, uint64_t count) {
   while (count) {
     if (_begin >= _end) {
-      if (IsEOF()) {
-        break;
+      if (IsEOF()) [[unlikely]] {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
+                        ERR_MSG("short read: ", count,
+                                " bytes past the end at offset ", Position()));
       }
       SwitchBuffer(Position());
     }

@@ -195,6 +195,9 @@ class InvertedIndexConfig final : public irs::IndexFieldOptions {
   std::string_view StoredExpression(irs::field_id field_id) const noexcept;
   bool StoresExpressions() const noexcept { return _stores_expressions; }
   bool HasExpressionKeys() const noexcept { return !_expressions.empty(); }
+  bool ReadsColumn(irs::field_id column_id) const noexcept {
+    return HasExpressionKeys() || FindColumnInfo(column_id);
+  }
 
   const std::vector<InvertedIndexKey> keys;
   const InvertedIndexFields fields;

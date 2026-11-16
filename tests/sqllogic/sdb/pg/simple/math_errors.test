@@ -64,14 +64,6 @@ SELECT log(1.0, 10.0);
 db error: ERROR: division by zero
 
 
-# cotd division by zero
-
-statement error
-SELECT cotd(0);
-----
-db error: ERROR: division by zero
-
-
 # Fix #8: div() with large doubles must error, not UB
 
 statement error

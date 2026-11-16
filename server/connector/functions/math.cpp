@@ -148,6 +148,17 @@ void RandomNormalFunction(duckdb::DataChunk& args,
   }
 }
 
+duckdb::unique_ptr<duckdb::FunctionData> BindDivInt(
+  duckdb::BindScalarFunctionInput& input) {
+  const auto divisor = input.TryGetConstant(1);
+  if (!divisor ||
+      (!divisor->IsNull() && (divisor->GetValue<int64_t>() == 0 ||
+                              divisor->GetValue<int64_t>() == -1))) {
+    input.GetBoundFunction().SetFallible();
+  }
+  return nullptr;
+}
+
 // div(y, x) -> bigint -- PG-compatible, ported from Velox PgDiv
 void DivIntFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                     duckdb::Vector& result) {
@@ -330,12 +341,14 @@ void CotDFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                   duckdb::Vector& result) {
   duckdb::UnaryExecutor::Execute<double, double>(
     args.data[0], result, args.size(), [](double x) -> double {
-      double t = std::tan(x * kDegreesToRadians);
-      if (t == 0.0) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_DIVISION_BY_ZERO),
-                        ERR_MSG("division by zero"));
+      if (std::isinf(x)) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                        ERR_MSG("input is out of range"));
       }
-      return 1.0 / t;
+      if (x == 0.0) {
+        return std::numeric_limits<double>::infinity();
+      }
+      return 1.0 / std::tan(x * kDegreesToRadians);
     });
 }
 
@@ -402,6 +415,22 @@ void MakeTimestampFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                      static_cast<int64_t>(frac * 1'000'000);
     result_data[row] = micros;
   }
+}
+
+duckdb::unique_ptr<duckdb::FunctionData> BindDateBin(
+  duckdb::BindScalarFunctionInput& input) {
+  const auto stride = input.TryGetConstant(0);
+  if (!stride) {
+    input.GetBoundFunction().SetFallible();
+  } else if (!stride->IsNull()) {
+    const auto value = stride->GetValue<duckdb::interval_t>();
+    if (value.months != 0 ||
+        value.micros + static_cast<int64_t>(value.days) * 86400'000'000LL <=
+          0) {
+      input.GetBoundFunction().SetFallible();
+    }
+  }
+  return nullptr;
 }
 
 // date_bin(stride, source, origin) -> timestamp
@@ -1128,28 +1157,35 @@ void RegisterPgMathFunctions(duckdb::DatabaseInstance& db) {
       "div",
       {duckdb::LogicalType::BIGINT, duckdb::LogicalType::BIGINT},
       duckdb::LogicalType::BIGINT,
-      DivIntFunction});
-    div_set.AddFunction(duckdb::ScalarFunction{
+      DivIntFunction,
+      BindDivInt});
+    duckdb::ScalarFunction div_double{
       "div",
       {duckdb::LogicalType::DOUBLE, duckdb::LogicalType::DOUBLE},
       duckdb::LogicalType::BIGINT,
-      DivDoubleFunction});
+      DivDoubleFunction};
+    div_double.SetFallible();
+    div_set.AddFunction(std::move(div_double));
     loader.RegisterFunction(div_set);
   }
 
   // gcd(a, b) -> int32/int64
   {
     duckdb::ScalarFunctionSet gcd_set("gcd");
-    gcd_set.AddFunction(duckdb::ScalarFunction{
+    duckdb::ScalarFunction gcd_int32{
       "gcd",
       {duckdb::LogicalType::INTEGER, duckdb::LogicalType::INTEGER},
       duckdb::LogicalType::INTEGER,
-      GcdInt32Function});
-    gcd_set.AddFunction(duckdb::ScalarFunction{
+      GcdInt32Function};
+    gcd_int32.SetFallible();
+    gcd_set.AddFunction(std::move(gcd_int32));
+    duckdb::ScalarFunction gcd_int64{
       "gcd",
       {duckdb::LogicalType::BIGINT, duckdb::LogicalType::BIGINT},
       duckdb::LogicalType::BIGINT,
-      GcdInt64Function});
+      GcdInt64Function};
+    gcd_int64.SetFallible();
+    gcd_set.AddFunction(std::move(gcd_int64));
     gcd_set.AddFunction(duckdb::ScalarFunction{
       "gcd",
       {duckdb::LogicalTypeId::DECIMAL, duckdb::LogicalTypeId::DECIMAL},
@@ -1162,16 +1198,20 @@ void RegisterPgMathFunctions(duckdb::DatabaseInstance& db) {
   // lcm(a, b) -> int32/int64
   {
     duckdb::ScalarFunctionSet lcm_set("lcm");
-    lcm_set.AddFunction(duckdb::ScalarFunction{
+    duckdb::ScalarFunction lcm_int32{
       "lcm",
       {duckdb::LogicalType::INTEGER, duckdb::LogicalType::INTEGER},
       duckdb::LogicalType::INTEGER,
-      LcmInt32Function});
-    lcm_set.AddFunction(duckdb::ScalarFunction{
+      LcmInt32Function};
+    lcm_int32.SetFallible();
+    lcm_set.AddFunction(std::move(lcm_int32));
+    duckdb::ScalarFunction lcm_int64{
       "lcm",
       {duckdb::LogicalType::BIGINT, duckdb::LogicalType::BIGINT},
       duckdb::LogicalType::BIGINT,
-      LcmInt64Function});
+      LcmInt64Function};
+    lcm_int64.SetFallible();
+    lcm_set.AddFunction(std::move(lcm_int64));
     duckdb::ScalarFunction lcm_decimal{
       "lcm",
       {duckdb::LogicalTypeId::DECIMAL, duckdb::LogicalTypeId::DECIMAL},
@@ -1191,23 +1231,28 @@ void RegisterPgMathFunctions(duckdb::DatabaseInstance& db) {
       {duckdb::LogicalType::DOUBLE, duckdb::LogicalType::DOUBLE},
       duckdb::LogicalType::DOUBLE,
       LogBaseFunction});
+    log_set.SetFallible();
     loader.RegisterFunction(log_set);
   }
 
   // cotd(x) -> double
-  loader.RegisterFunction(duckdb::ScalarFunction{"cotd",
-                                                 {duckdb::LogicalType::DOUBLE},
-                                                 duckdb::LogicalType::DOUBLE,
-                                                 CotDFunction});
+  duckdb::ScalarFunction cotd{"cotd",
+                              {duckdb::LogicalType::DOUBLE},
+                              duckdb::LogicalType::DOUBLE,
+                              CotDFunction};
+  cotd.SetFallible();
+  loader.RegisterFunction(std::move(cotd));
 
   // make_timestamp(year, month, day, hour, min, sec) -> timestamp
-  loader.RegisterFunction(duckdb::ScalarFunction{
+  duckdb::ScalarFunction make_timestamp{
     "make_timestamp",
     {duckdb::LogicalType::INTEGER, duckdb::LogicalType::INTEGER,
      duckdb::LogicalType::INTEGER, duckdb::LogicalType::INTEGER,
      duckdb::LogicalType::INTEGER, duckdb::LogicalType::DOUBLE},
     duckdb::LogicalType::TIMESTAMP,
-    MakeTimestampFunction});
+    MakeTimestampFunction};
+  make_timestamp.SetFallible();
+  loader.RegisterFunction(std::move(make_timestamp));
 
   // date_bin(stride interval, source timestamp, origin timestamp) -> timestamp
   {
@@ -1216,7 +1261,8 @@ void RegisterPgMathFunctions(duckdb::DatabaseInstance& db) {
       {duckdb::LogicalType::INTERVAL, duckdb::LogicalType::TIMESTAMP,
        duckdb::LogicalType::TIMESTAMP},
       duckdb::LogicalType::TIMESTAMP,
-      DateBinFunction};
+      DateBinFunction,
+      BindDateBin};
     func.SetBucketRewriteCallback(duckdb::DateBinBucketRewrite);
     loader.RegisterFunction(func);
   }
@@ -1230,11 +1276,12 @@ void RegisterPgMathFunctions(duckdb::DatabaseInstance& db) {
          Justify{"justify_hours", JustifyFunction<JustifyHours>},
          Justify{"justify_interval", JustifyFunction<JustifyInterval>},
        }) {
-    loader.RegisterFunction(
-      duckdb::ScalarFunction{duckdb::Identifier{name},
-                             {duckdb::LogicalType::INTERVAL},
-                             duckdb::LogicalType::INTERVAL,
-                             function});
+    duckdb::ScalarFunction justify{duckdb::Identifier{name},
+                                   {duckdb::LogicalType::INTERVAL},
+                                   duckdb::LogicalType::INTERVAL,
+                                   function};
+    justify.SetFallible();
+    loader.RegisterFunction(std::move(justify));
   }
 
   {

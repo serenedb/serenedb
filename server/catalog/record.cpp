@@ -831,7 +831,7 @@ void ReplayChange(duckdb::ClientContext& context, ReplayTarget target,
             return made->constraint_name == created.name;
           });
           if (it == made_constraints.end()) {
-            it = ColumnNotNull(*info, table, made_constraints);
+            it = ColumnNotNull(info, table, made_constraints);
           }
           SDB_ENSURE(it != made_constraints.end(),
                      "the log creates constraint \"", created.name,

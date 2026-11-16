@@ -407,6 +407,61 @@ count	sum	min
 
 
 statement ok
+SET sdb_scan_split = 'always'
+
+
+query
+SELECT id FROM sp_idx WHERE body @@ 'cat';
+----
+id
+
+
+query
+SELECT id, g FROM sp_idx WHERE id = 302000;
+----
+id	g
+302000	2000
+
+
+statement ok
+SET sdb_scan_split = 'never'
+
+
+query
+SELECT id FROM sp_idx WHERE body @@ 'cat';
+----
+id
+
+
+query
+SELECT id, g FROM sp_idx WHERE id = 302000;
+----
+id	g
+302000	2000
+
+
+statement ok
+SET threads = 4
+
+
+statement ok
+SET sdb_scan_split = 'tail'
+
+
+query
+SELECT id FROM sp_idx WHERE body @@ 'cat';
+----
+id
+
+
+query
+SELECT id, g FROM sp_idx WHERE id = 302000;
+----
+id	g
+302000	2000
+
+
+statement ok
 RESET sdb_scan_split
 
 

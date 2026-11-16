@@ -123,3 +123,19 @@ FROM (SELECT k, count(*) AS c FROM glo GROUP BY k LIMIT 10) r
 ----
 groups	exact
 10	t
+
+
+query
+SELECT count(*) AS groups, bool_and(c = (SELECT count(*) FROM glo g WHERE g.v + 1 = r.w)) AS exact
+FROM (SELECT v + 1 AS w, count(*) AS c FROM glo GROUP BY v + 1 LIMIT 3) r
+----
+groups	exact
+3	t
+
+
+query
+SELECT count(*) AS groups, bool_and(c = 1) AS exact
+FROM (SELECT range AS w, count(*) AS c FROM range(100000) GROUP BY range LIMIT 10) r
+----
+groups	exact
+10	t

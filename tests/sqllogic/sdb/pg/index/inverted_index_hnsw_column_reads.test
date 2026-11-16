@@ -141,6 +141,18 @@ pk
 
 
 query
+SELECT pk FROM hnsw_cr_idx WHERE opt IS NULL
+  ORDER BY emb <-> [2500.3, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+pk
+2500
+2505
+2495
+2510
+2490
+
+
+query
 SELECT pk FROM hnsw_cr_idx WHERE tag = 'a' AND qty < 250
   ORDER BY emb <-> [2500.3, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
 ----
@@ -274,6 +286,18 @@ pk
 2502
 2498
 2503
+
+
+query
+SELECT pk FROM hnsw_cr_idx WHERE opt IS NULL
+  ORDER BY emb <-> [2500.3, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+pk
+2500
+2505
+2495
+2510
+2490
 
 
 query

@@ -22,6 +22,7 @@
 
 #include <absl/functional/function_ref.h>
 
+#include <array>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
 #include <duckdb/catalog/standard_entry.hpp>
@@ -174,6 +175,8 @@ class Schema final : public duckdb::SchemaCatalogEntry {
   void Move(duckdb::CatalogTransaction transaction, EntrySet& set,
             duckdb::CatalogType type, duckdb::CatalogEntry& entry,
             Schema& target, const duckdb::AlterInfo& info);
+
+  std::array<EntrySet*, 13> MemberSets() const;
 
   std::shared_ptr<SchemaSets> _sets;
   std::vector<Inherited> _inherited;

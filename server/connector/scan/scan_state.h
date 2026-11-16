@@ -115,6 +115,28 @@ struct LiveClaim {
   uint32_t live = 0;
 };
 
+struct TsDictField {
+  irs::field_id field_id = irs::field_limits::invalid();
+  irs::DictLayout layout = irs::DictLayout::String;
+  bool nulls = false;
+  TsDictTermUses term_uses = TsDictTermUses::None;
+  const irs::Filter* having_filter = nullptr;
+  TsDictColumns slots;
+  std::vector<duckdb::idx_t> foreign_slots;
+};
+
+struct OffsetsOutput {
+  duckdb::idx_t slot;
+  irs::field_id field;
+  size_t limit;
+};
+
+enum class FetchedCopy : uint8_t {
+  Skip,
+  Null,
+  Copy,
+};
+
 struct ABSL_CACHELINE_ALIGNED SegmentWork {
   static constexpr uint8_t kUnclaimed = 0;
   static constexpr uint8_t kWhole = 1;
@@ -194,6 +216,11 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   std::vector<duckdb::LogicalType> projected_types;
   std::vector<duckdb::ColumnIndex> projected_column_indexes;
   duckdb::vector<duckdb::idx_t> output_projection_ids;
+  std::vector<bool> in_output;
+  std::vector<duckdb::idx_t> bind_slots;
+  std::vector<OffsetsOutput> offsets_outputs;
+  std::vector<TsDictField> ts_dict_fields;
+  std::vector<FetchedCopy> fetched_copy;
   duckdb::idx_t score_output_idx = duckdb::DConstants::INVALID_INDEX;
   duckdb::idx_t tableoid_output_idx = duckdb::DConstants::INVALID_INDEX;
   int64_t tableoid_value = 0;
@@ -387,6 +414,7 @@ struct FetchLocalState {
   duckdb::Vector* pk_column = nullptr;
 
   void EnsureHitBatcher(const ScanGlobalState& g);
+  void BindOffsets(const ScanGlobalState& g);
 };
 
 struct CountLocalState final : public ScanLocalState {
@@ -496,9 +524,8 @@ void WriteRowPositions(const ScanGlobalState& g, uint32_t seg,
 void WriteChunkOffsets(FetchLocalState& f, const ScanGlobalState& g,
                        uint32_t seg, std::span<const irs::doc_id_t> docs,
                        duckdb::DataChunk& output);
-void BuildOffsetsEntries(FetchLocalState& f,
-                         duckdb::TableFunctionInitInput& input,
-                         const ScanBindData& bd);
+void BuildOffsetsOutputs(ScanGlobalState& g);
+void BuildFetchedCopy(ScanGlobalState& g);
 duckdb::idx_t EmitReadyBatch(duckdb::ClientContext& ctx, ScanGlobalState& g,
                              FetchLocalState& f, duckdb::DataChunk& output);
 duckdb::idx_t FinalizeBatch(duckdb::ClientContext& ctx, ScanGlobalState& g,
@@ -563,19 +590,18 @@ void RunTopKScan(duckdb::ClientContext& ctx, duckdb::TableFunctionInput& input,
                  ScanGlobalState& g, TopKLocalState& l,
                  duckdb::DataChunk& output);
 void InitTopKGlobal(ScanGlobalState& g, duckdb::ClientContext& context);
-void InitTopKLocal(ScanGlobalState& g, TopKLocalState& l,
-                   duckdb::TableFunctionInitInput& input);
+void InitTopKLocal(ScanGlobalState& g, TopKLocalState& l);
 void RunAnnScan(duckdb::ClientContext& ctx, duckdb::TableFunctionInput& input,
                 ScanGlobalState& g, AnnLocalState& l,
                 duckdb::DataChunk& output);
 void InitAnnGlobal(ScanGlobalState& g, duckdb::ClientContext& context);
-void InitAnnLocal(ScanGlobalState& g, AnnLocalState& l,
-                  duckdb::TableFunctionInitInput& input);
+void InitAnnLocal(ScanGlobalState& g, AnnLocalState& l);
 
 void BuildTsDictCounts(ScanGlobalState& g);
+void BuildTsDictFields(ScanGlobalState& g);
 
 duckdb::unique_ptr<duckdb::LocalTableFunctionState> MakeTsDictLocal(
-  ScanGlobalState& g, duckdb::TableFunctionInitInput& input);
+  const ScanGlobalState& g);
 void RunTsDictScan(duckdb::ClientContext& ctx, ScanGlobalState& g,
                    duckdb::LocalTableFunctionState& l,
                    duckdb::DataChunk& output);

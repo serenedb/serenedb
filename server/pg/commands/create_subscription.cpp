@@ -21,6 +21,7 @@
 #include "pg/commands/create_subscription.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
@@ -817,14 +818,13 @@ void DropSubscription(ConnectionContext& conn_ctx, std::string_view name,
   if (engine != nullptr) {
     engine->Stop(oid);
   }
-  try {
-    DropSlot(conn_ctx, *definition);
-  } catch (...) {
+  absl::Cleanup resync = [&] {
     if (engine != nullptr) {
       engine->Sync(DatabaseOf(conn_ctx), oid);
     }
-    throw;
-  }
+  };
+  DropSlot(conn_ctx, *definition);
+  std::move(resync).Cancel();
 }
 
 void AlterSubscription(ConnectionContext& conn_ctx, std::string_view name,

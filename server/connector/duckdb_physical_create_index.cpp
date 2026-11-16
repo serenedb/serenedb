@@ -28,7 +28,6 @@
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
-#include <duckdb/common/error_data.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
@@ -60,6 +59,7 @@
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/error_mapping.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/system_compiler.hpp>
 #include <optional>
@@ -134,6 +134,7 @@ struct CreateIndexGlobalState final : public duckdb::GlobalSinkState {
 
 struct CreateIndexLocalState final : public duckdb::LocalSinkState {
   std::unique_ptr<irs::IndexWriter::Transaction> search_trx;
+  uint64_t version = 0;
   std::unique_ptr<DuckDBSearchSinkInsertWriter> writer;
   // Per-chunk scratch, kept at high-water mark: Sink runs once per 2048 rows,
   // so anything rebuilt on the stack there is an allocation per chunk.
@@ -293,8 +294,8 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       }
       index_entry.SetConfig(std::move(config));
       if (const auto& store = index_entry.SearchStore()) {
-        state->build_claim =
-          store->BeginIndexBuild(index_entry.oid, index_entry.Config());
+        state->build_claim = store->BeginIndexBuild(context, index_entry.oid,
+                                                    index_entry.Config());
         SearchBackfillTarget backfill;
         backfill.shard = store;
         backfill.catalog = &_relation.ParentCatalog();
@@ -422,6 +423,7 @@ SereneDBPhysicalCreateIndex::GetLocalSinkState(
   auto lstate = duckdb::make_uniq<CreateIndexLocalState>();
   lstate->search_trx = std::make_unique<irs::IndexWriter::Transaction>(
     inverted_storage.GetTransaction());
+  lstate->version = inverted_storage.Version();
   lstate->search_trx->SetFieldOptions(gstate.config);
   lstate->writer = std::make_unique<DuckDBSearchSinkInsertWriter>(
     *lstate->search_trx,
@@ -505,22 +507,16 @@ duckdb::SinkCombineResultType SereneDBPhysicalCreateIndex::Combine(
   std::span<const irs::IndexWriter::FlushedSegment> flushed;
   try {
     flushed = lstate.search_trx->FlushAndFsync();
-  } catch (const irs::SqlException& e) {
-    lstate.search_trx.reset();
-    THROW_SQL_ERROR(ERR_CODE(e.error().errcode),
-                    ERR_MSG("failed to flush index '", gstate.index_name,
-                            "': ", e.message()));
   } catch (const std::exception& e) {
     lstate.search_trx.reset();
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                    ERR_MSG("failed to flush index '", gstate.index_name,
-                            "': ", duckdb::ErrorData{e}.RawMessage()));
+    irs::pg::ThrowWithContext(
+      absl::StrCat("failed to flush index '", gstate.index_name, "'"), e);
   }
   ConnectionContext::Get(context.client)
     .Transaction()
     .SearchTxn()
-    .AddOwnSegments(gstate.index_storage, std::move(lstate.search_trx),
-                    flushed);
+    .AddOwnSegments(gstate.index_storage, std::move(lstate.search_trx), flushed,
+                    lstate.version);
   return duckdb::SinkCombineResultType::FINISHED;
 }
 

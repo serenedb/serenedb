@@ -51,8 +51,7 @@ struct SubscriptionStats {
 
 void WriteLsn(duckdb::VectorWriter<duckdb::string_t>& writer, uint64_t lsn) {
   const auto text = FormatLsn(lsn);
-  writer.WriteValue(
-    duckdb::string_t{text.data(), static_cast<uint32_t>(text.size())});
+  writer.WriteValue(duckdb::string_t::Unsafe(text));
 }
 
 void WriteTime(duckdb::VectorWriter<duckdb::timestamp_tz_t>& writer,
@@ -244,7 +243,7 @@ duckdb::unique_ptr<duckdb::FunctionData> OriginStatusBind(
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> OriginStatusInit(
   duckdb::ClientContext& context, duckdb::TableFunctionInitInput&) {
   auto state = duckdb::make_uniq<OriginStatusState>();
-  state->origins = ReplicationOrigins(*context.db);
+  state->origins = ReplicationOrigins(context);
   return state;
 }
 

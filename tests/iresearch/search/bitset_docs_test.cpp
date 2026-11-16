@@ -129,12 +129,6 @@ class WindowFill : public irs::fill::Node {
     return _set.FillOr(min, max, mask);
   }
 
-  irs::doc_id_t FillAnd(irs::doc_id_t min, irs::doc_id_t max,
-                        uint64_t* IRS_RESTRICT mask) final {
-    ++_windows;
-    return _set.FillAnd(min, max, mask);
-  }
-
   irs::doc_id_t FillAndNot(irs::doc_id_t min, irs::doc_id_t max,
                            uint64_t* IRS_RESTRICT mask) final {
     ++_windows;
@@ -650,16 +644,6 @@ TEST(bitset_fill_test, fill_or) {
   mask[1] = 0;
   ASSERT_EQ(130, it.FillOr(100, 130, mask));
   EXPECT_EQ(0, std::popcount(mask[0]) + std::popcount(mask[1]));
-}
-
-TEST(bitset_fill_test, fill_and) {
-  irs::fill::BitsetDocs it{MakeSet(192, {3, 70, 130})};
-
-  uint64_t mask[2]{~uint64_t{0}, ~uint64_t{0}};
-  ASSERT_EQ(130, it.FillAnd(1, 129, mask));
-  EXPECT_TRUE(irs::CheckBit(mask[0], 3 - 1));
-  EXPECT_TRUE(irs::CheckBit(mask[1], 70 - 1 - kBits));
-  EXPECT_EQ(2, std::popcount(mask[0]) + std::popcount(mask[1]));
 }
 
 TEST(bitset_fill_test, fill_and_not) {

@@ -23,6 +23,7 @@
 #include <absl/algorithm/container.h>
 
 #include <duckdb/catalog/catalog_transaction.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
 #include <iresearch/utils/assert.hpp>
@@ -156,15 +157,16 @@ bool WritesCatalog(duckdb::ClientContext& context,
 
 std::shared_ptr<const RoleGraph> Publish(catalog::ClusterCatalog& cluster,
                                          RoleCache& cache) {
-  auto& transactions = catalog::Transactions::Get();
-  const auto version = transactions.CatalogVersion();
+  SDB_PARK_ONCE_ON_FAILURE("pause_role_publish");
+  const catalog::CommittedView view;
+  const auto version =
+    catalog::Transactions::Get().CatalogEpoch(view.Snapshot());
   {
     absl::MutexLock lock{&cache.mutex};
     if (cache.roles && cache.version >= version) {
       return cache.roles;
     }
   }
-  const catalog::CommittedView view;
   auto roles = BuildRoleGraph(cluster, view.Transaction(cluster.GetDatabase()));
   absl::MutexLock lock{&cache.mutex};
   if (!cache.roles || version > cache.version) {

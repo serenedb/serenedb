@@ -37,6 +37,11 @@ class ReadContext;
 
 void NormalizeRows(float* data, size_t n, uint32_t d);
 
+std::span<const float> TrainableRows(std::span<const float> rows, size_t d,
+                                     std::vector<float>& kept);
+
+void KeepTrainableRows(std::vector<float>& rows, size_t d);
+
 enum class ClusteringAlgo {
   Auto,
   Lloyd,

@@ -1,0 +1,74 @@
+control substitution on
+
+statement ok
+CREATE TABLE ctie (a INTEGER);
+
+
+statement count 2
+COPY (SELECT * FROM (VALUES ('1'), ('x')) v(a)) TO '${__TEST_DIR__}/ctie.txt' (FORMAT text);
+
+
+statement count 1
+COPY ctie FROM '${__TEST_DIR__}/ctie.txt' (FORMAT text, IGNORE_ERRORS, REJECTS_LIMIT 1);
+
+
+statement error
+COPY ctie FROM '${__TEST_DIR__}/ctie.txt' (FORMAT text, IGNORE_ERRORS, REJECTS_LIMIT 0);
+----
+db error: ERROR: REJECT_LIMIT (0) must be greater than zero
+
+
+statement error
+COPY ctie FROM '${__TEST_DIR__}/ctie.txt' (FORMAT text, IGNORE_ERRORS, REJECTS_LIMIT 'many');
+----
+db error: ERROR: invalid input syntax for type bigint: "many"
+
+
+statement error
+COPY ctie FROM '${__TEST_DIR__}/ctie.txt' (FORMAT text, IGNORE_ERRORS false, REJECTS_LIMIT 1);
+----
+db error: ERROR: COPY REJECT_LIMIT requires ON_ERROR to be set to IGNORE
+
+
+query
+SELECT a FROM ctie;
+----
+a
+1
+
+statement ok
+CREATE TABLE ctie_array (a INTEGER[3], b INTEGER);
+
+
+statement count 2
+COPY (SELECT * FROM (VALUES ('{1,NULL,3}', 'x'), ('{4,5,6}', '2')) v(a, b)) TO '${__TEST_DIR__}/ctie_array.txt' (FORMAT text);
+
+
+statement count 1
+COPY ctie_array FROM '${__TEST_DIR__}/ctie_array.txt' (FORMAT text, IGNORE_ERRORS);
+
+
+query
+SELECT a, b, a[2] IS NULL AS second_null FROM ctie_array;
+----
+a	b	second_null
+{4,5,6}	2	f
+
+
+statement ok
+CREATE TABLE ctie_struct (a STRUCT(x INTEGER, y INTEGER), b INTEGER);
+
+
+statement count 2
+COPY (SELECT * FROM (VALUES ('(1,)', 'x'), ('(4,5)', '2')) v(a, b)) TO '${__TEST_DIR__}/ctie_struct.txt' (FORMAT text);
+
+
+statement count 1
+COPY ctie_struct FROM '${__TEST_DIR__}/ctie_struct.txt' (FORMAT text, IGNORE_ERRORS);
+
+
+query
+SELECT a, b, a.y IS NULL AS y_null FROM ctie_struct;
+----
+a	b	y_null
+(4,5)	2	f

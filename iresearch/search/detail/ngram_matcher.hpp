@@ -185,16 +185,6 @@ class NGramMatcher final : public Base {
 
   bool Match(size_t potential, irs::doc_id_t doc);
 
-  Attribute* GetMutableAttr(TypeInfo::type_id type) noexcept {
-    if constexpr (kHasPosition) {
-      if (type == irs::Type<PosAttr>::id()) {
-        return static_cast<Base*>(this);
-      }
-    }
-
-    return nullptr;
-  }
-
   score_t GetScale() const noexcept { return _scale; }
   uint32_t GetFreq() const noexcept { return _seq_freq; }
 

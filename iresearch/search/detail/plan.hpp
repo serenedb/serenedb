@@ -35,14 +35,13 @@
 #include "iresearch/search/lead/node.hpp"
 #include "iresearch/search/probe/impl.hpp"
 #include "iresearch/search/probe/node.hpp"
+#include "iresearch/search/queries/prepared_state_visitor.hpp"
 #include "iresearch/search/queries/term_state.hpp"
 
 namespace irs {
 
 class TermQuery;
 class MultiTermQuery;
-class FixedPhraseQuery;
-class VariadicPhraseQuery;
 class AllQuery;
 class NGramSimilarityQuery;
 class WildcardNGramQuery;
@@ -182,6 +181,8 @@ inline Terms UniformityOf(const TermReader& field,
 inline constexpr uint32_t kBitplaneMaxMatch = 2;
 
 inline constexpr uint64_t kDensityThresholdInverse = 32;
+
+inline constexpr uint64_t kBatchThresholdInverse = 4096;
 
 template<typename Result>
 using ApproxNode = std::conditional_t<std::is_same_v<Result, ProbeNode::ptr>,

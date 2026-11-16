@@ -400,8 +400,7 @@ void InitAnnGlobal(ScanGlobalState& g, duckdb::ClientContext& /*context*/) {
   a.floor.emplace(ranked, g.score_static_floor);
 }
 
-void InitAnnLocal(ScanGlobalState& g, AnnLocalState& l,
-                  duckdb::TableFunctionInitInput& input) {
+void InitAnnLocal(ScanGlobalState& g, AnnLocalState& l) {
   SDB_ASSERT(l.worker < g.workers);
   const auto k = g.ann.floor->K();
   if (g.has_lookup_filter) {
@@ -410,7 +409,7 @@ void InitAnnLocal(ScanGlobalState& g, AnnLocalState& l,
   } else {
     l.collector.emplace(*g.ann.floor, k);
   }
-  BuildOffsetsEntries(l, input, g.Bind());
+  l.BindOffsets(g);
 }
 
 void RunAnnScan(duckdb::ClientContext& ctx, duckdb::TableFunctionInput& input,

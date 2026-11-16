@@ -34,6 +34,7 @@
 #include <duckdb/main/prepared_statement_data.hpp>
 #include <duckdb/main/query_result.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/error_mapping.hpp>
 #include <iresearch/utils/system_compiler.hpp>
 #include <memory>
 #include <optional>
@@ -172,7 +173,7 @@ struct InsertOutcome {
 
 // https://opentelemetry.io/docs/specs/otlp/#failures-1
 InsertOutcome Failed(const duckdb::ErrorData& error) {
-  auto sql = network::pg::ToSqlError(error);
+  auto sql = irs::pg::ToSqlError(error);
   if (sql.errcode == ERRCODE_UNDEFINED_TABLE) {
     return {HttpStatus::ServiceUnavailable, kCodeUnavailable,
             absl::StrCat("the OpenTelemetry schema is missing: ", sql.errmsg)};

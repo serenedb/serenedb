@@ -1455,6 +1455,76 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
+      "lock_timeout",
+      {
+        LogicalTypeId::VARCHAR,
+        "Not used. Added for PostgreSQL compatibility only.",
+        [] { return duckdb::Value{"0"}; },
+        NoOverwrite<"lock_timeout">,
+      },
+    },
+    {
+      "idle_in_transaction_session_timeout",
+      {
+        LogicalTypeId::VARCHAR,
+        "Not used. Added for PostgreSQL compatibility only.",
+        [] { return duckdb::Value{"0"}; },
+        NoOverwrite<"idle_in_transaction_session_timeout">,
+      },
+    },
+    {
+      "transaction_timeout",
+      {
+        LogicalTypeId::VARCHAR,
+        "Not used. Added for PostgreSQL compatibility only.",
+        [] { return duckdb::Value{"0"}; },
+        NoOverwrite<"transaction_timeout">,
+      },
+    },
+    {
+      "check_function_bodies",
+      {
+        LogicalTypeId::BOOLEAN,
+        "Not used. Added for PostgreSQL compatibility only.",
+        [] { return duckdb::Value{true}; },
+        NoOverwrite<"check_function_bodies">,
+      },
+    },
+    {
+      "row_security",
+      {
+        LogicalTypeId::BOOLEAN,
+        "Not used. Added for PostgreSQL compatibility only.",
+        [] { return duckdb::Value{true}; },
+      },
+    },
+    {
+      "default_tablespace",
+      {
+        LogicalTypeId::VARCHAR,
+        "Not used. Added for PostgreSQL compatibility only.",
+        [] { return duckdb::Value{""}; },
+        NoOverwrite<"default_tablespace">,
+      },
+    },
+    {
+      "default_table_access_method",
+      {
+        LogicalTypeId::VARCHAR,
+        "Not used. Added for PostgreSQL compatibility only.",
+        [] { return duckdb::Value{"heap"}; },
+        NoOverwrite<"default_table_access_method">,
+      },
+    },
+    {
+      "synchronize_seqscans",
+      {
+        LogicalTypeId::BOOLEAN,
+        "Not used. Added for PostgreSQL compatibility only.",
+        [] { return duckdb::Value{true}; },
+      },
+    },
+    {
       "statement_timeout",
       {
         LogicalTypeId::VARCHAR,
@@ -1519,10 +1589,12 @@ constexpr std::pair<std::string_view, VariableDescription>
     {
       "session_replication_role",
       {
-        LogicalTypeId::VARCHAR,
-        "Sets the session's behavior for triggers and rewrite rules.",
-        [] { return duckdb::Value{"origin"}; },
-        SetReplicationRole,
+        .type = LogicalTypeId::VARCHAR,
+        .description =
+          "Sets the session's behavior for triggers and rewrite rules.",
+        .default_value = [] { return duckdb::Value{"origin"}; },
+        .set_callback = SetReplicationRole,
+        .rebind = true,
       },
     },
     {
@@ -1678,7 +1750,7 @@ void TryRegister(duckdb::DBConfig& config, std::string_view name,
     setting, std::string{desc.description}, duckdb::LogicalType{desc.type},
     desc.default_value ? desc.default_value() : duckdb::Value{},
     desc.set_callback, desc.reset_callback, desc.scope,
-    IsUnchangeableSetting(name));
+    IsUnchangeableSetting(name), desc.rebind);
 }
 
 }  // namespace

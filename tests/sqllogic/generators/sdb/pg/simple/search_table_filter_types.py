@@ -114,4 +114,12 @@ for table, _ in TABLES:
             t.expect(f"SELECT count({name}) AS n FROM {table} "
                      f"WHERE i % 3 <> 0 AND {name} {op_sql} {constant_sql}",
                      ["n"], [[len(narrowed)]])
+        same = [i for i in range(ROWS)
+                if value(column, i) is not None and value(column, i) == constant]
+        t.expect(f"SELECT count(*) AS n FROM {table} "
+                 f"WHERE {name} IS NOT DISTINCT FROM {constant_sql}",
+                 ["n"], [[len(same)]])
+        t.expect(f"SELECT count(*) AS n FROM {table} "
+                 f"WHERE {name} IS DISTINCT FROM {constant_sql}",
+                 ["n"], [[ROWS - len(same)]])
 t.write()

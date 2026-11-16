@@ -2174,7 +2174,7 @@ void ExpectRleAnalysesAgree(const duckdb::LogicalType& type,
     };
     return rle->compression
       ->analyze(data, std::numeric_limits<double>::infinity())
-      .ratio;
+      .score;
   };
   EXPECT_EQ(analyze(plain), analyze(masked));
 }

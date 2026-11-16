@@ -1,0 +1,122 @@
+control substitution on
+
+statement ok
+CREATE ROLE epsr_reader_${__DATABASE__};
+
+
+statement ok
+CREATE TABLE epsr_s (pk INTEGER PRIMARY KEY, v INTEGER) WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO epsr_s SELECT i, i FROM range(10) t(i);
+
+
+statement ok
+CREATE TABLE epsr_t (pk INTEGER PRIMARY KEY, v INTEGER, emb FLOAT[2]);
+
+
+statement ok
+CREATE INDEX epsr_idx ON epsr_t USING inverted(pk, v, emb hnsw (metric = 'l2', quant = 'none'));
+
+
+statement ok
+INSERT INTO epsr_t SELECT i, i, [i, 0]::FLOAT[2] FROM range(10) t(i);
+
+
+statement ok
+CREATE TABLE epsr_log (id INTEGER);
+
+
+statement ok
+CREATE SEQUENCE epsr_seq;
+
+
+statement ok
+PREPARE epsr_q1 AS SELECT count(*) AS n FROM epsr_s;
+
+
+statement ok
+PREPARE epsr_q2 AS SELECT pk FROM epsr_idx ORDER BY emb <-> [3, 0]::FLOAT[2] LIMIT 1;
+
+
+statement ok
+PREPARE epsr_q3 AS INSERT INTO epsr_log VALUES (1);
+
+
+statement ok
+PREPARE epsr_q4 AS SELECT nextval('epsr_seq') AS n;
+
+
+query
+EXECUTE epsr_q1;
+----
+n
+10
+
+
+query
+EXECUTE epsr_q2;
+----
+pk
+3
+
+
+statement ok
+SET ROLE epsr_reader_${__DATABASE__};
+
+
+statement error
+SELECT count(*) AS n FROM epsr_s;
+----
+db error: ERROR: permission denied for table epsr_s
+
+
+statement error
+EXECUTE epsr_q1;
+----
+db error: ERROR: permission denied for table epsr_s
+
+
+statement error
+EXECUTE epsr_q2;
+----
+db error: ERROR: permission denied for table epsr_t
+
+
+statement error
+EXECUTE epsr_q3;
+----
+db error: ERROR: permission denied for table epsr_log
+
+
+statement error
+EXECUTE epsr_q4;
+----
+db error: ERROR: permission denied for sequence epsr_seq
+
+
+statement ok
+RESET ROLE;
+
+
+query
+EXECUTE epsr_q1;
+----
+n
+10
+
+
+query
+SELECT count(*) AS n FROM epsr_log;
+----
+n
+0
+
+
+statement ok
+DEALLOCATE ALL;
+
+
+statement ok
+DROP ROLE epsr_reader_${__DATABASE__};

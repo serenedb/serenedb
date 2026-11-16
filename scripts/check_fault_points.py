@@ -17,7 +17,8 @@ in .pre-commit-config.yaml):
      names a test polls and arms to observe and release the parked thread.
 
   3. Source -> Test: every fault NAME defined in C++ source must be exercised by
-     at least one test (a recovery .test, or a C++/Python test under tests/).
+     at least one test (a recovery .test, a C++/Python test under tests/, or a
+     DuckDB C++ test listed in DUCKDB_TESTED_FAULTS).
 """
 
 import os
@@ -31,7 +32,17 @@ SOURCE_DIRS = ("server", "iresearch")
 DUCKDB_CHECKOUT = "third_party/duckdb/.git"
 DUCKDB_DIRS = ("third_party/duckdb/src", "third_party/duckdb/extension")
 DUCKDB_FAULTS = frozenset({"slow_expression_bind", "transaction_end_fails"})
-DUCKDB_PARK_FAULTS = frozenset({"attached_database_close"})
+DUCKDB_PARK_FAULTS = frozenset(
+    {
+        "async_write_failure_completed",
+        "attached_database_close",
+        "catalog_all_schemas_listed",
+        "duckdb_databases_listed",
+        "read_duckdb_reader_attached",
+    }
+)
+DUCKDB_TEST_DIR = "third_party/duckdb/test"
+DUCKDB_TESTED_FAULTS = frozenset({"async_write_failure_completed"})
 TEST_DIR = "tests"
 
 TEST_EXTS = (".test", ".test_slow")
@@ -170,13 +181,29 @@ def main():
                 f"scripts/check_fault_points.py: DUCKDB_FAULTS lists '{name}', "
                 "which DuckDB's sources do not define as a fault that does not park"
             )
+        duckdb_tested = set()
+        for path in walk_files(DUCKDB_TEST_DIR, SOURCE_EXTS):
+            text = read(path)
+            if "FaultPoints::" in text:
+                duckdb_tested.update(m.group(1) for m in TESTNET_LITERAL.finditer(text))
+        duckdb_tested = {name for name in duckdb_tested if name in duckdb_faults}
+        for name in sorted(duckdb_tested - DUCKDB_TESTED_FAULTS):
+            errors.append(
+                f"{DUCKDB_TEST_DIR}: DuckDB's tests arm fault '{name}', which is "
+                "missing from DUCKDB_TESTED_FAULTS in scripts/check_fault_points.py"
+            )
+        for name in sorted(DUCKDB_TESTED_FAULTS - duckdb_tested):
+            errors.append(
+                f"scripts/check_fault_points.py: DUCKDB_TESTED_FAULTS lists '{name}', "
+                "which no DuckDB test arms"
+            )
     for name in sorted(DUCKDB_FAULTS | DUCKDB_PARK_FAULTS):
         source_faults.setdefault(name, DUCKDB_DIRS[0])
     park_faults |= DUCKDB_PARK_FAULTS
 
     # ----- single pass over tests/ (checks #1 and the #3 test net) -----
     test_faults = {}  # name -> "path:line" (recovery activations only)
-    exercised = set()  # any test reference, for check #3
+    exercised = set(DUCKDB_TESTED_FAULTS)  # any test reference, for check #3
     for path in walk_files(TEST_DIR, TESTNET_EXTS):
         text = read(path)
         has_set = "sdb_faults" in text

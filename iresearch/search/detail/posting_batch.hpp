@@ -45,6 +45,26 @@
 namespace irs::detail {
 
 inline IRS_FORCE_INLINE uint32_t
+CopyBelow8(const doc_id_t* IRS_RESTRICT first, doc_id_t max,
+           doc_id_t* IRS_RESTRICT out) noexcept {
+#ifdef __AVX2__
+  const auto ids = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(first));
+  _mm256_storeu_si256(reinterpret_cast<__m256i*>(out), ids);
+  const auto below =
+    static_cast<uint32_t>(_mm256_movemask_ps(_mm256_castsi256_ps(
+      _mm256_cmpgt_epi32(_mm256_set1_epi32(static_cast<int32_t>(max)), ids))));
+  return static_cast<uint32_t>(std::countr_one(below));
+#else
+  uint32_t n = 0;
+  while (n != 8 && first[n] < max) {
+    out[n] = first[n];
+    ++n;
+  }
+  return n;
+#endif
+}
+
+inline IRS_FORCE_INLINE uint32_t
 CopyBelow16(const doc_id_t* IRS_RESTRICT first, doc_id_t max,
             doc_id_t* IRS_RESTRICT out) noexcept {
 #ifdef __AVX2__
@@ -128,14 +148,14 @@ inline IRS_FORCE_INLINE uint32_t CopyBelow(const doc_id_t* IRS_RESTRICT first,
 }
 
 template<typename InputType, bool Scored>
-class PostingBatch {
+class PostingBatch
+  : public PostingLeaf<InputType, Scored ? kScoredBatchShape : kBatchShape> {
+  using Base = PostingLeaf<InputType, Scored ? kScoredBatchShape : kBatchShape>;
+
  public:
-  static constexpr uint32_t kBlock = doc_limits::kBlockSize;
-  static constexpr bool kDefaultInit = true;
+  using Base::kBlock;
 
   doc_id_t Last() const noexcept { return _last; }
-
-  uint32_t Left() const noexcept { return _left_in_list; }
 
   bool Step(doc_id_t live) {
     if (live - _last <= kBlock || !_walk.Armed()) {
@@ -162,59 +182,22 @@ class PostingBatch {
   }
 
  protected:
-  IRS_FORCE_INLINE InputType& In() const noexcept {
-    return irs::utils::downCast<InputType>(*_in);
-  }
-
-  IRS_FORCE_INLINE uint32_t* Enc() noexcept { return EncOf<InputType>(_enc); }
-
-  void OpenInput(const PostingMeta& meta, const IndexInput& doc_in,
-                 bool bounds) {
-    _in = OpenDocInput(meta, doc_in);
-    auto& in = In();
-    if (const auto extent = DocExtent(meta); extent != 0) {
-      _hint.Arm(meta.doc_start, meta.doc_start + extent);
-    }
-    if (meta.docs_count <= kBlock) {
-      SkipScoreBounds(bounds, in);
-    }
-    _left_in_list = meta.docs_count;
-  }
-
-  void ArmWalk(const PostingMeta& meta, IndexFeatures layout, bool bounds) {
-    if (meta.docs_count > kBlock) {
-      _walk.Arm(meta, BlockIndexShapeOf(layout, bounds));
-    }
-  }
-
-  IRS_FORCE_INLINE void SetFreqLen(bool has_freq) noexcept {
-    static_assert(!Scored);
-    _freq_len.value = has_freq ? kBlock : 0;
-  }
-
-  void MakeScore(const SubReader& segment, const TermReader& field,
-                 const ScoreArgs& args) {
-    static_assert(Scored);
-    _provider.freq.value = _freqs.data;
-    _score.fetcher = args.fetcher;
-    SDB_ASSERT(args.scorer != nullptr);
-    _score.score = args.scorer->PrepareScorer({
-      .segment = segment,
-      .field = field.meta(),
-      .doc_attrs = _provider,
-      .fetcher = *args.fetcher,
-      .stats = args.stats,
-      .boost = args.boost,
-    });
-  }
-
-  IRS_FORCE_INLINE void SkipFreqs(uint32_t len) {
-    static_assert(!Scored);
-    SDB_ASSERT(len != 0);
-    if (len == _freq_len.value) {
-      block_io::SkipBlock(In());
-    }
-  }
+  using Base::_freqs;
+  using Base::_hint;
+  using Base::_in;
+  using Base::_last;
+  using Base::_left_in_list;
+  using Base::_provider;
+  using Base::_score;
+  using Base::_walk;
+  using Base::ArmWalk;
+  using Base::Enc;
+  using Base::In;
+  using Base::MakeScore;
+  using Base::OpenInput;
+  using Base::OpenList;
+  using Base::SetFreqLen;
+  using Base::SkipFreqs;
 
   IRS_FORCE_INLINE void ReadDocs(doc_id_t* IRS_RESTRICT dest, uint32_t len) {
     _hint.Advance(In(), In().Position());
@@ -223,33 +206,20 @@ class PostingBatch {
     _left_in_list -= len;
   }
 
-  void ScoreBlock(const doc_id_t* docs, score_t* scores) {
+  IRS_FORCE_INLINE void ScoreBlock(const doc_id_t* docs, score_t* scores) {
     static_assert(Scored);
     block_io::ReadBlock<block_io::kFreqBias>(In(), Enc(), _freqs.data);
-    _score.fetcher->FetchPostingBlock(
-      std::span<const doc_id_t, kBlock>{docs, kBlock});
-    _score.score.ScorePostingBlock(scores);
+    FetchAndScorePostingBlock(*_score.fetcher, _score.score, docs, scores,
+                              this->NextLast());
   }
 
   void ScoreTail(const doc_id_t* docs, score_t* scores, uint32_t len) {
     static_assert(Scored);
     block_io::ReadTail<block_io::kFreqBias>(len, In(), Enc(), _freqs.data);
     _provider.freq.value = _freqs.data + (kBlock - len);
-    _score.fetcher->Fetch(std::span<const doc_id_t>{docs, len});
-    _score.score.Score(scores, static_cast<scores_size_t>(len));
+    FetchAndScore(*_score.fetcher, _score.score, docs, scores, len);
     _provider.freq.value = _freqs.data;
   }
-
-  [[no_unique_address]] NeedEnc<InputType> _enc;
-  [[no_unique_address]] utils::Need<Scored, FreqBuf> _freqs;
-  IndexInput::ptr _in;
-  doc_id_t _last = 0;
-  uint32_t _left_in_list = 0;
-  [[no_unique_address]] utils::Need<!Scored, FreqLen> _freq_len;
-  [[no_unique_address]] utils::Need<Scored, LeafScore> _score;
-  [[no_unique_address]] utils::Need<Scored, LeafProvider> _provider;
-  GrowingHint _hint;
-  BlockCursor _walk;
 };
 
 }  // namespace irs::detail

@@ -33,9 +33,9 @@ namespace irs {
 class ByRegexp;
 
 template<typename Term, typename Prefix, typename Complex>
-auto ExecuteRegexp(bstring& buf, bytes_view pattern, Term&& t, Prefix&& p,
-                   Complex&& c) {
-  switch (ComputeRegexpType(pattern)) {
+auto ExecuteRegexp(bstring& buf, bytes_view pattern, RegexpSyntax syntax,
+                   Term&& t, Prefix&& p, Complex&& c) {
+  switch (ComputeRegexpType(pattern, syntax)) {
     case RegexpType::LiteralEscaped:
       return t(UnescapeRegexp(pattern, buf));
     case RegexpType::Literal:

@@ -1,0 +1,8 @@
+query
+SELECT
+    round(0.015877016::double precision::numeric, 5) AS five,
+    round(0.123456789::double precision::numeric, 6) AS six,
+    round('0.123456789'::numeric, 8) AS eight;
+----
+five	six	eight
+0.01588	0.123457	0.12345679

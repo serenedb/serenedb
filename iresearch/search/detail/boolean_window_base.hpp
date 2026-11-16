@@ -24,9 +24,12 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <tuple>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
+#include "iresearch/search/detail/exclude_block.hpp"
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/search/scorers/make_window.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
@@ -34,6 +37,13 @@
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {
+
+template<typename Lead>
+inline constexpr bool kBatchLead = requires(Lead& lead, doc_id_t doc) {
+  { lead.Batches() } -> std::same_as<bool>;
+  lead.Rest(doc);
+  lead.Seek(doc);
+};
 
 template<typename Lead, typename Others, typename Optional, typename Excludes>
 IRS_FORCE_INLINE doc_id_t FillClauses(Lead& lead, Others& others,
@@ -54,6 +64,52 @@ IRS_FORCE_INLINE doc_id_t FillClauses(Lead& lead, Others& others,
   }
   return next;
 }
+
+template<typename Lead, typename Others, typename Optional, typename Excludes>
+class WindowClauses {
+ public:
+  static constexpr bool kLead = !std::is_same_v<Lead, utils::Empty>;
+  static constexpr bool kOthers = !std::is_same_v<Others, utils::Empty>;
+  static constexpr bool kOptional = !std::is_same_v<Optional, utils::Empty>;
+  static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
+  static_assert(kLead || !kOthers);
+
+  template<typename LeadArgs, typename OthersArgs, typename OptionalArgs,
+           typename ExcludesArgs>
+  WindowClauses(std::piecewise_construct_t, LeadArgs&& lead,
+                OthersArgs&& others, OptionalArgs&& optional,
+                ExcludesArgs&& excludes)
+    : _lead{std::make_from_tuple<Lead>(std::forward<LeadArgs>(lead))},
+      _others{std::make_from_tuple<Others>(std::forward<OthersArgs>(others))},
+      _optional{
+        std::make_from_tuple<Optional>(std::forward<OptionalArgs>(optional))},
+      _excludes{
+        std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))} {}
+
+  WindowClauses(WindowClauses&&) = delete;
+  WindowClauses& operator=(WindowClauses&&) = delete;
+
+ protected:
+  IRS_FORCE_INLINE doc_id_t FillClauses(doc_id_t min, doc_id_t max,
+                                        uint64_t* IRS_RESTRICT words) {
+    return detail::FillClauses(_lead, _others, _optional, _excludes, min, max,
+                               words);
+  }
+
+  IRS_FORCE_INLINE uint32_t KeepBatch(const doc_id_t* in, uint32_t n,
+                                      doc_id_t* out) {
+    if constexpr (kOthers) {
+      n = _others.Keep(in, n, out);
+      in = out;
+    }
+    return DropExcluded(_excludes, in, n, out);
+  }
+
+  [[no_unique_address]] Lead _lead;
+  [[no_unique_address]] Others _others;
+  [[no_unique_address]] Optional _optional;
+  [[no_unique_address]] Excludes _excludes;
+};
 
 template<typename Derived, typename Score, bool Scored, bool ZeroWindow>
 class BooleanWindowBase {
@@ -113,10 +169,9 @@ class BooleanWindowBase {
   }
 
   Scratch _mask{};
-  [[no_unique_address]] ABSL_CACHELINE_ALIGNED
-    utils::Need<Scored, score_t[kWindowDocs]> _window{};
-  [[no_unique_address]] ABSL_CACHELINE_ALIGNED
-    utils::Need<Scored, score_t[kScoreBlock]> _gathered{};
+  [[no_unique_address]] utils::Need<Scored, WindowBuf<score_t>> _window{};
+  [[no_unique_address]] utils::Need<Scored, SlackBuf<score_t, kScoreBlock, 0>>
+    _gathered{};
   doc_id_t _min = 0;
   doc_id_t _next = doc_limits::eof();
   doc_id_t _doc = doc_limits::invalid();

@@ -26,8 +26,6 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
-#include <duckdb/common/types/timestamp.hpp>
-#include <functional>
 #include <memory>
 #include <vector>
 #include <yaclib/async/future.hpp>
@@ -77,7 +75,6 @@ class BackgroundScheduler final {
   // parked until OpenDelays() while the io pool has never been up).
   yaclib::Future<> Delay(clock::duration d);
 
-  void RunAt(duckdb::timestamp_t at, std::function<void()> task);
   void RunAfter(clock::duration delay, std::function<void()> task);
 
   // Startup: the io pool is up, so Delay can arm real timers. Releases every

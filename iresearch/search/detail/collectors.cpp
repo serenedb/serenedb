@@ -108,9 +108,7 @@ void ExpandedSlotsCollector::Finish(StatsArena& stats) {
       merged.clear();
       for (uint32_t t = 0; t != threads; ++t) {
         for (const auto& [term, counter] : Expanded(t, i)) {
-          auto& one = merged[term];
-          one.docs_with_term += counter.docs_with_term;
-          one.total_term_freq += counter.total_term_freq;
+          Accumulate(merged[term], counter);
         }
       }
       terms = &merged;

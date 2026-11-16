@@ -16,6 +16,8 @@ This section describes functions and operators for examining and manipulating [`
 | :------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | <a href="#arg1--arg2"><code>arg1 &#124;&#124; arg2</code></a> | Concatenates two strings, lists, or blobs. A `NULL` string or blob makes the result `NULL`; a `NULL` list counts as an empty one, so a list result is `NULL` only when every input is `NULL`. See also [`concat(arg1, arg2, ...)`](../../sql/functions/text.md#concatvalue-) and [`list_concat(list1, list2, ...)`](../../sql/functions/list.md#list_concatlist_1--list_n). |
 | [`base64(blob)`](#to_base64blob)                   | Alias for `to_base64`.                                                                                                                                                                                                                  |
+| [`bit_length(blob)`](#bit_lengthblob)              | Number of bits in `blob`. |
+| [`btrim(blob, bytes)`](#btrimblob-bytes)           | Removes the bytes that occur in `bytes` from both ends of `blob`. |
 | [`decode(blob[, on_error])`](#decodeblob-on_error) | Converts `blob` to `VARCHAR`. The optional `on_error` parameter controls handling of invalid UTF-8: `'strict'` (default, throws error), `'replace'` (replaces invalid characters with `?`), or `'ignore'` (removes invalid characters). |
 | [`encode(string)`](#encodestring)                  | Converts the `string` to `BLOB`. Converts UTF-8 characters into literal encoding.                                                                                                                                                       |
 | [`from_base64(string)`](#from_base64string)        | Converts a base64 encoded `string` to a character string (`BLOB`).                                                                                                                                                                      |
@@ -23,16 +25,22 @@ This section describes functions and operators for examining and manipulating [`
 | [`from_hex(value)`](#unhexvalue)                   | Alias for `unhex`.                                                                                                                                                                                                                      |
 | [`hex(blob)`](#hexblob)                            | Converts `blob` to `VARCHAR` using hexadecimal encoding.                                                                                                                                                                                |
 | [`length(blob)`](#octet_lengthblob)                | Alias for `octet_length`.                                                                                                                                                                                                               |
+| [`ltrim(blob, bytes)`](#btrimblob-bytes)           | Removes the bytes that occur in `bytes` from the start of `blob`. |
 | [`md5(blob)`](#md5blob)                            | Returns the MD5 hash of the `blob` as a `VARCHAR`.                                                                                                                                                                                      |
 | [`md5_number(blob)`](#md5_numberblob)              | Returns the MD5 hash of the `blob` as a `HUGEINT`.                                                                                                                                                                                      |
 | [`octet_length(blob)`](#octet_lengthblob)          | Number of bytes in `blob`.                                                                                                                                                                                                              |
+| [`overlay(blob PLACING replacement FROM start [FOR count])`](#overlayblob-placing-replacement-from-start-for-count) | Replaces `count` bytes of `blob`, from byte `start` on, with `replacement`. |
 | [`position(search IN blob)`](#positionsearch-in-blob) | Returns the byte position of the first occurrence of `search` in `blob`, counting from 1, or 0 if no match is found. |
 | [`read_blob(source)`](#read_blobsource)            | Returns the content from `source` (a filename, a list of filenames, or a glob pattern) as a `BLOB`. See the [`read_blob` guide](../../cookbook/file_formats/read_file.md#read_blob) for more details.                                   |
 | [`repeat(blob, count)`](#repeatblob-count)         | Repeats the `blob` `count` number of times.                                                                                                                                                                                             |
+| [`rtrim(blob, bytes)`](#btrimblob-bytes)           | Removes the bytes that occur in `bytes` from the end of `blob`. |
 | [`sha1(blob)`](#sha1blob)                          | Returns a `VARCHAR` with the SHA-1 hash of the `blob`.                                                                                                                                                                                  |
 | [`sha256(blob)`](#sha256blob)                      | Returns a `VARCHAR` with the SHA-256 hash of the `blob`.                                                                                                                                                                                |
+| [`substr(blob, start[, length])`](#substringblob-start-length) | Alias for `substring`. |
+| [`substring(blob, start[, length])`](#substringblob-start-length) | Extracts `length` bytes of `blob` from byte `start` on, or every byte from `start` to the end. |
 | [`to_base64(blob)`](#to_base64blob)                | Converts a `blob` to a base64 encoded string.                                                                                                                                                                                           |
 | [`to_hex(blob)`](#hexblob)                         | Alias for `hex`.                                                                                                                                                                                                                        |
+| [`trim(blob, bytes)`](#btrimblob-bytes)            | Alias for `btrim`. |
 | [`unbin(value)`](#unbinvalue)                      | Converts a `value` from binary representation to a blob.                                                                                                                                                                                |
 | [`unhex(value)`](#unhexvalue)                      | Converts a `value` from hexadecimal representation to a blob.                                                                                                                                                                           |
 
@@ -43,6 +51,18 @@ This section describes functions and operators for examining and manipulating [`
 Concatenates two strings, lists, or blobs. A `NULL` string or blob makes the result `NULL`; a `NULL` list counts as an empty one, so a list result is `NULL` only when every input is `NULL`. See also [`concat(arg1, arg2, ...)`](../../sql/functions/text.md#concatvalue-) and [`list_concat(list1, list2, ...)`](../../sql/functions/list.md#list_concatlist_1--list_n).
 
 <SqlLogicTest id="sql/functions/blob/string_concat_op" />
+
+#### `bit_length(blob)`
+
+Number of bits in `blob`: eight times its number of bytes.
+
+<SqlLogicTest id="sql/functions/blob/bit_length" />
+
+#### `btrim(blob, bytes)`
+
+Removes the bytes that occur in `bytes` from both ends of `blob`. `ltrim` removes them from the start only, `rtrim` from the end only, and `trim([LEADING | TRAILING | BOTH] bytes FROM blob)` from the ends it names, both by default.
+
+<SqlLogicTest id="sql/functions/blob/trim" />
 
 #### `decode(blob[, on_error])`
 
@@ -86,6 +106,12 @@ Number of bytes in `blob`.
 
 <SqlLogicTest id="sql/functions/blob/octet_length" />
 
+#### `overlay(blob PLACING replacement FROM start [FOR count])`
+
+Replaces `count` bytes of `blob`, starting at byte `start` (counting from 1), with `replacement`. Without `count`, it replaces as many bytes as `replacement` has; a `count` of 0 inserts `replacement`. A `start` below 1 fails with `negative substring length not allowed`.
+
+<SqlLogicTest id="sql/functions/blob/overlay" />
+
 #### `position(search IN blob)`
 
 Returns the byte position of the first occurrence of `search` in `blob`, counting from 1. Returns 0 if no match is found.
@@ -115,6 +141,12 @@ Returns a `VARCHAR` with the SHA-1 hash of the `blob`.
 Returns a `VARCHAR` with the SHA-256 hash of the `blob`.
 
 <SqlLogicTest id="sql/functions/blob/sha256" />
+
+#### `substring(blob, start[, length])`
+
+Extracts `length` bytes of `blob` starting at byte `start`, counting from 1, or every byte from `start` to the end when `length` is omitted. Also written `substring(blob FROM start [FOR length])`; `substr` is an alias. Positions before the first byte count toward `length`, so `substring(blob FROM 0 FOR 2)` returns one byte, and a `start` past the end returns an empty `BLOB`. A negative `length` fails with `negative substring length not allowed`.
+
+<SqlLogicTest id="sql/functions/blob/substring" />
 
 #### `to_base64(blob)`
 

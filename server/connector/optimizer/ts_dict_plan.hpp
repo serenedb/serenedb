@@ -20,30 +20,26 @@
 
 #pragma once
 
+#include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/logical_operator.hpp>
-#include <duckdb/planner/operator/logical_get.hpp>
 #include <memory>
 
-#include "catalog/entry/inverted_index.h"
-#include "connector/scan/scan_bind.h"
+#include "connector/optimizer/plan_index.h"
 
 namespace sdb::optimizer {
 
-// GROUP BY / aggregate pushdowns onto the term dictionary and the
-// ts_dict WHERE claim. Split out of iresearch_plan.cpp; shares its
-// planner helpers via iresearch_plan_common.hpp.
 void PushdownTsDictAggregates(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
-                              duckdb::LogicalOperator& root,
+                              duckdb::LogicalOperator& root, PlanIndex& index,
                               duckdb::Binder& binder,
                               duckdb::ClientContext& context);
 
-void CollapseTsDictUnnest(duckdb::unique_ptr<duckdb::LogicalOperator>& plan);
+void CollapseTsDictUnnest(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
+                          PlanIndex& index);
 
 void LimitTsDictEnumerations(duckdb::LogicalOperator& plan);
 
 void ClaimTsDictFilter(
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters,
-  duckdb::LogicalGet& get, connector::ScanBindData& bind_data,
-  connector::ScanBindData& ss, duckdb::ClientContext& context);
+  PlannedScan& scan, duckdb::ClientContext& context);
 
 }  // namespace sdb::optimizer

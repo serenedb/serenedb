@@ -48,7 +48,7 @@ The coordinates of the geometric types print as `float8` values do, so `point(1e
 | int8multirange               | 🟡            | A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. |
 | int8range                    | 🟡            | A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. |
 | interval                     | 🟡            | Field restrictions are ignored: `'1 year 2 mons'::interval year` keeps the months. |
-| json                         | 🟢            |         |
+| json                         | 🟡            | A `json` value can hold trailing commas, such as `'[1,]'`, and `NaN` and `Infinity` as numbers, which PostgreSQL refuses as input. The `json` operators and functions read `NaN` and `Infinity` as numbers, and fail with `invalid input syntax for type json` where they reach a trailing comma. |
 | jsonb                        | 🟡            | A `jsonb` value is a `json` value: it keeps its text as written, where PostgreSQL normalizes key order, duplicate keys and whitespace, and the operators and functions on it, `to_jsonb` included, return `json`. |
 | jsonpath                     | 🔴            |         |
 | line                         | 🟡            | `=` compares the coefficients, where PostgreSQL tests for the same line, so `line '{1,-1,0}' = line '{2,-2,0}'` is false. The other comparison operators, `ORDER BY`, `DISTINCT` and `GROUP BY` compare the coefficients one by one, where PostgreSQL refuses them. A column of this type cannot be indexed. |
@@ -89,7 +89,7 @@ The coordinates of the geometric types print as `float8` values do, so `point(1e
 | tid                          | 🟢            |         |
 | time                         | 🟡            | A precision such as `time(2)` is not accepted. |
 | timestamp                    | 🟡            | A precision keeps milliseconds or microseconds: `timestamp(2)` keeps three fractional digits. |
-| timestamptz                  | 🟡            | A precision such as `timestamptz(2)` is not accepted. |
+| timestamptz                  | 🟡            | A precision is ignored: `timestamptz(2)` keeps six fractional digits. |
 | timetz                       | 🟢            |         |
 | tsmultirange                 | 🟡            | A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. |
 | tsquery                      | 🟡            | SereneDB's own [`TSQUERY`](../sql/data_types/tsquery.md), a query for inverted-index search, not PostgreSQL's. |

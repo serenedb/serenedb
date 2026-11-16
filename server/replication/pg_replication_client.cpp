@@ -55,6 +55,7 @@
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/error_mapping.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <optional>
 #include <string_view>
@@ -902,7 +903,7 @@ yaclib::Task<> PgReplicationClient::ReplicationLoop() {
   try {
     _setup_ok = SetupApplyConnection();
   } catch (const std::exception& ex) {
-    ApplyFailed(network::pg::ToSqlError(ex));
+    ApplyFailed(irs::pg::ToSqlError(ex));
   }
   _setup_done.Set();
   if (!_setup_ok) {
@@ -962,7 +963,7 @@ yaclib::Task<> PgReplicationClient::ReplicationLoop() {
         ok = co_await ApplyMessage(*message);
       }
     } catch (const std::exception& ex) {
-      ApplyFailed(network::pg::ToSqlError(ex));
+      ApplyFailed(irs::pg::ToSqlError(ex));
     }
     if (!ok) {
       _stream.Abort();
@@ -1545,7 +1546,7 @@ yaclib::Task<bool> PgReplicationClient::RunBatch() {
   try {
     affected = co_await RunPrepared(*statement);
   } catch (const std::exception& ex) {
-    error = network::pg::ToSqlError(ex);
+    error = irs::pg::ToSqlError(ex);
   }
   if (!affected) {
     if (error.errcode == ERRCODE_UNIQUE_VIOLATION && shape.op != 'D') {

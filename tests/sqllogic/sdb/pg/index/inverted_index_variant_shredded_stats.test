@@ -1,0 +1,122 @@
+# A VARIANT row group of 30000 rows is stored shredded. Its statistics say the
+# column holds values, apply only to its own rows, and look keys up by their
+# exact name; a typed field reads rows that are not flushed yet too.
+
+statement ok
+SET threads = 1;
+
+statement ok
+CREATE TABLE vss (pk INTEGER PRIMARY KEY, meta VARIANT) WITH (compaction_interval = 0);
+
+statement ok
+CREATE INDEX vss_idx ON vss USING inverted(pk) INCLUDE (meta);
+
+statement ok
+INSERT INTO vss SELECT i, {'rank': i, 'a': i}::VARIANT FROM range(30000) r(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) vss;
+
+query
+SELECT count(*) AS n FROM vss WHERE (meta.rank)::BIGINT >= 0;
+----
+n
+30000
+
+query
+SELECT count(*) AS n FROM vss WHERE (meta.rank)::INTEGER > 50;
+----
+n
+29949
+
+query
+SELECT pk FROM vss WHERE (meta.rank)::BIGINT = 7;
+----
+pk
+7
+
+query
+SELECT count(*) AS n FROM vss_idx WHERE (meta.rank)::BIGINT >= 0;
+----
+n
+30000
+
+query
+SELECT (meta."A")::BIGINT AS upper_a, (meta.a)::BIGINT AS lower_a FROM vss_idx WHERE pk = 5;
+----
+upper_a	lower_a
+NULL	5
+
+query
+SELECT count(*) AS n FROM vss_idx WHERE (meta."A")::BIGINT = 5;
+----
+n
+0
+
+# A small segment is not shredded: the shredded one's field range must not
+# apply to its rows.
+statement ok
+INSERT INTO vss SELECT 100000 + i, {'rank': 100000 + i}::VARIANT FROM range(10) r(i);
+
+statement ok
+INSERT INTO vss VALUES (200000, NULL);
+
+statement ok
+VACUUM (FLUSH_TABLE) vss;
+
+query
+SELECT count(*) AS n FROM vss_idx WHERE (meta.rank)::BIGINT > 50000;
+----
+n
+10
+
+query
+SELECT pk, (meta.rank)::BIGINT AS rank FROM vss_idx WHERE pk >= 100008 AND pk < 200000 ORDER BY pk;
+----
+pk	rank
+100008	100008
+100009	100009
+
+query
+SELECT max((meta.rank)::BIGINT) AS m FROM vss_idx;
+----
+m
+100009
+
+query
+SELECT pk FROM vss_idx WHERE meta IS NULL;
+----
+pk
+200000
+
+# Rows not flushed yet, and a row patched by an UPDATE, read a typed field too.
+statement ok
+INSERT INTO vss SELECT 300000 + i, {'rank': 300000 + i}::VARIANT FROM range(10) r(i);
+
+query
+SELECT count(*) AS n FROM vss_idx WHERE (meta.rank)::BIGINT = 300007;
+----
+n
+1
+
+statement ok
+UPDATE vss SET meta = {'rank': 70}::VARIANT WHERE pk = 6;
+
+query
+SELECT pk, (meta.rank)::BIGINT AS rank FROM vss_idx WHERE pk IN (6, 7, 300006) ORDER BY pk;
+----
+pk	rank
+6	70
+7	7
+300006	300006
+
+statement ok
+VACUUM (FLUSH_TABLE) vss;
+
+query
+SELECT pk, (meta.rank)::BIGINT AS rank FROM vss_idx WHERE pk IN (6, 7, 300006) ORDER BY pk;
+----
+pk	rank
+6	70
+7	7
+300006	300006

@@ -52,7 +52,7 @@ version changes neither DuckDB nor iresearch.
 
 ## Branches
 
-Every repo in the table below is a `serenedb/<name>` fork. Each update builds a new branch `vYYYY.MM.DD` in every fork from scratch, and serenedb's gitlinks point at those heads (`scripts/check_submodule_pointers.py` refuses a gitlink that no version branch contains, unless it heads an open PR into the current version branch, which lands with `scripts/land.sh`). A version branch is never rewritten once created; the next update makes a new one.
+Every repo in the table below is a `serenedb/<name>` fork. Each update builds a new branch `vYYYY.MM.DD` in every fork from scratch, and serenedb's gitlinks point at those heads (`scripts/check_submodule_pointers.py` refuses a gitlink that no version branch contains, unless it heads an open PR into the current version branch or a newer `vYYYY.MM.DD-wip` branch, both of which `scripts/land.sh` lands). A version branch is never rewritten once created; the next update makes a new one.
 
 The first-parent history of a version branch, oldest first:
 
@@ -72,8 +72,8 @@ An update is reviewed patchset by patchset. Every fork whose upstream is in the 
 
 1. Build the update on `mbkkt/update-duckdb` (the recipe below) and force-push it while the update is in review.
 2. Force-push `mbkkt/update-duckdb-base` to the fork's boundary. The PR then shows exactly our patchset.
-3. Link every review PR from the serenedb PR of the update. Its gitlinks point at the `mbkkt/update-duckdb` heads while it is in review, so the gitlink check of the PR's pre-commit job (`scripts/check_submodule_pointers.py`) fails until the next step.
-4. Before the serenedb PR merges, push each head as a new `vYYYY.MM.DD` branch, the date of the update, and move the gitlinks to it. A version branch is never force-pushed.
+3. Link every review PR from the serenedb PR of the update. Push each head to `vYYYY.MM.DD-wip` as well, the date of the update, and point the gitlinks at it: the PR's `pre-commit` status stays pending while it is in review.
+4. `scripts/land.sh` turns each `vYYYY.MM.DD-wip` into the version branch `vYYYY.MM.DD` when the serenedb PR lands. A version branch is never force-pushed.
 
 | fork | review PR |
 |---|---|

@@ -86,6 +86,17 @@ def test_a_gitlink_at_an_open_fork_pr_head_posts_a_pending_status(gate):
     assert "Waiting for serenedb/duckdb#211" in log
 
 
+WIP_PENDING = ("third_party/duckdb_httpfs: gitlink 5678 is pending: head of serenedb/duckdb-httpfs "
+               "v2026.11.15-wip")
+
+
+def test_a_gitlink_at_a_wip_branch_head_posts_a_pending_status_naming_the_branch(gate):
+    rc, log = gate(3, f"{PENDING}\n{WIP_PENDING}")
+    assert rc == 0
+    assert "-f state=pending" in log
+    assert "description=Waiting for serenedb/duckdb#211 serenedb/duckdb-httpfs v2026.11.15-wip -f" in log
+
+
 def test_a_pending_gitlink_from_a_forked_pr_fails_the_job(gate):
     rc, log = gate(3, PENDING, from_fork="true")
     assert rc == 1

@@ -65,6 +65,14 @@ struct TableFilter {
   }
 };
 
+template<typename Make>
+auto WithTable(TableFilter* table, Make&& make) {
+  if (table != nullptr) {
+    return make(table);
+  }
+  return make(utils::Empty{});
+}
+
 template<typename Table>
 class Narrowing {
  public:

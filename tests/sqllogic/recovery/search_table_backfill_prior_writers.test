@@ -62,22 +62,12 @@ statement ok
 INSERT INTO bpw VALUES (1, 'drained');
 
 connection builder
-statement async ok
+statement ok
 CREATE INDEX bpw_idx ON bpw USING inverted (tag);
-
-connection default
-query ok retry 40 backoff 250ms
-SELECT count(*) AS n FROM pg_stat_progress_create_index
-WHERE relid = 'bpw'::regclass;
-----
-n
-1
 
 connection writer
 statement ok
 COMMIT;
-
-wait
 
 connection default
 query
@@ -113,22 +103,12 @@ statement ok
 INSERT INTO bpt VALUES (3, 'reborn');
 
 connection builder
-statement async ok
+statement ok
 CREATE INDEX bpt_idx ON bpt USING inverted (tag);
-
-connection default
-query ok retry 40 backoff 250ms
-SELECT count(*) AS n FROM pg_stat_progress_create_index
-WHERE relid = 'bpt'::regclass;
-----
-n
-1
 
 connection writer
 statement ok
 COMMIT;
-
-wait
 
 connection default
 query

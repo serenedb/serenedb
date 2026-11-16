@@ -25,7 +25,7 @@ namespace sdb::pg {
 namespace {
 
 SystemRows<ReplicationOrigin> LoadOrigins(SystemScan& scan) {
-  return ReplicationOrigins(*scan.Context().db);
+  return ReplicationOrigins(scan.Context());
 }
 
 constexpr auto kOrigin =

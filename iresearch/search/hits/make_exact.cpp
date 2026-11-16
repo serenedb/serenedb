@@ -32,7 +32,7 @@ class ExactHits : public Root {
  public:
   ExactHits(const ExactVectorQuery& query, const Context& ctx,
             const irs::detail::ScoreArgs& args)
-    : _scanner{query}, _fetcher{ctx.fetcher} {
+    : _scanner{query, true}, _fetcher{ctx.fetcher} {
     _score = irs::detail::PrepareBlockScorer(
       args, query.Segment(), irs::detail::NoField(), _provider, _block);
   }
@@ -56,8 +56,7 @@ class ExactHits : public Root {
       std::copy_n(_docs + _pos, m, docs + n);
       std::copy_n(_dists + _pos, m, _block);
       _pos += m;
-      _fetcher.Fetch(std::span<const doc_id_t>{docs + n, m});
-      _score.Score(scores + n, m);
+      FetchAndScore(_fetcher, _score, docs + n, scores + n, m);
       n += m;
     }
   }

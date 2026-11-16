@@ -1,0 +1,45 @@
+# NaN divided by zero is NaN, and exp and power fail when a finite argument
+# gives a result beyond the double range or one that rounds to zero.
+
+query
+SELECT 'NaN'::float8 / 0 AS d, 'NaN'::float4 / 0 AS f;
+----
+d	f
+NaN	NaN
+
+statement error
+SELECT exp(1000::float8);
+----
+db error: ERROR: value out of range: overflow
+
+
+statement error
+SELECT exp(-1000::float8);
+----
+db error: ERROR: value out of range: underflow
+
+
+statement error
+SELECT power(10::float8, 400);
+----
+db error: ERROR: value out of range: overflow
+
+
+statement error
+SELECT 10::float8 ^ 400;
+----
+db error: ERROR: value out of range: overflow
+
+
+statement error
+SELECT power(10::float8, -400);
+----
+db error: ERROR: value out of range: underflow
+
+
+query
+SELECT exp('Infinity'::float8) AS a, exp('-Infinity'::float8) AS b, power('Infinity'::float8, 2) AS c,
+       exp(-740::float8) > 0 AS d, power(0::float8, 3) AS e;
+----
+a	b	c	d	e
+Infinity	0	Infinity	t	0

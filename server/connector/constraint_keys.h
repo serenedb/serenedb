@@ -22,9 +22,13 @@
 
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/vector.hpp>
+#include <duckdb/common/vector/unified_vector_format.hpp>
+#include <duckdb/execution/expression_executor.hpp>
+#include <duckdb/function/create_sort_key.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/planner/expression.hpp>
 #include <iresearch/index/field_meta.hpp>
+#include <memory>
 #include <span>
 #include <string>
 #include <vector>
@@ -54,21 +58,38 @@ class ConstraintKeyEncoder {
 
   std::vector<KeyRead> ExpressionReads() const;
 
-  void Encode(duckdb::DataChunk& chunk, std::span<const ColumnId> column_ids,
-              duckdb::Vector& keys) const;
+  const duckdb::Vector& Encode(duckdb::DataChunk& chunk,
+                               std::span<const ColumnId> column_ids);
 
  private:
+  struct Prepared {
+    explicit Prepared(duckdb::ClientContext& context) : executor{context} {}
+
+    std::vector<duckdb::unique_ptr<duckdb::Expression>> parts;
+    duckdb::ExpressionExecutor executor;
+    duckdb::DataChunk input;
+    std::vector<size_t> intervals;
+    duckdb::DataChunk normalized;
+    duckdb::vector<duckdb::OrderModifiers> modifiers;
+    duckdb::UnifiedVectorFormat format;
+    duckdb::DataChunk keys;
+  };
+
+  void Prepare(const duckdb::DataChunk& chunk,
+               std::span<const ColumnId> column_ids);
+
   duckdb::ClientContext* _context;
   duckdb::idx_t _table_id;
   catalog::ConstraintKey _key;
   std::vector<duckdb::unique_ptr<duckdb::Expression>> _expressions;
+  std::unique_ptr<Prepared> _prepared;
 };
 
 // The key's values as PostgreSQL shows them in a DETAIL: `(a, b)=(1, x)`.
 std::string ConstraintKeyText(duckdb::ClientContext& context,
                               std::string_view key,
                               std::span<const std::string> names,
-                              std::span<const duckdb::LogicalType> types);
+                              const duckdb::vector<duckdb::LogicalType>& types);
 
 std::string EncodeKeyValue(const duckdb::Value& value);
 

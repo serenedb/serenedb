@@ -24,6 +24,8 @@
 #include <absl/cleanup/cleanup.h>
 #include <absl/functional/any_invocable.h>
 #include <absl/strings/str_cat.h>
+#include <absl/time/clock.h>
+#include <absl/time/time.h>
 
 #include <algorithm>
 #include <array>
@@ -347,6 +349,9 @@ void Store::ClaimColumnOids(const irs::DirectoryReader& reader) const {
 }
 
 void Store::SyncSegments() const {
+  SDB_IF_FAILURE("search_sync_segments_fails") {
+    THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+  }
   if (_on_disk) {
     utils::file_utils::SyncDirectory(Path());
   }
@@ -909,7 +914,10 @@ std::shared_ptr<const irs::IndexFieldOptions> Store::CompactionOptions() {
 absl::Status Store::VacuumCompact(duckdb::ClientContext& context,
                                   uint32_t target_segments) {
   const irs::MergeWriter::FlushProgress progress = [&context] {
-    return !context.IsInterrupted();
+    SDB_IF_FAILURE("slow_vacuum_merge") {
+      absl::SleepFor(absl::Milliseconds(100));
+    }
+    return !context.InterruptPending();
   };
   const auto target = std::max<uint32_t>(1, target_segments);
   GetSearchEngine().Maintenance().Enter(context).reset();

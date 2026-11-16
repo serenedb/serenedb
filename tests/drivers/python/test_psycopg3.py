@@ -1110,6 +1110,27 @@ def test_statement_timeout_interrupts_planning(fault, query):
     assert elapsed < 5, elapsed
 
 
+@pytest.mark.faults
+@pytest.mark.usefixtures("own_server")
+def test_statement_timeout_interrupts_a_vacuum_merge():
+    with psycopg.connect(**conn_kwargs(), autocommit=True) as c:
+        c.execute("CREATE TABLE vacuum_merge_timeout (id BIGINT, body TEXT) "
+                  "WITH (compaction_interval = 0)")
+        for _ in range(4):
+            c.execute("INSERT INTO vacuum_merge_timeout "
+                      "SELECT i, 'x' || i FROM range(500000) t(i)")
+        c.execute("SET statement_timeout = '1s'")
+        c.execute("SET sdb_faults = 'slow_vacuum_merge'")
+        start = time.monotonic()
+        with pytest.raises(psycopg.errors.QueryCanceled):
+            c.execute("VACUUM (COMPACT_TABLE) vacuum_merge_timeout")
+        elapsed = time.monotonic() - start
+        c.execute("RESET sdb_faults")
+        c.execute("RESET statement_timeout")
+        c.execute("DROP TABLE vacuum_merge_timeout")
+    assert elapsed < 5, elapsed
+
+
 def test_binary_parameters_after_an_untyped_null():
     with psycopg.connect(**conn_kwargs(), autocommit=True) as c:
         assert c.execute("SELECT %s, %b::INTEGER", (None, 7)).fetchone() == (None, 7)

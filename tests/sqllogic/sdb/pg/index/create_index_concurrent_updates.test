@@ -1,0 +1,139 @@
+statement ok
+CREATE TABLE cicu (id BIGINT, v INT, body TEXT);
+
+
+statement ok
+INSERT INTO cicu SELECT i, i, 'w' FROM range(1000) t(i);
+
+
+connection cicu_indexed
+statement ok
+BEGIN;
+
+
+connection cicu_indexed
+statement count 10
+UPDATE cicu SET body = 'x' WHERE id < 10;
+
+
+connection cicu_other
+statement ok
+BEGIN;
+
+
+connection cicu_other
+statement count 10
+UPDATE cicu SET v = v + 1000 WHERE id >= 990;
+
+
+statement ok
+CREATE INDEX cicu_idx ON cicu USING inverted (id, body);
+
+
+connection cicu_indexed
+statement error
+COMMIT;
+----
+db error: ERROR: could not serialize access due to concurrent update
+
+
+connection cicu_other
+statement ok
+COMMIT;
+
+
+query
+SELECT body, count(*) AS n FROM cicu GROUP BY body ORDER BY body;
+----
+body	n
+w	1000
+
+
+query
+SELECT count(*) AS n FROM cicu WHERE id < 10 AND body = 'x';
+----
+n
+0
+
+
+query
+SELECT count(*) AS n FROM cicu WHERE v >= 1990;
+----
+n
+10
+
+
+statement ok
+CREATE TABLE cicu_own (id BIGINT, v INT, body TEXT);
+
+
+statement ok
+INSERT INTO cicu_own SELECT i, i, 'w' FROM range(1000) t(i);
+
+
+statement ok
+BEGIN;
+
+
+statement count 10
+UPDATE cicu_own SET body = 'y', v = -v WHERE id >= 10 AND id < 20;
+
+
+statement count 1
+DELETE FROM cicu_own WHERE id = 19;
+
+
+statement ok
+CREATE INDEX cicu_own_idx ON cicu_own USING inverted (v, body);
+
+
+query
+SELECT count(*) AS n FROM cicu_own WHERE body = 'y';
+----
+n
+9
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT body, count(*) AS n FROM cicu_own GROUP BY body ORDER BY body;
+----
+body	n
+w	990
+y	9
+
+
+query
+SELECT count(*) AS n FROM cicu_own WHERE v < 0;
+----
+n
+9
+
+
+query
+SELECT id, v, body FROM cicu_own WHERE id BETWEEN 8 AND 20 ORDER BY id;
+----
+id	v	body
+8	8	w
+9	9	w
+10	-10	y
+11	-11	y
+12	-12	y
+13	-13	y
+14	-14	y
+15	-15	y
+16	-16	y
+17	-17	y
+18	-18	y
+20	20	w
+
+
+statement ok
+DROP TABLE cicu_own;
+
+
+statement ok
+DROP TABLE cicu;

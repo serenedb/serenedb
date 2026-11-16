@@ -2244,12 +2244,18 @@ void PgWireSession<Kind>::DropDeallocated(std::string_view name) {
 
 template<SocketKind Kind>
 StatementPtr& PgWireSession<Kind>::FindStatement(std::string_view name) {
-  DropDeallocated(name);
-  if (auto* slot = _proto.statements.Find(name)) {
-    return *slot;
+  if (name.empty()) {
+    return _proto.statements.FindOrThrow(name);
   }
   auto& statements =
     duckdb::ClientData::Get(*_conn->context).prepared_statements;
+  auto& named = _proto.statements.Named();
+  if (const auto it = named.find(name); it != named.end()) {
+    if (it->second->Alias().empty() || statements.contains(name)) {
+      return it->second;
+    }
+    named.erase(it);
+  }
   const auto sql = statements.find(name);
   if (sql == statements.end() || !sql->second->unbound_statement) {
     return _proto.statements.FindOrThrow(name);

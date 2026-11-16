@@ -94,6 +94,27 @@ id
 
 
 statement ok
+UPDATE score_dml SET tag = CAST(bm25(score_dml.tableoid) > 0 AS TEXT)
+WHERE body @@ ts_phrase('dog');
+
+
+query
+SELECT id, tag FROM score_dml ORDER BY id;
+----
+id	tag
+3	true
+5	a
+
+
+statement error
+DELETE FROM score_dml
+WHERE body @@ ts_phrase('cat')
+RETURNING id, bm25(score_dml.tableoid);
+----
+db error: ERROR: bm25() requires an inverted index scan in the same sub-query
+
+
+statement ok
 DROP TABLE score_dml;
 
 

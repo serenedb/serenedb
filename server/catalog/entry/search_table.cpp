@@ -578,14 +578,11 @@ bool SearchTableEntry::PatchesColumns(
     return false;
   }
   const auto config = _storage->Config();
-  if (config && config->HasExpressionKeys()) {
-    return false;
-  }
   return absl::c_all_of(columns, [&](duckdb::PhysicalIndex index) {
     const auto& column = list.GetColumn(index);
     const auto field = connector::TableColumnId(column);
     return irs::ColumnPatch::Patchable(column.Type()) &&
-           !(config && config->FindColumnInfo(field)) &&
+           !(config && config->ReadsColumn(field)) &&
            absl::c_none_of(_keys, [&](const search::KeySpec& spec) {
              return absl::c_contains(spec.key.columns, field);
            });

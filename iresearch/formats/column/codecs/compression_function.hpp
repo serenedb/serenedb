@@ -122,13 +122,6 @@ struct ColumnDataCheckpointData {
   void FlushSegment(CodecType codec, duckdb::BaseStatistics stats,
                     uint64_t rows, std::string_view bytes);
 
-  template<typename S, typename... Args>
-  S& Emplace(Args&&... args) {
-    auto& slot = states.emplace_back(
-      &kTag<S>, std::make_unique<S>(std::forward<Args>(args)...));
-    return static_cast<S&>(*slot.state);
-  }
-
   template<typename S>
   S& Get() {
     for (auto& slot : states) {
@@ -136,7 +129,8 @@ struct ColumnDataCheckpointData {
         return static_cast<S&>(*slot.state);
       }
     }
-    return Emplace<S>(*this);
+    return static_cast<S&>(
+      *states.emplace_back(&kTag<S>, std::make_unique<S>(*this)).state);
   }
 
   struct Slot {

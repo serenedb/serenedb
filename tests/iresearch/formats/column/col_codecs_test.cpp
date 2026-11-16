@@ -1093,7 +1093,7 @@ std::vector<irs::codecs::CodecType> SealAuto(
     .ctx = &ctx,
     .flush = flush,
     .params = params,
-    .tuning = &tuning,
+    .tuning = tuning,
     .disabled = disabled,
   };
   irs::codecs::Compress(irs::codecs::CodecType::Auto, checkpoint);
@@ -1180,7 +1180,7 @@ TEST_F(ColCodecsTest, NamedCodecSealsEverySegment) {
       .ctx = &ctx,
       .flush = flush,
       .params = {.segment_target = 16 * 1024},
-      .tuning = &tuning,
+      .tuning = tuning,
     };
     irs::codecs::Compress(irs::codecs::CodecOf(choice.shape, choice.leaf),
                           checkpoint);
@@ -3843,11 +3843,13 @@ TEST_F(ColCodecsTest, RoaringBooleanSegmentsCarryTheirOwnStats) {
     const auto flush =
       [&](const irs::codecs::Codec&, duckdb::BaseStatistics stats, uint64_t n,
           std::string_view) { flushed.push_back({std::move(stats), n}); };
+    irs::codecs::ColumnTuning tuning;
     irs::codecs::ColumnDataCheckpointData checkpoint{
       .type = duckdb::LogicalType::BOOLEAN,
       .chunks = rows,
       .ctx = &ctx,
       .flush = flush,
+      .tuning = tuning,
     };
     irs::codecs::Compress(fn.type, checkpoint);
     return flushed;
@@ -4030,7 +4032,7 @@ TEST_F(ColCodecsTest, FsstSegmentsFollowAChangeInCompressibility) {
     .ctx = &ctx,
     .flush = flush,
     .params = {.segment_target = kTarget},
-    .tuning = &tuning,
+    .tuning = tuning,
   };
   irs::codecs::Compress(irs::codecs::CodecType::Fsst, checkpoint);
   ASSERT_GT(sizes.size(), 8u);

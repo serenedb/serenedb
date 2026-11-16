@@ -266,7 +266,7 @@ size_t ChooseEncoding(StringWindow& window, Shape shape, const Tier& tier,
 }  // namespace
 
 Strings::Strings(ColumnDataCheckpointData& data)
-  : _tuning{data.tuning->strings},
+  : _tuning{data.tuning.strings},
     _compressor{data.params, data.type, _tuning.estimators,
                 data.ctx->BufferManager()} {}
 
@@ -317,7 +317,7 @@ bool Strings::Compress(ColumnDataCheckpointData& data) {
     SDB_ASSERT(Enabled(data.disabled, config->shape, config->leaf));
     _first = _compressor.CompressSegment(*config, acc, 0);
   }
-  if (held && data.tuning->reuse.Drifted(
+  if (held && data.tuning.reuse.Drifted(
                 static_cast<double>(_first->Size()),
                 static_cast<double>(std::max<uint64_t>(_first->input, 1)))) {
     return false;

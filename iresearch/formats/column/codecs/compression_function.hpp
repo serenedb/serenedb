@@ -146,7 +146,7 @@ struct ColumnDataCheckpointData {
   WriteContext* ctx = nullptr;
   FlushSegmentFn flush;
   ColCodecParams params;
-  ColumnTuning* tuning = nullptr;
+  ColumnTuning& tuning;
   CodecSet disabled;
   CodecType method = CodecType::Auto;
   uint64_t rows = 0;

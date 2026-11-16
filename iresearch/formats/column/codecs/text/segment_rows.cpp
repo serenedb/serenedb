@@ -95,7 +95,7 @@ void CompressCodes(
     .type = chunk.data.GetType(),
     .chunks = {&chunk, 1},
     .flush = flush,
-    .tuning = &column,
+    .tuning = column,
     .disabled = ~kCodesGroup,
   };
   Compress(CodecType::Auto, data);

@@ -2166,10 +2166,12 @@ void ExpectRleAnalysesAgree(const duckdb::LogicalType& type,
     }
     const auto flush = [](const irs::codecs::Codec&, duckdb::BaseStatistics,
                           uint64_t, std::string_view) {};
+    irs::codecs::ColumnTuning tuning;
     irs::codecs::ColumnDataCheckpointData data{
       .type = type,
       .chunks = chunks,
       .flush = flush,
+      .tuning = tuning,
       .rows = values.size(),
     };
     return rle->compression

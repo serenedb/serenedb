@@ -157,7 +157,7 @@ class NumericEncoder : public State {
   }
 
   bool Compress(ColumnDataCheckpointData& data, ByteCodec leaf) {
-    auto& choice = data.tuning->numeric;
+    auto& choice = data.tuning.numeric;
     const LeafSamples* samples = &_best_samples;
     if (data.method != CodecType::Auto) {
       if (leaf == ByteCodec::None
@@ -189,11 +189,10 @@ class NumericEncoder : public State {
     const auto ratio =
       static_cast<double>(_out.size()) /
       std::max(static_cast<double>(PackedBound(data)) / 8, 1.0);
-    if (held &&
-        ((_leaf == ByteCodec::None && choice.bound_ratio != 0 &&
-          ratio > choice.bound_ratio * kDrift) ||
-         data.tuning->reuse.Grew(static_cast<double>(_out.size()),
-                                 static_cast<double>(RawInput(data))))) {
+    if (held && ((_leaf == ByteCodec::None && choice.bound_ratio != 0 &&
+                  ratio > choice.bound_ratio * kDrift) ||
+                 data.tuning.reuse.Grew(static_cast<double>(_out.size()),
+                                        static_cast<double>(RawInput(data))))) {
       return false;
     }
     choice = {

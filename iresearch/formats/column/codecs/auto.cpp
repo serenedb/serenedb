@@ -27,7 +27,6 @@
 #include <magic_enum/magic_enum.hpp>
 #include <span>
 #include <utility>
-#include <vector>
 
 #include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/formats/column/codecs/tuning.hpp"
@@ -68,39 +67,9 @@ static_assert([] {
   return true;
 }());
 
-const std::vector<Contender>& ContendersOf(PhysicalType physical) {
-  static const auto kCandidates = [] {
-    std::array<std::vector<Contender>, 256> all;
-    for (size_t index = 0; index < all.size(); ++index) {
-      auto& list = all[index];
-      const auto add = [&](CodecType type) {
-        const auto* codec = GetCodec(type, static_cast<PhysicalType>(index));
-        if (!codec || !codec->compression) {
-          return;
-        }
-        auto it = absl::c_find_if(list, [&](const Contender& contender) {
-          return contender.function == codec->compression;
-        });
-        if (it == list.end()) {
-          it = list.insert(list.end(), Contender{codec->compression, {}});
-        }
-        it->codecs.set(std::to_underlying(type));
-      };
-      for (const auto type : kOrder) {
-        add(type);
-      }
-    }
-    return all;
-  }();
-  return kCandidates[std::to_underlying(physical)];
-}
-
 const CompressionFunction* Held(const ColumnDataCheckpointData& data,
                                 std::span<const Contender> contenders) {
-  const auto pick = std::to_underlying(data.tuning->reuse.pick);
-  if (data.disabled.test(pick)) {
-    return nullptr;
-  }
+  const auto pick = std::to_underlying(data.tuning.reuse.pick);
   const auto it = absl::c_find_if(contenders, [&](const Contender& contender) {
     return contender.codecs.test(pick);
   });
@@ -111,13 +80,26 @@ bool CompressAuto(ColumnDataCheckpointData& data) {
   if (CompressConstant(data)) {
     return true;
   }
-  absl::InlinedVector<Contender, magic_enum::enum_count<CodecType>()> enabled;
-  for (const auto& contender : ContendersOf(data.type.InternalType())) {
-    if ((contender.codecs & ~data.disabled).any()) {
-      enabled.push_back(contender);
+  const auto physical = data.type.InternalType();
+  absl::InlinedVector<Contender, std::size(kOrder)> contenders;
+  for (const auto type : kOrder) {
+    if (data.disabled.test(std::to_underlying(type))) {
+      continue;
     }
+    const auto* codec = GetCodec(type, physical);
+    if (!codec || !codec->compression) {
+      continue;
+    }
+    auto it = absl::c_find_if(contenders, [&](const Contender& contender) {
+      return contender.function == codec->compression;
+    });
+    if (it == contenders.end()) {
+      it =
+        contenders.insert(contenders.end(), Contender{codec->compression, {}});
+    }
+    it->codecs.set(std::to_underlying(type));
   }
-  Contest(enabled, data);
+  Contest(contenders, data);
   return true;
 }
 
@@ -129,8 +111,7 @@ constexpr Codec kAutoCodec{.type = CodecType::Auto, .compression = &kAuto};
 
 void Contest(std::span<const Contender> contenders,
              ColumnDataCheckpointData& data) {
-  SDB_ASSERT(data.tuning);
-  auto& reuse = data.tuning->reuse;
+  auto& reuse = data.tuning.reuse;
   const auto input = static_cast<double>(RawInput(data));
   if (const auto* held = reuse.Due() ? nullptr : Held(data, contenders)) {
     const auto written = data.written;

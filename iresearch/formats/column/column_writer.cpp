@@ -200,7 +200,7 @@ WriteContext& ColumnWriter::WriteCtx() const noexcept {
 bool ColumnWriter::Compress(const duckdb::LogicalType& type,
                             std::span<const WriteChunk> chunks,
                             codecs::CodecType method,
-                            codecs::ColumnTuning* tuning,
+                            codecs::ColumnTuning& tuning,
                             std::vector<ColumnBlockMeta>& sink) {
   auto& ctx = WriteCtx();
   bool flushed = false;
@@ -242,8 +242,9 @@ void ColumnWriter::SealValidity(std::span<WriteChunk> chunks,
     EmitEmptyValidity(row_count, sink);
     return;
   }
+  codecs::ColumnTuning tuning;
   Compress(duckdb::LogicalType{duckdb::LogicalTypeId::VALIDITY}, chunks,
-           _global_method, nullptr, sink);
+           _global_method, tuning, sink);
 }
 
 void ColumnWriter::Claim(ColumnMeta& meta,
@@ -351,11 +352,12 @@ void ColumnWriter::CompressPlain(const duckdb::LogicalType& type,
                                  codecs::CodecType codec,
                                  std::span<WriteChunk> chunks,
                                  std::vector<ColumnBlockMeta>& sink) {
+  codecs::ColumnTuning tuning;
   Compress(type, chunks,
            codecs::Writes(_global_method, type.InternalType(), _disabled)
              ? _global_method
              : codec,
-           nullptr, sink);
+           tuning, sink);
 }
 
 void ColumnWriter::SealVariant(const duckdb::LogicalType& type,
@@ -467,7 +469,7 @@ void ColumnWriter::SealColumn(
 
   SDB_ASSERT(row_count == codecs::CountRows(chunks));
   const bool nulls_covered_by_data =
-    Compress(type, chunks, _method, &state.tuning, meta.data);
+    Compress(type, chunks, _method, state.tuning, meta.data);
   if (skip_validity) {
     return;
   }

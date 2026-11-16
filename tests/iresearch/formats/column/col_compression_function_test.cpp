@@ -155,7 +155,7 @@ class ColCompressionFunctionTest : public ::testing::Test {
       .ctx = &ctx,
       .flush = flush,
       .params = {.tier = tier},
-      .tuning = &_tuning,
+      .tuning = _tuning,
       .disabled = disabled,
       .rows = kRows,
     };
@@ -177,7 +177,7 @@ class ColCompressionFunctionTest : public ::testing::Test {
       .ctx = &ctx,
       .flush = flush,
       .params = {.tier = tier},
-      .tuning = &_tuning,
+      .tuning = _tuning,
       .disabled = disabled,
     };
     irs::codecs::Compress(method, data);

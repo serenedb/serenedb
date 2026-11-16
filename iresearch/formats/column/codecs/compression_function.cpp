@@ -21,7 +21,6 @@
 #include "iresearch/formats/column/codecs/compression_function.hpp"
 
 #include <absl/algorithm/container.h>
-#include <absl/cleanup/cleanup.h>
 
 #include <algorithm>
 #include <cstring>
@@ -108,13 +107,6 @@ const CompressionFunction& UncompressedCompression(
 
 void Compress(CodecType method, ColumnDataCheckpointData& data) {
   const auto physical = data.type.InternalType();
-  ColumnTuning untuned;
-  const absl::Cleanup restore = [&data, tuning = data.tuning] {
-    data.tuning = tuning;
-  };
-  if (!data.tuning) {
-    data.tuning = &untuned;
-  }
   data.rows = CountRows(data.chunks);
   data.method = method;
   const auto* codec = GetCodec(method, physical);

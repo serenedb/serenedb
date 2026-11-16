@@ -34,6 +34,10 @@
 #include "search/store_stats.h"
 #include "server/utils/metrics.h"
 
+#ifdef SDB_FM_INDEX
+#include "iresearch/utils/fm_index.hpp"
+#endif
+
 namespace sdb::pg {
 namespace {
 
@@ -86,6 +90,10 @@ struct Metric {
 
 SystemRows<Metric> LoadMetrics(SystemScan& scan) {
   std::vector<Metric> rows;
+#ifdef SDB_FM_INDEX
+  rows.emplace_back("fm_index_bytes", irs::FmIndex::LiveBytes(),
+                    "serialized bytes of live substring indexes");
+#endif
   for (size_t i = 0; i < metrics::kGaugeCount; ++i) {
     const auto gauge = static_cast<metrics::Gauge>(i);
     rows.emplace_back(metrics::Name(gauge), metrics::Get(gauge),

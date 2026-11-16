@@ -154,8 +154,8 @@ SeekTermIterator::ptr SingleTermReader::iterator() const {
   return memory::make_managed<SingleIterator<false>>(*this);
 }
 
-SeekTermIterator::ptr SingleTermReader::iterator(
-  const RegexpAcceptor& a) const {
+SeekTermIterator::ptr SingleTermReader::iterator(const RegexpAcceptor& a,
+                                                 bool) const {
   return SingleFor(*this, a);
 }
 

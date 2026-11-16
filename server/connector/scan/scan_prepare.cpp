@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <iresearch/index/index_reader.hpp>
+#include <iresearch/search/detail/term_acceptor.hpp>
 #include <iresearch/search/queries/docs_mask_query.hpp>
 #include <iresearch/utils/assert.hpp>
 
@@ -48,8 +49,14 @@ const irs::QueryBuilder& EnsureSegmentQuery(ScanGlobalState& g,
       collector = g.collector->Get();
     }
     const auto& segment = (*g.reader)[seg_idx];
+#ifdef SDB_FM_INDEX
+    irs::FmIndexOptions fm_options{g.use_fm_index};
+#endif
     const irs::PrepareContext ctx{
       .collector = collector,
+#ifdef SDB_FM_INDEX
+      .ctx = &fm_options,
+#endif
       .thread = collector != nullptr ? l->thread_slot : 0,
       .needs_terms = g.needs_terms};
     const auto index_only = g.ClaimedIndexOnly();

@@ -903,6 +903,26 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
+      "sdb_enable_fm_index",
+      {
+        LogicalTypeId::BOOLEAN,
+        "Enable experimental FM-index acceleration for substring search. "
+        "The first qualifying query prepares an in-memory index. Requires "
+        "a build with FM-index support. Default false.",
+        [] { return duckdb::Value::BOOLEAN(false); },
+        [](duckdb::ClientContext&, duckdb::SetScope,
+           [[maybe_unused]] duckdb::Value& value) {
+#ifndef SDB_FM_INDEX
+          if (value.GetValue<bool>()) {
+            THROW_SQL_ERROR(
+              ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+              ERR_MSG("FM-index support is not enabled in this build"));
+          }
+#endif
+        },
+      },
+    },
+    {
       "sdb_ann_force_exact",
       {
         LogicalTypeId::BOOLEAN,

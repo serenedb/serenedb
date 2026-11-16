@@ -33,10 +33,12 @@ namespace irs::term_dict {
 
 class SingleTermReader final : public TermReader {
  public:
+  using TermReader::iterator;
   SingleTermReader(FieldReader& owner, const FieldHead& head);
 
   SeekTermIterator::ptr iterator() const final;
-  SeekTermIterator::ptr iterator(const RegexpAcceptor& a) const final;
+  SeekTermIterator::ptr iterator(const RegexpAcceptor& a,
+                                 bool use_fm_index) const final;
   SeekTermIterator::ptr iterator(const LevenshteinAcceptor& a) const final;
   SeekTermIterator::ptr iterator(const RegexpConjunction& a) const final;
   SeekTermIterator::ptr iterator(const FuzzyConjunction& a) const final;

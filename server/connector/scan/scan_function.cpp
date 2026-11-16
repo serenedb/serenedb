@@ -213,6 +213,9 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   auto state = duckdb::make_uniq<ScanGlobalState>();
 
   InitScanState(*state, &context, bind_data, input);
+#ifdef SDB_FM_INDEX
+  state->use_fm_index = GetBoolSetting(context, "sdb_enable_fm_index");
+#endif
 
   const auto& ss = bind_data;
   if (!ss.offsets.requests.empty() && !ss.search.filter) {

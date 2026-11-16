@@ -38,6 +38,13 @@
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
+#ifdef SDB_FM_INDEX
+#include <mutex>
+
+#include "iresearch/utils/fm_index.hpp"
+#include "iresearch/utils/resource_manager.hpp"
+#endif
+
 namespace irs::term_dict {
 
 class FieldReader;
@@ -79,12 +86,14 @@ void ReadPostingDocs(const Field& field, const PostingMeta& meta,
 
 class TermReaderImpl final : public TermReader {
  public:
+  using TermReader::iterator;
   TermReaderImpl(FieldReader& owner, const FieldHead& head, bytes_view prefix,
                  IndexInput& in, const Separators& separators);
 
   SeekTermIterator::ptr iterator() const final;
   SeekTermIterator::ptr IteratorUntil(bytes_view upper) const final;
-  SeekTermIterator::ptr iterator(const RegexpAcceptor& a) const final;
+  SeekTermIterator::ptr iterator(const RegexpAcceptor& a,
+                                 bool use_fm_index) const final;
   SeekTermIterator::ptr iterator(const LevenshteinAcceptor& a) const final;
   SeekTermIterator::ptr iterator(const RegexpConjunction& a) const final;
   SeekTermIterator::ptr iterator(const FuzzyConjunction& a) const final;
@@ -170,6 +179,19 @@ class TermReaderImpl final : public TermReader {
   const byte_type* ResolveInline(uint64_t end, uint8_t size) const;
 
  private:
+#ifdef SDB_FM_INDEX
+  struct FmTerms {
+    explicit FmTerms(IResourceManager& rm) : memory{rm} {}
+    ~FmTerms() { memory.DecreaseChecked(bytes); }
+
+    std::once_flag once;
+    std::unique_ptr<FmIndex> index;
+    IResourceManager& memory;
+    size_t bytes{0};
+  };
+
+  std::unique_ptr<FmTerms> _fm;
+#endif
   bool Excludes(bytes_view term) const noexcept;
   uint64_t ReadRanges(FieldReader& owner, IndexInput& in,
                       const RangesHead& ranges);

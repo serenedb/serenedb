@@ -63,6 +63,9 @@ class FieldReader final {
   const PostingsReader& Postings() const noexcept { return _pr; }
   const IndexInput& Input() const noexcept { return *_in; }
   const byte_type* Base() const noexcept { return _base; }
+#ifdef SDB_FM_INDEX
+  IResourceManager& Memory() const noexcept { return *_rm; }
+#endif
   void Account(uint64_t bytes) {
     if (bytes != 0) {
       _rm->Increase(bytes);

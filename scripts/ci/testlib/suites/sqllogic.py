@@ -180,6 +180,8 @@ def _runner_args(ctx, args, rel, engine, server, env, part=None, label="serenedb
         argv += ["--ssl-port", str(server.ssl_port)]
     if env.get("PGSOCKETDIR"):
         argv += ["--label", "pgsocket"]
+    if ctx.build.dir and not ctx.build.fm_index:
+        argv += ["--label", "without-fm-index"]
     if CORPUS in rel:
         argv += ["--show-column-names", "false", "--flat-values", "true", "--hash-threshold", "8"]
     if part:

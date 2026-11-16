@@ -209,6 +209,9 @@ target_link_libraries(
     iresearch-tests
     PRIVATE iresearch-test-support iresearch-test-writer search-benchmark-common
 )
+if(SDB_FM_INDEX)
+    target_sources(iresearch-tests PRIVATE utils/fm_index_test.cpp)
+endif()
 sdb_link_duckdb_extensions(iresearch-tests)
 
 add_executable(iresearch-load-tests search/load_test.cpp)

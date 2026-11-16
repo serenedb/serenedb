@@ -2,6 +2,10 @@
 
 ## C/C++ Libraries
 
+### [GNU General Public License, Version 3 or later](https://www.gnu.org/licenses/gpl-3.0.html)
+
+* [SDSL](https://github.com/simongog/sdsl-lite) (optional experimental FM-index build)
+
 ### [Apache 2.0](http://www.apache.org/licenses/LICENSE-2.0)
 
 * [Abseil - C++ Common Libraries](https://abseil.io)

@@ -33,6 +33,18 @@
 
 namespace irs {
 
+#ifdef SDB_FM_INDEX
+struct FmIndexOptions final : Attribute, AttributeProvider {
+  explicit FmIndexOptions(bool value) noexcept : enabled{value} {}
+
+  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
+    return type == Type<FmIndexOptions>::id() ? this : nullptr;
+  }
+
+  bool enabled;
+};
+#endif
+
 class TermAcceptorSource {
  public:
   using ptr = std::shared_ptr<const TermAcceptorSource>;
@@ -41,7 +53,12 @@ class TermAcceptorSource {
 
   virtual bool ok() const noexcept = 0;
 
-  virtual SeekTermIterator::ptr Iterator(const TermReader& reader) const = 0;
+  SeekTermIterator::ptr Iterator(const TermReader& reader) const {
+    return Iterator(reader, nullptr);
+  }
+
+  virtual SeekTermIterator::ptr Iterator(
+    const TermReader& reader, const AttributeProvider* ctx) const = 0;
 
   virtual TermPredicate::ptr Predicate() const = 0;
 

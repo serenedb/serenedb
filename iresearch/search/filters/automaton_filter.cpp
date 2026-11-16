@@ -61,7 +61,7 @@ QueryBuilder::ptr AutomatonFilter::PrepareSegment(
     ctx.memory, segment, ctx.memory, ctx.boost * GetBoost(),
     ScoreMergeType::Sum);
   MultiTermVisitor mtv{ctx, query->State(), *reader};
-  auto terms = options().source->Iterator(*reader);
+  auto terms = options().source->Iterator(*reader, ctx.ctx);
   SDB_ASSERT(terms);
   if (terms->next()) {
     VisitTerms(*terms, mtv);

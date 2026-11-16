@@ -221,7 +221,8 @@ SeekTermIterator::ptr PieceTermReader::iterator() const {
   return memory::make_managed<PieceTermIterator<false>>(*this);
 }
 
-SeekTermIterator::ptr PieceTermReader::iterator(const RegexpAcceptor& a) const {
+SeekTermIterator::ptr PieceTermReader::iterator(const RegexpAcceptor& a,
+                                                bool) const {
   return Filtered(*this, a);
 }
 

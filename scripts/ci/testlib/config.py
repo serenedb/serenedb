@@ -57,6 +57,7 @@ class Build:
     duckdb_unittests: bool
     croaring_tests: bool
     build_type: str
+    fm_index: bool = False
 
     @classmethod
     def absent(cls, root):
@@ -78,6 +79,7 @@ class Build:
             duckdb_unittests=_on(cache.get("SDB_BUILD_DUCKDB_UNITTESTS", "OFF")),
             croaring_tests=_on(cache.get("ENABLE_ROARING_TESTS", "OFF")),
             build_type=cache.get("CMAKE_BUILD_TYPE", ""),
+            fm_index=_on(cache.get("SDB_FM_INDEX", "OFF")),
         )
 
     def config_name(self):

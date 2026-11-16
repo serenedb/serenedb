@@ -23,6 +23,24 @@ endif()
 
 add_library(iresearch STATIC parser/lucene_lexer.cpp parser/lucene_parser.cpp)
 
+if(SDB_FM_INDEX)
+    add_library(sdb_fm_index OBJECT utils/fm_index.cpp)
+    target_compile_definitions(
+        sdb_fm_index
+        PRIVATE SDB_FM_BACKEND_${SDB_FM_BACKEND}
+    )
+    target_include_directories(
+        sdb_fm_index
+        PRIVATE ${CMAKE_SOURCE_DIR} ${CMAKE_BINARY_DIR}
+    )
+    target_link_libraries(
+        sdb_fm_index
+        PRIVATE sdb_sdsl absl::strings duckdb_static
+    )
+    target_link_libraries(iresearch PUBLIC sdb_sdsl PRIVATE sdb_fm_index)
+    target_compile_definitions(iresearch PUBLIC SDB_FM_INDEX)
+endif()
+
 add_subdirectory(analysis)
 add_subdirectory(formats)
 add_subdirectory(index)

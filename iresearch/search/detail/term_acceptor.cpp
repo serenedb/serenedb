@@ -98,7 +98,8 @@ class LiteralSetSource final : public TermAcceptorSource {
 
   bool ok() const noexcept final { return true; }
 
-  SeekTermIterator::ptr Iterator(const TermReader& reader) const final {
+  SeekTermIterator::ptr Iterator(const TermReader& reader,
+                                 const AttributeProvider*) const final {
     if (_acceptor->Literals().empty()) {
       return SeekTermIterator::empty();
     }
@@ -127,11 +128,18 @@ class PatternSource final : public TermAcceptorSource {
 
   bool ok() const noexcept final { return _acceptor->ok(); }
 
-  SeekTermIterator::ptr Iterator(const TermReader& reader) const final {
+  SeekTermIterator::ptr Iterator(
+    const TermReader& reader,
+    [[maybe_unused]] const AttributeProvider* ctx) const final {
     if (!_acceptor->ok()) {
       return SeekTermIterator::empty();
     }
+#ifdef SDB_FM_INDEX
+    const auto* options = ctx ? irs::get<FmIndexOptions>(*ctx) : nullptr;
+    return reader.iterator(*_acceptor, options && options->enabled);
+#else
     return reader.iterator(*_acceptor);
+#endif
   }
 
   TermPredicate::ptr Predicate() const final {
@@ -156,7 +164,8 @@ class WalkSource final : public TermAcceptorSource {
 
   bool ok() const noexcept final { return true; }
 
-  SeekTermIterator::ptr Iterator(const TermReader& reader) const final {
+  SeekTermIterator::ptr Iterator(const TermReader& reader,
+                                 const AttributeProvider*) const final {
     return reader.iterator(*_acceptor);
   }
 
@@ -178,7 +187,8 @@ class FuzzySource final : public TermAcceptorSource {
 
   bool ok() const noexcept final { return true; }
 
-  SeekTermIterator::ptr Iterator(const TermReader& reader) const final {
+  SeekTermIterator::ptr Iterator(const TermReader& reader,
+                                 const AttributeProvider*) const final {
     absl::call_once(_once, [this] {
       if (_fuzzy->LowerBound().empty()) {
         _dfa = FuzzyConjunction::Make(_fuzzy);
@@ -240,9 +250,10 @@ class ConjunctionSource final : public TermAcceptorSource {
 
   bool ok() const noexcept final { return true; }
 
-  SeekTermIterator::ptr Iterator(const TermReader& reader) const final {
-    auto it =
-      _driver ? _driver->Iterator(reader) : reader.IteratorUntil(_bounds.upper);
+  SeekTermIterator::ptr Iterator(const TermReader& reader,
+                                 const AttributeProvider* ctx) const final {
+    auto it = _driver ? _driver->Iterator(reader, ctx)
+                      : reader.IteratorUntil(_bounds.upper);
     if (!_residual && _bounds.lower.empty() && _bounds.upper.empty()) {
       return it;
     }

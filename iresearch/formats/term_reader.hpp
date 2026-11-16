@@ -85,8 +85,12 @@ struct TermReader : public AttributeProvider {
   virtual void VisitRange(bytes_view from, bytes_view to,
                           RangeVisitor visit) const = 0;
 
-  virtual SeekTermIterator::ptr iterator(
-    const RegexpAcceptor& acceptor) const = 0;
+  SeekTermIterator::ptr iterator(const RegexpAcceptor& acceptor) const {
+    return iterator(acceptor, false);
+  }
+
+  virtual SeekTermIterator::ptr iterator(const RegexpAcceptor& acceptor,
+                                         bool use_fm_index) const = 0;
 
   virtual SeekTermIterator::ptr iterator(
     const LevenshteinAcceptor& acceptor) const = 0;

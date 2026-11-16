@@ -443,18 +443,6 @@ long Ftell(void* fd) {
 }
 
 #ifdef _WIN32
-bool file_sync(const path_char_t* file) noexcept {
-  HANDLE handle =
-    ::CreateFileW(file, GENERIC_WRITE, FILE_SHARE_WRITE | FILE_SHARE_READ, NULL,
-                  OPEN_EXISTING, 0, NULL);
-  if (INVALID_HANDLE_VALUE == handle) {
-    return false;
-  }
-  const bool res = ::FlushFileBuffers(handle) > 0;
-  ::CloseHandle(handle);
-  return res;
-}
-
 bool FileSync(int fd) noexcept {
   // Attempt to convert file descriptor into an operating system file handle
   HANDLE handle = reinterpret_cast<HANDLE>(_get_osfhandle(fd));
@@ -464,30 +452,10 @@ bool FileSync(int fd) noexcept {
     return false;
   }
 
-  return !FlushFileBuffers(handle);
+  return FlushFileBuffers(handle) != 0;
 }
 
 #else
-
-bool FileSync(const path_char_t* file) noexcept {
-  const int handle = ::open(file, O_WRONLY);
-  if (handle < 0) {
-    SDB_ERROR(IRESEARCH, "Unable to open file: '", file,
-              "', error: ", GET_ERROR());
-    return false;
-  }
-  const int fsync_r = ::fsync(handle);
-  if (fsync_r != 0) {
-    SDB_ERROR(IRESEARCH, "Unable to fsync file: '", file,
-              "', error: ", GET_ERROR());
-  }
-  const int close_r = ::close(handle);
-  if (close_r != 0) {
-    SDB_ERROR(IRESEARCH, "Unable to close file: '", file,
-              "', error: ", GET_ERROR());
-  }
-  return fsync_r == 0;
-}
 
 bool FileSync(int fd) noexcept {
   if (::fsync(fd) != 0) {

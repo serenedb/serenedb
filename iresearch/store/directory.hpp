@@ -97,11 +97,6 @@ struct Directory : private util::Noncopyable {
   // Returns true if file has been renamed
   virtual bool rename(std::string_view src, std::string_view dst) noexcept = 0;
 
-  // Ensures that all modification have been sucessfully persisted
-  // files - files to sync
-  // Returns call success
-  virtual bool sync(std::span<const std::string_view> files) noexcept = 0;
-
   // Applies the specified 'visitor' to every filename in a directory
   // visitor - visitor to be applied
   // Returns 'false' if visitor has returned 'false', 'true' otherwise

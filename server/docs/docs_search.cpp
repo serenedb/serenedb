@@ -263,8 +263,6 @@ class SpanDirectory final : public irs::Directory {
     return false;
   }
 
-  bool sync(std::span<const std::string_view>) noexcept final { return true; }
-
  private:
   const IndexFile* Find(std::string_view name) const noexcept {
     const auto it = absl::c_find_if(

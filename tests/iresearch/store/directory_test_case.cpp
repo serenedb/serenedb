@@ -4002,20 +4002,18 @@ TEST_P(DirectoryTestCase, smoke_store) {
     EXPECT_EQ(crc.checksum(), file->Checksum());
 
     file->Flush();
+    EXPECT_TRUE(dir.Finish(std::move(file), irs::IOAdvice::RANDOM)->Sync());
   }
 
   // Check files count
-  std::vector<std::string_view> files_to_sync;
   std::set<std::string> files;
   auto list_files = [&](std::string_view name) {
-    [[maybe_unused]] auto [it, inserted] = files.emplace(std::move(name));
-    files_to_sync.emplace_back(*it);
+    files.emplace(name);
     return true;
   };
   ASSERT_TRUE(dir.visit(list_files));
   ASSERT_EQ((std::set<std::string>{std::begin(kNames), std::end(kNames)}),
             files);
-  ASSERT_TRUE(dir.sync(files_to_sync));
 
   // Read contents
   it = std::end(kNames);
@@ -4279,11 +4277,7 @@ TEST_P(DirectoryTestCase, smoke_store) {
       out->WriteData(buf, sizeof buf);
       out->WriteData(buf, 691);
       out->Flush();
-    }
-
-    {
-      std::vector<std::string_view> to_sync{name};
-      ASSERT_TRUE(dir.sync(to_sync));
+      ASSERT_TRUE(dir.Finish(std::move(out), irs::IOAdvice::RANDOM)->Sync());
     }
 
     // read from file
@@ -4546,9 +4540,8 @@ TEST_P(DirectoryTestCase,
     const std::vector<irs::byte_type> data(kSize, 1);
     out->WriteData(data.data(), data.size());
     out->Flush();
+    ASSERT_TRUE(_dir->Finish(std::move(out), irs::IOAdvice::RANDOM)->Sync());
   }
-  const std::string_view files[]{"evicted"};
-  ASSERT_TRUE(_dir->sync(files));
   auto in = _dir->open("evicted", irs::IOAdvice::RANDOM);
   ASSERT_FALSE(!in);
   const auto* mapped = in->ReadStable(0, kSize);

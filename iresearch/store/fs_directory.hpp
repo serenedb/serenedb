@@ -61,8 +61,6 @@ class FSDirectory : public Directory {
 
   bool rename(std::string_view src, std::string_view dst) noexcept override;
 
-  bool sync(std::span<const std::string_view> files) noexcept override;
-
   bool visit(const visitor_f& visitor) const final;
 
  protected:
@@ -70,8 +68,6 @@ class FSDirectory : public Directory {
                                 IOAdvice advice) const;
 
  private:
-  bool sync(std::string_view name) noexcept;
-
   DirectoryAttributes _attrs;
   std::filesystem::path _dir;
   size_t _fd_pool_size;

@@ -65,8 +65,6 @@ class OverlayDirectory final : public Directory {
 
   bool rename(std::string_view src, std::string_view dst) noexcept final;
 
-  bool sync(std::span<const std::string_view>) noexcept final { return true; }
-
   bool visit(const visitor_f& visitor) const final;
 
  private:

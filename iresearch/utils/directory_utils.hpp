@@ -79,10 +79,6 @@ struct TrackingDirectory final : public Directory {
 
   bool rename(std::string_view src, std::string_view dst) noexcept final;
 
-  bool sync(std::span<const std::string_view> files) noexcept final {
-    return _impl.sync(files);
-  }
-
   bool visit(const visitor_f& visitor) const final {
     return _impl.visit(visitor);
   }
@@ -139,10 +135,6 @@ struct RefTrackingDirectory : public Directory {
   bool remove(std::string_view name) noexcept final;
 
   bool rename(std::string_view src, std::string_view dst) noexcept final;
-
-  bool sync(std::span<const std::string_view> names) noexcept final {
-    return _impl.sync(names);
-  }
 
   bool visit(const visitor_f& visitor) const final {
     return _impl.visit(visitor);

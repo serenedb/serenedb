@@ -326,21 +326,20 @@ duckdb::shared_ptr<RowGroupPartitions> BuildRowGroupPartitions(
   const auto rg_size = bind.relation.RowGroupSize();
   size_t row_groups = 0;
   for (size_t seg = 0; seg < reader.size(); ++seg) {
-    row_groups += (reader[seg].Meta().docs_count + rg_size - 1) / rg_size;
+    row_groups += SegmentRowGroups{reader[seg], rg_size}.Count();
   }
   parts.reserve(row_groups);
   for (uint32_t seg = 0; seg < reader.size(); ++seg) {
     const auto& segment = reader[seg];
-    const uint64_t docs = segment.Meta().docs_count;
+    const SegmentRowGroups groups{segment, rg_size};
     const auto* columns = segment.GetColReader();
-    for (uint64_t begin = 0; begin < docs; begin += rg_size) {
-      const auto end = std::min(docs, begin + rg_size);
+    for (uint32_t rg = 0; rg < groups.Count(); ++rg) {
+      const auto begin = groups.Begin(rg);
+      const auto end = groups.End(rg);
       const auto deleted = DeletedRows(segment, begin, end);
       if (deleted != end - begin) {
-        parts.emplace_back(
-          bind, segment, columns,
-          ScanRowGroup{seg, static_cast<uint32_t>(begin / rg_size)}, begin, end,
-          end - begin - deleted);
+        parts.emplace_back(bind, segment, columns, ScanRowGroup{seg, rg}, begin,
+                           end, end - begin - deleted);
       }
     }
   }

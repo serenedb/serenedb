@@ -191,6 +191,16 @@ ColReader::ColReader(const Directory& dir, std::string_view segment_name,
         });
       _ctx.SetBlockAllocSize(footer.ReadPropertyWithExplicitDefault<uint64_t>(
         kColFieldBlockSize, "block_size", DEFAULT_BLOCK_ALLOC_SIZE));
+      footer.ReadOptionalList(
+        kColFieldRowGroupStarts, "row_group_starts",
+        [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
+          const auto start = list.ReadElement<uint64_t>();
+          SDB_ENSURE(_row_group_starts.empty()
+                       ? start == 0
+                       : start > _row_group_starts.back(),
+                     ".col footer: row group starts are not increasing from 0");
+          _row_group_starts.push_back(start);
+        });
       footer.Unset<duckdb::DatabaseInstance>();
     });
 }

@@ -66,6 +66,13 @@ class ColWriter final {
     _deferred = deferred;
   }
 
+  void SetRowGroupStarts(std::vector<uint64_t> starts) noexcept {
+    SDB_ASSERT(_columns.empty());
+    _row_group_starts = std::move(starts);
+  }
+
+  uint64_t RowGroupRows(uint64_t row, uint64_t uniform) const noexcept;
+
   std::vector<StagedColumn> Snapshot(uint64_t rows) const;
   std::vector<NormColumnSpec> SealNorms(uint64_t rows);
   size_t StagedBytes() const noexcept;
@@ -132,6 +139,7 @@ class ColWriter final {
   irs::containers::FlatHashMap<field_id, NormColumnWriter*> _norm_by_id;
   std::vector<std::unique_ptr<AnnEntry>> _ann_writers;
   irs::containers::FlatHashMap<field_id, AnnEntry*> _ann_by_id;
+  std::vector<uint64_t> _row_group_starts;
   bool _committed = false;
   bool _deferred = false;
 };

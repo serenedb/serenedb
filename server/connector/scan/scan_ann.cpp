@@ -353,7 +353,7 @@ void VerifyMore(duckdb::ClientContext& ctx, ScanGlobalState& g,
     hits.assign(ranked.begin() + verified, ranked.begin() + verified + take);
     verified += take;
     SortByAddress(hits);
-    const auto units = FetchUnitsOf(hits, g.rg_size);
+    const auto units = FetchUnitsOf(g, hits);
     for (size_t u = 0; u < units.size(); ++u) {
       const auto& unit = units[u];
       const std::span<const irs::ScoreDoc> part{hits.data() + unit.first,

@@ -24,6 +24,7 @@
 #include <absl/strings/str_cat.h>
 
 #include <cstring>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/main/database.hpp>
@@ -302,6 +303,13 @@ bool ColWriter::Commit(uint64_t target_row) {
   return Commit(target_row, kNoCancel);
 }
 
+uint64_t ColWriter::RowGroupRows(uint64_t row,
+                                 uint64_t uniform) const noexcept {
+  const auto next = absl::c_upper_bound(_row_group_starts, row);
+  return next == _row_group_starts.end() ? uniform - row % uniform
+                                         : *next - row;
+}
+
 yaclib::Task<bool> ColWriter::ComputeAnn(const AnnBuildEnv* env) {
   return ComputeAnn(env, kNoCancel);
 }
@@ -335,6 +343,9 @@ bool ColWriter::Commit(uint64_t target_row,
     }
     cw->SealRowGroup();
   }
+  auto row_groups =
+    _row_group_starts.empty() ? size_t{0} : _row_group_starts.size() - 1;
+  SDB_IF_FAILURE("irs::ColWriterOmitsRowGroupStarts") { row_groups = 0; }
   format_utils::WriteFooter(*_out, [&](duckdb::BinarySerializer& footer) {
     footer.WriteOptionalList(
       kColFieldColumns, "columns", _columns.size(),
@@ -353,6 +364,11 @@ bool ColWriter::Commit(uint64_t target_row,
     footer.WritePropertyWithDefault<uint64_t>(kColFieldBlockSize, "block_size",
                                               _write_ctx->GetBlockAllocSize(),
                                               DEFAULT_BLOCK_ALLOC_SIZE);
+    footer.WriteOptionalList(
+      kColFieldRowGroupStarts, "row_group_starts", row_groups,
+      [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+        list.WriteElement(_row_group_starts[i]);
+      });
   });
   _out.reset();
   _committed = true;

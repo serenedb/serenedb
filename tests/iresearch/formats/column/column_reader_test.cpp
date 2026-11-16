@@ -507,7 +507,8 @@ TEST_F(ColumnReaderTest, CopiedRowsReadBackLikeTheirSource) {
     {.first = 0, .count = kRgSize},
     {.first = kRgSize + 100, .count = kRgSize - 100},
     {.first = 2 * kRgSize, .count = kRows - 2 * kRgSize},
-    {.first = 50, .count = 10},
+    {.first = 50, .count = kRgSize - (kRows - 2 * kRgSize - 100)},
+    {.first = 2 * kRgSize, .count = kRows - 2 * kRgSize},
   };
   std::vector<uint64_t> rows;
   for (const auto& run : runs) {
@@ -554,10 +555,13 @@ TEST_F(ColumnReaderTest, CopiedRowsReadBackLikeTheirSource) {
   const auto source = src.Column(1)->DataBlocks();
   const auto copied = dst.Column(1)->DataBlocks();
   ASSERT_EQ(4, copied.size());
-  for (const size_t block : {0, 2}) {
-    EXPECT_EQ(source[block].tuple_count, copied[block].tuple_count);
-    EXPECT_EQ(source[block].byte_size, copied[block].byte_size);
-    EXPECT_EQ(source[block].codec, copied[block].codec);
+  for (size_t block = 0; block != 3; ++block) {
+    EXPECT_EQ(kRgSize, copied[block].tuple_count);
+  }
+  for (const auto [from, to] : {std::pair{0, 0}, std::pair{2, 3}}) {
+    EXPECT_EQ(source[from].tuple_count, copied[to].tuple_count);
+    EXPECT_EQ(source[from].byte_size, copied[to].byte_size);
+    EXPECT_EQ(source[from].codec, copied[to].codec);
   }
 }
 

@@ -386,15 +386,17 @@ void SortByAddress(std::span<irs::ScoreDoc> hits) {
 }
 
 std::vector<ScanGlobalState::TopKState::FetchUnit> FetchUnitsOf(
-  std::span<const irs::ScoreDoc> hits, uint64_t rg_size) {
+  const ScanGlobalState& g, std::span<const irs::ScoreDoc> hits) {
   std::vector<ScanGlobalState::TopKState::FetchUnit> units;
   for (uint32_t i = 0; i < hits.size();) {
     const auto seg = hits[i].segment_idx;
-    const auto rg = (hits[i].doc - irs::doc_limits::min()) / rg_size;
+    const SegmentRowGroups groups{(*g.reader)[seg], g.rg_size};
+    const auto end =
+      groups.End(groups.Of(hits[i].doc - irs::doc_limits::min()));
     uint32_t j = i + 1;
     while (j < hits.size() && j - i < STANDARD_VECTOR_SIZE &&
            hits[j].segment_idx == seg &&
-           (hits[j].doc - irs::doc_limits::min()) / rg_size == rg) {
+           hits[j].doc - irs::doc_limits::min() < end) {
       ++j;
     }
     units.push_back({.seg = seg, .first = i, .count = j - i});
@@ -406,7 +408,7 @@ std::vector<ScanGlobalState::TopKState::FetchUnit> FetchUnitsOf(
 void PlanFetch(ScanGlobalState& g) {
   auto& t = g.topk;
   SortByAddress(t.answer);
-  t.fetch_units = FetchUnitsOf(t.answer, g.rg_size);
+  t.fetch_units = FetchUnitsOf(g, t.answer);
   t.fetched.resize(t.fetch_units.size());
   t.fetched_pk.resize(t.fetch_units.size());
 }

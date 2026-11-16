@@ -234,7 +234,7 @@ QUERY PLAN
 ╰─────────────────┬────────────────╯
 ╭─ TOP_N ─────────┴────────────────╮
 │ Top: 3                           │
-│ Offset: 1452                     │
+│ Offset: 500                      │
 │ Order By: k ASC                  │
 │ ~3 rows                          │
 ╰─────────────────┬────────────────╯
@@ -326,7 +326,7 @@ EXPLAIN SELECT k FROM op ORDER BY k LIMIT 3 OFFSET 3500
 QUERY PLAN
 ╭─ TOP_N ──────────────────────────╮
 │ Top: 3                           │
-│ Offset: 3500                     │
+│ Offset: 500                      │
 │ Order By: k ASC                  │
 │ ~3 rows                          │
 ╰─────────────────┬────────────────╯

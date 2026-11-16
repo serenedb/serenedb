@@ -42,10 +42,19 @@
 
 namespace sdb::connector {
 
+SegmentRowGroups::SegmentRowGroups(const irs::SubReader& segment,
+                                   uint64_t row_group_size)
+  : row_group_size{row_group_size}, docs{segment.Meta().docs_count} {
+  if (const auto* columns = segment.GetColReader()) {
+    starts = columns->RowGroupStarts();
+  }
+}
+
 UnitRows ScanGlobalState::RowsOf(const ScanUnit& unit) const noexcept {
-  const uint64_t docs = (*reader)[unit.seg].Meta().docs_count;
-  return {.begin = std::min(docs, uint64_t{unit.rg_begin} * rg_size),
-          .end = std::min(docs, uint64_t{unit.rg_end} * rg_size)};
+  const auto& groups = segments[unit.seg].groups;
+  return {.begin = groups.Begin(unit.rg_begin),
+          .end = unit.rg_end < groups.Count() ? groups.Begin(unit.rg_end)
+                                              : groups.docs};
 }
 
 irs::DocRange ScanGlobalState::RangeOf(const ScanUnit& unit) const noexcept {
@@ -220,7 +229,6 @@ std::unique_ptr<OrderedUnits> BuildSegmentOrderedUnits(
     return built;
   }
   const auto* column = OrderColumn(g, seg);
-  const uint64_t docs = (*g.reader)[seg].Meta().docs_count;
   std::vector<ScanOrderKey> rgs;
   rgs.reserve(work.LiveCount());
   irs::BlockWindow w;
@@ -230,13 +238,11 @@ std::unique_ptr<OrderedUnits> BuildSegmentOrderedUnits(
       ++skipped;
       continue;
     }
-    const auto begin = uint64_t{rg} * g.rg_size;
-    rgs.push_back(
-      {.key = column
-                ? RowGroupKey(g, *column, begin,
-                              std::min<uint64_t>(docs, begin + g.rg_size), w)
-                : segment_key,
-       .id = rg});
+    rgs.push_back({.key = column
+                            ? RowGroupKey(g, *column, work.groups.Begin(rg),
+                                          work.groups.End(rg), w)
+                            : segment_key,
+                   .id = rg});
   }
   absl::c_sort(rgs);
   built->units.reserve(rgs.size());
@@ -649,9 +655,8 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
     const auto seg = g.segment_order[i];
     auto& work = g.Segment(seg);
     const auto& sub = (*g.reader)[seg];
-    const uint64_t docs = sub.Meta().docs_count;
-    work.rg_count = static_cast<uint32_t>(
-      std::max<uint64_t>(1, (docs + g.rg_size - 1) / g.rg_size));
+    work.groups = SegmentRowGroups{sub, g.rg_size};
+    work.rg_count = work.groups.Count();
     const bool split =
       g.splittable && work.rg_count > 1 &&
       !(constant_count && sub.live_docs_count() == sub.docs_count());
@@ -827,13 +832,13 @@ bool TrimDeadRowGroups(ScanGlobalState& g, ScanLocalState& l) {
   if (l.rg_checks.empty()) {
     return true;
   }
-  const uint64_t docs = (*g.reader)[unit.seg].Meta().docs_count;
+  const auto& groups = g.Segment(unit.seg).groups;
   auto first = unit.rg_end;
   auto last = unit.rg_begin;
   uint32_t live = 0;
   for (auto rg = unit.rg_begin; rg != unit.rg_end; ++rg) {
-    const auto begin = uint64_t{rg} * g.rg_size;
-    const auto end = std::min(docs, begin + g.rg_size);
+    const auto begin = groups.Begin(rg);
+    const auto end = groups.End(rg);
     bool dead = false;
     for (auto& check : l.rg_checks) {
       if (RowGroupDead(check, begin, end)) {

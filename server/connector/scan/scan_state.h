@@ -56,6 +56,7 @@
 #include "connector/offsets_collector.hpp"
 #include "connector/scan/col_filter_verify.h"
 #include "connector/scan/scan_bind.h"
+#include "connector/scan/scan_function.h"
 #include "connector/scan/scan_plan.h"
 
 namespace irs {
@@ -140,6 +141,7 @@ struct ABSL_CACHELINE_ALIGNED SegmentWork {
   static constexpr uint8_t kReady = 2;
   static constexpr uint8_t kAwaited = 3;
 
+  SegmentRowGroups groups;
   uint32_t rg_count = 0;
   uint32_t run_end = 0;
   uint32_t base = 0;
@@ -587,7 +589,7 @@ struct FetchedHits {
 
 void SortByAddress(std::span<irs::ScoreDoc> hits);
 std::vector<ScanGlobalState::TopKState::FetchUnit> FetchUnitsOf(
-  std::span<const irs::ScoreDoc> hits, uint64_t rg_size);
+  const ScanGlobalState& g, std::span<const irs::ScoreDoc> hits);
 void PlanFetch(ScanGlobalState& g);
 FetchedHits FetchHits(duckdb::ClientContext& ctx, ScanGlobalState& g,
                       FetchLocalState& l, duckdb::DataChunk& tmp, uint32_t seg,

@@ -572,7 +572,7 @@ inline constexpr DecompressionFunction kStringDecompression = [] consteval {
 }();
 
 template<typename Scan>
-consteval Codec StringFunction() {
+consteval Codec StringCodec() {
   return {
     .type = CodecOf(Scan::kShape, Scan::kCodec),
     .compression = &kStringsFunction,

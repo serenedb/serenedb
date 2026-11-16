@@ -37,22 +37,10 @@ using duckdb::PhysicalType;
 
 const Codec* TextCodecOf(CodecType type) {
   static constexpr const Codec* kText[] = {
-    nullptr,
-    &kLz4Function,
-    &kZstdFunction,
-    &kFsstFunction,
-    &kZxcFunction,
-    &kFsstPlusFunction,
-    &kOnPairFunction,
-    &kFsst12Function,
-    nullptr,
-    &kDictLz4Function,
-    &kDictZstdFunction,
-    &kDictFsstFunction,
-    &kDictZxcFunction,
-    &kDictFsstPlusFunction,
-    &kDictOnPairFunction,
-    &kDictFsst12Function,
+    nullptr,        &kLz4Codec,          &kZstdCodec,       &kFsstCodec,
+    &kZxcCodec,     &kFsstPlusCodec,     &kOnPairCodec,     &kFsst12Codec,
+    nullptr,        &kDictLz4Codec,      &kDictZstdCodec,   &kDictFsstCodec,
+    &kDictZxcCodec, &kDictFsstPlusCodec, &kDictOnPairCodec, &kDictFsst12Codec,
   };
   static_assert(std::size(kText) == kTextShapeForms);
   const auto index = FormIndex(type);
@@ -63,10 +51,6 @@ const Codec* TextCodecOf(CodecType type) {
   return kText[index];
 }
 
-const Codec* EmptyCodec(PhysicalType physical) {
-  return physical == PhysicalType::BIT ? &EmptyValidityFunction() : nullptr;
-}
-
 }  // namespace
 
 const Codec* GetCodec(CodecType type, PhysicalType physical) {
@@ -74,19 +58,19 @@ const Codec* GetCodec(CodecType type, PhysicalType physical) {
     case CodecType::Auto:
       return AutoCodec(physical);
     case CodecType::Uncompressed:
-      return UncompressedFunction(physical);
+      return UncompressedCodec(physical);
     case CodecType::Rle:
-      return RleFunction(physical);
+      return RleCodec(physical);
     case CodecType::Bitpacking:
-      return BitpackingFunction(physical);
+      return BitpackingCodec(physical);
     case CodecType::Alp:
-      return AlpFunction(physical);
+      return AlpCodec(physical);
     case CodecType::Alprd:
-      return AlpRdFunction(physical);
+      return AlpRdCodec(physical);
     case CodecType::Roaring:
-      return RoaringFunction(physical);
+      return RoaringCodec(physical);
     case CodecType::Constant:
-      return ConstantFunction(physical);
+      return ConstantCodec(physical);
     case CodecType::Empty:
       return EmptyCodec(physical);
     default:

@@ -46,13 +46,15 @@ constexpr DecompressionFunction kDecompression{
   .fetch_rows = FetchRows,
 };
 
-constexpr Codec kFunction{
+constexpr Codec kCodec{
   .type = CodecType::Empty,
   .decompression = &kDecompression,
 };
 
 }  // namespace
 
-const Codec& EmptyValidityFunction() { return kFunction; }
+const Codec* EmptyCodec(duckdb::PhysicalType physical) {
+  return physical == duckdb::PhysicalType::BIT ? &kCodec : nullptr;
+}
 
 }  // namespace irs::codecs

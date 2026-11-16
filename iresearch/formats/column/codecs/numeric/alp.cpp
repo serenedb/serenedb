@@ -1362,8 +1362,8 @@ constexpr DecompressionFunction kDecompression{
   .skip = AlpSkip<T>,
 };
 
-template<typename T, duckdb::PhysicalType kPhysical>
-constexpr Codec kFunction{
+template<typename T>
+constexpr Codec kCodec{
   .type = CodecType::Alp,
   .compression = &kStreamed<CodecType::Alp, AlpAnalyzeChunks<T>,
                             AlpCompressChunks<T>, HasRows>,
@@ -1372,12 +1372,12 @@ constexpr Codec kFunction{
 
 }  // namespace
 
-const Codec* AlpFunction(duckdb::PhysicalType physical) {
+const Codec* AlpCodec(duckdb::PhysicalType physical) {
   switch (physical) {
     case duckdb::PhysicalType::FLOAT:
-      return &kFunction<float, duckdb::PhysicalType::FLOAT>;
+      return &kCodec<float>;
     case duckdb::PhysicalType::DOUBLE:
-      return &kFunction<double, duckdb::PhysicalType::DOUBLE>;
+      return &kCodec<double>;
     default:
       return nullptr;
   }

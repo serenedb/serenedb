@@ -31,31 +31,31 @@
 
 namespace irs::codecs {
 
-extern const Codec kDictLz4Function;
-extern const Codec kLz4Function;
-extern const Codec kDictZstdFunction;
-extern const Codec kZstdFunction;
-extern const Codec kDictZxcFunction;
-extern const Codec kZxcFunction;
-extern const Codec kDictFsstFunction;
-extern const Codec kFsstFunction;
-extern const Codec kDictFsstPlusFunction;
-extern const Codec kFsstPlusFunction;
-extern const Codec kDictOnPairFunction;
-extern const Codec kOnPairFunction;
-extern const Codec kDictFsst12Function;
-extern const Codec kFsst12Function;
+extern const Codec kDictLz4Codec;
+extern const Codec kLz4Codec;
+extern const Codec kDictZstdCodec;
+extern const Codec kZstdCodec;
+extern const Codec kDictZxcCodec;
+extern const Codec kZxcCodec;
+extern const Codec kDictFsstCodec;
+extern const Codec kFsstCodec;
+extern const Codec kDictFsstPlusCodec;
+extern const Codec kFsstPlusCodec;
+extern const Codec kDictOnPairCodec;
+extern const Codec kOnPairCodec;
+extern const Codec kDictFsst12Codec;
+extern const Codec kFsst12Codec;
 const Codec* NumericCodecOf(Shape shape, ByteCodec leaf,
                             duckdb::PhysicalType physical);
-const Codec* ConstantFunction(duckdb::PhysicalType physical);
+const Codec* ConstantCodec(duckdb::PhysicalType physical);
 bool CompressConstant(ColumnDataCheckpointData& data);
-const Codec& EmptyValidityFunction();
-const Codec* UncompressedFunction(duckdb::PhysicalType physical);
-const Codec* RleFunction(duckdb::PhysicalType physical);
-const Codec* BitpackingFunction(duckdb::PhysicalType physical);
-const Codec* AlpFunction(duckdb::PhysicalType physical);
-const Codec* AlpRdFunction(duckdb::PhysicalType physical);
-const Codec* RoaringFunction(duckdb::PhysicalType physical);
+const Codec* EmptyCodec(duckdb::PhysicalType physical);
+const Codec* UncompressedCodec(duckdb::PhysicalType physical);
+const Codec* RleCodec(duckdb::PhysicalType physical);
+const Codec* BitpackingCodec(duckdb::PhysicalType physical);
+const Codec* AlpCodec(duckdb::PhysicalType physical);
+const Codec* AlpRdCodec(duckdb::PhysicalType physical);
+const Codec* RoaringCodec(duckdb::PhysicalType physical);
 const Codec* AutoCodec(duckdb::PhysicalType physical);
 
 const Codec* GetCodec(CodecType type, duckdb::PhysicalType physical);

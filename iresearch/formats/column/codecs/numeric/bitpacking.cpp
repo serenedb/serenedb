@@ -1294,8 +1294,8 @@ constexpr DecompressionFunction kDecompression{
   .get_segment_info = SegmentInfo<T>,
 };
 
-template<typename T, duckdb::PhysicalType kPhysical, bool kStats, bool kFilter>
-constexpr Codec kFunction{
+template<typename T, bool kStats = true, bool kFilter = true>
+constexpr Codec kCodec{
   .type = CodecType::Bitpacking,
   .compression = &kStreamed<CodecType::Bitpacking, AnalyzeChunks<T>,
                             CompressChunks<T, kStats>, Accepts<T>>,
@@ -1304,33 +1304,33 @@ constexpr Codec kFunction{
 
 }  // namespace
 
-const Codec* BitpackingFunction(duckdb::PhysicalType physical) {
+const Codec* BitpackingCodec(duckdb::PhysicalType physical) {
   using enum duckdb::PhysicalType;
   switch (physical) {
     case BOOL:
-      return &kFunction<int8_t, BOOL, true, false>;
+      return &kCodec<int8_t, true, false>;
     case INT8:
-      return &kFunction<int8_t, INT8, true, true>;
+      return &kCodec<int8_t>;
     case INT16:
-      return &kFunction<int16_t, INT16, true, true>;
+      return &kCodec<int16_t>;
     case INT32:
-      return &kFunction<int32_t, INT32, true, true>;
+      return &kCodec<int32_t>;
     case INT64:
-      return &kFunction<int64_t, INT64, true, true>;
+      return &kCodec<int64_t>;
     case UINT8:
-      return &kFunction<uint8_t, UINT8, true, true>;
+      return &kCodec<uint8_t>;
     case UINT16:
-      return &kFunction<uint16_t, UINT16, true, true>;
+      return &kCodec<uint16_t>;
     case UINT32:
-      return &kFunction<uint32_t, UINT32, true, true>;
+      return &kCodec<uint32_t>;
     case UINT64:
-      return &kFunction<uint64_t, UINT64, true, true>;
+      return &kCodec<uint64_t>;
     case INT128:
-      return &kFunction<duckdb::hugeint_t, INT128, true, true>;
+      return &kCodec<duckdb::hugeint_t>;
     case UINT128:
-      return &kFunction<duckdb::uhugeint_t, UINT128, true, true>;
+      return &kCodec<duckdb::uhugeint_t>;
     case LIST:
-      return &kFunction<uint64_t, LIST, false, false>;
+      return &kCodec<uint64_t, false, false>;
     default:
       return nullptr;
   }

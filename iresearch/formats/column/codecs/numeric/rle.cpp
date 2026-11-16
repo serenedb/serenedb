@@ -1166,58 +1166,57 @@ void FetchRows(const ColumnSegment& segment, ColumnFetchState& state,
   }
 }
 
-template<typename T, duckdb::PhysicalType kPhysical>
+template<typename T, bool kFilter>
 constexpr DecompressionFunction kDecompression{
   .init_scan = InitScan<T>,
   .scan = Scan<T>,
   .select = Select<T>,
-  .filter = kPhysical == duckdb::PhysicalType::BOOL ? nullptr : Filter<T>,
+  .filter = kFilter ? Filter<T> : nullptr,
   .fetch_rows = FetchRows<T>,
   .skip = Skip<T>,
 };
 
-template<typename T, duckdb::PhysicalType kPhysical,
-         bool kWriteStatistics = true>
-constexpr Codec kFunction{
+template<typename T, bool kStats = true, bool kFilter = true>
+constexpr Codec kCodec{
   .type = CodecType::Rle,
   .compression = &kStreamed<CodecType::Rle, AnalyzeChunks<T>,
-                            CompressChunks<T, kWriteStatistics>, HasRuns<T>>,
-  .decompression = &kDecompression<T, kPhysical>,
+                            CompressChunks<T, kStats>, HasRuns<T>>,
+  .decompression = &kDecompression<T, kFilter>,
 };
 
 }  // namespace
 
-const Codec* RleFunction(duckdb::PhysicalType physical) {
+const Codec* RleCodec(duckdb::PhysicalType physical) {
   using enum duckdb::PhysicalType;
   switch (physical) {
     case BOOL:
-      return &kFunction<int8_t, BOOL>;
+      return &kCodec<int8_t, true, false>;
     case INT8:
-      return &kFunction<int8_t, INT8>;
+      return &kCodec<int8_t>;
     case INT16:
-      return &kFunction<int16_t, INT16>;
+      return &kCodec<int16_t>;
     case INT32:
-      return &kFunction<int32_t, INT32>;
+      return &kCodec<int32_t>;
     case INT64:
-      return &kFunction<int64_t, INT64>;
+      return &kCodec<int64_t>;
     case INT128:
-      return &kFunction<duckdb::hugeint_t, INT128>;
+      return &kCodec<duckdb::hugeint_t>;
     case UINT128:
-      return &kFunction<duckdb::uhugeint_t, UINT128>;
+      return &kCodec<duckdb::uhugeint_t>;
     case UINT8:
-      return &kFunction<uint8_t, UINT8>;
+      return &kCodec<uint8_t>;
     case UINT16:
-      return &kFunction<uint16_t, UINT16>;
+      return &kCodec<uint16_t>;
     case UINT32:
-      return &kFunction<uint32_t, UINT32>;
+      return &kCodec<uint32_t>;
     case UINT64:
-      return &kFunction<uint64_t, UINT64>;
+      return &kCodec<uint64_t>;
     case FLOAT:
-      return &kFunction<float, FLOAT>;
+      return &kCodec<float>;
     case DOUBLE:
-      return &kFunction<double, DOUBLE>;
+      return &kCodec<double>;
     case LIST:
-      return &kFunction<uint64_t, LIST, false>;
+      return &kCodec<uint64_t, false>;
     default:
       return nullptr;
   }

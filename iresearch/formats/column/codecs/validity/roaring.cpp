@@ -1825,7 +1825,7 @@ constexpr Codec kBoolean{
 
 }  // namespace
 
-const Codec* RoaringFunction(duckdb::PhysicalType physical) {
+const Codec* RoaringCodec(duckdb::PhysicalType physical) {
   using enum duckdb::PhysicalType;
   switch (physical) {
     case BIT:

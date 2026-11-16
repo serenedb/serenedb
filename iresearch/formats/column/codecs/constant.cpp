@@ -149,7 +149,7 @@ constexpr DecompressionFunction kDecompression{
 };
 
 template<typename T>
-constexpr Codec kFunction{
+constexpr Codec kCodec{
   .type = CodecType::Constant,
   .decompression = &kDecompression<T>,
 };
@@ -191,36 +191,36 @@ bool CompressConstant(ColumnDataCheckpointData& data) {
   return true;
 }
 
-const Codec* ConstantFunction(duckdb::PhysicalType physical) {
+const Codec* ConstantCodec(duckdb::PhysicalType physical) {
   using enum duckdb::PhysicalType;
   switch (physical) {
     case BIT:
       return &kValidity;
     case BOOL:
     case INT8:
-      return &kFunction<int8_t>;
+      return &kCodec<int8_t>;
     case INT16:
-      return &kFunction<int16_t>;
+      return &kCodec<int16_t>;
     case INT32:
-      return &kFunction<int32_t>;
+      return &kCodec<int32_t>;
     case INT64:
-      return &kFunction<int64_t>;
+      return &kCodec<int64_t>;
     case UINT8:
-      return &kFunction<uint8_t>;
+      return &kCodec<uint8_t>;
     case UINT16:
-      return &kFunction<uint16_t>;
+      return &kCodec<uint16_t>;
     case UINT32:
-      return &kFunction<uint32_t>;
+      return &kCodec<uint32_t>;
     case UINT64:
-      return &kFunction<uint64_t>;
+      return &kCodec<uint64_t>;
     case INT128:
-      return &kFunction<duckdb::hugeint_t>;
+      return &kCodec<duckdb::hugeint_t>;
     case UINT128:
-      return &kFunction<duckdb::uhugeint_t>;
+      return &kCodec<duckdb::uhugeint_t>;
     case FLOAT:
-      return &kFunction<float>;
+      return &kCodec<float>;
     case DOUBLE:
-      return &kFunction<double>;
+      return &kCodec<double>;
     default:
       return nullptr;
   }

@@ -106,10 +106,8 @@ const_data_ptr_t ScanBase(ColumnScanState& state) {
   return state.scan_state->Cast<PinnedScan>().handle.Ptr();
 }
 
-template<typename T, bool kList>
+template<typename T, bool kStats>
 struct FixedSizeAppender {
-  using Stored = std::conditional_t<kList, uint64_t, T>;
-
   struct SegmentStats {
     void SetHasNull() { stats.SetHasNullFast(); }
     void SetHasValid() { stats.SetHasNoNullFast(); }
@@ -152,11 +150,11 @@ struct FixedSizeAppender {
   static idx_t Append(ColumnDataCheckpointData&, CompressedSegment& segment,
                       const duckdb::UnifiedVectorFormat& data, idx_t offset,
                       idx_t count) {
-    constexpr idx_t kMaxRows = kBlockSize / sizeof(Stored);
+    constexpr idx_t kMaxRows = kBlockSize / sizeof(T);
     const auto copy = std::min<idx_t>(count, kMaxRows - segment.count);
-    const auto* source = duckdb::UnifiedVectorFormat::GetData<Stored>(data);
-    auto* target = reinterpret_cast<Stored*>(segment.Data()) + segment.count;
-    if constexpr (kList) {
+    const auto* source = duckdb::UnifiedVectorFormat::GetData<T>(data);
+    auto* target = reinterpret_cast<T*>(segment.Data()) + segment.count;
+    if constexpr (!kStats) {
       for (idx_t i = 0; i < copy; ++i) {
         target[i] = source[data.sel->get_index(offset + i)];
       }
@@ -173,7 +171,7 @@ struct FixedSizeAppender {
   }
 
   static uint64_t Finish(CompressedSegment& segment) {
-    return segment.count * sizeof(Stored);
+    return segment.count * sizeof(T);
   }
 };
 
@@ -231,15 +229,12 @@ constexpr DecompressionFunction kFixedSizeDecompression{
   .fetch_rows = FixedSizeFetchRows<T>,
 };
 
-template<typename T, bool kList, duckdb::PhysicalType kPhysical>
+template<typename T, bool kStats = true>
 constexpr Codec kFixedSize{
   .type = CodecType::Uncompressed,
-  .compression =
-    &kStreamed<CodecType::Uncompressed,
-               FixedSizeAnalyze<std::conditional_t<kList, uint64_t, T>>,
-               CompressChunks<FixedSizeAppender<T, kList>>>,
-  .decompression =
-    &kFixedSizeDecompression<std::conditional_t<kList, uint64_t, T>>,
+  .compression = &kStreamed<CodecType::Uncompressed, FixedSizeAnalyze<T>,
+                            CompressChunks<FixedSizeAppender<T, kStats>>>,
+  .decompression = &kFixedSizeDecompression<T>,
 };
 
 constexpr idx_t kBitsPerEntry = duckdb::ValidityMask::BITS_PER_VALUE;
@@ -673,39 +668,38 @@ constexpr Codec kString{
 
 }  // namespace
 
-const Codec* UncompressedFunction(duckdb::PhysicalType physical) {
+const Codec* UncompressedCodec(duckdb::PhysicalType physical) {
   using enum duckdb::PhysicalType;
   switch (physical) {
     case BOOL:
-      return &kFixedSize<int8_t, false, BOOL>;
     case INT8:
-      return &kFixedSize<int8_t, false, INT8>;
+      return &kFixedSize<int8_t>;
     case INT16:
-      return &kFixedSize<int16_t, false, INT16>;
+      return &kFixedSize<int16_t>;
     case INT32:
-      return &kFixedSize<int32_t, false, INT32>;
+      return &kFixedSize<int32_t>;
     case INT64:
-      return &kFixedSize<int64_t, false, INT64>;
+      return &kFixedSize<int64_t>;
     case UINT8:
-      return &kFixedSize<uint8_t, false, UINT8>;
+      return &kFixedSize<uint8_t>;
     case UINT16:
-      return &kFixedSize<uint16_t, false, UINT16>;
+      return &kFixedSize<uint16_t>;
     case UINT32:
-      return &kFixedSize<uint32_t, false, UINT32>;
+      return &kFixedSize<uint32_t>;
     case UINT64:
-      return &kFixedSize<uint64_t, false, UINT64>;
+      return &kFixedSize<uint64_t>;
     case INT128:
-      return &kFixedSize<duckdb::hugeint_t, false, INT128>;
+      return &kFixedSize<duckdb::hugeint_t>;
     case UINT128:
-      return &kFixedSize<duckdb::uhugeint_t, false, UINT128>;
+      return &kFixedSize<duckdb::uhugeint_t>;
     case FLOAT:
-      return &kFixedSize<float, false, FLOAT>;
+      return &kFixedSize<float>;
     case DOUBLE:
-      return &kFixedSize<double, false, DOUBLE>;
+      return &kFixedSize<double>;
     case INTERVAL:
-      return &kFixedSize<duckdb::interval_t, false, INTERVAL>;
+      return &kFixedSize<duckdb::interval_t>;
     case LIST:
-      return &kFixedSize<uint64_t, true, LIST>;
+      return &kFixedSize<uint64_t, false>;
     case BIT:
       return &kValidity;
     case VARCHAR:

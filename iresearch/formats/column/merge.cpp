@@ -105,24 +105,17 @@ RowGroupPlan PlanRowGroups(std::span<const MergeSource> sources,
     if (source.col_reader && !HasRemovals(source.reader->Meta()) &&
         rows >= row_group_size) {
       auto starts = SourceRowGroupStarts(source, row_group_size);
-      bool fits = true;
-      for (size_t i = 0; fits && i != starts.size(); ++i) {
-        const auto end = i + 1 != starts.size() ? starts[i + 1] : rows;
-        fits = end - starts[i] <= row_group_size;
-      }
-      if (fits) {
-        if (open != 0) {
-          plan.starts.push_back(pos);
-          open = 0;
-        }
-        for (size_t i = 1; i != starts.size(); ++i) {
-          plan.starts.push_back(pos + starts[i]);
-        }
-        pos += rows;
+      if (open != 0) {
         plan.starts.push_back(pos);
-        plan.kept[si] = std::move(starts);
-        continue;
+        open = 0;
       }
+      for (size_t i = 1; i != starts.size(); ++i) {
+        plan.starts.push_back(pos + starts[i]);
+      }
+      pos += rows;
+      plan.starts.push_back(pos);
+      plan.kept[si] = std::move(starts);
+      continue;
     }
     for (uint64_t left = rows; left != 0;) {
       const auto take = std::min(left, row_group_size - open);

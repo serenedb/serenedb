@@ -256,8 +256,6 @@ quack_default_heartbeat_timeout	60	Heartbeat lease timeout in seconds requested 
 quack_default_statement_timeout	3600000	Milliseconds a statement without statement_timeout may wait for a SereneDB Quack server before it fails, so a server that is gone cannot hold it (0 = no limit)
 quack_enable_reconnects	off	Enable reconnect support (clients acknowledge results, the server caches the last result until acknowledged)
 quack_fetch_read_ahead	0	FETCH requests kept in flight ahead of the scan (0 = number of async threads)
-quack_max_heartbeat_timeout	600	Most seconds a server keeps a session without a request from its client; a client asking for longer gets this
-quack_max_sessions	0	Most sessions a server keeps open at once (0 = unlimited)
 quack_prepare_inline_rows	24576	Rows returned inline in the PREPARE response before the remainder is left to FETCH; drains whole batches, so it may overshoot to a batch boundary
 quack_rebalance_buffer_bytes	0	Pending (unstamped) bytes the batch rebalancer buffers before gating non-minimum producers (0 = automatic, memory-manager governed)
 quack_result_ttl	3600	Seconds an idle cached result is kept before it is dropped (0 = never)
@@ -319,6 +317,8 @@ sdb_job_max_depth	16	Maximum number of job runs in one chain of EXECUTE JOB call
 sdb_levenshtein_max_terms	50	The maximum number of dictionary terms a fuzzy predicate (`ts_levenshtein`) expands to per index segment. Terms closest to the query survive; the rest neither match nor contribute to scoring. Higher values improve recall on wide expansions at the cost of per-query work. 0 removes the cap, so every term within the edit distance matches. Default 50.
 sdb_lookup_join_source_hop	off	When true, a LOOKUP_JOIN over an inverted index that returns only source columns reads the row keys from the index in one LOOKUP_JOIN and the source columns in a second one. Default: false.
 sdb_pattern_cache_size	0	Bytes of compiled search patterns (`ts_regexp`, `ts_like`, LIKE and fused alternations over an inverted index) kept across queries, so a pattern is compiled once per server rather than once per query. The least recently used patterns are dropped first; a pattern in use by a running query stays alive until it finishes. 0, the default, keeps nothing: each query compiles its own patterns. Server-global.
+sdb_quack_max_heartbeat_timeout	600	Most seconds a Quack server keeps a session without a request from its client; a client asking for longer gets this. Server-global.
+sdb_quack_max_sessions	0	Most Quack sessions a server keeps open at once (0 = unlimited). Server-global.
 sdb_scan_no_split_row_groups	1	A segment with at most this many row groups is always one unit of an inverted-index scan and is never split across workers. Default 1.
 sdb_scan_order	auto	The order an inverted-index scan claims its segments in: 'smallest_first' and 'largest_first' order them by live document count; 'order' is best-first by the ORDER BY column's row-group statistics when the query has a scan order (and 'largest_first' otherwise); 'auto' (default) is 'order' under a scan order and 'largest_first' otherwise.
 sdb_scan_split	auto	How an inverted-index scan shares a segment between workers: 'tail' gives each worker its own segment and lets an idle worker join the segment with the most row groups left only once no segment is unclaimed; 'always' puts every worker on the same segment until it is claimed; 'never' scans each segment whole on one worker; 'auto' (default) is 'always' under an ORDER BY scan order and 'tail' otherwise.
@@ -626,8 +626,6 @@ quack_default_heartbeat_timeout	60	Heartbeat lease timeout in seconds requested 
 quack_default_statement_timeout	3600000	Milliseconds a statement without statement_timeout may wait for a SereneDB Quack server before it fails, so a server that is gone cannot hold it (0 = no limit)
 quack_enable_reconnects	off	Enable reconnect support (clients acknowledge results, the server caches the last result until acknowledged)
 quack_fetch_read_ahead	0	FETCH requests kept in flight ahead of the scan (0 = number of async threads)
-quack_max_heartbeat_timeout	600	Most seconds a server keeps a session without a request from its client; a client asking for longer gets this
-quack_max_sessions	0	Most sessions a server keeps open at once (0 = unlimited)
 quack_prepare_inline_rows	24576	Rows returned inline in the PREPARE response before the remainder is left to FETCH; drains whole batches, so it may overshoot to a batch boundary
 quack_rebalance_buffer_bytes	0	Pending (unstamped) bytes the batch rebalancer buffers before gating non-minimum producers (0 = automatic, memory-manager governed)
 quack_result_ttl	3600	Seconds an idle cached result is kept before it is dropped (0 = never)
@@ -689,6 +687,8 @@ sdb_job_max_depth	16	Maximum number of job runs in one chain of EXECUTE JOB call
 sdb_levenshtein_max_terms	50	The maximum number of dictionary terms a fuzzy predicate (`ts_levenshtein`) expands to per index segment. Terms closest to the query survive; the rest neither match nor contribute to scoring. Higher values improve recall on wide expansions at the cost of per-query work. 0 removes the cap, so every term within the edit distance matches. Default 50.
 sdb_lookup_join_source_hop	off	When true, a LOOKUP_JOIN over an inverted index that returns only source columns reads the row keys from the index in one LOOKUP_JOIN and the source columns in a second one. Default: false.
 sdb_pattern_cache_size	0	Bytes of compiled search patterns (`ts_regexp`, `ts_like`, LIKE and fused alternations over an inverted index) kept across queries, so a pattern is compiled once per server rather than once per query. The least recently used patterns are dropped first; a pattern in use by a running query stays alive until it finishes. 0, the default, keeps nothing: each query compiles its own patterns. Server-global.
+sdb_quack_max_heartbeat_timeout	600	Most seconds a Quack server keeps a session without a request from its client; a client asking for longer gets this. Server-global.
+sdb_quack_max_sessions	0	Most Quack sessions a server keeps open at once (0 = unlimited). Server-global.
 sdb_scan_no_split_row_groups	1	A segment with at most this many row groups is always one unit of an inverted-index scan and is never split across workers. Default 1.
 sdb_scan_order	auto	The order an inverted-index scan claims its segments in: 'smallest_first' and 'largest_first' order them by live document count; 'order' is best-first by the ORDER BY column's row-group statistics when the query has a scan order (and 'largest_first' otherwise); 'auto' (default) is 'order' under a scan order and 'largest_first' otherwise.
 sdb_scan_split	auto	How an inverted-index scan shares a segment between workers: 'tail' gives each worker its own segment and lets an idle worker join the segment with the most row groups left only once no segment is unclaimed; 'always' puts every worker on the same segment until it is claimed; 'never' scans each segment whole on one worker; 'auto' (default) is 'always' under an ORDER BY scan order and 'tail' otherwise.

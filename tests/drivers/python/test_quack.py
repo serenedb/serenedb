@@ -436,7 +436,7 @@ def test_timeout_ends_with_its_statement(servers) -> None:
 @pytest.mark.faults
 def test_expired_lease_reconnects(servers) -> None:
     conn_a, conn_b, quack_b, dsn_a = servers
-    with _setting(conn_b, "quack_max_heartbeat_timeout", 3):
+    with _setting(conn_b, "sdb_quack_max_heartbeat_timeout", 3):
         conn_a.execute(f"ATTACH 'quack:127.0.0.1:{quack_b}' AS leased "
                        "(TOKEN 'postgres:', HEARTBEAT_TIMEOUT 3)")
         try:
@@ -480,7 +480,7 @@ def test_prepared_scan_after_lost_session(servers) -> None:
 
 def test_heartbeat_follows_the_granted_lease(servers) -> None:
     conn_a, conn_b, quack_b, dsn_a = servers
-    with _setting(conn_b, "quack_max_heartbeat_timeout", 3):
+    with _setting(conn_b, "sdb_quack_max_heartbeat_timeout", 3):
         conn_a.execute(f"ATTACH 'quack:127.0.0.1:{quack_b}' AS capped "
                        "(TOKEN 'postgres:', HEARTBEAT_TIMEOUT 30)")
         try:
@@ -501,8 +501,8 @@ def test_server_settings_need_superuser(servers) -> None:
     with psycopg.connect(host="127.0.0.1", port=conn_b.info.port, user="alice",
                          password="secret", dbname="postgres",
                          autocommit=True) as alice:
-        for setting in ("quack_max_sessions = 1",
-                        "quack_max_heartbeat_timeout = 1",
+        for setting in ("sdb_quack_max_sessions = 1",
+                        "sdb_quack_max_heartbeat_timeout = 1",
                         "quack_result_ttl = 1",
                         "quack_cache_max_rows = 0",
                         "quack_server_stream_buffer_bytes = 0",
@@ -514,15 +514,22 @@ def test_server_settings_need_superuser(servers) -> None:
                 alice.execute(f"SET {setting}")
         with pytest.raises(psycopg.errors.InsufficientPrivilege,
                            match="permission denied to set parameter"):
-            alice.execute("RESET quack_max_sessions")
+            alice.execute("RESET sdb_quack_max_sessions")
         alice.execute("SET quack_default_statement_timeout = 5000")
     assert conn_b.execute(
-        "SELECT current_setting('quack_max_sessions')").fetchone() == ("0",)
+        "SELECT current_setting('sdb_quack_max_sessions')").fetchone() == ("0",)
+
+
+def test_max_heartbeat_timeout_is_positive(servers) -> None:
+    _, conn_b, _, _ = servers
+    with pytest.raises(psycopg.errors.InvalidParameterValue,
+                       match="must be positive"):
+        conn_b.execute("SET sdb_quack_max_heartbeat_timeout = 0")
 
 
 def test_session_limit(servers) -> None:
     conn_a, conn_b, quack_b, _ = servers
-    with (_setting(conn_b, "quack_max_sessions", 1),
+    with (_setting(conn_b, "sdb_quack_max_sessions", 1),
           pytest.raises(psycopg.Error, match="Too many Quack sessions")):
         conn_a.execute(_remote(quack_b, "SELECT 1"))
     assert conn_a.execute(_remote(quack_b, "SELECT 1")).fetchone() == (1,)
@@ -610,7 +617,7 @@ def test_late_handovers_leave_the_newest_statement(tmp_path: Path) -> None:
 
 def test_lease_limit(servers, tmp_path: Path) -> None:
     _, conn_b, quack_b, _ = servers
-    with _setting(conn_b, "quack_max_heartbeat_timeout", 2):
+    with _setting(conn_b, "sdb_quack_max_heartbeat_timeout", 2):
         with Serened(SERENED_BIN, datadir_root=str(tmp_path),
                      log_path=str(tmp_path / "serened.log")) as c:
             c.start()

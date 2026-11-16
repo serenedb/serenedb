@@ -93,15 +93,6 @@ yaclib::Future<> BackgroundScheduler::Delay(clock::duration d) {
   return std::move(f);
 }
 
-void BackgroundScheduler::RunAfter(clock::duration delay,
-                                   std::function<void()> task) {
-  Delay(delay).Detach(*_executor, [this, task = std::move(task)] {
-    if (!IsStopping()) {
-      task();
-    }
-  });
-}
-
 void BackgroundScheduler::OpenDelays() {
   std::vector<yaclib::Promise<>> parked;
   {

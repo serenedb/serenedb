@@ -28,9 +28,7 @@
 #include <duckdb/catalog/default/default_types.hpp>
 #include <duckdb/catalog/default/default_views.hpp>
 #include <duckdb/parser/expression/function_expression.hpp>
-#include <functional>
 
-#include "auth/enforce.h"
 #include "catalog/boot.h"
 #include "catalog/entry/inverted_index.h"
 #include "catalog/secret_store.h"
@@ -59,19 +57,19 @@
 #include "connector/functions/search.h"
 #include "connector/functions/string.h"
 #include "connector/iresearch_replacement_scan.h"
+#include "connector/quack.h"
 #include "connector/scan/scan_function.h"
 #include "docs/docs_functions.h"
+#include "network/http/quack/functions.h"
 #include "pg/catalog/engine/registry.h"
 #include "pg/catalog/engine/scan_function.h"
 #include "pg/catalog/functions/functions.h"
 #include "pg/connection_context.h"
 #include "pg/types/register.h"
-#include "quack_storage.hpp"
 #include "query/config.h"
 #include "query/config_variable_names.h"
 #include "replication/functions.h"
 #include "replication/repl_source.h"
-#include "scheduler/background_scheduler.h"
 #include "server/utils/file_utils.h"
 #include "server/utils/lifecycle.h"
 #include "server/utils/number_of_cores.h"
@@ -221,13 +219,8 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
 
   connector::RegisterSereneDBOptimizers(db);
 
-  auth::InstallQuackAccessCheck(db);
-  duckdb::QuackStorageExtensionInfo::GetState(db).scheduler =
-    [](duckdb::milliseconds delay, std::function<void()> task) {
-      if (auto* scheduler = BackgroundScheduler::gInstance) {
-        scheduler->RunAfter(delay, std::move(task));
-      }
-    };
+  connector::RestrictQuackClient(db);
+  network::http::quack::RegisterFunctions(db);
 
   duckdb::IndexType inverted;
   inverted.name = catalog::kInvertedIndexTypeName;

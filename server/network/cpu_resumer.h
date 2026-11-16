@@ -131,6 +131,8 @@ class CpuResumer final : public duckdb::Task {
 
   void Deschedule() override {}
 
+  void Reschedule() final { RequestRun(); }
+
  private:
   duckdb::TaskScheduler& _scheduler;
   duckdb::shared_ptr<duckdb::SchedulerAccount> _account;

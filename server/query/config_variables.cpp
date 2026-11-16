@@ -577,6 +577,36 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
+      "sdb_quack_max_heartbeat_timeout",
+      {
+        LogicalTypeId::UBIGINT,
+        "Most seconds a Quack server keeps a session without a request from "
+        "its client; a client asking for longer gets this. Server-global.",
+        [] { return duckdb::Value::UBIGINT(600); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+          if (value.IsNull() || value.GetValue<uint64_t>() == 0) {
+            THROW_SQL_ERROR(
+              ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+              ERR_MSG("sdb_quack_max_heartbeat_timeout must be positive"));
+          }
+        },
+        nullptr,
+        duckdb::SetScope::GLOBAL,
+      },
+    },
+    {
+      "sdb_quack_max_sessions",
+      {
+        LogicalTypeId::UBIGINT,
+        "Most Quack sessions a server keeps open at once (0 = unlimited). "
+        "Server-global.",
+        [] { return duckdb::Value::UBIGINT(0); },
+        nullptr,
+        nullptr,
+        duckdb::SetScope::GLOBAL,
+      },
+    },
+    {
       "sdb_ai_max_api_calls_per_query",
       {
         LogicalTypeId::UINTEGER,

@@ -27,8 +27,11 @@ target_sources(
         http/otel/handlers.cpp
         http/otel/schema.cpp
         http/mcp/tools.cpp
+        http/quack/functions.cpp
         http/quack/handlers.cpp
         http/quack/service.cpp
+        http/quack/session.cpp
+        http/quack/statement.cpp
         http/test/handlers.cpp
         pg/pg_frame_codec.cpp
         pg/wire_frames.cpp

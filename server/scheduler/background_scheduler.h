@@ -75,8 +75,6 @@ class BackgroundScheduler final {
   // parked until OpenDelays() while the io pool has never been up).
   yaclib::Future<> Delay(clock::duration d);
 
-  void RunAfter(clock::duration delay, std::function<void()> task);
-
   // Startup: the io pool is up, so Delay can arm real timers. Releases every
   // waiter parked during boot. Called once, after Server::StartIoPool().
   void OpenDelays();

@@ -74,9 +74,9 @@ The role's privileges apply to everything the client runs, and so do its setting
 - Each client session that uses an attached database has a session of its own on the server, with its own transaction state, so concurrent client sessions do not interfere. Every `quack_query` call opens one more. A session ends with the client session, and `DETACH` ends all of them.
 - A session runs one statement at a time. A new statement from the client cancels the one the session still runs.
 - Cancelling a query on the client side stops it on the server. A SereneDB client also stops it when its `statement_timeout` runs out, and fails with `canceling statement due to statement timeout`.
-- A session whose client stops sending requests and heartbeats is closed once the client's `HEARTBEAT_TIMEOUT` passes, 60 seconds by default. The server's `quack_max_heartbeat_timeout`, 600 seconds by default, caps it.
-- `quack_max_sessions` caps the sessions the server keeps open at once. A client beyond it fails with `Too many Quack sessions`.
-- The server's Quack settings, such as `quack_max_sessions` and `quack_max_heartbeat_timeout`, hold for every session, and only a superuser changes them; the [settings reference](../configuration/overview.md) marks each one.
+- A session whose client stops sending requests and heartbeats is closed once the client's `HEARTBEAT_TIMEOUT` passes, 60 seconds by default. The server's `sdb_quack_max_heartbeat_timeout`, 600 seconds by default, caps it.
+- `sdb_quack_max_sessions` caps the sessions the server keeps open at once. A client beyond it fails with `Too many Quack sessions`.
+- The server's Quack settings, such as `sdb_quack_max_sessions` and `sdb_quack_max_heartbeat_timeout`, hold for every session, and only a superuser changes them; the [settings reference](../configuration/overview.md) marks each one.
 - A server shutdown closes every session, and a statement still running fails on the client.
 - A session shows in `pg_stat_activity`, and `pg_terminate_backend` closes it.
 - A statement on a session the server has closed fails with `Invalid connection id`. The client's next transaction opens a new session.

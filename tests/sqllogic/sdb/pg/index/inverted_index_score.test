@@ -638,7 +638,7 @@ query
 SELECT count(*) > 0 AS matched, count(literal_null) AS literal_scores,
        count(folded_null) AS folded_scores
 FROM (SELECT BM25(docs_idx.tableoid, NULL::DOUBLE, 0.75) AS literal_null,
-             BM25(docs_idx.tableoid, CASE WHEN false THEN 1.2 END, 0.75) AS folded_null
+             BM25(docs_idx.tableoid, CASE WHEN false THEN docs_idx.id END, 0.75) AS folded_null
       FROM docs_idx WHERE body @@ ts_phrase('fox')) s;
 ----
 matched	literal_scores	folded_scores

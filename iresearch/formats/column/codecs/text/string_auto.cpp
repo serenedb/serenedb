@@ -280,7 +280,8 @@ bool Strings::Compress(ColumnDataCheckpointData& data) {
     }
     return true;
   }
-  if (!_first) {
+  const bool held = !_first;
+  if (held) {
     const auto& config = _tuning.config;
     const auto& acc = Accumulated(data.chunks);
     if (!config || acc.Rows() == 0) {
@@ -288,11 +289,11 @@ bool Strings::Compress(ColumnDataCheckpointData& data) {
     }
     SDB_ASSERT(Enabled(data.disabled, config->shape, config->leaf));
     _first = _compressor.CompressSegment(*config, acc, 0);
-    if (data.tuning->reuse.Drifted(
-          static_cast<double>(_first->Size()),
-          static_cast<double>(std::max<uint64_t>(_first->rows, 1)), false)) {
-      return false;
-    }
+  }
+  if (held && data.tuning->reuse.Drifted(
+                static_cast<double>(_first->Size()),
+                static_cast<double>(std::max<uint64_t>(_first->input, 1)))) {
+    return false;
   }
   if (_first->Size() > PlainStorageBytes(*_first)) {
     return false;

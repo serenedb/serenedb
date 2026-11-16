@@ -231,6 +231,8 @@ struct Codec {
 
 duckdb::idx_t CountRows(std::span<const WriteChunk> chunks) noexcept;
 
+uint64_t RawInput(const ColumnDataCheckpointData& data);
+
 bool HasRows(std::span<const WriteChunk> chunks) noexcept;
 
 const Codec* GetCodec(CodecType type, duckdb::PhysicalType physical);

@@ -24,7 +24,12 @@
 
 #include <absl/algorithm/container.h>
 
+#include <algorithm>
 #include <cstring>
+#include <duckdb/common/types.hpp>
+#include <duckdb/common/types/string_type.hpp>
+#include <duckdb/common/vector/flat_vector.hpp>
+#include <duckdb/common/vector/vector_iterator.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
 
 #include "iresearch/formats/column/codecs/registry.hpp"
@@ -53,6 +58,39 @@ duckdb::idx_t CountRows(std::span<const WriteChunk> chunks) noexcept {
     rows += chunk.data.size();
   }
   return rows;
+}
+
+uint64_t RawInput(const ColumnDataCheckpointData& data) {
+  const auto physical = data.type.InternalType();
+  uint64_t bytes = 0;
+  if (physical == duckdb::PhysicalType::VARCHAR) {
+    for (const auto& chunk : data.chunks) {
+      const auto& input = chunk.data;
+      if (input.GetVectorType() != duckdb::VectorType::FLAT_VECTOR) {
+        for (const auto value : input.Values<duckdb::string_t>()) {
+          if (value.IsValid()) {
+            bytes += value.GetValueUnsafe().GetSize();
+          }
+        }
+        continue;
+      }
+      const auto* values = duckdb::FlatVector::GetData<duckdb::string_t>(input);
+      const auto& validity = duckdb::FlatVector::Validity(input);
+      const auto count = input.size();
+      if (validity.CannotHaveNull()) {
+        for (duckdb::idx_t i = 0; i < count; ++i) {
+          bytes += values[i].GetSize();
+        }
+      } else {
+        for (duckdb::idx_t i = 0; i < count; ++i) {
+          bytes += validity.RowIsValid(i) ? values[i].GetSize() : 0;
+        }
+      }
+    }
+  } else {
+    bytes = data.rows * std::max<uint64_t>(duckdb::GetTypeIdSize(physical), 1);
+  }
+  return std::max<uint64_t>(bytes, 1);
 }
 
 bool HasRows(std::span<const WriteChunk> chunks) noexcept {

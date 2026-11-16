@@ -350,10 +350,8 @@ class Frames : public State {
     if (held &&
         ((_leaf.leaf == ByteCodec::None && choice.bound_ratio != 0 &&
           ratio > choice.bound_ratio * kDrift) ||
-         data.tuning->reuse.Drifted(
-           static_cast<double>(_out.size()),
-           static_cast<double>(std::max<size_t>(_values.Get().size(), 1)),
-           true))) {
+         data.tuning->reuse.Grew(static_cast<double>(_out.size()),
+                                 static_cast<double>(RawInput(data))))) {
       return false;
     }
     choice = {

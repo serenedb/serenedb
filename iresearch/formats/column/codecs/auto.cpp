@@ -123,12 +123,11 @@ void Contest(std::span<const CompressionFunction* const> functions,
              ColumnDataCheckpointData& data) {
   SDB_ASSERT(data.tuning);
   auto& reuse = data.tuning->reuse;
-  const auto input = static_cast<double>(std::max<uint64_t>(data.rows, 1));
+  const auto input = static_cast<double>(RawInput(data));
   if (const auto* held = reuse.Due() ? nullptr : Held(data, functions)) {
     const auto written = data.written;
     if (held->compress(data)) {
-      if (reuse.Drifted(static_cast<double>(data.written - written), input,
-                        true)) {
+      if (reuse.Grew(static_cast<double>(data.written - written), input)) {
         reuse.clock.Restart();
       }
       return;

@@ -25,6 +25,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <duckdb.hpp>
+#include <magic_enum/magic_enum.hpp>
 #include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
@@ -225,7 +226,7 @@ void PrintSegmentInfo(const Seg& seg, const irs::ColumnReader& col,
   irs::BlockWindow window{};
   uint64_t row = 0;
   for (const auto& block : col.DataBlocks()) {
-    std::string key{irs::codecs::NameOf(block.codec->type)};
+    std::string key{magic_enum::enum_name(block.codec->type)};
     if (block.codec->decompression->get_segment_info && block.byte_size != 0) {
       window = col.Locate(row, window);
       auto segment = col.OpenSegment(window.block, ctx);

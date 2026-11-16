@@ -139,15 +139,17 @@ class FrameReader {
   };
 
   FrameReader(duckdb::const_data_ptr_t base, const FrameHeader& frames,
-              const ReadContext::CacheSlot& slot)
+              CodecType codec, const ReadContext::CacheSlot& slot)
     : _base{base},
       _f{frames},
+      _shape{ShapeOf(codec)},
+      _leaf{LeafOf(codec)},
       _cache{slot.touched ? slot.cache : nullptr},
       _slot{slot} {
     SDB_ENSURE(_f.width == sizeof(T), "numeric codec: width mismatch");
     if (Packed()) {
-      _per_frame = _f.shape == NumericShape::Runs ? 0 : kFforFrameRows;
-    } else if (_f.shape != NumericShape::Runs) {
+      _per_frame = _shape == Shape::Runs ? 0 : kFforFrameRows;
+    } else if (_shape != Shape::Runs) {
       _per_frame = _f.FrameBytes() / _f.stored;
     }
     for (uint32_t f = 0; f < _f.frame_count; ++f) {
@@ -215,8 +217,8 @@ class FrameReader {
     SDB_ENSURE(
       m.frame.raw_len <= _f.FrameBytes() &&
         uint64_t{m.frame.comp_off} + m.frame.comp_len <= _f.data_size &&
-        (_f.leaf != NumericLeaf::None || m.frame.comp_len == m.frame.raw_len) &&
-        (_f.shape == NumericShape::Runs || Packed() ||
+        (_leaf != ByteCodec::None || m.frame.comp_len == m.frame.raw_len) &&
+        (_shape == Shape::Runs || Packed() ||
          m.frame.raw_len == rows * _f.stored),
       "numeric codec: corrupted frame table");
     return m;
@@ -280,10 +282,10 @@ class FrameReader {
     const auto* in = reinterpret_cast<const char*>(Data(m));
     auto* out = reinterpret_cast<char*>(dst);
     const bool ok =
-      _f.leaf == NumericLeaf::Lz4
+      _leaf == ByteCodec::Lz4
         ? Lz4::Decompressor::Decompress(in, m.frame.comp_len, out,
                                         m.frame.raw_len)
-        : _f.leaf == NumericLeaf::Zstd &&
+        : _leaf == ByteCodec::Zstd &&
             (_zstd ? *_zstd : _zstd.emplace())
               .Decompress(in, m.frame.comp_len, out, m.frame.raw_len);
     SDB_ENSURE(ok, "numeric codec: corrupted frame");
@@ -296,7 +298,7 @@ class FrameReader {
 
   void OpenSource(uint32_t f, const NumericFrameMeta& m, size_t need,
                   bool scan) {
-    const bool prefix = _f.leaf == NumericLeaf::Lz4 && f != _source_frame &&
+    const bool prefix = _leaf == ByteCodec::Lz4 && f != _source_frame &&
                         need < m.frame.raw_len &&
                         m.frame.comp_len != m.frame.raw_len && !Admitted();
     _source_len = prefix ? need : m.frame.raw_len;
@@ -420,6 +422,8 @@ class FrameReader {
 
   duckdb::const_data_ptr_t _base;
   FrameHeader _f;
+  Shape _shape;
+  ByteCodec _leaf;
   uint32_t _per_frame = 0;
   unsigned _max_bits = numeric::kMaxBits<U>;
   uint64_t _begin = 0;

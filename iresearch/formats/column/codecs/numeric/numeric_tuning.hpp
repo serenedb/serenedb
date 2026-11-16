@@ -27,17 +27,18 @@
 namespace irs::codecs {
 
 struct NumericChoice {
-  NumericTransform transform = NumericTransform::Raw;
-  NumericLeaf leaf = NumericLeaf::None;
+  Shape shape = Shape::Plain;
+  bool packed = false;
+  bool narrowed = false;
+  ByteCodec leaf = ByteCodec::None;
   bool shuffled = false;
 
   bool operator==(const NumericChoice&) const = default;
 };
 
 struct NumericTuning {
-  ReusePolicy<HeldCodec> reuse;
+  ReusePolicy reuse;
   NumericChoice choice;
-  double codes_ratio = 1;
 };
 
 }  // namespace irs::codecs

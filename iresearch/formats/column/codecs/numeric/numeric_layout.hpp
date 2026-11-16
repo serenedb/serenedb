@@ -22,90 +22,73 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string_view>
+#include <type_traits>
 #include <duckdb/common/helper.hpp>
 #include <duckdb/common/typedefs.hpp>
+#include <duckdb/common/types.hpp>
 
 #include "iresearch/formats/column/codecs/codec_type.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
+/*
+Data layout per segment, one block of one column holding a whole row group:
++------------------------------------------------------+
+|                        Header                        |
+|   +----------------------------------------------+   |
+|   |   FrameHeader, 48 bytes                      |   |
+|   +----------------------------------------------+   |
+|   value width, stored width, shape, leaf, flags,     |
+|   counts, section offsets, frame size, common        |
+|   divisor (scale)                                    |
+|   +----------------------------------------------+   |
+|   |   the function's own header, 8 or 16 bytes   |   |
+|   +----------------------------------------------+   |
+|   plain and delta: base; runs: base and run          |
+|   width; dictionary: entry count and offset          |
++------------------------------------------------------+
+|                     Frame table                      |
+|   +----------------------------------------------+   |
+|   |   NumericFrameMeta frames[frame_count]       |   |
+|   +----------------------------------------------+   |
+|   first row, decoded size and stored range of        |
+|   each frame in Data, its min and max, and a         |
+|   base: delta's previous value, rle_ffor's           |
+|   run count                                          |
++------------------------------------------------------+
+|                      Dictionary                      |
+|   +----------------------------------------------+   |
+|   |   value dict[dict_count]                     |   |
+|   +----------------------------------------------+   |
+|   dict and dict_ffor only                            |
++------------------------------------------------------+
+|                         Data                         |
+|   +----------------------------------------------+   |
+|   |   frames                                     |   |
+|   +----------------------------------------------+   |
+|   raw, for, delta, dict: one item per row, the       |
+|   value, value - base, the difference to the         |
+|   previous row minus base, or the dictionary         |
+|   index, in the stored width; shuffled into          |
+|   byte planes when flagged                           |
+|   rle: the frame's run values (value - base),        |
+|   then their run lengths                             |
+|   these frames are lz4 or zstd compressed when       |
+|   the leaf makes them smaller                        |
+|   ffor, dict_ffor: 16384 rows per frame, in          |
+|   blocks of 1024 values (dictionary indexes for      |
+|   dict_ffor): a 16-byte meta (base, bit width)       |
+|   per block, then each block's values minus its      |
+|   base, bitpacked                                    |
+|   rle_ffor: 1024 runs per frame, run values and      |
+|   run lengths each packed like ffor                  |
++------------------------------------------------------+
+The header holds the section offsets; bit-packed data starts at an
+8-byte boundary.
+*/
+
 namespace irs::codecs {
-
-enum class NumericTransform : uint8_t {
-  Raw = 0,
-  For = 1,
-  Delta = 2,
-  Rle = 3,
-  Dict = 4,
-  Ffor = 5,
-  RleFfor = 6,
-  DictFfor = 7,
-  DeltaFfor = 8,
-};
-
-constexpr bool BitPacked(NumericTransform t) noexcept {
-  return t == NumericTransform::Ffor || t == NumericTransform::RleFfor ||
-         t == NumericTransform::DictFfor || t == NumericTransform::DeltaFfor;
-}
-
-constexpr bool Runs(NumericTransform t) noexcept {
-  return t == NumericTransform::Rle || t == NumericTransform::RleFfor;
-}
-
-enum class NumericLeaf : uint8_t {
-  None = 0,
-  Lz4 = 1,
-  Zstd = 2,
-};
-
-enum class NumericShape : uint8_t {
-  Plain,
-  Delta,
-  Runs,
-  Dictionary,
-};
-
-constexpr NumericShape ShapeOf(NumericTransform t) noexcept {
-  switch (t) {
-    case NumericTransform::Raw:
-    case NumericTransform::For:
-    case NumericTransform::Ffor:
-      return NumericShape::Plain;
-    case NumericTransform::Delta:
-    case NumericTransform::DeltaFfor:
-      return NumericShape::Delta;
-    case NumericTransform::Rle:
-    case NumericTransform::RleFfor:
-      return NumericShape::Runs;
-    case NumericTransform::Dict:
-    case NumericTransform::DictFfor:
-      return NumericShape::Dictionary;
-  }
-  return NumericShape::Plain;
-}
-
-inline constexpr CodecType kNumericCodecs[4][3] = {
-  {CodecType::Ffor, CodecType::Lz4, CodecType::Zstd},
-  {CodecType::DeltaFfor, CodecType::DeltaLz4, CodecType::DeltaZstd},
-  {CodecType::RleFfor, CodecType::RleLz4, CodecType::RleZstd},
-  {CodecType::DictFfor, CodecType::DictLz4, CodecType::DictZstd},
-};
-
-constexpr CodecType NumericCodec(NumericShape shape,
-                                 NumericLeaf leaf) noexcept {
-  return kNumericCodecs[static_cast<size_t>(shape)][static_cast<size_t>(leaf)];
-}
-
-constexpr bool IsNumeric(CodecType type) noexcept {
-  for (const auto& shape : kNumericCodecs) {
-    for (const auto codec : shape) {
-      if (codec == type) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
 
 inline constexpr uint8_t kNumericVersion = 1;
 inline constexpr size_t kNumericFrameMetaSize = 40;
@@ -140,8 +123,7 @@ struct FrameHeader {
   uint8_t version = kNumericVersion;
   uint8_t width = 0;
   uint8_t stored = 0;
-  NumericShape shape = NumericShape::Plain;
-  NumericLeaf leaf = NumericLeaf::None;
+  uint8_t reserved0[2] = {};
   uint8_t level = 0;
   uint8_t flags = 0;
   uint8_t frame_log2 = kNumericFrameLog2;
@@ -187,62 +169,91 @@ static_assert(sizeof(DeltaHeader) == 8);
 static_assert(sizeof(RunsHeader) == 16);
 static_assert(sizeof(DictionaryHeader) == 8);
 
-constexpr uint32_t HeaderSize(NumericShape shape) noexcept {
+constexpr uint32_t HeaderSize(Shape shape) noexcept {
   switch (shape) {
-    case NumericShape::Plain:
+    case Shape::Plain:
       return sizeof(FrameHeader) + sizeof(PlainHeader);
-    case NumericShape::Delta:
+    case Shape::Delta:
       return sizeof(FrameHeader) + sizeof(DeltaHeader);
-    case NumericShape::Runs:
+    case Shape::Runs:
       return sizeof(FrameHeader) + sizeof(RunsHeader);
-    case NumericShape::Dictionary:
+    case Shape::Dictionary:
       return sizeof(FrameHeader) + sizeof(DictionaryHeader);
   }
   return sizeof(FrameHeader);
 }
 
-constexpr NumericTransform TransformOf(const FrameHeader& f) noexcept {
+constexpr std::string_view TransformName(Shape shape,
+                                         const FrameHeader& f) noexcept {
   const bool packed = f.flags & kNumericPacked;
-  switch (f.shape) {
-    case NumericShape::Plain:
-      return packed                ? NumericTransform::Ffor
-             : f.stored == f.width ? NumericTransform::Raw
-                                   : NumericTransform::For;
-    case NumericShape::Delta:
-      return packed ? NumericTransform::DeltaFfor : NumericTransform::Delta;
-    case NumericShape::Runs:
-      return packed ? NumericTransform::RleFfor : NumericTransform::Rle;
-    case NumericShape::Dictionary:
-      return packed ? NumericTransform::DictFfor : NumericTransform::Dict;
+  switch (shape) {
+    case Shape::Plain:
+      return packed ? "ffor" : f.stored == f.width ? "raw" : "for";
+    case Shape::Delta:
+      return packed ? "delta_ffor" : "delta";
+    case Shape::Runs:
+      return packed ? "rle_ffor" : "rle";
+    case Shape::Dictionary:
+      return packed ? "dict_ffor" : "dict";
   }
-  return NumericTransform::Raw;
+  return "raw";
 }
 
-inline FrameHeader ParseFrames(duckdb::const_data_ptr_t p, uint64_t size) {
+inline FrameHeader ParseFrames(duckdb::const_data_ptr_t p, uint64_t size,
+                               CodecType codec) {
   SDB_ENSURE(size >= sizeof(FrameHeader),
              "numeric codec: segment smaller than its header");
   const auto f = duckdb::Load<FrameHeader>(p);
   SDB_ENSURE(f.version == kNumericVersion,
              "numeric codec: unsupported segment version ", f.version);
+  const auto shape = ShapeOf(codec);
   const bool packed = f.flags & kNumericPacked;
   SDB_ENSURE(
-    f.shape <= NumericShape::Dictionary && size >= HeaderSize(f.shape) &&
-      NumericWidth(f.width) && NumericWidth(f.stored) && f.stored <= f.width &&
+    size >= HeaderSize(shape) && NumericWidth(f.width) &&
+      NumericWidth(f.stored) && f.stored <= f.width &&
       (f.flags & ~(kNumericShuffled | kNumericPacked)) == 0 &&
-      f.leaf <= NumericLeaf::Zstd &&
       (!(f.flags & kNumericShuffled) || f.stored > 1) &&
       (!packed ||
-       (f.leaf == NumericLeaf::None && !(f.flags & kNumericShuffled) &&
+       (LeafOf(codec) == ByteCodec::None && !(f.flags & kNumericShuffled) &&
         f.stored == f.width && f.frame_log2 == kFforFrameLog2 &&
         (reinterpret_cast<uintptr_t>(p) + f.off_data) % sizeof(uint64_t) ==
           0)) &&
-      f.off_frames >= HeaderSize(f.shape) &&
+      f.off_frames >= HeaderSize(shape) &&
       f.off_frames + uint64_t{f.frame_count} * kNumericFrameMetaSize <=
         f.off_data &&
       uint64_t{f.off_data} + f.data_size <= size && f.frame_log2 >= 10 &&
       f.frame_log2 <= 20 && (f.frame_count != 0 || f.row_count == 0),
     "numeric codec: corrupted segment header");
   return f;
+}
+
+template<typename F>
+std::invoke_result_t<F&, std::type_identity<int8_t>> WithNumericType(
+  duckdb::PhysicalType physical, F&& f) {
+  switch (physical) {
+    case duckdb::PhysicalType::INT8:
+      return f(std::type_identity<int8_t>{});
+    case duckdb::PhysicalType::INT16:
+      return f(std::type_identity<int16_t>{});
+    case duckdb::PhysicalType::INT32:
+      return f(std::type_identity<int32_t>{});
+    case duckdb::PhysicalType::INT64:
+      return f(std::type_identity<int64_t>{});
+    case duckdb::PhysicalType::UINT8:
+      return f(std::type_identity<uint8_t>{});
+    case duckdb::PhysicalType::UINT16:
+      return f(std::type_identity<uint16_t>{});
+    case duckdb::PhysicalType::UINT32:
+      return f(std::type_identity<uint32_t>{});
+    case duckdb::PhysicalType::UINT64:
+      return f(std::type_identity<uint64_t>{});
+    case duckdb::PhysicalType::FLOAT:
+      return f(std::type_identity<float>{});
+    case duckdb::PhysicalType::DOUBLE:
+      return f(std::type_identity<double>{});
+    default:
+      return {};
+  }
 }
 
 }  // namespace irs::codecs

@@ -600,7 +600,7 @@ void Codec::Export(std::string& side) const {
 }
 
 void CompressionState::FinalizeCompress() {
-  if (_rows.SegmentShape() == Shape::Dedup) {
+  if (_rows.SegmentShape() == Shape::Dictionary) {
     _rows.Sort(_sort);
   }
   const auto lengths = _rows.Lengths();

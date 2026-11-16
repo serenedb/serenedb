@@ -50,7 +50,7 @@ IRS_NO_INLINE void SealRows(State& state, const Config& config,
                             Segment& seg, SegmentSink sink) {
   const auto seal = [&] {
     state.FinalizeCompress();
-    sink(TextCodec(seg.config.shape, seg.config.leaf), std::move(*seg.stats),
+    sink(CodecOf(seg.config.shape, seg.config.leaf), std::move(*seg.stats),
          seg.rows, seg.bytes.View());
   };
   uint64_t row = 0;
@@ -79,7 +79,7 @@ IRS_NO_INLINE void CompressRows(State& state, const Config& config,
                                 SegmentSink sink) {
   for (auto row = begin; row < acc.Rows(); row = seg.begin + seg.rows) {
     CutRows(state, config, acc, row, target, seg);
-    sink(TextCodec(seg.config.shape, seg.config.leaf), std::move(*seg.stats),
+    sink(CodecOf(seg.config.shape, seg.config.leaf), std::move(*seg.stats),
          seg.rows, seg.bytes.View());
   }
 }
@@ -127,6 +127,8 @@ void StringCompressor::WithState(const Config& config, Visit&& visit) {
     case ByteCodec::Fsst12:
       visit(StateOf<fsst12::CompressionState>());
       return;
+    case ByteCodec::None:
+      break;
   }
   SDB_UNREACHABLE();
 }

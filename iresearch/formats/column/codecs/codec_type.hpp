@@ -21,8 +21,10 @@
 #pragma once
 
 #include <bitset>
+#include <cstddef>
 #include <cstdint>
 #include <magic_enum/magic_enum.hpp>
+#include <utility>
 
 namespace irs::codecs {
 
@@ -32,34 +34,189 @@ enum class CodecType : uint8_t {
   Rle,
   Bitpacking,
   Alp,
-  AlpRd,
+  Alprd,
   Roaring,
   Constant,
   Empty,
   Ffor,
-  DictLz4,
   Lz4,
-  DictZstd,
   Zstd,
-  DictFsst,
   Fsst,
-  DictZxc,
   Zxc,
-  DictFsstPlus,
   FsstPlus,
-  DictOnPair,
-  OnPair,
-  DictFsst12,
+  Onpair,
   Fsst12,
-  DeltaFfor,
-  RleFfor,
   DictFfor,
+  DictLz4,
+  DictZstd,
+  DictFsst,
+  DictZxc,
+  DictFsstPlus,
+  DictOnpair,
+  DictFsst12,
+  DeltaFfor,
   DeltaLz4,
-  RleLz4,
   DeltaZstd,
+  RleFfor,
+  RleLz4,
   RleZstd,
 };
 
+}  // namespace irs::codecs
+
+namespace magic_enum {
+
+template<>
+constexpr customize::customize_t customize::enum_name<irs::codecs::CodecType>(
+  irs::codecs::CodecType value) noexcept {
+  using CodecType = irs::codecs::CodecType;
+  switch (value) {
+    case CodecType::Auto:
+      return "Auto";
+    case CodecType::Uncompressed:
+      return "Uncompressed";
+    case CodecType::Rle:
+      return "RLE";
+    case CodecType::Bitpacking:
+      return "BitPacking";
+    case CodecType::Alp:
+      return "ALP";
+    case CodecType::Alprd:
+      return "ALPRD";
+    case CodecType::Roaring:
+      return "Roaring";
+    case CodecType::Constant:
+      return "Constant";
+    case CodecType::Empty:
+      return "Empty Validity";
+    case CodecType::Ffor:
+      return "FFOR";
+    case CodecType::Lz4:
+      return "LZ4";
+    case CodecType::Zstd:
+      return "ZSTD";
+    case CodecType::Fsst:
+      return "FSST";
+    case CodecType::Zxc:
+      return "ZXC";
+    case CodecType::FsstPlus:
+      return "FSST_PLUS";
+    case CodecType::Onpair:
+      return "ONPAIR";
+    case CodecType::Fsst12:
+      return "FSST12";
+    case CodecType::DictFfor:
+      return "DICT_FFOR";
+    case CodecType::DictLz4:
+      return "DICT_LZ4";
+    case CodecType::DictZstd:
+      return "DICT_ZSTD";
+    case CodecType::DictFsst:
+      return "DICT_FSST";
+    case CodecType::DictZxc:
+      return "DICT_ZXC";
+    case CodecType::DictFsstPlus:
+      return "DICT_FSST_PLUS";
+    case CodecType::DictOnpair:
+      return "DICT_ONPAIR";
+    case CodecType::DictFsst12:
+      return "DICT_FSST12";
+    case CodecType::DeltaFfor:
+      return "DELTA_FFOR";
+    case CodecType::DeltaLz4:
+      return "DELTA_LZ4";
+    case CodecType::DeltaZstd:
+      return "DELTA_ZSTD";
+    case CodecType::RleFfor:
+      return "RLE_FFOR";
+    case CodecType::RleLz4:
+      return "RLE_LZ4";
+    case CodecType::RleZstd:
+      return "RLE_ZSTD";
+  }
+  return invalid_tag;
+}
+
+}  // namespace magic_enum
+
+namespace irs::codecs {
+
 using CodecSet = std::bitset<magic_enum::enum_count<CodecType>()>;
+
+enum class Shape : uint8_t {
+  Plain,
+  Dictionary,
+  Delta,
+  Runs,
+};
+
+inline constexpr size_t kShapeCount = magic_enum::enum_count<Shape>();
+
+enum class ByteCodec : uint8_t {
+  None,
+  Lz4,
+  Zstd,
+  Fsst,
+  Zxc,
+  FsstPlus,
+  OnPair,
+  Fsst12,
+};
+
+inline constexpr size_t kByteCodecCount = magic_enum::enum_count<ByteCodec>();
+
+inline constexpr size_t kTextShapeCount = 2;
+inline constexpr size_t kTextShapeForms = kTextShapeCount * kByteCodecCount;
+inline constexpr size_t kNumericLeafCount = 3;
+
+constexpr bool IsForm(CodecType type) noexcept {
+  return type >= CodecType::Ffor;
+}
+
+constexpr size_t FormIndex(CodecType type) noexcept {
+  return std::to_underlying(type) - std::to_underlying(CodecType::Ffor);
+}
+
+constexpr CodecType CodecOf(Shape shape, ByteCodec leaf) noexcept {
+  const size_t s = std::to_underlying(shape);
+  const size_t l = std::to_underlying(leaf);
+  const size_t index =
+    s < kTextShapeCount
+      ? s * kByteCodecCount + l
+      : kTextShapeForms + (s - kTextShapeCount) * kNumericLeafCount + l;
+  return static_cast<CodecType>(std::to_underlying(CodecType::Ffor) + index);
+}
+
+constexpr Shape ShapeOf(CodecType type) noexcept {
+  const auto index = FormIndex(type);
+  return static_cast<Shape>(
+    index < kTextShapeForms
+      ? index / kByteCodecCount
+      : kTextShapeCount + (index - kTextShapeForms) / kNumericLeafCount);
+}
+
+constexpr ByteCodec LeafOf(CodecType type) noexcept {
+  const auto index = FormIndex(type);
+  return static_cast<ByteCodec>(
+    index < kTextShapeForms ? index % kByteCodecCount
+                            : (index - kTextShapeForms) % kNumericLeafCount);
+}
+
+constexpr bool IsText(CodecType type) noexcept {
+  return IsForm(type) && FormIndex(type) < kTextShapeForms &&
+         LeafOf(type) != ByteCodec::None;
+}
+
+constexpr bool IsNumeric(CodecType type) noexcept {
+  return IsForm(type) && std::to_underlying(LeafOf(type)) < kNumericLeafCount;
+}
+
+static_assert(std::to_underlying(Shape::Dictionary) + 1 == kTextShapeCount);
+static_assert(std::to_underlying(ByteCodec::Zstd) + 1 == kNumericLeafCount);
+static_assert(CodecOf(Shape::Dictionary, ByteCodec::Fsst12) ==
+              CodecType::DictFsst12);
+static_assert(CodecOf(Shape::Delta, ByteCodec::None) == CodecType::DeltaFfor);
+static_assert(std::to_underlying(CodecOf(Shape::Runs, ByteCodec::Zstd)) + 1 ==
+              magic_enum::enum_count<CodecType>());
 
 }  // namespace irs::codecs

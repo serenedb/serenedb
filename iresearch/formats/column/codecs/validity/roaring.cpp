@@ -955,7 +955,7 @@ RoaringCompressState::RoaringCompressState(
   const RoaringAnalyzeState& analyze_state)
   : checkpoint_data{checkpoint_data},
     analyze_state{analyze_state},
-    segment{checkpoint_data.type} {
+    segment{CodecType::Roaring, checkpoint_data.type} {
   CreateEmptySegment(*this);
   InitializeContainer(*this);
 }
@@ -1723,34 +1723,23 @@ struct Containers final : State {
   RoaringAnalyzeState state;
 };
 
-bool Disabled(const ColumnDataCheckpointData& data) noexcept {
-  return data.disabled.test(std::to_underlying(CodecType::Roaring));
-}
-
 template<duckdb::PhysicalType kPhysical>
 constexpr CompressionFunction kFunction{
   .analyze = [](ColumnDataCheckpointData& data, double) -> Estimate {
-    if (Disabled(data)) {
-      return {};
-    }
     return {
       .codec = CodecType::Roaring,
       .ratio = static_cast<double>(
                  data.Get<Containers<kPhysical>>().state.total_size) /
-               static_cast<double>(data.input),
+               static_cast<double>(std::max<uint64_t>(data.rows, 1)),
       .cost = kCompressPenalty,
     };
   },
-  .encode = [](ColumnDataCheckpointData& data, const Estimate*) -> Encoded {
-    return Disabled(data) ? Encoded{} : Encoded{.streams = true};
-  },
-  .flush =
+  .compress =
     [](ColumnDataCheckpointData& data) {
-      data.codec = GetCodec(CodecType::Roaring, data.type.InternalType());
       EncodeChunks<kPhysical>(data, data.chunks,
                               data.Get<Containers<kPhysical>>().state);
+      return true;
     },
-  .exact = true,
 };
 
 std::unique_ptr<SegmentScanState> InitScan(const ColumnSegment& segment) {

@@ -49,7 +49,8 @@ template<typename Appender>
 class UncompressedCompress {
  public:
   explicit UncompressedCompress(ColumnDataCheckpointData& checkpoint_data)
-    : _checkpoint_data{&checkpoint_data}, _segment{checkpoint_data.type} {
+    : _checkpoint_data{&checkpoint_data},
+      _segment{CodecType::Uncompressed, checkpoint_data.type} {
     Appender::Begin(_segment);
   }
 

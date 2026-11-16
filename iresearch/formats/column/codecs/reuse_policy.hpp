@@ -22,21 +22,10 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <optional>
-#include <utility>
 
 #include "iresearch/formats/column/codecs/codec_type.hpp"
 
 namespace irs::codecs {
-
-struct CompressionFunction;
-
-struct HeldCodec {
-  const CompressionFunction* function = nullptr;
-  CodecType codec = CodecType::Auto;
-
-  bool operator==(const HeldCodec&) const = default;
-};
 
 inline constexpr double kDrift = 1.25;
 
@@ -54,26 +43,22 @@ struct CalibrationClock {
   void Restart() noexcept { Settle(false); }
 };
 
-template<typename Pick>
 struct ReusePolicy {
-  std::optional<Pick> pick;
+  CodecType pick = CodecType::Auto;
   CalibrationClock clock;
   double reference = 0;
   bool calibrated = false;
 
   bool Due() noexcept { return !calibrated || clock.Due(); }
 
-  bool Drifted(double bytes, double input, bool growth_only) const noexcept {
-    const auto ratio = bytes / input;
-    return ratio > reference * kDrift ||
-           (!growth_only && ratio * kDrift < reference);
+  bool Drifted(double bytes, double input) const noexcept {
+    return bytes / input > reference * kDrift;
   }
 
-  void Settle(std::optional<Pick> next, bool kept, double bytes,
-              double input) noexcept {
+  void Settle(CodecType next, bool kept, double bytes, double input) noexcept {
     clock.Settle(kept);
     calibrated = true;
-    pick = std::move(next);
+    pick = next;
     if (input != 0) {
       reference = bytes / input;
     }

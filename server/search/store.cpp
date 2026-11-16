@@ -85,12 +85,12 @@ catalog::CompressionByColumn DeclaredCompression(
   const duckdb::ColumnList& columns) {
   catalog::CompressionByColumn compression;
   for (const auto& column : columns.Logical()) {
-    const auto* codec = irs::codecs::FindCodec(column.CompressionType());
-    SDB_ASSERT(codec);
-    if (codec->type != irs::codecs::CodecType::Auto) {
+    const auto type = irs::codecs::FindCodec(column.CompressionType());
+    SDB_ASSERT(type != irs::codecs::kNoCodec);
+    if (type != irs::codecs::CodecType::Auto) {
       compression.emplace(
         connector::TableColumnId(column),
-        catalog::DeclaredCodec{.type = codec->type,
+        catalog::DeclaredCodec{.type = type,
                                .compression_level = column.CompressionLevel()});
     }
   }

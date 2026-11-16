@@ -20,7 +20,10 @@
 
 #pragma once
 
+#include <span>
+
 #include "iresearch/formats/column/codecs/codec_type.hpp"
+#include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/text/segment_rows.hpp"
 #include "iresearch/formats/column/codecs/text/string_compressor.hpp"
 #include "iresearch/formats/column/codecs/text/string_seal.hpp"
@@ -28,13 +31,23 @@
 
 namespace irs::codecs::text {
 
-bool Enabled(const CodecSet& disabled, const Config& config) noexcept;
+class Strings final : public State {
+ public:
+  explicit Strings(ColumnDataCheckpointData& data);
 
-PooledSegment DetectBestCompressionMethod(const StringAccumulator& acc,
-                                          const ColCodecParams& params,
-                                          StringTuning& tuning,
-                                          const CodecSet& disabled,
-                                          StringCompressor& compressor,
-                                          PooledSegment first);
+  Estimate Analyze(ColumnDataCheckpointData& data);
+  bool Compress(ColumnDataCheckpointData& data);
+
+ private:
+  const StringAccumulator& Accumulated(std::span<const WriteChunk> chunks);
+  PooledSegment DetectBestCompressionMethod(
+    const ColumnDataCheckpointData& data);
+
+  StringTuning& _tuning;
+  StringCompressor _compressor;
+  StringAccumulator _acc;
+  PooledSegment _first;
+  bool _accumulated = false;
+};
 
 }  // namespace irs::codecs::text

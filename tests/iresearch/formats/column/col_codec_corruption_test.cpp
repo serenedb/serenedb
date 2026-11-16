@@ -34,6 +34,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <magic_enum/magic_enum.hpp>
 #include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
@@ -138,8 +139,8 @@ class ColCodecCorruptionTest : public TestBase {
     ASSERT_FALSE(target->DataBlocks().empty());
     const auto& block = target->DataBlocks().front();
     if (c.codec != CodecType::Auto && !c.validity) {
-      ASSERT_EQ(irs::codecs::NameOf(block.codec->type),
-                irs::codecs::NameOf(c.codec));
+      ASSERT_EQ(magic_enum::enum_name(block.codec->type),
+                magic_enum::enum_name(c.codec));
     }
     offset = block.file_offset;
     size = block.byte_size;
@@ -418,7 +419,7 @@ TEST_F(ColCodecCorruptionTest, SmallSegmentsRejectDamagedHeaders) {
   Sweep(
     {"alprd",
      LogicalType::DOUBLE,
-     CodecType::AlpRd,
+     CodecType::Alprd,
      [](uint64_t g) {
        return Value::DOUBLE(std::sqrt(static_cast<double>(g + 2)));
      },
@@ -521,7 +522,7 @@ TEST_F(ColCodecCorruptionTest, AlpCodecsRejectDamagedSegments) {
   Sweep(
     {"alprd double",
      LogicalType::DOUBLE,
-     CodecType::AlpRd,
+     CodecType::Alprd,
      [](uint64_t g) {
        return g % 97 == 0 ? Value::DOUBLE(-1e300 * static_cast<double>(g + 1))
                           : Value::DOUBLE(std::sin(static_cast<double>(g)));
@@ -540,7 +541,7 @@ TEST_F(ColCodecCorruptionTest, AlpCodecsRejectDamagedSegments) {
   Sweep(
     {"alprd float",
      LogicalType::FLOAT,
-     CodecType::AlpRd,
+     CodecType::Alprd,
      [](uint64_t g) {
        return g % 89 == 0
                 ? Value::FLOAT(-1e30F * static_cast<float>(g + 1))

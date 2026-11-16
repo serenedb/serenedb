@@ -42,7 +42,6 @@
 #include "iresearch/formats/column/codecs/bytes/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/bytes/segment_dictionary.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
-#include "iresearch/formats/column/codecs/numeric/numeric.hpp"
 #include "iresearch/formats/column/codecs/text/segment_rows.hpp"
 #include "iresearch/formats/column/codecs/text/string_layout.hpp"
 #include "iresearch/formats/column/codecs/text/string_scan.hpp"
@@ -65,8 +64,8 @@ struct FrameShape {
 };
 
 template<typename Codec>
-constexpr FrameShape FrameShapeOf(FrameLayout layout) noexcept {
-  if (layout == FrameLayout::Wide) {
+constexpr FrameShape FrameShapeOf(FrameDictionary layout) noexcept {
+  if (layout == FrameDictionary::None) {
     return {kFrameRawBytes, 0};
   }
   if constexpr (Codec::kCodec == ByteCodec::Zstd) {
@@ -183,7 +182,7 @@ class SizeEstimator {
 
   uint64_t EstimateSize(const Profile& p, std::string_view bytes,
                         const FrameSpans& spans, uint64_t codes_bytes,
-                        uint8_t level, FrameLayout layout, uint64_t begin) {
+                        uint8_t level, FrameDictionary layout, uint64_t begin) {
     if (!_codec || _level != level) {
       _codec.emplace(level);
       _level = level;
@@ -193,7 +192,7 @@ class SizeEstimator {
     uint64_t data = 0;
     if (!spans.empty()) {
       const bool whole =
-        layout == FrameLayout::Local && spans.size() >= kLocalMinFrames;
+        layout == FrameDictionary::Local && spans.size() >= kLocalMinFrames;
       SDB_ASSERT(!whole || bytes.size() == p.raw);
       const auto frame = [&](size_t i) {
         return whole ? bytes.substr(spans[i].offset, spans[i].raw)
@@ -227,7 +226,7 @@ class SizeEstimator {
         });
       data += Scale(sampled, sampled_raw, p.raw - spans[0].raw);
     }
-    const auto entry_count = p.codes.size() + (p.shape == Shape::Dedup ? 1 : 0);
+    const auto entry_count = p.codes.size() + (p.shape == Shape::Dictionary ? 1 : 0);
     Header h;
     return LayOut(h, data, spans.size(), Packed(entry_count, p.max_len), 0,
                   codes_bytes, 0);
@@ -303,7 +302,7 @@ class CompressionState {
     SDB_ASSERT(_packed + _frame.size() == rows.raw);
     const auto lengths = _rows.Lengths();
     _spans.Close();
-    if (_layout == FrameLayout::Local && _spans.size() >= kLocalMinFrames) {
+    if (_layout == FrameDictionary::Local && _spans.size() >= kLocalMinFrames) {
       Sizes();
       _trained = _codec->Train(_frame, _sizes);
     }
@@ -345,7 +344,7 @@ class CompressionState {
   uint64_t Estimate() const noexcept {
     const auto raw = _rows.View().raw;
     return (_spans.size() + 1) * kFrameMetaSize + Written() +
-           (_layout == FrameLayout::Local
+           (_layout == FrameDictionary::Local
               ? SegmentDictionaryBytes(raw, Codec::kDictionaryCap) /
                   kLocalDictionaryPacking
               : 0) +
@@ -358,7 +357,7 @@ class CompressionState {
     return _history[static_cast<size_t>(_rows.SegmentShape())];
   }
 
-  void Configure(uint8_t level, FrameLayout layout) {
+  void Configure(uint8_t level, FrameDictionary layout) {
     _layout = layout;
     _trained = false;
     _first_frame = false;
@@ -382,7 +381,7 @@ class CompressionState {
   }
 
   void Closed() {
-    if (_layout != FrameLayout::Local) {
+    if (_layout != FrameDictionary::Local) {
       CompressRest();
       Count();
       _frame.clear();
@@ -475,7 +474,7 @@ class CompressionState {
   std::optional<typename Codec::Compressor> _probe;
   uint8_t _level = 0;
   uint8_t _probe_level = 0;
-  FrameLayout _layout = FrameLayout::FirstFrame;
+  FrameDictionary _layout = FrameDictionary::FirstFrame;
   bool _trained = false;
   bool _first_frame = false;
   size_t _counted = 0;

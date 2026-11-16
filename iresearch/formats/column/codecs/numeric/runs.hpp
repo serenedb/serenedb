@@ -38,16 +38,15 @@ class RunFrames final : public Frames<T> {
   using Base::kWidth;
   using typename Base::U;
 
-  static constexpr uint32_t kPackedCodeRunRows = 4;
-
  public:
-  explicit RunFrames(ColumnDataCheckpointData& data)
-    : Base{data, NumericShape::Runs} {}
+  static constexpr Shape kShape = Shape::Runs;
+
+  explicit RunFrames(ColumnDataCheckpointData& data) : Base{data, kShape} {}
 
  private:
-  void Build(const NumericTransform* only) final {
-    const bool bytes = Base::Wanted(only, NumericTransform::Rle);
-    const bool packed = Base::Wanted(only, NumericTransform::RleFfor);
+  void Build(const NumericChoice* only) final {
+    const bool bytes = Base::Wanted(only, false);
+    const bool packed = Base::Wanted(only, true);
     const auto values = this->_values.Get();
     const auto& facts = this->_values.GetFacts();
     const auto n = static_cast<uint32_t>(values.size());
@@ -85,7 +84,6 @@ class RunFrames final : public Frames<T> {
         runs, run_width, _length_bytes.data(),
         [l = _lengths.data()](size_t r) { return l[r]; });
       this->Add({
-        .transform = NumericTransform::Rle,
         .stored = facts.for_stored,
         .run_width = run_width,
         .base = facts.lo,
@@ -95,13 +93,12 @@ class RunFrames final : public Frames<T> {
         .run_rows = _rows,
       });
     }
-    if (packed &&
-        (!this->_values.CodesOnly() || runs * kPackedCodeRunRows <= n)) {
+    if (packed) {
       _value_blocks.Plan(std::span<const U>{_run_values}, Values<T>::Less);
       _length_blocks.Plan(std::span<const uint32_t>{_lengths},
                           std::less<uint32_t>{});
       this->Add({
-        .transform = NumericTransform::RleFfor,
+        .packed = true,
         .stored = kWidth,
         .items = runs,
         .run_rows = _rows,
@@ -144,11 +141,11 @@ class RunReader final : public FrameReader<T> {
 
  public:
   RunReader(duckdb::const_data_ptr_t base, const FrameHeader& frames,
+            CodecType codec,
             const ReadContext::CacheSlot& slot = {})
-    : Base{base, frames, slot},
+    : Base{base, frames, codec, slot},
       _own{duckdb::Load<RunsHeader>(base + sizeof(FrameHeader))} {
-    SDB_ENSURE(frames.shape == NumericShape::Runs &&
-                 (this->Packed() ? _own.base == 0
+    SDB_ENSURE((this->Packed() ? _own.base == 0
                                  : NumericWidth(_own.run_width) &&
                                      _own.run_width <= sizeof(uint32_t)),
                "numeric codec: corrupted segment header");

@@ -688,7 +688,8 @@ class AlpCompressionState {
  public:
   AlpCompressionState(ColumnDataCheckpointData& checkpoint_data,
                       AlpAnalyzeState<T>& analyze_state)
-    : _checkpoint_data{checkpoint_data}, _segment{checkpoint_data.type} {
+    : _checkpoint_data{checkpoint_data},
+      _segment{CodecType::Alp, checkpoint_data.type} {
     _compression_data.best_k_combinations =
       std::move(analyze_state.compression_data.best_k_combinations);
   }

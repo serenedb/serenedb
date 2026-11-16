@@ -36,17 +36,17 @@ class PlainFrames final : public Frames<T> {
   using typename Base::U;
 
  public:
-  explicit PlainFrames(ColumnDataCheckpointData& data)
-    : Base{data, NumericShape::Plain} {}
+  static constexpr Shape kShape = Shape::Plain;
+
+  explicit PlainFrames(ColumnDataCheckpointData& data) : Base{data, kShape} {}
 
  private:
-  void Build(const NumericTransform* only) final {
+  void Build(const NumericChoice* only) final {
     const auto values = this->_values.Get();
     const auto& facts = this->_values.GetFacts();
     const auto n = static_cast<uint32_t>(values.size());
-    if (Base::Wanted(only, NumericTransform::Raw)) {
+    if (Base::Wanted(only, false)) {
       this->AddWithShuffle({
-        .transform = NumericTransform::Raw,
         .stored = kWidth,
         .items = n,
         .values = {reinterpret_cast<const uint8_t*>(values.data()),
@@ -54,8 +54,7 @@ class PlainFrames final : public Frames<T> {
       });
     }
     if constexpr (kWidth > 1) {
-      if (Base::Wanted(only, NumericTransform::For) &&
-          facts.for_stored < kWidth) {
+      if (Base::Wanted(only, false, true) && facts.for_stored < kWidth) {
         _for.resize(size_t{n} * facts.for_stored);
         numeric::Narrow<kWidth / 2>(
           n, facts.for_stored, _for.data(),
@@ -63,7 +62,7 @@ class PlainFrames final : public Frames<T> {
             return static_cast<U>(v[i] - lo);
           });
         this->AddWithShuffle({
-          .transform = NumericTransform::For,
+          .narrowed = true,
           .stored = facts.for_stored,
           .base = facts.lo,
           .items = n,
@@ -72,10 +71,10 @@ class PlainFrames final : public Frames<T> {
       }
     }
     if constexpr (std::is_integral_v<T>) {
-      if (Base::Wanted(only, NumericTransform::Ffor)) {
+      if (Base::Wanted(only, true)) {
         _ffor.Plan(values, Values<T>::Less);
         this->Add({
-          .transform = NumericTransform::Ffor,
+          .packed = true,
           .stored = kWidth,
           .items = n,
         });
@@ -108,10 +107,11 @@ class PlainReader final : public FrameReader<T> {
 
  public:
   PlainReader(duckdb::const_data_ptr_t base, const FrameHeader& frames,
+              CodecType codec,
               const ReadContext::CacheSlot& slot = {})
-    : Base{base, frames, slot},
+    : Base{base, frames, codec, slot},
       _own{duckdb::Load<PlainHeader>(base + sizeof(FrameHeader))} {
-    SDB_ENSURE(frames.shape == NumericShape::Plain && (For() || _own.base == 0),
+    SDB_ENSURE(For() || _own.base == 0,
                "numeric codec: corrupted segment header");
   }
 

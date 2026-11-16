@@ -41,19 +41,13 @@ constexpr double Ratio(const RatioHistory& hist, double empty) noexcept {
   return empty;
 }
 
-enum class FrameLayout : uint8_t {
-  FirstFrame = 0,
-  Wide = 1,
-  Local = 2,
-};
-
 namespace text {
 
 struct Config {
-  Shape shape = Shape::Dedup;
+  Shape shape = Shape::Dictionary;
   ByteCodec leaf = ByteCodec::Lz4;
   uint8_t level = 0;
-  FrameLayout layout = FrameLayout::FirstFrame;
+  FrameDictionary layout = FrameDictionary::FirstFrame;
 
   bool operator==(const Config&) const = default;
 };
@@ -63,11 +57,11 @@ struct Config {
 struct TunedParameters {
   bool done = false;
   uint8_t level[kByteCodecCount]{};
-  FrameLayout layout[kByteCodecCount]{};
+  FrameDictionary layout[kByteCodecCount]{};
 };
 
 struct EstimatorState {
-  RatioHistory history[kByteCodecCount][2]{};
+  RatioHistory history[kByteCodecCount][kShapeCount]{};
   NumericTuning codes;
 };
 

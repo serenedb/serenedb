@@ -31,9 +31,11 @@
 #include <duckdb/main/database.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/storage/buffer/buffer_handle.hpp>
+#include <duckdb/storage/statistics/base_statistics.hpp>
 
 #include "iresearch/formats/column/codecs/bytes/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
+#include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/utils/enum_name.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
@@ -53,14 +55,32 @@ duckdb::shared_ptr<DecodedDictionary> CachedDictionary(
 Header SegmentHeader(duckdb::const_data_ptr_t base,
                      const ColumnSegment& segment, Shape shape,
                      ByteCodec codec) {
-  const auto h = Header::Parse(base, segment.size);
-  const uint64_t first_entry = shape == Shape::Dedup ? 1 : 0;
-  SDB_ENSURE(h.shape == shape && h.codec == codec &&
-               h.row_count == segment.count &&
+  SDB_ASSERT(segment.codec == CodecOf(shape, codec));
+  const auto h = Header::Parse(base, segment.size, segment.codec);
+  const uint64_t first_entry = shape == Shape::Dictionary ? 1 : 0;
+  SDB_ENSURE(h.row_count == segment.count &&
                uint64_t{h.entry_count} <= uint64_t{h.row_count} + first_entry &&
-               (shape == Shape::Dedup || h.entry_count == h.row_count),
+               (shape == Shape::Dictionary || h.entry_count == h.row_count),
              "col codec: corrupted segment header");
   return h;
+}
+
+ColumnSegment CodesSegment(const ColumnSegment& segment, const Header& header) {
+  static const auto kStats =
+    duckdb::BaseStatistics::CreateEmpty(duckdb::LogicalType::UINTEGER);
+  const auto* codec = GetCodec(header.codes, duckdb::PhysicalType::UINT32);
+  SDB_ASSERT(codec && codec->decompression);
+  return {
+    .function = *codec->decompression,
+    .type = kStats.GetType(),
+    .stats = kStats,
+    .ctx = segment.ctx,
+    .block = segment.block,
+    .count = header.row_count,
+    .size = header.off_symtab - header.off_codes,
+    .codec = header.codes,
+    .offset = segment.offset + header.off_codes,
+  };
 }
 
 EntryRanges Normalize(EntryRanges ranges) {
@@ -158,14 +178,16 @@ duckdb::InsertionOrderPreservingMap<std::string> SegmentInfo(
   const ColumnSegment& segment) {
   auto handle = segment.Pin();
   const auto* base = handle.Ptr();
-  const auto h = Header::Parse(base, segment.size);
+  const auto h = Header::Parse(base, segment.size, segment.codec);
+  const auto shape = ShapeOf(segment.codec);
   duckdb::InsertionOrderPreservingMap<std::string> info;
-  info["shape"] = std::string{SnakeCaseName(h.shape)};
-  info["codec"] = std::string{SnakeCaseName(h.codec)};
+  info["shape"] = std::string{SnakeCaseName(shape)};
+  info["codec"] = std::string{SnakeCaseName(LeafOf(segment.codec))};
   info["level"] = absl::StrCat(static_cast<uint32_t>(h.level));
-  if (h.shape == Shape::Dedup) {
-    info["codes_transform"] = std::string{SnakeCaseName(TransformOf(
-      ParseFrames(base + h.off_codes, h.off_symtab - h.off_codes)))};
+  if (shape == Shape::Dictionary) {
+    info["codes_transform"] = std::string{TransformName(
+      ShapeOf(h.codes),
+      ParseFrames(base + h.off_codes, h.off_symtab - h.off_codes, h.codes))};
   }
   info["entries"] = absl::StrCat(h.entry_count);
   info["frames"] = absl::StrCat(h.frame_count);

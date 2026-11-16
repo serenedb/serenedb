@@ -65,7 +65,7 @@ n
 # owned stores a dictionary with FSST over its entries in every segment
 query
 SELECT count(*) > 0 AS has_dict_fsst,
-       count(*) FILTER (WHERE compression <> 'DICT_FSST' OR segment_info NOT LIKE '%shape: dedup, codec: fsst,%') AS other
+       count(*) FILTER (WHERE compression <> 'DICT_FSST' OR segment_info NOT LIKE '%shape: dictionary, codec: fsst,%') AS other
   FROM pragma_storage_info('own.dup', include_segment_info=true)
  WHERE column_name='s' AND segment_type='VARCHAR';
 ----

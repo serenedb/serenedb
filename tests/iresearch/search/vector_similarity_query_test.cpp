@@ -24,6 +24,7 @@
 #include <atomic>
 #include <duckdb.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
+#include <magic_enum/magic_enum.hpp>
 #include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/ivf/centroids.hpp>
 #include <iresearch/index/directory_reader.hpp>
@@ -470,8 +471,8 @@ class RerankExactDistancesTest
     ASSERT_NE(nullptr, child);
     ASSERT_LT(1U, child->DataBlocks().size());
     for (const auto& block : child->DataBlocks()) {
-      ASSERT_EQ(irs::codecs::NameOf(GetParam()),
-                irs::codecs::NameOf(block.codec->type));
+      ASSERT_EQ(magic_enum::enum_name(GetParam()),
+                magic_enum::enum_name(block.codec->type));
     }
   }
 

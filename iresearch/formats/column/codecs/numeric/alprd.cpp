@@ -393,7 +393,7 @@ class AlpRdCompressionState {
   AlpRdCompressionState(ColumnDataCheckpointData& checkpoint_data,
                         AlpRdAnalyzeState<T>& analyze_state)
     : _checkpoint_data{checkpoint_data},
-      _segment{checkpoint_data.type},
+      _segment{CodecType::Alprd, checkpoint_data.type},
       _dictionary{std::move(analyze_state.dictionary)},
       _actual_dictionary_size_bytes{_dictionary.actual_dictionary_size *
                                     kDictionaryElementSize},
@@ -1023,8 +1023,8 @@ constexpr DecompressionFunction kDecompression{
 
 template<typename T, duckdb::PhysicalType kPhysical>
 constexpr Codec kFunction{
-  .type = CodecType::AlpRd,
-  .compression = &kStreamed<CodecType::AlpRd, AlpRdAnalyzeChunks<T>,
+  .type = CodecType::Alprd,
+  .compression = &kStreamed<CodecType::Alprd, AlpRdAnalyzeChunks<T>,
                             AlpRdCompressChunks<T>, HasRows>,
   .decompression = &kDecompression<T>,
 };

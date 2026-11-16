@@ -44,6 +44,7 @@
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/table_filter_state.hpp>
 #include <functional>
+#include <magic_enum/magic_enum.hpp>
 #include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/column/codecs/text/string_tuning.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
@@ -1385,10 +1386,10 @@ TEST_F(ColumnReaderTest, GathersMatchScanAcrossBlocks) {
       ASSERT_NE(col, nullptr);
       ASSERT_EQ(col->RowCount(), c.rows);
       if (codec != "auto") {
-        const auto* forced = irs::codecs::FindCodec(codec);
-        ASSERT_NE(forced, nullptr);
+        const auto forced = irs::codecs::FindCodec(codec);
+        ASSERT_NE(forced, irs::codecs::kNoCodec);
         EXPECT_TRUE(absl::c_any_of(col->DataBlocks(), [&](const auto& b) {
-          return b.codec->type == forced->type;
+          return b.codec->type == forced;
         }));
       }
       GatherStats stats;
@@ -2146,13 +2147,13 @@ void CheckPointFetch(duckdb::DatabaseInstance& db, const PointCodecCase& c) {
   ASSERT_NE(col, nullptr) << c.name;
   std::string codecs;
   for (const auto& block : col->DataBlocks()) {
-    absl::StrAppend(&codecs, irs::codecs::NameOf(block.codec->type), " ");
+    absl::StrAppend(&codecs, magic_enum::enum_name(block.codec->type), " ");
   }
   ASSERT_TRUE(std::ranges::any_of(col->DataBlocks(),
                                   [&](const auto& block) {
-                                    return irs::codecs::NameOf(
+                                    return magic_enum::enum_name(
                                              block.codec->type) ==
-                                           irs::codecs::NameOf(c.codec);
+                                           magic_enum::enum_name(c.codec);
                                   }))
     << c.name << ": " << codecs;
   if (c.validity_codec) {
@@ -2160,8 +2161,8 @@ void CheckPointFetch(duckdb::DatabaseInstance& db, const PointCodecCase& c) {
     ASSERT_TRUE(
       std::ranges::any_of(col->Validity()->DataBlocks(),
                           [&](const auto& block) {
-                            return irs::codecs::NameOf(block.codec->type) ==
-                                   irs::codecs::NameOf(*c.validity_codec);
+                            return magic_enum::enum_name(block.codec->type) ==
+                                   magic_enum::enum_name(*c.validity_codec);
                           }))
       << c.name;
   }
@@ -2229,7 +2230,7 @@ TEST_F(ColumnReaderTest, PointFetchEveryCodec) {
      [](uint64_t g) { return Value::BIGINT(static_cast<int64_t>(g % 777)); },
      irs::codecs::CodecType::Roaring},
     {"double alprd exceptions", LogicalType::DOUBLE,
-     irs::codecs::CodecType::AlpRd, all,
+     irs::codecs::CodecType::Alprd, all,
      [](uint64_t g) {
        return g % 97 == 0 ? Value::DOUBLE(-1e300 * static_cast<double>(g))
                           : Value::DOUBLE(std::sin(static_cast<double>(g)));
@@ -2303,11 +2304,11 @@ TEST_F(ColumnReaderTest, PointFetchEveryCodec) {
      [](uint64_t g) {
        return Value::FLOAT(static_cast<float>(g % 1000) / 10.0F);
      }},
-    {"double alprd", LogicalType::DOUBLE, irs::codecs::CodecType::AlpRd, dense,
+    {"double alprd", LogicalType::DOUBLE, irs::codecs::CodecType::Alprd, dense,
      [](uint64_t g) {
        return Value::DOUBLE(std::sin(static_cast<double>(g)) * 12345.678901234);
      }},
-    {"float alprd", LogicalType::FLOAT, irs::codecs::CodecType::AlpRd, sparse,
+    {"float alprd", LogicalType::FLOAT, irs::codecs::CodecType::Alprd, sparse,
      [](uint64_t g) {
        return Value::FLOAT(std::sin(static_cast<float>(g)) * 123.456F);
      }},
@@ -3399,7 +3400,7 @@ TEST_F(ColumnReaderTest, VectorReadsInRandomOrderLandOnTheirRows) {
     irs::ColWriter w{dir, "seg", Db()};
     auto& cw = w.OpenColumn(kField, vtype,
                             {.row_group_size = kRgSize,
-                             .compression = irs::codecs::CodecType::AlpRd});
+                             .compression = irs::codecs::CodecType::Alprd});
     for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
       const auto take =
         std::min<duckdb::idx_t>(kRows - pos, STANDARD_VECTOR_SIZE);
@@ -4917,8 +4918,8 @@ void FetchWithCorruptedFooter(duckdb::DatabaseInstance& db,
   }
   ASSERT_EQ(metas.size(), 2);
   ASSERT_EQ(metas.front().id, kId);
-  ASSERT_EQ(irs::codecs::NameOf(metas.front().data.front().codec->type),
-            irs::codecs::NameOf(codec));
+  ASSERT_EQ(magic_enum::enum_name(metas.front().data.front().codec->type),
+            magic_enum::enum_name(codec));
   corrupt(metas.front());
   {
     auto out = dir.create(file);
@@ -4981,7 +4982,7 @@ TEST_F(ColumnReaderTest, FooterRowCountsBeyondAlpBlocks) {
 TEST_F(ColumnReaderTest, FooterRowCountsBeyondAlpRdBlocks) {
   constexpr uint64_t kCount = std::numeric_limits<uint64_t>::max();
   FetchWithCorruptedFooter(
-    Db(), duckdb::LogicalType::DOUBLE, irs::codecs::CodecType::AlpRd,
+    Db(), duckdb::LogicalType::DOUBLE, irs::codecs::CodecType::Alprd,
     "Corrupted ALPRD segment: metadata offset table exceeds the segment",
     10'000'000, [&](irs::ColumnMeta& meta) {
       meta.data.front().tuple_count = kCount;
@@ -6579,9 +6580,9 @@ TEST_F(ColumnReaderTest, VectorColumnAutoPicksFloatCodec) {
     ASSERT_NE(blocks[rg].codec, nullptr) << "row-group " << rg;
     const auto codec = blocks[rg].codec->type;
     EXPECT_TRUE(codec == irs::codecs::CodecType::Alp ||
-                codec == irs::codecs::CodecType::AlpRd ||
+                codec == irs::codecs::CodecType::Alprd ||
                 irs::codecs::IsNumeric(codec))
-      << "row-group " << rg << " codec=" << irs::codecs::NameOf(codec);
+      << "row-group " << rg << " codec=" << magic_enum::enum_name(codec);
   }
 }
 

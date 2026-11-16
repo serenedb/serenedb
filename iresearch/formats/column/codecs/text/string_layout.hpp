@@ -25,6 +25,7 @@
 #include <duckdb/common/bitpacking.hpp>
 #include <duckdb/common/helper.hpp>
 #include <duckdb/common/typedefs.hpp>
+#include <utility>
 
 #include "iresearch/formats/column/codecs/bytes/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
@@ -32,11 +33,22 @@
 
 namespace irs::codecs {
 
-enum class FrameDictionary : uint8_t {
-  None = 0,
-  FirstFrame = 1,
-  Local = 2,
-};
+inline constexpr CodecSet kCodesGroup =
+  CodecSet{}
+    .set(std::to_underlying(CodecType::Ffor))
+    .set(std::to_underlying(CodecType::DeltaFfor))
+    .set(std::to_underlying(CodecType::RleFfor));
+
+constexpr bool CodesCodec(CodecType type) noexcept {
+  const auto index = std::to_underlying(type);
+  return index < kCodesGroup.size() && kCodesGroup.test(index);
+}
+
+inline uint64_t Packed(uint64_t count, uint64_t max_value) noexcept {
+  return duckdb::BitpackingPrimitives::GetRequiredSize(
+    count, duckdb::BitpackingPrimitives::MinimumBitWidth<uint32_t>(
+             static_cast<uint32_t>(max_value)));
+}
 
 inline constexpr uint8_t kSegmentVersion = 1;
 inline constexpr size_t kHeaderSize = 72;
@@ -148,8 +160,8 @@ Sections start at 8-byte boundaries.
 
 struct Header {
   uint8_t version = kSegmentVersion;
-  Shape shape = Shape::Dedup;
-  ByteCodec codec = ByteCodec::Lz4;
+  CodecType codes = CodecType::Auto;
+  uint8_t reserved2 = 0;
   uint8_t level = 0;
   uint8_t reserved0 = 0;
   uint8_t length_width = 0;
@@ -172,24 +184,26 @@ struct Header {
   uint16_t reserved4 = 0;
   uint64_t raw_bytes = 0;
 
-  static Header Parse(duckdb::const_data_ptr_t p, duckdb::idx_t segment_size) {
+  static Header Parse(duckdb::const_data_ptr_t p, duckdb::idx_t segment_size,
+                      CodecType codec) {
     using duckdb::BitpackingPrimitives;
     SDB_ENSURE(segment_size >= kHeaderSize,
                "col codec: segment smaller than its header");
     const auto h = duckdb::Load<Header>(p);
+    const auto leaf = LeafOf(codec);
     SDB_ENSURE(h.version == kSegmentVersion,
                "col codec: unsupported segment version ", h.version);
     SDB_ENSURE(
-      h.shape <= Shape::Plain &&
-        static_cast<uint8_t>(h.codec) < kByteCodecCount &&
+      (ShapeOf(codec) == Shape::Dictionary ? CodesCodec(h.codes)
+                                           : h.codes == CodecType::Auto) &&
         h.length_width <= 32 && h.lcp_width <= 32 &&
         (h.flags == FrameDictionary::None ||
          (h.flags == FrameDictionary::FirstFrame && h.frame_count > 1 &&
-          !Sorted(h.codec)) ||
+          !Sorted(leaf)) ||
          (h.flags == FrameDictionary::Local && h.symtab_size != 0 &&
           h.dictionary_size != 0 && h.dictionary_size <= kMaxDictionaryBytes &&
-          !Sorted(h.codec))) &&
-        (h.codec != ByteCodec::FsstPlus ||
+          !Sorted(leaf))) &&
+        (leaf != ByteCodec::FsstPlus ||
          h.symtab_size >= uint64_t{h.dictionary_size} + sizeof(uint32_t)) &&
         static_cast<uint64_t>(h.off_data) + h.data_size <= segment_size &&
         h.off_frames >= kHeaderSize &&
@@ -210,8 +224,8 @@ struct Header {
 
 static_assert(sizeof(Header) == kHeaderSize);
 static_assert(offsetof(Header, version) == 0);
-static_assert(offsetof(Header, shape) == 1);
-static_assert(offsetof(Header, codec) == 2);
+static_assert(offsetof(Header, codes) == 1);
+static_assert(offsetof(Header, reserved2) == 2);
 static_assert(offsetof(Header, level) == 3);
 static_assert(offsetof(Header, reserved0) == 4);
 static_assert(offsetof(Header, length_width) == 5);

@@ -37,16 +37,17 @@ class DeltaFrames final : public Frames<T> {
   using typename Base::U;
 
  public:
-  explicit DeltaFrames(ColumnDataCheckpointData& data)
-    : Base{data, NumericShape::Delta} {}
+  static constexpr Shape kShape = Shape::Delta;
+
+  explicit DeltaFrames(ColumnDataCheckpointData& data) : Base{data, kShape} {}
 
  private:
-  void Build(const NumericTransform* only) final {
+  void Build(const NumericChoice* only) final {
     const auto values = this->_values.Get();
     const auto& facts = this->_values.GetFacts();
     const auto n = static_cast<uint32_t>(values.size());
     if constexpr (std::is_integral_v<T>) {
-      if (Base::Wanted(only, NumericTransform::DeltaFfor) && this->_named &&
+      if (Base::Wanted(only, true) && this->_named &&
           facts.delta_bits < facts.for_bits) {
         _wide.resize(n);
         for (uint32_t i = 0; i < n; ++i) {
@@ -57,14 +58,14 @@ class DeltaFrames final : public Frames<T> {
         }
         _blocks.PlanDeltas(std::span<const U>{_wide}, values);
         this->Add({
-          .transform = NumericTransform::DeltaFfor,
+          .packed = true,
           .stored = kWidth,
           .base = facts.delta_offset,
           .items = n,
         });
       }
     }
-    if (!Base::Wanted(only, NumericTransform::Delta)) {
+    if (!Base::Wanted(only, false)) {
       return;
     }
     _delta.resize(size_t{n} * facts.delta_stored);
@@ -75,7 +76,6 @@ class DeltaFrames final : public Frames<T> {
         return static_cast<U>(v[i + 1] - v[i] - offset);
       });
     this->AddWithShuffle({
-      .transform = NumericTransform::Delta,
       .stored = facts.delta_stored,
       .base = facts.delta_offset,
       .items = n,
@@ -109,12 +109,10 @@ class DeltaReader final : public FrameReader<T> {
 
  public:
   DeltaReader(duckdb::const_data_ptr_t base, const FrameHeader& frames,
+              CodecType codec,
               const ReadContext::CacheSlot& slot = {})
-    : Base{base, frames, slot},
-      _own{duckdb::Load<DeltaHeader>(base + sizeof(FrameHeader))} {
-    SDB_ENSURE(frames.shape == NumericShape::Delta,
-               "numeric codec: corrupted segment header");
-  }
+    : Base{base, frames, codec, slot},
+      _own{duckdb::Load<DeltaHeader>(base + sizeof(FrameHeader))} {}
 
   void Seek(uint64_t row) {
     if (this->Holds(row)) {

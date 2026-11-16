@@ -406,7 +406,7 @@ std::unique_ptr<codecs::ColumnSegment> ColumnReader::Open(const BlockWindow& w,
   if (m.byte_size == 0) {
     if (codec.type != codecs::CodecType::Constant &&
         codec.type != codecs::CodecType::Empty) [[unlikely]] {
-      codecs::ThrowCorrupted(codecs::NameOf(codec.type),
+      codecs::ThrowCorrupted(magic_enum::enum_name(codec.type),
                              "segment has no bytes");
     }
     return segment;

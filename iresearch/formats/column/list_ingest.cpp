@@ -56,22 +56,6 @@ void SliceChunks(std::vector<WriteChunk>& out, const duckdb::Vector& vec,
   }
 }
 
-std::vector<WriteChunk> ViewChunks(std::span<uint64_t> values) {
-  std::vector<WriteChunk> out;
-  out.reserve((values.size() + STANDARD_VECTOR_SIZE - 1) /
-              STANDARD_VECTOR_SIZE);
-  for (size_t off = 0; off < values.size(); off += STANDARD_VECTOR_SIZE) {
-    const auto count = static_cast<duckdb::idx_t>(
-      std::min<size_t>(values.size() - off, STANDARD_VECTOR_SIZE));
-    out.push_back(WriteChunk{
-      duckdb::Vector{duckdb::LogicalType::UBIGINT,
-                     reinterpret_cast<duckdb::data_ptr_t>(values.data() + off),
-                     count},
-      count});
-  }
-  return out;
-}
-
 void ListKeys::Node::Assign(const duckdb::Vector& vec) {
   vec.ToUnifiedFormat(format);
   flat = !format.sel->IsSet();

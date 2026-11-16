@@ -47,7 +47,6 @@
 #include <vector>
 
 #include "iresearch/formats/column/codecs/dictionary_cache.hpp"
-#include "iresearch/formats/column/codecs/numeric/codes_reader.hpp"
 #include "iresearch/formats/column/codecs/text/string_layout.hpp"
 #include "iresearch/formats/column/codecs/text/string_scan.hpp"
 #include "iresearch/formats/column/codecs/text/string_scan.tpp"
@@ -62,54 +61,51 @@ namespace irs::codecs::text {
 template<typename Leaf>
 struct DictionaryFetch final : SegmentScanState {
   void Reset(const ColumnSegment& segment) {
-    code_frames.reset();
+    codes.emplace(CodesSegment(segment, frames.header));
+    codes_fetch = {};
     frames.decoded = CachedDictionary(segment.cache_slot);
   }
 
-  void Read(data_ptr_t base, const idx_t* rows, idx_t count,
+  void Read(data_ptr_t, const idx_t* rows, idx_t count,
             duckdb::Vector& result, const duckdb::SelectionVector& sel,
             idx_t offset) {
     const auto& h = frames.header;
+    const auto* fetched_codes = FetchCodes(rows, count);
     auto& order = frames.order;
     order.resize(count);
     auto& validity = duckdb::FlatVector::ValidityMutable(result);
-    order.resize(Numeric(base).Visit([&](auto& codes) IRS_FORCE_INLINE {
-      auto* out = order.data();
-      const uint64_t row_count = h.row_count;
-      const uint32_t entries = h.entry_count;
-      idx_t kept = 0;
-      for (idx_t i = 0; i < count; ++i) {
-        SDB_ENSURE(rows[i] < row_count, "col codec: row out of range");
-        const uint32_t code =
-          codes.Fetch(rows[i], i + 1 == count ? kNoRow : rows[i + 1]);
-        const auto at = offset + sel.get_index(i);
-        if (code == 0) {
-          validity.SetInvalid(at);
-          continue;
-        }
-        SDB_ENSURE(code < entries, "col codec: corrupted row codes");
-        out[kept++] = {.entry = code, .at = at};
+    auto* out = order.data();
+    const uint32_t entries = h.entry_count;
+    idx_t kept = 0;
+    for (idx_t i = 0; i < count; ++i) {
+      const uint32_t code = fetched_codes[i];
+      const auto at = offset + sel.get_index(i);
+      if (code == 0) {
+        validity.SetInvalid(at);
+        continue;
       }
-      return kept;
-    }));
+      SDB_ENSURE(code < entries, "col codec: corrupted row codes");
+      out[kept++] = {.entry = code, .at = at};
+    }
+    order.resize(kept);
   }
 
-  IRS_FORCE_INLINE uint32_t ReadOne(data_ptr_t base, idx_t row) {
-    const auto& h = frames.header;
-    SDB_ENSURE(row < h.row_count, "col codec: row out of range");
-    const auto code = Numeric(base).Fetch(row, kNoRow);
-    SDB_ENSURE(code == 0 || code < h.entry_count,
+  IRS_FORCE_INLINE uint32_t ReadOne(data_ptr_t, idx_t row) {
+    const auto code = *FetchCodes(&row, 1);
+    SDB_ENSURE(code == 0 || code < frames.header.entry_count,
                "col codec: corrupted row codes");
     return code;
   }
 
-  CodesReader& Numeric(data_ptr_t base) {
-    if (!code_frames) {
-      const auto& h = frames.header;
-      code_frames.emplace(base + h.off_codes, h.off_symtab - h.off_codes,
-                          h.row_count);
+  const uint32_t* FetchCodes(const idx_t* rows, idx_t count) {
+    SDB_ASSERT(codes && count <= STANDARD_VECTOR_SIZE);
+    if (!fetched) {
+      fetched.emplace(codes->type, STANDARD_VECTOR_SIZE);
+      staged = duckdb::FlatVector::GetData<uint32_t>(*fetched);
     }
-    return *code_frames;
+    codes->function.fetch_rows(*codes, codes_fetch, rows, count, *fetched, all,
+                               0);
+    return staged;
   }
 
   bool PlanBatch(const_data_ptr_t base) {
@@ -128,7 +124,11 @@ struct DictionaryFetch final : SegmentScanState {
   }
 
   FetchFrames<Leaf> frames;
-  std::optional<CodesReader> code_frames;
+  std::optional<ColumnSegment> codes;
+  ColumnFetchState codes_fetch;
+  std::optional<duckdb::Vector> fetched;
+  const uint32_t* staged = nullptr;
+  duckdb::SelectionVector all;
 };
 
 class FilterVerdicts {
@@ -223,7 +223,7 @@ class FilterVerdicts {
 template<typename Leaf>
 struct DictionaryScan final : SegmentScanState {
   using Fetch = DictionaryFetch<Leaf>;
-  static constexpr Shape kShape = Shape::Dedup;
+  static constexpr Shape kShape = Shape::Dictionary;
   static constexpr ByteCodec kCodec = Leaf::kCodec;
   static constexpr auto kValidity = CompressionValidity::NoValidityRequired;
 
@@ -235,9 +235,8 @@ struct DictionaryScan final : SegmentScanState {
                  const duckdb::shared_ptr<DecodedDictionary>& cached)
     : entries{segment, std::move(handle), !cached},
       cache_slot{segment.cache_slot},
-      code_frames{entries.base + entries.header.off_codes,
-                  entries.header.off_symtab - entries.header.off_codes,
-                  entries.header.row_count} {
+      codes{CodesSegment(segment, entries.header)} {
+    codes_state.scan_state = codes.function.init_scan(codes);
     if (cached) {
       AdoptDictionary(*cached);
       return;
@@ -606,23 +605,30 @@ struct DictionaryScan final : SegmentScanState {
     if (!code_sel || code_sel_size < count) {
       code_sel_size = count;
       code_sel = duckdb::make_buffer<duckdb::SelectionVector>(count);
+      codes_view.emplace(codes.type,
+                         reinterpret_cast<duckdb::data_ptr_t>(code_sel->data()),
+                         count);
     }
-    auto* codes = code_sel->data();
-    code_frames.Read(start, count, codes);
+    codes_state.offset_in_column = start;
+    codes.function.scan(codes, codes_state, count, *codes_view, 0,
+                        duckdb::ScanVectorType::SCAN_FLAT_VECTOR);
+    const auto* unpacked = code_sel->data();
     duckdb::sel_t max_code = 0;
     for (idx_t i = 0; i < count; ++i) {
-      max_code = std::max(max_code, codes[i]);
+      max_code = std::max(max_code, unpacked[i]);
     }
     SDB_ENSURE(max_code < entries.header.entry_count,
                "col codec: corrupted row codes");
   }
 
-  EntryFrames<Shape::Dedup, Leaf> entries;
+  EntryFrames<Shape::Dictionary, Leaf> entries;
   ReadContext::CacheSlot cache_slot;
   bool full = false;
   duckdb::buffer_ptr<duckdb::SelectionVector> code_sel;
   idx_t code_sel_size = 0;
-  CodesReader code_frames;
+  ColumnSegment codes;
+  ColumnScanState codes_state;
+  std::optional<duckdb::Vector> codes_view;
   FilterVerdicts verdicts;
 };
 

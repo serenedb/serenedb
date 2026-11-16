@@ -18,6 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "iresearch/formats/column/codecs/compression_function.hpp"
+#include "iresearch/formats/column/codecs/tuning.hpp"
 #include "iresearch/formats/column/codecs/text/segment_rows.hpp"
 
 #include <absl/algorithm/container.h>
@@ -60,9 +62,45 @@ bool Less(const string_t& a, const string_t& b) noexcept {
 
 }  // namespace
 
-uint64_t CodesBytes(Shape shape, uint64_t rows, uint64_t entries, uint64_t runs,
+uint64_t CodesBytes(Shape shape, uint64_t rows, uint64_t entries,
                     const NumericTuning& tuning) noexcept {
-  return shape == Shape::Dedup ? EstimateCodes(tuning, rows, entries, runs) : 0;
+  if (shape != Shape::Dictionary) {
+    return 0;
+  }
+  return tuning.reuse.calibrated
+           ? static_cast<uint64_t>(static_cast<double>(rows) *
+                                   tuning.reuse.reference)
+           : Packed(rows, entries);
+}
+
+void CompressCodes(
+  std::span<uint32_t> codes, NumericTuning& tuning,
+  absl::FunctionRef<void(CodecType codec, std::string_view bytes)> write) {
+  if (codes.empty()) {
+    write(CodecType::Auto, {});
+    return;
+  }
+  const WriteChunk chunk{
+    duckdb::Vector{duckdb::LogicalType::UINTEGER,
+                   reinterpret_cast<duckdb::data_ptr_t>(codes.data()),
+                   codes.size()},
+    codes.size()};
+  ColumnTuning column{.reuse = tuning.reuse, .numeric = tuning.choice};
+  const auto flush = [&](const Codec& codec, duckdb::BaseStatistics, uint64_t,
+                         std::string_view bytes) {
+    SDB_ASSERT(CodesCodec(codec.type));
+    write(codec.type, bytes);
+  };
+  ColumnDataCheckpointData data{
+    .type = chunk.data.GetType(),
+    .chunks = {&chunk, 1},
+    .flush = flush,
+    .tuning = &column,
+    .disabled = ~kCodesGroup,
+  };
+  Compress(CodecType::Auto, data);
+  tuning.reuse = column.reuse;
+  tuning.choice = column.numeric;
 }
 
 uint64_t EstimateEntries(const SegmentEntries& rows,
@@ -91,7 +129,7 @@ void RecordRatio(RatioHistory& hist, uint64_t raw, uint64_t comp,
 
 uint64_t SegmentRows::Estimate() const noexcept {
   return kHeaderSize + Packed(EntryCount(), _max_len) +
-         CodesBytes(_shape, _rows, _entries.size(), _runs, _codes_tuning);
+         CodesBytes(_shape, _rows, _entries.size(), _codes_tuning);
 }
 
 void SegmentRows::Sort(SortScratch& scratch) {
@@ -134,9 +172,9 @@ void SegmentRows::Write(const EncodedFrames& frames, Segment& out) {
                data_size <= std::numeric_limits<uint32_t>::max(),
              "col codec: segment too large");
 
+  const auto assemble = [&](CodecType codes_codec, std::string_view codes) {
   Header h{
-    .shape = _shape,
-    .codec = frames.codec,
+    .codes = codes_codec,
     .level = _level,
     .length_width =
       BitpackingPrimitives::MinimumBitWidth<uint32_t>(frames.max_length),
@@ -151,10 +189,6 @@ void SegmentRows::Write(const EncodedFrames& frames, Segment& out) {
     .flags = frames.flags,
     .raw_bytes = _raw,
   };
-  const auto codes =
-    _shape == Shape::Dedup
-      ? EncodeCodes(_codes, _entries.size(), _runs, _codes_tuning)
-      : std::string{};
   const auto total =
     LayOut(h, data_size, frames.frames.size(),
            BitpackingPrimitives::GetRequiredSize(entry_count, h.length_width),
@@ -182,6 +216,12 @@ void SegmentRows::Write(const EncodedFrames& frames, Segment& out) {
     std::memcpy(base + h.off_symtab, frames.symtab.data(),
                 frames.symtab.size());
   }
+  };
+  if (_shape == Shape::Dictionary) {
+    CompressCodes(_codes, _codes_tuning, assemble);
+  } else {
+    assemble(CodecType::Auto, {});
+  }
 
   _stats.Merge(out.stats.emplace(duckdb::BaseStatistics::CreateEmpty(_type)));
   out.config = {
@@ -201,7 +241,6 @@ void SegmentRows::Write(const EncodedFrames& frames, Segment& out) {
   _codes.clear();
   _entries.clear();
   _rows = 0;
-  _runs = 0;
   _raw = 0;
   _max_len = 0;
   _nulls = 0;

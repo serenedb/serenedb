@@ -46,7 +46,7 @@ uint64_t StringWindow::Analyze(const Config& config) {
       slot.emplace();
     }
     const auto whole =
-      config.layout == FrameLayout::Local ? Bytes(rows) : std::string_view{};
+      config.layout == FrameDictionary::Local ? Bytes(rows) : std::string_view{};
     return slot->EstimateSize(
       rows.profile, whole,
       Split(rows, blob::FrameShapeOf<Codec>(config.layout)), CodesSize(rows),
@@ -63,7 +63,7 @@ uint64_t StringWindow::Analyze(const Config& config) {
 }
 
 uint64_t StringWindow::RawBound(Shape shape) const noexcept {
-  if (shape == Shape::Dedup && _first.config.shape == Shape::Dedup) {
+  if (shape == Shape::Dictionary && _first.config.shape == Shape::Dictionary) {
     return std::min(_first.input, _first.entries * _first.max_len);
   }
   return _first.input;
@@ -71,11 +71,11 @@ uint64_t StringWindow::RawBound(Shape shape) const noexcept {
 
 uint64_t StringWindow::Entries() {
   for (const auto& seg : _encoded) {
-    if (seg->config.shape == Shape::Dedup) {
+    if (seg->config.shape == Shape::Dictionary) {
       return seg->entries;
     }
   }
-  return Rows(Shape::Dedup).profile.codes.size();
+  return Rows(Shape::Dictionary).profile.codes.size();
 }
 
 size_t StringWindow::TrialCompress(const Config& config) {
@@ -118,7 +118,6 @@ StringWindow::Measured& StringWindow::Rows(Shape shape) {
   } else {
     _dedup.Begin(_acc.values.size());
     rows.locals.resize(_end - _begin);
-    uint32_t last = 0;
     for (auto row = _begin; row < _end; ++row) {
       const auto code = _acc.codes[row];
       uint32_t local = 0;
@@ -132,10 +131,6 @@ StringWindow::Measured& StringWindow::Rows(Shape shape) {
         }
       }
       rows.locals[row - _begin] = local;
-      if (row == _begin || local != last) {
-        ++p.runs;
-      }
-      last = local;
     }
     p.codes = rows.codes;
   }
@@ -143,15 +138,15 @@ StringWindow::Measured& StringWindow::Rows(Shape shape) {
 }
 
 uint64_t StringWindow::CodesSize(Measured& rows) {
-  if (rows.profile.shape != Shape::Dedup) {
+  if (rows.profile.shape != Shape::Dictionary) {
     return 0;
   }
   if (!rows.coded) {
     rows.coded = true;
     auto tuning = _codes;
-    rows.codes_bytes =
-      EncodeCodes(rows.locals, rows.codes.size(), rows.profile.runs, tuning)
-        .size();
+    CompressCodes(rows.locals, tuning, [&](CodecType, std::string_view bytes) {
+      rows.codes_bytes = bytes.size();
+    });
   }
   return rows.codes_bytes;
 }

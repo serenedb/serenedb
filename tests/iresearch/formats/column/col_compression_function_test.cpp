@@ -21,6 +21,7 @@
 #include <duckdb.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
+#include <magic_enum/magic_enum.hpp>
 #include <iresearch/formats/column/codecs/compression_function.hpp>
 #include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/column/codecs/tuning.hpp>
@@ -38,7 +39,6 @@ namespace {
 using irs::codecs::CodecType;
 using irs::codecs::ColumnDataCheckpointData;
 using irs::codecs::CompressionFunction;
-using irs::codecs::Encoded;
 using irs::codecs::Estimate;
 
 constexpr uint64_t kRows = 100;
@@ -46,9 +46,10 @@ constexpr uint64_t kRows = 100;
 struct Probe {
   double estimate = std::numeric_limits<double>::infinity();
   double bound = 0;
-  uint64_t encoded_bytes = kRows;
+  uint64_t bytes = kRows;
+  bool writes = true;
   int analyzed = 0;
-  int encodes = 0;
+  int compressed = 0;
 };
 
 template<int kId>
@@ -61,16 +62,14 @@ struct Fake {
     return {.codec = kCodec, .ratio = probe.estimate};
   }
 
-  static Encoded Encode(ColumnDataCheckpointData& data, const Estimate*) {
-    ++probe.encodes;
-    return {
-      .bytes = probe.encoded_bytes, .input = data.input, .buffered = true};
-  }
-
-  static void Flush(ColumnDataCheckpointData& data) {
-    data.codec = irs::codecs::GetCodec(kCodec, data.type.InternalType());
-    data.FlushSegment(duckdb::BaseStatistics::CreateEmpty(data.type), data.rows,
-                      {});
+  static bool Compress(ColumnDataCheckpointData& data) {
+    ++probe.compressed;
+    if (!probe.writes) {
+      return false;
+    }
+    data.FlushSegment(kCodec, duckdb::BaseStatistics::CreateEmpty(data.type),
+                      data.rows, std::string(probe.bytes, 'x'));
+    return true;
   }
 
   static constexpr CodecType kCodec =
@@ -81,8 +80,7 @@ struct Fake {
 template<int kId>
 constexpr CompressionFunction kFake{
   .analyze = Fake<kId>::Analyze,
-  .encode = Fake<kId>::Encode,
-  .flush = Fake<kId>::Flush,
+  .compress = Fake<kId>::Compress,
 };
 
 uint64_t StreamedAnalyze(std::span<const irs::WriteChunk>) { return kRows; }
@@ -128,13 +126,13 @@ class ColCompressionFunctionTest : public ::testing::Test {
       .tuning = &_tuning,
       .disabled = disabled,
       .rows = kRows,
-      .input = kRows,
     };
-    irs::codecs::Compress(functions, data);
+    irs::codecs::Contest(functions, data);
     return flushed;
   }
 
-  CodecType CompressAs(CodecType method, irs::WriteTier tier) {
+  CodecType CompressAs(CodecType method, irs::WriteTier tier,
+                       irs::codecs::CodecSet disabled = {}) {
     auto out = _dir.create("blocks");
     irs::WriteContext ctx{_db.instance->GetBufferManager(), *out};
     CodecType flushed = CodecType::Auto;
@@ -148,6 +146,7 @@ class ColCompressionFunctionTest : public ::testing::Test {
       .flush = flush,
       .params = {.tier = tier},
       .tuning = &_tuning,
+      .disabled = disabled,
     };
     irs::codecs::Compress(method, data);
     return flushed;
@@ -160,27 +159,58 @@ class ColCompressionFunctionTest : public ::testing::Test {
   irs::codecs::ColumnTuning _tuning;
 };
 
-TEST_F(ColCompressionFunctionTest,
-       AnExactCodecTakesARowGroupAnEstimateOversold) {
+TEST_F(ColCompressionFunctionTest, TheSmallestEstimateWins) {
   Fake<1>::probe.estimate = 0.5;
-  Fake<1>::probe.encoded_bytes = 2 * kRows;
-  const CompressionFunction* const functions[] = {&kStreamedRle, &kFake<1>};
-  EXPECT_EQ(Compress(functions, irs::WriteTier::Merge), CodecType::Rle);
-  EXPECT_EQ(Fake<1>::probe.encodes, 1);
-}
-
-TEST_F(ColCompressionFunctionTest, AnEstimateThatHoldsBeatsTheExactCodec) {
-  Fake<1>::probe.estimate = 0.5;
-  Fake<1>::probe.encoded_bytes = kRows / 2;
   const CompressionFunction* const functions[] = {&kStreamedRle, &kFake<1>};
   EXPECT_EQ(Compress(functions, irs::WriteTier::Merge), CodecType::Bitpacking);
+  EXPECT_EQ(Fake<1>::probe.compressed, 1);
+}
+
+TEST_F(ColCompressionFunctionTest, AWinnerThatCannotWriteLeavesItUncompressed) {
+  Fake<1>::probe.estimate = 0.5;
+  Fake<1>::probe.writes = false;
+  const CompressionFunction* const functions[] = {&kFake<1>};
+  EXPECT_EQ(Compress(functions, irs::WriteTier::Flush),
+            CodecType::Uncompressed);
+  EXPECT_EQ(Fake<1>::probe.compressed, 1);
+}
+
+TEST_F(ColCompressionFunctionTest, AHeldCodecThatGrowsIsContestedAgain) {
+  Fake<0>::probe.estimate = 0.5;
+  Fake<0>::probe.bytes = kRows / 2;
+  const CompressionFunction* const functions[] = {&kFake<0>};
+  for (int i = 0; i < 4; ++i) {
+    EXPECT_EQ(Compress(functions, irs::WriteTier::Flush), CodecType::Rle);
+  }
+  EXPECT_EQ(Fake<0>::probe.analyzed, 3);
+  EXPECT_EQ(Compress(functions, irs::WriteTier::Flush), CodecType::Rle);
+  EXPECT_EQ(Fake<0>::probe.analyzed, 3);
+  Fake<0>::probe.bytes = 2 * kRows;
+  EXPECT_EQ(Compress(functions, irs::WriteTier::Flush), CodecType::Rle);
+  EXPECT_EQ(Fake<0>::probe.analyzed, 3);
+  EXPECT_EQ(Compress(functions, irs::WriteTier::Flush), CodecType::Rle);
+  EXPECT_EQ(Fake<0>::probe.analyzed, 4);
+}
+
+TEST_F(ColCompressionFunctionTest, AHeldCodecThatCannotWriteIsContestedAgain) {
+  Fake<0>::probe.estimate = 0.5;
+  Fake<0>::probe.bytes = kRows / 2;
+  const CompressionFunction* const functions[] = {&kFake<0>};
+  for (int i = 0; i < 5; ++i) {
+    EXPECT_EQ(Compress(functions, irs::WriteTier::Flush), CodecType::Rle);
+  }
+  EXPECT_EQ(Fake<0>::probe.analyzed, 3);
+  Fake<0>::probe.writes = false;
+  EXPECT_EQ(Compress(functions, irs::WriteTier::Flush),
+            CodecType::Uncompressed);
+  EXPECT_EQ(Fake<0>::probe.analyzed, 4);
 }
 
 TEST_F(ColCompressionFunctionTest,
        EveryFunctionIsAnalyzedOnceUnderTheBestScoreBeforeIt) {
   Fake<0>::probe.estimate = 0.6;
   Fake<1>::probe.estimate = 0.3;
-  Fake<1>::probe.encoded_bytes = kRows / 4;
+  Fake<1>::probe.bytes = kRows / 4;
   Fake<2>::probe.estimate = 0.4;
   const CompressionFunction* const functions[] = {&kFake<0>, &kFake<1>,
                                                   &kFake<2>};
@@ -206,15 +236,20 @@ TEST_F(ColCompressionFunctionTest,
   EXPECT_EQ(Fake<0>::probe.analyzed, 2);
 }
 
-TEST_F(ColCompressionFunctionTest,
-       AHeldStreamedCodecThatGotDisabledIsNotReused) {
-  const CompressionFunction* const functions[] = {&kStreamedRle};
-  EXPECT_EQ(Compress(functions, irs::WriteTier::Merge), CodecType::Rle);
-  EXPECT_EQ(Compress(functions, irs::WriteTier::Merge), CodecType::Rle);
+TEST_F(ColCompressionFunctionTest, ADisabledCodecIsNeitherPickedNorReused) {
+  const auto held = CompressAs(CodecType::Auto, irs::WriteTier::Merge);
+  ASSERT_EQ(CompressAs(CodecType::Auto, irs::WriteTier::Merge), held);
   irs::codecs::CodecSet disabled;
-  disabled.set(std::to_underlying(CodecType::Rle));
-  EXPECT_EQ(Compress(functions, irs::WriteTier::Flush, disabled),
-            CodecType::Uncompressed);
+  disabled.set(std::to_underlying(held));
+  const auto next =
+    CompressAs(CodecType::Auto, irs::WriteTier::Merge, disabled);
+  EXPECT_NE(next, held);
+  disabled.set(std::to_underlying(next));
+  for (const auto tier : {irs::WriteTier::Flush, irs::WriteTier::Merge}) {
+    const auto again = CompressAs(CodecType::Auto, tier, disabled);
+    EXPECT_FALSE(disabled.test(std::to_underlying(again)))
+      << magic_enum::enum_name(again);
+  }
 }
 
 TEST_F(ColCompressionFunctionTest,

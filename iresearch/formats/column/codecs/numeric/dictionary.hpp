@@ -49,16 +49,17 @@ class DictionaryFrames final : public Frames<T> {
   static constexpr size_t kCodeBytes = kDictionaryCodeBytes<T>;
 
  public:
-  explicit DictionaryFrames(ColumnDataCheckpointData& data)
-    : Base{data, NumericShape::Dictionary} {}
+  static constexpr Shape kShape = Shape::Dictionary;
+
+  explicit DictionaryFrames(ColumnDataCheckpointData& data) : Base{data, kShape} {}
 
  private:
-  void Build(const NumericTransform* only) final {
-    const bool bytes = Base::Wanted(only, NumericTransform::Dict);
-    const bool packed = Base::Wanted(only, NumericTransform::DictFfor);
+  void Build(const NumericChoice* only) final {
+    const bool bytes = Base::Wanted(only, false);
+    const bool packed = Base::Wanted(only, true);
     const auto& facts = this->_values.GetFacts();
     SDB_ASSERT(bytes || packed);
-    if (this->_values.CodesOnly() || (!this->_named && facts.for_stored <= 1) ||
+    if ((!this->_named && facts.for_stored <= 1) ||
         !BuildEntries(this->_named || facts.for_stored >= 4 ? kNumericDictMax
                                                             : 256)) {
       return;
@@ -76,7 +77,6 @@ class DictionaryFrames final : public Frames<T> {
         n, code_width, _code_bytes.data(),
         [k = _codes.data()](size_t i) { return k[i]; });
       this->AddWithShuffle({
-        .transform = NumericTransform::Dict,
         .stored = code_width,
         .items = n,
         .values = _code_bytes,
@@ -87,7 +87,7 @@ class DictionaryFrames final : public Frames<T> {
       _code_blocks.Plan(std::span<const uint32_t>{_codes},
                         std::less<uint32_t>{});
       this->Add({
-        .transform = NumericTransform::DictFfor,
+        .packed = true,
         .stored = kWidth,
         .items = n,
         .dict = dict,
@@ -171,11 +171,12 @@ class DictionaryReader final : public FrameReader<T> {
 
  public:
   DictionaryReader(duckdb::const_data_ptr_t base, const FrameHeader& frames,
+                   CodecType codec,
                    const ReadContext::CacheSlot& slot = {})
-    : Base{base, frames, slot},
+    : Base{base, frames, codec, slot},
       _own{duckdb::Load<DictionaryHeader>(base + sizeof(FrameHeader))} {
     SDB_ENSURE(
-      frames.shape == NumericShape::Dictionary && _own.count != 0 &&
+      _own.count != 0 &&
         _own.count <= kNumericDictMax &&
         (this->Packed() || frames.stored <= kDictionaryCodeBytes<T>) &&
         uint64_t{frames.off_frames} +
@@ -251,7 +252,7 @@ class DictionaryReader final : public FrameReader<T> {
       const auto item = this->SourceLanes(row);
       code = static_cast<uint32_t>(numeric::ShuffledItem(
         item.source, item.rows, this->_f.stored, item.at));
-    } else if (this->_f.leaf == NumericLeaf::None) {
+    } else if (this->_leaf == ByteCodec::None) {
       if (next < this->_f.row_count) {
         const auto ahead = this->MetaAt(this->FrameOf(next));
         __builtin_prefetch(this->Data(ahead) +

@@ -446,7 +446,7 @@ class RleCompressState {
  public:
   explicit RleCompressState(ColumnDataCheckpointData& checkpoint_data)
     : _checkpoint_data{&checkpoint_data},
-      _segment{checkpoint_data.type},
+      _segment{CodecType::Rle, checkpoint_data.type},
       _pack_buffer{std::make_unique<duckdb::data_t[]>(kBlockSize)} {}
 
   void Append(const duckdb::UnifiedVectorFormat& vdata, idx_t count) {

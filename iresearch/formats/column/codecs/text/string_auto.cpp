@@ -27,8 +27,10 @@
 #include <iterator>
 #include <limits>
 #include <span>
+#include <string_view>
+#include <utility>
 
-#include "iresearch/formats/column/codecs/numeric/numeric.hpp"
+#include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/formats/column/codecs/text/string_layout.hpp"
 #include "iresearch/formats/column/codecs/text/string_window.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -107,7 +109,7 @@ Analysis AnalyzeLz4(const AnalyzeInput& input) {
   config.level = levels[level];
   state.config = config;
   state.score = scores[level];
-  const auto analyze_layout = [&](FrameLayout layout, double min_gain) {
+  const auto analyze_layout = [&](FrameDictionary layout, double min_gain) {
     auto candidate = state.config;
     candidate.layout = layout;
     const auto candidate_score = window.Analyze(candidate);
@@ -118,9 +120,9 @@ Analysis AnalyzeLz4(const AnalyzeInput& input) {
     }
   };
   if (method.local) {
-    analyze_layout(FrameLayout::Local, 0.0);
+    analyze_layout(FrameDictionary::Local, 0.0);
   }
-  analyze_layout(FrameLayout::Wide, kWideFramesGain);
+  analyze_layout(FrameDictionary::None, kWideFramesGain);
   tuned.level[leaf] = state.config.level;
   tuned.layout[leaf] = state.config.layout;
   return state;
@@ -201,7 +203,29 @@ Config Fast(Shape shape) noexcept {
 }
 
 bool Enabled(const CodecSet& disabled, Shape shape, ByteCodec leaf) noexcept {
-  return !disabled.test(std::to_underlying(TextCodec(shape, leaf)));
+  return !disabled.test(std::to_underlying(CodecOf(shape, leaf)));
+}
+
+uint64_t PlainStorageBytes(const Segment& seg) noexcept {
+  return kHeaderSize + seg.input + seg.rows * sizeof(int32_t);
+}
+
+Config NamedConfig(Shape shape, ByteCodec leaf,
+                         const ColCodecParams& params) noexcept {
+  return {
+    .shape = shape,
+    .leaf = leaf,
+    .level = params.compression_level,
+    .layout = params.tier == WriteTier::Flush ? FrameDictionary::FirstFrame
+                                              : FrameDictionary::Local,
+  };
+}
+
+auto FlushTo(ColumnDataCheckpointData& data) {
+  return [&data](CodecType type, duckdb::BaseStatistics stats, uint64_t rows,
+                 std::string_view bytes) {
+    data.FlushSegment(type, std::move(stats), rows, bytes);
+  };
 }
 
 bool Enabled(const CodecSet& disabled, const TierCandidates& tier,
@@ -213,50 +237,109 @@ bool Enabled(const CodecSet& disabled, const TierCandidates& tier,
 
 }  // namespace
 
-bool Enabled(const CodecSet& disabled, const Config& config) noexcept {
-  return Enabled(disabled, config.shape, config.leaf);
+Strings::Strings(ColumnDataCheckpointData& data)
+  : _tuning{data.tuning->strings},
+    _compressor{data.params, data.type, _tuning.estimators,
+                data.ctx->BufferManager()} {}
+
+const StringAccumulator& Strings::Accumulated(
+  std::span<const WriteChunk> chunks) {
+  if (!_accumulated) {
+    _accumulated = true;
+    _acc.Reserve(CountRows(chunks), _tuning.last_distinct);
+    for (const auto& chunk : chunks) {
+      _acc.Add(chunk.data);
+    }
+    _tuning.last_distinct = _acc.values.size();
+  }
+  return _acc;
 }
 
-PooledSegment DetectBestCompressionMethod(const StringAccumulator& acc,
-                                          const ColCodecParams& params,
-                                          StringTuning& tuning,
-                                          const CodecSet& disabled,
-                                          StringCompressor& compressor,
-                                          PooledSegment first) {
-  const auto& tier = CandidatesOf(params.tier);
-  if (acc.Rows() == 0 || (!Enabled(disabled, tier, Shape::Dedup) &&
+Estimate Strings::Analyze(ColumnDataCheckpointData& data) {
+  _first = DetectBestCompressionMethod(data);
+  if (!_first) {
+    return {};
+  }
+  const auto& seg = *_first;
+  return {
+    .codec = CodecOf(seg.config.shape, seg.config.leaf),
+    .ratio = static_cast<double>(seg.Size()) /
+             static_cast<double>(std::max<uint64_t>(seg.input, 1)),
+  };
+}
+
+bool Strings::Compress(ColumnDataCheckpointData& data) {
+  const auto sink = FlushTo(data);
+  if (data.method != CodecType::Auto) {
+    const auto config =
+      NamedConfig(ShapeOf(data.method), LeafOf(data.method), data.params);
+    if (config.shape == Shape::Plain) {
+      _compressor.CompressChunks(config, data.chunks, sink);
+    } else {
+      _compressor.Compress(config, Accumulated(data.chunks), 0, sink);
+    }
+    return true;
+  }
+  if (!_first) {
+    const auto& config = _tuning.config;
+    const auto& acc = Accumulated(data.chunks);
+    if (!config || acc.Rows() == 0) {
+      return false;
+    }
+    SDB_ASSERT(Enabled(data.disabled, config->shape, config->leaf));
+    _first = _compressor.CompressSegment(*config, acc, 0);
+  }
+  if (_first->Size() > PlainStorageBytes(*_first)) {
+    return false;
+  }
+  const auto config = _first->config;
+  const auto rest = _first->begin + _first->rows;
+  sink(CodecOf(config.shape, config.leaf), std::move(*_first->stats),
+       _first->rows, _first->bytes.View());
+  _first.reset();
+  _compressor.Compress(config, _acc, rest, sink);
+  return true;
+}
+
+PooledSegment Strings::DetectBestCompressionMethod(
+  const ColumnDataCheckpointData& data) {
+  const auto& acc = Accumulated(data.chunks);
+  const auto& disabled = data.disabled;
+  auto first = std::move(_first);
+  const auto& tier = CandidatesOf(data.params.tier);
+  if (acc.Rows() == 0 || (!Enabled(disabled, tier, Shape::Dictionary) &&
                           !Enabled(disabled, tier, Shape::Plain))) {
     return {};
   }
   if (!first) {
-    first = compressor.CompressSegment(
-      tuning.config
-        ? *tuning.config
+    first = _compressor.CompressSegment(
+      _tuning.config
+        ? *_tuning.config
         : Fast(Repeats(acc.values.size(), acc.Rows() - acc.null_count)
-                 ? Shape::Dedup
+                 ? Shape::Dictionary
                  : Shape::Plain),
       acc, 0);
   }
   const auto input = first->input;
   const auto values = first->rows - first->nulls;
   const auto lengths = Packed(first->rows, first->max_len);
-  StringWindow window{acc, compressor, std::move(first),
-                      tuning.estimators.codes};
+  StringWindow window{acc, _compressor, std::move(first),
+                      _tuning.estimators.codes};
   const auto entries = window.Entries();
   const auto slack = [&](Shape shape) {
     return window.Exact(Fast(shape)) ? 0.0 : kShapeSlack;
   };
-  auto shape = Shape::Dedup;
-  auto dedup = static_cast<double>(window.Analyze(Fast(Shape::Dedup)));
+  auto shape = Shape::Dictionary;
+  auto dedup = static_cast<double>(window.Analyze(Fast(Shape::Dictionary)));
   if (PlainWins(
-        entries, values, dedup * (1.0 + slack(Shape::Dedup)),
+        entries, values, dedup * (1.0 + slack(Shape::Dictionary)),
         static_cast<double>(kHeaderSize + lengths + input / kLz4MaxRatio))) {
     auto plain = static_cast<double>(window.Analyze(Fast(Shape::Plain)));
-    const auto margin = std::max(slack(Shape::Dedup), slack(Shape::Plain));
+    const auto margin = std::max(slack(Shape::Dictionary), slack(Shape::Plain));
     if (PlainWins(entries, values, dedup * (1.0 - margin), plain) !=
         PlainWins(entries, values, dedup * (1.0 + margin), plain)) {
       dedup = static_cast<double>(
-        window.At(window.TrialCompress(Fast(Shape::Dedup))).Size());
+        window.At(window.TrialCompress(Fast(Shape::Dictionary))).Size());
       plain = static_cast<double>(
         window.At(window.TrialCompress(Fast(Shape::Plain))).Size());
     }
@@ -264,10 +347,10 @@ PooledSegment DetectBestCompressionMethod(const StringAccumulator& acc,
       shape = Shape::Plain;
     }
   }
-  auto& tuned = tuning.tuned;
+  auto& tuned = _tuning.tuned;
   const bool tune = entries >= kTuneMinEntries && !tuned.done;
   if (!Enabled(disabled, tier, shape)) {
-    shape = shape == Shape::Dedup ? Shape::Plain : Shape::Dedup;
+    shape = shape == Shape::Dictionary ? Shape::Plain : Shape::Dictionary;
   }
   SDB_ASSERT(Enabled(disabled, tier, shape));
   const double fsst_preference = shape == Shape::Plain
@@ -329,7 +412,7 @@ PooledSegment DetectBestCompressionMethod(const StringAccumulator& acc,
       picked = fsst;
     }
   }
-  tuning.config = window.At(picked).config;
+  _tuning.config = window.At(picked).config;
   return std::move(window).Take(picked);
 }
 

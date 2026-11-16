@@ -65,6 +65,7 @@
 #include <duckdb/storage/storage_info.hpp>
 #include <duckdb/storage/table/row_group_collection.hpp>
 #include <iresearch/formats/column/codecs/registry.hpp>
+#include <iresearch/utils/enum_name.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/read_context.hpp>
@@ -302,13 +303,13 @@ irs::containers::FlatHashSet<duckdb::PhysicalType> LeafPhysicalTypes(
 }
 
 void CheckCompressionLevel(std::string_view column_name,
-                           const irs::codecs::CodecInfo& codec,
-                           uint32_t level) {
+                           irs::codecs::CodecType codec, uint32_t level) {
   if (level == 0) {
     return;
   }
-  const uint32_t max_level = irs::codecs::MaxLevel(codec.type);
-  const auto name = duckdb::StringUtil::Lower(std::string{codec.name});
+  const uint32_t max_level = irs::codecs::MaxLevel(codec);
+  const auto name =
+    duckdb::StringUtil::Lower(std::string{magic_enum::enum_name(codec)});
   if (max_level == 0) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("Column \"", column_name, "\": compression '", name,
@@ -355,31 +356,32 @@ void RequireSearchTableIndexOption(std::string_view name) {
 }
 
 irs::codecs::CodecType CheckColumnCodec(
-  std::string_view column_name, const irs::codecs::CodecInfo* codec,
+  std::string_view column_name, irs::codecs::CodecType codec,
   std::string_view codec_name, uint32_t level,
   const duckdb::LogicalType& column_type) {
-  if (!codec) {
+  if (codec == irs::codecs::kNoCodec) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("Column \"", column_name,
                             "\": unknown compression '", codec_name, "'"));
   }
-  CheckCompressionLevel(column_name, *codec, level);
-  if (codec->type == irs::codecs::CodecType::Auto) {
-    return codec->type;
+  CheckCompressionLevel(column_name, codec, level);
+  if (codec == irs::codecs::CodecType::Auto) {
+    return codec;
   }
   const auto compresses = [&](duckdb::PhysicalType physical) {
-    const auto* written = codec->function(physical);
+    const auto* written = irs::codecs::GetCodec(codec, physical);
     return written && written->compression;
   };
   const auto physical = column_type.InternalType();
   if (compresses(physical)) {
-    return codec->type;
+    return codec;
   }
   if (const auto leaves = LeafPhysicalTypes(column_type);
       !leaves.empty() && absl::c_all_of(leaves, compresses)) {
-    return codec->type;
+    return codec;
   }
-  ThrowCodecMismatch(column_name, codec->name, column_type, physical);
+  ThrowCodecMismatch(column_name, magic_enum::enum_name(codec),
+                     column_type, physical);
 }
 
 SearchTableEntry::SearchTableEntry(
@@ -495,8 +497,8 @@ void AppendIResearchBlockRows(
     info.segment_start = row_base + node.DataBlockFirstRow(block);
     info.segment_count = meta.tuple_count;
     info.compression_type =
-      meta.codec ? std::string{irs::codecs::NameOf(meta.codec->type)}
-                 : std::string{"Uncompressed"};
+      std::string{magic_enum::enum_name(
+        meta.codec ? meta.codec->type : irs::codecs::CodecType::Uncompressed)};
     info.segment_stats = meta.statistics.ToStruct();
     info.has_updates = false;
     info.persistent = true;

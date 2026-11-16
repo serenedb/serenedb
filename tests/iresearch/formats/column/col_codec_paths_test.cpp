@@ -38,6 +38,7 @@
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/table_filter_state.hpp>
 #include <functional>
+#include <magic_enum/magic_enum.hpp>
 #include <iresearch/formats/column/codecs/numeric/alp_primitives.hpp>
 #include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/column/codecs/text/string_scan.hpp>
@@ -550,7 +551,7 @@ class ColCodecPathsTest : public TestBase {
       const auto segment = col.OpenSegment(window.block, ctx);
       if (segment->function.get_segment_info) {
         EXPECT_FALSE(segment->function.get_segment_info(*segment).empty())
-          << irs::codecs::NameOf(block.codec->type) << " block at row " << row;
+          << magic_enum::enum_name(block.codec->type) << " block at row " << row;
       }
       row += block.tuple_count;
     }
@@ -569,7 +570,7 @@ class ColCodecPathsTest : public TestBase {
       std::string codecs;
       bool found = false;
       for (const auto& block : col->DataBlocks()) {
-        absl::StrAppend(&codecs, irs::codecs::NameOf(block.codec->type), " ");
+        absl::StrAppend(&codecs, magic_enum::enum_name(block.codec->type), " ");
         found = found || block.codec->type == c.codec;
       }
       ASSERT_TRUE(found) << codecs;
@@ -752,7 +753,7 @@ TEST_F(ColCodecPathsTest, NumericCodecsReadEveryTypeThroughEveryPath) {
     };
     const auto check = [&](CodecType codec, std::string_view shape,
                            const Gen& value, bool (*valid)(uint64_t) = All) {
-      Check({absl::StrCat(type.ToString(), " ", irs::codecs::NameOf(codec), " ",
+      Check({absl::StrCat(type.ToString(), " ", magic_enum::enum_name(codec), " ",
                           shape),
              type, codec, valid, value});
     };
@@ -899,10 +900,10 @@ TEST_F(ColCodecPathsTest, AlpCodecsReadFloatsAndDoubles) {
       Check({name("alp one value"), type, CodecType::Alp, valid,
              [&](uint64_t g) { return item(g % 4096 < 2048 ? 2.5 : 3.25); },
              /*stored=*/false});
-      Check({name("alprd"), type, CodecType::AlpRd, valid, [&](uint64_t g) {
+      Check({name("alprd"), type, CodecType::Alprd, valid, [&](uint64_t g) {
                return item(std::sin(static_cast<double>(g)) * 12345.678901234);
              }});
-      Check({name("alprd exceptions"), type, CodecType::AlpRd, valid,
+      Check({name("alprd exceptions"), type, CodecType::Alprd, valid,
              [&](uint64_t g) {
                return g % 97 == 0 ? item(-1e30 * static_cast<double>(g + 1))
                                   : item(std::sin(static_cast<double>(g)));
@@ -935,7 +936,7 @@ TEST_F(ColCodecPathsTest, AlpCodecsReadFloatsAndDoubles) {
       {name("alp short last vector"), type, CodecType::Alp, All,
        [&](uint64_t g) { return item(static_cast<double>(g % 10000) / 100.0); },
        /*stored=*/true, irs::WriteTier::Flush, kShortLastVector, kSampledRows});
-    Check({name("alprd short last vector"), type, CodecType::AlpRd, All,
+    Check({name("alprd short last vector"), type, CodecType::Alprd, All,
            [&](uint64_t g) {
              return item(std::sin(static_cast<double>(g)) * 12345.678901234);
            },
@@ -1088,14 +1089,14 @@ TEST_F(ColCodecPathsTest, TextCodecsReadEveryShape) {
     CodecType::DictLz4,    CodecType::Lz4,        CodecType::DictZstd,
     CodecType::Zstd,       CodecType::DictZxc,    CodecType::Zxc,
     CodecType::DictFsst,   CodecType::Fsst,       CodecType::DictFsstPlus,
-    CodecType::FsstPlus,   CodecType::DictOnPair, CodecType::OnPair,
+    CodecType::FsstPlus,   CodecType::DictOnpair, CodecType::Onpair,
     CodecType::DictFsst12, CodecType::Fsst12,
   };
   const std::string filler(400, 'w');
   for (const auto tier : {irs::WriteTier::Flush, irs::WriteTier::Merge}) {
     for (const auto codec : kCodecs) {
       const auto name = [&](std::string_view shape) {
-        return absl::StrCat(irs::codecs::NameOf(codec), " ", shape, " tier ",
+        return absl::StrCat(magic_enum::enum_name(codec), " ", shape, " tier ",
                             static_cast<int>(tier));
       };
       Check(
@@ -1136,9 +1137,9 @@ TEST_F(ColCodecPathsTest, TextCodecsReadEveryShape) {
   constexpr uint32_t kLargeGroup = 8 * STANDARD_VECTOR_SIZE;
   for (const auto codec :
        {CodecType::DictLz4, CodecType::DictZstd, CodecType::DictZxc,
-        CodecType::DictFsst, CodecType::DictFsstPlus, CodecType::DictOnPair,
+        CodecType::DictFsst, CodecType::DictFsstPlus, CodecType::DictOnpair,
         CodecType::DictFsst12}) {
-    Check({absl::StrCat(irs::codecs::NameOf(codec),
+    Check({absl::StrCat(magic_enum::enum_name(codec),
                         " half of a large dictionary judged row by row"),
            LogicalType::VARCHAR, codec, All,
            [](uint64_t g) {
@@ -1176,7 +1177,7 @@ TEST_F(ColCodecPathsTest, FiltersSplitAVectorAtBlockBoundaries) {
   for (const auto codec : {CodecType::DictFsst, CodecType::DictLz4,
                            CodecType::Fsst, CodecType::Lz4, CodecType::Auto}) {
     const auto name = [&](std::string_view shape) {
-      return absl::StrCat(irs::codecs::NameOf(codec), " ", shape);
+      return absl::StrCat(magic_enum::enum_name(codec), " ", shape);
     };
     Check({name("categories"), LogicalType::VARCHAR, codec, Periodic,
            [](uint64_t g) { return Value{absl::StrCat("category_", g % 50)}; },
@@ -1195,7 +1196,7 @@ TEST_F(ColCodecPathsTest, FiltersSplitAVectorAtBlockBoundaries) {
   for (const auto codec :
        {CodecType::Rle, CodecType::Bitpacking, CodecType::Auto}) {
     const auto name = [&](std::string_view shape) {
-      return absl::StrCat(irs::codecs::NameOf(codec), " ", shape);
+      return absl::StrCat(magic_enum::enum_name(codec), " ", shape);
     };
     Check({name("runs"), LogicalType::BIGINT, codec, All,
            [](uint64_t g) { return Int(LogicalType::BIGINT, (g / 37) % 11); },

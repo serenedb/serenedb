@@ -380,7 +380,8 @@ class BitpackingCompress {
   using S = Signed<T>;
 
   explicit BitpackingCompress(ColumnDataCheckpointData& checkpoint_data)
-    : _checkpoint_data{&checkpoint_data}, _segment{checkpoint_data.type} {}
+    : _checkpoint_data{&checkpoint_data},
+      _segment{CodecType::Bitpacking, checkpoint_data.type} {}
 
   void Append(const duckdb::Vector& input) {
     _state.Update(input.Values<T>(), *this);

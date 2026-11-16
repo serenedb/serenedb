@@ -72,9 +72,9 @@ void ZeroNullArrays(duckdb::Vector& arrays, duckdb::idx_t from,
 }
 
 codecs::CodecType ForcedBySetting(const duckdb::DBConfig& config) {
-  const auto* codec = codecs::FindCodec(
+  const auto type = codecs::FindCodec(
     duckdb::Settings::Get<duckdb::ForceCompressionSetting>(config));
-  return codec ? codec->type : codecs::CodecType::Auto;
+  return type == codecs::kNoCodec ? codecs::CodecType::Auto : type;
 }
 
 uint64_t AppendAligned(IndexOutput& out, std::string_view bytes) {
@@ -98,14 +98,6 @@ void CaptureBlock(const codecs::Codec& codec, duckdb::BaseStatistics stats,
     .tuple_count = tuple_count,
     .codec = &codec,
   };
-  if (m.statistics.IsConstant()) {
-    if (const auto* constant = codecs::GetCodec(
-          codecs::CodecType::Constant, m.statistics.GetType().InternalType())) {
-      m.codec = constant;
-      sink.push_back(std::move(m));
-      return;
-    }
-  }
   if (!bytes.empty()) {
     SDB_ASSERT(bytes.size() <= std::numeric_limits<uint32_t>::max());
     m.file_offset = AppendAligned(blocks, bytes);
@@ -334,16 +326,25 @@ void ColumnWriter::SealListParts(const duckdb::LogicalType& type,
   auto parts = ingest.Take();
   state.list_running = parts.running;
   state.list_distinct = parts.next_code;
-  auto code_chunks = ViewChunks(parts.codes);
-  CompressPlain(type, CodesCodec(parts, row_count), code_chunks, meta.data);
+  WriteChunk codes{
+    duckdb::Vector{duckdb::LogicalType::UBIGINT,
+                   reinterpret_cast<duckdb::data_ptr_t>(parts.codes.data()),
+                   parts.codes.size()},
+    parts.codes.size()};
+  CompressPlain(type, CodesCodec(parts, row_count),
+                {&codes, parts.codes.empty() ? 0U : 1U}, meta.data);
   SealColumn(duckdb::ListType::GetChildType(type), parts.elems,
              parts.elem_count, /*skip_validity=*/false, meta.children[0],
              state.children[0]);
   auto& ends = meta.children[1];
   Claim(ends, duckdb::LogicalType::UBIGINT);
-  auto end_chunks = ViewChunks(parts.ends);
+  WriteChunk end_chunk{
+    duckdb::Vector{duckdb::LogicalType::UBIGINT,
+                   reinterpret_cast<duckdb::data_ptr_t>(parts.ends.data()),
+                   parts.ends.size()},
+    parts.ends.size()};
   CompressPlain(duckdb::LogicalType::UBIGINT, codecs::CodecType::Bitpacking,
-                end_chunks, ends.data);
+                {&end_chunk, parts.ends.empty() ? 0U : 1U}, ends.data);
 }
 
 void ColumnWriter::CompressPlain(const duckdb::LogicalType& type,
@@ -881,8 +882,9 @@ void ColumnWriter::SealRowGroup() {
   _method = _named == codecs::CodecType::Auto ? _global_method : _named;
   _disabled.reset();
   for (const auto disabled : config.GetDisabledCompressionMethods()) {
-    if (const auto* codec = codecs::FindCodec(disabled)) {
-      _disabled.set(std::to_underlying(codec->type));
+    if (const auto type = codecs::FindCodec(disabled);
+        type != codecs::kNoCodec) {
+      _disabled.set(std::to_underlying(type));
     }
   }
   if (!_deferred) {

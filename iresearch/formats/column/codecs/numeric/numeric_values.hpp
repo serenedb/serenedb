@@ -66,9 +66,6 @@ class Values final : public State {
     DivideByGcd();
   }
 
-  explicit Values(std::span<const U> codes)
-    : _values{codes}, _any_valid{!codes.empty()}, _codes_only{true} {}
-
   static bool Less(U a, U b) noexcept {
     if constexpr (std::is_integral_v<T> && std::is_signed_v<T>) {
       return static_cast<T>(a) < static_cast<T>(b);
@@ -80,8 +77,6 @@ class Values final : public State {
   std::span<const U> Get() const noexcept { return _values; }
 
   bool Usable() const noexcept { return _any_valid; }
-
-  bool CodesOnly() const noexcept { return _codes_only; }
 
   U Scale() const noexcept { return _scale; }
 
@@ -186,7 +181,6 @@ class Values final : public State {
   U _last = 0;
   U _scale = 0;
   bool _any_valid = false;
-  bool _codes_only = false;
 };
 
 }  // namespace irs::codecs

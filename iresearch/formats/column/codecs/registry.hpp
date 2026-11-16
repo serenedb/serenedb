@@ -31,12 +31,6 @@
 
 namespace irs::codecs {
 
-struct CodecInfo {
-  CodecType type;
-  std::string_view name;
-  const Codec* (&function)(duckdb::PhysicalType physical);
-};
-
 extern const Codec kDictLz4Function;
 extern const Codec kLz4Function;
 extern const Codec kDictZstdFunction;
@@ -51,7 +45,8 @@ extern const Codec kDictOnPairFunction;
 extern const Codec kOnPairFunction;
 extern const Codec kDictFsst12Function;
 extern const Codec kFsst12Function;
-const Codec* NumericCodecOf(CodecType type, duckdb::PhysicalType physical);
+const Codec* NumericCodecOf(Shape shape, ByteCodec leaf,
+                            duckdb::PhysicalType physical);
 const Codec* ConstantFunction(duckdb::PhysicalType physical);
 bool CompressConstant(ColumnDataCheckpointData& data);
 const Codec& EmptyValidityFunction();
@@ -61,15 +56,18 @@ const Codec* BitpackingFunction(duckdb::PhysicalType physical);
 const Codec* AlpFunction(duckdb::PhysicalType physical);
 const Codec* AlpRdFunction(duckdb::PhysicalType physical);
 const Codec* RoaringFunction(duckdb::PhysicalType physical);
+const Codec* AutoCodec(duckdb::PhysicalType physical);
 
 const Codec* GetCodec(CodecType type, duckdb::PhysicalType physical);
 
 bool Writes(CodecType type, duckdb::PhysicalType physical,
             const CodecSet& disabled) noexcept;
 
-std::string_view NameOf(CodecType type) noexcept;
-const CodecInfo* FindCodec(std::string_view name) noexcept;
-const CodecInfo* FindCodec(duckdb::CompressionType type) noexcept;
+inline constexpr auto kNoCodec =
+  static_cast<CodecType>(magic_enum::enum_count<CodecType>());
+
+CodecType FindCodec(std::string_view name);
+CodecType FindCodec(duckdb::CompressionType type);
 
 uint8_t MaxLevel(CodecType type) noexcept;
 

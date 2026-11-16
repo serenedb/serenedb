@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <absl/functional/function_ref.h>
 #include <absl/strings/match.h>
 
 #include <algorithm>
@@ -32,12 +33,12 @@
 #include <duckdb/storage/statistics/stats_writer.hpp>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
 #include "iresearch/formats/column/codecs/bytes/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
-#include "iresearch/formats/column/codecs/numeric/numeric.hpp"
 #include "iresearch/formats/column/codecs/text/segment_buffer.hpp"
 #include "iresearch/formats/column/codecs/text/string_layout.hpp"
 #include "iresearch/formats/column/codecs/text/string_tuning.hpp"
@@ -144,9 +145,8 @@ struct EncodedFrames {
 };
 
 struct Profile {
-  Shape shape = Shape::Dedup;
+  Shape shape = Shape::Dictionary;
   uint64_t rows = 0;
-  uint64_t runs = 0;
   uint64_t raw = 0;
   uint32_t max_len = 0;
   std::span<const duckdb::string_t* const> values;
@@ -158,8 +158,12 @@ inline duckdb::string_t EntryOf(const Profile& p, size_t i) noexcept {
   return code == 0 ? duckdb::string_t{} : *p.values[code - 1];
 }
 
-uint64_t CodesBytes(Shape shape, uint64_t rows, uint64_t entries, uint64_t runs,
+uint64_t CodesBytes(Shape shape, uint64_t rows, uint64_t entries,
                     const NumericTuning& tuning) noexcept;
+
+void CompressCodes(
+  std::span<uint32_t> codes, NumericTuning& tuning,
+  absl::FunctionRef<void(CodecType codec, std::string_view bytes)> write);
 
 uint64_t EstimateEntries(const SegmentEntries& rows,
                          const RatioHistory& hist) noexcept;
@@ -179,7 +183,7 @@ class SegmentRows {
     _layout = config.layout;
     _next = first_row;
     _estimated_raw = _raw;
-    if (_shape == Shape::Dedup) {
+    if (_shape == Shape::Dictionary) {
       _dedup.Begin(distinct);
     }
   }
@@ -269,7 +273,7 @@ class SegmentRows {
 
  private:
   uint32_t FirstEntry() const noexcept {
-    return _shape == Shape::Dedup ? 1 : 0;
+    return _shape == Shape::Dictionary ? 1 : 0;
   }
 
   size_t EntryCount() const noexcept { return _entries.size() + FirstEntry(); }
@@ -284,28 +288,20 @@ class SegmentRows {
     append(value, static_cast<uint32_t>(EntryCount()) - 1);
   }
 
-  IRS_FORCE_INLINE void PushCode(uint32_t code) {
-    if (_rows == 0 || code != _last_code) {
-      ++_runs;
-    }
-    _last_code = code;
-    _codes.push_back(code);
-  }
+  IRS_FORCE_INLINE void PushCode(uint32_t code) { _codes.push_back(code); }
 
   duckdb::StatsWriter<duckdb::string_t> _stats;
   const duckdb::LogicalType& _type;
   DedupScratch& _dedup;
   NumericTuning& _codes_tuning;
-  Shape _shape = Shape::Dedup;
+  Shape _shape = Shape::Dictionary;
   uint8_t _level = 0;
-  FrameLayout _layout = FrameLayout::FirstFrame;
+  FrameDictionary _layout = FrameDictionary::FirstFrame;
   uint64_t _next = 0;
 
   std::vector<duckdb::string_t> _entries;
   ScratchVector<uint32_t> _codes;
   uint64_t _rows = 0;
-  uint64_t _runs = 0;
-  uint32_t _last_code = 0;
   uint64_t _raw = 0;
   uint64_t _estimated_raw = 0;
   uint32_t _max_len = 0;

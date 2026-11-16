@@ -45,6 +45,7 @@
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
+#include <magic_enum/magic_enum.hpp>
 #include <iresearch/formats/column/codecs/compression_function.hpp>
 #include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
@@ -152,7 +153,7 @@ std::unique_ptr<Blk> BuildBlk(const Shape& shape, uint64_t w) {
                shape.name, static_cast<unsigned long long>(w),
                blk->type.ToString().c_str(), col->DataBlocks().size(),
                static_cast<unsigned long long>(blk->rows),
-               irs::codecs::NameOf(blk->block->codec).data(),
+               magic_enum::enum_name(blk->block->codec).data(),
                fn.select != nullptr, fn.fetch_rows != nullptr);
   return blk;
 }

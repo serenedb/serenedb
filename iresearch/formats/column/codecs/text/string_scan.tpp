@@ -58,7 +58,7 @@ using duckdb::string_t;
 
 template<Shape S, typename Leaf>
 struct EntryFrames {
-  static constexpr bool kDedup = S == Shape::Dedup;
+  static constexpr bool kDedup = S == Shape::Dictionary;
   static constexpr uint32_t kFirstEntry = kDedup ? 1 : 0;
 
   EntryFrames(const ColumnSegment& segment, duckdb::BufferHandle handle_p,
@@ -504,7 +504,7 @@ void FetchRows(const ColumnSegment& segment, ColumnFetchState& state,
   if (count == 1) {
     const auto at = result_offset + result_sel.get_index(0);
     const auto entry = fetch.ReadOne(base, rows[0]);
-    if (Scan::kShape == Shape::Dedup && entry == 0) {
+    if (Scan::kShape == Shape::Dictionary && entry == 0) {
       duckdb::FlatVector::ValidityMutable(result).SetInvalid(at);
       return;
     }
@@ -565,7 +565,7 @@ inline constexpr DecompressionFunction kStringDecompression = [] consteval {
     .get_segment_info = SegmentInfo,
     .validity = Scan::kValidity,
   };
-  if constexpr (Scan::kShape == Shape::Dedup) {
+  if constexpr (Scan::kShape == Shape::Dictionary) {
     f.filter = Filter<Scan>;
   }
   return f;
@@ -574,7 +574,7 @@ inline constexpr DecompressionFunction kStringDecompression = [] consteval {
 template<typename Scan>
 consteval Codec StringFunction() {
   return {
-    .type = TextCodec(Scan::kShape, Scan::kCodec),
+    .type = CodecOf(Scan::kShape, Scan::kCodec),
     .compression = &kStringsFunction,
     .decompression = &kStringDecompression<Scan>,
   };

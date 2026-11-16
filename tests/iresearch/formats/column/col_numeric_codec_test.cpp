@@ -38,8 +38,8 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <magic_enum/magic_enum.hpp>
 #include <iresearch/formats/column/codecs/dictionary_cache.hpp>
-#include <iresearch/formats/column/codecs/numeric/numeric.hpp>
 #include <iresearch/formats/column/codecs/numeric/numeric_kernels.hpp>
 #include <iresearch/formats/column/codecs/numeric/numeric_layout.hpp>
 #include <iresearch/formats/column/codecs/registry.hpp>
@@ -530,7 +530,7 @@ TEST_F(ColNumericCodecTest, EveryNamedCodecStoresWhatItCanAndReadsBack) {
            {duckdb::LogicalType::BIGINT, duckdb::LogicalType::INTEGER,
             duckdb::LogicalType::DOUBLE}) {
         for (const auto& shape : Shapes()) {
-          SCOPED_TRACE(std::string{irs::codecs::NameOf(codec)} + " " +
+          SCOPED_TRACE(std::string{magic_enum::enum_name(codec)} + " " +
                        shape.name + " " + duckdb::LogicalType{type}.ToString() +
                        " " + std::to_string(static_cast<int>(tier)));
           irs::MemoryDirectory dir{};
@@ -544,13 +544,13 @@ TEST_F(ColNumericCodecTest, EveryNamedCodecStoresWhatItCanAndReadsBack) {
             const auto stored = block.codec->type;
             EXPECT_TRUE(stored == codec || stored == CodecType::Constant ||
                         stored == CodecType::Uncompressed)
-              << irs::codecs::NameOf(stored);
+              << magic_enum::enum_name(stored);
             named += stored == codec;
           }
         }
       }
     }
-    EXPECT_GT(named, 0u) << irs::codecs::NameOf(codec);
+    EXPECT_GT(named, 0u) << magic_enum::enum_name(codec);
   }
 }
 
@@ -570,7 +570,7 @@ TEST_F(ColNumericCodecTest, ANamedLeafCodecCompressesAtTheColumnsLevel) {
   using irs::codecs::CodecType;
   const auto type = duckdb::LogicalType::BIGINT;
   for (const auto codec : {CodecType::Zstd, CodecType::RleLz4}) {
-    SCOPED_TRACE(irs::codecs::NameOf(codec));
+    SCOPED_TRACE(magic_enum::enum_name(codec));
     uint64_t bytes[2] = {};
     for (const uint8_t level : {uint8_t{0}, uint8_t{9}}) {
       irs::MemoryDirectory dir{};
@@ -711,11 +711,6 @@ TEST_F(ColNumericCodecTest, PacksRunsAndCodesBelowByteWidths) {
   }
 }
 
-TEST_F(ColNumericCodecTest, CodesOfNoRowsEncodeToNothing) {
-  irs::codecs::NumericTuning tuning;
-  EXPECT_TRUE(irs::codecs::EncodeCodes({}, 0, 0, tuning).empty());
-}
-
 TEST_F(ColNumericCodecTest, FrameHeadersWithImpossibleWidthsAreRejected) {
   struct Corruption {
     std::string_view name;
@@ -734,8 +729,8 @@ TEST_F(ColNumericCodecTest, FrameHeadersWithImpossibleWidthsAreRejected) {
     {"two-byte codes of a two-byte dictionary", duckdb::LogicalType::SMALLINT,
      irs::codecs::CodecType::DictFfor, narrow,
      [](irs::codecs::FrameHeader& h) {
-       ASSERT_EQ(irs::codecs::TransformOf(h),
-                 irs::codecs::NumericTransform::Dict);
+       ASSERT_EQ(irs::codecs::TransformName(irs::codecs::Shape::Dictionary, h),
+                 "dict");
        h.stored = 2;
      }},
   };
@@ -766,7 +761,7 @@ TEST_F(ColNumericCodecTest, FrameHeadersWithImpossibleWidthsAreRejected) {
     }
     ASSERT_LE(offset + size, bytes.size());
     auto* block = reinterpret_cast<duckdb::data_ptr_t>(bytes.data() + offset);
-    auto h = irs::codecs::ParseFrames(block, size);
+    auto h = irs::codecs::ParseFrames(block, size, c.codec);
     ASSERT_NO_FATAL_FAILURE(c.patch(h));
     duckdb::Store(h, block);
     {
@@ -798,6 +793,7 @@ TEST_F(ColNumericCodecTest, CorruptedRunCountIsRejected) {
   });
   uint64_t offset = 0;
   uint64_t size = 0;
+  irs::codecs::CodecType block_codec = irs::codecs::CodecType::Auto;
   {
     irs::MMapDirectory dir{path};
     Write(dir, duckdb::LogicalType::BIGINT, {.tier = irs::WriteTier::Flush},
@@ -809,6 +805,7 @@ TEST_F(ColNumericCodecTest, CorruptedRunCountIsRejected) {
     ASSERT_TRUE(irs::codecs::IsNumeric(block.codec->type));
     offset = block.file_offset;
     size = block.byte_size;
+    block_codec = block.codec->type;
   }
   const auto file = path / irs::FileName(kSeg);
   std::string bytes;
@@ -818,9 +815,9 @@ TEST_F(ColNumericCodecTest, CorruptedRunCountIsRejected) {
   }
   ASSERT_LE(offset + size, bytes.size());
   auto* block = reinterpret_cast<duckdb::data_ptr_t>(bytes.data() + offset);
-  const auto h = irs::codecs::ParseFrames(block, size);
-  ASSERT_EQ(irs::codecs::TransformOf(h),
-            irs::codecs::NumericTransform::RleFfor);
+  const auto h = irs::codecs::ParseFrames(block, size, block_codec);
+  ASSERT_EQ(irs::codecs::TransformName(irs::codecs::ShapeOf(block_codec), h),
+            "rle_ffor");
   auto meta = duckdb::Load<irs::codecs::NumericFrameMeta>(block + h.off_frames);
   meta.base += 1;
   duckdb::Store(meta, block + h.off_frames);
@@ -852,6 +849,7 @@ TEST_F(ColNumericCodecTest, DictFforBaseThatWrapsTheCodeRangeIsRejected) {
   });
   uint64_t offset = 0;
   uint64_t size = 0;
+  irs::codecs::CodecType block_codec = irs::codecs::CodecType::Auto;
   {
     irs::MMapDirectory dir{path};
     Write(dir, duckdb::LogicalType::BIGINT, {.tier = irs::WriteTier::Flush},
@@ -863,6 +861,7 @@ TEST_F(ColNumericCodecTest, DictFforBaseThatWrapsTheCodeRangeIsRejected) {
     ASSERT_TRUE(irs::codecs::IsNumeric(block.codec->type));
     offset = block.file_offset;
     size = block.byte_size;
+    block_codec = block.codec->type;
   }
   const auto file = path / irs::FileName(kSeg);
   std::string bytes;
@@ -872,9 +871,9 @@ TEST_F(ColNumericCodecTest, DictFforBaseThatWrapsTheCodeRangeIsRejected) {
   }
   ASSERT_LE(offset + size, bytes.size());
   auto* block = reinterpret_cast<duckdb::data_ptr_t>(bytes.data() + offset);
-  const auto h = irs::codecs::ParseFrames(block, size);
-  ASSERT_EQ(irs::codecs::TransformOf(h),
-            irs::codecs::NumericTransform::DictFfor);
+  const auto h = irs::codecs::ParseFrames(block, size, block_codec);
+  ASSERT_EQ(irs::codecs::TransformName(irs::codecs::ShapeOf(block_codec), h),
+            "dict_ffor");
   const auto frame =
     duckdb::Load<irs::codecs::NumericFrameMeta>(block + h.off_frames).frame;
   auto* first_block = block + h.off_data + frame.comp_off;
@@ -1814,6 +1813,7 @@ TEST_F(ColNumericCodecTest, CorruptedFrameTableIsRejected) {
   };
   uint64_t offset = 0;
   uint64_t size = 0;
+  irs::codecs::CodecType block_codec = irs::codecs::CodecType::Auto;
   {
     irs::MMapDirectory dir{path};
     Write(dir, duckdb::LogicalType::BIGINT, {}, 20000, 20000, clustered);
@@ -1824,6 +1824,7 @@ TEST_F(ColNumericCodecTest, CorruptedFrameTableIsRejected) {
     ASSERT_TRUE(irs::codecs::IsNumeric(block.codec->type));
     offset = block.file_offset;
     size = block.byte_size;
+    block_codec = block.codec->type;
   }
   const auto file = path / irs::FileName(kSeg);
   std::string bytes;
@@ -1833,7 +1834,7 @@ TEST_F(ColNumericCodecTest, CorruptedFrameTableIsRejected) {
   }
   ASSERT_LE(offset + size, bytes.size());
   auto* block = reinterpret_cast<duckdb::data_ptr_t>(bytes.data() + offset);
-  const auto h = irs::codecs::ParseFrames(block, size);
+  const auto h = irs::codecs::ParseFrames(block, size, block_codec);
   ASSERT_GT(h.frame_count, 0);
   auto meta = duckdb::Load<irs::codecs::NumericFrameMeta>(block + h.off_frames);
   meta.frame.comp_len = h.data_size + 1;
@@ -2015,26 +2016,6 @@ TEST_F(ColNumericCodecTest, RareWidthsRunLengthsAndDictionarySizes) {
   }
 }
 
-TEST(ColNumericCodesTest, EstimateFollowsWhatTheEncoderWrote) {
-  constexpr uint64_t kEntries = 300;
-  for (const uint64_t run : {uint64_t{1}, uint64_t{64}}) {
-    SCOPED_TRACE(run);
-    std::vector<uint32_t> codes(16384);
-    uint64_t runs = 0;
-    for (size_t i = 0; i != codes.size(); ++i) {
-      codes[i] = static_cast<uint32_t>((i / run) * 7 % kEntries);
-      runs += i == 0 || codes[i] != codes[i - 1] ? 1 : 0;
-    }
-    irs::codecs::NumericTuning tuning;
-    const auto bytes =
-      irs::codecs::EncodeCodes(codes, kEntries, runs, tuning).size();
-    const auto estimate =
-      irs::codecs::EstimateCodes(tuning, codes.size(), kEntries, runs);
-    EXPECT_LE(estimate, bytes);
-    EXPECT_GE(estimate + 1, bytes);
-  }
-}
-
 TEST(ColNumericKernelsTest, PrefixSumOfEveryWidthAndLength) {
   static constexpr uint8_t kWidths[] = {1, 2, 4, 8};
   const auto check = []<typename U>() {
@@ -2190,7 +2171,6 @@ void ExpectRleAnalysesAgree(const duckdb::LogicalType& type,
       .chunks = chunks,
       .flush = flush,
       .rows = values.size(),
-      .input = values.size(),
     };
     return rle->compression
       ->analyze(data, std::numeric_limits<double>::infinity())

@@ -631,7 +631,7 @@ void ApplyIncludedOpclass(
     return;
   }
   uint32_t level = 0;
-  std::string declared{irs::codecs::NameOf(irs::codecs::CodecType::Auto)};
+  std::string declared{magic_enum::enum_name(irs::codecs::CodecType::Auto)};
   for (const auto& [key, raw_val] : *opts) {
     if (key == kCompressionField) {
       declared =

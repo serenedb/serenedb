@@ -47,6 +47,7 @@
 #include <duckdb/storage/table/scan_state.hpp>
 #include <duckdb/transaction/duck_transaction.hpp>
 #include <filesystem>
+#include <magic_enum/magic_enum.hpp>
 #include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
@@ -191,7 +192,7 @@ constexpr ColArm kNumArms[] = {
   {"bitpacking", irs::codecs::CodecType::Bitpacking, 0},
   {"rle", irs::codecs::CodecType::Rle, 0},
   {"alp", irs::codecs::CodecType::Alp, 0},
-  {"alprd", irs::codecs::CodecType::AlpRd, 0},
+  {"alprd", irs::codecs::CodecType::Alprd, 0},
   {"ffor", irs::codecs::CodecType::Ffor, 0},
   {"lz4", irs::codecs::CodecType::Lz4, 0},
   {"zstd", irs::codecs::CodecType::Zstd, 0},
@@ -213,8 +214,8 @@ constexpr ColArm kColArms[] = {
   {"fsst", irs::codecs::CodecType::Fsst, 0},
   {"dict_fsst_plus", irs::codecs::CodecType::DictFsstPlus, 0},
   {"fsst_plus", irs::codecs::CodecType::FsstPlus, 0},
-  {"dict_onpair", irs::codecs::CodecType::DictOnPair, 0},
-  {"onpair", irs::codecs::CodecType::OnPair, 0},
+  {"dict_onpair", irs::codecs::CodecType::DictOnpair, 0},
+  {"onpair", irs::codecs::CodecType::Onpair, 0},
   {"dict_fsst12", irs::codecs::CodecType::DictFsst12, 0},
   {"fsst12", irs::codecs::CodecType::Fsst12, 0},
   {"dict_lz4", irs::codecs::CodecType::DictLz4, 0},
@@ -677,7 +678,7 @@ void PrintSegmentInfo(const ColArm& arm, const ColSeg& seg) {
   irs::BlockWindow window{};
   uint64_t row = 0;
   for (const auto& block : seg.col->DataBlocks()) {
-    std::string key{irs::codecs::NameOf(block.codec->type)};
+    std::string key{magic_enum::enum_name(block.codec->type)};
     if (block.codec->decompression->get_segment_info && block.byte_size != 0) {
       window = seg.col->Locate(row, window);
       auto segment = seg.col->OpenSegment(window.block, ctx);

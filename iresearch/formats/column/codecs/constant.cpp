@@ -18,8 +18,6 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <absl/algorithm/container.h>
-
 #include <algorithm>
 #include <duckdb/common/types/hugeint.hpp>
 #include <duckdb/common/types/uhugeint.hpp>
@@ -28,7 +26,6 @@
 #include <duckdb/storage/compression/roaring/roaring.hpp>
 #include <duckdb/storage/statistics/numeric_stats.hpp>
 
-#include "iresearch/formats/column/codecs/numeric/numeric.hpp"
 #include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/utils/assert.hpp"
 
@@ -160,18 +157,35 @@ constexpr Codec kFunction{
 }  // namespace
 
 bool CompressConstant(ColumnDataCheckpointData& data) {
-  const auto* codec = GetCodec(CodecType::Constant, data.type.InternalType());
-  if (!codec || data.rows == 0) {
+  const auto physical = data.type.InternalType();
+  if (data.rows == 0 || !GetCodec(CodecType::Constant, physical)) {
     return false;
   }
   auto stats = duckdb::BaseStatistics::CreateEmpty(data.type);
-  if (!absl::c_all_of(data.chunks, [&](const WriteChunk& chunk) {
-        return UpdateConstant(chunk.data, stats);
-      })) {
+  if (stats.GetStatsType() != duckdb::StatisticsType::NUMERIC_STATS) {
     return false;
   }
-  data.codec = codec;
-  data.FlushSegment(std::move(stats), data.rows, {});
+  const bool constant =
+    WithNumericType(physical, [&]<typename T>(std::type_identity<T>) {
+      for (const auto& chunk : data.chunks) {
+        for (const auto value : chunk.data.Values<T>()) {
+          if (!value.IsValid()) {
+            stats.SetHasNullFast();
+            continue;
+          }
+          stats.SetHasNoNullFast();
+          stats.UpdateNumericStats<T>(value.GetValue());
+        }
+        if (!duckdb::NumericStats::IsConstant(stats)) {
+          return false;
+        }
+      }
+      return true;
+    });
+  if (!constant) {
+    return false;
+  }
+  data.FlushSegment(CodecType::Constant, std::move(stats), data.rows, {});
   return true;
 }
 

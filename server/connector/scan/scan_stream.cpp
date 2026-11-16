@@ -48,6 +48,7 @@ void StartUnit(ScanGlobalState& g, StreamLocalState& l) {
   l.unit_done = false;
   l.started = true;
   if (resume) {
+    l.unit_done = !l.root;
     return;
   }
   if (g.needs_lookup && !SegmentPkColumn(*g.reader, seg_idx).second) {
@@ -60,6 +61,12 @@ void StartUnit(ScanGlobalState& g, StreamLocalState& l) {
   l.hit_batcher->BeginSegment(seg_idx, seg.GetColReader(), g.client_context,
                               &l.filter_states, l.seg_cls.active);
   const auto& seg_query = EnsureSegmentQuery(g, &l, seg_idx);
+  if (irs::QueryBuilder::IsEmpty(seg_query)) {
+    l.root.reset();
+    l.root_seg = seg_idx;
+    l.unit_done = true;
+    return;
+  }
   const auto span = g.UnitSpan(l.unit);
   l.scored = g.ScanScore();
   if (l.scored) {

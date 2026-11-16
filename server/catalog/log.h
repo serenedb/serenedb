@@ -32,6 +32,7 @@
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/common/serializer/write_stream.hpp>
 #include <filesystem>
+#include <iresearch/utils/group_commit.hpp>
 #include <memory>
 #include <span>
 #include <string>
@@ -206,8 +207,7 @@ class Log {
   std::atomic<uint64_t> _written_seq{0};
   std::atomic<Lsn> _written{0};
   std::atomic<Lsn> _durable{0};
-  std::atomic<bool> _syncing{false};
-  std::atomic<uint64_t> _syncs{0};
+  irs::GroupCommit<Lsn> _syncs;
   uint64_t _directory_changes ABSL_GUARDED_BY(_mutex) = 0;
   uint64_t _directory_synced ABSL_GUARDED_BY(_mutex) = 0;
   duckdb::unique_ptr<duckdb::FileHandle> _next ABSL_GUARDED_BY(_mutex);

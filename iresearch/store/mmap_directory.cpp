@@ -149,6 +149,16 @@ class MMapIndexInput final : public BytesViewInput {
 
   ptr Dup() const final { return std::make_unique<MMapIndexInput>(*this); }
 
+  void StartWriteback() const noexcept final {
+    if (_handle) {
+      file_utils::StartWriteback(static_cast<int>(_handle->fd()));
+    }
+  }
+
+  bool Sync() const noexcept final {
+    return !_handle || file_utils::FileSync(static_cast<int>(_handle->fd()));
+  }
+
   void Prefetch(uint64_t offset, uint64_t count) const noexcept final {
     if (!_handle || offset >= _handle->size()) {
       return;

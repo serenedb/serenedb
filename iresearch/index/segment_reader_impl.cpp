@@ -78,6 +78,28 @@ FileRefs GetRefs(const Directory& dir, const SegmentMeta& meta) {
 
 }  // namespace
 
+std::vector<IndexInput::ptr> WrittenFiles(const SegmentInputs& inputs) {
+  std::vector<IndexInput::ptr> files;
+  const auto add = [&](IndexInput::ptr in) {
+    if (in) {
+      files.push_back(std::move(in));
+    }
+  };
+  if (inputs.col) {
+    add(inputs.col->ReopenIn());
+  }
+  if (inputs.idx) {
+    add(inputs.idx->ReopenIn());
+  }
+  for (const auto* in : {inputs.postings.doc.get(), inputs.postings.pos.get(),
+                         inputs.postings.pay.get()}) {
+    if (in) {
+      add(in->Dup());
+    }
+  }
+  return files;
+}
+
 std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::Open(
   const Directory& dir, const SegmentMeta& meta,
   const IndexReaderOptions& options) {

@@ -50,6 +50,8 @@ struct SegmentInputs {
   PostingsInputs postings;
 };
 
+std::vector<IndexInput::ptr> WrittenFiles(const SegmentInputs& inputs);
+
 class SegmentReaderImpl final : public SubReader {
   struct PrivateTag final {
     explicit PrivateTag() = default;

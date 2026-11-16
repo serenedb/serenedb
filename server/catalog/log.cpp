@@ -695,26 +695,20 @@ void Log::AdvanceWritten() noexcept {
 }
 
 void Log::Sync(Lsn end) {
-  for (;;) {
-    if (_durable.load(std::memory_order_acquire) >= end) {
-      return;
+  if (_durable.load(std::memory_order_acquire) >= end) {
+    return;
+  }
+  _syncs.Submit(end, [this](std::span<Lsn* const> batch) {
+    Lsn target = 0;
+    for (const auto* requested : batch) {
+      target = std::max(target, *requested);
     }
-    const auto syncs = _syncs.load(std::memory_order_acquire);
-    if (_syncing.exchange(true, std::memory_order_acq_rel)) {
-      _syncs.wait(syncs, std::memory_order_acquire);
-      continue;
-    }
-    absl::Cleanup done = [this] {
-      _syncing.store(false, std::memory_order_release);
-      _syncs.fetch_add(1, std::memory_order_release);
-      _syncs.notify_all();
-    };
-    for (auto written = _written.load(std::memory_order_acquire); written < end;
-         written = _written.load(std::memory_order_acquire)) {
+    for (auto written = _written.load(std::memory_order_acquire);
+         written < target; written = _written.load(std::memory_order_acquire)) {
       _written.wait(written, std::memory_order_acquire);
     }
     SyncTo(_written.load(std::memory_order_acquire));
-  }
+  });
 }
 
 void Log::SyncTo(Lsn target) {

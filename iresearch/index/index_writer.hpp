@@ -105,6 +105,7 @@ class IndexWriter : private util::Noncopyable {
     SegmentMeta meta;
     DocumentMaskBuilder docs_mask;
     std::shared_ptr<const SegmentReaderImpl> reader;
+    std::vector<IndexInput::ptr> files;
   };
 
   class Document : private util::Noncopyable {

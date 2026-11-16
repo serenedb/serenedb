@@ -27,6 +27,7 @@
 
 #include <cstring>
 #include <duckdb/parallel/task_scheduler.hpp>
+#include <system_error>
 
 #include "iresearch/store/directory_attributes.hpp"
 #include "iresearch/store/directory_cleaner.hpp"
@@ -236,6 +237,14 @@ class FsIndexInput : public BufferedIndexInput {
 
   ptr Dup() const override { return ptr{new FsIndexInput{*this}}; }
   ptr Reopen() const override;
+
+  void StartWriteback() const noexcept final {
+    file_utils::StartWriteback(HANDLE_CAST(_handle->handle.get()));
+  }
+
+  bool Sync() const noexcept final {
+    return file_utils::FileSync(HANDLE_CAST(_handle->handle.get()));
+  }
 
   static IndexInput::ptr Open(const path_char_t* name, size_t pool_size,
                               IOAdvice advice,
@@ -535,7 +544,8 @@ bool FSDirectory::mtime(std::time_t& result,
 
 bool FSDirectory::remove(std::string_view name) noexcept {
   const auto path = _dir / name;
-  return file_utils::Remove(path.c_str());
+  std::error_code error;
+  return std::filesystem::remove(path, error);
 }
 
 IndexInput::ptr FSDirectory::open(std::string_view name,

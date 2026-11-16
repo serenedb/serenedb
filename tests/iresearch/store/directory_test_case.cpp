@@ -4383,6 +4383,48 @@ TEST_P(DirectoryTestCase, read_once_reads_range_and_advances) {
   EXPECT_TRUE(in->IsEOF());
 }
 
+TEST_P(DirectoryTestCase, finish_reads_what_was_written) {
+  std::vector<irs::byte_type> data(3 * 1024 * 1024 + 123);
+  for (size_t i = 0; i < data.size(); ++i) {
+    data[i] = static_cast<irs::byte_type>(i * 31 % 251);
+  }
+  auto out = _dir->create("finish");
+  ASSERT_FALSE(!out);
+  out->WriteData(data.data(), data.size());
+  auto in = _dir->Finish(std::move(out), irs::IOAdvice::RANDOM);
+  ASSERT_FALSE(!in);
+  ASSERT_EQ(data.size(), in->Length());
+  std::vector<irs::byte_type> read(data.size());
+  in->ReadData(0, read.data(), read.size());
+  EXPECT_EQ(0, std::memcmp(read.data(), data.data(), data.size()));
+  in->StartWriteback();
+  EXPECT_TRUE(in->Sync());
+
+  uint64_t length = 0;
+  ASSERT_TRUE(_dir->length(length, "finish"));
+  EXPECT_EQ(data.size(), length);
+  auto reopened = _dir->open("finish", irs::IOAdvice::RANDOM);
+  ASSERT_FALSE(!reopened);
+  std::vector<irs::byte_type> again(data.size());
+  reopened->ReadData(0, again.data(), again.size());
+  EXPECT_EQ(0, std::memcmp(again.data(), data.data(), data.size()));
+}
+
+TEST_P(DirectoryTestCase, finish_counts_a_tracked_file_once) {
+  irs::TrackingDirectory tracked{*_dir};
+  auto out = tracked.create("tracked");
+  ASSERT_FALSE(!out);
+  const std::vector<irs::byte_type> data(100000, 7);
+  out->WriteData(data.data(), data.size());
+  auto in = tracked.Finish(std::move(out), irs::IOAdvice::RANDOM);
+  ASSERT_FALSE(!in);
+  uint64_t size = 0;
+  const auto files = tracked.FlushTracked(size);
+  ASSERT_EQ(1, files.size());
+  EXPECT_EQ("tracked", files.front());
+  EXPECT_EQ(data.size(), size);
+}
+
 TEST_P(DirectoryTestCase, evict_keeps_contents) {
   std::vector<irs::byte_type> data(1024 * 1024 + 321);
   for (size_t i = 0; i < data.size(); ++i) {

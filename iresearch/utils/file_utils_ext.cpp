@@ -168,6 +168,12 @@ void HintWriteback(void* fd, uint64_t offset, size_t size) noexcept {
 #endif
 }
 
+void StartWriteback(int fd) noexcept {
+#ifdef __linux__
+  ::sync_file_range(fd, 0, 0, SYNC_FILE_RANGE_WRITE);
+#endif
+}
+
 #ifndef _WIN32
 namespace {
 
@@ -449,7 +455,7 @@ bool file_sync(const path_char_t* file) noexcept {
   return res;
 }
 
-bool file_sync(int fd) noexcept {
+bool FileSync(int fd) noexcept {
   // Attempt to convert file descriptor into an operating system file handle
   HANDLE handle = reinterpret_cast<HANDLE>(_get_osfhandle(fd));
 
@@ -481,6 +487,15 @@ bool FileSync(const path_char_t* file) noexcept {
               "', error: ", GET_ERROR());
   }
   return fsync_r == 0;
+}
+
+bool FileSync(int fd) noexcept {
+  if (::fsync(fd) != 0) {
+    SDB_ERROR(IRESEARCH, "Unable to fsync file descriptor ", fd,
+              ", error: ", GET_ERROR());
+    return false;
+  }
+  return true;
 }
 
 #endif  // _WIN32
@@ -646,7 +661,9 @@ handle_t Open(const path_char_t* path, OpenMode mode, int advice) noexcept {
 #if !defined(__APPLE__) &&                             \
   ((defined(_XOPEN_SOURCE) && _XOPEN_SOURCE >= 600) || \
    (defined(_POSIX_C_SOURCE) && _POSIX_C_SOURCE >= 200112L))
-  posix_fadvise(fd, 0, 0, advice);
+  if (advice != IR_FADVICE_NORMAL) {
+    posix_fadvise(fd, 0, 0, advice);
+  }
 #endif
   return handle_t(reinterpret_cast<void*>(fd));
 #endif

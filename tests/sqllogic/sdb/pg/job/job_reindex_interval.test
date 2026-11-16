@@ -157,7 +157,11 @@ jri_idx_renamed	AFTER INTERVAL '00:00:00.2'	f
 
 statement count 1
 COPY (SELECT 5 AS id, 'clickclack rearms the loop' AS body)
-TO '${__TEST_DIR__}/jri_glob/f5.parquet' (FORMAT PARQUET);
+TO '${__TEST_DIR__}/jri_f5.parquet' (FORMAT PARQUET);
+
+
+system ok
+mv $__TEST_DIR__/jri_f5.parquet $__TEST_DIR__/jri_glob/f5.parquet
 
 
 query ok retry 200 backoff 250ms

@@ -87,7 +87,8 @@ uint64_t StreamedAnalyze(std::span<const irs::WriteChunk>) { return kRows; }
 
 void StreamedCompress(ColumnDataCheckpointData& data,
                       std::span<const irs::WriteChunk>) {
-  data.FlushSegment(duckdb::BaseStatistics::CreateEmpty(data.type), data.rows,
+  data.FlushSegment(CodecType::Rle,
+                    duckdb::BaseStatistics::CreateEmpty(data.type), data.rows,
                     {});
 }
 

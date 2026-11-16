@@ -457,6 +457,18 @@ void StringToArray3Function(duckdb::DataChunk& args, duckdb::ExpressionState&,
   }
 }
 
+duckdb::unique_ptr<duckdb::FunctionData> EncodeBind(
+  duckdb::BindScalarFunctionInput& input) {
+  const auto format = input.TryGetConstant(1);
+  if (!format || (!format->IsNull() &&
+                  !absl::c_linear_search(
+                    std::array<std::string_view, 3>{"hex", "base64", "escape"},
+                    duckdb::StringValue::Get(*format)))) {
+    input.GetBoundFunction().SetFallible();
+  }
+  return nullptr;
+}
+
 // PG encode(bytea, format) -> text
 void EncodeFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                     duckdb::Vector& result) {
@@ -553,6 +565,103 @@ void NormalizeFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     });
 }
 
+struct FormatPiece {
+  std::string_view literal;
+  char type = 0;
+  duckdb::idx_t argument = 0;
+  bool left_align = false;
+  int width = 0;
+};
+
+std::vector<FormatPiece> ParseFormat(std::string_view fmt,
+                                     duckdb::idx_t arguments) {
+  std::vector<FormatPiece> pieces;
+  duckdb::idx_t next_arg = 1;
+  size_t literal_start = 0;
+  for (size_t i = 0; i < fmt.size();) {
+    if (fmt[i] != '%') {
+      ++i;
+      continue;
+    }
+    FormatPiece piece{.literal = fmt.substr(literal_start, i - literal_start)};
+    ++i;
+    if (i >= fmt.size()) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("unterminated format() conversion specifier"));
+    }
+    if (fmt[i] == '%') {
+      piece.type = '%';
+      ++i;
+    } else {
+      duckdb::idx_t position = 0;
+      bool has_position = false;
+      const size_t digits = i;
+      while (i < fmt.size() && fmt[i] >= '0' && fmt[i] <= '9') {
+        ++i;
+      }
+      if (i < fmt.size() && fmt[i] == '$' && i > digits) {
+        if (fast_float::from_chars(fmt.data() + digits, fmt.data() + i,
+                                   position)
+              .ec != std::errc{}) {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                          ERR_MSG("number is out of range"));
+        }
+        has_position = true;
+        ++i;
+      } else {
+        i = digits;
+      }
+      if (i < fmt.size() && fmt[i] == '-') {
+        piece.left_align = true;
+        ++i;
+      }
+      while (i < fmt.size() && fmt[i] >= '0' && fmt[i] <= '9') {
+        piece.width = piece.width * 10 + (fmt[i] - '0');
+        ++i;
+      }
+      if (i >= fmt.size()) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("unterminated format() conversion specifier"));
+      }
+      piece.type = fmt[i++];
+      piece.argument = has_position ? position : next_arg++;
+      if (piece.type != 's' && piece.type != 'I' && piece.type != 'L') {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("unrecognized format() type specifier \"",
+                                std::string_view{&piece.type, 1}, "\""));
+      }
+      if (piece.argument >= arguments) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("too few arguments for format()"));
+      }
+    }
+    pieces.push_back(piece);
+    literal_start = i;
+  }
+  pieces.push_back(FormatPiece{.literal = fmt.substr(literal_start)});
+  return pieces;
+}
+
+struct FormatBindData final : duckdb::FunctionData {
+  FormatBindData(std::string format_p, duckdb::idx_t arguments_p)
+    : format{std::move(format_p)},
+      arguments{arguments_p},
+      pieces{ParseFormat(format, arguments)} {}
+
+  duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
+    return duckdb::make_uniq<FormatBindData>(format, arguments);
+  }
+
+  bool Equals(const duckdb::FunctionData& other) const final {
+    const auto& rhs = other.Cast<FormatBindData>();
+    return format == rhs.format && arguments == rhs.arguments;
+  }
+
+  std::string format;
+  duckdb::idx_t arguments;
+  std::vector<FormatPiece> pieces;
+};
+
 // PG format() accepts varargs of any type and stringifies each one via its
 // standard text output. Coerce non-VARCHAR varargs to VARCHAR at bind time so
 // the executor body can read every input as `string_t` unconditionally.
@@ -566,14 +675,35 @@ duckdb::unique_ptr<duckdb::FunctionData> PgFormatBind(
         context, std::move(arg), duckdb::LogicalType::VARCHAR);
     }
   }
-  return nullptr;
+  const auto format = input.TryGetConstant(0);
+  if (format && format->IsNull()) {
+    return nullptr;
+  }
+  duckdb::unique_ptr<FormatBindData> data;
+  if (format) {
+    try {
+      data =
+        duckdb::make_uniq<FormatBindData>(format->ToString(), arguments.size());
+    } catch (const irs::SqlException&) {
+    }
+  }
+  if (!data || absl::c_any_of(data->pieces, [](const FormatPiece& piece) {
+        return piece.type == 'I';
+      })) {
+    input.GetBoundFunction().SetFallible();
+  }
+  return data;
 }
 
 // PG format(text, ...) -- implements %s, %I, %L, %%, positional %n$s, width
-void PgFormatFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+void PgFormatFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                       duckdb::Vector& result) {
   auto count = args.size();
   auto ncols = args.ColumnCount();
+  const auto& bind_info =
+    state.expr.Cast<duckdb::BoundFunctionExpression>().BindInfo();
+  const auto* constant =
+    bind_info ? &bind_info->Cast<FormatBindData>().pieces : nullptr;
 
   // Flatten all vectors
   std::vector<duckdb::UnifiedVectorFormat> vdata(ncols);
@@ -585,6 +715,8 @@ void PgFormatFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
   auto& result_validity = duckdb::FlatVector::ValidityMutable(result);
 
+  std::vector<FormatPiece> parsed;
+  std::string out;
   for (duckdb::idx_t row = 0; row < count; row++) {
     // Get format string
     auto fmt_idx = vdata[0].sel->get_index(row);
@@ -592,16 +724,17 @@ void PgFormatFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
       result_validity.SetInvalid(row);
       continue;
     }
-    auto fmt_str =
-      duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(vdata[0])[fmt_idx];
-    std::string_view fmt{fmt_str.GetData(), fmt_str.GetSize()};
+    const std::vector<FormatPiece>* pieces = constant;
+    if (!pieces) {
+      auto fmt_str = duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(
+        vdata[0])[fmt_idx];
+      parsed = ParseFormat(
+        std::string_view{fmt_str.GetData(), fmt_str.GetSize()}, ncols);
+      pieces = &parsed;
+    }
 
     // Helper to get arg as string
     auto get_arg = [&](duckdb::idx_t arg_idx) -> std::optional<std::string> {
-      if (arg_idx >= ncols) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                        ERR_MSG("too few arguments for format()"));
-      }
       auto idx = vdata[arg_idx].sel->get_index(row);
       if (!vdata[arg_idx].validity.RowIsValid(idx)) {
         return std::nullopt;
@@ -636,73 +769,21 @@ void PgFormatFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
       return out;
     };
 
-    std::string out;
-    duckdb::idx_t next_arg =
-      1;  // next sequential arg (1-based, 0 is format string)
-
-    for (size_t i = 0; i < fmt.size();) {
-      if (fmt[i] != '%') {
-        out += fmt[i++];
-        continue;
-      }
-      i++;  // skip %
-      if (i >= fmt.size()) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                        ERR_MSG("unterminated format() conversion specifier"));
-      }
-      if (fmt[i] == '%') {
-        out += '%';
-        i++;
-        continue;
-      }
-
-      // Parse optional position: %n$
-      duckdb::idx_t arg_pos = 0;
-      bool has_position = false;
-      size_t save_i = i;
-      while (i < fmt.size() && fmt[i] >= '0' && fmt[i] <= '9') {
-        i++;
-      }
-      if (i < fmt.size() && fmt[i] == '$' && i > save_i) {
-        if (fast_float::from_chars(fmt.data() + save_i, fmt.data() + i, arg_pos)
-              .ec != std::errc{}) {
-          THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
-                          ERR_MSG("number is out of range"));
-        }
-        has_position = true;
-        i++;  // skip $
-      } else {
-        i = save_i;  // not a position, rewind
-      }
-
-      // Parse optional flags and width: [-][width]
-      bool left_align = false;
-      int width = 0;
-      if (i < fmt.size() && fmt[i] == '-') {
-        left_align = true;
-        i++;
-      }
-      while (i < fmt.size() && fmt[i] >= '0' && fmt[i] <= '9') {
-        width = width * 10 + (fmt[i] - '0');
-        i++;
-      }
-
-      if (i >= fmt.size()) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                        ERR_MSG("unterminated format() conversion specifier"));
-      }
-
-      char spec = fmt[i++];
-      duckdb::idx_t arg_idx = has_position ? arg_pos : next_arg++;
-
+    out.clear();
+    for (const auto& piece : *pieces) {
+      out += piece.literal;
       std::string formatted;
-      switch (spec) {
-        case 's': {
-          auto val = get_arg(arg_idx);
-          formatted = val.value_or("");
-        } break;
+      switch (piece.type) {
+        case 0:
+          continue;
+        case '%':
+          out += '%';
+          continue;
+        case 's':
+          formatted = get_arg(piece.argument).value_or("");
+          break;
         case 'I': {
-          auto val = get_arg(arg_idx);
+          auto val = get_arg(piece.argument);
           if (!val) {
             THROW_SQL_ERROR(
               ERR_CODE(ERRCODE_NULL_VALUE_NOT_ALLOWED),
@@ -710,21 +791,16 @@ void PgFormatFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
           }
           formatted = pg::QuoteIdentifier(*val);
         } break;
-        case 'L': {
-          auto val = get_arg(arg_idx);
-          formatted = quote_literal(val);
-          break;
-        }
         default:
-          THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                          ERR_MSG("unrecognized format() type specifier \"",
-                                  std::string_view{&spec, 1}, "\""));
+          formatted = quote_literal(get_arg(piece.argument));
+          break;
       }
 
       // Apply width
-      if (width > 0 && formatted.size() < static_cast<size_t>(width)) {
-        auto pad = width - formatted.size();
-        if (left_align) {
+      if (piece.width > 0 &&
+          formatted.size() < static_cast<size_t>(piece.width)) {
+        auto pad = piece.width - formatted.size();
+        if (piece.left_align) {
           formatted.append(pad, ' ');
         } else {
           formatted.insert(0, pad, ' ');
@@ -803,6 +879,28 @@ void QuoteNullableFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
   }
 }
 
+duckdb::unique_ptr<duckdb::FunctionData> BindTextForm(
+  duckdb::BindScalarFunctionInput& input) {
+  input.GetBoundFunction().GetArguments()[0] = duckdb::LogicalType::VARCHAR;
+  return nullptr;
+}
+
+bool ValidLikeEscape(std::string_view escape) {
+  return escape.empty() ||
+         irs::utf8_utils::LengthFromChar8<1>(
+           static_cast<irs::byte_type>(escape.front())) == escape.size();
+}
+
+duckdb::unique_ptr<duckdb::FunctionData> LikeEscapeBind(
+  duckdb::BindScalarFunctionInput& input) {
+  const auto escape = input.TryGetConstant(1);
+  if (!escape || (!escape->IsNull() &&
+                  !ValidLikeEscape(duckdb::StringValue::Get(*escape)))) {
+    input.GetBoundFunction().SetFallible();
+  }
+  return nullptr;
+}
+
 void LikeEscapeFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                         duckdb::Vector& result) {
   duckdb::BinaryExecutor::Execute<duckdb::string_t, duckdb::string_t,
@@ -810,9 +908,7 @@ void LikeEscapeFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     args.data[0], args.data[1], result, args.size(),
     [&](duckdb::string_t pattern, duckdb::string_t escape) -> duckdb::string_t {
       const auto escape_text = AsView(escape);
-      if (!escape_text.empty() &&
-          irs::utf8_utils::LengthFromChar8<1>(static_cast<irs::byte_type>(
-            escape_text.front())) != escape_text.size()) {
+      if (!ValidLikeEscape(escape_text)) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INVALID_ESCAPE_SEQUENCE),
           ERR_MSG("invalid escape string"),
@@ -923,6 +1019,18 @@ std::unique_ptr<re2::RE2> CompileConstantPattern(
   return nullptr;
 }
 
+bool MatchesSingleBytes(std::string_view pattern) {
+  for (size_t i = 0; i + 1 < pattern.size(); ++i) {
+    if (pattern[i] == '\\') {
+      if (pattern[i + 1] == 'C') {
+        return true;
+      }
+      ++i;
+    }
+  }
+  return false;
+}
+
 duckdb::unique_ptr<duckdb::FunctionData> RegexpInstrBind(
   duckdb::BindScalarFunctionInput& input) {
   auto re = CompileConstantPattern(input);
@@ -930,14 +1038,22 @@ duckdb::unique_ptr<duckdb::FunctionData> RegexpInstrBind(
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_REGULAR_EXPRESSION),
                     ERR_MSG("invalid regular expression: ", re->error()));
   }
+  if (!re && !input.TryGetConstant(1)) {
+    input.GetBoundFunction().SetFallible();
+  }
   return duckdb::make_uniq<RegexpBindData>(std::move(re));
 }
 
 duckdb::unique_ptr<duckdb::FunctionData> RegexpMatchBind(
   duckdb::BindScalarFunctionInput& input) {
   auto re = CompileConstantPattern(input);
-  if (re && !re->ok()) {
+  const bool invalid = re && !re->ok();
+  if (invalid) {
     re.reset();
+  }
+  if (invalid ||
+      (re ? MatchesSingleBytes(re->pattern()) : !input.TryGetConstant(1))) {
+    input.GetBoundFunction().SetFallible();
   }
   return duckdb::make_uniq<RegexpBindData>(std::move(re));
 }
@@ -1171,6 +1287,15 @@ std::string_view ByteaSubstring(std::string_view bytes, int64_t start,
   return offset < bytes.size()
            ? bytes.substr(offset, static_cast<size_t>(end - from))
            : std::string_view{};
+}
+
+duckdb::unique_ptr<duckdb::FunctionData> ByteaSubstringBind(
+  duckdb::BindScalarFunctionInput& input) {
+  const auto length = input.TryGetConstant(2);
+  if (!length || (!length->IsNull() && length->GetValue<int64_t>() < 0)) {
+    input.GetBoundFunction().SetFallible();
+  }
+  return nullptr;
 }
 
 void ByteaSubstringFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
@@ -1581,8 +1706,8 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
     "encode",
     {duckdb::LogicalType::BLOB, duckdb::LogicalType::VARCHAR},
     duckdb::LogicalType::VARCHAR,
-    EncodeFunction};
-  encode.SetFallible();
+    EncodeFunction,
+    EncodeBind};
   loader.RegisterFunction(std::move(encode));
 
   // decode(text, text) -> bytea
@@ -1627,34 +1752,42 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
     BlobPositionFunction});
 
   // get_byte(bytea, int) -> int
-  loader.RegisterFunction(duckdb::ScalarFunction{
+  duckdb::ScalarFunction get_byte{
     "get_byte",
     {duckdb::LogicalType::BLOB, duckdb::LogicalType::INTEGER},
     duckdb::LogicalType::INTEGER,
-    GetByteFunction});
+    GetByteFunction};
+  get_byte.SetFallible();
+  loader.RegisterFunction(std::move(get_byte));
 
   // set_byte(bytea, int, int) -> bytea
-  loader.RegisterFunction(duckdb::ScalarFunction{
+  duckdb::ScalarFunction set_byte{
     "set_byte",
     {duckdb::LogicalType::BLOB, duckdb::LogicalType::INTEGER,
      duckdb::LogicalType::INTEGER},
     duckdb::LogicalType::BLOB,
-    SetByteFunction});
+    SetByteFunction};
+  set_byte.SetFallible();
+  loader.RegisterFunction(std::move(set_byte));
 
   // get_bit(bytea, bigint) -> int
-  loader.RegisterFunction(duckdb::ScalarFunction{
+  duckdb::ScalarFunction get_bit{
     "get_bit",
     {duckdb::LogicalType::BLOB, duckdb::LogicalType::BIGINT},
     duckdb::LogicalType::INTEGER,
-    GetBitFunction});
+    GetBitFunction};
+  get_bit.SetFallible();
+  loader.RegisterFunction(std::move(get_bit));
 
   // set_bit(bytea, bigint, int) -> bytea
-  loader.RegisterFunction(duckdb::ScalarFunction{
+  duckdb::ScalarFunction set_bit{
     "set_bit",
     {duckdb::LogicalType::BLOB, duckdb::LogicalType::BIGINT,
      duckdb::LogicalType::INTEGER},
     duckdb::LogicalType::BLOB,
-    SetBitFunction});
+    SetBitFunction};
+  set_bit.SetFallible();
+  loader.RegisterFunction(std::move(set_bit));
 
   {
     duckdb::ScalarFunction convert_from{
@@ -1687,20 +1820,23 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
                                                  duckdb::LogicalType::VARCHAR,
                                                  QuoteIdentFunction});
 
-  // quote_literal(text) -> text
-  loader.RegisterFunction(duckdb::ScalarFunction{"quote_literal",
-                                                 {duckdb::LogicalType::VARCHAR},
-                                                 duckdb::LogicalType::VARCHAR,
-                                                 QuoteLiteralFunction});
-
-  // quote_nullable(text) -> text (returns 'NULL' for NULL input)
-  {
-    duckdb::ScalarFunction func{"quote_nullable",
-                                {duckdb::LogicalType::VARCHAR},
-                                duckdb::LogicalType::VARCHAR,
-                                QuoteNullableFunction};
-    func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
-    loader.RegisterFunction(func);
+  for (const auto& [name, function, special_null] :
+       {std::tuple{"quote_literal", QuoteLiteralFunction, false},
+        std::tuple{"quote_nullable", QuoteNullableFunction, true}}) {
+    duckdb::ScalarFunctionSet set{name};
+    for (const auto& argument :
+         {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::ANY}) {
+      duckdb::ScalarFunction func{
+        name, {argument}, duckdb::LogicalType::VARCHAR, function};
+      if (argument == duckdb::LogicalTypeId::ANY) {
+        func.SetBindCallback(BindTextForm);
+      }
+      if (special_null) {
+        func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
+      }
+      set.AddFunction(std::move(func));
+    }
+    loader.RegisterFunction(std::move(set));
   }
 
   // like_escape(pattern, escape) -> varchar
@@ -1708,7 +1844,8 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
     "like_escape",
     {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
     duckdb::LogicalType::VARCHAR,
-    LikeEscapeFunction});
+    LikeEscapeFunction,
+    LikeEscapeBind});
 
   // regexp_match(text, pattern) -> text[]
   {
@@ -1721,7 +1858,6 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
       nullptr,
       RegexpInitLocalState};
     func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
-    func.SetFallible();
     loader.RegisterFunction(func);
   }
 
@@ -1738,7 +1874,6 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
       RegexpInstrBind,
       nullptr,
       RegexpInitLocalState};
-    instr.SetFallible();
     regexp_instr_set.AddFunction(instr);
     duckdb::ScalarFunction instr_from{
       "regexp_instr",
@@ -1749,7 +1884,6 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
       RegexpInstrBind,
       nullptr,
       RegexpInitLocalState};
-    instr_from.SetFallible();
     regexp_instr_set.AddFunction(instr_from);
     loader.RegisterFunction(regexp_instr_set);
   }
@@ -1780,14 +1914,13 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
   for (const std::string_view name : {"substring", "substr"}) {
     loader.RegisterFunction(duckdb::ScalarFunction{
       duckdb::Identifier{name}, {blob, bigint}, blob, ByteaSubstringFunction});
-    duckdb::ScalarFunction with_length{
+    loader.RegisterFunction(duckdb::ScalarFunction{
       duckdb::Identifier{name},
       {blob, bigint, bigint},
       blob,
       ByteaSubstringFunction,
-    };
-    with_length.SetFallible();
-    loader.RegisterFunction(std::move(with_length));
+      ByteaSubstringBind,
+    });
   }
   for (auto arguments : {
          duckdb::vector<duckdb::LogicalType>{blob, blob, bigint},

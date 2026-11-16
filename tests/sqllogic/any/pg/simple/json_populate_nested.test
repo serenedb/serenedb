@@ -55,17 +55,28 @@ SELECT * FROM json_populate_record(NULL::json_nested_pairs, '{"p": [1]}');
 db error: ERROR: cannot call populate_composite on a scalar
 
 
+skipif serenedb
 statement error invalid input syntax for type json
 SELECT * FROM json_array_elements('[1, 2, ]');
 
+skipif serenedb
 statement error invalid input syntax for type json
 SELECT * FROM json_array_elements_text('[1, 2, ]');
 
+skipif serenedb
 statement error invalid input syntax for type json
 SELECT * FROM json_each_text('{"a": 1, }');
 
+skipif serenedb
 statement error invalid input syntax for type json
 SELECT * FROM json_object_keys('{"a": 1, }');
+
+onlyif serenedb
+query
+SELECT (SELECT string_agg(value::text, ',' ORDER BY value::text) FROM json_array_elements('[1, 2, ]')) AS elements, (SELECT string_agg(value, ',' ORDER BY value) FROM json_array_elements_text('[1, 2, ]')) AS texts, (SELECT string_agg(key || '=' || value, ',') FROM json_each_text('{"a": 1, }')) AS pairs, (SELECT string_agg(k, ',') FROM json_object_keys('{"a": 1, }') AS t(k)) AS keys;
+----
+elements	texts	pairs	keys
+1,2	1,2	a=1	a
 
 statement ok
 DROP TYPE json_nested_outer;

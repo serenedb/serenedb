@@ -59,7 +59,8 @@ class PrunedPhrase : public Root {
     : _slots{std::forward<Args>(slots)...},
       _bound{segment, field, args, stored},
       _fetcher{*args.fetcher},
-      _admit{table} {
+      _admit{table},
+      _normed{field_limits::valid(field.meta().norm)} {
     _provider.freq.value = _freqs;
     _score = irs::detail::PrepareScore(args, segment, field.meta(), _provider);
     _slots.Gate();
@@ -233,8 +234,8 @@ class PrunedPhrase : public Root {
   IRS_NO_INLINE void RaiseLeastFreq(score_t threshold) {
     if (_bound.Bounded()) {
       for (; _least_freq != kLeastFreqCap; ++_least_freq) {
-        _least_score =
-          _bound.ScoreOf({.freq = _least_freq, .norm = _least_freq});
+        _least_score = _bound.ScoreOf(
+          {.freq = _least_freq, .norm = _normed ? _least_freq : 1});
         if (_least_score > threshold) {
           return;
         }
@@ -267,6 +268,7 @@ class PrunedPhrase : public Root {
   uint32_t _least_freq = 1;
   score_t _least_score = std::numeric_limits<score_t>::lowest();
   [[no_unique_address]] Admit<Table> _admit;
+  bool _normed;
 };
 
 }  // namespace irs::top

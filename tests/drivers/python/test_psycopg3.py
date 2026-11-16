@@ -411,6 +411,69 @@ def test_unknown_guc_sqlstate():
         c.close()
 
 
+def test_reset_restores_the_session_start():
+    login, group = f"drv_reset_login_{os.getpid()}", f"drv_reset_group_{os.getpid()}"
+    admin = psycopg.connect(**conn_kwargs(), autocommit=True)
+    try:
+        admin.execute(f"CREATE ROLE {login} LOGIN")
+        admin.execute(f"CREATE ROLE {group}")
+        admin.execute(f"GRANT {group} TO {login}")
+        with psycopg.connect(**{**conn_kwargs(), "user": login}, autocommit=True,
+                             application_name="drv_reset_app",
+                             options="-c TimeZone=Asia/Tokyo -c search_path=public") as c:
+
+            def state():
+                return c.execute(
+                    "SELECT current_setting('application_name'), current_setting('TimeZone'), "
+                    "current_setting('search_path'), current_setting('session_authorization'), "
+                    "current_setting('role'), current_user::text").fetchone()
+
+            start = ("drv_reset_app", "Asia/Tokyo", "public", login, "none", login)
+            assert state() == start
+
+            def change():
+                c.execute("SET application_name = 'drv_reset_other'")
+                c.execute("SET TimeZone = 'Etc/UTC'")
+                c.execute("SET search_path = pg_catalog, public")
+                c.execute(f"SET ROLE {group}")
+
+            change()
+            c.execute("RESET ALL")
+            assert state() == start[:4] + (group, group)
+
+            change()
+            c.execute("RESET application_name")
+            c.execute("RESET TimeZone")
+            c.execute("RESET search_path")
+            c.execute("RESET role")
+            assert state() == start
+
+            change()
+            c.execute("DISCARD ALL")
+            assert state() == start
+
+        with psycopg.connect(**{**conn_kwargs(), "user": login}, autocommit=True,
+                             options=f"-c role={group}") as c:
+
+            def identity():
+                return c.execute(
+                    "SELECT current_user::text, current_setting('role'), "
+                    "current_setting('session_authorization')").fetchone()
+
+            assert identity() == (group, group, login)
+            c.execute("RESET role")
+            assert identity() == (group, group, login)
+            c.execute("SET SESSION AUTHORIZATION DEFAULT")
+            assert identity() == (login, "none", login)
+            c.execute(f"SET ROLE {group}")
+            c.execute("DISCARD ALL")
+            assert identity() == (login, "none", login)
+    finally:
+        admin.execute(f"DROP ROLE IF EXISTS {login}")
+        admin.execute(f"DROP ROLE IF EXISTS {group}")
+        admin.close()
+
+
 def test_binder_error_sqlstates():
     """BINDER errors get distinct SQLSTATEs, not a blanket undefined_column:
     ambiguous column -> 42702, grouping -> 42803, genuinely-missing -> 42703.
@@ -1011,6 +1074,40 @@ def test_pg_cancel_backend_cancels_running_query():
     finally:
         admin.close()
         victim.close()
+
+
+REWRITE_FAULT = "slow_expression_rewrite"
+STATISTICS_FAULT = "slow_statistics_propagation"
+
+
+@pytest.mark.faults
+@pytest.mark.usefixtures("own_server")
+@pytest.mark.parametrize(
+    ("fault", "query"),
+    [
+        (
+            REWRITE_FAULT,
+            "SELECT x IN ({}) FROM (VALUES (0)) t(x)".format(
+                ", ".join(str(i) for i in range(1, 10001))),
+        ),
+        (
+            STATISTICS_FAULT,
+            " UNION ALL ".join(
+                f"SELECT DISTINCT x + {i} FROM (VALUES (0)) t(x)" for i in range(500)),
+        ),
+    ],
+    ids=["rewrite", "statistics"],
+)
+def test_statement_timeout_interrupts_planning(fault, query):
+    with psycopg.connect(**conn_kwargs(), autocommit=True) as c:
+        c.execute("SET statement_timeout = '1s'")
+        c.execute(f"SET sdb_faults = '{fault}'")
+        start = time.monotonic()
+        with pytest.raises(psycopg.errors.QueryCanceled):
+            c.execute(query)
+        elapsed = time.monotonic() - start
+        c.execute("RESET sdb_faults")
+    assert elapsed < 5, elapsed
 
 
 def test_binary_parameters_after_an_untyped_null():

@@ -423,12 +423,14 @@ void SetSessionAuthCallback(duckdb::ClientContext& ctx, duckdb::SetScope,
       ERR_MSG("permission denied to set session authorization \"", name, "\""));
   }
   conn.SetSessionRole(role.oid);
+  conn.SetSetting("role", "none", false);
   RefreshSuperuser(conn);
 }
 
 void ResetSessionAuthCallback(duckdb::ClientContext& ctx, duckdb::SetScope) {
   auto& conn = ConnectionContext::Get(ctx);
   conn.ResetIdentity();
+  conn.SetSetting("role", "none", false);
   RefreshSuperuser(conn);
 }
 
@@ -1600,21 +1602,24 @@ constexpr std::pair<std::string_view, VariableDescription>
     {
       "session_authorization",
       {
-        LogicalTypeId::VARCHAR,
-        "Sets the current session's user name.",
-        [] { return duckdb::Value{irs::StaticStrings::kDefaultUser}; },
-        SetSessionAuthCallback,
-        ResetSessionAuthCallback,
+        .type = LogicalTypeId::VARCHAR,
+        .description = "Sets the current session's user name.",
+        .default_value =
+          [] { return duckdb::Value{irs::StaticStrings::kDefaultUser}; },
+        .set_callback = SetSessionAuthCallback,
+        .reset_callback = ResetSessionAuthCallback,
+        .no_reset_all = true,
       },
     },
     {
       "role",
       {
-        LogicalTypeId::VARCHAR,
-        "Sets the current role.",
-        [] { return duckdb::Value{"none"}; },
-        SetRoleCallback,
-        ResetRoleCallback,
+        .type = LogicalTypeId::VARCHAR,
+        .description = "Sets the current role.",
+        .default_value = [] { return duckdb::Value{"none"}; },
+        .set_callback = SetRoleCallback,
+        .reset_callback = ResetRoleCallback,
+        .no_reset_all = true,
       },
     },
     {
@@ -1750,7 +1755,7 @@ void TryRegister(duckdb::DBConfig& config, std::string_view name,
     setting, std::string{desc.description}, duckdb::LogicalType{desc.type},
     desc.default_value ? desc.default_value() : duckdb::Value{},
     desc.set_callback, desc.reset_callback, desc.scope,
-    IsUnchangeableSetting(name), desc.rebind);
+    desc.no_reset_all || IsUnchangeableSetting(name), desc.rebind);
 }
 
 }  // namespace

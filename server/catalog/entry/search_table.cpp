@@ -108,13 +108,13 @@ using Constraints = duckdb::vector<duckdb::unique_ptr<duckdb::Constraint>>;
 void RefreshTypeNames(duckdb::CatalogTransaction transaction,
                       duckdb::Catalog& catalog,
                       duckdb::LogicalDependencyList& dependencies) {
-  const duckdb::IdentifierEquality same_name{catalog.IsCaseSensitive()};
   duckdb::LogicalDependencyList current;
   for (auto dependency : dependencies.Set()) {
     if (dependency.oid &&
         dependency.entry.type == duckdb::CatalogType::TYPE_ENTRY &&
         (dependency.catalog.empty() ||
-         same_name(dependency.catalog, catalog.GetName()))) {
+         dependency.catalog.GetIdentifierName() ==
+           catalog.GetName().GetIdentifierName())) {
       if (auto subject = catalog.Cast<BaseCatalog>().LookupOid(
             transaction, dependency.oid)) {
         dependency.entry.name = subject->name;

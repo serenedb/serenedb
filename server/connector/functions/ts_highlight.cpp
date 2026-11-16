@@ -497,6 +497,7 @@ duckdb::ScalarFunction MakeOffsetsFn(duckdb::vector<duckdb::LogicalType> args) {
   };
   f.SetInitStateCallback(InitTsHighlightLocalState);
   f.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
+  f.SetFallible();
   return f;
 }
 

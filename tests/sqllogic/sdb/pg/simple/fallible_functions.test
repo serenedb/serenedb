@@ -26,3 +26,53 @@ valid_sizes	bytes
 
 statement ok
 DROP TABLE sif_sizes;
+
+
+statement ok
+CREATE TABLE sif_args (fmt TEXT, esc TEXT, pattern TEXT, doc JSON, valid BOOLEAN);
+
+
+statement ok
+INSERT INTO sif_args
+SELECT CASE WHEN i % 2 = 0 THEN 'ok %s' ELSE 'bad %z' END,
+       CASE WHEN i % 2 = 0 THEN '!' ELSE 'xx' END,
+       CASE WHEN i % 2 = 0 THEN 'a+' ELSE '(' END,
+       CASE WHEN i % 2 = 0 THEN '{"a":"x"}' ELSE '{"a":"\u0000"}' END,
+       i % 2 = 0
+FROM generate_series(1, 3000) AS i;
+
+
+statement ok
+VACUUM (FLUSH_TABLE) sif_args;
+
+
+query
+SELECT count(format(fmt, 'x')) AS formatted,
+       count(like_escape('a!%', esc)) AS escaped,
+       count(regexp_match('caab', pattern)) AS matched,
+       count(doc ->> 'a') AS texts
+FROM sif_args
+WHERE valid;
+----
+formatted	escaped	matched	texts
+1500	1500	1500	1500
+
+
+query
+SELECT format('%s!', fmt) AS f, like_escape(fmt, '!') AS l, regexp_match(fmt, 'o(k)') AS r
+FROM sif_args
+WHERE valid
+LIMIT 1;
+----
+f	l	r
+ok %s!	ok %s	{k}
+
+
+statement error
+SELECT count(format(fmt, 'x')) FROM sif_args;
+----
+db error: ERROR: unrecognized format() type specifier "z"
+
+
+statement ok
+DROP TABLE sif_args;

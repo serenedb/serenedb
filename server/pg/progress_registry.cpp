@@ -250,7 +250,8 @@ size_t ProgressRegistry::OtherSessions(int64_t datid, int32_t pid,
   const auto count = [&] {
     return static_cast<size_t>(
       absl::c_count_if(_sources, [&](const auto& entry) {
-        return entry.second->datid == datid && entry.second->pid != pid;
+        return entry.second->client_backend && entry.second->datid == datid &&
+               entry.second->pid != pid;
       }));
   };
   const auto none = [&] { return count() == 0; };

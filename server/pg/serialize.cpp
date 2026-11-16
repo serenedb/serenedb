@@ -1995,6 +1995,17 @@ bool SerializeNullColumn(SerializationContext& ctx, const RUVF&,
   return true;
 }
 
+bool SerializeCopyTextNullColumn(SerializationContext& ctx, const RUVF&,
+                                 duckdb::idx_t) {
+  ctx.writer->Write(ctx.copy_null);
+  return true;
+}
+
+bool SerializeRecordNullColumn(SerializationContext&, const RUVF&,
+                               duckdb::idx_t) {
+  return true;
+}
+
 // In-record TEXT field: no length prefix, NULL renders nothing (the empty
 // stretch between record commas means NULL). Returns true on a NULL field.
 template<typename Core>
@@ -2868,7 +2879,11 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
   switch (type.id()) {
     using enum duckdb::LogicalTypeId;
     case SQLNULL:
-      return SerializeNullColumn;
+      if (format == VarFormat::CopyText) {
+        return SerializeCopyTextNullColumn;
+      }
+      return context.in_record ? SerializeRecordNullColumn
+                               : SerializeNullColumn;
     case BOOLEAN:
       return SelectFieldSerializer<BoolTextCore, BoolTextCore, BoolBinCore>(
         format, context);

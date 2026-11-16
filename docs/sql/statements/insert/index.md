@@ -98,7 +98,7 @@ SereneDB supports two such clauses: [`ON CONFLICT DO NOTHING`](#do-nothing-claus
 
 Only conflicts on a unique key are handled: a `PRIMARY KEY` or `UNIQUE` constraint, or a unique index. A row that violates a `CHECK`, `NOT NULL` or foreign key constraint fails the statement as it does without the clause.
 
-The rows a statement proposes are decided one at a time, in the order the statement produces them: a row conflicts with the existing rows and with the rows the statement inserted before it. A key that holds a `NULL` never conflicts.
+The rows a statement proposes are decided one at a time: a row conflicts with the existing rows and with the rows the statement inserted before it. When the statement's own rows repeat a key, `DO NOTHING` inserts one of them and skips the others, and which one is not defined: a large statement decides its rows in parallel, so an `ORDER BY` in its query does not choose the first. A key that holds a `NULL` never conflicts.
 
 A conflict is found against the rows of the statement's snapshot. When another transaction commits the same key after that snapshot was taken, the statement fails with `could not serialize access due to concurrent update`, at the statement or at its `COMMIT`, and a retry takes the conflict path; see [Isolation Level](../transactions.md#isolation-level).
 

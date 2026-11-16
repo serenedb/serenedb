@@ -223,12 +223,12 @@ COPY (SELECT * FROM (VALUES
 ) AS t("l_orderkey", "l_partkey", "l_comment")) TO '${__TEST_DIR__}/sql_statements_copy_index_example_016_1_lineitem_tbl.tbl' (FORMAT CSV, HEADER false, DELIMITER '|');
 
 # DOCS_TEST_RAW
-#| COPY lineitem FROM 'lineitem.tbl' (AUTO_DETECT true);
+#| COPY lineitem FROM 'lineitem.tbl' (FORMAT csv, AUTO_DETECT true);
 
 # DOCS_TEST_BODY
 
 statement ok
-COPY lineitem FROM '${__TEST_DIR__}/sql_statements_copy_index_example_016_1_lineitem_tbl.tbl' (AUTO_DETECT true);
+COPY lineitem FROM '${__TEST_DIR__}/sql_statements_copy_index_example_016_1_lineitem_tbl.tbl' (FORMAT csv, AUTO_DETECT true);
 
 # DOCS_TEST: example_017
 
@@ -404,12 +404,12 @@ COPY lineitem TO '${__TEST_DIR__}/sql_statements_copy_index_example_025_1_lineit
 # DOCS_TEST: example_026
 
 # DOCS_TEST_RAW
-#| COPY lineitem TO 'lineitem.tsv' (DELIMITER '\t', HEADER false);
+#| COPY lineitem TO 'lineitem.tsv';
 
 # DOCS_TEST_BODY
 
 statement ok
-COPY lineitem TO '${__TEST_DIR__}/copy_index_example_026_lineitem.tsv' (DELIMITER '\t', HEADER false);
+COPY lineitem TO '${__TEST_DIR__}/copy_index_example_026_lineitem.tsv';
 
 # DOCS_TEST: example_027
 

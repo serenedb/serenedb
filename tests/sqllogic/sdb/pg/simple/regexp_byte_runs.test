@@ -162,3 +162,10 @@ SELECT regexp_match('aé', '(\C\C\C)') AS m;
 ----
 m
 {aé}
+
+
+query
+SELECT regexp_extract('é', '([^a]+?)', 1) AS a, regexp_extract('日本', '(.+?)', 1) AS b;
+----
+a	b
+é	日

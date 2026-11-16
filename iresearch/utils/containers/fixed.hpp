@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/cleanup/cleanup.h>
+
 #include <array>
 #include <cstddef>
 #include <memory>
@@ -131,21 +133,20 @@ class Fixed<T, 0> {
     std::allocator<T> alloc;
     T* const data = alloc.allocate(size);
     size_t built = 0;
-    try {
-      while (built != size) {
-        if constexpr (kDefaultInit<T>) {
-          ::new (static_cast<void*>(data + built)) T;
-        } else {
-          std::construct_at(data + built);
-        }
-        ++built;
-        init(data[built - 1], built - 1);
-      }
-    } catch (...) {
+    absl::Cleanup release = [&] {
       std::destroy_n(data, built);
       alloc.deallocate(data, size);
-      throw;
+    };
+    while (built != size) {
+      if constexpr (kDefaultInit<T>) {
+        ::new (static_cast<void*>(data + built)) T;
+      } else {
+        std::construct_at(data + built);
+      }
+      ++built;
+      init(data[built - 1], built - 1);
     }
+    std::move(release).Cancel();
     _data = data;
     _size = size;
   }
@@ -158,21 +159,19 @@ class Fixed<T, 0> {
     std::allocator<T> alloc;
     T* const data = alloc.allocate(size);
     size_t built = 0;
-    try {
-      while (built != size) {
-        std::apply(
-          [&](auto&&... one) {
-            std::construct_at(data + built,
-                              std::forward<decltype(one)>(one)...);
-          },
-          args(built));
-        ++built;
-      }
-    } catch (...) {
+    absl::Cleanup release = [&] {
       std::destroy_n(data, built);
       alloc.deallocate(data, size);
-      throw;
+    };
+    while (built != size) {
+      std::apply(
+        [&](auto&&... one) {
+          std::construct_at(data + built, std::forward<decltype(one)>(one)...);
+        },
+        args(built));
+      ++built;
     }
+    std::move(release).Cancel();
     _data = data;
     _size = size;
   }

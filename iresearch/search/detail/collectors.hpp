@@ -84,6 +84,18 @@ struct TermCollector {
   uint64_t total_term_freq = 0;
 };
 
+inline void Accumulate(FieldCollector& into,
+                       const FieldCollector& from) noexcept {
+  into.docs_with_field += from.docs_with_field;
+  into.total_term_freq += from.total_term_freq;
+}
+
+inline void Accumulate(TermCollector& into,
+                       const TermCollector& from) noexcept {
+  into.docs_with_term += from.docs_with_term;
+  into.total_term_freq += from.total_term_freq;
+}
+
 struct alignas(ABSL_CACHELINE_SIZE) CounterBlock {
   static constexpr size_t kTerms =
     (ABSL_CACHELINE_SIZE - sizeof(FieldCollector)) / sizeof(TermCollector);
@@ -122,9 +134,7 @@ class CounterSlots {
   FieldCollector TotalField() const noexcept {
     FieldCollector out;
     for (size_t t = 0; t != _threads; ++t) {
-      const auto& src = _blocks[t * _per_thread].field;
-      out.docs_with_field += src.docs_with_field;
-      out.total_term_freq += src.total_term_freq;
+      Accumulate(out, _blocks[t * _per_thread].field);
     }
     return out;
   }
@@ -133,10 +143,8 @@ class CounterSlots {
     SDB_ASSERT(i < _terms);
     TermCollector out;
     for (size_t t = 0; t != _threads; ++t) {
-      const auto& src = _blocks[t * _per_thread + i / CounterBlock::kTerms]
-                          .terms[i % CounterBlock::kTerms];
-      out.docs_with_term += src.docs_with_term;
-      out.total_term_freq += src.total_term_freq;
+      Accumulate(out, _blocks[t * _per_thread + i / CounterBlock::kTerms]
+                        .terms[i % CounterBlock::kTerms]);
     }
     return out;
   }

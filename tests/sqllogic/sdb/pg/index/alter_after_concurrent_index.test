@@ -1,0 +1,38 @@
+# A transaction that stored its rows before another session's CREATE INDEX
+# cannot then change the table itself: its rows predate the index.
+
+statement ok
+CREATE TABLE aaci (id INT PRIMARY KEY, body TEXT);
+
+
+connection aaci_bulk
+statement ok
+BEGIN;
+
+
+connection aaci_bulk
+statement ok
+INSERT INTO aaci SELECT i, 'bulk' FROM range(1, 5001) t(i);
+
+
+statement ok
+CREATE INDEX aaci_idx ON aaci USING inverted (id, body);
+
+
+connection aaci_bulk
+statement error
+ALTER TABLE aaci ADD COLUMN extra INT;
+----
+db error: ERROR: could not serialize access due to concurrent update
+
+
+connection aaci_bulk
+statement ok
+ROLLBACK;
+
+
+query
+SELECT count(*) AS n FROM aaci;
+----
+n
+0

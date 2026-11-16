@@ -1,0 +1,45 @@
+# A cast field of an INCLUDE'd struct keeps the field's NULLs: IS NULL,
+# IS NOT NULL and count() see the rows without a value.
+
+statement ok
+CREATE TABLE icn (pk INTEGER PRIMARY KEY, meta STRUCT(cat INTEGER));
+
+statement ok
+CREATE INDEX icn_idx ON icn USING inverted (pk) INCLUDE (meta);
+
+statement ok
+INSERT INTO icn VALUES (1, {'cat': 1}), (2, {'cat': 2}), (3, NULL), (4, {'cat': NULL});
+
+statement ok
+VACUUM (FLUSH_TABLE) icn;
+
+query
+SELECT count(*) AS n FROM icn_idx WHERE meta.cat IS NULL;
+----
+n
+2
+
+query
+SELECT count(*) AS n FROM icn_idx WHERE meta.cat::DOUBLE IS NULL;
+----
+n
+2
+
+query
+SELECT count(*) AS n FROM icn_idx WHERE meta.cat::BIGINT IS NOT NULL;
+----
+n
+2
+
+query
+SELECT count(meta.cat::DOUBLE) AS n FROM icn_idx;
+----
+n
+2
+
+query
+SELECT pk FROM icn_idx WHERE coalesce(meta.cat::DOUBLE, -1) = -1 ORDER BY pk;
+----
+pk
+3
+4

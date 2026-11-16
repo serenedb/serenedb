@@ -42,10 +42,6 @@ struct Node : memory::Managed {
     SDB_UNREACHABLE();
   }
 
-  virtual doc_id_t FillAnd(doc_id_t, doc_id_t, uint64_t* IRS_RESTRICT) {
-    SDB_UNREACHABLE();
-  }
-
   virtual doc_id_t FillAndNot(doc_id_t, doc_id_t, uint64_t* IRS_RESTRICT) {
     SDB_UNREACHABLE();
   }
@@ -54,6 +50,16 @@ struct Node : memory::Managed {
                         score_t* IRS_RESTRICT) {
     return FillOr(min, max, mask);
   }
+
+  virtual uint32_t Keep(const doc_id_t*, uint32_t, doc_id_t*) {
+    SDB_UNREACHABLE();
+  }
+
+  virtual uint32_t Drop(const doc_id_t*, uint32_t, doc_id_t*) {
+    SDB_UNREACHABLE();
+  }
+
+  virtual bool FillCostAbove(uint64_t, doc_id_t, doc_id_t) { return false; }
 
   virtual detail::BitsetStorage* Folded() noexcept { return nullptr; }
 };

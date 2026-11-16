@@ -38,6 +38,12 @@ namespace irs::detail {
 inline constexpr size_t kWindowWords = 64;
 inline constexpr doc_id_t kWindowBits = BitsRequired<uint64_t>();
 inline constexpr doc_id_t kWindowDocs = kWindowWords * kWindowBits;
+inline constexpr uint32_t kSparseInverse = BitsRequired<doc_id_t>();
+inline constexpr uint32_t kSparseWindow = kWindowDocs / kSparseInverse;
+inline constexpr uint32_t kBatchInverse = 8;
+inline constexpr uint64_t kProbeSteps =
+  std::countr_zero(doc_limits::kBlockSize) + 2;
+inline constexpr uint32_t kProbeWindow = kWindowDocs / kProbeSteps;
 
 static_assert(kWindowDocs < doc_limits::eof());
 
@@ -53,6 +59,9 @@ struct ABSL_CACHELINE_ALIGNED Scratch {
     return words[i];
   }
 };
+
+template<typename T>
+using WindowBuf = SlackBuf<T, kWindowDocs, 0>;
 
 IRS_FORCE_INLINE constexpr size_t WindowWords(doc_id_t min,
                                               doc_id_t max) noexcept {
@@ -152,6 +161,65 @@ inline IRS_FORCE_INLINE uint32_t CountAndClear(uint64_t* IRS_RESTRICT dst,
   return card;
 }
 
+inline uint32_t TakeDocs(doc_id_t min, uint64_t* IRS_RESTRICT words,
+                         size_t count, doc_id_t* IRS_RESTRICT out) noexcept {
+  SDB_ASSERT(count <= kWindowWords);
+  uint64_t live = 0;
+  for (size_t w = 0; w != count; ++w) {
+    live |= static_cast<uint64_t>(words[w] != 0) << w;
+  }
+  uint32_t n = 0;
+  for (; live != 0; live = PopBit(live)) {
+    const auto w = static_cast<uint32_t>(std::countr_zero(live));
+    const auto base = min + w * kWindowBits;
+    for (auto word = words[w]; word != 0; word = PopBit(word)) {
+      out[n++] = base + static_cast<doc_id_t>(std::countr_zero(word));
+    }
+    words[w] = 0;
+  }
+  return n;
+}
+
+inline void PutDocs(doc_id_t min, const doc_id_t* IRS_RESTRICT docs, uint32_t n,
+                    uint64_t* IRS_RESTRICT words) noexcept {
+  for (uint32_t i = 0; i != n; ++i) {
+    const auto offset = docs[i] - min;
+    SetBit(words[offset / kWindowBits], offset % kWindowBits);
+  }
+}
+
+template<bool Keep, typename Leaf>
+uint32_t SiftByFill(Leaf& leaf, const doc_id_t* in, uint32_t n, doc_id_t* out) {
+  uint64_t words[kWindowWords];
+  uint32_t kept = 0;
+  const doc_id_t stop = n != 0 ? in[n - 1] + 1 : 0;
+  for (uint32_t i = 0; i != n;) {
+    const auto min = in[i];
+    const auto max = stop - min > kWindowDocs ? min + kWindowDocs : stop;
+    const auto count = WindowWords(min, max);
+    for (size_t w = 0; w != count; ++w) {
+      words[w] = 0;
+    }
+    leaf.FillOr(min, max, words);
+    do {
+      const auto doc = in[i];
+      const auto offset = doc - min;
+      out[kept] = doc;
+      kept += static_cast<uint32_t>(
+        CheckBit(words[offset / kWindowBits], offset % kWindowBits) == Keep);
+    } while (++i != n && in[i] < max);
+  }
+  return kept;
+}
+
+inline IRS_FORCE_INLINE void And(uint64_t* IRS_RESTRICT dst,
+                                 const uint64_t* IRS_RESTRICT src,
+                                 size_t words) noexcept {
+  for (size_t w = 0; w != words; ++w) {
+    dst[w] &= src[w];
+  }
+}
+
 inline IRS_FORCE_INLINE uint32_t FoldAnd(uint64_t* IRS_RESTRICT dst,
                                          const uint64_t* IRS_RESTRICT src,
                                          size_t words) noexcept {
@@ -191,122 +259,6 @@ inline IRS_FORCE_INLINE uint64_t WordAt(const UnalignedWord* IRS_RESTRICT src,
   }
   return (lo >> shift) | (word(idx + 1) << (kWindowBits - shift));
 }
-
-struct AndCursor {
-  uint64_t* IRS_RESTRICT words;
-  uint32_t at = 0;
-  uint64_t keep = 0;
-
-  static IRS_FORCE_INLINE uint64_t Between(uint64_t first,
-                                           uint64_t last) noexcept {
-    return ((uint64_t{2} << last) - 1) & (~uint64_t{0} << first);
-  }
-
-  IRS_FORCE_INLINE void Reach(uint64_t offset) noexcept {
-    const auto word = static_cast<uint32_t>(offset / kWindowBits);
-    if (word == at) {
-      return;
-    }
-    words[at] &= keep;
-    keep = 0;
-    for (auto i = at + 1; i != word; ++i) {
-      words[i] = 0;
-    }
-    at = word;
-  }
-
-  IRS_FORCE_INLINE void Doc(uint64_t offset) noexcept {
-    Reach(offset);
-    keep |= uint64_t{1} << (offset % kWindowBits);
-  }
-
-  IRS_FORCE_INLINE void Keep(uint64_t lo, uint64_t hi) noexcept {
-    Reach(lo);
-    const auto word = static_cast<uint32_t>(hi / kWindowBits);
-    if (word == at) {
-      keep |= Between(lo % kWindowBits, hi % kWindowBits);
-      return;
-    }
-    words[at] &= keep | (~uint64_t{0} << (lo % kWindowBits));
-    at = word;
-    keep = (uint64_t{2} << (hi % kWindowBits)) - 1;
-  }
-
-  IRS_FORCE_INLINE void And(uint64_t lo, uint64_t hi, int64_t delta,
-                            const UnalignedWord* IRS_RESTRICT src,
-                            uint32_t count) noexcept {
-    Reach(lo);
-    words[at] &= keep | (~uint64_t{0} << (lo % kWindowBits));
-    keep = 0;
-    const auto first = static_cast<uint32_t>(lo / kWindowBits);
-    const auto last = static_cast<uint32_t>(hi / kWindowBits);
-    for (auto i = first; i <= last; ++i) {
-      auto spare = uint64_t{0};
-      if (i == first) {
-        spare |= (uint64_t{1} << (lo % kWindowBits)) - 1;
-      }
-      if (i == last && hi % kWindowBits != kWindowBits - 1) {
-        spare |= ~uint64_t{0} << (hi % kWindowBits + 1);
-      }
-      words[i] &=
-        WordAt(src, count,
-               static_cast<int64_t>(uint64_t{i} * kWindowBits) + delta) |
-        spare;
-    }
-    at = last;
-    keep = (uint64_t{2} << (hi % kWindowBits)) - 1;
-  }
-
-  IRS_FORCE_INLINE const doc_id_t* AndDocs(uint64_t lo, uint64_t hi,
-                                           const doc_id_t* it,
-                                           const doc_id_t* end,
-                                           doc_id_t min) noexcept {
-    Reach(lo);
-    words[at] &= keep | (~uint64_t{0} << (lo % kWindowBits));
-    keep = 0;
-    const auto first = static_cast<uint32_t>(lo / kWindowBits);
-    const auto last = static_cast<uint32_t>(hi / kWindowBits);
-    const uint64_t stop = hi + 1;
-    for (auto w = first; w <= last; ++w) {
-      const uint64_t edge =
-        std::min<uint64_t>(uint64_t{w + 1} * kWindowBits, stop);
-      uint64_t own = 0;
-      for (; it != end; ++it) {
-        const uint64_t offset = *it - min;
-        if (offset >= edge) {
-          break;
-        }
-        own |= uint64_t{1} << (offset % kWindowBits);
-      }
-      uint64_t spare = 0;
-      if (w == first) {
-        spare |= (uint64_t{1} << (lo % kWindowBits)) - 1;
-      }
-      if (w == last && hi % kWindowBits != kWindowBits - 1) {
-        spare |= ~uint64_t{0} << (hi % kWindowBits + 1);
-      }
-      words[w] &= own | spare;
-    }
-    at = last;
-    keep = (uint64_t{2} << (hi % kWindowBits)) - 1;
-    return it;
-  }
-
-  IRS_FORCE_INLINE void Settle(uint64_t limit) noexcept {
-    const auto last = static_cast<uint32_t>((limit - 1) / kWindowBits);
-    if (at > last) {
-      return;
-    }
-    const auto tail = limit % kWindowBits;
-    const uint64_t slack = tail == 0 ? uint64_t{0} : ~uint64_t{0} << tail;
-    words[at] &= at == last ? (keep | slack) : keep;
-    for (auto i = at + 1; i <= last; ++i) {
-      words[i] = i == last ? (words[i] & slack) : uint64_t{0};
-    }
-    at = last + 1;
-    keep = 0;
-  }
-};
 
 inline IRS_FORCE_INLINE void ClearInclusive(uint64_t* IRS_RESTRICT words,
                                             uint64_t lo, uint64_t hi) noexcept {

@@ -194,6 +194,63 @@ pk	hybrid
 3	0
 
 
+# The order the two are written in changes nothing: the text score keeps the
+# scan's score and the distance is computed per row.
+query
+SELECT pk, round((va <-> [100,0,0]::FLOAT[3])::DOUBLE, 3) AS dist,
+       round(IDF(docs_idx.tableoid)::DOUBLE, 3) AS idf
+FROM docs_idx WHERE body @@ ts_any(['trail', 'gear']) ORDER BY pk;
+----
+pk	dist	idf
+1	0	1.414
+3	141.421	1.414
+4	14.142	0.539
+
+
+query
+SELECT pk, round(((va <-> [100,0,0]::FLOAT[3]) * -0.001
+                  + IDF(docs_idx.tableoid))::DOUBLE, 3) AS hybrid
+FROM docs_idx WHERE body @@ ts_any(['trail', 'gear'])
+ORDER BY hybrid DESC, pk;
+----
+pk	hybrid
+1	1.414
+3	1.273
+4	0.525
+
+
+query
+SELECT pk, round(IDF(docs_idx.tableoid)::DOUBLE, 3) AS idf
+FROM docs_idx
+WHERE body @@ ts_any(['trail', 'gear']) AND va <-> [100,0,0]::FLOAT[3] < 20
+ORDER BY pk;
+----
+pk	idf
+1	1.414
+4	0.539
+
+
+query
+SELECT pk, round((va <-> [100,0,0]::FLOAT[3])::DOUBLE, 3) AS dist
+FROM docs_idx WHERE body @@ ts_any(['trail', 'gear'])
+ORDER BY IDF(docs_idx.tableoid) DESC, pk LIMIT 2;
+----
+pk	dist
+1	0
+3	141.421
+
+
+query
+SELECT pk, round((va <-> [100,0,0]::FLOAT[3])::DOUBLE, 3) AS dist,
+       ts_offsets(body) AS o
+FROM docs_idx WHERE body @@ 'gear' ORDER BY pk;
+----
+pk	dist	o
+1	0	{18,22}
+3	141.421	{13,17}
+4	14.142	{20,24}
+
+
 # A per-branch override composes with it: scoring one branch by a constant
 # makes the text side contribute a flat amount, leaving the vector to order
 # what is left.

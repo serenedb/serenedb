@@ -350,3 +350,121 @@ DROP TABLE fk_w_c;
 
 statement ok
 DROP TABLE fk_w_p;
+
+
+statement ok
+CREATE TABLE fk_late_p(id INTEGER PRIMARY KEY);
+
+
+statement ok
+CREATE TABLE fk_late_c(id INTEGER PRIMARY KEY, p INTEGER REFERENCES fk_late_p(id));
+
+
+statement ok
+INSERT INTO fk_late_p VALUES (1), (2), (3), (4);
+
+
+connection fk_late_writer
+statement ok
+BEGIN;
+
+
+connection fk_late_writer
+statement ok
+INSERT INTO fk_late_c VALUES (1, 1), (2, 2);
+
+
+statement ok
+INSERT INTO fk_late_p VALUES (5);
+
+
+connection fk_late_writer
+statement ok
+COMMIT;
+
+
+query
+SELECT id, p FROM fk_late_c ORDER BY id;
+----
+id	p
+1	1
+2	2
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+DELETE FROM fk_late_p WHERE id = 3;
+
+
+statement ok
+DELETE FROM fk_late_p WHERE id = 4;
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT id FROM fk_late_p ORDER BY id;
+----
+id
+1
+2
+5
+
+
+statement ok
+DROP TABLE fk_late_c;
+
+
+statement ok
+DROP TABLE fk_late_p;
+
+
+statement ok
+CREATE TABLE fk_coll_p (id VARCHAR COLLATE NOCASE PRIMARY KEY);
+
+
+statement ok
+CREATE TABLE fk_coll_c (pid VARCHAR REFERENCES fk_coll_p (id));
+
+
+statement ok
+INSERT INTO fk_coll_p VALUES ('Abc');
+
+
+statement ok
+INSERT INTO fk_coll_c VALUES ('abc'), ('ABC');
+
+
+statement error
+INSERT INTO fk_coll_c VALUES ('xyz');
+----
+db error: ERROR: insert or update on table "fk_coll_c" violates foreign key constraint "fk_coll_c_pid_fkey"
+DETAIL: Key (pid)=(xyz) is not present in table "fk_coll_p".
+
+
+statement error
+DELETE FROM fk_coll_p WHERE id = 'ABC';
+----
+db error: ERROR: update or delete on table "fk_coll_p" violates foreign key constraint "fk_coll_c_pid_fkey" on table "fk_coll_c"
+DETAIL: Key (id)=(abc) is still referenced from table "fk_coll_c".
+
+
+query
+SELECT pid FROM fk_coll_c ORDER BY pid;
+----
+pid
+ABC
+abc
+
+
+statement ok
+DROP TABLE fk_coll_c;
+
+
+statement ok
+DROP TABLE fk_coll_p;

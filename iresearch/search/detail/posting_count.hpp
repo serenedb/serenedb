@@ -25,6 +25,7 @@
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/detail/posting_leaf.hpp"
 #include "iresearch/store/data_input.hpp"
+#include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {
@@ -38,7 +39,6 @@ class PostingCount : public PostingLeaf<InputType, kCountShape> {
   using Base::_last;
   using Base::_left_in_leaf;
   using Base::_left_in_list;
-  using Base::Behind;
   using Base::ReadLeafDelta;
 
  public:
@@ -51,16 +51,10 @@ class PostingCount : public PostingLeaf<InputType, kCountShape> {
 
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
                IndexFeatures layout, bool has_score_bounds, bool has_freq) {
-    SDB_ASSERT(meta.docs_count != 0);
     this->SetFreqLen(has_freq);
-
-    if (meta.docs_count == 1) {
+    if (!this->OpenList(meta, doc_in, layout, has_score_bounds)) {
       _doc = this->SetSingle(meta);
-      return;
     }
-
-    this->OpenInput(meta, doc_in, has_score_bounds);
-    this->ArmWalk(meta, layout, has_score_bounds);
   }
 
   doc_id_t Count(doc_id_t min, doc_id_t max, uint32_t* IRS_RESTRICT counts) {
@@ -73,7 +67,7 @@ class PostingCount : public PostingLeaf<InputType, kCountShape> {
     const auto* const end = std::cend(_docs);
     for (;;) {
       if (_left_in_leaf != 0) {
-        const auto* it = Behind(end - _left_in_leaf, end, min);
+        const auto* it = ScanNotBelow(end - _left_in_leaf, end, min);
         while (it != end && *it < max) {
           ++counts[*it - min];
           ++it;

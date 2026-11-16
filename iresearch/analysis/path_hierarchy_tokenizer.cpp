@@ -345,7 +345,8 @@ Tokenizer::ptr MakePathHierarchy(PathHierarchyTokenizer::Options&& opts,
 
 Tokenizer::ptr PathHierarchyTokenizer::Make(Options opts) {
   if (opts.delimiter.empty()) {
-    THROW_SQL_ERROR(ERR_MSG("expand_path: empty delimiter"));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("expand_path: empty delimiter"));
   }
 
   if (opts.replacement.empty()) {

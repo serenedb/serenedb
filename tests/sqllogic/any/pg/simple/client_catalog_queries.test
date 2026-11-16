@@ -1,0 +1,27 @@
+query
+SELECT true OPERATOR(pg_catalog.=) 't' AS eq, 1 OPERATOR(pg_catalog.=) '1' AS int_eq, 2 OPERATOR(pg_catalog.<) '3' AS lt, true OPERATOR(pg_catalog.<>) 'f' AS ne, 1 OPERATOR(=) 1 AS bare;
+----
+eq	int_eq	lt	ne	bare
+t	t	t	t	t
+
+
+query
+SELECT 'Abc' OPERATOR(pg_catalog.~*) 'B' AS ci, 'abc' OPERATOR(pg_catalog.!~) 'x' AS neg, 'abc' OPERATOR(pg_catalog.!~*) 'B' AS neg_ci, 'abc' OPERATOR(~) '^a' AS bare;
+----
+ci	neg	neg_ci	bare
+t	t	f	t
+
+
+query
+SELECT nspname FROM pg_namespace WHERE nspname IN ('pg_catalog', 'information_schema') ORDER BY nspname COLLATE "C" LIMIT 1;
+----
+nspname
+information_schema
+
+
+query
+SELECT nspname COLLATE "C" AS n FROM pg_namespace WHERE nspname IN ('pg_catalog', 'information_schema') ORDER BY nspname COLLATE "C";
+----
+n
+information_schema
+pg_catalog

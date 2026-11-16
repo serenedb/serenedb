@@ -83,15 +83,8 @@ class SlotsScore {
       std::get<ScaleBlockAttr>(_provider.attrs).value = _scales;
     }
     SDB_ASSERT(_recipe.segment != nullptr && _recipe.field != nullptr);
-    SDB_ASSERT(_recipe.args.scorer != nullptr);
-    return _recipe.args.scorer->PrepareScorer({
-      .segment = *_recipe.segment,
-      .field = _recipe.field->meta(),
-      .doc_attrs = _provider,
-      .fetcher = *_recipe.args.fetcher,
-      .stats = _recipe.args.stats,
-      .boost = _recipe.args.boost,
-    });
+    return PrepareScore(_recipe.args, *_recipe.segment, _recipe.field->meta(),
+                        _provider);
   }
 
  private:

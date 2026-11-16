@@ -174,6 +174,20 @@ class PositionImpl final : public PosAttr {
     _cookie.pend_pos += n;
   }
 
+  void Follow(const PositionImpl& lead) noexcept {
+    if (_cookie.pos_group == lead._cookie.pos_group &&
+        PayGroupOf(_cookie) == PayGroupOf(lead._cookie)) {
+      SDB_ASSERT(_cookie.pend_pos <= lead._cookie.pend_pos);
+      _pend_pos += lead._cookie.pend_pos - _cookie.pend_pos;
+      _cookie.pend_pos = lead._cookie.pend_pos;
+    } else {
+      Land(lead._cookie.pos_group, PayGroupOf(lead._cookie),
+           lead._cookie.pend_pos);
+    }
+    _freq = lead._freq;
+    Clear();
+  }
+
   void Clear() noexcept {
     _value = pos_limits::invalid();
     ClearAttributes();

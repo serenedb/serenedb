@@ -63,10 +63,11 @@ namespace {
 
 const boost::asio::ssl::detail::openssl_init<true> kSslInit{};
 
-void SetSanitizerThreadStackSize() {
+void SetLargeThreadStackSize() {
 #if defined(__GLIBC__) &&                  \
   (defined(ABSL_HAVE_ADDRESS_SANITIZER) || \
-   defined(ABSL_HAVE_THREAD_SANITIZER) || defined(ABSL_HAVE_MEMORY_SANITIZER))
+   defined(ABSL_HAVE_THREAD_SANITIZER) ||  \
+   defined(ABSL_HAVE_MEMORY_SANITIZER) || !defined(__OPTIMIZE__))
   pthread_attr_t attr;
   pthread_attr_init(&attr);
   pthread_attr_setstacksize(&attr, size_t{64} << 20);
@@ -79,7 +80,7 @@ void SetSanitizerThreadStackSize() {
 
 void PrepareProcess(char* argv0) {
   irs::CheckCpuFeatures(argv0);
-  SetSanitizerThreadStackSize();
+  SetLargeThreadStackSize();
   json_object_seed(0);
   irs::InitOptimizeRules();
 }

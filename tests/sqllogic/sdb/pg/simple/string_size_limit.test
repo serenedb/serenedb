@@ -1,0 +1,10 @@
+statement error
+SELECT length(concat(r, r, r, r, r)) FROM (SELECT repeat('x', 1073741824) AS r) AS t;
+----
+db error: ERROR: Cannot create a string of size: '5368709120', the maximum supported string size is: '4294967295'
+
+
+statement error
+SELECT repeat('xx', 2147483648);
+----
+db error: ERROR: Cannot create a string of size: '4294967296', the maximum supported string size is: '4294967295'

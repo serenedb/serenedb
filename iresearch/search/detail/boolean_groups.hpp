@@ -154,6 +154,13 @@ class OrGroup {
     });
   }
 
+  doc_id_t AddMasked(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT words,
+                     score_t* IRS_RESTRICT scores) {
+    return _leaves.Visit(max, [&](auto& leaf) IRS_FORCE_INLINE {
+      return leaf.AddMasked(min, max, words, scores);
+    });
+  }
+
  private:
   Leaves _leaves;
 };
@@ -188,14 +195,15 @@ class ThresholdGroup {
     auto* const planes = _planes.data();
     const auto top = size_t{_min_match} - 1;
     bool first = true;
+    Scratch scratch;
     const auto next = _leaves.Visit(max, [&](auto& leaf) IRS_FORCE_INLINE {
       if (first) {
         first = false;
         return leaf.FillOr(min, max, planes);
       }
-      Clear(_scratch.data(), count);
-      const auto doc = leaf.FillOr(min, max, _scratch.data());
-      FoldCarry(planes, _scratch.data(), count, top);
+      Clear(scratch.data(), count);
+      const auto doc = leaf.FillOr(min, max, scratch.data());
+      FoldCarry(planes, scratch.data(), count, top);
       return doc;
     });
     const auto* const answers = planes + top * kWindowWords;
@@ -220,10 +228,11 @@ class ThresholdGroup {
     }
     const auto count = WindowWords(min, max);
     const auto top = size_t{_min_match} - 1;
+    Scratch scratch;
     const auto next = _leaves.Visit(max, [&](auto& leaf) IRS_FORCE_INLINE {
-      Clear(_scratch.data(), count);
-      const auto doc = leaf.Fill(min, max, _scratch.data(), scores);
-      FoldCarry(planes, _scratch.data(), count, top);
+      Clear(scratch.data(), count);
+      const auto doc = leaf.Fill(min, max, scratch.data(), scores);
+      FoldCarry(planes, scratch.data(), count, top);
       return doc;
     });
     const auto* const answers = planes + top * kWindowWords;
@@ -239,7 +248,6 @@ class ThresholdGroup {
   }
 
  private:
-  Scratch _scratch{};
   Leaves _leaves;
   containers::Fixed<uint64_t> _planes;
   score_t _constant;

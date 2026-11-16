@@ -87,7 +87,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | Scheduled Jobs             | Yes           | SereneDB extension, not PostgreSQL syntax: [`CREATE JOB`](../sql/statements/create_job/index.md) |
 | Functions & Procedures     | Yes           |  |
 | Custom Types               | Yes           |                                                 |
-| Triggers                   | No            |                                                 |
+| Triggers                   | Partial       | The body of `CREATE TRIGGER` is one `INSERT`, `UPDATE`, `DELETE` or `MERGE` statement, which reads the row through `NEW` and `OLD` and the statement's rows through `REFERENCING NEW TABLE` and `OLD TABLE`; `EXECUTE FUNCTION` is not supported. A table has either `FOR EACH ROW` or `FOR EACH STATEMENT` triggers, not both. The body of an `AFTER ... FOR EACH STATEMENT` trigger reads its table as it was before the statement, where PostgreSQL's sees the rows the statement wrote; its transition tables hold them. |
 | Prepared Statements        | Yes           |                                                 |
 | Advisory Locks             | No            |                                                 |
 
@@ -856,7 +856,7 @@ Even where a feature is supported, SereneDB intentionally diverges from PostgreS
 
 ### Floating-Point Arithmetic
 
-A division by zero raises a `Division by zero` error with SQLSTATE `22012`, as in PostgreSQL, and operations involving infinity values follow the [IEEE Standard for Floating-Point Arithmetic (IEEE 754)](https://en.wikipedia.org/wiki/IEEE_754) on both engines. One case differs: `'NaN'::float8 / 0` raises the error too, where PostgreSQL returns `NaN`. [`SET ieee_floating_point_ops = true`](../configuration/pragmas.md#ieee-floating-point-operation-semantics) makes a division by zero return `Infinity`, `NaN` or `-Infinity` instead. In SereneDB:
+A division by zero raises a `Division by zero` error with SQLSTATE `22012`, as in PostgreSQL, `'NaN'::float8 / 0` is `NaN`, and operations involving infinity values follow the [IEEE Standard for Floating-Point Arithmetic (IEEE 754)](https://en.wikipedia.org/wiki/IEEE_754) on both engines. `exp` and `power` raise `value out of range: overflow` or `underflow` when a finite argument gives a result beyond the double range or one that rounds to zero, as PostgreSQL does. One case differs: `+`, `-`, `*` and `/` on floats return `Infinity` when the result overflows, where PostgreSQL raises the overflow error. [`SET ieee_floating_point_ops = true`](../configuration/pragmas.md#ieee-floating-point-operation-semantics) makes a division by zero return `Infinity`, `NaN` or `-Infinity` instead. In SereneDB:
 
 <SqlLogicTest id="sql/dialect/postgresql_compatibility/example_001" />
 

@@ -457,10 +457,8 @@ void EmitPhraseTokens(irs::ByPhraseOptions& options, const FilterContext& ctx,
   auto& analyzer = PhraseAnalyzer(ctx, column_info);
   irs::ValueAnalyzer value_analyzer;
   PositionedTokens tokens{analyzer.Traits()};
-  if (!value_analyzer.Analyze(
-        analyzer,
-        duckdb::string_t{text.data(), static_cast<uint32_t>(text.size())},
-        tokens)) {
+  if (!value_analyzer.Analyze(analyzer, duckdb::string_t::Unsafe(text),
+                              tokens)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("ts_phrase failed to analyse '", text, "'"),
                     ERR_HINT("The column's analyzer rejected the input text."));

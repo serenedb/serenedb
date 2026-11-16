@@ -20,20 +20,17 @@
 
 #pragma once
 
+#include <absl/functional/any_invocable.h>
 #include <absl/functional/function_ref.h>
 
-#include <duckdb/planner/logical_operator.hpp>
-#include <duckdb/planner/operator/logical_get.hpp>
-#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <duckdb/planner/expression.hpp>
+#include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
-#include <memory>
 #include <optional>
-#include <string_view>
 #include <utility>
-#include <vector>
 
-#include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
+#include "connector/optimizer/plan_index.h"
 #include "connector/scan/scan_bind.h"
 #include "connector/search_filter_builder.hpp"
 
@@ -41,56 +38,6 @@ namespace sdb::optimizer {
 
 std::optional<duckdb::TableIndex> SingleReferencedTableIndex(
   const duckdb::Expression& expr);
-
-connector::ColumnId ResolveColumnId(duckdb::ColumnBinding binding,
-                                    const connector::ScanBindData& bind_data,
-                                    const duckdb::LogicalGet& get);
-
-std::vector<connector::ColumnId> BuildProjectedColumnIds(
-  const duckdb::LogicalGet& get, const connector::ScanBindData& bind_data);
-
-struct FoundScan {
-  duckdb::LogicalGet* get;
-  connector::ScanBindData* bind_data;
-
-  explicit operator bool() const noexcept { return get; }
-};
-
-std::optional<FoundScan> AsSearchScan(duckdb::LogicalOperator& op);
-std::optional<FoundScan> FindIResearchScan(duckdb::LogicalOperator& op,
-                                           duckdb::TableIndex table_index);
-
-struct FoundScanColumn {
-  FoundScan found;
-  duckdb::ColumnBinding binding;
-};
-
-struct ResolvedProjection {
-  duckdb::ColumnBinding binding;
-  const duckdb::Expression* stop_expr;
-};
-
-ResolvedProjection WalkProjections(duckdb::LogicalOperator& root,
-                                   duckdb::ColumnBinding binding);
-inline duckdb::ColumnBinding ResolveBindingThroughProjections(
-  duckdb::LogicalOperator& root, duckdb::ColumnBinding binding) {
-  return WalkProjections(root, binding).binding;
-}
-std::optional<FoundScanColumn> ResolveIResearchScanColumn(
-  duckdb::LogicalOperator& root, duckdb::ColumnBinding binding);
-
-duckdb::ColumnBinding ExposeGetColumnAt(duckdb::LogicalOperator& root,
-                                        duckdb::TableIndex anchor_ti,
-                                        const duckdb::LogicalGet& target_get,
-                                        duckdb::idx_t get_col_idx,
-                                        std::string_view col_name,
-                                        const duckdb::LogicalType& col_type);
-
-duckdb::idx_t AppendVirtualGetColumn(connector::ScanBindData& bind_data,
-                                     duckdb::LogicalGet& get,
-                                     connector::ColumnId virtual_id,
-                                     const duckdb::LogicalType& col_type,
-                                     std::string_view col_name);
 
 bool TryClaimIResearchConjunct(
   irs::BooleanFilter& root,
@@ -122,9 +69,7 @@ struct SearchGetters {
   const BindingColumnId& column_id;
 };
 
-bool WithSearchGetters(duckdb::LogicalGet& get,
-                       connector::ScanBindData& bind_data,
-                       duckdb::ClientContext& context,
+bool WithSearchGetters(PlannedScan& scan, duckdb::ClientContext& context,
                        absl::FunctionRef<bool(const SearchGetters&)> fn);
 
 }  // namespace sdb::optimizer

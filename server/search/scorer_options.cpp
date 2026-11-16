@@ -56,6 +56,11 @@ std::optional<irs::ScorerOptions> ExtractScorer(
   std::string_view name, std::span<const duckdb::Value* const> args) {
   using S = irs::ScorerOptions;
   S scorer;
+  if (absl::c_any_of(args,
+                     [](const duckdb::Value* v) { return v && v->IsNull(); })) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("scorer '", name, "' arguments must not be NULL"));
+  }
 
   if (name == S::Bm25::Owner::type_name()) {
     S::Bm25 p;
@@ -223,27 +228,25 @@ irs::ScorerOptions ParseScorerExpression(duckdb::ClientContext* context,
   std::string name = fn.FunctionName().GetIdentifierName();
   absl::AsciiStrToLower(&name);
 
-  std::vector<Value> values;
-  values.reserve(fn.GetArguments().size());
-  for (const auto& arg : fn.GetArguments()) {
-    const auto& expr = arg.GetExpression();
-    if (expr.GetExpressionClass() == ExpressionClass::CONSTANT) {
+  if (!context) {
+    std::vector<Value> values;
+    values.reserve(fn.GetArguments().size());
+    for (const auto& arg : fn.GetArguments()) {
+      const auto& expr = arg.GetExpression();
+      if (expr.GetExpressionClass() != ExpressionClass::CONSTANT) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("'", what, "' scorer args must be constants: '", input, "'"),
+          ERR_HINT("Use e.g. 'tfidf()' or 'bm25(1.2, 0.75)'"));
+      }
       values.push_back(expr.Cast<ConstantExpression>().GetLiteral().ToValue());
     }
-  }
-  if (values.size() == fn.GetArguments().size()) {
     std::vector<const Value*> literals;
     literals.reserve(values.size());
     for (const auto& value : values) {
       literals.push_back(&value);
     }
     return *ExtractScorer(name, literals);
-  }
-  if (!context) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("'", what, "' scorer args must be constants: '", input, "'"),
-      ERR_HINT("Use e.g. 'tfidf()' or 'bm25(1.2, 0.75)'"));
   }
 
   // Prepend a tableoid placeholder to match the SQL `BM25(idx.tableoid, ...)`

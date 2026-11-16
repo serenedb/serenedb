@@ -94,16 +94,6 @@ yaclib::Future<> Runtime::Delay(clock::duration d) {
   return std::move(f);
 }
 
-void Runtime::RunAt(duckdb::timestamp_t at, std::function<void()> task) {
-  const std::chrono::microseconds delay{
-    at.value - duckdb::Timestamp::GetCurrentTimestamp().value};
-  Delay(delay).Detach(_background, [this, task = std::move(task)] {
-    if (!IsStopping()) {
-      task();
-    }
-  });
-}
-
 void Runtime::RequestStop() noexcept {
   _stop.request_stop();
   absl::flat_hash_set<std::shared_ptr<asio_ns::steady_timer>> delays;

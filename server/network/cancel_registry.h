@@ -25,6 +25,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/shared_ptr.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
@@ -85,7 +86,7 @@ struct CancelToken {
   duckdb::weak_ptr<TransportBase> session;
 };
 
-// Process-wide registry mapping a connection's cancel key to its CancelToken.
+// Process-wide registry mapping a connection's pid to its CancelToken.
 // One instance per server (owned by Server, handed to sessions via the
 // listener contexts, like ssl/credentials). The 64-bit key is split into the
 // pid/secret halves sent in BackendKeyData; a CancelRequest must present both
@@ -97,6 +98,7 @@ class CancelRegistry {
     uint64_t key;
     {
       absl::MutexLock lock{&_mu};
+      bool first = true;
       for (;;) {
         // The high 32 bits are the "pid" reported by pg_backend_pid() and sent
         // in BackendKeyData; PG pids are positive int32, so keep that half in
@@ -106,9 +108,16 @@ class CancelRegistry {
         if (pid == 0) {
           pid = 1;
         }
-        key =
-          (static_cast<uint64_t>(pid) << 32) | static_cast<uint32_t>(entropy);
-        if (_tokens.try_emplace(key, token).second) {
+        SDB_IF_FAILURE("cancel_registry_reuse_pid") {
+          if (first && !_tokens.empty()) {
+            pid = _tokens.begin()->first;
+          }
+        }
+        first = false;
+        const auto secret = static_cast<uint32_t>(entropy);
+        if (_tokens.try_emplace(pid, Entry{.secret = secret, .token = token})
+              .second) {
+          key = (static_cast<uint64_t>(pid) << 32) | secret;
           break;
         }
       }
@@ -123,15 +132,17 @@ class CancelRegistry {
 
   void Unregister(uint64_t key) {
     absl::MutexLock lock{&_mu};
-    _tokens.erase(key);
+    if (const auto it = Find(key); it != _tokens.end()) {
+      _tokens.erase(it);
+    }
   }
 
   void Cancel(uint64_t key) {
     std::shared_ptr<CancelToken> token;
     {
       absl::MutexLock lock{&_mu};
-      if (const auto it = _tokens.find(key); it != _tokens.end()) {
-        token = it->second;
+      if (const auto it = Find(key); it != _tokens.end()) {
+        token = it->second.token;
       }
     }
     // Never hold the registry lock across Interrupt(): the token keeps the
@@ -149,8 +160,8 @@ class CancelRegistry {
       absl::MutexLock lock{&_mu};
       _terminating = true;
       tokens.reserve(_tokens.size());
-      for (const auto& [key, token] : _tokens) {
-        tokens.push_back(token);
+      for (const auto& [pid, entry] : _tokens) {
+        tokens.push_back(entry.token);
       }
     }
     for (const auto& token : tokens) {
@@ -158,36 +169,34 @@ class CancelRegistry {
     }
   }
 
-  struct PidMatch {
-    std::shared_ptr<CancelToken> token;
-    bool ambiguous;
-  };
-
   // Find by the pid half of the key alone (the high 32 bits sent in
   // BackendKeyData / reported by pg_backend_pid). Unlike Cancel(), this needs
   // no secret -- it backs the SQL pg_cancel_backend()/pg_terminate_backend(),
   // which check the caller's role against the backend's, not the cancel key.
-  // The pid is the high half of a RANDOM key, so it is not guaranteed unique
-  // across live backends (unlike a real OS pid); if two share it the request is
-  // ambiguous and none is found rather than risk hitting the wrong backend.
-  PidMatch FindByPid(uint32_t pid) {
-    PidMatch match{nullptr, false};
+  std::shared_ptr<CancelToken> FindByPid(uint32_t pid) {
     absl::MutexLock lock{&_mu};
-    for (const auto& [key, candidate] : _tokens) {
-      if (static_cast<uint32_t>(key >> 32) != pid) {
-        continue;
-      }
-      if (match.token) {
-        return {nullptr, true};
-      }
-      match.token = candidate;
-    }
-    return match;
+    const auto it = _tokens.find(pid);
+    return it == _tokens.end() ? nullptr : it->second.token;
   }
 
  private:
+  struct Entry {
+    uint32_t secret = 0;
+    std::shared_ptr<CancelToken> token;
+  };
+  using Tokens = irs::containers::FlatHashMap<uint32_t, Entry>;
+
+  Tokens::iterator Find(uint64_t key) ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mu) {
+    const auto it = _tokens.find(static_cast<uint32_t>(key >> 32));
+    if (it == _tokens.end() ||
+        it->second.secret != static_cast<uint32_t>(key)) {
+      return _tokens.end();
+    }
+    return it;
+  }
+
   absl::Mutex _mu;
-  irs::containers::FlatHashMap<uint64_t, std::shared_ptr<CancelToken>> _tokens;
+  Tokens _tokens ABSL_GUARDED_BY(_mu);
   absl::BitGen _gen;
   bool _terminating = false;
 };

@@ -1,0 +1,245 @@
+statement ok
+CREATE TABLE tfr_t (id INT, v INT);
+
+
+statement ok
+CREATE TABLE tfr_a (x INT);
+
+
+statement ok
+CREATE TRIGGER tfr_row AFTER INSERT ON tfr_t FOR EACH ROW
+  INSERT INTO tfr_a VALUES (NEW.v);
+
+
+statement ok
+ALTER TABLE tfr_t RENAME COLUMN v TO w;
+
+
+statement ok
+INSERT INTO tfr_t VALUES (1, 10);
+
+
+query
+SELECT x FROM tfr_a;
+----
+x
+10
+
+
+query
+SELECT sql FROM duckdb_triggers() WHERE trigger_name = 'tfr_row';
+----
+sql
+CREATE TRIGGER tfr_row AFTER INSERT ON tfr_t FOR EACH ROW INSERT INTO tfr_a (VALUES ("new".w));
+
+
+statement ok
+CREATE TABLE tfr_b (y INT, z INT);
+
+
+statement ok
+CREATE TRIGGER tfr_cols AFTER DELETE ON tfr_t FOR EACH ROW
+  INSERT INTO tfr_b (y) VALUES (OLD.id);
+
+
+statement ok
+ALTER TABLE tfr_b RENAME COLUMN y TO y2;
+
+
+statement ok
+DELETE FROM tfr_t WHERE id = 1;
+
+
+query
+SELECT y2, z FROM tfr_b;
+----
+y2	z
+1	NULL
+
+
+statement ok
+ALTER TABLE tfr_a RENAME TO tfr_a2;
+
+
+statement ok
+INSERT INTO tfr_t VALUES (2, 20);
+
+
+query
+SELECT x FROM tfr_a2 ORDER BY x;
+----
+x
+10
+20
+
+
+statement ok
+CREATE TABLE tfr_k (id INT, k INT);
+
+
+statement ok
+INSERT INTO tfr_k VALUES (3, 300);
+
+
+statement ok
+CREATE TABLE tfr_log (n BIGINT);
+
+
+statement ok
+CREATE TRIGGER tfr_join AFTER INSERT ON tfr_t FOR EACH ROW
+  INSERT INTO tfr_log SELECT k FROM tfr_k WHERE tfr_k.id = NEW.id;
+
+
+statement ok
+ALTER TABLE tfr_k RENAME COLUMN k TO k2;
+
+
+statement ok
+ALTER TABLE tfr_t RENAME TO tfr_t2;
+
+
+statement ok
+INSERT INTO tfr_t2 VALUES (3, 30);
+
+
+query
+SELECT x FROM tfr_a2 ORDER BY x;
+----
+x
+10
+20
+30
+
+
+query
+SELECT n FROM tfr_log;
+----
+n
+300
+
+
+query
+SELECT table_name, trigger_name, sql FROM duckdb_triggers()
+WHERE trigger_name IN ('tfr_row', 'tfr_cols', 'tfr_join')
+ORDER BY trigger_name;
+----
+table_name	trigger_name	sql
+tfr_t2	tfr_cols	CREATE TRIGGER tfr_cols AFTER DELETE ON tfr_t2 FOR EACH ROW INSERT INTO tfr_b (y2) (VALUES ("old".id));
+tfr_t2	tfr_join	CREATE TRIGGER tfr_join AFTER INSERT ON tfr_t2 FOR EACH ROW INSERT INTO tfr_log SELECT k2 AS k FROM tfr_k WHERE (tfr_k.id = "new".id);
+tfr_t2	tfr_row	CREATE TRIGGER tfr_row AFTER INSERT ON tfr_t2 FOR EACH ROW INSERT INTO tfr_a2 (VALUES ("new".w));
+
+
+statement ok
+CREATE TABLE tfr_s (id INT, v INT);
+
+
+statement ok
+CREATE TABLE tfr_sum (n BIGINT);
+
+
+statement ok
+CREATE TRIGGER tfr_stmt AFTER INSERT ON tfr_s
+  REFERENCING NEW TABLE AS nt FOR EACH STATEMENT
+  INSERT INTO tfr_sum SELECT sum(v) FROM nt;
+
+
+statement ok
+ALTER TABLE tfr_s RENAME COLUMN v TO w;
+
+
+statement ok
+INSERT INTO tfr_s VALUES (1, 2), (2, 3);
+
+
+query
+SELECT n FROM tfr_sum;
+----
+n
+5
+
+
+statement ok
+CREATE TABLE tfr_u (id INT, v INT);
+
+
+statement ok
+CREATE TRIGGER tfr_upd AFTER UPDATE OF v ON tfr_u FOR EACH STATEMENT
+  INSERT INTO tfr_sum VALUES (-1);
+
+
+statement ok
+ALTER TABLE tfr_u RENAME COLUMN v TO w;
+
+
+query
+SELECT columns FROM duckdb_triggers() WHERE trigger_name = 'tfr_upd';
+----
+columns
+{w}
+
+
+statement error
+ALTER TABLE tfr_s DROP COLUMN w;
+----
+db error: ERROR: cannot drop column w of table tfr_s because other objects depend on it
+DETAIL: trigger tfr_stmt on table tfr_s depends on column w of table tfr_s
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+
+
+statement error
+ALTER TABLE tfr_u DROP COLUMN w;
+----
+db error: ERROR: cannot drop column w of table tfr_u because other objects depend on it
+DETAIL: trigger tfr_upd on table tfr_u depends on column w of table tfr_u
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+
+
+statement ok
+ALTER TABLE tfr_s ADD COLUMN extra INT;
+
+
+statement ok
+ALTER TABLE tfr_s DROP COLUMN extra;
+
+
+statement ok
+ALTER TABLE tfr_s DROP COLUMN w CASCADE;
+
+
+query
+SELECT count(*) AS n FROM duckdb_triggers() WHERE trigger_name = 'tfr_stmt';
+----
+n
+0
+
+
+statement ok
+CREATE SCHEMA tfr_schema;
+
+
+statement ok
+CREATE TABLE tfr_schema.target (x INT);
+
+
+statement ok
+CREATE TABLE tfr_q (id INT);
+
+
+statement ok
+CREATE TRIGGER tfr_qualified AFTER INSERT ON tfr_q FOR EACH ROW
+  INSERT INTO tfr_schema.target VALUES (NEW.id);
+
+
+statement ok
+ALTER SCHEMA tfr_schema RENAME TO tfr_schema2;
+
+
+statement ok
+INSERT INTO tfr_q VALUES (7);
+
+
+query
+SELECT x FROM tfr_schema2.target;
+----
+x
+7

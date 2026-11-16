@@ -188,19 +188,16 @@ void WriteKeyed(duckdb::BinarySerializer& out, const FieldHead& head) {
     out.WritePropertyWithDefault<uint64_t>(kDictInlineSize, "inline_size",
                                            head.inline_size, 0);
   }
-  if (!Empty(head.text)) {
-    out.WriteObject(kDictText, "text", [&](duckdb::BinarySerializer& object) {
-      WriteText(object, head.text);
-    });
-  }
-  if (!head.ranges.counts.empty()) {
-    SDB_ASSERT(IsSubsetOf(IndexFeatures::Ranges, head.features) &&
-               head.width != 0);
-    out.WriteObject(kDictRanges, "ranges",
-                    [&](duckdb::BinarySerializer& object) {
-                      WriteRanges(object, head.ranges);
-                    });
-  }
+  out.WriteOptionalObject(
+    kDictText, "text", !Empty(head.text),
+    [&](duckdb::BinarySerializer& object) { WriteText(object, head.text); });
+  SDB_ASSERT(
+    head.ranges.counts.empty() ||
+    (IsSubsetOf(IndexFeatures::Ranges, head.features) && head.width != 0));
+  out.WriteOptionalObject(kDictRanges, "ranges", !head.ranges.counts.empty(),
+                          [&](duckdb::BinarySerializer& object) {
+                            WriteRanges(object, head.ranges);
+                          });
 }
 
 void WriteField(duckdb::BinarySerializer& out,
@@ -356,17 +353,15 @@ void WriteTerms(duckdb::BinarySerializer& out, const TermsMeta& terms) {
                                          0);
   out.WritePropertyWithDefault<uint64_t>(kTermsFirstPage, "first_page",
                                          terms.first_page, 0);
-  if (!terms.spans.empty()) {
-    out.WriteList(kTermsSpans, "spans", terms.spans.size(),
-                  [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-                    list.WriteObject([&](duckdb::BinarySerializer& span) {
-                      span.WriteProperty<uint32_t>(kSpanBlock, "block",
-                                                   terms.spans[i].block);
-                      span.WriteProperty<uint32_t>(
-                        kSpanExtraPages, "extra_pages", terms.spans[i].extra);
-                    });
-                  });
-  }
+  out.WriteOptionalList(
+    kTermsSpans, "spans", terms.spans.size(),
+    [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+      list.WriteObject([&](duckdb::BinarySerializer& span) {
+        span.WriteProperty<uint32_t>(kSpanBlock, "block", terms.spans[i].block);
+        span.WriteProperty<uint32_t>(kSpanExtraPages, "extra_pages",
+                                     terms.spans[i].extra);
+      });
+    });
   WriteOptionalBytes(out, kTermsSeparators, "separators", terms.separators);
   WriteOptionalBytes(out, kTermsFsst, "fsst_table", terms.fsst_table);
   out.WritePropertyWithDefault<uint64_t>(kTermsInlineOffset, "inline_offset",

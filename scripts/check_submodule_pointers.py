@@ -15,11 +15,14 @@ carry our version branches). Each must
 A submodule origin/main does not have yet (a new dependency) only has to
 satisfy rule 1.
 
-A gitlink that breaks rule 1 but is the head of an open fork PR into
-main's version branch or a newer one is pending, not failed: the PR is
-waiting for that fork PR to land: the script exits 3, which the PR's
-pre-commit job turns into a pending `pre-commit` status. --rev checks the gitlinks
-of a commit instead of the index, --base compares with another commit.
+A gitlink that breaks rule 1 is pending, not failed, when it is the head
+of an open fork PR into main's version branch or a newer one, or the
+head of a fork branch vYYYY.MM.DD-wip whose vYYYY.MM.DD is newer than
+main's version branch (an upstream update, which scripts/land.sh turns
+into the version branch vYYYY.MM.DD): the PR is waiting for it to land:
+the script exits 3, which the PR's pre-commit job turns into a pending
+`pre-commit` status. --rev checks the gitlinks of a commit instead of
+the index, --base compares with another commit.
 --reachable also checks that every gitlink, changed or not, can be
 fetched from its URL, all of them at once.
 
@@ -41,6 +44,7 @@ import urllib.error
 import urllib.request
 
 VERSION_BRANCH = re.compile(r"^v20\d{2}\.\d{2}\.\d{2}$")
+WIP_BRANCH = re.compile(r"^v20\d{2}\.\d{2}\.\d{2}-wip$")
 GITHUB_URL = re.compile(r"^https://github\.com/([\w.-]+/[\w.-]+?)(?:\.git)?$")
 
 EXCLUDED = {
@@ -123,16 +127,14 @@ def submodule_url(path: str, rev: str | None) -> str | None:
     return git("config", *source, f"submodule.{path}.url")
 
 
-def version_branches(url: str, pattern: re.Pattern) -> dict[str, str] | None:
+def remote_heads(url: str) -> dict[str, str] | None:
     out = git("ls-remote", "--heads", "--", url)
     if out is None:
         return None
     heads = {}
     for line in out.splitlines():
         sha, ref = line.split(None, 1)
-        name = ref.removeprefix("refs/heads/")
-        if pattern.match(name):
-            heads[name] = sha
+        heads[ref.removeprefix("refs/heads/")] = sha
     return heads
 
 
@@ -143,11 +145,13 @@ def verdict(
     contains,
     main_is_ancestor,
     fork_pr,
+    wip: tuple[str, str] | None,
 ) -> tuple[str, str]:
     """Shared decision: ("ok" | "pending" | "fail", detail).
     `contains(branch, sha)` and `main_is_ancestor()` abstract over the
     local-git and GitHub-API backends; `fork_pr()` finds the open fork PR
-    the gitlink heads. Branches older than main's are only searched to
+    the gitlink heads, `wip` is the newest vYYYY.MM.DD-wip branch it heads,
+    with its vYYYY.MM.DD. Branches older than main's are only searched to
     word a failure."""
     names = sorted(heads, reverse=True)
     ver_main = (
@@ -159,6 +163,8 @@ def verdict(
         pr = fork_pr()
         if pr is not None and (ver_main is None or pr[1] >= ver_main):
             return "pending", f"head of open {pr[0]}"
+        if wip is not None and (ver_main is None or wip[1] > ver_main):
+            return "pending", f"head of {wip[0]}"
         older = [n for n in names if n not in current]
         ver_old = next((n for n in older if contains(n, gitlink)), None)
         if ver_old is not None:
@@ -168,10 +174,15 @@ def verdict(
                 "fail",
                 f"is the head of {pr[0]}, older than main's gitlink branch {ver_main}",
             )
+        if wip is not None:
+            return (
+                "fail",
+                f"is the head of {wip[0]}, not newer than main's gitlink branch {ver_main}",
+            )
         return (
             "fail",
-            "not reachable from any version branch, and no open fork PR into "
-            "a version branch has it as its head",
+            "not reachable from any version branch, and neither an open fork PR "
+            "into a version branch nor a vYYYY.MM.DD-wip branch has it as its head",
         )
     if ver_main is None or ver_new > ver_main or main_is_ancestor():
         return "ok", f"on {ver_new}"
@@ -192,7 +203,12 @@ def is_local_ancestor(path: str, ancestor: str, descendant: str) -> bool:
 
 
 def validate_local(
-    path: str, gitlink: str, main_sha: str, heads: dict[str, str], fork_pr
+    path: str,
+    gitlink: str,
+    main_sha: str,
+    heads: dict[str, str],
+    fork_pr,
+    wip: tuple[str, str] | None,
 ) -> tuple[str, str] | None:
     """Validate with the local submodule clone; None if it cannot decide."""
     if not os.path.exists(os.path.join(path, ".git")):
@@ -211,6 +227,7 @@ def validate_local(
         lambda name, sha: is_local_ancestor(path, sha, heads[name]),
         lambda: is_local_ancestor(path, main_sha, gitlink),
         fork_pr,
+        wip,
     )
 
 
@@ -290,7 +307,12 @@ def open_fork_pr(repo: str, sha: str) -> tuple[str, str] | None:
 
 
 def validate_api(
-    repo: str, gitlink: str, main_sha: str, heads: dict[str, str], fork_pr
+    repo: str,
+    gitlink: str,
+    main_sha: str,
+    heads: dict[str, str],
+    fork_pr,
+    wip: tuple[str, str] | None,
 ) -> tuple[str, str] | None:
     """Validate through the GitHub compare API; None if it cannot decide."""
     probe = None
@@ -320,6 +342,7 @@ def validate_api(
         contains,
         lambda: probe in ("identical", "ahead"),
         fork_pr,
+        wip,
     )
     if result[0] != "ok" and indeterminate:
         return None
@@ -327,7 +350,6 @@ def validate_api(
 
 
 def check(path: str, override_sha: str | None, rev: str | None) -> str:
-    pattern = VERSION_BRANCH
     gitlink = override_sha or gitlink_at(path, rev)
     if gitlink is None:
         return "ok"
@@ -348,21 +370,26 @@ def check(path: str, override_sha: str | None, rev: str | None) -> str:
             file=sys.stderr,
         )
         return "fail"
-    heads = version_branches(url, pattern)
-    if heads is None:
+    branches = remote_heads(url)
+    if branches is None:
         print(
             f"{path}: cannot list version branches on {url} (offline?); rerun with network",
             file=sys.stderr,
         )
         return "fail"
-    if not heads:
+    heads = {name: sha for name, sha in branches.items() if VERSION_BRANCH.match(name)}
+    wips = sorted(
+        name for name, sha in branches.items() if sha == gitlink and WIP_BRANCH.match(name)
+    )
+    wip = (f"{repo} {wips[-1]}", wips[-1].removesuffix("-wip")) if wips else None
+    if not heads and wip is None:
         print(f"{path}: {url} has no version branch", file=sys.stderr)
         return "fail"
     fork_pr = lambda: open_fork_pr(repo, gitlink)
     try:
-        result = validate_local(path, gitlink, main_sha, heads, fork_pr)
+        result = validate_local(path, gitlink, main_sha, heads, fork_pr, wip)
         if result is None:
-            result = validate_api(repo, gitlink, main_sha, heads, fork_pr)
+            result = validate_api(repo, gitlink, main_sha, heads, fork_pr, wip)
     except Unreachable as e:
         print(
             f"{path}: {e}; rerun with network",
@@ -382,10 +409,12 @@ def check(path: str, override_sha: str | None, rev: str | None) -> str:
     elif status == "fail":
         print(
             f"{path}: gitlink {gitlink} {detail}. Point the submodule at the "
-            "head of a fork PR into the current version branch, or at a "
-            "commit on it.",
+            "head of a fork PR into the current version branch, at a commit "
+            "on it, or at the head of a newer vYYYY.MM.DD-wip branch.",
             file=sys.stderr,
         )
+    elif wip is not None and heads.get(wip[1]) == gitlink:
+        print(f"{path}: gitlink {gitlink} is on {wip[1]}, and {wip[0]} still heads it")
     return status
 
 

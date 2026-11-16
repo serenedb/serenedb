@@ -25,6 +25,8 @@
 
 #include <algorithm>
 #include <duckdb/common/types/vector.hpp>
+#include <duckdb/common/vector/array_vector.hpp>
+#include <duckdb/common/vector/struct_vector.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <utility>
@@ -110,6 +112,9 @@ std::string_view DecodeFieldView(std::string_view field, std::string& out) {
         out.push_back(static_cast<char>(value & 0xFF));
         break;
       }
+      case '.':
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
+                        ERR_MSG("end-of-copy marker is not alone on its line"));
       default:
         out.push_back(e);  // `\<anyotherchar>` -> drop the backslash
         break;
@@ -151,6 +156,32 @@ std::string_view TrimCarriageReturn(std::string_view line) {
   return pg::TrailingBackslashes(body) % 2 == 0 ? body : line;
 }
 
+[[noreturn]] void ThrowDataAfterMarker() {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
+                  ERR_MSG("end-of-copy marker is followed by data"));
+}
+
+void ResetNulls(duckdb::Vector& vec, duckdb::idx_t row) {
+  duckdb::FlatVector::SetNull(vec, row, false);
+  switch (vec.GetType().InternalType()) {
+    case duckdb::PhysicalType::STRUCT:
+      for (auto& child : duckdb::StructVector::GetEntries(vec)) {
+        ResetNulls(child, row);
+      }
+      break;
+    case duckdb::PhysicalType::ARRAY: {
+      const auto size = duckdb::ArrayType::GetSize(vec.GetType());
+      auto& child = duckdb::ArrayVector::GetChildMutable(vec);
+      for (auto i = row * size; i != (row + 1) * size; ++i) {
+        ResetNulls(child, i);
+      }
+      break;
+    }
+    default:
+      break;
+  }
+}
+
 }  // namespace
 
 CopyDeserializers MakeCopyDeserializers(
@@ -170,14 +201,15 @@ CopyDeserializers MakeCopyDeserializers(
 // reaches the decoder as a zero-copy view straight into `line`; only an escaped
 // field is materialized through `field_buf`. The field count is validated
 // against the column count.
-void ProcessTextRow(std::string_view line, char delim,
-                    std::string_view null_str,
+bool ProcessTextRow(std::string_view line, char delim,
+                    std::string_view null_str, bool ignore_errors,
                     const CopyDeserializers& deserializers,
                     pg::DeserializeContext& dctx, duckdb::DataChunk& output,
                     duckdb::idx_t row, std::string& field_buf) {
   const auto columns = deserializers.size();
   duckdb::idx_t column = 0;
   size_t pos = 0;
+  bool converted = true;
   for (;;) {
     bool had_escape = false;
     const auto end = ScanField(line, delim, pos, had_escape);
@@ -190,13 +222,16 @@ void ProcessTextRow(std::string_view line, char delim,
     auto& vec = output.data[column];
     if (raw == null_str) {
       duckdb::FlatVector::SetNull(vec, row, true);
-    } else {
+    } else if (converted) {
       const auto field = had_escape ? DecodeFieldView(raw, field_buf) : raw;
       pg::VectorSink sink{vec, row};
       if (!deserializers[column](dctx, field, sink)) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
-          ERR_MSG("COPY FROM: invalid input for column ", column + 1));
+        if (!ignore_errors) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
+            ERR_MSG("COPY FROM: invalid input for column ", column + 1));
+        }
+        converted = false;
       }
     }
     ++column;
@@ -210,20 +245,57 @@ void ProcessTextRow(std::string_view line, char delim,
       ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
       ERR_MSG("COPY FROM: row has ", column, " fields, expected ", columns));
   }
+  return converted;
 }
 
 CopyBatchParser::CopyBatchParser(duckdb::ClientContext& context,
-                                 pg::CopyInTarget target)
+                                 pg::CopyInTarget target, CopyTextEnd& end,
+                                 std::atomic<uint64_t>& rejected)
   : _target{std::move(target)},
-    _deserializers{MakeCopyDeserializers(_target.types, _target.binary)} {
+    _deserializers{MakeCopyDeserializers(_target.types, _target.binary)},
+    _end{end},
+    _rejected{rejected} {
   pg::FillDeserializeContext(context, _dctx);
+}
+
+void CopyBatchParser::CountRejected(uint64_t rejected) {
+  const auto total =
+    _rejected.fetch_add(rejected, std::memory_order_relaxed) + rejected;
+  if (total > _target.reject_limit) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+      ERR_MSG("skipped more than REJECT_LIMIT (", _target.reject_limit,
+              ") rows due to data type incompatibility"));
+  }
+}
+
+void CopyBatchParser::EndMarker() {
+  _ended = true;
+  const auto seq = _batch->seq;
+  for (auto marker = _end.marker.load();
+       seq < marker && !_end.marker.compare_exchange_weak(marker, seq);) {
+  }
+  if (_end.latest.load() > seq) {
+    ThrowDataAfterMarker();
+  }
 }
 
 void CopyBatchParser::Start(const pg::CopyBatch& batch) {
   _batch = &batch;
   _segment = 0;
   _pos = 0;
+  _ended = false;
   _skip = _target.header && !_target.binary && batch.seq == 0;
+  if (_target.binary) {
+    return;
+  }
+  for (auto latest = _end.latest.load();
+       latest < batch.seq &&
+       !_end.latest.compare_exchange_weak(latest, batch.seq);) {
+  }
+  if (_end.marker.load() < batch.seq) {
+    ThrowDataAfterMarker();
+  }
 }
 
 duckdb::idx_t CopyBatchParser::Parse(duckdb::DataChunk& output,
@@ -234,6 +306,7 @@ duckdb::idx_t CopyBatchParser::Parse(duckdb::DataChunk& output,
 duckdb::idx_t CopyBatchParser::ParseText(duckdb::DataChunk& output,
                                          duckdb::idx_t row) {
   const auto& segments = _batch->segments;
+  uint64_t rejected = 0;
   while (row < STANDARD_VECTOR_SIZE && _segment != segments.size()) {
     const auto data = segments[_segment];
     if (_pos == data.size()) {
@@ -249,9 +322,29 @@ duckdb::idx_t CopyBatchParser::ParseText(duckdb::DataChunk& output,
     if (std::exchange(_skip, false)) {
       continue;
     }
-    ProcessTextRow(line, _target.delim, _target.null_str, _deserializers, _dctx,
-                   output, row, _field_buf);
-    ++row;
+    if (_ended) {
+      if (!line.empty()) {
+        ThrowDataAfterMarker();
+      }
+      continue;
+    }
+    if (line == "\\.") {
+      EndMarker();
+      continue;
+    }
+    if (ProcessTextRow(line, _target.delim, _target.null_str,
+                       _target.ignore_errors, _deserializers, _dctx, output,
+                       row, _field_buf)) {
+      ++row;
+      continue;
+    }
+    for (auto& column : output.data) {
+      ResetNulls(column, row);
+    }
+    ++rejected;
+  }
+  if (rejected != 0 && _target.reject_limit != 0) {
+    CountRejected(rejected);
   }
   return row;
 }

@@ -1,0 +1,43 @@
+statement ok
+CREATE SCHEMA vsr_schema;
+
+
+statement ok
+CREATE TABLE vsr_schema.t (a INT);
+
+
+statement ok
+INSERT INTO vsr_schema.t VALUES (1);
+
+
+connection a
+statement ok
+BEGIN;
+
+
+connection a
+statement ok
+CREATE VIEW vsr_view AS SELECT a FROM vsr_schema.t;
+
+
+connection b
+statement ok
+ALTER SCHEMA vsr_schema RENAME TO vsr_schema_renamed;
+
+
+connection a
+statement error
+COMMIT;
+----
+db error: ERROR: Failed to commit: Could not commit creation of dependency, a subject was renamed to "vsr_schema_renamed" by another transaction
+
+
+statement ok
+CREATE VIEW vsr_view AS SELECT a FROM vsr_schema_renamed.t;
+
+
+query
+SELECT a FROM vsr_view;
+----
+a
+1

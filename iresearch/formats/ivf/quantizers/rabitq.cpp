@@ -70,6 +70,8 @@ struct RaBitQLayout {
   uint32_t row_code_bytes = 0;
   uint32_t group_code_bytes = 0;
   uint32_t storage = 0;
+  uint32_t factor_size = 0;
+  uint32_t fine_size = 0;
   uint32_t ex_code_size = 0;
   uint32_t record_size = 0;
   bool row_major = false;
@@ -82,7 +84,10 @@ struct RaBitQLayout {
 
   uint32_t AuxOffset() const noexcept { return group_code_bytes; }
   uint32_t CsOffset() const noexcept {
-    return AuxOffset() + static_cast<uint32_t>(kFastScanBbs) * storage;
+    return AuxOffset() + static_cast<uint32_t>(kFastScanBbs) * factor_size;
+  }
+  uint32_t FineOffset() const noexcept {
+    return CsOffset() + static_cast<uint32_t>(kFastScanBbs * sizeof(float));
   }
   uint32_t GroupBytes() const noexcept {
     return static_cast<uint32_t>(kFastScanBbs) * record_size;
@@ -92,6 +97,9 @@ struct RaBitQLayout {
       .group_size = row_major ? 1U : uint32_t{kFastScanBbs},
       .record_size = record_size,
       .alignment = row_major ? 1U : uint32_t{alignof(float)},
+      .fine_bytes =
+        row_major ? 0U : static_cast<uint32_t>(kFastScanBbs) * fine_size,
+      .fine_record_size = row_major ? 0U : fine_size,
     };
   }
 };
@@ -110,6 +118,14 @@ RaBitQLayout MakeRaBitQLayout(uint32_t d, uint32_t nb_bits,
   l.storage = static_cast<uint32_t>(
     faiss::rabitq_utils::compute_per_vector_storage_size(nb_bits, l.rd));
   l.ex_code_size = (l.rd * l.ex_bits + 7) / 8;
+  if (l.ex_bits == 0) {
+    l.factor_size = sizeof(faiss::rabitq_utils::SignBitFactors);
+  } else {
+    l.factor_size = sizeof(faiss::rabitq_utils::SignBitFactorsWithError);
+    l.fine_size =
+      l.ex_code_size + sizeof(faiss::rabitq_utils::ExtraBitsFactors);
+  }
+  SDB_ASSERT(l.storage == l.factor_size + l.fine_size);
   l.row_major = row_major;
   l.record_size = (row_major ? l.row_code_bytes : l.nsq / 2) + l.storage +
                   static_cast<uint32_t>(sizeof(float)) * (row_major ? 2U : 1U);
@@ -129,7 +145,8 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
       _row.resize(_lay.record_size);
     } else {
       _packed.resize(_lay.group_code_bytes);
-      _aux.resize(kFastScanBbs * size_t{_lay.storage});
+      _aux.resize(kFastScanBbs * size_t{_lay.factor_size});
+      _fine.resize(kFastScanBbs * size_t{_lay.fine_size});
     }
     SDB_ASSERT(_lay.rd % kFastScanBits == 0);
   }
@@ -214,8 +231,8 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
                              : faiss::MetricType::METRIC_INNER_PRODUCT;
 
   template<typename SetNib>
-  float EncodeVector(const float* vec, uint8_t* aux, float* norm_out,
-                     SetNib&& set) {
+  float EncodeVector(const float* vec, uint8_t* aux, uint8_t* fine,
+                     float* norm_out, SetNib&& set) {
     RotateInto(_signs.data(), vec, _rotated.data(), _lay.d, _lay.rd);
     for (uint32_t j = 0; j < _lay.rd; ++j) {
       _residual[j] = _rotated[j] - _centroid[j];
@@ -236,18 +253,13 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
       faiss::rabitq_utils::compute_vector_factors(
         _rotated.data(), _lay.rd, _centroid.data(), kMetric,
         /*compute_error=*/_lay.ex_bits > 0);
-    if (_lay.ex_bits == 0) {
-      std::memcpy(aux, &f, sizeof(faiss::rabitq_utils::SignBitFactors));
-    } else {
-      std::memcpy(aux, &f,
-                  sizeof(faiss::rabitq_utils::SignBitFactorsWithError));
-      uint8_t* ex_code =
-        aux + sizeof(faiss::rabitq_utils::SignBitFactorsWithError);
+    std::memcpy(aux, &f, _lay.factor_size);
+    if (_lay.ex_bits > 0) {
       faiss::rabitq_utils::ExtraBitsFactors ex;
       faiss::rabitq_multibit::quantize_ex_bits(_residual.data(), _lay.rd,
-                                               _lay.nb_bits, ex_code, ex,
-                                               kMetric, _centroid.data());
-      std::memcpy(ex_code + _lay.ex_code_size, &ex,
+                                               _lay.nb_bits, fine, ex, kMetric,
+                                               _centroid.data());
+      std::memcpy(fine + _lay.ex_code_size, &ex,
                   sizeof(faiss::rabitq_utils::ExtraBitsFactors));
     }
     if (norm_out) {
@@ -262,7 +274,8 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
 
   void EncodeGrouped(const float* vec, size_t lane) {
     _cs[lane] =
-      EncodeVector(vec, _aux.data() + lane * size_t{_lay.storage}, nullptr,
+      EncodeVector(vec, _aux.data() + lane * size_t{_lay.factor_size},
+                   _fine.data() + lane * size_t{_lay.fine_size}, nullptr,
                    [this, lane](uint32_t sq, uint8_t nib) {
                      faiss::pq4_set_packed_element(
                        _packed.data(), nib, kFastScanBbs, _lay.nsq, lane, sq);
@@ -272,23 +285,26 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
   void PackRecord(byte_type* dst, const float* vec) {
     std::fill_n(dst, _lay.record_size, byte_type{0});
     uint8_t* code = reinterpret_cast<uint8_t*>(dst);
+    uint8_t* aux = code + _lay.RowAuxOffset();
     float norm = 0.f;
     const float cs = EncodeVector(
-      vec, code + _lay.RowAuxOffset(), &norm,
+      vec, aux, aux + _lay.factor_size, &norm,
       [code](uint32_t sq, uint8_t nib) { SetNibble(code, sq, nib); });
     std::memcpy(dst + _lay.RowCsOffset(), &cs, sizeof(float));
     std::memcpy(dst + _lay.RowNormOffset(), &norm, sizeof(float));
   }
 
   void WriteGroup(IndexOutput& out, size_t count) {
-    const size_t storage = _lay.storage;
-    std::memset(_aux.data() + count * storage, 0,
-                (kFastScanBbs - count) * storage);
+    std::fill(_aux.begin() + count * _lay.factor_size, _aux.end(), 0);
+    std::fill(_fine.begin() + count * _lay.fine_size, _fine.end(), 0);
     std::fill_n(_cs.data() + count, kFastScanBbs - count, 0.f);
     out.WriteData(_packed.data(), _packed.size());
     out.WriteData(_aux.data(), _aux.size());
     out.WriteData(reinterpret_cast<const byte_type*>(_cs.data()),
                   kFastScanBbs * sizeof(float));
+    if (!_fine.empty()) {
+      out.WriteData(_fine.data(), _fine.size());
+    }
     std::memset(_packed.data(), 0, _packed.size());
     _lane = 0;
   }
@@ -303,6 +319,7 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
   std::vector<float> _residual;
   std::vector<uint8_t> _packed;
   std::vector<uint8_t> _aux;
+  std::vector<uint8_t> _fine;
   std::array<float, kFastScanBbs> _cs{};
   std::vector<byte_type> _row;
 };
@@ -536,21 +553,12 @@ class RaBitQuantizerReader final : public QuantizerReader {
       return;
     }
     const size_t group = _lay.GroupBytes();
-    const size_t storage = _lay.storage;
+    const size_t factor = _lay.factor_size;
     for (size_t first = 0; first < scores.size(); first += kFastScanBbs) {
       const byte_type* aux =
         block.data() + first / kFastScanBbs * group + _lay.AuxOffset();
       const size_t n = std::min<size_t>(kFastScanBbs, scores.size() - first);
-      if (_lay.ex_bits > 0) {
-        Errors([&](size_t i) { return aux + i * storage; }, n, errors + first);
-      } else {
-        SDB_ASSERT(storage == sizeof(faiss::rabitq_utils::SignBitFactors));
-        Errors(
-          [&](size_t i) {
-            return aux + i * sizeof(faiss::rabitq_utils::SignBitFactors);
-          },
-          n, errors + first);
-      }
+      Errors([&](size_t i) { return aux + i * factor; }, n, errors + first);
     }
   }
 
@@ -574,9 +582,44 @@ class RaBitQuantizerReader final : public QuantizerReader {
     }
     const size_t group_bytes = _lay.GroupBytes();
     SDB_ASSERT(block.size() % group_bytes == 0);
+    std::array<uint8_t, kFastScanBbs> marks;
     for (size_t off = 0; off < block.size();
          off += group_bytes, out += kFastScanBbs) {
-      ScoreGroup(block.data() + off, mt, out);
+      const byte_type* codes = block.data() + off;
+      Accumulate(codes);
+      if (CoarseGroup(codes, _accu.data(), mt, out, marks.data())) {
+        FineGroup(codes, marks.data(), out);
+      }
+    }
+  }
+
+  bool ComputeCoarse(std::span<const byte_type> block, score_t threshold,
+                     score_t* out, uint8_t* marks) final {
+    if (_lay.row_major) {
+      ComputeBlock(block, threshold, out);
+      return false;
+    }
+    const float mt = MetricThreshold(threshold);
+    const size_t group_bytes = _lay.GroupBytes();
+    SDB_ASSERT(block.size() % group_bytes == 0);
+    bool fine = false;
+    for (size_t off = 0; off < block.size();
+         off += group_bytes, out += kFastScanBbs, marks += kFastScanBbs) {
+      const byte_type* codes = block.data() + off;
+      Accumulate(codes);
+      fine |= CoarseGroup(codes, _accu.data(), mt, out, marks);
+    }
+    return fine;
+  }
+
+  void ComputeFine(std::span<const byte_type> block, const uint8_t* marks,
+                   score_t* out) final {
+    SDB_ASSERT(!_lay.row_major);
+    const size_t group_bytes = _lay.GroupBytes();
+    SDB_ASSERT(block.size() % group_bytes == 0);
+    for (size_t off = 0; off < block.size();
+         off += group_bytes, out += kFastScanBbs, marks += kFastScanBbs) {
+      FineGroup(block.data() + off, marks, out);
     }
   }
 
@@ -594,18 +637,20 @@ class RaBitQuantizerReader final : public QuantizerReader {
       _joint);
   }
 
-  void ComputeBlocks(std::span<QuantizerReader* const> readers,
+  bool ComputeBlocks(std::span<QuantizerReader* const> readers,
                      std::span<const byte_type> block,
-                     std::span<const score_t> thresholds, score_t* out) final {
+                     std::span<const score_t> thresholds, score_t* out,
+                     uint8_t* marks) final {
     if (_lay.row_major) {
-      QuantizerReader::ComputeBlocks(readers, block, thresholds, out);
-      return;
+      return QuantizerReader::ComputeBlocks(readers, block, thresholds, out,
+                                            marks);
     }
     const size_t group_bytes = _lay.GroupBytes();
     SDB_ASSERT(block.size() % group_bytes == 0);
     const size_t groups = block.size() / group_bytes;
     const size_t records = groups * kFastScanBbs;
     const size_t lut_bytes = _lay.nsq * kFastScanKsub;
+    bool fine = false;
     for (size_t first = 0; first < readers.size(); first += kFastScanQueries) {
       const size_t nq = std::min(kFastScanQueries, readers.size() - first);
       const uint8_t* joint = _joint.data() + first * lut_bytes;
@@ -616,12 +661,14 @@ class RaBitQuantizerReader final : public QuantizerReader {
                                  _accu_multi.data());
         for (size_t q = 0; q < nq; ++q) {
           auto& peer = static_cast<RaBitQuantizerReader&>(*readers[first + q]);
-          peer.FinishGroup(codes, _accu_multi.data() + q * kFastScanBbs,
-                           peer.MetricThreshold(thresholds[first + q]),
-                           out + (first + q) * records + g * kFastScanBbs);
+          const size_t at = (first + q) * records + g * kFastScanBbs;
+          fine |= peer.CoarseGroup(codes, _accu_multi.data() + q * kFastScanBbs,
+                                   peer.MetricThreshold(thresholds[first + q]),
+                                   out + at, marks + at);
         }
       }
     }
+    return fine;
   }
 
  private:
@@ -664,26 +711,32 @@ class RaBitQuantizerReader final : public QuantizerReader {
     return M == VectorMetric::L2Sqr ? -threshold : threshold;
   }
 
-  void ScoreGroup(const byte_type* codes, float mt, score_t* out) {
+  void Accumulate(const byte_type* codes) {
     faiss::accumulate_to_mem(1, kFastScanBbs, static_cast<int>(_lay.nsq), codes,
                              _cur->Lut().Packed(), _accu.data());
-    FinishGroup(codes, _accu.data(), mt, out);
   }
 
-  void FinishGroup(const byte_type* codes, const uint16_t* accu, float mt,
-                   score_t* out) {
+  bool CoarseGroup(const byte_type* codes, const uint16_t* accu, float mt,
+                   score_t* out, uint8_t* marks) {
     const byte_type* aux = codes + _lay.AuxOffset();
     const auto* cs = reinterpret_cast<const float*>(codes + _lay.CsOffset());
-    const size_t storage = _lay.storage;
-    Finish(
-      accu, [aux, storage](size_t i) { return aux + i * storage; },
-      [this, codes](size_t i) {
-        faiss::rabitq_utils::unpack_sign_bits_from_packed(
-          codes, kFastScanBbs, _lay.nsq, i, _lay.group_code_bytes,
-          _sign_bits.data());
-        return const_cast<const uint8_t*>(_sign_bits.data());
-      },
-      cs, kFastScanBbs, mt, out);
+    const size_t factor = _lay.factor_size;
+    return Coarse(
+      accu, [aux, factor](size_t i) { return aux + i * factor; }, cs,
+      kFastScanBbs, mt, out, marks);
+  }
+
+  void FineGroup(const byte_type* codes, const uint8_t* marks, score_t* out) {
+    const byte_type* fine = codes + _lay.FineOffset();
+    const size_t size = _lay.fine_size;
+    Refine([fine, size](size_t i) { return fine + i * size; },
+           [this, codes](size_t i) {
+             faiss::rabitq_utils::unpack_sign_bits_from_packed(
+               codes, kFastScanBbs, _lay.nsq, i, _lay.group_code_bytes,
+               _sign_bits.data());
+             return const_cast<const uint8_t*>(_sign_bits.data());
+           },
+           kFastScanBbs, marks, out);
   }
 
   template<typename Row>
@@ -697,57 +750,56 @@ class RaBitQuantizerReader final : public QuantizerReader {
     faiss::accumulate_to_mem(1, kFastScanBbs, static_cast<int>(_lay.nsq),
                              _packed.data(), _cur->Lut().Packed(),
                              _accu.data());
-    Finish(
-      _accu.data(), [row, aux_off](size_t i) { return row(i) + aux_off; },
-      [row](size_t i) { return reinterpret_cast<const uint8_t*>(row(i)); },
-      _rm_cs.data(), count, mt, out);
+    std::array<uint8_t, kFastScanBbs> marks;
+    if (Coarse(
+          _accu.data(), [row, aux_off](size_t i) { return row(i) + aux_off; },
+          _rm_cs.data(), count, mt, out, marks.data())) {
+      const uint32_t fine_off = aux_off + _lay.factor_size;
+      Refine(
+        [row, fine_off](size_t i) { return row(i) + fine_off; },
+        [row](size_t i) { return reinterpret_cast<const uint8_t*>(row(i)); },
+        count, marks.data(), out);
+    }
   }
 
-  template<typename Aux, typename Signs>
-  void Finish(const uint16_t* accu, Aux aux, Signs signs, const float* cs,
-              size_t count, float mt, score_t* out) {
+  template<typename Factors>
+  bool Coarse(const uint16_t* accu, Factors factors, const float* cs,
+              size_t count, float mt, score_t* out, uint8_t* marks) {
     const FastScanLut& lut = _cur->Lut();
+    bool fine = false;
     for (size_t i = 0; i < count; ++i) {
       const float normalized = lut.Decode(accu[i]) - cs[i];
-      const auto* fac =
-        reinterpret_cast<const faiss::rabitq_utils::SignBitFactors*>(aux(i));
-      out[i] = faiss::rabitq_utils::compute_1bit_adjusted_distance(
-        normalized, *fac, _qf, kRaBitQCentered, kRaBitQQueryBits, _rd);
-    }
-    if (_lay.ex_bits > 0) {
-      Refine(aux, signs, count, mt, out);
-    }
-    if constexpr (M == VectorMetric::L2Sqr) {
-      for (size_t i = 0; i < count; ++i) {
-        out[i] = -out[i];
+      faiss::rabitq_utils::SignBitFactorsWithError fac;
+      std::memcpy(&fac, factors(i), _lay.factor_size);
+      const float dist = faiss::rabitq_utils::compute_1bit_adjusted_distance(
+        normalized, fac, _qf, kRaBitQCentered, kRaBitQQueryBits, _rd);
+      if (_lay.ex_bits > 0) {
+        marks[i] = faiss::rabitq_utils::should_refine_candidate(
+          dist, fac.f_error, _qf.g_error, mt, M != VectorMetric::L2Sqr);
+        fine |= marks[i] != 0;
       }
+      out[i] = M == VectorMetric::L2Sqr ? -dist : dist;
     }
+    return fine;
   }
 
-  template<typename Aux, typename Signs>
-  void Refine(Aux aux, Signs signs, size_t count, float threshold,
+  template<typename Fine, typename Signs>
+  void Refine(Fine fine, Signs signs, size_t count, const uint8_t* marks,
               score_t* out) {
     const float qr_base =
       M == VectorMetric::L2Sqr ? _qf.qr_to_c_L2sqr : _qf.q_dot_c;
     for (size_t i = 0; i < count; ++i) {
-      const byte_type* rec = aux(i);
-      const auto* fe =
-        reinterpret_cast<const faiss::rabitq_utils::SignBitFactorsWithError*>(
-          rec);
-      if (!faiss::rabitq_utils::should_refine_candidate(
-            out[i], fe->f_error, _qf.g_error, threshold,
-            M != VectorMetric::L2Sqr)) {
+      if (marks[i] == 0) {
         continue;
       }
-      const uint8_t* ex_code =
-        rec + sizeof(faiss::rabitq_utils::SignBitFactorsWithError);
-      const auto* ex_fac =
-        reinterpret_cast<const faiss::rabitq_utils::ExtraBitsFactors*>(
-          ex_code + _lay.ex_code_size);
-      out[i] = faiss::rabitq_utils::compute_full_multibit_distance(
-        signs(i), ex_code, *ex_fac, _q_res.data(), qr_base, _rd, _lay.ex_bits,
+      const uint8_t* ex_code = fine(i);
+      faiss::rabitq_utils::ExtraBitsFactors ex_fac;
+      std::memcpy(&ex_fac, ex_code + _lay.ex_code_size, sizeof(ex_fac));
+      const float dist = faiss::rabitq_utils::compute_full_multibit_distance(
+        signs(i), ex_code, ex_fac, _q_res.data(), qr_base, _rd, _lay.ex_bits,
         M == VectorMetric::L2Sqr ? faiss::MetricType::METRIC_L2
                                  : faiss::MetricType::METRIC_INNER_PRODUCT);
+      out[i] = M == VectorMetric::L2Sqr ? -dist : dist;
     }
   }
 

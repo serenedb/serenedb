@@ -43,6 +43,7 @@
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <limits>
 #include <memory>
+#include <span>
 #include <vector>
 
 #include "connector/scan/scan_function.h"
@@ -92,6 +93,8 @@ struct AnnJoinLocalState final : RankedLocalState {
   std::vector<irs::ann::Collector> collectors;
   std::vector<std::vector<irs::ScoreDoc>> pools;
   std::vector<Candidate> candidates;
+  std::vector<Candidate> ahead;
+  std::vector<irs::doc_id_t> hinted;
   std::vector<uint32_t> cursors;
   std::vector<bool> stopped;
   std::vector<std::vector<irs::score_t>> best;
@@ -345,6 +348,48 @@ irs::score_t RescoreBar(const AnnJoinGlobalState& g, const AnnJoinLocalState& l,
   return std::max(exact, l.floors[q].Load());
 }
 
+bool ByAddress(const Candidate& a, const Candidate& b) noexcept {
+  return std::tie(a.segment, a.doc) < std::tie(b.segment, b.doc);
+}
+
+void HintRows(const AnnJoinGlobalState& g, AnnJoinLocalState& l,
+              std::span<const Candidate> rows) {
+  for (size_t i = 0; i < rows.size();) {
+    const auto segment = rows[i].segment;
+    l.hinted.clear();
+    for (; i < rows.size() && rows[i].segment == segment; ++i) {
+      if (l.hinted.empty() || l.hinted.back() != rows[i].doc) {
+        l.hinted.push_back(rows[i].doc);
+      }
+    }
+    if (auto* reader = Rescorer(g, l, segment)) {
+      reader->Hint(l.hinted);
+    }
+  }
+}
+
+void HintNextRound(const AnnJoinGlobalState& g, AnnJoinLocalState& l) {
+  l.ahead.clear();
+  for (uint32_t q = 0; q < l.pools.size(); ++q) {
+    if (l.stopped[q]) {
+      continue;
+    }
+    const auto& pool = l.pools[q];
+    const auto bar = RescoreBar(g, l, q);
+    const auto end =
+      std::min<size_t>(pool.size(), l.cursors[q] + size_t{kRescoreRound});
+    for (auto slot = l.cursors[q]; slot < end && pool[slot].score >= bar;
+         ++slot) {
+      l.ahead.push_back({.segment = pool[slot].segment_idx,
+                         .doc = pool[slot].doc,
+                         .query = q,
+                         .slot = slot});
+    }
+  }
+  absl::c_sort(l.ahead, ByAddress);
+  HintRows(g, l, l.ahead);
+}
+
 void Rescore(const AnnJoinGlobalState& g, AnnJoinLocalState& l) {
   const auto count = static_cast<uint32_t>(l.pools.size());
   l.cursors.assign(count, 0);
@@ -378,9 +423,11 @@ void Rescore(const AnnJoinGlobalState& g, AnnJoinLocalState& l) {
     if (l.candidates.empty()) {
       break;
     }
-    absl::c_sort(l.candidates, [](const Candidate& a, const Candidate& b) {
-      return std::tie(a.segment, a.doc) < std::tie(b.segment, b.doc);
-    });
+    absl::c_sort(l.candidates, ByAddress);
+    if (take == g.k) {
+      HintRows(g, l, l.candidates);
+    }
+    HintNextRound(g, l);
     for (size_t i = 0; i < l.candidates.size();) {
       const auto& first = l.candidates[i];
       auto* reader = Rescorer(g, l, first.segment);

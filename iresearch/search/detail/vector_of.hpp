@@ -53,10 +53,15 @@ struct ClusterFeed {
     const float* centroid =
       has_centroids ? state->cluster_centroids.data() + c * state->d : nullptr;
     quantizer->StartCluster(centroid);
-    VectorBlockReader pay{payload->Dup(), quantizer->BlockSetting()};
+    const auto setting = quantizer->BlockSetting();
+    const auto& doc_in = *detail::DocOf(*state->reader);
+    ClusterExtents extents{setting};
+    extents.Add(state->cookies[c]);
+    extents.Hint(doc_in, *payload);
+    VectorBlockReader pay{payload->Dup(), setting};
     pay.Reset(state->pay_starts[c]);
-    return Args{state->cookies[c], *detail::DocOf(*state->reader),
-                std::move(quantizer), std::move(pay), state->pay_lanes[c]};
+    return Args{state->cookies[c], doc_in, std::move(quantizer), std::move(pay),
+                state->pay_lanes[c]};
   }
 };
 

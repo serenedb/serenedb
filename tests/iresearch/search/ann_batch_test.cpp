@@ -32,10 +32,13 @@
 #include <iresearch/search/ann/family.hpp>
 #include <iresearch/search/detail/ann_index.hpp>
 #include <iresearch/search/detail/column_collector.hpp>
+#include <iresearch/search/detail/vector_slots.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/filters/vector_similarity_filter.hpp>
 #include <iresearch/search/scorers/vector_similarity_scorer.hpp>
 #include <iresearch/store/memory_directory.hpp>
+#include <iresearch/store/store_utils.hpp>
+#include <iresearch/utils/file_utils_ext.hpp>
 #include <random>
 #include <string>
 #include <vector>
@@ -261,7 +264,9 @@ void ExpectSame(const Hits& expected, const Hits& actual, uint32_t q) {
 }
 
 bool ScoresDependOnFloor(const BatchCase& c) {
-  return c.quant.kind == irs::VectorQuantization::RaBitQ && c.quant.nb_bits > 1;
+  return (c.quant.kind == irs::VectorQuantization::RaBitQ &&
+          c.quant.nb_bits > 1) ||
+         (c.quant.kind == irs::VectorQuantization::TQ && c.quant.nb_bits == 5);
 }
 
 TEST_P(AnnBatchTest, BatchOfOneMatchesSingleQuery) {
@@ -323,6 +328,120 @@ TEST_P(AnnBatchTest, RemovalsMatchSingleQueries) {
   }
 }
 
+class RecordingInput final : public irs::BytesViewInput {
+ public:
+  RecordingInput(irs::bytes_view data, std::vector<irs::FileRange>& hints)
+    : BytesViewInput{data}, _hints{&hints} {}
+
+  void Prefetch(uint64_t offset, uint64_t count) const noexcept final {
+    _hints->emplace_back(offset, offset + count);
+  }
+
+  ptr Dup() const final { return std::make_unique<RecordingInput>(*this); }
+
+ private:
+  std::vector<irs::FileRange>* _hints;
+};
+
+constexpr irs::PayloadBlockSetting kSplit{
+  .group_size = 32,
+  .record_size = 400,
+  .alignment = 4,
+  .fine_bytes = 32 * 300,
+  .fine_record_size = 300,
+};
+
+TEST(VectorBlockReaderTest, HintsTheFineRunsOfMarkedRecords) {
+  const irs::bstring file(1 << 20, 0);
+  std::vector<irs::FileRange> hints;
+  irs::detail::VectorBlockReader pay{
+    std::make_unique<RecordingInput>(file, hints), kSplit};
+  constexpr uint64_t kBase = 1000;
+  pay.Reset(kBase);
+  std::vector<uint8_t> marks(3 * 32, 0);
+  marks[1] = marks[2] = marks[31] = 1;
+  marks[2 * 32 + 5] = 1;
+  pay.HintFine(32, marks);
+  const uint64_t group = kSplit.GroupBytes();
+  const uint64_t fine = kBase + group + kSplit.CoarseBytes();
+  const std::vector<irs::FileRange> want{
+    {fine + 300, fine + 900},
+    {fine + 31 * 300, fine + 32 * 300},
+    {fine + 2 * group + 5 * 300, fine + 2 * group + 6 * 300},
+  };
+  EXPECT_EQ(want, hints);
+}
+
+TEST(VectorBlockReaderTest, HintsTheWholeTailOfAMarkedGroup) {
+  const irs::bstring file(1 << 20, 0);
+  std::vector<irs::FileRange> hints;
+  auto setting = kSplit;
+  setting.fine_record_size = 0;
+  irs::detail::VectorBlockReader pay{
+    std::make_unique<RecordingInput>(file, hints), setting};
+  std::vector<uint8_t> marks(2 * 32, 0);
+  marks[32 + 7] = 1;
+  pay.HintFine(0, marks);
+  const uint64_t fine = setting.GroupBytes() + setting.CoarseBytes();
+  const std::vector<irs::FileRange> want{{fine, fine + setting.fine_bytes}};
+  EXPECT_EQ(want, hints);
+}
+
+irs::PostingMeta ClusterMeta(uint64_t doc_start, uint64_t pay_start,
+                             uint16_t lane, uint32_t docs) {
+  irs::PostingMeta meta;
+  meta.doc_start = doc_start;
+  meta.pay_start = pay_start;
+  meta.pos_offset = lane;
+  meta.docs_count = docs;
+  return meta;
+}
+
+TEST(ClusterExtentsTest, HintsOnlyCoarseSpansAndMergesNeighbours) {
+  const irs::bstring file(1 << 20, 0);
+  std::vector<irs::FileRange> docs;
+  std::vector<irs::FileRange> pays;
+  const RecordingInput doc_in{file, docs};
+  const RecordingInput pay_in{file, pays};
+  const uint64_t group = kSplit.GroupBytes();
+  const uint64_t coarse = kSplit.CoarseBytes();
+  irs::detail::ClusterExtents extents{kSplit};
+  EXPECT_EQ(2 * coarse, extents.Add(ClusterMeta(100, group, 8, 30)));
+  EXPECT_EQ(2 * coarse, extents.Add(ClusterMeta(0, 0, 0, 40)));
+  extents.Hint(doc_in, pay_in);
+  const std::vector<irs::FileRange> want_docs{
+    {0, 100 + irs::file_utils::kPage},
+  };
+  const std::vector<irs::FileRange> want_pays{
+    {0, coarse},
+    {group, group + coarse},
+    {2 * group, 2 * group + coarse},
+  };
+  EXPECT_EQ(want_docs, docs);
+  EXPECT_EQ(want_pays, pays);
+}
+
+TEST(ClusterExtentsTest, HintsWholeExtentsWithoutAFinePart) {
+  const irs::bstring file(1 << 20, 0);
+  std::vector<irs::FileRange> docs;
+  std::vector<irs::FileRange> pays;
+  const RecordingInput doc_in{file, docs};
+  const RecordingInput pay_in{file, pays};
+  auto setting = kSplit;
+  setting.fine_bytes = 0;
+  setting.fine_record_size = 0;
+  const uint64_t group = setting.GroupBytes();
+  irs::detail::ClusterExtents extents{setting};
+  EXPECT_EQ(group, extents.Add(ClusterMeta(0, 0, 0, 1)));
+  EXPECT_EQ(2 * group, extents.Add(ClusterMeta(64, group, 8, 30)));
+  extents.Hint(doc_in, pay_in);
+  const std::vector<irs::FileRange> want_docs{
+    {64, 64 + irs::file_utils::kPage}};
+  EXPECT_EQ(want_docs, docs);
+  const std::vector<irs::FileRange> want_pays{{0, 3 * group}};
+  EXPECT_EQ(want_pays, pays);
+}
+
 using enum irs::VectorQuantization;
 using enum irs::VectorMetric;
 
@@ -342,7 +461,9 @@ INSTANTIATE_TEST_SUITE_P(
     BatchCase{irs::AnnKind::Ivf, L2Sqr, {.kind = RaBitQ, .nb_bits = 1}, 2.f},
     BatchCase{
       irs::AnnKind::Ivf, InnerProduct, {.kind = RaBitQ, .nb_bits = 3}, 0.f},
+    BatchCase{irs::AnnKind::Ivf, L2Sqr, {.kind = RaBitQ, .nb_bits = 9}, 2.f},
     BatchCase{irs::AnnKind::Ivf, L2Sqr, {.kind = TQ, .nb_bits = 3}, 2.f},
+    BatchCase{irs::AnnKind::Ivf, L2Sqr, {.kind = TQ, .nb_bits = 5}, 2.f},
     BatchCase{irs::AnnKind::Ivf, L2Sqr, {.kind = BQ, .nb_bits = 1}, 0.f},
     BatchCase{irs::AnnKind::Ivf, L2Sqr, {.kind = OSQ, .nb_bits = 4}, 2.f},
     BatchCase{irs::AnnKind::Ivf, L2Sqr, {.kind = FP16}, 0.f}),

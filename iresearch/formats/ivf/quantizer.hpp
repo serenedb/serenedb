@@ -42,10 +42,18 @@ struct PayloadBlockSetting {
   uint32_t group_size = 1;
   uint32_t record_size = 0;
   uint32_t alignment = 1;
+  uint32_t fine_bytes = 0;
+  uint32_t fine_record_size = 0;
 
   size_t RecordCount(size_t docs) const noexcept {
     return (docs + group_size - 1) / group_size * group_size;
   }
+
+  size_t GroupBytes() const noexcept {
+    return size_t{group_size} * record_size;
+  }
+
+  size_t CoarseBytes() const noexcept { return GroupBytes() - fine_bytes; }
 };
 
 using TrainFanout =
@@ -112,15 +120,26 @@ class QuantizerReader {
   virtual void ComputeBlock(std::span<const byte_type> block, score_t threshold,
                             score_t* out) = 0;
 
+  virtual bool ComputeCoarse(std::span<const byte_type> block,
+                             score_t threshold, score_t* out,
+                             uint8_t* /*marks*/) {
+    ComputeBlock(block, threshold, out);
+    return false;
+  }
+
+  virtual void ComputeFine(std::span<const byte_type> /*block*/,
+                           const uint8_t* /*marks*/, score_t* /*out*/) {}
+
   virtual void ComputeGathered(const byte_type* base, uint32_t record_size,
                                std::span<const uint32_t> ids, score_t threshold,
                                score_t* out);
 
   virtual void StartBlocks(std::span<QuantizerReader* const> /*readers*/) {}
 
-  virtual void ComputeBlocks(std::span<QuantizerReader* const> readers,
+  virtual bool ComputeBlocks(std::span<QuantizerReader* const> readers,
                              std::span<const byte_type> block,
-                             std::span<const score_t> thresholds, score_t* out);
+                             std::span<const score_t> thresholds, score_t* out,
+                             uint8_t* marks);
 
   virtual bool ComputeGatheredBounded(const byte_type* /*base*/,
                                       uint32_t /*record_size*/,

@@ -14,6 +14,8 @@ Gaussian mixture of --dim dimensions. The harness starts its own serened on a
 free port with a fresh datadir, builds one index, runs each mode --repeat
 times interleaved, and prints one JSON line per run with the wall time, the
 machine's load average when the run started, and the recall against exact.
+With --cold, every timed run starts on a restarted serened whose datadir was
+dropped from the page cache, and the line also gives the bytes serened read.
 
     scripts/perf/ann_join/bench.py --bin build_perf/bin/serened \
         --dataset ~/vecbench/dbpedia.parquet --rows 90000 --queries 1000
@@ -101,6 +103,28 @@ def prepare_data(args, workdir):
     return dim, items_path, users_path, vectors[args.rows :]
 
 
+def evict(datadir):
+    os.sync()
+    for root, _, files in os.walk(datadir):
+        for name in files:
+            try:
+                fd = os.open(os.path.join(root, name), os.O_RDONLY)
+            except OSError:
+                continue
+            try:
+                os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+            finally:
+                os.close(fd)
+
+
+def read_bytes(pid):
+    with open(f"/proc/{pid}/io") as f:
+        for line in f:
+            if line.startswith("read_bytes:"):
+                return int(line.split()[1])
+    return 0
+
+
 def load_avg():
     return os.getloadavg()[0]
 
@@ -149,6 +173,11 @@ def main():
     ap.add_argument("--repeat", type=int, default=3)
     ap.add_argument("--keep", action="store_true", help="keep the datadir")
     ap.add_argument("--profile", help="record the join runs with perf into this file")
+    ap.add_argument(
+        "--cold", action="store_true",
+        help="restart serened and drop the datadir from the page cache before "
+        "every timed run",
+    )
     args = ap.parse_args()
 
     op = {"l2": "<->", "ip": "<#>", "cosine": "<=>"}[args.metric]
@@ -158,14 +187,28 @@ def main():
     datadir = os.path.join(workdir, "data")
     os.mkdir(datadir)
     dim, items_path, users_path, user_vectors = prepare_data(args, workdir)
-    proc = start_server(args.bin, datadir, port, log)
-    try:
+    server = {"proc": start_server(args.bin, datadir, port, log)}
+
+    def connect():
         conn = psycopg.connect(
             host="127.0.0.1", port=port, user="postgres", dbname="postgres",
             autocommit=True,
         )
         for setting in args.set:
             conn.execute(f"SET {setting}")
+        server["conn"] = conn
+        return conn
+
+    def restart_cold():
+        server["conn"].close()
+        server["proc"].terminate()
+        server["proc"].wait()
+        evict(datadir)
+        server["proc"] = start_server(args.bin, datadir, port, log)
+        connect()
+
+    try:
+        conn = connect()
         conn.execute(f"CREATE TABLE items (id BIGINT PRIMARY KEY, emb FLOAT[{dim}])")
         conn.execute(f"INSERT INTO items SELECT id, emb FROM read_parquet('{items_path}')")
         conn.execute(f"CREATE TABLE users (id BIGINT, emb FLOAT[{dim}])")
@@ -195,10 +238,11 @@ def main():
         literals = ["[" + ",".join(f"{x:.7g}" for x in v) + "]" for v in user_vectors]
 
         def run_join():
-            return conn.execute(join_sql("")).fetchall()
+            return server["conn"].execute(join_sql("")).fetchall()
 
         def run_loop():
             rows = []
+            conn = server["conn"]
             with conn.pipeline():
                 cursors = [
                     conn.execute(knn, (lit,), prepare=True) for lit in literals
@@ -208,31 +252,39 @@ def main():
             return rows
 
         def run_exact():
-            return conn.execute(join_sql("EXACT ")).fetchall()
+            return server["conn"].execute(join_sql("EXACT ")).fetchall()
 
         runners = {"join": run_join, "loop": run_loop, "exact": run_exact}
         modes = args.modes.split(",")
-        for mode in modes:
-            runners[mode]()
+        if not args.cold:
+            for mode in modes:
+                runners[mode]()
         profiler = None
         if args.profile:
             profiler = subprocess.Popen(
-                ["perf", "record", "-F", "999", "-g", "-p", str(proc.pid),
-                 "-o", args.profile],
+                ["perf", "record", "-F", "999", "-g", "-p",
+                 str(server["proc"].pid), "-o", args.profile],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
             time.sleep(1)
         for rep in range(args.repeat):
             for mode in modes:
+                if args.cold:
+                    restart_cold()
+                pid = server["proc"].pid
                 load = load_avg()
-                cpu = cpu_seconds(proc.pid)
+                cpu = cpu_seconds(pid)
+                read = read_bytes(pid)
                 seconds, rows = timed(runners[mode])
-                cpu = cpu_seconds(proc.pid) - cpu
+                cpu = cpu_seconds(pid) - cpu
+                read = read_bytes(pid) - read
                 print(json.dumps({
                     "mode": mode,
                     "rep": rep,
+                    "cold": args.cold,
                     "seconds": round(seconds, 4),
                     "server_cpu_seconds": round(cpu, 2),
+                    "read_mb": round(read / 2**20, 2),
                     "per_query_ms": round(1000 * seconds / args.queries, 4),
                     "recall": round(recall(neighbours(rows), truth, args.k), 4),
                     "load": round(load, 2),
@@ -247,8 +299,8 @@ def main():
             profiler.send_signal(2)
             profiler.wait()
     finally:
-        proc.terminate()
-        proc.wait()
+        server["proc"].terminate()
+        server["proc"].wait()
         log.close()
         if not args.keep:
             shutil.rmtree(workdir, ignore_errors=True)

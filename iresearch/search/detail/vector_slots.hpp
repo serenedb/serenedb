@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
+
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -34,6 +36,7 @@
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/ivf/ivf_reader.hpp"
 #include "iresearch/formats/ivf/quantizer.hpp"
+#include "iresearch/formats/posting/doc_input.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/index_reader.hpp"
@@ -64,21 +67,20 @@ class VectorBlockReader {
  public:
   VectorBlockReader(IndexInput::ptr&& in,
                     const PayloadBlockSetting& setting) noexcept
-    : _in{std::move(in)},
-      _record_size{setting.record_size},
-      _alignment{setting.alignment} {
+    : _in{std::move(in)}, _setting{setting} {
     SDB_ASSERT(_in);
-    SDB_ASSERT(std::has_single_bit(_alignment));
-    SDB_ASSERT(_alignment <= __STDCPP_DEFAULT_NEW_ALIGNMENT__);
+    SDB_ASSERT(std::has_single_bit(_setting.alignment));
+    SDB_ASSERT(_setting.alignment <= __STDCPP_DEFAULT_NEW_ALIGNMENT__);
   }
 
   void Reset(uint64_t base_offset) noexcept { _base = base_offset; }
 
   std::span<const byte_type> Read(size_t index, size_t count) {
-    const uint64_t offset = _base + static_cast<uint64_t>(index) * _record_size;
-    const size_t bytes = count * size_t{_record_size};
+    const uint64_t offset =
+      _base + static_cast<uint64_t>(index) * _setting.record_size;
+    const size_t bytes = count * size_t{_setting.record_size};
     if (const byte_type* p = _in->ReadVolatile(offset, bytes)) {
-      SDB_ASSERT(reinterpret_cast<uintptr_t>(p) % _alignment == 0);
+      SDB_ASSERT(reinterpret_cast<uintptr_t>(p) % _setting.alignment == 0);
       return {p, bytes};
     }
     _buf.resize(bytes);
@@ -86,12 +88,85 @@ class VectorBlockReader {
     return _buf;
   }
 
+  void HintFine(size_t first, std::span<const uint8_t> marks) const noexcept {
+    const size_t gs = _setting.group_size;
+    SDB_ASSERT(first % gs == 0);
+    SDB_ASSERT(marks.size() % gs == 0);
+    const uint64_t record = _setting.fine_record_size;
+    for (size_t g = 0; g < marks.size(); g += gs) {
+      const uint64_t fine = _base +
+                            (first + g) * uint64_t{_setting.record_size} +
+                            _setting.CoarseBytes();
+      const auto group = marks.subspan(g, gs);
+      if (record == 0) {
+        if (absl::c_any_of(group, [](uint8_t mark) { return mark != 0; })) {
+          file_utils::Hint(*_in, fine, _setting.fine_bytes);
+        }
+        continue;
+      }
+      for (size_t i = 0; i < gs;) {
+        if (group[i] == 0) {
+          ++i;
+          continue;
+        }
+        const size_t from = i;
+        while (i < gs && group[i] != 0) {
+          ++i;
+        }
+        file_utils::Hint(*_in, fine + from * record, (i - from) * record);
+      }
+    }
+  }
+
  private:
   IndexInput::ptr _in;
   std::vector<byte_type> _buf;
   uint64_t _base = 0;
-  uint32_t _record_size;
-  uint32_t _alignment;
+  PayloadBlockSetting _setting;
+};
+
+class ClusterExtents {
+ public:
+  explicit ClusterExtents(const PayloadBlockSetting& setting) noexcept
+    : _setting{setting} {}
+
+  uint64_t Add(const PostingMeta& meta) {
+    if (const auto extent = DocExtent(meta); extent != 0) {
+      _docs.emplace_back(meta.doc_start, meta.doc_start + extent);
+    }
+    const uint64_t records =
+      _setting.RecordCount(size_t{meta.pos_offset} + meta.docs_count);
+    const uint64_t end = meta.pay_start + records * _setting.record_size;
+    if (_setting.fine_bytes == 0) {
+      _pays.emplace_back(meta.pay_start, end);
+      return end - meta.pay_start;
+    }
+    const uint64_t group = _setting.GroupBytes();
+    for (uint64_t at = meta.pay_start; at < end; at += group) {
+      _pays.emplace_back(at, at + _setting.CoarseBytes());
+    }
+    return records / _setting.group_size * _setting.CoarseBytes();
+  }
+
+  void Hint(const IndexInput& doc_in, const IndexInput& payload) {
+    Hint(doc_in, _docs);
+    Hint(payload, _pays);
+  }
+
+ private:
+  static void Hint(const IndexInput& in, FileRanges& extents) {
+    absl::c_sort(extents);
+    FileRanges ranges;
+    for (const auto& [from, to] : extents) {
+      AppendRange(ranges, from, to);
+    }
+    HintRanges(in, ranges);
+    extents.clear();
+  }
+
+  PayloadBlockSetting _setting;
+  FileRanges _docs;
+  FileRanges _pays;
 };
 
 struct RawRecipe {
@@ -122,14 +197,20 @@ class RawVectorReader {
     _dist = ResolveScoringDistance(metric);
   }
 
+  void Hint(std::span<const doc_id_t> docs) noexcept {
+    for (size_t i = 0; i < docs.size();) {
+      const size_t run = ConsecutiveRunLength(docs, i);
+      HintRun(docs[i], run);
+      i += run;
+    }
+  }
+
   void ComputeDistances(std::span<const doc_id_t> docs,
                         std::span<score_t> out) {
     SDB_ASSERT(_dist);
     SDB_ASSERT(out.size() >= docs.size());
-    for (size_t i = 0; docs.size() > 1 && i < docs.size();) {
-      const size_t run = ConsecutiveRunLength(docs, i);
-      HintRun(docs[i], run);
-      i += run;
+    if (docs.size() > 1) {
+      Hint(docs);
     }
     const auto* q = reinterpret_cast<const byte_type*>(_query.data());
     const auto d = static_cast<uint16_t>(_d);
@@ -368,7 +449,7 @@ class ClusterScorer {
       len -= take;
     }
     if (const uint32_t full = len / gs * gs; full != 0) {
-      ScoreBlock(pay.Read(lane, full), full, out, err);
+      ScoreBlock(pay, lane, full, out, err);
       lane += full;
       out += full;
       err += full;
@@ -378,16 +459,21 @@ class ClusterScorer {
       return;
     }
     if (const uint32_t records = layout.GroupRecords(lane); records == len) {
-      ScoreBlock(pay.Read(lane, records), records, out, err);
+      ScoreBlock(pay, lane, records, out, err);
       return;
     }
     ServeGroup(pay, lane, len, out, err);
   }
 
  private:
-  void ScoreBlock(std::span<const byte_type> block, uint32_t records,
+  void ScoreBlock(VectorBlockReader& pay, uint32_t first, uint32_t records,
                   score_t* out, score_t* err) {
-    _reader->ComputeBlock(block, _threshold, out);
+    const auto block = pay.Read(first, records);
+    _marks.resize(records);
+    if (_reader->ComputeCoarse(block, _threshold, out, _marks.data())) {
+      pay.HintFine(first, _marks);
+      _reader->ComputeFine(block, _marks.data(), out);
+    }
     if (_errors) {
       _reader->BlockErrors(block, {out, records}, err);
     }
@@ -400,8 +486,7 @@ class ClusterScorer {
     if (lane < _cached_first || lane >= _cached_end) {
       const uint32_t first = lane / gs * gs;
       const uint32_t records = layout.GroupRecords(first);
-      ScoreBlock(pay.Read(first, records), records, _cache.data(),
-                 _cache.data() + gs);
+      ScoreBlock(pay, first, records, _cache.data(), _cache.data() + gs);
       _cached_first = first;
       _cached_end = first + std::min<uint32_t>(records, layout.end - first);
     }
@@ -417,6 +502,7 @@ class ClusterScorer {
   QuantizerReader* _reader;
   const ClusterLayout* _layout = nullptr;
   std::vector<score_t> _cache;
+  std::vector<uint8_t> _marks;
   score_t _threshold = std::numeric_limits<score_t>::lowest();
   uint32_t _cached_first = 0;
   uint32_t _cached_end = 0;

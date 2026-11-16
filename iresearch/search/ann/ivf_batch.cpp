@@ -41,6 +41,7 @@
 #include "iresearch/search/detail/vector_slots.hpp"
 #include "iresearch/search/lead/posting_docs.hpp"
 #include "iresearch/utils/bit_utils.hpp"
+#include "iresearch/utils/file_utils_ext.hpp"
 
 namespace irs {
 namespace ann {
@@ -51,6 +52,42 @@ bool Admitted(const uint64_t* admitted, doc_id_t doc) noexcept {
   return CheckBit(admitted[offset / detail::LazyBitset::kBits],
                   offset % detail::LazyBitset::kBits);
 }
+
+class ClusterReadahead {
+ public:
+  ClusterReadahead(const IndexInput& doc_in, const IndexInput& payload,
+                   const PayloadBlockSetting& setting,
+                   std::span<const IvfCluster> clusters)
+    : _doc_in{doc_in},
+      _payload{payload},
+      _extents{setting},
+      _clusters{clusters},
+      _bytes(clusters.size()) {}
+
+  void Before(size_t i) {
+    if (i < _next) {
+      _ahead -= _bytes[i];
+    }
+    for (; _next < _clusters.size() &&
+           (_next <= i || _ahead < file_utils::kMaxReadahead);
+         ++_next) {
+      _bytes[_next] = _extents.Add(_clusters[_next].meta);
+      if (_next > i) {
+        _ahead += _bytes[_next];
+      }
+    }
+    _extents.Hint(_doc_in, _payload);
+  }
+
+ private:
+  const IndexInput& _doc_in;
+  const IndexInput& _payload;
+  irs::detail::ClusterExtents _extents;
+  std::span<const IvfCluster> _clusters;
+  std::vector<uint64_t> _bytes;
+  size_t _next = 0;
+  uint64_t _ahead = 0;
+};
 
 }  // namespace
 
@@ -196,12 +233,17 @@ void ScanIvfClusters(const IndexInput& doc_in, const IndexInput& payload,
                      std::span<Collector> collectors,
                      const uint64_t* admitted) {
   irs::detail::VectorBlockReader pay{payload.Dup(), setting};
+  ClusterReadahead readahead{doc_in, payload, setting, clusters};
   const uint32_t gs = setting.group_size;
   std::vector<QuantizerReader*> readers;
   std::vector<score_t> floors;
   std::vector<score_t> scores;
+  std::vector<uint8_t> marks;
+  std::vector<uint8_t> fine;
   irs::detail::ResolveInput(doc_in, [&]<typename InputType>() {
-    for (const auto& cluster : clusters) {
+    for (size_t c = 0; c < clusters.size(); ++c) {
+      readahead.Before(c);
+      const auto& cluster = clusters[c];
       const auto group = probes.subspan(cluster.first, cluster.count);
       const irs::detail::ClusterLayout layout{setting, cluster.meta.pos_offset,
                                               cluster.meta.docs_count};
@@ -232,8 +274,20 @@ void ScanIvfClusters(const IndexInput& doc_in, const IndexInput& payload,
             std::min(layout.records, (lane + len + gs - 1) / gs * gs);
           const uint32_t window = end - first;
           scores.resize(group.size() * size_t{window});
+          marks.resize(group.size() * size_t{window});
           const auto block = pay.Read(first, window);
-          readers.front()->ComputeBlocks(readers, block, floors, scores.data());
+          if (readers.front()->ComputeBlocks(readers, block, floors,
+                                             scores.data(), marks.data())) {
+            fine.assign(window, 0);
+            for (size_t i = 0; i < marks.size(); ++i) {
+              fine[i % window] |= marks[i];
+            }
+            pay.HintFine(first, fine);
+            for (size_t i = 0; i < group.size(); ++i) {
+              readers[i]->ComputeFine(block, marks.data() + i * window,
+                                      scores.data() + i * window);
+            }
+          }
           for (size_t i = 0; i < group.size(); ++i) {
             const auto q = group[i].query;
             scans[q].CollectScored(block, collectors[q], docs, admitted,

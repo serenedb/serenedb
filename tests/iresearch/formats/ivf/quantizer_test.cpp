@@ -18,6 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
+
 #include <algorithm>
 #include <bit>
 #include <cmath>
@@ -1582,6 +1584,122 @@ TEST(rabitq_quantizer_test, shared_groups_match_solo_clusters_multibit) {
   ExpectSharedGroupsMatchSoloClusters(make, VectorQuantization::RaBitQ, d,
                                       VectorMetric::L2Sqr, kRaggedSizes, pts,
                                       cen, query);
+}
+
+namespace {
+
+void Poison(bstring& payload, size_t at, size_t count) {
+  std::fill_n(payload.begin() + at, count, byte_type{0xA5});
+}
+
+// The coarse pass reads only the leading bytes of every group and the fine
+// pass only the trailing bytes of the records it marked: junk in any other
+// byte changes no score, so a cold scan never needs those pages.
+bool ExpectFineBytesReadOnlyWhenMarked(const AnnInfo::Quantizer& quant,
+                                       uint32_t d, VectorMetric metric) {
+  constexpr size_t n = 3 * kFastScanBbs + 5;
+  const auto pts = MakeSpread(d, n, 53);
+  const auto query = MakeSpread(d, 1, 59);
+  const std::vector<float> cen(d, 0.25f);
+  auto writer = MakeQuantizerWriter(quant, d, metric);
+  EXPECT_NE(writer, nullptr);
+  writer->Train(pts.data(), n);
+  writer->SetClusterCentroid(cen.data());
+  const size_t all[] = {n};
+  const bstring payload = EncodeChunks(*writer, pts, d, all);
+  auto stats =
+    MakeQuantizerStats(quant.kind, d, SerializeStats(*writer), metric);
+  EXPECT_NE(stats, nullptr);
+  auto reader = MakeQuantizerReader(stats->MakeCodebook(query));
+  EXPECT_NE(reader, nullptr);
+  reader->StartCluster(cen.data());
+  const auto setting = reader->BlockSetting();
+  EXPECT_NE(setting.fine_bytes, 0U);
+  const size_t gs = setting.group_size;
+  const size_t group = setting.GroupBytes();
+  const size_t coarse_bytes = setting.CoarseBytes();
+  EXPECT_EQ(payload.size() % group, 0U);
+  const size_t records = payload.size() / setting.record_size;
+
+  std::vector<score_t> ranked(records);
+  reader->ComputeBlock(payload, kNoPrune, ranked.data());
+  absl::c_sort(ranked, std::greater<>{});
+  bool mixed = false;
+  for (const score_t threshold :
+       {kNoPrune, ranked[8], std::numeric_limits<score_t>::max()}) {
+    std::vector<score_t> want(records);
+    reader->ComputeBlock(payload, threshold, want.data());
+
+    std::vector<score_t> coarse(records);
+    std::vector<uint8_t> marks(records);
+    const bool fine =
+      reader->ComputeCoarse(payload, threshold, coarse.data(), marks.data());
+
+    bstring blind = payload;
+    for (size_t at = 0; at < blind.size(); at += group) {
+      Poison(blind, at + coarse_bytes, setting.fine_bytes);
+    }
+    std::vector<score_t> blind_scores(records);
+    std::vector<uint8_t> blind_marks(records);
+    EXPECT_EQ(fine, reader->ComputeCoarse(blind, threshold, blind_scores.data(),
+                                          blind_marks.data()));
+    EXPECT_EQ(coarse, blind_scores) << "threshold " << threshold;
+    if (!fine) {
+      EXPECT_EQ(want, coarse) << "threshold " << threshold;
+      continue;
+    }
+    EXPECT_EQ(marks, blind_marks) << "threshold " << threshold;
+
+    bstring unmarked = payload;
+    for (size_t r = 0; r < records; ++r) {
+      if (marks[r] != 0) {
+        continue;
+      }
+      const size_t at = r / gs * group + coarse_bytes;
+      if (setting.fine_record_size == 0) {
+        Poison(unmarked, at, setting.fine_bytes);
+      } else {
+        Poison(unmarked, at + r % gs * setting.fine_record_size,
+               setting.fine_record_size);
+      }
+    }
+    reader->ComputeFine(unmarked, marks.data(), coarse.data());
+    EXPECT_EQ(want, coarse) << "threshold " << threshold;
+    const auto refined = absl::c_count(marks, uint8_t{1});
+    mixed |= refined != 0 && static_cast<size_t>(refined) != records;
+  }
+  return mixed;
+}
+
+}  // namespace
+
+TEST(rabitq_quantizer_test, fine_bytes_read_only_when_marked_l2) {
+  for (const uint32_t nb_bits : {4U, 9U}) {
+    EXPECT_TRUE(ExpectFineBytesReadOnlyWhenMarked(
+      {.kind = VectorQuantization::RaBitQ, .nb_bits = nb_bits}, 96,
+      VectorMetric::L2Sqr))
+      << "nb_bits " << nb_bits;
+  }
+}
+
+TEST(rabitq_quantizer_test, fine_bytes_read_only_when_marked_inner_product) {
+  EXPECT_TRUE(ExpectFineBytesReadOnlyWhenMarked(
+    {.kind = VectorQuantization::RaBitQ, .nb_bits = 4}, 96,
+    VectorMetric::InnerProduct));
+}
+
+TEST(rabitq_quantizer_test, one_bit_has_no_fine_part) {
+  auto writer =
+    MakeQuantizerWriter({.kind = VectorQuantization::RaBitQ, .nb_bits = 1}, 96,
+                        VectorMetric::L2Sqr);
+  ASSERT_NE(writer, nullptr);
+  EXPECT_EQ(writer->BlockSetting().fine_bytes, 0U);
+  EXPECT_EQ(writer->BlockSetting().fine_record_size, 0U);
+}
+
+TEST(tq_quantizer_test, fine_bytes_read_only_when_marked) {
+  ExpectFineBytesReadOnlyWhenMarked(
+    {.kind = VectorQuantization::TQ, .nb_bits = 5}, 96, VectorMetric::L2Sqr);
 }
 
 namespace {

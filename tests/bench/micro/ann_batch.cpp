@@ -108,12 +108,19 @@ void ScoreBlocks(benchmark::State& state, const irs::AnnInfo::Quantizer& quant,
   std::vector<irs::score_t> floors(queries,
                                    std::numeric_limits<irs::score_t>::lowest());
   std::vector<irs::score_t> out(queries * records);
+  std::vector<uint8_t> marks(queries * records);
   if (joint) {
     c.peers.front()->StartBlocks(c.peers);
   }
   for (auto _ : state) {
     if (joint) {
-      c.peers.front()->ComputeBlocks(c.peers, block, floors, out.data());
+      if (c.peers.front()->ComputeBlocks(c.peers, block, floors, out.data(),
+                                         marks.data())) {
+        for (size_t q = 0; q < queries; ++q) {
+          c.peers[q]->ComputeFine(block, marks.data() + q * records,
+                                  out.data() + q * records);
+        }
+      }
     } else {
       for (size_t q = 0; q < queries; ++q) {
         c.peers[q]->ComputeBlock(block, floors[q], out.data() + q * records);

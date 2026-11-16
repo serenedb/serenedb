@@ -402,10 +402,10 @@ class ProductQuantizerReader final : public QuantizerReader {
       _joint);
   }
 
-  void ComputeBlocks(std::span<QuantizerReader* const> readers,
+  bool ComputeBlocks(std::span<QuantizerReader* const> readers,
                      std::span<const byte_type> block,
-                     std::span<const score_t> /*thresholds*/,
-                     score_t* out) final {
+                     std::span<const score_t> /*thresholds*/, score_t* out,
+                     uint8_t* /*marks*/) final {
     SDB_ASSERT(block.size() % _group_bytes == 0);
     const size_t groups = block.size() / _group_bytes;
     const size_t records = groups * kFastScanBbs;
@@ -426,6 +426,7 @@ class ProductQuantizerReader final : public QuantizerReader {
         }
       }
     }
+    return false;
   }
 
   void ScoreErrors(const byte_type* /*base*/, uint32_t /*record_size*/,

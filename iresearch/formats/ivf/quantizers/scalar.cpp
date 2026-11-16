@@ -800,12 +800,13 @@ class ScalarQuantizerReader final : public QuantizerReader {
 
   void StartCluster(const float* /*centroid*/) final {}
 
-  void ComputeBlocks(std::span<QuantizerReader* const> readers,
+  bool ComputeBlocks(std::span<QuantizerReader* const> readers,
                      std::span<const byte_type> block,
-                     std::span<const score_t> thresholds, score_t* out) final {
+                     std::span<const score_t> thresholds, score_t* out,
+                     uint8_t* marks) final {
     if (!_fast) {
-      QuantizerReader::ComputeBlocks(readers, block, thresholds, out);
-      return;
+      return QuantizerReader::ComputeBlocks(readers, block, thresholds, out,
+                                            marks);
     }
     const size_t cs = _cb->Sq().code_size;
     SDB_ASSERT(block.size() % cs == 0);
@@ -819,6 +820,7 @@ class ScalarQuantizerReader final : public QuantizerReader {
     const byte_type* c = block.data();
     Sq8Score(
       _peers, [&](size_t j) { return c + j * cs; }, block.size() / cs, out);
+    return false;
   }
 
   void ComputeBlock(std::span<const byte_type> block, score_t /*threshold*/,

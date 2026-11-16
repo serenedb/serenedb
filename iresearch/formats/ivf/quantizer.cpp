@@ -115,15 +115,18 @@ void QuantizerReader::ComputeGathered(const byte_type* base,
   ComputeBlock(_gather, threshold, out);
 }
 
-void QuantizerReader::ComputeBlocks(std::span<QuantizerReader* const> readers,
+bool QuantizerReader::ComputeBlocks(std::span<QuantizerReader* const> readers,
                                     std::span<const byte_type> block,
                                     std::span<const score_t> thresholds,
-                                    score_t* out) {
+                                    score_t* out, uint8_t* marks) {
   SDB_ASSERT(readers.size() == thresholds.size());
   const auto records = block.size() / BlockSetting().record_size;
+  bool fine = false;
   for (size_t i = 0; i < readers.size(); ++i) {
-    readers[i]->ComputeBlock(block, thresholds[i], out + i * records);
+    fine |= readers[i]->ComputeCoarse(block, thresholds[i], out + i * records,
+                                      marks + i * records);
   }
+  return fine;
 }
 
 std::unique_ptr<QuantizerReader> MakeQuantizerReader(

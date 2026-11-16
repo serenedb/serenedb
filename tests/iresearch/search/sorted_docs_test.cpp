@@ -22,7 +22,8 @@
 
 #include <algorithm>
 #include <iresearch/search/detail/sorted_build.hpp>
-#include <iresearch/search/docs/sorted_docs.hpp>
+#include <iresearch/search/docs/walk.hpp>
+#include <iresearch/search/lead/concept.hpp>
 #include <iresearch/search/lead/sorted_docs.hpp>
 #include <numeric>
 #include <random>
@@ -130,6 +131,41 @@ TEST(sorted_docs_test, lead_walks_and_seeks_like_the_list) {
   }
 }
 
+TEST(sorted_docs_test, lead_gathers_up_to_cap_below_max) {
+  constexpr doc_id_t kEnd = 20001;
+  std::mt19937 rng{11};
+  std::uniform_int_distribution<doc_id_t> pick{doc_limits::min(), kEnd - 1};
+  for (const size_t size : {1, 5, 4000}) {
+    std::vector<doc_id_t> raw(size);
+    for (auto& doc : raw) {
+      doc = pick(rng);
+    }
+    const auto expected = Reference(raw);
+    auto docs = expected;
+    docs.push_back(doc_limits::eof());
+    for (const doc_id_t window : {1, 7, 2048}) {
+      for (const uint32_t cap : {1U, 3U, 64U}) {
+        SCOPED_TRACE(testing::Message() << size << ' ' << window << ' ' << cap);
+        irs::lead::SortedDocs node{std::vector<doc_id_t>{docs}};
+        std::vector<doc_id_t> buf(cap);
+        std::vector<doc_id_t> actual;
+        for (doc_id_t min = doc_limits::min(); min < kEnd; min += window) {
+          const doc_id_t max = min + window;
+          for (auto doc = node.Seek(min); doc < max;) {
+            const auto n = irs::lead::Gather(node, doc, max, buf.data(), cap);
+            ASSERT_GE(n, 1U);
+            ASSERT_LE(n, cap);
+            actual.insert(actual.end(), buf.begin(), buf.begin() + n);
+            const auto it = absl::c_upper_bound(expected, actual.back());
+            ASSERT_EQ(it == expected.end() ? doc_limits::eof() : *it, doc);
+          }
+        }
+        ASSERT_EQ(expected, actual);
+      }
+    }
+  }
+}
+
 TEST(sorted_docs_test, docs_root_emits_each_window_and_reports_the_next) {
   constexpr doc_id_t kEnd = 20001;
   std::mt19937 rng{3};
@@ -146,7 +182,8 @@ TEST(sorted_docs_test, docs_root_emits_each_window_and_reports_the_next) {
       for (const bool skip : {false, true}) {
         SCOPED_TRACE(testing::Message()
                      << size << ' ' << window << ' ' << skip);
-        irs::docs::SortedDocs root{std::vector<doc_id_t>{docs}};
+        irs::docs::Walk<irs::lead::SortedDocs> root{
+          std::vector<doc_id_t>{docs}};
         std::vector<doc_id_t> buf(window + doc_limits::kDocsSlack);
         std::vector<doc_id_t> actual;
         for (doc_id_t min = doc_limits::min(); min < kEnd;) {

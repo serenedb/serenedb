@@ -21,10 +21,12 @@
 #pragma once
 
 #include <algorithm>
+#include <cstdint>
 #include <utility>
 #include <vector>
 
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::lead {
@@ -55,6 +57,20 @@ class SortedDocs {
       std::lower_bound(begin + _at, begin + _docs.size(), target);
     _at = static_cast<size_t>(it - begin) + 1;
     return _doc = *it;
+  }
+
+  uint32_t Gather(doc_id_t& doc, doc_id_t max, doc_id_t* IRS_RESTRICT out,
+                  uint32_t cap) noexcept {
+    SDB_ASSERT(doc == _doc && doc < max);
+    const auto* const first = _docs.data() + _at - 1;
+    uint32_t n = 0;
+    while (n != cap && first[n] < max) {
+      ++n;
+    }
+    std::copy_n(first, n, out);
+    _at += n;
+    doc = _doc = _docs[_at - 1];
+    return n;
   }
 
  private:

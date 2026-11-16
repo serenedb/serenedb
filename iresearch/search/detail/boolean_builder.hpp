@@ -143,12 +143,8 @@ Result<Family> MakeSortedDocs(std::span<const Term> terms,
       !TakeBitset<Result<Family>>(terms, docs_count)) {
     return {};
   }
-  auto docs = SortedDocsOf(terms, field, doc);
-  if constexpr (requires { Family::MakeSorted(ctx, std::move(docs)); }) {
-    return Family::MakeSorted(ctx, std::move(docs));
-  } else {
-    return Family::template Docs<lead::SortedDocs>(ctx, std::move(docs));
-  }
+  return Family::template Docs<lead::SortedDocs>(
+    ctx, SortedDocsOf(terms, field, doc));
 }
 
 template<typename Family, typename Term, typename Ctx>

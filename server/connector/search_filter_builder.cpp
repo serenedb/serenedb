@@ -602,16 +602,28 @@ bool ReachesNullableKey(const FilterContext& ctx,
 // UNKNOWN exactly on NULL operands; false for shapes whose null behavior
 // is not provably strict.
 bool IsStrictPredicate(const duckdb::Expression& expr) {
-  if (IsStrictComparisonShape(expr)) {
+  const auto& peeled = PeelGroupModifiers(expr);
+  if (IsStrictComparisonShape(peeled)) {
     return true;
   }
-  if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_FUNCTION) {
-    return IsIndexOnlyPredicateName(expr.Cast<duckdb::BoundFunctionExpression>()
-                                      .Function()
-                                      .GetName()
-                                      .GetIdentifierName());
+  if (peeled.GetExpressionClass() == duckdb::ExpressionClass::BOUND_FUNCTION) {
+    return IsIndexOnlyPredicateName(
+      peeled.Cast<duckdb::BoundFunctionExpression>()
+        .Function()
+        .GetName()
+        .GetIdentifierName());
   }
   return false;
+}
+
+bool IsStrictDisjunct(const duckdb::Expression& expr) {
+  const auto& peeled = PeelGroupModifiers(expr);
+  if (peeled.GetExpressionType() != duckdb::ExpressionType::CONJUNCTION_OR) {
+    return IsStrictPredicate(peeled);
+  }
+  return absl::c_all_of(
+    peeled.Cast<duckdb::BoundConjunctionExpression>().GetChildren(),
+    [](const auto& child) { return IsStrictDisjunct(*child); });
 }
 
 void RejectRewrittenMinMatch(const duckdb::BoundFunctionExpression& cast,
@@ -764,7 +776,7 @@ absl::Status MakeGroup(BoolTarget parent, const FilterContext& ctx,
     if (!markers.empty() || has_nullable_group) {
       const bool claimable =
         !is_and && absl::c_all_of(conj.GetChildren(), [](const auto& child) {
-          return IsStrictPredicate(*child) || AsStrictMinMatchGroup(*child);
+          return IsStrictDisjunct(*child) || AsStrictMinMatchGroup(*child);
         });
       if (!claimable) {
         if (absl::c_any_of(conj.GetChildren(), [](const auto& child) {

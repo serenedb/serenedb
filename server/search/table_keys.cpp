@@ -275,8 +275,6 @@ KeySpec UniqueIndexKey(const catalog::SearchTableEntry& table,
 std::optional<KeySpec> IndexKeySpec(const catalog::SearchTableEntry& table,
                                     const catalog::ConstraintKey& key,
                                     duckdb::CatalogTransaction transaction) {
-  transaction.view.visibility_bound =
-    duckdb::VisibilityBound::IncludingUncommitted();
   const auto entry = table.catalog.Cast<catalog::BaseCatalog>().Oids().Find(
     transaction, key.field);
   if (!entry || entry->type != duckdb::CatalogType::INDEX_ENTRY) {
@@ -305,27 +303,6 @@ std::optional<KeySpec> IndexKeySpec(const catalog::SearchTableEntry& table,
     }
   }
   return spec;
-}
-
-void VerifyUniqueKey(duckdb::ClientContext& context,
-                     const irs::DirectoryReader& reader, const KeySpec& spec) {
-  std::vector<KeyProbe::Segment> segments;
-  for (const auto& segment : reader) {
-    segments.push_back({.sub = &segment});
-  }
-  ForEachSegmentKey(
-    segments, spec.key.field, [&](std::string_view key, size_t rows) {
-      if (rows > 1) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
-          ERR_MSG("could not create unique index \"", spec.constraint, "\""),
-          ERR_DETAIL(
-            "Key ",
-            connector::ConstraintKeyText(context, key, spec.names, spec.types),
-            " is duplicated."));
-      }
-      return true;
-    });
 }
 
 std::vector<irs::field_id> ConflictArbiters(

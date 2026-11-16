@@ -44,10 +44,10 @@ using irs::codecs::Estimate;
 constexpr uint64_t kRows = 100;
 
 struct Probe {
-  double estimate[2] = {std::numeric_limits<double>::infinity(),
-                        std::numeric_limits<double>::infinity()};
+  double estimate = std::numeric_limits<double>::infinity();
+  double bound = 0;
   uint64_t encoded_bytes = kRows;
-  int analyzed[2] = {};
+  int analyzed = 0;
   int encodes = 0;
 };
 
@@ -55,9 +55,10 @@ template<int kId>
 struct Fake {
   static inline Probe probe;
 
-  static Estimate Analyze(ColumnDataCheckpointData&, double, uint8_t round) {
-    ++probe.analyzed[round];
-    return {.codec = kCodec, .ratio = probe.estimate[round]};
+  static Estimate Analyze(ColumnDataCheckpointData&, double bound) {
+    ++probe.analyzed;
+    probe.bound = bound;
+    return {.codec = kCodec, .ratio = probe.estimate};
   }
 
   static Encoded Encode(ColumnDataCheckpointData& data, const Estimate*) {
@@ -77,12 +78,11 @@ struct Fake {
              : (kId == 1 ? CodecType::Bitpacking : CodecType::Alp);
 };
 
-template<int kId, uint8_t kRounds = 1>
+template<int kId>
 constexpr CompressionFunction kFake{
   .analyze = Fake<kId>::Analyze,
   .encode = Fake<kId>::Encode,
   .flush = Fake<kId>::Flush,
-  .rounds = kRounds,
 };
 
 uint64_t StreamedAnalyze(std::span<const irs::WriteChunk>) { return kRows; }
@@ -162,7 +162,7 @@ class ColCompressionFunctionTest : public ::testing::Test {
 
 TEST_F(ColCompressionFunctionTest,
        AnExactCodecTakesARowGroupAnEstimateOversold) {
-  Fake<1>::probe.estimate[0] = 0.5;
+  Fake<1>::probe.estimate = 0.5;
   Fake<1>::probe.encoded_bytes = 2 * kRows;
   const CompressionFunction* const functions[] = {&kStreamedRle, &kFake<1>};
   EXPECT_EQ(Compress(functions, irs::WriteTier::Merge), CodecType::Rle);
@@ -170,35 +170,40 @@ TEST_F(ColCompressionFunctionTest,
 }
 
 TEST_F(ColCompressionFunctionTest, AnEstimateThatHoldsBeatsTheExactCodec) {
-  Fake<1>::probe.estimate[0] = 0.5;
+  Fake<1>::probe.estimate = 0.5;
   Fake<1>::probe.encoded_bytes = kRows / 2;
   const CompressionFunction* const functions[] = {&kStreamedRle, &kFake<1>};
   EXPECT_EQ(Compress(functions, irs::WriteTier::Merge), CodecType::Bitpacking);
 }
 
-TEST_F(ColCompressionFunctionTest, OnlyFunctionsWithMoreRoundsAreAskedAgain) {
-  Fake<0>::probe.estimate[0] = 0.6;
-  Fake<1>::probe.estimate[1] = 0.3;
+TEST_F(ColCompressionFunctionTest,
+       EveryFunctionIsAnalyzedOnceUnderTheBestScoreBeforeIt) {
+  Fake<0>::probe.estimate = 0.6;
+  Fake<1>::probe.estimate = 0.3;
   Fake<1>::probe.encoded_bytes = kRows / 4;
-  const CompressionFunction* const functions[] = {&kFake<0>, &kFake<1, 2>};
+  Fake<2>::probe.estimate = 0.4;
+  const CompressionFunction* const functions[] = {&kFake<0>, &kFake<1>,
+                                                  &kFake<2>};
   EXPECT_EQ(Compress(functions, irs::WriteTier::Flush), CodecType::Bitpacking);
-  EXPECT_EQ(Fake<0>::probe.analyzed[0], 1);
-  EXPECT_EQ(Fake<0>::probe.analyzed[1], 0);
-  EXPECT_EQ(Fake<1>::probe.analyzed[0], 1);
-  EXPECT_EQ(Fake<1>::probe.analyzed[1], 1);
+  EXPECT_EQ(Fake<0>::probe.analyzed, 1);
+  EXPECT_EQ(Fake<1>::probe.analyzed, 1);
+  EXPECT_EQ(Fake<2>::probe.analyzed, 1);
+  EXPECT_EQ(Fake<0>::probe.bound, std::numeric_limits<double>::infinity());
+  EXPECT_EQ(Fake<1>::probe.bound, 0.6);
+  EXPECT_EQ(Fake<2>::probe.bound, 0.3);
 }
 
 TEST_F(ColCompressionFunctionTest,
        AHeldFunctionTheRowGroupDoesNotOfferIsNotReused) {
-  Fake<0>::probe.estimate[0] = 0.5;
-  Fake<1>::probe.estimate[0] = 0.5;
+  Fake<0>::probe.estimate = 0.5;
+  Fake<1>::probe.estimate = 0.5;
   const CompressionFunction* const first[] = {&kFake<0>};
   const CompressionFunction* const second[] = {&kFake<1>};
   EXPECT_EQ(Compress(first, irs::WriteTier::Flush), CodecType::Rle);
   EXPECT_EQ(Compress(first, irs::WriteTier::Flush), CodecType::Rle);
-  EXPECT_EQ(Fake<0>::probe.analyzed[0], 2);
+  EXPECT_EQ(Fake<0>::probe.analyzed, 2);
   EXPECT_EQ(Compress(second, irs::WriteTier::Flush), CodecType::Bitpacking);
-  EXPECT_EQ(Fake<0>::probe.analyzed[0], 2);
+  EXPECT_EQ(Fake<0>::probe.analyzed, 2);
 }
 
 TEST_F(ColCompressionFunctionTest,

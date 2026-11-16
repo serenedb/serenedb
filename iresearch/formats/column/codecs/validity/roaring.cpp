@@ -1729,7 +1729,7 @@ bool Disabled(const ColumnDataCheckpointData& data) noexcept {
 
 template<duckdb::PhysicalType kPhysical>
 constexpr CompressionFunction kFunction{
-  .analyze = [](ColumnDataCheckpointData& data, double, uint8_t) -> Estimate {
+  .analyze = [](ColumnDataCheckpointData& data, double) -> Estimate {
     if (Disabled(data)) {
       return {};
     }

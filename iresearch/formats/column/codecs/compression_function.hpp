@@ -190,12 +190,10 @@ struct Encoded {
 };
 
 struct CompressionFunction {
-  Estimate (*analyze)(ColumnDataCheckpointData& data, double bound,
-                      uint8_t round) = nullptr;
+  Estimate (*analyze)(ColumnDataCheckpointData& data, double bound) = nullptr;
   Encoded (*encode)(ColumnDataCheckpointData& data,
                     const Estimate* pick) = nullptr;
   void (*flush)(ColumnDataCheckpointData& data) = nullptr;
-  uint8_t rounds = 1;
   bool exact = false;
   bool growth_only = false;
 };
@@ -263,7 +261,7 @@ const Codec* GetCodec(CodecType type, duckdb::PhysicalType physical);
 
 template<CodecType kType, auto kAnalyze, auto kCompress, auto kAccepts>
 struct Streamed {
-  static Estimate Analyze(ColumnDataCheckpointData& data, double, uint8_t) {
+  static Estimate Analyze(ColumnDataCheckpointData& data, double) {
     if constexpr (kAnalyze == nullptr) {
       return {};
     } else {

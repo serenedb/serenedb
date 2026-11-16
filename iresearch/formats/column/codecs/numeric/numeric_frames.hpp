@@ -66,6 +66,19 @@ inline constexpr LeafOption kCompactionPlan[] = {
   {NumericLeaf::Zstd, 0.15},
 };
 
+static_assert([] {
+  for (size_t i = 0; i < std::size(kCompactionPlan); ++i) {
+    if (std::to_underlying(kCompactionPlan[i].leaf) != i ||
+        (i < std::size(kRefreshPlan) &&
+         kRefreshPlan[i].leaf != kCompactionPlan[i].leaf) ||
+        (i < std::size(kLeaflessPlan) &&
+         kLeaflessPlan[i].leaf != kCompactionPlan[i].leaf)) {
+      return false;
+    }
+  }
+  return true;
+}());
+
 struct Candidate {
   NumericTransform transform = NumericTransform::Raw;
   uint8_t stored = 0;
@@ -255,21 +268,19 @@ class Frames : public State {
   using U = numeric::Bits<sizeof(T)>;
   static constexpr uint8_t kWidth = sizeof(T);
 
-  static constexpr uint8_t kRounds = std::size(kCompactionPlan);
-
   Estimate Analyze(ColumnDataCheckpointData& data, double bound,
-                   uint8_t round) {
+                   NumericLeaf leaf) {
     if (!_values.Usable()) {
       return {};
     }
-    if (round == 0) {
+    if (!_complete) {
       Rebuild(nullptr);
     }
-    const auto plan = Plan(data);
-    if (round >= plan.size() || !Enabled(data, plan[round].leaf)) {
+    const auto* offered = Offered(data, leaf);
+    if (!offered) {
       return {};
     }
-    const auto& option = plan[round];
+    const auto& option = *offered;
     const auto rows = static_cast<double>(_values.Get().size());
     auto best_price = bound * rows;
     bool improved = false;
@@ -302,39 +313,31 @@ class Frames : public State {
     };
   }
 
-  Encoded Encode(ColumnDataCheckpointData& data, const Estimate* pick) {
+  Encoded Encode(ColumnDataCheckpointData& data, const Estimate* pick,
+                 NumericLeaf leaf) {
     auto& choice = data.tuning->numeric;
     const LeafSamples* samples = &_best_samples;
     if (!pick) {
       SDB_ASSERT(ShapeOf(choice.transform) == _shape);
+      SDB_ASSERT(choice.leaf == leaf);
       if (!_values.Usable()) {
         return {};
       }
       Rebuild(&choice.transform);
-      const auto plan = Plan(data);
-      const auto option = absl::c_find_if(
-        plan, [&](const auto& o) { return o.leaf == choice.leaf; });
+      const auto* option = Offered(data, leaf);
       const auto candidate = absl::c_find_if(_candidates, [&](const auto& c) {
         return c.shuffled == choice.shuffled;
       });
-      if (candidate == _candidates.end() || option == plan.end() ||
-          !Enabled(data, option->leaf)) {
+      if (candidate == _candidates.end() || !option) {
         return {};
       }
       _best = &*candidate;
       _leaf = *option;
       samples = nullptr;
-    } else if (!_best) {
-      Estimate best;
-      for (uint8_t round = 0; round < kRounds; ++round) {
-        if (const auto estimate = Analyze(data, best.Score(), round);
-            estimate.Score() < best.Score()) {
-          best = estimate;
-        }
-      }
-      if (best.codec != pick->codec) {
-        return {};
-      }
+    } else if (!_best &&
+               Analyze(data, std::numeric_limits<double>::infinity(), leaf)
+                   .codec != pick->codec) {
+      return {};
     }
     _out.clear();
     Write(*_best, _leaf, samples, _out);
@@ -439,14 +442,18 @@ class Frames : public State {
     return kCompactionPlan;
   }
 
-  bool Enabled(const ColumnDataCheckpointData& data,
-               NumericLeaf leaf) const noexcept {
+  const LeafOption* Offered(const ColumnDataCheckpointData& data,
+                            NumericLeaf leaf) const noexcept {
+    const auto plan = Plan(data);
+    const auto index = std::to_underlying(leaf);
     const auto codec = NumericCodec(_shape, leaf);
-    return !data.disabled.test(std::to_underlying(codec)) &&
-           (data.only == CodecType::Auto || data.only == codec);
+    return index < plan.size() && !data.disabled.test(std::to_underlying(codec))
+             ? &plan[index]
+             : nullptr;
   }
 
   void Rebuild(const NumericTransform* only) {
+    _complete = !only;
     _candidates.clear();
     _best = nullptr;
     Build(only);
@@ -645,6 +652,7 @@ class Frames : public State {
   std::vector<Candidate> _candidates;
   std::vector<SampleFrames> _sample_frames;
   const Candidate* _best = nullptr;
+  bool _complete = false;
   LeafOption _leaf;
   uint64_t _estimated = 0;
   LeafSamples _samples;
@@ -653,19 +661,17 @@ class Frames : public State {
   std::string _out;
 };
 
-template<typename Shape>
-inline constexpr CompressionFunction kShapeFunction{
+template<typename Form, NumericLeaf kLeaf>
+inline constexpr CompressionFunction kNumericFunction{
   .analyze =
-    [](ColumnDataCheckpointData& data, double bound, uint8_t round) {
-      return data.Get<Shape>().Analyze(data, bound, round);
+    [](ColumnDataCheckpointData& data, double bound) {
+      return data.Get<Form>().Analyze(data, bound, kLeaf);
     },
   .encode =
     [](ColumnDataCheckpointData& data, const Estimate* pick) {
-      return data.Get<Shape>().Encode(data, pick);
+      return data.Get<Form>().Encode(data, pick, kLeaf);
     },
-  .flush =
-    [](ColumnDataCheckpointData& data) { data.Get<Shape>().Flush(data); },
-  .rounds = Shape::kRounds,
+  .flush = [](ColumnDataCheckpointData& data) { data.Get<Form>().Flush(data); },
   .growth_only = true,
 };
 

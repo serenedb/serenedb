@@ -42,7 +42,9 @@ constexpr CodecType kOrder[] = {
   CodecType::Uncompressed, CodecType::Rle,       CodecType::Bitpacking,
   CodecType::Alp,          CodecType::AlpRd,     CodecType::Roaring,
   CodecType::Ffor,         CodecType::DeltaFfor, CodecType::RleFfor,
-  CodecType::DictFfor,
+  CodecType::DictFfor,     CodecType::Lz4,       CodecType::DeltaLz4,
+  CodecType::RleLz4,       CodecType::DictLz4,   CodecType::Zstd,
+  CodecType::DeltaZstd,    CodecType::RleZstd,   CodecType::DictZstd,
 };
 
 std::span<const CompressionFunction* const> FunctionsOf(PhysicalType physical) {
@@ -98,7 +100,7 @@ class Contest {
       if (!function->exact) {
         continue;
       }
-      if (const auto estimate = function->analyze(_data, _bar.Score(), 0);
+      if (const auto estimate = function->analyze(_data, _bar.Score());
           estimate.Score() < _bar.Score()) {
         _bar = estimate;
         _exact = function;
@@ -151,19 +153,14 @@ class Contest {
       winner = _functions.front();
       best = {.codec = _data.only};
     } else {
-      uint8_t rounds = 1;
-      for (uint8_t round = 0; round < rounds; ++round) {
-        for (const auto* function : _functions) {
-          if (function->exact || round >= function->rounds) {
-            continue;
-          }
-          rounds = std::max(rounds, function->rounds);
-          if (const auto estimate =
-                function->analyze(_data, best.Score(), round);
-              estimate.Score() < best.Score()) {
-            best = estimate;
-            winner = function;
-          }
+      for (const auto* function : _functions) {
+        if (function->exact) {
+          continue;
+        }
+        if (const auto estimate = function->analyze(_data, best.Score());
+            estimate.Score() < best.Score()) {
+          best = estimate;
+          winner = function;
         }
       }
     }

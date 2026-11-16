@@ -85,7 +85,7 @@ struct Strings final : State {
   bool accumulated = false;
 };
 
-Estimate Analyze(ColumnDataCheckpointData& data, double, uint8_t) {
+Estimate Analyze(ColumnDataCheckpointData& data, double) {
   auto& strings = data.Get<Strings>();
   strings.first = text::DetectBestCompressionMethod(
     strings.Accumulated(data.chunks), data.params, strings.tuning,

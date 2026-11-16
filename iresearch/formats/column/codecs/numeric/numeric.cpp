@@ -317,21 +317,11 @@ uint64_t CodesBound(uint64_t rows, uint64_t entries, uint64_t runs) noexcept {
                   Packed(runs, entries) + Packed(runs, rows));
 }
 
-template<typename T>
-consteval const CompressionFunction* DictionaryFunction() {
-  if constexpr (sizeof(T) > 1) {
-    return &kShapeFunction<DictionaryFrames<T>>;
-  } else {
-    return nullptr;
-  }
-}
-
-template<typename T>
-inline constexpr const CompressionFunction* kFunctions[] = {
-  &kShapeFunction<PlainFrames<T>>,
-  &kShapeFunction<DeltaFrames<T>>,
-  &kShapeFunction<RunFrames<T>>,
-  DictionaryFunction<T>(),
+template<typename Form>
+constexpr const CompressionFunction* kFunctions[] = {
+  &kNumericFunction<Form, NumericLeaf::None>,
+  &kNumericFunction<Form, NumericLeaf::Lz4>,
+  &kNumericFunction<Form, NumericLeaf::Zstd>,
 };
 
 template<typename R>
@@ -349,21 +339,23 @@ constexpr auto kCodecs = []() consteval {
   constexpr auto kLeaves = std::size(kNumericCodecs[0]);
   constexpr auto kShapes = std::size(kNumericCodecs) - (sizeof(T) == 1);
   std::array<Codec, kShapes * kLeaves> codecs;
-  for (size_t leaf = 0; leaf < kLeaves; ++leaf) {
-    const auto add = [&]<typename R>(NumericShape shape) consteval {
+  const auto add =
+    [&]<typename Form, typename R>(NumericShape shape) consteval {
       const auto s = static_cast<size_t>(shape);
-      codecs[s * kLeaves + leaf] = {
-        .type = kNumericCodecs[s][leaf],
-        .compression = kFunctions<T>[s],
-        .decompression = &kDecompression<R>,
-      };
+      for (size_t leaf = 0; leaf < kLeaves; ++leaf) {
+        codecs[s * kLeaves + leaf] = {
+          .type = kNumericCodecs[s][leaf],
+          .compression = kFunctions<Form>[leaf],
+          .decompression = &kDecompression<R>,
+        };
+      }
     };
-    add.template operator()<PlainReader<T>>(NumericShape::Plain);
-    add.template operator()<DeltaReader<T>>(NumericShape::Delta);
-    add.template operator()<RunReader<T>>(NumericShape::Runs);
-    if constexpr (sizeof(T) > 1) {
-      add.template operator()<DictionaryReader<T>>(NumericShape::Dictionary);
-    }
+  add.template operator()<PlainFrames<T>, PlainReader<T>>(NumericShape::Plain);
+  add.template operator()<DeltaFrames<T>, DeltaReader<T>>(NumericShape::Delta);
+  add.template operator()<RunFrames<T>, RunReader<T>>(NumericShape::Runs);
+  if constexpr (sizeof(T) > 1) {
+    add.template operator()<DictionaryFrames<T>, DictionaryReader<T>>(
+      NumericShape::Dictionary);
   }
   return codecs;
 }();
@@ -385,9 +377,9 @@ uint64_t EstimateCodes(const NumericTuning& tuning, uint64_t rows,
 std::string EncodeCodes(std::span<const uint32_t> codes, uint64_t entries,
                         uint64_t runs, NumericTuning& tuning) {
   static constexpr const CompressionFunction* kCodeFunctions[] = {
-    &kShapeFunction<PlainFrames<uint32_t>>,
-    &kShapeFunction<DeltaFrames<uint32_t>>,
-    &kShapeFunction<RunFrames<uint32_t>>,
+    &kNumericFunction<PlainFrames<uint32_t>, NumericLeaf::None>,
+    &kNumericFunction<DeltaFrames<uint32_t>, NumericLeaf::None>,
+    &kNumericFunction<RunFrames<uint32_t>, NumericLeaf::None>,
   };
   std::string bytes;
   if (codes.empty()) {

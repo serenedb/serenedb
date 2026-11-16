@@ -307,12 +307,6 @@ class ColFilterChain {
     std::conditional_t<Keep, const uint64_t*, uint64_t*> mask,
     duckdb::idx_t words, utils::Need<Keep, uint64_t*> out);
 
-  struct DenseRange {
-    duckdb::PhysicalType type = duckdb::PhysicalType::INVALID;
-    int64_t lo = std::numeric_limits<int64_t>::min();
-    int64_t hi = std::numeric_limits<int64_t>::max();
-  };
-
   template<bool Keep>
   duckdb::idx_t DenseMask(
     irs::doc_id_t base,
@@ -337,7 +331,7 @@ class ColFilterChain {
 
   std::vector<Col> _cols;
   std::vector<Row> _rows;
-  std::optional<DenseRange> _dense;
+  duckdb::ExpressionFilterExecutor* _dense = nullptr;
   detail::PointRead _point_reads = detail::PointRead::None;
   duckdb::SelectionVector _row_sel{STANDARD_VECTOR_SIZE};
   // FilterDocs' block-run selection. FilterSelection repoints `_sel` to a

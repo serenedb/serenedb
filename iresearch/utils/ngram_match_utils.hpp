@@ -48,7 +48,7 @@ namespace irs {
 /// @returns similarity value
 ////////////////////////////////////////////////////////////////////////////////
 template<typename T, bool search_semantics>
-float_t ngram_similarity(const T* target, size_t target_size, const T* src,
+float ngram_similarity(const T* target, size_t target_size, const T* src,
                          size_t src_size, size_t ngram_size) {
   if (ngram_size == 0) {
     return 0.f;
@@ -73,7 +73,7 @@ float_t ngram_similarity(const T* target, size_t target_size, const T* src,
         ++r;
         ++it;
       }
-      return float_t(matched) / float_t(src_size);
+      return float(matched) / float(src_size);
     } else {
       if (target_size == src_size) {
         return memcmp(target, src, target_size * sizeof(T)) == 0 ? 1 : 0;
@@ -88,8 +88,8 @@ float_t ngram_similarity(const T* target, size_t target_size, const T* src,
   const T* t_ngram_start_end = target + target_size - ngram_size +
                                1;  // end() analog for target ngram start
 
-  float_t d = 0;  // will store upper-left cell value for current cache row
-  std::vector<float_t> cache(s_ngram_count + 1, 0);
+  float d = 0;  // will store upper-left cell value for current cache row
+  std::vector<float> cache(s_ngram_count + 1, 0);
 
   // here could be constructed source string with start characters affixing
 
@@ -102,7 +102,7 @@ float_t ngram_similarity(const T* target, size_t target_size, const T* src,
 
     for (; s_ngram_start != s_ngram_start_end; ++s_ngram_start, ++s_ngram_idx) {
       const T* rhs_ngram_end = s_ngram_start + ngram_size;
-      float_t similarity = !search_semantics ? 0 : 1;
+      float similarity = !search_semantics ? 0 : 1;
       for (const T *l = t_ngram_start, *r = s_ngram_start;
            l != t_ngram_end && r != rhs_ngram_end; ++l, ++r) {
         if constexpr (search_semantics) {
@@ -117,7 +117,7 @@ float_t ngram_similarity(const T* target, size_t target_size, const T* src,
         }
       }
       if constexpr (!search_semantics) {
-        similarity = similarity / float_t(ngram_size);
+        similarity = similarity / float(ngram_size);
       }
 
       auto tmp = cache[s_ngram_idx];
@@ -127,7 +127,7 @@ float_t ngram_similarity(const T* target, size_t target_size, const T* src,
     }
   }
   return cache[s_ngram_count] /
-         float_t((!search_semantics) ? s_ngram_count : t_ngram_count);
+         float((!search_semantics) ? s_ngram_count : t_ngram_count);
 }
 
 }  // namespace irs

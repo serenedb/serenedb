@@ -141,7 +141,7 @@ TEST_P(FormatTestCase, fields_seek_ge) {
 
     for (size_t begin = 74, end = 7000, step = 2; begin < end; begin += step) {
       const auto term =
-        irs::numeric_utils::EncodeNumericTerm(buf, double_t(begin));
+        irs::numeric_utils::EncodeNumericTerm(buf, double(begin));
       ASSERT_EQ(irs::SeekResult::NotFound, it->seek_ge(term));
 
       auto expected_it =

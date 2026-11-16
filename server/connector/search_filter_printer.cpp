@@ -91,27 +91,22 @@ std::string TermToString(Term term) {
   return s;
 }
 
-// Decodes a numeric term back to the number it encodes. The leading byte is
-// the type's TYPE_MAGIC, disjoint per type, so the value type is recovered
-// from the term itself (which also disambiguates the shared JSON-leaf numeric
-// field).
-std::string DecodeNumericTerm(bytes_view term) {
+template<typename T>
+bool NumberToString(bytes_view term, std::string& out) {
   namespace nu = irs::numeric_utils;
-  if (term.empty()) {
-    return "";
+  if (term.size() != nu::kNumericTermSize<T> ||
+      term[0] != nu::kNumericTermMagic<T>) {
+    return false;
   }
-  const auto marker = term[0];
-  if (marker < 0x20) {
-    return absl::StrCat(nu::numeric_traits<int32_t>::decode(term.data()));
-  }
-  if (marker < 0x40) {
-    return absl::StrCat(nu::numeric_traits<float>::decode(term.data()));
-  }
-  if (marker >= 0x60 && marker < 0xA0) {
-    return absl::StrCat(nu::numeric_traits<int64_t>::decode(term.data()));
-  }
-  if (marker >= 0xA0 && marker < 0xE0) {
-    return absl::StrCat(nu::numeric_traits<double>::decode(term.data()));
+  out = absl::StrCat(nu::DecodeNumericTerm<T>(term));
+  return true;
+}
+
+std::string NumericTermToString(bytes_view term) {
+  std::string out;
+  if (NumberToString<int32_t>(term, out) || NumberToString<float>(term, out) ||
+      NumberToString<int64_t>(term, out) || NumberToString<double>(term, out)) {
+    return out;
   }
   return TermToString(term);
 }
@@ -132,7 +127,7 @@ std::string TermValue(bytes_view term, const LogicalType& type) {
     return !term.empty() && term[0] ? "true" : "false";
   }
   if (sdb::connector::term_dict::IsNumeric(type.id())) {
-    return DecodeNumericTerm(term);
+    return NumericTermToString(term);
   }
   if (sdb::pg::IsInetOrCidr(type)) {
     return sdb::connector::inet_terms::Describe(term);

@@ -32,16 +32,16 @@
 
 namespace irs {
 
-size_t MinMatchCount(size_t terms_count, float_t threshold) noexcept {
+size_t MinMatchCount(size_t terms_count, float threshold) noexcept {
   threshold = std::clamp(threshold, 0.f, 1.f);
   return std::clamp(static_cast<size_t>(
-                      std::ceil(static_cast<float_t>(terms_count) * threshold)),
+                      std::ceil(static_cast<float>(terms_count) * threshold)),
                     size_t{1}, terms_count);
 }
 
 QueryBuilder::ptr ByNGramSimilarity::PrepareSegment(
   const SubReader& segment, const PrepareContext& ctx, irs::field_id field_name,
-  DictRef dict, const std::vector<irs::bstring>& ngrams, float_t threshold,
+  DictRef dict, const std::vector<irs::bstring>& ngrams, float threshold,
   score_t boost) {
   SDB_ASSERT(irs::field_limits::valid(field_name));
   SDB_ASSERT(!ngrams.empty());

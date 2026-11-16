@@ -316,13 +316,13 @@ TEST(store_utils_tests, vlong_from_array) {
 }
 
 TEST(store_utils_tests, zvfloat_read_write) {
-  tests::detail::ReadWriteCore<float_t>(
+  tests::detail::ReadWriteCore<float>(
     {
-      std::numeric_limits<float_t>::max(),
-      std::numeric_limits<float_t>::min(),
+      std::numeric_limits<float>::max(),
+      std::numeric_limits<float>::min(),
       0.f,
-      std::numeric_limits<float_t>::infinity(),
-      -std::numeric_limits<float_t>::infinity(),
+      std::numeric_limits<float>::infinity(),
+      -std::numeric_limits<float>::infinity(),
       125.f,
       53.f,
       -1.f,
@@ -333,20 +333,20 @@ TEST(store_utils_tests, zvfloat_read_write) {
     tests::ReadZvfloat, tests::WriteZvfloat);
 
   /* NaN case */
-  tests::detail::ReadWriteCoreNan<float_t>(tests::ReadZvfloat,
+  tests::detail::ReadWriteCoreNan<float>(tests::ReadZvfloat,
                                            tests::WriteZvfloat);
 }
 
 TEST(store_utils_tests, zvdouble_read_write) {
-  tests::detail::ReadWriteCore<double_t>(
+  tests::detail::ReadWriteCore<double>(
     {
-      std::numeric_limits<double_t>::max(),
-      std::numeric_limits<double_t>::min(),
-      std::numeric_limits<float_t>::max(),
-      std::numeric_limits<float_t>::min(),
+      std::numeric_limits<double>::max(),
+      std::numeric_limits<double>::min(),
+      std::numeric_limits<float>::max(),
+      std::numeric_limits<float>::min(),
       0.,
-      std::numeric_limits<double_t>::infinity(),
-      -std::numeric_limits<double_t>::infinity(),
+      std::numeric_limits<double>::infinity(),
+      -std::numeric_limits<double>::infinity(),
       123.,
       43.,
       -1.,
@@ -358,7 +358,7 @@ TEST(store_utils_tests, zvdouble_read_write) {
     tests::ReadZvdouble, tests::WriteZvdouble);
 
   /* NaN case */
-  tests::detail::ReadWriteCoreNan<double_t>(tests::ReadZvdouble,
+  tests::detail::ReadWriteCoreNan<double>(tests::ReadZvdouble,
                                             tests::WriteZvdouble);
 }
 

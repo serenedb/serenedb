@@ -71,10 +71,8 @@ TEST(numeric_terms_test, golden_terms) {
   AssertNumericTerm(int64_t{42}, "\x60\x80\x00\x00\x00\x00\x00\x00\x2A"sv);
   AssertNumericTerm(int64_t{-1}, "\x60\x7F\xFF\xFF\xFF\xFF\xFF\xFF\xFF"sv);
   AssertNumericTerm(int32_t{7}, "\x00\x80\x00\x00\x07"sv);
-  AssertNumericTerm(double_t{2.5}, "\xA0\xC0\x04\x00\x00\x00\x00\x00\x00"sv);
-#ifndef FLOAT_T_IS_DOUBLE_T
-  AssertNumericTerm(float_t{1.5f}, "\x20\xBF\xC0\x00\x00"sv);
-#endif
+  AssertNumericTerm(double{2.5}, "\xA0\xC0\x04\x00\x00\x00\x00\x00\x00"sv);
+  AssertNumericTerm(float{1.5f}, "\x20\xBF\xC0\x00\x00"sv);
 }
 
 template<typename T>
@@ -109,24 +107,22 @@ TEST(numeric_terms_test, block_matches_per_value) {
                               std::numeric_limits<int32_t>::min(),
                               std::numeric_limits<int32_t>::max()};
   AssertNumericBlockMatchesPerValue(std::span<const int32_t>{kI32});
-  constexpr double_t kF64[] = {0.,
+  constexpr double kF64[] = {0.,
                                1.,
                                -1.,
                                3.141592653589793,
-                               std::numeric_limits<double_t>::max(),
-                               std::numeric_limits<double_t>::lowest(),
-                               std::numeric_limits<double_t>::infinity(),
-                               -std::numeric_limits<double_t>::infinity()};
-  AssertNumericBlockMatchesPerValue(std::span<const double_t>{kF64});
-#ifndef FLOAT_T_IS_DOUBLE_T
-  constexpr float_t kF32[] = {0.f,
+                               std::numeric_limits<double>::max(),
+                               std::numeric_limits<double>::lowest(),
+                               std::numeric_limits<double>::infinity(),
+                               -std::numeric_limits<double>::infinity()};
+  AssertNumericBlockMatchesPerValue(std::span<const double>{kF64});
+  constexpr float kF32[] = {0.f,
                               1.f,
                               -1.f,
                               3.14f,
-                              std::numeric_limits<float_t>::max(),
-                              std::numeric_limits<float_t>::lowest()};
-  AssertNumericBlockMatchesPerValue(std::span<const float_t>{kF32});
-#endif
+                              std::numeric_limits<float>::max(),
+                              std::numeric_limits<float>::lowest()};
+  AssertNumericBlockMatchesPerValue(std::span<const float>{kF32});
 }
 
 TEST(string_token_stream_tests, native_batch_fill) {

@@ -323,11 +323,11 @@ class IntField : public FieldBase {
 
 //////////////////////////////////////////////////////////////////////////////
 /// @class double_field
-/// @brief provides capabilities for storing & indexing double_t values
+/// @brief provides capabilities for storing & indexing double values
 //////////////////////////////////////////////////////////////////////////////
 class DoubleField : public FieldBase {
  public:
-  typedef double_t value_t;
+  typedef double value_t;
 
   DoubleField() { index_features = irs::IndexFeatures::Ranges; }
 
@@ -341,16 +341,16 @@ class DoubleField : public FieldBase {
   }
 
  private:
-  double_t _value{};
+  double _value{};
 };
 
 //////////////////////////////////////////////////////////////////////////////
 /// @class float_field
-/// @brief provides capabilities for storing & indexing double_t values
+/// @brief provides capabilities for storing & indexing double values
 //////////////////////////////////////////////////////////////////////////////
 class FloatField : public FieldBase {
  public:
-  typedef float_t value_t;
+  typedef float value_t;
 
   FloatField() { index_features = irs::IndexFeatures::Ranges; }
 
@@ -364,7 +364,7 @@ class FloatField : public FieldBase {
   }
 
  private:
-  float_t _value{};
+  float _value{};
 };
 
 //////////////////////////////////////////////////////////////////////////////
@@ -741,7 +741,7 @@ class JsonDocGenerator : public DocGeneratorBase {
       unsigned ui;
       int64_t i64;
       uint64_t ui64;
-      double_t dbl;
+      double dbl;
       JsonString str;
     };
 

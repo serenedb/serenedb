@@ -69,7 +69,7 @@ std::unique_ptr<irs::ByPhrase> Phrase(
 }
 
 std::unique_ptr<irs::ByNGramSimilarity> NGram(
-  std::initializer_list<std::string_view> ngrams, float_t threshold) {
+  std::initializer_list<std::string_view> ngrams, float threshold) {
   auto filter = std::make_unique<irs::ByNGramSimilarity>();
   *filter->mutable_field_id() = kBodyId;
   auto* opts = filter->mutable_options();

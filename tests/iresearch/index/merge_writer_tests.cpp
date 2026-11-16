@@ -833,8 +833,8 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
       ASSERT_NE(nullptr, terms);
       auto& field = terms->meta();
       auto features = tests::DoubleField().GetIndexFeatures();
-      const auto max_term = NumericTerm((double_t)(2.718281828 * 2));
-      const auto min_term = NumericTerm((double_t)(2.718281828 * 1));
+      const auto max_term = NumericTerm((double)(2.718281828 * 2));
+      const auto min_term = NumericTerm((double)(2.718281828 * 1));
       std::unordered_map<irs::bstring, std::unordered_set<irs::doc_id_t>,
                          absl::Hash<irs::bstring>>
         expected_terms;
@@ -855,8 +855,8 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
       ASSERT_NE(nullptr, terms);
       auto& field = terms->meta();
       auto features = tests::FloatField().GetIndexFeatures();
-      const auto max_term = NumericTerm((float_t)(3.1415926535 * 2));
-      const auto min_term = NumericTerm((float_t)(3.1415926535 * 1));
+      const auto max_term = NumericTerm((float)(3.1415926535 * 2));
+      const auto min_term = NumericTerm((float)(3.1415926535 * 1));
       std::unordered_map<irs::bstring, std::unordered_set<irs::doc_id_t>,
                          absl::Hash<irs::bstring>>
         expected_terms;
@@ -1021,8 +1021,8 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
       ASSERT_NE(nullptr, terms);
       auto& field = terms->meta();
       auto features = tests::DoubleField().GetIndexFeatures();
-      const auto max_term = NumericTerm((double_t)(2.718281828 * 3));
-      const auto min_term = NumericTerm((double_t)(2.718281828 * 3));
+      const auto max_term = NumericTerm((double)(2.718281828 * 3));
+      const auto min_term = NumericTerm((double)(2.718281828 * 3));
       std::unordered_map<irs::bstring, std::unordered_set<irs::doc_id_t>,
                          absl::Hash<irs::bstring>>
         expected_terms;
@@ -1042,8 +1042,8 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
       ASSERT_NE(nullptr, terms);
       auto& field = terms->meta();
       auto features = tests::FloatField().GetIndexFeatures();
-      const auto max_term = NumericTerm((float_t)(3.1415926535 * 3));
-      const auto min_term = NumericTerm((float_t)(3.1415926535 * 3));
+      const auto max_term = NumericTerm((float)(3.1415926535 * 3));
+      const auto min_term = NumericTerm((float)(3.1415926535 * 3));
       std::unordered_map<irs::bstring, std::unordered_set<irs::doc_id_t>,
                          absl::Hash<irs::bstring>>
         expected_terms;
@@ -1235,14 +1235,14 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
     ASSERT_NE(nullptr, terms);
     auto& field = terms->meta();
     auto features = tests::DoubleField().GetIndexFeatures();
-    const auto max_term = NumericTerm((double_t)(2.718281828 * 3));
-    const auto min_term = NumericTerm((double_t)(2.718281828 * 1));
+    const auto max_term = NumericTerm((double)(2.718281828 * 3));
+    const auto min_term = NumericTerm((double)(2.718281828 * 1));
     std::unordered_map<irs::bstring, std::unordered_set<irs::doc_id_t>,
                        absl::Hash<irs::bstring>>
       expected_terms;
 
     expected_terms[min_term].emplace(1);
-    expected_terms[NumericTerm((double_t)(2.718281828 * 2))].emplace(2);
+    expected_terms[NumericTerm((double)(2.718281828 * 2))].emplace(2);
     expected_terms[max_term].emplace(3);
 
     ASSERT_EQ(3, docs_count(*segment, kDocDoubleId, kNumeric));
@@ -1258,14 +1258,14 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
     ASSERT_NE(nullptr, terms);
     auto& field = terms->meta();
     auto features = tests::FloatField().GetIndexFeatures();
-    const auto max_term = NumericTerm((float_t)(3.1415926535 * 3));
-    const auto min_term = NumericTerm((float_t)(3.1415926535 * 1));
+    const auto max_term = NumericTerm((float)(3.1415926535 * 3));
+    const auto min_term = NumericTerm((float)(3.1415926535 * 1));
     std::unordered_map<irs::bstring, std::unordered_set<irs::doc_id_t>,
                        absl::Hash<irs::bstring>>
       expected_terms;
 
     expected_terms[min_term].emplace(1);
-    expected_terms[NumericTerm((float_t)(3.1415926535 * 2))].emplace(2);
+    expected_terms[NumericTerm((float)(3.1415926535 * 2))].emplace(2);
     expected_terms[max_term].emplace(3);
 
     ASSERT_EQ(3, docs_count(*segment, kDocFloatId, kNumeric));

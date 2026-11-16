@@ -256,7 +256,7 @@ class Format15TestCase : public tests::FormatTestCase {
   using Docs = std::vector<Doc>;
   using DocsView = std::span<const Doc>;
 
-  Docs GenerateDocs(size_t count, float_t mean, float_t dev, size_t step);
+  Docs GenerateDocs(size_t count, float mean, float dev, size_t step);
 
   struct ReadMeta {
     irs::PostingMeta meta;
@@ -525,14 +525,14 @@ void Format15TestCase::AssertDocsSeq(irs::PostingsReader& reader, DocsView docs,
 }
 
 Format15TestCase::Docs Format15TestCase::GenerateDocs(size_t count,
-                                                      float_t mean, float_t dev,
+                                                      float mean, float dev,
                                                       size_t step) {
   std::vector<std::pair<irs::doc_id_t, uint32_t>> docs;
   docs.reserve(count);
   std::generate_n(
     std::back_inserter(docs), count,
     [i = (irs::doc_limits::min)(), gen = std::mt19937{},
-     distr = std::normal_distribution<float_t>{mean, dev}, step]() mutable {
+     distr = std::normal_distribution<float>{mean, dev}, step]() mutable {
       const irs::doc_id_t doc = i;
       const auto freq = static_cast<uint32_t>(std::roundf(distr(gen)));
       i += step;

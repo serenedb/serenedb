@@ -626,6 +626,20 @@ CREATE TABLE tesp_s.tesp_mv2 (a INT CHECK (abs(a) > 0));
 
 
 statement ok
+CREATE TABLE tesp_s.tesp_mvg (a INT, g BOOLEAN GENERATED ALWAYS AS (tesp_pos(a)));
+
+
+statement ok
+CREATE TABLE tesp_s.tesp_mvg2 (a INT, g INT GENERATED ALWAYS AS (abs(a)) STORED);
+
+
+statement error
+CREATE TABLE tesp_s.tesp_mq (c INT CHECK (tesp_nodb.c.tesp_pos()));
+----
+db error: ERROR: Cannot extract field 'tesp_nodb' from expression "c" because it is not a struct, union, map, json or geometry
+
+
+statement ok
 RESET search_path;
 
 
@@ -639,6 +653,20 @@ INSERT INTO public.tesp_m VALUES (-1);
 db error: ERROR: CHECK constraint failed on table "tesp_m" with expression CHECK(tesp_s.tesp_pos(c))
 
 
+statement ok
+CREATE TABLE public.tesp_mb (c INT CHECK (c.abs() > 0));
+
+
+statement ok
+INSERT INTO public.tesp_mb VALUES (-1);
+
+
+statement error
+INSERT INTO public.tesp_mb VALUES (0);
+----
+db error: ERROR: CHECK constraint failed on table "tesp_mb" with expression CHECK((c.abs() > 0))
+
+
 statement error
 ALTER TABLE tesp_s.tesp_mv SET SCHEMA public;
 ----
@@ -647,6 +675,27 @@ db error: ERROR: Cannot move table "tesp_mv" to schema "public": its expressions
 
 statement ok
 ALTER TABLE tesp_s.tesp_mv2 SET SCHEMA public;
+
+
+statement error
+ALTER TABLE tesp_s.tesp_mvg SET SCHEMA public;
+----
+db error: ERROR: Cannot move table "tesp_mvg" to schema "public": its expressions call function "tesp_pos", which would resolve to a different function there
+
+
+statement ok
+ALTER TABLE tesp_s.tesp_mvg2 SET SCHEMA public;
+
+
+statement ok
+INSERT INTO public.tesp_mvg2 (a) VALUES (-4);
+
+
+query
+SELECT a, g FROM public.tesp_mvg2;
+----
+a	g
+-4	4
 
 
 statement ok
@@ -707,6 +756,29 @@ def
 nextval('tesp_sq.tesp_seq1')
 nextval(CAST('tesp_sq.tesp_seq2' AS regclass))
 currval('tesp_sq.tesp_seq1')
+
+
+statement error
+CREATE TABLE public.tesp_nv0 (n BIGINT DEFAULT nextval());
+----
+db error: ERROR: No function matches the given name and argument types 'nextval()'. You might need to add explicit type casts.
+	Candidate functions:
+	nextval(sequence_name VARCHAR) -> BIGINT
+
+
+statement ok
+CREATE TABLE public.tesp_nvn (id INT, n BIGINT DEFAULT nextval(NULL));
+
+
+statement ok
+INSERT INTO public.tesp_nvn (id) VALUES (1);
+
+
+query
+SELECT id, n FROM public.tesp_nvn;
+----
+id	n
+1	NULL
 
 
 statement ok

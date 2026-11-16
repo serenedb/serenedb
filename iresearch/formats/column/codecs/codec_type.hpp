@@ -63,7 +63,6 @@ enum class CodecType : uint8_t {
 };
 
 }  // namespace irs::codecs
-
 namespace magic_enum {
 
 template<>
@@ -138,7 +137,6 @@ constexpr customize::customize_t customize::enum_name<irs::codecs::CodecType>(
 }
 
 }  // namespace magic_enum
-
 namespace irs::codecs {
 
 using CodecSet = std::bitset<magic_enum::enum_count<CodecType>()>;
@@ -189,10 +187,10 @@ constexpr CodecType CodecOf(Shape shape, ByteCodec leaf) noexcept {
 
 constexpr Shape ShapeOf(CodecType type) noexcept {
   const auto index = FormIndex(type);
-  return static_cast<Shape>(
-    index < kTextShapeForms
-      ? index / kByteCodecCount
-      : kTextShapeCount + (index - kTextShapeForms) / kNumericLeafCount);
+  return static_cast<Shape>(index < kTextShapeForms
+                              ? index / kByteCodecCount
+                              : kTextShapeCount + (index - kTextShapeForms) /
+                                                    kNumericLeafCount);
 }
 
 constexpr ByteCodec LeafOf(CodecType type) noexcept {

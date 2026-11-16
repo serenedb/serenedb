@@ -45,8 +45,9 @@ uint64_t StringWindow::Analyze(const Config& config) {
     if (!slot) {
       slot.emplace();
     }
-    const auto whole =
-      config.layout == FrameDictionary::Local ? Bytes(rows) : std::string_view{};
+    const auto whole = config.layout == FrameDictionary::Local
+                         ? Bytes(rows)
+                         : std::string_view{};
     return slot->EstimateSize(
       rows.profile, whole,
       Split(rows, blob::FrameShapeOf<Codec>(config.layout)), CodesSize(rows),

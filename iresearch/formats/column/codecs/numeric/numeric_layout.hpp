@@ -22,11 +22,11 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <string_view>
-#include <type_traits>
 #include <duckdb/common/helper.hpp>
 #include <duckdb/common/typedefs.hpp>
 #include <duckdb/common/types.hpp>
+#include <string_view>
+#include <type_traits>
 
 #include "iresearch/formats/column/codecs/codec_type.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"

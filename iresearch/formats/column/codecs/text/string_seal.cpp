@@ -65,10 +65,8 @@ void StringAccumulator::Add(const duckdb::Vector& input) {
 }
 
 const CompressionFunction kStringsFunction{
-  .analyze =
-    [](ColumnDataCheckpointData& data, double) {
-      return data.Get<text::Strings>().Analyze(data);
-    },
+  .analyze = [](ColumnDataCheckpointData& data,
+                double) { return data.Get<text::Strings>().Analyze(data); },
   .compress =
     [](ColumnDataCheckpointData& data) {
       return data.Get<text::Strings>().Compress(data);

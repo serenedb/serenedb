@@ -20,9 +20,8 @@
 
 #include "iresearch/formats/column/codecs/compression_function.hpp"
 
-#include <absl/cleanup/cleanup.h>
-
 #include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
 
 #include <algorithm>
 #include <cstring>

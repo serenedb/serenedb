@@ -109,8 +109,7 @@ class DeltaReader final : public FrameReader<T> {
 
  public:
   DeltaReader(duckdb::const_data_ptr_t base, const FrameHeader& frames,
-              CodecType codec,
-              const ReadContext::CacheSlot& slot = {})
+              CodecType codec, const ReadContext::CacheSlot& slot = {})
     : Base{base, frames, codec, slot},
       _own{duckdb::Load<DeltaHeader>(base + sizeof(FrameHeader))} {}
 

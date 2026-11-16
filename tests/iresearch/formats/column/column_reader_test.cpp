@@ -44,7 +44,6 @@
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/table_filter_state.hpp>
 #include <functional>
-#include <magic_enum/magic_enum.hpp>
 #include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/column/codecs/text/string_tuning.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
@@ -66,6 +65,7 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <latch>
 #include <limits>
+#include <magic_enum/magic_enum.hpp>
 #include <numeric>
 #include <random>
 #include <span>

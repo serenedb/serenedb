@@ -104,7 +104,8 @@ bool CompressAuto(ColumnDataCheckpointData& data) {
   absl::InlinedVector<const CompressionFunction*,
                       magic_enum::enum_count<CodecType>()>
     enabled;
-  for (const auto& [function, codecs] : CandidatesOf(data.type.InternalType())) {
+  for (const auto& [function, codecs] :
+       CandidatesOf(data.type.InternalType())) {
     if ((codecs & ~data.disabled).any()) {
       enabled.push_back(function);
     }

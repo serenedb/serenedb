@@ -24,7 +24,6 @@
 #include <atomic>
 #include <duckdb.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
-#include <magic_enum/magic_enum.hpp>
 #include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/ivf/centroids.hpp>
 #include <iresearch/index/directory_reader.hpp>
@@ -42,6 +41,7 @@
 #include <iresearch/search/scorers/vector_similarity_scorer.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <limits>
+#include <magic_enum/magic_enum.hpp>
 #include <map>
 
 #include "formats/column/test_cs_helpers.hpp"

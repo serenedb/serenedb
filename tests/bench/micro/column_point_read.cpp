@@ -28,7 +28,6 @@
 #include <cstdlib>
 #include <duckdb.hpp>
 #include <filesystem>
-#include <magic_enum/magic_enum.hpp>
 #include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
@@ -36,6 +35,7 @@
 #include <iresearch/formats/column/column_writer.hpp>
 #include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <magic_enum/magic_enum.hpp>
 #include <memory>
 #include <random>
 #include <string>

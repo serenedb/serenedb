@@ -38,7 +38,6 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
-#include <magic_enum/magic_enum.hpp>
 #include <iresearch/formats/column/codecs/dictionary_cache.hpp>
 #include <iresearch/formats/column/codecs/numeric/numeric_kernels.hpp>
 #include <iresearch/formats/column/codecs/numeric/numeric_layout.hpp>
@@ -54,6 +53,7 @@
 #include <iresearch/store/mmap_directory.hpp>
 #include <iterator>
 #include <limits>
+#include <magic_enum/magic_enum.hpp>
 #include <optional>
 #include <set>
 #include <span>

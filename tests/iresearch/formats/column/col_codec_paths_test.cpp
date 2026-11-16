@@ -38,7 +38,6 @@
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/table_filter_state.hpp>
 #include <functional>
-#include <magic_enum/magic_enum.hpp>
 #include <iresearch/formats/column/codecs/numeric/alp_primitives.hpp>
 #include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/column/codecs/text/string_scan.hpp>
@@ -50,6 +49,7 @@
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <limits>
+#include <magic_enum/magic_enum.hpp>
 #include <optional>
 #include <random>
 #include <string>
@@ -551,7 +551,8 @@ class ColCodecPathsTest : public TestBase {
       const auto segment = col.OpenSegment(window.block, ctx);
       if (segment->function.get_segment_info) {
         EXPECT_FALSE(segment->function.get_segment_info(*segment).empty())
-          << magic_enum::enum_name(block.codec->type) << " block at row " << row;
+          << magic_enum::enum_name(block.codec->type) << " block at row "
+          << row;
       }
       row += block.tuple_count;
     }
@@ -753,8 +754,8 @@ TEST_F(ColCodecPathsTest, NumericCodecsReadEveryTypeThroughEveryPath) {
     };
     const auto check = [&](CodecType codec, std::string_view shape,
                            const Gen& value, bool (*valid)(uint64_t) = All) {
-      Check({absl::StrCat(type.ToString(), " ", magic_enum::enum_name(codec), " ",
-                          shape),
+      Check({absl::StrCat(type.ToString(), " ", magic_enum::enum_name(codec),
+                          " ", shape),
              type, codec, valid, value});
     };
     const auto bits = [&](uint64_t offset) {

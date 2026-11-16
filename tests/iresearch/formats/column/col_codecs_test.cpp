@@ -54,7 +54,6 @@
 #include <iresearch/formats/column/codecs/compression_function.hpp>
 #include <iresearch/formats/column/codecs/dictionary_cache.hpp>
 #include <iresearch/formats/column/codecs/registry.hpp>
-#include <magic_enum/magic_enum.hpp>
 #include <iresearch/formats/column/codecs/text/fsst.hpp>
 #include <iresearch/formats/column/codecs/text/onpair.hpp>
 #include <iresearch/formats/column/codecs/text/string_layout.hpp>
@@ -74,6 +73,7 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
 #include <limits>
+#include <magic_enum/magic_enum.hpp>
 #include <memory>
 #include <optional>
 #include <random>
@@ -706,9 +706,9 @@ TEST_F(ColCodecsTest, EveryCodecEveryShapeEveryLevel) {
           if (target != 0 && level != 0) {
             continue;
           }
-          SCOPED_TRACE(std::string{magic_enum::enum_name(arm.codec)} + " level " +
-                       std::to_string(level) + " on " + name + " target " +
-                       std::to_string(target));
+          SCOPED_TRACE(std::string{magic_enum::enum_name(arm.codec)} +
+                       " level " + std::to_string(level) + " on " + name +
+                       " target " + std::to_string(target));
           irs::ColCodecParams params{.compression_level = level};
           if (target != 0) {
             params.segment_target = target;
@@ -1145,13 +1145,20 @@ TEST_F(ColCodecsTest, NamedCodecSealsEverySegment) {
     ByteCodec leaf;
   };
   const Choice choices[] = {
-    {Shape::Dictionary, ByteCodec::Fsst},     {Shape::Dictionary, ByteCodec::Lz4},
-    {Shape::Dictionary, ByteCodec::Zstd},     {Shape::Dictionary, ByteCodec::Zxc},
-    {Shape::Dictionary, ByteCodec::FsstPlus}, {Shape::Dictionary, ByteCodec::OnPair},
-    {Shape::Dictionary, ByteCodec::Fsst12},   {Shape::Plain, ByteCodec::Fsst},
-    {Shape::Plain, ByteCodec::Lz4},      {Shape::Plain, ByteCodec::Zstd},
-    {Shape::Plain, ByteCodec::Zxc},      {Shape::Plain, ByteCodec::FsstPlus},
-    {Shape::Plain, ByteCodec::OnPair},   {Shape::Plain, ByteCodec::Fsst12},
+    {Shape::Dictionary, ByteCodec::Fsst},
+    {Shape::Dictionary, ByteCodec::Lz4},
+    {Shape::Dictionary, ByteCodec::Zstd},
+    {Shape::Dictionary, ByteCodec::Zxc},
+    {Shape::Dictionary, ByteCodec::FsstPlus},
+    {Shape::Dictionary, ByteCodec::OnPair},
+    {Shape::Dictionary, ByteCodec::Fsst12},
+    {Shape::Plain, ByteCodec::Fsst},
+    {Shape::Plain, ByteCodec::Lz4},
+    {Shape::Plain, ByteCodec::Zstd},
+    {Shape::Plain, ByteCodec::Zxc},
+    {Shape::Plain, ByteCodec::FsstPlus},
+    {Shape::Plain, ByteCodec::OnPair},
+    {Shape::Plain, ByteCodec::Fsst12},
   };
   const auto chunks = Chunks(20000, kWordSoup);
   const auto write_chunks = WriteChunks(chunks);
@@ -1269,10 +1276,9 @@ TEST_F(ColCodecsTest, AutoLeavesDisabledTextCodecsOut) {
 
   const auto other = shape == Shape::Plain ? Shape::Dictionary : Shape::Plain;
   irs::codecs::ColumnTuning fresh;
-  const auto shaped =
-    seal(fresh,
-         without({irs::codecs::CodecOf(shape, irs::codecs::ByteCodec::Fsst),
-                  irs::codecs::CodecOf(shape, irs::codecs::ByteCodec::Lz4)}));
+  const auto shaped = seal(
+    fresh, without({irs::codecs::CodecOf(shape, irs::codecs::ByteCodec::Fsst),
+                    irs::codecs::CodecOf(shape, irs::codecs::ByteCodec::Lz4)}));
   ASSERT_EQ(shaped.size(), 1u);
   ASSERT_TRUE(irs::codecs::IsText(*shaped.begin()));
   EXPECT_EQ(irs::codecs::ShapeOf(*shaped.begin()), other);
@@ -1636,7 +1642,8 @@ TEST_F(ColCodecsTest, TransactionalCodecsLeaveTextToTheColumnstore) {
   for (const auto forced :
        {irs::codecs::CodecType::Rle, irs::codecs::CodecType::Bitpacking}) {
     for (const auto& corpus : corpora) {
-      SCOPED_TRACE(absl::StrCat(magic_enum::enum_name(forced), " ", corpus.name));
+      SCOPED_TRACE(
+        absl::StrCat(magic_enum::enum_name(forced), " ", corpus.name));
       irs::MemoryDirectory dir{};
       Write(dir, forced, {}, corpus.rows, 16384, *corpus.value);
       Verify(dir, irs::codecs::CodecType::Auto, corpus.rows, *corpus.value);
@@ -2327,7 +2334,8 @@ TEST_F(ColCodecsTest, MappedFileAlignedBlocks) {
       const auto* col = r.Column(kField);
       ASSERT_NE(col, nullptr);
       for (const auto& block : col->DataBlocks()) {
-        EXPECT_EQ(block.file_offset % 8, 0u) << magic_enum::enum_name(arm.codec);
+        EXPECT_EQ(block.file_offset % 8, 0u)
+          << magic_enum::enum_name(arm.codec);
       }
     }
     Verify(dir, arm.codec, 5000, *arm.value);
@@ -3013,7 +3021,8 @@ TEST_F(ColCodecsTest, CorruptedFsstPlusPrefixesAreRejected) {
     ASSERT_LE(offset + size, bytes.size());
     auto* block = reinterpret_cast<duckdb::data_ptr_t>(bytes.data() + offset);
     auto h = irs::codecs::Header::Parse(block, size, block_codec);
-    ASSERT_EQ(irs::codecs::LeafOf(block_codec), irs::codecs::ByteCodec::FsstPlus);
+    ASSERT_EQ(irs::codecs::LeafOf(block_codec),
+              irs::codecs::ByteCodec::FsstPlus);
     ASSERT_GT(duckdb::Load<uint32_t>(kPrefixes(h, block)), 0u);
     c.corrupt(h, block);
     duckdb::Store(h, block);
@@ -3499,7 +3508,8 @@ TEST_F(ColCodecsTest, CorruptedNumericCodesAreRejected) {
     ASSERT_LE(offset + size, bytes.size());
     auto* block = reinterpret_cast<duckdb::data_ptr_t>(bytes.data() + offset);
     const auto h = irs::codecs::Header::Parse(block, size, block_codec);
-    ASSERT_EQ(irs::codecs::ShapeOf(block_codec), irs::codecs::Shape::Dictionary);
+    ASSERT_EQ(irs::codecs::ShapeOf(block_codec),
+              irs::codecs::Shape::Dictionary);
     if (codes_codec) {
       auto corrupted = h;
       corrupted.codes = irs::codecs::CodecType::DictLz4;
@@ -3999,9 +4009,9 @@ TEST_F(ColCodecsTest, AutoFollowsAChangeBetweenRowGroups) {
   for (const auto& block : col->DataBlocks()) {
     ASSERT_TRUE(irs::codecs::IsText(block.codec->type))
       << magic_enum::enum_name(block.codec->type);
-    EXPECT_EQ(
-      irs::codecs::ShapeOf(block.codec->type),
-      row < kSteady ? irs::codecs::Shape::Dictionary : irs::codecs::Shape::Plain)
+    EXPECT_EQ(irs::codecs::ShapeOf(block.codec->type),
+              row < kSteady ? irs::codecs::Shape::Dictionary
+                            : irs::codecs::Shape::Plain)
       << "block at row " << row;
     row += block.tuple_count;
   }

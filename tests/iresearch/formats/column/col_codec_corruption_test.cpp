@@ -34,7 +34,6 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
-#include <magic_enum/magic_enum.hpp>
 #include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
@@ -45,6 +44,7 @@
 #include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
+#include <magic_enum/magic_enum.hpp>
 #include <set>
 #include <string>
 #include <vector>

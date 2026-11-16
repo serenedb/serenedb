@@ -27,7 +27,6 @@
 #include <duckdb.hpp>
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
-#include <magic_enum/magic_enum.hpp>
 #include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
@@ -35,6 +34,7 @@
 #include <iresearch/formats/column/read_context.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <magic_enum/magic_enum.hpp>
 #include <memory>
 #include <random>
 #include <string>

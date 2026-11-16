@@ -51,7 +51,8 @@ class DictionaryFrames final : public Frames<T> {
  public:
   static constexpr Shape kShape = Shape::Dictionary;
 
-  explicit DictionaryFrames(ColumnDataCheckpointData& data) : Base{data, kShape} {}
+  explicit DictionaryFrames(ColumnDataCheckpointData& data)
+    : Base{data, kShape} {}
 
  private:
   void Build(const NumericChoice* only) final {
@@ -171,13 +172,11 @@ class DictionaryReader final : public FrameReader<T> {
 
  public:
   DictionaryReader(duckdb::const_data_ptr_t base, const FrameHeader& frames,
-                   CodecType codec,
-                   const ReadContext::CacheSlot& slot = {})
+                   CodecType codec, const ReadContext::CacheSlot& slot = {})
     : Base{base, frames, codec, slot},
       _own{duckdb::Load<DictionaryHeader>(base + sizeof(FrameHeader))} {
     SDB_ENSURE(
-      _own.count != 0 &&
-        _own.count <= kNumericDictMax &&
+      _own.count != 0 && _own.count <= kNumericDictMax &&
         (this->Packed() || frames.stored <= kDictionaryCodeBytes<T>) &&
         uint64_t{frames.off_frames} +
             uint64_t{frames.frame_count} * kNumericFrameMetaSize <=

@@ -51,7 +51,6 @@ WriteChunk RefChunk(const duckdb::Vector& vec, duckdb::idx_t count);
 void SliceChunks(std::vector<WriteChunk>& out, const duckdb::Vector& vec,
                  duckdb::idx_t base, duckdb::idx_t count);
 
-
 struct ListRep {
   uint64_t offset;
   uint32_t chunk;

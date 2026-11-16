@@ -47,7 +47,6 @@
 #include <duckdb/storage/table/scan_state.hpp>
 #include <duckdb/transaction/duck_transaction.hpp>
 #include <filesystem>
-#include <magic_enum/magic_enum.hpp>
 #include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
@@ -58,6 +57,7 @@
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <magic_enum/magic_enum.hpp>
 #include <map>
 #include <memory>
 #include <random>

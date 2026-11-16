@@ -21,7 +21,6 @@
 #include <duckdb.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
-#include <magic_enum/magic_enum.hpp>
 #include <iresearch/formats/column/codecs/compression_function.hpp>
 #include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/column/codecs/tuning.hpp>
@@ -29,6 +28,7 @@
 #include <iresearch/formats/column/list_ingest.hpp>
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/store/memory_directory.hpp>
+#include <magic_enum/magic_enum.hpp>
 #include <span>
 #include <vector>
 

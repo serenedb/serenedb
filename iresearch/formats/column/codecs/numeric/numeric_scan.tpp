@@ -47,7 +47,8 @@ namespace irs::codecs::numeric {
 using duckdb::const_data_ptr_t;
 using duckdb::idx_t;
 
-inline FrameHeader SegmentFrames(const_data_ptr_t base, const ColumnSegment& segment) {
+inline FrameHeader SegmentFrames(const_data_ptr_t base,
+                                 const ColumnSegment& segment) {
   const auto frames = ParseFrames(base, segment.size, segment.codec);
   SDB_ENSURE(frames.row_count == segment.count,
              "numeric codec: row count mismatch");

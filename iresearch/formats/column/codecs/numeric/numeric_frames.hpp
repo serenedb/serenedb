@@ -286,8 +286,7 @@ class Frames : public State {
     auto best_price = bound * rows;
     bool improved = false;
     for (const auto& c : _candidates) {
-      if (option.leaf == ByteCodec::None ? c.shuffled
-                                           : c.packed) {
+      if (option.leaf == ByteCodec::None ? c.shuffled : c.packed) {
         continue;
       }
       const auto bytes = EstimateBytes(c, option, best_price);
@@ -345,8 +344,9 @@ class Frames : public State {
     _out.clear();
     Write(*_best, _leaf, samples, _out);
     const bool held = data.method == CodecType::Auto && !samples;
-    const auto ratio = static_cast<double>(_out.size()) /
-                       std::max(static_cast<double>(PackedBound(data)) / 8, 1.0);
+    const auto ratio =
+      static_cast<double>(_out.size()) /
+      std::max(static_cast<double>(PackedBound(data)) / 8, 1.0);
     if (held &&
         ((_leaf.leaf == ByteCodec::None && choice.bound_ratio != 0 &&
           ratio > choice.bound_ratio * kDrift) ||
@@ -441,11 +441,10 @@ class Frames : public State {
   Geometry GeometryOf(const Candidate& c,
                       const LeafOption& option) const noexcept {
     uint8_t log2 = kFforFrameLog2;
-    uint32_t per =
-      _shape == Shape::Runs ? kRleFforFrameRuns : kFforFrameRows;
+    uint32_t per = _shape == Shape::Runs ? kRleFforFrameRuns : kFforFrameRows;
     if (!c.packed) {
       log2 = option.leaf == ByteCodec::None ? kNumericFrameLog2
-                                              : kNumericLeafFrameLog2;
+                                            : kNumericLeafFrameLog2;
       per = (uint32_t{1} << log2) / c.ItemBytes();
     }
     const uint32_t frames = (c.items + per - 1) / per;
@@ -492,8 +491,8 @@ class Frames : public State {
     uint64_t best_bytes = 0;
     for (const auto& c : _candidates) {
       const auto bytes = uint64_t{c.items} * c.ItemBytes();
-      if (!c.packed &&
-          (!best || bytes < best_bytes || (bytes == best_bytes && c.shuffled))) {
+      if (!c.packed && (!best || bytes < best_bytes ||
+                        (bytes == best_bytes && c.shuffled))) {
         best = &c;
         best_bytes = bytes;
       }
@@ -602,9 +601,8 @@ class Frames : public State {
     h.width = kWidth;
     h.stored = c.stored;
     h.level = option.leaf == ByteCodec::None ? uint8_t{0} : _leaves.Level();
-    h.flags =
-      static_cast<uint8_t>((c.shuffled ? kNumericShuffled : 0) |
-                           (c.packed ? kNumericPacked : 0));
+    h.flags = static_cast<uint8_t>((c.shuffled ? kNumericShuffled : 0) |
+                                   (c.packed ? kNumericPacked : 0));
     h.frame_log2 = log2;
     h.row_count = static_cast<uint32_t>(values.size());
     h.frame_count = frames;
@@ -617,8 +615,7 @@ class Frames : public State {
     const bool direct = option.leaf == ByteCodec::None;
     SDB_ASSERT(!direct || !c.shuffled);
     if (direct) {
-      out.reserve(h.off_data +
-                  (c.packed ? PackedBlocks(c) : h.raw_bytes));
+      out.reserve(h.off_data + (c.packed ? PackedBlocks(c) : h.raw_bytes));
     }
     out.resize(h.off_data);
     if (!c.dict.empty()) {

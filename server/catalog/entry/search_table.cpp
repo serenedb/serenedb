@@ -65,11 +65,11 @@
 #include <duckdb/storage/storage_info.hpp>
 #include <duckdb/storage/table/row_group_collection.hpp>
 #include <iresearch/formats/column/codecs/registry.hpp>
-#include <iresearch/utils/enum_name.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/read_context.hpp>
 #include <iresearch/index/directory_reader.hpp>
+#include <iresearch/utils/enum_name.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/type_limits.hpp>
@@ -380,8 +380,8 @@ irs::codecs::CodecType CheckColumnCodec(
       !leaves.empty() && absl::c_all_of(leaves, compresses)) {
     return codec;
   }
-  ThrowCodecMismatch(column_name, magic_enum::enum_name(codec),
-                     column_type, physical);
+  ThrowCodecMismatch(column_name, magic_enum::enum_name(codec), column_type,
+                     physical);
 }
 
 SearchTableEntry::SearchTableEntry(
@@ -496,9 +496,8 @@ void AppendIResearchBlockRows(
     info.segment_type = type_name;
     info.segment_start = row_base + node.DataBlockFirstRow(block);
     info.segment_count = meta.tuple_count;
-    info.compression_type =
-      std::string{magic_enum::enum_name(
-        meta.codec ? meta.codec->type : irs::codecs::CodecType::Uncompressed)};
+    info.compression_type = std::string{magic_enum::enum_name(
+      meta.codec ? meta.codec->type : irs::codecs::CodecType::Uncompressed)};
     info.segment_stats = meta.statistics.ToStruct();
     info.has_updates = false;
     info.persistent = true;

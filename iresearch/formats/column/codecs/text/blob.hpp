@@ -226,7 +226,8 @@ class SizeEstimator {
         });
       data += Scale(sampled, sampled_raw, p.raw - spans[0].raw);
     }
-    const auto entry_count = p.codes.size() + (p.shape == Shape::Dictionary ? 1 : 0);
+    const auto entry_count =
+      p.codes.size() + (p.shape == Shape::Dictionary ? 1 : 0);
     Header h;
     return LayOut(h, data, spans.size(), Packed(entry_count, p.max_len), 0,
                   codes_bytes, 0);

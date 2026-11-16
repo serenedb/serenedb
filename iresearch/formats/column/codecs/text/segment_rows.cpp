@@ -18,8 +18,6 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/formats/column/codecs/compression_function.hpp"
-#include "iresearch/formats/column/codecs/tuning.hpp"
 #include "iresearch/formats/column/codecs/text/segment_rows.hpp"
 
 #include <absl/algorithm/container.h>
@@ -31,6 +29,8 @@
 #include <duckdb/common/helper.hpp>
 #include <limits>
 
+#include "iresearch/formats/column/codecs/compression_function.hpp"
+#include "iresearch/formats/column/codecs/tuning.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::codecs::text {
@@ -173,49 +173,49 @@ void SegmentRows::Write(const EncodedFrames& frames, Segment& out) {
              "col codec: segment too large");
 
   const auto assemble = [&](CodecType codes_codec, std::string_view codes) {
-  Header h{
-    .codes = codes_codec,
-    .level = _level,
-    .length_width =
-      BitpackingPrimitives::MinimumBitWidth<uint32_t>(frames.max_length),
-    .row_count = static_cast<uint32_t>(_rows),
-    .entry_count = static_cast<uint32_t>(entry_count),
-    .frame_count = static_cast<uint32_t>(frames.frames.size()),
-    .dictionary_size = frames.dictionary_size,
-    .symtab_size = static_cast<uint32_t>(frames.symtab.size()),
-    .data_size = static_cast<uint32_t>(data_size),
-    .lcp_width =
-      BitpackingPrimitives::MinimumBitWidth<uint32_t>(frames.max_lcp),
-    .flags = frames.flags,
-    .raw_bytes = _raw,
-  };
-  const auto total =
-    LayOut(h, data_size, frames.frames.size(),
-           BitpackingPrimitives::GetRequiredSize(entry_count, h.length_width),
-           BitpackingPrimitives::GetRequiredSize(entry_count, h.lcp_width),
-           codes.size(), frames.symtab.size());
+    Header h{
+      .codes = codes_codec,
+      .level = _level,
+      .length_width =
+        BitpackingPrimitives::MinimumBitWidth<uint32_t>(frames.max_length),
+      .row_count = static_cast<uint32_t>(_rows),
+      .entry_count = static_cast<uint32_t>(entry_count),
+      .frame_count = static_cast<uint32_t>(frames.frames.size()),
+      .dictionary_size = frames.dictionary_size,
+      .symtab_size = static_cast<uint32_t>(frames.symtab.size()),
+      .data_size = static_cast<uint32_t>(data_size),
+      .lcp_width =
+        BitpackingPrimitives::MinimumBitWidth<uint32_t>(frames.max_lcp),
+      .flags = frames.flags,
+      .raw_bytes = _raw,
+    };
+    const auto total =
+      LayOut(h, data_size, frames.frames.size(),
+             BitpackingPrimitives::GetRequiredSize(entry_count, h.length_width),
+             BitpackingPrimitives::GetRequiredSize(entry_count, h.lcp_width),
+             codes.size(), frames.symtab.size());
 
-  out.bytes.Extend(total - data_size);
-  auto* base = reinterpret_cast<duckdb::data_ptr_t>(out.bytes.Data());
-  std::memmove(base + h.off_data, base, data_size);
-  std::memset(base, 0, h.off_data);
-  duckdb::Store(h, base);
-  for (size_t i = 0; i < frames.frames.size(); ++i) {
-    duckdb::Store(frames.frames[i], base + h.off_frames + i * kFrameMetaSize);
-  }
-  BitpackingPrimitives::PackBuffer<uint32_t, true>(
-    base + h.off_lengths, _lengths.data(), _lengths.size(), h.length_width);
-  if (!frames.lcps.empty()) {
+    out.bytes.Extend(total - data_size);
+    auto* base = reinterpret_cast<duckdb::data_ptr_t>(out.bytes.Data());
+    std::memmove(base + h.off_data, base, data_size);
+    std::memset(base, 0, h.off_data);
+    duckdb::Store(h, base);
+    for (size_t i = 0; i < frames.frames.size(); ++i) {
+      duckdb::Store(frames.frames[i], base + h.off_frames + i * kFrameMetaSize);
+    }
     BitpackingPrimitives::PackBuffer<uint32_t, true>(
-      base + h.off_lcps, frames.lcps.data(), frames.lcps.size(), h.lcp_width);
-  }
-  if (!codes.empty()) {
-    std::memcpy(base + h.off_codes, codes.data(), codes.size());
-  }
-  if (!frames.symtab.empty()) {
-    std::memcpy(base + h.off_symtab, frames.symtab.data(),
-                frames.symtab.size());
-  }
+      base + h.off_lengths, _lengths.data(), _lengths.size(), h.length_width);
+    if (!frames.lcps.empty()) {
+      BitpackingPrimitives::PackBuffer<uint32_t, true>(
+        base + h.off_lcps, frames.lcps.data(), frames.lcps.size(), h.lcp_width);
+    }
+    if (!codes.empty()) {
+      std::memcpy(base + h.off_codes, codes.data(), codes.size());
+    }
+    if (!frames.symtab.empty()) {
+      std::memcpy(base + h.off_symtab, frames.symtab.data(),
+                  frames.symtab.size());
+    }
   };
   if (_shape == Shape::Dictionary) {
     CompressCodes(_codes, _codes_tuning, assemble);

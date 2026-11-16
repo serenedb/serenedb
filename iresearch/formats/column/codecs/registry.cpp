@@ -99,7 +99,8 @@ const Codec* GetCodec(CodecType type, PhysicalType physical) {
     case CodecType::DictZxc:
       return FamilyCodec<CodecType::DictZxc, &kDictZxcFunction>(physical);
     case CodecType::DictFsstPlus:
-      return FamilyCodec<CodecType::DictFsstPlus, &kDictFsstPlusFunction>(physical);
+      return FamilyCodec<CodecType::DictFsstPlus, &kDictFsstPlusFunction>(
+        physical);
     case CodecType::DictOnpair:
       return FamilyCodec<CodecType::DictOnpair, &kDictOnPairFunction>(physical);
     case CodecType::DictFsst12:

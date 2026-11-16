@@ -211,7 +211,7 @@ uint64_t PlainStorageBytes(const Segment& seg) noexcept {
 }
 
 Config NamedConfig(Shape shape, ByteCodec leaf,
-                         const ColCodecParams& params) noexcept {
+                   const ColCodecParams& params) noexcept {
   return {
     .shape = shape,
     .leaf = leaf,

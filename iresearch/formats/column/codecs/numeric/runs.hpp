@@ -141,13 +141,12 @@ class RunReader final : public FrameReader<T> {
 
  public:
   RunReader(duckdb::const_data_ptr_t base, const FrameHeader& frames,
-            CodecType codec,
-            const ReadContext::CacheSlot& slot = {})
+            CodecType codec, const ReadContext::CacheSlot& slot = {})
     : Base{base, frames, codec, slot},
       _own{duckdb::Load<RunsHeader>(base + sizeof(FrameHeader))} {
     SDB_ENSURE((this->Packed() ? _own.base == 0
-                                 : NumericWidth(_own.run_width) &&
-                                     _own.run_width <= sizeof(uint32_t)),
+                               : NumericWidth(_own.run_width) &&
+                                   _own.run_width <= sizeof(uint32_t)),
                "numeric codec: corrupted segment header");
   }
 

@@ -107,8 +107,7 @@ class PlainReader final : public FrameReader<T> {
 
  public:
   PlainReader(duckdb::const_data_ptr_t base, const FrameHeader& frames,
-              CodecType codec,
-              const ReadContext::CacheSlot& slot = {})
+              CodecType codec, const ReadContext::CacheSlot& slot = {})
     : Base{base, frames, codec, slot},
       _own{duckdb::Load<PlainHeader>(base + sizeof(FrameHeader))} {
     SDB_ENSURE(For() || _own.base == 0,

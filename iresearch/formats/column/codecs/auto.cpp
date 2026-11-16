@@ -40,13 +40,33 @@ namespace {
 using duckdb::PhysicalType;
 
 constexpr CodecType kOrder[] = {
-  CodecType::Uncompressed, CodecType::Rle,       CodecType::Bitpacking,
-  CodecType::Alp,          CodecType::Alprd,     CodecType::Roaring,
-  CodecType::Ffor,         CodecType::DeltaFfor, CodecType::RleFfor,
-  CodecType::DictFfor,     CodecType::Lz4,       CodecType::DeltaLz4,
-  CodecType::RleLz4,       CodecType::DictLz4,   CodecType::Zstd,
-  CodecType::DeltaZstd,    CodecType::RleZstd,   CodecType::DictZstd,
+  CodecType::Uncompressed, CodecType::Rle,          CodecType::Bitpacking,
+  CodecType::Alp,          CodecType::Alprd,        CodecType::Roaring,
+  CodecType::Ffor,         CodecType::DeltaFfor,    CodecType::RleFfor,
+  CodecType::DictFfor,     CodecType::Lz4,          CodecType::DeltaLz4,
+  CodecType::RleLz4,       CodecType::DictLz4,      CodecType::Zstd,
+  CodecType::DeltaZstd,    CodecType::RleZstd,      CodecType::DictZstd,
+  CodecType::Fsst,         CodecType::Zxc,          CodecType::FsstPlus,
+  CodecType::Onpair,       CodecType::Fsst12,       CodecType::DictFsst,
+  CodecType::DictZxc,      CodecType::DictFsstPlus, CodecType::DictOnpair,
+  CodecType::DictFsst12,
 };
+
+static_assert([] {
+  std::array<int, magic_enum::enum_count<CodecType>()> listed{};
+  for (const auto type : kOrder) {
+    ++listed[std::to_underlying(type)];
+  }
+  for (const auto type : magic_enum::enum_values<CodecType>()) {
+    const bool contested = type != CodecType::Auto &&
+                           type != CodecType::Constant &&
+                           type != CodecType::Empty;
+    if (listed[std::to_underlying(type)] != (contested ? 1 : 0)) {
+      return false;
+    }
+  }
+  return true;
+}());
 
 struct Candidate {
   const CompressionFunction* function;
@@ -60,7 +80,7 @@ const std::vector<Candidate>& CandidatesOf(PhysicalType physical) {
       auto& list = all[index];
       const auto add = [&](CodecType type) {
         const auto* codec = GetCodec(type, static_cast<PhysicalType>(index));
-        if (type == CodecType::Auto || !codec || !codec->compression) {
+        if (!codec || !codec->compression) {
           return;
         }
         auto it = absl::c_find_if(list, [&](const Candidate& candidate) {
@@ -72,9 +92,6 @@ const std::vector<Candidate>& CandidatesOf(PhysicalType physical) {
         it->codecs.set(std::to_underlying(type));
       };
       for (const auto type : kOrder) {
-        add(type);
-      }
-      for (const auto type : magic_enum::enum_values<CodecType>()) {
         add(type);
       }
     }
@@ -153,8 +170,7 @@ void Contest(std::span<const CompressionFunction* const> functions,
   if (bytes == 0) {
     return;
   }
-  reuse.Settle(best.codec, reuse.pick == best.codec, static_cast<double>(bytes),
-               input);
+  reuse.Settle(best.codec, static_cast<double>(bytes), input);
 }
 
 const Codec* AutoCodec(PhysicalType) { return &kAutoCodec; }

@@ -54,8 +54,8 @@ struct ReusePolicy {
     return bytes / input > reference * kDrift;
   }
 
-  void Settle(CodecType next, bool kept, double bytes, double input) noexcept {
-    gap = kept ? std::min(gap * 2, kMaxGap) : 1;
+  void Settle(CodecType next, double bytes, double input) noexcept {
+    gap = pick == next ? std::min(gap * 2, kMaxGap) : 1;
     since = 0;
     calibrated = true;
     pick = next;

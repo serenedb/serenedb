@@ -726,8 +726,9 @@ void PgFormatFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
     }
     const std::vector<FormatPiece>* pieces = constant;
     if (!pieces) {
-      auto fmt_str = duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(
-        vdata[0])[fmt_idx];
+      const auto& fmt_str =
+        duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(
+          vdata[0])[fmt_idx];
       parsed = ParseFormat(
         std::string_view{fmt_str.GetData(), fmt_str.GetSize()}, ncols);
       pieces = &parsed;

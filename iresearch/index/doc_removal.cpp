@@ -102,7 +102,8 @@ void DocRemovalBuilder::AddRange(uint32_t index, doc_id_t first,
   Group(index).AddRange(first, last);
 }
 
-DocRemovalBuilder DocRemovalBuilder::Union(std::span<DocRemovalBuilder> parts) {
+DocRemovalBuilder DocRemovalBuilder::Union(std::span<DocRemovalBuilder> parts,
+                                           ParallelFor parallel) {
   absl::btree_map<uint32_t, std::vector<DocumentMaskBuilder>> indexed;
   for (auto& part : parts) {
     for (auto& [index, docs] : part._groups) {
@@ -111,12 +112,19 @@ DocRemovalBuilder DocRemovalBuilder::Union(std::span<DocRemovalBuilder> parts) {
     part._groups = {};
     part._last = 0;
   }
-  DocRemovalBuilder out;
-  out._groups.reserve(indexed.size());
+  std::vector<uint32_t> indexes;
+  std::vector<std::vector<DocumentMaskBuilder>> groups;
+  indexes.reserve(indexed.size());
+  groups.reserve(indexed.size());
   for (auto& [index, docs] : indexed) {
-    out._groups.emplace_back(index, docs.size() == 1
-                                      ? std::move(docs.front())
-                                      : DocumentMaskBuilder::Union(docs));
+    indexes.push_back(index);
+    groups.push_back(std::move(docs));
+  }
+  auto united = DocumentMaskBuilder::Union(groups, parallel);
+  DocRemovalBuilder out;
+  out._groups.reserve(indexes.size());
+  for (size_t i = 0; i != indexes.size(); ++i) {
+    out._groups.emplace_back(indexes[i], std::move(united[i]));
   }
   return out;
 }

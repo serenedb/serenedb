@@ -209,7 +209,9 @@ class DocumentMaskBuilder final {
   void AddShifted(const DocumentMaskBuilder& other, doc_id_t offset);
   void Merge(const DocumentMaskBuilder& other);
   void Merge(const DocumentMask& published);
-  static DocumentMaskBuilder Union(std::span<DocumentMaskBuilder> parts);
+  static std::vector<DocumentMaskBuilder> Union(
+    std::span<std::vector<DocumentMaskBuilder>> groups,
+    ParallelFor parallel = SerialFor);
   void Subtract(const DocumentMask& mask);
 
   using Bitset = roaring::internal::bitset_container_t;

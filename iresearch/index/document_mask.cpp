@@ -603,47 +603,79 @@ void DocumentMaskBuilder::Merge(const DocumentMask& published) {
   roaring::api::roaring_bitmap_or_inplace(&_set, &published._set);
 }
 
-DocumentMaskBuilder DocumentMaskBuilder::Union(
-  std::span<DocumentMaskBuilder> parts) {
+std::vector<DocumentMaskBuilder> DocumentMaskBuilder::Union(
+  std::span<std::vector<DocumentMaskBuilder>> groups, ParallelFor parallel) {
   struct Entry {
     uint16_t key = 0;
     uint8_t type = 0;
     container_t* container = nullptr;
   };
-  size_t total = 0;
-  for (const auto& part : parts) {
-    total += static_cast<size_t>(part._set.high_low_container.size);
-  }
-  std::vector<Entry> entries;
-  entries.reserve(total);
-  for (auto& part : parts) {
-    auto& ra = part._set.high_low_container;
-    for (int32_t i = 0; i != ra.size; ++i) {
-      entries.push_back({.key = ra.keys[i],
-                         .type = ra.typecodes[i],
-                         .container = ra.containers[i]});
+  struct Run {
+    size_t group = 0;
+    size_t begin = 0;
+    size_t end = 0;
+  };
+  std::vector<DocumentMaskBuilder> out(groups.size());
+  std::vector<std::vector<Entry>> entries(groups.size());
+  std::vector<Run> runs;
+  for (size_t g = 0; g != groups.size(); ++g) {
+    auto& parts = groups[g];
+    if (parts.size() == 1) {
+      out[g] = std::move(parts.front());
+      continue;
     }
-    roaring::internal::ra_clear_without_containers(&ra);
-  }
-  absl::c_sort(entries, [](const Entry& lhs, const Entry& rhs) {
-    return lhs.key < rhs.key;
-  });
-  DocumentMaskBuilder out;
-  auto& ra = out._set.high_low_container;
-  for (size_t i = 0; i != entries.size();) {
-    auto [key, type, container] = entries[i];
-    for (++i; i != entries.size() && entries[i].key == key; ++i) {
-      uint8_t merged_type = 0;
-      auto* merged = roaring::internal::container_ior(
-        container, type, entries[i].container, entries[i].type, &merged_type);
-      if (merged != container) {
-        roaring::internal::container_free(container, type);
+    auto& list = entries[g];
+    size_t total = 0;
+    for (const auto& part : parts) {
+      total += static_cast<size_t>(part._set.high_low_container.size);
+    }
+    list.reserve(total);
+    for (auto& part : parts) {
+      auto& ra = part._set.high_low_container;
+      for (int32_t i = 0; i != ra.size; ++i) {
+        list.push_back({.key = ra.keys[i],
+                        .type = ra.typecodes[i],
+                        .container = ra.containers[i]});
       }
-      roaring::internal::container_free(entries[i].container, entries[i].type);
-      container = merged;
-      type = merged_type;
+      roaring::internal::ra_clear_without_containers(&ra);
     }
-    roaring::internal::ra_append(&ra, key, container, type);
+    absl::c_sort(list, [](const Entry& lhs, const Entry& rhs) {
+      return lhs.key < rhs.key;
+    });
+    for (size_t i = 0; i != list.size();) {
+      auto j = i + 1;
+      while (j != list.size() && list[j].key == list[i].key) {
+        ++j;
+      }
+      runs.push_back({.group = g, .begin = i, .end = j});
+      i = j;
+    }
+  }
+  constexpr size_t kRunsPerTask = 64;
+  parallel((runs.size() + kRunsPerTask - 1) / kRunsPerTask, [&](size_t task) {
+    const auto first = task * kRunsPerTask;
+    const auto last = std::min(runs.size(), first + kRunsPerTask);
+    for (const auto& run : std::span{runs}.subspan(first, last - first)) {
+      auto& list = entries[run.group];
+      auto& head = list[run.begin];
+      for (auto k = run.begin + 1; k != run.end; ++k) {
+        uint8_t merged_type = 0;
+        auto* merged = roaring::internal::container_ior(
+          head.container, head.type, list[k].container, list[k].type,
+          &merged_type);
+        if (merged != head.container) {
+          roaring::internal::container_free(head.container, head.type);
+        }
+        roaring::internal::container_free(list[k].container, list[k].type);
+        head.container = merged;
+        head.type = merged_type;
+      }
+    }
+  });
+  for (const auto& run : runs) {
+    const auto& head = entries[run.group][run.begin];
+    roaring::internal::ra_append(&out[run.group]._set.high_low_container,
+                                 head.key, head.container, head.type);
   }
   return out;
 }

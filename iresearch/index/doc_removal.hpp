@@ -61,7 +61,8 @@ class DocRemovalBuilder {
   void Add(uint32_t index, doc_id_t doc);
   void AddRange(uint32_t index, doc_id_t first, doc_id_t last);
   DocumentMaskBuilder& Group(uint32_t index);
-  static DocRemovalBuilder Union(std::span<DocRemovalBuilder> parts);
+  static DocRemovalBuilder Union(std::span<DocRemovalBuilder> parts,
+                                 ParallelFor parallel = SerialFor);
 
   bool Empty() const noexcept {
     return absl::c_all_of(

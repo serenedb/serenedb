@@ -2146,6 +2146,43 @@ def test_copy_csv_keeps_eod_marker_as_data(conn):
         conn.run_ok("drop table if exists smoke_csv_eod")
 
 
+def test_copy_text_eod_marker_across_frames(conn):
+    marker_alone = "end-of-copy marker is not alone on its line"
+    cases = [
+        ([b"1\tone\n\\", b".\n"], (1, 1), None),
+        ([b"1\tone\r\n\\.", b"\r\n"], (1, 1), None),
+        ([b"1\tone\r\n\\.\r", b"\n"], (1, 1), None),
+        ([b"1\tone\n\\", b".", b"\n"], (1, 1), None),
+        ([b"1\tone\n\\."], (1, 1), None),
+        ([b"1\tone\n\\.\n", b"2\ttwo\n"], (1, 1), None),
+        ([b"1\tone\n\\", b"N\ttwo\n"], (2, 1), None),
+        ([b"\\N\tone\n"], (1, 0), None),
+        ([b"1\tone\n\\.x\n"], None, marker_alone),
+        ([b"1\tone\n\\.\rx\n"], None, marker_alone),
+        ([b"1\ta\\.b\n"], None, marker_alone),
+    ]
+    conn.run_ok("drop table if exists smoke_copy_eod_frames")
+    assert "E" not in types(conn.run("create table smoke_copy_eod_frames(a int, b text)"))
+    try:
+        for frames, counts, error in cases:
+            conn.run_ok("delete from smoke_copy_eod_frames")
+            conn.send("Q", _cstr("copy smoke_copy_eod_frames from stdin"))
+            assert conn.read_msg()[0] == "G", frames
+            for frame in frames:
+                conn.send("d", frame)
+            conn.send("c")
+            m = conn.drain_to_ready()
+            if error:
+                assert [e.get("M") for e in errors(m)] == [error], (frames, errors(m))
+                continue
+            assert tags(m) == [f"COPY {counts[0]}\x00".encode()], (frames, errors(m))
+            m = conn.run("select count(*), count(a), min(b) from smoke_copy_eod_frames")
+            assert all_fields(m) == [str(counts[0]).encode(), str(counts[1]).encode(),
+                                     b"one"], (frames, all_fields(m))
+    finally:
+        conn.run_ok("drop table if exists smoke_copy_eod_frames")
+
+
 def test_copy_binary_data_after_eof_marker_rejected(conn):
     # PG requires CopyDone to follow the PGCOPY -1 trailer immediately; any bytes
     # between the trailer and CopyDone are rejected with 22P04. Regression:
@@ -2987,11 +3024,12 @@ def test_copy_binary_rejects_format_options(conn):
     conn.run_ok("drop table if exists smoke_copy_binopt")
     assert "E" not in types(conn.run("create table smoke_copy_binopt(x int)"))
     try:
-        for opt in ("delimiter ','", "header", "null 'x'", "quote '\"'"):
+        for opt, sqlstate in (("delimiter ','", "42601"), ("header", "0A000"),
+                              ("null 'x'", "42601"), ("quote '\"'", "0A000")):
             conn.send("Q", _cstr(f"COPY smoke_copy_binopt TO STDOUT (FORMAT binary, {opt})"))
             m = conn.drain_to_ready()
             assert "H" not in types(m), (opt, types(m))  # no CopyOutResponse
-            assert sqlstates(m) == ["0A000"], (opt, sqlstates(m))
+            assert sqlstates(m) == [sqlstate], (opt, sqlstates(m))
     finally:
         conn.run_ok("drop table if exists smoke_copy_binopt")
 
@@ -3827,4 +3865,65 @@ def test_like_and_similar_to_escape_errors(conn, query, sqlstate, message, hint)
     m = conn.run(query)
     assert [(e["C"], e["M"], e.get("H")) for e in errors(m)] == [
         (sqlstate, message, hint)
+    ]
+
+
+@pytest.mark.parametrize(
+    "query, message",
+    [
+        ("SELECT 'abc' ~ '('", "missing ): ("),
+        ("SELECT 'abc' ~ p FROM (VALUES ('(')) AS t(p)", "missing ): ("),
+        ("SELECT regexp_replace('abc', '(', 'x')", "missing ): ("),
+        ("SELECT regexp_split_to_array('abc', '(')", "missing ): ("),
+        ("SELECT substring('abc' from '(')", "missing ): ("),
+        ("SELECT 'abc' SIMILAR TO '('", "missing ): ^(?:(?:)$"),
+        ("SELECT regexp_match('abc', '(')", "missing ): ("),
+        ("SELECT COLUMNS('(') FROM (VALUES (1)) AS t(a)", "missing ): ("),
+    ],
+)
+def test_invalid_regular_expression(conn, query, message):
+    m = conn.run(query)
+    assert [(e["C"], e["M"]) for e in errors(m)] == [
+        ("2201B", "invalid regular expression: " + message)
+    ]
+
+
+@pytest.mark.parametrize(
+    "definition, sqlstate",
+    [
+        ("split_by_pattern('(')", "2201B"),
+        ("split_by_pattern('')", "22023"),
+        ("split_by_pattern('a', group := 2)", "22023"),
+        ("remove_stopwords(stopwords_path := '/nonexistent/drv_stopwords')", "F0000"),
+        ("classify_text(model_location := '/nonexistent/drv_model.bin')", "F0000"),
+        ("split_text_csv(',') | lambda x: x || random()::text", "42P17"),
+        ("split_text_csv(',') | lambda x: x || (SELECT 'a')", "0A000"),
+        ("split_text_csv(',') | lambda x: no_such_fn(x)", "42P17"),
+        ("split_text_csv(',') | lambda x: upper(x) || y", "42703"),
+        ("split_text_csv(',') | lambda x: x::int", "42804"),
+    ],
+)
+def test_text_search_dictionary_errors(conn, definition, sqlstate):
+    m = conn.run(f"CREATE TEXT SEARCH DICTIONARY drv_bad_dictionary AS {definition}")
+    assert [e["C"] for e in errors(m)] == [sqlstate]
+
+
+def test_on_conflict_target_without_unique_key(conn):
+    assert not errors(conn.run("DROP TABLE IF EXISTS drv_on_conflict"))
+    assert not errors(
+        conn.run("CREATE TABLE drv_on_conflict (id INT PRIMARY KEY, x INT)")
+    )
+    m = conn.run("INSERT INTO drv_on_conflict VALUES (1, 1) ON CONFLICT (x) DO NOTHING")
+    assert [e["C"] for e in errors(m)] == ["42P10"]
+    assert not errors(conn.run("DROP TABLE drv_on_conflict"))
+
+
+def test_string_over_the_size_limit(conn):
+    m = conn.run(
+        "SELECT length(concat(r, r, r, r, r)) "
+        "FROM (SELECT repeat('x', 1073741824) AS r) AS t"
+    )
+    assert [(e["C"], e["M"]) for e in errors(m)] == [
+        ("54000", "Cannot create a string of size: '5368709120', the maximum "
+                  "supported string size is: '4294967295'")
     ]

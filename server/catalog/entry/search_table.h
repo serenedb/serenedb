@@ -185,6 +185,9 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry {
     const duckdb::Identifier& name) const final;
   bool DropTrigger(duckdb::CatalogTransaction transaction,
                    const duckdb::Identifier& name, bool cascade) final;
+  void ReplaceTrigger(duckdb::CatalogTransaction transaction,
+                      duckdb::CreateTriggerInfo& info);
+  void MoveTriggers(duckdb::CatalogTransaction transaction);
   duckdb::vector<std::reference_wrapper<duckdb::TableCatalogEntry>>
   ReferencingTables(duckdb::ClientContext& context) final;
 
@@ -195,6 +198,7 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry {
   }
   search::TableRead RowsWithOwn(duckdb::ClientContext& context) const;
   void AdoptAsWritten(duckdb::ClientContext& context) const;
+  bool PatchesColumns(std::span<const duckdb::PhysicalIndex> columns) const;
 
  private:
   duckdb::unique_ptr<duckdb::CreateTableInfo> Definition() const;
@@ -242,7 +246,6 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry {
     duckdb::Binder& binder, duckdb::ClientContext& context,
     duckdb::ChangeColumnTypeInfo& info);
   duckdb::idx_t UnusedColumnOid() const;
-  bool PatchesColumns(std::span<const duckdb::PhysicalIndex> columns) const;
 
   void BeginSchemaChange(duckdb::ClientContext& context);
   void ApplyKeys() const;

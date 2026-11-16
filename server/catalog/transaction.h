@@ -206,6 +206,7 @@ class Transactions final {
   }
 
   void Open(std::unique_ptr<Log> log) ABSL_LOCKS_EXCLUDED(_sequence_mutex);
+  void Close() ABSL_LOCKS_EXCLUDED(_sequence_mutex);
   Log* GetLog() noexcept { return _log.get(); }
 
   void SetReplaying(bool replaying) noexcept { _replaying = replaying; }

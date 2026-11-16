@@ -1,0 +1,32 @@
+statement ok
+CREATE DATABASE ccdd_db;
+
+statement ok
+CREATE TABLE ccdd_db.public.ccdd_docs (id INTEGER, body TEXT);
+
+statement ok
+INSERT INTO ccdd_db.public.ccdd_docs VALUES (1, 'a'), (2, 'b');
+
+statement ok
+SET sdb_faults = 'capture_snapshot_listed';
+
+connection ccdd_checkpointer
+statement async ok
+CHECKPOINT;
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-capture_snapshot_listed:parked';
+
+statement ok
+DROP DATABASE ccdd_db;
+
+statement ok
+SET sdb_faults = 'capture_snapshot_listed:release';
+
+wait
+
+query
+SELECT count(*) AS n FROM pg_database WHERE datname = 'ccdd_db';
+----
+n
+0

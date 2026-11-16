@@ -1,0 +1,53 @@
+statement ok
+CREATE TABLE aqb_prices (p NUMERIC(10,2));
+
+
+statement ok
+INSERT INTO aqb_prices VALUES (1.25), (1.25), (1.25);
+
+
+query
+SELECT approx_quantile(p, 0.5) AS q50, (approx_quantile(p, [0.5]))[1] AS q50_list, typeof(approx_quantile(p, 0.5)) AS q50_type
+FROM aqb_prices;
+----
+q50	q50_list	q50_type
+1.25	1.25	DECIMAL(10,2)
+
+
+statement ok
+CREATE TABLE aqb_neg (x INTEGER, d DOUBLE PRECISION, day DATE);
+
+
+statement ok
+INSERT INTO aqb_neg VALUES (-3, -3, '1950-01-01'), (-2, -2, '1950-01-02'), (-1, -1, '1950-01-03');
+
+
+query
+SELECT approx_quantile(c, 0.9) AS q90 FROM (VALUES (-1), (-1), (-1)) t(c);
+----
+q90
+-1
+
+
+query
+SELECT approx_quantile(x, 0.9) BETWEEN -3 AND -1 AS int_in_range,
+       approx_quantile(d, 0.9) BETWEEN -3 AND -1 AS double_in_range,
+       approx_quantile(day, 0.9) BETWEEN '1950-01-01' AND '1950-01-03' AS date_in_range
+FROM aqb_neg;
+----
+int_in_range	double_in_range	date_in_range
+t	t	t
+
+
+query
+SELECT qs[1] <= qs[2] AS monotone FROM (SELECT approx_quantile(d, [0.9, 1.0]) AS qs FROM aqb_neg) s;
+----
+monotone
+t
+
+
+query
+SELECT approx_quantile(c::DOUBLE PRECISION, 0.9) = 0 AS zero FROM (VALUES (0), (0), (0)) t(c);
+----
+zero
+t

@@ -61,8 +61,10 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/system_compiler.hpp>
 #include <limits>
+#include <span>
 #include <string_view>
 #include <type_traits>
+#include <utility>
 
 #include "connector/functions/ts_query_codec.h"
 #include "pg/catalog/functions/pg_catalog/regproc.h"
@@ -2845,6 +2847,18 @@ void FillContext(duckdb::ClientContext& client, SerializationContext& context) {
   }
   context.client = &client;
   context.caches.reset();
+}
+
+void SerializeCopyTextHeader(SerializationContext& context,
+                             std::span<const duckdb::Identifier> names) {
+  bool first = true;
+  for (const auto& name : names) {
+    if (!std::exchange(first, false)) {
+      context.writer->Write({&context.copy_delim, 1});
+    }
+    EmitEscaped(context, name.GetIdentifierName());
+  }
+  context.writer->Write("\n");
 }
 
 SerializationFunction GetSerialization(const duckdb::LogicalType& type,

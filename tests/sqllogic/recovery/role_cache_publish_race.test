@@ -1,0 +1,53 @@
+statement ok
+SET sdb_faults = 'pause_role_publish';
+
+
+connection first
+statement async ok
+CREATE ROLE rcpr_first;
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_role_publish:parked';
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_catalog_version_ahead_of_commit';
+
+
+connection second
+statement async ok
+CREATE ROLE rcpr_second;
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_catalog_version_ahead_of_commit:parked';
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_role_publish:release';
+
+
+connection first
+statement ok
+SELECT 1;
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_catalog_version_ahead_of_commit:release';
+
+
+wait
+
+
+query
+SELECT pg_get_userbyid(oid) AS name FROM pg_roles WHERE rolname LIKE 'rcpr_%' ORDER BY 1;
+----
+name
+rcpr_first
+rcpr_second

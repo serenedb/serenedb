@@ -85,10 +85,11 @@ using namespace sdb::app;
 
 const boost::asio::ssl::detail::openssl_init<true> kSslInit{};
 
-void SetSanitizerThreadStackSize() {
+void SetLargeThreadStackSize() {
 #if defined(__GLIBC__) &&                  \
   (defined(ABSL_HAVE_ADDRESS_SANITIZER) || \
-   defined(ABSL_HAVE_THREAD_SANITIZER) || defined(ABSL_HAVE_MEMORY_SANITIZER))
+   defined(ABSL_HAVE_THREAD_SANITIZER) ||  \
+   defined(ABSL_HAVE_MEMORY_SANITIZER) || !defined(__OPTIMIZE__))
   pthread_attr_t attr;
   pthread_attr_init(&attr);
   pthread_attr_setstacksize(&attr, size_t{64} << 20);
@@ -177,7 +178,7 @@ int RunServer(int argc, char** argv) {
       // it unless it can read its definition.
       stop("storage", [&] {
         irs::DuckDBEngine::Instance().CloseDatabases();
-        catalog::LogCleanShutdown();
+        catalog::CloseLog();
       });
       SDB_INFO(GENERAL, "SereneDB is shut down");
     };
@@ -288,7 +289,7 @@ void CloseShellEngine() {
   services.search.stop();
   services.background.stop();
   irs::DuckDBEngine::Instance().CloseDatabases();
-  catalog::LogCleanShutdown();
+  catalog::CloseLog();
   gShellServices.reset();
   irs::DuckDBEngine::Instance().Shutdown();
 }
@@ -311,7 +312,7 @@ extern "C" void json_object_seed(size_t seed);
 
 int main(int argc, char* argv[]) {
   irs::CheckCpuFeatures(argv[0]);
-  SetSanitizerThreadStackSize();
+  SetLargeThreadStackSize();
   json_object_seed(0);
   irs::InitOptimizeRules();
   if (argc >= 2 && std::strcmp(argv[1], "shell") == 0) {

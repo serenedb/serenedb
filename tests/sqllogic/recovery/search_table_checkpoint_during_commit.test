@@ -81,7 +81,7 @@ statement ok retry 40 backoff 250ms
 SET sdb_faults = '-pause_search_commit_before_irs:parked';
 
 connection checkpointer
-statement async ok
+statement ok
 CHECKPOINT;
 
 connection default
@@ -103,7 +103,7 @@ statement ok retry 40 backoff 250ms
 SET sdb_faults = '-pause_search_commit_before_irs:parked';
 
 connection checkpointer
-statement async ok
+statement ok
 CHECKPOINT;
 
 connection default
@@ -141,7 +141,7 @@ statement ok retry 40 backoff 250ms
 SET sdb_faults = '-pause_search_commit_before_irs:parked';
 
 connection checkpointer
-statement async ok
+statement ok
 CHECKPOINT;
 
 connection default
@@ -167,7 +167,7 @@ statement ok retry 40 backoff 250ms
 SET sdb_faults = '-pause_search_commit_before_irs:parked';
 
 connection checkpointer
-statement async ok
+statement ok
 CHECKPOINT;
 
 connection default
@@ -189,7 +189,7 @@ statement ok retry 40 backoff 250ms
 SET sdb_faults = '-pause_search_commit_before_irs:parked';
 
 connection checkpointer
-statement async ok
+statement ok
 CHECKPOINT;
 
 connection default

@@ -20,22 +20,33 @@
 
 #include "search/hot_keys.h"
 
+#include <absl/cleanup/cleanup.h>
+
+#include <iresearch/utils/type_limits.hpp>
+
 namespace sdb::search {
 
 void HotKeys::Add(irs::field_id field, std::string_view key,
                   irs::doc_id_t doc) {
   absl::MutexLock lock{&_mutex};
   auto& entry = _fields[field];
-  auto [it, inserted] = entry.newest.try_emplace(key, doc);
+  const auto [it, inserted] =
+    entry.newest.try_emplace(MakeHashedKey(key), irs::doc_limits::invalid());
   if (!inserted) {
     entry.previous.emplace(doc, it->second);
     it->second = doc;
+    return;
   }
+  absl::Cleanup erase = [&] { entry.newest.erase(it); };
+  it->first.key = _keys.AddBlob(key.data(), key.size());
+  std::move(erase).Cancel();
+  it->second = doc;
 }
 
 void HotKeys::Clear() noexcept {
   absl::MutexLock lock{&_mutex};
   _fields.clear();
+  _keys.Destroy();
 }
 
 void HotKeys::ForEach(irs::field_id field, std::string_view key,
@@ -46,7 +57,7 @@ void HotKeys::ForEach(irs::field_id field, std::string_view key,
     return;
   }
   const auto& entry = found->second;
-  const auto it = entry.newest.find(key);
+  const auto it = entry.newest.find(MakeHashedKey(key));
   if (it == entry.newest.end()) {
     return;
   }

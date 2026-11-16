@@ -30,12 +30,14 @@ Tokenizer::ptr MultiDelimitedTokenizer::Make(
   for (size_t i = 0; i < opts.delimiters.size(); ++i) {
     const bytes_view view{opts.delimiters[i]};
     if (view.empty()) {
-      THROW_SQL_ERROR(ERR_MSG("multi_delimited: empty delimiter"));
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("multi_delimited: empty delimiter"));
     }
     for (size_t j = 0; j < i; ++j) {
       const bytes_view known{opts.delimiters[j]};
       if (view.starts_with(known) || known.starts_with(view)) {
         THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
           ERR_MSG("multi_delimited: delimiters must not be prefixes of one "
                   "another"));
       }

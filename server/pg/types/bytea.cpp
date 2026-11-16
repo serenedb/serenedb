@@ -141,8 +141,7 @@ void RegisterBytea(duckdb::CastFunctionSet& casts) {
     duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BLOB,
     duckdb::BoundCastInfo{TextToBytea, nullptr, InitInput});
   casts.RegisterCastFunction(duckdb::LogicalType::BLOB,
-                             duckdb::LogicalType::VARCHAR, BindByteaToText,
-                             100);
+                             duckdb::LogicalType::VARCHAR, BindByteaToText);
 }
 
 }  // namespace sdb::pg

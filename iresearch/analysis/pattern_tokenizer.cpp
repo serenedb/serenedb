@@ -259,19 +259,22 @@ delim::Finder PatternTokenizer::Detect(std::string_view pattern, int group) {
 
 Tokenizer::ptr PatternTokenizer::Make(Options opts) {
   if (opts.pattern.empty()) {
-    THROW_SQL_ERROR(ERR_MSG("split_by_pattern: empty pattern"));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("split_by_pattern: empty pattern"));
   }
   auto regex =
     std::make_unique<re2::RE2>(opts.pattern, RegexOptions(opts.group));
   if (!regex->ok()) {
-    THROW_SQL_ERROR(
-      ERR_MSG("split_by_pattern: invalid regex: ", regex->error()));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_REGULAR_EXPRESSION),
+                    ERR_MSG("split_by_pattern: invalid regular expression: ",
+                            regex->error()));
   }
   const int num_groups = regex->NumberOfCapturingGroups();
   if (opts.group < -1 || opts.group > num_groups) {
-    THROW_SQL_ERROR(ERR_MSG("split_by_pattern: group ", opts.group,
-                            " out of range, pattern has ", num_groups,
-                            " capturing groups"));
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("split_by_pattern: group ", opts.group,
+              " out of range, pattern has ", num_groups, " capturing groups"));
   }
   if (auto split =
         delim::Make<PatternTokenizer>(DetectSplit(*regex, opts.group))) {

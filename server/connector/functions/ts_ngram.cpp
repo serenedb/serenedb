@@ -53,7 +53,7 @@ void FromNGram(BoolTarget filter, const FilterContext& ctx,
                  {"ts_ngram threshold", kSyntaxHint});
     threshold = static_cast<float>(thr);
   }
-  if (threshold < 0.f || threshold > 1.f) {
+  if (!(threshold >= 0.f && threshold <= 1.f)) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("ts_ngram threshold must be between 0 and 1, got ", threshold),

@@ -68,8 +68,7 @@ class HnswHits : public Root {
       if (m == 0) {
         return n;
       }
-      _fetcher.Fetch(std::span<const doc_id_t>{docs + n, m});
-      _score.Score(scores + n, m);
+      FetchAndScore(_fetcher, _score, docs + n, scores + n, m);
       n += m;
     }
   }

@@ -303,6 +303,7 @@ duckdb::unique_ptr<duckdb::BaseStatistics> IResearchScanStatistics(
     const auto cmax = duckdb::NumericStats::Max(*leaf).DefaultTryCastAs(want);
     if (cmin && cmax) {
       auto casted = duckdb::NumericStats::CreateEmpty(want);
+      casted.CopyValidity(*leaf);
       duckdb::NumericStats::SetMin(casted, *cmin);
       duckdb::NumericStats::SetMax(casted, *cmax);
       return casted.ToUnique();

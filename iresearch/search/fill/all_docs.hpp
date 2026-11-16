@@ -40,40 +40,15 @@ class AllDocs {
     return FillOrImpl(min, max, mask, [](doc_id_t, doc_id_t) noexcept {});
   }
 
-  doc_id_t FillSum(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
-                   score_t* IRS_RESTRICT scores, score_t constant) {
+  template<ScoreMergeType M>
+  doc_id_t FillMerge(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
+                     score_t* IRS_RESTRICT scores, score_t constant) {
     return FillOrImpl(min, max, mask,
                       [=](doc_id_t begin, doc_id_t end) IRS_FORCE_INLINE {
                         for (auto i = begin; i != end; ++i) {
-                          Merge<ScoreMergeType::Sum>(scores[i], constant);
+                          Merge<M>(scores[i], constant);
                         }
                       });
-  }
-
-  doc_id_t FillMax(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
-                   score_t* IRS_RESTRICT scores, score_t constant) {
-    return FillOrImpl(min, max, mask,
-                      [=](doc_id_t begin, doc_id_t end) IRS_FORCE_INLINE {
-                        for (auto i = begin; i != end; ++i) {
-                          Merge<ScoreMergeType::Max>(scores[i], constant);
-                        }
-                      });
-  }
-
-  doc_id_t FillAnd(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask) {
-    doc_id_t begin = 0;
-    doc_id_t end = 0;
-    if (!Span(min, max, begin, end)) {
-      detail::Clear(mask, detail::WindowWords(min, max));
-      return doc_limits::eof();
-    }
-    if (begin != min) {
-      detail::ClearInclusive(mask, 0, begin - min - 1);
-    }
-    if (end != max) {
-      detail::ClearInclusive(mask, end - min, max - min - 1);
-    }
-    return end > _last ? doc_limits::eof() : end;
   }
 
   doc_id_t FillAndNot(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask) {

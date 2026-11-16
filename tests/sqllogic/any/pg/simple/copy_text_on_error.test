@@ -1,0 +1,187 @@
+control substitution on
+
+statement ok
+CREATE TABLE cto_ints (a INTEGER, b TEXT);
+
+
+statement count 5
+COPY (SELECT * FROM (VALUES ('1', 'one'), ('x', 'bad'), ('3', 'three'), ('4.5', 'bad'), ('5', 'five')) v(a, b))
+TO '${__TEST_DIR__}/cto_mixed.txt' (FORMAT text);
+
+
+statement count 3
+COPY cto_ints FROM '${__TEST_DIR__}/cto_mixed.txt' (FORMAT text, ON_ERROR IGNORE);
+
+
+query
+SELECT a, b FROM cto_ints ORDER BY a;
+----
+a	b
+1	one
+3	three
+5	five
+
+
+statement count 3
+COPY cto_ints FROM '${__TEST_DIR__}/cto_mixed.txt' (FORMAT text, ON_ERROR IGNORE, REJECT_LIMIT 2);
+
+
+statement error skipped more than REJECT_LIMIT \(1\) rows due to data type incompatibility
+COPY cto_ints FROM '${__TEST_DIR__}/cto_mixed.txt' (FORMAT text, ON_ERROR IGNORE, REJECT_LIMIT 1);
+
+
+query
+SELECT count(*) AS n FROM cto_ints;
+----
+n
+6
+
+
+statement count 2
+COPY (SELECT * FROM (VALUES ('7', 'seven'), ('y', 'bad')) v(a, b))
+TO '${__TEST_DIR__}/cto_header.txt' (FORMAT text, HEADER);
+
+
+statement count 1
+COPY cto_ints FROM '${__TEST_DIR__}/cto_header.txt' (FORMAT text, HEADER, ON_ERROR IGNORE, REJECT_LIMIT 1);
+
+
+query
+SELECT a, b FROM cto_ints WHERE a > 5;
+----
+a	b
+7	seven
+
+
+statement ok
+CREATE TABLE cto_nest (id INTEGER, a INTEGER[], n INTEGER);
+
+
+statement count 7
+COPY (SELECT * FROM (VALUES
+  ('1', '{1,2}', '10'),
+  ('2', '{NULL,NULL}', 'bad'),
+  ('3', '{8,9}', '30'),
+  ('4', NULL, 'x'),
+  ('5', '{5,NULL}', '50'),
+  ('x', '{6}', '60'),
+  ('7', '{7,z}', '70')) v(id, a, n))
+TO '${__TEST_DIR__}/cto_nest.txt' (FORMAT text);
+
+
+statement count 3
+COPY cto_nest FROM '${__TEST_DIR__}/cto_nest.txt' (FORMAT text, ON_ERROR IGNORE);
+
+
+query
+SELECT id, a, n FROM cto_nest ORDER BY id;
+----
+id	a	n
+1	{1,2}	10
+3	{8,9}	30
+5	{5,NULL}	50
+
+
+statement ok
+CREATE TABLE cto_many (a INTEGER);
+
+
+statement count 3010
+COPY (SELECT CASE WHEN g <= 3000 THEN 'bad' ELSE g::TEXT END FROM generate_series(1, 3010) g)
+TO '${__TEST_DIR__}/cto_many.txt' (FORMAT text);
+
+
+statement count 10
+COPY cto_many FROM '${__TEST_DIR__}/cto_many.txt' (FORMAT text, ON_ERROR IGNORE, REJECT_LIMIT 3000);
+
+
+statement error skipped more than REJECT_LIMIT \(2999\) rows due to data type incompatibility
+COPY cto_many FROM '${__TEST_DIR__}/cto_many.txt' (FORMAT text, ON_ERROR IGNORE, REJECT_LIMIT 2999);
+
+
+statement count 3010
+COPY (SELECT CASE WHEN g <= 3000 THEN 'bad' ELSE g::TEXT END FROM generate_series(1, 3010) g)
+TO '${__TEST_DIR__}/cto_many.txt.gz' (FORMAT text);
+
+
+statement count 10
+COPY cto_many FROM '${__TEST_DIR__}/cto_many.txt.gz' (FORMAT text, ON_ERROR IGNORE);
+
+
+query
+SELECT count(*) AS n, min(a) AS lo, max(a) AS hi FROM cto_many;
+----
+n	lo	hi
+20	3001	3010
+
+
+statement count 1
+COPY (SELECT 'x', 'b', 'c') TO '${__TEST_DIR__}/cto_wide.txt' (FORMAT text);
+
+
+statement error (extra data after last expected column|row has more than 2 fields)
+COPY cto_ints FROM '${__TEST_DIR__}/cto_wide.txt' (FORMAT text, ON_ERROR IGNORE);
+
+
+statement error
+COPY cto_ints FROM '${__TEST_DIR__}/cto_mixed.txt' (FORMAT text, ON_ERROR IGNORE, REJECT_LIMIT 0);
+----
+db error: ERROR: REJECT_LIMIT (0) must be greater than zero
+
+
+statement error
+COPY cto_ints FROM '${__TEST_DIR__}/cto_mixed.txt' (FORMAT text, ON_ERROR IGNORE, REJECT_LIMIT);
+----
+db error: ERROR: reject_limit requires a numeric value
+
+
+statement error
+COPY cto_ints FROM '${__TEST_DIR__}/cto_mixed.txt' (FORMAT text, REJECT_LIMIT 5);
+----
+db error: ERROR: COPY REJECT_LIMIT requires ON_ERROR to be set to IGNORE
+
+
+statement error
+COPY cto_ints TO '${__TEST_DIR__}/cto_out.txt' (FORMAT text, ON_ERROR IGNORE);
+----
+db error: ERROR: COPY ON_ERROR cannot be used with COPY TO
+
+
+statement error
+COPY cto_ints FROM '${__TEST_DIR__}/cto_mixed.txt' (FORMAT binary, ON_ERROR IGNORE);
+----
+db error: ERROR: only ON_ERROR STOP is allowed in BINARY mode
+
+
+statement error
+COPY cto_ints TO '${__TEST_DIR__}/cto_out.bin' (FORMAT binary, ON_ERROR IGNORE);
+----
+db error: ERROR: COPY ON_ERROR cannot be used with COPY TO
+
+
+statement error
+COPY cto_ints FROM '${__TEST_DIR__}/cto_mixed.txt' (FORMAT binary, REJECT_LIMIT 5);
+----
+db error: ERROR: COPY REJECT_LIMIT requires ON_ERROR to be set to IGNORE
+
+
+statement error option "bogus" not recognized
+COPY cto_ints FROM '${__TEST_DIR__}/cto_mixed.txt' (FORMAT binary, bogus 1);
+
+
+statement error
+COPY cto_ints TO '${__TEST_DIR__}/cto_out.bin' (FORMAT binary, DELIMITER ',');
+----
+db error: ERROR: cannot specify DELIMITER in BINARY mode
+
+
+statement error
+COPY cto_ints FROM '${__TEST_DIR__}/cto_mixed.txt' (FORMAT binary, NULL 'x');
+----
+db error: ERROR: cannot specify NULL in BINARY mode
+
+
+statement error
+COPY cto_ints TO '${__TEST_DIR__}/cto_out.bin' (FORMAT binary, HEADER);
+----
+db error: ERROR: cannot specify HEADER in BINARY mode

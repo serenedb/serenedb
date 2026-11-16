@@ -53,12 +53,31 @@ Registry& GetRegistry() {
   return gRegistry;
 }
 
-std::vector<irs::SegmentMeta> Committed(const irs::Directory& dir) {
+irs::FileRefs Pin(const irs::Directory& dir,
+                  std::span<const irs::SegmentMeta> segments) {
+  irs::FileRefs pins;
+  auto& refs = dir.attributes().refs();
+  for (const auto& meta : segments) {
+    for (const auto& file : irs::SegmentFiles(meta.name, meta.kinds)) {
+      pins.emplace_back(refs.add(file));
+    }
+  }
+  return pins;
+}
+
+struct Snapshot {
+  std::vector<irs::SegmentMeta> segments;
+  irs::FileRefs pins;
+};
+
+Snapshot Committed(const irs::Directory& dir) {
   auto& registry = GetRegistry();
   absl::MutexLock lock{&registry.mutex};
   const auto it = registry.committed.find(&dir.attributes());
-  return it == registry.committed.end() ? std::vector<irs::SegmentMeta>{}
-                                        : it->second;
+  if (it == registry.committed.end()) {
+    return {};
+  }
+  return {.segments = it->second, .pins = Pin(dir, it->second)};
 }
 
 void Publish(const irs::Directory& dir,
@@ -69,11 +88,11 @@ void Publish(const irs::Directory& dir,
 }
 
 irs::DirectoryReader Open(const irs::Directory& dir,
-                          std::span<const irs::SegmentMeta> segments,
                           const irs::IndexReaderOptions& options) {
+  const auto committed = Committed(dir);
   std::vector<irs::SegmentReader> readers;
-  readers.reserve(segments.size());
-  for (const auto& meta : segments) {
+  readers.reserve(committed.segments.size());
+  for (const auto& meta : committed.segments) {
     readers.emplace_back(irs::SegmentReaderImpl::Open(dir, meta, options));
   }
   return {dir, options, std::move(readers), /*stats=*/true};
@@ -95,18 +114,6 @@ uint64_t SegmentId(const irs::SegmentMeta& meta) {
   uint64_t id = 0;
   irs::ParseSegmentId(meta.name, id);
   return id;
-}
-
-irs::FileRefs Pin(const irs::Directory& dir,
-                  std::span<const irs::SegmentMeta> segments) {
-  irs::FileRefs pins;
-  auto& refs = dir.attributes().refs();
-  for (const auto& meta : segments) {
-    for (const auto& file : irs::SegmentFiles(meta.name, meta.kinds)) {
-      pins.emplace_back(refs.add(file));
-    }
-  }
-  return pins;
 }
 
 irs::doc_id_t DocAt(uint64_t ordinal) {
@@ -271,7 +278,7 @@ IndexWriter::IndexWriter(irs::Directory& dir, OpenMode mode,
   if (!(mode & kOmAppend)) {
     Publish(dir, {});
   }
-  _pins = Pin(dir, Committed(dir));
+  _pins = Committed(dir).pins;
   irs::directory_utils::RemoveAllUnreferenced(dir);
   _writer = irs::IndexWriter::Make(dir, std::move(options));
   _writer->ReserveSegmentId(irs::directory_utils::MaxSegmentId(dir));
@@ -551,8 +558,8 @@ bool IndexWriter::RefreshBegin() {
   if (ready == 0 && staged.merges == 0 && flushed.empty()) {
     return false;
   }
-  staged.segments =
-    Apply(Committed(_dir), std::span{_pending}.first(ready), flushed, _merges);
+  staged.segments = Apply(Committed(_dir).segments,
+                          std::span{_pending}.first(ready), flushed, _merges);
   _staged = std::move(staged);
   return true;
 }
@@ -564,8 +571,9 @@ void IndexWriter::RefreshFinish() {
     return;
   }
   auto& staged = *_staged;
-  _pins = Pin(_dir, staged.segments);
+  auto pins = Pin(_dir, staged.segments);
   Publish(_dir, std::move(staged.segments));
+  _pins = std::move(pins);
   std::erase_if(_pending,
                 [&](const Change& change) { return change.seq < staged.cut; });
   for (auto it = staged.flushed.rbegin(); it != staged.flushed.rend(); ++it) {
@@ -591,7 +599,7 @@ bool IndexWriter::RefreshCommit() {
 }
 
 irs::DirectoryReader IndexWriter::GetSnapshot() const {
-  return Open(_dir, Committed(_dir), _reader_options);
+  return Open(_dir, _reader_options);
 }
 
 CompactionResult IndexWriter::Compact(
@@ -621,7 +629,7 @@ CompactionResult IndexWriter::Compact(
   if (!merged.reader) {
     return {.size = 0, .error = CompactionError::Fail};
   }
-  const auto committed = Committed(_dir);
+  const auto committed = Committed(_dir).segments;
   for (const auto* candidate : merged.claim.candidates) {
     if (absl::c_none_of(committed, [&](const irs::SegmentMeta& meta) {
           return meta.name == candidate->Meta().name;
@@ -636,7 +644,7 @@ CompactionResult IndexWriter::Compact(
 
 irs::DirectoryReader OpenReader(const irs::Directory& dir,
                                 const irs::IndexReaderOptions& options) {
-  return Open(dir, Committed(dir), options);
+  return Open(dir, options);
 }
 
 }  // namespace tests

@@ -632,6 +632,33 @@ SELECT id, BM25(docs.tableoid) FROM docs;
 db error: ERROR: bm25() requires an inverted index scan in the same sub-query
 
 
+# A NULL scorer argument makes the score NULL, whether it is written as NULL or
+# only folds to it.
+query
+SELECT count(*) > 0 AS matched, count(literal_null) AS literal_scores,
+       count(folded_null) AS folded_scores
+FROM (SELECT BM25(docs_idx.tableoid, NULL::DOUBLE, 0.75) AS literal_null,
+             BM25(docs_idx.tableoid, CASE WHEN false THEN docs_idx.id END, 0.75) AS folded_null
+      FROM docs_idx WHERE body @@ ts_phrase('fox')) s;
+----
+matched	literal_scores	folded_scores
+t	0	0
+
+
+# Error: a scorer argument that is not a constant
+query error
+SELECT id, BM25(docs_idx.tableoid, (SELECT 1.2), 0.75) FROM docs_idx WHERE body @@ ts_phrase('fox');
+----
+db error: ERROR: bm25() arguments must be constants
+
+
+statement error
+PREPARE bm25_param(DOUBLE) AS
+SELECT id, BM25(docs_idx.tableoid, $1, 0.75) FROM docs_idx WHERE body @@ ts_phrase('fox');
+----
+db error: ERROR: bm25() arguments must be constants
+
+
 # EXPLAIN for BM25 basic scan
 query
 EXPLAIN SELECT id, BM25(docs_idx.tableoid) FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY id LIMIT 3;
@@ -831,6 +858,21 @@ CREATE TABLE meta (id INTEGER PRIMARY KEY, tag VARCHAR);
 
 statement ok
 INSERT INTO meta VALUES (2, 'interesting'), (4, 'notable'), (5, 'relevant');
+
+
+query
+SELECT id FROM docs2_idx WHERE body @@ ts_phrase('fox') AND id IN (SELECT id FROM meta) ORDER BY id;
+----
+id
+2
+4
+
+
+statement error
+SELECT id FROM docs2_idx WHERE body @@ ts_phrase('fox') AND (id IN (SELECT id FROM meta))::score(NULL);
+----
+db error: ERROR: ::score(...) is only meaningful on a predicate the inverted index answers.
+HINT: A predicate the index does not answer, such as IN (subquery), is checked after the search and adds nothing to the score: remove ::score from it.
 
 
 query

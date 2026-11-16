@@ -58,10 +58,7 @@ Root::ptr MakePrunedPosting(
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
   const auto& doc = *irs::detail::DocOf(own);
-  const irs::detail::ScoreArgs args{.scorer = posting.stats.scorer,
-                                    .stats = posting.stats.stats,
-                                    .fetcher = &ctx.fetcher,
-                                    .boost = posting.boost};
+  const auto args = posting.Args(&ctx.fetcher);
   return irs::detail::ResolveInput(doc, [&]<typename Input> -> Root::ptr {
     if (excludes.empty() && exclude_filters.empty()) {
       return MakeShape<PrunedPosting, Input, utils::Empty>(

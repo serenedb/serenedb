@@ -1681,7 +1681,9 @@ void SearchTableEntry::VerifyKey(duckdb::ClientContext& context,
       .VerifyReferences(context, *this, spec);
     return;
   }
-  search::VerifyUniqueKey(context, RowsWithOwn(context).Reader(), spec);
+  SessionOf(context, catalog)
+    .SearchTxn()
+    .VerifyUniqueKey(context, _storage, spec);
 }
 
 void SearchTableEntry::ReplaceStoreColumnsAtCommit(

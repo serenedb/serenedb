@@ -77,16 +77,9 @@ KeySpec UniqueIndexKey(const catalog::SearchTableEntry& table,
                        irs::field_id field, std::string name,
                        std::span<const UniqueIndexPart> parts);
 
-// The unique key `key` of `table` if it is an index's, committed or not: a
-// table's store writes and checks the key from the start of the index's
-// build.
 std::optional<KeySpec> IndexKeySpec(const catalog::SearchTableEntry& table,
                                     const catalog::ConstraintKey& key,
                                     duckdb::CatalogTransaction transaction);
-
-// Refuses rows of `reader` sharing unique key `spec`, as a new index on it.
-void VerifyUniqueKey(duckdb::ClientContext& context,
-                     const irs::DirectoryReader& reader, const KeySpec& spec);
 
 std::vector<irs::field_id> ConflictArbiters(
   const catalog::SearchTableEntry& table,

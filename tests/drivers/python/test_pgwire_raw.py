@@ -3908,6 +3908,16 @@ def test_text_search_dictionary_errors(conn, definition, sqlstate):
     assert [e["C"] for e in errors(m)] == [sqlstate]
 
 
+def test_on_conflict_target_without_unique_key(conn):
+    assert not errors(conn.run("DROP TABLE IF EXISTS drv_on_conflict"))
+    assert not errors(
+        conn.run("CREATE TABLE drv_on_conflict (id INT PRIMARY KEY, x INT)")
+    )
+    m = conn.run("INSERT INTO drv_on_conflict VALUES (1, 1) ON CONFLICT (x) DO NOTHING")
+    assert [e["C"] for e in errors(m)] == ["42P10"]
+    assert not errors(conn.run("DROP TABLE drv_on_conflict"))
+
+
 def test_string_over_the_size_limit(conn):
     m = conn.run(
         "SELECT length(concat(r, r, r, r, r)) "

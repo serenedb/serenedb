@@ -180,6 +180,10 @@ int DuckExceptionToErrcode(const duckdb::ErrorData& error) {
                                     "must appear in the GROUP BY")) {
       return ERRCODE_GROUPING_ERROR;
     }
+    if (absl::StrContainsIgnoreCase(binder_msg,
+                                    "as conflict target are not referenced")) {
+      return ERRCODE_INVALID_COLUMN_REFERENCE;
+    }
     return ERRCODE_UNDEFINED_COLUMN;
   }
   if (error.Type() == duckdb::ExceptionType::CONSTRAINT) {

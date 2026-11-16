@@ -129,6 +129,8 @@ The conflicts that don't meet this condition are ignored instead.
 
 A statement that proposes the same key twice fails with `ON CONFLICT DO UPDATE command cannot affect row a second time`, whether or not the key already exists.
 
+With `DO UPDATE`, `RETURNING` returns the updated rows and the inserted rows in an order that is not defined: it can differ from the order of the statement's rows. To match returned rows to the rows you proposed, return the conflict key and join on it.
+
 Because we need a way to refer to both the **to-be-inserted** tuple and the **existing** tuple, we introduce the special `EXCLUDED` qualifier.
 When the `EXCLUDED` qualifier is provided, the reference refers to the **to-be-inserted** tuple, otherwise, it refers to the **existing** tuple.
 This special qualifier can be used within the `WHERE` clauses and `SET` expressions of the `ON CONFLICT` clause.

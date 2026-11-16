@@ -394,6 +394,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
     BuildFetchedCopy(*state);
     InitTopKGlobal(*state, context);
   } else if (state->shape == ScanShape::ValueTopK) {
+    BuildFetchedCopy(*state);
     InitValueTopKGlobal(*state);
   } else if (state->shape == ScanShape::Ann) {
     BuildFetchedCopy(*state);

@@ -172,6 +172,7 @@ irs::analysis::Tokenizer::ptr GeoPointTokenizer::Make(Options opts) {
   opts.options.Validate("geo_point");
   if (opts.latitude.empty() != opts.longitude.empty()) {
     THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("geo_point: latitude and longitude must both be set or both "
               "empty"));
   }

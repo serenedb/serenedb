@@ -24,11 +24,10 @@
 #include "iresearch/search/detail/make.hpp"
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/offsets/root.hpp"
+#include "iresearch/search/queries/prepared_state_visitor.hpp"
 
 namespace irs {
 
-class FixedPhraseQuery;
-class VariadicPhraseQuery;
 class NGramSimilarityQuery;
 struct TermReader;
 

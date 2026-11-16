@@ -50,10 +50,22 @@ SELECT sqrt(-1) AS sqrt_negative;
 db error: ERROR: cannot take square root of a negative number
 
 
-query
+statement error
 SELECT exp(1000) AS exp_overflow;
 ----
-exp_overflow
+db error: ERROR: value out of range: overflow
+
+
+query
+SELECT 'NaN'::float8 / 0 AS nan_div;
+----
+nan_div
+NaN
+
+query
+SELECT 1e308::float8 * 10 AS overflow;
+----
+overflow
 Infinity
 
 # DOCS_TEST: example_002

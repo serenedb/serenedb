@@ -77,9 +77,13 @@ struct ScoreOperator : memory::Managed {
 template<typename Derived, bool PostingBlock = true>
 struct ScoreOperatorOf : ScoreOperator {
   score_t Score() const noexcept final {
-    score_t res{};
-    Self().ScoreImpl(&res, 1);
-    return res;
+    if constexpr (requires(const Derived& self) { self.ScoreOne(); }) {
+      return Self().ScoreOne();
+    } else {
+      score_t res{};
+      Self().ScoreImpl(&res, 1);
+      return res;
+    }
   }
 
   void Score(score_t* res, scores_size_t n) const noexcept final {
@@ -93,13 +97,13 @@ struct ScoreOperatorOf : ScoreOperator {
   }
 
   void ScoreBlock(score_t* res) const noexcept final {
-    Self().ScoreImpl(res, kScoreBlock);
+    ScoreBlockOf<ScoreMergeType::Noop>(res);
   }
   void ScoreSumBlock(score_t* res) const noexcept final {
-    Self().template ScoreImpl<ScoreMergeType::Sum>(res, kScoreBlock);
+    ScoreBlockOf<ScoreMergeType::Sum>(res);
   }
   void ScoreMaxBlock(score_t* res) const noexcept final {
-    Self().template ScoreImpl<ScoreMergeType::Max>(res, kScoreBlock);
+    ScoreBlockOf<ScoreMergeType::Max>(res);
   }
 
   void ScorePostingBlock(score_t* res) const noexcept final {
@@ -111,6 +115,17 @@ struct ScoreOperatorOf : ScoreOperator {
   }
 
  private:
+  template<ScoreMergeType M>
+  IRS_FORCE_INLINE void ScoreBlockOf(score_t* res) const noexcept {
+    if constexpr (requires(const Derived& self, score_t* out) {
+                    self.template ScoreBlockImpl<M>(out);
+                  }) {
+      Self().template ScoreBlockImpl<M>(res);
+    } else {
+      Self().template ScoreImpl<M>(res, kScoreBlock);
+    }
+  }
+
   const Derived& Self() const noexcept {
     return static_cast<const Derived&>(*this);
   }

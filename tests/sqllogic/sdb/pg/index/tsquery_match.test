@@ -1044,18 +1044,18 @@ query
 EXPLAIN SELECT a FROM tsq_idx WHERE b @@ ('quick' ## ts_regexp('br.wn') ## ts_regexp('fo.*') ## ts_regexp('jumps'))
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────────────────────╮
-│ Index: tsq_idx                                                                   │
-│ Lookup: search                                                                   │
-│ Index Filter:                                                                    │
-│ ╭─ Phrase ─────────────────────────────────────────────────────────────────────╮ │
-│ │ Field: b(string)                                                             │ │
-│ │ Parts:                                                                       │ │
-│ │ Term:quick(0, 0); Automaton:br.wn(1, 1); Prefix:fo(1, 1); Term:jumps(1, 1);  │ │
-│ ╰──────────────────────────────────────────────────────────────────────────────╯ │
-│ Projections: a                                                                   │
-│ ~1 row                                                                           │
-╰──────────────────────────────────────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────────────────────────────────────────────────────────────────╮
+│ Index: tsq_idx                                                                        │
+│ Lookup: search                                                                        │
+│ Index Filter:                                                                         │
+│ ╭─ Phrase ──────────────────────────────────────────────────────────────────────────╮ │
+│ │ Field: b(string)                                                                  │ │
+│ │ Parts:                                                                            │ │
+│ │ Term:quick(0, 0); Automaton:br.wn(1, 1); Automaton:fo.*(1, 1); Term:jumps(1, 1);  │ │
+│ ╰───────────────────────────────────────────────────────────────────────────────────╯ │
+│ Projections: a                                                                        │
+│ ~1 row                                                                                │
+╰───────────────────────────────────────────────────────────────────────────────────────╯
 
 statement error
 SELECT a FROM tsq_idx WHERE b @@ ('quick' ## ts_regexp('br.wn', 'lisp'));
@@ -2962,7 +2962,7 @@ id
 statement error
 EXECUTE tsq_rx_quoted('(');
 ----
-db error: ERROR: missing ): (
+db error: ERROR: invalid regular expression: missing ): (
 
 
 statement ok

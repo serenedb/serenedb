@@ -26,7 +26,6 @@
 #include <chrono>
 #include <cstdint>
 #include <duckdb/common/error_data.hpp>
-#include <duckdb/common/types/timestamp.hpp>
 #include <exception>
 #include <functional>
 #include <iresearch/utils/assert.hpp>
@@ -79,7 +78,6 @@ class Runtime final {
 
   // Completes after `d` (best-effort; immediate once RequestStop() has run).
   yaclib::Future<> Delay(clock::duration d);
-  void RunAt(duckdb::timestamp_t at, std::function<void()> task);
 
   // Shutdown: wake every armed Delay and complete future ones immediately.
   // Stop flags are only checked when a sleeper wakes, so without this a loop

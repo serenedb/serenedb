@@ -160,81 +160,70 @@ std::string LogChunk(duckdb::DataChunk& chunk) {
 }
 
 void WriteTableDelta(duckdb::Serializer& object, const TableDelta& delta) {
-  if (!delta.drop.empty()) {
-    object.WriteList(100, "drop", delta.drop.size(),
-                     [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
-                       list.WriteElement<uint64_t>(delta.drop[i]);
-                     });
-  }
+  object.WriteOptionalList(
+    100, "drop", delta.drop.size(),
+    [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
+      list.WriteElement<uint64_t>(delta.drop[i]);
+    });
   object.WritePropertyWithDefault<uint64_t>(101, "drop_memory",
                                             delta.drop_memory, 0);
-  if (!delta.add.empty()) {
-    object.WriteList(
-      102, "add", delta.add.size(),
-      [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
-        const auto& added = delta.add[i];
-        list.WriteObject([&](duckdb::Serializer& segment) {
-          segment.WriteProperty<uint64_t>(100, "segment", added.id);
-          segment.WriteProperty<uint8_t>(101, "kinds", added.kinds);
-          segment.WriteProperty<uint32_t>(102, "rows", added.rows);
-        });
+  object.WriteOptionalList(
+    102, "add", delta.add.size(),
+    [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
+      const auto& added = delta.add[i];
+      list.WriteObject([&](duckdb::Serializer& segment) {
+        segment.WriteProperty<uint64_t>(100, "segment", added.id);
+        segment.WriteProperty<uint8_t>(101, "kinds", added.kinds);
+        segment.WriteProperty<uint32_t>(102, "rows", added.rows);
       });
-  }
-  if (!delta.rows.empty()) {
-    object.WriteList(
-      103, "rows", delta.rows.size(),
-      [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
-        const auto& rows = delta.rows[i];
-        list.WriteObject([&](duckdb::Serializer& run) {
-          run.WriteProperty<uint64_t>(100, "first", rows.first);
-          run.WriteList(
-            101, "columns", rows.columns.size(),
-            [&](duckdb::Serializer::List& columns, duckdb::idx_t c) {
-              columns.WriteElement<uint64_t>(rows.columns[c]);
-            });
-          run.WriteList(102, "chunks", rows.chunks.size(),
-                        [&](duckdb::Serializer::List& chunks, duckdb::idx_t c) {
-                          chunks.WriteElement(rows.chunks[c]);
-                        });
-        });
+    });
+  object.WriteOptionalList(
+    103, "rows", delta.rows.size(),
+    [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
+      const auto& rows = delta.rows[i];
+      list.WriteObject([&](duckdb::Serializer& run) {
+        run.WriteProperty<uint64_t>(100, "first", rows.first);
+        run.WriteList(101, "columns", rows.columns.size(),
+                      [&](duckdb::Serializer::List& columns, duckdb::idx_t c) {
+                        columns.WriteElement<uint64_t>(rows.columns[c]);
+                      });
+        run.WriteList(102, "chunks", rows.chunks.size(),
+                      [&](duckdb::Serializer::List& chunks, duckdb::idx_t c) {
+                        chunks.WriteElement(rows.chunks[c]);
+                      });
       });
-  }
-  if (!delta.deletes.empty()) {
-    object.WriteList(
-      104, "deletes", delta.deletes.size(),
-      [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
-        const auto& deleted = delta.deletes[i];
-        list.WriteObject([&](duckdb::Serializer& deletes) {
-          deletes.WriteProperty<uint64_t>(100, "segment", deleted.segment);
-          deletes.WriteProperty(101, "docs", Frozen(*deleted.docs));
-        });
+    });
+  object.WriteOptionalList(
+    104, "deletes", delta.deletes.size(),
+    [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
+      const auto& deleted = delta.deletes[i];
+      list.WriteObject([&](duckdb::Serializer& deletes) {
+        deletes.WriteProperty<uint64_t>(100, "segment", deleted.segment);
+        deletes.WriteProperty(101, "docs", Frozen(*deleted.docs));
       });
-  }
+    });
   if (delta.memory_deletes) {
     object.WriteProperty<uint64_t>(105, "memory_base", delta.memory_base);
     object.WriteProperty(106, "memory_deletes", Frozen(*delta.memory_deletes));
   }
-  if (!delta.updates.empty()) {
-    object.WriteList(
-      107, "updates", delta.updates.size(),
-      [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
-        const auto& updated = delta.updates[i];
-        list.WriteObject([&](duckdb::Serializer& update) {
-          update.WriteProperty<uint64_t>(100, "segment", updated.segment);
-          update.WriteObject(101, "patch", [&](duckdb::Serializer& patch) {
-            WritePatch(patch, updated.patch);
-          });
+  object.WriteOptionalList(
+    107, "updates", delta.updates.size(),
+    [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
+      const auto& updated = delta.updates[i];
+      list.WriteObject([&](duckdb::Serializer& update) {
+        update.WriteProperty<uint64_t>(100, "segment", updated.segment);
+        update.WriteObject(101, "patch", [&](duckdb::Serializer& patch) {
+          WritePatch(patch, updated.patch);
         });
       });
-  }
-  if (!delta.memory_updates.empty()) {
-    object.WriteList(108, "memory_updates", delta.memory_updates.size(),
-                     [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
-                       list.WriteObject([&](duckdb::Serializer& patch) {
-                         WritePatch(patch, delta.memory_updates[i]);
-                       });
-                     });
-  }
+    });
+  object.WriteOptionalList(
+    108, "memory_updates", delta.memory_updates.size(),
+    [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
+      list.WriteObject([&](duckdb::Serializer& patch) {
+        WritePatch(patch, delta.memory_updates[i]);
+      });
+    });
   if (delta.manifest) {
     object.WriteProperty(109, "manifest", LogManifest(*delta.manifest));
   }

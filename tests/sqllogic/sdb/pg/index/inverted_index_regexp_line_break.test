@@ -1,0 +1,87 @@
+# In a regular expression '.' does not match a line break, so through an
+# inverted index 'abc.*' leaves out a value with a line break after 'abc', as
+# the table does. With the (?s) flag '.' matches it.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rlb_kw AS keyword();
+
+statement ok
+CREATE TABLE rlb (id INT PRIMARY KEY, msg VARCHAR);
+
+statement ok
+INSERT INTO rlb VALUES (1, 'abc'), (2, 'abc' || chr(10) || 'def'), (3, 'abcdef'), (4, 'x' || chr(10) || 'y');
+
+statement ok
+CREATE INDEX rlb_kw_idx ON rlb USING inverted (id, msg rlb_kw);
+
+statement ok
+CREATE INDEX rlb_idx ON rlb USING inverted (id, msg);
+
+statement ok
+VACUUM (FLUSH_TABLE) rlb;
+
+query
+SELECT id FROM rlb WHERE regexp_full_match(msg, 'abc.*') ORDER BY id;
+----
+id
+1
+3
+
+query
+SELECT id FROM rlb_kw_idx WHERE regexp_full_match(msg, 'abc.*') ORDER BY id;
+----
+id
+1
+3
+
+query
+SELECT id FROM rlb_idx WHERE regexp_full_match(msg, 'abc.*') ORDER BY id;
+----
+id
+1
+3
+
+query
+SELECT id FROM rlb_kw_idx WHERE regexp_full_match(msg, '.*') ORDER BY id;
+----
+id
+1
+3
+
+query
+SELECT id FROM rlb_kw_idx WHERE msg @@ ts_regexp('abc.*') ORDER BY id;
+----
+id
+1
+3
+
+query
+SELECT id FROM rlb_kw_idx WHERE NOT regexp_full_match(msg, 'abc.*') ORDER BY id;
+----
+id
+2
+4
+
+query
+SELECT id FROM rlb WHERE regexp_full_match(msg, '(?s)abc.*') ORDER BY id;
+----
+id
+1
+2
+3
+
+query
+SELECT id FROM rlb_kw_idx WHERE regexp_full_match(msg, '(?s)abc.*') ORDER BY id;
+----
+id
+1
+2
+3
+
+query
+SELECT id FROM rlb_kw_idx WHERE msg @@ ts_regexp('(?s)abc.*') ORDER BY id;
+----
+id
+1
+2
+3

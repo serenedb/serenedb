@@ -39,6 +39,17 @@
 
 namespace irs::probe {
 
+template<typename Leaves, typename Held>
+IRS_FORCE_INLINE void GatherHeld(Leaves& leaves, Held& held, size_t from,
+                                 doc_id_t doc, uint32_t slot) {
+  for (size_t i = from, count = leaves.size(); i != count; ++i) {
+    if (leaves[i].Probe(doc) == doc) {
+      SetBit(held[i], slot);
+      leaves[i].FetchScoreArgs(slot);
+    }
+  }
+}
+
 template<Type Leaf, size_t N = 0>
 class AndLeaves {
  public:
@@ -120,6 +131,19 @@ class OrLeaves {
     return next;
   }
 
+  uint32_t Drop(doc_id_t* IRS_RESTRICT docs, score_t* IRS_RESTRICT scores,
+                uint32_t n)
+    requires requires(Leaf& leaf) { leaf.Drop(docs, scores, n); }
+  {
+    for (auto& leaf : _leaves) {
+      if (n == 0) {
+        break;
+      }
+      n = leaf.Drop(docs, scores, n);
+    }
+    return n;
+  }
+
   doc_id_t AdvanceBlock(doc_id_t target)
     requires kBounded
   {
@@ -149,13 +173,7 @@ class OrLeaves {
     }
     SetBit(_held[_first], slot);
     _leaves[_first].FetchScoreArgs(slot);
-    for (size_t i = _first + 1, count = _leaves.size(); i != count; ++i) {
-      if (_leaves[i].Probe(_doc) != _doc) {
-        continue;
-      }
-      SetBit(_held[i], slot);
-      _leaves[i].FetchScoreArgs(slot);
-    }
+    GatherHeld(_leaves, _held, _first + 1, _doc, slot);
   }
 
   ScoreFunction PrepareScore(ScoreMergeType inner, score_t absorbed)
@@ -238,14 +256,7 @@ class ThresholdLeaves {
       SetBit(_held[matched], slot);
       _probes[matched].FetchScoreArgs(slot);
     }
-    for (size_t i = _matched[_min_match - 1] + 1, count = _probes.size();
-         i != count; ++i) {
-      if (_probes[i].Probe(_doc) != _doc) {
-        continue;
-      }
-      SetBit(_held[i], slot);
-      _probes[i].FetchScoreArgs(slot);
-    }
+    GatherHeld(_probes, _held, _matched[_min_match - 1] + 1, _doc, slot);
   }
 
   ScoreFunction PrepareScore(ScoreMergeType inner, score_t absorbed)
@@ -290,13 +301,7 @@ class BoostLeaves {
 
   IRS_FORCE_INLINE void FetchScoreArgs(uint32_t slot, doc_id_t doc) {
     SDB_ASSERT(slot < kScoreBlock);
-    for (size_t i = 0, count = _leaves.size(); i != count; ++i) {
-      if (_leaves[i].Probe(doc) != doc) {
-        continue;
-      }
-      SetBit(_held[i], slot);
-      _leaves[i].FetchScoreArgs(slot);
-    }
+    GatherHeld(_leaves, _held, 0, doc, slot);
   }
 
   ScoreFunction PrepareScore(ScoreMergeType inner) {

@@ -95,13 +95,13 @@ set(OPENSSL_VERSION ${OPENSSL_VERSION} PARENT_SCOPE)
 # out here.
 set(OPENSSL_INCLUDE_DIR "${OPENSSL_INCLUDE_DIR}" CACHE PATH "" FORCE)
 set(OPENSSL_CRYPTO_LIBRARY
-    "${CMAKE_BINARY_DIR}/third_party/openssl-cmake/libcrypto.a"
+    "${serenedb_BINARY_DIR}/third_party/openssl-cmake/libcrypto.a"
     CACHE FILEPATH
     ""
     FORCE
 )
 set(OPENSSL_SSL_LIBRARY
-    "${CMAKE_BINARY_DIR}/third_party/openssl-cmake/libssl.a"
+    "${serenedb_BINARY_DIR}/third_party/openssl-cmake/libssl.a"
     CACHE FILEPATH
     ""
     FORCE

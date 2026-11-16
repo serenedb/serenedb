@@ -1,0 +1,53 @@
+# A scorer string, as in ::score('...'), names a scorer the way SQL calls it,
+# and its arguments are checked the same way whether they are plain literals
+# or casts: an argument list no form of the scorer takes is refused, and so is
+# a NULL argument.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ssa_words AS split_text() WITH (frequency, norm);
+
+statement ok
+CREATE TABLE ssa_docs(id INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+INSERT INTO ssa_docs VALUES (1, 'red fox'), (2, 'blue fox fox'), (3, 'red dog');
+
+statement ok
+CREATE INDEX ssa_idx ON ssa_docs USING inverted (id, body ssa_words);
+
+statement ok
+VACUUM (FLUSH_TABLE) ssa_docs;
+
+query
+SELECT id FROM ssa_idx
+  WHERE body @@ 'red' OR (body @@ 'fox')::score('constant(2)') ORDER BY id;
+----
+id
+1
+2
+3
+
+statement error No function matches the given name and argument types 'constant\(BIGINT, DOUBLE, INTEGER_LITERAL\)'
+SELECT id FROM ssa_idx
+  WHERE body @@ 'red' OR (body @@ 'fox')::score('constant(2::DOUBLE, 3)');
+
+statement error No function matches the given name and argument types 'constant\(BIGINT, INTEGER_LITERAL, INTEGER_LITERAL\)'
+SELECT id FROM ssa_idx
+  WHERE body @@ 'red' OR (body @@ 'fox')::score('constant(2, 3)');
+
+statement error No function matches the given name and argument types 'bm25\(BIGINT, DECIMAL\(2,1\)\)'
+SELECT id FROM ssa_idx
+  WHERE body @@ 'red' OR (body @@ 'fox')::score('bm25(2.0)');
+
+statement error
+SELECT id FROM ssa_idx
+  WHERE body @@ 'red' OR (body @@ 'fox')::score('bm25(NULL::DOUBLE, 0.5)');
+----
+db error: ERROR: '::score' did not bind to a scorer function: 'bm25(NULL::DOUBLE, 0.5)'
+
+
+statement error
+SELECT id FROM ssa_idx
+  WHERE body @@ 'red' OR (body @@ 'fox')::score('bm25(NULL, 0.5)');
+----
+db error: ERROR: '::score' did not bind to a scorer function: 'bm25(NULL, 0.5)'

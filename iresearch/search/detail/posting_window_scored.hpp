@@ -26,6 +26,7 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/posting_leaf.hpp"
 #include "iresearch/store/data_input.hpp"
+#include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {
@@ -43,9 +44,9 @@ class PostingWindowScored : public PostingLeaf<InputType, kWindowScoredShape> {
   using Base::_last;
   using Base::_left_in_leaf;
   using Base::_left_in_list;
-  using Base::Behind;
   using Base::kBlock;
   using Base::ReadLeafBelow;
+  using Base::ScoresAt;
 
   static constexpr bool kCounts = Counts;
 
@@ -61,17 +62,12 @@ class PostingWindowScored : public PostingLeaf<InputType, kWindowScoredShape> {
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
                bool has_score_bounds, const SubReader& segment,
                const TermReader& field, const ScoreArgs& args) {
-    SDB_ASSERT(meta.docs_count != 0);
     this->MakeScore(segment, field, args);
-
-    if (meta.docs_count == 1) {
+    if (!this->OpenList(meta, doc_in, field.meta().index_features,
+                        has_score_bounds)) {
       _doc = this->SetSingle(meta);
       this->ScoreLeaf(kBlock - 1, 1);
-      return;
     }
-
-    this->OpenInput(meta, doc_in, has_score_bounds);
-    this->ArmWalk(meta, field.meta().index_features, has_score_bounds);
   }
 
   doc_id_t Count(doc_id_t min, doc_id_t max, uint32_t* IRS_RESTRICT counts,
@@ -88,53 +84,69 @@ class PostingWindowScored : public PostingLeaf<InputType, kWindowScoredShape> {
     return Add(min, max, nullptr, mask, window);
   }
 
+  doc_id_t AddMasked(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
+                     score_t* IRS_RESTRICT window)
+    requires(!Counts)
+  {
+    return WalkLeaves<false>(
+      min, max,
+      [&](const doc_id_t* begin, const doc_id_t* end, bool) IRS_FORCE_INLINE {
+        return this->template ScoreMasked<MergeType>(begin, end, min, max, mask,
+                                                     window);
+      });
+  }
+
  private:
   IRS_FORCE_INLINE doc_id_t Add(doc_id_t min, doc_id_t max,
                                 uint32_t* IRS_RESTRICT counts,
                                 uint64_t* IRS_RESTRICT mask,
                                 score_t* IRS_RESTRICT window) {
+    return WalkLeaves<true>(
+      min, max,
+      [&](const doc_id_t* begin, const doc_id_t* end, bool whole)
+        IRS_FORCE_INLINE -> const doc_id_t* {
+          if (whole) {
+            AddWhole<MergeType, kCounts>(begin, end, ScoresAt(begin), min,
+                                         counts, mask, window);
+            return end;
+          }
+          return AddUntil<MergeType, kCounts>(begin, end, ScoresAt(begin), min,
+                                              max, counts, mask, window);
+        });
+  }
+
+  template<bool Score, typename Range>
+  IRS_FORCE_INLINE doc_id_t WalkLeaves(doc_id_t min, doc_id_t max,
+                                       Range&& range) {
     SDB_ASSERT(min < max);
     if (!this->Start(min, max)) {
       return _doc;
     }
     const auto* const end = std::cend(_docs);
-
     if (_left_in_leaf != 0) {
-      const auto* const begin = Behind(end - _left_in_leaf, end, min);
-      if (begin == end) {
-        _left_in_leaf = 0;
-      } else if (_last >= max) {
-        const auto* const it = this->template AddUntil<MergeType, kCounts>(
-          begin, end, min, max, counts, mask, window);
-        _left_in_leaf = static_cast<uint32_t>(end - it);
+      const auto* const begin = ScanNotBelow(end - _left_in_leaf, end, min);
+      const auto* const it =
+        begin == end ? end : range(begin, end, _last < max);
+      _left_in_leaf = static_cast<uint32_t>(end - it);
+      if (it != end) {
         return _doc = *it;
-      } else {
-        this->template AddWhole<MergeType, kCounts>(begin, end, min, counts,
-                                                    mask, window);
-        _left_in_leaf = 0;
       }
     }
-
     for (;;) {
       if (_left_in_list == 0) {
         return _doc = doc_limits::eof();
       }
       const auto len = std::min(_left_in_list, kBlock);
       _left_in_list -= len;
-      if (!ReadLeafBelow(len, min)) {
+      if (!this->template ReadLeafBelow<Score>(len, min)) {
         continue;
       }
-
-      const auto* const begin = Behind(end - len, end, min);
-      if (_last < max) {
-        this->template AddWhole<MergeType, kCounts>(begin, end, min, counts,
-                                                    mask, window);
-        continue;
+      const auto* const it =
+        range(ScanNotBelow(end - len, end, min), end, _last < max);
+      if (it != end) {
+        _left_in_leaf = static_cast<uint32_t>(end - it);
+        return _doc = *it;
       }
-      const auto* const it = this->template AddUntil<MergeType, kCounts>(
-        begin, end, min, max, counts, mask, window);
-      _left_in_leaf = static_cast<uint32_t>(end - it);
-      return _doc = *it;
     }
   }
 };

@@ -537,3 +537,87 @@ DROP TABLE ppas;
 
 statement ok
 DROP TEXT SEARCH DICTIONARY ppa_dict;
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ppn_kw AS keyword() WITH (frequency);
+
+statement ok
+CREATE TABLE ppn (pk INTEGER PRIMARY KEY, v INTEGER, s VARCHAR);
+
+statement ok
+CREATE INDEX ppn_idx ON ppn USING inverted(pk, v, s ppn_kw);
+
+statement ok
+INSERT INTO ppn VALUES (1, 3, 'ab'), (2, 4, 'cd'), (3, 9, 'ce');
+
+statement ok
+PREPARE ppn_eq(bigint) AS SELECT pk FROM ppn_idx WHERE v = $1 ORDER BY pk;
+
+query
+EXECUTE ppn_eq(3);
+----
+pk
+1
+
+query
+EXECUTE ppn_eq(NULL);
+----
+pk
+
+statement ok
+PREPARE ppn_or(bigint, bigint) AS SELECT pk FROM ppn_idx WHERE v = $1 OR v = $2 ORDER BY pk;
+
+query
+EXECUTE ppn_or(NULL, 4);
+----
+pk
+2
+
+statement ok
+PREPARE ppn_between(bigint, bigint) AS SELECT pk FROM ppn_idx WHERE v BETWEEN $1 AND $2 ORDER BY pk;
+
+query
+EXECUTE ppn_between(NULL, 4);
+----
+pk
+
+statement ok
+PREPARE ppn_not_between(bigint, bigint) AS SELECT pk FROM ppn_idx WHERE v NOT BETWEEN $1 AND $2 ORDER BY pk;
+
+query
+EXECUTE ppn_not_between(NULL, 4);
+----
+pk
+3
+
+statement ok
+PREPARE ppn_like(text) AS SELECT pk FROM ppn_idx WHERE s LIKE $1 ORDER BY pk;
+
+query
+EXECUTE ppn_like('c%');
+----
+pk
+2
+3
+
+query
+EXECUTE ppn_like(NULL);
+----
+pk
+
+statement ok
+PREPARE ppn_not_like(text) AS SELECT pk FROM ppn_idx WHERE s NOT LIKE $1 ORDER BY pk;
+
+query
+EXECUTE ppn_not_like(NULL);
+----
+pk
+
+statement ok
+DEALLOCATE ALL;
+
+statement ok
+DROP TABLE ppn;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY ppn_kw;

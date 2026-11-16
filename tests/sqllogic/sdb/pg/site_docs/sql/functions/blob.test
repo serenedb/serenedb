@@ -64,6 +64,47 @@ SELECT position('\xBB'::BLOB IN '\xAABB'::BLOB) AS position;
 position
 2
 
+# DOCS_TEST: bit_length
+# DOCS_TEST_BODY
+query
+SELECT bit_length('\xAABB'::BLOB) AS bit_length;
+----
+bit_length
+16
+
+# DOCS_TEST: trim
+# DOCS_TEST_BODY
+query
+SELECT
+    btrim('\x00AA00'::BLOB, '\x00'::BLOB) AS btrim,
+    ltrim('\x00AA00'::BLOB, '\x00'::BLOB) AS ltrim,
+    rtrim('\x00AA00'::BLOB, '\x00'::BLOB) AS rtrim,
+    trim(LEADING '\x00'::BLOB FROM '\x00AA00'::BLOB) AS trim_leading;
+----
+btrim	ltrim	rtrim	trim_leading
+\\xaa	\\xaa00	\\x00aa	\\xaa00
+
+# DOCS_TEST: substring
+# DOCS_TEST_BODY
+query
+SELECT
+    substring('\xAABBCCDD'::BLOB FROM 2 FOR 2) AS substring,
+    substr('\xAABBCCDD'::BLOB, 3) AS substr,
+    substring('\xAABBCCDD'::BLOB FROM 0 FOR 2) AS from_zero;
+----
+substring	substr	from_zero
+\\xbbcc	\\xccdd	\\xaa
+
+# DOCS_TEST: overlay
+# DOCS_TEST_BODY
+query
+SELECT
+    overlay('\xAABBCCDD'::BLOB PLACING '\xFF'::BLOB FROM 2) AS overlay,
+    overlay('\xAABBCCDD'::BLOB PLACING '\xFF'::BLOB FROM 2 FOR 0) AS inserted;
+----
+overlay	inserted
+\\xaaffccdd	\\xaaffbbccdd
+
 # DOCS_TEST: repeat
 # DOCS_TEST_BODY
 query

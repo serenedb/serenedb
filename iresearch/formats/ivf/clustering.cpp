@@ -20,6 +20,7 @@
 
 #include "iresearch/formats/ivf/clustering.hpp"
 
+#include <absl/algorithm/container.h>
 #include <faiss/Clustering.h>
 #include <faiss/IndexFlat.h>
 #include <faiss/SuperKMeans.h>
@@ -27,6 +28,7 @@
 #include <faiss/utils/distances.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <limits>
@@ -62,6 +64,7 @@ void ConfigureClusteringParams(faiss::ClusteringParameters& cp, uint32_t niter,
   cp.min_points_per_centroid = 1;
   cp.max_points_per_centroid = std::max<int>(cp.max_points_per_centroid,
                                              static_cast<int>((n + k - 1) / k));
+  cp.check_input_data_for_NaNs = false;
 }
 
 std::vector<float> RunSuperKMeans(const float* data, size_t n, uint32_t k,
@@ -182,6 +185,62 @@ void NormalizeRows(float* data, size_t n, uint32_t d) {
   }
 }
 
+namespace {
+
+auto TrainablePredicate(size_t d) {
+  const float bound = std::sqrt(std::numeric_limits<float>::max() /
+                                (4.f * static_cast<float>(d)));
+  return [bound, d](const float* row) {
+    return absl::c_all_of(std::span{row, d},
+                          [&](float x) { return std::abs(x) <= bound; });
+  };
+}
+
+}  // namespace
+
+std::span<const float> TrainableRows(std::span<const float> rows, size_t d,
+                                     std::vector<float>& kept) {
+  const auto trainable = TrainablePredicate(d);
+  const size_t n = rows.size() / d;
+  size_t i = 0;
+  while (i != n && trainable(rows.data() + i * d)) {
+    ++i;
+  }
+  if (i == n) {
+    return rows;
+  }
+  kept.assign(rows.begin(), rows.begin() + static_cast<ptrdiff_t>(i * d));
+  for (++i; i != n; ++i) {
+    if (const float* row = rows.data() + i * d; trainable(row)) {
+      kept.insert(kept.end(), row, row + d);
+    }
+  }
+  if (kept.empty()) {
+    kept.assign(d, 0.f);
+  }
+  return kept;
+}
+
+void KeepTrainableRows(std::vector<float>& rows, size_t d) {
+  const auto trainable = TrainablePredicate(d);
+  const size_t n = rows.size() / d;
+  size_t kept = 0;
+  for (size_t i = 0; i != n; ++i) {
+    const float* row = rows.data() + i * d;
+    if (!trainable(row)) {
+      continue;
+    }
+    if (kept != i) {
+      std::copy_n(row, d, rows.data() + kept * d);
+    }
+    ++kept;
+  }
+  rows.resize(kept * d);
+  if (kept == 0 && n != 0) {
+    rows.assign(d, 0.f);
+  }
+}
+
 std::vector<float> TrainCentroids(VectorMetric metric, const float* data,
                                   size_t n, uint32_t k, uint32_t d,
                                   uint32_t seed, uint32_t niter, uint32_t nredo,
@@ -207,12 +266,11 @@ namespace {
 template<VectorMetric Metric>
 uint32_t NearestCentroidT(const float* v, const float* centroids, uint32_t k,
                           uint32_t d) noexcept {
-  const auto dd = static_cast<uint16_t>(d);
   uint32_t best = 0;
   float best_score = -std::numeric_limits<float>::max();
   for (uint32_t s = 0; s < k; ++s) {
     const float score =
-      ComputeDistance<Metric>(v, centroids + static_cast<size_t>(s) * d, dd);
+      ComputeDistance<Metric>(v, centroids + static_cast<size_t>(s) * d, d);
     if (score > best_score) {
       best_score = score;
       best = s;
@@ -245,7 +303,7 @@ void AssignNearestT(const float* data, size_t n, const float* centroids,
                        indexes.data());
     }
     for (size_t i = 0; i < n; ++i) {
-      out[base + i] = static_cast<uint32_t>(indexes[i]);
+      out[base + i] = indexes[i] < 0 ? 0 : static_cast<uint32_t>(indexes[i]);
     }
   }
 }

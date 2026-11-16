@@ -33,6 +33,7 @@
 #include <duckdb/common/fault_points.hpp>
 #include <exception>
 #include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/error_mapping.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>
 #include <utility>
@@ -165,7 +166,7 @@ yaclib::Task<bool> PublisherSession::Guarded(yaclib::Task<bool> task) {
   try {
     co_return co_await std::move(task);
   } catch (const std::exception& ex) {
-    Fail(network::pg::ToSqlError(ex));
+    Fail(irs::pg::ToSqlError(ex));
   }
   co_return false;
 }

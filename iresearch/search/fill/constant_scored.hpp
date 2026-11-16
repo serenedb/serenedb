@@ -46,8 +46,10 @@ class ConstantScored {
 
   doc_id_t Fill(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
                 score_t* IRS_RESTRICT scores) {
-    return _max ? _approx.FillMax(min, max, mask, scores, _value)
-                : _approx.FillSum(min, max, mask, scores, _value);
+    return _max ? _approx.template FillMerge<ScoreMergeType::Max>(
+                    min, max, mask, scores, _value)
+                : _approx.template FillMerge<ScoreMergeType::Sum>(
+                    min, max, mask, scores, _value);
   }
 
  private:

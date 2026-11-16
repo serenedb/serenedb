@@ -333,7 +333,7 @@ TEST(term_predicate_test, wildcard_matches_its_lowering) {
 
 TEST(term_predicate_test, regexp_matches_its_lowering) {
   irs::ByRegexp prefix;
-  prefix.mutable_options()->pattern = irs::bstring{B("ab.*")};
+  prefix.mutable_options()->pattern = irs::bstring{B("(?s)ab.*")};
   const auto starts = prefix.CompileTermPredicate();
   ASSERT_NE(nullptr, starts);
   EXPECT_TRUE(Accepts(*starts, "ab"));

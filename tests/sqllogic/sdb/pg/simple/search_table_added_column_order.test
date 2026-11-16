@@ -15,7 +15,11 @@ ALTER TABLE sac ADD COLUMN k INTEGER;
 
 
 statement ok
-INSERT INTO sac SELECT i, i, i % 100 FROM range(5000, 10000) t(i);
+ALTER TABLE sac ADD COLUMN tag VARCHAR;
+
+
+statement ok
+INSERT INTO sac SELECT i, i, i % 100, 't' || (i % 7) || '_a_suffix_longer_than_twelve' FROM range(5000, 10000) t(i);
 
 
 statement ok
@@ -62,3 +66,10 @@ SELECT k, count(*) AS c FROM sac GROUP BY k ORDER BY k DESC LIMIT 2;
 k	c
 99	50
 98	50
+
+
+query
+SELECT count(*) AS n FROM sac WHERE tag IN ('t1_a_suffix_longer_than_twelve', 't2_a_suffix_longer_than_twelve', 't3_a_suffix_longer_than_twelve');
+----
+n
+2144

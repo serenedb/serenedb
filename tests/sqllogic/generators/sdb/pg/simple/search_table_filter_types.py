@@ -79,15 +79,16 @@ t = Test("Every comparison of a pushed filter on every physical type its "
          "kernels dispatch on, on a search table with NULLs, flushed and "
          "unflushed rows and a partial last vector: counted alone, with the "
          "column read and after another column's filter, on a table scanned "
-         "by its columns (selection paths) and on one with a primary key, "
-         "whose index scan hands the filter whole masks (the mask path). The "
+         "by its columns (selection paths) and on one with a primary key "
+         "whose range over every row hands the filter whole masks (the mask "
+         "path). The "
          "generator works out every count from the same formulas.", seed=7)
 
 columns = ", ".join(f"{name} {sql_type}" for name, sql_type, *_ in COLUMNS)
 exprs = ", ".join(f"CASE WHEN i % 7 = 3 THEN NULL ELSE {expr} END"
                   for _, _, expr, *_ in COLUMNS)
-TABLES = [("sft", "i BIGINT"), ("sftk", "i BIGINT PRIMARY KEY")]
-for table, key in TABLES:
+TABLES = [("sft", "i BIGINT", ""), ("sftk", "i BIGINT PRIMARY KEY", "i >= 0 AND ")]
+for table, key, _ in TABLES:
     t.statement(f"CREATE TABLE {table} ({key}, {columns}) "
                 "WITH (compaction_interval = 0, row_group_size = 2048)")
     t.statement(f"INSERT INTO {table} SELECT i, {exprs} FROM range(0, {FLUSHED}) r(i)")
@@ -98,28 +99,29 @@ CHECKS = [(name, to_value, constant_sql, constant)
           for name, _, _, to_value, constant_sql, constant in COLUMNS]
 CHECKS.append(("c_bool", COLUMNS[0][3], "false", False))
 
-for table, _ in TABLES:
+for table, _, index in TABLES:
     for name, to_value, constant_sql, constant in CHECKS:
         t.section(f"{table}.{name} against {constant_sql}.")
         column = (name, None, None, to_value)
         for op_sql, op in OPS:
             hits = [i for i in range(ROWS)
                     if value(column, i) is not None and op(value(column, i), constant)]
-            t.expect(f"SELECT count(*) AS n FROM {table} WHERE {name} {op_sql} {constant_sql}",
+            t.expect(f"SELECT count(*) AS n FROM {table} "
+                     f"WHERE {index}{name} {op_sql} {constant_sql}",
                      ["n"], [[len(hits)]])
             t.expect(f"SELECT count({name}) AS n, sum(i) AS s FROM {table} "
-                     f"WHERE {name} {op_sql} {constant_sql}",
+                     f"WHERE {index}{name} {op_sql} {constant_sql}",
                      ["n", "s"], [[len(hits), sum(hits) if hits else "NULL"]])
             narrowed = [i for i in hits if i % 3 != 0]
             t.expect(f"SELECT count({name}) AS n FROM {table} "
-                     f"WHERE i % 3 <> 0 AND {name} {op_sql} {constant_sql}",
+                     f"WHERE {index}i % 3 <> 0 AND {name} {op_sql} {constant_sql}",
                      ["n"], [[len(narrowed)]])
         same = [i for i in range(ROWS)
                 if value(column, i) is not None and value(column, i) == constant]
         t.expect(f"SELECT count(*) AS n FROM {table} "
-                 f"WHERE {name} IS NOT DISTINCT FROM {constant_sql}",
+                 f"WHERE {index}{name} IS NOT DISTINCT FROM {constant_sql}",
                  ["n"], [[len(same)]])
         t.expect(f"SELECT count(*) AS n FROM {table} "
-                 f"WHERE {name} IS DISTINCT FROM {constant_sql}",
+                 f"WHERE {index}{name} IS DISTINCT FROM {constant_sql}",
                  ["n"], [[ROWS - len(same)]])
 t.write()

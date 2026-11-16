@@ -256,8 +256,7 @@ void ColFilterChain::FinishBind() {
       c.state->Cast<duckdb::ExpressionFilterState>().fast_executor;
     if (executor && executor->FiltersMasks() && !c.nested && !c.list_like &&
         !c.row_gather && !c.extract && c.output_slots.empty() &&
-        c.null_check == NullCheckKind::None &&
-        duckdb::TypeIsConstantSize(c.reader->Type().InternalType())) {
+        c.null_check == NullCheckKind::None) {
       _dense = executor.get();
     }
   }

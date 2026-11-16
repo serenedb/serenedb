@@ -195,8 +195,6 @@ Header SegmentHeader(duckdb::const_data_ptr_t base,
                      const ColumnSegment& segment, Shape shape,
                      ByteCodec codec);
 
-ColumnSegment CodesSegment(const ColumnSegment& segment, const Header& header);
-
 struct EntryRange {
   uint32_t lo;
   uint32_t hi;

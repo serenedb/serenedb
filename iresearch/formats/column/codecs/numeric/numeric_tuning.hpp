@@ -32,8 +32,7 @@ struct NumericChoice {
   bool narrowed = false;
   ByteCodec leaf = ByteCodec::None;
   bool shuffled = false;
-
-  bool operator==(const NumericChoice&) const = default;
+  double bound_ratio = 0;
 };
 
 struct NumericTuning {

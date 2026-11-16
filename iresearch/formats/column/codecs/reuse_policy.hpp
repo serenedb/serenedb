@@ -51,8 +51,10 @@ struct ReusePolicy {
 
   bool Due() noexcept { return !calibrated || clock.Due(); }
 
-  bool Drifted(double bytes, double input) const noexcept {
-    return bytes / input > reference * kDrift;
+  bool Drifted(double bytes, double input, bool growth_only) const noexcept {
+    const auto ratio = bytes / input;
+    return ratio > reference * kDrift ||
+           (!growth_only && ratio * kDrift < reference);
   }
 
   void Settle(CodecType next, bool kept, double bytes, double input) noexcept {

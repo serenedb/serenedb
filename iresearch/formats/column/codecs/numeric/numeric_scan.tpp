@@ -50,7 +50,7 @@ using duckdb::idx_t;
 inline FrameHeader SegmentFrames(const_data_ptr_t base, const ColumnSegment& segment) {
   const auto frames = ParseFrames(base, segment.size, segment.codec);
   SDB_ENSURE(frames.row_count == segment.count,
-             "numeric codec: corrupted row count");
+             "numeric codec: row count mismatch");
   return frames;
 }
 
@@ -58,9 +58,8 @@ template<typename R>
 struct ScanState final : SegmentScanState {
   ScanState(const ColumnSegment& segment, duckdb::BufferHandle handle_p)
     : handle{std::move(handle_p)},
-      frames{handle.Ptr() + segment.offset,
-             SegmentFrames(handle.Ptr() + segment.offset, segment),
-             segment.codec, segment.cache_slot} {}
+      frames{handle.Ptr(), SegmentFrames(handle.Ptr(), segment), segment.codec,
+             segment.cache_slot} {}
 
   duckdb::BufferHandle handle;
   R frames;
@@ -169,7 +168,7 @@ void FetchRows(const ColumnSegment& segment, ColumnFetchState& state,
   auto& cache = state.GetOrCreateSegmentState<FetchCache<R>>(
     [] { return std::make_unique<FetchCache<R>>(); });
   if (!cache.frames) {
-    const auto* base = handle.Ptr() + segment.offset;
+    const auto* base = handle.Ptr();
     cache.frames.emplace(base, SegmentFrames(base, segment), segment.codec,
                          segment.cache_slot);
   }
@@ -187,7 +186,7 @@ void FetchRows(const ColumnSegment& segment, ColumnFetchState& state,
 inline duckdb::InsertionOrderPreservingMap<std::string> SegmentInfo(
   const ColumnSegment& segment) {
   auto handle = segment.Pin();
-  const auto* base = handle.Ptr() + segment.offset;
+  const auto* base = handle.Ptr();
   const auto h = ParseFrames(base, segment.size, segment.codec);
   const auto shape = ShapeOf(segment.codec);
   duckdb::InsertionOrderPreservingMap<std::string> info;

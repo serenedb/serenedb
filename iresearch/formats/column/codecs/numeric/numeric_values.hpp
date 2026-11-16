@@ -58,11 +58,13 @@ class Values final : public State {
   };
 
   explicit Values(ColumnDataCheckpointData& data) {
-    _owned.reserve(data.rows);
-    for (const auto& chunk : data.chunks) {
-      Add(chunk.data);
+    if (data.chunks.size() != 1 || !Borrow(data.chunks.front().data)) {
+      _owned.reserve(data.rows);
+      for (const auto& chunk : data.chunks) {
+        Add(chunk.data);
+      }
+      _values = _owned;
     }
-    _values = _owned;
     DivideByGcd();
   }
 
@@ -130,6 +132,25 @@ class Values final : public State {
   }
 
  private:
+  bool Borrow(const duckdb::Vector& input) {
+    if constexpr (std::is_integral_v<T>) {
+      if (input.GetVectorType() != duckdb::VectorType::FLAT_VECTOR ||
+          !duckdb::FlatVector::Validity(input).CannotHaveNull()) {
+        return false;
+      }
+      const auto* data = duckdb::FlatVector::GetData<T>(input);
+      const auto count = input.size();
+      for (duckdb::idx_t i = 0; i < count; ++i) {
+        _stats.Update(data[i]);
+      }
+      _values = {reinterpret_cast<const U*>(data), count};
+      _any_valid = count != 0;
+      return true;
+    } else {
+      return false;
+    }
+  }
+
   void Add(const duckdb::Vector& input) {
     auto stats = _stats;
     for (const auto value : input.Values<T>()) {
@@ -154,7 +175,7 @@ class Values final : public State {
   void DivideByGcd() noexcept {
     if constexpr (std::is_integral_v<T>) {
       U gcd = 0;
-      for (const U bits : _owned) {
+      for (const U bits : _values) {
         U magnitude = bits;
         if constexpr (std::is_signed_v<T>) {
           if (static_cast<T>(bits) < 0) {
@@ -168,8 +189,12 @@ class Values final : public State {
       }
       _scale = gcd > 1 ? gcd : 1;
       if (_scale > 1) {
+        if (_owned.empty()) {
+          _owned.assign(_values.begin(), _values.end());
+        }
         numeric::DivideExact<std::is_signed_v<T>>(_owned.data(), _owned.size(),
                                                   _scale);
+        _values = _owned;
       }
     }
   }

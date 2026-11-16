@@ -31,11 +31,9 @@
 #include <duckdb/main/database.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/storage/buffer/buffer_handle.hpp>
-#include <duckdb/storage/statistics/base_statistics.hpp>
 
 #include "iresearch/formats/column/codecs/bytes/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
-#include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/utils/enum_name.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
@@ -63,24 +61,6 @@ Header SegmentHeader(duckdb::const_data_ptr_t base,
                (shape == Shape::Dictionary || h.entry_count == h.row_count),
              "col codec: corrupted segment header");
   return h;
-}
-
-ColumnSegment CodesSegment(const ColumnSegment& segment, const Header& header) {
-  static const auto kStats =
-    duckdb::BaseStatistics::CreateEmpty(duckdb::LogicalType::UINTEGER);
-  const auto* codec = GetCodec(header.codes, duckdb::PhysicalType::UINT32);
-  SDB_ASSERT(codec && codec->decompression);
-  return {
-    .function = *codec->decompression,
-    .type = kStats.GetType(),
-    .stats = kStats,
-    .ctx = segment.ctx,
-    .block = segment.block,
-    .count = header.row_count,
-    .size = header.off_symtab - header.off_codes,
-    .codec = header.codes,
-    .offset = segment.offset + header.off_codes,
-  };
 }
 
 EntryRanges Normalize(EntryRanges ranges) {

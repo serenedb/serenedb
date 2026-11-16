@@ -288,6 +288,11 @@ bool Strings::Compress(ColumnDataCheckpointData& data) {
     }
     SDB_ASSERT(Enabled(data.disabled, config->shape, config->leaf));
     _first = _compressor.CompressSegment(*config, acc, 0);
+    if (data.tuning->reuse.Drifted(
+          static_cast<double>(_first->Size()),
+          static_cast<double>(std::max<uint64_t>(_first->rows, 1)), false)) {
+      return false;
+    }
   }
   if (_first->Size() > PlainStorageBytes(*_first)) {
     return false;

@@ -158,7 +158,9 @@ constexpr Codec kFunction{
 
 bool CompressConstant(ColumnDataCheckpointData& data) {
   const auto physical = data.type.InternalType();
-  if (data.rows == 0 || !GetCodec(CodecType::Constant, physical)) {
+  if (data.rows == 0 ||
+      data.disabled.test(std::to_underlying(CodecType::Constant)) ||
+      !GetCodec(CodecType::Constant, physical)) {
     return false;
   }
   auto stats = duckdb::BaseStatistics::CreateEmpty(data.type);

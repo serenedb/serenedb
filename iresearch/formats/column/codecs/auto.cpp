@@ -127,7 +127,8 @@ void Contest(std::span<const CompressionFunction* const> functions,
   if (const auto* held = reuse.Due() ? nullptr : Held(data, functions)) {
     const auto written = data.written;
     if (held->compress(data)) {
-      if (reuse.Drifted(static_cast<double>(data.written - written), input)) {
+      if (reuse.Drifted(static_cast<double>(data.written - written), input,
+                        true)) {
         reuse.clock.Restart();
       }
       return;

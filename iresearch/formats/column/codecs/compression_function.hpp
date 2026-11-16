@@ -74,7 +74,6 @@ struct ColumnSegment {
   uint64_t count = 0;
   uint64_t size = 0;
   CodecType codec = CodecType::Uncompressed;
-  uint64_t offset = 0;
 };
 
 struct SegmentScanState {

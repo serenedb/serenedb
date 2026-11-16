@@ -344,16 +344,57 @@ class Frames : public State {
     }
     _out.clear();
     Write(*_best, _leaf, samples, _out);
+    const bool held = data.method == CodecType::Auto && !samples;
+    const auto ratio = static_cast<double>(_out.size()) /
+                       std::max(static_cast<double>(PackedBound(data)) / 8, 1.0);
+    if (held &&
+        ((_leaf.leaf == ByteCodec::None && choice.bound_ratio != 0 &&
+          ratio > choice.bound_ratio * kDrift) ||
+         data.tuning->reuse.Drifted(
+           static_cast<double>(_out.size()),
+           static_cast<double>(std::max<size_t>(_values.Get().size(), 1)),
+           true))) {
+      return false;
+    }
     choice = {
       .shape = _shape,
       .packed = _best->packed,
       .narrowed = _best->narrowed,
       .leaf = _leaf.leaf,
       .shuffled = _best->shuffled,
+      .bound_ratio = held ? choice.bound_ratio : ratio,
     };
     data.FlushSegment(CodecOf(_shape, _leaf.leaf), _values.Stats(data.type),
                       _values.Get().size(), _out);
     return true;
+  }
+
+ private:
+  uint64_t PackedBits(Shape shape) {
+    const auto& facts = _values.GetFacts();
+    const uint64_t rows = _values.Get().size();
+    switch (shape) {
+      case Shape::Plain:
+        return rows * facts.for_bits;
+      case Shape::Delta:
+        return rows * facts.delta_bits;
+      case Shape::Runs:
+        return uint64_t{facts.runs} * (facts.for_bits + std::bit_width(rows));
+      case Shape::Dictionary:
+        break;
+    }
+    return std::numeric_limits<uint64_t>::max();
+  }
+
+  uint64_t PackedBound(const ColumnDataCheckpointData& data) {
+    auto bound = std::numeric_limits<uint64_t>::max();
+    for (const auto shape : {Shape::Plain, Shape::Delta, Shape::Runs}) {
+      if (!data.disabled.test(
+            std::to_underlying(CodecOf(shape, ByteCodec::None)))) {
+        bound = std::min(bound, PackedBits(shape));
+      }
+    }
+    return bound;
   }
 
  protected:

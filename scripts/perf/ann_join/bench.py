@@ -14,8 +14,8 @@ Gaussian mixture of --dim dimensions. The harness starts its own serened on a
 free port with a fresh datadir, builds one index, runs each mode --repeat
 times interleaved, and prints one JSON line per run with the wall time, the
 machine's load average when the run started, and the recall against exact.
-With --cold, every timed run starts on a restarted serened whose datadir was
-dropped from the page cache, and the line also gives the bytes serened read.
+With --cache cold, every timed run starts on a restarted serened whose datadir
+was dropped from the page cache; every line gives the bytes serened read.
 
     scripts/perf/ann_join/bench.py --bin build_perf/bin/serened \
         --dataset ~/vecbench/dbpedia.parquet --rows 90000 --queries 1000
@@ -167,6 +167,10 @@ def main():
     ap.add_argument("--k", type=int, default=30)
     ap.add_argument("--index", choices=["ivf", "hnsw"], default="ivf")
     ap.add_argument("--quant", default="sq8")
+    ap.add_argument(
+        "--option", action="append", default=[],
+        help="another index option, name = value",
+    )
     ap.add_argument("--metric", default="l2", choices=["l2", "ip", "cosine"])
     ap.add_argument("--set", action="append", default=[], help="SET name = value")
     ap.add_argument("--modes", default="join,loop")
@@ -174,11 +178,16 @@ def main():
     ap.add_argument("--keep", action="store_true", help="keep the datadir")
     ap.add_argument("--profile", help="record the join runs with perf into this file")
     ap.add_argument(
-        "--cold", action="store_true",
-        help="restart serened and drop the datadir from the page cache before "
-        "every timed run",
+        "--cache", default="warm",
+        help="comma list of warm and cold: a cold run starts on a restarted "
+        "serened whose datadir was dropped from the page cache",
+    )
+    ap.add_argument(
+        "--small", type=int, default=0,
+        help="also run join_small and loop_small over the first N users",
     )
     args = ap.parse_args()
+    caches = args.cache.split(",")
 
     op = {"l2": "<->", "ip": "<#>", "cosine": "<=>"}[args.metric]
     workdir = tempfile.mkdtemp(prefix="ann_join_")
@@ -213,7 +222,14 @@ def main():
         conn.execute(f"INSERT INTO items SELECT id, emb FROM read_parquet('{items_path}')")
         conn.execute(f"CREATE TABLE users (id BIGINT, emb FLOAT[{dim}])")
         conn.execute(f"INSERT INTO users SELECT id, emb FROM read_parquet('{users_path}')")
-        options = f"metric = '{args.metric}', quant = '{args.quant}'"
+        conn.execute(f"CREATE TABLE users_small (id BIGINT, emb FLOAT[{dim}])")
+        conn.execute(
+            f"INSERT INTO users_small SELECT id, emb FROM "
+            f"read_parquet('{users_path}') WHERE id < {args.small}"
+        )
+        options = ", ".join(
+            [f"metric = '{args.metric}'", f"quant = '{args.quant}'", *args.option]
+        )
         build, _ = timed(lambda: (
             conn.execute(
                 f"CREATE INDEX items_idx ON items USING inverted"
@@ -223,29 +239,31 @@ def main():
         ))
         print(json.dumps({"event": "built", "seconds": round(build, 3)}), flush=True)
 
-        def join_sql(kind):
+        def join_sql(kind, users="users"):
             return (
-                f"SELECT u.id, i.id FROM users u JOIN items_idx i {kind}NEAREST "
+                f"SELECT u.id, i.id FROM {users} u JOIN items_idx i {kind}NEAREST "
                 f"{args.k} BY DISTANCE u.emb {op} i.emb"
             )
 
         _, exact_rows = timed(lambda: conn.execute(join_sql("EXACT ")).fetchall())
         truth = neighbours(exact_rows)
+        small_truth = {u: truth[u] for u in range(min(args.small, args.queries))}
         knn = (
             f"SELECT id FROM items_idx ORDER BY emb {op} %s::FLOAT[{dim}] "
             f"LIMIT {args.k}"
         )
         literals = ["[" + ",".join(f"{x:.7g}" for x in v) + "]" for v in user_vectors]
 
-        def run_join():
-            return server["conn"].execute(join_sql("")).fetchall()
+        def run_join(users="users"):
+            return server["conn"].execute(join_sql("", users)).fetchall()
 
-        def run_loop():
+        def run_loop(count=args.queries):
             rows = []
             conn = server["conn"]
             with conn.pipeline():
                 cursors = [
-                    conn.execute(knn, (lit,), prepare=True) for lit in literals
+                    conn.execute(knn, (lit,), prepare=True)
+                    for lit in literals[:count]
                 ]
             for user, cur in enumerate(cursors):
                 rows.extend((user, item) for (item,) in cur.fetchall())
@@ -254,11 +272,16 @@ def main():
         def run_exact():
             return server["conn"].execute(join_sql("EXACT ")).fetchall()
 
-        runners = {"join": run_join, "loop": run_loop, "exact": run_exact}
+        runners = {
+            "join": (run_join, truth),
+            "loop": (run_loop, truth),
+            "exact": (run_exact, truth),
+            "join_small": (lambda: run_join("users_small"), small_truth),
+            "loop_small": (lambda: run_loop(args.small), small_truth),
+        }
         modes = args.modes.split(",")
-        if not args.cold:
-            for mode in modes:
-                runners[mode]()
+        if args.small:
+            modes += ["join_small", "loop_small"]
         profiler = None
         if args.profile:
             profiler = subprocess.Popen(
@@ -268,33 +291,39 @@ def main():
             )
             time.sleep(1)
         for rep in range(args.repeat):
-            for mode in modes:
-                if args.cold:
-                    restart_cold()
-                pid = server["proc"].pid
-                load = load_avg()
-                cpu = cpu_seconds(pid)
-                read = read_bytes(pid)
-                seconds, rows = timed(runners[mode])
-                cpu = cpu_seconds(pid) - cpu
-                read = read_bytes(pid) - read
-                print(json.dumps({
-                    "mode": mode,
-                    "rep": rep,
-                    "cold": args.cold,
-                    "seconds": round(seconds, 4),
-                    "server_cpu_seconds": round(cpu, 2),
-                    "read_mb": round(read / 2**20, 2),
-                    "per_query_ms": round(1000 * seconds / args.queries, 4),
-                    "recall": round(recall(neighbours(rows), truth, args.k), 4),
-                    "load": round(load, 2),
-                    "index": args.index,
-                    "quant": args.quant,
-                    "rows": args.rows,
-                    "queries": args.queries,
-                    "dim": dim,
-                    "k": args.k,
-                }), flush=True)
+            for cache in caches:
+                if cache == "warm":
+                    for mode in modes:
+                        runners[mode][0]()
+                for mode in modes:
+                    if cache == "cold":
+                        restart_cold()
+                    run, expected = runners[mode]
+                    pid = server["proc"].pid
+                    load = load_avg()
+                    cpu = cpu_seconds(pid)
+                    read = read_bytes(pid)
+                    seconds, rows = timed(run)
+                    cpu = cpu_seconds(pid) - cpu
+                    read = read_bytes(pid) - read
+                    print(json.dumps({
+                        "mode": mode,
+                        "rep": rep,
+                        "cache": cache,
+                        "seconds": round(seconds, 4),
+                        "server_cpu_seconds": round(cpu, 2),
+                        "read_mb": round(read / 2**20, 2),
+                        "per_query_ms": round(1000 * seconds / len(expected), 4),
+                        "recall": round(recall(neighbours(rows), expected, args.k), 4),
+                        "load": round(load, 2),
+                        "index": args.index,
+                        "quant": args.quant,
+                        "options": args.option,
+                        "rows": args.rows,
+                        "queries": len(expected),
+                        "dim": dim,
+                        "k": args.k,
+                    }), flush=True)
         if profiler:
             profiler.send_signal(2)
             profiler.wait()

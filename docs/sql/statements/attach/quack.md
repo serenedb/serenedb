@@ -31,6 +31,15 @@ SET ca_cert_file = '/etc/serenedb/quack-ca.pem';
 ATTACH 'quack:10.0.0.5:9494' AS remote (TOKEN 'alice:secret');
 ```
 
+`SSL_FINGERPRINT` trusts exactly the server certificate with that SHA-256 fingerprint instead, whoever signed it and whatever host name it carries, and turns HTTPS on. That is how a DuckDB server's self-signed certificate is trusted: `quack_server_list()` and `quack_generate_keys()` on the DuckDB server show its fingerprint, and `openssl x509 -noout -fingerprint -sha256 -in cert.pem` prints the fingerprint of a SereneDB listener's certificate. A server with any other certificate is refused with `SSL peer certificate or SSH remote key was not OK`.
+
+```sql
+ATTACH 'quack:10.0.0.5:9494' AS remote (
+    TOKEN 'alice:secret',
+    SSL_FINGERPRINT '83:D1:D2:DC:F3:D8:87:F2:F3:E7:FA:B5:79:DE:C4:E6:FF:CC:22:76:D3:E5:1B:70:3B:B8:3C:5D:7C:0D:0D:D6'
+);
+```
+
 ## Options
 
 | Option | Description | Default |
@@ -38,6 +47,7 @@ ATTACH 'quack:10.0.0.5:9494' AS remote (TOKEN 'alice:secret');
 | `TOKEN` | The credential the server checks, as the [Quack API page](../../../clients/quack.md#authentication) lists them | the token of a matching `quack` secret |
 | `SECRET` | The name of the `quack` secret that holds the token. Cannot be combined with `TOKEN`. | |
 | `DISABLE_SSL` | Connect over plain HTTP | `true` for a local host, `false` otherwise |
+| `SSL_FINGERPRINT` | The SHA-256 fingerprint of the one server certificate to trust, as 64 hex digits, optionally separated by colons and prefixed with `sha256:`. Turns HTTPS on; cannot be combined with `DISABLE_SSL true`. | the fingerprint of a matching `quack` secret |
 | `CLIENT_ID` | An identifier of the client, empty or at least 4 characters | the `quack_default_client_id` setting |
 | `HEARTBEAT_TIMEOUT` | Seconds the server keeps the session without a request from the client | the `quack_default_heartbeat_timeout` setting, 60 |
 
@@ -49,7 +59,7 @@ A `quack` secret keeps the token out of the `ATTACH` statement. Its `SCOPE` is t
 
 <SqlLogicTest id="sql/statements/attach/quack/example_002" hideResult />
 
-`EXTRA_HTTP_HEADERS` adds headers to every request the client sends, for example for a proxy in front of the server: `EXTRA_HTTP_HEADERS MAP {'X-Proxy-Token': 'abc'}`.
+`EXTRA_HTTP_HEADERS` adds headers to every request the client sends, for example for a proxy in front of the server: `EXTRA_HTTP_HEADERS MAP {'X-Proxy-Token': 'abc'}`. `SSL_FINGERPRINT` pins the server's certificate as the `ATTACH` option does.
 
 ## Queries
 
@@ -69,7 +79,7 @@ The attached database reads the server's table list at `ATTACH`. A table that an
 
 <SqlLogicTest id="sql/statements/attach/quack/example_004" />
 
-It takes the `token`, `disable_ssl`, `client_id` and `heartbeat_timeout` options of `ATTACH`.
+It takes the `token`, `disable_ssl`, `ssl_fingerprint`, `client_id` and `heartbeat_timeout` options of `ATTACH`.
 
 `quack_connection_id` returns the id of the server session that the current session uses for an attached database:
 

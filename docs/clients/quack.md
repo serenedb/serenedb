@@ -30,7 +30,7 @@ This is a SereneDB Quack endpoint. Use ATTACH 'quack:...' to connect here.
 
 Port 9494 is the port a `quack:` address uses when it names none. Sessions work in the listener's database, which is `postgres` unless `db=` names another one, as in `?api=quack&db=shop`.
 
-A client attaches over HTTPS unless the server address is `localhost`, `127.0.0.1` or `::1`. Serve the endpoint on an `https://` listener with a certificate the clients trust, or have them attach with `DISABLE_SSL true`. A client trusts a self-signed certificate once its `ca_cert_file` setting names it, as the [Quack ATTACH page](../sql/statements/attach/quack.md#address) shows.
+A client attaches over HTTPS unless the server address is `localhost`, `127.0.0.1` or `::1`. Serve the endpoint on an `https://` listener with a certificate the clients trust, or have them attach with `DISABLE_SSL true`. A client trusts a self-signed certificate once its `ca_cert_file` setting names it, or by the certificate's SHA-256 fingerprint (`SSL_FINGERPRINT`, `ssl_fingerprint` in DuckDB), as the [Quack ATTACH page](../sql/statements/attach/quack.md#address) shows.
 
 ## DuckDB clients
 

@@ -275,6 +275,29 @@ def test_credentials(servers) -> None:
         conn_a.execute(_remote(quack_b, "SELECT current_user", token=":"))
 
 
+def test_ssl_fingerprint_is_checked(servers) -> None:
+    conn_a, _, quack_b, _ = servers
+    pin = ":".join(["AB"] * 32)
+    for fingerprint, error in (("zz", "expected the SHA-256 fingerprint"),
+                               ("AB:CD", "has 64 hex digits, got 4")):
+        with pytest.raises(psycopg.Error, match=error):
+            conn_a.execute(f"ATTACH 'quack:127.0.0.1:{quack_b}' AS bad "
+                           f"(TOKEN 'postgres:', SSL_FINGERPRINT '{fingerprint}')")
+        with pytest.raises(psycopg.Error, match=error):
+            conn_a.execute(
+                "CREATE SECRET bad (TYPE quack, TOKEN 'postgres:', "
+                f"SSL_FINGERPRINT '{fingerprint}')")
+    with pytest.raises(psycopg.Error, match="cannot be combined with disable_ssl"):
+        conn_a.execute(f"ATTACH 'quack:127.0.0.1:{quack_b}' AS bad "
+                       f"(TOKEN 'postgres:', SSL_FINGERPRINT '{pin}', "
+                       "DISABLE_SSL true)")
+    with pytest.raises(psycopg.Error, match="cannot be combined with disable_ssl"):
+        conn_a.execute(
+            f"SELECT * FROM quack_query('quack:127.0.0.1:{quack_b}', 'SELECT 1', "
+            f"token := 'postgres:', ssl_fingerprint := '{pin}', "
+            "disable_ssl := true)")
+
+
 def test_login_rules(servers) -> None:
     conn_a, conn_b, quack_b, _ = servers
     conn_b.execute(

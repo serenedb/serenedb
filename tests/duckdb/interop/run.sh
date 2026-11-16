@@ -305,6 +305,88 @@ EOF
 	)
 }
 
+# Both peers over TLS with a vanilla self-signed certificate, which a client trusts by its pinned fingerprint
+quack_tls() {
+	local keys fingerprint wrong port pid feed pg quack server
+	keys="$WORK/quack-keys"
+	mkdir -p "$keys"
+	fingerprint=$(HOME="$VANILLA_HOME" "$VANILLA_DUCKDB" -bail -noheader -list :memory: \
+		-c "LOAD quack; SELECT fingerprint FROM quack_generate_keys(directory := '$keys')") || return 1
+	wrong=$([[ ${fingerprint:0:1} == 0 ]] && echo 1 || echo 0)${fingerprint:1}
+	port=$(free_port)
+	mkfifo "$WORK/quack-tls.in"
+	HOME="$VANILLA_HOME" "$VANILLA_DUCKDB" -bail -csv :memory: <"$WORK/quack-tls.in" >"$WORK/quack-tls.log" 2>&1 &
+	pid=$!
+	quack_pids+=("$pid")
+	exec {feed}>"$WORK/quack-tls.in"
+	echo "LOAD quack;
+CREATE TABLE served AS SELECT 7 AS x;
+CALL quack_serve('quack:127.0.0.1:$port', token := 'interop', disable_ssl := false,
+                 ssl_cert_file := '$keys/server.pem', ssl_key_file := '$keys/private_key.pem');" >&$feed
+	if ! wait_port "$port"; then
+		exec {feed}>&-
+		show "vanilla did not serve over TLS:" "$WORK/quack-tls.log"
+		return 1
+	fi
+	"$SERENED" shell -bail -csv :memory: >"$WORK/quack-tls-fork-client.csv" 2>&1 <<EOF
+ATTACH 'quack:127.0.0.1:$port' AS v (TOKEN 'interop', SSL_FINGERPRINT '$fingerprint');
+SELECT x FROM v.served;
+SELECT * FROM quack_query('quack:127.0.0.1:$port', 'SELECT 41 AS a', token := 'interop', ssl_fingerprint := '$fingerprint');
+CREATE SECRET pinned (TYPE quack, SCOPE 'quack:127.0.0.1:$port', TOKEN 'interop', SSL_FINGERPRINT 'sha256:${fingerprint,,}');
+ATTACH 'quack:127.0.0.1:$port' AS by_scope;
+SELECT x FROM by_scope.served;
+ATTACH 'quack:127.0.0.1:$port' AS by_name (SECRET 'pinned');
+SELECT x FROM by_name.served;
+EOF
+	"$SERENED" shell -csv :memory: >"$WORK/quack-tls-refused.log" 2>&1 <<EOF
+ATTACH 'quack:127.0.0.1:$port' AS unpinned (TOKEN 'interop', DISABLE_SSL false);
+ATTACH 'quack:127.0.0.1:$port' AS wrong (TOKEN 'interop', SSL_FINGERPRINT '$wrong');
+EOF
+	echo ".quit" >&$feed
+	exec {feed}>&-
+	wait "$pid"
+	pg=$(free_port)
+	quack=$(free_port)
+	"$SERENED" "$WORK/quack-tls-server" --listen="postgres://127.0.0.1:$pg,https://127.0.0.1:$quack?api=quack" \
+		--tls_cert="$keys/server.pem" --tls_key="$keys/private_key.pem" >"$WORK/quack-tls-server.log" 2>&1 &
+	server=$!
+	quack_pids+=("$server")
+	if ! wait_port "$quack"; then
+		show "serened did not serve over TLS:" "$WORK/quack-tls-server.log"
+		return 1
+	fi
+	HOME="$VANILLA_HOME" "$VANILLA_DUCKDB" -bail -csv :memory: >"$WORK/quack-tls-vanilla-client.csv" 2>&1 <<EOF
+LOAD quack;
+SELECT * FROM quack_query('quack:127.0.0.1:$quack', 'SELECT 43 AS a', token := 'postgres:', ssl_fingerprint := '$fingerprint');
+EOF
+	kill "$server"
+	wait "$server"
+	expect "serened reads a vanilla quack server over TLS differently" "$WORK/quack-tls-fork-client.csv" <(
+		cat <<'EOF'
+x
+7
+a
+41
+Success
+true
+x
+7
+x
+7
+EOF
+	) || return 1
+	if [[ $(grep -c 'SSL peer certificate or SSH remote key was not OK' "$WORK/quack-tls-refused.log") -ne 2 ]]; then
+		show "serened trusted a vanilla certificate it was not pinned to:" "$WORK/quack-tls-refused.log"
+		return 1
+	fi
+	expect "a vanilla quack client reads serened over TLS differently" "$WORK/quack-tls-vanilla-client.csv" <(
+		cat <<'EOF'
+a
+43
+EOF
+	)
+}
+
 echo "===== [duckdb interop] fork: $SERENED"
 echo "===== [duckdb interop] vanilla: $("$VANILLA_DUCKDB" --version) ($VANILLA_DUCKDB)"
 for version in $INTEROP_STORAGE_VERSIONS; do
@@ -317,6 +399,8 @@ quack_vanilla_client
 record "quack-vanilla-client" $?
 quack_vanilla_server
 record "quack-vanilla-server" $?
+quack_tls
+record "quack-tls" $?
 
 echo "===== [duckdb interop] $((cases - ${#failed[@]}))/$cases passed"
 if [[ ${#failed[@]} -gt 0 ]]; then

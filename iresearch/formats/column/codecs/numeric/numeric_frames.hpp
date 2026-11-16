@@ -308,8 +308,7 @@ class Frames : public State {
     }
     return {
       .codec = CodecOf(_shape, _leaf.leaf),
-      .ratio = static_cast<double>(_estimated) / rows,
-      .cost = 1.0 + _leaf.penalty,
+      .score = static_cast<double>(_estimated) / rows * (1.0 + _leaf.penalty),
     };
   }
 

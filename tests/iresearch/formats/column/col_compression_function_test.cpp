@@ -59,7 +59,7 @@ struct Fake {
   static Estimate Analyze(ColumnDataCheckpointData&, double bound) {
     ++probe.analyzed;
     probe.bound = bound;
-    return {.codec = kCodec, .ratio = probe.estimate};
+    return {.codec = kCodec, .score = probe.estimate};
   }
 
   static bool Compress(ColumnDataCheckpointData& data) {

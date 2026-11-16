@@ -1728,10 +1728,10 @@ constexpr CompressionFunction kFunction{
   .analyze = [](ColumnDataCheckpointData& data, double) -> Estimate {
     return {
       .codec = CodecType::Roaring,
-      .ratio = static_cast<double>(
+      .score = static_cast<double>(
                  data.Get<Containers<kPhysical>>().state.total_size) /
-               static_cast<double>(std::max<uint64_t>(data.rows, 1)),
-      .cost = kCompressPenalty,
+               static_cast<double>(std::max<uint64_t>(data.rows, 1)) *
+               kCompressPenalty,
     };
   },
   .compress =

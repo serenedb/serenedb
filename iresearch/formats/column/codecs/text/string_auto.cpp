@@ -263,7 +263,7 @@ Estimate Strings::Analyze(ColumnDataCheckpointData& data) {
   const auto& seg = *_first;
   return {
     .codec = CodecOf(seg.config.shape, seg.config.leaf),
-    .ratio = static_cast<double>(seg.Size()) /
+    .score = static_cast<double>(seg.Size()) /
              static_cast<double>(std::max<uint64_t>(seg.input, 1)),
   };
 }

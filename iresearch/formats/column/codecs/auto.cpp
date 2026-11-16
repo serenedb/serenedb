@@ -129,7 +129,7 @@ void Contest(std::span<const CompressionFunction* const> functions,
     const auto written = data.written;
     if (held->compress(data)) {
       if (reuse.Grew(static_cast<double>(data.written - written), input)) {
-        reuse.clock.Restart();
+        reuse.Restart();
       }
       return;
     }
@@ -137,8 +137,8 @@ void Contest(std::span<const CompressionFunction* const> functions,
   Estimate best;
   const CompressionFunction* winner = nullptr;
   for (const auto* function : functions) {
-    if (const auto estimate = function->analyze(data, best.Score());
-        estimate.Score() < best.Score()) {
+    if (const auto estimate = function->analyze(data, best.score);
+        estimate.score < best.score) {
       best = estimate;
       winner = function;
     }

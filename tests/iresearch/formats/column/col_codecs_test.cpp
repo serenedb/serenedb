@@ -3957,7 +3957,7 @@ TEST_F(ColCodecsTest, AutoMeasuresLessOftenWhileItsCodecHolds) {
   std::vector<uint32_t> gaps;
   for (int rg = 0; rg < 32; ++rg) {
     seal(steady, tuning);
-    gaps.push_back(reuse.clock.gap);
+    gaps.push_back(reuse.gap);
   }
   std::vector<uint32_t> expected{1};
   expected.resize(3, 2);
@@ -3974,18 +3974,18 @@ TEST_F(ColCodecsTest, AutoMeasuresLessOftenWhileItsCodecHolds) {
   };
   const auto changed = Chunks(4096, repeated);
   seal(changed, tuning);
-  EXPECT_EQ(reuse.clock.gap, 1u);
+  EXPECT_EQ(reuse.gap, 1u);
   ASSERT_TRUE(config);
   EXPECT_EQ(config->shape, Shape::Dictionary);
   gaps.clear();
   for (int rg = 0; rg < 4; ++rg) {
     seal(changed, tuning);
-    gaps.push_back(reuse.clock.gap);
+    gaps.push_back(reuse.gap);
   }
   EXPECT_EQ(gaps, (std::vector<uint32_t>{1, 2, 2, 4}));
 
   seal(steady, tuning);
-  EXPECT_EQ(reuse.clock.gap, 1u);
+  EXPECT_EQ(reuse.gap, 1u);
   ASSERT_TRUE(config);
   EXPECT_EQ(config->shape, Shape::Plain);
 }

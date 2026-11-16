@@ -155,11 +155,8 @@ struct ColumnDataCheckpointData {
 };
 
 struct Estimate {
-  double Score() const noexcept { return ratio * cost; }
-
   CodecType codec = CodecType::Auto;
-  double ratio = std::numeric_limits<double>::infinity();
-  double cost = 1;
+  double score = std::numeric_limits<double>::infinity();
 };
 
 struct CompressionFunction {
@@ -240,7 +237,7 @@ struct Streamed {
     } else {
       return {
         .codec = kType,
-        .ratio = static_cast<double>(kAnalyze(data.chunks)) /
+        .score = static_cast<double>(kAnalyze(data.chunks)) /
                  static_cast<double>(std::max<uint64_t>(data.rows, 1)),
       };
     }

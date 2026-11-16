@@ -5113,7 +5113,7 @@ TEST_F(ColumnReaderTest, VariantRoundTripUnshredded) {
 }
 
 uint32_t LargestCalibrationGap(const irs::ColumnWriteState& state) {
-  uint32_t gap = state.tuning.reuse.clock.gap;
+  uint32_t gap = state.tuning.reuse.gap;
   for (const auto& child : state.children) {
     gap = std::max(gap, LargestCalibrationGap(child));
   }

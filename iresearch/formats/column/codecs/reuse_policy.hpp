@@ -29,27 +29,21 @@ namespace irs::codecs {
 
 inline constexpr double kDrift = 1.25;
 
-struct CalibrationClock {
+struct ReusePolicy {
   static constexpr uint32_t kMaxGap = 16;
 
+  CodecType pick = CodecType::Auto;
   uint32_t gap = 1;
   uint32_t since = 0;
-
-  bool Due() noexcept { return ++since >= gap; }
-  void Settle(bool kept) noexcept {
-    gap = kept ? std::min(gap * 2, kMaxGap) : 1;
-    since = 0;
-  }
-  void Restart() noexcept { Settle(false); }
-};
-
-struct ReusePolicy {
-  CodecType pick = CodecType::Auto;
-  CalibrationClock clock;
   double reference = 0;
   bool calibrated = false;
 
-  bool Due() noexcept { return !calibrated || clock.Due(); }
+  bool Due() noexcept { return !calibrated || ++since >= gap; }
+
+  void Restart() noexcept {
+    gap = 1;
+    since = 0;
+  }
 
   bool Drifted(double bytes, double input) const noexcept {
     const auto ratio = bytes / input;
@@ -61,7 +55,8 @@ struct ReusePolicy {
   }
 
   void Settle(CodecType next, bool kept, double bytes, double input) noexcept {
-    clock.Settle(kept);
+    gap = kept ? std::min(gap * 2, kMaxGap) : 1;
+    since = 0;
     calibrated = true;
     pick = next;
     if (input != 0) {

@@ -148,7 +148,7 @@ constexpr DecompressionFunction kDecompression{
   .fetch_rows = FetchRows<T>,
 };
 
-template<typename T, duckdb::PhysicalType kPhysical>
+template<typename T>
 constexpr Codec kFunction{
   .type = CodecType::Constant,
   .decompression = &kDecompression<T>,
@@ -197,31 +197,30 @@ const Codec* ConstantFunction(duckdb::PhysicalType physical) {
     case BIT:
       return &kValidity;
     case BOOL:
-      return &kFunction<int8_t, BOOL>;
     case INT8:
-      return &kFunction<int8_t, INT8>;
+      return &kFunction<int8_t>;
     case INT16:
-      return &kFunction<int16_t, INT16>;
+      return &kFunction<int16_t>;
     case INT32:
-      return &kFunction<int32_t, INT32>;
+      return &kFunction<int32_t>;
     case INT64:
-      return &kFunction<int64_t, INT64>;
+      return &kFunction<int64_t>;
     case UINT8:
-      return &kFunction<uint8_t, UINT8>;
+      return &kFunction<uint8_t>;
     case UINT16:
-      return &kFunction<uint16_t, UINT16>;
+      return &kFunction<uint16_t>;
     case UINT32:
-      return &kFunction<uint32_t, UINT32>;
+      return &kFunction<uint32_t>;
     case UINT64:
-      return &kFunction<uint64_t, UINT64>;
+      return &kFunction<uint64_t>;
     case INT128:
-      return &kFunction<duckdb::hugeint_t, INT128>;
+      return &kFunction<duckdb::hugeint_t>;
     case UINT128:
-      return &kFunction<duckdb::uhugeint_t, UINT128>;
+      return &kFunction<duckdb::uhugeint_t>;
     case FLOAT:
-      return &kFunction<float, FLOAT>;
+      return &kFunction<float>;
     case DOUBLE:
-      return &kFunction<double, DOUBLE>;
+      return &kFunction<double>;
     default:
       return nullptr;
   }

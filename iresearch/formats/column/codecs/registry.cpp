@@ -22,6 +22,7 @@
 
 #include <absl/strings/match.h>
 
+#include <iterator>
 #include <magic_enum/magic_enum.hpp>
 
 #include "iresearch/formats/column/codecs/bytes/lz4.hpp"
@@ -34,16 +35,32 @@ namespace {
 
 using duckdb::PhysicalType;
 
-template<CodecType kType, const Codec* kText = nullptr>
-const Codec* FamilyCodec(PhysicalType physical) {
-  if (physical == PhysicalType::VARCHAR) {
-    return kText;
-  }
-  if constexpr (IsNumeric(kType)) {
-    return NumericCodecOf(ShapeOf(kType), LeafOf(kType), physical);
-  } else {
+const Codec* TextCodecOf(CodecType type) {
+  static constexpr const Codec* kText[] = {
+    nullptr,
+    &kLz4Function,
+    &kZstdFunction,
+    &kFsstFunction,
+    &kZxcFunction,
+    &kFsstPlusFunction,
+    &kOnPairFunction,
+    &kFsst12Function,
+    nullptr,
+    &kDictLz4Function,
+    &kDictZstdFunction,
+    &kDictFsstFunction,
+    &kDictZxcFunction,
+    &kDictFsstPlusFunction,
+    &kDictOnPairFunction,
+    &kDictFsst12Function,
+  };
+  static_assert(std::size(kText) == kTextShapeForms);
+  const auto index = FormIndex(type);
+  if (index >= std::size(kText)) {
     return nullptr;
   }
+  SDB_ASSERT(!kText[index] || kText[index]->type == type);
+  return kText[index];
 }
 
 const Codec* EmptyCodec(PhysicalType physical) {
@@ -72,53 +89,15 @@ const Codec* GetCodec(CodecType type, PhysicalType physical) {
       return ConstantFunction(physical);
     case CodecType::Empty:
       return EmptyCodec(physical);
-    case CodecType::Ffor:
-      return FamilyCodec<CodecType::Ffor>(physical);
-    case CodecType::Lz4:
-      return FamilyCodec<CodecType::Lz4, &kLz4Function>(physical);
-    case CodecType::Zstd:
-      return FamilyCodec<CodecType::Zstd, &kZstdFunction>(physical);
-    case CodecType::Fsst:
-      return FamilyCodec<CodecType::Fsst, &kFsstFunction>(physical);
-    case CodecType::Zxc:
-      return FamilyCodec<CodecType::Zxc, &kZxcFunction>(physical);
-    case CodecType::FsstPlus:
-      return FamilyCodec<CodecType::FsstPlus, &kFsstPlusFunction>(physical);
-    case CodecType::Onpair:
-      return FamilyCodec<CodecType::Onpair, &kOnPairFunction>(physical);
-    case CodecType::Fsst12:
-      return FamilyCodec<CodecType::Fsst12, &kFsst12Function>(physical);
-    case CodecType::DictFfor:
-      return FamilyCodec<CodecType::DictFfor>(physical);
-    case CodecType::DictLz4:
-      return FamilyCodec<CodecType::DictLz4, &kDictLz4Function>(physical);
-    case CodecType::DictZstd:
-      return FamilyCodec<CodecType::DictZstd, &kDictZstdFunction>(physical);
-    case CodecType::DictFsst:
-      return FamilyCodec<CodecType::DictFsst, &kDictFsstFunction>(physical);
-    case CodecType::DictZxc:
-      return FamilyCodec<CodecType::DictZxc, &kDictZxcFunction>(physical);
-    case CodecType::DictFsstPlus:
-      return FamilyCodec<CodecType::DictFsstPlus, &kDictFsstPlusFunction>(
-        physical);
-    case CodecType::DictOnpair:
-      return FamilyCodec<CodecType::DictOnpair, &kDictOnPairFunction>(physical);
-    case CodecType::DictFsst12:
-      return FamilyCodec<CodecType::DictFsst12, &kDictFsst12Function>(physical);
-    case CodecType::DeltaFfor:
-      return FamilyCodec<CodecType::DeltaFfor>(physical);
-    case CodecType::DeltaLz4:
-      return FamilyCodec<CodecType::DeltaLz4>(physical);
-    case CodecType::DeltaZstd:
-      return FamilyCodec<CodecType::DeltaZstd>(physical);
-    case CodecType::RleFfor:
-      return FamilyCodec<CodecType::RleFfor>(physical);
-    case CodecType::RleLz4:
-      return FamilyCodec<CodecType::RleLz4>(physical);
-    case CodecType::RleZstd:
-      return FamilyCodec<CodecType::RleZstd>(physical);
+    default:
+      break;
   }
-  return nullptr;
+  SDB_ASSERT(IsForm(type));
+  if (physical == PhysicalType::VARCHAR) {
+    return TextCodecOf(type);
+  }
+  return IsNumeric(type) ? NumericCodecOf(ShapeOf(type), LeafOf(type), physical)
+                         : nullptr;
 }
 
 CodecType FindCodec(std::string_view name) {

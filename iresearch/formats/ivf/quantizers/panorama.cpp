@@ -294,8 +294,7 @@ class PanoramaQuantizerReader final : public QuantizerReader {
     if (_levels == 0) {
       const byte_type* q = _cb->Query();
       for (size_t i = 0; i < left; ++i) {
-        out[i] = ComputeDistance<M>(q, block.data() + i * _record_size,
-                                    static_cast<uint16_t>(_d));
+        out[i] = ComputeDistance<M>(q, block.data() + i * _record_size, _d);
       }
       return;
     }

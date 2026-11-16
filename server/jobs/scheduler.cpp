@@ -23,6 +23,8 @@
 #include <absl/cleanup/cleanup.h>
 #include <absl/numeric/int128.h>
 #include <absl/strings/str_cat.h>
+#include <absl/time/clock.h>
+#include <absl/time/time.h>
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
@@ -313,8 +315,13 @@ void JobScheduler::Schedule(catalog::JobCatalogEntry& job) {
 }
 
 void JobScheduler::Arm(const std::shared_ptr<JobState>& state, uint64_t timer) {
-  _runtime.RunAt(state->status.next_run,
-                 [this, state, timer] { Run(state, timer); });
+  const auto wait = absl::ToChronoNanoseconds(
+    absl::FromUnixMicros(state->status.next_run.value) - absl::Now());
+  _runtime.Delay(wait).Detach(_runtime.Background(), [this, state, timer] {
+    if (!_runtime.IsStopping()) {
+      Run(state, timer);
+    }
+  });
 }
 
 void JobScheduler::Run(std::shared_ptr<JobState> state, uint64_t timer) {

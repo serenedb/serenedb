@@ -1,0 +1,146 @@
+statement ok
+CREATE SEQUENCE vuc_s;
+
+
+query
+SELECT count(*) AS n FROM (SELECT nextval('vuc_s') FROM generate_series(1, 100)) t;
+----
+n
+100
+
+
+query
+SELECT nextval('vuc_s') AS v;
+----
+v
+101
+
+
+query
+SELECT count(*) AS n FROM (SELECT setval('vuc_s', 1000)) t;
+----
+n
+1
+
+
+query
+SELECT nextval('vuc_s') AS v;
+----
+v
+1001
+
+
+statement ok
+CREATE VIEW vuc_view AS SELECT nextval('vuc_s') AS n, g FROM generate_series(1, 5) AS t (g);
+
+
+query
+SELECT count(g) AS c FROM vuc_view;
+----
+c
+5
+
+
+query
+SELECT nextval('vuc_s') AS v;
+----
+v
+1007
+
+
+query
+WITH w AS (SELECT nextval('vuc_s') AS n, g FROM generate_series(1, 3) AS t (g)) SELECT count(g) AS c FROM w;
+----
+c
+3
+
+
+query
+SELECT nextval('vuc_s') AS v;
+----
+v
+1011
+
+
+query
+WITH m AS MATERIALIZED (SELECT nextval('vuc_s') AS n, g FROM generate_series(1, 2) AS t (g)) SELECT count(g) AS c FROM m;
+----
+c
+2
+
+
+query
+SELECT nextval('vuc_s') AS v;
+----
+v
+1014
+
+
+query
+SELECT count(*) AS c FROM (SELECT sum(nextval('vuc_s')) AS s, count(*) AS k FROM generate_series(1, 4)) t;
+----
+c
+1
+
+
+query
+SELECT nextval('vuc_s') AS v;
+----
+v
+1019
+
+
+query
+SELECT count(x) AS c FROM (SELECT nextval('vuc_s') AS n, 1 AS x UNION ALL SELECT nextval('vuc_s'), 2) t;
+----
+c
+2
+
+
+query
+SELECT nextval('vuc_s') AS v;
+----
+v
+1022
+
+
+query
+SELECT x FROM (SELECT 1 AS x, nextval('vuc_s') AS n) t;
+----
+x
+1
+
+
+query
+SELECT nextval('vuc_s') AS v;
+----
+v
+1024
+
+
+query
+WITH RECURSIVE r (i, n) AS (SELECT 1, nextval('vuc_s') UNION ALL SELECT i + 1, nextval('vuc_s') FROM r WHERE i < 3) SELECT count(i) AS c FROM r;
+----
+c
+3
+
+
+query
+SELECT nextval('vuc_s') AS v;
+----
+v
+1028
+
+
+query
+SELECT count(*) AS c FROM (SELECT DISTINCT ON (g) g, nextval('vuc_s') AS n FROM generate_series(1, 3) AS t (g)) s;
+----
+c
+3
+
+
+query
+SELECT nextval('vuc_s') AS v;
+----
+v
+1032

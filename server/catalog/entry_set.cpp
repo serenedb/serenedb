@@ -38,6 +38,7 @@
 #include "catalog/base_catalog.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
+#include "catalog/entry/search_table.h"
 #include "catalog/transaction.h"
 
 namespace sdb::catalog {
@@ -107,12 +108,20 @@ void ForEachSubject(
       visit(oid, dependency);
     }
   };
+  subject(version.ParentSchemaOid(), nullptr);
   if (version.type == duckdb::CatalogType::INDEX_ENTRY) {
     subject(version.Cast<duckdb::IndexCatalogEntry>().table_oid, nullptr);
   }
   for (const auto& dependency :
        version.Cast<duckdb::StandardEntry>().dependencies.Set()) {
     subject(dependency.oid, &dependency);
+  }
+  if (IsSearchTable(version)) {
+    for (const auto& spec : version.Cast<SearchTableEntry>().KeySpecs()) {
+      if (spec.kind == search::KeyKind::Reference && !spec.self_reference) {
+        subject(spec.referenced_field, nullptr);
+      }
+    }
   }
   if (version.type == duckdb::CatalogType::ROLE_ENTRY) {
     return;
@@ -142,18 +151,58 @@ bool DependsOn(const duckdb::CatalogEntry& member, duckdb::idx_t subject,
   return depends;
 }
 
-bool TriggersDependOn(duckdb::CatalogTransaction transaction,
-                      duckdb::CatalogEntry& member, duckdb::idx_t subject,
-                      const duckdb::Identifier& catalog, bool local) {
-  if (member.type != duckdb::CatalogType::TABLE_ENTRY) {
+const duckdb::Constraint* FindConstraint(const duckdb::CatalogEntry& table,
+                                         duckdb::idx_t oid) {
+  const auto& constraints =
+    table.Cast<duckdb::TableCatalogEntry>().GetConstraints();
+  const auto it = absl::c_find_if(constraints, [&](const auto& constraint) {
+    return constraint->oid == oid;
+  });
+  return it == constraints.end() ? nullptr : it->get();
+}
+
+bool Redefined(const duckdb::Constraint& before,
+               const duckdb::Constraint* after) {
+  return !after || !before.Equals(*after);
+}
+
+bool ReadsColumns(const duckdb::CatalogEntry& dependent) {
+  switch (dependent.type) {
+    case duckdb::CatalogType::VIEW_ENTRY:
+    case duckdb::CatalogType::MACRO_ENTRY:
+    case duckdb::CatalogType::TABLE_MACRO_ENTRY:
+    case duckdb::CatalogType::INDEX_ENTRY:
+    case duckdb::CatalogType::TRIGGER_ENTRY:
+      return true;
+    default:
+      return false;
+  }
+}
+
+bool ColumnsChanged(const duckdb::CatalogEntry& before,
+                    const duckdb::CatalogEntry& after) {
+  if (before.type != duckdb::CatalogType::TABLE_ENTRY ||
+      after.type != duckdb::CatalogType::TABLE_ENTRY) {
     return false;
   }
-  bool depends = false;
-  member.Cast<duckdb::TableCatalogEntry>().ScanTriggers(
-    transaction, [&](duckdb::CatalogEntry& trigger) {
-      depends |= DependsOn(trigger, subject, catalog, local);
-    });
-  return depends;
+  const duckdb::IdentifierEquality equals{
+    before.ParentCatalog().IsCaseSensitive()};
+  const auto& columns = after.Cast<duckdb::TableCatalogEntry>().GetColumns();
+  for (const auto& column :
+       before.Cast<duckdb::TableCatalogEntry>().GetColumns().Logical()) {
+    bool kept = false;
+    for (const auto& now : columns.Logical()) {
+      if (column.CatalogOid() ? now.CatalogOid() == column.CatalogOid()
+                              : equals(now.Name(), column.Name())) {
+        kept = equals(now.Name(), column.Name());
+        break;
+      }
+    }
+    if (!kept) {
+      return true;
+    }
+  }
+  return false;
 }
 
 }  // namespace
@@ -336,9 +385,7 @@ void OidIndex::ForEachDependent(
     }
     const bool local = dependent.index == this;
     if (auto member = dependent.index->Find(transaction, dependent.oid);
-        member && (DependsOn(*member, subject, _database.GetName(), local) ||
-                   TriggersDependOn(transaction, *member, subject,
-                                    _database.GetName(), local))) {
+        member && DependsOn(*member, subject, _database.GetName(), local)) {
       callback(*member);
     }
   }
@@ -382,7 +429,9 @@ void OidIndex::VisitNewest(
   }
 }
 
-void OidIndex::CheckCreated(const duckdb::CatalogEntry& version) {
+void OidIndex::CheckCreated(const duckdb::SnapshotView& view,
+                            const duckdb::CatalogEntry& version) {
+  const bool columns = ReadsColumns(version);
   ForEachSubject(version, [&](duckdb::idx_t subject,
                               const duckdb::LogicalDependency* dependency) {
     auto* index = this;
@@ -401,22 +450,29 @@ void OidIndex::CheckCreated(const duckdb::CatalogEntry& version) {
       }
       index = &database->GetCatalog().Cast<BaseCatalog>().Oids();
     }
+    index->CheckLive(view, subject, columns);
+    if (!dependency) {
+      return;
+    }
+    duckdb::idx_t schema = 0;
     index->VisitNewest(subject,
                        [&](EntrySet& set, const duckdb::Identifier& name) {
-                         set.CheckSubjectLive(name, subject);
+                         if (const auto entry = set.GetCommitted(name)) {
+                           schema = entry->ParentSchemaOid();
+                         }
                        });
+    if (schema && schema != subject) {
+      index->CheckLive(view, schema, false);
+    }
   });
   if (version.deleted || version.type == duckdb::CatalogType::ROLE_ENTRY) {
     return;
   }
   auto& roles = ClusterOf().Oids();
   const auto check_role = [&](duckdb::idx_t role) {
-    if (!role) {
-      return;
+    if (role) {
+      roles.CheckLive(view, role, false);
     }
-    roles.VisitNewest(role, [&](EntrySet& set, const duckdb::Identifier& name) {
-      set.CheckSubjectLive(name, role);
-    });
   };
   check_role(version.permissions.owner);
   for (const auto& item : version.permissions.acl) {
@@ -425,8 +481,51 @@ void OidIndex::CheckCreated(const duckdb::CatalogEntry& version) {
   }
 }
 
+void OidIndex::CheckLive(const duckdb::SnapshotView& view, duckdb::idx_t oid,
+                         bool columns) {
+  bool indexed = false;
+  VisitNewest(oid, [&](EntrySet& set, const duckdb::Identifier& name) {
+    indexed = true;
+    set.CheckSubjectLive(view, name, oid, 0, columns);
+  });
+  if (indexed) {
+    return;
+  }
+  if (const auto owner = Owner(oid)) {
+    VisitNewest(owner, [&](EntrySet& set, const duckdb::Identifier& name) {
+      set.CheckSubjectLive(view, name, owner, oid, false);
+    });
+  }
+}
+
+void OidIndex::CheckChangedParts(const duckdb::SnapshotView& view,
+                                 duckdb::CatalogEntry& version) {
+  if (!version.HasChild() || version.Child().oid != version.oid) {
+    return;
+  }
+  if (ColumnsChanged(version.Child(), version)) {
+    CheckDropped(view, {
+                         .oid = version.oid,
+                         .name = version.name.GetIdentifierName(),
+                         .change = "ALTER",
+                         .columns = true,
+                       });
+  }
+  if (version.type != duckdb::CatalogType::TABLE_ENTRY ||
+      version.Child().type != duckdb::CatalogType::TABLE_ENTRY) {
+    return;
+  }
+  for (const auto& constraint :
+       version.Child().Cast<duckdb::TableCatalogEntry>().GetConstraints()) {
+    if (Redefined(*constraint, FindConstraint(version, constraint->oid))) {
+      CheckDropped(
+        view, {.oid = constraint->oid, .name = constraint->constraint_name});
+    }
+  }
+}
+
 void OidIndex::CheckDropped(const duckdb::SnapshotView& view,
-                            const duckdb::CatalogEntry& dropped) {
+                            const DroppedSubject& dropped) {
   for (const auto& dependent : _dependents->Of(dropped.oid)) {
     duckdb::shared_ptr<duckdb::AttachedDatabase> pinned;
     if (dependent.index != this) {
@@ -435,10 +534,11 @@ void OidIndex::CheckDropped(const duckdb::SnapshotView& view,
         continue;
       }
     }
+    const bool local = dependent.index == this;
     dependent.index->VisitNewest(
       dependent.oid, [&](EntrySet& set, const duckdb::Identifier& name) {
         set.CheckNoLaterDependent(view, name, dependent.oid, dropped,
-                                  _database.GetName(), dependent.index == this);
+                                  _database.GetName(), local);
       });
   }
 }
@@ -460,8 +560,10 @@ EntrySet::~EntrySet() {
   _oids.Forget(*this, indexed);
 }
 
-void EntrySet::CheckSubjectLive(const duckdb::Identifier& name,
-                                duckdb::idx_t oid) {
+void EntrySet::CheckSubjectLive(const duckdb::SnapshotView& view,
+                                const duckdb::Identifier& name,
+                                duckdb::idx_t oid, duckdb::idx_t part,
+                                bool columns) {
   absl::ReaderMutexLock lock{&_mutex};
   const auto it = _entries.find(name);
   const auto* head = it == _entries.end() ? nullptr : it->second.get();
@@ -483,12 +585,43 @@ void EntrySet::CheckSubjectLive(const duckdb::Identifier& name,
               name.GetIdentifierName(),
               "\" was dropped and re-created by another transaction"));
   }
+  const auto* seen = Visible(view, *it->second);
+  if (!part) {
+    if (head->type == duckdb::CatalogType::ROLE_ENTRY) {
+      return;
+    }
+    if (!seen || seen->deleted || seen->oid != oid) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_T_R_SERIALIZATION_FAILURE),
+        ERR_MSG("Failed to commit: Could not commit creation of dependency, "
+                "a subject was renamed to \"",
+                name.GetIdentifierName(), "\" by another transaction"));
+    }
+    if (columns && seen != head && ColumnsChanged(*seen, *head)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_T_R_SERIALIZATION_FAILURE),
+        ERR_MSG("Failed to commit: Could not commit creation of dependency, "
+                "columns of \"",
+                name.GetIdentifierName(),
+                "\" were changed by another transaction"));
+    }
+    return;
+  }
+  const auto* constraint = seen ? FindConstraint(*seen, part) : nullptr;
+  if (constraint && Redefined(*constraint, FindConstraint(*head, part))) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_T_R_SERIALIZATION_FAILURE),
+      ERR_MSG("Failed to commit: Could not commit creation of dependency, "
+              "constraint \"",
+              constraint->constraint_name, "\" of \"", name.GetIdentifierName(),
+              "\" was changed by another transaction"));
+  }
 }
 
 void EntrySet::CheckNoLaterDependent(const duckdb::SnapshotView& view,
                                      const duckdb::Identifier& name,
                                      duckdb::idx_t oid,
-                                     const duckdb::CatalogEntry& dropped,
+                                     const DroppedSubject& dropped,
                                      const duckdb::Identifier& catalog,
                                      bool local) {
   absl::ReaderMutexLock lock{&_mutex};
@@ -505,8 +638,8 @@ void EntrySet::CheckNoLaterDependent(const duckdb::SnapshotView& view,
       return;
     }
     bool depends = false;
-    if (version->oid == oid) {
-      if (dropped.type == duckdb::CatalogType::ROLE_ENTRY) {
+    if (version->oid == oid && (!dropped.columns || ReadsColumns(*version))) {
+      if (dropped.role) {
         ForEachSubject(*version, [&](duckdb::idx_t subject) {
           depends |= subject == dropped.oid;
         });
@@ -517,8 +650,8 @@ void EntrySet::CheckNoLaterDependent(const duckdb::SnapshotView& view,
     if (depends) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_T_R_SERIALIZATION_FAILURE),
-        ERR_MSG("Failed to commit: Could not commit DROP of \"",
-                dropped.name.GetIdentifierName(),
+        ERR_MSG("Failed to commit: Could not commit ", dropped.change, " of \"",
+                dropped.name,
                 "\" because a dependency was created after the transaction "
                 "started"));
     }
@@ -533,13 +666,13 @@ void EntrySet::Index(const duckdb::CatalogEntry& entry) {
 
 void EntrySet::IndexDependents(const duckdb::CatalogEntry& version) {
   if (_members) {
-    _oids.AddDependents(version, _owner ? _owner : version.oid);
+    _oids.AddDependents(version, version.oid);
   }
 }
 
 void EntrySet::UnindexDependents(const duckdb::CatalogEntry& version) {
   if (_members) {
-    _oids.RemoveDependents(version, _owner ? _owner : version.oid);
+    _oids.RemoveDependents(version, version.oid);
   }
 }
 

@@ -26,6 +26,7 @@
 #include <utility>
 
 #include "iresearch/formats/posting_meta.hpp"
+#include "iresearch/search/detail/bitset_of.hpp"
 #include "iresearch/search/detail/conjunction_leaves.hpp"
 #include "iresearch/search/detail/phrase_matcher.hpp"
 #include "iresearch/search/detail/phrase_variadic_pos.hpp"
@@ -36,28 +37,80 @@
 
 namespace irs::detail {
 
+struct PhraseTerms {
+  struct Repeat {
+    uint32_t slot;
+    uint32_t first;
+    uint32_t rank;
+  };
+
+  PhraseTerms(std::span<const PostingMeta> metas,
+              std::span<const TermInterval> intervals)
+    : metas{metas} {
+    const bool distinct = absl::c_none_of(
+      intervals.subspan(1),
+      [](const TermInterval& interval) { return interval.offs_min == 0; });
+    for (uint32_t slot = 0; slot != metas.size(); ++slot) {
+      const auto first = static_cast<uint32_t>(
+        std::find(metas.begin(), metas.begin() + slot, metas[slot]) -
+        metas.begin());
+      if (first == slot) {
+        leaves.push_back(slot);
+      } else {
+        const auto rank = distinct ? static_cast<uint32_t>(std::count(
+                                       metas.begin() + first + 1,
+                                       metas.begin() + slot + 1, metas[slot]))
+                                   : 0;
+        repeats.push_back({slot, first, rank});
+      }
+    }
+  }
+
+  std::span<const PostingMeta> metas;
+  absl::InlinedVector<uint32_t, 8> leaves;
+  absl::InlinedVector<Repeat, 4> repeats;
+};
+
 template<typename Matcher, typename Leaf, size_t N = 0, typename Slot = Leaf>
 class PhraseSlots {
   static constexpr bool kVariadic = !std::is_same_v<Slot, Leaf>;
+  static constexpr bool kRepeats = !kVariadic && N == 0;
 
  public:
   template<typename... Args>
-  PhraseSlots(std::span<const PostingMeta> metas,
-              std::span<const TermInterval> intervals, const IndexInput& doc_in,
-              IndexFeatures layout, const IndexInput& pos_in,
-              const IndexInput* pay_in, Args&&... args)
-    : _matcher{metas.size(), std::forward<Args>(args)...},
-      _leaves{metas.size(), [&](uint32_t j) { return metas[j].docs_count; },
+  PhraseSlots(const PhraseTerms& terms, std::span<const TermInterval> intervals,
+              const IndexInput& doc_in, IndexFeatures layout,
+              const IndexInput& pos_in, const IndexInput* pay_in,
+              Args&&... args)
+    : _matcher{terms.metas.size(), std::forward<Args>(args)...},
+      _repeats{terms.repeats.size()},
+      _leaves{terms.leaves,
+              [&](uint32_t j) { return terms.metas[j].docs_count; },
               [&](uint32_t j) {
-                return std::forward_as_tuple(metas[j], doc_in, layout, pos_in,
-                                             pay_in);
+                return std::forward_as_tuple(terms.metas[j], doc_in, layout,
+                                             pos_in, pay_in);
               },
               [&](uint32_t j, Leaf& leaf) {
                 _matcher.Position(j) = {&leaf.Positions(), intervals[j]};
+                if constexpr (kRepeats) {
+                  for (size_t i = 0; i != terms.repeats.size(); ++i) {
+                    const auto [slot, first, rank] = terms.repeats[i];
+                    if (first != j) {
+                      continue;
+                    }
+                    auto& repeat = _repeats[i];
+                    leaf.PreparePositions(repeat.pos, terms.metas[slot], pos_in,
+                                          pay_in);
+                    repeat.lead = &leaf.Positions();
+                    repeat.rank = rank;
+                    _matcher.Position(slot) = {&repeat.pos, intervals[slot]};
+                  }
+                }
               }} {
     static_assert(!kVariadic);
-    SDB_ASSERT(metas.size() == intervals.size());
-    SDB_ASSERT(metas.size() > 1);
+    SDB_ASSERT(terms.metas.size() == intervals.size());
+    SDB_ASSERT(terms.metas.size() > 1);
+    SDB_ASSERT(kRepeats || terms.repeats.empty());
     _matcher.Finish();
   }
 
@@ -117,10 +170,7 @@ class PhraseSlots {
     return _leaves.Probe(target);
   }
 
-  bool Match(doc_id_t) {
-    Collect();
-    return _matcher.Match();
-  }
+  bool Match(doc_id_t) { return Collect() && _matcher.Match(); }
 
   static constexpr bool kHasFreqBound =
     requires(Matcher& m) { m.DocFreqBound(); };
@@ -128,8 +178,67 @@ class PhraseSlots {
   uint32_t FreqBound()
     requires(kHasFreqBound)
   {
-    Collect();
-    return _matcher.DocFreqBound();
+    return Collect() ? _matcher.DocFreqBound() : 0;
+  }
+
+  void Gate() {
+    const auto lead = EstimateOf(LeavesOf(_leaves.Lead()));
+    for (size_t i = 1; i != _leaves.Size(); ++i) {
+      auto& slot = _leaves.begin()[i];
+      const auto leaves = LeavesOf(slot);
+      double reads = 0;
+      double locate = 0;
+      for (const auto& leaf : leaves) {
+        reads += LeadLeafReads(lead, leaf.Estimate());
+        locate += LeadLocateCost(lead, leaf.Estimate());
+      }
+      if (locate + reads * kLeafReadCost <= kBoundCheckCost) {
+        continue;
+      }
+      auto& gate = _gates[i];
+      gate.locate = locate;
+      if (leaves.size() == 1) {
+        gate.share = 1.0 / reads;
+        gate.read = kLeafReadCost;
+      } else {
+        gate.read = reads * kLeafReadCost;
+      }
+      _gating = true;
+    }
+  }
+
+  bool Gating() const noexcept { return _gating; }
+
+  template<typename Admit>
+  doc_id_t Next(doc_id_t, doc_id_t end, Admit&& admit)
+    requires(kHasFreqBound)
+  {
+    struct Consult {
+      IRS_FORCE_INLINE bool Admits(doc_id_t candidate, size_t cold) {
+        auto& gate = slots._gates[cold];
+        if (!gate.Armed() || gate.Skips()) {
+          return true;
+        }
+        auto* slot = slots._leaves.begin();
+        const auto* const stop = slot + cold;
+        auto freq = DocFreqOf(*slot);
+        while (++slot != stop) {
+          freq = std::min(freq, DocFreqOf(*slot));
+        }
+        const bool admitted =
+          admit(candidate, slots._matcher.FreqBoundOf(freq));
+        gate.Checked(admitted);
+        return admitted;
+      }
+
+      IRS_FORCE_INLINE void Probed(size_t cold, bool matched) noexcept {
+        slots._gates[cold].Probed(matched);
+      }
+
+      PhraseSlots& slots;
+      Admit& admit;
+    } consult{*this, admit};
+    return _leaves.Next(end, consult);
   }
 
   bool MatchOrdered(doc_id_t)
@@ -178,18 +287,118 @@ class PhraseSlots {
  private:
   using Leaves = ConjunctionLeaves<Slot, N>;
 
-  void Collect() {
+  static constexpr uint32_t kGateWindow = 64;
+  static constexpr uint32_t kGateSkip = 2 * kGateWindow;
+  static constexpr uint32_t kGateBackoff = 6;
+
+  struct SlotGate {
+    bool Armed() const noexcept { return locate != 0; }
+
+    bool Skips() noexcept {
+      if (skip == 0) {
+        return false;
+      }
+      --skip;
+      return true;
+    }
+
+    void Probed(bool matched) noexcept {
+      ++probes;
+      matches += static_cast<uint32_t>(matched);
+    }
+
+    IRS_FORCE_INLINE void Checked(bool admitted) noexcept {
+      admits += static_cast<uint32_t>(admitted);
+      if (++checks == kGateWindow) [[unlikely]] {
+        Decide();
+      }
+    }
+
+    IRS_NO_INLINE void Decide() noexcept {
+      const auto pass = static_cast<double>(admits) / checks;
+      const auto match = (matches + 1.0) / (probes + 2.0);
+      if (BoundCheckSaving(share, read, locate, pass, match) > 0) {
+        backoff /= 2;
+      } else {
+        skip = kGateSkip << backoff;
+        backoff = std::min(backoff + 1, kGateBackoff);
+      }
+      checks = 0;
+      admits = 0;
+    }
+
+    double share = 0;
+    double read = 0;
+    double locate = 0;
+    uint32_t checks = 0;
+    uint32_t admits = 0;
+    uint32_t probes = 0;
+    uint32_t matches = 0;
+    uint32_t skip = 0;
+    uint32_t backoff = 0;
+  };
+
+  static std::span<Leaf> LeavesOf(Slot& slot) noexcept {
+    if constexpr (kVariadic) {
+      return slot.Leaves();
+    } else {
+      return {&slot, 1};
+    }
+  }
+
+  static uint64_t EstimateOf(std::span<Leaf> leaves) {
+    uint64_t docs = 0;
+    for (const auto& leaf : leaves) {
+      docs += leaf.Estimate();
+    }
+    return docs;
+  }
+
+  static uint32_t DocFreqOf(Slot& slot) {
+    if constexpr (kVariadic) {
+      slot.OnMatch();
+    }
+    return slot.Positions().DocFreq();
+  }
+
+  bool Collect() {
     if constexpr (kVariadic) {
       for (auto& slot : _leaves) {
         slot.OnMatch();
       }
+    } else {
+      if constexpr (kRepeats) {
+        if (!_repeats.empty()) {
+          return FollowRepeats();
+        }
+      }
     }
+    return true;
   }
+
+  IRS_NO_INLINE bool FollowRepeats() noexcept {
+    bool enough = true;
+    for (auto& repeat : _repeats) {
+      repeat.pos.Follow(*repeat.lead);
+      enough &= repeat.lead->DocFreq() > repeat.rank;
+    }
+    return enough;
+  }
+
+  struct Repeat {
+    typename Leaf::Position pos;
+    const typename Leaf::Position* lead = nullptr;
+    uint32_t rank = 0;
+  };
 
   [[no_unique_address]] utils::Need<kVariadic, containers::Fixed<Leaf>> _terms;
   Matcher _matcher;
+  [[no_unique_address]] utils::Need<kRepeats, containers::Fixed<Repeat>>
+    _repeats;
   Leaves _leaves;
   [[no_unique_address]] utils::Need<kVariadic, Leaf*> _bound{};
+  containers::Fixed<SlotGate, N> _gates{_leaves.Size()};
+  bool _gating = false;
 };
 
 }  // namespace irs::detail

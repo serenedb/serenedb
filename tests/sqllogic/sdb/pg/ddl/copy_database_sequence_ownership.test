@@ -1,0 +1,115 @@
+control substitution on
+
+
+statement ok
+DROP DATABASE IF EXISTS cdso_src_${__DATABASE__};
+
+
+statement ok
+DROP DATABASE IF EXISTS cdso_dst_${__DATABASE__};
+
+
+statement ok
+CREATE DATABASE cdso_src_${__DATABASE__};
+
+
+statement ok
+CREATE DATABASE cdso_dst_${__DATABASE__};
+
+
+statement ok
+USE cdso_src_${__DATABASE__};
+
+
+statement ok
+CREATE TABLE cdso_serial (id SERIAL, v TEXT);
+
+
+statement ok
+CREATE TABLE cdso_owner (c INT);
+
+
+statement ok
+CREATE SEQUENCE cdso_owned OWNED BY cdso_owner.c;
+
+
+statement ok
+INSERT INTO cdso_serial (v) VALUES ('a'), ('b');
+
+
+query
+SELECT pg_get_serial_sequence('cdso_serial', 'id') AS serial_seq, pg_get_serial_sequence('cdso_owner', 'c') AS owned_seq;
+----
+serial_seq	owned_seq
+public.cdso_serial_id_seq	public.cdso_owned
+
+
+statement ok
+USE ${__DATABASE__};
+
+
+statement ok
+COPY FROM DATABASE cdso_src_${__DATABASE__} TO cdso_dst_${__DATABASE__};
+
+
+statement ok
+USE cdso_dst_${__DATABASE__};
+
+
+query
+SELECT relname, pg_get_userbyid(relowner) AS owner FROM pg_class WHERE relname LIKE 'cdso_%' ORDER BY relname;
+----
+relname	owner
+cdso_owned	postgres
+cdso_owner	postgres
+cdso_serial	postgres
+cdso_serial_id_seq	postgres
+
+
+query
+SELECT pg_get_serial_sequence('cdso_serial', 'id') AS serial_seq, pg_get_serial_sequence('cdso_owner', 'c') AS owned_seq;
+----
+serial_seq	owned_seq
+public.cdso_serial_id_seq	public.cdso_owned
+
+
+statement ok
+TRUNCATE cdso_serial RESTART IDENTITY;
+
+
+statement ok
+INSERT INTO cdso_serial (v) VALUES ('c');
+
+
+query
+SELECT id, v FROM cdso_serial ORDER BY id;
+----
+id	v
+1	c
+
+
+statement ok
+DROP TABLE cdso_serial;
+
+
+statement ok
+DROP TABLE cdso_owner;
+
+
+query
+SELECT count(*) AS sequences FROM duckdb_sequences() WHERE database_name = current_database();
+----
+sequences
+0
+
+
+statement ok
+USE ${__DATABASE__};
+
+
+statement ok
+DROP DATABASE cdso_src_${__DATABASE__};
+
+
+statement ok
+DROP DATABASE cdso_dst_${__DATABASE__};

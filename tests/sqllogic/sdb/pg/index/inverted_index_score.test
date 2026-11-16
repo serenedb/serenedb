@@ -834,6 +834,21 @@ INSERT INTO meta VALUES (2, 'interesting'), (4, 'notable'), (5, 'relevant');
 
 
 query
+SELECT id FROM docs2_idx WHERE body @@ ts_phrase('fox') AND id IN (SELECT id FROM meta) ORDER BY id;
+----
+id
+2
+4
+
+
+statement error
+SELECT id FROM docs2_idx WHERE body @@ ts_phrase('fox') AND (id IN (SELECT id FROM meta))::score(NULL);
+----
+db error: ERROR: ::score(...) is only meaningful on a predicate the inverted index answers.
+HINT: A predicate the index does not answer, such as IN (subquery), is checked after the search and adds nothing to the score: remove ::score from it.
+
+
+query
 SELECT docs_idx.id, BM25(docs_idx.tableoid) FROM docs_idx JOIN docs2_idx ON docs_idx.id = docs2_idx.id
 WHERE docs_idx.body @@ ts_phrase('fox') AND docs2_idx.body @@ ts_phrase('fox')
 ORDER BY docs_idx.id LIMIT 3;

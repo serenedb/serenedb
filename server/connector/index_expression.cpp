@@ -91,6 +91,8 @@ duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
   return copy;
 }
 
+}  // namespace
+
 duckdb::unique_ptr<duckdb::Expression> ResolveOverChunk(
   const duckdb::Expression& bound_expr, const duckdb::DataChunk& chunk,
   duckdb::idx_t table_id, std::span<const ColumnId> slot_to_col_id) {
@@ -109,8 +111,6 @@ duckdb::unique_ptr<duckdb::Expression> ResolveOverChunk(
   resolver.VisitExpression(&resolved);
   return resolved;
 }
-
-}  // namespace
 
 duckdb::unique_ptr<duckdb::Expression> DeserializeBoundExpression(
   std::string_view bytes, duckdb::ClientContext& context) {

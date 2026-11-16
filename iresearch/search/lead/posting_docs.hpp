@@ -43,16 +43,10 @@ class PostingLead : public PostingLeaf<InputType, kCursorShape> {
 
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
                IndexFeatures layout, bool bounds) {
-    SDB_ASSERT(meta.docs_count != 0);
     this->SetFreqLen(FeaturesHaveFreq(layout));
-
-    if (meta.docs_count == 1) {
+    if (!this->OpenList(meta, doc_in, layout, bounds)) {
       this->SetSingle(meta);
-      return;
     }
-
-    this->OpenInput(meta, doc_in, bounds);
-    this->ArmWalk(meta, layout, bounds);
   }
 
   IRS_FORCE_INLINE std::span<const doc_id_t> Leaf() const noexcept {

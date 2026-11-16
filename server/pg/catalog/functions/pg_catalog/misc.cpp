@@ -511,20 +511,18 @@ void SignalBackendFunction(duckdb::DataChunk& args,
       out.WriteNull();
       continue;
     }
-    const auto match =
+    const auto token =
       registry ? registry->FindByPid(static_cast<uint32_t>(pid.GetValue()))
-               : network::CancelRegistry::PidMatch{nullptr, false};
-    if (!match.token) {
-      conn_ctx.AddNotice(SQL_ERROR_DATA(
-        ERR_CODE(ERRCODE_WARNING),
-        ERR_MSG("PID ", pid.GetValue(),
-                match.ambiguous
-                  ? " matches more than one backend; not cancelling any"
-                  : " is not a PostgreSQL backend process")));
+               : nullptr;
+    if (!token) {
+      conn_ctx.AddNotice(
+        SQL_ERROR_DATA(ERR_CODE(ERRCODE_WARNING),
+                       ERR_MSG("PID ", pid.GetValue(),
+                               " is not a PostgreSQL backend process")));
       out.WriteValue(false);
       continue;
     }
-    const auto role = match.token->role.load(std::memory_order_relaxed);
+    const auto role = token->role.load(std::memory_order_relaxed);
     const auto* node = roles->Find(role);
     if (role == kInvalidOid || (node && node->is_superuser)) {
       if (!caller->is_superuser) {
@@ -545,9 +543,9 @@ void SignalBackendFunction(duckdb::DataChunk& args,
             "cancel this query.");
     }
     if constexpr (kTerminate) {
-      match.token->Terminate();
+      token->Terminate();
     } else {
-      match.token->Cancel();
+      token->Cancel();
     }
     out.WriteValue(true);
   }

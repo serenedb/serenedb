@@ -71,11 +71,7 @@ Node::ptr MakePostingScored(const detail::PostingClause& posting,
   }
 
   if (const auto constant =
-        detail::ConstantOf(segment, own,
-                           detail::ScoreArgs{.scorer = posting.stats.scorer,
-                                             .stats = posting.stats.stats,
-                                             .fetcher = ctx.fetcher,
-                                             .boost = posting.boost})) {
+        detail::ConstantOf(segment, own, posting.Args(ctx.fetcher))) {
     const auto value = *constant;
     return detail::ResolveInput(doc, [&]<typename Input> -> Node::ptr {
       using Approx = detail::PostingFill<Input>;
@@ -88,12 +84,8 @@ Node::ptr MakePostingScored(const detail::PostingClause& posting,
   return detail::ResolveFillScored<Node::ptr>(
     doc, freq && ScoresPerDoc(posting.stats.scorer), merge,
     [&]<typename Leaf, typename> -> Node::ptr {
-      return memory::make_managed<Impl<Leaf>>(
-        meta, doc, bounds, segment, own,
-        detail::ScoreArgs{.scorer = posting.stats.scorer,
-                          .stats = posting.stats.stats,
-                          .fetcher = ctx.fetcher,
-                          .boost = posting.boost});
+      return memory::make_managed<Impl<Leaf>>(meta, doc, bounds, segment, own,
+                                              posting.Args(ctx.fetcher));
     });
 }
 
@@ -108,12 +100,8 @@ Node::ptr MakeSinglePostingScored(const detail::PostingClause& posting,
   if (posting.stats.stats == nullptr) {
     return memory::make_managed<Impl<SingleDocs>>(doc);
   }
-  const auto value =
-    detail::SingleDocScore(segment, *posting.state.reader, doc, meta.freq,
-                           detail::ScoreArgs{.scorer = posting.stats.scorer,
-                                             .stats = posting.stats.stats,
-                                             .fetcher = ctx.fetcher,
-                                             .boost = posting.boost});
+  const auto value = detail::SingleDocScore(
+    segment, *posting.state.reader, doc, meta.freq, posting.Args(ctx.fetcher));
   return memory::make_managed<Impl<ConstantScored<SingleDocs>>>(merge, value,
                                                                 doc);
 }

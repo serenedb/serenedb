@@ -222,3 +222,35 @@ SELECT id, body FROM xml_dst ORDER BY id;
 id	body
 1	<a/>
 2	<a/><b/>
+
+
+statement ok
+CREATE TABLE huge_dst (h HUGEINT, u UHUGEINT);
+
+
+statement ok
+COPY (SELECT ('-170141183460469231731687303715884105728' || chr(9) || '340282366920938463463374607431768211455' || chr(10) || '170141183460469231731687303715884105727' || chr(9) || '0' || chr(10))::BLOB)
+TO '${__TEST_DIR__}/copy_text_huge.txt' (FORMAT BLOB);
+
+
+statement count 2
+COPY huge_dst FROM '${__TEST_DIR__}/copy_text_huge.txt' (FORMAT text);
+
+
+query
+SELECT h, u FROM huge_dst ORDER BY h;
+----
+h	u
+-170141183460469231731687303715884105728	340282366920938463463374607431768211455
+170141183460469231731687303715884105727	0
+
+
+statement ok
+COPY (SELECT ('1' || chr(9) || '340282366920938463463374607431768211456' || chr(10))::BLOB)
+TO '${__TEST_DIR__}/copy_text_huge_bad.txt' (FORMAT BLOB);
+
+
+statement error
+COPY huge_dst FROM '${__TEST_DIR__}/copy_text_huge_bad.txt' (FORMAT text);
+----
+db error: ERROR: COPY FROM: invalid input for column 2

@@ -1,0 +1,57 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY tnt_bigram AS generate_ngrams(2, 2) WITH (frequency, position);
+
+statement ok
+CREATE TABLE tnt_titles (id INTEGER PRIMARY KEY, title VARCHAR);
+
+statement ok
+CREATE INDEX tnt_titles_idx ON tnt_titles USING inverted (id, title tnt_bigram);
+
+statement ok
+INSERT INTO tnt_titles VALUES (1, 'hello'), (2, 'help'), (3, 'world'), (4, 'held');
+
+statement error
+SELECT id FROM tnt_titles_idx WHERE title @@ ts_ngram('hello', 1.5);
+----
+db error: ERROR: ts_ngram threshold must be between 0 and 1, got 1.5
+HINT: Example: ts_ngram('hello', 0.7). Threshold is 0.0-1.0 (default 0.7).
+
+
+statement error
+SELECT id FROM tnt_titles_idx WHERE title @@ ts_ngram('hello', 'NaN'::DOUBLE);
+----
+db error: ERROR: ts_ngram threshold must be between 0 and 1, got nan
+HINT: Example: ts_ngram('hello', 0.7). Threshold is 0.0-1.0 (default 0.7).
+
+
+statement error
+SELECT id FROM tnt_titles_idx WHERE ngram_matches(title, 'hello', 'NaN'::DOUBLE);
+----
+db error: ERROR: ts_ngram threshold must be between 0 and 1, got nan
+HINT: Example: ts_ngram('hello', 0.7). Threshold is 0.0-1.0 (default 0.7).
+
+
+statement ok
+PREPARE tnt_ngram(VARCHAR, DOUBLE) AS SELECT id FROM tnt_titles_idx WHERE title @@ ts_ngram($1, $2) ORDER BY id;
+
+statement error
+EXECUTE tnt_ngram('hello', 'NaN');
+----
+db error: ERROR: ts_ngram threshold must be between 0 and 1, got nan
+HINT: Example: ts_ngram('hello', 0.7). Threshold is 0.0-1.0 (default 0.7).
+
+
+query
+EXECUTE tnt_ngram('hello', 1.0);
+----
+id
+1
+
+statement ok
+DEALLOCATE tnt_ngram;
+
+statement ok
+DROP TABLE tnt_titles;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY tnt_bigram;

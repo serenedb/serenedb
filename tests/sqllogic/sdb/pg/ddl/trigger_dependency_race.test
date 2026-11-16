@@ -1,0 +1,75 @@
+statement ok
+CREATE TABLE tdr_t (a INT)
+
+statement ok
+CREATE TABLE tdr_audit (a INT)
+
+statement ok
+CREATE TABLE tdr_audit2 (a INT)
+
+connection a
+statement ok
+BEGIN
+
+connection a
+statement ok
+CREATE TRIGGER tdr_trg AFTER INSERT ON tdr_t FOR EACH ROW INSERT INTO tdr_audit VALUES (NEW.a)
+
+connection b
+statement ok
+BEGIN
+
+connection b
+statement ok
+DROP TABLE tdr_audit
+
+connection a
+statement ok
+COMMIT
+
+connection b
+statement error
+COMMIT
+----
+db error: ERROR: Failed to commit: Could not commit DROP of "tdr_audit" because a dependency was created after the transaction started
+
+
+connection a
+statement ok
+BEGIN
+
+connection a
+statement ok
+CREATE TRIGGER tdr_trg2 AFTER INSERT ON tdr_t FOR EACH ROW INSERT INTO tdr_audit2 VALUES (NEW.a)
+
+connection b
+statement ok
+DROP TABLE tdr_audit2
+
+connection a
+statement error
+COMMIT
+----
+db error: ERROR: Failed to commit: Could not commit creation of dependency, subject "tdr_audit2" has been deleted
+
+
+statement ok
+INSERT INTO tdr_t VALUES (1)
+
+query
+SELECT a FROM tdr_audit
+----
+a
+1
+
+query
+SELECT tgname FROM pg_trigger WHERE tgrelid = 'tdr_t'::regclass ORDER BY tgname
+----
+tgname
+tdr_trg
+
+statement ok
+DROP TABLE tdr_t
+
+statement ok
+DROP TABLE tdr_audit

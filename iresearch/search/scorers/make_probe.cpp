@@ -35,7 +35,7 @@ namespace irs::detail {
 namespace {
 
 template<ScoreMergeType Inner, bool HasConst>
-class ProbeScore : public ScoreOperator {
+class ProbeScore : public ScoreOperatorOf<ProbeScore<Inner, HasConst>, false> {
   static_assert(Inner != ScoreMergeType::Noop);
 
  public:
@@ -51,7 +51,7 @@ class ProbeScore : public ScoreOperator {
     SDB_ASSERT(_probed.empty() || _held != nullptr);
   }
 
-  score_t Score() const noexcept final {
+  score_t ScoreOne() const noexcept {
     score_t res = 0;
     bool covered = false;
     if (!_required.IsDefault()) {
@@ -82,28 +82,7 @@ class ProbeScore : public ScoreOperator {
     return res;
   }
 
-  void Score(score_t* res, scores_size_t n) const noexcept final {
-    ScoreImpl<ScoreMergeType::Noop>(res, n);
-  }
-  void ScoreSum(score_t* res, scores_size_t n) const noexcept final {
-    ScoreImpl<ScoreMergeType::Sum>(res, n);
-  }
-  void ScoreMax(score_t* res, scores_size_t n) const noexcept final {
-    ScoreImpl<ScoreMergeType::Max>(res, n);
-  }
-
-  void ScoreBlock(score_t* res) const noexcept final {
-    ScoreImpl<ScoreMergeType::Noop>(res, kScoreBlock);
-  }
-  void ScoreSumBlock(score_t* res) const noexcept final {
-    ScoreImpl<ScoreMergeType::Sum>(res, kScoreBlock);
-  }
-  void ScoreMaxBlock(score_t* res) const noexcept final {
-    ScoreImpl<ScoreMergeType::Max>(res, kScoreBlock);
-  }
-
- private:
-  template<ScoreMergeType Outer>
+  template<ScoreMergeType Outer = ScoreMergeType::Noop>
   IRS_FORCE_INLINE void ScoreImpl(score_t* IRS_RESTRICT res,
                                   scores_size_t n) const noexcept {
     SDB_ASSERT(n <= kScoreBlock);
@@ -148,6 +127,7 @@ class ProbeScore : public ScoreOperator {
     }
   }
 
+ private:
   ScoreFunction _required;
   containers::Fixed<ScoreFunction> _probed;
   ScoreMask* IRS_RESTRICT _held;

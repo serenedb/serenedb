@@ -20,7 +20,12 @@
 
 #pragma once
 
+#include <algorithm>
+#include <cstdint>
+#include <numeric>
+
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::lead {
@@ -42,6 +47,27 @@ class AllDocs {
       return _doc;
     }
     return _doc = target > _last ? doc_limits::eof() : target;
+  }
+
+  uint32_t Gather(doc_id_t& doc, doc_id_t max, doc_id_t* out,
+                  uint32_t cap) noexcept {
+    SDB_ASSERT(doc == _doc && doc < max);
+    const auto stop = std::min<uint64_t>(max, uint64_t{_last} + 1);
+    const auto n = static_cast<uint32_t>(std::min<uint64_t>(cap, stop - doc));
+    std::iota(out, out + n, doc);
+    _doc = doc + n - 1;
+    doc = Next();
+    return n;
+  }
+
+  uint64_t Count(doc_id_t min, doc_id_t max) noexcept {
+    const auto from = Seek(min);
+    if (from >= max) {
+      return 0;
+    }
+    const auto stop = std::min<uint64_t>(max, uint64_t{_last} + 1);
+    Seek(static_cast<doc_id_t>(stop));
+    return stop - from;
   }
 
  private:

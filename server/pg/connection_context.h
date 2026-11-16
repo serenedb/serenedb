@@ -132,15 +132,16 @@ class ConnectionContext final : public duckdb::ClientContext {
   std::string EffectiveUserName();
   std::string SessionUserName();
 
-  void SetEffectiveRole(duckdb::idx_t role) { _effective_role_id = role; }
+  void SetEffectiveRole(duckdb::idx_t role) {
+    if (std::exchange(_effective_role_id, role) != role) {
+      BumpBindingGeneration();
+    }
+  }
   void SetSessionRole(duckdb::idx_t role) {
     _session_role_id = role;
-    _effective_role_id = role;
+    SetEffectiveRole(role);
   }
-  void ResetIdentity() {
-    _session_role_id = _login_role_id;
-    _effective_role_id = _login_role_id;
-  }
+  void ResetIdentity() { SetSessionRole(_login_role_id); }
 
   auto* GetSendBuffer() const { return _send_buffer; }
 
@@ -249,7 +250,8 @@ class ConnectionContext final : public duckdb::ClientContext {
   void ValidateIsolationLevel(duckdb::TransactionIsolationLevel level) final;
   bool EmitWarning(const char* message) final;
   bool IsSettingVisible(const std::string& name) final;
-  void OnSettingChange(const std::string& name, duckdb::SetScope scope) final;
+  void OnSettingChange(const std::string& name, duckdb::SetScope scope,
+                       const duckdb::Value& previous) final;
   void OnQueryBegin() final;
   void OnQueryEnd() final;
   void OnTransactionPreCommit(duckdb::MetaTransaction& meta) final;
@@ -257,6 +259,11 @@ class ConnectionContext final : public duckdb::ClientContext {
   void OnTransactionCommit(duckdb::MetaTransaction& meta) final;
   void OnTransactionRollback(duckdb::MetaTransaction& meta) final;
   void OnBoundPlan(duckdb::Binder& binder, duckdb::LogicalOperator& plan) final;
+  void OnStatementEnd() final {
+    if (auto* transaction = CurrentTransaction()) {
+      transaction->SearchTxn().CheckStatement(*this);
+    }
+  }
 
  private:
   struct NoticeNode {

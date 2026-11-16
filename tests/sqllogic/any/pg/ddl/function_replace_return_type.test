@@ -1,0 +1,63 @@
+statement ok
+CREATE FUNCTION frt_used() RETURNS int LANGUAGE sql AS 'SELECT 1';
+
+
+statement ok
+CREATE TABLE frt_table (id int, d int DEFAULT frt_used());
+
+
+onlyif postgres
+statement error
+CREATE OR REPLACE FUNCTION frt_used() RETURNS text LANGUAGE sql AS 'SELECT ''x''';
+----
+db error: ERROR: cannot change return type of existing function
+HINT: Use DROP FUNCTION frt_used() first.
+
+
+skipif postgres
+statement error
+CREATE OR REPLACE FUNCTION frt_used() RETURNS text LANGUAGE sql AS 'SELECT ''x''';
+----
+db error: ERROR: Cannot alter entry "frt_used" because there are entries that depend on it.
+table "frt_table" depends on macro function "frt_used".
+Drop the dependent entries first and recreate them after the change.
+
+
+statement ok
+CREATE OR REPLACE FUNCTION frt_used() RETURNS int LANGUAGE sql AS 'SELECT 2';
+
+
+statement ok
+INSERT INTO frt_table (id) VALUES (1);
+
+
+query
+SELECT id, d FROM frt_table ORDER BY id;
+----
+id	d
+1	2
+
+
+statement ok
+CREATE FUNCTION frt_unused() RETURNS int LANGUAGE sql AS 'SELECT 1';
+
+
+onlyif postgres
+statement error
+CREATE OR REPLACE FUNCTION frt_unused() RETURNS text LANGUAGE sql AS 'SELECT ''x''';
+----
+db error: ERROR: cannot change return type of existing function
+HINT: Use DROP FUNCTION frt_unused() first.
+
+
+skipif postgres
+statement ok
+CREATE OR REPLACE FUNCTION frt_unused() RETURNS text LANGUAGE sql AS 'SELECT ''x''';
+
+
+skipif postgres
+query
+SELECT frt_unused() AS v;
+----
+v
+x

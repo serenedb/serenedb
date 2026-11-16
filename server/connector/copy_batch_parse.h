@@ -20,9 +20,12 @@
 
 #pragma once
 
+#include <atomic>
 #include <cstddef>
+#include <cstdint>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -35,18 +38,24 @@ namespace sdb::connector {
 using CopyDeserializers =
   std::vector<pg::DeserializationFunction<pg::VectorSink>>;
 
+struct CopyTextEnd {
+  std::atomic<uint64_t> marker{std::numeric_limits<uint64_t>::max()};
+  std::atomic<uint64_t> latest{0};
+};
+
 CopyDeserializers MakeCopyDeserializers(
   const std::vector<duckdb::LogicalType>& types, bool binary);
 
-void ProcessTextRow(std::string_view line, char delim,
-                    std::string_view null_str,
+bool ProcessTextRow(std::string_view line, char delim,
+                    std::string_view null_str, bool ignore_errors,
                     const CopyDeserializers& deserializers,
                     pg::DeserializeContext& dctx, duckdb::DataChunk& output,
                     duckdb::idx_t row, std::string& field_buf);
 
 class CopyBatchParser {
  public:
-  CopyBatchParser(duckdb::ClientContext& context, pg::CopyInTarget target);
+  CopyBatchParser(duckdb::ClientContext& context, pg::CopyInTarget target,
+                  CopyTextEnd& end, std::atomic<uint64_t>& rejected);
 
   void Start(const pg::CopyBatch& batch);
   bool Active() const noexcept { return static_cast<bool>(_batch); }
@@ -60,15 +69,20 @@ class CopyBatchParser {
  private:
   duckdb::idx_t ParseText(duckdb::DataChunk& output, duckdb::idx_t row);
   duckdb::idx_t ParseBinary(duckdb::DataChunk& output, duckdb::idx_t row);
+  void EndMarker();
+  void CountRejected(uint64_t rejected);
 
   pg::CopyInTarget _target;
   CopyDeserializers _deserializers;
   pg::DeserializeContext _dctx;
   std::string _field_buf;
+  CopyTextEnd& _end;
+  std::atomic<uint64_t>& _rejected;
   const pg::CopyBatch* _batch = nullptr;
   size_t _segment = 0;
   size_t _pos = 0;
   bool _skip = false;
+  bool _ended = false;
 };
 
 }  // namespace sdb::connector

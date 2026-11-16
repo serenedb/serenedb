@@ -63,7 +63,7 @@ bool OffsetsBindData::Equals(const duckdb::FunctionData& other) const {
   const auto& o = other.Cast<OffsetsBindData>();
   return config == o.config && column_id == o.column_id &&
          dict_tokenizer == o.dict_tokenizer && limit == o.limit &&
-         stored_filter == o.stored_filter;
+         filter == o.filter;
 }
 
 namespace {
@@ -187,7 +187,7 @@ duckdb::unique_ptr<duckdb::FunctionLocalState> InitOffsetsLocalState(
 void OffsetsScalarFn(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                      duckdb::Vector& result) {
   auto& expr = state.expr.Cast<duckdb::BoundFunctionExpression>();
-  if (!expr.BindInfo()) {
+  if (!expr.BindInfo() || !expr.BindInfo()->Cast<OffsetsBindData>().filter) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("ts_offsets() requires an inverted index scan in the same "
@@ -240,15 +240,13 @@ void OffsetsScalarFn(duckdb::DataChunk& args, duckdb::ExpressionState& state,
     }
   });
 
-  auto query =
-    bind.stored_filter->PrepareSegment(*segment, {.needs_terms = true});
-  if (!query) {
-    return;
-  }
-
   FieldEntry entry{.id = field.Id()};
-  OffsetsCollector visitor{std::span{&entry, 1}};
-  query->Visit(visitor, irs::kNoBoost);
+  const auto query =
+    bind.filter->PrepareSegment(*segment, {.needs_terms = true});
+  if (query) {
+    OffsetsCollector visitor{std::span{&entry, 1}};
+    query->Visit(visitor, irs::kNoBoost);
+  }
 
   std::vector<highlight::HitRange> offsets;
   for (duckdb::idx_t r = 0; r < count; ++r) {
@@ -374,7 +372,7 @@ duckdb::unique_ptr<duckdb::FunctionData> OffsetsStandaloneBind(
 
   auto bind = duckdb::make_uniq<OffsetsBindData>();
   bind->dict_tokenizer = dict->GetTokenizer();
-  bind->stored_filter = BuildFilterFromTSQuery(
+  bind->filter = BuildFilterFromTSQuery(
     context, *arguments[2], kStandaloneSyntheticColumnId, bind->dict_tokenizer);
   constexpr size_t kDefaultOffsetsLimit = 1 << 12;
   bind->limit = kDefaultOffsetsLimit;

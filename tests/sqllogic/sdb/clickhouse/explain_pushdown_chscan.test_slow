@@ -626,31 +626,36 @@ query ?
 EXPLAIN SELECT c_uint8 FROM chexp.chtest.types_all WHERE c_fixedstr = 'abcd'::BLOB;
 ----
 QUERY PLAN
-╭─ PROJECTION ─────────────────────────────╮
-│ Projections: c_uint8                     │
-│ ~1 row                                   │
-╰─────────────────────┬────────────────────╯
-╭─ CLICKHOUSE_SCAN_PUSHDOWN ───────────────╮
-│ Function: CLICKHOUSE_SCAN_PUSHDOWN       │
-│ Table: chtest.types_all                  │
-│ Projections: c_fixedstr, c_uint8         │
-│ Column Filter: c_fixedstr = '\\x61626364' │
-│ ~1 row                                   │
-╰──────────────────────────────────────────╯
+╭─ PROJECTION ────────────────────────────╮
+│ Projections: #1                         │
+│ ~1 row                                  │
+╰────────────────────┬────────────────────╯
+╭─ FILTER ───────────┴────────────────────╮
+│ Expression:                             │
+│ CAST(c_fixedstr AS BLOB) = 'abcd'::BLOB │
+│ ~1 row                                  │
+╰────────────────────┬────────────────────╯
+╭─ CLICKHOUSE_SCAN_PUSHDOWN ──────────────╮
+│ Function: CLICKHOUSE_SCAN_PUSHDOWN      │
+│ Table: chtest.types_all                 │
+│ Projections: c_fixedstr, c_uint8        │
+│ ~2 rows                                 │
+╰─────────────────────────────────────────╯
 
 # c_uint8 = 1.
 query ?
 SELECT c_uint8 FROM chexp.chtest.types_all WHERE c_fixedstr = 'abcd'::BLOB;
 ----
 c_uint8
+1
 
 # BLOB IN list matches both rows.
-query error
+query
 SELECT c_uint8 FROM chexp.chtest.types_all WHERE c_fixedstr IN ('abcd'::BLOB, 'wxyz'::BLOB) ORDER BY c_uint8;
 ----
-db error: ERROR: ClickHouse error during scan: DB::Exception: Too large string for FixedString column
-SQL: SELECT `c_fixedstr`, `c_uint8` FROM `chtest`.`types_all` WHERE `c_fixedstr` IN ('\\x61626364', '\\x7778797a')
-
+c_uint8
+1
+2
 
 # A non-matching BLOB predicate returns the empty result.
 query ?

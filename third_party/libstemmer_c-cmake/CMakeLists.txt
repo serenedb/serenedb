@@ -6,7 +6,7 @@
 # shipped in the distribution are unreachable. libstemmer_utf8.c is upstream's
 # UTF-8-only dispatch table for exactly this case.
 
-set(LIBRARY_DIR "${CMAKE_SOURCE_DIR}/third_party/libstemmer_c")
+set(LIBRARY_DIR "${serenedb_SOURCE_DIR}/third_party/libstemmer_c")
 
 add_library(
     stemmer-static

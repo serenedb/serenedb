@@ -1,0 +1,40 @@
+# The replacement of regexp_replace reads \1 to \9 as groups, empty when the
+# pattern has no such group, \& as the whole match and \\ as one backslash;
+# any other backslash stays as written.
+
+query
+SELECT regexp_replace('abc', 'b', '[\&]') AS whole, regexp_replace('abc', '(b)', '[\0]') AS zero,
+       '<' || regexp_replace('aaa', '(a+)', '\2') || '>' AS missing, regexp_replace('abc', 'b', '[\9]') AS nine;
+----
+whole	zero	missing	nine
+a[b]c	a[\\0]c	<>	a[]c
+
+query
+SELECT regexp_replace('abc', 'b', 'x\\y') AS escaped, regexp_replace('abc', 'b', '\x') AS other,
+       regexp_replace('abc', 'b', 'tail\') AS trailing;
+----
+escaped	other	trailing
+ax\\yc	a\\xc	atail\\c
+
+query
+SELECT regexp_replace('abcabc', '(b)', '<\1\&>', 'g') AS global;
+----
+global
+a<bb>ca<bb>c
+
+query
+SELECT s, regexp_replace(s, 'b', r) AS replaced
+FROM (VALUES ('abc', '[\&]'), ('xbx', '\\'), ('ybyb', '\1')) t(s, r) ORDER BY s;
+----
+s	replaced
+abc	a[b]c
+xbx	x\\x
+ybyb	yyb
+
+query
+SELECT p, regexp_replace('abc', p, '<\1>') AS replaced
+FROM (VALUES ('(b)'), ('b')) t(p) ORDER BY p;
+----
+p	replaced
+(b)	a<b>c
+b	a<>c

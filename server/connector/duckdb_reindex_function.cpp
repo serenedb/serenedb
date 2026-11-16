@@ -233,26 +233,12 @@ class PassConnection {
     _system.conn->context->config.user_settings = context.config.user_settings;
   }
 
-  // The pass statement carries the index's persisted DEFINITION (positions
-  // resolved against the view's CURRENT names, persisted predicate), so it
-  // survives renames and ALTER INDEX SET. Throws on failure.
   void RunPass(const ReindexTarget& target,
                duckdb::unique_ptr<SereneDBCreateIndexInfo> info) {
     info->index_type = "inverted";
-    const auto& view_info = *target.view_info;
-    for (const auto col : target.index->column_ids) {
-      if (col >= view_info.names.size()) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
-          ERR_MSG("REINDEX of \"", target.name,
-                  "\": the view no longer has the column at position ", col,
-                  " the index references; drop and recreate the "
-                  "index"));
-      }
-      auto column =
-        duckdb::make_uniq<duckdb::ColumnRefExpression>(view_info.names[col]);
-      info->expressions.emplace_back(column->Copy());
-      info->parsed_expressions.emplace_back(std::move(column));
+    for (const auto& key : target.index->parsed_expressions) {
+      info->expressions.emplace_back(key->Copy());
+      info->parsed_expressions.emplace_back(key->Copy());
     }
     if (const auto predicate = target.index->where_clause.get()) {
       info->where_clause = predicate->Copy();

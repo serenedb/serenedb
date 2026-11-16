@@ -40,7 +40,7 @@ file(
 add_custom_command(
     OUTPUT ${SDB_DOCS_GENERATED} ${SDB_DOCS_CORPUS}
     COMMAND
-        ${Python3_EXECUTABLE} ${serenedb_SOURCE_DIR}/scripts/generate_docs.py
+        Python3::Interpreter ${serenedb_SOURCE_DIR}/scripts/generate_docs.py
         ${SDB_DOCS_DIR} ${SDB_DOCS_GENERATED}.tmp --tests-dir
         ${SDB_DOCS_TESTS_DIR} --corpus ${SDB_DOCS_CORPUS}.tmp
     COMMAND
@@ -89,7 +89,7 @@ function(sdb_embed_docs_index TARGET)
         TARGET ${TARGET}
         POST_BUILD
         COMMAND
-            ${Python3_EXECUTABLE}
+            Python3::Interpreter
             ${serenedb_SOURCE_DIR}/scripts/embed_docs_index.py
             ${SDB_DOCS_INDEX_WORK}/index $<TARGET_FILE:${TARGET}>
         VERBATIM

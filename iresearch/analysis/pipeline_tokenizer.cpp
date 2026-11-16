@@ -62,13 +62,15 @@ PipelineTokenizer::PipelineTokenizer(std::vector<Tokenizer::ptr> options) {
     auto& child = *options[i];
     const auto traits = child.Traits();
     if (i != 0 && _traits.output != traits.input) {
-      THROW_SQL_ERROR(ERR_MSG("pipeline: stage ", i, " expects ",
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+                      ERR_MSG("pipeline: stage ", i, " expects ",
                               duckdb::LogicalTypeIdToString(traits.input),
                               " input, but the preceding stage produces ",
                               duckdb::LogicalTypeIdToString(_traits.output)));
     }
     if (traits.store) {
       THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
         ERR_MSG("pipeline: stage ", i,
                 " produces a per-document store blob, which a pipeline "
                 "cannot deliver"));

@@ -1,0 +1,67 @@
+# A NULL vector has a NULL distance, which NULLS FIRST puts before every
+# other row, so the nearest rows come after the NULL ones.
+
+statement ok
+CREATE TABLE annf (pk INTEGER PRIMARY KEY, emb FLOAT[2]);
+
+statement ok
+CREATE INDEX annf_idx ON annf USING inverted (pk, emb hnsw (metric = 'l2', quant = 'none'));
+
+statement ok
+INSERT INTO annf VALUES (1, [1, 0]), (2, NULL), (3, [0, 1]), (4, NULL), (5, [1, 1]);
+
+statement ok
+VACUUM (FLUSH_TABLE) annf;
+
+query
+SELECT pk FROM (
+  SELECT pk FROM annf ORDER BY emb <-> [1, 0]::FLOAT[2] NULLS FIRST LIMIT 2
+) t ORDER BY pk;
+----
+pk
+2
+4
+
+query
+SELECT pk FROM (
+  SELECT pk FROM annf_idx ORDER BY emb <-> [1, 0]::FLOAT[2] NULLS FIRST LIMIT 3
+) t ORDER BY pk;
+----
+pk
+1
+2
+4
+
+query
+SELECT pk FROM annf_idx ORDER BY emb <-> [1, 0]::FLOAT[2] LIMIT 2;
+----
+pk
+1
+5
+
+statement ok
+CREATE TABLE annfc (pk INTEGER PRIMARY KEY, emb FLOAT[2]);
+
+statement ok
+CREATE INDEX annfc_idx ON annfc USING inverted (pk, emb hnsw (metric = 'cosine', quant = 'none'));
+
+statement ok
+INSERT INTO annfc VALUES (1, [1, 0]), (2, NULL), (3, [0, 1]), (4, NULL), (5, [1, 1]);
+
+statement ok
+VACUUM (FLUSH_TABLE) annfc;
+
+statement ok
+SET default_null_order = 'NULLS_LAST_ON_ASC_FIRST_ON_DESC';
+
+query
+SELECT pk FROM (
+  SELECT pk FROM annfc_idx ORDER BY cosine_similarity(emb, [1, 0]::FLOAT[2]) DESC LIMIT 2
+) t ORDER BY pk;
+----
+pk
+2
+4
+
+statement ok
+RESET default_null_order;

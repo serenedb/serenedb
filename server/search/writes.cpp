@@ -1665,6 +1665,48 @@ bool ConflictArbiter::Propose(const Scratch& scratch, duckdb::idx_t row) {
   return true;
 }
 
+void ConflictArbiter::ProposeByShard(
+  Scratch& scratch, size_t arbiter,
+  const std::bitset<STANDARD_VECTOR_SIZE>& skip, duckdb::idx_t count,
+  absl::FunctionRef<void(duckdb::idx_t row, bool inserted)> proposed) {
+  const auto width = _arbiters.size();
+  const auto proposes = [&](duckdb::idx_t row) {
+    return !skip[row] && scratch.keys[row * width + arbiter].data();
+  };
+  const auto shard_of = [&](duckdb::idx_t row) {
+    return ProposedKeys::ShardIndex(scratch.hashes[row * width + arbiter]);
+  };
+  std::array<uint32_t, ProposedKeys::kShards + 1> starts{};
+  for (duckdb::idx_t row = 0; row != count; ++row) {
+    if (proposes(row)) {
+      ++starts[shard_of(row) + 1];
+    }
+  }
+  for (size_t s = 1; s != starts.size(); ++s) {
+    starts[s] += starts[s - 1];
+  }
+  auto& rows = scratch.by_shard;
+  rows.resize(starts.back());
+  auto next = starts;
+  for (duckdb::idx_t row = 0; row != count; ++row) {
+    if (proposes(row)) {
+      rows[next[shard_of(row)]++] = static_cast<uint16_t>(row);
+    }
+  }
+  auto& keys = *_arbiters[arbiter].proposed;
+  for (size_t s = 0; s != ProposedKeys::kShards; ++s) {
+    if (starts[s] == starts[s + 1]) {
+      continue;
+    }
+    auto& shard = keys.At(s);
+    absl::MutexLock lock{&shard.mutex};
+    for (auto i = starts[s]; i != starts[s + 1]; ++i) {
+      const auto at = rows[i] * width + arbiter;
+      proposed(rows[i], shard.Insert(scratch.keys[at], scratch.hashes[at]));
+    }
+  }
+}
+
 duckdb::idx_t ConflictArbiter::Admit(
   duckdb::DataChunk& chunk, std::span<const connector::ColumnId> column_ids,
   duckdb::SelectionVector& kept, Scratch& scratch) {
@@ -1673,9 +1715,22 @@ duckdb::idx_t ConflictArbiter::Admit(
   std::bitset<STANDARD_VECTOR_SIZE> held;
   ForEachHolder(scratch, count,
                 [&](duckdb::idx_t row, const KeyHolder&) { held.set(row); });
+  std::bitset<STANDARD_VECTOR_SIZE> admit;
+  if (_arbiters.size() == 1) {
+    for (duckdb::idx_t row = 0; row != count; ++row) {
+      admit[row] = !held[row] && !scratch.keys[row].data();
+    }
+    ProposeByShard(
+      scratch, 0, held, count,
+      [&](duckdb::idx_t row, bool inserted) { admit[row] = inserted; });
+  } else {
+    for (duckdb::idx_t row = 0; row != count; ++row) {
+      admit[row] = !held[row] && Propose(scratch, row);
+    }
+  }
   duckdb::idx_t admitted = 0;
   for (duckdb::idx_t row = 0; row != count; ++row) {
-    if (!held[row] && Propose(scratch, row)) {
+    if (admit[row]) {
       kept.set_index(admitted++, row);
     }
   }
@@ -1694,17 +1749,12 @@ void ConflictArbiter::Replace(
                 [&](duckdb::idx_t row, const KeyHolder& holder) {
                   holders.emplace_back(row, holder);
                 });
-  const auto width = _arbiters.size();
-  for (size_t i = 0; i != scratch.keys.size(); ++i) {
-    const auto key = scratch.keys[i];
-    if (!key.data()) {
-      continue;
-    }
-    auto& shard = _arbiters[i % width].proposed->Of(scratch.hashes[i]);
-    absl::MutexLock lock{&shard.mutex};
-    if (!shard.Insert(key, scratch.hashes[i])) {
-      ThrowProposedTwice();
-    }
+  for (size_t a = 0; a != _arbiters.size(); ++a) {
+    ProposeByShard(scratch, a, {}, count, [](duckdb::idx_t, bool inserted) {
+      if (!inserted) {
+        ThrowProposedTwice();
+      }
+    });
   }
   for (const auto& [row, holder] : holders) {
     replaced(row, holder);

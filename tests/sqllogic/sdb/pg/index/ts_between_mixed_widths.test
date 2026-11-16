@@ -1,0 +1,43 @@
+# ts_between takes numeric bounds of different widths, each resolved against
+# the column's type.
+
+statement ok
+CREATE TABLE tbmw (pk INTEGER PRIMARY KEY, b BIGINT);
+
+statement ok
+CREATE INDEX tbmw_idx ON tbmw USING inverted (pk, b);
+
+statement ok
+INSERT INTO tbmw VALUES (1, 1), (2, 3000000000), (3, 5), (4, -7), (5, 4000000000);
+
+statement ok
+VACUUM (FLUSH_TABLE) tbmw;
+
+query
+SELECT pk FROM tbmw_idx WHERE b @@ ts_between(0, 3000000000, true, true) ORDER BY pk;
+----
+pk
+1
+2
+3
+
+query
+SELECT pk FROM tbmw_idx WHERE b @@ ts_between(0::BIGINT, 3000000000::BIGINT, true, true) ORDER BY pk;
+----
+pk
+1
+2
+3
+
+query
+SELECT pk FROM tbmw_idx WHERE b @@ ts_between(-10, 2.5, true, false) ORDER BY pk;
+----
+pk
+1
+4
+
+statement error
+SELECT pk FROM tbmw_idx WHERE b @@ ts_between(0, 'x', true, true);
+----
+db error: ERROR: ts_between bounds have mismatched types: INTEGER vs VARCHAR
+HINT: Both bounds must share the same type family.

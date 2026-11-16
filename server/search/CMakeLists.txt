@@ -12,6 +12,5 @@ target_sources(
         table_replay.cpp
         task.cpp
         wal_recovery.cpp
-        writer_generations.cpp
         writes.cpp
 )

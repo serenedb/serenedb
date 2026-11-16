@@ -285,6 +285,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
                           absl::c_any_of(*state->reader, [](const auto& seg) {
                             return seg.live_docs_count() != seg.docs_count();
                           }));
+    BuildTsDictFields(*state);
     ClassifySegments(*state);
     BuildClaimPlan(*state, context);
     if (state->splittable) {
@@ -336,6 +337,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   }
 
   state->needs_terms = !ss.offsets.requests.empty();
+  BuildOffsetsOutputs(*state);
 
   if (state->shape == ScanShape::TopK || state->shape == ScanShape::Ann ||
       state->shape == ScanShape::Stream) {
@@ -389,24 +391,26 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   state->stats_barrier.Reset(static_cast<uint32_t>(state->total_segments));
 
   if (state->shape == ScanShape::TopK) {
+    BuildFetchedCopy(*state);
     InitTopKGlobal(*state, context);
   } else if (state->shape == ScanShape::ValueTopK) {
     InitValueTopKGlobal(*state);
   } else if (state->shape == ScanShape::Ann) {
+    BuildFetchedCopy(*state);
     InitAnnGlobal(*state, context);
   }
   return state;
 }
 
 duckdb::unique_ptr<duckdb::LocalTableFunctionState> IResearchScanInitLocal(
-  duckdb::ExecutionContext&, duckdb::TableFunctionInitInput& input,
+  duckdb::ExecutionContext&, duckdb::TableFunctionInitInput&,
   duckdb::GlobalTableFunctionState* state) {
   auto& g = state->Cast<ScanGlobalState>();
   const auto worker = g.worker_count.fetch_add(1, std::memory_order_relaxed);
   duckdb::unique_ptr<duckdb::LocalTableFunctionState> result;
   switch (g.shape) {
     case ScanShape::TsDict: {
-      result = MakeTsDictLocal(g, input);
+      result = MakeTsDictLocal(g);
       break;
     }
     case ScanShape::Count: {
@@ -416,7 +420,7 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> IResearchScanInitLocal(
     case ScanShape::TopK: {
       auto l = duckdb::make_uniq<TopKLocalState>();
       l->worker = worker;
-      InitTopKLocal(g, *l, input);
+      InitTopKLocal(g, *l);
       result = std::move(l);
       break;
     }
@@ -427,7 +431,7 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> IResearchScanInitLocal(
     case ScanShape::Ann: {
       auto l = duckdb::make_uniq<AnnLocalState>();
       l->worker = worker;
-      InitAnnLocal(g, *l, input);
+      InitAnnLocal(g, *l);
       result = std::move(l);
       break;
     }
@@ -437,7 +441,7 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> IResearchScanInitLocal(
     }
     case ScanShape::Stream: {
       auto l = duckdb::make_uniq<StreamLocalState>();
-      BuildOffsetsEntries(*l, input, g.Bind());
+      l->BindOffsets(g);
       result = std::move(l);
       break;
     }
@@ -620,7 +624,8 @@ void IResearchSetScanOrder(
     return;
   }
   if (bd.score.vector) {
-    if (options->order_type != bd.score.vector->natural_order) {
+    if (options->order_type != bd.score.vector->natural_order ||
+        options->null_order == duckdb::OrderByNullType::NULLS_FIRST) {
       return;
     }
     take_limit();

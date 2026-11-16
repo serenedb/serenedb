@@ -258,6 +258,11 @@ void PieceTermReader::ReadDocs(bytes_view term, Acceptor acceptor) const {
   ReadPostingDocs(*this, Lookup(term), acceptor);
 }
 
+void PieceTermReader::ReadDocs(const PostingMeta& meta,
+                               Acceptor acceptor) const {
+  ReadPostingDocs(*this, meta, acceptor);
+}
+
 bool PieceTermReader::VisitRange(bytes_view from, bytes_view to,
                                  bool descending, TermVisitor visit) const {
   const size_t begin = from.empty() ? 0 : LowerBound(from);

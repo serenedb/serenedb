@@ -65,6 +65,8 @@ struct CopyInTarget {
   char delim = '\t';
   std::string null_str = "\\N";
   bool header = false;
+  bool ignore_errors = false;
+  uint64_t reject_limit = 0;
   std::vector<duckdb::LogicalType> types;
 };
 

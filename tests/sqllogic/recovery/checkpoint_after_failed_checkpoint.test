@@ -1,0 +1,53 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TABLE ckpt_retry (id INTEGER);
+
+
+statement ok
+INSERT INTO ckpt_retry VALUES (1);
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+INSERT INTO ckpt_retry VALUES (2);
+
+
+statement ok
+SET debug_checkpoint_abort = 'before_header_non_fatal';
+
+
+statement error
+CHECKPOINT;
+----
+db error: ERROR: Checkpoint failed for database<slt:ignore>
+
+
+statement ok
+RESET debug_checkpoint_abort;
+
+
+statement ok
+INSERT INTO ckpt_retry SELECT * FROM range(100);
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+SET sdb_faults = 'shutdown_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM ckpt_retry;
+----
+n
+102

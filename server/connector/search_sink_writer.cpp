@@ -1035,11 +1035,11 @@ void SearchSinkInsertBaseImpl::Field::PrepareForJsonValue(
                    : irs::field_limits::invalid();
 }
 
-std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
+SearchTableInsertSink MakeSearchTableInsertSink(
   irs::IndexWriter::Transaction& trx, const search::Store& shard,
   duckdb::Catalog& catalog, duckdb::ClientContext& context) {
   SDB_PARK_ONCE_ON_FAILURE("search_insert_sink_before_config");
-  auto config = shard.Config();
+  auto [config, version] = shard.ConfigToWrite();
   SDB_PARK_ONCE_ON_FAILURE("search_insert_sink_after_config");
   std::vector<IndexedExpression> indexed_exprs;
   for (const auto& key : config->keys) {
@@ -1062,10 +1062,11 @@ std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
     return entry ? entry : AllStoredEntry();
   };
   trx.SetFieldOptions(config);
-  return std::make_unique<SearchSinkInsertBaseImpl>(
-    trx, BoundTokenizers(std::move(tokenizers)), std::move(entry_of),
-    catalog::PkColumnKind::None, std::move(indexed_exprs), config.get(),
-    std::move(constraint_keys));
+  return {.sink = std::make_unique<SearchSinkInsertBaseImpl>(
+            trx, BoundTokenizers(std::move(tokenizers)), std::move(entry_of),
+            catalog::PkColumnKind::None, std::move(indexed_exprs), config.get(),
+            std::move(constraint_keys)),
+          .version = version};
 }
 
 void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
@@ -1093,9 +1094,8 @@ void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
     sink.SwitchExpressionImpl(indexed_expr.field_id, result.GetType(), result,
                               num_rows);
   }
-  for (const auto& key : sink.ConstraintKeys()) {
-    duckdb::Vector keys{duckdb::LogicalType::BLOB, num_rows};
-    key.Encode(chunk, column_ids, keys);
+  for (auto& key : sink.ConstraintKeys()) {
+    const auto& keys = key.Encode(chunk, column_ids);
     sink.SwitchFieldImpl(key.Key().field, duckdb::LogicalType::BLOB, keys,
                          num_rows);
   }

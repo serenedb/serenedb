@@ -72,6 +72,7 @@ struct TermReader : public AttributeProvider {
   // goes through here rather than building a term iterator and a postings
   // iterator per key.
   virtual void ReadDocs(bytes_view term, Acceptor acceptor) const = 0;
+  virtual void ReadDocs(const PostingMeta& meta, Acceptor acceptor) const = 0;
 
   // The record of `term`; `docs_count == 0` when the field does not hold it,
   // which no record of a real term has -- a term is in the dictionary because

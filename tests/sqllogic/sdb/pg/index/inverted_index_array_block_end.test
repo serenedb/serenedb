@@ -1,0 +1,61 @@
+# An array column whose storage block ends inside a row is read in full
+# through the index, and a filter on it finishes: FLOAT[768] stored
+# uncompressed puts the end of its first block inside row 85.
+
+statement ok
+CREATE TABLE abe (id INTEGER, tag TEXT, emb FLOAT[768], inc FLOAT[768]);
+
+statement ok
+CREATE INDEX abe_idx ON abe
+  USING inverted(tag, emb hnsw (metric = 'l2', compression = false))
+  INCLUDE (inc included(compression = 'uncompressed'));
+
+statement ok
+INSERT INTO abe
+SELECT i, 'x', list_transform(range(768), lambda j: (i + j)::FLOAT)::FLOAT[768],
+       list_transform(range(768), lambda j: (i - j)::FLOAT)::FLOAT[768]
+FROM range(300) t(i);
+
+statement ok
+INSERT INTO abe VALUES (300, 'x', NULL, NULL);
+
+statement ok
+VACUUM (FLUSH_TABLE) abe;
+
+query
+SELECT count(emb[1]) AS n, max(emb[1])::INTEGER AS last, sum(emb[768])::BIGINT AS s FROM abe_idx WHERE tag = 'x';
+----
+n	last	s
+300	299	274950
+
+query
+SELECT count(inc[1]) AS n, max(inc[1])::INTEGER AS last, sum(inc[768])::BIGINT AS s FROM abe_idx WHERE tag = 'x';
+----
+n	last	s
+300	299	-185250
+
+query
+SELECT count(*) AS n FROM abe_idx WHERE tag = 'x' AND emb IS NOT NULL;
+----
+n
+300
+
+query
+SELECT count(*) AS n FROM abe_idx WHERE tag = 'x' AND inc IS NOT NULL;
+----
+n
+300
+
+query
+SELECT count(*) AS n FROM abe_idx WHERE tag = 'x' AND emb IS NULL;
+----
+n
+1
+
+query
+SELECT id FROM abe_idx WHERE tag = 'x' AND emb[1] BETWEEN 84 AND 86 ORDER BY id;
+----
+id
+84
+85
+86

@@ -57,6 +57,7 @@ class PieceTermReader final : public TermReader {
   PostingMeta Lookup(bytes_view term) const final;
   void LookupBatch(size_t count, TermAt term, FoundTerm found) const final;
   void ReadDocs(bytes_view term, Acceptor acceptor) const final;
+  void ReadDocs(const PostingMeta& meta, Acceptor acceptor) const final;
   bool VisitRange(bytes_view from, bytes_view to, bool descending,
                   TermVisitor visit) const final;
   bool CoverRange(bytes_view from, bytes_view to,

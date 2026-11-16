@@ -72,7 +72,11 @@ The index stores the kind of score bound that the scorer named in `optimize_top_
 | `lm_dirichlet` or `dfi` | `lm_dirichlet`, `dfi` |
 | `BM25` with any other `b` | `BM25` with the same `b` |
 
-`BM25` with `k1 = 0`, `indri_dirichlet`, `raw_boost`, `raw_dl`, `idf` and `constant` have no score bounds, so they never prune, neither in `ORDER BY` nor in `optimize_top_k`.
+`BM25` with `k1 = 0`, `indri_dirichlet`, `raw_boost`, `raw_dl`, `idf` and `constant` have no score bounds, so naming them in `optimize_top_k` stores none, and ranking by them never uses WAND pruning.
+
+Without WAND pruning (no `optimize_top_k`, or an `ORDER BY` scorer that can't use the bounds the index stores), a ranked query with a `LIMIT` still stops once it has `k` rows when every match gets the same score, as with a [`ts_like`](../../functions/search/full-text.md#ts_like) pattern. A phrase without slop still skips the rows where its words occur too few times to reach the top `k`.
+
+The bounds of `lm_dirichlet` and `dfi` require that no term occurs in a row more often than the row's `norm` counts positions. A dictionary that emits one term more than once at a position, such as a union whose parts produce the same token (`[split_text_csv(' '), keyword()]` on a one-word value), breaks that, and pruning can then skip the best row; without `optimize_top_k`, or with `sdb_disable_top_k_optimization` on, such a column ranks correctly.
 
 `EXPLAIN` shows `Top: k, optimized` on the scan (`Top: k, offset n, optimized` when the query has an `OFFSET`) when the first two conditions hold, plus a `Bounds:` row that names the index's scorer when it differs from the `ORDER BY` scorer; it doesn't check the filter's shape. The scan returns the answer rows already ranked, so no separate `TOP_N` operator sits above it. The [`sdb_disable_top_k_optimization` session setting](./maintenance.md#session-settings) turns it off at query time.
 

@@ -126,7 +126,7 @@ def test_psql_user_default_falls_back_to_os_user() -> None:
 
     # The psql lane's unfiltered \du goldens list every role in the cluster;
     # hold the cross-lane lock for as long as the sentinel exists.
-    shared = Path(os.environ.get("SDB_DRV_SHARED_DIR") or tempfile.gettempdir())
+    shared = Path(os.environ.get("SDB_DRV_SHARED_DIR") or Path(tempfile.gettempdir()) / f"sdb-drivers-{os.getuid()}")
     shared.mkdir(parents=True, exist_ok=True)
     lock = open(shared / "sdb-drivers-global-roles.lock", "w")
     fcntl.flock(lock, fcntl.LOCK_EX)

@@ -1,0 +1,67 @@
+statement ok
+CREATE TABLE autocommit_writes (id BIGINT, v BIGINT);
+
+
+statement ok
+CREATE TABLE autocommit_writes_pk (id BIGINT PRIMARY KEY, v BIGINT);
+
+
+statement ok
+INSERT INTO autocommit_writes VALUES (1, 0);
+
+
+statement ok
+INSERT INTO autocommit_writes_pk VALUES (1, 0);
+
+
+statement ok
+UPDATE autocommit_writes SET v = v + 1 WHERE id = 1;
+
+
+statement ok
+UPDATE autocommit_writes SET v = v + 1 WHERE id = 1;
+
+
+statement ok
+UPDATE autocommit_writes_pk SET v = v + 1 WHERE id = 1;
+
+
+statement ok
+UPDATE autocommit_writes_pk SET v = v + 1 WHERE id = 1;
+
+
+query
+SELECT id, v FROM autocommit_writes ORDER BY id, v;
+----
+id	v
+1	2
+
+
+query
+SELECT id, v FROM autocommit_writes_pk ORDER BY id, v;
+----
+id	v
+1	2
+
+
+statement ok
+INSERT INTO autocommit_writes VALUES (3, 0);
+
+
+statement ok
+INSERT INTO autocommit_writes_pk VALUES (3, 0);
+
+
+statement ok
+DELETE FROM autocommit_writes WHERE id = 3;
+
+
+statement ok
+DELETE FROM autocommit_writes_pk WHERE id = 3;
+
+
+query
+SELECT (SELECT count(*) FROM autocommit_writes WHERE id = 3) AS plain, (SELECT count(*) FROM autocommit_writes_pk WHERE id = 3) AS pk;
+----
+plain	pk
+0	0

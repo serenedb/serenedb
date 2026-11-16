@@ -75,6 +75,7 @@ DuckDBEngine& DuckDBEngine::Instance() {
 }
 
 void DuckDBEngine::Configure(duckdb::DBConfig& config) {
+  config.options.case_sensitive_database_names = true;
   config.SetOptionByName("preserve_identifier_case", duckdb::Value{false});
   config.SetOptionByName("disable_database_invalidation", duckdb::Value{true});
   config.SetOptionByName("explain_output_format", duckdb::Value{"PG"});

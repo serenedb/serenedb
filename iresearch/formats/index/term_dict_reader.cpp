@@ -477,10 +477,21 @@ void TermReaderImpl::LookupBatch(size_t count, TermAt term,
   uint32_t last = kNoBlock;
   size_t visited = 0;
   bytes_view last_term;
+  bool below_min = true;
   for (size_t i = 0; i != count; ++i) {
     const auto value = term(i);
-    SDB_ASSERT(probes.empty() || last_term <= value);
-    if (Excludes(value)) {
+    SDB_ASSERT(i == 0 || last_term <= value);
+    last_term = value;
+    if (below_min) {
+      if (value < min()) {
+        continue;
+      }
+      below_min = false;
+    }
+    if (max() < value) {
+      break;
+    }
+    if (key_width != 0 && value.size() != key_width) {
       continue;
     }
     const auto at = keys.size();
@@ -522,7 +533,6 @@ void TermReaderImpl::LookupBatch(size_t count, TermAt term,
       .size = static_cast<uint32_t>(size),
     });
     last = block;
-    last_term = value;
   }
   const auto& in = _owner->Input();
   const bool hinted = visited > 1 || !inlines.empty();

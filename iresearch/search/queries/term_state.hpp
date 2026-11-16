@@ -41,6 +41,15 @@ struct TermState {
 namespace detail {
 
 struct PostingClause {
+  ScoreArgs Args(ColumnArgsFetcher* fetcher) const noexcept {
+    return {
+      .scorer = stats.scorer,
+      .stats = stats.stats,
+      .fetcher = fetcher,
+      .boost = boost,
+    };
+  }
+
   TermState state;
   score_t boost = kNoBoost;
   StatsRecord stats{};

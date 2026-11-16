@@ -31,6 +31,7 @@
 #include <iresearch/utils/type_limits.hpp>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace sdb::connector {
 
@@ -51,6 +52,11 @@ struct BindingKey {
 
   auto operator<=>(const BindingKey&) const = default;
 };
+
+template<typename H>
+H AbslHashValue(H h, const BindingKey& key) {
+  return H::combine(std::move(h), key.table, key.column);
+}
 
 inline BindingKey MakeBindingKey(const duckdb::ColumnBinding& binding) {
   return {.table = binding.table_index.index,

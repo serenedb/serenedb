@@ -35,6 +35,7 @@
 #include <duckdb/common/types/timestamp.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/database_manager.hpp>
+#include <duckdb/main/parse_iterator.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
 #include <duckdb/parser/statement/drop_statement.hpp>
@@ -42,11 +43,13 @@
 #include <duckdb/parser/statement/transaction_statement.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/log.hpp>
+#include <iresearch/utils/pg/error_mapping.hpp>
 #include <iresearch/utils/system_compiler.hpp>
 
 #include "auth/role_closure.h"
 #include "catalog/cluster.h"
 #include "catalog/entry/role.h"
+#include "connector/duckdb_pg_binary_copy.h"
 #include "network/pg/bind_decoder.h"
 #include "network/pg/copy_eod_scanner.h"
 #include "network/pg/hba.h"
@@ -320,19 +323,6 @@ inline bool IsBinaryWireFormat(CopyFormat format) {
   return format == CopyFormat::Binary || format == CopyFormat::Parquet;
 }
 
-inline void RejectBinaryCopyOptions(const duckdb::CopyInfo& info) {
-  for (const auto& entry : info.options) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    ERR_MSG("COPY option \"", entry.first.GetIdentifierName(),
-                            "\" is not supported in BINARY mode"));
-  }
-  for (const auto& entry : info.parsed_options) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    ERR_MSG("COPY option \"", entry.first.GetIdentifierName(),
-                            "\" is not supported in BINARY mode"));
-  }
-}
-
 // The runnable inner query for a COPY ... TO. `select_statement` is the parsed
 // source SELECT for `COPY (query) TO`; for `COPY table TO` it is null until
 // bind, so synthesize `SELECT [cols|*] FROM [catalog.][schema.]table` exactly
@@ -540,7 +530,7 @@ bool PgWireSession<Kind>::SetupConnection() {
                                  "\" is not supported; using \"UTF8\"")));
         return true;
       }
-      WriteFatalResponse(this->_send, ToSqlError(exception));
+      WriteFatalResponse(this->_send, irs::pg::ToSqlError(exception));
       return false;
     }
     return true;
@@ -776,7 +766,7 @@ auto PgWireSession<Kind>::FunnelError(const std::exception& exception,
   // Notices accumulated before the failure go out ahead of the error, as PG
   // orders them (the post-dispatch drain would otherwise emit them after).
   DrainNotices();
-  WriteErrorResponse(this->_send, ToSqlError(exception));
+  WriteErrorResponse(this->_send, irs::pg::ToSqlError(exception));
   // Roll back the implicit block inline (postgres aborts at the error, not at
   // the Sync): the Sync then finds nothing open -> status 'I'. If we don't own
   // a block but the user does, the explicit transaction is aborted instead so
@@ -1382,13 +1372,11 @@ yaclib::Task<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
     WriteEmptyFrame(this->_send, PQ_MSG_EMPTY_QUERY_RESPONSE);
     co_return {};
   }
-  // Parsing binds too: the statement preprocessor resolves PRAGMA lookups
-  // through the catalog (TryReparsePragma), so the snapshot must be held
-  // before ExtractStatements.
-  duckdb::vector<duckdb::idx_t> raw_statement_ends;
-  auto extracted = _conn->ExtractStatements(query, &raw_statement_ends,
-                                            /*wrap_multi=*/false);
-  if (extracted.empty()) {
+  duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>> parsed;
+  for (duckdb::ParseIterator parser{*_conn->context, query}; parser.Peek();) {
+    parsed.push_back(parser.GetStatement());
+  }
+  if (parsed.empty()) {
     // A non-empty but statement-less query (";", a bare comment): postgres
     // replies EmptyQueryResponse, not just a bare ReadyForQuery.
     WriteEmptyFrame(this->_send, PQ_MSG_EMPTY_QUERY_RESPONSE);
@@ -1403,7 +1391,7 @@ yaclib::Task<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
   // iteration), so a leading or mid-string BEGIN/COMMIT/ROLLBACK reaches the
   // transaction operator itself rather than running wrapped in our block; a
   // following statement then arms the block (or joins the user's BEGIN).
-  const bool implicit_block = extracted.size() > 1;
+  bool implicit_block = parsed.size() > 1;
   // PG commits the implicit block in finish_xact_command BEFORE EndCommand for
   // the last statement (postgres.c:1304-1314), so a commit-time failure is
   // reported as an ErrorResponse in place of that statement's CommandComplete
@@ -1421,68 +1409,74 @@ yaclib::Task<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
       }
     }
   };
-  auto raw_end = raw_statement_ends.begin();
-  for (auto& statement : extracted) {
-    const bool is_last = &statement == &extracted.back();
-    const auto position =
-      static_cast<duckdb::idx_t>(&statement - &extracted.front()) + 1;
-    while (raw_end != raw_statement_ends.end() && *raw_end < position) {
-      ++raw_end;
-    }
-    const bool ends_raw =
-      raw_end != raw_statement_ends.end() && *raw_end == position;
+  duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>> peel;
+  for (size_t i = 0; i != parsed.size(); ++i) {
     // In an aborted transaction block PG rejects every statement except
     // COMMIT/ROLLBACK with 25P02 before parse-analysis. Mirror the extended
     // path (HandleParse): without this guard PREPARE/DEALLOCATE -- whose binder
     // permits an invalid transaction -- would execute here where PG rejects.
-    if (!_txn_state->GuardNotAborted(*statement)) {
+    if (!_txn_state->GuardNotAborted(*parsed[i])) {
       ThrowAbortedTransaction();
     }
-    _connection_ctx->SetInTransactionBlock(
-      implicit_block || !this->_conn->context->transaction.IsAutoCommit());
-    if (implicit_block &&
-        statement->type != duckdb::StatementType::TRANSACTION_STATEMENT) {
-      _txn_state->Arm();
-    }
-    if (const auto copy = ClassifyCopy(*statement); copy.dir != CopyDir::None) {
-      // A COPY FROM STDIN returns pinned to _ioexec; remaining statements just
-      // continue inline-first from there.
-      co_await RunCopy(std::move(statement), copy);
+    peel.clear();
+    peel.push_back(std::move(parsed[i]));
+    _conn->context->PreprocessStatements(peel, nullptr, /*wrap_multi=*/false);
+    if (peel.empty()) {
+      WriteEmptyFrame(this->_send, PQ_MSG_EMPTY_QUERY_RESPONSE);
       continue;
     }
-    // Bind and execution share one duckdb query lifecycle (one transaction):
-    // the plan's catalog references stay valid end-to-end. The command tag
-    // needs the parse tree, so it is built before the statement moves; rows
-    // go to the wire straight from the executor (wire_collector.h), with the
-    // hook writing RowDescription post-bind, before any task can emit a
-    // DataRow (a plan error then lands after T, which is postgres's
-    // mid-stream error behavior).
-    const auto stmt_type = statement->type;
-    const bool deallocates = DeallocatesPreparedStatements(*statement);
-    const auto tag = _txn_state->StatusByte() == 'E' && IsCommit(*statement)
-                       ? sdb::pg::CommandTag{"ROLLBACK", stmt_type}
-                       : sdb::pg::BuildCommandTag(*statement, *_conn->context);
-    auto wire = MakeWireContext({});
-    wire->announce_rowdesc = true;
-    ClosingPending pending;
-    auto result =
-      co_await DriveStatementToResult(std::move(statement), pending, wire);
-    commit_block_if_last(is_last, stmt_type);
-    DrainNotices();
-    if (deallocates) {
-      ReleaseDeallocated();
-    }
-    const auto return_type = result->GetStatementProperties().return_type;
-    if (return_type == duckdb::StatementReturnType::QUERY_RESULT) {
-      WriteCommandComplete(this->_send, tag,
-                           wire->rows.load(std::memory_order_relaxed));
-      continue;
-    }
-    if (ends_raw) {
-      WriteCommandTag(tag, *result, return_type);
-    }
-    if (stmt_type == duckdb::StatementType::TRANSACTION_STATEMENT) {
-      AfterTxnStatement();
+    implicit_block = implicit_block || peel.size() > 1;
+    for (auto& statement : peel) {
+      const bool ends_raw = &statement == &peel.back();
+      const bool is_last = ends_raw && i + 1 == parsed.size();
+      _connection_ctx->SetInTransactionBlock(
+        implicit_block || !this->_conn->context->transaction.IsAutoCommit());
+      if (implicit_block &&
+          statement->type != duckdb::StatementType::TRANSACTION_STATEMENT) {
+        _txn_state->Arm();
+      }
+      if (const auto copy = ClassifyCopy(*statement);
+          copy.dir != CopyDir::None) {
+        // A COPY FROM STDIN returns pinned to _ioexec; remaining statements
+        // just continue inline-first from there.
+        co_await RunCopy(std::move(statement), copy);
+        continue;
+      }
+      // Bind and execution share one duckdb query lifecycle (one transaction):
+      // the plan's catalog references stay valid end-to-end. The command tag
+      // needs the parse tree, so it is built before the statement moves; rows
+      // go to the wire straight from the executor (wire_collector.h), with the
+      // hook writing RowDescription post-bind, before any task can emit a
+      // DataRow (a plan error then lands after T, which is postgres's
+      // mid-stream error behavior).
+      const auto stmt_type = statement->type;
+      const bool deallocates = DeallocatesPreparedStatements(*statement);
+      const auto tag =
+        _txn_state->StatusByte() == 'E' && IsCommit(*statement)
+          ? sdb::pg::CommandTag{"ROLLBACK", stmt_type}
+          : sdb::pg::BuildCommandTag(*statement, *_conn->context);
+      auto wire = MakeWireContext({});
+      wire->announce_rowdesc = true;
+      ClosingPending pending;
+      auto result =
+        co_await DriveStatementToResult(std::move(statement), pending, wire);
+      commit_block_if_last(is_last, stmt_type);
+      DrainNotices();
+      if (deallocates) {
+        ReleaseDeallocated();
+      }
+      const auto return_type = result->GetStatementProperties().return_type;
+      if (return_type == duckdb::StatementReturnType::QUERY_RESULT) {
+        WriteCommandComplete(this->_send, tag,
+                             wire->rows.load(std::memory_order_relaxed));
+        continue;
+      }
+      if (ends_raw) {
+        WriteCommandTag(tag, *result, return_type);
+      }
+      if (stmt_type == duckdb::StatementType::TRANSACTION_STATEMENT) {
+        AfterTxnStatement();
+      }
     }
   }
   co_return {};
@@ -1597,7 +1591,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
   // target table's column count (PG sends natts + one per-column format code).
   const auto& copy_info = *statement->Cast<duckdb::CopyStatement>().info;
   if (format == CopyFormat::Binary) {
-    RejectBinaryCopyOptions(copy_info);
+    sdb::connector::CheckBinaryCopyOptions(copy_info, true);
   }
   auto copy_columns = static_cast<int16_t>(copy_info.select_list.size());
   if (copy_columns == 0) {
@@ -1666,7 +1660,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyToStdout(
   const bool binary = format == CopyFormat::Binary;
   auto& copy = statement->Cast<duckdb::CopyStatement>();
   if (binary) {
-    RejectBinaryCopyOptions(*copy.info);
+    sdb::connector::CheckBinaryCopyOptions(*copy.info, false);
   }
   auto inner = ExtractCopyToQuery(copy);
   auto prepared = PrepareInternal(std::move(inner));
@@ -1702,12 +1696,13 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyToStdout(
     auto opts =
       sdb::connector::ResolveTextCopyOptions(copy.info->parsed_options);
     sdb::connector::ResolveTextCopyOptions(copy.info->options, opts);
+    sdb::connector::CheckTextCopyOptions(opts, false);
     wire->proto.copy_delim = opts.delim;
     wire->proto.copy_null = opts.null_str;
     // PG-compat: COPY ... TO STDOUT (FORMAT text, HEADER) emits the column-name
     // header line before the rows (committed here, before the drive arms).
     if (opts.header) {
-      WriteCopyTextHeader(this->_send, prepared->GetNames(), opts.delim);
+      WriteCopyTextHeader(this->_send, prepared->GetNames(), wire->proto);
     }
   }
   duckdb::vector<duckdb::Value> params;
@@ -2893,7 +2888,7 @@ yaclib::Task<bool> PgWireSession<Kind>::Negotiate() {
       co_return false;
     }
   } catch (const std::exception& exception) {
-    WriteFatalResponse(this->_send, ToSqlError(exception));
+    WriteFatalResponse(this->_send, irs::pg::ToSqlError(exception));
     this->KickSend();
     co_return false;
   }
@@ -3070,7 +3065,7 @@ yaclib::Future<> PgWireSession<Kind>::SessionMain() {
       co_await RunCommandLoop();
     }
   } catch (const std::exception& exception) {
-    WriteFatalResponse(this->_send, ToSqlError(exception));
+    WriteFatalResponse(this->_send, irs::pg::ToSqlError(exception));
   }
   // Teardown runs where everything was created: results/portals die on a duck
   // worker; their cleanup may emit notices that must be stolen before

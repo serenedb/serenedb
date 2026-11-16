@@ -27,6 +27,7 @@
 #include "iresearch/search/detail/posting_leaf.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/bit_utils.hpp"
+#include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {
@@ -34,6 +35,7 @@ namespace irs::detail {
 template<typename InputType>
 class PostingProbe : public PostingLeaf<InputType, kProbeShape> {
   using Base = PostingLeaf<InputType, kProbeShape>;
+  using Kind = block_io::FillLeaf::Kind;
 
   using Base::_cursor;
   using Base::_doc;
@@ -54,16 +56,10 @@ class PostingProbe : public PostingLeaf<InputType, kProbeShape> {
 
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
                IndexFeatures layout, bool bounds) {
-    SDB_ASSERT(meta.docs_count != 0);
     this->SetFreqLen(FeaturesHaveFreq(layout));
-
-    if (meta.docs_count == 1) {
+    if (!this->OpenList(meta, doc_in, layout, bounds)) {
       _doc = _last = doc_limits::min() + meta.doc_delta;
-      return;
     }
-
-    this->OpenInput(meta, doc_in, bounds);
-    this->ArmWalk(meta, layout, bounds);
   }
 
   IRS_FORCE_INLINE doc_id_t Probe(doc_id_t target) {
@@ -75,28 +71,64 @@ class PostingProbe : public PostingLeaf<InputType, kProbeShape> {
       return _doc = doc_limits::eof();
     }
 
-    if (_kind == block_io::FillLeaf::Kind::Docs) [[likely]] {
-      if (_len == kBlock) [[likely]] {
-        return _doc = *BranchlessLowerBound<doc_limits::kBlockSize>(
-                 std::begin(_docs), target);
-      }
-      const auto* const end = std::cend(_docs);
-      for (const auto* it = end - _len; it != end; ++it) {
-        if (target <= *it) {
-          _len = static_cast<uint32_t>(end - it);
-          return _doc = *it;
-        }
-      }
-      _len = 0;
-      return _doc = doc_limits::eof();
+    if (_kind == Kind::DocsBlock) [[likely]] {
+      return _doc = *BranchlessLowerBound<doc_limits::kBlockSize>(
+               std::begin(_docs), target);
     }
 
-    if (_kind == block_io::FillLeaf::Kind::Bitset) {
+    if (_kind == Kind::DocsTail) {
+      const auto* const end = std::cend(_docs);
+      const auto* const it = ScanNotBelow(end - _len, end, target);
+      _len = static_cast<uint32_t>(end - it);
+      return _doc = it != end ? *it : doc_limits::eof();
+    }
+
+    if (_kind == Kind::Bitset) {
       return ProbeBitset(target);
     }
 
-    SDB_ASSERT(_kind == block_io::FillLeaf::Kind::Run);
+    SDB_ASSERT(_kind == Kind::Run);
     return _doc = target;
+  }
+
+  uint32_t Drop(doc_id_t* IRS_RESTRICT docs, score_t* IRS_RESTRICT scores,
+                uint32_t n) {
+    uint32_t blocks[kBlock];
+    const auto landings = n != 0 ? this->Landings(docs, n, blocks) : 0;
+    uint32_t landed = 0;
+    uint32_t kept = 0;
+    for (uint32_t i = 0; i != n;) {
+      if (docs[i] > _last) {
+        if (landed != landings) {
+          this->LandOn(blocks[landed++],
+                       [this](doc_id_t prev)
+                         IRS_FORCE_INLINE { ReadLeaf(prev); });
+        } else if (!ReadTo(docs[i])) {
+          _doc = doc_limits::eof();
+          for (; i != n; ++i) {
+            docs[kept] = docs[i];
+            scores[kept] = scores[i];
+            ++kept;
+          }
+          return kept;
+        }
+      }
+      const auto last = _last;
+      do {
+        const auto doc = docs[i];
+        const auto next = Probe(doc);
+        const auto stop = std::min<doc_id_t>(next, last + 1);
+        docs[kept] = doc;
+        scores[kept] = scores[i];
+        kept += static_cast<uint32_t>(next != doc);
+        while (++i != n && docs[i] < stop) {
+          docs[kept] = docs[i];
+          scores[kept] = scores[i];
+          ++kept;
+        }
+      } while (i != n && docs[i] <= last);
+    }
+    return kept;
   }
 
  private:
@@ -123,7 +155,7 @@ class PostingProbe : public PostingLeaf<InputType, kProbeShape> {
   }
 
   const UnalignedWord* _bitset = nullptr;
-  block_io::FillLeaf::Kind _kind = block_io::FillLeaf::Kind::Docs;
+  Kind _kind = Kind::DocsTail;
   uint32_t _len = 0;
 };
 

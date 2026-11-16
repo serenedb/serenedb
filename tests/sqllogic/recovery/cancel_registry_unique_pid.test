@@ -1,0 +1,38 @@
+statement ok
+SET sdb_faults = 'cancel_registry_reuse_pid';
+
+
+connection crup_a
+statement ok
+SELECT 1;
+
+
+connection crup_b
+statement ok
+SELECT 1;
+
+
+connection crup_c
+statement ok
+SELECT 1;
+
+
+query
+SELECT count(*) >= 4 AS sessions, count(*) = count(DISTINCT pid) AS unique_pids
+FROM pg_stat_activity;
+----
+sessions	unique_pids
+t	t
+
+
+query
+SELECT bool_and(pg_cancel_backend(pid)) AS canceled
+FROM pg_stat_activity
+WHERE pid <> pg_backend_pid();
+----
+canceled
+t
+
+
+statement ok
+RESET sdb_faults;

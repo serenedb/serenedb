@@ -28,6 +28,7 @@
 #include <compare>
 #include <cstdint>
 #include <limits>
+#include <numeric>
 #include <span>
 #include <vector>
 
@@ -35,6 +36,7 @@
 #include "iresearch/formats/posting/iterator_pos.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/detail/phrase_matcher.hpp"
+#include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/utils/containers/fixed.hpp"
 #include "iresearch/utils/empty.hpp"
@@ -46,9 +48,16 @@ struct MatchResult {
   uint64_t freq = 0;
   double weight = 0.0;
   score_t boost = 0.f;
-  PosAttr::value_t best_distance = 0;
   bool any = false;
 };
+
+inline uint32_t FreqOf(const MatchResult& res) noexcept {
+  return std::saturate_cast<uint32_t>(res.freq);
+}
+
+inline score_t ScaleOf(const MatchResult& res) noexcept {
+  return static_cast<score_t>(res.weight / static_cast<double>(res.freq));
+}
 
 struct MatchScratch {
   std::vector<int64_t> shift;
@@ -63,6 +72,15 @@ struct GroupPair {
   uint32_t a;
   uint32_t b;
 };
+
+template<typename Parent>
+uint32_t FindGroup(Parent&& parent, uint32_t x) noexcept {
+  while (parent(x) != x) {
+    parent(x) = parent(parent(x));
+    x = parent(x);
+  }
+  return x;
+}
 
 template<typename Group>
 void BuildGroupPairs(size_t n, Group&& group, std::vector<GroupPair>& out) {
@@ -99,10 +117,6 @@ MatchResult SweepOf(Cursors& cur, std::span<const int64_t> offsets,
     ++res.freq;
     res.weight += 1.0 / (1.0 + static_cast<double>(width));
     res.boost = std::max(res.boost, cur.Boost());
-    const auto distance = static_cast<PosAttr::value_t>(width);
-    if (!res.any || distance < res.best_distance) {
-      res.best_distance = distance;
-    }
     res.any = true;
     collect();
     return !early_exit;
@@ -463,13 +477,16 @@ class PhraseSlopMatcher {
     }
 
 #ifdef SDB_DEV
-    if constexpr (N != 0) {
-      if (detail::slop::StaticArityDisabled()) [[unlikely]] {
-        return Run<0>();
-      }
+    if (detail::slop::StaticArityDisabled()) [[unlikely]] {
+      return Run<0>();
     }
 #endif
-    return Run<N>();
+    if constexpr (N == 0) {
+      return detail::ResolveArity<detail::kSlotArity, detail::kSlotFloor>(
+        _pos.size(), [&]<size_t Arity> { return Run<Arity>(); });
+    } else {
+      return Run<N>();
+    }
   }
 
   uint32_t GetFreq() const noexcept { return _phrase_freq; }
@@ -497,8 +514,6 @@ class PhraseSlopMatcher {
   }
 
  private:
-  using Cursors = detail::slop::IterCursors<Positions, Offs, HasBoost>;
-
   uint32_t NextPosition() {
     if constexpr (!Offs || !HasFreq) {
       return 0;
@@ -515,7 +530,18 @@ class PhraseSlopMatcher {
 
   template<size_t Arity>
   bool Run() {
-    Cursors cur{_pos, _match_scratch};
+    if constexpr (N == 0 && Arity != 0) {
+      containers::Fixed<TermPosition, Arity> slots{
+        Arity, [&](TermPosition& slot, size_t i) noexcept { slot = _pos[i]; }};
+      return Run<Arity>(slots);
+    } else {
+      return Run<Arity>(_pos);
+    }
+  }
+
+  template<size_t Arity, typename Slots>
+  bool Run(Slots& slots) {
+    detail::slop::IterCursors<Slots, Offs, HasBoost> cur{slots, _match_scratch};
     const auto res = detail::slop::Sweep<Arity>(
       cur, {_offsets.data(), _offsets.size()}, _max_slop, _pairs,
       _match_scratch, !HasFreq, [&] {
@@ -537,9 +563,8 @@ class PhraseSlopMatcher {
 
   void Take(const detail::slop::MatchResult& res) {
     if constexpr (HasFreq) {
-      _phrase_freq = static_cast<uint32_t>(res.freq);
-      _phrase_scale =
-        static_cast<score_t>(res.weight / static_cast<double>(res.freq));
+      _phrase_freq = detail::slop::FreqOf(res);
+      _phrase_scale = detail::slop::ScaleOf(res);
       if constexpr (HasBoost) {
         _phrase_boost = res.boost;
       }

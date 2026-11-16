@@ -33,6 +33,7 @@ duckdb:core:test/sql/copy/parquet/writer/parquet_zstd_sequence.test_slow	slow	ta
 duckdb:core:test/sql/copy/partitioned/partitioned_write_tpch.test_slow	slow	takes 8 min under tsan; dev runs it
 duckdb:core:test/sql/cte/recursive_cte_aoc2022.test_slow	slow	takes 7 min under tsan; dev runs it
 duckdb:core:test/sql/cte/recursive_cte_research.test_slow	slow	takes 3 min under tsan; dev runs it
+duckdb:core:test/sql/function/string/test_string_size_limit.test_slow	slow	peaks at 22 GB without a sanitizer and is not run under tsan, whose shadow memory multiplies that (an estimate); dev runs it
 duckdb:core:test/sql/function/string/test_translate_large.test_slow	slow	takes 10 min under tsan; dev runs it
 duckdb:core:test/sql/index/art/create_drop/test_art_long_keys.test_slow	slow	takes 6 min under tsan; dev runs it
 duckdb:core:test/sql/index/art/insert_update_delete/test_art_linear_insert.test_slow	slow	takes 3 min under tsan; dev runs it

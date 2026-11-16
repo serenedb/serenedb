@@ -10,6 +10,8 @@ Use SereneDB applications, or connect with any PostgreSQL-compatible client or d
 
 PostgreSQL connections require a user name. If the startup packet omits the database name or sends an empty one, SereneDB connects to the database named after that user. An explicit database name takes precedence.
 
+A connection keeps one paged result open at a time. A result fetched a page at a time (a portal executed with a row limit, as JDBC's `setFetchSize`, psycopg's server-side cursors and asyncpg's cursors do) is closed by any other statement run on the same connection, and its next fetch fails with SQLSTATE `22023`. Read such a result to its end before running another statement, or run the other statements on another connection.
+
 ## Apps
 
 | App | Purpose | Guide |

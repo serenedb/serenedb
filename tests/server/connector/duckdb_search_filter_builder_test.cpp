@@ -7470,18 +7470,14 @@ TEST_F(SearchFilterBuilderTest, test_SlopModifierOnTsqueryPhrasePart) {
                "must not carry a slop modifier");
 }
 
-TEST_F(SearchFilterBuilderTest, test_SlopModifierOnNullDeclined) {
-  // NULL::TSQUERY::slop(2) -- the NULL constant retypes through both
-  // casts without cast nodes, so `@@` sees a constant NULL argument and
-  // folds to SQL NULL at bind. The builder declines the predicate and
-  // row-level NULL semantics yield 0 rows (pinned in
-  // sloppy_phrase.test); the slop budget dissolves with the NULL.
+TEST_F(SearchFilterBuilderTest, test_SlopModifierOnNullEmpty) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
-  irs::BooleanFilter expected;  // not claimed
+  irs::BooleanFilter expected;
+  AddChild<irs::Empty>(expected);
   AssertFilter(expected,
                "SELECT * FROM foo WHERE category @@ NULL::TSQUERY::slop(2)",
-               columns, false, SegmentationAnalyzerProvider);
+               columns, true, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_SlopModifierOnTsqueryPhraseRejected) {

@@ -4731,7 +4731,7 @@ a
 5
 
 
-# --- a pending trigger follows its table through another session's RENAME ---
+# --- a pending trigger fails its commit when another session renames its table ---
 
 connection s1
 statement ok
@@ -4745,17 +4745,15 @@ CREATE TRIGGER cmr_gtr2 AFTER INSERT ON cmr_gt FOR EACH ROW
 
 
 connection s2
-statement error
+statement ok
 ALTER TABLE cmr_gt RENAME TO cmr_gt2
-----
-db error: ERROR: Cannot alter entry "cmr_gt" because there are entries that depend on it.
-trigger "cmr_gtr" on table "cmr_gt" depends on table "cmr_gt".
-Drop the dependent entries first and recreate them after the change.
 
 
 connection s1
-statement ok
+statement error
 COMMIT
+----
+db error: ERROR: Failed to commit: Could not commit creation of dependency, a subject was renamed to "cmr_gt2" by another transaction
 
 
 query
@@ -4763,16 +4761,11 @@ SELECT t.tgname, c.relname FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgreli
 WHERE t.tgname LIKE 'cmr\_gtr%' ORDER BY 1
 ----
 tgname	relname
-cmr_gtr	cmr_gt
-cmr_gtr2	cmr_gt
+cmr_gtr	cmr_gt2
 
 
-statement error
+statement ok
 INSERT INTO cmr_gt2 VALUES (7)
-----
-db error: ERROR: Table with name cmr_gt2 does not exist!
-Did you mean "cmr_gt"?
-
 
 query
 SELECT a FROM cmr_ga ORDER BY a
@@ -4786,21 +4779,11 @@ a
 5
 
 
-statement error
+statement ok
 DROP TABLE cmr_gt2
-----
-db error: ERROR: Table with name cmr_gt2 does not exist!
-Did you mean "cmr_gt"?
 
-
-statement error
+statement ok
 DROP TABLE cmr_ga
-----
-db error: ERROR: cannot drop table cmr_ga because other objects depend on it
-DETAIL: trigger cmr_gtr on table cmr_gt depends on table cmr_ga
-trigger cmr_gtr2 on table cmr_gt depends on table cmr_ga
-HINT: Use DROP ... CASCADE to drop the dependent objects too.
-
 
 # --- BEFORE and AFTER statement triggers on UPDATE follow the same rules ---
 
@@ -5031,4 +5014,4 @@ query
 SELECT count(*) AS n FROM pg_class WHERE relname LIKE 'cmr\_%'
 ----
 n
-2
+0

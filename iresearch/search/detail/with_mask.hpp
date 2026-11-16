@@ -95,6 +95,11 @@ class WithMask {
     return ExcludeBlock(_rest, docs, scores, len);
   }
 
+  uint32_t Drop(const doc_id_t* in, uint32_t n, doc_id_t* out) {
+    n = DropExcluded(_mask, in, n, out);
+    return DropExcluded(_rest, out, n, out);
+  }
+
   void Remove(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT words) {
     _mask.Remove(min, max, words);
     _rest.Remove(min, max, words);

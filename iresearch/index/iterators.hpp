@@ -111,6 +111,10 @@ class LoserScoreCollector {
 
   IRS_FORCE_INLINE uint64_t TotalMatches() const noexcept { return _count; }
 
+  IRS_FORCE_INLINE bool Admits(score_t score) const noexcept {
+    return score > ScoreThreshold();
+  }
+
   IRS_FORCE_INLINE void Add(score_t score, doc_id_t doc) noexcept {
     ++_count;
     const auto old_threshold = ScoreThreshold();

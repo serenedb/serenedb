@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <duckdb/common/identifier.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/unique_ptr.hpp>
@@ -44,7 +45,11 @@ struct TextCopyOptions {
   char delim = '\t';
   std::string null_str = "\\N";
   bool header = false;
+  bool ignore_errors = false;
+  uint64_t reject_limit = 0;
 };
+
+void CheckTextCopyOptions(const TextCopyOptions& options, bool from);
 
 TextCopyOptions ResolveTextCopyOptions(
   const duckdb::identifier_map_t<duckdb::vector<duckdb::Value>>& options);

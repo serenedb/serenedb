@@ -1,0 +1,23 @@
+# bytea has LIKE over its bytes, but no ILIKE, regular expression or SIMILAR TO
+# operator, and is not read as its hex text implicitly.
+
+query
+SELECT 'beast'::bytea LIKE '%as%' AS bytes, 'beast'::bytea LIKE '%6265%' AS hex;
+----
+bytes	hex
+t	f
+
+statement error (operator does not exist: bytea ~~\* unknown|No function matches the given name and argument types '~~\*\(BLOB, STRING_LITERAL\)')
+SELECT 'beast'::bytea ILIKE '%6265%';
+
+statement error (operator does not exist: bytea ~ unknown|No function matches the given name and argument types 'regexp_matches\(BLOB, STRING_LITERAL\)')
+SELECT 'beast'::bytea ~ '^.x62';
+
+statement error (operator does not exist: bytea ~ text|No function matches the given name and argument types 'regexp_full_match\(BLOB, VARCHAR\)')
+SELECT 'beast'::bytea SIMILAR TO '%62%';
+
+query
+SELECT 'beast'::bytea::text ILIKE '%6265%' AS hex;
+----
+hex
+t

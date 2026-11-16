@@ -23,10 +23,10 @@
 #include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
 #include <absl/container/flat_hash_set.h>
+#include <absl/strings/str_cat.h>
 
 #include <algorithm>
 #include <duckdb/common/allocator.hpp>
-#include <duckdb/common/error_data.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
@@ -46,6 +46,7 @@
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/error_mapping.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/system_compiler.hpp>
 #include <iresearch/utils/type_limits.hpp>
@@ -455,7 +456,8 @@ std::shared_ptr<const search::TableState> RebuildGroup(
     auto slice = std::make_unique<Slice>();
     slice->trx = shard.GetTransaction();
     slice->sink =
-      MakeSearchTableInsertSink(slice->trx, shard, *target.catalog, context);
+      MakeSearchTableInsertSink(slice->trx, shard, *target.catalog, context)
+        .sink;
     if (!plan) {
       plan = PlanColumns(*slice->sink, *shard.Config(), target);
     }
@@ -502,18 +504,12 @@ std::shared_ptr<const search::TableState> RebuildGroup(
   std::shared_ptr<const search::TableState> published;
   try {
     published = shard.ReplaceSegments(group, std::move(adopted));
-  } catch (const irs::SqlException& e) {
-    THROW_SQL_ERROR(
-      ERR_CODE(e.error().errcode),
-      ERR_MSG("index build: failed to swap in the rebuilt segments of "
-              "table ",
-              target.table_id, ": ", e.message()));
   } catch (const std::exception& e) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INTERNAL_ERROR),
-      ERR_MSG("index build: failed to swap in the rebuilt segments of "
-              "table ",
-              target.table_id, ": ", duckdb::ErrorData{e}.RawMessage()));
+    irs::pg::ThrowWithContext(
+      absl::StrCat(
+        "index build: failed to swap in the rebuilt segments of table ",
+        target.table_id),
+      e);
   }
   abort_all();
   SDB_PARK_ONCE_ON_FAILURE("pause_search_backfill_before_publish");
@@ -539,7 +535,6 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
   SDB_ASSERT(target.shard);
   auto& shard = *target.shard;
 
-  shard.DrainPriorWriters(context);
   shard.WriteOut();
   const auto floor = shard.ArmCompactionFloor(context);
 
@@ -559,8 +554,8 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
   // One group per pass, and the reader that named it dies with the pass: it
   // references every segment it can see, so holding it across groups would
   // keep the ones already swapped out unreclaimable and make the budget above
-  // bound nothing. A straddler that committed after the drain shows up on a
-  // later pass as a sub-floor segment; loop until none do.
+  // bound nothing. A straddler that committed after the version bump shows up
+  // on a later pass as a sub-floor segment; loop until none do.
   for (;;) {
     const auto reader = shard.BuildSnapshot();
     std::vector<const irs::SubReader*> group;

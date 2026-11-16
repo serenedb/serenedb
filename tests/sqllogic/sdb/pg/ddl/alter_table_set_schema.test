@@ -262,6 +262,13 @@ tgname	rel
 drops_log	feastables.drops
 
 
+query
+SELECT schema_name, table_name FROM duckdb_triggers() WHERE trigger_name = 'drops_log';
+----
+schema_name	table_name
+feastables	drops
+
+
 statement ok
 CREATE TABLE mrbeast.tally (n INT);
 
@@ -270,12 +277,27 @@ statement ok
 CREATE TRIGGER tally_log AFTER INSERT ON mrbeast.tally FOR EACH STATEMENT INSERT INTO mrbeast.drop_log SELECT count(*)::TEXT FROM mrbeast.tally;
 
 
-statement error
+statement ok
 ALTER TABLE mrbeast.tally SET SCHEMA feastables;
+
+
+statement ok
+INSERT INTO feastables.tally VALUES (1), (2);
+
+
+query
+SELECT what FROM mrbeast.drop_log ORDER BY what;
 ----
-db error: ERROR: Cannot alter entry "tally" because there are entries that depend on it.
-trigger "tally_log" on table "tally" depends on table "tally".
-Drop the dependent entries first and recreate them after the change.
+what
+0
+drop
+
+
+query
+SELECT schema_name, table_name, sql FROM duckdb_triggers() WHERE trigger_name = 'tally_log';
+----
+schema_name	table_name	sql
+feastables	tally	CREATE TRIGGER tally_log AFTER INSERT ON feastables.tally FOR EACH STATEMENT INSERT INTO mrbeast.drop_log SELECT CAST(count_star() AS text) FROM feastables.tally;
 
 
 statement error
@@ -314,6 +336,29 @@ DROP VIEW feastables.far_bars;
 
 statement ok
 DROP DATABASE atss_far_${__DATABASE__};
+
+
+statement ok
+CREATE TABLE mrbeast.retyped (id SERIAL, v INT);
+
+
+statement ok
+ALTER TABLE mrbeast.retyped ALTER COLUMN id TYPE BIGINT;
+
+
+statement ok
+ALTER TABLE mrbeast.retyped SET SCHEMA feastables;
+
+
+statement ok
+INSERT INTO feastables.retyped (v) VALUES (1);
+
+
+query
+SELECT id, v, pg_get_serial_sequence('feastables.retyped', 'id') AS seq FROM feastables.retyped;
+----
+id	v	seq
+1	1	feastables.retyped_id_seq
 
 
 statement ok

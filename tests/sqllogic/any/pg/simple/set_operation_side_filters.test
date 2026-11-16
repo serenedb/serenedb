@@ -1,0 +1,19 @@
+statement ok
+CREATE TABLE set_side_a AS SELECT '1' AS x;
+
+
+statement ok
+CREATE TABLE set_side_b AS SELECT 'abc' AS x;
+
+
+query
+SELECT x FROM set_side_a WHERE x::INT > 0 EXCEPT SELECT x FROM set_side_b;
+----
+x
+1
+
+
+query
+SELECT x FROM set_side_a WHERE x::INT > 0 INTERSECT SELECT x FROM set_side_b;
+----
+x

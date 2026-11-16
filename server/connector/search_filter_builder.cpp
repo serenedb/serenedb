@@ -491,12 +491,13 @@ bool AnyExprNode(const duckdb::Expression& expr, const Pred& pred) {
   return found;
 }
 
+bool IsNullConstant(const duckdb::Expression& expr) {
+  return expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_CONSTANT &&
+         expr.Cast<duckdb::BoundConstantExpression>().GetValue().IsNull();
+}
+
 bool ContainsNullConstant(const duckdb::Expression& expr) {
-  return AnyExprNode(expr, [](const duckdb::Expression& node) {
-    return node.GetExpressionClass() ==
-             duckdb::ExpressionClass::BOUND_CONSTANT &&
-           node.Cast<duckdb::BoundConstantExpression>().GetValue().IsNull();
-  });
+  return AnyExprNode(expr, IsNullConstant);
 }
 
 }  // namespace
@@ -553,6 +554,19 @@ const SearchColumnInfo* FindKeyColumnInfo(const FilterContext& ctx,
                                           const duckdb::Expression& expr);
 
 namespace {
+
+bool ReachesNullableKey(const FilterContext& ctx,
+                        const duckdb::Expression& expr) {
+  if (const auto* info = FindKeyColumnInfo(ctx, expr)) {
+    return info->nullable;
+  }
+  bool reaches = false;
+  duckdb::ExpressionIterator::EnumerateChildren(
+    expr, [&](const duckdb::Expression& child) {
+      reaches = reaches || ReachesNullableKey(ctx, child);
+    });
+  return reaches;
+}
 
 // UNKNOWN exactly on NULL operands; false for shapes whose null behavior
 // is not provably strict.
@@ -678,13 +692,19 @@ absl::Status MakeGroup(BoolTarget parent, const FilterContext& ctx,
   bool null_aware_groups = false;
   if (ctx.negated && absl::c_all_of(conj.GetChildren(), [](const auto& child) {
         SDB_ASSERT(child);
-        return IsComparisonExpr(*child);
+        return IsComparisonExpr(*child) || IsNullConstant(*child);
       })) {
     // De Morgan's law: if we negate a group of comparisons, comparisons
     // consume negation by inversion so we can reduce NOT filters.
     group_is_union = is_and;
     group = open(parent, group_is_union);
   } else if (ctx.negated) {
+    if (absl::c_any_of(conj.GetChildren(), [&](const auto& child) {
+          return ReachesNullableKey(ctx, *child);
+        })) {
+      return absl::UnimplementedError(
+        "a negated key lookup would admit the column's NULL rows");
+    }
     if (absl::c_any_of(conj.GetChildren(), [](const auto& child) {
           return ContainsNullConstant(*child);
         })) {
@@ -826,6 +846,10 @@ absl::Status FromKeyLookup(BoolTarget filter, const FilterContext& ctx,
   if (negated && info.nullable) {
     return absl::UnimplementedError(
       "a negated key lookup would admit the column's NULL rows");
+  }
+  if (!duckdb::StringType::GetCollation(info.logical_type).empty()) {
+    return absl::UnimplementedError(
+      "a key lookup on a collated column compares the collation's form");
   }
   std::vector<irs::bstring> terms;
   terms.reserve(values.size());
@@ -1381,8 +1405,8 @@ std::string TSRegexpPattern(std::string_view literal) {
   re2::RegexpStatus status;
   auto* re = ParseRegexp(literal, status);
   if (!re) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG(status.Text()));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_REGULAR_EXPRESSION),
+                    ERR_MSG("invalid regular expression: ", status.Text()));
   }
   const bool at_start = AnchoredAtText(re, true);
   const bool at_end = AnchoredAtText(re, false);
@@ -2323,6 +2347,12 @@ absl::Status FromExpression(BoolTarget filter, const FilterContext& ctx,
     case duckdb::ExpressionClass::BOUND_FUNCTION:
       return FromFunctionExpression(
         filter, ctx, expr.Cast<duckdb::BoundFunctionExpression>());
+    case duckdb::ExpressionClass::BOUND_CONSTANT:
+      if (expr.Cast<duckdb::BoundConstantExpression>().GetValue().IsNull()) {
+        AddFilter<irs::Empty>(filter);
+        return absl::OkStatus();
+      }
+      [[fallthrough]];
     default:
       return absl::UnimplementedError(
         absl::StrCat("Unsupported expression class: ",

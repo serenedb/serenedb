@@ -56,10 +56,12 @@ duckdb::shared_ptr<const T> GetOrBuildModel(duckdb::SharedObjectCache& cache,
     const T* raw = model.get();
     return duckdb::shared_ptr<const T>{std::move(model), raw};
   } catch (const std::exception& e) {
-    THROW_SQL_ERROR(ERR_MSG("failed to load fasttext model from: ", location,
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_CONFIG_FILE_ERROR),
+                    ERR_MSG("failed to load fasttext model from: ", location,
                             ", error: ", e.what()));
   } catch (...) {
-    THROW_SQL_ERROR(ERR_MSG("failed to load fasttext model from: ", location));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_CONFIG_FILE_ERROR),
+                    ERR_MSG("failed to load fasttext model from: ", location));
   }
 }
 

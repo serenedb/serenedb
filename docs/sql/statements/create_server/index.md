@@ -201,7 +201,7 @@ If a remote is unreachable at boot, the replay for that server is skipped rather
 
 <RailroadDiagram source={RailroadSource} production="rrdiagram2" />
 
-`DROP SERVER` removes the catalog row **and** detaches the live connection, so the name becomes immediately reusable:
+`DROP SERVER` removes the catalog row **and**, when its transaction commits, detaches the live connection, so the name is reusable from then on. In the transaction that dropped it, a `CREATE SERVER` of the same name fails with `database with name "..." already exists`:
 
 ```sql
 DROP SERVER analytics;
@@ -287,7 +287,7 @@ The `USAGE` check is enforced wherever the server is referenced, including from 
 
 - **No `USER MAPPING`.** Credentials live in the server's `OPTIONS` and one shared connection serves every authorized role, the way a ClickHouse connection is normally shared. `CREATE USER MAPPING` and `DROP USER MAPPING` are syntax errors; per-role remote identities are not available.
 - **No `CREATE FOREIGN TABLE`.** Remote tables are reached through the server's catalog (`server.schema.table`), discovered live, rather than declared one by one.
-- **No `ALTER SERVER`, no `CREATE OR REPLACE SERVER`.** Drop and recreate to change options.
+- **No `ALTER SERVER`, no `CREATE OR REPLACE SERVER`.** Drop and recreate to change options, in two transactions: a `CREATE SERVER` of the name a `DROP SERVER` in the same transaction removed fails until that transaction has committed.
 - **No `CREATE FOREIGN DATA WRAPPER`.** The wrappers are built in.
 - **`pg_foreign_server` is superuser-only**, and its option values are unredacted (see above).
 - **`CREATE SERVER` connects eagerly**, so it fails on an unreachable remote instead of deferring the error to first use.

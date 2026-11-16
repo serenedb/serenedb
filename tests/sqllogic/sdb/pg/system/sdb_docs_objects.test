@@ -196,6 +196,7 @@ SELECT name, signature FROM sdb_docs.objects WHERE name IN ('substr', 'array_sor
 ----
 name	signature
 array_sort	array_sort(list[, col1][, col2])
+substr	substr(blob, start[, length])
 substr	substr(string, start[, length])
 
 connection docs database=postgres

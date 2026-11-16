@@ -254,8 +254,9 @@ void ColFilterChain::FinishBind() {
     const auto& c = _cols.front();
     const auto& executor =
       c.state->Cast<duckdb::ExpressionFilterState>().fast_executor;
-    if (executor && !c.nested && !c.list_like && !c.row_gather && !c.extract &&
-        c.output_slots.empty() && c.null_check == NullCheckKind::None &&
+    if (executor && executor->FiltersMasks() && !c.nested && !c.list_like &&
+        !c.row_gather && !c.extract && c.output_slots.empty() &&
+        c.null_check == NullCheckKind::None &&
         duckdb::TypeIsConstantSize(c.reader->Type().InternalType())) {
       _dense = executor.get();
     }

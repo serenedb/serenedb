@@ -1077,3 +1077,39 @@ id
 
 statement ok
 DROP TABLE nk;
+
+
+statement ok
+CREATE TABLE nki (id INTEGER PRIMARY KEY, u INTEGER UNIQUE);
+
+
+statement ok
+CREATE INDEX nki_idx ON nki USING inverted (id, u);
+
+
+statement ok
+INSERT INTO nki VALUES (1, 10), (2, NULL), (3, 30);
+
+
+query
+SELECT id FROM nki WHERE NOT ((u = 10)::boost(2) OR id < 0) ORDER BY id;
+----
+id
+3
+
+
+query
+SELECT id FROM nki WHERE NOT ((u = 10 OR u = 30)::boost(2) OR id < 0) ORDER BY id;
+----
+id
+
+
+query
+SELECT id FROM nki WHERE NOT ((u = 10)::score(NULL)::boost(2) OR id < 0) ORDER BY id;
+----
+id
+3
+
+
+statement ok
+DROP TABLE nki;

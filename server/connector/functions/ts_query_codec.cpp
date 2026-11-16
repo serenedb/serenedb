@@ -380,7 +380,9 @@ std::optional<duckdb::Value> TryEvaluateScalar(duckdb::ClientContext& context,
                                                const duckdb::Expression& expr) {
   duckdb::Value result;
   if (!expr.IsFoldable() ||
-      !duckdb::ExpressionExecutor::TryEvaluateScalar(context, expr, result)) {
+      !duckdb::ExpressionExecutor::TryEvaluateFoldable(
+        context, expr, result,
+        duckdb::NumericLimits<duckdb::idx_t>::Maximum())) {
     return std::nullopt;
   }
   return result;

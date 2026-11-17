@@ -3842,6 +3842,7 @@ def test_pg_prepared_statements_counts_unprepared_protocol_statements(conn):
         _execute_ok(conn, "pc_copy_out")
         _execute_ok(conn, "pc_empty")
     _execute_ok(conn, "pc_compound")
+    conn.run_ok("ALTER TABLE pc_unprep ADD COLUMN u float8 DEFAULT random()")
     plans = _plans(conn, "pc_copy_out", "pc_empty", "pc_compound")
     assert {name: counts[:2] for name, counts in plans.items()} == {
         "pc_copy_out": (0, 2),

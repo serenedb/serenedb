@@ -78,7 +78,7 @@ class BooleanBitset : public Root {
       edge = words[last] & tail;
       return total + _table.Count(kMin + last * kBits, &edge, 1);
     } else {
-      return detail::CountBitRange(_set.Words(), lo, hi);
+      return CountBitRange(_set.Words(), lo, hi);
     }
   }
 

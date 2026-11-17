@@ -116,9 +116,19 @@ IRS_FORCE_INLINE It BranchlessLowerBound(It begin, const T& value,
   }
 }
 
+#ifdef __AVX2__
+inline IRS_FORCE_INLINE uint32_t NotBelowLanes(const uint32_t* begin,
+                                               __m256i key) noexcept {
+  const __m256i lanes =
+    _mm256_loadu_si256(reinterpret_cast<const __m256i*>(begin));
+  return static_cast<uint32_t>(_mm256_movemask_ps(_mm256_castsi256_ps(
+    _mm256_cmpeq_epi32(_mm256_max_epu32(lanes, key), lanes))));
+}
+#endif
+
 template<typename T>
-IRS_FORCE_INLINE const T* ScanNotBelow(const T* begin, const T* end,
-                                       const T& value) noexcept {
+IRS_FORCE_INLINE T* ScanNotBelow(T* begin, T* end,
+                                 const std::remove_const_t<T>& value) noexcept {
   while (begin != end && *begin < value) {
     ++begin;
   }
@@ -126,22 +136,12 @@ IRS_FORCE_INLINE const T* ScanNotBelow(const T* begin, const T* end,
 }
 
 template<typename T>
-IRS_FORCE_INLINE const T* ScanNotBelow(const T* begin,
-                                       const T& value) noexcept {
+IRS_FORCE_INLINE T* ScanNotBelow(T* begin,
+                                 const std::remove_const_t<T>& value) noexcept {
   while (*begin < value) {
     ++begin;
   }
   return begin;
-}
-
-template<size_t N, typename T>
-IRS_FORCE_INLINE const T* LeafLowerBound(const T* block, size_t len,
-                                         const T* from,
-                                         const T& value) noexcept {
-  if (len == N) [[likely]] {
-    return BranchlessLowerBound<N>(block, value);
-  }
-  return ScanNotBelow(from, block + N, value);
 }
 
 template<typename It, typename Pred>
@@ -218,6 +218,27 @@ IRS_FORCE_INLINE size_t GallopIndex(size_t from, size_t hi, Pred&& pred) {
     step *= 2;
   }
   return PartitionIndex(lo, std::min(lo + step - 1, hi), pred);
+}
+
+template<size_t N, typename T>
+IRS_FORCE_INLINE T* LeafLowerBound(
+  T* first, T* last, const std::remove_const_t<T>& value) noexcept {
+  const auto len = static_cast<size_t>(last - first);
+  if (len == N) [[likely]] {
+    return BranchlessLowerBound<N>(first, value);
+  }
+  return first + PartitionIndex(0, len, [&](size_t i) IRS_FORCE_INLINE {
+           return first[i] < value;
+         });
+}
+
+template<size_t N, typename T>
+IRS_FORCE_INLINE T* LeafLowerBound(
+  T* first, T* last, T* from, const std::remove_const_t<T>& value) noexcept {
+  if (static_cast<size_t>(last - first) == N) [[likely]] {
+    return BranchlessLowerBound<N>(first, value);
+  }
+  return ScanNotBelow(from, last, value);
 }
 
 }  // namespace irs

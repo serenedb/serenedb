@@ -30,6 +30,7 @@
 #include "iresearch/search/lead/make.hpp"
 #include "iresearch/search/lead/plan.hpp"
 #include "iresearch/search/queries/term_query.hpp"
+#include "iresearch/utils/lower_bound.hpp"
 
 namespace irs::count {
 
@@ -94,11 +95,9 @@ class TermRange : public detail::PostingBatch<InputType, false> {
 
  private:
   uint32_t Below(uint32_t len, doc_id_t doc) const noexcept {
-    uint32_t n = 0;
-    while (n != len && _block[n] < doc) {
-      ++n;
-    }
-    return n;
+    const auto* const block = _block.data();
+    return static_cast<uint32_t>(
+      LeafLowerBound<kBlock>(block, block + len, doc) - block);
   }
 
   DocsBuf _block;

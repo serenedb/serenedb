@@ -323,9 +323,8 @@ uint32_t WritePlan(const uint32_t* values, const Stats<Full>& stats,
   uint32_t highs[kMaxExceptions];
   uint32_t n = 0;
   for (uint32_t word = 0; word != stats.Words(); ++word) {
-    for (auto mask = stats.Mask(w, word); mask != 0; mask &= mask - 1) {
-      const uint32_t i =
-        word * kMaskBits + static_cast<uint32_t>(std::countr_zero(mask));
+    ForEachSetBit(stats.Mask(w, word), [&](uint32_t bit) IRS_FORCE_INLINE {
+      const uint32_t i = word * kMaskBits + bit;
       const uint32_t high = values[i] >> w;
       if (bytes) {
         p[2 * n] = static_cast<byte_type>(i);
@@ -335,7 +334,7 @@ uint32_t WritePlan(const uint32_t* values, const Stats<Full>& stats,
         highs[n] = high - 1;
       }
       ++n;
-    }
+    });
   }
   SDB_ASSERT(n == plan.count);
   if (bytes) {

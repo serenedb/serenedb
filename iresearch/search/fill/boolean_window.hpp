@@ -146,18 +146,16 @@ class BooleanWindow : detail::WindowClauses<Lead, Others, Optional, Excludes> {
     requires kRetracts
   {
     for (size_t w = 0; w != words; ++w) {
-      auto bits = std::exchange(_own[w], uint64_t{0});
+      const auto bits = std::exchange(_own[w], uint64_t{0});
       mask[w] |= bits;
       const size_t base = w * detail::kWindowBits;
-      while (bits != 0) {
-        const auto offset =
-          base + static_cast<uint32_t>(std::countr_zero(bits));
+      ForEachSetBit(bits, [&](uint32_t bit) IRS_FORCE_INLINE {
+        const auto offset = base + bit;
         irs::Merge<Inner>(scores[offset], _scores[offset]);
         if constexpr (!detail::LazyReset<Optional>()) {
           _scores[offset] = _score.absorbed;
         }
-        bits = PopBit(bits);
-      }
+      });
     }
   }
 

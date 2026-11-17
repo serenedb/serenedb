@@ -540,14 +540,12 @@ class PrunedDisjunction : public Root {
       }
       _mask[i] = 0;
       const size_t base = i * irs::detail::kWindowBits;
-      do {
-        const size_t offset =
-          base + static_cast<size_t>(std::countr_zero(word));
-        word = PopBit(word);
+      ForEachSetBit(word, [&](uint32_t bit) IRS_FORCE_INLINE {
+        const size_t offset = base + bit;
         _cand_docs[count] = min + static_cast<doc_id_t>(offset);
         _cand_scores[count] = std::exchange(_scores[offset], 0.f);
         ++count;
-      } while (word != 0);
+      });
     }
     return count;
   }

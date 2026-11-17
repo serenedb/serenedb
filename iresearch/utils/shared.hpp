@@ -26,6 +26,8 @@
 #include <bit>
 #include <cfloat>  // for FLT_EVAL_METHOD
 #include <cmath>
+#include <cstdint>
+#include <type_traits>
 
 #ifndef __cplusplus
 #error C++ is required
@@ -59,6 +61,31 @@
 #else
 #define IRS_UNPREDICTABLE(x) (x)
 #endif
+
+namespace irs {
+
+template<typename T>
+IRS_FORCE_INLINE T Opaque(T value) noexcept {
+  if constexpr (std::is_integral_v<T> || std::is_pointer_v<T>) {
+    asm("" : "+r"(value));
+  } else {
+#if defined(__x86_64__)
+    asm("" : "+x"(value));
+#elif defined(__aarch64__)
+    using Half = uint32_t __attribute__((vector_size(16)));
+    struct Halves {
+      Half lo;
+      Half hi;
+    };
+    auto halves = std::bit_cast<Halves>(value);
+    asm("" : "+w"(halves.lo), "+w"(halves.hi));
+    value = std::bit_cast<T>(halves);
+#endif
+  }
+  return value;
+}
+
+}  // namespace irs
 
 // hook for MSVC-only code
 #if defined(_MSC_VER) && !defined(__clang__)

@@ -82,35 +82,17 @@ class BitsetStorage {
   std::unique_ptr<uint64_t[]> _bits;
 };
 
-inline uint64_t CountBits(const BitsetStorage& set) noexcept {
-  const auto* const words = set.Words();
-  uint64_t total = 0;
-  for (uint32_t i = 0, n = set.WordCount(); i != n; ++i) {
-    total += static_cast<uint64_t>(std::popcount(words[i]));
-  }
-  return total;
-}
-
 inline doc_id_t NextBit(const BitsetStorage& set, doc_id_t from) noexcept {
   constexpr auto kBits = BitsetStorage::kBits;
   SDB_ASSERT(doc_limits::valid(from));
   if (from >= set.End()) {
     return doc_limits::eof();
   }
-  const auto* const bits = set.Words();
   const auto count = set.WordCount();
-  const auto offset = from - BitsetStorage::kMin;
-  auto word = static_cast<uint32_t>(offset / kBits);
-  auto rest = bits[word] & (~uint64_t{0} << (offset % kBits));
-  while (rest == 0) {
-    if (++word == count) {
-      return doc_limits::eof();
-    }
-    rest = bits[word];
-  }
-  return BitsetStorage::kMin +
-         static_cast<doc_id_t>(size_t{word} * kBits +
-                               static_cast<size_t>(std::countr_zero(rest)));
+  const auto at = NextSetBit(set.Words(), from - BitsetStorage::kMin, count);
+  return at == uint64_t{count} * kBits
+           ? doc_limits::eof()
+           : BitsetStorage::kMin + static_cast<doc_id_t>(at);
 }
 
 template<typename Apply>
@@ -154,57 +136,6 @@ inline void AndNotWindow(const BitsetStorage& set, doc_id_t min, doc_id_t max,
   ApplyWindow(set, min, max, mask,
               [](uint64_t& word, uint64_t bits)
                 IRS_FORCE_INLINE { word &= ~bits; });
-}
-
-template<typename Word, typename Apply>
-IRS_FORCE_INLINE void ApplyShifted(Word* IRS_RESTRICT dst, uint64_t begin,
-                                   const UnalignedWord* IRS_RESTRICT src,
-                                   uint32_t words, Apply&& apply) noexcept {
-  constexpr auto kBits = BitsetStorage::kBits;
-  SDB_ASSERT(words != 0);
-  dst += begin >> BitsetStorage::kWordShift;
-  const auto shift = static_cast<uint32_t>(begin & (kBits - 1));
-  if (shift == 0) {
-    for (uint32_t i = 0; i != words; ++i) {
-      apply(dst[i], src[i]);
-    }
-    return;
-  }
-  uint64_t carry = 0;
-  for (uint32_t i = 0; i != words; ++i) {
-    const uint64_t word = src[i];
-    apply(dst[i], (word << shift) | carry);
-    carry = word >> (kBits - shift);
-  }
-  apply(dst[words], carry);
-}
-
-inline IRS_FORCE_INLINE void OrBlock(uint64_t* IRS_RESTRICT dst, uint64_t begin,
-                                     const UnalignedWord* IRS_RESTRICT src,
-                                     uint32_t words) noexcept {
-  ApplyShifted(dst, begin, src, words,
-               [](uint64_t& word, uint64_t bits)
-                 IRS_FORCE_INLINE { word |= bits; });
-}
-
-inline IRS_FORCE_INLINE void ClearBlock(uint64_t* IRS_RESTRICT dst,
-                                        uint64_t begin,
-                                        const UnalignedWord* IRS_RESTRICT src,
-                                        uint32_t words) noexcept {
-  ApplyShifted(dst, begin, src, words,
-               [](uint64_t& word, uint64_t bits)
-                 IRS_FORCE_INLINE { word &= ~bits; });
-}
-
-inline IRS_FORCE_INLINE uint64_t
-CountBlock(const uint64_t* IRS_RESTRICT dst, uint64_t begin,
-           const UnalignedWord* IRS_RESTRICT src, uint32_t words) noexcept {
-  uint64_t total = 0;
-  ApplyShifted(dst, begin, src, words,
-               [&](uint64_t word, uint64_t bits) IRS_FORCE_INLINE {
-                 total += static_cast<uint64_t>(std::popcount(word & bits));
-               });
-  return total;
 }
 
 inline IRS_FORCE_INLINE void RetainBlock(uint64_t* IRS_RESTRICT dst,

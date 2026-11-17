@@ -90,16 +90,9 @@ class PrefixIndex {
   }
 
   static uint32_t NextBit(const uint64_t* row, uint32_t from) noexcept {
-    for (uint32_t word = from / 64; word < kRowWords; ++word) {
-      uint64_t bits = row[word];
-      if (word == from / 64) {
-        bits &= ~uint64_t{0} << (from % 64);
-      }
-      if (bits != 0) {
-        return word * 64 + static_cast<uint32_t>(std::countr_zero(bits));
-      }
-    }
-    return kNoLabel;
+    return from < kNoLabel
+             ? static_cast<uint32_t>(NextSetBit(row, from, kRowWords))
+             : kNoLabel;
   }
 
   uint32_t Rank(uint32_t first, uint32_t second) const noexcept {

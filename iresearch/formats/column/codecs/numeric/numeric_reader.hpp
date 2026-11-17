@@ -412,9 +412,9 @@ class FrameReader {
       SDB_ENSURE(
         bits <= numeric::kMaxBits<V> && off + numeric::PackedBytes(bits) <= len,
         "numeric codec: corrupted blocks");
-      numeric::kUnpack<V>[bits](Words<numeric::LaneWord<V>>(src + off),
-                                out + b * numeric::kBlockValues,
-                                static_cast<V>(duckdb::Load<uint64_t>(meta)));
+      numeric::Unpack<V>(bits, Words<numeric::LaneWord<V>>(src + off),
+                         out + b * numeric::kBlockValues,
+                         static_cast<V>(duckdb::Load<uint64_t>(meta)));
       off += numeric::PackedBytes(bits);
     }
     return off;

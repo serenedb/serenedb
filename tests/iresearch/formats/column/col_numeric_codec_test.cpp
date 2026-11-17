@@ -2115,10 +2115,10 @@ TEST(ColNumericKernelsTest, PacksEveryWidthOfEveryType) {
         irs::codecs::numeric::PackedBytes(bits) / sizeof(Word) +
           irs::codecs::numeric::kLanes<U>,
         Word{0});
-      irs::codecs::numeric::kPack<U>[bits](values.data(), packed.data(), base);
+      irs::codecs::numeric::Pack<U>(bits, values.data(), packed.data(), base);
       std::vector<U> unpacked(kValues, static_cast<U>(~base));
-      irs::codecs::numeric::kUnpack<U>[bits](packed.data(), unpacked.data(),
-                                             base);
+      irs::codecs::numeric::Unpack<U>(bits, packed.data(), unpacked.data(),
+                                      base);
       ASSERT_EQ(unpacked, values);
       const auto* bytes = reinterpret_cast<const uint8_t*>(packed.data());
       for (uint32_t i = 0; i < kValues; i += 37) {

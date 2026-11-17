@@ -112,8 +112,9 @@ class FforBlocks {
           std::fill_n(_scratch.data() + n, numeric::kBlockValues - n, _base[g]);
           in = _scratch.data();
         }
-        numeric::kPack<V>[_bits[g]](
-          in, reinterpret_cast<numeric::LaneWord<V>*>(packed), _base[g]);
+        numeric::Pack<V>(_bits[g], in,
+                         reinterpret_cast<numeric::LaneWord<V>*>(packed),
+                         _base[g]);
         meta += kFforBlockMetaBytes;
         packed += numeric::PackedBytes(_bits[g]);
       }

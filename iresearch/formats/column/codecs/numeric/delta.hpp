@@ -198,9 +198,8 @@ class DeltaReader final : public FrameReader<T> {
   void UnpackBlock(uint64_t first, uint64_t rows, U* out) {
     const auto [packed, base, bits] = this->BlockAt(first);
     this->_block.resize(numeric::kBlockValues);
-    numeric::kUnpack<U>[bits](
-      this->template Words<numeric::LaneWord<U>>(packed), this->_block.data(),
-      U{0});
+    numeric::Unpack<U>(bits, this->template Words<numeric::LaneWord<U>>(packed),
+                       this->_block.data(), U{0});
     const auto step = static_cast<U>(_own.base);
     auto value = static_cast<U>(base);
     out[0] = value;

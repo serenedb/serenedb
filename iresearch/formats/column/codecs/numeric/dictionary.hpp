@@ -284,9 +284,8 @@ class DictionaryReader final : public FrameReader<T> {
     if (_codes.size() < numeric::kBlockValues) {
       _codes.resize(numeric::kBlockValues);
     }
-    numeric::kUnpack<uint32_t>[bits](this->template Words<uint32_t>(packed),
-                                     _codes.data(),
-                                     static_cast<uint32_t>(base));
+    numeric::Unpack<uint32_t>(bits, this->template Words<uint32_t>(packed),
+                              _codes.data(), static_cast<uint32_t>(base));
     const auto largest =
       uint64_t{static_cast<uint32_t>(base)} + (uint64_t{1} << bits) - 1;
     Gather<uint32_t>(reinterpret_cast<const uint8_t*>(_codes.data()),

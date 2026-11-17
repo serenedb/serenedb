@@ -25,7 +25,6 @@
 #endif
 
 #include <algorithm>
-#include <array>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -484,27 +483,19 @@ U UnpackValue(const uint8_t* packed, unsigned bits, uint32_t index,
 }
 
 template<typename U>
-using PackFn = void (*)(const U*, LaneWord<U>*, U) noexcept;
+IRS_FORCE_INLINE void Pack(unsigned bits, const U* IRS_RESTRICT in,
+                           LaneWord<U>* IRS_RESTRICT out, U base) noexcept {
+  [&]<unsigned... W>(std::integer_sequence<unsigned, W...>) IRS_FORCE_INLINE {
+    (void)((bits == W && (PackBlock<U, W>(in, out, base), true)) || ...);
+  }(std::make_integer_sequence<unsigned, kMaxBits<U> + 1>{});
+}
 
 template<typename U>
-using UnpackFn = void (*)(const LaneWord<U>*, U*, U) noexcept;
-
-template<typename U,
-         typename W = std::make_integer_sequence<unsigned, kMaxBits<U> + 1>>
-struct BlockKernels;
-
-template<typename U, unsigned... W>
-struct BlockKernels<U, std::integer_sequence<unsigned, W...>> {
-  static constexpr std::array<PackFn<U>, sizeof...(W)> kPack{
-    &PackBlock<U, W>...};
-  static constexpr std::array<UnpackFn<U>, sizeof...(W)> kUnpack{
-    &UnpackBlock<U, W>...};
-};
-
-template<typename U>
-inline constexpr auto& kPack = BlockKernels<U>::kPack;
-
-template<typename U>
-inline constexpr auto& kUnpack = BlockKernels<U>::kUnpack;
+IRS_FORCE_INLINE void Unpack(unsigned bits, const LaneWord<U>* IRS_RESTRICT in,
+                             U* IRS_RESTRICT out, U base) noexcept {
+  [&]<unsigned... W>(std::integer_sequence<unsigned, W...>) IRS_FORCE_INLINE {
+    (void)((bits == W && (UnpackBlock<U, W>(in, out, base), true)) || ...);
+  }(std::make_integer_sequence<unsigned, kMaxBits<U> + 1>{});
+}
 
 }  // namespace irs::codecs::numeric

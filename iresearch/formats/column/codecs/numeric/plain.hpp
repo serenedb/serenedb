@@ -192,11 +192,11 @@ class PlainReader final : public FrameReader<T> {
     const auto [packed, base, bits] = this->BlockAt(first);
     const auto* words = this->template Words<numeric::LaneWord<U>>(packed);
     if (rows == numeric::kBlockValues) {
-      numeric::kUnpack<U>[bits](words, out, static_cast<U>(base));
+      numeric::Unpack<U>(bits, words, out, static_cast<U>(base));
       return;
     }
     this->_block.resize(numeric::kBlockValues);
-    numeric::kUnpack<U>[bits](words, this->_block.data(), static_cast<U>(base));
+    numeric::Unpack<U>(bits, words, this->_block.data(), static_cast<U>(base));
     std::memcpy(out, this->_block.data(), rows * sizeof(U));
   }
 

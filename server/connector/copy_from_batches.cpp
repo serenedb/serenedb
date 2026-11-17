@@ -41,7 +41,7 @@
 #include <utility>
 #include <vector>
 
-#include "connector/copy_batch_parse.h"
+#include "formats/copy_decoder.h"
 #include "pg/connection_context.h"
 #include "pg/copy_batch_builder.h"
 
@@ -184,12 +184,12 @@ struct CopyFromGlobalState : public duckdb::GlobalTableFunctionState {
   CopyFromSource source;
   pg::CopyInTarget target;
   bool ordered;
-  CopyTextEnd end;
+  formats::CopyTextEnd end;
   std::atomic<uint64_t> rejected{0};
 };
 
 struct CopyFromLocalState : public duckdb::LocalTableFunctionState {
-  std::optional<CopyBatchParser> parser;
+  std::optional<formats::CopyDecoder> parser;
   duckdb::idx_t batch_index = 0;
 };
 

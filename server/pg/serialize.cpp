@@ -72,6 +72,7 @@
 #include "pg/catalog/functions/pg_catalog/regproc.h"
 #include "pg/catalog/utils/session.h"
 #include "pg/connection_context.h"
+#include "pg/datetime_text.h"
 #include "pg/types/char.h"
 #include "pg/types/float.h"
 #include "pg/types/geometric.h"
@@ -142,35 +143,40 @@ IRS_FORCE_INLINE size_t NextEscape(const char* p, size_t from, size_t n,
                                    bool copy_text, char copy_delim) {
   size_t i = from;
 #ifdef __AVX2__
-  if (i + 32 <= n) {
-    const __m256i vq = _mm256_set1_epi8('"');
-    const __m256i vb = _mm256_set1_epi8('\\');
-    const __m256i v8 = _mm256_set1_epi8(8);
-    const __m256i v5 = _mm256_set1_epi8(5);
-    const __m256i vd = _mm256_set1_epi8(copy_delim);
-    do {
-      const __m256i v =
-        _mm256_loadu_si256(reinterpret_cast<const __m256i*>(p + i));
-      __m256i m = _mm256_setzero_si256();
-      if (escape_quote) {
-        m = _mm256_or_si256(m, _mm256_cmpeq_epi8(v, vq));
-      }
-      if (escape_backslash) {
-        m = _mm256_or_si256(m, _mm256_cmpeq_epi8(v, vb));
-      }
-      if (copy_text) {
-        const __m256i lo = _mm256_sub_epi8(v, v8);
-        m = _mm256_or_si256(m, _mm256_cmpeq_epi8(_mm256_max_epu8(lo, v5), v5));
-        m = _mm256_or_si256(m, _mm256_cmpeq_epi8(v, vd));
-      }
-      const auto bits = static_cast<uint32_t>(_mm256_movemask_epi8(m));
-      if (bits != 0) {
-        return i + static_cast<size_t>(std::countr_zero(bits));
-      }
-      i += 32;
-    } while (i + 32 <= n);
+  const __m256i vq = _mm256_set1_epi8('"');
+  const __m256i vb = _mm256_set1_epi8('\\');
+  const __m256i v8 = _mm256_set1_epi8(8);
+  const __m256i v5 = _mm256_set1_epi8(5);
+  const __m256i vd = _mm256_set1_epi8(copy_delim);
+  const auto escapes = [&](const char* at) {
+    const __m256i v = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(at));
+    __m256i m = _mm256_setzero_si256();
+    if (escape_quote) {
+      m = _mm256_or_si256(m, _mm256_cmpeq_epi8(v, vq));
+    }
+    if (escape_backslash) {
+      m = _mm256_or_si256(m, _mm256_cmpeq_epi8(v, vb));
+    }
+    if (copy_text) {
+      const __m256i lo = _mm256_sub_epi8(v, v8);
+      m = _mm256_or_si256(m, _mm256_cmpeq_epi8(_mm256_max_epu8(lo, v5), v5));
+      m = _mm256_or_si256(m, _mm256_cmpeq_epi8(v, vd));
+    }
+    return static_cast<uint32_t>(_mm256_movemask_epi8(m));
+  };
+  for (; i + 32 <= n; i += 32) {
+    if (const auto bits = escapes(p + i); bits != 0) {
+      return i + static_cast<size_t>(std::countr_zero(bits));
+    }
   }
-#endif
+  if (i < n) {
+    alignas(32) char tail[32] = {};
+    std::memcpy(tail, p + i, n - i);
+    const auto bits = escapes(tail) & ((uint32_t{1} << (n - i)) - 1);
+    return bits != 0 ? i + static_cast<size_t>(std::countr_zero(bits)) : n;
+  }
+  return n;
+#else
   for (; i < n; ++i) {
     const auto c = static_cast<unsigned char>(p[i]);
     if ((escape_quote && c == '"') || (escape_backslash && c == '\\') ||
@@ -180,6 +186,7 @@ IRS_FORCE_INLINE size_t NextEscape(const char* p, size_t from, size_t n,
     }
   }
   return n;
+#endif
 }
 
 void EmitEscaped(SerializationContext& ctx, std::string_view s) {
@@ -1065,6 +1072,13 @@ struct TimestampTextCore {
   static constexpr absl::CharSet kCopyDelims = kTimestampCopyDelims;
   IRS_FORCE_INLINE static void Render(SerializationContext& ctx,
                                       Value timestamp) {
+    char buf[kMaxTimestampText];
+    if (const auto size = FormatTimestamp(buf, timestamp.value)) {
+      WithWrapIfNested<InContainer>(ctx, true, [&] {
+        WriteText<kCopyDelim>(ctx, std::string_view{buf, size});
+      });
+      return;
+    }
     auto str = duckdb::Timestamp::ToString(timestamp);
     WithWrapIfNested<InContainer>(ctx, timestamp.IsFinite(),
                                   [&] { WriteText<kCopyDelim>(ctx, str); });
@@ -1166,6 +1180,14 @@ struct TimestampTzTextCore {
       int64_t local_us = 0;
       if (duckdb::TryAddOperator::Operation(
             ts.value, int64_t{offset_secs} * 1'000'000, local_us)) {
+        char buf[kMaxTimestampText];
+        if (const auto size = FormatTimestamp(buf, local_us)) {
+          WithWrapIfNested<InContainer>(ctx, true, [&] {
+            WriteText<kCopyDelim>(ctx, std::string_view{buf, size});
+            WriteTzOffsetSuffix<kCopyDelim>(ctx, offset_secs);
+          });
+          return;
+        }
         auto str = duckdb::Timestamp::ToString(duckdb::timestamp_t{local_us});
         WithWrapIfNested<InContainer>(ctx, true, [&] {
           WriteText<kCopyDelim>(ctx, str);
@@ -1173,6 +1195,14 @@ struct TimestampTzTextCore {
         });
         return;
       }
+    }
+    char buf[kMaxTimestampText];
+    if (const auto size = FormatTimestamp(buf, ts.value)) {
+      WithWrapIfNested<InContainer>(ctx, true, [&] {
+        WriteText<kCopyDelim>(ctx, std::string_view{buf, size});
+        WriteText<kCopyDelim>(ctx, "+00");
+      });
+      return;
     }
     auto str = duckdb::Timestamp::ToString(ts);
     WithWrapIfNested<InContainer>(ctx, ts.IsFinite(), [&] {
@@ -1338,6 +1368,9 @@ struct DateTextCore {
     if (date.days == -std::numeric_limits<int32_t>::max()) {
       std::memcpy(buf, "-infinity", 9);
       return 9;
+    }
+    if (date.days >= kMinFastDays && date.days <= kMaxFastDays) {
+      return FormatDate(buf, date.days);
     }
     // TODO(mkornaukhov) support BC date and add some validation for dates
     // Format is "%04d-%02d-%02d"

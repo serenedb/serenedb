@@ -28,10 +28,12 @@
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/function/cast/default_casts.hpp>
+#include <exception>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -58,6 +60,7 @@ struct DeserializeContext {
     named_calendars;
   duckdb::optional_ptr<duckdb::ClientContext> client;
   std::optional<XmlOption> xml_option;
+  std::exception_ptr column_error;
 
   duckdb::Calendar* CalendarFor(std::string_view tz_name);
   XmlOption SessionXmlOption();
@@ -214,9 +217,24 @@ inline size_t ByteaTextCapacity(std::string_view input) noexcept {
 // ignored) and PG escape format (\\ and \NNN octal).
 ByteaTextDecoded DecodeByteaText(std::string_view input, char* out) noexcept;
 
+struct ColumnSink {};
+
 template<typename Sink>
-using DeserializationFunction = bool (*)(DeserializeContext& context,
-                                         std::string_view data, Sink& sink);
+struct DecoderOf {
+  using Type = bool (*)(DeserializeContext& context, std::string_view data,
+                        Sink& sink);
+};
+
+template<>
+struct DecoderOf<ColumnSink> {
+  using Type = duckdb::idx_t (*)(DeserializeContext& context,
+                                 std::span<const std::string_view> fields,
+                                 duckdb::Vector& vec, duckdb::idx_t offset,
+                                 uint64_t* failed);
+};
+
+template<typename Sink>
+using DeserializationFunction = typename DecoderOf<Sink>::Type;
 
 template<typename Sink>
 DeserializationFunction<Sink> GetDeserialization(

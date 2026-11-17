@@ -31,6 +31,8 @@
 
 #include <cstdint>
 #include <cstring>
+#include <duckdb/common/exception.hpp>
+#include <duckdb/common/exception/conversion_exception.hpp>
 #include <duckdb/common/operator/add.hpp>
 #include <duckdb/common/operator/cast_operators.hpp>
 #include <duckdb/common/operator/decimal_cast_operators.hpp>
@@ -54,6 +56,7 @@
 #include <icu-zone-lut.hpp>
 #include <iresearch/utils/dispatch.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
 #include <string>
@@ -67,6 +70,7 @@
 #include "icu-datefunc.hpp"
 #include "icu-helpers.hpp"
 #include "pg/catalog/functions/pg_catalog/regproc.h"
+#include "pg/datetime_text.h"
 #include "pg/types/char.h"
 #include "pg/types/geometric.h"
 #include "pg/types/inet.h"
@@ -1099,16 +1103,60 @@ struct UhugeintText {
 
 template<typename Phys>
 struct DecimalText {
+  static bool ParsePlain(std::string_view data, uint8_t width, uint8_t scale,
+                         Phys& out) {
+    if constexpr (sizeof(Phys) > sizeof(int64_t)) {
+      return false;
+    } else {
+      const char* p = data.data();
+      const char* const end = p + data.size();
+      const bool negative = p != end && *p == '-';
+      p += negative;
+      const char* const digits = p;
+      uint64_t value = 0;
+      while (p != end && static_cast<unsigned char>(*p - '0') <= 9) {
+        value = value * 10 + static_cast<uint64_t>(*p++ - '0');
+      }
+      const auto integral = static_cast<size_t>(p - digits);
+      if (integral == 0 || integral + scale > 18) {
+        return false;
+      }
+      uint8_t fraction = 0;
+      if (p != end && *p == '.') {
+        for (++p; p != end && static_cast<unsigned char>(*p - '0') <= 9; ++p) {
+          if (++fraction > scale) {
+            return false;
+          }
+          value = value * 10 + static_cast<uint64_t>(*p - '0');
+        }
+      }
+      if (p != end) {
+        return false;
+      }
+      value *= static_cast<uint64_t>(
+        duckdb::NumericHelper::POWERS_OF_TEN[scale - fraction]);
+      if (value >=
+          static_cast<uint64_t>(duckdb::NumericHelper::POWERS_OF_TEN[width])) {
+        return false;
+      }
+      const auto signed_value = static_cast<int64_t>(value);
+      out = static_cast<Phys>(negative ? -signed_value : signed_value);
+      return true;
+    }
+  }
+
   template<typename Sink>
   static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
     const auto& type = sink.Type();
     const auto width = duckdb::DecimalType::GetWidth(type);
     const auto scale = duckdb::DecimalType::GetScale(type);
-    duckdb::CastParameters params(/*strict=*/true, nullptr);
     Phys result;
-    if (!duckdb::TryCastToDecimal::Operation<duckdb::string_t, Phys>(
-          duckdb::string_t::Unsafe(data), result, params, width, scale)) {
-      return false;
+    if (!ParsePlain(data, width, scale, result)) {
+      duckdb::CastParameters params(/*strict=*/true, nullptr);
+      if (!duckdb::TryCastToDecimal::Operation<duckdb::string_t, Phys>(
+            duckdb::string_t::Unsafe(data), result, params, width, scale)) {
+        return false;
+      }
     }
     sink.template Decimal<Phys>(result, width, scale);
     return true;
@@ -1129,6 +1177,18 @@ struct CastText {
     }
     sink.Fixed(result);
     return true;
+  }
+};
+
+struct DateText {
+  template<typename Sink>
+  static bool Decode(DeserializeContext& ctx, std::string_view data,
+                     Sink& sink) {
+    if (int32_t days = 0; ParseIsoDate(data, days)) {
+      sink.Fixed(duckdb::date_t{days});
+      return true;
+    }
+    return CastText<duckdb::date_t>::Decode(ctx, data, sink);
   }
 };
 
@@ -1271,10 +1331,64 @@ struct RegText {
   }
 };
 
+void KeepColumnError(DeserializeContext& ctx, bool first) {
+  if (first) {
+    ctx.column_error = std::current_exception();
+  }
+}
+
+template<typename Core>
+bool DecodeColumnValue(DeserializeContext& ctx, std::string_view field,
+                       duckdb::Vector& vec, duckdb::idx_t row, bool first) {
+  VectorSink sink{vec, row};
+  try {
+    return Core::template Decode<VectorSink>(ctx, field, sink);
+  } catch (const duckdb::ConversionException&) {
+    KeepColumnError(ctx, first);
+  } catch (const duckdb::InvalidInputException&) {
+    KeepColumnError(ctx, first);
+  } catch (const duckdb::OutOfRangeException&) {
+    KeepColumnError(ctx, first);
+  } catch (const irs::SqlException&) {
+    KeepColumnError(ctx, first);
+  }
+  return false;
+}
+
+template<typename Core>
+duckdb::idx_t DecodeColumn(DeserializeContext& ctx,
+                           std::span<const std::string_view> fields,
+                           duckdb::Vector& vec, duckdb::idx_t offset,
+                           uint64_t* failed) {
+  duckdb::idx_t failures = 0;
+  for (duckdb::idx_t row = 0; row < fields.size(); ++row) {
+    const auto field = fields[row];
+    if (!field.data()) {
+      duckdb::FlatVector::SetNull(vec, offset + row, true);
+      continue;
+    }
+    if (!DecodeColumnValue<Core>(ctx, field, vec, offset + row, failures == 0))
+      [[unlikely]] {
+      failed[row / 64] |= uint64_t{1} << (row % 64);
+      ++failures;
+    }
+  }
+  return failures;
+}
+
+template<typename Core, typename Sink>
+DeserializationFunction<Sink> DecoderFor() {
+  if constexpr (std::is_same_v<Sink, ColumnSink>) {
+    return &DecodeColumn<Core>;
+  } else {
+    return &Core::template Decode<Sink>;
+  }
+}
+
 template<typename Sink>
 DeserializationFunction<Sink> RegTextDecoder(RegKind kind) {
   return irs::Resolve(kind, [&]<RegKind K> -> DeserializationFunction<Sink> {
-    return &RegText<K>::template Decode<Sink>;
+    return DecoderFor<RegText<K>, Sink>();
   });
 }
 
@@ -1289,8 +1403,7 @@ struct DefaultBin {
 // SelectFieldSerializer.
 template<typename BinCore, typename TextCore, typename Sink>
 DeserializationFunction<Sink> SelectDecoder(bool binary) {
-  return binary ? &BinCore::template Decode<Sink>
-                : &TextCore::template Decode<Sink>;
+  return binary ? DecoderFor<BinCore, Sink>() : DecoderFor<TextCore, Sink>();
 }
 
 // ===========================================================================
@@ -2376,14 +2489,13 @@ DeserializationFunction<Sink> GetDeserialization(
                              ParseFixed<int64_t, &TryParseTid>, Sink>(binary);
       }
       if (binary) {
-        return IsOidLike(type)
-                 ? &LoadBin<int64_t, uint32_t>::template Decode<Sink>
-                 : &LoadBin<int64_t>::template Decode<Sink>;
+        return IsOidLike(type) ? DecoderFor<LoadBin<int64_t, uint32_t>, Sink>()
+                               : DecoderFor<LoadBin<int64_t>, Sink>();
       }
       if (const auto kind = RegKindOf(type)) {
         return RegTextDecoder<Sink>(*kind);
       }
-      return &NumberText<int64_t>::template Decode<Sink>;
+      return DecoderFor<NumberText<int64_t>, Sink>();
     case UTINYINT:
       return SelectDecoder<LoadBin<uint8_t, int16_t>, NumberText<uint8_t>,
                            Sink>(binary);
@@ -2452,13 +2564,13 @@ DeserializationFunction<Sink> GetDeserialization(
         return SelectDecoder<XmlIn, XmlIn, Sink>(binary);
       }
       if (binary && type.IsJSONType()) {
-        return &JsonBin::template Decode<Sink>;
+        return DecoderFor<JsonBin, Sink>();
       }
       return SelectDecoder<VarcharBin, VarcharText, Sink>(binary);
     case BLOB:
       return SelectDecoder<BlobBin, BlobText, Sink>(binary);
     case DATE:
-      return SelectDecoder<DateBin, CastText<duckdb::date_t>, Sink>(binary);
+      return SelectDecoder<DateBin, DateText, Sink>(binary);
     case TIME:
       return SelectDecoder<TimeBin, CastText<duckdb::dtime_t>, Sink>(binary);
     case TIME_NS:
@@ -2487,7 +2599,7 @@ DeserializationFunction<Sink> GetDeserialization(
     case UUID:
       return SelectDecoder<UuidBin, UuidText, Sink>(binary);
     case ENUM:
-      return &EnumCore::template Decode<Sink>;
+      return DecoderFor<EnumCore, Sink>();
     case BIT:
       return SelectDecoder<BitBin, BitText, Sink>(binary);
     case LIST:
@@ -2522,7 +2634,7 @@ DeserializationFunction<Sink> GetDeserialization(
                              Nested<DeserializeTextInet<true>>, Sink>(binary);
       }
       if (connector::IsTSQueryStructType(type)) {
-        return &TsqueryCore::template Decode<Sink>;
+        return DecoderFor<TsqueryCore, Sink>();
       }
       if (IsRange(type)) {
         return SelectDecoder<Nested<DeserializeBinaryRange>,
@@ -2548,6 +2660,8 @@ DeserializationFunction<Sink> GetDeserialization(
 template DeserializationFunction<VectorSink> GetDeserialization<VectorSink>(
   const duckdb::LogicalType&, VarFormat);
 template DeserializationFunction<ValueSink> GetDeserialization<ValueSink>(
+  const duckdb::LogicalType&, VarFormat);
+template DeserializationFunction<ColumnSink> GetDeserialization<ColumnSink>(
   const duckdb::LogicalType&, VarFormat);
 
 namespace {

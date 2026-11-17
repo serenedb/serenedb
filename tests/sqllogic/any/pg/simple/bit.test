@@ -79,3 +79,23 @@ SELECT length(B'') AS len, B''::text = '' AS empty_text, B'' = B'0' AS eq_zero, 
 ----
 len	empty_text	eq_zero	concat	cast_len
 0	t	f	10	0
+
+
+query
+SELECT B''::int AS as_int, bit_count(B'') AS ones, octet_length(B'') AS octets, length('x'::varbit) AS hex_len,
+       length(~B'') AS not_len, length(B'' << 1) AS shift_len;
+----
+as_int	ones	octets	hex_len	not_len	shift_len
+0	0	0	0	0	0
+
+
+statement error
+SELECT get_bit(B'', 0);
+----
+db error: ERROR: bit index 0 out of valid range (0..-1)
+
+
+statement error
+SELECT set_bit(B'', 0, 1);
+----
+db error: ERROR: bit index 0 out of valid range (0..-1)

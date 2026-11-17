@@ -1300,14 +1300,15 @@ template<WrapContext InContainer>
 struct BitTextCore {
   using Value = duckdb::string_t;
   IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value raw) {
+    const auto n_bits = duckdb::Bit::BitLength(raw);
     if constexpr (InContainer != WrapContext::None) {
-      if (duckdb::Bit::BitLength(raw) == 0) {
+      if (n_bits == 0) {
         WriteWrapped<InContainer>(ctx, [] {});
         return;
       }
     }
-    // DuckDB Bit::ToString gives "01001..." string
-    ctx.writer->Write(duckdb::Bit::ToString(raw));
+    duckdb::Bit::ToString(raw,
+                          reinterpret_cast<char*>(ctx.writer->Alloc(n_bits)));
   }
 };
 

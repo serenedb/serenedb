@@ -1201,7 +1201,7 @@ TEST_P(Bm25TestCase, test_query) {
       irs::ViewCast<irs::byte_type>(std::string_view("7"));
 
     std::multimap<irs::score_t, uint32_t, std::greater<>> sorted;
-    std::vector<std::pair<float_t, uint32_t>> expected = {
+    std::vector<std::pair<float, uint32_t>> expected = {
       {-1, 0},
       {-1, 1},
       {-1, 5},

@@ -548,7 +548,7 @@ class TermDictTest : public tests::DirectoryTestCaseBase<> {
       writer.write(field->dict, reader);
     }
     writer.end();
-    idx.Commit();
+    idx.Commit(nullptr);
     Open(dir());
   }
 

@@ -129,6 +129,9 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
                                        VarFormat format,
                                        SerializationContext& context);
 
+void SetCopyText(SerializationContext& context, char delim,
+                 std::string null_str);
+
 void SerializeCopyTextHeader(SerializationContext& context,
                              std::span<const duckdb::Identifier> names);
 

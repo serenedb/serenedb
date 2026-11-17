@@ -85,6 +85,24 @@ void AssertRandomTermsSortLikeValues(uint64_t seed) {
   AssertTermsSortLikeValues<T>(values);
 }
 
+template<typename T>
+void AssertFloatEnds() {
+  using Limits = std::numeric_limits<T>;
+  const T values[]{
+    -Limits::infinity(),  Limits::lowest(), T(-1), -Limits::denorm_min(),
+    Limits::denorm_min(), Limits::min(),    T(1),  Limits::max(),
+    Limits::infinity()};
+  for (const auto value : values) {
+    const auto decoded = nu::DecodeNumericTerm<T>(Term(value));
+    ASSERT_EQ(value, decoded);
+    ASSERT_EQ(std::signbit(value), std::signbit(decoded));
+  }
+  ASSERT_EQ(T(0), nu::DecodeNumericTerm<T>(Term(-T(0))));
+  ASSERT_FALSE(std::signbit(nu::DecodeNumericTerm<T>(Term(-T(0)))));
+  ASSERT_LT(Term(-Limits::infinity()), Term(Limits::lowest()));
+  ASSERT_LT(Term(Limits::max()), Term(Limits::infinity()));
+}
+
 }  // namespace
 
 TEST(numeric_utils_test, terms_sort_like_their_values) {
@@ -120,17 +138,17 @@ TEST(numeric_utils_test, terms_sort_like_their_values) {
     0, 1, U128{1} << 64, kU128Half - 1, kU128Half, kU128Max - 1, kU128Max};
   AssertTermsSortLikeValues<U128>(u128);
 
-  using F = std::numeric_limits<float_t>;
-  const float_t f32[]{
+  using F = std::numeric_limits<float>;
+  const float f32[]{
     -F::infinity(),  F::lowest(), -1.5f, -F::min(), -F::denorm_min(), 0.f,
     F::denorm_min(), F::min(),    1.5f,  F::max(),  F::infinity()};
-  AssertTermsSortLikeValues<float_t>(f32);
+  AssertTermsSortLikeValues<float>(f32);
 
-  using D = std::numeric_limits<double_t>;
-  const double_t f64[]{
+  using D = std::numeric_limits<double>;
+  const double f64[]{
     -D::infinity(),  D::lowest(), -1.5, -D::min(), -D::denorm_min(), 0.,
     D::denorm_min(), D::min(),    1.5,  D::max(),  D::infinity()};
-  AssertTermsSortLikeValues<double_t>(f64);
+  AssertTermsSortLikeValues<double>(f64);
 }
 
 TEST(numeric_utils_test, random_terms_sort_like_their_values) {
@@ -139,19 +157,24 @@ TEST(numeric_utils_test, random_terms_sort_like_their_values) {
   AssertRandomTermsSortLikeValues<uint64_t, uint64_t>(3);
   AssertRandomTermsSortLikeValues<__int128, unsigned __int128>(4);
   AssertRandomTermsSortLikeValues<unsigned __int128, unsigned __int128>(5);
-  AssertRandomTermsSortLikeValues<float_t, uint32_t>(6);
-  AssertRandomTermsSortLikeValues<double_t, uint64_t>(7);
+  AssertRandomTermsSortLikeValues<float, uint32_t>(6);
+  AssertRandomTermsSortLikeValues<double, uint64_t>(7);
 }
 
 TEST(numeric_utils_test, float_terms_are_canonical) {
   EXPECT_EQ(Term(0.f), Term(-0.f));
   EXPECT_EQ(Term(0.), Term(-0.));
-  const auto f_nan = std::numeric_limits<float_t>::quiet_NaN();
-  const auto d_nan = std::numeric_limits<double_t>::quiet_NaN();
-  EXPECT_EQ(Term(f_nan), Term(-std::numeric_limits<float_t>::signaling_NaN()));
-  EXPECT_EQ(Term(d_nan), Term(-std::numeric_limits<double_t>::signaling_NaN()));
-  EXPECT_LT(Term(std::numeric_limits<float_t>::infinity()), Term(f_nan));
-  EXPECT_LT(Term(std::numeric_limits<double_t>::infinity()), Term(d_nan));
-  EXPECT_TRUE(std::isnan(nu::DecodeNumericTerm<float_t>(Term(f_nan))));
-  EXPECT_TRUE(std::isnan(nu::DecodeNumericTerm<double_t>(Term(d_nan))));
+  const auto f_nan = std::numeric_limits<float>::quiet_NaN();
+  const auto d_nan = std::numeric_limits<double>::quiet_NaN();
+  EXPECT_EQ(Term(f_nan), Term(-std::numeric_limits<float>::signaling_NaN()));
+  EXPECT_EQ(Term(d_nan), Term(-std::numeric_limits<double>::signaling_NaN()));
+  EXPECT_LT(Term(std::numeric_limits<float>::infinity()), Term(f_nan));
+  EXPECT_LT(Term(std::numeric_limits<double>::infinity()), Term(d_nan));
+  EXPECT_TRUE(std::isnan(nu::DecodeNumericTerm<float>(Term(f_nan))));
+  EXPECT_TRUE(std::isnan(nu::DecodeNumericTerm<double>(Term(d_nan))));
+}
+
+TEST(numeric_utils_test, float_terms_round_trip_to_the_ends) {
+  AssertFloatEnds<float>();
+  AssertFloatEnds<double>();
 }

@@ -217,7 +217,7 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
             field.id = fid;
             field.value(irs::ViewCast<irs::byte_type>(tests::kTrueTerm));
           } else if (data.is_number()) {
-            const double d_value = data.as_number<double_t>();
+            const double d_value = data.as_number<double>();
             {
               // 'value' can be interpreted as a double
               doc.insert(std::make_shared<tests::DoubleField>());
@@ -227,13 +227,13 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
               field.value(d_value);
             }
 
-            const float f_value = data.as_number<float_t>();
+            const float f_value = data.as_number<float>();
             {
               // 'value' can be interpreted as a float
               doc.insert(std::make_shared<tests::FloatField>());
               auto& field = (doc.indexed.end() - 1).as<tests::FloatField>();
               field.Name(name);
-              field.id = tests::TypedFieldId<float_t>(fid);
+              field.id = tests::TypedFieldId<float>(fid);
               field.value(f_value);
             }
 
@@ -320,7 +320,7 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
     {
       irs::byte_type stream_buf[irs::numeric_utils::kNumericTermMaxSize];
       const auto term =
-        irs::numeric_utils::EncodeNumericTerm(stream_buf, (double_t)90.564);
+        irs::numeric_utils::EncodeNumericTerm(stream_buf, (double)90.564);
 
       irs::ByTerm query = MakeFilter(kValueId, irs::ViewCast<char>(term),
                                      irs::NumericLayout::kNumbers);
@@ -346,10 +346,10 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
     {
       irs::byte_type stream_buf[irs::numeric_utils::kNumericTermMaxSize];
       const auto term =
-        irs::numeric_utils::EncodeNumericTerm(stream_buf, (float_t)90.564f);
+        irs::numeric_utils::EncodeNumericTerm(stream_buf, (float)90.564f);
 
       irs::ByTerm query =
-        MakeFilter(tests::TypedFieldId<float_t>(kValueId),
+        MakeFilter(tests::TypedFieldId<float>(kValueId),
                    irs::ViewCast<char>(term), irs::NumericLayout::kNumbers);
 
       tests::PreparedFilter prepared{query, rdr, nullptr, counter};
@@ -373,7 +373,7 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
     {
       irs::byte_type stream_buf[irs::numeric_utils::kNumericTermMaxSize];
       const auto term =
-        irs::numeric_utils::EncodeNumericTerm(stream_buf, (double_t)100.);
+        irs::numeric_utils::EncodeNumericTerm(stream_buf, (double)100.);
 
       irs::ByTerm query = MakeFilter(kValueId, irs::ViewCast<char>(term),
                                      irs::NumericLayout::kNumbers);
@@ -395,14 +395,14 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
     EXPECT_GT(counter.max, 0);
     counter.Reset();
 
-    // float_t(100)
+    // float(100)
     {
       irs::byte_type stream_buf[irs::numeric_utils::kNumericTermMaxSize];
       const auto term =
-        irs::numeric_utils::EncodeNumericTerm(stream_buf, (float_t)100.f);
+        irs::numeric_utils::EncodeNumericTerm(stream_buf, (float)100.f);
 
       irs::ByTerm query =
-        MakeFilter(tests::TypedFieldId<float_t>(kValueId),
+        MakeFilter(tests::TypedFieldId<float>(kValueId),
                    irs::ViewCast<char>(term), irs::NumericLayout::kNumbers);
 
       tests::PreparedFilter prepared{query, rdr, nullptr, counter};

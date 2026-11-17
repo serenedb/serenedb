@@ -48,6 +48,11 @@ struct FieldTermRange {
   uint64_t docs = 0;
 };
 
+struct PatchedReader {
+  SegmentReader before;
+  SegmentReader after;
+};
+
 class DirectoryReader final : public IndexReader {
  public:
   DirectoryReader() = default;
@@ -56,7 +61,7 @@ class DirectoryReader final : public IndexReader {
   DirectoryReader(const DirectoryReader& base,
                   std::vector<SegmentReader> readers,
                   std::span<const SegmentReader> added,
-                  std::span<const SegmentReader> patched,
+                  std::span<const PatchedReader> patched,
                   std::span<const SegmentReader> removed);
   DirectoryReader(DirectoryReader&&) noexcept = default;
   DirectoryReader& operator=(DirectoryReader&&) noexcept = default;
@@ -111,6 +116,7 @@ class DirectoryReader final : public IndexReader {
   void AddTerms(const SubReader& reader, bool keep_sorted);
   void RemoveTerms(const SubReader& reader);
   void AddColumns(const SubReader& reader, bool new_docs);
+  void RemoveColumns(const SubReader& reader);
   void Publish();
 
   const Directory* _dir = nullptr;

@@ -22,6 +22,8 @@
 
 #pragma once
 
+#include <absl/base/internal/endian.h>
+
 #include <bit>
 #include <cstring>
 #include <optional>

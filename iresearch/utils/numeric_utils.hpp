@@ -23,31 +23,16 @@
 #pragma once
 
 #include <bit>
-#include <cmath>
 #include <cstdint>
 #include <cstring>
-#include <limits>
+#include <duckdb/common/radix.hpp>
 #include <type_traits>
 
+#include "iresearch/types.hpp"
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs::numeric_utils {
-
-int32_t Ftoi32(float_t value);
-float_t I32tof(int32_t value);
-int64_t Dtoi64(double_t value);
-double_t I64tod(int64_t value);
-
-template<typename T>
-T CanonicalFloat(T value) noexcept {
-  static_assert(std::is_floating_point_v<T>);
-  if (value == 0) {
-    return 0;
-  }
-  return std::isnan(value) ? std::numeric_limits<T>::quiet_NaN() : value;
-}
 
 template<typename Key>
 inline constexpr Key kSignBit = Key{1} << (sizeof(Key) * 8 - 1);
@@ -94,27 +79,25 @@ struct NumericEncodeOf<uint64_t> : UnsignedKeyOf<uint64_t> {};
 template<>
 struct NumericEncodeOf<unsigned __int128> : UnsignedKeyOf<unsigned __int128> {};
 
-#ifndef FLOAT_T_IS_DOUBLE_T
 template<>
-struct NumericEncodeOf<float_t> {
+struct NumericEncodeOf<float> {
   using Key = uint32_t;
-  static Key ToKey(float_t value) noexcept {
-    return static_cast<Key>(Ftoi32(CanonicalFloat(value))) ^ kSignBit<Key>;
+  static Key ToKey(float value) noexcept {
+    return duckdb::Radix::EncodeFloat(value);
   }
-  static float_t FromKey(Key key) noexcept {
-    return I32tof(static_cast<int32_t>(key ^ kSignBit<Key>));
+  static float FromKey(Key key) noexcept {
+    return duckdb::Radix::DecodeFloat(key);
   }
 };
-#endif
 
 template<>
-struct NumericEncodeOf<double_t> {
+struct NumericEncodeOf<double> {
   using Key = uint64_t;
-  static Key ToKey(double_t value) noexcept {
-    return static_cast<Key>(Dtoi64(CanonicalFloat(value))) ^ kSignBit<Key>;
+  static Key ToKey(double value) noexcept {
+    return duckdb::Radix::EncodeDouble(value);
   }
-  static double_t FromKey(Key key) noexcept {
-    return I64tod(static_cast<int64_t>(key ^ kSignBit<Key>));
+  static double FromKey(Key key) noexcept {
+    return duckdb::Radix::DecodeDouble(key);
   }
 };
 

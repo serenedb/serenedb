@@ -50,10 +50,10 @@ constexpr irs::field_id TypedFieldId(irs::field_id id) noexcept {
     return id + kStride;
   } else if constexpr (std::is_same_v<T, int64_t>) {
     return id + 2 * kStride;
-  } else if constexpr (std::is_same_v<T, float_t>) {
+  } else if constexpr (std::is_same_v<T, float>) {
     return id + 3 * kStride;
   } else {
-    static_assert(std::is_same_v<T, double_t>);
+    static_assert(std::is_same_v<T, double>);
     return id;
   }
 }

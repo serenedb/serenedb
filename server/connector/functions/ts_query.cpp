@@ -403,6 +403,15 @@ duckdb::BoundCastInfo BindTSQueryToVarcharCast(
   return duckdb::BoundCastInfo(TSQueryToVarcharCast);
 }
 
+duckdb::unique_ptr<duckdb::FunctionData> TSQueryBoostBind(
+  duckdb::BindScalarFunctionInput& input) {
+  const auto factor = input.TryGetConstant(1);
+  if (!factor || (!factor->IsNull() && factor->GetValue<double>() < 0.0)) {
+    input.GetBoundFunction().SetFallible();
+  }
+  return nullptr;
+}
+
 void TSQueryBoostFn(duckdb::DataChunk& args, duckdb::ExpressionState&,
                     duckdb::Vector& result) {
   const auto count = args.size();
@@ -1124,10 +1133,10 @@ void RegisterTSQueryOperators(duckdb::ExtensionLoader& loader) {
     loader.RegisterFunction(std::move(fn));
   }
 
-  loader.RegisterFunction(
-    duckdb::ScalarFunction(duckdb::Identifier{kTSQueryBoost},
-                           {MakeTSQueryType(), duckdb::LogicalType::DOUBLE},
-                           MakeTSQueryType(), TSQueryBoostFn));
+  loader.RegisterFunction(duckdb::ScalarFunction(
+    duckdb::Identifier{kTSQueryBoost},
+    {MakeTSQueryType(), duckdb::LogicalType::DOUBLE}, MakeTSQueryType(),
+    TSQueryBoostFn, TSQueryBoostBind));
 
   // Phrase sequence `a ## b` (strictly adjacent), `a ## N ## b` (gap N),
   // `a ## [lo, hi] ## b` (interval).

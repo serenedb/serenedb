@@ -110,6 +110,20 @@ inline void PostingsReader::prepare(const ReaderState& state,
     IndexFeatures::None !=
     (features & (IndexFeatures::Offs | IndexFeatures::Vec));
 
+  if (state.postings) {
+    _doc_in = std::move(state.postings->doc);
+    SDB_ASSERT(_doc_in);
+    if (IndexFeatures::None != (features & IndexFeatures::Pos)) {
+      _pos_in = std::move(state.postings->pos);
+      SDB_ASSERT(_pos_in);
+    }
+    if (needs_pay) {
+      _pay_in = std::move(state.postings->pay);
+      SDB_ASSERT(_pay_in);
+    }
+    return;
+  }
+
   // prepare document input
   PrepareInput(buf, _doc_in, IOAdvice::RANDOM, state, PostingsWriter::kDocExt);
 

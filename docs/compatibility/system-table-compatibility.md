@@ -77,7 +77,7 @@ Built-in objects carry PostgreSQL's object identifiers: `'pg_class'::regclass` i
 | pg_statistic                | 🟡            | Stores planner statistics. |
 | pg_statistic_ext            | 🟡            | Stores extended statistics definitions. |
 | pg_statistic_ext_data       | 🟡            | Contains data for extended statistics. |
-| pg_subscription             | 🟢            | Stores logical replication subscriptions; see [CREATE SUBSCRIPTION](../sql/statements/create_subscription/index.md). |
+| pg_subscription             | 🟢            | Stores logical replication subscriptions; see [CREATE SUBSCRIPTION](../sql/statements/create_subscription/index.md). It lists the subscriptions of the current database, where PostgreSQL lists those of every database, and so do `pg_stat_subscription` and `pg_stat_subscription_stats`. |
 | pg_subscription_rel         | 🟢            | Tracks per-relation subscription state: `i` before the initial copy, `r` once replicated, with the copy's LSN. |
 | pg_tablespace               | 🟢            | Stores information about tablespaces. |
 | pg_transform                | 🟡            | Stores transforms between data types and languages. |

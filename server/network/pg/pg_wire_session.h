@@ -304,7 +304,7 @@ class PgWireSession
   void CapturePeerAddress();
   yaclib::Task<bool> AuthenticateCleartext(const Credential& credential);
   yaclib::Task<bool> AuthenticateMd5(std::string stored_md5);
-  yaclib::Task<bool> AuthenticateScram(const ScramVerifier& verifier);
+  yaclib::Task<bool> AuthenticateScram(ScramVerifier verifier, bool doomed);
 
   // The duck-side half of the session: an endless coroutine hosted by _task
   // on the DuckDB scheduler. Prologue (SetupConnection + startup burst) ->
@@ -365,6 +365,7 @@ class PgWireSession
   void RevalidatePlan(Statement& stmt);
   void DropDeallocated(std::string_view name);
   void ReleaseDeallocated();
+  StatementPtr& FindStatement(std::string_view name);
   void RegisterUnprepared(
     Statement& statement, std::string_view name, std::string_view query,
     const duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>>& body);

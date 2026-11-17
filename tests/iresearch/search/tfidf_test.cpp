@@ -219,7 +219,7 @@ void TfidfTestCase::TestQueryNorms() {
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
 
-    std::vector<float_t> scores;
+    std::vector<float> scores;
     while (!irs::doc_limits::eof(docs->Next())) {
       fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
@@ -1084,7 +1084,7 @@ TEST_P(TfidfTestCase, test_query) {
       irs::ViewCast<irs::byte_type>(std::string_view("7"));
 
     std::multimap<irs::score_t, uint64_t, std::greater<>> sorted;
-    std::vector<std::pair<float_t, uint64_t>> expected = {
+    std::vector<std::pair<float, uint64_t>> expected = {
       {-1, 0},
       {-1, 1},
       {-1, 5},

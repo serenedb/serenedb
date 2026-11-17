@@ -71,7 +71,7 @@ Filtering the *emitted terms* by arbitrary conditions belongs to the outer query
 `EXPLAIN` shows the split: the whole claimed tree renders as `Filter:` inside the `IRESEARCH_SCAN` box and scalar post-filters as a `FILTER` node above the scan.
 
 :::note Filtered enumeration runs in parallel
-An unfiltered enumeration answers from term metadata and costs one dictionary walk, so there is nothing to spread. Once a filter or a pending delete makes the counts document-dependent, a segment large enough to span several row groups is split across worker threads: each counts every term over its own document range, and the thread that finishes the segment's last range emits the summed rows. `min`/`max`-only requests are exempt — they seek to the one term they need instead of walking the dictionary. [`sdb_scan_split`](../../indexes/inverted/maintenance.md#session-settings) forces or disables the split.
+An unfiltered enumeration answers from term metadata and costs one dictionary walk, so there is nothing to spread. Once a filter or a pending delete makes the counts document-dependent, a segment large enough to span several row groups is split across worker threads: each counts every term over its own document range, and the thread that finishes the segment's last range emits the summed rows. `min`/`max`-only requests are exempt — they seek to the one term they need instead of walking the dictionary.
 :::
 
 :::note Scores follow the driver

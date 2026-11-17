@@ -203,13 +203,7 @@ auto ExtractNumericValue(const duckdb::UnifiedVectorFormat& fmt,
 
 template<typename T>
 auto PromoteNumericValue(T value) {
-  if constexpr (std::is_same_v<T, float>) {
-#ifdef FLOAT_T_IS_DOUBLE_T
-    return static_cast<double>(value);
-#else
-    return value;
-#endif
-  } else if constexpr (std::is_same_v<T, uint32_t>) {
+  if constexpr (std::is_same_v<T, uint32_t>) {
     return static_cast<int64_t>(value);
   } else {
     return value;

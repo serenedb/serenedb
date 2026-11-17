@@ -101,12 +101,6 @@ std::optional<duckdb::TableIndex> SingleReferencedTableIndex(
 
 namespace {
 
-bool IsDml(const duckdb::LogicalOperator& op) {
-  return op.type == duckdb::LogicalOperatorType::LOGICAL_DELETE ||
-         op.type == duckdb::LogicalOperatorType::LOGICAL_UPDATE ||
-         op.type == duckdb::LogicalOperatorType::LOGICAL_MERGE_INTO;
-}
-
 connector::ColumnId ColumnIdByName(const connector::ScanBindData& bind_data,
                                    std::string_view name) {
   if (bind_data.view) {
@@ -1007,9 +1001,6 @@ void CollectTextCalls(const duckdb::Expression& expr, CallRewrite& rewrite) {
 }
 
 void CollectTextCalls(duckdb::LogicalOperator& op, CallRewrite& rewrite) {
-  if (IsDml(op)) {
-    return;
-  }
   for (auto& child : op.children) {
     CollectTextCalls(*child, rewrite);
   }
@@ -1140,10 +1131,6 @@ void ReuseExistingScoreColumn(duckdb::Expression& order_expr,
 void RewriteSearchCalls(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
                         duckdb::unique_ptr<duckdb::LogicalOperator>& root,
                         CallRewrite& rewrite) {
-  if (IsDml(*plan)) {
-    return;
-  }
-
   for (auto& child : plan->children) {
     RewriteSearchCalls(child, root, rewrite);
   }

@@ -73,10 +73,27 @@ inline constexpr duckdb::field_id_t kIdxFieldIvf = 1;
 inline constexpr duckdb::field_id_t kIdxFieldHnsw = 2;
 inline constexpr duckdb::field_id_t kIdxFieldTerms = 3;
 
+struct IvfCentroidEntry {
+  field_id id;
+  IvfCentroidMeta meta;
+};
+
+struct HnswEntry {
+  field_id id;
+  HnswMeta meta;
+};
+
+struct IdxFooter {
+  std::vector<IvfCentroidEntry> ivf;
+  std::vector<HnswEntry> hnsw;
+  term_dict::TermsMeta terms;
+};
+
 class IdxReader final {
  public:
   IdxReader(const Directory& dir, std::string_view segment_name,
             HnswBases* hnsw_bases, bool keep_terms = true);
+  IdxReader(IndexInput::ptr in, IdxFooter footer, HnswBases* hnsw_bases);
   ~IdxReader();
 
   IdxReader(const IdxReader&) = delete;
@@ -92,6 +109,8 @@ class IdxReader final {
   IndexInput::ptr ReopenIn() const;
 
  private:
+  void Adopt(IdxFooter footer, HnswBases* hnsw_bases);
+
   struct Impl;
   std::unique_ptr<Impl> _impl;
 };

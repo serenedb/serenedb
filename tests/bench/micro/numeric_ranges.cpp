@@ -280,7 +280,7 @@ void Write(irs::Directory& dir, const Terms& terms, Ladder ladder, bool ranges,
   writer.write(irs::NumericLayout::kNumbers,
                TermsReader{terms, ladder, ranges});
   writer.end();
-  idx.Commit();
+  idx.Commit(nullptr);
 }
 
 struct Bytes {

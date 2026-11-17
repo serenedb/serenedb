@@ -20,3 +20,16 @@ SELECT acldefault('d', 999999999)::text[] AS d;
 ----
 d
 {=Tc/999999999,999999999=CTc/999999999}
+
+
+query
+SELECT acldefault('dd', 999999999)::text[] AS d;
+----
+d
+{=Tc/999999999,999999999=CTc/999999999}
+
+
+statement error
+SELECT * FROM aclexplode(ARRAY[NULL::aclitem, 'postgres=r/postgres'::aclitem]);
+----
+db error: ERROR: ACL arrays must not contain null values

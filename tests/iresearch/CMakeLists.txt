@@ -181,6 +181,7 @@ add_executable(
     utils/crc_test.cpp
     utils/directory_utils_tests.cpp
     utils/file_utils_tests.cpp
+    utils/group_commit_test.cpp
     utils/huge_page_allocator_test.cpp
     utils/json_leaf_test.cpp
     utils/levenshtein_utils_test.cpp

@@ -1,0 +1,386 @@
+control substitution on
+
+statement ok
+SET TimeZone = 'UTC';
+
+statement ok
+CREATE TABLE ctd
+(
+  id     INTEGER,
+  i      INTEGER,
+  n      NUMERIC(10, 2),
+  f      FLOAT8,
+  d      DATE,
+  t      TIME,
+  ttz    TIMETZ,
+  ts     TIMESTAMP,
+  tstz   TIMESTAMPTZ,
+  u      UUID,
+  s      TEXT,
+  arr    INTEGER[],
+  sarr   TEXT[],
+  r      INT4RANGE,
+  mac    MACADDR,
+  ip     INET,
+  ip6    INET,
+  lsn    PG_LSN,
+  pt     POINT,
+  bx     BOX,
+  m      MONEY,
+  ctid_v TID,
+  mr     INT4MULTIRANGE,
+  iv     INTERVAL
+);
+
+statement ok
+CREATE TABLE ctd_in AS SELECT * FROM ctd WHERE false;
+
+statement ok
+CREATE TABLE ctd_raw(line TEXT);
+
+statement ok
+INSERT INTO ctd VALUES (1, -5, -12.50, -1.5, '2024-01-15', '12:30:45',
+  '12:30:45+05:30', '2024-01-15 12:00:00', '2024-01-15 12:00:00+00',
+  'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', 'a:b-c,d e{f}"g"(h)+N',
+  ARRAY[-1, 2, NULL], ARRAY['x y', 'p"q', 'NULL', NULL], '[1,5)',
+  '08:00:2b:01:02:03', '192.168.1.5/24', '2001:db8::1', '16/B374D848',
+  '(1.5,-2)', '(3,4),(1,2)', '-1234.5', '(1,2)', '{[1,3),[5,7)}',
+  '1 day 02:03:04');
+
+statement ok
+COPY ctd TO '${__TEST_DIR__}/ctd_colon.txt' (FORMAT text, DELIMITER ':');
+
+statement ok
+COPY ctd_raw FROM '${__TEST_DIR__}/ctd_colon.txt' (FORMAT csv, DELIMITER E'\x01', QUOTE E'\x02');
+
+query
+DELETE FROM ctd_raw RETURNING line;
+----
+line
+1:-5:-12.50:-1.5:2024-01-15:12\\:30\\:45:12\\:30\\:45+05\\:30:2024-01-15 12\\:00\\:00:2024-01-15 12\\:00\\:00+00:a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11:a\\:b-c,d e{f}"g"(h)+N:{-1,2,NULL}:{"x y","p\\\\"q","NULL",NULL}:[1,5):08\\:00\\:2b\\:01\\:02\\:03:192.168.1.5/24:2001\\:db8\\:\\:1:16/B374D848:(1.5,-2):(3,4),(1,2):-$1,234.50:(1,2):{[1,3),[5,7)}:1 day 02\\:03\\:04
+
+statement ok
+COPY ctd_in FROM '${__TEST_DIR__}/ctd_colon.txt' (FORMAT text, DELIMITER ':');
+
+statement ok
+COPY ctd TO '${__TEST_DIR__}/ctd_dash.txt' (FORMAT text, DELIMITER '-');
+
+statement ok
+COPY ctd_raw FROM '${__TEST_DIR__}/ctd_dash.txt' (FORMAT csv, DELIMITER E'\x01', QUOTE E'\x02');
+
+query
+DELETE FROM ctd_raw RETURNING line;
+----
+line
+1-\\-5-\\-12.50-\\-1.5-2024\\-01\\-15-12:30:45-12:30:45+05:30-2024\\-01\\-15 12:00:00-2024\\-01\\-15 12:00:00+00-a0eebc99\\-9c0b\\-4ef8\\-bb6d\\-6bb9bd380a11-a:b\\-c,d e{f}"g"(h)+N-{\\-1,2,NULL}-{"x y","p\\\\"q","NULL",NULL}-[1,5)-08:00:2b:01:02:03-192.168.1.5/24-2001:db8::1-16/B374D848-(1.5,\\-2)-(3,4),(1,2)-\\-$1,234.50-(1,2)-{[1,3),[5,7)}-1 day 02:03:04
+
+statement ok
+COPY ctd_in FROM '${__TEST_DIR__}/ctd_dash.txt' (FORMAT text, DELIMITER '-');
+
+statement ok
+COPY ctd TO '${__TEST_DIR__}/ctd_comma.txt' (FORMAT text, DELIMITER ',');
+
+statement ok
+COPY ctd_raw FROM '${__TEST_DIR__}/ctd_comma.txt' (FORMAT csv, DELIMITER E'\x01', QUOTE E'\x02');
+
+query
+DELETE FROM ctd_raw RETURNING line;
+----
+line
+1,-5,-12.50,-1.5,2024-01-15,12:30:45,12:30:45+05:30,2024-01-15 12:00:00,2024-01-15 12:00:00+00,a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11,a:b-c\\,d e{f}"g"(h)+N,{-1\\,2\\,NULL},{"x y"\\,"p\\\\"q"\\,"NULL"\\,NULL},[1\\,5),08:00:2b:01:02:03,192.168.1.5/24,2001:db8::1,16/B374D848,(1.5\\,-2),(3\\,4)\\,(1\\,2),-$1\\,234.50,(1\\,2),{[1\\,3)\\,[5\\,7)},1 day 02:03:04
+
+statement ok
+COPY ctd_in FROM '${__TEST_DIR__}/ctd_comma.txt' (FORMAT text, DELIMITER ',');
+
+statement ok
+COPY ctd TO '${__TEST_DIR__}/ctd_plus.txt' (FORMAT text, DELIMITER '+');
+
+statement ok
+COPY ctd_raw FROM '${__TEST_DIR__}/ctd_plus.txt' (FORMAT csv, DELIMITER E'\x01', QUOTE E'\x02');
+
+query
+DELETE FROM ctd_raw RETURNING line;
+----
+line
+1+-5+-12.50+-1.5+2024-01-15+12:30:45+12:30:45\\+05:30+2024-01-15 12:00:00+2024-01-15 12:00:00\\+00+a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11+a:b-c,d e{f}"g"(h)\\+N+{-1,2,NULL}+{"x y","p\\\\"q","NULL",NULL}+[1,5)+08:00:2b:01:02:03+192.168.1.5/24+2001:db8::1+16/B374D848+(1.5,-2)+(3,4),(1,2)+-$1,234.50+(1,2)+{[1,3),[5,7)}+1 day 02:03:04
+
+statement ok
+COPY ctd_in FROM '${__TEST_DIR__}/ctd_plus.txt' (FORMAT text, DELIMITER '+');
+
+statement ok
+COPY ctd TO '${__TEST_DIR__}/ctd_space.txt' (FORMAT text, DELIMITER ' ');
+
+statement ok
+COPY ctd_raw FROM '${__TEST_DIR__}/ctd_space.txt' (FORMAT csv, DELIMITER E'\x01', QUOTE E'\x02');
+
+query
+DELETE FROM ctd_raw RETURNING line;
+----
+line
+1 -5 -12.50 -1.5 2024-01-15 12:30:45 12:30:45+05:30 2024-01-15\\ 12:00:00 2024-01-15\\ 12:00:00+00 a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11 a:b-c,d\\ e{f}"g"(h)+N {-1,2,NULL} {"x\\ y","p\\\\"q","NULL",NULL} [1,5) 08:00:2b:01:02:03 192.168.1.5/24 2001:db8::1 16/B374D848 (1.5,-2) (3,4),(1,2) -$1,234.50 (1,2) {[1,3),[5,7)} 1\\ day\\ 02:03:04
+
+statement ok
+COPY ctd_in FROM '${__TEST_DIR__}/ctd_space.txt' (FORMAT text, DELIMITER ' ');
+
+statement ok
+COPY ctd TO '${__TEST_DIR__}/ctd_brace.txt' (FORMAT text, DELIMITER '{');
+
+statement ok
+COPY ctd_raw FROM '${__TEST_DIR__}/ctd_brace.txt' (FORMAT csv, DELIMITER E'\x01', QUOTE E'\x02');
+
+query
+DELETE FROM ctd_raw RETURNING line;
+----
+line
+1{-5{-12.50{-1.5{2024-01-15{12:30:45{12:30:45+05:30{2024-01-15 12:00:00{2024-01-15 12:00:00+00{a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11{a:b-c,d e\\{f}"g"(h)+N{\\{-1,2,NULL}{\\{"x y","p\\\\"q","NULL",NULL}{[1,5){08:00:2b:01:02:03{192.168.1.5/24{2001:db8::1{16/B374D848{(1.5,-2){(3,4),(1,2){-$1,234.50{(1,2){\\{[1,3),[5,7)}{1 day 02:03:04
+
+statement ok
+COPY ctd_in FROM '${__TEST_DIR__}/ctd_brace.txt' (FORMAT text, DELIMITER '{');
+
+statement ok
+COPY ctd TO '${__TEST_DIR__}/ctd_quote.txt' (FORMAT text, DELIMITER '"');
+
+statement ok
+COPY ctd_raw FROM '${__TEST_DIR__}/ctd_quote.txt' (FORMAT csv, DELIMITER E'\x01', QUOTE E'\x02');
+
+query
+DELETE FROM ctd_raw RETURNING line;
+----
+line
+1"-5"-12.50"-1.5"2024-01-15"12:30:45"12:30:45+05:30"2024-01-15 12:00:00"2024-01-15 12:00:00+00"a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"a:b-c,d e{f}\\"g\\"(h)+N"{-1,2,NULL}"{\\"x y\\",\\"p\\\\\\"q\\",\\"NULL\\",NULL}"[1,5)"08:00:2b:01:02:03"192.168.1.5/24"2001:db8::1"16/B374D848"(1.5,-2)"(3,4),(1,2)"-$1,234.50"(1,2)"{[1,3),[5,7)}"1 day 02:03:04
+
+statement ok
+COPY ctd_in FROM '${__TEST_DIR__}/ctd_quote.txt' (FORMAT text, DELIMITER '"');
+
+statement ok
+COPY ctd TO '${__TEST_DIR__}/ctd_paren.txt' (FORMAT text, DELIMITER '(');
+
+statement ok
+COPY ctd_raw FROM '${__TEST_DIR__}/ctd_paren.txt' (FORMAT csv, DELIMITER E'\x01', QUOTE E'\x02');
+
+query
+DELETE FROM ctd_raw RETURNING line;
+----
+line
+1(-5(-12.50(-1.5(2024-01-15(12:30:45(12:30:45+05:30(2024-01-15 12:00:00(2024-01-15 12:00:00+00(a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11(a:b-c,d e{f}"g"\\(h)+N({-1,2,NULL}({"x y","p\\\\"q","NULL",NULL}([1,5)(08:00:2b:01:02:03(192.168.1.5/24(2001:db8::1(16/B374D848(\\(1.5,-2)(\\(3,4),\\(1,2)(-$1,234.50(\\(1,2)({[1,3),[5,7)}(1 day 02:03:04
+
+statement ok
+COPY ctd_in FROM '${__TEST_DIR__}/ctd_paren.txt' (FORMAT text, DELIMITER '(');
+
+statement ok
+COPY ctd TO '${__TEST_DIR__}/ctd_bracket.txt' (FORMAT text, DELIMITER '[');
+
+statement ok
+COPY ctd_raw FROM '${__TEST_DIR__}/ctd_bracket.txt' (FORMAT csv, DELIMITER E'\x01', QUOTE E'\x02');
+
+query
+DELETE FROM ctd_raw RETURNING line;
+----
+line
+1[-5[-12.50[-1.5[2024-01-15[12:30:45[12:30:45+05:30[2024-01-15 12:00:00[2024-01-15 12:00:00+00[a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11[a:b-c,d e{f}"g"(h)+N[{-1,2,NULL}[{"x y","p\\\\"q","NULL",NULL}[\\[1,5)[08:00:2b:01:02:03[192.168.1.5/24[2001:db8::1[16/B374D848[(1.5,-2)[(3,4),(1,2)[-$1,234.50[(1,2)[{\\[1,3),\\[5,7)}[1 day 02:03:04
+
+statement ok
+COPY ctd_in FROM '${__TEST_DIR__}/ctd_bracket.txt' (FORMAT text, DELIMITER '[');
+
+statement ok
+COPY ctd TO '${__TEST_DIR__}/ctd_slash.txt' (FORMAT text, DELIMITER '/');
+
+statement ok
+COPY ctd_raw FROM '${__TEST_DIR__}/ctd_slash.txt' (FORMAT csv, DELIMITER E'\x01', QUOTE E'\x02');
+
+query
+DELETE FROM ctd_raw RETURNING line;
+----
+line
+1/-5/-12.50/-1.5/2024-01-15/12:30:45/12:30:45+05:30/2024-01-15 12:00:00/2024-01-15 12:00:00+00/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11/a:b-c,d e{f}"g"(h)+N/{-1,2,NULL}/{"x y","p\\\\"q","NULL",NULL}/[1,5)/08:00:2b:01:02:03/192.168.1.5\\/24/2001:db8::1/16\\/B374D848/(1.5,-2)/(3,4),(1,2)/-$1,234.50/(1,2)/{[1,3),[5,7)}/1 day 02:03:04
+
+statement ok
+COPY ctd_in FROM '${__TEST_DIR__}/ctd_slash.txt' (FORMAT text, DELIMITER '/');
+
+statement ok
+COPY ctd TO '${__TEST_DIR__}/ctd_dollar.txt' (FORMAT text, DELIMITER '$');
+
+statement ok
+COPY ctd_raw FROM '${__TEST_DIR__}/ctd_dollar.txt' (FORMAT csv, DELIMITER E'\x01', QUOTE E'\x02');
+
+query
+DELETE FROM ctd_raw RETURNING line;
+----
+line
+1$-5$-12.50$-1.5$2024-01-15$12:30:45$12:30:45+05:30$2024-01-15 12:00:00$2024-01-15 12:00:00+00$a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11$a:b-c,d e{f}"g"(h)+N${-1,2,NULL}${"x y","p\\\\"q","NULL",NULL}$[1,5)$08:00:2b:01:02:03$192.168.1.5/24$2001:db8::1$16/B374D848$(1.5,-2)$(3,4),(1,2)$-\\$1,234.50$(1,2)${[1,3),[5,7)}$1 day 02:03:04
+
+statement ok
+COPY ctd_in FROM '${__TEST_DIR__}/ctd_dollar.txt' (FORMAT text, DELIMITER '$');
+
+statement ok
+COPY ctd TO '${__TEST_DIR__}/ctd_upper_b.txt' (FORMAT text, DELIMITER 'B');
+
+statement ok
+COPY ctd_raw FROM '${__TEST_DIR__}/ctd_upper_b.txt' (FORMAT csv, DELIMITER E'\x01', QUOTE E'\x02');
+
+query
+DELETE FROM ctd_raw RETURNING line;
+----
+line
+1B-5B-12.50B-1.5B2024-01-15B12:30:45B12:30:45+05:30B2024-01-15 12:00:00B2024-01-15 12:00:00+00Ba0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11Ba:b-c,d e{f}"g"(h)+NB{-1,2,NULL}B{"x y","p\\\\"q","NULL",NULL}B[1,5)B08:00:2b:01:02:03B192.168.1.5/24B2001:db8::1B16/\\B374D848B(1.5,-2)B(3,4),(1,2)B-$1,234.50B(1,2)B{[1,3),[5,7)}B1 day 02:03:04
+
+statement ok
+COPY ctd_in FROM '${__TEST_DIR__}/ctd_upper_b.txt' (FORMAT text, DELIMITER 'B');
+
+query
+SELECT count(*) AS loaded FROM ctd_in;
+----
+loaded
+12
+
+query
+SELECT count(*) AS different
+FROM (
+  SELECT id, i, n, f, d, t, ttz, ts, tstz, u, s, arr, sarr, r, mac, ip, ip6,
+         lsn, pt::TEXT, bx::TEXT, m, ctid_v, mr, iv
+  FROM ctd_in
+  EXCEPT
+  SELECT id, i, n, f, d, t, ttz, ts, tstz, u, s, arr, sarr, r, mac, ip, ip6,
+         lsn, pt::TEXT, bx::TEXT, m, ctid_v, mr, iv
+  FROM ctd
+) diff;
+----
+different
+0
+
+statement ok
+SET bytea_output = 'escape';
+
+statement ok
+CREATE VIEW ctd_more AS
+SELECT '\x613a28bc2c'::BYTEA AS b,
+       'NaN'::FLOAT8 AS nan, 'Infinity'::FLOAT4 AS inf,
+       '-Infinity'::FLOAT8 AS ninf, '1e+20'::FLOAT8 AS big,
+       '<(1,2),3>'::CIRCLE AS c, ARRAY[[1, -2], [3, NULL]] AS md,
+       '[(1,2),(3,4)]'::PATH AS p, '{1,-2,3}'::LINE AS l;
+
+statement ok
+COPY (SELECT ROW(1, 'a b', NULL, ARRAY[1, 2]), * FROM ctd_more) TO '${__TEST_DIR__}/ctd_more_paren.txt' (FORMAT text, DELIMITER '(', NULL 'nul');
+
+statement ok
+COPY ctd_raw FROM '${__TEST_DIR__}/ctd_more_paren.txt' (FORMAT csv, DELIMITER E'\x01', QUOTE E'\x02');
+
+query
+DELETE FROM ctd_raw RETURNING line;
+----
+line
+\\(1,"a b",,"{1,2}")(a:\\(\\\\274,(NaN(Infinity(-Infinity(1e+20(<\\(1,2),3>({{1,-2},{3,NULL}}([\\(1,2),\\(3,4)]({1,-2,3}
+
+statement ok
+COPY (SELECT ROW(1, 'a b', NULL, ARRAY[1, 2]), * FROM ctd_more) TO '${__TEST_DIR__}/ctd_more_comma.txt' (FORMAT text, DELIMITER ',', NULL 'nul');
+
+statement ok
+COPY ctd_raw FROM '${__TEST_DIR__}/ctd_more_comma.txt' (FORMAT csv, DELIMITER E'\x01', QUOTE E'\x02');
+
+query
+DELETE FROM ctd_raw RETURNING line;
+----
+line
+(1\\,"a b"\\,\\,"{1\\,2}"),a:(\\\\274\\,,NaN,Infinity,-Infinity,1e+20,<(1\\,2)\\,3>,{{1\\,-2}\\,{3\\,NULL}},[(1\\,2)\\,(3\\,4)],{1\\,-2\\,3}
+
+statement ok
+COPY (SELECT ROW(1, 'a b', NULL, ARRAY[1, 2]), * FROM ctd_more) TO '${__TEST_DIR__}/ctd_more_upper_n.txt' (FORMAT text, DELIMITER 'N', NULL 'nul');
+
+statement ok
+COPY ctd_raw FROM '${__TEST_DIR__}/ctd_more_upper_n.txt' (FORMAT csv, DELIMITER E'\x01', QUOTE E'\x02');
+
+query
+DELETE FROM ctd_raw RETURNING line;
+----
+line
+(1,"a b",,"{1,2}")Na:(\\\\274,N\\Na\\NNInfinityN-InfinityN1e+20N<(1,2),3>N{{1,-2},{3,\\NULL}}N[(1,2),(3,4)]N{1,-2,3}
+
+statement ok
+COPY (SELECT ROW(1, 'a b', NULL, ARRAY[1, 2]), * FROM ctd_more) TO '${__TEST_DIR__}/ctd_more_upper_i.txt' (FORMAT text, DELIMITER 'I', NULL 'nul');
+
+statement ok
+COPY ctd_raw FROM '${__TEST_DIR__}/ctd_more_upper_i.txt' (FORMAT csv, DELIMITER E'\x01', QUOTE E'\x02');
+
+query
+DELETE FROM ctd_raw RETURNING line;
+----
+line
+(1,"a b",,"{1,2}")Ia:(\\\\274,INaNI\\InfinityI-\\InfinityI1e+20I<(1,2),3>I{{1,-2},{3,NULL}}I[(1,2),(3,4)]I{1,-2,3}
+
+statement ok
+COPY (SELECT ROW(1, 'a b', NULL, ARRAY[1, 2]), * FROM ctd_more) TO '${__TEST_DIR__}/ctd_more_lt.txt' (FORMAT text, DELIMITER '<', NULL 'nul');
+
+statement ok
+COPY ctd_raw FROM '${__TEST_DIR__}/ctd_more_lt.txt' (FORMAT csv, DELIMITER E'\x01', QUOTE E'\x02');
+
+query
+DELETE FROM ctd_raw RETURNING line;
+----
+line
+(1,"a b",,"{1,2}")<a:(\\\\274,<NaN<Infinity<-Infinity<1e+20<\\<(1,2),3><{{1,-2},{3,NULL}}<[(1,2),(3,4)]<{1,-2,3}
+
+statement ok
+RESET bytea_output;
+
+statement error
+COPY ctd TO '${__TEST_DIR__}/ctd_bad.txt' (FORMAT text, DELIMITER 'a');
+----
+db error: ERROR: COPY delimiter cannot be "a"
+
+
+statement error
+COPY ctd TO '${__TEST_DIR__}/ctd_bad.txt' (FORMAT text, DELIMITER '7');
+----
+db error: ERROR: COPY delimiter cannot be "7"
+
+
+statement error
+COPY ctd TO '${__TEST_DIR__}/ctd_bad.txt' (FORMAT text, DELIMITER '.');
+----
+db error: ERROR: COPY delimiter cannot be "."
+
+
+statement error
+COPY ctd TO '${__TEST_DIR__}/ctd_bad.txt' (FORMAT text, DELIMITER E'\\');
+----
+db error: ERROR: COPY delimiter cannot be "\"
+
+
+statement error
+COPY ctd_in FROM '${__TEST_DIR__}/ctd_colon.txt' (FORMAT text, DELIMITER E'\n');
+----
+db error: ERROR: COPY delimiter cannot be newline or carriage return
+
+
+statement error
+COPY ctd TO '${__TEST_DIR__}/ctd_bad.txt' (FORMAT text, NULL E'n\rl');
+----
+db error: ERROR: COPY null representation cannot use newline or carriage return
+
+
+statement error
+COPY ctd TO '${__TEST_DIR__}/ctd_bad.txt' (FORMAT text, DELIMITER 'N');
+----
+db error: ERROR: COPY delimiter character must not appear in the NULL specification
+
+
+statement error
+COPY ctd_in FROM '${__TEST_DIR__}/ctd_colon.txt' (FORMAT text, DELIMITER ':', NULL 'x:y');
+----
+db error: ERROR: COPY delimiter character must not appear in the NULL specification
+
+
+statement ok
+DROP VIEW ctd_more;
+
+statement ok
+DROP TABLE ctd_raw;
+
+statement ok
+DROP TABLE ctd_in;
+
+statement ok
+DROP TABLE ctd;
+
+statement ok
+RESET TimeZone;

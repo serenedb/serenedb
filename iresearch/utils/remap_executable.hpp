@@ -32,6 +32,6 @@ struct ExecutableRemap {
   std::string skipped;
 };
 
-ExecutableRemap RemapExecutable(bool remap_text);
+ExecutableRemap RemapExecutable(bool remap_text, size_t threads);
 
 }  // namespace irs

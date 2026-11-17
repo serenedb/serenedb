@@ -23,6 +23,7 @@
 #include <absl/base/thread_annotations.h>
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
+#include <absl/functional/any_invocable.h>
 #include <absl/functional/function_ref.h>
 #include <absl/synchronization/mutex.h>
 
@@ -41,6 +42,7 @@
 #include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/store/directory_attributes.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
+#include <iresearch/utils/parallel_for.hpp>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -68,6 +70,11 @@ constexpr uint64_t OwnRowsId(uint64_t generation) noexcept {
 
 irs::doc_id_t PieceDocs(const irs::IndexWriter::Transaction& trx) noexcept;
 
+struct PatchedRows {
+  Tick tick = 0;
+  std::shared_ptr<const irs::DocumentMask> rows;
+};
+
 struct TableUnit {
   uint64_t id = 0;
   irs::SegmentMeta meta;
@@ -76,12 +83,14 @@ struct TableUnit {
   std::shared_ptr<const irs::DocumentMask> deleted;
   uint64_t deleted_bytes = 0;
   std::vector<irs::FieldPatch> patches;
+  std::vector<PatchedRows> patched;
   uint64_t first = 0;
   bool piece = false;
 };
 
 void MergePatches(std::vector<irs::FieldPatch>& patches,
-                  std::span<const irs::FieldPatch> added, Tick tick);
+                  std::span<const irs::FieldPatch> added, Tick tick,
+                  irs::ParallelFor parallel = irs::SerialFor);
 void SlicePatches(std::span<const irs::FieldPatch> patches, uint64_t first,
                   uint64_t end, std::vector<irs::FieldPatch>& out);
 
@@ -91,20 +100,20 @@ struct LoggedSegment {
   irs::doc_id_t rows = 0;
 };
 
+using ChunkVisit = absl::FunctionRef<void(duckdb::DataChunk& chunk)>;
+
 struct LoggedRows {
   uint64_t first = 0;
   std::vector<connector::ColumnId> columns;
-  std::vector<std::string> chunks;
+  size_t chunks = 0;
+  absl::AnyInvocable<void(ChunkVisit visit) const> scan;
 };
 
-struct LoggedDeletes {
-  uint64_t segment = 0;
-  std::shared_ptr<const irs::DocumentMask> docs;
-};
-
-struct LoggedUpdate {
-  uint64_t segment = 0;
-  irs::FieldPatch patch;
+struct UnitDelta {
+  uint64_t unit = 0;
+  std::shared_ptr<const irs::DocumentMask> deleted;
+  std::vector<irs::FieldPatch> patches;
+  std::shared_ptr<const irs::DocumentMask> patched;
 };
 
 struct TableDelta {
@@ -112,40 +121,52 @@ struct TableDelta {
   uint64_t drop_memory = 0;
   std::vector<LoggedSegment> add;
   std::vector<LoggedRows> rows;
-  std::vector<LoggedDeletes> deletes;
-  uint64_t memory_base = 0;
-  std::shared_ptr<const irs::DocumentMask> memory_deletes;
-  std::vector<LoggedUpdate> updates;
-  std::vector<irs::FieldPatch> memory_updates;
+  std::vector<UnitDelta> segments;
+  std::vector<UnitDelta> pieces;
   std::shared_ptr<const FileManifest> manifest;
 };
 
 bool Empty(const TableDelta& delta) noexcept;
 
-class MemoryDeletes {
- public:
-  void Add(uint64_t first, std::shared_ptr<const irs::DocumentMask> docs) {
-    _pieces.push_back({first, std::move(docs)});
-  }
-  void Finish(TableDelta& delta) &&;
-
- private:
-  struct Piece {
-    uint64_t first = 0;
-    std::shared_ptr<const irs::DocumentMask> docs;
-  };
-
-  std::vector<Piece> _pieces;
-};
-
 struct UnitPatch {
   uint64_t unit = 0;
   std::vector<irs::FieldPatch> fields;
+  bool same_rows = false;
+  std::vector<std::shared_ptr<const irs::DocumentMask>> rows;
 };
+
+void UniteRows(UnitPatch& patch);
 
 void AddUnitPatch(std::vector<UnitPatch>& patches, uint64_t unit,
                   irs::field_id field, const duckdb::LogicalType& type,
                   std::span<const uint64_t> rows, const duckdb::Vector& values);
+
+class UnitPatchBuilder {
+ public:
+  struct Column {
+    irs::field_id field = 0;
+    duckdb::LogicalType type;
+  };
+
+  explicit UnitPatchBuilder(std::vector<Column> columns)
+    : _columns{std::move(columns)} {}
+
+  void Add(uint64_t unit, std::span<const uint64_t> rows,
+           absl::FunctionRef<duckdb::Vector(size_t column)> values);
+  bool Empty() const noexcept { return _units.empty(); }
+  std::vector<UnitPatch> Finish() &&;
+
+ private:
+  struct Unit {
+    uint64_t unit = 0;
+    std::vector<irs::ColumnPatch::Builder> columns;
+  };
+
+  std::vector<Column> _columns;
+  std::vector<Unit> _units;
+  size_t _last = 0;
+};
+
 irs::DocumentMask PatchedDocs(const UnitPatch& patch);
 void MergeUnitPatches(std::vector<UnitPatch>& into,
                       std::vector<UnitPatch>&& added);
@@ -190,6 +211,8 @@ struct TableRead {
 };
 
 size_t VersionBytes(const TableState& state) noexcept;
+std::vector<UnitPatch> ResolvePatches(const TableState& state,
+                                      std::vector<UnitPatch>&& patches);
 
 using TableVersion = Version<TableState>;
 
@@ -315,7 +338,8 @@ class Table final {
   }
 
   TableDelta CommitDelta(const TableCommit& commit, LoggedRows&& rows) const;
-  [[nodiscard]] bool Apply(Tick tick, TableCommit&& commit);
+  [[nodiscard]] bool Apply(duckdb::ClientContext& context, Tick tick,
+                           TableCommit&& commit);
 
   struct Replacement {
     std::vector<uint64_t> replaced;
@@ -323,11 +347,11 @@ class Table final {
     std::vector<irs::DocMap> maps;
     TableDelta delta;
   };
-  Replacement PrepareReplace(std::span<const uint64_t> replaced,
-                             std::span<const Tick> folded,
-                             std::vector<std::shared_ptr<TableUnit>>&& added,
-                             std::vector<irs::DocMap>&& maps,
-                             uint64_t memory_below) const;
+  Replacement PrepareReplace(
+    std::span<const uint64_t> replaced,
+    std::span<const std::span<const irs::FieldPatch>> folded,
+    std::vector<std::shared_ptr<TableUnit>>&& added,
+    std::vector<irs::DocMap>&& maps, uint64_t memory_below) const;
   std::shared_ptr<const TableState> Replace(Tick tick,
                                             Replacement&& replacement);
   std::shared_ptr<TableUnit> SegmentUnit(OwnSegment&& segment) const;

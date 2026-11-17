@@ -224,8 +224,6 @@ std::vector<Edge> DirectDependents(duckdb::CatalogTransaction transaction,
     if (auto database = duckdb::DatabaseManager::Get(context).GetDatabase(
           context, subject.name)) {
       absl::flat_hash_set<duckdb::idx_t> seen;
-      const duckdb::IdentifierEquality same_name{
-        database->GetCatalog().IsCaseSensitive()};
       database->GetCatalog().Cast<BaseCatalog>().Oids().ForEachForeignDependent(
         transaction, [&](duckdb::CatalogEntry& member) {
           if (!seen.insert(member.oid).second) {
@@ -235,7 +233,8 @@ std::vector<Edge> DirectDependents(duckdb::CatalogTransaction transaction,
           bool whole = member.type != duckdb::CatalogType::TABLE_ENTRY;
           for (const auto& dependency :
                member.Cast<duckdb::StandardEntry>().dependencies.Set()) {
-            if (whole || !same_name(dependency.catalog, subject.name)) {
+            if (whole || dependency.catalog.GetIdentifierName() !=
+                           subject.name.GetIdentifierName()) {
               continue;
             }
             if (dependency.subdependencies.empty()) {

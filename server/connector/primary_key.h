@@ -24,7 +24,6 @@
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
-#include <duckdb/common/vector/unified_vector_format.hpp>
 #include <iresearch/index/field_meta.hpp>
 #include <span>
 #include <string>
@@ -45,14 +44,6 @@ struct PKColumn {
   duckdb::idx_t input_col_idx;
   duckdb::LogicalType type;
 };
-
-void PreparePKFormats(duckdb::DataChunk& chunk,
-                      std::span<const PKColumn> columns,
-                      std::vector<duckdb::UnifiedVectorFormat>& formats);
-
-void Create(std::span<const duckdb::UnifiedVectorFormat> formats,
-            std::span<const PKColumn> columns, duckdb::idx_t row,
-            std::string& key);
 
 // The chunk slot a declared-key column arrives in, with the name to report it
 // under, the type its values are keyed by, and the dictionary layout the index

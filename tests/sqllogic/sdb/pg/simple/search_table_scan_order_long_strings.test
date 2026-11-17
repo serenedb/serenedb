@@ -1,0 +1,67 @@
+statement ok
+CREATE TABLE sso (s TEXT, i INTEGER) WITH (compaction_interval = 0)
+
+
+statement ok
+INSERT INTO sso SELECT lpad(i::TEXT, 4, '0') || repeat('z', 2000), i FROM range(0, 50) t(i)
+
+
+statement ok
+INSERT INTO sso SELECT lpad(i::TEXT, 4, '0') || repeat('z', 2000), i FROM range(950, 1000) t(i)
+
+
+statement ok
+VACUUM (FLUSH_TABLE) sso
+
+
+statement ok
+INSERT INTO sso SELECT lpad(i::TEXT, 4, '0') || repeat('z', 2000), i FROM range(50, 500) t(i)
+
+
+statement ok
+INSERT INTO sso SELECT lpad(i::TEXT, 4, '0') || repeat('z', 2000), i FROM range(500, 950) t(i)
+
+
+query
+SELECT i, length(s) FROM sso ORDER BY s LIMIT 3
+----
+i	length
+0	2004
+1	2004
+2	2004
+
+
+query
+SELECT i, length(s) FROM sso ORDER BY s DESC LIMIT 3
+----
+i	length
+999	2004
+998	2004
+997	2004
+
+
+query
+SELECT count(*) AS groups, count(DISTINCT i) AS ids FROM (SELECT s, min(i) AS i FROM sso GROUP BY s LIMIT 5)
+----
+groups	ids
+5	5
+
+
+query
+SELECT i FROM (SELECT s, min(i) AS i FROM sso GROUP BY s ORDER BY s DESC LIMIT 2) ORDER BY i
+----
+i
+998
+999
+
+
+statement ok
+INSERT INTO sso SELECT repeat('k', 30) || lpad(i::TEXT, 4, '0') || repeat('z', 2000), i FROM range(1000, 1010) t(i)
+
+
+query
+SELECT i, length(s) FROM sso ORDER BY s DESC LIMIT 2
+----
+i	length
+1009	2034
+1008	2034

@@ -1,9 +1,8 @@
 # count(*) over an index whose column holds at most one value per row: a range,
 # an IN list, a list with IS NULL and a negated range count without reading
 # postings, and overlapping clauses still count each row once. Every count
-# matches the table under every unit-claiming mode, with one worker and with
-# several, before and after deletions. Small row groups split each segment
-# into many units.
+# matches the table with one worker and with several, before and after
+# deletions. Small row groups split each segment into many units.
 
 statement ok
 CREATE TABLE csv_t (id INT PRIMARY KEY, v INT, s VARCHAR)
@@ -55,31 +54,6 @@ statement ok
 SET threads = 1
 
 
-statement ok
-SET sdb_scan_split = 'never'
-
-
-query
-SELECT
-  (SELECT count(*) FROM csv_idx WHERE v BETWEEN 100 AND 120) AS narrow,
-  (SELECT count(*) FROM csv_idx WHERE v BETWEEN 10 AND 4000) AS dense,
-  (SELECT count(*) FROM csv_idx WHERE v >= 0) AS full_range,
-  (SELECT count(*) FROM csv_idx WHERE v IN (1, 2, 3, 4999)) AS in_list,
-  (SELECT count(*) FROM csv_idx WHERE v IN (1, 2, 3) OR v IS NULL) AS in_null,
-  (SELECT count(*) FROM csv_idx WHERE v NOT BETWEEN 100 AND 4500) AS negated,
-  (SELECT count(*) FROM csv_idx WHERE v BETWEEN 0 AND 3000 OR v = 5) AS range_term,
-  (SELECT count(*) FROM csv_idx
-     WHERE v BETWEEN 0 AND 3000 OR v BETWEEN 2000 AND 4000) AS two_ranges,
-  (SELECT count(*) FROM csv_idx WHERE s IN ('k1', 'k2', 'k99')) AS keywords
-----
-narrow	dense	full_range	in_list	in_null	negated	range_term	two_ranges	keywords
-108	21546	27000	24	3018	3240	16200	21600	900
-
-
-statement ok
-SET sdb_scan_split = 'always'
-
-
 query
 SELECT
   (SELECT count(*) FROM csv_idx WHERE v BETWEEN 100 AND 120) AS narrow,
@@ -99,31 +73,6 @@ narrow	dense	full_range	in_list	in_null	negated	range_term	two_ranges	keywords
 
 statement ok
 SET threads = 4
-
-
-statement ok
-SET sdb_scan_split = 'tail'
-
-
-query
-SELECT
-  (SELECT count(*) FROM csv_idx WHERE v BETWEEN 100 AND 120) AS narrow,
-  (SELECT count(*) FROM csv_idx WHERE v BETWEEN 10 AND 4000) AS dense,
-  (SELECT count(*) FROM csv_idx WHERE v >= 0) AS full_range,
-  (SELECT count(*) FROM csv_idx WHERE v IN (1, 2, 3, 4999)) AS in_list,
-  (SELECT count(*) FROM csv_idx WHERE v IN (1, 2, 3) OR v IS NULL) AS in_null,
-  (SELECT count(*) FROM csv_idx WHERE v NOT BETWEEN 100 AND 4500) AS negated,
-  (SELECT count(*) FROM csv_idx WHERE v BETWEEN 0 AND 3000 OR v = 5) AS range_term,
-  (SELECT count(*) FROM csv_idx
-     WHERE v BETWEEN 0 AND 3000 OR v BETWEEN 2000 AND 4000) AS two_ranges,
-  (SELECT count(*) FROM csv_idx WHERE s IN ('k1', 'k2', 'k99')) AS keywords
-----
-narrow	dense	full_range	in_list	in_null	negated	range_term	two_ranges	keywords
-108	21546	27000	24	3018	3240	16200	21600	900
-
-
-statement ok
-SET sdb_scan_split = 'always'
 
 
 query

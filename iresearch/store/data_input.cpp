@@ -26,6 +26,7 @@
 #include <memory>
 
 #include "iresearch/utils/memory.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/std.hpp"
 
@@ -117,16 +118,22 @@ void BufferedIndexInput::ReadData(byte_type* b, uint64_t count) {
     return;  // it's enough for us
   }
 
-  auto size = count - read;
+  const auto need = count - read;
   b += read;
-  if (size < _buf_size) {  // refill buffer & copy
-    size = std::min(size, Refill());
+  uint64_t size = 0;
+  if (need < _buf_size) {  // refill buffer & copy
+    size = std::min(need, Refill());
     std::memcpy(b, _begin, sizeof(byte_type) * size);
     _begin += size;
   } else {  // read directly to output buffer if possible
-    size = ReadInternal(b, size);
+    size = ReadInternal(b, need);
     _start += (Offset() + size);
     _begin = _end = _buf;  // will trigger refill on the next read
+  }
+  if (size != need) [[unlikely]] {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
+                    ERR_MSG("short read: ", size, " of ", need,
+                            " bytes, stopped at offset ", Position()));
   }
 }
 

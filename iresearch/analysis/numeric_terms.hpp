@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <cstdint>
+#include <duckdb/common/types/string_type.hpp>
 #include <span>
 
 #include "iresearch/analysis/token_batch.hpp"

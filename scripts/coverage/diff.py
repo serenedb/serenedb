@@ -31,7 +31,7 @@ def is_test(path):
 
 def git(*args, cwd=ROOT):
     return subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True,
-                          check=True).stdout
+                          errors="surrogateescape", check=True).stdout
 
 
 def changed_lines(base):

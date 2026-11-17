@@ -170,9 +170,9 @@ std::vector<TableSnapshot> CaptureSnapshot(const catalog::CommittedView& view) {
   return tables;
 }
 
-std::vector<std::vector<uint8_t>> SnapshotRecords(
+std::vector<catalog::RecordBuffer> SnapshotRecords(
   std::span<const TableSnapshot> tables) {
-  std::vector<std::vector<uint8_t>> records;
+  std::vector<catalog::RecordBuffer> records;
   records.reserve(tables.size());
   for (const auto& [store, state] : tables) {
     records.push_back(store->SnapshotRecord(*state));

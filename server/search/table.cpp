@@ -42,6 +42,7 @@
 #include <utility>
 
 #include "catalog/transaction.h"
+#include "search/parallel.h"
 #include "search/version_chain.tpp"
 
 namespace sdb::search {
@@ -115,9 +116,11 @@ void SetDeletes(TableUnit& unit, irs::DocumentMask&& mask) {
   }
 }
 
-void AddDeletes(TableUnit& unit, const irs::DocumentMask& docs) {
-  SetDeletes(unit, unit.deleted ? irs::DocumentMask::Union(unit.deleted, docs)
-                                : irs::DocumentMaskBuilder{docs}.Finish());
+void AddDeletes(TableUnit& unit, const irs::DocumentMask& docs,
+                irs::ParallelFor parallel) {
+  SetDeletes(unit, unit.deleted
+                     ? irs::DocumentMask::Union(unit.deleted, docs, parallel)
+                     : irs::DocumentMaskBuilder{docs}.Finish());
 }
 
 bool Dead(const TableUnit& unit) noexcept {
@@ -206,42 +209,20 @@ void Follow(const TableState& state, uint64_t id, const irs::DocumentMask& docs,
 
 bool PatchedAfter(const TableUnit& unit, const irs::DocumentMask& docs,
                   Tick snapshot) {
-  for (const auto& [field, patch] : unit.patches) {
-    if (patch->MaxTick() <= snapshot) {
-      continue;
-    }
-    bool found = false;
-    if (docs.Count() < patch->Count()) {
-      const auto newer = [&](uint64_t, const irs::ColumnPatch::Chunk& chunk,
-                             size_t i) {
-        found = found || chunk.ticks[i] > snapshot;
-      };
-      irs::DocumentMask::Cursor cursor{docs};
-      std::array<irs::MaskRun, 64> runs;
-      while (const auto count = cursor.ReadRuns(runs)) {
-        for (const auto& run : std::span{runs}.first(count)) {
-          patch->ForEach(run.min - irs::doc_limits::min(),
-                         run.max - irs::doc_limits::min() + 1, newer);
-          if (found) {
-            return true;
-          }
-        }
-      }
-    } else {
-      auto mask = irs::MakeGenericDocsMask(&docs);
-      patch->ForEach(
-        0, unit.docs,
-        [&](uint64_t row, const irs::ColumnPatch::Chunk& chunk, size_t i) {
-          found = found || (chunk.ticks[i] > snapshot &&
-                            mask.Test(static_cast<irs::doc_id_t>(
-                              row + irs::doc_limits::min())));
-        });
-      if (found) {
-        return true;
-      }
-    }
-  }
-  return false;
+  return absl::c_any_of(unit.patched, [&](const PatchedRows& entry) {
+    return entry.tick > snapshot && docs.Intersects(*entry.rows);
+  });
+}
+
+bool Settled(const TableUnit& unit, Tick oldest) noexcept {
+  return absl::c_any_of(unit.patched, [&](const PatchedRows& entry) {
+    return entry.tick <= oldest;
+  });
+}
+
+void ForgetSettled(TableUnit& unit, Tick oldest) {
+  std::erase_if(unit.patched,
+                [&](const PatchedRows& entry) { return entry.tick <= oldest; });
 }
 
 bool Conflicting(const TableState& state, uint64_t id,
@@ -269,18 +250,19 @@ bool Conflicting(const TableState& state, uint64_t id,
 
 void MergeField(std::vector<irs::FieldPatch>& fields, irs::field_id field,
                 const duckdb::LogicalType& type, std::span<const uint64_t> rows,
-                const duckdb::Vector& values, std::span<const uint64_t> ticks) {
+                const duckdb::Vector& values) {
   const auto it = absl::c_lower_bound(
     fields, field, [](const irs::FieldPatch& entry, irs::field_id id) {
       return entry.field < id;
     });
   if (it != fields.end() && it->field == field) {
-    it->patch =
-      irs::ColumnPatch::Merge(it->patch.get(), type, rows, values, ticks);
+    it->patch = irs::ColumnPatch::Merge(it->patch.get(), type, rows, values);
   } else {
-    fields.insert(it, {.field = field,
-                       .patch = irs::ColumnPatch::Merge(nullptr, type, rows,
-                                                        values, ticks)});
+    fields.insert(
+      it, {
+            .field = field,
+            .patch = irs::ColumnPatch::Merge(nullptr, type, rows, values),
+          });
   }
 }
 
@@ -324,71 +306,53 @@ std::vector<UnitPatch> FollowPatches(const TableState& state,
   std::vector<UnitPatch> followed;
   for (const auto& patch : patches) {
     for (const auto& [field, column] : patch.fields) {
-      std::vector<uint64_t> rows;
-      std::vector<uint64_t> ticks;
-      duckdb::Vector values{column->Type(), column->Count()};
-      column->Entries(rows, values, ticks);
-      FollowPatch(state, patch.unit, field, column->Type(), rows, values,
-                  followed);
+      const auto entries = column->EntriesSince(nullptr);
+      FollowPatch(state, patch.unit, field, column->Type(), entries.rows,
+                  entries.values, followed);
     }
   }
   return followed;
 }
 
-template<typename Keep>
-void CarryPatch(irs::field_id field, const irs::ColumnPatch& patch,
-                const irs::DocMap& map, const Keep& keep,
-                std::vector<irs::FieldPatch>& out) {
-  std::vector<uint64_t> rows;
-  std::vector<uint64_t> ticks;
-  duckdb::Vector values{patch.Type(), patch.Count()};
-  patch.Entries(rows, values, ticks);
-  std::vector<uint64_t> kept_rows;
-  std::vector<uint64_t> kept_ticks;
-  duckdb::SelectionVector kept_sel{rows.size()};
-  for (size_t k = 0; k < rows.size(); ++k) {
-    if (keep(ticks[k])) {
-      kept_sel.set_index(kept_rows.size(), k);
-      kept_rows.push_back(rows[k]);
-      kept_ticks.push_back(ticks[k]);
-    }
-  }
+void CarryEntries(irs::field_id field, const duckdb::LogicalType& type,
+                  const irs::ColumnPatch::Entries& entries,
+                  const irs::DocMap& map, std::vector<irs::FieldPatch>& out) {
   std::vector<irs::MappedRow> mapped;
-  irs::MapRows(map, kept_rows, mapped);
+  irs::MapRows(map, entries.rows, mapped);
   if (mapped.empty()) {
     return;
   }
-  const duckdb::Vector kept{values, kept_sel, kept_rows.size()};
   std::vector<uint64_t> target_rows;
-  std::vector<uint64_t> target_ticks;
+  target_rows.reserve(mapped.size());
   duckdb::SelectionVector sel{mapped.size()};
   for (size_t k = 0; k < mapped.size(); ++k) {
     target_rows.push_back(mapped[k].row);
-    target_ticks.push_back(kept_ticks[mapped[k].index]);
     sel.set_index(k, mapped[k].index);
   }
-  MergeField(out, field, patch.Type(), target_rows,
-             duckdb::Vector{kept, sel, mapped.size()}, target_ticks);
-}
-
-void ShiftPatches(std::span<const irs::FieldPatch> patches, uint64_t offset,
-                  std::vector<irs::FieldPatch>& out) {
-  for (const auto& [field, patch] : patches) {
-    std::vector<uint64_t> rows;
-    std::vector<uint64_t> ticks;
-    duckdb::Vector values{patch->Type(), patch->Count()};
-    patch->Entries(rows, values, ticks);
-    for (auto& row : rows) {
-      row += offset;
-    }
-    MergeField(out, field, patch->Type(), rows, values, ticks);
-  }
+  MergeField(out, field, type, target_rows,
+             duckdb::Vector{entries.values, sel, mapped.size()});
 }
 
 void ApplyPatches(TableUnit& unit, std::span<const irs::FieldPatch> added,
-                  Tick tick) {
-  MergePatches(unit.patches, added, tick);
+                  Tick tick, irs::ParallelFor parallel) {
+  MergePatches(unit.patches, added, tick, parallel);
   unit.reader = unit.reader->WithPatches(unit.patches);
+}
+
+std::shared_ptr<const irs::DocumentMask> RowsOf(const UnitPatch& patch) {
+  if (patch.rows.size() == 1) {
+    return patch.rows.front();
+  }
+  return std::make_shared<const irs::DocumentMask>(PatchedDocs(patch));
+}
+
+const irs::ColumnPatch* FoldedPatch(std::span<const irs::FieldPatch> folded,
+                                    irs::field_id field) noexcept {
+  const auto it = absl::c_lower_bound(
+    folded, field, [](const irs::FieldPatch& entry, irs::field_id id) {
+      return entry.field < id;
+    });
+  return it != folded.end() && it->field == field ? it->patch.get() : nullptr;
 }
 
 std::shared_ptr<const TableState> InitialState(
@@ -402,7 +366,11 @@ bool DeletesAll(const irs::DocumentMask* deleted, const irs::DocumentMask& docs,
                 irs::doc_id_t rows) {
   auto count = docs.Count();
   if (deleted) {
-    count += deleted->Count() - deleted->AndCount(docs);
+    count += deleted->Count();
+    if (count < rows) {
+      return false;
+    }
+    count -= deleted->AndCount(docs);
   }
   return count >= rows;
 }
@@ -410,18 +378,20 @@ bool DeletesAll(const irs::DocumentMask* deleted, const irs::DocumentMask& docs,
 }  // namespace
 
 void MergePatches(std::vector<irs::FieldPatch>& patches,
-                  std::span<const irs::FieldPatch> added, Tick tick) {
+                  std::span<const irs::FieldPatch> added, Tick tick,
+                  irs::ParallelFor parallel) {
   for (const auto& [field, patch] : added) {
     const auto it = absl::c_lower_bound(
       patches, field, [](const irs::FieldPatch& entry, irs::field_id id) {
         return entry.field < id;
       });
     if (it != patches.end() && it->field == field) {
-      it->patch = irs::ColumnPatch::Merge(it->patch.get(), *patch, tick);
+      it->patch =
+        irs::ColumnPatch::Merge(it->patch.get(), *patch, tick, parallel);
     } else {
-      patches.insert(it,
-                     {.field = field,
-                      .patch = irs::ColumnPatch::Merge(nullptr, *patch, tick)});
+      patches.insert(it, {.field = field,
+                          .patch = irs::ColumnPatch::Merge(nullptr, *patch,
+                                                           tick, parallel)});
     }
   }
 }
@@ -432,55 +402,28 @@ void SlicePatches(std::span<const irs::FieldPatch> patches, uint64_t first,
     if (!patch->Overlaps(first, end)) {
       continue;
     }
-    std::vector<uint64_t> rows;
-    std::vector<uint64_t> ticks;
-    duckdb::Vector values{patch->Type(), patch->Count()};
-    patch->Entries(rows, values, ticks);
+    const auto entries = patch->EntriesSince(nullptr);
+    const auto& rows = entries.rows;
     const auto begin = absl::c_lower_bound(rows, first) - rows.begin();
     const auto stop = absl::c_lower_bound(rows, end) - rows.begin();
     if (begin == stop) {
       continue;
     }
     std::vector<uint64_t> sliced_rows;
-    std::vector<uint64_t> sliced_ticks;
     duckdb::SelectionVector sel{static_cast<duckdb::idx_t>(stop - begin)};
     for (auto i = begin; i < stop; ++i) {
       sel.set_index(sliced_rows.size(), i);
       sliced_rows.push_back(rows[i] - first);
-      sliced_ticks.push_back(ticks[i]);
     }
     MergeField(out, field, patch->Type(), sliced_rows,
-               duckdb::Vector{values, sel, sliced_rows.size()}, sliced_ticks);
+               duckdb::Vector{entries.values, sel, sliced_rows.size()});
   }
 }
 
 bool Empty(const TableDelta& delta) noexcept {
   return delta.drop.empty() && delta.drop_memory == 0 && delta.add.empty() &&
-         delta.rows.empty() && delta.deletes.empty() && !delta.memory_deletes &&
-         delta.updates.empty() && delta.memory_updates.empty() &&
+         delta.rows.empty() && delta.segments.empty() && delta.pieces.empty() &&
          !delta.manifest;
-}
-
-void MemoryDeletes::Finish(TableDelta& delta) && {
-  if (_pieces.empty()) {
-    return;
-  }
-  const auto base =
-    absl::c_min_element(_pieces, [](const Piece& lhs, const Piece& rhs) {
-      return lhs.first < rhs.first;
-    })->first;
-  irs::DocumentMaskBuilder docs;
-  for (const auto& piece : _pieces) {
-    const auto offset = piece.first - base;
-    SDB_ENSURE(
-      offset + piece.docs->Max() < std::numeric_limits<irs::doc_id_t>::max(),
-      "the in-memory rows of a table span more rows than a mask "
-      "can number");
-    docs.AddShifted(*piece.docs, static_cast<irs::doc_id_t>(offset));
-  }
-  delta.memory_base = base;
-  delta.memory_deletes = std::make_shared<const irs::DocumentMask>(
-    std::move(docs).Finish(irs::DocumentMaskBuilder::kCanonical));
 }
 
 std::shared_ptr<TableUnit> PieceUnit(
@@ -506,23 +449,84 @@ void AddUnitPatch(std::vector<UnitPatch>& patches, uint64_t unit,
   if (it == patches.end()) {
     it = patches.insert(patches.end(), UnitPatch{.unit = unit});
   }
-  const uint64_t own = 0;
-  MergeField(it->fields, field, type, rows, values, {&own, 1});
+  MergeField(it->fields, field, type, rows, values);
+}
+
+void UnitPatchBuilder::Add(
+  uint64_t unit, std::span<const uint64_t> rows,
+  absl::FunctionRef<duckdb::Vector(size_t column)> values) {
+  if (_last >= _units.size() || _units[_last].unit != unit) {
+    const auto it = absl::c_find_if(
+      _units, [&](const Unit& entry) { return entry.unit == unit; });
+    _last = static_cast<size_t>(it - _units.begin());
+    if (it == _units.end()) {
+      auto& added = _units.emplace_back(Unit{.unit = unit});
+      added.columns.reserve(_columns.size());
+      for (const auto& column : _columns) {
+        added.columns.emplace_back(column.type);
+      }
+    }
+  }
+  auto& columns = _units[_last].columns;
+  for (size_t c = 0; c != columns.size(); ++c) {
+    columns[c].Add(rows, values(c));
+  }
+}
+
+std::vector<UnitPatch> UnitPatchBuilder::Finish() && {
+  std::vector<UnitPatch> patches;
+  patches.reserve(_units.size());
+  for (auto& [unit, columns] : _units) {
+    auto& patch =
+      patches.emplace_back(UnitPatch{.unit = unit, .same_rows = true});
+    patch.fields.reserve(columns.size());
+    for (size_t c = 0; c != columns.size(); ++c) {
+      patch.fields.push_back(
+        {.field = _columns[c].field, .patch = std::move(columns[c]).Finish()});
+    }
+    absl::c_sort(patch.fields, [](const auto& lhs, const auto& rhs) {
+      return lhs.field < rhs.field;
+    });
+  }
+  _units.clear();
+  _last = 0;
+  return patches;
+}
+
+void UniteRows(UnitPatch& patch) {
+  if (patch.rows.size() == 1) {
+    return;
+  }
+  if (patch.rows.empty()) {
+    patch.rows = {
+      std::make_shared<const irs::DocumentMask>(PatchedDocs(patch))};
+    return;
+  }
+  irs::DocumentMaskBuilder united;
+  for (const auto& part : patch.rows) {
+    united.Merge(*part);
+  }
+  patch.rows = {std::make_shared<const irs::DocumentMask>(
+    std::move(united).Finish(irs::DocumentMaskBuilder::kCanonical))};
 }
 
 irs::DocumentMask PatchedDocs(const UnitPatch& patch) {
   irs::DocumentMaskBuilder docs;
-  std::vector<irs::doc_id_t> rows;
   for (const auto& [field, column] : patch.fields) {
-    rows.clear();
-    column->ForEach(0, std::numeric_limits<uint64_t>::max(),
-                    [&](uint64_t row, const irs::ColumnPatch::Chunk&, size_t) {
-                      rows.push_back(static_cast<irs::doc_id_t>(
-                        row + irs::doc_limits::min()));
-                    });
-    docs.AddSorted(rows);
+    column->AddRows(docs);
+    if (patch.same_rows) {
+      break;
+    }
   }
   return std::move(docs).Finish(irs::DocumentMaskBuilder::kCanonical);
+}
+
+std::vector<UnitPatch> ResolvePatches(const TableState& state,
+                                      std::vector<UnitPatch>&& patches) {
+  if (PatchesCurrent(state, patches)) {
+    return std::move(patches);
+  }
+  return FollowPatches(state, patches);
 }
 
 void MergeUnitPatches(std::vector<UnitPatch>& into,
@@ -532,9 +536,19 @@ void MergeUnitPatches(std::vector<UnitPatch>& into,
       into, [&](const UnitPatch& entry) { return entry.unit == patch.unit; });
     if (it == into.end()) {
       into.push_back(std::move(patch));
-    } else {
-      MergePatches(it->fields, patch.fields, 0);
+      continue;
     }
+    it->same_rows = it->same_rows && patch.same_rows &&
+                    absl::c_equal(it->fields, patch.fields,
+                                  [](const auto& lhs, const auto& rhs) {
+                                    return lhs.field == rhs.field;
+                                  });
+    if (it->same_rows && !it->rows.empty() && !patch.rows.empty()) {
+      absl::c_move(patch.rows, std::back_inserter(it->rows));
+    } else {
+      it->rows.clear();
+    }
+    MergePatches(it->fields, patch.fields, 0);
   }
 }
 
@@ -547,15 +561,20 @@ void CarryUnitPatches(std::vector<UnitPatch>& patches, uint64_t source,
   }
   const auto fields = std::move(it->fields);
   patches.erase(it);
+  std::vector<irs::ColumnPatch::Entries> entries;
+  entries.reserve(fields.size());
+  for (const auto& [field, patch] : fields) {
+    entries.push_back(patch->EntriesSince(nullptr));
+  }
   std::vector<UnitPatch> carried;
   for (const auto& map : maps) {
     if (map.source != source) {
       continue;
     }
     UnitPatch target{.unit = map.target};
-    for (const auto& [field, patch] : fields) {
-      CarryPatch(
-        field, *patch, map, [](uint64_t) { return true; }, target.fields);
+    for (size_t f = 0; f != fields.size(); ++f) {
+      CarryEntries(fields[f].field, fields[f].patch->Type(), entries[f], map,
+                   target.fields);
     }
     if (!target.fields.empty()) {
       carried.push_back(std::move(target));
@@ -650,7 +669,7 @@ irs::DirectoryReader Table::BuildReader(const TableState& prev,
     before.emplace(unit->id, unit.get());
   }
   std::vector<irs::SegmentReader> added;
-  std::vector<irs::SegmentReader> patched;
+  std::vector<irs::PatchedReader> patched;
   for (const auto& unit : next.units) {
     const auto it = before.find(unit->id);
     if (it == before.end()) {
@@ -658,7 +677,10 @@ irs::DirectoryReader Table::BuildReader(const TableState& prev,
       continue;
     }
     if (it->second->reader->PatchTick() != unit->reader->PatchTick()) {
-      patched.emplace_back(unit->reader);
+      patched.push_back({
+        .before = irs::SegmentReader{it->second->reader},
+        .after = irs::SegmentReader{unit->reader},
+      });
     }
     before.erase(it);
   }
@@ -766,7 +788,7 @@ irs::DirectoryReader Table::Build(const TableState& state, const OwnWrites& own,
       return Masked(base, std::move(mask));
     };
   std::vector<irs::SegmentReader> added;
-  std::vector<irs::SegmentReader> patched;
+  std::vector<irs::PatchedReader> patched;
   std::vector<UnitPatch> followed;
   auto own_patches = own.patches;
   if (!PatchesCurrent(state, own_patches)) {
@@ -783,16 +805,21 @@ irs::DirectoryReader Table::Build(const TableState& state, const OwnWrites& own,
       }
       std::vector<irs::FieldPatch> fields{committed.begin(), committed.end()};
       MergePatches(fields, it->fields, 0);
-      auto patched_reader = reader->WithPatches(fields);
-      patched.emplace_back(patched_reader);
-      return patched_reader;
+      return reader->WithPatches(fields);
     };
   for (const auto& unit : state.units) {
     if (scope == Scope::Cold && unit->piece) {
       continue;
     }
-    add(with_patches(unit->id, unit->patches,
-                     with_own(unit->id, unit->deleted, unit->reader)));
+    auto visible = with_own(unit->id, unit->deleted, unit->reader);
+    auto reader = with_patches(unit->id, unit->patches, visible);
+    if (reader != visible) {
+      patched.push_back({
+        .before = irs::SegmentReader{unit->reader},
+        .after = irs::SegmentReader{reader},
+      });
+    }
+    add(std::move(reader));
   }
   for (const auto& segment : own.segments) {
     const auto id = segment.reader->Id();
@@ -900,7 +927,14 @@ std::vector<std::shared_ptr<const TableUnit>> Table::MergeRun() const {
     if (begin == i) {
       continue;
     }
-    pieces.erase(pieces.begin() + i + 1, pieces.end());
+    auto end = i + 1;
+    for (; end != pieces.size() && Adjacent(*pieces[end - 1], *pieces[end]) &&
+           Mergeable(*pieces[end]) && PieceTier(pieces[end]->docs) <= tier &&
+           docs + pieces[end]->docs <= irs::doc_limits::kMaxDocs;
+         ++end) {
+      docs += pieces[end]->docs;
+    }
+    pieces.erase(pieces.begin() + end, pieces.end());
     pieces.erase(pieces.begin(), pieces.begin() + begin);
     return pieces;
   }
@@ -940,6 +974,9 @@ void ThrowConcurrentUpdate() {
 
 Tick Table::Conflict(const irs::DocRemoval& removal, Tick snapshot) const {
   const auto state = State();
+  if (state->tick <= snapshot) {
+    return 0;
+  }
   return absl::c_any_of(removal.groups,
                         [&](const auto& group) {
                           return Conflicting(*state, group.segment, group.docs,
@@ -950,11 +987,7 @@ Tick Table::Conflict(const irs::DocRemoval& removal, Tick snapshot) const {
 }
 
 std::vector<UnitPatch> Table::Resolve(std::vector<UnitPatch>&& patches) const {
-  const auto state = State();
-  if (PatchesCurrent(*state, patches)) {
-    return std::move(patches);
-  }
-  return FollowPatches(*state, patches);
+  return ResolvePatches(*State(), std::move(patches));
 }
 
 TableDelta Table::CommitDelta(const TableCommit& commit,
@@ -962,22 +995,27 @@ TableDelta Table::CommitDelta(const TableCommit& commit,
   absl::MutexLock lock{&_state_mutex};
   const auto& state = *Head().state;
   TableDelta delta;
-  Mapped removed;
-  for (const auto& removal : commit.removals) {
-    for (const auto& group : removal->groups) {
-      removed[group.segment].Merge(group.docs);
-    }
-  }
   irs::containers::FlatHashMap<uint64_t,
                                std::shared_ptr<const irs::DocumentMask>>
     deletes;
-  deletes.reserve(removed.size());
-  for (auto& [id, docs] : removed) {
-    if (!docs.Empty()) {
-      deletes.emplace(
-        id, std::make_shared<const irs::DocumentMask>(
-              std::move(docs).Finish(irs::DocumentMaskBuilder::kCanonical)));
+  Mapped removed;
+  for (const auto& removal : commit.removals) {
+    for (const auto& group : removal->groups) {
+      const auto [it, first] = deletes.try_emplace(
+        group.segment,
+        std::shared_ptr<const irs::DocumentMask>{removal, &group.docs});
+      if (!first) {
+        auto& docs = removed[group.segment];
+        if (docs.Empty()) {
+          docs.Merge(*it->second);
+        }
+        docs.Merge(group.docs);
+      }
     }
+  }
+  for (auto& [id, docs] : removed) {
+    deletes[id] = std::make_shared<const irs::DocumentMask>(
+      std::move(docs).Finish(irs::DocumentMaskBuilder::kCanonical));
   }
   irs::containers::FlatHashSet<uint64_t> own;
   irs::containers::FlatHashSet<uint64_t> dead;
@@ -994,15 +1032,30 @@ TableDelta Table::CommitDelta(const TableCommit& commit,
     delta.add.push_back({.id = id, .kinds = segment.meta.kinds, .rows = rows});
   }
   if (commit.piece) {
-    SDB_ASSERT(!rows.chunks.empty());
+    SDB_ASSERT(rows.chunks != 0);
     rows.first = state.memory_end;
     delta.rows.push_back(std::move(rows));
   }
-  MemoryDeletes memory;
+  irs::containers::FlatHashMap<uint64_t, size_t> segment_at;
+  irs::containers::FlatHashMap<uint64_t, size_t> piece_at;
+  const auto changed = [](auto& at, std::vector<UnitDelta>& units,
+                          uint64_t unit) -> UnitDelta& {
+    const auto [it, added] = at.try_emplace(unit, units.size());
+    if (added) {
+      units.push_back({.unit = unit});
+    }
+    return units[it->second];
+  };
+  const auto segment = [&](uint64_t id) -> UnitDelta& {
+    return changed(segment_at, delta.segments, id);
+  };
+  const auto piece = [&](uint64_t first) -> UnitDelta& {
+    return changed(piece_at, delta.pieces, first);
+  };
   for (auto& [id, docs] : deletes) {
     if (own.contains(id)) {
       if (!dead.contains(id)) {
-        delta.deletes.push_back({.segment = id, .docs = std::move(docs)});
+        segment(id).deleted = std::move(docs);
       }
       continue;
     }
@@ -1011,50 +1064,43 @@ TableDelta Table::CommitDelta(const TableCommit& commit,
       continue;
     }
     if (unit->piece) {
-      memory.Add(unit->first, std::move(docs));
+      piece(unit->first).deleted = std::move(docs);
     } else if (DeletesAll(unit->deleted.get(), *docs, unit->docs)) {
       delta.drop.push_back(id);
       dead.insert(id);
     } else {
-      delta.deletes.push_back({.segment = id, .docs = std::move(docs)});
+      segment(id).deleted = std::move(docs);
     }
   }
-  std::move(memory).Finish(delta);
   for (const auto& patch : commit.patches) {
     if (dead.contains(patch.unit)) {
       continue;
     }
+    UnitDelta* target = nullptr;
     if (commit.piece && patch.unit == commit.piece->Id()) {
-      ShiftPatches(patch.fields, state.memory_end, delta.memory_updates);
+      target = &piece(state.memory_end);
+    } else if (own.contains(patch.unit)) {
+      target = &segment(patch.unit);
+    } else if (const auto* unit = FindUnit(state, patch.unit)) {
+      target = unit->piece ? &piece(unit->first) : &segment(patch.unit);
+    } else {
       continue;
     }
-    if (!own.contains(patch.unit)) {
-      const auto* unit = FindUnit(state, patch.unit);
-      if (!unit) {
-        continue;
-      }
-      if (unit->piece) {
-        ShiftPatches(patch.fields, unit->first, delta.memory_updates);
-        continue;
-      }
-    }
-    for (const auto& field : patch.fields) {
-      delta.updates.push_back({.segment = patch.unit, .patch = field});
-    }
+    target->patched =
+      target->patches.empty() && patch.same_rows && patch.rows.size() == 1
+        ? patch.rows.front()
+        : nullptr;
+    absl::c_copy(patch.fields, std::back_inserter(target->patches));
   }
   delta.manifest = commit.manifest;
   return delta;
 }
 
-bool Table::Apply(Tick tick, TableCommit&& commit) {
+bool Table::Apply(duckdb::ClientContext& context, Tick tick,
+                  TableCommit&& commit) {
   absl::MutexLock lock{&_state_mutex};
   auto next = std::make_shared<TableState>(*Head().state);
   auto& units = next->units;
-  const auto rewrite = [&](size_t i, auto&& change) {
-    auto unit = std::make_shared<TableUnit>(*units[i]);
-    change(*unit);
-    units[i] = std::move(unit);
-  };
   if (commit.manifest) {
     next->manifest = std::move(commit.manifest);
   }
@@ -1062,6 +1108,7 @@ bool Table::Apply(Tick tick, TableCommit&& commit) {
       !commit.patches.empty()) {
     _last_write.store(tick, std::memory_order_release);
   }
+  const auto committed = units.size();
   if (commit.piece) {
     auto unit = PieceUnit(std::move(commit.piece), next->memory_end);
     next->memory_end += unit->docs;
@@ -1070,22 +1117,63 @@ bool Table::Apply(Tick tick, TableCommit&& commit) {
   for (auto& segment : commit.segments) {
     units.push_back(SegmentUnit(std::move(segment)));
   }
+  struct UnitChange {
+    size_t index = 0;
+    std::vector<const irs::DocumentMask*> deletes;
+    const UnitPatch* patch = nullptr;
+    std::shared_ptr<TableUnit> rewritten;
+  };
+  std::vector<UnitChange> changes;
+  std::vector<size_t> change_of(units.size(), changes.max_size());
+  const auto change = [&](size_t i) -> UnitChange& {
+    if (change_of[i] == changes.max_size()) {
+      change_of[i] = changes.size();
+      changes.push_back({.index = i});
+    }
+    return changes[change_of[i]];
+  };
   for (const auto& removal : commit.removals) {
     for (const auto& group : removal->groups) {
       if (const auto i = IndexOf(units, group.segment); i != units.size()) {
-        rewrite(i, [&](TableUnit& unit) { AddDeletes(unit, group.docs); });
+        change(i).deletes.push_back(&group.docs);
       }
     }
   }
+  bool tracked = false;
   for (const auto& patch : commit.patches) {
     if (const auto i = IndexOf(units, patch.unit); i != units.size()) {
-      rewrite(i,
-              [&](TableUnit& unit) { ApplyPatches(unit, patch.fields, tick); });
+      auto& unit = change(i);
+      SDB_ASSERT(!unit.patch);
+      unit.patch = &patch;
+      tracked = tracked || i < committed;
     }
+  }
+  const auto oldest = catalog::Transactions::Get().Oldest();
+  const auto parallel = [&](size_t count,
+                            absl::FunctionRef<void(size_t)> body) {
+    ParallelFor(context, count, body);
+  };
+  parallel(changes.size(), [&](size_t c) {
+    auto& change = changes[c];
+    auto unit = std::make_shared<TableUnit>(*units[change.index]);
+    for (const auto* docs : change.deletes) {
+      AddDeletes(*unit, *docs, parallel);
+    }
+    ForgetSettled(*unit, oldest);
+    if (change.patch) {
+      ApplyPatches(*unit, change.patch->fields, tick, parallel);
+      if (change.index < committed) {
+        unit->patched.push_back({.tick = tick, .rows = RowsOf(*change.patch)});
+      }
+    }
+    change.rewritten = std::move(unit);
+  });
+  for (auto& change : changes) {
+    units[change.index] = std::move(change.rewritten);
   }
   const bool emptied = LeaveDead(*next, tick);
   Publish(std::move(next), tick);
-  return emptied;
+  return emptied || tracked;
 }
 
 std::shared_ptr<TableUnit> Table::SegmentUnit(OwnSegment&& segment) const {
@@ -1100,7 +1188,8 @@ std::shared_ptr<TableUnit> Table::SegmentUnit(OwnSegment&& segment) const {
 }
 
 Table::Replacement Table::PrepareReplace(
-  std::span<const uint64_t> replaced, std::span<const Tick> folded,
+  std::span<const uint64_t> replaced,
+  std::span<const std::span<const irs::FieldPatch>> folded,
   std::vector<std::shared_ptr<TableUnit>>&& added,
   std::vector<irs::DocMap>&& maps, uint64_t memory_below) const {
   SDB_ASSERT(folded.size() == replaced.size());
@@ -1121,8 +1210,9 @@ Table::Replacement Table::PrepareReplace(
     }
   }
   absl::flat_hash_map<uint64_t, std::vector<irs::FieldPatch>> carried_patches;
-  irs::containers::FlatHashMap<uint64_t, std::vector<irs::FieldPatch>>
-    logged_patches;
+  absl::flat_hash_map<uint64_t,
+                      absl::flat_hash_map<Tick, irs::DocumentMaskBuilder>>
+    carried_rows;
   const auto oldest = catalog::Transactions::Get().RefreshOldest();
   for (size_t r = 0; r < replaced.size(); ++r) {
     const auto* source = FindUnit(state, replaced[r]);
@@ -1133,22 +1223,29 @@ Table::Replacement Table::PrepareReplace(
     if (!source->piece) {
       delta.drop.push_back(replaced[r]);
     }
-    const auto bound = std::min<Tick>(folded[r], oldest);
     for (const auto& [field, patch] : source->patches) {
-      if (patch->MaxTick() <= bound) {
+      const auto* since = FoldedPatch(folded[r], field);
+      if (since == patch.get()) {
+        continue;
+      }
+      const auto entries = patch->EntriesSince(since);
+      if (entries.rows.empty()) {
         continue;
       }
       for (const auto& map : replacement.maps) {
-        if (map.source != replaced[r]) {
-          continue;
+        if (map.source == replaced[r]) {
+          CarryEntries(field, patch->Type(), entries, map,
+                       carried_patches[map.target]);
         }
-        CarryPatch(
-          field, *patch, map, [&](uint64_t tick) { return tick > bound; },
-          carried_patches[map.target]);
-        if (patch->MaxTick() > folded[r]) {
-          CarryPatch(
-            field, *patch, map, [&](uint64_t tick) { return tick > folded[r]; },
-            logged_patches[map.target]);
+      }
+    }
+    for (const auto& [tick, rows] : source->patched) {
+      if (tick <= oldest) {
+        continue;
+      }
+      for (const auto& map : replacement.maps) {
+        if (map.source == replaced[r]) {
+          irs::MapDocs(map, *rows, carried_rows[map.target][tick]);
         }
       }
     }
@@ -1169,19 +1266,28 @@ Table::Replacement Table::PrepareReplace(
       unit->patches = std::move(it->second);
       unit->reader = unit->reader->WithPatches(unit->patches);
     }
+    if (auto it = carried_rows.find(unit->id); it != carried_rows.end()) {
+      for (auto& [tick, rows] : it->second) {
+        if (!rows.Empty()) {
+          unit->patched.push_back(
+            {.tick = tick,
+             .rows = std::make_shared<const irs::DocumentMask>(
+               std::move(rows).Finish(irs::DocumentMaskBuilder::kCanonical))});
+        }
+      }
+    }
     if (unit->piece || Dead(*unit)) {
       continue;
     }
     delta.add.push_back(
       {.id = unit->id, .kinds = unit->meta.kinds, .rows = unit->docs});
+    UnitDelta changes{.unit = unit->id};
     if (unit->deleted && !unit->deleted->Empty()) {
-      delta.deletes.push_back({.segment = unit->id, .docs = unit->deleted});
+      changes.deleted = unit->deleted;
     }
-    if (auto it = logged_patches.find(unit->id); it != logged_patches.end()) {
-      for (auto& field : it->second) {
-        delta.updates.push_back(
-          {.segment = unit->id, .patch = std::move(field)});
-      }
+    changes.patches = unit->patches;
+    if (changes.deleted || !changes.patches.empty()) {
+      delta.segments.push_back(std::move(changes));
     }
   }
   return replacement;
@@ -1226,8 +1332,12 @@ std::shared_ptr<const TableState> Table::Replace(Tick tick,
 
 bool Table::Collectable(Tick oldest) const {
   const auto state = State();
-  return state->moved && absl::c_any_of(*state->moved, [&](const auto& entry) {
-           return entry.second->tick <= oldest;
+  return (state->moved && absl::c_any_of(*state->moved,
+                                         [&](const auto& entry) {
+                                           return entry.second->tick <= oldest;
+                                         })) ||
+         absl::c_any_of(state->units, [&](const auto& unit) {
+           return Settled(*unit, oldest);
          });
 }
 
@@ -1237,16 +1347,28 @@ void Table::Collect(Tick tick, Tick oldest) {
   const auto settled = [&](const auto& entry) {
     return entry.second->tick <= oldest;
   };
-  if (!state.moved || absl::c_none_of(*state.moved, settled)) {
+  const bool moved = state.moved && absl::c_any_of(*state.moved, settled);
+  const bool patched = absl::c_any_of(
+    state.units, [&](const auto& unit) { return Settled(*unit, oldest); });
+  if (!moved && !patched) {
     return;
   }
   auto next = SameUnits();
-  auto moved = std::make_shared<MovedUnits>(*state.moved);
-  absl::erase_if(*moved, settled);
-  if (moved->empty()) {
-    next->moved.reset();
-  } else {
-    next->moved = std::move(moved);
+  if (moved) {
+    auto kept = std::make_shared<MovedUnits>(*state.moved);
+    absl::erase_if(*kept, settled);
+    if (kept->empty()) {
+      next->moved.reset();
+    } else {
+      next->moved = std::move(kept);
+    }
+  }
+  for (auto& unit : next->units) {
+    if (Settled(*unit, oldest)) {
+      auto pruned = std::make_shared<TableUnit>(*unit);
+      ForgetSettled(*pruned, oldest);
+      unit = std::move(pruned);
+    }
   }
   Publish(std::move(next), tick);
 }

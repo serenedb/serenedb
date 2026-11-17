@@ -41,7 +41,7 @@ Setting a role that does not exist is an error:
 ## Notes
 
 - Setting a role you are not a member of fails with `permission denied to set role "..."` (superusers are exempt).
-- The switch lasts for the session (until `RESET ROLE`, another `SET ROLE`, or disconnect).
+- The switch lasts for the session: until `RESET ROLE`, another `SET ROLE`, `SET SESSION AUTHORIZATION`, `DISCARD ALL`, or disconnect. `RESET ALL` keeps it.
 
 ## See also
 

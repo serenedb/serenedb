@@ -467,7 +467,34 @@ DETAIL: index "arc_ft_idx" depends on it by name
 
 
 statement ok
+CREATE SCHEMA arc_s;
+
+
+statement ok
+CREATE FUNCTION arc_s.arc_sf(x INT) RETURNS INT LANGUAGE sql IMMUTABLE AS 'SELECT x + 1';
+
+
+statement ok
+CREATE INDEX arc_ft_sidx ON arc_ft ((arc_s.arc_sf(a)));
+
+
+statement error
+ALTER SCHEMA arc_s RENAME TO arc_s2;
+----
+db error: ERROR: cannot rename macro function "arc_sf" because other objects depend on it
+DETAIL: index "arc_ft_sidx" depends on it by name
+
+
+statement count 1
+INSERT INTO arc_ft VALUES (1);
+
+
+statement ok
 DROP TABLE arc_ft;
+
+
+statement ok
+DROP SCHEMA arc_s CASCADE;
 
 
 statement ok

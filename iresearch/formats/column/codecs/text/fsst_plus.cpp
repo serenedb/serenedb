@@ -47,42 +47,6 @@
 #include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
-/*
-FSST+ segments (fsst_plus, dict_fsst_plus) keep the layout of the fsst
-segments (fsst.cpp), with entries grouped instead of front-coded: a group of
-neighbouring entries stores the FSST codes they share once, and each entry
-stores the rest of its codes.
-+------------------------------------------------------+
-|                    Entry lengths                     |
-|   +----------------------------------------------+   |
-|   |   bitpacked encoded length[entry_count]      |   |
-|   +----------------------------------------------+   |
-|   length of each entry's codes after its group's     |
-|   shared codes                                       |
-+------------------------------------------------------+
-|                    Entry groups                      |
-|   +----------------------------------------------+   |
-|   |   bitpacked group[entry_count]               |   |
-|   +----------------------------------------------+   |
-|   1-based group of each entry, 0 for none            |
-+------------------------------------------------------+
-|                     Symbol table                     |
-|   +----------------------------------------------+   |
-|   |   FSST symbol table, dictionary_size bytes   |   |
-|   |   uint32 group_count                         |   |
-|   |   uint32 shared_end[group_count]             |   |
-|   |   shared codes of every group                |   |
-|   +----------------------------------------------+   |
-|   group g's shared codes end at shared_end[g - 1]    |
-+------------------------------------------------------+
-|                         Data                         |
-|   +----------------------------------------------+   |
-|   |   each entry's codes after its group's       |   |
-|   +----------------------------------------------+   |
-|   frames of up to 16 KiB of decoded entries          |
-+------------------------------------------------------+
-*/
-
 namespace irs::codecs::text::fsst_plus {
 
 class Prefixes {
@@ -559,6 +523,42 @@ void CompressionState::Cleave(uint32_t first_entry) {
 
 }  // namespace irs::codecs::text::fsst_plus
 namespace irs::codecs {
+
+/*
+FSST+ segments (fsst_plus, dict_fsst_plus) keep the layout of the fsst
+segments (fsst_front.cpp), with entries grouped instead of front-coded: a group
+of neighbouring entries stores the FSST codes they share once, and each entry
+stores the rest of its codes.
++------------------------------------------------------+
+|                    Entry lengths                     |
+|   +----------------------------------------------+   |
+|   |   bitpacked encoded length[entry_count]      |   |
+|   +----------------------------------------------+   |
+|   length of each entry's codes after its group's     |
+|   shared codes                                       |
++------------------------------------------------------+
+|                    Entry groups                      |
+|   +----------------------------------------------+   |
+|   |   bitpacked group[entry_count]               |   |
+|   +----------------------------------------------+   |
+|   1-based group of each entry, 0 for none            |
++------------------------------------------------------+
+|                     Symbol table                     |
+|   +----------------------------------------------+   |
+|   |   FSST symbol table, dictionary_size bytes   |   |
+|   |   uint32 group_count                         |   |
+|   |   uint32 shared_end[group_count]             |   |
+|   |   shared codes of every group                |   |
+|   +----------------------------------------------+   |
+|   group g's shared codes end at shared_end[g - 1]    |
++------------------------------------------------------+
+|                         Data                         |
+|   +----------------------------------------------+   |
+|   |   each entry's codes after its group's       |   |
+|   +----------------------------------------------+   |
+|   frames of up to 16 KiB of decoded entries          |
++------------------------------------------------------+
+*/
 
 constinit const Codec kFsstPlusCodec =
   text::StringCodec<text::PlainScan<text::fsst_plus::Scan>>();

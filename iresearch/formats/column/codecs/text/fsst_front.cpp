@@ -49,112 +49,6 @@
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
 
-/*
-Data layout per PlainScan segment, one block of one column; a text column's
-row group is cut into segments of about kDefaultColSegmentTarget encoded bytes:
-+------------------------------------------------------+
-|                        Header                        |
-|   +----------------------------------------------+   |
-|   |   Header (string_layout.hpp), 72 bytes       |   |
-|   +----------------------------------------------+   |
-|   shape, leaf, level, bit widths, counts,            |
-|   section offsets, flags                             |
-+------------------------------------------------------+
-|                     Frame table                      |
-|   +----------------------------------------------+   |
-|   |   FrameMeta frames[frame_count]              |   |
-|   +----------------------------------------------+   |
-|   first entry, decoded size and stored range         |
-|   of each frame in Data                              |
-+------------------------------------------------------+
-|                    Entry lengths                     |
-|   +----------------------------------------------+   |
-|   |   bitpacked encoded length[entry_count]      |   |
-|   +----------------------------------------------+   |
-|   length of each row's FSST-encoded suffix,          |
-|   0 for a NULL row                                   |
-+------------------------------------------------------+
-|                   Shared prefixes                    |
-|   +----------------------------------------------+   |
-|   |   bitpacked lcp[entry_count]                 |   |
-|   +----------------------------------------------+   |
-|   bytes shared with the previous entry; 0 on a       |
-|   frame's first entry and every 16th after it        |
-+------------------------------------------------------+
-|                     Symbol table                     |
-|   +----------------------------------------------+   |
-|   |   FSST symbol table: at most 2066 bytes      |   |
-|   |   with 8-bit codes, 36872 with 12-bit ones   |   |
-|   +----------------------------------------------+   |
-|   trained per row group and again when its data      |
-|   drifts; each FSST segment stores a copy            |
-+------------------------------------------------------+
-|                         Data                         |
-|   +----------------------------------------------+   |
-|   |   FSST-encoded suffixes                      |   |
-|   +----------------------------------------------+   |
-|   frames of up to 16 KiB of decoded entries          |
-+------------------------------------------------------+
-Sections start at 8-byte boundaries.
-*/
-
-/*
-Data layout per DictionaryScan segment, one block of one column; a text
-column's row group is cut into segments of about kDefaultColSegmentTarget
-encoded bytes:
-+------------------------------------------------------+
-|                        Header                        |
-|   +----------------------------------------------+   |
-|   |   Header (string_layout.hpp), 72 bytes       |   |
-|   +----------------------------------------------+   |
-|   shape, leaf, level, bit widths, counts,            |
-|   section offsets, flags                             |
-+------------------------------------------------------+
-|                     Frame table                      |
-|   +----------------------------------------------+   |
-|   |   FrameMeta frames[frame_count]              |   |
-|   +----------------------------------------------+   |
-|   first entry, decoded size and stored range         |
-|   of each frame in Data                              |
-+------------------------------------------------------+
-|                    Entry lengths                     |
-|   +----------------------------------------------+   |
-|   |   bitpacked encoded length[entry_count]      |   |
-|   +----------------------------------------------+   |
-|   length of each entry's FSST-encoded suffix;        |
-|   entry 0 is NULL, then the distinct values in       |
-|   sorted order                                       |
-+------------------------------------------------------+
-|                   Shared prefixes                    |
-|   +----------------------------------------------+   |
-|   |   bitpacked lcp[entry_count]                 |   |
-|   +----------------------------------------------+   |
-|   bytes shared with the previous entry; 0 on a       |
-|   frame's first entry and every 16th after it        |
-+------------------------------------------------------+
-|                      Row codes                       |
-|   +----------------------------------------------+   |
-|   |   numeric codec segment of code[row_count]   |   |
-|   +----------------------------------------------+   |
-|   row -> entry, code 0 is NULL                       |
-+------------------------------------------------------+
-|                     Symbol table                     |
-|   +----------------------------------------------+   |
-|   |   FSST symbol table: at most 2066 bytes      |   |
-|   |   with 8-bit codes, 36872 with 12-bit ones   |   |
-|   +----------------------------------------------+   |
-|   trained per row group and again when its data      |
-|   drifts; each FSST segment stores a copy            |
-+------------------------------------------------------+
-|                         Data                         |
-|   +----------------------------------------------+   |
-|   |   FSST-encoded suffixes                      |   |
-|   +----------------------------------------------+   |
-|   frames of up to 16 KiB of decoded entries          |
-+------------------------------------------------------+
-Sections start at 8-byte boundaries.
-*/
-
 namespace irs::codecs::text::fsst_front {
 
 constexpr uint64_t kChainGroupCost = 180;
@@ -687,14 +581,120 @@ struct Fetch {
 }  // namespace irs::codecs::text::fsst_front
 namespace irs::codecs {
 
+/*
+Data layout per PlainScan segment, one block of one column; a text column's
+row group is cut into segments of about kDefaultColSegmentTarget encoded bytes:
++------------------------------------------------------+
+|                        Header                        |
+|   +----------------------------------------------+   |
+|   |   Header (string_layout.hpp), 72 bytes       |   |
+|   +----------------------------------------------+   |
+|   shape, leaf, level, bit widths, counts,            |
+|   section offsets, flags                             |
++------------------------------------------------------+
+|                     Frame table                      |
+|   +----------------------------------------------+   |
+|   |   FrameMeta frames[frame_count]              |   |
+|   +----------------------------------------------+   |
+|   first entry, decoded size and stored range         |
+|   of each frame in Data                              |
++------------------------------------------------------+
+|                    Entry lengths                     |
+|   +----------------------------------------------+   |
+|   |   bitpacked encoded length[entry_count]      |   |
+|   +----------------------------------------------+   |
+|   length of each row's FSST-encoded suffix,          |
+|   0 for a NULL row                                   |
++------------------------------------------------------+
+|                   Shared prefixes                    |
+|   +----------------------------------------------+   |
+|   |   bitpacked lcp[entry_count]                 |   |
+|   +----------------------------------------------+   |
+|   bytes shared with the previous entry; 0 on a       |
+|   frame's first entry and every 16th after it        |
++------------------------------------------------------+
+|                     Symbol table                     |
+|   +----------------------------------------------+   |
+|   |   FSST symbol table: at most 2066 bytes      |   |
+|   |   with 8-bit codes, 36872 with 12-bit ones   |   |
+|   +----------------------------------------------+   |
+|   trained per row group and again when its data      |
+|   drifts; each FSST segment stores a copy            |
++------------------------------------------------------+
+|                         Data                         |
+|   +----------------------------------------------+   |
+|   |   FSST-encoded suffixes                      |   |
+|   +----------------------------------------------+   |
+|   frames of up to 16 KiB of decoded entries          |
++------------------------------------------------------+
+Sections start at 8-byte boundaries.
+*/
+
 constinit const Codec kFsstFrontCodec = text::StringCodec<
   text::PlainScan<text::fsst_front::Scan<text::fsst::Fsst8>>>();
 
-constinit const Codec kDictFsstFrontCodec = text::StringCodec<
-  text::DictionaryScan<text::fsst_front::Scan<text::fsst::Fsst8>>>();
-
 constinit const Codec kFsst12FrontCodec = text::StringCodec<
   text::PlainScan<text::fsst_front::Scan<text::fsst::Fsst12>>>();
+
+/*
+Data layout per DictionaryScan segment, one block of one column; a text
+column's row group is cut into segments of about kDefaultColSegmentTarget
+encoded bytes:
++------------------------------------------------------+
+|                        Header                        |
+|   +----------------------------------------------+   |
+|   |   Header (string_layout.hpp), 72 bytes       |   |
+|   +----------------------------------------------+   |
+|   shape, leaf, level, bit widths, counts,            |
+|   section offsets, flags                             |
++------------------------------------------------------+
+|                     Frame table                      |
+|   +----------------------------------------------+   |
+|   |   FrameMeta frames[frame_count]              |   |
+|   +----------------------------------------------+   |
+|   first entry, decoded size and stored range         |
+|   of each frame in Data                              |
++------------------------------------------------------+
+|                    Entry lengths                     |
+|   +----------------------------------------------+   |
+|   |   bitpacked encoded length[entry_count]      |   |
+|   +----------------------------------------------+   |
+|   length of each entry's FSST-encoded suffix;        |
+|   entry 0 is NULL, then the distinct values in       |
+|   sorted order                                       |
++------------------------------------------------------+
+|                   Shared prefixes                    |
+|   +----------------------------------------------+   |
+|   |   bitpacked lcp[entry_count]                 |   |
+|   +----------------------------------------------+   |
+|   bytes shared with the previous entry; 0 on a       |
+|   frame's first entry and every 16th after it        |
++------------------------------------------------------+
+|                      Row codes                       |
+|   +----------------------------------------------+   |
+|   |   numeric codec segment of code[row_count]   |   |
+|   +----------------------------------------------+   |
+|   row -> entry, code 0 is NULL                       |
++------------------------------------------------------+
+|                     Symbol table                     |
+|   +----------------------------------------------+   |
+|   |   FSST symbol table: at most 2066 bytes      |   |
+|   |   with 8-bit codes, 36872 with 12-bit ones   |   |
+|   +----------------------------------------------+   |
+|   trained per row group and again when its data      |
+|   drifts; each FSST segment stores a copy            |
++------------------------------------------------------+
+|                         Data                         |
+|   +----------------------------------------------+   |
+|   |   FSST-encoded suffixes                      |   |
+|   +----------------------------------------------+   |
+|   frames of up to 16 KiB of decoded entries          |
++------------------------------------------------------+
+Sections start at 8-byte boundaries.
+*/
+
+constinit const Codec kDictFsstFrontCodec = text::StringCodec<
+  text::DictionaryScan<text::fsst_front::Scan<text::fsst::Fsst8>>>();
 
 constinit const Codec kDictFsst12FrontCodec = text::StringCodec<
   text::DictionaryScan<text::fsst_front::Scan<text::fsst::Fsst12>>>();

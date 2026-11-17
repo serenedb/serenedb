@@ -49,7 +49,6 @@ namespace sdb::connector {
 namespace {
 
 constexpr std::string_view kCopyStdinPath = "/dev/stdin";
-constexpr size_t kOrderedRun = 16;
 constexpr uint64_t kCopyFileRangeBytes = 8 << 20;
 
 class CopyFileReader {
@@ -59,9 +58,11 @@ class CopyFileReader {
     : _file{std::move(file)},
       _builder{binary ? pg::CopyBatchFormat::Binary : pg::CopyBatchFormat::Text,
                pg::kCopyBatchBytes, !binary},
+      _batches{duckdb::TaskScheduler::QueryThreads(context) *
+               pg::kCopyBatchesPerThread},
       _memory{context},
-      _fixed_budget{duckdb::TaskScheduler::QueryThreads(context) * kOrderedRun *
-                    pg::kCopyBatchBytes},
+      _fixed_budget{duckdb::TaskScheduler::QueryThreads(context) *
+                    pg::kCopyBatchesPerThread * pg::kCopyBatchBytes},
       _executor{context, duckdb::TaskSchedulerType::ASYNC},
       _chunk(pg::kCopyBatchBytes, '\0') {
     UpdateBudget();
@@ -282,8 +283,7 @@ void ScanBatches(duckdb::ClientContext& context,
           if (g.ordered || !g.queue.TryTake(1, l.run)) {
             break;
           }
-        } else if (g.queue.Take(input, g.ordered ? kOrderedRun : 1, l.run) !=
-                   pg::CopyTake::Batches) {
+        } else if (g.queue.Take(input, 1, l.run) != pg::CopyTake::Batches) {
           break;
         }
         l.batch_index = l.run.front()->seq;

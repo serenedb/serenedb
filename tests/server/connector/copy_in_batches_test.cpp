@@ -50,7 +50,6 @@ using sdb::pg::CopyBatchFormat;
 using sdb::pg::CopyBatchLease;
 using sdb::pg::CopyInBatches;
 using sdb::pg::CopyTake;
-using sdb::pg::kCopyWakeBacklog;
 
 std::string Join(const CopyBatch& batch) {
   std::string out;
@@ -377,21 +376,62 @@ struct BlockingInput {
   duckdb::TableFunctionInput input{nullptr, nullptr, nullptr};
 };
 
-TEST(PgCopyInBatches, ParkedTaskWakesOnceBatchesBackUp) {
+TEST(PgCopyInBatches, ParkedTaskWakesOnPush) {
   CopyInBatches queue;
   BlockingInput consumer;
   std::vector<CopyBatchLease> taken;
-  ASSERT_EQ(queue.Take(consumer.input, kCopyWakeBacklog, taken),
-            CopyTake::Blocked);
-  for (size_t i = 0; i < kCopyWakeBacklog; ++i) {
-    queue.Push(MakeBatch(std::to_string(i)), {});
-  }
+  ASSERT_EQ(queue.Take(consumer.input, 1, taken), CopyTake::Blocked);
+  queue.Push(MakeBatch("0"), {});
   consumer.signal->Await();
-  ASSERT_EQ(queue.Take(consumer.input, kCopyWakeBacklog, taken),
-            CopyTake::Batches);
-  EXPECT_EQ(taken.size(), kCopyWakeBacklog);
+  ASSERT_EQ(queue.Take(consumer.input, 1, taken), CopyTake::Batches);
+  EXPECT_EQ(taken.size(), 1);
   queue.Finish();
   EXPECT_EQ(queue.Take(consumer.input, 1, taken), CopyTake::End);
+}
+
+TEST(PgCopyInBatches, PushWakesOneParkedTaskPerBatch) {
+  CopyInBatches queue;
+  BlockingInput first;
+  BlockingInput second;
+  std::vector<CopyBatchLease> taken;
+  ASSERT_EQ(queue.Take(first.input, 1, taken), CopyTake::Blocked);
+  ASSERT_EQ(queue.Take(second.input, 1, taken), CopyTake::Blocked);
+  queue.Push(MakeBatch("0"), {});
+  auto input = NoInput();
+  ASSERT_EQ(queue.Take(input, 1, taken), CopyTake::Batches);
+  EXPECT_TRUE(queue.Starving());
+  queue.Push(MakeBatch("1"), {});
+  first.signal->Await();
+  second.signal->Await();
+  EXPECT_FALSE(queue.Starving());
+  ASSERT_EQ(queue.Take(input, 1, taken), CopyTake::Batches);
+  ASSERT_EQ(taken.size(), 2);
+  EXPECT_EQ(Join(*taken[0]), "0");
+  EXPECT_EQ(Join(*taken[1]), "1");
+  taken.clear();
+  queue.Finish();
+}
+
+TEST(PgCopyInBatches, ParkingOnAnEmptyQueueSignalsStarvation) {
+  CopyInBatches queue;
+  size_t starved = 0;
+  queue.OnStarve([&] { ++starved; });
+  EXPECT_FALSE(queue.Starving());
+  BlockingInput consumer;
+  std::vector<CopyBatchLease> taken;
+  ASSERT_EQ(queue.Take(consumer.input, 1, taken), CopyTake::Blocked);
+  EXPECT_EQ(starved, 1);
+  EXPECT_TRUE(queue.Starving());
+  queue.Push(MakeBatch("0"), {});
+  EXPECT_FALSE(queue.Starving());
+  consumer.signal->Await();
+  ASSERT_EQ(queue.Take(consumer.input, 1, taken), CopyTake::Batches);
+  EXPECT_EQ(starved, 1);
+  taken.clear();
+  queue.Finish();
+  EXPECT_FALSE(queue.Starving());
+  EXPECT_EQ(queue.Take(consumer.input, 1, taken), CopyTake::End);
+  EXPECT_EQ(starved, 1);
 }
 
 TEST(PgCopyInBatches, FinishWakesParkedTaskForFewBatches) {

@@ -260,4 +260,49 @@ class SegmentRows {
   std::vector<uint32_t> _lengths;
 };
 
+class SortedCompressionState {
+ public:
+  SortedCompressionState(ByteCodec codec, const duckdb::LogicalType& type,
+                         DedupScratch& dedup, EstimatorState& estimators,
+                         uint32_t target)
+    : _rows{type, dedup, estimators.codes},
+      _history{estimators.history[static_cast<size_t>(codec)]},
+      _target{target} {}
+
+  void InitCompression(const Config& config, uint64_t first_row,
+                       size_t distinct, Segment& out) {
+    _rows.Begin(config, first_row, distinct);
+    _out = &out;
+    out.bytes.Truncate(0);
+  }
+
+  IRS_FORCE_INLINE void Compress(const duckdb::string_t* value) {
+    _rows.AddValue(value, [](const duckdb::string_t&, uint32_t) {});
+  }
+
+  IRS_FORCE_INLINE void Compress(
+    uint32_t code, std::span<const duckdb::string_t* const> values) {
+    _rows.AddCode(code, values, [](const duckdb::string_t&, uint32_t) {});
+  }
+
+  IRS_FORCE_INLINE bool Full(uint32_t target) {
+    return _rows.EstimateDue(target) &&
+           _rows.Estimate() +
+               EstimateEntries(
+                 _rows.View(),
+                 _history[static_cast<size_t>(_rows.SegmentShape())]) >=
+             target;
+  }
+
+ protected:
+  uint64_t Written() const noexcept { return _out->bytes.Size(); }
+
+  SegmentRows _rows;
+  SortScratch _sort;
+  RatioHistory* _history;
+  uint32_t _target;
+  Segment* _out = nullptr;
+  std::vector<FrameMeta> _frames;
+};
+
 }  // namespace irs::codecs::text

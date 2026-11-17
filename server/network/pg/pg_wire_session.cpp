@@ -209,8 +209,8 @@ duckdb::PreparedStatementData* FindPrepared(duckdb::ClientContext& context,
 void Replans(duckdb::ClientContext& context, std::string_view name,
              std::string_view previous) {
   auto* data = FindPrepared(context, name);
-  const auto* source = FindPrepared(context, previous);
-  if (data && source) {
+  SDB_ASSERT(data);
+  if (const auto* source = FindPrepared(context, previous)) {
     data->Replans(*source);
   }
 }

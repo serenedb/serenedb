@@ -29,6 +29,7 @@
 #include "iresearch/search/detail/vector_of.hpp"
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/search/docs/make.hpp"
+#include "iresearch/search/filters/query_profile.hpp"
 #include "iresearch/search/queries/vector_exact_query.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -50,7 +51,7 @@ class ExactScanner {
     _doc = _last;
     _end = _last;
     if (const auto* inner = query.Inner()) {
-      _matches = docs::MakeRoot(*inner, {});
+      _matches = ProfileInner(*inner, docs::MakeRoot(*inner, {}));
     }
     if (const auto& column = query.Column();
         (column.HasValidity() || column.InMemory()) &&

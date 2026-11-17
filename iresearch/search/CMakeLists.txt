@@ -34,6 +34,7 @@ target_sources(
         filters/ngram_similarity_filter.cpp
         filters/phrase_filter.cpp
         filters/prefix_filter.cpp
+        filters/query_profile.cpp
         filters/range_filter.cpp
         filters/range_rules.cpp
         filters/regexp_filter.cpp

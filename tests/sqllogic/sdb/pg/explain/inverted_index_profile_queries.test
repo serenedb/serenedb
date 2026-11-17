@@ -1,0 +1,809 @@
+statement ok
+SET profiling_renderer_settings = {'deterministic': true};
+
+
+statement ok
+SET threads = 1;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY queries_words AS
+    split_text(case := 'lower')
+    WITH (frequency, position, offset);
+
+
+statement ok
+CREATE TABLE queries_docs (id INTEGER PRIMARY KEY, body VARCHAR, year INTEGER)
+WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+
+
+statement ok
+INSERT INTO queries_docs
+SELECT i,
+       CASE WHEN i % 7 = 0 THEN 'new york city'
+            WHEN i % 5 = 0 THEN 'new york town'
+            WHEN i % 3 = 0 THEN 'york city'
+            ELSE 'other words here' END
+       || repeat(' pad', i % 9)
+       || CASE WHEN i % 11 = 0 THEN ' town town' ELSE '' END
+       || CASE WHEN i % 997 = 0 THEN ' rare' ELSE '' END,
+       2000 + i % 30
+FROM range(0, 100000) t(i);
+
+
+statement ok
+CREATE INDEX queries_idx ON queries_docs USING inverted (id, body queries_words, year);
+
+
+statement ok
+SET sdb_index_profile_nodes = true;
+
+
+query
+EXPLAIN ANALYZE
+SELECT count(*)
+FROM queries_idx
+WHERE body @@ 'rare' AND body @@ ts_phrase('york city');
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ UNGROUPED_AGGREGATE ───────────────────────────────────────────╮
+│ Aggregates: count_star()                                        │
+│ 1 row                                                       0µs │
+╰────────────────────────────────┬────────────────────────────────╯
+╭─ TABLE_SCAN ───────────────────┴────────────────────────────────╮
+│ Index: queries_idx                                              │
+│ Lookup: search                                                  │
+│ Index Filter:                                                   │
+│ ╭─ And ───────────────╮                                         │
+│ ╰──────────┬──────────╯                                         │
+│            ├────────────────────────────────╮                   │
+│ ╭─ Terms ──┴──────────╮  ╭─ Phrase ─────────┴─────────────────╮ │
+│ │ Field: body(string) │  │ Field: body(string)                │ │
+│ │ Values: 'rare'      │  │ Parts:                             │ │
+│ ╰─────────────────────╯  │ Term:york(0, 0); Term:city(1, 1);  │ │
+│                          ╰────────────────────────────────────╯ │
+│ Output: row-count only                                          │
+│ 38 rows                                                     0µs │
+╰────────────────────────────────┬────────────────────────────────╯
+                                 ├──────────────────────────────────────────────────────╮
+╭─ INDEX_PREPARE ────────────────┴────────────────────────────────╮  ╭─ INDEX_EXECUTE ──┴─────────────────╮
+│ Total: 0µs                                                      │  │ Total: 0µs                         │
+│ Snapshot: 0µs                                                   │  │ 38 rows                        0µs │
+│ Segments: 1 of 1                                                │  ╰──────────────────┬─────────────────╯
+│ 0 rows                                                      0µs │  ╭─ count::Walk<lead::BooleanSparse> ─╮
+╰────────────────────────────────┬────────────────────────────────╯  │ Plans: 1                           │
+╭─ AND ──────────────────────────┴────────────────────────────────╮  │ Calls: 2                           │
+│ Terms: body(string): 'rare'                                     │  │ Plan: 0µs                          │
+│ Total: 0µs                                                      │  │ Total: 0µs                         │
+│ Posting Lists: 1                                                │  │ 38 rows                        0µs │
+│ Estimated Matches: 28                                           │  ╰──────────────────┬─────────────────╯
+│ 101 rows                                                    0µs │  ╭─ probe::Impl<probe::TwoPhase> ─────╮
+╰────────────────────────────────┒┎───────────────────────────────╯  │ Filter: Phrase                     │
+╭─ PHRASE ───────────────────────┚┖───────────────────────────────╮  │ Plans: 1                           │
+│ Field: body(string)                                             │  │ Calls: 101                         │
+│ Parts:                                                          │  │ Timed: 3                           │
+│ Term:york(0, 0); Term:city(1, 1);                               │  │ 38 rows                        0µs │
+│ Posting Lists: 2                                                │  ╰────────────────────────────────────╯
+│ Estimated Matches: 27,368                                       │
+│ 91,430 rows                                                 0µs │
+╰─────────────────────────────────────────────────────────────────╯
+
+
+query
+EXPLAIN ANALYZE
+SELECT id
+FROM queries_idx
+WHERE body @@ 'rare' AND body @@ ts_phrase('york city')
+ORDER BY bm25(queries_idx.tableoid) DESC
+LIMIT 3;
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TABLE_SCAN ────────────────────────────────────────────────────╮
+│ Index: queries_idx                                              │
+│ Lookup: search                                                  │
+│ Index Filter:                                                   │
+│ ╭─ And ───────────────╮                                         │
+│ ╰──────────┬──────────╯                                         │
+│            ├────────────────────────────────╮                   │
+│ ╭─ Terms ──┴──────────╮  ╭─ Phrase ─────────┴─────────────────╮ │
+│ │ Field: body(string) │  │ Field: body(string)                │ │
+│ │ Values: 'rare'      │  │ Parts:                             │ │
+│ ╰─────────────────────╯  │ Term:york(0, 0); Term:city(1, 1);  │ │
+│                          ╰────────────────────────────────────╯ │
+│ Score: bm25(k1=1.2, b=0.75)                                     │
+│ Top: 3, optimized                                               │
+│ Projections: id                                                 │
+│ Fetch: 0µs                                                      │
+│ 3 rows                                                      0µs │
+╰────────────────────────────────┬────────────────────────────────╯
+                                 ├─────────────────────────────────────────────────────╮
+╭─ INDEX_PREPARE ────────────────┴────────────────────────────────╮  ╭─ INDEX_EXECUTE ─┴────────────────╮
+│ Total: 0µs                                                      │  │ Total: 0µs                       │
+│ Snapshot: 0µs                                                   │  │ 38 rows                      0µs │
+│ Segments: 1 of 1                                                │  ╰─────────────────┬────────────────╯
+│ Stats: 0µs                                                      │  ╭─ top::Walk<lead::BooleanSparse> ─╮
+│ 0 rows                                                      0µs │  │ Plans: 1                         │
+╰────────────────────────────────┬────────────────────────────────╯  │ Calls: 1                         │
+╭─ AND ──────────────────────────┴────────────────────────────────╮  │ Plan: 0µs                        │
+│ Terms: body(string): 'rare'                                     │  │ Total: 0µs                       │
+│ Total: 0µs                                                      │  │ 38 rows                      0µs │
+│ Posting Lists: 1                                                │  ╰─────────────────┬────────────────╯
+│ Estimated Matches: 28                                           │  ╭─ probe::Impl<probe::TwoPhase> ───╮
+│ 101 rows                                                    0µs │  │ Filter: Phrase                   │
+╰────────────────────────────────┒┎───────────────────────────────╯  │ Plans: 1                         │
+╭─ PHRASE ───────────────────────┚┖───────────────────────────────╮  │ Calls: 101                       │
+│ Field: body(string)                                             │  │ Timed: 3                         │
+│ Parts:                                                          │  │ 38 rows                      0µs │
+│ Term:york(0, 0); Term:city(1, 1);                               │  ╰──────────────────────────────────╯
+│ Posting Lists: 2                                                │
+│ Estimated Matches: 27,368                                       │
+│ 91,430 rows                                                 0µs │
+╰─────────────────────────────────────────────────────────────────╯
+
+
+query
+EXPLAIN ANALYZE
+SELECT id
+FROM queries_idx
+WHERE body @@ ts_phrase('new york') AND body @@ 'pad'
+ORDER BY bm25(queries_idx.tableoid) DESC
+LIMIT 3;
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TABLE_SCAN ──────────────────────────────────────────────────────────╮
+│ Index: queries_idx                                                    │
+│ Lookup: search                                                        │
+│ Index Filter:                                                         │
+│ ╭─ And ───────────────╮                                               │
+│ ╰──────────┬──────────╯                                               │
+│            ├───────────────────────────────────╮                      │
+│ ╭─ Terms ──┴──────────╮  ╭─ Phrase ────────────┴────────────────────╮ │
+│ │ Field: body(string) │  │ Field: body(string)                      │ │
+│ │ Values: 'pad'       │  │ Parts: Term:new(0, 0); Term:york(1, 1);  │ │
+│ ╰─────────────────────╯  ╰──────────────────────────────────────────╯ │
+│ Score: bm25(k1=1.2, b=0.75)                                           │
+│ Top: 3, optimized                                                     │
+│ Projections: id                                                       │
+│ Fetch: 0µs                                                            │
+│ 3 rows                                                            0µs │
+╰───────────────────────────────────┬───────────────────────────────────╯
+                                    ├────────────────────────────────────────────────────────╮
+╭─ INDEX_PREPARE ───────────────────┴───────────────────────────────────╮  ╭─ INDEX_EXECUTE ─┴────────────────╮
+│ Total: 0µs                                                            │  │ Total: 0µs                       │
+│ Snapshot: 0µs                                                         │  │ 27,935 rows                  0µs │
+│ Segments: 1 of 1                                                      │  ╰─────────────────┬────────────────╯
+│ Stats: 0µs                                                            │  ╭─ top::Walk<lead::BooleanSparse> ─╮
+│ 0 rows                                                            0µs │  │ Plans: 1                         │
+╰───────────────────────────────────┒┎──────────────────────────────────╯  │ Calls: 1                         │
+╭─ AND ─────────────────────────────┚┖──────────────────────────────────╮  │ Plan: 0µs                        │
+│ Terms: body(string): 'pad'                                            │  │ Total: 0µs                       │
+│ Total: 0µs                                                            │  │ 27,935 rows                  0µs │
+│ Posting Lists: 1                                                      │  ╰─────────────────┰────────────────╯
+│ Estimated Matches: 20,583                                             │  ╭─ lead::Impl<lead::TwoPhase> ─────╮
+│ 88,888 rows                                                       0µs │  │ Filter: Phrase                   │
+╰───────────────────────────────────┒┎──────────────────────────────────╯  │ Plans: 1                         │
+╭─ PHRASE ──────────────────────────┚┖──────────────────────────────────╮  │ Calls: 31,429                    │
+│ Field: body(string)                                                   │  │ Timed: 969                       │
+│ Parts: Term:new(0, 0); Term:york(1, 1);                               │  │ 31,428 rows                  0µs │
+│ Posting Lists: 2                                                      │  ╰──────────────────────────────────╯
+│ Estimated Matches: 23,156                                             │
+│ 85,714 rows                                                       0µs │
+╰───────────────────────────────────────────────────────────────────────╯
+
+
+query
+EXPLAIN ANALYZE
+SELECT id
+FROM queries_idx
+WHERE body @@ ts_phrase('new york') AND body @@ 'pad';
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TABLE_SCAN ──────────────────────────────────────────────────────────╮
+│ Index: queries_idx                                                    │
+│ Lookup: search                                                        │
+│ Index Filter:                                                         │
+│ ╭─ And ───────────────╮                                               │
+│ ╰──────────┬──────────╯                                               │
+│            ├───────────────────────────────────╮                      │
+│ ╭─ Terms ──┴──────────╮  ╭─ Phrase ────────────┴────────────────────╮ │
+│ │ Field: body(string) │  │ Field: body(string)                      │ │
+│ │ Values: 'pad'       │  │ Parts: Term:new(0, 0); Term:york(1, 1);  │ │
+│ ╰─────────────────────╯  ╰──────────────────────────────────────────╯ │
+│ Projections: id                                                       │
+│ Fetch: 0µs                                                            │
+│ 27,935 rows                                                       0µs │
+╰───────────────────────────────────┬───────────────────────────────────╯
+                                    ├──────────────────────────────────────────────────────╮
+╭─ INDEX_PREPARE ───────────────────┴───────────────────────────────────╮  ╭─ INDEX_EXECUTE ──────────────╮
+│ Total: 0µs                                                            │  │ Total: 0µs                   │
+│ Snapshot: 0µs                                                         │  │ 27,935 rows              0µs │
+│ Segments: 1 of 1                                                      │  ╰───────────────┬──────────────╯
+│ 0 rows                                                            0µs │  ╭─ docs::BooleanWindow ────────╮
+╰───────────────────────────────────┒┎──────────────────────────────────╯  │ Plans: 1                     │
+╭─ AND ─────────────────────────────┚┖──────────────────────────────────╮  │ Calls: 49                    │
+│ Terms: body(string): 'pad'                                            │  │ Plan: 0µs                    │
+│ Total: 0µs                                                            │  │ Total: 0µs                   │
+│ Posting Lists: 1                                                      │  │ 27,935 rows              0µs │
+│ Estimated Matches: 20,583                                             │  ╰───────────────┰──────────────╯
+│ 88,888 rows                                                       0µs │  ╭─ fill::Impl<fill::WalkDocs> ─╮
+╰───────────────────────────────────┒┎──────────────────────────────────╯  │ Filter: Phrase               │
+╭─ PHRASE ──────────────────────────┚┖──────────────────────────────────╮  │ Plans: 1                     │
+│ Field: body(string)                                                   │  │ Calls: 25                    │
+│ Parts: Term:new(0, 0); Term:york(1, 1);                               │  │ 31,428 rows              0µs │
+│ Posting Lists: 2                                                      │  ╰──────────────────────────────╯
+│ Estimated Matches: 23,156                                             │
+│ 85,714 rows                                                       0µs │
+╰───────────────────────────────────────────────────────────────────────╯
+
+
+query
+EXPLAIN ANALYZE
+SELECT count(*)
+FROM queries_idx
+WHERE (body @@ ts_phrase('new york') AND (body @@ 'city' OR body @@ 'town'))
+   OR (NOT body @@ 'pad' AND body @@ 'other');
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ UNGROUPED_AGGREGATE ──────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Aggregates: count_star()                                                                                                   │
+│ 1 row                                                                                                                  0µs │
+╰──────────────────────────────────────────────────────────────┬─────────────────────────────────────────────────────────────╯
+╭─ TABLE_SCAN ─────────────────────────────────────────────────┴─────────────────────────────────────────────────────────────╮
+│ Index: queries_idx                                                                                                         │
+│ Lookup: search                                                                                                             │
+│ Index Filter:                                                                                                              │
+│ ╭─ Or ─────────────────────────────────────╮                                                                               │
+│ ╰─────────────────────┬────────────────────╯                                                                               │
+│                       ├──────────────────────────────────────────────────────────────╮                                     │
+│ ╭─ And ───────────────┴────────────────────╮                              ╭─ Bool ───┴──────────╮                          │
+│ ╰─────────────────────┬────────────────────╯                              ╰──────────┬──────────╯                          │
+│                       ├────────────────────────────────────╮                         ├────────────────────────╮            │
+│ ╭─ Phrase ────────────┴────────────────────╮  ╭─ Or ───────┴───────────╮  ╭─ Must ───┴──────────╮  ╭─ Must Not ──────────╮ │
+│ │ Field: body(string)                      │  ╰────────────┬───────────╯  ╰──────────┬──────────╯  ╰──────────┬──────────╯ │
+│ │ Parts: Term:new(0, 0); Term:york(1, 1);  │  ╭─ Terms ────┴───────────╮  ╭─ Terms ──┴──────────╮  ╭─ Terms ──┴──────────╮ │
+│ ╰──────────────────────────────────────────╯  │ Field: body(string)    │  │ Field: body(string) │  │ Field: body(string) │ │
+│                                               │ Values: 'city', 'town' │  │ Values: 'other'     │  │ Values: 'pad'       │ │
+│                                               ╰────────────────────────╯  ╰─────────────────────╯  ╰─────────────────────╯ │
+│ Output: row-count only                                                                                                     │
+│ 31,428 rows                                                                                                            0µs │
+╰──────────────────────────────────────────────────────────────┬─────────────────────────────────────────────────────────────╯
+                                                               ├──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+╭─ INDEX_PREPARE ──────────────────────────────────────────────┴─────────────────────────────────────────────────────────────╮                                                                                    ╭─ INDEX_EXECUTE ──────────────╮
+│ Total: 0µs                                                                                                                 │                                                                                    │ Total: 0µs                   │
+│ Snapshot: 0µs                                                                                                              │                                                                                    │ 31,428 rows              0µs │
+│ Segments: 1 of 1                                                                                                           │                                                                                    ╰───────────────┬──────────────╯
+│ 0 rows                                                                                                                 0µs │                                                                                    ╭─ count::BooleanWindow ───────╮
+╰──────────────────────────────────────────────────────────────┬─────────────────────────────────────────────────────────────╯                                                                                    │ Plans: 1                     │
+╭─ OR ─────────────────────────────────────────────────────────┴─────────────────────────────────────────────────────────────╮                                                                                    │ Calls: 2                     │
+│ Total: 0µs                                                                                                                 │                                                                                    │ Plan: 0µs                    │
+│ Estimated Matches: 16,653                                                                                                  │                                                                                    │ Total: 0µs                   │
+│ 0 rows                                                                                                                 0µs │                                                                                    │ 31,428 rows              0µs │
+╰──────────────────────────────────────────────────────────────┬─────────────────────────────────────────────────────────────╯                                                                                    ╰───────────────┬──────────────╯
+                                                               ├────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┰┒                                    ├──────────────────────────────────╮
+╭─ AND ────────────────────────────────────────────────────────┴─────────────────────────────────────────────────────────────╮                                           ╭─ BOOL ───────────┚┖─────────────────╮  ╭─ fill::Impl<fill::WalkDocs> ─╮  ╭─ fill::Impl<fill::BitsetDocs> ─╮
+│ Total: 0µs                                                                                                                 │                                           │ Must Terms: body(string): 'other'   │  │ Filter: And                  │  │ Filter: Bool                   │
+│ Estimated Matches: 12,192                                                                                                  │                                           │ Must Not Terms: body(string): 'pad' │  │ Plans: 1                     │  │ Plans: 1                       │
+│ 0 rows                                                                                                                 0µs │                                           │ Posting Lists: 2                    │  │ Calls: 25                    │  │ Calls: 1                       │
+╰──────────────────────────────────────────────────────────────┬─────────────────────────────────────────────────────────────╯                                           │ Estimated Matches: 5,080            │  │ Total: 0µs                   │  │ 0 rows                     0µs │
+                                                               ┟───────────────────────────────────────────────────────────────────────────────────┒                     │ 134,602 rows                    0µs │  │ 31,428 rows              0µs │  ╰────────────────────────────────╯
+╭─ PHRASE ─────────────────────────────────────────────────────┸─────────────────────────────────────────────────────────────╮  ╭─ OR ─────────────┸──────────────────╮  ╰─────────────────────────────────────╯  ╰───────────────┬──────────────╯
+│ Field: body(string)                                                                                                        │  │ Terms: body(string): 'city', 'town' │                                                           ├────────────────────────────────────╮
+│ Parts: Term:new(0, 0); Term:york(1, 1);                                                                                    │  │ Posting Lists: 2                    │                                           ╭─ lead::Impl<lead::TwoPhase> ─╮  ╭─ probe::Impl<probe::BooleanSparse> ─╮
+│ Posting Lists: 2                                                                                                           │  │ Estimated Matches: 52,653           │                                           │ Filter: Phrase               │  │ Filter: Or                          │
+│ Estimated Matches: 23,156                                                                                                  │  │ 61,818 rows                     0µs │                                           │ Plans: 1                     │  │ Plans: 1                            │
+│ 85,714 rows                                                                                                            0µs │  ╰─────────────────────────────────────╯                                           │ Calls: 31,429                │  │ Calls: 31,428                       │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯                                                                                    │ Timed: 969                   │  │ Timed: 969                          │
+                                                                                                                                                                                                                  │ 31,428 rows              0µs │  │ 31,428 rows                     0µs │
+                                                                                                                                                                                                                  ╰──────────────────────────────╯  ╰─────────────────────────────────────╯
+
+
+query
+EXPLAIN ANALYZE
+SELECT id
+FROM queries_idx
+WHERE year BETWEEN 2005 AND 2010
+  AND (body @@ 'city' OR body @@ ts_phrase('new york'))
+  AND NOT body @@ 'pad';
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TABLE_SCAN ──────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Index: queries_idx                                                                                                        │
+│ Lookup: search                                                                                                            │
+│ Index Filter:                                                                                                             │
+│ ╭─ Bool ──────────────╮                                                                                                   │
+│ ╰──────────┬──────────╯                                                                                                   │
+│            ├─────────────────────────────────────────────────────────────────────────────────────────────────╮            │
+│ ╭─ Must ───┴──────────╮                                                                           ╭─ Must Not ──────────╮ │
+│ ╰──────────┬──────────╯                                                                           ╰──────────┬──────────╯ │
+│            ├───────────────────────────────────────────────────────────────────────╮              ╭─ Terms ──┴──────────╮ │
+│ ╭─ Or ─────┴──────────╮                                                ╭─ Granular Range ──────╮  │ Field: body(string) │ │
+│ ╰──────────┬──────────╯                                                │ Field: year(numeric)  │  │ Values: 'pad'       │ │
+│            ├───────────────────────────────────╮                       │ Range: >=2005, <=2010 │  ╰─────────────────────╯ │
+│ ╭─ Terms ──┴──────────╮  ╭─ Phrase ────────────┴────────────────────╮  ╰───────────────────────╯                          │
+│ │ Field: body(string) │  │ Field: body(string)                      │                                                     │
+│ │ Values: 'city'      │  │ Parts: Term:new(0, 0); Term:york(1, 1);  │                                                     │
+│ ╰─────────────────────╯  ╰──────────────────────────────────────────╯                                                     │
+│ Projections: id                                                                                                           │
+│ Fetch: 0µs                                                                                                                │
+│ 2,223 rows                                                                                                            0µs │
+╰─────────────────────────────────────────────────────────────┬─────────────────────────────────────────────────────────────╯
+                                                              ├──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+╭─ INDEX_PREPARE ─────────────────────────────────────────────┴─────────────────────────────────────────────────────────────╮                                 ╭─ INDEX_EXECUTE ──┴──────────────────╮
+│ Total: 0µs                                                                                                                │                                 │ Total: 0µs                          │
+│ Snapshot: 0µs                                                                                                             │                                 │ 2,223 rows                      0µs │
+│ Segments: 1 of 1                                                                                                          │                                 ╰──────────────────┬──────────────────╯
+│ 0 rows                                                                                                                0µs │                                 ╭─ docs::Walk<lead::BooleanSparse> ───╮
+╰─────────────────────────────────────────────────────────────┒┎────────────────────────────────────────────────────────────╯                                 │ Plans: 1                            │
+╭─ BOOL ──────────────────────────────────────────────────────┚┖────────────────────────────────────────────────────────────╮                                 │ Calls: 383                          │
+│ Must Not Terms: body(string): 'pad'                                                                                       │                                 │ Plan: 0µs                           │
+│ Total: 0µs                                                                                                                │                                 │ Total: 0µs                          │
+│ Posting Lists: 1                                                                                                          │                                 │ 2,223 rows                      0µs │
+│ Estimated Matches: 1,149                                                                                                  │                                 ╰──────────────────┬──────────────────╯
+│ 88,888 rows                                                                                                           0µs │                                                    ├──────────────────────────────────────╮
+╰─────────────────────────────────────────────────────────────┬─────────────────────────────────────────────────────────────╯                                 ╭─ probe::Impl<probe::BooleanSparse> ─╮  ╭─ lead::Impl<lead::BitsetDocs> ─╮
+                                                              ┟──────────────────────────────────────────────────────────────────────────────╮                │ Filter: Or                          │  │ Filter: Granular Range         │
+╭─ OR ────────────────────────────────────────────────────────┸─────────────────────────────────────────────────────────────╮  ╭─ GRANULAR_RANGE ──────────╮  │ Plans: 1                            │  │ Plans: 1                       │
+│ Occur: Must                                                                                                               │  │ Occur: Must               │  │ Calls: 17,665                       │  │ Calls: 18,048                  │
+│ Terms: body(string): 'city'                                                                                               │  │ Field: year(numeric)      │  │ Timed: 564                          │  │ Timed: 577                     │
+│ Total: 0µs                                                                                                                │  │ Range: >=2005, <=2010     │  │ Total: 0µs                          │  │ 18,047 rows                0µs │
+│ Posting Lists: 1                                                                                                          │  │ Posting Lists: 2          │  │ 14,288 rows                     0µs │  ╰────────────────────────────────╯
+│ Estimated Matches: 51,699                                                                                                 │  │ Estimated Matches: 20,003 │  ╰──────────────────┬──────────────────╯
+│ 37,144 rows                                                                                                           0µs │  │ 20,003 rows           0µs │  ╭─ probe::Impl<probe::TwoPhase> ──────╮
+╰─────────────────────────────────────────────────────────────┒┎────────────────────────────────────────────────────────────╯  ╰───────────────────────────╯  │ Filter: Phrase                      │
+╭─ PHRASE ────────────────────────────────────────────────────┚┖────────────────────────────────────────────────────────────╮                                 │ Plans: 1                            │
+│ Field: body(string)                                                                                                       │                                 │ Calls: 9,091                        │
+│ Parts: Term:new(0, 0); Term:york(1, 1);                                                                                   │                                 │ Timed: 293                          │
+│ Posting Lists: 2                                                                                                          │                                 │ 5,714 rows                      0µs │
+│ Estimated Matches: 23,156                                                                                                 │                                 ╰─────────────────────────────────────╯
+│ 85,714 rows                                                                                                           0µs │
+╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+
+query
+EXPLAIN ANALYZE
+SELECT count(*)
+FROM queries_idx
+WHERE body @@ ts_starts_with('ci') AND body @@ ts_levenshtein('tovn', 1);
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ UNGROUPED_AGGREGATE ────────────────────────────╮
+│ Aggregates: count_star()                         │
+│ 1 row                                        0µs │
+╰─────────────────────────┬────────────────────────╯
+╭─ TABLE_SCAN ────────────┴────────────────────────╮
+│ Index: queries_idx                               │
+│ Lookup: search                                   │
+│ Index Filter:                                    │
+│ ╭─ And ───────────────╮                          │
+│ ╰──────────┬──────────╯                          │
+│            ├────────────────────────╮            │
+│ ╭─ Starts With ───────╮  ╭─ Levenshtein ───────╮ │
+│ │ Field: body(string) │  │ Field: body(string) │ │
+│ │ Prefix: ci          │  │ Target: tovn        │ │
+│ ╰─────────────────────╯  │ Max Terms: 50       │ │
+│                          ╰─────────────────────╯ │
+│ Output: row-count only                           │
+│ 3,377 rows                                   0µs │
+╰─────────────────────────┬────────────────────────╯
+                          ├─────────────────────────────────────╮
+╭─ INDEX_PREPARE ─────────┴────────────────────────╮  ╭─ INDEX_EXECUTE ───╮
+│ Total: 0µs                                       │  │ Total: 0µs        │
+│ Snapshot: 0µs                                    │  │ 3,377 rows    0µs │
+│ Segments: 1 of 1                                 │  ╰─────────┬─────────╯
+│ 0 rows                                       0µs │  ╭─ count::Subtract ─╮
+╰─────────────────────────┬────────────────────────╯  │ Plans: 1          │
+╭─ AND ───────────────────┴────────────────────────╮  │ Calls: 2          │
+│ Total: 0µs                                       │  │ Plan: 0µs         │
+│ Estimated Matches: 9,165                         │  │ 3,377 rows    0µs │
+│ 0 rows                                       0µs │  ╰───────────────────╯
+╰─────────────────────────┰┰───────────────────────╯
+                          ┃┠────────────────────────────────────────┰┒
+╭─ STARTS_WITH ───────────┚┖───────────────────────╮  ╭─ LEVENSHTEIN ┖────────────╮
+│ Field: body(string)                              │  │ Field: body(string)       │
+│ Prefix: ci                                       │  │ Target: tovn              │
+│ Posting Lists: 1                                 │  │ Max Terms: 50             │
+│ Estimated Matches: 37,144                        │  │ Posting Lists: 1          │
+│ 37,144 rows                                  0µs │  │ Estimated Matches: 24,674 │
+╰──────────────────────────────────────────────────╯  │ 24,674 rows           0µs │
+                                                      ╰───────────────────────────╯
+
+
+query
+EXPLAIN ANALYZE
+SELECT count(*)
+FROM queries_idx
+WHERE body @@ ts_ngram('new york city', 0.5);
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ UNGROUPED_AGGREGATE ──────╮
+│ Aggregates: count_star()   │
+│ 1 row                  0µs │
+╰──────────────┰─────────────╯
+╭─ TABLE_SCAN ─┸─────────────╮
+│ Index: queries_idx         │
+│ Lookup: search             │
+│ Index Filter:              │
+│ ╭─ NGram Similarity ──╮    │
+│ │ Field: body(string) │    │
+│ │ NGrams: newyorkcity │    │
+│ │ Threshold: 0.5      │    │
+│ ╰─────────────────────╯    │
+│ Output: row-count only     │
+│ 54,286 rows            0µs │
+╰──────────────┬─────────────╯
+               ├────────────────────────────────┒
+╭─ INDEX_PREPARE ────────────╮  ╭─ INDEX_EXECUTE ───────────────╮
+│ Total: 0µs                 │  │ Total: 0µs                    │
+│ Snapshot: 0µs              │  │ 54,286 rows               0µs │
+│ Segments: 1 of 1           │  ╰───────────────┰───────────────╯
+│ 0 rows                 0µs │  ╭─ count::Walk<lead::TwoPhase> ─╮
+╰──────────────┒┎────────────╯  │ Plans: 1                      │
+╭─ NGRAM_SIMILARITY ─────────╮  │ Calls: 2                      │
+│ Field: body(string)        │  │ Plan: 0µs                     │
+│ NGrams: newyorkcity        │  │ 54,286 rows               0µs │
+│ Threshold: 0.5             │  ╰───────────────────────────────╯
+│ Estimated Matches: 100,000 │
+│ 100,000 rows           0µs │
+╰────────────────────────────╯
+
+
+query
+EXPLAIN ANALYZE
+SELECT count(*)
+FROM queries_idx
+WHERE body @@ ts_phrase('new city')::slop(1);
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ UNGROUPED_AGGREGATE ────────────────────────╮
+│ Aggregates: count_star()                     │
+│ 1 row                                    0µs │
+╰───────────────────────┬──────────────────────╯
+╭─ TABLE_SCAN ──────────┴──────────────────────╮
+│ Index: queries_idx                           │
+│ Lookup: search                               │
+│ Index Filter:                                │
+│ ╭─ Phrase ─────────────────────────────────╮ │
+│ │ Field: body(string)                      │ │
+│ │ Parts: Term:new(0, 0); Term:city(1, 1);  │ │
+│ │ Slop: 1                                  │ │
+│ ╰──────────────────────────────────────────╯ │
+│ Output: row-count only                       │
+│ 14,286 rows                              0µs │
+╰───────────────────────┬──────────────────────╯
+                        ├─────────────────────────────────────────╮
+╭─ INDEX_PREPARE ───────┴──────────────────────╮  ╭─ INDEX_EXECUTE ───────────────╮
+│ Total: 0µs                                   │  │ Total: 0µs                    │
+│ Snapshot: 0µs                                │  │ 14,286 rows               0µs │
+│ Segments: 1 of 1                             │  ╰───────────────┬───────────────╯
+│ 0 rows                                   0µs │  ╭─ count::Walk<lead::TwoPhase> ─╮
+╰───────────────────────┒┎─────────────────────╯  │ Plans: 1                      │
+╭─ PHRASE ──────────────┚┖─────────────────────╮  │ Calls: 2                      │
+│ Field: body(string)                          │  │ Plan: 0µs                     │
+│ Parts: Term:new(0, 0); Term:city(1, 1);      │  │ 14,286 rows               0µs │
+│ Slop: 1                                      │  ╰───────────────────────────────╯
+│ Posting Lists: 2                             │
+│ Estimated Matches: 19,155                    │
+│ 68,572 rows                              0µs │
+╰──────────────────────────────────────────────╯
+
+
+query
+EXPLAIN ANALYZE
+SELECT id
+FROM queries_idx
+WHERE body @@ 'city' OR body @@ 'town'
+ORDER BY tfidf(queries_idx.tableoid) DESC
+LIMIT 3;
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TABLE_SCAN ────────────────────────╮
+│ Index: queries_idx                  │
+│ Lookup: search                      │
+│ Index Filter:                       │
+│ ╭─ Or ───────────────────╮          │
+│ ╰────────────┬───────────╯          │
+│ ╭─ Terms ────┴───────────╮          │
+│ │ Field: body(string)    │          │
+│ │ Values: 'city', 'town' │          │
+│ ╰────────────────────────╯          │
+│ Score: tfidf(with_norms=false)      │
+│ Top: 3                              │
+│ Projections: id                     │
+│ Fetch: 0µs                          │
+│ 3 rows                          0µs │
+╰──────────────────┬──────────────────╯
+                   ├─────────────────────────────────┰┒
+╭─ INDEX_PREPARE ──┴──────────────────╮  ╭─ INDEX_EXECUTE ──────╮
+│ Total: 0µs                          │  │ Total: 0µs           │
+│ Snapshot: 0µs                       │  │ 58,441 rows      0µs │
+│ Segments: 1 of 1                    │  ╰───────────┒┎─────────╯
+│ Stats: 0µs                          │  ╭─ top::BooleanWindow ─╮
+│ 0 rows                          0µs │  │ Plans: 1             │
+╰──────────────────┒┎─────────────────╯  │ Calls: 1             │
+╭─ OR ─────────────┚┖─────────────────╮  │ Plan: 0µs            │
+│ Terms: body(string): 'city', 'town' │  │ 58,441 rows      0µs │
+│ Posting Lists: 2                    │  ╰──────────────────────╯
+│ Estimated Matches: 52,653           │
+│ 61,818 rows                     0µs │
+╰─────────────────────────────────────╯
+
+
+query
+EXPLAIN ANALYZE
+SELECT id, indri_dirichlet(queries_idx.tableoid) AS score
+FROM queries_idx
+WHERE body @@ 'rare' AND body @@ ts_phrase('york city');
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TABLE_SCAN ────────────────────────────────────────────────────╮
+│ Index: queries_idx                                              │
+│ Lookup: search                                                  │
+│ Index Filter:                                                   │
+│ ╭─ And ───────────────╮                                         │
+│ ╰──────────┬──────────╯                                         │
+│            ├────────────────────────────────╮                   │
+│ ╭─ Terms ──┴──────────╮  ╭─ Phrase ─────────┴─────────────────╮ │
+│ │ Field: body(string) │  │ Field: body(string)                │ │
+│ │ Values: 'rare'      │  │ Parts:                             │ │
+│ ╰─────────────────────╯  │ Term:york(0, 0); Term:city(1, 1);  │ │
+│                          ╰────────────────────────────────────╯ │
+│ Score: indri_dirichlet(mu=2000)                                 │
+│ Projections: id, sdb_inverted_index_score                       │
+│ Fetch: 0µs                                                      │
+│ 38 rows                                                     0µs │
+╰────────────────────────────────┬────────────────────────────────╯
+                                 ├─────────────────────────────────────────────────────╮
+╭─ INDEX_PREPARE ────────────────┴────────────────────────────────╮  ╭─ INDEX_EXECUTE ─┴─────────────────╮
+│ Total: 0µs                                                      │  │ Total: 0µs                        │
+│ Snapshot: 0µs                                                   │  │ 38 rows                       0µs │
+│ Segments: 1 of 1                                                │  ╰─────────────────┬─────────────────╯
+│ Stats: 0µs                                                      │  ╭─ hits::Walk<lead::BooleanSparse> ─╮
+│ 0 rows                                                      0µs │  │ Plans: 1                          │
+╰────────────────────────────────┬────────────────────────────────╯  │ Calls: 81                         │
+╭─ AND ──────────────────────────┴────────────────────────────────╮  │ Plan: 0µs                         │
+│ Terms: body(string): 'rare'                                     │  │ Total: 0µs                        │
+│ Total: 0µs                                                      │  │ 38 rows                       0µs │
+│ Posting Lists: 1                                                │  ╰─────────────────┬─────────────────╯
+│ Estimated Matches: 28                                           │  ╭─ probe::Impl<probe::TwoPhase> ────╮
+│ 101 rows                                                    0µs │  │ Filter: Phrase                    │
+╰────────────────────────────────┒┎───────────────────────────────╯  │ Plans: 1                          │
+╭─ PHRASE ───────────────────────┚┖───────────────────────────────╮  │ Calls: 101                        │
+│ Field: body(string)                                             │  │ Timed: 3                          │
+│ Parts:                                                          │  │ 38 rows                       0µs │
+│ Term:york(0, 0); Term:city(1, 1);                               │  ╰───────────────────────────────────╯
+│ Posting Lists: 2                                                │
+│ Estimated Matches: 27,368                                       │
+│ 91,430 rows                                                 0µs │
+╰─────────────────────────────────────────────────────────────────╯
+
+
+query
+EXPLAIN ANALYZE
+SELECT id
+FROM queries_idx
+WHERE body @@ 'city'
+   OR (body @@ 'town')::boost(3)
+   OR (body @@ 'rare')::score('constant(1)')
+   OR (body @@ 'words')::score(NULL)
+ORDER BY bm25(queries_idx.tableoid) DESC
+LIMIT 3;
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TABLE_SCAN ─────────────────────────────────────────────────────────────────────╮
+│ Index: queries_idx                                                               │
+│ Lookup: search                                                                   │
+│ Index Filter:                                                                    │
+│ ╭─ Or ───────────────────────────────────────────────────────────────╮           │
+│ ╰──────────────────────────────────┬─────────────────────────────────╯           │
+│ ╭─ Terms ──────────────────────────┴─────────────────────────────────╮           │
+│ │ Field: body(string)                                                │           │
+│ │ Values:                                                            │           │
+│ │ 'city', 'rare' [constant(value=1)], 'town' (3), 'words' [unscored] │           │
+│ ╰────────────────────────────────────────────────────────────────────╯           │
+│ Score: bm25(k1=1.2, b=0.75)                                                      │
+│ Top: 3, optimized                                                                │
+│ Projections: id                                                                  │
+│ Fetch: 0µs                                                                       │
+│ 3 rows                                                                       0µs │
+╰─────────────────────────────────────────┬────────────────────────────────────────╯
+                                          ├───────────────────────────────────────────────────────┰┒
+╭─ INDEX_PREPARE ─────────────────────────┴────────────────────────────────────────╮  ╭─ INDEX_EXECUTE ──────╮
+│ Total: 0µs                                                                       │  │ Total: 0µs           │
+│ Snapshot: 0µs                                                                    │  │ 100,000 rows     0µs │
+│ Segments: 1 of 1                                                                 │  ╰───────────┒┎─────────╯
+│ Stats: 0µs                                                                       │  ╭─ top::BooleanWindow ─╮
+│ 0 rows                                                                       0µs │  │ Plans: 1             │
+╰─────────────────────────────────────────┒┎───────────────────────────────────────╯  │ Calls: 1             │
+╭─ OR ────────────────────────────────────┚┖───────────────────────────────────────╮  │ Plan: 0µs            │
+│ Terms:                                                                           │  │ 100,000 rows     0µs │
+│ body(string): 'city', 'rare' [constant(value=1)], 'town' (3), 'words' [unscored] │  ╰──────────────────────╯
+│ Posting Lists: 4                                                                 │
+│ Estimated Matches: 74,323                                                        │
+│ 107,633 rows                                                                 0µs │
+╰──────────────────────────────────────────────────────────────────────────────────╯
+
+
+query
+EXPLAIN ANALYZE
+SELECT id
+FROM queries_idx
+WHERE (body @@ 'city' OR body @@ 'town')::merge('max')
+ORDER BY bm25(queries_idx.tableoid) DESC
+LIMIT 3;
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TABLE_SCAN ────────────────────────╮
+│ Index: queries_idx                  │
+│ Lookup: search                      │
+│ Index Filter:                       │
+│ ╭─ Or ───────────────────╮          │
+│ │ Merge: max             │          │
+│ ╰────────────┬───────────╯          │
+│ ╭─ Terms ────┴───────────╮          │
+│ │ Field: body(string)    │          │
+│ │ Values: 'city', 'town' │          │
+│ ╰────────────────────────╯          │
+│ Score: bm25(k1=1.2, b=0.75)         │
+│ Top: 3, optimized                   │
+│ Projections: id                     │
+│ Fetch: 0µs                          │
+│ 3 rows                          0µs │
+╰──────────────────┬──────────────────╯
+                   ├─────────────────────────────────┰┒
+╭─ INDEX_PREPARE ──┴──────────────────╮  ╭─ INDEX_EXECUTE ──────╮
+│ Total: 0µs                          │  │ Total: 0µs           │
+│ Snapshot: 0µs                       │  │ 58,441 rows      0µs │
+│ Segments: 1 of 1                    │  ╰───────────┒┎─────────╯
+│ Stats: 0µs                          │  ╭─ top::BooleanWindow ─╮
+│ 0 rows                          0µs │  │ Plans: 1             │
+╰──────────────────┒┎─────────────────╯  │ Calls: 1             │
+╭─ OR ─────────────┚┖─────────────────╮  │ Plan: 0µs            │
+│ Merge: max                          │  │ 58,441 rows      0µs │
+│ Terms: body(string): 'city', 'town' │  ╰──────────────────────╯
+│ Posting Lists: 2                    │
+│ Estimated Matches: 52,653           │
+│ 61,818 rows                     0µs │
+╰─────────────────────────────────────╯
+
+
+query
+EXPLAIN ANALYZE
+SELECT id, ts_offsets(body) AS offsets
+FROM queries_idx
+WHERE body @@ ts_phrase('new york') AND body @@ 'rare';
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TABLE_SCAN ──────────────────────────────────────────────────────────╮
+│ Index: queries_idx                                                    │
+│ Lookup: search                                                        │
+│ Index Filter:                                                         │
+│ ╭─ And ───────────────╮                                               │
+│ ╰──────────┬──────────╯                                               │
+│            ├───────────────────────────────────╮                      │
+│ ╭─ Terms ──┴──────────╮  ╭─ Phrase ────────────┴────────────────────╮ │
+│ │ Field: body(string) │  │ Field: body(string)                      │ │
+│ │ Values: 'rare'      │  │ Parts: Term:new(0, 0); Term:york(1, 1);  │ │
+│ ╰─────────────────────╯  ╰──────────────────────────────────────────╯ │
+│ Offsets: body                                                         │
+│ Projections:                                                          │
+│ id, sdb_inverted_index_offsets$body                                   │
+│ Fetch: 0µs                                                            │
+│ 33 rows                                                           0µs │
+╰───────────────────────────────────┬───────────────────────────────────╯
+                                    ├────────────────────────────────────────────────────────╮
+╭─ INDEX_PREPARE ───────────────────┴───────────────────────────────────╮  ╭─ INDEX_EXECUTE ─┴─────────────────╮
+│ Total: 0µs                                                            │  │ Total: 0µs                        │
+│ Snapshot: 0µs                                                         │  │ 33 rows                       0µs │
+│ Segments: 1 of 1                                                      │  ╰─────────────────┬─────────────────╯
+│ 0 rows                                                            0µs │  ╭─ docs::Walk<lead::BooleanSparse> ─╮
+╰───────────────────────────────────┬───────────────────────────────────╯  │ Plans: 1                          │
+╭─ AND ─────────────────────────────┴───────────────────────────────────╮  │ Calls: 79                         │
+│ Terms: body(string): 'rare'                                           │  │ Plan: 0µs                         │
+│ Total: 0µs                                                            │  │ Total: 0µs                        │
+│ Posting Lists: 1                                                      │  │ 33 rows                       0µs │
+│ Estimated Matches: 23                                                 │  ╰─────────────────┬─────────────────╯
+│ 101 rows                                                          0µs │  ╭─ probe::Impl<probe::TwoPhase> ────╮
+╰───────────────────────────────────┒┎──────────────────────────────────╯  │ Filter: Phrase                    │
+╭─ PHRASE ──────────────────────────┚┖──────────────────────────────────╮  │ Plans: 1                          │
+│ Field: body(string)                                                   │  │ Calls: 101                        │
+│ Parts: Term:new(0, 0); Term:york(1, 1);                               │  │ Timed: 3                          │
+│ Posting Lists: 2                                                      │  │ 33 rows                       0µs │
+│ Estimated Matches: 23,156                                             │  ╰───────────────────────────────────╯
+│ 85,714 rows                                                       0µs │
+╰───────────────────────────────────────────────────────────────────────╯
+
+
+query
+EXPLAIN ANALYZE
+SELECT id, ts_highlight(body) AS highlighted
+FROM queries_idx
+WHERE body @@ 'rare' AND body @@ 'city';
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ PROJECTION ────────────────────────╮
+│ Projections: id, highlighted        │
+│ 38 rows                         0µs │
+╰──────────────────┬──────────────────╯
+╭─ TABLE_SCAN ─────┴──────────────────╮
+│ Index: queries_idx                  │
+│ Lookup: search                      │
+│ Index Filter:                       │
+│ ╭─ And ──────────────────╮          │
+│ ╰────────────┬───────────╯          │
+│ ╭─ Terms ────┴───────────╮          │
+│ │ Field: body(string)    │          │
+│ │ Values: 'city', 'rare' │          │
+│ ╰────────────────────────╯          │
+│ Offsets: body                       │
+│ Projections:                        │
+│ body, id,                           │
+│ sdb_inverted_index_offsets$body     │
+│ Fetch: 0µs                          │
+│ 38 rows                         0µs │
+╰──────────────────┬──────────────────╯
+                   ├─────────────────────────────────╮
+╭─ INDEX_PREPARE ──┴──────────────────╮  ╭─ INDEX_EXECUTE ───────╮
+│ Total: 0µs                          │  │ Total: 0µs            │
+│ Snapshot: 0µs                       │  │ 38 rows           0µs │
+│ Segments: 1 of 1                    │  ╰───────────┬───────────╯
+│ 0 rows                          0µs │  ╭─ docs::BooleanWindow ─╮
+╰──────────────────┒┎─────────────────╯  │ Plans: 1              │
+╭─ AND ────────────┚┖─────────────────╮  │ Calls: 81             │
+│ Terms: body(string): 'city', 'rare' │  │ Plan: 0µs             │
+│ Posting Lists: 2                    │  │ 38 rows           0µs │
+│ Estimated Matches: 38               │  ╰───────────────────────╯
+│ 37,245 rows                     0µs │
+╰─────────────────────────────────────╯
+
+
+statement ok
+RESET sdb_index_profile_nodes;
+
+
+statement ok
+RESET threads;

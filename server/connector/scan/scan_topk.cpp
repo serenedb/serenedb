@@ -51,21 +51,27 @@ void CollectUnit(ScanGlobalState& g, TopKLocalState& l) {
     auto* table = BeginVerify(l.col_verify, seg, g, l);
     SDB_ENSURE(g.scorer_obj != nullptr,
                "a scan that ranks by score has a scorer to rank with");
-    auto plan = irs::top::MakeRoot(
-      seg_query,
-      {.scorer = *g.scorer_obj,
-       .fetcher = l.score_fetcher,
-       .table = table,
-       .prune = true,
-       .bounds = g.prune_scorer != nullptr && g.stats_scorer == g.prune_scorer,
-       .k = static_cast<uint32_t>(l.hit_slice.size()),
-       .span = g.UnitSpan(unit)});
-    EnsurePlanned(plan != nullptr);
+    auto plan = Planned(l.profile, [&] {
+      return irs::top::MakeRoot(seg_query,
+                                {.scorer = *g.scorer_obj,
+                                 .fetcher = l.score_fetcher,
+                                 .table = table,
+                                 .prune = true,
+                                 .bounds = g.prune_scorer != nullptr &&
+                                           g.stats_scorer == g.prune_scorer,
+                                 .k = static_cast<uint32_t>(l.hit_slice.size()),
+                                 .span = g.UnitSpan(unit)});
+    });
     l.root = std::move(plan);
     l.root_seg = unit.seg;
   }
-  irs::utils::downCast<irs::top::Root>(l.root.get())
-    ->Run(range.begin, range.end, collector);
+  Ran(
+    l.profile,
+    [&] {
+      irs::utils::downCast<irs::top::Root>(l.root.get())
+        ->Run(range.begin, range.end, collector);
+    },
+    [&] { return collector.TotalMatches(); });
   l.root_end = range.end;
 }
 
@@ -269,6 +275,7 @@ class FetchTask final : public duckdb::BaseExecutorTask {
 
 void FetchAnswer(duckdb::ClientContext& ctx, ScanGlobalState& g,
                  RankedLocalState& l) {
+  const ScanTimer fetch{l.profile, &ScanLocalProfile::fetch_ticks};
   const auto fetchers = std::min<size_t>(g.topk.fetch_units.size(), g.workers);
   if (fetchers < 2) {
     FetchUnits(ctx, g, l, l.fetch_tmp);
@@ -302,7 +309,9 @@ void MaterializeHits(duckdb::ClientContext& ctx, const ScanGlobalState& g,
                      std::vector<irs::ScoreDoc>& row_hits) {
   batch.Reset();
   CopyFetched(g, fetched, batch, hits.size(), 0);
+  ScanTimer lookup{l.profile, &ScanLocalProfile::lookup_ticks};
   const auto rows = l.index_source->Materialize(ctx, pk, hits.size(), batch);
+  lookup.Filtered(hits.size() - rows);
   const auto survivors = l.index_source->Survivors();
   for (duckdb::idx_t i = 0; i < rows; ++i) {
     row_hits.push_back(hits[survivors[i]]);

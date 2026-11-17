@@ -21,18 +21,21 @@
 #include "connector/scan/scan_function.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 
 #include <cmath>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
+#include <duckdb/common/time_point.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/execution/operator/helper/physical_limit.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/main/profiler/profiling_node.hpp>
+#include <duckdb/main/query_profiler.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/planner/bound_result_modifier.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
@@ -66,7 +69,16 @@ bool HasNested(const irs::Filter& filter) {
   return nested;
 }
 
+constexpr std::string_view kIndexProfileMetric = "operator.index_profile";
+
 void ClassifySegments(ScanGlobalState& g) {
+  const auto start = g.profile ? duckdb::TimePoint::Now() : 0;
+  absl::Cleanup classified = [&] {
+    if (g.profile) {
+      g.profile->SetSegments(ElapsedTicks(start), g.segment_order.size(),
+                             g.total_segments);
+    }
+  };
   g.segment_order.clear();
   g.segment_order.reserve(g.total_segments);
   if (g.col_filters.empty()) {
@@ -85,6 +97,14 @@ void ClassifySegments(ScanGlobalState& g) {
       g.segment_order.push_back(si);
     }
   }
+}
+
+void StartProfile(ScanGlobalState& g, const ScanBindData& bind,
+                  uint64_t snapshot_ticks) {
+  g.profile = std::make_unique<ScanProfile>(
+    g.filter ? FilterBoxes(bind, *g.filter) : std::vector<irs::FilterBox>{},
+    GetBoolSetting(*g.client_context, "sdb_index_profile_nodes"),
+    snapshot_ticks);
 }
 
 std::optional<uint64_t> EvaluateLimitValue(duckdb::ClientContext& context,
@@ -211,6 +231,13 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
   auto& bind_data = input.bind_data->Cast<ScanBindData>();
   auto state = duckdb::make_uniq<ScanGlobalState>();
+  const bool profiled =
+    duckdb::QueryProfiler::Get(context).MetricIsTracked(kIndexProfileMetric);
+  absl::Cleanup finish_init = [g = state.get()] {
+    if (g->profile) {
+      g->profile->FinishInit(g->workers);
+    }
+  };
 
   InitScanState(*state, &context, bind_data, input);
 
@@ -222,7 +249,9 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
               "sub-query"));
   }
   state->scan = &ss;
+  const auto snapshot_start = profiled ? duckdb::TimePoint::Now() : 0;
   AcquireScanSnapshot(*state, context, ss);
+  const auto snapshot_ticks = profiled ? ElapsedTicks(snapshot_start) : 0;
   if (ss.score.text && ss.relation.kind == ScanEntryKind::SearchTable &&
       !state->ClaimedWhere()) {
     THROW_SQL_ERROR(
@@ -260,6 +289,9 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
     }
     if (ss.search.filter) {
       state->filter = ss.search.filter.get();
+    }
+    if (profiled) {
+      StartProfile(*state, bind_data, snapshot_ticks);
     }
     state->queries.resize(state->total_segments);
     const bool seeks_one_term =
@@ -310,6 +342,9 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
     state->filter = state->owned_filter.get();
   } else {
     state->filter = where ? where.get() : &MatchAllFilter();
+  }
+  if (profiled) {
+    StartProfile(*state, bind_data, snapshot_ticks);
   }
   state->queries.resize(state->total_segments);
 
@@ -426,7 +461,9 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> IResearchScanInitLocal(
       break;
     }
   }
-  result->Cast<ScanLocalState>().worker = worker;
+  auto& local = result->Cast<ScanLocalState>();
+  local.worker = worker;
+  local.profile.enabled = g.profile != nullptr;
   return result;
 }
 
@@ -477,9 +514,16 @@ void IResearchScanFunction(duckdb::ClientContext& context,
 }
 
 void IResearchScanGetMetrics(duckdb::TableFunctionGetMetricsInput& input) {
-  const auto& l = input.local_state->Cast<ScanLocalState>();
+  auto& l = input.local_state->Cast<ScanLocalState>();
   input.operator_metrics.rows_scanned = l.produced_rows;
   input.operator_metrics.row_groups_scanned = l.rg_units;
+  auto& g = input.global_state->Cast<ScanGlobalState>();
+  if (!g.profile) {
+    return;
+  }
+  l.ReleasePlans();
+  g.profile->Report(l.worker, std::exchange(l.profile, {}),
+                    input.operator_metrics);
 }
 
 double IResearchScanProgress(duckdb::ClientContext&,
@@ -738,6 +782,13 @@ duckdb::TableFunction CreateIResearchScanFunction() {
 void RegisterIResearchScanFunction(duckdb::DatabaseInstance& db) {
   duckdb::ExtensionLoader loader(db, "serenedb");
   loader.RegisterFunction(CreateIResearchScanFunction());
+  loader.RegisterMetric({
+    .name = std::string{kIndexProfileMetric},
+    .metric_type = "map",
+    .description = "Time an inverted index scan spends preparing the index "
+                   "and running its execution plans",
+    .unit = "",
+  });
 }
 
 }  // namespace sdb::connector

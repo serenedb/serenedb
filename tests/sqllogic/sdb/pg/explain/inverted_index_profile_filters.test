@@ -1,0 +1,663 @@
+statement ok
+SET profiling_renderer_settings = {'deterministic': true};
+
+
+statement ok
+SET threads = 1;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY filters_kw AS keyword();
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY filters_ngrams AS generate_wildcard_ngrams(keyword(), 3);
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY filters_shapes AS encode_geojson();
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY filters_points AS encode_geojson(coding := 's2point');
+
+
+statement ok
+CREATE TABLE filters_msgs (id INTEGER PRIMARY KEY, msg VARCHAR, code VARCHAR, n INTEGER);
+
+
+statement ok
+INSERT INTO filters_msgs
+SELECT i,
+       'user-' || (i % 100) || '-' || CASE WHEN i % 3 = 0 THEN 'abc' ELSE 'xyz' END,
+       'code' || lpad((i % 1000)::VARCHAR, 4, '0'),
+       i
+FROM range(0, 20000) t(i);
+
+
+statement ok
+CREATE INDEX filters_kw_idx ON filters_msgs USING inverted (id, msg filters_kw, code filters_kw, n);
+
+
+statement ok
+CREATE INDEX filters_ngrams_idx ON filters_msgs USING inverted (id, msg filters_ngrams);
+
+
+statement ok
+CREATE TABLE filters_nets (pk INTEGER PRIMARY KEY, net CIDR, ip INET);
+
+
+statement ok
+INSERT INTO filters_nets
+SELECT i,
+       ('10.' || (i % 256) || '.0.0/16')::CIDR,
+       ('10.' || (i % 256) || '.' || (i % 200) || '.1')::INET
+FROM range(0, 5000) t(i);
+
+
+statement ok
+CREATE INDEX filters_nets_idx ON filters_nets USING inverted (pk, net, ip);
+
+
+statement ok
+CREATE TABLE filters_places (id INTEGER PRIMARY KEY, geo GEOMETRY('OGC:CRS84'), pt JSON);
+
+
+statement ok
+INSERT INTO filters_places
+SELECT i,
+       ('POINT(' || (37 + (i % 100) / 100.0) || ' ' || (55 + (i // 100) / 100.0) || ')')::GEOMETRY('OGC:CRS84'),
+       ('{"type":"Point","coordinates":[' || (37 + (i % 100) / 100.0) || ',' || (55 + (i // 100) / 100.0) || ']}')::JSON
+FROM range(0, 5000) t(i);
+
+
+statement ok
+CREATE INDEX filters_places_idx ON filters_places USING inverted (id, geo filters_shapes, pt filters_points);
+
+
+statement ok
+SET sdb_index_profile_nodes = true;
+
+
+query
+EXPLAIN ANALYZE
+SELECT count(*)
+FROM filters_kw_idx
+WHERE msg LIKE '%-abc';
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ UNGROUPED_AGGREGATE ────╮
+│ Aggregates: count_star() │
+│ 1 row                0µs │
+╰─────────────┒┎───────────╯
+╭─ TABLE_SCAN ┚┖───────────╮
+│ Index: filters_kw_idx    │
+│ Lookup: search           │
+│ Index Filter:            │
+│ ╭─ Automaton ────────╮   │
+│ │ Field: msg(string) │   │
+│ │ Pattern: %-abc     │   │
+│ ╰────────────────────╯   │
+│ Output: row-count only   │
+│ 6,667 rows           0µs │
+╰─────────────┬────────────╯
+              ├────────────────────────────┰┒
+╭─ INDEX_PREPARE ──────────╮  ╭─ INDEX_EXECUTE ────────╮
+│ Total: 0µs               │  │ Total: 0µs             │
+│ Snapshot: 0µs            │  │ 6,667 rows         0µs │
+│ Segments: 1 of 1         │  ╰────────────┒┎──────────╯
+│ 0 rows               0µs │  ╭─ count::BooleanBitset ─╮
+╰─────────────┒┎───────────╯  │ Plans: 1               │
+╭─ AUTOMATON ─┚┖───────────╮  │ Calls: 2               │
+│ Field: msg(string)       │  │ Plan: 0µs              │
+│ Pattern: %-abc           │  │ 6,667 rows         0µs │
+│ Posting Lists: 100       │  ╰────────────────────────╯
+│ Estimated Matches: 6,667 │
+│ 6,667 rows           0µs │
+╰──────────────────────────╯
+
+
+query
+EXPLAIN ANALYZE
+SELECT count(*)
+FROM filters_kw_idx
+WHERE msg @@ ts_regexp('user-1[0-9]-abc');
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ UNGROUPED_AGGREGATE ────────╮
+│ Aggregates: count_star()     │
+│ 1 row                    0µs │
+╰───────────────┒┎─────────────╯
+╭─ TABLE_SCAN ──┚┖─────────────╮
+│ Index: filters_kw_idx        │
+│ Lookup: search               │
+│ Index Filter:                │
+│ ╭─ Automaton ──────────────╮ │
+│ │ Field: msg(string)       │ │
+│ │ Pattern: user-1[0-9]-abc │ │
+│ ╰──────────────────────────╯ │
+│ Output: row-count only       │
+│ 666 rows                 0µs │
+╰───────────────┬──────────────╯
+                ├──────────────────────────────┰┒
+╭─ INDEX_PREPARE ──────────────╮  ╭─ INDEX_EXECUTE ────────╮
+│ Total: 0µs                   │  │ Total: 0µs             │
+│ Snapshot: 0µs                │  │ 666 rows           0µs │
+│ Segments: 1 of 1             │  ╰────────────┒┎──────────╯
+│ 0 rows                   0µs │  ╭─ count::BooleanBitset ─╮
+╰───────────────┒┎─────────────╯  │ Plans: 1               │
+╭─ AUTOMATON ───┚┖─────────────╮  │ Calls: 2               │
+│ Field: msg(string)           │  │ Plan: 0µs              │
+│ Pattern: user-1[0-9]-abc     │  │ 666 rows           0µs │
+│ Posting Lists: 10            │  ╰────────────────────────╯
+│ Estimated Matches: 666       │
+│ 666 rows                 0µs │
+╰──────────────────────────────╯
+
+
+query
+EXPLAIN ANALYZE
+SELECT count(*)
+FROM filters_ngrams_idx
+WHERE msg @@ ts_like('user-%-abc');
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ UNGROUPED_AGGREGATE ───────────────────╮
+│ Aggregates: count_star()                │
+│ 1 row                               0µs │
+╰────────────────────┰────────────────────╯
+╭─ TABLE_SCAN ───────┸────────────────────╮
+│ Index: filters_ngrams_idx               │
+│ Lookup: search                          │
+│ Index Filter:                           │
+│ ╭─ Wildcard NGram ────────────────────╮ │
+│ │ Field: msg(string)                  │ │
+│ │ Pattern: (?s)\\Auser-.*-abc\\z        │ │
+│ │ Syntax: perl                        │ │
+│ │ Has Pos: false                      │ │
+│ │ Query: And("\\xffuser-", "-abc\\xff") │ │
+│ │ Verify: false                       │ │
+│ ╰─────────────────────────────────────╯ │
+│ Table Filter:                           │
+│ ╭─ Wildcard NGram ────────────────────╮ │
+│ │ Field: msg(string)                  │ │
+│ │ Pattern: (?s)\\Auser-.*-abc\\z        │ │
+│ │ Syntax: perl                        │ │
+│ │ Has Pos: false                      │ │
+│ │ Query: And("\\xffuser-", "-abc\\xff") │ │
+│ │ Verify: table filter                │ │
+│ ╰─────────────────────────────────────╯ │
+│ Output: row-count only                  │
+│ 6,667 rows                          0µs │
+╰────────────────────┬────────────────────╯
+                     ├────────────────────────────────────┒
+╭─ INDEX_PREPARE ────┴────────────────────╮  ╭─ INDEX_EXECUTE ────────╮
+│ Total: 0µs                              │  │ Total: 0µs             │
+│ Snapshot: 0µs                           │  │ 6,667 rows         0µs │
+│ Segments: 1 of 1                        │  ╰────────────┰───────────╯
+│ 0 rows                              0µs │  ╭─ count::BooleanWindow ─╮
+╰────────────────────┒┎───────────────────╯  │ Plans: 1               │
+╭─ WILDCARD_NGRAM ───┚┖───────────────────╮  │ Calls: 2               │
+│ Field: msg(string)                      │  │ Plan: 0µs              │
+│ Pattern: (?s)\\Auser-.*-abc\\z            │  │ 6,667 rows         0µs │
+│ Syntax: perl                            │  ╰────────────────────────╯
+│ Has Pos: false                          │
+│ Query: And("\\xffuser-", "-abc\\xff")     │
+│ Verify: false                           │
+│ Estimated Matches: 741                  │
+│ 20,001 rows                         0µs │
+╰─────────────────────────────────────────╯
+
+
+query
+EXPLAIN ANALYZE
+SELECT count(*)
+FROM filters_kw_idx
+WHERE code @@ ts_between('code0100', 'code0200', true, false);
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ UNGROUPED_AGGREGATE ────────────╮
+│ Aggregates: count_star()         │
+│ 1 row                        0µs │
+╰─────────────────┒┎───────────────╯
+╭─ TABLE_SCAN ────┚┖───────────────╮
+│ Index: filters_kw_idx            │
+│ Lookup: search                   │
+│ Index Filter:                    │
+│ ╭─ Range ──────────────────────╮ │
+│ │ Field: code(string)          │ │
+│ │ Range: >=code0100, <code0200 │ │
+│ ╰──────────────────────────────╯ │
+│ Output: row-count only           │
+│ 2,000 rows                   0µs │
+╰─────────────────┬────────────────╯
+                  ├────────────────────────────────┰┒
+╭─ INDEX_PREPARE ─┴────────────────╮  ╭─ INDEX_EXECUTE ────────╮
+│ Total: 0µs                       │  │ Total: 0µs             │
+│ Snapshot: 0µs                    │  │ 2,000 rows         0µs │
+│ Segments: 1 of 1                 │  ╰────────────┒┎──────────╯
+│ 0 rows                       0µs │  ╭─ count::BooleanBitset ─╮
+╰─────────────────┒┎───────────────╯  │ Plans: 1               │
+╭─ RANGE ─────────┚┖───────────────╮  │ Calls: 2               │
+│ Field: code(string)              │  │ Plan: 0µs              │
+│ Range: >=code0100, <code0200     │  │ 2,000 rows         0µs │
+│ Posting Lists: 100               │  ╰────────────────────────╯
+│ Estimated Matches: 2,000         │
+│ 2,000 rows                   0µs │
+╰──────────────────────────────────╯
+
+
+query
+EXPLAIN ANALYZE
+SELECT count(*)
+FROM filters_kw_idx
+WHERE msg @@ 'user-1-abc' OR n @@ ts_between(NULL, NULL, true, true);
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ UNGROUPED_AGGREGATE ─────╮
+│ Aggregates: count_star()  │
+│ 1 row                 0µs │
+╰─────────────┒┎────────────╯
+╭─ TABLE_SCAN ┚┖────────────╮
+│ Index: filters_kw_idx     │
+│ Lookup: search            │
+│ Index Filter:             │
+│ ╭─ All ──╮                │
+│ ╰────────╯                │
+│ Output: row-count only    │
+│ 20,000 rows           0µs │
+╰─────────────┬─────────────╯
+              ├──────────────────────────┰┒
+╭─ INDEX_PREPARE ───────────╮  ╭─ INDEX_EXECUTE ───╮
+│ Total: 0µs                │  │ Total: 0µs        │
+│ Snapshot: 0µs             │  │ 20,000 rows   0µs │
+│ Segments: 1 of 1          │  ╰─────────┒┎────────╯
+│ 0 rows                0µs │  ╭─ count::AllCount ─╮
+╰─────────────┒┎────────────╯  │ Plans: 1          │
+╭─ ALL ───────┚┖────────────╮  │ Calls: 2          │
+│ Estimated Matches: 20,000 │  │ Plan: 0µs         │
+│ 20,000 rows           0µs │  │ 20,000 rows   0µs │
+╰───────────────────────────╯  ╰───────────────────╯
+
+
+query
+EXPLAIN ANALYZE
+SELECT count(*)
+FROM filters_kw_idx
+WHERE (n < 1 AND n > 1) OR (n > 5 AND n < 3);
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ UNGROUPED_AGGREGATE ────╮
+│ Aggregates: count_star() │
+│ 1 row                0µs │
+╰─────────────┬────────────╯
+╭─ TABLE_SCAN ┴────────────╮
+│ Index: filters_kw_idx    │
+│ Lookup: search           │
+│ Index Filter:            │
+│ ╭─ Empty ─╮              │
+│ ╰─────────╯              │
+│ Output: row-count only   │
+│ 0 rows               0µs │
+╰─────────────┬────────────╯
+              ├─────────────────────────╮
+╭─ INDEX_PREPARE ──────────╮  ╭─ INDEX_EXECUTE ───╮
+│ Total: 0µs               │  │ Total: 0µs        │
+│ Snapshot: 0µs            │  │ 0 rows        0µs │
+│ Segments: 1 of 1         │  ╰─────────┬─────────╯
+│ 0 rows               0µs │  ╭─ count::Constant ─╮
+╰─────────────┬────────────╯  │ Plans: 1          │
+╭─ EMPTY ─────┴────────────╮  │ Calls: 2          │
+│ Estimated Matches: 0     │  │ Plan: 0µs         │
+│ 0 rows               0µs │  │ 0 rows        0µs │
+╰──────────────────────────╯  ╰───────────────────╯
+
+
+query
+EXPLAIN ANALYZE
+SELECT count(*)
+FROM filters_nets_idx
+WHERE net >>= '10.1.0.0/16';
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ UNGROUPED_AGGREGATE ──────────────────────╮
+│ Aggregates: count_star()                   │
+│ 1 row                                  0µs │
+╰──────────────────────┒┎────────────────────╯
+╭─ TABLE_SCAN ─────────┚┖────────────────────╮
+│ Index: filters_nets_idx                    │
+│ Lookup: search                             │
+│ Index Filter:                              │
+│ ╭─ Starts With Any ──────────────────────╮ │
+│ │ Field: net(cidr)                       │ │
+│ │ Prefixes: 17, 0.0.0.0/0 .. 10.1.0.0/16 │ │
+│ ╰────────────────────────────────────────╯ │
+│ Output: row-count only                     │
+│ 20 rows                                0µs │
+╰──────────────────────┬─────────────────────╯
+                       ├───────────────────────────────────┰┒
+╭─ INDEX_PREPARE ──────┴─────────────────────╮  ╭─ INDEX_EXECUTE ────╮
+│ Total: 0µs                                 │  │ Total: 0µs         │
+│ Snapshot: 0µs                              │  │ 20 rows        0µs │
+│ Segments: 1 of 1                           │  ╰──────────┒┎────────╯
+│ 0 rows                                 0µs │  ╭─ count::TermCount ─╮
+╰──────────────────────┒┎────────────────────╯  │ Plans: 1           │
+╭─ STARTS_WITH_ANY ────┚┖────────────────────╮  │ Calls: 2           │
+│ Field: net(cidr)                           │  │ Plan: 0µs          │
+│ Prefixes: 17, 0.0.0.0/0 .. 10.1.0.0/16     │  │ 20 rows        0µs │
+│ Posting Lists: 1                           │  ╰────────────────────╯
+│ Estimated Matches: 20                      │
+│ 20 rows                                0µs │
+╰────────────────────────────────────────────╯
+
+
+query
+EXPLAIN ANALYZE
+SELECT count(*)
+FROM filters_nets_idx
+WHERE ip << '10.1.0.0/16';
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ UNGROUPED_AGGREGATE ────────────────────────────╮
+│ Aggregates: count_star()                         │
+│ 1 row                                        0µs │
+╰─────────────────────────┒┎───────────────────────╯
+╭─ TABLE_SCAN ────────────┚┖───────────────────────╮
+│ Index: filters_nets_idx                          │
+│ Lookup: search                                   │
+│ Index Filter:                                    │
+│ ╭─ Bool ──────────────╮                          │
+│ ╰──────────┬──────────╯                          │
+│            ├────────────────────────╮            │
+│ ╭─ Must ───┴──────────╮  ╭─ Must Not ──────────╮ │
+│ ╰──────────┬──────────╯  ╰──────────┬──────────╯ │
+│ ╭─ Terms ──┴──────────╮  ╭─ Starts With ───────╮ │
+│ │ Field: ip(inet)     │  │ Field: ip(inet)     │ │
+│ │ Values: 10.1.0.0/16 │  │ Prefix: 10.1.0.0/16 │ │
+│ ╰─────────────────────╯  ╰─────────────────────╯ │
+│ Output: row-count only                           │
+│ 20 rows                                      0µs │
+╰─────────────────────────┬────────────────────────╯
+                          ├──────────────────────────────────────┰┒
+╭─ INDEX_PREPARE ─────────┴────────────────────────╮  ╭─ INDEX_EXECUTE ────╮
+│ Total: 0µs                                       │  │ Total: 0µs         │
+│ Snapshot: 0µs                                    │  │ 20 rows        0µs │
+│ Segments: 1 of 1                                 │  ╰──────────┒┎────────╯
+│ 0 rows                                       0µs │  ╭─ count::TermCount ─╮
+╰─────────────────────────┒┎───────────────────────╯  │ Plans: 1           │
+╭─ BOOL ──────────────────┚┖───────────────────────╮  │ Calls: 2           │
+│ Must Terms: ip(inet): 10.1.0.0/16                │  │ Plan: 0µs          │
+│ Total: 0µs                                       │  │ 20 rows        0µs │
+│ Posting Lists: 1                                 │  ╰────────────────────╯
+│ Estimated Matches: 20                            │
+│ 20 rows                                      0µs │
+╰─────────────────────────┬────────────────────────╯
+╭─ STARTS_WITH ───────────┴────────────────────────╮
+│ Occur: Must Not                                  │
+│ Field: ip(inet)                                  │
+│ Prefix: 10.1.0.0/16                              │
+│ Estimated Matches: 0                             │
+│ 0 rows                                       0µs │
+╰──────────────────────────────────────────────────╯
+
+
+query
+EXPLAIN ANALYZE
+SELECT count(*)
+FROM filters_places_idx
+WHERE ST_Intersects(geo, 'POLYGON((37 55,37.5 55,37.5 55.2,37 55.2,37 55))'::GEOMETRY('OGC:CRS84'));
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ UNGROUPED_AGGREGATE ─────╮
+│ Aggregates: count_star()  │
+│ 1 row                 0µs │
+╰─────────────┒┎────────────╯
+╭─ TABLE_SCAN ┚┖────────────╮
+│ Index: filters_places_idx │
+│ Lookup: search            │
+│ Index Filter:             │
+│ ╭─ Geo ──────────────╮    │
+│ │ Field: geo(string) │    │
+│ │ Op: Intersects     │    │
+│ │ Shape: S2Polygon   │    │
+│ │ Verify: false      │    │
+│ ╰────────────────────╯    │
+│ Table Filter:             │
+│ ╭─ Geo ────────────────╮  │
+│ │ Field: geo(string)   │  │
+│ │ Op: Intersects       │  │
+│ │ Shape: S2Polygon     │  │
+│ │ Verify: table filter │  │
+│ ╰──────────────────────╯  │
+│ Output: row-count only    │
+│ 997 rows              0µs │
+╰─────────────┬─────────────╯
+              ├─────────────────────────────┰┒
+╭─ INDEX_PREPARE ───────────╮  ╭─ INDEX_EXECUTE ────────╮
+│ Total: 0µs                │  │ Total: 0µs             │
+│ Snapshot: 0µs             │  │ 997 rows           0µs │
+│ Segments: 1 of 1          │  ╰────────────┒┎──────────╯
+│ 0 rows                0µs │  ╭─ count::BooleanBitset ─╮
+╰─────────────┒┎────────────╯  │ Plans: 1               │
+╭─ GEO ───────┚┖────────────╮  │ Calls: 2               │
+│ Field: geo(string)        │  │ Plan: 0µs              │
+│ Op: Intersects            │  │ 997 rows           0µs │
+│ Shape: S2Polygon          │  ╰────────────────────────╯
+│ Verify: false             │
+│ Estimated Matches: 1,288  │
+│ 1,288 rows            0µs │
+╰───────────────────────────╯
+
+
+query
+EXPLAIN ANALYZE
+SELECT count(*)
+FROM filters_places_idx
+WHERE ST_Distance_Centroid(pt, '{"type":"Point","coordinates":[37.5,55.2]}') < 5000.0;
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ UNGROUPED_AGGREGATE ─────╮
+│ Aggregates: count_star()  │
+│ 1 row                 0µs │
+╰─────────────┒┎────────────╯
+╭─ TABLE_SCAN ┚┖────────────╮
+│ Index: filters_places_idx │
+│ Lookup: search            │
+│ Index Filter:             │
+│ ╭─ Geo Distance ────╮     │
+│ │ Field: pt(string) │     │
+│ │ Range: *, <5000   │     │
+│ │ Verify: false     │     │
+│ ╰───────────────────╯     │
+│ Table Filter:             │
+│ ╭─ Geo Distance ───────╮  │
+│ │ Field: pt(string)    │  │
+│ │ Range: *, <5000      │  │
+│ │ Verify: table filter │  │
+│ ╰──────────────────────╯  │
+│ Output: row-count only    │
+│ 111 rows              0µs │
+╰─────────────┬─────────────╯
+              ├─────────────────────────────┰┒
+╭─ INDEX_PREPARE ───────────╮  ╭─ INDEX_EXECUTE ────────╮
+│ Total: 0µs                │  │ Total: 0µs             │
+│ Snapshot: 0µs             │  │ 111 rows           0µs │
+│ Segments: 1 of 1          │  ╰────────────┒┎──────────╯
+│ 0 rows                0µs │  ╭─ count::BooleanBitset ─╮
+╰─────────────┒┎────────────╯  │ Plans: 1               │
+╭─ GEO_DISTANCE ────────────╮  │ Calls: 2               │
+│ Field: pt(string)         │  │ Plan: 0µs              │
+│ Range: *, <5000           │  │ 111 rows           0µs │
+│ Verify: false             │  ╰────────────────────────╯
+│ Estimated Matches: 167    │
+│ 167 rows              0µs │
+╰───────────────────────────╯
+
+
+query
+EXPLAIN ANALYZE
+SELECT count(*)
+FROM filters_kw_idx
+WHERE code @@ ts_levenshtein('code0123', 1);
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ UNGROUPED_AGGREGATE ────╮
+│ Aggregates: count_star() │
+│ 1 row                0µs │
+╰─────────────┒┎───────────╯
+╭─ TABLE_SCAN ┚┖───────────╮
+│ Index: filters_kw_idx    │
+│ Lookup: search           │
+│ Index Filter:            │
+│ ╭─ Levenshtein ───────╮  │
+│ │ Field: code(string) │  │
+│ │ Target: code0123    │  │
+│ │ Max Terms: 50       │  │
+│ ╰─────────────────────╯  │
+│ Output: row-count only   │
+│ 600 rows             0µs │
+╰─────────────┬────────────╯
+              ├────────────────────────────┰┒
+╭─ INDEX_PREPARE ──────────╮  ╭─ INDEX_EXECUTE ────────╮
+│ Total: 0µs               │  │ Total: 0µs             │
+│ Snapshot: 0µs            │  │ 600 rows           0µs │
+│ Segments: 1 of 1         │  ╰────────────┒┎──────────╯
+│ 0 rows               0µs │  ╭─ count::BooleanBitset ─╮
+╰─────────────┒┎───────────╯  │ Plans: 1               │
+╭─ LEVENSHTEIN ┖───────────╮  │ Calls: 2               │
+│ Field: code(string)      │  │ Plan: 0µs              │
+│ Target: code0123         │  │ 600 rows           0µs │
+│ Max Terms: 50            │  ╰────────────────────────╯
+│ Posting Lists: 30        │
+│ Estimated Matches: 600   │
+│ 600 rows             0µs │
+╰──────────────────────────╯
+
+
+query
+EXPLAIN ANALYZE
+SELECT count(*)
+FROM filters_kw_idx
+WHERE code @@ ts_starts_with('code01');
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ UNGROUPED_AGGREGATE ────╮
+│ Aggregates: count_star() │
+│ 1 row                0µs │
+╰─────────────┒┎───────────╯
+╭─ TABLE_SCAN ┚┖───────────╮
+│ Index: filters_kw_idx    │
+│ Lookup: search           │
+│ Index Filter:            │
+│ ╭─ Starts With ───────╮  │
+│ │ Field: code(string) │  │
+│ │ Prefix: code01      │  │
+│ ╰─────────────────────╯  │
+│ Output: row-count only   │
+│ 2,000 rows           0µs │
+╰─────────────┬────────────╯
+              ├────────────────────────────┰┒
+╭─ INDEX_PREPARE ──────────╮  ╭─ INDEX_EXECUTE ────────╮
+│ Total: 0µs               │  │ Total: 0µs             │
+│ Snapshot: 0µs            │  │ 2,000 rows         0µs │
+│ Segments: 1 of 1         │  ╰────────────┒┎──────────╯
+│ 0 rows               0µs │  ╭─ count::BooleanBitset ─╮
+╰─────────────┒┎───────────╯  │ Plans: 1               │
+╭─ STARTS_WITH ┖───────────╮  │ Calls: 2               │
+│ Field: code(string)      │  │ Plan: 0µs              │
+│ Prefix: code01           │  │ 2,000 rows         0µs │
+│ Posting Lists: 100       │  ╰────────────────────────╯
+│ Estimated Matches: 2,000 │
+│ 2,000 rows           0µs │
+╰──────────────────────────╯
+
+
+query
+EXPLAIN ANALYZE
+SELECT id
+FROM filters_kw_idx
+WHERE msg @@ ts_regexp('user-1[0-9]-abc') AND code @@ ts_starts_with('code00');
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TABLE_SCAN ──────────────────────────────────────────╮
+│ Index: filters_kw_idx                                 │
+│ Lookup: search                                        │
+│ Index Filter:                                         │
+│ ╭─ And ────────────────────╮                          │
+│ ╰─────────────┬────────────╯                          │
+│               ├──────────────────────────╮            │
+│ ╭─ Automaton ─┴────────────╮  ╭─ Starts With ───────╮ │
+│ │ Field: msg(string)       │  │ Field: code(string) │ │
+│ │ Pattern: user-1[0-9]-abc │  │ Prefix: code00      │ │
+│ ╰──────────────────────────╯  ╰─────────────────────╯ │
+│ Projections: id                                       │
+│ Fetch: 0µs                                            │
+│ 66 rows                                           0µs │
+╰───────────────────────────┬───────────────────────────╯
+                            ├─────────────────────────────────────────────────────────────────────────────╮
+╭─ INDEX_PREPARE ───────────┴───────────────────────────╮                                ╭─ INDEX_EXECUTE ┴───────────────╮
+│ Total: 0µs                                            │                                │ Total: 0µs                     │
+│ Snapshot: 0µs                                         │                                │ 66 rows                    0µs │
+│ Segments: 1 of 1                                      │                                ╰────────────────┬───────────────╯
+│ 0 rows                                            0µs │                                ╭─ docs::BooleanWindow ──────────╮
+╰───────────────────────────┬───────────────────────────╯                                │ Plans: 1                       │
+╭─ AND ─────────────────────┴───────────────────────────╮                                │ Calls: 18                      │
+│ Total: 0µs                                            │                                │ Plan: 0µs                      │
+│ Estimated Matches: 67                                 │                                │ Total: 0µs                     │
+│ 0 rows                                            0µs │                                │ 66 rows                    0µs │
+╰───────────────────────────┬───────────────────────────╯                                ╰────────────────┬───────────────╯
+                            ┟────────────────────────────────────────────┰┒                               ├───────────────────────────────────┰┒
+╭─ AUTOMATON ───────────────┸───────────────────────────╮  ╭─ STARTS_WITH ┖───────────╮  ╭─ fill::Impl<fill::BitsetDocs> ─╮  ╭─ fill::Impl<fill::BitsetDocs> ─╮
+│ Field: msg(string)                                    │  │ Field: code(string)      │  │ Filter: Automaton              │  │ Filter: Starts With            │
+│ Pattern: user-1[0-9]-abc                              │  │ Prefix: code00           │  │ Plans: 1                       │  │ Plans: 1                       │
+│ Posting Lists: 10                                     │  │ Posting Lists: 100       │  │ Calls: 5                       │  │ Calls: 5                       │
+│ Estimated Matches: 666                                │  │ Estimated Matches: 2,000 │  │ 612 rows                   0µs │  │ 1,992 rows                 0µs │
+│ 666 rows                                          0µs │  │ 2,000 rows           0µs │  ╰────────────────────────────────╯  ╰────────────────────────────────╯
+╰───────────────────────────────────────────────────────╯  ╰──────────────────────────╯
+
+
+statement ok
+RESET sdb_index_profile_nodes;
+
+
+statement ok
+RESET threads;

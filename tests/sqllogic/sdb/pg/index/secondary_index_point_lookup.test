@@ -13,6 +13,10 @@
 
 
 statement ok
+SET threads = 1;
+
+
+statement ok
 CREATE TABLE pudge_pt(a INTEGER, b INTEGER);
 
 
@@ -44,6 +48,21 @@ QUERY PLAN
 │ │ Value: 12345      │ │
 │ ╰───────────────────╯ │
 │ Projections: a        │
+│ Fetch: 0µs            │
+│ 1 row             0µs │
+╰───────────┬───────────╯
+            ├──────────────────────────┰┒
+╭─ INDEX_PREPARE ───────╮  ╭─ INDEX_EXECUTE ───────╮
+│ Total: 0µs            │  │ Total: 0µs            │
+│ Snapshot: 0µs         │  │ 1 row             0µs │
+│ Segments: 1 of 1      │  ╰───────────┒┎──────────╯
+│ 0 rows            0µs │  ╭─ docs::SinglePosting ─╮
+╰───────────┒┎──────────╯  │ Plans: 1              │
+╭─ TERM ────┚┖──────────╮  │ Calls: 49             │
+│ Field: b(numeric)     │  │ Plan: 0µs             │
+│ Value: 12345          │  │ 1 row             0µs │
+│ Posting Lists: 1      │  ╰───────────────────────╯
+│ Estimated Matches: 1  │
 │ 1 row             0µs │
 ╰───────────────────────╯
 
@@ -63,16 +82,31 @@ QUERY PLAN
 ╭─ Summary ───────────╮
 │ Total Time: 0.0000s │
 ╰─────────────────────╯
-╭─ TABLE_SCAN ──────────╮
-│ Table: pudge_pt       │
-│ Index Filter:         │
-│ ╭─ Granular Range ──╮ │
-│ │ Field: b(numeric) │ │
-│ │ Range: <60000     │ │
-│ ╰───────────────────╯ │
-│ Projections: a        │
-│ 60,000 rows       0µs │
-╰───────────────────────╯
+╭─ TABLE_SCAN ──────────────╮
+│ Table: pudge_pt           │
+│ Index Filter:             │
+│ ╭─ Granular Range ──╮     │
+│ │ Field: b(numeric) │     │
+│ │ Range: <60000     │     │
+│ ╰───────────────────╯     │
+│ Projections: a            │
+│ Fetch: 0µs                │
+│ 60,000 rows           0µs │
+╰─────────────┬─────────────╯
+              ├────────────────────────────┰┒
+╭─ INDEX_PREPARE ───────────╮  ╭─ INDEX_EXECUTE ───────╮
+│ Total: 0µs                │  │ Total: 0µs            │
+│ Snapshot: 0µs             │  │ 60,000 rows       0µs │
+│ Segments: 1 of 1          │  ╰───────────┒┎──────────╯
+│ 0 rows                0µs │  ╭─ docs::BooleanBitset ─╮
+╰─────────────┒┎────────────╯  │ Plans: 1              │
+╭─ GRANULAR_RANGE ──────────╮  │ Calls: 49             │
+│ Field: b(numeric)         │  │ Plan: 0µs             │
+│ Range: <60000             │  │ 60,000 rows       0µs │
+│ Posting Lists: 54         │  ╰───────────────────────╯
+│ Estimated Matches: 60,000 │
+│ 60,000 rows           0µs │
+╰───────────────────────────╯
 
 
 query
@@ -103,6 +137,21 @@ QUERY PLAN
 │ │ Value: 42                        │ │
 │ ╰──────────────────────────────────╯ │
 │ Projections: a                       │
+│ Fetch: 0µs                           │
+│ 2 rows                           0µs │
+╰───────────────────┬──────────────────╯
+                    ├──────────────────────────────┰┒
+╭─ INDEX_PREPARE ───┴──────────────────╮  ╭─ INDEX_EXECUTE ─╮
+│ Total: 0µs                           │  │ Total: 0µs      │
+│ Snapshot: 0µs                        │  │ 2 rows      0µs │
+│ Segments: 1 of 1                     │  ╰────────┒┎───────╯
+│ 0 rows                           0µs │  ╭─ docs::Posting ─╮
+╰───────────────────┒┎─────────────────╯  │ Plans: 1        │
+╭─ TERM ────────────┚┖─────────────────╮  │ Calls: 49       │
+│ Field: abs((b - 50000))(numeric)     │  │ Plan: 0µs       │
+│ Value: 42                            │  │ 2 rows      0µs │
+│ Posting Lists: 1                     │  ╰─────────────────╯
+│ Estimated Matches: 2                 │
 │ 2 rows                           0µs │
 ╰──────────────────────────────────────╯
 

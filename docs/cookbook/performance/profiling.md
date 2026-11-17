@@ -116,6 +116,35 @@ When the `profiling_mode` is set to `detailed`, an extra set of metrics are enab
 These include all the metrics in the Phase timing metric group.
 It is possible to toggle each of these additional metrics individually.
 
+## Inverted Index Scans
+
+In `EXPLAIN ANALYZE` and in the profiling output, a scan over an inverted index has two boxes below it: `INDEX_PREPARE` and `INDEX_EXECUTE`. Like every box, each shows its own time: the scan's box keeps the time the scan spends outside the index, and the boxes below it the time the index spends on the query.
+
+<SqlLogicTest id="cookbook/performance/profiling/example_005" />
+
+`INDEX_PREPARE` is the time the index spends getting ready for the query, summed over threads:
+
+| Line | Meaning |
+|---|---|
+| `Total` | The whole preparation, including the boxes below it |
+| `Snapshot` | Opening the index for the query |
+| `Segments` | How many index segments the query reads, of how many the index has: a segment none of whose rows can pass the scan's column filters is skipped |
+| `Stats` | Gathering the statistics a ranking function needs |
+
+Below it, one box per filter of the scan's `Index Filter` that the index used shows the time spent preparing that filter, such as looking up its terms or expanding a pattern. Each box shows how many posting lists it opened (`Posting Lists`), the index's estimate of the documents it matches (`Estimated Matches`) and, as its rows, how many documents the posting lists it opened hold. Filters over n-grams, geo shapes or vectors, and filters that match every row, leave `Posting Lists` out. A box's time is its own; `Total` adds the boxes below it.
+
+`INDEX_EXECUTE` is the time spent choosing and running the index's execution plans (`Total`); its own time is choosing them. Below it, one box per kind of execution plan that ran shows how many times the scan chose it (`Plans`) and the time that took (`Plan`), how many times the scan called it (`Calls`) and how many documents it produced; its own time is running it. Both counts depend on how the scan's threads split the work. In a query that orders by a ranking function with a `LIMIT`, those are the documents it offered to the top results. The box names identify the plans the index chose and can change between releases.
+
+A query over the term dictionary, such as `ts_dict_agg`, has one plan per segment: the one that finds the documents its `WHERE` matches, as the walk over the dictionary asks for them. Its box counts those documents as rows, and walking the dictionary is the scan's own time. Without a `WHERE`, and with no deleted rows, the counts come from the dictionary itself and `INDEX_EXECUTE` is left out.
+
+The scan's own box adds `Filtered`, how many of the documents the index produced the scan's other filters dropped, and the time spent reading columns and computing the positions `ts_offsets` and `ts_highlight` return (`Fetch`) and finding the rows in the indexed table or view (`Lookup Time`).
+
+`SET sdb_index_profile_nodes = true` adds boxes for the nested parts of each execution plan. Each shows the filter it runs (`Filter`), how many times its plan called it (`Calls`) and, as its rows, the documents it matched. A part that marks a window of documents at a time counts the documents it added to the window, or removed from it when it excludes them, so in an `OR` a part counts only the documents the parts before it had not marked. Their times are estimated from the calls they timed (`Timed`), about one in 32, and the query runs slower while the setting is on, so they compare the parts of a plan rather than measure them exactly. Parts that are called very often for very little work each time can add up to more than the time of the plan they belong to; the plan's box then shows no time of its own.
+
+In the JSON output, each of these boxes is an operator whose `type` is the box's name.
+
+Removing `operator.index_profile` from [`tracked_metrics`](../../configuration/overview.md#logging-metrics-and-profiling) leaves the index boxes out.
+
 ## Notation in Query Plans
 
 In query plans, the [hash join](https://en.wikipedia.org/wiki/Hash_join) operators adhere to the following convention:

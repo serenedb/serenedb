@@ -73,14 +73,16 @@ void StartUnit(ScanGlobalState& g, StreamLocalState& l) {
     SDB_ENSURE(g.scorer_obj != nullptr,
                "a scan that emits a score has a scorer to compute it with");
     l.score_fetcher.Clear();
-    auto root = irs::hits::MakeRoot(
-      seg_query,
-      {.scorer = *g.scorer_obj, .fetcher = l.score_fetcher, .span = span});
-    EnsurePlanned(root != nullptr);
+    auto root = Planned(l.profile, [&] {
+      return irs::hits::MakeRoot(
+        seg_query,
+        {.scorer = *g.scorer_obj, .fetcher = l.score_fetcher, .span = span});
+    });
     l.root = std::move(root);
   } else {
-    auto root = irs::docs::MakeRoot(seg_query, {.span = span});
-    EnsurePlanned(root != nullptr);
+    auto root = Planned(l.profile, [&] {
+      return irs::docs::MakeRoot(seg_query, {.span = span});
+    });
     l.root = std::move(root);
   }
   l.root_seg = seg_idx;
@@ -109,11 +111,13 @@ void PushHits(StreamLocalState& l) {
       static_cast<irs::doc_id_t>(std::min<uint64_t>(span, l.stop_row - row));
     const auto min = irs::doc_limits::min() + static_cast<irs::doc_id_t>(row);
     const auto max = min + width;
-    const auto n =
-      l.scored ? irs::utils::downCast<irs::hits::Root>(l.root.get())
+    const auto n = Ran(l.profile, [&] {
+      return l.scored
+               ? irs::utils::downCast<irs::hits::Root>(l.root.get())
                    ->Run(min, max, batcher.WindowHead(), batcher.ScoreHead())
                : irs::utils::downCast<irs::docs::Root>(l.root.get())
                    ->Run(min, max, batcher.WindowHead());
+    });
     batcher.CommitWindow(n);
     l.next_row = row + width;
   }
@@ -141,7 +145,10 @@ duckdb::idx_t EmitChunk(duckdb::ClientContext& ctx, ScanGlobalState& g,
         THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
       }
     }
+    ScanTimer fetch{l.profile, &ScanLocalProfile::fetch_ticks};
+    const auto staged = batcher.ReadyCount();
     const auto produced = EmitReadyBatch(ctx, g, l, output);
+    fetch.Filtered(staged - produced);
     if (produced != 0) {
       return produced;
     }
@@ -153,7 +160,12 @@ bool Deliver(duckdb::ClientContext& ctx, ScanGlobalState& g,
              StreamLocalState& l, duckdb::DataChunk& output,
              duckdb::idx_t added) {
   SDB_ASSERT(added <= STANDARD_VECTOR_SIZE);
-  const auto kept = FinalizeBatch(ctx, g, l, output, added);
+  auto kept = added;
+  if (g.needs_lookup) {
+    ScanTimer lookup{l.profile, &ScanLocalProfile::lookup_ticks};
+    kept = FinalizeBatch(ctx, g, l, output, added);
+    lookup.Filtered(added - kept);
+  }
   if (kept != 0) {
     output.SetChildCardinality(kept);
     return true;

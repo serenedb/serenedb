@@ -46,3 +46,89 @@ query
 CALL disable_profiling();
 ----
 Success
+
+# DOCS_TEST: example_005
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY profiling_words AS
+    split_text(case := 'lower')
+    WITH (frequency, position);
+
+statement ok
+CREATE TABLE articles (id INTEGER PRIMARY KEY, body VARCHAR, year INTEGER);
+
+statement ok
+INSERT INTO articles
+SELECT i,
+       CASE WHEN i % 7 = 0 THEN 'new york city'
+            WHEN i % 5 = 0 THEN 'new york town'
+            WHEN i % 3 = 0 THEN 'york city'
+            ELSE 'other words here' END,
+       2000 + i % 30
+FROM range(0, 100000) t(i);
+
+statement ok
+CREATE INDEX articles_idx ON articles USING inverted (id, body profiling_words) INCLUDE (year);
+
+# DOCS_TEST_RAW
+#| EXPLAIN ANALYZE
+#| SELECT id
+#| FROM articles_idx
+#| WHERE body @@ ts_phrase('new york') AND (body @@ 'city' OR body @@ 'town')
+#| ORDER BY bm25(articles_idx.tableoid) DESC
+#| LIMIT 10;
+#| ----
+#| QUERY PLAN
+#| ╭─ Summary ───────────╮
+#| │ Total Time: 0.0015s │
+#| ╰─────────────────────╯
+#| ╭─ TABLE_SCAN ─────────────────────────────────────────────────────────────╮
+#| │ Index: articles_idx                                                      │
+#| │ Lookup: search                                                           │
+#| │ Index Filter:                                                            │
+#| │ ╭─ And ────────────────────────────────────╮                             │
+#| │ ╰─────────────────────┬────────────────────╯                             │
+#| │                       ├────────────────────────────────────╮             │
+#| │ ╭─ Phrase ────────────┴────────────────────╮  ╭─ Or ───────┴───────────╮ │
+#| │ │ Field: body(string)                      │  ╰────────────┬───────────╯ │
+#| │ │ Parts: Term:new(0, 0); Term:york(1, 1);  │  ╭─ Terms ────┴───────────╮ │
+#| │ ╰──────────────────────────────────────────╯  │ Field: body(string)    │ │
+#| │                                               │ Values: 'city', 'town' │ │
+#| │                                               ╰────────────────────────╯ │
+#| │ Score: bm25(k1=1.2, b=0.75)                                              │
+#| │ Top: 10                                                                  │
+#| │ Projections: id                                                          │
+#| │ Fetch: 22µs                                                              │
+#| │ 10 rows                                                             65µs │
+#| ╰─────────────────────────────────────┬────────────────────────────────────╯
+#|                                       ├─────────────────────────────────────────────────────────┒
+#| ╭─ INDEX_PREPARE ─────────────────────┴────────────────────────────────────╮  ╭─ INDEX_EXECUTE ─┸────────────────╮
+#| │ Total: 26µs                                                              │  │ Total: 595µs                     │
+#| │ Snapshot: 0µs                                                            │  │ 31,428 rows                 18µs │
+#| │ Segments: 1 of 1                                                         │  ╰─────────────────┰────────────────╯
+#| │ Stats: 3µs                                                               │  ╭─ top::Walk<lead::BooleanSparse> ─╮
+#| │ 0 rows                                                               3µs │  │ Plans: 1                         │
+#| ╰─────────────────────────────────────┬────────────────────────────────────╯  │ Calls: 1                         │
+#| ╭─ AND ───────────────────────────────┴────────────────────────────────────╮  │ Plan: 18µs                       │
+#| │ Total: 23µs                                                              │  │ 31,428 rows                576µs │
+#| │ Estimated Matches: 11,096                                                │  ╰──────────────────────────────────╯
+#| │ 0 rows                                                               3µs │
+#| ╰─────────────────────────────────────┰┰───────────────────────────────────╯
+#|                                       ┃┠─────────────────────────────────────────────────────────┒
+#| ╭─ PHRASE ────────────────────────────┚┖───────────────────────────────────╮  ╭─ OR ─────────────┸──────────────────╮
+#| │ Field: body(string)                                                      │  │ Terms: body(string): 'city', 'town' │
+#| │ Parts: Term:new(0, 0); Term:york(1, 1);                                  │  │ Posting Lists: 2                    │
+#| │ Posting Lists: 2                                                         │  │ Estimated Matches: 47,919           │
+#| │ Estimated Matches: 23,156                                                │  │ 54,286 rows                    11µs │
+#| │ 85,714 rows                                                          9µs │  ╰─────────────────────────────────────╯
+#| ╰──────────────────────────────────────────────────────────────────────────╯
+
+# DOCS_TEST_BODY
+
+statement ok
+EXPLAIN ANALYZE
+SELECT id
+FROM articles_idx
+WHERE body @@ ts_phrase('new york') AND (body @@ 'city' OR body @@ 'town')
+ORDER BY bm25(articles_idx.tableoid) DESC
+LIMIT 10;

@@ -36,6 +36,7 @@
 #include "iresearch/search/detail/vector_of.hpp"
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/search/docs/make.hpp"
+#include "iresearch/search/filters/query_profile.hpp"
 #include "iresearch/search/queries/vector_similarity_query.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/utils/misc.hpp"
@@ -521,7 +522,7 @@ auto SetDocs(detail::LazyBitset& set) {
 auto IndexDocs(const QueryBuilder& inner, detail::TableFilter* table,
                doc_id_t docs_count) {
   return [&inner, table, docs_count](auto&& visit) {
-    const auto root = docs::MakeRoot(inner, {});
+    const auto root = ProfileInner(inner, docs::MakeRoot(inner, {}));
     SlackBuf<doc_id_t, detail::kWindowDocs, doc_limits::kDocsSlack> docs;
     const auto end = doc_limits::min() + docs_count;
     for (auto min = doc_limits::min(); min < end; min += detail::kWindowDocs) {

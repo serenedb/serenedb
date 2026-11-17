@@ -24,6 +24,7 @@
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/count/term_counts.hpp>
+#include <iresearch/search/detail/bitset_storage.hpp>
 #include <iresearch/search/detail/lazy_bitset.hpp>
 #include <iresearch/search/detail/resolve.hpp>
 #include <iresearch/search/docs/family.hpp>
@@ -57,6 +58,12 @@ struct TsDictLocalState final : public ScanLocalState {
                           duckdb::idx_t output_start);
   uint32_t LiveDocs(irs::TermIterator& it, bool count_all,
                     uint32_t ordinal = irs::count::TermCounts::kNoOrdinal);
+
+  void ReleasePlans() final {
+    _term_counts = nullptr;
+    _term_counts_cache.clear();
+    _live.reset();
+  }
 
  private:
   bool NextField();
@@ -216,9 +223,7 @@ struct TsDictEmitter {
 void TsDictLocalState::StartSegment(const irs::SubReader& seg, uint32_t seg_idx,
                                     ScanGlobalState& g) {
   _seg = &seg;
-  _term_counts = nullptr;
-  _term_counts_cache.clear();
-  _live.reset();
+  ReleasePlans();
   _all_query = {};
   _segment_live = false;
   Classify(g, seg_idx);
@@ -271,14 +276,17 @@ irs::detail::LazyBitset& TsDictLocalState::Live() {
   if (!_live) {
     const auto& query = where_query ? *where_query : *_all_query;
     SDB_ASSERT(!irs::QueryBuilder::IsEmpty(query));
-    auto node = query.PlanFill({}, irs::ScoreMergeType::Noop);
-    EnsurePlanned(node != nullptr);
+    auto node = Planned(
+      profile, [&] { return query.PlanFill({}, irs::ScoreMergeType::Noop); });
     if (auto* folded = node->Folded()) {
+      if (auto* shape = profile.current) {
+        shape->rows += irs::detail::CountBits(*folded);
+      }
       _live = std::make_unique<irs::detail::LazyBitset>(
         std::move(*folded), irs::MakeGenericDocsMask(*_seg));
     } else {
       _live = std::make_unique<irs::detail::LazyBitset>(
-        std::move(node), _seg->Meta().docs_count,
+        ProfileFill(profile, std::move(node)), _seg->Meta().docs_count,
         irs::MakeGenericDocsMask(*_seg));
     }
   }

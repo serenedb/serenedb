@@ -67,6 +67,7 @@ add_executable(
     connector/reindex_removes_test.cpp
     connector/row_position_deduplicator_test.cpp
     connector/row_position_test.cpp
+    connector/scan_profile_test.cpp
     connector/scram_client_test.cpp
     connector/subscription_lsn_test.cpp
     connector/ts_query_codec_test.cpp

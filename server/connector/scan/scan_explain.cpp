@@ -593,4 +593,23 @@ IndexLookupToStringValue(duckdb::TableFunctionToStringInput& input) {
   return result;
 }
 
+std::vector<irs::FilterBox> FilterBoxes(const ScanBindData& bind,
+                                        const irs::Filter& filter) {
+  const irs::FieldKeyResolver key_of = [&bind](ColumnId field) {
+    return KeyOfField(bind, field) != nullptr;
+  };
+  auto boxes = irs::ToFilterBoxes(filter, MakeFieldNameResolver(bind),
+                                  MakeFieldTypeResolver(bind), key_of);
+  if (const auto& vector = bind.score.vector) {
+    auto& attributes = boxes.front().node.attributes;
+    if (vector->radius == std::numeric_limits<float>::max()) {
+      attributes.erase("Radius");
+    } else {
+      attributes["Radius"] =
+        absl::StrCat(vector->radius_inclusive ? "<= " : "< ", vector->radius);
+    }
+  }
+  return boxes;
+}
+
 }  // namespace sdb::connector

@@ -20,10 +20,13 @@
 
 #pragma once
 
+#include <cstdint>
 #include <duckdb/common/explain_value.hpp>
 #include <functional>
 #include <iresearch/search/filters/filter.hpp>
+#include <limits>
 #include <string>
+#include <vector>
 
 #include "catalog/entry/inverted_index.h"
 #include "connector/term_dict.h"
@@ -45,5 +48,18 @@ duckdb::ExplainNode ToExplainNode(const Filter& f,
                                   const FieldNameResolver& name_of,
                                   const FieldTypeResolver& type_of,
                                   const FieldKeyResolver& key_of);
+
+struct FilterBox {
+  static constexpr uint32_t kRoot = std::numeric_limits<uint32_t>::max();
+
+  const Filter* filter = nullptr;
+  uint32_t parent = kRoot;
+  duckdb::ExplainNode node;
+};
+
+std::vector<FilterBox> ToFilterBoxes(const Filter& f,
+                                     const FieldNameResolver& name_of,
+                                     const FieldTypeResolver& type_of,
+                                     const FieldKeyResolver& key_of);
 
 }  // namespace irs

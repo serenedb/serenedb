@@ -22,6 +22,7 @@
 
 #include <duckdb/common/fault_points.hpp>
 #include <iresearch/index/index_reader.hpp>
+#include <iresearch/search/filters/query_profile.hpp>
 #include <iresearch/search/queries/docs_mask_query.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -55,14 +56,15 @@ const irs::QueryBuilder& EnsureSegmentQuery(ScanGlobalState& g,
     const irs::PrepareContext ctx{
       .collector = collector,
       .thread = collector != nullptr ? l->thread_slot : 0,
-      .needs_terms = g.needs_terms};
+      .needs_terms = g.needs_terms,
+      .profile = g.profile ? &g.profile->Query() : nullptr};
     const auto index_only = g.ClaimedIndexOnly();
     const auto& filter = !UsesColumnForms(g, segment) ? *g.filter
                          : index_only                 ? *index_only
                                                       : MatchAllFilter();
     g.queries[seg_idx] = g.vector_scorer == nullptr
                            ? irs::PrepareMasked(filter, segment, ctx)
-                           : g.filter->PrepareSegment(segment, ctx);
+                           : irs::PrepareFilter(*g.filter, segment, ctx);
     if (work.prepare.exchange(SegmentWork::kReady, std::memory_order_acq_rel) ==
         SegmentWork::kAwaited) {
       work.prepare.notify_all();
@@ -101,6 +103,7 @@ bool RunPrepareStage(duckdb::TableFunctionInput& input, ScanGlobalState& g,
       }
       if (g.stats_barrier.Arrive()) {
         if (g.collector) {
+          const ScanTimer stats{l.profile, &ScanLocalProfile::stats_ticks};
           g.collector->Finish();
         }
         g.stats_barrier.Release(input);

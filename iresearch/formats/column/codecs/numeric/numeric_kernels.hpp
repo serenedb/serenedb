@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <emmintrin.h>
-
 #ifdef __AVX2__
 #include <immintrin.h>
 #endif
@@ -31,6 +29,7 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <duckdb/common/helper.hpp>
 #include <type_traits>
 #include <utility>
@@ -132,12 +131,46 @@ inline uint64_t ShuffledSum(const uint8_t* in, size_t n, uint8_t stored,
   return sum;
 }
 
-inline __m128i Lane(const uint8_t* in, size_t n, size_t b, size_t i) noexcept {
-  return _mm_loadu_si128(reinterpret_cast<const __m128i*>(in + b * n + i));
+using U8x16 = uint8_t __attribute__((vector_size(16)));
+
+inline U8x16 Lane(const uint8_t* in, size_t n, size_t b, size_t i) noexcept {
+  U8x16 v;
+  std::memcpy(&v, in + b * n + i, sizeof(v));
+  return v;
 }
 
-inline void Put(uint8_t* out, size_t at, __m128i v) noexcept {
-  _mm_storeu_si128(reinterpret_cast<__m128i*>(out + at), v);
+inline void Put(uint8_t* out, size_t at, U8x16 v) noexcept {
+  std::memcpy(out + at, &v, sizeof(v));
+}
+
+inline U8x16 Bytes8Lo(U8x16 a, U8x16 b) noexcept {
+  return __builtin_shufflevector(a, b, 0, 16, 1, 17, 2, 18, 3, 19, 4, 20, 5, 21,
+                                 6, 22, 7, 23);
+}
+
+inline U8x16 Bytes8Hi(U8x16 a, U8x16 b) noexcept {
+  return __builtin_shufflevector(a, b, 8, 24, 9, 25, 10, 26, 11, 27, 12, 28, 13,
+                                 29, 14, 30, 15, 31);
+}
+
+inline U8x16 Bytes16Lo(U8x16 a, U8x16 b) noexcept {
+  return __builtin_shufflevector(a, b, 0, 1, 16, 17, 2, 3, 18, 19, 4, 5, 20, 21,
+                                 6, 7, 22, 23);
+}
+
+inline U8x16 Bytes16Hi(U8x16 a, U8x16 b) noexcept {
+  return __builtin_shufflevector(a, b, 8, 9, 24, 25, 10, 11, 26, 27, 12, 13, 28,
+                                 29, 14, 15, 30, 31);
+}
+
+inline U8x16 Bytes32Lo(U8x16 a, U8x16 b) noexcept {
+  return __builtin_shufflevector(a, b, 0, 1, 2, 3, 16, 17, 18, 19, 4, 5, 6, 7,
+                                 20, 21, 22, 23);
+}
+
+inline U8x16 Bytes32Hi(U8x16 a, U8x16 b) noexcept {
+  return __builtin_shufflevector(a, b, 8, 9, 10, 11, 24, 25, 26, 27, 12, 13, 14,
+                                 15, 28, 29, 30, 31);
 }
 
 inline size_t Unshuffle2(const uint8_t* in, size_t n, uint8_t* out) noexcept {
@@ -145,8 +178,8 @@ inline size_t Unshuffle2(const uint8_t* in, size_t n, uint8_t* out) noexcept {
   for (; i + 16 <= n; i += 16) {
     const auto a = Lane(in, n, 0, i);
     const auto b = Lane(in, n, 1, i);
-    Put(out, 2 * i, _mm_unpacklo_epi8(a, b));
-    Put(out, 2 * i + 16, _mm_unpackhi_epi8(a, b));
+    Put(out, 2 * i, Bytes8Lo(a, b));
+    Put(out, 2 * i + 16, Bytes8Hi(a, b));
   }
   return i;
 }
@@ -154,15 +187,15 @@ inline size_t Unshuffle2(const uint8_t* in, size_t n, uint8_t* out) noexcept {
 inline size_t Unshuffle4(const uint8_t* in, size_t n, uint8_t* out) noexcept {
   size_t i = 0;
   for (; i + 16 <= n; i += 16) {
-    const auto ab_lo = _mm_unpacklo_epi8(Lane(in, n, 0, i), Lane(in, n, 1, i));
-    const auto ab_hi = _mm_unpackhi_epi8(Lane(in, n, 0, i), Lane(in, n, 1, i));
-    const auto cd_lo = _mm_unpacklo_epi8(Lane(in, n, 2, i), Lane(in, n, 3, i));
-    const auto cd_hi = _mm_unpackhi_epi8(Lane(in, n, 2, i), Lane(in, n, 3, i));
+    const auto ab_lo = Bytes8Lo(Lane(in, n, 0, i), Lane(in, n, 1, i));
+    const auto ab_hi = Bytes8Hi(Lane(in, n, 0, i), Lane(in, n, 1, i));
+    const auto cd_lo = Bytes8Lo(Lane(in, n, 2, i), Lane(in, n, 3, i));
+    const auto cd_hi = Bytes8Hi(Lane(in, n, 2, i), Lane(in, n, 3, i));
     auto* row = out + 4 * i;
-    Put(row, 0, _mm_unpacklo_epi16(ab_lo, cd_lo));
-    Put(row, 16, _mm_unpackhi_epi16(ab_lo, cd_lo));
-    Put(row, 32, _mm_unpacklo_epi16(ab_hi, cd_hi));
-    Put(row, 48, _mm_unpackhi_epi16(ab_hi, cd_hi));
+    Put(row, 0, Bytes16Lo(ab_lo, cd_lo));
+    Put(row, 16, Bytes16Hi(ab_lo, cd_lo));
+    Put(row, 32, Bytes16Lo(ab_hi, cd_hi));
+    Put(row, 48, Bytes16Hi(ab_hi, cd_hi));
   }
   return i;
 }
@@ -170,24 +203,23 @@ inline size_t Unshuffle4(const uint8_t* in, size_t n, uint8_t* out) noexcept {
 inline size_t Unshuffle8(const uint8_t* in, size_t n, uint8_t* out) noexcept {
   size_t i = 0;
   for (; i + 16 <= n; i += 16) {
-    __m128i lo[4];
-    __m128i hi[4];
+    U8x16 lo[4];
+    U8x16 hi[4];
     for (size_t p = 0; p < 4; ++p) {
       const auto a = Lane(in, n, 2 * p, i);
       const auto b = Lane(in, n, 2 * p + 1, i);
-      lo[p] = _mm_unpacklo_epi8(a, b);
-      hi[p] = _mm_unpackhi_epi8(a, b);
+      lo[p] = Bytes8Lo(a, b);
+      hi[p] = Bytes8Hi(a, b);
     }
-    const __m128i quads[8] = {
-      _mm_unpacklo_epi16(lo[0], lo[1]), _mm_unpackhi_epi16(lo[0], lo[1]),
-      _mm_unpacklo_epi16(hi[0], hi[1]), _mm_unpackhi_epi16(hi[0], hi[1]),
-      _mm_unpacklo_epi16(lo[2], lo[3]), _mm_unpackhi_epi16(lo[2], lo[3]),
-      _mm_unpacklo_epi16(hi[2], hi[3]), _mm_unpackhi_epi16(hi[2], hi[3]),
+    const U8x16 quads[8] = {
+      Bytes16Lo(lo[0], lo[1]), Bytes16Hi(lo[0], lo[1]), Bytes16Lo(hi[0], hi[1]),
+      Bytes16Hi(hi[0], hi[1]), Bytes16Lo(lo[2], lo[3]), Bytes16Hi(lo[2], lo[3]),
+      Bytes16Lo(hi[2], hi[3]), Bytes16Hi(hi[2], hi[3]),
     };
     auto* row = out + 8 * i;
     for (size_t q = 0; q < 4; ++q) {
-      Put(row, 32 * q, _mm_unpacklo_epi32(quads[q], quads[q + 4]));
-      Put(row, 32 * q + 16, _mm_unpackhi_epi32(quads[q], quads[q + 4]));
+      Put(row, 32 * q, Bytes32Lo(quads[q], quads[q + 4]));
+      Put(row, 32 * q + 16, Bytes32Hi(quads[q], quads[q + 4]));
     }
   }
   return i;

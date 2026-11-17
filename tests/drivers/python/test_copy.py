@@ -733,6 +733,18 @@ def test_bytea_copy_values_longer_than_a_batch(conn: psycopg.Connection,
             cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
 
 
+def _cut_inside_row(payload: bytes, at: int) -> bytes:
+    pos = 19
+    while True:
+        end = pos + 2
+        for _ in range(struct.unpack_from("!h", payload, pos)[0]):
+            length = struct.unpack_from("!i", payload, end)[0]
+            end += 4 + max(length, 0)
+        if end > at:
+            return payload[:pos + 1]
+        pos = end
+
+
 @pytest.mark.parametrize("source", _SOURCES)
 @pytest.mark.parametrize("storage", _STORAGES, ids=["table"])
 @pytest.mark.parametrize("damage", ["after_trailer", "truncated"])
@@ -742,7 +754,7 @@ def test_large_binary_copy_damaged_stream_inserts_nothing(
     with conn.cursor() as cur:
         payload = _binary_rows(cur, _ROWS)
         payload = (payload + b"\x00\x01" if damage == "after_trailer"
-                   else payload[:len(payload) * 2 // 3])
+                   else _cut_inside_row(payload, len(payload) * 2 // 3))
         cur.execute(f'CREATE TABLE public."{table_name}"(x INT, label VARCHAR)'
                     f" {storage}")
         try:

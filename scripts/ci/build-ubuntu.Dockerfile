@@ -1,13 +1,13 @@
 FROM docker:29.9.2 AS docker-cli
 FROM rust:1.99.1 AS rust
-FROM duckdb/duckdb:1.5.5 AS vanilla-duckdb
+FROM duckdb/duckdb:2.0.0 AS vanilla-duckdb
 
 FROM ubuntu:26.04
 
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 
-COPY --from=vanilla-duckdb /duckdb /opt/duckdb-1.5.5/duckdb
-ENV VANILLA_DUCKDB=/opt/duckdb-1.5.5/duckdb
+COPY --from=vanilla-duckdb /duckdb /opt/duckdb-2.0.0/duckdb
+ENV VANILLA_DUCKDB=/opt/duckdb-2.0.0/duckdb
 
 COPY --from=rust /usr/local/rustup /usr/local/rustup
 COPY --from=rust /usr/local/cargo /usr/local/cargo
@@ -88,6 +88,8 @@ RUN python3 -m pip install --break-system-packages --no-cache-dir --root-user-ac
 ENV SDB_DUCKDB_HOME=/opt/sdb-duckdb
 RUN mkdir -p "$SDB_DUCKDB_HOME" && HOME="$SDB_DUCKDB_HOME" python3 -c 'import duckdb; duckdb.connect().install_extension("tpch")' && \
     chmod -R a+rX "$SDB_DUCKDB_HOME"
+RUN HOME="$(dirname "$VANILLA_DUCKDB")" "$VANILLA_DUCKDB" -bail :memory: -c "INSTALL quack" && \
+    chmod -R a+rX "$(dirname "$VANILLA_DUCKDB")"
 
 ENV SDB_SPARK_JAVA_HOME=/usr/lib/jvm/spark-java
 ENV SPARK_CONF_DIR=/opt/sdb-spark/conf

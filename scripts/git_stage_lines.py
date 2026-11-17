@@ -50,6 +50,7 @@ def run_git(args, *, check=True, stdin=None):
         input=stdin,
         capture_output=True,
         text=True,
+        errors="surrogateescape",
     )
     if check and proc.returncode != 0:
         if proc.stdout:

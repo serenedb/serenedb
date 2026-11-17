@@ -537,7 +537,7 @@ void Transactions::Commit(SessionTransaction& transaction,
       writes.Empty()) {
     return;
   }
-  std::vector<uint8_t> record;
+  std::optional<RecordBuffer> record;
   Log::Range range;
   Lsn end = 0;
   duckdb::transaction_t commit = 0;
@@ -553,7 +553,7 @@ void Transactions::Commit(SessionTransaction& transaction,
       CheckDependencies(transaction);
     }
     record = WriteRecord(context, transaction, writes);
-    const bool logged = !record.empty() && _log && !_replaying;
+    const bool logged = record && _log && !_replaying;
     if (logged) {
       SDB_IF_FAILURE("crash_before_catalog_commit") { SDB_IMMEDIATE_ABORT(); }
       SDB_IF_FAILURE("catalog_append_fails") {
@@ -565,7 +565,7 @@ void Transactions::Commit(SessionTransaction& transaction,
     {
       absl::MutexLock sequence{&_sequence_mutex};
       if (logged) {
-        range = _log->Reserve(record.size());
+        range = _log->Reserve(record->PayloadBytes());
       }
       commit = ++_reserved_commit;
       end = range.end != 0 ? range.end : ReservedEnd();
@@ -592,10 +592,10 @@ void Transactions::Commit(SessionTransaction& transaction,
         change.version->Child().OnDrop();
       }
     }
-    writes.Apply(commit, layouts);
+    writes.Apply(context, commit, layouts);
   }
   if (range.end != 0) {
-    _log->Write(range, record);
+    _log->Write(range, *record);
     _log->Sync(range.end);
     SDB_IF_FAILURE("crash_after_catalog_before_data") { SDB_IMMEDIATE_ABORT(); }
     SDB_IF_FAILURE("crash_on_drop") { SDB_IMMEDIATE_ABORT(); }
@@ -630,9 +630,9 @@ void Transactions::Commit(SessionTransaction& transaction,
 }
 
 void Transactions::CommitStorage(
-  absl::Mutex& table, absl::FunctionRef<std::vector<uint8_t>()> build,
+  absl::Mutex& table, absl::FunctionRef<std::optional<RecordBuffer>()> build,
   absl::FunctionRef<void(duckdb::transaction_t)> apply) {
-  std::vector<uint8_t> record;
+  std::optional<RecordBuffer> record;
   Log::Range range;
   Lsn end = 0;
   duckdb::transaction_t commit = 0;
@@ -642,8 +642,8 @@ void Transactions::CommitStorage(
     record = build();
     {
       absl::MutexLock sequence{&_sequence_mutex};
-      if (!record.empty() && _log && !_replaying) {
-        range = _log->Reserve(record.size());
+      if (record && _log && !_replaying) {
+        range = _log->Reserve(record->PayloadBytes());
       }
       commit = ++_reserved_commit;
       end = range.end != 0 ? range.end : ReservedEnd();
@@ -652,7 +652,7 @@ void Transactions::CommitStorage(
     apply(commit);
   }
   if (range.end != 0) {
-    _log->Write(range, record);
+    _log->Write(range, *record);
     _log->Sync(range.end);
   }
   Publish(commit, false, false);

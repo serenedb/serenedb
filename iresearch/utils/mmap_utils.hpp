@@ -62,6 +62,7 @@ class MMapHandle : private util::Noncopyable {
   ~MMapHandle() noexcept { close(); }
 
   void open(const path_char_t* file);
+  void Adopt(file_utils::handle_t file, uint64_t size);
   void close() noexcept;
 
   explicit operator bool() const noexcept { return _fd >= 0; }
@@ -80,6 +81,7 @@ class MMapHandle : private util::Noncopyable {
 
  private:
   void init() noexcept;
+  void Map(uint64_t size, std::string_view file);
 
   void* _addr;    // the beginning of mmapped region
   size_t _size;   // file size

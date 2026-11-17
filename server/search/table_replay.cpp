@@ -114,14 +114,15 @@ void TableReplay::DeleteMemory(uint64_t base, const irs::DocumentMask& docs) {
   }
 }
 
-void TableReplay::Update(uint64_t segment, const irs::FieldPatch& patch) {
+void TableReplay::Update(uint64_t segment,
+                         std::span<const irs::FieldPatch> patches) {
   _replayed = true;
-  MergePatches(Find(segment).patches, {&patch, 1}, 0);
+  MergePatches(Find(segment).patches, patches, 0);
 }
 
-void TableReplay::UpdateMemory(const irs::FieldPatch& patch) {
+void TableReplay::UpdateMemory(std::span<const irs::FieldPatch> patches) {
   _replayed = true;
-  MergePatches(_memory_patches, {&patch, 1}, 0);
+  MergePatches(_memory_patches, patches, 0);
 }
 
 std::vector<TableReplay::Piece>& TableReplay::Cut() {

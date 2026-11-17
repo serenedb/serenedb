@@ -609,6 +609,40 @@ statement ok
 DROP TABLE search_gen_upd;
 
 
+statement ok
+CREATE TABLE search_gen_virtual (id INTEGER PRIMARY KEY, a INTEGER,
+  v INTEGER GENERATED ALWAYS AS (a + 1), note TEXT);
+
+statement ok
+INSERT INTO search_gen_virtual (id, a, note) VALUES (1, 5, 'x'), (2, 7, 'y');
+
+statement ok
+VACUUM (FLUSH_TABLE) search_gen_virtual;
+
+query
+SELECT id, a, v, note FROM search_gen_virtual ORDER BY id;
+----
+id	a	v	note
+1	5	6	x
+2	7	8	y
+
+statement ok
+UPDATE search_gen_virtual SET a = 10 WHERE id = 1;
+
+statement ok
+VACUUM (FLUSH_TABLE) search_gen_virtual;
+
+query
+SELECT id, a, v, note FROM search_gen_virtual ORDER BY id;
+----
+id	a	v	note
+1	10	11	x
+2	7	8	y
+
+statement ok
+DROP TABLE search_gen_virtual;
+
+
 # Search table without a PK: UPDATE recomputes the generated column over the new
 # row.
 statement ok

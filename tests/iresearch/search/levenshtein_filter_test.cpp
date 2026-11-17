@@ -578,7 +578,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     auto score = docs->PrepareScore();
     ASSERT_FALSE(score.IsDefault());
 
-    constexpr std::pair<float_t, irs::doc_id_t> kExpectedDocs[]{
+    constexpr std::pair<float, irs::doc_id_t> kExpectedDocs[]{
       {3.1589780f, 261},
       {4.7384672f, 272},
       {3.9487224f, 273},
@@ -626,7 +626,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
     ASSERT_FALSE(score.IsDefault());
 
-    constexpr std::pair<float_t, irs::doc_id_t> kExpectedDocs[]{
+    constexpr std::pair<float, irs::doc_id_t> kExpectedDocs[]{
       {4.7384672f, 272},
       {3.9487224f, 273},
     };
@@ -672,7 +672,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
     ASSERT_FALSE(score.IsDefault());
 
-    constexpr std::pair<float_t, irs::doc_id_t> kExpectedDocs[]{
+    constexpr std::pair<float, irs::doc_id_t> kExpectedDocs[]{
       {4.7384672f, 272},
       {3.9487224f, 273},
     };
@@ -719,7 +719,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
     ASSERT_FALSE(score.IsDefault());
 
-    constexpr std::pair<float_t, irs::doc_id_t> kExpectedDocs[]{
+    constexpr std::pair<float, irs::doc_id_t> kExpectedDocs[]{
       {4.2365541f, 265},   {3.5304618f, 264},   {3.5304618f, 3054},
       {3.5304618f, 3069},  {3.0130219f, 46355}, {3.0130219f, 46356},
       {3.0130219f, 46357}, {2.8243694f, 263},   {2.8243694f, 3062},
@@ -727,7 +727,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
       {2.0086813f, 46351}, {2.0086813f, 46352},
     };
 
-    std::vector<std::pair<float_t, irs::doc_id_t>> actual_docs;
+    std::vector<std::pair<float, irs::doc_id_t>> actual_docs;
     while (!irs::doc_limits::eof(docs->Next())) {
       fetcher.Fetch(docs->Value());
       irs::score_t value;
@@ -786,13 +786,13 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
     ASSERT_FALSE(score.IsDefault());
 
-    constexpr std::pair<float_t, irs::doc_id_t> kExpectedDocs[]{
+    constexpr std::pair<float, irs::doc_id_t> kExpectedDocs[]{
       {1.7405479f, 275},
       {1.2378716f, 46376},
       {1.2378716f, 46377},
     };
 
-    std::vector<std::pair<float_t, irs::doc_id_t>> actual_docs;
+    std::vector<std::pair<float, irs::doc_id_t>> actual_docs;
     while (!irs::doc_limits::eof(docs->Next())) {
       fetcher.Fetch(docs->Value());
       irs::score_t value;
@@ -854,13 +854,13 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
     ASSERT_FALSE(score.IsDefault());
 
-    constexpr std::pair<float_t, irs::doc_id_t> kExpectedDocs[]{
+    constexpr std::pair<float, irs::doc_id_t> kExpectedDocs[]{
       {1.7405479f, 275},
       {1.2378716f, 46376},
       {1.2378716f, 46377},
     };
 
-    std::vector<std::pair<float_t, irs::doc_id_t>> actual_docs;
+    std::vector<std::pair<float, irs::doc_id_t>> actual_docs;
     while (!irs::doc_limits::eof(docs->Next())) {
       fetcher.Fetch(docs->Value());
       irs::score_t value;

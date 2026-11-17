@@ -979,17 +979,12 @@ inline constexpr double kMaxIndexRangeShare = 1.0 / 32;
 
 std::optional<double> RangeShare(const SearchColumnInfo& info, double lo,
                                  double hi) {
-  if (!info.stats || !duckdb::NumericStats::HasMinMax(*info.stats)) {
+  double min = 0;
+  double max = 0;
+  if (!info.stats ||
+      !duckdb::NumericStats::TryCastRange(*info.stats, min, max)) {
     return std::nullopt;
   }
-  const auto number = [&](const duckdb::Value& value) {
-    double out = 0;
-    WithNumericValue(info.logical_type.id(), value,
-                     [&](auto v) { out = static_cast<double>(v); });
-    return out;
-  };
-  const auto min = number(duckdb::NumericStats::Min(*info.stats));
-  const auto max = number(duckdb::NumericStats::Max(*info.stats));
   if (!(max > min)) {
     return std::nullopt;
   }

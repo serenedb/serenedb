@@ -105,7 +105,6 @@ void ConstraintKeyEncoder::Prepare(const duckdb::DataChunk& chunk,
   auto& prepared = *_prepared;
   const auto parts = _key.columns.size();
   duckdb::vector<duckdb::LogicalType> types;
-  duckdb::vector<duckdb::LogicalType> intervals;
   for (size_t i = 0; i != parts; ++i) {
     duckdb::unique_ptr<duckdb::Expression> part;
     if (i < _expressions.size() && _expressions[i]) {
@@ -123,11 +122,8 @@ void ConstraintKeyEncoder::Prepare(const duckdb::DataChunk& chunk,
     }
     const auto type =
       _key.types.empty() ? part->GetReturnType() : _key.types[i];
-    if (type.id() == duckdb::LogicalTypeId::INTERVAL) {
-      prepared.intervals.push_back(i);
-      intervals.push_back(type);
-    } else if (type.id() == duckdb::LogicalTypeId::VARCHAR &&
-               !duckdb::StringType::GetCollation(type).empty()) {
+    if (type.id() == duckdb::LogicalTypeId::VARCHAR &&
+        !duckdb::StringType::GetCollation(type).empty()) {
       duckdb::ExpressionBinder::PushCollation(
         *_context, part, type, duckdb::CollationType::EQUALITY_COLLATIONS);
       SDB_ASSERT(part->GetReturnType().InternalType() == type.InternalType());
@@ -138,10 +134,7 @@ void ConstraintKeyEncoder::Prepare(const duckdb::DataChunk& chunk,
   }
   auto& allocator = duckdb::Allocator::Get(*_context);
   prepared.input.Initialize(allocator, types);
-  if (!intervals.empty()) {
-    prepared.normalized.Initialize(allocator, intervals);
-  }
-  prepared.modifiers.assign(parts, kKeyOrder);
+  prepared.encoder.emplace(allocator, types);
   prepared.keys.Initialize(allocator, {duckdb::LogicalType::BLOB});
 }
 
@@ -151,37 +144,12 @@ const duckdb::Vector& ConstraintKeyEncoder::Encode(
     Prepare(chunk, column_ids);
   }
   auto& prepared = *_prepared;
-  const auto count = chunk.size();
   auto& input = prepared.input;
   input.Reset();
   prepared.keys.Reset();
   auto& keys = prepared.keys.data[0];
   prepared.executor.Execute(&chunk, input);
-  if (!prepared.intervals.empty()) {
-    prepared.normalized.Reset();
-    for (size_t i = 0; i != prepared.intervals.size(); ++i) {
-      auto& column = input.data[prepared.intervals[i]];
-      auto& normalized = prepared.normalized.data[i];
-      duckdb::UnaryExecutor::Execute<duckdb::interval_t, duckdb::interval_t>(
-        column, normalized, count,
-        [](duckdb::interval_t value) { return value.Normalize(); });
-      column.Reference(normalized);
-    }
-  }
-  duckdb::CreateSortKeyHelpers::CreateSortKey(input, prepared.modifiers, keys);
-  auto& format = prepared.format;
-  for (auto& column : input.data) {
-    column.ToUnifiedFormat(count, format);
-    if (format.validity.CheckAllValid(count)) {
-      continue;
-    }
-    auto& validity = duckdb::FlatVector::ValidityMutable(keys);
-    for (duckdb::idx_t row = 0; row != count; ++row) {
-      if (!format.validity.RowIsValid(format.sel->get_index(row))) {
-        validity.SetInvalid(row);
-      }
-    }
-  }
+  prepared.encoder->Encode(input, keys);
   return keys;
 }
 
@@ -202,6 +170,49 @@ std::string ConstraintKeyText(
   }
   out += ")";
   return out;
+}
+
+KeyEncoder::KeyEncoder(duckdb::Allocator& allocator,
+                       const duckdb::vector<duckdb::LogicalType>& types)
+  : _modifiers(types.size(), kKeyOrder) {
+  duckdb::vector<duckdb::LogicalType> intervals;
+  for (size_t i = 0; i != types.size(); ++i) {
+    if (types[i].id() == duckdb::LogicalTypeId::INTERVAL) {
+      _intervals.push_back(i);
+      intervals.push_back(types[i]);
+    }
+  }
+  if (!intervals.empty()) {
+    _normalized.Initialize(allocator, intervals);
+  }
+}
+
+void KeyEncoder::Encode(duckdb::DataChunk& input, duckdb::Vector& keys) {
+  const auto count = input.size();
+  if (!_intervals.empty()) {
+    _normalized.Reset();
+    for (size_t i = 0; i != _intervals.size(); ++i) {
+      auto& column = input.data[_intervals[i]];
+      auto& normalized = _normalized.data[i];
+      duckdb::UnaryExecutor::Execute<duckdb::interval_t, duckdb::interval_t>(
+        column, normalized, count,
+        [](duckdb::interval_t value) { return value.Normalize(); });
+      column.Reference(normalized);
+    }
+  }
+  duckdb::CreateSortKeyHelpers::CreateSortKey(input, _modifiers, keys);
+  for (auto& column : input.data) {
+    column.ToUnifiedFormat(count, _format);
+    if (_format.validity.CheckAllValid(count)) {
+      continue;
+    }
+    auto& validity = duckdb::FlatVector::ValidityMutable(keys);
+    for (duckdb::idx_t row = 0; row != count; ++row) {
+      if (!_format.validity.RowIsValid(_format.sel->get_index(row))) {
+        validity.SetInvalid(row);
+      }
+    }
+  }
 }
 
 std::string EncodeKeyValue(const duckdb::Value& value) {

@@ -47,13 +47,11 @@ struct Domain {
 };
 
 std::optional<Domain> DomainOf(const duckdb::BaseStatistics& stats) {
-  const auto& type = stats.GetType();
-  if (!type.IsNumeric() || !duckdb::NumericStats::HasMinMax(stats)) {
+  Domain domain{.min = 0, .max = 0, .integral = stats.GetType().IsIntegral()};
+  if (!duckdb::NumericStats::TryCastRange(stats, domain.min, domain.max)) {
     return std::nullopt;
   }
-  return Domain{.min = duckdb::NumericStats::Min(stats).GetValue<double>(),
-                .max = duckdb::NumericStats::Max(stats).GetValue<double>(),
-                .integral = type.IsIntegral()};
+  return domain;
 }
 
 double IntervalShare(const Domain& domain, Interval interval) {

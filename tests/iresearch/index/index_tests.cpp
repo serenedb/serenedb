@@ -831,27 +831,49 @@ class IndexTestCase : public tests::IndexTestBase {
   }
 
   void WriterAtomicityCheck() {
-    struct OverrideSyncDirectory : tests::DirectoryMock {
+    struct OverrideSyncDirectory : tests::FinishHookDirectory {
       typedef std::function<bool(std::string_view)> SyncF;
 
       OverrideSyncDirectory(irs::Directory& impl, SyncF&& sync)
-        : DirectoryMock(impl), _sync(std::move(sync)) {}
+        : FinishHookDirectory(impl), _sync(std::move(sync)) {}
 
-      bool sync(std::span<const std::string_view> files) noexcept final {
-        return absl::c_all_of(files, [this](std::string_view name) noexcept {
+     private:
+      class OverrideSyncInput final : public tests::ForwardingIndexInput {
+       public:
+        OverrideSyncInput(irs::IndexInput::ptr impl, std::string_view name,
+                          const SyncF& sync)
+          : ForwardingIndexInput(std::move(impl)), _name(name), _sync(&sync) {}
+
+        ptr Dup() const final {
+          return std::make_unique<OverrideSyncInput>(
+            ForwardingIndexInput::Dup(), _name, *_sync);
+        }
+        ptr Reopen() const final {
+          return std::make_unique<OverrideSyncInput>(
+            ForwardingIndexInput::Reopen(), _name, *_sync);
+        }
+
+        bool Sync() const noexcept final {
           try {
-            if (_sync(name)) {
+            if ((*_sync)(_name)) {
               return true;
             }
           } catch (...) {
             return false;
           }
+          return ForwardingIndexInput::Sync();
+        }
 
-          return DirectoryMock::sync({&name, 1});
-        });
+       private:
+        std::string _name;
+        const SyncF* _sync;
+      };
+
+      irs::IndexInput::ptr Finished(irs::IndexInput::ptr in,
+                                    std::string_view name) const final {
+        return std::make_unique<OverrideSyncInput>(std::move(in), name, _sync);
       }
 
-     private:
       SyncF _sync;
     };
 

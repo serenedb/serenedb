@@ -28,10 +28,12 @@
 #include <span>
 #include <vector>
 
+#include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/column_patch.hpp"
 #include "iresearch/formats/index/field_reader.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/piece_fields.hpp"
+#include "iresearch/formats/reader_state.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
@@ -40,8 +42,15 @@
 
 namespace irs {
 
-class ColReader;
 class NormColumnReader;
+
+struct SegmentInputs {
+  std::unique_ptr<ColReader> col;
+  std::unique_ptr<IdxReader> idx;
+  PostingsInputs postings;
+};
+
+std::vector<IndexInput::ptr> WrittenFiles(const SegmentInputs& inputs);
 
 class SegmentReaderImpl final : public SubReader {
   struct PrivateTag final {
@@ -59,6 +68,10 @@ class SegmentReaderImpl final : public SubReader {
   static std::shared_ptr<const SegmentReaderImpl> Open(
     const Directory& dir, const SegmentMeta& meta,
     const IndexReaderOptions& options);
+
+  static std::shared_ptr<const SegmentReaderImpl> Open(
+    const Directory& dir, const SegmentMeta& meta,
+    const IndexReaderOptions& options, SegmentInputs inputs);
 
   static std::shared_ptr<const SegmentReaderImpl> OpenInMemory(
     const SegmentMeta& meta, uint64_t id, std::unique_ptr<ColReader> columns);
@@ -86,6 +99,7 @@ class SegmentReaderImpl final : public SubReader {
 
   uint64_t Id() const noexcept { return _id; }
   uint64_t PatchTick() const noexcept { return _patch_tick; }
+  std::span<const FieldPatch> Patches() const noexcept { return _patches; }
 
   lead::Node::ptr docs_iterator() const final;
 
@@ -127,8 +141,6 @@ class SegmentReaderImpl final : public SubReader {
     const IdxReader* Idx() const noexcept {
       return idx_reader ? idx_reader.get() : base ? base->Idx() : nullptr;
     }
-    void Open(const Directory& dir, const SegmentMeta& meta,
-              const IndexReaderOptions& options, bool keep_terms);
   };
 
   FileRefs _refs;
@@ -137,6 +149,7 @@ class SegmentReaderImpl final : public SubReader {
   uint64_t _id = 0;
   uint64_t _patch_tick = 0;
   uint64_t _patched_docs = 0;
+  std::vector<FieldPatch> _patches;
   std::shared_ptr<ColumnData> _data;
   std::shared_ptr<term_dict::FieldReader> _field_reader;
   std::shared_ptr<const PieceFields> _pieces;

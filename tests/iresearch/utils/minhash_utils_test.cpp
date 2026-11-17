@@ -37,7 +37,7 @@ TEST(MinHashTest, MaxSize) {
 }
 
 TEST(MinHashTest, Error) {
-  ASSERT_DOUBLE_EQ(std::numeric_limits<double_t>::infinity(),
+  ASSERT_DOUBLE_EQ(std::numeric_limits<double>::infinity(),
                    irs::MinHash::Error(0));
 
   ASSERT_DOUBLE_EQ(1., irs::MinHash::Error(1));

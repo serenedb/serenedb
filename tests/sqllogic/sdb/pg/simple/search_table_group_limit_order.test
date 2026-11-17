@@ -1,0 +1,234 @@
+control substitution on
+
+statement ok
+CREATE TABLE glo (k BIGINT, v INT)
+WITH (compaction_interval = 0, row_group_size = 2048)
+
+
+statement ok
+INSERT INTO glo SELECT (100000 - i) * 1000003, i % 7 FROM range(0, 40960) t(i)
+
+
+statement ok
+VACUUM (FLUSH_TABLE) glo
+
+
+statement ok
+SET threads = 1
+
+
+statement ok
+SET enable_profiling = 'json'
+
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/glo_ordered.json'
+
+
+query
+SELECT k, count(*) AS n FROM glo GROUP BY k ORDER BY k LIMIT 3
+----
+k	n
+59041177123	1
+59042177126	1
+59043177129	1
+
+
+statement ok
+RESET enable_profiling
+
+
+query
+SELECT json_extract(content, '$.operator[0].children[0].children[0].children[0].row_groups_scanned') AS row_groups_scanned
+FROM read_text('${__TEST_DIR__}/glo_ordered.json')
+----
+row_groups_scanned
+1
+
+
+statement ok
+RESET threads
+
+
+statement ok
+CREATE TABLE gls (k BIGINT)
+WITH (compaction_interval = 0, row_group_size = 2048)
+
+
+statement ok
+INSERT INTO gls SELECT CASE WHEN i % 10 = 0 THEN i * 1000003 ELSE 0 END FROM range(0, 40960) t(i)
+
+
+statement ok
+VACUUM (FLUSH_TABLE) gls
+
+
+query
+EXPLAIN SELECT k, count(*) FROM gls GROUP BY k LIMIT 10
+----
+QUERY PLAN
+╭─ STREAMING_LIMIT ─────────────────╮
+│ Limit: 10                         │
+│ ~0 rows                           │
+╰─────────────────┬─────────────────╯
+╭─ HASH_GROUP_BY ─┴─────────────────╮
+│ Groups: #0                        │
+│ Aggregates: count_star()          │
+│ Group Limit: 10                   │
+│ ~25,891 rows                      │
+╰─────────────────┬─────────────────╯
+╭─ IRESEARCH_SCAN ┴─────────────────╮
+│ Table: gls                        │
+│ Projections: k                    │
+│ Column Filter:                    │
+│ optional: Dynamic Filter (k >= ?) │
+│ ~40,960 rows                      │
+╰───────────────────────────────────╯
+
+
+query
+SELECT count(*) AS groups, bool_and(c = (SELECT count(*) FROM gls s WHERE s.k = r.k)) AS exact
+FROM (SELECT k, count(*) AS c FROM gls GROUP BY k LIMIT 10) r
+----
+groups	exact
+10	t
+
+
+query
+EXPLAIN SELECT k, count(*) FROM glo GROUP BY k LIMIT 10
+----
+QUERY PLAN
+╭─ STREAMING_LIMIT ─────────────────╮
+│ Limit: 10                         │
+│ ~0 rows                           │
+╰─────────────────┬─────────────────╯
+╭─ HASH_GROUP_BY ─┴─────────────────╮
+│ Groups: #0                        │
+│ Aggregates: count_star()          │
+│ Group Limit: 10                   │
+│ ~25,891 rows                      │
+╰─────────────────┬─────────────────╯
+╭─ IRESEARCH_SCAN ┴─────────────────╮
+│ Table: glo                        │
+│ Projections: k                    │
+│ Column Filter:                    │
+│ optional: Dynamic Filter (k <= ?) │
+│ ~40,960 rows                      │
+╰───────────────────────────────────╯
+
+
+query
+SELECT count(*) AS groups, bool_and(c = 1) AS exact
+FROM (SELECT k, count(*) AS c FROM glo GROUP BY k LIMIT 10) r
+----
+groups	exact
+10	t
+
+
+query
+SELECT count(*) AS groups, bool_and(c = (SELECT count(*) FROM glo g WHERE g.v + 1 = r.w)) AS exact
+FROM (SELECT v + 1 AS w, count(*) AS c FROM glo GROUP BY v + 1 LIMIT 3) r
+----
+groups	exact
+3	t
+
+
+query
+SELECT count(*) AS groups, bool_and(c = 1) AS exact
+FROM (SELECT range AS w, count(*) AS c FROM range(100000) GROUP BY range LIMIT 10) r
+----
+groups	exact
+10	t
+
+
+query
+EXPLAIN SELECT DISTINCT k FROM glo ORDER BY k LIMIT 10
+----
+QUERY PLAN
+╭─ TOP_N ───────────────────────────╮
+│ Top: 10                           │
+│ Order By: k ASC                   │
+│ ~10 rows                          │
+╰─────────────────┬─────────────────╯
+╭─ HASH_GROUP_BY ─┴─────────────────╮
+│ Groups: #0                        │
+│ Group Limit: 10                   │
+│ ~40,960 rows                      │
+╰─────────────────┬─────────────────╯
+╭─ IRESEARCH_SCAN ┴─────────────────╮
+│ Table: glo                        │
+│ Projections: k                    │
+│ Column Filter:                    │
+│ optional: Dynamic Filter (k <= ?) │
+│ ~40,960 rows                      │
+╰───────────────────────────────────╯
+
+
+query
+SELECT count(*) AS groups, min(k) = (SELECT min(k) FROM glo) AS first, max(k) = (SELECT k FROM glo ORDER BY k LIMIT 1 OFFSET 9) AS last
+FROM (SELECT DISTINCT k FROM glo ORDER BY k LIMIT 10) r
+----
+groups	first	last
+10	t	t
+
+
+query
+EXPLAIN SELECT k FROM glo GROUP BY k ORDER BY k DESC LIMIT 5000
+----
+QUERY PLAN
+╭─ TOP_N ───────────────────────────╮
+│ Top: 5000                         │
+│ Order By: k DESC                  │
+│ ~5,000 rows                       │
+╰─────────────────┬─────────────────╯
+╭─ HASH_GROUP_BY ─┴─────────────────╮
+│ Groups: #0                        │
+│ Group Limit: 5000                 │
+│ ~25,891 rows                      │
+╰─────────────────┬─────────────────╯
+╭─ IRESEARCH_SCAN ┴─────────────────╮
+│ Table: glo                        │
+│ Projections: k                    │
+│ Column Filter:                    │
+│ optional: Dynamic Filter (k >= ?) │
+│ ~40,960 rows                      │
+╰───────────────────────────────────╯
+
+
+query
+SELECT count(*) AS groups, min(k) = (SELECT k FROM glo ORDER BY k DESC LIMIT 1 OFFSET 4999) AS last
+FROM (SELECT k FROM glo GROUP BY k ORDER BY k DESC LIMIT 5000) r
+----
+groups	last
+5000	t
+
+
+query
+EXPLAIN SELECT k, count(*) FROM glo GROUP BY k LIMIT 5000
+----
+QUERY PLAN
+╭─ STREAMING_LIMIT ─────────────────╮
+│ Limit: 5000                       │
+│ ~0 rows                           │
+╰─────────────────┬─────────────────╯
+╭─ HASH_GROUP_BY ─┴─────────────────╮
+│ Groups: #0                        │
+│ Aggregates: count_star()          │
+│ Group Limit: 5000                 │
+│ ~25,891 rows                      │
+╰─────────────────┬─────────────────╯
+╭─ IRESEARCH_SCAN ┴─────────────────╮
+│ Table: glo                        │
+│ Projections: k                    │
+│ Column Filter:                    │
+│ optional: Dynamic Filter (k <= ?) │
+│ ~40,960 rows                      │
+╰───────────────────────────────────╯
+
+
+query
+SELECT count(*) AS groups, bool_and(c = 1) AS exact
+FROM (SELECT k, count(*) AS c FROM glo GROUP BY k LIMIT 5000) r
+----
+groups	exact
+5000	t

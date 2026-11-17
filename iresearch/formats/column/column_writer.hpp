@@ -81,7 +81,7 @@ class ColumnWriter final {
     ++back.count;
     duckdb::FlatVector::SetSize(back.data, back.count);
     ++_staged_rows;
-    if (!_deferred && _staged_rows == _row_group_size) {
+    if (!_deferred && _staged_rows == _rg_rows) {
       SealRowGroup();
     }
   }
@@ -102,6 +102,7 @@ class ColumnWriter final {
   field_id Id() const noexcept { return _id; }
   const duckdb::LogicalType& Type() const noexcept { return _type; }
   const ColumnMeta& Meta() const noexcept { return _meta; }
+  ColumnMeta TakeMeta() noexcept { return std::move(_meta); }
 
  private:
   friend class ColWriter;
@@ -124,6 +125,7 @@ class ColumnWriter final {
                   uint64_t first, uint64_t count);
 
   void SealRowGroup();
+  void OpenRowGroup() noexcept;
 
   duckdb::optional_ptr<const duckdb::CompressionFunction> PickCodec(
     const duckdb::LogicalType& codec_type, std::span<WriteChunk> chunks,
@@ -180,6 +182,7 @@ class ColumnWriter final {
   duckdb::idx_t _staged_chunks = 0;
   uint64_t _staged_rows = 0;
   uint64_t _row_start = 0;
+  uint64_t _rg_rows = 0;
   bool _deferred = false;
   DistinctStats _distinct = DistinctStats::None;
   duckdb::Vector _distinct_hashes{duckdb::LogicalType::HASH, nullptr};

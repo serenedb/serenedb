@@ -177,10 +177,6 @@ statement ok
 SET threads = 2
 
 
-statement ok
-SET sdb_scan_split = 'tail'
-
-
 query
 SELECT count(*) FROM sb WHERE body @@ 'dog';
 ----
@@ -213,10 +209,6 @@ fox	59200
 
 statement ok
 SET threads = 3
-
-
-statement ok
-SET sdb_scan_split = 'tail'
 
 
 query
@@ -253,10 +245,6 @@ statement ok
 SET threads = 8
 
 
-statement ok
-SET sdb_scan_split = 'tail'
-
-
 query
 SELECT count(*) FROM sb WHERE body @@ 'dog';
 ----
@@ -291,10 +279,6 @@ statement ok
 SET threads = 3
 
 
-statement ok
-SET sdb_scan_split = 'never'
-
-
 query
 SELECT count(*) FROM sb WHERE body @@ 'dog';
 ----
@@ -327,10 +311,6 @@ fox	59200
 
 statement ok
 SET threads = 3
-
-
-statement ok
-SET sdb_scan_split = 'always'
 
 
 query
@@ -368,10 +348,6 @@ SET threads = 2
 
 
 statement ok
-SET sdb_scan_split = 'tail'
-
-
-statement ok
 SET enable_profiling = 'json'
 
 
@@ -396,10 +372,6 @@ FROM read_text('${__TEST_DIR__}/scan_batches_count.json');
 ----
 row_groups_scanned
 27
-
-
-statement ok
-RESET sdb_scan_split
 
 
 statement ok

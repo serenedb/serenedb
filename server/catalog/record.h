@@ -27,6 +27,7 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/parsed_data/alter_info.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -40,19 +41,19 @@ namespace sdb::catalog {
 
 std::string SerializeAlter(const duckdb::AlterInfo& info);
 
-std::vector<uint8_t> WriteRecord(duckdb::ClientContext& context,
-                                 const SessionTransaction& transaction,
-                                 search::Writes& writes);
+std::optional<RecordBuffer> WriteRecord(duckdb::ClientContext& context,
+                                        const SessionTransaction& transaction,
+                                        search::Writes& writes);
 
-std::vector<uint8_t> SequenceRecord(const BaseCatalog& catalog,
-                                    const duckdb::SequenceValue& value);
+RecordBuffer SequenceRecord(const BaseCatalog& catalog,
+                            const duckdb::SequenceValue& value);
 
-std::vector<uint8_t> SearchRecord(duckdb::idx_t catalog, duckdb::idx_t table,
-                                  const search::TableDelta& delta);
+RecordBuffer SearchRecord(duckdb::idx_t catalog, duckdb::idx_t table,
+                          const search::TableDelta& delta);
 
-std::vector<uint8_t> ShutdownRecord();
+RecordBuffer ShutdownRecord();
 
-std::vector<uint8_t> StartupRecord();
+RecordBuffer StartupRecord();
 
 std::span<uint8_t> CatalogPart(std::span<uint8_t> payload);
 

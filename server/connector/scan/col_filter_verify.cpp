@@ -123,7 +123,7 @@ void ClassifySegmentColFilters(
       .filter = cf.filter,
       .is_score = cf.is_score,
       .is_dynamic = cf.is_dynamic,
-      .zonemap_only = cf.zonemap_only,
+      .optional = cf.optional,
       .null_check = cf.null_check,
       .row_gather = cf.row_gather,
       .not_null = cf.not_null.get(),
@@ -159,13 +159,7 @@ void ClassifySegmentColFilters(
       continue;
     }
     if (reader == nullptr) {
-      duckdb::Vector null_row{duckdb::Value{cf.type}, duckdb::count_t{1}};
-      duckdb::SelectionVector sel;
-      duckdb::idx_t approved = 1;
-      duckdb::ColumnSegment::FilterSelection(
-        sel, null_row, states.State(*g.client_context, *spec.filter), 1,
-        approved);
-      if (approved == 0) {
+      if (!states.AdmitsNull(*g.client_context, *spec.filter, cf.type)) {
         out.segment_dead = true;
         out.active.clear();
         return;
@@ -183,12 +177,12 @@ void ClassifySegmentColFilters(
         out.active.clear();
         return;
       case duckdb::FilterPropagateResult::FILTER_ALWAYS_TRUE:
-        if (spec.zonemap_only) {
+        if (spec.is_dynamic) {
           out.active.push_back(spec);
         }
         break;
       case duckdb::FilterPropagateResult::FILTER_TRUE_OR_NULL:
-        if (!spec.zonemap_only && spec.not_null != nullptr) {
+        if (!spec.optional && !spec.is_dynamic && spec.not_null) {
           spec.filter = spec.not_null;
           spec.null_check = irs::NullCheckKind::IsNotNull;
         }

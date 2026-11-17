@@ -439,10 +439,6 @@ void IResearchScanFunction(duckdb::ClientContext& context,
   }
   const bool reorder = !g.output_projection_ids.empty();
   auto& base = data.local_state->Cast<ScanLocalState>();
-  if (base.parked_on) {
-    base.parked_on->Resume();
-    base.parked_on = nullptr;
-  }
   if (reorder) {
     if (base.scan_chunk.ColumnCount() == 0) {
       base.scan_chunk.Initialize(context, g.projected_types);
@@ -507,33 +503,41 @@ void IResearchSetScanOrder(
     return;
   }
   auto& bd = bind_data->Cast<ScanBindData>();
-  if (options->row_group_offset != 0 ||
-      options->leading_null_group_offset != 0) {
-    bd.search.filter = std::make_shared<irs::Empty>();
-    return;
-  }
-  if (!options->single_order_key ||
-      (!options->row_limit.IsValid() && !options->row_limit_expression)) {
-    return;
-  }
-  if (GetBoolSetting(context, "sdb_disable_top_k_optimization")) {
-    return;
-  }
   const auto order_col =
     ScanColumnOfStorage(bd, options->column_idx.GetPrimaryIndex());
-  if (order_col >= bd.columns.ids.size()) {
+  const auto order = [&] {
+    return ScanOrderSpec{
+      .column = bd.columns.ids[order_col],
+      .order_type = options->order_type,
+      .null_order = options->null_order,
+      .order_by = options->order_by,
+      .column_type = options->column_type,
+      .storage = options->column_idx,
+      .skipped_groups = options->row_group_offset,
+      .skipped_null_groups = options->leading_null_group_offset,
+    };
+  };
+  if (options->row_group_offset != 0 ||
+      options->leading_null_group_offset != 0) {
+    SDB_ASSERT(order_col < bd.columns.ids.size() &&
+               bd.relation.Stores(bd.columns.ids[order_col]));
+    bd.scan_order = order();
+    return;
+  }
+  if (GetBoolSetting(context, "sdb_disable_top_k_optimization") ||
+      order_col >= bd.columns.ids.size()) {
     return;
   }
   const auto col_id = bd.columns.ids[order_col];
   if (col_id != kInvertedIndexScoreId) {
     if (bd.relation.Stores(col_id) && !bd.scan_order) {
-      bd.scan_order =
-        ScanOrderSpec{col_id, options->order_type, options->null_order,
-                      options->order_by, options->column_type};
+      bd.scan_order = order();
     }
     return;
   }
-  if (bd.score.HasTopK()) {
+  if (!options->single_order_key ||
+      (!options->row_limit.IsValid() && !options->row_limit_expression) ||
+      bd.score.HasTopK()) {
     return;
   }
   const auto take_limit = [&] {

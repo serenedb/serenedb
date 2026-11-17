@@ -45,7 +45,7 @@ bool RecoverSearchStorages(
   bool orphans);
 void StartSearchStorageTasks();
 std::vector<TableSnapshot> CaptureSnapshot(const catalog::CommittedView& view);
-std::vector<std::vector<uint8_t>> SnapshotRecords(
+std::vector<catalog::RecordBuffer> SnapshotRecords(
   std::span<const TableSnapshot> tables);
 
 }  // namespace sdb::search

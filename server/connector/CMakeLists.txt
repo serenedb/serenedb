@@ -2,7 +2,6 @@ target_sources(
     sereneserver
     PRIVATE
         constraint_keys.cpp
-        key_encoding.cpp
         primary_key.cpp
         row_position_deduplicator.cpp
         offsets_collector.cpp

@@ -21,6 +21,8 @@
 #include <absl/algorithm/container.h>
 
 #include <algorithm>
+#include <atomic>
+#include <duckdb/parallel/task_executor.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/table_filter_state.hpp>
@@ -640,6 +642,52 @@ bool SegmentStaysWhole(ScanShape shape, const irs::QueryBuilder& query,
          STANDARD_VECTOR_SIZE;
 }
 
+struct EagerSegments {
+  ScanGlobalState& g;
+  std::vector<uint32_t> segments;
+  std::atomic_uint32_t next = 0;
+};
+
+void PrepareNext(EagerSegments& eager) {
+  const auto size = static_cast<uint32_t>(eager.segments.size());
+  for (auto i = eager.next.fetch_add(1, std::memory_order_relaxed); i < size;
+       i = eager.next.fetch_add(1, std::memory_order_relaxed)) {
+    PrepareSegmentNow(eager.g, eager.segments[i]);
+  }
+}
+
+class EagerPrepareTask final : public duckdb::BaseExecutorTask {
+ public:
+  EagerPrepareTask(duckdb::TaskExecutor& executor, EagerSegments& eager)
+    : BaseExecutorTask{executor}, _eager{eager} {}
+
+  void ExecuteTask() final { PrepareNext(_eager); }
+
+ private:
+  EagerSegments& _eager;
+};
+
+void PrepareSplitSegments(ScanGlobalState& g, duckdb::ClientContext& context,
+                          uint64_t threads) {
+  EagerSegments eager{.g = g};
+  for (const auto seg : g.segment_order) {
+    if (SegmentRowGroups{(*g.reader)[seg], g.rg_size}.Count() > 1) {
+      eager.segments.push_back(seg);
+    }
+  }
+  const auto helpers = std::min<uint64_t>(threads, eager.segments.size());
+  if (helpers < 2) {
+    PrepareNext(eager);
+    return;
+  }
+  duckdb::TaskExecutor executor{context};
+  for (uint64_t i = 1; i < helpers; ++i) {
+    executor.ScheduleTask(duckdb::make_uniq<EagerPrepareTask>(executor, eager));
+  }
+  PrepareNext(eager);
+  executor.WorkOnTasks();
+}
+
 }  // namespace
 
 void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
@@ -678,6 +726,9 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
   const bool constant_count = !eager && g.shape == ScanShape::Count &&
                               g.col_filters.empty() && where &&
                               ConstantCount(*where);
+  if (eager) {
+    PrepareSplitSegments(g, context, threads);
+  }
   const auto unique = UniqueBound(g, where.get());
   const bool single = unique && *unique <= STANDARD_VECTOR_SIZE;
   irs::ColFilterStateCache states;
@@ -698,7 +749,7 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
     bool split =
       g.splittable && work.rg_count > 1 && !(constant_count && exact_counts);
     if (split && eager) {
-      PrepareSegmentNow(g, seg);
+      SDB_ASSERT(g.queries[seg]);
       split =
         !SegmentStaysWhole(g.shape, *g.queries[seg], exact_counts, g.rg_size);
     }

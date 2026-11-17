@@ -50,7 +50,8 @@ irs::QueryBuilder::ptr PrepareSegmentQuery(const ScanGlobalState& g,
 
 void PrepareSegmentNow(ScanGlobalState& g, uint32_t seg_idx) {
   g.queries[seg_idx] = PrepareSegmentQuery(
-    g, seg_idx, {.needs_terms = g.needs_terms, .prefetch = false});
+    g, seg_idx,
+    {.needs_terms = g.needs_terms, .prefetch = g.shape == ScanShape::Count});
   g.Segment(seg_idx).prepare.store(SegmentWork::kReady,
                                    std::memory_order_relaxed);
 }

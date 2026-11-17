@@ -126,7 +126,7 @@ def test_explain_in_a_terminal_prints_the_plan_and_one_analyze_hint() -> None:
         ".web to open it in a browser") == 1, output
 
 
-@pytest.mark.parametrize("shape", ["pg", "duckdb_native"])
+@pytest.mark.parametrize("shape", ["server", "cli"])
 def test_explain_analyze_for_a_browser_prints_no_hint(tmp_path: Path, shape: str) -> None:
     opener = tmp_path / "bin" / "xdg-open"
     opener.parent.mkdir()
@@ -152,7 +152,7 @@ def test_explain_analyze_into_a_file_writes_no_hint(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("highlight", ["on", "off"])
-@pytest.mark.parametrize("shape", ["pg", "duckdb_native"])
+@pytest.mark.parametrize("shape", ["server", "cli"])
 def test_only_a_plan_taller_than_the_terminal_goes_through_the_pager(
     shape: str, highlight: str
 ) -> None:

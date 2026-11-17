@@ -75,6 +75,7 @@ struct VariableDescription {
   duckdb::reset_option_callback_t reset_callback = nullptr;
   duckdb::SetScope scope = duckdb::SetScope::AUTOMATIC;
   bool rebind = false;
+  bool no_reset_all = false;
 };
 
 std::string_view GetOriginalName(std::string_view name);

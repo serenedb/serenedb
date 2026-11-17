@@ -251,6 +251,11 @@ class Writes {
                   absl::FunctionRef<void(const irs::SubReader&,
                                          connector::SearchSinkInsertBaseImpl&)>
                     feed);
+  void TakeIndexedPatches(
+    duckdb::ClientContext& context, Store& store,
+    absl::FunctionRef<void(const irs::DirectoryReader&, size_t,
+                           const irs::DocumentMask&)>
+      feed);
 
   void Adopting(const std::shared_ptr<Store>& store);
   void Rebuilt(const std::shared_ptr<Store>& store,

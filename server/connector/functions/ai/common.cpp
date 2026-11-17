@@ -395,7 +395,8 @@ struct FetchState {
       token{scheduler.CreateProducer(exec.context.GetSchedulerAccount())} {}
 
   bool Stop() const {
-    return stop.load(std::memory_order_relaxed) || exec.context.IsInterrupted();
+    return stop.load(std::memory_order_relaxed) ||
+           exec.context.InterruptPending();
   }
 
   bool Pending() const {

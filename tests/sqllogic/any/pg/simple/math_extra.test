@@ -255,6 +255,19 @@ lcm
 24
 
 
+query
+SELECT cotd(0) AS zero, cotd('NaN'::float8) AS nan;
+----
+zero	nan
+Infinity	NaN
+
+
+statement error
+SELECT cotd('Infinity'::float8);
+----
+db error: ERROR: input is out of range
+
+
 # cotd with non-zero inputs
 
 query

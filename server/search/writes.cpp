@@ -484,6 +484,20 @@ void FlushRows(duckdb::ClientContext& context, StoreWrites& w) {
   ++w.rows_generation;
 }
 
+bool OwnUnit(const StoreWrites& w, uint64_t unit) {
+  return unit >= OwnRowsId(w.rows_generation) ||
+         absl::c_any_of(w.own_segments, [&](const OwnSegment& segment) {
+           return segment.reader->Id() == unit;
+         });
+}
+
+bool ReadsPatchedColumn(const catalog::InvertedIndexConfig& config,
+                        const UnitPatch& patch) {
+  return absl::c_any_of(patch.fields, [&](const irs::FieldPatch& field) {
+    return config.ReadsColumn(field.field);
+  });
+}
+
 }  // namespace
 
 void Writes::FollowVersion(const Store& store, uint64_t before) {
@@ -654,6 +668,9 @@ void Writes::RewriteOwn(
       w.changes.removals,
       [&](uint64_t segment) { return absl::c_linear_search(own, segment); },
       [](const irs::DocumentMask&) {});
+    std::erase_if(w.changes.patches, [&](const UnitPatch& patch) {
+      return absl::c_linear_search(own, patch.unit);
+    });
     w.changes.ClearBufferedRows();
     w.changes.column_ids.clear();
     ++w.rows_generation;
@@ -663,6 +680,44 @@ void Writes::RewriteOwn(
     ++w.revision;
     w.pinned.store(nullptr, std::memory_order_relaxed);
     w.pin.reset();
+  }
+}
+
+void Writes::TakeIndexedPatches(
+  duckdb::ClientContext& context, Store& store,
+  absl::FunctionRef<void(const irs::DirectoryReader&, size_t,
+                         const irs::DocumentMask&)>
+    feed) {
+  auto* w = FindStoreWrites(store.GetId());
+  const auto config = store.Config();
+  if (!w || !config) {
+    return;
+  }
+  const auto& pin = EnsurePin(context, *w);
+  std::vector<UnitPatch> taken;
+  {
+    absl::MutexLock lock{&w->mutex};
+    auto& patches = w->changes.patches;
+    const auto kept =
+      absl::c_stable_partition(patches, [&](const UnitPatch& patch) {
+        return OwnUnit(*w, patch.unit) || !ReadsPatchedColumn(*config, patch);
+      });
+    taken.assign(std::make_move_iterator(kept),
+                 std::make_move_iterator(patches.end()));
+    patches.erase(kept, patches.end());
+  }
+  const auto& reader = pin.Reader();
+  const auto unit = [&](size_t index) {
+    return irs::utils::downCast<irs::SegmentReader>(reader[index])
+      .GetImpl()
+      ->Id();
+  };
+  for (const auto& patch : ResolvePatches(*pin.state, std::move(taken))) {
+    size_t index = 0;
+    for (; unit(index) != patch.unit; ++index) {
+      SDB_ASSERT(index + 1 < reader.size());
+    }
+    feed(reader, index, PatchedDocs(patch));
   }
 }
 
@@ -1917,6 +1972,9 @@ void Writes::PrepareCommit(duckdb::ClientContext& context) {
       CarryUnitPatches(changes.patches, rows_id, sealed);
       changes.ClearBufferedRows();
     }
+    if (!w.own_segments.empty()) {
+      w.store->SyncSegments();
+    }
     w.buffered_keys.Clear();
     w.prepared = true;
   }
@@ -1946,6 +2004,13 @@ std::vector<LogSection> Writes::TakeLog(duckdb::ClientContext& context) {
       w.table->RequireCurrentSchema();
     }
     if (w.version && *w.version != w.store->Version()) {
+      ThrowConcurrentUpdate();
+    }
+    if (const auto config = w.store->Config();
+        config &&
+        absl::c_any_of(w.changes.patches, [&](const UnitPatch& patch) {
+          return ReadsPatchedColumn(*config, patch);
+        })) {
       ThrowConcurrentUpdate();
     }
     SDB_PARK_ONCE_ON_FAILURE("search_commit_validated");

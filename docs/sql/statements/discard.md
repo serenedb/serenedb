@@ -11,7 +11,7 @@ The `DISCARD` statement releases state the current session has built up, so a co
 
 | Statement | Effect |
 |---|---|
-| `DISCARD ALL` | Everything below, plus `DEALLOCATE ALL` and `RESET ALL`: every prepared statement of the session is dropped, and every setting the session changed returns to its default, the session authorization and the role included. |
+| `DISCARD ALL` | Everything below, plus `SET SESSION AUTHORIZATION DEFAULT`, `RESET ALL` and `DEALLOCATE ALL`: every prepared statement of the session is dropped, the session authorization returns to the role that logged in and the role to `none`, and every other setting the session changed returns to the value the session started with. |
 | `DISCARD TEMP` | Drops the temporary tables, views, sequences, functions and types of the session. `DISCARD TEMPORARY` is the same statement. |
 | `DISCARD SEQUENCES` | Forgets the session's sequence state: `currval` fails for every sequence until the next `nextval` on it. |
 | `DISCARD PLANS` | Accepted and has no effect: prepared statements stay prepared. |

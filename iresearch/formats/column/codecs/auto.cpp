@@ -67,13 +67,51 @@ static_assert([] {
   return true;
 }());
 
-const CompressionFunction* Held(const ColumnDataCheckpointData& data,
-                                std::span<const Contender> contenders) {
-  const auto pick = std::to_underlying(data.tuning.reuse.pick);
+const CompressionFunction* FunctionOf(std::span<const Contender> contenders,
+                                      CodecType codec) {
   const auto it = absl::c_find_if(contenders, [&](const Contender& contender) {
-    return contender.codecs.test(pick);
+    return contender.codecs.test(std::to_underlying(codec));
   });
   return it == contenders.end() ? nullptr : it->function;
+}
+
+bool CompressHeld(const CompressionFunction& held,
+                  ColumnDataCheckpointData& data) {
+  const auto written = data.written;
+  if (!held.compress(data)) {
+    return false;
+  }
+  auto& reuse = data.tuning.reuse;
+  if (reuse.Grew(static_cast<double>(data.written - written),
+                 static_cast<double>(RawInput(data)))) {
+    reuse.Restart();
+  }
+  return true;
+}
+
+void Decide(std::span<const Contender> contenders,
+            ColumnDataCheckpointData& data) {
+  Estimate best;
+  const CompressionFunction* winner = nullptr;
+  for (const auto& [function, codecs] : contenders) {
+    if (const auto estimate = function->analyze(data, best.score);
+        estimate.score < best.score) {
+      best = estimate;
+      winner = function;
+    }
+  }
+  const auto written = data.written;
+  if (!winner || !winner->compress(data)) {
+    winner = &UncompressedCompression(data.type.InternalType());
+    best = {.codec = CodecType::Uncompressed};
+    winner->compress(data);
+  }
+  const auto bytes = data.written - written;
+  if (bytes == 0) {
+    return;
+  }
+  data.tuning.reuse.Settle(best.codec, static_cast<double>(bytes),
+                           static_cast<double>(RawInput(data)));
 }
 
 bool CompressAuto(ColumnDataCheckpointData& data) {
@@ -112,37 +150,11 @@ constexpr Codec kAutoCodec{.type = CodecType::Auto, .compression = &kAuto};
 void Contest(std::span<const Contender> contenders,
              ColumnDataCheckpointData& data) {
   auto& reuse = data.tuning.reuse;
-  if (const auto* held = reuse.Due() ? nullptr : Held(data, contenders)) {
-    const auto written = data.written;
-    if (held->compress(data)) {
-      if (reuse.Grew(static_cast<double>(data.written - written),
-                     static_cast<double>(RawInput(data)))) {
-        reuse.Restart();
-      }
-      return;
-    }
-  }
-  Estimate best;
-  const CompressionFunction* winner = nullptr;
-  for (const auto& [function, codecs] : contenders) {
-    if (const auto estimate = function->analyze(data, best.score);
-        estimate.score < best.score) {
-      best = estimate;
-      winner = function;
-    }
-  }
-  const auto written = data.written;
-  if (!winner || !winner->compress(data)) {
-    winner = &UncompressedCompression(data.type.InternalType());
-    best = {.codec = CodecType::Uncompressed};
-    winner->compress(data);
-  }
-  const auto bytes = data.written - written;
-  if (bytes == 0) {
+  const auto* held = reuse.Due() ? nullptr : FunctionOf(contenders, reuse.pick);
+  if (held && CompressHeld(*held, data)) {
     return;
   }
-  reuse.Settle(best.codec, static_cast<double>(bytes),
-               static_cast<double>(RawInput(data)));
+  Decide(contenders, data);
 }
 
 const Codec* AutoCodec(PhysicalType) { return &kAutoCodec; }

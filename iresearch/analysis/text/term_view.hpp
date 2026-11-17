@@ -71,7 +71,7 @@ IRS_FORCE_INLINE inline __m128i InlineTermRegister(const char* data,
 IRS_FORCE_INLINE inline void StoreHalves(duckdb::string_t* dst,
                                          __m128i term) noexcept {
   _mm_storel_epi64(reinterpret_cast<__m128i*>(dst), term);
-  asm("" : "+x"(term));
+  term = Opaque(term);
   _mm_storeh_pd(reinterpret_cast<double*>(dst) + 1, _mm_castsi128_pd(term));
 }
 

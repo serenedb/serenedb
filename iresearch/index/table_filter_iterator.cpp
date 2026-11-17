@@ -860,12 +860,11 @@ duckdb::idx_t ColFilterChain::FilterMaskScores(
     }
     const auto base = static_cast<uint64_t>(w) * 64;
     duckdb::idx_t run = 0;
-    for (auto scan = word; scan != 0; scan &= scan - 1) {
-      const auto bit = static_cast<uint64_t>(std::countr_zero(scan));
+    ForEachSetBit(word, [&](uint32_t bit) IRS_FORCE_INLINE {
       offs[run] = static_cast<uint8_t>(bit);
       vals[run] = scores[base + bit];
       ++run;
-    }
+    });
     duckdb::Vector svec{duckdb::LogicalType::FLOAT,
                         reinterpret_cast<duckdb::data_ptr_t>(vals.data()), run};
     duckdb::SelectionVector sel;

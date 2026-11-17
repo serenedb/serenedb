@@ -82,8 +82,7 @@ inline IRS_FORCE_INLINE bool WithinBlock(std::span<const doc_id_t> docs,
 inline doc_id_t FirstCommon(std::span<const doc_id_t> a,
                             std::span<const doc_id_t> b) noexcept {
   SDB_ASSERT(!b.empty());
-  const auto* a_scalar = a.data();
-  asm("" : "+r"(a_scalar));
+  const auto* const a_scalar = Opaque(a.data());
   size_t i = 0;
   size_t j = 0;
   while (i + kMergeBlock <= a.size() && j + kMergeBlock <= b.size()) {
@@ -106,20 +105,17 @@ class ConjunctionLeaves {
  public:
   template<typename Estimate, typename Make, typename Emit>
   ConjunctionLeaves(size_t size, Estimate&& estimate, Make&& make, Emit&& emit)
-    : ConjunctionLeaves{SortBy(Order{size,
-                                     [](uint32_t& j, size_t i) noexcept {
-                                       j = static_cast<uint32_t>(i);
-                                     }},
-                               estimate),
-                        make, emit} {}
+    : ConjunctionLeaves{
+        size, [](size_t i) noexcept { return static_cast<uint32_t>(i); },
+        estimate, make, emit} {}
 
-  template<typename Estimate, typename Make, typename Emit>
-  ConjunctionLeaves(std::span<const uint32_t> indices, Estimate&& estimate,
+  template<typename Index, typename Estimate, typename Make, typename Emit>
+  ConjunctionLeaves(size_t size, Index&& index, Estimate&& estimate,
                     Make&& make, Emit&& emit)
     : ConjunctionLeaves{
-        SortBy(Order{indices.size(),
-                     [&](uint32_t& j, size_t i) noexcept { j = indices[i]; }},
-               estimate),
+        SortBy(
+          Order{size, [&](uint32_t& j, size_t i) noexcept { j = index(i); }},
+          estimate),
         make, emit} {}
 
   ConjunctionLeaves(ConjunctionLeaves&&) = delete;

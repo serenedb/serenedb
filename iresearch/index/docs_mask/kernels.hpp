@@ -70,10 +70,7 @@ inline IRS_FORCE_INLINE uint32_t* LiveWord(
 #ifdef __AVX2__
   return MaterializeWord(offset, live, out);
 #else
-  for (; live != 0; live &= live - 1) {
-    *out++ = offset + static_cast<uint32_t>(std::countr_zero(live));
-  }
-  return out;
+  return MaterializeBits(offset, live, out);
 #endif
 }
 

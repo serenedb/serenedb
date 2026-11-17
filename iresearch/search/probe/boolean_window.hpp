@@ -131,12 +131,10 @@ class BooleanWindow
       if constexpr (kBounded) {
         score_t top = 0;
         for (uint32_t w = 0; w != detail::kWindowWords; ++w) {
-          auto word = words[w];
           const auto base = w * detail::kWindowBits;
-          while (word != 0) {
-            top = std::max(top, _window[base + std::countr_zero(word)]);
-            word = PopBit(word);
-          }
+          ForEachSetBit(words[w], [&](uint32_t bit) IRS_FORCE_INLINE {
+            top = std::max(top, _window[base + bit]);
+          });
         }
         _max = top;
       }

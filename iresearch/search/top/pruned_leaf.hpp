@@ -329,8 +329,8 @@ class PrunedLeafBase : protected detail::PostingLeaf<InputType, kPrunedShape> {
 
   IRS_FORCE_INLINE const doc_id_t* FirstNotBelow(const doc_id_t* begin,
                                                  doc_id_t max) const noexcept {
-    return LeafLowerBound<doc_limits::kBlockSize>(std::cbegin(_docs), _len,
-                                                  begin, max);
+    return LeafLowerBound<doc_limits::kBlockSize>(std::cend(_docs) - _len,
+                                                  std::cend(_docs), begin, max);
   }
 
   void ReadLeaf(doc_id_t prev) {
@@ -490,10 +490,9 @@ class PrunedProbeBase : public PrunedLeafBase<InputType, false> {
                                                i, end, hits, index);
       if (hits != 0) {
         DecodeLazyFreqs();
-        for (; hits != 0; hits &= hits - 1) {
-          const auto j = static_cast<uint32_t>(std::countr_zero(hits));
+        ForEachSetBit(hits, [&](uint32_t j) IRS_FORCE_INLINE {
           visit(j, _freqs.data[index[j]]);
-        }
+        });
       }
       return end;
     });

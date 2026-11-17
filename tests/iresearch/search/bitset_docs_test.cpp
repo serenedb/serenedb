@@ -66,6 +66,10 @@ irs::detail::BitsetStorage MakeSet(irs::doc_id_t docs_count,
   return set;
 }
 
+uint64_t CountSet(const irs::detail::BitsetStorage& set) {
+  return irs::CountBits(set.Words(), set.WordCount());
+}
+
 std::vector<irs::doc_id_t> Range(irs::doc_id_t first, irs::doc_id_t last,
                                  irs::doc_id_t step = 1) {
   std::vector<irs::doc_id_t> docs;
@@ -158,7 +162,7 @@ TEST(bitset_lead_test, advance) {
   // empty segment
   {
     auto set = MakeSet(0, {});
-    ASSERT_EQ(0, irs::detail::CountBits(set));
+    ASSERT_EQ(0, CountSet(set));
     Cursor it{std::move(set)};
     ASSERT_EQ(irs::doc_limits::invalid(), it.Value());
 
@@ -172,7 +176,7 @@ TEST(bitset_lead_test, advance) {
   // non-empty segment holding nothing
   {
     auto set = MakeSet(13, {});
-    ASSERT_EQ(0, irs::detail::CountBits(set));
+    ASSERT_EQ(0, CountSet(set));
     Cursor it{std::move(set)};
     ASSERT_EQ(irs::doc_limits::invalid(), it.Value());
 
@@ -187,7 +191,7 @@ TEST(bitset_lead_test, advance) {
   {
     const auto expected = Range(1, 73);
     auto set = MakeSet(73, expected);
-    ASSERT_EQ(73, irs::detail::CountBits(set));
+    ASSERT_EQ(73, CountSet(set));
     Cursor it{std::move(set)};
     ASSERT_FALSE(irs::doc_limits::valid(it.Value()));
 
@@ -201,7 +205,7 @@ TEST(bitset_lead_test, advance) {
   {
     const auto expected = Range(1, 175, 2);
     auto set = MakeSet(176, expected);
-    ASSERT_EQ(88, irs::detail::CountBits(set));
+    ASSERT_EQ(88, CountSet(set));
     Cursor it{std::move(set)};
     ASSERT_FALSE(irs::doc_limits::valid(it.Value()));
 
@@ -215,7 +219,7 @@ TEST(bitset_lead_test, advance) {
     auto expected = Range(64, 126);
     expected.emplace_back(191);
     auto set = MakeSet(192, expected);
-    ASSERT_EQ(64, irs::detail::CountBits(set));
+    ASSERT_EQ(64, CountSet(set));
     Cursor it{std::move(set)};
     ASSERT_FALSE(irs::doc_limits::valid(it.Value()));
 
@@ -229,7 +233,7 @@ TEST(bitset_lead_test, advance) {
     const std::vector<irs::doc_id_t> expected{71,  74,  82,  86,  93,
                                               101, 103, 113, 121, 126};
     auto set = MakeSet(173, expected);
-    ASSERT_EQ(10, irs::detail::CountBits(set));
+    ASSERT_EQ(10, CountSet(set));
     Cursor it{std::move(set)};
     ASSERT_FALSE(irs::doc_limits::valid(it.Value()));
 
@@ -242,7 +246,7 @@ TEST(bitset_lead_test, advance) {
   {
     const std::vector<irs::doc_id_t> expected{185};
     auto set = MakeSet(189, expected);
-    ASSERT_EQ(1, irs::detail::CountBits(set));
+    ASSERT_EQ(1, CountSet(set));
     Cursor it{std::move(set)};
     ASSERT_FALSE(irs::doc_limits::valid(it.Value()));
 
@@ -680,12 +684,12 @@ TEST(bitset_docs_test, run) {
 
 // What a count's root reduces to once its buckets are folded.
 TEST(bitset_count_test, count) {
-  ASSERT_EQ(0, irs::detail::CountBits(MakeSet(0, {})));
-  ASSERT_EQ(0, irs::detail::CountBits(MakeSet(13, {})));
-  ASSERT_EQ(73, irs::detail::CountBits(MakeSet(73, Range(1, 73))));
-  ASSERT_EQ(88, irs::detail::CountBits(MakeSet(176, Range(1, 175, 2))));
-  ASSERT_EQ(1, irs::detail::CountBits(MakeSet(189, {185})));
-  ASSERT_EQ(4, irs::detail::CountBits(MakeSet(256, {1, 64, 130, 255})));
+  ASSERT_EQ(0, CountSet(MakeSet(0, {})));
+  ASSERT_EQ(0, CountSet(MakeSet(13, {})));
+  ASSERT_EQ(73, CountSet(MakeSet(73, Range(1, 73))));
+  ASSERT_EQ(88, CountSet(MakeSet(176, Range(1, 175, 2))));
+  ASSERT_EQ(1, CountSet(MakeSet(189, {185})));
+  ASSERT_EQ(4, CountSet(MakeSet(256, {1, 64, 130, 255})));
 }
 
 // A holder that is interrogated rather than swept fills only as far as the

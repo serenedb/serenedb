@@ -841,7 +841,7 @@ void BmMergeBitset(benchmark::State& state) {
         words[w] |= src[w];
       }
     }
-    benchmark::DoNotOptimize(irs::detail::CountBits(mask));
+    benchmark::DoNotOptimize(irs::CountBits(mask.Words(), mask.WordCount()));
   }
 }
 

@@ -34,6 +34,7 @@
 #include "iresearch/search/top/root.hpp"
 #include "iresearch/search/top/term_block.hpp"
 #include "iresearch/utils/empty.hpp"
+#include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::top {
@@ -87,15 +88,12 @@ class Posting : public Root {
     auto* first = _docs.data() + _at;
     auto* const last = _docs.data() + _len;
     if (*first < min) [[unlikely]] {
-      do {
-        ++first;
-      } while (first != last && *first < min);
+      first = ScanNotBelow(first, last, min);
     }
     auto* stop = last;
     if (last[-1] >= max) [[unlikely]] {
-      do {
-        --stop;
-      } while (stop != first && stop[-1] >= max);
+      stop =
+        LeafLowerBound<doc_limits::kBlockSize>(_docs.data(), last, first, max);
     }
     _at = static_cast<uint32_t>(stop - _docs.data());
     auto len = static_cast<uint32_t>(stop - first);

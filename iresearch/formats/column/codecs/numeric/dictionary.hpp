@@ -61,7 +61,7 @@ class DictionaryEncoder final : public NumericEncoder<T> {
     const auto& facts = this->_values.GetFacts();
     SDB_ASSERT(bytes || packed);
     if ((!this->_forced && facts.for_stored <= 1) ||
-        !BuildEntries(this->_forced || facts.for_stored >= 4 ? kNumericDictMax
+        !BuiltEntries(this->_forced || facts.for_stored >= 4 ? kNumericDictMax
                                                              : 256)) {
       return;
     }
@@ -94,6 +94,14 @@ class DictionaryEncoder final : public NumericEncoder<T> {
         .dict = dict,
       });
     }
+  }
+
+  bool BuiltEntries(uint32_t cap) {
+    if (!_built) {
+      _built = true;
+      _fits = BuildEntries(cap);
+    }
+    return _fits;
   }
 
   bool BuildEntries(uint32_t cap) {
@@ -163,6 +171,8 @@ class DictionaryEncoder final : public NumericEncoder<T> {
   ScratchVector<uint32_t> _codes;
   ScratchVector<uint8_t> _code_bytes;
   FforBlocks<uint32_t> _code_blocks;
+  bool _built = false;
+  bool _fits = false;
 };
 
 template<typename T>

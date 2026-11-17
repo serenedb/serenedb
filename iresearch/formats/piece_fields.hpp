@@ -42,6 +42,7 @@ class PieceFields;
 
 class PieceTermReader final : public TermReader {
  public:
+  using TermReader::iterator;
   PieceTermReader(const PieceFields& owner, FieldMeta meta,
                   uint32_t width) noexcept;
 
@@ -49,7 +50,8 @@ class PieceTermReader final : public TermReader {
   void Seal(uint64_t docs, uint64_t total_freq);
 
   SeekTermIterator::ptr iterator() const final;
-  SeekTermIterator::ptr iterator(const RegexpAcceptor& a) const final;
+  SeekTermIterator::ptr iterator(const RegexpAcceptor& a,
+                                 bool use_fm_index) const final;
   SeekTermIterator::ptr iterator(const LevenshteinAcceptor& a) const final;
   SeekTermIterator::ptr iterator(const RegexpConjunction& a) const final;
   SeekTermIterator::ptr iterator(const FuzzyConjunction& a) const final;

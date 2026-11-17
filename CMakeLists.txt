@@ -109,6 +109,28 @@ option(SDB_EMBEDDED_DOCS "embed the documentation from docs/ into serened" ON)
 option(SDB_GTEST "build the gtest suites under tests/" OFF)
 
 option(
+    SDB_FM_INDEX
+    "experimental FM-index acceleration for substring searches"
+    OFF
+)
+
+set(SDB_FM_BACKEND
+    "rrr8"
+    CACHE STRING
+    "FM-index representation: rrr8, rrr32, plain8 or plain32"
+)
+set_property(
+    CACHE SDB_FM_BACKEND
+    PROPERTY STRINGS rrr8 rrr32 plain8 plain32
+)
+if(NOT SDB_FM_BACKEND MATCHES "^(rrr|plain)(8|32)$")
+    message(
+        FATAL_ERROR
+        "SDB_FM_BACKEND=${SDB_FM_BACKEND}, expecting rrr8, rrr32, plain8 or plain32"
+    )
+endif()
+
+option(
     IRESEARCH_BENCH
     "build only search-benchmark-game, against a minimal iresearch: no server, vector, geo, fastText or DuckDB extensions besides icu"
     OFF
@@ -599,6 +621,9 @@ link_libraries(
 
 set(CMAKE_SKIP_INSTALL_RULES TRUE)
 add_subdirectory(third_party EXCLUDE_FROM_ALL SYSTEM)
+if(SDB_FM_INDEX)
+    add_subdirectory(third_party/sdsl-cmake EXCLUDE_FROM_ALL SYSTEM)
+endif()
 set(CMAKE_SKIP_INSTALL_RULES FALSE)
 
 if(SDB_ALLOC STREQUAL "JE")

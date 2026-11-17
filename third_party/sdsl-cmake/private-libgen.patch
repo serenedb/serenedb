@@ -1,0 +1,36 @@
+diff --git a/include/sdsl/util.hpp b/include/sdsl/util.hpp
+--- a/include/sdsl/util.hpp
++++ b/include/sdsl/util.hpp
+@@ -52,7 +52,6 @@
+ #define SDSL_UNUSED __attribute__ ((unused))
+ #include <sys/time.h>  // for struct timeval
+ #include <sys/resource.h> // for struct rusage
+-#include <libgen.h>    // for basename
+ #include <unistd.h>    // for getpid, file_size, clock_gettime
+ #else
+ #include <process.h>
+diff --git a/lib/util.cpp b/lib/util.cpp
+--- a/lib/util.cpp
++++ b/lib/util.cpp
+@@ -27,6 +27,12 @@
+ #include <typeinfo>
+ #ifndef MSVC_COMPILER
+ #include <cxxabi.h>
++#include <libgen.h>
++
++namespace {
++constexpr auto posix_basename = &::basename;
++}
++#undef basename
+ #endif
+ 
+ namespace sdsl
+@@ -47,7 +53,7 @@
+     std::string res(file_name);
+ #else
+     char* c = strdup((const char*)file.c_str());
+-    std::string res = std::string(::basename(c));
++    std::string res = std::string(posix_basename(c));
+ #endif
+     free(c);
+     return res;

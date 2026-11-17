@@ -24,7 +24,9 @@
 #include <array>
 #include <cstring>
 #include <limits>
+#include <new>
 #include <span>
+#include <type_traits>
 #include <variant>
 #include <vector>
 
@@ -1003,23 +1005,43 @@ void Readahead(Cursor& cursor, ColdPlan<A>& plan, const A& a) {
   cursor.WatchCold(plan);
 }
 
-template<typename A>
+struct AllBlocks {};
+
+#ifdef SDB_FM_INDEX
+struct SelectedBlocks {
+  std::vector<uint64_t> values;
+
+  uint32_t Next(uint32_t block) const noexcept {
+    const auto it = absl::c_lower_bound(values, block);
+    return it == values.end() ? kNoEntry : static_cast<uint32_t>(*it);
+  }
+};
+#endif
+
+template<typename A, typename Blocks = AllBlocks>
 class AcceptorIterator : public SeekTermIterator {
  public:
   using State = typename A::State;
 
-  AcceptorIterator(const TermReaderImpl& field, const A& a)
+  AcceptorIterator(const TermReaderImpl& field, const A& a, Blocks blocks = {})
     : _a{&a},
       _k{field.KeyPrefix().size()},
       _valid{_k},
       _cursor{field},
       _plan{field, a},
-      _filter{MakeFilter(a)} {
+      _filter{MakeFilter(a)},
+      _blocks{std::move(blocks)} {
     if constexpr (A::kHasPayload) {
       _pay.value = {&_payload, sizeof(_payload)};
     }
-    if (!field.Small()) {
-      Readahead(_cursor, _plan, a);
+    if constexpr (std::is_same_v<Blocks, AllBlocks>) {
+      if (!field.Small()) {
+        Readahead(_cursor, _plan, a);
+      }
+    } else {
+      for (const auto block : _blocks.values) {
+        field.PrefetchLookup(static_cast<uint32_t>(block));
+      }
     }
   }
 
@@ -1258,6 +1280,12 @@ class AcceptorIterator : public SeekTermIterator {
     _filter.Restart();
     _check = true;
     for (;;) {
+      if constexpr (!std::is_same_v<Blocks, AllBlocks>) {
+        block = _blocks.Next(block);
+        if (block >= field.Blocks()) {
+          return false;
+        }
+      }
       const auto prefix = BlockPrefix(block);
       const size_t shared = CommonPrefixLength(_target.Key(), prefix);
       const size_t base = std::min(valid, shared);
@@ -1403,6 +1431,7 @@ class AcceptorIterator : public SeekTermIterator {
   const uint32_t* _hint = nullptr;
   PayAttr _pay;
   KeyFilter _filter;
+  [[no_unique_address]] Blocks _blocks;
 };
 
 template<typename A>
@@ -1412,7 +1441,50 @@ SeekTermIterator::ptr Walk(const TermReaderImpl& field, const A& a) {
 
 }  // namespace
 
-SeekTermIterator::ptr TermReaderImpl::iterator(const RegexpAcceptor& a) const {
+SeekTermIterator::ptr TermReaderImpl::iterator(
+  const RegexpAcceptor& a, [[maybe_unused]] bool use_fm_index) const {
+#ifdef SDB_FM_INDEX
+  if (const auto infix = a.RequiredInfix();
+      use_fm_index && !infix.empty() &&
+      (a.LowerBound().empty() || a.LowerBound().front() == byte_type{0})) {
+    std::call_once(_fm->once, [this] {
+      try {
+        std::vector<std::string> terms;
+        terms.reserve(size());
+        std::vector<size_t> group_starts;
+        group_starts.reserve(Blocks());
+        PaddedKey key;
+        uint32_t previous = kNoEntry;
+        auto it = iterator();
+        while (it->next()) {
+          const auto block = BlockOf(key.Assign(KeyPrefix(), it->value()));
+          if (block != previous) {
+            SDB_ASSERT(block == group_starts.size());
+            group_starts.emplace_back(terms.size());
+            previous = block;
+          }
+          terms.emplace_back(ViewCast<char>(it->value()));
+        }
+        SDB_ASSERT(group_starts.size() == Blocks());
+        auto index = std::make_unique<FmIndex>(terms, group_starts);
+        const auto bytes = index->SizeInBytes();
+        _fm->memory.Increase(bytes);
+        _fm->bytes = bytes;
+        _fm->index = std::move(index);
+      } catch (const std::bad_alloc&) {
+        return;
+      }
+    });
+    if (_fm->index) {
+      if (auto matches = _fm->index->Find(ViewCast<char>(infix), size() / 128);
+          matches && matches->size() * 4 <= Blocks()) {
+        return memory::make_managed<
+          AcceptorIterator<RegexpAcceptor, SelectedBlocks>>(
+          *this, a, SelectedBlocks{std::move(*matches)});
+      }
+    }
+  }
+#endif
   return Walk(*this, a);
 }
 

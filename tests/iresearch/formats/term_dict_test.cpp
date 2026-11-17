@@ -22,6 +22,7 @@
 #include <absl/base/internal/endian.h>
 #include <absl/strings/str_cat.h>
 
+#include <array>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <iresearch/formats/flush_state.hpp>
 #include <iresearch/formats/format_utils.hpp>
@@ -38,7 +39,14 @@
 #include <iresearch/utils/numeric_utils.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/regexp_acceptor.hpp>
+#include <new>
 #include <random>
+#include <stdexcept>
+#include <utility>
+
+#ifdef SDB_FM_INDEX
+#include "iresearch/utils/fm_index.hpp"
+#endif
 
 #include "formats_test_case_base.hpp"
 #include "tests_param.hpp"
@@ -741,7 +749,8 @@ class TermDictTest : public tests::DirectoryTestCaseBase<> {
 
   static void AssertWalk(const irs::TermReader& reader,
                          const std::vector<Entry>& entries,
-                         const irs::RegexpAcceptor& acceptor) {
+                         const irs::RegexpAcceptor& acceptor,
+                         bool use_fm_index = false) {
     ASSERT_TRUE(acceptor.ok());
     std::vector<irs::bytes_view> expected;
     for (const auto& entry : entries) {
@@ -750,7 +759,7 @@ class TermDictTest : public tests::DirectoryTestCaseBase<> {
       }
     }
     {
-      auto it = reader.iterator(acceptor);
+      auto it = reader.iterator(acceptor, use_fm_index);
       size_t i = 0;
       for (; it->next(); ++i) {
         ASSERT_LT(i, expected.size());
@@ -758,7 +767,7 @@ class TermDictTest : public tests::DirectoryTestCaseBase<> {
       }
       ASSERT_EQ(expected.size(), i);
     }
-    auto it = reader.iterator(acceptor);
+    auto it = reader.iterator(acceptor, use_fm_index);
     for (const auto& probe : Probes(entries)) {
       const auto lb = absl::c_lower_bound(expected, irs::bytes_view{probe});
       const auto result = it->seek_ge(probe);
@@ -2176,6 +2185,160 @@ TEST_P(TermDictTest, infix_walk_seeks_back_from_skipped_tail) {
   ASSERT_EQ(irs::SeekResult::NotFound, it->seek_ge(Bytes("950stan")));
   ASSERT_EQ(irs::bytes_view{Bytes("950stand")}, it->value());
 }
+
+#ifdef SDB_FM_INDEX
+TEST_P(TermDictTest, fm_blocks_preserve_patterns_seeks_and_postings) {
+  auto keys = Words(12000, 19);
+  for (const std::string_view key : std::array<std::string_view, 5>{
+         "aaaneedleend", "middle needle middle", "zzzneedleend",
+         "bbbneedle%_end", std::string_view{"bneedle\0end", 11}}) {
+    keys.emplace_back(Bytes(key));
+  }
+  const Field fields[]{
+    {.id = 1, .entries = MakeEntries({Bytes("before"), Bytes("needle")})},
+    {.id = 2, .entries = MakeEntries(keys), .sample = false},
+    {.id = 3, .entries = MakeEntries(keys)},
+    {.id = 4, .entries = MakeEntries({Bytes("after"), Bytes("needle")})},
+  };
+  Write(fields);
+  ASSERT_NE(0, Blocks(*Get(2)).FirstEntry());
+  ASSERT_NE(0, Blocks(*Get(4)).FirstEntry());
+  for (const size_t field : {size_t{1}, size_t{2}}) {
+    const auto* reader = Get(fields[field]);
+    ASSERT_NE(nullptr, reader);
+    ASSERT_GT(reader->size(), 1024);
+    ASSERT_GT(Blocks(*reader).Blocks(), 16);
+    for (const std::string_view pattern : std::array<std::string_view, 6>{
+           "%needle%", "%needle%end", "%needle\\%%", "%\\_%", "%missingneedle%",
+           std::string_view{"%\0%", 3}}) {
+      SCOPED_TRACE(testing::Message("pattern ") << pattern);
+      const irs::RegexpAcceptor acceptor{
+        irs::RegexpAcceptor::WildcardTag{},
+        irs::ViewCast<irs::byte_type>(pattern)};
+      AssertWalk(*reader, fields[field].entries, acceptor, true);
+      auto it = reader->iterator(acceptor, true);
+      for (const auto& entry : fields[field].entries) {
+        if (!acceptor.Matches(entry.key)) {
+          continue;
+        }
+        ASSERT_TRUE(it->next());
+        ASSERT_EQ(entry.key, it->value());
+        std::vector<irs::doc_id_t> expected;
+        for (const auto& [doc, freq] : entry.docs) {
+          expected.emplace_back(doc);
+        }
+        ASSERT_EQ(expected, DocsOf(*reader, it->cookie()));
+      }
+      ASSERT_FALSE(it->next());
+    }
+  }
+}
+
+TEST_P(TermDictTest, fm_memory_rejection_falls_back_without_rebuilding) {
+  struct RejectingMemory final : irs::IResourceManager {
+    void Increase(size_t value) final {
+      ++attempts;
+      if (std::exchange(reject, false)) {
+        throw std::bad_alloc{};
+      }
+      bytes += value;
+    }
+    void Decrease(size_t value) noexcept final { bytes -= value; }
+    size_t bytes{0};
+    size_t attempts{0};
+    bool reject{false};
+  } memory;
+
+  const Field fields[]{
+    {.id = 6,
+     .entries =
+       MakeEntries({Bytes("banana"), Bytes("bandana"), Bytes("other")})}};
+  Write(fields);
+  const auto live_before = irs::FmIndex::LiveBytes();
+  {
+    irs::IdxReader index{dir(), kSegment, nullptr};
+    irs::term_dict::FieldReader fields_reader{memory};
+    fields_reader.prepare(
+      irs::ReaderState{.dir = &dir(), .meta = &_meta, .idx = &index});
+    ASSERT_EQ(1, fields_reader.fields(6).size());
+    const auto* reader = fields_reader.fields(6).front();
+    const irs::RegexpAcceptor acceptor{Bytes(".*ana.*")};
+    ASSERT_FALSE(acceptor.RequiredInfix().empty());
+    const auto bytes_before = memory.bytes;
+    const auto walk = [&] {
+      auto it = reader->iterator(acceptor, true);
+      std::vector<irs::bstring> matches;
+      while (it->next()) {
+        matches.emplace_back(it->value());
+      }
+      EXPECT_EQ((std::vector<irs::bstring>{Bytes("banana"), Bytes("bandana")}),
+                matches);
+    };
+    memory.reject = true;
+    {
+      auto it = reader->iterator(acceptor, false);
+      ASSERT_TRUE(it->next());
+      ASSERT_TRUE(memory.reject);
+      ASSERT_EQ(bytes_before, memory.bytes);
+      ASSERT_EQ(live_before, irs::FmIndex::LiveBytes());
+    }
+    ASSERT_NO_THROW(walk());
+    ASSERT_FALSE(memory.reject);
+    ASSERT_EQ(bytes_before, memory.bytes);
+    ASSERT_EQ(live_before, irs::FmIndex::LiveBytes());
+    const auto attempts_after = memory.attempts;
+    ASSERT_NO_THROW(walk());
+    ASSERT_EQ(attempts_after, memory.attempts);
+    ASSERT_EQ(bytes_before, memory.bytes);
+  }
+  ASSERT_EQ(0, memory.bytes);
+  ASSERT_EQ(live_before, irs::FmIndex::LiveBytes());
+}
+
+TEST_P(TermDictTest, fm_unexpected_initialization_failure_can_retry) {
+  struct RejectingMemory final : irs::IResourceManager {
+    void Increase(size_t value) final {
+      if (std::exchange(reject, false)) {
+        throw std::runtime_error{"unexpected initialization failure"};
+      }
+      bytes += value;
+    }
+    void Decrease(size_t value) noexcept final { bytes -= value; }
+    size_t bytes{0};
+    bool reject{false};
+  } memory;
+  const Field fields[]{
+    {.id = 6,
+     .entries =
+       MakeEntries({Bytes("banana"), Bytes("bandana"), Bytes("other")})}};
+  Write(fields);
+  const auto live_before = irs::FmIndex::LiveBytes();
+  {
+    irs::IdxReader index{dir(), kSegment, nullptr};
+    irs::term_dict::FieldReader fields_reader{memory};
+    fields_reader.prepare(
+      irs::ReaderState{.dir = &dir(), .meta = &_meta, .idx = &index});
+    const auto* reader = fields_reader.fields(6).front();
+    const irs::RegexpAcceptor acceptor{Bytes(".*ana.*")};
+    const auto bytes_before = memory.bytes;
+    memory.reject = true;
+    EXPECT_THROW(reader->iterator(acceptor, true), std::runtime_error);
+    ASSERT_EQ(bytes_before, memory.bytes);
+    ASSERT_EQ(live_before, irs::FmIndex::LiveBytes());
+    for (size_t attempt = 0; attempt != 2; ++attempt) {
+      auto it = reader->iterator(acceptor, true);
+      ASSERT_TRUE(it->next());
+      ASSERT_EQ(Bytes("banana"), it->value());
+      ASSERT_TRUE(it->next());
+      ASSERT_EQ(Bytes("bandana"), it->value());
+      ASSERT_FALSE(it->next());
+      ASSERT_GT(memory.bytes, bytes_before);
+    }
+  }
+  ASSERT_EQ(0, memory.bytes);
+  ASSERT_EQ(live_before, irs::FmIndex::LiveBytes());
+}
+#endif
 
 TEST_P(TermDictTest, acceptor_walks) {
   auto keys = Words(30000, 3);

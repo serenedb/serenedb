@@ -90,8 +90,11 @@ WHERE kind = 'setting' AND name LIKE 'compaction%';
 
 Background maintenance of tables and of inverted indexes on views, and the knobs the search and vector operators read.
 
+The experimental session setting `sdb_enable_fm_index` enables substring acceleration when the server was built with FM-index support. It defaults to `off`; enabling it in a build without support returns an error. The first qualifying query prepares additional in-memory data. Turning it off affects subsequent queries in that session, including prepared statements, but does not release data already prepared. See [substring-search costs and measurements](../benchmarks/fm-index.md).
+
 | Name | Description | Type | Scope | Default value |
 | --- | --- | --- | --- | --- |
+| `sdb_enable_fm_index` | Enable experimental substring acceleration. Requires a build with FM-index support and adds first-use latency and memory consumption. | `BOOLEAN` | `SESSION` | `off` |
 | `compaction_floor_segment_bytes` | Segments of a table or of an inverted index over a view below this size count as equal-sized for compaction candidate selection. Their WITH (compaction_floor_segment_bytes = ...) overrides it. Default 2097152 (2MB). | `UBIGINT` | `SESSION` | `2097152` |
 | `compaction_interval` | Background compaction interval (ms) for newly created tables and inverted indexes over views. Their WITH (compaction_interval = ...) overrides it, ALTER TABLE / ALTER INDEX ... SET changes it later. 0 disables background compaction; VACUUM (COMPACT_*) still merges on demand. Default: 1000. | `UINTEGER` | `SESSION` | `1000` |
 | `compaction_max_segments` | Maximum segments of a table or of an inverted index over a view merged by one background compaction. Their WITH (compaction_max_segments = ...) overrides it. Default 10. | `UINTEGER` | `SESSION` | `10` |

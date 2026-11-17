@@ -92,6 +92,7 @@ struct FreqScorer : irs::ScorerBase<void> {
 
 class MockPostingsField final : public irs::TermReader {
  public:
+  using TermReader::iterator;
   MockPostingsField(irs::FieldMeta meta, irs::PostingsHandles handles,
                     bool has_score_bounds, uint64_t docs_count)
     : _meta{std::move(meta)},
@@ -105,7 +106,8 @@ class MockPostingsField final : public irs::TermReader {
   irs::SeekTermIterator::ptr iterator() const final {
     return irs::SeekTermIterator::empty();
   }
-  irs::SeekTermIterator::ptr iterator(const irs::RegexpAcceptor&) const final {
+  irs::SeekTermIterator::ptr iterator(const irs::RegexpAcceptor&,
+                                      bool) const final {
     return irs::SeekTermIterator::empty();
   }
   irs::SeekTermIterator::ptr iterator(

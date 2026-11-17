@@ -1,0 +1,93 @@
+query
+SELECT current_setting('sdb_enable_fm_index')::BOOLEAN AS fm_enabled
+----
+fm_enabled
+f
+
+onlyif without-fm-index
+statement error
+SET sdb_enable_fm_index = true
+----
+db error: ERROR: FM-index support is not enabled in this build
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY fm_keyword AS keyword()
+
+statement ok
+CREATE TABLE fm_terms (id INT, body VARCHAR) WITH (compaction_interval = 0)
+
+statement ok
+CREATE INDEX fm_terms_idx ON fm_terms USING inverted (id, body fm_keyword)
+
+statement ok
+INSERT INTO fm_terms
+SELECT i, CASE WHEN i IN (0, 5000, 9999) THEN 'needle' || i::TEXT
+    ELSE 'fill' || i::TEXT END
+FROM range(10000) AS t(i)
+
+statement ok
+VACUUM (FLUSH_TABLE) fm_terms
+
+statement ok
+SELECT set_config('sdb_enable_fm_index',
+    EXISTS (SELECT 1 FROM sdb_metrics WHERE metric = 'fm_index_bytes')::TEXT, false)
+
+query
+SELECT id FROM fm_terms_idx WHERE body LIKE '%needle%' ORDER BY id
+----
+id
+0
+5000
+9999
+
+query
+SELECT COALESCE(MAX(value), 1) > 0 AS fm_ready
+FROM sdb_metrics WHERE metric = 'fm_index_bytes'
+----
+fm_ready
+t
+
+query
+SELECT count(*) FROM fm_terms_idx WHERE body @@ ts_like('%fill%')
+----
+count
+9997
+
+query
+SELECT count(*) FROM fm_terms_idx WHERE body LIKE '%missing%'
+----
+count
+0
+
+statement ok
+INSERT INTO fm_terms VALUES (10000, 'later needle')
+
+statement ok
+VACUUM (FLUSH_TABLE) fm_terms
+
+query
+SELECT id FROM fm_terms_idx WHERE body LIKE '%needle%' ORDER BY id
+----
+id
+0
+5000
+9999
+10000
+
+statement ok
+DELETE FROM fm_terms WHERE id = 5000
+
+statement ok
+VACUUM (FLUSH_TABLE) fm_terms
+
+statement ok
+VACUUM (COMPACT_TABLE) fm_terms
+
+query
+SELECT id FROM fm_terms_idx WHERE body LIKE '%needle%' ORDER BY id
+----
+id
+0
+9999
+10000

@@ -274,6 +274,9 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   std::vector<std::shared_ptr<irs::Scorer>> owned_where_scorers;
   std::unique_ptr<irs::Scorer> scorer_obj;
   bool needs_terms = false;
+#ifdef SDB_FM_INDEX
+  bool use_fm_index = false;
+#endif
   std::vector<irs::QueryBuilder::ptr> queries;
   std::optional<irs::StatsArena> stats_arena;
   std::optional<irs::PreparedCollector> collector;

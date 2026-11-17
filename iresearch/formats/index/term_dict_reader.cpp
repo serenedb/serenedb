@@ -215,6 +215,9 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
     _terms{head.term_count},
     _docs{head.doc_count},
     _has_score_bounds{head.text.has_score_bounds} {
+#ifdef SDB_FM_INDEX
+  _fm = std::make_unique<FmTerms>(owner.Memory());
+#endif
   _meta.norm = head.text.norm;
   _meta.dict = {.layout = head.layout, .member = head.member};
   SDB_ENSURE(head.text.total_freq <= std::numeric_limits<uint32_t>::max(),

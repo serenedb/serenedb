@@ -30,6 +30,7 @@ namespace irs {
 // term_reader implementation with docs_count but without terms
 class EmptyTermReader final : public irs::TermReader {
  public:
+  using TermReader::iterator;
   constexpr explicit EmptyTermReader(uint64_t docs_count) noexcept
     : _docs_count{docs_count} {}
 
@@ -37,7 +38,8 @@ class EmptyTermReader final : public irs::TermReader {
     return SeekTermIterator::empty();
   }
 
-  SeekTermIterator::ptr iterator(const RegexpAcceptor&) const noexcept final {
+  SeekTermIterator::ptr iterator(const RegexpAcceptor&,
+                                 bool) const noexcept final {
     return SeekTermIterator::empty();
   }
 

@@ -2189,9 +2189,9 @@ BindInfo PgWireSession<Kind>::ParseBindVars(std::string_view cursor,
           ERR_CODE(ERRCODE_INVALID_BINARY_REPRESENTATION),
           ERR_MSG("incorrect binary data format in bind parameter ", i + 1));
       }
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
-        ERR_MSG("invalid input syntax for bind parameter ", i + 1));
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                      ERR_MSG("invalid input syntax for bind parameter ", i + 1,
+                              ": \"", field, "\""));
     }
     values.emplace_back(std::move(out));
     cursor.remove_prefix(length);

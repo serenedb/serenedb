@@ -754,6 +754,22 @@ def test_malformed_parameter_is_refused(conn, oid, fmt, param, sqlstate):
     assert sqlstates(conn.drain_to_ready()) == [sqlstate]
 
 
+@pytest.mark.parametrize(
+    "sql, param",
+    [("select $1::int4", b"abc"), ("select $1::date", b"2024-13-01")],
+)
+def test_malformed_typed_parameter_names_the_value(conn, sql, param):
+    conn.parse("", sql, oids=(0,))
+    conn.bind("", "", params=(param,))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert sqlstates(m) == ["22P02"]
+    assert [e.get("M") for e in errors(m)] == [
+        f'invalid input syntax for bind parameter 1: "{param.decode()}"'
+    ]
+
+
 def test_malformed_map_parameter_is_refused(conn):
     conn.parse("", "select $1::MAP(INT, INT)::text", oids=(0,))
     conn.bind("", "", params=(b'{"(1,2)"x}',), formats=(0,))

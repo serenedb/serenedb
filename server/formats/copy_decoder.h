@@ -30,32 +30,21 @@
 #include <string_view>
 #include <vector>
 
+#include "formats/text_splitter.h"
 #include "pg/copy_in_batches.h"
 #include "pg/deserialize.h"
 
-namespace sdb::connector {
-
-using CopyDeserializers =
-  std::vector<pg::DeserializationFunction<pg::VectorSink>>;
+namespace sdb::formats {
 
 struct CopyTextEnd {
   std::atomic<uint64_t> marker{std::numeric_limits<uint64_t>::max()};
   std::atomic<uint64_t> latest{0};
 };
 
-CopyDeserializers MakeCopyDeserializers(
-  const std::vector<duckdb::LogicalType>& types, bool binary);
-
-bool ProcessTextRow(std::string_view line, char delim,
-                    std::string_view null_str, bool ignore_errors,
-                    const CopyDeserializers& deserializers,
-                    pg::DeserializeContext& dctx, duckdb::DataChunk& output,
-                    duckdb::idx_t row, std::string& field_buf);
-
-class CopyBatchParser {
+class CopyDecoder {
  public:
-  CopyBatchParser(duckdb::ClientContext& context, pg::CopyInTarget target,
-                  CopyTextEnd& end, std::atomic<uint64_t>& rejected);
+  CopyDecoder(duckdb::ClientContext& context, pg::CopyInTarget target,
+              CopyTextEnd& end, std::atomic<uint64_t>& rejected);
 
   void Start(const pg::CopyBatch& batch);
   bool Active() const noexcept { return static_cast<bool>(_batch); }
@@ -69,13 +58,22 @@ class CopyBatchParser {
  private:
   duckdb::idx_t ParseText(duckdb::DataChunk& output, duckdb::idx_t row);
   duckdb::idx_t ParseBinary(duckdb::DataChunk& output, duckdb::idx_t row);
+  void ResolveText(size_t rows);
+  duckdb::idx_t Decode(duckdb::DataChunk& output, duckdb::idx_t row,
+                       size_t rows);
+  size_t WalkBinary(std::string_view data, size_t max_rows);
+  void SkipHeader(std::string_view data);
+  void CheckAfterMarker(std::string_view rest) const;
   void EndMarker();
   void CountRejected(uint64_t rejected);
 
   pg::CopyInTarget _target;
-  CopyDeserializers _deserializers;
+  std::vector<pg::DeserializationFunction<pg::ColumnSink>> _decoders;
   pg::DeserializeContext _dctx;
-  std::string _field_buf;
+  TextSplitter _splitter;
+  std::string _unescaped;
+  std::vector<uint64_t> _failed;
+  std::vector<uint64_t> _rejected_rows;
   CopyTextEnd& _end;
   std::atomic<uint64_t>& _rejected;
   const pg::CopyBatch* _batch = nullptr;
@@ -83,6 +81,7 @@ class CopyBatchParser {
   size_t _pos = 0;
   bool _skip = false;
   bool _ended = false;
+  bool _null_has_backslash = true;
 };
 
-}  // namespace sdb::connector
+}  // namespace sdb::formats

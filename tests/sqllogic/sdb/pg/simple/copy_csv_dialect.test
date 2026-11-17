@@ -75,9 +75,7 @@ six	t	f	t	seven
 statement error
 COPY beast_two FROM '${__TEST_DIR__}/semicolon_header.csv' (FORMAT csv);
 ----
-db error: ERROR: Error when sniffing file "<slt:ignore>/semicolon_header.csv".
-It was not possible to automatically detect the CSV parsing dialect
-<slt:ignore>
+db error: ERROR: missing data for column "beast"
 
 
 statement ok

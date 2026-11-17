@@ -32,6 +32,7 @@
 #include <absl/time/civil_time.h>
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cctype>
 #include <cfloat>
@@ -69,6 +70,7 @@
 #include <utility>
 
 #include "connector/functions/ts_query_codec.h"
+#include "formats/structural.h"
 #include "pg/catalog/functions/pg_catalog/regproc.h"
 #include "pg/catalog/utils/session.h"
 #include "pg/connection_context.h"
@@ -2180,22 +2182,148 @@ IRS_FORCE_INLINE void RenderItem(SerializationContext& ctx, const RUVF& v,
   RenderValue<Core>(ctx, v, idx);
 }
 
+constexpr absl::CharSet kCopyTextReserved{
+  "\\.abcdefghijklmnopqrstuvwxyz0123456789"};
+
+template<typename Core>
+bool CsvScanNeeded(const SerializationContext& context) {
+  constexpr auto kAlphabet = kCopyTextReserved | CopyDelimsOf<Core>();
+  return kAlphabet.contains(context.copy_delim) ||
+         kAlphabet.contains(context.csv_quote);
+}
+
+bool HasCsvSpecial(std::string_view field, char delim, char quote) {
+  const std::array<char, 4> chars{delim, quote, '\n', '\r'};
+  const auto any = [](const formats::BlockMasks<4>& m) {
+    return (m.masks[0] | m.masks[1] | m.masks[2] | m.masks[3]) != 0;
+  };
+  size_t i = 0;
+  for (; i + formats::kBlockBytes <= field.size(); i += formats::kBlockBytes) {
+    if (any(formats::MatchBlock(field.data() + i, chars))) {
+      return true;
+    }
+  }
+  return i != field.size() &&
+         any(formats::MatchTail(field.data() + i, field.size() - i, chars));
+}
+
+bool CsvNeedsQuotes(const SerializationContext& ctx, std::string_view field) {
+  return field == ctx.copy_null || (ctx.csv_single_column && field == "\\.") ||
+         HasCsvSpecial(field, ctx.copy_delim, ctx.csv_quote);
+}
+
+bool IsCsvSpecial(uint8_t c, char quote, char escape) {
+  return escape != '\0' && (c == static_cast<uint8_t>(quote) ||
+                            c == static_cast<uint8_t>(escape));
+}
+
+size_t QuoteCsvInPlace(uint8_t* data, size_t size, char quote, char escape) {
+  size_t escapes = 0;
+  for (size_t i = 0; i < size; ++i) {
+    escapes += IsCsvSpecial(data[i], quote, escape);
+  }
+  auto* in = data + size;
+  auto* out = in + escapes + 1;
+  *out = static_cast<uint8_t>(quote);
+  while (in != data) {
+    const auto c = *--in;
+    *--out = c;
+    if (IsCsvSpecial(c, quote, escape)) {
+      *--out = static_cast<uint8_t>(escape);
+    }
+  }
+  *--out = static_cast<uint8_t>(quote);
+  return size + escapes + 2;
+}
+
+void WriteCsvQuoted(message::Writer& writer, std::string_view field, char quote,
+                    char escape) {
+  writer.Write({&quote, 1});
+  size_t start = 0;
+  for (size_t i = 0; i < field.size(); ++i) {
+    if (IsCsvSpecial(static_cast<uint8_t>(field[i]), quote, escape)) {
+      CheckMessageSize(writer.Written() + i - start + 1);
+      writer.Write(field.substr(start, i - start));
+      writer.Write({&escape, 1});
+      start = i;
+    }
+  }
+  writer.Write(field.substr(start));
+  writer.Write({&quote, 1});
+}
+
+void FinishCsvField(SerializationContext& ctx,
+                    const message::Writer::Mark& mark, bool force) {
+  auto& writer = *ctx.writer;
+  std::string_view field;
+  if (writer.Contiguous(mark)) [[likely]] {
+    field = writer.Since(mark);
+  } else {
+    ctx.csv_scratch.clear();
+    writer.AppendSince(mark, ctx.csv_scratch);
+    field = ctx.csv_scratch;
+  }
+  if (!force && !CsvNeedsQuotes(ctx, field)) {
+    return;
+  }
+  if (field.data() != ctx.csv_scratch.data()) {
+    ctx.csv_scratch.assign(field);
+    field = ctx.csv_scratch;
+  }
+  writer.Truncate(mark);
+  WriteCsvQuoted(writer, field, ctx.csv_quote, ctx.csv_escape);
+}
+
 enum class Framing {
   BinaryField,
   CopyTextField,
+  CsvField,
+  CsvPlainField,
+  CsvQuotedField,
 };
+
+template<Framing F>
+constexpr bool kCsvFraming =
+  F == Framing::CsvField || F == Framing::CsvPlainField ||
+  F == Framing::CsvQuotedField;
+
+template<Framing F, typename Core>
+IRS_FORCE_INLINE void RenderCsvValue(SerializationContext& ctx, const RUVF& v,
+                                     duckdb::idx_t idx) {
+  if constexpr (SizedCore<Core>) {
+    ctx.writer->Write(2 * Core::kMaxBytes + 2, [&](uint8_t* d) {
+      const auto n = RenderSized<Core>(d, ctx, v, idx);
+      const std::string_view field{reinterpret_cast<const char*>(d), n};
+      bool quote = true;
+      if constexpr (F == Framing::CsvPlainField) {
+        quote = field == ctx.copy_null;
+      } else if constexpr (F == Framing::CsvField) {
+        quote = CsvNeedsQuotes(ctx, field);
+      }
+      return quote ? QuoteCsvInPlace(d, n, ctx.csv_quote, ctx.csv_escape) : n;
+    });
+  } else {
+    const auto mark = ctx.writer->Position();
+    RenderStreamed<Core>(ctx, v, idx);
+    FinishCsvField(ctx, mark, F == Framing::CsvQuotedField);
+  }
+}
 
 template<Framing F, typename Core>
 bool SerializeField(SerializationContext& ctx, const RUVF& v,
                     duckdb::idx_t row) {
   const auto idx = v.unified.sel->get_index(row);
   const bool valid = v.unified.validity.RowIsValid(idx);
-  if constexpr (F == Framing::CopyTextField) {
+  if constexpr (F == Framing::CopyTextField || kCsvFraming<F>) {
     if (!valid) {
       ctx.writer->Write(ctx.copy_null);
       return true;
     }
-    RenderValue<Core>(ctx, v, idx);
+    if constexpr (kCsvFraming<F>) {
+      RenderCsvValue<F, Core>(ctx, v, idx);
+    } else {
+      RenderValue<Core>(ctx, v, idx);
+    }
     return false;
   } else if constexpr (SizedCore<Core>) {
     // BinaryField + sized: one reservation holds the fused [int32 len][body].
@@ -2659,13 +2787,28 @@ struct MultiDimArrayCore {
 
 // Select the column-level (framed) serializer for the wire format: binary and
 // top-level text are both int32-length-framed (BinaryField; top-level text just
-// wraps the text core), COPY text uses \N framing, an in-record field uses the
-// bare record-text framing.
+// wraps the text core), COPY text uses \N framing, COPY csv quotes the field,
+// an in-record field uses the bare record-text framing.
 template<typename TextCore, typename TextRecCore, typename BinaryCore>
 SerializationFunction SelectFieldSerializer(VarFormat format,
                                             SerializationContext& context) {
   if (format == VarFormat::Binary) {
     return SerializeField<Framing::BinaryField, BinaryCore>;
+  }
+  if ((format == VarFormat::CopyCsv || format == VarFormat::CopyCsvQuoted) &&
+      context.csv_quote == '\0') {
+    return SerializeField<Framing::CopyTextField, TextCore>;
+  }
+  if (format == VarFormat::CopyCsvQuoted) {
+    return SerializeField<Framing::CsvQuotedField, TextCore>;
+  }
+  if (format == VarFormat::CopyCsv) {
+    if constexpr (SizedCore<TextCore>) {
+      if (!CsvScanNeeded<TextCore>(context)) {
+        return SerializeField<Framing::CsvPlainField, TextCore>;
+      }
+    }
+    return SerializeField<Framing::CsvField, TextCore>;
   }
   if (format == VarFormat::CopyText) {
     if constexpr (!CopyDelimsOf<TextCore>().empty()) {
@@ -3147,6 +3290,38 @@ void SerializeCopyTextHeader(SerializationContext& context,
   context.writer->Write("\n");
 }
 
+void SetCopyCsv(SerializationContext& context, char delim, char quote,
+                char escape, std::string null_str, std::string new_line,
+                bool single_column) {
+  context.copy_text = false;
+  context.backslash_count = 1;
+  context.quote_seq = "\"";
+  context.copy_delim = delim;
+  context.copy_null = std::move(null_str);
+  context.copy_newline = std::move(new_line);
+  context.csv_quote = quote;
+  context.csv_escape = escape;
+  context.csv_single_column = single_column;
+}
+
+void SerializeCopyCsvHeader(SerializationContext& context,
+                            std::span<const duckdb::Identifier> names) {
+  auto& writer = *context.writer;
+  bool first = true;
+  for (const auto& name : names) {
+    if (!std::exchange(first, false)) {
+      writer.Write({&context.copy_delim, 1});
+    }
+    const std::string_view text = name.GetIdentifierName();
+    if (context.csv_quote != '\0' && CsvNeedsQuotes(context, text)) {
+      WriteCsvQuoted(writer, text, context.csv_quote, context.csv_escape);
+    } else {
+      writer.Write(text);
+    }
+  }
+  writer.Write(context.copy_newline);
+}
+
 SerializationFunction GetSerialization(const duckdb::LogicalType& type,
                                        VarFormat format,
                                        SerializationContext& context) {
@@ -3154,7 +3329,8 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
   switch (type.id()) {
     using enum duckdb::LogicalTypeId;
     case SQLNULL:
-      if (format == VarFormat::CopyText) {
+      if (format == VarFormat::CopyText || format == VarFormat::CopyCsv ||
+          format == VarFormat::CopyCsvQuoted) {
         return SerializeCopyTextNullColumn;
       }
       return context.in_record ? SerializeRecordNullColumn

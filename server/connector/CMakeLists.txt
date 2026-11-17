@@ -58,6 +58,7 @@ target_sources(
         duckdb_pg_binary_copy.cpp
         duckdb_pg_text_copy.cpp
         copy_from_batches.cpp
+        copy_options.cpp
         copy_to_file.cpp
         duckdb_physical_create_index.cpp
         duckdb_index_utils.cpp

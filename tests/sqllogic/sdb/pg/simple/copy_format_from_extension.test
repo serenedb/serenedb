@@ -192,4 +192,4 @@ a	b
 statement error
 COPY cfx_text FROM '${__TEST_DIR__}/cfx.dat' (QUOTE '"');
 ----
-db error: ERROR: COPY option "quote" is only available in CSV mode
+db error: ERROR: COPY QUOTE requires CSV mode

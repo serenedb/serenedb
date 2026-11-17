@@ -222,6 +222,14 @@ void Buffer::AppendSpanning(std::string_view data) {
   _tail->AdjustEnd(data.size());
 }
 
+void Writer::AppendSince(const Mark& mark, std::string& out) const {
+  size_t from = mark.end;
+  for (auto* chunk = mark.chunk; chunk; chunk = chunk->Next(), from = 0) {
+    out.append(reinterpret_cast<const char*>(chunk->WritableData()) + from,
+               chunk->GetEnd() - from);
+  }
+}
+
 // Writer dtor's uncommitted path: drop every chunk grown since the checkpoint
 // (they hold only uncommitted bytes; the checkpoint sits at/after the flush
 // watermark, so the consumer never frees its chunk) and reset the write end.

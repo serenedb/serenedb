@@ -205,7 +205,8 @@ SET xmloption = document;
 statement error
 COPY xml_dst FROM '${__TEST_DIR__}/copy_text_xml.txt' (FORMAT text);
 ----
-db error: ERROR: COPY FROM: invalid input for column 2
+db error: ERROR: invalid XML document
+DETAIL: line 1: Extra content at the end of the document
 
 
 statement ok
@@ -253,4 +254,4 @@ TO '${__TEST_DIR__}/copy_text_huge_bad.txt' (FORMAT BLOB);
 statement error
 COPY huge_dst FROM '${__TEST_DIR__}/copy_text_huge_bad.txt' (FORMAT text);
 ----
-db error: ERROR: COPY FROM: invalid input for column 2
+db error: ERROR: value "340282366920938463463374607431768211456" is out of range for type uhugeint

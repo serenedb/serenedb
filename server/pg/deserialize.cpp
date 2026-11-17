@@ -230,14 +230,26 @@ struct VarcharBin {
 
 constexpr char kJsonbVersion = 1;
 
-struct JsonBin {
+struct JsonText {
   template<typename Sink>
-  static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
-    if (data.starts_with(kJsonbVersion)) {
-      data.remove_prefix(1);
+  static bool Decode(DeserializeContext& context, std::string_view data,
+                     Sink& sink) {
+    if (const auto error = context.json.Check(data)) {
+      ThrowInvalidJson(error);
     }
     sink.Varchar(data);
     return true;
+  }
+};
+
+struct JsonBin {
+  template<typename Sink>
+  static bool Decode(DeserializeContext& context, std::string_view data,
+                     Sink& sink) {
+    if (data.starts_with(kJsonbVersion)) {
+      data.remove_prefix(1);
+    }
+    return JsonText::Decode(context, data, sink);
   }
 };
 
@@ -872,8 +884,8 @@ struct XmlIn {
   template<typename Sink>
   static bool Decode(DeserializeContext& context, std::string_view data,
                      Sink& sink) {
-    if (CheckXml(data, context.SessionXmlOption())) {
-      return false;
+    if (auto error = CheckXml(data, context.SessionXmlOption())) {
+      THROW_SQL_ERROR_FROM_DATA(std::move(*error));
     }
     sink.Varchar(data);
     return true;
@@ -1342,12 +1354,6 @@ struct RegText {
   }
 };
 
-void KeepColumnError(DeserializeContext& ctx, bool first) {
-  if (first) {
-    ctx.column_error = std::current_exception();
-  }
-}
-
 template<typename Core>
 bool DecodeColumnValue(DeserializeContext& ctx, std::string_view field,
                        duckdb::Vector& vec, duckdb::idx_t row, bool first) {
@@ -1355,13 +1361,12 @@ bool DecodeColumnValue(DeserializeContext& ctx, std::string_view field,
   try {
     return Core::template Decode<VectorSink>(ctx, field, sink);
   } catch (const duckdb::ConversionException&) {
-    KeepColumnError(ctx, first);
   } catch (const duckdb::InvalidInputException&) {
-    KeepColumnError(ctx, first);
   } catch (const duckdb::OutOfRangeException&) {
-    KeepColumnError(ctx, first);
   } catch (const irs::SqlException&) {
-    KeepColumnError(ctx, first);
+    if (first) {
+      ctx.column_error = std::current_exception();
+    }
   }
   return false;
 }
@@ -2574,8 +2579,8 @@ DeserializationFunction<Sink> GetDeserialization(
       if (IsXml(type)) {
         return SelectDecoder<XmlIn, XmlIn, Sink>(binary);
       }
-      if (binary && type.IsJSONType()) {
-        return DecoderFor<JsonBin, Sink>();
+      if (type.IsJSONType()) {
+        return SelectDecoder<JsonBin, JsonText, Sink>(binary);
       }
       return SelectDecoder<VarcharBin, VarcharText, Sink>(binary);
     case BLOB:

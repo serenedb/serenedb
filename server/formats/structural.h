@@ -123,6 +123,24 @@ IRS_FORCE_INLINE BlockMasks<N> MatchTail(const char* data, size_t size,
   return result;
 }
 
+IRS_FORCE_INLINE inline uint64_t PrefixXor(uint64_t bits) noexcept {
+#if defined(__x86_64__)
+  return static_cast<uint64_t>(_mm_cvtsi128_si64(_mm_clmulepi64_si128(
+    _mm_set_epi64x(0, static_cast<int64_t>(bits)), _mm_set1_epi8(-1), 0)));
+#elif defined(__aarch64__)
+  return vgetq_lane_u64(vreinterpretq_u64_p128(vmull_p64(bits, ~uint64_t{0})),
+                        0);
+#else
+  bits ^= bits << 1;
+  bits ^= bits << 2;
+  bits ^= bits << 4;
+  bits ^= bits << 8;
+  bits ^= bits << 16;
+  bits ^= bits << 32;
+  return bits;
+#endif
+}
+
 class EscapeScanner {
  public:
   IRS_FORCE_INLINE uint64_t Next(uint64_t backslash) noexcept {

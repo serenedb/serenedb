@@ -1,0 +1,340 @@
+control substitution on
+
+statement ok
+CREATE TABLE ccsv_src (id INTEGER, b BOOLEAN, t TEXT, a TEXT[], j JSON, d DATE, n NUMERIC(10,2), f FLOAT8);
+
+
+statement ok
+INSERT INTO ccsv_src VALUES
+  (1, true, 'plain', '{x,y}', '{"k": 1}', '2024-01-02', 1.5, 1.5),
+  (2, false, 'with,comma', '{"a b","c,d",NULL}', '[1,"x"]', '2024-12-31', -2.25, -0.1),
+  (3, NULL, 'quote"in', NULL, NULL, NULL, NULL, NULL),
+  (4, true, '', '{}', 'null', '0001-01-01', 0, 1e20),
+  (5, false, E'two\nlines', '{}', '"s"', '2024-02-29', 123.45, 'NaN'),
+  (6, true, '\.', '{"\\"}', '{}', '2024-03-01', 1, 'Infinity');
+
+
+statement ok
+CREATE TABLE ccsv_lines (l TEXT);
+
+
+statement count 6
+COPY ccsv_src TO '${__TEST_DIR__}/ccsv_plain.csv' (FORMAT csv);
+
+
+statement count 7
+COPY ccsv_lines FROM '${__TEST_DIR__}/ccsv_plain.csv' (FORMAT csv, DELIMITER E'\x01', QUOTE E'\x02');
+
+
+query
+SELECT l FROM ccsv_lines ORDER BY l;
+----
+l
+1,t,plain,"{x,y}","{""k"": 1}",2024-01-02,1.50,1.5
+2,f,"with,comma","{""a b"",""c,d"",NULL}","[1,""x""]",2024-12-31,-2.25,-0.1
+3,,"quote""in",,,,,
+4,t,"",{},null,0001-01-01,0.00,1e+20
+5,f,"two
+6,t,\\.,"{""\\\\""}",{},2024-03-01,1.00,Infinity
+lines",{},"""s""",2024-02-29,123.45,NaN
+
+
+statement ok
+TRUNCATE ccsv_lines;
+
+
+statement count 6
+COPY ccsv_src TO '${__TEST_DIR__}/ccsv_forced.csv' (FORMAT csv, HEADER, FORCE_QUOTE *, DELIMITER ';', NULL 'NULL');
+
+
+statement count 8
+COPY ccsv_lines FROM '${__TEST_DIR__}/ccsv_forced.csv' (FORMAT csv, DELIMITER E'\x01', QUOTE E'\x02');
+
+
+query
+SELECT l FROM ccsv_lines ORDER BY l;
+----
+l
+"1";"t";"plain";"{x,y}";"{""k"": 1}";"2024-01-02";"1.50";"1.5"
+"2";"f";"with,comma";"{""a b"",""c,d"",NULL}";"[1,""x""]";"2024-12-31";"-2.25";"-0.1"
+"3";NULL;"quote""in";NULL;NULL;NULL;NULL;NULL
+"4";"t";"";"{}";"null";"0001-01-01";"0.00";"1e+20"
+"5";"f";"two
+"6";"t";"\\.";"{""\\\\""}";"{}";"2024-03-01";"1.00";"Infinity"
+id;b;t;a;j;d;n;f
+lines";"{}";"""s""";"2024-02-29";"123.45";"NaN"
+
+
+statement ok
+TRUNCATE ccsv_lines;
+
+
+statement count 1
+COPY (SELECT '\.' AS x) TO '${__TEST_DIR__}/ccsv_marker.csv' (FORMAT csv);
+
+
+statement count 1
+COPY ccsv_lines FROM '${__TEST_DIR__}/ccsv_marker.csv' (FORMAT csv, DELIMITER E'\x01', QUOTE E'\x02');
+
+
+query
+SELECT l FROM ccsv_lines;
+----
+l
+"\\."
+
+
+statement ok
+TRUNCATE ccsv_lines;
+
+
+statement count 1
+COPY (SELECT 'a"b' AS "we,ird", 'x' AS "N") TO '${__TEST_DIR__}/ccsv_header.csv' (FORMAT csv, HEADER, NULL 'N', FORCE_QUOTE ("N"));
+
+
+statement count 2
+COPY ccsv_lines FROM '${__TEST_DIR__}/ccsv_header.csv' (FORMAT csv, DELIMITER E'\x01', QUOTE E'\x02');
+
+
+query
+SELECT l FROM ccsv_lines ORDER BY l;
+----
+l
+"a""b","x"
+"we,ird","N"
+
+
+statement ok
+CREATE TABLE ccsv_dst (id INTEGER, b BOOLEAN, t TEXT, a TEXT[], j JSON, d DATE, n NUMERIC(10,2), f FLOAT8);
+
+
+statement count 6
+COPY ccsv_dst FROM '${__TEST_DIR__}/ccsv_plain.csv' (FORMAT csv);
+
+
+query
+SELECT id, b, t, a, j::text AS j, d, n, f FROM ccsv_dst ORDER BY id;
+----
+id	b	t	a	j	d	n	f
+1	t	plain	{x,y}	{"k": 1}	2024-01-02	1.50	1.5
+2	f	with,comma	{"a b","c,d",NULL}	[1,"x"]	2024-12-31	-2.25	-0.1
+3	NULL	quote"in	NULL	NULL	NULL	NULL	NULL
+4	t	(empty)	{}	null	0001-01-01	0.00	1e+20
+5	f	two\nlines	{}	"s"	2024-02-29	123.45	NaN
+6	t	\\.	{"\\\\"}	{}	2024-03-01	1.00	Infinity
+
+
+statement ok
+TRUNCATE ccsv_dst;
+
+
+statement count 6
+COPY ccsv_dst FROM '${__TEST_DIR__}/ccsv_forced.csv' (FORMAT csv, HEADER MATCH, DELIMITER ';', NULL 'NULL');
+
+
+query
+SELECT count(*) AS n, count(b) AS nb, sum(id) AS ids FROM ccsv_dst;
+----
+n	nb	ids
+6	5	21
+
+
+statement error
+COPY ccsv_dst FROM '${__TEST_DIR__}/ccsv_header.csv' (FORMAT csv, HEADER MATCH);
+----
+db error: ERROR: wrong number of fields in header line: got 2, expected 8
+
+
+statement ok
+CREATE TABLE ccsv_two (a INTEGER, b TEXT);
+
+
+statement error
+COPY ccsv_two FROM '${__TEST_DIR__}/ccsv_header.csv' (FORMAT csv, HEADER MATCH);
+----
+db error: ERROR: column name mismatch in header line field 1: got "we,ird", expected "a"
+
+
+statement count 1
+COPY (SELECT 1 AS a, 'x' AS c) TO '${__TEST_DIR__}/ccsv_two.csv' (FORMAT csv, HEADER);
+
+
+statement error
+COPY ccsv_two FROM '${__TEST_DIR__}/ccsv_two.csv' (FORMAT csv, HEADER MATCH);
+----
+db error: ERROR: column name mismatch in header line field 2: got "c", expected "b"
+
+
+statement count 1
+COPY ccsv_two FROM '${__TEST_DIR__}/ccsv_two.csv' (FORMAT csv, HEADER);
+
+
+statement count 4
+COPY (SELECT * FROM (VALUES ('1,,'), ('2,"",'), ('3,N,"N"'), ('4,"x""y"')) v(l))
+TO '${__TEST_DIR__}/ccsv_nulls.csv' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+statement ok
+CREATE TABLE ccsv_three (a INTEGER, b TEXT, c TEXT);
+
+
+statement error
+COPY ccsv_three FROM '${__TEST_DIR__}/ccsv_nulls.csv' (FORMAT csv);
+----
+db error: ERROR: missing data for column "c"
+
+
+statement count 3
+COPY (SELECT * FROM (VALUES ('1,,'), ('2,"",'), ('3,N,"N"')) v(l))
+TO '${__TEST_DIR__}/ccsv_nulls3.csv' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+statement ok
+COPY ccsv_three FROM '${__TEST_DIR__}/ccsv_nulls3.csv' (FORMAT csv);
+
+
+query
+SELECT a, b IS NULL AS b_null, b, c IS NULL AS c_null, c FROM ccsv_three ORDER BY a;
+----
+a	b_null	b	c_null	c
+1	t	NULL	t	NULL
+2	f	(empty)	t	NULL
+3	f	N	f	N
+
+
+statement ok
+TRUNCATE ccsv_three;
+
+
+statement ok
+COPY ccsv_three FROM '${__TEST_DIR__}/ccsv_nulls3.csv' (FORMAT csv, NULL 'N', FORCE_NOT_NULL (b), FORCE_NULL (c));
+
+
+query
+SELECT a, b IS NULL AS b_null, b, c IS NULL AS c_null, c FROM ccsv_three ORDER BY a;
+----
+a	b_null	b	c_null	c
+1	f	(empty)	f	(empty)
+2	f	(empty)	f	(empty)
+3	f	N	t	NULL
+
+
+statement count 2
+COPY (SELECT * FROM (VALUES ('1,x,y,z'), ('2,"unterminated')) v(l))
+TO '${__TEST_DIR__}/ccsv_extra.csv' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+statement error
+COPY ccsv_three FROM '${__TEST_DIR__}/ccsv_extra.csv' (FORMAT csv);
+----
+db error: ERROR: extra data after last expected column
+
+
+statement count 1
+COPY (SELECT '2,"unterminated' AS l) TO '${__TEST_DIR__}/ccsv_open.csv' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+statement error
+COPY ccsv_three FROM '${__TEST_DIR__}/ccsv_open.csv' (FORMAT csv);
+----
+db error: ERROR: unterminated CSV quoted field
+
+
+statement ok
+TRUNCATE ccsv_three;
+
+
+statement count 2
+COPY (SELECT * FROM (VALUES ('1;''it!''s'';x'), ('2;''a;b'';''!''''')) v(l))
+TO '${__TEST_DIR__}/ccsv_escape.csv' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+statement count 2
+COPY ccsv_three FROM '${__TEST_DIR__}/ccsv_escape.csv' (FORMAT csv, DELIMITER ';', QUOTE '''', ESCAPE '!');
+
+
+query
+SELECT a, b, c FROM ccsv_three ORDER BY a;
+----
+a	b	c
+1	it's	x
+2	a;b	'
+
+
+statement count 2
+COPY (SELECT * FROM (VALUES ('1;''x'''';y'), ('2;''z')) v(l))
+TO '${__TEST_DIR__}/ccsv_escape_bad.csv' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+statement error
+COPY ccsv_three FROM '${__TEST_DIR__}/ccsv_escape_bad.csv' (FORMAT csv, DELIMITER ';', QUOTE '''', ESCAPE '!');
+----
+db error: ERROR: missing data for column "c"
+
+
+statement count 0
+COPY (SELECT 1 WHERE false) TO '${__TEST_DIR__}/ccsv_empty.csv' (FORMAT csv);
+
+
+statement count 0
+COPY ccsv_three FROM '${__TEST_DIR__}/ccsv_empty.csv' (FORMAT csv);
+
+
+statement error
+COPY ccsv_src TO '${__TEST_DIR__}/ccsv_bad.csv' (FORMAT csv, FORCE_NOT_NULL *);
+----
+db error: ERROR: COPY FORCE_NOT_NULL cannot be used with COPY TO
+
+
+statement error
+COPY ccsv_three FROM '${__TEST_DIR__}/ccsv_bad.csv' (FORMAT csv, FORCE_QUOTE *);
+----
+db error: ERROR: COPY FORCE_QUOTE cannot be used with COPY FROM
+
+
+statement error
+COPY ccsv_src TO '${__TEST_DIR__}/ccsv_bad.csv' (FORMAT csv, DELIMITER ',', QUOTE ',');
+----
+db error: ERROR: COPY delimiter and quote must be different
+
+
+statement error
+COPY ccsv_src TO '${__TEST_DIR__}/ccsv_bad.csv' (FORMAT csv, NULL 'a"b');
+----
+db error: ERROR: CSV quote character must not appear in the NULL specification
+
+
+statement error
+COPY ccsv_src TO '${__TEST_DIR__}/ccsv_bad.csv' (FORMAT text, QUOTE '"');
+----
+db error: ERROR: COPY QUOTE requires CSV mode
+
+
+statement error
+COPY ccsv_src TO '${__TEST_DIR__}/ccsv_bad.csv' (FORMAT csv, HEADER MATCH);
+----
+db error: ERROR: cannot use "match" with HEADER in COPY TO
+
+
+statement error
+COPY ccsv_three FROM '${__TEST_DIR__}/ccsv_nulls3.csv' (FORMAT csv, HEADER 'maybe');
+----
+db error: ERROR: header requires a Boolean value or "match"
+
+
+statement error
+COPY ccsv_three FROM '${__TEST_DIR__}/ccsv_nulls3.csv' (FORMAT csv, LOG_VERBOSITY loud);
+----
+db error: ERROR: COPY LOG_VERBOSITY "loud" not recognized
+
+
+statement ok
+TRUNCATE ccsv_three;
+
+
+statement ok
+COPY ccsv_three FROM '${__TEST_DIR__}/ccsv_nulls3.csv' (FORMAT csv, LOG_VERBOSITY verbose);
+
+
+statement ok
+COPY ccsv_three FROM '${__TEST_DIR__}/ccsv_nulls3.csv' (FORMAT csv, LOG_VERBOSITY default);

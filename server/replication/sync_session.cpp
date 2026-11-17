@@ -214,9 +214,10 @@ yaclib::Task<bool> SyncSession::CopyTable(const SyncTable& table, bool binary) {
     this->_connection_ctx->SetSideChannel<sdb::pg::CopyInBatches>(nullptr);
     co_return false;
   }
-  co_await this->RunCopyInFeeder(batches, binary
-                                            ? network::pg::CopyFormat::Binary
-                                            : network::pg::CopyFormat::Text);
+  co_await this->RunCopyInFeeder(
+    batches,
+    binary ? network::pg::CopyFormat::Binary : network::pg::CopyFormat::Text,
+    {}, formats::TextEncoding::Utf8);
   co_await _job_done.AwaitOn(*this->_ioexec);
   this->_connection_ctx->SetSideChannel<sdb::pg::CopyInBatches>(nullptr);
   const bool copied = _job_ok;

@@ -30,7 +30,6 @@
 #include <iresearch/utils/assert.hpp>
 
 namespace sdb::optimizer {
-namespace {
 
 bool NeedsClientCast(const duckdb::LogicalType& type) {
   switch (type.id()) {
@@ -98,6 +97,8 @@ duckdb::LogicalType ClientCastTarget(const duckdb::LogicalType& type) {
       return type;
   }
 }
+
+namespace {
 
 bool AnyNeedsClientCast(const duckdb::vector<duckdb::LogicalType>& types) {
   for (const auto& t : types) {

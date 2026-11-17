@@ -376,7 +376,7 @@ statement ok
 CREATE TABLE range_reversed (r int4range);
 
 
-statement error (range lower bound must be less than or equal to range upper bound|COPY FROM: invalid input for column 1)
+statement error (range lower bound must be less than or equal to range upper bound|invalid input syntax for type int4range: "\[5,1\)")
 COPY range_reversed FROM '${__TEST_DIR__}/range_reversed.txt' (FORMAT text);
 
 

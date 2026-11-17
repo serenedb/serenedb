@@ -20,111 +20,53 @@
 
 #include "connector/duckdb_pg_text_copy.h"
 
-#include <fast_float/fast_float.h>
+#include <absl/strings/str_cat.h>
 
-#include <cstdint>
-#include <cstring>
+#include <duckdb/catalog/catalog.hpp>
+#include <duckdb/catalog/catalog_entry/copy_function_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
-#include <duckdb/common/types/value.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/function/copy_function.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/main/client_context.hpp>
-#include <duckdb/main/database.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
-#include <duckdb/parser/expression/constant_expression.hpp>
-#include <iresearch/utils/pg/errcodes.hpp>
-#include <iresearch/utils/pg/sql_exception_macro.hpp>
-#include <iresearch/utils/string_utils.hpp>
+#include <duckdb/parser/parsed_data/create_copy_function_info.hpp>
+#include <iresearch/utils/assert.hpp>
 #include <memory>
-#include <span>
 #include <string>
-#include <string_view>
-#include <system_error>
+#include <utility>
 #include <vector>
 
 #include "connector/copy_from_batches.h"
 #include "connector/copy_to_file.h"
 #include "pg/connection_context.h"
-#include "pg/serialize.h"
 #include "server/utils/message_buffer.h"
 
 namespace sdb::connector {
 namespace {
 
-bool ParseCopyBool(std::string_view value) {
-  // A bare option (no value) means true, e.g. COPY ... (HEADER).
-  if (value.empty()) {
-    return true;
-  }
-  if (const auto parsed = irs::utils::ParseBool(value)) {
-    return *parsed;
-  }
-  THROW_SQL_ERROR(
-    ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-    ERR_MSG("invalid value for boolean COPY option: \"", value, "\""));
-}
+struct DuckCsvCopy final : public duckdb::TableFunctionInfo {
+  explicit DuckCsvCopy(duckdb::CopyFunction function_p)
+    : function{std::move(function_p)} {}
 
-uint64_t ParseRejectLimit(std::string_view value) {
-  if (value.empty()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                    ERR_MSG("reject_limit requires a numeric value"));
-  }
-  int64_t limit = 0;
-  const auto* end = value.data() + value.size();
-  const auto [ptr, ec] = fast_float::from_chars(value.data(), end, limit);
-  if (ec != std::errc{} || ptr != end) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
-      ERR_MSG("invalid input syntax for type bigint: \"", value, "\""));
-  }
-  if (limit <= 0) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("REJECT_LIMIT (", limit, ") must be greater than zero"));
-  }
-  return static_cast<uint64_t>(limit);
-}
-
-void ApplyTextCopyOption(TextCopyOptions& out, std::string_view key,
-                         std::string_view value) {
-  if (key == "delimiter" || key == "delim" || key == "sep" ||
-      key == "separator") {
-    if (value.size() != 1) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                      ERR_MSG("COPY delimiter must be a single character"));
-    }
-    out.delim = value.front();
-  } else if (key == "null" || key == "nullstr") {
-    out.null_str.assign(value);
-  } else if (key == "header") {
-    out.header = ParseCopyBool(value);
-  } else if (key == "ignore_errors") {
-    out.ignore_errors = ParseCopyBool(value);
-  } else if (key == "rejects_limit") {
-    out.reject_limit = ParseRejectLimit(value);
-  } else if (key == "quote" || key == "escape" || key == "force_quote" ||
-             key == "force_not_null" || key == "force_null") {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG("COPY option \"", key, "\" is only available in CSV mode"));
-  } else {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                    ERR_MSG("COPY option \"", key, "\" not recognized"));
-  }
-}
+  duckdb::CopyFunction function;
+};
 
 class PgTextCopyEncoder final : public CopyChunkEncoder {
  public:
   PgTextCopyEncoder(duckdb::ClientContext& context,
-                    std::span<const duckdb::LogicalType> types, char delim,
-                    const std::string& null_str) {
+                    std::span<const duckdb::LogicalType> types,
+                    const PgCopyOptions& options,
+                    std::span<const sdb::pg::VarFormat> formats)
+    : _separate{!options.suffix.empty()} {
     sdb::pg::FillContext(ConnectionContext::Get(context), _ctx);
-    sdb::pg::SetCopyText(_ctx, delim, null_str);
+    SetCopyFormat(_ctx, options, types.size());
     _serializers.reserve(types.size());
-    for (const auto& type : types) {
+    for (size_t column = 0; column < types.size(); ++column) {
       _serializers.push_back(
-        sdb::pg::GetSerialization(type, sdb::pg::VarFormat::CopyText, _ctx));
+        sdb::pg::GetSerialization(types[column], formats[column], _ctx));
     }
   }
 
@@ -144,105 +86,165 @@ class PgTextCopyEncoder final : public CopyChunkEncoder {
     for (duckdb::idx_t row = 0; row < rows; ++row) {
       message::Writer writer{out};
       _ctx.writer = &writer;
+      if (_separate) {
+        writer.Write(_ctx.copy_newline);
+      }
       for (duckdb::idx_t column = 0; column < columns; ++column) {
         if (column > 0) {
           writer.Write({&_ctx.copy_delim, 1});
         }
         _serializers[column](_ctx, decoded[column], row);
       }
-      writer.Write("\n");
+      if (!_separate) {
+        writer.Write(_ctx.copy_newline);
+      }
       writer.Commit(false);
     }
   }
 
  private:
+  const bool _separate;
   sdb::pg::SerializationContext _ctx;
   std::vector<sdb::pg::SerializationFunction> _serializers;
 };
 
 class PgTextCopyBindData final : public CopyToFileBindData {
  public:
-  PgTextCopyBindData(duckdb::vector<duckdb::LogicalType> types, char delim,
-                     std::string null_str, bool header,
-                     duckdb::vector<duckdb::Identifier> names)
+  PgTextCopyBindData(duckdb::vector<duckdb::LogicalType> types,
+                     PgCopyOptions options,
+                     duckdb::vector<duckdb::Identifier> names,
+                     std::vector<sdb::pg::VarFormat> formats)
     : _sql_types{std::move(types)},
-      _delim{delim},
-      _null_str{std::move(null_str)},
-      _header{header},
-      _names{std::move(names)} {}
+      _options{std::move(options)},
+      _names{std::move(names)},
+      _formats{std::move(formats)} {}
 
   duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
-    return duckdb::make_uniq<PgTextCopyBindData>(_sql_types, _delim, _null_str,
-                                                 _header, _names);
+    return duckdb::make_uniq<PgTextCopyBindData>(_sql_types, _options, _names,
+                                                 _formats);
   }
   bool Equals(const duckdb::FunctionData& other) const final {
     const auto& o = other.Cast<PgTextCopyBindData>();
-    return _sql_types == o._sql_types && _delim == o._delim &&
-           _null_str == o._null_str && _header == o._header &&
-           _names == o._names;
+    return _sql_types == o._sql_types && _names == o._names &&
+           _formats == o._formats && _options.mode == o._options.mode &&
+           _options.delim == o._options.delim &&
+           _options.quote == o._options.quote &&
+           _options.escape == o._options.escape &&
+           _options.null_str == o._options.null_str &&
+           _options.header == o._options.header &&
+           _options.compression == o._options.compression;
   }
 
   std::unique_ptr<CopyChunkEncoder> MakeEncoder(
     duckdb::ClientContext& context) const final {
-    return std::make_unique<PgTextCopyEncoder>(context, _sql_types, _delim,
-                                               _null_str);
+    return std::make_unique<PgTextCopyEncoder>(context, _sql_types, _options,
+                                               _formats);
   }
 
   void WriteHeader(duckdb::ClientContext& context,
                    message::Buffer& out) const final {
-    if (!_header) {
-      return;
-    }
-    sdb::pg::SerializationContext ctx;
-    sdb::pg::FillContext(ConnectionContext::Get(context), ctx);
-    sdb::pg::SetCopyText(ctx, _delim, _null_str);
     message::Writer writer{out};
-    ctx.writer = &writer;
-    sdb::pg::SerializeCopyTextHeader(ctx, _names);
+    writer.Write(_options.prefix);
+    if (_options.header) {
+      sdb::pg::SerializationContext ctx;
+      sdb::pg::FillContext(ConnectionContext::Get(context), ctx);
+      SetCopyFormat(ctx, _options, _sql_types.size());
+      ctx.writer = &writer;
+      SerializeCopyHeader(ctx, _options, _names);
+    }
     writer.Commit(false);
   }
 
-  void WriteTrailer(message::Buffer&) const final {}
+  void WriteTrailer(message::Buffer& out) const final {
+    message::Writer writer{out};
+    writer.Write(_options.suffix);
+    writer.Commit(false);
+  }
+
+  duckdb::FileCompressionType Compression() const final {
+    return _options.compression;
+  }
+
+  std::string_view RowSeparator() const final {
+    return _options.suffix.empty() ? std::string_view{} : _options.new_line;
+  }
+
+  formats::TextEncoding Encoding() const final { return _options.encoding; }
 
  private:
   duckdb::vector<duckdb::LogicalType> _sql_types;
-  char _delim;
-  std::string _null_str;
-  bool _header;
+  PgCopyOptions _options;
   duckdb::vector<duckdb::Identifier> _names;
+  std::vector<sdb::pg::VarFormat> _formats;
 };
 
+template<CopyMode Mode>
 duckdb::unique_ptr<duckdb::FunctionData> BindCopyTo(
   duckdb::ClientContext&, duckdb::CopyFunctionBindInput& input,
-  const duckdb::vector<duckdb::Identifier>&,
+  const duckdb::vector<duckdb::Identifier>& names,
   const duckdb::vector<duckdb::LogicalType>& sql_types) {
-  auto opts = ResolveTextCopyOptions(input.info.options);
-  CheckTextCopyOptions(opts, false);
-  return duckdb::make_uniq<PgTextCopyBindData>(sql_types, opts.delim,
-                                               std::move(opts.null_str),
-                                               opts.header, input.query_names);
+  auto options = ResolveCopyOptions(Mode, false, input.info.options);
+  CheckCopyOptions(options, false);
+  const auto& compression = options.compression;
+  if ((compression == duckdb::FileCompressionType::GZIP ||
+       compression == duckdb::FileCompressionType::ZSTD) &&
+      !duckdb::IsFileCompressed(input.file_extension, compression)) {
+    input.file_extension += duckdb::CompressionExtensionFromType(compression);
+  }
+  auto formats = CopyFieldFormats(options, CopyNames(names));
+  return duckdb::make_uniq<PgTextCopyBindData>(
+    sql_types, std::move(options), input.query_names, std::move(formats));
+}
+
+duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> SelectCsv(
+  duckdb::CopyToSelectInput& input) {
+  const auto options = ResolveCopyOptions(CopyMode::Csv, false, input.options);
+  return CopyToSelect(input, options.date_format, options.timestamp_format);
+}
+
+duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> SelectText(
+  duckdb::CopyToSelectInput& input) {
+  return CopyToSelect(input, {}, {});
 }
 
 struct PgTextCopyFromBindData final : public duckdb::TableFunctionData {
-  PgTextCopyFromBindData(duckdb::vector<duckdb::LogicalType> types,
-                         std::string path, TextCopyOptions options)
-    : sql_types{std::move(types)},
-      file_path{std::move(path)},
-      options{std::move(options)} {}
+  std::string table;
   duckdb::vector<duckdb::LogicalType> sql_types;
+  std::vector<std::string> names;
   std::string file_path;
-  TextCopyOptions options;
+  PgCopyOptions options;
+  std::vector<bool> force_not_null;
+  std::vector<bool> force_null;
+  std::shared_ptr<const pg::CopyDefaults> defaults;
   bool ordered = false;
 };
 
+template<CopyMode Mode>
 duckdb::unique_ptr<duckdb::FunctionData> BindFrom(
   duckdb::ClientContext& context, duckdb::CopyFromFunctionBindInput& input,
-  duckdb::vector<duckdb::Identifier>&,
+  duckdb::vector<duckdb::Identifier>& expected_names,
   duckdb::vector<duckdb::LogicalType>& expected_types) {
-  auto opts = ResolveTextCopyOptions(input.info.options);
-  CheckTextCopyOptions(opts, true);
-  auto result = duckdb::make_uniq<PgTextCopyFromBindData>(
-    expected_types, input.info.file_path, std::move(opts));
+  auto options = ResolveCopyOptions(Mode, true, input.info.options);
+  if (!options.foreign.empty() ||
+      (Mode == CopyMode::Csv && input.info.is_format_auto_detected)) {
+    const auto duck = input.tf.function_info->Cast<DuckCsvCopy>().function;
+    input.tf = duck.copy_from_function;
+    return duck.copy_from_bind(context, input, expected_names, expected_types);
+  }
+  CheckCopyOptions(options, true);
+  auto result = duckdb::make_uniq<PgTextCopyFromBindData>();
+  result->table = input.info.GetQualifiedName().Name().GetIdentifierName();
+  result->sql_types = expected_types;
+  result->names = CopyNames(expected_names);
+  result->file_path = input.info.file_path;
+  result->force_not_null =
+    CopyColumnMask(options.force_not_null, result->names, "FORCE_NOT_NULL");
+  result->force_null =
+    CopyColumnMask(options.force_null, result->names, "FORCE_NULL");
+  if (options.default_str) {
+    result->defaults = BindCopyDefaults(context, input.info, expected_names);
+  }
+  result->options = std::move(options);
   result->ordered = BindCopyFrom(context, input);
   return result;
 }
@@ -250,109 +252,115 @@ duckdb::unique_ptr<duckdb::FunctionData> BindFrom(
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> InitGlobalFrom(
   duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
   const auto& bind = input.bind_data->Cast<PgTextCopyFromBindData>();
+  const auto& options = bind.options;
   return InitCopyFromGlobal(
     context, bind.file_path,
     pg::CopyInTarget{
+      .table = bind.table,
+      .log_verbosity = options.log_verbosity,
+      .encoding = options.encoding,
       .binary = false,
-      .delim = bind.options.delim,
-      .null_str = bind.options.null_str,
-      .header = bind.options.header,
-      .ignore_errors = bind.options.ignore_errors,
-      .reject_limit = bind.options.reject_limit,
+      .csv = options.mode == CopyMode::Csv,
+      .delim = options.delim,
+      .quote = options.quote,
+      .escape = options.escape,
+      .null_str = options.null_str,
+      .default_str = options.default_str,
+      .header = options.header,
+      .header_match = options.header_match,
+      .ignore_errors = options.ignore_errors,
+      .reject_limit = options.reject_limit,
       .types = {bind.sql_types.begin(), bind.sql_types.end()},
+      .names = bind.names,
+      .force_not_null = bind.force_not_null,
+      .force_null = bind.force_null,
+      .defaults = bind.defaults,
     },
-    bind.ordered);
+    bind.ordered, options.compression);
+}
+
+template<CopyMode Mode>
+duckdb::CopyFunction MakeCopyFunction(const char* name) {
+  duckdb::CopyFunction function{name};
+  function.extension = name;
+  function.copy_to_bind = BindCopyTo<Mode>;
+  function.copy_to_select = Mode == CopyMode::Csv ? SelectCsv : SelectText;
+  SetCopyToFileCallbacks(function);
+  function.copy_from_bind = BindFrom<Mode>;
+  function.copy_from_function = duckdb::TableFunction(
+    duckdb::Identifier{absl::StrCat("pg_", name, "_copy_from")}, {},
+    ScanCopyFrom,
+    /*bind=*/nullptr, InitGlobalFrom, InitCopyFromLocal);
+  return function;
 }
 
 }  // namespace
 
-void CheckTextCopyOptions(const TextCopyOptions& options, bool from) {
-  if (options.delim == '\r' || options.delim == '\n') {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("COPY delimiter cannot be newline or carriage return"));
-  }
-  if (options.null_str.find_first_of("\r\n") != std::string::npos) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG(
-        "COPY null representation cannot use newline or carriage return"));
-  }
-  if (std::string_view{"\\.abcdefghijklmnopqrstuvwxyz0123456789"}.contains(
-        options.delim)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("COPY delimiter cannot be \"",
-                            std::string_view{&options.delim, 1}, "\""));
-  }
-  if (options.null_str.contains(options.delim)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("COPY delimiter character must not appear in the "
-                            "NULL specification"));
-  }
-  if (!from && options.ignore_errors) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("COPY ON_ERROR cannot be used with COPY TO"));
-  }
-  if (options.reject_limit != 0 && !options.ignore_errors) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("COPY REJECT_LIMIT requires ON_ERROR to be set to IGNORE"));
+void SetCopyFormat(sdb::pg::SerializationContext& context,
+                   const PgCopyOptions& options, size_t columns) {
+  if (options.mode == CopyMode::Csv) {
+    sdb::pg::SetCopyCsv(context, options.delim, options.quote, options.escape,
+                        options.null_str, options.new_line, columns == 1);
+  } else {
+    sdb::pg::SetCopyText(context, options.delim, options.null_str);
   }
 }
 
-void ResolveTextCopyOptions(
-  const duckdb::identifier_map_t<duckdb::vector<duckdb::Value>>& options,
-  TextCopyOptions& out) {
-  for (const auto& [key, values] : options) {
-    if (values.empty()) {
-      ApplyTextCopyOption(out, key.GetIdentifierName(), {});
-    } else {
-      ApplyTextCopyOption(out, key.GetIdentifierName(),
-                          values[0].GetValue<std::string>());
+std::vector<sdb::pg::VarFormat> CopyFieldFormats(
+  const PgCopyOptions& options, std::span<const std::string> names) {
+  if (options.mode == CopyMode::Text) {
+    return std::vector<sdb::pg::VarFormat>(names.size(),
+                                           sdb::pg::VarFormat::CopyText);
+  }
+  const auto quoted = CopyColumnMask(options.force_quote, names, "FORCE_QUOTE");
+  std::vector<sdb::pg::VarFormat> formats(names.size(),
+                                          sdb::pg::VarFormat::CopyCsv);
+  for (size_t column = 0; column < quoted.size(); ++column) {
+    if (quoted[column]) {
+      formats[column] = sdb::pg::VarFormat::CopyCsvQuoted;
     }
+  }
+  return formats;
+}
+
+void SerializeCopyHeader(sdb::pg::SerializationContext& context,
+                         const PgCopyOptions& options,
+                         std::span<const duckdb::Identifier> names) {
+  if (options.mode == CopyMode::Csv) {
+    sdb::pg::SerializeCopyCsvHeader(context, names);
+  } else {
+    sdb::pg::SerializeCopyTextHeader(context, names);
   }
 }
 
-TextCopyOptions ResolveTextCopyOptions(
-  const duckdb::identifier_map_t<duckdb::vector<duckdb::Value>>& options) {
-  TextCopyOptions result;
-  ResolveTextCopyOptions(options, result);
-  return result;
-}
-
-TextCopyOptions ResolveTextCopyOptions(
-  const duckdb::identifier_map_t<duckdb::unique_ptr<duckdb::ParsedExpression>>&
-    parsed_options) {
-  TextCopyOptions result;
-  for (const auto& [key, expr] : parsed_options) {
-    if (!expr) {
-      // A bare boolean flag (e.g. HEADER with no value) means true.
-      ApplyTextCopyOption(result, key.GetIdentifierName(), {});
-      continue;
-    }
-    if (expr->GetExpressionClass() != duckdb::ExpressionClass::CONSTANT) {
-      continue;
-    }
-    ApplyTextCopyOption(result, key.GetIdentifierName(),
-                        expr->Cast<duckdb::ConstantExpression>()
-                          .GetLiteral()
-                          .ToValue()
-                          .GetValue<std::string>());
+std::vector<std::string> CopyNames(std::span<const duckdb::Identifier> names) {
+  std::vector<std::string> result;
+  result.reserve(names.size());
+  for (const auto& name : names) {
+    result.push_back(name.GetIdentifierName());
   }
   return result;
 }
 
-void RegisterPgTextCopyFunction(duckdb::DatabaseInstance& db) {
+void RegisterPgTextCopyFunctions(duckdb::DatabaseInstance& db) {
   duckdb::ExtensionLoader loader(db, "serenedb");
-  duckdb::CopyFunction func("text");
-  func.extension = "text";
-  func.copy_to_bind = BindCopyTo;
-  SetCopyToFileCallbacks(func);
-  func.copy_from_bind = BindFrom;
-  func.copy_from_function =
-    duckdb::TableFunction("pg_text_copy_from", {}, ScanCopyFrom,
-                          /*bind=*/nullptr, InitGlobalFrom, InitCopyFromLocal);
-  loader.RegisterFunction(std::move(func));
+  loader.RegisterFunction(MakeCopyFunction<CopyMode::Text>("text"));
+
+  auto& catalog = duckdb::Catalog::GetSystemCatalog(db);
+  auto transaction = duckdb::CatalogTransaction::GetSystemTransaction(db);
+  auto& schema = catalog.GetSchema(transaction, *catalog.GetDefaultSchema());
+  auto entry = schema.GetEntry(transaction,
+                               duckdb::CatalogType::COPY_FUNCTION_ENTRY, "csv");
+  SDB_ASSERT(entry);
+  auto csv = MakeCopyFunction<CopyMode::Csv>("csv");
+  csv.copy_from_function.function_info = duckdb::make_shared_ptr<DuckCsvCopy>(
+    entry->Cast<duckdb::CopyFunctionCatalogEntry>().function);
+  duckdb::CreateCopyFunctionInfo info{std::move(csv)};
+  info.on_conflict = duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;
+  info.SetQualifiedName(duckdb::QualifiedName(info.GetQualifiedName().Catalog(),
+                                              *catalog.GetDefaultSchema(),
+                                              info.GetQualifiedName().Name()));
+  catalog.CreateCopyFunction(transaction, info);
 }
 
 }  // namespace sdb::connector

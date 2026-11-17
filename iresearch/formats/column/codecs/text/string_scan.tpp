@@ -29,6 +29,7 @@
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/immutable_strings.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
+#include <duckdb/common/vector/vector_writer.hpp>
 #include <duckdb/planner/table_filter.hpp>
 #include <duckdb/planner/table_filter_state.hpp>
 #include <duckdb/storage/buffer/buffer_handle.hpp>
@@ -177,13 +178,12 @@ struct EntryFrames {
   }
 
   template<typename Entry>
-  void EnsureGroups(idx_t count, Entry entry_at, uint32_t window_first,
+  void EnsureSparse(idx_t count, Entry entry_at, uint32_t window_first,
                     uint32_t window_end) {
-    constexpr uint32_t kUnit = Leaf::Scan::kEntryGroup;
     if (Complete()) {
       return;
     }
-    auto f = group_frame;
+    auto f = sparse_frame;
     for (idx_t i = 0; i < count;) {
       const auto e = static_cast<uint32_t>(entry_at(i));
       if (f == kNoFrame || e < frames[f].first_entry || e >= FrameEnd(f)) {
@@ -191,50 +191,28 @@ struct EntryFrames {
       }
       const auto first = frames[f].first_entry;
       const auto end = FrameEnd(f);
-      auto last = (e - first) / kUnit;
-      uint64_t groups = 1;
+      auto last = e;
+      uint64_t distinct = 1;
       auto j = i + 1;
       for (; j < count; ++j) {
         const auto next = static_cast<uint32_t>(entry_at(j));
         if (next < first || next >= end) {
           break;
         }
-        const auto group = (next - first) / kUnit;
-        groups += group != last;
-        last = group;
+        distinct += next != last;
+        last = next;
       }
       if (!decoded[f]) {
         const auto lo = std::max(window_first, first);
         const auto hi = std::min(window_end, end);
         SDB_ASSERT(lo < hi);
-        const uint64_t range =
-          (hi - 1 - first) / kUnit - (lo - first) / kUnit + 1;
-        const uint64_t total = (end - first + kUnit - 1) / kUnit;
-        bool sparse = range < total;
-        if constexpr (kUnit == 1) {
-          const uint64_t entry_bytes = frames[f].raw_len / (end - first);
-          sparse = (groups <= kSparseEntries && sparse) ||
-                   groups * (entry_bytes + entry_bytes / 8 + kSingleRowCost) <=
-                     range * (entry_bytes + kFrameRowCost);
-        }
-        if (sparse) {
-          if constexpr (kUnit > 1) {
-            const auto group_of = [&](idx_t k) {
-              return (static_cast<uint32_t>(entry_at(k)) - first) / kUnit;
-            };
-            for (auto k = i; k < j;) {
-              const auto group = group_of(k);
-              uint32_t rows = 0;
-              for (; k < j && group_of(k) == group; ++k) {
-                rows |= uint32_t{1}
-                        << (static_cast<uint32_t>(entry_at(k)) - first) % kUnit;
-              }
-              leaf->EnsureRows(*this, f, group, rows);
-            }
-          } else {
-            for (auto k = i; k < j; ++k) {
-              leaf->EnsureEntry(*this, static_cast<uint32_t>(entry_at(k)), f);
-            }
+        const uint64_t range = hi - lo;
+        const uint64_t entry_bytes = frames[f].raw_len / (end - first);
+        if ((distinct <= kSparseEntries && range < end - first) ||
+            distinct * (entry_bytes + entry_bytes / 8 + kSingleRowCost) <=
+              range * (entry_bytes + kFrameRowCost)) {
+          for (auto k = i; k < j; ++k) {
+            leaf->EnsureEntry(*this, static_cast<uint32_t>(entry_at(k)), f);
           }
         } else {
           DecodeFrame(f);
@@ -242,130 +220,17 @@ struct EntryFrames {
       }
       i = j;
     }
-    group_frame = f;
+    sparse_frame = f;
   }
 
   template<typename Entry>
-  void SelectChained(duckdb::Vector& result, idx_t result_offset, idx_t count,
-                     Entry entry_at, uint32_t window_first,
-                     uint32_t window_end) {
-    constexpr uint32_t kUnit = Leaf::Scan::kEntryGroup;
+  IRS_FORCE_INLINE void WriteRefs(duckdb::Vector& result, idx_t result_offset,
+                                  idx_t count, Entry entry_at) {
+    ReferenceHeap(result);
     auto writer =
       duckdb::FlatVector::Writer<string_t>(result, count, result_offset);
-    auto& arena = duckdb::StringVector::GetStringAllocator(result);
-    bool referenced = false;
-    auto f = group_frame;
-    for (idx_t i = 0; i < count;) {
-      const auto e = static_cast<uint32_t>(entry_at(i));
-      if (f == kNoFrame || e < frames[f].first_entry || e >= FrameEnd(f)) {
-        f = FrameOf(e);
-      }
-      const auto first = frames[f].first_entry;
-      const auto end = FrameEnd(f);
-      auto last = (e - first) / kUnit;
-      uint64_t groups = 1;
-      auto j = i + 1;
-      for (; j < count; ++j) {
-        const auto next = static_cast<uint32_t>(entry_at(j));
-        if (next < first || next >= end) {
-          break;
-        }
-        const auto group = (next - first) / kUnit;
-        groups += group != last;
-        last = group;
-      }
-      if (!decoded[f]) {
-        const auto lo = std::max(window_first, first);
-        const auto hi = std::min(window_end, end);
-        SDB_ASSERT(lo < hi);
-        const uint64_t range =
-          (hi - 1 - first) / kUnit - (lo - first) / kUnit + 1;
-        const uint64_t entry_bytes = std::max<uint64_t>(
-          frames[f].raw_len / (end - first), kChainMinRowBytes);
-        const uint64_t total = (end - first + kUnit - 1) / kUnit;
-        if ((groups * kUnit <= kSparseEntries && range < total) ||
-            (j - i) * entry_bytes + groups * kChainGroupCost <=
-              range * kUnit * entry_bytes) {
-          while (i < j) {
-            const auto group =
-              (static_cast<uint32_t>(entry_at(i)) - first) / kUnit;
-            uint32_t rows = 0;
-            for (; i < j; ++i) {
-              const auto at = static_cast<uint32_t>(entry_at(i)) - first;
-              if (at / kUnit != group) {
-                break;
-              }
-              rows |= uint32_t{1} << at % kUnit;
-            }
-            leaf->DecodeRows(*this, f, group, rows, arena, writer);
-          }
-          continue;
-        }
-        DecodeFrame(f);
-      }
-      referenced = true;
-      for (; i < j; ++i) {
-        writer.WriteStringRef(values[entry_at(i)]);
-      }
-    }
-    group_frame = f;
-    if (referenced) {
-      ReferenceHeap(result);
-    }
-  }
-
-  template<typename Entry>
-  void SelectFrames(duckdb::Vector& result, idx_t result_offset, idx_t count,
-                    Entry entry_at, uint32_t window_first, uint32_t window_end,
-                    FramePrefix& scratch) {
-    auto writer =
-      duckdb::FlatVector::Writer<string_t>(result, count, result_offset);
-    auto& arena = duckdb::StringVector::GetStringAllocator(result);
-    bool referenced = false;
-    uint32_t f = kNoFrame;
-    for (idx_t i = 0; i < count;) {
-      auto e = static_cast<uint32_t>(entry_at(i));
-      if (f == kNoFrame || e < frames[f].first_entry || e >= FrameEnd(f)) {
-        f = FrameOf(e);
-      }
-      const auto first = frames[f].first_entry;
-      const auto end = FrameEnd(f);
-      auto j = i + 1;
-      for (; j < count; ++j) {
-        const auto next = static_cast<uint32_t>(entry_at(j));
-        if (next < e || next >= end) {
-          break;
-        }
-        e = next;
-      }
-      if (!decoded[f]) {
-        const uint64_t rows = end - first;
-        const uint64_t prefix = e - first + 1;
-        const uint64_t hits = j - i;
-        const uint64_t entry_bytes = frames[f].raw_len / rows;
-        const uint64_t frame_byte_cost =
-          kInflateByteCost +
-          (header.flags == FrameDictionary::None ? 0 : kFrameCopyByteCost);
-        const bool done =
-          end <= window_end ||
-          count * uint64_t{end - window_end} < window_end - window_first;
-        if (done &&
-            prefix * (entry_bytes * kInflateByteCost + kPrefixEntryCost) +
-                hits * (entry_bytes * kHitByteCost + kHitCost) <=
-              rows * (entry_bytes * frame_byte_cost + kFrameEntryCost)) {
-          leaf->EmitRows(*this, f, i, j, entry_at, arena, writer, scratch);
-          i = j;
-          continue;
-        }
-        DecodeFrame(f);
-      }
-      referenced = true;
-      for (; i < j; ++i) {
-        writer.WriteStringRef(values[entry_at(i)]);
-      }
-    }
-    if (referenced) {
-      ReferenceHeap(result);
+    for (idx_t i = 0; i < count; ++i) {
+      writer.WriteStringRef(values[entry_at(i)]);
     }
   }
 
@@ -399,7 +264,7 @@ struct EntryFrames {
   std::vector<uint64_t> frame_off;
   std::vector<uint8_t> decoded;
   size_t decoded_count = 0;
-  uint32_t group_frame = kNoFrame;
+  uint32_t sparse_frame = kNoFrame;
   std::optional<typename Leaf::Scan> leaf;
 };
 

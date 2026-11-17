@@ -164,8 +164,6 @@ std::string_view DecodeEntry(const fsst::Decoder<fsst::Fsst8>& fsst,
 }
 
 struct Scan {
-  static constexpr uint32_t kEntryGroup = 1;
-
   template<typename Frames>
   Scan(const ColumnSegment&, const Frames& s)
     : ids{s.base + s.header.off_lcps, s.header.lcp_width} {
@@ -255,6 +253,20 @@ struct Scan {
     s.Keep(e, v);
     entry_heap_bytes += v.size();
     entry_decoded[e] = 1;
+  }
+
+  template<typename Frames, typename Entry>
+  void Ensure(Frames& s, duckdb::idx_t count, Entry entry_at, uint32_t,
+              uint32_t) {
+    s.EnsureEach(count, entry_at);
+  }
+
+  template<typename Frames, typename Entry>
+  void Select(Frames& s, duckdb::Vector& result, duckdb::idx_t result_offset,
+              duckdb::idx_t count, Entry entry_at, uint32_t window_first,
+              uint32_t window_end) {
+    s.EnsureSparse(count, entry_at, window_first, window_end);
+    s.WriteRefs(result, result_offset, count, entry_at);
   }
 
   template<typename Frames, typename Before>

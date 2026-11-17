@@ -27,6 +27,7 @@
 #include <duckdb/common/bitpacking.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
+#include <duckdb/common/vector/vector_writer.hpp>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -156,6 +157,9 @@ Sections start at 8-byte boundaries.
 
 namespace irs::codecs::text::fsst {
 
+constexpr uint64_t kChainGroupCost = 180;
+constexpr uint64_t kChainMinRowBytes = 8;
+
 struct ChainEnd {
   uint64_t written;
   uint64_t enc_off;
@@ -274,8 +278,6 @@ std::string_view DecodeChained(const Decoder<Impl>& fsst, const char* in,
 
 template<typename Impl>
 struct Scan {
-  static constexpr uint32_t kEntryGroup = kChainRestart;
-
   template<typename Frames>
   Scan(const ColumnSegment&, const Frames& s)
     : lcps{s.base + s.header.off_lcps, s.header.lcp_width} {
@@ -315,6 +317,137 @@ struct Scan {
     const auto g = (e - s.frames[f].first_entry) / kChainRestart;
     if (!group_decoded[groups.Base(f) + g]) {
       DecodeGroup(s, f, g);
+    }
+  }
+
+  template<typename Frames, typename Entry>
+  void Ensure(Frames& s, duckdb::idx_t count, Entry entry_at,
+              uint32_t window_first, uint32_t window_end) {
+    if (count <= kSparseEntries) {
+      EnsureGroups(s, count, entry_at, window_first, window_end);
+    } else {
+      s.EnsureEach(count, entry_at);
+    }
+  }
+
+  template<typename Frames, typename Entry>
+  void EnsureGroups(Frames& s, duckdb::idx_t count, Entry entry_at,
+                    uint32_t window_first, uint32_t window_end) {
+    if (s.Complete()) {
+      return;
+    }
+    auto f = group_frame;
+    for (duckdb::idx_t i = 0; i < count;) {
+      const auto e = static_cast<uint32_t>(entry_at(i));
+      if (f == kNoFrame || e < s.frames[f].first_entry || e >= s.FrameEnd(f)) {
+        f = s.FrameOf(e);
+      }
+      const auto first = s.frames[f].first_entry;
+      const auto end = s.FrameEnd(f);
+      auto j = i + 1;
+      for (; j < count; ++j) {
+        const auto next = static_cast<uint32_t>(entry_at(j));
+        if (next < first || next >= end) {
+          break;
+        }
+      }
+      if (!s.decoded[f]) {
+        const auto lo = std::max(window_first, first);
+        const auto hi = std::min(window_end, end);
+        SDB_ASSERT(lo < hi);
+        const uint64_t range =
+          (hi - 1 - first) / kChainRestart - (lo - first) / kChainRestart + 1;
+        const uint64_t total =
+          (end - first + kChainRestart - 1) / kChainRestart;
+        if (range < total) {
+          const auto group_of = [&](duckdb::idx_t k) {
+            return (static_cast<uint32_t>(entry_at(k)) - first) / kChainRestart;
+          };
+          for (auto k = i; k < j;) {
+            const auto group = group_of(k);
+            uint32_t rows = 0;
+            for (; k < j && group_of(k) == group; ++k) {
+              rows |=
+                uint32_t{1}
+                << (static_cast<uint32_t>(entry_at(k)) - first) % kChainRestart;
+            }
+            EnsureRows(s, f, group, rows);
+          }
+        } else {
+          s.DecodeFrame(f);
+        }
+      }
+      i = j;
+    }
+    group_frame = f;
+  }
+
+  template<typename Frames, typename Entry>
+  void Select(Frames& s, duckdb::Vector& result, duckdb::idx_t result_offset,
+              duckdb::idx_t count, Entry entry_at, uint32_t window_first,
+              uint32_t window_end) {
+    auto writer = duckdb::FlatVector::Writer<duckdb::string_t>(result, count,
+                                                               result_offset);
+    auto& arena = duckdb::StringVector::GetStringAllocator(result);
+    bool referenced = false;
+    auto f = group_frame;
+    for (duckdb::idx_t i = 0; i < count;) {
+      const auto e = static_cast<uint32_t>(entry_at(i));
+      if (f == kNoFrame || e < s.frames[f].first_entry || e >= s.FrameEnd(f)) {
+        f = s.FrameOf(e);
+      }
+      const auto first = s.frames[f].first_entry;
+      const auto end = s.FrameEnd(f);
+      auto last = (e - first) / kChainRestart;
+      uint64_t touched = 1;
+      auto j = i + 1;
+      for (; j < count; ++j) {
+        const auto next = static_cast<uint32_t>(entry_at(j));
+        if (next < first || next >= end) {
+          break;
+        }
+        const auto group = (next - first) / kChainRestart;
+        touched += group != last;
+        last = group;
+      }
+      if (!s.decoded[f]) {
+        const auto lo = std::max(window_first, first);
+        const auto hi = std::min(window_end, end);
+        SDB_ASSERT(lo < hi);
+        const uint64_t range =
+          (hi - 1 - first) / kChainRestart - (lo - first) / kChainRestart + 1;
+        const uint64_t entry_bytes = std::max<uint64_t>(
+          s.frames[f].raw_len / (end - first), kChainMinRowBytes);
+        const uint64_t total =
+          (end - first + kChainRestart - 1) / kChainRestart;
+        if ((touched * kChainRestart <= kSparseEntries && range < total) ||
+            (j - i) * entry_bytes + touched * kChainGroupCost <=
+              range * kChainRestart * entry_bytes) {
+          while (i < j) {
+            const auto group =
+              (static_cast<uint32_t>(entry_at(i)) - first) / kChainRestart;
+            uint32_t rows = 0;
+            for (; i < j; ++i) {
+              const auto at = static_cast<uint32_t>(entry_at(i)) - first;
+              if (at / kChainRestart != group) {
+                break;
+              }
+              rows |= uint32_t{1} << at % kChainRestart;
+            }
+            DecodeRows(s, f, group, rows, arena, writer);
+          }
+          continue;
+        }
+        s.DecodeFrame(f);
+      }
+      referenced = true;
+      for (; i < j; ++i) {
+        writer.WriteStringRef(s.values[entry_at(i)]);
+      }
+    }
+    group_frame = f;
+    if (referenced) {
+      s.ReferenceHeap(result);
     }
   }
 
@@ -520,6 +653,7 @@ struct Scan {
   std::vector<uint16_t> group_rows;
   static_assert(kChainRestart <= 8 * sizeof(uint16_t));
   uint64_t group_heap_bytes = 0;
+  uint32_t group_frame = kNoFrame;
   std::string probe;
 };
 

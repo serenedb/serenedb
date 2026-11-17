@@ -31,6 +31,7 @@
 #include <duckdb/common/types/string_type.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
+#include <duckdb/common/vector/vector_writer.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 #include <optional>
@@ -49,6 +50,7 @@
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
+#include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
 
@@ -57,6 +59,12 @@ namespace irs::codecs::text::blob {
 inline constexpr size_t kSampleFrames = 8;
 inline constexpr size_t kProbeFrames = 1;
 inline constexpr size_t kLocalMinFrames = 8;
+inline constexpr uint64_t kInflateByteCost = 6;
+inline constexpr uint64_t kFrameCopyByteCost = 2;
+inline constexpr uint64_t kFrameEntryCost = 72;
+inline constexpr uint64_t kPrefixEntryCost = 16;
+inline constexpr uint64_t kHitByteCost = 2;
+inline constexpr uint64_t kHitCost = 128;
 
 struct FrameShape {
   size_t frame;
@@ -570,11 +578,84 @@ struct Scan {
     SDB_ENSURE(off == m.raw_len, "col codec: corrupted entry lengths");
   }
 
+  template<typename Frames, typename Entry>
+  void Ensure(Frames& s, duckdb::idx_t count, Entry entry_at, uint32_t,
+              uint32_t) {
+    s.EnsureEach(count, entry_at);
+  }
+
+  template<typename Frames, typename Entry>
+  void Select(Frames& s, duckdb::Vector& result, duckdb::idx_t result_offset,
+              duckdb::idx_t count, Entry entry_at, uint32_t window_first,
+              uint32_t window_end) {
+    if constexpr (Codec::kCodec == ByteCodec::Lz4) {
+      SelectFrames(s, result, result_offset, count, entry_at, window_first,
+                   window_end);
+    } else {
+      s.EnsureEach(count, entry_at);
+      s.WriteRefs(result, result_offset, count, entry_at);
+    }
+  }
+
+  template<typename Frames, typename Entry>
+  void SelectFrames(Frames& s, duckdb::Vector& result,
+                    duckdb::idx_t result_offset, duckdb::idx_t count,
+                    Entry entry_at, uint32_t window_first,
+                    uint32_t window_end) {
+    auto writer = duckdb::FlatVector::Writer<duckdb::string_t>(result, count,
+                                                               result_offset);
+    auto& arena = duckdb::StringVector::GetStringAllocator(result);
+    bool referenced = false;
+    uint32_t f = kNoFrame;
+    for (duckdb::idx_t i = 0; i < count;) {
+      auto e = static_cast<uint32_t>(entry_at(i));
+      if (f == kNoFrame || e < s.frames[f].first_entry || e >= s.FrameEnd(f)) {
+        f = s.FrameOf(e);
+      }
+      const auto first = s.frames[f].first_entry;
+      const auto end = s.FrameEnd(f);
+      auto j = i + 1;
+      for (; j < count; ++j) {
+        const auto next = static_cast<uint32_t>(entry_at(j));
+        if (next < e || next >= end) {
+          break;
+        }
+        e = next;
+      }
+      if (!s.decoded[f]) {
+        const uint64_t rows = end - first;
+        const uint64_t prefix = e - first + 1;
+        const uint64_t hits = j - i;
+        const uint64_t entry_bytes = s.frames[f].raw_len / rows;
+        const uint64_t frame_byte_cost =
+          kInflateByteCost +
+          (s.header.flags == FrameDictionary::None ? 0 : kFrameCopyByteCost);
+        const bool done =
+          end <= window_end ||
+          count * uint64_t{end - window_end} < window_end - window_first;
+        if (done &&
+            prefix * (entry_bytes * kInflateByteCost + kPrefixEntryCost) +
+                hits * (entry_bytes * kHitByteCost + kHitCost) <=
+              rows * (entry_bytes * frame_byte_cost + kFrameEntryCost)) {
+          EmitRows(s, f, i, j, entry_at, arena, writer);
+          i = j;
+          continue;
+        }
+        s.DecodeFrame(f);
+      }
+      referenced = true;
+      for (; i < j; ++i) {
+        writer.WriteStringRef(s.values[entry_at(i)]);
+      }
+    }
+    if (referenced) {
+      s.ReferenceHeap(result);
+    }
+  }
+
   template<typename Frames, typename Entry, typename Writer>
   void EmitRows(Frames& s, uint32_t f, duckdb::idx_t i, duckdb::idx_t j,
-                Entry entry_at, duckdb::ArenaAllocator& arena, Writer& writer,
-                FramePrefix& scratch) {
-    auto& [raw, ends] = scratch;
+                Entry entry_at, duckdb::ArenaAllocator& arena, Writer& writer) {
     const auto& m = s.frames[f];
     const auto first = m.first_entry;
     const auto prefix = static_cast<uint32_t>(entry_at(j - 1)) - first + 1;
@@ -621,6 +702,10 @@ struct Scan {
   uint64_t HeapBytes() const noexcept { return 0; }
 
   FrameInflater<Codec> inflater;
+  [[no_unique_address]] utils::Need<Codec::kCodec == ByteCodec::Lz4,
+                                    std::string> raw;
+  [[no_unique_address]] utils::Need<Codec::kCodec == ByteCodec::Lz4,
+                                    std::vector<uint32_t>> ends;
 };
 
 template<typename Codec>

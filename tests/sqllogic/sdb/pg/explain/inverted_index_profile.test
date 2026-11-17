@@ -1204,3 +1204,75 @@ id
 500
 502
 498
+
+
+statement ok
+COPY (
+  SELECT i AS id, i % 100 AS extra, [i::FLOAT, 0, 0, 0]::FLOAT[4] AS emb
+  FROM range(0, 3000) t(i)
+) TO '${__TEST_DIR__}/profile_vector_lookup.parquet' (FORMAT PARQUET);
+
+
+statement ok
+CREATE VIEW profile_vector_lookup AS
+SELECT id, extra, emb::FLOAT[4] AS emb
+FROM read_parquet('${__TEST_DIR__}/profile_vector_lookup.parquet');
+
+
+statement ok
+CREATE INDEX profile_vector_lookup_idx ON profile_vector_lookup USING inverted (id, emb hnsw (metric = 'l2'));
+
+
+query
+EXPLAIN ANALYZE
+SELECT id
+FROM profile_vector_lookup_idx
+WHERE extra = 7
+ORDER BY emb <-> [1500.4, 0, 0, 0]::FLOAT[4]
+LIMIT 5;
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TABLE_SCAN ──────────────────────╮
+│ Index: profile_vector_lookup_idx  │
+│ Lookup: parquet                   │
+│ Score: l2_distance(emb, FLOAT[4]) │
+│ Top: 5                            │
+│ Projections: id                   │
+│ Column Filter: extra = 7          │
+│ Filtered: 990                     │
+│ Fetch: 0µs                        │
+│ Lookup Time: 0µs                  │
+│ 5 rows                        0µs │
+╰─────────────────┬─────────────────╯
+                  ├──────────────────────────────┰┒
+╭─ INDEX_PREPARE ─┴─────────────────╮  ╭─ INDEX_EXECUTE ───╮
+│ Total: 0µs                        │  │ Total: 0µs        │
+│ Snapshot: 0µs                     │  │ 3,200 rows    0µs │
+│ Segments: 1 of 1                  │  ╰─────────┰┰────────╯
+│ 0 rows                        0µs │            ┃┠────────────────────╮
+╰─────────────────┒┎────────────────╯  ╭─ ann::ExactChain ─╮  ╭─ ann::HnswHits ─╮
+╭─ VECTOR_SIMILARITY ───────────────╮  │ Plans: 1          │  │ Plans: 1        │
+│ Field: emb                        │  │ Calls: 1          │  │ Calls: 1        │
+│ Metric: l2                        │  │ Plan: 0µs         │  │ Plan: 0µs       │
+│ Top: 5                            │  │ 3,000 rows    0µs │  │ 200 rows    0µs │
+│ Estimated Matches: 3,000          │  ╰───────────────────╯  ╰─────────────────╯
+│ 3,000 rows                    0µs │
+╰───────────────────────────────────╯
+
+
+query
+SELECT id
+FROM profile_vector_lookup_idx
+WHERE extra = 7
+ORDER BY emb <-> [1500.4, 0, 0, 0]::FLOAT[4]
+LIMIT 5;
+----
+id
+1507
+1407
+1607
+1307
+1707

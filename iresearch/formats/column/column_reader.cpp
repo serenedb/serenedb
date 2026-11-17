@@ -125,24 +125,6 @@ bool BorrowsBlockStrings(const codecs::ColumnSegment& segment) {
          segment.type.InternalType() == duckdb::PhysicalType::VARCHAR;
 }
 
-void ScanSegment(const codecs::ColumnSegment& segment,
-                 codecs::ColumnScanState& st, duckdb::idx_t count,
-                 duckdb::Vector& result, duckdb::idx_t result_offset,
-                 duckdb::ScanVectorType scan_type) {
-  SDB_ASSERT(scan_type == duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR
-               ? result_offset == 0
-               : result.GetVectorType() == duckdb::VectorType::FLAT_VECTOR);
-  segment.function.scan(segment, st, count, result, result_offset, scan_type);
-}
-
-void SkipSegment(const codecs::ColumnSegment& segment,
-                 codecs::ColumnScanState& st) {
-  if (segment.function.skip) {
-    segment.function.skip(segment, st, st.offset_in_column - st.internal_index);
-  }
-  st.internal_index = st.offset_in_column;
-}
-
 void FetchSegmentRows(const codecs::ColumnSegment& segment,
                       codecs::ColumnFetchState& state,
                       const duckdb::idx_t* rows, duckdb::idx_t count,
@@ -545,7 +527,12 @@ void ColumnReader::BeginScanVector(ScanState& s) const {
   }
   SDB_ASSERT(s.st.internal_index <= s.st.offset_in_column);
   if (s.st.internal_index < s.st.offset_in_column) {
-    SkipSegment(*s.segments.back(), s.st);
+    const auto& segment = *s.segments.back();
+    if (segment.function.skip) {
+      segment.function.skip(segment, s.st,
+                            s.st.offset_in_column - s.st.internal_index);
+    }
+    s.st.internal_index = s.st.offset_in_column;
   }
 }
 
@@ -605,7 +592,11 @@ duckdb::idx_t ColumnReader::ScanVector(ScanState& s, duckdb::Vector& result,
     const auto result_offset = base_result_offset + (initial - remaining);
     if (scan_count > 0) {
       const auto& segment = *s.segments.back();
-      ScanSegment(segment, s.st, scan_count, result, result_offset, scan_type);
+      SDB_ASSERT(scan_type == duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR
+                   ? result_offset == 0
+                   : result.GetVectorType() == duckdb::VectorType::FLAT_VECTOR);
+      segment.function.scan(segment, s.st, scan_count, result, result_offset,
+                            scan_type);
       if (BorrowsBlockStrings(segment)) [[unlikely]] {
         CertifyStrings(s, segment, result);
       }

@@ -323,6 +323,9 @@ duckdb::shared_ptr<duckdb::ClientContext> CreateClientContext(
 duckdb::unique_ptr<duckdb::Connection> MakeConnection(
   duckdb::DatabaseInstance& db, const SessionIdentity& identity);
 
+// The current value of setting `name` is what RESET and DISCARD return it to.
+void KeepAsSessionDefault(ConnectionContext& ctx, std::string_view name);
+
 void StartSession(ConnectionContext& ctx, bool superuser);
 
 duckdb::unique_ptr<duckdb::Connection> OpenClientSession(

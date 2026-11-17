@@ -461,10 +461,8 @@ bool PgWireSession<Kind>::SetupConnection() {
   client_config.sink_progress_callback =
     [state = _connection_ctx](duckdb::idx_t rows, duckdb::idx_t bytes) {
       auto& metrics = state->Progress();
-      sdb::pg::ProgressMetrics::Add(metrics.tuples_processed,
-                                    static_cast<int64_t>(rows));
-      sdb::pg::ProgressMetrics::Add(metrics.bytes_processed,
-                                    static_cast<int64_t>(bytes));
+      metrics.AddProcessed(static_cast<int64_t>(rows),
+                           static_cast<int64_t>(bytes));
       const auto command = static_cast<sdb::pg::ProgressCommand>(
         metrics.command.load(std::memory_order_relaxed));
       SDB_IF_FAILURE("pause_copy_from_mid_stream") {
@@ -505,30 +503,36 @@ bool PgWireSession<Kind>::SetupConnection() {
       WriteFatalResponse(this->_send, irs::pg::ToSqlError(exception));
       return false;
     }
+    KeepAsSessionDefault(*_connection_ctx, name);
     return true;
   };
+  std::vector<StartupSetting> settings;
   if (const auto options = _params.find("options"); options != _params.end()) {
-    std::vector<StartupSetting> settings;
     if (auto error = ParseStartupOptions(options->second, settings)) {
       WriteFatalResponse(this->_send, *error);
       return false;
     }
+  }
+  bool applied = true;
+  _conn->context->RunFunctionInTransaction([&] {
     for (const auto& [name, value] : settings) {
       if (!apply(name, value)) {
-        return false;
+        applied = false;
+        return;
       }
     }
-  }
-  for (const auto& [name, value] : _params) {
-    if (name == "user" || name == "database" || name == "replication" ||
-        name == "options") {
-      continue;
+    for (const auto& [name, value] : _params) {
+      if (name == "user" || name == "database" || name == "replication" ||
+          name == "options") {
+        continue;
+      }
+      if (!apply(name, value)) {
+        applied = false;
+        return;
+      }
     }
-    if (!apply(name, value)) {
-      return false;
-    }
-  }
-  return true;
+  });
+  return applied;
 }
 
 template<SocketKind Kind>
@@ -929,19 +933,12 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
   }
 
   // A password method matched: verify against the stored credential. A role
-  // with no usable verifier fails, as in PostgreSQL. Passwordless trust is
+  // with no usable verifier, or no role at all, fails after the same exchange
+  // a real one gets, as in PostgreSQL. Passwordless trust is
   // expressed entirely in HBA (the superuser's loopback `trust` rules) and is
   // therefore already decided above, before this point.
   const auto credential =
     _credentials ? _credentials->LookupCredential(UserName()) : std::nullopt;
-  if (!credential) {
-    WriteFatalResponse(
-      this->_send,
-      SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_PASSWORD),
-                     ERR_MSG("password authentication failed for user \"",
-                             UserName(), "\"")));
-    co_return false;
-  }
 
   // Method (from HBA) x stored form, matching PostgreSQL:
   //  scram    : only a SCRAM secret works (md5 storage cannot do SCRAM).
@@ -950,38 +947,26 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
   //             cleartext (flag) secret is hashed to the md5 form.
   //  password : cleartext exchange verified against whatever is stored.
   bool ok = false;
-  bool method_ok = true;
-  if (hba_method == hba::Method::Scram) {
-    if (credential->scram) {
-      ok = co_await AuthenticateScram(*credential->scram);
-    } else {
-      method_ok = false;
-    }
-  } else if (hba_method == hba::Method::Md5) {
-    if (credential->md5) {
-      ok = co_await AuthenticateMd5(*credential->md5);
-    } else if (credential->scram) {
-      ok = co_await AuthenticateScram(*credential->scram);
-    } else if (credential->cleartext) {
-      ok = co_await AuthenticateMd5(
-        BuildMd5Verifier(UserName(), *credential->cleartext));
-    } else {
-      method_ok = false;
-    }
-  } else if (hba_method == hba::Method::Password) {
-    ok = co_await AuthenticateCleartext(*credential);
+  if (hba_method == hba::Method::Password) {
+    ok =
+      co_await AuthenticateCleartext(credential ? *credential : Credential{});
+  } else if (hba_method == hba::Method::Md5 && credential && credential->md5) {
+    ok = co_await AuthenticateMd5(*credential->md5);
+  } else if (hba_method == hba::Method::Md5 && credential &&
+             !credential->scram && credential->cleartext) {
+    ok = co_await AuthenticateMd5(
+      BuildMd5Verifier(UserName(), *credential->cleartext));
+  } else if (credential && credential->scram) {
+    SDB_ASSERT(hba_method == hba::Method::Scram ||
+               hba_method == hba::Method::Md5);
+    ok = co_await AuthenticateScram(*credential->scram, false);
   } else {
-    method_ok = false;
-  }
-  if (!method_ok) {
-    WriteFatalResponse(
-      this->_send,
-      SQL_ERROR_DATA(
-        ERR_CODE(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
-        ERR_MSG("authentication method \"", hba::MethodName(hba_method),
-                "\" cannot verify the stored password for user \"", UserName(),
-                "\"")));
-    co_return false;
+    SDB_ASSERT(hba_method == hba::Method::Scram ||
+               hba_method == hba::Method::Md5);
+    ok = co_await AuthenticateScram(_credentials
+                                      ? _credentials->MockScram(UserName())
+                                      : MockScramVerifier(UserName(), {}),
+                                    true);
   }
   if (!ok) {
     co_return false;
@@ -1094,7 +1079,7 @@ yaclib::Task<bool> PgWireSession<Kind>::AuthenticateMd5(
 
 template<SocketKind Kind>
 yaclib::Task<bool> PgWireSession<Kind>::AuthenticateScram(
-  const ScramVerifier& verifier) {
+  ScramVerifier verifier, bool doomed) {
   const auto fail = [&](int code, auto&&... msg) {
     WriteFatalResponse(
       this->_send,
@@ -1266,7 +1251,7 @@ yaclib::Task<bool> PgWireSession<Kind>::AuthenticateScram(
   }
   const std::string auth_message =
     absl::StrCat(client_first_bare, ",", server_first, ",", without_proof);
-  if (!VerifyClientProof(verifier, auth_message, *proof)) {
+  if (!VerifyClientProof(verifier, auth_message, *proof) || doomed) {
     fail(ERRCODE_INVALID_PASSWORD, "password authentication failed for user \"",
          UserName(), "\"");
     co_return false;
@@ -1600,12 +1585,6 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyToStdout(
   wire->row_encoding = binary ? RowEncoding::CopyBinary : RowEncoding::CopyText;
   wire->copy_binary_header = binary;
   if (!binary) {
-    // COPY text fields escape inline through the reused Text serializers
-    // (SerializationContext::copy_text); backslash_count = 2 is the COPY
-    // base (a literal backslash -> \\), which array/record depth doubling
-    // composes on top of.
-    wire->proto.copy_text = true;
-    wire->proto.backslash_count = 2;
     // The parser splits COPY options: value-form options (DELIMITER '|') land
     // in info->options, while NULL / HEADER / FORCE_* land in parsed_options.
     // Consult both before bind so every text option (and the csv-only
@@ -1614,8 +1593,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyToStdout(
       sdb::connector::ResolveTextCopyOptions(copy.info->parsed_options);
     sdb::connector::ResolveTextCopyOptions(copy.info->options, opts);
     sdb::connector::CheckTextCopyOptions(opts, false);
-    wire->proto.copy_delim = opts.delim;
-    wire->proto.copy_null = opts.null_str;
+    sdb::pg::SetCopyText(wire->proto, opts.delim, std::move(opts.null_str));
     // PG-compat: COPY ... TO STDOUT (FORMAT text, HEADER) emits the column-name
     // header line before the rows (committed here, before the drive arms).
     if (opts.header) {
@@ -2171,6 +2149,44 @@ void PgWireSession<Kind>::DropDeallocated(std::string_view name) {
 }
 
 template<SocketKind Kind>
+StatementPtr& PgWireSession<Kind>::FindStatement(std::string_view name) {
+  if (name.empty()) {
+    return _proto.statements.FindOrThrow(name);
+  }
+  auto& statements =
+    duckdb::ClientData::Get(*_conn->context).prepared_statements;
+  auto& named = _proto.statements.Named();
+  if (const auto it = named.find(name); it != named.end()) {
+    if (it->second->Alias().empty() || statements.contains(name)) {
+      return it->second;
+    }
+    named.erase(it);
+  }
+  const auto sql = statements.find(name);
+  if (sql == statements.end() || !sql->second->unbound_statement) {
+    return _proto.statements.FindOrThrow(name);
+  }
+  auto& sql_data = sql->second;
+  auto hints = sql_data->parameter_type_hints;
+  _connection_ctx->RefreshCatalogEpoch();
+  const auto bind_epoch = _connection_ctx->CatalogEpoch();
+  auto prepared = PrepareInternal(sql_data->unbound_statement->Copy(),
+                                  hints.empty() ? nullptr : &hints);
+  if (prepared->HasError()) {
+    prepared->GetErrorObject().Throw();
+  }
+  if (const auto handle = statements.find(prepared->GetName());
+      handle != statements.end()) {
+    sql_data = handle->second;
+  }
+  auto& slot = _proto.statements.Create(name);
+  slot->SetPrepared(std::move(prepared), bind_epoch);
+  slot->SetTypeHints(std::move(hints));
+  slot->SetAlias(name);
+  return slot;
+}
+
+template<SocketKind Kind>
 void PgWireSession<Kind>::ReleaseDeallocated() {
   const auto& statements =
     duckdb::ClientData::Get(*_conn->context).prepared_statements;
@@ -2211,8 +2227,7 @@ void PgWireSession<Kind>::HandleBind(std::string_view payload) {
     payload.substr(portal_end + 1, statement_end - portal_end - 1);
   payload.remove_prefix(statement_end + 1);
 
-  DropDeallocated(statement_name);
-  auto& slot = _proto.statements.FindOrThrow(statement_name);
+  auto& slot = FindStatement(statement_name);
   auto& statement = *slot;
   if (!statement.Bound()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_SQL_STATEMENT_NAME),
@@ -2385,8 +2400,7 @@ void PgWireSession<Kind>::HandleDescribe(std::string_view payload) {
   const char what = payload.front();
   const std::string_view name = payload.substr(1, name_end - 1);
   if (what == 'S') {
-    DropDeallocated(name);
-    DescribeStatement(*_proto.statements.FindOrThrow(name));
+    DescribeStatement(*FindStatement(name));
   } else if (what == 'P') {
     // Find (not FindOrThrow): the anon slot always exists but an unbound anon
     // portal (no stmt) is "does not exist" too, so both misses share one throw.

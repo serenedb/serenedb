@@ -52,7 +52,7 @@ class IdxWriter final {
 
   void SetTerms(term_dict::TermsMeta terms) noexcept;
 
-  void Commit();
+  std::unique_ptr<IdxReader> Commit(HnswBases* hnsw_bases);
 
  private:
   void EnsureOut();

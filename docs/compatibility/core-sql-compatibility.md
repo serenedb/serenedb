@@ -382,7 +382,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | current_timestamp      | Yes           |                          |
 | date_add               | Yes           | possible with +          |
 | date_bin               | Yes           |                          |
-| date_part              | Yes           |                          |
+| date_part              | Yes           | Returns `bigint` for every part but `epoch` and `julian`, where PostgreSQL returns `double precision`: `second` is whole seconds, so `date_part('second', TIMESTAMP '2020-01-01 12:00:00.5')` is `0`, not `0.5` |
 | date_subtract          | Yes           |                          |
 | date_trunc             | Yes           |                          |
 | extract                | Yes           | `pg_catalog.extract(field, source)` returns `numeric`. An infinite source gives `NULL` where PostgreSQL gives `Infinity`, `julian` of a timestamp has 20 fractional digits, and a field that is not a constant gives six fractional digits |
@@ -404,7 +404,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | transaction_timestamp  | Yes           |                          |
 | to_timestamp           | Yes               |                          |
 | OVERLAPS               | Yes           |                          |
-| EXTRACT                | Yes           |                          |
+| EXTRACT                | Yes           | `EXTRACT(field FROM source)` calls `date_part` and returns its types, where PostgreSQL returns `numeric`, and its column is named `date_part`. `pg_catalog.extract(field, source)` returns PostgreSQL's `numeric`, the fraction of seconds included |
 
 #### Enum
 | Feature      | Support State | Details |

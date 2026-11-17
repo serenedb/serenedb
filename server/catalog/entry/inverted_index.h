@@ -195,6 +195,9 @@ class InvertedIndexConfig final : public irs::IndexFieldOptions {
   std::string_view StoredExpression(irs::field_id field_id) const noexcept;
   bool StoresExpressions() const noexcept { return _stores_expressions; }
   bool HasExpressionKeys() const noexcept { return !_expressions.empty(); }
+  bool ReadsColumn(irs::field_id column_id) const noexcept {
+    return HasExpressionKeys() || FindColumnInfo(column_id);
+  }
 
   const std::vector<InvertedIndexKey> keys;
   const InvertedIndexFields fields;
@@ -301,6 +304,8 @@ class InvertedIndexEntry final : public duckdb::IndexCatalogEntry {
   void OnDrop() final;
   duckdb::optional_idx GetDataVersion(
     duckdb::ClientContext& context) const final;
+  duckdb::optional_idx GetLayoutVersion(
+    duckdb::ClientContext& context) const final;
 
   void CreateReindexJob(duckdb::CatalogTransaction transaction,
                         uint32_t interval_ms);
@@ -330,6 +335,9 @@ class InvertedIndexEntry final : public duckdb::IndexCatalogEntry {
   persistence::InvertedIndexData ToPersisted() const;
 
   bool ViewBacked() const noexcept { return !_search_table; }
+  const search::Store* VersionedStore() const noexcept {
+    return _search_table ? _search_table.get() : _storage.get();
+  }
 
   duckdb::optional_ptr<duckdb::CatalogEntry> ReindexJob(
     duckdb::CatalogTransaction transaction) const;

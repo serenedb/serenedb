@@ -153,46 +153,77 @@ NormColumnMeta DeserializeNormMeta(duckdb::BinaryDeserializer& d, field_id id,
 ColReader::ColReader(const Directory& dir, std::string_view segment_name,
                      duckdb::DatabaseInstance& db, IOAdvice advice)
   : _db{&db}, _ctx{db, OpenColFile(dir, segment_name, advice)} {
+  ColFooter footer;
   if (!_ctx.HasIn()) {
-    _ctx.SetBlockAllocSize(DEFAULT_BLOCK_ALLOC_SIZE);
+    Adopt(std::move(footer));
     return;
   }
   auto fin = _ctx.In().Dup();
   format_utils::ReadFooter(
     *fin, FileName(segment_name),
-    [&](duckdb::BinaryDeserializer& footer, uint64_t data_size) {
-      footer.Set<duckdb::DatabaseInstance&>(db);
-      footer.ReadOptionalList(
+    [&](duckdb::BinaryDeserializer& in, uint64_t data_size) {
+      in.Set<duckdb::DatabaseInstance&>(db);
+      in.ReadOptionalList(
         kColFieldColumns, "columns",
         [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
           list.ReadObject([&](duckdb::BinaryDeserializer& obj) {
             auto meta = DeserializeColumnMeta(obj);
             CheckColumnMetaRanges(meta, data_size);
-            auto col = ColumnReader::Make(std::move(meta));
-            const auto id = col->Id();
-            const bool ok = _by_id.emplace(id, col.get()).second;
-            SDB_ENSURE(ok, ".col footer: duplicate column field_id ", id);
-            _columns.push_back(col.get());
-            _owned.push_back(std::move(col));
+            footer.columns.push_back(std::move(meta));
           });
         });
-      footer.ReadOptionalList(
+      in.ReadOptionalList(
         kColFieldNormColumns, "norm_columns",
         [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
           list.ReadObject([&](duckdb::BinaryDeserializer& obj) {
             const auto id =
               static_cast<field_id>(obj.ReadProperty<uint64_t>(0, "id"));
-            auto column = std::make_unique<NormColumnReader>(
-              id, DeserializeNormMeta(obj, id, data_size), _ctx.In());
-            const bool ok = _norm_by_id.emplace(id, column.get()).second;
-            SDB_ENSURE(ok, ".col footer: duplicate norm field_id ", id);
-            _norm_columns.push_back(std::move(column));
+            footer.norms.push_back(
+              {.id = id, .meta = DeserializeNormMeta(obj, id, data_size)});
           });
         });
-      _ctx.SetBlockAllocSize(footer.ReadPropertyWithExplicitDefault<uint64_t>(
-        kColFieldBlockSize, "block_size", DEFAULT_BLOCK_ALLOC_SIZE));
-      footer.Unset<duckdb::DatabaseInstance>();
+      footer.block_size = in.ReadPropertyWithExplicitDefault<uint64_t>(
+        kColFieldBlockSize, "block_size", DEFAULT_BLOCK_ALLOC_SIZE);
+      in.ReadOptionalList(
+        kColFieldRowGroupStarts, "row_group_starts",
+        [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
+          const auto start = list.ReadElement<uint64_t>();
+          SDB_ENSURE(footer.row_group_starts.empty()
+                       ? start == 0
+                       : start > footer.row_group_starts.back(),
+                     ".col footer: row group starts are not increasing from 0");
+          footer.row_group_starts.push_back(start);
+        });
+      in.Unset<duckdb::DatabaseInstance>();
     });
+  Adopt(std::move(footer));
+}
+
+ColReader::ColReader(duckdb::DatabaseInstance& db, IndexInput::ptr in,
+                     ColFooter footer)
+  : _db{&db}, _ctx{db, std::move(in)} {
+  Adopt(std::move(footer));
+}
+
+void ColReader::Adopt(ColFooter footer) {
+  _ctx.SetBlockAllocSize(footer.block_size);
+  for (auto& meta : footer.columns) {
+    auto col = ColumnReader::Make(std::move(meta));
+    const auto id = col->Id();
+    const bool ok = _by_id.emplace(id, col.get()).second;
+    SDB_ENSURE(ok, ".col footer: duplicate column field_id ", id);
+    _columns.push_back(col.get());
+    _owned.push_back(std::move(col));
+  }
+  SDB_ASSERT(footer.norms.empty() || _ctx.HasIn());
+  for (auto& norm : footer.norms) {
+    auto column = std::make_unique<NormColumnReader>(
+      norm.id, std::move(norm.meta), _ctx.In());
+    const bool ok = _norm_by_id.emplace(norm.id, column.get()).second;
+    SDB_ENSURE(ok, ".col footer: duplicate norm field_id ", norm.id);
+    _norm_columns.push_back(std::move(column));
+  }
+  _row_group_starts = std::move(footer.row_group_starts);
 }
 
 ColReader::ColReader(duckdb::DatabaseInstance& db,

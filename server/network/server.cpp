@@ -41,6 +41,7 @@
 #include <utility>
 #include <vector>
 
+#include "backup/pg_control.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
 #include "catalog/entry/role.h"
@@ -148,6 +149,11 @@ class CatalogCredentialProvider final : public network::CredentialProvider {
       return std::nullopt;
     }
     return credential;
+  }
+
+  network::ScramVerifier MockScram(std::string_view username) const final {
+    return network::MockScramVerifier(
+      username, backup::PositionSource::Instance().MockNonce());
   }
 };
 

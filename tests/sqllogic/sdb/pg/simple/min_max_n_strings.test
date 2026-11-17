@@ -1,0 +1,14 @@
+query
+SELECT length((max(s, 1))[1]) AS m, length((arg_max(s, i, 1))[1]) AS a
+FROM (VALUES (1, repeat('a', 20)), (2, repeat('b', 200))) t(i, s);
+----
+m	a
+200	200
+
+
+query
+SELECT max(s, 2) AS top, min(s, 2) AS bottom
+FROM (VALUES ('prefix_shared_by_all_x'), ('prefix_shared_by_all_z'), ('prefix_shared_by_all_y'), ('prefix_shared_by_all')) t(s);
+----
+top	bottom
+{prefix_shared_by_all_z,prefix_shared_by_all_y}	{prefix_shared_by_all,prefix_shared_by_all_x}

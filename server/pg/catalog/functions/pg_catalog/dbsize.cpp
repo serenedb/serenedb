@@ -527,11 +527,13 @@ void RegisterDbsizeFunctions(duckdb::ExtensionLoader& loader) {
   const std::string_view pg_catalog = irs::StaticStrings::kPgCatalogSchema;
   const auto stability = duckdb::FunctionStability::VOLATILE;
 
+  duckdb::ScalarFunction relation_fork{
+    {regclass, text}, int8, RelationForkBytesFunction};
+  relation_fork.SetFallible();
   RegisterScalar(loader, pg_catalog, "pg_relation_size", stability, InitSession,
                  {duckdb::ScalarFunction{
                     {regclass}, int8, RelationBytesFunction<true, false>},
-                  duckdb::ScalarFunction{
-                    {regclass, text}, int8, RelationForkBytesFunction}});
+                  relation_fork});
   RegisterScalar(loader, pg_catalog, "pg_table_size", stability, InitSession,
                  {duckdb::ScalarFunction{
                    {regclass}, int8, RelationBytesFunction<true, false>}});
@@ -542,15 +544,22 @@ void RegisterDbsizeFunctions(duckdb::ExtensionLoader& loader) {
   RegisterScalar(loader, pg_catalog, "pg_indexes_size", stability, InitSession,
                  {duckdb::ScalarFunction{
                    {regclass}, int8, RelationBytesFunction<false, true>}});
-  RegisterScalar(
-    loader, pg_catalog, "pg_database_size", stability, nullptr,
-    {duckdb::ScalarFunction{
-       {text}, int8, DatabaseSizeFunction<duckdb::string_t>},
-     duckdb::ScalarFunction{{int8}, int8, DatabaseSizeFunction<int64_t>}});
-  RegisterScalar(
-    loader, pg_catalog, "pg_schema_size", stability, InitSession,
-    {duckdb::ScalarFunction{{text}, int8, SchemaSizeFunction<duckdb::string_t>},
-     duckdb::ScalarFunction{{int8}, int8, SchemaSizeFunction<int64_t>}});
+  duckdb::ScalarFunction database_by_name{
+    {text}, int8, DatabaseSizeFunction<duckdb::string_t>};
+  database_by_name.SetFallible();
+  duckdb::ScalarFunction database_by_oid{
+    {int8}, int8, DatabaseSizeFunction<int64_t>};
+  database_by_oid.SetFallible();
+  RegisterScalar(loader, pg_catalog, "pg_database_size", stability, nullptr,
+                 {database_by_name, database_by_oid});
+  duckdb::ScalarFunction schema_by_name{
+    {text}, int8, SchemaSizeFunction<duckdb::string_t>};
+  schema_by_name.SetFallible();
+  duckdb::ScalarFunction schema_by_oid{
+    {int8}, int8, SchemaSizeFunction<int64_t>};
+  schema_by_oid.SetFallible();
+  RegisterScalar(loader, pg_catalog, "pg_schema_size", stability, InitSession,
+                 {schema_by_name, schema_by_oid});
 
   duckdb::ScalarFunction size_bytes{{text}, int8, SizeBytesFunction};
   size_bytes.SetFallible();

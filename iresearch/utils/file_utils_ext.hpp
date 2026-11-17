@@ -139,6 +139,7 @@ bool Move(const path_char_t* src_path, const path_char_t* dst_path) noexcept;
 size_t Fread(void* fd, void* buf, size_t size);
 size_t Fwrite(void* fd, const void* buf, size_t size);
 void HintWriteback(void* fd, uint64_t offset, size_t size) noexcept;
+void StartWriteback(int fd) noexcept;
 
 inline constexpr size_t kPage = 4 * 1024;
 inline constexpr size_t kMaxReadahead = 2 * 1024 * 1024;
@@ -275,6 +276,6 @@ bool VisitDirectory(const path_char_t* name,
                     const std::function<bool(const path_char_t* name)>& visitor,
                     bool include_dot_dir = true);
 
-bool FileSync(const path_char_t* name) noexcept;
+bool FileSync(int fd) noexcept;
 
 }  // namespace irs::file_utils

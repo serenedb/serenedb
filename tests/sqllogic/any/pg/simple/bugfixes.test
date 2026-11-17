@@ -31,6 +31,13 @@ E'hello\\\\world'
 
 
 query
+SELECT quote_literal('\x01'::bytea) AS l, quote_nullable('\x01'::bytea) AS n, quote_literal(42) AS i, quote_nullable(NULL::bytea) AS z;
+----
+l	n	i	z
+E'\\\\x01'	E'\\\\x01'	'42'	NULL
+
+
+query
 SELECT quote_literal('simple');
 ----
 quote_literal

@@ -4002,20 +4002,18 @@ TEST_P(DirectoryTestCase, smoke_store) {
     EXPECT_EQ(crc.checksum(), file->Checksum());
 
     file->Flush();
+    EXPECT_TRUE(dir.Finish(std::move(file), irs::IOAdvice::RANDOM)->Sync());
   }
 
   // Check files count
-  std::vector<std::string_view> files_to_sync;
   std::set<std::string> files;
   auto list_files = [&](std::string_view name) {
-    [[maybe_unused]] auto [it, inserted] = files.emplace(std::move(name));
-    files_to_sync.emplace_back(*it);
+    files.emplace(name);
     return true;
   };
   ASSERT_TRUE(dir.visit(list_files));
   ASSERT_EQ((std::set<std::string>{std::begin(kNames), std::end(kNames)}),
             files);
-  ASSERT_TRUE(dir.sync(files_to_sync));
 
   // Read contents
   it = std::end(kNames);
@@ -4279,11 +4277,7 @@ TEST_P(DirectoryTestCase, smoke_store) {
       out->WriteData(buf, sizeof buf);
       out->WriteData(buf, 691);
       out->Flush();
-    }
-
-    {
-      std::vector<std::string_view> to_sync{name};
-      ASSERT_TRUE(dir.sync(to_sync));
+      ASSERT_TRUE(dir.Finish(std::move(out), irs::IOAdvice::RANDOM)->Sync());
     }
 
     // read from file
@@ -4298,6 +4292,10 @@ TEST_P(DirectoryTestCase, smoke_store) {
       // 'sizeof buf' already read above
       in->ReadData(buf, in->Length() - sizeof buf);
       ASSERT_TRUE(in->IsEOF());
+      EXPECT_ANY_THROW(in->ReadData(buf, 1));
+      EXPECT_ANY_THROW(in->ReadData(in->Length() - 10, buf, 20));
+      in->Seek(in->Length() - 10);
+      EXPECT_ANY_THROW(in->ReadData(buf, 20));
     }
 
     ASSERT_TRUE(dir.remove("nonempty_file"));
@@ -4377,6 +4375,48 @@ TEST_P(DirectoryTestCase, read_once_reads_range_and_advances) {
   EXPECT_EQ(0, std::memcmp(read.data(), data.data() + kOffset, read.size()));
   EXPECT_EQ(data.back(), in->ReadByte());
   EXPECT_TRUE(in->IsEOF());
+}
+
+TEST_P(DirectoryTestCase, finish_reads_what_was_written) {
+  std::vector<irs::byte_type> data(3 * 1024 * 1024 + 123);
+  for (size_t i = 0; i < data.size(); ++i) {
+    data[i] = static_cast<irs::byte_type>(i * 31 % 251);
+  }
+  auto out = _dir->create("finish");
+  ASSERT_FALSE(!out);
+  out->WriteData(data.data(), data.size());
+  auto in = _dir->Finish(std::move(out), irs::IOAdvice::RANDOM);
+  ASSERT_FALSE(!in);
+  ASSERT_EQ(data.size(), in->Length());
+  std::vector<irs::byte_type> read(data.size());
+  in->ReadData(0, read.data(), read.size());
+  EXPECT_EQ(0, std::memcmp(read.data(), data.data(), data.size()));
+  in->StartWriteback();
+  EXPECT_TRUE(in->Sync());
+
+  uint64_t length = 0;
+  ASSERT_TRUE(_dir->length(length, "finish"));
+  EXPECT_EQ(data.size(), length);
+  auto reopened = _dir->open("finish", irs::IOAdvice::RANDOM);
+  ASSERT_FALSE(!reopened);
+  std::vector<irs::byte_type> again(data.size());
+  reopened->ReadData(0, again.data(), again.size());
+  EXPECT_EQ(0, std::memcmp(again.data(), data.data(), data.size()));
+}
+
+TEST_P(DirectoryTestCase, finish_counts_a_tracked_file_once) {
+  irs::TrackingDirectory tracked{*_dir};
+  auto out = tracked.create("tracked");
+  ASSERT_FALSE(!out);
+  const std::vector<irs::byte_type> data(100000, 7);
+  out->WriteData(data.data(), data.size());
+  auto in = tracked.Finish(std::move(out), irs::IOAdvice::RANDOM);
+  ASSERT_FALSE(!in);
+  uint64_t size = 0;
+  const auto files = tracked.FlushTracked(size);
+  ASSERT_EQ(1, files.size());
+  EXPECT_EQ("tracked", files.front());
+  EXPECT_EQ(data.size(), size);
 }
 
 TEST_P(DirectoryTestCase, evict_keeps_contents) {
@@ -4500,9 +4540,8 @@ TEST_P(DirectoryTestCase,
     const std::vector<irs::byte_type> data(kSize, 1);
     out->WriteData(data.data(), data.size());
     out->Flush();
+    ASSERT_TRUE(_dir->Finish(std::move(out), irs::IOAdvice::RANDOM)->Sync());
   }
-  const std::string_view files[]{"evicted"};
-  ASSERT_TRUE(_dir->sync(files));
   auto in = _dir->open("evicted", irs::IOAdvice::RANDOM);
   ASSERT_FALSE(!in);
   const auto* mapped = in->ReadStable(0, kSize);

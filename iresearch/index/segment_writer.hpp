@@ -123,7 +123,7 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
     _valid = false;
   }
 
-  void flush(SegmentMeta& meta, DocumentMaskBuilder& docs_mask);
+  SegmentInputs flush(SegmentMeta& meta, DocumentMaskBuilder& docs_mask);
 
   std::shared_ptr<const SegmentReaderImpl> SealPiece(uint64_t id);
 

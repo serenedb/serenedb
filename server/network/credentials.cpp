@@ -74,8 +74,8 @@ std::string SaslPrep(std::string_view password) {
 
 std::optional<ScramVerifier> BuildScramVerifier(std::string_view password) {
   ScramVerifier verifier;
-  verifier.iterations = 4096;
-  verifier.salt.resize(16);
+  verifier.iterations = kScramIterations;
+  verifier.salt.resize(kScramSaltLen);
   if (!RandomBytes({reinterpret_cast<uint8_t*>(verifier.salt.data()),
                     verifier.salt.size()})) {
     return std::nullopt;
@@ -93,6 +93,19 @@ std::optional<ScramVerifier> BuildScramVerifier(std::string_view password) {
   Hmac256({salted, kScramKeyLen}, "Client Key", client_key);
   SHA256(client_key, kScramKeyLen, verifier.stored_key.data());
   Hmac256({salted, kScramKeyLen}, "Server Key", verifier.server_key.data());
+  return verifier;
+}
+
+ScramVerifier MockScramVerifier(std::string_view username,
+                                std::span<const uint8_t> nonce) {
+  std::string input{username};
+  input.append(reinterpret_cast<const char*>(nonce.data()), nonce.size());
+  uint8_t digest[SHA256_DIGEST_LENGTH];
+  SHA256(reinterpret_cast<const uint8_t*>(input.data()), input.size(), digest);
+  static_assert(kScramSaltLen <= SHA256_DIGEST_LENGTH);
+  ScramVerifier verifier;
+  verifier.iterations = kScramIterations;
+  verifier.salt.assign(reinterpret_cast<const char*>(digest), kScramSaltLen);
   return verifier;
 }
 

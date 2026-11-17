@@ -124,12 +124,12 @@ std::string_view ProgressPhaseName(ProgressCommand command, int64_t phase) {
 }
 
 void ProgressMetrics::Reset() {
-  for (auto* slot :
-       {&command, &io_type, &relid, &current_relid, &phase, &bytes_processed,
-        &bytes_total, &tuples_processed, &tuples_total, &stage, &stages_total,
-        &step, &steps_total, &items_processed, &items_total}) {
+  for (auto* slot : {&command, &io_type, &relid, &current_relid, &phase,
+                     &bytes_total, &tuples_total, &stage, &stages_total, &step,
+                     &steps_total, &items_processed, &items_total}) {
     slot->store(0, std::memory_order_relaxed);
   }
+  processed.Reset();
 }
 
 void ProgressSource::BeginQuery(std::string query_text) {
@@ -250,7 +250,8 @@ size_t ProgressRegistry::OtherSessions(int64_t datid, int32_t pid,
   const auto count = [&] {
     return static_cast<size_t>(
       absl::c_count_if(_sources, [&](const auto& entry) {
-        return entry.second->datid == datid && entry.second->pid != pid;
+        return entry.second->client_backend && entry.second->datid == datid &&
+               entry.second->pid != pid;
       }));
   };
   const auto none = [&] { return count() == 0; };
@@ -286,9 +287,9 @@ std::vector<ProgressSnapshot> ProgressRegistry::GetSnapshots() const {
     s.relid = m.relid.load(std::memory_order_relaxed);
     s.current_relid = m.current_relid.load(std::memory_order_relaxed);
     s.phase = m.phase.load(std::memory_order_relaxed);
-    s.bytes_processed = m.bytes_processed.load(std::memory_order_relaxed);
+    s.bytes_processed = m.Bytes();
     s.bytes_total = m.bytes_total.load(std::memory_order_relaxed);
-    s.tuples_processed = m.tuples_processed.load(std::memory_order_relaxed);
+    s.tuples_processed = m.Tuples();
     s.tuples_total = m.tuples_total.load(std::memory_order_relaxed);
     s.stage = m.stage.load(std::memory_order_relaxed);
     s.stages_total = m.stages_total.load(std::memory_order_relaxed);

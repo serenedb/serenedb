@@ -477,7 +477,7 @@ void ScorePruneFieldFactory(tests::Document& doc, const std::string& name,
     auto& field = (doc.indexed.end() - 1).as<DoubleField>();
     field.Name(name);
     field.id = ColumnIdFor(name);
-    field.value(data.as_number<double_t>());
+    field.value(data.as_number<double>());
   }
 }
 

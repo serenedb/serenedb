@@ -1,0 +1,116 @@
+statement ok
+CREATE TABLE ppt (id INTEGER, salary INTEGER, karma BIGINT, nick TEXT, b BYTEA, ts TIMESTAMP);
+
+statement ok
+INSERT INTO ppt VALUES (1, 100, 5, 'a', '\x61', '2024-01-15 12:00:00'), (2, 200, 7, 'c', '\x63', '2024-01-16 12:00:00');
+
+statement ok
+PREPARE ppt_add AS SELECT karma + $1 AS k FROM ppt ORDER BY id;
+
+statement ok
+PREPARE ppt_update AS UPDATE ppt SET salary = salary * $1 WHERE id = $2;
+
+statement ok
+PREPARE ppt_any AS SELECT count(*) AS n FROM ppt WHERE nick = ANY($1);
+
+statement ok
+PREPARE ppt_bytea_like AS SELECT count(*) AS n FROM ppt WHERE b LIKE $1;
+
+statement ok
+PREPARE ppt_like AS SELECT $1 LIKE $2 AS l;
+
+statement ok
+PREPARE ppt_concat AS SELECT count(*) AS n FROM ppt WHERE nick LIKE ($1 || '%') AND salary >= $2;
+
+statement ok
+PREPARE ppt_interval AS SELECT max(ts + $1) AS t FROM ppt;
+
+statement ok
+PREPARE ppt_text AS SELECT $1 || $2 AS s;
+
+statement ok
+PREPARE ppt_bytea_concat AS SELECT b || $1 AS c FROM ppt ORDER BY id;
+
+query
+SELECT name, array_to_string(parameter_types, ',') AS parameter_types,
+       array_to_string(result_types, ',') AS result_types
+FROM pg_prepared_statements
+WHERE name LIKE 'ppt_%'
+ORDER BY name;
+----
+name	parameter_types	result_types
+ppt_add	bigint	bigint
+ppt_any	text[]	bigint
+ppt_bytea_concat	bytea	bytea
+ppt_bytea_like	bytea	bigint
+ppt_concat	text,integer	bigint
+ppt_interval	interval	timestamp without time zone
+ppt_like	text,text	boolean
+ppt_text	text,text	text
+ppt_update	integer,integer	NULL
+
+query
+EXECUTE ppt_add(1);
+----
+k
+6
+8
+
+statement count 1
+EXECUTE ppt_update(2, 1);
+
+query
+SELECT id, salary FROM ppt ORDER BY id;
+----
+id	salary
+1	200
+2	200
+
+query
+EXECUTE ppt_any('{a,b}');
+----
+n
+1
+
+query
+EXECUTE ppt_bytea_like('\x61');
+----
+n
+1
+
+query
+EXECUTE ppt_like('abc', 'a%');
+----
+l
+t
+
+query
+EXECUTE ppt_concat('a', 150);
+----
+n
+1
+
+query
+EXECUTE ppt_interval('1 day');
+----
+t
+2024-01-17 12:00:00
+
+query
+EXECUTE ppt_text('a', 'b');
+----
+s
+ab
+
+query
+EXECUTE ppt_bytea_concat('\x62');
+----
+c
+\\x6162
+\\x6362
+
+statement ok
+DEALLOCATE ALL;
+
+statement ok
+DROP TABLE ppt;

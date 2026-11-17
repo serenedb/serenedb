@@ -30,6 +30,8 @@
 namespace sdb::network {
 
 inline constexpr int kScramKeyLen = 32;  // SCRAM_SHA_256_KEY_LEN
+inline constexpr int kScramIterations = 4096;
+inline constexpr size_t kScramSaltLen = 16;
 
 // A parsed SCRAM-SHA-256 verifier (the secret a server keeps; never the
 // password). StoredKey = H(HMAC(SaltedPassword,"Client Key")),
@@ -58,6 +60,7 @@ class CredentialProvider {
   virtual ~CredentialProvider() = default;
   virtual std::optional<Credential> LookupCredential(
     std::string_view username) const = 0;
+  virtual ScramVerifier MockScram(std::string_view username) const = 0;
 };
 
 // --- crypto helpers (auth.cpp wraps the vendored libpq src/common crypto) ---
@@ -77,6 +80,9 @@ std::string ScramVerifierToString(const ScramVerifier& verifier);
 // iterations) -- used to hash CREATE/ALTER ROLE ... PASSWORD and by the config
 // credential source.
 std::optional<ScramVerifier> BuildScramVerifier(std::string_view password);
+
+ScramVerifier MockScramVerifier(std::string_view username,
+                                std::span<const uint8_t> nonce);
 
 // Hash a cleartext password straight to the stored SCRAM verifier string
 // (BuildScramVerifier + ScramVerifierToString); nullopt on crypto failure. The

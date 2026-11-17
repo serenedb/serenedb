@@ -43,6 +43,8 @@
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database_manager.hpp>
+#include <duckdb/parser/parsed_data/create_job_info.hpp>
+#include <duckdb/parser/parser.hpp>
 #include <functional>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
@@ -199,9 +201,19 @@ duckdb::ErrorData RunQuery(JobState& state, const JobDefinition& job,
   }
   duckdb::QueryParameters parameters;
   parameters.caller_drives = true;
-  for (const auto& peel : *job.body) {
+  auto body = duckdb::CreateJobInfo::CopyBody(*job.body);
+  if (duckdb::CreateJobInfo::IsScript(body)) {
+    duckdb::Parser parser{*context};
+    try {
+      parser.ParseQuery(duckdb::CreateJobInfo::BodyToString(body));
+    } catch (const std::exception& e) {
+      return duckdb::ErrorData{e};
+    }
+    body = std::move(parser.statements);
+  }
+  for (auto& peel : body) {
     duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>> statements;
-    statements.push_back(peel->Copy());
+    statements.push_back(std::move(peel));
     try {
       context->PreprocessStatements(statements);
     } catch (const std::exception& e) {

@@ -146,7 +146,8 @@ bool DependsOn(const duckdb::CatalogEntry& member, duckdb::idx_t subject,
       return;
     }
     depends |=
-      dependency->catalog == catalog || (local && dependency->catalog.empty());
+      dependency->catalog.GetIdentifierName() == catalog.GetIdentifierName() ||
+      (local && dependency->catalog.empty());
   });
   return depends;
 }
@@ -437,7 +438,8 @@ void OidIndex::CheckCreated(const duckdb::SnapshotView& view,
     auto* index = this;
     duckdb::shared_ptr<duckdb::AttachedDatabase> database;
     if (dependency && !dependency->catalog.empty() &&
-        dependency->catalog != _database.GetName()) {
+        dependency->catalog.GetIdentifierName() !=
+          _database.GetName().GetIdentifierName()) {
       database = duckdb::DatabaseManager::Get(_database.GetDatabase())
                    .GetDatabase(dependency->catalog);
       if (!database) {

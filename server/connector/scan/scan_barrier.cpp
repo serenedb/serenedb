@@ -18,104 +18,67 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <chrono>
-#include <duckdb/common/mutex.hpp>
 #include <duckdb/parallel/interrupt.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
-#include <iresearch/utils/assert.hpp>
-#include <thread>
 
 #include "connector/scan/scan_state.h"
-#include "utils/number_of_cores.h"
 
 namespace sdb::connector {
-namespace {
 
-std::atomic_int64_t gParkCost{0};
-
-int64_t Now() noexcept {
-  return std::chrono::duration_cast<std::chrono::nanoseconds>(
-           std::chrono::steady_clock::now().time_since_epoch())
-    .count();
-}
-
-void CpuRelax() noexcept {
-#if defined(__x86_64__) || defined(__i386__)
-  __builtin_ia32_pause();
-#elif defined(__aarch64__)
-  asm volatile("yield");
-#endif
-}
-
-bool CanSpin() {
-  static const bool kCanSpin = CountLogicalCores() > 1;
-  return kCanSpin;
-}
-
-}  // namespace
-
-void ScanBarrier::Release(duckdb::TableFunctionInput& input) {
-  _released_at.store(Now(), std::memory_order_relaxed);
-  if (input.blockable) {
-    duckdb::annotated_lock_guard<duckdb::annotated_mutex> guard{
-      input.blockable->lock};
-    _released.store(true, std::memory_order_release);
-    input.blockable->UnblockTasks();
-  } else {
-    _released.store(true, std::memory_order_release);
-  }
-  SDB_ASSERT(!_notification.HasBeenNotified());
-  _notification.Notify();
-}
-
-bool ScanBarrier::Park(duckdb::TableFunctionInput& input,
-                       duckdb::ClientContext& context) {
-  const auto& scheduler = duckdb::TaskScheduler::GetScheduler(context);
-  if (CanSpin() && scheduler.GetNumberOfTasks() == 0) {
-    const auto budget = gParkCost.load(std::memory_order_relaxed);
-    const auto start = Now();
-    for (uint32_t i = 1; !Released(); ++i) {
-      CpuRelax();
-      if (i % 64 == 0) {
-        if (Now() - start >= budget || scheduler.GetNumberOfTasks() != 0) {
-          break;
-        }
-        std::this_thread::yield();
-      }
-    }
-  }
-  if (Released()) {
+bool ScanBarrier::Finish(State state) noexcept {
+  auto open = State::Open;
+  if (!_state.compare_exchange_strong(open, state, std::memory_order_acq_rel)) {
     return false;
   }
-  if (input.blockable && input.interrupt_state &&
-      input.results_execution_mode ==
-        duckdb::AsyncResultsExecutionMode::TASK_EXECUTOR) {
+  _state.notify_all();
+  return true;
+}
+
+void ScanBarrier::Release(duckdb::TableFunctionInput& input) {
+  if (!input.blockable) {
+    Finish(State::Released);
+    return;
+  }
+  duckdb::vector<duckdb::InterruptState> parked;
+  {
     duckdb::annotated_lock_guard<duckdb::annotated_mutex> guard{
       input.blockable->lock};
-    if (Released()) {
-      return false;
+    if (!Finish(State::Released)) {
+      return;
     }
-    if (input.blockable->BlockTask(*input.interrupt_state)) {
-      input.async_result = duckdb::AsyncResultType::BLOCKED;
-      return true;
-    }
+    parked = input.blockable->TakeBlockedTasks();
   }
-  return false;
+  for (const auto& task : parked) {
+    task.Callback();
+  }
 }
 
-void ScanBarrier::Resume() const noexcept {
-  const auto cost = Now() - _released_at.load(std::memory_order_relaxed);
-  const auto last = gParkCost.load(std::memory_order_relaxed);
-  gParkCost.store(last == 0 ? cost : last + (cost - last) / 8,
-                  std::memory_order_relaxed);
+void ScanBarrier::Abandon() noexcept { Finish(State::Failed); }
+
+bool ScanBarrier::Park(duckdb::TableFunctionInput& input) {
+  if (!input.blockable || !input.interrupt_state ||
+      input.results_execution_mode !=
+        duckdb::AsyncResultsExecutionMode::TASK_EXECUTOR) {
+    return false;
+  }
+  duckdb::annotated_lock_guard<duckdb::annotated_mutex> guard{
+    input.blockable->lock};
+  if (Released() || !input.blockable->BlockTask(*input.interrupt_state)) {
+    return false;
+  }
+  input.async_result = duckdb::AsyncResultType::BLOCKED;
+  return true;
 }
 
-void ScanBarrier::Wait() {
+void ScanBarrier::Wait() const {
   if (Released()) {
     return;
   }
   duckdb::TaskScheduler::BlockingScope blocking;
-  _notification.WaitForNotification();
+  for (auto state = _state.load(std::memory_order_acquire);
+       state == State::Open; state = _state.load(std::memory_order_acquire)) {
+    _state.wait(State::Open, std::memory_order_acquire);
+  }
 }
 
 }  // namespace sdb::connector

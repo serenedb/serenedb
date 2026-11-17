@@ -806,3 +806,33 @@ id
 
 statement ok
 SET sdb_disable_top_k_optimization = false;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY union_dup AS [split_text_csv(' '), keyword()] WITH (frequency, position, norm);
+
+
+statement ok
+CREATE TABLE docs_union_dup (id INTEGER PRIMARY KEY, body VARCHAR) WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+
+
+statement ok
+CREATE INDEX docs_union_dup_idx ON docs_union_dup USING inverted(id, body union_dup);
+
+
+statement ok
+INSERT INTO docs_union_dup VALUES (1, 'red fox'), (2, 'fox fox'), (3, 'fox');
+
+
+statement ok
+VACUUM (FLUSH_TABLE) docs_union_dup;
+
+
+query
+SELECT id FROM docs_union_dup_idx
+WHERE body @@ 'fox'
+ORDER BY BM25(docs_union_dup_idx.tableoid) DESC
+LIMIT 1;
+----
+id
+3

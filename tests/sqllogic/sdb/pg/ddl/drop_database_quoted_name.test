@@ -30,3 +30,50 @@ n
 
 statement ok
 DROP DATABASE IF EXISTS "DdqMixed";
+
+
+statement ok
+CREATE DATABASE ddqtwin;
+
+
+statement ok
+CREATE DATABASE "DdqTwin";
+
+
+statement ok
+CREATE TABLE ddqtwin.public.kept (a INT);
+
+
+statement ok
+INSERT INTO ddqtwin.public.kept VALUES (1);
+
+
+statement ok
+CREATE TABLE "DdqTwin".public.gone (a INT);
+
+
+statement ok
+DROP DATABASE "DdqTwin";
+
+
+statement ok
+CREATE DATABASE "DdqTwin";
+
+
+statement ok
+CREATE TABLE "DdqTwin".public.gone (a INT);
+
+
+statement ok
+DROP DATABASE "DdqTwin" CASCADE;
+
+
+query
+SELECT a FROM ddqtwin.public.kept;
+----
+a
+1
+
+
+statement ok
+DROP DATABASE ddqtwin;

@@ -27,9 +27,12 @@
 #include <absl/cleanup/cleanup.h>
 
 #include <algorithm>
+#include <bit>
 #include <cstdint>
 #include <duckdb/common/fault_points.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <iterator>
+#include <span>
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/future.hpp>
 
@@ -42,6 +45,7 @@
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/down_cast.hpp"
+#include "iresearch/utils/group_commit.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -65,13 +69,48 @@ std::vector<DocMap> MergeMaps(CompactionView candidates,
   return maps;
 }
 
-void SyncSegment(RefTrackingDirectory& dir, const SegmentMeta& meta) {
-  const auto names = SegmentFiles(meta.name, meta.kinds);
-  const std::vector<std::string_view> files{names.begin(), names.end()};
-  if (!dir.sync(files)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
-                    ERR_MSG("Failed to sync segment '", meta.name, "'"));
+struct SyncFile {
+  const IndexInput* file;
+  std::string_view segment;
+};
+
+using SyncFiles = std::vector<SyncFile>;
+
+void AddSyncFiles(SyncFiles& out, std::span<const IndexInput::ptr> files,
+                  const SegmentMeta& meta) {
+  SDB_ASSERT(files.size() == static_cast<size_t>(std::popcount(meta.kinds)));
+  for (const auto& file : files) {
+    out.push_back({.file = file.get(), .segment = meta.name});
   }
+}
+
+void StartWriteback(const SyncFiles& files) {
+  for (const auto& [file, segment] : files) {
+    file->StartWriteback();
+  }
+}
+
+void FinishSync(const SyncFiles& files) {
+  for (const auto& [file, segment] : files) {
+    if (!file->Sync()) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
+                      ERR_MSG("Failed to sync segment '", segment, "'"));
+    }
+  }
+}
+
+void SyncBatch(GroupCommit<SyncFiles>::Batch batch) {
+  for (const auto* files : batch) {
+    StartWriteback(*files);
+  }
+  for (const auto* files : batch) {
+    FinishSync(*files);
+  }
+}
+
+GroupCommit<SyncFiles>& FlushSyncs() {
+  static GroupCommit<SyncFiles> syncs;
+  return syncs;
 }
 
 }  // namespace
@@ -103,9 +142,12 @@ IndexWriter::Transaction::FlushSegments(bool sync) {
   if (!sync) {
     return flushed;
   }
+  SyncFiles files;
   for (const auto& entry : flushed) {
-    SyncSegment(_segment->dir, entry.meta);
+    AddSyncFiles(files, entry.files, entry.meta);
   }
+  duckdb::TaskScheduler::BlockingScope blocking;
+  FlushSyncs().Submit(files, SyncBatch);
   return flushed;
 }
 
@@ -178,7 +220,12 @@ IndexWriter::SegmentContext::SegmentContext(Directory& dir,
                                             const SegmentWriterOptions& options)
   : dir{dir},
     flushed{{options.resource_manager}},
-    writer{SegmentWriter::make(this->dir, options)} {}
+    writer{SegmentWriter::make(this->dir, options)},
+    reader_options{
+      .scorer = options.scorer,
+      .db = options.db,
+      .hnsw_bases = options.hnsw_bases,
+    } {}
 
 IndexWriter::SegmentContext::ptr IndexWriter::SegmentContext::make(
   Directory& dir, const SegmentWriterOptions& options) {
@@ -201,13 +248,17 @@ void IndexWriter::SegmentContext::Flush() {
   SDB_IF_FAILURE("IndexWriter::Flush") {
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
-  writer->flush(writer_meta, docs_mask);
+  auto inputs = writer->flush(writer_meta, docs_mask);
   if (writer_meta.live_docs_count == 0) {
     return;
   }
   SDB_ASSERT(writer_meta.kinds != 0);
   SDB_ASSERT(writer_meta.live_docs_count <= writer_meta.docs_count);
-  flushed.emplace_back(std::move(writer_meta), std::move(docs_mask));
+  auto files = WrittenFiles(inputs);
+  auto reader = SegmentReaderImpl::Open(dir, writer_meta, reader_options,
+                                        std::move(inputs));
+  flushed.emplace_back(std::move(writer_meta), std::move(docs_mask),
+                       std::move(reader), std::move(files));
 }
 
 void IndexWriter::SegmentContext::Prepare(uint64_t segment_id) {
@@ -395,9 +446,18 @@ auto IndexWriter::FlushMerge(Merged merged, uint64_t id,
   if (!(co_await merger.Flush(meta, progress, env))) {
     co_return merged;
   }
-  merged.reader = SegmentReaderImpl::Open(_dir, meta, merged.source.Options());
+  auto inputs = merger.TakeInputs();
+  const auto files = WrittenFiles(inputs);
+  merged.reader = SegmentReaderImpl::Open(_dir, meta, merged.source.Options(),
+                                          std::move(inputs));
   merged.maps = MergeMaps(candidates, merger, *merged.reader);
-  SyncSegment(dir, meta);
+  SyncFiles sync;
+  AddSyncFiles(sync, files, meta);
+  {
+    duckdb::TaskScheduler::BlockingScope blocking;
+    StartWriteback(sync);
+    FinishSync(sync);
+  }
   merged.refs = dir.GetRefs();
   merged.meta = std::move(meta);
   co_return merged;

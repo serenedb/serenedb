@@ -124,7 +124,7 @@ error_on_division_by_zero	on	Throw an error instead of returning NULL when divid
 errors_as_json	off	Output error messages as structured JSON instead of as a raw string.
 experimental_metadata_reuse	on	EXPERIMENTAL: Re-use row group and table metadata when checkpointing.
 explain_output	PHYSICAL_ONLY	Configure the output of EXPLAIN statements (ALL, OPTIMIZED_ONLY, PHYSICAL_ONLY).
-explain_output_format	PG	Column shape of EXPLAIN output (DUCKDB_NATIVE = native two-column key/value, PG = single QUERY PLAN column with one row per line of a text or compact plan and one row per plan in other formats)
+explain_output_format	SERVER	Column shape of EXPLAIN output (CLI = two columns, key and value, SERVER = single QUERY PLAN column with one row per line of a text or compact plan and one row per plan in other formats)
 extension_directories	[]	Set the directories to store extensions in.
 extension_repository_directory	(empty)	Set the directory in which trusted extension repositories are stored. This is the trust anchor for user-provided repositories, so while signature checking is enabled (allow_unsigned_extensions=false) it can only be set at startup, not while the database is running.
 external_file_cache_local_max_block_size	16384	Maximum size in bytes of an external file cache block for local (non-remote) files. Larger reads are split into blocks of this size, which are fetched in parallel.
@@ -319,9 +319,6 @@ sdb_lookup_join_source_hop	off	When true, a LOOKUP_JOIN over an inverted index t
 sdb_pattern_cache_size	0	Bytes of compiled search patterns (`ts_regexp`, `ts_like`, LIKE and fused alternations over an inverted index) kept across queries, so a pattern is compiled once per server rather than once per query. The least recently used patterns are dropped first; a pattern in use by a running query stays alive until it finishes. 0, the default, keeps nothing: each query compiles its own patterns. Server-global.
 sdb_quack_max_heartbeat_timeout	600	Most seconds a Quack server keeps a session without a request from its client; a client asking for longer gets this. Server-global.
 sdb_quack_max_sessions	0	Most Quack sessions a server keeps open at once (0 = unlimited). Server-global.
-sdb_scan_no_split_row_groups	1	A segment with at most this many row groups is always one unit of an inverted-index scan and is never split across workers. Default 1.
-sdb_scan_order	auto	The order an inverted-index scan claims its segments in: 'smallest_first' and 'largest_first' order them by live document count; 'order' is best-first by the ORDER BY column's row-group statistics when the query has a scan order (and 'largest_first' otherwise); 'auto' (default) is 'order' under a scan order and 'largest_first' otherwise.
-sdb_scan_split	auto	How an inverted-index scan shares a segment between workers: 'tail' gives each worker its own segment and lets an idle worker join the segment with the most row groups left only once no segment is unclaimed; 'always' puts every worker on the same segment until it is claimed; 'never' scans each segment whole on one worker; 'auto' (default) is 'always' under an ORDER BY scan order and 'tail' otherwise.
 search_backfill_group_bytes	1073741824	Bytes of existing segments a CREATE INDEX on a table rewrites before swapping them in and moving on. Bounds the build's peak disk (~2x one group) and the length of each publish; a value above the table's size means a single swap. 0 = no limit (one swap for the whole table). Default 1073741824 (1GB).
 search_path	<slt:ignore>	Sets the default catalog search path as a comma-separated list of values.
 secret_directory	<slt:ignore>	Set the directory in which persistent secrets are stored.
@@ -494,7 +491,7 @@ error_on_division_by_zero	on	Throw an error instead of returning NULL when divid
 errors_as_json	off	Output error messages as structured JSON instead of as a raw string.
 experimental_metadata_reuse	on	EXPERIMENTAL: Re-use row group and table metadata when checkpointing.
 explain_output	PHYSICAL_ONLY	Configure the output of EXPLAIN statements (ALL, OPTIMIZED_ONLY, PHYSICAL_ONLY).
-explain_output_format	PG	Column shape of EXPLAIN output (DUCKDB_NATIVE = native two-column key/value, PG = single QUERY PLAN column with one row per line of a text or compact plan and one row per plan in other formats)
+explain_output_format	SERVER	Column shape of EXPLAIN output (CLI = two columns, key and value, SERVER = single QUERY PLAN column with one row per line of a text or compact plan and one row per plan in other formats)
 extension_directories	[]	Set the directories to store extensions in.
 extension_repository_directory	(empty)	Set the directory in which trusted extension repositories are stored. This is the trust anchor for user-provided repositories, so while signature checking is enabled (allow_unsigned_extensions=false) it can only be set at startup, not while the database is running.
 external_file_cache_local_max_block_size	16384	Maximum size in bytes of an external file cache block for local (non-remote) files. Larger reads are split into blocks of this size, which are fetched in parallel.
@@ -689,9 +686,6 @@ sdb_lookup_join_source_hop	off	When true, a LOOKUP_JOIN over an inverted index t
 sdb_pattern_cache_size	0	Bytes of compiled search patterns (`ts_regexp`, `ts_like`, LIKE and fused alternations over an inverted index) kept across queries, so a pattern is compiled once per server rather than once per query. The least recently used patterns are dropped first; a pattern in use by a running query stays alive until it finishes. 0, the default, keeps nothing: each query compiles its own patterns. Server-global.
 sdb_quack_max_heartbeat_timeout	600	Most seconds a Quack server keeps a session without a request from its client; a client asking for longer gets this. Server-global.
 sdb_quack_max_sessions	0	Most Quack sessions a server keeps open at once (0 = unlimited). Server-global.
-sdb_scan_no_split_row_groups	1	A segment with at most this many row groups is always one unit of an inverted-index scan and is never split across workers. Default 1.
-sdb_scan_order	auto	The order an inverted-index scan claims its segments in: 'smallest_first' and 'largest_first' order them by live document count; 'order' is best-first by the ORDER BY column's row-group statistics when the query has a scan order (and 'largest_first' otherwise); 'auto' (default) is 'order' under a scan order and 'largest_first' otherwise.
-sdb_scan_split	auto	How an inverted-index scan shares a segment between workers: 'tail' gives each worker its own segment and lets an idle worker join the segment with the most row groups left only once no segment is unclaimed; 'always' puts every worker on the same segment until it is claimed; 'never' scans each segment whole on one worker; 'auto' (default) is 'always' under an ORDER BY scan order and 'tail' otherwise.
 search_backfill_group_bytes	1073741824	Bytes of existing segments a CREATE INDEX on a table rewrites before swapping them in and moving on. Bounds the build's peak disk (~2x one group) and the length of each publish; a value above the table's size means a single swap. 0 = no limit (one swap for the whole table). Default 1073741824 (1GB).
 search_path	<slt:ignore>	Sets the default catalog search path as a comma-separated list of values.
 secret_directory	<slt:ignore>	Set the directory in which persistent secrets are stored.

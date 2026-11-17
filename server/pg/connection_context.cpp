@@ -619,8 +619,18 @@ duckdb::unique_ptr<duckdb::Connection> MakeConnection(
     duckdb::make_shared_ptr<ConnectionContext>(db, identity));
 }
 
+void KeepAsSessionDefault(ConnectionContext& ctx, std::string_view name) {
+  duckdb::Identifier setting{name};
+  duckdb::Value value;
+  if (ctx.TryGetCurrentSetting(setting, value)) {
+    duckdb::ClientConfig::GetConfig(ctx).session_defaults.insert_or_assign(
+      std::move(setting), std::move(value));
+  }
+}
+
 void StartSession(ConnectionContext& ctx, bool superuser) {
   ctx.SetSetting("session_authorization", ctx.user(), false);
+  KeepAsSessionDefault(ctx, "session_authorization");
   ctx.SetSetting("is_superuser", superuser ? "on" : "off", false);
 }
 

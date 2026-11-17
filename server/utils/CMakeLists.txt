@@ -15,6 +15,7 @@ add_library(
     metrics.cpp
     number_of_cores.cpp
     signals.cpp
+    striped_counters.cpp
 )
 
 target_link_libraries(serene PUBLIC iresearch boost_boost simdjson)

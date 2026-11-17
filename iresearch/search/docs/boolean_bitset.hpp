@@ -85,7 +85,7 @@ template<>
 inline docs::Root::ptr MakeBitsetNode<docs::Root::ptr>(BitsetBuckets&& buckets,
                                                        const IndexInput& doc,
                                                        doc_id_t docs_count,
-                                                       TableFilter*) {
+                                                       doc_id_t, TableFilter*) {
   return memory::make_managed<docs::BooleanBitset>(
     BuildBitset(buckets, doc, docs_count));
 }

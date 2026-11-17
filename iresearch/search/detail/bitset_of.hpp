@@ -383,13 +383,13 @@ inline bool TakeConjunctionFold(const BitsetBuckets& buckets,
 
 template<typename Result>
 Result MakeBitsetNode(BitsetBuckets&& buckets, const IndexInput& doc,
-                      doc_id_t docs_count, TableFilter* table);
+                      doc_id_t docs_count, doc_id_t span, TableFilter* table);
 
 template<>
 inline FillNode::ptr MakeBitsetNode<FillNode::ptr>(BitsetBuckets&& buckets,
                                                    const IndexInput& doc,
                                                    doc_id_t docs_count,
-                                                   TableFilter*) {
+                                                   doc_id_t, TableFilter*) {
   return memory::make_managed<fill::Impl<fill::BitsetDocs>>(
     BuildBitset(buckets, doc, docs_count));
 }
@@ -398,7 +398,7 @@ template<>
 inline ProbeNode::ptr MakeBitsetNode<ProbeNode::ptr>(BitsetBuckets&& buckets,
                                                      const IndexInput& doc,
                                                      doc_id_t docs_count,
-                                                     TableFilter*) {
+                                                     doc_id_t, TableFilter*) {
   return memory::make_managed<probe::Impl<probe::BitsetDocs>>(
     BuildBitset(buckets, doc, docs_count));
 }
@@ -407,7 +407,7 @@ template<>
 inline LeadNode::ptr MakeBitsetNode<LeadNode::ptr>(BitsetBuckets&& buckets,
                                                    const IndexInput& doc,
                                                    doc_id_t docs_count,
-                                                   TableFilter*) {
+                                                   doc_id_t, TableFilter*) {
   return memory::make_managed<lead::Impl<lead::BitsetDocs>>(
     BuildBitset(buckets, doc, docs_count));
 }
@@ -426,13 +426,13 @@ BitsetBuckets DisjunctionBuckets(std::span<const Term> terms,
 
 template<typename Result, typename Term>
 Result MakeBitsetOf(std::span<const Term> terms, const TermReader* field,
-                    const IndexInput& doc, doc_id_t docs_count,
+                    const IndexInput& doc, doc_id_t docs_count, doc_id_t span,
                     TableFilter* table) {
   if (!TakeBitset<Result>(terms, docs_count)) {
     return {};
   }
   return MakeBitsetNode<Result>(DisjunctionBuckets(terms, field), doc,
-                                docs_count, table);
+                                docs_count, span, table);
 }
 
 }  // namespace irs::detail

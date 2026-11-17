@@ -141,7 +141,8 @@ Node::ptr MakeDisjunction(std::span<const Term> terms,
         }
       } else {
         return detail::MakeBitsetNode<Node::ptr>(
-          detail::DisjunctionBuckets(terms, field), *doc, docs_count, nullptr);
+          detail::DisjunctionBuckets(terms, field), *doc, docs_count,
+          docs_count, nullptr);
       }
     }
   }

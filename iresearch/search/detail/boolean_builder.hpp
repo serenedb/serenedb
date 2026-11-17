@@ -157,10 +157,10 @@ Result<Family> MakeDisjunctionOfTerms(std::span<const Term> terms,
         MakeSortedDocs<Family>(terms, field, doc, docs_count, ctx)) {
     return sorted;
   }
-  if (kRangeBitset<Result<Family>> ||
-      Family::BitsetSpan(ctx, docs_count) >= docs_count) {
+  const auto span = Family::BitsetSpan(ctx, docs_count);
+  if (kRangeBitset<Result<Family>> || span >= docs_count) {
     if (auto folded = MakeBitsetOf<Result<Family>>(
-          terms, field, doc, docs_count, Family::BitsetTable(ctx))) {
+          terms, field, doc, docs_count, span, Family::BitsetTable(ctx))) {
       return folded;
     }
   }

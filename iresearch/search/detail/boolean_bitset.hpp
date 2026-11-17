@@ -93,7 +93,8 @@ Result MakeConjunctionBitset(std::span<const Term> terms,
   if (!TakeConjunctionFold(buckets, docs_count, HeadEstimate(terms, filters))) {
     return {};
   }
-  return MakeBitsetNode<Result>(std::move(buckets), *doc, docs_count, table);
+  return MakeBitsetNode<Result>(std::move(buckets), *doc, docs_count,
+                                docs_count, table);
 }
 
 struct ExcludeFills {
@@ -217,7 +218,8 @@ Result MakeNegationBitset(const BooleanGroups& groups, const SubReader& segment,
   if (!PlanExcludeFills(fills, buckets)) {
     return {};
   }
-  return MakeBitsetNode<Result>(std::move(buckets), *doc, docs_count, table);
+  return MakeBitsetNode<Result>(std::move(buckets), *doc, docs_count,
+                                docs_count, table);
 }
 
 template<typename Result>
@@ -244,7 +246,8 @@ Result MakeBooleanBitset(const BooleanGroups& groups, const SubReader& segment,
     if (groups.should_fills != nullptr) {
       buckets.fills = std::move(*groups.should_fills);
     }
-    return MakeBitsetNode<Result>(std::move(buckets), *doc, docs_count, table);
+    return MakeBitsetNode<Result>(std::move(buckets), *doc, docs_count,
+                                  docs_count, table);
   }
   if (!groups.should.empty() || !groups.should_filters.empty()) {
     return {};
@@ -265,7 +268,8 @@ Result MakeBooleanBitset(const BooleanGroups& groups, const SubReader& segment,
                              HeadEstimate(groups.must, groups.must_filters))) {
       return {};
     }
-    return MakeBitsetNode<Result>(std::move(buckets), *doc, docs_count, table);
+    return MakeBitsetNode<Result>(std::move(buckets), *doc, docs_count,
+                                  docs_count, table);
   }
   const auto candidates =
     IncludeCandidates(groups.must, groups.must_filters, segment);
@@ -285,7 +289,8 @@ Result MakeBooleanBitset(const BooleanGroups& groups, const SubReader& segment,
       !PlanExcludeFills(fills, buckets)) {
     return {};
   }
-  return MakeBitsetNode<Result>(std::move(buckets), *doc, docs_count, table);
+  return MakeBitsetNode<Result>(std::move(buckets), *doc, docs_count,
+                                docs_count, table);
 }
 
 }  // namespace irs::detail

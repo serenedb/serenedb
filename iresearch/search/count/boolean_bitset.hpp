@@ -38,8 +38,9 @@ template<typename Table>
 class BooleanBitset : public Root {
  public:
   BooleanBitset(detail::BitsetBuckets&& buckets, const IndexInput& doc,
-                doc_id_t docs_count, Table table) noexcept
+                doc_id_t docs_count, doc_id_t span, Table table)
     : _buckets{std::move(buckets)},
+      _set{span},
       _doc{&doc},
       _docs_count{docs_count},
       _table{table} {}
@@ -52,7 +53,7 @@ class BooleanBitset : public Root {
     }
     const auto docs = max - min;
     const auto count = static_cast<uint32_t>((docs + kBits - 1) / kBits);
-    if (_set.WordCount() < count) {
+    if (_set.WordCount() < count) [[unlikely]] {
       _set = detail::BitsetStorage{docs};
     } else {
       std::fill_n(_set.Words(), count, uint64_t{0});
@@ -90,13 +91,13 @@ inline constexpr FoldEmit kFoldEmit<count::Root::ptr>{0.3, 1.0, false};
 template<>
 inline count::Root::ptr MakeBitsetNode<count::Root::ptr>(
   BitsetBuckets&& buckets, const IndexInput& doc, doc_id_t docs_count,
-  TableFilter* table) {
+  doc_id_t span, TableFilter* table) {
   if (table != nullptr) {
     return memory::make_managed<count::BooleanBitset<TableFilter*>>(
-      std::move(buckets), doc, docs_count, table);
+      std::move(buckets), doc, docs_count, span, table);
   }
   return memory::make_managed<count::BooleanBitset<utils::Empty>>(
-    std::move(buckets), doc, docs_count, utils::Empty{});
+    std::move(buckets), doc, docs_count, span, utils::Empty{});
 }
 
 }  // namespace irs::detail

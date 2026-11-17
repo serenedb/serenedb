@@ -964,6 +964,25 @@ tesp_code()
 
 
 statement ok
+CREATE TABLE tesp_app.tesp_retype (s TEXT);
+
+
+statement ok
+INSERT INTO tesp_app.tesp_retype VALUES ('abcd');
+
+
+statement ok
+ALTER TABLE tesp_app.tesp_retype ALTER COLUMN s TYPE INT USING length(s);
+
+
+query
+SELECT s FROM tesp_app.tesp_retype;
+----
+s
+4
+
+
+statement ok
 CREATE FUNCTION public.tesp_valid(x INT) RETURNS BOOLEAN LANGUAGE sql IMMUTABLE AS 'SELECT x > 0';
 
 

@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <duckdb/common/types.hpp>
-#include <duckdb/common/types/string_type.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
 
 #include "iresearch/store/data_output.hpp"
@@ -38,8 +36,6 @@ class WriteContext final {
 
   duckdb::BufferManager& BufferManager() noexcept { return *_buffers; }
   IndexOutput& Out() noexcept { return *_out; }
-
-  duckdb::block_id_t WriteOverflowString(duckdb::string_t string);
 
  private:
   duckdb::BufferManager* _buffers;

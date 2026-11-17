@@ -80,7 +80,6 @@ add_executable(
     formats/column/col_compression_function_test.cpp
     formats/column/col_numeric_codec_test.cpp
     formats/column/column_reader_test.cpp
-    formats/column/write_context_test.cpp
     formats/columnstore2_test.cpp
     formats/docs_slack_test.cpp
     formats/formats_10_tests.cpp

@@ -3746,6 +3746,14 @@ def test_pg_prepared_statements_lists_protocol_statements(conn):
     assert all_fields(m) == [b"select $1::int4", b"{integer}", b"{integer}", b"f"]
 
 
+def test_sql_prepared_statement_stays_from_sql_once_bound_over_the_protocol(conn):
+    assert not errors(_simple(conn, "PREPARE fs_sql AS SELECT 1"))
+    _execute_ok(conn, "fs_sql")
+    m = _simple(conn, "SELECT from_sql FROM pg_prepared_statements WHERE name = 'fs_sql'")
+    assert not errors(m), errors(m)
+    assert all_fields(m) == [b"t"]
+
+
 def _execute_ok(conn, name, params=()):
     conn.bind("", name, params=params)
     conn.execute("")
@@ -3864,6 +3872,31 @@ def test_protocol_statement_plans_once_after_search_path_change(conn):
         _execute_ok(conn, "pc_path_point", params=(b"1",))
     plans = _plans(conn, "pc_path_point")
     assert plans["pc_path_point"][:2] == (3, 1), plans
+
+
+def test_replan_of_a_deallocated_statement_leaves_its_reused_name(conn):
+    assert statuses(conn.run("BEGIN")) == ["T"]
+    _parse_ok(conn, "rp_reused", "SELECT 1 AS v")
+    conn.bind("rp_portal", "rp_reused")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert not errors(m), errors(m)
+    for sql in (
+        "DEALLOCATE rp_reused",
+        "PREPARE rp_reused AS SELECT 2 AS v",
+        "CREATE TABLE rp_reused_epoch(a int4)",
+    ):
+        m = _simple(conn, sql)
+        assert not errors(m), (sql, errors(m))
+    conn.execute("rp_portal")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert not errors(m), errors(m)
+    assert [_data_row(row) for row in rows(m)] == [[b"1"]]
+    m = _simple(conn, "EXECUTE rp_reused")
+    assert not errors(m), errors(m)
+    assert [_data_row(row) for row in rows(m)] == [[b"2"]]
+    assert statuses(conn.run("ROLLBACK")) == ["I"]
 
 
 def test_close_drops_protocol_statement_name(conn):

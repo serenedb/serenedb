@@ -72,6 +72,23 @@ inline uint64_t FirstToken(ChainGroups& groups, PackedReader& counts,
   return first;
 }
 
+template<typename Out>
+IRS_FORCE_INLINE std::string_view DecodeEntry(
+  const Table& table, ChainGroups& groups, PackedReader& counts,
+  const FrameMeta& m, uint32_t f, uint32_t e, const char* data, Out& out) {
+  const auto tokens = TokenFrame(m, table.Bits());
+  const auto first = FirstToken(groups, counts, tokens, f, e);
+  const uint64_t count = counts.At(e);
+  SDB_ENSURE(first + count <= tokens.comp_len, "col codec: corrupted entry");
+  const auto capacity = table.Capacity(count);
+  auto* at = Reserve(out, capacity);
+  const auto n =
+    table.Decode(reinterpret_cast<const uint8_t*>(data) + m.comp_off, first,
+                 count, at, capacity);
+  Trim(out, capacity - n);
+  return {at, n};
+}
+
 struct Scan {
   template<typename Frames>
   Scan(const ColumnSegment&, const Frames& s) {
@@ -110,18 +127,8 @@ struct Scan {
 
   template<typename Frames, typename Out>
   std::string_view Decode(Frames& s, uint32_t e, uint32_t f, Out& out) {
-    const auto& m = s.frames[f];
-    const auto tokens = TokenFrame(m, table.Bits());
-    const auto first = FirstToken(groups, s.length_reader, tokens, f, e);
-    const uint64_t count = s.length_reader.At(e);
-    SDB_ENSURE(first + count <= tokens.comp_len, "col codec: corrupted entry");
-    const auto capacity = table.Capacity(count);
-    auto* at = Reserve(out, capacity);
-    const auto n =
-      table.Decode(reinterpret_cast<const uint8_t*>(s.Data()) + m.comp_off,
-                   first, count, at, capacity);
-    Trim(out, capacity - n);
-    return {at, n};
+    return DecodeEntry(table, groups, s.length_reader, s.frames[f], f, e,
+                       s.Data(), out);
   }
 
   template<typename Frames>
@@ -195,20 +202,13 @@ struct Fetch {
     if (!table) {
       Open(h, base);
     }
-    const auto tokens = TokenFrame(f, table->Bits());
-    const auto first = FirstToken(groups, counts, tokens, lo, entry);
-    const uint64_t count = counts.At(entry);
-    SDB_ENSURE(first + count <= tokens.comp_len, "col codec: corrupted entry");
-    if (const auto need = table->Capacity(count); buf.size() < need) {
-      buf.resize(std::max<uint64_t>(need, buf.size() * 2));
-    }
-    const auto n = table->Decode(
-      reinterpret_cast<const uint8_t*>(base + h.off_data) + f.comp_off, first,
-      count, buf.data(), buf.size());
+    const auto value =
+      DecodeEntry(*table, groups, counts, f, lo, entry,
+                  reinterpret_cast<const char*>(base + h.off_data), buf);
     ++walked;
     auto* out = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
     out[result_idx] =
-      duckdb::StringVector::AddStringOrBlob(result, buf.data(), n);
+      duckdb::StringVector::AddStringOrBlob(result, value.data(), value.size());
   }
 
   void Open(const Header& h, duckdb::const_data_ptr_t base) {

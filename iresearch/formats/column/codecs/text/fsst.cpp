@@ -178,11 +178,9 @@ inline uint64_t ChainCapacity(PackedReader& lengths, PackedReader& lcps,
 template<typename Impl>
 uint64_t DecodeSuffix(const Decoder<Impl>& fsst, const char* in, uint64_t enc,
                       uint64_t lcp, std::string& buf) {
-  if (const auto need = lcp + enc * kMaxExpansion; buf.size() < need) {
-    buf.resize(std::max<uint64_t>(need, buf.size() * 2));
-  }
-  const auto room = buf.size() - lcp;
-  const auto dec = enc == 0 ? 0 : fsst.Decode(in, enc, buf.data() + lcp, room);
+  const auto room = enc * kMaxExpansion;
+  auto* at = Reserve(buf, lcp + room) + lcp;
+  const auto dec = enc == 0 ? 0 : fsst.Decode(in, enc, at, room);
   SDB_ENSURE(dec <= room, "col codec: corrupted entry");
   return lcp + dec;
 }
@@ -434,7 +432,13 @@ struct Scan {
               }
               rows |= uint32_t{1} << at % kChainRestart;
             }
-            DecodeRows(s, f, group, rows, arena, writer);
+            DecodeRows(s, f, group, rows, 0, arena,
+                       [&](uint32_t row, std::string_view v) {
+                         if ((rows >> row & 1) != 0) {
+                           writer.WriteStringRef(duckdb::string_t{
+                             v.data(), static_cast<uint32_t>(v.size())});
+                         }
+                       });
           }
           continue;
         }
@@ -466,8 +470,24 @@ struct Scan {
       return;
     }
     const auto restart = s.frames[f].first_entry + g * kChainRestart;
+    const auto used =
+      DecodeRows(s, f, g, rows, kept,
+                 duckdb::StringVector::GetStringAllocator(s.dictionary->data),
+                 [&](uint32_t row, std::string_view v) {
+                   s.Keep(restart + row, v);
+                   group_heap_bytes += v.size();
+                 });
+    group_rows[index] = static_cast<uint16_t>(kept | used);
+  }
+
+  template<typename Frames, typename Visit>
+  IRS_FORCE_INLINE uint32_t DecodeRows(Frames& s, uint32_t f, uint32_t g,
+                                       uint32_t rows, uint32_t kept,
+                                       duckdb::ArenaAllocator& arena,
+                                       Visit&& visit) {
+    const auto restart = s.frames[f].first_entry + g * kChainRestart;
     const uint32_t n = std::bit_width(rows);
-    SDB_ASSERT(n <= kChainRestart && restart + n <= s.FrameEnd(f));
+    SDB_ASSERT(n != 0 && n <= kChainRestart && restart + n <= s.FrameEnd(f));
     std::array<uint64_t, kChainRestart + 1> off;
     std::array<uint32_t, kChainRestart> lcp;
     std::array<uint32_t, kChainRestart> enc;
@@ -493,7 +513,6 @@ struct Scan {
       need = wanted != 0 ? (source != 0 ? 0 : lcp[i]) : need;
       capacity += decode * (lcp[i] + uint64_t{enc[i]} * kMaxExpansion);
     }
-    auto& arena = duckdb::StringVector::GetStringAllocator(s.dictionary->data);
     auto* out = duckdb::char_ptr_cast(arena.Allocate(capacity));
     uint64_t written = 0;
     const char* prev = nullptr;
@@ -519,65 +538,10 @@ struct Scan {
       prev = at;
       prev_len = lcp[i] + dec;
       written += prev_len;
-      s.Keep(restart + i, std::string_view{at, prev_len});
+      visit(i, std::string_view{at, prev_len});
     }
     arena.ShrinkHead(capacity - written);
-    group_heap_bytes += written;
-    group_rows[index] = static_cast<uint16_t>(kept | used);
-  }
-
-  template<typename Frames, typename Writer>
-  void DecodeRows(Frames& s, uint32_t f, uint32_t g, uint32_t rows,
-                  duckdb::ArenaAllocator& arena, Writer& writer) {
-    const auto restart = s.frames[f].first_entry + g * kChainRestart;
-    const uint32_t n = std::bit_width(rows);
-    SDB_ASSERT(n != 0 && n <= kChainRestart && restart + n <= s.FrameEnd(f));
-    std::array<uint64_t, kChainRestart + 1> off;
-    std::array<uint32_t, kChainRestart> lcp;
-    std::array<uint32_t, kChainRestart> enc;
-    lcps.Read(restart, n, lcp.data());
-    s.length_reader.Read(restart, n, enc.data());
-    lcp[0] = 0;
-    off[0] = groups.Offset(s.length_reader, s.frames[f], f, g);
-    for (uint32_t i = 0; i < n; ++i) {
-      off[i + 1] = off[i] + enc[i];
-    }
-    SDB_ENSURE(off[n] <= s.header.data_size,
-               "col codec: corrupted front coding");
-    uint32_t used = 0;
-    uint64_t need = 0;
-    uint64_t capacity = 0;
-    for (uint32_t i = n; i-- > 0;) {
-      const uint32_t decode = (rows >> i & 1) | uint32_t{lcp[i] < need};
-      used |= decode << i;
-      need = decode != 0 ? lcp[i] : need;
-      capacity += decode * (lcp[i] + uint64_t{enc[i]} * kMaxExpansion);
-    }
-    auto* out = duckdb::char_ptr_cast(arena.Allocate(capacity));
-    uint64_t written = 0;
-    const char* prev = nullptr;
-    uint64_t prev_len = 0;
-    for (auto left = used; left != 0; left &= left - 1) {
-      const auto i = static_cast<uint32_t>(std::countr_zero(left));
-      SDB_ENSURE(lcp[i] <= prev_len, "col codec: corrupted front coding");
-      auto* at = out + written;
-      if (lcp[i] != 0) {
-        std::memcpy(at, prev, lcp[i]);
-      }
-      const auto room = capacity - (written + lcp[i]);
-      const auto dec = enc[i] == 0 ? 0
-                                   : decoder.Decode(s.Data() + off[i], enc[i],
-                                                    at + lcp[i], room);
-      SDB_ENSURE(dec <= room, "col codec: corrupted entry");
-      prev = at;
-      prev_len = lcp[i] + dec;
-      written += prev_len;
-      if ((rows >> i & 1) != 0) {
-        writer.WriteStringRef(
-          duckdb::string_t{at, static_cast<uint32_t>(prev_len)});
-      }
-    }
-    arena.ShrinkHead(capacity - written);
+    return used;
   }
 
   template<typename Frames>

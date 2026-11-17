@@ -147,22 +147,6 @@ inline uint64_t EntryOffset(ChainGroups& groups, PackedReader& lengths,
   return offset;
 }
 
-template<typename Out>
-std::string_view DecodeEntry(const fsst::Decoder<fsst::Fsst8>& fsst,
-                             std::string_view prefix, const char* in,
-                             uint64_t enc, Out& out) {
-  const auto room = enc * fsst::kMaxExpansion;
-  auto* at = Reserve(out, prefix.size() + room);
-  if (!prefix.empty()) {
-    std::memcpy(at, prefix.data(), prefix.size());
-  }
-  const auto dec =
-    enc == 0 ? 0 : fsst.Decode(in, enc, at + prefix.size(), room);
-  SDB_ENSURE(dec <= room, "col codec: corrupted entry");
-  Trim(out, room - dec);
-  return {at, prefix.size() + dec};
-}
-
 struct Scan {
   template<typename Frames>
   Scan(const ColumnSegment&, const Frames& s)
@@ -240,7 +224,18 @@ struct Scan {
       id <= prefixes.Count() &&
         enc_off + enc <= static_cast<uint64_t>(m.comp_off) + m.comp_len,
       "col codec: corrupted entry");
-    return DecodeEntry(decoder, Prefix(id), s.Data() + enc_off, enc, out);
+    const auto prefix = Prefix(id);
+    const auto room = enc * fsst::kMaxExpansion;
+    auto* at = Reserve(out, prefix.size() + room);
+    if (!prefix.empty()) {
+      std::memcpy(at, prefix.data(), prefix.size());
+    }
+    const auto dec = enc == 0 ? 0
+                              : decoder.Decode(s.Data() + enc_off, enc,
+                                               at + prefix.size(), room);
+    SDB_ENSURE(dec <= room, "col codec: corrupted entry");
+    Trim(out, room - dec);
+    return {at, prefix.size() + dec};
   }
 
   template<typename Frames>
@@ -324,19 +319,25 @@ struct Fetch {
       id <= prefixes.Count() &&
         enc_off + enc <= static_cast<uint64_t>(f.comp_off) + f.comp_len,
       "col codec: corrupted entry");
-    std::string_view prefix;
-    if (id != 0) {
-      const auto encoded = prefixes.Encoded(id);
-      prefix = DecodeEntry(*decoder, {}, encoded.data(), encoded.size(), head);
-    }
-    const auto value =
-      DecodeEntry(*decoder, prefix,
-                  reinterpret_cast<const char*>(base + h.off_data) + enc_off,
-                  enc, value_buf);
+    const auto prefix = id == 0 ? std::string_view{} : prefixes.Encoded(id);
+    const auto capacity = (prefix.size() + enc) * fsst::kMaxExpansion;
+    auto* at = Reserve(buf, capacity);
+    const auto head =
+      prefix.empty()
+        ? 0
+        : decoder->Decode(prefix.data(), prefix.size(), at, capacity);
+    SDB_ENSURE(head <= capacity, "col codec: corrupted prefix");
+    const auto room = capacity - head;
+    const auto dec =
+      enc == 0 ? 0
+               : decoder->Decode(
+                   reinterpret_cast<const char*>(base + h.off_data) + enc_off,
+                   enc, at + head, room);
+    SDB_ENSURE(dec <= room, "col codec: corrupted entry");
     ++walked;
     auto* out = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
     out[result_idx] =
-      duckdb::StringVector::AddStringOrBlob(result, value.data(), value.size());
+      duckdb::StringVector::AddStringOrBlob(result, at, head + dec);
   }
 
   void Open(const Header& h, duckdb::const_data_ptr_t base) {
@@ -355,8 +356,7 @@ struct Fetch {
   Prefixes prefixes;
   PackedReader ids{nullptr, 0};
   ChainGroups groups;
-  std::string head;
-  std::string value_buf;
+  std::string buf;
   uint64_t walked = 0;
 };
 

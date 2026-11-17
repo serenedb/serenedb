@@ -1278,8 +1278,7 @@ void CurrentLogfileFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
       }
     }
   }
-  result.Reference(duckdb::Value{duckdb::LogicalType::VARCHAR},
-                   duckdb::count_t(args.size()));
+  duckdb::ConstantVector::SetNull(result, duckdb::count_t(args.size()));
 }
 
 template<const std::string_view& kKind,

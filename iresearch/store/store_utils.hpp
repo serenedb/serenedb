@@ -22,6 +22,8 @@
 
 #pragma once
 
+#include <limits>
+
 #include "data_input.hpp"
 #include "data_output.hpp"
 #include "directory.hpp"
@@ -29,7 +31,6 @@
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 #include "iresearch/utils/number_utils.hpp"
-#include "iresearch/utils/numeric_utils.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/std.hpp"
 #include "iresearch/utils/string.hpp"

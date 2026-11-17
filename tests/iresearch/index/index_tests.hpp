@@ -23,6 +23,9 @@
 
 #pragma once
 
+#include <absl/container/flat_hash_map.h>
+#include <absl/synchronization/mutex.h>
+
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/index/directory_reader.hpp>
@@ -87,6 +90,11 @@ class DirectoryMock : public irs::Directory {
     return _impl.open(name, advice);
   }
 
+  irs::IndexInput::ptr Finish(irs::IndexOutput::ptr out,
+                              irs::IOAdvice advice) const override {
+    return _impl.Finish(std::move(out), advice);
+  }
+
   bool remove(std::string_view name) noexcept override {
     return _impl.remove(name);
   }
@@ -95,16 +103,123 @@ class DirectoryMock : public irs::Directory {
     return _impl.rename(src, dst);
   }
 
-  bool sync(std::span<const std::string_view> files) noexcept override {
-    return _impl.sync(files);
-  }
-
   bool visit(const irs::Directory::visitor_f& visitor) const final {
     return _impl.visit(visitor);
   }
 
  private:
   irs::Directory& _impl;
+};
+
+class ForwardingIndexInput : public irs::IndexInput {
+ public:
+  explicit ForwardingIndexInput(irs::IndexInput::ptr impl) noexcept
+    : _impl(std::move(impl)) {}
+
+  const irs::byte_type* ReadStable(uint64_t count) final {
+    return _impl->ReadStable(count);
+  }
+  const irs::byte_type* ReadStable(uint64_t offset, uint64_t count) final {
+    return _impl->ReadStable(offset, count);
+  }
+  const irs::byte_type* ReadVolatile(uint64_t offset, uint64_t count) final {
+    return _impl->ReadVolatile(offset, count);
+  }
+  const irs::byte_type* ReadVolatile(uint64_t count) final {
+    return _impl->ReadVolatile(count);
+  }
+
+  irs::byte_type ReadByte() final { return _impl->ReadByte(); }
+  using DataInput::ReadData;
+  void ReadData(irs::byte_type* b, uint64_t count) final {
+    _impl->ReadData(b, count);
+  }
+  void ReadData(duckdb::QueryContext context, irs::byte_type* b,
+                uint64_t count) final {
+    _impl->ReadData(context, b, count);
+  }
+  void ReadData(uint64_t offset, irs::byte_type* b, size_t count) final {
+    _impl->ReadData(offset, b, count);
+  }
+
+  int16_t ReadI16() final { return _impl->ReadI16(); }
+  int32_t ReadI32() final { return _impl->ReadI32(); }
+  int64_t ReadI64() final { return _impl->ReadI64(); }
+  uint32_t ReadV32() final { return _impl->ReadV32(); }
+  uint64_t ReadV64() final { return _impl->ReadV64(); }
+
+  void SkipV32() final { _impl->SkipV32(); }
+  void SkipV64() final { _impl->SkipV64(); }
+  void Skip(uint64_t count) final { _impl->Skip(count); }
+  void Seek(uint64_t pos) final { _impl->Seek(pos); }
+
+  uint64_t Position() const noexcept final { return _impl->Position(); }
+  uint64_t Length() const noexcept final { return _impl->Length(); }
+  bool IsEOF() const noexcept final { return _impl->IsEOF(); }
+
+  ptr Dup() const override { return _impl->Dup(); }
+  ptr Reopen() const override { return _impl->Reopen(); }
+
+  uint32_t Checksum(uint64_t offset) const final {
+    return _impl->Checksum(offset);
+  }
+
+  uint64_t CountMappedMemory() const final {
+    return _impl->CountMappedMemory();
+  }
+  void Prefetch(uint64_t offset, uint64_t size) const noexcept final {
+    _impl->Prefetch(offset, size);
+  }
+  void Evict(uint64_t offset, uint64_t size) const noexcept final {
+    _impl->Evict(offset, size);
+  }
+  bool Resident(uint64_t offset, uint64_t size) const noexcept final {
+    return _impl->Resident(offset, size);
+  }
+  uint64_t Warm(uint64_t offset, uint64_t size) const noexcept final {
+    return _impl->Warm(offset, size);
+  }
+  void MarkWarm(uint64_t offset, uint64_t size) const noexcept final {
+    _impl->MarkWarm(offset, size);
+  }
+  void StartWriteback() const noexcept final { _impl->StartWriteback(); }
+  bool Sync() const noexcept override { return _impl->Sync(); }
+
+ private:
+  irs::IndexInput::ptr _impl;
+};
+
+class FinishHookDirectory : public DirectoryMock {
+ public:
+  using DirectoryMock::DirectoryMock;
+
+  irs::IndexOutput::ptr create(std::string_view name) override {
+    auto out = DirectoryMock::create(name);
+    absl::MutexLock lock{&_mutex};
+    _names.insert_or_assign(out.get(), std::string{name});
+    return out;
+  }
+
+  irs::IndexInput::ptr Finish(irs::IndexOutput::ptr out,
+                              irs::IOAdvice advice) const final {
+    std::string name;
+    {
+      absl::MutexLock lock{&_mutex};
+      if (auto node = _names.extract(out.get())) {
+        name = std::move(node.mapped());
+      }
+    }
+    return Finished(DirectoryMock::Finish(std::move(out), advice), name);
+  }
+
+ protected:
+  virtual irs::IndexInput::ptr Finished(irs::IndexInput::ptr in,
+                                        std::string_view name) const = 0;
+
+ private:
+  mutable absl::Mutex _mutex;
+  mutable absl::flat_hash_map<const irs::IndexOutput*, std::string> _names
+    ABSL_GUARDED_BY(_mutex);
 };
 
 struct BlockingDirectory : DirectoryMock {

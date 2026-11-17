@@ -1,0 +1,78 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY rgk_words AS split_text(case := 'lower') WITH (frequency, position, norm);
+
+
+statement ok
+CREATE TABLE rgk (id BIGINT PRIMARY KEY, body VARCHAR) WITH (compaction_interval = 0, row_group_size = 2048);
+
+
+statement ok
+CREATE INDEX rgk_idx ON rgk USING inverted(id, body rgk_words);
+
+
+statement ok
+SET threads = 1
+
+
+statement ok
+INSERT INTO rgk SELECT i, CASE WHEN i % 1000 = 7 THEN 'rare common' ELSE 'common' END FROM range(0, 5000) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) rgk;
+
+
+statement ok
+INSERT INTO rgk SELECT i, CASE WHEN i % 1000 = 7 THEN 'rare common' ELSE 'common' END FROM range(5000, 6000) t(i);
+
+
+statement ok
+RESET threads
+
+
+statement ok
+VACUUM (FLUSH_TABLE) rgk;
+
+
+statement ok
+VACUUM (COMPACT_TABLE) rgk;
+
+
+query
+EXPLAIN SELECT id FROM rgk ORDER BY id LIMIT 3 OFFSET 4100;
+----
+QUERY PLAN
+╭─ TOP_N ───────────────────────────╮
+│ Top: 3                            │
+│ Offset: 4                         │
+│ Order By: id ASC                  │
+│ ~3 rows                           │
+╰─────────────────┬─────────────────╯
+╭─ IRESEARCH_SCAN ┴─────────────────╮
+│ Table: rgk                        │
+│ Projections: id                   │
+│ Column Filter:                    │
+│ optional: Dynamic Filter (id < ?) │
+│ ~6,000 rows                       │
+╰───────────────────────────────────╯
+
+
+query
+SELECT id, body FROM (SELECT id, body, BM25(rgk_idx.tableoid) AS s FROM rgk_idx WHERE body @@ 'rare' ORDER BY BM25(rgk_idx.tableoid) DESC LIMIT 10) r ORDER BY id;
+----
+id	body
+7	rare common
+1007	rare common
+2007	rare common
+3007	rare common
+4007	rare common
+5007	rare common
+
+
+query
+SELECT id FROM rgk ORDER BY id LIMIT 3 OFFSET 4100;
+----
+id
+4100
+4101
+4102

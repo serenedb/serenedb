@@ -1,0 +1,29 @@
+query
+SELECT sdb_encode_key(1.5::DECIMAL(10, 2)) < sdb_encode_key(2.25::DECIMAL(10, 2)) AS decimal_ordered, sdb_encode_key(-170141183460469231731687303715884105727::HUGEINT) < sdb_encode_key(1::HUGEINT) AS hugeint_ordered, sdb_encode_key(INTERVAL '1 day') < sdb_encode_key(INTERVAL '2 days') AS interval_ordered, sdb_encode_key('00000000-0000-0000-0000-000000000001'::UUID) < sdb_encode_key('ffffffff-0000-0000-0000-000000000000'::UUID) AS uuid_ordered, sdb_encode_key(TIME '01:00') < sdb_encode_key(TIME '02:00') AS time_ordered;
+----
+decimal_ordered	hugeint_ordered	interval_ordered	uuid_ordered	time_ordered
+t	t	t	t	t
+
+
+query
+SELECT sdb_encode_key(1, NULL) IS NULL AS any_null, sdb_encode_key([1, NULL]) > sdb_encode_key([1, 2]) AS nested_null_greatest, sdb_encode_key([1]) < sdb_encode_key([1, 0]) AS prefix_first, sdb_encode_key(1, 'b') < sdb_encode_key(1, 'c') AS second_column;
+----
+any_null	nested_null_greatest	prefix_first	second_column
+t	t	t	t
+
+
+query
+SELECT sdb_encode_key('abc') < sdb_encode_key('abcd') AS string_prefix_first, sdb_encode_key('abcdefghijklm') < sdb_encode_key('abcdefghijkm') AS long_string, sdb_encode_key('NaN'::DOUBLE) > sdb_encode_key('Infinity'::DOUBLE) AS nan_greatest, sdb_encode_key(-0.0::DOUBLE) = sdb_encode_key(0.0::DOUBLE) AS signed_zero;
+----
+string_prefix_first	long_string	nan_greatest	signed_zero
+t	t	t	t
+
+
+query
+SELECT v FROM (VALUES (3), (-1), (20), (NULL), (0)) t(v) WHERE v IS NOT NULL ORDER BY sdb_encode_key(v);
+----
+v
+-1
+0
+3
+20

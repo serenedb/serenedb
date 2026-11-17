@@ -160,10 +160,8 @@ class PhysicalPgWireCollector final : public duckdb::PhysicalResultCollector {
     }
     ctx.rows.fetch_add(chunk.size(), std::memory_order_relaxed);
     if (lstate.progress) {
-      sdb::pg::ProgressMetrics::Add(lstate.progress->tuples_processed,
-                                    static_cast<int64_t>(chunk.size()));
-      sdb::pg::ProgressMetrics::Add(
-        lstate.progress->bytes_processed,
+      lstate.progress->AddProcessed(
+        static_cast<int64_t>(chunk.size()),
         static_cast<int64_t>(chunk.GetAllocationSize()));
       SDB_WAIT_ON_FAILURE("pause_copy_to_mid_stream");
     }

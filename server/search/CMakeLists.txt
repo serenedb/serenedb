@@ -3,6 +3,7 @@ target_sources(
     PRIVATE
         hot_keys.cpp
         log_entry.cpp
+        parallel.cpp
         store.cpp
         store_stats.cpp
         search_analyzer_impl.cpp

@@ -140,6 +140,7 @@ struct CreateIndexLocalState final : public duckdb::LocalSinkState {
   // so anything rebuilt on the stack there is an allocation per chunk.
   std::vector<FeedColumn> columns;
   std::unique_ptr<duckdb::Vector> pk_scratch;
+  duckdb::idx_t rows = 0;
 };
 
 }  // namespace
@@ -489,8 +490,8 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
 
   FeedChunk(*writer, num_rows, pk, chunk, columns, gstate.expression_slots);
 
-  gstate.backfill_count_atomic.fetch_add(num_rows, std::memory_order_relaxed);
-  pg::ProgressMetrics::Add(gstate.progress.tuples_processed, num_rows);
+  lstate->rows += num_rows;
+  gstate.progress.AddTuples(static_cast<int64_t>(num_rows));
   SDB_WAIT_ON_FAILURE("pause_create_index_mid_build");
   return duckdb::SinkResultType::NEED_MORE_INPUT;
 }
@@ -503,6 +504,8 @@ duckdb::SinkCombineResultType SereneDBPhysicalCreateIndex::Combine(
     return duckdb::SinkCombineResultType::FINISHED;
   }
   auto& lstate = input.local_state.Cast<CreateIndexLocalState>();
+  gstate.backfill_count_atomic.fetch_add(lstate.rows,
+                                         std::memory_order_relaxed);
   lstate.writer.reset();
   std::span<const irs::IndexWriter::FlushedSegment> flushed;
   try {

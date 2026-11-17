@@ -304,6 +304,8 @@ class InvertedIndexEntry final : public duckdb::IndexCatalogEntry {
   void OnDrop() final;
   duckdb::optional_idx GetDataVersion(
     duckdb::ClientContext& context) const final;
+  duckdb::optional_idx GetLayoutVersion(
+    duckdb::ClientContext& context) const final;
 
   void CreateReindexJob(duckdb::CatalogTransaction transaction,
                         uint32_t interval_ms);
@@ -333,6 +335,9 @@ class InvertedIndexEntry final : public duckdb::IndexCatalogEntry {
   persistence::InvertedIndexData ToPersisted() const;
 
   bool ViewBacked() const noexcept { return !_search_table; }
+  const search::Store* VersionedStore() const noexcept {
+    return _search_table ? _search_table.get() : _storage.get();
+  }
 
   duckdb::optional_ptr<duckdb::CatalogEntry> ReindexJob(
     duckdb::CatalogTransaction transaction) const;

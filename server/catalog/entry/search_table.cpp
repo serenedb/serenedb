@@ -562,6 +562,11 @@ duckdb::optional_idx SearchTableEntry::GetDataVersion(
   return SessionOf(context, catalog).SearchTxn().PlanVersion(*_storage);
 }
 
+duckdb::optional_idx SearchTableEntry::GetLayoutVersion(
+  duckdb::ClientContext& context) const {
+  return SessionOf(context, catalog).SearchTxn().LayoutVersion(*_storage);
+}
+
 void SearchTableEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
   if (CreatedObject(prev_entry)) {
     OnDrop();

@@ -199,7 +199,7 @@ void Write(Data& data) {
   writer.prepare(state, 1);
   writer.write(irs::StringLayout::kStrings, KeysReader{data.keys});
   writer.end();
-  idx.Commit();
+  idx.Commit(nullptr);
 }
 
 void Open(Data& data) {

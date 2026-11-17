@@ -169,9 +169,7 @@ void IndexBuilder::WriteSegmentList() {
   auto out = _dir.create(kSegmentListFile);
   out->WriteData(reinterpret_cast<const irs::byte_type*>(text.data()),
                  text.size());
-  out.reset();
-  const std::string_view name = kSegmentListFile;
-  _dir.sync({&name, 1});
+  _dir.Finish(std::move(out), irs::IOAdvice::RANDOM)->Sync();
 }
 
 void Batch::Add(std::string_view id, std::string_view text) {

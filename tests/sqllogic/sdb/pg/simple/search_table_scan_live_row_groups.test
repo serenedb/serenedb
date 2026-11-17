@@ -158,10 +158,6 @@ id
 86013
 
 
-statement ok
-SET sdb_scan_split = 'always'
-
-
 query
 SELECT (SELECT count(*) || ':' || sum(v) FROM slr WHERE k IN (0, 31, 63)) = (SELECT count(*) || ':' || sum(v) FROM slr_d WHERE k IN (0, 31, 63)) AS a,
        (SELECT count(*) || ':' || sum(v) FROM slr WHERE k >= 62 OR k <= 1) = (SELECT count(*) || ':' || sum(v) FROM slr_d WHERE k >= 62 OR k <= 1) AS b,
@@ -180,10 +176,6 @@ id
 86013
 
 
-statement ok
-SET sdb_scan_split = 'never'
-
-
 query
 SELECT (SELECT count(*) || ':' || sum(v) FROM slr WHERE k IN (0, 31, 63)) = (SELECT count(*) || ':' || sum(v) FROM slr_d WHERE k IN (0, 31, 63)) AS a,
        (SELECT count(*) || ':' || sum(v) FROM slr WHERE k >= 62 OR k <= 1) = (SELECT count(*) || ':' || sum(v) FROM slr_d WHERE k >= 62 OR k <= 1) AS b,
@@ -191,10 +183,6 @@ SELECT (SELECT count(*) || ':' || sum(v) FROM slr WHERE k IN (0, 31, 63)) = (SEL
 ----
 a	b	c
 t	t	t
-
-
-statement ok
-RESET sdb_scan_split
 
 
 statement ok

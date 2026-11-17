@@ -1,8 +1,8 @@
 # Native CMake build of jemalloc (the ../jemalloc submodule), modelled on
 # ClickHouse's contrib/jemalloc-cmake. Instead of running jemalloc's autotools
 # ./configure at build time, we compile the sources against per-platform config
-# headers generated once from our 5.3.1 source (see README.md for how they were
-# regenerated). Linux only, and unlike ClickHouse we build with jemalloc's
+# headers generated once per update (README.md). Linux only, and unlike
+# ClickHouse we build with jemalloc's
 # default empty prefix so it overrides libc malloc/free directly (serenedb links
 # it globally) -- hence NO -DJEMALLOC_NO_RENAME.
 
@@ -10,7 +10,7 @@ set(LIBRARY_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../jemalloc")
 
 # jemalloc runtime config (malloc_conf), substituted into the config header via
 # configure_file below. Overridable without a cache purge. Based on ClickHouse's
-# tuned Linux server config, with duckdb's larger oversize threshold.
+# tuned Linux server config.
 #   percpu_arena:percpu        cap arenas at the CPU count (vs the 4*CPU default)
 #                              so idle threads don't each retain an arena's RSS.
 #   oversize_threshold:64MiB   route large allocations to a dedicated arena,
@@ -20,12 +20,13 @@ set(LIBRARY_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../jemalloc")
 #                              the OS immediately, keeping RSS bounded.
 #   background_thread:true     purge on jemalloc's own threads, off the free()
 #                              path.
-#   lg_extent_max_active_fit:8 reuse an extent for requests up to 2^8x smaller
-#                              (default 2^6); helps hashtable-heavy queries.
+#   process_madvise_max_batch:128 purge up to 128 extents with one
+#                              process_madvise, so the kernel flushes the TLB
+#                              once per batch instead of once per extent.
 # prof:* is intentionally omitted -- serenedb compiles prof only under
 # SDB_JEMALLOC_PROF, so arming it here on a non-prof build would be rejected.
 set(JEMALLOC_CONFIG_MALLOC_CONF
-    "percpu_arena:percpu,oversize_threshold:67108864,muzzy_decay_ms:0,dirty_decay_ms:5000,background_thread:true,lg_extent_max_active_fit:8")
+    "percpu_arena:percpu,oversize_threshold:67108864,muzzy_decay_ms:0,dirty_decay_ms:5000,background_thread:true,process_madvise_max_batch:128")
 set(JEMALLOC_CONFIG_MALLOC_CONF_OVERRIDE ""
     CACHE STRING "Override jemalloc's default malloc_conf string")
 if(JEMALLOC_CONFIG_MALLOC_CONF_OVERRIDE)

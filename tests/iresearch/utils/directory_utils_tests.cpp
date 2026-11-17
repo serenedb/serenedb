@@ -60,13 +60,14 @@ class DirectoryUtilsTests : public ::testing::Test {
                       ERR_MSG("cannot open ", name));
     }
 
+    irs::IndexInput::ptr Finish(irs::IndexOutput::ptr,
+                                irs::IOAdvice) const final {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR), ERR_MSG("cannot finish"));
+    }
+
     bool remove(std::string_view) noexcept final { return false; }
 
     bool rename(std::string_view, std::string_view) noexcept final {
-      return false;
-    }
-
-    bool sync(std::span<const std::string_view>) noexcept final {
       return false;
     }
 
@@ -145,8 +146,6 @@ TEST_F(DirectoryUtilsTests, test_ref_tracking_dir) {
     auto file2 = track_dir.open(file, irs::IOAdvice::RANDOM);
 
     ASSERT_FALSE(!file2);
-    // does nothing in memory_directory, but adds line coverage
-    ASSERT_TRUE(track_dir.sync({&file, 1}));
     ASSERT_EQ(1, file2->Length());
     ASSERT_TRUE(track_dir.rename(file, "def"));
     file1.reset();  // release before remove
@@ -249,11 +248,12 @@ TEST_F(DirectoryUtilsTests, test_ref_tracking_dir) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
                       ERR_MSG("cannot open ", name));
     }
+    irs::IndexInput::ptr Finish(irs::IndexOutput::ptr,
+                                irs::IOAdvice) const final {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR), ERR_MSG("cannot finish"));
+    }
     bool remove(std::string_view) noexcept final { return false; }
     bool rename(std::string_view, std::string_view) noexcept final {
-      return false;
-    }
-    bool sync(std::span<const std::string_view>) noexcept final {
       return false;
     }
   } error_dir{irs::ResourceManagementOptions::gDefault};
@@ -299,7 +299,6 @@ TEST_F(DirectoryUtilsTests, test_tracking_dir) {
       file1->WriteByte(42);
       file1->Flush();
     }
-    ASSERT_TRUE(track_dir.sync({&file, 1}));
     uint64_t byte_size{0};
     ASSERT_TRUE(track_dir.length(byte_size, file));
     ASSERT_EQ(1, byte_size);

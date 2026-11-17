@@ -130,6 +130,10 @@ class IndexInput : public DataInput {
 
   virtual void MarkWarm(uint64_t, uint64_t) const noexcept {}
 
+  virtual void StartWriteback() const noexcept {}
+
+  virtual bool Sync() const noexcept { return true; }
+
   IndexInput& operator=(const IndexInput&) = delete;
 
  protected:

@@ -50,7 +50,7 @@ namespace {
 
 irs::ByNGramSimilarity MakeFilter(irs::field_id field_id,
                                   const std::vector<std::string_view>& ngrams,
-                                  float_t threshold = 1.f) {
+                                  float threshold = 1.f) {
   irs::ByNGramSimilarity filter;
   *filter.mutable_field_id() = field_id;
   auto* opts = filter.mutable_options();

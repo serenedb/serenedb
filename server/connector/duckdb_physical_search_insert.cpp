@@ -92,7 +92,7 @@ struct SearchUpsertLocalState final : SearchInsertLocalState {
   irs::DocRemovalBuilder replaced;
   search::UnitRows unit_rows;
   search::ConflictArbiter::Scratch conflict;
-  std::vector<search::UnitPatch> patches;
+  std::optional<search::UnitPatchBuilder> patches;
 };
 
 void ReportProgress(duckdb::ExecutionContext& context,
@@ -375,17 +375,23 @@ duckdb::SinkResultType SereneDBSearchUpsert::Sink(
     patched_rows.set(row);
   }
   absl::c_sort(order);
+  if (!lstate.patches) {
+    std::vector<search::UnitPatchBuilder::Column> columns;
+    columns.reserve(_patched.size());
+    for (const auto& column : _patched) {
+      columns.push_back({.field = column.field, .type = column.type});
+    }
+    lstate.patches.emplace(std::move(columns));
+  }
   search::ForEachUnitRows(
     gstate.sdb_txn->SearchTxn().PinnedReader(context.client,
                                              *gstate.table.store),
     lstate.unit_rows,
     [&](uint64_t unit, std::span<const uint64_t> rows,
         const duckdb::SelectionVector& sel) {
-      for (const auto& column : _patched) {
-        const duckdb::Vector values{chunk.data[column.input], sel, rows.size()};
-        search::AddUnitPatch(lstate.patches, unit, column.field, column.type,
-                             rows, values);
-      }
+      lstate.patches->Add(unit, rows, [&](size_t c) {
+        return duckdb::Vector{chunk.data[_patched[c].input], sel, rows.size()};
+      });
     });
   duckdb::idx_t inserted = 0;
   for (duckdb::idx_t row = 0; row != chunk.size(); ++row) {
@@ -410,8 +416,9 @@ duckdb::SinkCombineResultType SereneDBSearchUpsert::Combine(
     search_txn.AddRemoval(context.client, gstate.table.store,
                           std::move(lstate.replaced));
   }
-  if (!lstate.patches.empty()) {
-    search_txn.AddPatches(gstate.table.store, std::move(lstate.patches));
+  if (lstate.patches && !lstate.patches->Empty()) {
+    search_txn.AddPatches(gstate.table.store,
+                          std::move(*lstate.patches).Finish());
   }
   return SereneDBSearchInsert::Combine(context, input);
 }

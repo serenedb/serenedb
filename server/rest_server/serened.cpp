@@ -66,6 +66,7 @@
 #include "server/utils/app_server.h"
 #include "server/utils/build.h"
 #include "server/utils/init.h"
+#include "server/utils/number_of_cores.h"
 #include "server/utils/signals.h"
 #include "storage_engine/search_engine.h"
 
@@ -338,7 +339,8 @@ int main(int argc, char* argv[]) {
   // Initialize (parseOptions is SDB_*-free precisely so it can run this early).
   sdb::app::AppServer::parseOptions(argc, argv);
   const auto remap =
-    irs::RemapExecutable(absl::GetFlag(FLAGS_remap_executable));
+    irs::RemapExecutable(absl::GetFlag(FLAGS_remap_executable),
+                         static_cast<size_t>(sdb::CountLogicalCores()));
   auto& engine = irs::DuckDBEngine::Instance();
   engine.Initialize(&server::query::ConfigureServerDBConfig);
   SDB_INFO(STARTUP, "starting SereneDB ", SERENEDB_VERSION);

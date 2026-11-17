@@ -22,16 +22,25 @@
 
 #pragma once
 
+#include "iresearch/store/data_input.hpp"
+
 namespace irs {
 
 struct Directory;
 class IdxReader;
 struct SegmentMeta;
 
+struct PostingsInputs {
+  IndexInput::ptr doc;
+  IndexInput::ptr pos;
+  IndexInput::ptr pay;
+};
+
 struct ReaderState {
   const Directory* dir;
   const SegmentMeta* meta;
   IdxReader* idx = nullptr;
+  PostingsInputs* postings = nullptr;
 };
 
 }  // namespace irs

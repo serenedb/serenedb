@@ -287,22 +287,24 @@ query ?
 EXPLAIN SELECT name, count(*) FROM chexp.chtest.widgets GROUP BY name LIMIT 2;
 ----
 QUERY PLAN
-╭─ STREAMING_LIMIT ──────────────────╮
-│ Limit: 2                           │
-│ ~0 rows                            │
-╰──────────────────┬─────────────────╯
-╭─ HASH_GROUP_BY ──┴─────────────────╮
-│ Groups: #0                         │
-│ Aggregates: count_star()           │
-│ Group Limit: 2                     │
-│ ~3 rows                            │
-╰──────────────────┬─────────────────╯
-╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────╮
-│ Function: CLICKHOUSE_SCAN_PUSHDOWN │
-│ Table: chtest.widgets              │
-│ Projections: name                  │
-│ ~5 rows                            │
-╰────────────────────────────────────╯
+╭─ STREAMING_LIMIT ────────────────────╮
+│ Limit: 2                             │
+│ ~0 rows                              │
+╰───────────────────┬──────────────────╯
+╭─ HASH_GROUP_BY ───┴──────────────────╮
+│ Groups: #0                           │
+│ Aggregates: count_star()             │
+│ Group Limit: 2                       │
+│ ~3 rows                              │
+╰───────────────────┬──────────────────╯
+╭─ CLICKHOUSE_SCAN_PUSHDOWN ───────────╮
+│ Function: CLICKHOUSE_SCAN_PUSHDOWN   │
+│ Table: chtest.widgets                │
+│ Projections: name                    │
+│ Column Filter:                       │
+│ optional: Dynamic Filter (name <= ?) │
+│ ~5 rows                              │
+╰──────────────────────────────────────╯
 
 # 2 groups returned.
 query ?

@@ -32,7 +32,7 @@ namespace irs {
 using byte_type = uint8_t;
 using field_id = uint64_t;
 using doc_id_t = uint32_t;
-using score_t = float_t;
+using score_t = float;
 // NOLINTEND
 
 }  // namespace irs

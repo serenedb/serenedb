@@ -168,6 +168,12 @@ void HintWriteback(void* fd, uint64_t offset, size_t size) noexcept {
 #endif
 }
 
+void StartWriteback(int fd) noexcept {
+#ifdef __linux__
+  ::sync_file_range(fd, 0, 0, SYNC_FILE_RANGE_WRITE);
+#endif
+}
+
 #ifndef _WIN32
 namespace {
 
@@ -437,19 +443,7 @@ long Ftell(void* fd) {
 }
 
 #ifdef _WIN32
-bool file_sync(const path_char_t* file) noexcept {
-  HANDLE handle =
-    ::CreateFileW(file, GENERIC_WRITE, FILE_SHARE_WRITE | FILE_SHARE_READ, NULL,
-                  OPEN_EXISTING, 0, NULL);
-  if (INVALID_HANDLE_VALUE == handle) {
-    return false;
-  }
-  const bool res = ::FlushFileBuffers(handle) > 0;
-  ::CloseHandle(handle);
-  return res;
-}
-
-bool file_sync(int fd) noexcept {
+bool FileSync(int fd) noexcept {
   // Attempt to convert file descriptor into an operating system file handle
   HANDLE handle = reinterpret_cast<HANDLE>(_get_osfhandle(fd));
 
@@ -458,29 +452,18 @@ bool file_sync(int fd) noexcept {
     return false;
   }
 
-  return !FlushFileBuffers(handle);
+  return FlushFileBuffers(handle) != 0;
 }
 
 #else
 
-bool FileSync(const path_char_t* file) noexcept {
-  const int handle = ::open(file, O_WRONLY);
-  if (handle < 0) {
-    SDB_ERROR(IRESEARCH, "Unable to open file: '", file,
-              "', error: ", GET_ERROR());
+bool FileSync(int fd) noexcept {
+  if (::fsync(fd) != 0) {
+    SDB_ERROR(IRESEARCH, "Unable to fsync file descriptor ", fd,
+              ", error: ", GET_ERROR());
     return false;
   }
-  const int fsync_r = ::fsync(handle);
-  if (fsync_r != 0) {
-    SDB_ERROR(IRESEARCH, "Unable to fsync file: '", file,
-              "', error: ", GET_ERROR());
-  }
-  const int close_r = ::close(handle);
-  if (close_r != 0) {
-    SDB_ERROR(IRESEARCH, "Unable to close file: '", file,
-              "', error: ", GET_ERROR());
-  }
-  return fsync_r == 0;
+  return true;
 }
 
 #endif  // _WIN32
@@ -638,7 +621,7 @@ handle_t Open(const path_char_t* path, OpenMode mode, int advice) noexcept {
 #else
   auto posix_mode = (((OpenMode::Read & mode) == OpenMode::Read)
                        ? O_RDONLY
-                       : (O_CREAT | O_TRUNC | O_WRONLY));
+                       : (O_CREAT | O_TRUNC | O_RDWR));
   auto fd = ::open(path ? path : "/dev/null", posix_mode, S_IRUSR | S_IWUSR);
   if (fd < 0) {
     return handle_t(nullptr);
@@ -646,7 +629,9 @@ handle_t Open(const path_char_t* path, OpenMode mode, int advice) noexcept {
 #if !defined(__APPLE__) &&                             \
   ((defined(_XOPEN_SOURCE) && _XOPEN_SOURCE >= 600) || \
    (defined(_POSIX_C_SOURCE) && _POSIX_C_SOURCE >= 200112L))
-  posix_fadvise(fd, 0, 0, advice);
+  if (advice != IR_FADVICE_NORMAL) {
+    posix_fadvise(fd, 0, 0, advice);
+  }
 #endif
   return handle_t(reinterpret_cast<void*>(fd));
 #endif

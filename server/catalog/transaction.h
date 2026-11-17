@@ -215,7 +215,7 @@ class Transactions final {
 
   void Commit(SessionTransaction& transaction, duckdb::ClientContext& context);
   void CommitStorage(absl::Mutex& table,
-                     absl::FunctionRef<std::vector<uint8_t>()> build,
+                     absl::FunctionRef<std::optional<RecordBuffer>()> build,
                      absl::FunctionRef<void(duckdb::transaction_t)> apply);
   void AwaitPublished(duckdb::transaction_t commit) const;
 

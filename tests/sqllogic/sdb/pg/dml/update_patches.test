@@ -530,6 +530,66 @@ id	a
 
 
 statement ok
+CREATE TABLE up_moved (id INT PRIMARY KEY, a INT) WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO up_moved SELECT i, 0 FROM range(1000) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) up_moved;
+
+
+statement ok
+INSERT INTO up_moved SELECT i, 0 FROM range(1000, 2000) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) up_moved;
+
+
+connection up_first
+statement ok
+BEGIN;
+
+
+connection up_first
+statement count 1
+UPDATE up_moved SET a = 1 WHERE id = 1500;
+
+
+connection up_second
+statement count 1
+UPDATE up_moved SET a = 2 WHERE id = 1500;
+
+
+statement ok
+VACUUM (COMPACT_TABLE) up_moved;
+
+
+query
+SELECT count(DISTINCT rowid >> 32) AS segments FROM up_moved;
+----
+segments
+1
+
+
+connection up_first
+statement error
+COMMIT;
+----
+db error: ERROR: could not serialize access due to concurrent update
+
+
+query
+SELECT id, a FROM up_moved WHERE a <> 0 ORDER BY id;
+----
+id	a
+1500	2
+
+
+statement ok
 CREATE TABLE up_added (id INT PRIMARY KEY, a INT);
 
 

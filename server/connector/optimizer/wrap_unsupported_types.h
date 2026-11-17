@@ -20,10 +20,15 @@
 
 #pragma once
 
+#include <duckdb/common/types.hpp>
 #include <duckdb/planner/bound_statement.hpp>
 #include <duckdb/planner/planner_extension.hpp>
 
 namespace sdb::optimizer {
+
+bool NeedsClientCast(const duckdb::LogicalType& type);
+
+duckdb::LogicalType ClientCastTarget(const duckdb::LogicalType& type);
 
 void WrapVariantOutputs(duckdb::PlannerExtensionInput& input,
                         duckdb::BoundStatement& statement);

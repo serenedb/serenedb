@@ -183,6 +183,9 @@ void CopyBatchBuilder::Feed(std::string_view bytes, bool stable) {
     case CopyBatchFormat::Binary:
       FeedBinary(bytes, stable);
       break;
+    case CopyBatchFormat::Csv:
+      FeedCsv(bytes, stable);
+      break;
     case CopyBatchFormat::Raw:
       AddRows(bytes, stable);
       break;
@@ -211,6 +214,26 @@ void CopyBatchBuilder::FeedText(std::string_view bytes, bool stable) {
     _partial.assign(bytes.substr(last + 1));
     return;
   }
+}
+
+void CopyBatchBuilder::FeedCsv(std::string_view bytes, bool stable) {
+  if (!_partial.empty()) {
+    const auto end = formats::CsvRecordEnd(bytes, 0, _csv, _quote_state);
+    if (end == std::string_view::npos) {
+      _partial.append(bytes);
+      return;
+    }
+    _partial.append(bytes.data(), end + 1);
+    AddRow(std::exchange(_partial, {}));
+    bytes.remove_prefix(end + 1);
+  }
+  const auto last = formats::CsvLastRecordEnd(bytes, _csv, _quote_state);
+  if (last == std::string_view::npos) {
+    _partial.assign(bytes);
+    return;
+  }
+  AddRows(bytes.substr(0, last + 1), stable);
+  _partial.assign(bytes.substr(last + 1));
 }
 
 size_t CopyBatchBuilder::FeedHeader(std::string_view bytes) {

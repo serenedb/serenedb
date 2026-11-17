@@ -57,6 +57,7 @@
 
 #include "connector/common.h"
 #include "connector/functions/function_alias.h"
+#include "pg/types/json.h"
 
 namespace sdb::connector {
 namespace {
@@ -69,12 +70,6 @@ enum class JsonOutputType {
   JSON,
   TEXT,
 };
-
-[[noreturn]] void ThrowInvalidJson(simdjson::error_code error) {
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
-                  ERR_MSG("invalid input syntax for type json"),
-                  ERR_DETAIL(simdjson::error_message(error)));
-}
 
 simdjson::ondemand::parser JsonValueParser() {
   simdjson::ondemand::parser parser;
@@ -96,7 +91,7 @@ T Unwrap(simdjson::simdjson_result<T>&& result) {
   T value;
   if (const auto error = std::move(result).get(value);
       error != simdjson::SUCCESS) {
-    ThrowInvalidJson(error);
+    pg::ThrowInvalidJson(error);
   }
   return value;
 }
@@ -642,7 +637,7 @@ JsonKind KindOf(simdjson::ondemand::json_type type) {
     case simdjson::ondemand::json_type::null:
       return JsonKind::Null;
     case simdjson::ondemand::json_type::unknown:
-      ThrowInvalidJson(simdjson::TAPE_ERROR);
+      pg::ThrowInvalidJson(simdjson::TAPE_ERROR);
   }
   SDB_UNREACHABLE();
 }

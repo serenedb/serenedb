@@ -132,7 +132,7 @@ CREATE TABLE copy_binary_ndim (a INTEGER[]);
 statement error
 COPY copy_binary_ndim FROM '${__TEST_DIR__}/copy_binary_ndim.bin' (FORMAT binary);
 ----
-db error: ERROR: COPY FROM: invalid binary value in column 1
+db error: ERROR: incorrect binary data format
 
 
 query

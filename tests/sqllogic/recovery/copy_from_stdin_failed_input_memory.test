@@ -10,7 +10,7 @@ system ok
 pid=$(cat $__TEST_DIR__/serened_pid); echo 5 > /proc/$pid/clear_refs; awk '/VmHWM/ {print $2}' /proc/$pid/status > $__TEST_DIR__/hwm_before
 
 system ok
-pid=$(cat $__TEST_DIR__/serened_pid); port=$(tr '\0' '\n' < /proc/$pid/cmdline | grep -o 'postgres://[^,?/]*' | head -1 | sed 's/.*://'); python3 -c "import sys; w = sys.stdout.buffer; w.write(b'x\n'); block = b'1\n' * (1 << 19); [w.write(block) for _ in range(768)]" | PGPASSWORD=postgres psql -h 127.0.0.1 -p "$port" -U postgres -d $__DATABASE__ -q -c 'COPY copy_fail_memory FROM STDIN' 2>&1 | grep -c 'invalid input for column 1'
+pid=$(cat $__TEST_DIR__/serened_pid); port=$(tr '\0' '\n' < /proc/$pid/cmdline | grep -o 'postgres://[^,?/]*' | head -1 | sed 's/.*://'); python3 -c "import sys; w = sys.stdout.buffer; w.write(b'x\n'); block = b'1\n' * (1 << 19); [w.write(block) for _ in range(768)]" | PGPASSWORD=postgres psql -h 127.0.0.1 -p "$port" -U postgres -d $__DATABASE__ -q -c 'COPY copy_fail_memory FROM STDIN' 2>&1 | grep -c 'invalid input syntax for type integer: "x"'
 ----
 1
 

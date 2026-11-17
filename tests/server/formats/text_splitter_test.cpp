@@ -113,20 +113,14 @@ TEST(TextSplitter, MatchesScalarReference) {
     const auto expected = Reference(input, 0, columns, max_rows, '\t');
     TextSplitter splitter{'\t', columns, max_rows};
     size_t pos = 0;
-    sdb::formats::TextRows split;
-    bool error = false;
-    try {
-      split = splitter.Split(input, pos, max_rows);
-    } catch (...) {
-      error = true;
-    }
+    const auto split = splitter.Split(input, pos, max_rows);
+    const bool error = split.error != sdb::formats::RowError::None;
     ASSERT_EQ(error, expected.error) << iter;
-    if (error) {
-      continue;
-    }
-    ASSERT_EQ(split.marker, expected.marker) << iter;
     ASSERT_EQ(split.rows, expected.rows.size()) << iter;
-    ASSERT_EQ(pos, expected.pos) << iter;
+    if (!error) {
+      ASSERT_EQ(split.marker, expected.marker) << iter;
+      ASSERT_EQ(pos, expected.pos) << iter;
+    }
     std::vector<bool> escaped(columns * max_rows);
     for (const auto index : splitter.Escaped()) {
       ASSERT_LT(index % max_rows, split.rows) << iter;

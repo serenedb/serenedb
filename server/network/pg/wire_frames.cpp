@@ -129,14 +129,14 @@ void WriteCopyChunk(message::Buffer& out, const duckdb::DataChunk& chunk,
     } else {
       static_assert(Encoding == RowEncoding::CopyText,
                     "WriteCopyChunk is for the COPY encodings only");
-      // PG-text row: TAB-separated fields, terminated by \n.
+      // PG text or csv row: delimiter-separated fields, then the row end.
       for (uint16_t column = 0; column < columns; ++column) {
         if (column > 0) {
           writer.Write({&context.copy_delim, 1});
         }
         serializers[column](context, decoded[column], row);
       }
-      writer.Write("\n");
+      writer.Write(context.copy_newline);
     }
     sdb::pg::CheckMessageSize(writer.Written() - kFrameTag);
     prefix[0] = PQ_MSG_COPY_DATA;
@@ -190,14 +190,18 @@ void WriteCopyBinaryHeader(message::Buffer& out, message::Chain& first) {
   first.bytes -= kFrameHeader;
 }
 
-void WriteCopyTextHeader(message::Buffer& out,
-                         std::span<const duckdb::Identifier> names,
-                         sdb::pg::SerializationContext& context) {
+void WriteCopyHeader(message::Buffer& out,
+                     std::span<const duckdb::Identifier> names,
+                     sdb::pg::SerializationContext& context, bool csv) {
   message::Writer w{out};
   const auto start = w.Written();
   auto* prefix = w.Alloc(kFrameHeader);
   auto* const writer = std::exchange(context.writer, &w);
-  sdb::pg::SerializeCopyTextHeader(context, names);
+  if (csv) {
+    sdb::pg::SerializeCopyCsvHeader(context, names);
+  } else {
+    sdb::pg::SerializeCopyTextHeader(context, names);
+  }
   context.writer = writer;
   prefix[0] = PQ_MSG_COPY_DATA;
   absl::big_endian::Store32(

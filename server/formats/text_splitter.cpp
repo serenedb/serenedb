@@ -42,8 +42,8 @@ IRS_FORCE_INLINE uint64_t BitsBelow(size_t to) noexcept {
   return to >= 64 ? ~uint64_t{0} : (uint64_t{1} << to) - 1;
 }
 
-[[noreturn]] void ThrowBadRow(std::string_view bytes, size_t row_start,
-                              size_t fields, size_t columns) {
+RowError BadRow(std::string_view bytes, size_t row_start, size_t fields,
+                size_t columns) {
   const auto end = pg::FindRowEnd(bytes, row_start);
   const auto line = bytes.substr(
     row_start, end == std::string_view::npos ? end : end - row_start);
@@ -52,19 +52,11 @@ IRS_FORCE_INLINE uint64_t BitsBelow(size_t to) noexcept {
       continue;
     }
     if (i + 1 < line.size() && line[i + 1] == '.') {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
-                      ERR_MSG("end-of-copy marker is not alone on its line"));
+      return RowError::MarkerNotAlone;
     }
     ++i;
   }
-  if (fields > columns) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
-      ERR_MSG("COPY FROM: row has more than ", columns, " fields"));
-  }
-  THROW_SQL_ERROR(
-    ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
-    ERR_MSG("COPY FROM: row has ", fields, " fields, expected ", columns));
+  return fields > columns ? RowError::ExtraData : RowError::MissingData;
 }
 
 }  // namespace
@@ -102,13 +94,23 @@ TextRows TextSplitter::Split(std::string_view bytes, size_t& pos,
     return at >= block ? ((escaped >> (at - block)) & 1) != 0
                        : (prev_escaped >> 63) != 0;
   };
+  const auto fail = [&](size_t fields) {
+    result.error = BadRow(bytes, row_start, fields, _columns);
+    result.fields = fields;
+    result.row_start = row_start;
+    while (!_escaped.empty() && _escaped.back() % _capacity >= result.rows) {
+      _escaped.pop_back();
+    }
+    return true;
+  };
   const auto add_field = [&](size_t end) {
     if (column == _columns) {
-      ThrowBadRow(bytes, row_start, column + 1, _columns);
+      return fail(column + 1);
     }
     AddField(column, result.rows, {data + field_start, end - field_start},
              field_backslash);
     ++column;
+    return false;
   };
   const auto finish_row = [&](size_t row_end) {
     if (column == 1 && Column(0, result.rows + 1)[result.rows] == "\\.") {
@@ -120,7 +122,7 @@ TextRows TextSplitter::Split(std::string_view bytes, size_t& pos,
       return true;
     }
     if (column != _columns) {
-      ThrowBadRow(bytes, row_start, column, _columns);
+      return fail(column);
     }
     column = 0;
     row_start = row_end;
@@ -152,7 +154,9 @@ TextRows TextSplitter::Split(std::string_view bytes, size_t& pos,
           !escaped_at(block, escaped, end - 1)) {
         --end;
       }
-      add_field(end);
+      if (add_field(end)) {
+        return result;
+      }
       field_start = at + 1;
       field_backslash = false;
       if (row_end && finish_row(at + 1)) {
@@ -172,8 +176,7 @@ TextRows TextSplitter::Split(std::string_view bytes, size_t& pos,
         !((prev_escaped >> (size - 1 - last_block)) & 1)) {
       --end;
     }
-    add_field(end);
-    if (finish_row(size)) {
+    if (add_field(end) || finish_row(size)) {
       return result;
     }
   }

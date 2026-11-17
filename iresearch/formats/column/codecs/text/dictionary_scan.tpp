@@ -44,7 +44,6 @@
 #include <string>
 #include <string_view>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include "iresearch/formats/column/codecs/dictionary_cache.hpp"
@@ -59,39 +58,49 @@
 #include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
+#include "iresearch/utils/system_compiler.hpp"
 
 namespace irs::codecs::text {
 
-using RowCodes = std::variant<PlainReader<uint32_t>, DeltaReader<uint32_t>,
-                              RunsReader<uint32_t>>;
+class RowCodes {
+ public:
+  RowCodes(const_data_ptr_t base, const Header& h) {
+    const auto* codes = base + h.off_codes;
+    const auto frames = ParseFrames(codes, h.off_symtab - h.off_codes, h.codes);
+    SDB_ENSURE(frames.row_count == h.row_count,
+               "col codec: corrupted row codes");
+    _shape = ShapeOf(h.codes);
+    switch (_shape) {
+      case Shape::Plain:
+        _plain.emplace(codes, frames, h.codes);
+        break;
+      case Shape::Delta:
+        _delta.emplace(codes, frames, h.codes);
+        break;
+      default:
+        _runs.emplace(codes, frames, h.codes);
+        break;
+    }
+  }
 
-inline RowCodes RowCodesOf(const_data_ptr_t base, const Header& h) {
-  const auto* codes = base + h.off_codes;
-  const auto frames = ParseFrames(codes, h.off_symtab - h.off_codes, h.codes);
-  SDB_ENSURE(frames.row_count == h.row_count, "col codec: corrupted row codes");
-  switch (ShapeOf(h.codes)) {
-    case Shape::Plain:
-      return RowCodes{std::in_place_type<PlainReader<uint32_t>>, codes, frames,
-                      h.codes};
-    case Shape::Delta:
-      return RowCodes{std::in_place_type<DeltaReader<uint32_t>>, codes, frames,
-                      h.codes};
-    default:
-      return RowCodes{std::in_place_type<RunsReader<uint32_t>>, codes, frames,
-                      h.codes};
+  template<typename F>
+  IRS_FORCE_INLINE decltype(auto) Visit(F&& f) {
+    switch (_shape) {
+      case Shape::Plain:
+        return f(*_plain);
+      case Shape::Delta:
+        return f(*_delta);
+      default:
+        return f(*_runs);
+    }
   }
-}
 
-template<typename F>
-IRS_FORCE_INLINE decltype(auto) VisitCodes(RowCodes& codes, F&& f) {
-  if (auto* plain = std::get_if<PlainReader<uint32_t>>(&codes)) {
-    return f(*plain);
-  }
-  if (auto* delta = std::get_if<DeltaReader<uint32_t>>(&codes)) {
-    return f(*delta);
-  }
-  return f(*std::get_if<RunsReader<uint32_t>>(&codes));
-}
+ private:
+  Shape _shape = Shape::Plain;
+  std::optional<PlainReader<uint32_t>> _plain;
+  std::optional<DeltaReader<uint32_t>> _delta;
+  std::optional<RunsReader<uint32_t>> _runs;
+};
 
 template<typename Leaf>
 struct DictionaryFetch final : SegmentScanState {
@@ -107,7 +116,7 @@ struct DictionaryFetch final : SegmentScanState {
     auto& order = frames.order;
     order.resize(count);
     auto& validity = duckdb::FlatVector::ValidityMutable(result);
-    order.resize(VisitCodes(Numeric(base), [&](auto& codes) IRS_FORCE_INLINE {
+    order.resize(Numeric(base).Visit([&](auto& codes) IRS_FORCE_INLINE {
       auto* out = order.data();
       const uint64_t row_count = h.row_count;
       const uint32_t entries = h.entry_count;
@@ -131,8 +140,7 @@ struct DictionaryFetch final : SegmentScanState {
   IRS_FORCE_INLINE uint32_t ReadOne(data_ptr_t base, idx_t row) {
     const auto& h = frames.header;
     SDB_ENSURE(row < h.row_count, "col codec: row out of range");
-    const auto code = VisitCodes(
-      Numeric(base),
+    const auto code = Numeric(base).Visit(
       [&](auto& codes) IRS_FORCE_INLINE { return codes.Fetch(row, kNoRow); });
     SDB_ENSURE(code == 0 || code < h.entry_count,
                "col codec: corrupted row codes");
@@ -141,7 +149,7 @@ struct DictionaryFetch final : SegmentScanState {
 
   RowCodes& Numeric(data_ptr_t base) {
     if (!code_frames) {
-      code_frames.emplace(RowCodesOf(base, frames.header));
+      code_frames.emplace(base, frames.header);
     }
     return *code_frames;
   }
@@ -269,7 +277,7 @@ struct DictionaryScan final : SegmentScanState {
                  const duckdb::shared_ptr<DecodedDictionary>& cached)
     : entries{segment, std::move(handle), !cached},
       cache_slot{segment.cache_slot},
-      code_frames{RowCodesOf(entries.base, entries.header)} {
+      code_frames{entries.base, entries.header} {
     if (cached) {
       AdoptDictionary(*cached);
       return;
@@ -640,8 +648,7 @@ struct DictionaryScan final : SegmentScanState {
       code_sel = duckdb::make_buffer<duckdb::SelectionVector>(count);
     }
     auto* codes = code_sel->data();
-    VisitCodes(code_frames,
-               [&](auto& reader) { reader.Read(start, count, codes); });
+    code_frames.Visit([&](auto& reader) { reader.Read(start, count, codes); });
     duckdb::sel_t max_code = 0;
     for (idx_t i = 0; i < count; ++i) {
       max_code = std::max(max_code, codes[i]);

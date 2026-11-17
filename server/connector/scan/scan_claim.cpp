@@ -185,7 +185,8 @@ bool OrderPruned(const ScanGlobalState& g,
   if (!bound || IsNullKey(g, key)) {
     return false;
   }
-  return key > *bound || (key == *bound && g.order_strict);
+  const auto order = key <=> *bound;
+  return order > 0 || (order == 0 && g.order_strict);
 }
 
 bool DropPruned(ScanGlobalState& g, const duckdb::RowGroupOrderKey* bound) {

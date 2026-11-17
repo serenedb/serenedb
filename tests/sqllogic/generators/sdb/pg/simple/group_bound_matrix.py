@@ -87,10 +87,16 @@ def ordered(name, sql_type):
                    f"LIMIT 11)")
     selects.append(f"SELECT '{name} rows' AS shape, {k} AS k, v AS c, 0 AS s FROM (SELECT {name} AS k, v FROM gb "
                    f"ORDER BY {name} ASC NULLS FIRST, v LIMIT 9)")
+    for limit in (7, 5000):
+        selects.append(f"SELECT '{name} distinct {limit}' AS shape, {k} AS k, 0 AS c, 0 AS s FROM (SELECT DISTINCT "
+                       f"{name} AS k FROM gb ORDER BY k DESC NULLS FIRST LIMIT {limit})")
+        selects.append(f"SELECT '{name} no aggregates {limit}' AS shape, {k} AS k, 0 AS c, 0 AS s FROM (SELECT "
+                       f"{name} AS k FROM gb GROUP BY {name} ORDER BY {name} LIMIT {limit})")
     return selects
 
 
-t = Test("GROUP BY ... ORDER BY its keys LIMIT, the Top-N of rows and GROUP BY ... LIMIT over every key "
+t = Test("GROUP BY ... ORDER BY its keys LIMIT, with and without aggregates, SELECT DISTINCT ... ORDER BY "
+         "LIMIT, the Top-N of rows and GROUP BY ... LIMIT over every key "
          "type, with NULLs, the float specials, collated intervals, strings inlined, long and empty, and "
          "keys that reach the aggregate as storage dictionaries, runs, constants and distinct rows, over "
          "sorted, shuffled and unflushed rows: the answers with the Top-N optimizer, which plans the group "
@@ -115,7 +121,7 @@ for part in t.parts(COLUMNS, 8):
         diff(t, f"{first}_{threads}", selects, "top_n", ["shape", "k", "c", "s"])
         t.section(f"GROUP BY ... LIMIT without an order from {first} on, threads = {threads}.")
         for name, _, _ in part:
-            for limit in (3, 50):
+            for limit in (3, 50, 5000):
                 t.expect(f"SELECT (count(*) = least({limit}, (SELECT count(DISTINCT {name}) + "
                          f"(count(*) FILTER (WHERE {name} IS NULL) > 0)::INT FROM gb)))::INT AS complete "
                          f"FROM (SELECT {name} AS k, count(*) AS c, sum(v) AS s FROM gb GROUP BY {name} "

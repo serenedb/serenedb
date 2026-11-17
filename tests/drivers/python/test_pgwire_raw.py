@@ -2160,6 +2160,10 @@ def test_copy_text_eod_marker_across_frames(conn):
         ([b"1\tone\n\\.x\n"], None, marker_alone),
         ([b"1\tone\n\\.\rx\n"], None, marker_alone),
         ([b"1\ta\\.b\n"], None, marker_alone),
+        ([b"1\tone\\\n\\.\n"], None, marker_alone),
+        ([b"1\tone\\", b"\n\\.\n"], None, marker_alone),
+        ([b"1\tone\n2\ttwo\\\\\n\\.\n3\tthree\n"], (2, 2), None),
+        ([b"1\tone\n2\ttwo\\", b"\\\n\\.\n3\tthree\n"], (2, 2), None),
     ]
     conn.run_ok("drop table if exists smoke_copy_eod_frames")
     assert "E" not in types(conn.run("create table smoke_copy_eod_frames(a int, b text)"))

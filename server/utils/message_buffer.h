@@ -117,8 +117,11 @@ class Buffer {
   // Receive-channel ops. The consumer ops below snapshot the atomic watermark
   // (published by the producer's CommitWrite) instead of reading its live
   // _tail/_end, so the producer and consumer may run on different threads.
-  std::span<uint8_t> Reserve(size_t min_capacity);
+  std::span<uint8_t> Reserve(size_t min_capacity, size_t chunk_bytes = 0);
   void CommitWrite(size_t size);
+  size_t Backlog() const noexcept {
+    return _total_committed - _total_consumed.load(std::memory_order_acquire);
+  }
   bool Readable() noexcept {
     RefreshReadable();
     return _consumed.chunk != nullptr &&
@@ -171,6 +174,7 @@ class Buffer {
   const size_t _flush_size;
   size_t _volatile_size{0};
   size_t _total_committed{0};
+  std::atomic<size_t> _total_consumed{0};
 
   const size_t _max_growth;
   mutable size_t _growth;

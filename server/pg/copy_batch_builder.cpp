@@ -47,6 +47,40 @@ bool EndsRow(std::string_view bytes, size_t pos,
   return (run == pos ? run + backslashes_before : run) % 2 == 0;
 }
 
+size_t WalkBinaryRows(std::string_view bytes, size_t pos) noexcept {
+  const char* const data = bytes.data();
+  const size_t size = bytes.size();
+  for (;;) {
+    size_t p = pos;
+    if (size - p < sizeof(int16_t)) {
+      return pos;
+    }
+    const auto fields =
+      static_cast<int16_t>(absl::big_endian::Load16(data + p));
+    if (fields < 0) {
+      return pos;
+    }
+    p += sizeof(int16_t);
+    for (int16_t field = 0; field < fields; ++field) {
+      if (size - p < sizeof(int32_t)) {
+        return pos;
+      }
+      const auto length =
+        static_cast<int32_t>(absl::big_endian::Load32(data + p));
+      p += sizeof(int32_t);
+      if (length > 0) {
+        if (size - p < static_cast<size_t>(length)) {
+          return pos;
+        }
+        p += static_cast<size_t>(length);
+      } else if (length < kNullFieldLength) {
+        return pos;
+      }
+    }
+    pos = p;
+  }
+}
+
 size_t BlankLines(std::string_view rows) noexcept {
   size_t blank = 0;
   for (;;) {
@@ -253,6 +287,15 @@ void CopyBatchBuilder::FeedBinary(std::string_view bytes, bool stable) {
   };
   while (pos < bytes.size()) {
     if (!_open) {
+      if (const auto end = WalkBinaryRows(bytes, pos); end != pos) {
+        if (run_begin == kNone) {
+          run_begin = pos;
+        }
+        run_end = end;
+        pos = end;
+        row_begin = pos;
+        continue;
+      }
       _open = true;
       _state = Field::Count;
       _have = 0;

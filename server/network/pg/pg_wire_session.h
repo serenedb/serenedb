@@ -235,6 +235,7 @@ class PgWireSession
   // Stop hook: wake the COPY feeder and interrupt any running query.
   void OnStop() {
     _copy_gate.Kick();
+    _copy_room.Kick();
     if (_cancel_token) {
       _cancel_token->Cancel();
     }
@@ -472,6 +473,7 @@ class PgWireSession
   // then kicks _copy_gate instead of RequestRun.
   std::atomic_bool _copy_route = false;
   Gate _copy_gate;
+  Gate _copy_room;
   std::atomic_bool _feeder_done = false;
   const bool _client = false;
   // Prepared-statement + portal stores (named + anon slots) and the cross-store

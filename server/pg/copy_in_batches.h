@@ -26,6 +26,7 @@
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/parallel/interrupt.hpp>
 #include <exception>
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -38,9 +39,9 @@
 
 namespace sdb::pg {
 
-inline constexpr size_t kCopyBatchBytes = 64 << 10;
+inline constexpr size_t kCopyBatchBytes = 1 << 20;
+inline constexpr size_t kCopyBatchesPerThread = 2;
 inline constexpr size_t kCopyBatchesInFlight = 64;
-inline constexpr size_t kCopyWakeBacklog = 4;
 
 struct CopyBatch {
   uint64_t seq = 0;
@@ -85,6 +86,10 @@ class CopyInBatches {
   CopyInBatches(const CopyInBatches&) = delete;
   CopyInBatches& operator=(const CopyInBatches&) = delete;
 
+  void OnStarve(std::function<void()> callback) {
+    _on_starve = std::move(callback);
+  }
+  bool Starving() const;
   bool NeedSpace();
   auto SpaceReady(yaclib::IExecutor& io) noexcept { return _space.AwaitOn(io); }
   void ResetSpace() noexcept { _space.Reset(); }
@@ -115,10 +120,11 @@ class CopyInBatches {
 
   bool Full() const;
   bool TakeReady(size_t max, std::vector<CopyBatchLease>& out);
-  std::vector<duckdb::InterruptState> TakeOneWaiter()
+  std::vector<duckdb::InterruptState> TakeWaiters(uint64_t count)
     DUCKDB_REQUIRES(_waiters.lock);
-  std::vector<duckdb::InterruptState> TakeWaitersIfQueued()
+  std::vector<duckdb::InterruptState> TakeAllWaiters()
     DUCKDB_REQUIRES(_waiters.lock);
+  void Starve() const;
   void ThrowIfFailed(Lock& lock) DUCKDB_NO_THREAD_SAFETY_ANALYSIS;
   void WaitForPush(Lock& lock) DUCKDB_NO_THREAD_SAFETY_ANALYSIS;
 
@@ -131,12 +137,14 @@ class CopyInBatches {
   uint64_t _taken = 0;
   uint64_t _watermark = 0;
   uint64_t _outstanding = 0;
+  uint64_t _parked = 0;
   size_t _retained_bytes = 0;
   std::exception_ptr _error;
   bool _finished = false;
   bool _aborted = false;
   bool _space_waiter = false;
   yaclib::OneShotEvent _space;
+  std::function<void()> _on_starve;
 };
 
 class CopyBatchLease {

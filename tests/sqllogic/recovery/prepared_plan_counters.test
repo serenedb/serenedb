@@ -490,22 +490,6 @@ VACUUM (FLUSH_TABLE) ppln;
 
 
 statement ok
-SET sdb_compact_target_segments = 2;
-
-
-statement ok
-VACUUM (COMPACT_TABLE) ppl;
-
-
-statement ok
-VACUUM (COMPACT_TABLE) ppln;
-
-
-statement ok
-RESET sdb_compact_target_segments;
-
-
-statement ok
 DEALLOCATE ALL;
 
 
@@ -611,16 +595,21 @@ ppl_offset_param	1	0
 ppln_nulls	2	0
 
 
+connection ppc_holder
+statement ok
+BEGIN;
+
+
+connection ppc_holder
+query
+SELECT count(*) AS n FROM ppl;
+----
+n
+8192
+
+
 statement ok
 VACUUM (COMPACT_TABLE) ppl;
-
-
-statement ok
-VACUUM (COMPACT_TABLE) ppl;
-
-
-statement ok
-VACUUM (COMPACT_TABLE) ppln;
 
 
 statement ok
@@ -669,6 +658,19 @@ ppl_count	2	0
 ppl_offset	2	1
 ppl_offset_param	2	0
 ppln_nulls	2	1
+
+
+connection ppc_holder
+statement ok
+COMMIT;
+
+
+statement ok
+VACUUM (COMPACT_TABLE) ppl;
+
+
+statement ok
+VACUUM (COMPACT_TABLE) ppln;
 
 
 statement ok

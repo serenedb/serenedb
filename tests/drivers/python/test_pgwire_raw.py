@@ -3796,7 +3796,7 @@ def test_pg_prepared_statements_counts_protocol_plans(conn):
     assert rows(m) and rows(m)[0].endswith(b"11"), rows(m)
     m = _execute_ok(conn, "pc_scan")
     assert rows(m) and rows(m)[0].endswith(b"11"), rows(m)
-    _execute_ok(conn, "pc_scan")
+    assert not errors(_simple(conn, "EXECUTE pc_scan"))
     m = _execute_ok(conn, "pc_sql", params=(b"11",))
     assert rows(m) and rows(m)[0].endswith(b"12"), rows(m)
     _execute_ok(conn, "pc_sql", params=(b"1",))
@@ -3807,6 +3807,14 @@ def test_pg_prepared_statements_counts_protocol_plans(conn):
         "pc_scan": (3, 1),
         "pc_sql": (3, 1),
     }, after_write
+
+    assert not errors(_simple(conn, "INSERT INTO pc_wire VALUES (12, 12)"))
+    m = _simple(conn, "EXECUTE pc_scan")
+    assert not errors(m), errors(m)
+    assert rows(m) and rows(m)[0].endswith(b"12"), rows(m)
+    _execute_ok(conn, "pc_scan")
+    after_sql_replan = _plans(conn, "pc_scan")
+    assert after_sql_replan["pc_scan"][:2] == (4, 2), after_sql_replan
 
     assert not errors(_simple(conn, "CREATE TABLE pc_wire_other(z int4)"))
     _execute_ok(conn, "pc_point", params=(b"2",))

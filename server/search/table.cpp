@@ -645,8 +645,9 @@ std::shared_ptr<const TableState> Table::State() const {
   return _versions.Latest(catalog::Transactions::Get().SharedWalks());
 }
 
-void Table::Publish(std::shared_ptr<TableState> state, Tick tick) {
+void Table::Publish(std::shared_ptr<TableState> state, Tick tick, Tick layout) {
   state->tick = tick;
+  state->layout = layout;
   state->config = _config;
   CountPieces(*state);
   state->reader = BuildReader(*Head().state, *state);
@@ -1172,7 +1173,7 @@ bool Table::Apply(duckdb::ClientContext& context, Tick tick,
     units[change.index] = std::move(change.rewritten);
   }
   const bool emptied = LeaveDead(*next, tick);
-  Publish(std::move(next), tick);
+  Publish(std::move(next), tick, tick);
   return emptied || tracked;
 }
 
@@ -1326,7 +1327,7 @@ std::shared_ptr<const TableState> Table::Replace(Tick tick,
     }
   }
   LeaveDead(*next, tick);
-  Publish(next, tick);
+  Publish(next, tick, tick);
   return next;
 }
 
@@ -1370,7 +1371,7 @@ void Table::Collect(Tick tick, Tick oldest) {
       unit = std::move(pruned);
     }
   }
-  Publish(std::move(next), tick);
+  Publish(std::move(next), tick, state.layout);
 }
 
 void Table::SetConfig(
@@ -1382,7 +1383,7 @@ void Table::SetConfig(
 void Table::PublishConfig(Tick tick) {
   absl::MutexLock lock{&_state_mutex};
   if (Head().state->config != _config) {
-    Publish(SameUnits(), tick);
+    Publish(SameUnits(), tick, tick);
   }
 }
 

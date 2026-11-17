@@ -794,7 +794,7 @@ Tick Writes::PlanVersion(const Store& store) {
 Tick Writes::LayoutVersion(const Store& store) {
   return HasOwnWrites(store)
            ? catalog::Transactions::Get().NextId()
-           : store.GetTable().VersionAt(Snapshot(), _walks).tick;
+           : store.GetTable().VersionAt(Snapshot(), _walks).state->layout;
 }
 
 const irs::DirectoryReader& Writes::PinnedReader(duckdb::ClientContext& context,

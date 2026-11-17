@@ -130,19 +130,16 @@ class DisjunctionLead {
     ABSL_CACHELINE_ALIGNED score_t scores[doc_limits::kBlockSize];
     uint32_t len = 0;
     for (size_t w = 0; w != irs::detail::kWindowWords; ++w) {
-      auto word = mask[w];
-      while (word != 0) {
-        const auto offset =
-          static_cast<uint32_t>(w * irs::detail::kWindowBits) +
-          static_cast<uint32_t>(std::countr_zero(word));
-        word &= word - 1;
+      const auto base = static_cast<uint32_t>(w * irs::detail::kWindowBits);
+      ForEachSetBit(mask[w], [&](uint32_t bit) IRS_FORCE_INLINE {
+        const auto offset = base + bit;
         docs[len] = min + offset;
         scores[len] = window[offset];
         if (++len == doc_limits::kBlockSize) {
           visit(docs, len, scores);
           len = 0;
         }
-      }
+      });
     }
     if (len != 0) {
       visit(docs, len, scores);

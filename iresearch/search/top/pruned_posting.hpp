@@ -44,6 +44,7 @@ class PrunedPosting : public Root, public PrunedLeafBase<InputType, true> {
   using Base::_last;
   using Base::_left_in_leaf;
   using Base::_left_in_list;
+  using Base::_len;
   using Base::_provider;
   using Base::_score;
   using Base::_threshold;
@@ -159,15 +160,12 @@ class PrunedPosting : public Root, public PrunedLeafBase<InputType, true> {
       auto* first = end - _left_in_leaf;
       auto* stop = end;
       if (*first < min) [[unlikely]] {
-        do {
-          ++first;
-        } while (first != stop && *first < min);
+        first = ScanNotBelow(first, stop, min);
       }
       const bool straddles = _last >= max;
       if (straddles) [[unlikely]] {
-        while (stop != first && stop[-1] >= max) {
-          --stop;
-        }
+        stop =
+          LeafLowerBound<doc_limits::kBlockSize>(end - _len, end, first, max);
       }
       _left_in_leaf = static_cast<uint32_t>(end - stop);
       if (stop != first) {

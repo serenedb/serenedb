@@ -121,16 +121,13 @@ class PlainCountScored {
     Clear(own.data(), words);
     const auto next = _leaf.FillOr(min, max, own.data());
     for (size_t w = 0; w != words; ++w) {
-      auto word = own[w];
+      const auto word = own[w];
       if (word == 0) {
         continue;
       }
       mask[w] |= word;
       auto* const base = counts + w * kWindowBits;
-      do {
-        ++base[static_cast<uint32_t>(std::countr_zero(word))];
-        word = PopBit(word);
-      } while (word != 0);
+      ForEachSetBit(word, [&](uint32_t bit) IRS_FORCE_INLINE { ++base[bit]; });
     }
     return next;
   }
@@ -165,19 +162,17 @@ class ConstCountScored {
     Clear(own.data(), words);
     const auto next = _leaf.FillOr(min, max, own.data());
     for (size_t w = 0; w != words; ++w) {
-      auto word = own[w];
+      const auto word = own[w];
       if (word == 0) {
         continue;
       }
       mask[w] |= word;
       auto* const tally = counts + w * kWindowBits;
       auto* const scores = window + w * kWindowBits;
-      do {
-        const auto slot = static_cast<uint32_t>(std::countr_zero(word));
+      ForEachSetBit(word, [&](uint32_t slot) IRS_FORCE_INLINE {
         ++tally[slot];
         irs::Merge<MergeType>(scores[slot], _value);
-        word = PopBit(word);
-      } while (word != 0);
+      });
     }
     return next;
   }

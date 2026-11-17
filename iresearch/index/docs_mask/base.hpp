@@ -116,12 +116,11 @@ class DocsMaskBase {
     uint64_t dead[detail::kWindowWords];
     const auto count = DeadWords<false>(min, max, dead);
     for (size_t w = 0; w != count; ++w) {
-      auto cleared = words[w] & dead[w];
+      const auto cleared = words[w] & dead[w];
       words[w] &= ~dead[w];
-      while (cleared != 0) {
-        scores[w * 64 + static_cast<size_t>(std::countr_zero(cleared))] = reset;
-        cleared &= cleared - 1;
-      }
+      ForEachSetBit(cleared, [&](uint32_t bit) IRS_FORCE_INLINE {
+        scores[w * 64 + bit] = reset;
+      });
     }
   }
 

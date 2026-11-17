@@ -20,11 +20,11 @@
 
 #pragma once
 
-#include <algorithm>
 #include <concepts>
 #include <cstdint>
 
 #include "iresearch/search/scorers/score_function.hpp"
+#include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -111,10 +111,11 @@ uint64_t CountLeaves(Node& node, doc_id_t min, doc_id_t max,
       doc = node.NextLeaf();
       continue;
     }
-    total +=
-      count(leaf.data(),
-            static_cast<uint32_t>(
-              std::lower_bound(leaf.begin(), leaf.end(), max) - leaf.begin()));
+    total += count(
+      leaf.data(),
+      static_cast<uint32_t>(LeafLowerBound<doc_limits::kBlockSize>(
+                              leaf.data(), leaf.data() + leaf.size(), max) -
+                            leaf.data()));
     node.Seek(max);
     break;
   }

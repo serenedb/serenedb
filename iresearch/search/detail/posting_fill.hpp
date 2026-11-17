@@ -24,6 +24,8 @@
 #include <immintrin.h>
 #endif
 
+#include <roaring/bitset_util.h>
+
 #include <algorithm>
 #include <bit>
 #include <cstdint>
@@ -35,6 +37,7 @@
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/bit_utils.hpp"
+#include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {
@@ -79,11 +82,10 @@ class PostingFill : public PostingLeaf<InputType, kFillShape> {
       [&](size_t offset)
         IRS_FORCE_INLINE { SetBit(mask[offset / kBits], offset % kBits); },
       [&](uint32_t lo, uint32_t hi)
-        IRS_FORCE_INLINE { SetBitRange(mask, lo, hi); },
+        IRS_FORCE_INLINE { roaring::internal::bitset_set_range(mask, lo, hi); },
       [&] {
         if (Inside(min, max)) {
-          OrBitsetAt(mask, _cursor.base + 1 - min, _bitset, _words,
-                     _bitset[_words - 1]);
+          OrBlock(mask, _cursor.base + 1 - min, _bitset, _words);
           return;
         }
         Bits(min, max, [&](uint32_t w, uint64_t bits) IRS_FORCE_INLINE {
@@ -97,12 +99,12 @@ class PostingFill : public PostingLeaf<InputType, kFillShape> {
       min, max,
       [&](size_t offset)
         IRS_FORCE_INLINE { UnsetBit(mask[offset / kBits], offset % kBits); },
-      [&](uint32_t lo, uint32_t hi)
-        IRS_FORCE_INLINE { ClearBitRange(mask, lo, hi); },
+      [&](uint32_t lo, uint32_t hi) IRS_FORCE_INLINE {
+        roaring::internal::bitset_reset_range(mask, lo, hi);
+      },
       [&] {
         if (Inside(min, max)) {
-          AndNotBitsetAt(mask, _cursor.base + 1 - min, _bitset, _words,
-                         _bitset[_words - 1]);
+          ClearBlock(mask, _cursor.base + 1 - min, _bitset, _words);
           return;
         }
         Bits(min, max, [&](uint32_t w, uint64_t bits) IRS_FORCE_INLINE {
@@ -202,19 +204,14 @@ class PostingFill : public PostingLeaf<InputType, kFillShape> {
 #ifdef __AVX2__
     const auto key = _mm256_set1_epi32(static_cast<int32_t>(target));
     for (;; at += 8) {
-      const auto docs =
-        _mm256_loadu_si256(reinterpret_cast<const __m256i*>(_docs.data() + at));
-      const auto below = static_cast<uint32_t>(
-        _mm256_movemask_ps(_mm256_castsi256_ps(_mm256_cmpgt_epi32(key, docs))));
-      if (below != 0xFF) {
-        return at + static_cast<uint32_t>(std::countr_one(below));
+      if (const auto found = NotBelowLanes(_docs.data() + at, key);
+          found != 0) {
+        return at + static_cast<uint32_t>(std::countr_zero(found));
       }
     }
 #else
-    while (_docs[at] < target) {
-      ++at;
-    }
-    return at;
+    return static_cast<uint32_t>(ScanNotBelow(_docs.data() + at, target) -
+                                 _docs.data());
 #endif
   }
 
@@ -227,12 +224,7 @@ class PostingFill : public PostingLeaf<InputType, kFillShape> {
   doc_id_t NextBit(doc_id_t target) const noexcept {
     const auto base = _cursor.base;
     const uint32_t bit = target > base ? target - base - 1 : 0;
-    auto w = bit / kBits;
-    auto word = uint64_t{_bitset[w]} & (~uint64_t{0} << (bit % kBits));
-    while (word == 0) {
-      word = _bitset[++w];
-    }
-    return base + 1 + w * kBits + static_cast<uint32_t>(std::countr_zero(word));
+    return base + 1 + static_cast<doc_id_t>(NextSetBit(_bitset, bit, _words));
   }
 
   template<typename Mark, typename OnRun, typename OnBits>
@@ -268,7 +260,7 @@ class PostingFill : public PostingLeaf<InputType, kFillShape> {
       } else if (_kind == Kind::Bitset) {
         on_bits();
         if (_last >= max) {
-          return NextBit(max);
+          return max;
         }
       } else {
         const doc_id_t lo = std::max<doc_id_t>(min, base + 1);
@@ -296,7 +288,7 @@ class PostingFill : public PostingLeaf<InputType, kFillShape> {
         write(offset);
       },
       [&](uint32_t lo, uint32_t hi) IRS_FORCE_INLINE {
-        SetBitRange(mask, lo, hi);
+        roaring::internal::bitset_set_range(mask, lo, hi);
         for (auto offset = lo; offset != hi; ++offset) {
           write(offset);
         }
@@ -304,10 +296,9 @@ class PostingFill : public PostingLeaf<InputType, kFillShape> {
       [&] {
         Bits(min, max, [&](uint32_t w, uint64_t bits) IRS_FORCE_INLINE {
           mask[w] |= bits;
-          for (; bits != 0; bits = PopBit(bits)) {
-            write(size_t{w} * kBits +
-                  static_cast<size_t>(std::countr_zero(bits)));
-          }
+          ForEachSetBit(bits, [&](uint32_t bit) IRS_FORCE_INLINE {
+            write(size_t{w} * kBits + bit);
+          });
         });
       });
   }

@@ -149,11 +149,9 @@ class LoserScoreCollector {
       word &= GetScoreMask(score_base, new_threshold);
       const doc_id_t doc_base = min + i * BitsRequired<uint64_t>();
 
-      while (word != 0) {
-        const doc_id_t bit = std::countr_zero(word);
-        word = PopBit(word);
+      ForEachSetBit(word, [&](uint32_t bit) IRS_FORCE_INLINE {
         TryPush(new_threshold, score_base[bit], doc_base + bit);
-      }
+      });
 
       std::memset(score_base, 0, BitsRequired<uint64_t>() * sizeof(score_t));
     }
@@ -170,13 +168,11 @@ class LoserScoreCollector {
     size_t i = 0;
 #ifdef __AVX2__
     for (; i + 8 <= count; i += 8) {
-      auto pass = static_cast<unsigned>(_mm256_movemask_ps(_mm256_cmp_ps(
+      const auto pass = static_cast<unsigned>(_mm256_movemask_ps(_mm256_cmp_ps(
         _mm256_loadu_ps(scores + i), _mm256_set1_ps(new_threshold), kCmpPred)));
-      while (pass != 0) {
-        const int bit = std::countr_zero(pass);
-        pass = PopBit(pass);
+      ForEachSetBit(pass, [&](uint32_t bit) IRS_FORCE_INLINE {
         TryPush(new_threshold, scores[i + bit], docs[i + bit]);
-      }
+      });
     }
 #endif
     for (; i < count; ++i) {

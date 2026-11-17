@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <roaring/bitset_util.h>
+
 #include <algorithm>
 
 #include "iresearch/formats/posting/common.hpp"
@@ -57,7 +59,7 @@ class AllDocs {
     if (!Span(min, max, begin, end)) {
       return doc_limits::eof();
     }
-    detail::ClearInclusive(mask, begin - min, end - min - 1);
+    roaring::internal::bitset_reset_range(mask, begin - min, end - min);
     return end > _last ? doc_limits::eof() : end;
   }
 
@@ -70,7 +72,7 @@ class AllDocs {
     if (!Span(min, max, begin, end)) {
       return doc_limits::eof();
     }
-    SetBitRange(mask, begin - min, end - min);
+    roaring::internal::bitset_set_range(mask, begin - min, end - min);
     write(begin - min, end - min);
     return end > _last ? doc_limits::eof() : end;
   }

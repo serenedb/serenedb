@@ -136,8 +136,10 @@ class MaskedLeaf {
 
   IRS_FORCE_INLINE uint32_t LowerBound(const doc_id_t* docs, uint32_t from,
                                        doc_id_t target) const noexcept {
-    return static_cast<uint32_t>(
-      LeafLowerBound<kBlock>(docs, _len, docs + from, target) - docs);
+    return static_cast<uint32_t>(LeafLowerBound<kBlock>(docs + kBlock - _len,
+                                                        docs + kBlock,
+                                                        docs + from, target) -
+                                 docs);
   }
 
   IRS_NO_INLINE doc_id_t FindMasked(doc_id_t base, doc_id_t target) noexcept {

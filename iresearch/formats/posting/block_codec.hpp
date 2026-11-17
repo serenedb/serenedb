@@ -42,16 +42,6 @@
 
 namespace irs::block_codec {
 
-#ifdef __AVX2__
-#define IRS_BLOCK_CODEC_AVX512 \
-  __attribute__((target("avx512f,avx512vl,avx512bw,avx512dq")))
-#define IRS_BLOCK_CODEC_VBMI2 \
-  __attribute__((target("avx512f,avx512vl,avx512bw,avx512dq,avx512vbmi2")))
-#else
-#define IRS_BLOCK_CODEC_AVX512
-#define IRS_BLOCK_CODEC_VBMI2
-#endif
-
 inline constexpr uint32_t kMaxBitsetWords = 32;
 
 enum class DeltaEncoding : byte_type {
@@ -458,9 +448,8 @@ uint32_t WritePlan(const uint32_t* values, const Stats<Full>& stats,
   uint32_t highs[kMaxExceptions];
   uint32_t n = 0;
   for (uint32_t word = 0; word != stats.Words(); ++word) {
-    for (auto mask = stats.Mask(w, word); mask != 0; mask &= mask - 1) {
-      const uint32_t i =
-        word * kMaskBits + static_cast<uint32_t>(std::countr_zero(mask));
+    ForEachSetBit(stats.Mask(w, word), [&](uint32_t bit) IRS_FORCE_INLINE {
+      const uint32_t i = word * kMaskBits + bit;
       const uint32_t high = values[i] >> w;
       if (bytes) {
         p[2 * n] = static_cast<byte_type>(i);
@@ -470,7 +459,7 @@ uint32_t WritePlan(const uint32_t* values, const Stats<Full>& stats,
         highs[n] = high - 1;
       }
       ++n;
-    }
+    });
   }
   SDB_ASSERT(n == plan.count);
   if (bytes) {
@@ -707,68 +696,7 @@ consteval bool Inlined(uint32_t token) noexcept {
   return family == Family::Pack || (Full && family == Family::PatchByte);
 }
 
-inline IRS_FORCE_INLINE doc_id_t* MaterializeScalar(doc_id_t offset,
-                                                    uint64_t word,
-                                                    doc_id_t* out) noexcept {
-  for (; word != 0; word &= word - 1) {
-    *out++ = offset + static_cast<doc_id_t>(std::countr_zero(word));
-  }
-  return out;
-}
-
-inline IRS_FORCE_INLINE doc_id_t* MaterializeBits(doc_id_t offset,
-                                                  uint64_t word,
-                                                  doc_id_t* out) noexcept {
-#ifdef __AVX2__
-  uint64_t counts = word - ((word >> 1) & 0x5555555555555555ULL);
-  counts =
-    (counts & 0x3333333333333333ULL) + ((counts >> 2) & 0x3333333333333333ULL);
-  counts = (counts + (counts >> 4)) & 0x0F0F0F0F0F0F0F0FULL;
-  const uint64_t prefix = (counts * 0x0101010101010101ULL) << 8;
-  for (uint32_t b = 0; b != 8; ++b) {
-    const __m256i docs = _mm256_add_epi32(
-      _mm256_set1_epi32(static_cast<int>(offset + b * 8)),
-      LeftPackControl(static_cast<uint32_t>(word >> (8 * b)) & 0xFF));
-    _mm256_storeu_si256(
-      reinterpret_cast<__m256i*>(out + ((prefix >> (8 * b)) & 0xFF)), docs);
-  }
-  return out + std::popcount(word);
-#else
-  return MaterializeScalar(offset, word, out);
-#endif
-}
-
-#ifdef __AVX2__
-inline IRS_FORCE_INLINE IRS_BLOCK_CODEC_AVX512 __m512i OpaqueZero() noexcept {
-  __m512i zero = _mm512_setzero_si512();
-  asm("" : "+v"(zero));
-  return zero;
-}
-#endif
-
-inline IRS_FORCE_INLINE IRS_BLOCK_CODEC_AVX512 doc_id_t* MaterializeWord16(
-  doc_id_t offset, uint64_t word, doc_id_t* out) noexcept {
-#ifdef __AVX2__
-  static_assert(kOutSlack >= 16);
-  const __m512i lanes =
-    _mm512_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
-  const __m512i zero = OpaqueZero();
-  for (uint32_t q = 0; q != 4; ++q) {
-    const auto mask = static_cast<__mmask16>(word >> (16 * q));
-    _mm512_storeu_si512(
-      out, _mm512_mask_compress_epi32(
-             zero, mask,
-             _mm512_add_epi32(
-               lanes, _mm512_set1_epi32(static_cast<int>(offset + 16 * q)))));
-    out += std::popcount(mask);
-  }
-  return out;
-#else
-  return MaterializeScalar(offset, word, out);
-#endif
-}
-
-inline IRS_FORCE_INLINE IRS_BLOCK_CODEC_AVX512 const byte_type* DecodeBitset16(
+inline IRS_FORCE_INLINE IRS_AVX512 const byte_type* DecodeBitset16(
   const byte_type* in, uint32_t len, doc_id_t prev, doc_id_t* out) noexcept {
   const auto [bits, words] = ParseBitset(in);
   auto* p = out;
@@ -783,8 +711,9 @@ inline IRS_FORCE_INLINE IRS_BLOCK_CODEC_AVX512 const byte_type* DecodeBitset16(
 
 #ifdef __AVX2__
 template<uint32_t Q>
-inline IRS_FORCE_INLINE IRS_BLOCK_CODEC_VBMI2 void StoreDocs64(
-  doc_id_t* out, __m512i positions, __m512i base) noexcept {
+inline IRS_FORCE_INLINE IRS_VBMI2 void StoreDocs64(doc_id_t* out,
+                                                   __m512i positions,
+                                                   __m512i base) noexcept {
   _mm512_storeu_si512(
     out + 16 * Q,
     _mm512_add_epi32(
@@ -792,7 +721,7 @@ inline IRS_FORCE_INLINE IRS_BLOCK_CODEC_VBMI2 void StoreDocs64(
 }
 
 template<uint32_t G>
-inline IRS_FORCE_INLINE IRS_BLOCK_CODEC_VBMI2 doc_id_t* MaterializeWord64(
+inline IRS_FORCE_INLINE IRS_VBMI2 doc_id_t* MaterializeWord64(
   doc_id_t offset, uint64_t word, doc_id_t* out) noexcept {
   static_assert(kOutSlack >= 16);
   const __m512i positions = _mm512_mask_compress_epi8(
@@ -818,7 +747,7 @@ inline IRS_FORCE_INLINE IRS_BLOCK_CODEC_VBMI2 doc_id_t* MaterializeWord64(
 }
 
 template<uint32_t G>
-IRS_FORCE_INLINE IRS_BLOCK_CODEC_VBMI2 const byte_type* DecodeBitsetWords64(
+IRS_FORCE_INLINE IRS_VBMI2 const byte_type* DecodeBitsetWords64(
   const byte_type* in, uint32_t len, doc_id_t prev, doc_id_t* out) noexcept {
   const auto [bits, words] = ParseBitset(in);
   auto* p = out;
@@ -840,7 +769,7 @@ IRS_FORCE_INLINE IRS_BLOCK_CODEC_VBMI2 const byte_type* DecodeBitsetWords64(
 }
 #endif
 
-inline IRS_FORCE_INLINE IRS_BLOCK_CODEC_VBMI2 const byte_type* DecodeBitset64(
+inline IRS_FORCE_INLINE IRS_VBMI2 const byte_type* DecodeBitset64(
   const byte_type* in, uint32_t len, doc_id_t prev, doc_id_t* out) noexcept {
 #ifdef __AVX2__
   constexpr uint32_t kSparse = 10;
@@ -858,12 +787,12 @@ inline IRS_FORCE_INLINE IRS_BLOCK_CODEC_VBMI2 const byte_type* DecodeBitset64(
 #endif
 }
 
-inline IRS_NO_INLINE IRS_BLOCK_CODEC_VBMI2 const byte_type* DecodeBitsetBlock64(
+inline IRS_NO_INLINE IRS_VBMI2 const byte_type* DecodeBitsetBlock64(
   const byte_type* in, doc_id_t prev, doc_id_t* out) noexcept {
   return DecodeBitset64(in, kBlock, prev, out);
 }
 
-inline IRS_NO_INLINE IRS_BLOCK_CODEC_VBMI2 const byte_type* DecodeBitsetTail64(
+inline IRS_NO_INLINE IRS_VBMI2 const byte_type* DecodeBitsetTail64(
   const byte_type* in, uint32_t len, doc_id_t prev, doc_id_t* out) noexcept {
   return DecodeBitset64(in, len, prev, out);
 }
@@ -950,9 +879,8 @@ IRS_NO_INLINE const byte_type* DecodeDeltaTailToken(const byte_type* in,
 }
 
 template<uint32_t Token>
-IRS_NO_INLINE IRS_BLOCK_CODEC_AVX512 const byte_type*
-DecodeDeltaBlockTokenAvx512(const byte_type* in, doc_id_t prev,
-                            doc_id_t* out) noexcept {
+IRS_NO_INLINE IRS_AVX512 const byte_type* DecodeDeltaBlockTokenAvx512(
+  const byte_type* in, doc_id_t prev, doc_id_t* out) noexcept {
   if constexpr (IsTokenBitset(Token)) {
     return DecodeBitset16(in, kBlock, prev, out);
   } else {
@@ -961,9 +889,8 @@ DecodeDeltaBlockTokenAvx512(const byte_type* in, doc_id_t prev,
 }
 
 template<uint32_t Token>
-IRS_NO_INLINE IRS_BLOCK_CODEC_AVX512 const byte_type*
-DecodeDeltaTailTokenAvx512(const byte_type* in, uint32_t len, doc_id_t prev,
-                           doc_id_t* out) noexcept {
+IRS_NO_INLINE IRS_AVX512 const byte_type* DecodeDeltaTailTokenAvx512(
+  const byte_type* in, uint32_t len, doc_id_t prev, doc_id_t* out) noexcept {
   if constexpr (IsTokenBitset(Token)) {
     return DecodeBitset16(in, len, prev, out);
   } else {

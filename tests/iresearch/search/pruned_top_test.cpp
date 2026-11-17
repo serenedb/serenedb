@@ -542,18 +542,18 @@ TEST(PrunedPhraseGate, bound_checks_pay_when_checked_docs_reach_the_bound) {
                                   irs::detail::kStepBaseCost, 0.36, 0.97),
     0);
   EXPECT_GT(
-    irs::detail::BoundCheckSaving(8.02, irs::detail::kLeafDocsReadCost,
+    irs::detail::BoundCheckSaving(8.02, irs::detail::kLeafReadCost,
                                   irs::detail::kStepBaseCost, 0.03, 0.7),
     0);
 }
 
 TEST(PrunedPhraseGate, bound_checks_cost_when_cold_leaves_are_read_anyway) {
   EXPECT_LT(
-    irs::detail::BoundCheckSaving(6.54, irs::detail::kLeafDocsReadCost,
+    irs::detail::BoundCheckSaving(6.54, irs::detail::kLeafReadCost,
                                   irs::detail::kStepBaseCost, 0.5, 0.13),
     0);
   EXPECT_LT(
-    irs::detail::BoundCheckSaving(4.78, irs::detail::kLeafDocsReadCost,
+    irs::detail::BoundCheckSaving(4.78, irs::detail::kLeafReadCost,
                                   irs::detail::kStepBaseCost, 0.7, 0.53),
     0);
 }
@@ -976,7 +976,7 @@ TEST_P(PrunedTopTest, phrases_with_repeated_terms) {
   }
 }
 
-TEST_P(PrunedTopTest, phrases_defer_positions_of_terms_denser_than_the_lead) {
+TEST_P(PrunedTopTest, phrases_with_terms_denser_than_the_lead) {
   Build(PhrasesText);
   for (const auto& parts : std::vector<std::vector<std::string_view>>{
          {"zephyr", "alpha", "beta"},

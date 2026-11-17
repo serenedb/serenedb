@@ -215,7 +215,7 @@ class DynamicBitset {
   void clear() noexcept { clear_offset(0); }
 
   // counts bits set
-  size_t count() const noexcept { return math::Popcount(begin(), end()); }
+  size_t count() const noexcept { return CountBits(data(), _words); }
 
   Alloc& get_allocator() { return _data.get_deleter().alloc(); }
 

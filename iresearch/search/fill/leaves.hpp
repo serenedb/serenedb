@@ -125,16 +125,12 @@ class ProbedAndNot {
     }
     auto base = min;
     for (size_t w = 0; w != words; ++w, base += detail::kWindowBits) {
-      auto word = mask[w];
-      auto live = word;
-      while (word != 0) {
-        const auto bit = static_cast<uint32_t>(std::countr_zero(word));
-        const auto doc = base + bit;
-        if (detail::IsExcluded(_probe, doc)) {
+      auto live = mask[w];
+      ForEachSetBit(mask[w], [&](uint32_t bit) IRS_FORCE_INLINE {
+        if (detail::IsExcluded(_probe, base + bit)) {
           UnsetBit(live, bit);
         }
-        word = PopBit(word);
-      }
+      });
       mask[w] = live;
     }
   }
@@ -144,17 +140,13 @@ class ProbedAndNot {
     const auto words = detail::WindowWords(min, max);
     auto base = min;
     for (size_t w = 0; w != words; ++w, base += detail::kWindowBits) {
-      auto word = mask[w];
-      auto live = word;
-      while (word != 0) {
-        const auto bit = static_cast<uint32_t>(std::countr_zero(word));
-        const auto doc = base + bit;
-        if (detail::IsExcluded(_probe, doc)) {
+      auto live = mask[w];
+      ForEachSetBit(mask[w], [&](uint32_t bit) IRS_FORCE_INLINE {
+        if (detail::IsExcluded(_probe, base + bit)) {
           UnsetBit(live, bit);
           scores[w * detail::kWindowBits + bit] = reset;
         }
-        word = PopBit(word);
-      }
+      });
       mask[w] = live;
     }
   }
@@ -210,11 +202,9 @@ class FilledAndNot {
     std::copy_n(mask, words, before);
     Remove(min, max, mask);
     for (size_t w = 0; w != words; ++w) {
-      auto removed = before[w] & ~mask[w];
-      while (removed != 0) {
-        scores[w * detail::kWindowBits + std::countr_zero(removed)] = reset;
-        removed = PopBit(removed);
-      }
+      ForEachSetBit(before[w] & ~mask[w], [&](uint32_t bit) IRS_FORCE_INLINE {
+        scores[w * detail::kWindowBits + bit] = reset;
+      });
     }
   }
 

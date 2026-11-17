@@ -33,13 +33,10 @@ IRS_FORCE_INLINE void MergeHeld(score_t* IRS_RESTRICT window,
                                 const uint64_t* IRS_RESTRICT mask, size_t words,
                                 score_t constant) noexcept {
   for (size_t w = 0; w != words; ++w) {
-    auto bits = mask[w];
     const size_t base = w * BitsRequired<uint64_t>();
-    while (bits != 0) {
-      irs::Merge<Inner>(
-        window[base + static_cast<uint32_t>(std::countr_zero(bits))], constant);
-      bits = PopBit(bits);
-    }
+    ForEachSetBit(mask[w], [&](uint32_t bit) IRS_FORCE_INLINE {
+      irs::Merge<Inner>(window[base + bit], constant);
+    });
   }
 }
 

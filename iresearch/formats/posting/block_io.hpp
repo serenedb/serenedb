@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <roaring/bitset_util.h>
+
 #include <cstring>
 #include <string_view>
 
@@ -200,7 +202,7 @@ IRS_FORCE_INLINE inline uint32_t* MaterializeBitset(
   constexpr auto kBits = BitsRequired<uint64_t>();
   uint64_t word = bitset[0];
   for (uint32_t i = 0;;) {
-    out = block_codec::MaterializeBits(prev + 1 + i * kBits, word, out);
+    out = MaterializeBits(prev + 1 + i * kBits, word, out);
     if (++i == words) {
       return out;
     }
@@ -254,8 +256,8 @@ inline uint64_t HolesToBitset(const byte_type* in, uint32_t len,
   uint64_t before = 0;
   for (uint32_t i = 0; i != n; ++i) {
     const uint32_t length = hole(i);
-    const uint64_t start = slot(i) + before;
-    ClearBitRange(bitset, start, start + length);
+    const auto start = static_cast<uint32_t>(slot(i) + before);
+    roaring::internal::bitset_reset_range(bitset, start, start + length);
     before += length;
   }
   return span;

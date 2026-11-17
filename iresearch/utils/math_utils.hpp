@@ -159,13 +159,6 @@ struct MathTraits {
   static uint32_t bits_required(T val) noexcept;
 };
 
-template<typename Iterator>
-constexpr size_t Popcount(Iterator begin, Iterator end) noexcept {
-  return std::accumulate(begin, end, size_t{0}, [](size_t acc, auto word) {
-    return acc + std::popcount(word);
-  });
-}
-
 template<typename T>
 struct MathTraits<T, sizeof(uint32_t)> {
   using type = T;

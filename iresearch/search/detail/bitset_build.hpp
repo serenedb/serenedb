@@ -21,6 +21,7 @@
 #pragma once
 
 #include <absl/algorithm/container.h>
+#include <roaring/bitset_util.h>
 
 #include <algorithm>
 #include <optional>
@@ -89,8 +90,8 @@ struct OrBits {
   uint64_t* IRS_RESTRICT words;
 
   IRS_FORCE_INLINE void Run(uint64_t prev, uint32_t len) noexcept {
-    const auto first = prev + 1 - kMin;
-    SetBitRange(words, first, first + len);
+    const auto first = static_cast<uint32_t>(prev + 1 - kMin);
+    roaring::internal::bitset_set_range(words, first, first + len);
   }
 
   IRS_FORCE_INLINE void Bitset(uint64_t prev,
@@ -115,8 +116,8 @@ struct ClearBits {
   uint64_t* IRS_RESTRICT words;
 
   IRS_FORCE_INLINE void Run(uint64_t prev, uint32_t len) noexcept {
-    const auto first = prev + 1 - kMin;
-    ClearBitRange(words, first, first + len);
+    const auto first = static_cast<uint32_t>(prev + 1 - kMin);
+    roaring::internal::bitset_reset_range(words, first, first + len);
   }
 
   IRS_FORCE_INLINE void Bitset(uint64_t prev,

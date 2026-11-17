@@ -302,14 +302,13 @@ class PrunedLeaves {
       for (uint32_t off = 0; off < len; off += kScoreBlock) {
         const auto n = std::min<uint32_t>(kScoreBlock, len - off);
         uint32_t freqs[kScoreBlock];
-        for (auto found = leaf.Hits(docs + off, n, freqs); found != 0;
-             found &= found - 1) {
-          const auto j = static_cast<uint32_t>(std::countr_zero(found));
-          matched.slots[hits] = off + j;
-          matched.docs[hits] = docs[off + j];
-          matched.freqs[hits] = freqs[j];
-          ++hits;
-        }
+        ForEachSetBit(leaf.Hits(docs + off, n, freqs),
+                      [&](uint32_t j) IRS_FORCE_INLINE {
+                        matched.slots[hits] = off + j;
+                        matched.docs[hits] = docs[off + j];
+                        matched.freqs[hits] = freqs[j];
+                        ++hits;
+                      });
       }
       if (hits == 0) {
         continue;

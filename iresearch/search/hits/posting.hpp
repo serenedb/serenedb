@@ -74,7 +74,8 @@ class BoostTerm {
           break;
         }
       }
-      at = static_cast<uint32_t>(std::lower_bound(docs + at, docs + len, doc) -
+      at = static_cast<uint32_t>(LeafLowerBound<doc_limits::kBlockSize>(
+                                   docs, docs + len, docs + at, doc) -
                                  docs);
       if (docs[at] != doc) {
         continue;
@@ -184,18 +185,14 @@ class Posting : public Root, public irs::detail::PostingBatch<InputType, true> {
       auto* const out = scores + emitted;
       auto kept = Fill(dest, out, len);
       if (kept != 0 && dest[0] < min) [[unlikely]] {
-        const auto below = static_cast<uint32_t>(
-          std::lower_bound(dest, dest + kept, min) - dest);
-        kept -= below;
-        std::copy_n(dest + below, kept, dest);
-        std::copy_n(out + below, kept, out);
+        kept = DropBelow(dest, out, kept, min);
       }
       if (kept == 0 || dest[kept - 1] < max) [[likely]] {
         emitted += kept;
         continue;
       }
       const auto stop = static_cast<uint32_t>(
-        LeafLowerBound<kBlock>(dest, kept, dest, max) - dest);
+        LeafLowerBound<kBlock>(dest, dest + kept, max) - dest);
       _len = kept - stop;
       _at = 0;
       std::copy_n(dest + stop, _len, _block.data());
@@ -203,6 +200,17 @@ class Posting : public Root, public irs::detail::PostingBatch<InputType, true> {
       return emitted + stop;
     }
     return emitted;
+  }
+
+  IRS_NO_INLINE static uint32_t DropBelow(doc_id_t* IRS_RESTRICT docs,
+                                          score_t* IRS_RESTRICT scores,
+                                          uint32_t len, doc_id_t min) noexcept {
+    const auto below = static_cast<uint32_t>(
+      LeafLowerBound<kBlock>(docs, docs + len, min) - docs);
+    len -= below;
+    std::copy_n(docs + below, len, docs);
+    std::copy_n(scores + below, len, scores);
+    return len;
   }
 
   IRS_FORCE_INLINE uint32_t Fill(doc_id_t* IRS_RESTRICT dest,
@@ -232,9 +240,7 @@ class Posting : public Root, public irs::detail::PostingBatch<InputType, true> {
     const auto* first = begin + _at;
     const auto* last = begin + _len;
     if (*first < min) [[unlikely]] {
-      do {
-        ++first;
-      } while (first != last && *first < min);
+      first = ScanNotBelow(first, last, min);
       if (first == last) [[unlikely]] {
         _at = _len;
         return 0;

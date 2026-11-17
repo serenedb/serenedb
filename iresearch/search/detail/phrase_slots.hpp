@@ -47,28 +47,51 @@ struct PhraseTerms {
   PhraseTerms(std::span<const PostingMeta> metas,
               std::span<const TermInterval> intervals)
     : metas{metas} {
+    const auto first_of = [&](uint32_t slot) {
+      return static_cast<uint32_t>(
+        std::find(metas.begin(), metas.begin() + slot, metas[slot]) -
+        metas.begin());
+    };
+    uint32_t repeated = 0;
+    for (uint32_t slot = 1; slot != metas.size(); ++slot) {
+      repeated += static_cast<uint32_t>(first_of(slot) != slot);
+    }
+    if (repeated == 0) {
+      return;
+    }
     const bool distinct = absl::c_none_of(
       intervals.subspan(1),
       [](const TermInterval& interval) { return interval.offs_min == 0; });
+    leaves = containers::Fixed<uint32_t>{metas.size() - repeated};
+    repeats = containers::Fixed<Repeat>{repeated};
+    auto* leaf = leaves.begin();
+    auto* repeat = repeats.begin();
     for (uint32_t slot = 0; slot != metas.size(); ++slot) {
-      const auto first = static_cast<uint32_t>(
-        std::find(metas.begin(), metas.begin() + slot, metas[slot]) -
-        metas.begin());
+      const auto first = first_of(slot);
       if (first == slot) {
-        leaves.push_back(slot);
-      } else {
-        const auto rank = distinct ? static_cast<uint32_t>(std::count(
-                                       metas.begin() + first + 1,
-                                       metas.begin() + slot + 1, metas[slot]))
-                                   : 0;
-        repeats.push_back({slot, first, rank});
+        *leaf++ = slot;
+        continue;
       }
+      const auto rank =
+        distinct
+          ? static_cast<uint32_t>(std::count(
+              metas.begin() + first + 1, metas.begin() + slot + 1, metas[slot]))
+          : 0;
+      *repeat++ = {slot, first, rank};
     }
   }
 
+  size_t LeafCount() const noexcept {
+    return repeats.empty() ? metas.size() : leaves.size();
+  }
+
+  uint32_t Leaf(size_t i) const noexcept {
+    return repeats.empty() ? static_cast<uint32_t>(i) : leaves[i];
+  }
+
   std::span<const PostingMeta> metas;
-  absl::InlinedVector<uint32_t, 8> leaves;
-  absl::InlinedVector<Repeat, 4> repeats;
+  containers::Fixed<uint32_t> leaves;
+  containers::Fixed<Repeat> repeats;
 };
 
 template<typename Matcher, typename Leaf, size_t N = 0, typename Slot = Leaf>
@@ -84,7 +107,7 @@ class PhraseSlots {
               Args&&... args)
     : _matcher{terms.metas.size(), std::forward<Args>(args)...},
       _repeats{terms.repeats.size()},
-      _leaves{terms.leaves,
+      _leaves{terms.LeafCount(), [&](size_t i) { return terms.Leaf(i); },
               [&](uint32_t j) { return terms.metas[j].docs_count; },
               [&](uint32_t j) {
                 return std::forward_as_tuple(terms.metas[j], doc_in, layout,

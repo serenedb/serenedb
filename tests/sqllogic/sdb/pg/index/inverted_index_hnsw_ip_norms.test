@@ -1,0 +1,46 @@
+control substitution on
+
+# ============================================================================
+# An `ip` HNSW graph reaches every row whatever its norm: a wide enough beam
+# returns all of them, and the top equals the exact ranking.
+# ============================================================================
+
+statement ok
+CREATE MACRO ip_vec(i) AS
+  list_transform(range(8), lambda c: ((0.1 + (i * 7 % 29) / 10.0) * sin(i * 0.37 + c * 0.73 + i * c * 0.011))::FLOAT)::FLOAT[8];
+
+statement ok
+CREATE TABLE ip_norms (id INTEGER PRIMARY KEY, emb FLOAT[8]);
+
+statement ok
+INSERT INTO ip_norms SELECT i, ip_vec(i) FROM range(6000) t(i);
+
+statement ok
+CREATE INDEX ip_norms_none ON ip_norms
+  USING inverted(id, emb hnsw (metric = 'ip', quant = 'none'));
+
+statement ok
+CREATE INDEX ip_norms_sq8 ON ip_norms
+  USING inverted(id, emb hnsw (metric = 'ip', quant = 'sq8'));
+
+statement ok
+VACUUM (REFRESH_TABLE) ip_norms;
+
+statement ok
+SET sdb_hnsw_ef_search = 100000;
+
+query
+SELECT
+  (SELECT count(*) FROM (SELECT id FROM ip_norms_none ORDER BY emb <#> ip_vec(777.5) LIMIT 100000) t) AS none_rows,
+  (SELECT count(*) FROM (SELECT id FROM ip_norms_sq8 ORDER BY emb <#> ip_vec(777.5) LIMIT 100000) t) AS sq8_rows;
+----
+none_rows	sq8_rows
+6000	6000
+
+query
+SELECT count(*) FROM (
+  (SELECT id FROM ip_norms ORDER BY emb <#> ip_vec(1234.5) LIMIT 200)
+  EXCEPT (SELECT id FROM ip_norms_none ORDER BY emb <#> ip_vec(1234.5) LIMIT 200)) t;
+----
+count
+0

@@ -1607,6 +1607,59 @@ INSTANTIATE_TEST_SUITE_P(
     irs::AnnInfo::Quantizer{.kind = irs::VectorQuantization::None},
     irs::AnnInfo::Quantizer{.kind = irs::VectorQuantization::PQ, .pq_m = 4}));
 
+class HnswInnerProductGraphTest
+  : public ::testing::TestWithParam<irs::VectorQuantization> {};
+
+TEST_P(HnswInnerProductGraphTest, ReachesVectorsOfEveryNorm) {
+  constexpr size_t kRows = 4000;
+  auto vecs = MakeVectors(kRows, 23);
+  std::mt19937 rng{29};
+  std::uniform_real_distribution<float> scale{0.1f, 3.f};
+  for (auto& vec : vecs) {
+    const auto s = scale(rng);
+    for (auto& x : vec) {
+      x *= s;
+    }
+  }
+  irs::MemoryDirectory dir;
+  auto writer = irs::IndexWriter::Make(
+    dir, irs::kOmCreate,
+    MakeWriterOptions(irs::VectorMetric::InnerProduct, GetParam()));
+  ASSERT_NE(nullptr, writer);
+  AppendBatch(*writer, vecs);
+  const auto reader = writer->GetSnapshot();
+  ASSERT_EQ(1U, reader->size());
+  const auto& segment = (*reader)[0];
+  const auto* ann = static_cast<const irs::HnswIndex*>(segment.Ann(kVec));
+  ASSERT_NE(nullptr, ann);
+  const auto data = ann->Load(segment);
+  ASSERT_TRUE(data);
+  const auto& graph = data->graph;
+  std::vector<uint8_t> seen(kRows, 0);
+  std::vector<uint32_t> stack{graph.EntryPoint()};
+  seen[graph.EntryPoint()] = 1;
+  size_t reached = 1;
+  while (!stack.empty()) {
+    const auto node = stack.back();
+    stack.pop_back();
+    for (const auto next : graph.Neighbors(node, 0)) {
+      if (next == irs::kHnswInvalidNode) {
+        break;
+      }
+      if (seen[next] == 0) {
+        seen[next] = 1;
+        ++reached;
+        stack.push_back(next);
+      }
+    }
+  }
+  EXPECT_EQ(kRows, reached);
+}
+
+INSTANTIATE_TEST_SUITE_P(Quants, HnswInnerProductGraphTest,
+                         ::testing::Values(irs::VectorQuantization::None,
+                                           irs::VectorQuantization::SQ8));
+
 TEST(HnswPqGraphTest, CoarseCodesLinkNodesAsTheVectorsDo) {
   constexpr uint32_t kD = 64;
   constexpr size_t kRows = 3000;

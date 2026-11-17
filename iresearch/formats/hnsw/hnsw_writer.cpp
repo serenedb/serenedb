@@ -403,7 +403,8 @@ void FanOut(const AnnBuildEnv* env, size_t tasks,
 bool EncodeColumn(const ColumnReader& col, ReadContext& ctx, uint64_t rows,
                   uint32_t d, bool normalize, QuantizerWriter& qw,
                   byte_type* codes, uint32_t record_size,
-                  std::vector<uint8_t>& valid, const AnnBuildEnv* env) {
+                  std::vector<uint8_t>& valid, std::span<float> sq_norms,
+                  const AnnBuildEnv* env) {
   HnswCrew crew{env, static_cast<uint32_t>(std::clamp<uint64_t>(
                        rows * qw.EncodeWidth() / kHnswMinRowsPerEncoder, 1,
                        kHnswMaxWorkers))};
@@ -469,6 +470,11 @@ bool EncodeColumn(const ColumnReader& col, ReadContext& ctx, uint64_t rows,
       if (!writer.EncodeInto(codes + (done + lo) * size_t{record_size},
                              vecs + lo * size_t{d}, hi - lo)) {
         ok.store(false, std::memory_order_relaxed);
+      }
+      if (!sq_norms.empty()) {
+        for (size_t i = lo; i < hi; ++i) {
+          sq_norms[done + i] = faiss::fvec_norm_L2sqr(vecs + i * size_t{d}, d);
+        }
       }
     };
 
@@ -657,6 +663,81 @@ HnswCodeDistFactory MakeCodeFactory(const bstring& codes, uint32_t record_size,
   }
   return factory;
 }
+
+template<typename Dist>
+struct HnswLiftedDist {
+  Dist inner;
+  std::span<const score_t> lifts;
+  score_t max_lift = 0.f;
+  score_t query_lift = 0.f;
+
+  void SetQuery(uint32_t id) {
+    inner.SetQuery(id);
+    query_lift = lifts[id];
+  }
+
+  void SetWindow(const float* base, uint32_t first, uint32_t count) noexcept {
+    inner.SetWindow(base, first, count);
+  }
+
+  void Batch(std::span<const uint32_t> ids, score_t* out,
+             score_t threshold = kHnswNoThreshold) {
+    inner.Batch(ids, out, threshold - query_lift * max_lift);
+    for (size_t i = 0; i < ids.size(); ++i) {
+      out[i] += query_lift * lifts[ids[i]];
+    }
+  }
+
+  score_t One(uint32_t id) { return inner.One(id) + query_lift * lifts[id]; }
+
+  void Prefetch(uint32_t id) const noexcept { inner.Prefetch(id); }
+
+  score_t Pair(uint32_t a, uint32_t b) {
+    return inner.Pair(a, b) + lifts[a] * lifts[b];
+  }
+
+  void PairBatch(uint32_t from, std::span<const uint32_t> to, score_t* out) {
+    inner.PairBatch(from, to, out);
+    for (size_t i = 0; i < to.size(); ++i) {
+      out[i] += lifts[from] * lifts[to[i]];
+    }
+  }
+
+  bool CheapPair() const noexcept { return inner.CheapPair(); }
+};
+
+template<typename Factory>
+class HnswLiftedFactory {
+ public:
+  using Dist = HnswLiftedDist<typename Factory::Dist>;
+
+  HnswLiftedFactory(Factory inner, std::span<const uint8_t> valid)
+    : _inner{std::move(inner)}, _lifts(valid.size(), 0.f) {
+    auto dist = _inner.Make();
+    score_t top = 0.f;
+    for (uint32_t i = 0; i < valid.size(); ++i) {
+      if (valid[i] != 0) {
+        _lifts[i] = dist.Pair(i, i);
+        top = std::max(top, _lifts[i]);
+      }
+    }
+    for (uint32_t i = 0; i < valid.size(); ++i) {
+      if (valid[i] != 0) {
+        _lifts[i] = std::sqrt(std::max(0.f, top - _lifts[i]));
+        _max_lift = std::max(_max_lift, _lifts[i]);
+      }
+    }
+  }
+
+  Dist Make() const {
+    return Dist{.inner = _inner.Make(), .lifts = _lifts, .max_lift = _max_lift};
+  }
+
+ private:
+  Factory _inner;
+  std::vector<score_t> _lifts;
+  score_t _max_lift = 0.f;
+};
 
 template<typename Factory>
 struct HnswInsertJob {
@@ -1091,6 +1172,32 @@ auto BuildDispatch(HnswGraphWriter& graph, const Factory& factory,
   co_return {};
 }
 
+inline constexpr score_t kHnswEqualNormSpread = 1e-4f;
+
+template<typename Factory>
+auto BuildForNorms(std::span<const float> sq_norms, HnswGraphWriter& graph,
+                   Factory factory, std::span<const uint8_t> valid, uint32_t m,
+                   uint32_t ef, uint64_t seed, const MergeDonor& donor,
+                   const AnnBuildEnv* env, HnswOriginals src, uint32_t d)
+  -> yaclib::Future<> {
+  score_t top = 0.f;
+  score_t low = std::numeric_limits<score_t>::max();
+  for (size_t i = 0; i < sq_norms.size(); ++i) {
+    if (valid[i] != 0) {
+      top = std::max(top, sq_norms[i]);
+      low = std::min(low, sq_norms[i]);
+    }
+  }
+  if (sq_norms.empty() || top - low <= kHnswEqualNormSpread * top) {
+    co_await BuildDispatch(graph, factory, valid, m, ef, seed, donor, env, src,
+                           d);
+    co_return {};
+  }
+  const HnswLiftedFactory<Factory> lifted{std::move(factory), valid};
+  co_await BuildDispatch(graph, lifted, valid, m, ef, seed, donor, env, src, d);
+  co_return {};
+}
+
 inline constexpr size_t kPanoramaMinRows = 1024;
 inline constexpr size_t kPanoramaTrainRows = 4096;
 inline constexpr size_t kPanoramaApplyRows = 4096;
@@ -1329,6 +1436,7 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& column, ReadContext& ctx,
 
   std::vector<uint8_t> valid(_rows, 1);
   std::vector<float> batch_buf;
+  std::vector<float> sq_norms;
   const bool normalize = _info.metric == VectorMetric::Cosine;
 
   if (_info.quant.kind != VectorQuantization::None) {
@@ -1353,11 +1461,15 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& column, ReadContext& ctx,
     if (basis && enough) {
       RotateForPanorama(vectors, valid.size(), _d, *basis, env, _rotation);
       const auto stats = EncodeRotated(vectors, valid, env);
+      if (_info.metric == VectorMetric::InnerProduct) {
+        sq_norms = RowNorms(vectors, valid.size(), _d);
+      }
       std::vector<float> pair_terms;
-      const auto factory = MakeCodeFactory(_codes, _record_size, *stats, {}, _d,
-                                           vectors.data(), _rows, pair_terms);
-      co_await BuildDispatch(_graph, factory, valid, m, ef, kHnswBuildSeed,
-                             donor, env, HnswOriginals{}, _d);
+      co_await BuildForNorms(
+        sq_norms, _graph,
+        MakeCodeFactory(_codes, _record_size, *stats, {}, _d, vectors.data(),
+                        _rows, pair_terms),
+        valid, m, ef, kHnswBuildSeed, donor, env, HnswOriginals{}, _d);
       co_return {};
     }
   }
@@ -1371,8 +1483,11 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& column, ReadContext& ctx,
   if (encoding) {
     _record_size = _qw->BlockSetting().record_size;
     _codes.resize(static_cast<size_t>(_rows) * _record_size);
+    if (_info.metric == VectorMetric::InnerProduct) {
+      sq_norms.assign(_rows, 0.f);
+    }
     encoding = EncodeColumn(col, ctx, _rows, _d, normalize, *_qw, _codes.data(),
-                            _record_size, valid, env);
+                            _record_size, valid, sq_norms, env);
   } else if (!_qw) {
     _vectors = LoadVectors(col, ctx, _rows, _d, normalize, valid, batch_buf);
     if (RotationApplies(_info.metric, _d)) {
@@ -1384,6 +1499,9 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& column, ReadContext& ctx,
         _norms = RowNorms(_vectors, valid.size(), _d);
       }
     }
+    if (_info.metric == VectorMetric::InnerProduct) {
+      sq_norms = _norms.empty() ? RowNorms(_vectors, valid.size(), _d) : _norms;
+    }
   }
 
   std::shared_ptr<const QuantizerStats> stats;
@@ -1393,12 +1511,12 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& column, ReadContext& ctx,
 
   if (stats && !raw_build) {
     std::vector<float> pair_terms;
-    const auto factory = MakeCodeFactory(
-      _codes, _record_size, *stats, _centroid, _d, nullptr, _rows, pair_terms);
-    const HnswOriginals originals{
-      .col = &col, .ctx = &ctx, .normalize = normalize};
-    co_await BuildDispatch(_graph, factory, valid, m, ef, kHnswBuildSeed, donor,
-                           env, originals, _d);
+    co_await BuildForNorms(
+      sq_norms, _graph,
+      MakeCodeFactory(_codes, _record_size, *stats, _centroid, _d, nullptr,
+                      _rows, pair_terms),
+      valid, m, ef, kHnswBuildSeed, donor, env,
+      HnswOriginals{.col = &col, .ctx = &ctx, .normalize = normalize}, _d);
     co_return {};
   }
 
@@ -1420,9 +1538,9 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& column, ReadContext& ctx,
   yaclib::Future<> built;
   ResolveEnum<VectorMetric>(
     EffectiveQuantMetric(_info.metric), [&]<VectorMetric M>() {
-      HnswRawDistFactory<M> factory{.base = base, .d = _d};
-      built = BuildDispatch(_graph, factory, valid, m, ef, kHnswBuildSeed,
-                            donor, env, HnswOriginals{}, _d);
+      built = BuildForNorms(
+        sq_norms, _graph, HnswRawDistFactory<M>{.base = base, .d = _d}, valid,
+        m, ef, kHnswBuildSeed, donor, env, HnswOriginals{}, _d);
     });
   SDB_ASSERT(built.Valid());
   co_await std::move(built);

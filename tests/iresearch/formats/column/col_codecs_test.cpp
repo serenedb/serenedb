@@ -477,6 +477,53 @@ TEST_F(ColCodecsTest, PlainFsstRowOrder) {
   RoundTrip(irs::codecs::CodecType::Fsst, {}, 3000, 2048, kLongTextWithNulls);
 }
 
+struct CountedSymbols {
+  static constexpr std::string_view kCacheType = "test-symbols";
+
+  bool Open(std::string_view bytes) {
+    ++opens;
+    value = bytes;
+    return !bytes.empty();
+  }
+
+  static inline size_t opens = 0;
+  std::string value;
+};
+
+TEST_F(ColCodecsTest, EqualSymbolTableBytesShareOneOpenedTable) {
+  auto& cache = Db().GetObjectCache();
+  CountedSymbols::opens = 0;
+  const auto open = [&](std::string_view bytes) {
+    return irs::codecs::OpenSymbolTable<CountedSymbols>(&cache, bytes);
+  };
+  const auto first = open("abcdefghij");
+  ASSERT_TRUE(first);
+  EXPECT_EQ("abcdefghij", first->Table().value);
+  EXPECT_EQ(first, open("abcdefghij"));
+  EXPECT_EQ(1, CountedSymbols::opens);
+  const auto second = open("Xbcdefghij");
+  ASSERT_TRUE(second);
+  EXPECT_NE(first, second);
+  EXPECT_EQ("Xbcdefghij", second->Table().value);
+  EXPECT_EQ(first, open("abcdefghij"));
+  EXPECT_EQ(second, open("Xbcdefghij"));
+  EXPECT_EQ(2, CountedSymbols::opens);
+  ASSERT_EQ(irs::codecs::SymbolTableCacheKey("t", "abcdefghij"),
+            irs::codecs::SymbolTableCacheKey("t", "abcdefghiX"));
+  const auto collided = open("abcdefghiX");
+  ASSERT_TRUE(collided);
+  EXPECT_EQ("abcdefghiX", collided->Table().value);
+  EXPECT_EQ("abcdefghij", first->Table().value);
+  EXPECT_EQ(3, CountedSymbols::opens);
+  EXPECT_FALSE(open(""));
+  EXPECT_EQ(4, CountedSymbols::opens);
+  const auto uncached =
+    irs::codecs::OpenSymbolTable<CountedSymbols>(nullptr, "Xbcdefghij");
+  ASSERT_TRUE(uncached);
+  EXPECT_NE(second, uncached);
+  EXPECT_EQ(5, CountedSymbols::opens);
+}
+
 TEST(FsstEncoderTest, BatchesEncodeLikeSingleStrings) {
   constexpr std::array<std::string_view, 8> kWords{
     "https://", "example.org/", "users/", "profile?",
@@ -518,7 +565,7 @@ TEST(FsstEncoderTest, BatchesEncodeLikeSingleStrings) {
   batch.resize(all.bytes);
 
   irs::codecs::text::fsst::Decoder<irs::codecs::text::fsst::Fsst8> decoder;
-  ASSERT_TRUE(decoder.Import(encoder.SymbolTable()));
+  ASSERT_TRUE(decoder.Import(nullptr, encoder.SymbolTable()));
   std::string single;
   uint32_t single_length = 0;
   std::string decoded;

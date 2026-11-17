@@ -283,13 +283,15 @@ struct Scan {
   using Fetch = fsst_front::Fetch<Impl>;
 
   template<typename Frames>
-  Scan(const ColumnSegment&, const Frames& s)
+  Scan(const ColumnSegment& segment, const Frames& s)
     : lcps{s.base + s.header.off_lcps, s.header.lcp_width} {
-    SDB_ENSURE(s.header.symtab_size == 0 ||
-                 decoder.Import(std::string_view{
-                   reinterpret_cast<const char*>(s.base + s.header.off_symtab),
-                   s.header.symtab_size}),
-               "col codec: corrupted symbol table");
+    SDB_ENSURE(
+      s.header.symtab_size == 0 ||
+        decoder.Import(segment.cache_slot.cache,
+                       std::string_view{reinterpret_cast<const char*>(
+                                          s.base + s.header.off_symtab),
+                                        s.header.symtab_size}),
+      "col codec: corrupted symbol table");
     groups.Reset(static_cast<uint32_t>(s.frames.size()), [&](uint32_t f) {
       return std::pair{s.frames[f].first_entry, s.FrameEnd(f)};
     });
@@ -640,12 +642,12 @@ struct Fetch {
 
   uint64_t DecodedBytes() const noexcept { return 0; }
 
-  void Emit(const ColumnSegment&, const Header& h, duckdb::data_ptr_t base,
-            PackedReader& lengths, uint32_t lo, const FrameMeta& f,
-            uint32_t entry, duckdb::Vector& result, duckdb::idx_t result_idx,
-            bool) {
+  void Emit(const ColumnSegment& segment, const Header& h,
+            duckdb::data_ptr_t base, PackedReader& lengths, uint32_t lo,
+            const FrameMeta& f, uint32_t entry, duckdb::Vector& result,
+            duckdb::idx_t result_idx, bool) {
     if (groups.Empty()) {
-      Open(h, base);
+      Open(segment.cache_slot.cache, h, base);
     }
     const auto* in = reinterpret_cast<const char*>(base + h.off_data);
     const uint32_t group = (entry - f.first_entry) / kChainRestart;
@@ -658,12 +660,14 @@ struct Fetch {
       duckdb::StringVector::AddStringOrBlob(result, value.data(), value.size());
   }
 
-  void Open(const Header& h, duckdb::const_data_ptr_t base) {
+  void Open(duckdb::ObjectCache* cache, const Header& h,
+            duckdb::const_data_ptr_t base) {
     decoder.emplace();
     SDB_ENSURE(
       h.symtab_size == 0 ||
-        decoder->Import(std::string_view{
-          reinterpret_cast<const char*>(base + h.off_symtab), h.symtab_size}),
+        decoder->Import(cache, std::string_view{reinterpret_cast<const char*>(
+                                                  base + h.off_symtab),
+                                                h.symtab_size}),
       "col codec: corrupted symbol table");
     const auto* table = base + h.off_frames;
     groups.Reset(h.frame_count, [&](uint32_t i) {

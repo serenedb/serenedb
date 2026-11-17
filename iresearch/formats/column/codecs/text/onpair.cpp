@@ -96,9 +96,10 @@ struct Scan {
   using Fetch = onpair::Fetch;
 
   template<typename Frames>
-  Scan(const ColumnSegment&, const Frames& s) {
-    SDB_ENSURE(table.Open(SymbolTable(s.header, s.base)),
-               "col codec: corrupted symbol table");
+  Scan(const ColumnSegment& segment, const Frames& s)
+    : table{OpenSymbolTable<Table>(segment.cache_slot.cache,
+                                   SymbolTable(s.header, s.base))} {
+    SDB_ENSURE(table, "col codec: corrupted symbol table");
     groups.Reset(static_cast<uint32_t>(s.frames.size()), [&](uint32_t f) {
       return std::pair{s.frames[f].first_entry, s.FrameEnd(f)};
     });
@@ -108,7 +109,7 @@ struct Scan {
   template<typename Frames>
   void DecodeFrame(Frames& s, uint32_t f, char* out) {
     const auto& m = s.frames[f];
-    const auto tokens = TokenFrame(m, table.Bits());
+    const auto tokens = TokenFrame(m, table->Table().Bits());
     const auto* stream =
       reinterpret_cast<const uint8_t*>(s.Data()) + m.comp_off;
     const auto end = s.FrameEnd(f);
@@ -119,7 +120,7 @@ struct Scan {
       SDB_ENSURE(token + count <= tokens.comp_len,
                  "col codec: corrupted entry");
       const auto n =
-        table.Decode(stream, token, count, out + off, m.raw_len - off);
+        table->Table().Decode(stream, token, count, out + off, m.raw_len - off);
       const std::string_view v{out + off, n};
       SDB_ASSERT(!Frames::kDedup || e == m.first_entry ||
                  View(s.values[e - 1]) < v);
@@ -132,8 +133,8 @@ struct Scan {
 
   template<typename Frames, typename Out>
   std::string_view Decode(Frames& s, uint32_t e, uint32_t f, Out& out) {
-    return DecodeEntry(table, groups, s.length_reader, s.frames[f], f, e,
-                       s.Data(), out);
+    return DecodeEntry(table->Table(), groups, s.length_reader, s.frames[f], f,
+                       e, s.Data(), out);
   }
 
   template<typename Frames>
@@ -179,10 +180,10 @@ struct Scan {
   }
 
   uint64_t HeapBytes() const noexcept {
-    return entry_heap_bytes + table.Bytes();
+    return entry_heap_bytes + table->Table().Bytes();
   }
 
-  Table table;
+  duckdb::shared_ptr<CachedSymbolTable<Table>> table;
   ChainGroups groups;
   std::vector<uint8_t> entry_decoded;
   uint64_t entry_heap_bytes = 0;
@@ -200,15 +201,15 @@ struct Fetch {
 
   uint64_t DecodedBytes() const noexcept { return 0; }
 
-  void Emit(const ColumnSegment&, const Header& h, duckdb::data_ptr_t base,
-            PackedReader& counts, uint32_t lo, const FrameMeta& f,
-            uint32_t entry, duckdb::Vector& result, duckdb::idx_t result_idx,
-            bool) {
+  void Emit(const ColumnSegment& segment, const Header& h,
+            duckdb::data_ptr_t base, PackedReader& counts, uint32_t lo,
+            const FrameMeta& f, uint32_t entry, duckdb::Vector& result,
+            duckdb::idx_t result_idx, bool) {
     if (!table) {
-      Open(h, base);
+      Open(segment.cache_slot.cache, h, base);
     }
     const auto value =
-      DecodeEntry(*table, groups, counts, f, lo, entry,
+      DecodeEntry(table->Table(), groups, counts, f, lo, entry,
                   reinterpret_cast<const char*>(base + h.off_data), buf);
     ++walked;
     auto* out = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
@@ -216,10 +217,10 @@ struct Fetch {
       duckdb::StringVector::AddStringOrBlob(result, value.data(), value.size());
   }
 
-  void Open(const Header& h, duckdb::const_data_ptr_t base) {
-    table.emplace();
-    SDB_ENSURE(table->Open(SymbolTable(h, base)),
-               "col codec: corrupted symbol table");
+  void Open(duckdb::ObjectCache* cache, const Header& h,
+            duckdb::const_data_ptr_t base) {
+    table = OpenSymbolTable<Table>(cache, SymbolTable(h, base));
+    SDB_ENSURE(table, "col codec: corrupted symbol table");
     const auto* frames = base + h.off_frames;
     groups.Reset(h.frame_count, [&](uint32_t i) {
       return std::pair{FrameAt(frames, i).first_entry,
@@ -229,7 +230,7 @@ struct Fetch {
     });
   }
 
-  std::optional<Table> table;
+  duckdb::shared_ptr<CachedSymbolTable<Table>> table;
   ChainGroups groups;
   std::string buf;
   uint64_t walked = 0;

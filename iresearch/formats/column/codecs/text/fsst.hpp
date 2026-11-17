@@ -35,6 +35,7 @@
 #include <vector>
 
 #include "iresearch/formats/column/codecs/bytes/byte_codec.hpp"
+#include "iresearch/formats/column/codecs/dictionary_cache.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
@@ -72,15 +73,19 @@ struct Fsst8 {
                                 out, out_lengths, out_strings);
   }
 
-  static size_t Import(Table& table, const unsigned char* in,
-                       size_t size) noexcept {
-    return duckdb_fsst_import(&table, in, size);
+  using Imported = Table;
+
+  static bool Import(Imported& imported, duckdb::ObjectCache*,
+                     std::string_view table) noexcept {
+    return duckdb_fsst_import(
+             &imported, reinterpret_cast<const unsigned char*>(table.data()),
+             table.size()) == table.size();
   }
 
-  static size_t Decompress(const Table& table, const unsigned char* in,
+  static size_t Decompress(const Imported& imported, const unsigned char* in,
                            size_t size, unsigned char* out,
                            size_t capacity) noexcept {
-    return duckdb_fsst_decompress(const_cast<Table*>(&table), size, in,
+    return duckdb_fsst_decompress(const_cast<Table*>(&imported), size, in,
                                   capacity, out);
   }
 };
@@ -114,15 +119,32 @@ struct Fsst12 {
                                   out_lengths, out_strings);
   }
 
-  static size_t Import(Table& table, const unsigned char* in,
-                       size_t size) noexcept {
-    return duckdb_fsst12_import(&table, in, size);
+  struct Symbols {
+    static constexpr std::string_view kCacheType = "col-fsst12";
+
+    bool Open(std::string_view table) noexcept {
+      return duckdb_fsst12_import(
+               &decoder, reinterpret_cast<const unsigned char*>(table.data()),
+               table.size()) == table.size();
+    }
+
+    Table decoder;
+  };
+
+  using Imported = duckdb::shared_ptr<CachedSymbolTable<Symbols>>;
+
+  static bool Import(Imported& imported, duckdb::ObjectCache* cache,
+                     std::string_view table) {
+    imported = OpenSymbolTable<Symbols>(cache, table);
+    return static_cast<bool>(imported);
   }
 
-  static size_t Decompress(const Table& table, const unsigned char* in,
+  static size_t Decompress(const Imported& imported, const unsigned char* in,
                            size_t size, unsigned char* out,
                            size_t capacity) noexcept {
-    return duckdb_fsst12_decompress(&table, size, in, capacity, out);
+    return imported ? duckdb_fsst12_decompress(&imported->Table().decoder, size,
+                                               in, capacity, out)
+                    : DUCKDB_FSST12_DECOMPRESS_INVALID_INPUT;
   }
 };
 
@@ -192,21 +214,19 @@ class Encoder {
 template<typename Impl>
 class Decoder {
  public:
-  bool Import(std::string_view table) noexcept {
-    return Impl::Import(_decoder,
-                        reinterpret_cast<const unsigned char*>(table.data()),
-                        table.size()) == table.size();
+  bool Import(duckdb::ObjectCache* cache, std::string_view table) {
+    return Impl::Import(_imported, cache, table);
   }
 
   size_t Decode(const char* in, size_t in_length, char* out,
                 size_t capacity) const noexcept {
     return Impl::Decompress(
-      _decoder, reinterpret_cast<const unsigned char*>(in), in_length,
+      _imported, reinterpret_cast<const unsigned char*>(in), in_length,
       reinterpret_cast<unsigned char*>(out), capacity);
   }
 
  private:
-  typename Impl::Table _decoder{};
+  typename Impl::Imported _imported{};
 };
 
 }  // namespace irs::codecs::text::fsst

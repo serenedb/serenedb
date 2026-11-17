@@ -326,7 +326,7 @@ struct FsstFrames {
     encoded.resize(
       encoder.Encode(views, skip, encoded.data(), encoded.size(), lengths)
         .bytes);
-    decoder.Import(encoder.SymbolTable());
+    decoder.Import(nullptr, encoder.SymbolTable());
   }
 };
 

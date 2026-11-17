@@ -90,7 +90,8 @@ class Prefixes {
   bool Open(std::string_view section, uint32_t table_size,
             fsst::Decoder<fsst::Fsst8>& decoder) {
     if (section.size() < static_cast<uint64_t>(table_size) + sizeof(uint32_t) ||
-        (table_size != 0 && !decoder.Import(section.substr(0, table_size)))) {
+        (table_size != 0 &&
+         !decoder.Import(nullptr, section.substr(0, table_size)))) {
       return false;
     }
     const auto rest = section.substr(table_size);

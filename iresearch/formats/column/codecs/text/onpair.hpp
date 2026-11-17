@@ -46,6 +46,8 @@ inline constexpr uint8_t kDictionaryBits = 12;
 
 class Table {
  public:
+  static constexpr std::string_view kCacheType = "col-onpair";
+
   bool Open(std::string_view table);
 
   uint8_t Bits() const noexcept { return _bits; }

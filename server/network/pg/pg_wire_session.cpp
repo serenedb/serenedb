@@ -199,6 +199,29 @@ bool DeallocatesPreparedStatements(const duckdb::SQLStatement& statement) {
   return info && info->type == duckdb::CatalogType::PREPARED_STATEMENT;
 }
 
+duckdb::PreparedStatementData* FindPrepared(duckdb::ClientContext& context,
+                                            std::string_view name) {
+  auto& statements = duckdb::ClientData::Get(context).prepared_statements;
+  const auto it = statements.find(name);
+  return it == statements.end() ? nullptr : it->second.get();
+}
+
+void Replans(duckdb::ClientContext& context, std::string_view name,
+             std::string_view previous) {
+  auto* data = FindPrepared(context, name);
+  const auto* source = FindPrepared(context, previous);
+  if (data && source) {
+    data->Replans(*source);
+  }
+}
+
+void CountExecution(duckdb::ClientContext& context, const Statement& stmt,
+                    bool planned) {
+  if (auto* data = FindPrepared(context, stmt.Alias())) {
+    data->CountExecution(planned);
+  }
+}
+
 // Classified from the parsed statement BEFORE Prepare -- the CSV sniff opens
 // /dev/stdin during Prepare, so the bridge must already be live by then.
 inline CopyKind ClassifyCopy(duckdb::SQLStatement& statement) {
@@ -2220,6 +2243,7 @@ void PgWireSession<Kind>::RevalidatePlan(Statement& stmt) {
     const auto alias = statements.find(stmt.Alias());
     const auto handle = statements.find(prepared->GetName());
     if (alias != statements.end() && handle != statements.end()) {
+      handle->second->Replans(*alias->second);
       alias->second = handle->second;
     }
   }
@@ -2269,6 +2293,7 @@ StatementPtr& PgWireSession<Kind>::FindStatement(std::string_view name) {
   }
   if (const auto handle = statements.find(prepared->GetName());
       handle != statements.end()) {
+    handle->second->Replans(*sql_data);
     sql_data = handle->second;
   }
   auto& slot = _proto.statements.Create(name);
@@ -2463,6 +2488,7 @@ PlanPtr PgWireSession<Kind>::ResolvePlan(
   if (resolved->HasError()) {
     return plan;
   }
+  Replans(*_conn->context, resolved->GetName(), plan->GetName());
   PlanPtr result{std::move(resolved)};
   if (plan == stmt.Plan()) {
     stmt.SetResolution(std::move(hints), result);
@@ -2541,9 +2567,11 @@ yaclib::Task<> PgWireSession<Kind>::HandleExecute(std::string_view payload) {
     case Statement::Kind::Unbound:
       SDB_UNREACHABLE();
     case Statement::Kind::Empty:
+      CountExecution(*_conn->context, *portal.stmt, false);
       WriteEmptyFrame(this->_send, PQ_MSG_EMPTY_QUERY_RESPONSE);
       co_return {};
     case Statement::Kind::Copy: {
+      CountExecution(*_conn->context, *portal.stmt, true);
       portal.exec.state = PortalState::Done;
       auto statement = portal.stmt->GetCopy().Copy();
       const auto copy = ClassifyCopy(*statement);
@@ -2741,6 +2769,7 @@ yaclib::Task<> PgWireSession<Kind>::ExecuteCompound(Portal& portal) {
   }
   auto last = PrepareInternal(body.back()->Copy());
   ThrowIfError(*last);
+  Replans(*_conn->context, last->GetName(), portal.stmt->Alias());
   portal.plan = std::move(last);
   co_return {};
 }

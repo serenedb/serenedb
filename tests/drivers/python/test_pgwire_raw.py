@@ -3746,6 +3746,117 @@ def test_pg_prepared_statements_lists_protocol_statements(conn):
     assert all_fields(m) == [b"select $1::int4", b"{integer}", b"{integer}", b"f"]
 
 
+def _execute_ok(conn, name, params=()):
+    conn.bind("", name, params=params)
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert not errors(m), errors(m)
+    return m
+
+
+def _plans(conn, *names):
+    listed = ", ".join(f"'{name}'" for name in names)
+    m = _simple(
+        conn,
+        "SELECT name, generic_plans, custom_plans, prepare_time"
+        f" FROM pg_prepared_statements WHERE name IN ({listed})",
+    )
+    assert not errors(m), errors(m)
+    out = {}
+    for row in rows(m):
+        name, generic, custom, prepared = _data_row(row)
+        out[name.decode()] = (int(generic), int(custom), prepared)
+    return out
+
+
+@pytest.mark.usefixtures("own_server")
+def test_pg_prepared_statements_counts_protocol_plans(conn):
+    conn.run_ok("CREATE TABLE pc_wire(id int4 PRIMARY KEY, v int4)")
+    conn.run_ok("INSERT INTO pc_wire SELECT i, i FROM generate_series(1, 10) g(i)")
+    _parse_ok(conn, "pc_point", "SELECT v FROM pc_wire WHERE id = $1", oids=(23,))
+    _parse_ok(conn, "pc_scan", "SELECT count(*) FROM pc_wire")
+    _parse_ok(conn, "pc_untyped", "SELECT $1 AS x")
+    conn.run_ok("PREPARE pc_sql(int4) AS SELECT v + 1 FROM pc_wire WHERE id = $1")
+    for _ in range(2):
+        _execute_ok(conn, "pc_point", params=(b"1",))
+        _execute_ok(conn, "pc_scan")
+        _execute_ok(conn, "pc_untyped", params=(b"a",))
+    assert not errors(_simple(conn, "EXECUTE pc_sql(1)"))
+    before = _plans(conn, "pc_point", "pc_scan", "pc_untyped", "pc_sql")
+    assert {name: plans[:2] for name, plans in before.items()} == {
+        "pc_point": (2, 0),
+        "pc_scan": (2, 0),
+        "pc_untyped": (1, 1),
+        "pc_sql": (1, 0),
+    }, before
+
+    assert not errors(_simple(conn, "INSERT INTO pc_wire VALUES (11, 11)"))
+    m = _execute_ok(conn, "pc_point", params=(b"11",))
+    assert rows(m) and rows(m)[0].endswith(b"11"), rows(m)
+    m = _execute_ok(conn, "pc_scan")
+    assert rows(m) and rows(m)[0].endswith(b"11"), rows(m)
+    _execute_ok(conn, "pc_scan")
+    m = _execute_ok(conn, "pc_sql", params=(b"11",))
+    assert rows(m) and rows(m)[0].endswith(b"12"), rows(m)
+    _execute_ok(conn, "pc_sql", params=(b"1",))
+    assert not errors(_simple(conn, "EXECUTE pc_sql(2)"))
+    after_write = _plans(conn, "pc_point", "pc_scan", "pc_sql")
+    assert {name: plans[:2] for name, plans in after_write.items()} == {
+        "pc_point": (3, 0),
+        "pc_scan": (3, 1),
+        "pc_sql": (3, 1),
+    }, after_write
+
+    assert not errors(_simple(conn, "CREATE TABLE pc_wire_other(z int4)"))
+    _execute_ok(conn, "pc_point", params=(b"2",))
+    _execute_ok(conn, "pc_point", params=(b"3",))
+    m = _simple(conn, "EXECUTE pc_point(4)")
+    assert not errors(m), errors(m)
+    assert rows(m) and rows(m)[0].endswith(b"4"), rows(m)
+    after_ddl = _plans(conn, "pc_point")
+    assert after_ddl["pc_point"][:2] == (5, 1), after_ddl
+    assert after_ddl["pc_point"][2] == before["pc_point"][2], (before, after_ddl)
+
+
+def test_pg_prepared_statements_counts_unprepared_protocol_statements(conn):
+    _drop(conn, "pc_unprep")
+    conn.run_ok("CREATE TABLE pc_unprep(a int4)")
+    conn.run_ok("INSERT INTO pc_unprep VALUES (1)")
+    _parse_ok(conn, "pc_copy_out", "COPY pc_unprep TO STDOUT")
+    _parse_ok(conn, "pc_empty", "")
+    _parse_ok(
+        conn,
+        "pc_compound",
+        "ALTER TABLE pc_unprep ADD COLUMN r float8 DEFAULT random()",
+    )
+    for _ in range(2):
+        _execute_ok(conn, "pc_copy_out")
+        _execute_ok(conn, "pc_empty")
+    _execute_ok(conn, "pc_compound")
+    plans = _plans(conn, "pc_copy_out", "pc_empty", "pc_compound")
+    assert {name: counts[:2] for name, counts in plans.items()} == {
+        "pc_copy_out": (0, 2),
+        "pc_empty": (2, 0),
+        "pc_compound": (0, 1),
+    }, plans
+    assert not errors(_simple(conn, "DEALLOCATE ALL"))
+    _drop(conn, "pc_unprep")
+
+
+@pytest.mark.usefixtures("own_server")
+def test_protocol_statement_plans_once_after_search_path_change(conn):
+    conn.run_ok("CREATE TABLE pc_path(id int4 PRIMARY KEY, v int4)")
+    conn.run_ok("INSERT INTO pc_path VALUES (1, 1)")
+    _parse_ok(conn, "pc_path_point", "SELECT v FROM pc_path WHERE id = $1", oids=(23,))
+    _execute_ok(conn, "pc_path_point", params=(b"1",))
+    assert not errors(_simple(conn, "SET search_path = public, pg_catalog"))
+    for _ in range(3):
+        _execute_ok(conn, "pc_path_point", params=(b"1",))
+    plans = _plans(conn, "pc_path_point")
+    assert plans["pc_path_point"][:2] == (3, 1), plans
+
+
 def test_close_drops_protocol_statement_name(conn):
     _parse_ok(conn, "ns_closed", "select 1")
     conn.send("C", b"S" + _cstr("ns_closed"))

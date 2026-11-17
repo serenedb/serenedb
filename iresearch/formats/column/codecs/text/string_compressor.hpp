@@ -70,6 +70,8 @@ class StringCompressor {
 
   void CompressChunks(const Config& config, ColumnDataCheckpointData& data);
 
+  DedupScratch& Dedup() noexcept { return _dedup; }
+
  private:
   template<typename State>
   State& StateOf() {

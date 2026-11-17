@@ -117,14 +117,15 @@ StringWindow::Measured& StringWindow::Rows(Shape shape) {
       }
     }
   } else {
-    _dedup.Begin(_acc.values.size());
+    auto& dedup = _compressor.Dedup();
+    dedup.Begin(_acc.values.size());
     rows.locals.resize(_end - _begin);
     for (auto row = _begin; row < _end; ++row) {
       const auto code = _acc.codes[row];
       uint32_t local = 0;
       if (code != 0) {
         const auto mapped =
-          _dedup.Local(code, static_cast<uint32_t>(rows.codes.size()) + 1);
+          dedup.Local(code, static_cast<uint32_t>(rows.codes.size()) + 1);
         local = mapped.local;
         if (mapped.fresh) {
           rows.codes.push_back(code);

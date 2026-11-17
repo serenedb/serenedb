@@ -112,7 +112,6 @@ class StringWindow {
   uint64_t _begin;
   uint64_t _end;
   std::vector<PooledSegment> _encoded;
-  DedupScratch _dedup;
   Measured _measured[kShapeCount];
   SizeEstimators _size_estimators;
 };

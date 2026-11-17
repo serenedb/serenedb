@@ -39,7 +39,7 @@ Data layout per segment, one block of one column holding a whole row group:
 |   +----------------------------------------------+   |
 |   |   FrameHeader, 48 bytes                      |   |
 |   +----------------------------------------------+   |
-|   value width, stored width, shape, leaf, flags,     |
+|   value width, stored width, leaf level, flags,      |
 |   counts, section offsets, frame size, common        |
 |   divisor (scale)                                    |
 |   +----------------------------------------------+   |

@@ -27,10 +27,8 @@
 namespace irs::codecs {
 
 struct NumericChoice {
-  Shape shape = Shape::Plain;
   bool packed = false;
   bool narrowed = false;
-  ByteCodec leaf = ByteCodec::None;
   bool shuffled = false;
   double bound_ratio = 0;
 };

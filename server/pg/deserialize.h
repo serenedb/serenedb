@@ -41,6 +41,7 @@
 #include <vector>
 
 #include "pg/serialize.h"
+#include "pg/types/json.h"
 #include "pg/types/xml.h"
 
 namespace sdb::pg {
@@ -61,6 +62,7 @@ struct DeserializeContext {
   duckdb::optional_ptr<duckdb::ClientContext> client;
   std::optional<XmlOption> xml_option;
   std::exception_ptr column_error;
+  JsonInput json;
 
   duckdb::Calendar* CalendarFor(std::string_view tz_name);
   XmlOption SessionXmlOption();

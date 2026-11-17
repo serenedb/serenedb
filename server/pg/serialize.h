@@ -54,6 +54,8 @@ enum class VarFormat : int16_t {
   // caller's wrapper). Field/row framing (tab between columns, newline per row)
   // is done by WriteCopyChunk<CopyText>, not the serializer.
   CopyText = 2,
+  CopyCsv = 3,
+  CopyCsvQuoted = 4,
 };
 
 // TODO: consider optimizing with type-switch + UnifiedVectorFormat per column
@@ -100,6 +102,11 @@ struct SerializationContext {
   bool copy_text = false;
   char copy_delim = '\t';
   std::string copy_null = "\\N";
+  std::string copy_newline = "\n";
+  char csv_quote = '"';
+  char csv_escape = '"';
+  bool csv_single_column = false;
+  std::string csv_scratch;
   // Null means UTC (the default) and keeps the cheap ToString + "+00" path.
   duckdb::unique_ptr<duckdb::TimeZone> time_zone;
   duckdb::shared_ptr<const duckdb::ZoneLUT> zone_lut;
@@ -134,6 +141,13 @@ void SetCopyText(SerializationContext& context, char delim,
 
 void SerializeCopyTextHeader(SerializationContext& context,
                              std::span<const duckdb::Identifier> names);
+
+void SetCopyCsv(SerializationContext& context, char delim, char quote,
+                char escape, std::string null_str, std::string new_line,
+                bool single_column);
+
+void SerializeCopyCsvHeader(SerializationContext& context,
+                            std::span<const duckdb::Identifier> names);
 
 void ByteaOutHex(char* buf, std::string_view value);
 

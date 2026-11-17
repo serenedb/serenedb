@@ -26,6 +26,7 @@
 #include <functional>
 #include <iresearch/utils/shared.hpp>
 #include <span>
+#include <string>
 #include <string_view>
 #include <type_traits>
 #include <utility>
@@ -261,6 +262,34 @@ class Writer {
 
   // Bytes written into this message so far (since the checkpoint).
   size_t Written() const { return _written; }
+
+  struct Mark {
+    Chunk* chunk;
+    size_t end;
+    size_t written;
+  };
+
+  Mark Position() const noexcept {
+    return {_buffer->_tail, _buffer->_tail->GetEnd(), _written};
+  }
+
+  bool Contiguous(const Mark& mark) const noexcept {
+    return mark.chunk == _buffer->_tail;
+  }
+
+  std::string_view Since(const Mark& mark) const noexcept {
+    SDB_ASSERT(Contiguous(mark));
+    return {
+      reinterpret_cast<const char*>(mark.chunk->WritableData()) + mark.end,
+      _written - mark.written};
+  }
+
+  void AppendSince(const Mark& mark, std::string& out) const;
+
+  void Truncate(const Mark& mark) {
+    _buffer->Rewind(mark.chunk, mark.end);
+    _written = mark.written;
+  }
 
   // Publish this message; returns the byte count committed. The handle is spent
   // afterwards (the nulled Buffer* is the committed flag -- no rewind).

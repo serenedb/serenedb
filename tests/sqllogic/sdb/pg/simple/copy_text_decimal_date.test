@@ -62,7 +62,8 @@ COPY (SELECT 1, '99999999999999.99', '2024-01-01') TO '${__TEST_DIR__}/ctdd_over
 statement error
 COPY ctdd_typed FROM '${__TEST_DIR__}/ctdd_overflow.txt' (FORMAT text);
 ----
-db error: ERROR: Could not convert string "99999999999999.99" to DECIMAL(15,2)
+db error: ERROR: numeric field overflow
+DETAIL: A field with precision 15, scale 2 must round to an absolute value less than 10^13.
 
 
 statement ok
@@ -92,4 +93,4 @@ COPY (SELECT 1, '1.00', '2023-02-29') TO '${__TEST_DIR__}/ctdd_bad_date.txt' (FO
 statement error
 COPY ctdd_typed FROM '${__TEST_DIR__}/ctdd_bad_date.txt' (FORMAT text);
 ----
-db error: ERROR: COPY FROM: invalid input for column 3
+db error: ERROR: date/time field value out of range: "2023-02-29"

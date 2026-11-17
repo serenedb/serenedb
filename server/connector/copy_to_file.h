@@ -20,11 +20,14 @@
 
 #pragma once
 
+#include <duckdb/common/enums/file_compression_type.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/function/copy_function.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <memory>
+#include <string_view>
 
+#include "formats/text_encoding.h"
 #include "server/utils/message_buffer.h"
 
 namespace sdb::connector {
@@ -43,8 +46,19 @@ class CopyToFileBindData : public duckdb::FunctionData {
   virtual void WriteHeader(duckdb::ClientContext& context,
                            message::Buffer& out) const = 0;
   virtual void WriteTrailer(message::Buffer& out) const = 0;
+  virtual duckdb::FileCompressionType Compression() const {
+    return duckdb::FileCompressionType::AUTO_DETECT;
+  }
+  virtual std::string_view RowSeparator() const { return {}; }
+  virtual formats::TextEncoding Encoding() const {
+    return formats::TextEncoding::Utf8;
+  }
 };
 
 void SetCopyToFileCallbacks(duckdb::CopyFunction& function);
+
+duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> CopyToSelect(
+  duckdb::CopyToSelectInput& input, std::string_view date_format,
+  std::string_view timestamp_format);
 
 }  // namespace sdb::connector

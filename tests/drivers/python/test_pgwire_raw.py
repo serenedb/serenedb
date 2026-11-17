@@ -842,6 +842,10 @@ def test_char_oid18_text_param(conn, param, text):
         (1033, 0, b"garbage", "22P02"),
         (1033, 0, b"nobody_missing=r/postgres", "42704"),
         (2205, 0, b"no_such_table_x", "42P01"),
+        (114, 0, b"x", "22P02"),
+        (114, 0, b"[1] 2", "22P02"),
+        (114, 1, b"{x}", "22P02"),
+        (3802, 1, b"\x01[1 2]", "22P02"),
     ],
 )
 def test_malformed_parameter_is_refused(conn, oid, fmt, param, sqlstate):
@@ -853,19 +857,49 @@ def test_malformed_parameter_is_refused(conn, oid, fmt, param, sqlstate):
 
 
 @pytest.mark.parametrize(
-    "sql, param",
-    [("select $1::int4", b"abc"), ("select $1::date", b"2024-13-01")],
+    "sql, param, sqlstate, message",
+    [
+        ("select $1::int4", b"abc", "22P02",
+         'invalid input syntax for type integer: "abc"'),
+        ("select $1::int2", b"99999", "22003",
+         'value "99999" is out of range for type smallint'),
+        ("select $1::date", b"2024-13-01", "22008",
+         'date/time field value out of range: "2024-13-01"'),
+    ],
 )
-def test_malformed_typed_parameter_names_the_value(conn, sql, param):
+def test_malformed_typed_parameter_names_the_value(conn, sql, param, sqlstate,
+                                                   message):
     conn.parse("", sql, oids=(0,))
     conn.bind("", "", params=(param,))
     conn.execute("")
     conn.sync()
     m = conn.drain_to_ready()
-    assert sqlstates(m) == ["22P02"]
-    assert [e.get("M") for e in errors(m)] == [
-        f'invalid input syntax for bind parameter 1: "{param.decode()}"'
+    assert sqlstates(m) == [sqlstate]
+    assert [(e.get("M"), e.get("W")) for e in errors(m)] == [
+        (message, "unnamed portal parameter $1 = '...'")
     ]
+
+
+@pytest.mark.parametrize(
+    "param, sqlstate, message",
+    [
+        (b"abc", "22P02", 'invalid input syntax for type numeric: "abc"'),
+        (b"123456", "22003", "numeric field overflow"),
+    ],
+)
+def test_malformed_column_parameter_is_refused(conn, param, sqlstate, message):
+    conn.run_ok("drop table if exists raw_bad_numeric_param")
+    conn.run_ok("create table raw_bad_numeric_param (n numeric(5,2))")
+    conn.parse("", "insert into raw_bad_numeric_param values ($1)", oids=(0,))
+    conn.bind("", "", params=(param,))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert sqlstates(m) == [sqlstate], errors(m)
+    assert errors(m)[0]["M"] == message
+    assert first_field(
+        conn.run_ok("select count(*) from raw_bad_numeric_param")) == b"0"
+    conn.run_ok("drop table raw_bad_numeric_param")
 
 
 def test_malformed_map_parameter_is_refused(conn):

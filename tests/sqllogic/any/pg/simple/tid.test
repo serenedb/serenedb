@@ -84,5 +84,5 @@ statement ok
 COPY (SELECT '\x0000000100'::bytea) TO '${__TEST_DIR__}/tid_short.bin' (FORMAT binary);
 
 
-statement error (no data left in message|insufficient data left in message|COPY FROM: invalid binary value in column 1)
+statement error (no data left in message|insufficient data left in message|incorrect binary data format)
 COPY tid_one FROM '${__TEST_DIR__}/tid_short.bin' (FORMAT binary);

@@ -26,11 +26,23 @@
 #include <string_view>
 #include <vector>
 
+#include "formats/field_columns.h"
+
 namespace sdb::formats {
+
+enum class RowError : uint8_t {
+  None,
+  ExtraData,
+  MissingData,
+  MarkerNotAlone,
+};
 
 struct TextRows {
   size_t rows = 0;
   bool marker = false;
+  RowError error = RowError::None;
+  size_t fields = 0;
+  size_t row_start = 0;
 };
 
 class TextSplitter {
@@ -42,6 +54,7 @@ class TextSplitter {
   std::span<std::string_view> Column(size_t column, size_t rows) noexcept {
     return {_fields.data() + column * _capacity, rows};
   }
+  FieldColumns Fields() noexcept { return {_fields.data(), _capacity}; }
   std::string_view& Field(uint32_t index) noexcept { return _fields[index]; }
   std::span<const uint32_t> Escaped() const noexcept { return _escaped; }
   size_t Capacity() const noexcept { return _capacity; }

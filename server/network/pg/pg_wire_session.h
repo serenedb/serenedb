@@ -76,6 +76,7 @@
 #include "catalog/catalog.h"
 #include "connector/duckdb_copy_filesystem.h"
 #include "connector/duckdb_pg_text_copy.h"
+#include "formats/csv_splitter.h"
 #include "network/cancel_registry.h"
 #include "network/connection.h"
 #include "network/cpu_resumer.h"
@@ -134,11 +135,13 @@ struct PgServerContext {
 };
 
 // COPY wire format, from info->format (the lowercased copy-function name).
-// Binary and text are serenedb's own (de)serialized PG COPY formats; parquet
-// needs a seekable file; Other (csv / no FORMAT) goes through DuckDB's writer.
+// Binary, text and csv are serenedb's own (de)serialized PG COPY formats;
+// parquet needs a seekable file; Other (json, csv with DuckDB-only options)
+// goes through DuckDB's copy functions.
 enum class CopyFormat : uint8_t {
   Other,
   Text,
+  Csv,
   Binary,
   Parquet,
 };
@@ -352,7 +355,9 @@ class PgWireSession
   yaclib::Task<> RunCopyToStdoutViaFormat(
     duckdb::unique_ptr<duckdb::SQLStatement> statement, CopyFormat format);
   yaclib::Task<> RunCopyInFeeder(sdb::pg::CopyInBatches& batches,
-                                 CopyFormat format);
+                                 CopyFormat format,
+                                 sdb::formats::CsvDialect dialect,
+                                 sdb::formats::TextEncoding encoding);
   yaclib::Task<> WaitCopyInput();
   void HandleParse(std::string_view payload);
   void HandleBind(std::string_view payload);
@@ -392,7 +397,8 @@ class PgWireSession
     const duckdb::shared_ptr<duckdb::PreparedStatementEntry>& entry = nullptr,
     bool custom = false);
   BindInfo ParseBindVars(std::string_view cursor, const Statement& stmt,
-                         std::string_view statement_name);
+                         std::string_view statement_name,
+                         std::string_view portal_name);
 
   std::string_view DatabaseName() const;
   std::string_view UserName() const;

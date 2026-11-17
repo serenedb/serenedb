@@ -25,12 +25,14 @@
 #include <absl/synchronization/mutex.h>
 
 #include <array>
+#include <bitset>
 #include <cstdint>
 #include <duckdb/common/identifier.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/common/types/string_heap.hpp>
 #include <duckdb/common/types/string_type.hpp>
+#include <duckdb/common/vector_size.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/doc_removal.hpp>
@@ -144,6 +146,7 @@ enum class KeyConflict : uint8_t {
 class ProposedKeys {
  public:
   static constexpr unsigned kShardBits = 6;
+  static constexpr size_t kShards = size_t{1} << kShardBits;
 
   struct Shard {
     mutable absl::Mutex mutex;
@@ -155,15 +158,16 @@ class ProposedKeys {
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex);
   };
 
-  Shard& Of(size_t hash) noexcept { return _shards[ShardIndex(hash)]; }
-  bool Contains(const HashedKey& key) const;
-
- private:
   static constexpr size_t ShardIndex(size_t hash) noexcept {
     return hash >> (64 - kShardBits);
   }
 
-  std::array<Shard, size_t{1} << kShardBits> _shards;
+  Shard& At(size_t index) noexcept { return _shards[index]; }
+  Shard& Of(size_t hash) noexcept { return At(ShardIndex(hash)); }
+  bool Contains(const HashedKey& key) const;
+
+ private:
+  std::array<Shard, kShards> _shards;
 };
 
 class ConflictArbiter {
@@ -176,6 +180,7 @@ class ConflictArbiter {
     std::vector<std::string_view> sorted;
     std::vector<uint32_t> rest;
     std::vector<std::pair<duckdb::idx_t, KeyHolder>> holders;
+    std::vector<uint16_t> by_shard;
   };
 
   ConflictArbiter(duckdb::ClientContext& context, const StoreWrites& w,
@@ -218,6 +223,10 @@ class ConflictArbiter {
     const;
   bool Propose(const Scratch& scratch,
                duckdb::idx_t row) ABSL_NO_THREAD_SAFETY_ANALYSIS;
+  void ProposeByShard(
+    Scratch& scratch, size_t arbiter,
+    const std::bitset<STANDARD_VECTOR_SIZE>& skip, duckdb::idx_t count,
+    absl::FunctionRef<void(duckdb::idx_t row, bool inserted)> proposed);
 
   duckdb::ClientContext& _context;
   const StoreWrites& _w;
@@ -251,6 +260,11 @@ class Writes {
                   absl::FunctionRef<void(const irs::SubReader&,
                                          connector::SearchSinkInsertBaseImpl&)>
                     feed);
+  void TakeIndexedPatches(
+    duckdb::ClientContext& context, Store& store,
+    absl::FunctionRef<void(const irs::DirectoryReader&, size_t,
+                           const irs::DocumentMask&)>
+      feed);
 
   void Adopting(const std::shared_ptr<Store>& store);
   void Rebuilt(const std::shared_ptr<Store>& store,
@@ -289,6 +303,7 @@ class Writes {
 
   ReadView Read(duckdb::ClientContext& context, Store& store);
   Tick PlanVersion(const Store& store);
+  Tick LayoutVersion(const Store& store);
   const irs::DirectoryReader& PinnedReader(duckdb::ClientContext& context,
                                            Store& store);
   void ResetPins(bool all) noexcept;
@@ -322,7 +337,7 @@ class Writes {
   bool CrossTable() const;
   std::vector<absl::Mutex*> CommitMutexes(
     std::span<const std::shared_ptr<Store>> layouts) const;
-  void Apply(Tick tick,
+  void Apply(duckdb::ClientContext& context, Tick tick,
              std::span<const std::shared_ptr<Store>> layouts) noexcept;
   void BeforePublish() noexcept;
   void Finish() noexcept;
@@ -332,6 +347,7 @@ class Writes {
  private:
   StoreWrites& EnsureStoreWrites(const std::shared_ptr<Store>& store);
   StoreWrites* FindStoreWrites(duckdb::idx_t store_id) const;
+  bool HasOwnWrites(const Store& store);
   const StoreWrites::Pin& EnsurePin(duckdb::ClientContext& context,
                                     StoreWrites& w);
   Tick Snapshot() const noexcept {

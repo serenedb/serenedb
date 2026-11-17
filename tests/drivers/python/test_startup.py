@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import base64
 import os
 import platform
 import shutil
+import socket
+import struct
 import subprocess
 import tempfile
 import time
@@ -215,6 +218,81 @@ def test_cleartext_password_on_a_unix_socket(tmp_path: Path,
             pytest.fail(f"{error}\n{server.output()}")
     finally:
         server.stop()
+
+
+def _scram_attempt(port: int, user: str) -> tuple[str, str]:
+    sock = socket.create_connection(("127.0.0.1", port))
+
+    def recv_exact(n: int) -> bytes:
+        buf = b""
+        while len(buf) < n:
+            chunk = sock.recv(n - len(buf))
+            if not chunk:
+                raise EOFError("connection closed")
+            buf += chunk
+        return buf
+
+    def read_msg() -> tuple[bytes, bytes]:
+        t = recv_exact(1)
+        (ln,) = struct.unpack("!I", recv_exact(4))
+        return t, recv_exact(ln - 4)
+
+    def send(t: bytes, payload: bytes) -> None:
+        sock.sendall(t + struct.pack("!I", len(payload) + 4) + payload)
+
+    try:
+        params = b"user\0" + user.encode() + b"\0database\0postgres\0\0"
+        sock.sendall(struct.pack("!II", len(params) + 8, 196608) + params)
+        t, body = read_msg()
+        assert (t, struct.unpack("!I", body[:4])[0]) == (b"R", 10), (user, t,
+                                                                     body)
+        first = b"n,,n=,r=probenonce"
+        send(b"p", b"SCRAM-SHA-256\0" + struct.pack("!i", len(first)) + first)
+        t, body = read_msg()
+        assert (t, struct.unpack("!I", body[:4])[0]) == (b"R", 11), (user, t,
+                                                                     body)
+        fields = dict(part.split("=", 1)
+                      for part in body[4:].decode().split(","))
+        proof = base64.b64encode(bytes(32)).decode()
+        send(b"p", f"c=biws,r={fields['r']},p={proof}".encode())
+        t, body = read_msg()
+        assert t == b"E", (user, t, body)
+        codes = {chr(f[0]): f[1:].decode() for f in body.split(b"\0") if f}
+        return fields["s"], codes["C"]
+    finally:
+        sock.close()
+
+
+def test_scram_hides_which_roles_exist(tmp_path: Path) -> None:
+    datadir = tmp_path / "data"
+    users = ("probe_pw", "probe_nopw", "probe_md5", "probe_missing",
+             "probe_other_missing")
+    server = _Server(datadir)
+    try:
+        assert server.wait_ready(), server.output()
+        with psycopg.connect(host="127.0.0.1", port=server.port,
+                             user="postgres", dbname="postgres",
+                             autocommit=True) as admin:
+            admin.execute("CREATE ROLE probe_pw LOGIN PASSWORD 'probe_secret'")
+            admin.execute("CREATE ROLE probe_nopw LOGIN")
+            admin.execute("CREATE ROLE probe_md5 LOGIN "
+                          "PASSWORD 'md5c0f3ed6e0bd5c24ab7cd2e0a14b9be3f'")
+        attempts = {user: _scram_attempt(server.port, user) for user in users}
+        assert {code for _, code in attempts.values()} == {"28P01"}, attempts
+        assert len({salt for salt, _ in attempts.values()}) == len(users), (
+            attempts)
+        for user in users:
+            assert _scram_attempt(server.port, user) == attempts[user]
+    finally:
+        server.stop()
+
+    restarted = _Server(datadir)
+    try:
+        assert restarted.wait_ready(), restarted.output()
+        for user in users:
+            assert _scram_attempt(restarted.port, user) == attempts[user]
+    finally:
+        restarted.stop()
 
 
 def test_startup_parameters_on_a_unix_socket(tmp_path: Path,

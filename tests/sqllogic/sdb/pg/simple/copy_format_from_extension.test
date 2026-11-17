@@ -100,6 +100,50 @@ a	b
 2	x<tab>y
 
 
+statement count 1
+COPY (SELECT 5 AS a, NULL AS b) TO '${__TEST_DIR__}/cfx_untyped.tsv';
+
+
+query
+SELECT replace(replace(content, chr(9), '<tab>'), chr(10), '<lf>') AS content
+FROM read_text('${__TEST_DIR__}/cfx_untyped.tsv');
+----
+content
+5<tab>\\N<lf>
+
+
+statement count 1
+COPY cfx_text FROM '${__TEST_DIR__}/cfx_untyped.tsv';
+
+
+statement count 1
+COPY (SELECT 6 AS a, NULL AS b) TO '${__TEST_DIR__}/cfx_untyped_nil.tsv' (NULL 'nil');
+
+
+query
+SELECT replace(replace(content, chr(9), '<tab>'), chr(10), '<lf>') AS content
+FROM read_text('${__TEST_DIR__}/cfx_untyped_nil.tsv');
+----
+content
+6<tab>nil<lf>
+
+
+statement count 1
+COPY cfx_text FROM '${__TEST_DIR__}/cfx_untyped_nil.tsv' (NULL 'nil');
+
+
+query
+SELECT a, coalesce(b, '<null>') AS b FROM cfx_text WHERE a > 4 ORDER BY a;
+----
+a	b
+5	<null>
+6	<null>
+
+
+statement ok
+DELETE FROM cfx_text WHERE a > 4;
+
+
 statement count 2
 COPY (SELECT 1 AS a, NULL::TEXT AS b UNION ALL SELECT 2 AS a, 'x' || chr(9) || 'y' AS b ORDER BY a)
 TO '${__TEST_DIR__}/cfx.tsv.gz';

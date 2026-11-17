@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/cleanup/cleanup.h>
+#include <absl/strings/str_cat.h>
 #include <gtest/gtest.h>
 
 #ifdef __linux__
@@ -30,6 +31,7 @@
 #include <atomic>
 #include <chrono>
 #include <duckdb.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parallel/task.hpp>
@@ -43,6 +45,8 @@
 #include <string>
 #include <thread>
 #include <vector>
+
+#include "search/parallel.h"
 
 namespace {
 
@@ -145,6 +149,35 @@ TEST(DuckDBThreads, SessionValueCapsItsQueries) {
   Exec(con, "RESET threads");
   EXPECT_EQ(CurrentThreads(con), duckdb::Value::BIGINT(4));
   EXPECT_EQ(db.NumberOfThreads(), 4U);
+}
+
+TEST(DuckDBThreads, SearchParallelForKeepsToTheSessionValue) {
+  duckdb::DBConfig config;
+  config.options.maximum_threads = 8;
+  duckdb::DuckDB db{nullptr, &config};
+  duckdb::Connection con{db};
+  const auto peak = [&con] {
+    std::atomic<size_t> running{0};
+    std::atomic<size_t> peak{0};
+    sdb::search::ParallelFor(*con.context, 64, [&](size_t) {
+      const auto now = ++running;
+      for (auto seen = peak.load();
+           now > seen && !peak.compare_exchange_weak(seen, now);) {
+      }
+      const auto until =
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(1);
+      while (std::chrono::steady_clock::now() < until) {
+      }
+      --running;
+    });
+    return peak.load();
+  };
+
+  Exec(con, "SET threads = 1");
+  EXPECT_EQ(peak(), 1U);
+
+  Exec(con, "SET threads = 3");
+  EXPECT_LE(peak(), 3U);
 }
 
 class FunctionTask final : public duckdb::Task {
@@ -482,6 +515,65 @@ TEST(DuckDBScheduler, ListedAccountWithoutWorkerArrivesWithItsNextTask) {
   EXPECT_FALSE(queue.Enqueue(producer, &task, 1, false));
   EXPECT_TRUE(queue.HasArrivals());
   EXPECT_TRUE(queue.TakeArrival());
+}
+
+TEST(DuckDBScheduler, LeavingAClaimedAccountWakesAWorkerForTheTaskItKept) {
+  constexpr std::string_view kNoFreeSlot =
+    "scheduler_enqueue_finds_no_free_slot";
+  constexpr std::string_view kWakeInFlight = "scheduler_woken_worker_pauses";
+  if (!duckdb::FaultPoints::Arm(kNoFreeSlot)) {
+    GTEST_SKIP() << "this build has no fault injection";
+  }
+  duckdb::FaultPoints::Disarm(kNoFreeSlot);
+  absl::Cleanup clear = [] { duckdb::FaultPoints::Clear(); };
+  auto db = SchedulerDB(3);
+  auto& scheduler = duckdb::TaskScheduler::GetScheduler(*db->instance);
+  std::this_thread::sleep_for(std::chrono::milliseconds(600));
+  auto starter = scheduler.CreateProducer(
+    scheduler.CreateAccount(duckdb::SchedulerClass::FOREGROUND));
+  auto claimed = scheduler.CreateProducer(
+    scheduler.CreateAccount(duckdb::SchedulerClass::FOREGROUND));
+  auto arriving = scheduler.CreateProducer(
+    scheduler.CreateAccount(duckdb::SchedulerClass::FOREGROUND));
+  std::atomic<std::chrono::steady_clock::time_point> claimed_end{};
+  std::atomic<std::chrono::steady_clock::time_point> kept_start{};
+  std::atomic<bool> kept_ran{false};
+  std::atomic<bool> arriving_started{false};
+  std::atomic<bool> arriving_done{false};
+  scheduler.ScheduleTask(*starter, duckdb::make_shared_ptr<FunctionTask>([&] {
+    duckdb::FaultPoints::Arm(kNoFreeSlot);
+    scheduler.ScheduleTask(*claimed, duckdb::make_shared_ptr<FunctionTask>([&] {
+      scheduler.ScheduleTask(*claimed,
+                             duckdb::make_shared_ptr<FunctionTask>([&] {
+                               kept_start = std::chrono::steady_clock::now();
+                               kept_ran = true;
+                             }));
+      duckdb::FaultPoints::Arm(kWakeInFlight);
+      scheduler.ScheduleTask(*arriving,
+                             duckdb::make_shared_ptr<FunctionTask>([&] {
+                               arriving_started = true;
+                               WaitFor([&] { return kept_ran.load(); });
+                               arriving_done = true;
+                             }));
+      const auto until =
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(20);
+      while (std::chrono::steady_clock::now() < until) {
+      }
+      claimed_end = std::chrono::steady_clock::now();
+    }));
+    duckdb::FaultPoints::Disarm(kNoFreeSlot);
+  }));
+  ASSERT_TRUE(WaitFor([&] { return arriving_started.load(); }));
+  const auto deadline =
+    std::chrono::steady_clock::now() + std::chrono::seconds(1);
+  while (!kept_ran && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  duckdb::FaultPoints::Arm(absl::StrCat(kWakeInFlight, ":release"));
+  ASSERT_TRUE(WaitFor([&] { return arriving_done.load(); }));
+  ASSERT_TRUE(kept_ran);
+  EXPECT_LT(kept_start.load() - claimed_end.load(),
+            std::chrono::milliseconds(100));
 }
 
 TEST(DuckDBScheduler, TwoHeavyQueriesShareWorkers) {

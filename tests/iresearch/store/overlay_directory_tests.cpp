@@ -100,9 +100,6 @@ TEST(overlay_directory_test, never_changes_the_base) {
   EXPECT_FALSE(Exists(overlay, "shadowed"));
   EXPECT_EQ(3, Read(below, "shadowed"));
 
-  const std::array<std::string_view, 1> files{"renamed"};
-  EXPECT_TRUE(overlay.sync(files));
-
   EXPECT_EQ((std::vector<std::string>{"kept", "renamed"}), Names(overlay));
   EXPECT_EQ((std::vector<std::string>{"kept", "removed", "shadowed"}),
             Names(below));

@@ -32,6 +32,8 @@
 #include <string_view>
 #include <vector>
 
+#include "server/utils/striped_counters.h"
+
 namespace sdb::pg {
 
 enum class ProgressCommand : int64_t {
@@ -100,10 +102,12 @@ struct ProgressMetrics {
   std::atomic_int64_t io_type{0};
   std::atomic_int64_t relid{0};
   std::atomic_int64_t current_relid{0};
+  static constexpr size_t kTuples = 0;
+  static constexpr size_t kBytes = 1;
+
   std::atomic_int64_t phase{0};
-  std::atomic_int64_t bytes_processed{0};
+  StripedCounters processed;
   std::atomic_int64_t bytes_total{0};
-  std::atomic_int64_t tuples_processed{0};
   std::atomic_int64_t tuples_total{0};
   std::atomic_int64_t stage{0};
   std::atomic_int64_t stages_total{0};
@@ -128,6 +132,12 @@ struct ProgressMetrics {
   static void Add(std::atomic<int64_t>& slot, int64_t delta) {
     slot.fetch_add(delta, std::memory_order_relaxed);
   }
+  void AddTuples(int64_t tuples) noexcept { processed.Add({tuples}); }
+  void AddProcessed(int64_t tuples, int64_t bytes) noexcept {
+    processed.Add({tuples, bytes});
+  }
+  int64_t Tuples() const noexcept { return processed.Read(kTuples); }
+  int64_t Bytes() const noexcept { return processed.Read(kBytes); }
 
   void Reset();
 };

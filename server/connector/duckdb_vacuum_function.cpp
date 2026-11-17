@@ -227,7 +227,7 @@ void CompactInvertedStorage(search::Store& inverted,
   // and aborts the merge on user cancellation.
   const irs::MergeWriter::FlushProgress tick = [&context, &progress] {
     pg::ProgressMetrics::Add(progress.step, 1);
-    return !context.IsInterrupted();
+    return !context.InterruptPending();
   };
   const search::ManualCompactionSlot slot;
   const irs::AnnBuildEnv* env_ptr = slot.AnnEnv();

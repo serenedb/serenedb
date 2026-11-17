@@ -1,0 +1,156 @@
+statement ok
+CREATE TABLE group_limit_bound_t (a BIGINT, b TEXT, c INT);
+
+
+statement ok
+INSERT INTO group_limit_bound_t SELECT CASE WHEN i < 50 THEN NULL ELSE (i % 1000) * 1000003 END, (i % 7)::TEXT, i FROM generate_series(0, 99999) g(i);
+
+
+query
+EXPLAIN SELECT a, b, count(*) FROM group_limit_bound_t GROUP BY a, b LIMIT 5;
+----
+QUERY PLAN
+╭─ STREAMING_LIMIT ────────────────────────╮
+│ Limit: 5                                 │
+│ ~0 rows                                  │
+╰─────────────────────┬────────────────────╯
+╭─ PROJECTION ────────┴────────────────────╮
+│ Projections:                             │
+│ #0, __internal_decompress_string(#1), #2 │
+│ ~99,999 rows                             │
+╰─────────────────────┬────────────────────╯
+╭─ HASH_GROUP_BY ─────┴────────────────────╮
+│ Groups: #0, #1                           │
+│ Aggregates: count_star()                 │
+│ Group Limit: 5                           │
+│ ~99,999 rows                             │
+╰─────────────────────┬────────────────────╯
+╭─ PROJECTION ────────┴────────────────────╮
+│ Projections:                             │
+│ #0,                                      │
+│ __internal_compress_string_utinyint(#1)  │
+│ ~100,000 rows                            │
+╰─────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ────┴────────────────────╮
+│ Table: group_limit_bound_t               │
+│ Projections: a, b                        │
+│ Column Filter:                           │
+│ optional: Dynamic Filter (a <= ?)        │
+│ ~100,000 rows                            │
+╰──────────────────────────────────────────╯
+
+
+query
+SELECT count(*), bool_and(c = (SELECT count(*) FROM group_limit_bound_t t WHERE t.a IS NOT DISTINCT FROM r.a AND t.b = r.b)) FROM (SELECT a, b, count(*) AS c FROM group_limit_bound_t GROUP BY a, b LIMIT 5) r;
+----
+count	bool_and
+5	t
+
+
+query
+EXPLAIN SELECT a, count(*) FROM group_limit_bound_t GROUP BY a ORDER BY a DESC NULLS LAST LIMIT 3;
+----
+QUERY PLAN
+╭─ TOP_N ───────────────────────────╮
+│ Top: 3                            │
+│ Order By: a DESC                  │
+│ ~3 rows                           │
+╰─────────────────┬─────────────────╯
+╭─ HASH_GROUP_BY ─┴─────────────────╮
+│ Groups: #0                        │
+│ Aggregates: count_star()          │
+│ Group Limit: 3                    │
+│ ~63,212 rows                      │
+╰─────────────────┬─────────────────╯
+╭─ IRESEARCH_SCAN ┴─────────────────╮
+│ Table: group_limit_bound_t        │
+│ Projections: a                    │
+│ Column Filter:                    │
+│ optional: Dynamic Filter (a >= ?) │
+│ ~100,000 rows                     │
+╰───────────────────────────────────╯
+
+
+query
+SELECT a, count(*) FROM group_limit_bound_t GROUP BY a ORDER BY a DESC NULLS LAST LIMIT 3;
+----
+a	count
+999002997	100
+998002994	100
+997002991	100
+
+
+query
+EXPLAIN SELECT a, count(*) FROM group_limit_bound_t GROUP BY a ORDER BY a NULLS FIRST LIMIT 3;
+----
+QUERY PLAN
+╭─ TOP_N ────────────────────────────────────────────╮
+│ Top: 3                                             │
+│ Order By: a ASC                                    │
+│ ~3 rows                                            │
+╰──────────────────────────┬─────────────────────────╯
+╭─ HASH_GROUP_BY ──────────┴─────────────────────────╮
+│ Groups: #0                                         │
+│ Aggregates: count_star()                           │
+│ Group Limit: 3                                     │
+│ ~63,212 rows                                       │
+╰──────────────────────────┬─────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────┴─────────────────────────╮
+│ Table: group_limit_bound_t                         │
+│ Projections: a                                     │
+│ Column Filter:                                     │
+│ optional: ((a IS NULL) OR Dynamic Filter (a <= ?)) │
+│ ~100,000 rows                                      │
+╰────────────────────────────────────────────────────╯
+
+
+query
+SELECT a, count(*) FROM group_limit_bound_t GROUP BY a ORDER BY a NULLS FIRST LIMIT 3;
+----
+a	count
+NULL	50
+0	99
+1000003	99
+
+
+query
+SELECT b, a, count(*) FROM group_limit_bound_t GROUP BY a, b ORDER BY b DESC, a LIMIT 3;
+----
+b	a	count
+6	0	15
+6	1000003	14
+6	2000006	14
+
+
+query
+EXPLAIN SELECT a, count(*) FROM group_limit_bound_t GROUP BY a ORDER BY count(*) DESC, a LIMIT 3;
+----
+QUERY PLAN
+╭─ TOP_N ──────────────────────────╮
+│ Top: 3                           │
+│ Order By: count DESC, a ASC      │
+│ ~3 rows                          │
+╰─────────────────┬────────────────╯
+╭─ PROJECTION ────┴────────────────╮
+│ Projections: CAST(#0 AS BIGINT), │
+│              #1                  │
+│ ~63,212 rows                     │
+╰─────────────────┬────────────────╯
+╭─ HASH_GROUP_BY ─┴────────────────╮
+│ Groups: #0                       │
+│ Aggregates: count_star()         │
+│ ~63,212 rows                     │
+╰─────────────────┬────────────────╯
+╭─ PROJECTION ────┴────────────────╮
+│ Projections: CAST(#0 AS INTEGER) │
+│ ~100,000 rows                    │
+╰─────────────────┬────────────────╯
+╭─ IRESEARCH_SCAN ┴────────────────╮
+│ Table: group_limit_bound_t       │
+│ Projections: a                   │
+│ ~100,000 rows                    │
+╰──────────────────────────────────╯
+
+
+statement ok
+DROP TABLE group_limit_bound_t;

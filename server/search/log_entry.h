@@ -20,22 +20,22 @@
 
 #pragma once
 
-#include <duckdb/common/serializer/deserializer.hpp>
-#include <duckdb/common/serializer/serializer.hpp>
-#include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/catalog/catalog.hpp>
+#include <duckdb/common/serializer/binary_deserializer.hpp>
+#include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/main/client_context.hpp>
-#include <string>
 
+#include "catalog/log.h"
 #include "search/table.h"
 #include "search/table_replay.h"
 
 namespace sdb::search {
 
-std::string LogChunk(duckdb::DataChunk& chunk);
-
-void WriteTableDelta(duckdb::Serializer& object, const TableDelta& delta);
+void WriteTableDelta(duckdb::BinarySerializer& object,
+                     catalog::RecordBuffer& out, const TableDelta& delta);
 
 void ReplayTableDelta(duckdb::ClientContext& context, TableReplay* replay,
-                      duckdb::Catalog* catalog, duckdb::Deserializer& object);
+                      duckdb::Catalog* catalog,
+                      duckdb::BinaryDeserializer& object);
 
 }  // namespace sdb::search

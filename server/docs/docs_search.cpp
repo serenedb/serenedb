@@ -247,6 +247,12 @@ class SpanDirectory final : public irs::Directory {
                             "\": the documentation index is read-only"));
   }
 
+  irs::IndexInput::ptr Finish(irs::IndexOutput::ptr,
+                              irs::IOAdvice) const final {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                    ERR_MSG("the documentation index is read-only"));
+  }
+
   bool mtime(std::time_t&, std::string_view) const noexcept final {
     return false;
   }
@@ -256,8 +262,6 @@ class SpanDirectory final : public irs::Directory {
   bool rename(std::string_view, std::string_view) noexcept final {
     return false;
   }
-
-  bool sync(std::span<const std::string_view>) noexcept final { return true; }
 
  private:
   const IndexFile* Find(std::string_view name) const noexcept {

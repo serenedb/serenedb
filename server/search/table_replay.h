@@ -68,8 +68,8 @@ class TableReplay {
               duckdb::unique_ptr<duckdb::DataChunk> rows);
   void Delete(uint64_t segment, const irs::DocumentMask& docs);
   void DeleteMemory(uint64_t base, const irs::DocumentMask& docs);
-  void Update(uint64_t segment, const irs::FieldPatch& patch);
-  void UpdateMemory(const irs::FieldPatch& patch);
+  void Update(uint64_t segment, std::span<const irs::FieldPatch> patches);
+  void UpdateMemory(std::span<const irs::FieldPatch> patches);
   void SetManifest(std::shared_ptr<const FileManifest> manifest) {
     _replayed = true;
     _manifest = std::move(manifest);

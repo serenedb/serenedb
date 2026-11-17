@@ -60,6 +60,7 @@
 #include "catalog/boot.h"
 #include "catalog/catalog.h"
 #include "catalog/dependency.h"
+#include "catalog/entry/job.h"
 #include "catalog/entry/replication_lsn.h"
 #include "catalog/schema.h"
 #include "pg/catalog/functions/pg_catalog/objectaddress.h"
@@ -490,9 +491,14 @@ void ClusterCatalog::DropDatabase(duckdb::CatalogTransaction transaction,
     return;
   }
   auto& context = transaction.GetContext();
-  duckdb::DatabaseManager::Get(context).DetachDatabase(
-    context, info.GetQualifiedName().Name(),
-    duckdb::OnEntryNotFound::RETURN_NULL);
+  auto& manager = duckdb::DatabaseManager::Get(context);
+  if (auto attached = manager.GetDatabase(info.GetQualifiedName().Name());
+      attached && IsSereneDB(attached->GetCatalog())) {
+    ForEachJob(attached->GetCatalog().Cast<BaseCatalog>(),
+               [](JobCatalogEntry& job) { job.OnDrop(); });
+  }
+  manager.DetachDatabase(context, info.GetQualifiedName().Name(),
+                         duckdb::OnEntryNotFound::RETURN_NULL);
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry>

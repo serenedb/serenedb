@@ -222,6 +222,39 @@ def test_copy_to_stdout(conn: psycopg.Connection, table_name: str,
         _drop(conn, table_name)
 
 
+@pytest.mark.parametrize(
+    "delim,expected",
+    [
+        (":", rb'12\:30\:45:{"a b","c\\"d"}:-5:x\:y,"z":\N' + b"\n"),
+        ('"', rb'12:30:45"{\"a b\",\"c\\\"d\"}"-5"x:y,\"z\""\N' + b"\n"),
+        (",", rb'12:30:45,{"a b"\,"c\\"d"},-5,x:y\,"z",\N' + b"\n"),
+    ],
+    ids=["colon", "quote", "comma"],
+)
+def test_copy_to_stdout_text_delimiter(conn: psycopg.Connection,
+                                       table_name: str, delim: str,
+                                       expected: bytes) -> None:
+    with conn.cursor() as cur:
+        with cur.copy(
+            "COPY (SELECT TIME '12:30:45' AS t, ARRAY['a b', 'c\"d'] AS a, "
+            "-5 AS i, 'x:y,\"z\"' AS s, NULL::INT AS n) "
+            f"TO STDOUT (FORMAT text, DELIMITER '{delim}')"
+        ) as cp:
+            data = b"".join(bytes(chunk) for chunk in cp)
+        assert data == expected
+        cur.execute(f'CREATE TABLE public."{table_name}"'
+                    "(t TIME, a TEXT[], i INT, s TEXT, n INT)")
+        try:
+            with cur.copy(f'COPY public."{table_name}" FROM STDIN '
+                          f"(FORMAT text, DELIMITER '{delim}')") as cp:
+                cp.write(data)
+            cur.execute(f'SELECT t::TEXT, a, i, s, n FROM public."{table_name}"')
+            assert cur.fetchall() == [("12:30:45", ["a b", 'c"d'], -5,
+                                       'x:y,"z"', None)]
+        finally:
+            _drop(conn, table_name)
+
+
 def test_copy_to_stdout_parquet_is_binary_blob(conn: psycopg.Connection,
                                                  table_name: str) -> None:
     _create_int_varchar(conn, table_name)

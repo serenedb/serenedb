@@ -395,6 +395,24 @@ CREATE SEQUENCE {schema}.bind_seq;<NL>SELECT nextval('{schema}.bind_seq') AS v, 
 > 2
 > AB
 
+CREATE TABLE {schema}.bind_infer (id int, salary int, nick text);<NL>INSERT INTO {schema}.bind_infer VALUES (1, 100, 'a'), (2, 200, 'c');<NL>UPDATE {schema}.bind_infer SET salary = salary * $1 WHERE id = $2<NL>\bind 2 1<NL>\g<NL>\echo :ROW_COUNT<NL>BEGIN;<NL>UPDATE {schema}.bind_infer SET salary = salary * $1 WHERE id = $2<NL>\bind 3 2<NL>\g<NL>\echo :ROW_COUNT<NL>COMMIT;<NL>SELECT id, salary + $1 AS s FROM {schema}.bind_infer WHERE nick = ANY($2) ORDER BY id<NL>\bind 1 '{a,b}'<NL>\g<NL>SELECT id FROM {schema}.bind_infer WHERE nick LIKE ($1 || '%') AND salary >= $2 ORDER BY id<NL>\bind a 5<NL>\g<NL>DROP TABLE {schema}.bind_infer;
+----
+> 1
+> 1
+> +----+-----+
+> | id |  s  |
+> +----+-----+
+> |  1 | 201 |
+> +----+-----+
+> (1 row)
+>
+> +----+
+> | id |
+> +----+
+> |  1 |
+> +----+
+> (1 row)
+
 SELECT 'r' AS rowcat, 'c' AS colcat, 1 AS val<NL>\crosstabview
 ----
 > +--------+---+

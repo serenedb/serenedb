@@ -514,6 +514,7 @@ void Register(duckdb::ExtensionLoader& loader, const char* name,
     scalar.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
   }
   scalar.SetVolatile();
+  scalar.SetFallible();
   loader.RegisterFunction(scalar);
 }
 

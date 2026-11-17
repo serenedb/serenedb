@@ -37,12 +37,29 @@ void FinishRoot(CountLocalState& l) {
   }
 }
 
+void Emit(ScanGlobalState& g, CountLocalState& l, duckdb::DataChunk& output) {
+  const auto batch = std::min<uint64_t>(l.local_count, STANDARD_VECTOR_SIZE);
+  l.local_count -= batch;
+  if (batch != 0) {
+    WriteVirtualColumns(g, batch, nullptr, output);
+  }
+  output.SetChildCardinality(batch);
+}
+
 }  // namespace
 
 void RunCountScan(duckdb::TableFunctionInput&, ScanGlobalState& g,
                   CountLocalState& l, duckdb::DataChunk& output) {
-  while (NextLiveUnit(g, l)) {
+  for (;;) {
+    if (l.whole_backlog && l.local_count >= STANDARD_VECTOR_SIZE) {
+      Emit(g, l, output);
+      return;
+    }
+    if (!NextLiveUnit(g, l)) {
+      break;
+    }
     const auto& unit = l.unit;
+    l.whole_backlog = unit.whole;
     const auto& sub = (*g.reader)[unit.seg];
     if (unit.whole && l.seg_cls.active.empty() && !g.ClaimedWhere() &&
         !g.vector_scorer) {
@@ -60,22 +77,15 @@ void RunCountScan(duckdb::TableFunctionInput&, ScanGlobalState& g,
         l.root = std::move(plan);
         l.root_seg = unit.seg;
       }
-      l.local_count += irs::utils::downCast<irs::count::Root>(l.root.get())
-                         ->Run(range.begin, range.end);
+      auto& root = *irs::utils::downCast<irs::count::Root>(l.root.get());
+      l.local_count += root.Run(range.begin, range.end);
+      l.local_count += root.Finish();
       l.root_end = range.end;
     }
     FinishUnit(g, l);
   }
   FinishRoot(l);
-  if (l.local_emitted >= l.local_count) {
-    output.SetChildCardinality(0);
-    return;
-  }
-  const auto batch = std::min<duckdb::idx_t>(l.local_count - l.local_emitted,
-                                             STANDARD_VECTOR_SIZE);
-  WriteVirtualColumns(g, batch, nullptr, output);
-  output.SetChildCardinality(batch);
-  l.local_emitted += batch;
+  Emit(g, l, output);
 }
 
 }  // namespace sdb::connector

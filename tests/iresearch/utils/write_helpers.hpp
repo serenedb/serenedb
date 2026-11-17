@@ -27,12 +27,12 @@
 
 namespace tests {
 
-void WriteZvfloat(irs::DataOutput& out, float_t v);
+void WriteZvfloat(irs::DataOutput& out, float v);
 
-float_t ReadZvfloat(irs::DataInput& in);
+float ReadZvfloat(irs::DataInput& in);
 
-void WriteZvdouble(irs::DataOutput& out, double_t v);
+void WriteZvdouble(irs::DataOutput& out, double v);
 
-double_t ReadZvdouble(irs::DataInput& in);
+double ReadZvdouble(irs::DataInput& in);
 
 }  // namespace tests

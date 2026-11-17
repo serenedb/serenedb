@@ -749,6 +749,11 @@ void RegisterRuleutilsFunctions(duckdb::ExtensionLoader& loader) {
   const auto bigint = duckdb::LogicalType::BIGINT;
   const auto stability = duckdb::FunctionStability::CONSISTENT_WITHIN_QUERY;
 
+  duckdb::ScalarFunction viewdef_by_name{{text}, text, PgGetViewdefByName<>};
+  viewdef_by_name.SetFallible();
+  duckdb::ScalarFunction viewdef_by_name_pretty{
+    {text, boolean}, text, PgGetViewdefByName<bool>};
+  viewdef_by_name_pretty.SetFallible();
   RegisterScalar(
     loader, pg_catalog, "pg_get_viewdef", stability, InitSession,
     {duckdb::ScalarFunction{{oid}, text, OidFunction(ViewDefinition)},
@@ -764,8 +769,7 @@ void RegisterRuleutilsFunctions(duckdb::ExtensionLoader& loader) {
        OidArgFunction<int64_t>([](const auto& session, int64_t view, int64_t) {
          return ViewDefinition(session, view);
        })},
-     duckdb::ScalarFunction{{text}, text, PgGetViewdefByName<>},
-     duckdb::ScalarFunction{{text, boolean}, text, PgGetViewdefByName<bool>}});
+     viewdef_by_name, viewdef_by_name_pretty});
   RegisterScalar(
     loader, pg_catalog, "pg_get_ruledef", stability, InitSession,
     {duckdb::ScalarFunction{

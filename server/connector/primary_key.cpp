@@ -20,11 +20,11 @@
 
 #include "connector/primary_key.h"
 
+#include <duckdb/common/vector/unified_vector_format.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
-#include "connector/key_encoding.h"
 #include "connector/term_dict.h"
 
 namespace sdb::connector::primary_key {
@@ -37,24 +37,6 @@ std::vector<duckdb::LogicalIndex> KeyColumns(
   }
   return key->Cast<duckdb::UniqueConstraint>().GetLogicalIndexes(
     entry.GetColumns());
-}
-
-void PreparePKFormats(duckdb::DataChunk& chunk,
-                      std::span<const PKColumn> columns,
-                      std::vector<duckdb::UnifiedVectorFormat>& formats) {
-  formats.resize(columns.size());
-  for (size_t i = 0; i != columns.size(); ++i) {
-    chunk.data[columns[i].input_col_idx].ToUnifiedFormat(chunk.size(),
-                                                         formats[i]);
-  }
-}
-
-void Create(std::span<const duckdb::UnifiedVectorFormat> formats,
-            std::span<const PKColumn> columns, duckdb::idx_t row,
-            std::string& key) {
-  for (size_t i = 0; i != columns.size(); ++i) {
-    key_encoding::AppendScalarValue(key, formats[i], row, columns[i].type);
-  }
 }
 
 std::vector<KeySlot> KeySlots(const duckdb::TableCatalogEntry& entry,

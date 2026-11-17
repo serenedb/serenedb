@@ -286,6 +286,9 @@ duckdb::unique_ptr<duckdb::FunctionData> TsLexizeBind(
     fn.SetInitStateCallback(InitTsLexizeLocalState);
     return bind;
   }
+  if (!input.TryGetConstant(0)) {
+    input.GetBoundFunction().SetFallible();
+  }
   bind->state = std::move(ctx);
   return bind;
 }

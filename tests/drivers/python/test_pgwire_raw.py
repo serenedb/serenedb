@@ -3705,6 +3705,27 @@ def test_protocol_and_sql_statements_share_names(conn):
     assert sqlstates(_simple(conn, "PREPARE ns_shared_proto AS SELECT 4")) == ["42P05"]
 
 
+def test_sql_prepare_binds_and_describes_over_the_protocol(conn):
+    assert not errors(_simple(conn, "PREPARE ns_sql_bound(int4) AS SELECT $1 + 1 AS n"))
+    conn.describe("S", "ns_sql_bound")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert not errors(m), errors(m)
+    assert parameter_types(m) == [23], parameter_types(m)
+    assert [c[0] for c in row_description(m)] == ["n"], row_description(m)
+    conn.bind("", "ns_sql_bound", params=(b"41",))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert not errors(m), errors(m)
+    assert rows(m) and rows(m)[0].endswith(b"42"), rows(m)
+    m = _simple(conn, "EXECUTE ns_sql_bound(1)")
+    assert not errors(m), errors(m)
+    assert rows(m) and rows(m)[0].endswith(b"2"), rows(m)
+    assert not errors(_simple(conn, "DEALLOCATE ns_sql_bound"))
+    assert _bind_sqlstates(conn, "ns_sql_bound") == ["26000"]
+
+
 def test_prepared_statement_sqlstates(conn):
     assert sqlstates(_simple(conn, "EXECUTE ns_missing")) == ["26000"]
     assert sqlstates(_simple(conn, "DEALLOCATE ns_missing")) == ["26000"]

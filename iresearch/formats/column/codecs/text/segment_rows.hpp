@@ -39,7 +39,8 @@
 
 #include "iresearch/formats/column/codecs/bytes/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
-#include "iresearch/formats/column/codecs/text/segment_buffer.hpp"
+#include "iresearch/formats/column/codecs/text/dedup_scratch.hpp"
+#include "iresearch/formats/column/codecs/text/segment.hpp"
 #include "iresearch/formats/column/codecs/text/string_layout.hpp"
 #include "iresearch/formats/column/codecs/text/string_tuning.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -51,55 +52,6 @@ namespace irs::codecs::text {
 inline constexpr uint64_t kEstimateEvery = 64;
 inline constexpr uint64_t kEstimateSteps = 16;
 inline constexpr uint64_t kDriftMinFraction = 4;
-
-class DedupScratch {
- public:
-  struct LocalCode {
-    uint32_t local;
-    bool fresh;
-  };
-
-  void Begin(size_t entries) {
-    if (_slots.size() != entries) {
-      _slots.assign(entries, Slot{});
-    }
-    ++_epoch;
-  }
-
-  LocalCode Local(uint32_t code, uint32_t next) noexcept {
-    auto& slot = _slots[code - 1];
-    if (slot.epoch == _epoch) {
-      return {slot.local, false};
-    }
-    slot = {_epoch, next};
-    return {next, true};
-  }
-
- private:
-  struct Slot {
-    uint32_t epoch = 0;
-    uint32_t local = 0;
-  };
-
-  std::vector<Slot> _slots;
-  uint32_t _epoch = 0;
-};
-
-struct Segment {
-  explicit Segment(duckdb::BufferManager& buffers) noexcept : bytes{buffers} {}
-
-  Config config;
-  uint64_t begin = 0;
-  uint64_t rows = 0;
-  uint64_t entries = 0;
-  uint64_t nulls = 0;
-  uint64_t input = 0;
-  uint32_t max_len = 0;
-  SegmentBuffer bytes;
-  std::optional<duckdb::BaseStatistics> stats;
-
-  uint64_t Size() const noexcept { return bytes.Size(); }
-};
 
 struct SegmentEntries {
   std::span<const duckdb::string_t> entries;
@@ -217,7 +169,7 @@ class SegmentRows {
     if (code == 0) {
       _stats.SetHasNull();
       ++_nulls;
-      PushCode(0);
+      _codes.push_back(0);
       ++_rows;
       return;
     }
@@ -231,7 +183,7 @@ class SegmentRows {
     } else {
       _stats.UpdateRepeated(value);
     }
-    PushCode(local);
+    _codes.push_back(local);
     ++_rows;
   }
 
@@ -287,8 +239,6 @@ class SegmentRows {
     _raw += size;
     append(value, static_cast<uint32_t>(EntryCount()) - 1);
   }
-
-  IRS_FORCE_INLINE void PushCode(uint32_t code) { _codes.push_back(code); }
 
   duckdb::StatsWriter<duckdb::string_t> _stats;
   const duckdb::LogicalType& _type;

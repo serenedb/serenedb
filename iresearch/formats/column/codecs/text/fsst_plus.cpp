@@ -87,13 +87,13 @@ namespace irs::codecs::text::fsst_plus {
 
 class Prefixes {
  public:
-  bool Open(std::string_view side, uint32_t table_size,
+  bool Open(std::string_view section, uint32_t table_size,
             fsst::Decoder<fsst::Fsst8>& decoder) {
-    if (side.size() < static_cast<uint64_t>(table_size) + sizeof(uint32_t) ||
-        (table_size != 0 && !decoder.Import(side.substr(0, table_size)))) {
+    if (section.size() < static_cast<uint64_t>(table_size) + sizeof(uint32_t) ||
+        (table_size != 0 && !decoder.Import(section.substr(0, table_size)))) {
       return false;
     }
-    const auto rest = side.substr(table_size);
+    const auto rest = section.substr(table_size);
     _count = duckdb::Load<uint32_t>(
       reinterpret_cast<duckdb::const_data_ptr_t>(rest.data()));
     const auto head = sizeof(uint32_t) * (uint64_t{_count} + 1);
@@ -132,7 +132,7 @@ class Prefixes {
   uint32_t _count = 0;
 };
 
-inline std::string_view SideSection(const Header& h,
+inline std::string_view SymbolTable(const Header& h,
                                     duckdb::const_data_ptr_t base) noexcept {
   return {reinterpret_cast<const char*>(base + h.off_symtab), h.symtab_size};
 }
@@ -156,7 +156,7 @@ struct Scan {
   template<typename Frames>
   Scan(const ColumnSegment&, const Frames& s)
     : ids{s.base + s.header.off_lcps, s.header.lcp_width} {
-    SDB_ENSURE(prefixes.Open(SideSection(s.header, s.base),
+    SDB_ENSURE(prefixes.Open(SymbolTable(s.header, s.base),
                              s.header.dictionary_size, decoder),
                "col codec: corrupted symbol table");
     prefix_ends.assign(prefixes.Count() + 1, 0);
@@ -347,7 +347,7 @@ struct Fetch {
 
   void Open(const Header& h, duckdb::const_data_ptr_t base) {
     decoder.emplace();
-    SDB_ENSURE(prefixes.Open(SideSection(h, base), h.dictionary_size, *decoder),
+    SDB_ENSURE(prefixes.Open(SymbolTable(h, base), h.dictionary_size, *decoder),
                "col codec: corrupted symbol table");
     const auto* table = base + h.off_frames;
     groups.Reset(h.frame_count, [&](uint32_t i) {

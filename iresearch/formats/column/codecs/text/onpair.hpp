@@ -40,13 +40,13 @@
 namespace irs::codecs::text::onpair {
 
 inline constexpr size_t kMaxToken = 16;
-inline constexpr size_t kSideHeader = 8;
+inline constexpr size_t kSymbolTableHeader = 8;
 inline constexpr size_t kPadding = 2;
 inline constexpr uint8_t kDictionaryBits = 12;
 
 class Table {
  public:
-  bool Open(std::string_view side);
+  bool Open(std::string_view table);
 
   uint8_t Bits() const noexcept { return _bits; }
   uint64_t Bytes() const noexcept { return _bytes.size(); }
@@ -137,7 +137,7 @@ class Codec {
   void Encode(std::span<const duckdb::string_t> entries,
               std::span<uint16_t> codes, std::span<uint32_t> counts) const;
 
-  void Export(std::string& side) const;
+  void Export(std::string& table) const;
 
   uint8_t Bits() const noexcept { return _bits; }
 

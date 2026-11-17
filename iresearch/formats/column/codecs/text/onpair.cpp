@@ -51,8 +51,8 @@
 
 namespace irs::codecs::text::onpair {
 
-inline std::string_view Side(const Header& h,
-                             duckdb::const_data_ptr_t base) noexcept {
+inline std::string_view SymbolTable(const Header& h,
+                                    duckdb::const_data_ptr_t base) noexcept {
   return {reinterpret_cast<const char*>(base + h.off_symtab), h.symtab_size};
 }
 
@@ -97,7 +97,7 @@ struct Scan {
 
   template<typename Frames>
   Scan(const ColumnSegment&, const Frames& s) {
-    SDB_ENSURE(table.Open(Side(s.header, s.base)),
+    SDB_ENSURE(table.Open(SymbolTable(s.header, s.base)),
                "col codec: corrupted symbol table");
     groups.Reset(static_cast<uint32_t>(s.frames.size()), [&](uint32_t f) {
       return std::pair{s.frames[f].first_entry, s.FrameEnd(f)};
@@ -218,7 +218,8 @@ struct Fetch {
 
   void Open(const Header& h, duckdb::const_data_ptr_t base) {
     table.emplace();
-    SDB_ENSURE(table->Open(Side(h, base)), "col codec: corrupted symbol table");
+    SDB_ENSURE(table->Open(SymbolTable(h, base)),
+               "col codec: corrupted symbol table");
     const auto* frames = base + h.off_frames;
     groups.Reset(h.frame_count, [&](uint32_t i) {
       return std::pair{FrameAt(frames, i).first_entry,
@@ -300,18 +301,19 @@ class Controller {
 
 }  // namespace
 
-bool Table::Open(std::string_view side) {
-  if (side.size() < kSideHeader) {
+bool Table::Open(std::string_view table) {
+  if (table.size() < kSymbolTableHeader) {
     return false;
   }
-  _bits = static_cast<uint8_t>(side[0]);
-  const auto count = duckdb::Load<uint32_t>(
-    reinterpret_cast<duckdb::const_data_ptr_t>(side.data() + sizeof(uint32_t)));
+  _bits = static_cast<uint8_t>(table[0]);
+  const auto count =
+    duckdb::Load<uint32_t>(reinterpret_cast<duckdb::const_data_ptr_t>(
+      table.data() + sizeof(uint32_t)));
   if (_bits == 0 || _bits > 16 || count == 0 ||
       count > (uint64_t{1} << _bits)) {
     return false;
   }
-  const auto rest = side.substr(kSideHeader);
+  const auto rest = table.substr(kSymbolTableHeader);
   const auto nibbles = (uint64_t{count} + 1) / 2;
   if (rest.size() < nibbles) {
     return false;
@@ -586,22 +588,22 @@ void Codec::Encode(std::span<const duckdb::string_t> entries,
   }
 }
 
-void Codec::Export(std::string& side) const {
-  side.assign(kSideHeader, '\0');
-  side[0] = static_cast<char>(_bits);
+void Codec::Export(std::string& table) const {
+  table.assign(kSymbolTableHeader, '\0');
+  table[0] = static_cast<char>(_bits);
   duckdb::Store<uint32_t>(
     static_cast<uint32_t>(_tokens.size()),
-    duckdb::data_ptr_cast(side.data() + sizeof(uint32_t)));
+    duckdb::data_ptr_cast(table.data() + sizeof(uint32_t)));
   const auto nibbles = (_tokens.size() + 1) / 2;
-  const auto at = side.size();
-  side.resize(at + nibbles, '\0');
+  const auto at = table.size();
+  table.resize(at + nibbles, '\0');
   for (size_t t = 0; t < _tokens.size(); ++t) {
-    side[at + t / 2] =
-      static_cast<char>(static_cast<uint8_t>(side[at + t / 2]) |
+    table[at + t / 2] =
+      static_cast<char>(static_cast<uint8_t>(table[at + t / 2]) |
                         ((_tokens[t].size() - 1) << (4 * (t % 2))));
   }
   for (const auto& token : _tokens) {
-    side.append(token);
+    table.append(token);
   }
 }
 

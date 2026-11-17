@@ -3075,7 +3075,8 @@ TEST_F(ColCodecsTest, CorruptedOnPairDictionariesAreRejected) {
      "corrupted symbol table"},
     {"token lengths",
      [](irs::codecs::Header& h, duckdb::data_ptr_t block) {
-       block[h.off_symtab + irs::codecs::text::onpair::kSideHeader] ^= 0x0F;
+       block[h.off_symtab + irs::codecs::text::onpair::kSymbolTableHeader] ^=
+         0x0F;
      },
      "corrupted symbol table"},
   };

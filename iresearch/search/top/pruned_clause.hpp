@@ -108,9 +108,4 @@ class ErasedClause {
   PrunedClause::ptr _node;
 };
 
-class ErasedProbeClause : public ErasedClause {
- public:
-  using ErasedClause::ErasedClause;
-};
-
 }  // namespace irs::top

@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <tuple>
 #include <type_traits>
 #include <utility>
@@ -40,6 +41,12 @@
 
 namespace irs::top {
 
+enum class Walks : uint8_t {
+  Never,
+  Learned,
+  Always,
+};
+
 template<typename Lead, typename Others, typename Joined, typename Excludes,
          typename Table>
 class PrunedConjunction : public Root {
@@ -49,7 +56,7 @@ class PrunedConjunction : public Root {
   static constexpr bool kJoined = !std::is_same_v<Joined, utils::Empty>;
 
   template<typename Init, typename JoinedArgs, typename ExcludesArgs>
-  PrunedConjunction(Table table, ColumnArgsFetcher& fetcher, bool exhaustive,
+  PrunedConjunction(Table table, Walks walks, ColumnArgsFetcher& fetcher,
                     size_t size, Init&& init, JoinedArgs&& joined,
                     ExcludesArgs&& excludes)
     : _others{fetcher, size - 1,
@@ -57,21 +64,22 @@ class PrunedConjunction : public Root {
       _joined{std::make_from_tuple<Joined>(std::forward<JoinedArgs>(joined))},
       _excludes{
         std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))},
-      _exhaustive{exhaustive},
+      _walks{walks},
       _admit{table} {
     SDB_ASSERT(size > 1);
     init(_lead, 0);
   }
 
   template<typename LeadArgs, typename OthersArgs, typename ExcludesArgs>
-  PrunedConjunction(Table table, ColumnArgsFetcher& fetcher, size_t size,
-                    std::piecewise_construct_t, LeadArgs&& lead,
+  PrunedConjunction(Table table, Walks walks, ColumnArgsFetcher& fetcher,
+                    size_t size, std::piecewise_construct_t, LeadArgs&& lead,
                     OthersArgs&& others, ExcludesArgs&& excludes)
     : _lead{std::make_from_tuple<Lead>(std::forward<LeadArgs>(lead))},
       _others{fetcher, size - 1, std::piecewise_construct,
               std::forward<OthersArgs>(others)},
       _excludes{
         std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))},
+      _walks{walks},
       _admit{table} {
     SDB_ASSERT(size > 1);
   }
@@ -81,7 +89,7 @@ class PrunedConjunction : public Root {
 
   void Run(doc_id_t min, doc_id_t max, LoserScoreCollector& collector) final {
     if constexpr (kDocFirst) {
-      if (_exhaustive) {
+      if (_walks == Walks::Always) {
         Walk(_lead.Seek(min), max - 1, std::numeric_limits<score_t>::max(),
              collector);
         FlushBatch(collector);
@@ -106,16 +114,18 @@ class PrunedConjunction : public Root {
       }
 
       if constexpr (kDocFirst) {
-        doc = _lead.Seek(doc);
-        if (threshold <= others_max) {
-          last = std::max(last, std::min(_lead.SpanLast(_span), max - 1));
-          _span = std::min(_span * 2, kMaxSpan);
-          doc = Walk(doc, last, others_max, collector);
+        if (_walks != Walks::Never) {
+          doc = _lead.Seek(doc);
+          if (threshold <= others_max) {
+            last = std::max(last, std::min(_lead.SpanLast(_span), max - 1));
+            _span = std::min(_span * 2, kMaxSpan);
+            doc = Walk(doc, last, others_max, collector);
+            continue;
+          }
+          doc = ScoreOrWalk(doc, last, max, threshold, lead_max, others_max,
+                            collector);
           continue;
         }
-        doc = ScoreOrWalk(doc, last, max, threshold, lead_max, others_max,
-                          collector);
-        continue;
       }
       ScoreFirst(last, others_max, collector);
       doc = _lead.Value();
@@ -134,9 +144,7 @@ class PrunedConjunction : public Root {
   static constexpr uint32_t kMaxInterval = 256;
   static constexpr uint32_t kScoreFirstEvidence = 128;
   static constexpr uint64_t kDocsPerSavedRead = 32;
-  static constexpr bool kDocFirst = requires(Lead& lead) {
-    lead.Freq();
-  } && !std::is_same_v<typename Others::LeafType, ErasedClause>;
+  static constexpr bool kDocFirst = requires(Lead& lead) { lead.Freq(); };
 
   struct Bucket {
     uint64_t sf_range = 0;
@@ -382,7 +390,7 @@ class PrunedConjunction : public Root {
   [[no_unique_address]] utils::Need<kDocFirst, std::array<Bucket, kBuckets>>
     _buckets;
   uint32_t _span = 1;
-  bool _exhaustive = false;
+  Walks _walks;
   [[no_unique_address]] Admit<Table> _admit;
 };
 

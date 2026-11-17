@@ -225,6 +225,7 @@ Root::ptr MakeNestedPrunedConjunctionIn(
   SDB_ASSERT(doc != nullptr);
   const bool posting_lead = clauses.front().terms.size() == 1;
   const auto size = clauses.size();
+  const auto walks = constants ? Walks::Never : Walks::Learned;
   return irs::detail::ResolveInput(*doc, [&]<typename Input> -> Root::ptr {
     using Leaf = PostingPrunedClause<Input>;
     using Group = probe::OrLeaves<Leaf, 0, true>;
@@ -271,7 +272,7 @@ Root::ptr MakeNestedPrunedConjunctionIn(
                          auto&& lead, auto&& others_args) -> Root::ptr {
       if (excludes.empty() && exclude_filters.empty()) {
         return MakeShape<PrunedConjunction, Lead, Others, utils::Empty,
-                         utils::Empty>(ctx, ctx.fetcher, size,
+                         utils::Empty>(ctx, walks, ctx.fetcher, size,
                                        std::piecewise_construct,
                                        std::forward<decltype(lead)>(lead),
                                        others_args, std::forward_as_tuple());
@@ -282,22 +283,16 @@ Root::ptr MakeNestedPrunedConjunctionIn(
         [&]<typename Exclude>(auto&& negated) -> Root::ptr {
           return MakeShape<PrunedConjunction, Lead, Others, utils::Empty,
                            Exclude>(
-            ctx, ctx.fetcher, size, std::piecewise_construct,
+            ctx, walks, ctx.fetcher, size, std::piecewise_construct,
             std::forward<decltype(lead)>(lead), others_args,
             std::forward<decltype(negated)>(negated));
         });
     };
     const auto make = [&]<typename Lead>(auto&& lead) -> Root::ptr {
-      const auto erasing = [&]<typename Clause> {
-        return build.template operator()<Lead, PrunedLeaves<Clause>>(
+      if (constants || phrases) {
+        return build.template operator()<Lead, PrunedLeaves<ErasedClause>>(
           std::forward<decltype(lead)>(lead),
           [&](size_t i) { return std::make_tuple(erased(i + 1)); });
-      };
-      if (constants) {
-        return erasing.template operator()<ErasedClause>();
-      }
-      if (phrases) {
-        return erasing.template operator()<ErasedProbeClause>();
       }
       using Others = PrunedLeaves<Group>;
       return build.template operator()<Lead, Others>(

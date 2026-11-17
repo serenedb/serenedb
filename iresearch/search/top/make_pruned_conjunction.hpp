@@ -20,10 +20,11 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
+
 #include <span>
 #include <tuple>
 #include <utility>
-#include <vector>
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/exclusion_of.hpp"
@@ -59,9 +60,18 @@ Root::ptr MakePrunedConjunctionIn(
     irs::detail::DocOf(irs::detail::FieldOf(terms.front(), nullptr));
   SDB_ASSERT(doc != nullptr);
   const auto size = terms.size();
+  const auto docs = static_cast<doc_id_t>(segment.docs_count());
+  const auto joins = [&](const irs::detail::PostingClause& term) {
+    return !irs::detail::DensePosting(term.state.cookie.docs_count, docs);
+  };
+  const auto joined =
+    static_cast<size_t>(absl::c_count_if(terms.subspan(1), joins));
+  const bool windowed =
+    joined != 0 && irs::detail::DenseConjunction(terms, docs);
+  const auto walks = PruneByBounds(ctx) ? Walks::Learned : Walks::Always;
   return irs::detail::ResolveInput(*doc, [&]<typename Input> -> Root::ptr {
     using Lead = PostingPrunedLead<Input>;
-    using Clause = PostingPrunedClause<Input>;
+    using Fill = irs::detail::PostingFill<Input>;
     const auto init = [&](auto& leaf, size_t i) {
       const auto& posting = terms[i];
       const auto& own = *posting.state.reader;
@@ -69,48 +79,37 @@ Root::ptr MakePrunedConjunctionIn(
       leaf.Prepare(posting.state.cookie, *doc, irs::detail::LayoutOf(own),
                    segment, own, posting.Args(&ctx.fetcher));
     };
-    const auto docs = static_cast<doc_id_t>(segment.docs_count());
-    std::vector<size_t> joined;
-    joined.reserve(size - 1);
-    for (size_t i = 1; i != size; ++i) {
-      if (!irs::detail::DensePosting(terms[i].state.cookie.docs_count, docs)) {
-        joined.push_back(i);
-      }
-    }
-    const auto prepare_joined = [&](irs::detail::PostingFill<Input>& leaf,
-                                    size_t i) {
-      irs::detail::PreparePlain(leaf, terms[joined[i]], nullptr, *doc);
-    };
-    const auto make = [&]<typename Others, typename Joined>(
-                        const auto& joined_args) -> Root::ptr {
-      if (excludes.empty() && exclude_filters.empty()) {
-        return MakeShape<PrunedConjunction, Lead, Others, Joined, utils::Empty>(
-          ctx, ctx.fetcher, !PruneByBounds(ctx), size, init, joined_args,
-          std::forward_as_tuple());
-      }
-      const uint64_t lead = terms.front().state.cookie.docs_count;
-      return irs::detail::BuildBlockExcludes<Root::ptr, kSlice>(
-        excludes, exclude_filters, nullptr, segment, lead, lead,
-        [&]<typename Exclude>(auto&& negated) -> Root::ptr {
-          return MakeShape<PrunedConjunction, Lead, Others, Joined, Exclude>(
-            ctx, ctx.fetcher, !PruneByBounds(ctx), size, init, joined_args,
+    return irs::detail::ResolveArity<1, 1>(
+      size - 1, [&]<size_t N> -> Root::ptr {
+        using Others = PrunedLeaves<PostingPrunedClause<Input>, N>;
+        const auto build = [&]<typename Exclude>(auto&& negated) -> Root::ptr {
+          if (!windowed) {
+            return MakeShape<PrunedConjunction, Lead, Others, utils::Empty,
+                             Exclude>(ctx, walks, ctx.fetcher, size, init,
+                                      std::tuple<>{},
+                                      std::forward<decltype(negated)>(negated));
+          }
+          return MakeShape<PrunedConjunction, Lead, Others,
+                           fill::AndLeaves<Fill, N>, Exclude>(
+            ctx, walks, ctx.fetcher, size, init,
+            std::forward_as_tuple(
+              joined,
+              [&, next = size_t{1}](Fill& leaf, size_t) mutable {
+                while (!joins(terms[next])) {
+                  ++next;
+                }
+                irs::detail::PreparePlain(leaf, terms[next++], nullptr, *doc);
+              }),
             std::forward<decltype(negated)>(negated));
-        });
-    };
-    using Fill = irs::detail::PostingFill<Input>;
-    const bool windowed =
-      !joined.empty() && irs::detail::DenseConjunction(terms, docs);
-    const auto shape = [&]<size_t N>() -> Root::ptr {
-      if (windowed) {
-        return make.template
-        operator()<PrunedLeaves<Clause, N>, fill::AndLeaves<Fill, N>>(
-          std::forward_as_tuple(joined.size(), prepare_joined));
-      }
-      return make.template operator()<PrunedLeaves<Clause, N>, utils::Empty>(
-        std::tuple<>{});
-    };
-    return size == 2 ? shape.template operator()<1>()
-                     : shape.template operator()<0>();
+        };
+        if (excludes.empty() && exclude_filters.empty()) {
+          return build.template operator()<utils::Empty>(
+            std::forward_as_tuple());
+        }
+        const uint64_t lead = terms.front().state.cookie.docs_count;
+        return irs::detail::BuildBlockExcludes<Root::ptr, kSlice>(
+          excludes, exclude_filters, nullptr, segment, lead, lead, build);
+      });
   });
 }
 

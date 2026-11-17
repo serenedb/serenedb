@@ -799,6 +799,17 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
+      "sdb_maxsim_overfetch",
+      {
+        LogicalTypeId::UINTEGER,
+        "How many index entries each query vector of a maxsim() search keeps, "
+        "as a multiple of the LIMIT. Rows reached by no kept entry are not "
+        "candidates, so a larger value raises recall at the cost of latency.",
+        [] { return duckdb::Value::UINTEGER(10); },
+        RejectZero<"sdb_maxsim_overfetch">,
+      },
+    },
+    {
       "sdb_ivf_max_search_fanout",
       {
         LogicalTypeId::INTEGER,

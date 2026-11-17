@@ -59,6 +59,7 @@
 #include "catalog/entry/search_table.h"
 #include "catalog/entry/tokenizer.h"
 #include "connector/column_id.h"
+#include "connector/functions/vector.h"
 #include "connector/geo_validate.h"
 #include "connector/index_expression.hpp"
 #include "connector/term_dict.h"
@@ -709,16 +710,29 @@ void FinishAnnOpclass(const irs::AnnInfo& cfg, bool compression,
   entry.store_values = true;
 }
 
+void ValidateMultiVectorMetric(std::string_view owner_label,
+                               const duckdb::LogicalType& value_type,
+                               const irs::AnnInfo& cfg) {
+  if (IsMultiVector(value_type) &&
+      cfg.metric != irs::VectorMetric::InnerProduct) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("Column '", owner_label,
+                            "': an index over FLOAT[N][] needs metric = '",
+                            kIPMetric, "', which maxsim() scores with"));
+  }
+}
+
 void ApplyIVFOpclass(
   duckdb::ClientContext& context, std::string_view owner_label,
   const duckdb::LogicalType& value_type,
   const std::optional<duckdb::case_insensitive_map_t<duckdb::Value>>& opts,
   catalog::InvertedIndexField& entry) {
   irs::AnnInfo cfg{
-    .d = static_cast<int>(duckdb::ArrayType::GetSize(value_type)),
+    .d = static_cast<int>(VectorDimension(value_type)),
   };
   bool compression = true;
   ApplyIVFOptions(owner_label, *opts, cfg, compression);
+  ValidateMultiVectorMetric(owner_label, value_type, cfg);
   cfg.sample_factor = ReadIVFSampleFactor(context);
   cfg.posting_size = ReadIVFPostingSize(context);
   FinishAnnOpclass(cfg, compression, entry);
@@ -730,10 +744,11 @@ void ApplyHNSWOpclass(
   catalog::InvertedIndexField& entry) {
   irs::AnnInfo cfg{
     .kind = irs::AnnKind::Hnsw,
-    .d = static_cast<int>(duckdb::ArrayType::GetSize(value_type)),
+    .d = static_cast<int>(VectorDimension(value_type)),
   };
   bool compression = true;
   ApplyHNSWOptions(owner_label, *opts, cfg, compression);
+  ValidateMultiVectorMetric(owner_label, value_type, cfg);
   FinishAnnOpclass(cfg, compression, entry);
 }
 
@@ -888,24 +903,13 @@ void ValidateIncludedKey(std::string_view label,
   }
 }
 
-uint32_t VectorDimension(const duckdb::LogicalType& type) noexcept {
-  if (type.id() != duckdb::LogicalTypeId::ARRAY) {
-    return 0;
-  }
-  if (duckdb::ArrayType::GetChildType(type).id() !=
-      duckdb::LogicalTypeId::FLOAT) {
-    return 0;
-  }
-  return static_cast<uint32_t>(duckdb::ArrayType::GetSize(type));
-}
-
 void ValidateVectorKey(std::string_view label, const duckdb::LogicalType& type,
                        std::string_view kind) {
   if (VectorDimension(type) == 0) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
-      ERR_MSG("Column '", label, "' must be FLOAT[N] to use the '", kind,
-              "' opclass, not ", type.ToString()));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+                    ERR_MSG("Column '", label,
+                            "' must be FLOAT[N] or FLOAT[N][] to use the '",
+                            kind, "' opclass, not ", type.ToString()));
   }
 }
 

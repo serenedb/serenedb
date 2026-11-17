@@ -37,6 +37,7 @@
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/index/table_filter_iterator.hpp>
 #include <iresearch/search/ann/collector.hpp>
+#include <iresearch/search/ann/maxsim.hpp>
 #include <iresearch/search/ann/shared_floor.hpp>
 #include <iresearch/search/detail/vector_slots.hpp>
 #include <iresearch/search/filters/filter.hpp>
@@ -447,6 +448,7 @@ struct AnnLocalState final : public RankedLocalState {
   std::vector<std::unique_ptr<irs::detail::RawVectorReader>> rescorers;
   std::vector<irs::doc_id_t> rescore_docs;
   std::vector<irs::score_t> rescore_scores;
+  irs::ann::MaxSimCandidates maxsim;
   ColFilterVerify column_verify;
   irs::ColFilterClassification dual_cls;
   std::vector<irs::ColFilterSpec> column_specs;

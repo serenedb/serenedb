@@ -47,6 +47,20 @@ void NormalizeQuery(std::span<const float> query,
 
 }  // namespace ann
 
+const AnnEntries* AnnIndex::Entries(const SubReader& segment,
+                                    field_id column) const {
+  absl::call_once(_entries_once, [&] {
+    const auto* list = segment.Column(column);
+    const auto* columns = segment.GetColReader();
+    if (!list || !columns || list->Type().id() != duckdb::LogicalTypeId::LIST) {
+      return;
+    }
+    ReadContext ctx{*columns};
+    _entries = std::make_unique<const AnnEntries>(*list, ctx);
+  });
+  return _entries.get();
+}
+
 void AnnIndex::SearchBatch(const SubReader& segment, const PrepareContext& ctx,
                            const VectorFilterOptions& opts,
                            const ann::QueryBatch& batch, uint32_t effort,

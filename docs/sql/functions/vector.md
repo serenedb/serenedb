@@ -14,7 +14,7 @@ Every function and operator here is a plain scalar: pass any two vectors and get
 Lower distance means more similar. `cosine_similarity` and `inner_product` are the exceptions -- there, *higher* means more similar. `negative_inner_product` flips the sign so that lower is again more similar, which is what the `ip` index metric needs.
 
 :::info Vectors
-A vector is a list (`FLOAT[]`, `DOUBLE[]`) or a fixed-size array (`FLOAT[N]`, `DOUBLE[N]`), and both operands of a distance must have the same length -- a mismatch is an error. A `NULL` vector gives `NULL`; a vector with a `NULL` element is an error. Empty lists are at distance `0` from each other and have norm `0`, except under cosine, which gives `NULL`. An indexed vector column must be a fixed-size `FLOAT[N]`; the query vector can be written as `'[1, 0, 0]'`, `[1, 0, 0]` or `[1, 0, 0]::FLOAT[3]`.
+A vector is a list (`FLOAT[]`, `DOUBLE[]`) or a fixed-size array (`FLOAT[N]`, `DOUBLE[N]`), and both operands of a distance must have the same length -- a mismatch is an error. A `NULL` vector gives `NULL`; a vector with a `NULL` element is an error. Empty lists are at distance `0` from each other and have norm `0`, except under cosine, which gives `NULL`. An indexed vector column must be a fixed-size `FLOAT[N]`, or a list of them (`FLOAT[N][]`) for [`maxsim`](#maxsim); the query vector can be written as `'[1, 0, 0]'`, `[1, 0, 0]` or `[1, 0, 0]::FLOAT[3]`.
 :::
 
 | Function / operator | Metric | Direction | Description |
@@ -26,6 +26,7 @@ A vector is a list (`FLOAT[]`, `DOUBLE[]`) or a fixed-size array (`FLOAT[N]`, `D
 | [`cosine_similarity(a, b)`](#cosine_similarity) | cosine | **higher = closer** | Cosine of the angle between the vectors. |
 | [`inner_product(a, b)`](#inner_product) | dot | **higher = closer** | Dot product. |
 | [`negative_inner_product(a, b)`](#negative_inner_product) | ip | lower = closer | `-inner_product`; backs the `ip` index metric. |
+| [`maxsim(document, query)`](#maxsim) | dot | **higher = closer** | Sum over the query vectors of the best dot product with a document vector. |
 | [`a <-> b`](#distance-operators) | L2 | lower = closer | Same as `l2_distance`. |
 | [`a <+> b`](#distance-operators) | L1 | lower = closer | Same as `l1_distance`. |
 | [`a <=> b`](#distance-operators) | cosine | lower = closer | Same as `cosine_distance`. |
@@ -137,6 +138,18 @@ The dot product of the two vectors. **Higher** means more similar; for unit-leng
 | `a`, `b` | vectors of the same length |
 
 <SqlLogicTest id="sql/functions/full_text_search/negative_inner_product" />
+
+#### `maxsim(document, query)` {#maxsim}
+
+The late-interaction score of two lists of vectors: for each vector of `query`, the largest inner product with any vector of `document`, summed over `query`. **Higher** means more similar. A `NULL` or empty list on either side gives `NULL`; a `NULL` vector or element in either list is an error. The vectors on both sides must have the same length; an untyped list literal such as `[[1, 0], [0, 1]]` takes the other side's type.
+
+| Operand | Type |
+| :--- | :--- |
+| `document`, `query` | lists of fixed-size vectors of the same length (`FLOAT[N][]` or `DOUBLE[N][]`) |
+
+`ORDER BY maxsim(column, query) DESC LIMIT k` over a `FLOAT[N][]` column with an `ip` vector index is answered by the index -- see [Multi-vector search](../indexes/inverted/vector-search.md#maxsim).
+
+<SqlLogicTest id="sql/functions/full_text_search/maxsim" />
 
 ## Distance operators: `<->`, `<+>`, `<=>`, `<#>` {#distance-operators}
 

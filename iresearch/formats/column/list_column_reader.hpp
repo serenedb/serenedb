@@ -50,6 +50,11 @@ class ListColumnReader final : public ColumnReader {
     return ScanCount(s, result, count, /*result_offset=*/0);
   }
 
+  duckdb::idx_t ScanEnds(ScanState& s, duckdb::Vector& ends,
+                         duckdb::idx_t count) const {
+    return ScanVector(s, ends, count, duckdb::ScanVectorType::SCAN_FLAT_VECTOR);
+  }
+
   duckdb::idx_t ScanCount(ScanState& s, duckdb::Vector& result,
                           duckdb::idx_t count,
                           duckdb::idx_t result_offset) const final {

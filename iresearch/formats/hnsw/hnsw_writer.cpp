@@ -1316,8 +1316,10 @@ bool HnswWriter::TrainQuantizer(const ColumnReader& col, ReadContext& ctx,
   return true;
 }
 
-yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
+yaclib::Task<> HnswWriter::Compute(const ColumnReader& column, ReadContext& ctx,
                                    const AnnBuildEnv* env) {
+  const bool multi = column.Type().id() == duckdb::LogicalTypeId::LIST;
+  const auto& col = multi ? *column.Child() : column;
   _d = static_cast<uint32_t>(col.ArraySize());
   _rows = col.RowCount();
   SDB_ASSERT(_d != 0);
@@ -1339,7 +1341,8 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
   const auto ef = _info.ef_construction;
   SDB_ASSERT(m != 0 && ef != 0);
   const auto donor =
-    PickMergeDonor(_merge_sources, _info.index_id, _d, _info.metric, m);
+    multi ? MergeDonor{}
+          : PickMergeDonor(_merge_sources, _info.index_id, _d, _info.metric, m);
 
   if (_qw && RotatesCodes(_info, _d)) {
     auto vectors =

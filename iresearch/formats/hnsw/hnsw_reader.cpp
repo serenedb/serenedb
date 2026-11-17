@@ -183,8 +183,30 @@ void HnswIndex::SearchBatch(const SubReader& segment, const PrepareContext& ctx,
   if (Empty()) {
     return;
   }
-  if (opts.dual) {
+  const auto* entries = Entries(segment, opts.column_id);
+  if (opts.dual && !entries) {
     AnnIndex::SearchBatch(segment, ctx, opts, batch, effort, collectors);
+    return;
+  }
+  if (entries) {
+    std::optional<detail::LazyBitset> admitted;
+    if (opts.inner || HasRemovals(segment.Meta())) {
+      QueryBuilder::ptr inner;
+      if (!PrepareInnerFilter(opts.inner, segment, ctx, inner)) {
+        return;
+      }
+      admitted.emplace(detail::MakeDocSet(
+        inner.get(), static_cast<doc_id_t>(segment.docs_count())));
+      admitted->Reach(admitted->End());
+    }
+    const auto data = Load(segment);
+    if (!data) {
+      return;
+    }
+    HnswSearchBatch(segment, *data, opts, _meta.header.record_size,
+                    std::max(opts.ef_search, opts.min_ef), batch, ctx.boost,
+                    collectors, entries,
+                    admitted ? admitted->Words() : nullptr);
     return;
   }
   if (opts.inner || HasRemovals(segment.Meta())) {
@@ -230,7 +252,7 @@ void HnswIndex::SearchBatch(const SubReader& segment, const PrepareContext& ctx,
   SDB_ASSERT(opts.ef_search != 0);
   HnswSearchBatch(segment, *data, opts, _meta.header.record_size,
                   std::max(opts.ef_search, opts.min_ef), batch, ctx.boost,
-                  collectors);
+                  collectors, nullptr, nullptr);
 }
 
 AnnExactCodes HnswIndex::PrepareExact(const SubReader& segment,

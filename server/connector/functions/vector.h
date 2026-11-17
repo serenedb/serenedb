@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <cstdint>
+#include <duckdb/common/types.hpp>
 #include <string_view>
 
 namespace sdb::connector {
@@ -37,5 +39,23 @@ inline constexpr std::string_view kNegativeIP = "negative_inner_product";
 inline constexpr std::string_view kNegativeIPDistanceOp = "<#>";
 inline constexpr std::string_view kL1Norm = "l1_norm";
 inline constexpr std::string_view kL2Norm = "l2_norm";
+inline constexpr std::string_view kMaxSim = "maxsim";
+
+inline bool IsMultiVector(const duckdb::LogicalType& type) noexcept {
+  return type.id() == duckdb::LogicalTypeId::LIST &&
+         duckdb::ListType::GetChildType(type).id() ==
+           duckdb::LogicalTypeId::ARRAY;
+}
+
+inline uint32_t VectorDimension(const duckdb::LogicalType& type) noexcept {
+  const auto& vector =
+    IsMultiVector(type) ? duckdb::ListType::GetChildType(type) : type;
+  if (vector.id() != duckdb::LogicalTypeId::ARRAY ||
+      duckdb::ArrayType::GetChildType(vector).id() !=
+        duckdb::LogicalTypeId::FLOAT) {
+    return 0;
+  }
+  return static_cast<uint32_t>(duckdb::ArrayType::GetSize(vector));
+}
 
 }  // namespace sdb::connector

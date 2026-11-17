@@ -23,7 +23,9 @@
 #include <algorithm>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/ann/family.hpp>
+#include <iresearch/search/filters/vector_similarity_filter.hpp>
 #include <iresearch/search/queries/vector_similarity_query.hpp>
+#include <iresearch/utils/down_cast.hpp>
 #include <iterator>
 
 #include "connector/scan/scan_plan.h"
@@ -47,9 +49,20 @@ irs::detail::RawVectorReader* SegmentRescorer(const ScanGlobalState& g,
     if (!column || !columns) {
       return nullptr;
     }
-    reader = std::make_unique<irs::detail::RawVectorReader>(
-      *column, *columns, static_cast<uint32_t>(vs.query_vector.size()));
-    reader->SetQuery(vs.query_vector, vs.metric);
+    if (!vs.maxsim) {
+      reader = std::make_unique<irs::detail::RawVectorReader>(
+        *column, *columns, static_cast<uint32_t>(vs.query_vector.size()));
+      reader->SetQuery(vs.query_vector, vs.metric);
+      return reader.get();
+    }
+    const auto* ann = sub.Ann(vs.ann_id);
+    const auto* entries = ann ? ann->Entries(sub, vs.field_id) : nullptr;
+    if (!entries) {
+      return nullptr;
+    }
+    reader = std::make_unique<irs::detail::RawVectorReader>(*column->Child(),
+                                                            *columns, vs.dims);
+    reader->SetMaxSim(vs.query_vector, *entries);
   }
   return reader.get();
 }
@@ -198,6 +211,33 @@ void FlushSegment(ScanGlobalState& g, AnnLocalState& l) {
   l.collector->Clear();
 }
 
+void CollectMaxSim(ScanGlobalState& g, AnnLocalState& l) {
+  const auto& seg = (*g.reader)[l.unit.seg];
+  const auto& opts =
+    irs::utils::downCast<irs::ByVectorSimilarity>(*g.filter).options();
+  const auto* ann = seg.Ann(opts.ann_id);
+  const auto* entries = ann ? ann->Entries(seg, opts.column_id) : nullptr;
+  if (!entries) {
+    return;
+  }
+  const uint32_t ends[] = {
+    static_cast<uint32_t>(opts.query.size() / ann->Dim())};
+  l.maxsim.Search(*ann, *entries, seg, {}, opts, opts.nprobe, opts.query, ends);
+  const auto bounds = l.maxsim.Group(0);
+  l.rescore_docs.resize(bounds.size());
+  l.rescore_scores.resize(bounds.size());
+  for (size_t i = 0; i < bounds.size(); ++i) {
+    l.rescore_docs[i] = bounds[i].doc;
+    l.rescore_scores[i] = bounds[i].upper;
+  }
+  auto n = static_cast<uint32_t>(bounds.size());
+  if (auto* table = BeginVerify(l.col_verify, seg, g, l); table && n != 0) {
+    table->Rewind();
+    n = table->Narrow(l.rescore_docs.data(), l.rescore_scores.data(), n);
+  }
+  l.collector->AppendBounds(l.rescore_docs.data(), l.rescore_scores.data(), n);
+}
+
 void CollectUnit(ScanGlobalState& g, AnnLocalState& l) {
   const auto& unit = l.unit;
   if (l.pool_seg != unit.seg) {
@@ -205,6 +245,13 @@ void CollectUnit(ScanGlobalState& g, AnnLocalState& l) {
       FlushSegment(g, l);
     }
     l.pool_seg = unit.seg;
+  }
+  if (g.vector_scorer->maxsim && !g.vector_scorer->exact) {
+    if (l.root_seg != unit.seg) {
+      l.root_seg = unit.seg;
+      CollectMaxSim(g, l);
+    }
+    return;
   }
   if (l.root_seg != unit.seg) {
     const auto& seg = (*g.reader)[unit.seg];
@@ -310,7 +357,7 @@ void FillShortAnswer(ScanGlobalState& g, RankedLocalState& l) {
   auto& t = g.topk;
   const auto* vs = g.vector_scorer;
   if (t.answer.size() >= t.limit || g.has_lookup_filter ||
-      vs->kind != irs::AnnKind::Ivf || vs->exact ||
+      (vs->kind != irs::AnnKind::Ivf && !vs->maxsim) || vs->exact ||
       vs->radius != std::numeric_limits<float>::max()) {
     return;
   }
@@ -378,7 +425,7 @@ void InitAnnGlobal(ScanGlobalState& g, duckdb::ClientContext& /*context*/) {
   double pool = k;
   if (!vs->exact) {
     a.rescore =
-      vs->rescore_width > 0.f ||
+      vs->maxsim || vs->rescore_width > 0.f ||
       (g.has_lookup_filter && vs->quant != irs::VectorQuantization::None);
     if (g.has_lookup_filter) {
       constexpr double kLookupFilterOverfetch = 4.0;

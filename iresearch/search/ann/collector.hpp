@@ -63,6 +63,18 @@ class Collector {
     }
   }
 
+  void AppendBounds(const doc_id_t* docs, const score_t* upper, size_t n) {
+    const auto floor = Floor();
+    for (size_t i = 0; i < n; ++i) {
+      if (upper[i] >= floor) {
+        _hits.push_back({.score = upper[i], .doc = docs[i]});
+      }
+    }
+    if (_hits.size() >= _prune_at) {
+      Prune();
+    }
+  }
+
   std::span<ScoreDoc> Flush() {
     Merge();
     return _hits;

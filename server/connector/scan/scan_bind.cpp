@@ -312,6 +312,7 @@ void RefreshVectorKnobs(VectorScorerOptions& vs,
     mode("sdb_hnsw_column_filter", irs::HnswColumnFilter::Auto);
   vs.exact = GetBoolSetting(context, "sdb_ann_force_exact");
   vs.rescore_width = AnnRescoreWidth(context, vs);
+  vs.maxsim_overfetch = count("sdb_maxsim_overfetch");
 }
 
 TsDictRequest& TsDictSpec::For(irs::field_id field_id) {
@@ -755,6 +756,7 @@ irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
     o->metric = vs.metric;
     o->radius = radius;
     o->inclusive = vs.radius_inclusive;
+    o->maxsim = vs.maxsim;
     o->inner = std::move(inner);
     return f;
   }
@@ -779,6 +781,8 @@ irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
   o->hnsw_column_filter = vs.hnsw_column_filter;
   o->index_only = std::move(index_only);
   o->dual = dual;
+  o->maxsim = vs.maxsim;
+  o->maxsim_depth = vs.maxsim ? vs.top_k * vs.maxsim_overfetch : 0;
   return f;
 }
 

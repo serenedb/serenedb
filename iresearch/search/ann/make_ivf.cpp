@@ -33,7 +33,7 @@ class IvfScanRoot : public Root {
               irs::detail::TableFilter* table)
     : _state{query.State()},
       _scan{MakeQuantizerReader(_state.codebook), score.boost,
-            _state.rescore_width} {
+            _state.rescore_width, nullptr} {
     _scan.Score(score, query.Segment(), _state.reader->meta(), table);
     const bool centroids =
       _state.cluster_centroids.size() == _state.cookies.size() * _state.d;

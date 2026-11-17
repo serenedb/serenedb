@@ -17,10 +17,17 @@ machine's load average when the run started, and the recall against exact.
 With --cache cold, every timed run starts on a restarted serened whose datadir
 was dropped from the page cache; every line gives the bytes serened read.
 
+With --tokens N, every item is a list of N unit token vectors and every user a
+list of --query-tokens of them, and the three modes rank by maxsim() through
+an `ip` index. Synthetic tokens scatter around a per-row center; dataset
+tokens are consecutive embeddings.
+
     scripts/perf/ann_join/bench.py --bin build_perf/bin/serened \
         --dataset ~/vecbench/dbpedia.parquet --rows 90000 --queries 1000
     scripts/perf/ann_join/bench.py --bin build_perf/bin/serened \
         --dim 128 --rows 1000000 --queries 10000 --index hnsw
+    scripts/perf/ann_join/bench.py --bin build_perf/bin/serened \
+        --dim 128 --rows 20000 --queries 500 --tokens 24 --query-tokens 8
 """
 
 import argparse
@@ -75,32 +82,68 @@ def synthetic(rows, dim, clusters, seed):
     return centers[which] + 0.5 * noise
 
 
-def write_parquet(path, ids, vectors):
+def write_parquet(path, ids, vectors, tokens=0):
     dim = vectors.shape[1]
     emb = pa.FixedSizeListArray.from_arrays(
         pa.array(vectors.reshape(-1), type=pa.float32()), dim
     )
+    if tokens:
+        offsets = pa.array(np.arange(len(ids) + 1) * tokens, type=pa.int32())
+        emb = pa.ListArray.from_arrays(offsets, emb)
     pq.write_table(pa.table({"id": pa.array(ids, type=pa.int64()), "emb": emb}), path)
+
+
+def read_dataset(path, total):
+    table = pq.read_table(path, columns=["emb"])
+    if table.num_rows < total:
+        sys.exit(f"{path} has {table.num_rows} rows, {total} needed")
+    emb = table.column("emb").combine_chunks().slice(0, total)
+    dim = len(emb[0])
+    flat = np.asarray(emb.flatten().to_numpy(zero_copy_only=False), dtype=np.float32)
+    return flat.reshape(total, dim)
+
+
+def token_vectors(args):
+    items = args.rows * args.tokens
+    users = args.queries * args.query_tokens
+    if args.dataset:
+        vectors = read_dataset(args.dataset, items + users)
+    else:
+        rng = np.random.default_rng(args.seed + 1)
+        centers = synthetic(args.rows + args.queries, args.dim, args.clusters, args.seed)
+        owner = np.concatenate([
+            np.repeat(np.arange(args.rows), args.tokens),
+            args.rows + np.repeat(np.arange(args.queries), args.query_tokens),
+        ])
+        noise = rng.standard_normal((items + users, args.dim)).astype(np.float32)
+        vectors = centers[owner] + noise
+    vectors /= np.linalg.norm(vectors, axis=1, keepdims=True)
+    return vectors[:items], vectors[items:].reshape(args.queries, args.query_tokens, -1)
 
 
 def prepare_data(args, workdir):
     items_path = os.path.join(workdir, "items.parquet")
     users_path = os.path.join(workdir, "users.parquet")
+    if args.tokens:
+        items, users = token_vectors(args)
+        write_parquet(items_path, np.arange(args.rows), items, args.tokens)
+        write_parquet(
+            users_path, np.arange(args.queries), users.reshape(-1, users.shape[2]),
+            args.query_tokens,
+        )
+        return users.shape[2], items_path, users_path, users
     if args.dataset:
-        table = pq.read_table(args.dataset, columns=["emb"])
-        total = args.rows + args.queries
-        if table.num_rows < total:
-            sys.exit(f"{args.dataset} has {table.num_rows} rows, {total} needed")
-        emb = table.column("emb").combine_chunks().slice(0, total)
-        dim = len(emb[0])
-        flat = np.asarray(emb.flatten().to_numpy(zero_copy_only=False), dtype=np.float32)
-        vectors = flat.reshape(total, dim)
+        vectors = read_dataset(args.dataset, args.rows + args.queries)
     else:
-        dim = args.dim
-        vectors = synthetic(args.rows + args.queries, dim, args.clusters, args.seed)
+        vectors = synthetic(args.rows + args.queries, args.dim, args.clusters, args.seed)
+    dim = vectors.shape[1]
     write_parquet(items_path, np.arange(args.rows), vectors[: args.rows])
     write_parquet(users_path, np.arange(args.queries), vectors[args.rows :])
     return dim, items_path, users_path, vectors[args.rows :]
+
+
+def vector_literal(v):
+    return "[" + ",".join(f"{x:.7g}" for x in v) + "]"
 
 
 def evict(datadir):
@@ -186,8 +229,15 @@ def main():
         "--small", type=int, default=0,
         help="also run join_small and loop_small over the first N users",
     )
+    ap.add_argument(
+        "--tokens", type=int, default=0,
+        help="token vectors per item: rank by maxsim() over an ip index",
+    )
+    ap.add_argument("--query-tokens", type=int, default=8)
     args = ap.parse_args()
     caches = args.cache.split(",")
+    if args.tokens:
+        args.metric = "ip"
 
     op = {"l2": "<->", "ip": "<#>", "cosine": "<=>"}[args.metric]
     workdir = tempfile.mkdtemp(prefix="ann_join_")
@@ -216,13 +266,14 @@ def main():
         server["proc"] = start_server(args.bin, datadir, port, log)
         connect()
 
+    vector_type = f"FLOAT[{dim}][]" if args.tokens else f"FLOAT[{dim}]"
     try:
         conn = connect()
-        conn.execute(f"CREATE TABLE items (id BIGINT PRIMARY KEY, emb FLOAT[{dim}])")
+        conn.execute(f"CREATE TABLE items (id BIGINT PRIMARY KEY, emb {vector_type})")
         conn.execute(f"INSERT INTO items SELECT id, emb FROM read_parquet('{items_path}')")
-        conn.execute(f"CREATE TABLE users (id BIGINT, emb FLOAT[{dim}])")
+        conn.execute(f"CREATE TABLE users (id BIGINT, emb {vector_type})")
         conn.execute(f"INSERT INTO users SELECT id, emb FROM read_parquet('{users_path}')")
-        conn.execute(f"CREATE TABLE users_small (id BIGINT, emb FLOAT[{dim}])")
+        conn.execute(f"CREATE TABLE users_small (id BIGINT, emb {vector_type})")
         conn.execute(
             f"INSERT INTO users_small SELECT id, emb FROM "
             f"read_parquet('{users_path}') WHERE id < {args.small}"
@@ -240,19 +291,30 @@ def main():
         print(json.dumps({"event": "built", "seconds": round(build, 3)}), flush=True)
 
         def join_sql(kind, users="users"):
+            rank = (
+                "SIMILARITY maxsim(i.emb, u.emb)" if args.tokens
+                else f"DISTANCE u.emb {op} i.emb"
+            )
             return (
                 f"SELECT u.id, i.id FROM {users} u JOIN items_idx i {kind}NEAREST "
-                f"{args.k} BY DISTANCE u.emb {op} i.emb"
+                f"{args.k} BY {rank}"
             )
 
         _, exact_rows = timed(lambda: conn.execute(join_sql("EXACT ")).fetchall())
         truth = neighbours(exact_rows)
         small_truth = {u: truth[u] for u in range(min(args.small, args.queries))}
-        knn = (
-            f"SELECT id FROM items_idx ORDER BY emb {op} %s::FLOAT[{dim}] "
-            f"LIMIT {args.k}"
+        order = (
+            f"maxsim(emb, %s::{vector_type}) DESC" if args.tokens
+            else f"emb {op} %s::{vector_type}"
         )
-        literals = ["[" + ",".join(f"{x:.7g}" for x in v) + "]" for v in user_vectors]
+        knn = f"SELECT id FROM items_idx ORDER BY {order} LIMIT {args.k}"
+        if args.tokens:
+            literals = [
+                "[" + ",".join(vector_literal(t) for t in tokens) + "]"
+                for tokens in user_vectors
+            ]
+        else:
+            literals = [vector_literal(v) for v in user_vectors]
 
         def run_join(users="users"):
             return server["conn"].execute(join_sql("", users)).fetchall()
@@ -322,6 +384,8 @@ def main():
                         "rows": args.rows,
                         "queries": len(expected),
                         "dim": dim,
+                        "tokens": args.tokens,
+                        "query_tokens": args.query_tokens if args.tokens else 0,
                         "k": args.k,
                     }), flush=True)
         if profiler:

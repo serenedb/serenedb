@@ -38,6 +38,7 @@ struct ByVectorExactOptions {
   VectorMetric metric = VectorMetric::L2Sqr;
   float radius = std::numeric_limits<float>::max();
   bool inclusive = false;
+  bool maxsim = false;
   std::shared_ptr<const Filter> inner;
 
   bool operator==(const ByVectorExactOptions& rhs) const noexcept = default;

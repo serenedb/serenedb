@@ -20,11 +20,14 @@
 
 #pragma once
 
+#include <absl/base/call_once.h>
+
 #include <cstdint>
 #include <memory>
 #include <span>
 #include <vector>
 
+#include "iresearch/formats/ann_entries.hpp"
 #include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/formats/ivf/quantizer.hpp"
 #include "iresearch/index/column_info.hpp"
@@ -62,12 +65,16 @@ struct VectorFilterOptions {
   HnswColumnFilter hnsw_column_filter = HnswColumnFilter::Auto;
   std::shared_ptr<const Filter> inner;
   std::shared_ptr<const Filter> index_only;
+  uint32_t maxsim_depth = 0;
   bool dual = false;
+  bool maxsim = false;
+  bool exact = false;
 
   bool operator==(const VectorFilterOptions& rhs) const noexcept = default;
 };
 
-struct AnnIndex {
+class AnnIndex {
+ public:
   virtual ~AnnIndex() = default;
 
   virtual AnnKind Kind() const noexcept = 0;
@@ -103,6 +110,12 @@ struct AnnIndex {
                                      VectorMetric /*metric*/) const {
     return {};
   }
+
+  const AnnEntries* Entries(const SubReader& segment, field_id column) const;
+
+ private:
+  mutable absl::once_flag _entries_once;
+  mutable std::unique_ptr<const AnnEntries> _entries;
 };
 
 inline bool PrepareInnerFilter(const std::shared_ptr<const Filter>& inner,

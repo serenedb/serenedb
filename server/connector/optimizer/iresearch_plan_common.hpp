@@ -55,6 +55,7 @@ struct AnnFunctionInfo {
   duckdb::OrderType order;
   bool is_norm;
   connector::ScoreEmit score_emit;
+  bool maxsim = false;
 };
 
 std::optional<AnnFunctionInfo> GetAnnFunctionInfo(

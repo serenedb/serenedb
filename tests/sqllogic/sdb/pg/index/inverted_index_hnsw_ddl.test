@@ -77,7 +77,7 @@ statement error
 CREATE INDEX hnsw_ddl_not_vector ON hnsw_ddl
   USING inverted(pk hnsw (metric = 'l2'));
 ----
-db error: ERROR: Column 'pk' must be FLOAT[N] to use the 'hnsw' opclass, not INTEGER
+db error: ERROR: Column 'pk' must be FLOAT[N] or FLOAT[N][] to use the 'hnsw' opclass, not INTEGER
 
 
 statement ok

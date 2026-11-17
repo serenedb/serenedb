@@ -92,9 +92,11 @@ class ClusterReadahead {
 }  // namespace
 
 IvfQueryScan::IvfQueryScan(std::unique_ptr<QuantizerReader> reader,
-                           score_t boost, float width)
+                           score_t boost, float width,
+                           const AnnEntries* entries)
   : _reader{std::move(reader)},
     _scorer{*_reader},
+    _entries{entries},
     _boost{boost},
     _width{width} {
   if (_width > 0.f) {
@@ -183,7 +185,7 @@ void IvfQueryScan::Keep(Collector& collector, std::span<const doc_id_t> docs,
   for (; i < n; ++i) {
     const auto spread = errors ? _width * errors[i] : 0.f;
     if (scores[i] + spread < floor ||
-        (admitted && !Admitted(admitted, docs[i]))) {
+        (admitted && !Admitted(admitted, RowDoc(docs[i])))) {
       continue;
     }
     _docs[kept] = docs[i];
@@ -333,10 +335,12 @@ void IvfIndex::SearchBatch(const SubReader& segment, const PrepareContext& ctx,
 
   const std::span<const float> queries = batch.vectors;
 
+  const auto* entries = Entries(segment, opts.column_id);
   const auto nprobe =
     effort != 0
       ? effort
-      : IvfAutoNprobe(segment.docs_count(), opts.posting_size, opts.top_k,
+      : IvfAutoNprobe(entries ? entries->Count() : segment.docs_count(),
+                      opts.posting_size, opts.top_k,
                       _tree.Levels() == 1 ? _tree.RootSize() : 0);
   const auto beam =
     IvfSearchBeam(nprobe, opts.min_search_fanout, opts.max_search_fanout);
@@ -361,7 +365,7 @@ void IvfIndex::SearchBatch(const SubReader& segment, const PrepareContext& ctx,
   for (uint32_t q = 0; q < batch.Size(); ++q) {
     scans.emplace_back(MakeQuantizerReader(stats->MakeCodebook(
                          queries.subspan(size_t{q} * d, d))),
-                       ctx.boost, opts.rescore_width);
+                       ctx.boost, opts.rescore_width, entries);
   }
   const auto setting = scans.front().Reader().BlockSetting();
   SDB_ASSERT(setting.group_size != 0);

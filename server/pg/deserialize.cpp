@@ -1388,6 +1388,29 @@ const std::vector<DeserializationFunction<VectorSink>>& GetRecordFieldDecoders(
 // children is written, each either a deeper sub-list or a leaf element read
 // from the stream (int32 len, -1 = NULL, then len bytes). `offset` advances
 // through the leaf stream. The DuckDB column type mirrors the dimension count.
+bool DecodeBinaryLeaf(DeserializeContext& ctx, std::string_view data,
+                      size_t& offset, duckdb::Vector& vec, duckdb::idx_t index,
+                      DeserializationFunction<VectorSink> leaf_fn) {
+  if (offset + 4 > data.size()) {
+    return false;
+  }
+  const auto len = absl::big_endian::Load<int32_t>(data.data() + offset);
+  offset += 4;
+  if (len == -1) {
+    duckdb::FlatVector::SetNull(vec, index, true);
+    return true;
+  }
+  if (len < 0 || static_cast<size_t>(len) > data.size() - offset) {
+    return false;
+  }
+  VectorSink sink{vec, index};
+  if (!leaf_fn(ctx, data.substr(offset, len), sink)) {
+    return false;
+  }
+  offset += len;
+  return true;
+}
+
 bool DecodeBinaryDim(DeserializeContext& ctx, std::string_view data,
                      size_t& offset, const int32_t* dims, int32_t ndim,
                      int32_t depth, duckdb::Vector& vec, duckdb::idx_t index,
@@ -1396,8 +1419,21 @@ bool DecodeBinaryDim(DeserializeContext& ctx, std::string_view data,
   const auto cur = duckdb::ListVector::GetListSize(vec);
   duckdb::ListVector::Reserve(vec, cur + count);
   auto& child = duckdb::ListVector::GetEntry(vec);
+  const bool arrays =
+    depth + 1 < ndim && child.GetType().id() == duckdb::LogicalTypeId::ARRAY;
   for (duckdb::idx_t i = 0; i < count; ++i) {
     const auto child_index = cur + i;
+    if (arrays) {
+      const auto size = duckdb::ArrayType::GetSize(child.GetType());
+      auto& elements = duckdb::ArrayVector::GetEntry(child);
+      for (duckdb::idx_t j = 0; j < size; ++j) {
+        if (!DecodeBinaryLeaf(ctx, data, offset, elements,
+                              child_index * size + j, leaf_fn)) {
+          return false;
+        }
+      }
+      continue;
+    }
     if (depth + 1 < ndim) {
       if (!DecodeBinaryDim(ctx, data, offset, dims, ndim, depth + 1, child,
                            child_index, leaf_fn)) {
@@ -1405,25 +1441,9 @@ bool DecodeBinaryDim(DeserializeContext& ctx, std::string_view data,
       }
       continue;
     }
-    if (offset + 4 > data.size()) {
+    if (!DecodeBinaryLeaf(ctx, data, offset, child, child_index, leaf_fn)) {
       return false;
     }
-    const auto len = absl::big_endian::Load<int32_t>(data.data() + offset);
-    offset += 4;
-    if (len == -1) {
-      duckdb::FlatVector::SetNull(child, child_index, true);
-      continue;
-    }
-    if (len < 0 || static_cast<size_t>(len) > data.size() - offset) {
-      return false;
-    }
-    // leaf_fn is resolved once per array (the element type is fixed) instead of
-    // re-resolving the deserializer for every element.
-    VectorSink sink{child, child_index};
-    if (!leaf_fn(ctx, data.substr(offset, len), sink)) {
-      return false;
-    }
-    offset += len;
   }
   Out<duckdb::list_entry_t>(vec)[index] = {cur, count};
   duckdb::ListVector::SetListSize(vec, cur + count);
@@ -1459,12 +1479,19 @@ bool DeserializeBinaryList(DeserializeContext& ctx, std::string_view data,
     dims[static_cast<size_t>(d)] = size;
   }
   // Resolve the leaf element deserializer once (the element type is fixed for
-  // the whole array). LIST and MAP each contribute one dimension; ARRAY targets
-  // aren't reconstructed by the multi-dim path.
+  // the whole array). LIST and MAP each contribute one dimension; an ARRAY is
+  // only the last one, of exactly its size.
   const auto* leaf = &duckdb::ListType::GetChildType(vec.GetType());
   for (int32_t d = 1; d < ndim; ++d) {
-    if (leaf->id() == duckdb::LogicalTypeId::ARRAY ||
-        !IsArrayDimension(*leaf)) {
+    if (leaf->id() == duckdb::LogicalTypeId::ARRAY) {
+      if (d + 1 != ndim || static_cast<duckdb::idx_t>(dims[d]) !=
+                             duckdb::ArrayType::GetSize(*leaf)) {
+        return false;
+      }
+      leaf = &duckdb::ArrayType::GetChildType(*leaf);
+      break;
+    }
+    if (!IsArrayDimension(*leaf)) {
       return false;
     }
     leaf = &duckdb::ListType::GetChildType(*leaf);

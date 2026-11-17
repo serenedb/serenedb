@@ -3513,6 +3513,46 @@ def test_binary_fixed_size_array_parameter_of_the_wrong_length(conn):
     assert sqlstates(m) == ["22P03"], errors(m)
 
 
+def _float4_matrix(rows) -> bytes:
+    out = struct.pack("!iiiiiii", 2, 0, 700, len(rows), 1, len(rows[0]), 1)
+    for row in rows:
+        for v in row:
+            out += struct.pack("!i", 4) + struct.pack("!f", v)
+    return out
+
+
+@pytest.mark.parametrize(
+    "param, fmt",
+    [
+        (_float4_matrix([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]), 1),
+        (b"{{1,2},{3,4},{5,6}}", 0),
+    ],
+)
+def test_list_of_fixed_size_arrays_parameter(conn, param, fmt):
+    conn.parse(
+        "",
+        "SELECT $1::FLOAT[2][] = [[1, 2], [3, 4], [5, 6]]::FLOAT[2][], "
+        "maxsim($1::FLOAT[2][], [[1, 0], [0, 1]]::FLOAT[2][])",
+    )
+    conn.bind("", "", params=(param,), formats=(fmt,))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert not errors(m), errors(m)
+    assert [_data_row(r) for r in rows(m)] == [[b"t", b"11"]]
+
+
+def test_list_of_fixed_size_arrays_parameter_of_the_wrong_length(conn):
+    conn.parse("", "SELECT $1::FLOAT[3][]")
+    conn.bind(
+        "", "", params=(_float4_matrix([[1.0, 2.0], [3.0, 4.0]]),), formats=(1,)
+    )
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert sqlstates(m) == ["22P03"], errors(m)
+
+
 def _simple(conn, sql):
     conn.send("Q", _cstr(sql))
     return conn.drain_to_ready()

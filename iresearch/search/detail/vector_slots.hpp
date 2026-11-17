@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <core_functions/array_kernels.hpp>
 #include <limits>
 #include <memory>
 #include <span>
@@ -33,6 +34,7 @@
 #include <vector>
 
 #include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/formats/ann_entries.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/ivf/ivf_reader.hpp"
 #include "iresearch/formats/ivf/quantizer.hpp"
@@ -192,7 +194,39 @@ class RawVectorReader {
     _dist = ResolveScoringDistance(metric);
   }
 
+  void SetMaxSim(std::span<const float> queries, const AnnEntries& entries) {
+    SDB_ASSERT(queries.size() % _d == 0);
+    _query.assign(queries.begin(), queries.end());
+    _entries = &entries;
+  }
+
+  score_t MaxSim(doc_id_t doc) { return MaxSim(doc, _query); }
+
+  score_t MaxSim(doc_id_t doc, std::span<const float> queries) {
+    SDB_ASSERT(_entries && queries.size() % _d == 0);
+    const auto row = static_cast<uint32_t>(doc - doc_limits::min());
+    auto entry = _entries->First(row);
+    const auto end = _entries->End(row);
+    _best.assign(queries.size() / _d, std::numeric_limits<float>::lowest());
+    while (entry < end) {
+      size_t got = 0;
+      const auto* run = ReadSome(entry + doc_limits::min(), end - entry, got);
+      SDB_ASSERT(got != 0 && got <= end - entry);
+      duckdb::MaxSimAccumulate(queries.data(), _best.size(),
+                               reinterpret_cast<const float*>(run), got, _d,
+                               _best.data());
+      entry += static_cast<uint32_t>(got);
+    }
+    return duckdb::MaxSimSum(_best.data(), _best.size());
+  }
+
   void Hint(std::span<const doc_id_t> docs) noexcept {
+    if (_entries) {
+      for (const auto doc : docs) {
+        PrefetchRow(doc);
+      }
+      return;
+    }
     for (size_t i = 0; i < docs.size();) {
       const size_t run = ConsecutiveRunLength(docs, i);
       HintRun(docs[i], run);
@@ -202,8 +236,14 @@ class RawVectorReader {
 
   void ComputeDistances(std::span<const doc_id_t> docs,
                         std::span<score_t> out) {
-    SDB_ASSERT(_dist);
     SDB_ASSERT(out.size() >= docs.size());
+    if (_entries) {
+      for (size_t i = 0; i < docs.size(); ++i) {
+        out[i] = MaxSim(docs[i]);
+      }
+      return;
+    }
+    SDB_ASSERT(_dist);
     if (docs.size() > 1) {
       Hint(docs);
     }
@@ -241,6 +281,9 @@ class RawVectorReader {
   }
 
   score_t ComputeDistance(doc_id_t doc, const byte_type* row) {
+    if (_entries) {
+      return MaxSim(doc);
+    }
     SDB_ASSERT(_dist);
     if (!row) {
       size_t got = 0;
@@ -252,6 +295,12 @@ class RawVectorReader {
 
   template<int Locality = 3>
   const byte_type* PrefetchRow(doc_id_t doc) noexcept {
+    if (_entries) {
+      const auto row = static_cast<uint32_t>(doc - doc_limits::min());
+      const auto first = _entries->First(row);
+      HintRun(first + doc_limits::min(), _entries->End(row) - first);
+      return nullptr;
+    }
     const auto* child = _column->Child();
     const uint64_t elem = (static_cast<uint64_t>(doc) - doc_limits::min()) * _d;
     const auto w = child->Locate(elem, _win);
@@ -371,6 +420,8 @@ class RawVectorReader {
   std::vector<byte_type> _buf;
   VectorDistanceFn _dist = nullptr;
   std::vector<float> _query;
+  std::vector<float> _best;
+  const AnnEntries* _entries = nullptr;
   uint32_t _d;
 };
 

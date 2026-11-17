@@ -676,6 +676,8 @@ std::optional<AnnFunctionInfo> GetAnnFunctionInfo(
   constexpr AnnFunctionInfo kNegativeIPInfo{InnerProduct, kAsc, false, Negate};
   constexpr AnnFunctionInfo kL1NormInfo{L1, kAsc, true, ZeroMinus};
   constexpr AnnFunctionInfo kL2NormInfo{L2Sqr, kAsc, true, SqrtNeg};
+  constexpr AnnFunctionInfo kMaxSimInfo{InnerProduct, kDesc, false, Identity,
+                                        true};
   static const irs::containers::FlatHashMap<std::string_view, AnnFunctionInfo>
     kFunctions{
       {connector::kL2Distance, kL2Info},
@@ -706,6 +708,7 @@ std::optional<AnnFunctionInfo> GetAnnFunctionInfo(
       {connector::kL1Norm, kL1NormInfo},
       {connector::kL2Norm, kL2NormInfo},
       {"vector_norm", kL2NormInfo},
+      {connector::kMaxSim, kMaxSimInfo},
     };
   const auto it =
     kFunctions.find(func.Function().GetName().GetIdentifierName());
@@ -736,6 +739,7 @@ connector::VectorScorerOptions MakeVectorScorer(
     .kind = ann.kind,
     .ef_construction = ann.ef_construction,
     .posting_size = ann.posting_size,
+    .maxsim = info.maxsim,
   };
   connector::RefreshVectorKnobs(vs, context);
   return vs;
@@ -808,6 +812,37 @@ bool TryFoldQueryVector(duckdb::ClientContext& context,
       return false;
     }
     out.push_back(child.GetValue<float>());
+  }
+  return true;
+}
+
+bool TryFoldQueryVectors(duckdb::ClientContext& context,
+                         duckdb::Expression& expr, size_t dim,
+                         std::vector<float>& out) {
+  duckdb::Value folded;
+  if (!TryFoldExpression(context, expr, folded)) {
+    return false;
+  }
+  const auto casted = folded.DefaultTryCastAs(duckdb::LogicalType::LIST(
+    duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT, dim)));
+  if (!casted || casted->IsNull()) {
+    return false;
+  }
+  const auto& vectors = duckdb::ListValue::GetChildren(*casted);
+  if (vectors.empty()) {
+    return false;
+  }
+  out.reserve(vectors.size() * dim);
+  for (const auto& vector : vectors) {
+    if (vector.IsNull()) {
+      return false;
+    }
+    for (const auto& value : duckdb::ArrayValue::GetChildren(vector)) {
+      if (value.IsNull()) {
+        return false;
+      }
+      out.push_back(value.GetValue<float>());
+    }
   }
   return true;
 }
@@ -945,6 +980,10 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
     return nullptr;
   }
   const auto& column = PeelArrayToListCast(*col_arg);
+  if (info.maxsim != connector::IsMultiVector(column.GetReturnType()) ||
+      (info.maxsim && col_arg != func.GetChildren()[0].get())) {
+    return nullptr;
+  }
 
   const auto anchor_ti = SingleReferencedTableIndex(column);
   if (!anchor_ti) {
@@ -975,7 +1014,10 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
   std::shared_ptr<const duckdb::Expression> call_qexpr;
   if (info.is_norm) {
     call_qvec.assign(ann_info->d, 0.0f);
-  } else if (!TryFoldQueryVector(context, *value_arg, ann_info->d, call_qvec)) {
+  } else if (info.maxsim ? !TryFoldQueryVectors(context, *value_arg,
+                                                ann_info->d, call_qvec)
+                         : !TryFoldQueryVector(context, *value_arg, ann_info->d,
+                                               call_qvec)) {
     if (!value_arg->HasParameter()) {
       return nullptr;
     }

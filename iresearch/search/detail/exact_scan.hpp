@@ -40,8 +40,13 @@ class ExactScanner {
     : _reader{query.Column(), query.Columns(),
               static_cast<uint32_t>(query.Column().ArraySize())},
       _threshold{query.Threshold()},
+      _entries{query.Entries()},
       _inclusive{query.Inclusive()} {
-    _reader.SetQuery(query.Query(), query.Metric());
+    if (_entries) {
+      _reader.SetMaxSim(query.Query(), *_entries);
+    } else {
+      _reader.SetQuery(query.Query(), query.Metric());
+    }
     const auto rows = static_cast<doc_id_t>(query.Segment().docs_count());
     _last = doc_limits::min() + rows;
     _doc = _last;
@@ -50,7 +55,8 @@ class ExactScanner {
       _matches = docs::MakeRoot(*inner, {});
     }
     if (const auto& column = query.Column();
-        column.HasValidity() && column.MergedStatistics().CanHaveNull()) {
+        !_entries && column.HasValidity() &&
+        column.MergedStatistics().CanHaveNull()) {
       _validity.emplace(query.Columns(), column);
     }
   }
@@ -103,6 +109,19 @@ class ExactScanner {
   uint32_t NextDocs(doc_id_t* docs) {
     for (;;) {
       auto n = Collect(docs);
+      if (n != 0 && _entries) {
+        uint32_t kept = 0;
+        for (uint32_t i = 0; i < n; ++i) {
+          const auto row = docs[i] - doc_limits::min();
+          if (_entries->First(row) != _entries->End(row)) {
+            docs[kept++] = docs[i];
+          }
+        }
+        if (kept == 0) {
+          continue;
+        }
+        return kept;
+      }
       if (n == 0 || !_validity) {
         return n;
       }
@@ -163,6 +182,7 @@ class ExactScanner {
   uint32_t _len = 0;
   std::optional<Validity> _validity;
   std::optional<score_t> _threshold;
+  const AnnEntries* _entries;
   bool _inclusive;
   doc_id_t _doc;
   doc_id_t _end;

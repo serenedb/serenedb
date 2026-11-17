@@ -440,10 +440,12 @@ void ScanBindData::AppendSummary(
     if (ctype.id() == duckdb::LogicalTypeId::INVALID) {
       ctype = relation.inverted_config->ExpressionType(vector->field_id);
     }
-    out.insert("Score",
-               absl::StrCat(VectorMetricFunctionName(vector->metric), "(",
-                            name_of(col_id, irs::StringLayout::kStrings), ", ",
-                            ctype.ToString(), ")"));
+    out.insert(
+      "Score",
+      absl::StrCat(
+        vector->maxsim ? kMaxSim : VectorMetricFunctionName(vector->metric),
+        "(", name_of(col_id, irs::StringLayout::kStrings), ", ",
+        ctype.ToString(), ")"));
     if (vector->exact || !score.HasTopK()) {
       out.insert("Exact", "brute force over the stored vectors");
     }

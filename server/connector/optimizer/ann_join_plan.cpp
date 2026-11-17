@@ -37,6 +37,7 @@
 #include <duckdb/planner/operator/logical_projection.hpp>
 
 #include "connector/column_id.h"
+#include "connector/functions/vector.h"
 #include "connector/optimizer/iresearch_plan.h"
 #include "connector/optimizer/iresearch_plan_common.hpp"
 #include "connector/scan/scan_ann_join.h"
@@ -279,7 +280,9 @@ duckdb::unique_ptr<duckdb::LogicalOperator> PlanAnnJoin(
     return nullptr;
   }
   const auto sides = SplitDistance(func, get.table_index);
-  if (!sides.column) {
+  if (!sides.column ||
+      info->maxsim != connector::IsMultiVector(sides.column->GetReturnType()) ||
+      (info->maxsim && sides.column != func.GetChildren()[0].get())) {
     return nullptr;
   }
   const auto field_id =
@@ -294,8 +297,10 @@ duckdb::unique_ptr<duckdb::LogicalOperator> PlanAnnJoin(
   }
 
   const auto dims = static_cast<duckdb::idx_t>(ann->d);
-  const auto query_type =
+  const auto vector_type =
     duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT, dims);
+  const auto query_type =
+    info->maxsim ? duckdb::LogicalType::LIST(vector_type) : vector_type;
   auto query = sides.value->Copy();
   if (!ToOuter(query, join.left->GetColumnBindings())) {
     return nullptr;

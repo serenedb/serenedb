@@ -38,6 +38,7 @@ endif()
 target_sources(
     iresearch
     PRIVATE
+        ann_entries.cpp
         hnsw/hnsw_bases.cpp
         hnsw/hnsw_graph.cpp
         hnsw/hnsw_reader.cpp

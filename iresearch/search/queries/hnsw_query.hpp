@@ -106,6 +106,7 @@ extern template class QueryBuilderImpl<HnswQuery>;
 void HnswSearchBatch(const SubReader& segment, const HnswData& data,
                      const VectorFilterOptions& opts, uint32_t record_size,
                      uint32_t ef, const ann::QueryBatch& batch, score_t boost,
-                     std::span<ann::Collector> collectors);
+                     std::span<ann::Collector> collectors,
+                     const AnnEntries* entries, const uint64_t* admitted);
 
 }  // namespace irs

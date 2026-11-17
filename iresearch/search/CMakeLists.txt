@@ -230,6 +230,7 @@ target_sources(
         ann/make_exact.cpp
         ann/make_hnsw.cpp
         ann/make_ivf.cpp
+        ann/maxsim.cpp
         count/make_exact.cpp
         count/make_hnsw.cpp
         docs/make_exact.cpp

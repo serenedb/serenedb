@@ -137,3 +137,55 @@ name	id	dist
 far	1	10
 origin	3	75
 unknown	NULL	NULL
+
+# DOCS_TEST: maxsim
+
+statement ok
+CREATE TABLE passages (id INTEGER, tokens FLOAT[3][]);
+
+statement ok
+CREATE INDEX passages_index ON passages USING inverted (id, tokens ivf (metric = 'ip'));
+
+statement ok
+INSERT INTO passages VALUES
+    (1, [[1, 0, 0], [0, 1, 0]]),
+    (2, [[0, 0, 0.9]]),
+    (3, [[0.6, 0.8, 0], [0, 0.6, 0.8], [0.8, 0, 0.6]]),
+    (4, []);
+
+statement ok
+VACUUM (REFRESH_TABLE) passages;
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, round(maxsim(tokens, [[1, 0, 0], [0, 0, 1]]), 2) AS score
+FROM passages_index
+ORDER BY maxsim(tokens, [[1, 0, 0], [0, 0, 1]]) DESC
+LIMIT 2;
+----
+id	score
+3	1.6
+1	1
+
+# DOCS_TEST: maxsim_join
+
+statement ok
+CREATE TABLE questions (name TEXT, tokens FLOAT[3][]);
+
+statement ok
+INSERT INTO questions VALUES
+    ('x and y', [[1, 0, 0], [0, 1, 0]]),
+    ('z', [[0, 0, 1]]);
+
+# DOCS_TEST_BODY
+
+query
+SELECT q.name, p.id
+FROM questions q
+JOIN passages_index p NEAREST 1 BY SIMILARITY maxsim(p.tokens, q.tokens)
+ORDER BY q.name;
+----
+name	id
+x and y	1
+z	2

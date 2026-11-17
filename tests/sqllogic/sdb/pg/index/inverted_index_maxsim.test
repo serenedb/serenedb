@@ -1,0 +1,572 @@
+control substitution on
+
+# ============================================================================
+# Multi-vector columns and late interaction: every token vector of a
+# FLOAT[N][] row is an index entry, and ORDER BY maxsim(column, query) DESC
+# ranks rows through the vector index. Tokens are unit vectors, as late
+# interaction models emit them. At full effort the pushed answer equals the
+# scalar's, scores included; at default effort it keeps most of the top.
+# ============================================================================
+
+statement ok
+CREATE MACRO raw_tok(i, j) AS
+  list_transform(range(8), lambda c: sin(i * 0.37 + j * 1.91 + c * 0.73 + i * c * 0.011));
+
+statement ok
+CREATE MACRO tok(i, j) AS
+  list_transform(raw_tok(i, j), lambda x: x / sqrt(list_sum(list_transform(raw_tok(i, j), lambda y: y * y))))::FLOAT[8];
+
+statement ok
+CREATE MACRO toks(i, n) AS
+  list_transform(range(n), lambda j: tok(i, j))::FLOAT[8][];
+
+statement ok
+CREATE TABLE docs (pk INTEGER PRIMARY KEY, cat INTEGER, toks FLOAT[8][]);
+
+statement ok
+INSERT INTO docs SELECT i, i % 3,
+  CASE WHEN i % 23 = 0 THEN NULL
+       WHEN i % 29 = 0 THEN []::FLOAT[8][]
+       ELSE toks(i, 1 + i % 5) END
+  FROM range(2000) t(i);
+
+statement ok
+CREATE INDEX docs_ivf ON docs
+  USING inverted(pk, cat, toks ivf (metric = 'ip', quant = 'none'));
+
+statement ok
+CREATE INDEX docs_ivf_sq8 ON docs
+  USING inverted(pk, cat, toks ivf (metric = 'ip', quant = 'sq8'));
+
+statement ok
+CREATE INDEX docs_ivf_pq ON docs
+  USING inverted(pk, cat, toks ivf (metric = 'ip', quant = 'pq', pq_m = 4));
+
+statement ok
+CREATE INDEX docs_ivf_rabitq ON docs
+  USING inverted(pk, cat, toks ivf (metric = 'ip', quant = 'rabitq', rabitq_bits = 8));
+
+statement ok
+CREATE INDEX docs_hnsw ON docs
+  USING inverted(pk, cat, toks hnsw (metric = 'ip', quant = 'none'));
+
+statement ok
+CREATE INDEX docs_hnsw_sq8 ON docs
+  USING inverted(pk, cat, toks hnsw (metric = 'ip', quant = 'sq8'));
+
+statement ok
+VACUUM (REFRESH_TABLE) docs;
+
+# A multi-vector index scores by inner product, which maxsim() sums
+
+statement error
+CREATE INDEX docs_l2 ON docs USING inverted(pk, toks ivf (metric = 'l2'));
+----
+db error: ERROR: Column 'toks': an index over FLOAT[N][] needs metric = 'ip', which maxsim() scores with
+
+
+statement error
+CREATE INDEX docs_cos ON docs USING inverted(pk, toks hnsw (metric = 'cosine'));
+----
+db error: ERROR: Column 'toks': an index over FLOAT[N][] needs metric = 'ip', which maxsim() scores with
+
+
+# Full effort: every entry is a candidate, so the index answers exactly
+
+statement ok
+SET sdb_ivf_search_nprobe = 100000;
+
+statement ok
+SET sdb_hnsw_ef_search = 10000;
+
+statement ok
+SET sdb_maxsim_overfetch = 1000;
+
+query
+SELECT pk, maxsim(toks, toks(777.5, 3)) AS s FROM docs
+  ORDER BY s DESC LIMIT 5;
+----
+pk	s
+1377	2.9980333
+773	2.9889145
+1949	2.9876146
+234	2.9840386
+1339	2.9773064
+
+query
+SELECT pk, maxsim(toks, toks(777.5, 3)) AS s FROM docs_ivf
+  ORDER BY s DESC LIMIT 5;
+----
+pk	s
+1377	2.9980333
+773	2.9889145
+1949	2.9876146
+234	2.9840386
+1339	2.9773064
+
+query
+SELECT pk, maxsim(toks, toks(777.5, 3)) AS s FROM docs_hnsw
+  ORDER BY s DESC LIMIT 5;
+----
+pk	s
+1377	2.9980333
+773	2.9889145
+1949	2.9876146
+234	2.9840386
+1339	2.9773064
+
+query
+SELECT count(*) FROM (
+  (SELECT pk, maxsim(toks, toks(1234.5, 4)) FROM docs_ivf
+     ORDER BY 2 DESC LIMIT 20)
+  EXCEPT (SELECT pk, maxsim(toks, toks(1234.5, 4)) FROM docs
+     ORDER BY 2 DESC LIMIT 20)) t;
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+  (SELECT pk, maxsim(toks, toks(1234.5, 4)) FROM docs_hnsw
+     ORDER BY 2 DESC LIMIT 20)
+  EXCEPT (SELECT pk, maxsim(toks, toks(1234.5, 4)) FROM docs
+     ORDER BY 2 DESC LIMIT 20)) t;
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+  (SELECT pk FROM docs_ivf_sq8 ORDER BY maxsim(toks, toks(42.5, 2)) DESC LIMIT 20)
+  EXCEPT (SELECT pk FROM docs ORDER BY maxsim(toks, toks(42.5, 2)) DESC LIMIT 20)) t;
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+  (SELECT pk FROM docs_hnsw_sq8 ORDER BY maxsim(toks, toks(42.5, 2)) DESC LIMIT 20)
+  EXCEPT (SELECT pk FROM docs ORDER BY maxsim(toks, toks(42.5, 2)) DESC LIMIT 20)) t;
+----
+count
+0
+
+# A filter is applied per row, before the top is taken
+
+query
+SELECT count(*) FROM (
+  (SELECT pk FROM docs_ivf WHERE cat = 1
+     ORDER BY maxsim(toks, toks(99.5, 3)) DESC LIMIT 10)
+  EXCEPT (SELECT pk FROM docs WHERE cat = 1
+     ORDER BY maxsim(toks, toks(99.5, 3)) DESC LIMIT 10)) t;
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+  (SELECT pk FROM docs_hnsw WHERE cat = 1
+     ORDER BY maxsim(toks, toks(99.5, 3)) DESC LIMIT 10)
+  EXCEPT (SELECT pk FROM docs WHERE cat = 1
+     ORDER BY maxsim(toks, toks(99.5, 3)) DESC LIMIT 10)) t;
+----
+count
+0
+
+# Without LIMIT every row with vectors is scored: 2000 rows, less 87 NULL and
+# 69 empty ones, 3 of them both
+
+query
+SELECT count(*), count(s), min(s) = (SELECT min(maxsim(toks, toks(5.5, 2))) FROM docs)
+  FROM (SELECT maxsim(toks, toks(5.5, 2)) AS s FROM docs_ivf ORDER BY s DESC) t;
+----
+count	count	?column?
+1847	1847	t
+
+# Parameters bind like constants; an empty or NULL query list is refused, as a
+# NULL query vector is, and an untyped list literal takes the column's type
+
+statement ok
+PREPARE top_ivf AS SELECT pk FROM docs_ivf ORDER BY maxsim(toks, $1) DESC LIMIT 3;
+
+statement ok
+PREPARE top_hnsw AS SELECT pk FROM docs_hnsw ORDER BY maxsim(toks, $1) DESC LIMIT 3;
+
+statement ok
+PREPARE top_scalar AS SELECT pk FROM docs ORDER BY maxsim(toks, $1) DESC LIMIT 3;
+
+query ? rowsort
+EXECUTE top_scalar([[1, 0, 0, 0, 0, 0, 0, 0], [0, 0.6, 0.8, 0, 0, 0, 0, 0]]);
+----
+pk
+1078
+1634
+516
+
+query ? rowsort
+EXECUTE top_ivf([[1, 0, 0, 0, 0, 0, 0, 0], [0, 0.6, 0.8, 0, 0, 0, 0, 0]]);
+----
+pk
+1078
+1634
+516
+
+query ? rowsort
+EXECUTE top_hnsw([[1, 0, 0, 0, 0, 0, 0, 0], [0, 0.6, 0.8, 0, 0, 0, 0, 0]]::FLOAT[8][]);
+----
+pk
+1078
+1634
+516
+
+statement error
+EXECUTE top_ivf([]::FLOAT[8][]);
+----
+db error: ERROR: the query vector of a vector search is empty
+
+
+statement error
+EXECUTE top_hnsw(NULL::FLOAT[8][]);
+----
+db error: ERROR: the query vector of a vector search is NULL
+
+
+statement error
+EXECUTE top_ivf([[1, 0, 0, 0, 0, 0, 0, 0], NULL]::FLOAT[8][]);
+----
+db error: ERROR: the query vector of a vector search holds NULL
+
+
+# A constant empty query list ranks nothing: every score is NULL
+
+query
+SELECT count(*), count(s) FROM
+  (SELECT maxsim(toks, []::FLOAT[8][]) AS s FROM docs_ivf ORDER BY s DESC LIMIT 3) t;
+----
+count	count
+3	0
+
+statement error
+SELECT pk FROM docs_ivf
+  ORDER BY maxsim(toks, [NULL, [1, 0, 0, 0, 0, 0, 0, 0]]::FLOAT[8][]) DESC LIMIT 3;
+----
+db error: ERROR: maxsim: right argument can not contain NULL values
+
+
+# Default effort keeps most of the exact top
+
+statement ok
+RESET sdb_ivf_search_nprobe;
+
+statement ok
+RESET sdb_hnsw_ef_search;
+
+statement ok
+RESET sdb_maxsim_overfetch;
+
+query
+SELECT
+  (SELECT count(*) FROM (SELECT pk FROM docs_ivf ORDER BY maxsim(toks, toks(1777.5, 4)) DESC LIMIT 10) a
+     JOIN (SELECT pk FROM docs ORDER BY maxsim(toks, toks(1777.5, 4)) DESC LIMIT 10) b USING (pk)) >= 9 AS ivf,
+  (SELECT count(*) FROM (SELECT pk FROM docs_ivf_sq8 ORDER BY maxsim(toks, toks(1777.5, 4)) DESC LIMIT 10) a
+     JOIN (SELECT pk FROM docs ORDER BY maxsim(toks, toks(1777.5, 4)) DESC LIMIT 10) b USING (pk)) >= 8 AS sq8,
+  (SELECT count(*) FROM (SELECT pk FROM docs_ivf_pq ORDER BY maxsim(toks, toks(1777.5, 4)) DESC LIMIT 10) a
+     JOIN (SELECT pk FROM docs ORDER BY maxsim(toks, toks(1777.5, 4)) DESC LIMIT 10) b USING (pk)) >= 8 AS pq,
+  (SELECT count(*) FROM (SELECT pk FROM docs_ivf_rabitq ORDER BY maxsim(toks, toks(1777.5, 4)) DESC LIMIT 10) a
+     JOIN (SELECT pk FROM docs ORDER BY maxsim(toks, toks(1777.5, 4)) DESC LIMIT 10) b USING (pk)) >= 8 AS rabitq,
+  (SELECT count(*) FROM (SELECT pk FROM docs_hnsw ORDER BY maxsim(toks, toks(1777.5, 4)) DESC LIMIT 10) a
+     JOIN (SELECT pk FROM docs ORDER BY maxsim(toks, toks(1777.5, 4)) DESC LIMIT 10) b USING (pk)) >= 9 AS hnsw,
+  (SELECT count(*) FROM (SELECT pk FROM docs_hnsw_sq8 ORDER BY maxsim(toks, toks(1777.5, 4)) DESC LIMIT 10) a
+     JOIN (SELECT pk FROM docs ORDER BY maxsim(toks, toks(1777.5, 4)) DESC LIMIT 10) b USING (pk)) >= 7 AS hnsw_sq8;
+----
+ivf	sq8	pq	rabitq	hnsw	hnsw_sq8
+t	t	t	t	t	t
+
+# Plans: the index ranks by maxsim; other shapes keep the scalar
+
+query
+EXPLAIN SELECT pk FROM docs_ivf ORDER BY maxsim(toks, toks(1.5, 2)) DESC LIMIT 3;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────╮
+│ Index: docs_ivf                 │
+│ Lookup: table                   │
+│ Score: maxsim(toks, FLOAT[8][]) │
+│ Top: 3                          │
+│ Projections: pk                 │
+│ ~2,000 rows                     │
+╰─────────────────────────────────╯
+
+query
+EXPLAIN SELECT pk FROM docs_hnsw ORDER BY maxsim(toks, [[1, 0, 0, 0, 0, 0, 0, 0]]) DESC LIMIT 3;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────╮
+│ Index: docs_hnsw                │
+│ Lookup: table                   │
+│ Score: maxsim(toks, FLOAT[8][]) │
+│ Top: 3                          │
+│ Projections: pk                 │
+│ ~2,000 rows                     │
+╰─────────────────────────────────╯
+
+query
+EXPLAIN SELECT pk FROM docs_ivf ORDER BY maxsim(toks, toks(1.5, 2)) LIMIT 3;
+----
+QUERY PLAN
+╭─ LOOKUP_JOIN ───────────────────────────────────────────╮
+│ Key: iresearch_pk                                       │
+│ ~3 rows                                                 │
+╰────────────────────────────┬────────────────────────────╯
+                             ├─────────────────────────────────────────╮
+╭─ TOP_N ────────────────────┴────────────────────────────╮  ╭─ IRESEARCH_SCAN ─╮
+│ Top: 3                                                  │  │ Index: docs_ivf  │
+│ Order By: #0 ASC                                        │  │ Lookup: table    │
+│ ~3 rows                                                 │  │ Projections: pk  │
+╰────────────────────────────┬────────────────────────────╯  │ ~3 rows          │
+╭─ IRESEARCH_SCAN ───────────┴────────────────────────────╮  ╰──────────────────╯
+│ Index: docs_ivf                                         │
+│ Score: maxsim(toks, FLOAT[8][])                         │
+│ Exact:                                                  │
+│ brute force over the stored vectors                     │
+│ Projections: sdb_inverted_index_score, iresearch_pk     │
+│ Column Filter:                                          │
+│ optional: Dynamic Filter (sdb_inverted_index_score < ?) │
+│ ~2,000 rows                                             │
+╰─────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT pk FROM docs_ivf ORDER BY maxsim([[1, 0, 0, 0, 0, 0, 0, 0]]::FLOAT[8][], toks) DESC LIMIT 3;
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections: #0                           │
+│ ~3 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ PROJECTION ────────┴─────────────────────╮
+│ Projections:                              │
+│ pk,                                       │
+│ maxsim([[1, 0, 0, 0, 0, 0, 0, 0]], toks)  │
+│ ~3 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ LOOKUP_JOIN ───────┴─────────────────────╮
+│ Key: iresearch_pk                         │
+│ ~3 rows                                   │
+╰─────────────────────┬─────────────────────╯
+                      ├──────────────────────────────────╮
+╭─ TOP_N ─────────────┴─────────────────────╮  ╭─ IRESEARCH_SCAN ─╮
+│ Top: 3                                    │  │ Index: docs_ivf  │
+│ Order By: #0 DESC                         │  │ Lookup: table    │
+│ ~3 rows                                   │  │ Projections: pk  │
+╰─────────────────────┬─────────────────────╯  │ ~3 rows          │
+╭─ PROJECTION ────────┴─────────────────────╮  ╰──────────────────╯
+│ Projections:                              │
+│ maxsim([[1, 0, 0, 0, 0, 0, 0, 0]], toks), │
+│ iresearch_pk, toks                        │
+│ ~2,000 rows                               │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: docs_ivf                           │
+│ Projections: toks, iresearch_pk           │
+│ ~2,000 rows                               │
+╰───────────────────────────────────────────╯
+
+query
+SELECT count(*) FROM (
+  (SELECT pk FROM docs_ivf ORDER BY maxsim(toks, toks(1.5, 2)) LIMIT 5)
+  EXCEPT (SELECT pk FROM docs ORDER BY maxsim(toks, toks(1.5, 2)) LIMIT 5)) t;
+----
+count
+0
+
+# Deletes, a second segment and a merge
+
+statement ok
+SET sdb_ivf_search_nprobe = 100000;
+
+statement ok
+SET sdb_hnsw_ef_search = 10000;
+
+statement ok
+SET sdb_maxsim_overfetch = 1000;
+
+statement ok
+DELETE FROM docs WHERE pk IN
+  (SELECT pk FROM docs ORDER BY maxsim(toks, toks(777.5, 3)) DESC LIMIT 2);
+
+statement ok
+INSERT INTO docs SELECT i, i % 3, toks(i, 1 + i % 7) FROM range(2000, 2600) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) docs;
+
+query
+SELECT count(*) FROM (
+  (SELECT pk FROM docs_ivf ORDER BY maxsim(toks, toks(777.5, 3)) DESC LIMIT 10)
+  EXCEPT (SELECT pk FROM docs ORDER BY maxsim(toks, toks(777.5, 3)) DESC LIMIT 10)) t;
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+  (SELECT pk FROM docs_hnsw ORDER BY maxsim(toks, toks(777.5, 3)) DESC LIMIT 10)
+  EXCEPT (SELECT pk FROM docs ORDER BY maxsim(toks, toks(777.5, 3)) DESC LIMIT 10)) t;
+----
+count
+0
+
+statement ok
+VACUUM (COMPACT_TABLE) docs;
+
+query
+SELECT count(*) FROM (
+  (SELECT pk, maxsim(toks, toks(2222.5, 3)) FROM docs_ivf ORDER BY 2 DESC LIMIT 10)
+  EXCEPT (SELECT pk, maxsim(toks, toks(2222.5, 3)) FROM docs ORDER BY 2 DESC LIMIT 10)) t;
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+  (SELECT pk, maxsim(toks, toks(2222.5, 3)) FROM docs_hnsw ORDER BY 2 DESC LIMIT 10)
+  EXCEPT (SELECT pk, maxsim(toks, toks(2222.5, 3)) FROM docs ORDER BY 2 DESC LIMIT 10)) t;
+----
+count
+0
+
+# Joins: each outer row's vector list is one MaxSim query
+
+statement ok
+CREATE TABLE users (id INTEGER, q FLOAT[8][]);
+
+statement ok
+INSERT INTO users VALUES
+  (1, toks(777.5, 3)),
+  (2, toks(1234.5, 1)),
+  (3, NULL),
+  (4, []::FLOAT[8][]),
+  (5, toks(777.5, 3));
+
+query
+SELECT u.id, d.pk FROM users u
+  JOIN docs_ivf d NEAREST 3 BY SIMILARITY maxsim(d.toks, u.q)
+  ORDER BY u.id, d.pk;
+----
+id	pk
+1	1949
+1	2488
+1	2512
+2	914
+2	1802
+2	2063
+5	1949
+5	2488
+5	2512
+
+query
+SELECT u.id, d.pk FROM users u
+  JOIN docs d NEAREST 3 BY SIMILARITY maxsim(d.toks, u.q)
+  ORDER BY u.id, d.pk;
+----
+id	pk
+1	1949
+1	2488
+1	2512
+2	914
+2	1802
+2	2063
+5	1949
+5	2488
+5	2512
+
+query
+SELECT count(*) FROM (
+  (SELECT u.id, d.pk FROM users u
+     JOIN docs_ivf d NEAREST 3 BY SIMILARITY maxsim(d.toks, u.q))
+  EXCEPT (SELECT u.id, d.pk FROM users u
+     JOIN docs_ivf d EXACT NEAREST 3 BY SIMILARITY maxsim(d.toks, u.q))) t;
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+  (SELECT u.id, d.pk FROM users u
+     JOIN docs_hnsw d NEAREST 3 BY SIMILARITY maxsim(d.toks, u.q))
+  EXCEPT (SELECT u.id, d.pk FROM users u
+     JOIN docs_hnsw d EXACT NEAREST 3 BY SIMILARITY maxsim(d.toks, u.q))) t;
+----
+count
+0
+
+query
+SELECT u.id, n.pk FROM users u
+  LEFT JOIN LATERAL (SELECT pk FROM docs_hnsw
+                     ORDER BY maxsim(toks, u.q) DESC LIMIT 2) n ON TRUE
+  ORDER BY u.id, n.pk;
+----
+id	pk
+1	2488
+1	2512
+2	914
+2	2063
+3	NULL
+4	NULL
+5	2488
+5	2512
+
+query
+EXPLAIN SELECT u.id, d.pk FROM users u
+  JOIN docs_ivf d NEAREST 3 BY SIMILARITY maxsim(d.toks, u.q);
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────╮
+│ Projections: id, pk             │
+│ ~5 rows                         │
+╰────────────────┬────────────────╯
+╭─ INOUT_FUNCTION ────────────────╮
+│ Index: docs_ivf                 │
+│ Lookup: table                   │
+│ Score: maxsim(toks, FLOAT[8][]) │
+│ Top: 3                          │
+│ ~5 rows                         │
+╰────────────────┬────────────────╯
+╭─ SEQ_SCAN ─────┴────────────────╮
+│ Table: users                    │
+│ Type: Sequential Scan           │
+│ ~5 rows                         │
+╰─────────────────────────────────╯
+
+# More outer rows than one chunk, with vector lists of several sizes
+
+statement ok
+CREATE TABLE many_users AS SELECT i AS id, toks(i * 1.37 + 0.5, 1 + i % 4) AS q
+  FROM range(2500) t(i);
+
+query
+SELECT count(*), count(DISTINCT u.id) FROM many_users u
+  JOIN docs_ivf d NEAREST 2 BY SIMILARITY maxsim(d.toks, u.q);
+----
+count	count
+5000	2500
+
+query
+SELECT count(*) FROM (
+  (SELECT u.id, n.pk FROM many_users u,
+     LATERAL (SELECT pk FROM docs_ivf ORDER BY maxsim(toks, u.q) DESC LIMIT 2) n)
+  EXCEPT (SELECT u.id, d.pk FROM many_users u
+     JOIN docs_ivf d EXACT NEAREST 2 BY SIMILARITY maxsim(d.toks, u.q))) t;
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+  (SELECT u.id, d.pk FROM many_users u
+     JOIN docs_hnsw d NEAREST 2 BY SIMILARITY maxsim(d.toks, u.q))
+  EXCEPT (SELECT u.id, d.pk FROM many_users u
+     JOIN docs_hnsw d EXACT NEAREST 2 BY SIMILARITY maxsim(d.toks, u.q))) t;
+----
+count
+0

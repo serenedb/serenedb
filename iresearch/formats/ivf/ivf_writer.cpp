@@ -362,12 +362,14 @@ yaclib::Task<> IvfWriter::Compute(const ColumnReader& col, ReadContext& ctx,
                                   const AnnBuildEnv* /*env*/) {
   SDB_ASSERT(_idx != nullptr,
              "IvfWriter::Compute: SetIdxWriter must be called first");
-  const auto d = static_cast<uint32_t>(col.ArraySize());
+  const auto& vectors =
+    col.Type().id() == duckdb::LogicalTypeId::LIST ? *col.Child() : col;
+  const auto d = static_cast<uint32_t>(vectors.ArraySize());
   auto qw = MakeQuantizerWriter(
     _info.quant, d, EffectiveQuantMetric(_info.metric), kDefaultClusterIters);
 
   IvfBuilder builder{_info};
-  auto built = builder.Compute(col, ctx, qw.get());
+  auto built = builder.Compute(vectors, ctx, qw.get());
   if (built.empty) {
     co_return {};
   }
@@ -400,11 +402,14 @@ const BasicTermReader* IvfWriter::ClusterReader(ReadContext& ctx,
     return nullptr;
   }
   if (!_reader) {
+    const auto* vectors = col_reader.Column(_info.column_id);
+    if (vectors && vectors->Type().id() == duckdb::LogicalTypeId::LIST) {
+      vectors = vectors->Child();
+    }
     _reader = std::make_unique<IvfTermReader>(
       _info.index_id, _result.data.cluster_docs, _result.data.cluster_offsets,
-      _result.qw.get(), col_reader.Column(_info.column_id), &ctx,
-      _result.data.d, &_result.data.cluster_centroids,
-      _info.metric == VectorMetric::Cosine);
+      _result.qw.get(), vectors, &ctx, _result.data.d,
+      &_result.data.cluster_centroids, _info.metric == VectorMetric::Cosine);
   }
   return _reader.get();
 }

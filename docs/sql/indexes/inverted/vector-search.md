@@ -13,7 +13,7 @@ IVF groups the vectors of each index segment into clusters, sized by the `sdb_iv
 
 ## Creating a vector index
 
-A vector column uses the `ivf (...)` or [`hnsw (...)`](#hnsw) operator class, once per index: listing the column a second time with either fails. The column must be a fixed-size `FLOAT` array (`FLOAT[N]`) -- every row shares the same dimension `N`:
+A vector column uses the `ivf (...)` or [`hnsw (...)`](#hnsw) operator class, once per index: listing the column a second time with either fails. The column must be a fixed-size `FLOAT` array (`FLOAT[N]`) -- every row shares the same dimension `N` -- or a list of them (`FLOAT[N][]`) for [multi-vector search](#maxsim):
 
 <SqlLogicTest id="sql/indexes/inverted/vector-search/example_001" />
 
@@ -100,6 +100,20 @@ A `LATERAL` subquery that orders the index by a distance to the outer row and ta
 A `WHERE` inside the subquery on indexed fields filters the rows before they are ranked, as it does for a single kNN query.
 
 `EXPLAIN` shows the join as an `INOUT_FUNCTION` over the left side, with the `Score` and `Top: k` of a kNN scan. The index is used when the join selects from the index by name, the distance matches the index's metric, the limit is a constant, every predicate inside the subquery can be answered by the index, and the subquery's columns read only the index's rows; otherwise the join computes the distance for every pair of rows.
+
+### Multi-vector search (MaxSim) {#maxsim}
+
+A `FLOAT[N][]` column holds a list of vectors per row, such as one embedding per token of a passage. An `ivf` or `hnsw` index over it indexes every vector of every row and needs `metric = 'ip'`; any other metric is an error. Rank the rows by [`maxsim(column, query)`](../../functions/vector.md#maxsim), largest first: for each vector of the query list, the best inner product with any vector of the row, summed over the query list.
+
+<SqlLogicTest id="sql/indexes/inverted/vector-search/maxsim" />
+
+The query list is a constant or a parameter of type `FLOAT[N][]`. The index finds the rows whose vectors are among the nearest to each query vector, then scores those rows exactly with `maxsim`, so the returned scores are the function's own. A row with a `NULL` or empty list is never returned. A parameter that is `NULL`, empty or holds a `NULL` vector is an error; a constant one is not pushed to the index, and ranks every row by the function's `NULL` result.
+
+Each query vector keeps [`sdb_maxsim_overfetch`](./maintenance.md#session-settings) times the `LIMIT` nearest index entries (`10` by default); a row none of them reaches is not a candidate, so a larger value finds more of the true top at a higher cost. [`sdb_ivf_search_nprobe`](./maintenance.md#session-settings) and [`sdb_hnsw_ef_search`](./maintenance.md#session-settings) widen the search for every query vector as for a single kNN query.
+
+`EXPLAIN` shows `Score: maxsim(column, FLOAT[N][])` with `Top: k`. `ORDER BY maxsim(...)` ascending, or `maxsim` with the column as its second argument, ranks the rows exactly instead. [`NEAREST k BY SIMILARITY maxsim(...)`](#nearest-joins) and a `LATERAL` subquery ordered by it run one MaxSim search per left row through the index:
+
+<SqlLogicTest id="sql/indexes/inverted/vector-search/maxsim_join" />
 
 ## Quantization {#quantization}
 
@@ -191,7 +205,7 @@ Here `lang` is `INCLUDE`d and `id` is indexed: the part on indexed fields -- a c
 
 ## Column types
 
-A vector column must be a fixed-size `FLOAT[N]` array -- all rows share dimension `N` (an unsized `FLOAT[]` is rejected). Unlike text and `INCLUDE`d columns, a vector column does not take a storage `compression` codec -- use `quant` instead to control its on-disk size.
+A vector column must be a fixed-size `FLOAT[N]` array -- all rows share dimension `N` (an unsized `FLOAT[]` is rejected) -- or a list of such arrays, `FLOAT[N][]`, indexed for [multi-vector search](#maxsim) with `metric = 'ip'`. Unlike text and `INCLUDE`d columns, a vector column does not take a storage `compression` codec -- use `quant` instead to control its on-disk size.
 
 ## See also
 

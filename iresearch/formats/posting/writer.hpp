@@ -208,7 +208,7 @@ class PostingsWriter final {
       SDB_ASSERT(_pay_out);
       _term_pay->Finish(*_pay_out);
     }
-    const auto count = _docs.count();
+    const auto count = _features.HasVector() ? _vec_docs : _docs.count();
     SDB_ASSERT(count < doc_limits::eof());
     return {.has_score_bounds = _valid_writer != nullptr,
             .docs_count = static_cast<doc_id_t>(count)};
@@ -285,8 +285,9 @@ class PostingsWriter final {
 
   BlockIndexWriter _index;
   bstring _tail;
-  PostingMeta _last_state;    // Last final term state
-  bitset _docs;               // Set of all processed documents
+  PostingMeta _last_state;  // Last final term state
+  bitset _docs;             // Set of all processed documents
+  uint64_t _vec_docs = 0;
   IndexOutput::ptr _doc_out;  // Postings (doc + freq)
   IndexOutput::ptr _pos_out;  // Positions
   IndexOutput::ptr _pay_out;  // Payload (pay + offs)
@@ -380,6 +381,7 @@ inline void PostingsWriter::Prepare(const FlushState& state) {
 
   // Prepare documents bitset
   _docs.reset(doc_limits::min() + state.doc_count);
+  _vec_docs = 0;
 }
 
 inline void PostingsWriter::Encode(BufferedOutput& out,
@@ -809,7 +811,9 @@ IRS_FORCE_INLINE inline void PostingsWriter::BeginDocInTerm(doc_id_t doc,
     _doc.Push(doc);
   }
 
-  _docs.set(doc);
+  if (!_features.HasVector()) {
+    _docs.set(doc);
+  }
 
   // First position offsets now is format dependent
   _pos.last = pos_limits::invalid();
@@ -858,8 +862,10 @@ inline void PostingsWriter::Write(TermPostings& docs, PostingMeta& meta,
       const auto take = std::min(doc_limits::kBlockSize - _doc.size, n - k);
       auto* docs_out = _doc.docs + _doc.size;
       std::copy_n(_run_docs + k, take, docs_out);
-      for (uint32_t i = 0; i != take; ++i) {
-        _docs.set(docs_out[i]);
+      if (!has_vec) {
+        for (uint32_t i = 0; i != take; ++i) {
+          _docs.set(docs_out[i]);
+        }
       }
       uint64_t positions = 0;
       if (has_freq) {
@@ -888,6 +894,9 @@ inline void PostingsWriter::Write(TermPostings& docs, PostingMeta& meta,
 
   meta.docs_count = docs_count;
   meta.freq = total_freq;
+  if (has_vec) {
+    _vec_docs += docs_count;
+  }
   EndTerm(meta);
 
   // Stream this term's fixed-width per-document payload (e.g. IVF quantized
@@ -958,6 +967,9 @@ inline void PostingsWriter::WritePostings(const PostingRows& postings,
 
   meta.docs_count = docs_count;
   meta.freq = total_freq;
+  if (has_vec) {
+    _vec_docs += docs_count;
+  }
   EndTerm(meta);
 
   if (has_vec) {

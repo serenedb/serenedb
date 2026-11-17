@@ -29,6 +29,7 @@
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
+#include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/execution/operator/helper/physical_limit.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
@@ -144,8 +145,9 @@ bool SameLimit(const duckdb::BoundLimitNode& node,
 
 std::vector<float> EvaluateQueryVector(duckdb::ClientContext& context,
                                        const VectorScorerOptions& vs) {
-  const auto target =
+  const auto vector =
     duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT, vs.dims);
+  const auto target = vs.maxsim ? duckdb::LogicalType::LIST(vector) : vector;
   const auto bad = [&](const char* what) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("the query vector of a vector search ", what));
@@ -164,6 +166,26 @@ std::vector<float> EvaluateQueryVector(duckdb::ClientContext& context,
   casted.Flatten(1);
   if (!duckdb::FlatVector::Validity(casted).RowIsValid(0)) {
     bad("is NULL");
+  }
+  if (vs.maxsim) {
+    const auto entry =
+      duckdb::FlatVector::GetData<duckdb::list_entry_t>(casted)[0];
+    if (entry.length == 0) {
+      bad("is empty");
+    }
+    auto& arrays = duckdb::ListVector::GetChildMutable(casted);
+    arrays.Flatten(entry.offset + entry.length);
+    auto& values = duckdb::ArrayVector::GetChildMutable(arrays);
+    const auto first = entry.offset * vs.dims;
+    const auto count = entry.length * vs.dims;
+    if (!duckdb::FlatVector::Validity(arrays).CheckAllValid(
+          entry.offset + entry.length, entry.offset) ||
+        !duckdb::FlatVector::Validity(values).CheckAllValid(first + count,
+                                                            first)) {
+      bad("holds NULL");
+    }
+    const auto* data = duckdb::FlatVector::GetData<float>(values) + first;
+    return std::vector<float>{data, data + count};
   }
   auto& child = duckdb::ArrayVector::GetEntry(casted);
   child.Flatten(vs.dims);

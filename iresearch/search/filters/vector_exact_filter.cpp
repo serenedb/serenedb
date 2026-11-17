@@ -33,8 +33,19 @@ QueryBuilder::ptr ByVectorExact::PrepareSegment(
   const auto& opts = options();
   const auto* column = segment.Column(field_id());
   const auto* columns = segment.GetColReader();
-  if (!column || !columns || !column->Child() ||
-      column->ArraySize() != opts.query.size() || column->RowCount() == 0) {
+  if (!column || !columns || !column->Child() || column->RowCount() == 0) {
+    return QueryBuilder::Empty();
+  }
+  const AnnEntries* entries = nullptr;
+  if (opts.maxsim) {
+    const auto* ann = segment.Ann(opts.ann_id);
+    entries = ann ? ann->Entries(segment, field_id()) : nullptr;
+    column = column->Child();
+    if (!entries || !column->Child() || column->ArraySize() == 0 ||
+        opts.query.size() % column->ArraySize() != 0) {
+      return QueryBuilder::Empty();
+    }
+  } else if (column->ArraySize() != opts.query.size()) {
     return QueryBuilder::Empty();
   }
   QueryBuilder::ptr inner;
@@ -42,7 +53,7 @@ QueryBuilder::ptr ByVectorExact::PrepareSegment(
     return QueryBuilder::Empty();
   }
   AnnExactCodes codes;
-  if (const auto* ann = segment.Ann(opts.ann_id)) {
+  if (const auto* ann = segment.Ann(opts.ann_id); ann && !entries) {
     codes = ann->PrepareExact(segment, opts.query, opts.metric);
   }
   std::optional<score_t> threshold;
@@ -52,7 +63,7 @@ QueryBuilder::ptr ByVectorExact::PrepareSegment(
   auto built = memory::make_tracked<ExactVectorQuery>(
     ctx.memory, segment, *column, *columns, opts.query, opts.metric,
     ctx.boost * GetBoost(), std::move(inner), std::move(codes), threshold,
-    opts.inclusive);
+    opts.inclusive, entries);
   built->SetStats(ctx.Record());
   return built;
 }

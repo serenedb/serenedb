@@ -752,6 +752,16 @@ SELECT negative_inner_product([1, 2, 3]::FLOAT[3], [4, 5, 6]::FLOAT[3]) AS neg_d
 neg_dot
 -32
 
+# DOCS_TEST: maxsim
+# DOCS_TEST_BODY
+query
+SELECT
+    maxsim([[1, 0], [0, 1]]::FLOAT[2][], [[1, 1], [2, 0]]) AS score,
+    maxsim([[1, 0]]::FLOAT[2][], []) AS no_query;
+----
+score	no_query
+3	NULL
+
 # DOCS_TEST: l2_norm
 # DOCS_TEST_BODY
 query

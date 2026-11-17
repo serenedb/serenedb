@@ -238,21 +238,35 @@ void HnswWiden(QuantizerReader& reader, const HnswData& data,
   nearest.resize(kept);
 }
 
+doc_id_t RowOf(const AnnEntries* entries, uint32_t node) noexcept {
+  return static_cast<doc_id_t>(entries ? entries->Row(node) : node) +
+         doc_limits::min();
+}
+
+bool Admitted(const uint64_t* admitted, doc_id_t doc) noexcept {
+  const auto offset = doc - detail::LazyBitset::kMin;
+  return !admitted || CheckBit(admitted[offset / detail::LazyBitset::kBits],
+                               offset % detail::LazyBitset::kBits);
+}
+
 std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
-                                  const SubReader& segment) {
+                                  const SubReader& segment,
+                                  const AnnEntries* entries = nullptr,
+                                  const uint64_t* admitted = nullptr) {
   const auto it_mask = segment.MaskedDocs();
   const auto end =
     doc_limits::min() + static_cast<doc_id_t>(segment.docs_count());
   std::vector<ScoreDoc> hits;
   hits.reserve(found.size());
   for (const auto& c : found) {
-    const auto doc = static_cast<doc_id_t>(c.node) + doc_limits::min();
-    SDB_ENSURE(doc >= doc_limits::min() && doc < end,
+    const auto row = RowOf(entries, c.node);
+    SDB_ENSURE(row >= doc_limits::min() && row < end,
                "an hnsw hit is outside its segment");
-    if (it_mask.Contains(doc)) {
+    if (it_mask.Contains(row) || !Admitted(admitted, row)) {
       continue;
     }
-    hits.push_back({.score = c.score, .doc = doc});
+    hits.push_back({.score = c.score,
+                    .doc = static_cast<doc_id_t>(c.node) + doc_limits::min()});
   }
   absl::c_sort(
     hits, [](const ScoreDoc& l, const ScoreDoc& r) { return l.doc < r.doc; });
@@ -262,7 +276,9 @@ std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
 std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
                                   const SubReader& segment,
                                   std::span<const score_t> spreads,
-                                  std::vector<score_t>& spread_out) {
+                                  std::vector<score_t>& spread_out,
+                                  const AnnEntries* entries = nullptr,
+                                  const uint64_t* admitted = nullptr) {
   SDB_ASSERT(spreads.size() == found.size());
   std::vector<uint32_t> order(found.size());
   std::iota(order.begin(), order.end(), 0);
@@ -277,13 +293,15 @@ std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
   spread_out.clear();
   spread_out.reserve(found.size());
   for (const auto i : order) {
-    const auto doc = static_cast<doc_id_t>(found[i].node) + doc_limits::min();
-    SDB_ENSURE(doc >= doc_limits::min() && doc < end,
+    const auto row = RowOf(entries, found[i].node);
+    SDB_ENSURE(row >= doc_limits::min() && row < end,
                "an hnsw hit is outside its segment");
-    if (it_mask.Contains(doc)) {
+    if (it_mask.Contains(row) || !Admitted(admitted, row)) {
       continue;
     }
-    hits.push_back({.score = found[i].score, .doc = doc});
+    hits.push_back(
+      {.score = found[i].score,
+       .doc = static_cast<doc_id_t>(found[i].node) + doc_limits::min()});
     spread_out.push_back(spreads[i]);
   }
   return hits;
@@ -916,7 +934,8 @@ std::vector<ScoreDoc> HnswQuery::RunSearch(detail::TableFilter* table,
 void HnswSearchBatch(const SubReader& segment, const HnswData& data,
                      const VectorFilterOptions& opts, uint32_t record_size,
                      uint32_t ef, const ann::QueryBatch& batch, score_t boost,
-                     std::span<ann::Collector> collectors) {
+                     std::span<ann::Collector> collectors,
+                     const AnnEntries* entries, const uint64_t* admitted) {
   constexpr size_t kLockstep = 8;
   const auto& graph = data.graph;
   const auto d = batch.d;
@@ -943,18 +962,18 @@ void HnswSearchBatch(const SubReader& segment, const HnswData& data,
     };
   }
   WithHnswDists(data, inputs, opts.metric, d, record_size, [&](auto dists) {
-    std::vector<HnswCandidate> entries(count);
+    std::vector<HnswCandidate> starts(count);
     {
       HnswSearchScratch scratch;
       for (uint32_t q = 0; q < count; ++q) {
         HnswResetSearch(scratch);
-        entries[q] = HnswDescendToBase(graph, dists[q], ef, scratch);
+        starts[q] = HnswDescendToBase(graph, dists[q], ef, scratch);
       }
     }
     std::vector<uint32_t> order(count);
     absl::c_iota(order, 0);
     absl::c_stable_sort(order, [&](uint32_t l, uint32_t r) {
-      return entries[l].node < entries[r].node;
+      return starts[l].node < starts[r].node;
     });
     std::array<HnswSearchScratch, kLockstep> scratch;
     std::vector<size_t> active;
@@ -968,7 +987,7 @@ void HnswSearchBatch(const SubReader& segment, const HnswData& data,
       active.clear();
       for (size_t i = 0; i < group.size(); ++i) {
         auto& s = scratch[i];
-        const auto entry = entries[group[i]];
+        const auto entry = starts[group[i]];
         HnswResetSearch(s);
         s.visited.Reset(graph.Size(), HnswWalkVisits(ef, graph.M0()),
                         HnswWalks::One);
@@ -994,9 +1013,10 @@ void HnswSearchBatch(const SubReader& segment, const HnswData& data,
             wide = true;
           }
         }
-        const auto hits = wide
-                            ? CollectHits(s.nearest, segment, widened, spreads)
-                            : CollectHits(s.nearest, segment);
+        const auto hits =
+          wide ? CollectHits(s.nearest, segment, widened, spreads, entries,
+                             admitted)
+               : CollectHits(s.nearest, segment, entries, admitted);
         if (!wide) {
           spreads.assign(hits.size(), 0.f);
         }

@@ -27,6 +27,7 @@
 #include <duckdb/common/vector/array_vector.hpp>
 #include <duckdb/common/vector/constant_vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
+#include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
@@ -88,7 +89,9 @@ constexpr uint32_t kRescoreRound = 8;
 struct AnnJoinLocalState final : RankedLocalState {
   duckdb::idx_t next_row = 0;
   std::vector<float> vectors;
+  std::vector<uint32_t> ends;
   std::vector<uint32_t> rows;
+  irs::ann::MaxSimCandidates maxsim;
   std::deque<irs::ann::SharedFloor> floors;
   std::vector<irs::ann::Collector> collectors;
   std::vector<std::vector<irs::ScoreDoc>> pools;
@@ -184,7 +187,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> AnnJoinInitGlobal(
       vs.ef_search = std::max(vs.ef_construction, state->k);
     }
   }
-  state->rescore = !vs.exact && vs.rescore_width > 0.f;
+  state->rescore = !vs.exact && (vs.maxsim || vs.rescore_width > 0.f);
   g.vector_scorer = &vs;
   if (!vs.exact) {
     state->filter = MakeVectorFilter(vs, bind.search.filter,
@@ -212,8 +215,49 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> AnnJoinInitLocal(
   return state;
 }
 
+void PrepareQueryVectors(const AnnJoinGlobalState& g, AnnJoinLocalState& l,
+                         duckdb::DataChunk& input, duckdb::idx_t end) {
+  const auto d = g.vs.dims;
+  auto& lists = input.data[0];
+  const auto& valid = duckdb::FlatVector::Validity(lists);
+  const auto* entries =
+    duckdb::FlatVector::GetData<duckdb::list_entry_t>(lists);
+  auto& arrays = duckdb::ListVector::GetChildMutable(lists);
+  const auto& array_valid = duckdb::FlatVector::Validity(arrays);
+  auto& values = duckdb::ArrayVector::GetChildMutable(arrays);
+  const auto& value_valid = duckdb::FlatVector::Validity(values);
+  const auto* data = duckdb::FlatVector::GetData<float>(values);
+  l.vectors.clear();
+  l.ends.clear();
+  l.rows.clear();
+  for (; l.next_row < end; ++l.next_row) {
+    const auto row = l.next_row;
+    if (!valid.RowIsValid(row)) {
+      continue;
+    }
+    const auto& entry = entries[row];
+    if (!l.rows.empty() && l.vectors.size() / d + entry.length > g.batch_rows) {
+      break;
+    }
+    const auto first = entry.offset * d;
+    const auto count = entry.length * d;
+    if (entry.length == 0 ||
+        !array_valid.CheckAllValid(entry.offset + entry.length, entry.offset) ||
+        !value_valid.CheckAllValid(first + count, first)) {
+      continue;
+    }
+    l.vectors.insert(l.vectors.end(), data + first, data + first + count);
+    l.ends.push_back(static_cast<uint32_t>(l.vectors.size() / d));
+    l.rows.push_back(static_cast<uint32_t>(row));
+  }
+}
+
 void PrepareQueries(const AnnJoinGlobalState& g, AnnJoinLocalState& l,
                     duckdb::DataChunk& input, duckdb::idx_t end) {
+  if (g.vs.maxsim) {
+    PrepareQueryVectors(g, l, input, end);
+    return;
+  }
   const auto d = g.vs.dims;
   auto& arrays = input.data[0];
   const auto& valid = duckdb::FlatVector::Validity(arrays);
@@ -271,6 +315,23 @@ void Drain(AnnJoinLocalState& l, uint32_t segment) {
   }
 }
 
+void SearchMaxSim(const AnnJoinGlobalState& g, AnnJoinLocalState& l,
+                  const irs::SubReader& segment, const irs::AnnIndex& ann,
+                  uint32_t seg) {
+  const auto* entries = ann.Entries(segment, g.vs.field_id);
+  if (!entries) {
+    return;
+  }
+  l.maxsim.Search(ann, *entries, segment, {}, *g.options, g.options->nprobe,
+                  l.vectors, l.ends);
+  for (uint32_t q = 0; q < l.ends.size(); ++q) {
+    for (const auto& bound : l.maxsim.Group(q)) {
+      l.pools[q].push_back(
+        {.score = bound.upper, .doc = bound.doc, .segment_idx = seg});
+    }
+  }
+}
+
 void SearchApprox(const AnnJoinGlobalState& g, AnnJoinLocalState& l) {
   const auto& reader = *g.scan.reader;
   const irs::ann::QueryBatch batch{.vectors = l.vectors, .d = g.vs.dims};
@@ -283,10 +344,24 @@ void SearchApprox(const AnnJoinGlobalState& g, AnnJoinLocalState& l) {
     if (!ann) {
       continue;
     }
+    if (g.vs.maxsim) {
+      SearchMaxSim(g, l, segment, *ann, seg);
+      continue;
+    }
     ann->SearchBatch(segment, {}, *g.options, batch, g.options->nprobe,
                      l.collectors);
     Drain(l, seg);
   }
+}
+
+std::span<const float> QueryOf(const AnnJoinGlobalState& g,
+                               const AnnJoinLocalState& l, uint32_t query) {
+  const size_t d = g.vs.dims;
+  if (!g.vs.maxsim) {
+    return {l.vectors.data() + query * d, d};
+  }
+  const size_t first = query == 0 ? 0 : l.ends[query - 1];
+  return {l.vectors.data() + first * d, (l.ends[query] - first) * d};
 }
 
 void SearchExactly(const AnnJoinGlobalState& g, AnnJoinLocalState& l,
@@ -294,9 +369,8 @@ void SearchExactly(const AnnJoinGlobalState& g, AnnJoinLocalState& l,
   const auto& reader = *g.scan.reader;
   auto vs = g.vs;
   vs.exact = true;
-  const auto d = vs.dims;
-  vs.query_vector.assign(l.vectors.begin() + size_t{query} * d,
-                         l.vectors.begin() + size_t{query + 1} * d);
+  const auto vectors = QueryOf(g, l, query);
+  vs.query_vector.assign(vectors.begin(), vectors.end());
   const auto filter = MakeVectorFilter(vs, g.scan.scan->search.filter,
                                        std::numeric_limits<float>::max());
   const irs::VectorSimilarityScorer scorer;
@@ -333,8 +407,19 @@ irs::detail::RawVectorReader* Rescorer(const AnnJoinGlobalState& g,
     if (!column || !columns) {
       return nullptr;
     }
-    reader = std::make_unique<irs::detail::RawVectorReader>(*column, *columns,
-                                                            g.vs.dims);
+    if (!g.vs.maxsim) {
+      reader = std::make_unique<irs::detail::RawVectorReader>(*column, *columns,
+                                                              g.vs.dims);
+      return reader.get();
+    }
+    const auto* ann = sub.Ann(g.options->ann_id);
+    const auto* entries = ann ? ann->Entries(sub, g.vs.field_id) : nullptr;
+    if (!entries) {
+      return nullptr;
+    }
+    reader = std::make_unique<irs::detail::RawVectorReader>(
+      *column->Child(), *columns, g.vs.dims);
+    reader->SetMaxSim({}, *entries);
   }
   return reader.get();
 }
@@ -431,20 +516,23 @@ void Rescore(const AnnJoinGlobalState& g, AnnJoinLocalState& l) {
     for (size_t i = 0; i < l.candidates.size();) {
       const auto& first = l.candidates[i];
       auto* reader = Rescorer(g, l, first.segment);
-      const auto* row = reader ? reader->Row(first.doc) : nullptr;
+      const auto* row =
+        reader && !g.vs.maxsim ? reader->Row(first.doc) : nullptr;
       for (; i < l.candidates.size() &&
              l.candidates[i].segment == first.segment &&
              l.candidates[i].doc == first.doc;
            ++i) {
         const auto& c = l.candidates[i];
         auto& score = l.pools[c.query][c.slot].score;
-        if (!row) {
+        if (!reader || (!row && !g.vs.maxsim)) {
           score = std::numeric_limits<irs::score_t>::lowest();
           continue;
         }
-        score = dist(reinterpret_cast<const irs::byte_type*>(
-                       l.vectors.data() + size_t{c.query} * d),
-                     reinterpret_cast<const irs::byte_type*>(row), d);
+        const auto query = QueryOf(g, l, c.query);
+        score = g.vs.maxsim
+                  ? reader->MaxSim(c.doc, query)
+                  : dist(reinterpret_cast<const irs::byte_type*>(query.data()),
+                         reinterpret_cast<const irs::byte_type*>(row), d);
         auto& best = l.best[c.query];
         best.push_back(score);
         absl::c_push_heap(best, std::greater<>{});
@@ -547,9 +635,11 @@ void AppendNullRows(AnnJoinLocalState& l, duckdb::idx_t first,
 void SearchRows(duckdb::ClientContext& ctx, AnnJoinGlobalState& g,
                 AnnJoinLocalState& l, duckdb::DataChunk& input) {
   const auto first = l.next_row;
-  const auto end =
-    std::min<duckdb::idx_t>(input.size(), l.next_row + g.batch_rows);
-  PrepareQueries(g, l, input, end);
+  PrepareQueries(g, l, input,
+                 g.vs.maxsim ? input.size()
+                             : std::min<duckdb::idx_t>(
+                                 input.size(), l.next_row + g.batch_rows));
+  const auto end = l.next_row;
   const auto count = static_cast<uint32_t>(l.rows.size());
   ResetCollectors(g, l, count);
   if (count == 0) {
@@ -573,7 +663,7 @@ void SearchRows(duckdb::ClientContext& ctx, AnnJoinGlobalState& g,
   const auto want = std::min<uint64_t>(g.k, g.scan.reader->live_docs_count());
   for (uint32_t q = 0; q < count; ++q) {
     KeepTop(l.pools[q], g.k, g.scan.score_static_floor);
-    if (!g.vs.exact && g.vs.kind == irs::AnnKind::Ivf &&
+    if (!g.vs.exact && (g.vs.kind == irs::AnnKind::Ivf || g.vs.maxsim) &&
         l.pools[q].size() < want) {
       l.pools[q].clear();
       l.floors[q].Reset(g.scan.score_static_floor);
@@ -642,9 +732,17 @@ duckdb::OperatorResultType AnnJoinFunction(duckdb::ExecutionContext& context,
   auto& g = data.global_state->Cast<AnnJoinGlobalState>();
   auto& l = data.local_state->Cast<AnnJoinLocalState>();
   if (l.next_row == 0 && l.emitted == l.answer.size()) {
-    input.data[0].Flatten(input.size());
-    duckdb::ArrayVector::GetEntry(input.data[0])
-      .Flatten(input.size() * g.vs.dims);
+    auto& queries = input.data[0];
+    queries.Flatten(input.size());
+    auto count = input.size();
+    if (g.vs.maxsim) {
+      count = duckdb::ListVector::GetListSize(queries);
+      auto& arrays = duckdb::ListVector::GetChildMutable(queries);
+      arrays.Flatten(count);
+      duckdb::ArrayVector::GetChildMutable(arrays).Flatten(count * g.vs.dims);
+    } else {
+      duckdb::ArrayVector::GetEntry(queries).Flatten(count * g.vs.dims);
+    }
   }
   while (l.emitted == l.answer.size()) {
     if (l.next_row >= input.size()) {

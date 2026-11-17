@@ -28,6 +28,7 @@
 #include <span>
 #include <vector>
 
+#include "iresearch/formats/ann_entries.hpp"
 #include "iresearch/formats/ivf/quantizer.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/ann/collector.hpp"
@@ -54,7 +55,7 @@ struct IvfCluster {
 class IvfQueryScan {
  public:
   IvfQueryScan(std::unique_ptr<QuantizerReader> reader, score_t boost,
-               float width);
+               float width, const AnnEntries* entries);
 
   void Score(const irs::detail::ScoreArgs& args, const SubReader& segment,
              const FieldProperties& field, irs::detail::TableFilter* table);
@@ -81,8 +82,14 @@ class IvfQueryScan {
 
   uint32_t Narrow(uint32_t n);
 
+  doc_id_t RowDoc(doc_id_t doc) const noexcept {
+    return _entries ? _entries->Row(doc - doc_limits::min()) + doc_limits::min()
+                    : doc;
+  }
+
   std::unique_ptr<QuantizerReader> _reader;
   irs::detail::ClusterScorer _scorer;
+  const AnnEntries* _entries;
   irs::detail::ScaleProvider _provider;
   ScoreFunction _score;
   ColumnArgsFetcher* _fetcher = nullptr;

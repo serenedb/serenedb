@@ -40,7 +40,7 @@
 namespace irs {
 
 struct Directory;
-struct AnnIndex;
+class AnnIndex;
 struct IResourceManager;
 
 struct IvfCentroidMeta {

@@ -39,7 +39,7 @@ namespace irs {
 struct SubReader;
 
 class ColumnReader;
-struct AnnIndex;
+class AnnIndex;
 class ReadContext;
 class ColReader;
 struct SegmentMeta;

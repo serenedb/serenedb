@@ -160,8 +160,10 @@ class NumericEncoder : public State {
     auto& choice = data.tuning.numeric;
     const LeafSamples* samples = &_best_samples;
     if (data.method != CodecType::Auto) {
-      if (Analyze(data, std::numeric_limits<double>::infinity(), leaf).codec ==
-          CodecType::Auto) {
+      if (leaf == ByteCodec::None
+            ? Analyze(data, std::numeric_limits<double>::infinity(), leaf)
+                  .codec == CodecType::Auto
+            : !Smallest(leaf)) {
         return false;
       }
     } else if (!_best) {
@@ -302,6 +304,32 @@ class NumericEncoder : public State {
       return leaf == ByteCodec::None;
     }
     return data.params.tier != WriteTier::Flush || leaf != ByteCodec::Zstd;
+  }
+
+  bool Smallest(ByteCodec leaf) {
+    if (!_values.Usable()) {
+      return false;
+    }
+    if (!_complete) {
+      Rebuild(nullptr);
+    }
+    const Candidate* best = nullptr;
+    uint64_t best_bytes = 0;
+    for (const auto& c : _candidates) {
+      const auto bytes = uint64_t{c.items} * c.ItemBytes();
+      if (!c.packed && (!best || bytes < best_bytes ||
+                        (bytes == best_bytes && c.shuffled))) {
+        best = &c;
+        best_bytes = bytes;
+      }
+    }
+    if (!best) {
+      return false;
+    }
+    _best = best;
+    _leaf = leaf;
+    _best_samples.frames.clear();
+    return true;
   }
 
   void Rebuild(const NumericChoice* only) {

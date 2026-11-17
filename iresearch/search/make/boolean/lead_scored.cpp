@@ -25,6 +25,5 @@
 namespace irs::detail {
 
 IRS_MAKE_BOOLEAN(lead::Family, ScoredCtx);
-IRS_MAKE_BOOLEAN_REQUIRED(lead::Family, ScoredCtx);
 
 }  // namespace irs::detail

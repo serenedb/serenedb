@@ -32,6 +32,7 @@
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/detail/window_set.hpp"
+#include "iresearch/search/detail/with_mask.hpp"
 #include "iresearch/search/probe/boolean_sparse.hpp"
 #include "iresearch/search/probe/impl.hpp"
 #include "iresearch/search/probe/leaves.hpp"
@@ -50,32 +51,6 @@ Scoring WithUniformity(Scoring scoring, detail::Terms uniformity) noexcept {
   }
   return scoring;
 }
-
-template<typename Scoring>
-Node::ptr MakeOptional(std::span<const detail::PostingClause> should,
-                       std::span<const QueryBuilder::ptr> should_filters,
-                       uint32_t min_match, const SubReader& segment,
-                       uint64_t interrogations, const Scoring& scoring,
-                       const detail::ScoredCtx& ctx, score_t absorbed) {
-  SDB_ASSERT(min_match != 0);
-  return min_match == 1
-           ? MakeDisjunction(should, should_filters, nullptr, segment,
-                             interrogations, scoring, ctx, absorbed)
-           : MakeSparseThreshold(should, should_filters, segment, min_match,
-                                 interrogations, scoring, ctx, absorbed);
-}
-
-extern template Node::ptr MakeOptional(std::span<const detail::PostingClause>,
-                                       std::span<const QueryBuilder::ptr>,
-                                       uint32_t, const SubReader&, uint64_t,
-                                       const detail::NoScoring&,
-                                       const detail::ScoredCtx&, score_t);
-
-extern template Node::ptr MakeOptional(std::span<const detail::PostingClause>,
-                                       std::span<const QueryBuilder::ptr>,
-                                       uint32_t, const SubReader&, uint64_t,
-                                       const detail::TermScoring&,
-                                       const detail::ScoredCtx&, score_t);
 
 template<typename Scoring, typename Make>
 Node::ptr BuildMusts(std::span<const detail::PostingClause> terms,
@@ -263,6 +238,23 @@ Node::ptr MakeIncluded(const BooleanQuery& query, uint64_t interrogations,
     }
   }
   return MakeRequired(query, interrogations, scoring, ctx, absorbed);
+}
+
+template<typename Scoring, detail::MaskSlice kSlice>
+Node::ptr MakeExclusionIn(const BooleanQuery& query, uint64_t interrogations,
+                          const Scoring& scoring, const detail::ScoredCtx& ctx,
+                          score_t absorbed);
+
+template<typename Scoring>
+Node::ptr MakeExclusion(const BooleanQuery& query, uint64_t interrogations,
+                        const Scoring& scoring, const detail::ScoredCtx& ctx,
+                        score_t absorbed) {
+  return detail::ResolveMaskSlice(
+    query.Queries(Occur::MustNot), query.Segment(),
+    [&]<detail::MaskSlice kSlice> -> Node::ptr {
+      return MakeExclusionIn<Scoring, kSlice>(query, interrogations, scoring,
+                                              ctx, absorbed);
+    });
 }
 
 template<typename Scoring>

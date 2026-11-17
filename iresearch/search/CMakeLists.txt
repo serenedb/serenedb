@@ -49,35 +49,75 @@ target_sources(
         lead/make_posting.cpp
         make/boolean/count.cpp
         make/boolean/count_exclusion.cpp
+        make/boolean/count_exclusion_plural_mask.cpp
+        make/boolean/count_exclusion_single_mask.cpp
         make/boolean/count_exclusion_window.cpp
+        make/boolean/count_exclusion_window_plural_mask.cpp
+        make/boolean/count_exclusion_window_single_mask.cpp
+        make/boolean/count_required.cpp
         make/boolean/docs.cpp
         make/boolean/docs_exclusion.cpp
+        make/boolean/docs_exclusion_plural_mask.cpp
+        make/boolean/docs_exclusion_single_mask.cpp
         make/boolean/docs_exclusion_window.cpp
+        make/boolean/docs_exclusion_window_plural_mask.cpp
+        make/boolean/docs_exclusion_window_single_mask.cpp
         make/boolean/docs_negation.cpp
+        make/boolean/docs_required.cpp
         make/boolean/fill_docs.cpp
+        make/boolean/fill_docs_required.cpp
         make/boolean/fill_exclusion_docs.cpp
+        make/boolean/fill_exclusion_docs_plural_mask.cpp
+        make/boolean/fill_exclusion_docs_single_mask.cpp
         make/boolean/fill_exclusion_scored.cpp
+        make/boolean/fill_exclusion_scored_plural_mask.cpp
+        make/boolean/fill_exclusion_scored_single_mask.cpp
         make/boolean/fill_exclusion_window.cpp
+        make/boolean/fill_exclusion_window_plural_mask.cpp
+        make/boolean/fill_exclusion_window_single_mask.cpp
         make/boolean/fill_negation.cpp
         make/boolean/fill_scored.cpp
+        make/boolean/fill_scored_required.cpp
         make/boolean/hits.cpp
         make/boolean/hits_exclusion.cpp
+        make/boolean/hits_exclusion_plural_mask.cpp
+        make/boolean/hits_exclusion_single_mask.cpp
         make/boolean/hits_exclusion_window.cpp
+        make/boolean/hits_exclusion_window_plural_mask.cpp
+        make/boolean/hits_exclusion_window_single_mask.cpp
+        make/boolean/hits_required.cpp
         make/boolean/lead_docs.cpp
+        make/boolean/lead_docs_required.cpp
         make/boolean/lead_exclusion_docs.cpp
+        make/boolean/lead_exclusion_docs_plural_mask.cpp
+        make/boolean/lead_exclusion_docs_single_mask.cpp
         make/boolean/lead_exclusion_scored.cpp
+        make/boolean/lead_exclusion_scored_plural_mask.cpp
+        make/boolean/lead_exclusion_scored_single_mask.cpp
         make/boolean/lead_exclusion_window.cpp
+        make/boolean/lead_exclusion_window_plural_mask.cpp
+        make/boolean/lead_exclusion_window_single_mask.cpp
         make/boolean/lead_negation.cpp
         make/boolean/lead_scored.cpp
+        make/boolean/lead_scored_required.cpp
         make/boolean/probe_docs.cpp
         make/boolean/probe_exclusion_docs.cpp
+        make/boolean/probe_exclusion_docs_plural_mask.cpp
+        make/boolean/probe_exclusion_docs_single_mask.cpp
         make/boolean/probe_exclusion_scored.cpp
+        make/boolean/probe_exclusion_scored_plural_mask.cpp
+        make/boolean/probe_exclusion_scored_single_mask.cpp
         make/boolean/probe_optional_docs.cpp
         make/boolean/probe_optional_scored.cpp
         make/boolean/probe_scored.cpp
         make/boolean/top.cpp
         make/boolean/top_exclusion.cpp
+        make/boolean/top_exclusion_plural_mask.cpp
+        make/boolean/top_exclusion_single_mask.cpp
         make/boolean/top_exclusion_window.cpp
+        make/boolean/top_exclusion_window_plural_mask.cpp
+        make/boolean/top_exclusion_window_single_mask.cpp
+        make/boolean/top_required.cpp
         make/ngram/count_all.cpp
         make/ngram/count_threshold.cpp
         make/ngram/docs_all.cpp
@@ -168,6 +208,7 @@ target_sources(
         make/query/multi_term.cpp
         make/query/ngram_similarity.cpp
         make/query/phrase.cpp
+        make/query/phrase_variadic.cpp
         make/query/term.cpp
         make/query/token_phrase.cpp
         make/query/wildcard_ngram.cpp
@@ -211,7 +252,15 @@ target_sources(
         top/make_pruned.cpp
         top/make_pruned_conjunction.cpp
         top/make_pruned_conjunction_nested.cpp
+        top/make_pruned_conjunction_nested_plural_mask.cpp
+        top/make_pruned_conjunction_nested_single_mask.cpp
+        top/make_pruned_conjunction_plural_mask.cpp
+        top/make_pruned_conjunction_single_mask.cpp
+        top/make_pruned_conjunction_unmasked.cpp
         top/make_pruned_disjunction.cpp
+        top/make_pruned_disjunction_plural_mask.cpp
+        top/make_pruned_disjunction_single_mask.cpp
+        top/make_pruned_disjunction_unmasked.cpp
         top/make_pruned_posting.cpp
         top/make_pruned_req_opt.cpp
         top/make_token_phrase.cpp

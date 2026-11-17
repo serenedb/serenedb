@@ -33,6 +33,7 @@
 #include "iresearch/search/queries/token_phrase_query.hpp"
 #include "iresearch/search/top/empty.hpp"
 #include "iresearch/search/top/family.hpp"
+#include "iresearch/search/top/make_pruned_disjunction.hpp"
 
 namespace irs::top {
 namespace {

@@ -34,18 +34,9 @@ typename Family::Result MakeQuery(const FixedPhraseQuery& query,
   });
 }
 
-template<typename Family, typename Ctx>
-typename Family::Result MakeQuery(const VariadicPhraseQuery& query,
-                                  const Ctx& ctx) {
-  return ResolveMatch(query, [&]<PhraseMatch M> {
-    return MakeKind<Family, PhraseKind<M>>(query, ctx);
-  });
-}
-
 }  // namespace irs::detail
 namespace irs {
 
 template class QueryBuilderImpl<FixedPhraseQuery, PhraseQuery>;
-template class QueryBuilderImpl<VariadicPhraseQuery, PhraseQuery>;
 
 }  // namespace irs

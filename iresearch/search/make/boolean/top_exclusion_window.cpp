@@ -24,6 +24,7 @@
 
 namespace irs::detail {
 
-IRS_MAKE_BOOLEAN_EXCLUSION_WINDOW(top::Family, top::Context);
+IRS_MAKE_BOOLEAN_EXCLUSION_WINDOW(top::Family, top::Context,
+                                  MaskSlice::Unmasked);
 
 }  // namespace irs::detail

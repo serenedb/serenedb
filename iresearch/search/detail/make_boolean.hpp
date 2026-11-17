@@ -32,12 +32,12 @@
     std::span<const PostingClause>, std::span<const QueryBuilder::ptr>, Terms, \
     uint32_t, const SubReader&, const Ctx&, ScoreMergeType, score_t)
 
-#define IRS_MAKE_BOOLEAN_EXCLUSION(Family, Ctx)                \
-  template Family::Result builder::MakeExclusion<Family, Ctx>( \
+#define IRS_MAKE_BOOLEAN_EXCLUSION(Family, Ctx, Slice)                  \
+  template Family::Result builder::MakeExclusionIn<Family, Ctx, Slice>( \
     const BooleanQuery&, const Ctx&, ScoreMergeType, score_t)
 
-#define IRS_MAKE_BOOLEAN_EXCLUSION_WINDOW(Family, Ctx)               \
-  template Family::Result builder::MakeExclusionWindow<Family, Ctx>( \
+#define IRS_MAKE_BOOLEAN_EXCLUSION_WINDOW(Family, Ctx, Slice)                 \
+  template Family::Result builder::MakeExclusionWindowIn<Family, Ctx, Slice>( \
     const BooleanQuery&, const Ctx&, ScoreMergeType, score_t, uint64_t)
 
 #define IRS_MAKE_BOOLEAN_NEGATION(Family, Ctx)                          \

@@ -21,17 +21,20 @@
 #pragma once
 
 #include <algorithm>
+#include <cstdint>
 #include <span>
 #include <tuple>
 #include <type_traits>
 #include <utility>
 
 #include "iresearch/index/docs_mask/docs_mask.hpp"
+#include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/exclude_block.hpp"
 #include "iresearch/search/fill/leaves.hpp"
 #include "iresearch/search/filters/filter.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/shared.hpp"
+#include "iresearch/utils/system_compiler.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {
@@ -54,6 +57,77 @@ bool OnlyMask(std::span<const Term> terms,
               std::span<const QueryBuilder::ptr> filters) noexcept {
   return terms.empty() && filters.size() == 1 &&
          filters.front()->Kind() == QueryKind::DocsMask;
+}
+
+enum class MaskSlice : uint8_t {
+  All,
+  Unmasked,
+  Plural,
+  Single,
+};
+
+consteval bool InSlice(MaskSlice slice, MaskKind kind) {
+  switch (slice) {
+    case MaskSlice::All:
+      return true;
+    case MaskSlice::Unmasked:
+      return false;
+    case MaskSlice::Plural:
+      return docs_mask::Plural(kind) == kind;
+    case MaskSlice::Single:
+      return docs_mask::Plural(kind) != kind;
+  }
+  return false;
+}
+
+inline MaskSlice MaskSliceOf(std::span<const QueryBuilder::ptr> filters,
+                             const SubReader& segment) noexcept {
+  if (!SplitMask(filters).masked) {
+    return MaskSlice::Unmasked;
+  }
+  return ResolveDocsMask(segment, []<DocsMaskType Mask>(const Mask&) noexcept {
+    return InSlice(MaskSlice::Plural, Mask::kKind) ? MaskSlice::Plural
+                                                   : MaskSlice::Single;
+  });
+}
+
+template<typename Make>
+decltype(auto) ResolveMaskSlice(std::span<const QueryBuilder::ptr> filters,
+                                const SubReader& segment, Make&& make) {
+  switch (MaskSliceOf(filters, segment)) {
+    case MaskSlice::Plural:
+      return make.template operator()<MaskSlice::Plural>();
+    case MaskSlice::Single:
+      return make.template operator()<MaskSlice::Single>();
+    case MaskSlice::All:
+    case MaskSlice::Unmasked:
+      break;
+  }
+  return make.template operator()<MaskSlice::Unmasked>();
+}
+
+template<MaskSlice kSlice, typename Result, typename Unmasked, typename Masked>
+Result ResolveSlicedMask(bool masked, const SubReader& segment,
+                         Unmasked&& unmasked, Masked&& make) {
+  if (!masked) {
+    if constexpr (kSlice == MaskSlice::All || kSlice == MaskSlice::Unmasked) {
+      return unmasked();
+    } else {
+      SDB_UNREACHABLE();
+    }
+  }
+  if constexpr (kSlice == MaskSlice::Unmasked) {
+    SDB_UNREACHABLE();
+  } else {
+    return ResolveDocsMask(segment,
+                           [&]<DocsMaskType Mask>(Mask docs_mask) -> Result {
+                             if constexpr (InSlice(kSlice, Mask::kKind)) {
+                               return make(std::move(docs_mask));
+                             } else {
+                               SDB_UNREACHABLE();
+                             }
+                           });
+  }
 }
 
 template<DocsMaskType Mask>

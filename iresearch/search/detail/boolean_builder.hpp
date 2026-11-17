@@ -321,7 +321,8 @@ Result<Family> MakeWindowConjunction(std::span<const PostingClause> terms,
     ctx);
 }
 
-template<typename Result, typename Term, typename Make>
+template<typename Result, MaskSlice kSlice = MaskSlice::All, typename Term,
+         typename Make>
 Result BuildNegationWindow(std::span<const Term> terms,
                            std::span<const QueryBuilder::ptr> filters,
                            const SubReader& segment, Make&& make) {
@@ -345,12 +346,13 @@ Result BuildNegationWindow(std::span<const Term> terms,
           leaf = fill::Erased{std::move(nodes[i])};
         })));
   };
-  if (!split.masked) {
-    return with_lead.template operator()<fill::AllDocs>(
-      std::forward_as_tuple(segment));
-  }
-  return ResolveDocsMask(
-    segment, [&]<DocsMaskType Mask>(Mask docs_mask) -> Result {
+  return ResolveSlicedMask<kSlice, Result>(
+    split.masked, segment,
+    [&] {
+      return with_lead.template operator()<fill::AllDocs>(
+        std::forward_as_tuple(segment));
+    },
+    [&]<DocsMaskType Mask>(Mask docs_mask) -> Result {
       return with_lead.template operator()<fill::LiveDocs<Mask>>(
         std::forward_as_tuple(std::move(docs_mask), LiveEnd(segment)));
     });
@@ -373,7 +375,7 @@ Result<Family> MakeWindowNegation(
     });
 }
 
-template<typename Family, typename Ctx>
+template<typename Family, MaskSlice kSlice, typename Ctx>
 Result<Family> MakeWindowExclusion(
   std::span<const PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters,
@@ -399,7 +401,7 @@ Result<Family> MakeWindowExclusion(
       }
       const auto& front = CookieOf(terms.front());
       return ResolveInput(*doc, [&]<typename Input> -> Result<Family> {
-        return BuildWindowExcludes<Result<Family>>(
+        return BuildWindowExcludes<Result<Family>, kSlice>(
           exclude_terms, exclude_filters, nullptr, segment, candidates,
           [&]<typename Excludes>(auto&& excludes) -> Result<Family> {
             return Family::template MakeWindow<PostingFill<Input>, utils::Empty,
@@ -417,7 +419,7 @@ Result<Family> MakeWindowExclusion(
     if (!node) {
       return {};
     }
-    return BuildWindowExcludes<Result<Family>>(
+    return BuildWindowExcludes<Result<Family>, kSlice>(
       exclude_terms, exclude_filters, nullptr, segment, candidates,
       [&]<typename Excludes>(auto&& excludes) -> Result<Family> {
         return Family::template MakeWindow<fill::Erased, utils::Empty,
@@ -435,7 +437,7 @@ Result<Family> MakeWindowExclusion(
                              : !DenseConjunction(terms, docs_count)) {
     return {};
   }
-  return BuildWindowExcludes<Result<Family>>(
+  return BuildWindowExcludes<Result<Family>, kSlice>(
     exclude_terms, exclude_filters, nullptr, segment, candidates,
     [&]<typename Excludes>(auto&& excludes) -> Result<Family> {
       return MakeWindowOfTerms<Family, Excludes>(
@@ -534,13 +536,14 @@ Result<Family> MakeSparseConjunction(std::span<const PostingClause> terms,
     });
 }
 
-template<typename Family, typename Score, typename Ctx>
+template<typename Family, MaskSlice kSlice = MaskSlice::All, typename Score,
+         typename Ctx>
 Result<Family> MakeSparseExclusionOf(
   LeadNode::ptr include, std::span<const PostingClause> exclude_terms,
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
   uint64_t candidates, const Ctx& ctx, ScoreMergeType merge, Score score) {
   SDB_ASSERT(include);
-  return BuildExcludeSide<Result<Family>>(
+  return BuildExcludeSide<Result<Family>, kSlice>(
     exclude_terms, exclude_filters, nullptr, segment, candidates,
     [&]<typename Exclude>(auto&& exclude) -> Result<Family> {
       return Family::template MakeSparse<lead::Erased, utils::Empty,
@@ -587,7 +590,7 @@ Result<Family> MakeSparseNegation(
     });
 }
 
-template<typename Family, typename Ctx>
+template<typename Family, MaskSlice kSlice, typename Ctx>
 Result<Family> MakeSparseExclusion(
   std::span<const PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters,
@@ -598,7 +601,7 @@ Result<Family> MakeSparseExclusion(
   if (terms.size() + filters.size() > 1) {
     if (auto folded = MakeConjunctionBitset<LeadNode::ptr>(
           terms, filters, nullptr, segment, nullptr)) {
-      return MakeSparseExclusionOf<Family>(
+      return MakeSparseExclusionOf<Family, kSlice>(
         std::move(folded), exclude_terms, exclude_filters, segment, candidates,
         ctx, ScoreMergeType::Noop, utils::Empty{});
     }
@@ -606,7 +609,7 @@ Result<Family> MakeSparseExclusion(
       terms, filters, segment, ctx, NoScoring{},
       [&]<typename Head, typename Tail>(auto&& head,
                                         auto&& tail) -> Result<Family> {
-        return BuildExcludeSide<Result<Family>>(
+        return BuildExcludeSide<Result<Family>, kSlice>(
           exclude_terms, exclude_filters, nullptr, segment, candidates,
           [&]<typename Exclude>(auto&& exclude) -> Result<Family> {
             return Family::template MakeSparse<Head, Tail, utils::Empty,
@@ -623,7 +626,7 @@ Result<Family> MakeSparseExclusion(
     if (!lead) {
       return {};
     }
-    return MakeSparseExclusionOf<Family>(
+    return MakeSparseExclusionOf<Family, kSlice>(
       std::move(lead), exclude_terms, exclude_filters, segment, candidates, ctx,
       ScoreMergeType::Noop, utils::Empty{});
   }
@@ -631,7 +634,7 @@ Result<Family> MakeSparseExclusion(
   const auto& meta = terms.front().state.cookie;
   return ResolveInput(*DocOf(own), [&]<typename Input> -> Result<Family> {
     using Include = PostingLead<Input>;
-    return BuildExcludeSideOf<Result<Family>, Input>(
+    return BuildExcludeSideOf<Result<Family>, Input, kSlice>(
       exclude_terms, exclude_filters, nullptr, segment, candidates,
       [&]<typename Exclude>(auto&& exclude) -> Result<Family> {
         return Family::template MakeSparse<Include, utils::Empty, utils::Empty,

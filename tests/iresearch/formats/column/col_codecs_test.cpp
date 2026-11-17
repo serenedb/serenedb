@@ -3942,6 +3942,25 @@ TEST_F(ColCodecsTest, WideRowsStayNearTheSegmentTarget) {
   Verify(dir, irs::codecs::CodecType::Lz4, 3000, kLongTextWithNulls);
 }
 
+TEST_F(ColCodecsTest, CodesHeavyDictionarySegmentsStayNearTheSegmentTarget) {
+  constexpr uint32_t kTarget = 16384;
+  constexpr uint64_t kRows = 200000;
+  const Value value = [](uint64_t g) -> std::optional<std::string> {
+    return "v" + std::to_string(std::mt19937_64{g}() % 200);
+  };
+  irs::MemoryDirectory dir{};
+  Write(dir, irs::codecs::CodecType::DictLz4, {.segment_target = kTarget},
+        kRows, DEFAULT_ROW_GROUP_SIZE, value);
+  irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto* col = r.Column(kField);
+  ASSERT_NE(col, nullptr);
+  for (const auto& block : col->DataBlocks()) {
+    EXPECT_LE(block.byte_size, kTarget * 3 / 2);
+  }
+  EXPECT_GT(col->DataBlocks().size(), 6u);
+  Verify(dir, irs::codecs::CodecType::DictLz4, kRows, value);
+}
+
 TEST_F(ColCodecsTest, AutoMeasuresLessOftenWhileItsCodecHolds) {
   using irs::codecs::Shape;
   const auto seal = [&](const std::vector<std::unique_ptr<duckdb::Vector>>& in,

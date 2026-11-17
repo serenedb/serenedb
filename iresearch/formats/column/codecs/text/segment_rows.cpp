@@ -69,8 +69,9 @@ uint64_t CodesBytes(Shape shape, uint64_t rows, uint64_t entries,
     return 0;
   }
   return tuning.reuse.calibrated
-           ? static_cast<uint64_t>(static_cast<double>(rows) *
-                                   tuning.reuse.reference)
+           ? static_cast<uint64_t>(
+               static_cast<double>(rows * sizeof(uint32_t)) *
+               tuning.reuse.reference)
            : Packed(rows, entries);
 }
 

@@ -259,8 +259,10 @@ void MergeField(std::vector<irs::FieldPatch>& fields, irs::field_id field,
     it->patch = irs::ColumnPatch::Merge(it->patch.get(), type, rows, values);
   } else {
     fields.insert(
-      it, {.field = field,
-           .patch = irs::ColumnPatch::Merge(nullptr, type, rows, values)});
+      it, {
+            .field = field,
+            .patch = irs::ColumnPatch::Merge(nullptr, type, rows, values),
+          });
   }
 }
 
@@ -675,8 +677,10 @@ irs::DirectoryReader Table::BuildReader(const TableState& prev,
       continue;
     }
     if (it->second->reader->PatchTick() != unit->reader->PatchTick()) {
-      patched.push_back({.before = irs::SegmentReader{it->second->reader},
-                         .after = irs::SegmentReader{unit->reader}});
+      patched.push_back({
+        .before = irs::SegmentReader{it->second->reader},
+        .after = irs::SegmentReader{unit->reader},
+      });
     }
     before.erase(it);
   }
@@ -810,8 +814,10 @@ irs::DirectoryReader Table::Build(const TableState& state, const OwnWrites& own,
     auto visible = with_own(unit->id, unit->deleted, unit->reader);
     auto reader = with_patches(unit->id, unit->patches, visible);
     if (reader != visible) {
-      patched.push_back({.before = irs::SegmentReader{unit->reader},
-                         .after = irs::SegmentReader{reader}});
+      patched.push_back({
+        .before = irs::SegmentReader{unit->reader},
+        .after = irs::SegmentReader{reader},
+      });
     }
     add(std::move(reader));
   }

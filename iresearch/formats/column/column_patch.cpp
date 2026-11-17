@@ -373,7 +373,7 @@ std::shared_ptr<const ColumnPatch> ColumnPatch::Merge(const ColumnPatch* base,
   return next;
 }
 
-auto ColumnPatch::EntriesSince(const ColumnPatch* since) const -> Entries {
+ColumnPatch::Entries ColumnPatch::EntriesSince(const ColumnPatch* since) const {
   const auto changed = [&](auto&& visit) {
     auto old = since ? since->_groups.begin() : _groups.end();
     const auto old_end = since ? since->_groups.end() : _groups.end();
@@ -460,7 +460,7 @@ void ColumnPatch::AddRows(DocumentMaskBuilder& docs) const {
 ColumnPatch::Builder::Builder(duckdb::LogicalType type)
   : _type{std::move(type)} {}
 
-auto ColumnPatch::Builder::GroupOf(uint64_t id) -> Building& {
+ColumnPatch::Builder::Building& ColumnPatch::Builder::GroupOf(uint64_t id) {
   if (!_groups.empty() && _groups.back().id == id) {
     return _groups.back();
   }

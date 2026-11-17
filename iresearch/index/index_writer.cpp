@@ -84,19 +84,27 @@ void AddSyncFiles(SyncFiles& out, std::span<const IndexInput::ptr> files,
   }
 }
 
-void SyncBatch(std::span<const SyncFiles* const> batch) {
-  for (const auto* files : batch) {
-    for (const auto& [file, segment] : *files) {
-      file->StartWriteback();
+void StartWriteback(const SyncFiles& files) {
+  for (const auto& [file, segment] : files) {
+    file->StartWriteback();
+  }
+}
+
+void FinishSync(const SyncFiles& files) {
+  for (const auto& [file, segment] : files) {
+    if (!file->Sync()) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
+                      ERR_MSG("Failed to sync segment '", segment, "'"));
     }
   }
+}
+
+void SyncBatch(GroupCommit<SyncFiles>::Batch batch) {
   for (const auto* files : batch) {
-    for (const auto& [file, segment] : *files) {
-      if (!file->Sync()) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
-                        ERR_MSG("Failed to sync segment '", segment, "'"));
-      }
-    }
+    StartWriteback(*files);
+  }
+  for (const auto* files : batch) {
+    FinishSync(*files);
   }
 }
 
@@ -139,9 +147,7 @@ IndexWriter::Transaction::FlushSegments(bool sync) {
     AddSyncFiles(files, entry.files, entry.meta);
   }
   duckdb::TaskScheduler::BlockingScope blocking;
-  FlushSyncs().Submit(files, [](std::span<SyncFiles* const> batch) {
-    SyncBatch(std::span<const SyncFiles* const>{batch.data(), batch.size()});
-  });
+  FlushSyncs().Submit(files, SyncBatch);
   return flushed;
 }
 
@@ -449,8 +455,8 @@ auto IndexWriter::FlushMerge(Merged merged, uint64_t id,
   AddSyncFiles(sync, files, meta);
   {
     duckdb::TaskScheduler::BlockingScope blocking;
-    const SyncFiles* const batch[] = {&sync};
-    SyncBatch(batch);
+    StartWriteback(sync);
+    FinishSync(sync);
   }
   merged.refs = dir.GetRefs();
   merged.meta = std::move(meta);

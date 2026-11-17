@@ -139,9 +139,8 @@ size_t Lock(const Mapping& mapping) {
   return size;
 }
 
-void ReadInParallel(std::span<const Mapping> mappings) {
+void ReadInParallel(std::span<const Mapping> mappings, size_t threads) {
   constexpr uintptr_t kChunk = uintptr_t{2} << 20;
-  constexpr size_t kThreads = 32;
   std::vector<Mapping> chunks;
   for (const auto& mapping : mappings) {
     for (auto at = mapping.begin; at < mapping.end; at += kChunk) {
@@ -150,11 +149,11 @@ void ReadInParallel(std::span<const Mapping> mappings) {
     }
   }
   std::atomic_size_t next{0};
-  const auto count = std::min(kThreads, chunks.size());
-  std::vector<std::jthread> threads;
-  threads.reserve(count);
+  const auto count = std::min(threads, chunks.size());
+  std::vector<std::jthread> readers;
+  readers.reserve(count);
   for (size_t i = 0; i != count; ++i) {
-    threads.emplace_back([&] {
+    readers.emplace_back([&] {
       for (auto chunk = next.fetch_add(1, std::memory_order_relaxed);
            chunk < chunks.size();
            chunk = next.fetch_add(1, std::memory_order_relaxed)) {
@@ -288,7 +287,7 @@ bool RemapText(const Mapping& text) {
 
 }  // namespace
 
-ExecutableRemap RemapExecutable(bool remap_text) {
+ExecutableRemap RemapExecutable(bool remap_text, size_t threads) {
   ExecutableRemap remap;
 #if defined(__linux__)
   const auto exe = ExecutablePath();
@@ -297,7 +296,7 @@ ExecutableRemap RemapExecutable(bool remap_text) {
     remap.skipped = "cannot read the executable's mappings";
     return remap;
   }
-  ReadInParallel(mappings);
+  ReadInParallel(mappings, threads);
   for (const auto& mapping : mappings) {
     if (!mapping.exec) {
       remap.populated += Populate(mapping);

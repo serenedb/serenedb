@@ -21,7 +21,6 @@
 #include <atomic>
 #include <chrono>
 #include <iresearch/utils/group_commit.hpp>
-#include <span>
 #include <stdexcept>
 #include <thread>
 #include <vector>
@@ -34,21 +33,23 @@ struct Request {
   int runs = 0;
 };
 
-void RunOnce(std::span<Request* const> batch) {
+size_t RunOnce(irs::GroupCommit<Request>::Batch batch) {
+  size_t count = 0;
   for (auto* request : batch) {
     ++request->runs;
+    ++count;
   }
+  return count;
 }
 
 TEST(GroupCommitTest, a_lone_caller_runs_its_own_request) {
   irs::GroupCommit<Request> commit;
   Request request;
   size_t runs = 0;
-  commit.Submit(request, [&](std::span<Request* const> batch) {
+  commit.Submit(request, [&](auto batch) {
     ++runs;
-    ASSERT_EQ(1, batch.size());
-    EXPECT_EQ(&request, batch.front());
-    RunOnce(batch);
+    EXPECT_EQ(&request, *batch.begin());
+    EXPECT_EQ(1, RunOnce(batch));
   });
   EXPECT_EQ(1, runs);
   EXPECT_EQ(1, request.runs);
@@ -65,9 +66,8 @@ TEST(GroupCommitTest, every_request_runs_once_when_callers_race) {
   for (auto& own : requests) {
     threads.emplace_back([&] {
       for (auto& request : own) {
-        commit.Submit(request, [&](std::span<Request* const> batch) {
-          RunOnce(batch);
-          handled.fetch_add(batch.size(), std::memory_order_relaxed);
+        commit.Submit(request, [&](auto batch) {
+          handled.fetch_add(RunOnce(batch), std::memory_order_relaxed);
           std::this_thread::sleep_for(std::chrono::microseconds{20});
         });
         EXPECT_EQ(1, request.runs);
@@ -94,7 +94,7 @@ TEST(GroupCommitTest, a_failed_run_throws_to_its_callers_and_frees_the_lead) {
     threads.emplace_back([&] {
       Request request;
       try {
-        commit.Submit(request, [](std::span<Request* const>) {
+        commit.Submit(request, [](auto) {
           std::this_thread::sleep_for(std::chrono::microseconds{200});
           throw std::runtime_error{"sync failed"};
         });

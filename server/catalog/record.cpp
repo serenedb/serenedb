@@ -65,11 +65,8 @@
 namespace sdb::catalog {
 namespace {
 
-using Writer = duckdb::BinarySerializer;
-using Reader = duckdb::BinaryDeserializer;
-using FieldWriter = absl::FunctionRef<void(Writer& object, size_t index)>;
-
-constexpr size_t kBlobLengthBytes = 5;
+using FieldWriter =
+  absl::FunctionRef<void(duckdb::BinarySerializer& object, size_t index)>;
 
 BaseCatalog& Owner(duckdb::CatalogEntry& entry) {
   return entry.ParentCatalog().Cast<BaseCatalog>();
@@ -85,48 +82,57 @@ uint32_t PartSize(size_t size) {
 }
 
 template<typename Write>
-void WriteBlob(Writer& object, RecordBuffer& out, duckdb::field_id_t field,
-               const char* tag, const Write& write) {
+void WriteBlob(duckdb::BinarySerializer& object, RecordBuffer& out,
+               duckdb::field_id_t field, const char* tag, const Write& write) {
   object.OnPropertyBegin(field, tag);
-  auto* length = out.Alloc(kBlobLengthBytes);
+  auto* length = out.Alloc(sizeof(uint32_t));
   const auto begin = out.PayloadBytes();
   write();
-  auto size = PartSize(out.PayloadBytes() - begin);
-  for (size_t i = 0; i + 1 < kBlobLengthBytes; ++i) {
-    length[i] = static_cast<uint8_t>(size | 0x80);
-    size >>= 7;
-  }
-  length[kBlobLengthBytes - 1] = static_cast<uint8_t>(size);
+  const auto size = PartSize(out.PayloadBytes() - begin);
+  std::memcpy(length, &size, sizeof(size));
   object.OnPropertyEnd();
 }
 
-void WriteView(Writer& object, duckdb::field_id_t field, const char* tag,
+void WriteView(duckdb::BinarySerializer& object, duckdb::WriteStream& stream,
+               duckdb::field_id_t field, const char* tag,
                std::span<const uint8_t> bytes) {
-  if (!bytes.empty()) {
-    object.WriteProperty(field, tag, bytes.data(), bytes.size());
+  if (bytes.empty()) {
+    return;
   }
+  object.OnPropertyBegin(field, tag);
+  const auto size = PartSize(bytes.size());
+  stream.WriteData(reinterpret_cast<const uint8_t*>(&size), sizeof(size));
+  stream.WriteData(bytes.data(), bytes.size());
+  object.OnPropertyEnd();
 }
 
-std::span<uint8_t> ReadView(Reader& object, duckdb::MemoryStream& stream,
+std::span<uint8_t> ReadView(duckdb::BinaryDeserializer& object,
+                            duckdb::MemoryStream& stream,
                             duckdb::field_id_t field, const char* tag) {
   std::span<uint8_t> bytes;
   const auto present = object.OnOptionalPropertyBegin(field, tag);
   if (present) {
-    const auto size = object.ReadUnsignedInt64();
-    const auto at = stream.GetPosition();
+    auto at = stream.GetPosition();
+    uint32_t size = 0;
+    if (stream.GetCapacity() - at < sizeof(size)) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
+                      ERR_MSG("the log holds a damaged record"));
+    }
+    std::memcpy(&size, stream.GetData() + at, sizeof(size));
+    at += sizeof(size);
     if (size > stream.GetCapacity() - at) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
                       ERR_MSG("the log holds a damaged record"));
     }
     stream.SetPosition(at + size);
-    bytes = {stream.GetData() + at, static_cast<size_t>(size)};
+    bytes = {stream.GetData() + at, size};
   }
   object.OnOptionalPropertyEnd(present);
   return bytes;
 }
 
 void WriteSecret(const duckdb::CatalogEntry& entry, RecordBuffer& out) {
-  Writer serializer{out};
+  duckdb::BinarySerializer serializer{out};
   serializer.Begin();
   entry.Cast<duckdb::SecretCatalogEntry>().secret->secret->Serialize(
     serializer);
@@ -207,13 +213,14 @@ struct Slot {
   T value;
 };
 
-void WriteCatalogRecord(Writer& serializer, const CatalogRecord& record,
-                        FieldWriter body, FieldWriter secret) {
+void WriteCatalogRecord(duckdb::BinarySerializer& serializer,
+                        const CatalogRecord& record, FieldWriter body,
+                        FieldWriter secret) {
   serializer.WriteList(
     100, "changes", record.changes.size(),
-    [&](Writer::List& list, duckdb::idx_t i) {
+    [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
       const auto& change = record.changes[i];
-      list.WriteObject([&](Writer& object) {
+      list.WriteObject([&](duckdb::BinarySerializer& object) {
         object.WriteProperty(100, "catalog", change.catalog);
         object.WriteProperty(101, "kind", static_cast<uint8_t>(change.kind));
         object.WriteProperty(102, "oid", change.oid);
@@ -225,9 +232,10 @@ void WriteCatalogRecord(Writer& serializer, const CatalogRecord& record,
       });
     });
   serializer.WriteList(
-    101, "lsns", record.lsns.size(), [&](Writer::List& list, duckdb::idx_t i) {
+    101, "lsns", record.lsns.size(),
+    [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
       const auto& update = record.lsns[i];
-      list.WriteObject([&](Writer& object) {
+      list.WriteObject([&](duckdb::BinarySerializer& object) {
         object.WriteProperty(100, "catalog", update.catalog);
         object.WriteProperty(101, "oid", update.oid);
         object.WriteProperty(102, "type", update.type);
@@ -239,9 +247,9 @@ void WriteCatalogRecord(Writer& serializer, const CatalogRecord& record,
     });
   serializer.WriteList(
     102, "sequences", record.sequences.size(),
-    [&](Writer::List& list, duckdb::idx_t i) {
+    [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
       const auto& value = record.sequences[i];
-      list.WriteObject([&](Writer& object) {
+      list.WriteObject([&](duckdb::BinarySerializer& object) {
         object.WriteProperty(100, "catalog", value.catalog);
         object.WriteProperty(101, "oid", value.oid);
         object.WritePropertyWithDefault<uint64_t>(102, "usage_count",
@@ -251,16 +259,16 @@ void WriteCatalogRecord(Writer& serializer, const CatalogRecord& record,
           104, "last_value", value.last_value);
       });
     });
-  serializer.WriteList(103, "secrets", record.secrets.size(),
-                       [&](Writer::List& list, duckdb::idx_t i) {
-                         const auto& item = record.secrets[i];
-                         list.WriteObject([&](Writer& object) {
-                           object.WriteProperty(
-                             100, "kind", static_cast<uint8_t>(item.kind));
-                           object.WriteProperty(101, "name", item.name);
-                           secret(object, i);
-                         });
-                       });
+  serializer.WriteList(
+    103, "secrets", record.secrets.size(),
+    [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+      const auto& item = record.secrets[i];
+      list.WriteObject([&](duckdb::BinarySerializer& object) {
+        object.WriteProperty(100, "kind", static_cast<uint8_t>(item.kind));
+        object.WriteProperty(101, "name", item.name);
+        secret(object, i);
+      });
+    });
   serializer.WritePropertyWithDefault(104, "shutdown", record.shutdown);
 }
 
@@ -269,7 +277,7 @@ void WriteCatalogPart(RecordBuffer& out, bool present, const Write& write) {
   auto* size = out.Alloc(sizeof(uint32_t));
   const auto begin = out.PayloadBytes();
   if (present) {
-    Writer serializer{out};
+    duckdb::BinarySerializer serializer{out};
     serializer.Begin();
     write(serializer);
     serializer.End();
@@ -278,48 +286,51 @@ void WriteCatalogPart(RecordBuffer& out, bool present, const Write& write) {
   std::memcpy(size, &written, sizeof(written));
 }
 
-void NoField(Writer&, size_t) {}
+void NoField(duckdb::BinarySerializer&, size_t) {}
 
 CatalogRecord ReadCatalogRecord(std::span<uint8_t> bytes) {
   CatalogRecord record;
   duckdb::MemoryStream stream{bytes.data(), bytes.size()};
-  Reader deserializer{stream};
+  duckdb::BinaryDeserializer deserializer{stream};
   deserializer.Begin();
-  deserializer.ReadList(100, "changes", [&](Reader::List& list, duckdb::idx_t) {
-    list.ReadObject([&](Reader& object) {
-      record.changes.push_back({
-        .catalog = object.ReadProperty<duckdb::idx_t>(100, "catalog"),
-        .kind =
-          static_cast<ChangeKind>(object.ReadProperty<uint8_t>(101, "kind")),
-        .oid = object.ReadProperty<duckdb::idx_t>(102, "oid"),
-        .owner = object.ReadPropertyWithDefault<duckdb::idx_t>(103, "owner"),
-        .body = ReadView(object, stream, 104, "body"),
-        .references =
-          object.ReadPropertyWithDefault<duckdb::vector<duckdb::idx_t>>(
-            105, "references"),
-        .supersedes =
-          object.ReadPropertyWithDefault<duckdb::vector<std::string>>(
-            106, "supersedes"),
-      });
-    });
-  });
-  deserializer.ReadList(101, "lsns", [&](Reader::List& list, duckdb::idx_t) {
-    list.ReadObject([&](Reader& object) {
-      record.lsns.push_back({
-        .catalog = object.ReadProperty<duckdb::idx_t>(100, "catalog"),
-        .oid = object.ReadProperty<duckdb::idx_t>(101, "oid"),
-        .type = object.ReadProperty<duckdb::CatalogType>(102, "type"),
-        .name = object.ReadPropertyWithDefault<std::string>(103, "name"),
-        .relation =
-          object.ReadPropertyWithDefault<duckdb::idx_t>(104, "relation"),
-        .remote_lsn = object.ReadProperty<uint64_t>(105, "remote_lsn"),
-        .assign = object.ReadPropertyWithDefault<bool>(106, "assign"),
-      });
-    });
-  });
   deserializer.ReadList(
-    102, "sequences", [&](Reader::List& list, duckdb::idx_t) {
-      list.ReadObject([&](Reader& object) {
+    100, "changes", [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
+      list.ReadObject([&](duckdb::BinaryDeserializer& object) {
+        record.changes.push_back({
+          .catalog = object.ReadProperty<duckdb::idx_t>(100, "catalog"),
+          .kind =
+            static_cast<ChangeKind>(object.ReadProperty<uint8_t>(101, "kind")),
+          .oid = object.ReadProperty<duckdb::idx_t>(102, "oid"),
+          .owner = object.ReadPropertyWithDefault<duckdb::idx_t>(103, "owner"),
+          .body = ReadView(object, stream, 104, "body"),
+          .references =
+            object.ReadPropertyWithDefault<duckdb::vector<duckdb::idx_t>>(
+              105, "references"),
+          .supersedes =
+            object.ReadPropertyWithDefault<duckdb::vector<std::string>>(
+              106, "supersedes"),
+        });
+      });
+    });
+  deserializer.ReadList(
+    101, "lsns", [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
+      list.ReadObject([&](duckdb::BinaryDeserializer& object) {
+        record.lsns.push_back({
+          .catalog = object.ReadProperty<duckdb::idx_t>(100, "catalog"),
+          .oid = object.ReadProperty<duckdb::idx_t>(101, "oid"),
+          .type = object.ReadProperty<duckdb::CatalogType>(102, "type"),
+          .name = object.ReadPropertyWithDefault<std::string>(103, "name"),
+          .relation =
+            object.ReadPropertyWithDefault<duckdb::idx_t>(104, "relation"),
+          .remote_lsn = object.ReadProperty<uint64_t>(105, "remote_lsn"),
+          .assign = object.ReadPropertyWithDefault<bool>(106, "assign"),
+        });
+      });
+    });
+  deserializer.ReadList(
+    102, "sequences",
+    [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
+      list.ReadObject([&](duckdb::BinaryDeserializer& object) {
         record.sequences.push_back({
           .catalog = object.ReadProperty<duckdb::idx_t>(100, "catalog"),
           .oid = object.ReadProperty<duckdb::idx_t>(101, "oid"),
@@ -332,16 +343,17 @@ CatalogRecord ReadCatalogRecord(std::span<uint8_t> bytes) {
         });
       });
     });
-  deserializer.ReadList(103, "secrets", [&](Reader::List& list, duckdb::idx_t) {
-    list.ReadObject([&](Reader& object) {
-      record.secrets.push_back({
-        .kind =
-          static_cast<ChangeKind>(object.ReadProperty<uint8_t>(100, "kind")),
-        .name = object.ReadProperty<std::string>(101, "name"),
-        .secret = ReadView(object, stream, 102, "secret"),
+  deserializer.ReadList(
+    103, "secrets", [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
+      list.ReadObject([&](duckdb::BinaryDeserializer& object) {
+        record.secrets.push_back({
+          .kind =
+            static_cast<ChangeKind>(object.ReadProperty<uint8_t>(100, "kind")),
+          .name = object.ReadProperty<std::string>(101, "name"),
+          .secret = ReadView(object, stream, 102, "secret"),
+        });
       });
     });
-  });
   record.shutdown = deserializer.ReadPropertyWithDefault<bool>(104, "shutdown");
   deserializer.End();
   return record;
@@ -363,7 +375,7 @@ void ReplaySecret(duckdb::ClientContext& context, ReplayTarget target,
     return;
   }
   duckdb::MemoryStream stream{record.secret.data(), record.secret.size()};
-  Reader deserializer{stream};
+  duckdb::BinaryDeserializer deserializer{stream};
   deserializer.Begin();
   auto secret =
     duckdb::SecretManager::Get(context).DeserializeSecret(deserializer);
@@ -715,7 +727,7 @@ bool Commutes(std::span<const std::string_view> earlier,
 
 void WriteChangeBody(const Change& change, RecordBuffer& out) {
   auto& subject = change.Subject();
-  Writer serializer{out};
+  duckdb::BinarySerializer serializer{out};
   serializer.Begin();
   if (change.kind == ChangeKind::Create) {
     serializer.WritePropertyWithDefault(100, "info",
@@ -752,18 +764,20 @@ ChangeContent ReadChangeBody(duckdb::ClientContext& context,
     return content;
   }
   duckdb::MemoryStream stream{body.data(), body.size()};
-  Reader deserializer{stream};
+  duckdb::BinaryDeserializer deserializer{stream};
   deserializer.Set<duckdb::ClientContext&>(context);
   deserializer.Begin();
   content.info =
     deserializer
       .ReadPropertyWithDefault<duckdb::unique_ptr<duckdb::CreateInfo>>(100,
                                                                        "info");
-  deserializer.ReadOptionalObject(101, "alter", [&](Reader& alter) {
-    content.alter =
-      duckdb::unique_ptr_cast<duckdb::ParseInfo, duckdb::AlterInfo>(
-        alter.ReadProperty<duckdb::unique_ptr<duckdb::ParseInfo>>(100, "info"));
-  });
+  deserializer.ReadOptionalObject(
+    101, "alter", [&](duckdb::BinaryDeserializer& alter) {
+      content.alter =
+        duckdb::unique_ptr_cast<duckdb::ParseInfo, duckdb::AlterInfo>(
+          alter.ReadProperty<duckdb::unique_ptr<duckdb::ParseInfo>>(100,
+                                                                    "info"));
+    });
   content.dependencies =
     deserializer.ReadPropertyWithExplicitDefault<duckdb::LogicalDependencyList>(
       102, "dependencies", duckdb::LogicalDependencyList{});
@@ -864,7 +878,7 @@ void ReplayChange(duckdb::ClientContext& context, ReplayTarget target,
 }
 
 void ReplaySection(duckdb::ClientContext& context, ReplayTarget target,
-                   Reader& object) {
+                   duckdb::BinaryDeserializer& object) {
   const auto id = object.ReadProperty<duckdb::idx_t>(100, "catalog");
   const auto oid = object.ReadProperty<duckdb::idx_t>(101, "table");
   search::TableReplay* replay = nullptr;
@@ -882,17 +896,18 @@ void ReplaySection(duckdb::ClientContext& context, ReplayTarget target,
       replay = store->Replay();
     }
   }
-  object.ReadObject(102, "delta", [&](Reader& delta) {
+  object.ReadObject(102, "delta", [&](duckdb::BinaryDeserializer& delta) {
     search::ReplayTableDelta(context, replay, catalog, delta);
   });
 }
 
-void WriteSection(Writer::List& list, RecordBuffer& out, duckdb::idx_t catalog,
-                  duckdb::idx_t table, const search::TableDelta& delta) {
-  list.WriteObject([&](Writer& object) {
+void WriteSection(duckdb::BinarySerializer::List& list, RecordBuffer& out,
+                  duckdb::idx_t catalog, duckdb::idx_t table,
+                  const search::TableDelta& delta) {
+  list.WriteObject([&](duckdb::BinarySerializer& object) {
     object.WriteProperty(100, "catalog", catalog);
     object.WriteProperty(101, "table", table);
-    object.WriteObject(102, "delta", [&](Writer& change) {
+    object.WriteObject(102, "delta", [&](duckdb::BinarySerializer& change) {
       search::WriteTableDelta(change, out, delta);
     });
   });
@@ -900,11 +915,11 @@ void WriteSection(Writer::List& list, RecordBuffer& out, duckdb::idx_t catalog,
 
 template<typename Write>
 void WriteSearchPart(RecordBuffer& out, size_t sections, const Write& write) {
-  Writer serializer{out};
+  duckdb::BinarySerializer serializer{out};
   serializer.Begin();
-  serializer.WriteList(
-    100, "search", sections,
-    [&](Writer::List& list, duckdb::idx_t i) { write(list, i); });
+  serializer.WriteList(100, "search", sections,
+                       [&](duckdb::BinarySerializer::List& list,
+                           duckdb::idx_t i) { write(list, i); });
   serializer.End();
 }
 
@@ -950,7 +965,7 @@ void ReplaySequence(duckdb::ClientContext& context, ReplayTarget target,
 
 RecordBuffer CatalogOnly(const CatalogRecord& record) {
   RecordBuffer out;
-  WriteCatalogPart(out, true, [&](Writer& serializer) {
+  WriteCatalogPart(out, true, [&](duckdb::BinarySerializer& serializer) {
     WriteCatalogRecord(serializer, record, &NoField, &NoField);
   });
   return out;
@@ -983,10 +998,11 @@ RecordBuffer SequenceRecord(const BaseCatalog& catalog,
 RecordBuffer SearchRecord(duckdb::idx_t catalog, duckdb::idx_t table,
                           const search::TableDelta& delta) {
   RecordBuffer out;
-  WriteCatalogPart(out, false, [](Writer&) {});
-  WriteSearchPart(out, 1, [&](Writer::List& list, duckdb::idx_t) {
-    WriteSection(list, out, catalog, table, delta);
-  });
+  WriteCatalogPart(out, false, [](duckdb::BinarySerializer&) {});
+  WriteSearchPart(out, 1,
+                  [&](duckdb::BinarySerializer::List& list, duckdb::idx_t) {
+                    WriteSection(list, out, catalog, table, delta);
+                  });
   return out;
 }
 
@@ -996,7 +1012,7 @@ RecordBuffer ShutdownRecord() {
 
 RecordBuffer StartupRecord() {
   RecordBuffer out;
-  WriteCatalogPart(out, false, [](Writer&) {});
+  WriteCatalogPart(out, false, [](duckdb::BinarySerializer&) {});
   return out;
 }
 
@@ -1212,15 +1228,15 @@ std::vector<std::vector<uint8_t>> CompactHistory(
     uint32_t size = 0;
     stream.WriteData(reinterpret_cast<const uint8_t*>(&size), sizeof(size));
     {
-      Writer serializer{stream};
+      duckdb::BinarySerializer serializer{stream};
       serializer.Begin();
       WriteCatalogRecord(
         serializer, record,
-        [&](Writer& object, size_t i) {
-          WriteView(object, 104, "body", record.changes[i].body);
+        [&](duckdb::BinarySerializer& object, size_t i) {
+          WriteView(object, stream, 104, "body", record.changes[i].body);
         },
-        [&](Writer& object, size_t i) {
-          WriteView(object, 102, "secret", record.secrets[i].secret);
+        [&](duckdb::BinarySerializer& object, size_t i) {
+          WriteView(object, stream, 102, "secret", record.secrets[i].secret);
         });
       serializer.End();
     }
@@ -1320,25 +1336,27 @@ std::optional<RecordBuffer> WriteRecord(duckdb::ClientContext& context,
     return std::nullopt;
   }
   std::optional<RecordBuffer> out{std::in_place};
-  WriteCatalogPart(*out, !record.Empty(), [&](Writer& serializer) {
-    WriteCatalogRecord(
-      serializer, record,
-      [&](Writer& object, size_t i) {
-        if (changes[i]->kind != ChangeKind::Drop) {
-          WriteBlob(object, *out, 104, "body",
-                    [&] { WriteChangeBody(*changes[i], *out); });
-        }
-      },
-      [&](Writer& object, size_t i) {
-        if (secrets[i]->kind == ChangeKind::Create) {
-          WriteBlob(object, *out, 102, "secret",
-                    [&] { WriteSecret(secrets[i]->Subject(), *out); });
-        }
-      });
-  });
+  WriteCatalogPart(
+    *out, !record.Empty(), [&](duckdb::BinarySerializer& serializer) {
+      WriteCatalogRecord(
+        serializer, record,
+        [&](duckdb::BinarySerializer& object, size_t i) {
+          if (changes[i]->kind != ChangeKind::Drop) {
+            WriteBlob(object, *out, 104, "body",
+                      [&] { WriteChangeBody(*changes[i], *out); });
+          }
+        },
+        [&](duckdb::BinarySerializer& object, size_t i) {
+          if (secrets[i]->kind == ChangeKind::Create) {
+            WriteBlob(object, *out, 102, "secret",
+                      [&] { WriteSecret(secrets[i]->Subject(), *out); });
+          }
+        });
+    });
   if (!sections.empty()) {
     WriteSearchPart(
-      *out, sections.size(), [&](Writer::List& list, duckdb::idx_t i) {
+      *out, sections.size(),
+      [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
         const auto& section = sections[i];
         WriteSection(
           list, *out,
@@ -1418,13 +1436,15 @@ bool ReplayRecord(duckdb::ClientContext& context, ReplayTarget target,
     return shutdown;
   }
   duckdb::MemoryStream stream{search.data(), search.size()};
-  Reader deserializer{stream};
+  duckdb::BinaryDeserializer deserializer{stream};
   deserializer.Set<duckdb::ClientContext&>(context);
   deserializer.Begin();
-  deserializer.ReadList(100, "search", [&](Reader::List& list, duckdb::idx_t) {
-    list.ReadObject(
-      [&](Reader& object) { ReplaySection(context, target, object); });
-  });
+  deserializer.ReadList(
+    100, "search", [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
+      list.ReadObject([&](duckdb::BinaryDeserializer& object) {
+        ReplaySection(context, target, object);
+      });
+    });
   deserializer.End();
   return shutdown;
 }

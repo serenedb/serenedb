@@ -226,11 +226,12 @@ std::unique_ptr<OrderedUnits> BuildSegmentOrderedUnits(
       ++skipped;
       continue;
     }
-    rgs.push_back({.key = column
-                            ? RowGroupKey(g, *column, work.groups.Begin(rg),
-                                          work.groups.End(rg), w)
-                            : segment_key,
-                   .id = rg});
+    rgs.push_back({
+      .key = column ? RowGroupKey(g, *column, work.groups.Begin(rg),
+                                  work.groups.End(rg), w)
+                    : segment_key,
+      .id = rg,
+    });
   }
   absl::c_sort(rgs);
   built->units.reserve(rgs.size());
@@ -358,11 +359,13 @@ void SetOwned(ScanGlobalState& g, ScanLocalState& l, uint32_t seg,
 }
 
 ScanUnit UnitOf(uint32_t seg, uint32_t begin, uint32_t end) noexcept {
-  return {.seg = seg,
-          .rg_begin = begin,
-          .rg_end = end,
-          .live = end - begin,
-          .whole = false};
+  return {
+    .seg = seg,
+    .rg_begin = begin,
+    .rg_end = end,
+    .live = end - begin,
+    .whole = false,
+  };
 }
 
 bool ClaimOwned(ScanGlobalState& g, ScanLocalState& l) {
@@ -780,11 +783,12 @@ void BuildRowGroupChecks(const ScanGlobalState& g, ScanLocalState& l,
     if (!reader || reader->Type().IsNested()) {
       continue;
     }
-    l.rg_checks.push_back(
-      {.reader = reader,
-       .filter = &spec.filter->Cast<duckdb::ExpressionFilter>(),
-       .state = &l.filter_states.State(*g.client_context, *spec.filter),
-       .window = {}});
+    l.rg_checks.push_back({
+      .reader = reader,
+      .filter = &spec.filter->Cast<duckdb::ExpressionFilter>(),
+      .state = &l.filter_states.State(*g.client_context, *spec.filter),
+      .window = {},
+    });
   }
 }
 

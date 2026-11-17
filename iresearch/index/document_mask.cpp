@@ -637,9 +637,11 @@ std::vector<DocumentMaskBuilder> DocumentMaskBuilder::Union(
     for (auto& part : parts) {
       auto& ra = part._set.high_low_container;
       for (int32_t i = 0; i != ra.size; ++i) {
-        list.push_back({.key = ra.keys[i],
-                        .type = ra.typecodes[i],
-                        .container = ra.containers[i]});
+        list.push_back({
+          .key = ra.keys[i],
+          .type = ra.typecodes[i],
+          .container = ra.containers[i],
+        });
       }
       roaring::internal::ra_clear_without_containers(&ra);
     }

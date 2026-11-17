@@ -143,9 +143,10 @@ std::shared_ptr<const DocRemoval> DocRemovalBuilder::Finish(
   for (size_t i = 0; i != _groups.size(); ++i) {
     const auto index = _groups[i].first;
     SDB_ASSERT(index < reader.size());
-    removal->groups.push_back(
-      {.segment = utils::downCast<SegmentReader>(reader[index]).GetImpl()->Id(),
-       .docs = std::move(*masks[i])});
+    removal->groups.push_back({
+      .segment = utils::downCast<SegmentReader>(reader[index]).GetImpl()->Id(),
+      .docs = std::move(*masks[i]),
+    });
   }
   _groups = {};
   _last = 0;

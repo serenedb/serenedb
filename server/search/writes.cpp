@@ -927,7 +927,9 @@ void Writes::AddPatches(const std::shared_ptr<Store>& store,
     auto& patch = patches[p];
     if (patch.unit < rows_id) {
       auto& group = changed->groups.emplace_back(irs::DocRemoval::Group{
-        .segment = patch.unit, .docs = std::move(patched[p])});
+        .segment = patch.unit,
+        .docs = std::move(patched[p]),
+      });
       if (patch.same_rows) {
         patch.rows = {
           std::shared_ptr<const irs::DocumentMask>{changed, &group.docs}};

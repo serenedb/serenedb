@@ -350,11 +350,10 @@ class Store final : public std::enable_shared_from_this<Store>,
     bool contended = false;
   };
 
-  auto CompactGroupAsync(duckdb::ClientContext& context,
-                         std::span<const std::string> names,
-                         const irs::MergeWriter::FlushProgress& progress,
-                         const irs::AnnBuildEnv* env)
-    -> yaclib::Future<GroupCompaction>;
+  yaclib::Future<GroupCompaction> CompactGroupAsync(
+    duckdb::ClientContext& context, std::span<const std::string> names,
+    const irs::MergeWriter::FlushProgress& progress,
+    const irs::AnnBuildEnv* env);
 
   struct IndexConfig {
     duckdb::idx_t oid;

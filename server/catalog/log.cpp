@@ -698,7 +698,7 @@ void Log::Sync(Lsn end) {
   if (_durable.load(std::memory_order_acquire) >= end) {
     return;
   }
-  _syncs.Submit(end, [this](std::span<Lsn* const> batch) {
+  _syncs.Submit(end, [this](auto batch) {
     Lsn target = 0;
     for (const auto* requested : batch) {
       target = std::max(target, *requested);

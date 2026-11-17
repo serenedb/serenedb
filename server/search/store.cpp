@@ -945,11 +945,10 @@ absl::Status Store::VacuumCompact(duckdb::ClientContext& context,
     ParallelFor(context, buckets.size(), [&](size_t b) {
       groups[b] = CompactGroupAsync(context, buckets[b], progress, env);
     });
-    for (auto& group : groups) {
-      if (!group.Ready()) {
-        duckdb::TaskScheduler::BlockingScope blocking;
-        yaclib::Wait(group);
-      }
+    if (absl::c_any_of(groups,
+                       [](const auto& group) { return !group.Ready(); })) {
+      duckdb::TaskScheduler::BlockingScope blocking;
+      yaclib::Wait(groups.begin(), groups.end());
     }
     absl::Status status;
     bool merged = false;
@@ -977,11 +976,10 @@ absl::Status Store::VacuumCompact(duckdb::ClientContext& context,
   return cleanup;
 }
 
-auto Store::CompactGroupAsync(duckdb::ClientContext& context,
-                              std::span<const std::string> names,
-                              const irs::MergeWriter::FlushProgress& progress,
-                              const irs::AnnBuildEnv* env)
-  -> yaclib::Future<GroupCompaction> {
+yaclib::Future<Store::GroupCompaction> Store::CompactGroupAsync(
+  duckdb::ClientContext& context, std::span<const std::string> names,
+  const irs::MergeWriter::FlushProgress& progress,
+  const irs::AnnBuildEnv* env) {
   GroupCompaction result;
   const irs::CompactionPolicy group = [names, &result](
                                         irs::Compaction& candidates,
@@ -1057,8 +1055,10 @@ std::shared_ptr<const TableState> Store::ReplaceSegments(
   std::vector<irs::DocMap> maps;
   for (auto& replacement : replacements) {
     SDB_ASSERT(replacement.reader);
-    OwnSegment opened{.meta = std::move(replacement.meta),
-                      .reader = std::move(replacement.reader)};
+    OwnSegment opened{
+      .meta = std::move(replacement.meta),
+      .reader = std::move(replacement.reader),
+    };
     const auto target = opened.reader->Id();
     for (auto& map : replacement.absorbed) {
       map.target = target;

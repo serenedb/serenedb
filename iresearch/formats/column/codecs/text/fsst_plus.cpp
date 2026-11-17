@@ -147,7 +147,12 @@ inline uint64_t EntryOffset(ChainGroups& groups, PackedReader& lengths,
   return offset;
 }
 
+struct Fetch;
+
 struct Scan {
+  static constexpr ByteCodec kCodec = ByteCodec::FsstPlus;
+  using Fetch = fsst_plus::Fetch;
+
   template<typename Frames>
   Scan(const ColumnSegment&, const Frames& s)
     : ids{s.base + s.header.off_lcps, s.header.lcp_width} {
@@ -360,12 +365,6 @@ struct Fetch {
   uint64_t walked = 0;
 };
 
-struct Leaf {
-  static constexpr ByteCodec kCodec = ByteCodec::FsstPlus;
-  using Scan = fsst_plus::Scan;
-  using Fetch = fsst_plus::Fetch;
-};
-
 namespace {
 
 constexpr uint32_t kNoNode = std::numeric_limits<uint32_t>::max();
@@ -561,9 +560,9 @@ void CompressionState::Cleave(uint32_t first_entry) {
 namespace irs::codecs {
 
 constinit const Codec kFsstPlusCodec =
-  text::StringCodec<text::PlainScan<text::fsst_plus::Leaf>>();
+  text::StringCodec<text::PlainScan<text::fsst_plus::Scan>>();
 
 constinit const Codec kDictFsstPlusCodec =
-  text::StringCodec<text::DictionaryScan<text::fsst_plus::Leaf>>();
+  text::StringCodec<text::DictionaryScan<text::fsst_plus::Scan>>();
 
 }  // namespace irs::codecs

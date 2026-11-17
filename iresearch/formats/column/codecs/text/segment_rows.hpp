@@ -263,10 +263,10 @@ class SegmentRows {
 class SortedCompressionState {
  public:
   SortedCompressionState(ByteCodec codec, const duckdb::LogicalType& type,
-                         DedupScratch& dedup, EstimatorState& estimators,
+                         DedupScratch& dedup, StringTuning& tuning,
                          uint32_t target)
-    : _rows{type, dedup, estimators.codes},
-      _history{estimators.history[static_cast<size_t>(codec)]},
+    : _rows{type, dedup, tuning.codes},
+      _history{tuning.history[static_cast<size_t>(codec)]},
       _target{target} {}
 
   void InitCompression(const Config& config, uint64_t first_row,

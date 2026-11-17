@@ -178,8 +178,8 @@ class CompressionState : public SortedCompressionState {
   static constexpr ByteCodec kCodec = ByteCodec::OnPair;
 
   CompressionState(const duckdb::LogicalType& type, DedupScratch& dedup,
-                   EstimatorState& estimators, uint32_t target)
-    : SortedCompressionState{kCodec, type, dedup, estimators, target} {}
+                   StringTuning& tuning, uint32_t target)
+    : SortedCompressionState{kCodec, type, dedup, tuning, target} {}
 
   void FinalizeCompress();
 

@@ -275,9 +275,9 @@ class CompressionState {
   static_assert(!Sorted(kCodec));
 
   CompressionState(const duckdb::LogicalType& type, DedupScratch& dedup,
-                   EstimatorState& estimators)
-    : _rows{type, dedup, estimators.codes},
-      _history{estimators.history[static_cast<size_t>(kCodec)]} {}
+                   StringTuning& tuning)
+    : _rows{type, dedup, tuning.codes},
+      _history{tuning.history[static_cast<size_t>(kCodec)]} {}
 
   void InitCompression(const Config& config, uint64_t first_row,
                        size_t distinct, Segment& out) {
@@ -547,7 +547,13 @@ class FrameInflater {
 };
 
 template<typename Codec>
+struct Fetch;
+
+template<typename Codec>
 struct Scan {
+  static constexpr ByteCodec kCodec = Codec::kCodec;
+  using Fetch = blob::Fetch<Codec>;
+
   template<typename Frames>
   Scan(const ColumnSegment&, const Frames&) {}
 
@@ -588,7 +594,7 @@ struct Scan {
   void Select(Frames& s, duckdb::Vector& result, duckdb::idx_t result_offset,
               duckdb::idx_t count, Entry entry_at, uint32_t window_first,
               uint32_t window_end) {
-    if constexpr (Codec::kCodec == ByteCodec::Lz4) {
+    if constexpr (kCodec == ByteCodec::Lz4) {
       SelectFrames(s, result, result_offset, count, entry_at, window_first,
                    window_end);
     } else {
@@ -798,13 +804,6 @@ struct Fetch {
   const char* frame_data = nullptr;
   uint64_t decoded_total = 0;
   FrameInflater<Codec> inflater;
-};
-
-template<typename Codec>
-struct Leaf {
-  static constexpr ByteCodec kCodec = Codec::kCodec;
-  using Scan = blob::Scan<Codec>;
-  using Fetch = blob::Fetch<Codec>;
 };
 
 }  // namespace irs::codecs::text::blob

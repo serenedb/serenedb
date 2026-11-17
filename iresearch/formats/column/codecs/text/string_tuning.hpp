@@ -60,21 +60,13 @@ struct Config {
 
 }  // namespace text
 
-struct TunedParameters {
-  bool done = false;
-  uint8_t level[kByteCodecCount]{};
-  FrameDictionary layout[kByteCodecCount]{};
-};
-
-struct EstimatorState {
-  RatioHistory history[kByteCodecCount][kShapeCount]{};
-  NumericTuning codes;
-};
-
 struct StringTuning {
   std::optional<text::Config> config;
-  TunedParameters tuned;
-  EstimatorState estimators;
+  bool tuned = false;
+  uint8_t level[kByteCodecCount]{};
+  FrameDictionary layout[kByteCodecCount]{};
+  RatioHistory history[kByteCodecCount][kShapeCount]{};
+  NumericTuning codes;
   uint64_t last_distinct = 0;
 };
 

@@ -265,7 +265,7 @@ struct EntryFrames {
   std::vector<uint8_t> decoded;
   size_t decoded_count = 0;
   uint32_t sparse_frame = kNoFrame;
-  std::optional<typename Leaf::Scan> leaf;
+  std::optional<Leaf> leaf;
 };
 
 template<typename Leaf>

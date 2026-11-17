@@ -1556,8 +1556,8 @@ TEST_F(ColCodecsTest, AutoTunesLevelsOnTheFirstRowGroupWithData) {
   const auto levels = [](const irs::codecs::ColumnTuning& tuning) {
     std::vector<int> out;
     for (size_t leaf = 0; leaf < irs::codecs::kByteCodecCount; ++leaf) {
-      out.push_back(tuning.strings.tuned.level[leaf]);
-      out.push_back(static_cast<int>(tuning.strings.tuned.layout[leaf]));
+      out.push_back(tuning.strings.level[leaf]);
+      out.push_back(static_cast<int>(tuning.strings.layout[leaf]));
     }
     return out;
   };
@@ -4097,9 +4097,8 @@ TEST_F(ColCodecsTest, TheWritersTierDecidesOverTheColumnsParams) {
                       .compression = irs::codecs::CodecType::Auto,
                       .codec_params = {.tier = irs::WriteTier::Merge}});
       AppendValues(cw, 120000, value);
-      const auto lz4 =
-        cw.State().tuning.strings.tuned.level[static_cast<size_t>(
-          irs::codecs::ByteCodec::Lz4)];
+      const auto lz4 = cw.State().tuning.strings.level[static_cast<size_t>(
+        irs::codecs::ByteCodec::Lz4)];
       EXPECT_EQ(tier == irs::WriteTier::Merge, lz4 > 1);
       ASSERT_TRUE(w.Commit(0));
     }

@@ -129,13 +129,16 @@ uint64_t TouchedBytes(const Header& h, duckdb::const_data_ptr_t base,
 void ReferenceOnce(HeapReference& reference, const duckdb::Vector& source,
                    duckdb::Vector& result) {
   const auto& heap = source.GetBufferRef()->GetAuxiliaryData();
-  if (heap.get() == reference.source &&
-      reference.target.Holds(result.GetBufferRef()->GetAuxiliaryData())) {
+  if (const auto& held = result.GetBufferRef()->GetAuxiliaryData();
+      heap.get() == reference.source && held &&
+      held.get() == reference.target && !reference.target_weak.expired()) {
     return;
   }
   duckdb::StringVector::AddAuxiliaryData(
     result, duckdb::ImmutableStrings::Reference(heap));
-  reference.target.Set(result.GetBufferRef()->GetAuxiliaryData());
+  const auto& held = result.GetBufferRef()->GetAuxiliaryData();
+  reference.target_weak = held;
+  reference.target = held.get();
   reference.source = heap.get();
 }
 

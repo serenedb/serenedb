@@ -89,7 +89,12 @@ IRS_FORCE_INLINE std::string_view DecodeEntry(
   return {at, n};
 }
 
+struct Fetch;
+
 struct Scan {
+  static constexpr ByteCodec kCodec = ByteCodec::OnPair;
+  using Fetch = onpair::Fetch;
+
   template<typename Frames>
   Scan(const ColumnSegment&, const Frames& s) {
     SDB_ENSURE(table.Open(Side(s.header, s.base)),
@@ -227,12 +232,6 @@ struct Fetch {
   ChainGroups groups;
   std::string buf;
   uint64_t walked = 0;
-};
-
-struct Leaf {
-  static constexpr ByteCodec kCodec = ByteCodec::OnPair;
-  using Scan = onpair::Scan;
-  using Fetch = onpair::Fetch;
 };
 
 namespace {
@@ -698,9 +697,9 @@ void CompressionState::Pack(std::span<const duckdb::string_t> entries,
 namespace irs::codecs {
 
 constinit const Codec kOnPairCodec =
-  text::StringCodec<text::PlainScan<text::onpair::Leaf>>();
+  text::StringCodec<text::PlainScan<text::onpair::Scan>>();
 
 constinit const Codec kDictOnPairCodec =
-  text::StringCodec<text::DictionaryScan<text::onpair::Leaf>>();
+  text::StringCodec<text::DictionaryScan<text::onpair::Scan>>();
 
 }  // namespace irs::codecs

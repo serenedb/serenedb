@@ -51,12 +51,9 @@ using PooledSegment = std::unique_ptr<Segment, SegmentRecycler>;
 class StringCompressor {
  public:
   StringCompressor(const ColCodecParams& params,
-                   const duckdb::LogicalType& type, EstimatorState& estimators,
+                   const duckdb::LogicalType& type, StringTuning& tuning,
                    duckdb::BufferManager& buffers)
-    : _params{params},
-      _type{type},
-      _estimators{estimators},
-      _buffers{buffers} {}
+    : _params{params}, _type{type}, _tuning{tuning}, _buffers{buffers} {}
 
   PooledSegment CompressSegment(const Config& config,
                                 const StringAccumulator& acc, uint64_t begin);
@@ -78,9 +75,9 @@ class StringCompressor {
     auto& slot = std::get<std::optional<State>>(_states);
     if (!slot) {
       if constexpr (Sorted(State::kCodec)) {
-        slot.emplace(_type, _dedup, _estimators, _params.segment_target);
+        slot.emplace(_type, _dedup, _tuning, _params.segment_target);
       } else {
-        slot.emplace(_type, _dedup, _estimators);
+        slot.emplace(_type, _dedup, _tuning);
       }
     }
     return *slot;
@@ -103,7 +100,7 @@ class StringCompressor {
 
   const ColCodecParams& _params;
   const duckdb::LogicalType& _type;
-  EstimatorState& _estimators;
+  StringTuning& _tuning;
   duckdb::BufferManager& _buffers;
   DedupScratch _dedup;
   States _states;

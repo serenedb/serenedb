@@ -275,7 +275,13 @@ std::string_view DecodeChained(const Decoder<Impl>& fsst, const char* in,
 }
 
 template<typename Impl>
+struct Fetch;
+
+template<typename Impl>
 struct Scan {
+  static constexpr ByteCodec kCodec = Impl::kCodec;
+  using Fetch = fsst::Fetch<Impl>;
+
   template<typename Frames>
   Scan(const ColumnSegment&, const Frames& s)
     : lcps{s.base + s.header.off_lcps, s.header.lcp_width} {
@@ -674,26 +680,19 @@ struct Fetch {
   uint64_t walked = 0;
 };
 
-template<typename Impl>
-struct Leaf {
-  static constexpr ByteCodec kCodec = Impl::kCodec;
-  using Scan = fsst::Scan<Impl>;
-  using Fetch = fsst::Fetch<Impl>;
-};
-
 }  // namespace irs::codecs::text::fsst
 namespace irs::codecs {
 
 constinit const Codec kFsstCodec =
-  text::StringCodec<text::PlainScan<text::fsst::Leaf<text::fsst::Fsst8>>>();
+  text::StringCodec<text::PlainScan<text::fsst::Scan<text::fsst::Fsst8>>>();
 
 constinit const Codec kDictFsstCodec = text::StringCodec<
-  text::DictionaryScan<text::fsst::Leaf<text::fsst::Fsst8>>>();
+  text::DictionaryScan<text::fsst::Scan<text::fsst::Fsst8>>>();
 
 constinit const Codec kFsst12Codec =
-  text::StringCodec<text::PlainScan<text::fsst::Leaf<text::fsst::Fsst12>>>();
+  text::StringCodec<text::PlainScan<text::fsst::Scan<text::fsst::Fsst12>>>();
 
 constinit const Codec kDictFsst12Codec = text::StringCodec<
-  text::DictionaryScan<text::fsst::Leaf<text::fsst::Fsst12>>>();
+  text::DictionaryScan<text::fsst::Scan<text::fsst::Fsst12>>>();
 
 }  // namespace irs::codecs

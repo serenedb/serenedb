@@ -41,6 +41,7 @@
 #include "iresearch/search/top/constant_union_member.hpp"
 #include "iresearch/search/top/empty.hpp"
 #include "iresearch/search/top/family.hpp"
+#include "iresearch/search/top/make_pruned_disjunction.hpp"
 
 namespace irs::top {
 namespace {

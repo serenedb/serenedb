@@ -22,8 +22,6 @@
 
 namespace irs::probe {
 
-template Node::ptr MakeExclusion(const BooleanQuery&, uint64_t,
-                                 const detail::NoScoring&,
-                                 const detail::ScoredCtx&, score_t);
+IRS_MAKE_PROBE_EXCLUSION(detail::NoScoring, detail::MaskSlice::Unmasked);
 
 }  // namespace irs::probe

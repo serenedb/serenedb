@@ -30,12 +30,12 @@
 
 namespace irs::detail::builder {
 
-template<typename Family, typename Ctx>
+template<typename Family, MaskSlice kSlice, typename Ctx>
 Result<Family> MakeScoredNegation(
   std::span<const PostingClause> excludes,
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
   ScoreMergeType merge, score_t absorbed, const Ctx& ctx) {
-  return BuildNegationWindow<Result<Family>>(
+  return BuildNegationWindow<Result<Family>, kSlice>(
     excludes, exclude_filters, segment,
     [&]<typename Lead, typename Excludes>(auto&& lead,
                                           auto&& excluded) -> Result<Family> {
@@ -47,10 +47,10 @@ Result<Family> MakeScoredNegation(
     });
 }
 
-template<typename Family, typename Ctx>
-Result<Family> MakeExclusionWindow(const BooleanQuery& query, const Ctx& ctx,
-                                   ScoreMergeType merge, score_t absorbed,
-                                   uint64_t candidates) {
+template<typename Family, typename Ctx, MaskSlice kSlice>
+Result<Family> MakeExclusionWindowIn(const BooleanQuery& query, const Ctx& ctx,
+                                     ScoreMergeType merge, score_t absorbed,
+                                     uint64_t candidates) {
   const auto& segment = query.Segment();
   const std::span must = query.Terms(Occur::Must);
   const std::span must_filters = query.Queries(Occur::Must);
@@ -64,8 +64,8 @@ Result<Family> MakeExclusionWindow(const BooleanQuery& query, const Ctx& ctx,
     std::span<const QueryBuilder::ptr> filters;
     if (must.empty() && must_filters.empty()) {
       if (should.empty() && should_filters.empty()) {
-        return MakeScoredNegation<Family>(excludes, exclude_filters, segment,
-                                          merge, absorbed, ctx);
+        return MakeScoredNegation<Family, kSlice>(
+          excludes, exclude_filters, segment, merge, absorbed, ctx);
       }
       if (query.MinShouldMatch() != 1) {
         return {};
@@ -88,7 +88,7 @@ Result<Family> MakeExclusionWindow(const BooleanQuery& query, const Ctx& ctx,
     }
     const auto scoring =
       ScoringOf<Family>(segment, ctx, merge, query.Uniformity(Occur::Should));
-    return BuildWindowExcludes<Result<Family>>(
+    return BuildWindowExcludes<Result<Family>, kSlice>(
       excludes, exclude_filters, nullptr, segment, candidates,
       [&]<typename Excludes>(auto&& negated) -> Result<Family> {
         return BuildWindowSet<Result<Family>>(
@@ -103,7 +103,7 @@ Result<Family> MakeExclusionWindow(const BooleanQuery& query, const Ctx& ctx,
           });
       });
   } else {
-    return MakeWindowExclusion<Family>(
+    return MakeWindowExclusion<Family, kSlice>(
       must, must_filters, excludes, exclude_filters, segment, candidates, ctx);
   }
 }

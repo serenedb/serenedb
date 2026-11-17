@@ -404,18 +404,17 @@ Result BuildRestExcludes(ExcludeUse use, std::span<const Term> metas,
     });
 }
 
-template<typename Result, typename Folded, typename Term, typename Build,
-         typename Make>
+template<typename Result, typename Folded, MaskSlice kSlice, typename Term,
+         typename Build, typename Make>
 Result PeelMask(std::span<const Term> metas,
                 std::span<const QueryBuilder::ptr> filters,
                 const SubReader& segment, Build&& build, Make&& make) {
   SDB_ASSERT(!metas.empty() || !filters.empty());
   const auto split = SplitMask(filters);
-  if (!split.masked) {
-    return build.template operator()<true>(filters, kNoMaskFold, make);
-  }
-  return ResolveDocsMask(
-    segment, [&]<DocsMaskType Mask>(Mask docs_mask) -> Result {
+  return ResolveSlicedMask<kSlice, Result>(
+    split.masked, segment,
+    [&] { return build.template operator()<true>(filters, kNoMaskFold, make); },
+    [&]<DocsMaskType Mask>(Mask docs_mask) -> Result {
       if (metas.empty() && split.rest.empty()) {
         return make.template operator()<Mask>(
           std::forward_as_tuple(std::move(docs_mask)));
@@ -439,12 +438,13 @@ Result PeelMask(std::span<const Term> metas,
     });
 }
 
-template<typename Result, typename Input, typename Term, typename Make>
+template<typename Result, typename Input, MaskSlice kSlice = MaskSlice::All,
+         typename Term, typename Make>
 Result BuildExcludesOf(ExcludeUse use, std::span<const Term> metas,
                        std::span<const QueryBuilder::ptr> filters,
                        const TermReader* field, const SubReader& segment,
                        uint64_t candidates, uint64_t span, Make&& make) {
-  return PeelMask<Result, probe::BitsetDocs>(
+  return PeelMask<Result, probe::BitsetDocs, kSlice>(
     metas, filters, segment,
     [&]<bool kConcrete>(std::span<const QueryBuilder::ptr> rest, auto&& fold,
                         auto&& wrap) -> Result {
@@ -455,62 +455,68 @@ Result BuildExcludesOf(ExcludeUse use, std::span<const Term> metas,
     make);
 }
 
-template<typename Result, typename Input, typename Term, typename Make>
+template<typename Result, typename Input, MaskSlice kSlice = MaskSlice::All,
+         typename Term, typename Make>
 Result BuildExcludeSideOf(std::span<const Term> metas,
                           std::span<const QueryBuilder::ptr> filters,
                           const TermReader* field, const SubReader& segment,
                           uint64_t candidates, uint64_t span, Make&& make) {
-  return BuildExcludesOf<Result, Input, Term>(
+  return BuildExcludesOf<Result, Input, kSlice, Term>(
     ExcludeUse::PerDoc, metas, filters, field, segment, candidates, span,
     std::forward<Make>(make));
 }
 
-template<typename Result, typename Input, typename Term, typename Make>
+template<typename Result, typename Input, MaskSlice kSlice = MaskSlice::All,
+         typename Term, typename Make>
 Result BuildExcludeSideOf(std::span<const Term> metas,
                           std::span<const QueryBuilder::ptr> filters,
                           const TermReader* field, const SubReader& segment,
                           uint64_t candidates, Make&& make) {
-  return BuildExcludeSideOf<Result, Input, Term>(metas, filters, field, segment,
-                                                 candidates, candidates,
-                                                 std::forward<Make>(make));
+  return BuildExcludeSideOf<Result, Input, kSlice, Term>(
+    metas, filters, field, segment, candidates, candidates,
+    std::forward<Make>(make));
 }
 
-template<typename Result, typename Term, typename Make>
+template<typename Result, MaskSlice kSlice = MaskSlice::All, typename Term,
+         typename Make>
 Result BuildExcludeSide(std::span<const Term> terms,
                         std::span<const QueryBuilder::ptr> filters,
                         const TermReader* field, const SubReader& segment,
                         uint64_t candidates, uint64_t span, Make&& make) {
-  return BuildExcludesOf<Result, void, Term>(ExcludeUse::PerDoc, terms, filters,
-                                             field, segment, candidates, span,
-                                             std::forward<Make>(make));
+  return BuildExcludesOf<Result, void, kSlice, Term>(
+    ExcludeUse::PerDoc, terms, filters, field, segment, candidates, span,
+    std::forward<Make>(make));
 }
 
-template<typename Result, typename Term, typename Make>
+template<typename Result, MaskSlice kSlice = MaskSlice::All, typename Term,
+         typename Make>
 Result BuildExcludeSide(std::span<const Term> terms,
                         std::span<const QueryBuilder::ptr> filters,
                         const TermReader* field, const SubReader& segment,
                         uint64_t candidates, Make&& make) {
-  return BuildExcludeSide<Result, Term>(terms, filters, field, segment,
-                                        candidates, candidates,
-                                        std::forward<Make>(make));
+  return BuildExcludeSide<Result, kSlice, Term>(terms, filters, field, segment,
+                                                candidates, candidates,
+                                                std::forward<Make>(make));
 }
 
-template<typename Result, typename Input, typename Term, typename Make>
+template<typename Result, typename Input, MaskSlice kSlice = MaskSlice::All,
+         typename Term, typename Make>
 Result BuildBlockExcludesOf(std::span<const Term> metas,
                             std::span<const QueryBuilder::ptr> filters,
                             const TermReader* field, const SubReader& segment,
                             uint64_t candidates, uint64_t lead, Make&& make) {
-  return BuildExcludesOf<Result, Input, Term>(
+  return BuildExcludesOf<Result, Input, kSlice, Term>(
     ExcludeUse::PerBlock, metas, filters, field, segment, candidates, lead,
     std::forward<Make>(make));
 }
 
-template<typename Result, typename Term, typename Make>
+template<typename Result, MaskSlice kSlice = MaskSlice::All, typename Term,
+         typename Make>
 Result BuildBlockExcludes(std::span<const Term> terms,
                           std::span<const QueryBuilder::ptr> filters,
                           const TermReader* field, const SubReader& segment,
                           uint64_t candidates, uint64_t lead, Make&& make) {
-  return BuildExcludesOf<Result, void, Term>(
+  return BuildExcludesOf<Result, void, kSlice, Term>(
     ExcludeUse::PerBlock, terms, filters, field, segment, candidates, lead,
     std::forward<Make>(make));
 }
@@ -581,12 +587,13 @@ Result BuildRestWindowExcludes(std::span<const Term> metas,
     });
 }
 
-template<typename Result, typename Term, typename Make>
+template<typename Result, MaskSlice kSlice = MaskSlice::All, typename Term,
+         typename Make>
 Result BuildWindowExcludes(std::span<const Term> metas,
                            std::span<const QueryBuilder::ptr> filters,
                            const TermReader* field, const SubReader& segment,
                            uint64_t candidates, Make&& make) {
-  return PeelMask<Result, fill::ProbedAndNot<probe::BitsetDocs>>(
+  return PeelMask<Result, fill::ProbedAndNot<probe::BitsetDocs>, kSlice>(
     metas, filters, segment,
     [&]<bool kConcrete>(std::span<const QueryBuilder::ptr> rest, auto&& fold,
                         auto&& wrap) -> Result {

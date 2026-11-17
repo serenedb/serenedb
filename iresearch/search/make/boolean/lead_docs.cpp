@@ -25,6 +25,5 @@
 namespace irs::detail {
 
 IRS_MAKE_BOOLEAN(lead::Family, utils::Empty);
-IRS_MAKE_BOOLEAN_REQUIRED(lead::Family, utils::Empty);
 
 }  // namespace irs::detail

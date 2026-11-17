@@ -18,14 +18,10 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/search/probe/boolean_planner.hpp"
+#include "iresearch/search/probe/boolean_optional.hpp"
 
 namespace irs::probe {
 
-template Node::ptr MakeOptional(std::span<const detail::PostingClause>,
-                                std::span<const QueryBuilder::ptr>, uint32_t,
-                                const SubReader&, uint64_t,
-                                const detail::NoScoring&,
-                                const detail::ScoredCtx&, score_t);
+IRS_MAKE_PROBE_OPTIONAL(detail::NoScoring);
 
 }  // namespace irs::probe

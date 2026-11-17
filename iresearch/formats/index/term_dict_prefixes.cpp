@@ -80,9 +80,9 @@ PrefixTrie::PrefixTrie(bytes_view encoded, field_id id) {
     const bytes_view labels{at + *edge_size, fanout};
     const bytes_view kinds{at + *edge_size + fanout, kind_bytes};
     at += *edge_size + size_t{fanout} + kind_bytes;
-    if (absl::c_adjacent_find(labels, [](byte_type lhs, byte_type rhs) {
-          return lhs >= rhs;
-        }) != labels.end() ||
+    if (absl::c_adjacent_find(
+          labels, [](byte_type lhs, byte_type rhs) { return lhs >= rhs; }) !=
+          labels.end() ||
         (fanout % 4 != 0 && kinds.back() >> (2 * (fanout % 4)) != 0)) {
       corrupted();
     }
@@ -108,10 +108,10 @@ PrefixTrie::PrefixTrie(bytes_view encoded, field_id id) {
     }
     for (uint32_t slot = 0; slot != fanout; ++slot) {
       const uint64_t lo = node.BlockAt(slot, range.lo);
-      const uint64_t hi =
-        slot + 1 == fanout ? uint64_t{range.hi}
-                           : uint64_t{node.BlockAt(slot + 1, range.lo)} -
-                               uint64_t{node.StartsAt(slot + 1)};
+      const uint64_t hi = slot + 1 == fanout
+                            ? uint64_t{range.hi}
+                            : uint64_t{node.BlockAt(slot + 1, range.lo)} -
+                                uint64_t{node.StartsAt(slot + 1)};
       const bool first = slot == 0 && !node.terminal;
       const bool after_key = slot == 0 && node.terminal;
       if (lo < range.lo || hi > range.hi || lo > hi ||
@@ -229,8 +229,8 @@ Located PrefixTrie::Locate(bytes_view key) const noexcept {
     }
     const bytes_view labels{node.labels, node.fanout};
     const auto label = key[depth];
-    const auto slot =
-      static_cast<uint32_t>(absl::c_lower_bound(labels, label) - labels.begin());
+    const auto slot = static_cast<uint32_t>(absl::c_lower_bound(labels, label) -
+                                            labels.begin());
     if (slot == node.fanout) {
       return {.block = after, .absent = true};
     }
@@ -244,8 +244,9 @@ Located PrefixTrie::Locate(bytes_view key) const noexcept {
       case TrieKind::Leaf:
         return {.block = block, .absent = false};
       case TrieKind::End:
-        return key.size() == depth + 1 ? Located{.block = block, .absent = false}
-                                       : Located{.block = next, .absent = true};
+        return key.size() == depth + 1
+                 ? Located{.block = block, .absent = false}
+                 : Located{.block = next, .absent = true};
       case TrieKind::Inner:
         break;
     }
@@ -559,8 +560,8 @@ void PrefixTrieBuilder::Encode(uint32_t root, std::string& out) const {
     out.push_back(static_cast<char>((node.terminal ? kTrieTerminal : 0) |
                                     code << kTrieWidthShift));
     WriteVarint(EdgeSize(node), it);
-    out.append(
-      ViewCast<char>(bytes_view{_edges}.substr(offsets[id].edge, EdgeSize(node))));
+    out.append(ViewCast<char>(
+      bytes_view{_edges}.substr(offsets[id].edge, EdgeSize(node))));
     out.append(ViewCast<char>(bytes_view{_labels}.substr(from, node.fanout)));
     bits(from, node.fanout, 2, [&](uint32_t k) {
       const auto child = _nodes[k];

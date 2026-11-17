@@ -197,15 +197,16 @@ class PrefixTrie {
     }
     const auto node = NodeOf(cursor);
     const uint32_t lo = node.BlockAt(slot, cursor.lo);
-    const uint32_t hi = slot + 1 == node.fanout
-                          ? cursor.hi
-                          : node.BlockAt(slot + 1, cursor.lo) -
-                              uint32_t{node.StartsAt(slot + 1)};
+    const uint32_t hi =
+      slot + 1 == node.fanout
+        ? cursor.hi
+        : node.BlockAt(slot + 1, cursor.lo) - uint32_t{node.StartsAt(slot + 1)};
     switch (node.KindAt(slot)) {
       case TrieKind::Inner:
         return At(node.ChildAt(slot), lo, hi);
       case TrieKind::End:
-        return {.node = kTrieEnd, .labels = 0, .matched = 0, .lo = lo, .hi = hi};
+        return {
+          .node = kTrieEnd, .labels = 0, .matched = 0, .lo = lo, .hi = hi};
       case TrieKind::Leaf:
         break;
     }

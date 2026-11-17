@@ -33,9 +33,9 @@
 
 #include "iresearch/formats/index/term_dict_format.hpp"
 #include "iresearch/formats/index/term_dict_inline.hpp"
+#include "iresearch/formats/index/term_dict_key.hpp"
 #include "iresearch/formats/index/term_dict_meta.hpp"
 #include "iresearch/formats/index/term_dict_reader.hpp"
-#include "iresearch/formats/index/term_dict_key.hpp"
 #include "iresearch/formats/index/term_dict_single.hpp"
 #include "iresearch/formats/posting/reader.hpp"
 #include "iresearch/formats/reader_state.hpp"

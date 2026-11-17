@@ -685,7 +685,8 @@ void EmitPhraseSeq(BoolTarget parent, const FilterContext& ctx,
     duckdb::unique_ptr<duckdb::Expression> structured;
     const duckdb::Expression* part = &part_expr_ref;
     if (part->GetExpressionClass() == duckdb::ExpressionClass::BOUND_CONSTANT) {
-      const auto& val = part->Cast<duckdb::BoundConstantExpression>().GetValue();
+      const auto& val =
+        part->Cast<duckdb::BoundConstantExpression>().GetValue();
       if (auto parts = TryGetTSQueryParts(val)) {
         if (parts->boost != irs::kNoBoost || !parts->tokenizer.empty()) {
           THROW_SQL_ERROR(

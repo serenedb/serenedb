@@ -176,8 +176,7 @@ void FieldReader::prepare(const ReaderState& state) {
     } else {
       prefix.clear();
       AppendOrdinal(prefix, ordinal++, terms.ordinal_bytes);
-      _dicts.push_back(
-        &_keyed.emplace_back(*this, head, prefix, *_in));
+      _dicts.push_back(&_keyed.emplace_back(*this, head, prefix, *_in));
     }
     ++_by_id
         .try_emplace(

@@ -1003,25 +1003,9 @@ void RegexpAcceptor::Compile(bytes_view pattern, RegexpSyntax syntax,
       _error = kTooComplex;
     } else if (wildcard) {
       _contained = ContainedLiteral(pattern);
-      _contained_finder =
-        re2::LiteralFinder{ViewCast<char>(bytes_view{_contained})};
     }
   }
   Setup();
-}
-
-RegexpAcceptor::Quick RegexpAcceptor::QuickMatch(
-  bytes_view term) const noexcept {
-  if (_contained.empty()) {
-    return Quick::Unknown;
-  }
-  const auto* text = reinterpret_cast<const char*>(term.data());
-  if (!_contained_finder.Find(ViewCast<char>(bytes_view{_contained}), text,
-                              text + term.size())) {
-    return Quick::Reject;
-  }
-  return simdutf::validate_utf8(text, term.size()) ? Quick::Accept
-                                                   : Quick::Unknown;
 }
 
 void RegexpAcceptor::CompileParts(std::span<const Part> parts,

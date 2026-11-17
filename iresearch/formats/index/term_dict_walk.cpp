@@ -1444,15 +1444,6 @@ void Readahead(Cursor& cursor, ColdPlan<A>& plan, const A& a) {
 }
 
 template<typename A>
-RegexpAcceptor::Quick QuickMatch(const A& a, bytes_view term) noexcept {
-  if constexpr (requires { a.QuickMatch(term); }) {
-    return a.QuickMatch(term);
-  } else {
-    return RegexpAcceptor::Quick::Unknown;
-  }
-}
-
-template<typename A>
 class AcceptorIterator : public SeekTermIterator {
  public:
   using State = typename A::State;
@@ -1663,20 +1654,15 @@ class AcceptorIterator : public SeekTermIterator {
       _cursor.Materialize();
       const auto key = _cursor.Key();
       const auto term = key.substr(_k);
-      const auto quick = QuickMatch(*_a, term);
-      bool accepted = quick == RegexpAcceptor::Quick::Accept;
-      if (quick == RegexpAcceptor::Quick::Unknown) {
-        size_t depth = _targets.StepAlong(key, _valid);
-        _valid = depth;
-        if (depth != key.size()) {
-          if (!_targets.NextTarget(key, depth) || !Hop(depth)) {
-            return End();
-          }
-          continue;
+      size_t depth = _targets.StepAlong(key, _valid);
+      _valid = depth;
+      if (depth != key.size()) {
+        if (!_targets.NextTarget(key, depth) || !Hop(depth)) {
+          return End();
         }
-        accepted = Accepts(term, _targets.StateAt(depth));
+        continue;
       }
-      if (accepted) {
+      if (Accepts(term, _targets.StateAt(depth))) {
         _position = Position::At;
         _term.value = term;
         return true;

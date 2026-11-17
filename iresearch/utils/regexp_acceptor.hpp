@@ -37,7 +37,6 @@
 #include "iresearch/utils/byte_set.hpp"
 #include "iresearch/utils/regexp_utils.hpp"
 #include "iresearch/utils/string.hpp"
-#include "re2/literal_finder.h"
 #include "re2/prog.h"
 
 namespace irs {
@@ -77,12 +76,6 @@ class RegexpAcceptor {
   using State = const Row*;
 
   struct WildcardTag {};
-
-  enum class Quick : uint8_t {
-    Unknown,
-    Accept,
-    Reject,
-  };
 
   enum class PartKind : uint8_t {
     Term,
@@ -128,8 +121,6 @@ class RegexpAcceptor {
   State Start() const noexcept { return _start; }
 
   bytes_view LowerBound() const noexcept { return _lower; }
-
-  Quick QuickMatch(bytes_view term) const noexcept;
 
   bool MatchesByLiteral() const noexcept { return !_contained.empty(); }
 
@@ -260,7 +251,6 @@ class RegexpAcceptor {
   std::vector<ExemptKey> _exempt;
   bstring _infix;
   bstring _contained;
-  re2::LiteralFinder _contained_finder;
   std::vector<bstring> _literals;
   std::string _error;
   bool _finite{false};

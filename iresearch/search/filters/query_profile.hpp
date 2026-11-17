@@ -32,6 +32,7 @@
 #include <typeinfo>
 #include <vector>
 
+#include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/search/filters/filter.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 
@@ -61,6 +62,23 @@ class QueryProfile {
   struct ExecutedNode {
     uint32_t node = 0;
     const Executed* executed = nullptr;
+  };
+
+  struct CheckCounts {
+    std::atomic_uint64_t checked = 0;
+    std::atomic_uint64_t dropped = 0;
+    Executed batches;
+    Executed rows;
+  };
+
+  struct RootChecks {
+    CheckCounts table;
+    CheckCounts columns;
+  };
+
+  struct OwnedChecks {
+    std::unique_ptr<detail::TableFilter> table;
+    std::unique_ptr<detail::TableFilter> columns;
   };
 
   class Counter {
@@ -132,8 +150,8 @@ class QueryProfile {
    public:
     using Ptr = typename Base::ptr;
 
-    Profiled(Ptr inner, Executed& slot)
-      : _inner{std::move(inner)}, _counter{slot} {}
+    Profiled(Ptr inner, Executed& slot, OwnedChecks checks = {})
+      : _checks{std::move(checks)}, _inner{std::move(inner)}, _counter{slot} {}
 
     Ptr Release() {
       _counter.Unplan();
@@ -141,6 +159,7 @@ class QueryProfile {
     }
 
    protected:
+    OwnedChecks _checks;
     Ptr _inner;
     Counter _counter;
   };
@@ -158,6 +177,20 @@ class QueryProfile {
 
   uint64_t TimerTicks() const noexcept { return _timer_ticks; }
 
+  const RootChecks& Checks() const noexcept { return _checks; }
+
+  bool WrapsRoot(uint32_t id) const noexcept { return id == 0 || _nested; }
+
+  std::unique_ptr<detail::TableFilter> WrapTableChecks(
+    detail::TableFilter*& checks) {
+    return WrapChecks(checks, _checks.table);
+  }
+
+  std::unique_ptr<detail::TableFilter> WrapColumnChecks(
+    detail::TableFilter*& checks) {
+    return WrapChecks(checks, _checks.columns);
+  }
+
   static uint64_t WindowDocs(const uint64_t* mask, doc_id_t min,
                              doc_id_t max) noexcept;
 
@@ -174,21 +207,31 @@ class QueryProfile {
   probe::Node::ptr Wrap(probe::Node::ptr node, uint32_t id);
   fill::Node::ptr Wrap(fill::Node::ptr node, uint32_t id);
 
-  docs::Root::ptr WrapRoot(docs::Root::ptr root, uint32_t id, uint64_t ticks);
-  hits::Root::ptr WrapRoot(hits::Root::ptr root, uint32_t id, uint64_t ticks);
-  count::Root::ptr WrapRoot(count::Root::ptr root, uint32_t id, uint64_t ticks);
-  top::Root::ptr WrapRoot(top::Root::ptr root, uint32_t id, uint64_t ticks);
-  ann::Root::ptr WrapRoot(ann::Root::ptr root, uint32_t id, uint64_t ticks);
-  fill::Node::ptr WrapRoot(fill::Node::ptr root, uint32_t id, uint64_t ticks);
+  docs::Root::ptr WrapRoot(docs::Root::ptr root, uint32_t id, uint64_t ticks,
+                           OwnedChecks checks);
+  hits::Root::ptr WrapRoot(hits::Root::ptr root, uint32_t id, uint64_t ticks,
+                           OwnedChecks checks);
+  count::Root::ptr WrapRoot(count::Root::ptr root, uint32_t id, uint64_t ticks,
+                            OwnedChecks checks);
+  top::Root::ptr WrapRoot(top::Root::ptr root, uint32_t id, uint64_t ticks,
+                          OwnedChecks checks);
+  ann::Root::ptr WrapRoot(ann::Root::ptr root, uint32_t id, uint64_t ticks,
+                          OwnedChecks checks);
+  fill::Node::ptr WrapRoot(fill::Node::ptr root, uint32_t id, uint64_t ticks,
+                           OwnedChecks checks);
 
  private:
+  std::unique_ptr<detail::TableFilter> WrapChecks(detail::TableFilter*& checks,
+                                                  CheckCounts& counts);
+
   template<typename Wrapper, typename Ptr>
-  Ptr WrapRootAs(Ptr root, uint32_t id, uint64_t ticks);
+  Ptr WrapRootAs(Ptr root, uint32_t id, uint64_t ticks, OwnedChecks checks);
 
   containers::FlatHashMap<const Filter*, uint32_t> _ids;
   std::unique_ptr<Prepared[]> _nodes;
   mutable absl::Mutex _mutex;
   std::unique_ptr<std::list<Executed>[]> _executed;
+  RootChecks _checks;
   uint32_t _size = 0;
   uint64_t _timer_ticks = 0;
   bool _nested = false;
@@ -217,19 +260,37 @@ Ptr ProfilePlan(const QueryBuilder& query, Ptr node) {
   return node;
 }
 
-template<typename Make>
-auto ProfileRoot(const QueryBuilder& query, Make&& make) {
+template<typename Context, typename Make>
+auto ProfileRoot(const QueryBuilder& query, const Context& ctx, Make&& make) {
   auto* profile = query.Profile();
   if (!profile) [[likely]] {
-    return make();
+    return make(ctx);
+  }
+  const auto node = query.ProfileNode();
+  auto profiled = ctx;
+  QueryProfile::OwnedChecks checks;
+  if (profile->WrapsRoot(node)) {
+    if constexpr (requires { profiled.table; }) {
+      checks.table = profile->WrapTableChecks(profiled.table);
+    }
+    if constexpr (requires { profiled.columns; }) {
+      checks.columns = profile->WrapColumnChecks(profiled.columns);
+    }
   }
   const auto start = duckdb::TimePoint::Now();
-  auto root = make();
+  auto root = make(profiled);
   const auto ticks = static_cast<uint64_t>(duckdb::TimePoint::Now() - start);
   if (!root) {
     return root;
   }
-  return profile->WrapRoot(std::move(root), query.ProfileNode(), ticks);
+  return profile->WrapRoot(std::move(root), node, ticks, std::move(checks));
+}
+
+template<typename Make>
+auto ProfileRoot(const QueryBuilder& query, Make&& make) {
+  struct NoContext {};
+  return ProfileRoot(query, NoContext{},
+                     [&](const NoContext&) { return make(); });
 }
 
 }  // namespace irs

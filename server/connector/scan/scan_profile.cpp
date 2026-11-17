@@ -22,26 +22,25 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/debugging/internal/demangle.h>
-#include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_replace.h>
 #include <absl/strings/str_split.h>
 #include <absl/strings/strip.h>
 
 #include <duckdb/common/string_util.hpp>
+#include <iterator>
 #include <string>
 #include <utility>
 
 namespace sdb::connector {
 namespace {
 
-using Info = duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue>;
+using Info = ScanProfile::Info;
 
-std::vector<const irs::Filter*> FiltersOf(
-  const std::vector<irs::FilterBox>& boxes) {
+std::vector<const irs::Filter*> FiltersOf(const irs::FilterTree& tree) {
   std::vector<const irs::Filter*> filters;
-  filters.reserve(boxes.size());
-  for (const auto& box : boxes) {
+  filters.reserve(tree.boxes.size());
+  for (const auto& box : tree.boxes) {
     filters.push_back(box.filter);
   }
   return filters;
@@ -93,22 +92,6 @@ std::string ShapeName(const std::type_info& type) {
   return name;
 }
 
-std::string BoxName(std::string_view label) {
-  return absl::StrReplaceAll(absl::AsciiStrToUpper(label), {{" ", "_"}});
-}
-
-duckdb::ProfilingNode& AddBox(duckdb::ProfilingNode& parent, std::string name,
-                              uint64_t ticks, uint64_t rows, Info info) {
-  auto node = duckdb::make_uniq<duckdb::ProfilingNode>();
-  auto& metrics = node->GetOperatorMetrics();
-  metrics.name = std::move(name);
-  metrics.operator_type = duckdb::PhysicalOperatorType::EXTENSION;
-  metrics.time = Seconds(ticks);
-  metrics.elements_returned = rows;
-  metrics.SetExtraInfo(std::move(info));
-  return *parent.AddChild(std::move(node));
-}
-
 void AddTiming(Info& info, std::string_view key, uint64_t ticks) {
   if (ticks != 0) {
     info[std::string{key}] = Timing(ticks);
@@ -127,6 +110,14 @@ uint64_t EstimatedTicks(const irs::QueryProfile::Executed& slot,
                                static_cast<double>(timed));
 }
 
+template<typename Node>
+void PreOrder(Node& node, std::vector<Node*>& out) {
+  out.push_back(&node);
+  for (auto& child : node.children) {
+    PreOrder(child, out);
+  }
+}
+
 class ProfiledLookup final : public irs::IndexSource {
  public:
   ProfiledLookup(ScanProfile& profile, std::unique_ptr<irs::IndexSource> inner)
@@ -137,7 +128,7 @@ class ProfiledLookup final : public irs::IndexSource {
                             duckdb::DataChunk& output) final {
     const auto start = duckdb::TimePoint::Now();
     const auto rows = _inner->Materialize(context, pk, count, output);
-    _profile.AddLookup(ElapsedTicks(start), count - rows);
+    _profile.AddLookup(ElapsedTicks(start), count, count - rows);
     return rows;
   }
 
@@ -160,16 +151,19 @@ std::unique_ptr<irs::IndexSource> ProfileLookup(
   return std::make_unique<ProfiledLookup>(*profile, std::move(source));
 }
 
-ScanProfile::ScanProfile(std::vector<irs::FilterBox> boxes, bool nested,
+ScanProfile::ScanProfile(irs::FilterTree filter, ScanChecks checks,
+                         std::string lookup_source, bool nested,
                          uint64_t snapshot_ticks)
-  : _boxes{std::move(boxes)},
-    _query{FiltersOf(_boxes), nested},
+  : _filter{std::move(filter)},
+    _checks{std::move(checks)},
+    _lookup_source{std::move(lookup_source)},
+    _query{FiltersOf(_filter), nested},
     _snapshot_ticks{snapshot_ticks} {}
 
 void ScanProfile::FinishInit() {
   uint64_t ticks = _snapshot_ticks + _classify_ticks;
-  for (uint32_t i = 0; i != _boxes.size(); ++i) {
-    if (_boxes[i].parent == irs::FilterBox::kRoot) {
+  for (uint32_t i = 0; i != _filter.boxes.size(); ++i) {
+    if (_filter.boxes[i].parent == irs::FilterBox::kRoot) {
       ticks += _query.Node(i).ticks;
     }
   }
@@ -179,21 +173,107 @@ void ScanProfile::FinishInit() {
 void ScanProfile::Report(duckdb::OperatorMetrics& metrics) {
   const auto version = _version.fetch_add(1, std::memory_order_acq_rel) + 1;
   metrics.time += Seconds(_init_ticks.exchange(0, std::memory_order_relaxed));
-  auto nested = duckdb::make_shared_ptr<duckdb::ProfilingNode>();
-  Render(*nested);
-  metrics.nested = std::move(nested);
-  metrics.nested_version = version;
+  metrics.final_extra_info = duckdb::make_shared_ptr<const Info>(Render());
+  metrics.final_extra_info_version = version;
 }
 
-void ScanProfile::Render(duckdb::ProfilingNode& node) const {
-  const auto size = _boxes.size();
-  std::vector<std::vector<size_t>> children(size);
-  std::vector<size_t> roots;
-  for (size_t i = 0; i != size; ++i) {
-    const auto parent = _boxes[i].parent;
-    (parent == irs::FilterBox::kRoot ? roots : children[parent]).push_back(i);
+Info ScanProfile::Render() const {
+  Info info;
+  const bool draws_filter =
+    !_filter.boxes.empty() && _query.Node(0).segments != 0;
+  if (draws_filter) {
+    info["Index Filter"] = duckdb::ExplainValue{};
   }
+  const auto& columns = _query.Checks().columns;
+  const bool draws_duals =
+    !_checks.duals.empty() &&
+    (_checks.duals_on_rows || columns.batches.calls != 0 ||
+     columns.rows.calls != 0);
+  auto nodes = _checks.nodes;
+  if (draws_duals) {
+    nodes.insert(nodes.end(), _checks.duals.begin(), _checks.duals.end());
+    info["Index or Column Filter"] = duckdb::ExplainValue{};
+  }
+  if (!nodes.empty()) {
+    for (const std::string_view key :
+         {"Table Filter", "Row Filter", "Dynamic Column Filter"}) {
+      info[std::string{key}] = duckdb::ExplainValue{};
+    }
+  }
+  info["Index Filter Prepare"] =
+    duckdb::ExplainValue::Section(Prepared(draws_filter));
+  if (auto executed = Executed(); !executed.children.empty()) {
+    info["Index Filter Execute"] =
+      duckdb::ExplainValue::Section(std::move(executed));
+  }
+  if (!nodes.empty()) {
+    info["Column Filter"] =
+      duckdb::ExplainValue::Section(Checked(std::move(nodes)));
+  }
+  if (const uint64_t rows = _lookup_rows; rows != 0) {
+    info["Lookup"] = duckdb::ExplainValue::Section(LookedUp(rows));
+  }
+  return info;
+}
 
+duckdb::ExplainNode ScanProfile::Prepared(bool draws_filter) const {
+  const auto size = static_cast<uint32_t>(_filter.boxes.size());
+  std::vector<std::vector<uint32_t>> children(size);
+  uint64_t filter_ticks = 0;
+  for (uint32_t i = 0; i != size; ++i) {
+    const auto parent = _filter.boxes[i].parent;
+    if (parent == irs::FilterBox::kRoot) {
+      filter_ticks += _query.Node(i).ticks;
+    } else {
+      children[parent].push_back(i);
+    }
+  }
+  const uint64_t stats_ticks = _stats_ticks;
+  duckdb::ExplainNode prepared;
+  prepared.attributes["Total"] =
+    Timing(_snapshot_ticks + stats_ticks + filter_ticks);
+  AddTiming(prepared.attributes, "Snapshot", _snapshot_ticks);
+  prepared.attributes["Segments"] =
+    absl::StrCat(Count(_segments_kept), " of ", Count(_segments_total));
+  AddTiming(prepared.attributes, "Stats", stats_ticks);
+  if (!draws_filter) {
+    return prepared;
+  }
+  auto& tree = prepared.children.emplace_back(_filter.root);
+  std::vector<duckdb::ExplainNode*> nodes;
+  PreOrder(tree, nodes);
+  for (uint32_t i = 0; i != size; ++i) {
+    const auto& stats = _query.Node(i);
+    if (stats.segments == 0) {
+      continue;
+    }
+    uint64_t ticks = stats.ticks;
+    uint64_t terms = stats.terms;
+    uint64_t postings = stats.postings;
+    for (const auto child : children[i]) {
+      const auto& sub = _query.Node(child);
+      ticks = Minus(ticks, sub.ticks);
+      terms = Minus(terms, sub.terms);
+      postings = Minus(postings, sub.postings);
+    }
+    auto& attributes = nodes[_filter.boxes[i].node]->attributes;
+    const bool lists = terms != 0 && CountsPostingLists(stats.kind);
+    if (lists) {
+      attributes["Posting Lists"] = Count(terms);
+    }
+    attributes["Estimated Matches"] = Count(stats.matches);
+    if (lists) {
+      attributes["Postings"] = Count(postings);
+    }
+    if (!children[i].empty()) {
+      attributes["Total"] = Timing(stats.ticks);
+    }
+    attributes["Time"] = Timing(ticks);
+  }
+  return prepared;
+}
+
+duckdb::ExplainNode ScanProfile::Executed() const {
   const auto slots = _query.Slots();
   std::vector<std::string> names(slots.size());
   std::vector<uint64_t> slot_ticks(slots.size());
@@ -212,77 +292,14 @@ void ScanProfile::Render(duckdb::ProfilingNode& node) const {
       rows += slot.docs;
     }
   }
+  duckdb::ExplainNode executed;
+  if (plans.empty()) {
+    return executed;
+  }
   absl::c_sort(plans,
                [&](size_t lhs, size_t rhs) { return names[lhs] < names[rhs]; });
-
-  Info scan_info;
-  if (const uint64_t filtered = _filtered; filtered != 0) {
-    scan_info["Filtered"] = Count(filtered);
-  }
-  AddTiming(scan_info, "Lookup Time", _lookup_ticks);
-
-  uint64_t queries_ticks = 0;
-  for (const auto root : roots) {
-    queries_ticks += _query.Node(static_cast<uint32_t>(root)).ticks;
-  }
-  const uint64_t stats_ticks = _stats_ticks;
-  const auto own_ticks = _snapshot_ticks + _classify_ticks + stats_ticks;
-  auto& scan = node.GetOperatorMetrics();
-  scan.SetExtraInfo(std::move(scan_info));
-  scan.time = Seconds(own_ticks + queries_ticks + plan_ticks + run_ticks);
-  Info prepare_info;
-  prepare_info["Total"] = Timing(own_ticks + queries_ticks);
-  AddTiming(prepare_info, "Snapshot", _snapshot_ticks);
-  prepare_info["Segments"] =
-    absl::StrCat(Count(_segments_kept), " of ", Count(_segments_total));
-  AddTiming(prepare_info, "Stats", stats_ticks);
-  auto& prepare =
-    AddBox(node, "INDEX_PREPARE", own_ticks, 0, std::move(prepare_info));
-
-  const auto add_filter = [&](this const auto& self,
-                              duckdb::ProfilingNode& parent, size_t i) -> void {
-    const auto& stats = _query.Node(static_cast<uint32_t>(i));
-    if (stats.segments == 0) {
-      return;
-    }
-    uint64_t ticks = stats.ticks;
-    uint64_t terms = stats.terms;
-    uint64_t postings = stats.postings;
-    for (const auto child : children[i]) {
-      const auto& sub = _query.Node(static_cast<uint32_t>(child));
-      ticks = Minus(ticks, sub.ticks);
-      terms = Minus(terms, sub.terms);
-      postings = Minus(postings, sub.postings);
-    }
-    const auto& box = _boxes[i].node;
-    Info info;
-    for (const auto& [key, value] : box.attributes) {
-      info[key] = value;
-    }
-    if (!children[i].empty()) {
-      info["Total"] = Timing(stats.ticks);
-    }
-    if (terms != 0 && CountsPostingLists(stats.kind)) {
-      info["Posting Lists"] = Count(terms);
-    }
-    info["Estimated Matches"] = Count(stats.matches);
-    auto& added =
-      AddBox(parent, BoxName(box.label), ticks, postings, std::move(info));
-    for (const auto child : children[i]) {
-      self(added, child);
-    }
-  };
-  for (const auto root : roots) {
-    add_filter(prepare, root);
-  }
-
-  if (plans.empty()) {
-    return;
-  }
-  Info execute_info;
-  execute_info["Total"] = Timing(plan_ticks + run_ticks);
-  auto& execute =
-    AddBox(node, "INDEX_EXECUTE", plan_ticks, rows, std::move(execute_info));
+  executed.attributes["Total"] = Timing(plan_ticks + run_ticks);
+  executed.attributes["Rows"] = Count(rows);
 
   const auto owner = *absl::c_max_element(plans, [&](size_t lhs, size_t rhs) {
     return slot_ticks[lhs] < slot_ticks[rhs];
@@ -293,8 +310,9 @@ void ScanProfile::Render(duckdb::ProfilingNode& node) const {
       continue;
     }
     auto parent = owner;
-    for (auto up = _boxes[slots[s].node].parent;
-         up != irs::FilterBox::kRoot && up != 0; up = _boxes[up].parent) {
+    for (auto up = _filter.boxes[slots[s].node].parent;
+         up != irs::FilterBox::kRoot && up != 0;
+         up = _filter.boxes[up].parent) {
       const auto found = absl::c_find_if(
         slots, [&](const auto& other) { return other.node == up; });
       if (found != slots.end()) {
@@ -305,35 +323,81 @@ void ScanProfile::Render(duckdb::ProfilingNode& node) const {
     slot_children[parent].push_back(s);
   }
 
-  const auto add_slot = [&](this const auto& self,
-                            duckdb::ProfilingNode& parent, size_t s) -> void {
+  std::vector<const duckdb::ExplainNode*> filters;
+  PreOrder(_filter.root, filters);
+  const auto slot_node = [&](this const auto& self,
+                             size_t s) -> duckdb::ExplainNode {
     const auto& slot = *slots[s].executed;
-    Info info;
+    duckdb::ExplainNode node{names[s]};
     if (slots[s].node != 0) {
-      info["Filter"] = _boxes[slots[s].node].node.label;
+      node.attributes["Filter"] =
+        filters[_filter.boxes[slots[s].node].node]->label;
     }
-    info["Plans"] = Count(slot.plans);
-    info["Calls"] = Count(slot.calls);
-    AddTiming(info, "Plan", slot.plan_ticks);
+    node.attributes["Plans"] = Count(slot.plans);
+    node.attributes["Calls"] = Count(slot.calls);
+    AddTiming(node.attributes, "Plan", slot.plan_ticks);
     if (slot.timed_calls < slot.calls) {
-      info["Timed"] = Count(slot.timed_calls);
+      node.attributes["Timed"] = Count(slot.timed_calls);
     }
     auto own_ticks = slot_ticks[s];
     if (!slot_children[s].empty()) {
-      info["Total"] = Timing(slot_ticks[s]);
+      node.attributes["Total"] = Timing(slot_ticks[s]);
       for (const auto child : slot_children[s]) {
         own_ticks = Minus(own_ticks, slot_ticks[child]);
       }
     }
-    auto& added =
-      AddBox(parent, names[s], own_ticks, slot.docs, std::move(info));
+    node.attributes["Time"] = Timing(own_ticks);
+    node.attributes["Rows"] = Count(slot.docs);
     for (const auto child : slot_children[s]) {
-      self(added, child);
+      node.children.push_back(self(child));
     }
+    return node;
   };
   for (const auto s : plans) {
-    add_slot(execute, s);
+    executed.children.push_back(slot_node(s));
   }
+  return executed;
+}
+
+duckdb::ExplainNode ScanProfile::Checked(
+  std::vector<duckdb::ExplainNode> nodes) const {
+  duckdb::ExplainNode checked;
+  uint64_t calls = 0;
+  uint64_t rows = 0;
+  uint64_t dropped = 0;
+  uint64_t ticks = 0;
+  for (const auto* counts :
+       {&_query.Checks().table, &_query.Checks().columns}) {
+    calls += counts->batches.calls + counts->rows.calls;
+    rows += counts->checked;
+    dropped += counts->dropped;
+    ticks += EstimatedTicks(counts->batches, _query.TimerTicks()) +
+             EstimatedTicks(counts->rows, _query.TimerTicks());
+  }
+  if (calls != 0) {
+    checked.attributes["Rows"] = Count(rows);
+    checked.attributes["Rows Removed"] = Count(dropped);
+    checked.attributes["Time"] = Timing(ticks);
+  }
+  if (nodes.size() == 1) {
+    checked.children.push_back(std::move(nodes.front()));
+  } else {
+    checked.children.emplace_back("And").children.assign(
+      std::make_move_iterator(nodes.begin()),
+      std::make_move_iterator(nodes.end()));
+  }
+  return checked;
+}
+
+duckdb::ExplainNode ScanProfile::LookedUp(uint64_t rows) const {
+  duckdb::ExplainNode lookup;
+  if (!_lookup_source.empty()) {
+    lookup.attributes["Source"] = _lookup_source;
+  }
+  lookup.attributes["Rows"] = Count(rows);
+  lookup.attributes["Rows Removed"] = Count(_lookup_dropped);
+  lookup.attributes["Time"] = Timing(_lookup_ticks);
+  return lookup;
 }
 
 }  // namespace sdb::connector

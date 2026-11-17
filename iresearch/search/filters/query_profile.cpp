@@ -214,6 +214,80 @@ class ProfiledAnn : public QueryProfile::Profiled<ann::Root> {
   int64_t _kept = 0;
 };
 
+class ProfiledChecks final : public detail::TableFilter {
+ public:
+  ProfiledChecks(QueryProfile::CheckCounts& checks, detail::TableFilter& inner)
+    : _checks{checks},
+      _inner{inner},
+      _batches{checks.batches},
+      _rows{checks.rows} {}
+
+  ~ProfiledChecks() final {
+    _checks.checked.fetch_add(_checked, std::memory_order_relaxed);
+    _checks.dropped.fetch_add(_dropped, std::memory_order_relaxed);
+  }
+
+  doc_id_t Live(doc_id_t doc) final { return _inner.Live(doc); }
+
+  bool Foldable() const noexcept final { return _inner.Foldable(); }
+
+  uint64_t CountAndClear(doc_id_t base, uint64_t* mask, uint32_t words) final {
+    const auto checked = CountWords(mask, words);
+    const auto kept =
+      _batches.Time([&] { return _inner.CountAndClear(base, mask, words); });
+    Add(checked, kept);
+    return kept;
+  }
+
+  uint32_t Narrow(doc_id_t* docs, score_t* scores, uint32_t n) final {
+    const auto kept =
+      _batches.Time([&] { return _inner.Narrow(docs, scores, n); });
+    Add(n, kept);
+    return kept;
+  }
+
+  uint32_t Narrow(doc_id_t base, const uint64_t* in, uint64_t* out,
+                  score_t* scores, uint32_t words) final {
+    const auto checked = CountWords(in, words);
+    const auto kept = _batches.Time(
+      [&] { return _inner.Narrow(base, in, out, scores, words); });
+    Add(checked, kept);
+    return kept;
+  }
+
+  void Rewind() final { _inner.Rewind(); }
+
+  detail::PointRead PointReads() const noexcept final {
+    return _inner.PointReads();
+  }
+
+  double Share() const final { return _inner.Share(); }
+
+  bool Admits(doc_id_t doc) final {
+    const bool admitted = _rows.Sample([&] { return _inner.Admits(doc); });
+    Add(1, admitted ? 1 : 0);
+    return admitted;
+  }
+
+ private:
+  static uint64_t CountWords(const uint64_t* words, uint32_t count) noexcept {
+    return count == 0 ? 0
+                      : detail::CountBitRange(words, 0, uint64_t{count} * 64);
+  }
+
+  void Add(uint64_t checked, uint64_t kept) noexcept {
+    _checked += checked;
+    _dropped += Minus(checked, kept);
+  }
+
+  QueryProfile::CheckCounts& _checks;
+  detail::TableFilter& _inner;
+  QueryProfile::Counter _batches;
+  QueryProfile::Counter _rows;
+  uint64_t _checked = 0;
+  uint64_t _dropped = 0;
+};
+
 template<typename Wrapper, typename Ptr>
 Ptr WrapPart(QueryProfile& profile, Ptr node, uint32_t id) {
   if (typeid(*node) == typeid(memory::OnHeap<Wrapper>)) {
@@ -293,44 +367,60 @@ uint64_t QueryProfile::WindowDocs(const uint64_t* mask, doc_id_t min,
   return max > min ? detail::CountBitRange(mask, 0, max - min) : 0;
 }
 
+std::unique_ptr<detail::TableFilter> QueryProfile::WrapChecks(
+  detail::TableFilter*& checks, CheckCounts& counts) {
+  if (!checks) {
+    return nullptr;
+  }
+  auto wrapper = std::make_unique<ProfiledChecks>(counts, *checks);
+  checks = wrapper.get();
+  return wrapper;
+}
+
 template<typename Wrapper, typename Ptr>
-Ptr QueryProfile::WrapRootAs(Ptr root, uint32_t id, uint64_t ticks) {
-  if (id != 0 && !_nested) {
+Ptr QueryProfile::WrapRootAs(Ptr root, uint32_t id, uint64_t ticks,
+                             OwnedChecks checks) {
+  if (!WrapsRoot(id)) {
     return root;
   }
   auto& slot = Plan(id, typeid(*root));
   slot.plan_ticks.fetch_add(ticks, std::memory_order_relaxed);
-  return memory::make_managed<Wrapper>(std::move(root), slot);
+  return memory::make_managed<Wrapper>(std::move(root), slot,
+                                       std::move(checks));
 }
 
 docs::Root::ptr QueryProfile::WrapRoot(docs::Root::ptr root, uint32_t id,
-                                       uint64_t ticks) {
-  return WrapRootAs<ProfiledDocs>(std::move(root), id, ticks);
+                                       uint64_t ticks, OwnedChecks checks) {
+  return WrapRootAs<ProfiledDocs>(std::move(root), id, ticks,
+                                  std::move(checks));
 }
 
 hits::Root::ptr QueryProfile::WrapRoot(hits::Root::ptr root, uint32_t id,
-                                       uint64_t ticks) {
-  return WrapRootAs<ProfiledHits>(std::move(root), id, ticks);
+                                       uint64_t ticks, OwnedChecks checks) {
+  return WrapRootAs<ProfiledHits>(std::move(root), id, ticks,
+                                  std::move(checks));
 }
 
 count::Root::ptr QueryProfile::WrapRoot(count::Root::ptr root, uint32_t id,
-                                        uint64_t ticks) {
-  return WrapRootAs<ProfiledCount>(std::move(root), id, ticks);
+                                        uint64_t ticks, OwnedChecks checks) {
+  return WrapRootAs<ProfiledCount>(std::move(root), id, ticks,
+                                   std::move(checks));
 }
 
 top::Root::ptr QueryProfile::WrapRoot(top::Root::ptr root, uint32_t id,
-                                      uint64_t ticks) {
-  return WrapRootAs<ProfiledTop>(std::move(root), id, ticks);
+                                      uint64_t ticks, OwnedChecks checks) {
+  return WrapRootAs<ProfiledTop>(std::move(root), id, ticks, std::move(checks));
 }
 
 ann::Root::ptr QueryProfile::WrapRoot(ann::Root::ptr root, uint32_t id,
-                                      uint64_t ticks) {
-  return WrapRootAs<ProfiledAnn>(std::move(root), id, ticks);
+                                      uint64_t ticks, OwnedChecks checks) {
+  return WrapRootAs<ProfiledAnn>(std::move(root), id, ticks, std::move(checks));
 }
 
 fill::Node::ptr QueryProfile::WrapRoot(fill::Node::ptr root, uint32_t id,
-                                       uint64_t ticks) {
-  return WrapRootAs<ProfiledFill>(std::move(root), id, ticks);
+                                       uint64_t ticks, OwnedChecks checks) {
+  return WrapRootAs<ProfiledFill>(std::move(root), id, ticks,
+                                  std::move(checks));
 }
 
 lead::Node::ptr QueryProfile::Wrap(lead::Node::ptr node, uint32_t id) {

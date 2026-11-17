@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 
@@ -25,11 +26,13 @@
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <ranges>
 #include <span>
+#include <string_view>
 
 #include "connector/column_id.h"
 #include "connector/functions/vector.h"
 #include "connector/scan/scan_bind.h"
 #include "connector/scan/scan_function.h"
+#include "connector/scan/scan_state.h"
 #include "connector/search_filter_printer.hpp"
 #include "connector/term_dict.h"
 #include "pg/types/logical.h"
@@ -37,6 +40,21 @@
 
 namespace sdb::connector {
 namespace {
+
+std::string_view StripOuterParens(std::string_view text) {
+  while (text.size() >= 2 && text.front() == '(' && text.back() == ')') {
+    size_t depth = 0;
+    for (size_t i = 0; i + 1 != text.size(); ++i) {
+      depth += text[i] == '(';
+      depth -= text[i] == ')';
+      if (depth == 0) {
+        return text;
+      }
+    }
+    text = text.substr(1, text.size() - 2);
+  }
+  return text;
+}
 
 void AppendTypeSuffix(std::string& name, const duckdb::LogicalType& type) {
   using enum duckdb::LogicalTypeId;
@@ -593,15 +611,15 @@ IndexLookupToStringValue(duckdb::TableFunctionToStringInput& input) {
   return result;
 }
 
-std::vector<irs::FilterBox> FilterBoxes(const ScanBindData& bind,
-                                        const irs::Filter& filter) {
+irs::FilterTree IndexFilterTree(const ScanBindData& bind,
+                                const irs::Filter& filter) {
   const irs::FieldKeyResolver key_of = [&bind](ColumnId field) {
     return KeyOfField(bind, field) != nullptr;
   };
-  auto boxes = irs::ToFilterBoxes(filter, MakeFieldNameResolver(bind),
-                                  MakeFieldTypeResolver(bind), key_of);
+  auto tree = irs::ToFilterTree(filter, MakeFieldNameResolver(bind),
+                                MakeFieldTypeResolver(bind), key_of);
   if (const auto& vector = bind.score.vector) {
-    auto& attributes = boxes.front().node.attributes;
+    auto& attributes = tree.root.attributes;
     if (vector->radius == std::numeric_limits<float>::max()) {
       attributes.erase("Radius");
     } else {
@@ -609,7 +627,89 @@ std::vector<irs::FilterBox> FilterBoxes(const ScanBindData& bind,
         absl::StrCat(vector->radius_inclusive ? "<= " : "< ", vector->radius);
     }
   }
-  return boxes;
+  return tree;
+}
+
+ScanChecks ColumnChecks(const ScanGlobalState& g) {
+  const auto& bind = g.Bind();
+  const auto name_of = MakeFieldNameResolver(bind);
+  const auto type_of = MakeFieldTypeResolver(bind);
+  const irs::FieldKeyResolver key_of = [&bind](ColumnId field) {
+    return KeyOfField(bind, field) != nullptr;
+  };
+  const auto source_of =
+    [&](const duckdb::TableFilter* check) -> const irs::Filter* {
+    for (const auto* deferred : {&g.deferred_checks, &bind.search.deferred}) {
+      const auto found = absl::c_find_if(
+        *deferred,
+        [&](const DeferredCheck& d) { return d.check.get() == check; });
+      if (found != deferred->end()) {
+        return found->source;
+      }
+    }
+    return nullptr;
+  };
+  const auto column = [](std::string label, std::string name,
+                         const duckdb::TableFilter& filter) {
+    duckdb::ExplainNode node{std::move(label)};
+    auto check = std::string{StripOuterParens(
+      duckdb::ExpressionFilter::GetExpressionFilter(filter, "ColumnChecks")
+        .ToString(name))};
+    node.attributes["Field"] = std::move(name);
+    node.attributes["Check"] = std::move(check);
+    return node;
+  };
+  const auto check_of = [&](const ScanGlobalState::ColFilter& cf) {
+    if (const auto* source = cf.row_gather ? source_of(cf.filter) : nullptr) {
+      auto node = irs::ToExplainNode(*source, name_of, type_of, key_of);
+      node.attributes["Verify"] = "table filter";
+      return node;
+    }
+    if (cf.is_score) {
+      return column("Score", "score", *cf.filter);
+    }
+    if (!cf.row_fields.empty()) {
+      duckdb::ExplainNode node{"Row"};
+      node.attributes["Check"] = std::string{
+        StripOuterParens(duckdb::ExpressionFilter::GetExpressionFilter(
+                           *cf.filter, "ColumnChecks")
+                           .expr->ToString())};
+      return node;
+    }
+    return column(cf.is_dynamic ? "Dynamic Column" : "Column",
+                  bind.DisplayColumnName(cf.field), *cf.filter);
+  };
+  ScanChecks checks;
+  for (const auto& cf : g.col_filters) {
+    checks.nodes.push_back(check_of(cf));
+  }
+  for (const auto& cf : g.dual_filters) {
+    checks.duals.push_back(check_of(cf));
+  }
+  checks.duals_on_rows = !checks.duals.empty() && !g.vector_scorer &&
+                         absl::c_any_of(*g.reader, RowsOnlySegment);
+  if (!g.has_lookup_filter || !g.pushed_filters) {
+    return checks;
+  }
+  for (const auto& entry : *g.pushed_filters) {
+    const auto proj = entry.GetIndex();
+    if (proj == g.score_output_idx || proj >= g.projected_columns.size()) {
+      continue;
+    }
+    const auto bind_index = g.projected_columns[proj];
+    if (bind_index == duckdb::DConstants::INVALID_INDEX) {
+      continue;
+    }
+    const auto col_id = bind.columns.ids[bind_index];
+    if (col_id == kInvertedIndexScoreId || bind.relation.Stores(col_id)) {
+      continue;
+    }
+    auto node =
+      column("Column", bind.DisplayColumnName(col_id), entry.Filter());
+    node.attributes["Verify"] = "lookup";
+    checks.nodes.push_back(std::move(node));
+  }
+  return checks;
 }
 
 }  // namespace sdb::connector

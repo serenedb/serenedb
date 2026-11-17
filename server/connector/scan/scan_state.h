@@ -542,6 +542,8 @@ irs::detail::TableFilter* BeginColumnVerify(const irs::SubReader& seg,
                                             ScanGlobalState& g,
                                             AnnLocalState& l);
 
+ScanChecks ColumnChecks(const ScanGlobalState& g);
+
 void WriteVirtualColumns(ScanGlobalState& g, duckdb::idx_t num_rows,
                          duckdb::Vector* scores, duckdb::DataChunk& output);
 void WriteRowPositions(const ScanGlobalState& g, uint32_t seg,

@@ -37,7 +37,9 @@ Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {
   if (query.Kind() == QueryKind::Empty) {
     return MakeEmpty();
   }
-  return ProfileRoot(query, [&] { return query.PlanAnn(ctx); });
+  return ProfileRoot(query, ctx, [&](const Context& profiled) {
+    return query.PlanAnn(profiled);
+  });
 }
 
 }  // namespace irs::ann

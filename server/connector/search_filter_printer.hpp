@@ -54,12 +54,16 @@ struct FilterBox {
 
   const Filter* filter = nullptr;
   uint32_t parent = kRoot;
-  duckdb::ExplainNode node;
+  uint32_t node = 0;
 };
 
-std::vector<FilterBox> ToFilterBoxes(const Filter& f,
-                                     const FieldNameResolver& name_of,
-                                     const FieldTypeResolver& type_of,
-                                     const FieldKeyResolver& key_of);
+struct FilterTree {
+  duckdb::ExplainNode root;
+  std::vector<FilterBox> boxes;
+};
+
+FilterTree ToFilterTree(const Filter& f, const FieldNameResolver& name_of,
+                        const FieldTypeResolver& type_of,
+                        const FieldKeyResolver& key_of);
 
 }  // namespace irs

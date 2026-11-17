@@ -75,8 +75,8 @@ duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue> ScanToStringValue(
 duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue>
 IndexLookupToStringValue(duckdb::TableFunctionToStringInput& input);
 
-std::vector<irs::FilterBox> FilterBoxes(const ScanBindData& bind,
-                                        const irs::Filter& filter);
+irs::FilterTree IndexFilterTree(const ScanBindData& bind,
+                                const irs::Filter& filter);
 
 bool IResearchSupportsPushdownExtract(const duckdb::FunctionData& bind_data,
                                       const duckdb::LogicalIndex& col_idx);

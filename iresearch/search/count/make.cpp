@@ -37,7 +37,9 @@ Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {
     return MakeConstant(0);
   }
   const detail::FoldReachScope reach{ctx.span};
-  return ProfileRoot(query, [&] { return query.PlanCount(ctx); });
+  return ProfileRoot(query, ctx, [&](const Context& profiled) {
+    return query.PlanCount(profiled);
+  });
 }
 
 Root::ptr Family::Make(const MultiTermQuery& query, const Context& ctx) {

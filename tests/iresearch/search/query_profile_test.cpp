@@ -21,6 +21,8 @@
 #include <absl/algorithm/container.h>
 
 #include <array>
+#include <bit>
+#include <iresearch/search/detail/table_filter.hpp>
 #include <iresearch/search/fill/node.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/query_profile.hpp>
@@ -90,6 +92,47 @@ class FakeLead : public irs::lead::Node {
 class FakeProbe : public irs::probe::Node {
  public:
   irs::doc_id_t Probe(irs::doc_id_t target) final { return target; }
+};
+
+class EvenDocs final : public irs::detail::TableFilter {
+ public:
+  irs::doc_id_t Live(irs::doc_id_t doc) final { return doc; }
+
+  bool Foldable() const noexcept final { return true; }
+
+  uint64_t CountAndClear(irs::doc_id_t, uint64_t* mask, uint32_t words) final {
+    uint64_t kept = 0;
+    for (uint32_t i = 0; i != words; ++i) {
+      kept += static_cast<uint64_t>(std::popcount(mask[i] & kEven));
+      mask[i] = 0;
+    }
+    return kept;
+  }
+
+  uint32_t Narrow(irs::doc_id_t* docs, irs::score_t*, uint32_t n) final {
+    uint32_t kept = 0;
+    for (uint32_t i = 0; i != n; ++i) {
+      if (docs[i] % 2 == 0) {
+        docs[kept++] = docs[i];
+      }
+    }
+    return kept;
+  }
+
+  uint32_t Narrow(irs::doc_id_t, const uint64_t* in, uint64_t* out,
+                  irs::score_t*, uint32_t words) final {
+    uint32_t kept = 0;
+    for (uint32_t i = 0; i != words; ++i) {
+      out[i] = in[i] & kEven;
+      kept += static_cast<uint32_t>(std::popcount(out[i]));
+    }
+    return kept;
+  }
+
+  double Share() const final { return 0.5; }
+
+ private:
+  static constexpr uint64_t kEven = 0x5555555555555555;
 };
 
 template<typename Fake>
@@ -230,10 +273,11 @@ TEST(query_profile, roots_are_profiled_without_nested_parts) {
   EXPECT_EQ(raw, profile.Wrap(std::move(fill), 1).get());
   auto inner = irs::memory::make_managed<FakeFill>();
   const auto* raw_inner = inner.get();
-  EXPECT_EQ(raw_inner, profile.WrapRoot(std::move(inner), 1, 5).get());
+  EXPECT_EQ(raw_inner, profile.WrapRoot(std::move(inner), 1, 5, {}).get());
   EXPECT_TRUE(profile.Slots().empty());
 
-  auto planned = profile.WrapRoot(irs::memory::make_managed<FakeFill>(), 0, 7);
+  auto planned =
+    profile.WrapRoot(irs::memory::make_managed<FakeFill>(), 0, 7, {});
   std::array<uint64_t, 2> mask{};
   EXPECT_EQ(129, planned->FillOr(1, 129, mask.data()));
   EXPECT_EQ(nullptr, planned->Folded());
@@ -247,6 +291,71 @@ TEST(query_profile, roots_are_profiled_without_nested_parts) {
   EXPECT_EQ(7, slot.plan_ticks.load());
   EXPECT_EQ(1, slot.calls.load());
   EXPECT_EQ(10, slot.docs.load());
+}
+
+TEST(query_profile, column_checks_count_the_rows_they_check_and_drop) {
+  const irs::All root;
+  const std::array<const irs::Filter*, 1> filters{&root};
+  irs::QueryProfile profile{filters, false};
+  irs::detail::TableFilter* none = nullptr;
+  EXPECT_EQ(nullptr, profile.WrapTableChecks(none));
+  EXPECT_EQ(nullptr, none);
+
+  EvenDocs even;
+  irs::detail::TableFilter* table = &even;
+  auto wrapper = profile.WrapTableChecks(table);
+  ASSERT_EQ(wrapper.get(), table);
+  EXPECT_TRUE(table->Foldable());
+  EXPECT_EQ(5, table->Live(5));
+  EXPECT_EQ(0.5, table->Share());
+  EXPECT_EQ(irs::detail::PointRead::None, table->PointReads());
+  table->Rewind();
+
+  std::array<irs::doc_id_t, 4> docs{1, 2, 3, 4};
+  EXPECT_EQ(2, table->Narrow(docs.data(), nullptr, 4));
+  const uint64_t in = 0b1111;
+  uint64_t out = 0;
+  EXPECT_EQ(2, table->Narrow(0, &in, &out, nullptr, 1));
+  uint64_t mask = 0b111;
+  EXPECT_EQ(2, table->CountAndClear(0, &mask, 1));
+  EXPECT_EQ(0, table->CountAndClear(0, &mask, 0));
+  EXPECT_TRUE(table->Admits(2));
+  EXPECT_FALSE(table->Admits(3));
+  EXPECT_EQ(0, profile.Checks().table.checked.load());
+  wrapper.reset();
+
+  const auto& checks = profile.Checks().table;
+  EXPECT_EQ(4 + 4 + 3 + 0 + 1 + 1, checks.checked.load());
+  EXPECT_EQ(2 + 2 + 1 + 0 + 0 + 1, checks.dropped.load());
+  EXPECT_EQ(4, checks.batches.calls.load());
+  EXPECT_EQ(4, checks.batches.timed_calls.load());
+  EXPECT_EQ(2, checks.rows.calls.load());
+  EXPECT_EQ(0, profile.Checks().columns.checked.load());
+}
+
+TEST(query_profile, a_root_owns_the_checks_it_runs) {
+  const irs::All root;
+  const std::array<const irs::Filter*, 1> filters{&root};
+  irs::QueryProfile profile{filters, false};
+  EvenDocs even;
+  irs::detail::TableFilter* table = &even;
+  irs::detail::TableFilter* columns = &even;
+  irs::QueryProfile::OwnedChecks owned;
+  owned.table = profile.WrapTableChecks(table);
+  owned.columns = profile.WrapColumnChecks(columns);
+  auto planned = profile.WrapRoot(irs::memory::make_managed<FakeFill>(), 0, 0,
+                                  std::move(owned));
+  std::array<irs::doc_id_t, 1> docs{2};
+  EXPECT_EQ(1, table->Narrow(docs.data(), nullptr, 1));
+  std::array<irs::doc_id_t, 2> more{2, 3};
+  EXPECT_EQ(1, columns->Narrow(more.data(), nullptr, 2));
+  EXPECT_EQ(0, profile.Checks().table.checked.load());
+  planned.reset();
+  const auto& checks = profile.Checks();
+  EXPECT_EQ(1, checks.table.checked.load());
+  EXPECT_EQ(0, checks.table.dropped.load());
+  EXPECT_EQ(2, checks.columns.checked.load());
+  EXPECT_EQ(1, checks.columns.dropped.load());
 }
 
 TEST(query_profile, counter_times_every_call) {

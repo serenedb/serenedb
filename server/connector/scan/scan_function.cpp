@@ -102,7 +102,9 @@ void ClassifySegments(ScanGlobalState& g) {
 void StartProfile(ScanGlobalState& g, const ScanBindData& bind,
                   uint64_t snapshot_ticks) {
   g.profile = std::make_unique<ScanProfile>(
-    g.filter ? FilterBoxes(bind, *g.filter) : std::vector<irs::FilterBox>{},
+    g.filter ? IndexFilterTree(bind, *g.filter)
+             : irs::FilterTree{duckdb::ExplainNode{}},
+    ColumnChecks(g), bind.lookup.label,
     GetBoolSetting(*g.client_context, "sdb_index_profile_nodes"),
     snapshot_ticks);
 }

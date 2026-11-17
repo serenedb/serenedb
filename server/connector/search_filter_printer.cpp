@@ -609,10 +609,10 @@ struct FilterPrinter {
       const auto& f = downCast<const GeoFilter>(filter);
       ExplainNode node{"Geo"};
       node.attributes["Field"] = FieldName(f.field_id(), f.dict());
-      node.attributes["Op"].assign(GeoFilterTypeName(f.options().type));
-      node.attributes["Shape"].assign(
-        GeoShapeTypeName(f.options().shape.type()));
-      node.attributes["Verify"].assign(GeoVerify(f.options()));
+      node.attributes["Op"] = std::string{GeoFilterTypeName(f.options().type)};
+      node.attributes["Shape"] =
+        std::string{GeoShapeTypeName(f.options().shape.type())};
+      node.attributes["Verify"] = std::string{GeoVerify(f.options())};
       return node;
     }
     if (type == Type<GeoDistanceFilter>::id()) {
@@ -620,7 +620,7 @@ struct FilterPrinter {
       ExplainNode node{"Geo Distance"};
       node.attributes["Field"] = FieldName(f.field_id(), f.dict());
       node.attributes["Range"] = GeoDistanceRange(f);
-      node.attributes["Verify"].assign(GeoVerify(f.options()));
+      node.attributes["Verify"] = std::string{GeoVerify(f.options())};
       return node;
     }
     if (type == Type<ByRadius>::id()) {
@@ -628,7 +628,7 @@ struct FilterPrinter {
       const auto& o = f.options();
       ExplainNode node{"Vector Range"};
       node.attributes["Field"] = FieldName(f.field_id(), f.dict());
-      node.attributes["Metric"].assign(VectorMetricName(o.metric));
+      node.attributes["Metric"] = std::string{VectorMetricName(o.metric)};
       node.attributes["Radius"] =
         absl::StrCat(o.inclusive ? "<= " : "< ", o.radius);
       if (o.inner) {
@@ -641,7 +641,7 @@ struct FilterPrinter {
       const auto& o = f.options();
       ExplainNode node{"Vector Range"};
       node.attributes["Field"] = FieldName(f.field_id(), f.dict());
-      node.attributes["Metric"].assign(VectorMetricName(o.metric));
+      node.attributes["Metric"] = std::string{VectorMetricName(o.metric)};
       node.attributes["Radius"] =
         absl::StrCat(o.inclusive ? "<= " : "< ", o.radius);
       node.attributes["Exact"] = "brute force over the stored vectors";
@@ -655,7 +655,7 @@ struct FilterPrinter {
       const auto& o = f.options();
       ExplainNode node{"Vector Similarity"};
       node.attributes["Field"] = FieldName(f.field_id(), f.dict());
-      node.attributes["Metric"].assign(VectorMetricName(o.metric));
+      node.attributes["Metric"] = std::string{VectorMetricName(o.metric)};
       node.attributes["Top"] = absl::StrCat(o.top_k);
       if (o.inner) {
         node.children.push_back(Build(*o.inner));
@@ -663,7 +663,7 @@ struct FilterPrinter {
       return node;
     }
     ExplainNode node{"Unknown"};
-    node.attributes["Type"].assign(type().name());
+    node.attributes["Type"] = std::string{type().name()};
     return node;
   }
 };
@@ -679,8 +679,6 @@ LogicalType UnknownType(sdb::connector::ColumnId, DictRef) { return {}; }
 
 bool NoKey(sdb::connector::ColumnId) { return false; }
 
-constexpr std::string_view kOccurLabels[]{"Must", "Should", "Must Not"};
-
 const Filter* InnerOf(const Filter& filter) {
   const auto type = filter.type();
   if (type == Type<ByVectorSimilarity>::id()) {
@@ -695,73 +693,59 @@ const Filter* InnerOf(const Filter& filter) {
   return nullptr;
 }
 
-void AddFilterBoxes(const Filter& filter, ExplainNode node, uint32_t parent,
-                    std::string_view occur, std::vector<FilterBox>& out) {
+uint32_t CountNodes(const ExplainNode& node) {
+  uint32_t count = 1;
+  for (const auto& child : node.children) {
+    count += CountNodes(child);
+  }
+  return count;
+}
+
+void AddFilterBoxes(const Filter& filter, const ExplainNode& node,
+                    uint32_t index, uint32_t parent,
+                    std::vector<FilterBox>& out) {
   const auto self = static_cast<uint32_t>(out.size());
-  auto& added =
-    out.emplace_back(&filter, parent, ExplainNode{std::move(node.label)});
-  if (!occur.empty()) {
-    added.node.attributes["Occur"] = std::string{occur};
-  }
-  for (auto& [key, value] : node.attributes) {
-    added.node.attributes[key] = std::move(value);
-  }
-  node.attributes.clear();
+  out.push_back({.filter = &filter, .parent = parent, .node = index});
   if (const auto* inner = InnerOf(filter)) {
     SDB_ASSERT(!node.children.empty());
-    AddFilterBoxes(*inner, std::move(node.children.front()), self, {}, out);
+    AddFilterBoxes(*inner, node.children.front(), index + 1, self, out);
     return;
   }
   if (filter.type() != Type<BooleanFilter>::id()) {
     return;
   }
   const auto& boolean = downCast<const BooleanFilter>(filter);
-  const auto add_bucket = [&](Occur bucket_occur, ExplainNode& bucket,
-                              std::string_view child_occur) {
-    const auto subs = boolean.Filters(bucket_occur);
+  const auto add_bucket = [&](Occur occur, const ExplainNode& bucket,
+                              uint32_t bucket_index) {
+    const auto subs = boolean.Filters(occur);
     SDB_ASSERT(subs.size() <= bucket.children.size());
-    const auto terms_end = bucket.children.size() - subs.size();
-    std::string terms;
-    for (size_t i = 0; i != terms_end; ++i) {
-      const auto& leaf = bucket.children[i].attributes;
-      const auto field = leaf.find("Field");
-      SDB_ASSERT(field != leaf.end());
-      const auto values = leaf.find("Values");
-      absl::StrAppend(&terms, terms.empty() ? "" : "\n", field->second,
-                      values != leaf.end() ? ": " : "",
-                      values != leaf.end() ? values->second : "");
-    }
-    auto& box = out[self].node;
-    if (!terms.empty()) {
-      box
-        .attributes[child_occur.empty() ? std::string{"Terms"}
-                                        : absl::StrCat(child_occur, " Terms")] =
-        std::move(terms);
-    }
-    for (auto& [key, value] : bucket.attributes) {
-      box.attributes[absl::StrCat(child_occur, " ", key)] = std::move(value);
-    }
-    for (size_t i = 0; i != subs.size(); ++i) {
-      AddFilterBoxes(*subs[i], std::move(bucket.children[terms_end + i]), self,
-                     child_occur, out);
+    const auto first_sub = bucket.children.size() - subs.size();
+    auto child_index = bucket_index + 1;
+    for (size_t i = 0; i != bucket.children.size(); ++i) {
+      if (i >= first_sub) {
+        AddFilterBoxes(*subs[i - first_sub], bucket.children[i], child_index,
+                       self, out);
+      }
+      child_index += CountNodes(bucket.children[i]);
     }
   };
-  const std::string label = out[self].node.label;
-  if (label == "And") {
-    add_bucket(Occur::Must, node, {});
-  } else if (label == "Or") {
-    add_bucket(Occur::Should, node, {});
-  } else if (label == "Not") {
-    add_bucket(Occur::MustNot, node, {});
+  if (node.label == "And") {
+    add_bucket(Occur::Must, node, index);
+  } else if (node.label == "Or") {
+    add_bucket(Occur::Should, node, index);
+  } else if (node.label == "Not") {
+    add_bucket(Occur::MustNot, node, index);
   } else {
     size_t next = 0;
-    for (const auto bucket_occur : kAllOccur) {
-      if (boolean.Size(bucket_occur) == 0) {
+    auto bucket_index = index + 1;
+    for (const auto occur : kAllOccur) {
+      if (boolean.Size(occur) == 0) {
         continue;
       }
       SDB_ASSERT(next < node.children.size());
-      add_bucket(bucket_occur, node.children[next++],
-                 kOccurLabels[OccurIndex(bucket_occur)]);
+      const auto& bucket = node.children[next++];
+      add_bucket(occur, bucket, bucket_index);
+      bucket_index += CountNodes(bucket);
     }
   }
 }
@@ -780,17 +764,15 @@ duckdb::ExplainNode ToExplainNode(const Filter& f,
     .Build(f);
 }
 
-std::vector<FilterBox> ToFilterBoxes(const Filter& f,
-                                     const FieldNameResolver& name_of,
-                                     const FieldTypeResolver& type_of,
-                                     const FieldKeyResolver& key_of) {
-  std::vector<FilterBox> out;
-  AddFilterBoxes(
-    f,
-    FilterPrinter{.name_of = name_of, .type_of = type_of, .key_of = key_of}
-      .Build(f),
-    FilterBox::kRoot, {}, out);
-  return out;
+FilterTree ToFilterTree(const Filter& f, const FieldNameResolver& name_of,
+                        const FieldTypeResolver& type_of,
+                        const FieldKeyResolver& key_of) {
+  FilterTree tree{
+    .root =
+      FilterPrinter{.name_of = name_of, .type_of = type_of, .key_of = key_of}
+        .Build(f)};
+  AddFilterBoxes(f, tree.root, 0, FilterBox::kRoot, tree.boxes);
+  return tree;
 }
 
 }  // namespace irs

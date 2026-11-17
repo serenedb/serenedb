@@ -368,11 +368,10 @@ void VerifyMore(duckdb::ClientContext& ctx, ScanGlobalState& g,
       const auto& unit = units[u];
       const std::span<const irs::ScoreDoc> part{hits.data() + unit.first,
                                                 unit.count};
-      auto fetched = [&] {
-        const ScanTimer fetch{l.profile, &ScanLocalProfile::fetch_ticks};
-        return FetchHits(ctx, g, l, l.fetch_tmp, unit.seg, part,
-                         u == 0 || units[u - 1].seg != unit.seg);
-      }();
+      ScanTimer fetch{l.profile, &ScanLocalProfile::fetch_ticks};
+      auto fetched = FetchHits(ctx, g, l, l.fetch_tmp, unit.seg, part,
+                               u == 0 || units[u - 1].seg != unit.seg);
+      fetch.Stop();
       MaterializeHits(ctx, g, l, *fetched.chunk, *fetched.pk, part, batch,
                       row_hits);
     }

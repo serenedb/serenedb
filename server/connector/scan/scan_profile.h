@@ -71,9 +71,12 @@ class [[nodiscard]] ScanTimer {
   ScanTimer(const ScanTimer&) = delete;
   ScanTimer& operator=(const ScanTimer&) = delete;
 
-  ~ScanTimer() {
-    if (_profile.enabled) {
+  ~ScanTimer() { Stop(); }
+
+  void Stop() noexcept {
+    if (_profile.enabled && _ticks) {
       _profile.*_ticks += ElapsedTicks(_start);
+      _ticks = nullptr;
     }
   }
 

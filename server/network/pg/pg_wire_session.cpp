@@ -34,6 +34,8 @@
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/database_manager.hpp>
+#include <duckdb/main/parse_iterator.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
 #include <duckdb/parser/statement/drop_statement.hpp>
@@ -69,6 +71,10 @@ inline constexpr uint32_t kMaxAuthToken = 65535;
 // PG_MAX_SASL_MESSAGE_LENGTH (real client-first/client-final are well under 1
 // KiB).
 inline constexpr uint32_t kMaxSaslMessage = 1024;
+
+inline constexpr size_t kCopyReadBlock = 64 << 10;
+inline constexpr size_t kCopyChunkBytes = 1 << 20;
+inline constexpr size_t kCopyRecvHighWater = 16 << 20;
 
 inline bool PlannedParamType(const duckdb::PreparedStatement& prepared,
                              uint16_t id, duckdb::LogicalType& type) {
@@ -1469,7 +1475,10 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
         static_cast<int16_t>(table->GetColumns().LogicalColumnCount());
     }
   }
-  sdb::pg::CopyInBatches batches;
+  sdb::pg::CopyInBatches batches{
+    duckdb::TaskScheduler::QueryThreads(*_conn->context) *
+    sdb::pg::kCopyBatchesPerThread};
+  batches.OnStarve([this] { _copy_gate.Kick(); });
   _connection_ctx->SetSideChannel(&batches);
   _feeder_done.store(false, std::memory_order_relaxed);
   _copy_route.store(true, std::memory_order_release);
@@ -1506,6 +1515,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
     co_await this->_task->Park();
   }
   _copy_route.store(false, std::memory_order_release);
+  _copy_room.Kick();
   _connection_ctx->SetSideChannel<sdb::pg::CopyInBatches>(nullptr);
   if (error) {
     std::rethrow_exception(error);
@@ -1617,7 +1627,9 @@ yaclib::Task<> PgWireSession<Kind>::WaitCopyInput() {
     co_return {};
   }
   auto [ec, n] =
-    co_await this->_socket.ReadSome(this->_recv.Reserve(kReadBlock)).NoThrow();
+    co_await this->_socket
+      .ReadSome(this->_recv.Reserve(kCopyReadBlock, kCopyChunkBytes))
+      .NoThrow();
   if (ec || n == 0) {
     this->Stop();
     co_return {};
@@ -1634,6 +1646,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
   const bool is_text = format == CopyFormat::Text;
   absl::Cleanup done_guard = [this, task = this->_task] {
     _feeder_done.store(true, std::memory_order_release);
+    _copy_room.Kick();
     SDB_IF_FAILURE("copy_feeder_done_wake") {
       absl::SleepFor(absl::Seconds(2));
     }
@@ -1700,8 +1713,9 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
              "unexpected EOF during COPY from stdin");
         co_return {};
       }
-      co_await publish();
-      batches.Flush();
+      if (!feeding() || batches.Starving()) {
+        co_await publish();
+      }
       co_await WaitCopyInput();
     }
     std::array<uint8_t, kHeader> head;
@@ -1732,8 +1746,9 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
                  "unexpected EOF during COPY from stdin");
             co_return {};
           }
-          co_await publish();
-          batches.Flush();
+          if (!feeding() || batches.Starving()) {
+            co_await publish();
+          }
           co_await WaitCopyInput();
         }
         const std::string_view chunk = this->_recv.Front();
@@ -1756,8 +1771,9 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
           }
         }
         this->_recv.Consume(take);
+        _copy_room.Kick();
         body -= take;
-        if (builder.Ready()) {
+        if (builder.Ready() || !feeding()) {
           co_await publish();
         }
       }
@@ -2925,8 +2941,15 @@ yaclib::Future<> PgWireSession<Kind>::SpawnSession() noexcept {
 template<SocketKind Kind>
 yaclib::Task<> PgWireSession<Kind>::PumpRecv() {
   for (;;) {
+    const bool copy = _copy_route.load(std::memory_order_acquire);
+    if (copy && this->_recv.Backlog() >= kCopyRecvHighWater) {
+      co_await _copy_room.Wait(*this->_ioexec);
+      continue;
+    }
     auto [ec, n] =
-      co_await this->_socket.ReadSome(this->_recv.Reserve(kReadBlock))
+      co_await this->_socket
+        .ReadSome(copy ? this->_recv.Reserve(kCopyReadBlock, kCopyChunkBytes)
+                       : this->_recv.Reserve(kReadBlock))
         .NoThrow();
     if (ec || n == 0) {
       co_return {};

@@ -20,6 +20,7 @@
 
 #include "server/utils/message_buffer.h"
 
+#include <algorithm>
 #include <iresearch/utils/assert.hpp>
 
 namespace sdb::message {
@@ -83,14 +84,15 @@ void Buffer::SpliceCommitted(Chain&& chain, bool need_flush) {
   }
 }
 
-std::span<uint8_t> Buffer::Reserve(size_t min_capacity) {
+std::span<uint8_t> Buffer::Reserve(size_t min_capacity, size_t chunk_bytes) {
   if (_tail->FreeSpace() < min_capacity) {
-    Grow(min_capacity);
+    Grow(std::max(min_capacity, chunk_bytes));
   }
   return {_tail->WritableData() + _tail->GetEnd(), _tail->FreeSpace()};
 }
 
 void Buffer::CommitWrite(size_t size) {
+  _total_committed += size;
   _tail->AdjustEnd(size);
   _committed.store(BufferOffset{_tail, _tail->GetEnd()},
                    std::memory_order_release);
@@ -158,6 +160,8 @@ SequenceView Buffer::ReadableView(size_t length) noexcept {
 }
 
 void Buffer::Consume(size_t size) {
+  _total_consumed.store(_total_consumed.load(std::memory_order_relaxed) + size,
+                        std::memory_order_release);
   RefreshReadable();
   while (size != 0) {
     const size_t available =

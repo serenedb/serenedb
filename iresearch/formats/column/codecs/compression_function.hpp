@@ -148,6 +148,7 @@ struct ColumnDataCheckpointData {
   ColCodecParams params;
   ColumnTuning& tuning;
   CodecSet disabled;
+  uint32_t min_packed_run = 1;
   CodecType method = CodecType::Auto;
   uint64_t rows = 0;
   uint64_t written = 0;

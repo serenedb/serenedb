@@ -41,18 +41,19 @@ class RunsEncoder final : public NumericEncoder<T> {
  public:
   static constexpr Shape kShape = Shape::Runs;
 
-  explicit RunsEncoder(ColumnDataCheckpointData& data) : Base{data, kShape} {}
+  explicit RunsEncoder(ColumnDataCheckpointData& data)
+    : Base{data, kShape}, _min_packed_run{data.min_packed_run} {}
 
  private:
   void AddCandidates(const NumericChoice* only) final {
-    const bool bytes = Base::Wanted(only, false);
-    const bool packed = Base::Wanted(only, true);
     const auto values = this->_values.Get();
     const auto& facts = this->_values.GetFacts();
     const auto n = static_cast<uint32_t>(values.size());
     const auto runs = facts.runs;
-    SDB_ASSERT(bytes || packed);
-    if (this->_forced ? runs == n : runs * 2 > n) {
+    const bool bytes = Base::Wanted(only, false);
+    const bool packed = Base::Wanted(only, true) &&
+                        uint64_t{runs} * _min_packed_run <= uint64_t{n};
+    if ((!bytes && !packed) || (this->_forced ? runs == n : runs * 2 > n)) {
       return;
     }
     _run_values.clear();
@@ -129,6 +130,7 @@ class RunsEncoder final : public NumericEncoder<T> {
   ScratchVector<uint8_t> _length_bytes;
   FforBlocks<U> _value_blocks;
   FforBlocks<uint32_t> _length_blocks;
+  uint32_t _min_packed_run;
 };
 
 template<typename T>

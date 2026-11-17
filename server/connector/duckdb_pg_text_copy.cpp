@@ -24,7 +24,6 @@
 
 #include <cstdint>
 #include <cstring>
-#include <duckdb/common/file_system.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/types/vector.hpp>
@@ -37,13 +36,15 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/string_utils.hpp>
+#include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
 #include <vector>
 
 #include "connector/copy_from_batches.h"
-#include "connector/duckdb_copy_filesystem.h"
+#include "connector/copy_to_file.h"
 #include "pg/connection_context.h"
 #include "pg/serialize.h"
 #include "server/utils/message_buffer.h"
@@ -113,46 +114,102 @@ void ApplyTextCopyOption(TextCopyOptions& out, std::string_view key,
   }
 }
 
-struct PgTextCopyBindData final : public duckdb::FunctionData {
+class PgTextCopyEncoder final : public CopyChunkEncoder {
+ public:
+  PgTextCopyEncoder(duckdb::ClientContext& context,
+                    std::span<const duckdb::LogicalType> types, char delim,
+                    const std::string& null_str) {
+    sdb::pg::FillContext(ConnectionContext::Get(context), _ctx);
+    sdb::pg::SetCopyText(_ctx, delim, null_str);
+    _serializers.reserve(types.size());
+    for (const auto& type : types) {
+      _serializers.push_back(
+        sdb::pg::GetSerialization(type, sdb::pg::VarFormat::CopyText, _ctx));
+    }
+  }
+
+  void Encode(const duckdb::DataChunk& chunk, message::Buffer& out) final {
+    const auto rows = chunk.size();
+    if (rows == 0) {
+      return;
+    }
+    const auto columns = chunk.ColumnCount();
+    auto& decoded = _ctx.decoded;
+    decoded.clear();
+    decoded.resize(columns);
+    for (duckdb::idx_t column = 0; column < columns; ++column) {
+      duckdb::Vector::RecursiveToUnifiedFormat(chunk.data[column], rows,
+                                               decoded[column]);
+    }
+    for (duckdb::idx_t row = 0; row < rows; ++row) {
+      message::Writer writer{out};
+      _ctx.writer = &writer;
+      for (duckdb::idx_t column = 0; column < columns; ++column) {
+        if (column > 0) {
+          writer.Write({&_ctx.copy_delim, 1});
+        }
+        _serializers[column](_ctx, decoded[column], row);
+      }
+      writer.Write("\n");
+      writer.Commit(false);
+    }
+  }
+
+ private:
+  sdb::pg::SerializationContext _ctx;
+  std::vector<sdb::pg::SerializationFunction> _serializers;
+};
+
+class PgTextCopyBindData final : public CopyToFileBindData {
+ public:
   PgTextCopyBindData(duckdb::vector<duckdb::LogicalType> types, char delim,
                      std::string null_str, bool header,
                      duckdb::vector<duckdb::Identifier> names)
-    : sql_types{std::move(types)},
-      delim{delim},
-      null_str{std::move(null_str)},
-      header{header},
-      names{std::move(names)} {}
+    : _sql_types{std::move(types)},
+      _delim{delim},
+      _null_str{std::move(null_str)},
+      _header{header},
+      _names{std::move(names)} {}
 
   duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
-    return duckdb::make_uniq<PgTextCopyBindData>(sql_types, delim, null_str,
-                                                 header, names);
+    return duckdb::make_uniq<PgTextCopyBindData>(_sql_types, _delim, _null_str,
+                                                 _header, _names);
   }
   bool Equals(const duckdb::FunctionData& other) const final {
     const auto& o = other.Cast<PgTextCopyBindData>();
-    return sql_types == o.sql_types && delim == o.delim &&
-           null_str == o.null_str && header == o.header && names == o.names;
+    return _sql_types == o._sql_types && _delim == o._delim &&
+           _null_str == o._null_str && _header == o._header &&
+           _names == o._names;
   }
 
-  duckdb::vector<duckdb::LogicalType> sql_types;
-  char delim;
-  std::string null_str;
-  bool header;
-  duckdb::vector<duckdb::Identifier> names;
-};
+  std::unique_ptr<CopyChunkEncoder> MakeEncoder(
+    duckdb::ClientContext& context) const final {
+    return std::make_unique<PgTextCopyEncoder>(context, _sql_types, _delim,
+                                               _null_str);
+  }
 
-// TO target is a file (or real stdout): `handle` is a plain DuckDB FileHandle
-// and `file_buffer` is a private staging buffer the serializers write into;
-// after each chunk its committed bytes are drained to the handle as the raw,
-// tab-separated PG TEXT stream (no header, no length prefixes). (pg-wire STDOUT
-// no longer routes through this CopyFunction -- the session runs it through the
-// wire collector.)
-struct PgTextCopyGlobalState final : public duckdb::GlobalFunctionData {
-  duckdb::unique_ptr<duckdb::FileHandle> handle;
-  duckdb::unique_ptr<message::Buffer> file_buffer;
-  sdb::pg::SerializationContext ctx;
-  std::vector<sdb::pg::SerializationFunction> serializers;
-  // Committed-but-undrained bytes; drained to the handle once past a block.
-  size_t pending = 0;
+  void WriteHeader(duckdb::ClientContext& context,
+                   message::Buffer& out) const final {
+    if (!_header) {
+      return;
+    }
+    sdb::pg::SerializationContext ctx;
+    sdb::pg::FillContext(ConnectionContext::Get(context), ctx);
+    sdb::pg::SetCopyText(ctx, _delim, _null_str);
+    message::Writer writer{out};
+    ctx.writer = &writer;
+    sdb::pg::SerializeCopyTextHeader(ctx, _names);
+    writer.Commit(false);
+  }
+
+  void WriteTrailer(message::Buffer&) const final {}
+
+ private:
+  duckdb::vector<duckdb::LogicalType> _sql_types;
+  char _delim;
+  std::string _null_str;
+  bool _header;
+  duckdb::vector<duckdb::Identifier> _names;
 };
 
 duckdb::unique_ptr<duckdb::FunctionData> BindCopyTo(
@@ -164,113 +221,6 @@ duckdb::unique_ptr<duckdb::FunctionData> BindCopyTo(
   return duckdb::make_uniq<PgTextCopyBindData>(sql_types, opts.delim,
                                                std::move(opts.null_str),
                                                opts.header, input.query_names);
-}
-
-duckdb::unique_ptr<duckdb::LocalFunctionData> InitLocal(
-  duckdb::ExecutionContext&, duckdb::FunctionData&) {
-  return duckdb::make_uniq<duckdb::LocalFunctionData>();
-}
-
-duckdb::unique_ptr<duckdb::GlobalFunctionData> InitGlobal(
-  duckdb::ClientContext& context, duckdb::FunctionData& bind_data,
-  const std::string& file_path) {
-  auto& bdata = bind_data.Cast<PgTextCopyBindData>();
-  auto result = duckdb::make_uniq<PgTextCopyGlobalState>();
-
-  // pg-wire STDOUT is owned by the session's wire collector (parallel + text
-  // CopyData framing), so it never reaches this CopyFunction. If it somehow
-  // does, the session failed to route it -- fail clearly rather than emit an
-  // unframed text stream into a send buffer that expects CopyData.
-  if (file_path == "/dev/stdout" &&
-      ConnectionContext::Get(context).GetSendBuffer()) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INTERNAL_ERROR),
-      ERR_MSG("COPY ... TO STDOUT (FORMAT text) must be routed through the "
-              "pg-wire collector, not the text CopyFunction"));
-  }
-
-  // File (or real stdout): write the raw PG TEXT stream through a plain DuckDB
-  // FileHandle. No CopyData framing -- that is wire-only. Works without a wire
-  // connection. A private staging buffer feeds the same serializers;
-  // FillContext takes what it needs from the wire connection when
-  // present, otherwise from the client context's catalog.
-  result->handle = duckdb::FileSystem::GetFileSystem(context).OpenFile(
-    file_path, duckdb::FileFlags::FILE_FLAGS_WRITE |
-                 duckdb::FileFlags::FILE_FLAGS_FILE_CREATE |
-                 duckdb::FileCompressionType::AUTO_DETECT);
-  result->file_buffer =
-    duckdb::make_uniq<message::Buffer>(64u * 1024, 1u << 20);
-  sdb::pg::FillContext(ConnectionContext::Get(context), result->ctx);
-  sdb::pg::SetCopyText(result->ctx, bdata.delim, bdata.null_str);
-  result->serializers.reserve(bdata.sql_types.size());
-  for (const auto& type : bdata.sql_types) {
-    result->serializers.push_back(sdb::pg::GetSerialization(
-      type, sdb::pg::VarFormat::CopyText, result->ctx));
-  }
-  if (bdata.header) {
-    message::Writer writer{*result->file_buffer};
-    result->ctx.writer = &writer;
-    sdb::pg::SerializeCopyTextHeader(result->ctx, bdata.names);
-    result->pending += writer.Commit(false);
-  }
-  return result;
-}
-
-void Sink(duckdb::ExecutionContext&, duckdb::FunctionData&,
-          duckdb::GlobalFunctionData& gstate, duckdb::LocalFunctionData&,
-          duckdb::DataChunk& input) {
-  auto& g = gstate.Cast<PgTextCopyGlobalState>();
-  const auto rows = input.size();
-  if (rows == 0) {
-    return;
-  }
-  const auto columns = static_cast<uint16_t>(input.ColumnCount());
-  std::vector<duckdb::RecursiveUnifiedVectorFormat> decoded(columns);
-  for (uint16_t column = 0; column < columns; ++column) {
-    duckdb::Vector::RecursiveToUnifiedFormat(input.data[column], rows,
-                                             decoded[column]);
-  }
-
-  // Each row is the per-column escaped field bodies (or \N for NULL) separated
-  // by a TAB and terminated by a newline; no header line, no length prefixes.
-  // The bytes go to the handle as the raw text stream. Drain at a fixed block
-  // so peak staging memory stays bounded to ~one block regardless of
-  // chunk/value size, rather than holding the whole chunk (the sync-sink
-  // equivalent of the wire send buffer's flush threshold).
-  constexpr size_t kFileBlock = 256u * 1024;
-  for (duckdb::idx_t row = 0; row < rows; ++row) {
-    message::Writer writer{*g.file_buffer};
-    g.ctx.writer = &writer;
-    for (uint16_t column = 0; column < columns; ++column) {
-      if (column > 0) {
-        writer.Write({&g.ctx.copy_delim, 1});
-      }
-      g.serializers[column](g.ctx, decoded[column], row);
-    }
-    writer.Write("\n");
-    g.pending += writer.Commit(false);
-    if (g.pending >= kFileBlock) {
-      DrainToHandle(*g.file_buffer, *g.handle);
-      g.pending = 0;
-    }
-  }
-}
-
-void Combine(duckdb::ExecutionContext&, duckdb::FunctionData&,
-             duckdb::GlobalFunctionData&, duckdb::LocalFunctionData&) {}
-
-void Finalize(duckdb::ClientContext&, duckdb::FunctionData&,
-              duckdb::GlobalFunctionData& gstate) {
-  auto& g = gstate.Cast<PgTextCopyGlobalState>();
-  // No trailer in PG TEXT format: drain anything left and close the handle.
-  DrainToHandle(*g.file_buffer, *g.handle);
-  g.handle->Close();
-}
-
-// Parallel/batch copy reorders rows, which would corrupt the single ordered
-// text stream on the socket -- force the regular single-threaded path.
-duckdb::CopyFunctionExecutionMode ExecutionMode(bool, bool) {
-  return duckdb::CopyFunctionExecutionMode::REGULAR_COPY_TO_FILE;
 }
 
 struct PgTextCopyFromBindData final : public duckdb::TableFunctionData {
@@ -397,12 +347,7 @@ void RegisterPgTextCopyFunction(duckdb::DatabaseInstance& db) {
   duckdb::CopyFunction func("text");
   func.extension = "text";
   func.copy_to_bind = BindCopyTo;
-  func.copy_to_initialize_local = InitLocal;
-  func.copy_to_initialize_global = InitGlobal;
-  func.copy_to_sink = Sink;
-  func.copy_to_combine = Combine;
-  func.copy_to_finalize = Finalize;
-  func.execution_mode = ExecutionMode;
+  SetCopyToFileCallbacks(func);
   func.copy_from_bind = BindFrom;
   func.copy_from_function =
     duckdb::TableFunction("pg_text_copy_from", {}, ScanCopyFrom,

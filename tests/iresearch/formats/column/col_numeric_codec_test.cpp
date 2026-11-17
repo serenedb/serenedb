@@ -596,6 +596,44 @@ TEST_F(ColNumericCodecTest, ANamedLeafCodecCompressesAtTheColumnsLevel) {
   }
 }
 
+TEST_F(ColNumericCodecTest, ANamedLeafCodecHoldsItsLayoutUntilItsBytesGrow) {
+  constexpr uint32_t kRowGroup = 4096;
+  constexpr uint64_t kSwitch = 8 * kRowGroup;
+  constexpr uint64_t kRows = 2 * kSwitch;
+  const Gen gen = [](uint64_t g) -> std::optional<int64_t> {
+    const auto value = static_cast<int64_t>(Mix(g) % 200);
+    return g < kSwitch ? value : value << 24 | static_cast<int64_t>(g & 1);
+  };
+  const auto type = duckdb::LogicalType::BIGINT;
+  irs::MemoryDirectory dir{};
+  Write(dir, type, {}, kRows, kRowGroup, gen, irs::codecs::CodecType::Zstd);
+  Verify(dir, type, kRows, gen);
+  irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto* col = r.Column(kField);
+  ASSERT_NE(col, nullptr);
+  irs::ReadContext ctx{r};
+  irs::BlockWindow window{};
+  uint64_t row = 0;
+  std::vector<std::string> layouts;
+  for (const auto& block : col->DataBlocks()) {
+    ASSERT_EQ(block.codec->type, irs::codecs::CodecType::Zstd);
+    window = col->Locate(row, window);
+    auto seg = col->OpenSegment(window.block, ctx);
+    auto info = seg->function.get_segment_info(*seg);
+    layouts.push_back(info["stored"] + "/" + info["shuffled"]);
+    row += block.tuple_count;
+  }
+  ASSERT_EQ(layouts.size(), kRows / kRowGroup);
+  const auto first = layouts.begin() + kSwitch / kRowGroup;
+  EXPECT_TRUE(std::all_of(layouts.begin(), first,
+                          [](const auto& l) { return l == "1/false"; }))
+    << ::testing::PrintToString(layouts);
+  EXPECT_EQ(*first, "4/false") << ::testing::PrintToString(layouts);
+  EXPECT_TRUE(std::all_of(first + 1, layouts.end(),
+                          [](const auto& l) { return l.ends_with("/true"); }))
+    << ::testing::PrintToString(layouts);
+}
+
 TEST_F(ColNumericCodecTest, ANamedCodecStoresEveryRowGroupItCan) {
   using irs::codecs::CodecType;
   const Gen narrow = [](uint64_t g) -> std::optional<int64_t> {

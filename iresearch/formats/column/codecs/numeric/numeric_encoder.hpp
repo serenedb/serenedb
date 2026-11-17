@@ -158,39 +158,32 @@ class NumericEncoder : public State {
 
   bool Compress(ColumnDataCheckpointData& data, ByteCodec leaf) {
     auto& choice = data.tuning.numeric;
-    const LeafSamples* samples = &_best_samples;
-    if (data.method != CodecType::Auto) {
-      if (leaf == ByteCodec::None
-            ? Analyze(data, std::numeric_limits<double>::infinity(), leaf)
-                  .codec == CodecType::Auto
-            : !Smallest(leaf)) {
+    auto& reuse = data.tuning.reuse;
+    const bool named = data.method != CodecType::Auto;
+    bool held = false;
+    if (!named) {
+      held = !_best;
+      if (held && !Hold(data, leaf, choice)) {
         return false;
       }
-    } else if (!_best) {
-      if (!_values.Usable()) {
-        return false;
-      }
-      Rebuild(&choice);
-      const auto candidate = absl::c_find_if(_candidates, [&](const auto& c) {
-        return c.shuffled == choice.shuffled;
-      });
-      if (candidate == _candidates.end() || !Offers(data, leaf)) {
-        return false;
-      }
-      _best = &*candidate;
-      _leaf = leaf;
-      samples = nullptr;
+    } else if (leaf != ByteCodec::None && reuse.pick == data.method) {
+      held = Hold(data, leaf, choice);
+    }
+    if (named && !held &&
+        Analyze(data, std::numeric_limits<double>::infinity(), leaf).codec ==
+          CodecType::Auto) {
+      return false;
     }
     _out.clear();
-    Write(*_best, _leaf, samples, _out);
-    const bool held = data.method == CodecType::Auto && !samples;
+    Write(*_best, _leaf, held ? nullptr : &_best_samples, _out);
+    const auto bytes = static_cast<double>(_out.size());
     const auto ratio =
-      static_cast<double>(_out.size()) /
-      std::max(static_cast<double>(PackedBound(data)) / 8, 1.0);
-    if (held && ((_leaf == ByteCodec::None && choice.bound_ratio != 0 &&
-                  ratio > choice.bound_ratio * kDrift) ||
-                 data.tuning.reuse.Grew(static_cast<double>(_out.size()),
-                                        static_cast<double>(RawInput(data))))) {
+      bytes / std::max(static_cast<double>(PackedBound(data)) / 8, 1.0);
+    const bool grew =
+      held && reuse.Grew(bytes, static_cast<double>(RawInput(data)));
+    if (!named && held &&
+        (grew || (_leaf == ByteCodec::None && choice.bound_ratio != 0 &&
+                  ratio > choice.bound_ratio * kDrift))) {
       return false;
     }
     choice = {
@@ -201,6 +194,13 @@ class NumericEncoder : public State {
     };
     data.FlushSegment(CodecOf(_shape, _leaf), _values.Stats(data.type),
                       _values.Get().size(), _out);
+    if (named && _leaf != ByteCodec::None) {
+      if (!held) {
+        reuse.Settle(data.method, bytes, static_cast<double>(RawInput(data)));
+      } else if (grew) {
+        reuse.Release();
+      }
+    }
     return true;
   }
 
@@ -306,29 +306,20 @@ class NumericEncoder : public State {
     return data.params.tier != WriteTier::Flush || leaf != ByteCodec::Zstd;
   }
 
-  bool Smallest(ByteCodec leaf) {
+  bool Hold(const ColumnDataCheckpointData& data, ByteCodec leaf,
+            const NumericChoice& choice) {
     if (!_values.Usable()) {
       return false;
     }
-    if (!_complete) {
-      Rebuild(nullptr);
-    }
-    const Candidate* best = nullptr;
-    uint64_t best_bytes = 0;
-    for (const auto& c : _candidates) {
-      const auto bytes = uint64_t{c.items} * c.ItemBytes();
-      if (!c.packed && (!best || bytes < best_bytes ||
-                        (bytes == best_bytes && c.shuffled))) {
-        best = &c;
-        best_bytes = bytes;
-      }
-    }
-    if (!best) {
+    Rebuild(&choice);
+    const auto candidate = absl::c_find_if(_candidates, [&](const auto& c) {
+      return c.shuffled == choice.shuffled;
+    });
+    if (candidate == _candidates.end() || !Offers(data, leaf)) {
       return false;
     }
-    _best = best;
+    _best = &*candidate;
     _leaf = leaf;
-    _best_samples.frames.clear();
     return true;
   }
 

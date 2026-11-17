@@ -45,6 +45,8 @@ struct ReusePolicy {
     since = 0;
   }
 
+  void Release() noexcept { pick = CodecType::Auto; }
+
   bool Drifted(double bytes, double input) const noexcept {
     const auto ratio = bytes / input;
     return ratio > reference * kDrift || ratio * kDrift < reference;

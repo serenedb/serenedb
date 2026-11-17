@@ -360,10 +360,8 @@ struct Scan {
       need = wanted != 0 ? (source != 0 ? 0 : lcp[i]) : need;
       capacity += decode * (lcp[i] + uint64_t{enc[i]} * kMaxExpansion);
     }
-    if (group.size() < capacity) {
-      group.resize(capacity);
-    }
-    std::array<uint64_t, kChainRestart> ends;
+    auto& arena = duckdb::StringVector::GetStringAllocator(s.dictionary->data);
+    auto* out = duckdb::char_ptr_cast(arena.Allocate(capacity));
     uint64_t written = 0;
     const char* prev = nullptr;
     uint64_t prev_len = 0;
@@ -376,7 +374,7 @@ struct Scan {
         continue;
       }
       SDB_ENSURE(lcp[i] <= prev_len, "col codec: corrupted front coding");
-      auto* at = group.data() + written;
+      auto* at = out + written;
       if (lcp[i] != 0) {
         std::memcpy(at, prev, lcp[i]);
       }
@@ -388,21 +386,10 @@ struct Scan {
       prev = at;
       prev_len = lcp[i] + dec;
       written += prev_len;
-      ends[i] = written;
+      s.Keep(restart + i, std::string_view{at, prev_len});
     }
+    arena.ShrinkHead(capacity - written);
     group_heap_bytes += written;
-    char* out = duckdb::char_ptr_cast(
-      duckdb::StringVector::GetStringAllocator(s.dictionary->data)
-        .Allocate(written));
-    if (written != 0) {
-      std::memcpy(out, group.data(), written);
-    }
-    uint64_t from = 0;
-    for (auto left = used; left != 0; left &= left - 1) {
-      const auto i = static_cast<uint32_t>(std::countr_zero(left));
-      s.Keep(restart + i, std::string_view{out + from, ends[i] - from});
-      from = ends[i];
-    }
     group_rows[index] = static_cast<uint16_t>(kept | used);
   }
 
@@ -465,30 +452,14 @@ struct Scan {
     const auto first = s.frames[f].first_entry + g * kChainRestart;
     const auto end = std::min<uint32_t>(first + kChainRestart, s.FrameEnd(f));
     const auto capacity = ChainCapacity(s.length_reader, lcps, first, end);
-    if (group.size() < capacity) {
-      group.resize(capacity);
-    }
-    std::array<uint64_t, kChainRestart> ends;
+    auto& arena = duckdb::StringVector::GetStringAllocator(s.dictionary->data);
+    auto* out = duckdb::char_ptr_cast(arena.Allocate(capacity));
     const auto chain = WalkChain(
       decoder, s.Data(), s.length_reader, lcps, first, end,
       groups.Offset(s.length_reader, s.frames[f], f, g), s.header.data_size,
-      group.data(), capacity, [&](uint32_t e, std::string_view v) {
-        ends[e - first] =
-          static_cast<uint64_t>(v.data() + v.size() - group.data());
-      });
+      out, capacity, [&](uint32_t e, std::string_view v) { s.Keep(e, v); });
+    arena.ShrinkHead(capacity - chain.written);
     group_heap_bytes += chain.written;
-    char* out = duckdb::char_ptr_cast(
-      duckdb::StringVector::GetStringAllocator(s.dictionary->data)
-        .Allocate(chain.written));
-    if (chain.written != 0) {
-      std::memcpy(out, group.data(), chain.written);
-    }
-    uint64_t from = 0;
-    for (auto e = first; e < end; ++e) {
-      const auto to = ends[e - first];
-      s.Keep(e, std::string_view{out + from, to - from});
-      from = to;
-    }
     group_decoded[groups.Base(f) + g] = 1;
   }
 
@@ -549,7 +520,6 @@ struct Scan {
   std::vector<uint16_t> group_rows;
   static_assert(kChainRestart <= 8 * sizeof(uint16_t));
   uint64_t group_heap_bytes = 0;
-  ScratchVector<char> group;
   std::string probe;
 };
 

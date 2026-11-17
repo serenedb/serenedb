@@ -147,21 +147,20 @@ inline uint64_t EntryOffset(ChainGroups& groups, PackedReader& lengths,
   return offset;
 }
 
-inline std::string_view DecodeEntry(const fsst::Decoder<fsst::Fsst8>& fsst,
-                                    std::string_view prefix, const char* in,
-                                    uint64_t enc, std::string& buf) {
-  if (const auto need = prefix.size() + enc * fsst::kMaxExpansion;
-      buf.size() < need) {
-    buf.resize(std::max<uint64_t>(need, buf.size() * 2));
-  }
+template<typename Out>
+std::string_view DecodeEntry(const fsst::Decoder<fsst::Fsst8>& fsst,
+                             std::string_view prefix, const char* in,
+                             uint64_t enc, Out& out) {
+  const auto room = enc * fsst::kMaxExpansion;
+  auto* at = Reserve(out, prefix.size() + room);
   if (!prefix.empty()) {
-    std::memcpy(buf.data(), prefix.data(), prefix.size());
+    std::memcpy(at, prefix.data(), prefix.size());
   }
-  const auto room = buf.size() - prefix.size();
   const auto dec =
-    enc == 0 ? 0 : fsst.Decode(in, enc, buf.data() + prefix.size(), room);
+    enc == 0 ? 0 : fsst.Decode(in, enc, at + prefix.size(), room);
   SDB_ENSURE(dec <= room, "col codec: corrupted entry");
-  return {buf.data(), prefix.size() + dec};
+  Trim(out, room - dec);
+  return {at, prefix.size() + dec};
 }
 
 struct Scan {
@@ -233,8 +232,8 @@ struct Scan {
                "col codec: corrupted frame");
   }
 
-  template<typename Frames>
-  std::string_view Decode(Frames& s, uint32_t e, uint32_t f, std::string& buf) {
+  template<typename Frames, typename Out>
+  std::string_view Decode(Frames& s, uint32_t e, uint32_t f, Out& out) {
     const auto& m = s.frames[f];
     const auto enc_off = EntryOffset(groups, s.length_reader, m, f, e);
     const uint64_t enc = s.length_reader.At(e);
@@ -243,7 +242,7 @@ struct Scan {
       id <= prefixes.Count() &&
         enc_off + enc <= static_cast<uint64_t>(m.comp_off) + m.comp_len,
       "col codec: corrupted entry");
-    return DecodeEntry(decoder, Prefix(id), s.Data() + enc_off, enc, buf);
+    return DecodeEntry(decoder, Prefix(id), s.Data() + enc_off, enc, out);
   }
 
   template<typename Frames>
@@ -251,14 +250,9 @@ struct Scan {
     if (entry_decoded[e]) {
       return;
     }
-    const auto v = Decode(s, e, f, probe);
-    char* out = duckdb::char_ptr_cast(
-      duckdb::StringVector::GetStringAllocator(s.dictionary->data)
-        .Allocate(v.size()));
-    if (!v.empty()) {
-      std::memcpy(out, v.data(), v.size());
-    }
-    s.Keep(e, std::string_view{out, v.size()});
+    const auto v = Decode(
+      s, e, f, duckdb::StringVector::GetStringAllocator(s.dictionary->data));
+    s.Keep(e, v);
     entry_heap_bytes += v.size();
     entry_decoded[e] = 1;
   }

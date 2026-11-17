@@ -32,6 +32,7 @@
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/planner/expression.hpp>
+#include <duckdb/storage/arena_allocator.hpp>
 #include <limits>
 #include <span>
 #include <string>
@@ -212,6 +213,23 @@ const duckdb::Value* StringConstant(const duckdb::Expression& expr) noexcept;
 
 inline std::string_view View(const duckdb::string_t& s) noexcept {
   return {s.GetData(), s.GetSize()};
+}
+
+inline char* Reserve(std::string& scratch, uint64_t bytes) {
+  if (scratch.size() < bytes) {
+    scratch.resize(std::max<uint64_t>(bytes, scratch.size() * 2));
+  }
+  return scratch.data();
+}
+
+inline char* Reserve(duckdb::ArenaAllocator& arena, uint64_t bytes) {
+  return duckdb::char_ptr_cast(arena.Allocate(bytes));
+}
+
+inline void Trim(std::string&, uint64_t) noexcept {}
+
+inline void Trim(duckdb::ArenaAllocator& arena, uint64_t bytes) {
+  arena.ShrinkHead(bytes);
 }
 
 struct EntryAt {

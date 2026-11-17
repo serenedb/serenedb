@@ -110,20 +110,20 @@ struct Scan {
     SDB_ENSURE(off == m.raw_len, "col codec: corrupted frame");
   }
 
-  template<typename Frames>
-  std::string_view Decode(Frames& s, uint32_t e, uint32_t f, std::string& buf) {
+  template<typename Frames, typename Out>
+  std::string_view Decode(Frames& s, uint32_t e, uint32_t f, Out& out) {
     const auto& m = s.frames[f];
     const auto tokens = TokenFrame(m, table.Bits());
     const auto first = FirstToken(groups, s.length_reader, tokens, f, e);
     const uint64_t count = s.length_reader.At(e);
     SDB_ENSURE(first + count <= tokens.comp_len, "col codec: corrupted entry");
-    if (const auto need = table.Capacity(count); buf.size() < need) {
-      buf.resize(std::max<uint64_t>(need, buf.size() * 2));
-    }
+    const auto capacity = table.Capacity(count);
+    auto* at = Reserve(out, capacity);
     const auto n =
       table.Decode(reinterpret_cast<const uint8_t*>(s.Data()) + m.comp_off,
-                   first, count, buf.data(), buf.size());
-    return {buf.data(), n};
+                   first, count, at, capacity);
+    Trim(out, capacity - n);
+    return {at, n};
   }
 
   template<typename Frames>
@@ -131,14 +131,9 @@ struct Scan {
     if (entry_decoded[e]) {
       return;
     }
-    const auto v = Decode(s, e, f, probe);
-    char* out = duckdb::char_ptr_cast(
-      duckdb::StringVector::GetStringAllocator(s.dictionary->data)
-        .Allocate(v.size()));
-    if (!v.empty()) {
-      std::memcpy(out, v.data(), v.size());
-    }
-    s.Keep(e, std::string_view{out, v.size()});
+    const auto v = Decode(
+      s, e, f, duckdb::StringVector::GetStringAllocator(s.dictionary->data));
+    s.Keep(e, v);
     entry_heap_bytes += v.size();
     entry_decoded[e] = 1;
   }

@@ -19,21 +19,23 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "database_path_feature.h"
+#include "storage/storage.h"
 
 #include <absl/flags/flag.h>
 
+#include <duckdb/common/error_data.hpp>
+#include <exception>
 #include <filesystem>
-#include <iresearch/utils/application_exit.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
-#include <iresearch/utils/operating_system.hpp>
-#include <iresearch/utils/string_utils.hpp>
 #include <system_error>
+#include <utility>
 
 #include "backup/pg_control.h"
+#include "catalog/boot.h"
+#include "network/pg/hba.h"
 #include "server/utils/file_utils.h"
 #include "server/utils/lifecycle.h"
-#include "server/utils/lockfile.h"
 
 ABSL_FLAG(std::string, server_directory, "serenedb-data",
           "Path to the database directory. A positional argument, if given, "
@@ -46,48 +48,77 @@ ABSL_FLAG(std::string, hba_config, "",
 
 namespace sdb {
 
-DatabasePathFeature::DatabasePathFeature()
-  : _directory(
-      lifecycle::ResolveDataDir(absl::GetFlag(FLAGS_server_directory))) {
-  std::error_code ec;
-  // Resolve the HBA config path against the (now absolute) data directory.
+StorageConfig ReadStorageConfig() {
+  StorageConfig config{.directory = lifecycle::ResolveDataDir(
+                         absl::GetFlag(FLAGS_server_directory))};
   if (const std::string hba = absl::GetFlag(FLAGS_hba_config); hba.empty()) {
-    _hba_config_file =
-      utils::file_utils::BuildFilename(_directory, "pg_hba.conf");
+    config.hba_config =
+      utils::file_utils::BuildFilename(config.directory, "pg_hba.conf");
   } else if (std::filesystem::path{hba}.is_absolute()) {
-    _hba_config_file = hba;
+    config.hba_config = hba;
   } else {
-    _hba_config_file = utils::file_utils::BuildFilename(_directory, hba);
+    config.hba_config = utils::file_utils::BuildFilename(config.directory, hba);
   }
+  return config;
+}
 
-  if (!std::filesystem::is_directory(_directory, ec)) {
-    std::filesystem::create_directories(_directory, ec);
+Storage::Storage(Runtime& runtime, const StorageConfig& config)
+  : _runtime{runtime}, _search{runtime} {
+  bool initialized = false;
+  if (!config.directory.empty()) {
+    initialized = Lock(config.directory);
+    network::pg::hba::SetHbaConfig(config.hba_config);
+  }
+  try {
+    catalog::InitCatalog(config.default_database, initialized);
+    _search.Start();
+  } catch (...) {
+    Close();
+    throw;
+  }
+}
+
+Storage::~Storage() { Close(); }
+
+bool Storage::Lock(const std::string& directory) {
+  std::error_code ec;
+  if (!std::filesystem::is_directory(directory, ec)) {
+    std::filesystem::create_directories(directory, ec);
     if (!ec) {
-      SDB_INFO(STARTUP, "Created database directory: ", _directory);
+      SDB_INFO(STARTUP, "Created database directory: ", directory);
     } else {
-      SDB_FATAL(GENERAL, "Unable to create database directory '", _directory,
+      SDB_FATAL(GENERAL, "Unable to create database directory '", directory,
                 "': ", ec.message());
     }
   }
-
-  const std::filesystem::path data_dir{_directory};
+  const std::filesystem::path data_dir{directory};
   const auto version = data_dir / backup::kPgVersionFile;
-  _initialized = std::filesystem::exists(version, ec);
+  const bool initialized = std::filesystem::exists(version, ec);
   if (ec) {
     SDB_FATAL(GENERAL, "Unable to check '", version.string(),
               "': ", ec.message());
   }
   auto lock = FileLock::Take(
-    (_initialized ? version : backup::PendingPgVersion(data_dir)).string(),
+    (initialized ? version : backup::PendingPgVersion(data_dir)).string(),
     FileLock::Mode::Exclusive);
   if (!lock.ok()) {
     SDB_FATAL(GENERAL, lock.status().message());
   }
   _lock = std::move(*lock);
-
-  gInstance = this;
+  return initialized;
 }
 
-DatabasePathFeature::~DatabasePathFeature() { gInstance = nullptr; }
+void Storage::Close() noexcept {
+  _runtime.RequestStop();
+  _search.Stop();
+  _runtime.Background().Drain();
+  try {
+    irs::DuckDBEngine::Instance().CloseDatabases();
+    catalog::CloseLog();
+  } catch (const std::exception& ex) {
+    SDB_ERROR(GENERAL, "closing the databases failed: ",
+              duckdb::ErrorData{ex}.RawMessage());
+  }
+}
 
 }  // namespace sdb

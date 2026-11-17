@@ -19,11 +19,12 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "search_engine.h"
+#include "search/engine.h"
 
 #include <absl/strings/escaping.h>
 
 #include <algorithm>
+#include <duckdb/common/fault_points.hpp>
 #include <iresearch/analysis/classification_tokenizer.hpp>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/analysis/nearest_neighbors_tokenizer.hpp>
@@ -37,7 +38,7 @@
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
 #include "catalog/transaction.h"
-#include "scheduler/background_scheduler.h"
+#include "runtime/runtime.h"
 #include "search/store.h"
 #include "search/task.h"
 #include "search/wal_recovery.h"
@@ -46,23 +47,15 @@
 
 namespace sdb::search {
 
-SearchEngine::SearchEngine() { gInstance = this; }
-
 int SearchEngine::MaxConcurrentCompactions() noexcept {
   return std::max<int>(1, static_cast<int>(CountLogicalCores()) / 4 - 1);
 }
 
 uint32_t SearchEngine::MaxAnnBuildWorkers() noexcept {
-  return static_cast<uint32_t>(BackgroundScheduler::AnnBuildBudget());
+  return static_cast<uint32_t>(std::max<int64_t>(1, CountLogicalCores()));
 }
 
-const irs::AnnBuildEnv& AnnBuildEnv() {
-  static const irs::AnnBuildEnv env{
-    .executor = &BackgroundScheduler::instance().executor(),
-    .acquire = AnnAcquireWorkers,
-    .release = AnnReleaseWorkers};
-  return env;
-}
+const irs::AnnBuildEnv& AnnBuildEnv() { return GetSearchEngine().AnnEnv(); }
 
 namespace {
 
@@ -72,6 +65,17 @@ uint32_t AnnAcquireAllWorkers(uint32_t want, uint32_t held) noexcept {
 }
 
 }  // namespace
+
+SearchEngine::SearchEngine(Runtime& runtime)
+  : _runtime{runtime},
+    _ann_env{.executor = &runtime.Background(),
+             .acquire = AnnAcquireWorkers,
+             .release = AnnReleaseWorkers},
+    _manual_ann_env{.executor = &runtime.Background(),
+                    .acquire = AnnAcquireAllWorkers,
+                    .release = AnnReleaseWorkers} {
+  gInstance = this;
+}
 
 ManualCompactionSlot::ManualCompactionSlot() noexcept
   : _held{GetSearchEngine().TryAcquireCompaction()} {}
@@ -83,26 +87,25 @@ ManualCompactionSlot::~ManualCompactionSlot() {
 }
 
 const irs::AnnBuildEnv* ManualCompactionSlot::AnnEnv() const noexcept {
-  static const irs::AnnBuildEnv env{.executor = AnnBuildEnv().executor,
-                                    .acquire = AnnAcquireAllWorkers,
-                                    .release = AnnReleaseWorkers};
-  return &env;
+  return &GetSearchEngine().ManualAnnEnv();
 }
 
-void SearchEngine::start() {
+void SearchEngine::Start() {
   _loops.Consume(MaintenanceLoop(_loops));
   StartSearchStorageTasks();
   catalog::Transactions::Get().SettleLog();
+  SDB_IF_FAILURE("search_start_throws") {
+    THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+  }
 }
 
-void SearchEngine::stop() {
-  _stopping.store(true, std::memory_order_release);
+void SearchEngine::Stop() {
   _loops.Done();
   _loops.Wait();
 }
 
 void SearchEngine::StartTasks(const std::shared_ptr<Store>& store) {
-  if (_stopping.load(std::memory_order_acquire)) {
+  if (IsStopping()) {
     return;
   }
   AddMaintenanceTarget(store);

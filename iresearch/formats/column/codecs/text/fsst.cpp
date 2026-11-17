@@ -82,7 +82,8 @@ row group is cut into segments of about kDefaultColSegmentTarget encoded bytes:
 +------------------------------------------------------+
 |                     Symbol table                     |
 |   +----------------------------------------------+   |
-|   |   FSST symbol table, at most 2066 bytes      |   |
+|   |   FSST symbol table: at most 2066 bytes      |   |
+|   |   with 8-bit codes, 36872 with 12-bit ones   |   |
 |   +----------------------------------------------+   |
 |   trained per row group and again when its data      |
 |   drifts; each FSST segment stores a copy            |
@@ -138,7 +139,8 @@ encoded bytes:
 +------------------------------------------------------+
 |                     Symbol table                     |
 |   +----------------------------------------------+   |
-|   |   FSST symbol table, at most 2066 bytes      |   |
+|   |   FSST symbol table: at most 2066 bytes      |   |
+|   |   with 8-bit codes, 36872 with 12-bit ones   |   |
 |   +----------------------------------------------+   |
 |   trained per row group and again when its data      |
 |   drifts; each FSST segment stores a copy            |
@@ -169,8 +171,9 @@ inline uint64_t ChainCapacity(PackedReader& lengths, PackedReader& lcps,
   return capacity;
 }
 
-inline uint64_t DecodeSuffix(const Decoder& fsst, const char* in, uint64_t enc,
-                             uint64_t lcp, std::string& buf) {
+template<typename Impl>
+uint64_t DecodeSuffix(const Decoder<Impl>& fsst, const char* in, uint64_t enc,
+                      uint64_t lcp, std::string& buf) {
   if (const auto need = lcp + enc * kMaxExpansion; buf.size() < need) {
     buf.resize(std::max<uint64_t>(need, buf.size() * 2));
   }
@@ -180,10 +183,10 @@ inline uint64_t DecodeSuffix(const Decoder& fsst, const char* in, uint64_t enc,
   return lcp + dec;
 }
 
-template<typename Visit>
-ChainEnd WalkChain(const Decoder& fsst, const char* in, PackedReader& lengths,
-                   PackedReader& lcps, uint32_t first, uint32_t end,
-                   uint64_t enc_off, uint64_t enc_end, char* out,
+template<typename Impl, typename Visit>
+ChainEnd WalkChain(const Decoder<Impl>& fsst, const char* in,
+                   PackedReader& lengths, PackedReader& lcps, uint32_t first,
+                   uint32_t end, uint64_t enc_off, uint64_t enc_end, char* out,
                    uint64_t capacity, Visit&& visit) {
   uint64_t off = 0;
   uint64_t prev_off = 0;
@@ -211,11 +214,11 @@ ChainEnd WalkChain(const Decoder& fsst, const char* in, PackedReader& lengths,
   return {off, enc_off};
 }
 
-template<typename Visit>
-uint32_t WalkInPlace(const Decoder& fsst, const char* in, PackedReader& lengths,
-                     PackedReader& lcps, uint32_t first, uint32_t end,
-                     uint64_t enc_off, uint64_t enc_end, std::string& buf,
-                     Visit&& visit) {
+template<typename Impl, typename Visit>
+uint32_t WalkInPlace(const Decoder<Impl>& fsst, const char* in,
+                     PackedReader& lengths, PackedReader& lcps, uint32_t first,
+                     uint32_t end, uint64_t enc_off, uint64_t enc_end,
+                     std::string& buf, Visit&& visit) {
   uint64_t len = 0;
   for (auto e = first; e < end; ++e) {
     const uint64_t lcp = e == first ? 0 : lcps.At(e);
@@ -231,11 +234,12 @@ uint32_t WalkInPlace(const Decoder& fsst, const char* in, PackedReader& lengths,
   return end;
 }
 
-inline std::string_view DecodeChained(const Decoder& fsst, const char* in,
-                                      PackedReader& lengths, PackedReader& lcps,
-                                      uint32_t restart, uint32_t entry,
-                                      uint64_t enc_off, uint64_t enc_end,
-                                      std::string& buf, uint64_t& walked) {
+template<typename Impl>
+std::string_view DecodeChained(const Decoder<Impl>& fsst, const char* in,
+                               PackedReader& lengths, PackedReader& lcps,
+                               uint32_t restart, uint32_t entry,
+                               uint64_t enc_off, uint64_t enc_end,
+                               std::string& buf, uint64_t& walked) {
   const uint32_t n = entry - restart + 1;
   SDB_ASSERT(n <= kChainRestart);
   std::array<uint64_t, kChainRestart + 1> off;
@@ -268,6 +272,7 @@ inline std::string_view DecodeChained(const Decoder& fsst, const char* in,
   return {buf.data(), len};
 }
 
+template<typename Impl>
 struct Scan {
   static constexpr uint32_t kEntryGroup = kChainRestart;
 
@@ -537,7 +542,7 @@ struct Scan {
 
   uint64_t HeapBytes() const noexcept { return group_heap_bytes; }
 
-  Decoder decoder;
+  Decoder<Impl> decoder;
   PackedReader lcps{nullptr, 0};
   ChainGroups groups;
   std::vector<uint8_t> group_decoded;
@@ -548,6 +553,7 @@ struct Scan {
   std::string probe;
 };
 
+template<typename Impl>
 struct Fetch {
   void Reset(const Header& h, duckdb::data_ptr_t base) {
     decoder.reset();
@@ -593,161 +599,33 @@ struct Fetch {
     });
   }
 
-  std::optional<Decoder> decoder;
+  std::optional<Decoder<Impl>> decoder;
   PackedReader lcps{nullptr, 0};
   ChainGroups groups;
   std::string chain;
   uint64_t walked = 0;
 };
 
+template<typename Impl>
 struct Leaf {
-  static constexpr ByteCodec kCodec = ByteCodec::Fsst;
-  using Scan = fsst::Scan;
-  using Fetch = fsst::Fetch;
+  static constexpr ByteCodec kCodec = Impl::kCodec;
+  using Scan = fsst::Scan<Impl>;
+  using Fetch = fsst::Fetch<Impl>;
 };
-
-Encoded Encoder::Encode(std::span<const duckdb::string_t> strings,
-                        std::span<const uint32_t> skip, char* out,
-                        size_t capacity, std::span<uint32_t> lengths) {
-  SDB_ASSERT(skip.size() == strings.size());
-  SDB_ASSERT(lengths.size() >= strings.size());
-  const size_t n = strings.size();
-  if (n == 0) {
-    return {};
-  }
-  _in_lengths.resize(n);
-  _in_ptrs.resize(n);
-  for (size_t i = 0; i < n; ++i) {
-    _in_lengths[i] = strings[i].GetSize() - skip[i];
-    _in_ptrs[i] = reinterpret_cast<unsigned char*>(
-      const_cast<char*>(strings[i].GetData() + skip[i]));
-  }
-  if (!_encoder) {
-    _encoder.reset(
-      duckdb_fsst_create(n, _in_lengths.data(), _in_ptrs.data(), 0));
-    SDB_ENSURE(_encoder, "fsst: cannot build a symbol table");
-    _table_size = duckdb_fsst_export(_encoder.get(), _table);
-  }
-  _out_lengths.resize(n);
-  _out_ptrs.resize(n);
-  const size_t done =
-    duckdb_fsst_compress(_encoder.get(), n, _in_lengths.data(), _in_ptrs.data(),
-                         capacity, reinterpret_cast<unsigned char*>(out),
-                         _out_lengths.data(), _out_ptrs.data());
-  size_t used = 0;
-  for (size_t i = 0; i < done; ++i) {
-    lengths[i] = static_cast<uint32_t>(_out_lengths[i]);
-    used += _out_lengths[i];
-  }
-  return {.strings = done, .bytes = used};
-}
-
-bool Decoder::Import(std::string_view table) noexcept {
-  return duckdb_fsst_import(
-           &_decoder, reinterpret_cast<const unsigned char*>(table.data()),
-           table.size()) == table.size();
-}
-
-namespace {
-
-constexpr uint64_t kEncodeExpansion = 2;
-constexpr uint64_t kEncodeSlack = 8;
-
-}  // namespace
-
-void CompressionState::FinalizeCompress() {
-  if (_rows.SegmentShape() == Shape::Dictionary) {
-    _rows.Sort(_sort);
-  }
-  const auto lengths = _rows.Lengths();
-  const auto rows = _rows.View();
-  const auto entries = rows.entries;
-  const auto first_entry = rows.first_entry;
-  auto& data = _out->bytes;
-  _lcp_stream.assign(first_entry, 0);
-  _frames.clear();
-  uint32_t max_lcp = 0;
-  uint64_t frame_raw = 0;
-  uint64_t frame_first = 0;
-  uint64_t suffixes = 0;
-  for (size_t i = 0; i < entries.size(); ++i) {
-    const auto& entry = entries[i];
-    const auto size = entry.GetSize();
-    if (frame_raw != 0 && frame_raw + size > kFsstFrameRawBytes) {
-      _frames.emplace_back(static_cast<uint32_t>(frame_first),
-                           static_cast<uint32_t>(frame_raw), 0, 0);
-      frame_raw = 0;
-      frame_first = i;
-    }
-    const uint32_t lcp = (i - frame_first) % kChainRestart == 0
-                           ? 0
-                           : CommonPrefix(entries[i - 1], entry);
-    _lcp_stream.emplace_back(lcp);
-    max_lcp = std::max(max_lcp, lcp);
-    frame_raw += size;
-    suffixes += size - lcp;
-  }
-  if (!entries.empty()) {
-    _frames.emplace_back(static_cast<uint32_t>(frame_first),
-                         static_cast<uint32_t>(frame_raw), 0, 0);
-  }
-  const auto skip = std::span{_lcp_stream}.subspan(first_entry);
-  size_t done = 0;
-  const auto encode = [&](uint64_t capacity) {
-    auto* out = data.Extend(capacity);
-    const auto encoded =
-      _codec.Encode(entries.subspan(done), skip.subspan(done), out, capacity,
-                    lengths.subspan(done));
-    data.Shrink(capacity - encoded.bytes);
-    for (auto i = done; i < done + encoded.strings; ++i) {
-      suffixes -= entries[i].GetSize() - skip[i];
-    }
-    done += encoded.strings;
-  };
-  encode(suffixes + kEncodeSlack);
-  if (done != entries.size()) {
-    encode(kEncodeExpansion * suffixes + kEncodeSlack);
-    SDB_ENSURE(done == entries.size(), "fsst: compression ran out of space");
-  }
-  size_t off = 0;
-  uint32_t max_enc = 0;
-  for (size_t f = 0; f < _frames.size(); ++f) {
-    auto& frame = _frames[f];
-    const size_t end =
-      f + 1 < _frames.size() ? _frames[f + 1].first_entry : entries.size();
-    frame.comp_off = static_cast<uint32_t>(off);
-    for (size_t e = frame.first_entry; e < end; ++e) {
-      off += lengths[e];
-      max_enc = std::max(max_enc, lengths[e]);
-    }
-    frame.comp_len = static_cast<uint32_t>(off - frame.comp_off);
-    frame.first_entry += first_entry;
-  }
-  _lcp_stream.resize(
-    duckdb::BitpackingPrimitives::RoundUpToAlgorithmGroupSize(EntryCount(rows)),
-    0);
-  const auto symtab = _codec.SymbolTable();
-  RecordRatio(_history[static_cast<size_t>(_rows.SegmentShape())], rows.raw,
-              data.Size() + symtab.size(), _target);
-  _rows.Write(
-    {
-      .codec = kCodec,
-      .frames = _frames,
-      .max_length = max_enc,
-      .lcps = _lcp_stream,
-      .max_lcp = max_lcp,
-      .symtab = symtab,
-    },
-    *_out);
-}
 
 }  // namespace irs::codecs::text::fsst
 namespace irs::codecs {
 
 constinit const Codec kFsstCodec =
-  text::StringCodec<text::PlainScan<text::fsst::Leaf>>();
+  text::StringCodec<text::PlainScan<text::fsst::Leaf<text::fsst::Fsst8>>>();
 
-constinit const Codec kDictFsstCodec =
-  text::StringCodec<text::DictionaryScan<text::fsst::Leaf>>();
+constinit const Codec kDictFsstCodec = text::StringCodec<
+  text::DictionaryScan<text::fsst::Leaf<text::fsst::Fsst8>>>();
+
+constinit const Codec kFsst12Codec =
+  text::StringCodec<text::PlainScan<text::fsst::Leaf<text::fsst::Fsst12>>>();
+
+constinit const Codec kDictFsst12Codec = text::StringCodec<
+  text::DictionaryScan<text::fsst::Leaf<text::fsst::Fsst12>>>();
 
 }  // namespace irs::codecs

@@ -15,7 +15,6 @@ target_sources(
         column/codecs/numeric/rle.cpp
         column/codecs/registry.cpp
         column/codecs/text/fsst.cpp
-        column/codecs/text/fsst12.cpp
         column/codecs/text/fsst_plus.cpp
         column/codecs/text/onpair.cpp
         column/codecs/text/segment_buffer.cpp

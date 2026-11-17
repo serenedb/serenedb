@@ -33,7 +33,6 @@
 #include "iresearch/formats/column/codecs/bytes/zxc.hpp"
 #include "iresearch/formats/column/codecs/text/blob.hpp"
 #include "iresearch/formats/column/codecs/text/fsst.hpp"
-#include "iresearch/formats/column/codecs/text/fsst12.hpp"
 #include "iresearch/formats/column/codecs/text/fsst_plus.hpp"
 #include "iresearch/formats/column/codecs/text/onpair.hpp"
 #include "iresearch/formats/column/codecs/text/segment_rows.hpp"
@@ -90,14 +89,15 @@ class StringCompressor {
 
   PooledSegment Acquire();
 
-  using States = std::tuple<std::optional<blob::CompressionState<Lz4>>,
-                            std::optional<blob::CompressionState<Lz4Hc>>,
-                            std::optional<blob::CompressionState<Zstd>>,
-                            std::optional<blob::CompressionState<Zxc>>,
-                            std::optional<fsst::CompressionState>,
-                            std::optional<fsst_plus::CompressionState>,
-                            std::optional<onpair::CompressionState>,
-                            std::optional<fsst12::CompressionState>>;
+  using States =
+    std::tuple<std::optional<blob::CompressionState<Lz4>>,
+               std::optional<blob::CompressionState<Lz4Hc>>,
+               std::optional<blob::CompressionState<Zstd>>,
+               std::optional<blob::CompressionState<Zxc>>,
+               std::optional<fsst::CompressionState<fsst::Fsst8>>,
+               std::optional<fsst_plus::CompressionState>,
+               std::optional<onpair::CompressionState>,
+               std::optional<fsst::CompressionState<fsst::Fsst12>>>;
 
   const ColCodecParams& _params;
   const duckdb::LogicalType& _type;

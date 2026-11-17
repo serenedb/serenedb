@@ -509,7 +509,7 @@ TEST(FsstEncoderTest, BatchesEncodeLikeSingleStrings) {
     total += s.size();
   }
 
-  irs::codecs::text::fsst::Encoder encoder;
+  irs::codecs::text::fsst::Encoder<irs::codecs::text::fsst::Fsst8> encoder;
   std::string batch(2 * total + 8, '\0');
   std::vector<uint32_t> lengths(values.size());
   const auto all =
@@ -517,7 +517,7 @@ TEST(FsstEncoderTest, BatchesEncodeLikeSingleStrings) {
   ASSERT_EQ(values.size(), all.strings);
   batch.resize(all.bytes);
 
-  irs::codecs::text::fsst::Decoder decoder;
+  irs::codecs::text::fsst::Decoder<irs::codecs::text::fsst::Fsst8> decoder;
   ASSERT_TRUE(decoder.Import(encoder.SymbolTable()));
   std::string single;
   uint32_t single_length = 0;
@@ -559,7 +559,7 @@ TEST(FsstEncoderTest, ResumesWhereTheOutputRanOut) {
   }
   const std::vector<uint32_t> skip(values.size(), 1);
 
-  irs::codecs::text::fsst::Encoder whole;
+  irs::codecs::text::fsst::Encoder<irs::codecs::text::fsst::Fsst8> whole;
   std::string expected(2 * total + 8, '\0');
   std::vector<uint32_t> expected_lengths(values.size());
   const auto all = whole.Encode(values, skip, expected.data(), expected.size(),
@@ -567,7 +567,7 @@ TEST(FsstEncoderTest, ResumesWhereTheOutputRanOut) {
   ASSERT_EQ(values.size(), all.strings);
   expected.resize(all.bytes);
 
-  irs::codecs::text::fsst::Encoder resumed;
+  irs::codecs::text::fsst::Encoder<irs::codecs::text::fsst::Fsst8> resumed;
   std::string out(total / 2, '\0');
   std::vector<uint32_t> lengths(values.size());
   const auto first =

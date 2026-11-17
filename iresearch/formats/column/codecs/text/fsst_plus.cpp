@@ -88,7 +88,7 @@ namespace irs::codecs::text::fsst_plus {
 class Prefixes {
  public:
   bool Open(std::string_view side, uint32_t table_size,
-            fsst::Decoder& decoder) {
+            fsst::Decoder<fsst::Fsst8>& decoder) {
     if (side.size() < static_cast<uint64_t>(table_size) + sizeof(uint32_t) ||
         (table_size != 0 && !decoder.Import(side.substr(0, table_size)))) {
       return false;
@@ -147,7 +147,7 @@ inline uint64_t EntryOffset(ChainGroups& groups, PackedReader& lengths,
   return offset;
 }
 
-inline std::string_view DecodeEntry(const fsst::Decoder& fsst,
+inline std::string_view DecodeEntry(const fsst::Decoder<fsst::Fsst8>& fsst,
                                     std::string_view prefix, const char* in,
                                     uint64_t enc, std::string& buf) {
   if (const auto need = prefix.size() + enc * fsst::kMaxExpansion;
@@ -281,7 +281,7 @@ struct Scan {
 
   uint64_t HeapBytes() const noexcept { return entry_heap_bytes + heap.size(); }
 
-  fsst::Decoder decoder;
+  fsst::Decoder<fsst::Fsst8> decoder;
   Prefixes prefixes;
   PackedReader ids{nullptr, 0};
   ChainGroups groups;
@@ -345,7 +345,7 @@ struct Fetch {
     });
   }
 
-  std::optional<fsst::Decoder> decoder;
+  std::optional<fsst::Decoder<fsst::Fsst8>> decoder;
   Prefixes prefixes;
   PackedReader ids{nullptr, 0};
   ChainGroups groups;

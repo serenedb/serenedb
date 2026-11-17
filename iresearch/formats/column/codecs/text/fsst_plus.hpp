@@ -91,7 +91,7 @@ class CompressionState {
   SortScratch _sort;
   RatioHistory* _history;
   uint32_t _target;
-  fsst::Encoder _codec;
+  fsst::Encoder<fsst::Fsst8> _codec;
   Segment* _out = nullptr;
   std::vector<FrameMeta> _frames;
   std::string _encoded;

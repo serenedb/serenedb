@@ -306,8 +306,8 @@ struct FsstFrames {
   std::vector<duckdb::string_t> views;
   std::string encoded;
   std::vector<uint32_t> lengths;
-  irs::codecs::text::fsst::Encoder encoder;
-  irs::codecs::text::fsst::Decoder decoder;
+  irs::codecs::text::fsst::Encoder<irs::codecs::text::fsst::Fsst8> encoder;
+  irs::codecs::text::fsst::Decoder<irs::codecs::text::fsst::Fsst8> decoder;
   size_t raw = 0;
   static constexpr size_t kPerFrame = 400;
   static constexpr size_t kFrames = 64;

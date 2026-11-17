@@ -69,27 +69,27 @@ struct Route {
 Route RouteOf(const VectorQueryBase& query, const SubReader& segment,
               const Context& ctx) {
   const auto* inner = query.Inner();
-  if (inner == nullptr || !query.Dual() || ctx.columns == nullptr) {
+  if (inner == nullptr || !query.HasColumnPart() || ctx.columns == nullptr) {
     return {inner, ctx};
   }
   const auto candidates = static_cast<double>(query.State().estimation);
   const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
   const auto docs = static_cast<double>(docs_count);
-  const auto* index_only = query.IndexOnly();
-  const auto index_share = ShareOf(index_only, docs);
+  const auto* index_part = query.IndexPart();
+  const auto index_share = ShareOf(index_part, docs);
   const auto column_share =
     index_share > 0 ? std::min(1.0, ShareOf(inner, docs) / index_share) : 0.0;
   const auto checks = ColumnChecks(static_cast<double>(ctx.k), column_share,
                                    candidates * index_share);
   if (ProbeCost(inner, candidates, docs_count) <=
-      ProbeCost(index_only, candidates, docs_count) +
+      ProbeCost(index_part, candidates, docs_count) +
         checks * kColumnCheckCost) {
     return {inner, ctx};
   }
   SDB_IF_FAILURE("irs::IvfReadsColumns") {
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
-  return {query.IndexOnly(),
+  return {index_part,
           {.scorer = ctx.scorer,
            .fetcher = ctx.fetcher,
            .table = ctx.columns,

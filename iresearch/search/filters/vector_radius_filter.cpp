@@ -34,8 +34,8 @@ QueryBuilder::ptr ByRadius::PrepareSegment(const SubReader& segment,
   if (!ann) {
     return PrepareExactVectors(segment, ctx, field_id(), opts.query,
                                opts.ann_id, opts.metric, opts.inner,
-                               opts.index_only, opts.dual, opts.radius,
-                               opts.inclusive, GetBoost());
+                               opts.index_part, opts.has_column_part,
+                               opts.radius, opts.inclusive, GetBoost());
   }
   SDB_ASSERT(ann->SupportsRange());
   auto sub_ctx = ctx;

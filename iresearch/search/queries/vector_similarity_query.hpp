@@ -44,11 +44,11 @@ class VectorQueryBase {
 
   const QueryBuilder* Inner() const noexcept { return _prefilter.inner.get(); }
 
-  const QueryBuilder* IndexOnly() const noexcept {
-    return _prefilter.index_only.get();
+  const QueryBuilder* IndexPart() const noexcept {
+    return _prefilter.index_part.get();
   }
 
-  bool Dual() const noexcept { return _prefilter.dual; }
+  bool HasColumnPart() const noexcept { return _prefilter.has_column_part; }
 
   bool Rescored() const noexcept {
     return _state.quant != VectorQuantization::None &&

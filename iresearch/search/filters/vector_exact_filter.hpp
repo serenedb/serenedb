@@ -38,9 +38,9 @@ struct ByVectorExactOptions {
   VectorMetric metric = VectorMetric::L2Sqr;
   float radius = std::numeric_limits<float>::max();
   bool inclusive = false;
+  bool has_column_part = false;
   std::shared_ptr<const Filter> inner;
-  std::shared_ptr<const Filter> index_only;
-  bool dual = false;
+  std::shared_ptr<const Filter> index_part;
 
   bool operator==(const ByVectorExactOptions& rhs) const noexcept = default;
 };
@@ -49,8 +49,8 @@ QueryBuilder::ptr PrepareExactVectors(
   const SubReader& segment, const PrepareContext& ctx, field_id column_id,
   std::span<const float> query, field_id ann_id, VectorMetric metric,
   const std::shared_ptr<const Filter>& inner_filter,
-  const std::shared_ptr<const Filter>& index_only, bool dual, float radius,
-  bool inclusive, score_t boost);
+  const std::shared_ptr<const Filter>& index_part, bool has_column_part,
+  float radius, bool inclusive, score_t boost);
 
 class ByVectorExact final : public FilterWithField<ByVectorExactOptions> {
  public:

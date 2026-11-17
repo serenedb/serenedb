@@ -100,7 +100,7 @@ inline IRS_FORCE_INLINE uint32_t* MaterializeWord(uint32_t offset,
   if (word == 0) {
     return out;
   }
-  constexpr uint32_t kLanes = std::tuple_size_v<BitsetByteEntry>;
+  static constexpr uint32_t kLanes = std::tuple_size_v<BitsetByteEntry>;
   for (uint32_t b = 0; b != sizeof(uint64_t); ++b) {
     const auto byte = static_cast<uint8_t>(word >> (kLanes * b));
     const auto& positions = kBitsetByteTable[byte];

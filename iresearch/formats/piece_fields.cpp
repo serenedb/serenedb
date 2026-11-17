@@ -51,8 +51,8 @@ class PieceTermIterator : public SeekTermIterator {
     : _field{&field},
       _matches{std::move(matches)},
       _payloads{std::move(payloads)},
-      _count{_matches.size()},
-      _filtered{true} {
+      _count{_matches.size()} {
+    SDB_ASSERT(Filtered());
     if constexpr (kHasPayload) {
       _pay.value = {&_payload, sizeof(_payload)};
     }
@@ -84,7 +84,7 @@ class PieceTermIterator : public SeekTermIterator {
   }
 
   SeekResult seek_ge(bytes_view target) final {
-    if (_filtered) {
+    if (Filtered()) {
       _at = static_cast<size_t>(
         absl::c_lower_bound(_matches, target,
                             [&](uint32_t entry, bytes_view term) {
@@ -117,7 +117,8 @@ class PieceTermIterator : public SeekTermIterator {
   }
 
  private:
-  size_t Entry() const noexcept { return _filtered ? _matches[_at] : _at; }
+  bool Filtered() const noexcept { return !_matches.empty(); }
+  size_t Entry() const noexcept { return Filtered() ? _matches[_at] : _at; }
 
   bool Stand() noexcept {
     if (_at >= _count) {
@@ -142,7 +143,6 @@ class PieceTermIterator : public SeekTermIterator {
   size_t _count;
   size_t _at = 0;
   Position _position = Position::Before;
-  bool _filtered = false;
 };
 
 template<typename A>

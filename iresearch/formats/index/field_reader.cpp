@@ -92,7 +92,7 @@ void FieldReader::FillCopies() {
   _pending.shrink_to_fit();
 }
 
-Separators FieldReader::Bind(const TermsMeta& terms) {
+void FieldReader::Bind(const TermsMeta& terms) {
   _block_count = terms.blocks;
   _first_page = terms.first_page;
   _inline_offset = terms.inline_offset;
@@ -119,13 +119,6 @@ Separators FieldReader::Bind(const TermsMeta& terms) {
     Corrupted("block directory");
   }
 
-  const auto encoded = ViewCast<byte_type>(std::string_view{terms.separators});
-  Separators separators;
-  if (blocks != 0) {
-    separators = DecodeSeparators(encoded, blocks - 1);
-  } else if (!encoded.empty()) {
-    Corrupted("separators");
-  }
   if (terms.inline_starts.empty() != (_inline_size == 0)) {
     Corrupted("inline starts");
   }
@@ -141,7 +134,6 @@ Separators FieldReader::Bind(const TermsMeta& terms) {
   }
   Account(_spans.capacity() * sizeof(SpanningBlock) +
           _inline_pages.MemoryBytes());
-  return separators;
 }
 
 void FieldReader::prepare(const ReaderState& state) {
@@ -156,7 +148,9 @@ void FieldReader::prepare(const ReaderState& state) {
 
   _base = _in->ReadStable(0, _in->Length());
   const auto& heads = terms.fields;
-  const auto separators = heads.empty() ? Separators{} : Bind(terms);
+  if (!heads.empty()) {
+    Bind(terms);
+  }
 
   IndexFeatures features = IndexFeatures::None;
   for (const auto& head : heads) {
@@ -183,7 +177,7 @@ void FieldReader::prepare(const ReaderState& state) {
       prefix.clear();
       AppendOrdinal(prefix, ordinal++, terms.ordinal_bytes);
       _dicts.push_back(
-        &_keyed.emplace_back(*this, head, prefix, *_in, separators));
+        &_keyed.emplace_back(*this, head, prefix, *_in));
     }
     ++_by_id
         .try_emplace(

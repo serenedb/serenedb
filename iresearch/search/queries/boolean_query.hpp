@@ -40,8 +40,6 @@ namespace irs {
 
 struct TermReader;
 
-inline constexpr uint64_t kAllDocsWordPostings = 4;
-
 class BooleanQuery : public QueryBuilderImpl<BooleanQuery> {
  public:
   using Filters = ManagedVector<QueryBuilder::ptr>;
@@ -84,7 +82,7 @@ class BooleanQuery : public QueryBuilderImpl<BooleanQuery> {
       (segment.docs_count() + (detail::BitsetStorage::kBits - 1)) /
       detail::BitsetStorage::kBits;
     for (const auto& bucket : _clauses) {
-      _postings += bucket.all_docs.size() * kAllDocsWordPostings * words;
+      _postings += bucket.all_docs.size() * kPostingsPerFoldedWord * words;
       for (const auto& posting : bucket.postings) {
         _postings += posting.state.cookie.docs_count;
       }
@@ -141,6 +139,8 @@ class BooleanQuery : public QueryBuilderImpl<BooleanQuery> {
   }
 
  private:
+  static constexpr uint64_t kPostingsPerFoldedWord = 4;
+
   Clauses _clauses;
   uint32_t _declared_msm;
   uint32_t _min_should_match;
@@ -166,7 +166,6 @@ class BooleanBuilder {
       _msm{min_should_match},
       _boost{boost},
       _merge_type{merge_type},
-      _collects{collector != nullptr},
       _needs_terms{needs_terms} {}
 
   void Add(QueryBuilder::ptr query, Occur occur);
@@ -185,14 +184,14 @@ class BooleanBuilder {
 
   bool Absorb(QueryKind kind, Occur occur);
 
-  bool KeepsTerms() const noexcept { return _collects || _needs_terms; }
+  bool KeepsTerms() const noexcept { return _collector || _needs_terms; }
 
   bool SplicesTerms(Occur occur) const noexcept {
     return occur == Occur::MustNot || (occur == Occur::Should && _msm == 1);
   }
 
   bool Scores(const QueryBuilder& child, Occur occur) const noexcept {
-    return _collects && occur != Occur::MustNot && child.Scores();
+    return _collector && occur != Occur::MustNot && child.Scores();
   }
 
   const BooleanQuery* Dissolves(const QueryBuilder& child,
@@ -223,7 +222,6 @@ class BooleanBuilder {
   score_t _boost;
   ScoreMergeType _merge_type;
   uint32_t _groups = 0;
-  bool _collects = false;
   bool _needs_terms = false;
   bool _empty = false;
 };

@@ -47,15 +47,15 @@ void BuildFtsTerm(BoolTarget parent, const FilterContext& ctx,
   };
   // SetupTermClause declines for unsupported column types (it is shared with
   // the speculative comparison path); under ts_* syntax that is a user error.
-  const auto set = SetupTermClause(clause, column_info, value);
-  if (!set.ok()) {
+  const auto exact = SetupTermClause(clause, column_info, value);
+  if (!exact.ok()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG(set.status().message()),
+      ERR_MSG(exact.status().message()),
       ERR_HINT("The value's type must match the column's indexed type."));
   }
   const auto target = MaybeNegated(parent, ctx, column_info);
-  if (*set) {
+  if (*exact) {
     target.Add(std::move(clause));
   } else {
     AddFilter<irs::Empty>(target);

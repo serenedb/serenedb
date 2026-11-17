@@ -935,13 +935,13 @@ absl::Status FromBinaryEq(BoolTarget filter, const FilterContext& ctx,
 
   irs::TermClause clause{.scorer = LeafScorer(*column_info),
                          .boost = ctx.boost};
-  const auto set = SetupTermClause(clause, *column_info, *const_val);
-  if (!set.ok()) {
-    return set.status();
+  const auto exact = SetupTermClause(clause, *column_info, *const_val);
+  if (!exact.ok()) {
+    return exact.status();
   }
   const auto target =
     (ctx.negated != not_equal) ? NegateScoped(filter, *column_info) : filter;
-  if (*set) {
+  if (*exact) {
     target.Add(std::move(clause));
   } else {
     AddFilter<irs::Empty>(target);

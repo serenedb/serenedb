@@ -296,7 +296,9 @@ class InfixFilter {
     BuildLiterals();
   }
 
-  bool Off() const noexcept { return _off; }
+  bool Off() const noexcept {
+    return _checks == kInfixProbe && _rejects * 2 < kInfixProbe;
+  }
 
   void Restart() noexcept {
     _lcp = 0;
@@ -320,9 +322,7 @@ class InfixFilter {
     _lcp = kNone;
     if (_checks != kInfixProbe) {
       _rejects += !found;
-      if (++_checks == kInfixProbe && _rejects * 2 < kInfixProbe) {
-        _off = true;
-      }
+      ++_checks;
     }
     return !found;
   }
@@ -782,7 +782,6 @@ class InfixFilter {
   uint32_t _checks = 0;
   uint32_t _rejects = 0;
   bool _checked = false;
-  bool _off = false;
   bool _coded = false;
   uint32_t _hits_block = kNoEntry;
   size_t _hit = 0;
@@ -1028,8 +1027,9 @@ Branch NextBranch(const PrefixTrie& trie, TrieCursor head, const A& a,
 
 class TrieHeads {
  public:
-  TrieHeads(const PrefixTrie& trie, size_t k) : _trie{&trie}, _k{k} {
-    _heads.push_back(trie.Root());
+  TrieHeads(const PrefixTrie& trie, TrieCursor root, size_t k)
+    : _trie{&trie}, _k{k} {
+    _heads.push_back(root);
   }
 
   TrieCursor operator[](size_t depth) const noexcept {
@@ -1132,7 +1132,7 @@ class Targeter {
     : _trie{&field.Trie()},
       _a{&a},
       _k{field.KeyPrefix().size()},
-      _heads{field.Trie(), _k} {}
+      _heads{field.Trie(), field.TrieRoot(), _k} {}
 
   void Start() {
     if (_states.empty()) {
@@ -1219,16 +1219,12 @@ class Targeter {
     }
   }
 
-  bool TargetFrom(bytes_view key, size_t& valid, bool boundary) {
-    size_t depth = StepAlong(key, valid);
-    if (!boundary) {
-      depth = _heads.Extend(key, depth);
-    }
+  bool TargetFrom(bytes_view key, size_t& valid) {
+    size_t depth = _heads.Extend(key, StepAlong(key, valid));
     if (depth == key.size()) {
       Tail tail;
       const size_t extra =
-        Continuation(*_trie, boundary ? kTrieUngated : _heads[depth], *_a,
-                     _states[depth], tail);
+        Continuation(*_trie, _heads[depth], *_a, _states[depth], tail);
       if (extra != kDeadEnd) {
         std::memcpy(Retarget(key, key.size(), extra), tail.data(), extra);
         valid = depth;
@@ -1269,46 +1265,124 @@ class Targeter {
 };
 
 template<typename A>
+bool MatchesByLiteral(const A& a) noexcept {
+  if constexpr (requires { a.MatchesByLiteral(); }) {
+    return a.MatchesByLiteral();
+  } else {
+    return false;
+  }
+}
+
+template<typename A>
 class BlockPlan {
  public:
-  BlockPlan(const TermReaderImpl& field, const A& a)
-    : _field{&field}, _targets{field, a} {
-    _targets.Start();
-    _targets.Assign(field.KeyPrefix(), {});
-  }
+  using State = typename A::State;
+
+  BlockPlan(const TermReaderImpl& field, const A& a) noexcept
+    : _field{&field}, _a{&a} {}
 
   void Run(uint32_t block, uint32_t end, uint64_t budget) {
-    const auto& root = _field->GetRoot();
-    const uint64_t base = _field->BlockOffset(block);
-    const uint32_t blocks = _field->Blocks();
-    size_t valid = _field->KeyPrefix().size();
-    while (block < end && _field->BlockOffset(block) - base < budget) {
-      const auto lower =
-        block == 0 ? _field->MinKey() : root.Separator(block, _lower_key);
-      valid = std::min(valid, CommonPrefixLength(_targets.Key(), lower));
-      if (!_targets.TargetFrom(lower, valid, true)) {
-        break;
+    const uint64_t limit = _field->BlockOffset(block) + budget;
+    _first = block;
+    for (_end = end; block < _end;) {
+      const uint32_t mid = block + (_end - block) / 2;
+      if (_field->BlockOffset(mid) < limit) {
+        block = mid + 1;
+      } else {
+        _end = mid;
       }
-      const auto target = _targets.Key();
-      if (block + 1 == blocks
-            ? target <= _field->MaxKey()
-            : target < root.Separator(block + 1, _upper_key)) {
-        Add(block++);
-        continue;
-      }
-      block = std::max(block + 1, static_cast<uint32_t>(root.FindFrom(
-                                    block + 1, _targets.View(), _upper_key)));
+    }
+    if (_first == _end) {
+      return;
+    }
+    if (const auto root = _field->TrieRoot();
+        PrefixTrie::Gates(root) && !MatchesByLiteral(*_a)) {
+      Visit(root, _a->Start(), 0);
+    } else {
+      Add(_first, _end - 1);
     }
     Flush();
   }
 
  private:
-  void Add(uint32_t block) {
-    if (block != _run_end) {
-      Flush();
-      _run_begin = block;
+  static constexpr size_t kMaxDepth = 64;
+
+  bool Visit(TrieCursor cursor, State state, size_t depth) {
+    if (cursor.hi < _first || cursor.hi < _run_end) {
+      return true;
     }
-    _run_end = block + 1;
+    if (cursor.lo >= _end) {
+      return false;
+    }
+    if constexpr (A::kMayBeUnknown) {
+      if (A::Unknown(state)) {
+        Add(cursor.lo, cursor.hi);
+        return true;
+      }
+    }
+    const auto& trie = _field->Trie();
+    if (cursor.lo == cursor.hi || depth == kMaxDepth) {
+      Tail tail;
+      if (Continuation(trie, cursor, *_a, state,
+                       std::span{tail}.first(kMaxGuess)) != kDeadEnd) {
+        Add(cursor.lo, cursor.hi);
+      }
+      return true;
+    }
+    if (const auto edge = trie.Edge(cursor); !edge.empty()) {
+      switch (StepEdge(*_a, state, edge)) {
+        case EdgeStep::Dead:
+          return true;
+        case EdgeStep::Unknown:
+          Add(cursor.lo, cursor.hi);
+          return true;
+        case EdgeStep::Live:
+          break;
+      }
+      cursor.matched += static_cast<uint32_t>(edge.size());
+    }
+    if (trie.MayEnd(cursor)) {
+      typename A::PayloadType payload{};
+      if (_a->Accept(state, payload)) {
+        Add(cursor.lo, cursor.lo);
+      }
+    }
+    const auto labels = trie.Labels(cursor);
+    const auto range = LiveRangeOf(*_a, state);
+    uint32_t reach = 0;
+    for (auto slot = static_cast<uint32_t>(
+           absl::c_lower_bound(labels, range.lo) - labels.begin());
+         slot < labels.size(); ++slot) {
+      if (const uint32_t from = std::max(_first, _run_end); from != reach) {
+        reach = from;
+        slot = trie.SlotReaching(cursor, slot, reach);
+        if (slot == labels.size()) {
+          break;
+        }
+      }
+      if (labels[slot] > range.hi) {
+        break;
+      }
+      const auto next = _a->Step(state, labels[slot]);
+      if (A::Alive(next) &&
+          !Visit(trie.ChildAt(cursor, slot), next, depth + 1)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  void Add(uint32_t lo, uint32_t hi) {
+    lo = std::max(lo, _first);
+    const uint32_t end = std::min(hi + 1, _end);
+    if (lo >= end) {
+      return;
+    }
+    if (lo > _run_end) {
+      Flush();
+      _run_begin = lo;
+    }
+    _run_end = std::max(_run_end, end);
   }
 
   void Flush() {
@@ -1322,9 +1396,9 @@ class BlockPlan {
   }
 
   const TermReaderImpl* _field;
-  Targeter<A> _targets;
-  SeparatorBuffer _lower_key;
-  SeparatorBuffer _upper_key;
+  const A* _a;
+  uint32_t _first = 0;
+  uint32_t _end = 0;
   uint32_t _run_begin = 0;
   uint32_t _run_end = 0;
 };
@@ -1367,15 +1441,6 @@ void Readahead(Cursor& cursor, ColdPlan<A>& plan, const A& a) {
   cursor.ReadaheadUntil(range <= kMaxWalkPrefetch ? 0 : end, false);
   plan.Arm(end);
   cursor.WatchCold(plan);
-}
-
-template<typename A>
-bool MatchesByLiteral(const A& a) noexcept {
-  if constexpr (requires { a.MatchesByLiteral(); }) {
-    return a.MatchesByLiteral();
-  } else {
-    return false;
-  }
 }
 
 template<typename A>
@@ -1473,15 +1538,6 @@ class AcceptorIterator : public SeekTermIterator {
     return false;
   }
 
-  bytes_view BlockPrefix(uint32_t block) noexcept {
-    if (block != _prefix_block) {
-      _prefix =
-        _cursor.Field().BlockPrefix(block, _prefix_lower, _prefix_upper);
-      _prefix_block = block;
-    }
-    return _prefix;
-  }
-
   bool Seek(bytes_view target, size_t valid) {
     _targets.Start();
     const auto& field = _cursor.Field();
@@ -1489,30 +1545,15 @@ class AcceptorIterator : public SeekTermIterator {
       return false;
     }
     _targets.Assign(field.KeyPrefix(), target);
-    if (!_targets.TargetFrom(_targets.Key(), valid, false) ||
+    if (!_targets.TargetFrom(_targets.Key(), valid) ||
         _targets.Key() > field.MaxKey()) {
       return false;
     }
     return Land(field.BlockOf(_targets.View()), valid);
   }
 
-  void Bound(uint32_t block) {
-    if (block != _bound_block) {
-      const auto& field = _cursor.Field();
-      _last_block = block + 1 == field.Blocks();
-      _bound = _last_block ? field.MaxKey()
-                           : field.GetRoot().Separator(block + 1, _bound_key);
-      _bound_block = block;
-    }
-  }
-
-  bool InBlock(bytes_view target) {
-    Bound(_cursor.BlockIndex());
-    return _last_block ? target <= _bound : target < _bound;
-  }
-
   bool Hop(size_t depth) {
-    if (InBlock(_targets.Key()) && _cursor.SeekAhead(_targets.View(), depth)) {
+    if (_cursor.SeekAhead(_targets.View(), depth)) {
       _filter.Restart();
       _check = true;
       _valid = std::min(depth, _cursor.Shared());
@@ -1526,57 +1567,30 @@ class AcceptorIterator : public SeekTermIterator {
     if (_targets.Key() > field.MaxKey()) {
       return false;
     }
-    const auto block = _cursor.BlockIndex();
-    Bound(block);
-    if (_last_block || _targets.Key() < _bound) {
-      return Land(block, valid);
-    }
-    return Land(static_cast<uint32_t>(field.GetRoot().FindFrom(
-                  block + 1, _targets.View(), _bound_key)),
-                valid);
+    return Land(
+      std::max(_cursor.BlockIndex() + 1, field.BlockOf(_targets.View())),
+      valid);
   }
 
   bool Land(uint32_t block, size_t valid) {
     const auto& field = _cursor.Field();
+    SDB_ASSERT(block < field.Blocks());
     _filter.Restart();
     _check = true;
-    for (;;) {
-      const auto prefix = BlockPrefix(block);
-      const size_t shared = CommonPrefixLength(_targets.Key(), prefix);
-      const size_t base = std::min(valid, shared);
-      size_t depth = _targets.StepAlong(prefix, base);
-      if (depth == prefix.size()) {
-        if (_cursor.BlockIndex() != block) {
-          _cursor.Load(block);
-        }
-        if (_cursor.LowerBound(_targets.View())) {
-          _valid = prefix.size();
-          if (shared == prefix.size()) {
-            _valid = std::min(std::max(valid, prefix.size()), _cursor.Shared());
-          }
-          return true;
-        }
-        if (++block == field.Blocks()) {
-          return false;
-        }
-        const auto separator = field.GetRoot().Separator(block, _separator_key);
-        valid = std::min(base, CommonPrefixLength(_targets.Key(), separator));
-        if (!_targets.TargetFrom(separator, valid, true) ||
-            _targets.Key() > field.MaxKey()) {
-          return false;
-        }
-        block = static_cast<uint32_t>(
-          field.GetRoot().FindFrom(block, _targets.View(), _separator_key));
-        continue;
-      }
-      if (block + 1 == field.Blocks() || !_targets.NextTarget(prefix, depth) ||
-          _targets.Key() > field.MaxKey()) {
-        return false;
-      }
-      valid = depth;
-      block = static_cast<uint32_t>(
-        field.GetRoot().FindFrom(block + 1, _targets.View(), _separator_key));
+    if (_cursor.BlockIndex() != block) {
+      _cursor.Load(block);
     }
+    if (_cursor.LowerBound(_targets.View())) {
+      _valid = std::min(valid, _cursor.Shared());
+      return true;
+    }
+    if (block + 1 == field.Blocks()) {
+      return false;
+    }
+    _cursor.Load(block + 1);
+    _cursor.Next();
+    _valid = std::min(valid, CommonPrefixLength(_targets.Key(), _cursor.Key()));
+    return true;
   }
 
   IRS_NO_INLINE bool NextBlock() {
@@ -1601,22 +1615,14 @@ class AcceptorIterator : public SeekTermIterator {
           return false;
         }
       }
-      _filter.Restart();
-      _check = true;
       _valid = _k;
-      return true;
+    } else {
+      _cursor.Load(next);
+      _valid = std::min<size_t>(_valid, _cursor.Next());
     }
-    _cursor.Materialize();
-    const auto separator = field.GetRoot().Separator(next, _separator_key);
-    size_t valid =
-      std::min(_valid, CommonPrefixLength(_cursor.Key(), separator));
-    if (!_targets.TargetFrom(separator, valid, true) ||
-        _targets.Key() > field.MaxKey()) {
-      return false;
-    }
-    return Land(static_cast<uint32_t>(field.GetRoot().FindFrom(
-                  next, _targets.View(), _separator_key)),
-                valid);
+    _filter.Restart();
+    _check = true;
+    return true;
   }
 
   IRS_FORCE_INLINE bool Advance() {
@@ -1699,16 +1705,7 @@ class AcceptorIterator : public SeekTermIterator {
   size_t _valid;
   bool _by_literal;
   bool _check = true;
-  bool _last_block = false;
   Position _position = Position::Before;
-  uint32_t _prefix_block = kNoEntry;
-  uint32_t _bound_block = kNoEntry;
-  bytes_view _prefix;
-  bytes_view _bound;
-  SeparatorBuffer _prefix_lower;
-  SeparatorBuffer _prefix_upper;
-  SeparatorBuffer _bound_key;
-  SeparatorBuffer _separator_key;
   TermAttr _term;
   typename A::PayloadType _payload{};
   mutable Cursor _cursor;

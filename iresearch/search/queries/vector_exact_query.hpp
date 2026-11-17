@@ -57,10 +57,10 @@ class ExactVectorQuery : public QueryBuilderImpl<ExactVectorQuery> {
   std::span<const float> Query() const noexcept { return _query; }
   VectorMetric Metric() const noexcept { return _metric; }
   const QueryBuilder* Inner() const noexcept { return _prefilter.inner.get(); }
-  const QueryBuilder* IndexOnly() const noexcept {
-    return _prefilter.index_only.get();
+  const QueryBuilder* IndexPart() const noexcept {
+    return _prefilter.index_part.get();
   }
-  bool Dual() const noexcept { return _prefilter.dual; }
+  bool HasColumnPart() const noexcept { return _prefilter.has_column_part; }
   const AnnExactCodes& Codes() const noexcept { return _codes; }
 
   ann::Root::ptr PlanAnn(const ann::Context& ctx) const final;

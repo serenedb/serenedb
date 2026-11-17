@@ -121,7 +121,7 @@ struct VectorScorerOptions {
 
 irs::Filter::ptr MakeVectorFilter(
   const VectorScorerOptions& vs, std::shared_ptr<const irs::Filter> inner,
-  float radius, std::shared_ptr<const irs::Filter> index_only = nullptr,
-  bool dual = false);
+  float radius, std::shared_ptr<const irs::Filter> index_part = nullptr,
+  bool has_column_part = false);
 
 }  // namespace sdb::connector

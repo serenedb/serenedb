@@ -56,20 +56,20 @@ struct ExactRoute {
 
 ExactRoute RouteOf(const ExactVectorQuery& query, const Context& ctx) {
   const auto* inner = query.Inner();
-  if (inner == nullptr || !query.Dual() || ctx.columns == nullptr) {
+  if (inner == nullptr || !query.HasColumnPart() || ctx.columns == nullptr) {
     return {inner, ctx.table};
   }
   const auto docs = static_cast<double>(query.Segment().docs_count());
   const auto rows_per_decode = std::max(
     1.0, kVectorDecodeFloats / static_cast<double>(query.Column().ArraySize()));
   if (ScanCost(inner, docs, rows_per_decode) <=
-      ScanCost(query.IndexOnly(), docs, rows_per_decode)) {
+      ScanCost(query.IndexPart(), docs, rows_per_decode)) {
     return {inner, ctx.table};
   }
   SDB_IF_FAILURE("irs::ExactReadsColumns") {
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
-  return {query.IndexOnly(), ctx.columns};
+  return {query.IndexPart(), ctx.columns};
 }
 
 class ExactChain : public Root {

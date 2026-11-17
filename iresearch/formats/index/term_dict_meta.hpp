@@ -36,7 +36,6 @@ struct TextHead {
   uint64_t total_freq = 0;
   field_id norm = field_limits::invalid();
   bool has_score_bounds = false;
-  std::string prefix_trie;
 };
 
 struct RangesHead {
@@ -66,6 +65,7 @@ struct FieldHead {
   uint64_t inline_base = 0;
   uint64_t inline_size = 0;
   std::string fsst_table;
+  std::string prefix_trie;
   TextHead text;
   RangesHead ranges;
   bool single_valued = false;
@@ -80,7 +80,6 @@ struct TermsMeta {
   uint32_t blocks = 0;
   uint64_t first_page = 0;
   std::vector<SpanningBlock> spans;
-  std::string separators;
   uint64_t inline_offset = 0;
   uint64_t inline_size = 0;
   uint64_t ranges_size = 0;

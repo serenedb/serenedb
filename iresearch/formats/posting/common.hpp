@@ -47,6 +47,20 @@
 
 namespace irs {
 
+struct PostingFeatures {
+  PostingFeatures() = default;
+  explicit PostingFeatures(IndexFeatures features) noexcept
+    : freq{IsSubsetOf(IndexFeatures::Freq, features)},
+      pos{IsSubsetOf(IndexFeatures::Pos, features)},
+      offs{IsSubsetOf(IndexFeatures::Offs, features)},
+      vec{IsSubsetOf(IndexFeatures::Vec, features)} {}
+
+  bool freq = false;
+  bool pos = false;
+  bool offs = false;
+  bool vec = false;
+};
+
 struct RecordLayout {
   uint32_t follows;
   uint32_t payload;

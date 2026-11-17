@@ -40,18 +40,20 @@ namespace irs::term_dict {
 
 inline constexpr uint32_t kPage = 4096;
 inline constexpr uint32_t kRestartInterval = 16;
-inline constexpr uint32_t kRecordInterval = 8;
+inline constexpr uint32_t kFixedHeadInterval = 8;
 inline constexpr uint32_t kHeadBytes = sizeof(uint32_t);
 constexpr uint32_t FixedHeadBytes(uint64_t stride) noexcept {
   return stride > sizeof(uint64_t) ? sizeof(uint32_t) : sizeof(uint16_t);
 }
+constexpr uint64_t FixedHeads(uint64_t count) noexcept {
+  return (count + kFixedHeadInterval - 1) / kFixedHeadInterval;
+}
 constexpr bool PacksKeys(uint64_t stride) noexcept {
   return stride != 0 && stride <= sizeof(uint64_t);
 }
-constexpr uint64_t PackedKeyBytes(uint64_t count, uint32_t bits) noexcept {
+constexpr uint64_t PackedBytes(uint64_t count, uint32_t bits) noexcept {
   return (count * bits + 7) / 8;
 }
-inline constexpr uint32_t kRecordOffset = sizeof(uint16_t);
 inline constexpr uint32_t kMaxStride = 32;
 inline constexpr uint32_t kSlack = block_codec::kInSlack;
 inline constexpr uint32_t kVarRestart = sizeof(uint16_t);
@@ -101,10 +103,6 @@ class RecordOutput final : private RecordBytes, public BufferedOutput {
  private:
   void WriteDirect(const byte_type* b, size_t len) final;
 };
-
-constexpr uint64_t RecordGroups(uint64_t count) noexcept {
-  return (count + kRecordInterval - 1) / kRecordInterval;
-}
 
 inline constexpr size_t kMaxRangeLevels = 8;
 

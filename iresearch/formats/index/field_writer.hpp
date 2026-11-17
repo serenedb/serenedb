@@ -38,6 +38,7 @@
 #include "iresearch/formats/index/term_dict_meta.hpp"
 #include "iresearch/formats/index/term_dict_prefixes.hpp"
 #include "iresearch/formats/index/term_dict_ranges.hpp"
+#include "iresearch/formats/index/term_dict_records.hpp"
 #include "iresearch/formats/posting/writer.hpp"
 #include "iresearch/index/field_meta.hpp"
 
@@ -75,13 +76,12 @@ struct BlockBuilder {
   bstring keys;
   std::vector<uint32_t> ends;
   bstring records;
-  std::vector<uint16_t> record_starts;
+  RecordRun run;
   VarColumns columns;
   uint64_t size = 0;
   uint64_t deferred = 0;
   uint32_t deferred_len = 0;
   uint32_t coded = 0;
-  uint32_t width = 0;
   uint32_t prefix = 0;
   uint32_t head_skip = 0;
   BlockKind kind = BlockKind::Var;
@@ -115,7 +115,9 @@ class FieldWriter final : public FieldSink {
   bool OwnsBlock() const noexcept;
   void Add(bytes_view term, const PostingMeta& meta);
   void Commit(bytes_view term, const PostingMeta& meta);
+  void FeedTrie();
   bool Append(bytes_view term, const PostingMeta& meta);
+  void CloseRun();
   bool AppendFixedKey(bytes_view key, uint64_t records);
   bool AppendVarKey(bytes_view key, uint64_t records);
   bool EncodeBlock(const VarEntry& entry, uint64_t records);
@@ -129,15 +131,12 @@ class FieldWriter final : public FieldSink {
   void Reset() noexcept;
 
   PostingsWriter _pw;
-  RecordOutput _record;
   BlockBuilder _block;
   RangeWriter _ranges;
   bstring _inline;
   FsstEncoder _fsst;
   std::string _fsst_table;
   const BasicTermReader* _reader = nullptr;
-  bstring _samples;
-  std::vector<size_t> _sample_lengths;
   bstring _coded;
   VarColumns _encoded;
   std::vector<VarEntry> _batch_entries;
@@ -146,9 +145,6 @@ class FieldWriter final : public FieldSink {
   std::vector<size_t> _coded_lengths;
   std::vector<unsigned char*> _coded_starts;
   std::vector<SpanningBlock> _spans;
-  std::string _separators;
-  bstring _separator;
-  bstring _last;
   std::string _inline_starts;
   bstring _range_regions;
   std::vector<FieldHead> _heads;
@@ -175,7 +171,6 @@ class FieldWriter final : public FieldSink {
   uint32_t _first_record = 0;
   bool _trained = false;
   bool _fsst_used = false;
-  bool _group_inline = false;
   const bool _compaction;
 };
 

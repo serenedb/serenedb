@@ -32,7 +32,7 @@
 #include "iresearch/formats/index/term_dict_inline.hpp"
 #include "iresearch/formats/index/term_dict_meta.hpp"
 #include "iresearch/formats/index/term_dict_prefixes.hpp"
-#include "iresearch/formats/index/term_dict_root.hpp"
+#include "iresearch/formats/index/term_dict_key.hpp"
 #include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/store/data_input.hpp"
@@ -58,7 +58,7 @@ struct RangeLevel {
 class TermReaderImpl final : public TermReader {
  public:
   TermReaderImpl(FieldReader& owner, const FieldHead& head, bytes_view prefix,
-                 IndexInput& in, const Separators& separators);
+                 IndexInput& in);
 
   SeekTermIterator::ptr iterator() const final;
   SeekTermIterator::ptr IteratorUntil(bytes_view upper) const final;
@@ -102,9 +102,18 @@ class TermReaderImpl final : public TermReader {
   uint32_t Blocks() const noexcept { return _blocks; }
   bool Small() const noexcept { return _blocks == 1; }
   const duckdb_fsst_decoder_t* Fsst() const noexcept { return _fsst.get(); }
-  const Root& GetRoot() const noexcept { return _root; }
+  Located Locate(Probe key) const noexcept {
+    SDB_ASSERT(!Small() && key.size >= _prefix_size);
+    return _trie.Locate({key.data + _prefix_size, key.size - _prefix_size});
+  }
   uint32_t BlockOf(Probe key) const noexcept {
-    return Small() ? 0 : static_cast<uint32_t>(_root.Find(key));
+    return Small() ? 0 : Locate(key).block;
+  }
+  bool Gated() const noexcept {
+    return key_width == 0 && _meta.dict.member == DictMember::Strings;
+  }
+  TrieCursor TrieRoot() const noexcept {
+    return Gated() ? _trie.Root() : kTrieUngated;
   }
   uint32_t BlockEnd(bytes_view upper) const;
   bytes_view KeyPrefix() const noexcept {
@@ -115,18 +124,6 @@ class TermReaderImpl final : public TermReader {
   uint32_t FirstEntry() const noexcept { return _first_entry; }
   uint32_t FirstRecord() const noexcept { return _first_record; }
   uint32_t LastEntry() const noexcept { return _last_entry; }
-  bytes_view BlockPrefix(size_t block, SeparatorBuffer& lower_key,
-                         SeparatorBuffer& upper_key) const {
-    if (block != 0 && block + 1 != _blocks) {
-      const bytes_view lower = _root.Separator(block, lower_key);
-      return lower.substr(0, _root.SharedWithNext(block, lower_key, lower));
-    }
-    const bytes_view lower =
-      block == 0 ? MinKey() : _root.Separator(block, lower_key);
-    const bytes_view upper =
-      block + 1 == _blocks ? MaxKey() : _root.Separator(block + 1, upper_key);
-    return lower.substr(0, CommonPrefixLength(lower, upper));
-  }
   const byte_type* Block(size_t block, BlockBuffer& buffer) const;
   uint64_t BlockOffset(size_t block) const noexcept;
   uint64_t BlocksEnd() const noexcept { return BlockOffset(_blocks); }
@@ -161,7 +158,6 @@ class TermReaderImpl final : public TermReader {
   uint32_t _last_entry = 0;
   bool _has_score_bounds;
   FreqAttr _freq;
-  Root _root;
   std::vector<RangeLevel> _levels;
   PrefixTrie _trie;
   std::unique_ptr<duckdb_fsst_decoder_t> _fsst;

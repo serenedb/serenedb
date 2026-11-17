@@ -1012,14 +1012,16 @@ void RegexpAcceptor::Compile(bytes_view pattern, RegexpSyntax syntax,
 
 RegexpAcceptor::Quick RegexpAcceptor::QuickMatch(
   bytes_view term) const noexcept {
-  const auto* text = reinterpret_cast<const char*>(term.data());
-  if (_contained.empty() || !simdutf::validate_utf8(text, term.size())) {
+  if (_contained.empty()) {
     return Quick::Unknown;
   }
-  return _contained_finder.Find(ViewCast<char>(bytes_view{_contained}), text,
-                                text + term.size())
-           ? Quick::Accept
-           : Quick::Reject;
+  const auto* text = reinterpret_cast<const char*>(term.data());
+  if (!_contained_finder.Find(ViewCast<char>(bytes_view{_contained}), text,
+                              text + term.size())) {
+    return Quick::Reject;
+  }
+  return simdutf::validate_utf8(text, term.size()) ? Quick::Accept
+                                                   : Quick::Unknown;
 }
 
 void RegexpAcceptor::CompileParts(std::span<const Part> parts,

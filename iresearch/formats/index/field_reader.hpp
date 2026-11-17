@@ -35,7 +35,7 @@
 #include "iresearch/formats/index/term_dict_inline.hpp"
 #include "iresearch/formats/index/term_dict_meta.hpp"
 #include "iresearch/formats/index/term_dict_reader.hpp"
-#include "iresearch/formats/index/term_dict_root.hpp"
+#include "iresearch/formats/index/term_dict_key.hpp"
 #include "iresearch/formats/index/term_dict_single.hpp"
 #include "iresearch/formats/posting/reader.hpp"
 #include "iresearch/formats/reader_state.hpp"
@@ -109,7 +109,7 @@ class FieldReader final {
     uint32_t count = 0;
   };
 
-  Separators Bind(const TermsMeta& terms);
+  void Bind(const TermsMeta& terms);
   void FillCopies();
 
   std::deque<TermReaderImpl> _keyed;

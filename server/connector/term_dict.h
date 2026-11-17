@@ -26,6 +26,7 @@
 #include <duckdb/common/vector/unified_vector_format.hpp>
 #include <iresearch/index/field_meta.hpp>
 #include <iresearch/types.hpp>
+#include <iresearch/utils/system_compiler.hpp>
 #include <type_traits>
 #include <utility>
 
@@ -85,8 +86,10 @@ inline duckdb::LogicalTypeId IndexedKind(const duckdb::LogicalType& type) {
       return INTEGER;
     case duckdb::PhysicalType::INT64:
       return BIGINT;
-    default:
+    case duckdb::PhysicalType::INT128:
       return HUGEINT;
+    default:
+      SDB_UNREACHABLE();
   }
 }
 

@@ -1012,3 +1012,41 @@ TEST_F(WildcardUtilsTest, match_wildcard_truncated_utf8) {
     EXPECT_FALSE(Accepts(a, "\xF0\x9F\x98\x81"));
   }
 }
+
+TEST_F(WildcardUtilsTest, quick_match_agrees_with_the_automaton) {
+  using enum irs::RegexpAcceptor::Quick;
+  const auto a = FromWildcard("%ab%");
+  ASSERT_TRUE(a.ok());
+  ASSERT_TRUE(a.MatchesByLiteral());
+  const std::string_view terms[]{
+    "",
+    "ab",
+    "xaby",
+    "xy",
+    "\xD0\xBF"
+    "ab",
+    "\xFF"
+    "xy",
+    "\xFF"
+    "ab",
+    "a\xFF"
+    "b",
+    "\xED\xA0\x80"
+    "ab",
+  };
+  for (const auto term : terms) {
+    if (const auto quick = a.QuickMatch(B(term)); quick != Unknown) {
+      EXPECT_EQ(quick == Accept, Accepts(a, term)) << term;
+    }
+  }
+  EXPECT_EQ(Accept, a.QuickMatch(B("xaby")));
+  EXPECT_EQ(Reject, a.QuickMatch(B("xy")));
+  EXPECT_EQ(Reject, a.QuickMatch(B("\xFF"
+                                   "xy")));
+  EXPECT_EQ(Unknown, a.QuickMatch(B("\xED\xA0\x80"
+                                    "ab")));
+  EXPECT_TRUE(Accepts(a,
+                      "\xED\xA0\x80"
+                      "ab"));
+  EXPECT_EQ(Unknown, FromWildcard("a%b").QuickMatch(B("ab")));
+}

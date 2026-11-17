@@ -23,7 +23,7 @@ target_sources(
         index/term_dict_prefixes.cpp
         index/term_dict_ranges.cpp
         index/term_dict_reader.cpp
-        index/term_dict_root.cpp
+        index/term_dict_records.cpp
         index/term_dict_single.cpp
         index/term_dict_walk.cpp
         piece_fields.cpp

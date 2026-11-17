@@ -187,13 +187,6 @@ class PostingsWriter final {
   void WritePostings(const PostingRows& postings, PostingMeta& meta,
                      DocTee tee = {});
 
-  void BeginBlock() noexcept {
-    // clear state in order to write
-    // absolute address of the first
-    // entry in the block
-    _last_state.clear();
-  }
-
   void Encode(BufferedOutput& out, const PostingMeta& meta);
 
   void EncodeAbsolute(BufferedOutput& out, const PostingMeta& meta) {
@@ -204,7 +197,7 @@ class PostingsWriter final {
   }
 
   FieldStats EndField() {
-    if (_features.HasVector() && _term_pay != nullptr) {
+    if (_features.vec && _term_pay != nullptr) {
       SDB_ASSERT(_pay_out);
       _term_pay->Finish(*_pay_out);
     }
@@ -217,27 +210,6 @@ class PostingsWriter final {
   void End();
 
  private:
-  class Features {
-   public:
-    void Reset(IndexFeatures features) noexcept {
-      _has_freq = (IndexFeatures::None != (features & IndexFeatures::Freq));
-      _has_pos = (IndexFeatures::None != (features & IndexFeatures::Pos));
-      _has_offs = (IndexFeatures::None != (features & IndexFeatures::Offs));
-      _has_vec = (IndexFeatures::None != (features & IndexFeatures::Vec));
-    }
-
-    bool HasFrequency() const noexcept { return _has_freq; }
-    bool HasPosition() const noexcept { return _has_pos; }
-    bool HasOffset() const noexcept { return _has_offs; }
-    bool HasVector() const noexcept { return _has_vec; }
-
-   private:
-    bool _has_freq{};
-    bool _has_pos{};
-    bool _has_offs{};
-    bool _has_vec{};
-  };
-
   void AddBlock(const PostingMeta& meta, doc_id_t last);
   void BeginTerm(PostingMeta& meta);
   void EndTerm(PostingMeta& meta);
@@ -298,15 +270,12 @@ class PostingsWriter final {
   const NormProvider* _norms{};
   ScoreBoundWriter::ptr _writer;      // Score bound writer
   ScoreBoundWriter* _valid_writer{};  // Valid score bound writer
-  Features _features;                 // Features supported by current field
+  PostingFeatures _features;          // Features supported by current field
   // Per-term payload writer for IndexFeatures::Vec fields (e.g. IVF codes).
   TermPayloadWriter* _term_pay{};
   // Scratch list of the current term's document ids (collected when
   // HasVector).
   std::vector<doc_id_t> _term_docs;
-  uint32_t _enc_buf[block_io::kEncWords];
-  doc_id_t _run_docs[doc_limits::kBlockSize];
-  uint32_t _run_freqs[doc_limits::kBlockSize];
 };
 
 inline void PostingsWriter::PrepareWriters(const FieldProperties& meta) {
@@ -316,7 +285,7 @@ inline void PostingsWriter::PrepareWriters(const FieldProperties& meta) {
     return;
   }
 
-  if (_writer && _writer->Prepare(*_norms, meta, _features.HasFrequency())) {
+  if (_writer && _writer->Prepare(*_norms, meta, _features.freq)) {
     _valid_writer = _writer.get();
   }
 }
@@ -326,11 +295,11 @@ inline void PostingsWriter::AddBlock(const PostingMeta& meta, doc_id_t last) {
   uint64_t pos_group = 0;
   uint32_t pos_index = 0;
   uint64_t pay_group = 0;
-  if (_features.HasPosition()) {
+  if (_features.pos) {
     SDB_ASSERT(_pos_out);
     pos_group = _pos_out->Position() - meta.pos_start;
     pos_index = PosIndex();
-    if (_features.HasOffset()) {
+    if (_features.offs) {
       SDB_ASSERT(_pay_out);
       pay_group = _pay_out->Position() - meta.pay_start;
     }
@@ -384,29 +353,26 @@ inline void PostingsWriter::Prepare(const FlushState& state) {
 
 inline void PostingsWriter::Encode(BufferedOutput& out,
                                    const PostingMeta& meta) {
-  SDB_ASSERT(!_features.HasVector() ||
-             (!_features.HasPosition() && !_features.HasOffset()));
+  SDB_ASSERT(!_features.vec || (!_features.pos && !_features.offs));
 
   const bool inlined = meta.inline_size != 0;
   const bool single = meta.docs_count == 1;
   SDB_ASSERT(meta.docs_count != 0);
   SDB_ASSERT(!single || !inlined);
-  const bool same_freq =
-    _features.HasFrequency() && meta.freq == meta.docs_count;
+  const bool same_freq = _features.freq && meta.freq == meta.docs_count;
   const uint64_t next = uint64_t{_last_state.pos_offset} + _last_state.freq;
   const bool follows =
-    _features.HasPosition() && _last_state.docs_count != 0 &&
+    _features.pos && _last_state.docs_count != 0 &&
     meta.pos_offset == next % PosGroup::kPositions &&
     (next >= PosGroup::kPositions || meta.pos_start == _last_state.pos_start);
-  const auto layout =
-    RecordLayoutOf(_features.HasFrequency(), _features.HasPosition());
+  const auto layout = RecordLayoutOf(_features.freq, _features.pos);
   const uint64_t flags =
     uint64_t{follows} << layout.follows | uint64_t{same_freq} << 1;
   out.WriteV64(single ? uint64_t{meta.doc_delta} << layout.payload | flags | 1
                       : (uint64_t{meta.docs_count} << 1 | uint64_t{inlined})
                             << layout.payload |
                           flags);
-  if (_features.HasFrequency() && !same_freq) {
+  if (_features.freq && !same_freq) {
     SDB_ASSERT(meta.freq > meta.docs_count);
     out.WriteV32(meta.freq - meta.docs_count - 1);
   }
@@ -417,20 +383,19 @@ inline void PostingsWriter::Encode(BufferedOutput& out,
   } else if (!single) {
     out.WriteV64(meta.doc_start - doc_start);
   }
-  if (_features.HasPosition()) {
+  if (_features.pos) {
     if (!follows || next >= PosGroup::kPositions) {
       out.WriteV64(meta.pos_start - _last_state.pos_start);
-      if (_features.HasOffset()) {
+      if (_features.offs) {
         out.WriteV64(meta.pay_start - _last_state.pay_start);
       }
     } else {
-      SDB_ASSERT(!_features.HasOffset() ||
-                 meta.pay_start == _last_state.pay_start);
+      SDB_ASSERT(!_features.offs || meta.pay_start == _last_state.pay_start);
     }
     if (!follows) {
       out.WriteV32(meta.pos_offset);
     }
-  } else if (_features.HasVector()) {
+  } else if (_features.vec) {
     out.WriteV64(meta.pay_start - _last_state.pay_start);
     out.WriteV32(meta.pos_offset);
   }
@@ -439,9 +404,9 @@ inline void PostingsWriter::Encode(BufferedOutput& out,
     out.WriteV32(meta.doc_delta);
   }
 
-  if (_features.HasPosition() && pos_limits::kBlockSize < meta.freq) {
+  if (_features.pos && pos_limits::kBlockSize < meta.freq) {
     out.WriteV32(meta.pos_extent);
-    if (_features.HasOffset()) {
+    if (_features.offs) {
       out.WriteV32(meta.pay_extent);
     }
   }
@@ -455,10 +420,10 @@ inline void PostingsWriter::Encode(BufferedOutput& out,
 inline void PostingsWriter::BeginTerm(PostingMeta& meta) {
   _index.Reset();
   meta.doc_start = _doc_out->Position();
-  if (_features.HasPosition()) {
+  if (_features.pos) {
     SDB_ASSERT(_pos_out);
     meta.pos_start = _pos_out->Position();
-    if (_features.HasOffset()) {
+    if (_features.offs) {
       SDB_ASSERT(_pay_out);
       meta.pay_start = _pay_out->Position();
     }
@@ -509,12 +474,12 @@ inline void PostingsWriter::EndTerm(PostingMeta& meta) {
                std::numeric_limits<uint32_t>::max(), " byte limit");
     meta.doc_delta = static_cast<uint32_t>(index_start);
     ApplyToWriter([&](auto& writer) { writer.Take(2, _index.Root()); });
-    _index.Write(*_doc_out, {.pos = _features.HasPosition(),
-                             .offs = _features.HasOffset(),
+    _index.Write(*_doc_out, {.pos = _features.pos,
+                             .offs = _features.offs,
                              .bounds = _valid_writer != nullptr});
   }
 
-  if (_features.HasPosition() && pos_limits::kBlockSize < meta.freq) {
+  if (_features.pos && pos_limits::kBlockSize < meta.freq) {
     const auto extent = [](const IndexOutput& out, uint64_t start,
                            const BlockGroup& group, bool partial,
                            uint32_t blocks) {
@@ -529,7 +494,7 @@ inline void PostingsWriter::EndTerm(PostingMeta& meta) {
     };
     meta.pos_extent =
       extent(*_pos_out, meta.pos_start, _pos_group, _pos.size != 0, 1);
-    if (_features.HasOffset()) {
+    if (_features.offs) {
       meta.pay_extent =
         extent(*_pay_out, meta.pay_start, _pay_group, _pay.size != 0, 2);
     }
@@ -548,13 +513,14 @@ template<typename Output>
 void PostingsWriter::WriteDocBlock(Output& out) {
   const auto size = _doc.size;
   SDB_ASSERT(size != 0);
-  block_io::WriteTailDelta(size, out, _doc.docs, _doc.block_last, _enc_buf);
-  if (_features.HasFrequency()) {
+  uint32_t enc_buf[block_io::kEncWords];
+  block_io::WriteTailDelta(size, out, _doc.docs, _doc.block_last, enc_buf);
+  if (_features.freq) {
     uint32_t freqs[doc_limits::kBlockSize];
     for (uint32_t i = 0; i != size; ++i) {
       freqs[i] = _doc.freqs[i] - block_io::kFreqBias;
     }
-    block_io::WriteTail(size, out, freqs, _enc_buf, block_io::kFreqOptions);
+    block_io::WriteTail(size, out, freqs, enc_buf, block_io::kFreqOptions);
   }
 }
 
@@ -590,23 +556,24 @@ inline void PostingsWriter::FlushTailPay() {
 
 inline void PostingsWriter::WritePosBlock() {
   SDB_ASSERT(_pos_out);
-  _pos_group.Append(_enc_buf, block_io::EncodeBlock(_pos.buf, _enc_buf));
+  uint32_t enc_buf[block_io::kEncWords];
+  _pos_group.Append(enc_buf, block_io::EncodeBlock(_pos.buf, enc_buf));
   _pos_group.Close(*_pos_out);
   _pos.size = 0;
 }
 
 inline void PostingsWriter::WritePayBlock() {
   SDB_ASSERT(_pay_out);
-  _pay_group.Append(_enc_buf,
-                    block_io::EncodeBlock(_pay.offs_start_buf, _enc_buf));
-  _pay_group.Append(_enc_buf,
-                    block_io::EncodeBlock(_pay.offs_len_buf, _enc_buf));
+  uint32_t enc_buf[block_io::kEncWords];
+  _pay_group.Append(enc_buf,
+                    block_io::EncodeBlock(_pay.offs_start_buf, enc_buf));
+  _pay_group.Append(enc_buf, block_io::EncodeBlock(_pay.offs_len_buf, enc_buf));
   _pay_group.Close(*_pay_out);
   _pay.size = 0;
 }
 
 inline void PostingsWriter::BeginField(const FieldProperties& meta) {
-  _features.Reset(meta.index_features);
+  _features = PostingFeatures{meta.index_features};
   PrepareWriters(meta);
   _docs.clear();
   _last_state.clear();
@@ -616,7 +583,7 @@ inline void PostingsWriter::BeginField(const FieldProperties& meta) {
   // So if it was case when we didn't have offsets we need to flush positions.
   // And if we had positions and offsets and now we will write only positions
   // we need to flush positions and offsets.
-  if (_features.HasOffset()) {
+  if (_features.offs) {
     if (_pos.size != _pay.size || _pos_group.Blocks() != _pay_group.Blocks())
       [[unlikely]] {
       SDB_ASSERT(_pay.size == 0);
@@ -645,8 +612,8 @@ template<bool HasOffs>
 void PostingsWriter::PushPosition(uint32_t pos, uint32_t offs_start,
                                   uint32_t offs_end) {
   // at least positions stream should be created
-  SDB_ASSERT(_features.HasPosition());
-  SDB_ASSERT(_features.HasOffset() == HasOffs);
+  SDB_ASSERT(_features.pos);
+  SDB_ASSERT(_features.offs == HasOffs);
 
   SDB_ASSERT(_pos.size == _pay.size || _pay.size == 0);
   _pos.Next(pos);
@@ -672,8 +639,8 @@ template<bool HasOffs>
 void PostingsWriter::PushPositions(const uint32_t* pos,
                                    const uint32_t* offs_start,
                                    const uint32_t* offs_end, size_t n) {
-  SDB_ASSERT(_features.HasPosition());
-  SDB_ASSERT(_features.HasOffset() == HasOffs);
+  SDB_ASSERT(_features.pos);
+  SDB_ASSERT(_features.offs == HasOffs);
 
   size_t k = 0;
   while (k < n) {
@@ -720,8 +687,8 @@ void PostingsWriter::PushPositions(const uint32_t* pos,
 
 template<bool HasOffs>
 void PostingsWriter::PushDeltas(TermPostings& docs, uint64_t n) {
-  SDB_ASSERT(_features.HasPosition());
-  SDB_ASSERT(_features.HasOffset() == HasOffs);
+  SDB_ASSERT(_features.pos);
+  SDB_ASSERT(_features.offs == HasOffs);
 
   while (n != 0) {
     SDB_ASSERT(_pos.size < pos_limits::kBlockSize);
@@ -825,34 +792,36 @@ inline void PostingsWriter::Write(TermPostings& docs, PostingMeta& meta,
   BeginTerm(meta);
   ApplyToWriter([&](auto& writer) { writer.Reset(); });
 
-  const bool has_vec = _features.HasVector();
+  const bool has_vec = _features.vec;
   if (has_vec) {
     _term_docs.clear();
   }
-  const bool has_freq = _features.HasFrequency();
-  const bool has_pos = _features.HasPosition();
-  const bool has_offs = _features.HasOffset();
+  const bool has_freq = _features.freq;
+  const bool has_pos = _features.pos;
+  const bool has_offs = _features.offs;
 
   uint32_t docs_count = 0;
   uint32_t total_freq = 0;
 
-  while (const auto n = docs.NextDocs(_run_docs, _run_freqs)) {
+  doc_id_t run_docs[doc_limits::kBlockSize];
+  uint32_t run_freqs[doc_limits::kBlockSize];
+  while (const auto n = docs.NextDocs(run_docs, run_freqs)) {
     SDB_ASSERT(n <= doc_limits::kBlockSize);
-    SDB_ASSERT(std::is_sorted(_run_docs, _run_docs + n, std::less_equal{}));
-    if (_doc.last >= _run_docs[0]) [[unlikely]] {
+    SDB_ASSERT(std::is_sorted(run_docs, run_docs + n, std::less_equal{}));
+    if (_doc.last >= run_docs[0]) [[unlikely]] {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INTERNAL_ERROR),
         ERR_MSG("While beginning document in postings_writer, error: "
                 "docs out of order '",
-                _run_docs[0], "' < '", _doc.last, "'"));
+                run_docs[0], "' < '", _doc.last, "'"));
     }
     if (has_vec) {
-      _term_docs.insert(_term_docs.end(), _run_docs, _run_docs + n);
+      _term_docs.insert(_term_docs.end(), run_docs, run_docs + n);
     }
     if (tee.docs && tee.docs->size() < tee.limit) {
       tee.docs->insert(
-        tee.docs->end(), _run_docs,
-        _run_docs + std::min<size_t>(n, tee.limit - tee.docs->size()));
+        tee.docs->end(), run_docs,
+        run_docs + std::min<size_t>(n, tee.limit - tee.docs->size()));
     }
 
     for (uint32_t k = 0; k != n;) {
@@ -861,13 +830,13 @@ inline void PostingsWriter::Write(TermPostings& docs, PostingMeta& meta,
       }
       const auto take = std::min(doc_limits::kBlockSize - _doc.size, n - k);
       auto* docs_out = _doc.docs + _doc.size;
-      std::copy_n(_run_docs + k, take, docs_out);
+      std::copy_n(run_docs + k, take, docs_out);
       for (uint32_t i = 0; i != take; ++i) {
         _docs.set(docs_out[i]);
       }
       uint64_t positions = 0;
       if (has_freq) {
-        const auto* freqs = _run_freqs + k;
+        const auto* freqs = run_freqs + k;
         std::copy_n(freqs, take, _doc.freqs + _doc.size);
         for (uint32_t i = 0; i != take; ++i) {
           SDB_ASSERT(freqs[i] >= block_io::kFreqBias);
@@ -909,13 +878,13 @@ inline void PostingsWriter::WritePostings(const PostingRows& postings,
   BeginTerm(meta);
   ApplyToWriter([&](auto& writer) { writer.Reset(); });
 
-  const bool has_vec = _features.HasVector();
+  const bool has_vec = _features.vec;
   if (has_vec) {
     _term_docs.clear();
   }
-  const bool has_freq = _features.HasFrequency();
-  const bool has_pos = _features.HasPosition();
-  const bool has_offs = _features.HasOffset();
+  const bool has_freq = _features.freq;
+  const bool has_pos = _features.pos;
+  const bool has_offs = _features.offs;
 
   uint32_t docs_count = 0;
   uint32_t total_freq = 0;

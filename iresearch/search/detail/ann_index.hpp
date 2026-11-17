@@ -58,9 +58,9 @@ struct VectorFilterOptions {
   float rescore_width = 0.f;
   HnswFilterMode hnsw_filter_mode = HnswFilterMode::Auto;
   HnswColumnFilter hnsw_column_filter = HnswColumnFilter::Auto;
+  bool has_column_part = false;
   std::shared_ptr<const Filter> inner;
-  std::shared_ptr<const Filter> index_only;
-  bool dual = false;
+  std::shared_ptr<const Filter> index_part;
 
   bool operator==(const VectorFilterOptions& rhs) const noexcept = default;
 };
@@ -118,16 +118,17 @@ inline bool PrepareInnerFilter(const std::shared_ptr<const Filter>& inner,
 
 struct VectorPrefilter {
   QueryBuilder::ptr inner;
-  QueryBuilder::ptr index_only;
-  bool dual = false;
+  QueryBuilder::ptr index_part;
+  bool has_column_part = false;
 };
 
 inline VectorPrefilter PrefilterOf(
-  QueryBuilder::ptr&& inner, const std::shared_ptr<const Filter>& index_only,
-  bool dual, const SubReader& segment, const PrepareContext& ctx) {
+  QueryBuilder::ptr&& inner, const std::shared_ptr<const Filter>& index_part,
+  bool has_column_part, const SubReader& segment, const PrepareContext& ctx) {
   VectorPrefilter prefilter{.inner = std::move(inner)};
-  prefilter.dual =
-    dual && PrepareInnerFilter(index_only, segment, ctx, prefilter.index_only);
+  prefilter.has_column_part =
+    has_column_part &&
+    PrepareInnerFilter(index_part, segment, ctx, prefilter.index_part);
   return prefilter;
 }
 

@@ -32,6 +32,7 @@
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/index/field_reader.hpp"
 #include "iresearch/formats/index/term_dict_format.hpp"
+#include "iresearch/formats/index/term_dict_records.hpp"
 #include "iresearch/formats/posting/block_codec.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
@@ -85,7 +86,6 @@ struct BlockView {
   PackedKeys packed_keys;
   const byte_type* table;
   const byte_type* heads;
-  const byte_type* record_offsets;
   const byte_type* suffixes;
   const byte_type* keys;
   const byte_type* records;
@@ -93,11 +93,6 @@ struct BlockView {
 
 inline uint32_t SuffixOffset(const BlockView& view, uint32_t restart) noexcept {
   return absl::little_endian::Load16(view.table + kVarRestart * restart);
-}
-
-inline uint32_t RecordOffset(const BlockView& view, uint32_t group) noexcept {
-  return absl::little_endian::Load16(view.record_offsets +
-                                     kRecordOffset * group);
 }
 
 inline bytes_view Prefix(const BlockView& view) noexcept {
@@ -197,9 +192,7 @@ inline BlockView Parse(const byte_type* p, const duckdb_fsst_decoder_t* fsst) {
     }
     view.table = p;
     view.heads = p + kVarRestart * view.restarts;
-    view.record_offsets = view.heads + kHeadBytes * view.restarts;
-    view.lcps.data =
-      view.record_offsets + kRecordOffset * RecordGroups(view.count);
+    view.lcps.data = view.heads + kHeadBytes * view.restarts;
     if (packed) {
       headers.codes = view.lcps.data;
       headers.escaped_entries = headers.codes + view.count;
@@ -213,7 +206,7 @@ inline BlockView Parse(const byte_type* p, const duckdb_fsst_decoder_t* fsst) {
   }
   if (view.fixed) {
     const auto groups = vread<uint32_t>(p);
-    if (groups != RecordGroups(view.count)) [[unlikely]] {
+    if (groups != FixedHeads(view.count)) [[unlikely]] {
       corrupted("group count", groups);
     }
     view.stride = vread<uint32_t>(p);
@@ -232,11 +225,10 @@ inline BlockView Parse(const byte_type* p, const duckdb_fsst_decoder_t* fsst) {
     }
     view.table = p + view.prefix;
     view.restarts = groups;
-    view.record_offsets = view.table;
-    view.heads = view.record_offsets + kRecordOffset * groups;
+    view.heads = view.table;
     view.keys = view.heads + FixedHeadBytes(view.stride) * groups;
     if (packs) {
-      view.records = view.keys + PackedKeyBytes(view.count, packed.bits);
+      view.records = view.keys + PackedBytes(view.count, packed.bits);
     } else {
       view.records = view.keys + uint64_t{view.count} * view.stride;
     }
@@ -617,12 +609,12 @@ inline uint32_t FixedLowerBound(const BlockView& view, Probe probe,
                                        absl::big_endian::Load16(rest.data));
     const auto groups = static_cast<uint32_t>(PartitionIndex(
       counts.less, counts.not_after,
-      [&](size_t group) { return less(group * kRecordInterval); }));
+      [&](size_t group) { return less(group * kFixedHeadInterval); }));
     if (groups == 0) {
       return uint32_t{0};
     }
-    const uint32_t first = (groups - 1) * kRecordInterval + 1;
-    const uint32_t last = std::min(groups * kRecordInterval, view.count);
+    const uint32_t first = (groups - 1) * kFixedHeadInterval + 1;
+    const uint32_t last = std::min(groups * kFixedHeadInterval, view.count);
     if constexpr (Shallow) {
       uint32_t entry = first;
       for (uint32_t i = first + 1; i < last; i += 2) {
@@ -691,26 +683,6 @@ struct PendingSuffix {
   bool restart = false;
 };
 
-inline const byte_type* GroupStart(const BlockView& view,
-                                   uint32_t group) noexcept {
-  return view.records + RecordOffset(view, group);
-}
-
-inline void DecodeRecords(const byte_type*& record, uint32_t count,
-                          IndexFeatures features, PostingMeta& meta,
-                          uint64_t& inline_end) noexcept {
-  PostingsReader::WithRecordLayout(features, [&]<bool Freq, bool Pos> {
-    for (; count != 0; --count) {
-      record +=
-        PostingsReader::DecodeAs<Freq, Pos, true>(record, features, meta);
-      if (meta.inline_size != 0) {
-        inline_end = (inline_end == 0 ? vread<uint64_t>(record) : inline_end) +
-                     meta.inline_size;
-      }
-    }
-  });
-}
-
 struct ReadWindow {
   uint64_t ahead;
   uint64_t issued;
@@ -738,18 +710,25 @@ inline HintSpan Slide(ReadWindow& window, uint64_t at, uint64_t end,
   return {.from = from, .to = to};
 }
 
-inline const byte_type* FieldRecords(const TermReaderImpl& field,
-                                     const BlockView& view, uint32_t block,
-                                     uint32_t entry, uint32_t& count) noexcept {
-  const uint32_t group = entry / kRecordInterval;
-  const uint32_t first = field.FirstEntry();
-  if (block == 0 && first > group * kRecordInterval) {
-    SDB_ASSERT(entry >= first);
-    count = entry - first + 1;
-    return view.records + field.FirstRecord();
+inline const byte_type* RunStart(const TermReaderImpl& field,
+                                 const BlockView& view,
+                                 uint32_t block) noexcept {
+  return view.records + (block == 0 ? field.FirstRecord() : 0);
+}
+
+inline uint32_t RunEntry(const TermReaderImpl& field, uint32_t block,
+                         uint32_t entry) noexcept {
+  const uint32_t first = block == 0 ? field.FirstEntry() : 0;
+  SDB_ASSERT(entry >= first);
+  return entry - first;
+}
+
+inline void BindInline(const TermReaderImpl& field,
+                       const RecordDecoder& decoder, PostingMeta& meta) {
+  if (meta.inline_size != 0) {
+    meta.inline_data =
+      field.ResolveInline(decoder.InlineEnd(), meta.inline_size);
   }
-  count = entry % kRecordInterval + 1;
-  return GroupStart(view, group);
 }
 
 struct ColdBlocks {
@@ -762,7 +741,9 @@ struct ColdBlocks {
 class Cursor {
  public:
   explicit Cursor(const TermReaderImpl& field) noexcept
-    : _field{&field}, _end{field.Blocks()} {}
+    : _field{&field},
+      _decoder{field.meta().index_features},
+      _end{field.Blocks()} {}
 
   void ReadaheadUntil(uint32_t end, bool eager) noexcept {
     _end = std::min(end, _field->Blocks());
@@ -1053,30 +1034,25 @@ class Cursor {
     if (_record == _entry) {
       return _meta;
     }
-    const auto features = _field->meta().index_features;
-    if (_record != kNoEntry && _record < _entry &&
-        _record / kRecordInterval == _entry / kRecordInterval) {
-      DecodeRecords(_records, _entry - _record, features, _meta, _inline_end);
+    if (_record != kNoEntry && _record + 1 == _entry) {
+      _decoder.Next(_meta);
     } else {
-      uint32_t count = 0;
-      _records = FieldRecords(*_field, _view, _block, _entry, count);
-      _meta.clear();
-      _inline_end = 0;
-      DecodeRecords(_records, count, features, _meta, _inline_end);
-    }
-    if (_meta.inline_size != 0) {
-      _meta.inline_data = _field->ResolveInline(_inline_end, _meta.inline_size);
-      if (!_field->Small() && _field->Owner().Base()) {
-        InlineAhead(_field->InlineBegin() + _inline_end - _meta.inline_size);
+      if (_record == kNoEntry) {
+        _decoder.Reset(RunStart(*_field, _view, _block));
       }
+      _decoder.Seek(RunEntry(*_field, _block, _entry), _meta);
+    }
+    BindInline(*_field, _decoder, _meta);
+    if (_meta.inline_size != 0 && !_field->Small() && _field->Owner().Base()) {
+      InlineAhead(_field->InlineBegin() + InlineAt());
     }
     _record = _entry;
     return _meta;
   }
 
   uint64_t InlineAt() const noexcept {
-    SDB_ASSERT(_record == _entry && _meta.inline_size != 0);
-    return _inline_end - _meta.inline_size;
+    SDB_ASSERT(_meta.inline_size != 0);
+    return _decoder.InlineEnd() - _meta.inline_size;
   }
 
   bool LowerBound(Probe probe) {
@@ -1410,10 +1386,9 @@ class Cursor {
   bool _partial = false;
   bool _jumped = false;
   KeyBuffer _key;
-  const byte_type* _records = nullptr;
   std::array<PendingSuffix, kRestartInterval> _pending;
+  RecordDecoder _decoder;
   PostingMeta _meta;
-  uint64_t _inline_end = 0;
   PaddedKey _probe;
   BlockBuffer _buffer;
   ReadWindow _blocks_ahead{.ahead = 0, .issued = 0, .size = kFirstWindow};

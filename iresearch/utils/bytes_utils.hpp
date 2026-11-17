@@ -392,11 +392,9 @@ IRS_FORCE_INLINE inline uint64_t ReadPaddedVarint(
   std::memcpy(&word, in, sizeof(word));
   const uint64_t stops = ~word & 0x8080808080808080;
   SDB_ASSERT(stops != 0);
-  const auto bits = static_cast<uint32_t>(std::countr_zero(stops)) + 1;
-  in += bits / 8;
-  if (bits != 64) {
-    word &= (uint64_t{1} << bits) - 1;
-  }
+  const auto stop = static_cast<uint32_t>(std::countr_zero(stops));
+  in += (stop + 1) / 8;
+  word &= ~uint64_t{0} >> (63 - stop);
   word &= 0x7F7F7F7F7F7F7F7F;
   word = (word & 0x7F007F007F007F00) >> 1 | (word & 0x007F007F007F007F);
   word = (word & 0x3FFF00003FFF0000) >> 2 | (word & 0x00003FFF00003FFF);

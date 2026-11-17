@@ -310,7 +310,7 @@ float AnnRescoreWidth(duckdb::ClientContext& context,
 template<typename AnnFilter>
 std::unique_ptr<AnnFilter> MakeAnnFilter(
   const VectorScorerOptions& vs, std::shared_ptr<const irs::Filter> inner,
-  std::shared_ptr<const irs::Filter> index_only, bool dual) {
+  std::shared_ptr<const irs::Filter> index_part, bool has_column_part) {
   auto f = std::make_unique<AnnFilter>();
   *f->mutable_field_id() = vs.field_id;
   auto* o = f->mutable_options();
@@ -320,8 +320,8 @@ std::unique_ptr<AnnFilter> MakeAnnFilter(
   o->metric = vs.metric;
   o->quant = vs.quant;
   o->inner = std::move(inner);
-  o->index_only = std::move(index_only);
-  o->dual = dual;
+  o->index_part = std::move(index_part);
+  o->has_column_part = has_column_part;
   return f;
 }
 
@@ -787,8 +787,8 @@ DeferredBuild BuildDeferredFilter(duckdb::ClientContext& context,
 irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
                                   std::shared_ptr<const irs::Filter> inner,
                                   float radius,
-                                  std::shared_ptr<const irs::Filter> index_only,
-                                  bool dual) {
+                                  std::shared_ptr<const irs::Filter> index_part,
+                                  bool has_column_part) {
   if (vs.exact) {
     auto f = std::make_unique<irs::ByVectorExact>();
     *f->mutable_field_id() = vs.field_id;
@@ -799,20 +799,20 @@ irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
     o->radius = radius;
     o->inclusive = vs.radius_inclusive;
     o->inner = std::move(inner);
-    o->index_only = std::move(index_only);
-    o->dual = dual;
+    o->index_part = std::move(index_part);
+    o->has_column_part = has_column_part;
     return f;
   }
   if (vs.radius != std::numeric_limits<float>::max()) {
-    auto f = MakeAnnFilter<irs::ByRadius>(vs, std::move(inner),
-                                          std::move(index_only), dual);
+    auto f = MakeAnnFilter<irs::ByRadius>(
+      vs, std::move(inner), std::move(index_part), has_column_part);
     auto* o = f->mutable_options();
     o->radius = radius;
     o->inclusive = vs.radius_inclusive;
     return f;
   }
-  auto f = MakeAnnFilter<irs::ByVectorSimilarity>(vs, std::move(inner),
-                                                  std::move(index_only), dual);
+  auto f = MakeAnnFilter<irs::ByVectorSimilarity>(
+    vs, std::move(inner), std::move(index_part), has_column_part);
   auto* o = f->mutable_options();
   o->nprobe = vs.nprobe;
   o->min_search_fanout = vs.min_search_fanout;

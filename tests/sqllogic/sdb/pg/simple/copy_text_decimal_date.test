@@ -1,0 +1,95 @@
+control substitution on
+
+statement ok
+CREATE TABLE ctdd_src AS
+SELECT i::INTEGER AS i,
+  CASE i % 12
+    WHEN 0 THEN (i % 1000)::VARCHAR
+    WHEN 1 THEN '-' || (i % 1000)::VARCHAR || '.' || lpad((i % 100)::VARCHAR, 2, '0')
+    WHEN 2 THEN (i * 7919 % 1000000000000)::VARCHAR || '.5'
+    WHEN 3 THEN '000' || (i % 50)::VARCHAR || '.0'
+    WHEN 4 THEN (i % 100)::VARCHAR || '.'
+    WHEN 5 THEN '-0.0' || (i % 10)::VARCHAR
+    WHEN 6 THEN (i % 100)::VARCHAR || '.125'
+    WHEN 7 THEN '+' || (i % 100)::VARCHAR
+    WHEN 8 THEN (i % 30000)::VARCHAR || 'e-2'
+    WHEN 9 THEN '9999999999999.99'
+    WHEN 10 THEN '-9999999999999.99'
+    ELSE '0.' || lpad((i % 100)::VARCHAR, 2, '0')
+  END AS d,
+  CASE i % 6
+    WHEN 0 THEN strftime(DATE '1970-01-01' + (i * 37 % 3000000 - 719000)::INTEGER, '%Y-%m-%d')
+    WHEN 1 THEN strftime(DATE '2000-01-01' + (i % 20000)::INTEGER, '%Y/%m/%d')
+    WHEN 2 THEN (1900 + i % 200)::VARCHAR || '-' || (1 + i % 12)::VARCHAR || '-' || (1 + i % 28)::VARCHAR
+    WHEN 3 THEN (2000 + floor(i / 6.0)::INTEGER % 400)::VARCHAR || '-02-29'
+    WHEN 4 THEN 'infinity'
+    ELSE '0001-01-01'
+  END AS dt
+FROM range(30000) t(i);
+
+
+statement ok
+DELETE FROM ctdd_src WHERE i % 6 = 3 AND try_cast(dt AS DATE) IS NULL;
+
+
+statement ok
+COPY ctdd_src TO '${__TEST_DIR__}/ctdd.txt' (FORMAT text);
+
+
+statement ok
+CREATE TABLE ctdd_typed (i INTEGER, d DECIMAL(15,2), dt DATE);
+
+
+statement ok
+COPY ctdd_typed FROM '${__TEST_DIR__}/ctdd.txt' (FORMAT text);
+
+
+query
+SELECT count(*) AS n,
+  count(*) FILTER (WHERE t.d IS DISTINCT FROM s.d::DECIMAL(15,2)) AS decimal_mismatches,
+  count(*) FILTER (WHERE t.dt IS DISTINCT FROM s.dt::DATE) AS date_mismatches
+FROM ctdd_typed t
+JOIN ctdd_src s USING (i);
+----
+n	decimal_mismatches	date_mismatches
+26213	0	0
+
+
+statement ok
+COPY (SELECT 1, '99999999999999.99', '2024-01-01') TO '${__TEST_DIR__}/ctdd_overflow.txt' (FORMAT text);
+
+
+statement error
+COPY ctdd_typed FROM '${__TEST_DIR__}/ctdd_overflow.txt' (FORMAT text);
+----
+db error: ERROR: Could not convert string "99999999999999.99" to DECIMAL(15,2)
+
+
+statement ok
+CREATE TABLE ctdd_ignore (i INTEGER, d DECIMAL(15,2), b BIT(4));
+
+
+statement ok
+COPY (SELECT * FROM (VALUES (1, '1.5', '1010'), (2, 'abc', '1010'), (3, '2.5', '10x1'), (4, '3.5', '0101')) t) TO '${__TEST_DIR__}/ctdd_ignore.txt' (FORMAT text);
+
+
+statement ok
+COPY ctdd_ignore FROM '${__TEST_DIR__}/ctdd_ignore.txt' (FORMAT text, ON_ERROR ignore);
+
+
+query
+SELECT i, d, b FROM ctdd_ignore ORDER BY i;
+----
+i	d	b
+1	1.50	1010
+4	3.50	0101
+
+
+statement ok
+COPY (SELECT 1, '1.00', '2023-02-29') TO '${__TEST_DIR__}/ctdd_bad_date.txt' (FORMAT text);
+
+
+statement error
+COPY ctdd_typed FROM '${__TEST_DIR__}/ctdd_bad_date.txt' (FORMAT text);
+----
+db error: ERROR: COPY FROM: invalid input for column 3

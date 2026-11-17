@@ -23,11 +23,17 @@
 #include <cstdint>
 #include <optional>
 
-#include "iresearch/formats/column/codecs/bytes/byte_codec.hpp"
+#include "iresearch/formats/column/codecs/codec_type.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_tuning.hpp"
 #include "iresearch/formats/column/codecs/reuse_policy.hpp"
 
 namespace irs::codecs {
+
+enum class FrameDictionary : uint8_t {
+  None,
+  FirstFrame,
+  Local,
+};
 
 struct RatioHistory {
   uint64_t raw = 0;

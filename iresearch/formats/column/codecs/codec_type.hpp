@@ -209,6 +209,11 @@ constexpr bool IsNumeric(CodecType type) noexcept {
   return IsForm(type) && std::to_underlying(LeafOf(type)) < kNumericLeafCount;
 }
 
+constexpr bool Sorted(ByteCodec leaf) noexcept {
+  return leaf == ByteCodec::Fsst || leaf == ByteCodec::FsstPlus ||
+         leaf == ByteCodec::OnPair || leaf == ByteCodec::Fsst12;
+}
+
 static_assert(std::to_underlying(Shape::Dictionary) + 1 == kTextShapeCount);
 static_assert(std::to_underlying(ByteCodec::Zstd) + 1 == kNumericLeafCount);
 static_assert(CodecOf(Shape::Dictionary, ByteCodec::Fsst12) ==

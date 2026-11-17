@@ -49,44 +49,36 @@ struct Zxc {
     return zxc_compress_bound(raw_size);
   }
 
-  class Compressor {
+  class Compressor final : public DictionaryCompressor {
    public:
     explicit Compressor(uint8_t level);
 
-    bool Train(std::string_view frames, std::span<const size_t> sizes);
-    void Use(std::string_view raw);
-    void Clear() noexcept {
-      _dictionary.clear();
-      _stored.clear();
-    }
-    std::string_view Dictionary() const noexcept { return _dictionary; }
-    std::string_view Stored() const noexcept { return _stored; }
-
     size_t Compress(const char* src, size_t size, char* dst, size_t capacity);
+
+    void Attach();
+    static size_t StoredBound(size_t size) noexcept { return Bound(size); }
+    size_t CompressStored(const char* src, size_t size, char* dst,
+                          size_t capacity) {
+      return Plain(src, size, dst, capacity);
+    }
 
    private:
     size_t Plain(const char* src, size_t size, char* dst, size_t capacity);
-    bool Pack();
-    void Attach();
 
     uint8_t _level;
     std::unique_ptr<zxc_cctx, ZxcFree> _ctx;
     std::unique_ptr<zxc_cctx, ZxcFree> _attached;
-    std::string _dictionary;
-    std::string _stored;
   };
 
-  class Decompressor {
+  class Decompressor final : public DictionaryDecompressor {
    public:
     Decompressor();
 
     bool Decompress(const char* src, size_t size, char* dst,
                     size_t raw_size) noexcept;
-
-    bool Load(std::string_view stored, size_t size);
-    bool LoadFrame(const char* src, size_t size, size_t raw_size);
-    std::string_view Dictionary() const noexcept {
-      return {_window.data(), _dictionary};
+    bool DecompressStored(const char* src, size_t size, char* dst,
+                          size_t raw_size) noexcept {
+      return Decompress(src, size, dst, raw_size);
     }
 
     std::string_view Inflate(const char* src, size_t size, char* dst, size_t,
@@ -95,8 +87,6 @@ struct Zxc {
    private:
     std::unique_ptr<zxc_dctx, ZxcFree> _ctx;
     std::unique_ptr<zxc_dctx, ZxcFree> _blocks;
-    std::string _window;
-    size_t _dictionary = 0;
   };
 };
 

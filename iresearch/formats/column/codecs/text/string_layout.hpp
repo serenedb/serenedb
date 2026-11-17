@@ -27,8 +27,9 @@
 #include <duckdb/common/typedefs.hpp>
 #include <utility>
 
-#include "iresearch/formats/column/codecs/bytes/byte_codec.hpp"
+#include "iresearch/formats/column/codecs/codec_type.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
+#include "iresearch/formats/column/codecs/text/string_tuning.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::codecs {

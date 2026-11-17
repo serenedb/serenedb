@@ -57,48 +57,25 @@ size_t Lz4::Bound(size_t raw_size) noexcept {
 }
 
 Lz4::Compressor::Compressor(uint8_t)
-  : _work{std::make_unique_for_overwrite<LZ4_stream_t>()} {
+  : DictionaryCompressor{kDictionaryCap},
+    _work{std::make_unique_for_overwrite<LZ4_stream_t>()} {
   SDB_ENSURE(LZ4_initStream(_work.get(), sizeof(LZ4_stream_t)),
              "lz4: cannot initialize a compression stream");
 }
 
-bool Lz4::Compressor::Train(std::string_view frames,
-                            std::span<const size_t> sizes) {
-  TrainDictionary(frames, sizes, kDictionaryCap, _dictionary);
-  return Pack();
-}
-
-bool Lz4::Compressor::Pack() {
-  _stored.clear();
-  if (_dictionary.empty()) {
-    return false;
-  }
-  PackDictionary(_dictionary, Bound(_dictionary.size()), _stored,
-                 [&](const char* src, size_t size, char* dst, size_t capacity) {
-                   return Plain(src, size, dst, capacity);
-                 });
-  Attach();
-  return true;
-}
-
-void Lz4::Compressor::Use(std::string_view raw) {
-  _dictionary.assign(raw);
-  _stored.clear();
-  Attach();
-}
-
 void Lz4::Compressor::Attach() {
-  SDB_ASSERT(_dictionary.size() <= static_cast<size_t>(LZ4_MAX_INPUT_SIZE));
+  const auto dictionary = Dictionary();
+  SDB_ASSERT(dictionary.size() <= static_cast<size_t>(LZ4_MAX_INPUT_SIZE));
   if (!_attached) {
     _attached = std::make_unique_for_overwrite<LZ4_stream_t>();
   }
-  LZ4_loadDict(_attached.get(), _dictionary.data(),
-               static_cast<int>(_dictionary.size()));
+  LZ4_loadDict(_attached.get(), dictionary.data(),
+               static_cast<int>(dictionary.size()));
 }
 
 size_t Lz4::Compressor::Compress(const char* src, size_t size, char* dst,
                                  size_t capacity) {
-  if (_dictionary.empty()) {
+  if (Dictionary().empty()) {
     return Plain(src, size, dst, capacity);
   }
   SDB_ASSERT(size <= static_cast<size_t>(LZ4_MAX_INPUT_SIZE));
@@ -124,50 +101,28 @@ size_t Lz4::Compressor::Plain(const char* src, size_t size, char* dst,
 }
 
 Lz4Hc::Compressor::Compressor(uint8_t level)
-  : _level{EffectiveLevel<Lz4Hc>(level)}, _work{LZ4_createStreamHC()} {
+  : DictionaryCompressor{kDictionaryCap},
+    _level{EffectiveLevel<Lz4Hc>(level)},
+    _work{LZ4_createStreamHC()} {
   SDB_ENSURE(_work, "lz4: cannot create a compression stream");
 }
 
-bool Lz4Hc::Compressor::Train(std::string_view frames,
-                              std::span<const size_t> sizes) {
-  TrainDictionary(frames, sizes, kDictionaryCap, _dictionary);
-  return Pack();
-}
-
-bool Lz4Hc::Compressor::Pack() {
-  _stored.clear();
-  if (_dictionary.empty()) {
-    return false;
-  }
-  PackDictionary(_dictionary, Bound(_dictionary.size()), _stored,
-                 [&](const char* src, size_t size, char* dst, size_t capacity) {
-                   return Plain(src, size, dst, capacity);
-                 });
-  Attach();
-  return true;
-}
-
-void Lz4Hc::Compressor::Use(std::string_view raw) {
-  _dictionary.assign(raw);
-  _stored.clear();
-  Attach();
-}
-
 void Lz4Hc::Compressor::Attach() {
-  SDB_ASSERT(_dictionary.size() <= static_cast<size_t>(LZ4_MAX_INPUT_SIZE));
+  const auto dictionary = Dictionary();
+  SDB_ASSERT(dictionary.size() <= static_cast<size_t>(LZ4_MAX_INPUT_SIZE));
   if (!_attached) {
     _attached = std::make_unique_for_overwrite<LZ4_streamHC_t>();
   }
   LZ4_setCompressionLevel(_attached.get(), _level);
   LZ4_favorDecompressionSpeed(_attached.get(), 0);
   _attached->internal_donotuse.hasWorkspace = 0;
-  LZ4_loadDictHC(_attached.get(), _dictionary.data(),
-                 static_cast<int>(_dictionary.size()));
+  LZ4_loadDictHC(_attached.get(), dictionary.data(),
+                 static_cast<int>(dictionary.size()));
 }
 
 size_t Lz4Hc::Compressor::Compress(const char* src, size_t size, char* dst,
                                    size_t capacity) {
-  if (_dictionary.empty()) {
+  if (Dictionary().empty()) {
     return Plain(src, size, dst, capacity);
   }
   SDB_ASSERT(size <= static_cast<size_t>(LZ4_MAX_INPUT_SIZE));
@@ -214,28 +169,11 @@ size_t Lz4::Decompressor::DecompressPrefix(const char* src, size_t size,
   return n >= static_cast<int>(want) ? static_cast<size_t>(n) : 0;
 }
 
-bool Lz4::Decompressor::Load(std::string_view stored, size_t size) {
-  return FillDictionary(_window, _dictionary, size, [&](char* buf) {
-    return UnpackDictionary(
-      stored, buf, size,
-      [&](const char* src, size_t n, char* dst, size_t raw_size) {
-        return Decompress(src, n, dst, raw_size);
-      });
-  });
-}
-
-bool Lz4::Decompressor::LoadFrame(const char* src, size_t size,
-                                  size_t raw_size) {
-  return FillDictionary(_window, _dictionary, raw_size, [&](char* buf) {
-    return Decompress(src, size, buf, raw_size);
-  });
-}
-
 std::string_view Lz4::Decompressor::Inflate(const char* src, size_t size,
                                             char* dst, size_t want,
                                             size_t raw_size) {
   SDB_ASSERT(want <= raw_size);
-  if (_dictionary == 0) {
+  if (!HasDictionary()) {
     if (want == raw_size) {
       return Decompress(src, size, dst, raw_size)
                ? std::string_view{dst, raw_size}
@@ -246,7 +184,7 @@ std::string_view Lz4::Decompressor::Inflate(const char* src, size_t size,
   if (!std::in_range<int>(size) || !std::in_range<int>(raw_size)) {
     return {};
   }
-  auto* out = FrameAfterDictionary(_window, _dictionary, raw_size);
+  auto* out = FrameAfterDictionary(raw_size);
   const auto dictionary = Dictionary();
   const int n =
     want == raw_size

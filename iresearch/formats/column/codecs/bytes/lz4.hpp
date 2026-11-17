@@ -49,51 +49,39 @@ struct Lz4 {
 
   static size_t Bound(size_t raw_size) noexcept;
 
-  class Compressor {
+  class Compressor final : public DictionaryCompressor {
    public:
     explicit Compressor(uint8_t level);
 
-    bool Train(std::string_view frames, std::span<const size_t> sizes);
-    void Use(std::string_view raw);
-    void Clear() noexcept {
-      _dictionary.clear();
-      _stored.clear();
-    }
-    std::string_view Dictionary() const noexcept { return _dictionary; }
-    std::string_view Stored() const noexcept { return _stored; }
-
     size_t Compress(const char* src, size_t size, char* dst, size_t capacity);
+
+    void Attach();
+    static size_t StoredBound(size_t size) noexcept { return Bound(size); }
+    size_t CompressStored(const char* src, size_t size, char* dst,
+                          size_t capacity) {
+      return Plain(src, size, dst, capacity);
+    }
 
    private:
     size_t Plain(const char* src, size_t size, char* dst, size_t capacity);
-    bool Pack();
-    void Attach();
 
     std::unique_ptr<LZ4_stream_t> _work;
     std::unique_ptr<LZ4_stream_t> _attached;
-    std::string _dictionary;
-    std::string _stored;
   };
 
-  class Decompressor {
+  class Decompressor final : public DictionaryDecompressor {
    public:
     static bool Decompress(const char* src, size_t size, char* dst,
                            size_t raw_size) noexcept;
     static size_t DecompressPrefix(const char* src, size_t size, char* dst,
                                    size_t want, size_t raw_size) noexcept;
-
-    bool Load(std::string_view stored, size_t size);
-    bool LoadFrame(const char* src, size_t size, size_t raw_size);
-    std::string_view Dictionary() const noexcept {
-      return {_window.data(), _dictionary};
+    static bool DecompressStored(const char* src, size_t size, char* dst,
+                                 size_t raw_size) noexcept {
+      return Decompress(src, size, dst, raw_size);
     }
 
     std::string_view Inflate(const char* src, size_t size, char* dst,
                              size_t want, size_t raw_size);
-
-   private:
-    std::string _window;
-    size_t _dictionary = 0;
   };
 };
 
@@ -105,31 +93,25 @@ struct Lz4Hc {
 
   static size_t Bound(size_t raw_size) noexcept { return Lz4::Bound(raw_size); }
 
-  class Compressor {
+  class Compressor final : public DictionaryCompressor {
    public:
     explicit Compressor(uint8_t level);
 
-    bool Train(std::string_view frames, std::span<const size_t> sizes);
-    void Use(std::string_view raw);
-    void Clear() noexcept {
-      _dictionary.clear();
-      _stored.clear();
-    }
-    std::string_view Dictionary() const noexcept { return _dictionary; }
-    std::string_view Stored() const noexcept { return _stored; }
-
     size_t Compress(const char* src, size_t size, char* dst, size_t capacity);
+
+    void Attach();
+    static size_t StoredBound(size_t size) noexcept { return Bound(size); }
+    size_t CompressStored(const char* src, size_t size, char* dst,
+                          size_t capacity) {
+      return Plain(src, size, dst, capacity);
+    }
 
    private:
     size_t Plain(const char* src, size_t size, char* dst, size_t capacity);
-    bool Pack();
-    void Attach();
 
     int _level;
     std::unique_ptr<LZ4_streamHC_t, Lz4HcFree> _work;
     std::unique_ptr<LZ4_streamHC_t> _attached;
-    std::string _dictionary;
-    std::string _stored;
   };
 };
 

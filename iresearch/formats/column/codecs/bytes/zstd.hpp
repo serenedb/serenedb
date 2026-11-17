@@ -51,44 +51,33 @@ struct Zstd {
     return ZSTD_compressBound(raw_size);
   }
 
-  class Compressor {
+  class Compressor final : public DictionaryCompressor {
    public:
     explicit Compressor(uint8_t level);
 
-    bool Train(std::string_view frames, std::span<const size_t> sizes);
-    void Use(std::string_view raw);
-    void Clear() noexcept {
-      _dictionary.clear();
-      _stored.clear();
-    }
-    std::string_view Dictionary() const noexcept { return _dictionary; }
-    std::string_view Stored() const noexcept { return _stored; }
-
     size_t Compress(const char* src, size_t size, char* dst, size_t capacity);
+
+    void Attach();
+    static size_t StoredBound(size_t size) noexcept;
+    static size_t CompressStored(const char* src, size_t size, char* dst,
+                                 size_t capacity) noexcept;
 
    private:
     size_t Plain(const char* src, size_t size, char* dst, size_t capacity);
-    bool Pack();
-    void Attach();
 
     int _level;
     std::unique_ptr<ZSTD_CCtx, ZstdFree> _ctx;
     std::unique_ptr<ZSTD_CDict, ZstdFree> _attached;
-    std::string _dictionary;
-    std::string _stored;
   };
 
-  class Decompressor {
+  class Decompressor final : public DictionaryDecompressor {
    public:
     Decompressor();
 
     bool Decompress(const char* src, size_t size, char* dst, size_t raw_size);
 
-    bool Load(std::string_view stored, size_t size);
-    bool LoadFrame(const char* src, size_t size, size_t raw_size);
-    std::string_view Dictionary() const noexcept {
-      return {_window.data(), _dictionary};
-    }
+    static bool DecompressStored(const char* src, size_t size, char* dst,
+                                 size_t raw_size) noexcept;
 
     std::string_view Inflate(const char* src, size_t size, char* dst, size_t,
                              size_t raw_size);
@@ -101,8 +90,6 @@ struct Zstd {
     std::unique_ptr<ZSTD_DCtx, ZstdFree> _ctx;
     std::unique_ptr<ZSTD_DDict, ZstdFree> _attached;
     std::string_view _attached_bytes;
-    std::string _window;
-    size_t _dictionary = 0;
   };
 };
 

@@ -65,35 +65,12 @@ constinit const Codec kDictZxcCodec =
   text::StringCodec<text::DictionaryScan<text::blob::Leaf<Zxc>>>();
 
 Zxc::Compressor::Compressor(uint8_t level)
-  : _level{level}, _ctx{NewContext(level)} {}
-
-bool Zxc::Compressor::Train(std::string_view frames,
-                            std::span<const size_t> sizes) {
-  TrainDictionary(frames, sizes, kDictionaryCap, _dictionary);
-  return Pack();
-}
-
-bool Zxc::Compressor::Pack() {
-  _stored.clear();
-  if (_dictionary.empty()) {
-    return false;
-  }
-  PackDictionary(_dictionary, Bound(_dictionary.size()), _stored,
-                 [&](const char* src, size_t size, char* dst, size_t capacity) {
-                   return Plain(src, size, dst, capacity);
-                 });
-  Attach();
-  return true;
-}
-
-void Zxc::Compressor::Use(std::string_view raw) {
-  _dictionary.assign(raw);
-  _stored.clear();
-  Attach();
-}
+  : DictionaryCompressor{kDictionaryCap},
+    _level{level},
+    _ctx{NewContext(level)} {}
 
 void Zxc::Compressor::Attach() {
-  const auto bytes = ZxcDictionary(_dictionary);
+  const auto bytes = ZxcDictionary(Dictionary());
   _attached = NewContext(_level);
   const auto rc =
     zxc_cctx_set_dict(_attached.get(), bytes.data(), bytes.size(), nullptr);
@@ -102,7 +79,7 @@ void Zxc::Compressor::Attach() {
 
 size_t Zxc::Compressor::Compress(const char* src, size_t size, char* dst,
                                  size_t capacity) {
-  if (_dictionary.empty() || size == 0 || size > ZXC_BLOCK_SIZE_MAX) {
+  if (Dictionary().empty() || size == 0 || size > ZXC_BLOCK_SIZE_MAX) {
     return Plain(src, size, dst, capacity);
   }
   const auto n = zxc_compress_block(_attached.get(), src, size, dst, capacity);
@@ -127,27 +104,10 @@ bool Zxc::Decompressor::Decompress(const char* src, size_t size, char* dst,
   return n >= 0 && static_cast<size_t>(n) == raw_size;
 }
 
-bool Zxc::Decompressor::Load(std::string_view stored, size_t size) {
-  return FillDictionary(_window, _dictionary, size, [&](char* buf) {
-    return UnpackDictionary(
-      stored, buf, size,
-      [&](const char* src, size_t n, char* dst, size_t raw_size) {
-        return Decompress(src, n, dst, raw_size);
-      });
-  });
-}
-
-bool Zxc::Decompressor::LoadFrame(const char* src, size_t size,
-                                  size_t raw_size) {
-  return FillDictionary(_window, _dictionary, raw_size, [&](char* buf) {
-    return Decompress(src, size, buf, raw_size);
-  });
-}
-
 std::string_view Zxc::Decompressor::Inflate(const char* src, size_t size,
                                             char* dst, size_t,
                                             size_t raw_size) {
-  if (_dictionary == 0 || raw_size == 0 || raw_size > ZXC_BLOCK_SIZE_MAX) {
+  if (!HasDictionary() || raw_size == 0 || raw_size > ZXC_BLOCK_SIZE_MAX) {
     return Decompress(src, size, dst, raw_size)
              ? std::string_view{dst, raw_size}
              : std::string_view{};
@@ -159,7 +119,7 @@ std::string_view Zxc::Decompressor::Inflate(const char* src, size_t size,
     }
   }
   const auto capacity = zxc_decompress_block_bound(raw_size);
-  auto* out = FrameAfterDictionary(_window, _dictionary, capacity);
+  auto* out = FrameAfterDictionary(capacity);
   const auto dictionary = ZxcDictionary(Dictionary());
   if (zxc_dctx_ref_dict(_blocks.get(), dictionary.data(), dictionary.size()) !=
       ZXC_OK) {

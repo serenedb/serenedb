@@ -21,28 +21,105 @@
 #pragma once
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
-#include <magic_enum/magic_enum.hpp>
-#include <utility>
+#include <span>
+#include <string>
+#include <string_view>
 
+#include "iresearch/formats/column/codecs/bytes/segment_dictionary.hpp"
 #include "iresearch/formats/column/codecs/codec_type.hpp"
 
 namespace irs::codecs {
-
-enum class FrameDictionary : uint8_t {
-  None,
-  FirstFrame,
-  Local,
-};
-
-constexpr bool Sorted(ByteCodec leaf) noexcept {
-  return leaf == ByteCodec::Fsst || leaf == ByteCodec::FsstPlus ||
-         leaf == ByteCodec::OnPair || leaf == ByteCodec::Fsst12;
-}
 
 template<typename Codec>
 constexpr uint8_t EffectiveLevel(uint8_t level) noexcept {
   return level ? std::min(level, Codec::kMaxLevel) : Codec::kDefaultLevel;
 }
+
+class DictionaryCompressor {
+ public:
+  template<typename Self>
+  bool Train(this Self& self, std::string_view frames,
+             std::span<const size_t> sizes) {
+    DictionaryCompressor& base = self;
+    TrainDictionary(frames, sizes, base._cap, base._dictionary);
+    base._stored.clear();
+    if (base._dictionary.empty()) {
+      return false;
+    }
+    PackDictionary(
+      base._dictionary, self.StoredBound(base._dictionary.size()), base._stored,
+      [&](const char* src, size_t size, char* dst, size_t capacity) {
+        return self.CompressStored(src, size, dst, capacity);
+      });
+    self.Attach();
+    return true;
+  }
+
+  template<typename Self>
+  void Use(this Self& self, std::string_view raw) {
+    DictionaryCompressor& base = self;
+    base._dictionary.assign(raw);
+    base._stored.clear();
+    self.Attach();
+  }
+
+  void Clear() noexcept {
+    _dictionary.clear();
+    _stored.clear();
+  }
+
+  std::string_view Dictionary() const noexcept { return _dictionary; }
+
+  std::string_view Stored() const noexcept { return _stored; }
+
+ protected:
+  explicit DictionaryCompressor(size_t cap) noexcept : _cap{cap} {}
+
+ private:
+  size_t _cap;
+  std::string _dictionary;
+  std::string _stored;
+};
+
+class DictionaryDecompressor {
+ public:
+  template<typename Self>
+  bool Load(this Self& self, std::string_view stored, size_t size) {
+    DictionaryDecompressor& base = self;
+    return FillDictionary(base._window, base._dictionary, size, [&](char* buf) {
+      return UnpackDictionary(
+        stored, buf, size,
+        [&](const char* src, size_t n, char* dst, size_t raw_size) {
+          return self.DecompressStored(src, n, dst, raw_size);
+        });
+    });
+  }
+
+  template<typename Self>
+  bool LoadFrame(this Self& self, const char* src, size_t size,
+                 size_t raw_size) {
+    DictionaryDecompressor& base = self;
+    return FillDictionary(
+      base._window, base._dictionary, raw_size,
+      [&](char* buf) { return self.Decompress(src, size, buf, raw_size); });
+  }
+
+  std::string_view Dictionary() const noexcept {
+    return {_window.data(), _dictionary};
+  }
+
+ protected:
+  bool HasDictionary() const noexcept { return _dictionary != 0; }
+
+  char* FrameAfterDictionary(size_t size) {
+    return codecs::FrameAfterDictionary(_window, _dictionary, size);
+  }
+
+ private:
+  std::string _window;
+  size_t _dictionary = 0;
+};
 
 }  // namespace irs::codecs

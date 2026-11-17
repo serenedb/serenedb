@@ -52,48 +52,35 @@ constinit const Codec kDictZstdCodec =
   text::StringCodec<text::DictionaryScan<text::blob::Leaf<Zstd>>>();
 
 Zstd::Compressor::Compressor(uint8_t level)
-  : _level{EffectiveLevel<Zstd>(level)}, _ctx{ZSTD_createCCtx()} {
+  : DictionaryCompressor{kDictionaryCap},
+    _level{EffectiveLevel<Zstd>(level)},
+    _ctx{ZSTD_createCCtx()} {
   SDB_ENSURE(_ctx, "zstd: cannot create a compression context");
 }
 
-bool Zstd::Compressor::Train(std::string_view frames,
-                             std::span<const size_t> sizes) {
-  TrainDictionary(frames, sizes, kDictionaryCap, _dictionary);
-  return Pack();
+size_t Zstd::Compressor::StoredBound(size_t size) noexcept {
+  return Lz4::Bound(size);
 }
 
-bool Zstd::Compressor::Pack() {
-  _stored.clear();
-  if (_dictionary.empty()) {
-    return false;
-  }
-  PackDictionary(_dictionary, Lz4::Bound(_dictionary.size()), _stored,
-                 [](const char* src, size_t size, char* dst, size_t capacity) {
-                   return static_cast<size_t>(std::max(
-                     0, LZ4_compress_default(src, dst, static_cast<int>(size),
-                                             static_cast<int>(capacity))));
-                 });
-  Attach();
-  return true;
-}
-
-void Zstd::Compressor::Use(std::string_view raw) {
-  _dictionary.assign(raw);
-  _stored.clear();
-  Attach();
+size_t Zstd::Compressor::CompressStored(const char* src, size_t size, char* dst,
+                                        size_t capacity) noexcept {
+  return static_cast<size_t>(
+    std::max(0, LZ4_compress_default(src, dst, static_cast<int>(size),
+                                     static_cast<int>(capacity))));
 }
 
 void Zstd::Compressor::Attach() {
+  const auto dictionary = Dictionary();
   _attached.reset(ZSTD_createCDict_advanced(
-    _dictionary.data(), _dictionary.size(), ZSTD_dlm_byRef, ZSTD_dct_rawContent,
-    ZSTD_getCParams(_level, kZstdDictionaryFrameBytes, _dictionary.size()),
+    dictionary.data(), dictionary.size(), ZSTD_dlm_byRef, ZSTD_dct_rawContent,
+    ZSTD_getCParams(_level, kZstdDictionaryFrameBytes, dictionary.size()),
     ZSTD_defaultCMem));
   SDB_ENSURE(_attached, "zstd: cannot create a compression dictionary");
 }
 
 size_t Zstd::Compressor::Compress(const char* src, size_t size, char* dst,
                                   size_t capacity) {
-  if (_dictionary.empty()) {
+  if (Dictionary().empty()) {
     return Plain(src, size, dst, capacity);
   }
   const auto n = ZSTD_compress_usingCDict(_ctx.get(), dst, capacity, src, size,
@@ -121,28 +108,20 @@ bool Zstd::Decompressor::Decompress(const char* src, size_t size, char* dst,
   return Run(src, size, dst, raw_size, nullptr);
 }
 
-bool Zstd::Decompressor::Load(std::string_view stored, size_t size) {
-  return FillDictionary(_window, _dictionary, size, [&](char* buf) {
-    return UnpackDictionary(stored, buf, size, Lz4::Decompressor::Decompress);
-  });
-}
-
-bool Zstd::Decompressor::LoadFrame(const char* src, size_t size,
-                                   size_t raw_size) {
-  return FillDictionary(_window, _dictionary, raw_size, [&](char* buf) {
-    return Decompress(src, size, buf, raw_size);
-  });
+bool Zstd::Decompressor::DecompressStored(const char* src, size_t size,
+                                          char* dst, size_t raw_size) noexcept {
+  return Lz4::Decompressor::Decompress(src, size, dst, raw_size);
 }
 
 std::string_view Zstd::Decompressor::Inflate(const char* src, size_t size,
                                              char* dst, size_t,
                                              size_t raw_size) {
-  if (_dictionary == 0) {
+  if (!HasDictionary()) {
     return Decompress(src, size, dst, raw_size)
              ? std::string_view{dst, raw_size}
              : std::string_view{};
   }
-  auto* out = FrameAfterDictionary(_window, _dictionary, raw_size);
+  auto* out = FrameAfterDictionary(raw_size);
   return Run(src, size, out, raw_size, Attached())
            ? std::string_view{out, raw_size}
            : std::string_view{};

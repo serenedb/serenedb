@@ -184,9 +184,9 @@ for name in ("wdm_words", "wdm_words_pos"):
     t.part()
     t.section(f"Words, {DICTS[name]}: a row matches when one of its words does.")
     run(f"{name}_idx", "wdm_w", "msg", any_word, sql_like=False)
-    t.section(f"Words, {DICTS[name]}: the SQL forms other than LIKE match the whole value.")
+    t.section(f"Words, {DICTS[name]}: the SQL forms match the whole value.")
     for pred, truth in predicates("msg", whole):
-        if "@@" in pred or "LIKE '" in pred.replace("ILIKE '", ""):
+        if "@@" in pred:
             continue
         t.same_rows(f"SELECT id FROM {name}_idx WHERE {pred}",
                     f"SELECT id FROM wdm_w WHERE {truth}")

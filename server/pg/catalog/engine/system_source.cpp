@@ -433,6 +433,7 @@ std::vector<duckdb::SchemaCatalogEntry*> SystemScan::Schemas(
 
 duckdb::optional_ptr<duckdb::CatalogEntry> SystemScan::FindOwned(
   duckdb::idx_t oid, SystemSchemas system) const {
+  oid = RewriteRuleView(oid);
   if (system == SystemSchemas::Visit) {
     if (const auto* schema = FindSystemObject(kSystemNamespaces, oid)) {
       return FindSchema(schema->name, system).get();

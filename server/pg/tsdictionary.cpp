@@ -28,6 +28,7 @@
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/main/database.hpp>
+#include <duckdb/main/settings.hpp>
 #include <iresearch/analysis/classification_tokenizer.hpp>
 #include <iresearch/analysis/collation_tokenizer.hpp>
 #include <iresearch/analysis/delimited_tokenizer.hpp>
@@ -732,7 +733,10 @@ class CreateTSDictionaryOptions : public OptionsParser {
   void BuildDictionary(irs::analysis::TokenizerConfig& out) {
     std::string from = Value<tokenizer_options::kFrom>();
     auto tokenizer = duckdb::Catalog::GetEntry<catalog::TokenizerCatalogEntry>(
-      _context, duckdb::QualifiedName::Parse(from),
+      _context,
+      duckdb::QualifiedName::Parse(
+        from,
+        duckdb::Settings::Get<duckdb::PreserveIdentifierCaseSetting>(_context)),
       duckdb::OnEntryNotFound::RETURN_NULL);
     if (!tokenizer) {
       THROW_SQL_ERROR(

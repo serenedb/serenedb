@@ -1614,7 +1614,6 @@ struct StringBuiltin {
   StringBuiltinBuilder keyword;
   StringBuiltinBuilder wildcard;
   bool like_pattern = false;
-  bool per_term = false;
 };
 
 const irs::containers::FlatHashMap<std::string_view, StringBuiltin>
@@ -1628,7 +1627,7 @@ const irs::containers::FlatHashMap<std::string_view, StringBuiltin>
     {"regexp_matches", {&BuildTSRegexp, &BuildTSRegexp}},
     {"regexp_like", {&BuildTSRegexp, &BuildTSRegexp}},
     {"regexp_full_match", {&BuildTSFullRegexp, &BuildTSFullRegexp}},
-    {"~~", {&BuildTSLike, &BuildTSLike, true, true}},
+    {"~~", {&BuildTSLike, &BuildTSLike, true}},
     {"~~*", {&BuildTSILike, &BuildTSILike, true}},
 };
 
@@ -1742,10 +1741,9 @@ absl::Status FromFunctionExpression(
         builder = builtin->second.keyword;
       } else if (analyzer.type() ==
                    irs::Type<irs::analysis::WildcardTokenizer>::id() &&
-                 (builtin->second.per_term ||
-                  irs::utils::downCast<irs::analysis::WildcardTokenizer>(
-                    analyzer)
-                    .KeepsWholeValues())) {
+                 irs::utils::downCast<irs::analysis::WildcardTokenizer>(
+                   analyzer)
+                   .KeepsWholeValues()) {
         builder = builtin->second.wildcard;
       }
       if (!builder) {

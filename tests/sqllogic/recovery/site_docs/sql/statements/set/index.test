@@ -117,3 +117,19 @@ async_threads
 
 statement ok
 COMMIT;
+
+# DOCS_TEST: time_zone
+
+# DOCS_TEST_BODY
+
+statement ok
+SET TIME ZONE INTERVAL '+05:30' HOUR TO MINUTE;
+
+query
+SELECT TIMESTAMPTZ '2026-10-10 09:55:01+00'::VARCHAR AS east;
+----
+east
+2026-10-10 15:25:01+05:30
+
+statement ok
+SET TIME ZONE 'UTC';

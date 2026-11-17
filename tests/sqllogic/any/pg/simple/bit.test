@@ -71,3 +71,11 @@ bit_xor	int_xor	bigint_xor
 
 statement error (cannot XOR bit strings of different sizes|Cannot XOR bit strings of different sizes)
 SELECT B'10' # B'011';
+
+
+query
+SELECT length(B'') AS len, B''::text = '' AS empty_text, B'' = B'0' AS eq_zero, (B'' || B'10')::text AS concat,
+       length(''::varbit) AS cast_len;
+----
+len	empty_text	eq_zero	concat	cast_len
+0	t	f	10	0

@@ -207,17 +207,18 @@ class Statement {
   // The result descriptor the client was last told (PG's
   // plansource->resultDesc). The extended protocol sends RowDescription only
   // in reply to a Describe, so this is what it will decode rows against.
-  void MarkDescribed(duckdb::PreparedStatement& plan) {
+  void MarkDescribed(duckdb::vector<duckdb::LogicalType> types,
+                     duckdb::vector<duckdb::Identifier> names) {
     _described = true;
-    _described_types = plan.GetTypes();
-    _described_names = plan.GetNames();
+    _described_types = std::move(types);
+    _described_names = std::move(names);
   }
 
   // Would this plan's rows still fit the descriptor the client holds? PG's
   // fixed_result check, which a protocol-level prepared statement fails with
   // "cached plan must not change result type".
   bool DescribedShapeMatches(duckdb::PreparedStatement& plan) const {
-    return !_described ||
+    return !_described || !plan.GetStatementProperties().bound_all_parameters ||
            (absl::c_equal(plan.GetTypes(), _described_types, SameColumnType) &&
             plan.GetNames() == _described_names);
   }

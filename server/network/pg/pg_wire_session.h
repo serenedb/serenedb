@@ -33,6 +33,7 @@
 #include <duckdb/common/case_insensitive_map.hpp>
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/exception.hpp>
+#include <duckdb/main/client_context.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/prepared_statement.hpp>
@@ -373,6 +374,9 @@ class PgWireSession
   void DescribePortal(Portal& portal);
   PlanPtr ResolvePlan(Statement& stmt, const PlanPtr& plan,
                       std::span<const duckdb::Value> values);
+  duckdb::StatementSignature DescribedShape(
+    Statement& stmt, duckdb::PreparedStatement& plan,
+    std::span<const duckdb::Value> values);
   duckdb::unique_ptr<duckdb::PreparedStatement> PrepareInternal(
     duckdb::unique_ptr<duckdb::SQLStatement> statement,
     duckdb::optional_ptr<

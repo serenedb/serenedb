@@ -138,5 +138,17 @@ deps
 0
 
 
+query
+SELECT r.oid <> r.ev_class AS own_oid, r.rulename,
+       pg_describe_object('pg_rewrite'::regclass, r.oid, 0) AS description,
+       (SELECT count(*) FROM pg_rewrite o WHERE o.oid = r.oid) AS by_oid,
+       (SELECT d.deptype FROM pg_depend d
+        WHERE d.classid = 'pg_rewrite'::regclass AND d.objid = r.oid AND d.refobjid = r.ev_class) AS on_view
+FROM pg_rewrite r WHERE r.ev_class = 'vrd.vn'::regclass;
+----
+own_oid	rulename	description	by_oid	on_view
+t	_RETURN	rule _RETURN on view vrd.vn	1	i
+
+
 statement ok
 DROP SCHEMA vrd CASCADE;

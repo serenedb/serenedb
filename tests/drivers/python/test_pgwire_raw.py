@@ -406,6 +406,66 @@ def test_startup_utf8_client_encoding_no_warning():
         )
 
 
+def test_value_dependent_result_types_are_described(conn):
+    conn.parse(
+        "value_dependent",
+        "SELECT round(1.2345::numeric, $1) AS r, "
+        "percentile_cont($2::float8) WITHIN GROUP (ORDER BY x) AS p "
+        "FROM (VALUES (1), (2)) t(x)",
+    )
+    conn.describe("S", "value_dependent")
+    conn.sync()
+    msgs = conn.drain_to_ready()
+    assert not errors(msgs), errors(msgs)
+    assert [(n, oid) for n, oid, _ in row_description(msgs)] == [
+        ("r", 1700),
+        ("p", 701),
+    ]
+    conn.bind("", "value_dependent", params=(b"2", b"0.25"))
+    conn.describe("P", "")
+    conn.execute("")
+    conn.sync()
+    msgs = conn.drain_to_ready()
+    assert not errors(msgs), errors(msgs)
+    assert [(n, oid) for n, oid, _ in row_description(msgs)] == [
+        ("r", 1700),
+        ("p", 701),
+    ]
+    assert all_fields(msgs) == [b"1.23", b"1.25"]
+
+
+def test_text_parameters_take_postgres_input_forms(conn):
+    conn.parse(
+        "input_forms",
+        "SELECT $1::bool, $2::bool, $3::date, $4::date, $5::time, "
+        "$6::timestamptz::text",
+    )
+    conn.bind(
+        "",
+        "input_forms",
+        params=(
+            b"TRUE",
+            b" on ",
+            b"2004-02-01 00:00:00",
+            b"20240102",
+            b"07:08:09+00",
+            b"2026-10-10 09:55:01.123 +00:00",
+        ),
+    )
+    conn.execute("")
+    conn.sync()
+    msgs = conn.drain_to_ready()
+    assert not errors(msgs), errors(msgs)
+    assert all_fields(msgs) == [
+        b"t",
+        b"t",
+        b"2004-02-01",
+        b"2024-01-02",
+        b"07:08:09",
+        b"2026-10-10 09:55:01.123+00",
+    ]
+
+
 def test_empty_query_extended(conn):
     conn.parse("", "")
     conn.bind("", "")

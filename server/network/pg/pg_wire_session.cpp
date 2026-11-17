@@ -373,6 +373,16 @@ inline constexpr auto kReportParams = std::to_array<std::string_view>({
   "TimeZone",
 });
 
+duckdb::Value NeutralValue(const duckdb::LogicalType& type) {
+  if (type.IsNumeric()) {
+    return duckdb::Value::Numeric(type, 0);
+  }
+  if (type.id() == duckdb::LogicalTypeId::VARCHAR) {
+    return duckdb::Value{"0"};
+  }
+  return duckdb::Value{type};
+}
+
 }  // namespace
 
 // Startup-phase frames: RecvLoop is both byte producer and frame consumer,
@@ -549,8 +559,29 @@ bool PgWireSession<Kind>::SetupConnection() {
       return false;
     }
   }
+  std::vector<StartupSetting> role_settings;
+  catalog::ReadRole(user, [&](const catalog::RoleCatalogEntry& entry) {
+    for (const std::string_view item : entry.Config()) {
+      const auto eq = item.find('=');
+      role_settings.push_back({.name = std::string{item.substr(0, eq)},
+                               .value = std::string{item.substr(eq + 1)}});
+    }
+  });
   bool applied = true;
   _conn->context->RunFunctionInTransaction([&] {
+    for (const auto& [name, value] : role_settings) {
+      try {
+        _connection_ctx->SetSettingChecked(name, value, false);
+      } catch (const duckdb::InternalException&) {
+        _connection_ctx->SetSetting(name, value, false);
+      } catch (const std::exception& exception) {
+        auto notice = irs::pg::ToSqlError(exception);
+        notice.errcode = ERRCODE_WARNING;
+        _connection_ctx->AddNotice(std::move(notice));
+        continue;
+      }
+      keep_as_default(name);
+    }
     for (const auto& [name, value] : settings) {
       if (!apply(name, value)) {
         applied = false;
@@ -2381,7 +2412,8 @@ void PgWireSession<Kind>::DescribeStatement(Statement& stmt) {
       _txn_state->StatusByte() == 'E') {
     ThrowAbortedTransaction();
   }
-  stmt.MarkDescribed(prepared);
+  auto shape = DescribedShape(stmt, prepared, {});
+  stmt.MarkDescribed(shape.types, shape.names);
   const auto param_count = prepared.GetNamedParameterMap().size();
   const auto& client_oids = stmt.ParamOids();
   std::vector<uint64_t> oids;
@@ -2400,8 +2432,8 @@ void PgWireSession<Kind>::DescribeStatement(Statement& stmt) {
     WriteEmptyFrame(this->_send, PQ_MSG_NO_DATA);
     return;
   }
-  WriteRowDescription(this->_send, *_connection_ctx, prepared.GetTypes(),
-                      prepared.GetNames(), {});
+  WriteRowDescription(this->_send, *_connection_ctx, shape.types, shape.names,
+                      {});
 }
 
 template<SocketKind Kind>
@@ -2425,9 +2457,38 @@ void PgWireSession<Kind>::DescribePortal(Portal& portal) {
   }
   // The client now knows this portal's shape, so rows from this plan are no
   // longer ones it would decode against a descriptor it never saw.
-  portal.stmt->MarkDescribed(prepared);
-  WriteRowDescription(this->_send, *_connection_ctx, prepared.GetTypes(),
-                      prepared.GetNames(), portal.bind_info.output_formats);
+  auto shape =
+    DescribedShape(*portal.stmt, prepared, portal.bind_info.param_values);
+  portal.stmt->MarkDescribed(shape.types, shape.names);
+  WriteRowDescription(this->_send, *_connection_ctx, shape.types, shape.names,
+                      portal.bind_info.output_formats);
+}
+
+template<SocketKind Kind>
+duckdb::StatementSignature PgWireSession<Kind>::DescribedShape(
+  Statement& stmt, duckdb::PreparedStatement& plan,
+  std::span<const duckdb::Value> values) {
+  if (plan.GetStatementProperties().bound_all_parameters || !stmt.Source()) {
+    return {.names = plan.GetNames(), .types = plan.GetTypes()};
+  }
+  const auto& hints = stmt.TypeHints();
+  duckdb::identifier_map_t<duckdb::BoundParameterData> args;
+  const auto param_count = plan.GetNamedParameterMap().size();
+  for (uint16_t i = 0; i < param_count; ++i) {
+    args.emplace(
+      duckdb::Identifier{absl::AlphaNum(i + 1).Piece()},
+      duckdb::BoundParameterData{
+        i < values.size() ? values[i]
+                          : NeutralValue(ResolveExpectedType(plan, hints, i))});
+  }
+  try {
+    return _conn->context->BindStatement(stmt.Source()->Copy(), &hints, &args);
+  } catch (const duckdb::Exception&) {
+    if (!values.empty()) {
+      throw;
+    }
+    return {.names = plan.GetNames(), .types = plan.GetTypes()};
+  }
 }
 
 template<SocketKind Kind>

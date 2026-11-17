@@ -278,6 +278,33 @@ db error: ERROR: invalid escape string
 HINT: Escape string must be empty or one character.
 
 
+query
+SELECT '5' SIMILAR TO '#d' ESCAPE '#' AS digit,
+       'a' || chr(8) SIMILAR TO 'a#b' ESCAPE '#' AS backspace,
+       'abc' SIMILAR TO 'a"b"c"d' ESCAPE '"' AS control_backslash,
+       chr(1) SIMILAR TO '#ca' ESCAPE '#' AS control_a,
+       'a\b' SIMILAR TO 'a#Bb' ESCAPE '#' AS backslash,
+       'ab cd' SIMILAR TO 'ab#y cd' ESCAPE '#' AS word_boundary,
+       'AB' SIMILAR TO '#x41#u0042' ESCAPE '#' AS hex,
+       chr(10) SIMILAR TO '#012' ESCAPE '#' AS octal
+----
+digit	backspace	control_backslash	control_a	backslash	word_boundary	hex	octal
+t	t	f	t	t	t	t	t
+
+
+query
+SELECT 'a%' SIMILAR TO 'a§%' ESCAPE '§' AS escaped_percent,
+       'abc' SIMILAR TO 'a§%' ESCAPE '§' AS literal_percent,
+       'a§' SIMILAR TO 'a§§' ESCAPE '§' AS escaped_escape
+----
+escaped_percent	literal_percent	escaped_escape
+t	f	t
+
+
+statement error invalid regular expression: invalid escape
+SELECT 'a' SIMILAR TO '#q' ESCAPE '#'
+
+
 statement error
 SELECT similar_to_escape('a\"b\"c\"d')
 ----

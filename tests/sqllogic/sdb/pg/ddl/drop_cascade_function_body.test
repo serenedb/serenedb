@@ -253,3 +253,90 @@ DROP TABLE ml_paper_runs;
 
 statement ok
 DROP SEQUENCE ml_paper_seq;
+
+
+statement ok
+CREATE SEQUENCE untyped_seq;
+
+
+statement ok
+CREATE SEQUENCE untyped_table_seq;
+
+
+statement ok
+CREATE TABLE untyped_t (a INT);
+
+
+statement ok
+CREATE FUNCTION untyped_inner(x INT) AS x * 10;
+
+
+statement ok
+CREATE MACRO untyped_defaulted(x, y := 1) AS x + y + nextval('untyped_seq');
+
+
+statement ok
+CREATE MACRO untyped_calls(x) AS x + 1 + untyped_inner(2) + (SELECT count(*) FROM untyped_t);
+
+
+statement ok
+CREATE MACRO untyped_rows(x) AS TABLE SELECT x + 1 + nextval('untyped_table_seq') AS v;
+
+
+statement error
+DROP SEQUENCE untyped_seq;
+----
+db error: ERROR: cannot drop sequence untyped_seq because other objects depend on it
+DETAIL: function untyped_defaulted(unknown,unknown) depends on sequence untyped_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+
+
+
+statement error
+DROP FUNCTION untyped_inner(INT);
+----
+db error: ERROR: cannot drop function untyped_inner(integer) because other objects depend on it
+DETAIL: function untyped_calls(unknown) depends on function untyped_inner(integer)
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+
+
+
+statement error
+DROP TABLE untyped_t;
+----
+db error: ERROR: cannot drop table untyped_t because other objects depend on it
+DETAIL: function untyped_calls(unknown) depends on table untyped_t
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+
+
+
+statement error
+DROP SEQUENCE untyped_table_seq;
+----
+db error: ERROR: cannot drop sequence untyped_table_seq because other objects depend on it
+DETAIL: function untyped_rows(unknown) depends on sequence untyped_table_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+
+
+
+query
+SELECT untyped_defaulted(1) AS d, untyped_calls(1) AS c, (SELECT v FROM untyped_rows(1)) AS r;
+----
+d	c	r
+3	22	3
+
+
+statement ok
+DROP SEQUENCE untyped_seq CASCADE;
+
+
+statement ok
+DROP FUNCTION untyped_inner(INT) CASCADE;
+
+
+statement ok
+DROP SEQUENCE untyped_table_seq CASCADE;
+
+
+statement ok
+DROP TABLE untyped_t;

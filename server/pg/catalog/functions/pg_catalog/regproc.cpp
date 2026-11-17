@@ -1131,6 +1131,10 @@ std::optional<uint64_t> ClassIn(const Session& session, std::string_view text,
                     ERR_MSG("cross-database references are not implemented: \"",
                             absl::StrJoin(*names, "."), "\""));
   }
+  if (names->size() > 1 &&
+      !SchemaOid(session, (*names)[names->size() - 2], soft_error)) {
+    return std::nullopt;
+  }
   const duckdb::Identifier name{names->back()};
   const auto qualified =
     names->size() == 1

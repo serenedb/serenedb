@@ -851,7 +851,7 @@ fd58bf431a5b64aa
 d51b088abac03aa0
 	relation
 	NULL
-838c1d2ddc48fc3c	error	db error: ERROR: relation "nosuchschema.t" does not exist
+838c1d2ddc48fc3c	error	db error: ERROR: schema "nosuchschema" does not exist
 848245901335b8d0
 	relation
 	-

@@ -116,7 +116,7 @@ void StringCompressor::WithState(const Config& config, Visit&& visit) {
       visit(StateOf<blob::CompressionState<Zxc>>());
       return;
     case ByteCodec::Fsst:
-      visit(StateOf<fsst::CompressionState<fsst::Fsst8>>());
+      visit(StateOf<fsst_front::CompressionState<fsst::Fsst8>>());
       return;
     case ByteCodec::FsstPlus:
       visit(StateOf<fsst_plus::CompressionState>());
@@ -125,7 +125,7 @@ void StringCompressor::WithState(const Config& config, Visit&& visit) {
       visit(StateOf<onpair::CompressionState>());
       return;
     case ByteCodec::Fsst12:
-      visit(StateOf<fsst::CompressionState<fsst::Fsst12>>());
+      visit(StateOf<fsst_front::CompressionState<fsst::Fsst12>>());
       return;
     case ByteCodec::None:
       break;

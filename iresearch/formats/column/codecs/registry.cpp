@@ -37,10 +37,14 @@ using duckdb::PhysicalType;
 
 const Codec* TextCodecOf(CodecType type) {
   static constexpr const Codec* kText[] = {
-    nullptr,        &kLz4Codec,          &kZstdCodec,       &kFsstCodec,
-    &kZxcCodec,     &kFsstPlusCodec,     &kOnPairCodec,     &kFsst12Codec,
-    nullptr,        &kDictLz4Codec,      &kDictZstdCodec,   &kDictFsstCodec,
-    &kDictZxcCodec, &kDictFsstPlusCodec, &kDictOnPairCodec, &kDictFsst12Codec,
+    nullptr,           &kLz4Codec,
+    &kZstdCodec,       &kFsstFrontCodec,
+    &kZxcCodec,        &kFsstPlusCodec,
+    &kOnPairCodec,     &kFsst12FrontCodec,
+    nullptr,           &kDictLz4Codec,
+    &kDictZstdCodec,   &kDictFsstFrontCodec,
+    &kDictZxcCodec,    &kDictFsstPlusCodec,
+    &kDictOnPairCodec, &kDictFsst12FrontCodec,
   };
   static_assert(std::size(kText) == kTextShapeForms);
   const auto index = FormIndex(type);

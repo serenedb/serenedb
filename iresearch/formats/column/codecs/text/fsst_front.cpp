@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/formats/column/codecs/text/fsst.hpp"
+#include "iresearch/formats/column/codecs/text/fsst_front.hpp"
 
 #include <algorithm>
 #include <array>
@@ -155,7 +155,7 @@ encoded bytes:
 Sections start at 8-byte boundaries.
 */
 
-namespace irs::codecs::text::fsst {
+namespace irs::codecs::text::fsst_front {
 
 constexpr uint64_t kChainGroupCost = 180;
 constexpr uint64_t kChainMinRowBytes = 8;
@@ -169,16 +169,16 @@ inline uint64_t ChainCapacity(PackedReader& lengths, PackedReader& lcps,
                               uint32_t first, uint32_t end) {
   uint64_t capacity = 0;
   for (auto e = first; e < end; ++e) {
-    capacity +=
-      (e == first ? 0 : lcps.At(e)) + uint64_t{lengths.At(e)} * kMaxExpansion;
+    capacity += (e == first ? 0 : lcps.At(e)) +
+                uint64_t{lengths.At(e)} * fsst::kMaxExpansion;
   }
   return capacity;
 }
 
 template<typename Impl>
-uint64_t DecodeSuffix(const Decoder<Impl>& fsst, const char* in, uint64_t enc,
-                      uint64_t lcp, std::string& buf) {
-  const auto room = enc * kMaxExpansion;
+uint64_t DecodeSuffix(const fsst::Decoder<Impl>& fsst, const char* in,
+                      uint64_t enc, uint64_t lcp, std::string& buf) {
+  const auto room = enc * fsst::kMaxExpansion;
   auto* at = Reserve(buf, lcp + room) + lcp;
   const auto dec = enc == 0 ? 0 : fsst.Decode(in, enc, at, room);
   SDB_ENSURE(dec <= room, "col codec: corrupted entry");
@@ -186,7 +186,7 @@ uint64_t DecodeSuffix(const Decoder<Impl>& fsst, const char* in, uint64_t enc,
 }
 
 template<typename Impl, typename Visit>
-ChainEnd WalkChain(const Decoder<Impl>& fsst, const char* in,
+ChainEnd WalkChain(const fsst::Decoder<Impl>& fsst, const char* in,
                    PackedReader& lengths, PackedReader& lcps, uint32_t first,
                    uint32_t end, uint64_t enc_off, uint64_t enc_end, char* out,
                    uint64_t capacity, Visit&& visit) {
@@ -217,7 +217,7 @@ ChainEnd WalkChain(const Decoder<Impl>& fsst, const char* in,
 }
 
 template<typename Impl, typename Visit>
-uint32_t WalkInPlace(const Decoder<Impl>& fsst, const char* in,
+uint32_t WalkInPlace(const fsst::Decoder<Impl>& fsst, const char* in,
                      PackedReader& lengths, PackedReader& lcps, uint32_t first,
                      uint32_t end, uint64_t enc_off, uint64_t enc_end,
                      std::string& buf, Visit&& visit) {
@@ -237,7 +237,7 @@ uint32_t WalkInPlace(const Decoder<Impl>& fsst, const char* in,
 }
 
 template<typename Impl>
-std::string_view DecodeChained(const Decoder<Impl>& fsst, const char* in,
+std::string_view DecodeChained(const fsst::Decoder<Impl>& fsst, const char* in,
                                PackedReader& lengths, PackedReader& lcps,
                                uint32_t restart, uint32_t entry,
                                uint64_t enc_off, uint64_t enc_end,
@@ -280,7 +280,7 @@ struct Fetch;
 template<typename Impl>
 struct Scan {
   static constexpr ByteCodec kCodec = Impl::kCodec;
-  using Fetch = fsst::Fetch<Impl>;
+  using Fetch = fsst_front::Fetch<Impl>;
 
   template<typename Frames>
   Scan(const ColumnSegment&, const Frames& s)
@@ -517,7 +517,7 @@ struct Scan {
       sources |= source << i;
       used |= decode << i;
       need = wanted != 0 ? (source != 0 ? 0 : lcp[i]) : need;
-      capacity += decode * (lcp[i] + uint64_t{enc[i]} * kMaxExpansion);
+      capacity += decode * (lcp[i] + uint64_t{enc[i]} * fsst::kMaxExpansion);
     }
     auto* out = duckdb::char_ptr_cast(arena.Allocate(capacity));
     uint64_t written = 0;
@@ -616,7 +616,7 @@ struct Scan {
 
   uint64_t HeapBytes() const noexcept { return group_heap_bytes; }
 
-  Decoder<Impl> decoder;
+  fsst::Decoder<Impl> decoder;
   PackedReader lcps{nullptr, 0};
   ChainGroups groups;
   std::vector<uint8_t> group_decoded;
@@ -673,26 +673,26 @@ struct Fetch {
     });
   }
 
-  std::optional<Decoder<Impl>> decoder;
+  std::optional<fsst::Decoder<Impl>> decoder;
   PackedReader lcps{nullptr, 0};
   ChainGroups groups;
   std::string chain;
   uint64_t walked = 0;
 };
 
-}  // namespace irs::codecs::text::fsst
+}  // namespace irs::codecs::text::fsst_front
 namespace irs::codecs {
 
-constinit const Codec kFsstCodec =
-  text::StringCodec<text::PlainScan<text::fsst::Scan<text::fsst::Fsst8>>>();
+constinit const Codec kFsstFrontCodec = text::StringCodec<
+  text::PlainScan<text::fsst_front::Scan<text::fsst::Fsst8>>>();
 
-constinit const Codec kDictFsstCodec = text::StringCodec<
-  text::DictionaryScan<text::fsst::Scan<text::fsst::Fsst8>>>();
+constinit const Codec kDictFsstFrontCodec = text::StringCodec<
+  text::DictionaryScan<text::fsst_front::Scan<text::fsst::Fsst8>>>();
 
-constinit const Codec kFsst12Codec =
-  text::StringCodec<text::PlainScan<text::fsst::Scan<text::fsst::Fsst12>>>();
+constinit const Codec kFsst12FrontCodec = text::StringCodec<
+  text::PlainScan<text::fsst_front::Scan<text::fsst::Fsst12>>>();
 
-constinit const Codec kDictFsst12Codec = text::StringCodec<
-  text::DictionaryScan<text::fsst::Scan<text::fsst::Fsst12>>>();
+constinit const Codec kDictFsst12FrontCodec = text::StringCodec<
+  text::DictionaryScan<text::fsst_front::Scan<text::fsst::Fsst12>>>();
 
 }  // namespace irs::codecs

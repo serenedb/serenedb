@@ -32,7 +32,7 @@
 #include "iresearch/formats/column/codecs/bytes/zstd.hpp"
 #include "iresearch/formats/column/codecs/bytes/zxc.hpp"
 #include "iresearch/formats/column/codecs/text/blob.hpp"
-#include "iresearch/formats/column/codecs/text/fsst.hpp"
+#include "iresearch/formats/column/codecs/text/fsst_front.hpp"
 #include "iresearch/formats/column/codecs/text/fsst_plus.hpp"
 #include "iresearch/formats/column/codecs/text/onpair.hpp"
 #include "iresearch/formats/column/codecs/text/segment_rows.hpp"
@@ -93,10 +93,10 @@ class StringCompressor {
                std::optional<blob::CompressionState<Lz4Hc>>,
                std::optional<blob::CompressionState<Zstd>>,
                std::optional<blob::CompressionState<Zxc>>,
-               std::optional<fsst::CompressionState<fsst::Fsst8>>,
+               std::optional<fsst_front::CompressionState<fsst::Fsst8>>,
                std::optional<fsst_plus::CompressionState>,
                std::optional<onpair::CompressionState>,
-               std::optional<fsst::CompressionState<fsst::Fsst12>>>;
+               std::optional<fsst_front::CompressionState<fsst::Fsst12>>>;
 
   const ColCodecParams& _params;
   const duckdb::LogicalType& _type;

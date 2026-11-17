@@ -37,14 +37,14 @@ extern const Codec kDictZstdCodec;
 extern const Codec kZstdCodec;
 extern const Codec kDictZxcCodec;
 extern const Codec kZxcCodec;
-extern const Codec kDictFsstCodec;
-extern const Codec kFsstCodec;
+extern const Codec kDictFsstFrontCodec;
+extern const Codec kFsstFrontCodec;
 extern const Codec kDictFsstPlusCodec;
 extern const Codec kFsstPlusCodec;
 extern const Codec kDictOnPairCodec;
 extern const Codec kOnPairCodec;
-extern const Codec kDictFsst12Codec;
-extern const Codec kFsst12Codec;
+extern const Codec kDictFsst12FrontCodec;
+extern const Codec kFsst12FrontCodec;
 const Codec* NumericCodecOf(Shape shape, ByteCodec leaf,
                             duckdb::PhysicalType physical);
 const Codec* ConstantCodec(duckdb::PhysicalType physical);

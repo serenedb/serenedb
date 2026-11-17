@@ -112,11 +112,11 @@ constexpr Codec kAutoCodec{.type = CodecType::Auto, .compression = &kAuto};
 void Contest(std::span<const Contender> contenders,
              ColumnDataCheckpointData& data) {
   auto& reuse = data.tuning.reuse;
-  const auto input = static_cast<double>(RawInput(data));
   if (const auto* held = reuse.Due() ? nullptr : Held(data, contenders)) {
     const auto written = data.written;
     if (held->compress(data)) {
-      if (reuse.Grew(static_cast<double>(data.written - written), input)) {
+      if (reuse.Grew(static_cast<double>(data.written - written),
+                     static_cast<double>(RawInput(data)))) {
         reuse.Restart();
       }
       return;
@@ -141,7 +141,8 @@ void Contest(std::span<const Contender> contenders,
   if (bytes == 0) {
     return;
   }
-  reuse.Settle(best.codec, static_cast<double>(bytes), input);
+  reuse.Settle(best.codec, static_cast<double>(bytes),
+               static_cast<double>(RawInput(data)));
 }
 
 const Codec* AutoCodec(PhysicalType) { return &kAutoCodec; }

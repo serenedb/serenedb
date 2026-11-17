@@ -39,6 +39,7 @@ void StringAccumulator::Add(const duckdb::Vector& input) {
   const auto base = codes.size();
   codes.resize(base + input.size());
   auto* out = codes.data() + base;
+  uint64_t bytes = 0;
   for (const auto entry : input.Values<string_t>()) {
     auto& code = out[entry.GetIndex()];
     if (!entry.IsValid()) {
@@ -47,6 +48,7 @@ void StringAccumulator::Add(const duckdb::Vector& input) {
       continue;
     }
     const auto& value = entry.GetValueUnsafe();
+    bytes += value.GetSize();
     if (_last && value == *_last) {
       code = _last_code;
       continue;
@@ -60,6 +62,7 @@ void StringAccumulator::Add(const duckdb::Vector& input) {
     _last = &value;
     _last_code = code;
   }
+  raw += bytes;
 }
 
 }  // namespace irs::codecs

@@ -55,6 +55,7 @@ class StringAccumulator {
   uint64_t Rows() const noexcept { return codes.size(); }
 
   uint64_t null_count = 0;
+  uint64_t raw = 0;
   std::vector<const duckdb::string_t*> values;
   ScratchVector<uint32_t> codes;
 

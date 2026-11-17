@@ -270,15 +270,15 @@ Strings::Strings(ColumnDataCheckpointData& data)
     _compressor{data.params, data.type, _tuning.estimators,
                 data.ctx->BufferManager()} {}
 
-const StringAccumulator& Strings::Accumulated(
-  std::span<const WriteChunk> chunks) {
+const StringAccumulator& Strings::Accumulated(ColumnDataCheckpointData& data) {
   if (!_accumulated) {
     _accumulated = true;
-    _acc.Reserve(CountRows(chunks), _tuning.last_distinct);
-    for (const auto& chunk : chunks) {
+    _acc.Reserve(CountRows(data.chunks), _tuning.last_distinct);
+    for (const auto& chunk : data.chunks) {
       _acc.Add(chunk.data);
     }
     _tuning.last_distinct = _acc.values.size();
+    data.raw_input = std::max<uint64_t>(_acc.raw, 1);
   }
   return _acc;
 }
@@ -303,14 +303,14 @@ bool Strings::Compress(ColumnDataCheckpointData& data) {
     if (config.shape == Shape::Plain) {
       _compressor.CompressChunks(config, data);
     } else {
-      _compressor.Compress(config, Accumulated(data.chunks), 0, data);
+      _compressor.Compress(config, Accumulated(data), 0, data);
     }
     return true;
   }
   const bool held = !_first;
   if (held) {
     const auto& config = _tuning.config;
-    const auto& acc = Accumulated(data.chunks);
+    const auto& acc = Accumulated(data);
     if (!config || acc.Rows() == 0) {
       return false;
     }
@@ -336,8 +336,8 @@ bool Strings::Compress(ColumnDataCheckpointData& data) {
 }
 
 PooledSegment Strings::DetectBestCompressionMethod(
-  const ColumnDataCheckpointData& data) {
-  const auto& acc = Accumulated(data.chunks);
+  ColumnDataCheckpointData& data) {
+  const auto& acc = Accumulated(data);
   const auto& disabled = data.disabled;
   auto first = std::move(_first);
   if (acc.Rows() == 0 || (!AnyEnabled(disabled, Shape::Dictionary) &&

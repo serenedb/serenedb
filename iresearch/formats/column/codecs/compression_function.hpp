@@ -151,6 +151,7 @@ struct ColumnDataCheckpointData {
   uint32_t min_packed_run = 1;
   CodecType method = CodecType::Auto;
   uint64_t rows = 0;
+  uint64_t raw_input = 0;
   uint64_t written = 0;
   std::vector<Slot> states;
 };
@@ -228,7 +229,7 @@ struct Codec {
 
 duckdb::idx_t CountRows(std::span<const WriteChunk> chunks) noexcept;
 
-uint64_t RawInput(const ColumnDataCheckpointData& data);
+uint64_t RawInput(ColumnDataCheckpointData& data);
 
 bool HasRows(std::span<const WriteChunk> chunks) noexcept;
 

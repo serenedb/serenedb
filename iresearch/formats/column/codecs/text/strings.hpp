@@ -39,9 +39,8 @@ class Strings final : public State {
   bool Compress(ColumnDataCheckpointData& data);
 
  private:
-  const StringAccumulator& Accumulated(std::span<const WriteChunk> chunks);
-  PooledSegment DetectBestCompressionMethod(
-    const ColumnDataCheckpointData& data);
+  const StringAccumulator& Accumulated(ColumnDataCheckpointData& data);
+  PooledSegment DetectBestCompressionMethod(ColumnDataCheckpointData& data);
 
   StringTuning& _tuning;
   StringCompressor _compressor;

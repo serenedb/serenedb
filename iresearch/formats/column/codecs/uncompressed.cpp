@@ -31,6 +31,7 @@
 #include <duckdb/common/types/validity_mask.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/unified_vector_format.hpp>
+#include <duckdb/storage/segment/uncompressed.hpp>
 #include <duckdb/storage/statistics/stats_writer.hpp>
 #include <limits>
 
@@ -62,49 +63,28 @@ duckdb::block_id_t WriteOverflowString(IndexOutput& out,
 }
 
 template<typename Appender>
-class UncompressedCompress {
- public:
-  explicit UncompressedCompress(ColumnDataCheckpointData& checkpoint_data)
-    : _checkpoint_data{&checkpoint_data},
-      _segment{CodecType::Uncompressed, checkpoint_data.type} {
-    Appender::Begin(_segment);
-  }
-
-  void Append(const duckdb::Vector& input) {
+void CompressChunks(ColumnDataCheckpointData& checkpoint_data,
+                    std::span<const WriteChunk> chunks) {
+  CompressedSegment segment{CodecType::Uncompressed, checkpoint_data.type};
+  Appender::Begin(segment);
+  for (const auto& chunk : chunks) {
     duckdb::UnifiedVectorFormat data;
-    input.ToUnifiedFormat(data);
+    chunk.data.ToUnifiedFormat(data);
     idx_t offset = 0;
-    idx_t remaining = input.size();
+    idx_t remaining = chunk.data.size();
     while (true) {
       const auto appended =
-        Appender::Append(*_checkpoint_data, _segment, data, offset, remaining);
+        Appender::Append(checkpoint_data, segment, data, offset, remaining);
       if (appended == remaining) {
-        return;
+        break;
       }
-      Flush();
+      segment.Flush(checkpoint_data, Appender::Finish(segment));
+      Appender::Begin(segment);
       offset += appended;
       remaining -= appended;
     }
   }
-
-  void Flush() {
-    _segment.Flush(*_checkpoint_data, Appender::Finish(_segment));
-    Appender::Begin(_segment);
-  }
-
- private:
-  ColumnDataCheckpointData* _checkpoint_data;
-  CompressedSegment _segment;
-};
-
-template<typename Appender>
-void CompressChunks(ColumnDataCheckpointData& checkpoint_data,
-                    std::span<const WriteChunk> chunks) {
-  UncompressedCompress<Appender> state{checkpoint_data};
-  for (const auto& chunk : chunks) {
-    state.Append(chunk.data);
-  }
-  state.Flush();
+  segment.Flush(checkpoint_data, Appender::Finish(segment));
 }
 
 struct PinnedScan final : SegmentScanState {
@@ -254,16 +234,6 @@ constexpr Codec kFixedSize{
 };
 
 constexpr idx_t kBitsPerEntry = duckdb::ValidityMask::BITS_PER_VALUE;
-constexpr validity_t kAllValid = ~validity_t{0};
-
-constexpr validity_t LowerMask(idx_t bits) noexcept {
-  SDB_ASSERT(bits < kBitsPerEntry);
-  return (validity_t{1} << bits) - 1;
-}
-
-constexpr validity_t UpperMask(idx_t bits) noexcept {
-  return bits == 0 ? 0 : kAllValid << (kBitsPerEntry - bits);
-}
 
 struct ValidityAppender {
   static void Begin(CompressedSegment& segment) {
@@ -325,43 +295,6 @@ bool RowValid(const validity_t* entries, idx_t row) noexcept {
                                           row % kBitsPerEntry);
 }
 
-IRS_NO_INLINE void UnalignedScan(const validity_t* input, idx_t input_start,
-                                 duckdb::ValidityMask& result_mask,
-                                 idx_t result_offset, idx_t scan_count) {
-  auto* result_data = result_mask.GetData();
-  auto result_entry = result_offset / kBitsPerEntry;
-  auto result_idx = result_offset % kBitsPerEntry;
-  auto input_entry = input_start / kBitsPerEntry;
-  auto input_idx = input_start % kBitsPerEntry;
-  idx_t pos = 0;
-  while (pos < scan_count) {
-    auto input_mask = input[input_entry];
-    const auto bits_left = scan_count - pos;
-    const auto window_size = std::min(
-      {bits_left, kBitsPerEntry - input_idx, kBitsPerEntry - result_idx});
-    if (result_idx < input_idx) {
-      input_mask >>= input_idx - result_idx;
-    } else {
-      const auto shift = result_idx - input_idx;
-      input_mask = (input_mask & ~UpperMask(shift)) << shift;
-    }
-    input_mask |= UpperMask(kBitsPerEntry - result_idx - window_size);
-    input_mask |= LowerMask(result_idx);
-    if (input_mask != kAllValid) {
-      if (!result_data) {
-        result_mask.Initialize();
-        result_data = result_mask.GetData();
-      }
-      result_data[result_entry] &= input_mask;
-    }
-    pos += window_size;
-    input_idx = (input_idx + window_size) % kBitsPerEntry;
-    result_idx = (result_idx + window_size) % kBitsPerEntry;
-    input_entry += input_idx == 0;
-    result_entry += result_idx == 0;
-  }
-}
-
 void ValidityScan(const ColumnSegment& segment, ColumnScanState& state,
                   idx_t scan_count, duckdb::Vector& result, idx_t result_offset,
                   duckdb::ScanVectorType scan_type) {
@@ -370,30 +303,17 @@ void ValidityScan(const ColumnSegment& segment, ColumnScanState& state,
   if (entire) {
     result.Flatten();
   }
-  if (!entire || start % kBitsPerEntry != 0) {
-    const auto* input =
-      ValidityEntries(segment, ScanBase(state), start, scan_count);
-    UnalignedScan(input, start, duckdb::FlatVector::ValidityMutable(result),
-                  result_offset, scan_count);
+  const duckdb::unsafe_array_ptr<const validity_t> input{
+    ValidityEntries(segment, ScanBase(state), start, scan_count),
+    segment.size / sizeof(validity_t)};
+  auto& result_mask = duckdb::FlatVector::ValidityMutable(result);
+  if (entire && start % kBitsPerEntry == 0) {
+    duckdb::ValidityUncompressed::AlignedScan(input, start, result_mask,
+                                              scan_count);
     return;
   }
-  const auto* input =
-    ValidityEntries(segment, ScanBase(state), start, scan_count) +
-    start / kBitsPerEntry;
-  auto& result_mask = duckdb::FlatVector::ValidityMutable(result);
-  auto* result_data = result_mask.GetData();
-  const auto entries = (scan_count + kBitsPerEntry - 1) / kBitsPerEntry;
-  for (idx_t i = 0; i < entries; ++i) {
-    const auto entry = input[i];
-    if (!result_data && entry == kAllValid) {
-      continue;
-    }
-    if (!result_data) {
-      result_mask.Initialize();
-      result_data = result_mask.GetData();
-    }
-    result_data[i] = entry;
-  }
+  duckdb::ValidityUncompressed::UnalignedScan(
+    input, segment.count, start, result_mask, result_offset, scan_count);
 }
 
 void ValiditySelect(const ColumnSegment& segment, ColumnScanState& state,
@@ -556,15 +476,10 @@ bool ValidEntry(int32_t current, int32_t previous,
   return invalid == 0;
 }
 
-struct StringEntry {
-  const_data_ptr_t data;
-  uint32_t length;
-  bool overflow;
-};
-
 class StringLayout {
  public:
-  StringLayout(const ColumnSegment& segment, const_data_ptr_t base) {
+  StringLayout(const ColumnSegment& segment, const_data_ptr_t base)
+    : _ctx{segment.ctx} {
     if (segment.size < kDictionaryHeaderSize) [[unlikely]] {
       ThrowCorrupted("uncompressed string", "header exceeds the segment");
     }
@@ -599,60 +514,60 @@ class StringLayout {
     }
   }
 
-  StringEntry Entry(idx_t row) const noexcept {
+  duckdb::string_t Read(duckdb::Vector& result, idx_t row) const {
     const auto current = _offsets[row];
     const auto offset = DictionaryOffset(current);
     const auto previous = row > 0 ? DictionaryOffset(_offsets[row - 1]) : 0;
     const auto length = offset - previous;
-    return {_dictionary_end - offset, length, current < 0 && length > 0};
+    const auto* data = _dictionary_end - offset;
+    if (current >= 0 || length == 0) [[likely]] {
+      return {reinterpret_cast<const char*>(data), length};
+    }
+    const auto block = duckdb::Load<duckdb::block_id_t>(data);
+    const auto block_offset =
+      duckdb::Load<int32_t>(data + sizeof(duckdb::block_id_t));
+    if (block < 0 || block_offset != 0) [[unlikely]] {
+      ThrowCorrupted("uncompressed string", "invalid overflow string marker");
+    }
+    return _ctx.ReadString(result, block, block_offset);
   }
 
  private:
+  ReadContext& _ctx;
   const int32_t* _offsets = nullptr;
   const_data_ptr_t _dictionary_end = nullptr;
   uint32_t _dictionary_size = 0;
   uint64_t _count = 0;
 };
 
-duckdb::string_t ReadEntry(const ColumnSegment& segment, duckdb::Vector& result,
-                           const StringEntry& entry) {
-  if (!entry.overflow) [[likely]] {
-    return {reinterpret_cast<const char*>(entry.data), entry.length};
+template<typename Row>
+void ReadStrings(const ColumnSegment& segment, ColumnScanState& state,
+                 idx_t span, idx_t count, Row row_at, duckdb::Vector& result,
+                 idx_t result_offset) {
+  const StringLayout layout{segment, ScanBase(state)};
+  const auto start = state.GetPositionInSegment();
+  layout.Validate(start, span);
+  auto* target = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
+  for (idx_t i = 0; i < count; ++i) {
+    target[result_offset + i] = layout.Read(result, start + row_at(i));
   }
-  const auto block = duckdb::Load<duckdb::block_id_t>(entry.data);
-  const auto offset =
-    duckdb::Load<int32_t>(entry.data + sizeof(duckdb::block_id_t));
-  if (block < 0 || offset != 0) [[unlikely]] {
-    ThrowCorrupted("uncompressed string", "invalid overflow string marker");
-  }
-  return segment.ctx.ReadString(result, block, offset);
 }
 
 void StringScan(const ColumnSegment& segment, ColumnScanState& state,
                 idx_t scan_count, duckdb::Vector& result, idx_t result_offset,
                 duckdb::ScanVectorType) {
-  const StringLayout layout{segment, ScanBase(state)};
-  const auto start = state.GetPositionInSegment();
-  layout.Validate(start, scan_count);
-  auto* target = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
-  for (idx_t i = 0; i < scan_count; ++i) {
-    target[result_offset + i] =
-      ReadEntry(segment, result, layout.Entry(start + i));
-  }
+  ReadStrings(
+    segment, state, scan_count, scan_count, [](idx_t i) { return i; }, result,
+    result_offset);
 }
 
 void StringSelect(const ColumnSegment& segment, ColumnScanState& state,
                   idx_t vector_count, duckdb::Vector& result,
                   idx_t result_offset, const duckdb::SelectionVector& sel,
                   idx_t sel_count, duckdb::ScanVectorType) {
-  const StringLayout layout{segment, ScanBase(state)};
-  const auto start = state.GetPositionInSegment();
-  layout.Validate(start, vector_count);
-  auto* target = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
-  for (idx_t i = 0; i < sel_count; ++i) {
-    target[result_offset + i] =
-      ReadEntry(segment, result, layout.Entry(start + sel.get_index(i)));
-  }
+  ReadStrings(
+    segment, state, vector_count, sel_count,
+    [&](idx_t i) { return sel.get_index(i); }, result, result_offset);
 }
 
 void StringFetchRows(const ColumnSegment& segment, ColumnFetchState& state,
@@ -665,7 +580,7 @@ void StringFetchRows(const ColumnSegment& segment, ColumnFetchState& state,
     SDB_ASSERT(rows[i] < segment.count);
     layout.Validate(rows[i], 1);
     target[result_offset + result_sel.get_index(i)] =
-      ReadEntry(segment, result, layout.Entry(rows[i]));
+      layout.Read(result, rows[i]);
   }
 }
 

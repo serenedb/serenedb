@@ -111,7 +111,7 @@ QUERY PLAN
 │ Segments: 1 of 1         │  ╰────────────┒┎──────────╯
 │ 0 rows               0µs │  ╭─ count::BooleanBitset ─╮
 ╰─────────────┒┎───────────╯  │ Plans: 1               │
-╭─ AUTOMATON ─┚┖───────────╮  │ Calls: 2               │
+╭─ AUTOMATON ─┚┖───────────╮  │ Calls: 3               │
 │ Field: msg(string)       │  │ Plan: 0µs              │
 │ Pattern: %-abc           │  │ 6,667 rows         0µs │
 │ Posting Lists: 100       │  ╰────────────────────────╯
@@ -152,7 +152,7 @@ QUERY PLAN
 │ Segments: 1 of 1             │  ╰────────────┒┎──────────╯
 │ 0 rows                   0µs │  ╭─ count::BooleanBitset ─╮
 ╰───────────────┒┎─────────────╯  │ Plans: 1               │
-╭─ AUTOMATON ───┚┖─────────────╮  │ Calls: 2               │
+╭─ AUTOMATON ───┚┖─────────────╮  │ Calls: 3               │
 │ Field: msg(string)           │  │ Plan: 0µs              │
 │ Pattern: user-1[0-9]-abc     │  │ 666 rows           0µs │
 │ Posting Lists: 10            │  ╰────────────────────────╯
@@ -206,7 +206,7 @@ QUERY PLAN
 │ Segments: 1 of 1                        │  ╰────────────┰───────────╯
 │ 0 rows                              0µs │  ╭─ count::BooleanWindow ─╮
 ╰────────────────────┒┎───────────────────╯  │ Plans: 1               │
-╭─ WILDCARD_NGRAM ───┚┖───────────────────╮  │ Calls: 2               │
+╭─ WILDCARD_NGRAM ───┚┖───────────────────╮  │ Calls: 3               │
 │ Field: msg(string)                      │  │ Plan: 0µs              │
 │ Pattern: (?s)\\Auser-.*-abc\\z            │  │ 6,667 rows         0µs │
 │ Syntax: perl                            │  ╰────────────────────────╯
@@ -250,7 +250,7 @@ QUERY PLAN
 │ Segments: 1 of 1                 │  ╰────────────┒┎──────────╯
 │ 0 rows                       0µs │  ╭─ count::BooleanBitset ─╮
 ╰─────────────────┒┎───────────────╯  │ Plans: 1               │
-╭─ RANGE ─────────┚┖───────────────╮  │ Calls: 2               │
+╭─ RANGE ─────────┚┖───────────────╮  │ Calls: 3               │
 │ Field: code(string)              │  │ Plan: 0µs              │
 │ Range: >=code0100, <code0200     │  │ 2,000 rows         0µs │
 │ Posting Lists: 100               │  ╰────────────────────────╯
@@ -289,7 +289,7 @@ QUERY PLAN
 │ Segments: 1 of 1          │  ╰─────────┒┎────────╯
 │ 0 rows                0µs │  ╭─ count::AllCount ─╮
 ╰─────────────┒┎────────────╯  │ Plans: 1          │
-╭─ ALL ───────┚┖────────────╮  │ Calls: 2          │
+╭─ ALL ───────┚┖────────────╮  │ Calls: 3          │
 │ Estimated Matches: 20,000 │  │ Plan: 0µs         │
 │ 20,000 rows           0µs │  │ 20,000 rows   0µs │
 ╰───────────────────────────╯  ╰───────────────────╯
@@ -318,17 +318,16 @@ QUERY PLAN
 │ Output: row-count only   │
 │ 0 rows               0µs │
 ╰─────────────┬────────────╯
-              ├─────────────────────────╮
-╭─ INDEX_PREPARE ──────────╮  ╭─ INDEX_EXECUTE ───╮
-│ Total: 0µs               │  │ Total: 0µs        │
-│ Snapshot: 0µs            │  │ 0 rows        0µs │
-│ Segments: 1 of 1         │  ╰─────────┬─────────╯
-│ 0 rows               0µs │  ╭─ count::Constant ─╮
-╰─────────────┬────────────╯  │ Plans: 1          │
-╭─ EMPTY ─────┴────────────╮  │ Calls: 2          │
-│ Estimated Matches: 0     │  │ Plan: 0µs         │
-│ 0 rows               0µs │  │ 0 rows        0µs │
-╰──────────────────────────╯  ╰───────────────────╯
+╭─ INDEX_PREPARE ──────────╮
+│ Total: 0µs               │
+│ Snapshot: 0µs            │
+│ Segments: 1 of 1         │
+│ 0 rows               0µs │
+╰─────────────┬────────────╯
+╭─ EMPTY ─────┴────────────╮
+│ Estimated Matches: 0     │
+│ 0 rows               0µs │
+╰──────────────────────────╯
 
 
 query
@@ -363,7 +362,7 @@ QUERY PLAN
 │ Segments: 1 of 1                           │  ╰──────────┒┎────────╯
 │ 0 rows                                 0µs │  ╭─ count::TermCount ─╮
 ╰──────────────────────┒┎────────────────────╯  │ Plans: 1           │
-╭─ STARTS_WITH_ANY ────┚┖────────────────────╮  │ Calls: 2           │
+╭─ STARTS_WITH_ANY ────┚┖────────────────────╮  │ Calls: 3           │
 │ Field: net(cidr)                           │  │ Plan: 0µs          │
 │ Prefixes: 17, 0.0.0.0/0 .. 10.1.0.0/16     │  │ 20 rows        0µs │
 │ Posting Lists: 1                           │  ╰────────────────────╯
@@ -409,7 +408,7 @@ QUERY PLAN
 │ Segments: 1 of 1                                 │  ╰──────────┒┎────────╯
 │ 0 rows                                       0µs │  ╭─ count::TermCount ─╮
 ╰─────────────────────────┒┎───────────────────────╯  │ Plans: 1           │
-╭─ BOOL ──────────────────┚┖───────────────────────╮  │ Calls: 2           │
+╭─ BOOL ──────────────────┚┖───────────────────────╮  │ Calls: 3           │
 │ Must Terms: ip(inet): 10.1.0.0/16                │  │ Plan: 0µs          │
 │ Total: 0µs                                       │  │ 20 rows        0µs │
 │ Posting Lists: 1                                 │  ╰────────────────────╯
@@ -466,7 +465,7 @@ QUERY PLAN
 │ Segments: 1 of 1          │  ╰────────────┒┎──────────╯
 │ 0 rows                0µs │  ╭─ count::BooleanBitset ─╮
 ╰─────────────┒┎────────────╯  │ Plans: 1               │
-╭─ GEO ───────┚┖────────────╮  │ Calls: 2               │
+╭─ GEO ───────┚┖────────────╮  │ Calls: 3               │
 │ Field: geo(string)        │  │ Plan: 0µs              │
 │ Op: Intersects            │  │ 997 rows           0µs │
 │ Shape: S2Polygon          │  ╰────────────────────────╯
@@ -515,7 +514,7 @@ QUERY PLAN
 │ Segments: 1 of 1          │  ╰────────────┒┎──────────╯
 │ 0 rows                0µs │  ╭─ count::BooleanBitset ─╮
 ╰─────────────┒┎────────────╯  │ Plans: 1               │
-╭─ GEO_DISTANCE ────────────╮  │ Calls: 2               │
+╭─ GEO_DISTANCE ────────────╮  │ Calls: 3               │
 │ Field: pt(string)         │  │ Plan: 0µs              │
 │ Range: *, <5000           │  │ 111 rows           0µs │
 │ Verify: false             │  ╰────────────────────────╯
@@ -557,7 +556,7 @@ QUERY PLAN
 │ Segments: 1 of 1         │  ╰────────────┒┎──────────╯
 │ 0 rows               0µs │  ╭─ count::BooleanBitset ─╮
 ╰─────────────┒┎───────────╯  │ Plans: 1               │
-╭─ LEVENSHTEIN ┖───────────╮  │ Calls: 2               │
+╭─ LEVENSHTEIN ┖───────────╮  │ Calls: 3               │
 │ Field: code(string)      │  │ Plan: 0µs              │
 │ Target: code0123         │  │ 600 rows           0µs │
 │ Max Terms: 50            │  ╰────────────────────────╯
@@ -599,7 +598,7 @@ QUERY PLAN
 │ Segments: 1 of 1         │  ╰────────────┒┎──────────╯
 │ 0 rows               0µs │  ╭─ count::BooleanBitset ─╮
 ╰─────────────┒┎───────────╯  │ Plans: 1               │
-╭─ STARTS_WITH ┖───────────╮  │ Calls: 2               │
+╭─ STARTS_WITH ┖───────────╮  │ Calls: 3               │
 │ Field: code(string)      │  │ Plan: 0µs              │
 │ Prefix: code01           │  │ 2,000 rows         0µs │
 │ Posting Lists: 100       │  ╰────────────────────────╯
@@ -630,7 +629,6 @@ QUERY PLAN
 │ │ Pattern: user-1[0-9]-abc │  │ Prefix: code00      │ │
 │ ╰──────────────────────────╯  ╰─────────────────────╯ │
 │ Projections: id                                       │
-│ Fetch: 0µs                                            │
 │ 66 rows                                           0µs │
 ╰───────────────────────────┬───────────────────────────╯
                             ├─────────────────────────────────────────────────────────────────────────────╮

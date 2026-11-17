@@ -235,7 +235,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
     duckdb::QueryProfiler::Get(context).MetricIsTracked(kIndexProfileMetric);
   absl::Cleanup finish_init = [g = state.get()] {
     if (g->profile) {
-      g->profile->FinishInit(g->workers);
+      g->profile->FinishInit();
     }
   };
 
@@ -461,9 +461,7 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> IResearchScanInitLocal(
       break;
     }
   }
-  auto& local = result->Cast<ScanLocalState>();
-  local.worker = worker;
-  local.profile.enabled = g.profile != nullptr;
+  result->Cast<ScanLocalState>().worker = worker;
   return result;
 }
 
@@ -522,8 +520,7 @@ void IResearchScanGetMetrics(duckdb::TableFunctionGetMetricsInput& input) {
     return;
   }
   l.ReleasePlans();
-  g.profile->Report(l.worker, std::exchange(l.profile, {}),
-                    input.operator_metrics);
+  g.profile->Report(input.operator_metrics);
 }
 
 double IResearchScanProgress(duckdb::ClientContext&,

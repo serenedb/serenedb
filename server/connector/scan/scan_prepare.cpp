@@ -103,8 +103,11 @@ bool RunPrepareStage(duckdb::TableFunctionInput& input, ScanGlobalState& g,
       }
       if (g.stats_barrier.Arrive()) {
         if (g.collector) {
-          const ScanTimer stats{l.profile, &ScanLocalProfile::stats_ticks};
+          const auto start = g.profile ? duckdb::TimePoint::Now() : 0;
           g.collector->Finish();
+          if (g.profile) {
+            g.profile->AddStats(ElapsedTicks(start));
+          }
         }
         g.stats_barrier.Release(input);
       }

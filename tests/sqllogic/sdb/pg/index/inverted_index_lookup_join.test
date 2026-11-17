@@ -186,7 +186,6 @@ QUERY PLAN
 │ optional: Dynamic Filter (sdb_inverted_index_score < ?) │
 │ Score: bm25(k1=1.2, b=0.75)                             │
 │ Projections: sdb_inverted_index_score, rowid            │
-│ Fetch: 0µs                                              │
 │ 1,000 rows                                          0µs │
 ╰────────────────────────────┬────────────────────────────╯
                              ├─────────────────────────────────────────┰┒
@@ -234,7 +233,6 @@ QUERY PLAN
 │ optional: Dynamic Filter (sdb_inverted_index_score >= ?) │
 │ Score: bm25(k1=1.2, b=0.75)                              │
 │ Projections: sdb_inverted_index_score, id, rowid         │
-│ Fetch: 0µs                                               │
 │ 1,000 rows                                           0µs │
 ╰─────────────────────────────┬────────────────────────────╯
                               ├─────────────────────────────────────────┰┒
@@ -282,7 +280,6 @@ QUERY PLAN
 │ optional: Dynamic Filter (sdb_inverted_index_score < ?) │
 │ Score: bm25(k1=1.2, b=0.75)                             │
 │ Projections: sdb_inverted_index_score, rowid            │
-│ Fetch: 0µs                                              │
 │ 1,000 rows                                          0µs │
 ╰────────────────────────────┬────────────────────────────╯
                              ├─────────────────────────────────────────┰┒
@@ -328,7 +325,6 @@ QUERY PLAN
 │ optional: Dynamic Filter (sdb_inverted_index_score < ?) │
 │ Score: bm25(k1=1.2, b=0.75)                             │
 │ Projections: id, title, body, sdb_inverted_index_score  │
-│ Fetch: 0µs                                              │
 │ 1,000 rows                                          0µs │
 ╰────────────────────────────┬────────────────────────────╯
                              ├─────────────────────────────────────────┰┒
@@ -371,7 +367,6 @@ QUERY PLAN
 │ optional: Dynamic Filter (sdb_inverted_index_score >= ?) │
 │ Score: bm25(k1=1.2, b=0.75)                              │
 │ Projections: title, body, sdb_inverted_index_score, id   │
-│ Fetch: 0µs                                               │
 │ 1,000 rows                                           0µs │
 ╰─────────────────────────────┬────────────────────────────╯
                               ├─────────────────────────────────────────┰┒

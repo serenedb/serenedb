@@ -424,7 +424,6 @@ struct ScanLocalState : public duckdb::LocalTableFunctionState {
   bool starts_exhausted = false;
   uint64_t rg_units = 0;
   uint64_t produced_rows = 0;
-  ScanLocalProfile profile;
 
   void Classify(ScanGlobalState& g, uint32_t seg);
 

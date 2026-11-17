@@ -71,7 +71,7 @@ QUERY PLAN
 │ Segments: 1 of 1                                                      │  ╰────────────┬───────────╯
 │ 0 rows                                                            0µs │  ╭─ count::BooleanWindow ─╮
 ╰───────────────────────────────────┰───────────────────────────────────╯  │ Plans: 1               │
-╭─ BOOL ────────────────────────────┸───────────────────────────────────╮  │ Calls: 2               │
+╭─ BOOL ────────────────────────────┸───────────────────────────────────╮  │ Calls: 3               │
 │ Must Not Terms: body(string): 'city'                                  │  │ Plan: 0µs              │
 │ Total: 0µs                                                            │  │ 17,142 rows        0µs │
 │ Posting Lists: 1                                                      │  ╰────────────────────────╯
@@ -123,7 +123,7 @@ QUERY PLAN
 │ Segments: 1 of 1                               │  ╰─────────┒┎────────╯
 │ 0 rows                                     0µs │  ╭─ count::Subtract ─╮
 ╰────────────────────────┰───────────────────────╯  │ Plans: 1          │
-╭─ NOT ──────────────────┸───────────────────────╮  │ Calls: 2          │
+╭─ NOT ──────────────────┸───────────────────────╮  │ Calls: 3          │
 │ Terms: body(string): 'city', body(null)        │  │ Plan: 0µs         │
 │ Posting Lists: 1                               │  │ 62,856 rows   0µs │
 │ Estimated Matches: 62,856                      │  ╰───────────────────╯
@@ -168,7 +168,7 @@ QUERY PLAN
 │ Segments: 1 of 1                     │  ╰────────────┰───────────╯
 │ 0 rows                           0µs │  ╭─ count::BooleanWindow ─╮
 ╰───────────────────┒┎─────────────────╯  │ Plans: 1               │
-╭─ BOOL ────────────┚┖─────────────────╮  │ Calls: 2               │
+╭─ BOOL ────────────┚┖─────────────────╮  │ Calls: 3               │
 │ Should Terms:                        │  │ Plan: 0µs              │
 │ body(string): 'city', 'town', 'york' │  │ 54,286 rows        0µs │
 │ Should Min Match: 2                  │  ╰────────────────────────╯
@@ -213,7 +213,7 @@ QUERY PLAN
 │ Segments: 1 of 1                                │  ╰─────────┒┎────────╯
 │ 0 rows                                      0µs │  ╭─ count::Subtract ─╮
 ╰────────────────────────┒┎───────────────────────╯  │ Plans: 1          │
-╭─ OR ───────────────────┚┖───────────────────────╮  │ Calls: 2          │
+╭─ OR ───────────────────┚┖───────────────────────╮  │ Calls: 3          │
 │ Terms: id(numeric): 5, body(string): 'city'     │  │ Plan: 0µs         │
 │ Posting Lists: 2                                │  │ 37,145 rows   0µs │
 │ Estimated Matches: 37,145                       │  ╰───────────────────╯
@@ -246,17 +246,16 @@ QUERY PLAN
 │ Output: row-count only   │
 │ 0 rows               0µs │
 ╰─────────────┬────────────╯
-              ├─────────────────────────╮
-╭─ INDEX_PREPARE ──────────╮  ╭─ INDEX_EXECUTE ───╮
-│ Total: 0µs               │  │ Total: 0µs        │
-│ Snapshot: 0µs            │  │ 0 rows        0µs │
-│ Segments: 1 of 1         │  ╰─────────┬─────────╯
-│ 0 rows               0µs │  ╭─ count::Constant ─╮
-╰─────────────┬────────────╯  │ Plans: 1          │
-╭─ TERM ──────┴────────────╮  │ Calls: 2          │
-│ Field: body(string)      │  │ Plan: 0µs         │
-│ Value: harbor            │  │ 0 rows        0µs │
-│ Estimated Matches: 0     │  ╰───────────────────╯
+╭─ INDEX_PREPARE ──────────╮
+│ Total: 0µs               │
+│ Snapshot: 0µs            │
+│ Segments: 1 of 1         │
+│ 0 rows               0µs │
+╰─────────────┬────────────╯
+╭─ TERM ──────┴────────────╮
+│ Field: body(string)      │
+│ Value: harbor            │
+│ Estimated Matches: 0     │
 │ 0 rows               0µs │
 ╰──────────────────────────╯
 
@@ -284,7 +283,6 @@ QUERY PLAN
 │ Score: bm25(k1=1.2, b=0.75) │
 │ Top: 3, optimized           │
 │ Projections: id             │
-│ Fetch: 0µs                  │
 │ 3 rows                  0µs │
 ╰──────────────┬──────────────╯
                ├───────────────────────────────────────╮
@@ -392,7 +390,7 @@ QUERY PLAN
 │ Segments: 1 of 1          │  ╰──────────┒┎────────╯
 │ 0 rows                0µs │  ╭─ count::TermCount ─╮
 ╰─────────────┒┎────────────╯  │ Plans: 1           │
-╭─ Term ──────┚┖────────────╮  │ Calls: 2           │
+╭─ Term ──────┚┖────────────╮  │ Calls: 3           │
 │ Field: body(string)       │  │ Plan: 0µs          │
 │ Value: city               │  │ 37144 rows     0µs │
 │ Posting Lists: 1          │  ╰────────────────────╯
@@ -436,7 +434,6 @@ QUERY PLAN
 │ Score: bm25(k1=1.2, b=0.75)                                                          │
 │ Top: 3, optimized                                                                    │
 │ Projections: id                                                                      │
-│ Fetch: 0µs                                                                           │
 │ 3 rows                                                                           0µs │
 ╰───────────────────────────────────────────┬──────────────────────────────────────────╯
                                             ├───────────────────────────────────────────────────────────────────────────────────────────────────┒
@@ -488,7 +485,6 @@ QUERY PLAN
 │ Score: bm25(k1=1.5, b=0.5)          │
 │ Top: 3                              │
 │ Projections: id                     │
-│ Fetch: 0µs                          │
 │ 3 rows                          0µs │
 ╰──────────────────┬──────────────────╯
                    ├─────────────────────────────────┰┒
@@ -534,7 +530,6 @@ QUERY PLAN
 │                                               ╰─────────────────────╯  │ Term:york(0, 0); Term:city(1, 1);  │ │
 │                                                                        ╰────────────────────────────────────╯ │
 │ Projections: id                                                                                               │
-│ Fetch: 0µs                                                                                                    │
 │ 31,428 rows                                                                                               0µs │
 ╰───────────────────────────────────────────────────────┬───────────────────────────────────────────────────────╯
                                                         ├──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┒
@@ -629,20 +624,20 @@ QUERY PLAN
 │ Total: 0µs                                                            │  │ Total: 0µs                   │
 │ Snapshot: 0µs                                                         │  │ 16,667 rows              0µs │
 │ Segments: 2 of 2                                                      │  ╰───────────────┬──────────────╯
-│ 0 rows                                                            0µs │                  ├───────────────────────────╮
-╰───────────────────────────────────┬───────────────────────────────────╯  ╭─ count::BooleanWindow ───────╮  ╭─ count::Constant ─╮
-╭─ AND ─────────────────────────────┴───────────────────────────────────╮  │ Plans: 1                     │  │ Plans: 1          │
-│ Terms: body(string): 'city'                                           │  │ Calls: 2                     │  │ Calls: 2          │
-│ Total: 0µs                                                            │  │ Plan: 0µs                    │  │ Plan: 0µs         │
-│ Posting Lists: 1                                                      │  │ Total: 0µs                   │  │ 0 rows        0µs │
-│ Estimated Matches: 5,556                                              │  │ 16,667 rows              0µs │  ╰───────────────────╯
-│ 16,667 rows                                                       0µs │  ╰───────────────┬──────────────╯
-╰───────────────────────────────────┒┎──────────────────────────────────╯  ╭─ fill::Impl<fill::WalkDocs> ─╮
-╭─ PHRASE ──────────────────────────┚┖──────────────────────────────────╮  │ Filter: Phrase               │
-│ Field: body(string)                                                   │  │ Plans: 1                     │
-│ Parts: Term:new(0, 0); Term:york(1, 1);                               │  │ Calls: 13                    │
-│ Posting Lists: 2                                                      │  │ 16,667 rows              0µs │
-│ Estimated Matches: 16,667                                             │  ╰──────────────────────────────╯
+│ 0 rows                                                            0µs │  ╭─ count::BooleanWindow ───────╮
+╰───────────────────────────────────┬───────────────────────────────────╯  │ Plans: 1                     │
+╭─ AND ─────────────────────────────┴───────────────────────────────────╮  │ Calls: 3                     │
+│ Terms: body(string): 'city'                                           │  │ Plan: 0µs                    │
+│ Total: 0µs                                                            │  │ Total: 0µs                   │
+│ Posting Lists: 1                                                      │  │ 16,667 rows              0µs │
+│ Estimated Matches: 5,556                                              │  ╰───────────────┬──────────────╯
+│ 16,667 rows                                                       0µs │  ╭─ fill::Impl<fill::WalkDocs> ─╮
+╰───────────────────────────────────┒┎──────────────────────────────────╯  │ Filter: Phrase               │
+╭─ PHRASE ──────────────────────────┚┖──────────────────────────────────╮  │ Plans: 1                     │
+│ Field: body(string)                                                   │  │ Calls: 13                    │
+│ Parts: Term:new(0, 0); Term:york(1, 1);                               │  │ 16,667 rows              0µs │
+│ Posting Lists: 2                                                      │  ╰──────────────────────────────╯
+│ Estimated Matches: 16,667                                             │
 │ 66,667 rows                                                       0µs │
 ╰───────────────────────────────────────────────────────────────────────╯
 
@@ -687,7 +682,6 @@ QUERY PLAN
 │ │ Value: even          │ │
 │ ╰──────────────────────╯ │
 │ Projections: id          │
-│ Fetch: 0µs               │
 │ 4 rows               0µs │
 ╰─────────────┬────────────╯
               ├─────────────────────────────────╮
@@ -738,7 +732,6 @@ QUERY PLAN
 │ │ Value: even          │ │
 │ ╰──────────────────────╯ │
 │ Projections: id          │
-│ Fetch: 0µs               │
 │ 4 rows               0µs │
 ╰─────────────┬────────────╯
               ├─────────────────────────────────╮
@@ -795,7 +788,6 @@ QUERY PLAN
 │ brute force over the stored vectors    │
 │ Top: 3                                 │
 │ Projections: id                        │
-│ Fetch: 0µs                             │
 │ 3 rows                             0µs │
 ╰────────────────────┬───────────────────╯
                      ├────────────────────────────────╮
@@ -814,9 +806,9 @@ QUERY PLAN
 │ Estimated Matches: 1,000               │  │ Filter: Term      │
 │ 500 rows                           0µs │  │ Plans: 1          │
 ╰────────────────────┒┎──────────────────╯  │ Calls: 1          │
-╭─ TERM ─────────────┚┖──────────────────╮  │ 500 rows      0µs │
-│ Field: label(string)                   │  ╰───────────────────╯
-│ Value: even                            │
+╭─ TERM ─────────────┚┖──────────────────╮  │ Plan: 0µs         │
+│ Field: label(string)                   │  │ 500 rows      0µs │
+│ Value: even                            │  ╰───────────────────╯
 │ Posting Lists: 1                       │
 │ Estimated Matches: 500                 │
 │ 500 rows                           0µs │
@@ -1034,7 +1026,6 @@ QUERY PLAN
 │ Score: l2_distance(emb, FLOAT[4]) │
 │ Top: 3000                         │
 │ Projections: id                   │
-│ Fetch: 0µs                        │
 │ 3,000 rows                    0µs │
 ╰─────────────────┬─────────────────╯
                   ├──────────────────────────────┰┒

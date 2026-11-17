@@ -24,10 +24,10 @@
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/count/term_counts.hpp>
-#include <iresearch/search/detail/bitset_storage.hpp>
 #include <iresearch/search/detail/lazy_bitset.hpp>
 #include <iresearch/search/detail/resolve.hpp>
 #include <iresearch/search/docs/family.hpp>
+#include <iresearch/search/fill/make.hpp>
 #include <iresearch/search/queries/term_state.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -60,9 +60,9 @@ struct TsDictLocalState final : public ScanLocalState {
                     uint32_t ordinal = irs::count::TermCounts::kNoOrdinal);
 
   void ReleasePlans() final {
+    _live.reset();
     _term_counts = nullptr;
     _term_counts_cache.clear();
-    _live.reset();
   }
 
  private:
@@ -276,17 +276,14 @@ irs::detail::LazyBitset& TsDictLocalState::Live() {
   if (!_live) {
     const auto& query = where_query ? *where_query : *_all_query;
     SDB_ASSERT(!irs::QueryBuilder::IsEmpty(query));
-    auto node = Planned(
-      profile, [&] { return query.PlanFill({}, irs::ScoreMergeType::Noop); });
+    auto node = irs::fill::MakeRoot(query);
+    EnsurePlanned(node != nullptr);
     if (auto* folded = node->Folded()) {
-      if (auto* shape = profile.current) {
-        shape->rows += irs::detail::CountBits(*folded);
-      }
       _live = std::make_unique<irs::detail::LazyBitset>(
         std::move(*folded), irs::MakeGenericDocsMask(*_seg));
     } else {
       _live = std::make_unique<irs::detail::LazyBitset>(
-        ProfileFill(profile, std::move(node)), _seg->Meta().docs_count,
+        std::move(node), _seg->Meta().docs_count,
         irs::MakeGenericDocsMask(*_seg));
     }
   }
@@ -435,9 +432,7 @@ void TsDictLocalState::BeginEmit(ScanGlobalState& g) {
   emitting = true;
   counting = false;
   _range = {};
-  _live.reset();
-  _term_counts = nullptr;
-  _term_counts_cache.clear();
+  ReleasePlans();
   _cursor.reset();
   _field = nullptr;
   _next_field = _emit_fields;

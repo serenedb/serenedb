@@ -194,7 +194,7 @@ Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {
     return MakeEmpty();
   }
   const detail::FoldReachScope reach{ctx.span};
-  return query.PlanTop(ctx);
+  return ProfileRoot(query, [&] { return query.PlanTop(ctx); });
 }
 
 Root::ptr Family::Make(const FixedPhraseQuery& query, const Context& ctx) {

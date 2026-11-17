@@ -27,6 +27,8 @@
 #include <typeinfo>
 
 #include "iresearch/index/iterators.hpp"
+#include "iresearch/search/ann/collector.hpp"
+#include "iresearch/search/detail/bitset_storage.hpp"
 #include "iresearch/search/detail/lazy_bitset.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -144,7 +146,72 @@ class ProfiledFill : public QueryProfile::Profiled<fill::Node> {
     return _inner->FillCostAbove(cost, min, max);
   }
 
-  detail::BitsetStorage* Folded() noexcept final { return _inner->Folded(); }
+  detail::BitsetStorage* Folded() noexcept final {
+    auto* folded = _inner->Folded();
+    if (folded) {
+      _counter.Docs(detail::CountBits(*folded));
+    }
+    return folded;
+  }
+};
+
+class ProfiledHits : public QueryProfile::Profiled<hits::Root> {
+ public:
+  using Profiled::Profiled;
+
+  uint32_t Run(doc_id_t min, doc_id_t max, doc_id_t* docs,
+               score_t* scores) final {
+    const auto count =
+      _counter.Time([&] { return _inner->Run(min, max, docs, scores); });
+    _counter.Docs(count);
+    return count;
+  }
+};
+
+class ProfiledCount : public QueryProfile::Profiled<count::Root> {
+ public:
+  using Profiled::Profiled;
+
+  uint64_t Run(doc_id_t min, doc_id_t max) final {
+    const auto count = _counter.Time([&] { return _inner->Run(min, max); });
+    _counter.Docs(count);
+    return count;
+  }
+
+  uint64_t Finish() final {
+    const auto count = _counter.Time([&] { return _inner->Finish(); });
+    _counter.Docs(count);
+    return count;
+  }
+};
+
+class ProfiledTop : public QueryProfile::Profiled<top::Root> {
+ public:
+  using Profiled::Profiled;
+
+  void Run(doc_id_t min, doc_id_t max, LoserScoreCollector& collector) final {
+    const auto before = collector.TotalMatches();
+    _counter.Time([&] { _inner->Run(min, max, collector); });
+    _counter.Docs(collector.TotalMatches() - before);
+  }
+};
+
+class ProfiledAnn : public QueryProfile::Profiled<ann::Root> {
+ public:
+  using Profiled::Profiled;
+
+  ~ProfiledAnn() override {
+    _counter.Docs(static_cast<uint64_t>(std::max<int64_t>(_kept, 0)));
+  }
+
+  void Run(ann::Collector& collector) final {
+    const auto before = static_cast<int64_t>(collector.Size());
+    _counter.Time([&] { _inner->Run(collector); });
+    _kept += static_cast<int64_t>(collector.Size()) - before;
+  }
+
+ private:
+  int64_t _kept = 0;
 };
 
 template<typename Wrapper, typename Ptr>
@@ -164,10 +231,9 @@ QueryProfile::QueryProfile(std::span<const Filter* const> filters, bool nested)
   for (uint32_t i = 0; i != _size; ++i) {
     _ids.try_emplace(filters[i], i);
   }
-  if (nested) {
-    _executed = std::make_unique<std::list<Executed>[]>(_size);
-    _timer_ticks = MeasureTimerTicks();
-  }
+  _executed = std::make_unique<std::list<Executed>[]>(_size);
+  _timer_ticks = MeasureTimerTicks();
+  _nested = nested;
 }
 
 QueryBuilder::ptr QueryProfile::Prepare(const Filter& filter,
@@ -189,16 +255,14 @@ QueryBuilder::ptr QueryProfile::Prepare(const Filter& filter,
     node.postings.fetch_add(query->Postings(), std::memory_order_relaxed);
     node.matches.fetch_add(query->EstimateMatches(), std::memory_order_relaxed);
     node.kind.store(query->Kind(), std::memory_order_relaxed);
-    if (_executed) {
-      query->SetProfile(*this, id->second);
-    }
+    query->SetProfile(*this, id->second);
   }
   return query;
 }
 
 QueryProfile::Executed& QueryProfile::Plan(uint32_t node,
                                            const std::type_info& type) {
-  SDB_ASSERT(_executed && node < _size);
+  SDB_ASSERT(node < _size);
   const absl::MutexLock lock{&_mutex};
   auto& entries = _executed[node];
   auto entry = absl::c_find_if(
@@ -213,9 +277,6 @@ QueryProfile::Executed& QueryProfile::Plan(uint32_t node,
 
 std::vector<QueryProfile::ExecutedNode> QueryProfile::Slots() const {
   std::vector<ExecutedNode> slots;
-  if (!_executed) {
-    return slots;
-  }
   const absl::MutexLock lock{&_mutex};
   for (uint32_t node = 0; node != _size; ++node) {
     for (const auto& executed : _executed[node]) {
@@ -232,8 +293,44 @@ uint64_t QueryProfile::WindowDocs(const uint64_t* mask, doc_id_t min,
   return max > min ? detail::CountBitRange(mask, 0, max - min) : 0;
 }
 
-docs::Root::ptr QueryProfile::WrapInner(docs::Root::ptr node, uint32_t id) {
-  return WrapAs<ProfiledDocs>(std::move(node), id);
+template<typename Wrapper, typename Ptr>
+Ptr QueryProfile::WrapRootAs(Ptr root, uint32_t id, uint64_t ticks) {
+  if (id != 0 && !_nested) {
+    return root;
+  }
+  auto& slot = Plan(id, typeid(*root));
+  slot.plan_ticks.fetch_add(ticks, std::memory_order_relaxed);
+  return memory::make_managed<Wrapper>(std::move(root), slot);
+}
+
+docs::Root::ptr QueryProfile::WrapRoot(docs::Root::ptr root, uint32_t id,
+                                       uint64_t ticks) {
+  return WrapRootAs<ProfiledDocs>(std::move(root), id, ticks);
+}
+
+hits::Root::ptr QueryProfile::WrapRoot(hits::Root::ptr root, uint32_t id,
+                                       uint64_t ticks) {
+  return WrapRootAs<ProfiledHits>(std::move(root), id, ticks);
+}
+
+count::Root::ptr QueryProfile::WrapRoot(count::Root::ptr root, uint32_t id,
+                                        uint64_t ticks) {
+  return WrapRootAs<ProfiledCount>(std::move(root), id, ticks);
+}
+
+top::Root::ptr QueryProfile::WrapRoot(top::Root::ptr root, uint32_t id,
+                                      uint64_t ticks) {
+  return WrapRootAs<ProfiledTop>(std::move(root), id, ticks);
+}
+
+ann::Root::ptr QueryProfile::WrapRoot(ann::Root::ptr root, uint32_t id,
+                                      uint64_t ticks) {
+  return WrapRootAs<ProfiledAnn>(std::move(root), id, ticks);
+}
+
+fill::Node::ptr QueryProfile::WrapRoot(fill::Node::ptr root, uint32_t id,
+                                       uint64_t ticks) {
+  return WrapRootAs<ProfiledFill>(std::move(root), id, ticks);
 }
 
 lead::Node::ptr QueryProfile::Wrap(lead::Node::ptr node, uint32_t id) {

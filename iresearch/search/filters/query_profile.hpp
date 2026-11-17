@@ -51,6 +51,7 @@ class QueryProfile {
   struct Executed {
     const std::type_info* type = nullptr;
     std::atomic_uint64_t plans = 0;
+    std::atomic_uint64_t plan_ticks = 0;
     std::atomic_uint64_t calls = 0;
     std::atomic_uint64_t docs = 0;
     std::atomic_uint64_t ticks = 0;
@@ -162,25 +163,35 @@ class QueryProfile {
 
   template<typename Wrapper, typename Ptr>
   Ptr WrapAs(Ptr node, uint32_t id) {
-    if (id == 0) {
+    if (id == 0 || !_nested) {
       return node;
     }
     auto& slot = Plan(id, typeid(*node));
     return memory::make_managed<Wrapper>(std::move(node), slot);
   }
 
-  docs::Root::ptr WrapInner(docs::Root::ptr node, uint32_t id);
   lead::Node::ptr Wrap(lead::Node::ptr node, uint32_t id);
   probe::Node::ptr Wrap(probe::Node::ptr node, uint32_t id);
   fill::Node::ptr Wrap(fill::Node::ptr node, uint32_t id);
 
+  docs::Root::ptr WrapRoot(docs::Root::ptr root, uint32_t id, uint64_t ticks);
+  hits::Root::ptr WrapRoot(hits::Root::ptr root, uint32_t id, uint64_t ticks);
+  count::Root::ptr WrapRoot(count::Root::ptr root, uint32_t id, uint64_t ticks);
+  top::Root::ptr WrapRoot(top::Root::ptr root, uint32_t id, uint64_t ticks);
+  ann::Root::ptr WrapRoot(ann::Root::ptr root, uint32_t id, uint64_t ticks);
+  fill::Node::ptr WrapRoot(fill::Node::ptr root, uint32_t id, uint64_t ticks);
+
  private:
+  template<typename Wrapper, typename Ptr>
+  Ptr WrapRootAs(Ptr root, uint32_t id, uint64_t ticks);
+
   containers::FlatHashMap<const Filter*, uint32_t> _ids;
   std::unique_ptr<Prepared[]> _nodes;
   mutable absl::Mutex _mutex;
   std::unique_ptr<std::list<Executed>[]> _executed;
   uint32_t _size = 0;
   uint64_t _timer_ticks = 0;
+  bool _nested = false;
 };
 
 inline QueryBuilder::ptr PrepareFilter(const Filter& filter,
@@ -206,13 +217,19 @@ Ptr ProfilePlan(const QueryBuilder& query, Ptr node) {
   return node;
 }
 
-inline docs::Root::ptr ProfileInner(const QueryBuilder& query,
-                                    docs::Root::ptr node) {
-  if (auto* profile = query.Profile()) [[unlikely]] {
-    SDB_ASSERT(node);
-    return profile->WrapInner(std::move(node), query.ProfileNode());
+template<typename Make>
+auto ProfileRoot(const QueryBuilder& query, Make&& make) {
+  auto* profile = query.Profile();
+  if (!profile) [[likely]] {
+    return make();
   }
-  return node;
+  const auto start = duckdb::TimePoint::Now();
+  auto root = make();
+  const auto ticks = static_cast<uint64_t>(duckdb::TimePoint::Now() - start);
+  if (!root) {
+    return root;
+  }
+  return profile->WrapRoot(std::move(root), query.ProfileNode(), ticks);
 }
 
 }  // namespace irs

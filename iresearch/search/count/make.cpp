@@ -27,6 +27,7 @@
 #include "iresearch/search/count/subtract.hpp"
 #include "iresearch/search/detail/fold_reach.hpp"
 #include "iresearch/search/detail/make_term.hpp"
+#include "iresearch/search/filters/query_profile.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
 
 namespace irs::count {
@@ -36,7 +37,7 @@ Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {
     return MakeConstant(0);
   }
   const detail::FoldReachScope reach{ctx.span};
-  return query.PlanCount(ctx);
+  return ProfileRoot(query, [&] { return query.PlanCount(ctx); });
 }
 
 Root::ptr Family::Make(const MultiTermQuery& query, const Context& ctx) {

@@ -30,9 +30,8 @@ namespace {
 
 void FinishRoot(CountLocalState& l) {
   if (l.root) {
-    l.local_count += Ran(l.profile, [&] {
-      return irs::utils::downCast<irs::count::Root>(l.root.get())->Finish();
-    });
+    l.local_count +=
+      irs::utils::downCast<irs::count::Root>(l.root.get())->Finish();
     l.root.reset();
     l.root_seg = std::numeric_limits<uint32_t>::max();
   }
@@ -71,18 +70,16 @@ void RunCountScan(duckdb::TableFunctionInput&, ScanGlobalState& g,
         FinishRoot(l);
         const auto& seg_query = EnsureSegmentQuery(g, &l, unit.seg);
         auto* table = BeginVerify(l.col_verify, sub, g, l);
-        auto plan = Planned(l.profile, [&] {
-          return irs::count::MakeRoot(
-            seg_query,
-            {.table = table, .span = g.UnitSpan(unit), .partial = true});
-        });
+        auto plan = irs::count::MakeRoot(
+          seg_query,
+          {.table = table, .span = g.UnitSpan(unit), .partial = true});
+        EnsurePlanned(plan != nullptr);
         l.root = std::move(plan);
         l.root_seg = unit.seg;
       }
       auto& root = *irs::utils::downCast<irs::count::Root>(l.root.get());
-      l.local_count += Ran(l.profile, [&] {
-        return root.Run(range.begin, range.end) + root.Finish();
-      });
+      l.local_count += root.Run(range.begin, range.end);
+      l.local_count += root.Finish();
       l.root_end = range.end;
     }
     FinishUnit(g, l);

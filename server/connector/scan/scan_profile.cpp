@@ -29,7 +29,6 @@
 #include <absl/strings/strip.h>
 
 #include <duckdb/common/string_util.hpp>
-#include <iresearch/search/detail/lazy_bitset.hpp>
 #include <string>
 #include <utility>
 
@@ -116,19 +115,6 @@ void AddTiming(Info& info, std::string_view key, uint64_t ticks) {
   }
 }
 
-void Add(ShapeStats& sum, const ShapeStats& shape) {
-  sum.plans += shape.plans;
-  sum.calls += shape.calls;
-  sum.rows += shape.rows;
-  sum.plan_ticks += shape.plan_ticks;
-  sum.run_ticks += shape.run_ticks;
-}
-
-struct Shape {
-  std::string name;
-  ShapeStats stats;
-};
-
 uint64_t EstimatedTicks(const irs::QueryProfile::Executed& slot,
                         uint64_t timer_ticks) {
   const uint64_t timed = slot.timed_calls;
@@ -141,65 +127,37 @@ uint64_t EstimatedTicks(const irs::QueryProfile::Executed& slot,
                                static_cast<double>(timed));
 }
 
-class ProfiledFill : public irs::fill::Node {
+class ProfiledLookup final : public irs::IndexSource {
  public:
-  ProfiledFill(irs::fill::Node::ptr inner, ShapeStats& shape)
-    : _inner{std::move(inner)}, _shape{shape} {}
+  ProfiledLookup(ScanProfile& profile, std::unique_ptr<irs::IndexSource> inner)
+    : _profile{profile}, _inner{std::move(inner)} {}
 
-  irs::doc_id_t FillOr(irs::doc_id_t min, irs::doc_id_t max,
-                       uint64_t* IRS_RESTRICT mask) final {
+  duckdb::idx_t Materialize(duckdb::ClientContext& context, duckdb::Vector& pk,
+                            duckdb::idx_t count,
+                            duckdb::DataChunk& output) final {
     const auto start = duckdb::TimePoint::Now();
-    const auto next = _inner->FillOr(min, max, mask);
-    _shape.run_ticks += ElapsedTicks(start);
-    ++_shape.calls;
-    _shape.rows += irs::detail::CountBitRange(mask, 0, max - min);
-    return next;
+    const auto rows = _inner->Materialize(context, pk, count, output);
+    _profile.AddLookup(ElapsedTicks(start), count - rows);
+    return rows;
   }
 
-  irs::doc_id_t FillAndNot(irs::doc_id_t min, irs::doc_id_t max,
-                           uint64_t* IRS_RESTRICT mask) final {
-    return _inner->FillAndNot(min, max, mask);
-  }
-
-  irs::doc_id_t Fill(irs::doc_id_t min, irs::doc_id_t max,
-                     uint64_t* IRS_RESTRICT mask,
-                     irs::score_t* IRS_RESTRICT scores) final {
-    return _inner->Fill(min, max, mask, scores);
-  }
-
-  uint32_t Keep(const irs::doc_id_t* docs, uint32_t count,
-                irs::doc_id_t* out) final {
-    return _inner->Keep(docs, count, out);
-  }
-
-  uint32_t Drop(const irs::doc_id_t* docs, uint32_t count,
-                irs::doc_id_t* out) final {
-    return _inner->Drop(docs, count, out);
-  }
-
-  bool FillCostAbove(uint64_t cost, irs::doc_id_t min,
-                     irs::doc_id_t max) final {
-    return _inner->FillCostAbove(cost, min, max);
-  }
-
-  irs::detail::BitsetStorage* Folded() noexcept final {
-    return _inner->Folded();
+  std::span<const duckdb::idx_t> Survivors() const noexcept final {
+    return _inner->Survivors();
   }
 
  private:
-  irs::fill::Node::ptr _inner;
-  ShapeStats& _shape;
+  ScanProfile& _profile;
+  std::unique_ptr<irs::IndexSource> _inner;
 };
 
 }  // namespace
 
-irs::fill::Node::ptr ProfileFill(const ScanLocalProfile& profile,
-                                 irs::fill::Node::ptr node) {
-  if (!profile.current) {
-    return node;
+std::unique_ptr<irs::IndexSource> ProfileLookup(
+  ScanProfile* profile, std::unique_ptr<irs::IndexSource> source) {
+  if (!profile) {
+    return source;
   }
-  return irs::memory::make_managed<ProfiledFill>(std::move(node),
-                                                 *profile.current);
+  return std::make_unique<ProfiledLookup>(*profile, std::move(source));
 }
 
 ScanProfile::ScanProfile(std::vector<irs::FilterBox> boxes, bool nested,
@@ -208,9 +166,7 @@ ScanProfile::ScanProfile(std::vector<irs::FilterBox> boxes, bool nested,
     _query{FiltersOf(_boxes), nested},
     _snapshot_ticks{snapshot_ticks} {}
 
-void ScanProfile::FinishInit(uint32_t workers) {
-  _workers = std::make_unique<Worker[]>(workers);
-  _workers_size = workers;
+void ScanProfile::FinishInit() {
   uint64_t ticks = _snapshot_ticks + _classify_ticks;
   for (uint32_t i = 0; i != _boxes.size(); ++i) {
     if (_boxes[i].parent == irs::FilterBox::kRoot) {
@@ -220,13 +176,7 @@ void ScanProfile::FinishInit(uint32_t workers) {
   _init_ticks = ticks;
 }
 
-void ScanProfile::Report(uint32_t worker, ScanLocalProfile local,
-                         duckdb::OperatorMetrics& metrics) {
-  SDB_ENSURE(local.enabled && worker < _workers_size,
-             "every worker of a profiled scan reports its profile once");
-  auto& slot = _workers[worker];
-  slot.profile = std::move(local);
-  slot.published.store(true, std::memory_order_release);
+void ScanProfile::Report(duckdb::OperatorMetrics& metrics) {
   const auto version = _version.fetch_add(1, std::memory_order_acq_rel) + 1;
   metrics.time += Seconds(_init_ticks.exchange(0, std::memory_order_relaxed));
   auto nested = duckdb::make_shared_ptr<duckdb::ProfilingNode>();
@@ -244,49 +194,39 @@ void ScanProfile::Render(duckdb::ProfilingNode& node) const {
     (parent == irs::FilterBox::kRoot ? roots : children[parent]).push_back(i);
   }
 
-  ScanLocalProfile total;
-  for (uint32_t w = 0; w != _workers_size; ++w) {
-    const auto& slot = _workers[w];
-    if (!slot.published.load(std::memory_order_acquire)) {
-      continue;
-    }
-    const auto& local = slot.profile;
-    for (const auto& [type, shape] : local.shapes) {
-      Add(total.shapes[type], shape);
-    }
-    total.filtered += local.filtered;
-    total.fetch_ticks += local.fetch_ticks;
-    total.lookup_ticks += local.lookup_ticks;
-    total.stats_ticks += local.stats_ticks;
-  }
-
-  std::vector<Shape> shapes;
-  shapes.reserve(total.shapes.size());
+  const auto slots = _query.Slots();
+  std::vector<std::string> names(slots.size());
+  std::vector<uint64_t> slot_ticks(slots.size());
+  std::vector<size_t> plans;
   uint64_t plan_ticks = 0;
   uint64_t run_ticks = 0;
   uint64_t rows = 0;
-  for (const auto& [type, shape] : total.shapes) {
-    shapes.push_back({.name = ShapeName(*type), .stats = shape});
-    plan_ticks += shape.plan_ticks;
-    run_ticks += shape.run_ticks;
-    rows += shape.rows;
+  for (size_t s = 0; s != slots.size(); ++s) {
+    const auto& slot = *slots[s].executed;
+    names[s] = ShapeName(*slot.type);
+    slot_ticks[s] = EstimatedTicks(slot, _query.TimerTicks());
+    if (slots[s].node == 0) {
+      plans.push_back(s);
+      plan_ticks += slot.plan_ticks;
+      run_ticks += slot_ticks[s];
+      rows += slot.docs;
+    }
   }
-  absl::c_sort(shapes, [](const Shape& lhs, const Shape& rhs) {
-    return lhs.name < rhs.name;
-  });
+  absl::c_sort(plans,
+               [&](size_t lhs, size_t rhs) { return names[lhs] < names[rhs]; });
 
   Info scan_info;
-  if (total.filtered != 0) {
-    scan_info["Filtered"] = Count(total.filtered);
+  if (const uint64_t filtered = _filtered; filtered != 0) {
+    scan_info["Filtered"] = Count(filtered);
   }
-  AddTiming(scan_info, "Fetch", total.fetch_ticks);
-  AddTiming(scan_info, "Lookup Time", total.lookup_ticks);
+  AddTiming(scan_info, "Lookup Time", _lookup_ticks);
 
   uint64_t queries_ticks = 0;
   for (const auto root : roots) {
     queries_ticks += _query.Node(static_cast<uint32_t>(root)).ticks;
   }
-  const auto own_ticks = _snapshot_ticks + _classify_ticks + total.stats_ticks;
+  const uint64_t stats_ticks = _stats_ticks;
+  const auto own_ticks = _snapshot_ticks + _classify_ticks + stats_ticks;
   auto& scan = node.GetOperatorMetrics();
   scan.SetExtraInfo(std::move(scan_info));
   scan.time = Seconds(own_ticks + queries_ticks + plan_ticks + run_ticks);
@@ -295,7 +235,7 @@ void ScanProfile::Render(duckdb::ProfilingNode& node) const {
   AddTiming(prepare_info, "Snapshot", _snapshot_ticks);
   prepare_info["Segments"] =
     absl::StrCat(Count(_segments_kept), " of ", Count(_segments_total));
-  AddTiming(prepare_info, "Stats", total.stats_ticks);
+  AddTiming(prepare_info, "Stats", stats_ticks);
   auto& prepare =
     AddBox(node, "INDEX_PREPARE", own_ticks, 0, std::move(prepare_info));
 
@@ -336,86 +276,63 @@ void ScanProfile::Render(duckdb::ProfilingNode& node) const {
     add_filter(prepare, root);
   }
 
-  if (shapes.empty()) {
+  if (plans.empty()) {
     return;
   }
-  const auto slots = _query.Slots();
   Info execute_info;
   execute_info["Total"] = Timing(plan_ticks + run_ticks);
   auto& execute =
     AddBox(node, "INDEX_EXECUTE", plan_ticks, rows, std::move(execute_info));
 
-  std::vector<uint64_t> slot_ticks(slots.size());
-  std::vector<size_t> slot_parent(slots.size(), slots.size());
-  std::vector<std::vector<size_t>> slot_children(slots.size() + 1);
+  const auto owner = *absl::c_max_element(plans, [&](size_t lhs, size_t rhs) {
+    return slot_ticks[lhs] < slot_ticks[rhs];
+  });
+  std::vector<std::vector<size_t>> slot_children(slots.size());
   for (size_t s = 0; s != slots.size(); ++s) {
-    slot_ticks[s] = EstimatedTicks(*slots[s].executed, _query.TimerTicks());
-    for (auto up = _boxes[slots[s].node].parent; up != irs::FilterBox::kRoot;
-         up = _boxes[up].parent) {
-      const auto parent = absl::c_find_if(
+    if (slots[s].node == 0) {
+      continue;
+    }
+    auto parent = owner;
+    for (auto up = _boxes[slots[s].node].parent;
+         up != irs::FilterBox::kRoot && up != 0; up = _boxes[up].parent) {
+      const auto found = absl::c_find_if(
         slots, [&](const auto& other) { return other.node == up; });
-      if (parent != slots.end()) {
-        slot_parent[s] = static_cast<size_t>(parent - slots.begin());
+      if (found != slots.end()) {
+        parent = static_cast<size_t>(found - slots.begin());
         break;
       }
     }
-    slot_children[slot_parent[s]].push_back(s);
+    slot_children[parent].push_back(s);
   }
-  const auto own_slot_ticks = [&](uint64_t total, size_t parent) {
-    for (const auto child : slot_children[parent]) {
-      total = Minus(total, slot_ticks[child]);
-    }
-    return total;
-  };
 
   const auto add_slot = [&](this const auto& self,
                             duckdb::ProfilingNode& parent, size_t s) -> void {
     const auto& slot = *slots[s].executed;
     Info info;
-    info["Filter"] = _boxes[slots[s].node].node.label;
+    if (slots[s].node != 0) {
+      info["Filter"] = _boxes[slots[s].node].node.label;
+    }
     info["Plans"] = Count(slot.plans);
     info["Calls"] = Count(slot.calls);
+    AddTiming(info, "Plan", slot.plan_ticks);
     if (slot.timed_calls < slot.calls) {
       info["Timed"] = Count(slot.timed_calls);
     }
+    auto own_ticks = slot_ticks[s];
     if (!slot_children[s].empty()) {
       info["Total"] = Timing(slot_ticks[s]);
+      for (const auto child : slot_children[s]) {
+        own_ticks = Minus(own_ticks, slot_ticks[child]);
+      }
     }
     auto& added =
-      AddBox(parent, ShapeName(*slot.type), own_slot_ticks(slot_ticks[s], s),
-             slot.docs, std::move(info));
+      AddBox(parent, names[s], own_ticks, slot.docs, std::move(info));
     for (const auto child : slot_children[s]) {
       self(added, child);
     }
   };
-
-  const auto& top_slots = slot_children[slots.size()];
-  const auto owner =
-    top_slots.empty()
-      ? shapes.end()
-      : absl::c_max_element(shapes, [](const Shape& lhs, const Shape& rhs) {
-          return lhs.stats.run_ticks < rhs.stats.run_ticks;
-        });
-  for (auto shape = shapes.begin(); shape != shapes.end(); ++shape) {
-    const bool owns_slots = shape == owner;
-    const auto& stats = shape->stats;
-    Info info;
-    info["Plans"] = Count(stats.plans);
-    info["Calls"] = Count(stats.calls);
-    AddTiming(info, "Plan", stats.plan_ticks);
-    if (owns_slots) {
-      info["Total"] = Timing(stats.run_ticks);
-    }
-    auto& added =
-      AddBox(execute, std::move(shape->name),
-             owns_slots ? own_slot_ticks(stats.run_ticks, slots.size())
-                        : stats.run_ticks,
-             stats.rows, std::move(info));
-    if (owns_slots) {
-      for (const auto s : top_slots) {
-        add_slot(added, s);
-      }
-    }
+  for (const auto s : plans) {
+    add_slot(execute, s);
   }
 }
 

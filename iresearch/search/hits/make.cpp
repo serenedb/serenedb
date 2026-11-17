@@ -21,6 +21,7 @@
 #include "iresearch/search/hits/make.hpp"
 
 #include "iresearch/search/detail/fold_reach.hpp"
+#include "iresearch/search/filters/query_profile.hpp"
 #include "iresearch/search/hits/empty.hpp"
 
 namespace irs::hits {
@@ -32,7 +33,7 @@ Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {
     return MakeEmpty();
   }
   const detail::FoldReachScope reach{ctx.span};
-  return query.PlanScored(ctx);
+  return ProfileRoot(query, [&] { return query.PlanScored(ctx); });
 }
 
 }  // namespace irs::hits

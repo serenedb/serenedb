@@ -20,6 +20,7 @@ target_sources(
         fill/make_all_docs.cpp
         fill/make_all_scored.cpp
         fill/make_posting.cpp
+        fill/make_root.cpp
         filters/all_filter.cpp
         filters/automaton_filter.cpp
         filters/boolean_filter.cpp

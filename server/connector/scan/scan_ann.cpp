@@ -166,9 +166,6 @@ void RescoreWhileReachable(ScanGlobalState& g, AnnLocalState& l,
 
 void FlushSegment(ScanGlobalState& g, AnnLocalState& l) {
   auto pool = l.collector->Flush();
-  if (auto* shape = l.profile.current) {
-    shape->rows += pool.size();
-  }
   if (!pool.empty()) {
     for (auto& hit : pool) {
       hit.segment_idx = l.pool_seg;
@@ -216,20 +213,17 @@ void CollectUnit(ScanGlobalState& g, AnnLocalState& l) {
     auto* table = BeginVerify(l.col_verify, seg, g, l);
     SDB_ENSURE(g.scorer_obj != nullptr,
                "a scan that ranks by score has a scorer to rank with");
-    auto plan = Planned(l.profile, [&] {
-      return irs::ann::MakeRoot(seg_query,
-                                {.scorer = *g.scorer_obj,
-                                 .fetcher = l.score_fetcher,
-                                 .table = table,
-                                 .columns = BeginColumnVerify(seg, g, l),
-                                 .k = l.collector->K()});
-    });
+    auto plan =
+      irs::ann::MakeRoot(seg_query, {.scorer = *g.scorer_obj,
+                                     .fetcher = l.score_fetcher,
+                                     .table = table,
+                                     .columns = BeginColumnVerify(seg, g, l),
+                                     .k = l.collector->K()});
+    EnsurePlanned(plan != nullptr);
     l.root = std::move(plan);
     l.root_seg = unit.seg;
   }
-  Ran(l.profile, [&] {
-    irs::utils::downCast<irs::ann::Root>(l.root.get())->Run(*l.collector);
-  });
+  irs::utils::downCast<irs::ann::Root>(l.root.get())->Run(*l.collector);
 }
 
 void PublishHits(ScanGlobalState& g, AnnLocalState& l) {
@@ -285,21 +279,20 @@ std::vector<irs::ScoreDoc> RankExactly(ScanGlobalState& g, RankedLocalState& l,
       continue;
     }
     const auto query = filter->PrepareSegment(segment, {});
+    if (g.profile && !irs::QueryBuilder::IsEmpty(*query)) {
+      query->SetProfile(g.profile->Query(), 0);
+    }
     irs::ann::SharedFloor floor{static_cast<uint32_t>(slots)};
     irs::ann::Collector collector{floor, static_cast<uint32_t>(slots)};
     l.score_fetcher.Clear();
-    auto* table = BeginVerify(l.col_verify, segment, g, l);
-    auto root = Planned(l.profile, [&] {
-      return irs::ann::MakeRoot(*query, {.scorer = *g.scorer_obj,
-                                         .fetcher = l.score_fetcher,
-                                         .table = table,
-                                         .k = static_cast<uint32_t>(slots)});
-    });
-    Ran(l.profile, [&] { root->Run(collector); });
+    auto root = irs::ann::MakeRoot(
+      *query, {.scorer = *g.scorer_obj,
+               .fetcher = l.score_fetcher,
+               .table = BeginVerify(l.col_verify, segment, g, l),
+               .k = static_cast<uint32_t>(slots)});
+    EnsurePlanned(static_cast<bool>(root));
+    root->Run(collector);
     auto hits = collector.Flush();
-    if (auto* shape = l.profile.current) {
-      shape->rows += hits.size();
-    }
     if (hits.size() > slots) {
       std::nth_element(hits.begin(), hits.begin() + slots, hits.end(),
                        BetterScore{});
@@ -368,10 +361,8 @@ void VerifyMore(duckdb::ClientContext& ctx, ScanGlobalState& g,
       const auto& unit = units[u];
       const std::span<const irs::ScoreDoc> part{hits.data() + unit.first,
                                                 unit.count};
-      ScanTimer fetch{l.profile, &ScanLocalProfile::fetch_ticks};
       auto fetched = FetchHits(ctx, g, l, l.fetch_tmp, unit.seg, part,
                                u == 0 || units[u - 1].seg != unit.seg);
-      fetch.Stop();
       MaterializeHits(ctx, g, l, *fetched.chunk, *fetched.pk, part, batch,
                       row_hits);
     }

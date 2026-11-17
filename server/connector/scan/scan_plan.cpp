@@ -940,10 +940,12 @@ duckdb::idx_t FinalizeBatch(duckdb::ClientContext& ctx, ScanGlobalState& g,
     return collected;
   }
   if (!f.index_source) {
-    f.index_source = MakeIndexSource(
-      ctx, g.Bind(), g.view.manifest, g.lookup_projected_columns,
-      g.projected_types, g.Bind().columns.ids,
-      const_cast<duckdb::TableFilterSet*>(g.pushed_filters));
+    f.index_source = ProfileLookup(
+      g.profile.get(),
+      MakeIndexSource(ctx, g.Bind(), g.view.manifest,
+                      g.lookup_projected_columns, g.projected_types,
+                      g.Bind().columns.ids,
+                      const_cast<duckdb::TableFilterSet*>(g.pushed_filters)));
   }
   SDB_ASSERT(f.pk_column);
   const auto rows =

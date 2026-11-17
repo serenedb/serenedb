@@ -220,6 +220,35 @@ TEST(query_profile, handed_off_plan_belongs_to_the_filter_returning_it) {
   CheckHandOff<FakeProbe>();
 }
 
+TEST(query_profile, roots_are_profiled_without_nested_parts) {
+  const irs::All root;
+  const irs::All part;
+  const std::array<const irs::Filter*, 2> filters{&root, &part};
+  irs::QueryProfile profile{filters, false};
+  auto fill = irs::memory::make_managed<FakeFill>();
+  const auto* raw = fill.get();
+  EXPECT_EQ(raw, profile.Wrap(std::move(fill), 1).get());
+  auto inner = irs::memory::make_managed<FakeFill>();
+  const auto* raw_inner = inner.get();
+  EXPECT_EQ(raw_inner, profile.WrapRoot(std::move(inner), 1, 5).get());
+  EXPECT_TRUE(profile.Slots().empty());
+
+  auto planned = profile.WrapRoot(irs::memory::make_managed<FakeFill>(), 0, 7);
+  std::array<uint64_t, 2> mask{};
+  EXPECT_EQ(129, planned->FillOr(1, 129, mask.data()));
+  EXPECT_EQ(nullptr, planned->Folded());
+  planned.reset();
+
+  const auto slots = profile.Slots();
+  ASSERT_EQ(1, slots.size());
+  const auto& slot = *slots[0].executed;
+  EXPECT_EQ(0, slots[0].node);
+  EXPECT_EQ(1, slot.plans.load());
+  EXPECT_EQ(7, slot.plan_ticks.load());
+  EXPECT_EQ(1, slot.calls.load());
+  EXPECT_EQ(10, slot.docs.load());
+}
+
 TEST(query_profile, counter_times_every_call) {
   irs::QueryProfile::Executed slot;
   {

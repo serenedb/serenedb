@@ -24,125 +24,17 @@
 #include <cstdint>
 #include <duckdb/common/time_point.hpp>
 #include <duckdb/main/profiler/profiling_node.hpp>
-#include <iresearch/search/fill/node.hpp>
+#include <iresearch/index/index_source.hpp>
 #include <iresearch/search/filters/query_profile.hpp>
-#include <iresearch/utils/containers/node_hash_map.hpp>
-#include <iresearch/utils/memory.hpp>
 #include <memory>
-#include <type_traits>
-#include <typeinfo>
 #include <vector>
 
-#include "connector/scan/scan_plan.h"
 #include "connector/search_filter_printer.hpp"
 
 namespace sdb::connector {
 
-struct ShapeStats {
-  uint64_t plans = 0;
-  uint64_t calls = 0;
-  uint64_t rows = 0;
-  uint64_t plan_ticks = 0;
-  uint64_t run_ticks = 0;
-};
-
-struct ScanLocalProfile {
-  bool enabled = false;
-  irs::containers::NodeHashMap<const std::type_info*, ShapeStats> shapes;
-  ShapeStats* current = nullptr;
-  uint64_t filtered = 0;
-  uint64_t fetch_ticks = 0;
-  uint64_t lookup_ticks = 0;
-  uint64_t stats_ticks = 0;
-};
-
 inline uint64_t ElapsedTicks(int64_t start) noexcept {
   return static_cast<uint64_t>(duckdb::TimePoint::Now() - start);
-}
-
-class [[nodiscard]] ScanTimer {
- public:
-  ScanTimer(ScanLocalProfile& profile,
-            uint64_t ScanLocalProfile::* ticks) noexcept
-    : _profile{profile},
-      _ticks{ticks},
-      _start{profile.enabled ? duckdb::TimePoint::Now() : 0} {}
-
-  ScanTimer(const ScanTimer&) = delete;
-  ScanTimer& operator=(const ScanTimer&) = delete;
-
-  ~ScanTimer() { Stop(); }
-
-  void Stop() noexcept {
-    if (_profile.enabled && _ticks) {
-      _profile.*_ticks += ElapsedTicks(_start);
-      _ticks = nullptr;
-    }
-  }
-
-  void Filtered(uint64_t rows) noexcept {
-    if (_profile.enabled) {
-      _profile.filtered += rows;
-    }
-  }
-
- private:
-  ScanLocalProfile& _profile;
-  uint64_t ScanLocalProfile::* _ticks;
-  int64_t _start;
-};
-
-template<typename Make>
-auto Planned(ScanLocalProfile& profile, Make&& make) {
-  if (!profile.enabled) [[likely]] {
-    auto root = make();
-    EnsurePlanned(root != nullptr);
-    return root;
-  }
-  const auto start = duckdb::TimePoint::Now();
-  auto root = make();
-  const auto ticks = ElapsedTicks(start);
-  EnsurePlanned(root != nullptr);
-  auto& shape = profile.shapes[&typeid(*root)];
-  ++shape.plans;
-  shape.plan_ticks += ticks;
-  profile.current = &shape;
-  return root;
-}
-
-template<typename Run>
-auto Ran(ScanLocalProfile& profile, Run&& run) {
-  auto* shape = profile.current;
-  if (!shape) [[likely]] {
-    return run();
-  }
-  const auto start = duckdb::TimePoint::Now();
-  if constexpr (std::is_void_v<std::invoke_result_t<Run>>) {
-    run();
-    shape->run_ticks += ElapsedTicks(start);
-    ++shape->calls;
-  } else {
-    auto rows = run();
-    shape->run_ticks += ElapsedTicks(start);
-    ++shape->calls;
-    shape->rows += rows;
-    return rows;
-  }
-}
-
-template<typename Run, typename Total>
-void Ran(ScanLocalProfile& profile, Run&& run, Total&& total) {
-  auto* shape = profile.current;
-  if (!shape) [[likely]] {
-    run();
-    return;
-  }
-  const auto before = total();
-  const auto start = duckdb::TimePoint::Now();
-  run();
-  shape->run_ticks += ElapsedTicks(start);
-  ++shape->calls;
-  shape->rows += total() - before;
 }
 
 class ScanProfile {
@@ -158,17 +50,20 @@ class ScanProfile {
     _segments_total = total;
   }
 
-  void FinishInit(uint32_t workers);
+  void AddStats(uint64_t ticks) noexcept {
+    _stats_ticks.fetch_add(ticks, std::memory_order_relaxed);
+  }
 
-  void Report(uint32_t worker, ScanLocalProfile local,
-              duckdb::OperatorMetrics& metrics);
+  void AddLookup(uint64_t ticks, uint64_t filtered) noexcept {
+    _lookup_ticks.fetch_add(ticks, std::memory_order_relaxed);
+    _filtered.fetch_add(filtered, std::memory_order_relaxed);
+  }
+
+  void FinishInit();
+
+  void Report(duckdb::OperatorMetrics& metrics);
 
  private:
-  struct Worker {
-    ScanLocalProfile profile;
-    std::atomic_bool published = false;
-  };
-
   void Render(duckdb::ProfilingNode& node) const;
 
   std::vector<irs::FilterBox> _boxes;
@@ -177,13 +72,14 @@ class ScanProfile {
   uint64_t _classify_ticks = 0;
   uint64_t _segments_kept = 0;
   uint64_t _segments_total = 0;
+  std::atomic_uint64_t _stats_ticks = 0;
+  std::atomic_uint64_t _lookup_ticks = 0;
+  std::atomic_uint64_t _filtered = 0;
   std::atomic_uint64_t _init_ticks = 0;
-  std::unique_ptr<Worker[]> _workers;
-  uint32_t _workers_size = 0;
   std::atomic_uint64_t _version = 0;
 };
 
-irs::fill::Node::ptr ProfileFill(const ScanLocalProfile& profile,
-                                 irs::fill::Node::ptr node);
+std::unique_ptr<irs::IndexSource> ProfileLookup(
+  ScanProfile* profile, std::unique_ptr<irs::IndexSource> source);
 
 }  // namespace sdb::connector

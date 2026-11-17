@@ -17870,7 +17870,7 @@
   {
     "query": "+the +stat*",
     "count": 1235370,
-    "top_100": 314502,
+    "top_100": 312145,
     "result_type": "Hash",
     "top_100_result": [
       "0bc1bf3bd08496b415eb0c24b21a45d703ed88e1f7b5105661a4041cac080394"
@@ -17882,7 +17882,7 @@
   {
     "query": "+the +histor*",
     "count": 840838,
-    "top_100": 215102,
+    "top_100": 213367,
     "result_type": "Hash",
     "top_100_result": [
       "594e095ae576cb30af8476995f9b955612548380ee3da23e94d28a80439293e7"
@@ -18242,7 +18242,7 @@
   {
     "query": "+(world state) +histor*",
     "count": 360844,
-    "top_100": 193147,
+    "top_100": 195100,
     "result_type": "Hash",
     "top_100_result": [
       "164cea661d50ddde049775057845e9d41a8fd5daff870f2d5ffd67d0ad72cbaa"

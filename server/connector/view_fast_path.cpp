@@ -81,6 +81,12 @@ const RegistryEntry kRegistry[] = {
     .supports_filters = true,
   },
   {
+    .function_name = "read_arrow",
+    .single_pk_spec = PkSpec::FileRowNumber,
+    .glob_pk_spec = PkSpec::FileIndexPlusRowNumber,
+    .supports_filters = true,
+  },
+  {
     .function_name = "read_csv",
     .single_pk_spec = PkSpec::FileOffset,
     .glob_pk_spec = PkSpec::FileIndexPlusOffset,

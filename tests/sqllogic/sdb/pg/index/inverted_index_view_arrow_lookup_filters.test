@@ -1,0 +1,167 @@
+control substitution on
+
+# An inverted index over a read_arrow view looks rows up by file_row_number, and
+# filters on columns the index does not hold run inside those lookups: they
+# return what the same filters return in SQL.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY vjaf_en AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+
+statement ok
+CREATE TABLE vjaf_src (id int, body text, n int, tag text);
+
+
+statement ok
+INSERT INTO vjaf_src VALUES
+    (1, 'red fox', 10, 'alpha'),
+    (2, 'red fox', 20, NULL),
+    (3, 'blue fox', 30, 'gamma'),
+    (4, 'red dog', 40, 'delta'),
+    (5, 'red fox', 50, 'epsilon long enough to not inline'),
+    (6, 'red fox', 60, 'alpha');
+
+
+statement ok
+COPY (SELECT * FROM vjaf_src WHERE id <= 3 ORDER BY id) TO '${__TEST_DIR__}/vjaf_1.arrow' (FORMAT arrow);
+
+
+statement ok
+COPY (SELECT * FROM vjaf_src WHERE id > 3 ORDER BY id) TO '${__TEST_DIR__}/vjaf_2.arrow' (FORMAT arrow);
+
+
+statement ok
+COPY (SELECT * FROM vjaf_src ORDER BY id) TO '${__TEST_DIR__}/vjaf_all.arrow' (FORMAT arrow);
+
+
+statement ok
+CREATE VIEW vjaf AS SELECT * FROM read_arrow('${__TEST_DIR__}/vjaf_all.arrow');
+
+
+statement ok
+CREATE INDEX vjaf_idx ON vjaf USING inverted(id, body vjaf_en);
+
+
+query
+SELECT id, n, tag FROM vjaf_idx WHERE body @@ 'red' AND n > 15 ORDER BY id;
+----
+id	n	tag
+2	20	NULL
+4	40	delta
+5	50	epsilon long enough to not inline
+6	60	alpha
+
+
+query
+SELECT id FROM vjaf_idx WHERE body @@ 'fox' AND tag = 'alpha' ORDER BY id;
+----
+id
+1
+6
+
+
+query
+SELECT id FROM vjaf_idx WHERE body @@ 'fox' AND tag IS NULL ORDER BY id;
+----
+id
+2
+
+
+query
+SELECT count(*) AS c FROM vjaf_idx WHERE body @@ 'red' AND n BETWEEN 20 AND 50;
+----
+c
+3
+
+
+query
+SELECT id FROM vjaf_idx WHERE body @@ 'fox' AND n > 15 AND tag LIKE 'e%' ORDER BY id;
+----
+id
+5
+
+
+query
+EXPLAIN SELECT id, tag FROM vjaf_idx WHERE body @@ 'fox' AND n > 15 ORDER BY id;
+----
+QUERY PLAN
+╭─ ORDER_BY ──────────────╮
+│ Order By: id ASC        │
+│ ~1 row                  │
+╰────────────┬────────────╯
+╭─ IRESEARCH_SCAN ────────╮
+│ Index: vjaf_idx         │
+│ Lookup: arrow           │
+│ Index Filter:           │
+│ ╭─ Term ──────────────╮ │
+│ │ Field: body(string) │ │
+│ │ Value: fox          │ │
+│ ╰─────────────────────╯ │
+│ Column Filter: n > 15   │
+│ Projections: id, tag    │
+│ ~1 row                  │
+╰─────────────────────────╯
+
+
+statement ok
+CREATE VIEW vjaf_glob AS SELECT * FROM read_arrow('${__TEST_DIR__}/vjaf_?.arrow');
+
+
+statement ok
+CREATE INDEX vjaf_glob_idx ON vjaf_glob USING inverted(id, body vjaf_en);
+
+
+query
+SELECT id, n, tag FROM vjaf_glob_idx WHERE body @@ 'red' AND n > 15 ORDER BY id;
+----
+id	n	tag
+2	20	NULL
+4	40	delta
+5	50	epsilon long enough to not inline
+6	60	alpha
+
+
+query
+EXPLAIN SELECT id, tag FROM vjaf_glob_idx WHERE body @@ 'fox' AND n > 15 ORDER BY id;
+----
+QUERY PLAN
+╭─ ORDER_BY ──────────────╮
+│ Order By: id ASC        │
+│ ~1 row                  │
+╰────────────┬────────────╯
+╭─ IRESEARCH_SCAN ────────╮
+│ Index: vjaf_glob_idx    │
+│ Lookup: glob arrow      │
+│ Index Filter:           │
+│ ╭─ Term ──────────────╮ │
+│ │ Field: body(string) │ │
+│ │ Value: fox          │ │
+│ ╰─────────────────────╯ │
+│ Column Filter: n > 15   │
+│ Projections: id, tag    │
+│ ~1 row                  │
+╰─────────────────────────╯
+
+
+statement ok
+COPY (SELECT * FROM vjaf_src ORDER BY id) TO '${__TEST_DIR__}/vjaf_all.arrows' (FORMAT arrows);
+
+
+statement ok
+CREATE VIEW vjaf_stream AS SELECT * FROM read_arrow('${__TEST_DIR__}/vjaf_all.arrows');
+
+
+statement ok
+CREATE INDEX vjaf_stream_idx ON vjaf_stream USING inverted(id, body vjaf_en);
+
+
+query
+SELECT id, n, tag FROM vjaf_stream_idx WHERE body @@ 'red' AND n > 15 ORDER BY id;
+----
+id	n	tag
+2	20	NULL
+4	40	delta
+5	50	epsilon long enough to not inline
+6	60	alpha

@@ -38,7 +38,7 @@ How the index derives a stable per-row identity depends on the view body:
 
 | View body | Row identity | Can be overridden |
 |---|---|---|
-| `SELECT … FROM read_parquet('file')` | The reader's `file_row_number` | — |
+| `SELECT … FROM read_parquet('file')` or `read_arrow('file')` | The reader's `file_row_number` | — |
 | `read_csv` / `read_json` single file | The byte offset within the file | — |
 | Reader over a **glob** (`'…/*.parquet'`) | `(file_index, position)` pair | — |
 | Attached DuckDB / Iceberg table | The source row id / `(file_index, row)` | — |
@@ -50,7 +50,7 @@ Row identity is always derived automatically — there is no `pk` index option. 
 
 ## Fast-path sources
 
-A **fast-path source** is a view body SereneDB recognizes well enough to both derive the row identity and re-read columns by it later. The recognized sources are: `read_parquet` / `read_csv` / `read_json` (and their `*_auto` / `parquet_scan` / `read_ndjson` variants), `read_json_objects` / `read_json_objects_auto` / `read_ndjson_objects`, `read_text`, [`read_duckdb`](../../../cookbook/file_formats/read_duckdb.md), Iceberg tables, attached DuckDB tables and [attached PostgreSQL and ClickHouse tables](./external-data.md#external-databases).
+A **fast-path source** is a view body SereneDB recognizes well enough to both derive the row identity and re-read columns by it later. The recognized sources are: `read_parquet` / `read_arrow` / `read_csv` / `read_json` (and their `*_auto` / `parquet_scan` / `read_ndjson` variants), `read_json_objects` / `read_json_objects_auto` / `read_ndjson_objects`, `read_text`, [`read_duckdb`](../../../cookbook/file_formats/read_duckdb.md), Iceberg tables, attached DuckDB tables and [attached PostgreSQL and ClickHouse tables](./external-data.md#external-databases).
 
 The view body may shape the source and still qualify as fast-path:
 

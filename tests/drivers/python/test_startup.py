@@ -287,6 +287,28 @@ def test_hba_config_resolves_against_the_data_directory(
         server.output())
 
 
+@pytest.mark.parametrize(("listen", "message"), [
+    ("postgres://127.0.0.1:{port}?sslmode=require",
+     "requires TLS but no certificate is configured"),
+    ("https://127.0.0.1:{port}?api=es",
+     "requires TLS but no certificate is configured"),
+    ("postgres://127.0.0.1:{port}?sslmode=verify-full"
+     "&cert=/no/such/cert.pem&key=/no/such/key.pem",
+     "uses sslmode=verify-* but no client-cert CA is configured"),
+])
+def test_tls_listener_without_its_files(tmp_path: Path, listen: str,
+                                        message: str) -> None:
+    reserved = reserve_port()
+    server = _Server(tmp_path / "data",
+                     listen.format(port=reserved.getsockname()[1]))
+    try:
+        assert server.proc.wait(timeout=60) != 0, server.output()
+        assert message in server.output(), server.output()
+    finally:
+        server.stop()
+        reserved.close()
+
+
 def test_unknown_unix_socket_group(tmp_path: Path, socket_dir: Path) -> None:
     server = _Server(tmp_path / "data",
                      f"postgres://{socket_dir / 'sdb.sock'}"

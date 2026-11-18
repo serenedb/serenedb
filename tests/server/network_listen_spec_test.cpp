@@ -223,6 +223,43 @@ TEST(ListenSpec, CreateSchemaNeedsBoolean) {
     "invalid boolean for 'create_schema'");
 }
 
+struct Refused {
+  std::string_view url;
+  std::string_view message;
+};
+
+constexpr Refused kRefused[] = {
+  {"postgres:///tmp/s.sock?sslmode=require",
+   "'sslmode' is not valid on a unix endpoint"},
+  {"postgres://127.0.0.1:1?sslmode=sometimes",
+   "invalid sslmode in endpoint '[^']*': 'sometimes'"},
+  {"postgres://127.0.0.1:1?port=5",
+   "'port' query is only for a unix pg socket"},
+  {"postgres://127.0.0.1:1?api=es", "unknown parameter 'api' in endpoint"},
+  {"http://127.0.0.1:1?api=es&sslmode=require",
+   "'sslmode' is not valid on an http endpoint"},
+  {"http://127.0.0.1:1?api=es&cert=/c.pem",
+   "TLS material is not valid on a plaintext http endpoint"},
+  {"https://127.0.0.1:1?api=es&proxy_protocol=require",
+   "proxy_protocol is not supported on an https listener"},
+  {"http://127.0.0.1:1?api=es&db=", "empty 'db' in endpoint"},
+  {"http://127.0.0.1:1?api=es&schema=", "empty 'schema' in endpoint"},
+  {"http://127.0.0.1:1?api=es&color=red", "unknown parameter 'color'"},
+  {"http://127.0.0.1:1", "requires \\?api="},
+};
+
+TEST(ListenSpec, ProtocolParamsAreChecked) {
+  for (const auto& refused : kRefused) {
+    EXPECT_DEATH(
+      {
+        dup2(STDERR_FILENO, STDOUT_FILENO);
+        Parse({std::string{refused.url}});
+      },
+      std::string{refused.message})
+      << refused.url;
+  }
+}
+
 TEST(ListenSpec, HttpsImpliesTls) {
   const auto specs = Parse({"https://127.0.0.1:9443?api=es"});
   ASSERT_EQ(specs.size(), 1u);

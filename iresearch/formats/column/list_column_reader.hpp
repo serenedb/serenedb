@@ -123,11 +123,7 @@ class ListColumnReader final : public ColumnReader {
     for (duckdb::idx_t i = 0; i < hits;) {
       const uint64_t target = anchor + sel.get_index(i);
       SDB_ASSERT(target >= pos);
-      duckdb::idx_t run = 1;
-      while (i + run < hits &&
-             sel.get_index(i + run) == sel.get_index(i + run - 1) + 1) {
-        ++run;
-      }
+      const auto run = column_internal::ConsecutiveRows(sel, i, hits);
       if (target > pos) {
         ColumnReader::Skip(s, static_cast<duckdb::idx_t>(target - pos));
       }
@@ -212,11 +208,14 @@ class ListColumnReader final : public ColumnReader {
     return list == 0 ? 0 : d.ends[list - 1 - d.ends_base];
   }
 
+  static bool EndsDecoded(const ListDictionary& d, uint64_t begin,
+                          uint64_t end) noexcept {
+    return d.ends_block != 0 && begin >= d.ends_begin && end <= d.ends_end;
+  }
+
   ListEnds ReadEnds(ScanState& s, uint64_t first, uint64_t count) const {
     auto& list = List(s);
-    if (const auto& d = list.dictionary; d.ends_block != 0 &&
-                                         first >= d.ends_begin &&
-                                         first + count <= d.ends_end) {
+    if (const auto& d = list.dictionary; EndsDecoded(d, first, first + count)) {
       return {DecodedStart(d, first), d.ends.data() + (first - d.ends_base)};
     }
     const bool chained =
@@ -360,7 +359,7 @@ class ListColumnReader final : public ColumnReader {
     auto dictionary = NewLists(total);
     auto& lists = dictionary->data;
     const uint64_t end = base + d.runs.back().end;
-    if (d.ends_block != 0 && base >= d.ends_begin && end <= d.ends_end) {
+    if (EndsDecoded(d, base, end)) {
       uint64_t elems = 0;
       for (const auto& run : d.runs) {
         elems +=
@@ -528,9 +527,16 @@ class ListColumnReader final : public ColumnReader {
     }
     if constexpr (kDictionary) {
       result.Dictionary(d.lists, sel, scan_count);
-      return;
+    } else {
+      CopyLists(state, result, scan_count, result_offset, child_base);
     }
-    const auto* picks = sel.data();
+  }
+
+  static void CopyLists(ListScanState& state, duckdb::Vector& result,
+                        duckdb::idx_t scan_count, duckdb::idx_t result_offset,
+                        uint64_t child_base) {
+    const auto& d = state.dictionary;
+    const auto* picks = state.sel.data();
     const auto* lists =
       duckdb::FlatVector::GetData<duckdb::list_entry_t>(d.lists->data);
     auto* entries =

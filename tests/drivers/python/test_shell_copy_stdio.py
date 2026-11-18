@@ -1,5 +1,10 @@
 # fmt: off
 
+import struct
+from pathlib import Path
+
+import pytest
+
 from shell_harness import ShellTest, requires_serenedb, shell  # noqa: F401
 
 pytestmark = requires_serenedb
@@ -52,6 +57,26 @@ def test_copy_from_stdin_inline_in_a_file(shell, tmp_path):
     result.check_stdout("7")
 
 
+@pytest.mark.parametrize("ending", ["", "\n\\."], ids=["no end marker", "end marker without a line break"])
+def test_copy_from_stdin_data_ends_at_the_end_of_a_file(shell, tmp_path, ending):
+    script = tmp_path / "copy.sql"
+    script.write_text("CREATE TABLE t(i INTEGER);\nCOPY t FROM STDIN (FORMAT csv);\n3\n4" + ending)
+    result = ShellTest(shell).add_argument("-f", script.as_posix(), "-c", "SELECT sum(i) AS total FROM t;").run()
+    result.check_stdout("7")
+
+
+def test_copy_from_stdin_in_a_script_with_crlf_line_breaks(shell):
+    result = ShellTest(shell).run_raw(
+        "CREATE TABLE t(i INTEGER);\r\n"
+        "COPY t FROM STDIN (FORMAT csv);\r\n"
+        "1\r\n"
+        "2\r\n"
+        "\\.\r\n"
+        "SELECT sum(i) * 10 AS total FROM t;\r\n"
+    )
+    result.check_stdout("30")
+
+
 def test_copy_from_stdin_twice(shell):
     result = run_script(
         shell,
@@ -84,6 +109,32 @@ def test_copy_from_stdin_failure_skips_its_data(shell):
     assert "0" in result.stdout
 
 
+def test_copy_from_stdin_with_a_duckdb_option(shell):
+    result = run_script(
+        shell,
+        "CREATE TABLE t(i INTEGER);",
+        "COPY t FROM STDIN (FORMAT csv, SKIP 1);",
+        "skipped",
+        "3",
+        "4",
+        "\\.",
+        "SELECT sum(i) AS total FROM t;",
+    )
+    result.check_stdout("7")
+
+
+def test_copy_from_a_file_leaves_the_script_alone(shell, tmp_path):
+    data = tmp_path / "rows.csv"
+    data.write_text("5\n6\n")
+    result = run_script(
+        shell,
+        "CREATE TABLE t(i INTEGER);",
+        f"COPY t FROM '{data.as_posix()}' (FORMAT csv);",
+        "SELECT sum(i) AS total FROM t;",
+    )
+    result.check_stdout("11")
+
+
 def test_copy_from_stdin_with_command_reads_process_stdin(shell):
     test = ShellTest(shell).add_argument(
         "-c", "CREATE TABLE t(i INTEGER); COPY t FROM STDIN (FORMAT csv); SELECT sum(i) AS total FROM t;"
@@ -111,6 +162,38 @@ def test_copy_from_stdin_redirected_from_a_file(shell, tmp_path):
     )
     result = test.run_with_stdin_file(data)
     result.check_stdout("500500")
+
+
+def test_copy_from_stdin_binary_in_a_script_reads_process_stdin(shell, tmp_path):
+    script = tmp_path / "copy.sql"
+    script.write_text(
+        "CREATE TABLE t(i INTEGER);\n"
+        "COPY t FROM STDIN (FORMAT binary);\n"
+        "SELECT sum(i) AS total FROM t;\n"
+    )
+    rows = b"".join(struct.pack(">hii", 1, 4, value) for value in (5, 6))
+    data = b"PGCOPY\n\xff\r\n\x00" + struct.pack(">ii", 0, 0) + rows + struct.pack(">h", -1)
+    result = ShellTest(shell).add_argument("-f", script.as_posix()).run_raw(data)
+    result.check_stdout("11")
+
+
+def test_read_csv_reads_a_piped_stdin(shell):
+    query = "SELECT count(*) AS n, sum(a) AS total FROM read_csv('/dev/stdin', header = false, columns = {'a': 'INTEGER'})"
+    result = ShellTest(shell).add_argument("-csv", "-c", query).run_raw("1\n2\n3\n")
+    assert result.status_code == 0, result.stderr
+    assert result.stdout.splitlines()[1:] == ["3,6"], result.stdout
+
+
+def test_read_text_reads_a_piped_stdin(shell):
+    result = ShellTest(shell).add_argument("-csv", "-c", "SELECT * FROM read_text('/dev/stdin');").run_raw("piped text")
+    assert result.status_code == 0, result.stderr
+    assert result.stdout.splitlines()[1].startswith("/dev/stdin,piped text,"), result.stdout
+
+
+def test_read_csv_of_dev_stdout_fails(shell):
+    result = ShellTest(shell).add_argument("-c", "SELECT * FROM read_csv('/dev/stdout');").run()
+    assert result.status_code == 1, result.stdout
+    result.check_stderr('Cannot read from "/dev/stdout"')
 
 
 def test_copy_to_stdout_follows_output(shell, tmp_path):
@@ -180,6 +263,29 @@ def test_backslash_copy_column_list(shell, tmp_path):
     result.check_stdout("5filled")
 
 
+def test_backslash_copy_quotes_inside_names_and_queries(shell, tmp_path):
+    (tmp_path / "it's.csv").write_text("1\n")
+    result = run_script(
+        shell,
+        "CREATE TABLE t(i INTEGER);",
+        f"\\copy t from '{tmp_path.as_posix()}/it''s.csv' (format csv)",
+        "\\copy (SELECT 'it''s ' || i AS v FROM t) to stdout (format csv)",
+    )
+    result.check_stdout("it's 1")
+
+
+def test_backslash_copy_unquoted_file_name(shell, tmp_path):
+    source = tmp_path / "plain.csv"
+    source.write_text("8\n9\n")
+    result = run_script(
+        shell,
+        "CREATE TABLE t(i INTEGER);",
+        f"\\copy t from {source.as_posix()} (format csv)",
+        "SELECT sum(i) AS total FROM t;",
+    )
+    result.check_stdout("17")
+
+
 def test_backslash_copy_from_stdin_inline(shell):
     result = run_script(
         shell,
@@ -222,10 +328,29 @@ def test_backslash_copy_errors(shell, tmp_path):
         shell,
         "\\copy",
         "\\copy t",
+        "\\copy t from",
+        "\\copy t from 'unterminated",
         f"\\copy t from '{missing.as_posix()}'",
         "\\copy t from program 'cat'",
     )
     result.check_stderr("\\copy: arguments required")
-    result.check_stderr("\\copy: parse error at end of line")
+    assert result.stderr.count("\\copy: parse error at end of line") == 2, result.stderr
+    result.check_stderr("\\copy: unterminated quoted string")
     result.check_stderr("missing.csv: ")
     result.check_stderr("\\copy: PROGRAM is not supported")
+
+
+def test_backslash_copy_from_a_directory(shell, tmp_path):
+    result = run_script(shell, "CREATE TABLE t(i INTEGER);", f"\\copy t from '{tmp_path.as_posix()}' (format csv)")
+    result.check_stderr("Is a directory")
+
+
+@pytest.mark.skipif(not Path("/dev/full").exists(), reason="needs /dev/full")
+def test_backslash_copy_reports_a_failed_write(shell):
+    result = run_script(
+        shell,
+        "\\copy (SELECT 'small' AS v) to '/dev/full' (format csv)",
+        "\\copy (SELECT repeat('x', 100000) AS v) to '/dev/full' (format csv)",
+    )
+    result.check_stderr("/dev/full: No space left on device")
+    result.check_stderr("Failed to write the COPY data: No space left on device")

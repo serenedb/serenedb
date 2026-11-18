@@ -120,12 +120,7 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type,
   if (const auto it = _by_id.find(id); it != _by_id.end()) {
     SDB_ASSERT(_columns[it->second].writer);
     auto& existing = *_columns[it->second].writer;
-    SDB_ASSERT(existing._type == type &&
-               existing._row_group_size == options.row_group_size &&
-               existing._skip_validity == options.skip_validity &&
-               existing._named == options.compression &&
-               existing._codec_params == options.codec_params &&
-               existing._distinct == options.distinct);
+    SDB_ASSERT(existing.Type() == type && existing.Options() == options);
     return existing;
   }
   if (!_deferred) {
@@ -162,7 +157,7 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type) {
 void ColWriter::Close(ColumnEntry& entry) {
   SDB_ASSERT(entry.writer);
   entry.writer->Finish();
-  entry.meta = std::move(entry.writer->_meta);
+  entry.meta = entry.writer->TakeMeta();
   entry.writer.reset();
 }
 
@@ -258,10 +253,10 @@ std::vector<StagedColumn> ColWriter::Snapshot(uint64_t rows) const {
   for (const auto& entry : _columns) {
     SDB_ASSERT(entry.writer);
     const auto& writer = *entry.writer;
-    columns.push_back(StagedColumn{.id = writer._id,
-                                   .type = writer._type,
+    columns.push_back(StagedColumn{.id = writer.Id(),
+                                   .type = writer.Type(),
                                    .chunks = writer.Snapshot(rows),
-                                   .distinct = writer._distinct});
+                                   .distinct = writer.Options().distinct});
   }
   return columns;
 }

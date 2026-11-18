@@ -60,6 +60,42 @@ template<typename Family>
 inline constexpr bool kLeadPlan =
   std::is_same_v<typename Family::Result, LeadNode::ptr>;
 
+template<typename Family>
+inline constexpr bool kRootPlan = requires { requires Family::kRoot; };
+
+template<typename Family, typename Ctx>
+typename Family::Result MakeConstantRows(const MultiTermQuery& query,
+                                         const TermReader& field,
+                                         const Ctx& ctx, ScoreMergeType merge) {
+  std::vector<FillNode::ptr> rows;
+  rows.emplace_back(query.PlanFill({}, ScoreMergeType::Noop));
+  if (!rows.front()) {
+    return {};
+  }
+  const TermScoring absorb{
+    .recipe = builder::RecipeOf<Family>(query.Segment(), ctx),
+    .merge = merge,
+  };
+  return builder::MakeWindowDisjunction<Family>(
+    std::span<const MultiTermState::Entry>{}, &field, DocOf(field), rows,
+    absorb, ctx, AllDocsScoreOf(query, Family::Scoring(ctx)));
+}
+
+template<typename Family, typename Ctx>
+typename Family::Result MakeConstantWindow(const MultiTermQuery& query,
+                                           const Ctx& ctx,
+                                           ScoreMergeType merge) {
+  auto docs = query.PlanFill({}, ScoreMergeType::Noop);
+  if (!docs) {
+    return {};
+  }
+  return Family::template MakeWindow<fill::Erased, utils::Empty, utils::Empty,
+                                     utils::Empty>(
+    ctx, merge, Scored{merge, AllDocsScoreOf(query, Family::Scoring(ctx))},
+    std::forward_as_tuple(std::move(docs)), std::forward_as_tuple(),
+    std::forward_as_tuple(), std::forward_as_tuple());
+}
+
 template<typename Family, typename Ctx>
 typename Family::Result MakeConstantBitset(
   const MultiTermQuery& query, std::span<const MultiTermState::Entry> terms,
@@ -97,30 +133,20 @@ typename Family::Result MakeQuery(const MultiTermQuery& query, const Ctx& ctx) {
       return Family::MakePosting(ClauseOf(terms.front(), field, scorer, boost),
                                  segment, ctx, merge);
     }
-    if constexpr (kProbePlan<Family> || kLeadPlan<Family>) {
-      if (IsConstantScore(scorer) && query.MergeType() == ScoreMergeType::Max) {
+    if (IsConstantScore(scorer) && query.MergeType() == ScoreMergeType::Max) {
+      if constexpr (kProbePlan<Family> || kLeadPlan<Family>) {
         if (auto folded =
               MakeConstantBitset<Family>(query, terms, *field, ctx)) {
           return folded;
         }
+      } else if constexpr (kRootPlan<Family>) {
+        return MakeConstantWindow<Family>(query, ctx, merge);
+      } else if (merge != ScoreMergeType::Max) {
+        return MakeConstantRows<Family>(query, *field, ctx, merge);
       }
     }
     if constexpr (requires { ctx.merge; }) {
       if (const auto own = query.MergeType(); own != merge) {
-        if (own == ScoreMergeType::Max && IsConstantScore(scorer)) {
-          std::vector<FillNode::ptr> rows;
-          rows.emplace_back(query.PlanFill({}, ScoreMergeType::Noop));
-          if (!rows.front()) {
-            return {};
-          }
-          const TermScoring absorb{
-            .recipe = builder::RecipeOf<Family>(segment, ctx),
-            .merge = merge,
-          };
-          return builder::MakeWindowDisjunction<Family>(
-            std::span<const MultiTermState::Entry>{}, field, DocOf(*field),
-            rows, absorb, ctx, AllDocsScoreOf(query, Family::Scoring(ctx)));
-        }
         auto own_ctx = ctx;
         own_ctx.merge = own;
         auto child = MakeQuery<Family>(query, own_ctx);

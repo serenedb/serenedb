@@ -92,6 +92,27 @@ def test_copy_from_stdin_with_command_reads_process_stdin(shell):
     result.check_stdout("6")
 
 
+def test_stdin_redirected_from_a_file_reads_as_that_file(shell, tmp_path):
+    data = tmp_path / "rows.csv"
+    data.write_text("".join(f"{i},{i * 2}\n" for i in range(100000)))
+    query = ("SELECT count(*) AS n, sum(b) AS total "
+             "FROM read_csv('/dev/stdin', header = false, columns = {'a': 'INTEGER', 'b': 'BIGINT'}, buffer_size = 65536)")
+    test = ShellTest(shell).add_argument("-csv", "-c", f"{query} UNION ALL {query};")
+    result = test.run_with_stdin_file(data)
+    assert result.status_code == 0, result.stderr
+    assert result.stdout.splitlines()[1:] == ["100000,9999900000", "100000,9999900000"], result.stdout
+
+
+def test_copy_from_stdin_redirected_from_a_file(shell, tmp_path):
+    data = tmp_path / "rows.csv"
+    data.write_text("".join(f"{i}\n" for i in range(1, 1001)))
+    test = ShellTest(shell).add_argument(
+        "-c", "CREATE TABLE t(i INTEGER); COPY t FROM STDIN (FORMAT csv); SELECT sum(i) AS total FROM t;"
+    )
+    result = test.run_with_stdin_file(data)
+    result.check_stdout("500500")
+
+
 def test_copy_to_stdout_follows_output(shell, tmp_path):
     target = tmp_path / "copy.csv"
     result = run_script(

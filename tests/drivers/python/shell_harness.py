@@ -78,14 +78,15 @@ class ShellTest:
         return self.run_raw(b"")
 
     def run_raw(self, stdin: str | bytes) -> TestResult:
+        return self._run(input=stdin.encode("utf8") if isinstance(stdin, str) else stdin)
+
+    def run_with_stdin_file(self, path: Path) -> TestResult:
+        with open(path, "rb") as stdin:
+            return self._run(stdin=stdin)
+
+    def _run(self, **stdin) -> TestResult:
         env = {k: v for k, v in os.environ.items() if k not in _AGENT_ENVIRONMENT}
         env.update({"NO_COLOR": "1", "TERM": "dumb"})
-        res = subprocess.run(
-            self.arguments,
-            input=stdin.encode("utf8") if isinstance(stdin, str) else stdin,
-            capture_output=True,
-            env=env,
-            timeout=60,
-        )
+        res = subprocess.run(self.arguments, capture_output=True, env=env, timeout=60, **stdin)
         return TestResult(res.stdout.decode("utf8").strip(),
                           res.stderr.decode("utf8").strip(), res.returncode)

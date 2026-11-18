@@ -1156,7 +1156,7 @@ TEST_F(ColNumericCodecTest, AutoFollowsTheDataAcrossRowGroups) {
   }
 }
 
-TEST_F(ColNumericCodecTest, AutoLeavesTheDeltaCodecsToColumnsThatNameThem) {
+TEST_F(ColNumericCodecTest, AutoPacksTheDeltasOfSortedIntegers) {
   constexpr uint32_t kRowGroup = 4096;
   constexpr uint64_t kRows = 4 * kRowGroup;
   const Gen clustered = [](uint64_t g) -> std::optional<int64_t> {
@@ -1176,6 +1176,9 @@ TEST_F(ColNumericCodecTest, AutoLeavesTheDeltaCodecsToColumnsThatNameThem) {
     irs::MemoryDirectory dir{};
     Write(dir, type, {.tier = tier}, kRows, kRowGroup, gen, compression);
     Verify(dir, type, kRows, gen);
+    for (const auto& transform : Transforms(dir)) {
+      EXPECT_NE(transform, "delta/none");
+    }
     irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
     const auto* col = r.Column(kField);
     EXPECT_NE(col, nullptr);
@@ -1188,14 +1191,16 @@ TEST_F(ColNumericCodecTest, AutoLeavesTheDeltaCodecsToColumnsThatNameThem) {
   using irs::codecs::CodecType;
   for (const auto tier : {irs::WriteTier::Flush, irs::WriteTier::Merge}) {
     SCOPED_TRACE(tier == irs::WriteTier::Flush ? "flush" : "merge");
-    for (const duckdb::LogicalType type :
-         {duckdb::LogicalType::BIGINT, duckdb::LogicalType::TIMESTAMP,
-          duckdb::LogicalType::DOUBLE}) {
-      SCOPED_TRACE(type.ToString());
-      for (const auto& gen : {clustered, sequence}) {
-        for (const auto stored : codecs(type, gen, tier, CodecType::Auto)) {
-          EXPECT_FALSE(delta(stored)) << magic_enum::enum_name(stored);
-        }
+    for (const auto& gen : {clustered, sequence}) {
+      for (const duckdb::LogicalType type :
+           {duckdb::LogicalType::BIGINT, duckdb::LogicalType::TIMESTAMP}) {
+        SCOPED_TRACE(type.ToString());
+        EXPECT_EQ(codecs(type, gen, tier, CodecType::Auto),
+                  std::set{CodecType::DeltaFfor});
+      }
+      for (const auto stored :
+           codecs(duckdb::LogicalType::DOUBLE, gen, tier, CodecType::Auto)) {
+        EXPECT_FALSE(delta(stored)) << magic_enum::enum_name(stored);
       }
     }
     EXPECT_EQ(

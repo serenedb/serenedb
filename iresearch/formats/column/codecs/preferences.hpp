@@ -30,6 +30,8 @@ namespace irs::codecs {
 
 struct Preferences {
   double leaf_price[kNumericLeafCount] = {1.0, 1.0, 1.0};
+  double delta_price = 1.0;
+  double delta_ffor_price = 1.0;
   double text_lz4_price[kTextShapeCount] = {1.0, 1.0};
   double roaring_price = 1.0;
   double max_runs_per_row = 1.0;
@@ -43,6 +45,8 @@ inline constexpr Preferences kNoPreferences;
 
 inline constexpr Preferences kFlushPreferences{
   .leaf_price = {1.0, 1.05, 1.15},
+  .delta_price = 1.25,
+  .delta_ffor_price = 1.05,
   .text_lz4_price = {1.05, 1.05},
   .roaring_price = 2.0,
   .max_runs_per_row = 0.5,

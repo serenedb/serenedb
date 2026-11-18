@@ -46,15 +46,15 @@ constexpr CodecType kLightweight[] = {
 };
 
 constexpr CodecType kIntegerMerge[] = {
-  CodecType::Uncompressed, CodecType::Bitpacking, CodecType::Ffor,
-  CodecType::RleFfor,      CodecType::DictFfor,   CodecType::Lz4,
-  CodecType::RleLz4,       CodecType::DictLz4,    CodecType::Zstd,
+  CodecType::Uncompressed, CodecType::Ffor,     CodecType::DeltaFfor,
+  CodecType::RleFfor,      CodecType::DictFfor, CodecType::Lz4,
+  CodecType::RleLz4,       CodecType::DictLz4,  CodecType::Zstd,
   CodecType::RleZstd,      CodecType::DictZstd,
 };
 
 constexpr CodecType kIntegerFlush[] = {
-  CodecType::Uncompressed, CodecType::Bitpacking, CodecType::Ffor,
-  CodecType::RleFfor,      CodecType::DictFfor,   CodecType::Lz4,
+  CodecType::Uncompressed, CodecType::Ffor,     CodecType::DeltaFfor,
+  CodecType::RleFfor,      CodecType::DictFfor, CodecType::Lz4,
   CodecType::RleLz4,       CodecType::DictLz4,
 };
 
@@ -65,7 +65,6 @@ constexpr CodecType kFloat[] = {
 };
 
 constexpr CodecType kNamedOnly[] = {
-  CodecType::DeltaFfor,
   CodecType::DeltaLz4,
   CodecType::DeltaZstd,
 };
@@ -220,8 +219,8 @@ bool CompressAuto(ColumnDataCheckpointData& data) {
   }
   const auto physical = data.type.InternalType();
   const bool flush = data.params.tier == WriteTier::Flush;
-  data.params.compression_level = 0;
   data.preferences = flush ? &kFlushPreferences : &kMergePreferences;
+  data.params.compression_level = 0;
   absl::InlinedVector<Contender, kMostContenders> contenders;
   const auto& orders = OrdersOf(physical);
   for (const auto type : flush ? orders.flush : orders.merge) {

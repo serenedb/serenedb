@@ -76,9 +76,11 @@ template<typename T>
 double AnalyzeDelta(ColumnDataCheckpointData& data, double bound,
                     FrameStore store) {
   const auto items = DeltaItems<T>(data, store);
-  return AnalyzeFrames<T>(
-    data, items, data.Get<Delta<T>>().analysis[store.shuffled], bound,
-    Slices(items.stored, [&] { return Deltas<T>(data); }));
+  const auto price = data.preferences->delta_price;
+  return price * AnalyzeFrames<T>(
+                   data, items, data.Get<Delta<T>>().analysis[store.shuffled],
+                   bound / price,
+                   Slices(items.stored, [&] { return Deltas<T>(data); }));
 }
 
 template<typename T>
@@ -147,9 +149,11 @@ double AnalyzeDeltaFfor(ColumnDataCheckpointData& data, double bound) {
     return kNoScore;
   }
   state.analyzed = true;
-  return AnalyzeBlocks<T>(data, Shape::Delta,
-                          static_cast<uint32_t>(values.Get().size()),
-                          state.blocks.Bytes(kFforFrameRows), 0, bound);
+  const auto price = data.preferences->delta_ffor_price;
+  return price * AnalyzeBlocks<T>(data, Shape::Delta,
+                                  static_cast<uint32_t>(values.Get().size()),
+                                  state.blocks.Bytes(kFforFrameRows), 0,
+                                  bound / price);
 }
 
 template<typename T>

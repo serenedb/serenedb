@@ -118,7 +118,6 @@ const CompressionFunction& UncompressedCompression(
 void Compress(CodecType method, ColumnDataCheckpointData& data) {
   const auto physical = data.type.InternalType();
   data.rows = CountRows(data.chunks);
-  data.method = method;
   const auto* codec = GetCodec(method, physical);
   SDB_ASSERT(codec && codec->compression);
   if (!codec->compression->compress(data)) {

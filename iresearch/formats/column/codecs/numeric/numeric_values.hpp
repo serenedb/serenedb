@@ -46,11 +46,9 @@ class Values final : public State {
   static constexpr StateId kId = StateId::NumericValues;
 
   using U = numeric::Bits<sizeof(T)>;
-  static constexpr uint8_t kWidth = sizeof(T);
 
   struct Facts {
     U lo = 0;
-    U hi = 0;
     U delta_offset = 0;
     uint8_t for_stored = 0;
     uint8_t delta_stored = 0;
@@ -130,7 +128,6 @@ class Values final : public State {
     const auto delta_range = static_cast<U>(static_cast<U>(dhi) - delta_offset);
     return _facts.emplace(Facts{
       .lo = lo,
-      .hi = hi,
       .delta_offset = delta_offset,
       .for_stored = numeric::BytesFor(range),
       .delta_stored = numeric::BytesFor(delta_range),

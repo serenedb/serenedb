@@ -220,6 +220,7 @@ bool CompressAuto(ColumnDataCheckpointData& data) {
   }
   const auto physical = data.type.InternalType();
   const bool flush = data.params.tier == WriteTier::Flush;
+  data.params.compression_level = 0;
   data.preferences = flush ? &kFlushPreferences : &kMergePreferences;
   absl::InlinedVector<Contender, kMostContenders> contenders;
   const auto& orders = OrdersOf(physical);

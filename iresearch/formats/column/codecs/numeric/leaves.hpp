@@ -37,9 +37,8 @@ class Leaves final : public State {
   static constexpr StateId kId = StateId::NumericLeaves;
 
   explicit Leaves(ColumnDataCheckpointData& data)
-    : _level{data.method != CodecType::Auto && data.params.compression_level
-               ? data.params.compression_level
-               : kLeafLevel} {}
+    : _level{data.params.compression_level ? data.params.compression_level
+                                           : kLeafLevel} {}
 
   uint8_t Level() const noexcept { return _level; }
 

@@ -189,11 +189,6 @@ class PatchedColumnReader final : public ColumnReader {
   PatchedColumnReader(std::unique_ptr<const ColumnReader> base,
                       std::shared_ptr<const ColumnPatch> patch);
 
-  const ColumnReader& Base() const noexcept { return _base; }
-  const std::shared_ptr<const ColumnPatch>& Patch() const noexcept {
-    return _patch;
-  }
-
   uint64_t RowGroupEnd(uint64_t row) const noexcept final {
     return _base.RowGroupEnd(row);
   }

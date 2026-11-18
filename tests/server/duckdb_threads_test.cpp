@@ -624,11 +624,11 @@ TEST(DuckDBScheduler, SessionsSchedulingOneTaskAtATimeAllRun) {
         scheduler.CreateAccount(duckdb::SchedulerClass::FOREGROUND));
       for (int64_t t = 0; t < kTasks; ++t) {
         auto done = std::make_shared<std::atomic<bool>>(false);
-        scheduler.ScheduleTask(*producer,
-                               duckdb::make_shared_ptr<FunctionTask>([done, &ran] {
-                                 ++ran;
-                                 *done = true;
-                               }));
+        scheduler.ScheduleTask(
+          *producer, duckdb::make_shared_ptr<FunctionTask>([done, &ran] {
+            ++ran;
+            *done = true;
+          }));
         while (!done->load()) {
           if (std::chrono::steady_clock::now() >= deadline) {
             return;

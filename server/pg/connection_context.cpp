@@ -470,9 +470,10 @@ void ConnectionContext::OnQueryBegin() {
       !transaction.IsAutoCommit()) {
     transaction.ActiveTransaction().RefreshStartTime();
   }
-  if (_internal_statements == 0) {
-    _query_in_transaction = true;
+  if (_internal_statements != 0) {
+    return;
   }
+  _query_in_transaction = true;
   _progress->BeginQuery(GetCurrentQuery());
   if (pending_copy_command != pg::ProgressCommand::None) {
     auto& metrics = _progress->metrics;
@@ -492,7 +493,7 @@ void ConnectionContext::OnQueryBegin() {
 void ConnectionContext::OnQueryEnd() {
   copy_stdin_open_count = 0;
   copy_stdin_done = false;
-  if (!_progress->client_backend) {
+  if (!_progress->client_backend && _internal_statements == 0) {
     ReportIdle();
   }
   RefreshCatalogEpoch();

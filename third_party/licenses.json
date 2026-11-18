@@ -526,13 +526,6 @@
       "paths": ["third_party/yaclib"]
     },
     {
-      "name": "yyjson",
-      "url": "https://github.com/ibireme/yyjson",
-      "license": "MIT",
-      "files": ["third_party/duckdb/third_party/yyjson/LICENSE"],
-      "paths": ["third_party/duckdb/third_party/yyjson"]
-    },
-    {
       "name": "zlib-ng",
       "url": "https://github.com/zlib-ng/zlib-ng",
       "license": "Zlib",

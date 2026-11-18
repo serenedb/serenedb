@@ -18,7 +18,12 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/base/internal/endian.h>
+
 #include <duckdb/common/file_system.hpp>
+#include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/common/types/vector.hpp>
+#include <duckdb/common/vector/vector_writer.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/parsed_data/attach_info.hpp>
@@ -32,8 +37,10 @@
 #include "docs/docs_shell_backend.h"
 #include "duckdb_shell.hpp"
 #include "jobs/scheduler.h"
+#include "pg/serialize.h"
 #include "query/server_engine.h"
 #include "runtime/runtime.h"
+#include "server/utils/message_buffer.h"
 #include "storage/storage.h"
 
 namespace sdb::app {
@@ -92,12 +99,58 @@ void CloseShellEngine() {
   irs::DuckDBEngine::Instance().Shutdown();
 }
 
+void RenderShellText(duckdb::ClientContext& client, duckdb::DataChunk& input,
+                     duckdb::DataChunk& output) {
+  constexpr size_t kChunkMin = 4 << 10;
+  constexpr size_t kChunkMax = 1 << 20;
+  pg::SerializationContext context;
+  pg::FillContext(client, context);
+  const auto rows = input.size();
+  message::Buffer buffer{kChunkMin, kChunkMax};
+  std::string bytes;
+  duckdb::RecursiveUnifiedVectorFormat values;
+  for (duckdb::idx_t column = 0; column < input.ColumnCount(); ++column) {
+    const auto serialize = pg::GetSerialization(input.data[column].GetType(),
+                                                pg::VarFormat::Text, context);
+    duckdb::Vector::RecursiveToUnifiedFormat(input.data[column], rows, values);
+    for (duckdb::idx_t row = 0; row < rows; ++row) {
+      message::Writer writer{buffer};
+      context.writer = &writer;
+      serialize(context, values, row);
+      writer.Commit(false);
+    }
+    const auto chain = buffer.ReleaseChain();
+    bytes.clear();
+    for (auto* chunk = chain.head; chunk; chunk = chunk->Next()) {
+      const auto data = chunk->Data(chunk->GetEnd());
+      bytes.append(reinterpret_cast<const char*>(data.data()), data.size());
+    }
+    auto text =
+      duckdb::FlatVector::Writer<duckdb::string_t>(output.data[column], rows);
+    size_t at = 0;
+    for (duckdb::idx_t row = 0; row < rows; ++row) {
+      const auto length =
+        static_cast<int32_t>(absl::big_endian::Load32(bytes.data() + at));
+      at += sizeof(int32_t);
+      if (length < 0) {
+        text.WriteNull();
+        continue;
+      }
+      text.WriteValue(
+        duckdb::string_t{bytes.data() + at, static_cast<uint32_t>(length)});
+      at += static_cast<size_t>(length);
+    }
+  }
+}
+
 int RunCLI(int argc, char* argv[], duckdb_shell::ShellSubcommand subcommand) {
   gShellSubcommand = subcommand;
   docs::RegisterShellDocsBackend();
-  return duckdb_shell::Run(
-    argc, argv, subcommand,
-    {.open = &OpenShellEngine, .close = &CloseShellEngine, .name = "sdb"});
+  return duckdb_shell::Run(argc, argv, subcommand,
+                           {.open = &OpenShellEngine,
+                            .close = &CloseShellEngine,
+                            .name = "sdb",
+                            .render_text = &RenderShellText});
 }
 
 int RunShell(int argc, char* argv[]) {

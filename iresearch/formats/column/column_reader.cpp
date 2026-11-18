@@ -555,7 +555,11 @@ duckdb::ScanVectorType ColumnReader::GetVectorScanType(
   if (result.GetVectorType() != duckdb::VectorType::FLAT_VECTOR) {
     return duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR;
   }
-  if (RowsLeft(s) < count) {
+  auto rows = RowsLeft(s);
+  if (rows == 0 && s.window.block + 1 < _segments.size()) {
+    rows = _segments[s.window.block + 1].tuple_count;
+  }
+  if (rows < count) {
     return duckdb::ScanVectorType::SCAN_FLAT_VECTOR;
   }
   if (!_validity) {

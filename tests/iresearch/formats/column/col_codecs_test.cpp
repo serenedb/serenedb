@@ -1705,6 +1705,32 @@ TEST_F(ColCodecsTest, TransactionalCodecsLeaveTextToTheColumnstore) {
   }
 }
 
+TEST_F(ColCodecsTest, AScanStartsEveryRowGroupWithADictionaryVector) {
+  const Value value = [](uint64_t g) -> std::optional<std::string> {
+    return "status-" + std::to_string(g % 37);
+  };
+  constexpr uint32_t kRowGroup = 2 * STANDARD_VECTOR_SIZE;
+  constexpr uint32_t kRows = 3 * kRowGroup;
+  irs::MemoryDirectory dir{};
+  Write(dir, irs::codecs::CodecType::DictLz4, {}, kRows, kRowGroup, value);
+  irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto* col = r.Column(kField);
+  ASSERT_NE(col, nullptr);
+  ASSERT_EQ(col->DataBlocks().size(), 3u);
+  auto state = col->InitScan(r.Ctx());
+  for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+    duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+    ASSERT_EQ(col->Scan(state, out, STANDARD_VECTOR_SIZE),
+              duckdb::idx_t{STANDARD_VECTOR_SIZE});
+    EXPECT_EQ(out.GetVectorType(), duckdb::VectorType::DICTIONARY_VECTOR)
+      << "row " << pos;
+    for (duckdb::idx_t i = 0; i < STANDARD_VECTOR_SIZE; i += 97) {
+      EXPECT_EQ(out.GetValue(i).ToString(), *value(pos + i))
+        << "row " << pos + i;
+    }
+  }
+}
+
 TEST_F(ColCodecsTest, CachedDictionaryKeepsNoScanContext) {
   const auto& value = kLowCardinalityWithNulls;
   constexpr uint32_t kRows = 10 * STANDARD_VECTOR_SIZE;

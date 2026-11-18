@@ -35,7 +35,7 @@ The first two positional arguments are taken as `DBNAME` and `USERNAME` when the
 serenedb psql -h localhost -p 7890 postgres alice
 ```
 
-The bootstrap superuser `postgres` connects locally without a password; other roles (and remote connections) authenticate with their [role password](../security/client_authentication.md). `serened psql` does not prompt for it: the password comes from the `PGPASSWORD` environment variable or the `~/.pgpass` file, and `-w` and `-W` are accepted and change nothing.
+The bootstrap superuser `postgres` connects locally without a password; other roles (and remote connections) authenticate with their [role password](../security/client_authentication.md). `serenedb psql` does not prompt for it: the password comes from the `PGPASSWORD` environment variable or the `~/.pgpass` file, and `-w` and `-W` are accepted and change nothing.
 
 ## Running a single command
 
@@ -54,7 +54,7 @@ serenedb psql -h localhost -p 7890 -d postgres -c "SELECT 1 + 1 AS sum;"
 
 ## Output formats
 
-`serened psql` prints results the way `psql` does. The default is an aligned table: column names centered, numbers aligned right and other values left, a value with a line break continued on the next line with a `+` before the break, and a `(N rows)` footer. Values are printed in their PostgreSQL text form, as a PostgreSQL server sends them: `t` and `f` for booleans, `{1,2}` for an array, dates and timestamps in PostgreSQL's format. `NULL` prints as an empty value, or as the text `\pset null` sets.
+`serenedb psql` prints results the way `psql` does. The default is an aligned table: column names centered, numbers aligned right and other values left, a value with a line break continued on the next line with a `+` before the break, and a `(N rows)` footer. Values are printed in their PostgreSQL text form, as a PostgreSQL server sends them: `t` and `f` for booleans, `{1,2}` for an array, dates and timestamps in PostgreSQL's format. `NULL` prints as an empty value, or as the text `\pset null` sets.
 
 | Format                                                           | Flag                  | Command                        |
 | :--------------------------------------------------------------- | :-------------------- | :----------------------------- |
@@ -67,7 +67,7 @@ serenedb psql -h localhost -p 7890 -d postgres -c "SELECT 1 + 1 AS sum;"
 Expanded output:
 
 ```sh
-serened psql -h localhost -p 7890 -d postgres -x -c "SELECT 1 AS a, 2 AS b;"
+serenedb psql -h localhost -p 7890 -d postgres -x -c "SELECT 1 AS a, 2 AS b;"
 ```
 
 ```text
@@ -79,7 +79,7 @@ b | 2
 Unaligned rows only, ready for a script to split:
 
 ```sh
-serened psql -h localhost -p 7890 -d postgres -A -t -c "SELECT 1 AS a, 2 AS b;"
+serenedb psql -h localhost -p 7890 -d postgres -A -t -c "SELECT 1 AS a, 2 AS b;"
 ```
 
 ```text
@@ -89,7 +89,7 @@ serened psql -h localhost -p 7890 -d postgres -A -t -c "SELECT 1 AS a, 2 AS b;"
 CSV quotes a value that holds the separator, a double quote or a line break, and an empty string, which a `NULL` (printed as nothing) is not:
 
 ```sh
-serened psql -h localhost -p 7890 -d postgres --csv -c "SELECT 'hello, world' AS msg;"
+serenedb psql -h localhost -p 7890 -d postgres --csv -c "SELECT 'hello, world' AS msg;"
 ```
 
 ```text
@@ -117,7 +117,7 @@ msg
 Without a value, `expanded`, `tuples_only`, `footer` and `pager` switch between on and off, and the other options print their value. `\pset` alone lists them all. On the command line, an unknown option or value prints a warning and is ignored.
 
 ```sh
-serened psql -h localhost -p 7890 -d postgres -P border=2 -c "SELECT 5 AS v;"
+serenedb psql -h localhost -p 7890 -d postgres -P border=2 -c "SELECT 5 AS v;"
 ```
 
 ```text

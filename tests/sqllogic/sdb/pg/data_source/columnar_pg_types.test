@@ -42,14 +42,14 @@ SELECT pg_typeof(mac), pg_typeof(mac8), pg_typeof(lsn), pg_typeof(m), pg_typeof(
 FROM read_parquet('${__TEST_DIR__}/cpt.parquet') WHERE id = 1;
 ----
 pg_typeof	pg_typeof	pg_typeof	pg_typeof	pg_typeof	pg_typeof	pg_typeof	pg_typeof	pg_typeof	pg_typeof	pg_typeof
-text	text	text	text	text	text	text	text	text[]	numeric	integer[]
+text	text	text	numeric	text	text	text	text	text[]	numeric	integer[]
 
 
 query
 SELECT mac, mac8, lsn, m, r, mr, p, b, macs, n, a FROM read_parquet('${__TEST_DIR__}/cpt.parquet') ORDER BY id;
 ----
 mac	mac8	lsn	m	r	mr	p	b	macs	n	a
-08:00:2b:01:02:03	08:00:2b:01:02:03:04:05	16/B374D848	$12.34	[1,5)	{[1,3),[5,7)}	(1,2)	(1,1),(0,0)	{08:00:2b:01:02:03,NULL}	1.50	{1,2}
+08:00:2b:01:02:03	08:00:2b:01:02:03:04:05	16/B374D848	12.34	[1,5)	{[1,3),[5,7)}	(1,2)	(1,1),(0,0)	{08:00:2b:01:02:03,NULL}	1.50	{1,2}
 NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 
 

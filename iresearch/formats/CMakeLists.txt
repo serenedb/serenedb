@@ -27,8 +27,10 @@ target_sources(
         column/codecs/validity/roaring.cpp
         column/col_reader.cpp
         column/col_writer.cpp
+        column/column_meta.cpp
         column/column_patch.cpp
         column/column_reader.cpp
+        column/column_reader_point.cpp
         column/column_writer.cpp
         column/hot_column_reader.cpp
         column/list_ingest.cpp

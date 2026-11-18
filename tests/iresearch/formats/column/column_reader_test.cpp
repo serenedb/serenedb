@@ -5193,11 +5193,10 @@ TEST_F(ColumnReaderTest, VariantRoundTripShredded) {
   ExpectVariantValuesEqual(expected, ScanVariantAll(*col, r.Ctx()));
 }
 
-TEST_F(ColumnReaderTest, StoredBytesOfAVariantCountItsRowGroups) {
+TEST_F(ColumnReaderTest, SubColumnsOfAVariantAreVisitedRowGroupByRowGroup) {
   constexpr irs::field_id kId = 34;
   constexpr uint32_t kRowGroup = 256;
   constexpr uint64_t kRows = 600;
-  constexpr uint64_t kMd5Bytes = 16;
   SetShreddingSize(Db(), kRowGroup);
   irs::MemoryDirectory dir{};
   std::vector<duckdb::Value> expected;
@@ -5218,7 +5217,6 @@ TEST_F(ColumnReaderTest, StoredBytesOfAVariantCountItsRowGroups) {
   });
   EXPECT_EQ((std::vector<std::string>{"1@0", "2@0", "1@256", "2@256", "1@512"}),
             sub_columns);
-  EXPECT_GE(irs::StoredBytes(*col), kRows * kMd5Bytes);
 }
 
 // VARIANT with NULL rows + leftover (mixed types) under shredding: exercises

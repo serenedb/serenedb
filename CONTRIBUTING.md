@@ -67,7 +67,7 @@ Every binary links most of the server statically, so debug info dominates its si
 - **Split DWARF** (`SDB_SPLIT_DWARF`, on by default except on macOS, off in CI): debug info is written once, into a `.dwo` file beside each object, and the binaries only point at those files. lldb, gdb, perf, `llvm-symbolizer` and `addr2line` follow the pointers on their own, as long as the build directory is there. A binary copied out of it keeps its symbols and line numbers but loses inlined frames, variables and types; to keep those too, pack the debug info next to the copy:
 
   ```bash
-  llvm-dwp -e build/bin/serened -o /path/to/copy/serened.dwp
+  llvm-dwp -e build/bin/serenedb -o /path/to/copy/serenedb.dwp
   ```
 
   lldb and gdb pick up `<binary>.dwp` beside the binary automatically.
@@ -88,10 +88,10 @@ cmake --build build_sbg -t search-benchmark-game
 
 ### The embedded documentation index
 
-`docs/` and a search index of it are built into `serened` and `serenedb-tests`, where the `sdb_docs` functions and the shell's `.docs` read them; a `docs/` change needs only a rebuild.
+`docs/` and a search index of it are built into `serenedb` and `serenedb-tests`, where the `sdb_docs` functions and the shell's `.docs` read them; a `docs/` change needs only a rebuild.
 
 - To skip it, configure with `-DSDB_EMBEDDED_DOCS=OFF`; that build has no documentation to read.
-- The build indexes the docs with the freshly linked binary, `serened docs-index <corpus> <index-dir>`, then embeds the index into it.
+- The build indexes the docs with the freshly linked binary, `serenedb docs-index <corpus> <index-dir>`, then embeds the index into it.
 - On macOS the index gets a fixed 4 MiB region. When the build fails because the index outgrew it, raise `kCapacity` in `server/docs/docs_index_image.cpp`.
 
 ### The TPC data generators
@@ -100,7 +100,11 @@ The `tpch` and `tpcds` extensions, linked by default, carry the TPC-H and TPC-DS
 
 ### Code from another repository
 
-A repository that keeps this tree as a submodule builds its own code into `serened` rather than a second server: `-DSDB_EXTERNAL_DIRS=<dir>;...` adds each directory, absolute or relative to this tree, after this tree's own, with the same compiler, flags and libraries, and a directory links its code into the server with `target_link_libraries(serened PRIVATE <object library>)`.
+A repository that keeps this tree as a submodule builds its own code into `serenedb` rather than a second binary: `-DSDB_EXTERNAL_DIRS=<dir>;...` adds each directory, absolute or relative to this tree, after this tree's own, with the same compiler, flags and libraries, and a directory links its code into the binary with `target_link_libraries(serenedb PRIVATE <object library>)`. Its commands register themselves like the built-in ones.
+
+### Commands
+
+`serenedb <command>` runs one of the commands that register themselves with `app::RegisterCommand` in their own files, such as `server` in `server/app/server.cpp` and `shell` and `psql` in `server/app/cli.cpp`; `serenedb` alone lists them. `serened`, a link to `serenedb` next to it, always runs `server`.
 
 ### Launch
 

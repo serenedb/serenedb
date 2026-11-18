@@ -3,8 +3,9 @@
   "title": "serened -- SereneDB pg-wire server",
   "usage": [
     "serened <data-dir> [--flag=value ...]",
-    "serened shell [duckdb-shell args ...]",
-    "serened psql  [psql args ...]"
+    "serenedb server <data-dir> [--flag=value ...]",
+    "serenedb shell [duckdb-shell args ...]",
+    "serenedb psql  [psql args ...]"
   ],
   "commands": [
     {
@@ -12,11 +13,15 @@
       "description": "Start the SereneDB pg-wire server, using the optional data directory and flags."
     },
     {
-      "command": "serened shell [duckdb-shell args ...]",
+      "command": "serenedb server <data-dir> [--flag=value ...]",
+      "description": "Start the SereneDB pg-wire server, using the optional data directory and flags."
+    },
+    {
+      "command": "serenedb shell [duckdb-shell args ...]",
       "description": "Open the embedded DuckDB shell without starting the SereneDB server."
     },
     {
-      "command": "serened psql  [psql args ...]",
+      "command": "serenedb psql  [psql args ...]",
       "description": "Open the psql-compatible shell subcommand without starting the SereneDB server."
     }
   ],

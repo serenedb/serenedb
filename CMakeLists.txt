@@ -104,7 +104,7 @@ option(
     ON
 )
 
-option(SDB_EMBEDDED_DOCS "embed the documentation from docs/ into serened" ON)
+option(SDB_EMBEDDED_DOCS "embed the documentation from docs/ into serenedb" ON)
 
 option(
     SDB_TPC_EXTENSIONS
@@ -115,7 +115,7 @@ option(
 set(SDB_EXTERNAL_DIRS
     ""
     CACHE STRING
-    "directories outside this tree, absolute or relative to it, built after it with its settings, so their code can link into serened"
+    "directories outside this tree, absolute or relative to it, built after it with its settings, so their code can link into serenedb"
 )
 
 option(SDB_GTEST "build the gtest suites under tests/" OFF)
@@ -245,7 +245,7 @@ option(
 
 option(
     SDB_REMAP_EXECUTABLE
-    "default of serened's --remap_executable, which copies its machine code into huge pages at startup; on in Release builds"
+    "default of the server's --remap_executable, which copies its machine code into huge pages at startup; on in Release builds"
     ${SDB_RELEASE_DEFAULT}
 )
 
@@ -686,8 +686,6 @@ add_subdirectory(iresearch)
 if(NOT IRESEARCH_BENCH)
     add_subdirectory(server)
     add_subdirectory(examples/iresearch EXCLUDE_FROM_ALL)
-    add_custom_target(serenedb)
-    add_dependencies(serenedb serened)
 endif()
 add_subdirectory(tests)
 foreach(dir IN LISTS SDB_EXTERNAL_DIRS)

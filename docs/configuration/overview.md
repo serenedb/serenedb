@@ -5,7 +5,7 @@ split: headings
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
-SereneDB has a number of configuration options that can be used to change the behavior of the system. The defaults listed here are a server's; `serened shell` has other defaults for some options, such as `integer_division` (`false`), `ieee_floating_point_ops` (`true`), `preserve_identifier_case` (`preserve_case`) and the default schema (`main`).
+SereneDB has a number of configuration options that can be used to change the behavior of the system. The defaults listed here are a server's; `serenedb shell` has other defaults for some options, such as `integer_division` (`false`), `ieee_floating_point_ops` (`true`), `preserve_identifier_case` (`preserve_case`) and the default schema (`main`).
 
 The configuration options can be set using either the [`SET` statement](../sql/statements/set/index.md) or the [`PRAGMA` statement](../configuration/pragmas.md). They can be reset to their original values using the [`RESET` statement](../sql/statements/set/index.md#reset).
 
@@ -193,7 +193,7 @@ Planning, rewriting and the shape of query output.
 | `enable_caching_operators` | Enables caching operators that cache intermediate results. | `BOOLEAN` | `SESSION` | `on` |
 | `enable_optimizer` | Whether or not query optimization is enabled. | `BOOLEAN` | `GLOBAL` | `on` |
 | `explain_output` | Output of EXPLAIN statements (`ALL`, `OPTIMIZED_ONLY`, `PHYSICAL_ONLY`) | `VARCHAR` | `SESSION` | `PHYSICAL_ONLY` |
-| `explain_output_format` | Column shape of EXPLAIN output (`CLI` = two columns, key and value, as `serened shell` and `serened psql` print them; `SERVER` = single QUERY PLAN column with one row per line of a text or compact plan and one row per plan in other formats). | `VARCHAR` | `SESSION` | `SERVER` |
+| `explain_output_format` | Column shape of EXPLAIN output (`CLI` = two columns, key and value, as `serenedb shell` and `serenedb psql` print them; `SERVER` = single QUERY PLAN column with one row per line of a text or compact plan and one row per plan in other formats). | `VARCHAR` | `SESSION` | `SERVER` |
 | `filter_reorder` | How far filter reordering may move conditions that can fail (`never`, `safe`, `fast` or `always`) | `VARCHAR` | `SESSION` | `fast` |
 | `late_materialization_lookup_max_rows` | The maximum amount of rows in the LIMIT/TOP_N/SAMPLE for which a scan that can look up rows by their row id is late materialized through a `LOOKUP_JOIN`. `0` disables the `LOOKUP_JOIN`: late materialization then joins on the row ids, up to `late_materialization_max_rows`. | `UBIGINT` | `SESSION` | `2048` |
 | `late_materialization_max_rows` | The maximum amount of rows in the LIMIT/SAMPLE for which we trigger late materialization | `UBIGINT` | `SESSION` | `50` |

@@ -104,6 +104,11 @@ endfunction()
 
 function(sdb_build_docs_index TARGET)
     add_dependencies(${TARGET} serene_docs_corpus_file)
+    set_property(
+        TARGET ${TARGET}
+        APPEND
+        PROPERTY LINK_DEPENDS ${SDB_DOCS_CORPUS}
+    )
     add_custom_command(
         TARGET ${TARGET}
         POST_BUILD

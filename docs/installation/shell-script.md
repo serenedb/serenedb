@@ -14,7 +14,7 @@ The quickest way to install SereneDB on Linux. No root needed.
 curl https://linux.serenedb.com | sh
 ```
 
-This installs the `serened` command for your user. On macOS, Windows or an unsupported CPU architecture the script stops and points you to [Docker](./docker.md).
+This installs the `serenedb` and `serened` commands for your user. On macOS, Windows or an unsupported CPU architecture the script stops and points you to [Docker](./docker.md).
 
 <DocCallout type="tip">
 If `serened` is not found afterwards, the script prints the one line to add to your `~/.bashrc` or `~/.zshrc`.

@@ -38,20 +38,40 @@ add_subdirectory(runtime)
 add_subdirectory(storage)
 add_subdirectory(search)
 
-add_executable(serened app/serened.cpp)
+add_executable(
+    serenedb
+    app/main.cpp
+    app/cli.cpp
+    app/command.cpp
+    app/docs_builder.cpp
+    app/server.cpp
+)
 target_compile_definitions(
-    serened
+    serenedb
     PRIVATE
         SDB_REMAP_EXECUTABLE=$<IF:$<BOOL:${SDB_REMAP_EXECUTABLE}>,true,false>
 )
-target_link_libraries(serened PRIVATE serene_docs_shell serene_docs_builder)
-sdb_link_duckdb_extensions(serened)
+target_link_libraries(serenedb PRIVATE serene_docs_shell serene_docs_builder)
+sdb_link_duckdb_extensions(serenedb)
 if(SDB_EMBEDDED_DOCS)
-    target_link_libraries(serened PRIVATE serene_docs_index)
-    sdb_build_docs_index(serened)
+    target_link_libraries(serenedb PRIVATE serene_docs_index)
+    sdb_build_docs_index(serenedb)
 endif()
+add_custom_command(
+    TARGET serenedb
+    POST_BUILD
+    COMMAND
+        ${CMAKE_COMMAND} -E create_symlink serenedb
+        $<TARGET_FILE_DIR:serenedb>/serened
+    VERBATIM
+)
 
-install(TARGETS serened RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} OPTIONAL)
+install(TARGETS serenedb RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} OPTIONAL)
+install(
+    PROGRAMS $<TARGET_FILE_DIR:serenedb>/serened
+    DESTINATION ${CMAKE_INSTALL_BINDIR}
+    OPTIONAL
+)
 configure_file(
     ${CMAKE_SOURCE_DIR}/etc/serenedb/serened.conf.in
     ${CMAKE_BINARY_DIR}/etc/serenedb/serened.conf

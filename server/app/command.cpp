@@ -20,52 +20,30 @@
 
 #include "app/command.h"
 
-#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 
 #include <cstdio>
 #include <cstdlib>
-#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <string>
-#include <vector>
 
 namespace sdb::app {
 namespace {
 
-irs::containers::FlatHashMap<std::string_view, Command>& Commands() {
-  static irs::containers::FlatHashMap<std::string_view, Command> commands;
-  return commands;
-}
+using Commands = Registry<Command>;
 
 std::string Usage() {
-  std::vector<std::string_view> names;
-  names.reserve(Commands().size());
-  for (const auto& [name, run] : Commands()) {
-    names.push_back(name);
-  }
-  absl::c_sort(names);
   return absl::StrCat("usage: serenedb <command> [args ...]\n\ncommands: ",
-                      absl::StrJoin(names, ", "),
+                      absl::StrJoin(Commands::Names(), ", "),
                       "\n\nserened is serenedb server.\n");
 }
 
 }  // namespace
 
-RegisterCommand::RegisterCommand(std::string_view name, Command run) {
-  if (!Commands().emplace(name, run).second) {
-    std::fputs(
-      absl::StrCat("serenedb: the command ", name, " is registered twice\n")
-        .c_str(),
-      stderr);
-    std::abort();
-  }
-}
-
 int RunCommand(int argc, char* argv[]) {
   const std::string_view program{argv[0]};
   if (program.substr(program.rfind('/') + 1) == "serened") {
-    return Commands().at("server")(argc, argv);
+    return Commands::Find("server")->run(argc, argv);
   }
   if (argc < 2) {
     std::fputs(Usage().c_str(), stderr);
@@ -76,8 +54,8 @@ int RunCommand(int argc, char* argv[]) {
     std::fputs(Usage().c_str(), stdout);
     return EXIT_SUCCESS;
   }
-  const auto command = Commands().find(name);
-  if (command == Commands().end()) {
+  const auto* command = Commands::Find(name);
+  if (!command) {
     std::fputs(
       absl::StrCat("serenedb: unknown command '", name, "'\n\n", Usage())
         .c_str(),
@@ -85,7 +63,7 @@ int RunCommand(int argc, char* argv[]) {
     return EXIT_FAILURE;
   }
   argv[1] = argv[0];
-  return command->second(argc - 1, argv + 1);
+  return command->run(argc - 1, argv + 1);
 }
 
 }  // namespace sdb::app

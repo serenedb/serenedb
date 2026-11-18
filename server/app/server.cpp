@@ -78,7 +78,7 @@ int RunServer(int argc, char* argv[]) {
   return RunWithEngine(argc, argv, Serve);
 }
 
-const RegisterCommand kServer{"server", &RunServer};
+SDB_COMMAND kServer{"server", &RunServer};
 
 }  // namespace
 

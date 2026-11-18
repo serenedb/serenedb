@@ -28,17 +28,17 @@
 
 namespace {
 
-using sdb::network::HttpApi;
 using sdb::network::HttpMethod;
 using sdb::network::HttpRequest;
 using sdb::network::HttpRouter;
+using Apis = sdb::Registry<sdb::network::http::Api>;
 
 HttpRouter& Router() {
   static HttpRouter router = [] {
     HttpRouter built;
-    constexpr std::array kApis{HttpApi::Es, HttpApi::Mcp, HttpApi::Otel,
-                               HttpApi::Test};
-    sdb::network::http::AddRoutes(built, kApis);
+    const std::array apis{Apis::Find("es"), Apis::Find("mcp"),
+                          Apis::Find("otel"), Apis::Find("test")};
+    sdb::network::http::AddRoutes(built, apis);
     return built;
   }();
   return router;

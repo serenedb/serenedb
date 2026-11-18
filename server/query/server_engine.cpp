@@ -62,6 +62,7 @@
 #include "pg/catalog/engine/scan_function.h"
 #include "pg/catalog/functions/functions.h"
 #include "pg/connection_context.h"
+#include "pg/types/mapping.h"
 #include "pg/types/register.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
@@ -104,6 +105,7 @@ void ConfigureEngineDBConfig(duckdb::DBConfig& config,
     };
   config.create_client_context = CreateClientContext;
   config.create_secret_storage = catalog::CreateSecretStorage;
+  config.copy_to_written_type = sdb::pg::ColumnarWrittenType;
   connector::RegisterSereneDBStorage(config);
   connector::RegisterConfigVariables(config);
   config.AddExtensionOption(

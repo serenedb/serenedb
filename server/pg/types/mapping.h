@@ -128,6 +128,8 @@ ColumnType DescribeColumnType(const duckdb::LogicalType& type);
 
 bool IsAliasedListDimension(const duckdb::LogicalType& type);
 
+duckdb::LogicalType ColumnarWrittenType(const duckdb::LogicalType& type);
+
 inline bool IsArrayDimension(const duckdb::LogicalType& type) {
   const auto id = type.id();
   if (id == duckdb::LogicalTypeId::LIST) {

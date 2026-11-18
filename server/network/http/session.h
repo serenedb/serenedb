@@ -766,6 +766,7 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
             // ConnectionContext dtor asserts the queue is empty).
             _connection_ctx->ConsumeNotices(
               [](const irs::pg::SqlErrorData&) {});
+            _connection_ctx->ReportIdle();
           }
         } else {
           writer.Error(http::HttpStatus::NotFound, "not_found");

@@ -78,14 +78,18 @@ constexpr std::tuple kProgressBase{Col<"pid">(&ProgressSnapshot::pid),
                                    Col<"usename">(&ProgressSnapshot::user),
                                    Col<"datname">(&ProgressSnapshot::database)};
 
-std::string_view SessionState(const ProgressSnapshot& s) {
-  if (s.active) {
-    return "active";
+std::string_view StateName(BackendState state) {
+  switch (state) {
+    case BackendState::Idle:
+      return "idle";
+    case BackendState::Active:
+      return "active";
+    case BackendState::IdleInTransaction:
+      return "idle in transaction";
+    case BackendState::IdleInTransactionAborted:
+      return "idle in transaction (aborted)";
   }
-  if (s.xact_aborted) {
-    return "idle in transaction (aborted)";
-  }
-  return s.xact_start_us == 0 ? "idle" : "idle in transaction";
+  return "";
 }
 
 std::optional<int64_t> MicrosOrNull(int64_t micros) {
@@ -93,7 +97,7 @@ std::optional<int64_t> MicrosOrNull(int64_t micros) {
 }
 
 constexpr std::tuple kProgressSession{
-  Col<"state">([](const auto& s) { return SessionState(s); }),
+  Col<"state">([](const auto& s) { return StateName(s.state); }),
   Col<"query">(&ProgressSnapshot::query),
   Col<"backend_start_us">(&ProgressSnapshot::backend_start_us),
   Col<"xact_start_us">(
@@ -161,7 +165,7 @@ class SdbProgress final : public SystemTableScan<kSdbProgressSql> {
         return;
       }
     }
-    if (!s.active) {
+    if (s.state != BackendState::Active) {
       Emit<kIdle>(s);
     } else if (static_cast<ProgressCommand>(s.command) ==
                ProgressCommand::None) {

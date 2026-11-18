@@ -785,7 +785,6 @@ auto PgWireSession<Kind>::FunnelError(const std::exception& exception,
   // it reads 'E' and subsequent statements surface 25P02.
   if (!RollbackImplicitBlock() && _txn_state->Explicit()) {
     _txn_state->AbortBlock();
-    _connection_ctx->ProgressSource()->AbortTransaction();
   }
   return IsExtended(type) ? PostError::DiscardUntilSync : PostError::Resync;
 }
@@ -879,8 +878,8 @@ void PgWireSession<Kind>::CommitAndReportReady() {
   // overlay, so reporting afterwards tells the client the value it actually
   // keeps (and a set-then-reverted SET LOCAL nets to no message).
   ReportChangedParameters();
-  const auto status = _txn_state->StatusByte();
-  WriteReadyForQuery(this->_send, status);
+  _connection_ctx->ReportIdle();
+  WriteReadyForQuery(this->_send, _txn_state->StatusByte());
   this->KickSend();
 }
 

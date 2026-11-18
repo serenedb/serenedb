@@ -35,7 +35,6 @@
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/settings.hpp>
-#include <duckdb/main/valid_checker.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
@@ -144,7 +143,8 @@ ConnectionContext::ConnectionContext(duckdb::DatabaseInstance& db,
   _progress->database = _database_name;
   _progress->client_backend = identity.client_backend;
   _progress->backend_start_us = duckdb::Timestamp::GetCurrentTimestamp().value;
-  _progress->state_change_us = _progress->backend_start_us;
+  _progress->state_change_us.store(_progress->backend_start_us,
+                                   std::memory_order_relaxed);
   _progress->ctx = this;
   if (_database_name.empty()) {
     return;
@@ -288,7 +288,6 @@ void ConnectionContext::EndTransaction() noexcept {
   _transaction.reset();
   _transaction_owner = duckdb::MAX_TRANSACTION_ID;
   _had_query_in_transaction = false;
-  _progress->EndTransaction();
 }
 
 void ConnectionContext::OnSet(std::string_view name, bool is_local,
@@ -494,13 +493,17 @@ void ConnectionContext::OnQueryBegin() {
 void ConnectionContext::OnQueryEnd() {
   copy_stdin_open_count = 0;
   copy_stdin_done = false;
-  _progress->EndQuery(
-    transaction.HasActiveTransaction() &&
-    duckdb::ValidChecker::IsInvalidated(transaction.ActiveTransaction()));
+  if (!_progress->client_backend) {
+    ReportIdle();
+  }
   RefreshCatalogEpoch();
   if (_transaction) {
     _transaction->ResetSearchPins(!IsStableSnapshot());
   }
+}
+
+void ConnectionContext::ReportIdle() {
+  _progress->Ready(pg::IdleState(transaction));
 }
 
 void ConnectionContext::OnTransactionPreCommit(duckdb::MetaTransaction& meta) {

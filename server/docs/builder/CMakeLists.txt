@@ -112,10 +112,8 @@ function(sdb_build_docs_index TARGET)
         POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E rm -rf ${SDB_DOCS_INDEX_WORK}
         COMMAND
-            $<TARGET_FILE:${TARGET}> ${SDB_DOCS_INDEX_WORK}/datadir
-            --build_docs_index=${SDB_DOCS_INDEX_WORK}/index
-            --docs_corpus=${SDB_DOCS_CORPUS}
-        COMMAND ${CMAKE_COMMAND} -E rm -rf ${SDB_DOCS_INDEX_WORK}/datadir
+            $<TARGET_FILE:${TARGET}> docs-index ${SDB_DOCS_CORPUS}
+            ${SDB_DOCS_INDEX_WORK}/index
         VERBATIM
     )
     sdb_embed_docs_index(${TARGET})

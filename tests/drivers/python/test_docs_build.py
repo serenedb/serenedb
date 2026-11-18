@@ -21,6 +21,28 @@ def _run(*args: str) -> subprocess.CompletedProcess:
                           text=True, timeout=300)
 
 
+def _run_docs_index(tmp_path: Path, *args: str) -> subprocess.CompletedProcess:
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    return subprocess.run([SERENED_BIN, "docs-index", *args], cwd=tmp_path,
+                          env={**os.environ, "TMPDIR": str(scratch)},
+                          capture_output=True, text=True, timeout=120)
+
+
+def _assert_no_data_directory_left(tmp_path: Path) -> None:
+    assert not any((tmp_path / "scratch").iterdir())
+    assert not (tmp_path / "serenedb-data").exists()
+
+
+def _write_select_corpus(tmp_path: Path) -> Path:
+    doc = ("sql/statements/select/index.md#SELECT", "SELECT",
+           "SQL > Statements > SELECT", "# SELECT\n\nSELECT reads rows.\n")
+    corpus = tmp_path / "docs_corpus.bin"
+    corpus.write_bytes(b"".join(struct.pack("<I", len(field)) + field
+                                for field in map(str.encode, doc)))
+    return corpus
+
+
 def _write_macho(path: Path, capacity: int, regions: int = 1) -> None:
     region = (REGION_TAG + struct.pack("<QQ", capacity, 0) + bytes(32) +
               bytes(capacity))
@@ -208,16 +230,9 @@ def test_index_embedding_needs_exactly_one_macos_region(
     reason=f"serened binary not found or not executable: {SERENED_BIN}")
 def test_index_build_writes_the_docs_and_objects_indexes(
         tmp_path: Path) -> None:
-    doc = ("sql/statements/select/index.md#SELECT", "SELECT",
-           "SQL > Statements > SELECT", "# SELECT\n\nSELECT reads rows.\n")
-    corpus = tmp_path / "docs_corpus.bin"
-    corpus.write_bytes(b"".join(struct.pack("<I", len(field)) + field
-                                for field in map(str.encode, doc)))
+    corpus = _write_select_corpus(tmp_path)
     index = tmp_path / "index"
-    r = subprocess.run([SERENED_BIN, str(tmp_path / "datadir"),
-                        f"--build_docs_index={index}",
-                        f"--docs_corpus={corpus}"],
-                       capture_output=True, text=True, timeout=120)
+    r = _run_docs_index(tmp_path, str(corpus), str(index))
     assert r.returncode == 0, r.stdout + r.stderr
     assert sorted(p.name for p in index.iterdir()) == ["docs", "objects"]
     for name in ("docs", "objects"):
@@ -229,6 +244,68 @@ def test_index_build_writes_the_docs_and_objects_indexes(
     layout = (index / "docs" / "sdb_docs.layout").read_text()
     assert [line.split()[0] for line in layout.splitlines()] == [
         "path", "title", "breadcrumb", "content", "content_text"]
+    _assert_no_data_directory_left(tmp_path)
+
+
+@pytest.mark.skipif(
+    not (Path(SERENED_BIN).is_file() and os.access(SERENED_BIN, os.X_OK)),
+    reason=f"serened binary not found or not executable: {SERENED_BIN}")
+def test_index_build_reports_an_unreadable_corpus(tmp_path: Path) -> None:
+    r = _run_docs_index(tmp_path, str(tmp_path / "missing.bin"),
+                        str(tmp_path / "index"))
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "cannot read the docs corpus" in r.stdout + r.stderr
+    _assert_no_data_directory_left(tmp_path)
+
+
+@pytest.mark.skipif(
+    not (Path(SERENED_BIN).is_file() and os.access(SERENED_BIN, os.X_OK)),
+    reason=f"serened binary not found or not executable: {SERENED_BIN}")
+def test_index_build_reports_a_truncated_corpus(tmp_path: Path) -> None:
+    corpus = tmp_path / "docs_corpus.bin"
+    corpus.write_bytes(struct.pack("<I", 100) + b"SELECT")
+    r = _run_docs_index(tmp_path, str(corpus), str(tmp_path / "index"))
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "is truncated" in r.stdout + r.stderr
+    _assert_no_data_directory_left(tmp_path)
+
+
+@pytest.mark.skipif(
+    not (Path(SERENED_BIN).is_file() and os.access(SERENED_BIN, os.X_OK)),
+    reason=f"serened binary not found or not executable: {SERENED_BIN}")
+def test_index_build_keeps_a_directory_that_is_not_empty(
+        tmp_path: Path) -> None:
+    index = tmp_path / "index"
+    index.mkdir()
+    (index / "keep").write_text("kept")
+    r = _run_docs_index(tmp_path, str(_write_select_corpus(tmp_path)),
+                        str(index))
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "give docs-index a new or empty directory" in r.stdout + r.stderr
+    assert [p.name for p in index.iterdir()] == ["keep"]
+    _assert_no_data_directory_left(tmp_path)
+
+
+@pytest.mark.skipif(
+    not (Path(SERENED_BIN).is_file() and os.access(SERENED_BIN, os.X_OK)),
+    reason=f"serened binary not found or not executable: {SERENED_BIN}")
+def test_index_build_takes_a_corpus_and_a_directory(tmp_path: Path) -> None:
+    r = _run_docs_index(tmp_path, str(tmp_path / "corpus.bin"))
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "usage: serened docs-index <corpus> <index-dir>" in r.stderr
+
+
+@pytest.mark.skipif(
+    not (Path(SERENED_BIN).is_file() and os.access(SERENED_BIN, os.X_OK)),
+    reason=f"serened binary not found or not executable: {SERENED_BIN}")
+def test_index_build_needs_a_temporary_directory(tmp_path: Path) -> None:
+    r = subprocess.run([SERENED_BIN, "docs-index", str(tmp_path / "corpus.bin"),
+                        str(tmp_path / "index")], cwd=tmp_path,
+                       env={**os.environ, "TMPDIR": str(tmp_path / "missing")},
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "cannot create a data directory in" in r.stderr
+    assert not (tmp_path / "serenedb-data").exists()
 
 
 def test_docs_generation_writes_the_corpus(tmp_path: Path) -> None:

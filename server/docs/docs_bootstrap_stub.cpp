@@ -18,10 +18,16 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <cstdio>
+
 #include "docs/docs_bootstrap.h"
 
 namespace sdb::docs {
 
-[[gnu::weak]] std::optional<int> RunDocsBootstrap() { return std::nullopt; }
+[[gnu::weak]] bool BuildDocsIndex(const std::filesystem::path&,
+                                  const std::filesystem::path&) {
+  std::fputs("serened: this build embeds no documentation to index\n", stderr);
+  return false;
+}
 
 }  // namespace sdb::docs

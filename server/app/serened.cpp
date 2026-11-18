@@ -20,9 +20,14 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/base/config.h>
+#include <absl/cleanup/cleanup.h>
 #include <absl/flags/flag.h>
+#include <absl/functional/function_ref.h>
+#include <absl/strings/str_cat.h>
 #include <pthread.h>
 
+#include <cerrno>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <deque>
@@ -34,6 +39,7 @@
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/parsed_data/attach_info.hpp>
 #include <exception>
+#include <filesystem>
 #include <functional>
 #include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/utils/cpu_features.hpp>
@@ -44,6 +50,8 @@
 #include <iresearch/utils/static_strings.hpp>
 #include <optional>
 #include <string>
+#include <string_view>
+#include <system_error>
 #include <utility>
 
 #include "app/process.h"
@@ -99,9 +107,6 @@ int Serve() {
   auto server_config = ReadServerConfig();
   Runtime runtime{ReadIoThreads()};
   Storage storage{runtime, ReadStorageConfig()};
-  if (const auto bootstrapped = docs::RunDocsBootstrap()) {
-    return *bootstrapped;
-  }
   replication::SubscriptionEngine subscriptions{runtime.IoPool()};
   JobScheduler jobs{runtime};
   Server network{runtime.IoPool(), std::move(server_config)};
@@ -112,13 +117,30 @@ int Serve() {
   return EXIT_SUCCESS;
 }
 
-int RunServer() {
+int RunWithEngine(int argc, char* argv[], absl::FunctionRef<int()> body) {
+  ParseOptions(argc, argv);
+  const auto remap =
+    irs::RemapExecutable(absl::GetFlag(FLAGS_remap_executable),
+                         static_cast<size_t>(CountLogicalCores()));
+  auto& engine = irs::DuckDBEngine::Instance();
+  engine.Initialize(&server::query::ConfigureServerDBConfig);
+  SDB_INFO(STARTUP, "starting SereneDB ", SERENEDB_VERSION);
+  server::query::RegisterServerExtensions(engine.instance());
+  duckdb::FileSystem::GetFileSystem(engine.instance())
+    .RegisterSubSystem(duckdb::make_uniq<connector::SereneDBCopyFileSystem>());
+
+  InitProcess(argv[0]);
+  SDB_DEBUG(STARTUP, "executable memory: ", remap.remapped >> 20,
+            " MB of machine code remapped into anonymous huge-page memory, ",
+            remap.locked >> 20, " MB locked, ", remap.populated >> 20,
+            " MB pre-read",
+            remap.skipped.empty() ? "" : "; remap skipped: ", remap.skipped);
   auto rc = EXIT_FAILURE;
   try {
     irs::CrashHandler::installCrashHandler();
     signals::InstallShutdownHandlers();
     irs::CrashHandler::SetState("starting");
-    rc = Serve();
+    rc = body();
   } catch (const std::exception& ex) {
     SDB_ERROR(GENERAL, "serened terminated because of an exception: ",
               duckdb::ErrorData{ex}.RawMessage());
@@ -127,6 +149,7 @@ int RunServer() {
               "serened terminated because of an exception of unknown type");
   }
   SDB_INFO(GENERAL, "SereneDB is shut down");
+  engine.Shutdown();
   return rc;
 }
 
@@ -183,16 +206,47 @@ void CloseShellEngine() {
   irs::DuckDBEngine::Instance().Shutdown();
 }
 
-// Trim argv in place: overwrite argv[1] with argv[0] and hand the shell
-// `argv + 1`. The shell sees {<binary>, <user args>...} with no copy.
-int RunSubcommand(int argc, char* argv[],
-                  duckdb_shell::ShellSubcommand subcommand) {
+int RunCLI(int argc, char* argv[], duckdb_shell::ShellSubcommand subcommand) {
   argv[1] = argv[0];
   gShellSubcommand = subcommand;
   docs::RegisterShellDocsBackend();
   return duckdb_shell::Run(
     argc - 1, argv + 1, subcommand,
     {.open = &OpenShellEngine, .close = &CloseShellEngine});
+}
+
+int RunDocsBuilder(int argc, char* argv[]) {
+  if (argc != 4) {
+    std::fputs("usage: serened docs-index <corpus> <index-dir>\n", stderr);
+    return EXIT_FAILURE;
+  }
+  const std::filesystem::path corpus{argv[2]};
+  const std::filesystem::path index{argv[3]};
+  std::error_code ec;
+  const auto temp = std::filesystem::temp_directory_path(ec);
+  auto directory = (temp / "serened-docs-XXXXXX").string();
+  if (ec || ::mkdtemp(directory.data()) == nullptr) {
+    std::fputs(
+      absl::StrCat("serened: cannot create a data directory in ", temp.string(),
+                   ": ", ec ? ec.message() : std::strerror(errno), "\n")
+        .c_str(),
+      stderr);
+    return EXIT_FAILURE;
+  }
+  absl::Cleanup remove = [&] {
+    std::error_code ignored;
+    std::filesystem::remove_all(directory, ignored);
+  };
+  char* args[] = {argv[0], directory.data()};
+  return RunWithEngine(2, args, [&] {
+    Runtime runtime{ReadIoThreads()};
+    Storage storage{runtime, ReadStorageConfig()};
+    return docs::BuildDocsIndex(corpus, index) ? EXIT_SUCCESS : EXIT_FAILURE;
+  });
+}
+
+int RunServer(int argc, char* argv[]) {
+  return RunWithEngine(argc, argv, Serve);
 }
 
 }  // namespace
@@ -204,46 +258,15 @@ int main(int argc, char* argv[]) {
   SetLargeThreadStackSize();
   json_object_seed(0);
   irs::InitOptimizeRules();
-  if (argc >= 2 && std::strcmp(argv[1], "shell") == 0) {
-    return RunSubcommand(argc, argv, duckdb_shell::ShellSubcommand::SHELL);
+  const std::string_view command = argc > 1 ? argv[1] : "";
+  if (command == "shell") {
+    return RunCLI(argc, argv, duckdb_shell::ShellSubcommand::SHELL);
   }
-  if (argc >= 2 && std::strcmp(argv[1], "psql") == 0) {
-    return RunSubcommand(argc, argv, duckdb_shell::ShellSubcommand::PSQL);
+  if (command == "psql") {
+    return RunCLI(argc, argv, duckdb_shell::ShellSubcommand::PSQL);
   }
-
-  // DuckDBEngine must be up BEFORE the first SDB_* fires. VPackHelper::
-  // initialize() below does SDB_TRACE, so it has to run after the engine
-  // is initialized. Bracket the whole RunServer lifetime so the contract
-  // holds.
-  //
-  // Two-step boot: the lite Initialize (serene_base) installs the storage
-  // extension via the ConfigureServerDBConfig mutator BEFORE the duckdb
-  // ctor runs (storage extensions must be registered pre-construct), then
-  // RegisterServerExtensions fills connector/pg/index types on the live
-  // DatabaseInstance.
-  //
-  // CLI flags are parsed FIRST: ConfigureServerDBConfig reads --cpu_threads to
-  // size the DuckDB pool at construction, so the flags must be live before
-  // Initialize (ParseOptions is SDB_*-free precisely so it can run this early).
-  sdb::app::ParseOptions(argc, argv);
-  const auto remap =
-    irs::RemapExecutable(absl::GetFlag(FLAGS_remap_executable),
-                         static_cast<size_t>(sdb::CountLogicalCores()));
-  auto& engine = irs::DuckDBEngine::Instance();
-  engine.Initialize(&server::query::ConfigureServerDBConfig);
-  SDB_INFO(STARTUP, "starting SereneDB ", SERENEDB_VERSION);
-  server::query::RegisterServerExtensions(engine.instance());
-  duckdb::FileSystem::GetFileSystem(engine.instance())
-    .RegisterSubSystem(duckdb::make_uniq<connector::SereneDBCopyFileSystem>());
-
-  sdb::app::InitProcess(argv[0]);
-  SDB_DEBUG(STARTUP, "executable memory: ", remap.remapped >> 20,
-            " MB of machine code remapped into anonymous huge-page memory, ",
-            remap.locked >> 20, " MB locked, ", remap.populated >> 20,
-            " MB pre-read",
-            remap.skipped.empty() ? "" : "; remap skipped: ", remap.skipped);
-  int rc = RunServer();
-
-  engine.Shutdown();
-  return rc;
+  if (command == "docs-index") {
+    return RunDocsBuilder(argc, argv);
+  }
+  return RunServer(argc, argv);
 }

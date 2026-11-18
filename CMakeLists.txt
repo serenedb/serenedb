@@ -106,6 +106,18 @@ option(
 
 option(SDB_EMBEDDED_DOCS "embed the documentation from docs/ into serened" ON)
 
+option(
+    SDB_TPC_EXTENSIONS
+    "link the tpch and tpcds extensions, whose data generators are under the TPC End User License Agreement"
+    ON
+)
+
+set(SDB_EXTERNAL_DIRS
+    ""
+    CACHE STRING
+    "directories outside this tree, absolute or relative to it, built after it with its settings, so their code can link into serened"
+)
+
 option(SDB_GTEST "build the gtest suites under tests/" OFF)
 
 option(
@@ -678,3 +690,7 @@ if(NOT IRESEARCH_BENCH)
     add_dependencies(serenedb serened)
 endif()
 add_subdirectory(tests)
+foreach(dir IN LISTS SDB_EXTERNAL_DIRS)
+    cmake_path(GET dir FILENAME name)
+    add_subdirectory(${dir} external/${name})
+endforeach()

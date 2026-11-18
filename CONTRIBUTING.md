@@ -91,7 +91,16 @@ cmake --build build_sbg -t search-benchmark-game
 `docs/` and a search index of it are built into `serened` and `serenedb-tests`, where the `sdb_docs` functions and the shell's `.docs` read them; a `docs/` change needs only a rebuild.
 
 - To skip it, configure with `-DSDB_EMBEDDED_DOCS=OFF`; that build has no documentation to read.
+- The build indexes the docs with the freshly linked binary, `serened docs-index <corpus> <index-dir>`, then embeds the index into it.
 - On macOS the index gets a fixed 4 MiB region. When the build fails because the index outgrew it, raise `kCapacity` in `server/docs/docs_index_image.cpp`.
+
+### The TPC data generators
+
+The `tpch` and `tpcds` extensions, linked by default, carry the TPC-H and TPC-DS data generators, which the TPC licenses under its End User License Agreement rather than an open source license: a binary that includes them may be distributed only for free and with that agreement. `-DSDB_TPC_EXTENSIONS=OFF` leaves both out.
+
+### Code from another repository
+
+A repository that keeps this tree as a submodule builds its own code into `serened` rather than a second server: `-DSDB_EXTERNAL_DIRS=<dir>;...` adds each directory, absolute or relative to this tree, after this tree's own, with the same compiler, flags and libraries, and a directory links its code into the server with `target_link_libraries(serened PRIVATE <object library>)`.
 
 ### Launch
 

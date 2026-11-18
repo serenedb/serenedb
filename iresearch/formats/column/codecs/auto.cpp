@@ -38,20 +38,26 @@ namespace {
 
 using duckdb::PhysicalType;
 
-constexpr CodecType kMerge[] = {
-  CodecType::Uncompressed, CodecType::Rle,       CodecType::Bitpacking,
-  CodecType::Roaring,      CodecType::Ffor,      CodecType::DeltaFfor,
-  CodecType::RleFfor,      CodecType::DictFfor,  CodecType::Lz4,
-  CodecType::DeltaLz4,     CodecType::RleLz4,    CodecType::DictLz4,
-  CodecType::Zstd,         CodecType::DeltaZstd, CodecType::RleZstd,
-  CodecType::DictZstd,
+constexpr CodecType kLightweight[] = {
+  CodecType::Uncompressed,
+  CodecType::Rle,
+  CodecType::Bitpacking,
+  CodecType::Roaring,
 };
 
-constexpr CodecType kFlush[] = {
-  CodecType::Uncompressed, CodecType::Rle,      CodecType::Bitpacking,
-  CodecType::Roaring,      CodecType::Ffor,     CodecType::DeltaFfor,
-  CodecType::RleFfor,      CodecType::DictFfor, CodecType::Lz4,
-  CodecType::DeltaLz4,     CodecType::RleLz4,   CodecType::DictLz4,
+constexpr CodecType kIntegerMerge[] = {
+  CodecType::Uncompressed, CodecType::Bitpacking, CodecType::Ffor,
+  CodecType::DeltaFfor,    CodecType::RleFfor,    CodecType::DictFfor,
+  CodecType::Lz4,          CodecType::DeltaLz4,   CodecType::RleLz4,
+  CodecType::DictLz4,      CodecType::Zstd,       CodecType::DeltaZstd,
+  CodecType::RleZstd,      CodecType::DictZstd,
+};
+
+constexpr CodecType kIntegerFlush[] = {
+  CodecType::Uncompressed, CodecType::Bitpacking, CodecType::Ffor,
+  CodecType::DeltaFfor,    CodecType::RleFfor,    CodecType::DictFfor,
+  CodecType::Lz4,          CodecType::DeltaLz4,   CodecType::RleLz4,
+  CodecType::DictLz4,
 };
 
 constexpr CodecType kFloat[] = {
@@ -70,7 +76,9 @@ struct Orders {
   std::span<const CodecType> merge;
 };
 
-constexpr Orders kOrders{.flush = kFlush, .merge = kMerge};
+constexpr Orders kLightweightOrders{.flush = kLightweight,
+                                    .merge = kLightweight};
+constexpr Orders kIntegerOrders{.flush = kIntegerFlush, .merge = kIntegerMerge};
 constexpr Orders kFloatOrders{.flush = kFloat, .merge = kFloat};
 constexpr Orders kTextOrders{.flush = kText, .merge = kText};
 
@@ -81,14 +89,24 @@ const Orders& OrdersOf(PhysicalType physical) noexcept {
     case PhysicalType::FLOAT:
     case PhysicalType::DOUBLE:
       return kFloatOrders;
+    case PhysicalType::INT8:
+    case PhysicalType::INT16:
+    case PhysicalType::INT32:
+    case PhysicalType::INT64:
+    case PhysicalType::UINT8:
+    case PhysicalType::UINT16:
+    case PhysicalType::UINT32:
+    case PhysicalType::UINT64:
+      return kIntegerOrders;
     default:
-      return kOrders;
+      return kLightweightOrders;
   }
 }
 
 static_assert([] {
   std::array<bool, magic_enum::enum_count<CodecType>()> listed{};
-  for (const auto order : {kOrders.merge, kFloatOrders.merge}) {
+  for (const auto order :
+       {kLightweightOrders.merge, kIntegerOrders.merge, kFloatOrders.merge}) {
     for (const auto type : order) {
       listed[std::to_underlying(type)] = true;
     }
@@ -165,7 +183,7 @@ bool CompressAuto(ColumnDataCheckpointData& data) {
     return true;
   }
   const auto physical = data.type.InternalType();
-  absl::InlinedVector<Contender, std::size(kMerge)> contenders;
+  absl::InlinedVector<Contender, std::size(kIntegerMerge)> contenders;
   const auto& orders = OrdersOf(physical);
   for (const auto type :
        data.params.tier == WriteTier::Flush ? orders.flush : orders.merge) {

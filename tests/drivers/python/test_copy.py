@@ -76,6 +76,136 @@ def test_copy_from_stdin(conn: psycopg.Connection, table_name: str,
         _drop(conn, table_name)
 
 
+_ENCODED_LABELS = {
+    "LATIN1": ("latin-1", ["café", "ÿ a\\b"]),
+    "UTF16LE": ("utf-16-le", ["é€😀", "a\\b 😀z"]),
+    "UTF16BE": ("utf-16-be", ["é€😀", "a\\b 😀z"]),
+    "UTF32LE": ("utf-32-le", ["é€😀", "a\\b 😀z"]),
+    "UTF32BE": ("utf-32-be", ["é€😀", "a\\b 😀z"]),
+}
+
+
+@pytest.mark.parametrize("chunk", [1, 3, 64 * 1024])
+@pytest.mark.parametrize("fmt", ["text", "csv"])
+@pytest.mark.parametrize("encoding", list(_ENCODED_LABELS))
+def test_copy_from_stdin_decodes_its_encoding(conn: psycopg.Connection,
+                                              table_name: str, encoding: str,
+                                              fmt: str, chunk: int) -> None:
+    codec, labels = _ENCODED_LABELS[encoding]
+    if fmt == "text":
+        lines = [f"{i}\t{label.replace(chr(92), chr(92) * 2)}\n"
+                 for i, label in enumerate(labels)] + [f"{len(labels)}\t\\N\n"]
+    else:
+        lines = [f'{i},"{label}"\n' for i, label in enumerate(labels)]
+        lines.append(f"{len(labels)},\n")
+    payload = "".join(lines).encode(codec)
+    _create_int_varchar(conn, table_name)
+    try:
+        with conn.cursor() as cur:
+            with cur.copy(f'COPY public."{table_name}" FROM STDIN '
+                          f"(FORMAT {fmt}, ENCODING '{encoding}')") as cp:
+                for start in range(0, len(payload), chunk):
+                    cp.write(payload[start:start + chunk])
+            cur.execute(f'SELECT x, label FROM public."{table_name}" ORDER BY x')
+            assert cur.fetchall() == [*enumerate(labels), (len(labels), None)]
+    finally:
+        _drop(conn, table_name)
+
+
+@pytest.mark.parametrize(
+    "encoding,payload,message",
+    [
+        ("UTF16LE", "1\tone\n".encode("utf-16-le") + b"\x32",
+         'invalid byte sequence for encoding "UTF16LE": incomplete character '
+         "at the end of the input"),
+        ("UTF16BE", "1\tone\n".encode("utf-16-be") + b"\xdc\x00\x00\x0a",
+         'invalid byte sequence for encoding "UTF16BE": invalid UTF-16 code unit'),
+        ("UTF32LE", "1\tone\n".encode("utf-32-le") + b"\x00\x00\x11\x00",
+         'invalid byte sequence for encoding "UTF32LE": invalid UTF-32 code point'),
+    ],
+    ids=["incomplete", "lone_low_surrogate", "beyond_unicode"])
+def test_copy_from_stdin_refuses_bytes_outside_its_encoding(
+        conn: psycopg.Connection, table_name: str, encoding: str,
+        payload: bytes, message: str) -> None:
+    _create_int_varchar(conn, table_name)
+    try:
+        with pytest.raises(psycopg.Error) as info:
+            with conn.cursor() as cur:
+                with cur.copy(f'COPY public."{table_name}" FROM STDIN '
+                              f"(FORMAT text, ENCODING '{encoding}')") as cp:
+                    cp.write(payload)
+        assert info.value.diag.message_primary == message
+        with conn.cursor() as cur:
+            cur.execute(f'SELECT count(*) FROM public."{table_name}"')
+            assert cur.fetchone() == (0,)
+    finally:
+        _drop(conn, table_name)
+
+
+@pytest.mark.parametrize(
+    "fmt,encoding,codec,text",
+    [("text", "UTF16BE", "utf-16-be", "é€😀"), ("csv", "LATIN1", "latin-1", "café"),
+     ("text", "UTF32LE", "utf-32-le", "a\tb")],
+    ids=["text_utf16be", "csv_latin1", "text_utf32le"])
+def test_copy_to_stdout_encodes_its_encoding(conn: psycopg.Connection, fmt: str,
+                                             encoding: str, codec: str,
+                                             text: str) -> None:
+    with conn.cursor() as cur:
+        with cur.copy(f"COPY (SELECT %s::text AS t, 1 AS n) TO STDOUT "
+                      f"(FORMAT {fmt}, ENCODING '{encoding}')", (text,)) as cp:
+            data = b"".join(bytes(chunk) for chunk in cp)
+    field = text.replace("\t", "\\t") if fmt == "text" else text
+    delim = "\t" if fmt == "text" else ","
+    assert data == f"{field}{delim}1\n".encode(codec)
+
+
+def test_copy_stdio_force_column_lists(conn: psycopg.Connection,
+                                       table_name: str) -> None:
+    with conn.cursor() as cur:
+        with cur.copy("COPY (SELECT 1 AS a, 'x' AS b, NULL::text AS c) TO STDOUT "
+                      "(FORMAT csv, FORCE_QUOTE (b, c))") as cp:
+            assert b"".join(bytes(chunk) for chunk in cp) == b'1,"x",\n'
+        with cur.copy("COPY (SELECT 1 AS a, 'x' AS b) TO STDOUT "
+                      "(FORMAT csv, FORCE_QUOTE *)") as cp:
+            assert b"".join(bytes(chunk) for chunk in cp) == b'"1","x"\n'
+    _create_int_varchar(conn, table_name)
+    try:
+        with conn.cursor() as cur:
+            with cur.copy(f'COPY public."{table_name}" FROM STDIN '
+                          "(FORMAT csv, FORCE_NOT_NULL (label), FORCE_NULL (x))") as cp:
+                cp.write(b'1,\n"",two\n')
+            cur.execute(f'SELECT x, label FROM public."{table_name}" ORDER BY label')
+            assert cur.fetchall() == [(1, ""), (None, "two")]
+    finally:
+        _drop(conn, table_name)
+
+
+def test_copy_to_stdout_takes_an_expression_option(conn: psycopg.Connection,
+                                                   shared_path: Path) -> None:
+    path = shared_path / "delimited.csv"
+    with conn.cursor() as cur:
+        cur.execute(f"COPY (SELECT 1 AS a, 2 AS b) TO '{path}' "
+                    "(FORMAT csv, DELIMITER chr(124))")
+        assert path.read_bytes() == b"1|2\n"
+        with cur.copy("COPY (SELECT 1 AS a, 2 AS b) TO STDOUT "
+                      "(FORMAT csv, DELIMITER chr(124))") as cp:
+            assert b"".join(bytes(chunk) for chunk in cp) == b"1|2\n"
+
+
+def test_copy_from_stdin_crlf_end_marker(conn: psycopg.Connection,
+                                         table_name: str) -> None:
+    with conn.cursor() as cur:
+        cur.execute(f'CREATE TABLE public."{table_name}"(label VARCHAR)')
+    try:
+        with conn.cursor() as cur:
+            with cur.copy(f'COPY public."{table_name}" FROM STDIN') as cp:
+                cp.write(b"\\\\.\r\ntwo\r\n\\.\r\n")
+            cur.execute(f'SELECT label FROM public."{table_name}" ORDER BY label')
+            assert cur.fetchall() == [("\\.",), ("two",)]
+    finally:
+        _drop(conn, table_name)
+
+
 def test_copy_from_stdin_bare_keyword(conn: psycopg.Connection,
                                        table_name: str) -> None:
     _create_int_varchar(conn, table_name)

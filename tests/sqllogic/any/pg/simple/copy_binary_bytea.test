@@ -116,3 +116,50 @@ DROP TABLE cbb_dst;
 
 statement ok
 DROP TABLE cbb_src;
+
+
+statement ok
+CREATE TABLE cbb_utf8_src (id INTEGER, b BYTEA);
+
+
+statement ok
+INSERT INTO cbb_utf8_src VALUES (1, '\x61'::BYTEA), (2, '\xff'::BYTEA);
+
+
+statement count 2
+COPY cbb_utf8_src TO '${__TEST_DIR__}/copy_binary_bad_utf8.bin' (FORMAT binary);
+
+
+statement count 2
+COPY (SELECT * FROM cbb_utf8_src ORDER BY id DESC) TO '${__TEST_DIR__}/copy_binary_bad_utf8_first.bin' (FORMAT binary);
+
+
+statement ok
+CREATE TABLE cbb_utf8_dst (id INTEGER, t TEXT);
+
+
+statement error
+COPY cbb_utf8_dst FROM '${__TEST_DIR__}/copy_binary_bad_utf8.bin' (FORMAT binary);
+----
+db error: ERROR: invalid byte sequence for encoding "UTF8": 0xff
+
+
+statement error
+COPY cbb_utf8_dst FROM '${__TEST_DIR__}/copy_binary_bad_utf8_first.bin' (FORMAT binary);
+----
+db error: ERROR: invalid byte sequence for encoding "UTF8": 0xff
+
+
+query
+SELECT count(*) AS n FROM cbb_utf8_dst;
+----
+n
+0
+
+
+statement ok
+DROP TABLE cbb_utf8_dst;
+
+
+statement ok
+DROP TABLE cbb_utf8_src;

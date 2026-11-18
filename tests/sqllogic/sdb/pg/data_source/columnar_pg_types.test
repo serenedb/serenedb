@@ -82,3 +82,27 @@ SELECT count(*) FROM (
 ----
 count
 0
+
+
+statement ok
+CREATE TYPE cpt_pair AS (n int, lsn pg_lsn, mac macaddr);
+
+
+statement ok
+COPY (SELECT 1 AS id, ROW(7, '16/B374D848', '08:00:2b:01:02:03')::cpt_pair AS pair) TO '${__TEST_DIR__}/cpt_pair.parquet' (FORMAT parquet);
+
+
+query
+SELECT name, type, duckdb_type FROM parquet_schema('${__TEST_DIR__}/cpt_pair.parquet') WHERE name IN ('n', 'lsn', 'mac') ORDER BY name;
+----
+name	type	duckdb_type
+lsn	BYTE_ARRAY	VARCHAR
+mac	BYTE_ARRAY	VARCHAR
+n	INT32	INTEGER
+
+
+query
+SELECT id, pair FROM read_parquet('${__TEST_DIR__}/cpt_pair.parquet');
+----
+id	pair
+1	(7,16/B374D848,08:00:2b:01:02:03)

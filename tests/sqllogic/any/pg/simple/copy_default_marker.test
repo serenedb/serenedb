@@ -115,8 +115,128 @@ COPY chm FROM '${__TEST_DIR__}/chm_null.txt' (FORMAT text, HEADER MATCH);
 db error: ERROR: column name mismatch in header line field 2: got null value ("\N"), expected "b"
 
 
+statement count 2
+COPY (SELECT * FROM (VALUES ('\a' || chr(9) || '\x62'), ('2' || chr(9) || 'y')) v(l))
+TO '${__TEST_DIR__}/chm_escaped.txt' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+statement count 1
+COPY chm FROM '${__TEST_DIR__}/chm_escaped.txt' (FORMAT text, HEADER MATCH);
+
+
 query
 SELECT a, b FROM chm ORDER BY a;
 ----
 a	b
 1	x
+2	y
+
+
+statement ok
+CREATE TABLE chq (a INTEGER, "b""c" TEXT);
+
+
+statement count 2
+COPY (SELECT * FROM (VALUES ('"a","b""c"'), ('1,x')) v(l))
+TO '${__TEST_DIR__}/chq_quoted.csv' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+statement count 1
+COPY chq FROM '${__TEST_DIR__}/chq_quoted.csv' (FORMAT csv, HEADER MATCH);
+
+
+statement count 2
+COPY (SELECT * FROM (VALUES ('a,"b""c",d'), ('1,x,y')) v(l))
+TO '${__TEST_DIR__}/chq_extra.csv' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+statement error
+COPY chq FROM '${__TEST_DIR__}/chq_extra.csv' (FORMAT csv, HEADER MATCH);
+----
+db error: ERROR: wrong number of fields in header line: got 3, expected 2
+
+
+statement count 2
+COPY (SELECT * FROM (VALUES ('a,'), ('1,x')) v(l))
+TO '${__TEST_DIR__}/chq_null.csv' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+statement error
+COPY chq FROM '${__TEST_DIR__}/chq_null.csv' (FORMAT csv, HEADER MATCH);
+----
+db error: ERROR: column name mismatch in header line field 2: got null value (""), expected "b"c"
+
+
+statement count 1
+COPY (SELECT '"a,b' AS l) TO '${__TEST_DIR__}/chq_open.csv' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+statement error
+COPY chq FROM '${__TEST_DIR__}/chq_open.csv' (FORMAT csv, HEADER MATCH);
+----
+db error: ERROR: unterminated CSV quoted field
+
+
+query
+SELECT a, "b""c" FROM chq;
+----
+a	b"c
+1	x
+
+
+statement count 1
+COPY (SELECT '9' || chr(9) || 'x' || chr(9) || '1' || chr(9) || 'D' AS l)
+TO '${__TEST_DIR__}/cdm_nodefault.txt' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+statement error
+COPY cdm FROM '${__TEST_DIR__}/cdm_nodefault.txt' (DEFAULT 'D');
+----
+db error: ERROR: unexpected default marker in COPY data
+DETAIL: Column "d" has no default value.
+
+
+statement count 1
+COPY (SELECT '8' || chr(9) || '\D' || chr(9) || '\D' || chr(9) || 'w' AS l)
+TO '${__TEST_DIR__}/cdm_backslash.txt' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+statement count 1
+COPY cdm FROM '${__TEST_DIR__}/cdm_backslash.txt' (DEFAULT '\D');
+
+
+query
+SELECT id, b, c, d FROM cdm WHERE id = 8;
+----
+id	b	c	d
+8	dflt	7	w
+
+
+statement count 130
+COPY (SELECT CASE WHEN g <= 70 THEN 'x' ELSE (g + 100)::TEXT END || chr(9) || 'D' || chr(9) ||
+             CASE WHEN g % 2 = 0 THEN 'D' ELSE '5' END || chr(9) || 'z' AS l
+      FROM generate_series(1, 130) g)
+TO '${__TEST_DIR__}/cdm_ignore.txt' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+statement count 60
+COPY cdm FROM '${__TEST_DIR__}/cdm_ignore.txt' (DEFAULT 'D', ON_ERROR IGNORE);
+
+
+query
+SELECT count(*) AS n, min(id) AS lo, max(id) AS hi, min(b) AS b, sum(c) AS c, min(d) AS d FROM cdm WHERE id > 100;
+----
+n	lo	hi	b	c	d
+60	171	230	dflt	360	z
+
+
+statement error
+COPY cdm FROM '${__TEST_DIR__}/cdm.csv' (FORMAT csv, DEFAULT E'\r');
+----
+db error: ERROR: COPY default representation cannot use newline or carriage return
+
+
+statement error
+COPY cdm FROM '${__TEST_DIR__}/cdm.csv' (FORMAT csv, DEFAULT '"D');
+----
+db error: ERROR: CSV quote character must not appear in the DEFAULT specification

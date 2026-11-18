@@ -209,3 +209,69 @@ statement error
 COPY cto_ints TO '${__TEST_DIR__}/cto_out.bin' (FORMAT binary, HEADER);
 ----
 db error: ERROR: cannot specify HEADER in BINARY mode
+
+
+statement count 1500000
+COPY (SELECT CASE WHEN g = 1180000 THEN 'x1' WHEN g = 1190000 THEN 'x2' ELSE g::TEXT END AS v FROM generate_series(1, 1500000) g)
+TO '${__TEST_DIR__}/cto_two_errors.txt' (FORMAT text);
+
+
+statement count 1500000
+COPY (SELECT CASE WHEN g = 1190000 THEN 'x2' ELSE g::TEXT END AS v FROM generate_series(1, 1500000) g)
+TO '${__TEST_DIR__}/cto_late_error.txt' (FORMAT text);
+
+
+statement ok
+CREATE TABLE cto_ranges (a INTEGER);
+
+
+statement error
+COPY cto_ranges FROM '${__TEST_DIR__}/cto_two_errors.txt' (FORMAT text);
+----
+db error: ERROR: invalid input syntax for type integer: "x1"
+
+
+statement error
+COPY cto_ranges FROM '${__TEST_DIR__}/cto_late_error.txt' (FORMAT text);
+----
+db error: ERROR: invalid input syntax for type integer: "x2"
+
+
+query
+SELECT count(*) AS n FROM cto_ranges;
+----
+n
+0
+
+
+statement count 2
+COPY cto_stop FROM '${__TEST_DIR__}/cto_stop.bin' (FORMAT binary, LOG_VERBOSITY verbose);
+
+
+statement error
+COPY cto_stop FROM '${__TEST_DIR__}/cto_stop.bin' (FORMAT binary, LOG_VERBOSITY loud);
+----
+db error: ERROR: COPY LOG_VERBOSITY "loud" not recognized
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE TABLE cto_frozen (a INTEGER, b TEXT);
+
+
+statement count 2
+COPY cto_frozen FROM '${__TEST_DIR__}/cto_stop.bin' (FORMAT binary, FREEZE);
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT (SELECT count(*) FROM cto_stop) AS stop, (SELECT count(*) FROM cto_frozen) AS frozen;
+----
+stop	frozen
+6	2

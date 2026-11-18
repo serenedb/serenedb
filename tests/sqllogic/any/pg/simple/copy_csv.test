@@ -338,3 +338,232 @@ COPY ccsv_three FROM '${__TEST_DIR__}/ccsv_nulls3.csv' (FORMAT csv, LOG_VERBOSIT
 
 statement ok
 COPY ccsv_three FROM '${__TEST_DIR__}/ccsv_nulls3.csv' (FORMAT csv, LOG_VERBOSITY default);
+
+
+statement count 3
+COPY (SELECT id % 3 AS k, count(*) AS n FROM ccsv_src GROUP BY 1) TO '${__TEST_DIR__}/ccsv_grouped.csv' (FORMAT csv);
+
+
+statement ok
+TRUNCATE ccsv_lines;
+
+
+statement count 3
+COPY ccsv_lines FROM '${__TEST_DIR__}/ccsv_grouped.csv' (FORMAT csv, DELIMITER E'\x01', QUOTE E'\x02');
+
+
+query
+SELECT l FROM ccsv_lines ORDER BY l;
+----
+l
+0,2
+1,2
+2,2
+
+
+statement ok
+TRUNCATE ccsv_three;
+
+
+statement count 3
+COPY (SELECT * FROM (VALUES ('1,,'), ('2,"",""'), ('3,"x",x')) v(l))
+TO '${__TEST_DIR__}/ccsv_force.csv' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+statement count 3
+COPY ccsv_three FROM '${__TEST_DIR__}/ccsv_force.csv' (FORMAT csv, FORCE_NOT_NULL (C), FORCE_NULL (B));
+
+
+query
+SELECT a, b IS NULL AS b_null, b, c IS NULL AS c_null, c FROM ccsv_three ORDER BY a;
+----
+a	b_null	b	c_null	c
+1	t	NULL	f	(empty)
+2	t	NULL	f	(empty)
+3	f	x	f	x
+
+
+statement error
+COPY ccsv_three (a, b) FROM '${__TEST_DIR__}/ccsv_force.csv' (FORMAT csv, FORCE_NOT_NULL (c));
+----
+db error: ERROR: FORCE_NOT_NULL column "c" not referenced by COPY
+
+
+statement error
+COPY ccsv_src TO '${__TEST_DIR__}/ccsv_bad.csv' (FORMAT csv, DELIMITER 'ab');
+----
+db error: ERROR: COPY delimiter must be a single one-byte character
+
+
+statement error
+COPY ccsv_three FROM '${__TEST_DIR__}/ccsv_force.csv' (FORMAT csv, QUOTE '');
+----
+db error: ERROR: COPY quote must be a single one-byte character
+
+
+statement error (COPY delimiter must be a single one-byte character|delimiter requires a parameter)
+COPY ccsv_three FROM '${__TEST_DIR__}/ccsv_force.csv' (FORMAT csv, DELIMITER);
+
+
+statement error
+COPY ccsv_three FROM '${__TEST_DIR__}/ccsv_force.csv' (FORMAT csv, FREEZE 'maybe');
+----
+db error: ERROR: freeze requires a Boolean value
+
+
+statement error (NULL requires a single string value|null requires a parameter)
+COPY ccsv_src TO '${__TEST_DIR__}/ccsv_bad.csv' (FORMAT csv, NULL);
+
+
+statement error
+COPY ccsv_src TO '${__TEST_DIR__}/ccsv_bad.csv' (FORMAT text, ESCAPE '|');
+----
+db error: ERROR: COPY ESCAPE requires CSV mode
+
+
+statement error
+COPY ccsv_src TO '${__TEST_DIR__}/ccsv_bad.csv' (FORMAT text, FORCE_QUOTE *);
+----
+db error: ERROR: COPY FORCE_QUOTE requires CSV mode
+
+
+statement error
+COPY ccsv_three FROM '${__TEST_DIR__}/ccsv_force.csv' (FORMAT text, FORCE_NOT_NULL (b));
+----
+db error: ERROR: COPY FORCE_NOT_NULL requires CSV mode
+
+
+statement error
+COPY ccsv_three FROM '${__TEST_DIR__}/ccsv_force.csv' (FORMAT text, FORCE_NULL (b));
+----
+db error: ERROR: COPY FORCE_NULL requires CSV mode
+
+
+statement error
+COPY ccsv_src TO '${__TEST_DIR__}/ccsv_bad.csv' (FORMAT csv, FREEZE);
+----
+db error: ERROR: COPY FREEZE cannot be used with COPY TO
+
+
+statement error
+COPY ccsv_src TO '${__TEST_DIR__}/ccsv_bad.bin' (FORMAT binary, FREEZE);
+----
+db error: ERROR: COPY FREEZE cannot be used with COPY TO
+
+
+statement error option "bogus" not recognized
+COPY ccsv_src TO '${__TEST_DIR__}/ccsv_bad.csv' (FORMAT csv, BOGUS 1);
+
+
+statement ok
+CREATE TABLE ccsv_long (id INTEGER, t TEXT);
+
+
+statement count 1
+COPY (SELECT 1 AS id, repeat('a' || chr(10), 9000000) AS t) TO '${__TEST_DIR__}/ccsv_long.csv' (FORMAT csv);
+
+
+statement count 1
+COPY ccsv_long FROM '${__TEST_DIR__}/ccsv_long.csv' (FORMAT csv);
+
+
+query
+SELECT id, length(t) AS len, t = repeat('a' || chr(10), 9000000) AS same FROM ccsv_long;
+----
+id	len	same
+1	18000000	t
+
+
+statement count 1
+COPY (SELECT 'a,' || repeat('x', 100) AS t, 1.5::FLOAT8 AS f) TO '${__TEST_DIR__}/ccsv_wide.csv' (FORMAT csv);
+
+
+statement count 1
+COPY (SELECT 1.5::FLOAT8 AS f, -2 AS i) TO '${__TEST_DIR__}/ccsv_dot_quote.csv' (FORMAT csv, QUOTE '.');
+
+
+statement count 1
+COPY (SELECT -2 AS i, 'a-b' AS t) TO '${__TEST_DIR__}/ccsv_dash_escape.csv' (FORMAT csv, QUOTE '''', ESCAPE '-', FORCE_QUOTE *);
+
+
+statement count 1
+COPY (SELECT 1 AS a, NULL AS n) TO '${__TEST_DIR__}/ccsv_null_literal.csv' (FORMAT csv, FORCE_QUOTE *);
+
+
+statement count 1
+COPY (SELECT 1 AS a, NULL AS n) TO '${__TEST_DIR__}/ccsv_null_literal.txt' (FORMAT text);
+
+
+statement ok
+TRUNCATE ccsv_lines;
+
+
+statement count 1
+COPY ccsv_lines FROM '${__TEST_DIR__}/ccsv_wide.csv' (FORMAT csv, DELIMITER E'\x01', QUOTE E'\x02');
+
+
+query
+SELECT replace(l, repeat('x', 100), '<x100>') AS l FROM ccsv_lines;
+----
+l
+"a,<x100>",1.5
+
+
+statement ok
+TRUNCATE ccsv_lines;
+
+
+statement count 1
+COPY ccsv_lines FROM '${__TEST_DIR__}/ccsv_dot_quote.csv' (FORMAT csv, DELIMITER E'\x01', QUOTE E'\x02');
+
+
+query
+SELECT l FROM ccsv_lines;
+----
+l
+.1..5.,-2
+
+
+statement ok
+TRUNCATE ccsv_lines;
+
+
+statement count 1
+COPY ccsv_lines FROM '${__TEST_DIR__}/ccsv_dash_escape.csv' (FORMAT csv, DELIMITER E'\x01', QUOTE E'\x02');
+
+
+query
+SELECT l FROM ccsv_lines;
+----
+l
+'--2','a--b'
+
+
+statement ok
+TRUNCATE ccsv_lines;
+
+
+statement count 1
+COPY ccsv_lines FROM '${__TEST_DIR__}/ccsv_null_literal.csv' (FORMAT csv, DELIMITER E'\x01', QUOTE E'\x02');
+
+
+query
+SELECT l FROM ccsv_lines;
+----
+l
+"1",
+
+
+statement ok
+TRUNCATE ccsv_lines;
+
+
+statement count 1
+COPY ccsv_lines FROM '${__TEST_DIR__}/ccsv_null_literal.txt' (FORMAT csv, DELIMITER E'\x01', QUOTE E'\x02');
+
+
+query
+SELECT l FROM ccsv_lines;
+----
+l
+1\t\\N

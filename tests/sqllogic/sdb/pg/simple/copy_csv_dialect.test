@@ -132,3 +132,56 @@ SELECT mr, beast FROM beast_two;
 ----
 mr	beast
 six	seven
+
+
+statement count 1
+COPY beast_two TO '${__TEST_DIR__}/beast_list_quote.csv' (FORMAT csv, FORCE_QUOTE ['beast']);
+
+
+query
+SELECT replace(content, chr(10), '|') AS content FROM read_text('${__TEST_DIR__}/beast_list_quote.csv');
+----
+content
+six,"seven"|
+
+
+statement ok
+COPY (SELECT ('six,' || chr(10))::BLOB) TO '${__TEST_DIR__}/beast_empty_beast.csv' (FORMAT BLOB);
+
+
+statement ok
+DELETE FROM beast_two;
+
+
+statement count 1
+COPY beast_two FROM '${__TEST_DIR__}/beast_empty_beast.csv' (FORMAT csv, FORCE_NOT_NULL ['beast']);
+
+
+query
+SELECT mr, beast IS NULL AS beast_null, length(beast) AS beast_length FROM beast_two;
+----
+mr	beast_null	beast_length
+six	f	0
+
+
+statement ok
+DELETE FROM beast_four;
+
+
+statement count 1
+COPY beast_four FROM '${__TEST_DIR__}/cr_only.csv' (FORMAT csv, HEADER false, NULL_PADDING);
+
+
+query
+SELECT a, b, c IS NULL AS c_null, d IS NULL AS d_null FROM beast_four;
+----
+a	b	c_null	d_null
+six	seven	t	t
+
+
+statement ok
+COPY (SELECT 'mr,beast'::BLOB) TO '${__TEST_DIR__}/header_only.csv' (FORMAT BLOB);
+
+
+statement count 0
+COPY beast_two FROM '${__TEST_DIR__}/header_only.csv' (FORMAT csv, HEADER MATCH);

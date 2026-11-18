@@ -1,0 +1,225 @@
+control substitution on
+
+statement ok
+CREATE TABLE cenc (id INTEGER, t TEXT);
+
+
+statement ok
+INSERT INTO cenc VALUES (1, 'é€'), (2, '😀'), (3, NULL);
+
+
+statement ok
+CREATE TABLE cenc_back (id INTEGER, t TEXT);
+
+
+statement count 3
+COPY cenc TO '${__TEST_DIR__}/cenc_utf16le.csv' (FORMAT csv, ENCODING 'UTF16LE');
+
+
+query
+SELECT hex(content) AS bytes FROM read_blob('${__TEST_DIR__}/cenc_utf16le.csv');
+----
+bytes
+31002C00E900AC200A0032002C003DD800DE0A0033002C000A00
+
+
+statement count 3
+COPY cenc_back FROM '${__TEST_DIR__}/cenc_utf16le.csv' (FORMAT csv, ENCODING 'UTF16LE');
+
+
+statement count 3
+COPY cenc TO '${__TEST_DIR__}/cenc_utf16be.csv' (FORMAT csv, ENCODING 'UTF16BE');
+
+
+query
+SELECT hex(content) AS bytes FROM read_blob('${__TEST_DIR__}/cenc_utf16be.csv');
+----
+bytes
+0031002C00E920AC000A0032002CD83DDE00000A0033002C000A
+
+
+statement count 3
+COPY cenc_back FROM '${__TEST_DIR__}/cenc_utf16be.csv' (FORMAT csv, ENCODING 'UTF16BE');
+
+
+statement count 3
+COPY cenc TO '${__TEST_DIR__}/cenc_utf32le.csv' (FORMAT csv, ENCODING 'UTF32LE');
+
+
+query
+SELECT hex(content) AS bytes FROM read_blob('${__TEST_DIR__}/cenc_utf32le.csv');
+----
+bytes
+310000002C000000E9000000AC2000000A000000320000002C00000000F601000A000000330000002C0000000A000000
+
+
+statement count 3
+COPY cenc_back FROM '${__TEST_DIR__}/cenc_utf32le.csv' (FORMAT csv, ENCODING 'UTF32LE');
+
+
+statement count 3
+COPY cenc TO '${__TEST_DIR__}/cenc_utf32be.csv' (FORMAT csv, ENCODING 'UTF32BE');
+
+
+query
+SELECT hex(content) AS bytes FROM read_blob('${__TEST_DIR__}/cenc_utf32be.csv');
+----
+bytes
+000000310000002C000000E9000020AC0000000A000000320000002C0001F6000000000A000000330000002C0000000A
+
+
+statement count 3
+COPY cenc_back FROM '${__TEST_DIR__}/cenc_utf32be.csv' (FORMAT csv, ENCODING 'UTF32BE');
+
+
+statement count 3
+COPY cenc TO '${__TEST_DIR__}/cenc_utf16.txt' (FORMAT text, ENCODING 'UTF-16');
+
+
+statement count 3
+COPY cenc_back FROM '${__TEST_DIR__}/cenc_utf16.txt' (FORMAT text, ENCODING 'utf16le');
+
+
+statement count 3
+COPY cenc TO '${__TEST_DIR__}/cenc_utf32.txt' (FORMAT text, ENCODING 'utf_32');
+
+
+statement count 3
+COPY cenc_back FROM '${__TEST_DIR__}/cenc_utf32.txt' (FORMAT text, ENCODING 'UTF32LE');
+
+
+query
+SELECT id, t, count(*) AS n FROM cenc_back GROUP BY ALL ORDER BY id;
+----
+id	t	n
+1	é€	6
+2	😀	6
+3	NULL	6
+
+
+statement count 3
+COPY cenc TO '${__TEST_DIR__}/cenc_unicode.csv' (FORMAT csv, ENCODING 'Unicode');
+
+
+query
+SELECT hex(content) AS bytes FROM read_blob('${__TEST_DIR__}/cenc_unicode.csv');
+----
+bytes
+312CC3A9E282AC0A322CF09F98800A332C0A
+
+
+statement ok
+TRUNCATE cenc_back;
+
+
+statement count 3
+COPY cenc_back FROM '${__TEST_DIR__}/cenc_unicode.csv' (FORMAT csv, ENCODING 'SQL_ASCII');
+
+
+query
+SELECT id, t FROM cenc_back ORDER BY id;
+----
+id	t
+1	é€
+2	😀
+3	NULL
+
+
+statement ok
+CREATE TABLE cenc_big (t TEXT);
+
+
+statement count 1
+COPY (SELECT 'a' || repeat('😀', 300000) AS t) TO '${__TEST_DIR__}/cenc_emoji.txt' (FORMAT text, ENCODING 'UTF16LE');
+
+
+statement count 1
+COPY cenc_big FROM '${__TEST_DIR__}/cenc_emoji.txt' (FORMAT text, ENCODING 'UTF16LE');
+
+
+statement count 1
+COPY (SELECT repeat('€', 100000) AS t) TO '${__TEST_DIR__}/cenc_euro.txt' (FORMAT text, ENCODING 'UTF16BE');
+
+
+statement count 1
+COPY cenc_big FROM '${__TEST_DIR__}/cenc_euro.txt' (FORMAT text, ENCODING 'UTF16BE');
+
+
+query
+SELECT length(t) AS len, left(t, 2) AS head, t IN ('a' || repeat('😀', 300000), repeat('€', 100000)) AS same
+FROM cenc_big ORDER BY len;
+----
+len	head	same
+100000	€€	t
+300001	a😀	t
+
+
+statement ok
+CREATE TABLE cenc_one (t TEXT);
+
+
+statement ok
+COPY (SELECT '\x31000a00ff'::bytea) TO '${__TEST_DIR__}/cenc_odd.txt' (FORMAT BLOB);
+
+
+statement error
+COPY cenc_one FROM '${__TEST_DIR__}/cenc_odd.txt' (FORMAT text, ENCODING 'UTF16LE');
+----
+db error: ERROR: invalid byte sequence for encoding "UTF16LE": incomplete character at the end of the input
+
+
+statement ok
+COPY (SELECT '\x310000000a00000062'::bytea) TO '${__TEST_DIR__}/cenc_odd32.txt' (FORMAT BLOB);
+
+
+statement error
+COPY cenc_one FROM '${__TEST_DIR__}/cenc_odd32.txt' (FORMAT text, ENCODING 'UTF32LE');
+----
+db error: ERROR: invalid byte sequence for encoding "UTF32LE": incomplete character at the end of the input
+
+
+statement ok
+COPY (SELECT '\x31000a0000dc0a00'::bytea) TO '${__TEST_DIR__}/cenc_low.txt' (FORMAT BLOB);
+
+
+statement error
+COPY cenc_one FROM '${__TEST_DIR__}/cenc_low.txt' (FORMAT text, ENCODING 'UTF16LE');
+----
+db error: ERROR: invalid byte sequence for encoding "UTF16LE": invalid UTF-16 code unit
+
+
+statement ok
+COPY (SELECT '\x0031000adc00000a'::bytea) TO '${__TEST_DIR__}/cenc_low_be.txt' (FORMAT BLOB);
+
+
+statement error
+COPY cenc_one FROM '${__TEST_DIR__}/cenc_low_be.txt' (FORMAT text, ENCODING 'UTF16BE');
+----
+db error: ERROR: invalid byte sequence for encoding "UTF16BE": invalid UTF-16 code unit
+
+
+statement ok
+COPY (SELECT '\x310000000a000000000011000a000000'::bytea) TO '${__TEST_DIR__}/cenc_big_point.txt' (FORMAT BLOB);
+
+
+statement error
+COPY cenc_one FROM '${__TEST_DIR__}/cenc_big_point.txt' (FORMAT text, ENCODING 'UTF32LE');
+----
+db error: ERROR: invalid byte sequence for encoding "UTF32LE": invalid UTF-32 code point
+
+
+statement ok
+COPY (SELECT '\x000000310000000a001100000000000a'::bytea) TO '${__TEST_DIR__}/cenc_big_point_be.txt' (FORMAT BLOB);
+
+
+statement error
+COPY cenc_one FROM '${__TEST_DIR__}/cenc_big_point_be.txt' (FORMAT text, ENCODING 'UTF32BE');
+----
+db error: ERROR: invalid byte sequence for encoding "UTF32BE": invalid UTF-32 code point
+
+
+query
+SELECT count(*) AS n FROM cenc_one;
+----
+n
+0

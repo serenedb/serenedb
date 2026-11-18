@@ -277,6 +277,76 @@ def test_copy_to_stdout_parquet_is_binary_blob(conn: psycopg.Connection,
         _drop(conn, table_name)
 
 
+def test_copy_arrows_round_trip(conn: psycopg.Connection,
+                                table_name: str) -> None:
+    dest = f"{table_name}_dst"
+    _create_int_varchar(conn, table_name)
+    with conn.cursor() as cur:
+        cur.execute(f'CREATE TABLE public."{dest}"(x INT, label VARCHAR)')
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f'INSERT INTO public."{table_name}" SELECT i, CASE WHEN i % 7 = 0 '
+                f"THEN NULL ELSE 'label ' || i END FROM generate_series(1, 5000) i")
+            blob = b""
+            with cur.copy(
+                f'COPY public."{table_name}" TO STDOUT (FORMAT arrows)'
+            ) as cp:
+                for chunk in cp:
+                    blob += bytes(chunk)
+            assert blob.startswith(b"\xff\xff\xff\xff"), blob[:8]
+            with cur.copy(
+                f'COPY public."{dest}" FROM STDIN (FORMAT arrows)'
+            ) as cp:
+                for i in range(0, len(blob), 4096):
+                    cp.write(blob[i:i + 4096])
+            cur.execute(
+                f'SELECT count(*) FROM (SELECT * FROM public."{table_name}" '
+                f'EXCEPT ALL SELECT * FROM public."{dest}")')
+            assert cur.fetchone() == (0,)
+            cur.execute(f'SELECT count(*), count(label) FROM public."{dest}"')
+            assert cur.fetchone() == (5000, 5000 - 5000 // 7)
+    finally:
+        _drop(conn, table_name)
+        _drop(conn, dest)
+
+
+def test_copy_to_stdout_arrow_file_is_binary_blob(conn: psycopg.Connection,
+                                                   shared_path: Path) -> None:
+    with conn.cursor() as cur:
+        blob = b""
+        with cur.copy(
+            "COPY (SELECT i AS x, 'v' || i AS label FROM generate_series(1, 100) i) "
+            "TO STDOUT (FORMAT arrow)"
+        ) as cp:
+            for chunk in cp:
+                blob += bytes(chunk)
+        assert blob.startswith(b"ARROW1"), blob[:8]
+        assert blob.endswith(b"ARROW1"), blob[-8:]
+        path = shared_path / "stdout.arrow"
+        path.write_bytes(blob)
+        cur.execute(f"SELECT count(*), sum(x) FROM read_arrow('{path}')")
+        assert cur.fetchone() == (100, 5050)
+
+
+def test_copy_from_stdin_arrow_file_is_refused(conn: psycopg.Connection,
+                                               table_name: str) -> None:
+    _create_int_varchar(conn, table_name)
+    try:
+        with pytest.raises(psycopg.errors.FeatureNotSupported,
+                           match="use FORMAT arrows"):
+            with conn.cursor() as cur:
+                with cur.copy(
+                    f'COPY public."{table_name}" FROM STDIN (FORMAT arrow)'
+                ) as cp:
+                    cp.write(b"ARROW1")
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1")
+            assert cur.fetchone() == (1,)
+    finally:
+        _drop(conn, table_name)
+
+
 def test_copy_to_stdout_json_lines(conn: psycopg.Connection,
                                    table_name: str) -> None:
     # COPY ... TO STDOUT (FORMAT JSON) emits one JSON object per row (newline

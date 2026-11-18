@@ -124,10 +124,10 @@ serenedb shell --markdown -c "SELECT 1 AS a, 2 AS b;"
 | 1 | 2 |
 ```
 
-`.mode psql`, `\pset format aligned` (or `unaligned`) and `-P format=aligned` switch to psql's output, the [output formats of `serened psql`](./serened-psql.md#output-formats), with every value in its PostgreSQL text form:
+`.mode psql`, `\pset format aligned` (or `unaligned`) and `-P format=aligned` switch to psql's output, the [output formats of `serenedb psql`](./serened-psql.md#output-formats), with every value in its PostgreSQL text form:
 
 ```sh
-serened shell <<'EOF'
+serenedb shell <<'EOF'
 .mode psql
 SELECT 1 AS id, 'abc' AS name, NULL::VARCHAR AS note, 'line1' || chr(10) || 'line2' AS multi, 3.5 AS num;
 EOF
@@ -417,7 +417,7 @@ one and `.docs --kind command` lists them all.
 
 ## Backslash commands
 
-A line that starts with `\` holds psql-style commands. `serened shell` and [`serened psql`](./serened-psql.md) take the same ones, and `\?` lists them.
+A line that starts with `\` holds psql-style commands. `serenedb shell` and [`serenedb psql`](./serened-psql.md) take the same ones, and `\?` lists them.
 
 | Command | Arguments | Description |
 | :--- | :--- | :--- |
@@ -433,7 +433,7 @@ A line that starts with `\` holds psql-style commands. `serened shell` and [`ser
 | `\a` | | Switch between psql's aligned and unaligned output. |
 | `\t` | `?on\|off?` | Print rows only, without column names and footer. |
 | `\x` | `?on\|off\|auto?` | Expanded output. |
-| `\pset` | `?NAME ?VALUE??` | Set a printing option, see the [output formats of `serened psql`](./serened-psql.md#output-formats). |
+| `\pset` | `?NAME ?VALUE??` | Set a printing option, see the [output formats of `serenedb psql`](./serened-psql.md#output-formats). |
 | `\timing` | `?on\|off?` | Print the run time of each statement, like `.timer`. |
 
 Without an argument, `\t`, `\x` and `\timing` switch between on and off. A line can hold several commands, as in `\a \t on`, and an argument a command does not take is ignored with a warning. Text in single quotes is one argument, in which `\n` and `\t` stand for a line break and a tab. A command typed between the lines of a statement leaves the statement pending, to run at its semicolon or at `\g`, and a backslash inside a string literal is part of the SQL.
@@ -443,7 +443,7 @@ Catalog commands such as `\d` and `\dt` are not supported: `\dt: catalog command
 `\x on` and a query, with psql's output:
 
 ```sh
-serened shell <<'EOF'
+serenedb shell <<'EOF'
 .mode psql
 \x on
 SELECT * FROM (VALUES (1, 'a'), (2, 'b')) t(n, s);
@@ -474,7 +474,7 @@ s | b
 `COPY ... TO STDOUT` writes to the output of the shell, in order with the results of the statements around it: the terminal, or the file that `.output`, `\o` or `-o` names.
 
 ```sh
-serened shell <<'EOF'
+serenedb shell <<'EOF'
 CREATE TABLE t (i INTEGER, s VARCHAR);
 COPY t FROM STDIN (FORMAT csv);
 1,one
@@ -498,7 +498,7 @@ EOF
 The options are those of `COPY`, after an optional `WITH`. `PROGRAM` is not supported.
 
 ```sh
-serened shell <<'EOF'
+serenedb shell <<'EOF'
 CREATE TABLE t (i INTEGER, s VARCHAR);
 \copy t FROM 'in.csv' (FORMAT csv)
 \copy (SELECT s FROM t ORDER BY i) TO 'out.csv' WITH (FORMAT csv)

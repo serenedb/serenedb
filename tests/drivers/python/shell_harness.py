@@ -1,4 +1,4 @@
-"""`serened shell` runs for the psql output, backslash command and COPY stream tests."""
+"""`serenedb shell` runs for the psql output, backslash command and COPY stream tests."""
 
 from __future__ import annotations
 
@@ -9,9 +9,9 @@ from pathlib import Path
 import pytest
 
 
-SERENED_BIN = os.environ.get(
-    "SDB_DRV_SERENED_BIN",
-    str(Path(__file__).resolve().parents[3] / "build" / "bin" / "serened"),
+SERENEDB_BIN = os.environ.get(
+    "SDB_DRV_SERENEDB_BIN",
+    str(Path(__file__).resolve().parents[3] / "build" / "bin" / "serenedb"),
 )
 
 _AGENT_ENVIRONMENT = ("AI_AGENT", "AGENT", "CLAUDECODE", "CODEX_CI", "CODEX_SANDBOX",
@@ -20,18 +20,18 @@ _AGENT_ENVIRONMENT = ("AI_AGENT", "AGENT", "CLAUDECODE", "CODEX_CI", "CODEX_SAND
 
 
 def _have_binary() -> bool:
-    return Path(SERENED_BIN).is_file() and os.access(SERENED_BIN, os.X_OK)
+    return Path(SERENEDB_BIN).is_file() and os.access(SERENEDB_BIN, os.X_OK)
 
 
-requires_serened = pytest.mark.skipif(
+requires_serenedb = pytest.mark.skipif(
     not _have_binary(),
-    reason=f"serened binary not found or not executable: {SERENED_BIN}",
+    reason=f"serenedb binary not found or not executable: {SERENEDB_BIN}",
 )
 
 
 @pytest.fixture()
 def shell() -> list[str]:
-    return [SERENED_BIN, "shell"]
+    return [SERENEDB_BIN, "shell"]
 
 
 class TestResult:

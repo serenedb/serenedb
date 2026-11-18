@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "scheduler/job_scheduler.h"
+#include "jobs/scheduler.h"
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/numeric/int128.h>
@@ -56,7 +56,7 @@
 #include "catalog/entry/job.h"
 #include "pg/connection_context.h"
 #include "query/config.h"
-#include "scheduler/background_scheduler.h"
+#include "runtime/runtime.h"
 
 namespace sdb {
 namespace {
@@ -279,8 +279,23 @@ void VerifySchedule(const duckdb::JobSchedule& schedule) {
   NextRun(schedule, 0, duckdb::Timestamp::GetCurrentTimestamp());
 }
 
+JobScheduler::JobScheduler(Runtime& runtime) : _runtime{runtime} {
+  gInstance = this;
+  try {
+    Start();
+  } catch (...) {
+    Stop();
+    throw;
+  }
+}
+
+JobScheduler::~JobScheduler() { Stop(); }
+
 void JobScheduler::Start() {
   ForAllJobs([&](catalog::JobCatalogEntry& job) { Schedule(job); });
+  SDB_IF_FAILURE("jobs_start_throws") {
+    THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+  }
 }
 
 void JobScheduler::Schedule(catalog::JobCatalogEntry& job) {
@@ -306,15 +321,15 @@ void JobScheduler::Schedule(catalog::JobCatalogEntry& job) {
 }
 
 void JobScheduler::Arm(const std::shared_ptr<JobState>& state, uint64_t timer) {
-  auto& background = BackgroundScheduler::instance();
   const auto wait = absl::ToChronoNanoseconds(
     absl::FromUnixMicros(state->status.next_run.value) - absl::Now());
-  background.Delay(wait).Detach(background.executor(),
-                                [this, state, timer, &background] {
-                                  if (!background.IsStopping()) {
-                                    Run(state, timer);
-                                  }
-                                });
+  _runs.Add();
+  _runtime.Delay(wait).Detach(_runtime.Background(), [this, state, timer] {
+    if (!_runtime.IsStopping()) {
+      Run(state, timer);
+    }
+    _runs.Done();
+  });
 }
 
 void JobScheduler::Run(std::shared_ptr<JobState> state, uint64_t timer) {
@@ -427,10 +442,12 @@ void JobScheduler::TrimHistory(size_t size) {
   }
 }
 
-void JobScheduler::Stop() {
+void JobScheduler::Stop() noexcept {
+  _runtime.RequestStop();
   ForAllJobs([](catalog::JobCatalogEntry& job) { job.OnDrop(); });
   _runs.Done();
   _runs.Wait();
+  gInstance = nullptr;
 }
 
 }  // namespace sdb

@@ -50,7 +50,7 @@
 #include "quack_session_state.hpp"
 #include "quack_settings.hpp"
 #include "query/config.h"
-#include "scheduler/background_scheduler.h"
+#include "runtime/runtime.h"
 #include "server/utils/asio_ns.h"
 
 namespace sdb::network::http::quack {
@@ -317,10 +317,16 @@ Service::Service(CancelRegistry& cancel, yaclib::WaitGroup<>& tasks,
     _db{irs::DuckDBEngine::Instance().instance()},
     _server_id{std::move(server_id)},
     _client_id_key{RandomToken()} {
-  _tasks.Consume(SweepLoop());
+  _sweep.Consume(SweepLoop());
+  gInstance = this;
 }
 
-Service::~Service() { RequestStop(); }
+Service::~Service() {
+  gInstance = nullptr;
+  RequestStop();
+  _sweep.Done();
+  _sweep.Wait();
+}
 
 void Service::RequestStop() {
   _stopping.store(true, std::memory_order_release);
@@ -335,10 +341,10 @@ void Service::RequestStop() {
 }
 
 yaclib::Future<> Service::SweepLoop() {
-  auto& scheduler = BackgroundScheduler::instance();
-  while (!Stopping() && !scheduler.IsStopping()) {
-    co_await scheduler.Delay(kSweepInterval);
-    if (Stopping() || scheduler.IsStopping()) {
+  auto& runtime = Runtime::Get();
+  while (!Stopping() && !runtime.IsStopping()) {
+    co_await runtime.Delay(kSweepInterval);
+    if (Stopping() || runtime.IsStopping()) {
       break;
     }
     SDB_IF_FAILURE("quack_sweep_paused") { continue; }

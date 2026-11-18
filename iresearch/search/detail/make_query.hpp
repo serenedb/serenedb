@@ -22,6 +22,7 @@
 
 #include "iresearch/search/detail/make.hpp"
 #include "iresearch/search/detail/plan.hpp"
+#include "iresearch/search/filters/query_profile.hpp"
 
 namespace irs::detail {
 
@@ -105,9 +106,9 @@ typename Family::Result MakeQuery(const EmptyQueryBuilder&, const Ctx&) {
 template<typename Family, typename Query, typename Ctx>
 typename Family::Result Plan(const Query& query, const Ctx& ctx) {
   if constexpr (requires { Family::Make(query, ctx); }) {
-    return Family::Make(query, ctx);
+    return ProfilePlan(query, Family::Make(query, ctx));
   } else {
-    return MakeQuery<Family>(query, ctx);
+    return ProfilePlan(query, MakeQuery<Family>(query, ctx));
   }
 }
 

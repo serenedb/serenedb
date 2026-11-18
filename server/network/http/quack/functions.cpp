@@ -29,7 +29,6 @@
 
 #include "auth/role_closure.h"
 #include "network/http/quack/service.h"
-#include "network/server.h"
 #include "pg/connection_context.h"
 
 namespace sdb::network::http::quack {
@@ -78,7 +77,7 @@ duckdb::unique_ptr<duckdb::FunctionData> Bind(
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> Init(
   duckdb::ClientContext&, duckdb::TableFunctionInitInput&) {
   auto state = duckdb::make_uniq<ConnectionsState>();
-  if (auto* service = Server::instance().Quack()) {
+  if (auto* service = Service::Instance()) {
     state->snapshots = service->Connections();
   }
   return state;

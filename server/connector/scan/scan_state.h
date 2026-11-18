@@ -58,6 +58,7 @@
 #include "connector/scan/scan_bind.h"
 #include "connector/scan/scan_function.h"
 #include "connector/scan/scan_plan.h"
+#include "connector/scan/scan_profile.h"
 
 namespace irs {
 
@@ -375,6 +376,8 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   };
   AnnState ann;
 
+  std::unique_ptr<ScanProfile> profile;
+
   duckdb::idx_t MaxThreads() const final { return workers; }
 
   const ScanBindData& Bind() const noexcept { return *scan; }
@@ -423,6 +426,8 @@ struct ScanLocalState : public duckdb::LocalTableFunctionState {
   uint64_t produced_rows = 0;
 
   void Classify(ScanGlobalState& g, uint32_t seg);
+
+  virtual void ReleasePlans() {}
 };
 
 struct FetchLocalState {
@@ -466,6 +471,8 @@ struct StreamLocalState final : public ScanLocalState, FetchLocalState {
   uint64_t stop_row = 0;
   bool unit_done = true;
   bool started = false;
+
+  void ReleasePlans() final { root = nullptr; }
 };
 
 struct RankedLocalState : public ScanLocalState, FetchLocalState {
@@ -483,6 +490,8 @@ struct RankedLocalState : public ScanLocalState, FetchLocalState {
   std::vector<uint32_t> answer_order;
   duckdb::SelectionVector emit_sel;
   duckdb::buffer_ptr<duckdb::SelectionData> emit_sel_data;
+
+  void ReleasePlans() final { root = nullptr; }
 };
 
 struct TopKLocalState final : public RankedLocalState {
@@ -532,6 +541,8 @@ irs::detail::TableFilter* BeginVerify(ColFilterVerify& verify,
 irs::detail::TableFilter* BeginColumnVerify(const irs::SubReader& seg,
                                             ScanGlobalState& g,
                                             AnnLocalState& l);
+
+ScanChecks ColumnChecks(const ScanGlobalState& g);
 
 void WriteVirtualColumns(ScanGlobalState& g, duckdb::idx_t num_rows,
                          duckdb::Vector* scores, duckdb::DataChunk& output);

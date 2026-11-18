@@ -20,10 +20,10 @@
 
 #include "network/http/quack/handlers.h"
 
+#include <iresearch/utils/system_compiler.hpp>
 #include <yaclib/lazy/make.hpp>
 
 #include "network/http/quack/service.h"
-#include "network/server.h"
 
 namespace sdb::network::http::quack {
 namespace {
@@ -32,7 +32,7 @@ class RpcHandler final : public HttpHandler {
  public:
   yaclib::Task<> Handle(RequestContext& context, const HttpRequest& request,
                         HttpResponseWriter& writer) final {
-    return Server::instance().Quack()->Handle(context, request, writer);
+    return Service::Instance()->Handle(context, request, writer);
   }
 
   bool SkipsHttpAuth() const noexcept final { return true; }

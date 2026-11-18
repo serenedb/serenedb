@@ -1,0 +1,205 @@
+statement ok
+CREATE TABLE pro (id INT PRIMARY KEY, v INT);
+
+
+statement ok
+INSERT INTO pro SELECT i, i FROM generate_series(1, 100) g(i);
+
+
+statement ok
+CREATE TABLE pro_log (x INT);
+
+
+statement ok
+PREPARE pro_ins(INT) AS INSERT INTO pro_log VALUES ($1);
+
+
+statement ok
+PREPARE pro_scan AS SELECT count(*) AS n FROM pro;
+
+
+statement ok
+PREPARE pro_pk(INT) AS SELECT v FROM pro WHERE id = $1;
+
+
+statement ok
+PREPARE pro_const AS SELECT 1 AS r;
+
+
+statement ok
+EXECUTE pro_scan;
+
+
+statement ok
+EXECUTE pro_pk(1);
+
+
+statement ok
+EXECUTE pro_const;
+
+
+statement ok
+EXECUTE pro_ins(1);
+
+
+statement ok
+CREATE TABLE pro_other (z INT);
+
+
+statement ok
+EXECUTE pro_ins(2);
+
+
+statement ok
+EXECUTE pro_ins(3);
+
+
+statement ok
+EXECUTE pro_scan;
+
+
+statement ok
+EXECUTE pro_pk(1);
+
+
+statement ok
+EXECUTE pro_const;
+
+
+statement ok
+EXECUTE pro_scan;
+
+
+statement ok
+EXECUTE pro_pk(1);
+
+
+statement ok
+EXECUTE pro_const;
+
+
+query
+EXECUTE pro_scan;
+----
+n
+100
+
+
+query
+EXECUTE pro_pk(2);
+----
+v
+2
+
+
+statement ok
+EXECUTE pro_const;
+
+
+query
+SELECT name, generic_plans, custom_plans FROM pg_prepared_statements ORDER BY name;
+----
+name	generic_plans	custom_plans
+pro_const	4	0
+pro_ins	2	1
+pro_pk	3	1
+pro_scan	3	1
+
+
+statement ok
+SET search_path = public, pg_catalog;
+
+
+statement ok
+EXECUTE pro_ins(4);
+
+
+statement ok
+EXECUTE pro_ins(5);
+
+
+statement ok
+EXECUTE pro_scan;
+
+
+statement ok
+EXECUTE pro_pk(1);
+
+
+statement ok
+EXECUTE pro_const;
+
+
+statement ok
+EXECUTE pro_scan;
+
+
+statement ok
+EXECUTE pro_pk(1);
+
+
+statement ok
+EXECUTE pro_const;
+
+
+query
+SELECT name, generic_plans, custom_plans FROM pg_prepared_statements ORDER BY name;
+----
+name	generic_plans	custom_plans
+pro_const	5	1
+pro_ins	3	2
+pro_pk	4	2
+pro_scan	4	2
+
+
+statement ok
+SET integer_overflow = 'WRAP';
+
+
+statement ok
+EXECUTE pro_ins(6);
+
+
+statement ok
+EXECUTE pro_ins(7);
+
+
+statement ok
+EXECUTE pro_scan;
+
+
+statement ok
+EXECUTE pro_pk(1);
+
+
+statement ok
+EXECUTE pro_const;
+
+
+statement ok
+EXECUTE pro_scan;
+
+
+statement ok
+EXECUTE pro_pk(1);
+
+
+statement ok
+EXECUTE pro_const;
+
+
+query
+SELECT name, generic_plans, custom_plans FROM pg_prepared_statements ORDER BY name;
+----
+name	generic_plans	custom_plans
+pro_const	6	2
+pro_ins	4	3
+pro_pk	5	3
+pro_scan	5	3
+
+
+query
+SELECT count(*) AS n, sum(x) AS s FROM pro_log;
+----
+n	s
+7	28

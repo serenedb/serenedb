@@ -48,4 +48,6 @@ Node::ptr MakeAllDocs(const SubReader& segment);
 Node::ptr MakeAllScored(const SubReader& segment, ScoreMergeType merge,
                         score_t score);
 
+Node::ptr MakeRoot(const QueryBuilder& query);
+
 }  // namespace irs::fill

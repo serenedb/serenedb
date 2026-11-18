@@ -65,6 +65,9 @@ class Service final {
           std::string server_id);
   ~Service();
 
+  // The service of this server, null while no listener serves Quack.
+  static Service* Instance() noexcept { return gInstance; }
+
   void RequestStop();
 
   yaclib::Task<> Handle(RequestContext& context, const HttpRequest& request,
@@ -119,8 +122,12 @@ class Service final {
   void QueueForExpiry(Connection& connection)
     ABSL_EXCLUSIVE_LOCKS_REQUIRED(connection.mu);
 
+  inline static Service* gInstance = nullptr;
+
   CancelRegistry& _cancel;
   yaclib::WaitGroup<>& _tasks;
+  // The sweep reads the service, so the service outlives it
+  yaclib::WaitGroup<> _sweep{1};
   duckdb::DatabaseInstance& _db;
   const std::string _server_id;
   // Keys the HMAC of a client's CLIENT_ID in quack_active_connections()

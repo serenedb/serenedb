@@ -66,8 +66,8 @@ struct RegistryEntry {
   std::string_view function_name;
   PkSpec single_pk_spec;
   PkSpec glob_pk_spec;
-  // Whether the reader's lookup applies pushed table filters. csv/json/text
-  // only fetch rows by offset and ignore filters, so filters on their lookup
+  // Whether the reader's lookup applies pushed table filters. json/text only
+  // fetch rows by offset and ignore filters, so filters on their lookup
   // columns must NOT be pushed (they'd be silently dropped) -- see
   // supports_pushdown.
   bool supports_filters = false;
@@ -84,6 +84,7 @@ const RegistryEntry kRegistry[] = {
     .function_name = "read_csv",
     .single_pk_spec = PkSpec::FileOffset,
     .glob_pk_spec = PkSpec::FileIndexPlusOffset,
+    .supports_filters = true,
   },
   {
     .function_name = "read_json",

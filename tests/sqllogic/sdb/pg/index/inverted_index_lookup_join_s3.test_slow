@@ -100,21 +100,23 @@ query
 EXPLAIN SELECT * FROM read_csv('s3://${MINIO_BUCKET}/${__DATABASE__}_lj_one.csv') ORDER BY n DESC LIMIT 3;
 ----
 QUERY PLAN
-╭─ LOOKUP_JOIN ────────────────╮
-│ Key: file_index, file_offset │
-│ ~3 rows                      │
-╰───────────────┬──────────────╯
-                ├────────────────────────────╮
-╭─ TOP_N ───────┴──────────────╮  ╭─ READ_CSV ──────────╮
-│ Top: 3                       │  │ Function: READ_CSV  │
-│ Order By: n DESC             │  │ Projections: id,    │
-│ ~3 rows                      │  │              title, │
-╰───────────────┬──────────────╯  │              body,  │
-╭─ READ_CSV ────┴──────────────╮  │              note   │
-│ Function: READ_CSV           │  │ ~3 rows             │
-│ Projections: n               │  ╰─────────────────────╯
-│ ~8,608 rows                  │
-╰──────────────────────────────╯
+╭─ LOOKUP_JOIN ────────────────────╮
+│ Key: file_index, file_offset     │
+│ ~3 rows                          │
+╰─────────────────┬────────────────╯
+                  ├──────────────────────────────╮
+╭─ TOP_N ─────────┴────────────────╮  ╭─ READ_CSV ──────────╮
+│ Top: 3                           │  │ Function: READ_CSV  │
+│ Order By: n DESC                 │  │ Projections: id,    │
+│ ~3 rows                          │  │              title, │
+╰─────────────────┬────────────────╯  │              body,  │
+╭─ READ_CSV ──────┴────────────────╮  │              note   │
+│ Function: READ_CSV               │  │ ~3 rows             │
+│ Projections: n                   │  ╰─────────────────────╯
+│ Column Filter:                   │
+│ optional: Dynamic Filter (n > ?) │
+│ ~8,608 rows                      │
+╰──────────────────────────────────╯
 
 query
 SELECT id, title, body, replace(note, chr(10), '|') AS note FROM read_csv('s3://${MINIO_BUCKET}/${__DATABASE__}_lj_one.csv') ORDER BY n DESC LIMIT 3;

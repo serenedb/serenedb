@@ -147,7 +147,7 @@ struct ViewFastPath {
   // empty for ExternalPostgresCtid (keyed on the virtual duckdb rowid).
   std::vector<ExternalKeyColumn> key_columns;
   // Whether the backing reader's lookup applies pushed table filters (parquet /
-  // duckdb yes; csv / json / text no). Drives filter pushdown -- see
+  // duckdb / csv yes; json / text no). Drives filter pushdown -- see
   // IResearchSupportsPushdownFilter.
   bool supports_filters = false;
   // The view supports per-file DELTA refresh -- it decomposes exactly per

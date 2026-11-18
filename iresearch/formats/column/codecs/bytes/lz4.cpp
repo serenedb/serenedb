@@ -32,6 +32,7 @@
 #include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/formats/column/codecs/text/blob.hpp"
 #include "iresearch/formats/column/codecs/text/dictionary_scan.tpp"
+#include "iresearch/formats/column/codecs/text/lz4.hpp"
 #include "iresearch/formats/column/codecs/text/plain_scan.tpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -46,10 +47,12 @@ same frames, each compressed with the segment's trained dictionary; or
 namespace irs::codecs {
 
 constinit const Codec kLz4Codec =
-  text::StringCodec<text::PlainScan<text::blob::Scan<Lz4>>>();
+  text::StringCodec<text::PlainScan<text::blob::Scan<Lz4>>,
+                    text::blob::Lz4CompressionState>();
 
 constinit const Codec kDictLz4Codec =
-  text::StringCodec<text::DictionaryScan<text::blob::Scan<Lz4>>>();
+  text::StringCodec<text::DictionaryScan<text::blob::Scan<Lz4>>,
+                    text::blob::Lz4CompressionState>();
 
 size_t Lz4::Bound(size_t raw_size) noexcept {
   SDB_ASSERT(raw_size <= static_cast<size_t>(LZ4_MAX_INPUT_SIZE));

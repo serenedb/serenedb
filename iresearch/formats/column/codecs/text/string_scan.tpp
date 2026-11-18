@@ -43,7 +43,7 @@
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
 #include "iresearch/formats/column/codecs/text/string_layout.hpp"
 #include "iresearch/formats/column/codecs/text/string_scan.hpp"
-#include "iresearch/formats/column/codecs/text/strings.hpp"
+#include "iresearch/formats/column/codecs/text/text_encoder.hpp"
 #include "iresearch/formats/column/immutable_payloads.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
@@ -436,11 +436,12 @@ inline constexpr DecompressionFunction kStringDecompression = [] consteval {
   return f;
 }();
 
-template<typename Scan>
+template<typename Scan, typename Compression>
 consteval Codec StringCodec() {
+  static_assert(Compression::kCodec == Scan::kCodec);
   return {
     .type = CodecOf(Scan::kShape, Scan::kCodec),
-    .compression = &kStringsFunction,
+    .compression = &kTextFunction<Compression, Scan::kShape>,
     .decompression = &kStringDecompression<Scan>,
   };
 }

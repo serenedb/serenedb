@@ -19,11 +19,9 @@ target_sources(
         column/codecs/text/onpair.cpp
         column/codecs/text/segment_buffer.cpp
         column/codecs/text/segment_rows.cpp
-        column/codecs/text/strings.cpp
-        column/codecs/text/string_compressor.cpp
+        column/codecs/text/shape.cpp
         column/codecs/text/string_scan.cpp
-        column/codecs/text/string_accumulator.cpp
-        column/codecs/text/string_window.cpp
+        column/codecs/text/values.cpp
         column/codecs/uncompressed.cpp
         column/codecs/validity/empty_validity.cpp
         column/codecs/validity/roaring.cpp

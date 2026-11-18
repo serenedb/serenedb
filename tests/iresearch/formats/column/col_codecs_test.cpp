@@ -56,9 +56,9 @@
 #include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/column/codecs/text/fsst.hpp>
 #include <iresearch/formats/column/codecs/text/onpair.hpp>
-#include <iresearch/formats/column/codecs/text/string_accumulator.hpp>
 #include <iresearch/formats/column/codecs/text/string_layout.hpp>
 #include <iresearch/formats/column/codecs/text/string_scan.hpp>
+#include <iresearch/formats/column/codecs/text/values.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
@@ -1602,9 +1602,9 @@ TEST_F(ColCodecsTest, AutoTunesLevelsOnTheFirstRowGroupWithData) {
   };
   const auto levels = [](const irs::codecs::ColumnTuning& tuning) {
     std::vector<int> out;
-    for (size_t leaf = 0; leaf < irs::codecs::kByteCodecCount; ++leaf) {
-      out.push_back(tuning.strings.level[leaf]);
-      out.push_back(static_cast<int>(tuning.strings.layout[leaf]));
+    for (const auto& lz4 : tuning.strings.lz4) {
+      out.push_back(lz4.level);
+      out.push_back(static_cast<int>(lz4.layout));
     }
     return out;
   };
@@ -4009,6 +4009,41 @@ TEST_F(ColCodecsTest, CodesHeavyDictionarySegmentsStayNearTheSegmentTarget) {
   Verify(dir, irs::codecs::CodecType::DictLz4, kRows, value);
 }
 
+TEST_F(ColCodecsTest, AutoTunesLz4AgainWhenTheValuesChange) {
+  const auto seal = [&](const std::vector<std::unique_ptr<duckdb::Vector>>& in,
+                        irs::codecs::ColumnTuning& tuning) {
+    EXPECT_TRUE(AllText(SealAuto(Db(), WriteChunks(in), {}, tuning)));
+  };
+  const Value brief = [](uint64_t g) -> std::optional<std::string> {
+    return "id-" + std::to_string(g % 50);
+  };
+  const Value similar = [](uint64_t g) -> std::optional<std::string> {
+    return "key-" + std::to_string(g % 60);
+  };
+  const Value wordy = [](uint64_t g) -> std::optional<std::string> {
+    return kVocabulary(g % 60);
+  };
+  const auto small = Chunks(4096, brief);
+  const auto alike = Chunks(4096, similar);
+  const auto large = Chunks(4096, wordy);
+  irs::codecs::ColumnTuning tuning;
+  const auto& lz4 =
+    tuning.strings.lz4[std::to_underlying(irs::codecs::Shape::Dictionary)];
+  seal(small, tuning);
+  ASSERT_TRUE(lz4.tuned);
+  const auto first = lz4.tuned_on;
+  EXPECT_GT(first, 0u);
+  const auto brief_bytes = tuning.strings.contested_on.value_bytes;
+  for (int rg = 0; rg < 4; ++rg) {
+    seal(alike, tuning);
+    EXPECT_EQ(lz4.tuned_on, first);
+  }
+  EXPECT_GT(tuning.reuse.gap, 1u);
+  seal(large, tuning);
+  EXPECT_GE(lz4.tuned_on, 4 * first);
+  EXPECT_GT(tuning.strings.contested_on.value_bytes, 2 * brief_bytes);
+}
+
 TEST_F(ColCodecsTest, AutoMeasuresLessOftenWhileItsCodecHolds) {
   using irs::codecs::Shape;
   const auto seal = [&](const std::vector<std::unique_ptr<duckdb::Vector>>& in,
@@ -4145,8 +4180,10 @@ TEST_F(ColCodecsTest, TheWritersTierDecidesOverTheColumnsParams) {
                       .compression = irs::codecs::CodecType::Auto,
                       .codec_params = {.tier = irs::WriteTier::Merge}});
       AppendValues(cw, 120000, value);
-      const auto lz4 = cw.State().tuning.strings.level[static_cast<size_t>(
-        irs::codecs::ByteCodec::Lz4)];
+      const auto lz4 =
+        cw.State()
+          .tuning.strings.lz4[std::to_underlying(irs::codecs::Shape::Plain)]
+          .level;
       EXPECT_EQ(tier == irs::WriteTier::Merge, lz4 > 1);
       ASSERT_TRUE(w.Commit(0));
     }

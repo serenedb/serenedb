@@ -561,9 +561,11 @@ stores the rest of its codes.
 */
 
 constinit const Codec kFsstPlusCodec =
-  text::StringCodec<text::PlainScan<text::fsst_plus::Scan>>();
+  text::StringCodec<text::PlainScan<text::fsst_plus::Scan>,
+                    text::fsst_plus::CompressionState>();
 
 constinit const Codec kDictFsstPlusCodec =
-  text::StringCodec<text::DictionaryScan<text::fsst_plus::Scan>>();
+  text::StringCodec<text::DictionaryScan<text::fsst_plus::Scan>,
+                    text::fsst_plus::CompressionState>();
 
 }  // namespace irs::codecs

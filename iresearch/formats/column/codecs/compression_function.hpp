@@ -123,8 +123,23 @@ enum class StateId : uint8_t {
   RunsEncoder,
   DictionaryEncoder,
   RoaringContainers,
-  Strings,
+  TextValues,
+  TextLz4,
+  TextZstd,
+  TextFsst,
+  TextZxc,
+  TextFsstPlus,
+  TextOnPair,
+  TextFsst12,
 };
+
+constexpr StateId TextState(ByteCodec leaf) noexcept {
+  return static_cast<StateId>(std::to_underlying(StateId::TextLz4) +
+                              std::to_underlying(leaf) -
+                              std::to_underlying(ByteCodec::Lz4));
+}
+
+static_assert(TextState(ByteCodec::Fsst12) == StateId::TextFsst12);
 
 struct State {
   virtual ~State() = default;

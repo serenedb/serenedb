@@ -60,11 +60,31 @@ struct Config {
 
 }  // namespace text
 
+struct TextStatistics {
+  double value_bytes = 0;
+  double distinct_share = 0;
+};
+
+constexpr bool Moved(const TextStatistics& now, const TextStatistics& then,
+                     double factor) noexcept {
+  const auto moved = [&](double a, double b) {
+    return a > b * factor || a * factor < b;
+  };
+  return moved(now.value_bytes, then.value_bytes) ||
+         moved(now.distinct_share, then.distinct_share);
+}
+
+struct Lz4Tuning {
+  bool tuned = false;
+  uint8_t level = 0;
+  FrameDictionary layout = FrameDictionary::None;
+  uint64_t tuned_on = 0;
+};
+
 struct StringTuning {
   std::optional<text::Config> config;
-  bool tuned = false;
-  uint8_t level[kByteCodecCount]{};
-  FrameDictionary layout[kByteCodecCount]{};
+  TextStatistics contested_on;
+  Lz4Tuning lz4[kTextShapeCount];
   RatioHistory history[kByteCodecCount][kShapeCount]{};
   NumericTuning codes;
   uint64_t last_distinct = 0;

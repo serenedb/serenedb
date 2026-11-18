@@ -630,11 +630,13 @@ row group is cut into segments of about kDefaultColSegmentTarget encoded bytes:
 Sections start at 8-byte boundaries.
 */
 
-constinit const Codec kFsstFrontCodec = text::StringCodec<
-  text::PlainScan<text::fsst_front::Scan<text::fsst::Fsst8>>>();
+constinit const Codec kFsstFrontCodec =
+  text::StringCodec<text::PlainScan<text::fsst_front::Scan<text::fsst::Fsst8>>,
+                    text::fsst_front::CompressionState<text::fsst::Fsst8>>();
 
-constinit const Codec kFsst12FrontCodec = text::StringCodec<
-  text::PlainScan<text::fsst_front::Scan<text::fsst::Fsst12>>>();
+constinit const Codec kFsst12FrontCodec =
+  text::StringCodec<text::PlainScan<text::fsst_front::Scan<text::fsst::Fsst12>>,
+                    text::fsst_front::CompressionState<text::fsst::Fsst12>>();
 
 /*
 Data layout per DictionaryScan segment, one block of one column; a text
@@ -694,9 +696,11 @@ Sections start at 8-byte boundaries.
 */
 
 constinit const Codec kDictFsstFrontCodec = text::StringCodec<
-  text::DictionaryScan<text::fsst_front::Scan<text::fsst::Fsst8>>>();
+  text::DictionaryScan<text::fsst_front::Scan<text::fsst::Fsst8>>,
+  text::fsst_front::CompressionState<text::fsst::Fsst8>>();
 
 constinit const Codec kDictFsst12FrontCodec = text::StringCodec<
-  text::DictionaryScan<text::fsst_front::Scan<text::fsst::Fsst12>>>();
+  text::DictionaryScan<text::fsst_front::Scan<text::fsst::Fsst12>>,
+  text::fsst_front::CompressionState<text::fsst::Fsst12>>();
 
 }  // namespace irs::codecs

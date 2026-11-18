@@ -114,16 +114,12 @@ class NumericEncoder : public State {
   using U = numeric::Bits<sizeof(T)>;
   static constexpr uint8_t kWidth = sizeof(T);
 
-  Estimate Analyze(ColumnDataCheckpointData& data, double bound,
-                   ByteCodec leaf) {
+  Estimate Analyze(double bound, ByteCodec leaf) {
     if (!_values.Usable()) {
       return {};
     }
     if (!_complete) {
       Rebuild(nullptr);
-    }
-    if (!Offers(data, leaf)) {
-      return {};
     }
     const auto rows = static_cast<double>(_values.Get().size());
     auto best_price = bound * rows;
@@ -163,14 +159,14 @@ class NumericEncoder : public State {
     bool held = false;
     if (!named) {
       held = !_best;
-      if (held && !Hold(data, leaf, choice)) {
+      if (held && !Hold(leaf, choice)) {
         return false;
       }
     } else if (leaf != ByteCodec::None && reuse.pick == data.method) {
-      held = Hold(data, leaf, choice);
+      held = Hold(leaf, choice);
     }
     if (named && !held &&
-        Analyze(data, std::numeric_limits<double>::infinity(), leaf).codec ==
+        Analyze(std::numeric_limits<double>::infinity(), leaf).codec ==
           CodecType::Auto) {
       return false;
     }
@@ -295,19 +291,7 @@ class NumericEncoder : public State {
     };
   }
 
-  bool Offers(const ColumnDataCheckpointData& data,
-              ByteCodec leaf) const noexcept {
-    if (data.method != CodecType::Auto) {
-      return true;
-    }
-    if constexpr (std::is_floating_point_v<T>) {
-      return leaf == ByteCodec::None;
-    }
-    return data.params.tier != WriteTier::Flush || leaf != ByteCodec::Zstd;
-  }
-
-  bool Hold(const ColumnDataCheckpointData& data, ByteCodec leaf,
-            const NumericChoice& choice) {
+  bool Hold(ByteCodec leaf, const NumericChoice& choice) {
     if (!_values.Usable()) {
       return false;
     }
@@ -315,7 +299,7 @@ class NumericEncoder : public State {
     const auto candidate = absl::c_find_if(_candidates, [&](const auto& c) {
       return c.shuffled == choice.shuffled;
     });
-    if (candidate == _candidates.end() || !Offers(data, leaf)) {
+    if (candidate == _candidates.end()) {
       return false;
     }
     _best = &*candidate;
@@ -528,10 +512,9 @@ class NumericEncoder : public State {
 
 template<typename Form, ByteCodec kLeaf>
 inline constexpr CompressionFunction kNumericFunction{
-  .analyze =
-    [](ColumnDataCheckpointData& data, double bound) {
-      return data.Get<Form>().Analyze(data, bound, kLeaf);
-    },
+  .analyze = [](
+               ColumnDataCheckpointData& data,
+               double bound) { return data.Get<Form>().Analyze(bound, kLeaf); },
   .compress =
     [](ColumnDataCheckpointData& data) {
       return data.Get<Form>().Compress(data, kLeaf);

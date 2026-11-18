@@ -700,9 +700,11 @@ void CompressionState::Pack(std::span<const duckdb::string_t> entries,
 namespace irs::codecs {
 
 constinit const Codec kOnPairCodec =
-  text::StringCodec<text::PlainScan<text::onpair::Scan>>();
+  text::StringCodec<text::PlainScan<text::onpair::Scan>,
+                    text::onpair::CompressionState>();
 
 constinit const Codec kDictOnPairCodec =
-  text::StringCodec<text::DictionaryScan<text::onpair::Scan>>();
+  text::StringCodec<text::DictionaryScan<text::onpair::Scan>,
+                    text::onpair::CompressionState>();
 
 }  // namespace irs::codecs

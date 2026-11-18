@@ -59,10 +59,12 @@ std::unique_ptr<zxc_cctx, ZxcFree> NewContext(uint8_t level) {
 }  // namespace
 
 constinit const Codec kZxcCodec =
-  text::StringCodec<text::PlainScan<text::blob::Scan<Zxc>>>();
+  text::StringCodec<text::PlainScan<text::blob::Scan<Zxc>>,
+                    text::blob::CompressionState<Zxc>>();
 
 constinit const Codec kDictZxcCodec =
-  text::StringCodec<text::DictionaryScan<text::blob::Scan<Zxc>>>();
+  text::StringCodec<text::DictionaryScan<text::blob::Scan<Zxc>>,
+                    text::blob::CompressionState<Zxc>>();
 
 Zxc::Compressor::Compressor(uint8_t level)
   : DictionaryCompressor{kDictionaryCap},

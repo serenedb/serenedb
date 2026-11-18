@@ -38,29 +38,66 @@ namespace {
 
 using duckdb::PhysicalType;
 
-constexpr CodecType kOrder[] = {
-  CodecType::Uncompressed, CodecType::Rle,          CodecType::Bitpacking,
-  CodecType::Alp,          CodecType::Alprd,        CodecType::Roaring,
-  CodecType::Ffor,         CodecType::DeltaFfor,    CodecType::RleFfor,
-  CodecType::DictFfor,     CodecType::Lz4,          CodecType::DeltaLz4,
-  CodecType::RleLz4,       CodecType::DictLz4,      CodecType::Zstd,
-  CodecType::DeltaZstd,    CodecType::RleZstd,      CodecType::DictZstd,
-  CodecType::Fsst,         CodecType::Zxc,          CodecType::FsstPlus,
-  CodecType::Onpair,       CodecType::Fsst12,       CodecType::DictFsst,
-  CodecType::DictZxc,      CodecType::DictFsstPlus, CodecType::DictOnpair,
-  CodecType::DictFsst12,
+constexpr CodecType kMerge[] = {
+  CodecType::Uncompressed, CodecType::Rle,       CodecType::Bitpacking,
+  CodecType::Roaring,      CodecType::Ffor,      CodecType::DeltaFfor,
+  CodecType::RleFfor,      CodecType::DictFfor,  CodecType::Lz4,
+  CodecType::DeltaLz4,     CodecType::RleLz4,    CodecType::DictLz4,
+  CodecType::Zstd,         CodecType::DeltaZstd, CodecType::RleZstd,
+  CodecType::DictZstd,
 };
 
+constexpr CodecType kFlush[] = {
+  CodecType::Uncompressed, CodecType::Rle,      CodecType::Bitpacking,
+  CodecType::Roaring,      CodecType::Ffor,     CodecType::DeltaFfor,
+  CodecType::RleFfor,      CodecType::DictFfor, CodecType::Lz4,
+  CodecType::DeltaLz4,     CodecType::RleLz4,   CodecType::DictLz4,
+};
+
+constexpr CodecType kFloat[] = {
+  CodecType::Uncompressed, CodecType::Rle,      CodecType::Alp,
+  CodecType::Alprd,        CodecType::Ffor,     CodecType::DeltaFfor,
+  CodecType::RleFfor,      CodecType::DictFfor,
+};
+
+constexpr CodecType kText[] = {
+  CodecType::Uncompressed, CodecType::DictFsst, CodecType::DictLz4,
+  CodecType::Fsst,         CodecType::Lz4,
+};
+
+struct Orders {
+  std::span<const CodecType> flush;
+  std::span<const CodecType> merge;
+};
+
+constexpr Orders kOrders{.flush = kFlush, .merge = kMerge};
+constexpr Orders kFloatOrders{.flush = kFloat, .merge = kFloat};
+constexpr Orders kTextOrders{.flush = kText, .merge = kText};
+
+const Orders& OrdersOf(PhysicalType physical) noexcept {
+  switch (physical) {
+    case PhysicalType::VARCHAR:
+      return kTextOrders;
+    case PhysicalType::FLOAT:
+    case PhysicalType::DOUBLE:
+      return kFloatOrders;
+    default:
+      return kOrders;
+  }
+}
+
 static_assert([] {
-  std::array<int, magic_enum::enum_count<CodecType>()> listed{};
-  for (const auto type : kOrder) {
-    ++listed[std::to_underlying(type)];
+  std::array<bool, magic_enum::enum_count<CodecType>()> listed{};
+  for (const auto order : {kOrders.merge, kFloatOrders.merge}) {
+    for (const auto type : order) {
+      listed[std::to_underlying(type)] = true;
+    }
   }
   for (const auto type : magic_enum::enum_values<CodecType>()) {
-    const bool contested = type != CodecType::Auto &&
-                           type != CodecType::Constant &&
-                           type != CodecType::Empty;
-    if (listed[std::to_underlying(type)] != (contested ? 1 : 0)) {
+    const bool contested =
+      type != CodecType::Auto && type != CodecType::Constant &&
+      type != CodecType::Empty && (!IsText(type) || IsNumeric(type));
+    if (listed[std::to_underlying(type)] != contested) {
       return false;
     }
   }
@@ -93,11 +130,20 @@ void Decide(std::span<const Contender> contenders,
             ColumnDataCheckpointData& data) {
   Estimate best;
   const CompressionFunction* winner = nullptr;
-  for (const auto& [function, codecs] : contenders) {
+  const auto analyze = [&](const CompressionFunction* function) {
     if (const auto estimate = function->analyze(data, best.score);
         estimate.score < best.score) {
       best = estimate;
       winner = function;
+    }
+  };
+  const auto* held = FunctionOf(contenders, data.tuning.reuse.pick);
+  if (held) {
+    analyze(held);
+  }
+  for (const auto& [function, codecs] : contenders) {
+    if (function != held) {
+      analyze(function);
     }
   }
   const auto written = data.written;
@@ -119,8 +165,10 @@ bool CompressAuto(ColumnDataCheckpointData& data) {
     return true;
   }
   const auto physical = data.type.InternalType();
-  absl::InlinedVector<Contender, std::size(kOrder)> contenders;
-  for (const auto type : kOrder) {
+  absl::InlinedVector<Contender, std::size(kMerge)> contenders;
+  const auto& orders = OrdersOf(physical);
+  for (const auto type :
+       data.params.tier == WriteTier::Flush ? orders.flush : orders.merge) {
     if (data.disabled.test(std::to_underlying(type))) {
       continue;
     }

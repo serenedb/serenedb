@@ -124,6 +124,8 @@ TEST(TextEncoding, NamesTheCharacterLatin1CannotHold) {
     ErrorOf([] { Encode(TextEncoding::Latin1, "\xF0\x9F\x98\x80", 1); }),
     "character with byte sequence 0xf0 0x9f 0x98 0x80 in encoding "
     "\"UTF8\" has no equivalent in encoding \"LATIN1\"");
+  EXPECT_EQ(ErrorOf([] { Encode(TextEncoding::Latin1, "ab\x80", 64); }),
+            "invalid byte sequence for encoding \"UTF8\": 0x80");
 }
 
 TEST(TextEncoding, RefusesInvalidUnits) {

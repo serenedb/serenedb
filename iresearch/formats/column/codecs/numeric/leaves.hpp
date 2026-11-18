@@ -34,6 +34,8 @@ inline constexpr uint8_t kLeafLevel = 1;
 
 class Leaves final : public State {
  public:
+  static constexpr StateId kId = StateId::NumericLeaves;
+
   explicit Leaves(ColumnDataCheckpointData& data)
     : _level{data.method != CodecType::Auto && data.params.compression_level
                ? data.params.compression_level

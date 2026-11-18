@@ -1716,6 +1716,8 @@ void EncodeChunks(ColumnDataCheckpointData& checkpoint_data,
 
 template<duckdb::PhysicalType kPhysical>
 struct Containers final : State {
+  static constexpr StateId kId = StateId::RoaringContainers;
+
   explicit Containers(ColumnDataCheckpointData& data) {
     CountContainers<kPhysical>(state, data.chunks);
   }

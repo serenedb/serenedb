@@ -33,6 +33,8 @@ namespace irs::codecs::text {
 
 class Strings final : public State {
  public:
+  static constexpr StateId kId = StateId::Strings;
+
   explicit Strings(ColumnDataCheckpointData& data);
 
   Estimate Analyze(ColumnDataCheckpointData& data);

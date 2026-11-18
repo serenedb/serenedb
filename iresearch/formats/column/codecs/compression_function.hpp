@@ -23,6 +23,7 @@
 #include <absl/functional/function_ref.h>
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <duckdb/common/enums/scan_vector_type.hpp>
 #include <duckdb/common/insertion_order_preserving_map.hpp>
@@ -114,6 +115,17 @@ using FlushSegmentFn =
   absl::FunctionRef<void(const Codec& codec, duckdb::BaseStatistics stats,
                          uint64_t rows, std::string_view bytes)>;
 
+enum class StateId : uint8_t {
+  NumericValues,
+  NumericLeaves,
+  PlainEncoder,
+  DeltaEncoder,
+  RunsEncoder,
+  DictionaryEncoder,
+  RoaringContainers,
+  Strings,
+};
+
 struct State {
   virtual ~State() = default;
 };
@@ -124,22 +136,12 @@ struct ColumnDataCheckpointData {
 
   template<typename S>
   S& Get() {
-    for (auto& slot : states) {
-      if (slot.tag == &kTag<S>) {
-        return static_cast<S&>(*slot.state);
-      }
+    auto& state = states[std::to_underlying(S::kId)];
+    if (!state) {
+      state = std::make_unique<S>(*this);
     }
-    return static_cast<S&>(
-      *states.emplace_back(&kTag<S>, std::make_unique<S>(*this)).state);
+    return static_cast<S&>(*state);
   }
-
-  struct Slot {
-    const void* tag;
-    std::unique_ptr<State> state;
-  };
-
-  template<typename S>
-  static inline char kTag = 0;
 
   const duckdb::LogicalType& type;
   std::span<const WriteChunk> chunks;
@@ -153,7 +155,7 @@ struct ColumnDataCheckpointData {
   uint64_t rows = 0;
   uint64_t raw_input = 0;
   uint64_t written = 0;
-  std::vector<Slot> states;
+  std::array<std::unique_ptr<State>, magic_enum::enum_count<StateId>()> states;
 };
 
 struct Estimate {

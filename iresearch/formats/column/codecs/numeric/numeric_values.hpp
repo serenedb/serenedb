@@ -43,6 +43,8 @@ namespace irs::codecs {
 template<typename T>
 class Values final : public State {
  public:
+  static constexpr StateId kId = StateId::NumericValues;
+
   using U = numeric::Bits<sizeof(T)>;
   static constexpr uint8_t kWidth = sizeof(T);
 

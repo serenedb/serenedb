@@ -40,6 +40,7 @@ class RunsEncoder final : public NumericEncoder<T> {
 
  public:
   static constexpr Shape kShape = Shape::Runs;
+  static constexpr StateId kId = StateId::RunsEncoder;
 
   explicit RunsEncoder(ColumnDataCheckpointData& data)
     : Base{data, kShape}, _min_packed_run{data.min_packed_run} {}

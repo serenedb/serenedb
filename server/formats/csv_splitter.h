@@ -27,6 +27,7 @@
 #include <vector>
 
 #include "formats/field_columns.h"
+#include "formats/lexed_rows.h"
 
 namespace sdb::formats {
 
@@ -66,15 +67,15 @@ class CsvSplitter {
   const CsvDialect& Dialect() const noexcept { return _dialect; }
 
  private:
-  CsvRows SplitSimd(std::string_view bytes, size_t& pos, size_t max_rows);
-  CsvRows SplitScalar(std::string_view bytes, size_t& pos, size_t max_rows);
   void AddField(size_t column, size_t row, std::string_view field,
                 uint8_t flags);
   void FinishRow(size_t columns_seen, size_t row);
+  uint8_t FieldFlags(std::string_view field, bool flagged) const noexcept;
 
   const CsvDialect _dialect;
   const size_t _columns;
   const size_t _capacity;
+  LexedRows _rows;
   std::vector<std::string_view> _fields;
   std::vector<uint8_t> _flags;
   std::vector<uint32_t> _offsets;
@@ -89,10 +90,10 @@ struct CsvQuoteState {
 bool CsvQuoteParity(std::string_view bytes, char quote) noexcept;
 
 size_t CsvRecordEnd(std::string_view bytes, size_t from,
-                    const CsvDialect& dialect, CsvQuoteState& state) noexcept;
+                    const CsvDialect& dialect, CsvQuoteState& state);
 
 size_t CsvLastRecordEnd(std::string_view bytes, const CsvDialect& dialect,
-                        CsvQuoteState& state) noexcept;
+                        CsvQuoteState& state);
 
 std::string_view UnquoteCsv(std::string_view raw, const CsvDialect& dialect,
                             char* out);

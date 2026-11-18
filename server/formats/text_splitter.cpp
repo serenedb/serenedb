@@ -23,24 +23,13 @@
 #include <fast_float/fast_float.h>
 
 #include <algorithm>
-#include <array>
-#include <bit>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
-#include "formats/structural.h"
 #include "pg/copy_batch_builder.h"
 
 namespace sdb::formats {
 namespace {
-
-IRS_FORCE_INLINE uint64_t BitsFrom(size_t from) noexcept {
-  return from >= 64 ? 0 : ~uint64_t{0} << from;
-}
-
-IRS_FORCE_INLINE uint64_t BitsBelow(size_t to) noexcept {
-  return to >= 64 ? ~uint64_t{0} : (uint64_t{1} << to) - 1;
-}
 
 RowError BadRow(std::string_view bytes, size_t row_start, size_t fields,
                 size_t columns) {
@@ -62,9 +51,9 @@ RowError BadRow(std::string_view bytes, size_t row_start, size_t fields,
 }  // namespace
 
 TextSplitter::TextSplitter(char delimiter, size_t columns, size_t capacity)
-  : _delimiter{delimiter},
-    _columns{columns},
+  : _columns{columns},
     _capacity{capacity},
+    _rows{duckdb::RowDialect::PostgresText(delimiter), columns},
     _fields(columns * capacity) {}
 
 void TextSplitter::AddField(size_t column, size_t row, std::string_view field,
@@ -81,106 +70,37 @@ TextRows TextSplitter::Split(std::string_view bytes, size_t& pos,
   _escaped.clear();
   TextRows result;
   const char* const data = bytes.data();
-  const size_t size = bytes.size();
-  const std::array<char, 3> chars{_delimiter, '\n', '\\'};
-  EscapeScanner scanner;
-  size_t column = 0;
-  size_t field_start = pos;
-  size_t row_start = pos;
-  bool field_backslash = false;
-  uint64_t prev_escaped = 0;
-  size_t last_block = pos;
-  const auto escaped_at = [&](size_t block, uint64_t escaped, size_t at) {
-    return at >= block ? ((escaped >> (at - block)) & 1) != 0
-                       : (prev_escaped >> 63) != 0;
-  };
-  const auto fail = [&](size_t fields) {
-    result.error = BadRow(bytes, row_start, fields, _columns);
-    result.fields = fields;
-    result.row_start = row_start;
-    while (!_escaped.empty() && _escaped.back() % _capacity >= result.rows) {
-      _escaped.pop_back();
-    }
-    return true;
-  };
-  const auto add_field = [&](size_t end) {
-    if (column == _columns) {
-      return fail(column + 1);
-    }
-    AddField(column, result.rows, {data + field_start, end - field_start},
-             field_backslash);
-    ++column;
-    return false;
-  };
-  const auto finish_row = [&](size_t row_end) {
-    if (column == 1 && Column(0, result.rows + 1)[result.rows] == "\\.") {
-      if (!_escaped.empty() && _escaped.back() == result.rows) {
-        _escaped.pop_back();
-      }
+  _rows.Prepare(bytes, pos, max_rows);
+  size_t row = 0;
+  for (; row < _rows.Rows() && result.rows < max_rows; ++row) {
+    const auto first = _rows.FirstField(row);
+    const auto fields = _rows.LastField(row) - first;
+    const auto row_start = _rows.RowStart(row);
+    if (fields == 1 &&
+        std::string_view{data + row_start, _rows.FieldEnd(first) - row_start} ==
+          "\\.") {
       result.marker = true;
-      pos = row_end;
-      return true;
-    }
-    if (column != _columns) {
-      return fail(column);
-    }
-    column = 0;
-    row_start = row_end;
-    ++result.rows;
-    if (result.rows == max_rows) {
-      pos = row_end;
-      return true;
-    }
-    return false;
-  };
-  for (size_t block = pos; block < size; block += kBlockBytes) {
-    const size_t len = std::min(kBlockBytes, size - block);
-    const auto masks = len == kBlockBytes ? MatchBlock(data + block, chars)
-                                          : MatchTail(data + block, len, chars);
-    const auto [delim, lf, backslash] = masks.masks;
-    const auto escaped = scanner.Next(backslash);
-    auto structural = (delim | lf) & ~escaped;
-    while (structural) {
-      const auto bit = static_cast<size_t>(std::countr_zero(structural));
-      structural &= structural - 1;
-      const size_t at = block + bit;
-      if (!field_backslash) {
-        const size_t from = field_start > block ? field_start - block : 0;
-        field_backslash = (backslash & BitsFrom(from) & BitsBelow(bit)) != 0;
-      }
-      const bool row_end = ((lf >> bit) & 1) != 0;
-      size_t end = at;
-      if (row_end && end > field_start && data[end - 1] == '\r' &&
-          !escaped_at(block, escaped, end - 1)) {
-        --end;
-      }
-      if (add_field(end)) {
-        return result;
-      }
-      field_start = at + 1;
-      field_backslash = false;
-      if (row_end && finish_row(at + 1)) {
-        return result;
-      }
-    }
-    if (field_start < block + len) {
-      const size_t from = field_start > block ? field_start - block : 0;
-      field_backslash |= (backslash & BitsFrom(from) & BitsBelow(len)) != 0;
-    }
-    prev_escaped = escaped;
-    last_block = block;
-  }
-  if (field_start < size || column != 0) {
-    size_t end = size;
-    if (end > field_start && data[end - 1] == '\r' &&
-        !((prev_escaped >> (size - 1 - last_block)) & 1)) {
-      --end;
-    }
-    if (add_field(end) || finish_row(size)) {
+      pos = _rows.After(row);
+      _rows.Consume(row + 1);
       return result;
     }
+    if (fields != _columns) {
+      result.error = BadRow(bytes, row_start, fields, _columns);
+      result.fields = fields;
+      result.row_start = row_start;
+      return result;
+    }
+    for (size_t column = 0; column < fields; ++column) {
+      const auto index = first + column;
+      const auto begin = _rows.FieldBegin(row, index);
+      AddField(column, result.rows,
+               {data + begin, _rows.FieldEnd(index) - begin},
+               _rows.Flagged(index));
+    }
+    ++result.rows;
   }
-  pos = size;
+  pos = row != 0 ? _rows.After(row - 1) : bytes.size();
+  _rows.Consume(row);
   return result;
 }
 

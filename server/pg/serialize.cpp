@@ -53,6 +53,7 @@
 #include <duckdb/common/types/timestamp.hpp>
 #include <duckdb/common/types/uhugeint.hpp>
 #include <duckdb/common/types/uuid.hpp>
+#include <duckdb/formats/csv_simd.hpp>
 #include <duckdb/inet/inet_ipaddress.hpp>
 #include <icu-helpers.hpp>
 #include <icu-zone-lut.hpp>
@@ -70,7 +71,6 @@
 #include <utility>
 
 #include "connector/functions/ts_query_codec.h"
-#include "formats/structural.h"
 #include "pg/catalog/functions/pg_catalog/regproc.h"
 #include "pg/catalog/utils/session.h"
 #include "pg/connection_context.h"
@@ -2183,18 +2183,24 @@ bool CsvScanNeeded(const SerializationContext& context) {
 }
 
 bool HasCsvSpecial(std::string_view field, char delim, char quote) {
-  const std::array<char, 4> chars{delim, quote, '\n', '\r'};
-  const auto any = [](const formats::BlockMasks<4>& m) {
-    return (m.masks[0] | m.masks[1] | m.masks[2] | m.masks[3]) != 0;
+  const auto special = [&](const duckdb::CsvVector& block) {
+    return block.Equal(delim) | block.Equal(quote) | block.Equal('\n') |
+           block.Equal('\r');
   };
+  constexpr size_t kBlock = duckdb::CSV_BLOCK_BYTES;
   size_t i = 0;
-  for (; i + formats::kBlockBytes <= field.size(); i += formats::kBlockBytes) {
-    if (any(formats::MatchBlock(field.data() + i, chars))) {
+  for (; i + kBlock <= field.size(); i += kBlock) {
+    if (special(duckdb::CsvVector{field.data() + i})) {
       return true;
     }
   }
-  return i != field.size() &&
-         any(formats::MatchTail(field.data() + i, field.size() - i, chars));
+  if (i == field.size()) {
+    return false;
+  }
+  char padded[kBlock] = {};
+  std::memcpy(padded, field.data() + i, field.size() - i);
+  const uint64_t valid = (uint64_t{1} << (field.size() - i)) - 1;
+  return (special(duckdb::CsvVector{padded}) & valid) != 0;
 }
 
 bool CsvNeedsQuotes(const SerializationContext& ctx, std::string_view field) {

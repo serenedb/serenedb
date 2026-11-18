@@ -202,11 +202,27 @@ To configure the page size of Parquet file's dictionary pages, use the `STRING_D
 
 <SqlLogicTest id="data_import_and_export/parquet/overview/example_034" />
 
-SereneDB's `EXPORT` command can be used to export an entire database to a series of Parquet files. See the [“`EXPORT` statement” page](../../sql/statements/export_and_import_database/index.md) for more details:
+SereneDB's `EXPORT` command can be used to export an entire database to a series of Parquet files. See the [`EXPORT` statement page](../../sql/statements/export_and_import_database/index.md) for more details:
 
 Export the table contents of the entire database as Parquet:
 
 <SqlLogicTest id="data_import_and_export/parquet/overview/example_035" />
+
+Over the PostgreSQL wire protocol, `COPY ... TO STDOUT (FORMAT parquet)` sends a whole Parquet file to the client. A Parquet file cannot be loaded from `STDIN`, because a reader needs its footer, which comes last; see [`STDIN` and `STDOUT`](../../sql/statements/copy/index.md#stdin-and-stdout).
+
+## PostgreSQL Types
+
+`COPY ... TO` writes a column as the Parquet type that holds its values: an array becomes a list, a record (a composite type) a struct, and `numeric` a decimal. A PostgreSQL type that Parquet has no type for is written as its text, the text a cast to `text` gives: the `reg*` types such as `regclass` and `regtype`, `tid`, `pg_lsn`, `macaddr`, `macaddr8`, `money`, the range and multirange types, and the geometric types `point`, `line`, `lseg`, `box`, `path`, `polygon` and `circle`. These types are written as text inside arrays and records too, so a `macaddr[]` column becomes a list of strings, and [Arrow](../arrow/overview.md) files hold them the same way. A Parquet file also holds `inet` and `cidr` values as text, such as `10.0.0.0/8`.
+
+<SqlLogicTest id="data_import_and_export/parquet/overview/pg_types_write" />
+
+Reading such a file gives text columns. `COPY ... FROM` loads them back into columns of the original types, and converts each value as a cast from text does:
+
+<SqlLogicTest id="data_import_and_export/parquet/overview/pg_types_read_back" />
+
+Text that is not a valid value of the column's type fails the `COPY` with the error of that type:
+
+<SqlLogicTest id="data_import_and_export/parquet/overview/pg_types_invalid" />
 
 ## Encryption
 
@@ -214,4 +230,4 @@ SereneDB supports reading and writing [encrypted Parquet files](./encryption.md)
 
 ## Supported Features
 
-The list of supported Parquet features is available in the [Parquet documentation's “Implementation status” page](https://parquet.apache.org/docs/file-format/implementationstatus/).
+The list of supported Parquet features is available in the [Implementation status page of the Parquet documentation](https://parquet.apache.org/docs/file-format/implementationstatus/).

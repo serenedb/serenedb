@@ -79,6 +79,11 @@ void ByTerm::DescribeStats(const PrepareCollector* collector,
   }
 }
 
+void ByTerm::DescribeTerms(const SubReader& segment,
+                           explain::TermNames& out) const {
+  explain::DescribeTerms(*this, segment, field_id(), dict(), out);
+}
+
 TermPredicate::ptr ByTerm::CompileTermPredicate() const {
   return MakeTermPredicate(TermAcceptor{options().term});
 }

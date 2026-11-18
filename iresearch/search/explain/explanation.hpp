@@ -21,6 +21,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -60,5 +61,12 @@ inline Node& AddDetail(Node& parent, std::string_view key, Value value,
     .description = std::move(description),
   });
 }
+
+class Explainer {
+ public:
+  virtual ~Explainer() = default;
+
+  virtual Node Explain(doc_id_t doc, std::optional<score_t> returned) = 0;
+};
 
 }  // namespace irs::explain

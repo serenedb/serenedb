@@ -5,6 +5,7 @@ target_sources(
         primary_key.cpp
         row_position_deduplicator.cpp
         explain_output.cpp
+        vector_explain.cpp
         offsets_collector.cpp
         search_sink_rows.cpp
         search_sink_writer.cpp

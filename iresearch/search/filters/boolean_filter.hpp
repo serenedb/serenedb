@@ -186,6 +186,9 @@ class BooleanFilter final : public FilterWithType<BooleanFilter> {
   void DescribeStats(const PrepareCollector* collector,
                      explain::StatsIndex& out) const final;
 
+  void DescribeTerms(const SubReader& segment,
+                     explain::TermNames& out) const final;
+
  protected:
   PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer,
                                           StatsArena& stats,

@@ -80,6 +80,11 @@ void AutomatonFilter::DescribeStats(const PrepareCollector* collector,
   explain::DescribeMultiTerm(collector, field_id(), out);
 }
 
+void AutomatonFilter::DescribeTerms(const SubReader& segment,
+                                    explain::TermNames& out) const {
+  explain::DescribeTerms(*this, segment, field_id(), dict(), out);
+}
+
 TermPredicate::ptr AutomatonFilter::CompileTermPredicate() const {
   if (!options().source) {
     return nullptr;

@@ -728,6 +728,14 @@ void ByPhrase::DescribeStats(const PrepareCollector* collector,
   out.Add(slots.Record().stats, std::move(stats));
 }
 
+void ByPhrase::DescribeTerms(const SubReader& segment,
+                             explain::TermNames& out) const {
+  for (const auto& word : options()) {
+    PartFilter(field_id(), dict(), word.part, false)
+      ->DescribeTerms(segment, out);
+  }
+}
+
 Filter::ptr PartFilter(field_id field, DictRef dict,
                        ByPhraseOptions::PhrasePart part, bool max_synonyms) {
   return std::visit(

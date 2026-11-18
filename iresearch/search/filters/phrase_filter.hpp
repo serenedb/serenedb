@@ -198,6 +198,9 @@ class ByPhrase : public FilterWithField<ByPhraseOptions> {
 
   void DescribeStats(const PrepareCollector* collector,
                      explain::StatsIndex& out) const final;
+
+  void DescribeTerms(const SubReader& segment,
+                     explain::TermNames& out) const final;
 };
 
 Filter::ptr PartFilter(field_id field, DictRef dict,

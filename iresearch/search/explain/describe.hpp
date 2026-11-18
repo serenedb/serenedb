@@ -24,7 +24,9 @@
 
 #include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/detail/multiterm_collector.hpp"
+#include "iresearch/search/explain/names.hpp"
 #include "iresearch/search/explain/stats.hpp"
+#include "iresearch/search/filters/filter.hpp"
 #include "iresearch/utils/down_cast.hpp"
 
 namespace irs::explain {
@@ -87,8 +89,20 @@ inline void DescribeBlended(const PrepareCollector* collector, field_id field,
   }
   const auto& terms = utils::downCast<BlendedTermsCollector>(*collector);
   auto stats = FieldStats(terms, field);
+  stats.blended = true;
   stats.terms.push_back(TermOf({}, terms.Blended()));
   out.Add(terms.Record().stats, std::move(stats));
+}
+
+inline void DescribeTerms(const Filter& filter, const SubReader& segment,
+                          field_id field, DictRef dict, TermNames& out) {
+  const auto* reader = segment.field(field, dict);
+  if (!reader) {
+    return;
+  }
+  if (auto terms = filter.CompileTermIterator(*reader)) {
+    out.AddAll(*reader, *terms);
+  }
 }
 
 }  // namespace irs::explain

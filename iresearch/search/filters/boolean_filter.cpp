@@ -401,6 +401,28 @@ void BooleanFilter::DescribeStats(const PrepareCollector* collector,
     });
 }
 
+void BooleanFilter::DescribeTerms(const SubReader& segment,
+                                  explain::TermNames& out) const {
+  for (const auto occur : {Occur::Must, Occur::Should}) {
+    const TermClause* opened = nullptr;
+    const TermReader* reader = nullptr;
+    SeekTermIterator::ptr terms;
+    for (const auto& clause : Terms(occur)) {
+      if (!opened || !SameField(*opened, clause)) {
+        opened = &clause;
+        reader = segment.field(clause.field, clause.dict);
+        terms = reader ? reader->iterator() : SeekTermIterator::ptr{};
+      }
+      if (terms && terms->seek(clause.term)) {
+        out.Add(*reader, terms->cookie(), clause.term);
+      }
+    }
+    for (const auto& child : Filters(occur)) {
+      child->DescribeTerms(segment, out);
+    }
+  }
+}
+
 QueryBuilder::ptr BooleanFilter::PrepareSegment(
   const SubReader& segment, const PrepareContext& ctx) const {
   SDB_ASSERT(Valid());

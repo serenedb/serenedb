@@ -158,8 +158,7 @@ void DFI::Explain(const ScoreContext& ctx, const explain::SlotStats* stats,
     return;
   }
   explain::AddBoost(out, ctx.boost);
-  explain::AddCollectionShare(
-    out, "p", "p, the term's share of all text in the column", ratio, stats);
+  explain::AddCollectionShare(out, ratio, stats);
   const auto freq = explain::AddFreq(out, ctx);
   auto& expected = explain::AddDetail(
     out, "expected", score_t{0},

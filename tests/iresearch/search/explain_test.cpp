@@ -19,11 +19,14 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/algorithm/container.h>
+#include <absl/strings/str_cat.h>
 
 #include <iresearch/search/explain/explanation.hpp>
+#include <iresearch/search/explain/names.hpp>
 #include <iresearch/search/explain/plan.hpp>
 #include <iresearch/search/explain/stats.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/levenshtein_filter.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/search/filters/prefix_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
@@ -183,7 +186,9 @@ class ExplainTest : public IndexTestBase {
       if (!query) {
         continue;
       }
-      irs::explain::Plan plan{*query, scorer, stats};
+      irs::explain::TermNames names;
+      filter.DescribeTerms(query->Segment(), names);
+      irs::explain::Plan plan{*query, scorer, stats, names};
       for (const auto& row : rows) {
         if (row.segment != segment) {
           continue;
@@ -296,32 +301,96 @@ TEST_P(ExplainTest, phrase_sums_the_idf_of_its_terms) {
 TEST_P(ExplainTest, prefix_names_each_expanded_term) {
   BuildFixture();
   irs::BM25 bm25;
+  const auto expanded = [&](const irs::ByPrefix& filter) {
+    const auto rows = Explain(filter, bm25, 1e-5f);
+    EXPECT_EQ(1u, rows.size());
+    std::vector<irs::bstring> terms;
+    for (const auto& row : rows) {
+      EXPECT_EQ("sum", row.key);
+      for (const auto& leaf : row.details) {
+        EXPECT_EQ(kBodyId, leaf.subject.field);
+        EXPECT_EQ(1u, leaf.subject.terms.size());
+        absl::c_copy(leaf.subject.terms, std::back_inserter(terms));
+      }
+    }
+    absl::c_sort(terms);
+    return terms;
+  };
+  const std::vector<irs::bstring> expected{Bytes("a"), Bytes("and")};
+
   irs::ByPrefix constant;
   *constant.mutable_field_id() = kBodyId;
   constant.mutable_options()->term = Bytes("a");
-  for (const auto& row : Explain(constant, bm25, 1e-5f)) {
-    ASSERT_EQ("sum", row.key);
-    ASSERT_EQ(2u, row.details.size());
-    for (const auto& leaf : row.details) {
-      EXPECT_EQ(kBodyId, leaf.subject.field);
-      EXPECT_TRUE(leaf.subject.terms.empty());
-    }
-  }
+  EXPECT_EQ(expected, expanded(constant));
 
   irs::ByPrefix scored;
   *scored.mutable_field_id() = kBodyId;
   scored.mutable_options()->term = Bytes("a");
   scored.SetScorer(&bm25);
-  const auto rows = Explain(scored, bm25, 1e-5f);
-  ASSERT_EQ(1u, rows.size());
-  ASSERT_EQ("sum", rows.front().key);
-  std::vector<irs::bstring> terms;
-  for (const auto& leaf : rows.front().details) {
-    ASSERT_EQ(1u, leaf.subject.terms.size());
-    terms.push_back(leaf.subject.terms.front());
+  EXPECT_EQ(expected, expanded(scored));
+}
+
+TEST_P(ExplainTest, an_unscored_clause_names_its_terms) {
+  BuildFixture();
+  irs::BM25 bm25;
+  irs::Unscored unscored;
+  irs::BooleanFilter filter;
+  filter.Add(irs::TermClause{.field = kBodyId, .term = Bytes("cat")},
+             irs::Occur::Should);
+  auto lazy = Term("lazy");
+  lazy->SetScorer(&unscored);
+  filter.Add(std::move(lazy), irs::Occur::Should);
+  auto phrase = Phrase({"brown", "dog"});
+  phrase->SetScorer(&unscored);
+  filter.Add(std::move(phrase), irs::Occur::Should);
+  filter.SetMinShouldMatch(1);
+  std::vector<std::string> named;
+  const auto collect = [&](this const auto& self,
+                           const irs::explain::Node& node) -> void {
+    if (node.key != "match") {
+      for (const auto& child : node.details) {
+        self(child);
+      }
+      return;
+    }
+    EXPECT_EQ(kBodyId, node.subject.field);
+    std::string label;
+    for (const auto& term : node.subject.terms) {
+      absl::StrAppend(&label, label.empty() ? "" : " ",
+                      irs::ViewCast<char>(irs::bytes_view{term}));
+    }
+    named.push_back(node.subject.phrase ? absl::StrCat("\"", label, "\"")
+                                        : label);
+  };
+  for (const auto& row : Explain(filter, bm25, 1e-5f)) {
+    collect(row);
   }
-  absl::c_sort(terms);
-  EXPECT_EQ((std::vector<irs::bstring>{Bytes("a"), Bytes("and")}), terms);
+  absl::c_sort(named);
+  named.erase(std::unique(named.begin(), named.end()), named.end());
+  EXPECT_EQ((std::vector<std::string>{"\"brown dog\"", "lazy"}), named);
+}
+
+TEST_P(ExplainTest, a_fuzzy_match_names_the_term_it_matched) {
+  BuildFixture();
+  irs::BM25 bm25;
+  irs::ByEditDistanceOptions options;
+  options.term = Bytes("quik");
+  options.max_distance = 1;
+  const auto filter =
+    irs::LowerLevenshtein(kBodyId, irs::DictRef{}, options, irs::kNoBoost);
+  ASSERT_NE(nullptr, filter);
+  const auto rows = Explain(*filter, bm25, 1e-5f);
+  ASSERT_EQ(3u, rows.size());
+  for (const auto& row : rows) {
+    const auto& leaf = row.key == "sum" ? row.details.front() : row;
+    ASSERT_EQ(1u, leaf.subject.terms.size());
+    EXPECT_EQ(Bytes("quick"), leaf.subject.terms.front());
+    const auto* idf = Child(leaf, "idf");
+    ASSERT_NE(nullptr, idf);
+    const auto* n = Child(*idf, "n");
+    ASSERT_NE(nullptr, n);
+    EXPECT_NE(std::string::npos, n->description.find("matched terms"));
+  }
 }
 
 TEST_P(ExplainTest, every_scorer_matches_execution) {
@@ -412,7 +481,9 @@ TEST_P(ExplainTest, rows_in_any_order_are_explained) {
   filter->DescribeStats(prepared.Collector(), stats);
   const auto rows = Execute(prepared);
   for (size_t segment = 0; segment != prepared.size(); ++segment) {
-    irs::explain::Plan plan{*prepared.Query(segment), bm25, stats};
+    irs::explain::TermNames names;
+    filter->DescribeTerms(prepared.Query(segment)->Segment(), names);
+    irs::explain::Plan plan{*prepared.Query(segment), bm25, stats, names};
     for (auto it = rows.rbegin(); it != rows.rend(); ++it) {
       if (it->segment != segment) {
         continue;

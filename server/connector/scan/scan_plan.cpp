@@ -42,6 +42,7 @@
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/filter/table_filter_functions.hpp>
 #include <duckdb/planner/table_filter_set.hpp>
+#include <iresearch/search/explain/plan.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -54,6 +55,7 @@
 #include "connector/scan/deferred_check.h"
 #include "connector/scan/scan_state.h"
 #include "connector/term_dict.h"
+#include "connector/vector_explain.h"
 
 namespace sdb::connector {
 namespace {
@@ -865,6 +867,20 @@ void WriteChunkOffsets(FetchLocalState& f, const ScanGlobalState& g,
   }
 }
 
+std::unique_ptr<irs::explain::Explainer> MakeExplainer(const ScanGlobalState& g,
+                                                       uint32_t seg) {
+  if (const auto* vs = g.vector_scorer) {
+    return std::make_unique<DistanceExplainer>(
+      (*g.reader)[seg], *vs, g.Bind().DisplayColumnName(vs->field_id));
+  }
+  const auto& seg_query = g.queries[seg];
+  SDB_ASSERT(seg_query && g.scorer_obj);
+  irs::explain::TermNames names;
+  g.filter->DescribeTerms(seg_query->Segment(), names);
+  return std::make_unique<irs::explain::Plan>(*seg_query, *g.scorer_obj,
+                                              g.explain_stats, names);
+}
+
 void WriteChunkExplain(FetchLocalState& f, const ScanGlobalState& g,
                        uint32_t seg, std::span<const irs::doc_id_t> docs,
                        const duckdb::Vector* scores,
@@ -873,18 +889,16 @@ void WriteChunkExplain(FetchLocalState& f, const ScanGlobalState& g,
     return;
   }
   if (seg != f.explain_seg) {
-    const auto& seg_query = g.queries[seg];
-    SDB_ASSERT(seg_query && g.scorer_obj);
-    f.explain_plan.emplace(*seg_query, *g.scorer_obj, g.explain_stats);
+    f.explainer = MakeExplainer(g, seg);
     f.explain_seg = seg;
   }
-  const auto* executed =
+  const auto* returned =
     scores ? duckdb::FlatVector::GetData<irs::score_t>(*scores) : nullptr;
   f.explain_rows.clear();
   for (size_t i = 0; i < docs.size(); ++i) {
-    f.explain_rows.push_back(f.explain_plan->Explain(
+    f.explain_rows.push_back(f.explainer->Explain(
       docs[i],
-      executed ? std::optional<irs::score_t>{executed[i]} : std::nullopt));
+      returned ? std::optional<irs::score_t>{returned[i]} : std::nullopt));
   }
   WriteExplanations(f.explain_rows, ExplainLabels{g.Bind()},
                     output.data[g.explain_output_idx]);

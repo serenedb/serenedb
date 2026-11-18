@@ -92,7 +92,9 @@ void AddIdf(Node& out, score_t idf, const SlotStats* stats,
   }
   const auto add_counts = [&](Node& to, const TermStats& term) {
     AddDetail(to, "n", term.docs_with_term,
-              "n, number of rows containing the term");
+              stats->blended
+                ? "n, the most rows any one of the matched terms occurs in"
+                : "n, number of rows containing the term");
     AddDetail(to, "N", stats->docs_with_field,
               "N, number of rows with the column");
   };
@@ -112,15 +114,19 @@ void AddIdf(Node& out, score_t idf, const SlotStats* stats,
   }
 }
 
-void AddCollectionShare(Node& out, std::string_view key, std::string_view what,
-                        score_t value, const SlotStats* stats) {
-  auto& node = AddDetail(out, key, value, std::string{what});
+void AddCollectionShare(Node& out, score_t value, const SlotStats* stats) {
+  const bool blended = stats && stats->blended;
+  auto& node =
+    AddDetail(out, "p", value,
+              blended ? "p, the matched terms' share of all text in the column"
+                      : "p, the term's share of all text in the column");
   if (!stats || stats->terms.size() != 1) {
     return;
   }
   absl::StrAppend(&node.description, ", computed as (ttf + 1) / (L + 1) from:");
   AddDetail(node, "ttf", stats->terms.front().total_term_freq,
-            "ttf, occurrences of the term over all rows");
+            blended ? "ttf, occurrences of all the matched terms over all rows"
+                    : "ttf, occurrences of the term over all rows");
   AddDetail(node, "L", stats->total_term_freq,
             "L, total length of the column over all rows");
 }
@@ -135,8 +141,7 @@ void ExplainLanguageModel(const ScoreContext& ctx, score_t collection_share,
   }
   AddBoost(out, ctx.boost);
   out.details.push_back(std::move(parameter));
-  AddCollectionShare(out, "p", "p, the term's share of all text in the column",
-                     collection_share, stats);
+  AddCollectionShare(out, collection_share, stats);
   AddFreq(out, ctx);
   AddLength(out, ctx);
   out.description = absl::StrCat("computed as ", formula, " from:");

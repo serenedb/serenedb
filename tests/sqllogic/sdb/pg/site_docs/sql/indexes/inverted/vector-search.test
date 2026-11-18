@@ -37,6 +37,21 @@ id
 2
 3
 
+# DOCS_TEST: ts_explain
+
+# DOCS_TEST_BODY
+
+query
+SELECT id,
+       emb <-> [0, 0, 0]::FLOAT[3] AS distance,
+       ts_explain(l2_index.tableoid) AS why
+FROM l2_index
+ORDER BY emb <-> [0, 0, 0]::FLOAT[3]
+LIMIT 1;
+----
+id	distance	why
+3	75	{"value":75,"description":"l2_distance(emb, query) = sqrt(sum((emb[i] - query[i])^2)), found by an ivf search over sq8 codes","details":[{"value":75,"description":"exact, the distance computed from the row's stored vector","details":[]},{"value":3,"description":"dims, dimensions of the vectors","details":[]},{"value":1,"description":"k, the number of nearest rows the search returns","details":[]},{"value":2,"description":"rescore_width, how far a code score may be off and still be read again at full precision","details":[]}]}
+
 # DOCS_TEST: example_003
 
 statement ok

@@ -42,6 +42,7 @@
 #include "iresearch/search/detail/term_iterator.hpp"
 #include "iresearch/search/detail/term_predicate.hpp"
 #include "iresearch/search/docs/root.hpp"
+#include "iresearch/search/explain/names.hpp"
 #include "iresearch/search/explain/stats.hpp"
 #include "iresearch/search/fill/node.hpp"
 #include "iresearch/search/hits/root.hpp"
@@ -226,6 +227,8 @@ class Filter {
 
   virtual void DescribeStats(const PrepareCollector*,
                              explain::StatsIndex&) const {}
+
+  virtual void DescribeTerms(const SubReader&, explain::TermNames&) const {}
 
   virtual TypeInfo::type_id type() const noexcept = 0;
 

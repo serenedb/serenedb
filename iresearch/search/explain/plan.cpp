@@ -36,6 +36,8 @@
 #include "iresearch/search/probe/family.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
+#include "iresearch/search/queries/phrase_state.hpp"
+#include "iresearch/search/queries/prepared_state_visitor.hpp"
 #include "iresearch/search/queries/term_query.hpp"
 #include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/scorers/score_provider.hpp"
@@ -68,6 +70,50 @@ Subject SubjectOf(const StatsIndex& index, const byte_type* slot,
   }
   return {.field = field ? field->meta().id : field_limits::invalid()};
 }
+
+class PhraseNamer final : public PreparedStateVisitor {
+ public:
+  PhraseNamer(const TermNames& names, Subject& out) noexcept
+    : _names{names}, _out{out} {}
+
+  bool Visit(const BooleanQuery&, score_t) final { return false; }
+  bool Visit(const ByNestedQuery&, score_t) final { return false; }
+  bool Visit(const TermState&, score_t) final { return false; }
+  bool Visit(const MultiTermQuery&, const MultiTermState&, score_t) final {
+    return false;
+  }
+  bool Visit(const FixedPhraseQuery&, const PhraseState& state, score_t) final {
+    Name(state);
+    return false;
+  }
+  bool Visit(const VariadicPhraseQuery&, const PhraseState& state,
+             score_t) final {
+    Name(state);
+    return false;
+  }
+  bool Visit(const NGramSimilarityQuery&, const NGramState&, score_t) final {
+    return false;
+  }
+
+ private:
+  void Name(const PhraseState& state) {
+    if (!state.reader) {
+      return;
+    }
+    _out = {.field = state.reader->meta().id, .phrase = true};
+    for (const auto& meta : state.metas) {
+      const auto* name = _names.Find(*state.reader, meta);
+      if (!name) {
+        _out.terms.clear();
+        return;
+      }
+      _out.terms.push_back(*name);
+    }
+  }
+
+  const TermNames& _names;
+  Subject& _out;
+};
 
 struct Fallback {
   const SubReader* segment = nullptr;
@@ -254,9 +300,9 @@ class GroupPart final : public Part {
 
 class Builder {
  public:
-  Builder(const Scorer& scorer, const StatsIndex& stats,
+  Builder(const Scorer& scorer, const StatsIndex& stats, const TermNames& names,
           ColumnArgsFetcher& fetcher) noexcept
-    : _scorer{scorer}, _stats{stats}, _fetcher{fetcher} {}
+    : _scorer{scorer}, _stats{stats}, _names{names}, _fetcher{fetcher} {}
 
   std::unique_ptr<Part> Make(const QueryBuilder& query) {
     if (QueryBuilder::IsEmpty(query)) {
@@ -300,6 +346,12 @@ class Builder {
     if (meta.docs_count == 1 && with_freq) {
       fallback.freq = meta.freq;
     }
+    auto subject = SubjectOf(_stats, clause.stats.stats, field);
+    if (subject.terms.empty() && field) {
+      if (const auto* name = _names.Find(*field, meta)) {
+        subject.terms.push_back(*name);
+      }
+    }
     return std::make_unique<LeafPart>(
       [clause, segment = &segment, scoring = Scoring(),
        scored]() -> probe::Node::ptr {
@@ -314,18 +366,22 @@ class Builder {
           clause, *segment, probe::Family::DocsContext{.interrogations = 1},
           ScoreMergeType::Noop);
       },
-      _fetcher, _stats, SubjectOf(_stats, clause.stats.stats, field),
-      std::move(fallback));
+      _fetcher, _stats, std::move(subject), std::move(fallback));
   }
 
   std::unique_ptr<Part> MakeLeaf(const QueryBuilder& query) {
     const bool scored = query.Stats().stats != nullptr;
     const auto record = query.Stats(Scoring());
+    auto subject = SubjectOf(_stats, record.stats, nullptr);
+    if (subject.terms.empty()) {
+      PhraseNamer namer{_names, subject};
+      query.Visit(namer, kNoBoost);
+    }
     return std::make_unique<LeafPart>(
       [&query, scoring = Scoring(), scored] {
         return query.PlanProbe(scored ? scoring : detail::ScoredCtx{}, 1);
       },
-      _fetcher, _stats, SubjectOf(_stats, record.stats, nullptr),
+      _fetcher, _stats, std::move(subject),
       Fallback{
         .segment = &query.Segment(),
         .args =
@@ -386,6 +442,7 @@ class Builder {
 
   const Scorer& _scorer;
   const StatsIndex& _stats;
+  const TermNames& _names;
   ColumnArgsFetcher& _fetcher;
 };
 
@@ -397,8 +454,8 @@ bool AgreesWith(score_t explained, score_t executed) noexcept {
 }  // namespace
 
 Plan::Plan(const QueryBuilder& query, const Scorer& scorer,
-           const StatsIndex& stats)
-  : _root{Builder{scorer, stats, _fetcher}.Make(query)} {}
+           const StatsIndex& stats, const TermNames& names)
+  : _root{Builder{scorer, stats, names, _fetcher}.Make(query)} {}
 
 Node Plan::Explain(doc_id_t doc, std::optional<score_t> executed) {
   Node root;

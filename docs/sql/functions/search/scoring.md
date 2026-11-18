@@ -322,12 +322,32 @@ Each node of the explanation has three keys:
 | `details` | The nodes the value was computed from. |
 
 - The top node's `value` is the row's score, exactly as the scorer function returns it for that row.
-- A clause names the column and the term it matched: `weight(body:fox)`, `weight(body:"quick fox")` for a phrase.
-- Clauses combine with `sum of:` or `max of:`, following the query's [`::merge`](#merge) policy. Optional clauses that the row does not match are left out, and a clause excluded from scoring with [`::score(NULL)`](#score-modifier) shows as matching without scoring.
-- `n` is the number of rows containing a term and `N` the number of rows with the column; both, and the column's average length, count the whole index, as the scorer does.
+- A clause names the column and the term it matched: `weight(body:fox)`, `weight(body:"quick fox")` for a phrase, `weight(body:quick)` for each word a prefix, pattern, range or fuzzy match expanded to. A numeric range names only the column, as does a term in a column indexed without positions when another term of the query occurs in exactly the same rows, as often.
+- Clauses combine with `sum of:` or `max of:`, following the query's [`::merge`](#merge) policy. Optional clauses that the row does not match are left out, and a clause excluded from scoring with [`::score(NULL)`](#score-modifier) shows as matching without scoring: `match(body:dog)`.
+- `n` is the number of rows containing a term and `N` the number of rows with the column; both, and the column's average length, count the whole index, as the scorer does. A fuzzy match scores every word it matched with the same statistics, so its `n` is the most rows any one of those words occurs in.
 - Each node's value is computed separately, so the values listed under `sum of:` can differ from their total in the last digit.
 
-`ts_explain` is computed for every row the scan returns and costs about as much as running the query again for that row, so request it together with a `LIMIT`. It explains text scorers only: a query ranked by a vector distance raises an error, as does a query without a scorer function on the index.
+`ts_explain` is computed for every row the scan returns and costs about as much as running the query again for that row, so request it together with a `LIMIT`. A query without a scorer function or a vector distance on the index raises an error.
+
+### Vector distances {#ts_explain-vector}
+
+A query that ranks or filters by a distance to an indexed [vector column](../../indexes/inverted/vector-search.md) explains that distance: the function and its formula, how the row was found, and the parameters of the search:
+
+<SqlLogicTest id="sql/indexes/inverted/vector-search/ts_explain" />
+
+The top node's `value` is the distance the query returned for the row. Its details, each named by the first word of its `description`, are:
+
+| Detail | Meaning |
+| :--- | :--- |
+| `exact` | The distance computed from the row's stored vector. A search over quantized codes can return a different value when the row was not re-scored. Shown for an `ivf` or `hnsw` search. |
+| `dims` | The number of dimensions of the vectors. |
+| `k` | How many nearest rows the search returns, for a query with `ORDER BY` and `LIMIT`. |
+| `radius` | The distance the search compares with, for a range search. |
+| `nprobe` | The clusters an `ivf` search scans in each segment, when [`sdb_ivf_search_nprobe`](../../indexes/inverted/maintenance.md#session-settings) sets them. |
+| `ef_search` | The candidates an `hnsw` search keeps, from [`sdb_hnsw_ef_search`](../../indexes/inverted/maintenance.md#session-settings) or its default. |
+| `rescore_width` | For a quantized index, how far a candidate's code score may be off and still be read again at full precision: [`sdb_ann_rescore_width`](../../indexes/inverted/maintenance.md#session-settings) or the quantizer's default. |
+
+A distance computed from every row's stored vector, without `ORDER BY ... LIMIT` and without a radius, says so and lists only `dims`. A row whose vector is `NULL` gets a `null` value and no details.
 
 ## Top-K and WAND pruning {#top-k}
 

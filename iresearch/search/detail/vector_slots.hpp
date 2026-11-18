@@ -94,6 +94,11 @@ class VectorBlockReader {
   uint32_t _alignment;
 };
 
+inline bool MayHaveNullRows(const ColumnReader& column) {
+  return (column.HasValidity() || column.InMemory()) &&
+         column.MergedStatistics().CanHaveNull();
+}
+
 struct RawRecipe {
   const ColumnReader* column = nullptr;
   const ColReader* reader = nullptr;

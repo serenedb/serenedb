@@ -18,6 +18,7 @@ target_sources(
         docs/make_all.cpp
         docs/make_posting.cpp
         explain/factors.cpp
+        explain/names.cpp
         fill/make_all_docs.cpp
         fill/make_all_scored.cpp
         fill/make_posting.cpp

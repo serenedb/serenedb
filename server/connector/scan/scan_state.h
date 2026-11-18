@@ -41,7 +41,7 @@
 #include <iresearch/search/ann/collector.hpp>
 #include <iresearch/search/ann/shared_floor.hpp>
 #include <iresearch/search/detail/vector_slots.hpp>
-#include <iresearch/search/explain/plan.hpp>
+#include <iresearch/search/explain/explanation.hpp>
 #include <iresearch/search/explain/stats.hpp>
 #include <iresearch/search/filters/filter.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
@@ -447,7 +447,7 @@ struct FetchLocalState {
   std::vector<FieldEntry> offsets_entries;
   std::vector<highlight::HitRange> offsets_doc_scratch;
   uint32_t offsets_prepped_seg = std::numeric_limits<uint32_t>::max();
-  std::optional<irs::explain::Plan> explain_plan;
+  std::unique_ptr<irs::explain::Explainer> explainer;
   std::vector<irs::explain::Node> explain_rows;
   uint32_t explain_seg = std::numeric_limits<uint32_t>::max();
   std::shared_ptr<irs::IndexSource> index_source;

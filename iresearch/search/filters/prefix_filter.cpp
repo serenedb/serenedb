@@ -159,6 +159,11 @@ void ByPrefix::DescribeStats(const PrepareCollector* collector,
   explain::DescribeMultiTerm(collector, field_id(), out);
 }
 
+void ByPrefix::DescribeTerms(const SubReader& segment,
+                             explain::TermNames& out) const {
+  explain::DescribeTerms(*this, segment, field_id(), dict(), out);
+}
+
 void ByPrefix::visit(const SubReader& segment, const TermReader& reader,
                      const ByPrefixOptions& options, FilterVisitor& visitor) {
   ByPrefixIterator terms{reader, options.term};
@@ -207,6 +212,11 @@ PrepareCollector::ptr ByPrefixes::MakeCollectorImpl(const Scorer* scorer,
 void ByPrefixes::DescribeStats(const PrepareCollector* collector,
                                explain::StatsIndex& out) const {
   explain::DescribeMultiTerm(collector, field_id(), out);
+}
+
+void ByPrefixes::DescribeTerms(const SubReader& segment,
+                               explain::TermNames& out) const {
+  explain::DescribeTerms(*this, segment, field_id(), dict(), out);
 }
 
 TermPredicate::ptr ByPrefixes::CompileTermPredicate() const {

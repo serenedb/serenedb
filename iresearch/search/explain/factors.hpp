@@ -47,8 +47,7 @@ void AddAverageLength(Node& out, score_t value, const SlotStats* stats);
 void AddIdf(Node& out, score_t idf, const SlotStats* stats,
             std::string_view formula, IdfOf per_term);
 
-void AddCollectionShare(Node& out, std::string_view key, std::string_view what,
-                        score_t value, const SlotStats* stats);
+void AddCollectionShare(Node& out, score_t value, const SlotStats* stats);
 
 void ExplainLanguageModel(const ScoreContext& ctx, score_t collection_share,
                           const SlotStats* stats, Node parameter,

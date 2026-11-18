@@ -136,9 +136,41 @@ WHERE body @@ 'brown' OR (body @@ 'lazy')::score('constant(5)') OR (body @@ 'dog
 ORDER BY BM25(explain_idx.tableoid) DESC, id;
 ----
 id	why
-5	{"value":5,"description":"sum of:","details":[{"value":0,"description":"match(body) matches without scoring","details":[]},{"value":5,"description":"weight(body:lazy) [constant(value=5)], computed as boost * value from:","details":[{"value":5,"description":"value, the constant score","details":[]}]}]}
+5	{"value":5,"description":"sum of:","details":[{"value":0,"description":"match(body:dog) matches without scoring","details":[]},{"value":5,"description":"weight(body:lazy) [constant(value=5)], computed as boost * value from:","details":[{"value":5,"description":"value, the constant score","details":[]}]}]}
 1	{"value":0.45580956,"description":"sum of:","details":[{"value":0.45580956,"description":"weight(body:brown) [bm25(k1=1.2, b=0.75)], computed as boost * idf * tf from:","details":[{"value":0.87546873,"description":"idf, computed as log(1 + (N - n + 0.5) / (n + 0.5)) from:","details":[{"value":2,"description":"n, number of rows containing the term","details":[]},{"value":5,"description":"N, number of rows with the column","details":[]}]},{"value":0.52064633,"description":"tf, computed as freq / (freq + k1 * (1 - b + b * dl / avgdl)) from:","details":[{"value":1,"description":"freq, occurrences of the term in the row","details":[]},{"value":1.2,"description":"k1, term saturation parameter","details":[]},{"value":0.75,"description":"b, length normalization parameter","details":[]},{"value":4,"description":"dl, length of the column in the row","details":[]},{"value":5.8,"description":"avgdl, average length of the column, computed as L / N from:","details":[{"value":29,"description":"L, total length of the column over all rows","details":[]},{"value":5,"description":"N, number of rows with the column","details":[]}]}]}]}]}
-4	{"value":0.45580956,"description":"sum of:","details":[{"value":0.45580956,"description":"weight(body:brown) [bm25(k1=1.2, b=0.75)], computed as boost * idf * tf from:","details":[{"value":0.87546873,"description":"idf, computed as log(1 + (N - n + 0.5) / (n + 0.5)) from:","details":[{"value":2,"description":"n, number of rows containing the term","details":[]},{"value":5,"description":"N, number of rows with the column","details":[]}]},{"value":0.52064633,"description":"tf, computed as freq / (freq + k1 * (1 - b + b * dl / avgdl)) from:","details":[{"value":1,"description":"freq, occurrences of the term in the row","details":[]},{"value":1.2,"description":"k1, term saturation parameter","details":[]},{"value":0.75,"description":"b, length normalization parameter","details":[]},{"value":4,"description":"dl, length of the column in the row","details":[]},{"value":5.8,"description":"avgdl, average length of the column, computed as L / N from:","details":[{"value":29,"description":"L, total length of the column over all rows","details":[]},{"value":5,"description":"N, number of rows with the column","details":[]}]}]}]},{"value":0,"description":"match(body) matches without scoring","details":[]}]}
+4	{"value":0.45580956,"description":"sum of:","details":[{"value":0.45580956,"description":"weight(body:brown) [bm25(k1=1.2, b=0.75)], computed as boost * idf * tf from:","details":[{"value":0.87546873,"description":"idf, computed as log(1 + (N - n + 0.5) / (n + 0.5)) from:","details":[{"value":2,"description":"n, number of rows containing the term","details":[]},{"value":5,"description":"N, number of rows with the column","details":[]}]},{"value":0.52064633,"description":"tf, computed as freq / (freq + k1 * (1 - b + b * dl / avgdl)) from:","details":[{"value":1,"description":"freq, occurrences of the term in the row","details":[]},{"value":1.2,"description":"k1, term saturation parameter","details":[]},{"value":0.75,"description":"b, length normalization parameter","details":[]},{"value":4,"description":"dl, length of the column in the row","details":[]},{"value":5.8,"description":"avgdl, average length of the column, computed as L / N from:","details":[{"value":29,"description":"L, total length of the column over all rows","details":[]},{"value":5,"description":"N, number of rows with the column","details":[]}]}]}]},{"value":0,"description":"match(body:dog) matches without scoring","details":[]}]}
+
+query
+SELECT id, ts_explain(explain_idx.tableoid)->'details'->0->>'description' AS clause
+FROM explain_idx
+WHERE body @@ 'clever' OR (body @@ ts_phrase('lazy dog'))::score(NULL)
+ORDER BY BM25(explain_idx.tableoid) DESC, id;
+----
+id	clause
+3	weight(body:clever) [bm25(k1=1.2, b=0.75)], computed as boost * idf * tf from:
+5	match(body:"lazy dog") matches without scoring
+
+query
+SELECT id,
+       ts_explain(explain_idx.tableoid)->'details'->0->>'description' AS first,
+       ts_explain(explain_idx.tableoid)->'details'->1->>'description' AS second
+FROM explain_idx
+WHERE body @@ ts_starts_with('d')
+ORDER BY BM25(explain_idx.tableoid) DESC, id;
+----
+id	first	second
+5	weight(body:dog) [constant(value=1)], computed as boost * value from:	weight(body:day) [constant(value=1)], computed as boost * value from:
+4	weight(body:dog) [constant(value=1)], computed as boost * value from:	NULL
+
+query
+SELECT id, ts_explain(explain_idx.tableoid) AS why
+FROM explain_idx
+WHERE body @@ ts_levenshtein('quik', 1)
+ORDER BY BM25(explain_idx.tableoid) DESC, id
+LIMIT 1;
+----
+id	why
+1	{"value":0.3418572,"description":"weight(body:quick) [bm25(k1=1.2, b=0.75)], computed as boost * idf * tf from:","details":[{"value":0.75,"description":"boost, the query's weight for this clause","details":[]},{"value":0.87546873,"description":"idf, computed as log(1 + (N - n + 0.5) / (n + 0.5)) from:","details":[{"value":2,"description":"n, the most rows any one of the matched terms occurs in","details":[]},{"value":5,"description":"N, number of rows with the column","details":[]}]},{"value":0.52064633,"description":"tf, computed as freq / (freq + k1 * (1 - b + b * dl / avgdl)) from:","details":[{"value":1,"description":"freq, occurrences of the term in the row","details":[]},{"value":1.2,"description":"k1, term saturation parameter","details":[]},{"value":0.75,"description":"b, length normalization parameter","details":[]},{"value":4,"description":"dl, length of the column in the row","details":[]},{"value":5.8,"description":"avgdl, average length of the column, computed as L / N from:","details":[{"value":29,"description":"L, total length of the column over all rows","details":[]},{"value":5,"description":"N, number of rows with the column","details":[]}]}]}]}
 
 query
 SELECT id, ts_explain(explain_idx.tableoid)->>'description' AS description
@@ -206,13 +238,101 @@ SELECT ts_explain(1);
 db error: ERROR: ts_explain() requires an inverted index scan in the same sub-query
 
 
+query
+EXPLAIN SELECT id, ts_explain(explain_idx.tableoid)
+FROM explain_idx
+WHERE body @@ 'fox'
+ORDER BY BM25(explain_idx.tableoid) DESC
+LIMIT 1;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────╮
+│ Index: explain_idx                       │
+│ Lookup: search                           │
+│ Index Filter:                            │
+│ ╭─ Term ──────────────╮                  │
+│ │ Field: body(string) │                  │
+│ │ Value: fox          │                  │
+│ ╰─────────────────────╯                  │
+│ Score: bm25(k1=1.2, b=0.75), explained   │
+│ Top: 1                                   │
+│ Projections: id,                         │
+│              sdb_inverted_index_explain  │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
+
 statement ok
 CREATE INDEX explain_vec ON explain_docs USING inverted (id, emb ivf (metric = 'l2'));
 
-statement error
-SELECT id, ts_explain(explain_vec.tableoid)
+query
+SELECT id, emb <-> [1, 0.2]::FLOAT[2] AS distance, ts_explain(explain_vec.tableoid) AS why
 FROM explain_vec
-ORDER BY emb <-> [1, 0]::FLOAT[2]
+ORDER BY emb <-> [1, 0.2]::FLOAT[2]
+LIMIT 2;
+----
+id	distance	why
+1	0.2	{"value":0.2,"description":"l2_distance(emb, query) = sqrt(sum((emb[i] - query[i])^2)), found by an ivf search over sq8 codes","details":[{"value":0.2,"description":"exact, the distance computed from the row's stored vector","details":[]},{"value":2,"description":"dims, dimensions of the vectors","details":[]},{"value":2,"description":"k, the number of nearest rows the search returns","details":[]},{"value":2,"description":"rescore_width, how far a code score may be off and still be read again at full precision","details":[]}]}
+3	0.8	{"value":0.8,"description":"l2_distance(emb, query) = sqrt(sum((emb[i] - query[i])^2)), found by an ivf search over sq8 codes","details":[{"value":0.8,"description":"exact, the distance computed from the row's stored vector","details":[]},{"value":2,"description":"dims, dimensions of the vectors","details":[]},{"value":2,"description":"k, the number of nearest rows the search returns","details":[]},{"value":2,"description":"rescore_width, how far a code score may be off and still be read again at full precision","details":[]}]}
+
+query
+EXPLAIN SELECT id, ts_explain(explain_vec.tableoid)
+FROM explain_vec
+ORDER BY emb <-> [1, 0.2]::FLOAT[2]
+LIMIT 2;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────╮
+│ Index: explain_vec                       │
+│ Lookup: search                           │
+│ Score:                                   │
+│ l2_distance(emb, FLOAT[2]), explained    │
+│ Top: 2                                   │
+│ Projections: id,                         │
+│              sdb_inverted_index_explain  │
+│ ~5 rows                                  │
+╰──────────────────────────────────────────╯
+
+query
+SELECT id, ts_explain(explain_vec.tableoid) AS why
+FROM explain_vec
+WHERE emb <-> [1, 0.2]::FLOAT[2] < 0.9
+ORDER BY id;
+----
+id	why
+1	{"value":0.2,"description":"l2_distance(emb, query) = sqrt(sum((emb[i] - query[i])^2)), found by an ivf search over sq8 codes","details":[{"value":0.2,"description":"exact, the distance computed from the row's stored vector","details":[]},{"value":2,"description":"dims, dimensions of the vectors","details":[]},{"value":0.9,"description":"radius, the search returns distances below it","details":[]}]}
+3	{"value":0.8,"description":"l2_distance(emb, query) = sqrt(sum((emb[i] - query[i])^2)), found by an ivf search over sq8 codes","details":[{"value":0.8,"description":"exact, the distance computed from the row's stored vector","details":[]},{"value":2,"description":"dims, dimensions of the vectors","details":[]},{"value":0.9,"description":"radius, the search returns distances below it","details":[]}]}
+
+statement ok
+INSERT INTO explain_docs VALUES (6, NULL, NULL, NULL);
+
+query
+SELECT id, emb <-> [1, 0.2]::FLOAT[2] AS distance, ts_explain(explain_vec.tableoid) AS why
+FROM explain_vec
+WHERE id IN (1, 6)
+ORDER BY id;
+----
+id	distance	why
+1	0.2	{"value":0.2,"description":"l2_distance(emb, query) = sqrt(sum((emb[i] - query[i])^2)), computed from the row's stored vector","details":[{"value":2,"description":"dims, dimensions of the vectors","details":[]}]}
+6	NULL	{"value":null,"description":"l2_distance(emb, query) is NULL because emb is NULL in the row","details":[]}
+
+query
+SELECT id, l2_norm(emb) AS norm, ts_explain(explain_vec.tableoid)->>'description' AS how
+FROM explain_vec
+WHERE id IN (1, 4)
+ORDER BY id;
+----
+id	norm	how
+1	1	l2_norm(emb) = sqrt(sum(emb[i]^2)), computed from the row's stored vector
+4	2	l2_norm(emb) = sqrt(sum(emb[i]^2)), computed from the row's stored vector
+
+statement ok
+CREATE INDEX explain_hnsw ON explain_docs USING inverted (id, emb hnsw (metric = 'cosine'));
+
+query
+SELECT id, ts_explain(explain_hnsw.tableoid) AS why
+FROM explain_hnsw
+ORDER BY emb <=> [1, 0.9]::FLOAT[2]
 LIMIT 1;
 ----
-db error: ERROR: ts_explain() explains text scorers, not vector distances
+id	why
+3	{"value":0.0013821721,"description":"cosine_distance(emb, query) = 1 - sum(emb[i] * query[i]) / (sqrt(sum(emb[i]^2)) * sqrt(sum(query[i]^2))), found by an hnsw search over sq8 codes","details":[{"value":0.0013821721,"description":"exact, the distance computed from the row's stored vector","details":[]},{"value":2,"description":"dims, dimensions of the vectors","details":[]},{"value":1,"description":"k, the number of nearest rows the search returns","details":[]},{"value":200,"description":"ef_search, candidates the search keeps in its beam","details":[]},{"value":2,"description":"rescore_width, how far a code score may be off and still be read again at full precision","details":[]}]}

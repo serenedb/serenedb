@@ -333,3 +333,25 @@ COPY (SELECT * FROM (VALUES
 
 statement ok
 COPY tbl FROM '${__TEST_DIR__}/data_import_and_export_overview_example_016_1_test_arrow.arrow';
+
+# DOCS_TEST: example_017
+
+statement ok
+COPY (SELECT E'# Project\n\nAbout it.\n\n## Install\n\nRun the installer.\n\n## Usage\n\nRun it.') TO '${__TEST_DIR__}/data_import_and_export_overview_example_017_1_readme_md.md' (FORMAT csv, HEADER false, QUOTE '');
+
+# DOCS_TEST_RAW
+#| SELECT title, level
+#| FROM read_markdown_sections('README.md')
+#| ORDER BY start_line;
+
+# DOCS_TEST_BODY
+
+query
+SELECT title, level
+FROM read_markdown_sections('${__TEST_DIR__}/data_import_and_export_overview_example_017_1_readme_md.md')
+ORDER BY start_line;
+----
+title	level
+Project	1
+Install	2
+Usage	2

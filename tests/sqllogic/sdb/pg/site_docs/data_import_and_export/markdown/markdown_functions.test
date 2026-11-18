@@ -1,0 +1,59 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query
+SELECT
+    rtrim(md_to_html('# Hello **world**'), chr(10)) AS html,
+    rtrim(md_to_text('# Hello **world**'), chr(10)) AS plain_text;
+----
+html	plain_text
+<h1>Hello <strong>world</strong></h1>	Hello world
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT
+    (md_stats(E'# A\n## B\n[l](http://x)')).heading_count AS headings,
+    (md_stats(E'# A\n## B\n[l](http://x)')).link_count AS links;
+----
+headings	links
+2	1
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT
+    (md_extract_links('see [a](http://a) and [b](http://b)'))[2].url AS second_url,
+    (md_extract_code_blocks(E'```sql\nSELECT 1;\n```'))[1].language AS lang;
+----
+second_url	lang
+http://b	sql
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+SELECT
+    (md_extract_metadata(E'---\ntitle: Notes\nauthor: Ana\n---\n# Body'))['title'] AS title,
+    md_extract_frontmatter(E'---\ntitle: Notes\nauthor: Ana\n---\n# Body') = E'title: Notes\nauthor: Ana' AS raw_text;
+----
+title	raw_text
+Notes	t
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query
+SELECT
+    md_section_breadcrumb(E'# Guide\n## Install\n### Linux\nUse the package.', 'linux') AS breadcrumb,
+    rtrim(md_extract_section(E'# Guide\n## Install\n### Linux\nUse the package.', 'linux'), chr(10)) AS section;
+----
+breadcrumb	section
+Guide > Install > Linux	Use the package.

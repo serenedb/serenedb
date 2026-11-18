@@ -22,6 +22,7 @@
 #include <bit>
 #include <duckdb/common/explain_value.hpp>
 #include <duckdb/main/profiler/profiling_node.hpp>
+#include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/docs/root.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <memory>
@@ -118,6 +119,29 @@ TEST(scan_profile, each_report_renders_the_plans_made_so_far) {
   ASSERT_EQ(1, plans.size());
   ASSERT_EQ(1, plans.front().children.size());
   EXPECT_EQ(plans.front().label, plans.front().children.front().label);
+}
+
+TEST(scan_profile, a_filter_never_prepared_shows_no_counts) {
+  const irs::All root;
+  const irs::All inner;
+  irs::FilterTree tree{.root = duckdb::ExplainNode{"Vector Similarity"}};
+  tree.root.children.emplace_back("Term");
+  tree.boxes.push_back({.filter = &root});
+  tree.boxes.push_back({.filter = &inner, .parent = 0, .node = 1});
+  ScanProfile profile{std::move(tree), {}, "", false, 0};
+  profile.Query().Prepare(root, irs::SubReader::empty(), {});
+
+  duckdb::OperatorMetrics metrics;
+  profile.Report(metrics);
+  ASSERT_TRUE(metrics.final_extra_info);
+  const auto& prepared =
+    Entry(*metrics.final_extra_info, "Index Filter Prepare").Structured();
+  ASSERT_EQ(1, prepared.children.size());
+  const auto& search = prepared.children.front();
+  EXPECT_TRUE(search.attributes.contains("Estimated Matches"));
+  EXPECT_TRUE(search.attributes.contains("Total"));
+  ASSERT_EQ(1, search.children.size());
+  EXPECT_TRUE(search.children.front().attributes.empty());
 }
 
 TEST(scan_profile, column_filter_shows_what_its_checks_saw) {

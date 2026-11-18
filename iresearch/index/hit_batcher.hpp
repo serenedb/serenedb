@@ -81,7 +81,6 @@ class HitBatcher {
   uint32_t Segment() const noexcept { return _seg_idx; }
 
   bool Ready() const noexcept { return _ready != Pending::None; }
-  duckdb::idx_t ReadyCount() const noexcept { return _batch; }
   duckdb::idx_t Len() const noexcept { return _len; }
 
   bool Empty() const noexcept {

@@ -69,6 +69,7 @@ add_executable(
     connector/row_position_test.cpp
     connector/scan_profile_test.cpp
     connector/scram_client_test.cpp
+    connector/search_filter_printer_test.cpp
     connector/subscription_lsn_test.cpp
     connector/ts_query_codec_test.cpp
 )

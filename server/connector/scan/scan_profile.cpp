@@ -27,7 +27,7 @@
 #include <absl/strings/str_split.h>
 #include <absl/strings/strip.h>
 
-#include <duckdb/common/string_util.hpp>
+#include <duckdb/common/string_format.hpp>
 #include <iterator>
 #include <string>
 #include <utility>
@@ -57,7 +57,7 @@ duckdb::ExplainValue Timing(uint64_t ticks) {
 }
 
 std::string Count(uint64_t count) {
-  return duckdb::StringUtil::FormatCount(count);
+  return duckdb::StringFormat::Format("{:,}", {duckdb::FormatArgument{count}});
 }
 
 uint64_t Minus(uint64_t total, uint64_t part) {

@@ -380,7 +380,7 @@ std::unique_ptr<detail::TableFilter> QueryProfile::WrapChecks(
 template<typename Wrapper, typename Ptr>
 Ptr QueryProfile::WrapRootAs(Ptr root, uint32_t id, uint64_t ticks,
                              OwnedChecks checks) {
-  if (!WrapsRoot(id)) {
+  if (!root || !WrapsRoot(id)) {
     return root;
   }
   auto& slot = Plan(id, typeid(*root));

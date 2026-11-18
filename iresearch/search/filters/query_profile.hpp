@@ -280,9 +280,6 @@ auto ProfileRoot(const QueryBuilder& query, const Context& ctx, Make&& make) {
   const auto start = duckdb::TimePoint::Now();
   auto root = make(profiled);
   const auto ticks = static_cast<uint64_t>(duckdb::TimePoint::Now() - start);
-  if (!root) {
-    return root;
-  }
   return profile->WrapRoot(std::move(root), node, ticks, std::move(checks));
 }
 

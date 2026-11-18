@@ -416,6 +416,26 @@ RESULT_COLLECTOR (rows=0, time=<slt:ignore>)
           Column {Field: year; Check: year >= 2020}
 
 
+query
+EXPLAIN (FORMAT json)
+SELECT count(*)
+FROM columns_idx
+WHERE body @@ ts_phrase('new york') AND year >= 2020;
+----
+QUERY PLAN
+[\n    {\n        "name": "UNGROUPED_AGGREGATE",\n        "children": [\n            {\n                "name": "IRESEARCH_SCAN",\n                "children": [],\n                "extra_info": {\n                    "Index": "columns_idx",\n                    "Lookup": "search",\n                    "Index Filter": {\n                        "name": "Phrase",\n                        "Field": "body(string)",\n                        "Parts": "Term:new(0, 0); Term:york(1, 1); "\n                    },\n                    "Column Filter": "(year >= 2020)",\n                    "Output": "row-count only",\n                    "Projections": "",\n                    "Estimated Cardinality": "800"\n                }\n            }\n        ],\n        "extra_info": {\n            "Aggregates": "count_star()",\n            "Estimated Cardinality": "1"\n        }\n    }\n]
+
+
+query
+EXPLAIN (FORMAT yaml)
+SELECT count(*)
+FROM columns_idx
+WHERE body @@ ts_phrase('new york') AND year >= 2020;
+----
+QUERY PLAN
+- name: "UNGROUPED_AGGREGATE"\n  "Aggregates": "count_star()"\n  "Estimated Cardinality": "1"\n  children: \n    - name: "IRESEARCH_SCAN"\n      "Index": "columns_idx"\n      "Lookup": "search"\n      "Index Filter":\n        - "Phrase"\n        - "  Field: body(string)"\n        - "  Parts: Term:new(0, 0); Term:york(1, 1); "\n      "Column Filter": "(year >= 2020)"\n      "Output": "row-count only"\n      "Projections": ""\n      "Estimated Cardinality": "800"
+
+
 statement ok
 CREATE TEXT SEARCH DICTIONARY columns_shapes AS encode_geojson();
 
@@ -597,6 +617,22 @@ QUERY PLAN
 ├──────────────────────────────────────────────────────────────────┤
 │ 4 rows                                                       0µs │
 ╰──────────────────────────────────────────────────────────────────╯
+
+
+query
+EXPLAIN (FORMAT compact)
+SELECT pk
+FROM columns_vectors
+WHERE cat = 4 AND num < 2000 AND tag @@ 'even'
+ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]
+LIMIT 4;
+----
+QUERY PLAN
+IRESEARCH_SCAN (est=120) Table: columns_vectors; Column Filter: (num < 2000); Index or Column Filter: (cat = 4); Score: l2_distance(emb, FLOAT[8]); Top: 4; Projections: pk
+  Index Filter:
+    And
+      Terms {Field: cat(numeric); Values: 4}
+      Terms {Field: tag(string); Values: 'even'}
 
 
 statement ok

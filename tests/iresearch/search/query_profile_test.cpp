@@ -293,6 +293,14 @@ TEST(query_profile, roots_are_profiled_without_nested_parts) {
   EXPECT_EQ(10, slot.docs.load());
 }
 
+TEST(query_profile, a_root_that_could_not_be_planned_stays_unplanned) {
+  const irs::All root;
+  const std::array<const irs::Filter*, 1> filters{&root};
+  irs::QueryProfile profile{filters, false};
+  EXPECT_EQ(nullptr, profile.WrapRoot(irs::fill::Node::ptr{}, 0, 3, {}));
+  EXPECT_TRUE(profile.Slots().empty());
+}
+
 TEST(query_profile, column_checks_count_the_rows_they_check_and_drop) {
   const irs::All root;
   const std::array<const irs::Filter*, 1> filters{&root};

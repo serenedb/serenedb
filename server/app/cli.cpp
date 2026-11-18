@@ -108,8 +108,8 @@ int RunPsql(int argc, char* argv[]) {
   return RunCLI(argc, argv, duckdb_shell::ShellSubcommand::PSQL);
 }
 
-const RegisterCommand kShell{"shell", &RunShell};
-const RegisterCommand kPsql{"psql", &RunPsql};
+SDB_COMMAND kShell{"shell", &RunShell};
+SDB_COMMAND kPsql{"psql", &RunPsql};
 
 }  // namespace
 }  // namespace sdb::app

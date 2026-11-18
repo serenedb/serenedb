@@ -22,15 +22,18 @@
 
 #include <string_view>
 
+#include "server/utils/registry.h"
+
 namespace sdb::app {
 
-using Command = int (*)(int argc, char* argv[]);
+struct Command {
+  static constexpr std::string_view kKind = "command";
 
-class RegisterCommand final {
- public:
-  RegisterCommand(std::string_view name, Command run);
+  int (*run)(int argc, char* argv[]);
 };
 
 int RunCommand(int argc, char* argv[]);
 
 }  // namespace sdb::app
+
+#define SDB_COMMAND const ::sdb::Registry<::sdb::app::Command>::Register

@@ -51,7 +51,10 @@ target_compile_definitions(
     PRIVATE
         SDB_REMAP_EXECUTABLE=$<IF:$<BOOL:${SDB_REMAP_EXECUTABLE}>,true,false>
 )
-target_link_libraries(serenedb PRIVATE serene_docs_shell serene_docs_builder)
+target_link_libraries(
+    serenedb
+    PRIVATE serene_docs_shell serene_docs_builder serene_listeners
+)
 sdb_link_duckdb_extensions(serenedb)
 if(SDB_EMBEDDED_DOCS)
     target_link_libraries(serenedb PRIVATE serene_docs_index)

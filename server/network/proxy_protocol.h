@@ -26,6 +26,12 @@
 
 namespace sdb::network {
 
+enum class ProxyMode : uint8_t {
+  Off,
+  Optional,
+  Require,
+};
+
 // HAProxy PROXY protocol (v1 text + v2 binary). When serenedb sits behind a TCP
 // load balancer, the LB prefixes a PROXY header carrying the real client
 // address; we parse it off the front of the stream so logging/auth see the true

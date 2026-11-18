@@ -68,7 +68,7 @@ int RunDocsBuilder(int argc, char* argv[]) {
   });
 }
 
-const RegisterCommand kDocsIndex{"docs-index", &RunDocsBuilder};
+SDB_COMMAND kDocsIndex{"docs-index", &RunDocsBuilder};
 
 }  // namespace
 }  // namespace sdb::app

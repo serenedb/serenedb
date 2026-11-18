@@ -3,6 +3,9 @@ control substitution on
 hash-threshold 100
 
 statement ok
+SET threads = 1;
+
+statement ok
 CREATE TABLE lj_docs (id INTEGER PRIMARY KEY, title VARCHAR, body VARCHAR, n INTEGER);
 
 statement ok
@@ -20,6 +23,9 @@ CREATE TEXT SEARCH DICTIONARY lj_words AS
 
 statement ok
 CREATE INDEX lj_idx ON lj_docs USING inverted (id, body lj_words, n) INCLUDE (n);
+
+statement ok
+RESET threads;
 
 query
 EXPLAIN SELECT id, title, body FROM lj_idx WHERE body @@ ts_phrase('fox') ORDER BY id DESC LIMIT 3;
@@ -148,6 +154,9 @@ count	count
 statement ok
 SET profiling_renderer_settings = {'deterministic': true};
 
+statement ok
+SET threads = 1;
+
 query
 EXPLAIN ANALYZE SELECT id, title, body FROM lj_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(lj_idx.tableoid) ASC LIMIT 5;
 ----
@@ -155,30 +164,63 @@ QUERY PLAN
 ╭─ Summary ───────────╮
 │ Total Time: 0.0000s │
 ╰─────────────────────╯
-╭─ LOOKUP_JOIN ───────────────────────────────────────────╮
-│ Key: rowid                                              │
-│ 5 rows                                              0µs │
-╰────────────────────────────┬────────────────────────────╯
-                             ├──────────────────────────────────────────╮
-╭─ TOP_N ────────────────────┴────────────────────────────╮  ╭─ TABLE_SCAN ────────╮
-│ Top: 5                                                  │  │ Index: lj_idx       │
-│ Order By: #0 ASC                                        │  │ Lookup: search      │
-│ 5 rows                                              0µs │  │ Projections: body,  │
-╰────────────────────────────┒┎───────────────────────────╯  │              id,    │
-╭─ TABLE_SCAN ───────────────┚┖───────────────────────────╮  │              title  │
-│ Index: lj_idx                                           │  │ 5 rows          0µs │
-│ Lookup: search                                          │  ╰─────────────────────╯
-│ Index Filter:                                           │
-│ ╭─ Term ──────────────╮                                 │
-│ │ Field: body(string) │                                 │
-│ │ Value: fox          │                                 │
-│ ╰─────────────────────╯                                 │
-│ Column Filter:                                          │
-│ optional: Dynamic Filter (sdb_inverted_index_score < ?) │
-│ Score: bm25(k1=1.2, b=0.75)                             │
-│ Projections: sdb_inverted_index_score, rowid            │
-│ 1,000 rows                                          0µs │
-╰─────────────────────────────────────────────────────────╯
+╭─ LOOKUP_JOIN ────────────────────────────╮
+│ Key: rowid                               │
+│ 5 rows                               0µs │
+╰─────────────────────┬────────────────────╯
+                      ├──────────────────────────────────╮
+╭─ TOP_N ─────────────┴────────────────────╮  ╭─ TABLE_SCAN ────────╮
+│ Top: 5                                   │  │ Index: lj_idx       │
+│ Order By: #0 ASC                         │  │ Lookup: search      │
+│ 5 rows                               0µs │  │ Projections: body,  │
+╰─────────────────────┒┎───────────────────╯  │              id,    │
+╭─ TABLE_SCAN ────────┚┖───────────────────╮  │              title  │
+│ Index: lj_idx                            │  │ 5 rows          0µs │
+│ Lookup: search                           │  ╰─────────────────────╯
+│ Score: bm25(k1=1.2, b=0.75)              │
+│ Projections: sdb_inverted_index_score,   │
+│              rowid                       │
+│                                          │
+├─ Index Filter Prepare ───────────────────┤
+│                                          │
+│ Total: 0µs                               │
+│ Snapshot: 0µs                            │
+│ Segments: 1 of 1                         │
+│ Stats: 0µs                               │
+│                                          │
+│ ╭─ Term ───────────────────╮             │
+│ │ Field: body(string)      │             │
+│ │ Value: fox               │             │
+│ │ Posting Lists: 1         │             │
+│ │ Estimated Matches: 1,000 │             │
+│ │ Postings: 1,000          │             │
+│ │ Time: 0µs                │             │
+│ ╰──────────────────────────╯             │
+│                                          │
+├─ Index Filter Execute ───────────────────┤
+│                                          │
+│ Total: 0µs                               │
+│ Rows: 1,000                              │
+│                                          │
+│ ╭─ hits::Posting ─╮                      │
+│ │ Plans: 1        │                      │
+│ │ Calls: 2        │                      │
+│ │ Plan: 0µs       │                      │
+│ │ Time: 0µs       │                      │
+│ │ Rows: 1,000     │                      │
+│ ╰─────────────────╯                      │
+│                                          │
+├─ Column Filter ──────────────────────────┤
+│                                          │
+│ ╭─ Score ──────────────────────────────╮ │
+│ │ Field: score                         │ │
+│ │ Check:                               │ │
+│ │ optional: Dynamic Filter (score < ?) │ │
+│ ╰──────────────────────────────────────╯ │
+│                                          │
+├──────────────────────────────────────────┤
+│ 1,000 rows                           0µs │
+╰──────────────────────────────────────────╯
 
 query
 EXPLAIN ANALYZE SELECT title, body FROM lj_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(lj_idx.tableoid) DESC, id LIMIT 3;
@@ -187,30 +229,63 @@ QUERY PLAN
 ╭─ Summary ───────────╮
 │ Total Time: 0.0000s │
 ╰─────────────────────╯
-╭─ LOOKUP_JOIN ────────────────────────────────────────────╮
-│ Key: rowid                                               │
-│ 3 rows                                               0µs │
-╰─────────────────────────────┬────────────────────────────╯
-                              ├──────────────────────────────────────────╮
-╭─ TOP_N ─────────────────────┴────────────────────────────╮  ╭─ TABLE_SCAN ────────╮
-│ Top: 3                                                   │  │ Index: lj_idx       │
-│ Order By: #0 DESC, #1 ASC                                │  │ Lookup: search      │
-│ 3 rows                                               0µs │  │ Projections: body,  │
-╰─────────────────────────────┒┎───────────────────────────╯  │              title  │
-╭─ TABLE_SCAN ────────────────┚┖───────────────────────────╮  │ 3 rows          0µs │
-│ Index: lj_idx                                            │  ╰─────────────────────╯
-│ Lookup: search                                           │
-│ Index Filter:                                            │
-│ ╭─ Term ──────────────╮                                  │
-│ │ Field: body(string) │                                  │
-│ │ Value: fox          │                                  │
-│ ╰─────────────────────╯                                  │
-│ Column Filter:                                           │
-│ optional: Dynamic Filter (sdb_inverted_index_score >= ?) │
-│ Score: bm25(k1=1.2, b=0.75)                              │
-│ Projections: sdb_inverted_index_score, id, rowid         │
-│ 1,000 rows                                           0µs │
-╰──────────────────────────────────────────────────────────╯
+╭─ LOOKUP_JOIN ─────────────────────────────╮
+│ Key: rowid                                │
+│ 3 rows                                0µs │
+╰─────────────────────┬─────────────────────╯
+                      ├───────────────────────────────────╮
+╭─ TOP_N ─────────────┴─────────────────────╮  ╭─ TABLE_SCAN ────────╮
+│ Top: 3                                    │  │ Index: lj_idx       │
+│ Order By: #0 DESC, #1 ASC                 │  │ Lookup: search      │
+│ 3 rows                                0µs │  │ Projections: body,  │
+╰─────────────────────┒┎────────────────────╯  │              title  │
+╭─ TABLE_SCAN ────────┚┖────────────────────╮  │ 3 rows          0µs │
+│ Index: lj_idx                             │  ╰─────────────────────╯
+│ Lookup: search                            │
+│ Score: bm25(k1=1.2, b=0.75)               │
+│ Projections: sdb_inverted_index_score,    │
+│              id, rowid                    │
+│                                           │
+├─ Index Filter Prepare ────────────────────┤
+│                                           │
+│ Total: 0µs                                │
+│ Snapshot: 0µs                             │
+│ Segments: 1 of 1                          │
+│ Stats: 0µs                                │
+│                                           │
+│ ╭─ Term ───────────────────╮              │
+│ │ Field: body(string)      │              │
+│ │ Value: fox               │              │
+│ │ Posting Lists: 1         │              │
+│ │ Estimated Matches: 1,000 │              │
+│ │ Postings: 1,000          │              │
+│ │ Time: 0µs                │              │
+│ ╰──────────────────────────╯              │
+│                                           │
+├─ Index Filter Execute ────────────────────┤
+│                                           │
+│ Total: 0µs                                │
+│ Rows: 1,000                               │
+│                                           │
+│ ╭─ hits::Posting ─╮                       │
+│ │ Plans: 1        │                       │
+│ │ Calls: 2        │                       │
+│ │ Plan: 0µs       │                       │
+│ │ Time: 0µs       │                       │
+│ │ Rows: 1,000     │                       │
+│ ╰─────────────────╯                       │
+│                                           │
+├─ Column Filter ───────────────────────────┤
+│                                           │
+│ ╭─ Score ───────────────────────────────╮ │
+│ │ Field: score                          │ │
+│ │ Check:                                │ │
+│ │ optional: Dynamic Filter (score >= ?) │ │
+│ ╰───────────────────────────────────────╯ │
+│                                           │
+├───────────────────────────────────────────┤
+│ 1,000 rows                            0µs │
+╰───────────────────────────────────────────╯
 
 query
 EXPLAIN ANALYZE SELECT id, title, n FROM lj_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(lj_idx.tableoid) ASC LIMIT 5;
@@ -219,30 +294,63 @@ QUERY PLAN
 ╭─ Summary ───────────╮
 │ Total Time: 0.0000s │
 ╰─────────────────────╯
-╭─ LOOKUP_JOIN ───────────────────────────────────────────╮
-│ Key: rowid                                              │
-│ 5 rows                                              0µs │
-╰────────────────────────────┬────────────────────────────╯
-                             ├──────────────────────────────────────────╮
-╭─ TOP_N ────────────────────┴────────────────────────────╮  ╭─ TABLE_SCAN ────────╮
-│ Top: 5                                                  │  │ Index: lj_idx       │
-│ Order By: #0 ASC                                        │  │ Lookup: search      │
-│ 5 rows                                              0µs │  │ Projections: id,    │
-╰────────────────────────────┒┎───────────────────────────╯  │              title, │
-╭─ TABLE_SCAN ───────────────┚┖───────────────────────────╮  │              n      │
-│ Index: lj_idx                                           │  │ 5 rows          0µs │
-│ Lookup: search                                          │  ╰─────────────────────╯
-│ Index Filter:                                           │
-│ ╭─ Term ──────────────╮                                 │
-│ │ Field: body(string) │                                 │
-│ │ Value: fox          │                                 │
-│ ╰─────────────────────╯                                 │
-│ Column Filter:                                          │
-│ optional: Dynamic Filter (sdb_inverted_index_score < ?) │
-│ Score: bm25(k1=1.2, b=0.75)                             │
-│ Projections: sdb_inverted_index_score, rowid            │
-│ 1,000 rows                                          0µs │
-╰─────────────────────────────────────────────────────────╯
+╭─ LOOKUP_JOIN ────────────────────────────╮
+│ Key: rowid                               │
+│ 5 rows                               0µs │
+╰─────────────────────┬────────────────────╯
+                      ├──────────────────────────────────╮
+╭─ TOP_N ─────────────┴────────────────────╮  ╭─ TABLE_SCAN ────────╮
+│ Top: 5                                   │  │ Index: lj_idx       │
+│ Order By: #0 ASC                         │  │ Lookup: search      │
+│ 5 rows                               0µs │  │ Projections: id,    │
+╰─────────────────────┒┎───────────────────╯  │              title, │
+╭─ TABLE_SCAN ────────┚┖───────────────────╮  │              n      │
+│ Index: lj_idx                            │  │ 5 rows          0µs │
+│ Lookup: search                           │  ╰─────────────────────╯
+│ Score: bm25(k1=1.2, b=0.75)              │
+│ Projections: sdb_inverted_index_score,   │
+│              rowid                       │
+│                                          │
+├─ Index Filter Prepare ───────────────────┤
+│                                          │
+│ Total: 0µs                               │
+│ Snapshot: 0µs                            │
+│ Segments: 1 of 1                         │
+│ Stats: 0µs                               │
+│                                          │
+│ ╭─ Term ───────────────────╮             │
+│ │ Field: body(string)      │             │
+│ │ Value: fox               │             │
+│ │ Posting Lists: 1         │             │
+│ │ Estimated Matches: 1,000 │             │
+│ │ Postings: 1,000          │             │
+│ │ Time: 0µs                │             │
+│ ╰──────────────────────────╯             │
+│                                          │
+├─ Index Filter Execute ───────────────────┤
+│                                          │
+│ Total: 0µs                               │
+│ Rows: 1,000                              │
+│                                          │
+│ ╭─ hits::Posting ─╮                      │
+│ │ Plans: 1        │                      │
+│ │ Calls: 2        │                      │
+│ │ Plan: 0µs       │                      │
+│ │ Time: 0µs       │                      │
+│ │ Rows: 1,000     │                      │
+│ ╰─────────────────╯                      │
+│                                          │
+├─ Column Filter ──────────────────────────┤
+│                                          │
+│ ╭─ Score ──────────────────────────────╮ │
+│ │ Field: score                         │ │
+│ │ Check:                               │ │
+│ │ optional: Dynamic Filter (score < ?) │ │
+│ ╰──────────────────────────────────────╯ │
+│                                          │
+├──────────────────────────────────────────┤
+│ 1,000 rows                           0µs │
+╰──────────────────────────────────────────╯
 
 statement ok
 SET disabled_optimizers = 'late_materialization';
@@ -254,25 +362,58 @@ QUERY PLAN
 ╭─ Summary ───────────╮
 │ Total Time: 0.0000s │
 ╰─────────────────────╯
-╭─ TOP_N ─────────────────────────────────────────────────╮
-│ Top: 5                                                  │
-│ Order By: #3 ASC                                        │
-│ 5 rows                                              0µs │
-╰────────────────────────────┒┎───────────────────────────╯
-╭─ TABLE_SCAN ───────────────┚┖───────────────────────────╮
-│ Index: lj_idx                                           │
-│ Lookup: search                                          │
-│ Index Filter:                                           │
-│ ╭─ Term ──────────────╮                                 │
-│ │ Field: body(string) │                                 │
-│ │ Value: fox          │                                 │
-│ ╰─────────────────────╯                                 │
-│ Column Filter:                                          │
-│ optional: Dynamic Filter (sdb_inverted_index_score < ?) │
-│ Score: bm25(k1=1.2, b=0.75)                             │
-│ Projections: id, title, body, sdb_inverted_index_score  │
-│ 1,000 rows                                          0µs │
-╰─────────────────────────────────────────────────────────╯
+╭─ TOP_N ──────────────────────────────────╮
+│ Top: 5                                   │
+│ Order By: #3 ASC                         │
+│ 5 rows                               0µs │
+╰─────────────────────┒┎───────────────────╯
+╭─ TABLE_SCAN ────────┚┖───────────────────╮
+│ Index: lj_idx                            │
+│ Lookup: search                           │
+│ Score: bm25(k1=1.2, b=0.75)              │
+│ Projections: id, title, body,            │
+│              sdb_inverted_index_score    │
+│                                          │
+├─ Index Filter Prepare ───────────────────┤
+│                                          │
+│ Total: 0µs                               │
+│ Snapshot: 0µs                            │
+│ Segments: 1 of 1                         │
+│ Stats: 0µs                               │
+│                                          │
+│ ╭─ Term ───────────────────╮             │
+│ │ Field: body(string)      │             │
+│ │ Value: fox               │             │
+│ │ Posting Lists: 1         │             │
+│ │ Estimated Matches: 1,000 │             │
+│ │ Postings: 1,000          │             │
+│ │ Time: 0µs                │             │
+│ ╰──────────────────────────╯             │
+│                                          │
+├─ Index Filter Execute ───────────────────┤
+│                                          │
+│ Total: 0µs                               │
+│ Rows: 1,000                              │
+│                                          │
+│ ╭─ hits::Posting ─╮                      │
+│ │ Plans: 1        │                      │
+│ │ Calls: 2        │                      │
+│ │ Plan: 0µs       │                      │
+│ │ Time: 0µs       │                      │
+│ │ Rows: 1,000     │                      │
+│ ╰─────────────────╯                      │
+│                                          │
+├─ Column Filter ──────────────────────────┤
+│                                          │
+│ ╭─ Score ──────────────────────────────╮ │
+│ │ Field: score                         │ │
+│ │ Check:                               │ │
+│ │ optional: Dynamic Filter (score < ?) │ │
+│ ╰──────────────────────────────────────╯ │
+│                                          │
+├──────────────────────────────────────────┤
+│ 1,000 rows                           0µs │
+╰──────────────────────────────────────────╯
 
 query
 EXPLAIN ANALYZE SELECT title, body FROM lj_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(lj_idx.tableoid) DESC, id LIMIT 3;
@@ -281,28 +422,64 @@ QUERY PLAN
 ╭─ Summary ───────────╮
 │ Total Time: 0.0000s │
 ╰─────────────────────╯
-╭─ TOP_N ──────────────────────────────────────────────────╮
-│ Top: 3                                                   │
-│ Order By: #2 DESC, #3 ASC                                │
-│ 3 rows                                               0µs │
-╰─────────────────────────────┒┎───────────────────────────╯
-╭─ TABLE_SCAN ────────────────┚┖───────────────────────────╮
-│ Index: lj_idx                                            │
-│ Lookup: search                                           │
-│ Index Filter:                                            │
-│ ╭─ Term ──────────────╮                                  │
-│ │ Field: body(string) │                                  │
-│ │ Value: fox          │                                  │
-│ ╰─────────────────────╯                                  │
-│ Column Filter:                                           │
-│ optional: Dynamic Filter (sdb_inverted_index_score >= ?) │
-│ Score: bm25(k1=1.2, b=0.75)                              │
-│ Projections: title, body, sdb_inverted_index_score, id   │
-│ 1,000 rows                                           0µs │
-╰──────────────────────────────────────────────────────────╯
+╭─ TOP_N ───────────────────────────────────╮
+│ Top: 3                                    │
+│ Order By: #2 DESC, #3 ASC                 │
+│ 3 rows                                0µs │
+╰─────────────────────┒┎────────────────────╯
+╭─ TABLE_SCAN ────────┚┖────────────────────╮
+│ Index: lj_idx                             │
+│ Lookup: search                            │
+│ Score: bm25(k1=1.2, b=0.75)               │
+│ Projections: title, body,                 │
+│              sdb_inverted_index_score, id │
+│                                           │
+├─ Index Filter Prepare ────────────────────┤
+│                                           │
+│ Total: 0µs                                │
+│ Snapshot: 0µs                             │
+│ Segments: 1 of 1                          │
+│ Stats: 0µs                                │
+│                                           │
+│ ╭─ Term ───────────────────╮              │
+│ │ Field: body(string)      │              │
+│ │ Value: fox               │              │
+│ │ Posting Lists: 1         │              │
+│ │ Estimated Matches: 1,000 │              │
+│ │ Postings: 1,000          │              │
+│ │ Time: 0µs                │              │
+│ ╰──────────────────────────╯              │
+│                                           │
+├─ Index Filter Execute ────────────────────┤
+│                                           │
+│ Total: 0µs                                │
+│ Rows: 1,000                               │
+│                                           │
+│ ╭─ hits::Posting ─╮                       │
+│ │ Plans: 1        │                       │
+│ │ Calls: 2        │                       │
+│ │ Plan: 0µs       │                       │
+│ │ Time: 0µs       │                       │
+│ │ Rows: 1,000     │                       │
+│ ╰─────────────────╯                       │
+│                                           │
+├─ Column Filter ───────────────────────────┤
+│                                           │
+│ ╭─ Score ───────────────────────────────╮ │
+│ │ Field: score                          │ │
+│ │ Check:                                │ │
+│ │ optional: Dynamic Filter (score >= ?) │ │
+│ ╰───────────────────────────────────────╯ │
+│                                           │
+├───────────────────────────────────────────┤
+│ 1,000 rows                            0µs │
+╰───────────────────────────────────────────╯
 
 statement ok
 RESET disabled_optimizers;
+
+statement ok
+RESET threads;
 
 query
 SELECT title, body FROM lj_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(lj_idx.tableoid) DESC, id LIMIT 3;
@@ -697,6 +874,9 @@ id	title
 2991	title-2991-long-enough-to-not-inline
 
 statement ok
+SET threads = 1;
+
+statement ok
 CREATE TABLE lj_hits (id INTEGER PRIMARY KEY, url VARCHAR, event_time INTEGER, c1 VARCHAR, c2 BIGINT, c3 VARCHAR)
 WITH (compaction_interval = 0);
 
@@ -740,24 +920,40 @@ QUERY PLAN
 ╭─ Summary ───────────╮
 │ Total Time: 0.0000s │
 ╰─────────────────────╯
-╭─ LOOKUP_JOIN ──────────────────────────────╮
-│ Key: rowid                                 │
-│ 3 rows                                 0µs │
-╰──────────────────────┬─────────────────────╯
-                       ├──────────────────────────────────╮
-╭─ TOP_N ──────────────┴─────────────────────╮  ╭─ TABLE_SCAN ─────╮
-│ Top: 3                                     │  │ Index: lj_hits   │
-│ Order By: event_time ASC                   │  │ Projections: id, │
-│ 3 rows                                 0µs │  │              c1, │
-╰──────────────────────┒┎────────────────────╯  │              c2, │
-╭─ TABLE_SCAN ─────────┚┖────────────────────╮  │              c3  │
-│ Table: lj_hits                             │  │ 3 rows       0µs │
-│ Projections: url, event_time, rowid        │  ╰──────────────────╯
-│ Column Filter:                             │
-│ contains(url, 'google'),                   │
-│ optional: Dynamic Filter (event_time < ?)  │
-│ <slt:ignore> rows                               0µs │
-╰────────────────────────────────────────────╯
+╭─ LOOKUP_JOIN ─────────────────────────────────────────────────────────────────────╮
+│ Key: rowid                                                                        │
+│ 3 rows                                                                        0µs │
+╰─────────────────────────────────────────┬─────────────────────────────────────────╯
+                                          ├──────────────────────────────────────────────────────╮
+╭─ TOP_N ─────────────────────────────────┴─────────────────────────────────────────╮  ╭─ TABLE_SCAN ─────╮
+│ Top: 3                                                                            │  │ Index: lj_hits   │
+│ Order By: event_time ASC                                                          │  │ Projections: id, │
+│ 3 rows                                                                        0µs │  │              c1, │
+╰─────────────────────────────────────────┒┎────────────────────────────────────────╯  │              c2, │
+╭─ TABLE_SCAN ────────────────────────────┚┖────────────────────────────────────────╮  │              c3  │
+│ Table: lj_hits                                                                    │  │ 3 rows       0µs │
+│ Projections: url, event_time, rowid                                               │  ╰──────────────────╯
+│                                                                                   │
+├─ Index Filter Prepare ────────────────────────────────────────────────────────────┤
+│                                                                                   │
+│ Total: 0µs                                                                        │
+│ Snapshot: 0µs                                                                     │
+│ Segments: 1 of 1                                                                  │
+│                                                                                   │
+├─ Column Filter ───────────────────────────────────────────────────────────────────┤
+│                                                                                   │
+│ ╭─ And ──────────────────────────╮                                                │
+│ ╰────────────────┬───────────────╯                                                │
+│                  ├────────────────────────────────────────╮                       │
+│ ╭─ Column ───────┴───────────────╮  ╭─ Dynamic Column ────┴─────────────────────╮ │
+│ │ Field: url                     │  │ Field: event_time                         │ │
+│ │ Check: contains(url, 'google') │  │ Check:                                    │ │
+│ ╰────────────────────────────────╯  │ optional: Dynamic Filter (event_time < ?) │ │
+│                                     ╰───────────────────────────────────────────╯ │
+│                                                                                   │
+├───────────────────────────────────────────────────────────────────────────────────┤
+│ 715 rows                                                                      0µs │
+╰───────────────────────────────────────────────────────────────────────────────────╯
 
 query
 SELECT * FROM lj_hits WHERE url LIKE '%google%' ORDER BY event_time LIMIT 3;
@@ -777,20 +973,35 @@ QUERY PLAN
 ╭─ Summary ───────────╮
 │ Total Time: 0.0000s │
 ╰─────────────────────╯
-╭─ TOP_N ────────────────────────────────────╮
-│ Top: 3                                     │
-│ Order By: event_time ASC                   │
-│ 3 rows                                 0µs │
-╰──────────────────────┒┎────────────────────╯
-╭─ TABLE_SCAN ─────────┚┖────────────────────╮
-│ Table: lj_hits                             │
-│ Projections: id, url, event_time, c1, c2,  │
-│              c3                            │
-│ Column Filter:                             │
-│ contains(url, 'google'),                   │
-│ optional: Dynamic Filter (event_time < ?)  │
-│ <slt:ignore> rows                               0µs │
-╰────────────────────────────────────────────╯
+╭─ TOP_N ───────────────────────────────────────────────────────────────────────────╮
+│ Top: 3                                                                            │
+│ Order By: event_time ASC                                                          │
+│ 3 rows                                                                        0µs │
+╰─────────────────────────────────────────┒┎────────────────────────────────────────╯
+╭─ TABLE_SCAN ────────────────────────────┚┖────────────────────────────────────────╮
+│ Table: lj_hits                                                                    │
+│ Projections: id, url, event_time, c1, c2, c3                                      │
+│                                                                                   │
+├─ Index Filter Prepare ────────────────────────────────────────────────────────────┤
+│                                                                                   │
+│ Total: 0µs                                                                        │
+│ Snapshot: 0µs                                                                     │
+│ Segments: 1 of 1                                                                  │
+│                                                                                   │
+├─ Column Filter ───────────────────────────────────────────────────────────────────┤
+│                                                                                   │
+│ ╭─ And ──────────────────────────╮                                                │
+│ ╰────────────────┬───────────────╯                                                │
+│                  ├────────────────────────────────────────╮                       │
+│ ╭─ Column ───────┴───────────────╮  ╭─ Dynamic Column ────┴─────────────────────╮ │
+│ │ Field: url                     │  │ Field: event_time                         │ │
+│ │ Check: contains(url, 'google') │  │ Check:                                    │ │
+│ ╰────────────────────────────────╯  │ optional: Dynamic Filter (event_time < ?) │ │
+│                                     ╰───────────────────────────────────────────╯ │
+│                                                                                   │
+├───────────────────────────────────────────────────────────────────────────────────┤
+│ 715 rows                                                                      0µs │
+╰───────────────────────────────────────────────────────────────────────────────────╯
 
 query
 SELECT * FROM lj_hits WHERE url LIKE '%google%' ORDER BY event_time LIMIT 3;
@@ -802,6 +1013,9 @@ id	url	event_time	c1	c2	c3
 
 statement ok
 RESET disabled_optimizers;
+
+statement ok
+RESET threads;
 
 query
 SELECT count(*), count(*) FILTER (WHERE c1 = 'payload-' || id || '-long-enough-to-not-inline' AND c2 = id * 3 AND c3 = md5(id::VARCHAR))

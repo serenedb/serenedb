@@ -43,7 +43,7 @@ The `EXPLAIN` statement supports additional settings that can be used to control
 
 ## Output Formats
 
-`EXPLAIN (FORMAT name)` picks how the plan is rendered: `text` (the default tree of boxes), `compact` (one operator per line, for programs and AI agents that read plans), `json`, `yaml`, `html`, `graphviz` or `mermaid`.
+`EXPLAIN (FORMAT name)` picks how the plan is rendered: `text` (the default tree of boxes), `compact` (one operator per line, with its filter trees indented below it and a value that holds a `;`, a brace or a double quote written in double quotes, for programs and AI agents that read plans), `json`, `yaml`, `html`, `graphviz` or `mermaid`.
 
 <SqlLogicTest id="cookbook/meta/explain/example_006" />
 

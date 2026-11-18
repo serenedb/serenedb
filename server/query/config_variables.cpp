@@ -1096,6 +1096,17 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
+      "sdb_index_profile_nodes",
+      {
+        LogicalTypeId::BOOLEAN,
+        "When true, a profiled inverted-index scan also times the nested "
+        "parts of its execution plans, at a cost per document. Default: "
+        "false.",
+        [] { return duckdb::Value::BOOLEAN(false); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      },
+    },
+    {
       "sdb_lookup_join_source_hop",
       {
         LogicalTypeId::BOOLEAN,

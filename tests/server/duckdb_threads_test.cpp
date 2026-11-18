@@ -609,4 +609,39 @@ TEST(DuckDBScheduler, MoreQueriesThanWorkersAllProgress) {
   EXPECT_GT(least * 3, most);
 }
 
+TEST(DuckDBScheduler, SessionsSchedulingOneTaskAtATimeAllRun) {
+  auto db = SchedulerDB(4);
+  auto& scheduler = duckdb::TaskScheduler::GetScheduler(*db->instance);
+  constexpr int64_t kSessions = 64;
+  constexpr int64_t kTasks = 500;
+  const auto deadline =
+    std::chrono::steady_clock::now() + std::chrono::seconds(30);
+  std::atomic<int64_t> ran{0};
+  std::vector<std::thread> sessions;
+  for (int64_t s = 0; s < kSessions; ++s) {
+    sessions.emplace_back([&] {
+      auto producer = scheduler.CreateProducer(
+        scheduler.CreateAccount(duckdb::SchedulerClass::FOREGROUND));
+      for (int64_t t = 0; t < kTasks; ++t) {
+        auto done = std::make_shared<std::atomic<bool>>(false);
+        scheduler.ScheduleTask(*producer,
+                               duckdb::make_shared_ptr<FunctionTask>([done, &ran] {
+                                 ++ran;
+                                 *done = true;
+                               }));
+        while (!done->load()) {
+          if (std::chrono::steady_clock::now() >= deadline) {
+            return;
+          }
+          std::this_thread::yield();
+        }
+      }
+    });
+  }
+  for (auto& session : sessions) {
+    session.join();
+  }
+  EXPECT_EQ(ran.load(), kSessions * kTasks);
+}
+
 }  // namespace

@@ -36,6 +36,7 @@
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/settings.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
+#include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
@@ -56,7 +57,6 @@
 #include "catalog/entry/role.h"
 #include "connector/iresearch_replacement_scan.h"
 #include "pg/catalog/oids.h"
-#include "server/utils/app_server.h"
 
 namespace sdb::pg {
 

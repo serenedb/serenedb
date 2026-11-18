@@ -154,7 +154,7 @@
           "flag": "--io_threads",
           "type": "",
           "defaultValue": "0",
-          "description": "IO threads for HTTP and pg-wire connections (0 = max(1, cpu_count / 4)).",
+          "description": "IO threads for HTTP and pg-wire connections and for timers (0 = one per physical core).",
           "source": "server",
           "category": "server",
           "categoryLabel": "Server"

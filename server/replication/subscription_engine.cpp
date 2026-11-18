@@ -32,6 +32,7 @@
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <utility>
 #include <yaclib/async/contract.hpp>
@@ -165,14 +166,15 @@ std::optional<ReplicationTarget> ResolveTarget(std::string_view database,
 SubscriptionEngine::SubscriptionEngine(network::IoThreadPool& pool)
   : _pool(pool) {
   gInstance = this;
-}
-
-SubscriptionEngine::~SubscriptionEngine() {
-  RequestStop();
-  if (gInstance == this) {
-    gInstance = nullptr;
+  try {
+    start();
+  } catch (...) {
+    stop();
+    throw;
   }
 }
+
+SubscriptionEngine::~SubscriptionEngine() { stop(); }
 
 void SubscriptionEngine::start() {
   struct Enabled {
@@ -215,21 +217,20 @@ void SubscriptionEngine::start() {
   }
   SDB_INFO(REPLICATION, "subscription engine started (", _subs.size(),
            " enabled subscriber(s))");
+  SDB_IF_FAILURE("subscriptions_start_throws") {
+    THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+  }
 }
 
-void SubscriptionEngine::RequestStop() noexcept {
+void SubscriptionEngine::stop() noexcept {
   _stopping.store(true, std::memory_order_release);
   absl::MutexLock lock{&_mu};
   for (auto& [_, state] : _subs) {
     StopLocked(state);
   }
-}
-
-void SubscriptionEngine::stop() {
-  RequestStop();
-  absl::MutexLock lock{&_mu};
   _mu.Await(absl::Condition(
     +[](decltype(_subs)* subs) { return subs->empty(); }, &_subs));
+  gInstance = nullptr;
 }
 
 void SubscriptionEngine::Sync(std::string_view database,

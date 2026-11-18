@@ -47,7 +47,7 @@ template<typename T>
 void Fill(const ColumnSegment& segment, duckdb::Vector& result, idx_t start,
           idx_t count) {
   std::fill_n(duckdb::FlatVector::GetDataMutable<T>(result) + start, count,
-              duckdb::NumericStats::GetMin<T>(segment.stats));
+              duckdb::NumericStats::GetMinUnsafe<T>(segment.stats));
 }
 
 std::unique_ptr<SegmentScanState> InitScan(const ColumnSegment&) {
@@ -80,7 +80,7 @@ void Scan(const ColumnSegment& segment, ColumnScanState&, idx_t scan_count,
     return;
   }
   auto* data = duckdb::FlatVector::GetDataMutable<T>(result);
-  data[0] = duckdb::NumericStats::GetMin<T>(segment.stats);
+  data[0] = duckdb::NumericStats::GetMinUnsafe<T>(segment.stats);
   result.SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
   duckdb::FlatVector::SetSize(result, duckdb::count_t(scan_count));
 }
@@ -100,8 +100,10 @@ template<typename T>
 void FetchRows(const ColumnSegment& segment, ColumnFetchState&, const idx_t*,
                idx_t count, duckdb::Vector& result,
                const duckdb::SelectionVector& result_sel, idx_t result_offset) {
+  const auto value = duckdb::NumericStats::GetMinUnsafe<T>(segment.stats);
+  auto* data = duckdb::FlatVector::GetDataMutable<T>(result);
   for (idx_t i = 0; i < count; ++i) {
-    Fill<T>(segment, result, result_offset + result_sel.get_index(i), 1);
+    data[result_offset + result_sel.get_index(i)] = value;
   }
 }
 

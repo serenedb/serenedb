@@ -307,6 +307,10 @@ statement ok
 INSERT INTO columns_years VALUES (2001), (2002);
 
 
+statement ok
+SET disabled_optimizers = 'compressed_materialization';
+
+
 query
 EXPLAIN ANALYZE
 SELECT count(*)
@@ -317,70 +321,64 @@ QUERY PLAN
 ╭─ Summary ───────────╮
 │ Total Time: 0.0000s │
 ╰─────────────────────╯
-╭─ UNGROUPED_AGGREGATE ─────────────────────────────╮
-│ Aggregates: count_star()                          │
-│ 1 row                                         0µs │
-╰─────────────────────────┒┎────────────────────────╯
-╭─ PROJECTION ────────────┚┖────────────────────────╮
-│ Projections:                                      │
-│ __internal_decompress_integral_integer(#0, 2001), │
-│ #1                                                │
-│ 190 rows                                      0µs │
-╰─────────────────────────┒┎────────────────────────╯
-╭─ HASH_JOIN ─────────────┚┖────────────────────────╮
-│ Join Type: INNER                                  │
-│ Conditions: year = year                           │
-│ 190 rows                                      0µs │
-╰─────────────────────────┰┰────────────────────────╯
-                          ┃┠─────────────────────────────────────────────────────╮
-╭─ PROJECTION ────────────┚┖────────────────────────╮  ╭─ PROJECTION ────────────┴─────────────────────────╮
-│ Projections:                                      │  │ Projections:                                      │
-│ __internal_compress_integral_utinyint(#0, 2001)   │  │ #0,                                               │
-│ 190 rows                                      0µs │  │ __internal_decompress_integral_integer(#0, 2001)  │
-╰─────────────────────────┒┎────────────────────────╯  │ 2 rows                                        0µs │
-╭─ TABLE_SCAN ────────────┚┖────────────────────────╮  ╰─────────────────────────┬─────────────────────────╯
-│ Index: columns_idx                                │  ╭─ PROJECTION ────────────┴─────────────────────────╮
-│ Lookup: search                                    │  │ Projections:                                      │
-│ Projections: year                                 │  │ __internal_compress_integral_utinyint(#0, 2001)   │
-│                                                   │  │ 2 rows                                        0µs │
-├─ Index Filter Prepare ────────────────────────────┤  ╰─────────────────────────┬─────────────────────────╯
-│                                                   │  ╭─ TABLE_SCAN ────────────┴─────────────────────────╮
-│ Total: 0µs                                        │  │ Table: columns_years                              │
-│ Snapshot: 0µs                                     │  │ Projections: year                                 │
-│ Segments: 1 of 1                                  │  │                                                   │
-│                                                   │  ├─ Index Filter Prepare ────────────────────────────┤
-│ ╭─ Term ───────────────────╮                      │  │                                                   │
-│ │ Field: body(string)      │                      │  │ Total: 0µs                                        │
-│ │ Value: city              │                      │  │ Snapshot: 0µs                                     │
-│ │ Posting Lists: 1         │                      │  │ Segments: 1 of 1                                  │
-│ │ Estimated Matches: 8,572 │                      │  │                                                   │
-│ │ Postings: 8,572          │                      │  ├───────────────────────────────────────────────────┤
-│ │ Time: 0µs                │                      │  │ 2 rows                                        0µs │
-│ ╰──────────────────────────╯                      │  ╰───────────────────────────────────────────────────╯
-│                                                   │
-├─ Index Filter Execute ────────────────────────────┤
-│                                                   │
-│ Total: 0µs                                        │
-│ Rows: 8,572                                       │
-│                                                   │
-│ ╭─ docs::Posting ─╮                               │
-│ │ Plans: 1        │                               │
-│ │ Calls: 10       │                               │
-│ │ Plan: 0µs       │                               │
-│ │ Time: 0µs       │                               │
-│ │ Rows: 8,572     │                               │
-│ ╰─────────────────╯                               │
-│                                                   │
-├─ Column Filter ───────────────────────────────────┤
-│                                                   │
-│ ╭─ Column ─────────────────────────────────╮      │
-│ │ Field: year                              │      │
-│ │ Check: (year >= 2001) AND (year <= 2002) │      │
-│ ╰──────────────────────────────────────────╯      │
-│                                                   │
-├───────────────────────────────────────────────────┤
-│ 190 rows                                      0µs │
-╰───────────────────────────────────────────────────╯
+╭─ UNGROUPED_AGGREGATE ─────────────────────────────────────────────────╮
+│ Aggregates: count_star()                                              │
+│ 1 row                                                             0µs │
+╰───────────────────────────────────┒┎──────────────────────────────────╯
+╭─ HASH_JOIN ───────────────────────┚┖──────────────────────────────────╮
+│ Join Type: INNER                                                      │
+│ Conditions: year = year                                               │
+│ 190 rows                                                          0µs │
+╰───────────────────────────────────┰┰──────────────────────────────────╯
+                                    ┃┠──────────────────────────────────────────────────╮
+╭─ TABLE_SCAN ──────────────────────┚┖──────────────────────────────────╮  ╭─ TABLE_SCAN ───────────╮
+│ Index: columns_idx                                                    │  │ Table: columns_years   │
+│ Lookup: search                                                        │  │ Projections: year      │
+│ Projections: year                                                     │  │                        │
+│                                                                       │  ├─ Index Filter Prepare ─┤
+├─ Index Filter Prepare ────────────────────────────────────────────────┤  │                        │
+│                                                                       │  │ Total: 0µs             │
+│ Total: 0µs                                                            │  │ Snapshot: 0µs          │
+│ Snapshot: 0µs                                                         │  │ Segments: 1 of 1       │
+│ Segments: 1 of 1                                                      │  │                        │
+│                                                                       │  ├────────────────────────┤
+│ ╭─ Term ───────────────────╮                                          │  │ 2 rows             0µs │
+│ │ Field: body(string)      │                                          │  ╰────────────────────────╯
+│ │ Value: city              │                                          │
+│ │ Posting Lists: 1         │                                          │
+│ │ Estimated Matches: 8,572 │                                          │
+│ │ Postings: 8,572          │                                          │
+│ │ Time: 0µs                │                                          │
+│ ╰──────────────────────────╯                                          │
+│                                                                       │
+├─ Index Filter Execute ────────────────────────────────────────────────┤
+│                                                                       │
+│ Total: 0µs                                                            │
+│ Rows: 8,572                                                           │
+│                                                                       │
+│ ╭─ docs::Posting ─╮                                                   │
+│ │ Plans: 1        │                                                   │
+│ │ Calls: 10       │                                                   │
+│ │ Plan: 0µs       │                                                   │
+│ │ Time: 0µs       │                                                   │
+│ │ Rows: 8,572     │                                                   │
+│ ╰─────────────────╯                                                   │
+│                                                                       │
+├─ Column Filter ───────────────────────────────────────────────────────┤
+│                                                                       │
+│ ╭─ Column ──────────────────────────────────────────────────────────╮ │
+│ │ Field: year                                                       │ │
+│ │ Check:                                                            │ │
+│ │ (year >= 2001) AND (year <= 2002) AND optional: year IN PRF(year) │ │
+│ ╰───────────────────────────────────────────────────────────────────╯ │
+│                                                                       │
+├───────────────────────────────────────────────────────────────────────┤
+│ 190 rows                                                          0µs │
+╰───────────────────────────────────────────────────────────────────────╯
+
+
+statement ok
+RESET disabled_optimizers;
 
 
 query

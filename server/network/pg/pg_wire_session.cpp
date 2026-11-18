@@ -229,6 +229,10 @@ inline CopyKind ClassifyCopy(duckdb::SQLStatement& statement) {
                : CopyFormat::Csv;
   } else if (info.format == "parquet") {
     format = CopyFormat::Parquet;
+  } else if (info.format == "arrow") {
+    format = CopyFormat::Arrow;
+  } else if (info.format == "arrows") {
+    format = CopyFormat::Arrows;
   }
   // The CSV header default is not decided here: this runs before binding, so it
   // cannot see the format of a target that only resolves later (COPY TO $1).
@@ -329,11 +333,12 @@ inline bool IsNativeCopyFormat(CopyFormat format) {
 }
 
 // The pg-wire CopyResponse overall-format byte (1 = binary, 0 = text): binary
-// PGCOPY and parquet are binary; text/csv/json are text. New binary formats
-// (excel/pdf/...) extend this one spot rather than scattered `== Parquet`
-// tests.
+// PGCOPY, parquet and Arrow IPC are binary; text/csv/json are text. New binary
+// formats (excel/pdf/...) extend this one spot rather than scattered
+// `== Parquet` tests.
 inline bool IsBinaryWireFormat(CopyFormat format) {
-  return format == CopyFormat::Binary || format == CopyFormat::Parquet;
+  return format == CopyFormat::Binary || format == CopyFormat::Parquet ||
+         format == CopyFormat::Arrow || format == CopyFormat::Arrows;
 }
 
 // The runnable inner query for a COPY ... TO. `select_statement` is the parsed
@@ -1582,14 +1587,22 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
     this->_recv.Consume(_dispatch_consume);
     _dispatch_consume = 0;
   }
-  // parquet needs a seekable file (footer at EOF); it cannot be read from a
-  // non-seekable STDIN pipe. Reject here -- before CopyInResponse -- so the
-  // client gets a clear error instead of a deep filesystem failure mid-COPY.
+  // parquet and the Arrow file format need a seekable file (footer at EOF);
+  // they cannot be read from a non-seekable STDIN pipe. Reject here -- before
+  // CopyInResponse -- so the client gets a clear error instead of a deep
+  // filesystem failure mid-COPY. The Arrow stream format (arrows) has no
+  // footer and streams.
   if (format == CopyFormat::Parquet) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
       ERR_MSG("COPY FROM STDIN (FORMAT parquet) is not supported: "
               "parquet requires a regular file"));
+  }
+  if (format == CopyFormat::Arrow) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("COPY FROM STDIN (FORMAT arrow) is not supported: the Arrow "
+              "file format requires a regular file; use FORMAT arrows"));
   }
   _connection_ctx->copy_stdin_open_count = 0;
   _connection_ctx->copy_stdin_done = false;

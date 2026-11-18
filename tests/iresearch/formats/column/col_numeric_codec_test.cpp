@@ -2315,6 +2315,33 @@ TEST(ColNumericKernelsTest, NarrowsAndWidensEveryStoredWidth) {
   check.template operator()<uint64_t>();
 }
 
+TEST(ColNumericKernelsTest, ShufflesAndUnshufflesEveryStoredWidth) {
+  static constexpr uint8_t kWidths[] = {1, 2, 4, 8};
+  for (const auto stored : kWidths) {
+    for (const size_t n : {size_t{0}, size_t{1}, size_t{15}, size_t{16},
+                           size_t{17}, size_t{33}, size_t{1000}}) {
+      SCOPED_TRACE(testing::Message() << int{stored} << " " << n);
+      std::vector<uint8_t> values(n * stored);
+      for (size_t i = 0; i != values.size(); ++i) {
+        values[i] = static_cast<uint8_t>(Mix(i + n * 131 + stored));
+      }
+      std::vector<uint8_t> lanes(n * stored + 1, uint8_t{0x5a});
+      irs::codecs::numeric::Shuffle(values.data(), n, stored, lanes.data());
+      EXPECT_EQ(lanes[n * stored], 0x5a);
+      for (size_t i = 0; i != n; ++i) {
+        for (size_t b = 0; b != stored; ++b) {
+          ASSERT_EQ(lanes[b * n + i], values[i * stored + b]) << i << " " << b;
+        }
+      }
+      std::vector<uint8_t> back(n * stored + 1, uint8_t{0x5a});
+      irs::codecs::numeric::Unshuffle(lanes.data(), n, stored, back.data());
+      EXPECT_EQ(back[n * stored], 0x5a);
+      back.pop_back();
+      EXPECT_EQ(back, values);
+    }
+  }
+}
+
 template<typename T>
 void ExpectRleAnalysesAgree(const duckdb::LogicalType& type,
                             const std::vector<T>& values) {

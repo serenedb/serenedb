@@ -98,15 +98,6 @@ void Widen(const uint8_t* in, size_t n, uint8_t stored, U* out) noexcept {
                            [&]<typename S> { WidenAs<U, S>(in, n, out); });
 }
 
-inline void Shuffle(const uint8_t* in, size_t n, uint8_t stored,
-                    uint8_t* out) noexcept {
-  for (size_t i = 0; i < n; ++i) {
-    for (uint8_t b = 0; b < stored; ++b) {
-      out[b * n + i] = in[i * stored + b];
-    }
-  }
-}
-
 inline uint64_t ShuffledItem(const uint8_t* in, size_t n, uint8_t stored,
                              size_t at) noexcept {
   uint64_t v = 0;
@@ -170,6 +161,96 @@ inline U8x16 Bytes32Lo(U8x16 a, U8x16 b) noexcept {
 inline U8x16 Bytes32Hi(U8x16 a, U8x16 b) noexcept {
   return __builtin_shufflevector(a, b, 8, 9, 10, 11, 24, 25, 26, 27, 12, 13, 14,
                                  15, 28, 29, 30, 31);
+}
+
+inline U8x16 Bytes16(const uint8_t* in) noexcept {
+  U8x16 v;
+  std::memcpy(&v, in, sizeof(v));
+  return v;
+}
+
+inline U8x16 EvenBytes(U8x16 a, U8x16 b) noexcept {
+  return __builtin_shufflevector(a, b, 0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20,
+                                 22, 24, 26, 28, 30);
+}
+
+inline U8x16 OddBytes(U8x16 a, U8x16 b) noexcept {
+  return __builtin_shufflevector(a, b, 1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21,
+                                 23, 25, 27, 29, 31);
+}
+
+inline size_t Shuffle2(const uint8_t* in, size_t n, uint8_t* out) noexcept {
+  size_t i = 0;
+  for (; i + 16 <= n; i += 16) {
+    const auto a = Bytes16(in + 2 * i);
+    const auto b = Bytes16(in + 2 * i + 16);
+    Put(out, i, EvenBytes(a, b));
+    Put(out, n + i, OddBytes(a, b));
+  }
+  return i;
+}
+
+inline size_t Shuffle4(const uint8_t* in, size_t n, uint8_t* out) noexcept {
+  size_t i = 0;
+  for (; i + 16 <= n; i += 16) {
+    const auto* row = in + 4 * i;
+    const auto even_lo = EvenBytes(Bytes16(row), Bytes16(row + 16));
+    const auto odd_lo = OddBytes(Bytes16(row), Bytes16(row + 16));
+    const auto even_hi = EvenBytes(Bytes16(row + 32), Bytes16(row + 48));
+    const auto odd_hi = OddBytes(Bytes16(row + 32), Bytes16(row + 48));
+    Put(out, i, EvenBytes(even_lo, even_hi));
+    Put(out, n + i, EvenBytes(odd_lo, odd_hi));
+    Put(out, 2 * n + i, OddBytes(even_lo, even_hi));
+    Put(out, 3 * n + i, OddBytes(odd_lo, odd_hi));
+  }
+  return i;
+}
+
+inline size_t Shuffle8(const uint8_t* in, size_t n, uint8_t* out) noexcept {
+  size_t i = 0;
+  for (; i + 16 <= n; i += 16) {
+    const auto* row = in + 8 * i;
+    U8x16 even[4];
+    U8x16 odd[4];
+    for (size_t p = 0; p < 4; ++p) {
+      const auto a = Bytes16(row + 32 * p);
+      const auto b = Bytes16(row + 32 * p + 16);
+      even[p] = EvenBytes(a, b);
+      odd[p] = OddBytes(a, b);
+    }
+    const U8x16 pairs[8] = {
+      EvenBytes(even[0], even[1]), EvenBytes(even[2], even[3]),
+      EvenBytes(odd[0], odd[1]),   EvenBytes(odd[2], odd[3]),
+      OddBytes(even[0], even[1]),  OddBytes(even[2], even[3]),
+      OddBytes(odd[0], odd[1]),    OddBytes(odd[2], odd[3]),
+    };
+    for (size_t b = 0; b < 4; ++b) {
+      Put(out, b * n + i, EvenBytes(pairs[2 * b], pairs[2 * b + 1]));
+      Put(out, (b + 4) * n + i, OddBytes(pairs[2 * b], pairs[2 * b + 1]));
+    }
+  }
+  return i;
+}
+
+inline void Shuffle(const uint8_t* in, size_t n, uint8_t stored,
+                    uint8_t* out) noexcept {
+  size_t done = 0;
+  switch (stored) {
+    case 2:
+      done = Shuffle2(in, n, out);
+      break;
+    case 4:
+      done = Shuffle4(in, n, out);
+      break;
+    case 8:
+      done = Shuffle8(in, n, out);
+      break;
+  }
+  for (size_t i = done; i < n; ++i) {
+    for (uint8_t b = 0; b < stored; ++b) {
+      out[b * n + i] = in[i * stored + b];
+    }
+  }
 }
 
 inline size_t Unshuffle2(const uint8_t* in, size_t n, uint8_t* out) noexcept {

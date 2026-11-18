@@ -174,6 +174,16 @@ def test_psql_no_password_flag_accepted() -> None:
     assert r.returncode == 0, r.stderr
 
 
+def test_psql_timing_prints_the_elapsed_time() -> None:
+    r = _run(_conn_args() + ["-c", "\\timing on", "-c", "SELECT 1 AS a;",
+                             "-c", "SELECT pg_sleep(1.1) AS slept;"])
+    assert r.returncode == 0, r.stderr
+    assert "Timing is on." in r.stdout
+    assert re.search(r"^Time: \d+\.\d{3} ms$", r.stdout, re.M), r.stdout
+    assert re.search(r"^Time: \d{4,}\.\d{3} ms \(00:\d{2}\.\d{3}\)$", r.stdout,
+                     re.M), r.stdout
+
+
 def test_psql_round_trip() -> None:
     # CREATE / INSERT (postgres_scanner -> COPY FROM STDIN) / SELECT / DROP
     # against the attached server -- the original regression that motivated
@@ -611,6 +621,12 @@ def test_psql_help_interactive_all_is_verbose() -> None:
     short = _run(["--help=interactive"]).stdout.splitlines()
     long = _run(["--help=interactive-all"]).stdout.splitlines()
     assert len(long) > len(short)
+
+
+def test_psql_help_commands_needs_no_server() -> None:
+    r = _run(["-p", "1", "--help=commands"])
+    assert r.returncode == 0, r.stderr
+    assert "\\timing [on|off]" in r.stdout
 
 
 def test_psql_help_unknown_target_errors() -> None:
@@ -1508,6 +1524,84 @@ def test_docs_tab_completes_names_flags_and_paths(docs_terminal) -> None:
                               "sql/functions/datepart.md")]:
         docs_terminal.send(f"\x15{typed}", until=typed)
         docs_terminal.send("\t", until=completed)
+
+
+@pytest.fixture
+def terminal(tmp_path: Path):
+    terminal = _Terminal(tmp_path, 160)
+    try:
+        yield terminal
+    finally:
+        terminal.close()
+
+
+def test_terminal_backslash_command_ends_a_multi_line_query(terminal) -> None:
+    terminal.send("\\pset format aligned\r", until="Output format is aligned.")
+    terminal.send("SELECT 1 AS a\r", until="SELECT 1 AS a")
+    out = terminal.send("\\gx\r", until="a | 1")
+    assert "-[ RECORD 1 ]" in out
+    terminal.send("SELECT 'x\r", until="SELECT 'x")
+    out = terminal.send("\\x\r", until="\\x")
+    out += terminal.send("y' AS s;\r", until="(1 row)")
+    assert " \\x+" in out
+    assert "Expanded display" not in out
+    os.write(terminal._fd, b"\\pset form\t")
+    time.sleep(0.3)
+    terminal.send("at unaligned\r", until="Output format is unaligned.")
+    terminal.send("\\nosuch\r", until="Try \\? for help.")
+
+
+def test_terminal_psql_output_expands_and_pages(terminal) -> None:
+    wide = "SELECT repeat('x', 100) AS a, repeat('y', 100) AS b;\r"
+    terminal.send("\\pset format aligned\r", until="Output format is aligned.")
+    terminal.send("\\x auto\r", until="Expanded display is used automatically.")
+    terminal.send(wide, until="-[ RECORD 1 ]")
+    out = terminal.send("SELECT 1 AS a, 2 AS b;\r", until="(1 row)")
+    assert " a | b " in out
+    assert "PAGER_USED" not in out
+    out = terminal.send("SELECT i FROM range(60) t(i);\r", until="(60 rows)")
+    assert "PAGER_USED" in out
+    terminal.send("\\pset border 0\r", until="Border style is 0.")
+    terminal.send(wide, until="* Record 1")
+    terminal.send("\\pset border 2\r", until="Border style is 2.")
+    terminal.send(wide, until="+-[ RECORD 1 ]")
+    terminal.send("\\pset pager always\r", until="Pager is always used.")
+    out = terminal.send("SELECT 'one' || 'row' AS s;\r", until="onerow")
+    assert "PAGER_USED" in out
+    out = terminal.send("COPY (SELECT 'copied' || 'out' AS v) TO STDOUT;\r", until="copiedout")
+    assert "PAGER_USED" in out
+
+
+def test_terminal_copy_from_stdin_prompts_for_its_rows(terminal) -> None:
+    terminal.send("CREATE TABLE t(i INTEGER);\r", until="CREATE TABLE t(i INTEGER);")
+    out = terminal.send("COPY t FROM STDIN;\r", until=">> ")
+    assert "Enter data to be copied followed by a newline." in out
+    assert "End with a backslash and a period on a line by itself, or an EOF signal." in out
+    terminal.send("40\r", until=">> ")
+    terminal.send("2\r", until=">> ")
+    terminal.send("\\.\r", until="\\.")
+    terminal.send("SELECT sum(i) * 10 AS total FROM t;\r", until="420")
+
+
+def test_terminal_copy_from_stdin_again_after_an_eof_signal(terminal) -> None:
+    terminal.send("CREATE TABLE t(i INTEGER);\r", until="CREATE TABLE t(i INTEGER);")
+    terminal.send("COPY t FROM STDIN;\r", until=">> ")
+    terminal.send("40\r", until=">> ")
+    os.write(terminal._fd, b"\x04")
+    terminal.send("COPY t FROM STDIN;\r", until=">> ")
+    terminal.send("300\r", until=">> ")
+    terminal.send("\\.\r", until="\\.")
+    terminal.send("SELECT sum(i) * 10 AS total FROM t;\r", until="3400")
+
+
+def test_terminal_recalls_a_backslash_command_from_the_history(tmp_path: Path) -> None:
+    (tmp_path / ".duckdb_history").write_text("SELECT 1;\n\\echo 'recalled\\x21'\n")
+    terminal = _Terminal(tmp_path, 160)
+    try:
+        terminal.send("\x1b[A", until="recalled\\x21")
+        terminal.send("\r", until="recalled!")
+    finally:
+        terminal.close()
 
 
 def test_docs_number_without_a_list_fails() -> None:

@@ -34,8 +34,7 @@ StripedCounters::StripedCounters()
 
 void StripedCounters::Add(std::span<const int64_t> deltas) noexcept {
   SDB_ASSERT(deltas.size() <= kCounters);
-  const auto index =
-    duckdb::TaskScheduler::GetEstimatedCPUId() % _lines.size();
+  const auto index = duckdb::TaskScheduler::GetEstimatedCPUId() % _lines.size();
   auto& line = _lines[index];
   for (size_t i = 0; i != deltas.size(); ++i) {
     line.values[i].fetch_add(deltas[i], std::memory_order_relaxed);

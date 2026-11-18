@@ -60,6 +60,14 @@ One should note that the CSV Parser is affected by the projection pushdown optim
 
 <SqlLogicTest id="data_import_and_export/csv/reading_faulty_csv_files/example_004" />
 
+## Faulty Values in Filtered Rows
+
+The filters of a query's `WHERE` clause are applied while the file is read, before the other columns of a row are converted. A faulty value in a row that a filter removes therefore causes no error, unless the filter uses its column. Reading only the row of Pedro from `faulty.csv` succeeds without `ignore_errors`:
+
+<SqlLogicTest id="data_import_and_export/csv/reading_faulty_csv_files/example_009" />
+
+With `store_rejects`, every value is converted, also in the rows a filter removes, so the [rejects tables](#retrieving-faulty-csv-lines) record every faulty value.
+
 ## Retrieving Faulty CSV Lines
 
 Being able to read faulty CSV files is important, but for many data cleaning operations, it is also necessary to know exactly which lines are corrupted and what errors the parser discovered on them. For scenarios like these, it is possible to use SereneDB's CSV Rejects Table feature.

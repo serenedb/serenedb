@@ -79,7 +79,7 @@ What lives in a server's catalog or session needs a server: the `pg_catalog` and
 
 ## Safe mode
 
-`--safe`, or `.safe_mode` inside a session, turns off everything that reaches outside the engine: file and network access from SQL (reading and writing files, `COPY`, attaching database files, remote URLs) and the dot commands `.shell`, `.system`, `.open`, `.read`, `.import`, `.output`, `.once`, `.cd` and `.log`. It also locks the configuration for the rest of the session. The built-in documentation keeps working, since it is part of the binary, so `serenedb shell --safe -c ".docs <topic>"` gives a script or an agent the docs and nothing else.
+`--safe`, or `.safe_mode` inside a session, turns off everything that reaches outside the engine: file and network access from SQL (reading and writing files, `COPY`, attaching database files, remote URLs), the dot commands `.shell`, `.system`, `.open`, `.read`, `.import`, `.output`, `.once`, `.cd` and `.log`, and the backslash commands `\i`, `\o`, `\g` with a file and `\copy`. It also locks the configuration for the rest of the session. The built-in documentation keeps working, since it is part of the binary, so `serenedb shell --safe -c ".docs <topic>"` gives a script or an agent the docs and nothing else.
 
 To let a session read and write a few locations only, allow them first and switch safe mode on afterwards:
 
@@ -93,10 +93,10 @@ Files under the listed directories and URL prefixes can be read and written; eve
 
 ## Creating objects
 
-Unlike a server connection, the shell does not pre-select a default database. To create objects, first select a database with `USE` (or fully-qualify the name), otherwise SereneDB reports `Catalog Error: no schema has been selected to create in`:
+The shell creates objects in the database it opened: the database file named on the command line or, without one, an in-memory database named `postgres`, the name of a server's default database:
 
 ```sh
-serenedb shell :memory: -c "USE memory; CREATE TABLE t (i INTEGER); INSERT INTO t VALUES (1), (2); SELECT count(*) AS rows FROM t;"
+serenedb shell -c "CREATE TABLE t (i INTEGER); INSERT INTO t VALUES (1), (2); SELECT count(*) AS rows FROM t;"
 ```
 
 ```text
@@ -110,7 +110,7 @@ serenedb shell :memory: -c "USE memory; CREATE TABLE t (i INTEGER); INSERT INTO 
 
 ## Output modes
 
-The default output is the aligned `duckbox` table. Switch modes with a `--MODE` flag (`box`, `csv`, `json`, `markdown`, `line`, …) or with `-P format=…`:
+The default output is DuckDB's `duckbox` table. `.mode MODE` or a `--MODE` flag switches to another DuckDB mode (`box`, `csv`, `json`, `markdown`, `line`, …):
 
 ```sh
 serenedb shell :memory: --markdown -c "SELECT 1 AS a, 2 AS b;"
@@ -121,6 +121,25 @@ serenedb shell :memory: --markdown -c "SELECT 1 AS a, 2 AS b;"
 |--:|--:|
 | 1 | 2 |
 ```
+
+`.mode psql`, `\pset format aligned` (or `unaligned`) and `-P format=aligned` switch to psql's output, the [output formats of `serened psql`](./serened-psql.md#output-formats), with every value in its PostgreSQL text form:
+
+```sh
+serened shell <<'EOF'
+.mode psql
+SELECT 1 AS id, 'abc' AS name, NULL::VARCHAR AS note, 'line1' || chr(10) || 'line2' AS multi, 3.5 AS num;
+EOF
+```
+
+```text
+ id | name | note | multi | num 
+----+------+------+-------+-----
+  1 | abc  |      | line1+| 3.5
+    |      |      | line2 | 
+(1 row)
+```
+
+In the DuckDB modes, the psql switches pick the closest DuckDB mode: `-x` and `\x` the `line` mode, `-t` and `\t` the `list` mode without column names, `--csv` and `\pset format csv` the `csv` mode. `-A` switches to psql's unaligned output and `\a` to psql's aligned output.
 
 ## Formatting SQL
 
@@ -394,6 +413,96 @@ one and `.docs --kind command` lists them all.
 | `.version` | | Show the version. |
 | `.width` | `NUM1 NUM2 ...` | Set the minimum column widths for columnar output. |
 
+## Backslash commands
+
+A line that starts with `\` holds psql-style commands. `serened shell` and [`serened psql`](./serened-psql.md) take the same ones, and `\?` lists them.
+
+| Command | Arguments | Description |
+| :--- | :--- | :--- |
+| `\?` | | List the backslash commands. |
+| `\q`, `\quit` | | Exit, also from a file that `\i` runs. |
+| `\g` | `?FILE?` | Run the statement typed so far, or the last statement again when none is pending. With `FILE` or `\|command`, its result goes there. |
+| `\gx` | `?FILE?` | `\g` with expanded output. |
+| `\copy` | `...` | `COPY` with its data on the client, see [COPY with standard input and output](#copy-with-standard-input-and-output). |
+| `\echo` | `?-n? ?TEXT...?` | Print the text on standard output, followed by a newline unless `-n` comes first. |
+| `\i`, `\include` | `FILE` | Run the commands in `FILE`, like `.read`. |
+| `\o`, `\out` | `?FILE?` | Send the results of the following statements to `FILE` or `\|command`, or back to standard output without `FILE`, like `.output`. |
+| `\l`, `\list` | | List the databases, as `SHOW DATABASES` does. |
+| `\a` | | Switch between psql's aligned and unaligned output. |
+| `\t` | `?on\|off?` | Print rows only, without column names and footer. |
+| `\x` | `?on\|off\|auto?` | Expanded output. |
+| `\pset` | `?NAME ?VALUE??` | Set a printing option, see the [output formats of `serened psql`](./serened-psql.md#output-formats). |
+| `\timing` | `?on\|off?` | Print the run time of each statement, like `.timer`. |
+
+Without an argument, `\t`, `\x` and `\timing` switch between on and off. A line can hold several commands, as in `\a \t on`, and an argument a command does not take is ignored with a warning. Text in single quotes is one argument, in which `\n` and `\t` stand for a line break and a tab. A command typed between the lines of a statement leaves the statement pending, to run at its semicolon or at `\g`, and a backslash inside a string literal is part of the SQL.
+
+Catalog commands such as `\d` and `\dt` are not supported: `\dt: catalog commands are not supported; use .tables, .schema or DESCRIBE instead`. Any other unknown command fails with `invalid command \name`.
+
+`\x on` and a query, with psql's output:
+
+```sh
+serened shell <<'EOF'
+.mode psql
+\x on
+SELECT * FROM (VALUES (1, 'a'), (2, 'b')) t(n, s);
+EOF
+```
+
+```text
+Expanded display is on.
+-[ RECORD 1 ]
+n | 1
+s | a
+-[ RECORD 2 ]
+n | 2
+s | b
+```
+
+`-q` (`--quiet`) leaves out messages such as `Expanded display is on.`
+
+## COPY with standard input and output
+
+`COPY ... FROM STDIN` and `COPY ... TO STDOUT` exchange their data with the shell:
+
+- In a script, run with `-f`, `\i` or `.read` or piped to the shell, `COPY ... FROM STDIN` reads the lines that follow it, up to a line holding only `\.` or the end of the script. When the `COPY` fails, those lines are skipped, not run as statements.
+- Typed at the prompt, it asks for the lines, up to a line holding only `\.` or the end of input.
+- In a command given with `-c`, it reads the standard input of the shell to its end.
+- With `FORMAT binary`, it always reads the standard input of the shell.
+
+`COPY ... TO STDOUT` writes to the output of the shell, in order with the results of the statements around it: the terminal, or the file that `.output`, `\o` or `-o` names.
+
+```sh
+serened shell <<'EOF'
+CREATE TABLE t (i INTEGER, s VARCHAR);
+COPY t FROM STDIN (FORMAT csv);
+1,one
+2,two
+\.
+COPY (SELECT * FROM t ORDER BY i) TO STDOUT (FORMAT csv);
+EOF
+```
+
+```text
+1,one
+2,two
+```
+
+`\copy` runs a `COPY` whose data is on the client, as `\copy TABLE [(COLUMNS)] FROM SOURCE [OPTIONS]`, or `\copy TABLE TO TARGET [OPTIONS]` with a table or a query in parentheses. The source or target is one of:
+
+- a file, as a path or a string in single quotes, which the shell reads or writes;
+- `stdin` or `stdout`, the streams of `COPY ... FROM STDIN` and `COPY ... TO STDOUT` above;
+- `pstdin` or `pstdout`, the standard input and output of the shell process, whatever script the shell runs and wherever `\o` points.
+
+The options are those of `COPY`, after an optional `WITH`. `PROGRAM` is not supported.
+
+```sh
+serened shell <<'EOF'
+CREATE TABLE t (i INTEGER, s VARCHAR);
+\copy t FROM 'in.csv' (FORMAT csv)
+\copy (SELECT s FROM t ORDER BY i) TO 'out.csv' WITH (FORMAT csv)
+EOF
+```
+
 ## Keyboard shortcuts
 
 The interactive line editor takes these keys, which `.help shortcuts` also lists.
@@ -452,6 +561,7 @@ The interactive line editor takes these keys, which `.help shortcuts` also lists
 | `-1`, `--single-transaction` | Wrap the `-c` / `-f` batch in `BEGIN` / `COMMIT`             |
 | `--format`                   | Format SQL from stdin and write the result to stdout         |
 | `--format-file=FILENAME`     | Format SQL in a file and write the result to stdout          |
+| `-l`                         | List the attached databases, then exit                       |
 | `-V`, `--version`            | Print the SereneDB version and exit                          |
 | `-?`, `--help`               | Show the help message and exit                               |
 
@@ -471,13 +581,14 @@ The interactive line editor takes these keys, which `.help shortcuts` also lists
 
 | Option                         | Description                                             |
 | :----------------------------- | :------------------------------------------------------ |
-| `-A`, `--no-align`             | Unaligned output                                        |
-| `--csv`                        | CSV output                                              |
+| `-A`, `--no-align`             | psql's unaligned output                                 |
+| `--csv`                        | CSV output (the `csv` mode)                             |
 | `-H`, `--html`                 | HTML output                                             |
-| `-t`, `--tuples-only`          | Print rows only, without column headers                 |
-| `-x`, `--expanded`             | Expanded output (one value per line)                    |
+| `-t`, `--tuples-only`          | Print rows only, without column names (the `list` mode) |
+| `-x`, `--expanded`             | Expanded output, a `column = value` line per value (the `line` mode) |
 | `-F`, `--field-separator=STR`  | Field separator for unaligned output (default `\|`)      |
-| `--nullvalue=TEXT`             | Text shown for `NULL` values (default `NULL`)           |
+| `-P`, `--pset=VAR[=ARG]`       | Set a printing option, as [`\pset`](./serened-psql.md#output-formats) does; `-P format=aligned` switches to psql's output |
+| `--nullvalue=TEXT`             | Text shown for `NULL` values (default `NULL`, empty in psql's output) |
 | `--MODE`                       | Set the output mode directly (`box`, `csv`, `json`, `markdown`, `line`, …) |
 
 ### Database options
@@ -491,7 +602,7 @@ The interactive line editor takes these keys, which `.help shortcuts` also lists
 | `--ui`                   | Launch a web interface via the `ui` extension        |
 
 :::note
-The flags `-h`, `-l` and `-s` differ from [`serenedb psql`](./serened-psql.md): in the shell, `-h` shows the help message, `-l` selects list output mode, and `-s` is an alias for `-c`.
+The flags `-h`, `-s` and `--list` differ from [`serenedb psql`](./serened-psql.md): in the shell, `-h` shows the help message, `-s` is an alias for `-c`, and `--list` selects the `list` output mode. `-l` lists the databases in both.
 :::
 
 ### Environment variables

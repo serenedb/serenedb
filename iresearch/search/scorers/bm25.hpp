@@ -22,10 +22,19 @@
 
 #pragma once
 
+#include <cmath>
+
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 
 namespace irs {
+
+inline score_t Bm25Idf(uint64_t docs_with_field,
+                       uint64_t docs_with_term) noexcept {
+  return static_cast<score_t>(
+    std::log1p((static_cast<double>(docs_with_field - docs_with_term) + 0.5) /
+               (static_cast<double>(docs_with_term) + 0.5)));
+}
 
 struct BM25Stats {
   score_t idf;
@@ -95,6 +104,9 @@ class BM25 final : public irs::ScorerBase<BM25, BM25Stats> {
   }
 
   ScoreFunction PrepareScorer(const ScoreContext& ctx) const final;
+
+  void Explain(const ScoreContext& ctx, const explain::SlotStats* stats,
+               explain::Node& out) const final;
 
   ScoreBoundWriter::ptr PrepareScoreBoundWriter() const final;
 

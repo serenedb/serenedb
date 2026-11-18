@@ -39,6 +39,7 @@
 #include "iresearch/search/detail/geo_terms.hpp"
 #include "iresearch/search/detail/make.hpp"
 #include "iresearch/search/detail/make_query.hpp"
+#include "iresearch/search/explain/describe.hpp"
 #include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/filters/boolean_filter.hpp"
 #include "iresearch/search/queries/approx_query.hpp"
@@ -388,6 +389,11 @@ PrepareCollector::ptr GeoFilter::MakeCollectorImpl(const Scorer* scorer,
   return std::make_unique<AllCollector>(scorer, stats);
 }
 
+void GeoFilter::DescribeStats(const PrepareCollector* collector,
+                              explain::StatsIndex& out) const {
+  explain::DescribeSlot(collector, field_id(), out);
+}
+
 QueryBuilder::ptr GeoDistanceFilter::PrepareSegment(
   const SubReader& segment, const PrepareContext& ctx) const {
   auto sub_ctx = ctx;
@@ -411,6 +417,11 @@ PrepareCollector::ptr GeoDistanceFilter::MakeCollectorImpl(const Scorer* scorer,
                                                            StatsArena& stats,
                                                            uint32_t) const {
   return std::make_unique<AllCollector>(scorer, stats);
+}
+
+void GeoDistanceFilter::DescribeStats(const PrepareCollector* collector,
+                                      explain::StatsIndex& out) const {
+  explain::DescribeSlot(collector, field_id(), out);
 }
 
 namespace detail {

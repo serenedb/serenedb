@@ -719,6 +719,12 @@ bool ParseSearchBody(std::string_view body, const FieldTypes& fields,
         out.include_source = include;
       } else if (key == "track_total_hits") {
         // Totals are exact; the tracking hint has nothing to change.
+      } else if (key == "explain") {
+        bool explain = false;
+        if (Value(entry).get_bool().get(explain) != simdjson::SUCCESS) {
+          Fail("[explain] must be a boolean");
+        }
+        out.explain = explain;
       } else {
         Fail(
           absl::StrCat("request parameter [", key, "] is not supported yet"));

@@ -29,6 +29,7 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/detail/term_iterator.hpp"
+#include "iresearch/search/explain/describe.hpp"
 #include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/filters/filter_visitor.hpp"
 #include "iresearch/search/queries/term_query.hpp"
@@ -68,6 +69,14 @@ PrepareCollector::ptr ByTerm::MakeCollectorImpl(const Scorer* scorer,
                                                 StatsArena& stats,
                                                 uint32_t threads) const {
   return std::make_unique<ByTermsCollector>(scorer, 1, stats, threads);
+}
+
+void ByTerm::DescribeStats(const PrepareCollector* collector,
+                           explain::StatsIndex& out) const {
+  if (collector != nullptr) {
+    explain::DescribeTerm(utils::downCast<ByTermsCollector>(*collector), 0,
+                          field_id(), options().term, out);
+  }
 }
 
 TermPredicate::ptr ByTerm::CompileTermPredicate() const {

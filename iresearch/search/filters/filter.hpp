@@ -42,6 +42,7 @@
 #include "iresearch/search/detail/term_iterator.hpp"
 #include "iresearch/search/detail/term_predicate.hpp"
 #include "iresearch/search/docs/root.hpp"
+#include "iresearch/search/explain/stats.hpp"
 #include "iresearch/search/fill/node.hpp"
 #include "iresearch/search/hits/root.hpp"
 #include "iresearch/search/lead/node.hpp"
@@ -222,6 +223,9 @@ class Filter {
     }
     return MakeCollectorImpl(own, stats, threads);
   }
+
+  virtual void DescribeStats(const PrepareCollector*,
+                             explain::StatsIndex&) const {}
 
   virtual TypeInfo::type_id type() const noexcept = 0;
 

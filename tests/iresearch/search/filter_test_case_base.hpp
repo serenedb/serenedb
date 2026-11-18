@@ -496,6 +496,10 @@ class PreparedFilter {
 
   const irs::Scorer* Scorer() const noexcept { return _scorer; }
 
+  const irs::PrepareCollector* Collector() const noexcept {
+    return _collector ? _collector->Get() : nullptr;
+  }
+
   irs::detail::StatsRecord Stats() const noexcept {
     return _queries.empty() || !_queries.front() ? irs::detail::StatsRecord{}
                                                  : _queries.front()->Stats();

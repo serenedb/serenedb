@@ -34,6 +34,7 @@
 #include "iresearch/search/detail/multiterm_collector.hpp"
 #include "iresearch/search/detail/term_iterator.hpp"
 #include "iresearch/search/detail/top_terms_selector.hpp"
+#include "iresearch/search/explain/describe.hpp"
 #include "iresearch/search/filters/automaton_filter.hpp"
 #include "iresearch/search/filters/field_target.hpp"
 #include "iresearch/search/filters/filter_visitor.hpp"
@@ -375,6 +376,11 @@ QueryBuilder::ptr LevenshteinAutomatonFilter::PrepareSegment(
 PrepareCollector::ptr LevenshteinAutomatonFilter::MakeCollectorImpl(
   const Scorer* scorer, StatsArena& stats, uint32_t threads) const {
   return std::make_unique<BlendedTermsCollector>(scorer, stats, threads);
+}
+
+void LevenshteinAutomatonFilter::DescribeStats(
+  const PrepareCollector* collector, explain::StatsIndex& out) const {
+  explain::DescribeBlended(collector, field_id(), out);
 }
 
 LevenshteinAutomatonOptions::LevenshteinAutomatonOptions(

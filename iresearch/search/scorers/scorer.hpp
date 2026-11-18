@@ -31,6 +31,8 @@
 
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
+#include "iresearch/search/explain/explanation.hpp"
+#include "iresearch/search/explain/stats.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
@@ -126,6 +128,9 @@ struct Scorer {
   virtual IndexFeatures GetIndexFeatures() const = 0;
 
   virtual ScoreFunction PrepareScorer(const ScoreContext& ctx) const = 0;
+
+  virtual void Explain(const ScoreContext&, const explain::SlotStats*,
+                       explain::Node&) const {}
 
   virtual bool ScoresPerDoc() const noexcept { return true; }
 

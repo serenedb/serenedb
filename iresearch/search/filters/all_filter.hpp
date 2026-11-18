@@ -58,6 +58,9 @@ class All : public Filter {
                                           StatsArena& stats,
                                           uint32_t threads) const final;
 
+  void DescribeStats(const PrepareCollector* collector,
+                     explain::StatsIndex& out) const final;
+
   TypeInfo::type_id type() const noexcept final { return irs::Type<All>::id(); }
 
   TermPredicate::ptr CompileTermPredicate() const final {

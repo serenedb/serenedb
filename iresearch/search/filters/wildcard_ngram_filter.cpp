@@ -36,6 +36,7 @@
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/collectors.hpp"
+#include "iresearch/search/explain/describe.hpp"
 #include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/filters/phrase_filter.hpp"
 #include "iresearch/search/filters/prefix_filter.hpp"
@@ -253,6 +254,11 @@ PrepareCollector::ptr ByWildcardNGram::MakeCollectorImpl(const Scorer* scorer,
                                                          StatsArena& stats,
                                                          uint32_t) const {
   return std::make_unique<AllCollector>(scorer, stats);
+}
+
+void ByWildcardNGram::DescribeStats(const PrepareCollector* collector,
+                                    explain::StatsIndex& out) const {
+  explain::DescribeSlot(collector, field_id(), out);
 }
 
 QueryBuilder::ptr ByWildcardNGram::PrepareSegment(

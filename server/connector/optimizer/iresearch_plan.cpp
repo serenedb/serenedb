@@ -69,6 +69,7 @@
 
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
+#include "connector/explain_output.h"
 #include "connector/functions/search.h"
 #include "connector/functions/ts_common.hpp"
 #include "connector/functions/ts_offsets.h"
@@ -741,6 +742,30 @@ duckdb::unique_ptr<duckdb::Expression> PushdownScorerCall(
   return ref;
 }
 
+duckdb::unique_ptr<duckdb::Expression> PushdownExplainCall(
+  duckdb::BoundFunctionExpression& func, PlanIndex& index) {
+  const auto* anchor = AnchorOf(func);
+  if (!anchor) {
+    return nullptr;
+  }
+  auto* scan = index.Scan(anchor->Binding().table_index);
+  if (!scan) {
+    return nullptr;
+  }
+  scan->Bind().score.explain = true;
+  const auto type = connector::ExplainType();
+  const auto get_column = scan->Ensure(connector::kInvertedIndexExplainId, type,
+                                       connector::kExplainName);
+  auto ref = duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
+    duckdb::Identifier{connector::kExplainName}, type,
+    index.Expose(anchor->Binding().table_index, *scan, get_column,
+                 connector::kExplainName, type));
+  if (!func.GetAlias().empty()) {
+    ref->SetAlias(func.GetAlias());
+  }
+  return ref;
+}
+
 const duckdb::Expression& PeelArrayToListCast(const duckdb::Expression& expr) {
   if (!duckdb::BoundCastExpression::IsCast(expr)) {
     return expr;
@@ -1115,6 +1140,20 @@ void RewriteCallInExpr(duckdb::unique_ptr<duckdb::Expression>& expr,
       }
       // Native scans cannot materialize the tableoid argument, so the
       // runtime stub would never be reached; raise its error here.
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      ERR_MSG(name,
+                              "() requires an inverted index scan in the same "
+                              "sub-query"));
+    } else if (name == connector::kExplain) {
+      if (StrictOverNull(func)) {
+        expr = duckdb::make_uniq<duckdb::BoundConstantExpression>(
+          duckdb::Value{func.GetReturnType()});
+        return;
+      }
+      if (auto repl = PushdownExplainCall(func, index)) {
+        expr = std::move(repl);
+        return;
+      }
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                       ERR_MSG(name,
                               "() requires an inverted index scan in the same "

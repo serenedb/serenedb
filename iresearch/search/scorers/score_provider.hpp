@@ -62,5 +62,10 @@ struct LeafRecipe {
   ScoreArgs args;
 };
 
+struct ScoreInputs {
+  const LeafRecipe& recipe;
+  const AttributeProvider& attrs;
+};
+
 }  // namespace detail
 }  // namespace irs

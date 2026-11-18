@@ -862,6 +862,84 @@ def test_search_match_phrase(conn, corpus):
     assert body["hits"]["total"]["value"] == 0
 
 
+def test_search_explain(conn, corpus):
+    status, body = _search(
+        conn, corpus,
+        {"query": {"match": {"title": "quick dog"}}, "explain": True})
+    assert status == 200, body
+    hits = body["hits"]["hits"]
+    assert len(hits) == 3
+    for hit in hits:
+        explanation = hit["_explanation"]
+        assert set(explanation) == {"value", "description", "details"}
+        assert explanation["value"] == hit["_score"]
+        assert explanation["details"]
+
+    status, body = _search(
+        conn, corpus, {"query": {"match": {"title": "quick"}}},
+        qs="?explain=true")
+    assert status == 200, body
+    assert all("_explanation" in hit for hit in body["hits"]["hits"])
+
+    status, body = _search(
+        conn, corpus,
+        {"query": {"match": {"title": "quick"}}, "explain": False},
+        qs="?explain=true")
+    assert status == 200, body
+    assert all("_explanation" not in hit for hit in body["hits"]["hits"])
+
+    status, body = _search(
+        conn, corpus, {"query": {"term": {"author": "aesop"}}, "explain": True})
+    assert status == 200, body
+    for hit in body["hits"]["hits"]:
+        assert hit["_explanation"]["value"] == 1.0
+
+    status, body = _search(conn, corpus, {
+        "query": {"match": {"title": "quick"}},
+        "sort": [{"year": {"order": "desc"}}],
+        "explain": True,
+    })
+    assert status == 200, body
+    for hit in body["hits"]["hits"]:
+        assert hit["_score"] is None
+        assert hit["_explanation"]["value"] > 0
+
+    status, body = _request(
+        conn, "POST", f"/{corpus}/_search?scroll=1m",
+        {"query": {"match": {"title": "quick"}}, "explain": True})
+    assert status == 400, body
+
+    status, body = _search(conn, corpus, {"explain": "yes"})
+    assert status == 400, body
+
+
+def test_explain_one_document(conn, corpus):
+    query = {"query": {"match": {"title": "quick"}}}
+    status, body = _request(conn, "POST", f"/{corpus}/_explain/1", query)
+    assert status == 200, body
+    assert body["_index"] == corpus
+    assert body["_id"] == "1"
+    assert body["matched"] is True
+    status, search = _search(conn, corpus, query)
+    assert status == 200, search
+    score = next(h["_score"] for h in search["hits"]["hits"] if h["_id"] == "1")
+    assert body["explanation"]["value"] == score
+
+    status, body = _request(conn, "POST", f"/{corpus}/_explain/2", query)
+    assert status == 200, body
+    assert body["matched"] is False
+
+    status, body = _request(conn, "POST", f"/{corpus}/_explain/9", query)
+    assert status == 404, body
+    assert body["matched"] is False
+
+    status, body = _request(conn, "GET", f"/{corpus}/_explain/2",
+                            {"query": {"term": {"author": "aesop"}}})
+    assert status == 200, body
+    assert body["matched"] is True
+    assert body["explanation"]["value"] == 1.0
+
+
 # --- aggregations + scroll ---------------------------------------------------
 
 

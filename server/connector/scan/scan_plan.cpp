@@ -47,6 +47,7 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
 #include "connector/column_id.h"
+#include "connector/explain_output.h"
 #include "connector/index_source_factory.h"
 #include "connector/offsets_writer.hpp"
 #include "connector/row_position.h"
@@ -63,6 +64,9 @@ std::optional<duckdb::LogicalType> VirtualIndexColumnType(ColumnId col_id) {
   }
   if (col_id == kInvertedIndexOffsetsId) {
     return MakeOffsetsType();
+  }
+  if (col_id == kInvertedIndexExplainId) {
+    return ExplainType();
   }
   if (col_id == kInvertedIndexTermId) {
     return duckdb::LogicalType::VARCHAR;
@@ -600,6 +604,8 @@ void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,
       if (const auto virtual_type = VirtualIndexColumnType(catalog_col_id)) {
         if (catalog_col_id == kInvertedIndexScoreId) {
           state.score_output_idx = proj;
+        } else if (catalog_col_id == kInvertedIndexExplainId) {
+          state.explain_output_idx = proj;
         }
         state.projected_columns.push_back(duckdb::DConstants::INVALID_INDEX);
         state.projected_types.push_back(*virtual_type);
@@ -859,6 +865,31 @@ void WriteChunkOffsets(FetchLocalState& f, const ScanGlobalState& g,
   }
 }
 
+void WriteChunkExplain(FetchLocalState& f, const ScanGlobalState& g,
+                       uint32_t seg, std::span<const irs::doc_id_t> docs,
+                       const duckdb::Vector* scores,
+                       duckdb::DataChunk& output) {
+  if (!g.ScanExplain()) {
+    return;
+  }
+  if (seg != f.explain_seg) {
+    const auto& seg_query = g.queries[seg];
+    SDB_ASSERT(seg_query && g.scorer_obj);
+    f.explain_plan.emplace(*seg_query, *g.scorer_obj, g.explain_stats);
+    f.explain_seg = seg;
+  }
+  const auto* executed =
+    scores ? duckdb::FlatVector::GetData<irs::score_t>(*scores) : nullptr;
+  f.explain_rows.clear();
+  for (size_t i = 0; i < docs.size(); ++i) {
+    f.explain_rows.push_back(f.explain_plan->Explain(
+      docs[i],
+      executed ? std::optional<irs::score_t>{executed[i]} : std::nullopt));
+  }
+  WriteExplanations(f.explain_rows, ExplainLabels{g.Bind()},
+                    output.data[g.explain_output_idx]);
+}
+
 void BuildOffsetsOutputs(ScanGlobalState& g) {
   for (const auto& req : g.Bind().offsets.requests) {
     if (req.bind_column == duckdb::DConstants::INVALID_INDEX) {
@@ -890,6 +921,7 @@ void BuildFetchedCopy(ScanGlobalState& g) {
     }
   };
   produced(g.score_output_idx);
+  produced(g.explain_output_idx);
   produced(g.tableoid_output_idx);
   produced(g.doc_address_output_idx);
   for (const auto& output : g.offsets_outputs) {
@@ -924,7 +956,10 @@ duckdb::idx_t EmitReadyBatch(duckdb::ClientContext&, ScanGlobalState& g,
     batch.pk->Flatten(batch.count);
     f.pk_column = batch.pk;
   }
-  WriteChunkOffsets(f, g, batch.seg, batch.docs, output);
+  if (g.WritesLateColumns()) {
+    WriteChunkOffsets(f, g, batch.seg, batch.docs, output);
+    WriteChunkExplain(f, g, batch.seg, batch.docs, batch.score_vec, output);
+  }
   WriteRowPositions(g, batch.seg, batch.docs, output);
   WriteVirtualColumns(g, batch.count, batch.score_vec, output);
   if (g.ScanScore() && g.vector_scorer && g.vector_scorer->PerRow()) {

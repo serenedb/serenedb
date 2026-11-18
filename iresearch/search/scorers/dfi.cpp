@@ -32,6 +32,7 @@
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
+#include "iresearch/search/explain/factors.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/score_inputs.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
@@ -146,6 +147,41 @@ ScoreFunction DFI::PrepareScorer(const ScoreContext& ctx) const {
                                                       scale);
   }
   return ScoreFunction::Default();
+}
+
+void DFI::Explain(const ScoreContext& ctx, const explain::SlotStats* stats,
+                  explain::Node& out) const {
+  const auto ratio = stats_cast(ctx.stats)->ratio;
+  if (!explain::FreqOf(ctx) || ratio <= 0.f) {
+    out.description =
+      "the column records no term frequency, so the clause scores 0";
+    return;
+  }
+  explain::AddBoost(out, ctx.boost);
+  explain::AddCollectionShare(
+    out, "p", "p, the term's share of all text in the column", ratio, stats);
+  const auto freq = explain::AddFreq(out, ctx);
+  auto& expected = explain::AddDetail(
+    out, "expected", score_t{0},
+    "expected, occurrences of the term if it were spread evenly, computed as "
+    "p * dl from:");
+  const auto length = TermCountToScore(explain::AddLength(expected, ctx));
+  expected.value = ratio * length;
+  const auto* const kernel = [&] {
+    switch (_measure) {
+      case DFIMeasure::Standardized:
+        return "(freq - expected) / sqrt(expected)";
+      case DFIMeasure::Saturated:
+        return "(freq - expected) / expected";
+      case DFIMeasure::ChiSquared:
+        return "(freq - expected)^2 / expected";
+    }
+    return "";
+  }();
+  out.description =
+    freq > std::get<score_t>(expected.value)
+      ? absl::StrCat("computed as boost * log2(1 + ", kernel, ") from:")
+      : "the term occurs no more often than expected, so the clause scores 0:";
 }
 
 std::string DFI::ToString() const {

@@ -20,10 +20,11 @@
 
 #include "idf.hpp"
 
-#include <cmath>
-
 #include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/detail/scale_score.hpp"
+#include "iresearch/search/explain/factors.hpp"
+#include "iresearch/search/scorers/bm25.hpp"
+#include "iresearch/search/scorers/score_inputs.hpp"
 #include "iresearch/utils/assert.hpp"
 
 namespace irs {
@@ -34,14 +35,22 @@ void IDF::collect(byte_type* stats_buf, const FieldCollector* field,
   const auto docs_with_term = term ? term->docs_with_term : 0;
 
   auto* stats = stats_cast(stats_buf);
-  stats->value += static_cast<score_t>(
-    std::log1p((static_cast<double>(docs_with_field - docs_with_term) + 0.5) /
-               (static_cast<double>(docs_with_term) + 0.5)));
+  stats->value += Bm25Idf(docs_with_field, docs_with_term);
   SDB_ASSERT(stats->value >= 0.f);
 }
 
 ScoreFunction IDF::PrepareScorer(const ScoreContext& ctx) const {
   return MakeScaleScore(ctx, ctx.boost * stats_cast(ctx.stats)->value);
+}
+
+void IDF::Explain(const ScoreContext& ctx, const explain::SlotStats* stats,
+                  explain::Node& out) const {
+  explain::AddBoost(out, ctx.boost);
+  explain::AddIdf(out, stats_cast(ctx.stats)->value, stats,
+                  "log(1 + (N - n + 0.5) / (n + 0.5))", &Bm25Idf);
+  explain::AddScale(out, ctx);
+  out.description = ScaleOf(ctx) ? "computed as scale * boost * idf from:"
+                                 : "computed as boost * idf from:";
 }
 
 }  // namespace irs

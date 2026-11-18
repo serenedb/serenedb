@@ -58,6 +58,14 @@ class Impl : public Node {
     }
   }
 
+  std::optional<detail::ScoreInputs> Inputs() const final {
+    if constexpr (requires(const L& leaf) { leaf.Inputs(); }) {
+      return _leaf.Inputs();
+    } else {
+      return std::nullopt;
+    }
+  }
+
  private:
   L _leaf;
 };

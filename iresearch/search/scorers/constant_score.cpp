@@ -23,6 +23,8 @@
 #include <absl/strings/str_cat.h>
 
 #include "iresearch/search/detail/scale_score.hpp"
+#include "iresearch/search/explain/factors.hpp"
+#include "iresearch/search/scorers/score_inputs.hpp"
 #include "iresearch/utils/down_cast.hpp"
 
 namespace irs {
@@ -39,6 +41,15 @@ const ConstantScore& DefaultConstScore() noexcept {
 
 ScoreFunction ConstantScore::PrepareScorer(const ScoreContext& ctx) const {
   return MakeScaleScore(ctx, ctx.boost * _value);
+}
+
+void ConstantScore::Explain(const ScoreContext& ctx, const explain::SlotStats*,
+                            explain::Node& out) const {
+  explain::AddBoost(out, ctx.boost);
+  explain::AddDetail(out, "value", _value, "value, the constant score");
+  explain::AddScale(out, ctx);
+  out.description = ScaleOf(ctx) ? "computed as scale * boost * value from:"
+                                 : "computed as boost * value from:";
 }
 
 bool ConstantScore::equals(const Scorer& other) const noexcept {

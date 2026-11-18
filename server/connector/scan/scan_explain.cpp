@@ -301,6 +301,7 @@ bool ProjectionIsVirtual(const ScanBindData& bind,
   }
   const auto catalog_col_id = bind.columns.ids[col_id];
   return catalog_col_id == kInvertedIndexScoreId ||
+         catalog_col_id == kInvertedIndexExplainId ||
          catalog_col_id == kInvertedIndexOffsetsId ||
          catalog_col_id == kInvertedIndexTermId ||
          catalog_col_id == kInvertedIndexTermRawId ||
@@ -484,7 +485,8 @@ void ScanBindData::AppendSummary(
   }
   if (score.text) {
     query_scorer = search::MakeScorer(*score.text);
-    out.insert("Score", query_scorer->ToString());
+    out.insert("Score", absl::StrCat(query_scorer->ToString(),
+                                     score.explain ? ", explained" : ""));
   }
   if (score.HasTopK()) {
     std::string topk_val =

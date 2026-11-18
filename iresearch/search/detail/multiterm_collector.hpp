@@ -89,6 +89,21 @@ class MultiTermCollector final : public FieldPrepareCollector {
     }
   }
 
+  template<typename Visitor>
+  void VisitTerms(Visitor&& visitor) const {
+    TermMap<TermCollector> merged;
+    for (const auto& own : _threads) {
+      for (const auto& [term, slot] : own.terms) {
+        Accumulate(merged[term], slot.counter);
+      }
+    }
+    for (const auto& own : _threads) {
+      for (const auto& [term, slot] : own.terms) {
+        visitor(bytes_view{term}, merged.find(term)->second, slot.stats);
+      }
+    }
+  }
+
  private:
   static constexpr size_t kChunkSlots = 64;
 
@@ -134,12 +149,15 @@ class BlendedTermsCollector final : public FieldPrepareCollector {
       return;
     }
     const auto field = _counters.TotalField();
+    const auto blended = Blended();
+    _scorer->collect(const_cast<byte_type*>(_stats), &field, &blended);
+  }
+
+  TermCollector Blended() const {
     Terms merged;
-    for (auto& terms : _threads) {
-      for (auto& [term, counter] : terms) {
-        auto& one = merged[term];
-        one.docs_with_term += counter.docs_with_term;
-        one.total_term_freq += counter.total_term_freq;
+    for (const auto& terms : _threads) {
+      for (const auto& [term, counter] : terms) {
+        Accumulate(merged[term], counter);
       }
     }
     TermCollector blended;
@@ -148,7 +166,7 @@ class BlendedTermsCollector final : public FieldPrepareCollector {
         std::max(blended.docs_with_term, counter.docs_with_term);
       blended.total_term_freq += counter.total_term_freq;
     }
-    _scorer->collect(const_cast<byte_type*>(_stats), &field, &blended);
+    return blended;
   }
 
  private:

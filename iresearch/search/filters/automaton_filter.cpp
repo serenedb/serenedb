@@ -22,6 +22,7 @@
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/multiterm_collector.hpp"
+#include "iresearch/search/explain/describe.hpp"
 #include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/filters/filter_visitor.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
@@ -72,6 +73,11 @@ QueryBuilder::ptr AutomatonFilter::PrepareSegment(
 PrepareCollector::ptr AutomatonFilter::MakeCollectorImpl(
   const Scorer* scorer, StatsArena& stats, uint32_t threads) const {
   return MakeMultiTermCollector(scorer, stats, threads);
+}
+
+void AutomatonFilter::DescribeStats(const PrepareCollector* collector,
+                                    explain::StatsIndex& out) const {
+  explain::DescribeMultiTerm(collector, field_id(), out);
 }
 
 TermPredicate::ptr AutomatonFilter::CompileTermPredicate() const {

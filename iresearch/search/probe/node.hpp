@@ -21,8 +21,10 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 
 #include "iresearch/search/scorers/score_function.hpp"
+#include "iresearch/search/scorers/score_provider.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/shared.hpp"
@@ -38,6 +40,10 @@ struct Node : memory::Managed {
   virtual void FetchScoreArgs(uint32_t) {}
 
   virtual ScoreFunction PrepareScore() { return ScoreFunction::Default(); }
+
+  virtual std::optional<detail::ScoreInputs> Inputs() const {
+    return std::nullopt;
+  }
 };
 
 }  // namespace irs::probe

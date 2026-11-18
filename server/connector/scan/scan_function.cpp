@@ -250,6 +250,19 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
       ERR_MSG("ts_offsets() requires an inverted index scan in the same "
               "sub-query"));
   }
+  if (ss.score.explain && ss.score.vector) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("ts_explain() explains text scorers, not vector distances"));
+  }
+  if (ss.score.explain && !ss.score.text) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("ts_explain() requires a scorer function on the same index in "
+              "the query"),
+      ERR_HINT("Add a scorer such as BM25(", ss.RelationName(),
+               ".tableoid) to the select list or ORDER BY."));
+  }
   state->scan = &ss;
   const auto snapshot_start = profiled ? duckdb::TimePoint::Now() : 0;
   AcquireScanSnapshot(*state, context, ss);

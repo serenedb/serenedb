@@ -50,6 +50,7 @@
 
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/tokenizer.h"
+#include "connector/explain_output.h"
 #include "connector/functions/minhash.h"
 #include "connector/functions/tokenizer_functions.h"
 #include "connector/functions/ts_common.hpp"
@@ -171,6 +172,10 @@ void RegisterScorerFunctions(duckdb::ExtensionLoader& loader) {
     }
     loader.RegisterFunction(std::move(set));
   }
+  duckdb::ScalarFunctionSet explain{duckdb::Identifier{kExplain}};
+  explain.AddFunction(
+    duckdb::ScalarFunction({LT::BIGINT}, ExplainType(), ScorerStubFn));
+  loader.RegisterFunction(std::move(explain));
 }
 
 // ts_offsets(col [, limit]) -> INTEGER[] of interleaved start/end pairs.

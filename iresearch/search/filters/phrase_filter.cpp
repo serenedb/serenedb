@@ -39,6 +39,7 @@
 #include "iresearch/search/detail/phrase_matcher.hpp"
 #include "iresearch/search/detail/term_iterator.hpp"
 #include "iresearch/search/detail/top_terms_selector.hpp"
+#include "iresearch/search/explain/describe.hpp"
 #include "iresearch/search/filters/boolean_filter.hpp"
 #include "iresearch/search/filters/filter_visitor.hpp"
 #include "iresearch/search/filters/levenshtein_filter.hpp"
@@ -687,6 +688,44 @@ PrepareCollector::ptr ByPhrase::MakeCollectorImpl(const Scorer* scorer,
   }
   return std::make_unique<ExpandedSlotsCollector>(
     scorer, counts.terms, counts.expanded, stats, threads);
+}
+
+void ByPhrase::DescribeStats(const PrepareCollector* collector,
+                             explain::StatsIndex& out) const {
+  if (collector == nullptr) {
+    return;
+  }
+  const auto& slots = utils::downCast<SlotsCollector>(*collector);
+  auto stats = explain::FieldStats(slots, field_id());
+  stats.phrase = true;
+  size_t i = 0;
+  const auto add = [&](bytes_view term) {
+    const auto counts = slots.TermTotal(i++);
+    if (counts.docs_with_term != 0) {
+      stats.terms.push_back(explain::TermOf(term, counts));
+    }
+  };
+  for (const auto& word : options()) {
+    switch (ByPhraseOptions::KindOf(word.part)) {
+      case SlotKind::Term:
+        add(ByPhraseOptions::TermOf(word.part));
+        break;
+      case SlotKind::Set:
+        for (const auto& term : std::get<TermSetOptions>(word.part).terms) {
+          add(term);
+        }
+        break;
+      case SlotKind::Expansion:
+        break;
+    }
+  }
+  if (CountSlots(options()).expanded != 0) {
+    const auto& expanded = utils::downCast<ExpandedSlotsCollector>(*collector);
+    for (const auto& [term, counts] : expanded.ExpandedTotal()) {
+      stats.terms.push_back(explain::TermOf(term, counts));
+    }
+  }
+  out.Add(slots.Record().stats, std::move(stats));
 }
 
 Filter::ptr PartFilter(field_id field, DictRef dict,

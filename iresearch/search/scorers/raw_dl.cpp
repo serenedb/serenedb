@@ -24,6 +24,7 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
+#include "iresearch/search/explain/factors.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/score_inputs.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
@@ -70,6 +71,19 @@ struct RawDLScore : public ScoreOperatorOf<RawDLScore<HasScale>> {
 };
 
 }  // namespace
+
+void RawDL::Explain(const ScoreContext& ctx, const explain::SlotStats*,
+                    explain::Node& out) const {
+  if (!explain::FreqOf(ctx)) {
+    explain::ExplainNoFreq(ctx, false, out);
+    return;
+  }
+  explain::AddBoost(out, ctx.boost);
+  explain::AddScale(out, ctx);
+  explain::AddLength(out, ctx);
+  out.description = ScaleOf(ctx) ? "computed as scale * boost * dl from:"
+                                 : "computed as boost * dl from:";
+}
 
 ScoreFunction RawDL::PrepareScorer(const ScoreContext& ctx) const {
   if (!irs::get<FreqBlockAttr>(ctx.doc_attrs)) {

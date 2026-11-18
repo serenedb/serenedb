@@ -39,6 +39,8 @@ using FieldTypeResolver =
   std::function<duckdb::LogicalType(sdb::connector::ColumnId, DictRef)>;
 using FieldKeyResolver = std::function<bool(sdb::connector::ColumnId)>;
 
+std::string TermValue(bytes_view term, const duckdb::LogicalType& type);
+
 // Builds the structured filter tree for EXPLAIN: one node per filter with its
 // attributes (field, decoded terms/bounds, max_terms, min_match, boost, ...)
 // and children for boolean operators. DuckDB renders it per output format

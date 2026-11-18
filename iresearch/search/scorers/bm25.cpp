@@ -39,6 +39,7 @@
 #include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/detail/scale_score.hpp"
+#include "iresearch/search/explain/factors.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/score_inputs.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
@@ -127,9 +128,7 @@ void BM25::collect(byte_type* stats_buf, const irs::FieldCollector* field,
   const auto docs_with_term = term ? term->docs_with_term : 0;
   const auto total_term_freq = field ? field->total_term_freq : 0;
 
-  stats->idf += score_t(
-    std::log1p((static_cast<double>(docs_with_field - docs_with_term) + 0.5) /
-               (static_cast<double>(docs_with_term) + 0.5)));
+  stats->idf += Bm25Idf(docs_with_field, docs_with_term);
   SDB_ASSERT(stats->idf >= 0.f);
 
   if (!NeedsNorm()) {
@@ -178,6 +177,40 @@ ScoreFunction BM25::PrepareScorer(const ScoreContext& ctx) const {
     return ScoreFunction::Make<Bm25Score<HasScale>>(ctx.boost, *stats, freq,
                                                     norm, scale);
   });
+}
+
+void BM25::Explain(const ScoreContext& ctx, const explain::SlotStats* stats,
+                   explain::Node& out) const {
+  const auto& own = *stats_cast(ctx.stats);
+  if (!IsBM1() && !explain::FreqOf(ctx)) {
+    explain::ExplainNoFreq(ctx, _boost_as_score, out);
+    return;
+  }
+  explain::AddBoost(out, ctx.boost);
+  explain::AddIdf(out, own.idf, stats, "log(1 + (N - n + 0.5) / (n + 0.5))",
+                  &Bm25Idf);
+  if (IsBM1()) {
+    explain::AddScale(out, ctx);
+    out.description = ScaleOf(ctx) ? "computed as scale * boost * idf from:"
+                                   : "computed as boost * idf from:";
+    return;
+  }
+  auto& tf = explain::AddDetail(out, "tf", score_t{0}, {});
+  const auto freq = explain::AddFreq(tf, ctx);
+  explain::AddDetail(tf, "k1", _k, "k1, term saturation parameter");
+  if (IsBM15()) {
+    tf.value = freq / (freq + own.norm_const);
+    tf.description = "tf, computed as freq / (freq + k1) from:";
+  } else {
+    explain::AddDetail(tf, "b", _b, "b, length normalization parameter");
+    const auto length = TermCountToScore(explain::AddLength(tf, ctx));
+    explain::AddAverageLength(tf, _k * _b / own.norm_length, stats);
+    const auto c1 = own.norm_const + own.norm_length * length;
+    tf.value = freq / (freq + c1);
+    tf.description =
+      "tf, computed as freq / (freq + k1 * (1 - b + b * dl / avgdl)) from:";
+  }
+  out.description = "computed as boost * idf * tf from:";
 }
 
 ScoreBoundWriter::ptr BM25::PrepareScoreBoundWriter() const {

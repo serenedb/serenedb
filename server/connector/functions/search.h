@@ -107,6 +107,8 @@ inline constexpr std::string_view kHasAnyTokens = "has_any_tokens";
 inline constexpr std::string_view kTsHighlight = "ts_highlight";
 inline constexpr std::string_view kOffsets = "ts_offsets";
 
+inline constexpr std::string_view kExplain = "ts_explain";
+
 // Term-dictionary access -- optimizer-claimed aggregate stubs.
 inline constexpr std::string_view kTsDictAgg = "ts_dict_agg";
 inline constexpr std::string_view kTsDictRawAgg = "ts_dict_raw_agg";

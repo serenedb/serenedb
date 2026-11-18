@@ -232,6 +232,12 @@ class PostingLeaf {
     return Scan(target);
   }
 
+  ScoreInputs Inputs() const noexcept
+    requires(Shape.defer && Shape.gather)
+  {
+    return {.recipe = _recipe, .attrs = _provider};
+  }
+
  protected:
   static constexpr bool kEnc = Shape.enc || !InputType::kVolatileAlways;
   static constexpr uint32_t kBlock = doc_limits::kBlockSize;

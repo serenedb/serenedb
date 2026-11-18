@@ -476,6 +476,20 @@ id	score
 1	0.2449984
 3	0.2449984
 
+# DOCS_TEST: ts_explain
+# DOCS_TEST_BODY
+query
+SELECT id,
+       BM25(scored_idx.tableoid) AS score,
+       ts_explain(scored_idx.tableoid) AS why
+FROM scored_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY score DESC, id
+LIMIT 1;
+----
+id	score	why
+2	0.38217354	{"value":0.38217354,"description":"weight(body:fox) [bm25(k1=1.2, b=0.75)], computed as boost * idf * tf from:","details":[{"value":0.5389965,"description":"idf, computed as log(1 + (N - n + 0.5) / (n + 0.5)) from:","details":[{"value":3,"description":"n, number of rows containing the term","details":[]},{"value":5,"description":"N, number of rows with the column","details":[]}]},{"value":0.7090465,"description":"tf, computed as freq / (freq + k1 * (1 - b + b * dl / avgdl)) from:","details":[{"value":3,"description":"freq, occurrences of the term in the row","details":[]},{"value":1.2,"description":"k1, term saturation parameter","details":[]},{"value":0.75,"description":"b, length normalization parameter","details":[]},{"value":6,"description":"dl, length of the column in the row","details":[]},{"value":5.8,"description":"avgdl, average length of the column, computed as L / N from:","details":[{"value":29,"description":"L, total length of the column over all rows","details":[]},{"value":5,"description":"N, number of rows with the column","details":[]}]}]}]}
+
 # DOCS_TEST: tfidf
 # DOCS_TEST_BODY
 query

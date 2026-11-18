@@ -87,6 +87,10 @@ class SlotsScore {
                         _provider);
   }
 
+  ScoreInputs Inputs() const noexcept {
+    return {.recipe = _recipe, .attrs = _provider};
+  }
+
  private:
   template<bool Want, typename T>
   using Maybe = std::conditional_t<Want, std::tuple<T>, std::tuple<>>;
@@ -142,6 +146,12 @@ class TwoPhaseBase {
     requires Scored
   {
     return _score.Prepare();
+  }
+
+  ScoreInputs Inputs() const noexcept
+    requires Scored
+  {
+    return _score.Inputs();
   }
 
   const score_t* Spreads() const noexcept

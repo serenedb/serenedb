@@ -32,6 +32,7 @@
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
+#include "iresearch/search/explain/factors.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/score_inputs.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
@@ -91,6 +92,19 @@ ScoreFunction LMDirichlet::PrepareScorer(const ScoreContext& ctx) const {
     return ScoreFunction::Default();
   }
   return PrepareLMScorer<LmDirScore>(ctx, *stats_cast(ctx.stats), _mu);
+}
+
+void LMDirichlet::Explain(const ScoreContext& ctx,
+                          const explain::SlotStats* stats,
+                          explain::Node& out) const {
+  if (_mu <= 0.f) {
+    out.description = "mu is not positive, so the clause scores 0";
+    return;
+  }
+  explain::ExplainLanguageModel(
+    ctx, stats_cast(ctx.stats)->collection_prob, stats,
+    {.key = "mu", .value = _mu, .description = "mu, the Dirichlet prior"},
+    "boost * max(0, log(1 + freq / (mu * p)) - log(1 + dl / mu))", out);
 }
 
 std::string LMDirichlet::ToString() const {

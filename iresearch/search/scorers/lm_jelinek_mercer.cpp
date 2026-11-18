@@ -31,6 +31,7 @@
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
+#include "iresearch/search/explain/factors.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/score_inputs.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
@@ -86,6 +87,17 @@ void LMJelinekMercer::collect(byte_type* stats_buf, const FieldCollector* field,
 
 ScoreFunction LMJelinekMercer::PrepareScorer(const ScoreContext& ctx) const {
   return PrepareLMScorer<LmJmScore>(ctx, *stats_cast(ctx.stats), _lambda);
+}
+
+void LMJelinekMercer::Explain(const ScoreContext& ctx,
+                              const explain::SlotStats* stats,
+                              explain::Node& out) const {
+  explain::ExplainLanguageModel(
+    ctx, stats_cast(ctx.stats)->collection_prob, stats,
+    {.key = "lambda",
+     .value = _lambda,
+     .description = "lambda, the share of the collection model"},
+    "boost * log(1 + ((1 - lambda) * freq / dl) / (lambda * p))", out);
 }
 
 std::string LMJelinekMercer::ToString() const {

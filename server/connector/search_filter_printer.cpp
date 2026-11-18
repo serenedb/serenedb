@@ -123,7 +123,9 @@ bool IsString(const LogicalType& type) {
   }
 }
 
-std::string TermValue(bytes_view term, const LogicalType& type) {
+}  // namespace
+
+std::string TermValue(bytes_view term, const duckdb::LogicalType& type) {
   if (type.id() == LogicalTypeId::BOOLEAN) {
     return !term.empty() && term[0] ? "true" : "false";
   }
@@ -136,13 +138,11 @@ std::string TermValue(bytes_view term, const LogicalType& type) {
   return TermToString(term);
 }
 
+namespace {
+
 std::string PrefixValue(bytes_view prefix, const LogicalType& type) {
   return sdb::pg::IsInetOrCidr(type) ? TermValue(prefix, type)
                                      : TermToString(prefix);
-}
-
-std::string TermValue(const bstring& term, const LogicalType& type) {
-  return TermValue(bytes_view{term}, type);
 }
 
 std::string DictTermValue(DictRef dict, bytes_view term,

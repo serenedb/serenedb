@@ -30,6 +30,7 @@
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
+#include "iresearch/search/explain/factors.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/score_inputs.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
@@ -86,6 +87,19 @@ ScoreFunction IndriDirichlet::PrepareScorer(const ScoreContext& ctx) const {
     return ScoreFunction::Default();
   }
   return PrepareLMScorer<IndriScore>(ctx, *stats_cast(ctx.stats), _mu);
+}
+
+void IndriDirichlet::Explain(const ScoreContext& ctx,
+                             const explain::SlotStats* stats,
+                             explain::Node& out) const {
+  if (_mu <= 0.f) {
+    out.description = "mu is not positive, so the clause scores 0";
+    return;
+  }
+  explain::ExplainLanguageModel(
+    ctx, stats_cast(ctx.stats)->collection_prob, stats,
+    {.key = "mu", .value = _mu, .description = "mu, the Dirichlet prior"},
+    "boost * log((freq + mu * p) / (dl + mu))", out);
 }
 
 std::string IndriDirichlet::ToString() const {

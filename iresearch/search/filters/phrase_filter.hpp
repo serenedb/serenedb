@@ -195,6 +195,9 @@ class ByPhrase : public FilterWithField<ByPhraseOptions> {
   PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer,
                                           StatsArena& stats,
                                           uint32_t threads) const final;
+
+  void DescribeStats(const PrepareCollector* collector,
+                     explain::StatsIndex& out) const final;
 };
 
 Filter::ptr PartFilter(field_id field, DictRef dict,

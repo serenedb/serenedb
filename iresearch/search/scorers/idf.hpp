@@ -51,6 +51,9 @@ class IDF final : public irs::ScorerBase<IDF, IDFStats> {
   bool ScoresPerDoc() const noexcept final { return false; }
 
   ScoreFunction PrepareScorer(const ScoreContext& ctx) const final;
+
+  void Explain(const ScoreContext& ctx, const explain::SlotStats* stats,
+               explain::Node& out) const final;
 };
 
 }  // namespace irs

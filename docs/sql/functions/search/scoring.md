@@ -25,6 +25,8 @@ The score is an ordinary value — use it wherever you need one: project it in t
 | [`raw_boost(tableoid)`](#raw_boost) | Raw query boost factor. |
 | [`raw_dl(tableoid)`](#raw_dl) | Raw document length. |
 
+To see how a row's score was computed, use [`ts_explain(tableoid)`](#ts_explain).
+
 ## Quick start
 
 Filter with `@@` to select matching rows, then rank them with a scorer in `ORDER BY ... DESC`. Add the primary key as a final sort key so ties resolve deterministically:
@@ -302,6 +304,30 @@ WHERE (body @@ 'fox' OR body @@ 'cat')::score('constant(42)')::merge('max')
 ```
 
 A per-branch scorer competes on its own terms under a group policy, so a `constant(10)` branch survives a `max` against a BM25 sibling. An unscored branch has nothing to compare, so the other branch wins by default.
+
+## Explaining scores {#ts_explain}
+
+**Signature.** `ts_explain(tableoid) -> JSON`.
+
+`ts_explain` shows how a row got its score: which clauses of the query matched the row, what each one contributed and the inputs of the scorer's formula. It explains the scorer function the query uses on the same index, so the query needs one, such as `BM25(idx.tableoid)` in the select list or in `ORDER BY`:
+
+<SqlLogicTest id="sql/functions/full_text_search/ts_explain" />
+
+Each node of the explanation has three keys:
+
+| Key | Meaning |
+| :--- | :--- |
+| `value` | The node's contribution to the score, a factor of the formula or a count. |
+| `description` | What the value is and how it was computed. |
+| `details` | The nodes the value was computed from. |
+
+- The top node's `value` is the row's score, exactly as the scorer function returns it for that row.
+- A clause names the column and the term it matched: `weight(body:fox)`, `weight(body:"quick fox")` for a phrase.
+- Clauses combine with `sum of:` or `max of:`, following the query's [`::merge`](#merge) policy. Optional clauses that the row does not match are left out, and a clause excluded from scoring with [`::score(NULL)`](#score-modifier) shows as matching without scoring.
+- `n` is the number of rows containing a term and `N` the number of rows with the column; both, and the column's average length, count the whole index, as the scorer does.
+- Each node's value is computed separately, so the values listed under `sum of:` can differ from their total in the last digit.
+
+`ts_explain` is computed for every row the scan returns and costs about as much as running the query again for that row, so request it together with a `LIMIT`. It explains text scorers only: a query ranked by a vector distance raises an error, as does a query without a scorer function on the index.
 
 ## Top-K and WAND pruning {#top-k}
 

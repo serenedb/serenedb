@@ -74,6 +74,9 @@ class LMDirichlet final : public irs::ScorerBase<LMDirichlet, LMStats> {
 
   ScoreFunction PrepareScorer(const ScoreContext& ctx) const final;
 
+  void Explain(const ScoreContext& ctx, const explain::SlotStats* stats,
+               explain::Node& out) const final;
+
   bool equals(const Scorer& other) const noexcept final;
 
   std::string ToString() const final;

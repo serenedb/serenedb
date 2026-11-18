@@ -26,6 +26,7 @@
 #include <utility>
 
 #include "iresearch/formats/posting/doc_input.hpp"
+#include "iresearch/search/explain/describe.hpp"
 #include "iresearch/search/filters/query_profile.hpp"
 #include "iresearch/search/filters/term_filter.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
@@ -374,6 +375,30 @@ PrepareCollector::ptr BooleanFilter::MakeCollectorImpl(const Scorer* scorer,
                       : filter.MakeCollector(*scorer, stats, threads));
     });
   return compound;
+}
+
+void BooleanFilter::DescribeStats(const PrepareCollector* collector,
+                                  explain::StatsIndex& out) const {
+  if (collector == nullptr) {
+    return;
+  }
+  const auto& compound = utils::downCast<CompoundCollector>(*collector);
+  size_t idx = 0;
+  WalkClauses(
+    *this,
+    [&](std::span<const TermClause> run, Occur) {
+      const auto* child = compound.Child(idx++);
+      if (child == nullptr) {
+        return;
+      }
+      const auto& terms = utils::downCast<ByTermsCollector>(*child);
+      for (size_t i = 0; i != run.size(); ++i) {
+        explain::DescribeTerm(terms, i, run[i].field, run[i].term, out);
+      }
+    },
+    [&](const Filter& filter, Occur) {
+      filter.DescribeStats(compound.Child(idx++), out);
+    });
 }
 
 QueryBuilder::ptr BooleanFilter::PrepareSegment(

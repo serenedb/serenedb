@@ -25,6 +25,7 @@
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/collectors.hpp"
+#include "iresearch/search/explain/describe.hpp"
 #include "iresearch/search/filters/term_filter.hpp"
 #include "iresearch/search/queries/ngram_similarity_query.hpp"
 #include "iresearch/search/queries/term_query.hpp"
@@ -114,6 +115,28 @@ PrepareCollector::ptr ByNGramSimilarity::MakeCollectorImpl(
     return std::make_unique<ByTermsCollector>(scorer, 1, stats, threads);
   }
   return std::make_unique<SlotsCollector>(scorer, terms_count, stats, threads);
+}
+
+void ByNGramSimilarity::DescribeStats(const PrepareCollector* collector,
+                                      explain::StatsIndex& out) const {
+  if (collector == nullptr) {
+    return;
+  }
+  const auto& ngrams = options().ngrams;
+  if (ngrams.size() == 1) {
+    explain::DescribeTerm(utils::downCast<ByTermsCollector>(*collector), 0,
+                          field_id(), ngrams.front(), out);
+    return;
+  }
+  const auto& slots = utils::downCast<SlotsCollector>(*collector);
+  auto stats = explain::FieldStats(slots, field_id());
+  for (size_t i = 0; i != ngrams.size(); ++i) {
+    const auto counts = slots.TermTotal(i);
+    if (counts.docs_with_term != 0) {
+      stats.terms.push_back(explain::TermOf(ngrams[i], counts));
+    }
+  }
+  out.Add(slots.Record().stats, std::move(stats));
 }
 
 }  // namespace irs

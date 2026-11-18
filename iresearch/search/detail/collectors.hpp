@@ -194,6 +194,8 @@ class FieldPrepareCollector : public PrepareCollector {
     return _counters.Field(thread);
   }
 
+  FieldCollector FieldTotal() const noexcept { return _counters.TotalField(); }
+
   void Finish(StatsArena& stats) override;
 
  protected:
@@ -224,6 +226,10 @@ class ByTermsCollector final : public FieldPrepareCollector {
     return _counters.Term(thread, i);
   }
 
+  TermCollector TermTotal(size_t i) const noexcept {
+    return _counters.TotalTerm(i);
+  }
+
   size_t Size() const noexcept { return _size; }
 
   void Finish(StatsArena& stats) final;
@@ -243,6 +249,12 @@ class SlotsCollector : public FieldPrepareCollector {
     return _counters.Term(thread, i);
   }
 
+  TermCollector TermTotal(size_t i) const noexcept {
+    return _counters.TotalTerm(i);
+  }
+
+  size_t Terms() const noexcept { return _counters.Terms(); }
+
   void Finish(StatsArena& stats) override;
 };
 
@@ -259,6 +271,16 @@ class ExpandedSlotsCollector final : public SlotsCollector {
   Terms& Expanded(uint32_t thread, size_t i) noexcept {
     SDB_ASSERT(i < _expanded_size);
     return _expanded[thread * _expanded_size + i];
+  }
+
+  Terms ExpandedTotal() const {
+    Terms total;
+    for (const auto& terms : _expanded) {
+      for (const auto& [term, counter] : terms) {
+        Accumulate(total[term], counter);
+      }
+    }
+    return total;
   }
 
   void Finish(StatsArena& stats) final;
@@ -289,7 +311,9 @@ class CompoundCollector final : public PrepareCollector {
 
   CompoundCollector* AsCompound() noexcept final { return this; }
 
-  PrepareCollector* Child(size_t i) noexcept { return _children[i].get(); }
+  PrepareCollector* Child(size_t i) const noexcept {
+    return _children[i].get();
+  }
 
   auto Size() const noexcept { return _children.size(); }
 

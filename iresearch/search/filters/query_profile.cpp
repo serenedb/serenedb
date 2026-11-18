@@ -95,6 +95,10 @@ class ProfiledProbe : public QueryProfile::Profiled<probe::Node> {
   void FetchScoreArgs(uint32_t n) final { _inner->FetchScoreArgs(n); }
 
   ScoreFunction PrepareScore() final { return _inner->PrepareScore(); }
+
+  std::optional<detail::ScoreInputs> Inputs() const final {
+    return _inner->Inputs();
+  }
 };
 
 class ProfiledFill : public QueryProfile::Profiled<fill::Node> {

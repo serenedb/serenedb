@@ -84,6 +84,7 @@ struct SearchRequest {
   int64_t from = 0;
   bool include_source = true;
   bool uses_match = false;
+  bool explain = false;
 };
 
 // Parses a _search body ('' = match_all). On failure writes the ES error

@@ -1,0 +1,218 @@
+statement ok
+CREATE TABLE explain_docs (id INTEGER PRIMARY KEY, body VARCHAR, tag VARCHAR, emb FLOAT[2]);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY explain_en AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm);
+
+statement ok
+CREATE INDEX explain_idx ON explain_docs USING inverted (id, body explain_en, tag);
+
+statement ok
+INSERT INTO explain_docs VALUES
+    (1, 'the quick brown fox', 'animal', [1, 0]),
+    (2, 'fox fox fox in the henhouse', 'animal', [0, 1]),
+    (3, 'a clever fox outwits two hounds in the meadow', 'story', [1, 1]),
+    (4, 'quick brown dog runs', 'animal', [2, 0]),
+    (5, 'the lazy dog sleeps all day', 'story', [0, 2]);
+
+query
+SELECT id, ts_explain(explain_idx.tableoid) AS why
+FROM explain_idx
+WHERE body @@ 'fox'
+ORDER BY BM25(explain_idx.tableoid) DESC, id
+LIMIT 1;
+----
+id	why
+2	{"value":0.38217354,"description":"weight(body:fox) [bm25(k1=1.2, b=0.75)], computed as boost * idf * tf from:","details":[{"value":0.5389965,"description":"idf, computed as log(1 + (N - n + 0.5) / (n + 0.5)) from:","details":[{"value":3,"description":"n, number of rows containing the term","details":[]},{"value":5,"description":"N, number of rows with the column","details":[]}]},{"value":0.7090465,"description":"tf, computed as freq / (freq + k1 * (1 - b + b * dl / avgdl)) from:","details":[{"value":3,"description":"freq, occurrences of the term in the row","details":[]},{"value":1.2,"description":"k1, term saturation parameter","details":[]},{"value":0.75,"description":"b, length normalization parameter","details":[]},{"value":6,"description":"dl, length of the column in the row","details":[]},{"value":5.8,"description":"avgdl, average length of the column, computed as L / N from:","details":[{"value":29,"description":"L, total length of the column over all rows","details":[]},{"value":5,"description":"N, number of rows with the column","details":[]}]}]}]}
+
+query
+SELECT id, (ts_explain(explain_idx.tableoid)->>'value')::FLOAT = BM25(explain_idx.tableoid) AS same
+FROM explain_idx
+WHERE body @@ 'fox quick dog'
+ORDER BY id;
+----
+id	same
+1	t
+2	t
+3	t
+4	t
+5	t
+
+query
+SELECT id, (why->>'value')::FLOAT = score AS same
+FROM (
+    SELECT id, BM25(explain_idx.tableoid) AS score, ts_explain(explain_idx.tableoid) AS why
+    FROM explain_idx
+    WHERE body @@ 'fox quick dog'
+    ORDER BY score DESC
+    LIMIT 2
+) t
+ORDER BY id;
+----
+id	same
+1	t
+4	t
+
+query
+SELECT id,
+       (ts_explain(explain_idx.tableoid)->>'value')::FLOAT = TFIDF(explain_idx.tableoid, true) AS same,
+       ts_explain(explain_idx.tableoid)->>'description' AS description
+FROM explain_idx
+WHERE body @@ 'fox'
+ORDER BY id;
+----
+id	same	description
+1	t	weight(body:fox) [tfidf(with_norms=true)], computed as boost * idf * tf * norm from:
+2	t	weight(body:fox) [tfidf(with_norms=true)], computed as boost * idf * tf * norm from:
+3	t	weight(body:fox) [tfidf(with_norms=true)], computed as boost * idf * tf * norm from:
+
+query
+SELECT id,
+       (ts_explain(explain_idx.tableoid)->>'value')::FLOAT = lm_dirichlet(explain_idx.tableoid, 10) AS same,
+       ts_explain(explain_idx.tableoid)->>'description' AS description
+FROM explain_idx
+WHERE body @@ 'fox'
+ORDER BY id;
+----
+id	same	description
+1	t	weight(body:fox) [lm_dirichlet(mu=10)], computed as boost * max(0, log(1 + freq / (mu * p)) - log(1 + dl / mu)) from:
+2	t	weight(body:fox) [lm_dirichlet(mu=10)], computed as boost * max(0, log(1 + freq / (mu * p)) - log(1 + dl / mu)) from:
+3	t	weight(body:fox) [lm_dirichlet(mu=10)], computed as boost * max(0, log(1 + freq / (mu * p)) - log(1 + dl / mu)) from:
+
+query
+SELECT id,
+       ts_explain(explain_idx.tableoid)->>'description' AS root,
+       json_array_length(ts_explain(explain_idx.tableoid)->'details') AS clauses
+FROM explain_idx
+WHERE body @@ 'fox quick'
+ORDER BY BM25(explain_idx.tableoid) DESC, id;
+----
+id	root	clauses
+1	sum of:	2
+4	sum of:	1
+2	sum of:	1
+3	sum of:	1
+
+query
+SELECT id, ts_explain(explain_idx.tableoid)->>'description' AS root
+FROM explain_idx
+WHERE (body @@ 'fox' OR body @@ 'quick')::merge('max')
+ORDER BY BM25(explain_idx.tableoid) DESC, id;
+----
+id	root
+1	max of:
+4	max of:
+2	max of:
+3	max of:
+
+query
+SELECT id,
+       ts_explain(explain_idx.tableoid)->>'description' AS phrase,
+       json_array_length(ts_explain(explain_idx.tableoid)->'details'->0->'details') AS idfs
+FROM explain_idx
+WHERE body @@ ts_phrase('quick brown')
+ORDER BY BM25(explain_idx.tableoid) DESC, id;
+----
+id	phrase	idfs
+1	weight(body:"quick brown") [bm25(k1=1.2, b=0.75)], computed as boost * idf * tf from:	2
+4	weight(body:"quick brown") [bm25(k1=1.2, b=0.75)], computed as boost * idf * tf from:	2
+
+query
+SELECT id, ts_explain(explain_idx.tableoid)->'details'->0 AS boost
+FROM explain_idx
+WHERE body @@ (ts_phrase('dog') ^ 2.0)
+ORDER BY BM25(explain_idx.tableoid) DESC, id;
+----
+id	boost
+4	{"value":2,"description":"boost, the query's weight for this clause","details":[]}
+5	{"value":2,"description":"boost, the query's weight for this clause","details":[]}
+
+query
+SELECT id, ts_explain(explain_idx.tableoid) AS why
+FROM explain_idx
+WHERE body @@ 'brown' OR (body @@ 'lazy')::score('constant(5)') OR (body @@ 'dog')::score(NULL)
+ORDER BY BM25(explain_idx.tableoid) DESC, id;
+----
+id	why
+5	{"value":5,"description":"sum of:","details":[{"value":0,"description":"match(body) matches without scoring","details":[]},{"value":5,"description":"weight(body:lazy) [constant(value=5)], computed as boost * value from:","details":[{"value":5,"description":"value, the constant score","details":[]}]}]}
+1	{"value":0.45580956,"description":"sum of:","details":[{"value":0.45580956,"description":"weight(body:brown) [bm25(k1=1.2, b=0.75)], computed as boost * idf * tf from:","details":[{"value":0.87546873,"description":"idf, computed as log(1 + (N - n + 0.5) / (n + 0.5)) from:","details":[{"value":2,"description":"n, number of rows containing the term","details":[]},{"value":5,"description":"N, number of rows with the column","details":[]}]},{"value":0.52064633,"description":"tf, computed as freq / (freq + k1 * (1 - b + b * dl / avgdl)) from:","details":[{"value":1,"description":"freq, occurrences of the term in the row","details":[]},{"value":1.2,"description":"k1, term saturation parameter","details":[]},{"value":0.75,"description":"b, length normalization parameter","details":[]},{"value":4,"description":"dl, length of the column in the row","details":[]},{"value":5.8,"description":"avgdl, average length of the column, computed as L / N from:","details":[{"value":29,"description":"L, total length of the column over all rows","details":[]},{"value":5,"description":"N, number of rows with the column","details":[]}]}]}]}]}
+4	{"value":0.45580956,"description":"sum of:","details":[{"value":0.45580956,"description":"weight(body:brown) [bm25(k1=1.2, b=0.75)], computed as boost * idf * tf from:","details":[{"value":0.87546873,"description":"idf, computed as log(1 + (N - n + 0.5) / (n + 0.5)) from:","details":[{"value":2,"description":"n, number of rows containing the term","details":[]},{"value":5,"description":"N, number of rows with the column","details":[]}]},{"value":0.52064633,"description":"tf, computed as freq / (freq + k1 * (1 - b + b * dl / avgdl)) from:","details":[{"value":1,"description":"freq, occurrences of the term in the row","details":[]},{"value":1.2,"description":"k1, term saturation parameter","details":[]},{"value":0.75,"description":"b, length normalization parameter","details":[]},{"value":4,"description":"dl, length of the column in the row","details":[]},{"value":5.8,"description":"avgdl, average length of the column, computed as L / N from:","details":[{"value":29,"description":"L, total length of the column over all rows","details":[]},{"value":5,"description":"N, number of rows with the column","details":[]}]}]}]},{"value":0,"description":"match(body) matches without scoring","details":[]}]}
+
+query
+SELECT id, ts_explain(explain_idx.tableoid)->>'description' AS description
+FROM explain_idx
+WHERE tag @@ 'story'
+ORDER BY BM25(explain_idx.tableoid) DESC, id;
+----
+id	description
+3	weight(tag:story) [bm25(k1=1.2, b=0.75)], computed as boost * idf * tf from:
+5	weight(tag:story) [bm25(k1=1.2, b=0.75)], computed as boost * idf * tf from:
+
+statement ok
+PREPARE explain_term(VARCHAR) AS
+SELECT id, ts_explain(explain_idx.tableoid)->>'description' AS description
+FROM explain_idx
+WHERE body @@ $1
+ORDER BY BM25(explain_idx.tableoid) DESC, id
+LIMIT 1;
+
+query
+EXECUTE explain_term('dog');
+----
+id	description
+4	weight(body:dog) [bm25(k1=1.2, b=0.75)], computed as boost * idf * tf from:
+
+query
+EXECUTE explain_term('henhouse');
+----
+id	description
+2	weight(body:henhouse) [bm25(k1=1.2, b=0.75)], computed as boost * idf * tf from:
+
+statement ok
+DEALLOCATE explain_term;
+
+query
+SELECT a.id,
+       (ts_explain(a.tableoid)->>'value')::FLOAT = BM25(a.tableoid) AS left_same,
+       (ts_explain(b.tableoid)->>'value')::FLOAT = BM25(b.tableoid) AS right_same
+FROM explain_idx a
+JOIN explain_idx b ON a.id = b.id
+WHERE a.body @@ 'fox' AND b.body @@ 'the'
+ORDER BY a.id;
+----
+id	left_same	right_same
+1	t	t
+2	t	t
+3	t	t
+
+query
+SELECT ts_explain(NULL) IS NULL AS is_null;
+----
+is_null
+t
+
+statement error
+SELECT id, ts_explain(explain_idx.tableoid) FROM explain_idx WHERE body @@ 'fox';
+----
+db error: ERROR: ts_explain() requires a scorer function on the same index in the query
+HINT: Add a scorer such as BM25(explain_idx.tableoid) to the select list or ORDER BY.
+
+
+statement error
+SELECT ts_explain(1);
+----
+db error: ERROR: ts_explain() requires an inverted index scan in the same sub-query
+
+
+statement ok
+CREATE INDEX explain_vec ON explain_docs USING inverted (id, emb ivf (metric = 'l2'));
+
+statement error
+SELECT id, ts_explain(explain_vec.tableoid)
+FROM explain_vec
+ORDER BY emb <-> [1, 0]::FLOAT[2]
+LIMIT 1;
+----
+db error: ERROR: ts_explain() explains text scorers, not vector distances

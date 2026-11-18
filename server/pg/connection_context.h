@@ -64,7 +64,6 @@ struct ReplBatch;
 }  // namespace sdb::replication
 namespace sdb::network::pg {
 
-class ProtocolState;
 class WireSinkContext;
 
 }  // namespace sdb::network::pg
@@ -236,8 +235,6 @@ class ConnectionContext final : public duckdb::ClientContext {
   bool copy_stdin_done = false;
 
   std::shared_ptr<network::pg::WireSinkContext> wire_sink;
-
-  const network::pg::ProtocolState* protocol_state = nullptr;
 
   pg::ProgressCommand pending_copy_command = pg::ProgressCommand::None;
   pg::ProgressIoType pending_copy_io = pg::ProgressIoType::None;

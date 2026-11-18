@@ -476,7 +476,6 @@ bool PgWireSession<Kind>::SetupConnection() {
   _txn_state.emplace(_conn->context->transaction);
   _connection_ctx = &ConnectionContext::Get(*_conn->context);
   _progress = sdb::pg::ProgressRegistration{_connection_ctx->ProgressSource()};
-  _connection_ctx->protocol_state = &_proto;
   auto& client_config = duckdb::ClientConfig::GetConfig(*_conn->context);
   client_config.get_result_collector = MakeWireCollector;
   client_config.enable_progress_bar = true;
@@ -2088,7 +2087,10 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
     statement.SetPrepared(std::move(prepared), bind_epoch);
     statement.SetTypeHints(std::move(type_hints));
     statement.SetParamOids(std::move(param_oids));
-    statement.SetAlias(statement_name);
+    if (!statement_name.empty()) {
+      statement.SetEntry(
+        duckdb::ClientData::Get(*_conn->context).prepared_statements.at(alias));
+    }
   } else {
     // One user command expanded into several statements (wrap_multi=false left
     // the body bare, no BEGIN/COMMIT). Keep them UNPREPARED: a later
@@ -2207,21 +2209,12 @@ void PgWireSession<Kind>::RevalidatePlan(Statement& stmt) {
   auto rebind = source->Copy();
   stmt.ReleaseUnusedPlan();
   const auto& hints = stmt.TypeHints();
-  auto prepared =
-    PrepareInternal(std::move(rebind), hints.empty() ? nullptr : &hints);
+  auto prepared = PrepareInternal(
+    std::move(rebind), hints.empty() ? nullptr : &hints, stmt.Entry());
   if (prepared->HasError()) {
     // The statement keeps its source, so the next Bind retries the re-plan
     // (PG's revalidation likewise fails per attempt, not once and for all).
     prepared->GetErrorObject().Throw();
-  }
-  if (!stmt.Alias().empty()) {
-    auto& statements =
-      duckdb::ClientData::Get(*_conn->context).prepared_statements;
-    const auto alias = statements.find(stmt.Alias());
-    const auto handle = statements.find(prepared->GetName());
-    if (alias != statements.end() && handle != statements.end()) {
-      alias->second = handle->second;
-    }
   }
   stmt.SetPrepared(std::move(prepared), epoch);
 }
@@ -2233,7 +2226,7 @@ void PgWireSession<Kind>::DropDeallocated(std::string_view name) {
   }
   auto& named = _proto.statements.Named();
   const auto it = named.find(name);
-  if (it != named.end() && !it->second->Alias().empty() &&
+  if (it != named.end() && it->second->Entry() &&
       !duckdb::ClientData::Get(*_conn->context)
          .prepared_statements.contains(name)) {
     named.erase(it);
@@ -2249,32 +2242,28 @@ StatementPtr& PgWireSession<Kind>::FindStatement(std::string_view name) {
     duckdb::ClientData::Get(*_conn->context).prepared_statements;
   auto& named = _proto.statements.Named();
   if (const auto it = named.find(name); it != named.end()) {
-    if (it->second->Alias().empty() || statements.contains(name)) {
+    if (!it->second->Entry() || statements.contains(name)) {
       return it->second;
     }
     named.erase(it);
   }
   const auto sql = statements.find(name);
-  if (sql == statements.end() || !sql->second->unbound_statement) {
+  if (sql == statements.end() || !sql->second->plan->unbound_statement) {
     return _proto.statements.FindOrThrow(name);
   }
-  auto& sql_data = sql->second;
-  auto hints = sql_data->parameter_type_hints;
+  const auto entry = sql->second;
+  auto hints = entry->plan->parameter_type_hints;
   _connection_ctx->RefreshCatalogEpoch();
   const auto bind_epoch = _connection_ctx->CatalogEpoch();
-  auto prepared = PrepareInternal(sql_data->unbound_statement->Copy(),
-                                  hints.empty() ? nullptr : &hints);
+  auto prepared = PrepareInternal(entry->plan->unbound_statement->Copy(),
+                                  hints.empty() ? nullptr : &hints, entry);
   if (prepared->HasError()) {
     prepared->GetErrorObject().Throw();
-  }
-  if (const auto handle = statements.find(prepared->GetName());
-      handle != statements.end()) {
-    sql_data = handle->second;
   }
   auto& slot = _proto.statements.Create(name);
   slot->SetPrepared(std::move(prepared), bind_epoch);
   slot->SetTypeHints(std::move(hints));
-  slot->SetAlias(name);
+  slot->SetEntry(entry);
   return slot;
 }
 
@@ -2282,8 +2271,8 @@ template<SocketKind Kind>
 void PgWireSession<Kind>::ReleaseDeallocated() {
   const auto& statements =
     duckdb::ClientData::Get(*_conn->context).prepared_statements;
-  absl::erase_if(_proto.statements.Named(), [&](const auto& entry) {
-    return !entry.second->Alias().empty() && !statements.contains(entry.first);
+  absl::erase_if(_proto.statements.Named(), [&](const auto& named) {
+    return named.second->Entry() && !statements.contains(named.first);
   });
 }
 
@@ -2299,9 +2288,8 @@ void PgWireSession<Kind>::RegisterUnprepared(
     unbound->statements.push_back(part->Copy());
   }
   unbound->query = query;
-  _conn->context->RegisterPreparedStatement(duckdb::Identifier{name},
-                                            std::move(unbound));
-  statement.SetAlias(name);
+  statement.SetEntry(_conn->context->RegisterPreparedStatement(
+    duckdb::Identifier{name}, std::move(unbound)));
 }
 
 template<SocketKind Kind>
@@ -2459,7 +2447,8 @@ PlanPtr PgWireSession<Kind>::ResolvePlan(
   if (auto cached = stmt.Resolution(plan, hints)) {
     return cached;
   }
-  auto resolved = PrepareInternal(stmt.Source()->Copy(), &hints);
+  auto resolved = PrepareInternal(stmt.Source()->Copy(), &hints, stmt.Entry(),
+                                  /*custom=*/true);
   if (resolved->HasError()) {
     return plan;
   }
@@ -2476,9 +2465,16 @@ PgWireSession<Kind>::PrepareInternal(
   duckdb::unique_ptr<duckdb::SQLStatement> statement,
   duckdb::optional_ptr<
     const duckdb::case_insensitive_map_t<duckdb::LogicalType>>
-    hints) {
+    hints,
+  const duckdb::shared_ptr<duckdb::PreparedStatementEntry>& entry,
+  bool custom) {
   const auto internal = _connection_ctx->InternalStatements();
-  return _conn->Prepare(std::move(statement), hints);
+  if (!entry) {
+    return _conn->Prepare(std::move(statement), hints);
+  }
+  return custom ? _conn->context->PrepareCustomPlan(entry, std::move(statement),
+                                                    hints)
+                : _conn->context->Replan(entry, std::move(statement), hints);
 }
 
 template<SocketKind Kind>
@@ -2541,9 +2537,11 @@ yaclib::Task<> PgWireSession<Kind>::HandleExecute(std::string_view payload) {
     case Statement::Kind::Unbound:
       SDB_UNREACHABLE();
     case Statement::Kind::Empty:
+      portal.stmt->CountExecution(false);
       WriteEmptyFrame(this->_send, PQ_MSG_EMPTY_QUERY_RESPONSE);
       co_return {};
     case Statement::Kind::Copy: {
+      portal.stmt->CountExecution(true);
       portal.exec.state = PortalState::Done;
       auto statement = portal.stmt->GetCopy().Copy();
       const auto copy = ClassifyCopy(*statement);
@@ -2562,6 +2560,7 @@ yaclib::Task<> PgWireSession<Kind>::HandleExecute(std::string_view payload) {
       // (ExecuteCompound); ExecutePrepared then drives that last one --
       // emitting the single CommandComplete and honoring max_rows.
       if (portal.exec.state == PortalState::Unstarted) {
+        portal.stmt->CountExecution(true);
         co_await ExecuteCompound(portal);
       }
       co_await ExecutePrepared(portal, max_rows);
@@ -3093,9 +3092,6 @@ yaclib::Future<> PgWireSession<Kind>::SessionMain() {
   // Teardown runs where everything was created: results/portals die on a duck
   // worker; their cleanup may emit notices that must be stolen before
   // ~ConnectionContext asserts an empty queue.
-  if (_connection_ctx) {
-    _connection_ctx->protocol_state = nullptr;
-  }
   _proto.Clear();
   if (_txn_state) {
     _txn_state->Rollback();

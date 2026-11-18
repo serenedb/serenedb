@@ -49,6 +49,8 @@ class JobCatalogEntry;
 }  // namespace sdb::catalog
 namespace sdb {
 
+class Runtime;
+
 void VerifySchedule(const duckdb::JobSchedule& schedule);
 
 struct JobRunRecord {
@@ -100,16 +102,16 @@ class JobScheduler final {
 
   static JobScheduler* Instance() noexcept { return gInstance; }
 
-  JobScheduler() { gInstance = this; }
-  ~JobScheduler() { gInstance = nullptr; }
+  explicit JobScheduler(Runtime& runtime);
+  ~JobScheduler();
 
-  void Start();
   void Schedule(catalog::JobCatalogEntry& job);
   void Execute(duckdb::ClientContext& caller, catalog::JobCatalogEntry& job);
   std::vector<JobRunRecord> GetHistory();
-  void Stop();
 
  private:
+  void Start();
+  void Stop() noexcept;
   void Arm(const std::shared_ptr<JobState>& state, uint64_t timer);
   void Run(std::shared_ptr<JobState> state, uint64_t timer);
   duckdb::ErrorData RunBody(std::shared_ptr<JobState> state, JobDefinition job,
@@ -119,6 +121,7 @@ class JobScheduler final {
 
   inline static JobScheduler* gInstance = nullptr;
 
+  Runtime& _runtime;
   yaclib::WaitGroup<> _runs{1};
   absl::Mutex _mutex;
   std::deque<JobRunRecord> _history ABSL_GUARDED_BY(_mutex);

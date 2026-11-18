@@ -33,6 +33,9 @@
 #include "utils/drain_gate.h"
 
 namespace sdb {
+
+class Runtime;
+
 namespace search {
 
 class Store;
@@ -53,22 +56,19 @@ class SearchEngine final {
 
   static int MaxConcurrentCompactions() noexcept;
 
-  SearchEngine();
+  explicit SearchEngine(Runtime& runtime);
   ~SearchEngine() { gInstance = nullptr; }
 
-  void start();
-  void stop();
+  void Start();
+  void Stop();
 
   void StartTasks(const std::shared_ptr<Store>& store);
 
-  // Loops poll this so they bail out of long-running cycles promptly.
-  bool IsStopping() const noexcept {
-    return _stopping.load(std::memory_order_acquire);
-  }
+  bool IsStopping() const noexcept;
 
-  // Signal the loops to stop without joining.
-  void RequestStop() noexcept {
-    _stopping.store(true, std::memory_order_release);
+  const irs::AnnBuildEnv& AnnEnv() const noexcept { return _ann_env; }
+  const irs::AnnBuildEnv& ManualAnnEnv() const noexcept {
+    return _manual_ann_env;
   }
 
   // Reserve / release one of the MaxConcurrentCompactions() slots. A fan-out
@@ -124,13 +124,15 @@ class SearchEngine final {
   utils::DrainGate& Maintenance() noexcept { return _maintenance; }
 
  private:
+  Runtime& _runtime;
+  irs::AnnBuildEnv _ann_env;
+  irs::AnnBuildEnv _manual_ann_env;
   utils::DrainGate _maintenance;
-  std::atomic<bool> _stopping{false};
   std::atomic<int> _running_compactions{0};
   std::atomic<uint32_t> _running_ann_workers{0};
   // Live loop futures plus one baseline token held for the engine's lifetime:
   // loops come and go with CREATE/DROP, and a transient zero would complete the
-  // group for good. stop() Done()s the token, then Waits.
+  // group for good. Stop() Done()s the token, then Waits.
   yaclib::WaitGroup<> _loops{1};
 };
 

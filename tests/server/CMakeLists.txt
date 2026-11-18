@@ -4,7 +4,6 @@ add_executable(
     # SDB_* macro fires -- see tests_main.cpp comment.
     tests_main.cpp
     assertions_tests.cpp
-    background_scheduler_test.cpp
     backup/backup_label_test.cpp
     backup/pg_control_test.cpp
     backup/restore_test.cpp
@@ -44,6 +43,7 @@ add_executable(
     number_of_cores_test.cpp
     pointer_union_test.cpp
     query_prepared_cache_test.cpp
+    runtime_test.cpp
     scorer_bounds_test.cpp
     search_engine_test.cpp
     search_table_changes_test.cpp

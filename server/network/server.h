@@ -41,34 +41,33 @@
 
 namespace sdb {
 
+struct ServerConfig {
+  std::vector<network::ListenSpec> listeners;
+  std::string tls_cert;
+  std::string tls_key;
+  std::string tls_ca;
+  std::string tls_ciphers;
+  std::string tls_groups;
+  network::TlsMinVersion tls_min_version = network::TlsMinVersion::Tls12;
+  std::string api_key;
+  std::string bearer_token;
+  std::string cors_origins;
+  std::uint32_t max_message = 0;
+  std::uint32_t max_connections = 0;
+  std::chrono::milliseconds auth_timeout{0};
+  std::chrono::milliseconds idle_timeout{0};
+  std::chrono::milliseconds body_timeout{0};
+};
+
+ServerConfig ReadServerConfig();
+
 class Server final {
  public:
-  inline static Server* gInstance = nullptr;
-  static Server& instance() noexcept { return *gInstance; }
-
-  Server();
+  Server(network::IoThreadPool& pool, ServerConfig config);
   ~Server();
 
-  // Two-phase start: bring the io worker pool up first (StartIoPool) so the
-  // background scheduler's Delay() has a timer host, then -- after the rest of
-  // the engine (search indexes) is ready -- begin accepting connections
-  // (StartListeners).
-  void StartIoPool();
-  void StartListeners();
-  // Two-phase stop, mirroring SearchEngine. RequestStop() is the signal:
-  // listeners close (synchronously) and every session is terminated -- its
-  // in-flight query interrupted, its socket closed by its own writer. stop()
-  // is the join: waits until every session has fully completed (queries and
-  // teardown run against the still-live engine, so it must precede store and
-  // catalog shutdown), then tears the io pool down.
-  void RequestStop() noexcept;
-  void stop();
-
-  // The io worker pool (sockets + reused for background timers); null until
-  // StartIoPool().
-  network::IoThreadPool* IoPool() noexcept { return _pool.get(); }
-
  private:
+  void StartListeners();
   void SetupAuth();
   void AddListener(const network::ListenSpec& spec);
   void AddUnixListener(const network::ListenSpec& spec);
@@ -78,27 +77,15 @@ class Server final {
   // Per-listener HTTP router assembled from the listener's ?api= module set.
   network::HttpRouter& BuildRouter(const network::ListenSpec& spec);
 
-  std::vector<std::string> _listen;
-  std::string _tls_cert;
-  std::string _tls_key;
-  std::string _tls_ca;
-  std::string _tls_ciphers;
-  std::string _tls_groups;
-  network::TlsMinVersion _tls_min_version = network::TlsMinVersion::Tls12;
-  std::string _api_key;
-  std::string _bearer_token;
-  std::string _cors_origins;
-  std::uint32_t _io_threads = 0;
-  std::uint32_t _max_message = 0;
-  std::uint32_t _max_connections = 0;
-  std::chrono::milliseconds _auth_timeout{0};
+  network::IoThreadPool& _pool;
+  const ServerConfig _config;
 
-  // Declared before the per-listener deps + pool/acceptors so they outlive the
+  // Declared before the per-listener deps + acceptors so they outlive the
   // sessions that point at them via the per-listener contexts.
   network::CancelRegistry _cancel;
   std::atomic<std::uint32_t> _active{0};
   // Every accepted session's Run() future; the slot is taken by the acceptor
-  // at spawn and the initial hold is released by stop().
+  // at spawn and the initial hold is released by ~Server().
   yaclib::WaitGroup<> _sessions{1};
   // Shared (cross-listener) auth sources; a future RBAC layer replaces them.
   std::unique_ptr<network::CredentialProvider> _credentials;
@@ -112,7 +99,6 @@ class Server final {
   std::deque<network::pg::PgServerContext> _pg_ctxs;
   std::deque<network::HttpServerContext> _http_ctxs;
 
-  std::unique_ptr<network::IoThreadPool> _pool;
   std::vector<std::shared_ptr<network::AcceptorBase>> _acceptors;
 };
 

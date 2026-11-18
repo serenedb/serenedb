@@ -54,10 +54,6 @@ class SubscriptionEngine final {
   explicit SubscriptionEngine(network::IoThreadPool& pool);
   ~SubscriptionEngine();
 
-  void start();
-  void RequestStop() noexcept;
-  void stop();
-
   void Sync(std::string_view database, duckdb::idx_t subscription,
             bool restart = false);
   void Stop(duckdb::idx_t subscription);
@@ -125,6 +121,8 @@ class SubscriptionEngine final {
                            network::IoExecutor& exec);
   void Disable(std::string_view database, duckdb::idx_t subscription,
                std::string_view name);
+  void start();
+  void stop() noexcept;
 
   network::IoThreadPool& _pool;
   std::atomic<bool> _stopping{false};

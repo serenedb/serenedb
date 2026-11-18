@@ -27,10 +27,8 @@
 #include <string>
 #include <vector>
 
-#include "network/pg/protocol_state.h"
 #include "pg/catalog/engine/system_table.h"
 #include "pg/catalog/tables/tables.h"
-#include "pg/connection_context.h"
 #include "pg/types/mapping.h"
 
 namespace sdb::pg {
@@ -38,10 +36,9 @@ namespace {
 
 struct PreparedStatement {
   std::string name;
-  duckdb::shared_ptr<duckdb::PreparedStatementData> data;
+  duckdb::shared_ptr<duckdb::PreparedStatementEntry> entry;
   std::vector<uint32_t> parameter_types;
   std::optional<std::vector<uint32_t>> result_types;
-  bool from_sql;
 };
 
 std::vector<uint32_t> ParameterTypes(duckdb::PreparedStatementData& data) {
@@ -79,20 +76,17 @@ std::optional<std::vector<uint32_t>> ResultTypes(
 
 SystemRows<PreparedStatement> LoadPreparedStatements(SystemScan& scan) {
   auto& context = scan.Context();
-  const auto* protocol = ConnectionContext::Get(context).protocol_state;
   std::vector<PreparedStatement> rows;
-  for (const auto& [name, data] :
+  for (const auto& [name, entry] :
        duckdb::ClientData::Get(context).prepared_statements) {
     if (duckdb::ClientContext::IsPreparedStatementHandle(name)) {
       continue;
     }
     const auto& text = name.GetIdentifierName();
-    rows.push_back(
-      {.name = text,
-       .data = data,
-       .parameter_types = ParameterTypes(*data),
-       .result_types = ResultTypes(*data),
-       .from_sql = !protocol || !protocol->statements.Named().contains(text)});
+    rows.push_back({.name = text,
+                    .entry = entry,
+                    .parameter_types = ParameterTypes(*entry->plan),
+                    .result_types = ResultTypes(*entry->plan)});
   }
   return rows;
 }
@@ -108,14 +102,21 @@ class PgPreparedStatement final
   static constexpr auto kStatement = Shape<kSql, const PreparedStatement>(
     Col<"name">([](const auto& row) -> const auto& { return row.name; }),
     Col<"statement">([](const auto& row) -> const auto& {
-      return row.data->unbound_statement->query;
+      return row.entry->plan->unbound_statement->query;
     }),
-    Col<"prepare_time">([](const auto& row) { return row.data->prepare_time; }),
+    Col<"prepare_time">(
+      [](const auto& row) { return row.entry->prepare_time; }),
     Col<"parameter_types">(
       [](const auto& row) -> const auto& { return row.parameter_types; }),
     Col<"result_types">(
       [](const auto& row) -> const auto& { return row.result_types; }),
-    Col<"from_sql">(&PreparedStatement::from_sql));
+    Col<"from_sql">([](const auto& row) { return row.entry->from_sql; }),
+    Col<"generic_plans">([](const auto& row) {
+      return static_cast<int64_t>(row.entry->generic_plans);
+    }),
+    Col<"custom_plans">([](const auto& row) {
+      return static_cast<int64_t>(row.entry->custom_plans);
+    }));
 
   void Row(const PreparedStatement& statement) { Emit<kStatement>(statement); }
 };

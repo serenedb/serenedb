@@ -1,0 +1,71 @@
+statement ok
+CREATE TABLE prb (id INT, v INT);
+
+
+statement ok
+PREPARE prb_exec(INT) AS INSERT INTO prb (id) VALUES ($1) RETURNING v;
+
+
+query
+EXECUTE prb_exec(1);
+----
+v
+NULL
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+ALTER TABLE prb ALTER COLUMN v SET DEFAULT 5;
+
+
+statement ok
+PREPARE prb_prep(INT) AS INSERT INTO prb (id) VALUES ($1) RETURNING v;
+
+
+query
+EXECUTE prb_exec(2);
+----
+v
+5
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE TABLE prb_other (z INT);
+
+
+query
+EXECUTE prb_prep(3);
+----
+v
+NULL
+
+
+query
+EXECUTE prb_exec(4);
+----
+v
+NULL
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT id, v FROM prb ORDER BY id;
+----
+id	v
+1	NULL
+3	NULL
+4	NULL

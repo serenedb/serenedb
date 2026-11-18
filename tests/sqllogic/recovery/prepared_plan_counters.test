@@ -1,0 +1,699 @@
+statement ok
+CREATE TABLE ppc (id INT PRIMARY KEY, u INT UNIQUE, v INT);
+
+
+statement ok
+INSERT INTO ppc SELECT i, i + 1000, i % 10 FROM generate_series(1, 100) g(i);
+
+
+statement ok
+CREATE TABLE ppc_child (id INT PRIMARY KEY, parent INT REFERENCES ppc (id), w INT);
+
+
+statement ok
+INSERT INTO ppc_child SELECT i, i % 10 + 1, i FROM generate_series(1, 50) g(i);
+
+
+statement ok
+CREATE TABLE ppc_side (x INT);
+
+
+statement ok
+INSERT INTO ppc_side SELECT i FROM generate_series(1, 10) g(i);
+
+
+statement ok
+PREPARE ppc_scan AS SELECT count(*) AS n FROM ppc;
+
+
+statement ok
+PREPARE ppc_pk(INT) AS SELECT v FROM ppc WHERE id = $1;
+
+
+statement ok
+PREPARE ppc_uk(INT) AS SELECT v FROM ppc WHERE u = $1;
+
+
+statement ok
+PREPARE ppc_fk(INT) AS SELECT count(*) AS n FROM ppc_child WHERE parent = $1;
+
+
+statement ok
+PREPARE ppc_const(INT) AS SELECT $1 + 1 AS r;
+
+
+statement ok
+PREPARE ppc_mixed(INT) AS SELECT v AS r FROM ppc WHERE id = $1 UNION ALL SELECT x FROM ppc_side WHERE x > 100;
+
+
+statement ok
+PREPARE ppc_filter(INT) AS SELECT count(*) AS n FROM ppc WHERE v > $1;
+
+
+statement ok
+PREPARE ppc_filter_lit AS SELECT count(*) AS n FROM ppc WHERE v > 5;
+
+
+statement ok
+PREPARE ppc_now AS SELECT count(*) AS n FROM ppc WHERE now() IS NOT NULL;
+
+
+query
+SELECT name, generic_plans, custom_plans FROM pg_prepared_statements ORDER BY name;
+----
+name	generic_plans	custom_plans
+ppc_const	0	0
+ppc_filter	0	0
+ppc_filter_lit	0	0
+ppc_fk	0	0
+ppc_mixed	0	0
+ppc_now	0	0
+ppc_pk	0	0
+ppc_scan	0	0
+ppc_uk	0	0
+
+
+statement ok
+EXECUTE ppc_scan;
+
+
+statement ok
+EXECUTE ppc_pk(1);
+
+
+statement ok
+EXECUTE ppc_uk(1001);
+
+
+statement ok
+EXECUTE ppc_fk(2);
+
+
+statement ok
+EXECUTE ppc_const(1);
+
+
+statement ok
+EXECUTE ppc_mixed(1);
+
+
+statement ok
+EXECUTE ppc_filter(5);
+
+
+statement ok
+EXECUTE ppc_filter_lit;
+
+
+statement ok
+EXECUTE ppc_now;
+
+
+query
+EXECUTE ppc_scan;
+----
+n
+100
+
+
+query
+EXECUTE ppc_pk(2);
+----
+v
+2
+
+
+query
+EXECUTE ppc_uk(1003);
+----
+v
+3
+
+
+query
+EXECUTE ppc_fk(3);
+----
+n
+5
+
+
+query
+EXECUTE ppc_const(2);
+----
+r
+3
+
+
+query
+EXECUTE ppc_mixed(4);
+----
+r
+4
+
+
+query
+EXECUTE ppc_filter(7);
+----
+n
+20
+
+
+query
+EXECUTE ppc_filter_lit;
+----
+n
+40
+
+
+query
+EXECUTE ppc_now;
+----
+n
+100
+
+
+query
+SELECT name, generic_plans, custom_plans FROM pg_prepared_statements ORDER BY name;
+----
+name	generic_plans	custom_plans
+ppc_const	2	0
+ppc_filter	0	2
+ppc_filter_lit	2	0
+ppc_fk	2	0
+ppc_mixed	2	0
+ppc_now	0	2
+ppc_pk	2	0
+ppc_scan	2	0
+ppc_uk	2	0
+
+
+statement ok
+INSERT INTO ppc VALUES (101, 1101, 9);
+
+
+query
+EXECUTE ppc_scan;
+----
+n
+101
+
+
+query
+EXECUTE ppc_pk(101);
+----
+v
+9
+
+
+query
+EXECUTE ppc_uk(1101);
+----
+v
+9
+
+
+statement ok
+EXECUTE ppc_fk(3);
+
+
+query
+EXECUTE ppc_const(3);
+----
+r
+4
+
+
+query
+EXECUTE ppc_mixed(101);
+----
+r
+9
+
+
+query
+EXECUTE ppc_filter(7);
+----
+n
+21
+
+
+query
+EXECUTE ppc_filter_lit;
+----
+n
+41
+
+
+statement ok
+EXECUTE ppc_now;
+
+
+query
+SELECT name, generic_plans, custom_plans FROM pg_prepared_statements ORDER BY name;
+----
+name	generic_plans	custom_plans
+ppc_const	3	0
+ppc_filter	0	3
+ppc_filter_lit	2	1
+ppc_fk	3	0
+ppc_mixed	2	1
+ppc_now	0	3
+ppc_pk	3	0
+ppc_scan	2	1
+ppc_uk	3	0
+
+
+statement ok
+EXECUTE ppc_scan;
+
+
+statement ok
+EXECUTE ppc_mixed(1);
+
+
+statement ok
+EXECUTE ppc_filter_lit;
+
+
+query
+SELECT name, generic_plans, custom_plans FROM pg_prepared_statements WHERE name IN ('ppc_scan', 'ppc_mixed', 'ppc_filter_lit') ORDER BY name;
+----
+name	generic_plans	custom_plans
+ppc_filter_lit	3	1
+ppc_mixed	3	1
+ppc_scan	3	1
+
+
+statement ok
+INSERT INTO ppc_child VALUES (51, 3, 0);
+
+
+query
+EXECUTE ppc_fk(3);
+----
+n
+6
+
+
+statement ok
+INSERT INTO ppc_side VALUES (200);
+
+
+query rowsort
+EXECUTE ppc_mixed(1);
+----
+r
+1
+200
+
+
+statement ok
+EXECUTE ppc_scan;
+
+
+query
+SELECT name, generic_plans, custom_plans FROM pg_prepared_statements WHERE name IN ('ppc_fk', 'ppc_mixed', 'ppc_scan') ORDER BY name;
+----
+name	generic_plans	custom_plans
+ppc_fk	4	0
+ppc_mixed	3	2
+ppc_scan	4	1
+
+
+statement ok
+PREPARE ppc_upd(INT) AS UPDATE ppc SET v = v + 1 WHERE id = $1;
+
+
+statement ok
+EXECUTE ppc_upd(1);
+
+
+statement ok
+EXECUTE ppc_upd(1);
+
+
+statement ok
+EXECUTE ppc_upd(2);
+
+
+query
+EXECUTE ppc_pk(1);
+----
+v
+3
+
+
+query
+SELECT name, generic_plans, custom_plans FROM pg_prepared_statements WHERE name IN ('ppc_pk', 'ppc_upd') ORDER BY name;
+----
+name	generic_plans	custom_plans
+ppc_pk	4	0
+ppc_upd	3	0
+
+
+statement ok
+EXPLAIN EXECUTE ppc_scan;
+
+
+statement ok
+EXECUTE ppc_scan;
+
+
+query
+SELECT name, generic_plans, custom_plans FROM pg_prepared_statements WHERE name = 'ppc_scan';
+----
+name	generic_plans	custom_plans
+ppc_scan	5	2
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO ppc VALUES (102, 1102, 0);
+
+
+query
+EXECUTE ppc_scan;
+----
+n
+102
+
+
+query
+EXECUTE ppc_scan;
+----
+n
+102
+
+
+query
+EXECUTE ppc_pk(102);
+----
+v
+0
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+EXECUTE ppc_scan;
+
+
+statement ok
+EXECUTE ppc_scan;
+
+
+query
+SELECT name, generic_plans, custom_plans FROM pg_prepared_statements WHERE name IN ('ppc_scan', 'ppc_pk') ORDER BY name;
+----
+name	generic_plans	custom_plans
+ppc_pk	5	0
+ppc_scan	6	5
+
+
+query
+EXECUTE ppc_const(2.5);
+----
+r
+4
+
+
+statement ok
+PREPARE ppc_cast AS SELECT $1::INT + 1 AS r;
+
+
+statement ok
+EXECUTE ppc_cast(1);
+
+
+query
+EXECUTE ppc_cast(1.5);
+----
+r
+3
+
+
+statement ok
+EXECUTE ppc_cast(2);
+
+
+query
+SELECT name, generic_plans, custom_plans FROM pg_prepared_statements WHERE name IN ('ppc_const', 'ppc_cast') ORDER BY name;
+----
+name	generic_plans	custom_plans
+ppc_cast	2	1
+ppc_const	4	0
+
+
+statement ok
+CREATE TABLE ppl (k INT) WITH (compaction_interval = 0, row_group_size = 2048);
+
+
+statement ok
+INSERT INTO ppl SELECT i FROM range(0, 4096) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) ppl;
+
+
+statement ok
+INSERT INTO ppl SELECT i FROM range(4096, 8192) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) ppl;
+
+
+statement ok
+CREATE TABLE ppln (k INT) WITH (compaction_interval = 0, row_group_size = 2048);
+
+
+statement ok
+INSERT INTO ppln SELECT NULL FROM range(0, 4096) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) ppln;
+
+
+statement ok
+INSERT INTO ppln SELECT i FROM range(0, 4096) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) ppln;
+
+
+statement ok
+DEALLOCATE ALL;
+
+
+statement ok
+PREPARE ppl_offset AS SELECT k FROM ppl ORDER BY k LIMIT 3 OFFSET 4100;
+
+
+statement ok
+PREPARE ppl_offset_param(INT) AS SELECT k FROM ppl ORDER BY k LIMIT 3 OFFSET $1;
+
+
+statement ok
+PREPARE ppl_count AS SELECT count(*) AS n FROM ppl;
+
+
+statement ok
+PREPARE ppln_nulls AS SELECT k FROM ppln ORDER BY k NULLS FIRST LIMIT 3 OFFSET 4100;
+
+
+query
+EXPLAIN EXECUTE ppl_offset;
+----
+QUERY PLAN
+╭─ EXECUTE ────────────────────────╮
+╰─────────────────┬────────────────╯
+╭─ TOP_N ─────────┴────────────────╮
+│ Top: 3                           │
+│ Offset: 4                        │
+│ Order By: k ASC                  │
+│ ~3 rows                          │
+╰─────────────────┬────────────────╯
+╭─ IRESEARCH_SCAN ┴────────────────╮
+│ Table: ppl                       │
+│ Projections: k                   │
+│ Column Filter:                   │
+│ optional: Dynamic Filter (k < ?) │
+│ ~8,192 rows                      │
+╰──────────────────────────────────╯
+
+
+query
+EXPLAIN EXECUTE ppln_nulls;
+----
+QUERY PLAN
+╭─ EXECUTE ─────────────────────────────────────────╮
+╰─────────────────────────┬─────────────────────────╯
+╭─ TOP_N ─────────────────┴─────────────────────────╮
+│ Top: 3                                            │
+│ Offset: 4                                         │
+│ Order By: k ASC                                   │
+│ ~3 rows                                           │
+╰─────────────────────────┬─────────────────────────╯
+╭─ IRESEARCH_SCAN ────────┴─────────────────────────╮
+│ Table: ppln                                       │
+│ Projections: k                                    │
+│ Column Filter:                                    │
+│ optional: ((k IS NULL) OR Dynamic Filter (k < ?)) │
+│ ~8,192 rows                                       │
+╰───────────────────────────────────────────────────╯
+
+
+query
+EXECUTE ppl_offset;
+----
+k
+4100
+4101
+4102
+
+
+query
+EXECUTE ppl_offset_param(4100);
+----
+k
+4100
+4101
+4102
+
+
+query
+EXECUTE ppl_count;
+----
+n
+8192
+
+
+query
+EXECUTE ppln_nulls;
+----
+k
+4
+5
+6
+
+
+query
+SELECT name, generic_plans, custom_plans FROM pg_prepared_statements ORDER BY name;
+----
+name	generic_plans	custom_plans
+ppl_count	1	0
+ppl_offset	2	0
+ppl_offset_param	1	0
+ppln_nulls	2	0
+
+
+connection ppc_holder
+statement ok
+BEGIN;
+
+
+connection ppc_holder
+query
+SELECT count(*) AS n FROM ppl;
+----
+n
+8192
+
+
+statement ok
+VACUUM (COMPACT_TABLE) ppl;
+
+
+statement ok
+VACUUM (COMPACT_TABLE) ppln;
+
+
+query
+EXECUTE ppl_offset;
+----
+k
+4100
+4101
+4102
+
+
+query
+EXECUTE ppl_offset_param(4100);
+----
+k
+4100
+4101
+4102
+
+
+query
+EXECUTE ppl_count;
+----
+n
+8192
+
+
+query
+EXECUTE ppln_nulls;
+----
+k
+4
+5
+6
+
+
+query
+SELECT name, generic_plans, custom_plans FROM pg_prepared_statements ORDER BY name;
+----
+name	generic_plans	custom_plans
+ppl_count	2	0
+ppl_offset	2	1
+ppl_offset_param	2	0
+ppln_nulls	2	1
+
+
+connection ppc_holder
+statement ok
+COMMIT;
+
+
+statement ok
+VACUUM (COMPACT_TABLE) ppl;
+
+
+statement ok
+VACUUM (COMPACT_TABLE) ppln;
+
+
+statement ok
+EXECUTE ppl_offset;
+
+
+statement ok
+EXECUTE ppl_offset_param(10);
+
+
+statement ok
+EXECUTE ppl_count;
+
+
+statement ok
+EXECUTE ppln_nulls;
+
+
+query
+SELECT name, generic_plans, custom_plans FROM pg_prepared_statements ORDER BY name;
+----
+name	generic_plans	custom_plans
+ppl_count	3	0
+ppl_offset	3	1
+ppl_offset_param	3	0
+ppln_nulls	3	1

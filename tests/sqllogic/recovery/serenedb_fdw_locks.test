@@ -57,7 +57,7 @@ system ok
 ! flock -n -x $__TEST_DIR__/sfl_copy/PG_VERSION true
 
 system ok
-timeout 60 $SERENED $__TEST_DIR__/sfl_copy --listen='postgres://127.0.0.1:0' > $__TEST_DIR__/sfl_start.log 2>&1; [ $? -ne 0 ] && grep -q "is locked by a running server or a read-only attachment" $__TEST_DIR__/sfl_start.log
+timeout 60 $SERENED $__TEST_DIR__/sfl_copy --listen='postgres://$__TEST_DIR__/sfl_second.sock' > $__TEST_DIR__/sfl_start.log 2>&1; [ $? -ne 0 ] && grep -q "is locked by a running server or a read-only attachment" $__TEST_DIR__/sfl_start.log
 
 query
 SELECT count(*) AS n FROM sfl_copy.public.sfl_docs;

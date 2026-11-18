@@ -171,7 +171,7 @@ CommandTag ExecuteTag(const duckdb::SQLStatement* unbound,
     return {"EXECUTE", duckdb::StatementType::EXECUTE_STATEMENT};
   }
   using duckdb::StatementType;
-  const auto inner = it->second->statement_type;
+  const auto inner = it->second->plan->statement_type;
   switch (inner) {
     case StatementType::SELECT_STATEMENT:
       return {"SELECT", inner, true};
@@ -339,7 +339,7 @@ const duckdb::SQLStatement* UnboundStatement(
     duckdb::ClientData::Get(*context).prepared_statements;
   const auto it = statements.find(prepared.GetName());
   return it != statements.end() && it->second
-           ? it->second->unbound_statement.get()
+           ? it->second->plan->unbound_statement.get()
            : nullptr;
 }
 

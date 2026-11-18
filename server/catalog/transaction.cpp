@@ -182,6 +182,12 @@ void SessionTransaction::Refresh() {
   transactions.Ended(previous);
 }
 
+void SessionTransaction::Push(Change change) {
+  _changes.push_back(std::move(change));
+  _change_epoch.store(Transactions::Get().NextId(), std::memory_order_release);
+  _change_count.store(_changes.size(), std::memory_order_release);
+}
+
 void ApplyLsnUpdate(const LsnUpdate& update, duckdb::transaction_t commit) {
   if (update.relation != 0) {
     update.entry->MarkRelationSynced(update.relation, update.remote_lsn,

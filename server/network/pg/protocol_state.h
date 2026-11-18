@@ -191,8 +191,17 @@ class Statement {
   }
   const std::vector<uint64_t>& ParamOids() const { return _param_oids; }
 
-  void SetAlias(std::string_view alias) { _alias = alias; }
-  const std::string& Alias() const { return _alias; }
+  void SetEntry(duckdb::shared_ptr<duckdb::PreparedStatementEntry> entry) {
+    _entry = std::move(entry);
+  }
+  const duckdb::shared_ptr<duckdb::PreparedStatementEntry>& Entry() const {
+    return _entry;
+  }
+  void CountExecution(bool planned) {
+    if (_entry) {
+      _entry->CountExecution(planned);
+    }
+  }
 
   // The result descriptor the client was last told (PG's
   // plansource->resultDesc). The extended protocol sends RowDescription only
@@ -255,7 +264,7 @@ class Statement {
   duckdb::unique_ptr<duckdb::SQLStatement> _source;
   duckdb::case_insensitive_map_t<duckdb::LogicalType> _type_hints;
   std::vector<uint64_t> _param_oids;
-  std::string _alias;
+  duckdb::shared_ptr<duckdb::PreparedStatementEntry> _entry;
   duckdb::vector<duckdb::LogicalType> _described_types;
   duckdb::vector<duckdb::Identifier> _described_names;
   duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>> _statements;

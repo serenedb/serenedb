@@ -79,9 +79,13 @@ A client can also declare parameter types when it prepares a statement over the 
 
 ## Plans
 
-An execution of a prepared statement skips parsing. A statement that reads only tables and [inverted indexes](../indexes/inverted/index.md) also keeps its plan between executions: it is planned again only by the first execution after a table or index it reads has changed, and that execution's plan is kept in turn. Every committed write to a table is such a change, so a statement over a table that receives writes between its executions is planned again on each of them. A statement that reads a table of an attached DuckDB database file is planned on every execution.
+An execution of a prepared statement skips parsing, and it runs the plan the statement already has unless something below makes it plan the statement again first. [`pg_prepared_statements`](#listing-prepared-statements) counts which executions did.
 
-The values the index takes over are read at execution, so one plan serves them all: the query vector, a full-text query, the conditions the index answers, `LIMIT` and `OFFSET`. A parameter in a condition the index cannot answer, one that is itself an operand of `AND` or `OR`, and any parameter of a statement that calls `ts_dict_agg` or `ts_offsets` is planned with its value, on every execution.
+- **Changed data.** A statement that reads tables and [inverted indexes](../indexes/inverted/index.md) is planned again by its first execution after a table or index it reads has changed, and that execution's plan is kept in turn. Every committed write to a table is such a change, and in a transaction that has written to a table the statement reads, every execution plans it again. A statement that reads each of its tables only through an equality on a primary key, a unique key or a foreign key, such as `SELECT v FROM t WHERE id = $1` or `UPDATE t SET v = v + 1 WHERE id = $1`, keeps its plan across writes, and so does a statement that reads no table. A statement that reads a table of an attached DuckDB database file is planned on every execution.
+- **Changed storage layout.** A statement that sorts by a column and skips a constant `OFFSET`, whose plan leaves out the row groups the offset covers, is planned again by its first execution after the table's segments are flushed or compacted, by `VACUUM (FLUSH_TABLE)`, `VACUUM (COMPACT_TABLE)` or in the background, even when no row changed, and that execution's plan is kept in turn. Other statements keep their plans across flushes and compactions.
+- **Schema and session changes.** A statement that reads tables is planned again by its first execution after a schema change committed anywhere on the server, such as a `CREATE TABLE` in another database, and every statement by its first execution after the session changes `search_path` or `integer_overflow`; that execution's plan is kept in turn. A statement prepared through the extended query protocol is planned again after a schema change by the Bind or Describe before its next execution.
+- **Values.** The values the index takes over are read at execution, so one plan serves them all: the query vector, a full-text query, the conditions the index answers, `LIMIT` and `OFFSET`. A parameter in a condition the index cannot answer, one that is itself an operand of `AND` or `OR`, and any parameter of a statement that calls `ts_dict_agg` or `ts_offsets` is planned with its value, on every execution.
+- **Functions.** A statement that calls a function whose value holds for the whole query, such as `now()`, is planned on every execution.
 
 An `EXECUTE` whose values do not have the parameters' types plans the statement again for that execution: `[1, 1]` is an `INTEGER[]` and `2` an `INTEGER`. Declare the parameters with those types or cast the values; client drivers that send typed parameters are not affected.
 
@@ -103,9 +107,13 @@ Statements a client prepares through the extended query protocol share these nam
 
 ## Listing Prepared Statements
 
-The `pg_catalog.pg_prepared_statements` view lists the prepared statements of the session: the name, the text that prepared it, when it was prepared, the parameter and result types, and `from_sql`, which is `true` for statements prepared with `PREPARE` and `false` for named statements prepared through the extended query protocol. `generic_plans` and `custom_plans` are always `NULL`.
+The `pg_catalog.pg_prepared_statements` view lists the prepared statements of the session: the name, the text that prepared it, when it was prepared, the parameter and result types, and `from_sql`, which is `true` for statements prepared with `PREPARE` and `false` for named statements prepared through the extended query protocol.
 
 <SqlLogicTest id="sql/query_syntax/prepared_statements/example_013" />
+
+`generic_plans` counts the executions that ran the plan the statement already had, and `custom_plans` the executions that planned the statement first, for any of the reasons under [Plans](#plans). Each execution counts once: an `EXECUTE`, an `EXPLAIN EXECUTE`, and an execution of a statement prepared through the extended query protocol, where a Bind or Describe that plans the statement again makes its next execution count in `custom_plans`. Such a statement that is a `COPY ... FROM STDIN`, a `COPY ... TO STDOUT` or an `ALTER TABLE ... ADD COLUMN` with a volatile default is planned on every execution, and the empty query never is. Below, the lookup by primary key keeps its plan across the `INSERT`, and the sum is planned again once:
+
+<SqlLogicTest id="sql/query_syntax/prepared_statements/plan_counts" />
 
 
 ## Dropping Prepared Statements: `DEALLOCATE`

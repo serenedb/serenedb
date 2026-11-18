@@ -172,6 +172,13 @@
       "paths": ["third_party/duckdb_markdown"]
     },
     {
+      "name": "duckdb-nanoarrow",
+      "url": "https://github.com/duckdb/duckdb-nanoarrow",
+      "license": "MIT",
+      "files": ["third_party/duckdb_nanoarrow/LICENSE"],
+      "paths": ["third_party/duckdb_nanoarrow"]
+    },
+    {
       "name": "duckdb-postgres",
       "url": "https://github.com/duckdb/duckdb-postgres",
       "license": "MIT",
@@ -216,6 +223,13 @@
       "license": "MIT",
       "files": ["third_party/fastText/LICENSE"],
       "paths": ["third_party/fastText"]
+    },
+    {
+      "name": "flatcc",
+      "url": "https://github.com/dvidelabs/flatcc",
+      "license": "Apache-2.0",
+      "files": ["third_party/nanoarrow/thirdparty/flatcc/LICENSE"],
+      "paths": ["third_party/nanoarrow/thirdparty/flatcc"]
     },
     {
       "name": "fmt",
@@ -351,6 +365,13 @@
       "license": "Apache-2.0 OR GPL-2.0-or-later",
       "files": ["third_party/duckdb/third_party/mbedtls/LICENSE"],
       "paths": ["third_party/duckdb/third_party/mbedtls"]
+    },
+    {
+      "name": "nanoarrow",
+      "url": "https://arrow.apache.org/nanoarrow",
+      "license": "Apache-2.0",
+      "files": ["third_party/nanoarrow/LICENSE.txt", "third_party/nanoarrow/NOTICE.txt"],
+      "paths": ["third_party/nanoarrow"]
     },
     {
       "name": "OpenBLAS",

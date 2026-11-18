@@ -19,14 +19,14 @@ from .. import reports, store
 from ..scheduler import CRASHED, FAILED, PASSED, SKIPPED, STUCK, Fixture, Outcome, Unit
 from . import BELOW_RESOLUTION, Skip, plan, skipped
 
-SUITES = ("core", "cpp", "avro", "azure", "httpfs", "iceberg", "inet", "markdown",
+SUITES = ("core", "cpp", "avro", "azure", "httpfs", "iceberg", "inet", "markdown", "nanoarrow",
           "postgres_scanner", "spatial", "interop")
 SUITE_DIRS = {
     "core": "third_party/duckdb", "cpp": "third_party/duckdb", "avro": "third_party/duckdb_avro",
     "azure": "third_party/duckdb_azure", "httpfs": "third_party/duckdb_httpfs",
     "iceberg": "third_party/duckdb_iceberg", "inet": "third_party/duckdb_inet",
-    "markdown": "third_party/duckdb_markdown", "postgres_scanner": "third_party/duckdb_postgres",
-    "spatial": "third_party/duckdb_spatial",
+    "markdown": "third_party/duckdb_markdown", "nanoarrow": "third_party/duckdb_nanoarrow",
+    "postgres_scanner": "third_party/duckdb_postgres", "spatial": "third_party/duckdb_spatial",
 }
 CORE_SERIAL = (
     "test/sql/storage/concurrent_checkpoint_append_before_snapshot.test_slow",

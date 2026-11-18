@@ -144,6 +144,8 @@ enum class CopyFormat : uint8_t {
   Csv,
   Binary,
   Parquet,
+  Arrow,
+  Arrows,
 };
 
 // COPY direction over a stdin/stdout pipe. The patched parser rewrites STDIN /

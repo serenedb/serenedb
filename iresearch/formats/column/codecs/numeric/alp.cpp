@@ -50,6 +50,7 @@
 #include <vector>
 
 #include "iresearch/formats/column/codecs/numeric/alp_primitives.hpp"
+#include "iresearch/formats/column/codecs/numeric/alp_scan.tpp"
 #include "iresearch/formats/column/codecs/numeric/segment_reader.hpp"
 #include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -79,7 +80,6 @@ constexpr double kEncodingUpperLimit = 9223372036854774784.0;
 constexpr double kEncodingLowerLimit = -9223372036854774784.0;
 constexpr auto kEncodedUpperLimit = static_cast<int64_t>(kEncodingUpperLimit);
 constexpr size_t kMaxCombinations = 5;
-constexpr idx_t kDecodeDistance = kVectorSize / 64;
 
 constexpr int64_t kFactArr[] = {
   1,
@@ -954,6 +954,8 @@ SegmentReader GetVectorReader(const AlpSegmentLayout& layout,
 
 template<typename T>
 struct AlpScanState final : SegmentScanState {
+  using Value = T;
+
   AlpScanState(duckdb::BufferHandle handle_p, const ColumnSegment& segment)
     : handle{std::move(handle_p)},
       count{segment.count},
@@ -968,13 +970,8 @@ struct AlpScanState final : SegmentScanState {
 };
 
 template<typename T>
-idx_t LeftInVector(const AlpScanState<T>& state) {
-  return kVectorSize - (state.total_value_count % kVectorSize);
-}
-
-template<typename T>
-bool VectorFinished(const AlpScanState<T>& state) {
-  return !(state.total_value_count % kVectorSize);
+T* ResultValues(const AlpScanState<T>&, duckdb::Vector& result) {
+  return duckdb::FlatVector::GetDataMutable<T>(result);
 }
 
 template<typename T>
@@ -1039,88 +1036,6 @@ void LoadVector(AlpScanState<T>& state, T* value_buffer) {
     vector_state.exceptions_count, vector_state.exceptions,
     vector_state.exceptions_positions, vector_state.frame_of_reference,
     vector_state.bit_width);
-}
-
-template<typename T, bool kSkip>
-void ScanVector(AlpScanState<T>& state, T* values, idx_t vector_size) {
-  SDB_ASSERT(vector_size <= kVectorSize);
-  SDB_ASSERT(vector_size <= LeftInVector(state));
-  if (VectorFinished(state)) {
-    SDB_ASSERT(state.total_value_count < state.count);
-    if constexpr (!kSkip) {
-      if (vector_size == kVectorSize) {
-        LoadVector(state, values);
-        state.total_value_count += vector_size;
-        return;
-      }
-    }
-    LoadVector(state, state.vector_state.decoded_values);
-  }
-  if constexpr (!kSkip) {
-    std::memcpy(values,
-                state.vector_state.decoded_values + state.vector_state.index,
-                sizeof(T) * vector_size);
-  }
-  state.vector_state.index += vector_size;
-  state.total_value_count += vector_size;
-}
-
-template<typename T>
-void SkipVector(AlpScanState<T>& state) {
-  SDB_ASSERT(state.total_value_count < state.count);
-  state.total_value_count +=
-    std::min<idx_t>(kVectorSize, state.count - state.total_value_count);
-}
-
-template<typename T>
-void SkipValues(AlpScanState<T>& state, idx_t skip_count) {
-  SDB_ASSERT(state.total_value_count <= state.count);
-  SDB_ASSERT(skip_count <= state.count - state.total_value_count);
-  if (state.total_value_count && !VectorFinished(state)) {
-    const idx_t to_skip = std::min<idx_t>(skip_count, LeftInVector(state));
-    ScanVector<T, true>(state, nullptr, to_skip);
-    skip_count -= to_skip;
-  }
-  const idx_t vectors_to_skip = skip_count / kVectorSize;
-  for (idx_t i = 0; i < vectors_to_skip; ++i) {
-    SkipVector(state);
-  }
-  skip_count -= kVectorSize * vectors_to_skip;
-  if (!skip_count) {
-    return;
-  }
-  ScanVector<T, true>(state, nullptr, skip_count);
-}
-
-template<typename T>
-std::unique_ptr<SegmentScanState> AlpInitScan(const ColumnSegment& segment) {
-  return std::make_unique<AlpScanState<T>>(segment.Pin(), segment);
-}
-
-template<typename T>
-void AlpScan(const ColumnSegment&, ColumnScanState& state, idx_t scan_count,
-             duckdb::Vector& result, idx_t result_offset,
-             duckdb::ScanVectorType) {
-  auto& scan_state = state.scan_state->Cast<AlpScanState<T>>();
-  SDB_ASSERT(scan_state.total_value_count <= scan_state.count);
-  SDB_ASSERT(scan_count <= scan_state.count - scan_state.total_value_count);
-
-  auto* current_result_ptr = duckdb::FlatVector::GetDataMutable<T>(result);
-  result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
-  current_result_ptr += result_offset;
-
-  idx_t scanned = 0;
-  while (scanned < scan_count) {
-    const auto remaining = scan_count - scanned;
-    const idx_t to_scan = std::min(remaining, LeftInVector(scan_state));
-    ScanVector<T, false>(scan_state, current_result_ptr + scanned, to_scan);
-    scanned += to_scan;
-  }
-}
-
-template<typename T>
-void AlpSkip(const ColumnSegment&, ColumnScanState& state, idx_t skip_count) {
-  SkipValues(state.scan_state->Cast<AlpScanState<T>>(), skip_count);
 }
 
 template<typename T>
@@ -1225,12 +1140,12 @@ void AlpFilter(const ColumnSegment& segment, ColumnScanState& state,
   }
   if (verdict == duckdb::FilterPropagateResult::FILTER_ALWAYS_FALSE ||
       verdict == duckdb::FilterPropagateResult::FILTER_FALSE_OR_NULL) {
-    SkipValues(scan_state, vector_count);
+    alp::SkipValues(scan_state, vector_count);
     sel_count = 0;
     return;
   }
-  AlpScan<T>(segment, state, vector_count, result, 0,
-             duckdb::ScanVectorType::SCAN_FLAT_VECTOR);
+  alp::Scan<AlpScanState<T>>(segment, state, vector_count, result, 0,
+                             duckdb::ScanVectorType::SCAN_FLAT_VECTOR);
   duckdb::FlatVector::SetSize(result, duckdb::count_t(vector_count));
   if (verdict == duckdb::FilterPropagateResult::FILTER_ALWAYS_TRUE) {
     return;
@@ -1238,16 +1153,6 @@ void AlpFilter(const ColumnSegment& segment, ColumnScanState& state,
   duckdb::ColumnSegment::FilterSelection(sel, result, filter_state,
                                          vector_count, sel_count);
 }
-
-template<typename T>
-struct AlpFetchState final : SegmentScanState {
-  AlpFetchState(duckdb::BufferHandle handle, const ColumnSegment& segment)
-    : scan_state{std::move(handle), segment} {}
-
-  AlpScanState<T> scan_state;
-  idx_t decoded_vector = duckdb::DConstants::INVALID_INDEX;
-  idx_t previous_row = duckdb::DConstants::INVALID_INDEX;
-};
 
 template<typename T>
 IRS_NO_INLINE T FetchValue(const AlpScanState<T>& scan_state, idx_t row) {
@@ -1308,36 +1213,24 @@ IRS_NO_INLINE T FetchValue(const AlpScanState<T>& scan_state, idx_t row) {
                         {.exponent = exponent, .factor = factor});
 }
 
-bool Near(idx_t row, idx_t other) {
-  return other != duckdb::DConstants::INVALID_INDEX &&
-         row / kVectorSize == other / kVectorSize &&
-         (row > other ? row - other : other - row) <= kDecodeDistance;
-}
-
-template<typename T>
-bool Alone(AlpFetchState<T>& fetch_state, const idx_t* rows, idx_t i,
-           idx_t count) {
-  const auto previous = fetch_state.previous_row;
-  fetch_state.previous_row = rows[i];
-  return !Near(rows[i], previous) &&
-         (i + 1 == count || !Near(rows[i], rows[i + 1]));
-}
-
 template<typename T>
 void AlpFetchRows(const ColumnSegment& segment, ColumnFetchState& state,
                   const idx_t* rows, idx_t count, duckdb::Vector& result,
                   const duckdb::SelectionVector& result_sel,
                   idx_t result_offset) {
   SDB_ASSERT(!count || rows[count - 1] < segment.count);
-  auto& fetch_state = state.GetOrCreateSegmentState<AlpFetchState<T>>(
-    [&] { return std::make_unique<AlpFetchState<T>>(segment.Pin(), segment); });
+  auto& fetch_state =
+    state.GetOrCreateSegmentState<alp::FetchState<AlpScanState<T>>>([&] {
+      return std::make_unique<alp::FetchState<AlpScanState<T>>>(segment.Pin(),
+                                                                segment);
+    });
   auto& scan_state = fetch_state.scan_state;
   auto* result_data =
     duckdb::FlatVector::GetDataMutableUnsafe<alp::ExactType<T>>(result);
   for (idx_t i = 0; i < count; ++i) {
     const auto vector_index = rows[i] / kVectorSize;
     if (vector_index != fetch_state.decoded_vector) {
-      if (Alone(fetch_state, rows, i, count)) {
+      if (alp::Alone(fetch_state, rows, i, count)) {
         const auto value = FetchValue(scan_state, rows[i]);
         std::memcpy(result_data + result_offset + result_sel.get_index(i),
                     &value, sizeof(T));
@@ -1355,11 +1248,11 @@ void AlpFetchRows(const ColumnSegment& segment, ColumnFetchState& state,
 
 template<typename T>
 constexpr DecompressionFunction kDecompression{
-  .init_scan = AlpInitScan<T>,
-  .scan = AlpScan<T>,
+  .init_scan = alp::InitScan<AlpScanState<T>>,
+  .scan = alp::Scan<AlpScanState<T>>,
   .filter = AlpFilter<T>,
   .fetch_rows = AlpFetchRows<T>,
-  .skip = AlpSkip<T>,
+  .skip = alp::Skip<AlpScanState<T>>,
 };
 
 template<typename T>

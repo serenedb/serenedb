@@ -29,6 +29,7 @@
 #include <array>
 #include <bit>
 #include <cstring>
+#include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -79,21 +80,21 @@ std::string HexBytes(std::string_view bytes) {
 
 [[noreturn]] void ThrowUntranslatable(TextEncoding encoding,
                                       std::string_view utf8) {
-  size_t at = 0;
-  while (at < utf8.size()) {
+  const auto valid = std::min(FindInvalidUtf8(utf8), utf8.size());
+  for (size_t at = 0; at < valid;) {
     const auto length = Utf8Length(static_cast<uint8_t>(utf8[at]));
     if (length > 2 || (length == 2 && static_cast<uint8_t>(utf8[at]) > 0xC3)) {
-      break;
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_UNTRANSLATABLE_CHARACTER),
+        ERR_MSG("character with byte sequence ",
+                HexBytes(utf8.substr(at, length)),
+                " in encoding \"UTF8\" has no equivalent in encoding \"",
+                TextEncodingName(encoding), "\""));
     }
     at += length;
   }
-  const auto character = utf8.substr(
-    at, std::min(Utf8Length(static_cast<uint8_t>(utf8[at])), utf8.size() - at));
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNTRANSLATABLE_CHARACTER),
-                  ERR_MSG("character with byte sequence ", HexBytes(character),
-                          " in encoding \"UTF8\" has no equivalent in "
-                          "encoding \"",
-                          TextEncodingName(encoding), "\""));
+  SDB_ASSERT(valid < utf8.size());
+  std::rethrow_exception(InvalidUtf8Error(utf8, valid));
 }
 
 template<typename Unit>

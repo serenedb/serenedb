@@ -1141,7 +1141,7 @@ TEST_F(ColCodecPathsTest, TextCodecsReadEveryShape) {
         CodecType::DictFsst, CodecType::DictFsstPlus, CodecType::DictOnpair,
         CodecType::DictFsst12}) {
     Check({absl::StrCat(magic_enum::enum_name(codec),
-                        " half of a large dictionary judged row by row"),
+                        " half of a large dictionary filtered row by row"),
            LogicalType::VARCHAR, codec, All,
            [](uint64_t g) {
              return Value{absl::StrCat("entry_", g % kLargeDictionary)};

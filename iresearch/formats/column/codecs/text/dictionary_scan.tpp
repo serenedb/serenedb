@@ -200,17 +200,17 @@ class FilterVerdicts {
   }
 
   void Defer(uint32_t entries) {
-    _verdicts.assign(entries, kUnjudged);
+    _verdicts.assign(entries, kUnfiltered);
     _lazy = true;
   }
 
-  std::span<const uint32_t> Unjudged(const duckdb::SelectionVector& codes,
-                                     const duckdb::SelectionVector& rows,
-                                     idx_t count) {
+  std::span<const uint32_t> Unfiltered(const duckdb::SelectionVector& codes,
+                                       const duckdb::SelectionVector& rows,
+                                       idx_t count) {
     _pending.clear();
     for (idx_t i = 0; i < count; ++i) {
       const auto code = codes.get_index(rows.get_index(i));
-      if (_verdicts[code] == kUnjudged) {
+      if (_verdicts[code] == kUnfiltered) {
         _verdicts[code] = kPending;
         _pending.emplace_back(static_cast<uint32_t>(code));
       }
@@ -218,18 +218,18 @@ class FilterVerdicts {
     return _pending;
   }
 
-  void Judge(const duckdb::SelectionVector& kept, idx_t kept_count) {
+  void AcceptPending(const duckdb::SelectionVector& kept, idx_t kept_count) {
     for (const auto code : _pending) {
       _verdicts[code] = kRejected;
     }
     for (idx_t i = 0; i < kept_count; ++i) {
       _verdicts[_pending[kept.get_index(i)]] = kAccepted;
     }
-    _judged += _pending.size();
+    _filtered += _pending.size();
   }
 
-  bool MostlyJudged(uint32_t entries) const noexcept {
-    return _judged * 2 >= entries;
+  bool MostlyFiltered(uint32_t entries) const noexcept {
+    return _filtered * 2 >= entries;
   }
 
   idx_t KeepAccepted(const duckdb::SelectionVector& codes,
@@ -250,7 +250,7 @@ class FilterVerdicts {
   }
 
  private:
-  static constexpr uint8_t kUnjudged = 0;
+  static constexpr uint8_t kUnfiltered = 0;
   static constexpr uint8_t kRejected = 1;
   static constexpr uint8_t kAccepted = 2;
   static constexpr uint8_t kPending = 3;
@@ -258,7 +258,7 @@ class FilterVerdicts {
   std::vector<uint8_t> _verdicts;
   std::vector<uint32_t> _pending;
   idx_t _matches = 0;
-  uint64_t _judged = 0;
+  uint64_t _filtered = 0;
   bool _lazy = false;
 };
 
@@ -552,12 +552,12 @@ struct DictionaryScan final : SegmentScanState {
           Resolve(*filter.Cast<duckdb::ExpressionFilter>().expr, ranges)) {
         verdicts.Accept(ranges, dict_count);
       } else if (dict_count < kLazyFilterEntries || dense) {
-        JudgeAll(filter_state);
+        FilterEveryEntry(filter_state);
       } else {
         verdicts.Defer(dict_count);
       }
     } else if (verdicts.Lazy() && dense) {
-      JudgeAll(filter_state);
+      FilterEveryEntry(filter_state);
     }
     if (!verdicts.Lazy() && verdicts.Matches() == 0) {
       sel_count = 0;
@@ -565,7 +565,7 @@ struct DictionaryScan final : SegmentScanState {
     }
     const auto& codes = Codes(start, vector_count);
     if (verdicts.Lazy()) {
-      JudgeLazily(codes, sel, sel_count, filter_state);
+      FilterTouchedEntries(codes, sel, sel_count, filter_state);
     } else if (verdicts.Matches() != dict_count) {
       sel_count = verdicts.KeepAccepted(codes, sel, sel_count);
     }
@@ -599,7 +599,7 @@ struct DictionaryScan final : SegmentScanState {
     }
   }
 
-  void JudgeAll(duckdb::TableFilterState& filter_state) {
+  void FilterEveryEntry(duckdb::TableFilterState& filter_state) {
     const auto dict_count = entries.header.entry_count;
     EnsureDictionary();
     duckdb::SelectionVector dict_sel;
@@ -610,10 +610,10 @@ struct DictionaryScan final : SegmentScanState {
     verdicts.Accept(dict_sel, filter_count, dict_count);
   }
 
-  void JudgeLazily(const duckdb::SelectionVector& codes,
-                   duckdb::SelectionVector& rows, idx_t& count,
-                   duckdb::TableFilterState& filter_state) {
-    if (const auto pending = verdicts.Unjudged(codes, rows, count);
+  void FilterTouchedEntries(const duckdb::SelectionVector& codes,
+                            duckdb::SelectionVector& rows, idx_t& count,
+                            duckdb::TableFilterState& filter_state) {
+    if (const auto pending = verdicts.Unfiltered(codes, rows, count);
         !pending.empty()) {
       EnsureEach(pending.size(), [&](idx_t i) { return pending[i]; });
       duckdb::Vector candidates{entries.type, pending.size()};
@@ -634,11 +634,11 @@ struct DictionaryScan final : SegmentScanState {
       idx_t kept_count = pending.size();
       duckdb::ColumnSegment::FilterSelection(kept, candidates, filter_state,
                                              pending.size(), kept_count);
-      verdicts.Judge(kept, kept_count);
+      verdicts.AcceptPending(kept, kept_count);
     }
     count = verdicts.KeepAccepted(codes, rows, count);
-    if (verdicts.MostlyJudged(entries.header.entry_count)) {
-      JudgeAll(filter_state);
+    if (verdicts.MostlyFiltered(entries.header.entry_count)) {
+      FilterEveryEntry(filter_state);
     }
   }
 

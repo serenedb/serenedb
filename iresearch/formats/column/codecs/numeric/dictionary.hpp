@@ -281,7 +281,7 @@ class DictionaryReader final : public FrameReader<T> {
   }
 
   struct Matches {
-    bool judged = false;
+    bool counted = false;
     uint32_t count = 0;
   };
 

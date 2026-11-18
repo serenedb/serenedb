@@ -57,6 +57,22 @@ inline FrameHeader SegmentFrames(const_data_ptr_t base,
   return frames;
 }
 
+inline constexpr uint64_t kWalkedRunRows = 4;
+inline constexpr idx_t kRunBurst = 32;
+inline constexpr uint32_t kEntryBatch = 512;
+
+static_assert(STANDARD_VECTOR_SIZE / kWalkedRunRows <= kEntryBatch);
+
+template<typename T>
+struct EntryBatch {
+  explicit EntryBatch(const duckdb::LogicalType& type)
+    : vector{type, reinterpret_cast<duckdb::data_ptr_t>(values),
+             std::size(values)} {}
+
+  T values[kEntryBatch];
+  duckdb::Vector vector;
+};
+
 template<typename R>
 struct ScanState final : SegmentScanState {
   ScanState(const ColumnSegment& segment, duckdb::BufferHandle handle_p)
@@ -64,9 +80,17 @@ struct ScanState final : SegmentScanState {
       frames{handle.Ptr(), SegmentFrames(handle.Ptr(), segment), segment.codec,
              segment.cache_slot} {}
 
+  EntryBatch<typename R::Value>& Batch(const duckdb::LogicalType& type) {
+    if (!batch) [[unlikely]] {
+      batch = std::make_unique<EntryBatch<typename R::Value>>(type);
+    }
+    return *batch;
+  }
+
   duckdb::BufferHandle handle;
   R frames;
   duckdb::unique_ptr<duckdb::BaseStatistics> filter_stats;
+  std::unique_ptr<EntryBatch<typename R::Value>> batch;
   [[no_unique_address]] typename R::Matches matches;
 };
 
@@ -127,10 +151,6 @@ duckdb::FilterPropagateResult FramesVerdict(
   return verdict;
 }
 
-inline constexpr uint64_t kWalkedRunRows = 4;
-inline constexpr idx_t kRunBurst = 32;
-inline constexpr uint32_t kJudgedEntries = 512;
-
 template<typename R>
 bool FilterRuns(ScanState<R>& scan, uint64_t start, idx_t count,
                 duckdb::Vector& result, duckdb::SelectionVector& sel,
@@ -141,7 +161,8 @@ bool FilterRuns(ScanState<R>& scan, uint64_t start, idx_t count,
   if (start + count > frames.FrameEnd()) {
     return false;
   }
-  T values[STANDARD_VECTOR_SIZE / kWalkedRunRows];
+  auto& batch = scan.Batch(result.GetType());
+  auto& values = batch.values;
   const auto runs =
     frames.ReadRuns(start, count,
                     std::span{values}.first(std::min<size_t>(
@@ -149,11 +170,9 @@ bool FilterRuns(ScanState<R>& scan, uint64_t start, idx_t count,
   if (runs.count == 0) {
     return false;
   }
-  duckdb::Vector judged{
-    result.GetType(), reinterpret_cast<duckdb::data_ptr_t>(values), runs.count};
   duckdb::SelectionVector accepted;
   idx_t accepted_count = runs.count;
-  duckdb::ColumnSegment::FilterSelection(accepted, judged, filter_state,
+  duckdb::ColumnSegment::FilterSelection(accepted, batch.vector, filter_state,
                                          runs.count, accepted_count);
   auto* out = duckdb::FlatVector::GetDataMutable<T>(result);
   auto* picked = sel.data();
@@ -202,25 +221,22 @@ bool FilterRuns(ScanState<R>& scan, uint64_t start, idx_t count,
 }
 
 template<typename R>
-IRS_NO_INLINE void JudgeEntries(ScanState<R>& scan,
-                                const duckdb::LogicalType& type,
-                                duckdb::TableFilterState& filter_state) {
+IRS_NO_INLINE void CountMatchingEntries(
+  ScanState<R>& scan, const duckdb::LogicalType& type,
+  duckdb::TableFilterState& filter_state) {
   auto& matches = scan.matches;
-  matches.judged = true;
+  matches.counted = true;
   const auto entries = scan.frames.EntryCount();
-  typename R::Value values[kJudgedEntries];
-  for (uint32_t first = 0; first < entries; first += kJudgedEntries) {
-    const auto judged_count =
-      std::min<uint32_t>(entries - first, kJudgedEntries);
-    scan.frames.Entries(first, judged_count, values);
-    duckdb::Vector judged{type, reinterpret_cast<duckdb::data_ptr_t>(values),
-                          judged_count};
+  auto& batch = scan.Batch(type);
+  for (uint32_t first = 0; first < entries; first += kEntryBatch) {
+    const auto batch_count = std::min<uint32_t>(entries - first, kEntryBatch);
+    scan.frames.Entries(first, batch_count, batch.values);
     duckdb::SelectionVector accepted;
-    idx_t accepted_count = judged_count;
-    duckdb::ColumnSegment::FilterSelection(accepted, judged, filter_state,
-                                           judged_count, accepted_count);
+    idx_t accepted_count = batch_count;
+    duckdb::ColumnSegment::FilterSelection(accepted, batch.vector, filter_state,
+                                           batch_count, accepted_count);
     matches.count += static_cast<uint32_t>(accepted_count);
-    if (matches.count != 0 && matches.count != first + judged_count) {
+    if (matches.count != 0 && matches.count != first + batch_count) {
       break;
     }
   }
@@ -231,8 +247,8 @@ bool FilterEntries(const ColumnSegment& segment, ColumnScanState& state,
                    ScanState<R>& scan, idx_t count, duckdb::Vector& result,
                    idx_t& sel_count, duckdb::TableFilterState& filter_state) {
   const auto& matches = scan.matches;
-  if (!matches.judged) [[unlikely]] {
-    JudgeEntries(scan, result.GetType(), filter_state);
+  if (!matches.counted) [[unlikely]] {
+    CountMatchingEntries(scan, result.GetType(), filter_state);
   }
   if (matches.count == 0) {
     sel_count = 0;

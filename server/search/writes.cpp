@@ -2033,6 +2033,9 @@ void Writes::PrepareCommit(duckdb::ClientContext& context) {
                        removed](ChunkVisit visit) {
           ForEachLiveChunk(*collection, removed.get(), visit);
         };
+        if (catalog::Transactions::Get().LogCompression()) {
+          PackRows({&w.rows, 1});
+        }
       }
       const auto docs = PieceDocs(piece.trx);
       if (docs != 0) {

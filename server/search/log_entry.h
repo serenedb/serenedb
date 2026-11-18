@@ -23,6 +23,7 @@
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
+#include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/main/client_context.hpp>
 
 #include "catalog/log.h"
@@ -31,11 +32,15 @@
 
 namespace sdb::search {
 
+void PackRows(std::span<LoggedRows> runs,
+              irs::ParallelFor parallel = irs::SerialFor);
+
 void WriteTableDelta(duckdb::BinarySerializer& object,
                      catalog::RecordBuffer& out, const TableDelta& delta);
 
 void ReplayTableDelta(duckdb::ClientContext& context, TableReplay* replay,
                       duckdb::Catalog* catalog,
-                      duckdb::BinaryDeserializer& object);
+                      duckdb::BinaryDeserializer& object,
+                      duckdb::MemoryStream& stream);
 
 }  // namespace sdb::search

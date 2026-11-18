@@ -23,7 +23,9 @@
 #include <absl/algorithm/container.h>
 
 #include <array>
+#include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <iresearch/formats/column/column_patch.hpp>
 #include <iresearch/index/document_mask.hpp>
 #include <iresearch/utils/assert.hpp>
@@ -37,6 +39,7 @@
 
 #include "connector/column_id.h"
 #include "connector/file_manifest.h"
+#include "search/parallel.h"
 
 namespace sdb::search {
 namespace {
@@ -141,27 +144,149 @@ void WriteUnits(duckdb::BinarySerializer& object, catalog::RecordBuffer& out,
     });
 }
 
+void WriteChunks(duckdb::BinarySerializer& object, duckdb::field_id_t field,
+                 const LoggedRows& rows) {
+  object.OnPropertyBegin(field, "chunks");
+  object.OnListBegin(rows.chunks);
+  size_t written = 0;
+  if (rows.chunks != 0) {
+    rows.scan([&](duckdb::DataChunk& chunk) {
+      object.OnObjectBegin();
+      chunk.Serialize(object);
+      object.OnObjectEnd();
+      ++written;
+    });
+  }
+  SDB_ASSERT(written == rows.chunks);
+  object.OnListEnd();
+  object.OnPropertyEnd();
+}
+
 void WriteRows(duckdb::BinarySerializer& run, const LoggedRows& rows) {
   run.WriteProperty<uint64_t>(100, "first", rows.first);
   run.WriteList(101, "columns", rows.columns.size(),
                 [&](duckdb::BinarySerializer::List& columns, duckdb::idx_t c) {
                   columns.WriteElement<uint64_t>(rows.columns[c]);
                 });
-  run.OnPropertyBegin(102, "chunks");
-  run.OnListBegin(rows.chunks);
-  size_t written = 0;
-  if (rows.chunks != 0) {
-    rows.scan([&](duckdb::DataChunk& chunk) {
-      run.OnObjectBegin();
-      chunk.Serialize(run);
-      run.OnObjectEnd();
-      ++written;
-    });
+  if (rows.packed.bytes) {
+    run.WriteObject(103, "packed_chunks",
+                    [&](duckdb::BinarySerializer& packed) {
+                      irs::compression::WritePacked(packed, rows.packed);
+                    });
+    return;
   }
-  SDB_ASSERT(written == rows.chunks);
-  run.OnListEnd();
-  run.OnPropertyEnd();
+  WriteChunks(run, 102, rows);
 }
+
+duckdb::unique_ptr<duckdb::DataChunk> ReadChunk(
+  duckdb::BinaryDeserializer::List& chunks) {
+  auto chunk = duckdb::make_uniq<duckdb::DataChunk>();
+  chunks.ReadObject(
+    [&](duckdb::BinaryDeserializer& read) { chunk->Deserialize(read); });
+  return chunk;
+}
+
+class RowsReader {
+ public:
+  RowsReader(duckdb::ClientContext& context, TableReplay* replay,
+             duckdb::Catalog* catalog, duckdb::MemoryStream& stream)
+    : _context{context},
+      _replay{replay},
+      _catalog{catalog},
+      _stream{stream},
+      _window{
+        std::max<size_t>(1, duckdb::TaskScheduler::QueryThreads(context))} {}
+
+  void Read(duckdb::BinaryDeserializer& object) {
+    Run run{.first = object.ReadProperty<uint64_t>(100, "first"),
+            .columns = std::make_shared<std::vector<connector::ColumnId>>()};
+    object.ReadList(101, "columns",
+                    [&](duckdb::BinaryDeserializer::List& ids, duckdb::idx_t) {
+                      run.columns->push_back(static_cast<connector::ColumnId>(
+                        ids.ReadElement<uint64_t>()));
+                    });
+    auto row = run.first;
+    const auto plain = object.ReadOptionalList(
+      102, "chunks",
+      [&](duckdb::BinaryDeserializer::List& chunks, duckdb::idx_t) {
+        auto chunk = ReadChunk(chunks);
+        if (_replay) {
+          Flush();
+          Append(row, run.columns, std::move(chunk));
+        }
+      });
+    if (plain) {
+      return;
+    }
+    object.ReadObject(
+      103, "packed_chunks", [&](duckdb::BinaryDeserializer& packed) {
+        run.packed = irs::compression::ReadPacked(packed, _stream);
+      });
+    if (!_replay) {
+      return;
+    }
+    _pending.push_back(std::move(run));
+    if (_pending.size() >= _window) {
+      Flush();
+    }
+  }
+
+  void Flush() {
+    if (_pending.empty()) {
+      return;
+    }
+    const auto parallel = [&](size_t count,
+                              absl::FunctionRef<void(size_t)> body) {
+      ParallelFor(_context, count, body);
+    };
+    std::vector<std::unique_ptr<irs::byte_type[]>> raw(_pending.size());
+    if (_pending.size() == 1) {
+      raw.front() =
+        irs::compression::Decompress(_pending.front().packed, parallel);
+    } else {
+      parallel(_pending.size(), [&](size_t i) {
+        raw[i] = irs::compression::Decompress(_pending[i].packed);
+      });
+    }
+    for (size_t i = 0; i != _pending.size(); ++i) {
+      const auto& run = _pending[i];
+      auto row = run.first;
+      duckdb::MemoryStream stream{raw[i].get(), run.packed.frames.raw_bytes};
+      duckdb::BinaryDeserializer deserializer{stream};
+      deserializer.Begin();
+      deserializer.ReadList(
+        100, "chunks",
+        [&](duckdb::BinaryDeserializer::List& chunks, duckdb::idx_t) {
+          Append(row, run.columns, ReadChunk(chunks));
+        });
+      deserializer.End();
+      raw[i].reset();
+    }
+    _pending.clear();
+  }
+
+ private:
+  struct Run {
+    uint64_t first = 0;
+    std::shared_ptr<std::vector<connector::ColumnId>> columns;
+    irs::compression::Packed packed;
+  };
+
+  void Append(uint64_t& row,
+              const std::shared_ptr<std::vector<connector::ColumnId>>& columns,
+              duckdb::unique_ptr<duckdb::DataChunk> chunk) {
+    const auto size = chunk->size();
+    _replay->Append(*_catalog, row, columns, std::move(chunk));
+    row += size;
+  }
+
+  duckdb::ClientContext& _context;
+  TableReplay* _replay;
+  duckdb::Catalog* _catalog;
+  duckdb::MemoryStream& _stream;
+  size_t _window;
+  std::vector<Run> _pending;
+};
 
 void ReadPatchGroup(duckdb::BinaryDeserializer& group, uint64_t first,
                     std::vector<irs::FieldPatch>& patches) {
@@ -234,6 +359,25 @@ void ReadUnits(duckdb::BinaryDeserializer& object, duckdb::field_id_t field,
 
 }  // namespace
 
+void PackRows(std::span<LoggedRows> runs, irs::ParallelFor parallel) {
+  const auto pack = [&](LoggedRows& rows, irs::ParallelFor frames) {
+    duckdb::MemoryStream raw;
+    duckdb::BinarySerializer serializer{raw};
+    serializer.Begin();
+    WriteChunks(serializer, 100, rows);
+    serializer.End();
+    rows.packed = irs::compression::Compress(
+      irs::compression::kZstd1, {raw.GetData(), raw.GetPosition()},
+      irs::compression::kFrameBytes, frames);
+    rows.scan = nullptr;
+  };
+  if (runs.size() == 1) {
+    pack(runs.front(), parallel);
+    return;
+  }
+  parallel(runs.size(), [&](size_t i) { pack(runs[i], irs::SerialFor); });
+}
+
 void WriteTableDelta(duckdb::BinarySerializer& object,
                      catalog::RecordBuffer& out, const TableDelta& delta) {
   object.WriteOptionalList(
@@ -270,7 +414,8 @@ void WriteTableDelta(duckdb::BinarySerializer& object,
 
 void ReplayTableDelta(duckdb::ClientContext& context, TableReplay* replay,
                       duckdb::Catalog* catalog,
-                      duckdb::BinaryDeserializer& object) {
+                      duckdb::BinaryDeserializer& object,
+                      duckdb::MemoryStream& stream) {
   std::vector<uint64_t> drop;
   object.ReadOptionalList(
     100, "drop", [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
@@ -293,32 +438,12 @@ void ReplayTableDelta(duckdb::ClientContext& context, TableReplay* replay,
         }
       });
     });
+  RowsReader rows{context, replay, catalog, stream};
   object.ReadOptionalList(
     103, "rows", [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
-      list.ReadObject([&](duckdb::BinaryDeserializer& run) {
-        auto row = run.ReadProperty<uint64_t>(100, "first");
-        auto columns = std::make_shared<std::vector<connector::ColumnId>>();
-        run.ReadList(101, "columns",
-                     [&](duckdb::BinaryDeserializer::List& ids, duckdb::idx_t) {
-                       columns->push_back(static_cast<connector::ColumnId>(
-                         ids.ReadElement<uint64_t>()));
-                     });
-        run.ReadList(
-          102, "chunks",
-          [&](duckdb::BinaryDeserializer::List& chunks, duckdb::idx_t) {
-            auto chunk = duckdb::make_uniq<duckdb::DataChunk>();
-            chunks.ReadObject([&](duckdb::BinaryDeserializer& read) {
-              chunk->Deserialize(read);
-            });
-            if (!replay) {
-              return;
-            }
-            const auto size = chunk->size();
-            replay->Append(*catalog, row, columns, std::move(chunk));
-            row += size;
-          });
-      });
+      list.ReadObject([&](duckdb::BinaryDeserializer& run) { rows.Read(run); });
     });
+  rows.Flush();
   ReadUnits(object, 104, "segments", false,
             [&](uint64_t segment, const irs::DocumentMask* deleted,
                 std::span<const irs::FieldPatch> patches) {

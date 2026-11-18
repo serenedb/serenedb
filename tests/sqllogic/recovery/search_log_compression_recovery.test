@@ -1,0 +1,179 @@
+control substitution on
+
+statement ok
+CREATE TABLE lc (id BIGINT PRIMARY KEY, tag TEXT, payload TEXT)
+  WITH (compaction_interval = 0);
+
+
+statement ok
+CREATE INDEX lc_tag ON lc USING inverted (tag);
+
+
+statement ok
+SET sdb_log_compression = false;
+
+
+statement ok
+INSERT INTO lc
+SELECT i, 'plain' || (i % 10)::TEXT, repeat('x', (i % 50)::INTEGER)
+FROM range(0, 2000) t(i);
+
+
+statement ok
+RESET sdb_log_compression;
+
+
+statement ok
+INSERT INTO lc
+SELECT i, 'packed' || (i % 10)::TEXT, repeat('y', (i % 50)::INTEGER)
+FROM range(2000, 4000) t(i);
+
+
+statement ok
+INSERT INTO lc VALUES (4000, 'single', 'z');
+
+
+statement ok
+UPDATE lc SET payload = 'updated' WHERE id % 100 = 7;
+
+
+statement ok
+DELETE FROM lc WHERE id % 100 = 9;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_log
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*), sum(id), sum(length(payload)) FROM lc;
+----
+count	sum	sum
+3961	7923640	97641
+
+
+connection after_log
+query
+SELECT id, tag, payload FROM lc WHERE id IN (7, 8, 9, 2007, 2008, 2009, 4000) ORDER BY id;
+----
+id	tag	payload
+7	plain7	updated
+8	plain8	xxxxxxxx
+2007	packed7	updated
+2008	packed8	yyyyyyyy
+4000	single	z
+
+
+connection after_log
+query
+SELECT count(*) FROM lc_tag WHERE tag @@ 'packed3';
+----
+count
+200
+
+
+connection after_log
+statement ok
+CHECKPOINT;
+
+
+connection after_log
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_log
+statement error connection closed
+SELECT 1;
+
+
+connection after_packed_snapshot
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*), sum(id), sum(length(payload)) FROM lc;
+----
+count	sum	sum
+3961	7923640	97641
+
+
+connection after_packed_snapshot
+query
+SELECT id, tag, payload FROM lc WHERE id IN (7, 8, 9, 2007, 2008, 2009, 4000) ORDER BY id;
+----
+id	tag	payload
+7	plain7	updated
+8	plain8	xxxxxxxx
+2007	packed7	updated
+2008	packed8	yyyyyyyy
+4000	single	z
+
+
+connection after_packed_snapshot
+query
+SELECT count(*) FROM lc_tag WHERE tag @@ 'packed3';
+----
+count
+200
+
+
+connection after_packed_snapshot
+statement ok
+SET sdb_log_compression = false;
+
+
+connection after_packed_snapshot
+statement ok
+INSERT INTO lc VALUES (4001, 'late', 'w');
+
+
+connection after_packed_snapshot
+statement ok
+CHECKPOINT;
+
+
+connection after_packed_snapshot
+statement ok
+RESET sdb_log_compression;
+
+
+connection after_packed_snapshot
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_packed_snapshot
+statement error connection closed
+SELECT 1;
+
+
+connection after_plain_snapshot
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*), sum(id), sum(length(payload)) FROM lc;
+----
+count	sum	sum
+3962	7927641	97642
+
+
+connection after_plain_snapshot
+query
+SELECT id, tag, payload FROM lc WHERE id IN (7, 8, 9, 2007, 2008, 2009, 4000, 4001) ORDER BY id;
+----
+id	tag	payload
+7	plain7	updated
+8	plain8	xxxxxxxx
+2007	packed7	updated
+2008	packed8	yyyyyyyy
+4000	single	z
+4001	late	w
+
+
+connection after_plain_snapshot
+query
+SELECT count(*) FROM lc_tag WHERE tag @@ 'packed3';
+----
+count
+200

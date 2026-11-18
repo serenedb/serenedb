@@ -175,6 +175,7 @@ add_executable(
     utils/bit_utils_tests.cpp
     utils/bitset_tests.cpp
     utils/bitvector_tests.cpp
+    utils/compression_test.cpp
     utils/container_utils_tests.cpp
     utils/crc_test.cpp
     utils/directory_utils_tests.cpp

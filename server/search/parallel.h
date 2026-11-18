@@ -30,4 +30,7 @@ namespace sdb::search {
 void ParallelFor(duckdb::ClientContext& context, size_t count,
                  absl::FunctionRef<void(size_t)> body);
 
+void ParallelFor(duckdb::DatabaseInstance& db, size_t count,
+                 absl::FunctionRef<void(size_t)> body);
+
 }  // namespace sdb::search

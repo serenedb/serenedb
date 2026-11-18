@@ -4,6 +4,7 @@ target_sources(
         application_exit.cpp
         attributes.cpp
         bit_packing.cpp
+        compression.cpp
         conjunction_acceptor.cpp
         cpu_features.cpp
         crash_handler.cpp

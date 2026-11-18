@@ -87,6 +87,7 @@ target_link_libraries(
         absl::failure_signal_handler
         absl::stacktrace
         absl::symbolize
+        lz4_static
         simdutf
 )
 
@@ -107,5 +108,5 @@ target_include_directories(
 target_link_libraries(
     iresearch
     PUBLIC OpenSSL::Crypto OpenSSL::SSL fasttext-static faiss s2
-    PRIVATE lz4_static stemmer-static
+    PRIVATE stemmer-static
 )

@@ -41,6 +41,7 @@
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/store/directory_attributes.hpp>
+#include <iresearch/utils/compression.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
 #include <iresearch/utils/parallel_for.hpp>
 #include <limits>
@@ -107,6 +108,7 @@ struct LoggedRows {
   std::vector<connector::ColumnId> columns;
   size_t chunks = 0;
   absl::AnyInvocable<void(ChunkVisit visit) const> scan;
+  irs::compression::Compressed packed;
 };
 
 struct UnitDelta {

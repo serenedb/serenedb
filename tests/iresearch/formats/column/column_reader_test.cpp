@@ -68,6 +68,7 @@
 #include <magic_enum/magic_enum.hpp>
 #include <numeric>
 #include <random>
+#include <set>
 #include <span>
 #include <string_view>
 #include <thread>
@@ -5112,43 +5113,52 @@ TEST_F(ColumnReaderTest, VariantRoundTripUnshredded) {
   ExpectVariantValuesEqual(expected, ScanVariantAll(*col, r.Ctx()));
 }
 
-uint32_t LargestCalibrationGap(const irs::ColumnWriteState& state) {
-  uint32_t gap = state.tuning.reuse.gap;
-  for (const auto& child : state.children) {
-    gap = std::max(gap, LargestCalibrationGap(child));
+void TextLevels(const irs::ColumnReader& col, irs::ReadContext& ctx,
+                std::set<std::string>& levels) {
+  if (col.Type().InternalType() == duckdb::PhysicalType::VARCHAR) {
+    for (size_t block = 0; block != col.DataBlocks().size(); ++block) {
+      const auto segment = col.OpenSegment(block, ctx);
+      levels.insert(segment->function.get_segment_info(*segment)["level"]);
+    }
   }
-  return gap;
+  col.VisitSubColumns([&](const irs::ColumnReader::SubColumn& sub) {
+    TextLevels(sub.column, ctx, levels);
+  });
 }
 
 TEST_F(ColumnReaderTest, VariantRowGroupsKeepTheirStringTuning) {
+  constexpr irs::field_id kId = 31;
+  constexpr uint32_t kRowGroup = 16384;
   SetShreddingSize(Db(), -1);
-  irs::MemoryDirectory dir{};
-  std::vector<duckdb::Value> expected;
-  {
-    irs::ColWriter w{dir, "vtune", Db(), irs::WriteTier::Merge};
-    auto& cw = w.OpenColumn(/*id=*/31, duckdb::LogicalType::VARIANT(),
-                            {.row_group_size = 16384});
-    duckdb::Connection con{Db()};
-    auto result = con.Query(
-      "SELECT ('https://shop' || (i % 997) || '.example.org/catalog/' || "
-      "((i * 7919) % 100003) || '/item?id=' || i)::VARIANT FROM range(120000) "
-      "t(i)");
-    ASSERT_FALSE(result->HasError()) << result->GetError();
-    while (auto chunk = result->Fetch()) {
-      cw.Append(chunk->data[0], chunk->size());
-      for (duckdb::idx_t k = 0; k < chunk->size(); ++k) {
-        expected.emplace_back(chunk->GetValue(0, k));
-      }
-    }
-    const auto& rgs = cw.Meta().variant_rgs;
-    ASSERT_GT(rgs.size(), 2u);
-    EXPECT_GT(LargestCalibrationGap(cw.State()), 1u);
-    ASSERT_TRUE(w.Commit(0));
-  }
-  irs::ColReader r{dir, "vtune", Db(), irs::IOAdvice::SEQUENTIAL};
-  const auto* col = r.Column(31);
-  ASSERT_NE(col, nullptr);
-  ExpectVariantValuesEqual(expected, ScanVariantAll(*col, r.Ctx()));
+  const auto levels = [&](uint64_t begin, uint64_t end) {
+    irs::MemoryDirectory dir{};
+    std::vector<duckdb::Value> expected;
+    WriteVariantViaSql(
+      Db(), dir, "vtune", kId,
+      absl::StrCat(
+        "SELECT CASE WHEN i < ", kRowGroup,
+        " THEN array_to_string(list_transform(range(40), lambda k: "
+        "substr(md5((((hash(i * 40 + k) % 3000) * (hash(i * 40 + k) % 3000)) "
+        "// 3000)::VARCHAR), 1, 3 + (hash(i * 40 + k) % 8)::BIGINT)), ' ') "
+        "ELSE repeat(to_base64(unhex(md5(i::VARCHAR))), 8) END::VARIANT "
+        "FROM range(",
+        begin, ", ", end, ") t(i)"),
+      kRowGroup, expected);
+    EXPECT_EQ(expected.size(), end - begin);
+    irs::ColReader r{dir, "vtune", Db(), irs::IOAdvice::SEQUENTIAL};
+    const auto* col = r.Column(kId);
+    EXPECT_NE(col, nullptr);
+    ExpectVariantValuesEqual(expected, ScanVariantAll(*col, r.Ctx()));
+    std::set<std::string> found;
+    TextLevels(*col, r.Ctx(), found);
+    return found;
+  };
+  const auto words = levels(0, kRowGroup);
+  const auto repeats = levels(kRowGroup, 2 * kRowGroup);
+  ASSERT_EQ(words.size(), 1u) << ::testing::PrintToString(words);
+  ASSERT_EQ(repeats.size(), 1u) << ::testing::PrintToString(repeats);
+  ASSERT_NE(words, repeats);
+  EXPECT_EQ(levels(0, 6 * kRowGroup), words);
 }
 
 TEST_F(ColumnReaderTest, VariantRowGroupsOfOneShapeShredOnOneType) {

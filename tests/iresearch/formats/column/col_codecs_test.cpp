@@ -4190,11 +4190,7 @@ TEST_F(ColCodecsTest, FsstSegmentsFollowAChangeInCompressibility) {
 }
 
 TEST_F(ColCodecsTest, TheWritersTierDecidesOverTheColumnsParams) {
-  const Value value = [](uint64_t g) -> std::optional<std::string> {
-    return "https://shop" + std::to_string(g % 997) + ".example.org/catalog/" +
-           std::to_string((g * 7919) % 100003) +
-           "/item?id=" + std::to_string(g) + "&ref=" + std::to_string(g % 13);
-  };
+  constexpr uint64_t kRows = 8000;
   for (const auto tier : {irs::WriteTier::Flush, irs::WriteTier::Merge}) {
     SCOPED_TRACE(tier == irs::WriteTier::Flush ? "flush" : "merge");
     irs::MemoryDirectory dir{};
@@ -4202,18 +4198,18 @@ TEST_F(ColCodecsTest, TheWritersTierDecidesOverTheColumnsParams) {
       irs::ColWriter w{dir, kSeg, Db(), tier};
       auto& cw =
         w.OpenColumn(kField, duckdb::LogicalType::VARCHAR,
-                     {.row_group_size = 16384,
-                      .compression = irs::codecs::CodecType::Auto,
-                      .codec_params = {.tier = irs::WriteTier::Merge}});
-      AppendValues(cw, 120000, value);
-      const auto lz4 =
-        cw.State()
-          .tuning.strings.lz4[std::to_underlying(irs::codecs::Shape::Plain)]
-          .level;
-      EXPECT_EQ(tier == irs::WriteTier::Merge, lz4 > 1);
+                     {.compression = irs::codecs::CodecType::Auto,
+                      .codec_params = {.segment_target = 64 * 1024,
+                                       .tier = irs::WriteTier::Merge}});
+      AppendValues(cw, kRows, kVocabulary);
       ASSERT_TRUE(w.Commit(0));
     }
-    Verify(dir, irs::codecs::CodecType::Auto, 120000, value);
+    bool above_fast = false;
+    for (const auto& [type, level] : BlockLevels(dir)) {
+      above_fast |= !level.empty() && level != "0" && level != "1";
+    }
+    EXPECT_EQ(tier == irs::WriteTier::Merge, above_fast);
+    Verify(dir, irs::codecs::CodecType::Auto, kRows, kVocabulary);
   }
 }
 

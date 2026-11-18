@@ -128,7 +128,6 @@ class ColumnWriter final {
   const ColumnWriterOptions& Options() const noexcept { return _options; }
   const ColumnMeta& Meta() const noexcept { return _meta; }
   ColumnMeta TakeMeta() noexcept { return std::move(_meta); }
-  const ColumnWriteState& State() const noexcept { return _state; }
 
  private:
   template<typename Fill>

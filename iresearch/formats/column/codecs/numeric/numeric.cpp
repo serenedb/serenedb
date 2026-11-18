@@ -32,10 +32,33 @@
 namespace irs::codecs {
 namespace {
 
+template<typename Form, ByteCodec kLeaf, size_t... kIndex>
+constexpr std::array<Contender, sizeof...(kIndex)> ContendersOf(
+  std::index_sequence<kIndex...>) {
+  return {Contender{
+    .function =
+      &kNumericLayout<Form, kLeaf, Form::kLayouts[kIndex], kIndex == 0>,
+    .codec = CodecOf(Form::kShape, kLeaf),
+  }...};
+}
+
+template<typename Form, ByteCodec kLeaf>
+constexpr auto kContenders = ContendersOf<Form, kLeaf>(
+  std::make_index_sequence<std::size(Form::kLayouts)>{});
+
+template<typename Form, ByteCodec kLeaf>
+constexpr CompressionFunction kContest{
+  .compress =
+    [](ColumnDataCheckpointData& data) {
+      Contest(kContenders<Form, kLeaf>, data);
+      return true;
+    },
+};
+
 template<typename Form, typename Reader, ByteCodec kLeaf>
 constexpr Codec kCodec{
   .type = CodecOf(Form::kShape, kLeaf),
-  .compression = &kNumericFunction<Form, kLeaf>,
+  .compression = &kContest<Form, kLeaf>,
   .decompression = &numeric::kDecompression<Reader>,
 };
 
@@ -46,47 +69,32 @@ constexpr const Codec* kCodecs[] = {
   &kCodec<Form, Reader, ByteCodec::Zstd>,
 };
 
-template<typename Form, ByteCodec kLeaf, size_t... kIndex>
-constexpr std::array<Contender, sizeof...(kIndex)> LayoutsOf(
-  std::index_sequence<kIndex...>) {
-  return {Contender{
-    .function =
-      &kNumericLayout<Form, kLeaf, Form::kLayouts[kIndex], kIndex == 0>,
-    .codecs = CodecSet{}.set(std::to_underlying(CodecOf(Form::kShape, kLeaf))),
-    .layout = Form::kLayouts[kIndex],
-  }...};
-}
-
-template<typename Form, ByteCodec kLeaf>
-constexpr auto kLayouts =
-  LayoutsOf<Form, kLeaf>(std::make_index_sequence<std::size(Form::kLayouts)>{});
-
 template<typename Form>
-std::span<const Contender> FormLayouts(ByteCodec leaf) {
+std::span<const Contender> FormContenders(ByteCodec leaf) {
   switch (leaf) {
     case ByteCodec::None:
-      return kLayouts<Form, ByteCodec::None>;
+      return kContenders<Form, ByteCodec::None>;
     case ByteCodec::Lz4:
-      return kLayouts<Form, ByteCodec::Lz4>;
+      return kContenders<Form, ByteCodec::Lz4>;
     case ByteCodec::Zstd:
-      return kLayouts<Form, ByteCodec::Zstd>;
+      return kContenders<Form, ByteCodec::Zstd>;
     default:
       return {};
   }
 }
 
 template<typename T>
-std::span<const Contender> ShapeLayouts(Shape shape, ByteCodec leaf) {
+std::span<const Contender> ShapeContenders(Shape shape, ByteCodec leaf) {
   switch (shape) {
     case Shape::Plain:
-      return FormLayouts<PlainEncoder<T>>(leaf);
+      return FormContenders<PlainEncoder<T>>(leaf);
     case Shape::Delta:
-      return FormLayouts<DeltaEncoder<T>>(leaf);
+      return FormContenders<DeltaEncoder<T>>(leaf);
     case Shape::Runs:
-      return FormLayouts<RunsEncoder<T>>(leaf);
+      return FormContenders<RunsEncoder<T>>(leaf);
     case Shape::Dictionary:
       if constexpr (sizeof(T) > 1) {
-        return FormLayouts<DictionaryEncoder<T>>(leaf);
+        return FormContenders<DictionaryEncoder<T>>(leaf);
       }
       break;
   }
@@ -116,19 +124,16 @@ const Codec* FormCodec(Shape shape, ByteCodec leaf) {
 }  // namespace
 
 uint64_t PackedBytes(ColumnDataCheckpointData& data) {
-  if (data.disabled.test(std::to_underlying(CodecType::Ffor))) {
-    return 0;
-  }
   const auto physical = data.type.InternalType();
   return WithNumericType(physical, [&]<typename T>(std::type_identity<T>) {
     return std::is_integral_v<T> ? data.Get<Values<T>>().PackedBytes() : 0;
   });
 }
 
-std::span<const Contender> NumericLayouts(Shape shape, ByteCodec leaf,
-                                          duckdb::PhysicalType physical) {
+std::span<const Contender> NumericContenders(Shape shape, ByteCodec leaf,
+                                             duckdb::PhysicalType physical) {
   return WithNumericType(physical, [&]<typename T>(std::type_identity<T>) {
-    return ShapeLayouts<T>(shape, leaf);
+    return ShapeContenders<T>(shape, leaf);
   });
 }
 

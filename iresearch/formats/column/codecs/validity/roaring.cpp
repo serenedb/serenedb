@@ -1706,15 +1706,13 @@ struct Containers final : State {
 
 template<duckdb::PhysicalType kPhysical>
 constexpr CompressionFunction kFunction{
-  .analyze = [](ColumnDataCheckpointData& data, double) -> Estimate {
-    return {
-      .codec = CodecType::Roaring,
-      .score = static_cast<double>(
-                 data.Get<Containers<kPhysical>>().state.total_size) /
-               static_cast<double>(std::max<uint64_t>(data.rows, 1)) *
-               kCompressPenalty,
-    };
-  },
+  .analyze =
+    [](ColumnDataCheckpointData& data, double) {
+      return static_cast<double>(
+               data.Get<Containers<kPhysical>>().state.total_size) /
+             static_cast<double>(std::max<uint64_t>(data.rows, 1)) *
+             kCompressPenalty;
+    },
   .compress =
     [](ColumnDataCheckpointData& data) {
       EncodeChunks<kPhysical>(data, data.chunks,

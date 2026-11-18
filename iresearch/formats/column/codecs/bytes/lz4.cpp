@@ -27,6 +27,7 @@
 #include <lz4hc.h>
 
 #include <memory>
+#include <span>
 #include <utility>
 
 #include "iresearch/formats/column/codecs/registry.hpp"
@@ -34,6 +35,7 @@
 #include "iresearch/formats/column/codecs/text/dictionary_scan.tpp"
 #include "iresearch/formats/column/codecs/text/lz4.hpp"
 #include "iresearch/formats/column/codecs/text/plain_scan.tpp"
+#include "iresearch/formats/column/codecs/text/text_encoder.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
@@ -45,6 +47,30 @@ same frames, each compressed with the segment's trained dictionary; or
 */
 
 namespace irs::codecs {
+namespace {
+
+template<Shape kShape, FrameDictionary kFrames>
+constexpr Contender kFramed{
+  .function = &text::kFramedTextFunction<text::blob::Lz4CompressionState,
+                                         kShape, kFrames>,
+  .codec = CodecOf(kShape, ByteCodec::Lz4),
+};
+
+template<Shape kShape>
+constexpr Contender kContenders[] = {
+  kFramed<kShape, FrameDictionary::FirstFrame>,
+  kFramed<kShape, FrameDictionary::Local>,
+  kFramed<kShape, FrameDictionary::None>,
+};
+
+}  // namespace
+
+std::span<const Contender> Lz4TextContenders(Shape shape) {
+  if (shape == Shape::Plain) {
+    return kContenders<Shape::Plain>;
+  }
+  return kContenders<Shape::Dictionary>;
+}
 
 constinit const Codec kLz4Codec =
   text::StringCodec<text::PlainScan<text::blob::Scan<Lz4>>,

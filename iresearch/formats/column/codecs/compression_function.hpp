@@ -173,20 +173,16 @@ struct ColumnDataCheckpointData {
   std::array<std::unique_ptr<State>, magic_enum::enum_count<StateId>()> states;
 };
 
-struct Estimate {
-  CodecType codec = CodecType::Auto;
-  double score = std::numeric_limits<double>::infinity();
-};
+inline constexpr double kNoScore = std::numeric_limits<double>::infinity();
 
 struct CompressionFunction {
-  Estimate (*analyze)(ColumnDataCheckpointData& data, double bound) = nullptr;
+  double (*analyze)(ColumnDataCheckpointData& data, double bound) = nullptr;
   bool (*compress)(ColumnDataCheckpointData& data) = nullptr;
 };
 
 struct Contender {
   const CompressionFunction* function;
-  CodecSet codecs;
-  uint8_t layout = 0;
+  CodecType codec;
 };
 
 inline constexpr uint64_t kBlockSize = duckdb::Storage::DEFAULT_BLOCK_SIZE;
@@ -257,16 +253,13 @@ const Codec* GetCodec(CodecType type, duckdb::PhysicalType physical);
 
 template<CodecType kType, auto kAnalyze, auto kCompress, auto kAccepts>
 struct Streamed {
-  static Estimate Analyze([[maybe_unused]] ColumnDataCheckpointData& data,
-                          double) {
+  static double Analyze([[maybe_unused]] ColumnDataCheckpointData& data,
+                        double) {
     if constexpr (kAnalyze == nullptr) {
-      return {};
+      return kNoScore;
     } else {
-      return {
-        .codec = kType,
-        .score = static_cast<double>(kAnalyze(data.chunks)) /
-                 static_cast<double>(std::max<uint64_t>(data.rows, 1)),
-      };
+      return static_cast<double>(kAnalyze(data.chunks)) /
+             static_cast<double>(std::max<uint64_t>(data.rows, 1));
     }
   }
 

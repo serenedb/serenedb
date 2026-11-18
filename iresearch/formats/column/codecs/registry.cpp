@@ -88,11 +88,20 @@ const Codec* GetCodec(CodecType type, PhysicalType physical) {
                          : nullptr;
 }
 
-std::span<const Contender> Layouts(CodecType type, PhysicalType physical) {
-  if (!IsForm(type) || physical == PhysicalType::VARCHAR || !IsNumeric(type)) {
+std::span<const Contender> Contenders(CodecType type, PhysicalType physical) {
+  if (!IsForm(type)) {
     return {};
   }
-  return NumericLayouts(ShapeOf(type), LeafOf(type), physical);
+  if (physical == PhysicalType::VARCHAR) {
+    if (LeafOf(type) == ByteCodec::Lz4) {
+      return Lz4TextContenders(ShapeOf(type));
+    }
+    return {};
+  }
+  if (!IsNumeric(type)) {
+    return {};
+  }
+  return NumericContenders(ShapeOf(type), LeafOf(type), physical);
 }
 
 CodecType FindCodec(std::string_view name) {

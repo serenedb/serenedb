@@ -23,21 +23,16 @@
 #include <algorithm>
 #include <cstdint>
 
-#include "iresearch/formats/column/codecs/codec_type.hpp"
-
 namespace irs::codecs {
 
 inline constexpr double kDrift = 1.25;
 
-struct Pick {
-  CodecType codec = CodecType::Auto;
-  uint8_t layout = 0;
-};
+struct CompressionFunction;
 
 struct ReusePolicy {
   static constexpr uint32_t kMaxGap = 16;
 
-  Pick pick;
+  const CompressionFunction* held = nullptr;
   uint32_t gap = 1;
   uint32_t since = 0;
   double reference = 0;
@@ -50,8 +45,6 @@ struct ReusePolicy {
     since = 0;
   }
 
-  void Release() noexcept { pick = {}; }
-
   bool Grew(double bytes, double input) const noexcept {
     return bytes / input > reference * kDrift;
   }
@@ -60,11 +53,12 @@ struct ReusePolicy {
     return bytes * kDrift < reference * input;
   }
 
-  void Settle(Pick next, double bytes, double input) noexcept {
-    gap = pick.codec == next.codec ? std::min(gap * 2, kMaxGap) : 1;
+  void Settle(const CompressionFunction* next, bool same_codec, double bytes,
+              double input) noexcept {
+    gap = same_codec ? std::min(gap * 2, kMaxGap) : 1;
     since = 0;
     calibrated = true;
-    pick = next;
+    held = next;
     if (input != 0) {
       reference = bytes / input;
     }

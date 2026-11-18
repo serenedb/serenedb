@@ -138,28 +138,16 @@ class NumericEncoder : public State {
   using U = numeric::Bits<sizeof(T)>;
   static constexpr uint8_t kWidth = sizeof(T);
 
-  Estimate Analyze(double bound, ByteCodec leaf) {
+  double EstimateLayout(double bound, ByteCodec leaf, uint8_t layout,
+                        bool opens) {
     if (!Ready()) {
-      return {};
-    }
-    _running_price = bound * RowCount();
-    bool improved = false;
-    for (const auto& c : _candidates) {
-      improved |= Fits(c, leaf) && Improves(c, leaf);
-    }
-    return improved ? Estimated() : Estimate{};
-  }
-
-  Estimate EstimateLayout(double bound, ByteCodec leaf, uint8_t layout,
-                          bool opens) {
-    if (!Ready()) {
-      return {};
+      return kNoScore;
     }
     if (opens) {
       _running_price = bound * RowCount();
     }
     const auto* c = Find(layout);
-    return c && Fits(*c, leaf) && Improves(*c, leaf) ? Estimated() : Estimate{};
+    return c && Fits(*c, leaf) && Improves(*c, leaf) ? Estimated() : kNoScore;
   }
 
   bool Encode(ColumnDataCheckpointData& data, ByteCodec leaf, uint8_t layout) {
@@ -187,33 +175,6 @@ class NumericEncoder : public State {
     }
     data.FlushSegment(CodecOf(_shape, _leaf), _values.Stats(data.type),
                       _values.Get().size(), _out);
-    return true;
-  }
-
-  bool Compress(ColumnDataCheckpointData& data, ByteCodec leaf) {
-    SDB_ASSERT(data.method != CodecType::Auto);
-    auto& reuse = data.tuning.reuse;
-    const bool held = leaf != ByteCodec::None &&
-                      reuse.pick.codec == data.method &&
-                      Hold(leaf, ChoiceOf(reuse.pick.layout));
-    if (!held && Analyze(std::numeric_limits<double>::infinity(), leaf).codec ==
-                   CodecType::Auto) {
-      return false;
-    }
-    _out.clear();
-    Write(*_best, _leaf, held ? nullptr : &_best_samples, _out);
-    const auto bytes = static_cast<double>(_out.size());
-    const auto input = static_cast<double>(RawInput(data));
-    data.FlushSegment(CodecOf(_shape, _leaf), _values.Stats(data.type),
-                      _values.Get().size(), _out);
-    if (_leaf != ByteCodec::None) {
-      if (!held) {
-        reuse.Settle({.codec = data.method, .layout = LayoutOf(*_best)}, bytes,
-                     input);
-      } else if (reuse.Grew(bytes, input)) {
-        reuse.Release();
-      }
-    }
     return true;
   }
 
@@ -316,12 +277,9 @@ class NumericEncoder : public State {
     return true;
   }
 
-  Estimate Estimated() const noexcept {
-    return {
-      .codec = CodecOf(_shape, _leaf),
-      .score = static_cast<double>(_estimated) / RowCount() *
-               (1.0 + kLeafPenalty[std::to_underlying(_leaf)]),
-    };
+  double Estimated() const noexcept {
+    return static_cast<double>(_estimated) / RowCount() *
+           (1.0 + kLeafPenalty[std::to_underlying(_leaf)]);
   }
 
   const Candidate* Find(uint8_t layout) const noexcept {
@@ -559,17 +517,6 @@ inline constexpr CompressionFunction kNumericLayout{
   .compress =
     [](ColumnDataCheckpointData& data) {
       return data.Get<Form>().Encode(data, kLeaf, kLayout);
-    },
-};
-
-template<typename Form, ByteCodec kLeaf>
-inline constexpr CompressionFunction kNumericFunction{
-  .analyze = [](
-               ColumnDataCheckpointData& data,
-               double bound) { return data.Get<Form>().Analyze(bound, kLeaf); },
-  .compress =
-    [](ColumnDataCheckpointData& data) {
-      return data.Get<Form>().Compress(data, kLeaf);
     },
 };
 

@@ -598,7 +598,8 @@ TEST_F(ColNumericCodecTest, ANamedLeafCodecCompressesAtTheColumnsLevel) {
   }
 }
 
-TEST_F(ColNumericCodecTest, ANamedLeafCodecHoldsItsLayoutUntilItsBytesGrow) {
+TEST_F(ColNumericCodecTest,
+       ANamedLeafCodecLeavesItsLayoutAsSoonAsItsBytesGrow) {
   constexpr uint32_t kRowGroup = 4096;
   constexpr uint64_t kSwitch = 8 * kRowGroup;
   constexpr uint64_t kRows = 2 * kSwitch;
@@ -608,7 +609,7 @@ TEST_F(ColNumericCodecTest, ANamedLeafCodecHoldsItsLayoutUntilItsBytesGrow) {
   };
   const auto type = duckdb::LogicalType::BIGINT;
   irs::MemoryDirectory dir{};
-  Write(dir, type, {}, kRows, kRowGroup, gen, irs::codecs::CodecType::Zstd);
+  Write(dir, type, {}, kRows, kRowGroup, gen, irs::codecs::CodecType::Lz4);
   Verify(dir, type, kRows, gen);
   irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
   const auto* col = r.Column(kField);
@@ -618,7 +619,7 @@ TEST_F(ColNumericCodecTest, ANamedLeafCodecHoldsItsLayoutUntilItsBytesGrow) {
   uint64_t row = 0;
   std::vector<std::string> layouts;
   for (const auto& block : col->DataBlocks()) {
-    ASSERT_EQ(block.codec->type, irs::codecs::CodecType::Zstd);
+    ASSERT_EQ(block.codec->type, irs::codecs::CodecType::Lz4);
     window = col->Locate(row, window);
     auto seg = col->OpenSegment(window.block, ctx);
     auto info = seg->function.get_segment_info(*seg);
@@ -630,9 +631,8 @@ TEST_F(ColNumericCodecTest, ANamedLeafCodecHoldsItsLayoutUntilItsBytesGrow) {
   EXPECT_TRUE(std::all_of(layouts.begin(), first,
                           [](const auto& l) { return l == "1/false"; }))
     << ::testing::PrintToString(layouts);
-  EXPECT_EQ(*first, "4/false") << ::testing::PrintToString(layouts);
-  EXPECT_TRUE(std::all_of(first + 1, layouts.end(),
-                          [](const auto& l) { return l.ends_with("/true"); }))
+  EXPECT_TRUE(std::all_of(first, layouts.end(),
+                          [](const auto& l) { return l == "4/true"; }))
     << ::testing::PrintToString(layouts);
 }
 
@@ -2480,9 +2480,8 @@ void ExpectRleAnalysesAgree(const duckdb::LogicalType& type,
       .tuning = tuning,
       .rows = values.size(),
     };
-    return rle->compression
-      ->analyze(data, std::numeric_limits<double>::infinity())
-      .score;
+    return rle->compression->analyze(data,
+                                     std::numeric_limits<double>::infinity());
   };
   EXPECT_EQ(analyze(plain), analyze(masked));
 }

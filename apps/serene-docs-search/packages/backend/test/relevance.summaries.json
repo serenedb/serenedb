@@ -182,7 +182,7 @@
     {"cat":"function","q":"Return a list of all values in the map.","expect":["/docs/sql/functions/map"]},
     {"cat":"function","q":"Returns false if the string matches the like_specifier (see Pattern Matching) using case-insensitive matching. escape_character is used to search for wildcard characters in the string.","expect":["/docs/sql/functions/text"]},
     {"cat":"function","q":"Returns the geometry type, such as POINT or LINESTRING.","expect":["/docs/sql/functions/geometry"]},
-    {"cat":"function","q":"Returns the value of the environment variable var. Only available in the command line client (serened shell).","expect":["/docs/sql/functions/utility"]},
+    {"cat":"function","q":"Returns the value of the environment variable var. Only available in the command line client (serenedb shell).","expect":["/docs/sql/functions/utility"]},
     {"cat":"function","q":"Returns a character which is corresponding the ASCII code value or Unicode code point.","expect":["/docs/sql/functions/text"]},
     {"cat":"function","q":"Returns the upper 64-bit segment of the MD5 hash of the string as a UBIGINT.","expect":["/docs/sql/functions/text","/docs/sql/functions/utility"]},
     {"cat":"function","q":"Escapes special patterns to turn string into a regular expression similarly to Python's re.escape function.","expect":["/docs/sql/functions/text"]},

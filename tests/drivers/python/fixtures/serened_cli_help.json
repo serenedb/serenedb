@@ -3,8 +3,9 @@
   "title": "serened -- SereneDB pg-wire server",
   "usage": [
     "serened <data-dir> [--flag=value ...]",
-    "serened shell [duckdb-shell args ...]",
-    "serened psql  [psql args ...]"
+    "serenedb server <data-dir> [--flag=value ...]",
+    "serenedb shell [duckdb-shell args ...]",
+    "serenedb psql  [psql args ...]"
   ],
   "commands": [
     {
@@ -12,11 +13,15 @@
       "description": "Start the SereneDB pg-wire server, using the optional data directory and flags."
     },
     {
-      "command": "serened shell [duckdb-shell args ...]",
+      "command": "serenedb server <data-dir> [--flag=value ...]",
+      "description": "Start the SereneDB pg-wire server, using the optional data directory and flags."
+    },
+    {
+      "command": "serenedb shell [duckdb-shell args ...]",
       "description": "Open the embedded DuckDB shell without starting the SereneDB server."
     },
     {
-      "command": "serened psql  [psql args ...]",
+      "command": "serenedb psql  [psql args ...]",
       "description": "Open the psql-compatible shell subcommand without starting the SereneDB server."
     }
   ],
@@ -304,32 +309,6 @@
           "source": "log",
           "category": "log",
           "categoryLabel": "Logging"
-        }
-      ]
-    },
-    {
-      "id": "server/docs/builder/docs_bootstrap.cpp",
-      "label": "server/docs/builder/docs_bootstrap.cpp",
-      "flags": [
-        {
-          "name": "build_docs_index",
-          "flag": "--build_docs_index",
-          "type": "",
-          "defaultValue": "",
-          "description": "Index the documentation corpus named by --docs_corpus into this directory and exit, without starting a listener. The build runs it on the freshly linked binary and writes the index into that binary; see CONTRIBUTING.md.",
-          "source": "server/docs/builder/docs_bootstrap.cpp",
-          "category": "server/docs/builder/docs_bootstrap.cpp",
-          "categoryLabel": "server/docs/builder/docs_bootstrap.cpp"
-        },
-        {
-          "name": "docs_corpus",
-          "flag": "--docs_corpus",
-          "type": "",
-          "defaultValue": "",
-          "description": "The documentation corpus --build_docs_index reads, as written by scripts/generate_docs.py --corpus.",
-          "source": "server/docs/builder/docs_bootstrap.cpp",
-          "category": "server/docs/builder/docs_bootstrap.cpp",
-          "categoryLabel": "server/docs/builder/docs_bootstrap.cpp"
         }
       ]
     }

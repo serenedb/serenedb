@@ -116,7 +116,8 @@ check "service recovered after crash" $EXEC systemctl is-active --quiet serenedb
 
 echo "=== apt remove ==="
 $EXEC apt-get remove -y serenedb
-check "binary removed" $EXEC test ! -f /usr/bin/serened
+check "binary removed" $EXEC test ! -e /usr/bin/serenedb
+check "link removed" $EXEC test ! -L /usr/bin/serened
 check "data dir preserved after remove" $EXEC test -d /var/lib/serenedb
 
 echo "=== apt purge ==="

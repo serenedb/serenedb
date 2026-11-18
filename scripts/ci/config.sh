@@ -37,7 +37,7 @@ sdb_config() {
 	SDB_GTEST=On
 	SDB_FAULT_INJECTION=On
 	EXTRA_CMAKE_FLAGS="-DSDB_BUILD_DUCKDB_UNITTESTS=ON"
-	TARGETS=(serened)
+	TARGETS=(serenedb)
 	case "$CONFIG" in
 	perf)
 		SDB_DEV=Off

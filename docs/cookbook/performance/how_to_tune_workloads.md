@@ -71,7 +71,7 @@ This section explains the prerequisites, scope, and known limitations of larger-
 ### Spilling to Disk
 
 Larger-than-memory workloads are supported by spilling to disk.
-With the default configuration, the server spills to the `tmp` directory of its data directory, and `serened shell` creates the `⟨database_file_name⟩.tmp`{:.language-sql .highlight} temporary directory (in persistent mode) or the `.tmp`{:.language-sql .highlight} directory (in in-memory mode). This directory can be changed using the [`temp_directory` configuration option](../../configuration/pragmas.md#temp-directory-for-spilling-data-to-disk), e.g.:
+With the default configuration, the server spills to the `tmp` directory of its data directory, and `serenedb shell` creates the `⟨database_file_name⟩.tmp`{:.language-sql .highlight} temporary directory (in persistent mode) or the `.tmp`{:.language-sql .highlight} directory (in in-memory mode). This directory can be changed using the [`temp_directory` configuration option](../../configuration/pragmas.md#temp-directory-for-spilling-data-to-disk), e.g.:
 
 <SqlLogicTest id="cookbook/performance/how_to_tune_workloads/example_003" />
 
@@ -148,7 +148,7 @@ Using multiple connections can parallelize some operations, although it is typic
 
 ## Persistent vs. In-Memory Tables
 
-SereneDB supports lightweight compression techniques. In DuckDB databases, such as those of `serened shell`, compression is by default only applied on persistent (on-disk) databases and not on in-memory tables.
+SereneDB supports lightweight compression techniques. In DuckDB databases, such as those of `serenedb shell`, compression is by default only applied on persistent (on-disk) databases and not on in-memory tables.
 
 In some cases, this can result in counter-intuitive performance results where queries are faster on on-disk tables compared to in-memory ones. Let's take Q1 of the TPC-H workload for example on the SF30 dataset:
 
@@ -158,8 +158,8 @@ We run this script using three SereneDB prompts:
 
 | Database setup              | SereneDB prompt                                                    | Execution time |
 | --------------------------- | ------------------------------------------------------------------ | -------------: |
-| In-memory DB (uncompressed) | `serened shell`                                                    |         4.22 s |
-| In-memory DB (compressed)   | `serened shell -cmd "ATTACH ':memory:' AS db (COMPRESS); USE db;"` |         0.55 s |
-| Persistent DB (compressed)  | `serened shell tpch-sf30.db`                                       |         0.56 s |
+| In-memory DB (uncompressed) | `serenedb shell`                                                    |         4.22 s |
+| In-memory DB (compressed)   | `serenedb shell -cmd "ATTACH ':memory:' AS db (COMPRESS); USE db;"` |         0.55 s |
+| Persistent DB (compressed)  | `serenedb shell tpch-sf30.db`                                       |         0.56 s |
 
 We can observe that the compressed databases are about 8x faster compared to the uncompressed in-memory database.

@@ -78,7 +78,7 @@ def objects(build_dir):
     candidates = sorted((build_dir / "bin").iterdir()) if (build_dir / "bin").is_dir() else []
     found = []
     for b in [*candidates, build_dir / "third_party" / "duckdb" / "test" / "unittest"]:
-        if not b.is_file():
+        if b.is_symlink() or not b.is_file():
             continue
         sections = subprocess.run(["llvm-readelf-23", "-S", str(b)], capture_output=True).stdout
         if b"__llvm_covmap" in sections:

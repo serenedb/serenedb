@@ -18,10 +18,33 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "docs/docs_bootstrap.h"
+#pragma once
 
-namespace sdb::docs {
+#include <cstdint>
+#include <memory>
+#include <span>
+#include <string_view>
 
-[[gnu::weak]] std::optional<int> RunDocsBootstrap() { return std::nullopt; }
+#include "network/http/handler.h"
+#include "network/listen_spec.h"
+#include "server/utils/registry.h"
 
-}  // namespace sdb::docs
+namespace sdb::network::http {
+
+struct Route {
+  HttpMethod method;
+  std::string_view pattern;
+  std::unique_ptr<HttpHandler> (*make)();
+};
+
+struct Api {
+  static constexpr std::string_view kKind = "http api";
+
+  std::span<const Route> routes;
+  uint64_t max_body_bytes = 0;
+  void (*start)(const ListenSpec& spec) = nullptr;
+};
+
+}  // namespace sdb::network::http
+
+#define SDB_HTTP_API const ::sdb::Registry<::sdb::network::http::Api>::Register

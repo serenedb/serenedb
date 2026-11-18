@@ -359,7 +359,7 @@ SELECT gen_random_uuid();
 
 # DOCS_TEST: getenv
 
-# getenv is only available in the command line client (serened shell), not over
+# getenv is only available in the command line client (serenedb shell), not over
 # the server protocol, so this example is illustrative.
 
 # DOCS_TEST_RAW

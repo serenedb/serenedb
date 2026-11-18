@@ -219,10 +219,11 @@ bool CompressAuto(ColumnDataCheckpointData& data) {
     return true;
   }
   const auto physical = data.type.InternalType();
+  const bool flush = data.params.tier == WriteTier::Flush;
+  data.preferences = flush ? &kFlushPreferences : &kMergePreferences;
   absl::InlinedVector<Contender, kMostContenders> contenders;
   const auto& orders = OrdersOf(physical);
-  for (const auto type :
-       data.params.tier == WriteTier::Flush ? orders.flush : orders.merge) {
+  for (const auto type : flush ? orders.flush : orders.merge) {
     if (data.disabled.test(std::to_underlying(type))) {
       continue;
     }
@@ -234,6 +235,7 @@ bool CompressAuto(ColumnDataCheckpointData& data) {
       contenders.insert(contenders.end(), own.begin(), own.end());
       continue;
     }
+    SDB_ASSERT(codec->compression->analyze);
     SDB_ASSERT(!Find(contenders, codec->compression));
     contenders.push_back({codec->compression, type});
   }

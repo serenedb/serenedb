@@ -77,7 +77,6 @@ constexpr idx_t kBitsPerValue = ValidityMask::BITS_PER_VALUE;
 constexpr idx_t kPackGroupSize =
   BitpackingPrimitives::BITPACKING_ALGORITHM_GROUP_SIZE;
 constexpr validity_t kAllValid = ~validity_t{0};
-constexpr double kCompressPenalty = 2.0;
 
 static_assert(kMaxRunIdx < std::numeric_limits<uint8_t>::max());
 static_assert(kBitsetSentinel < std::numeric_limits<uint8_t>::max());
@@ -1711,7 +1710,7 @@ constexpr CompressionFunction kFunction{
       return static_cast<double>(
                data.Get<Containers<kPhysical>>().state.total_size) /
              static_cast<double>(std::max<uint64_t>(data.rows, 1)) *
-             kCompressPenalty;
+             data.preferences->roaring_price;
     },
   .compress =
     [](ColumnDataCheckpointData& data) {

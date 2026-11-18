@@ -18,8 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <array>
 #include <span>
+#include <type_traits>
 #include <utility>
 
 #include "iresearch/formats/column/codecs/numeric/delta.hpp"
@@ -32,52 +32,150 @@
 namespace irs::codecs {
 namespace {
 
-template<typename Form, ByteCodec kLeaf, size_t... kIndex>
-constexpr std::array<Contender, sizeof...(kIndex)> ContendersOf(
-  std::index_sequence<kIndex...>) {
-  return {Contender{
-    .function =
-      &kNumericLayout<Form, kLeaf, Form::kLayouts[kIndex], kIndex == 0>,
-    .codec = CodecOf(Form::kShape, kLeaf),
-  }...};
+template<typename T, ByteCodec kLeaf>
+std::span<const Contender> PlainContenders() {
+  static constexpr auto kCodec = CodecOf(Shape::Plain, kLeaf);
+  if constexpr (kLeaf != ByteCodec::None) {
+    static constexpr Contender kContenders[] = {
+      {&kRaw<T, kLeaf, false>, kCodec},
+      {&kRaw<T, kLeaf, true>, kCodec},
+      {&kFor<T, kLeaf, false>, kCodec},
+      {&kFor<T, kLeaf, true>, kCodec},
+    };
+    return kContenders;
+  } else if constexpr (std::is_integral_v<T>) {
+    static constexpr Contender kContenders[] = {
+      {&kRaw<T, kLeaf, false>, kCodec},
+      {&kFor<T, kLeaf, false>, kCodec},
+      {&kFfor<T>, kCodec},
+    };
+    return kContenders;
+  } else {
+    static constexpr Contender kContenders[] = {
+      {&kRaw<T, kLeaf, false>, kCodec},
+      {&kFor<T, kLeaf, false>, kCodec},
+    };
+    return kContenders;
+  }
 }
 
-template<typename Form, ByteCodec kLeaf>
-constexpr auto kContenders = ContendersOf<Form, kLeaf>(
-  std::make_index_sequence<std::size(Form::kLayouts)>{});
+template<typename T, ByteCodec kLeaf>
+std::span<const Contender> DeltaContenders() {
+  static constexpr auto kCodec = CodecOf(Shape::Delta, kLeaf);
+  if constexpr (kLeaf != ByteCodec::None) {
+    static constexpr Contender kContenders[] = {
+      {&kDelta<T, kLeaf, false>, kCodec},
+      {&kDelta<T, kLeaf, true>, kCodec},
+    };
+    return kContenders;
+  } else if constexpr (std::is_integral_v<T>) {
+    static constexpr Contender kContenders[] = {
+      {&kDeltaFfor<T>, kCodec},
+      {&kDelta<T, kLeaf, false>, kCodec},
+    };
+    return kContenders;
+  } else {
+    static constexpr Contender kContenders[] = {
+      {&kDelta<T, kLeaf, false>, kCodec},
+    };
+    return kContenders;
+  }
+}
 
-template<typename Form, ByteCodec kLeaf>
+template<typename T, ByteCodec kLeaf>
+std::span<const Contender> RunsContenders() {
+  static constexpr auto kCodec = CodecOf(Shape::Runs, kLeaf);
+  if constexpr (kLeaf != ByteCodec::None) {
+    static constexpr Contender kContenders[] = {
+      {&kRle<T, kLeaf>, kCodec},
+    };
+    return kContenders;
+  } else {
+    static constexpr Contender kContenders[] = {
+      {&kRle<T, kLeaf>, kCodec},
+      {&kRleFfor<T>, kCodec},
+    };
+    return kContenders;
+  }
+}
+
+template<typename T, ByteCodec kLeaf>
+std::span<const Contender> DictionaryContenders() {
+  static constexpr auto kCodec = CodecOf(Shape::Dictionary, kLeaf);
+  if constexpr (kLeaf != ByteCodec::None) {
+    static constexpr Contender kContenders[] = {
+      {&kDict<T, kLeaf, false>, kCodec},
+      {&kDict<T, kLeaf, true>, kCodec},
+    };
+    return kContenders;
+  } else {
+    static constexpr Contender kContenders[] = {
+      {&kDict<T, kLeaf, false>, kCodec},
+      {&kDictFfor<T>, kCodec},
+    };
+    return kContenders;
+  }
+}
+
+template<typename T, Shape kShape, ByteCodec kLeaf>
+std::span<const Contender> ContendersOf() {
+  if constexpr (kShape == Shape::Plain) {
+    return PlainContenders<T, kLeaf>();
+  } else if constexpr (kShape == Shape::Delta) {
+    return DeltaContenders<T, kLeaf>();
+  } else if constexpr (kShape == Shape::Runs) {
+    return RunsContenders<T, kLeaf>();
+  } else {
+    return DictionaryContenders<T, kLeaf>();
+  }
+}
+
+template<typename T, Shape kShape>
+constexpr auto ReaderType() {
+  if constexpr (kShape == Shape::Plain) {
+    return std::type_identity<PlainReader<T>>{};
+  } else if constexpr (kShape == Shape::Delta) {
+    return std::type_identity<DeltaReader<T>>{};
+  } else if constexpr (kShape == Shape::Runs) {
+    return std::type_identity<RunsReader<T>>{};
+  } else {
+    return std::type_identity<DictionaryReader<T>>{};
+  }
+}
+
+template<typename T, Shape kShape, ByteCodec kLeaf>
 constexpr CompressionFunction kContest{
   .compress =
     [](ColumnDataCheckpointData& data) {
-      Contest(kContenders<Form, kLeaf>, data);
+      Contest(ContendersOf<T, kShape, kLeaf>(), data);
       return true;
     },
 };
 
-template<typename Form, typename Reader, ByteCodec kLeaf>
+template<typename T, Shape kShape, ByteCodec kLeaf>
 constexpr Codec kCodec{
-  .type = CodecOf(Form::kShape, kLeaf),
-  .compression = &kContest<Form, kLeaf>,
-  .decompression = &numeric::kDecompression<Reader>,
+  .type = CodecOf(kShape, kLeaf),
+  .compression = &kContest<T, kShape, kLeaf>,
+  .decompression =
+    &numeric::kDecompression<typename decltype(ReaderType<T, kShape>())::type>,
 };
 
-template<typename Form, typename Reader>
+template<typename T, Shape kShape>
 constexpr const Codec* kCodecs[] = {
-  &kCodec<Form, Reader, ByteCodec::None>,
-  &kCodec<Form, Reader, ByteCodec::Lz4>,
-  &kCodec<Form, Reader, ByteCodec::Zstd>,
+  &kCodec<T, kShape, ByteCodec::None>,
+  &kCodec<T, kShape, ByteCodec::Lz4>,
+  &kCodec<T, kShape, ByteCodec::Zstd>,
 };
 
-template<typename Form>
-std::span<const Contender> FormContenders(ByteCodec leaf) {
+template<typename T, Shape kShape>
+std::span<const Contender> LeafContenders(ByteCodec leaf) {
   switch (leaf) {
     case ByteCodec::None:
-      return kContenders<Form, ByteCodec::None>;
+      return ContendersOf<T, kShape, ByteCodec::None>();
     case ByteCodec::Lz4:
-      return kContenders<Form, ByteCodec::Lz4>;
+      return ContendersOf<T, kShape, ByteCodec::Lz4>();
     case ByteCodec::Zstd:
-      return kContenders<Form, ByteCodec::Zstd>;
+      return ContendersOf<T, kShape, ByteCodec::Zstd>();
     default:
       return {};
   }
@@ -87,14 +185,14 @@ template<typename T>
 std::span<const Contender> ShapeContenders(Shape shape, ByteCodec leaf) {
   switch (shape) {
     case Shape::Plain:
-      return FormContenders<PlainEncoder<T>>(leaf);
+      return LeafContenders<T, Shape::Plain>(leaf);
     case Shape::Delta:
-      return FormContenders<DeltaEncoder<T>>(leaf);
+      return LeafContenders<T, Shape::Delta>(leaf);
     case Shape::Runs:
-      return FormContenders<RunsEncoder<T>>(leaf);
+      return LeafContenders<T, Shape::Runs>(leaf);
     case Shape::Dictionary:
       if constexpr (sizeof(T) > 1) {
-        return FormContenders<DictionaryEncoder<T>>(leaf);
+        return LeafContenders<T, Shape::Dictionary>(leaf);
       }
       break;
   }
@@ -104,17 +202,17 @@ std::span<const Contender> ShapeContenders(Shape shape, ByteCodec leaf) {
 template<typename T>
 const Codec* FormCodec(Shape shape, ByteCodec leaf) {
   const auto index = std::to_underlying(leaf);
-  SDB_ASSERT(index < std::size(kCodecs<PlainEncoder<T>, PlainReader<T>>));
+  SDB_ASSERT(index < kNumericLeafCount);
   switch (shape) {
     case Shape::Plain:
-      return kCodecs<PlainEncoder<T>, PlainReader<T>>[index];
+      return kCodecs<T, Shape::Plain>[index];
     case Shape::Delta:
-      return kCodecs<DeltaEncoder<T>, DeltaReader<T>>[index];
+      return kCodecs<T, Shape::Delta>[index];
     case Shape::Runs:
-      return kCodecs<RunsEncoder<T>, RunsReader<T>>[index];
+      return kCodecs<T, Shape::Runs>[index];
     case Shape::Dictionary:
       if constexpr (sizeof(T) > 1) {
-        return kCodecs<DictionaryEncoder<T>, DictionaryReader<T>>[index];
+        return kCodecs<T, Shape::Dictionary>[index];
       }
       break;
   }

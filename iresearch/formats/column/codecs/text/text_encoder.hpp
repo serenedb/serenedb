@@ -40,19 +40,10 @@
 
 namespace irs::codecs::text {
 
-inline constexpr double kLz4Penalty = 0.05;
 inline constexpr double kContestMove = 2.0;
 
-inline double Penalty(ByteCodec leaf, Shape shape, WriteTier tier) noexcept {
-  return leaf == ByteCodec::Lz4 &&
-             (shape == Shape::Plain || tier == WriteTier::Flush)
-           ? kLz4Penalty
-           : 0.0;
-}
-
-inline double Score(Values& values, Shape shape, ByteCodec leaf, WriteTier tier,
-                    uint64_t bytes) {
-  return static_cast<double>(bytes) * (1.0 + Penalty(leaf, shape, tier)) /
+inline double Score(Values& values, double price, uint64_t bytes) {
+  return static_cast<double>(bytes) * price /
          static_cast<double>(std::max<uint64_t>(values.trial.input, 1));
 }
 
@@ -99,8 +90,12 @@ class TextEncoder final : public State {
     if (ContestedShape(data) != shape) {
       return kNoScore;
     }
+    const auto price =
+      kLeaf == ByteCodec::Lz4
+        ? data.preferences->text_lz4_price[std::to_underlying(shape)]
+        : 1.0;
     const auto score = [&](uint64_t bytes) {
-      return Score(values, shape, kLeaf, tier, bytes);
+      return Score(values, price, bytes);
     };
     uint64_t bytes = 0;
     if constexpr (requires {
@@ -128,27 +123,26 @@ class TextEncoder final : public State {
 
   bool Compress(ColumnDataCheckpointData& data, Shape shape,
                 FrameDictionary frames) {
-    SDB_ASSERT(data.method == CodecType::Auto);
     const auto* config = data.Get<Values>().trial.rows != 0
                            ? &_config[std::to_underlying(shape)]
                            : (_tuning.config ? &*_tuning.config : nullptr);
     return config && config->layout == frames && Compress(data, shape);
   }
 
+  void CompressAs(ColumnDataCheckpointData& data, const Config& config) {
+    const auto target = _params.segment_target;
+    With(config, [&](auto& state) {
+      if (config.shape == Shape::Plain) {
+        SealRows(state, config, data, target, _segment);
+      } else {
+        CompressRows(state, config, data.Get<Values>(), 0, target, _segment,
+                     data);
+      }
+    });
+  }
+
   bool Compress(ColumnDataCheckpointData& data, Shape shape) {
     const auto target = _params.segment_target;
-    if (data.method != CodecType::Auto) {
-      const auto config = NamedConfig(shape, kLeaf, _params);
-      With(config, [&](auto& state) {
-        if (shape == Shape::Plain) {
-          SealRows(state, config, data, target, _segment);
-        } else {
-          CompressRows(state, config, data.Get<Values>(), 0, target, _segment,
-                       data);
-        }
-      });
-      return true;
-    }
     auto& values = data.Get<Values>();
     Config config;
     if (values.trial.rows != 0) {
@@ -325,6 +319,16 @@ inline constexpr CompressionFunction kTextFunction{
   .compress =
     [](ColumnDataCheckpointData& data) {
       return data.Get<TextEncoder<Codec>>().Compress(data, kShape);
+    },
+};
+
+template<typename Codec, Shape kShape>
+inline constexpr CompressionFunction kNamedTextFunction{
+  .compress =
+    [](ColumnDataCheckpointData& data) {
+      data.Get<TextEncoder<Codec>>().CompressAs(
+        data, NamedConfig(kShape, Codec::kCodec, data.params));
+      return true;
     },
 };
 

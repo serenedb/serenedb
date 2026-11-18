@@ -441,7 +441,7 @@ consteval Codec StringCodec() {
   static_assert(Compression::kCodec == Scan::kCodec);
   return {
     .type = CodecOf(Scan::kShape, Scan::kCodec),
-    .compression = &kTextFunction<Compression, Scan::kShape>,
+    .compression = &kNamedTextFunction<Compression, Scan::kShape>,
     .decompression = &kStringDecompression<Scan>,
   };
 }

@@ -21,118 +21,250 @@
 #pragma once
 
 #include <algorithm>
+#include <cstdint>
+#include <cstring>
 #include <functional>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
-#include "iresearch/formats/column/codecs/numeric/numeric_encoder.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_reader.hpp"
+#include "iresearch/formats/column/codecs/numeric/numeric_writer.hpp"
 #include "iresearch/utils/lower_bound.hpp"
 
 namespace irs::codecs {
 
 template<typename T>
-class RunsEncoder final : public NumericEncoder<T> {
-  using Base = NumericEncoder<T>;
-  using Base::kWidth;
-  using typename Base::U;
+struct Runs final : State {
+  static constexpr StateId kId = StateId::Runs;
 
- public:
-  static constexpr Shape kShape = Shape::Runs;
-  static constexpr uint8_t kLayouts[] = {0, kPackedLayout};
-  static constexpr StateId kId = StateId::RunsEncoder;
+  explicit Runs(ColumnDataCheckpointData&) {}
 
-  explicit RunsEncoder(ColumnDataCheckpointData& data)
-    : Base{data, kShape}, _min_packed_run{data.min_packed_run} {}
+  std::vector<numeric::Bits<sizeof(T)>> values;
+  std::vector<uint32_t> lengths;
+  std::vector<uint32_t> rows;
+};
 
- private:
-  void AddCandidates(const NumericChoice* only) final {
-    const auto values = this->_values.Get();
-    const auto& facts = this->_values.GetFacts();
-    const auto n = static_cast<uint32_t>(values.size());
-    const auto runs = facts.runs;
-    const bool bytes = Base::Wanted(only, false);
-    const bool packed = Base::Wanted(only, true) &&
-                        uint64_t{runs} * _min_packed_run <= uint64_t{n};
-    if ((!bytes && !packed) || (this->_forced ? runs == n : runs * 2 > n)) {
-      return;
+template<typename T>
+Runs<T>* ScanRuns(ColumnDataCheckpointData& data) {
+  auto& values = data.Get<Values<T>>();
+  if (!values.Usable()) {
+    return nullptr;
+  }
+  const auto rows = values.Get();
+  const auto n = static_cast<uint32_t>(rows.size());
+  const auto count = values.GetFacts().runs;
+  if (count == n ||
+      static_cast<double>(count) >
+        static_cast<double>(n) * data.preferences->max_runs_per_row) {
+    return nullptr;
+  }
+  auto& runs = data.Get<Runs<T>>();
+  if (!runs.rows.empty()) {
+    return &runs;
+  }
+  runs.values.reserve(count);
+  runs.lengths.reserve(count);
+  runs.rows.reserve(count);
+  for (uint32_t i = 0; i < n;) {
+    uint32_t j = i + 1;
+    while (j < n && rows[j] == rows[i]) {
+      ++j;
     }
-    _run_values.clear();
-    _lengths.clear();
-    _rows.clear();
-    _run_values.reserve(runs);
-    _lengths.reserve(runs);
-    _rows.reserve(runs);
-    for (uint32_t i = 0; i < n;) {
-      uint32_t j = i + 1;
-      while (j < n && values[j] == values[i]) {
-        ++j;
-      }
-      _run_values.push_back(values[i]);
-      _lengths.push_back(j - i);
-      _rows.push_back(i);
-      i = j;
-    }
-    if (bytes) {
-      const auto run_width = numeric::BytesFor(std::ranges::max(_lengths));
-      _value_bytes.resize(size_t{runs} * facts.for_stored);
-      _length_bytes.resize(size_t{runs} * run_width);
-      numeric::Narrow<kWidth>(
-        runs, facts.for_stored, _value_bytes.data(),
-        [v = _run_values.data(), lo = facts.lo](size_t r) {
-          return static_cast<U>(v[r] - lo);
-        });
-      numeric::Narrow<sizeof(uint32_t)>(
-        runs, run_width, _length_bytes.data(),
-        [l = _lengths.data()](size_t r) { return l[r]; });
-      this->Add({
-        .stored = facts.for_stored,
-        .run_width = run_width,
-        .base = facts.lo,
-        .items = runs,
-        .values = _value_bytes,
-        .lengths = _length_bytes,
-        .run_rows = _rows,
+    runs.values.push_back(rows[i]);
+    runs.lengths.push_back(j - i);
+    runs.rows.push_back(i);
+    i = j;
+  }
+  return &runs;
+}
+
+template<typename T>
+struct Rle final : State {
+  static constexpr StateId kId = StateId::Rle;
+
+  explicit Rle(ColumnDataCheckpointData&) {}
+
+  ScratchVector<uint8_t> value_bytes;
+  ScratchVector<uint8_t> length_bytes;
+  uint8_t stored = 0;
+  uint8_t run_width = 0;
+  Analysis analysis;
+};
+
+template<typename T>
+Items RleItems(ColumnDataCheckpointData& data, FrameStore store) {
+  const auto* runs = ScanRuns<T>(data);
+  if (!runs) {
+    return {};
+  }
+  auto& rle = data.Get<Rle<T>>();
+  if (rle.run_width == 0) {
+    const auto& facts = data.Get<Values<T>>().GetFacts();
+    const auto count = runs->rows.size();
+    rle.stored = facts.for_stored;
+    rle.run_width = numeric::BytesFor(std::ranges::max(runs->lengths));
+    rle.value_bytes.resize(count * rle.stored);
+    rle.length_bytes.resize(count * rle.run_width);
+    numeric::Narrow<sizeof(T)>(
+      count, rle.stored, rle.value_bytes.data(),
+      [v = runs->values.data(), lo = facts.lo](size_t r) {
+        return static_cast<numeric::Bits<sizeof(T)>>(v[r] - lo);
       });
-    }
-    if (packed) {
-      _value_blocks.Plan(std::span<const U>{_run_values}, Values<T>::Less);
-      _length_blocks.Plan(std::span<const uint32_t>{_lengths},
-                          std::less<uint32_t>{});
-      this->Add({
-        .packed = true,
-        .stored = kWidth,
-        .items = runs,
-        .run_rows = _rows,
-      });
-    }
+    numeric::Narrow<sizeof(uint32_t)>(
+      count, rle.run_width, rle.length_bytes.data(),
+      [l = runs->lengths.data()](size_t r) { return l[r]; });
   }
+  return {
+    .shape = Shape::Runs,
+    .store = store,
+    .stored = rle.stored,
+    .run_width = rle.run_width,
+    .count = static_cast<uint32_t>(runs->rows.size()),
+  };
+}
 
-  void StoreHeader(const Candidate& c, uint32_t,
-                   duckdb::data_ptr_t own) const final {
-    duckdb::Store(RunsHeader{.base = c.base, .run_width = c.run_width}, own);
+template<typename T>
+auto RleFrames(const Rle<T>& state) {
+  return [rle = &state](
+           uint32_t begin, uint32_t count,
+           ScratchVector<uint8_t>& scratch) -> std::span<const uint8_t> {
+    scratch.resize(size_t{count} * (rle->stored + rle->run_width));
+    std::memcpy(scratch.data(),
+                rle->value_bytes.data() + size_t{begin} * rle->stored,
+                size_t{count} * rle->stored);
+    std::memcpy(scratch.data() + size_t{count} * rle->stored,
+                rle->length_bytes.data() + size_t{begin} * rle->run_width,
+                size_t{count} * rle->run_width);
+    return scratch;
+  };
+}
+
+template<typename T>
+double AnalyzeRle(ColumnDataCheckpointData& data, double bound,
+                  FrameStore store) {
+  const auto items = RleItems<T>(data, store);
+  auto& rle = data.Get<Rle<T>>();
+  return AnalyzeFrames<T>(data, items, rle.analysis, bound, RleFrames(rle));
+}
+
+template<typename T>
+bool CompressRle(ColumnDataCheckpointData& data, FrameStore store) {
+  auto& rle = data.Get<Rle<T>>();
+  if (!MayWrite(data, rle.analysis.done, store.leaf)) {
+    return false;
   }
-
-  uint64_t PackedBlocks(const Candidate&) const noexcept final {
-    return _value_blocks.Bytes() + _length_blocks.Bytes();
+  const auto items = RleItems<T>(data, store);
+  if (!Offered(items)) {
+    return false;
   }
+  const auto& rows = data.Get<Runs<T>>().rows;
+  return CompressFrames<T>(
+    data, items, rle.analysis,
+    RunsHeader{.base = data.Get<Values<T>>().GetFacts().lo,
+               .run_width = rle.run_width},
+    RleFrames(rle), [&](NumericFrameMeta& m, uint32_t begin) {
+      m.frame.first_entry = rows[begin];
+    });
+}
 
-  void AppendBlocks(const Candidate&, size_t first, size_t blocks,
-                    std::string& out) final {
-    _value_blocks.Append(std::span<const U>{_run_values}, first, blocks, out);
-    _length_blocks.Append(std::span<const uint32_t>{_lengths}, first, blocks,
-                          out);
+template<typename T, ByteCodec kLeaf>
+inline constexpr auto& kRle =
+  kStoredFrames<AnalyzeRle<T>, CompressRle<T>, kLeaf, false>;
+
+template<typename T>
+struct RleFfor final : State {
+  static constexpr StateId kId = StateId::RleFfor;
+
+  explicit RleFfor(ColumnDataCheckpointData&) {}
+
+  FforBlocks<numeric::Bits<sizeof(T)>> value_blocks;
+  FforBlocks<uint32_t> length_blocks;
+  bool planned = false;
+  bool analyzed = false;
+};
+
+template<typename T>
+const Runs<T>* PlanRleFfor(ColumnDataCheckpointData& data, RleFfor<T>& state) {
+  auto& values = data.Get<Values<T>>();
+  if (!values.Usable() ||
+      uint64_t{values.GetFacts().runs} * data.min_packed_run >
+        values.Get().size()) {
+    return nullptr;
   }
+  const auto* runs = ScanRuns<T>(data);
+  if (runs && !state.planned) {
+    state.planned = true;
+    state.value_blocks.Plan(
+      std::span<const numeric::Bits<sizeof(T)>>{runs->values}, Values<T>::Less);
+    state.length_blocks.Plan(std::span<const uint32_t>{runs->lengths},
+                             std::less<uint32_t>{});
+  }
+  return runs;
+}
 
-  std::vector<U> _run_values;
-  std::vector<uint32_t> _lengths;
-  std::vector<uint32_t> _rows;
-  ScratchVector<uint8_t> _value_bytes;
-  ScratchVector<uint8_t> _length_bytes;
-  FforBlocks<U> _value_blocks;
-  FforBlocks<uint32_t> _length_blocks;
-  uint32_t _min_packed_run;
+template<typename T>
+double AnalyzeRleFfor(ColumnDataCheckpointData& data, double bound) {
+  auto& state = data.Get<RleFfor<T>>();
+  const auto* runs = PlanRleFfor(data, state);
+  if (!runs) {
+    return kNoScore;
+  }
+  state.analyzed = true;
+  return AnalyzeBlocks<T>(
+    data, Shape::Runs, static_cast<uint32_t>(runs->rows.size()),
+    state.value_blocks.Bytes() + state.length_blocks.Bytes(), 0, bound);
+}
+
+template<typename T>
+bool CompressRleFfor(ColumnDataCheckpointData& data) {
+  using U = numeric::Bits<sizeof(T)>;
+  auto& state = data.Get<RleFfor<T>>();
+  if (!MayWrite(data, state.analyzed, ByteCodec::None)) {
+    return false;
+  }
+  const auto* runs = PlanRleFfor(data, state);
+  if (!runs) {
+    return false;
+  }
+  auto& out = data.Get<NumericScratch>().out;
+  const auto count = static_cast<uint32_t>(runs->rows.size());
+  const auto geometry = PackedGeometry(Shape::Runs, count, 0);
+  SegmentWriter<T> writer{
+    Shape::Runs,
+    geometry,
+    state.value_blocks.Bytes() + state.length_blocks.Bytes(),
+    {},
+    out};
+  for (uint32_t f = 0; f < geometry.frames; ++f) {
+    const auto begin = f * geometry.per;
+    const auto items = std::min(count - begin, geometry.per);
+    const size_t first = begin / numeric::kBlockValues;
+    const size_t blocks =
+      (size_t{items} + numeric::kBlockValues - 1) / numeric::kBlockValues;
+    auto& m = writer.Open(f, runs->rows[begin]);
+    m.base = items;
+    state.value_blocks.Append(std::span<const U>{runs->values}, first, blocks,
+                              out);
+    state.length_blocks.Append(std::span<const uint32_t>{runs->lengths}, first,
+                               blocks, out);
+    writer.Close(m);
+  }
+  writer.Finish(
+    {
+      .stored = sizeof(T),
+      .flags = kNumericPacked,
+      .raw_bytes = uint64_t{count} * sizeof(T),
+    },
+    RunsHeader{}, data.Get<Values<T>>());
+  return FlushNumeric<T>(data, Shape::Runs, ByteCodec::None, state.analyzed);
+}
+
+template<typename T>
+inline constexpr CompressionFunction kRleFfor{
+  .analyze = AnalyzeRleFfor<T>,
+  .compress = CompressRleFfor<T>,
 };
 
 template<typename T>

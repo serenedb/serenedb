@@ -93,10 +93,14 @@ std::span<const Contender> Contenders(CodecType type, PhysicalType physical) {
     return {};
   }
   if (physical == PhysicalType::VARCHAR) {
-    if (LeafOf(type) == ByteCodec::Lz4) {
-      return Lz4TextContenders(ShapeOf(type));
+    switch (LeafOf(type)) {
+      case ByteCodec::Lz4:
+        return Lz4TextContenders(ShapeOf(type));
+      case ByteCodec::Fsst:
+        return FsstTextContenders(ShapeOf(type));
+      default:
+        return {};
     }
-    return {};
   }
   if (!IsNumeric(type)) {
     return {};

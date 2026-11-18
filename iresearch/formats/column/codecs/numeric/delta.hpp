@@ -20,88 +20,156 @@
 
 #pragma once
 
+#include <algorithm>
+#include <cstdint>
 #include <cstring>
 #include <span>
 #include <string>
 #include <type_traits>
+#include <utility>
 
-#include "iresearch/formats/column/codecs/numeric/numeric_encoder.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_reader.hpp"
+#include "iresearch/formats/column/codecs/numeric/numeric_writer.hpp"
 
 namespace irs::codecs {
 
 template<typename T>
-class DeltaEncoder final : public NumericEncoder<T> {
-  using Base = NumericEncoder<T>;
-  using Base::kWidth;
-  using typename Base::U;
+struct Delta final : State {
+  static constexpr StateId kId = StateId::Delta;
 
- public:
-  static constexpr Shape kShape = Shape::Delta;
-  static constexpr uint8_t kLayouts[] = {kPackedLayout, 0, kShuffledLayout};
-  static constexpr StateId kId = StateId::DeltaEncoder;
+  explicit Delta(ColumnDataCheckpointData&) {}
 
-  explicit DeltaEncoder(ColumnDataCheckpointData& data) : Base{data, kShape} {}
+  ScratchVector<uint8_t> deltas;
+  Analysis analysis[2];
+};
 
- private:
-  void AddCandidates(const NumericChoice* only) final {
-    const auto values = this->_values.Get();
-    const auto& facts = this->_values.GetFacts();
-    const auto n = static_cast<uint32_t>(values.size());
-    if constexpr (std::is_integral_v<T>) {
-      if (Base::Wanted(only, true) && this->_forced &&
-          facts.delta_bits < facts.for_bits) {
-        _wide.resize(n);
-        for (uint32_t i = 0; i < n; ++i) {
-          _wide[i] =
-            i % numeric::kBlockValues == 0
-              ? U{0}
-              : static_cast<U>(values[i] - values[i - 1] - facts.delta_offset);
-        }
-        _blocks.PlanDeltas(std::span<const U>{_wide}, values);
-        this->Add({
-          .packed = true,
-          .stored = kWidth,
-          .base = facts.delta_offset,
-          .items = n,
-        });
-      }
-    }
-    if (!Base::Wanted(only, false)) {
-      return;
-    }
-    _delta.resize(size_t{n} * facts.delta_stored);
-    std::memset(_delta.data(), 0, facts.delta_stored);
-    numeric::Narrow<kWidth>(
-      n - 1, facts.delta_stored, _delta.data() + facts.delta_stored,
-      [v = values.data(), offset = facts.delta_offset](size_t i) {
-        return static_cast<U>(v[i + 1] - v[i] - offset);
+template<typename T>
+Items DeltaItems(ColumnDataCheckpointData& data, FrameStore store) {
+  auto& values = data.Get<Values<T>>();
+  return {
+    .shape = Shape::Delta,
+    .store = store,
+    .stored = values.Usable() ? values.GetFacts().delta_stored : uint8_t{0},
+    .count = static_cast<uint32_t>(values.Get().size()),
+  };
+}
+
+template<typename T>
+const uint8_t* Deltas(ColumnDataCheckpointData& data) {
+  auto& deltas = data.Get<Delta<T>>().deltas;
+  if (deltas.empty()) {
+    auto& values = data.Get<Values<T>>();
+    const auto rows = values.Get();
+    const auto& facts = values.GetFacts();
+    deltas.resize(rows.size() * facts.delta_stored);
+    std::memset(deltas.data(), 0, facts.delta_stored);
+    numeric::Narrow<sizeof(T)>(
+      rows.size() - 1, facts.delta_stored, deltas.data() + facts.delta_stored,
+      [v = rows.data(), offset = facts.delta_offset](size_t i) {
+        return static_cast<numeric::Bits<sizeof(T)>>(v[i + 1] - v[i] - offset);
       });
-    this->AddWithShuffle({
-      .stored = facts.delta_stored,
-      .base = facts.delta_offset,
-      .items = n,
-      .values = _delta,
+  }
+  return deltas.data();
+}
+
+template<typename T>
+double AnalyzeDelta(ColumnDataCheckpointData& data, double bound,
+                    FrameStore store) {
+  const auto items = DeltaItems<T>(data, store);
+  return AnalyzeFrames<T>(
+    data, items, data.Get<Delta<T>>().analysis[store.shuffled], bound,
+    Slices(items.stored, [&] { return Deltas<T>(data); }));
+}
+
+template<typename T>
+bool CompressDelta(ColumnDataCheckpointData& data, FrameStore store) {
+  using U = numeric::Bits<sizeof(T)>;
+  const auto items = DeltaItems<T>(data, store);
+  if (!Offered(items)) {
+    return false;
+  }
+  auto& values = data.Get<Values<T>>();
+  const auto rows = values.Get();
+  const auto offset = values.GetFacts().delta_offset;
+  return CompressFrames<T>(
+    data, items, data.Get<Delta<T>>().analysis[store.shuffled],
+    DeltaHeader{.base = offset},
+    Slices(items.stored, [&] { return Deltas<T>(data); }),
+    [&](NumericFrameMeta& m, uint32_t begin) {
+      m.base = begin == 0 ? static_cast<U>(rows[0] - offset) : rows[begin - 1];
     });
-  }
+}
 
-  void StoreHeader(const Candidate& c, uint32_t,
-                   duckdb::data_ptr_t own) const final {
-    duckdb::Store(DeltaHeader{.base = c.base}, own);
-  }
+template<typename T, ByteCodec kLeaf, bool kShuffled>
+inline constexpr auto& kDelta =
+  kStoredFrames<AnalyzeDelta<T>, CompressDelta<T>, kLeaf, kShuffled>;
 
-  uint64_t PackedBlocks(const Candidate&) const noexcept final {
-    return _blocks.Bytes();
-  }
+template<typename T>
+struct DeltaFfor final : State {
+  static constexpr StateId kId = StateId::DeltaFfor;
 
-  void AppendBlocks(const Candidate&, size_t first, size_t blocks,
-                    std::string& out) final {
-    _blocks.Append(std::span<const U>{_wide}, first, blocks, out);
-  }
+  explicit DeltaFfor(ColumnDataCheckpointData&) {}
 
-  ScratchVector<uint8_t> _delta;
-  ScratchVector<U> _wide;
-  FforBlocks<U> _blocks;
+  ScratchVector<numeric::Bits<sizeof(T)>> wide;
+  FforBlocks<numeric::Bits<sizeof(T)>> blocks;
+  bool planned = false;
+  bool analyzed = false;
+};
+
+template<typename T>
+bool PlanDeltaFfor(Values<T>& values, DeltaFfor<T>& state) {
+  using U = numeric::Bits<sizeof(T)>;
+  const auto& facts = values.GetFacts();
+  if (facts.delta_bits >= facts.for_bits) {
+    return false;
+  }
+  if (!state.planned) {
+    state.planned = true;
+    const auto rows = values.Get();
+    const auto n = static_cast<uint32_t>(rows.size());
+    state.wide.resize(n);
+    for (uint32_t i = 0; i < n; ++i) {
+      state.wide[i] =
+        i % numeric::kBlockValues == 0
+          ? U{0}
+          : static_cast<U>(rows[i] - rows[i - 1] - facts.delta_offset);
+    }
+    state.blocks.PlanDeltas(std::span<const U>{state.wide}, rows);
+  }
+  return true;
+}
+
+template<typename T>
+double AnalyzeDeltaFfor(ColumnDataCheckpointData& data, double bound) {
+  auto& values = data.Get<Values<T>>();
+  auto& state = data.Get<DeltaFfor<T>>();
+  if (!values.Usable() || !PlanDeltaFfor(values, state)) {
+    return kNoScore;
+  }
+  state.analyzed = true;
+  return AnalyzeBlocks<T>(data, Shape::Delta,
+                          static_cast<uint32_t>(values.Get().size()),
+                          state.blocks.Bytes(), 0, bound);
+}
+
+template<typename T>
+bool CompressDeltaFfor(ColumnDataCheckpointData& data) {
+  using U = numeric::Bits<sizeof(T)>;
+  auto& values = data.Get<Values<T>>();
+  auto& state = data.Get<DeltaFfor<T>>();
+  if (!values.Usable() || !MayWrite(data, state.analyzed, ByteCodec::None) ||
+      !PlanDeltaFfor(values, state)) {
+    return false;
+  }
+  return CompressBlocks<T>(data, Shape::Delta, state.blocks,
+                           std::span<const U>{state.wide}, {}, state.analyzed,
+                           DeltaHeader{.base = values.GetFacts().delta_offset});
+}
+
+template<typename T>
+inline constexpr CompressionFunction kDeltaFfor{
+  .analyze = AnalyzeDeltaFfor<T>,
+  .compress = CompressDeltaFfor<T>,
 };
 
 template<typename T>

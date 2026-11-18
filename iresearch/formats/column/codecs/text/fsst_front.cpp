@@ -31,6 +31,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -43,6 +44,7 @@
 #include "iresearch/formats/column/codecs/text/plain_scan.tpp"
 #include "iresearch/formats/column/codecs/text/string_layout.hpp"
 #include "iresearch/formats/column/codecs/text/string_scan.hpp"
+#include "iresearch/formats/column/codecs/text/text_encoder.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
 #include "iresearch/utils/lower_bound.hpp"
@@ -629,6 +631,25 @@ row group is cut into segments of about kDefaultColSegmentTarget encoded bytes:
 +------------------------------------------------------+
 Sections start at 8-byte boundaries.
 */
+
+namespace {
+
+template<Shape kShape>
+constexpr Contender kFsstContender{
+  .function =
+    &text::kTextFunction<text::fsst_front::CompressionState<text::fsst::Fsst8>,
+                         kShape>,
+  .codec = CodecOf(kShape, ByteCodec::Fsst),
+};
+
+}  // namespace
+
+std::span<const Contender> FsstTextContenders(Shape shape) {
+  if (shape == Shape::Plain) {
+    return {&kFsstContender<Shape::Plain>, 1};
+  }
+  return {&kFsstContender<Shape::Dictionary>, 1};
+}
 
 constinit const Codec kFsstFrontCodec =
   text::StringCodec<text::PlainScan<text::fsst_front::Scan<text::fsst::Fsst8>>,

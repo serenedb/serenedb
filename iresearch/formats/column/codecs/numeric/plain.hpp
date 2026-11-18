@@ -20,92 +20,184 @@
 
 #pragma once
 
+#include <algorithm>
+#include <cstdint>
 #include <span>
 #include <string>
 #include <type_traits>
+#include <utility>
 
-#include "iresearch/formats/column/codecs/numeric/numeric_encoder.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_reader.hpp"
+#include "iresearch/formats/column/codecs/numeric/numeric_writer.hpp"
 
 namespace irs::codecs {
 
 template<typename T>
-class PlainEncoder final : public NumericEncoder<T> {
-  using Base = NumericEncoder<T>;
-  using Base::kWidth;
-  using typename Base::U;
+struct Raw final : State {
+  static constexpr StateId kId = StateId::Raw;
 
- public:
-  static constexpr Shape kShape = Shape::Plain;
-  static constexpr uint8_t kLayouts[] = {
-    0,
-    kShuffledLayout,
-    kNarrowedLayout,
-    kNarrowedLayout | kShuffledLayout,
-    kPackedLayout,
+  explicit Raw(ColumnDataCheckpointData&) {}
+
+  Analysis analysis[2];
+};
+
+template<typename T>
+Items RawItems(ColumnDataCheckpointData& data, FrameStore store) {
+  const auto& values = data.Get<Values<T>>();
+  return {
+    .shape = Shape::Plain,
+    .store = store,
+    .stored = values.Usable() ? uint8_t{sizeof(T)} : uint8_t{0},
+    .count = static_cast<uint32_t>(values.Get().size()),
   };
-  static constexpr StateId kId = StateId::PlainEncoder;
+}
 
-  explicit PlainEncoder(ColumnDataCheckpointData& data) : Base{data, kShape} {}
+template<typename T>
+auto RawFrames(ColumnDataCheckpointData& data) {
+  return Slices(sizeof(T),
+                [bytes = reinterpret_cast<const uint8_t*>(
+                   data.Get<Values<T>>().Get().data())] { return bytes; });
+}
 
- private:
-  void AddCandidates(const NumericChoice* only) final {
-    const auto values = this->_values.Get();
-    const auto& facts = this->_values.GetFacts();
-    const auto n = static_cast<uint32_t>(values.size());
-    if (Base::Wanted(only, false)) {
-      this->AddWithShuffle({
-        .stored = kWidth,
-        .items = n,
-        .values = {reinterpret_cast<const uint8_t*>(values.data()),
-                   size_t{n} * kWidth},
-      });
+template<typename T>
+double AnalyzeRaw(ColumnDataCheckpointData& data, double bound,
+                  FrameStore store) {
+  return AnalyzeFrames<T>(data, RawItems<T>(data, store),
+                          data.Get<Raw<T>>().analysis[store.shuffled], bound,
+                          RawFrames<T>(data));
+}
+
+template<typename T>
+bool CompressRaw(ColumnDataCheckpointData& data, FrameStore store) {
+  return CompressFrames<T>(data, RawItems<T>(data, store),
+                           data.Get<Raw<T>>().analysis[store.shuffled],
+                           PlainHeader{}, RawFrames<T>(data));
+}
+
+template<typename T, ByteCodec kLeaf, bool kShuffled>
+inline constexpr auto& kRaw =
+  kStoredFrames<AnalyzeRaw<T>, CompressRaw<T>, kLeaf, kShuffled>;
+
+template<typename T>
+struct For final : State {
+  static constexpr StateId kId = StateId::For;
+
+  explicit For(ColumnDataCheckpointData&) {}
+
+  ScratchVector<uint8_t> narrowed;
+  Analysis analysis[2];
+};
+
+template<typename T>
+Items ForItems(ColumnDataCheckpointData& data, FrameStore store) {
+  auto& values = data.Get<Values<T>>();
+  uint8_t stored = 0;
+  if constexpr (sizeof(T) > 1) {
+    if (values.Usable() && values.GetFacts().for_stored < sizeof(T)) {
+      stored = values.GetFacts().for_stored;
     }
-    if constexpr (kWidth > 1) {
-      if (Base::Wanted(only, false, true) && facts.for_stored < kWidth) {
-        _for.resize(size_t{n} * facts.for_stored);
-        numeric::Narrow<kWidth / 2>(
-          n, facts.for_stored, _for.data(),
-          [v = values.data(), lo = facts.lo](size_t i) {
-            return static_cast<U>(v[i] - lo);
-          });
-        this->AddWithShuffle({
-          .narrowed = true,
-          .stored = facts.for_stored,
-          .base = facts.lo,
-          .items = n,
-          .values = _for,
+  }
+  return {
+    .shape = Shape::Plain,
+    .store = store,
+    .stored = stored,
+    .count = static_cast<uint32_t>(values.Get().size()),
+  };
+}
+
+template<typename T>
+const uint8_t* Narrowed(ColumnDataCheckpointData& data) {
+  auto& narrowed = data.Get<For<T>>().narrowed;
+  if constexpr (sizeof(T) > 1) {
+    if (narrowed.empty()) {
+      auto& values = data.Get<Values<T>>();
+      const auto rows = values.Get();
+      const auto& facts = values.GetFacts();
+      narrowed.resize(rows.size() * facts.for_stored);
+      numeric::Narrow<sizeof(T) / 2>(
+        rows.size(), facts.for_stored, narrowed.data(),
+        [v = rows.data(), lo = facts.lo](size_t i) {
+          return static_cast<numeric::Bits<sizeof(T)>>(v[i] - lo);
         });
-      }
-    }
-    if constexpr (std::is_integral_v<T>) {
-      if (Base::Wanted(only, true)) {
-        _ffor.Plan(values, Values<T>::Less);
-        this->Add({
-          .packed = true,
-          .stored = kWidth,
-          .items = n,
-        });
-      }
     }
   }
+  return narrowed.data();
+}
 
-  void StoreHeader(const Candidate& c, uint32_t,
-                   duckdb::data_ptr_t own) const final {
-    duckdb::Store(PlainHeader{.base = c.base}, own);
+template<typename T>
+double AnalyzeFor(ColumnDataCheckpointData& data, double bound,
+                  FrameStore store) {
+  const auto items = ForItems<T>(data, store);
+  return AnalyzeFrames<T>(
+    data, items, data.Get<For<T>>().analysis[store.shuffled], bound,
+    Slices(items.stored, [&] { return Narrowed<T>(data); }));
+}
+
+template<typename T>
+bool CompressFor(ColumnDataCheckpointData& data, FrameStore store) {
+  const auto items = ForItems<T>(data, store);
+  if (!Offered(items)) {
+    return false;
   }
+  return CompressFrames<T>(
+    data, items, data.Get<For<T>>().analysis[store.shuffled],
+    PlainHeader{.base = data.Get<Values<T>>().GetFacts().lo},
+    Slices(items.stored, [&] { return Narrowed<T>(data); }));
+}
 
-  uint64_t PackedBlocks(const Candidate&) const noexcept final {
-    return _ffor.Bytes();
+template<typename T, ByteCodec kLeaf, bool kShuffled>
+inline constexpr auto& kFor =
+  kStoredFrames<AnalyzeFor<T>, CompressFor<T>, kLeaf, kShuffled>;
+
+template<typename T>
+struct Ffor final : State {
+  static constexpr StateId kId = StateId::Ffor;
+
+  explicit Ffor(ColumnDataCheckpointData&) {}
+
+  FforBlocks<numeric::Bits<sizeof(T)>> blocks;
+  bool planned = false;
+  bool analyzed = false;
+};
+
+template<typename T>
+void PlanFfor(const Values<T>& values, Ffor<T>& state) {
+  if (!state.planned) {
+    state.planned = true;
+    state.blocks.Plan(values.Get(), Values<T>::Less);
   }
+}
 
-  void AppendBlocks(const Candidate&, size_t first, size_t blocks,
-                    std::string& out) final {
-    _ffor.Append(this->_values.Get(), first, blocks, out);
+template<typename T>
+double AnalyzeFfor(ColumnDataCheckpointData& data, double bound) {
+  auto& values = data.Get<Values<T>>();
+  if (!values.Usable()) {
+    return kNoScore;
   }
+  auto& state = data.Get<Ffor<T>>();
+  state.analyzed = true;
+  PlanFfor(values, state);
+  return AnalyzeBlocks<T>(data, Shape::Plain,
+                          static_cast<uint32_t>(values.Get().size()),
+                          state.blocks.Bytes(), 0, bound);
+}
 
-  ScratchVector<uint8_t> _for;
-  FforBlocks<U> _ffor;
+template<typename T>
+bool CompressFfor(ColumnDataCheckpointData& data) {
+  auto& values = data.Get<Values<T>>();
+  auto& state = data.Get<Ffor<T>>();
+  if (!values.Usable() || !MayWrite(data, state.analyzed, ByteCodec::None)) {
+    return false;
+  }
+  PlanFfor(values, state);
+  return CompressBlocks<T>(data, Shape::Plain, state.blocks, values.Get(), {},
+                           state.analyzed, PlainHeader{});
+}
+
+template<typename T>
+inline constexpr CompressionFunction kFfor{
+  .analyze = AnalyzeFfor<T>,
+  .compress = CompressFfor<T>,
 };
 
 template<typename T>

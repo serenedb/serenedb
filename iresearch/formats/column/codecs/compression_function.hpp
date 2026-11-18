@@ -44,6 +44,7 @@
 #include <vector>
 
 #include "iresearch/formats/column/codecs/codec_type.hpp"
+#include "iresearch/formats/column/codecs/preferences.hpp"
 #include "iresearch/formats/column/codecs/tuning.hpp"
 #include "iresearch/formats/column/internal/write_chunk.hpp"
 #include "iresearch/formats/column/internal/write_context.hpp"
@@ -118,10 +119,18 @@ using FlushSegmentFn =
 enum class StateId : uint8_t {
   NumericValues,
   NumericLeaves,
-  PlainEncoder,
-  DeltaEncoder,
-  RunsEncoder,
-  DictionaryEncoder,
+  NumericScratch,
+  Raw,
+  For,
+  Ffor,
+  Delta,
+  DeltaFfor,
+  Runs,
+  Rle,
+  RleFfor,
+  Entries,
+  Dict,
+  DictFfor,
   RoaringContainers,
   TextValues,
   TextLz4,
@@ -164,6 +173,7 @@ struct ColumnDataCheckpointData {
   FlushSegmentFn flush;
   ColCodecParams params;
   ColumnTuning& tuning;
+  const Preferences* preferences = &kNoPreferences;
   CodecSet disabled;
   uint32_t min_packed_run = 1;
   CodecType method = CodecType::Auto;

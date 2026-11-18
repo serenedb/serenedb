@@ -50,6 +50,7 @@ const Codec* NumericCodecOf(Shape shape, ByteCodec leaf,
 std::span<const Contender> NumericContenders(Shape shape, ByteCodec leaf,
                                              duckdb::PhysicalType physical);
 std::span<const Contender> Lz4TextContenders(Shape shape);
+std::span<const Contender> FsstTextContenders(Shape shape);
 const Codec* ConstantCodec(duckdb::PhysicalType physical);
 bool CompressConstant(ColumnDataCheckpointData& data);
 const Codec* EmptyCodec(duckdb::PhysicalType physical);

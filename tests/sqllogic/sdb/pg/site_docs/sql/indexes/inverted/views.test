@@ -5,21 +5,22 @@ control substitution on
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TABLE base_docs (id INTEGER PRIMARY KEY, body VARCHAR, extra VARCHAR);
-
-statement ok
 CREATE TEXT SEARCH DICTIONARY view_en AS
     split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
     WITH (frequency, position);
 
-statement ok
-INSERT INTO base_docs VALUES
-    (1, 'quick brown fox', 'alpha'),
-    (2, 'lazy dog sleeps', 'beta'),
-    (3, 'quick red fox', 'gamma');
+statement count 3
+COPY (
+    SELECT *
+    FROM (VALUES
+        (1, 'quick brown fox', 'alpha'),
+        (2, 'lazy dog sleeps', 'beta'),
+        (3, 'quick red fox', 'gamma')) t(id, body, extra)
+) TO '${__TEST_DIR__}/docs.parquet' (FORMAT PARQUET);
 
 statement ok
-CREATE VIEW v_docs AS SELECT id, body, extra FROM base_docs;
+CREATE VIEW v_docs AS
+    SELECT id, body, extra FROM read_parquet('${__TEST_DIR__}/docs.parquet');
 
 statement ok
 CREATE INDEX v_docs_idx ON v_docs USING inverted (id, body view_en) INCLUDE (id);

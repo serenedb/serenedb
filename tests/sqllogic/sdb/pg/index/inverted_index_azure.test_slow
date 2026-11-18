@@ -301,14 +301,6 @@ TO 'az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_inv_idx_az_company.csv'
 WITH (FORMAT csv, HEADER true);
 
 
-statement ok
-VACUUM (REFRESH_INDEX) company_parquet_idx;
-
-
-statement ok
-VACUUM (REFRESH_INDEX) company_csv_idx;
-
-
 # still the 8-row snapshot: no row 9, its terms are not searchable
 query
 SELECT count(*) AS c FROM company_parquet_idx;

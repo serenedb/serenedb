@@ -194,7 +194,7 @@ size_t SlotOf(irs::field_id id) noexcept { return static_cast<size_t>(id) - 1; }
 class ScoreConstantTest : public tests::FilterTestCaseBase {
  protected:
   void BuildIndex() {
-    auto writer = open_writer(irs::kOmCreate);
+    auto writer = open_writer(tests::kOmCreate);
     ASSERT_NE(nullptr, writer);
     for (const auto& words : {std::vector<std::string>{"fox", "fox", "dog"},
                               std::vector<std::string>{"fox", "cat"},
@@ -214,8 +214,8 @@ class ScoreConstantTest : public tests::FilterTestCaseBase {
 TEST_P(ScoreConstantTest, folds_only_what_reads_nothing_per_document) {
   BuildIndex();
   auto index = open_reader();
-  ASSERT_EQ(1, index->size());
-  const auto& segment = *index->begin();
+  ASSERT_EQ(1, index.size());
+  const auto& segment = *index.begin();
 
   for (const auto& c : kCases) {
     auto scorer = c.make();
@@ -228,7 +228,7 @@ TEST_P(ScoreConstantTest, folds_only_what_reads_nothing_per_document) {
       filter.mutable_options()->term =
         irs::ViewCast<irs::byte_type>(std::string_view{"fox"});
 
-      tests::PreparedFilter prepared{filter, *index, scorer.get()};
+      tests::PreparedFilter prepared{filter, index, scorer.get()};
       const auto* reader = segment.field(id);
       ASSERT_NE(nullptr, reader);
       ASSERT_NE(nullptr, irs::detail::DocOf(*reader));
@@ -248,7 +248,7 @@ TEST_P(ScoreConstantTest, folds_only_what_reads_nothing_per_document) {
 TEST_P(ScoreConstantTest, every_combination_executes) {
   BuildIndex();
   auto index = open_reader();
-  ASSERT_EQ(1, index->size());
+  ASSERT_EQ(1, index.size());
 
   for (const auto& c : kCases) {
     auto scorer = c.make();
@@ -261,7 +261,7 @@ TEST_P(ScoreConstantTest, every_combination_executes) {
       filter.mutable_options()->term =
         irs::ViewCast<irs::byte_type>(std::string_view{"fox"});
 
-      tests::PreparedFilter prepared{filter, *index, scorer.get()};
+      tests::PreparedFilter prepared{filter, index, scorer.get()};
       irs::ColumnArgsFetcher fetcher;
       auto docs = prepared.ExecuteScored(0, fetcher);
       ASSERT_NE(nullptr, docs);
@@ -292,7 +292,7 @@ TEST_P(ScoreConstantTest, every_combination_executes) {
 TEST_P(ScoreConstantTest, every_root_answers_every_combination) {
   BuildIndex();
   auto index = open_reader();
-  ASSERT_EQ(1, index->size());
+  ASSERT_EQ(1, index.size());
 
   for (const auto& c : kCases) {
     auto scorer = c.make();
@@ -305,7 +305,7 @@ TEST_P(ScoreConstantTest, every_root_answers_every_combination) {
       filter.mutable_options()->term =
         irs::ViewCast<irs::byte_type>(std::string_view{"fox"});
 
-      tests::PreparedFilter prepared{filter, *index, scorer.get()};
+      tests::PreparedFilter prepared{filter, index, scorer.get()};
       const auto* query = prepared.Query(0);
       ASSERT_NE(nullptr, query);
 
@@ -322,7 +322,7 @@ TEST_P(ScoreConstantTest, every_root_answers_every_combination) {
         size_t seen = 0;
         constexpr auto kWindow = irs::doc_limits::kMinCapacity;
         const auto end = irs::doc_limits::min() +
-                         static_cast<irs::doc_id_t>((*index)[0].docs_count());
+                         static_cast<irs::doc_id_t>((index)[0].docs_count());
         for (auto min = irs::doc_limits::min(); min < end; min += kWindow) {
           const auto max = std::min<irs::doc_id_t>(min + kWindow, end);
           const auto n = plan->Run(min, max, docs.data(), scores.data());
@@ -352,7 +352,7 @@ TEST_P(ScoreConstantTest, every_root_answers_every_combination) {
 TEST_P(ScoreConstantTest, constant_over_freq_field_steps_over_full_blocks) {
   constexpr size_t kDocs = 400;
   {
-    auto writer = open_writer(irs::kOmCreate);
+    auto writer = open_writer(tests::kOmCreate);
     ASSERT_NE(nullptr, writer);
     for (size_t i = 0; i != kDocs; ++i) {
       std::vector<std::string> words{"common", "common"};
@@ -367,7 +367,7 @@ TEST_P(ScoreConstantTest, constant_over_freq_field_steps_over_full_blocks) {
     writer->RefreshCommit();
   }
   auto index = open_reader();
-  ASSERT_EQ(1, index->size());
+  ASSERT_EQ(1, index.size());
 
   auto scorer = irs::BM25::Make(irs::BM25::Options{.k1 = 0.f});
   ASSERT_NE(nullptr, scorer);
@@ -382,7 +382,7 @@ TEST_P(ScoreConstantTest, constant_over_freq_field_steps_over_full_blocks) {
   }
   filter.SetMinShouldMatch(1);
 
-  tests::PreparedFilter prepared{filter, *index, scorer.get()};
+  tests::PreparedFilter prepared{filter, index, scorer.get()};
   irs::ColumnArgsFetcher fetcher;
   auto docs = prepared.ExecuteScored(0, fetcher);
   ASSERT_NE(nullptr, docs);
@@ -401,8 +401,8 @@ TEST_P(ScoreConstantTest, constant_over_freq_field_steps_over_full_blocks) {
 TEST_P(ScoreConstantTest, bm25_degrades_to_freq_one_norm_one) {
   BuildIndex();
   auto index = open_reader();
-  ASSERT_EQ(1, index->size());
-  const auto& segment = *index->begin();
+  ASSERT_EQ(1, index.size());
+  const auto& segment = *index.begin();
 
   auto scorer = irs::BM25::Make(irs::BM25::Options{});
   irs::ByTerm filter;
@@ -410,7 +410,7 @@ TEST_P(ScoreConstantTest, bm25_degrades_to_freq_one_norm_one) {
   filter.mutable_options()->term =
     irs::ViewCast<irs::byte_type>(std::string_view{"fox"});
 
-  tests::PreparedFilter prepared{filter, *index, scorer.get()};
+  tests::PreparedFilter prepared{filter, index, scorer.get()};
   const auto* reader = segment.field(kNone);
   ASSERT_NE(nullptr, reader);
   ASSERT_NE(nullptr, irs::detail::DocOf(*reader));

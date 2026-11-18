@@ -1,6 +1,6 @@
 statement ok
 CREATE TABLE list_dict (a INTEGER PRIMARY KEY, attrs MAP(VARCHAR, VARCHAR), tags VARCHAR[], nested INTEGER[][])
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO list_dict SELECT a,
@@ -10,7 +10,7 @@ INSERT INTO list_dict SELECT a,
 FROM range(20000) t(a);
 
 statement ok
-VACUUM (REFRESH_TABLE) list_dict;
+VACUUM (FLUSH_TABLE) list_dict;
 
 query
 SELECT count(*) FROM list_dict
@@ -41,7 +41,7 @@ INSERT INTO list_dict SELECT a,
 FROM range(20000, 30000) t(a);
 
 statement ok
-VACUUM (REFRESH_TABLE) list_dict;
+VACUUM (FLUSH_TABLE) list_dict;
 
 statement ok
 VACUUM (COMPACT_TABLE) list_dict;
@@ -72,7 +72,7 @@ SET threads = 4;
 
 statement ok
 CREATE TABLE list_dict_grouped (id BIGINT, tags VARCHAR[], skills VARCHAR[], info STRUCT(n VARCHAR, tags VARCHAR[]))
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO list_dict_grouped
@@ -84,7 +84,7 @@ HAVING (max(k) + u) % 3 <> 0;
 
 statement ok
 CREATE TABLE list_dict_joined (id BIGINT, skills VARCHAR[])
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO list_dict_joined
@@ -93,10 +93,10 @@ LEFT JOIN (SELECT a.u AS user_id, list('k' || ((a.u * 13 + b.k * b.k * 7) % 5000
            FROM range(50000) a(u), range(16) b(k) GROUP BY a.u) s ON s.user_id = u;
 
 statement ok
-VACUUM (REFRESH_TABLE) list_dict_grouped;
+VACUUM (FLUSH_TABLE) list_dict_grouped;
 
 statement ok
-VACUUM (REFRESH_TABLE) list_dict_joined;
+VACUUM (FLUSH_TABLE) list_dict_joined;
 
 query
 SELECT count(*) AS total, count(*) FILTER (WHERE

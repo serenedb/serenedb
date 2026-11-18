@@ -20,9 +20,6 @@ statement ok
 INSERT INTO hnsw_small SELECT i,
   [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM range(300) t(i);
 
-statement ok
-VACUUM (REFRESH_TABLE) hnsw_small;
-
 query
 SELECT pk FROM hnsw_small_idx
   ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;

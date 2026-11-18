@@ -57,7 +57,9 @@ connection default
 statement error
 DROP ROLE fo_owner;
 ----
-db error: ERROR: Cannot drop entry "fo_owner" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "fo_owner" cannot be dropped because some objects depend on it
+DETAIL: owner of server fo_srv
+privileges for database <slt:ignore>
 
 
 # Crash mid-connection; the runner restarts it on the same datadir.
@@ -97,7 +99,9 @@ connection after_crash
 statement error
 DROP ROLE fo_owner;
 ----
-db error: ERROR: Cannot drop entry "fo_owner" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "fo_owner" cannot be dropped because some objects depend on it
+DETAIL: owner of server fo_srv
+privileges for database <slt:ignore>
 
 
 # The owner (or a superuser) can still drop the server post-restart; here the

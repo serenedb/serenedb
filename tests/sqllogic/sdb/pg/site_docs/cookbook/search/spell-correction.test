@@ -20,9 +20,6 @@ INSERT INTO query_log VALUES
 statement ok
 CREATE INDEX query_log_idx ON query_log USING inverted (term);
 
-statement ok
-VACUUM (REFRESH_TABLE) query_log;
-
 # DOCS_TEST: example_001
 
 # DOCS_TEST_BODY

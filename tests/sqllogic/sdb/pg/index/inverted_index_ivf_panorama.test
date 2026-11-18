@@ -32,9 +32,6 @@ INSERT INTO pn_axis
 SELECT i, list_transform(range(64), lambda x: CASE WHEN x = 0 THEN i::FLOAT ELSE 0.0::FLOAT END)::FLOAT[64]
 FROM range(1, 2001) t(i)
 
-statement ok
-VACUUM (REFRESH_TABLE) pn_axis
-
 query
 SELECT pk, round(emb <-> list_transform(range(64), lambda x: 0.0::FLOAT)::FLOAT[64], 3) AS d
 FROM pn_axis_idx ORDER BY d LIMIT 5;
@@ -78,9 +75,6 @@ SELECT i, list_transform(range(64), lambda j: (sin(i * 0.7 + j * 1.3) / (j + 1))
 FROM range(2000) t(i)
 
 statement ok
-VACUUM (REFRESH_TABLE) pn_l2
-
-statement ok
 CREATE TABLE pn_ip (pk INTEGER PRIMARY KEY, emb FLOAT[64])
 
 statement ok
@@ -92,9 +86,6 @@ SELECT i, list_transform(range(64), lambda j: (sin(i * 0.7 + j * 1.3) / (j + 1))
 FROM range(2000) t(i)
 
 statement ok
-VACUUM (REFRESH_TABLE) pn_ip
-
-statement ok
 CREATE TABLE pn_cos (pk INTEGER PRIMARY KEY, emb FLOAT[64])
 
 statement ok
@@ -104,9 +95,6 @@ statement count 2000
 INSERT INTO pn_cos
 SELECT i, list_transform(range(64), lambda j: (sin(i * 0.7 + j * 1.3) / (j + 1))::FLOAT)::FLOAT[64]
 FROM range(2000) t(i)
-
-statement ok
-VACUUM (REFRESH_TABLE) pn_cos
 
 # The index top-k must be the sequential scan's top-k, exactly, for every
 # metric. Zero rows in either direction of the symmetric difference.
@@ -229,9 +217,6 @@ diff
 statement count 600
 DELETE FROM pn_l2 WHERE pk % 10 < 3
 
-statement ok
-VACUUM (REFRESH_TABLE) pn_l2
-
 query
 SELECT count(*) FROM pn_l2_idx;
 ----
@@ -282,9 +267,6 @@ SELECT i, list_transform(range(64), lambda j: (sin(i * 0.7 + j * 1.3) + i * 0.00
 FROM range(4000) t(i)
 
 statement ok
-VACUUM (REFRESH_TABLE) pn_lanes
-
-statement ok
 RESET sdb_ivf_posting_size
 
 query
@@ -326,9 +308,6 @@ SELECT i, list_transform(range(64), lambda j: (sin(i * 1.1 + j * 0.9) / (j + 1))
 FROM range(3000) t(i)
 
 statement ok
-VACUUM (REFRESH_TABLE) pn_tree
-
-statement ok
 RESET sdb_ivf_posting_size
 
 query
@@ -366,9 +345,6 @@ INSERT INTO pn_nopk
 SELECT i, list_transform(range(64), lambda x: CASE WHEN x = 0 THEN i::FLOAT ELSE 0.0::FLOAT END)::FLOAT[64]
 FROM range(1, 2001) t(i)
 
-statement ok
-VACUUM (REFRESH_TABLE) pn_nopk
-
 query
 SELECT round(emb <-> list_transform(range(64), lambda x: 0.0::FLOAT)::FLOAT[64], 3) AS d
 FROM pn_nopk_idx ORDER BY d LIMIT 3;
@@ -390,9 +366,6 @@ statement count 2000
 INSERT INTO pn_l1
 SELECT i, list_transform(range(64), lambda x: CASE WHEN x = 0 THEN i::FLOAT ELSE 0.0::FLOAT END)::FLOAT[64]
 FROM range(1, 2001) t(i)
-
-statement ok
-VACUUM (REFRESH_TABLE) pn_l1
 
 query
 SELECT pk, emb <+> list_transform(range(64), lambda x: 0.0::FLOAT)::FLOAT[64] AS d

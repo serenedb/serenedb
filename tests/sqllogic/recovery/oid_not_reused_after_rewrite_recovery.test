@@ -13,15 +13,7 @@ INSERT INTO onr_oids SELECT 'onr_a'::regclass::oid;
 
 
 statement ok
-SET sdb_faults = 'compact_inside_drop';
-
-
-statement ok
 DROP TABLE onr_a;
-
-
-statement ok
-SET sdb_faults = '-compact_inside_drop';
 
 
 statement ok

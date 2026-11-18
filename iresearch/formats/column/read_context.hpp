@@ -21,12 +21,11 @@
 #pragma once
 
 #include <atomic>
-#include <deque>
 #include <duckdb/common/memory_mapped_file.hpp>
+#include <duckdb/common/types/string_type.hpp>
+#include <duckdb/common/types/vector.hpp>
 #include <duckdb/main/database.hpp>
-#include <duckdb/storage/checkpoint/string_checkpoint_state.hpp>
 #include <duckdb/storage/object_cache.hpp>
-#include <duckdb/storage/table/column_segment.hpp>
 #include <memory>
 #include <string>
 #include <vector>
@@ -41,9 +40,7 @@ class ColReader;
 
 bool StreamsFrames(const duckdb::LogicalType& type);
 
-class ReadContext final : public BlockManager,
-                          public duckdb::OverflowStringReader,
-                          public duckdb::ColumnStreamReader {
+class ReadContext final : public BlockManager {
  public:
   explicit ReadContext(duckdb::DatabaseInstance& db) noexcept;
   explicit ReadContext(const ColReader& reader, bool random_access = false);
@@ -71,12 +68,12 @@ class ReadContext final : public BlockManager,
   void SetStreams(bool streams) noexcept { _streams = streams; }
 
   duckdb::string_t ReadString(duckdb::Vector& result, duckdb::block_id_t block,
-                              int32_t offset) final;
+                              int32_t offset);
 
   duckdb::const_data_ptr_t TryReadStable(duckdb::idx_t position,
-                                         duckdb::idx_t size) final;
+                                         duckdb::idx_t size);
   void Read(duckdb::idx_t position, duckdb::data_ptr_t target,
-            duckdb::idx_t size) final;
+            duckdb::idx_t size);
 
   struct CacheSlot {
     uint64_t file_id = 0;
@@ -87,13 +84,7 @@ class ReadContext final : public BlockManager,
   };
 
   duckdb::shared_ptr<duckdb::BlockHandle> RegisterColBlock(uint64_t offset,
-                                                           uint64_t size,
-                                                           CacheSlot slot);
-  const CacheSlot& CacheSlotOf(duckdb::block_id_t block) const noexcept {
-    const auto id = static_cast<size_t>(block);
-    SDB_ASSERT(id < _cache_slots.size());
-    return _cache_slots[id];
-  }
+                                                           uint64_t size);
 
   duckdb::unique_ptr<duckdb::Block> CreateBlock(
     duckdb::block_id_t block_id, duckdb::FileBuffer* source_buffer) final;
@@ -122,7 +113,6 @@ class ReadContext final : public BlockManager,
   IndexInput::ptr _in;
   duckdb::unique_ptr<duckdb::MemoryMappedFile> _mapping;
   std::vector<std::pair<uint64_t, uint64_t>> _ranges;
-  std::deque<CacheSlot> _cache_slots;
   bool _random_access = false;
   bool _read_ahead = true;
   bool _merge_read = false;
@@ -134,9 +124,6 @@ class ReadContext final : public BlockManager,
 std::shared_ptr<ReadContext> MergeReadContext(const ColReader& reader,
                                               duckdb::ObjectCache* cache,
                                               bool streams = false);
-
-const ReadContext::CacheSlot& CacheSlotOf(
-  duckdb::ColumnSegment& segment) noexcept;
 
 inline bool Touched(const ReadContext::CacheSlot& slot) noexcept {
   return slot.touched->load(std::memory_order_relaxed);

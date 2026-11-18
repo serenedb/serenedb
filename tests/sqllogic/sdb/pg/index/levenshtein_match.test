@@ -32,9 +32,6 @@ INSERT INTO test_levenshtein values (5, 'cats');
 statement ok
 INSERT INTO test_levenshtein values (6, 'act');
 
-statement ok
-VACUUM (REFRESH_TABLE) test_levenshtein;
-
 # Exact match (distance 0)
 query
 SELECT a FROM test_levenshtein_idx WHERE b @@ ts_levenshtein('cat', 0) ORDER BY a;
@@ -174,9 +171,6 @@ INSERT INTO test_levenshtein_prefix VALUES
     (3, 'application'),
     (4, 'apricot'),
     (5, 'banana');
-
-statement ok
-VACUUM (REFRESH_TABLE) test_levenshtein_prefix;
 
 
 # Prefix `app` + suffix `le` distance 0 -> only `apple` matches.

@@ -36,7 +36,6 @@
 #include <yaclib/coro/task.hpp>
 #include <yaclib/lazy/make.hpp>
 
-#include "connector/duckdb_client_state.h"
 #include "connector/functions/es.h"
 #include "network/http/common.h"
 #include "network/http/es/common.h"
@@ -60,29 +59,6 @@ yaclib::Task<duckdb::unique_ptr<duckdb::QueryResult>> RunSql(
     co_return nullptr;
   }
   co_return std::move(result);
-}
-
-// ?refresh, ?refresh=true and ?refresh=wait_for all refresh synchronously
-// (CommitWait IS the wait); only an explicit false is a no-op.
-bool WantsRefresh(const HttpRequest& request) {
-  for (const auto& [key, value] : request.query) {
-    if (key == "refresh") {
-      return value != "false";
-    }
-  }
-  return false;
-}
-
-yaclib::Task<bool> MaybeRefresh(RequestContext& ctx, const HttpRequest& request,
-                                std::string_view index,
-                                http::HttpResponseWriter& writer) {
-  if (!WantsRefresh(request)) {
-    co_return true;
-  }
-  auto result = co_await RunSql(
-    ctx, absl::StrCat("CALL es_refresh(", SqlLiteral(index), ")"), writer,
-    index);
-  co_return result != nullptr;
 }
 
 int64_t TookMs(std::chrono::steady_clock::time_point start) {
@@ -190,7 +166,7 @@ class BulkHandler final : public HttpHandler {
     std::vector<std::vector<connector::EsBulkItem>> items;
     const connector::EsBulkInput input{
       .body = body, .capacity = padded.size(), .items = &items};
-    auto& connection = connector::GetSereneDBContext(*ctx.Connection().context);
+    auto& connection = ConnectionContext::Get(*ctx.Connection().context);
     connection.SetSideChannel(&input);
     const absl::Cleanup clear = [&] {
       connection.SetSideChannel<const connector::EsBulkInput>(nullptr);
@@ -198,9 +174,6 @@ class BulkHandler final : public HttpHandler {
     auto result = co_await ctx.RunPrepared(*prepared.statement);
     if (result->HasError()) {
       WriteSqlError(writer, result->GetErrorObject(), index);
-      co_return {};
-    }
-    if (!co_await MaybeRefresh(ctx, request, index, writer)) {
       co_return {};
     }
     const std::string head = absl::StrCat("{\"took\":", TookMs(start),
@@ -259,8 +232,7 @@ class DocHandler final : public HttpHandler {
                                   " SELECT * FROM es_doc(", SqlLiteral(index),
                                   ", ", SqlLiteral(id), ", ",
                                   SqlLiteral(FlattenBody(request.body)), ")");
-    if (!co_await RunSql(ctx, sql, writer, index, /*writes=*/true) ||
-        !co_await MaybeRefresh(ctx, request, index, writer)) {
+    if (!co_await RunSql(ctx, sql, writer, index, /*writes=*/true)) {
       co_return {};
     }
     simdjson::builder::string_builder sb;

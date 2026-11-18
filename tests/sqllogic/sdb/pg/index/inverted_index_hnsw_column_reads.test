@@ -33,10 +33,6 @@ FROM range(5000) t(i);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) hnsw_cr;
-
-
-statement ok
 SET sdb_hnsw_filter_mode = 'walk';
 
 
@@ -332,10 +328,6 @@ FROM range(2000) t(i);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) hnsw_nest;
-
-
-statement ok
 SET sdb_hnsw_filter_mode = 'walk';
 
 
@@ -390,10 +382,6 @@ CREATE INDEX hnsw_late_idx ON hnsw_late
 statement ok
 INSERT INTO hnsw_late SELECT i, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8], i
 FROM range(40000) t(i);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) hnsw_late;
 
 
 statement ok

@@ -21,7 +21,7 @@
 #pragma once
 
 #include <array>
-#include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
+#include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/common/case_insensitive_map.hpp>
@@ -29,9 +29,7 @@
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/parser/qualified_name.hpp>
-#include <duckdb/parser/result_modifier.hpp>
 #include <iresearch/index/column_info.hpp>
-#include <iresearch/index/merge/sort_spec.hpp>
 #include <iresearch/search/scorers/scorer_options.hpp>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
@@ -44,6 +42,7 @@
 #include <string_view>
 #include <vector>
 
+#include "catalog/base_catalog.h"
 #include "catalog/entry/tokenizer.h"
 #include "catalog/persistence/inverted_index.h"
 #include "query/config_variable_names.h"
@@ -93,20 +92,36 @@ struct InvertedIndexFieldLookup {
   const InvertedIndexField* entry = nullptr;
 };
 
-// The index type name duckdb stores in IndexCatalogEntry::index_type, and the
-// name the index type is registered under.
+// The index type name duckdb stores in IndexCatalogEntry::index_type.
 inline constexpr const char* kInvertedIndexTypeName = "inverted";
+
+inline bool IsInvertedIndex(const duckdb::IndexCatalogEntry& entry) {
+  return entry.index_type == kInvertedIndexTypeName;
+}
 
 // The two built-in opclasses. An opclass written bare resolves against the
 // schema's text search dictionaries first, so a dictionary of either name
 // shadows the built-in; the parenthesised form always selects the built-in.
 inline constexpr std::string_view kIncludedKind = "included";
+inline constexpr std::string_view kPlainKind = "plain";
 inline constexpr std::string_view kIVFKind = "ivf";
 inline constexpr std::string_view kHNSWKind = "hnsw";
 
 struct InvertedIndexKey : persistence::KeyRecord {
   std::string expression_text;
 };
+
+struct ConstraintKey {
+  irs::field_id field = irs::field_limits::invalid();
+  std::vector<irs::field_id> columns;
+  std::vector<duckdb::LogicalType> types;
+  std::vector<std::string> expressions;
+};
+
+inline bool IsSingleColumnKey(const ConstraintKey& key) noexcept {
+  return key.columns.size() == 1 &&
+         (key.expressions.empty() || key.expressions.front().empty());
+}
 
 struct ExpressionKeys {
   const InvertedIndexKey* term = nullptr;
@@ -116,12 +131,13 @@ struct ExpressionKeys {
 using InvertedIndexFields =
   irs::containers::NodeHashMap<irs::field_id, InvertedIndexField>;
 
+inline constexpr std::string_view kKeyColumnsOption = "key_columns";
+inline constexpr std::string_view kStorePkOption = "store_pk";
+
 inline constexpr auto kInvertedIndexSettings = std::to_array({
   kRowGroupSizeSetting,
-  kRefreshIntervalSetting,
   kReindexIntervalSetting,
   kCompactionIntervalSetting,
-  kCleanupIntervalStepSetting,
   kSegmentMemoryMaxSetting,
   kSegmentDocsMaxSetting,
   kCompactionMaxSegmentsSetting,
@@ -143,9 +159,8 @@ InvertedIndexSettings ResolveSettings(
   const duckdb::case_insensitive_map_t<duckdb::Value>& options);
 
 struct DeclaredCodec {
-  duckdb::CompressionType type = duckdb::CompressionType::COMPRESSION_AUTO;
+  irs::codecs::CodecType type = irs::codecs::CodecType::Auto;
   uint8_t compression_level = 0;
-  bool hyperloglog = false;
 };
 
 using CompressionByColumn =
@@ -192,7 +207,7 @@ class InvertedIndexConfig final : public irs::IndexFieldOptions {
   std::optional<ScorerOptions> top_k_scorer;
   CompressionByColumn declared_compression;
   irs::containers::FlatHashSet<irs::field_id> table_columns;
-  std::vector<irs::SortKey> sort;
+  std::vector<ConstraintKey> constraint_keys;
 
  private:
   static constexpr uint32_t kNoKey = std::numeric_limits<uint32_t>::max();
@@ -250,7 +265,7 @@ class IndexTokenizers {
   duckdb::ClientContext* _context = nullptr;
 };
 
-class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
+class InvertedIndexEntry final : public duckdb::IndexCatalogEntry {
  public:
   InvertedIndexEntry(duckdb::Catalog& catalog,
                      duckdb::SchemaCatalogEntry& schema,
@@ -265,18 +280,23 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
   duckdb::unique_ptr<duckdb::CreateInfo> GetInfo() const final;
   duckdb::unique_ptr<duckdb::CreateInfo> GetInfo(
     duckdb::CatalogTransaction transaction) const final;
-  std::string ToSQL() const final { return GetInfo()->ToString(); }
-
-  duckdb::vector<duckdb::OrderByNode> SortOrders() const;
+  std::string ToSQL() const final {
+    auto info = duckdb::IndexCatalogEntry::GetInfo();
+    info->StripCatalogQualification();
+    return info->ToString();
+  }
 
   duckdb::unique_ptr<duckdb::CatalogEntry> Copy(
     duckdb::ClientContext& context) const final;
 
-  using duckdb::DuckIndexEntry::AlterEntry;
+  using duckdb::IndexCatalogEntry::AlterEntry;
   duckdb::unique_ptr<duckdb::CatalogEntry> AlterEntry(
     duckdb::CatalogTransaction transaction, duckdb::AlterInfo& info) final;
 
   duckdb::Identifier GetTableName() const final;
+
+  duckdb::optional_ptr<duckdb::CatalogEntry> GetRelation(
+    duckdb::CatalogTransaction transaction) const final;
 
   duckdb::Identifier GetSchemaName() const final { return ParentSchemaName(); }
 
@@ -284,7 +304,8 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
 
   void BeforeDrop(duckdb::CatalogTransaction transaction) final;
   void OnDrop() final;
-  void OnAlter(const duckdb::AlterInfo& info) final;
+  duckdb::optional_idx GetDataVersion(
+    duckdb::ClientContext& context) const final;
 
   void CreateReindexJob(duckdb::CatalogTransaction transaction,
                         uint32_t interval_ms);
@@ -313,7 +334,7 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
  private:
   persistence::InvertedIndexData ToPersisted() const;
 
-  bool ViewBacked() const noexcept { return !info && !_search_table; }
+  bool ViewBacked() const noexcept { return !_search_table; }
 
   duckdb::optional_ptr<duckdb::CatalogEntry> ReindexJob(
     duckdb::CatalogTransaction transaction) const;
@@ -329,6 +350,6 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
 };
 
 std::vector<duckdb::reference<InvertedIndexEntry>> InvertedIndexEntries(
-  duckdb::DuckCatalog& catalog);
+  BaseCatalog& catalog);
 
 }  // namespace sdb::catalog

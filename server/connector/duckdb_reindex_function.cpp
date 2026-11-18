@@ -27,7 +27,6 @@
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry.hpp>
-#include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry_retriever.hpp>
@@ -90,10 +89,8 @@
 #include "catalog/rest/catalog_entry/schema/iceberg_schema_entry.hpp"
 #include "catalog/rest/catalog_entry/table/iceberg_table.hpp"
 #include "catalog/rest/iceberg_catalog.hpp"
-#include "connector/duckdb_client_state.h"
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/file_manifest.h"
-#include "connector/inverted_store_index.h"
 #include "connector/reindex_removes.h"
 #include "connector/view_fast_path.h"
 #include "core/deletes/iceberg_equality_delete.hpp"
@@ -226,19 +223,14 @@ class PassConnection {
  public:
   PassConnection(duckdb::ClientContext& context, ConnectionContext& caller,
                  const ReindexTarget& target)
-    : _caller{caller},
-      _conn{*context.db},
-      _ctx{std::make_shared<ConnectionContext>(
-        *_conn.context, caller.user(), caller.SystemUser(), caller.GetRoleId(),
-        target.database, target.database_id, nullptr, caller.GetBackendPid(),
-        nullptr)},
-      _progress{SereneDBClientState::Register(*_conn.context, _ctx, false)
-                  .progress_source} {
-    _conn.context->config.user_settings = context.config.user_settings;
-  }
-  ~PassConnection() {
-    _ctx->ConsumeNotices(
-      [&](auto& notice) { _caller.AddNotice(std::move(notice)); });
+    : _system{{.user = caller.user(),
+               .system_user = caller.SystemUser(),
+               .role = caller.GetRoleId(),
+               .database = target.database,
+               .database_id = target.database_id,
+               .backend_pid = caller.GetBackendPid()},
+              {.forward_to = &caller}} {
+    _system.conn->context->config.user_settings = context.config.user_settings;
   }
 
   // The pass statement carries the index's persisted DEFINITION (positions
@@ -270,7 +262,7 @@ class PassConnection {
       QualifiedIn(target, info->GetQualifiedName().Name()));
     auto statement = duckdb::make_uniq<duckdb::CreateStatement>();
     statement->info = std::move(info);
-    auto result = _conn.Query(std::move(statement));
+    auto result = _system.conn->Query(std::move(statement));
     if (result->HasError()) {
       SDB_DEBUG(SEARCH, "REINDEX pass for index \"", target.name,
                 "\" failed: ", result->GetError());
@@ -280,14 +272,32 @@ class PassConnection {
 
   duckdb::unique_ptr<duckdb::QueryResult> Query(
     duckdb::unique_ptr<duckdb::SQLStatement> statement) {
-    return _conn.Query(std::move(statement));
+    return _system.conn->Query(std::move(statement));
+  }
+
+  void Commit(const ReindexTarget& target, std::vector<uint64_t> files,
+              std::vector<IcebergObserve::DeleteMask> masks,
+              std::vector<std::pair<uint64_t, int64_t>> rows,
+              std::shared_ptr<const search::FileManifest> manifest) {
+    auto& context = *_system.conn->context;
+    context.RunFunctionInTransaction([&] {
+      auto& writes =
+        catalog::SessionOf(context, target.index->catalog).SearchTxn();
+      const auto& store = target.index->Storage();
+      writes.RegisterIndex(store, *target.index);
+      auto removed =
+        ResolveRemoves(writes.PinnedReader(context, *store), std::move(files),
+                       std::move(masks), std::move(rows));
+      if (!removed.Empty()) {
+        SDB_PARK_ONCE_ON_FAILURE("reindex_delta_removes_resolved");
+        writes.AddRemoval(context, store, std::move(removed));
+      }
+      writes.SetManifest(store, std::move(manifest));
+    });
   }
 
  private:
-  ConnectionContext& _caller;
-  duckdb::Connection _conn;
-  std::shared_ptr<ConnectionContext> _ctx;
-  pg::ProgressRegistration _progress;
+  SystemConnection _system;
 };
 
 bool CollectDeadRows(duckdb::ClientContext& context,
@@ -724,8 +734,7 @@ std::shared_ptr<search::FileManifest> BuildNextManifest(
 template<typename Observe>
 void RunDelta(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
               const ReindexTarget& target, const Source& src, FileDiff& files,
-              Observe& observe, const search::FileManifest& manifest,
-              search::Store& storage) {
+              Observe& observe, const search::FileManifest& manifest) {
   constexpr bool kIceberg = std::is_same_v<Observe, IcebergObserve>;
   std::vector<std::pair<uint64_t, int64_t>> eq_rows;
   if constexpr (kIceberg) {
@@ -743,30 +752,12 @@ void RunDelta(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
     masks = std::move(observe.del_masks);
   }
 
-  // The removes commit first as their own transaction, so the pass's docs land
-  // above them. A crash between the two loses the removed rows until the next
-  // tick: the manifest version only moves at the end, so the tick re-runs the
-  // delta.
-  if (auto removal =
-        ResolveRemoves(storage.Snapshot()->reader, std::move(files.del_files),
-                       std::move(masks), std::move(eq_rows));
-      !removal->groups.empty()) {
-    SDB_PARK_ONCE_ON_FAILURE("reindex_delta_removes_resolved");
-    storage.CommitRemoval(std::move(removal));
-  }
-
+  PassConnection pass_conn{context, conn_ctx, target};
   if (files.scan.empty()) {
     // Removes-only tick: no pass, publish directly -- REINDEX returning
     // means the deletions are visible.
-    storage.SetFileManifest(std::move(manifest_next));
-    auto code = search::RefreshResult::Undefined;
-    if (auto refreshed = storage.RefreshUnsafe(/*wait=*/true, nullptr, code);
-        !refreshed.res.ok()) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INTERNAL_ERROR),
-        ERR_MSG("REINDEX delta of \"", target.name,
-                "\": publish failed: ", refreshed.res.ToString()));
-    }
+    pass_conn.Commit(target, std::move(files.del_files), std::move(masks),
+                     std::move(eq_rows), std::move(manifest_next));
     return;
   }
 
@@ -774,9 +765,11 @@ void RunDelta(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
   // REAL view (the bind hook narrows the leaf's file list, so the reader
   // still applies every delete flavor). The pass commits like an ordinary
   // CREATE INDEX; Finalize publishes manifest_next.
-  PassConnection pass_conn{context, conn_ctx, target};
   auto info = duckdb::make_uniq<SereneDBCreateIndexInfo>();
   info->source_index = target.index->name;
+  info->removed_files = std::move(files.del_files);
+  info->removed_masks = std::move(masks);
+  info->removed_rows = std::move(eq_rows);
   info->delta_file_base = file_base;
   info->delta_files.reserve(files.scan.size());
   for (const auto& file : files.scan) {
@@ -805,7 +798,7 @@ ReindexOutcome RunRefresh(duckdb::ClientContext& context,
                           ConnectionContext& conn_ctx,
                           const ReindexTarget& target, const Source& src,
                           const search::FileManifest& manifest,
-                          search::Store& storage, Observe& observe) {
+                          Observe& observe) {
   constexpr bool kIceberg = std::is_same_v<Observe, IcebergObserve>;
   auto files = DiffListing(src, manifest, observe);
 
@@ -813,10 +806,11 @@ ReindexOutcome RunRefresh(duckdb::ClientContext& context,
     if constexpr (kIceberg) {
       if (files.version != manifest.version) {
         // Identical files under a moved pin: restamp so reads never pin an
-        // expiring snapshot. Durability rides the next refresh.
+        // expiring snapshot.
         auto restamped = std::make_shared<search::FileManifest>(manifest);
         restamped->version = files.version;
-        storage.SetFileManifest(std::move(restamped));
+        PassConnection{context, conn_ctx, target}.Commit(target, {}, {}, {},
+                                                         std::move(restamped));
       }
     }
     return {ReindexAction::UpToDate, files.added, files.changed, files.removed};
@@ -826,7 +820,7 @@ ReindexOutcome RunRefresh(duckdb::ClientContext& context,
   // takes the rebuild road).
   if (src.fast_path.supports_delta &&
       target.index->Config()->pk == catalog::PkColumnKind::Has) {
-    RunDelta(context, conn_ctx, target, src, files, observe, manifest, storage);
+    RunDelta(context, conn_ctx, target, src, files, observe, manifest);
     return {ReindexAction::Delta, files.added, files.changed, files.removed,
             static_cast<int64_t>(files.scan.size()) - files.added};
   }
@@ -906,7 +900,8 @@ ReindexOutcome RunClaimed(duckdb::ClientContext& context,
                           const ReindexTarget& target,
                           const std::shared_ptr<search::Store>& storage) {
   SDB_WAIT_ON_FAILURE("pause_reindex_claimed");
-  const auto manifest = storage->GetFileManifest();
+  const auto state = storage->GetTable().State();
+  const auto& manifest = state->manifest;
   std::optional<Source> src;
   if (manifest) {
     src = ResolveSource(context, target);
@@ -917,7 +912,7 @@ ReindexOutcome RunClaimed(duckdb::ClientContext& context,
     return {};
   }
   if (manifest->version && manifest->entries.empty() &&
-      storage->Snapshot()->reader.live_docs_count() > 0) {
+      storage->GetTable().Reader(*state).live_docs_count() > 0) {
     RunFullRebuild(context, conn_ctx, target);
     return {};
   }
@@ -940,51 +935,37 @@ ReindexOutcome RunClaimed(duckdb::ClientContext& context,
     IcebergObserve observe{*src->iceberg_list,
                            src->bind->Cast<duckdb::MultiFileBindData>(),
                            manifest->version};
-    return RunRefresh(context, conn_ctx, target, *src, *manifest, *storage,
-                      observe);
+    return RunRefresh(context, conn_ctx, target, *src, *manifest, observe);
   }
   StatObserve observe{context};
-  return RunRefresh(context, conn_ctx, target, *src, *manifest, *storage,
-                    observe);
+  return RunRefresh(context, conn_ctx, target, *src, *manifest, observe);
 }
 
 class ReindexSession {
  public:
-  using NoticeSink = std::function<void(irs::pg::SqlErrorData&)>;
+  ReindexSession(std::string_view user, duckdb::idx_t role_id,
+                 std::string_view database, duckdb::idx_t database_id,
+                 int32_t backend_pid, ConnectionContext& caller)
+    : _system{{.user = user,
+               .role = role_id,
+               .database = database,
+               .database_id = database_id,
+               .backend_pid = backend_pid},
+              {.forward_to = &caller}} {}
 
-  ReindexSession(duckdb::DatabaseInstance& db, std::string_view user,
-                 duckdb::idx_t role_id, const std::string& database,
-                 duckdb::idx_t database_id, int32_t backend_pid,
-                 NoticeSink sink)
-    : _conn{db},
-      _ctx{std::make_shared<ConnectionContext>(
-        *_conn.context, user, std::string_view{}, role_id, database,
-        database_id, nullptr, backend_pid, nullptr)},
-      _progress{SereneDBClientState::Register(*_conn.context, _ctx, false)
-                  .progress_source},
-      _sink{std::move(sink)} {}
-  ~ReindexSession() {
-    _ctx->ConsumeNotices([&](auto& notice) { _sink(notice); });
-  }
-  ReindexSession(const ReindexSession&) = delete;
-  ReindexSession& operator=(const ReindexSession&) = delete;
-
-  duckdb::ClientContext& Context() { return *_conn.context; }
-  ConnectionContext& Conn() { return *_ctx; }
-  void Begin() { _conn.BeginTransaction(); }
+  duckdb::ClientContext& Context() { return *_system.conn->context; }
+  ConnectionContext& Conn() { return ConnectionContext::Get(Context()); }
+  void Begin() { _system.conn->BeginTransaction(); }
 
  private:
-  duckdb::Connection _conn;
-  std::shared_ptr<ConnectionContext> _ctx;
-  pg::ProgressRegistration _progress;
-  NoticeSink _sink;
+  SystemConnection _system;
 };
 
 ReindexOutcome RunManualReindex(duckdb::ClientContext& context,
                                 const std::string& name,
                                 duckdb::vector<duckdb::Identifier> schema_path,
                                 const std::string& catalog_p) {
-  auto& conn_ctx = GetSereneDBContext(context);
+  auto& conn_ctx = ConnectionContext::Get(context);
   const auto target =
     ResolveTarget(context, conn_ctx, name, std::move(schema_path), catalog_p);
   const auto storage = target.index->Storage();
@@ -993,32 +974,20 @@ ReindexOutcome RunManualReindex(duckdb::ClientContext& context,
                     ERR_MSG("index \"", name, "\" does not exist"));
   }
   catalog::ThrowIfReadOnly(target.index->catalog, "REINDEX");
-  pg::ProgressMetrics* progress = nullptr;
-  if (auto client_state = context.registered_state->Get<SereneDBClientState>(
-        kSereneDBClientStateKey);
-      client_state && client_state->progress_source) {
-    progress = &client_state->Progress();
-    progress->SetCommand(pg::ProgressCommand::Reindex);
-    progress->SetPhase(pg::progress_phase::Reindex::WaitingForReindex);
-    pg::ProgressMetrics::Set(progress->relid,
-                             static_cast<int64_t>(target.relation_id));
-    pg::ProgressMetrics::Set(progress->current_relid,
-                             static_cast<int64_t>(target.index->oid));
-  }
+  auto& progress = conn_ctx.Progress();
+  progress.SetCommand(pg::ProgressCommand::Reindex);
+  progress.SetPhase(pg::progress_phase::Reindex::WaitingForReindex);
+  pg::ProgressMetrics::Set(progress.relid,
+                           static_cast<int64_t>(target.relation_id));
+  pg::ProgressMetrics::Set(progress.current_relid,
+                           static_cast<int64_t>(target.index->oid));
   const auto claim = storage->ClaimReindex(context);
-  if (progress) {
-    progress->SetPhase(pg::progress_phase::Reindex::Refreshing);
-  }
+  progress.SetPhase(pg::progress_phase::Reindex::Refreshing);
   for (uint64_t attempt = 1;; ++attempt) {
     context.InterruptCheck();
-    ReindexSession session{
-      *context.db,
-      conn_ctx.user(),
-      conn_ctx.GetRoleId(),
-      target.database,
-      target.database_id,
-      conn_ctx.GetBackendPid(),
-      [&](auto& notice) { conn_ctx.AddNotice(std::move(notice)); }};
+    ReindexSession session{conn_ctx.user(),          conn_ctx.GetRoleId(),
+                           target.database,          target.database_id,
+                           conn_ctx.GetBackendPid(), conn_ctx};
     session.Context().config.user_settings = context.config.user_settings;
     session.Begin();
     const auto current =
@@ -1144,9 +1113,9 @@ void ReindexByIdPragma(duckdb::ClientContext& context,
   }
   auto& catalog = *database;
   const auto trx = catalog.GetCatalogTransaction(context);
-  auto index = catalog.FindIn<duckdb::DuckIndexEntry>(
-    &context, static_cast<duckdb::idx_t>(index_id));
-  if (!index || index->index_type != "inverted") {
+  auto index = catalog.FindIn<duckdb::IndexCatalogEntry>(
+    trx, static_cast<duckdb::idx_t>(index_id));
+  if (!index || !catalog::IsInvertedIndex(*index)) {
     return;
   }
   const auto relation = index->GetRelation(trx);
@@ -1161,18 +1130,13 @@ void ReindexByIdPragma(duckdb::ClientContext& context,
   if (!claim) {
     return;
   }
-  auto& conn_ctx = GetSereneDBContext(context);
+  auto& conn_ctx = ConnectionContext::Get(context);
   const auto& index_name = index->name.GetIdentifierName();
   const auto& database_name = catalog.GetName().GetIdentifierName();
   try {
     ReindexSession session{
-      *context.db,
-      conn_ctx.user(),
-      conn_ctx.GetRoleId(),
-      database_name,
-      conn_ctx.GetDatabaseId(),
-      conn_ctx.GetBackendPid(),
-      [&](auto& notice) { conn_ctx.AddNotice(std::move(notice)); }};
+      conn_ctx.user(),          conn_ctx.GetRoleId(),     database_name,
+      conn_ctx.GetDatabaseId(), conn_ctx.GetBackendPid(), conn_ctx};
     session.Begin();
     const auto target =
       ResolveTarget(session.Context(), session.Conn(), index_name,

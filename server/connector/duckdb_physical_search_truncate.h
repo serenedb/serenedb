@@ -33,6 +33,8 @@ class SereneDBSearchTruncate final : public duckdb::PhysicalOperator {
                          const catalog::SearchTableEntry& table,
                          duckdb::idx_t estimated_cardinality);
 
+  std::string GetName() const final { return "TRUNCATE"; }
+
   bool IsSource() const final { return true; }
   duckdb::SourceResultType GetDataInternal(
     duckdb::ExecutionContext& context, duckdb::DataChunk& chunk,

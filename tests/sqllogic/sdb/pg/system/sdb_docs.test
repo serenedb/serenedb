@@ -258,14 +258,16 @@ connection docs database=postgres
 statement error
 CREATE FUNCTION sdb_docs.x() RETURNS INT LANGUAGE SQL BEGIN ATOMIC SELECT 1; END;
 ----
-db error: ERROR: Cannot create entry in system catalog
+db error: ERROR: permission denied to create "sdb_docs.x"
+DETAIL: System catalog modifications are currently disallowed.
 
 
 connection docs database=postgres
 statement error
 CREATE TABLE sdb_docs.scratch (id INT);
 ----
-db error: ERROR: Cannot create entry in system catalog
+db error: ERROR: permission denied to create "sdb_docs.scratch"
+DETAIL: System catalog modifications are currently disallowed.
 
 
 connection docs database=postgres
@@ -286,7 +288,7 @@ connection docs database=postgres
 statement error
 DROP SCHEMA sdb_docs CASCADE;
 ----
-db error: ERROR: Schema with name sdb_docs does not exist!
+db error: ERROR: Cannot drop entry "sdb_docs" because it is an internal system entry
 
 
 connection docs database=postgres
@@ -325,16 +327,27 @@ db error: ERROR: Cannot alter entry "search" because it is an internal system en
 
 
 connection docs database=postgres
-statement ok
+statement error
 CREATE SCHEMA sdb_docs;
+----
+db error: ERROR: schema "sdb_docs" already exists
+
 
 connection docs database=postgres
-statement ok
+statement error
 CREATE TABLE postgres.sdb_docs.docs (path TEXT);
+----
+db error: ERROR: permission denied to create "sdb_docs.docs"
+DETAIL: System catalog modifications are currently disallowed.
+
 
 connection docs database=postgres
-statement ok
+statement error
 CREATE MACRO postgres.sdb_docs.search(q, n) AS TABLE SELECT 'shadow' AS path;
+----
+db error: ERROR: permission denied to create "sdb_docs.search"
+DETAIL: System catalog modifications are currently disallowed.
+
 
 connection docs database=postgres
 query
@@ -354,12 +367,9 @@ connection docs database=postgres
 statement error
 CREATE TABLE sdb_docs.scratch (id INT);
 ----
-db error: ERROR: Cannot create entry in system catalog
+db error: ERROR: permission denied to create "sdb_docs.scratch"
+DETAIL: System catalog modifications are currently disallowed.
 
-
-connection docs database=postgres
-statement ok
-DROP SCHEMA sdb_docs CASCADE;
 
 connection docs database=postgres
 statement ok

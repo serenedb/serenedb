@@ -48,17 +48,17 @@ Note that only the column names and types are copied to `t1`, other pieces of in
 
 ## Temporary Tables
 
-Temporary tables are session scoped, meaning that only the specific connection that created them can access them and once the connection to SereneDB is closed they will be automatically dropped (similar to PostgreSQL, for example).
+Temporary tables are session scoped, meaning that only the specific connection that created them can access them and once the connection to SereneDB is closed they will be automatically dropped.
 
-They can be created using the `CREATE TEMP TABLE` or the `CREATE TEMPORARY TABLE` statement (see diagram below) and are part of the `temp.main` schema. While discouraged, their names can overlap with the names of the regular database tables. In these cases, temporary tables take priority in name resolution and full qualification is required to refer to a regular table e.g., `memory.main.t1`.
+They can be created using the `CREATE TEMP TABLE` or the `CREATE TEMPORARY TABLE` statement (see diagram below) and are part of the `pg_temp` schema. While discouraged, their names can overlap with the names of the regular database tables. In these cases, temporary tables take priority in name resolution and full qualification is required to refer to a regular table, e.g., `public.t1`.
 
-Temporary tables reside in memory rather than on disk even when connecting to a persistent SereneDB, but if the `temp_directory` [configuration](../../../configuration/overview.md) is set, data will be spilled to disk if memory becomes constrained.
+Temporary tables reside in memory rather than on disk, and their rows stay in memory even when memory becomes constrained.
 
 Create a temporary table from a CSV file (automatically detecting column names and types):
 
 <SqlLogicTest id="sql/statements/create_table/index/example_009" />
 
-Allow temporary tables to off-load excess memory to disk:
+The `temp_directory` [setting](../../../configuration/overview.md) names the directory where queries spill intermediate results that do not fit in memory; it does not apply to temporary tables:
 
 <SqlLogicTest id="sql/statements/create_table/index/example_010" />
 
@@ -103,6 +103,27 @@ Or:
 <SqlLogicTest id="sql/statements/create_table/index/example_017" />
 
 It is not possible to create tables using CTAS statements with constraints (primary keys, check constraints, etc.).
+
+## Table Options
+
+`CREATE TABLE ... WITH (option = value, ...)` sets how the table stores and maintains its rows and the [inverted indexes](../../indexes/inverted/index.md) on it:
+
+| Option | Default | Description |
+| :--- | :--- | :--- |
+| `compaction_interval` | `1000` | Background compaction interval in milliseconds; `0` disables it |
+| `compaction_max_segments` | `10` | Segments merged by one background compaction |
+| `compaction_max_segments_bytes` | `5368709120` (5 GB) | Size budget of one background compaction |
+| `compaction_floor_segment_bytes` | `2097152` (2 MB) | Segments smaller than this count as equal-sized when choosing what to merge |
+| `segment_memory_max` | `268435456` (256 MB) | Committed rows, deletes and in-place updates the table holds in memory before writing them to disk; below 4 GiB |
+| `row_group_size` | `122880` | Rows in a row group of the table's columns; a multiple of 2048 |
+| `block_size` | `262144` | Sets the size of the segments the table's text columns are compressed in, about twice this many bytes; a power of two from 16384 to 262144 |
+| `optimize_top_k` | — | Scorer expression enabling top-K (WAND) pruning, e.g. `'bm25(1.2, 0.75)'` |
+
+The settings of the same names give the defaults of a new table, and the `default_block_size` setting that of `block_size`; `row_group_size` and `block_size` take the database's `ROW_GROUP_SIZE` and `BLOCK_SIZE` first (see [`CREATE DATABASE`](../create_database/index.md#storage-options)). The four `compaction_*` options can be changed later with [`ALTER TABLE ... SET` and `RESET`](../alter_table/index.md#set--reset-table-options); the others are fixed when the table is created. Any other option fails with `unrecognized parameter "<name>"`. See [Maintenance](../../indexes/inverted/maintenance.md) for what the options trade.
+
+## Key Lookups
+
+A filter that compares a single-column `PRIMARY KEY`, `UNIQUE` or `FOREIGN KEY` column with a value (`=`) or a list of values (`IN`) reads only the matching rows, whatever the column's type, instead of scanning the table. `EXPLAIN` shows it as an `Index Filter` on the column.
 
 ## Check Constraints
 
@@ -191,24 +212,25 @@ Two expressions that PostgreSQL rejects are accepted by SereneDB:
 -   the expression may **reference other generated columns**, not just regular columns of the same row;
 -   the expression is **not required to be immutable** — volatile functions such as `random()` are accepted.
 
+## Functions in Column Expressions
+
+A user-defined function called in a `DEFAULT` value, a `CHECK` constraint or a generated column is looked up through the `search_path` of the statement that defines it, `CREATE TABLE` or `ALTER TABLE`. A function from a schema other than the table's own is kept with its schema: `CHECK (is_positive(v))` on a table in `public`, written while the function's schema `app` is on the `search_path`, is kept and shown as `CHECK (app.is_positive(v))`. Writes, later `ALTER TABLE` statements of the table and a restart call that function whatever the session's `search_path` is. The `USING` expression of `ALTER COLUMN TYPE` is looked up the same way. A temporary function, such as one created with `CREATE TEMPORARY MACRO`, cannot be used in these expressions or in an index of a non-temporary table: the statement fails with `Cannot use temporary function "<name>" in a non-temporary relation`.
+
 ## Sort Keys
 
-A search table can keep its rows sorted by a key, given after the column list as `SORTED BY (column [ASC | DESC] [NULLS FIRST | NULLS LAST], ...)`:
+A table can declare a sort key after the column list as `SORTED BY (column [ASC | DESC] [NULLS FIRST | NULLS LAST], ...)`:
 
 <SqlLogicTest id="sql/statements/create_table/index/example_031" />
 
 -   Each key is a column of the table, listed in key order. A key is ascending unless it says `DESC`. NULLs come last in an ascending key and first in a descending one, as in PostgreSQL's `ORDER BY`, unless `NULLS FIRST` or `NULLS LAST` says otherwise. The table's definition always shows both, as in `SORTED BY (service ASC NULLS LAST, ts DESC NULLS FIRST)`.
--   Every segment of the table holds its rows in key order from the moment it is written, and merges keep that order. Rows with equal keys are stored in no particular order.
--   A merge in key order takes at most 1024 segments: background compaction merges at most 1024 at a time, whatever `compaction_max_segments` says, and `VACUUM` merges more [in steps](../vacuum/index.md#compact).
--   Rows close in key order are stored together, so filters on the key columns skip more data and those columns compress better.
+-   The key is kept in the table's definition. Rows are stored in the order they are written, not in key order.
 -   The key is set when the table is created, also by `CREATE TABLE ... AS SELECT`. `ALTER TABLE ... SET SORTED BY` and `RESET SORTED BY` are not supported. Renaming a key column keeps it in the key.
 -   A key is a stored column: an expression, a `COLLATE` clause, a column declared with a collation or a generated column is rejected.
 -   A column of type `VARIANT`, `INTERVAL`, `TIMETZ` or `BIT`, or a struct, list or array holding one, is rejected as a key, because `ORDER BY` orders these values by a normalized form rather than as stored; a `MAP` or `UNION` holding one is accepted.
--   Regular tables reject `SORTED BY`.
 
 ## Partition Keys
 
-The syntax below includes `PARTITIONED BY (...)`, which is not supported. `CREATE TABLE` rejects a definition that uses it, for search tables and regular tables alike, including `CREATE TABLE ... AS SELECT`.
+The syntax below includes `PARTITIONED BY (...)`, which is not supported. `CREATE TABLE` rejects a definition that uses it, including `CREATE TABLE ... AS SELECT`.
 
 ## Syntax
 

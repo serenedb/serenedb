@@ -1,0 +1,48 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+COPY (SELECT i AS id, 'doc ' || i AS body FROM range(3) t(i)) TO '${__TEST_DIR__}/vicf_1.parquet' (FORMAT parquet);
+
+
+statement ok
+CREATE VIEW vicf_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/vicf_*.parquet');
+
+
+statement ok
+SET sdb_faults = 'Search::FailOnCommit';
+
+
+statement error
+CREATE INDEX vicf_idx ON vicf_v USING inverted(id) INCLUDE(body)
+  WITH (reindex_interval = 0, compaction_interval = 0);
+----
+db error: ERROR: debug failure point
+
+
+statement ok
+RESET sdb_faults;
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'vicf_idx';
+----
+n
+0
+
+
+statement ok
+CREATE INDEX vicf_idx ON vicf_v USING inverted(id) INCLUDE(body)
+  WITH (reindex_interval = 0, compaction_interval = 0);
+
+
+query
+SELECT id, body FROM vicf_idx ORDER BY id;
+----
+id	body
+0	doc 0
+1	doc 1
+2	doc 2

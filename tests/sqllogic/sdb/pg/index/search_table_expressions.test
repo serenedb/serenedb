@@ -2,22 +2,18 @@
 # single-field: it has no stored column, so the write path evaluates it per row
 # and emits its value + terms under the expression's own allocated field. A
 # predicate on the expression pushes down through the index scan (matching a
-# transactional expression index). Empty-table-only CREATE INDEX, commit-time
-# only, so rows are observed after VACUUM (REFRESH_TABLE).
+# transactional expression index). Empty-table-only CREATE INDEX.
 
 # --- Scalar numeric expression ---
 statement ok
 CREATE TABLE num (id BIGINT PRIMARY KEY, a INT, b INT)
-  WITH (storage='search', compaction_interval=0);
+  WITH (compaction_interval=0);
 
 statement ok
 CREATE INDEX num_idx ON num USING inverted ((a + b));
 
 statement ok
 INSERT INTO num VALUES (1, 10, 20), (2, 5, 5), (3, 100, 1);
-
-statement ok
-VACUUM (REFRESH_TABLE) num;
 
 query
 SELECT id FROM num_idx WHERE a + b = 30;
@@ -51,16 +47,13 @@ QUERY PLAN
 # --- String expression ---
 statement ok
 CREATE TABLE str (id BIGINT PRIMARY KEY, s1 TEXT, s2 TEXT)
-  WITH (storage='search', compaction_interval=0);
+  WITH (compaction_interval=0);
 
 statement ok
 CREATE INDEX str_idx ON str USING inverted ((s1 || s2));
 
 statement ok
 INSERT INTO str VALUES (1, 'foo', 'bar'), (2, 'hello', 'world');
-
-statement ok
-VACUUM (REFRESH_TABLE) str;
 
 query
 SELECT id FROM str_idx WHERE s1 || s2 = 'foobar';
@@ -77,16 +70,13 @@ id
 # --- JSON-leaf expression (exercises the synthetic null/bool/numeric leaves) ---
 statement ok
 CREATE TABLE j (id BIGINT PRIMARY KEY, doc JSON)
-  WITH (storage='search', compaction_interval=0);
+  WITH (compaction_interval=0);
 
 statement ok
 CREATE INDEX j_idx ON j USING inverted ((doc->>'name'));
 
 statement ok
 INSERT INTO j VALUES (1, '{"name":"alice"}'), (2, '{"name":"bob"}');
-
-statement ok
-VACUUM (REFRESH_TABLE) j;
 
 query
 SELECT id FROM j_idx WHERE doc->>'name' = 'alice' ORDER BY id;
@@ -105,7 +95,7 @@ CREATE TEXT SEARCH DICTIONARY ste_words AS split_text(case := 'lower') WITH (fre
 
 statement ok
 CREATE TABLE split (id BIGINT PRIMARY KEY, body TEXT)
-  WITH (storage='search', compaction_interval=0);
+  WITH (compaction_interval=0);
 
 statement ok
 CREATE INDEX split_terms ON split USING inverted ((upper(body)) ste_words);
@@ -115,9 +105,6 @@ CREATE INDEX split_stored ON split USING inverted ((upper(body)) included());
 
 statement ok
 INSERT INTO split VALUES (1, 'quick brown'), (2, 'lazy dog');
-
-statement ok
-VACUUM (REFRESH_TABLE) split;
 
 query
 SELECT id FROM (SELECT id, upper(body) AS u FROM split) s WHERE u @@ 'quick' ORDER BY id;
@@ -139,7 +126,7 @@ id	u
 
 statement ok
 CREATE TABLE jmeta (id BIGINT PRIMARY KEY, doc JSON)
-  WITH (storage='search', compaction_interval=0);
+  WITH (compaction_interval=0);
 
 statement ok
 CREATE INDEX jmeta_idx ON jmeta USING inverted ((doc->'meta') included());
@@ -147,9 +134,6 @@ CREATE INDEX jmeta_idx ON jmeta USING inverted ((doc->'meta') included());
 statement ok
 INSERT INTO jmeta VALUES
     (1, '{"meta":{"a":1}}'), (2, '{"meta":[1,2]}'), (3, '{"meta":"x"}');
-
-statement ok
-VACUUM (REFRESH_TABLE) jmeta;
 
 query
 SELECT id, (doc->'meta') AS m FROM jmeta_idx ORDER BY id;
@@ -164,7 +148,7 @@ CREATE TEXT SEARCH DICTIONARY ste_shape AS encode_geojson();
 
 statement ok
 CREATE TABLE jgeo (id BIGINT PRIMARY KEY, doc JSON)
-  WITH (storage='search', compaction_interval=0);
+  WITH (compaction_interval=0);
 
 statement ok
 CREATE INDEX jgeo_idx ON jgeo USING inverted ((doc->'geo') ste_shape);
@@ -173,9 +157,6 @@ statement ok
 INSERT INTO jgeo VALUES
     (1, '{"geo":{"type":"Point","coordinates":[37.6,55.7]}}'),
     (2, '{"geo":{"type":"Point","coordinates":[-3.5,-6.9]}}');
-
-statement ok
-VACUUM (REFRESH_TABLE) jgeo;
 
 query
 SELECT id FROM jgeo_idx
@@ -187,7 +168,7 @@ id
 
 statement ok
 CREATE TABLE jtok (id BIGINT PRIMARY KEY, doc JSON)
-  WITH (storage='search', compaction_interval=0);
+  WITH (compaction_interval=0);
 
 statement ok
 CREATE INDEX jtok_idx ON jtok USING inverted ((doc->'meta') ste_words);
@@ -200,9 +181,6 @@ INSERT INTO jtok VALUES (2, '{"meta":{"a":1}}');
 ----
 db error: ERROR: JSON expression indexed by an inverted index must point to a primitive (string/number/boolean/null) leaf; got an object or array
 
-
-statement ok
-VACUUM (REFRESH_TABLE) jtok;
 
 query
 SELECT id FROM jtok_idx WHERE (doc->'meta') @@ 'fox' ORDER BY id;

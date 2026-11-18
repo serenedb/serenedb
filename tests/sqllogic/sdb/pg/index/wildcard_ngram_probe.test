@@ -11,10 +11,10 @@ statement ok
 CREATE INDEX wnp_idx ON wnp USING inverted (id, msg wnp_kw3)
 
 statement ok
-VACUUM (REFRESH_TABLE) wnp
+VACUUM (FLUSH_TABLE) wnp
 
 statement ok
-CREATE TABLE wnp_s (id INTEGER, msg VARCHAR) WITH (storage = 'search')
+CREATE TABLE wnp_s (id INTEGER, msg VARCHAR)
 
 statement ok
 CREATE INDEX wnp_s_idx ON wnp_s USING inverted (id, msg wnp_kw3)
@@ -23,7 +23,7 @@ statement ok
 INSERT INTO wnp_s SELECT id, msg FROM wnp
 
 statement ok
-VACUUM (REFRESH_TABLE) wnp_s
+VACUUM (FLUSH_TABLE) wnp_s
 
 query
 SELECT id FROM wnp WHERE id IN (3, 4) AND (msg LIKE '%foo%' OR id = 100000) ORDER BY id

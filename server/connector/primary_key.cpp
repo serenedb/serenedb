@@ -20,10 +20,12 @@
 
 #include "connector/primary_key.h"
 
-#include <duckdb/execution/row_id_deduplicator.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 
 #include "connector/key_encoding.h"
+#include "connector/term_dict.h"
 
 namespace sdb::connector::primary_key {
 
@@ -47,23 +49,44 @@ void PreparePKFormats(duckdb::DataChunk& chunk,
   }
 }
 
-duckdb::idx_t KeepFirstRowIds(duckdb::RowIdDeduplicator& seen,
-                              duckdb::DataChunk& chunk, const PKColumn& rowid) {
-  const auto count = chunk.size();
-  duckdb::SelectionVector first{count};
-  const auto kept =
-    seen.Register(chunk.data[rowid.input_col_idx], count, first);
-  if (kept != count) {
-    chunk.Slice(first, kept);
-  }
-  return kept;
-}
-
 void Create(std::span<const duckdb::UnifiedVectorFormat> formats,
             std::span<const PKColumn> columns, duckdb::idx_t row,
             std::string& key) {
   for (size_t i = 0; i != columns.size(); ++i) {
     key_encoding::AppendScalarValue(key, formats[i], row, columns[i].type);
+  }
+}
+
+std::vector<KeySlot> KeySlots(const duckdb::TableCatalogEntry& entry,
+                              const catalog::InvertedIndexConfig& config) {
+  const auto& columns = entry.GetColumns();
+  std::vector<KeySlot> slots;
+  for (const auto index : KeyColumns(entry)) {
+    const auto& column = columns.GetColumn(index);
+    const auto id = TableColumnId(column);
+    const auto* field = config.FindEntry(id);
+    slots.emplace_back(
+      static_cast<duckdb::idx_t>(index.index),
+      column.Name().GetIdentifierName(), column.Type(), id,
+      term_dict::LayoutOf(column.Type(), field && field->HasJsonLeafFields()));
+  }
+  return slots;
+}
+
+void VerifyNotNull(duckdb::DataChunk& chunk, std::span<const KeySlot> slots,
+                   duckdb::idx_t count) {
+  if (count == 0) {
+    return;
+  }
+  duckdb::UnifiedVectorFormat format;
+  for (const auto& slot : slots) {
+    chunk.data[slot.input_col_idx].ToUnifiedFormat(count, format);
+    if (format.validity.CheckAllValid(count)) {
+      continue;
+    }
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_NOT_NULL_VIOLATION),
+                    ERR_MSG("null value in column \"", slot.name,
+                            "\" violates not-null constraint"));
   }
 }
 

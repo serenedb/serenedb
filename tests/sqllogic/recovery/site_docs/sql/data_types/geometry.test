@@ -206,7 +206,7 @@ query
 SELECT stats(geom) AS geom_stats FROM geometries;
 ----
 geom_stats
-{"approx_unique":1,"extent":{"x_max":30.0,"x_min":30.0,"y_max":10.0,"y_min":10.0,"z_max":5.0,"z_min":5.0},"has_empty_geom":false,"has_empty_part":false,"has_no_null":true,"has_non_empty_geom":true,"has_non_empty_part":true,"has_null":false}
+{"extent":{"x_max":30.0,"x_min":30.0,"y_max":10.0,"y_min":10.0,"z_max":5.0,"z_min":5.0},"has_empty_geom":false,"has_empty_part":false,"has_no_null":true,"has_non_empty_geom":true,"has_non_empty_part":true,"has_null":false}
 
 # DOCS_TEST: example_006
 
@@ -215,7 +215,7 @@ geom_stats
 query
 SELECT crs_name, auth_name, auth_code
 FROM sdb_coordinate_systems()
-WHERE auth_name = 'OGC'
+WHERE auth_name = 'OGC' AND database_name = current_database()
 ORDER BY crs_name;
 ----
 crs_name	auth_name	auth_code

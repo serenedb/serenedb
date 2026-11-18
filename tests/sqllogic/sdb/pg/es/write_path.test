@@ -1,8 +1,7 @@
 hash-threshold 200
 
 # ES write path: es_doc/es_bulk emit rows shaped like the target table and
-# are consumed via INSERT ... SELECT; es_refresh commits the inverted shards
-# so writes become searchable.
+# are consumed via INSERT ... SELECT.
 
 statement ok
 CALL es_create_index('slt_es_w', '{"mappings":{"properties":{"title":{"type":"text"},"n":{"type":"long"},"flag":{"type":"boolean"},"ts":{"type":"date"}}}}');
@@ -30,7 +29,6 @@ SELECT count(*) FROM es.slt_es_w;
 count
 3
 
-# After the refresh every document is visible in the text index.
 query
 SELECT count(*) FROM es."slt_es_w$text";
 ----
@@ -49,7 +47,7 @@ SELECT length(_id) AS len FROM es.slt_es_w WHERE _id NOT IN ('a', 'b');
 len
 20
 
-statement error (?i)duplicate key .* violates primary key constraint
+statement error duplicate key value violates unique constraint "slt_es_w_pkey"
 INSERT INTO es.slt_es_w SELECT * FROM es_doc('slt_es_w', 'a', '{"n":1}');
 
 statement error (?i)failed to parse field \[n\]
@@ -85,7 +83,6 @@ CALL es_refresh('slt_es_missing');
 statement error (?i)no such index \[slt_es_missing\]
 INSERT INTO es.slt_es_w SELECT * FROM es_doc('slt_es_missing', 'a', '{}');
 
-# Empty name refreshes every ES index.
 query
 CALL es_refresh('');
 ----
@@ -165,7 +162,7 @@ query
 EXPLAIN INSERT INTO es.slt_es_big SELECT * FROM es_bulk('slt_es_big', repeat('{"index":{}}' || chr(10) || '{"n":1}' || chr(10), 450000));
 ----
 QUERY PLAN
-╭─ BATCH_INSERT ────╮
+╭─ INSERT ──────────╮
 ╰─────────┬─────────╯
 ╭─ ES_BULK ─────────╮
 │ Function: ES_BULK │

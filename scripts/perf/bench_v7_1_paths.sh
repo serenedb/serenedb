@@ -3,7 +3,7 @@
 # reading the code could not settle.
 #
 #   delim     The multi-delimited tokenizer. It runs in the WRITE path, so what
-#             is timed is INSERT + CREATE INDEX + REFRESH over text split on a
+#             is timed is INSERT + CREATE INDEX + FLUSH over text split on a
 #             delimiter set. Swept over set size, because the tokenizer's DFA
 #             table is dense (`states x 256 x 4` bytes) and the question is
 #             where it stops fitting in cache.
@@ -213,8 +213,8 @@ run_delim() { # bin engine
 			# The tokenizer runs here.
 			record delim "$engine" "n=${n}" index \
 				"$(timed "CREATE INDEX idx ON t USING inverted(id, body d${n})")"
-			record delim "$engine" "n=${n}" refresh \
-				"$(timed "VACUUM (REFRESH_TABLE) t")"
+			record delim "$engine" "n=${n}" flush \
+				"$(timed "VACUUM (FLUSH_TABLE) t")"
 			# Let compaction finish before freezing the datadir, so both engines
 			# read from the same segment layout.
 			quiesce
@@ -263,8 +263,8 @@ run_postings() { # bin engine
 		record postings "$engine" corpus index \
 			"$(timed "CREATE INDEX pidx ON p USING inverted(id, body ws)
 			            WITH (optimize_top_k = 'bm25(1.2, 0.75)')")"
-		record postings "$engine" corpus refresh \
-			"$(timed "VACUUM (REFRESH_TABLE) p")"
+		record postings "$engine" corpus flush \
+			"$(timed "VACUUM (FLUSH_TABLE) p")"
 		quiesce
 		stop_engine
 	fi

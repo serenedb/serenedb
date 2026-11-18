@@ -88,7 +88,7 @@ SELECT count(*) FILTER (WHERE kind = 'function') > 400,
        count(*) FILTER (WHERE kind = 'tokenizer') >= 4,
        count(*) FILTER (WHERE kind = 'type') > 20,
        count(*) FILTER (WHERE kind = 'setting') > 100,
-       count(*) FILTER (WHERE kind = 'index_type') = 2,
+       count(*) FILTER (WHERE kind = 'index_type') = 1,
        count(*) FILTER (WHERE kind = 'command') > 50
 FROM sdb_docs.objects;
 ----
@@ -248,4 +248,5 @@ connection docs database=postgres
 statement error
 CREATE OR REPLACE FUNCTION sdb_docs.summary(doc_content TEXT) RETURNS TEXT LANGUAGE SQL BEGIN ATOMIC SELECT ''; END;
 ----
-db error: ERROR: Cannot create entry in system catalog
+db error: ERROR: permission denied to create "sdb_docs.summary"
+DETAIL: System catalog modifications are currently disallowed.

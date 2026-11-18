@@ -24,7 +24,7 @@ statement ok
 CREATE VIEW kek.pepe_v AS SELECT * FROM pepe;
 
 statement ok
-CREATE INDEX pepe_idx ON kek.pepe_v USING inverted (id, body meme_res_en);
+CREATE INDEX pepe_idx ON kek.pepe_v USING inverted (id, body meme_res_en) INCLUDE (id, body);
 
 query
 SELECT id, body FROM kek.pepe_idx WHERE body @@ 'pepe';

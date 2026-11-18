@@ -70,6 +70,7 @@
 #include <thread>
 #include <vector>
 
+#include "index/test_index_writer.hpp"
 #include "insert_field.hpp"
 
 extern "C" int JemallocControl(const char* name, void* old_value,
@@ -165,7 +166,7 @@ const Inputs& InputsOf(Layout layout) {
     return {};
   };
   auto writer =
-    irs::IndexWriter::Make(cached->dir, irs::kOmCreate, std::move(options));
+    tests::IndexWriter::Make(cached->dir, tests::kOmCreate, std::move(options));
   static constexpr std::array<std::string_view, 10> kServices{
     "cart",    "checkout", "frontend", "shipping", "currency",
     "payment", "email",    "ads",      "quote",    "recommendation"};

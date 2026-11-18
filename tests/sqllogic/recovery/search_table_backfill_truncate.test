@@ -12,13 +12,13 @@ RESET sdb_faults;
 
 statement ok
 CREATE TABLE bft (id BIGINT PRIMARY KEY, tag TEXT)
-  WITH (storage = 'search', refresh_interval = 50, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO bft VALUES (1, 'a'), (2, 'b'), (3, 'c');
 
 statement ok
-VACUUM (REFRESH_TABLE) bft;
+VACUUM (FLUSH_TABLE) bft;
 
 statement ok
 SET sdb_faults = 'pause_search_backfill_before_swap';
@@ -51,8 +51,6 @@ connection truncater
 statement ok
 COMMIT;
 
-# The refresh loop applies it while the build is still parked, so it cannot ride
-# the adopt tick into the rebuilt segment.
 connection default
 query ok retry 40 backoff 250ms
 SELECT count(*) AS n FROM bft;
@@ -74,7 +72,7 @@ n
 wait
 
 statement ok
-VACUUM (REFRESH_TABLE) bft;
+VACUUM (FLUSH_TABLE) bft;
 
 query
 SELECT count(*) AS n FROM bft;

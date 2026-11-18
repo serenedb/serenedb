@@ -113,10 +113,6 @@ INSERT INTO v VALUES
   (3, [50, 25, 50]::FLOAT[3]), (4, [50, 50, 100]::FLOAT[3])
 
 
-statement ok
-VACUUM (REFRESH_TABLE) v
-
-
 # ANN CTE referenced twice via self-join.
 query
 WITH cand AS (SELECT id FROM v_idx ORDER BY emb <-> [0.0, 0.0, 0.0]::FLOAT[3] LIMIT 3)

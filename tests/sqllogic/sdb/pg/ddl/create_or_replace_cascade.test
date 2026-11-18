@@ -108,9 +108,9 @@ c
 statement error
 DROP FUNCTION babsky(INT);
 ----
-db error: ERROR: Cannot drop entry "babsky" because there are entries that depend on it.
-view "v_babsky" depends on macro function "babsky".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop function babsky(integer) because other objects depend on it
+DETAIL: view v_babsky depends on function babsky(integer)
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -179,9 +179,9 @@ CREATE FUNCTION saga(x TEXT) AS CAST(x AS iceberg);
 statement error
 DROP TYPE iceberg;
 ----
-db error: ERROR: Cannot drop entry "iceberg" because there are entries that depend on it.
-macro function "saga" depends on type "iceberg".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop type iceberg because other objects depend on it
+DETAIL: function saga(text) depends on type iceberg
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -198,9 +198,9 @@ DROP TYPE iceberg;
 statement error
 DROP TYPE mop;
 ----
-db error: ERROR: Cannot drop entry "mop" because there are entries that depend on it.
-macro function "saga" depends on type "mop".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop type mop because other objects depend on it
+DETAIL: function saga(text) depends on type mop
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -236,9 +236,9 @@ CREATE VIEW audit AS SELECT jira_ticket(n) AS c FROM dashboard;
 statement error
 DROP FUNCTION jira_ticket(INT);
 ----
-db error: ERROR: Cannot drop entry "jira_ticket" because there are entries that depend on it.
-view "audit" depends on macro function "jira_ticket".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop function jira_ticket(integer) because other objects depend on it
+DETAIL: view audit depends on function jira_ticket(integer)
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -255,9 +255,9 @@ DROP FUNCTION jira_ticket(INT);
 statement error
 DROP FUNCTION manifest(INT);
 ----
-db error: ERROR: Cannot drop entry "manifest" because there are entries that depend on it.
-view "audit" depends on macro function "manifest".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop function manifest(integer) because other objects depend on it
+DETAIL: view audit depends on function manifest(integer)
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -334,3 +334,40 @@ DROP TABLE clickclack_or;
 
 statement ok
 DROP TEXT SEARCH DICTIONARY mop_dict;
+
+
+statement ok
+CREATE FUNCTION babsky_pos(x INT) AS x > 0;
+
+
+statement ok
+CREATE TABLE clickclack_chk (a INT CHECK (babsky_pos(a)), b INT CHECK (babsky_pos(b)));
+
+
+statement ok
+CREATE OR REPLACE FUNCTION babsky_pos(x INT) AS x > 10;
+
+
+statement ok
+INSERT INTO clickclack_chk VALUES (11, 12);
+
+
+statement error
+INSERT INTO clickclack_chk VALUES (5, 12);
+----
+db error: ERROR: CHECK constraint failed on table "clickclack_chk" with expression CHECK(babsky_pos(a))
+
+
+query
+SELECT a, b FROM clickclack_chk;
+----
+a	b
+11	12
+
+
+statement ok
+DROP TABLE clickclack_chk;
+
+
+statement ok
+DROP FUNCTION babsky_pos(INT);

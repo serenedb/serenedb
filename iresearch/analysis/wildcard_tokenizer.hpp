@@ -91,6 +91,8 @@ class WildcardTokenizer final : public TypedTokenizer<WildcardTokenizer>,
     return _analyzer->Traits().output != duckdb::LogicalTypeId::VARCHAR;
   }
 
+  bool KeepsWholeValues() const noexcept;
+
   size_t MemoryUsage() const noexcept final {
     return _analyzer->MemoryUsage() + _terms.capacity() +
            _fill_bounds.capacity() * sizeof(uint32_t) + _ngram.MemoryUsage() +

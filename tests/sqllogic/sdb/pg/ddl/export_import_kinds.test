@@ -36,11 +36,11 @@ CREATE TABLE eik.child (id SERIAL PRIMARY KEY, parent_id INT REFERENCES eik.pare
 
 
 statement ok
-CREATE TABLE eik.st (id BIGINT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE TABLE eik.st (id BIGINT PRIMARY KEY, body TEXT);
 
 
 statement ok
-CREATE TABLE eik.st_numbered (a INT, body TEXT) WITH (storage = 'search');
+CREATE TABLE eik.st_numbered (a INT, body TEXT);
 
 
 statement ok
@@ -57,14 +57,6 @@ INSERT INTO eik.st VALUES (1, 'search me');
 
 statement ok
 INSERT INTO eik.st_numbered VALUES (7, 'numbered');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) eik.st;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) eik.st_numbered;
 
 
 statement ok
@@ -135,14 +127,6 @@ id	parent_id	body	n
 2	2	bye	20
 
 
-statement ok
-VACUUM (REFRESH_TABLE) eik.st;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) eik.st_numbered;
-
-
 query
 SELECT id, body FROM eik.st;
 ----
@@ -200,13 +184,15 @@ parents	the code	it's a view
 statement error
 INSERT INTO eik.parent (id, code, c) VALUES (3, 'a', 1);
 ----
-db error: ERROR: Duplicate key "code: a" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "parent_code_key"
+DETAIL: Key (code)=(a) already exists.
 
 
 statement error
 INSERT INTO eik.child (parent_id, body) VALUES (99, 'orphan');
 ----
-db error: ERROR: Violates foreign key constraint because key "id: 99" does not exist in the referenced table
+db error: ERROR: insert or update on table "child" violates foreign key constraint "child_parent_id_fkey"
+DETAIL: Key (parent_id)=(99) is not present in table "parent".
 
 
 statement ok

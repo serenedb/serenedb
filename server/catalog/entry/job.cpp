@@ -27,7 +27,7 @@
 #include <utility>
 
 #include "catalog/catalog.h"
-#include "connector/duckdb_client_state.h"
+#include "catalog/transaction.h"
 #include "pg/connection_context.h"
 #include "scheduler/job_scheduler.h"
 
@@ -100,14 +100,15 @@ duckdb::unique_ptr<duckdb::CatalogEntry> JobCatalogEntry::AlterEntry(
 }
 
 void JobCatalogEntry::ScheduleAtCommit(duckdb::ClientContext& context) const {
-  auto* connection = connector::GetSereneDBContextPtr(context);
-  if (!connection) {
+  if (catalog.GetAttached().IsReadOnly()) {
     return;
   }
   auto& serene = catalog.Cast<SereneDBCatalog>();
-  connection->DeferToCommit([&serene, oid = oid] {
+  SessionOf(context, catalog).DeferToCommit([&serene, oid = oid] {
     auto* jobs = JobScheduler::Instance();
-    auto entry = serene.FindIn<JobCatalogEntry>(nullptr, oid);
+    const CommittedView view;
+    auto entry = serene.FindIn<JobCatalogEntry>(
+      view.Transaction(serene.GetDatabase()), oid);
     if (jobs && entry) {
       jobs->Schedule(*entry);
     }
@@ -122,9 +123,9 @@ void JobCatalogEntry::OnDrop() {
   }
 }
 
-void ForEachJob(duckdb::DuckCatalog& catalog,
+void ForEachJob(BaseCatalog& catalog,
                 const std::function<void(JobCatalogEntry&)>& callback) {
-  catalog.ScanSchemas([&](duckdb::SchemaCatalogEntry& schema) {
+  catalog.ScanSchemas([&](Schema& schema) {
     schema.Scan(duckdb::CatalogType::JOB_ENTRY,
                 [&](duckdb::CatalogEntry& entry) {
                   callback(entry.Cast<JobCatalogEntry>());

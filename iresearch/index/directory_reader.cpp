@@ -23,76 +23,240 @@
 
 #include "directory_reader.hpp"
 
-#include <absl/container/flat_hash_map.h>
+#include <absl/algorithm/container.h>
 
-#include "iresearch/index/directory_reader_impl.hpp"
-#include "iresearch/index/segment_reader.hpp"
-#include "iresearch/utils/hash_utils.hpp"
-#include "iresearch/utils/singleton.hpp"
-#include "iresearch/utils/type_limits.hpp"
+#include <algorithm>
+#include <cmath>
+
+#include "iresearch/formats/column/col_reader.hpp"
+#include "iresearch/formats/column/column_reader.hpp"
+#include "iresearch/index/segment_reader_impl.hpp"
 
 namespace irs {
+namespace {
 
-DirectoryReader::DirectoryReader(
-  const Directory& dir,
-  const IndexReaderOptions& opts /*= directory_reader_options()*/,
-  MetaPayloadReader payload)
-  : _impl{DirectoryReaderImpl::Open(dir, opts, nullptr, std::move(payload))} {}
+constexpr auto kByMin = [](const auto& lhs, const auto& rhs) {
+  return lhs.min < rhs.min;
+};
 
-DirectoryReader::DirectoryReader(
-  std::shared_ptr<const DirectoryReaderImpl>&& impl) noexcept
-  : _impl{std::move(impl)} {}
-
-DirectoryReader::DirectoryReader(const DirectoryReader& other) noexcept
-  : _impl{std::atomic_load_explicit(&other._impl, std::memory_order_acquire)} {}
-
-DirectoryReader& DirectoryReader::operator=(
-  const DirectoryReader& other) noexcept {
-  if (this != &other) {
-    // make a copy
-    auto impl =
-      std::atomic_load_explicit(&other._impl, std::memory_order_acquire);
-
-    std::atomic_store_explicit(&_impl, impl, std::memory_order_release);
+uint64_t DistinctOfOverlapping(uint64_t terms, uint64_t docs, uint64_t sum) {
+  const auto distinct = static_cast<double>(terms);
+  const auto samples = static_cast<double>(docs);
+  const auto occupied = [&](double values) {
+    return -values * std::expm1(-samples / values);
+  };
+  auto high = static_cast<double>(sum);
+  if (terms >= docs || occupied(high) <= distinct) {
+    return sum;
   }
-
-  return *this;
+  auto low = distinct;
+  while (high - low > 0.5) {
+    const auto mid = (low + high) / 2;
+    (occupied(mid) < distinct ? low : high) = mid;
+  }
+  return static_cast<uint64_t>(std::llround(high));
 }
 
-const SubReader& DirectoryReader::operator[](size_t i) const {
-  return (*_impl)[i];
+}  // namespace
+
+DirectoryReader::DirectoryReader(const Directory& dir,
+                                 const IndexReaderOptions& opts,
+                                 std::vector<SegmentReader> readers, bool stats)
+  : _dir{&dir}, _opts{opts}, _readers{std::move(readers)}, _stats{stats} {
+  Count();
+  if (_stats) {
+    Build();
+  }
+}
+
+DirectoryReader::DirectoryReader(const DirectoryReader& base,
+                                 std::vector<SegmentReader> readers,
+                                 std::span<const SegmentReader> added,
+                                 std::span<const SegmentReader> patched,
+                                 std::span<const SegmentReader> removed)
+  : _dir{base._dir},
+    _opts{base._opts},
+    _readers{std::move(readers)},
+    _stats{base._stats} {
+  Count();
+  if (!_stats) {
+    return;
+  }
+  _terms.reserve(base._terms.size());
+  for (const auto& [key, terms] : base._terms) {
+    _terms.try_emplace(key, TermStats{.segments = terms.segments});
+  }
+  for (const auto& reader : removed) {
+    RemoveTerms(*reader);
+  }
+  for (const auto& reader : added) {
+    AddTerms(*reader, /*keep_sorted=*/true);
+  }
+  if (!removed.empty()) {
+    for (const auto& reader : _readers) {
+      AddColumns(*reader, /*new_docs=*/true);
+    }
+    Publish();
+    return;
+  }
+  _columns.reserve(base._columns.size());
+  for (const auto& [field, column] : base._columns) {
+    _columns.try_emplace(
+      field, ColumnStats{
+               .merged = column.merged->ToUnique(),
+               .distinct = column.distinct ? column.distinct->Copy() : nullptr,
+               .docs = column.docs});
+  }
+  for (const auto& reader : added) {
+    AddColumns(*reader, /*new_docs=*/true);
+  }
+  for (const auto& reader : patched) {
+    AddColumns(*reader, /*new_docs=*/false);
+  }
+  Publish();
+}
+
+void DirectoryReader::Count() noexcept {
+  _docs = 0;
+  _live = 0;
+  _patched = 0;
+  for (const auto& reader : _readers) {
+    _docs += reader.docs_count();
+    _live += reader.live_docs_count();
+    _patched += reader.PatchedDocs();
+  }
+}
+
+void DirectoryReader::Build() {
+  for (const auto& reader : _readers) {
+    AddTerms(*reader, /*keep_sorted=*/false);
+    AddColumns(*reader, /*new_docs=*/true);
+  }
+  for (auto& [key, terms] : _terms) {
+    absl::c_stable_sort(terms.segments, kByMin);
+  }
+  Publish();
+}
+
+void DirectoryReader::AddTerms(const SubReader& reader, bool keep_sorted) {
+  for (const auto id : reader.field_ids()) {
+    for (const auto* field : reader.fields(id)) {
+      if (field->size() == 0) {
+        continue;
+      }
+      auto& segments = _terms[std::pair{id, field->meta().dict}].segments;
+      const SegmentTerms added{.field = field,
+                               .min = field->min(),
+                               .max = field->max(),
+                               .terms = field->size(),
+                               .docs = field->docs_count()};
+      if (keep_sorted) {
+        segments.insert(absl::c_upper_bound(segments, added, kByMin), added);
+      } else {
+        segments.push_back(added);
+      }
+    }
+  }
+}
+
+void DirectoryReader::RemoveTerms(const SubReader& reader) {
+  for (const auto id : reader.field_ids()) {
+    for (const auto* field : reader.fields(id)) {
+      if (field->size() == 0) {
+        continue;
+      }
+      const auto it = _terms.find(std::pair{id, field->meta().dict});
+      SDB_ASSERT(it != _terms.end());
+      auto& segments = it->second.segments;
+      std::erase_if(segments, [&](const SegmentTerms& terms) {
+        return terms.field == field;
+      });
+      if (segments.empty()) {
+        _terms.erase(it);
+      }
+    }
+  }
+}
+
+void DirectoryReader::AddColumns(const SubReader& reader, bool new_docs) {
+  const auto* col_reader = reader.GetColReader();
+  if (!col_reader) {
+    return;
+  }
+  for (const auto& column : col_reader->Columns()) {
+    auto& stats = _columns[column->Id()];
+    if (!stats.merged) {
+      stats.merged = column->MergedStatistics().ToUnique();
+    } else {
+      stats.merged->Merge(column->MergedStatistics());
+    }
+    if (const auto* distinct = column->Distinct()) {
+      if (!stats.distinct) {
+        stats.distinct = distinct->Copy();
+      } else {
+        stats.distinct->Merge(*distinct);
+      }
+    }
+    if (new_docs) {
+      stats.docs += reader.docs_count();
+    }
+  }
+}
+
+void DirectoryReader::Publish() {
+  for (auto& [field, column] : _columns) {
+    column.published = column.merged->ToUnique();
+    if (column.docs < _docs) {
+      column.published->SetHasNull();
+    }
+    if (column.distinct) {
+      column.published->SetDistinctCount(
+        std::min<uint64_t>(column.distinct->GetCount(), _live));
+    }
+  }
+  for (auto& [key, terms] : _terms) {
+    const auto& segments = terms.segments;
+    SDB_ASSERT(!segments.empty());
+    auto& range = terms.range;
+    range = {.min = segments.front().min, .max = segments.front().max};
+    const SegmentTerms* largest = nullptr;
+    uint64_t sum = 0;
+    for (const auto& segment : segments) {
+      if (largest && segment.min > range.max) {
+        range.distinct +=
+          DistinctOfOverlapping(largest->terms, largest->docs, sum);
+        largest = nullptr;
+        sum = 0;
+      }
+      range.docs += segment.docs;
+      range.max = std::max(range.max, segment.max);
+      if (!largest || segment.terms > largest->terms) {
+        largest = &segment;
+      }
+      sum += segment.terms;
+    }
+    range.distinct += DistinctOfOverlapping(largest->terms, largest->docs, sum);
+  }
 }
 
 uint64_t DirectoryReader::CountMappedMemory() const {
-  return _impl->CountMappedMemory();
-}
-
-uint64_t DirectoryReader::docs_count() const { return _impl->docs_count(); }
-
-uint64_t DirectoryReader::live_docs_count() const {
-  return _impl->live_docs_count();
+  uint64_t bytes = 0;
+  for (const auto& reader : _readers) {
+    bytes += reader.CountMappedMemory();
+  }
+  return bytes;
 }
 
 const duckdb::BaseStatistics* DirectoryReader::GetColumnStats(
   field_id field) const {
-  return _impl->GetColumnStats(field);
+  const auto it = _columns.find(field);
+  return it == _columns.end() ? nullptr : it->second.published.get();
 }
 
 const FieldTermRange* DirectoryReader::GetTermRange(field_id field,
                                                     DictRef dict) const {
-  return _impl->GetTermRange(field, dict);
-}
-
-size_t DirectoryReader::size() const { return _impl->size(); }
-
-const DirectoryMeta& DirectoryReader::Meta() const { return _impl->Meta(); }
-
-DirectoryReader DirectoryReader::Reopen(MetaPayloadReader payload) const {
-  // make a copy
-  auto impl = std::atomic_load_explicit(&_impl, std::memory_order_acquire);
-
-  return DirectoryReader{DirectoryReaderImpl::Open(
-    impl->Dir(), impl->Options(), std::move(impl), std::move(payload))};
+  const auto it = _terms.find(std::pair{field, dict});
+  return it == _terms.end() ? nullptr : &it->second.range;
 }
 
 }  // namespace irs

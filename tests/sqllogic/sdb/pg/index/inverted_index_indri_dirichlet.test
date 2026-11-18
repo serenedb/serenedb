@@ -34,10 +34,6 @@ statement ok
 CREATE INDEX docs_idx ON docs USING inverted(id, body en);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) docs;
-
-
 # Indri Dirichlet with small mu: log((tf + mu*P(t|C)) / (dl + mu)) is finite
 # for every matching doc. It can be negative, unlike lm_dirichlet.
 query

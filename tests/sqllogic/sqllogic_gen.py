@@ -57,9 +57,8 @@ class Test:
     def dictionary(self, name, definition):
         self.statement(f"CREATE TEXT SEARCH DICTIONARY {name} AS {definition}")
 
-    def table(self, name, columns, search=False):
-        storage = " WITH (storage = 'search')" if search else ""
-        self.statement(f"CREATE TABLE {name} ({columns}){storage}")
+    def table(self, name, columns):
+        self.statement(f"CREATE TABLE {name} ({columns})")
 
     def insert(self, table, rows, chunk=100):
         rows = list(rows)
@@ -72,9 +71,6 @@ class Test:
         included = f" INCLUDE ({include})" if include else ""
         self.statement(
             f"CREATE INDEX {name} ON {table} USING inverted ({keys}){included}")
-
-    def refresh(self, table):
-        self.statement(f"VACUUM (REFRESH_TABLE) {table}")
 
     def query(self, sql, columns=None, rows=1, onlyif=None, skipif=None):
         header = [] if columns is None else ["\t".join(columns)]

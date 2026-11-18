@@ -26,10 +26,6 @@ statement count 1
 INSERT INTO docs VALUES (3, 'the lazy dog');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) docs;
-
-
 query
 SELECT id, raw_dl(docs_idx.tableoid) > 0 AS has_len
 FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY id;
@@ -76,10 +72,6 @@ statement count 1
 INSERT INTO docs VALUES (5, 'a quick brown rabbit and a fox');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) docs;
-
-
 query
 SELECT id, CAST(raw_dl(docs_idx.tableoid) AS INTEGER) AS dl
 FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY id;
@@ -92,7 +84,7 @@ id	dl
 
 
 query error raw_dl\(\) requires an inverted index scan in the same sub-query
-SELECT id, raw_dl(docs.tableoid) FROM docs WHERE id > 0;
+SELECT id, raw_dl(docs.tableoid) FROM docs;
 
 
 query
@@ -106,7 +98,7 @@ QUERY PLAN
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: docs_idx                        │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Term ──────────────╮                │
 │ │ Field: body(string) │                │
@@ -117,7 +109,6 @@ QUERY PLAN
 │              sdb_inverted_index_score  │
 │ ~1 row                                 │
 ╰────────────────────────────────────────╯
-
 
 
 query error Only one scorer function is allowed per inverted index
@@ -218,10 +209,6 @@ INSERT INTO sparse_norm VALUES (5, '{"body":"x"}'::json);
 
 statement count 1
 INSERT INTO sparse_norm VALUES (6, '{"body":"x"}'::json);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sparse_norm;
 
 
 query

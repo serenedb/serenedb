@@ -19,9 +19,6 @@ INSERT INTO terms VALUES
 statement ok
 CREATE INDEX terms_idx ON terms USING inverted (id, term wildcard_dict);
 
-statement ok
-VACUUM (REFRESH_TABLE) terms;
-
 query
 SELECT id, term FROM terms_idx WHERE term @@ ts_like('%ear%') ORDER BY id;
 ----
@@ -59,9 +56,6 @@ CREATE TEXT SEARCH DICTIONARY wildcard_expr AS generate_wildcard_ngrams(split_te
 
 statement ok
 CREATE INDEX terms_expr_idx ON terms_expr USING inverted (id, term wildcard_expr);
-
-statement ok
-VACUUM (REFRESH_TABLE) terms_expr;
 
 query
 SELECT id, term FROM terms_expr_idx WHERE term @@ ts_like('%ear%') ORDER BY id;

@@ -24,24 +24,26 @@
 #include <atomic>
 #include <cstdint>
 #include <duckdb/common/allocator.hpp>
-#include <duckdb/common/types/hyperloglog.hpp>
+#include <duckdb/common/enums/scan_vector_type.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/types/vector_cache.hpp>
 #include <duckdb/common/vector/dictionary_vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
-#include <duckdb/function/compression_function.hpp>
 #include <duckdb/storage/statistics/base_statistics.hpp>
-#include <duckdb/storage/table/column_segment.hpp>
-#include <duckdb/storage/table/scan_state.hpp>
+#include <duckdb/storage/statistics/distinct_statistics.hpp>
 #include <limits>
 #include <memory>
 #include <span>
 #include <vector>
 
+#include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/numeric.hpp"
 #include "iresearch/formats/column/codecs/string_tuning.hpp"
 #include "iresearch/formats/column/read_context.hpp"
+#include "iresearch/index/column_info.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/containers/bitset.hpp"
+#include "iresearch/utils/default_init_allocator.hpp"
 #include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -91,7 +93,7 @@ struct ColumnBlockMeta {
   uint64_t tuple_count = 0;
   uint64_t file_offset = 0;
   uint64_t byte_size = 0;
-  const duckdb::CompressionFunction* codec = nullptr;
+  const codecs::CompressionFunction* codec = nullptr;
 };
 
 struct ListPart {
@@ -116,7 +118,8 @@ struct ColumnMeta {
   std::vector<ColumnMeta> children;
   std::vector<VariantRgMeta> variant_rgs;
   std::vector<ListPart> list_parts;
-  duckdb::shared_ptr<duckdb::HyperLogLog> hyperloglog;
+  duckdb::shared_ptr<duckdb::DistinctStatistics> distinct;
+  uint8_t compression_level = 0;
   uint64_t write_list_running = 0;
   std::unique_ptr<codecs::StringTuning> write_string_tuning;
   std::unique_ptr<codecs::NumericTuning> write_numeric_tuning;
@@ -127,15 +130,27 @@ void SerializeColumnMeta(duckdb::BinarySerializer& s, const ColumnMeta& meta);
 ColumnMeta DeserializeColumnMeta(duckdb::BinaryDeserializer& d);
 
 struct VariantScanState;
+struct ListScanState;
+
+struct ListRun {
+  uint64_t begin = 0;
+  uint64_t end = 0;
+};
 
 struct ListDictionary {
   uint64_t begin = 0;
   uint64_t end = 0;
   uint64_t missed_block = 0;
   uint64_t oversized_block = 0;
+  uint64_t ends_block = 0;
+  uint64_t ends_base = 0;
+  uint64_t ends_begin = 0;
+  uint64_t ends_end = 0;
   duckdb::buffer_ptr<duckdb::DictionaryEntry> lists;
-  std::vector<uint64_t> decoded;
+  bitset decoded;
   std::vector<uint32_t> ranks;
+  std::vector<ListRun> runs;
+  ScratchVector<uint64_t> ends;
 };
 
 class ColumnReader {
@@ -164,9 +179,9 @@ class ColumnReader {
     ~ScanState();
 
     std::shared_ptr<ReadContext> ctx;
-    duckdb::ColumnScanState st{nullptr};
+    codecs::ColumnScanState st;
     BlockWindow window{};
-    std::vector<std::unique_ptr<duckdb::ColumnSegment>> segments;
+    std::vector<std::unique_ptr<codecs::ColumnSegment>> segments;
     std::vector<ScanState> child_states;
     std::unique_ptr<VariantScanState> variant;
     size_t opened_block = std::numeric_limits<size_t>::max();
@@ -174,14 +189,12 @@ class ColumnReader {
     bool certified_dictionary = false;
     bool initialized = false;
     duckdb::SelectionVector sel;
-    std::unique_ptr<VectorScratch> list_codes;
-    std::unique_ptr<VectorScratch> list_ends;
-    std::unique_ptr<ListDictionary> list_dict;
-    std::vector<duckdb::sel_t> list_picked;
-    duckdb::SelectionVector list_sel;
+    duckdb::SelectionVector piece;
+    duckdb::SelectionVector window_sel;
+    std::unique_ptr<ListScanState> list;
     struct Fetch {
-      std::unique_ptr<duckdb::ColumnSegment> segment;
-      duckdb::ColumnFetchState state;
+      std::unique_ptr<codecs::ColumnSegment> segment;
+      codecs::ColumnFetchState state;
     };
     Fetch fetch;
     BlockWindow fetch_window{};
@@ -203,9 +216,11 @@ class ColumnReader {
   field_id Id() const noexcept { return _id; }
   const duckdb::LogicalType& Type() const noexcept { return _type; }
   uint64_t RowCount() const noexcept { return _row_count; }
+  bool InMemory() const noexcept { return _in_memory; }
+  bool Patched() const noexcept { return _patched; }
   size_t DataRgCount() const noexcept { return _segments.size(); }
-  bool HasValidity() const noexcept { return _validity != nullptr; }
-  const ColumnReader* Validity() const noexcept { return _validity.get(); }
+  bool HasValidity() const noexcept { return _validity_view != nullptr; }
+  const ColumnReader* Validity() const noexcept { return _validity_view; }
   std::span<const ColumnBlockMeta> DataBlocks() const noexcept {
     return _segments;
   }
@@ -213,9 +228,11 @@ class ColumnReader {
     SDB_ASSERT(block < _offsets.size());
     return _offsets[block];
   }
-  const duckdb::HyperLogLog* HyperLogLog() const noexcept {
-    return _hyperloglog.get();
+  const duckdb::DistinctStatistics* Distinct() const noexcept {
+    return _distinct.get();
   }
+  uint8_t CompressionLevel() const noexcept { return _compression_level; }
+  uint64_t FileId() const noexcept { return _file_id; }
 
   const duckdb::BaseStatistics& MergedStatistics() const noexcept {
     return *_stats;
@@ -241,8 +258,8 @@ class ColumnReader {
 
   template<typename Visitor>
   void VisitSubColumns(Visitor&& visit) const {
-    if (_validity) {
-      visit(SubColumn{.column = *_validity});
+    if (_validity_view) {
+      visit(SubColumn{.column = *_validity_view});
     }
     for (size_t i = 0; i != _children.size(); ++i) {
       visit(SubColumn{.column = *_children[i], .index = i + 1});
@@ -261,7 +278,7 @@ class ColumnReader {
 
   virtual uint64_t RowGroupEnd(uint64_t row) const noexcept;
 
-  std::unique_ptr<duckdb::ColumnSegment> OpenSegment(size_t rg,
+  std::unique_ptr<codecs::ColumnSegment> OpenSegment(size_t rg,
                                                      ReadContext& ctx) const {
     return Open(BlockWindow{rg, _offsets[rg], _offsets[rg + 1]}, ctx);
   }
@@ -270,7 +287,7 @@ class ColumnReader {
     return InitScan(
       std::shared_ptr<ReadContext>{std::shared_ptr<ReadContext>{}, &ctx});
   }
-  ScanState InitScan(std::shared_ptr<ReadContext> ctx) const;
+  virtual ScanState InitScan(std::shared_ptr<ReadContext> ctx) const;
 
   virtual uint64_t GatherCursor(const ScanState& s) const noexcept {
     return s.window.begin + s.st.offset_in_column;
@@ -297,8 +314,8 @@ class ColumnReader {
 
   // Narrows `sel` (offsets within [0, span) of the requested rows, ascending)
   // to the subset whose value in [anchor, anchor+span) passes `filter`, exactly
-  // like RowGroup::Scan's per-column filter step. Uses the compression codec's
-  // ColumnSegment::Filter (dict evaluates the predicate once per entry) when
+  // like RowGroup::Scan's per-column filter step. Uses the codec's filter
+  // callback (dict evaluates the predicate once per entry) when
   // the codec self-describes nulls; a bare IS [NOT] NULL (`null_check`)
   // evaluates on the validity child alone, skipping the data decode;
   // otherwise decodes the span (data + validity) into `scratch` and narrows
@@ -306,13 +323,19 @@ class ColumnReader {
   // (rows must ascend across calls). `scratch` is a caller-owned throwaway of
   // this column's type. Returns the survivor count; on return
   // `sel[0..survivors)` are the surviving span offsets.
-  duckdb::idx_t GatherFilter(ScanState& s, uint64_t anchor, duckdb::idx_t span,
-                             duckdb::SelectionVector& sel,
-                             duckdb::idx_t sel_count,
-                             const duckdb::TableFilter& filter,
-                             duckdb::TableFilterState& filter_state,
-                             NullCheckKind null_check,
-                             duckdb::Vector& scratch) const;
+  virtual duckdb::idx_t GatherFilter(
+    ScanState& s, uint64_t anchor, duckdb::idx_t span,
+    duckdb::SelectionVector& sel, duckdb::idx_t sel_count,
+    const duckdb::TableFilter& filter, duckdb::TableFilterState& filter_state,
+    NullCheckKind null_check, duckdb::Vector& scratch) const;
+
+  class PointReader;
+
+  virtual bool FetchPoint(PointReader& reader, uint64_t row,
+                          duckdb::Vector& out, duckdb::idx_t out_offset) const;
+
+  virtual bool ValidPoint(PointReader& reader, uint64_t row,
+                          duckdb::Vector& scratch) const;
 
   class PointReader {
    public:
@@ -324,17 +347,34 @@ class ColumnReader {
 
     void SetCache(duckdb::ObjectCache* cache) noexcept { _ctx.SetCache(cache); }
 
-    bool FetchRow(uint64_t row, duckdb::Vector& out, duckdb::idx_t out_offset);
+    bool FetchRow(uint64_t row, duckdb::Vector& out, duckdb::idx_t out_offset) {
+      return _stored ? FetchStored(row, out, out_offset)
+                     : _reader->FetchPoint(*this, row, out, out_offset);
+    }
 
-    void FetchRows(std::span<const uint64_t> rows, duckdb::Vector& out,
-                   duckdb::idx_t out_offset);
+    void FetchRows(std::span<const uint32_t> ids, uint32_t first_id,
+                   duckdb::Vector& out, duckdb::idx_t out_offset) {
+      if (_stored) [[likely]] {
+        FetchStoredRows(ids, first_id, out, out_offset);
+      } else {
+        FetchPoints(ids, first_id, out, out_offset);
+      }
+    }
 
-    bool ValidRow(uint64_t row, duckdb::Vector& scratch);
+    bool ValidRow(uint64_t row, duckdb::Vector& scratch) {
+      return _stored ? ValidStored(row, scratch)
+                     : _reader->ValidPoint(*this, row, scratch);
+    }
+
+    bool FetchStored(uint64_t row, duckdb::Vector& out,
+                     duckdb::idx_t out_offset);
+
+    bool ValidStored(uint64_t row, duckdb::Vector& scratch);
 
    protected:
     struct OpenBlock {
-      std::unique_ptr<duckdb::ColumnSegment> segment;
-      duckdb::ColumnFetchState state;
+      std::unique_ptr<codecs::ColumnSegment> segment;
+      codecs::ColumnFetchState state;
       uint64_t bytes = 0;
       uint64_t last_use = 0;
     };
@@ -344,10 +384,15 @@ class ColumnReader {
     bool FetchOne(std::vector<OpenBlock>& blocks, const ColumnReader& reader,
                   BlockWindow& window, uint64_t row, duckdb::Vector& out,
                   duckdb::idx_t out_offset);
+    void FetchStoredRows(std::span<const uint32_t> ids, uint32_t first_id,
+                         duckdb::Vector& out, duckdb::idx_t out_offset);
+    void FetchPoints(std::span<const uint32_t> ids, uint32_t first_id,
+                     duckdb::Vector& out, duckdb::idx_t out_offset);
     void Evict(uint64_t incoming);
 
     ReadContext _ctx;
     const ColumnReader* _reader;
+    bool _stored;
     std::vector<OpenBlock> _blocks;
     std::vector<OpenBlock> _validity_blocks;
     std::vector<OpenBlock*> _open;
@@ -383,11 +428,7 @@ class ColumnReader {
 
     void FetchDocs(std::span<const doc_id_t> docs) {
       SDB_ASSERT(docs.size() <= STANDARD_VECTOR_SIZE);
-      _rows.clear();
-      for (const auto doc : docs) {
-        _rows.push_back(static_cast<uint64_t>(doc) - doc_limits::min());
-      }
-      PointReader::FetchRows(_rows, _batch.Reset(), 0);
+      PointReader::FetchRows(docs, doc_limits::min(), _batch.Reset(), 0);
     }
     bytes_view Fetched(size_t i) const {
       if (!duckdb::FlatVector::Validity(_batch.vector).RowIsValid(i)) {
@@ -404,7 +445,6 @@ class ColumnReader {
 
     VectorScratch _buf{duckdb::LogicalType::BLOB, 1};
     VectorScratch _batch{duckdb::LogicalType::BLOB};
-    std::vector<uint64_t> _rows;
   };
 
  protected:
@@ -426,6 +466,10 @@ class ColumnReader {
   static void ResetOutput(const ColumnReader& reader, ScanState& s) {
     reader.NewOutputVector(s);
   }
+  static const duckdb::shared_ptr<duckdb::DistinctStatistics>& SharedDistinct(
+    const ColumnReader& reader) noexcept {
+    return reader._distinct;
+  }
 
   field_id _id;
   uint64_t _file_id = 0;
@@ -435,17 +479,21 @@ class ColumnReader {
   std::vector<uint64_t> _offsets;
   uint64_t _row_count = 0;
   std::unique_ptr<ColumnReader> _validity;
+  const ColumnReader* _validity_view = nullptr;
   std::vector<std::unique_ptr<ColumnReader>> _children;
   std::vector<SubColumn> _row_group_columns;
   uint64_t _array_size = 0;
-  duckdb::shared_ptr<duckdb::HyperLogLog> _hyperloglog;
+  duckdb::shared_ptr<duckdb::DistinctStatistics> _distinct;
+  uint8_t _compression_level = 0;
   duckdb::unique_ptr<duckdb::BaseStatistics> _stats;
+  bool _in_memory = false;
+  bool _patched = false;
 
  private:
-  void CertifyStrings(ScanState& s, duckdb::ColumnSegment& segment,
+  void CertifyStrings(ScanState& s, const codecs::ColumnSegment& segment,
                       duckdb::Vector& result) const;
   void Readahead(size_t block, ReadContext& ctx, ScanState* s) const noexcept;
-  std::unique_ptr<duckdb::ColumnSegment> Open(const BlockWindow& w,
+  std::unique_ptr<codecs::ColumnSegment> Open(const BlockWindow& w,
                                               ReadContext& ctx,
                                               ScanState* s = nullptr) const;
   bool NextSegment(BlockWindow& w) const noexcept;
@@ -460,15 +508,40 @@ class ColumnReader {
   bool ValiditySpanAllValid(ScanState& s, uint64_t anchor,
                             duckdb::idx_t span) const;
   void BeginScanVector(ScanState& s) const;
+  void GatherWindow(ScanState& s, uint64_t anchor,
+                    const duckdb::SelectionVector& sel, duckdb::idx_t hits,
+                    duckdb::idx_t span, duckdb::Vector& out,
+                    duckdb::idx_t at) const;
   bool SelectNative(ScanState& s, const duckdb::SelectionVector& sel,
-                    duckdb::idx_t hits, duckdb::idx_t span,
-                    duckdb::Vector& out) const;
+                    duckdb::idx_t hits, duckdb::idx_t span, duckdb::Vector& out,
+                    duckdb::idx_t at, duckdb::ScanVectorType scan_type) const;
+  bool SelectsAcross(const ScanState& s, duckdb::idx_t span) const noexcept;
+  void SelectAcross(ScanState& s, const duckdb::SelectionVector& sel,
+                    duckdb::idx_t hits, duckdb::idx_t span, duckdb::Vector& out,
+                    duckdb::idx_t at) const;
   void OpenScanSegment(ScanState& s) const;
   void SkipTo(ScanState& s, uint64_t row) const;
   void SkipValidity(ScanState& s, duckdb::idx_t count) const;
   duckdb::ScanVectorType GetVectorScanType(ScanState& s, duckdb::idx_t count,
                                            duckdb::Vector& result) const;
 };
+
+struct ListScanState {
+  std::unique_ptr<ColumnReader::VectorScratch> codes;
+  std::unique_ptr<ColumnReader::VectorScratch> ends;
+  ListDictionary dictionary;
+  std::vector<duckdb::sel_t> picked;
+  duckdb::SelectionVector sel;
+};
+
+inline void KeepReadahead(const ColumnReader::ScanState& from,
+                          ColumnReader::ScanState& to) noexcept {
+  SDB_ASSERT(from.child_states.size() == to.child_states.size());
+  to.advised_end = from.advised_end;
+  for (size_t i = 0; i != to.child_states.size(); ++i) {
+    KeepReadahead(from.child_states[i], to.child_states[i]);
+  }
+}
 
 inline duckdb::Vector& ResetScratch(
   std::unique_ptr<ColumnReader::VectorScratch>& slot, const auto& type,

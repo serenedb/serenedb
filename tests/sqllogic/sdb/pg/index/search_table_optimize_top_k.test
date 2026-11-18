@@ -9,7 +9,7 @@ CREATE TEXT SEARCH DICTIONARY st_topk_en AS
 
 statement ok
 CREATE TABLE st_topk (id INTEGER PRIMARY KEY, body VARCHAR)
-WITH (storage = 'search', compaction_interval = 0, optimize_top_k = 'bm25(1.2, 0.75)');
+WITH (compaction_interval = 0, optimize_top_k = 'bm25(1.2, 0.75)');
 
 statement ok
 CREATE INDEX st_topk_idx ON st_topk USING inverted (body st_topk_en);
@@ -17,16 +17,12 @@ CREATE INDEX st_topk_idx ON st_topk USING inverted (body st_topk_en);
 statement ok
 INSERT INTO st_topk SELECT i, CASE WHEN i % 1000 = 500 THEN repeat('fox ', 30 + i / 1000) WHEN i % 17 = 0 THEN repeat('fox ', 1 + i % 3) ELSE 'dog ' END || repeat('filler ', (i * 104729) % 30) FROM range(30000) t(i);
 
-statement ok
-VACUUM (REFRESH_TABLE) st_topk;
-
 query
 EXPLAIN SELECT id FROM st_topk WHERE body @@ ts_phrase('fox') ORDER BY BM25(st_topk.tableoid) DESC LIMIT 8;
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
-│ Index: st_topk              │
-│ Lookup: search              │
+│ Table: st_topk              │
 │ Index Filter:               │
 │ ╭─ Term ──────────────╮     │
 │ │ Field: body(string) │     │
@@ -84,7 +80,7 @@ QUERY PLAN
 
 statement ok
 CREATE TABLE st_plain (id INTEGER PRIMARY KEY, body VARCHAR)
-WITH (storage = 'search', compaction_interval = 0);
+WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX st_plain_idx ON st_plain USING inverted (body st_topk_en);
@@ -92,16 +88,12 @@ CREATE INDEX st_plain_idx ON st_plain USING inverted (body st_topk_en);
 statement ok
 INSERT INTO st_plain VALUES (1, 'fox quick'), (2, 'fox lazy'), (3, 'lazy dog');
 
-statement ok
-VACUUM (REFRESH_TABLE) st_plain;
-
 query
 EXPLAIN SELECT id FROM st_plain WHERE body @@ ts_phrase('fox') ORDER BY BM25(st_plain.tableoid) DESC LIMIT 2;
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
-│ Index: st_plain             │
-│ Lookup: search              │
+│ Table: st_plain             │
 │ Index Filter:               │
 │ ╭─ Term ──────────────╮     │
 │ │ Field: body(string) │     │
@@ -115,24 +107,24 @@ QUERY PLAN
 
 statement ok
 CREATE TABLE st_empty (id INTEGER PRIMARY KEY, body VARCHAR)
-WITH (storage = 'search', compaction_interval = 0);
+WITH (compaction_interval = 0);
 
 statement error
 CREATE INDEX st_empty_topk ON st_empty USING inverted (body st_topk_en) WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 ----
-db error: ERROR: optimize_top_k is a table option on a search-backed table
-HINT: Set it in CREATE TABLE ... WITH (storage = 'search', optimize_top_k = '...'); the table's store keeps the score bounds every index on it prunes with.
+db error: ERROR: optimize_top_k is a table option
+HINT: Set it in CREATE TABLE ... WITH (optimize_top_k = ...).
 
 
 statement error
-CREATE TABLE st_expr (id INTEGER PRIMARY KEY, body VARCHAR) WITH (storage = 'search', optimize_top_k = 'bm25(1 + 0.2, 0.75)');
+CREATE TABLE st_expr (id INTEGER PRIMARY KEY, body VARCHAR) WITH (optimize_top_k = 'bm25(1 + 0.2, 0.75)');
 ----
 db error: ERROR: 'optimize_top_k' scorer args must be constants: 'bm25(1 + 0.2, 0.75)'
 HINT: Use e.g. 'tfidf()' or 'bm25(1.2, 0.75)'
 
 
 statement error
-CREATE TABLE st_bad (id INTEGER PRIMARY KEY, body VARCHAR) WITH (storage = 'search', optimize_top_k = 'nope()');
+CREATE TABLE st_bad (id INTEGER PRIMARY KEY, body VARCHAR) WITH (optimize_top_k = 'nope()');
 ----
 db error: ERROR: Unknown scorer 'nope'
 HINT: Expected one of: bm25, tfidf, lm_jm, lm_dirichlet, indri_dirichlet, dfi, idf, raw_boost, raw_tf, raw_dl

@@ -51,6 +51,8 @@ class ColFileWriter final {
 
   uint64_t AppendString(std::string_view string);
 
+  void Flush();
+
   void Finish(format_utils::FooterWriter footer);
 
  private:

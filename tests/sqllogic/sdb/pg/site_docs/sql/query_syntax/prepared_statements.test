@@ -141,9 +141,6 @@ CREATE INDEX doc_idx ON doc
 statement ok
 INSERT INTO doc VALUES (1, [0, 0]), (2, [1, 1]), (3, [5, 5]);
 
-statement ok
-VACUUM (REFRESH_TABLE) doc;
-
 # DOCS_TEST_BODY
 
 statement ok

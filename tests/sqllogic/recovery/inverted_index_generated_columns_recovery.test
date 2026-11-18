@@ -17,7 +17,7 @@ INSERT INTO iigc_t (a, b, c) VALUES (1, 'red', 'x'), (2, 'blue', 'y'), (3, 'red'
 
 
 statement ok
-VACUUM (REFRESH_TABLE) iigc_t;
+VACUUM (FLUSH_TABLE) iigc_t;
 
 
 query
@@ -45,7 +45,7 @@ SELECT 1;
 
 connection after_crash
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (REFRESH_TABLE) iigc_t;
+SELECT 1;
 
 
 connection after_crash
@@ -78,7 +78,7 @@ SELECT 1;
 
 connection after_shutdown
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (REFRESH_TABLE) iigc_t;
+SELECT 1;
 
 
 connection after_shutdown

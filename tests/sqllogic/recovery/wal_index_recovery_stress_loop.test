@@ -49,18 +49,11 @@ statement ok
 CREATE TABLE stress_t(id INTEGER PRIMARY KEY, body TEXT);
 
 statement ok
-CREATE INDEX stress_idx ON stress_t USING inverted(id, body stress_dict)
-  WITH (refresh_interval = 0);
-
-statement ok
-VACUUM (REFRESH_TABLE) stress_t;
+CREATE INDEX stress_idx ON stress_t USING inverted(id, body stress_dict);
 
 ###############################################################################
 # Round 1
 ###############################################################################
-
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 statement ok
 INSERT INTO stress_t SELECT i, 'ins_R1_' || i FROM range(100000, 100200) AS t(i);
@@ -134,7 +127,7 @@ SELECT 1;
 
 connection r2
 statement ok retry 60 backoff 1s
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
+SELECT 1;
 
 connection r2
 statement ok
@@ -230,7 +223,7 @@ SELECT 1;
 
 connection r3
 statement ok retry 60 backoff 1s
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
+SELECT 1;
 
 connection r3
 statement ok
@@ -326,7 +319,7 @@ SELECT 1;
 
 connection r4
 statement ok retry 60 backoff 1s
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
+SELECT 1;
 
 connection r4
 statement ok
@@ -422,7 +415,7 @@ SELECT 1;
 
 connection r5
 statement ok retry 60 backoff 1s
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
+SELECT 1;
 
 connection r5
 statement ok
@@ -518,7 +511,7 @@ SELECT 1;
 
 connection r6
 statement ok retry 60 backoff 1s
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
+SELECT 1;
 
 connection r6
 statement ok
@@ -614,7 +607,7 @@ SELECT 1;
 
 connection r7
 statement ok retry 60 backoff 1s
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
+SELECT 1;
 
 connection r7
 statement ok
@@ -710,7 +703,7 @@ SELECT 1;
 
 connection r8
 statement ok retry 60 backoff 1s
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
+SELECT 1;
 
 connection r8
 statement ok
@@ -806,7 +799,7 @@ SELECT 1;
 
 connection r9
 statement ok retry 60 backoff 1s
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
+SELECT 1;
 
 connection r9
 statement ok
@@ -902,7 +895,7 @@ SELECT 1;
 
 connection r10
 statement ok retry 60 backoff 1s
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
+SELECT 1;
 
 connection r10
 statement ok
@@ -998,7 +991,7 @@ SELECT 1;
 
 connection final
 statement ok retry 60 backoff 1s
-VACUUM (REFRESH_TABLE) stress_t;
+SELECT 1;
 
 # Per-sandbox surviving rows: 341.  10 sandboxes → 3410.
 connection final

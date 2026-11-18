@@ -26,8 +26,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <magic_enum/magic_enum.hpp>
-#include <string>
-#include <vector>
 
 namespace irs {
 
@@ -103,18 +101,6 @@ class MergeStepClock {
  private:
   MergeProfile& _profile;
   std::chrono::steady_clock::time_point _last;
-};
-
-struct MergeStats {
-  std::vector<std::string> inputs;
-  uint64_t input_docs = 0;
-  uint64_t input_live_docs = 0;
-  uint64_t input_bytes = 0;
-  uint64_t input_live_bytes = 0;
-  std::string output;
-  uint64_t output_docs = 0;
-  uint64_t output_bytes = 0;
-  MergeProfile profile;
 };
 
 }  // namespace irs

@@ -32,12 +32,12 @@ TEST(Metrics, SetGet) {
 }
 
 TEST(Metrics, AddSub) {
-  sdb::metrics::Set(Gauge::RefreshActive, 0);
-  sdb::metrics::Add(Gauge::RefreshActive);
-  sdb::metrics::Add(Gauge::RefreshActive, 4);
-  EXPECT_EQ(sdb::metrics::Get(Gauge::RefreshActive), 5);
-  sdb::metrics::Sub(Gauge::RefreshActive, 2);
-  EXPECT_EQ(sdb::metrics::Get(Gauge::RefreshActive), 3);
+  sdb::metrics::Set(Gauge::CleanupActive, 0);
+  sdb::metrics::Add(Gauge::CleanupActive);
+  sdb::metrics::Add(Gauge::CleanupActive, 4);
+  EXPECT_EQ(sdb::metrics::Get(Gauge::CleanupActive), 5);
+  sdb::metrics::Sub(Gauge::CleanupActive, 2);
+  EXPECT_EQ(sdb::metrics::Get(Gauge::CleanupActive), 3);
 }
 
 TEST(Metrics, ScopedBalances) {

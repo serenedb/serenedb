@@ -355,12 +355,8 @@ constexpr SystemMacro kMacros[] = {
   {"pg_catalog", "pg_indexam_has_property",
    R"((am, property) AS
       CASE (SELECT amname FROM pg_catalog.pg_am WHERE oid = am AND amtype = 'i')
-        WHEN 'secondary' THEN CASE lower(property)
-          WHEN 'can_order' THEN false WHEN 'can_unique' THEN true
-          WHEN 'can_multi_col' THEN true WHEN 'can_exclude' THEN false
-          WHEN 'can_include' THEN false END
         WHEN 'inverted' THEN CASE lower(property)
-          WHEN 'can_order' THEN false WHEN 'can_unique' THEN false
+          WHEN 'can_order' THEN false WHEN 'can_unique' THEN true
           WHEN 'can_multi_col' THEN true WHEN 'can_exclude' THEN false
           WHEN 'can_include' THEN true END
       END)"},

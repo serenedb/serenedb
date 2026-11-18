@@ -10,12 +10,11 @@ CREATE TEXT SEARCH DICTIONARY sm_en AS split_text_csv(' ')
 
 
 statement ok
-CREATE TABLE sm (id INT PRIMARY KEY, body TEXT)
+CREATE TABLE sm (id INT PRIMARY KEY, body TEXT) WITH (compaction_interval = 0)
 
 
 statement ok
 CREATE INDEX sm_idx ON sm USING inverted (id, body sm_en)
-  WITH (compaction_interval = 0)
 
 
 statement ok
@@ -25,17 +24,13 @@ FROM generate_series(1, 300000) s(i)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) sm
+VACUUM (FLUSH_TABLE) sm
 
 
 statement ok
 INSERT INTO sm
 SELECT i, CASE WHEN i % 3 = 0 THEN 'fox dog' ELSE 'fox' END
 FROM generate_series(300001, 305000) s(i)
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sm
 
 
 statement ok

@@ -27,10 +27,10 @@
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/utils/bytes_output.hpp>
+#include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/type_limits.hpp>
 
 #include "formats/column/test_cs_helpers.hpp"
-#include "index/compaction/policy_compaction.hpp"
 #include "index_tests.hpp"
 #include "token_sink_utils.hpp"
 
@@ -196,7 +196,7 @@ TEST_P(NormTestCase, CheckNorms) {
   auto opts = irs::tests::DefaultWriterOptions();
 
   // Create actual index
-  auto writer = open_writer(irs::kOmCreate, std::move(opts));
+  auto writer = open_writer(tests::kOmCreate, std::move(opts));
   ASSERT_NE(nullptr, writer);
   ASSERT_TRUE(Insert(*writer, doc0->indexed.begin(), doc0->indexed.end()));
   ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end()));
@@ -280,7 +280,8 @@ TEST_P(NormTestCase, StackedTokensCountOnce) {
   tests::Document doc3;
   add(doc3, 2048, 3);
 
-  auto writer = open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
+  auto writer =
+    open_writer(tests::kOmCreate, irs::tests::DefaultWriterOptions());
   ASSERT_NE(nullptr, writer);
   for (const auto* doc : {&doc0, &doc1, &doc2, &doc3}) {
     ASSERT_TRUE(Insert(*writer, doc->indexed.begin(), doc->indexed.end()));
@@ -332,7 +333,8 @@ TEST_P(NormTestCase, RareLongNormsAcrossCompaction) {
     EXPECT_TRUE(exceptions);
   };
 
-  auto writer = open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
+  auto writer =
+    open_writer(tests::kOmCreate, irs::tests::DefaultWriterOptions());
   ASSERT_NE(nullptr, writer);
   std::vector<std::vector<std::pair<irs::doc_id_t, uint32_t>>> expected(2);
   for (size_t segment = 0; segment < 2; ++segment) {
@@ -363,8 +365,8 @@ TEST_P(NormTestCase, RareLongNormsAcrossCompaction) {
   tests::Remove(*writer, remove_long);
   tests::Remove(*writer, remove_short);
   writer->RefreshCommit();
-  const tests::CompactionCount compact_all;
-  ASSERT_TRUE(tests::Compact(*writer, tests::MakePolicy(compact_all)));
+  const irs::index_utils::CompactionCount compact_all;
+  ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all)));
   writer->RefreshCommit();
 
   std::vector<std::pair<irs::doc_id_t, uint32_t>> merged;
@@ -428,7 +430,7 @@ TEST_P(NormTestCase, CheckNormsBatched) {
   auto opts = irs::tests::DefaultWriterOptions();
 
   // Create actual index
-  auto writer = open_writer(irs::kOmCreate, std::move(opts));
+  auto writer = open_writer(tests::kOmCreate, std::move(opts));
   ASSERT_NE(nullptr, writer);
   for (const auto* d : docs) {
     ASSERT_TRUE(Insert(*writer, d->indexed.begin(), d->indexed.end()));
@@ -535,7 +537,7 @@ TEST_P(NormTestCase, CheckNormsCompaction) {
   auto opts = irs::tests::DefaultWriterOptions();
 
   // Create actual index
-  auto writer = open_writer(irs::kOmCreate, std::move(opts));
+  auto writer = open_writer(tests::kOmCreate, std::move(opts));
   ASSERT_NE(nullptr, writer);
   ASSERT_TRUE(Insert(*writer, doc0->indexed.begin(), doc0->indexed.end()));
   ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end()));
@@ -658,8 +660,8 @@ TEST_P(NormTestCase, CheckNormsCompaction) {
 
   // Compact segments
   {
-    const tests::CompactionCount compact_all;
-    ASSERT_TRUE(tests::Compact(*writer, tests::MakePolicy(compact_all)));
+    const irs::index_utils::CompactionCount compact_all;
+    ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all)));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -784,7 +786,7 @@ TEST_P(NormTestCase, CheckNormsCompactionWithRemovals) {
   auto opts = irs::tests::DefaultWriterOptions();
 
   // Create actual index
-  auto writer = open_writer(irs::kOmCreate, std::move(opts));
+  auto writer = open_writer(tests::kOmCreate, std::move(opts));
   ASSERT_NE(nullptr, writer);
   ASSERT_TRUE(Insert(*writer, doc0->indexed.begin(), doc0->indexed.end()));
   ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end()));
@@ -915,8 +917,8 @@ TEST_P(NormTestCase, CheckNormsCompactionWithRemovals) {
 
   // Compact segments
   {
-    const tests::CompactionCount compact_all;
-    ASSERT_TRUE(tests::Compact(*writer, tests::MakePolicy(compact_all)));
+    const irs::index_utils::CompactionCount compact_all;
+    ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all)));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -1002,8 +1004,8 @@ TEST_P(NormTestCase, CheckNormsCompactionWithRemovals) {
 
   // Compact segments
   {
-    const tests::CompactionCount compact_all;
-    ASSERT_TRUE(tests::Compact(*writer, tests::MakePolicy(compact_all)));
+    const irs::index_utils::CompactionCount compact_all;
+    ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all)));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
   }

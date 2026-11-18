@@ -20,9 +20,6 @@ INSERT INTO articles VALUES
 (7, 'Fix a dropped connection',          [0.0, 0.0, 1.0]::FLOAT[3]),
 (8, 'How do I change my payment method', [0.0, 1.0, 0.0]::FLOAT[3]);
 
-statement ok
-VACUUM (REFRESH_TABLE) articles;
-
 # DOCS_TEST: example_001
 
 # DOCS_TEST_BODY

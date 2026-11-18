@@ -64,9 +64,6 @@ INSERT INTO dup_mix SELECT i, [100.0::FLOAT, 0.0::FLOAT]::FLOAT[2] FROM range(50
 statement ok
 INSERT INTO dup_mix SELECT i, [i::FLOAT, 50.0::FLOAT]::FLOAT[2] FROM range(500, 1000) t(i);
 
-statement ok
-VACUUM (REFRESH_TABLE) dup_mix;
-
 query
 SELECT count(*) FROM dup_mix_idx;
 ----

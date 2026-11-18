@@ -34,9 +34,10 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/formats/column/col_file_writer.hpp"
+#include "executor.h"
 #include "iresearch/formats/column/norm_column_reader.hpp"
 #include "iresearch/formats/column/norm_writer.hpp"
+#include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/norm_reader_impl.hpp"
 #include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/directory_reader.hpp"
@@ -80,9 +81,9 @@ const std::vector<uint32_t>& IndexNorms() {
     }
     const char* field = std::getenv("NORM_FIELD");
     irs::MMapDirectory dir{path};
-    irs::DirectoryReader reader{
+    const auto reader = bench::OpenIndex(
       dir,
-      irs::IndexReaderOptions{.db = &irs::DuckDBEngine::Instance().instance()}};
+      irs::IndexReaderOptions{.db = &irs::DuckDBEngine::Instance().instance()});
     for (const auto& segment : reader) {
       for (const auto id : segment.field_ids()) {
         if (field != nullptr && id != std::strtoul(field, nullptr, 10)) {
@@ -260,14 +261,15 @@ struct PackedColumn {
   size_t bytes = 0;
 
   void Build(const std::vector<uint32_t>& values) {
-    irs::ColFileWriter file{dir.create("norms")};
+    auto file = dir.create("norms");
     irs::NormColumnWriter writer{1, kRgRows,
-                                 [&]() -> irs::ColFileWriter& { return file; }};
+                                 [&]() -> irs::IndexOutput& { return *file; }};
     for (size_t i = 0; i != values.size(); ++i) {
       writer.Append(i, values[i]);
     }
     writer.Finalize();
-    file.Finish([](duckdb::BinarySerializer&) {});
+    irs::format_utils::WriteFooter(*file, [](duckdb::BinarySerializer&) {});
+    file.reset();
     for (const auto& region : writer.Meta().regions) {
       bytes += irs::NormSlotsSize(region) +
                (region.exceptions == 0 ? 0 : irs::NormTableSize(region));

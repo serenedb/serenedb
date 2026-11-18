@@ -72,6 +72,7 @@ void HitBatcher::BeginSegment(uint32_t seg_idx,
   _compact = false;
   _compact_dense = false;
   _columns.clear();
+  _absent.clear();
   _filters.Clear();
   _score_filter = nullptr;
   _score_state = nullptr;
@@ -125,6 +126,7 @@ void HitBatcher::BeginSegment(uint32_t seg_idx,
   for (const auto& p : _projections) {
     const auto* r = col_reader->Column(static_cast<irs::field_id>(p.column_id));
     if (r == nullptr) {
+      _absent.push_back(p.output_slot);
       continue;
     }
     // A projected column that is also a `.col` filter column materializes as
@@ -186,6 +188,14 @@ std::pair<uint64_t, duckdb::idx_t> HitBatcher::BuildSel(duckdb::idx_t first,
   return {anchor, span};
 }
 
+void HitBatcher::FillAbsent(duckdb::DataChunk& output) const {
+  for (const auto slot : _absent) {
+    auto& out = output.data[slot];
+    out.SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
+    duckdb::ConstantVector::SetNull(out, true);
+  }
+}
+
 void HitBatcher::FinishBatch(Batch& batch, duckdb::idx_t count) {
   batch.count = count;
   batch.docs = {_docs.data(), count};
@@ -235,7 +245,8 @@ float* HitBatcher::ScoreData() {
   auto& s = _score_bufs[_score_idx];
   if (!s) {
     s = std::make_unique<irs::ColumnReader::VectorScratch>(
-      duckdb::LogicalType::FLOAT);
+      duckdb::LogicalType::FLOAT,
+      STANDARD_VECTOR_SIZE + irs::doc_limits::kScoresSlack);
   }
   return duckdb::FlatVector::GetDataMutable<float>(s->vector);
 }
@@ -355,9 +366,8 @@ void HitBatcher::MaterializeColumn(Column& c, uint64_t anchor,
   if (!whole && hits * column_internal::kPointDensity < span &&
       !c.out_type.IsNested()) {
     column_internal::FetchPoints(
-      c.point, *_col_reader, *c.reader, _rows, hits,
-      [&](duckdb::idx_t i) -> uint64_t { return anchor + _sel.get_index(i); },
-      out, at);
+      c.point, *_col_reader, *c.reader,
+      std::span<const irs::doc_id_t>{&_docs[first], hits}, out, at);
     return;
   }
   column_internal::GatherSelected(*c.reader, *c.state, anchor, _sel, hits, span,
@@ -413,6 +423,7 @@ HitBatcher::Batch HitBatcher::EmitFiltered(duckdb::DataChunk& output) {
     }
   }
 
+  FillAbsent(output);
   FinishBatch(batch, survivors);
   return batch;
 }
@@ -442,6 +453,7 @@ HitBatcher::Batch HitBatcher::Emit(duckdb::DataChunk& output) {
       }
     }
   }
+  FillAbsent(output);
   FinishBatch(batch, _batch);
   return batch;
 }

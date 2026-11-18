@@ -34,15 +34,11 @@ t
 
 
 statement ok
-CREATE TABLE tuple_search (id BIGINT PRIMARY KEY, payload TUPLE(BIGINT, BIGINT)) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+CREATE TABLE tuple_search (id BIGINT PRIMARY KEY, payload TUPLE(BIGINT, BIGINT)) WITH (compaction_interval = 0);
 
 
 statement ok
 INSERT INTO tuple_search VALUES (1, ROW(10, 20)), (2, NULL), (3, ROW(NULL, 30));
-
-
-statement ok
-VACUUM (REFRESH_TABLE) tuple_search;
 
 
 query

@@ -47,7 +47,8 @@ connection after_crash
 statement error
 INSERT INTO auc_t VALUES (3, 1, 'z');
 ----
-db error: ERROR: Duplicate key "b: 1" violates unique constraint.<slt:ignore>
+db error: ERROR: duplicate key value violates unique constraint "auc_b_key"
+DETAIL: Key (b)=(1) already exists.
 
 
 connection after_crash

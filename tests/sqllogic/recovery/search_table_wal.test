@@ -1,17 +1,17 @@
 control substitution on
 
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-CREATE TABLE s_wal(a INTEGER, b TEXT) WITH (storage = 'search');
+CREATE TABLE s_wal(a INTEGER, b TEXT);
 
 statement ok
 RESET sdb_faults;
 
-# --- Fixture: a published baseline, durable in the iresearch index on disk. ---
+# --- Fixture: a baseline flushed to segments on disk. ---
 statement ok
 INSERT INTO s_wal VALUES (1, 'one'), (2, 'two'), (3, 'three');
 
 statement ok
-VACUUM (REFRESH_TABLE) s_wal;
+VACUUM (FLUSH_TABLE) s_wal;
 
 query
 SELECT a, b FROM s_wal ORDER BY a;
@@ -24,8 +24,6 @@ a	b
 
 ###############################################################################
 # 1. Crash AFTER the WAL commit -> the write survives via recovery replay.
-#    (4,5) is fsynced into the WAL but never refresh-published, so it exists
-#    ONLY in the WAL; recovery must rebuild it into iresearch.
 ###############################################################################
 
 statement ok
@@ -48,7 +46,7 @@ a	b
 
 connection after_commit
 statement ok
-VACUUM (REFRESH_TABLE) s_wal;
+VACUUM (FLUSH_TABLE) s_wal;
 
 
 ###############################################################################
@@ -83,7 +81,7 @@ DROP TABLE s_wal;
 
 connection before_commit
 statement ok
-CREATE TABLE s_wal_pk(id INTEGER PRIMARY KEY, b TEXT) WITH (storage = 'search');
+CREATE TABLE s_wal_pk(id INTEGER PRIMARY KEY, b TEXT);
 
 connection before_commit
 statement ok
@@ -91,7 +89,7 @@ INSERT INTO s_wal_pk VALUES (1, 'one'), (2, 'two'), (3, 'three');
 
 connection before_commit
 statement ok
-VACUUM (REFRESH_TABLE) s_wal_pk;
+VACUUM (FLUSH_TABLE) s_wal_pk;
 
 connection before_commit
 query
@@ -135,7 +133,7 @@ four
 
 connection pk_after_commit
 statement ok
-VACUUM (REFRESH_TABLE) s_wal_pk;
+VACUUM (FLUSH_TABLE) s_wal_pk;
 
 
 # --- 3b. Crash BEFORE the WAL commit -> lost (no record written). ---
@@ -188,7 +186,7 @@ SET sdb_faults = 'crash_after_commit';
 
 connection pk_before_commit
 statement error connection closed
-CREATE TABLE ctas_after WITH (storage = 'search') AS
+CREATE TABLE ctas_after AS
   SELECT x, y FROM read_parquet('${__TEST_DIR__}/ctas_src.parquet');
 
 # --- restart ---
@@ -209,7 +207,7 @@ v9999
 
 connection ctas_after_conn
 statement ok
-VACUUM (REFRESH_TABLE) ctas_after;
+VACUUM (FLUSH_TABLE) ctas_after;
 
 connection ctas_after_conn
 statement ok
@@ -217,7 +215,7 @@ SET sdb_faults = 'crash_before_commit';
 
 connection ctas_after_conn
 statement error connection closed
-CREATE TABLE ctas_before WITH (storage = 'search') AS
+CREATE TABLE ctas_before AS
   SELECT x, y FROM read_parquet('${__TEST_DIR__}/ctas_src.parquet');
 
 # --- restart ---
@@ -239,7 +237,7 @@ DROP TABLE ctas_after;
 
 connection ctas_before_conn
 statement ok
-CREATE TABLE mix_t (x INTEGER, y TEXT) WITH (storage = 'search');
+CREATE TABLE mix_t (x INTEGER, y TEXT);
 
 connection ctas_before_conn
 statement ok
@@ -294,13 +292,11 @@ DROP TABLE mix_t;
 
 ###############################################################################
 # 6. DELETE -> the removal survives recovery replay (with and without a PK).
-#    The baseline is published; the DELETE is fsynced into the WAL but crashes
-#    before the iresearch removal commits, so recovery must re-apply it.
 ###############################################################################
 
 connection mix_conn
 statement ok
-CREATE TABLE del_t (id INTEGER PRIMARY KEY, b TEXT) WITH (storage = 'search');
+CREATE TABLE del_t (id INTEGER PRIMARY KEY, b TEXT);
 
 connection mix_conn
 statement ok
@@ -308,7 +304,7 @@ INSERT INTO del_t VALUES (1, 'one'), (2, 'two'), (3, 'three');
 
 connection mix_conn
 statement ok
-VACUUM (REFRESH_TABLE) del_t;
+VACUUM (FLUSH_TABLE) del_t;
 
 connection mix_conn
 statement ok
@@ -337,7 +333,7 @@ three
 
 connection del_after
 statement ok
-VACUUM (REFRESH_TABLE) del_t;
+VACUUM (FLUSH_TABLE) del_t;
 
 connection del_after
 statement ok
@@ -348,7 +344,7 @@ DROP TABLE del_t;
 # stored kGeneratedPKId column); its removal must also survive recovery.
 connection del_after
 statement ok
-CREATE TABLE del_g (a INTEGER, b TEXT) WITH (storage = 'search');
+CREATE TABLE del_g (a INTEGER, b TEXT);
 
 connection del_after
 statement ok
@@ -356,7 +352,7 @@ INSERT INTO del_g VALUES (10, 'p'), (20, 'q'), (30, 'r');
 
 connection del_after
 statement ok
-VACUUM (REFRESH_TABLE) del_g;
+VACUUM (FLUSH_TABLE) del_g;
 
 connection del_after
 statement ok
@@ -381,15 +377,11 @@ DROP TABLE del_g;
 
 ###############################################################################
 # 7. DELETE then re-INSERT the same PK -> last write wins through recovery.
-#    'a' is published; the same-PK [DELETE id=1] (unpublished) and [INSERT
-#    (1,'b')] are both fsynced into the WAL but crash before publish. Recovery
-#    replays them in manifest order (delete before the re-insert), so the
-#    higher-tick re-insert survives: exactly one row, b.
 ###############################################################################
 
 connection del_g_after
 statement ok
-CREATE TABLE reins (id INTEGER PRIMARY KEY, b TEXT) WITH (storage = 'search');
+CREATE TABLE reins (id INTEGER PRIMARY KEY, b TEXT);
 
 connection del_g_after
 statement ok
@@ -397,7 +389,7 @@ INSERT INTO reins VALUES (1, 'a');
 
 connection del_g_after
 statement ok
-VACUUM (REFRESH_TABLE) reins;
+VACUUM (FLUSH_TABLE) reins;
 
 connection del_g_after
 statement ok
@@ -432,18 +424,14 @@ DROP TABLE reins;
 
 
 ###############################################################################
-# 8. UPDATE = delete-old + insert-new survives recovery replay. The baseline is
-#    published; the UPDATE's removal + re-insert are fsynced into the WAL but
-#    crash before the iresearch commit, so recovery must replay BOTH halves --
-#    and in manifest order (delete before insert), or the re-inserted row would
-#    be masked by its own removal.
+# 8. UPDATE = delete-old + insert-new survives recovery replay.
 ###############################################################################
 
 # 8a. Explicit PK, non-PK column updated -> old and new rows share the PK, so
 #     this is the core delete<insert ordering case: the new value must win.
 connection reins_after
 statement ok
-CREATE TABLE upd_t (id INTEGER PRIMARY KEY, b TEXT) WITH (storage = 'search');
+CREATE TABLE upd_t (id INTEGER PRIMARY KEY, b TEXT);
 
 connection reins_after
 statement ok
@@ -451,7 +439,7 @@ INSERT INTO upd_t VALUES (1, 'one'), (2, 'two'), (3, 'three');
 
 connection reins_after
 statement ok
-VACUUM (REFRESH_TABLE) upd_t;
+VACUUM (FLUSH_TABLE) upd_t;
 
 connection reins_after
 statement ok
@@ -488,7 +476,7 @@ DROP TABLE upd_t;
 #     position of its own. Both halves must survive recovery.
 connection upd_after
 statement ok
-CREATE TABLE upd_g (a INTEGER, b TEXT) WITH (storage = 'search');
+CREATE TABLE upd_g (a INTEGER, b TEXT);
 
 connection upd_after
 statement ok
@@ -496,7 +484,7 @@ INSERT INTO upd_g VALUES (10, 'p'), (20, 'q'), (30, 'r');
 
 connection upd_after
 statement ok
-VACUUM (REFRESH_TABLE) upd_g;
+VACUUM (FLUSH_TABLE) upd_g;
 
 connection upd_after
 statement ok
@@ -522,15 +510,12 @@ DROP TABLE upd_g;
 
 
 ###############################################################################
-# 9. TRUNCATE -> the wipe survives recovery replay. The baseline is published;
-#    the TRUNCATE's marker is fsynced into the WAL but crashes before the
-#    iresearch Clear runs, so recovery must re-apply the Clear (dropping the
-#    on-disk baseline) from the bodyless TRUNCATE op.
+# 9. TRUNCATE -> the wipe survives recovery replay.
 ###############################################################################
 
 connection upd_g_after
 statement ok
-CREATE TABLE trunc_t (id INTEGER PRIMARY KEY, b TEXT) WITH (storage = 'search');
+CREATE TABLE trunc_t (id INTEGER PRIMARY KEY, b TEXT);
 
 connection upd_g_after
 statement ok
@@ -538,7 +523,7 @@ INSERT INTO trunc_t VALUES (1, 'one'), (2, 'two'), (3, 'three');
 
 connection upd_g_after
 statement ok
-VACUUM (REFRESH_TABLE) trunc_t;
+VACUUM (FLUSH_TABLE) trunc_t;
 
 connection upd_g_after
 statement ok
@@ -563,7 +548,7 @@ INSERT INTO trunc_t VALUES (7, 'seven');
 
 connection trunc_after
 statement ok
-VACUUM (REFRESH_TABLE) trunc_t;
+VACUUM (FLUSH_TABLE) trunc_t;
 
 connection trunc_after
 query

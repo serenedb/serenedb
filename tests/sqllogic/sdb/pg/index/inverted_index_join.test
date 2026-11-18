@@ -42,10 +42,6 @@ INSERT INTO docs VALUES
 
 
 statement ok
-VACUUM (REFRESH_TABLE) docs
-
-
-statement ok
 CREATE TABLE cats (cat INTEGER)
 
 
@@ -70,18 +66,17 @@ QUERY PLAN
 │ Conditions: cat = cat    │
 │ ~2 rows                  │
 ╰─────────────┬────────────╯
-              ├───────────────────────────╮
-╭─ IRESEARCH_SCAN ─────────╮  ╭─ SEQ_SCAN ┴───────────╮
-│ Index: docs_idx          │  │ Table: cats           │
-│ Lookup: table            │  │ Type: Sequential Scan │
-│ Index Filter:            │  │ Projections: cat      │
-│ ╭─ Term ──────────────╮  │  │ ~2 rows               │
-│ │ Field: body(string) │  │  ╰───────────────────────╯
+              ├─────────────────────────╮
+╭─ IRESEARCH_SCAN ─────────╮  ╭─ IRESEARCH_SCAN ─╮
+│ Index: docs_idx          │  │ Table: cats      │
+│ Lookup: search           │  │ Projections: cat │
+│ Index Filter:            │  │ ~2 rows          │
+│ ╭─ Term ──────────────╮  │  ╰──────────────────╯
+│ │ Field: body(string) │  │
 │ │ Value: fox          │  │
 │ ╰─────────────────────╯  │
 │ Column Filter: cat <= 30 │
-│ Projections: cat (i),    │
-│              id (l)      │
+│ Projections: cat, id     │
 │ ~2 rows                  │
 ╰──────────────────────────╯
 
@@ -123,7 +118,7 @@ AND cat >= 15 AND cat <= 35;
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────╮
 │ Index: docs_idx                │
-│ Lookup: table                  │
+│ Lookup: search                 │
 │ Index Filter:                  │
 │ ╭─ Term ──────────────╮        │
 │ │ Field: body(string) │        │
@@ -166,10 +161,6 @@ INSERT INTO big SELECT i, i % 50, 'fox doc ' || i FROM generate_series(1, 50000)
 # `cat` is neither indexed nor INCLUDE'd -> not store_values -> no zonemap.
 statement ok
 CREATE INDEX big_idx ON big USING inverted(id, body en)
-
-
-statement ok
-VACUUM (REFRESH_TABLE) big
 
 
 # Correctness under the runtime join filter: every row matches 'fox', and

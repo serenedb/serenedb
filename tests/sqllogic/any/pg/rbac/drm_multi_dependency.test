@@ -126,7 +126,7 @@ onlyif serenedb
 statement error
 DROP ROLE dmd_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dmd_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dmd_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 # Clear dep1 by transferring ownership of drm_iceberg to babsky. Two deps remain.
@@ -146,7 +146,7 @@ onlyif serenedb
 statement error
 DROP ROLE dmd_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dmd_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dmd_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 # Clear dep2 by revoking the SELECT grant on drm_clickclack. One dep remains.
@@ -166,7 +166,7 @@ onlyif serenedb
 statement error
 DROP ROLE dmd_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dmd_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dmd_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 # A plain (RESTRICT) revoke of vedernikoff's own grant is itself refused while the
@@ -189,7 +189,7 @@ onlyif serenedb
 statement error
 DROP ROLE dmd_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dmd_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dmd_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 # CASCADE clears dep3: it revokes vedernikoff's option grant AND tears down the
@@ -260,7 +260,7 @@ onlyif serenedb
 statement error
 DROP ROLE dmd_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dmd_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dmd_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 # Clear dep3 step 1: revoke the downstream grant to kostya (attributed to
@@ -300,7 +300,7 @@ onlyif serenedb
 statement error
 DROP ROLE dmd_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dmd_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dmd_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 # Clear dep3 step 2: now that no dependent grant remains, a plain RESTRICT revoke
@@ -321,7 +321,7 @@ onlyif serenedb
 statement error
 DROP ROLE dmd_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dmd_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dmd_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 # Clear dep2: revoke the SELECT grant on drm_clickclack. Only ownership remains.
@@ -341,7 +341,7 @@ onlyif serenedb
 statement error
 DROP ROLE dmd_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dmd_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dmd_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 # Clear dep1 by DROPPING the owned table outright (vs. reassigning). Last dep gone.

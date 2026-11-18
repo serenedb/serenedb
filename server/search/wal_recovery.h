@@ -20,14 +20,32 @@
 
 #pragma once
 
+#include <cstdint>
 #include <duckdb/common/shared_ptr.hpp>
 #include <duckdb/main/attached_database.hpp>
+#include <duckdb/main/client_context.hpp>
+#include <memory>
 #include <span>
+#include <vector>
+
+#include "catalog/transaction.h"
+#include "search/store.h"
+#include "search/table.h"
 
 namespace sdb::search {
 
-void RecoverSearchStorages(
-  std::span<const duckdb::shared_ptr<duckdb::AttachedDatabase>> attached);
+struct TableSnapshot {
+  std::shared_ptr<Store> store;
+  std::shared_ptr<const TableState> state;
+};
+
+bool RecoverSearchStorages(
+  duckdb::ClientContext& context,
+  std::span<const duckdb::shared_ptr<duckdb::AttachedDatabase>> attached,
+  bool orphans);
 void StartSearchStorageTasks();
+std::vector<TableSnapshot> CaptureSnapshot(const catalog::CommittedView& view);
+std::vector<std::vector<uint8_t>> SnapshotRecords(
+  std::span<const TableSnapshot> tables);
 
 }  // namespace sdb::search

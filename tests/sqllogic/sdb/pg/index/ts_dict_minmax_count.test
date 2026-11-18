@@ -3,9 +3,6 @@ hash-threshold 100
 statement ok
 SET compaction_interval = 0
 
-statement ok
-SET refresh_interval = 0
-
 # count(DISTINCT col), min(col) and max(col) over a keyword-analyzed
 # inverted-index column reduce exactly the field's distinct terms, so the
 # optimizer serves them from the term dictionary like array_agg(DISTINCT).
@@ -18,11 +15,10 @@ statement ok
 CREATE TEXT SEARCH DICTIONARY mmc_kw AS keyword() WITH (frequency)
 
 statement ok
-CREATE TABLE mc(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, opt VARCHAR)
+CREATE TABLE mc(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, opt VARCHAR) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX mc_idx ON mc USING inverted(cat mmc_kw, opt mmc_kw)
-    WITH (refresh_interval = 0, compaction_interval = 0)
 
 statement ok
 INSERT INTO mc VALUES
@@ -31,9 +27,6 @@ INSERT INTO mc VALUES
   (3, 'red',   'y'),
   (4, 'blue',  'x'),
   (5, 'amber', NULL)
-
-statement ok
-VACUUM (REFRESH_TABLE) mc;
 
 query ITT
 SELECT count(DISTINCT cat) AS cnt, min(cat) AS mn, max(cat) AS mx FROM mc_idx
@@ -84,6 +77,7 @@ QUERY PLAN
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: mc_idx                            │
+│ Lookup: search                           │
 │ TsDict: opt                              │
 │ Projections: sdb_inverted_index_term$opt │
 │ ~2 rows                                  │
@@ -99,6 +93,7 @@ QUERY PLAN
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: mc_idx                            │
+│ Lookup: search                           │
 │ TsDict: cat                              │
 │ Projections: sdb_inverted_index_term$cat │
 │ ~1 row                                   │
@@ -114,6 +109,7 @@ QUERY PLAN
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: mc_idx                            │
+│ Lookup: search                           │
 │ TsDict: cat                              │
 │ Projections: sdb_inverted_index_term$cat │
 │ ~1 row                                   │
@@ -147,6 +143,7 @@ QUERY PLAN
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: mc_idx                            │
+│ Lookup: search                           │
 │ TsDict: cat                              │
 │ Projections: sdb_inverted_index_term$cat │
 │ ~4 rows                                  │
@@ -192,6 +189,7 @@ QUERY PLAN
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: mc_idx                            │
+│ Lookup: search                           │
 │ Index Filter:                            │
 │ ╭─ Starts With ──────╮                   │
 │ │ Field: cat(string) │                   │
@@ -218,7 +216,7 @@ QUERY PLAN
 ╰───────────┬───────────╯
 ╭─ IRESEARCH_SCAN ──────╮
 │ Index: mc_idx         │
-│ Lookup: table         │
+│ Lookup: search        │
 │ Projections: cat      │
 │ Column Filter: id > 2 │
 │ ~1 row                │

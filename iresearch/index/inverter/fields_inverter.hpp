@@ -34,8 +34,8 @@
 #include "iresearch/formats/basic_term_reader.hpp"
 #include "iresearch/formats/column/col_writer.hpp"
 #include "iresearch/formats/column/norm_writer.hpp"
+#include "iresearch/formats/field_sink.hpp"
 #include "iresearch/formats/flush_state.hpp"
-#include "iresearch/formats/index/field_writer.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/flush_order.hpp"
@@ -870,7 +870,7 @@ class FieldsInverter : util::Noncopyable {
     }
   }
 
-  void Flush(term_dict::FieldWriter& fw, FlushState& state,
+  void Flush(FieldSink& fw, FlushState& state,
              std::span<const BasicTermReader* const> extra,
              const DocOrder& order);
 

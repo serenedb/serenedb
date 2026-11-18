@@ -21,14 +21,13 @@
 #include "iresearch/formats/column/merge.hpp"
 
 #include <absl/algorithm/container.h>
+#include <absl/container/flat_hash_set.h>
 
 #include <algorithm>
 #include <array>
 #include <bit>
 #include <cstddef>
-#include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/type_visitor.hpp>
-#include <duckdb/common/types/hyperloglog.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/types/vector.hpp>
@@ -37,8 +36,6 @@
 #include <duckdb/common/vector/immutable_strings.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
-#include <duckdb/common/vector_operations/vector_operations.hpp>
-#include <duckdb/function/compression_function.hpp>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -51,6 +48,7 @@
 #include "iresearch/formats/column/col_writer.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/column_writer.hpp"
+#include "iresearch/formats/column/hot_column_reader.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/docs_mask/docs_mask.hpp"
 #include "iresearch/index/index_reader.hpp"
@@ -59,6 +57,58 @@
 
 namespace irs {
 namespace {
+
+class DistinctMerger {
+ public:
+  void Begin(DistinctStats mode) {
+    _mode = mode;
+    _distinct = duckdb::make_shared_ptr<duckdb::DistinctStatistics>();
+  }
+
+  bool MergeStored(const ColumnReader& col) {
+    if (const auto* src = col.Distinct()) {
+      _distinct->Merge(*src);
+      return true;
+    }
+    return false;
+  }
+
+  void MergeValues(const duckdb::Vector& values, duckdb::idx_t count) {
+    UpdateDistinct(*_distinct, _mode, values, count, _hashes);
+  }
+
+  duckdb::shared_ptr<duckdb::DistinctStatistics> Take() {
+    SDB_ASSERT(_distinct);
+    return std::move(_distinct);
+  }
+
+ private:
+  DistinctStats _mode = DistinctStats::None;
+  duckdb::shared_ptr<duckdb::DistinctStatistics> _distinct;
+  duckdb::Vector _hashes{duckdb::LogicalType::HASH, nullptr};
+};
+
+std::vector<std::pair<field_id, const ColumnReader*>> OrderedColumns(
+  std::span<const MergeSource> sources,
+  const IndexFieldOptions* field_options) {
+  std::vector<std::pair<field_id, const ColumnReader*>> ordered_cols;
+  absl::flat_hash_set<field_id> seen_ids;
+  for (const auto& s : sources) {
+    if (!s.col_reader) {
+      continue;
+    }
+    for (const auto& col : s.col_reader->Columns()) {
+      if (field_options &&
+          field_options->GetFieldKind(col->Id()) == FieldKind::None) {
+        continue;
+      }
+      if (seen_ids.insert(col->Id()).second) {
+        ordered_cols.emplace_back(col->Id(), col);
+      }
+    }
+  }
+  return ordered_cols;
+}
 
 const ColumnReader* ColumnOf(const MergeSource& source, field_id column) {
   return source.col_reader ? source.col_reader->Column(column) : nullptr;
@@ -88,18 +138,11 @@ uint32_t OrderedStep(size_t inputs) {
 }
 
 bool BlocksRelocatable(const ColumnReader& column) {
-  if (column.Type().InternalType() != duckdb::PhysicalType::VARCHAR) {
-    return true;
+  if (!absl::c_all_of(column.DataBlocks(), SelfContained)) {
+    return false;
   }
-  return absl::c_all_of(column.DataBlocks(), [](const ColumnBlockMeta& block) {
-    const auto type = block.codec->type;
-    SDB_ASSERT(type != duckdb::CompressionType::COMPRESSION_CONSTANT &&
-               type != duckdb::CompressionType::COMPRESSION_EMPTY &&
-               type != duckdb::CompressionType::COMPRESSION_DICTIONARY &&
-               type != duckdb::CompressionType::COMPRESSION_FSST);
-    return type == duckdb::CompressionType::COMPRESSION_DICT_FSST ||
-           duckdb::IsSereneDBCompressionType(type);
-  });
+  const auto* validity = column.Validity();
+  return !validity || absl::c_all_of(validity->DataBlocks(), SelfContained);
 }
 
 uint32_t ValuedIn(const std::vector<duckdb::sel_t>& kept, uint64_t take) {
@@ -108,6 +151,30 @@ uint32_t ValuedIn(const std::vector<duckdb::sel_t>& kept, uint64_t take) {
 }
 
 }  // namespace
+
+std::vector<std::unique_ptr<ColumnReader>> ConcatInMemory(
+  duckdb::DatabaseInstance& db, std::span<const MergeSource> sources,
+  const IndexFieldOptions* field_options) {
+  SDB_ASSERT(absl::c_none_of(sources, [](const MergeSource& s) {
+    return HasRemovals(s.reader->Meta());
+  }));
+  std::vector<std::unique_ptr<ColumnReader>> columns;
+  std::vector<HotColumnPart> parts(sources.size());
+  for (const auto& [id, first_col] : OrderedColumns(sources, field_options)) {
+    for (size_t i = 0; i < sources.size(); ++i) {
+      const auto& s = sources[i];
+      parts[i] = {.column = s.col_reader ? s.col_reader->Column(id) : nullptr,
+                  .rows = s.alive_count};
+    }
+    const auto distinct = field_options
+                            ? field_options->GetColumnOptions(id).distinct
+                            : DistinctStats::None;
+    columns.push_back(
+      HotColumnReader::Concat(db, id, first_col->Type(), distinct, parts));
+  }
+  return columns;
+}
+
 
 std::vector<duckdb::sel_t>& ColumnMerger::KeptFor(size_t si, uint64_t pos) {
   auto& kept = _kept_rows[si];
@@ -505,8 +572,7 @@ ColumnMerger::ColumnMerger(std::span<const MergeSource> sources,
           field_options->GetFieldKind(col->Id()) == FieldKind::None) {
         continue;
       }
-      if (_slots.try_emplace(col->Id(), ColumnSlot{.first = col.get()})
-            .second) {
+      if (_slots.try_emplace(col->Id(), ColumnSlot{.first = col}).second) {
         _ids.emplace_back(col->Id());
       }
     }
@@ -532,7 +598,7 @@ uint64_t ColumnMerger::StoredBytes(field_id column, size_t input) const {
 
 bool ColumnMerger::Splittable(field_id column) const {
   const auto opts = Options(column);
-  return !opts.hyperloglog && AnnFields(column).empty() &&
+  return opts.distinct == DistinctStats::None && AnnFields(column).empty() &&
          !duckdb::TypeVisitor::Contains(First(column).Type(),
                                         duckdb::LogicalTypeId::VARIANT);
 }
@@ -541,11 +607,16 @@ bool ColumnMerger::Copyable(field_id column, size_t input) const {
   const auto& source = _sources[input];
   const auto* col = ColumnOf(source, column);
   if (!_field_options || !col || HasRemovals(source.reader->Meta()) ||
-      col->Type().IsNested() || !Splittable(column)) {
+      col->Type().IsNested() || col->InMemory() || col->Patched() ||
+      !Splittable(column)) {
+    return false;
+  }
+  if (col->CompressionLevel() !=
+      CodecParams(Options(column)).compression_level) {
     return false;
   }
   if (col->RowCount() != source.alive_count ||
-      col->RowCount() < uint64_t{_row_group_size} * kCopyMinRowGroups) {
+      col->RowCount() < _row_group_size) {
     return false;
   }
   if (Options(column).skip_validity && col->HasValidity()) {
@@ -557,8 +628,14 @@ bool ColumnMerger::Copyable(field_id column, size_t input) const {
 bool ColumnMerger::MergeRange(field_id column, uint32_t part, uint64_t begin,
                               uint64_t end, ColWriter& output,
                               const MergeProgress& progress) {
+  return FillPart(OpenPart(column, part, output), column, part, begin, end,
+                  output, progress);
+}
+
+bool ColumnMerger::FillPart(ColumnWriter& cw, field_id column, uint32_t part,
+                            uint64_t begin, uint64_t end, ColWriter& output,
+                            const MergeProgress& progress) {
   SDB_ASSERT(begin < end);
-  auto& cw = OpenPart(column, part, output);
   const auto append = [&](uint64_t at, const duckdb::Vector& values,
                           duckdb::idx_t count) {
     cw.Append(at - begin, values, count);
@@ -580,14 +657,18 @@ bool ColumnMerger::CopyRange(field_id column, uint32_t part, size_t input,
                              const MergeProgress& progress) {
   const auto& source = _sources[input];
   const auto& col = *ColumnOf(source, column);
-  const auto estimate =
-    EstimateReencode(*source.col_reader, col, *_field_options, _cache);
-  if (ReencodePays(estimate)) {
-    return MergeRange(column, part, begin, end, output, progress);
+  auto& cw = OpenPart(column, part, output);
+  if (!cw.CopyableFrom(col) ||
+      ReencodePays(
+        EstimateReencode(*source.col_reader, col, *_field_options, _cache))) {
+    return FillPart(cw, column, part, begin, end, output, progress);
   }
   ReadContext ctx{*source.col_reader};
-  return output.CopyColumnPart(column, part, ctx, col,
-                               !Options(column).skip_validity, progress);
+  if (!cw.CopyBlocks(col, ctx, progress)) {
+    return false;
+  }
+  output.CloseColumnPart(column, part);
+  return true;
 }
 
 void ColumnMerger::Open(field_id column, ColWriter& output) const {
@@ -605,18 +686,11 @@ bool ColumnMerger::Merge(field_id column, ColWriter& output,
                          const MergeProgress& progress) {
   const auto opts = Options(column);
   auto& cw = output.OpenedColumn(column);
-  duckdb::shared_ptr<duckdb::HyperLogLog> hyperloglog;
-  duckdb::Vector hashes{duckdb::LogicalType::HASH, nullptr};
-  if (opts.hyperloglog) {
-    hyperloglog = duckdb::make_shared_ptr<duckdb::HyperLogLog>();
-    hashes.Initialize(duckdb::VectorDataInitialization::UNINITIALIZED,
-                      STANDARD_VECTOR_SIZE);
+  const bool distinct = opts.distinct != DistinctStats::None;
+  DistinctMerger distinct_merger;
+  if (distinct) {
+    distinct_merger.Begin(opts.distinct);
   }
-  const auto count_distinct = [&](const duckdb::Vector& values,
-                                  duckdb::idx_t count) {
-    duckdb::VectorOperations::Hash(values, hashes, count);
-    hyperloglog->Update(values, hashes);
-  };
 
   uint64_t rows = 0;
   bool merged = false;
@@ -626,8 +700,8 @@ bool ColumnMerger::Merge(field_id column, ColWriter& output,
       column, 0, rows, progress,
       [&](uint64_t at, const duckdb::Vector& values, duckdb::idx_t count) {
         cw.Append(at, values, count);
-        if (hyperloglog) {
-          count_distinct(values, count);
+        if (distinct) {
+          distinct_merger.MergeValues(values, count);
         }
       });
   } else {
@@ -636,20 +710,15 @@ bool ColumnMerger::Merge(field_id column, ColWriter& output,
       const auto& s = _sources[si];
       rows += s.alive_count;
       const auto* col = ColumnOf(s, column);
-      const auto* known = hyperloglog && col && !HasRemovals(s.reader->Meta())
-                            ? col->HyperLogLog()
-                            : nullptr;
-      if (known) {
-        hyperloglog->Merge(*known);
-        stored[si] = true;
-      }
+      stored[si] = distinct && col && !HasRemovals(s.reader->Meta()) &&
+                   !col->Patched() && distinct_merger.MergeStored(*col);
     }
     merged = VisitRows(column, 0, rows, {}, progress,
                        [&](size_t si, uint64_t at, const duckdb::Vector& values,
                            duckdb::idx_t count) {
                          cw.Append(at, values, count);
-                         if (hyperloglog && !stored[si]) {
-                           count_distinct(values, count);
+                         if (distinct && !stored[si]) {
+                           distinct_merger.MergeValues(values, count);
                          }
                        });
   }
@@ -657,8 +726,8 @@ bool ColumnMerger::Merge(field_id column, ColWriter& output,
     return false;
   }
   cw.PadNullsTo(rows);
-  if (hyperloglog) {
-    cw.SetHyperLogLog(std::move(hyperloglog));
+  if (distinct) {
+    cw.SetDistinct(distinct_merger.Take());
   }
   output.CloseColumn(column);
   return true;

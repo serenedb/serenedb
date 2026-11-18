@@ -40,7 +40,6 @@ enum class ProgressCommand : int64_t {
   CopyTo,
   CreateIndex,
   CreateTableAs,
-  Analyze,
   Vacuum,
   Reindex,
   BaseBackup,
@@ -67,11 +66,6 @@ enum class CreateTableAs : int64_t {
   Ingesting = 1,
   Committing = 2,
   Finalizing = 3,
-};
-
-enum class Analyze : int64_t {
-  Initializing = 0,
-  ComputingStatistics = 3,
 };
 
 enum class Vacuum : int64_t {

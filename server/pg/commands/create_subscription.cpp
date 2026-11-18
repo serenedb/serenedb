@@ -52,7 +52,7 @@ namespace sdb::pg {
 namespace {
 
 catalog::SereneDBCatalog& CatalogOf(ConnectionContext& conn_ctx) {
-  auto& context = conn_ctx.GetClientContext();
+  auto& context = conn_ctx;
   auto database = catalog::DefaultSereneDBCatalog(context);
   if (!database) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -65,14 +65,12 @@ catalog::SereneDBCatalog& CatalogOf(ConnectionContext& conn_ctx) {
 }
 
 std::string DatabaseOf(ConnectionContext& conn_ctx) {
-  return duckdb::DatabaseManager::GetDefaultDatabase(
-           conn_ctx.GetClientContext())
+  return duckdb::DatabaseManager::GetDefaultDatabase(conn_ctx)
     .GetIdentifierName();
 }
 
 bool IsSuperuser(ConnectionContext& conn_ctx) {
-  return auth::ClosureFor(&conn_ctx.GetClientContext(), conn_ctx.GetRoleId())
-    ->is_superuser;
+  return auth::ClosureFor(&conn_ctx, conn_ctx.GetRoleId())->is_superuser;
 }
 
 void PreventInTransactionBlock(ConnectionContext& conn_ctx,
@@ -272,12 +270,11 @@ SubscriptionOptions ParseOptions(const duckdb::named_argument_map_t& options,
 }
 
 void RequireCreateOnDatabase(ConnectionContext& conn_ctx) {
-  auto& context = conn_ctx.GetClientContext();
+  auto& context = conn_ctx;
   auto& cluster = catalog::ClusterOf(context);
-  auto database =
-    cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
-      .GetEntry(cluster.GetCatalogTransaction(context),
-                duckdb::DatabaseManager::GetDefaultDatabase(context));
+  auto database = cluster.Set(duckdb::CatalogType::DATABASE_ENTRY)
+                    .Get(cluster.GetCatalogTransaction(context),
+                         duckdb::DatabaseManager::GetDefaultDatabase(context));
   if (database && !auth::ClosureFor(&context, conn_ctx.GetRoleId())
                      ->Can(duckdb::CatalogType::DATABASE_ENTRY,
                            database->permissions, duckdb::AclMode::Create)) {
@@ -352,7 +349,7 @@ replication::PublisherResult CallPublisher(
   ConnectionContext& conn_ctx, const duckdb::CreateSubscriptionInfo& info,
   replication::PublisherCall::Body body) {
   auto conninfo = replication::ParseConnInfo(info.conninfo);
-  auto& context = conn_ctx.GetClientContext();
+  auto& context = conn_ctx;
   const auto owner = info.permissions.owner;
   if (conninfo.user.empty()) {
     conninfo.user = auth::RolesOf(&context)->NameOf(owner);
@@ -490,7 +487,7 @@ std::vector<duckdb::SubscriptionRelation> FetchRelations(
       ERR_HINT("Verify that initial data copied from the publisher tables did "
                "not come from other origins.")));
   }
-  auto& context = conn_ctx.GetClientContext();
+  auto& context = conn_ctx;
   const auto database = duckdb::DatabaseManager::GetDefaultDatabase(context);
   std::vector<duckdb::SubscriptionRelation> relations;
   relations.reserve(tables.size());
@@ -633,8 +630,8 @@ void RefreshRelations(ConnectionContext& conn_ctx,
 catalog::SubscriptionCatalogEntry& RequireSubscription(
   catalog::SereneDBCatalog& catalog, duckdb::CatalogTransaction transaction,
   std::string_view name) {
-  auto entry = catalog.GetCatalogSet(duckdb::CatalogType::SUBSCRIPTION_ENTRY)
-                 .GetEntry(transaction, duckdb::Identifier{name});
+  auto entry =
+    catalog.Subscriptions().Get(transaction, duckdb::Identifier{name});
   if (!entry) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("subscription \"", name, "\" does not exist"));
@@ -644,7 +641,7 @@ catalog::SubscriptionCatalogEntry& RequireSubscription(
 
 void RequireOwner(ConnectionContext& conn_ctx,
                   const catalog::SubscriptionCatalogEntry& subscription) {
-  if (!auth::ClosureFor(&conn_ctx.GetClientContext(), conn_ctx.GetRoleId())
+  if (!auth::ClosureFor(&conn_ctx, conn_ctx.GetRoleId())
          ->Owns(subscription.permissions.owner)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                     ERR_MSG("must be owner of subscription ",
@@ -654,11 +651,12 @@ void RequireOwner(ConnectionContext& conn_ctx,
 
 void SyncAfterCommit(ConnectionContext& conn_ctx, duckdb::idx_t oid,
                      bool restart = false) {
-  conn_ctx.DeferToCommit([database = DatabaseOf(conn_ctx), oid, restart] {
-    if (auto* engine = replication::SubscriptionEngine::gInstance) {
-      engine->Sync(database, oid, restart);
-    }
-  });
+  catalog::SessionOf(conn_ctx, CatalogOf(conn_ctx))
+    .DeferToCommit([database = DatabaseOf(conn_ctx), oid, restart] {
+      if (auto* engine = replication::SubscriptionEngine::gInstance) {
+        engine->Sync(database, oid, restart);
+      }
+    });
 }
 
 void Replace(ConnectionContext& conn_ctx, catalog::SereneDBCatalog& catalog,
@@ -666,8 +664,7 @@ void Replace(ConnectionContext& conn_ctx, catalog::SereneDBCatalog& catalog,
              duckdb::unique_ptr<duckdb::CreateSubscriptionInfo> definition) {
   duckdb::ReplaceDefinitionInfo alter{std::move(definition)};
   alter.SetQualifiedName(duckdb::QualifiedName(subscription.name));
-  catalog.Alter(catalog.GetCatalogTransaction(conn_ctx.GetClientContext()),
-                alter);
+  catalog.Alter(catalog.GetCatalogTransaction(conn_ctx), alter);
 }
 
 duckdb::unique_ptr<duckdb::CreateSubscriptionInfo> DefinitionOf(
@@ -727,7 +724,7 @@ void CreateSubscription(ConnectionContext& conn_ctx, std::string_view name,
     }
   }
 
-  auto& context = conn_ctx.GetClientContext();
+  auto& context = conn_ctx;
   const auto role = conn_ctx.GetRoleId();
   RequireCreateOnDatabase(conn_ctx);
 
@@ -751,9 +748,8 @@ void CreateSubscription(ConnectionContext& conn_ctx, std::string_view name,
   }
 
   auto& catalog = CatalogOf(conn_ctx);
-  if (catalog.GetCatalogSet(duckdb::CatalogType::SUBSCRIPTION_ENTRY)
-        .GetEntry(catalog.GetCatalogTransaction(context),
-                  duckdb::Identifier{name})) {
+  if (catalog.Subscriptions().Get(catalog.GetCatalogTransaction(context),
+                                  duckdb::Identifier{name})) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
                     ERR_MSG("subscription \"", name, "\" already exists"));
   }
@@ -785,11 +781,11 @@ void CreateSubscription(ConnectionContext& conn_ctx, std::string_view name,
 
 void DropSubscription(ConnectionContext& conn_ctx, std::string_view name,
                       bool missing_ok, bool cascade) {
-  auto& context = conn_ctx.GetClientContext();
+  auto& context = conn_ctx;
   auto& catalog = CatalogOf(conn_ctx);
   const auto transaction = catalog.GetCatalogTransaction(context);
-  auto entry = catalog.GetCatalogSet(duckdb::CatalogType::SUBSCRIPTION_ENTRY)
-                 .GetEntry(transaction, duckdb::Identifier{name});
+  auto entry =
+    catalog.Subscriptions().Get(transaction, duckdb::Identifier{name});
   if (!entry) {
     if (missing_ok) {
       return;
@@ -835,7 +831,7 @@ void AlterSubscription(ConnectionContext& conn_ctx, std::string_view name,
                        std::string_view action, std::string_view argument,
                        std::vector<std::string> publications,
                        const duckdb::named_argument_map_t& options_map) {
-  auto& context = conn_ctx.GetClientContext();
+  auto& context = conn_ctx;
   auto& catalog = CatalogOf(conn_ctx);
   auto& subscription =
     RequireSubscription(catalog, catalog.GetCatalogTransaction(context), name);
@@ -931,9 +927,8 @@ void AlterSubscription(ConnectionContext& conn_ctx, std::string_view name,
     }
     definition->skip_lsn = *options.lsn;
   } else if (action == "rename") {
-    if (catalog.GetCatalogSet(duckdb::CatalogType::SUBSCRIPTION_ENTRY)
-          .GetEntry(catalog.GetCatalogTransaction(context),
-                    duckdb::Identifier{argument})) {
+    if (catalog.Subscriptions().Get(catalog.GetCatalogTransaction(context),
+                                    duckdb::Identifier{argument})) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
         ERR_MSG("subscription \"", argument, "\" already exists"));

@@ -10,10 +10,6 @@ statement ok
 INSERT INTO ts_hrf VALUES (1, 0.5, -1.25), (2, 1.5, 2.5), (3, 2.5, 7.75)
 
 
-statement ok
-VACUUM (REFRESH_TABLE) ts_hrf
-
-
 query
 SELECT id FROM ts_hrf_idx WHERE r @@ ts_gt(0.5) ORDER BY id
 ----

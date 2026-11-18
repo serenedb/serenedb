@@ -25,8 +25,6 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
-#include <iresearch/index/index_writer.hpp>
-#include <string>
 
 // Background-maintenance vocabulary shared by Store and the loops in
 // search/task.h that drive it.
@@ -34,33 +32,18 @@ namespace sdb::search {
 
 // Maintenance cadence, read by the background loops while an ALTER rewrites it.
 struct TasksSettings {
-  std::atomic_size_t cleanup_interval_step{};
-  std::atomic_size_t refresh_interval_msec{};
   std::atomic_size_t compaction_interval_msec{};
   std::atomic_size_t compaction_max_segments{};
   std::atomic_size_t compaction_max_segments_bytes{};
   std::atomic_size_t compaction_floor_segment_bytes{};
 };
 
-enum class RefreshResult {
-  Undefined = 0,
-  NoChanges,
-  InProgress,
-  Done,
-};
-
-// Outcome of a best-effort background tick (refresh / cleanup): the *Unsafe op
-// returns a failure as a Status and the caller logs + counts it. A failure is
-// never propagated past the caller.
+// Outcome of a best-effort background compaction or cleanup: the *Impl worker
+// throws, the *Unsafe wrapper converts it to a Status and the caller logs +
+// counts it. A failure is never propagated past the caller.
 struct ResultWithTime {
   absl::Status res;
   uint64_t time_ms;
-};
-
-struct MergeResult {
-  irs::CompactionResult outcome;
-  std::string error;
-  bool backup = false;
 };
 
 }  // namespace sdb::search

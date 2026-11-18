@@ -1,0 +1,10 @@
+statement error
+ALTER ROLE amrd_missing LOGIN;
+----
+db error: ERROR: role "amrd_missing" does not exist
+
+
+statement error
+ALTER ROLE amrd_missing RENAME TO amrd_other;
+----
+db error: ERROR: role "amrd_missing" does not exist

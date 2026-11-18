@@ -36,10 +36,6 @@ statement ok
 INSERT INTO bdb SELECT g, 'row ' || g || ' bravo' FROM generate_series(1, 250000) g;
 
 
-statement ok
-VACUUM (REFRESH_TABLE) bdb;
-
-
 query
 SELECT count(*) AS n FROM bdb;
 ----

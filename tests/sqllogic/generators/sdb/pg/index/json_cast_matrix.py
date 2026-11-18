@@ -59,13 +59,11 @@ for name, leaves, casts in (("jcm", SMALL, SMALL_CASTS),
                             ("jcw", WIDE, WIDE_CASTS)):
     t.section(f"{name}: " + ", ".join(casts))
     t.table(name, "id INTEGER PRIMARY KEY, doc JSON")
-    t.table(f"{name}_s", "id INTEGER PRIMARY KEY, doc JSON", search=True)
+    t.table(f"{name}_s", "id INTEGER PRIMARY KEY, doc JSON")
     t.index(f"{name}_idx", name, "id, (doc->'v') jcm_kw")
     t.index(f"{name}_s_idx", f"{name}_s", "id, (doc->'v') jcm_kw")
     t.insert(name, rows(leaves))
     t.statement(f"INSERT INTO {name}_s SELECT * FROM {name}")
-    t.refresh(name)
-    t.refresh(f"{name}_s")
     for cast, constants in casts.items():
         for pred in predicates(cast, constants):
             truth = f"SELECT id FROM {name} WHERE {pred}"

@@ -68,35 +68,40 @@ connection after_crash
 statement error
 INSERT INTO icr_t VALUES (3, 'other');
 ----
-db error: ERROR: Duplicate key "id: 3" violates primary key constraint.
+db error: ERROR: duplicate key value violates unique constraint "icr_t_pkey"
+DETAIL: Key (id)=(3) already exists.
 
 
 connection after_crash
 statement error
 INSERT INTO icr_t VALUES (4, 'one');
 ----
-db error: ERROR: Duplicate key "body: one" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "icr_body"
+DETAIL: Key (body)=(one) already exists.
 
 
 connection after_crash
 statement error
 INSERT INTO icr_t VALUES (4, 'three');
 ----
-db error: ERROR: Duplicate key "body: three" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "icr_body"
+DETAIL: Key (body)=(three) already exists.
 
 
 connection after_crash
 statement error
 INSERT INTO icr_existing VALUES (3, 'one');
 ----
-db error: ERROR: Duplicate key "body: one" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "icr_existing_body"
+DETAIL: Key (body)=(one) already exists.
 
 
 connection after_crash
 statement error
 INSERT INTO icr_existing VALUES (3, 'two');
 ----
-db error: ERROR: Duplicate key "body: two" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "icr_existing_body"
+DETAIL: Key (body)=(two) already exists.
 
 
 connection after_crash

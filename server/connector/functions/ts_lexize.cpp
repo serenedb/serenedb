@@ -41,7 +41,6 @@
 #include "catalog/catalog.h"
 #include "catalog/entry/tokenizer.h"
 #include "connector/common.h"
-#include "connector/duckdb_client_state.h"
 #include "connector/functions/list_token_sink.hpp"
 #include "connector/functions/search.h"
 #include "connector/functions/ts_common.hpp"
@@ -266,7 +265,7 @@ template<ScalarFnPtr ConstantFn>
 duckdb::unique_ptr<duckdb::FunctionData> TsLexizeBind(
   duckdb::BindScalarFunctionInput& input) {
   auto& context = input.GetClientContext();
-  auto& conn_ctx = GetSereneDBContext(context);
+  auto& conn_ctx = ConnectionContext::Get(context);
   DynamicCtx ctx{.db_id = conn_ctx.GetDatabaseId()};
 
   auto bind = duckdb::make_uniq<TsLexizeBindData>();

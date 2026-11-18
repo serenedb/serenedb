@@ -23,7 +23,7 @@ statement ok
 SET disabled_optimizers = 'late_materialization';
 
 statement ok
-CREATE TABLE docs_topk (id INTEGER PRIMARY KEY, body VARCHAR);
+CREATE TABLE docs_topk (id INTEGER PRIMARY KEY, body VARCHAR) WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 
 
 statement count 1
@@ -53,12 +53,7 @@ CREATE TEXT SEARCH DICTIONARY en_topk AS
 
 
 statement ok
-CREATE INDEX docs_topk_idx ON docs_topk USING inverted(id, body en_topk)
-  WITH (optimize_top_k = 'bm25(1.2, 0.75)');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) docs_topk;
+CREATE INDEX docs_topk_idx ON docs_topk USING inverted(id, body en_topk);
 
 
 # Top-K with pruning on. Tie-break on id for deterministic ordering across
@@ -104,10 +99,6 @@ INSERT INTO docs_plain VALUES (5, 'rabbit and a fox');
 
 statement ok
 CREATE INDEX docs_plain_idx ON docs_plain USING inverted(id, body en_topk);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) docs_plain;
 
 
 query
@@ -197,7 +188,7 @@ EXPLAIN SELECT id FROM docs_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM2
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: docs_topk_idx        │
-│ Lookup: table               │
+│ Lookup: search              │
 │ Index Filter:               │
 │ ╭─ Term ──────────────╮     │
 │ │ Field: body(string) │     │
@@ -224,7 +215,7 @@ QUERY PLAN
 ╰─────────────────────────────┬────────────────────────────╯
 ╭─ IRESEARCH_SCAN ────────────┴────────────────────────────╮
 │ Index: docs_topk_idx                                     │
-│ Lookup: table                                            │
+│ Lookup: search                                           │
 │ Index Filter:                                            │
 │ ╭─ Term ──────────────╮                                  │
 │ │ Field: body(string) │                                  │
@@ -248,7 +239,7 @@ EXPLAIN SELECT id FROM docs_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM2
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: docs_topk_idx        │
-│ Lookup: table               │
+│ Lookup: search              │
 │ Index Filter:               │
 │ ╭─ Term ──────────────╮     │
 │ │ Field: body(string) │     │
@@ -267,7 +258,7 @@ EXPLAIN SELECT id FROM docs_plain_idx WHERE body @@ ts_phrase('fox') ORDER BY BM
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: docs_plain_idx       │
-│ Lookup: table               │
+│ Lookup: search              │
 │ Index Filter:               │
 │ ╭─ Term ──────────────╮     │
 │ │ Field: body(string) │     │
@@ -296,10 +287,6 @@ INSERT INTO docs_default VALUES (2, 'fox jumps');
 
 statement ok
 CREATE INDEX docs_default_idx ON docs_default USING inverted(id, body en_topk);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) docs_default;
 
 
 query
@@ -396,14 +383,6 @@ statement count 1
 INSERT INTO docs_plain VALUES (8, 'no match here');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) docs_topk;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) docs_plain;
-
-
 query
 SELECT id FROM docs_topk_idx
 WHERE body @@ ts_phrase('fox')
@@ -477,7 +456,7 @@ QUERY PLAN
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: docs_topk_idx                   │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Term ──────────────╮                │
 │ │ Field: body(string) │                │
@@ -504,7 +483,7 @@ QUERY PLAN
 ╰────────────────────────────┬────────────────────────────╯
 ╭─ IRESEARCH_SCAN ───────────┴────────────────────────────╮
 │ Index: docs_topk_idx                                    │
-│ Lookup: table                                           │
+│ Lookup: search                                          │
 │ Index Filter:                                           │
 │ ╭─ Term ──────────────╮                                 │
 │ │ Field: body(string) │                                 │
@@ -527,7 +506,7 @@ QUERY PLAN
 # tfidf with default args.
 
 statement ok
-CREATE TABLE docs_tfidf (id INTEGER PRIMARY KEY, body VARCHAR);
+CREATE TABLE docs_tfidf (id INTEGER PRIMARY KEY, body VARCHAR) WITH (optimize_top_k = 'tfidf()');
 
 
 statement count 1
@@ -540,12 +519,7 @@ INSERT INTO docs_tfidf VALUES (2, 'fox bar');
 
 statement ok
 CREATE INDEX docs_tfidf_idx ON docs_tfidf
-  USING inverted(id, body en_topk)
-  WITH (optimize_top_k = 'tfidf()');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) docs_tfidf;
+  USING inverted(id, body en_topk);
 
 
 query
@@ -554,7 +528,7 @@ EXPLAIN SELECT id FROM docs_tfidf_idx WHERE body @@ ts_phrase('fox') ORDER BY TF
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────╮
 │ Index: docs_tfidf_idx          │
-│ Lookup: table                  │
+│ Lookup: search                 │
 │ Index Filter:                  │
 │ ╭─ Term ──────────────╮        │
 │ │ Field: body(string) │        │
@@ -571,7 +545,7 @@ QUERY PLAN
 # `ORDER BY BM25(...)` use the same params, so pruning engages.
 
 statement ok
-CREATE TABLE docs_bm25_args (id INTEGER PRIMARY KEY, body VARCHAR);
+CREATE TABLE docs_bm25_args (id INTEGER PRIMARY KEY, body VARCHAR) WITH (optimize_top_k = 'bm25(1.5, 0.8)');
 
 
 statement count 1
@@ -584,12 +558,7 @@ INSERT INTO docs_bm25_args VALUES (2, 'fox bar');
 
 statement ok
 CREATE INDEX docs_bm25_args_idx ON docs_bm25_args
-  USING inverted(id, body en_topk)
-  WITH (optimize_top_k = 'bm25(1.5, 0.8)');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) docs_bm25_args;
+  USING inverted(id, body en_topk);
 
 
 query
@@ -598,7 +567,7 @@ EXPLAIN SELECT id FROM docs_bm25_args_idx WHERE body @@ ts_phrase('fox') ORDER B
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────╮
 │ Index: docs_bm25_args_idx  │
-│ Lookup: table              │
+│ Lookup: search             │
 │ Index Filter:              │
 │ ╭─ Term ──────────────╮    │
 │ │ Field: body(string) │    │
@@ -620,7 +589,7 @@ EXPLAIN SELECT id FROM docs_bm25_args_idx WHERE body @@ ts_phrase('fox') ORDER B
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────╮
 │ Index: docs_bm25_args_idx      │
-│ Lookup: table                  │
+│ Lookup: search                 │
 │ Index Filter:                  │
 │ ╭─ Term ──────────────╮        │
 │ │ Field: body(string) │        │
@@ -638,25 +607,37 @@ QUERY PLAN
 # ---------------------------------------------------------------------------
 
 # Unknown scorer name.
-statement error scorer
+statement error
 CREATE INDEX docs_default_bad_unknown ON docs_default
   USING inverted(id, body en_topk)
   WITH (optimize_top_k = 'mystery_scorer()');
+----
+db error: ERROR: optimize_top_k is a table option
+HINT: Set it in CREATE TABLE ... WITH (optimize_top_k = ...).
+
 
 
 # Out-of-range parameter.
-statement error lambda
+statement error
 CREATE INDEX docs_default_bad_lambda ON docs_default
   USING inverted(id, body en_topk)
   WITH (optimize_top_k = 'lm_jm(2.0)');
+----
+db error: ERROR: optimize_top_k is a table option
+HINT: Set it in CREATE TABLE ... WITH (optimize_top_k = ...).
+
 
 
 # Bare identifier (no parentheses) is rejected -- caller must spell out a
 # function call.
-statement error scorer function call
+statement error
 CREATE INDEX docs_default_bad_bare ON docs_default
   USING inverted(id, body en_topk)
   WITH (optimize_top_k = 'bm25');
+----
+db error: ERROR: optimize_top_k is a table option
+HINT: Set it in CREATE TABLE ... WITH (optimize_top_k = ...).
+
 
 
 # DuckDB's CREATE INDEX grammar still rejects non-constant values like the
@@ -666,5 +647,5 @@ CREATE INDEX docs_default_bad_keyword ON docs_default
   USING inverted(id, body en_topk)
   WITH (optimize_top_k = true);
 ----
-db error: ERROR: 'optimize_top_k' expects a scorer function call, got 'true'
-HINT: Use e.g. 'tfidf()' or 'bm25(1.2, 0.75)'
+db error: ERROR: optimize_top_k is a table option
+HINT: Set it in CREATE TABLE ... WITH (optimize_top_k = ...).

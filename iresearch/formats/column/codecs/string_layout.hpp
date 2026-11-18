@@ -234,9 +234,9 @@ static_assert(offsetof(Header, flags) == 61);
 static_assert(offsetof(Header, reserved4) == 62);
 static_assert(offsetof(Header, raw_bytes) == 64);
 
-inline void LayOut(Header& h, uint64_t frames, uint64_t lengths_bytes,
-                   uint64_t lcps_bytes, uint64_t codes_bytes,
-                   uint64_t symtab_bytes) noexcept {
+inline uint64_t LayOut(Header& h, uint64_t data_bytes, uint64_t frames,
+                       uint64_t lengths_bytes, uint64_t lcps_bytes,
+                       uint64_t codes_bytes, uint64_t symtab_bytes) noexcept {
   h.off_frames = kHeaderSize;
   h.off_lengths =
     duckdb::AlignValue<uint64_t, 8>(kHeaderSize + frames * kFrameMetaSize);
@@ -244,6 +244,7 @@ inline void LayOut(Header& h, uint64_t frames, uint64_t lengths_bytes,
   h.off_codes = duckdb::AlignValue<uint64_t, 8>(h.off_lcps + lcps_bytes);
   h.off_symtab = duckdb::AlignValue<uint64_t, 8>(h.off_codes + codes_bytes);
   h.off_data = duckdb::AlignValue<uint64_t, 8>(h.off_symtab + symtab_bytes);
+  return h.off_data + data_bytes;
 }
 
 }  // namespace irs::codecs

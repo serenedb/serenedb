@@ -651,7 +651,7 @@ bench_server() {
 			-c "CREATE TABLE bench_inv (id BIGINT PRIMARY KEY, body TEXT);" \
 			-c "INSERT INTO bench_inv SELECT x, 'lorem token' || (x % 50) FROM generate_series(1, 300000) t(x);" \
 			-c "CREATE INDEX bench_inv_idx ON bench_inv USING inverted(body bench_dict);" >/dev/null
-		"${PSQL[@]}" -c "VACUUM (REFRESH_TABLE) bench_inv;" >/dev/null
+		"${PSQL[@]}" -c "VACUUM (FLUSH_TABLE) bench_inv;" >/dev/null
 		run_pgb "${srv}_insert_inv_${CLIENTS}c" "${OUT_DIR}/wl/insert_inv.sql" prepared "${CLIENTS}"
 		run_pgb "${srv}_update_inv_${CLIENTS}c" "${OUT_DIR}/wl/update_inv.sql" prepared "${CLIENTS}"
 		run_pgb "${srv}_delete_inv_${CLIENTS}c" "${OUT_DIR}/wl/delete_inv.sql" prepared "${CLIENTS}"
@@ -753,7 +753,7 @@ bench_server() {
 		"CREATE INDEX bench_txt_idx ON bench_txt USING inverted(body bench_dict);" \
 		"DROP INDEX bench_txt_idx;"
 	"${PSQL[@]}" -c "CREATE INDEX bench_txt_idx ON bench_txt USING inverted(body bench_dict);" >/dev/null
-	"${PSQL[@]}" -c "VACUUM (REFRESH_TABLE) bench_txt;" >/dev/null
+	"${PSQL[@]}" -c "VACUUM (FLUSH_TABLE) bench_txt;" >/dev/null
 	run_pgb "${srv}_search_fetch" "${OUT_DIR}/wl/search.sql" prepared "${CLIENTS}"
 	# G. search that materializes row columns from the base table.
 	guard "${srv}_search_materialize" "search materialize unsupported" \
@@ -793,9 +793,9 @@ bench_server() {
 		"DROP TABLE IF EXISTS bench_bdel;"
 
 	# --- H. maintenance ------------------------------------------------------
-	guard "${srv}_vacuum_refresh" "VACUUM REFRESH_TABLE unsupported" \
-		run_wall "${srv}_vacuum_refresh" "${REPS}" "" \
-		"VACUUM (REFRESH_TABLE) bench_inv;" \
+	guard "${srv}_vacuum_flush" "VACUUM FLUSH_TABLE unsupported" \
+		run_wall "${srv}_vacuum_flush" "${REPS}" "" \
+		"VACUUM (FLUSH_TABLE) bench_inv;" \
 		""
 
 	# --- K. scaling (full profile only) --------------------------------------

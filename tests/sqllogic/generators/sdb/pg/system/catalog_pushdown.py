@@ -12,10 +12,12 @@ TEXT = {"kName", "kText", "kChar", "kPgNodeTree", "kCharacterData", "kSqlIdentif
         "kYesOrNo"}
 NUMBER = {"kInt2", "kInt4", "kInt8", "kOid", "kRegproc", "kXid", "kCardinalNumber"}
 GLOBAL = {"pg_authid", "pg_auth_members", "pg_database", "pg_db_role_setting",
-          "pg_default_acl", "pg_shdepend", "pg_foreign_server"}
+          "pg_default_acl", "pg_shdepend", "pg_foreign_server", "pg_subscription",
+          "pg_subscription_rel", "pg_replication_origin"}
 LIVE = {"sdb_progress"}
 STABLE = {"sdb_metrics": "metric, description, relation_id"}
 ROLES = "('spd_role'::regrole, 'spd_member'::regrole)"
+SUBSCRIPTION = "(SELECT oid FROM pg_catalog.pg_subscription WHERE subname = 'spd_sub')"
 SCOPED = {
     "pg_authid": f"oid IN {ROLES}",
     "pg_auth_members": f"member IN {ROLES}",
@@ -24,6 +26,9 @@ SCOPED = {
     "pg_default_acl": "defaclacl::text LIKE '%spd_role%'",
     "pg_shdepend": f"refobjid IN {ROLES}",
     "pg_foreign_server": "srvname = 'spd_srv'",
+    "pg_subscription": "subname = 'spd_sub'",
+    "pg_subscription_rel": f"srsubid = {SUBSCRIPTION}",
+    "pg_replication_origin": f"roident = {SUBSCRIPTION}",
 }
 
 FIXTURE = [
@@ -48,7 +53,7 @@ FIXTURE = [
     "CREATE MACRO spd_rows(n) AS TABLE SELECT * FROM range(n)",
     "CREATE FUNCTION spd_fn(a INT) RETURNS INT LANGUAGE SQL AS 'SELECT a + 1'",
     "CREATE TEXT SEARCH DICTIONARY spd_dict AS keyword() WITH (frequency)",
-    "CREATE TABLE spd_docs (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search')",
+    "CREATE TABLE spd_docs (id INT PRIMARY KEY, body TEXT)",
     "CREATE INDEX spd_docs_idx ON spd_docs USING inverted (id, body spd_dict)",
     "COMMENT ON TABLE spd_parent IS 'table'",
     "COMMENT ON COLUMN spd_parent.name IS 'column'",
@@ -240,9 +245,9 @@ t = Test("A filter a system relation evaluates while it scans returns the rows t
          "sdb_progress shows operations as they run and sdb_metrics counts them, so the "
          "first is left out and the second compared on the columns that stay put while a "
          "statement runs; the catalogs every database of the server shares show the "
-         "databases, roles, settings, default privileges and servers that files running "
-         "alongside create and drop, so they are compared on the rows of this file's own "
-         "database and objects.")
+         "databases, roles, settings, default privileges, servers and subscriptions that "
+         "files running alongside create and drop, so they are compared on the rows of this "
+         "file's own database and objects.")
 for sql in FIXTURE:
     t.statement(sql)
 local = [r for r in relations() if r[0] not in GLOBAL]

@@ -10,7 +10,6 @@
 #                                          native LIKE; counts/sums/topk)
 #                nested-gather            (filtered nested reads at 0.1/1/10%
 #                                          density vs native table filters)
-#                search-table             (write/ingest: storage='search' + count)
 #   dims:        threads {1,64} x {cold, hot=avg of 2 after cold}
 #   metrics:     write time, read time (cold/hot), peak RSS (VmHWM), disk size
 #
@@ -45,7 +44,7 @@ TYPES_PQ="${FM_TYPES_PQ:-${HOME}/data/types_perf.parquet}"
 HITS_PQ="${FM_HITS_PQ:-${HOME}/data/hits_10pct.parquet}"
 NESTED_ROWS="${FM_NESTED_ROWS:-10000000}"
 NESTED_PQ="${FM_NESTED_PQ:-${FM}/nested_v2.parquet}"
-BENCHES="${FM_BENCHES:-per-type hits nested text-gather nested-gather search-table}"
+BENCHES="${FM_BENCHES:-per-type hits nested text-gather nested-gather}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ 2>/dev/null || echo run)"
 OUT="${FM}/matrix-${STAMP}.tsv"
 
@@ -135,28 +134,8 @@ du_mb_native() {
 # which is what serves reads -- comparable to native's table. Excludes the
 # data.db base table copy (only present when the source is a real TABLE, not a
 # parquet VIEW).
-# Sums only LIVE segments (those named in the newest segments_N meta): an
-# in-flight merge output or a not-yet-GC'd pre-merge segment would otherwise
-# inflate the number (observed: an orphan 2.4GB _146.col written by a merge
-# that was still in flight when the engine stopped).
 du_mb_index() {
-	local d="$1/engine_v1" sdir smeta live seg f bytes=0
-	[[ -d "$d" ]] || d="$1"
-	while IFS= read -r sdir; do
-		smeta=$(ls -v "$sdir"/segments_* 2>/dev/null | tail -1)
-		if [[ -z "$smeta" ]]; then
-			bytes=$((bytes + $(du -sb "$sdir" 2>/dev/null | awk '{print $1+0}')))
-			continue
-		fi
-		live=$(strings "$smeta" | grep -oE '_[0-9]+\.0\.sm' | sed 's/\.0\.sm$//' | sort -u)
-		bytes=$((bytes + $(stat -c %s "$smeta")))
-		for seg in $live; do
-			for f in "$sdir/$seg". "$sdir/$seg".*; do
-				[[ -f "$f" ]] && bytes=$((bytes + $(stat -c %s "$f")))
-			done
-		done
-	done < <(find "$d" -name 'segments_*' -printf '%h\n' 2>/dev/null | sort -u)
-	echo $((bytes / 1048576))
+	psql "$CONN" -X -At -c "SELECT coalesce(sum(value), 0)::BIGINT / 1048576 FROM sdb_metrics WHERE metric = 'index_size'"
 }
 quiesce() { # wait until listener CPU is idle (compaction done)
 	local p hz u1 s1 u2 s2 pct idle=0
@@ -394,10 +373,10 @@ run_cs_engine() { # bench engine bin
 		emit "$bench" "$engine" _WRITE 0 - "$(awk "BEGIN{printf \"%.0f\", ($t1-$t0)*1000}")"
 		emit "$bench" "$engine" _RSSw 0 - "$(peak_rss_mb)"
 		quiesce
-		emit "$bench" "$engine" _DISK 0 - "$(du_mb_index "$dd")"
+		emit "$bench" "$engine" _DISK 0 - "$(du_mb_index)"
 	else
 		start_engine "$bin" "$dd" || return 1
-		emit "$bench" "$engine" _DISK 0 - "$(du_mb_index "$dd")"
+		emit "$bench" "$engine" _DISK 0 - "$(du_mb_index)"
 	fi
 	read_matrix "$bench" "$engine" "$rel" "$dd" "stop_engine; start_engine '$bin' '$dd'"
 	stop_engine
@@ -438,7 +417,6 @@ run_native() { # bench
 }
 
 for bench in $BENCHES; do
-	[[ "$bench" == "search-table" ]] && continue # handled separately below
 	echo "===== benchmark: $bench ====="
 	run_cs_engine "$bench" old "$OLD_BIN"
 	run_cs_engine "$bench" new "$NEW_BIN"
@@ -478,7 +456,6 @@ render_bench() {
     }' "$OUT"
 }
 for bench in $BENCHES; do
-	[[ "$bench" == "search-table" ]] && continue
 	render_bench "$bench"
 done
 echo

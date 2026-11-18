@@ -78,6 +78,11 @@ uint64_t ColFileWriter::AppendString(std::string_view string) {
   return Write(1, parts);
 }
 
+void ColFileWriter::Flush() {
+  Drain();
+  _out->Flush();
+}
+
 void ColFileWriter::Finish(format_utils::FooterWriter footer) {
   Drain();
   format_utils::WriteFooter(*_out, footer);

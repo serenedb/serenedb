@@ -23,7 +23,6 @@
 #include <array>
 #include <cstdint>
 #include <duckdb/catalog/catalog.hpp>
-#include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
@@ -36,6 +35,7 @@
 #include <string_view>
 #include <vector>
 
+#include "catalog/schema.h"
 #include "catalog/snapshot.h"
 #include "pg/catalog/engine/registry.h"
 #include "pg/catalog/engine/system_table.h"
@@ -92,8 +92,7 @@ duckdb::optional_ptr<duckdb::SchemaCatalogEntry> SchemaByOid(
 inline duckdb::optional_ptr<duckdb::CatalogEntry> FindMember(
   duckdb::CatalogTransaction transaction, duckdb::SchemaCatalogEntry& schema,
   duckdb::CatalogType type, const duckdb::Identifier& name) {
-  return schema.Cast<duckdb::DuckSchemaEntry>().GetCatalogSet(type).GetEntry(
-    transaction, name);
+  return schema.Cast<catalog::Schema>().Set(type).Get(transaction, name);
 }
 duckdb::optional_ptr<duckdb::TableCatalogEntry> OwnerTable(
   const Session& session, uint64_t oid);
@@ -140,8 +139,6 @@ struct Relation {
   const SystemTable* system;
   const StaticView* view;
 };
-
-inline constexpr std::string_view kTemporarySchema = "pg_temp";
 
 inline bool IsTemporary(const Relation& relation) {
   return relation.entry && !relation.key &&

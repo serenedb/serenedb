@@ -18,9 +18,6 @@ INSERT INTO doc VALUES
 (1, 'wireless noise cancelling headphones with long battery life');
 
 statement ok
-VACUUM (REFRESH_TABLE) doc;
-
-statement ok
 CREATE TABLE alerts (id INTEGER PRIMARY KEY, name VARCHAR, term VARCHAR);
 
 statement ok
@@ -96,9 +93,6 @@ CREATE INDEX doc2_idx ON doc2 USING inverted (id, body tx);
 statement ok
 INSERT INTO doc2 VALUES
 (1, 'lightweight aluminium laptop with wireless keyboard');
-
-statement ok
-VACUUM (REFRESH_TABLE) doc2;
 
 # DOCS_TEST_BODY
 

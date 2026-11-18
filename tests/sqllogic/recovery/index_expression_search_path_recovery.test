@@ -1,0 +1,92 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE SCHEMA iespr_s;
+
+
+statement ok
+CREATE SCHEMA iespr_fn;
+
+
+statement ok
+CREATE FUNCTION iespr_s.iespr_f(x INT) RETURNS INT LANGUAGE sql IMMUTABLE AS 'SELECT x + 1';
+
+
+statement ok
+CREATE FUNCTION iespr_fn.iespr_g(x INT) RETURNS INT LANGUAGE sql IMMUTABLE AS 'SELECT x * 2';
+
+
+statement ok
+CREATE TABLE iespr_s.iespr_t (a INT);
+
+
+statement ok
+CREATE TABLE iespr_s.iespr_u (a INT, b TEXT);
+
+
+statement ok
+SET search_path = iespr_s, iespr_fn, public;
+
+
+statement ok
+CREATE INDEX iespr_i ON iespr_t ((iespr_f(a)));
+
+
+statement ok
+CREATE INDEX iespr_inv ON iespr_u USING inverted ((iespr_g(a)), b);
+
+
+statement ok
+RESET search_path;
+
+
+statement count 1
+INSERT INTO iespr_s.iespr_t VALUES (1);
+
+
+statement count 1
+INSERT INTO iespr_s.iespr_u VALUES (1, 'one');
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_crash
+statement count 1
+INSERT INTO iespr_s.iespr_t VALUES (2);
+
+
+connection after_crash
+statement count 1
+INSERT INTO iespr_s.iespr_u VALUES (2, 'two');
+
+
+connection after_crash
+query
+SELECT a FROM iespr_s.iespr_t ORDER BY a;
+----
+a
+1
+2
+
+
+connection after_crash
+query ok retry 40 backoff 250ms
+SELECT a FROM iespr_s.iespr_inv WHERE b @@ 'two';
+----
+a
+2

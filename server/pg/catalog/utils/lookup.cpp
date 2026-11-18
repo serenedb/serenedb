@@ -24,19 +24,17 @@
 #include <absl/strings/str_cat.h>
 
 #include <duckdb/catalog/catalog.hpp>
-#include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
-#include <duckdb/catalog/catalog_entry/replication_lsn_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
-#include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/catalog/permissions.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/static_strings.hpp>
 #include <vector>
 
 #include "auth/enforce.h"
@@ -85,8 +83,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> EntryByOid(const Session& session,
   if (!session.database || oid == kInvalidOid) {
     return nullptr;
   }
-  auto entry =
-    session.database->GetOidIndex().GetVisible(oid, session.transaction->view);
+  auto entry = session.database->LookupOid(*session.transaction, oid);
   if (!entry || entry->internal) {
     return nullptr;
   }
@@ -100,9 +97,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> TemporaryEntryByOid(
   }
   auto& temporary = duckdb::ClientData::Get(*session.context)
                       .temporary_objects->GetCatalog()
-                      .Cast<duckdb::DuckCatalog>();
-  auto entry = temporary.GetOidIndex().GetVisible(
-    oid, temporary.GetCatalogTransaction(*session.context).view);
+                      .Cast<catalog::BaseCatalog>();
+  auto entry =
+    temporary.LookupOid(temporary.GetCatalogTransaction(*session.context), oid);
   if (!entry || entry->internal) {
     return nullptr;
   }
@@ -114,8 +111,7 @@ duckdb::optional_ptr<duckdb::SchemaCatalogEntry> SchemaByOid(
   if (!session.database) {
     return nullptr;
   }
-  auto entry =
-    session.database->GetOidIndex().GetVisible(oid, session.transaction->view);
+  auto entry = session.database->LookupOid(*session.transaction, oid);
   if (!entry || entry->type != duckdb::CatalogType::SCHEMA_ENTRY) {
     return nullptr;
   }
@@ -127,8 +123,7 @@ duckdb::optional_ptr<duckdb::TableCatalogEntry> OwnerTable(
   if (!session.database || oid == kInvalidOid) {
     return nullptr;
   }
-  auto owner = session.database->GetOidIndex().GetVisibleOwner(
-    oid, session.transaction->view);
+  auto owner = session.database->LookupOwner(*session.transaction, oid);
   if (!owner || owner->type != duckdb::CatalogType::TABLE_ENTRY) {
     return nullptr;
   }
@@ -138,15 +133,15 @@ duckdb::optional_ptr<duckdb::TableCatalogEntry> OwnerTable(
 duckdb::optional_ptr<duckdb::CatalogEntry> FindDatabase(
   duckdb::ClientContext& context, std::string_view name) {
   auto& cluster = catalog::ClusterOf(context);
-  return cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
-    .GetEntry(cluster.GetCatalogTransaction(context), duckdb::Identifier{name});
+  return cluster.Set(duckdb::CatalogType::DATABASE_ENTRY)
+    .Get(cluster.GetCatalogTransaction(context), duckdb::Identifier{name});
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> FindDatabaseById(
   duckdb::ClientContext& context, duckdb::idx_t id) {
   auto& cluster = catalog::ClusterOf(context);
-  const auto entry = cluster.GetOidIndex().GetVisible(
-    id, cluster.GetCatalogTransaction(context).view);
+  const auto entry =
+    cluster.LookupOid(cluster.GetCatalogTransaction(context), id);
   if (!entry || entry->type != duckdb::CatalogType::DATABASE_ENTRY) {
     return nullptr;
   }
@@ -157,7 +152,7 @@ std::vector<duckdb::reference<duckdb::CatalogEntry>> Databases(
   duckdb::ClientContext& context) {
   auto& cluster = catalog::ClusterOf(context);
   std::vector<duckdb::reference<duckdb::CatalogEntry>> databases;
-  cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+  cluster.Set(duckdb::CatalogType::DATABASE_ENTRY)
     .Scan(cluster.GetCatalogTransaction(context),
           [&](duckdb::CatalogEntry& entry) { databases.emplace_back(entry); });
   return databases;
@@ -209,7 +204,7 @@ ObjectName NameOf(duckdb::CatalogTransaction transaction,
       .name = relation.key->constraint_name};
   }
   if (IsTemporary(relation)) {
-    return {.schema = kTemporarySchema,
+    return {.schema = irs::StaticStrings::kPgTempSchema,
             .name = relation.entry->name.GetIdentifierName()};
   }
   if (relation.entry) {
@@ -388,20 +383,20 @@ std::vector<ReplicationOrigin> ReplicationOrigins(
   for (const auto& database :
        catalog::SereneDBDatabases(duckdb::DatabaseManager::Get(db))) {
     database->GetCatalog()
-      .Cast<duckdb::DuckCatalog>()
-      .GetCatalogSet(duckdb::CatalogType::SUBSCRIPTION_ENTRY)
-      .Scan([&](duckdb::CatalogEntry& entry) {
+      .Cast<catalog::SereneDBCatalog>()
+      .Subscriptions()
+      .ScanCommitted([&](duckdb::CatalogEntry& entry) {
         origins.emplace_back(
           entry.oid, absl::StrCat("pg_", entry.oid),
           entry.Cast<catalog::SubscriptionCatalogEntry>().RemoteLsn());
       });
   }
   catalog::ClusterOf(db)
-    .GetCatalogSet(duckdb::CatalogType::REPLICATION_ORIGIN_ENTRY)
-    .Scan([&](duckdb::CatalogEntry& entry) {
+    .Set(duckdb::CatalogType::REPLICATION_ORIGIN_ENTRY)
+    .ScanCommitted([&](duckdb::CatalogEntry& entry) {
       origins.emplace_back(
         entry.oid, entry.name.GetIdentifierName(),
-        entry.Cast<duckdb::ReplicationLsnEntry>().RemoteLsn());
+        entry.Cast<catalog::ReplicationLsnEntry>().RemoteLsn());
     });
   return origins;
 }
@@ -447,13 +442,11 @@ catalog::CatalogKey FindKeyIndex(duckdb::ClientContext& context,
     }
   }
   auto& catalog = schema.ParentCatalog();
-  const auto storage = catalog.GetCatalogType();
   const auto snapshot =
-    storage == catalog::SereneDBCatalog::kStorageType ||
-        storage == catalog::SereneDBCatalog::kReadOnlyStorageType
+    catalog::IsSereneDB(catalog)
       ? catalog.Cast<catalog::SereneDBCatalog>().Snapshots().Get(
-          context, schema.Cast<duckdb::DuckSchemaEntry>().GetCatalogSet(
-                     duckdb::CatalogType::TABLE_ENTRY))
+          context,
+          schema.Cast<catalog::Schema>().Set(duckdb::CatalogType::TABLE_ENTRY))
       : nullptr;
   if (!snapshot) {
     schema.Scan(context, duckdb::CatalogType::TABLE_ENTRY, match);

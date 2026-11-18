@@ -21,9 +21,6 @@ INSERT INTO cmp VALUES
   (2, 'banana berry',  'green'),
   (3, 'cherry apple',  'blue')
 
-statement ok
-VACUUM (REFRESH_TABLE) cmp;
-
 # OR  ->  UNION
 query T
 SELECT term FROM (

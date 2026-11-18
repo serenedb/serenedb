@@ -8,7 +8,7 @@ CREATE TABLE repro_src AS SELECT range AS id FROM range(300000);
 
 statement ok
 CREATE TABLE repro_st (id BIGINT, b TEXT)
-  WITH (storage = 'search', compaction_interval = 0, segment_memory_max = 2097152);
+  WITH (compaction_interval = 0, segment_memory_max = 2097152);
 
 
 statement ok
@@ -16,7 +16,7 @@ INSERT INTO repro_st VALUES (-1, 'seed');
 
 
 statement ok
-VACUUM (REFRESH_TABLE) repro_st;
+VACUUM (FLUSH_TABLE) repro_st;
 
 
 statement ok
@@ -36,7 +36,7 @@ COMMIT;
 
 
 statement ok
-VACUUM (REFRESH_TABLE) repro_st;
+VACUUM (FLUSH_TABLE) repro_st;
 
 
 query
@@ -67,7 +67,7 @@ COMMIT;
 
 
 statement ok
-VACUUM (REFRESH_TABLE) repro_st;
+VACUUM (FLUSH_TABLE) repro_st;
 
 
 query
@@ -101,7 +101,7 @@ COMMIT;
 
 
 statement ok
-VACUUM (REFRESH_TABLE) repro_st;
+VACUUM (FLUSH_TABLE) repro_st;
 
 
 query
@@ -116,7 +116,7 @@ bulk	serial	lo	hi
 
 statement ok
 CREATE TABLE repro_rf (id BIGINT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 
 statement ok
@@ -124,7 +124,7 @@ INSERT INTO repro_rf VALUES (1);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) repro_rf;
+VACUUM (FLUSH_TABLE) repro_rf;
 
 
 statement ok
@@ -143,7 +143,7 @@ TRUNCATE repro_rf;
 
 connection s2
 statement ok
-VACUUM (REFRESH_TABLE) repro_rf;
+VACUUM (FLUSH_TABLE) repro_rf;
 
 
 connection s2
@@ -161,7 +161,7 @@ COMMIT;
 
 connection s2
 statement ok
-VACUUM (REFRESH_TABLE) repro_rf;
+VACUUM (FLUSH_TABLE) repro_rf;
 
 
 connection s2

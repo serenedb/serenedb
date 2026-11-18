@@ -20,19 +20,18 @@
 
 #pragma once
 
-#include <algorithm>
 #include <cstdint>
-#include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/storage/statistics/base_statistics.hpp>
 #include <limits>
 #include <memory>
-#include <optional>
 #include <span>
 #include <string>
 
+#include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/numeric_layout.hpp"
+#include "iresearch/formats/column/codecs/reuse_policy.hpp"
 #include "iresearch/index/column_info.hpp"
 
 namespace irs::codecs {
@@ -50,38 +49,17 @@ struct NumericSegment {
   std::string bytes;
 };
 
-inline constexpr double kDrift = 1.25;
-inline constexpr uint64_t kNoRival = std::numeric_limits<uint64_t>::max();
-
-struct CalibrationClock {
-  static constexpr uint32_t kMaxGap = 16;
-
-  uint32_t gap = 1;
-  uint32_t since = 0;
-
-  bool Due() noexcept { return ++since >= gap; }
-  void Settle(bool kept) noexcept {
-    gap = kept ? std::min(gap * 2, kMaxGap) : 1;
-    since = 0;
-  }
-  void Restart() noexcept { Settle(false); }
-};
+inline constexpr uint64_t kNotAnalyzed = std::numeric_limits<uint64_t>::max();
 
 struct NumericTuning {
-  std::optional<NumericChoice> pick;
-  bool calibrated = false;
-  CalibrationClock clock;
-  double bytes_per_row = 0;
+  ReusePolicy<NumericChoice> reuse;
   double codes_ratio = 1;
-  duckdb::CompressionType rival = duckdb::CompressionType::COMPRESSION_AUTO;
-
-  bool Due() noexcept { return !calibrated || clock.Due(); }
-  bool Drifted(double bytes, double rows) const noexcept {
-    return bytes > bytes_per_row * rows * kDrift;
-  }
+  const CompressionFunction* analyzed = nullptr;
 };
 
 uint64_t Packed(uint64_t count, uint64_t max_value) noexcept;
+
+bool UpdateConstant(const duckdb::Vector& input, duckdb::BaseStatistics& stats);
 
 uint64_t EstimateCodes(const NumericTuning& tuning, uint64_t rows,
                        uint64_t entries, uint64_t runs) noexcept;
@@ -99,7 +77,7 @@ class NumericSealer {
   virtual void Add(const duckdb::Vector& input) = 0;
 
   virtual NumericSegment Seal(const ColCodecParams& params,
-                              uint64_t rival_bytes, NumericTuning& tuning,
+                              uint64_t analyzed_bytes, NumericTuning& tuning,
                               bool due) = 0;
 };
 

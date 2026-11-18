@@ -65,8 +65,10 @@ inline uint64_t FirstToken(ChainGroups& groups, PackedReader& counts,
 }
 
 struct OnPairScan {
+  static constexpr uint32_t kEntryGroup = 1;
+
   template<typename Frames>
-  OnPairScan(duckdb::ColumnSegment&, const Frames& s) {
+  OnPairScan(const ColumnSegment&, const Frames& s) {
     SDB_ENSURE(table.Open(OnPairSide(s.header, s.base)),
                "col codec: corrupted symbol table");
     groups.Reset(static_cast<uint32_t>(s.frames.size()), [&](uint32_t f) {
@@ -184,7 +186,7 @@ struct OnPairFetch {
 
   uint64_t DecodedBytes() const noexcept { return 0; }
 
-  void Emit(duckdb::ColumnSegment&, const Header& h, duckdb::data_ptr_t base,
+  void Emit(const ColumnSegment&, const Header& h, duckdb::data_ptr_t base,
             PackedReader& counts, uint32_t lo, const FrameMeta& f,
             uint32_t entry, duckdb::Vector& result, duckdb::idx_t result_idx,
             bool) {

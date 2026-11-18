@@ -192,7 +192,7 @@ void LMIndexTest::BuildFixture() {
 
   auto opts = irs::tests::DefaultWriterOptions();
 
-  auto writer = open_writer(irs::kOmCreate, std::move(opts));
+  auto writer = open_writer(tests::kOmCreate, std::move(opts));
   ASSERT_NE(nullptr, writer);
   ASSERT_TRUE(tests::Insert(*writer, doc1.indexed.begin(), doc1.indexed.end()));
   ASSERT_TRUE(tests::Insert(*writer, doc2.indexed.begin(), doc2.indexed.end()));
@@ -235,9 +235,9 @@ TEST_P(LMIndexTest, jm_scores_positive_and_ordered) {
 
   auto impl = std::make_unique<irs::LMJelinekMercer>(0.1f);
   auto index = open_reader(irs::tests::DefaultReaderOptions());
-  ASSERT_EQ(1, index->size());
+  ASSERT_EQ(1, index.size());
 
-  auto seen = RunQuery(*index, *impl);
+  auto seen = RunQuery(index, *impl);
   ASSERT_EQ(3u, seen.size());
   for (auto& [_, s] : seen) {
     ASSERT_GT(s, 0.f) << "LM JM should produce positive scores for matches";
@@ -260,9 +260,9 @@ TEST_P(LMIndexTest, dirichlet_scores_nonnegative) {
   // Small mu for sharper separation on this toy corpus.
   auto impl = std::make_unique<irs::LMDirichlet>(10.f);
   auto index = open_reader(irs::tests::DefaultReaderOptions());
-  ASSERT_EQ(1, index->size());
+  ASSERT_EQ(1, index.size());
 
-  auto seen = RunQuery(*index, *impl);
+  auto seen = RunQuery(index, *impl);
   ASSERT_EQ(3u, seen.size());
   for (auto& [_, s] : seen) {
     ASSERT_GE(s, 0.f) << "LM Dirichlet floors at 0 per Lucene";

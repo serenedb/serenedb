@@ -23,9 +23,6 @@ statement ok
 INSERT INTO offsets_test VALUES (4, 'good day', 'fox fox fox fox fox fox fox fox fox fox fox fox', 12);
 
 statement ok
-VACUUM (REFRESH_TABLE) offsets_test;
-
-statement ok
 CREATE TABLE offsets_test2 (id INTEGER PRIMARY KEY, body VARCHAR);
 
 statement ok
@@ -33,9 +30,6 @@ CREATE INDEX offsets_test2_idx ON offsets_test2 USING inverted(id, body offsets_
 
 statement ok
 INSERT INTO offsets_test2 VALUES (1, 'fox'), (2, 'cat');
-
-statement ok
-VACUUM (REFRESH_TABLE) offsets_test2;
 
 query
 SELECT id, ts_offsets(body) AS bo
@@ -73,7 +67,7 @@ QUERY PLAN
 ╰─────────────────┬────────────────╯
 ╭─ IRESEARCH_SCAN ┴────────────────╮
 │ Index: offsets_test_idx          │
-│ Lookup: table                    │
+│ Lookup: search                   │
 │ Index Filter:                    │
 │ ╭─ Term ──────────────╮          │
 │ │ Field: body(string) │          │
@@ -328,7 +322,7 @@ QUERY PLAN
 ╰─────────────────┬─────────────────╯  ╰─────────────────┬────────────────╯
 ╭─ IRESEARCH_SCAN ┴─────────────────╮  ╭─ IRESEARCH_SCAN ┴────────────────╮
 │ Index: offsets_test_idx           │  │ Index: offsets_test_idx          │
-│ Lookup: table                     │  │ Lookup: table                    │
+│ Lookup: search                    │  │ Lookup: search                   │
 │ Index Filter:                     │  │ Index Filter:                    │
 │ ╭─ Term ──────────────╮           │  │ ╭─ Term ──────────────╮          │
 │ │ Field: body(string) │           │  │ │ Field: body(string) │          │
@@ -420,13 +414,13 @@ db error: ERROR: ts_offsets(): column 'id' not found in index
 query error
 SELECT ts_offsets(body) FROM offsets_test;
 ----
-db error: ERROR: ts_offsets(body) requires an inverted index scan in the same sub-query
+db error: ERROR: ts_offsets() requires an inverted index scan in the same sub-query
 
 
 query error
 SELECT ts_offsets(body) FROM offsets_test;
 ----
-db error: ERROR: ts_offsets(body) requires an inverted index scan in the same sub-query
+db error: ERROR: ts_offsets() requires an inverted index scan in the same sub-query
 
 
 # Extract a context window around the first search hit using byte offsets.
@@ -601,7 +595,7 @@ QUERY PLAN
 ╰─────────────────────────────┬────────────────────────────╯
 ╭─ IRESEARCH_SCAN ────────────┴────────────────────────────╮
 │ Index: offsets_test_idx                                  │
-│ Lookup: table                                            │
+│ Lookup: search                                           │
 │ Index Filter:                                            │
 │ ╭─ Term ──────────────╮                                  │
 │ │ Field: body(string) │                                  │
@@ -634,7 +628,7 @@ QUERY PLAN
 ╰─────────────────┬────────────────╯
 ╭─ IRESEARCH_SCAN ┴────────────────╮
 │ Index: offsets_test_idx          │
-│ Lookup: table                    │
+│ Lookup: search                   │
 │ Index Filter:                    │
 │ ╭─ Term ──────────────╮          │
 │ │ Field: body(string) │          │
@@ -1176,7 +1170,6 @@ statement error
 SELECT ts_offsets('standalone_dict', 42, ts_phrase('fox'))
 ----
 db error: ERROR: No function matches the given name and argument types 'ts_offsets(STRING_LITERAL, INTEGER_LITERAL, TSQUERY)'. You might need to add explicit type casts.<slt:ignore>
-
 
 
 statement ok

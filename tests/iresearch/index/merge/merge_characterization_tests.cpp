@@ -110,7 +110,7 @@ class MergeCharacterizationTest : public ::testing::Test {
   static constexpr size_t kWordsTerms = 150;
 
   void SetUp() final {
-    _writer = irs::IndexWriter::Make(_dir, irs::kOmCreate,
+    _writer = tests::IndexWriter::Make(_dir, tests::kOmCreate,
                                      irs::tests::DefaultWriterOptions());
     Write(kBigDocs, 0);
     Write(kSmallDocs, kBigDocs);
@@ -160,7 +160,7 @@ class MergeCharacterizationTest : public ::testing::Test {
 
   irs::MemoryDirectory _dir;
   irs::MemoryDirectory _out;
-  irs::IndexWriter::ptr _writer;
+  tests::IndexWriter::ptr _writer;
   irs::DirectoryReader _reader;
   std::vector<const irs::SubReader*> _inputs;
   irs::FunctionFieldOptions _field_options{
@@ -197,7 +197,7 @@ TEST_F(MergeCharacterizationTest, AbortsAtEveryProgressCall) {
     EXPECT_FALSE(Merge(meta, [&] { return ++calls < stop_at; }));
     EXPECT_GE(calls, stop_at);
     EXPECT_TRUE(meta.name.empty());
-    EXPECT_TRUE(meta.files.empty());
+    EXPECT_EQ(0, meta.kinds);
     EXPECT_EQ(0, meta.docs_count);
   }
 }
@@ -263,39 +263,29 @@ TEST_F(MergeCharacterizationTest, DocMapAllocationFailureFailsTheMerge) {
       Merge(meta, {}, memory);
     } catch (const std::bad_alloc&) {
       doc_map_failed = true;
-      EXPECT_TRUE(meta.files.empty());
+      EXPECT_EQ(0, meta.kinds);
     }
   }
   EXPECT_TRUE(doc_map_failed);
 }
 
 TEST_F(MergeCharacterizationTest, FullyDeletedInputYieldsNoSegment) {
-  auto meta = _reader.Meta().index_meta.segments.back().meta;
-  irs::DocumentMaskBuilder all;
-  for (irs::doc_id_t doc = irs::doc_limits::min();
-       doc < meta.docs_count + irs::doc_limits::min(); ++doc) {
-    all.Add(doc);
-  }
-  meta.docs_mask = std::make_shared<irs::DocumentMask>(std::move(all).Finish());
-  meta.live_docs_count = 0;
-  auto deleted = irs::SegmentReaderImpl::Open(
-    _dir, meta, irs::tests::DefaultReaderOptions());
-  ASSERT_NE(nullptr, deleted);
+  const auto deleted = AllDeleted(_reader[_reader.size() - 1]);
   ASSERT_EQ(0, deleted->live_docs_count());
   const irs::SubReader* inputs[] = {deleted.get()};
   irs::MemoryDirectory dir;
   const auto merged = RunMerge(dir, inputs, &_field_options);
   EXPECT_FALSE(merged.flushed);
-  EXPECT_TRUE(merged.meta.files.empty());
+  EXPECT_EQ(0, merged.meta.kinds);
 }
 
-irs::IndexWriter::ptr MakeWriter(irs::Directory& dir,
+tests::IndexWriter::ptr MakeWriter(irs::Directory& dir,
                                  irs::ColumnOptionsProvider columns,
                                  irs::AnnFieldsByColumn anns = {}) {
   auto options = irs::tests::DefaultWriterOptions();
   options.column_options = std::move(columns);
   options.anns = std::move(anns);
-  return irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(options));
+  return tests::IndexWriter::Make(dir, tests::kOmCreate, std::move(options));
 }
 
 TEST(MergeColumnsTest, InputWithoutColumnsIsPaddedWithNulls) {
@@ -354,17 +344,8 @@ TEST(MergeNormsTest, InputsWithoutNormColumnsGiveZeroNorms) {
   const auto second_merged = RunMerge(second_dir, second, nullptr);
   ASSERT_TRUE(second_merged.flushed);
 
-  auto meta = reader.Meta().index_meta.segments.front().meta;
-  irs::DocumentMaskBuilder all;
-  for (irs::doc_id_t doc = irs::doc_limits::min();
-       doc < meta.docs_count + irs::doc_limits::min(); ++doc) {
-    all.Add(doc);
-  }
-  meta.docs_mask = std::make_shared<irs::DocumentMask>(std::move(all).Finish());
-  meta.live_docs_count = 0;
-  const auto deleted =
-    irs::SegmentReaderImpl::Open(dir, meta, irs::tests::DefaultReaderOptions());
-  ASSERT_NE(nullptr, deleted);
+  const auto deleted = AllDeleted(reader[0]);
+  ASSERT_EQ(0, deleted->live_docs_count());
   const WithoutColumnStore storeless{reader[0]};
   const WithoutColumnStore storeless_deleted{*deleted};
 
@@ -406,7 +387,7 @@ TEST(MergeColumnsTest, SketchesStartAtTheMerge) {
   ASSERT_EQ(2, inputs.size());
   for (const auto* input : inputs) {
     ASSERT_EQ(nullptr,
-              input->GetColReader()->Column(kFirstColumn)->HyperLogLog());
+              input->GetColReader()->Column(kFirstColumn)->Distinct());
   }
 
   irs::FunctionFieldOptions field_options{
@@ -418,8 +399,8 @@ TEST(MergeColumnsTest, SketchesStartAtTheMerge) {
   const auto merged = RunMerge(out, inputs, &field_options);
   ASSERT_TRUE(merged.flushed);
   const auto* cs = merged.reader->GetColReader();
-  ASSERT_NE(nullptr, cs->Column(kFirstColumn)->HyperLogLog());
-  ASSERT_NE(nullptr, cs->Column(kFirstColumn + 2)->HyperLogLog());
+  ASSERT_NE(nullptr, cs->Column(kFirstColumn)->Distinct());
+  ASSERT_NE(nullptr, cs->Column(kFirstColumn + 2)->Distinct());
   EXPECT_EQ("", FirstDifference(ExpectedMerge(inputs), Dump(*merged.reader)));
 }
 
@@ -483,59 +464,8 @@ std::string LogLine(size_t g) {
                       " user=", rng() % 100000, " took ", rng() % 997, "ms");
 }
 
-TEST(MergeColumnsTest, DictionarySamplingSkipsInputsWithoutTheColumn) {
-  constexpr irs::field_id kLog = kFirstColumn + 2;
-  constexpr size_t kRows = 30000;
-  irs::MemoryDirectory dir;
-  auto writer = MakeWriter(dir, PlainColumns);
-  Generator gen{79};
-  size_t next_id = 0;
-  SegmentShape bare;
-  bare.docs = 50;
-  bare.has_norm_field = false;
-  WriteSegment(*writer, gen, bare, next_id);
-  for (size_t s = 0; s != 2; ++s) {
-    auto trx = writer->GetBatch();
-    for (size_t i = 0; i != kRows; ++i) {
-      auto doc = trx.Insert();
-      tests::StringField id_field{"id", absl::StrCat("log-", s, "-", i)};
-      id_field.id = kIdField;
-      tests::InsertField(doc, id_field);
-      WriteValue(doc, kLog, duckdb::LogicalType::VARCHAR,
-                 duckdb::Value{LogLine(s * kRows + i)});
-    }
-    trx.Commit();
-    ASSERT_TRUE(writer->RefreshCommit());
-  }
-  const auto reader = writer->GetSnapshot();
-  const auto inputs = Segments(reader);
-  ASSERT_EQ(3, inputs.size());
-
-  irs::FunctionFieldOptions field_options{
-    PlainColumns,
-    irs::tests::MakeNormColumnIdProvider(),
-    DEFAULT_ROW_GROUP_SIZE,
-    {}};
-  irs::MemoryDirectory out;
-  const auto merged = RunMerge(out, inputs, &field_options);
-  ASSERT_TRUE(merged.flushed);
-  const auto* cs = merged.reader->GetColReader();
-  const auto* col = cs->Column(kLog);
-  ASSERT_NE(nullptr, col);
-  irs::ReadContext ctx{*cs};
-  bool trained = false;
-  for (size_t b = 0; b < col->DataBlocks().size() && !trained; ++b) {
-    auto seg = col->OpenSegment(b, ctx);
-    auto info = seg->GetCompressionFunction().get_segment_info(
-      duckdb::QueryContext{}, *seg);
-    trained = info["dictionary"] == "local";
-  }
-  EXPECT_TRUE(trained);
-  EXPECT_EQ("", FirstDifference(ExpectedMerge(inputs), Dump(*merged.reader)));
-}
-
 template<typename Value>
-void AppendStringRows(irs::IndexWriter& writer, irs::field_id column,
+void AppendStringRows(tests::IndexWriter& writer, irs::field_id column,
                       size_t rows, Value&& value) {
   auto trx = writer.GetBatch();
   for (size_t begin = 0; begin < rows; begin += STANDARD_VECTOR_SIZE) {
@@ -643,7 +573,7 @@ irs::AnnFieldsByColumn IvfAnns() {
   return anns;
 }
 
-void WriteVectors(irs::IndexWriter& writer, size_t docs, uint64_t seed) {
+void WriteVectors(tests::IndexWriter& writer, size_t docs, uint64_t seed) {
   std::mt19937_64 rng{seed};
   std::uniform_real_distribution<float> coord{-1.f, 1.f};
   const auto type =
@@ -744,19 +674,9 @@ TEST(MergeIvfTest, OnlyDeletedVectorsGiveNoSegment) {
   const auto reader = writer->GetSnapshot();
   std::vector<std::shared_ptr<const irs::SegmentReaderImpl>> deleted;
   std::vector<const irs::SubReader*> inputs;
-  for (const auto& segment : reader.Meta().index_meta.segments) {
-    auto meta = segment.meta;
-    irs::DocumentMaskBuilder all;
-    for (auto doc = irs::doc_limits::min();
-         doc < meta.docs_count + irs::doc_limits::min(); ++doc) {
-      all.Add(doc);
-    }
-    meta.docs_mask =
-      std::make_shared<irs::DocumentMask>(std::move(all).Finish());
-    meta.live_docs_count = 0;
-    deleted.push_back(irs::SegmentReaderImpl::Open(
-      dir, meta, irs::tests::DefaultReaderOptions()));
-    ASSERT_NE(nullptr, deleted.back());
+  for (const auto& segment : reader) {
+    deleted.push_back(AllDeleted(segment));
+    ASSERT_EQ(0, deleted.back()->live_docs_count());
     inputs.push_back(deleted.back().get());
   }
   ASSERT_EQ(2, inputs.size());

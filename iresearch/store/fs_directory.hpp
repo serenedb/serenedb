@@ -50,8 +50,6 @@ class FSDirectory : public Directory {
 
   bool length(uint64_t& result, std::string_view name) const noexcept override;
 
-  IndexLock::ptr make_lock(std::string_view name) noexcept final;
-
   bool mtime(std::time_t& result, std::string_view name) const noexcept final;
 
   IndexInput::ptr open(std::string_view name, IOAdvice advice) const override;

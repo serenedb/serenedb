@@ -1,60 +1,9 @@
 statement ok
 CREATE TABLE alt (id INT PRIMARY KEY, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
-INSERT INTO alt SELECT i, 'row ' || i FROM range(100) t(i);
-
-statement ok
-BEGIN;
-
-statement ok
-ALTER TABLE alt SET (refresh_interval = 100);
-
-statement ok
-ROLLBACK;
-
-sleep 2s
-
-query
-SELECT count(*) AS n FROM alt;
-----
-n
-0
-
-statement ok
-ALTER TABLE alt SET (refresh_interval = 100);
-
-query ok retry 60 backoff 500ms
-SELECT count(*) AS n FROM alt;
-----
-n
-100
-
-statement ok
-ALTER TABLE alt SET (refresh_interval = 600000);
-
-sleep 1s
-
-statement ok
-INSERT INTO alt SELECT i, 'row ' || i FROM range(100, 200) t(i);
-
-sleep 2s
-
-query
-SELECT count(*) AS n FROM alt;
-----
-n
-100
-
-statement ok
-ALTER TABLE alt SET (refresh_interval = 100);
-
-query ok retry 20 backoff 500ms
-SELECT count(*) AS n FROM alt;
-----
-n
-200
+INSERT INTO alt SELECT i, 'row ' || i FROM range(200) t(i);
 
 statement ok
 CREATE INDEX alt_idx ON alt USING inverted(body);
@@ -70,7 +19,7 @@ alt_body_idx
 alt_pkey
 
 statement ok
-ALTER TABLE alt SET (refresh_interval = 0, compaction_interval = 500);
+ALTER TABLE alt SET (compaction_interval = 500);
 
 statement ok
 ALTER TABLE alt RESET (compaction_interval);
@@ -82,14 +31,14 @@ query
 SELECT reloptions FROM pg_class WHERE relname = 'alt';
 ----
 reloptions
-{refresh_interval=0,compaction_interval=1000,cleanup_interval_step=1,compaction_max_segments=10,compaction_max_segments_bytes=5368709120,compaction_floor_segment_bytes=2097152,row_group_size=122880,segment_memory_max=268435456}
+NULL
 
 statement ok
 DROP TABLE alt;
 
 statement ok
 CREATE TABLE alc (a INTEGER PRIMARY KEY, v TEXT, n INTEGER)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 SET threads = 1;
@@ -98,7 +47,7 @@ statement ok
 INSERT INTO alc SELECT a, 'event ' || (a % 3000) || ' completed for user ' || (a % 1000) || ' status ok', a FROM range(9000) t(a);
 
 statement ok
-VACUUM (REFRESH_TABLE) alc;
+VACUUM (FLUSH_TABLE) alc;
 
 statement ok
 ALTER TABLE alc ALTER COLUMN v SET COMPRESSION dict_zstd(compression_level = 19);
@@ -110,7 +59,7 @@ statement ok
 RESET threads;
 
 statement ok
-VACUUM (REFRESH_TABLE) alc;
+VACUUM (FLUSH_TABLE) alc;
 
 query
 SELECT row_group_id, compression
@@ -146,7 +95,7 @@ statement ok
 INSERT INTO alc SELECT a, 'x' || a, a FROM range(18000, 19000) t(a);
 
 statement ok
-VACUUM (REFRESH_TABLE) alc;
+VACUUM (FLUSH_TABLE) alc;
 
 query
 SELECT string_agg(DISTINCT compression, ',') AS compression
@@ -163,13 +112,13 @@ query
 SELECT reloptions FROM pg_class WHERE relname = 'alc';
 ----
 reloptions
-{refresh_interval=0,compaction_interval=0,cleanup_interval_step=1,compaction_max_segments=10,compaction_max_segments_bytes=5368709120,compaction_floor_segment_bytes=2097152,row_group_size=122880,segment_memory_max=268435456}
+{compaction_interval=0}
 
 statement ok
 INSERT INTO alc SELECT a, 'x' || a, a FROM range(19000, 20000) t(a);
 
 statement ok
-VACUUM (REFRESH_TABLE) alc;
+VACUUM (FLUSH_TABLE) alc;
 
 query
 SELECT compression FROM pragma_storage_info('alc')
@@ -233,8 +182,7 @@ DROP TABLE alc;
 
 
 statement ok
-CREATE TABLE alg (id INT PRIMARY KEY, v TEXT, g TEXT GENERATED ALWAYS AS (upper(v)))
-WITH (storage = 'search');
+CREATE TABLE alg (id INT PRIMARY KEY, v TEXT, g TEXT GENERATED ALWAYS AS (upper(v)));
 
 
 statement error
@@ -258,11 +206,14 @@ ALTER TABLE alt_tx ALTER COLUMN b SET COMPRESSION rle;
 statement error
 ALTER TABLE alt_tx ALTER COLUMN b SET COMPRESSION dict_lz4;
 ----
-db error: ERROR: Column "b": compression 'dict_lz4' is only available on search tables (WITH (storage = 'search'))
+db error: ERROR: Can't compress column "b" with type 'INTEGER' (physical: INT32) using compression type 'DICT_LZ4'
 
 
 statement ok
-FORCE CHECKPOINT;
+VACUUM (FLUSH_TABLE) alt_tx;
+
+statement ok
+VACUUM (COMPACT_TABLE) alt_tx;
 
 query
 SELECT DISTINCT compression FROM pragma_storage_info('alt_tx') WHERE column_name = 'b' AND segment_type <> 'VALIDITY';

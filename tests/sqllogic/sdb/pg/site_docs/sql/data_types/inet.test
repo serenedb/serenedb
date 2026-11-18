@@ -54,9 +54,6 @@ INSERT INTO hosts VALUES (1, '10.1.2.3'), (2, '10.200.0.7'), (3, '192.168.1.5'),
 statement ok
 CREATE INDEX hosts_idx ON hosts USING inverted (id, ip);
 
-statement ok
-VACUUM (REFRESH_TABLE) hosts;
-
 query
 SELECT id, ip FROM hosts_idx WHERE ip <<= '10.0.0.0/8' ORDER BY id;
 ----
@@ -76,9 +73,6 @@ INSERT INTO networks VALUES (1, '10.0.0.0/8', 'corporate'), (2, '10.1.0.0/16', '
 
 statement ok
 CREATE INDEX networks_idx ON networks USING inverted (id, net) INCLUDE (name);
-
-statement ok
-VACUUM (REFRESH_TABLE) networks;
 
 query
 SELECT id, name FROM networks_idx WHERE net >>= '10.1.2.3' ORDER BY id;

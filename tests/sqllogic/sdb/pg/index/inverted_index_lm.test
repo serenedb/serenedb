@@ -34,10 +34,6 @@ statement ok
 CREATE INDEX docs_idx ON docs USING inverted(id, body en);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) docs;
-
-
 # LM Jelinek-Mercer with default lambda (0.1): strictly positive for matches.
 query
 SELECT id, lm_jm(docs_idx.tableoid) > 0 AS has_score
@@ -126,10 +122,6 @@ INSERT INTO docs VALUES (6, 'another fox entered the room');
 
 statement count 1
 INSERT INTO docs VALUES (7, 'fox runs fast fox');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) docs;
 
 
 # LM JM across segments: positive for every match, doc 7 (higher tf) strictly

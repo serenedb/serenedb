@@ -23,41 +23,38 @@
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
 #include <memory>
+#include <span>
 #include <vector>
 
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/type_limits.hpp"
 
 namespace irs::column_internal {
 
 inline constexpr duckdb::idx_t kPointDensity = 64;
 
-void FetchPoints(std::unique_ptr<ColumnReader::PointReader>& point,
-                 const ColReader& col_reader, const ColumnReader& column,
-                 std::vector<uint64_t>& rows, duckdb::idx_t count,
-                 const auto& row, duckdb::Vector& out, duckdb::idx_t at) {
+inline void FetchPoints(std::unique_ptr<ColumnReader::PointReader>& point,
+                        const ColReader& col_reader, const ColumnReader& column,
+                        std::span<const doc_id_t> docs, duckdb::Vector& out,
+                        duckdb::idx_t at) {
   if (!point) {
     point = std::make_unique<ColumnReader::PointReader>(col_reader, column);
   }
-  rows.clear();
-  for (duckdb::idx_t i = 0; i < count; ++i) {
-    rows.emplace_back(row(i));
-  }
-  point->FetchRows(rows, out, at);
+  point->FetchRows(docs, doc_limits::min(), out, at);
 }
 
 template<typename Kind>
 void ScatterRuns(const Kind& self, ColumnReader::ScanState& s, uint64_t anchor,
-                 const duckdb::SelectionVector& sel, duckdb::idx_t hits,
-                 duckdb::Vector& out, duckdb::idx_t at) {
+                 const duckdb::SelectionVector& sel, duckdb::idx_t i,
+                 duckdb::idx_t end, duckdb::Vector& out, duckdb::idx_t at) {
   uint64_t pos = self.Kind::GatherCursor(s);
-  duckdb::idx_t i = 0;
-  while (i < hits) {
+  while (i < end) {
     const uint64_t target = anchor + sel.get_index(i);
     SDB_ASSERT(target >= pos, "GatherScatter requires ascending rows");
     duckdb::idx_t run = 1;
-    while (i + run < hits &&
+    while (i + run < end &&
            sel.get_index(i + run) == sel.get_index(i + run - 1) + 1) {
       ++run;
     }
@@ -78,7 +75,7 @@ void DenseRuns(const Kind& self, ColumnReader::ScanState& s, uint64_t anchor,
   const uint64_t cur = self.Kind::GatherCursor(s);
   SDB_ASSERT(anchor >= cur, "GatherDense requires ascending rows");
   if (hits * 32 < span) {
-    ScatterRuns(self, s, anchor, sel, hits, out, 0);
+    self.Kind::GatherScatter(s, anchor, sel, hits, out, 0);
     return;
   }
   if (anchor > cur) {
@@ -140,7 +137,7 @@ void GatherRows(const ColumnReader& reader, ColumnReader::ScanState& s,
     if (at == 0) {                                                           \
       NewOutputVector(s);                                                    \
     }                                                                        \
-    column_internal::ScatterRuns(*this, s, anchor, sel, hits, out, at);      \
+    column_internal::ScatterRuns(*this, s, anchor, sel, 0, hits, out, at);   \
   }
 
 #define IRS_COLUMN_READER_GATHER_DENSE                                     \

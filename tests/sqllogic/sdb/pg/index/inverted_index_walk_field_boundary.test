@@ -3,7 +3,7 @@ CREATE TEXT SEARCH DICTIONARY wfb_kw AS keyword()
 
 
 statement ok
-CREATE TABLE wfb (id INT, f VARCHAR, g VARCHAR) WITH (storage = 'search')
+CREATE TABLE wfb (id INT, f VARCHAR, g VARCHAR)
 
 
 statement ok
@@ -17,10 +17,6 @@ INSERT INTO wfb SELECT i,
   FROM range(3001) t(i)
 
 
-statement ok
-VACUUM (REFRESH_TABLE) wfb
-
-
 query
 EXPLAIN SELECT count(*) FROM wfb WHERE f LIKE '_b%'
 ----
@@ -30,8 +26,7 @@ QUERY PLAN
 │ ~1 row                   │
 ╰─────────────┬────────────╯
 ╭─ IRESEARCH_SCAN ─────────╮
-│ Index: wfb               │
-│ Lookup: search           │
+│ Table: wfb               │
 │ Index Filter:            │
 │ ╭─ Automaton ──────╮     │
 │ │ Field: f(string) │     │

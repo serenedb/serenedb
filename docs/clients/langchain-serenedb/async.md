@@ -25,7 +25,7 @@ Awaiting an `a`-prefixed method on the **synchronous** store does not give you a
 
 ## The event loop model {#event-loop}
 
-[`SereneDBEngine.from_connection_string()`](./engine.md#from_connection_string) creates one event loop on a daemon thread the first time it is called, stores it on the class, and shares it across every engine built that way. The connection pool is constructed unopened and opened lazily on that loop, because an `AsyncConnectionPool` must be opened from inside the loop that drives it.
+[`SereneDBEngine.from_connection_string()`](./engine.md#from_connection_string) creates one event loop on a daemon thread the first time it is called, stores it on the class, and shares it across every engine built that way. The connection pool is constructed unopened and opened on that loop, because an `AsyncConnectionPool` must be opened from inside the loop that drives it; the factory opens it right away to run the [server version check](./engine.md#version-check).
 
 That indirection is what makes the synchronous API possible, and it is harmless for async callers: an `await` on an async method hands the coroutine to the background loop with `run_coroutine_threadsafe` and awaits the result on your own loop.
 
@@ -47,7 +47,7 @@ engine = SereneDBEngine.from_pool(pool, loop=asyncio.get_running_loop())
 store = await AsyncSereneDBVectorStore.create(engine, embeddings, "my_docs")
 ```
 
-Pass `loop` even for a purely async application: without it, any synchronous method — including the DDL helpers such as [`init_vectorstore_table()`](./engine.md#init_vectorstore_table) — raises `Exception("Engine was initialized without a background loop and cannot call sync methods.")`. The pool must also already be open, since `from_pool()` marks the engine as opened.
+Pass `loop` even for a purely async application: without it, any synchronous method — including the DDL helpers such as [`init_vectorstore_table()`](./engine.md#init_vectorstore_table) — raises `Exception("Engine was initialized without a background loop and cannot call sync methods.")`. The pool must also already be open, since `from_pool()` marks the engine as opened. Because `loop` here is the loop you are running on, `from_pool()` cannot wait for the [server version check](./engine.md#version-check) during creation; it runs before the engine's first query instead, and an unsupported server raises from that first `await`.
 
 ## Creating an async store {#creating}
 
@@ -78,7 +78,6 @@ store = await AsyncSereneDBVectorStore.create(
 | `index_query_options` | `Optional[QueryOptions]` | `None` | See [`IVFQueryOptions`](./indexes.md#ivfqueryoptions). |
 | `hybrid_search_config` | `Optional[HybridSearchConfig]` | `None` | Query-time fusion settings; the combined index must already exist. See [Hybrid Search](./hybrid-search.md). |
 | `metadata_index` | `Optional[MetadataIndexConfig]` | `None` | See [Metadata index configuration](./indexes.md#metadata-index). |
-| `sync_load` | `bool` | `True` | When `False`, writes do not auto-refresh the inverted index. |
 
 The column validation and its error messages are the same as for the synchronous factory — see [Creating a store](./vector-store.md#creating).
 
@@ -106,7 +105,7 @@ Calling `AsyncSereneDBVectorStore(...)` directly raises — always go through `c
 | [`apply_vector_index()`](./indexes.md#apply_vector_index) | `aapply_vector_index()` | |
 | [`apply_hybrid_search_index()`](./indexes.md#apply_hybrid_search_index) | `aapply_hybrid_search_index()` | `index_config` and `concurrently` are keyword-only on the sync form, positional-or-keyword on the async one. |
 | [`drop_vector_index()`](./indexes.md#drop_vector_index) | `adrop_vector_index()` | |
-| [`reindex()`](./indexes.md#reindex) | `areindex()` | Both raise `NotImplementedError` for now. |
+| [`reindex()`](./indexes.md#reindex) | `areindex()` | Both raise `NotImplementedError`. |
 | [`is_valid_index()`](./indexes.md#is_valid_index) | `is_valid_index()` | Same name; on this class it is a coroutine. |
 | — | [`afrom_texts()`](#afrom_texts) / [`afrom_documents()`](#afrom_texts) | Async only. The sync `from_texts()` raises. |
 
@@ -135,7 +134,7 @@ ids = await store.aadd_embeddings(texts, embeddings, metadatas=None, ids=None)
 
 Writes rows with vectors you already have, skipping the embeddings model entirely — useful when embeddings arrive from a batch job or another service. This is the method [`aadd_texts()`](#methods) delegates to.
 
-The vector dimension is taken from `embeddings[0]` and bound as `%(embedding)s::FLOAT[N]`, so every vector in the batch must have the same length as the column. Like the other writes, it upserts on the id column and refreshes the index unless `sync_load=False`.
+The vector dimension is taken from `embeddings[0]` and bound as `%(embedding)s::FLOAT[N]`, so every vector in the batch must have the same length as the column. Like the other writes, it upserts on the id column.
 
 ### `asimilarity_search_with_score_by_vector()` {#asimilarity_search_with_score_by_vector}
 
@@ -197,7 +196,6 @@ Every configuration value is a plain public attribute on the store, readable aft
 | `index_query_options` | `Optional[QueryOptions]` | |
 | `hybrid_search_config` | `Optional[HybridSearchConfig]` | |
 | `metadata_index` | `Optional[MetadataIndexConfig]` | |
-| `sync_load` | `bool` | |
 
 Assigning to these after construction is not supported — the store derives internal state (the distance-column alias, for one) from them at construction time.
 

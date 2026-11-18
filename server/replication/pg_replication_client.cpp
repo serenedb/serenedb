@@ -33,10 +33,8 @@
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
-#include <duckdb/catalog/catalog_entry/subscription_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp>
-#include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/execution/operator/helper/physical_set.hpp>
 #include <duckdb/main/attached_database.hpp>
@@ -53,7 +51,6 @@
 #include <duckdb/planner/binder.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
 #include <duckdb/storage/data_table.hpp>
-#include <duckdb/transaction/duck_transaction.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
@@ -68,7 +65,7 @@
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/entry/subscription.h"
-#include "connector/duckdb_client_state.h"
+#include "catalog/transaction.h"
 #include "network/asio_awaitable.h"
 #include "network/pg/wire_frames.h"
 #include "network/server.h"
@@ -217,6 +214,7 @@ yaclib::Task<> PgReplicationClient::RunClient() {
       streaming = false;
     }
     streaming = streaming && co_await Guarded(StartReplication());
+    _streaming.store(streaming, std::memory_order_release);
     co_await RunJob(Job::Stream);
     if (streaming) {
       auto feedback = FeedbackLoop();
@@ -705,16 +703,9 @@ yaclib::Task<> PgReplicationClient::Feeder() {
           const auto start =
             std::get<StreamStartMessage>(DecodePgOutput(message));
           _streamed_xid = start.xid;
-          const bool fresh = _spools.try_emplace(start.xid, buffers).second;
-          const auto received = _received_lsn.load(std::memory_order_relaxed);
-          if (fresh && start.first_segment && !_eager_xid &&
-              _spools.size() == 1 && _target.skip_lsn == 0 &&
-              received >= _max_sync_lsn) {
-            _eager_xid = start.xid;
-            _txn_open = true;
-            ok = co_await Enqueue(StreamStopMessage{}) &&
-                 co_await Enqueue(
-                   BeginMessage{.final_lsn = received, .xid = start.xid});
+          if (_spools.try_emplace(start.xid, buffers).second &&
+              start.first_segment) {
+            _eager_candidate = start.xid;
           }
           break;
         }
@@ -733,6 +724,13 @@ yaclib::Task<> PgReplicationClient::Feeder() {
               CommitMessage{.commit_lsn = commit.commit_lsn,
                             .end_lsn = commit.end_lsn,
                             .commit_time = commit.commit_time});
+            break;
+          }
+          if (const auto spool = _spools.find(commit.xid);
+              spool != _spools.end() && spool->second.Size() == 0 &&
+              commit.commit_lsn != _target.skip_lsn) {
+            _spools.erase(spool);
+            _subxacts.erase(commit.xid);
             break;
           }
           ok = (!_eager_xid || co_await CancelEager()) &&
@@ -767,6 +765,23 @@ yaclib::Task<> PgReplicationClient::Feeder() {
         default:
           if (_streamed_xid) {
             auto& spool = _spools.at(*_streamed_xid);
+            if (spool.Size() == 0 && _eager_candidate == _streamed_xid) {
+              _eager_candidate.reset();
+              const auto received =
+                _received_lsn.load(std::memory_order_relaxed);
+              if (!_eager_xid && _target.skip_lsn == 0 &&
+                  received >= _max_sync_lsn &&
+                  absl::c_all_of(_spools, [&](const auto& other) {
+                    return other.first == *_streamed_xid ||
+                           other.second.Size() == 0;
+                  })) {
+                _eager_xid = _streamed_xid;
+                _txn_open = true;
+                ok = co_await Enqueue(StreamStopMessage{}) &&
+                     co_await Enqueue(BeginMessage{.final_lsn = received,
+                                                   .xid = *_streamed_xid});
+              }
+            }
             const auto xid = StreamedMessageXid(message);
             if (xid != *_streamed_xid) {
               auto& subxacts = _subxacts[*_streamed_xid];
@@ -778,7 +793,7 @@ yaclib::Task<> PgReplicationClient::Feeder() {
               }
             }
             spool.Append(message);
-            if (_eager_xid == _streamed_xid) {
+            if (ok && _eager_xid == _streamed_xid) {
               ok = co_await Enqueue(message, true, frame.recv_consume != 0);
             }
           } else {
@@ -1059,7 +1074,7 @@ void PgReplicationClient::OnRelation(const RelationMessage& message) {
       .Scan(*this->_conn->context, duckdb::CatalogType::INDEX_ENTRY,
             [&](duckdb::CatalogEntry& entry) {
               const auto& index = entry.Cast<duckdb::IndexCatalogEntry>();
-              if (!index.IsUnique() || index.GetTableName() != table->name) {
+              if (!index.IsUnique() || index.table_oid != table->oid) {
                 return;
               }
               std::vector<std::string_view> names;
@@ -1187,7 +1202,7 @@ void PgReplicationClient::PushRemoteLsn(uint64_t end_lsn) {
     return;
   }
   if (auto* subscription = VisibleSubscription()) {
-    duckdb::DuckTransaction::Get(context, *_database)
+    catalog::SessionOf(context, _database->GetCatalog())
       .PushReplicationLsn(*subscription, end_lsn);
   }
 }
@@ -1374,8 +1389,7 @@ yaclib::Task<> PgReplicationClient::ApplyTruncate(
       }
     }
     for (size_t i = 0; message.cascade && i < tables.size(); ++i) {
-      for (auto& referencing :
-           duckdb::Binder::TruncateReferencingTables(context, tables[i])) {
+      for (auto& referencing : tables[i].get().ReferencingTables(context)) {
         add(referencing, referencing.get().permissions.owner);
       }
     }

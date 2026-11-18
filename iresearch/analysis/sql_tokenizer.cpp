@@ -47,6 +47,7 @@
 #include <vector>
 
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
+#include "iresearch/utils/static_strings.hpp"
 
 namespace irs::analysis {
 namespace {
@@ -69,8 +70,10 @@ void ValidateParsed(std::string_view owner, duckdb::ParsedExpression& expr) {
     case duckdb::ExpressionClass::FUNCTION: {
       auto& func = expr.Cast<duckdb::FunctionExpression>();
       const auto& name = func.GetQualifiedName();
-      if ((!name.Catalog().empty() && name.Catalog() != SYSTEM_CATALOG) ||
-          (!name.Schema().empty() && name.Schema() != DEFAULT_SCHEMA)) {
+      if (!func.IsBuiltin() &&
+          (!name.Catalog().empty() ||
+           (!name.Schema().empty() &&
+            name.Schema() != irs::StaticStrings::kPgCatalogSchema))) {
         THROW_SQL_ERROR(ERR_MSG(owner, ": function \"",
                                 name.Name().GetIdentifierName(),
                                 "\": only built-in functions are allowed"));
@@ -81,8 +84,8 @@ void ValidateParsed(std::string_view owner, duckdb::ParsedExpression& expr) {
           "\" is not allowed in a ", owner,
           " tokenizer expression (it would recurse into the tokenizer)"));
       }
-      func.SetQualifiedName(duckdb::Identifier{SYSTEM_CATALOG},
-                            duckdb::Identifier{DEFAULT_SCHEMA}, name.Name());
+      func.SetQualifiedName(duckdb::QualifiedName{name.Name()});
+      func.BuiltinMutable() = true;
     } break;
     default:
       break;
@@ -112,12 +115,10 @@ void VerifyFunctionsExist(duckdb::ClientContext& ctx, std::string_view owner,
   if (expr.GetExpressionClass() == duckdb::ExpressionClass::FUNCTION) {
     const auto& name =
       expr.Cast<duckdb::FunctionExpression>().GetQualifiedName().Name();
-    auto& sys = duckdb::Catalog::GetSystemCatalog(ctx);
     const auto exists = [&](duckdb::CatalogType type) {
-      return sys
-               .GetEntry(ctx, type, duckdb::Identifier{DEFAULT_SCHEMA}, name,
-                         duckdb::OnEntryNotFound::RETURN_NULL)
-               .get() != nullptr;
+      return duckdb::Catalog::GetBuiltinEntry(
+               ctx, type, name, duckdb::OnEntryNotFound::RETURN_NULL) !=
+             nullptr;
     };
     if (!exists(duckdb::CatalogType::SCALAR_FUNCTION_ENTRY) &&
         !exists(duckdb::CatalogType::MACRO_ENTRY) &&

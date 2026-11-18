@@ -24,6 +24,7 @@
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <iresearch/types.hpp>
+#include <iresearch/utils/type_limits.hpp>
 #include <span>
 
 namespace sdb::connector {
@@ -33,7 +34,8 @@ inline constexpr uint64_t kRowPositionDocMask =
   (uint64_t{1} << kRowPositionDocBits) - 1;
 
 inline uint64_t MakeRowPosition(uint32_t index, irs::doc_id_t doc) noexcept {
-  return uint64_t{index} << kRowPositionDocBits | doc;
+  return uint64_t{index} << kRowPositionDocBits |
+         (doc - irs::doc_limits::min());
 }
 
 inline uint32_t RowPositionIndex(uint64_t position) noexcept {
@@ -41,7 +43,8 @@ inline uint32_t RowPositionIndex(uint64_t position) noexcept {
 }
 
 inline irs::doc_id_t RowPositionDoc(uint64_t position) noexcept {
-  return static_cast<irs::doc_id_t>(position & kRowPositionDocMask);
+  return static_cast<irs::doc_id_t>(position & kRowPositionDocMask) +
+         irs::doc_limits::min();
 }
 
 inline void FillRowPositions(uint32_t index,

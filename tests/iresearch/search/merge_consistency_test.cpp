@@ -260,7 +260,7 @@ void AssertMergeConsistent(const irs::Filter& filter,
 class MergeConsistencyTestCase : public tests::FilterTestCaseBase {
  protected:
   void BuildIndex() {
-    auto writer = open_writer(irs::kOmCreate);
+    auto writer = open_writer(tests::kOmCreate);
     {
       tests::JsonDocGenerator gen{resource("AdventureWorks2014.json"),
                                   &tests::GenericJsonFieldFactory};
@@ -388,7 +388,7 @@ TEST_P(MergeConsistencyTestCase, ngram_similarity) {
   for (size_t i = 0; i < 2; ++i) {
     tests::JsonDocGenerator gen(resource("ngram_similarity.json"),
                                 &tests::GenericJsonFieldFactory);
-    add_segment(gen, i == 0 ? irs::kOmCreate : irs::kOmAppend);
+    add_segment(gen, i == 0 ? tests::kOmCreate : tests::kOmAppend);
   }
 
   auto rdr = open_reader();
@@ -409,7 +409,7 @@ TEST_P(MergeConsistencyTestCase, phrase) {
   for (size_t i = 0; i < 2; ++i) {
     tests::JsonDocGenerator gen(resource("phrase_sequential.json"),
                                 &AnalyzedFieldFactory);
-    add_segment(gen, i == 0 ? irs::kOmCreate : irs::kOmAppend,
+    add_segment(gen, i == 0 ? tests::kOmCreate : tests::kOmAppend,
                 irs::tests::DefaultWriterOptions());
   }
 
@@ -439,7 +439,7 @@ TEST_P(MergeConsistencyTestCase, edit_distance) {
   for (size_t i = 0; i < 2; ++i) {
     tests::JsonDocGenerator gen(resource("levenshtein_sequential.json"),
                                 &tests::GenericJsonFieldFactory);
-    add_segment(gen, i == 0 ? irs::kOmCreate : irs::kOmAppend);
+    add_segment(gen, i == 0 ? tests::kOmCreate : tests::kOmAppend);
   }
 
   auto rdr = open_reader(irs::tests::DefaultReaderOptions());

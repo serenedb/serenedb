@@ -253,28 +253,28 @@ connection s2
 statement error
 REVOKE USAGE ON SCHEMA csv_s FROM csv_r1
 ----
-db error: ERROR: Catalog write-write conflict on alter with "csv_s"
+db error: ERROR: could not serialize access due to concurrent update of "csv_s"
 
 
 connection s3
 statement error
 ALTER SCHEMA csv_s OWNER TO csv_owner
 ----
-db error: ERROR: Catalog write-write conflict on alter with "csv_s"
+db error: ERROR: could not serialize access due to concurrent update of "csv_s"
 
 
 connection s4
 statement error
 GRANT CREATE ON SCHEMA csv_s TO csv_r3
 ----
-db error: ERROR: Catalog write-write conflict on alter with "csv_s"
+db error: ERROR: could not serialize access due to concurrent update of "csv_s"
 
 
 connection s5
 statement error
 DROP SCHEMA csv_s CASCADE
 ----
-db error: ERROR: Catalog write-write conflict on alter with <slt:ignore>
+db error: ERROR: could not serialize access due to concurrent update of <slt:ignore>
 
 
 connection s2
@@ -440,7 +440,7 @@ connection s2
 statement error
 GRANT USAGE ON SCHEMA csv_s TO csv_r2
 ----
-db error: ERROR: Catalog write-write conflict on alter with "csv_s"
+db error: ERROR: could not serialize access due to concurrent update of "csv_s"
 
 
 connection s2

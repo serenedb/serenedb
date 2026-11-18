@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <iresearch/index/file_names.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/merge/merge_executor.hpp>
 #include <iresearch/index/merge/merge_plan.hpp>
@@ -49,10 +50,10 @@ namespace {
 
 using namespace tests::merge;
 
-irs::IndexWriter::ptr MakeWriter(irs::Directory& dir) {
+tests::IndexWriter::ptr MakeWriter(irs::Directory& dir) {
   auto options = irs::tests::DefaultWriterOptions();
   options.column_options = SketchedColumns;
-  return irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(options));
+  return tests::IndexWriter::Make(dir, tests::kOmCreate, std::move(options));
 }
 
 std::shared_ptr<const irs::SegmentReaderImpl> MergeAll(
@@ -249,7 +250,8 @@ uint64_t ScoredMergeBytes(std::span<const irs::SubReader* const> inputs,
   auto doc_map = irs::MakeMergeDocMap(inputs, options.resource_manager);
   EXPECT_TRUE(
     irs::MergeSegments(out, doc_map, meta, options, MergePool(threads)));
-  std::vector<std::string> files(meta.files.begin(), meta.files.end());
+  const auto names = irs::SegmentFiles(meta.name, meta.kinds);
+  std::vector<std::string> files(names.begin(), names.end());
   std::ranges::sort(files);
   std::string bytes;
   for (const auto& file : files) {

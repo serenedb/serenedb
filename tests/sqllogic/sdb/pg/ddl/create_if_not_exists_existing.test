@@ -44,7 +44,7 @@ n
 
 # A search table creates no storage and no hidden sequence for the skipped one.
 statement ok
-CREATE TABLE ine_s (id INT, body TEXT) WITH (storage = 'search');
+CREATE TABLE ine_s (id INT, body TEXT);
 
 
 statement ok
@@ -53,11 +53,11 @@ SELECT count(*) AS n FROM pg_class WHERE relkind = 'S' AND relname LIKE 'ine_s%'
 
 
 statement ok
-CREATE TABLE IF NOT EXISTS ine_s (id INT, body TEXT) WITH (storage = 'search');
+CREATE TABLE IF NOT EXISTS ine_s (id INT, body TEXT);
 
 
 statement ok
-CREATE TABLE IF NOT EXISTS ine_s (x INT) WITH (storage = 'search');
+CREATE TABLE IF NOT EXISTS ine_s (x INT);
 
 
 query
@@ -141,7 +141,7 @@ query
 SELECT indexdef FROM pg_indexes WHERE indexname = 'ine_u';
 ----
 indexdef
-CREATE UNIQUE INDEX ine_u ON public.ine_t USING secondary (id)
+CREATE UNIQUE INDEX ine_u ON public.ine_t USING inverted (id)
 
 
 # A transaction that already wrote to a search table may still skip an index

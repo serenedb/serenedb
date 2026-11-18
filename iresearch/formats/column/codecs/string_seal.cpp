@@ -26,9 +26,10 @@
 #include <string_view>
 #include <utility>
 
-#include "iresearch/formats/column/codecs/calibration.hpp"
-#include "iresearch/formats/column/codecs/segment_encoder.hpp"
+#include "iresearch/formats/column/codecs/string_compression_function.hpp"
+#include "iresearch/formats/column/codecs/string_compressor.hpp"
 #include "iresearch/formats/column/codecs/string_layout.hpp"
+#include "iresearch/formats/column/codecs/string_picker.hpp"
 
 namespace irs::codecs {
 namespace {
@@ -64,7 +65,10 @@ void StringAccumulator::Add(const duckdb::Vector& input) {
       code = _last_code;
       continue;
     }
-    code = *_distinct.lazy_emplace(value, [&](const auto& construct) {
+    if (values.size() == values.capacity()) {
+      values.reserve(std::max<size_t>(kFirstValues, 2 * values.capacity()));
+    }
+    code = *_distinct.lazy_emplace(value, [&](const auto& construct) noexcept {
       values.push_back(&value);
       construct(static_cast<uint32_t>(values.size()));
     });
@@ -77,40 +81,35 @@ SealOutcome SealSegments(const StringAccumulator& acc,
                          const StringChoice* named,
                          const ColCodecParams& params,
                          const duckdb::LogicalType& type, StringTuning& tuning,
-                         SegmentSink sink) {
-  text::SegmentEncoder encoder{params, type, tuning};
-  text::Calibration calibration{acc, named, params, tuning, encoder};
+                         duckdb::BufferManager& buffers, SegmentSink sink) {
+  text::StringCompressor compressor{params, type, tuning.estimators, buffers};
   SealOutcome outcome{.sealed = true};
-  uint64_t row = 0;
-  bool first = true;
-  const bool due = !named && (!tuning.choice || tuning.clock.Due());
-  while (row < acc.Rows()) {
-    auto* seg = encoder.Cut(calibration.CutConfig(), acc, row);
-    const auto end = seg->begin + seg->rows;
-    if (!named) {
-      const bool scheduled = first && due;
-      const bool drift =
-        !scheduled && calibration.Drifted(*seg, first || end < acc.Rows());
-      const bool retune = drift && !first;
-      if (retune) {
-        encoder.Retrain();
-      }
-      if (scheduled || drift) {
-        seg = calibration.Calibrate(seg, !tuning.levels_tuned || retune, drift);
-      }
-      if (first && seg->Size() > PlainStorageBytes(*seg)) {
-        encoder.Release(seg);
-        return {};
-      }
-    }
-    outcome.all_dedup =
-      outcome.all_dedup && seg->config.choice.shape == Shape::Dedup;
-    const std::string_view parts[] = {seg->head, seg->data};
-    sink(seg->config.choice, std::move(*seg->stats), seg->rows, parts);
-    encoder.Release(seg);
-    row = end;
-    first = false;
+  const auto emit = [&](StringChoice choice, duckdb::BaseStatistics stats,
+                        uint64_t rows, std::string_view bytes) {
+    outcome.all_dedup = outcome.all_dedup && choice.shape == Shape::Dedup;
+    sink(choice, std::move(stats), rows, bytes);
+  };
+  if (named) {
+    const auto config = text::NamedConfig(*named, params);
+    text::GetStringCompressionFunction(config).Compress(compressor, config, acc,
+                                                        0, emit);
+    return outcome;
   }
+  text::StringPicker picker{acc, params, tuning, compressor};
+  auto first = picker.First();
+  if (!first) {
+    return outcome;
+  }
+  if (first->Size() > PlainStorageBytes(*first)) {
+    return {};
+  }
+  const auto config = first->config;
+  const auto rest = first->begin + first->rows;
+  emit(config.choice, std::move(*first->stats), first->rows,
+       first->bytes.View());
+  first.reset();
+  text::GetStringCompressionFunction(config).Compress(compressor, config, acc,
+                                                      rest, emit);
   return outcome;
 }
 
@@ -118,15 +117,16 @@ SealOutcome SealSegments(std::span<const WriteChunk> chunks,
                          const StringChoice& named,
                          const ColCodecParams& params,
                          const duckdb::LogicalType& type, StringTuning& tuning,
-                         SegmentSink sink) {
-  text::SegmentEncoder encoder{params, type, tuning};
+                         duckdb::BufferManager& buffers, SegmentSink sink) {
+  text::StringCompressor compressor{params, type, tuning.estimators, buffers};
   SealOutcome outcome{.sealed = true};
-  encoder.SealChunks(
-    text::NamedConfig(named, params), chunks,
+  const auto config = text::NamedConfig(named, params);
+  text::GetStringCompressionFunction(config).CompressChunks(
+    compressor, config, chunks,
     [&](StringChoice choice, duckdb::BaseStatistics stats, uint64_t rows,
-        std::span<const std::string_view> parts) {
+        std::string_view bytes) {
       outcome.all_dedup = outcome.all_dedup && choice.shape == Shape::Dedup;
-      sink(choice, std::move(stats), rows, parts);
+      sink(choice, std::move(stats), rows, bytes);
     });
   return outcome;
 }

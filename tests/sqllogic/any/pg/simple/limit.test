@@ -93,3 +93,31 @@ FETCH NEXT ROW ONLY;
 ----
 x
 1
+
+
+statement ok
+CREATE TABLE limit_nested (id INT, a INT[2]);
+
+
+statement ok
+INSERT INTO limit_nested VALUES (1, '{1,2}'), (2, '{2,3}'), (3, '{3,4}');
+
+
+statement ok
+PREPARE limit_nested_page(INT, INT) AS
+SELECT a, ARRAY[id, id * 10] AS l FROM limit_nested ORDER BY id LIMIT $1 OFFSET $2;
+
+
+query
+EXECUTE limit_nested_page(2, 1);
+----
+a	l
+{2,3}	{2,20}
+{3,4}	{3,30}
+
+
+query
+SELECT a FROM limit_nested ORDER BY id LIMIT (SELECT 1);
+----
+a
+{1,2}

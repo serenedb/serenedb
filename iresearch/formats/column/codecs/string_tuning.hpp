@@ -21,10 +21,10 @@
 #pragma once
 
 #include <cstdint>
-#include <optional>
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/numeric.hpp"
+#include "iresearch/formats/column/codecs/reuse_policy.hpp"
 
 namespace irs::codecs {
 
@@ -46,16 +46,34 @@ enum class FrameLayout : uint8_t {
   Local = 2,
 };
 
-struct StringTuning {
-  std::optional<StringChoice> choice;
-  double bytes_per_input = 0;
-  bool levels_tuned = false;
-  CalibrationClock clock;
-  uint64_t last_distinct = 0;
+namespace text {
+
+struct Config {
+  StringChoice choice{};
+  uint8_t level = 0;
+  FrameLayout layout = FrameLayout::FirstFrame;
+
+  bool operator==(const Config&) const = default;
+};
+
+}  // namespace text
+
+struct TunedParameters {
+  bool done = false;
   uint8_t level[kByteCodecCount]{};
   FrameLayout layout[kByteCodecCount]{};
+};
+
+struct EstimatorState {
   RatioHistory history[kByteCodecCount][2]{};
   NumericTuning codes;
+};
+
+struct StringTuning {
+  ReusePolicy<text::Config> reuse;
+  TunedParameters tuned;
+  EstimatorState estimators;
+  uint64_t last_distinct = 0;
 };
 
 }  // namespace irs::codecs

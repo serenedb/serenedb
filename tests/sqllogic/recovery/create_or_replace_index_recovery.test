@@ -23,7 +23,7 @@ INSERT INTO corir_t VALUES (1, 'Alpha'), (2, 'beta'), (3, 'alpha');
 
 
 statement ok
-CREATE TABLE corir_s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE TABLE corir_s (id INT PRIMARY KEY, body TEXT);
 
 
 statement ok
@@ -75,7 +75,7 @@ CREATE INDEX corir_v_inv ON corir_v USING inverted (body) WITH (reindex_interval
 
 
 statement ok
-CREATE OR REPLACE INDEX corir_v_inv ON corir_v USING inverted (id, body corir_dict) WITH (reindex_interval = 3600000);
+CREATE OR REPLACE INDEX corir_v_inv ON corir_v USING inverted (id, body corir_dict) INCLUDE (id) WITH (reindex_interval = 3600000);
 
 
 # An inverted index replaced by a plain one.
@@ -113,11 +113,11 @@ INSERT INTO corir_s VALUES (4, 'ALPHA');
 
 
 statement ok
-VACUUM (REFRESH_TABLE) corir_t;
+VACUUM (FLUSH_TABLE) corir_t;
 
 
 statement ok
-VACUUM (REFRESH_TABLE) corir_s;
+VACUUM (FLUSH_TABLE) corir_s;
 
 
 query
@@ -125,12 +125,12 @@ SELECT relname AS indexname, regexp_replace(pg_get_indexdef(oid), ' WITH \(.*', 
 WHERE relkind = 'i' AND relname LIKE 'corir%' AND relname <> 'corir_s_pkey' ORDER BY relname;
 ----
 indexname	def
-corir_art	CREATE INDEX corir_art ON public.corir_t USING secondary (id, body)
-corir_kind	CREATE INDEX corir_kind ON public.corir_t USING secondary (body)
+corir_art	CREATE INDEX corir_art ON public.corir_t USING inverted (id, body)
+corir_kind	CREATE INDEX corir_kind ON public.corir_t USING inverted (body)
 corir_rb	CREATE INDEX corir_rb ON public.corir_s USING inverted (body corir_dict)
 corir_s_inv	CREATE INDEX corir_s_inv ON public.corir_s USING inverted (id, body corir_dict)
 corir_t_inv	CREATE INDEX corir_t_inv ON public.corir_t USING inverted (id, body corir_dict)
-corir_v_inv	CREATE INDEX corir_v_inv ON public.corir_v USING inverted (id, body corir_dict)
+corir_v_inv	CREATE INDEX corir_v_inv ON public.corir_v USING inverted (id, body corir_dict) INCLUDE (id)
 
 
 query
@@ -175,12 +175,12 @@ SELECT relname AS indexname, regexp_replace(pg_get_indexdef(oid), ' WITH \(.*', 
 WHERE relkind = 'i' AND relname LIKE 'corir%' AND relname <> 'corir_s_pkey' ORDER BY relname;
 ----
 indexname	def
-corir_art	CREATE INDEX corir_art ON public.corir_t USING secondary (id, body)
-corir_kind	CREATE INDEX corir_kind ON public.corir_t USING secondary (body)
+corir_art	CREATE INDEX corir_art ON public.corir_t USING inverted (id, body)
+corir_kind	CREATE INDEX corir_kind ON public.corir_t USING inverted (body)
 corir_rb	CREATE INDEX corir_rb ON public.corir_s USING inverted (body corir_dict)
 corir_s_inv	CREATE INDEX corir_s_inv ON public.corir_s USING inverted (id, body corir_dict)
 corir_t_inv	CREATE INDEX corir_t_inv ON public.corir_t USING inverted (id, body corir_dict)
-corir_v_inv	CREATE INDEX corir_v_inv ON public.corir_v USING inverted (id, body corir_dict)
+corir_v_inv	CREATE INDEX corir_v_inv ON public.corir_v USING inverted (id, body corir_dict) INCLUDE (id)
 
 
 connection after_replay
@@ -215,12 +215,12 @@ INSERT INTO corir_s VALUES (5, 'Alpha');
 
 connection after_replay
 statement ok
-VACUUM (REFRESH_TABLE) corir_t;
+VACUUM (FLUSH_TABLE) corir_t;
 
 
 connection after_replay
 statement ok
-VACUUM (REFRESH_TABLE) corir_s;
+VACUUM (FLUSH_TABLE) corir_s;
 
 
 connection after_replay
@@ -270,7 +270,7 @@ SELECT indexname, regexp_replace(indexdef, ' WITH \(.*', '') AS def FROM pg_inde
 WHERE indexname IN ('corir_art', 'corir_t_inv') ORDER BY indexname;
 ----
 indexname	def
-corir_art	CREATE INDEX corir_art ON public.corir_t USING secondary (id, body)
+corir_art	CREATE INDEX corir_art ON public.corir_t USING inverted (id, body)
 corir_t_inv	CREATE INDEX corir_t_inv ON public.corir_t USING inverted (id, body corir_dict)
 
 
@@ -324,7 +324,7 @@ SELECT indexname, regexp_replace(indexdef, ' WITH \(.*', '') AS def FROM pg_inde
 WHERE indexname IN ('corir_art', 'corir_s_inv', 'corir_t_inv') ORDER BY indexname;
 ----
 indexname	def
-corir_art	CREATE INDEX corir_art ON public.corir_t USING secondary (body)
+corir_art	CREATE INDEX corir_art ON public.corir_t USING inverted (body)
 corir_s_inv	CREATE INDEX corir_s_inv ON public.corir_s USING inverted (body)
 corir_t_inv	CREATE INDEX corir_t_inv ON public.corir_t USING inverted (id, body)
 
@@ -390,11 +390,11 @@ WHERE relkind = 'i' AND relname LIKE 'corir%' AND relname <> 'corir_s_pkey' ORDE
 ----
 indexname	def
 corir_art	CREATE INDEX corir_art ON public.corir_t USING inverted (body corir_dict)
-corir_kind	CREATE INDEX corir_kind ON public.corir_t USING secondary (body)
+corir_kind	CREATE INDEX corir_kind ON public.corir_t USING inverted (body)
 corir_rb	CREATE INDEX corir_rb ON public.corir_s USING inverted (body corir_dict)
 corir_s_inv	CREATE INDEX corir_s_inv ON public.corir_s USING inverted (id, body corir_dict)
 corir_t_inv	CREATE INDEX corir_t_inv ON public.corir_t USING inverted (body)
-corir_v_inv	CREATE INDEX corir_v_inv ON public.corir_v USING inverted (id, body corir_dict)
+corir_v_inv	CREATE INDEX corir_v_inv ON public.corir_v USING inverted (id, body corir_dict) INCLUDE (id)
 
 
 connection after_checkpoint

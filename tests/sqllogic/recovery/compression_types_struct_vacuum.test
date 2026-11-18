@@ -1,4 +1,4 @@
-# The remainder of the type/lifecycle matrix: UUID and ENUM (both bitpacking-backed), STRUCT and
+# The remainder of the type/lifecycle matrix: UUID (bitpacking-backed) and ENUM, STRUCT and
 # MAP child columns (each field/key/value is its own column tree with its own segments and block
 # boundaries), and vacuum-driven row-group merges (a mass DELETE followed by CHECKPOINT rewrites
 # the survivors through the full compression path -- the third distinct write path after fresh
@@ -87,7 +87,7 @@ CHECKPOINT cv;
 
 
 statement ok
-SET force_compression='auto';
+VACUUM (COMPACT_TABLE) cv.vac;
 
 
 # the merge happened and the survivors are intact to the byte
@@ -131,25 +131,29 @@ lo	hi	band_left
 
 
 # codec placement across the whole file: clean sequential UUIDs bitpack while ONE outlier
-# de-bitpacks the whole row group (both pinned), ENUM bitpacks, all four nested VARCHAR children
+# de-bitpacks the whole row group (both pinned), ENUM takes the numeric codec, all four nested VARCHAR children
 # (struct.name, struct.kind, map.key, map.value) landed in DICT_FSST, and the vacuumed survivors
 # were RE-compressed into DICT_FSST after the merge
 query
 SELECT 'uuid_clean_bitpacks' AS combo, (SELECT bool_or(compression = 'BitPacking') FROM pragma_storage_info('cw.uuid_enum', include_segment_info=true) WHERE column_name='u2' AND segment_type NOT IN ('VALIDITY')) AS ok
 UNION ALL SELECT 'uuid_spike_debitpacks', (SELECT NOT bool_or(compression = 'BitPacking') FROM pragma_storage_info('cw.uuid_enum', include_segment_info=true) WHERE column_name='u' AND segment_type NOT IN ('VALIDITY'))
-UNION ALL SELECT 'enum_bitpacks', (SELECT bool_or(compression = 'BitPacking') FROM pragma_storage_info('cw.uuid_enum', include_segment_info=true) WHERE column_name='m' AND segment_type NOT IN ('VALIDITY'))
+UNION ALL SELECT 'enum_numeric', (SELECT bool_and(compression = 'Numeric') FROM pragma_storage_info('cw.uuid_enum', include_segment_info=true) WHERE column_name='m' AND segment_type NOT IN ('VALIDITY'))
 UNION ALL SELECT 'struct_children_dict_fsst', (SELECT count(DISTINCT column_path) = 2 FROM pragma_storage_info('cw.struct_map', include_segment_info=true) WHERE column_name='st' AND segment_type='VARCHAR' AND compression='DICT_FSST')
 UNION ALL SELECT 'map_children_dict_fsst', (SELECT count(DISTINCT column_path) = 2 FROM pragma_storage_info('cw.struct_map', include_segment_info=true) WHERE column_name='mp' AND segment_type='VARCHAR' AND compression='DICT_FSST')
 UNION ALL SELECT 'vacuumed_dict_fsst', (SELECT bool_or(compression = 'DICT_FSST') FROM pragma_storage_info('cv.vac', include_segment_info=true) WHERE column_name='v' AND segment_type='VARCHAR')
 ORDER BY combo;
 ----
 combo	ok
-enum_bitpacks	t
+enum_numeric	t
 map_children_dict_fsst	t
 struct_children_dict_fsst	t
 uuid_clean_bitpacks	t
 uuid_spike_debitpacks	t
 vacuumed_dict_fsst	t
+
+
+statement ok
+SET force_compression='auto';
 
 
 statement ok

@@ -32,6 +32,7 @@
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
+#include <iresearch/index/file_names.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/merge/key_merge.hpp>
 #include <iresearch/index/merge/merge_executor.hpp>
@@ -75,7 +76,7 @@ constexpr uint32_t kSmallRowGroup = 64;
 
 irs::ColumnOptions PlainColumns(irs::field_id) { return {}; }
 
-irs::IndexWriter::ptr MakeWriter(irs::Directory& dir, uint32_t row_group_size,
+tests::IndexWriter::ptr MakeWriter(irs::Directory& dir, uint32_t row_group_size,
                                  irs::ColumnOptionsProvider columns,
                                  std::vector<irs::SortKey> sort = {},
                                  irs::AnnFieldsByColumn anns = {}) {
@@ -84,7 +85,7 @@ irs::IndexWriter::ptr MakeWriter(irs::Directory& dir, uint32_t row_group_size,
   options.row_group_size = row_group_size;
   options.anns = std::move(anns);
   options.sort = std::move(sort);
-  return irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(options));
+  return tests::IndexWriter::Make(dir, tests::kOmCreate, std::move(options));
 }
 
 std::vector<irs::SortKey> RandomSpec(Generator& gen) {
@@ -310,7 +311,7 @@ class SortedMergeTest : public ::testing::Test {
   }
 
   irs::MemoryDirectory _dir;
-  irs::IndexWriter::ptr _writer;
+  tests::IndexWriter::ptr _writer;
   irs::DirectoryReader _reader;
   irs::FunctionFieldOptions _field_options{
     PlainColumns, irs::tests::MakeNormColumnIdProvider(), kSmallRowGroup, {}};
@@ -565,17 +566,8 @@ TEST_F(SortedMergeTest, FullyDeletedInputsAddNoRows) {
   AddSegment(Keys(0, 2, 100), true);
   AddSegment(Keys(1, 2, 100));
   const auto inputs = Snapshot();
-  auto meta = _reader.Meta().index_meta.segments.back().meta;
-  irs::DocumentMaskBuilder all;
-  for (auto doc = irs::doc_limits::min();
-       doc < meta.docs_count + irs::doc_limits::min(); ++doc) {
-    all.Add(doc);
-  }
-  meta.docs_mask = std::make_shared<irs::DocumentMask>(std::move(all).Finish());
-  meta.live_docs_count = 0;
-  const auto deleted = irs::SegmentReaderImpl::Open(
-    _dir, meta, irs::tests::DefaultReaderOptions());
-  ASSERT_NE(nullptr, deleted);
+  const auto deleted = AllDeleted(*inputs.back());
+  ASSERT_EQ(0, deleted->live_docs_count());
   const std::vector<const irs::SubReader*> with_deleted{deleted.get(),
                                                         inputs.front()};
   for (const auto column : {kBigint, irs::field_id{kFirstColumn + 50}}) {
@@ -996,7 +988,7 @@ TEST(SortedMergeBytesTest, PostingsAndScoreBoundsMatchASortedRebuild) {
                   flushed, 1, &bm25, &meta);
       EXPECT_TRUE(flushed);
       std::vector<std::string> files;
-      for (const auto& file : meta.files) {
+      for (const auto& file : irs::SegmentFiles(meta.name, meta.kinds)) {
         if (file.ends_with(".doc") || file.ends_with(".pos") ||
             file.ends_with(".pay")) {
           files.push_back(file);

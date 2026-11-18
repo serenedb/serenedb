@@ -209,7 +209,7 @@ void CollectUnit(ScanGlobalState& g, AnnLocalState& l) {
   if (l.root_seg != unit.seg) {
     const auto& seg = (*g.reader)[unit.seg];
     l.score_fetcher.Clear();
-    const auto& seg_query = EnsureSegmentQuery(g, l, unit.seg);
+    const auto& seg_query = EnsureSegmentQuery(g, &l, unit.seg);
     auto* table = BeginVerify(l.col_verify, seg, g, l);
     SDB_ENSURE(g.scorer_obj != nullptr,
                "a scan that ranks by score has a scorer to rank with");

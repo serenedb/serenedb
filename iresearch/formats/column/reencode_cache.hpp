@@ -23,8 +23,8 @@
 #include <absl/synchronization/mutex.h>
 
 #include <cstdint>
-#include <duckdb/common/enums/compression_type.hpp>
 
+#include "iresearch/formats/column/codecs/codec_type.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
@@ -39,8 +39,7 @@ struct ReencodeEstimate {
 
 struct ReencodeKey {
   bool skip_validity = false;
-  duckdb::CompressionType compression =
-    duckdb::CompressionType::COMPRESSION_AUTO;
+  codecs::CodecType compression = codecs::CodecType::Auto;
   ColCodecParams codec_params;
   uint32_t row_group_size = 0;
 

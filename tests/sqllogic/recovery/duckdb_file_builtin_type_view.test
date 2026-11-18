@@ -1,0 +1,49 @@
+control substitution on
+
+
+statement ok
+DETACH IF EXISTS dfbt_${__DATABASE__};
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/dfbt.duckdb' AS dfbt_${__DATABASE__};
+
+
+statement ok
+CREATE TABLE dfbt_${__DATABASE__}.main.t (a INTEGER);
+
+
+statement ok
+INSERT INTO dfbt_${__DATABASE__}.main.t VALUES (1), (2);
+
+
+statement ok
+CREATE VIEW dfbt_${__DATABASE__}.main.v AS SELECT a::VARCHAR AS s, [a]::BIGINT[] AS l FROM dfbt_${__DATABASE__}.main.t;
+
+
+statement ok
+CHECKPOINT dfbt_${__DATABASE__};
+
+
+statement ok
+DETACH dfbt_${__DATABASE__};
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/dfbt.duckdb' AS dfbt_${__DATABASE__};
+
+
+query
+SELECT s, l FROM dfbt_${__DATABASE__}.main.v ORDER BY s;
+----
+s	l
+1	{1}
+2	{2}
+
+
+statement ok
+DROP VIEW dfbt_${__DATABASE__}.main.v;
+
+
+statement ok
+DETACH dfbt_${__DATABASE__};

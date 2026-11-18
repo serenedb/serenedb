@@ -10,10 +10,6 @@ statement ok
 INSERT INTO iivg_t (a, b) VALUES (1, 'red'), (2, 'blue'), (3, 'red');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) iivg_t;
-
-
 query
 SELECT count(*) AS n FROM iivg_inv WHERE b @@ 'red';
 ----
@@ -27,10 +23,6 @@ ALTER TABLE iivg_t DROP COLUMN g;
 
 statement ok
 INSERT INTO iivg_t (a, b) VALUES (4, 'red');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) iivg_t;
 
 
 query

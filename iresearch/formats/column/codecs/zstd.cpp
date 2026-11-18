@@ -45,19 +45,12 @@ same frames, each compressed with the segment's trained dictionary; or
 
 namespace irs::codecs {
 
-const duckdb::CompressionFunction& ZstdFunction() {
-  static const auto kFunction =
-    text::StringFunction<text::PlainScan<text::BlobLeaf<Zstd>>>(
-      duckdb::CompressionType::COMPRESSION_COL_ZSTD);
-  return kFunction;
-}
+constinit const CompressionFunction kZstdFunction =
+  text::StringFunction<text::PlainScan<text::BlobLeaf<Zstd>>>(CodecType::Zstd);
 
-const duckdb::CompressionFunction& DictZstdFunction() {
-  static const auto kFunction =
-    text::StringFunction<text::DictionaryScan<text::BlobLeaf<Zstd>>>(
-      duckdb::CompressionType::COMPRESSION_DICT_ZSTD);
-  return kFunction;
-}
+constinit const CompressionFunction kDictZstdFunction =
+  text::StringFunction<text::DictionaryScan<text::BlobLeaf<Zstd>>>(
+    CodecType::DictZstd);
 
 Zstd::Compressor::Compressor(uint8_t level)
   : _level{EffectiveLevel<Zstd>(level)}, _ctx{ZSTD_createCCtx()} {
@@ -67,11 +60,6 @@ Zstd::Compressor::Compressor(uint8_t level)
 bool Zstd::Compressor::Train(std::string_view frames,
                              std::span<const size_t> sizes) {
   TrainDictionary(frames, sizes, kDictionaryCap, _dictionary);
-  return Pack();
-}
-
-bool Zstd::Compressor::Adopt(std::string_view dictionary) {
-  _dictionary.assign(dictionary);
   return Pack();
 }
 

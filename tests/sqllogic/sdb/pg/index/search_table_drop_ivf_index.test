@@ -1,6 +1,6 @@
 statement ok
 CREATE TABLE dv (id BIGINT PRIMARY KEY, vec FLOAT[3], txt TEXT)
-  WITH (storage='search', compaction_interval=0);
+  WITH (compaction_interval=0);
 
 statement ok
 CREATE INDEX dv_ivf ON dv USING inverted (vec ivf(metric='l2'));
@@ -13,7 +13,7 @@ INSERT INTO dv SELECT i, [i::FLOAT, (i % 7)::FLOAT, (i % 13)::FLOAT]::FLOAT[3],
   'w' || (i % 10) FROM range(500) t(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) dv;
+VACUUM (FLUSH_TABLE) dv;
 
 statement ok
 DROP INDEX dv_ivf;
@@ -23,7 +23,7 @@ INSERT INTO dv SELECT i, [i::FLOAT, (i % 7)::FLOAT, (i % 13)::FLOAT]::FLOAT[3],
   'w' || (i % 10) FROM range(500, 1000) t(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) dv;
+VACUUM (FLUSH_TABLE) dv;
 
 query
 SELECT value AS segments FROM sdb_metrics

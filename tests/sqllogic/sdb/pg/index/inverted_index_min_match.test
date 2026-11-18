@@ -1,7 +1,7 @@
 hash-threshold 100
 
 statement ok
-CREATE TABLE mm (id INTEGER PRIMARY KEY, title VARCHAR, skills VARCHAR, edu VARCHAR, tenure INTEGER);
+CREATE TABLE mm (id INTEGER PRIMARY KEY, title VARCHAR, skills VARCHAR, edu VARCHAR, tenure INTEGER) WITH (compaction_interval = 0);
 
 
 statement ok
@@ -19,12 +19,7 @@ CREATE TEXT SEARCH DICTIONARY mm_words AS split_text() WITH (frequency, position
 
 
 statement ok
-CREATE INDEX mm_idx ON mm USING inverted(id, title mm_words, skills mm_words, edu mm_words, tenure)
-  WITH (compaction_interval = 0);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) mm;
+CREATE INDEX mm_idx ON mm USING inverted(id, title mm_words, skills mm_words, edu mm_words, tenure);
 
 
 query
@@ -574,7 +569,6 @@ id
 5
 
 
-
 query error ::min_match used on a predicate the inverted index could not claim
 SELECT id FROM mm_idx WHERE (skills @@ 'gcp' OR id > id)::min_match(1);
 
@@ -913,7 +907,7 @@ DROP TABLE mm;
 
 
 statement ok
-CREATE TABLE nm (id INTEGER PRIMARY KEY, skills VARCHAR, bonus INTEGER, tenure INTEGER);
+CREATE TABLE nm (id INTEGER PRIMARY KEY, skills VARCHAR, bonus INTEGER, tenure INTEGER) WITH (compaction_interval = 0);
 
 
 statement ok
@@ -927,12 +921,7 @@ INSERT INTO nm VALUES
 
 
 statement ok
-CREATE INDEX nm_idx ON nm USING inverted(id, skills mm_words, bonus, tenure)
-  WITH (compaction_interval = 0);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) nm;
+CREATE INDEX nm_idx ON nm USING inverted(id, skills mm_words, bonus, tenure);
 
 
 query

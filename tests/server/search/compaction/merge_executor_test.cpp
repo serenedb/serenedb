@@ -44,6 +44,7 @@
 #include <iresearch/index/merge/merge_plan.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
@@ -55,7 +56,8 @@
 #include "connector/column_id.h"
 #include "connector/search_sink_writer.hpp"
 #include "gtest/gtest.h"
-#include "index/compaction/policy_compaction.hpp"
+#include "index/merge/support/parallel_merge.hpp"
+#include "index/test_index_writer.hpp"
 
 namespace {
 
@@ -94,9 +96,8 @@ catalog::ColumnTokenizer KeywordTokenizer(irs::field_id) {
 
 constexpr ColumnId kValueColumn{1};
 
-const tests::CompactionPolicy& FullMerge() {
-  static const auto kPolicy = tests::MakePolicy(
-    tests::CompactionCount{std::numeric_limits<size_t>::max()});
+const irs::CompactionPolicy& FullMerge() {
+  static const auto kPolicy = irs::index_utils::MakePolicy(irs::index_utils::CompactionCount{std::numeric_limits<size_t>::max()});
   return kPolicy;
 }
 
@@ -120,9 +121,6 @@ class NoPostingsDirectory final : public irs::Directory {
   }
   bool length(uint64_t& result, std::string_view name) const noexcept final {
     return _impl.length(result, name);
-  }
-  irs::IndexLock::ptr make_lock(std::string_view name) noexcept final {
-    return _impl.make_lock(name);
   }
   bool mtime(std::time_t& result, std::string_view name) const noexcept final {
     return _impl.mtime(result, name);
@@ -154,7 +152,7 @@ class MergeExecutorTest : public ::testing::Test {
     irs::IndexWriterOptions options;
     options.db = &TestDb();
     options.reader_options.db = &TestDb();
-    _writer = irs::IndexWriter::Make(_dir, irs::kOmCreate, std::move(options));
+    _writer = tests::IndexWriter::Make(_dir, tests::kOmCreate, std::move(options));
     for (int64_t segment = 0; segment != 4; ++segment) {
       std::vector<int64_t> rowids(3000 + segment * 700);
       std::iota(rowids.begin(), rowids.end(), segment * 100000);
@@ -164,19 +162,21 @@ class MergeExecutorTest : public ::testing::Test {
 
   void TearDown() override { _writer.reset(); }
 
-  void Reopen(std::vector<irs::SortKey> sort) {
+  void Reopen(std::vector<irs::SortKey> sort,
+              duckdb::shared_ptr<duckdb::DedicatedPool> pool = nullptr) {
     _writer.reset();
     irs::IndexWriterOptions options;
     options.db = &TestDb();
     options.reader_options.db = &TestDb();
     options.sort = std::move(sort);
-    _writer = irs::IndexWriter::Make(_dir, irs::kOmCreate, std::move(options));
+    options.merge_pool = std::move(pool);
+    _writer = tests::IndexWriter::Make(_dir, tests::kOmCreate, std::move(options));
   }
 
   void Insert(std::span<const int64_t> rowids) {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
     DuckDBSearchSinkInsertWriter sink{
-      trx, KeywordTokenizer, std::array<ColumnId, 1>{kValueColumn},
+      trx.Native(), KeywordTokenizer, std::array<ColumnId, 1>{kValueColumn},
       NoEntryInfoProvider(), catalog::PkColumnKind::Has};
     for (size_t first = 0; first < rowids.size();
          first += STANDARD_VECTOR_SIZE) {
@@ -236,11 +236,11 @@ class MergeExecutorTest : public ::testing::Test {
     for (const auto& segment : reader) {
       const auto rowids = Read(segment, kGeneratedPKId);
       EXPECT_EQ(segment.docs_count(), rowids.size());
-      auto mask = segment.MaskedDocs();
+      const auto* mask = segment.docs_mask();
       for (size_t row = 0; row < rowids.size(); ++row) {
         const auto doc =
           static_cast<irs::doc_id_t>(row) + irs::doc_limits::min();
-        if (!mask.Contains(doc)) {
+        if (!mask || !mask->Contains(doc)) {
           out.push_back(rowids[row]);
         }
       }
@@ -260,12 +260,12 @@ class MergeExecutorTest : public ::testing::Test {
           for (auto it = field->iterator(); it->next();) {
             const irs::bstring term{it->value()};
             auto postings = it->postings(irs::IndexFeatures::None);
-            auto mask = segment.MaskedDocs();
+            const auto* mask = segment.docs_mask();
             irs::doc_id_t docs[irs::doc_limits::kBlockSize];
             uint32_t freqs[irs::doc_limits::kBlockSize];
             while (const auto count = postings->NextDocs(docs, freqs)) {
               for (uint32_t i = 0; i < count; ++i) {
-                if (!mask.Contains(docs[i])) {
+                if (!mask || !mask->Contains(docs[i])) {
                   out.emplace_back(id, term,
                                    rowids[docs[i] - irs::doc_limits::min()]);
                 }
@@ -280,16 +280,16 @@ class MergeExecutorTest : public ::testing::Test {
   }
 
   irs::MemoryDirectory _dir;
-  irs::IndexWriter::ptr _writer;
+  tests::IndexWriter::ptr _writer;
 };
 
 TEST_F(MergeExecutorTest, MergesKeepEveryRow) {
   const auto before = Rows();
   ASSERT_EQ(4, _writer->GetSnapshot().size());
-  const auto result = tests::Compact(*_writer, FullMerge());
+  const auto result = _writer->Compact(FullMerge());
   ASSERT_TRUE(result);
   EXPECT_EQ(4, result.size);
-  EXPECT_GT(result.stats.profile.TotalNanos(), 0);
+  EXPECT_GT(result.profile.TotalNanos(), 0);
   _writer->RefreshCommit();
   EXPECT_EQ(1, _writer->GetSnapshot().size());
   EXPECT_EQ(before, Rows());
@@ -298,7 +298,7 @@ TEST_F(MergeExecutorTest, MergesKeepEveryRow) {
 TEST_F(MergeExecutorTest, MergedPostingsKeepEveryRowsTerms) {
   const auto before = Postings();
   ASSERT_EQ(Rows().size(), before.size());
-  ASSERT_TRUE(tests::Compact(*_writer, FullMerge()));
+  ASSERT_TRUE(_writer->Compact(FullMerge()));
   _writer->RefreshCommit();
   EXPECT_EQ(1, _writer->GetSnapshot().size());
   EXPECT_EQ(before, Postings());
@@ -307,7 +307,7 @@ TEST_F(MergeExecutorTest, MergedPostingsKeepEveryRowsTerms) {
 TEST_F(MergeExecutorTest, MergesNeedNoSchedulerWorker) {
   const auto before = Rows();
   const auto restore = PinWorkers(1, 1);
-  ASSERT_TRUE(tests::Compact(*_writer, FullMerge()));
+  ASSERT_TRUE(_writer->Compact(FullMerge()));
   _writer->RefreshCommit();
   EXPECT_EQ(1, _writer->GetSnapshot().size());
   EXPECT_EQ(before, Rows());
@@ -374,7 +374,7 @@ TEST_F(MergeExecutorTest, UnitsLeaveTheSchedulerWorkersToOtherTasks) {
 TEST_F(MergeExecutorTest, StoppedMergeKeepsTheInputs) {
   const auto before = Rows();
   std::atomic<size_t> calls{0};
-  const auto result = tests::Compact(*_writer, FullMerge(), nullptr,
+  const auto result = _writer->Compact(FullMerge(), nullptr,
                                      [&] { return calls.fetch_add(1) < 2; });
   EXPECT_FALSE(result);
   _writer->RefreshCommit();
@@ -425,9 +425,9 @@ TEST_F(MergeExecutorTest, SortedMergesInterleaveTheirInputs) {
   }
   const auto before = Rows();
   const auto postings = Postings();
-  const auto result = tests::Compact(*_writer, FullMerge());
+  const auto result = _writer->Compact(FullMerge());
   ASSERT_TRUE(result);
-  EXPECT_GT(result.stats.profile.Nanos(irs::MergeStep::Prepare), 0);
+  EXPECT_GT(result.profile.Nanos(irs::MergeStep::Prepare), 0);
   _writer->RefreshCommit();
   const auto reader = _writer->GetSnapshot();
   ASSERT_EQ(1, reader.size());
@@ -436,7 +436,8 @@ TEST_F(MergeExecutorTest, SortedMergesInterleaveTheirInputs) {
 }
 
 TEST_F(MergeExecutorTest, SortedMergesPartitionOnTheirPool) {
-  Reopen(std::vector<irs::SortKey>{{{.column = kGeneratedPKId}}});
+  Reopen(std::vector<irs::SortKey>{{{.column = kGeneratedPKId}}},
+         tests::merge::MergePool(4));
   for (int64_t segment = 0; segment != 6; ++segment) {
     std::vector<int64_t> rowids(3000);
     for (size_t i = 0; i != rowids.size(); ++i) {
@@ -446,10 +447,9 @@ TEST_F(MergeExecutorTest, SortedMergesPartitionOnTheirPool) {
   }
   const auto before = Rows();
   const auto postings = Postings();
-  const auto result = tests::Compact(*_writer, FullMerge(), nullptr, {},
-                                     nullptr, tests::merge::MergePool(4));
+  const auto result = _writer->Compact(FullMerge());
   ASSERT_TRUE(result);
-  EXPECT_GT(result.stats.profile.Nanos(irs::MergeStep::Postings), 0);
+  EXPECT_GT(result.profile.Nanos(irs::MergeStep::Postings), 0);
   _writer->RefreshCommit();
   const auto reader = _writer->GetSnapshot();
   ASSERT_EQ(1, reader.size());

@@ -27,7 +27,7 @@ INSERT INTO t VALUES (0, 0);
 
 
 query
-SELECT * FROM t;
+SELECT * FROM t ORDER BY key;
 ----
 key	value
 0	0
@@ -38,7 +38,7 @@ ROLLBACK;
 
 
 query
-SELECT * FROM t;
+SELECT * FROM t ORDER BY key;
 ----
 key	value
 
@@ -56,7 +56,7 @@ COMMIT;
 
 
 query
-SELECT * FROM t;
+SELECT * FROM t ORDER BY key;
 ----
 key	value
 0	0
@@ -72,7 +72,7 @@ INSERT INTO t VALUES (1, 0);
 
 #Read-your-own-writes
 query
-SELECT * FROM t;
+SELECT * FROM t ORDER BY key;
 ----
 key	value
 0	0
@@ -84,7 +84,7 @@ ABORT;
 
 
 query
-SELECT * FROM t;
+SELECT * FROM t ORDER BY key;
 ----
 key	value
 0	0
@@ -100,7 +100,7 @@ INSERT INTO t VALUES (1, 0);
 
 connection client2
 query
-SELECT * FROM t;
+SELECT * FROM t ORDER BY key;
 ----
 key	value
 0	0
@@ -112,7 +112,7 @@ COMMIT;
 
 connection client2
 query
-SELECT * FROM t;
+SELECT * FROM t ORDER BY key;
 ----
 key	value
 0	0
@@ -134,7 +134,7 @@ BEGIN;
 
 connection client2
 query
-SELECT * FROM t;
+SELECT * FROM t ORDER BY key;
 ----
 key	value
 0	0
@@ -155,7 +155,7 @@ COMMIT;
 
 
 query
-SELECT * FROM t;
+SELECT * FROM t ORDER BY key;
 ----
 key	value
 0	0
@@ -166,7 +166,7 @@ key	value
 
 connection client2
 query
-SELECT * FROM t;
+SELECT * FROM t ORDER BY key;
 ----
 key	value
 0	0
@@ -180,7 +180,7 @@ INSERT INTO t SELECT key + 100 as key, value as value FROM t;
 
 
 query
-SELECT * FROM t;
+SELECT * FROM t ORDER BY key;
 ----
 key	value
 0	0

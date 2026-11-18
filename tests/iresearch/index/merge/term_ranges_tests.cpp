@@ -429,7 +429,7 @@ class TermRangeMergeTest : public ::testing::Test {
     auto options = irs::tests::DefaultWriterOptions();
     options.column_options = SketchedColumns;
     options.sort = std::move(sort);
-    _writer = irs::IndexWriter::Make(_dir, irs::kOmCreate, std::move(options));
+    _writer = tests::IndexWriter::Make(_dir, tests::kOmCreate, std::move(options));
   }
 
   void AddSegments(size_t segments) {
@@ -505,7 +505,7 @@ class TermRangeMergeTest : public ::testing::Test {
   }
 
   irs::MemoryDirectory _dir;
-  irs::IndexWriter::ptr _writer;
+  tests::IndexWriter::ptr _writer;
   irs::DirectoryReader _reader;
   irs::FunctionFieldOptions _field_options{
     SketchedColumns,

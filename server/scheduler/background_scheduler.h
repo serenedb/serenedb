@@ -85,7 +85,7 @@ class BackgroundScheduler final {
 
   // Shutdown: wake every armed Delay and complete future ones immediately.
   // Stop flags are only checked when a sleeper wakes, so without this a loop
-  // parked on a long timer (e.g. a stretched refresh delay) holds up its join
+  // parked on a long timer holds up its join
   // for the timer's remainder.
   void CancelDelays();
 

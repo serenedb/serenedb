@@ -1,0 +1,117 @@
+control substitution on
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS reu_${__DATABASE__} (TYPE postgres);
+
+
+statement ok
+CALL postgres_execute('reu_${__DATABASE__}', 'SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name LIKE ''reu\_%''');
+
+
+statement ok
+CALL postgres_execute('reu_${__DATABASE__}', 'DO $$ BEGIN DROP PUBLICATION IF EXISTS reu_pub; DROP TABLE IF EXISTS reu_rows; DROP TABLE IF EXISTS reu_other; CREATE TABLE reu_rows (id int PRIMARY KEY); CREATE TABLE reu_other (id int); CREATE PUBLICATION reu_pub FOR TABLE reu_rows; END $$');
+
+
+statement ok
+CREATE TABLE reu_rows (id INTEGER);
+
+
+statement ok
+CREATE SUBSCRIPTION reu_sub CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER} options=''-c logical_decoding_work_mem=64kB''' PUBLICATION reu_pub WITH (slot_name = 'reu_sub', streaming = on);
+
+
+query ok retry 120 backoff 250ms
+SELECT count(*) AS n FROM pg_subscription_rel WHERE srsubstate = 'r';
+----
+n
+1
+
+
+connection pg_other
+statement ok
+BEGIN;
+
+
+connection pg_other
+statement ok
+CALL postgres_execute('reu_${__DATABASE__}', 'INSERT INTO reu_other SELECT generate_series(1, 20000)');
+
+
+connection default
+query ok retry 240 backoff 250ms
+SELECT * FROM postgres_query('reu_${__DATABASE__}', 'SELECT stream_txns > 0 AS streamed FROM pg_stat_replication_slots WHERE slot_name = ''reu_sub''');
+----
+streamed
+t
+
+
+statement ok
+SET sdb_faults = 'pause_subscription_apply_drained';
+
+
+connection pg_writer
+statement ok
+BEGIN;
+
+
+connection pg_writer
+statement ok
+CALL postgres_execute('reu_${__DATABASE__}', 'INSERT INTO reu_rows SELECT generate_series(1, 20000)');
+
+
+connection default
+statement ok retry 240 backoff 250ms
+SET sdb_faults = '-pause_subscription_apply_drained:parked';
+
+
+statement ok
+SET sdb_faults = 'pause_subscription_apply_drained:release';
+
+
+connection pg_other
+statement ok
+COMMIT;
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_subscription_apply_drained';
+
+
+connection pg_writer
+statement ok
+CALL postgres_execute('reu_${__DATABASE__}', 'INSERT INTO reu_rows SELECT generate_series(20001, 40000)');
+
+
+connection default
+statement ok retry 240 backoff 250ms
+SET sdb_faults = '-pause_subscription_apply_drained:parked';
+
+
+statement ok
+SET sdb_faults = 'pause_subscription_apply_drained:release';
+
+
+connection pg_writer
+statement ok
+COMMIT;
+
+
+connection default
+query ok retry 240 backoff 250ms
+SELECT count(*) AS n, count(DISTINCT id) AS ids, min(id) AS lo, max(id) AS hi FROM reu_rows;
+----
+n	ids	lo	hi
+40000	40000	1	40000
+
+
+statement ok
+DROP SUBSCRIPTION reu_sub;
+
+
+statement ok
+CALL postgres_execute('reu_${__DATABASE__}', 'DO $$ BEGIN DROP PUBLICATION reu_pub; DROP TABLE reu_rows; DROP TABLE reu_other; END $$');
+
+
+statement ok
+DETACH reu_${__DATABASE__};

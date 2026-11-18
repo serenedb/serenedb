@@ -80,9 +80,6 @@ INSERT INTO smi VALUES
     (2, false, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
      NULL, NULL, NULL, NULL, NULL);
 
-statement ok
-VACUUM (REFRESH_TABLE) smi;
-
 query
 SUMMARIZE smi_idx;
 ----

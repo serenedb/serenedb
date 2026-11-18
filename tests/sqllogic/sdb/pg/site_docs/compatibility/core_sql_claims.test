@@ -42,7 +42,8 @@ INSERT INTO ddl_create_u VALUES (1);
 statement error
 INSERT INTO ddl_create_u VALUES (1);
 ----
-db error: ERROR: Duplicate key "a: 1" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "ddl_create_u_a_key"
+DETAIL: Key (a)=(1) already exists.
 
 
 # ddl_create: Primary Keys

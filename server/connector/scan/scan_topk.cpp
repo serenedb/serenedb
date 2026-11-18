@@ -47,7 +47,7 @@ void CollectUnit(ScanGlobalState& g, TopKLocalState& l) {
   if (l.root_seg != unit.seg || range.begin < l.root_end) {
     const auto& seg = (*g.reader)[unit.seg];
     l.score_fetcher.Clear();
-    const auto& seg_query = EnsureSegmentQuery(g, l, unit.seg);
+    const auto& seg_query = EnsureSegmentQuery(g, &l, unit.seg);
     auto* table = BeginVerify(l.col_verify, seg, g, l);
     SDB_ENSURE(g.scorer_obj != nullptr,
                "a scan that ranks by score has a scorer to rank with");
@@ -258,10 +258,10 @@ void FetchUnit(duckdb::ClientContext& ctx, ScanGlobalState& g,
 void EnsureIndexSource(duckdb::ClientContext& ctx, const ScanGlobalState& g,
                        FetchLocalState& l) {
   if (!l.index_source) {
-    l.index_source =
-      MakeIndexSource(ctx, g.Bind(), *g.snapshot, g.lookup_projected_columns,
-                      g.projected_types, g.Bind().columns.ids,
-                      const_cast<duckdb::TableFilterSet*>(g.pushed_filters));
+    l.index_source = MakeIndexSource(
+      ctx, g.Bind(), g.view.manifest, g.lookup_projected_columns,
+      g.projected_types, g.Bind().columns.ids,
+      const_cast<duckdb::TableFilterSet*>(g.pushed_filters));
   }
 }
 

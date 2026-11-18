@@ -49,8 +49,7 @@ def _start_otel(tmp_path: Path,
 def test_mistyped_column_refuses_startup(tmp_path: Path) -> None:
     _break_schema(
         tmp_path,
-        'CREATE TABLE otel_logs ("timestamp" VARCHAR NOT NULL) '
-        "WITH (storage = 'search')",
+        'CREATE TABLE otel_logs ("timestamp" VARCHAR NOT NULL) ',
     )
     result = _start_otel(tmp_path)
     output = result.stdout + result.stderr
@@ -88,7 +87,6 @@ class _Server:
             conn.close()
 
     def count(self, table: str) -> int:
-        self.pg.execute(f"VACUUM (REFRESH_TABLE) {table}")
         return self.pg.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
 
     def close(self) -> None:
@@ -152,8 +150,7 @@ def test_without_create_schema_mistyped_column_answers_503(
         tmp_path: Path) -> None:
     _break_schema(
         tmp_path,
-        'CREATE TABLE otel_logs ("timestamp" VARCHAR NOT NULL) '
-        "WITH (storage = 'search')",
+        'CREATE TABLE otel_logs ("timestamp" VARCHAR NOT NULL) ',
     )
     server = _Server(tmp_path, "api=otel&create_schema=false")
     try:
@@ -270,7 +267,7 @@ OWN_LOGS_SCHEMA = (
         resource_attributes JSON,
         scope_attributes    JSON,
         log_attributes      JSON
-    ) WITH (storage = 'search')""",
+    )""",
     """CREATE INDEX otel_logs_idx ON otel_logs USING inverted (
         "timestamp", body otel_words, severity_text, service_name, trace_id,
         (log_attributes ->> 'error.type') otel_keyword
@@ -352,6 +349,7 @@ def test_own_schema_with_its_own_tokenizer_and_expression_index(
             "GROUP BY ALL ORDER BY 2 DESC, 1").fetchall() == [
             ("timeout", 2), ("downstream_remote_disconnect", 1),
             ("remote", 1)]
+        server.pg.execute("VACUUM (FLUSH_TABLE) otel_logs")
         assert server.pg.execute(
             "SELECT DISTINCT compression FROM pragma_storage_info('otel_logs') "
             "WHERE column_name = 'body'").fetchall() == [("ZSTD",)]

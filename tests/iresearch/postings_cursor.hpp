@@ -35,9 +35,9 @@ class PostingsCursor {
   explicit PostingsCursor(
     irs::TermPostings::ptr postings,
     irs::IndexFeatures features = irs::IndexFeatures::None,
-    irs::DocumentMask::Iterator mask = {})
+    const irs::DocumentMask* mask = nullptr)
     : _postings{std::move(postings)},
-      _mask{std::move(mask)},
+      _mask{mask},
       _has_freq{irs::IsSubsetOf(irs::IndexFeatures::Freq, features)},
       _has_pos{irs::IsSubsetOf(
         irs::IndexFeatures::Freq | irs::IndexFeatures::Pos, features)},
@@ -59,7 +59,7 @@ class PostingsCursor {
       if (_has_pos) {
         _pos.Load(*_postings, _freq);
       }
-      if (!_mask.Contains(_doc)) {
+      if (!(_mask && _mask->Contains(_doc))) {
         return _doc;
       }
     }
@@ -135,7 +135,7 @@ class PostingsCursor {
   };
 
   irs::TermPostings::ptr _postings;
-  irs::DocumentMask::Iterator _mask;
+  const irs::DocumentMask* _mask = nullptr;
   irs::doc_id_t _docs[irs::doc_limits::kBlockSize];
   uint32_t _freqs[irs::doc_limits::kBlockSize];
   uint32_t _at = 0;

@@ -45,11 +45,9 @@ CREATE TEXT SEARCH DICTIONARY fz_kw AS keyword() WITH (frequency);
 CREATE TABLE fz(id INTEGER PRIMARY KEY, kw VARCHAR, num INTEGER,
                 pad VARCHAR NOT NULL);
 CREATE INDEX fz_idx ON fz USING inverted(id, kw fz_kw, num, pad fz_kw)
-    WITH (refresh_interval=0, compaction_interval=0);
+    WITH (compaction_interval=0);
 INSERT INTO fz VALUES {', '.join(rows[:20])};
-VACUUM (REFRESH_TABLE) fz;
 INSERT INTO fz VALUES {', '.join(rows[20:])};
-VACUUM (REFRESH_TABLE) fz;
 """
     r = psql(port, ddl)
     if r.returncode != 0:

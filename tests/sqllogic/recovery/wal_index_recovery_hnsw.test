@@ -9,10 +9,6 @@ control substitution on
 # must re-feed the cs writer so the next commit produces a segment whose
 # .cs has the vectors AND an auto-rebuilt graph.
 #
-# Pre-crash row goes through a normal commit so the on-disk .cs is the
-# reference. Post-crash rows land in the WAL only -- we freeze
-# SearchRefreshTask::commitUnsafe before INSERTing them so the iresearch
-# trx never gets to flush.
 
 statement ok
 CREATE TABLE wal_hnsw_t(pk INTEGER PRIMARY KEY, emb FLOAT[3]);
@@ -25,7 +21,7 @@ CREATE INDEX wal_hnsw_idx ON wal_hnsw_t
   USING inverted(emb hnsw (metric = 'l2'));
 
 statement ok
-VACUUM (REFRESH_TABLE) wal_hnsw_t;
+VACUUM (FLUSH_TABLE) wal_hnsw_t;
 
 # Plan check: ANN top-K served by the graph in the inverted index.
 query
@@ -34,7 +30,7 @@ EXPLAIN SELECT pk FROM wal_hnsw_idx ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] L
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────╮
 │ Index: wal_hnsw_idx               │
-│ Lookup: table                     │
+│ Lookup: search                    │
 │ Score: l2_distance(emb, FLOAT[3]) │
 │ Top: 1                            │
 │ Projections: pk                   │
@@ -47,12 +43,6 @@ SELECT pk FROM wal_hnsw_idx ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 1;
 ----
 pk
 1
-
-# Freeze iresearch commits BEFORE the second batch lands. The next two
-# rows reach storage (and its WAL) but the iresearch trx is never
-# committed -- their vectors only exist as WAL bytes when we crash.
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 statement ok
 INSERT INTO wal_hnsw_t VALUES (2, [0.0, 1.0, 0.0]::FLOAT[3]),
@@ -69,7 +59,7 @@ SELECT 1;
 
 connection wal_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (REFRESH_TABLE) wal_hnsw_t;
+SELECT 1;
 
 # Pre-crash row still queryable.
 connection wal_after

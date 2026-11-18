@@ -41,7 +41,7 @@ connection s2
 statement error
 ALTER SCHEMA srr_b RENAME TO srr_y;
 ----
-db error: ERROR: Catalog write-write conflict on alter with "srr_b"
+db error: ERROR: could not serialize access due to concurrent update of "srr_b"
 
 
 connection s1

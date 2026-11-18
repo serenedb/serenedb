@@ -1,6 +1,6 @@
 statement ok
 CREATE TABLE sai (id BIGINT, pair INTEGER[2], tags VARCHAR[2])
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 
 statement ok
@@ -24,7 +24,7 @@ COMMIT;
 
 
 statement ok
-VACUUM (REFRESH_TABLE) sai;
+VACUUM (FLUSH_TABLE) sai;
 
 
 query

@@ -2,19 +2,19 @@ control substitution on
 
 statement ok
 CREATE TABLE alr (id INTEGER PRIMARY KEY, v TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO alr SELECT i, 'v' || (i % 7) FROM range(1000) t(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) alr;
+VACUUM (FLUSH_TABLE) alr;
 
 statement ok
 ALTER TABLE alr ALTER COLUMN v SET COMPRESSION dict_zxc(compression_level = 4);
 
 statement ok
-ALTER TABLE alr SET (refresh_interval = 200);
+ALTER TABLE alr SET (compaction_max_segments = 7);
 
 statement ok
 CREATE TABLE alr_tx (a INTEGER, b INTEGER);
@@ -49,7 +49,7 @@ query
 SELECT reloptions FROM pg_class WHERE relname = 'alr';
 ----
 reloptions
-{refresh_interval=200,compaction_interval=0,cleanup_interval_step=1,compaction_max_segments=10,compaction_max_segments_bytes=5368709120,compaction_floor_segment_bytes=2097152,row_group_size=122880,segment_memory_max=268435456}
+{compaction_interval=0,compaction_max_segments=7}
 
 connection after_crash
 statement ok
@@ -61,6 +61,10 @@ SELECT count(*) AS n FROM alr;
 ----
 n
 2000
+
+connection after_crash
+statement ok
+VACUUM (FLUSH_TABLE) alr;
 
 connection after_crash
 query

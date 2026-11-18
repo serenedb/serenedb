@@ -60,6 +60,8 @@ class SegmentReader final : public SubReader {
 
   const DocumentMask* docs_mask() const final;
 
+  uint64_t PatchedDocs() const noexcept final;
+
   std::span<const TermReader* const> fields(field_id id) const final;
   std::span<const field_id> field_ids() const final;
 

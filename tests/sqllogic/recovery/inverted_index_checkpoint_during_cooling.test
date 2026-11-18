@@ -1,0 +1,52 @@
+control substitution on
+
+statement ok
+CREATE DATABASE ckpt_cooling;
+
+
+statement ok
+CREATE TABLE ckpt_cooling.public.docs (id INTEGER, body TEXT) WITH (compaction_interval = 0);
+
+
+statement ok
+CREATE INDEX docs_idx ON ckpt_cooling.public.docs USING inverted (body);
+
+
+statement ok
+INSERT INTO ckpt_cooling.public.docs SELECT i, 'base' FROM range(0, 1000) r(i);
+
+
+statement ok
+SET sdb_faults = 'pause_search_write_out';
+
+
+connection reader
+statement async ok
+VACUUM (FLUSH_TABLE) ckpt_cooling.public.docs;
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_write_out:parked';
+
+
+connection checkpointer
+statement ok
+CHECKPOINT ckpt_cooling;
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_search_write_out:release';
+
+
+connection reader
+wait
+
+
+connection default
+query
+SELECT count(*) AS n FROM ckpt_cooling.public.docs_idx WHERE body @@ 'base';
+----
+n
+1000

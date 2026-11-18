@@ -287,7 +287,7 @@ void TsDictLocalState::StartSegment(const irs::SubReader& seg, uint32_t seg_idx,
   where_query = nullptr;
   _next_field = fields.empty() ? nullptr : fields.data();
   if (g.filter) {
-    where_query = &EnsureSegmentQuery(g, *this, seg_idx);
+    where_query = &EnsureSegmentQuery(g, this, seg_idx);
     if (irs::QueryBuilder::IsEmpty(*where_query)) {
       _next_field = nullptr;
       return;
@@ -747,8 +747,9 @@ void BuildTsDictCounts(ScanGlobalState& g) {
   const auto& reader = *g.reader;
   g.ts_dict_counts.resize(reader.size());
   for (const auto seg : g.segment_order) {
-    if (g.Segment(seg).claim.load(std::memory_order_relaxed) !=
-        SegmentWork::kSplit) {
+    const auto& work = g.Segment(seg);
+    if (work.claim.load(std::memory_order_relaxed) != SegmentWork::kSplit ||
+        work.LiveCount() == 0) {
       continue;
     }
     auto& per_field = g.ts_dict_counts[seg];

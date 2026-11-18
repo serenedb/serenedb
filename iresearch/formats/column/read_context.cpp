@@ -27,8 +27,10 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/storage/block.hpp>
+#include <duckdb/storage/buffer/block_handle.hpp>
 #include <duckdb/storage/storage_info.hpp>
 
+#include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -60,7 +62,8 @@ bool StreamsFrames(const duckdb::LogicalType& type) {
 }
 
 ReadContext::ReadContext(duckdb::DatabaseInstance& db) noexcept
-  : BlockManager{db, /*block_header_size=*/0}, _cache{&db.GetObjectCache()} {}
+  : BlockManager{db, DEFAULT_BLOCK_ALLOC_SIZE, /*block_header_size=*/0},
+    _cache{&db.GetObjectCache()} {}
 
 ReadContext::ReadContext(const ColReader& reader, bool random_access)
   : ReadContext{reader.Database()} {
@@ -91,7 +94,6 @@ void ReadContext::Reset(const ColReader& reader) {
 void ReadContext::ResetMapping() {
   _mapping.reset();
   _ranges.clear();
-  _cache_slots.clear();
   if (!_in) {
     return;
   }
@@ -108,9 +110,18 @@ duckdb::string_t ReadContext::ReadString(duckdb::Vector& result,
                                          int32_t offset) {
   SDB_ASSERT(offset == 0);
   const auto pos = static_cast<uint64_t>(block);
+  const uint64_t file_size = _in->Length();
   uint32_t len;
+  if (file_size < sizeof(len) || pos > file_size - sizeof(len)) {
+    codecs::ThrowCorrupted("uncompressed string",
+                           "overflow string is outside the file");
+  }
   _in->ReadData(pos, reinterpret_cast<byte_type*>(&len), sizeof(len));
   len = absl::little_endian::Load32(reinterpret_cast<byte_type*>(&len));
+  if (len > file_size - pos - sizeof(len)) {
+    codecs::ThrowCorrupted("uncompressed string",
+                           "overflow string runs past the end of the file");
+  }
   if (const auto* body = _in->ReadStable(pos + sizeof(len), len)) {
     return duckdb::string_t{reinterpret_cast<const char*>(body), len};
   }
@@ -139,10 +150,9 @@ void ReadContext::Read(duckdb::idx_t position, duckdb::data_ptr_t target,
 }
 
 duckdb::shared_ptr<duckdb::BlockHandle> ReadContext::RegisterColBlock(
-  uint64_t offset, uint64_t size, CacheSlot slot) {
+  uint64_t offset, uint64_t size) {
   const auto id = static_cast<duckdb::block_id_t>(_ranges.size());
   _ranges.emplace_back(offset, size);
-  _cache_slots.push_back(slot);
   ++_live_handles;
   auto handle = RegisterBlock(
     id, duckdb::AlignValue<duckdb::idx_t, duckdb::Storage::SECTOR_SIZE>(size));
@@ -240,13 +250,6 @@ std::shared_ptr<ReadContext> MergeReadContext(const ColReader& reader,
   ctx->SetCache(cache);
   ctx->SetStreams(streams);
   return ctx;
-}
-
-const ReadContext::CacheSlot& CacheSlotOf(
-  duckdb::ColumnSegment& segment) noexcept {
-  const auto& block = segment.GetBlockHandle();
-  return static_cast<const ReadContext&>(block->GetBlockManager())
-    .CacheSlotOf(block->BlockId());
 }
 
 }  // namespace irs

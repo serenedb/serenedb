@@ -394,9 +394,6 @@ INSERT INTO chain_docs VALUES (1, ' Running , flies '), (2, 'Lazy , dogs'), (3, 
 statement ok
 CREATE INDEX chain_docs_idx ON chain_docs USING inverted (id, body feat_chain);
 
-statement ok
-VACUUM (REFRESH_TABLE) chain_docs;
-
 query
 SELECT id FROM chain_docs_idx WHERE body @@ 'fli' ORDER BY id;
 ----

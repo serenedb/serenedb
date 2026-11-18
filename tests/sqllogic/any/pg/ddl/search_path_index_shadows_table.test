@@ -1,0 +1,65 @@
+statement ok
+CREATE SCHEMA spist_first;
+
+
+statement ok
+CREATE SCHEMA spist_second;
+
+
+statement ok
+CREATE TABLE spist_first.src (i INTEGER);
+
+
+statement ok
+CREATE INDEX rel ON spist_first.src (i);
+
+
+statement ok
+CREATE TABLE spist_second.rel AS SELECT 42 AS i;
+
+
+statement ok
+SET search_path TO spist_first, spist_second;
+
+
+onlyif postgres
+statement error cannot open relation "rel"
+SELECT i FROM rel;
+
+
+onlyif serenedb
+query
+SELECT count(*) AS n FROM rel;
+----
+n
+0
+
+
+statement ok
+SET search_path TO spist_second, spist_first;
+
+
+query
+SELECT i FROM rel;
+----
+i
+42
+
+
+query
+SELECT i FROM spist_second.rel;
+----
+i
+42
+
+
+statement ok
+RESET search_path;
+
+
+statement ok
+DROP SCHEMA spist_first CASCADE;
+
+
+statement ok
+DROP SCHEMA spist_second CASCADE;

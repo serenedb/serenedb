@@ -29,21 +29,15 @@ namespace {
 std::array<std::atomic<int64_t>, kGaugeCount> gValues{};
 
 constexpr std::array<const char*, kGaugeCount> kNames = {
-  "pg_connections",     "http_connections",         "refresh_active",
-  "refresh_pending",    "compaction_active",        "compaction_pending",
-  "compaction_threads", "compaction_written_bytes", "cleanup_active",
-  "cleanup_pending",
+  "pg_connections",     "http_connections", "compaction_active",
+  "compaction_pending", "cleanup_active",   "cleanup_pending",
 };
 
 constexpr std::array<const char*, kGaugeCount> kDescriptions = {
   "Open pg-wire client connections",
   "Open HTTP client connections",
-  "Search refresh tasks currently running",
-  "Search refresh tasks waiting to run",
   "Search compaction tasks currently running",
-  "Search tables and indexes whose compaction waits for a free merge slot",
-  "Merge slots that search compaction holds",
-  "Bytes written by search compaction tasks since start",
+  "Search compaction tasks waiting to run",
   "Search cleanup tasks currently running",
   "Search cleanup tasks waiting to run",
 };

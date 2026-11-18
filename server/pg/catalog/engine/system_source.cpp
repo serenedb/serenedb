@@ -25,12 +25,13 @@
 #include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_set.hpp>
-#include <duckdb/catalog/dependency_manager.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <limits>
 
+#include "catalog/catalog.h"
 #include "catalog/cluster.h"
+#include "catalog/dependency.h"
 #include "pg/catalog/engine/registry.h"
 #include "pg/catalog/engine/system_table.h"
 #include "pg/catalog/oids.h"
@@ -56,9 +57,9 @@ std::string_view ScanPrefix(const SystemCondition<std::string>& condition) {
   return lower.substr(0, common);
 }
 
-duckdb::DuckCatalog& CatalogOf(duckdb::ClientContext& context,
-                               duckdb::DuckCatalog& database,
-                               SystemCatalog catalog) {
+catalog::BaseCatalog& CatalogOf(duckdb::ClientContext& context,
+                                catalog::BaseCatalog& database,
+                                SystemCatalog catalog) {
   if (catalog == SystemCatalog::Cluster) {
     return catalog::ClusterOf(context);
   }
@@ -66,7 +67,7 @@ duckdb::DuckCatalog& CatalogOf(duckdb::ClientContext& context,
 }
 
 catalog::CatalogSnapshots& SnapshotsOf(duckdb::ClientContext& context,
-                                       duckdb::DuckCatalog& database,
+                                       catalog::BaseCatalog& database,
                                        SystemCatalog catalog) {
   if (catalog == SystemCatalog::Cluster) {
     return catalog::ClusterOf(context).Snapshots();
@@ -207,13 +208,13 @@ SystemEntries SystemScan::Resolve(const CatalogSource& source) const {
       sets.emplace_back(SCHEMA_ENTRY);
     }
     if (!schemas.empty()) {
-      auto& first = schemas.front()->Cast<duckdb::DuckSchemaEntry>();
-      absl::InlinedVector<const duckdb::CatalogSet*, 8> walked;
+      auto& first = schemas.front()->Cast<catalog::Schema>();
+      absl::InlinedVector<const catalog::EntrySet*, 8> walked;
       for (const auto type : source.types) {
         if (!wanted_member(type)) {
           continue;
         }
-        if (const auto* set = &first.GetCatalogSet(type);
+        if (const auto* set = &first.Set(type);
             !absl::c_linear_search(walked, set)) {
           walked.emplace_back(set);
           sets.emplace_back(type);
@@ -239,7 +240,7 @@ SystemEntries SystemScan::Resolve(const CatalogSource& source) const {
 }
 
 SystemSet SystemScan::SetOf(catalog::CatalogSnapshots& snapshots,
-                            duckdb::CatalogSet& set) const {
+                            catalog::EntrySet& set) const {
   auto snapshot = snapshots.Get(_context, set);
   std::span<duckdb::CatalogEntry* const> entries{snapshot->entries};
   return {.snapshot = std::move(snapshot), .entries = entries};
@@ -248,9 +249,8 @@ SystemSet SystemScan::SetOf(catalog::CatalogSnapshots& snapshots,
 SystemSet SystemScan::MemberSet(duckdb::SchemaCatalogEntry& schema,
                                 duckdb::CatalogType type,
                                 const SystemPrefix* prefix) const {
-  auto result =
-    SetOf(_database.Cast<catalog::SereneDBCatalog>().Snapshots(),
-          schema.Cast<duckdb::DuckSchemaEntry>().GetCatalogSet(type));
+  auto result = SetOf(_database.Cast<catalog::SereneDBCatalog>().Snapshots(),
+                      schema.Cast<catalog::Schema>().Set(type));
   if (prefix) {
     const duckdb::IdentifierCompare compare{
       schema.ParentCatalog().IsCaseSensitive()};
@@ -273,12 +273,11 @@ std::span<const catalog::CatalogEdge> SystemScan::WalkedSubjects(
   duckdb::CatalogEntry& entry) const {
   const auto collect = [&](duckdb::CatalogEntry& member) {
     std::vector<catalog::CatalogEdge> edges;
-    Dependencies().ScanEdges(
-      Transaction(), member, true,
-      [&](duckdb::CatalogEntry& subject,
-          const duckdb::DependencyDependentFlags& flags) {
-        edges.emplace_back(&subject, flags);
-      });
+    catalog::ScanSubjects(Transaction(), member,
+                          [&](duckdb::CatalogEntry& subject,
+                              const duckdb::DependencyDependentFlags& flags) {
+                            edges.emplace_back(&subject, flags);
+                          });
     return edges;
   };
   const auto& subjects = _walked->subjects.Get([&](auto& subjects) {
@@ -298,14 +297,11 @@ std::span<const catalog::CatalogEdge> SystemScan::WalkedSubjects(
 
 bool SystemScan::Indexed(duckdb::CatalogEntry& relation) const {
   if (!_walked) {
-    bool indexed = false;
-    Dependencies().ScanEdges(
-      Transaction(), relation, false,
-      [&](duckdb::CatalogEntry& dependent,
-          const duckdb::DependencyDependentFlags&) {
-        indexed = indexed || dependent.type == duckdb::CatalogType::INDEX_ENTRY;
-      });
-    return indexed;
+    const auto indexes = MemberSet(relation.ParentSchema(Transaction()),
+                                   duckdb::CatalogType::INDEX_ENTRY, nullptr);
+    return absl::c_any_of(indexes.entries, [&](duckdb::CatalogEntry* entry) {
+      return entry->Cast<duckdb::IndexCatalogEntry>().table_oid == relation.oid;
+    });
   }
   const auto& indexed = _walked->indexed.Get([&](auto& indexed) {
     const auto indexes = MemberSet(relation.ParentSchema(Transaction()),
@@ -322,7 +318,9 @@ bool SystemScan::Triggered(const duckdb::TableCatalogEntry& table) const {
     bool triggered = false;
     member.ScanTriggers(Transaction(),
                         [&](duckdb::CatalogEntry&) { triggered = true; });
-    return triggered;
+    return triggered ||
+           (catalog::IsSereneDB(member.catalog) &&
+            catalog::ReferencedByForeignKey(Transaction(), member));
   };
   if (!_walked) {
     return any(table);
@@ -349,7 +347,7 @@ SystemListed SystemScan::Resolve(const CatalogSetSource& source) const {
   }
   auto& catalog = CatalogOf(_context, _database, source.catalog);
   result.set = SetOf(SnapshotsOf(_context, _database, source.catalog),
-                     catalog.GetCatalogSet(source.type));
+                     catalog.Set(source.type));
   return result;
 }
 
@@ -362,11 +360,10 @@ void SystemScan::VisitKey(
   const auto transaction = catalog.GetCatalogTransaction(_context);
   auto entry =
     key < keys.names.size()
-      ? catalog.GetCatalogSet(source.type)
-          .GetEntry(transaction, duckdb::Identifier{keys.names[key]})
-      : catalog.GetOidIndex().GetVisible(
-          static_cast<duckdb::idx_t>(keys.oids[key - keys.names.size()]),
-          transaction.view);
+      ? catalog.Set(source.type)
+          .Get(transaction, duckdb::Identifier{keys.names[key]})
+      : catalog.LookupOid(transaction, static_cast<duckdb::idx_t>(
+                                         keys.oids[key - keys.names.size()]));
   if (entry && entry->type == source.type) {
     visit(*entry);
   }
@@ -385,8 +382,8 @@ void SystemScan::VisitKey(
       visit(entry);
       return;
     }
-    Dependencies().ScanEdges(
-      Transaction(), entry, false,
+    catalog::ScanDependents(
+      Transaction(), entry,
       [&](duckdb::CatalogEntry& dependent,
           const duckdb::DependencyDependentFlags&) {
         if (!dependent.internal &&

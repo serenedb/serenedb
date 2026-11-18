@@ -2,7 +2,7 @@ control substitution on
 
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 CREATE TABLE ck_search (id BIGINT, body TEXT)
-WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+WITH (compaction_interval = 0);
 
 statement ok
 RESET sdb_faults;
@@ -11,7 +11,7 @@ statement ok
 INSERT INTO ck_search VALUES (1, 'one'), (2, 'two');
 
 statement ok
-VACUUM (REFRESH_TABLE) ck_search;
+VACUUM (FLUSH_TABLE) ck_search;
 
 statement ok
 DELETE FROM ck_search WHERE id = 1;

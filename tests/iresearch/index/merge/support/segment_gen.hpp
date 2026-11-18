@@ -29,12 +29,16 @@
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/merge/sort_spec.hpp>
+#include <iresearch/index/segment_reader_impl.hpp>
+#include <memory>
 #include <optional>
 #include <random>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include "index/test_index_writer.hpp"
 
 namespace tests::merge {
 
@@ -87,7 +91,7 @@ struct GeneratedDoc {
 void WriteValue(irs::IndexWriter::Document& doc, irs::field_id id,
                 const duckdb::LogicalType& type, const duckdb::Value& value);
 
-void RemoveTerms(irs::IndexWriter& writer, irs::field_id field,
+void RemoveTerms(tests::IndexWriter& writer, irs::field_id field,
                  std::span<const std::string> terms);
 
 int CompareKeyValues(const duckdb::Value& lhs, const duckdb::Value& rhs,
@@ -100,10 +104,10 @@ std::vector<GeneratedDoc> GenerateDocs(Generator& gen,
 void SortDocs(std::vector<GeneratedDoc>& docs, const SegmentShape& shape,
               const std::vector<irs::SortKey>& spec);
 
-void InsertDocs(irs::IndexWriter& writer, const SegmentShape& shape,
+void InsertDocs(tests::IndexWriter& writer, const SegmentShape& shape,
                 std::span<const GeneratedDoc> docs);
 
-void WriteSegment(irs::IndexWriter& writer, Generator& gen,
+void WriteSegment(tests::IndexWriter& writer, Generator& gen,
                   const SegmentShape& shape, size_t& next_id,
                   const std::vector<irs::SortKey>* sort = nullptr);
 
@@ -112,6 +116,9 @@ SegmentShape RandomShape(Generator& gen);
 irs::ColumnOptions SketchedColumns(irs::field_id id);
 
 std::vector<const irs::SubReader*> Segments(const irs::DirectoryReader& reader);
+
+std::shared_ptr<const irs::SegmentReaderImpl> AllDeleted(
+  const irs::SubReader& segment);
 
 class WithoutColumnStore final : public irs::SubReader {
  public:

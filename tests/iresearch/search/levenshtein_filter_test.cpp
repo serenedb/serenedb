@@ -544,15 +544,14 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
     auto opts = irs::tests::DefaultWriterOptions();
 
-    add_segment(gen, irs::kOmCreate, std::move(opts));
+    add_segment(gen, tests::kOmCreate, std::move(opts));
   }
 
   std::array<irs::Scorer::ptr, 1> order{irs::BM25::Make(irs::BM25::Options{})};
   ASSERT_NE(nullptr, order.front());
 
   auto index = open_reader(irs::tests::DefaultReaderOptions());
-  ASSERT_NE(nullptr, index);
-  ASSERT_EQ(1, index->size());
+  ASSERT_EQ(1, index.size());
 
   MaxMemoryCounter counter;
   irs::ColumnArgsFetcher fetcher;
@@ -569,7 +568,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     irs::Filter::ptr lowered =
       std::make_unique<irs::ByEditDistance>(std::move(filter));
     irs::Optimize(lowered, {.scored = true});
-    tests::PreparedFilter prepared{*lowered, *index, order.front().get(),
+    tests::PreparedFilter prepared{*lowered, index, order.front().get(),
                                    counter};
     ASSERT_NE(nullptr, prepared.Query(0));
 
@@ -615,7 +614,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     irs::Filter::ptr lowered =
       std::make_unique<irs::ByEditDistance>(std::move(filter));
     irs::Optimize(lowered, {.scored = true});
-    tests::PreparedFilter prepared{*lowered, *index, order.front().get(),
+    tests::PreparedFilter prepared{*lowered, index, order.front().get(),
                                    counter};
     ASSERT_NE(nullptr, prepared.Query(0));
 
@@ -661,7 +660,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     irs::Filter::ptr lowered =
       std::make_unique<irs::ByEditDistance>(std::move(filter));
     irs::Optimize(lowered, {.scored = true});
-    tests::PreparedFilter prepared{*lowered, *index, order.front().get(),
+    tests::PreparedFilter prepared{*lowered, index, order.front().get(),
                                    counter};
     ASSERT_NE(nullptr, prepared.Query(0));
 
@@ -708,7 +707,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     irs::Filter::ptr lowered =
       std::make_unique<irs::ByEditDistance>(std::move(filter));
     irs::Optimize(lowered, {.scored = true});
-    tests::PreparedFilter prepared{*lowered, *index, order.front().get(),
+    tests::PreparedFilter prepared{*lowered, index, order.front().get(),
                                    counter};
     ASSERT_NE(nullptr, prepared.Query(0));
 
@@ -775,7 +774,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     irs::Filter::ptr lowered =
       std::make_unique<irs::ByEditDistance>(std::move(filter));
     irs::Optimize(lowered, {.scored = true});
-    tests::PreparedFilter prepared{*lowered, *index, order.front().get(),
+    tests::PreparedFilter prepared{*lowered, index, order.front().get(),
                                    counter};
     ASSERT_NE(nullptr, prepared.Query(0));
 
@@ -843,7 +842,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     irs::Filter::ptr lowered =
       std::make_unique<irs::ByEditDistance>(std::move(filter));
     irs::Optimize(lowered, {.scored = true});
-    tests::PreparedFilter prepared{*lowered, *index, order.front().get(),
+    tests::PreparedFilter prepared{*lowered, index, order.front().get(),
                                    counter};
     ASSERT_NE(nullptr, prepared.Query(0));
 

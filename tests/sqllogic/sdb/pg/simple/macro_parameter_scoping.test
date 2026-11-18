@@ -76,7 +76,7 @@ rows
 
 
 statement ok
-CREATE MACRO mps_schema(main) AS (SELECT main.upper('x'));
+CREATE MACRO mps_schema(pg_catalog) AS (SELECT pg_catalog.upper('x'));
 
 
 statement ok

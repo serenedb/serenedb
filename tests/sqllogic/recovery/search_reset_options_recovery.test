@@ -1,0 +1,85 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TABLE rso_t (id INT PRIMARY KEY, body TEXT)
+WITH (compaction_interval = 100);
+
+
+statement ok
+CREATE TABLE rso_plain (id INT, body TEXT) WITH (compaction_interval = 100);
+
+
+statement ok
+CREATE INDEX rso_idx ON rso_plain USING inverted (body);
+
+
+statement ok
+CREATE TABLE rso_old (id INT PRIMARY KEY, body TEXT)
+WITH (compaction_interval = 100);
+
+
+statement ok
+CREATE TABLE rso_old_plain (id INT, body TEXT) WITH (compaction_interval = 100);
+
+
+statement ok
+CREATE INDEX rso_old_idx ON rso_old_plain USING inverted (id);
+
+
+statement ok
+SET compaction_interval = 0;
+
+
+statement ok
+ALTER TABLE rso_t RESET (compaction_interval);
+
+
+statement ok
+ALTER TABLE rso_plain RESET (compaction_interval);
+
+
+statement ok
+SET sdb_faults = 'reset_options_without_values';
+
+
+statement ok
+ALTER TABLE rso_old RESET (compaction_interval);
+
+
+statement ok
+ALTER TABLE rso_old_plain RESET (compaction_interval);
+
+
+statement ok
+RESET sdb_faults;
+
+
+query
+SELECT relname, list_filter(reloptions, lambda x: x LIKE 'compaction_interval=%') AS opts
+FROM pg_class WHERE relname IN ('rso_t', 'rso_plain', 'rso_old', 'rso_old_plain') ORDER BY relname;
+----
+relname	opts
+rso_old	{compaction_interval=0}
+rso_old_plain	{compaction_interval=0}
+rso_plain	{compaction_interval=0}
+rso_t	{compaction_interval=0}
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT relname, list_filter(reloptions, lambda x: x LIKE 'compaction_interval=%') AS opts
+FROM pg_class WHERE relname IN ('rso_t', 'rso_plain', 'rso_old', 'rso_old_plain') ORDER BY relname;
+----
+relname	opts
+rso_old	NULL
+rso_old_plain	NULL
+rso_plain	{compaction_interval=0}
+rso_t	{compaction_interval=0}

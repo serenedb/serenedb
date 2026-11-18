@@ -1,32 +1,46 @@
 target_sources(
     iresearch
     PRIVATE
-        column/codecs/calibration.cpp
+        column/codecs/alp.cpp
+        column/codecs/alprd.cpp
+        column/codecs/bitpacking.cpp
+        column/codecs/blob_compression_state.cpp
+        column/codecs/compression_function.cpp
+        column/codecs/constant.cpp
+        column/codecs/empty_validity.cpp
         column/codecs/fsst.cpp
         column/codecs/fsst12.cpp
-        column/codecs/fsst12_chain_encoder.cpp
-        column/codecs/fsst_chain_encoder.cpp
+        column/codecs/fsst12_compression_state.cpp
+        column/codecs/fsst_compression_state.cpp
         column/codecs/fsst_plus.cpp
-        column/codecs/fsst_plus_encoder.cpp
-        column/codecs/leaf_encoder.cpp
+        column/codecs/fsst_plus_compression_state.cpp
         column/codecs/lz4.cpp
         column/codecs/numeric.cpp
         column/codecs/onpair.cpp
-        column/codecs/onpair_encoder.cpp
+        column/codecs/onpair_compression_state.cpp
         column/codecs/registry.cpp
-        column/codecs/segment_builder.cpp
+        column/codecs/rle.cpp
+        column/codecs/roaring.cpp
+        column/codecs/segment_buffer.cpp
         column/codecs/segment_dictionary.cpp
-        column/codecs/segment_encoder.cpp
+        column/codecs/segment_rows.cpp
+        column/codecs/string_compression_function.cpp
+        column/codecs/string_compressor.cpp
+        column/codecs/string_picker.cpp
         column/codecs/string_scan.cpp
         column/codecs/string_seal.cpp
+        column/codecs/string_window.cpp
+        column/codecs/uncompressed.cpp
         column/codecs/zstd.cpp
         column/codecs/zxc.cpp
         column/col_file_writer.cpp
         column/col_copy_check.cpp
         column/col_reader.cpp
         column/col_writer.cpp
+        column/column_patch.cpp
         column/column_reader.cpp
         column/column_writer.cpp
+        column/hot_column_reader.cpp
         column/internal/write_context.cpp
         column/list_ingest.cpp
         column/merge.cpp
@@ -49,11 +63,8 @@ target_sources(
         index/term_dict_single.cpp
         index/term_dict_walk.cpp
         index/term_parts.cpp
-        index_meta_reader.cpp
-        index_meta_writer.cpp
+        piece_fields.cpp
         posting/block_codec.cpp
-        segment_meta_reader.cpp
-        segment_meta_writer.cpp
 )
 
 if(IRESEARCH_BENCH)

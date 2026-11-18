@@ -26,8 +26,7 @@
 namespace sdb::connector {
 
 void SearchSinkRows::Append(duckdb::ClientContext& context,
-                            const SearchSinkTable& table,
-                            duckdb::DataChunk& rows) {
+                            SearchSinkTable& table, duckdb::DataChunk& rows) {
   if (_sink) {
     WriteChunkToSearchSink(*_sink, rows, table.column_ids, table.table_id,
                            context);
@@ -37,15 +36,21 @@ void SearchSinkRows::Append(duckdb::ClientContext& context,
     _rows = std::make_unique<duckdb::ColumnDataCollection>(
       duckdb::BufferManager::GetBufferManager(context), table.types);
   }
+  const auto bytes = rows.GetDataSize();
   _rows->Append(rows);
+  _bytes += bytes;
+  const auto statement_bytes =
+    table.inline_bytes.fetch_add(bytes, std::memory_order_relaxed) + bytes;
   if (_rows->Count() <= STANDARD_VECTOR_SIZE &&
-      _rows->SizeInBytes() <= _budget) {
+      statement_bytes <= table.buffer_bytes) {
     return;
   }
+  table.inline_bytes.fetch_sub(_bytes, std::memory_order_relaxed);
+  _bytes = 0;
   // Exclusive: Combine reports this thread's segments to the WAL, so they
   // must not also carry a previous transaction's documents.
   _trx = std::make_unique<irs::IndexWriter::Transaction>(
-    table.store->GetTransaction(/*exclusive_segment=*/true));
+    table.store->GetTransaction());
   _sink =
     MakeSearchTableInsertSink(*_trx, *table.store, *table.catalog, context);
   for (auto& chunk : _rows->Chunks()) {
@@ -60,29 +65,24 @@ void SearchSinkRows::Flush() {
   if (!_trx) {
     return;
   }
-  // On the worker, in parallel with the others, rather than deferring the tail
-  // to the single-threaded refresh commit; the fsync is what lets the WAL
-  // reference these by name instead of copying the rows.
-  for (const auto& segment : _trx->FlushAndFsync()) {
-    _segments.push_back(segment.filename);
-  }
+  // On the worker, in parallel with the others; the fsync is what lets the
+  // log reference these by name instead of copying the rows.
+  _flushed = _trx->FlushAndFsync();
 }
 
 void SearchSinkRows::HandOver(duckdb::ClientContext& context,
                               const SearchSinkTable& table,
                               search::Writes& writes) {
   if (_trx) {
-    writes.AddParallelSearchTransaction(table.store, std::move(_trx));
-    writes.AddSegments(table.store, std::move(_segments));
+    writes.AddOwnSegments(table.store, std::move(_trx), _flushed);
+    _flushed = {};
   }
   if (!_rows) {
     return;
   }
-  writes.AddInlineRows(table.store, table.column_ids, *table.catalog,
-                       std::move(_rows));
-  if (writes.BufferedBytes(table.store->GetId()) > table.buffer_bytes) {
-    writes.FlushBuffer(table.store, context);
-  }
+  writes.AddInlineRows(context, table.store, table.column_ids, *table.catalog,
+                       std::move(_rows), std::exchange(_bytes, 0),
+                       table.buffer_bytes);
 }
 
 }  // namespace sdb::connector

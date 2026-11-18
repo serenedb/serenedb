@@ -31,7 +31,7 @@ SOURCE_DIRS = ("server", "iresearch")
 DUCKDB_CHECKOUT = "third_party/duckdb/.git"
 DUCKDB_DIRS = ("third_party/duckdb/src", "third_party/duckdb/extension")
 DUCKDB_FAULTS = frozenset({"slow_expression_bind"})
-DUCKDB_PARK_FAULTS = frozenset({"pause_checkpoint", "pause_wal_sync"})
+DUCKDB_PARK_FAULTS = frozenset({"attached_database_close"})
 TEST_DIR = "tests"
 
 TEST_EXTS = (".test", ".test_slow")
@@ -74,6 +74,7 @@ TESTNET_LITERAL = re.compile(
 # '{name}'`), so the SET literal itself carries no name; the names live in
 # module constants by convention: <SOMETHING>_FAULT = "name".
 PY_FAULT_CONST = re.compile(r'FAULT\w*\s*=\s*"([^"]+)"')
+CPP_NAME_CONST = re.compile(r'constexpr\s+std::string_view\s+(\w+)\s*=\s*"([^"]+)"')
 
 # faults.test is the test of the fault FRAMEWORK itself; its names (some1, some2,
 # some3) are synthetic and intentionally have no source definition.
@@ -94,9 +95,9 @@ KNOWN_MISSING_SOURCE_FAULTS = {
 # Source faults that no test exercises yet. Each is a deliberate, documented
 # gap rather than a silent skip; remove an entry once a test covers it.
 KNOWN_UNTESTED_SOURCE_FAULTS = {
-    # Search refresh task fault points; cleanup/lock paths untested.
-    "SearchRefreshTask::cleanupUnsafe",
-    "SearchRefreshTask::lockInvertedIndexStorage",
+    # Search compaction task fault points; no recovery test drives compaction yet.
+    "SearchCompactionTask::compactUnsafe",
+    "SearchCompactionTask::lockInvertedIndexStorage",
     # Truncate failure injection; no test drives a failed search truncate yet.
     "SereneSearchTruncateFailure",
     # Crash before the drop-task wipes the sequence counter; recovery test pending.
@@ -133,7 +134,7 @@ def scan_sources(dirs):
     parks = set()
     for path in (p for d in dirs for p in walk_files(d, SOURCE_EXTS)):
         text = read(path)
-        if "FAIL" not in text and "FaultPoints" not in text:
+        if "FAIL" not in text and "Fail" not in text:
             continue
         for m in SOURCE_DEF.finditer(text):
             faults.setdefault(m.group(1), f"{rel(path)}:{lineno(text, m.start())}")
@@ -179,8 +180,9 @@ def main():
     for path in walk_files(TEST_DIR, TESTNET_EXTS):
         text = read(path)
         has_set = "sdb_faults" in text
-        has_lit = "FAIL" in text or "FaultPoints" in text
-        if not has_set and not has_lit:
+        has_lit = "FAIL" in text or "Fail" in text or "FaultPoints::" in text
+        has_points = "FaultPoints::" in text
+        if not has_set and not has_lit and not has_points:
             continue
         normalized = rel(path)
         is_recovery = normalized.startswith(RECOVERY_DIR + "/")
@@ -207,6 +209,10 @@ def main():
         if path.endswith(".py") and (has_set or has_lit):
             for m in PY_FAULT_CONST.finditer(text):
                 exercised.add(m.group(1))
+        if has_points:
+            for m in CPP_NAME_CONST.finditer(text):
+                if re.search(rf"FaultPoints::\w+\(\s*{m.group(1)}\b", text):
+                    exercised.add(m.group(2))
 
     # ----- check #2: test -> source -----
     for name, loc in sorted(test_faults.items()):

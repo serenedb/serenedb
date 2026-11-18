@@ -1,5 +1,7 @@
 hash-threshold 100
 
+control substitution on
+
 # ts_dict_* pushdown over a VIEW-backed inverted index. A view has no catalog
 # table, so no column can be proven NOT NULL: every key is treated as nullable
 # (rides the field's null-marker for the synthesized NULL group), count/min/max
@@ -10,9 +12,6 @@ hash-threshold 100
 
 statement ok
 SET compaction_interval = 0
-
-statement ok
-SET refresh_interval = 0
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY vkw AS keyword() WITH (frequency)
@@ -38,18 +37,18 @@ INSERT INTO vbase VALUES
   (5, 'FENDT', 'open', NULL,             'ok gamma')
 
 statement ok
+COPY vbase TO '${__TEST_DIR__}/vbase.parquet' (FORMAT PARQUET)
+
+statement ok
 CREATE VIEW vlog AS
 SELECT id, brand AS Brand, status AS Status, tags AS Tags, body AS Body
-FROM vbase
+FROM read_parquet('${__TEST_DIR__}/vbase.parquet')
 
 statement ok
 CREATE INDEX vlog_idx ON vlog USING inverted(
     Brand vkw, Status vkw, Tags vkw, Body vtx,
     (split_by_non_alpha(Body, case := 'lower')) vkw)
-    WITH (refresh_interval = 0, compaction_interval = 0)
-
-statement ok
-VACUUM (REFRESH_TABLE) vbase;
+    WITH (compaction_interval = 0)
 
 # --- Facet on a nullable keyword column: converts, with the NULL group
 # --- synthesized from the null-marker.
@@ -240,10 +239,10 @@ QUERY PLAN
                     ├─────────────────────────────────────╮
 ╭─ IRESEARCH_SCAN ──┴───────────────────╮  ╭─ UNION ──────┴──────────────╮
 │ Index: vlog_idx                       │  ╰──────────────┬──────────────╯
-│ Projections: brand, status            │                 ├────────────────────────────────╮
-│ ~5 rows                               │  ╭─ PROJECTION ─┴──────────────╮  ╭─ PROJECTION ─┴──────────────╮
-╰───────────────────────────────────────╯  │ Projections: #0,            │  │ Projections: NULL::VARCHAR, │
-                                           │              NULL::VARCHAR, │  │              #0, #1         │
+│ Lookup: parquet                       │                 ├────────────────────────────────╮
+│ Projections: brand, status            │  ╭─ PROJECTION ─┴──────────────╮  ╭─ PROJECTION ─┴──────────────╮
+│ ~5 rows                               │  │ Projections: #0,            │  │ Projections: NULL::VARCHAR, │
+╰───────────────────────────────────────╯  │              NULL::VARCHAR, │  │              #0, #1         │
                                            │              #1             │  │ ~2 rows                     │
                                            │ ~2 rows                     │  ╰──────────────┬──────────────╯
                                            ╰──────────────┬──────────────╯  ╭─ HASH_GROUP_BY ─────────────╮
@@ -343,6 +342,7 @@ QUERY PLAN
 ╰─────────────┬─────────────╯
 ╭─ IRESEARCH_SCAN ──────────╮
 │ Index: vlog_idx           │
+│ Lookup: parquet           │
 │ Projections: brand        │
 │ ~5 rows                   │
 ╰───────────────────────────╯

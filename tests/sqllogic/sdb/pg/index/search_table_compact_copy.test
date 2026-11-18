@@ -1,0 +1,92 @@
+statement ok
+SET threads = 1;
+
+statement ok
+CREATE TABLE cc (id BIGINT, n INTEGER, d DOUBLE, s VARCHAR, flag BOOLEAN, note VARCHAR)
+  WITH (compaction_interval = 0, row_group_size = 2048);
+
+statement ok
+INSERT INTO cc SELECT i, i % 97, i / 7.0, 'string value number ' || i, i % 2 = 0,
+    CASE WHEN i % 5 = 0 THEN NULL ELSE 'n' || (i % 11) END
+  FROM range(0, 5000) r(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) cc;
+
+statement ok
+INSERT INTO cc SELECT i, i % 97, i / 7.0, 'string value number ' || i, i % 2 = 0, NULL
+  FROM range(5000, 11000) r(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) cc;
+
+statement ok
+INSERT INTO cc SELECT i, i % 97, i / 7.0, 'string value number ' || i, i % 2 = 0, 'small' || (i % 3)
+  FROM range(11000, 12000) r(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) cc;
+
+statement ok
+INSERT INTO cc SELECT i, i % 97, i / 7.0, 'string value number ' || i, i % 2 = 0, 'big' || (i % 4)
+  FROM range(12000, 16000) r(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) cc;
+
+statement ok
+DELETE FROM cc WHERE id BETWEEN 12000 AND 15999 AND id % 3 = 0;
+
+query
+SELECT value AS segments FROM sdb_metrics WHERE metric = 'num_segments' AND relation_id = 'cc'::regclass;
+----
+segments
+4
+
+statement ok
+VACUUM (COMPACT_TABLE) cc;
+
+query
+SELECT value AS segments FROM sdb_metrics WHERE metric = 'num_segments' AND relation_id = 'cc'::regclass;
+----
+segments
+1
+
+query
+SELECT count(*), count(note), sum(n), round(sum(d))::BIGINT, count(*) FILTER (WHERE flag) FROM cc;
+----
+count	count	sum	round	count
+14666	7666	703439	15616667	7333
+
+query
+SELECT min(s), max(s), min(note), max(note) FROM cc;
+----
+min	max	min	max
+string value number 0	string value number 9999	big0	small2
+
+query
+SELECT count(*) FROM cc WHERE id BETWEEN 4000 AND 6000;
+----
+count
+2001
+
+query
+SELECT count(*) FROM cc WHERE note = 'n3';
+----
+count
+364
+
+query
+SELECT id, n, s, flag, note FROM cc WHERE id IN (0, 4999, 5000, 10999, 11000, 12001, 15998) ORDER BY id;
+----
+id	n	s	flag	note
+0	0	string value number 0	t	NULL
+4999	52	string value number 4999	f	n5
+5000	53	string value number 5000	t	NULL
+10999	38	string value number 10999	f	NULL
+11000	39	string value number 11000	t	small2
+12001	70	string value number 12001	f	big1
+15998	90	string value number 15998	t	big2
+
+statement ok
+DROP TABLE cc;

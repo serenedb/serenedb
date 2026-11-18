@@ -60,10 +60,10 @@
 namespace irs::codecs::text {
 
 template<typename Leaf>
-struct DictionaryFetch final : duckdb::SegmentScanState {
-  void Reset(duckdb::ColumnSegment& segment) {
+struct DictionaryFetch final : SegmentScanState {
+  void Reset(const ColumnSegment& segment) {
     code_frames.reset();
-    frames.decoded = CachedDictionary(CacheSlotOf(segment));
+    frames.decoded = CachedDictionary(segment.cache_slot);
   }
 
   void Read(data_ptr_t base, const idx_t* rows, idx_t count,
@@ -79,8 +79,7 @@ struct DictionaryFetch final : duckdb::SegmentScanState {
     for (idx_t i = 0; i < count; ++i) {
       SDB_ENSURE(rows[i] < h.row_count, "col codec: row out of range");
       const uint32_t code =
-        numeric.Fetch(rows[i], i == 0 ? kNoRow : rows[i - 1],
-                      i + 1 == count ? kNoRow : rows[i + 1]);
+        numeric.Fetch(rows[i], i + 1 == count ? kNoRow : rows[i + 1]);
       const auto at = offset + sel.get_index(i);
       if (code == 0) {
         validity.SetInvalid(at);
@@ -95,7 +94,7 @@ struct DictionaryFetch final : duckdb::SegmentScanState {
   IRS_FORCE_INLINE uint32_t ReadOne(data_ptr_t base, idx_t row) {
     const auto& h = frames.header;
     SDB_ENSURE(row < h.row_count, "col codec: row out of range");
-    const auto code = Numeric(base).Fetch(row, kNoRow, kNoRow);
+    const auto code = Numeric(base).Fetch(row, kNoRow);
     SDB_ENSURE(code == 0 || code < h.entry_count,
                "col codec: corrupted row codes");
     return code;
@@ -218,20 +217,19 @@ class FilterVerdicts {
 };
 
 template<typename Leaf>
-struct DictionaryScan final : duckdb::SegmentScanState {
+struct DictionaryScan final : SegmentScanState {
   using Fetch = DictionaryFetch<Leaf>;
   static constexpr Shape kShape = Shape::Dedup;
-  static constexpr auto kValidity =
-    duckdb::CompressionValidity::NO_VALIDITY_REQUIRED;
+  static constexpr auto kValidity = CompressionValidity::NoValidityRequired;
 
-  DictionaryScan(duckdb::ColumnSegment& segment, duckdb::BufferHandle handle)
+  DictionaryScan(const ColumnSegment& segment, duckdb::BufferHandle handle)
     : DictionaryScan{segment, std::move(handle),
-                     CachedDictionary(CacheSlotOf(segment))} {}
+                     CachedDictionary(segment.cache_slot)} {}
 
-  DictionaryScan(duckdb::ColumnSegment& segment, duckdb::BufferHandle handle,
+  DictionaryScan(const ColumnSegment& segment, duckdb::BufferHandle handle,
                  const duckdb::shared_ptr<DecodedDictionary>& cached)
     : entries{segment, std::move(handle), !cached},
-      cache_slot{CacheSlotOf(segment)},
+      cache_slot{segment.cache_slot},
       code_frames{entries.base + entries.header.off_codes,
                   CodesHeader(entries.base, entries.header)} {
     if (cached) {
@@ -328,9 +326,6 @@ struct DictionaryScan final : duckdb::SegmentScanState {
   }
 
   bool ResolveFilter(const duckdb::TableFilter& filter, EntryRanges& out) {
-    if (filter.filter_type != duckdb::TableFilterType::EXPRESSION_FILTER) {
-      return false;
-    }
     return Resolve(*filter.Cast<duckdb::ExpressionFilter>().expr, out);
   }
 
@@ -339,31 +334,17 @@ struct DictionaryScan final : duckdb::SegmentScanState {
     switch (expr.GetExpressionClass()) {
       case duckdb::ExpressionClass::BOUND_OPERATOR: {
         const auto& op = expr.Cast<duckdb::BoundOperatorExpression>();
-        const auto& children = op.GetChildren();
-        if (children.empty() ||
-            !duckdb::ExpressionFilter::IsSimpleFilterColumnRef(*children[0])) {
+        const auto type = op.GetExpressionType();
+        if ((type != duckdb::ExpressionType::OPERATOR_IS_NULL &&
+             type != duckdb::ExpressionType::OPERATOR_IS_NOT_NULL) ||
+            !duckdb::ExpressionFilter::IsSimpleFilterColumnRef(
+              *op.GetChildren()[0])) {
           return false;
         }
-        switch (op.GetExpressionType()) {
-          case duckdb::ExpressionType::OPERATOR_IS_NULL:
-          case duckdb::ExpressionType::OPERATOR_IS_NOT_NULL:
-            if (children.size() != 1) {
-              return false;
-            }
-            out =
-              op.GetExpressionType() == duckdb::ExpressionType::OPERATOR_IS_NULL
+        out = type == duckdb::ExpressionType::OPERATOR_IS_NULL
                 ? EntryRanges{{0, 1}}
                 : Normalize({{1, n}});
-            return true;
-          case duckdb::ExpressionType::COMPARE_IN:
-            if constexpr (Sorted(Leaf::kCodec)) {
-              return ResolveIn(children, out);
-            } else {
-              return false;
-            }
-          default:
-            return false;
-        }
+        return true;
       }
       case duckdb::ExpressionClass::BOUND_FUNCTION:
         if constexpr (Sorted(Leaf::kCodec)) {
@@ -377,9 +358,7 @@ struct DictionaryScan final : duckdb::SegmentScanState {
           expr.Cast<duckdb::BoundConjunctionExpression>();
         const auto kind = conjunction.GetExpressionType();
         const auto& children = conjunction.GetChildren();
-        if ((kind != duckdb::ExpressionType::CONJUNCTION_AND &&
-             kind != duckdb::ExpressionType::CONJUNCTION_OR) ||
-            children.empty() || !Resolve(*children[0], out)) {
+        if (!Resolve(*children[0], out)) {
           return false;
         }
         EntryRanges ranges;
@@ -399,21 +378,6 @@ struct DictionaryScan final : duckdb::SegmentScanState {
       default:
         return false;
     }
-  }
-
-  bool ResolveIn(const auto& children, EntryRanges& out) {
-    EntryRanges ranges;
-    for (size_t i = 1; i < children.size(); ++i) {
-      const auto* value = StringConstant(*children[i]);
-      if (!value) {
-        return false;
-      }
-      if (!value->IsNull()) {
-        ranges.emplace_back(EqualRange(duckdb::StringValue::Get(*value)));
-      }
-    }
-    out = Normalize(std::move(ranges));
-    return true;
   }
 
   bool ResolveComparison(const duckdb::BoundFunctionExpression& fn,
@@ -541,13 +505,15 @@ struct DictionaryScan final : duckdb::SegmentScanState {
     }
   }
 
-  void Select(duckdb::Vector& result, idx_t start, idx_t vector_count,
-              const duckdb::SelectionVector& sel, idx_t sel_count) {
+  void Select(duckdb::Vector& result, idx_t result_offset, idx_t start,
+              idx_t vector_count, const duckdb::SelectionVector& sel,
+              idx_t sel_count, duckdb::ScanVectorType scan_type) {
     SDB_ASSERT(!entries.streams);
-    if (!full && sel_count * 4 < vector_count) {
+    if (scan_type == duckdb::ScanVectorType::SCAN_FLAT_VECTOR ||
+        (!full && sel_count * 4 < vector_count)) {
       const auto& codes = Codes(start, vector_count, sel, sel_count);
       EnsureCodes(codes, sel_count);
-      WriteCodes(result, 0, codes, sel_count);
+      WriteCodes(result, result_offset, codes, sel_count);
       return;
     }
     EnsureDictionary();
@@ -561,15 +527,17 @@ struct DictionaryScan final : duckdb::SegmentScanState {
               duckdb::TableFilterState& filter_state) {
     SDB_ASSERT(!entries.streams);
     const auto dict_count = entries.header.entry_count;
+    const bool dense = sel_count * 4 >= vector_count;
     if (verdicts.Empty()) {
       if (EntryRanges ranges; ResolveFilter(filter, ranges)) {
         verdicts.Accept(ranges, dict_count);
-      } else if (dict_count < kLazyFilterEntries ||
-                 sel_count * 4 >= vector_count) {
+      } else if (dict_count < kLazyFilterEntries || dense) {
         JudgeAll(filter_state);
       } else {
         verdicts.Defer(dict_count);
       }
+    } else if (verdicts.Lazy() && dense) {
+      JudgeAll(filter_state);
     }
     if (!verdicts.Lazy() && verdicts.Matches() == 0) {
       sel_count = 0;

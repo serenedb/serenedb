@@ -165,7 +165,8 @@ INSERT INTO uq_col VALUES (1, 'y')
 statement error
 INSERT INTO uq_col VALUES (2, 'y')
 ----
-db error: ERROR: Duplicate key "k: y" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "uq_col_k"
+DETAIL: Key (k)=(y) already exists.
 
 
 statement ok
@@ -183,13 +184,15 @@ INSERT INTO uq_expr VALUES (1, 'y'), (2, 'n')
 statement error
 INSERT INTO uq_expr VALUES (3, 'y')
 ----
-db error: ERROR: Duplicate key "CAST(s AS chk_kind): y" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "uq_expr_k"
+DETAIL: Key (CAST(s AS chk_kind))=(y) already exists.
 
 
 statement error
 UPDATE uq_expr SET s = 'y' WHERE id = 2
 ----
-db error: ERROR: Duplicate key "CAST(s AS chk_kind): y" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "uq_expr_k"
+DETAIL: Key (CAST(s AS chk_kind))=(y) already exists.
 
 
 query

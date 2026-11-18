@@ -21,7 +21,7 @@ CREATE TABLE lvl_columns (a INTEGER PRIMARY KEY,
                           zstd_3 TEXT USING COMPRESSION zstd(compression_level = 3),
                           zstd_22 TEXT USING COMPRESSION zstd(compression_level = 22),
                           zstd_tbl TEXT USING COMPRESSION zstd)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO lvl_columns SELECT a,
@@ -40,7 +40,7 @@ INSERT INTO lvl_columns SELECT a,
   FROM range(20000) t(a);
 
 statement ok
-VACUUM (REFRESH_TABLE) lvl_columns;
+VACUUM (FLUSH_TABLE) lvl_columns;
 
 query
 SELECT column_name, string_agg(DISTINCT compression, ',') AS compression
@@ -136,29 +136,29 @@ statement ok
 CREATE TABLE lvl_merge (a INTEGER PRIMARY KEY,
                         lo TEXT USING COMPRESSION dict_zstd(compression_level = 1),
                         hi TEXT USING COMPRESSION dict_zstd(compression_level = 19))
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO lvl_merge SELECT a, 'event ' || (a % 3000) || ' completed for user ' || (a % 1000) || ' status ok',
   'event ' || (a % 3000) || ' completed for user ' || (a % 1000) || ' status ok' FROM range(10000) t(a);
 
 statement ok
-VACUUM (REFRESH_TABLE) lvl_merge;
+VACUUM (FLUSH_TABLE) lvl_merge;
 
 statement ok
 INSERT INTO lvl_merge SELECT a, 'event ' || (a % 3000) || ' completed for user ' || (a % 1000) || ' status ok',
   'event ' || (a % 3000) || ' completed for user ' || (a % 1000) || ' status ok' FROM range(10000, 20000) t(a);
 
 statement ok
-VACUUM (REFRESH_TABLE) lvl_merge;
+VACUUM (FLUSH_TABLE) lvl_merge;
 
 statement ok
 VACUUM (COMPACT_TABLE) lvl_merge;
 
 query
 SELECT count(DISTINCT row_group_id) AS segments,
-       sum(split_part(segment_info, '=', 2)::BIGINT) FILTER (WHERE column_name = 'hi')
-         <> sum(split_part(segment_info, '=', 2)::BIGINT) FILTER (WHERE column_name = 'lo') AS levels_differ
+       sum(regexp_extract(segment_info, 'byte_size: (\d+)', 1)::BIGINT) FILTER (WHERE column_name = 'hi')
+         <> sum(regexp_extract(segment_info, 'byte_size: (\d+)', 1)::BIGINT) FILTER (WHERE column_name = 'lo') AS levels_differ
 FROM pragma_storage_info('lvl_merge', include_segment_info = true)
 WHERE column_name IN ('lo', 'hi') AND segment_type <> 'VALIDITY';
 ----
@@ -176,7 +176,7 @@ DROP TABLE lvl_merge;
 
 statement ok
 CREATE TABLE lvl_incl (pk INTEGER PRIMARY KEY, body TEXT, p1 TEXT, p2 TEXT, p3 TEXT USING COMPRESSION dict_fsst, p4 TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX lvl_incl_idx ON lvl_incl USING inverted(body)
@@ -189,7 +189,7 @@ statement ok
 INSERT INTO lvl_incl SELECT a, 'text ' || a, 'p' || (a % 13), repeat('q' || a, 6), repeat('r' || a, 6), 's' || (a % 17) FROM range(5000) t(a);
 
 statement ok
-VACUUM (REFRESH_TABLE) lvl_incl;
+VACUUM (FLUSH_TABLE) lvl_incl;
 
 query
 SELECT column_name, string_agg(DISTINCT compression, ',') AS compression
@@ -228,7 +228,7 @@ statement ok
 INSERT INTO lvl_incl SELECT a, 'text ' || a, 'p' || (a % 13), repeat('q' || a, 6), repeat('r' || a, 6), 's' || (a % 17) FROM range(5000, 10000) t(a);
 
 statement ok
-VACUUM (REFRESH_TABLE) lvl_incl;
+VACUUM (FLUSH_TABLE) lvl_incl;
 
 query
 SELECT column_name, string_agg(DISTINCT compression, ',' ORDER BY compression) AS compression
@@ -249,140 +249,140 @@ statement ok
 DROP TABLE lvl_incl;
 
 statement error
-CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION dict_fsst(compression_level = 2)) WITH (storage = 'search');
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION dict_fsst(compression_level = 2));
 ----
 db error: ERROR: Column "v": compression 'dict_fsst' takes no compression_level
 
 
 statement error
-CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION fsst(compression_level = 1)) WITH (storage = 'search');
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION fsst(compression_level = 1));
 ----
 db error: ERROR: Column "v": compression 'fsst' takes no compression_level
 
 
 statement error
-CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION dict_fsst_plus(compression_level = 2)) WITH (storage = 'search');
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION dict_fsst_plus(compression_level = 2));
 ----
 db error: ERROR: Column "v": compression 'dict_fsst_plus' takes no compression_level
 
 
 statement error
-CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION fsst_plus(compression_level = 1)) WITH (storage = 'search');
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION fsst_plus(compression_level = 1));
 ----
 db error: ERROR: Column "v": compression 'fsst_plus' takes no compression_level
 
 
 statement error
-CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION dict_onpair(compression_level = 2)) WITH (storage = 'search');
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION dict_onpair(compression_level = 2));
 ----
 db error: ERROR: Column "v": compression 'dict_onpair' takes no compression_level
 
 
 statement error
-CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION onpair(compression_level = 1)) WITH (storage = 'search');
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION onpair(compression_level = 1));
 ----
 db error: ERROR: Column "v": compression 'onpair' takes no compression_level
 
 
 statement error
-CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION dict_fsst12(compression_level = 2)) WITH (storage = 'search');
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION dict_fsst12(compression_level = 2));
 ----
 db error: ERROR: Column "v": compression 'dict_fsst12' takes no compression_level
 
 
 statement error
-CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION fsst12(compression_level = 1)) WITH (storage = 'search');
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION fsst12(compression_level = 1));
 ----
 db error: ERROR: Column "v": compression 'fsst12' takes no compression_level
 
 
 statement error
-CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION zstd(compression_level = 23)) WITH (storage = 'search');
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION zstd(compression_level = 23));
 ----
 db error: ERROR: Column "v": compression_level 23 is out of range for 'zstd' (1 to 22)
 
 
 statement error
-CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION uncompressed(compression_level = 1)) WITH (storage = 'search');
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION uncompressed(compression_level = 1));
 ----
 db error: ERROR: Column "v": compression 'uncompressed' takes no compression_level
 
 
 statement error
-CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v INTEGER USING COMPRESSION rle(compression_level = 1)) WITH (storage = 'search');
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v INTEGER USING COMPRESSION rle(compression_level = 1));
 ----
 db error: ERROR: Column "v": compression 'rle' takes no compression_level
 
 
 statement error
-CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION lz4(compression_level = 13)) WITH (storage = 'search');
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION lz4(compression_level = 13));
 ----
 db error: ERROR: Column "v": compression_level 13 is out of range for 'lz4' (1 to 12)
 
 
 statement error
-CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION dict_lz4(compression_level = 13)) WITH (storage = 'search');
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION dict_lz4(compression_level = 13));
 ----
 db error: ERROR: Column "v": compression_level 13 is out of range for 'dict_lz4' (1 to 12)
 
 
 statement error
-CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION dict_zstd(compression_level = 23)) WITH (storage = 'search');
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION dict_zstd(compression_level = 23));
 ----
 db error: ERROR: Column "v": compression_level 23 is out of range for 'dict_zstd' (1 to 22)
 
 
 statement error
-CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION zxc(compression_level = 8)) WITH (storage = 'search');
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION zxc(compression_level = 8));
 ----
 db error: ERROR: Column "v": compression_level 8 is out of range for 'zxc' (1 to 7)
 
 
 statement error
-CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION dict_zxc(compression_level = 8)) WITH (storage = 'search');
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION dict_zxc(compression_level = 8));
 ----
 db error: ERROR: Column "v": compression_level 8 is out of range for 'dict_zxc' (1 to 7)
 
 
 statement error
-CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION lz4(compression_level = 0)) WITH (storage = 'search');
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION lz4(compression_level = 0));
 ----
 db error: ERROR: compression_level must be between 1 and 255, got 0
 
 
 statement error
-CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION lz4(compression_level = 300)) WITH (storage = 'search');
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION lz4(compression_level = 300));
 ----
 db error: ERROR: compression_level must be between 1 and 255, got 300
 
 
 statement error
-CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION lz4(compression_level = 'high')) WITH (storage = 'search');
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION lz4(compression_level = 'high'));
 ----
 db error: ERROR: compression_level must be an integer, got 'high'
 
 
 statement error
-CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION lz4(speed = 3)) WITH (storage = 'search');
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION lz4(speed = 3));
 ----
 db error: ERROR: Unknown compression option 'speed', expected compression_level
 
 
 statement error
-CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION lz4(compression_level)) WITH (storage = 'search');
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION lz4(compression_level));
 ----
 db error: ERROR: Compression option must be written as name = value, got 'compression_level'
 
 
 statement error
-CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION lz4(compression_level = 3, compression_level = 4)) WITH (storage = 'search');
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION lz4(compression_level = 3, compression_level = 4));
 ----
 db error: ERROR: Compression option compression_level is specified more than once
 
 
 statement ok
 CREATE TABLE lvl_incl_bad (pk INTEGER PRIMARY KEY, body TEXT, p TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement error
 CREATE INDEX lvl_incl_bad_idx ON lvl_incl_bad USING inverted(body) INCLUDE (p included (compression = 'dict_fsst', compression_level = 2));
@@ -423,25 +423,16 @@ db error: ERROR: Column 'p': included option 'compression_level' must be an inte
 statement ok
 DROP TABLE lvl_incl_bad;
 
-statement error
-CREATE TABLE lvl_plain (a INTEGER, v TEXT USING COMPRESSION dict_lz4(compression_level = 2));
-----
-db error: ERROR: Column "v": compression 'dict_lz4' is only available on search tables (WITH (storage = 'search'))
-
-
-statement error
-CREATE TABLE lvl_plain (a INTEGER, v TEXT USING COMPRESSION zstd(compression_level = 2));
-----
-db error: ERROR: Column "v": compression 'zstd' takes no compression_level
-
-
 statement ok
 CREATE TABLE lvl_plain (a INTEGER, v TEXT USING COMPRESSION zstd);
 
-statement error
+statement ok
 ALTER TABLE lvl_plain ADD COLUMN w TEXT USING COMPRESSION dict_zstd(compression_level = 4);
+
+statement error
+ALTER TABLE lvl_plain ADD COLUMN x TEXT USING COMPRESSION dict_zstd(compression_level = 23);
 ----
-db error: ERROR: Column "w": compression 'dict_zstd' is only available on search tables (WITH (storage = 'search'))
+db error: ERROR: Column "x": compression_level 23 is out of range for 'dict_zstd' (1 to 22)
 
 
 statement ok
@@ -460,37 +451,16 @@ statement ok
 DROP TABLE lvl_retype;
 
 statement error
-CREATE TABLE lvl_constant (a INTEGER PRIMARY KEY, v INTEGER USING COMPRESSION constant) WITH (storage = 'search');
+CREATE TABLE lvl_constant (a INTEGER PRIMARY KEY, v INTEGER USING COMPRESSION constant);
 ----
 db error: ERROR: Can't compress column "v" with type 'INTEGER' (physical: INT32) using compression type 'Constant'
 
 
-statement error
-CREATE TEMP TABLE lvl_temp (a INTEGER, v TEXT USING COMPRESSION dict_lz4);
-----
-db error: ERROR: Can't compress column "v" using compression type 'DICT_LZ4', that type is only available on SereneDB tables
-
-
-statement error
-CREATE TEMP TABLE lvl_temp (a INTEGER, v TEXT USING COMPRESSION zstd(compression_level = 3));
-----
-db error: ERROR: Can't set compression_level on column "v", compression options are only available on SereneDB tables
-
+statement ok
+CREATE TEMP TABLE lvl_temp (a INTEGER, v TEXT USING COMPRESSION dict_lz4, z TEXT USING COMPRESSION zstd(compression_level = 3));
 
 statement ok
-CREATE TEMP TABLE lvl_temp (a INTEGER, v TEXT USING COMPRESSION zstd);
-
-statement error
 ALTER TABLE lvl_temp ADD COLUMN w TEXT USING COMPRESSION dict_zstd;
-----
-db error: ERROR: Can't compress column "w" using compression type 'DICT_ZSTD', that type is only available on SereneDB tables
-
-
-statement error
-ALTER TABLE lvl_temp ADD COLUMN w TEXT USING COMPRESSION zstd(compression_level = 3);
-----
-db error: ERROR: Can't set compression_level on column "w", compression options are only available on SereneDB tables
-
 
 statement ok
 DROP TABLE lvl_temp;

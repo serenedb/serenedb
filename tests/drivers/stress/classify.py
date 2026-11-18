@@ -67,8 +67,8 @@ PERMANENT_REJECTION_STATES = frozenset({
 })
 
 # Codes that mean "the object I named is not there". The probe found these are not
-# interchangeable per object -- one index name yields 42P01 from DROP INDEX, 42704 from
-# REINDEX and 42704 from VACUUM (REFRESH_INDEX) -- so they are grouped by meaning, not
+# interchangeable per object -- one index name yields 42P01 from DROP INDEX and 42704
+# from REINDEX -- so they are grouped by meaning, not
 # by kind, and the verdict comes from whether the key was private or shared.
 VANISHED_STATES = frozenset({
     UNDEFINED_TABLE, UNDEFINED_OBJECT, UNDEFINED_SCHEMA, UNDEFINED_FUNCTION,

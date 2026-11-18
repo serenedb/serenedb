@@ -190,7 +190,7 @@ bool MergeSegments(Directory& dir, MergeDocMap& doc_map, SegmentMeta& segment,
   bool merged = false;
   absl::Cleanup invalidate = [&merged, &segment]() noexcept {
     if (!merged) [[unlikely]] {
-      segment.files.clear();
+      segment.kinds = 0;
       static_cast<SegmentInfo&>(segment) = SegmentInfo{};
     }
   };

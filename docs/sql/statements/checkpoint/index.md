@@ -8,32 +8,31 @@ import RailroadDiagram from '@site/src/components/RailroadDiagram';
 import RailroadSource from './diagram.js';
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
-import DocCallout from "@site/src/components/DocCallout";
 
-The `CHECKPOINT` statement synchronizes data in the write-ahead log (WAL) to the database data file.
+The `CHECKPOINT` statement writes a snapshot of the catalog and of every table, including the rows, deletes and updates tables still hold in memory, then removes the log files the snapshot covers, so that a restart replays less. It does not write rows to segments: [`VACUUM (FLUSH_*)`](../vacuum/index.md) does. In an attached DuckDB database file, it writes the file's own write-ahead log into the database file.
 
 ## Examples
 
-Synchronize data in the default database:
+Checkpoint the server's databases:
 
 <SqlLogicTest id="sql/statements/checkpoint/index/example_001" />
 
 
-Synchronize data in the specified database:
+Checkpoint an attached DuckDB database file:
 
 <SqlLogicTest id="sql/statements/checkpoint/index/example_002" />
 
 
-Synchronize data and prevent new transactions from starting:
+`FORCE CHECKPOINT` is accepted as well:
 
 <SqlLogicTest id="sql/statements/checkpoint/index/example_003" />
 
 
-## Checkpointing In-Memory Tables
+## Checkpointing In-Memory DuckDB Databases
 
-In-memory tables support checkpointing. This has two key benefits:
+An in-memory DuckDB database attached with `ATTACH ':memory:'` supports checkpointing. This has two key benefits:
 
--   In-memory tables also support compression. This is disabled by default – you can turn it on using:
+-   Its tables support compression. This is disabled by default – you can turn it on using:
 
     <SqlLogicTest id="sql/statements/checkpoint/index/example_004" />
 
@@ -44,12 +43,13 @@ In-memory tables support checkpointing. This has two key benefits:
 
 <RailroadDiagram source={RailroadSource} production="rrdiagram1" />
 
-Checkpoint operations happen automatically based on the WAL size (see [Configuration](../../../configuration/overview.md)). This
-statement is for manual checkpoint actions.
+The server writes a new snapshot on its own once the log written since the last one reaches [`max_wal_size`](../../../configuration/overview.md); see [Durability](../../indexes/inverted/maintenance.md#durability). This statement is for manual checkpoint actions.
 
 ## Behavior
 
-The default `CHECKPOINT` command fails if other write transactions are running on the database. `FORCE CHECKPOINT` stops new transactions on the database from starting, waits for the running write transactions to finish, and then checkpoints.
+The server's databases share one write-ahead log, so a checkpoint of any of them covers all of them. It runs while other transactions write, and `FORCE CHECKPOINT` behaves the same there.
+
+In an attached DuckDB database file, the default `CHECKPOINT` command fails if other write transactions are running on the file. `FORCE CHECKPOINT` stops new transactions on it from starting, waits for the running write transactions to finish, and then checkpoints.
 
 While a [backup](../../../operations/backup.md) is in progress, between `pg_backup_start` and `pg_backup_stop`, both `CHECKPOINT` and `FORCE CHECKPOINT` fail with `cannot checkpoint while a backup is in progress`. Run the checkpoint again after `pg_backup_stop`. A `pg_backup_start` issued while a checkpoint is running waits for it to finish.
 
@@ -57,10 +57,6 @@ Also see the related [`PRAGMA` option](../../../configuration/pragmas.md#force-c
 
 ### Reclaiming Space
 
-When performing a checkpoint (automatic or otherwise), the space occupied by deleted rows is partially reclaimed. Note that this does not remove all deleted rows, but rather merges row groups that have a significant amount of deletes together. In the current implementation this requires ~25% of rows to be deleted in adjacent row groups.
+In the server's databases, a checkpoint does not drop deleted rows: compaction does, in the background or with [`VACUUM (COMPACT_*)`](../vacuum/index.md).
 
-An in-memory database reclaims space the same way: checkpointing vacuums deleted rows and frees the memory they held (see [Checkpointing In-Memory Tables](#checkpointing-in-memory-tables) above).
-
-<DocCallout type="attention">
-The [`VACUUM` statement](../vacuum/index.md) does _not_ trigger vacuuming deletes and hence does not reclaim space.
-</DocCallout>
+In an attached DuckDB database file, a checkpoint (automatic or otherwise) partially reclaims the space occupied by deleted rows. It does not remove all deleted rows, but merges row groups that have a significant amount of deletes together, which requires ~25% of rows to be deleted in adjacent row groups. An in-memory DuckDB database reclaims space the same way: checkpointing vacuums deleted rows and frees the memory they held (see [Checkpointing In-Memory DuckDB Databases](#checkpointing-in-memory-duckdb-databases) above).

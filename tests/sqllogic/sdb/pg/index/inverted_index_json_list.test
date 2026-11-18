@@ -26,16 +26,13 @@ CREATE INDEX jl_idx ON jl USING inverted(pk, js jl_verbatim, ja jl_verbatim,
                                          ((doc->'t')::JSON[]) jl_verbatim);
 
 statement ok
-VACUUM (REFRESH_TABLE) jl;
+VACUUM (FLUSH_TABLE) jl;
 
 statement ok
 INSERT INTO jl VALUES
   (6, ['"gamma"', '3', NULL]::JSON[], ['"gamma"', '3']::JSON[2],
       '{"t": ["gamma", 3, null]}'),
   (7, NULL, NULL, '{}');
-
-statement ok
-VACUUM (REFRESH_TABLE) jl;
 
 query
 SELECT pk FROM jl_idx WHERE js @@ ts_like('alpha') ORDER BY pk;
@@ -57,7 +54,7 @@ EXPLAIN SELECT pk FROM jl_idx WHERE js @@ ts_like('alpha');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─╮
 │ Index: jl_idx    │
-│ Lookup: table    │
+│ Lookup: search   │
 │ Index Filter:    │
 │ ╭─ Term ───────╮ │
 │ │ Field: js    │ │
@@ -130,7 +127,7 @@ EXPLAIN SELECT pk FROM jl_idx WHERE NOT (js @@ ts_like('alpha'));
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────────────────────────╮
 │ Index: jl_idx                                                         │
-│ Lookup: table                                                         │
+│ Lookup: search                                                        │
 │ Index Filter:                                                         │
 │ ╭─ Not ───────────╮                                                   │
 │ ╰────────┬────────╯                                                   │
@@ -177,7 +174,7 @@ WHERE ((doc->'t')::JSON[])::DOUBLE[] @@ ts_between(2, 3, true, true);
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────────╮
 │ Index: jl_idx                               │
-│ Lookup: table                               │
+│ Lookup: search                              │
 │ Index Filter:                               │
 │ ╭─ Granular Range ────────────────────────╮ │
 │ │ Field:                                  │ │
@@ -204,7 +201,7 @@ WHERE NOT (((doc->'t')::JSON[])::DOUBLE[] @@ ts_between(2, 3, true, true));
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Index: jl_idx                                                                                                                                                                          │
-│ Lookup: table                                                                                                                                                                          │
+│ Lookup: search                                                                                                                                                                         │
 │ Index Filter:                                                                                                                                                                          │
 │ ╭─ Not ────────────────────────────────╮                                                                                                                                               │
 │ ╰───────────────────┬──────────────────╯                                                                                                                                               │
@@ -312,9 +309,6 @@ CREATE INDEX jn_idx ON jn USING inverted(pk,
   (json_extract(doc::VARCHAR, '$.items[*].tags[*]')) jl_verbatim,
   (flatten((doc->'matrix')::JSON[][])) jl_verbatim);
 
-statement ok
-VACUUM (REFRESH_TABLE) jn;
-
 query
 SELECT pk FROM jn_idx
 WHERE list_transform((doc->'items')::JSON[], lambda x: x->'name')
@@ -341,7 +335,7 @@ WHERE list_transform((doc->'items')::JSON[], lambda x: x->'name')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────────────────────────────────────╮
 │ Index: jn_idx                                                                     │
-│ Lookup: table                                                                     │
+│ Lookup: search                                                                    │
 │ Index Filter:                                                                     │
 │ ╭─ Term ────────────────────────────────────────────────────────────────────────╮ │
 │ │ Field:                                                                        │ │
@@ -552,9 +546,6 @@ INSERT INTO jn VALUES
   (8, '{"items": [{"name": "pear", "price": 7, "gift": true,
                    "tags": ["green", "ripe"]}],
         "matrix": [["b"]]}');
-
-statement ok
-VACUUM (REFRESH_TABLE) jn;
 
 statement ok
 VACUUM (COMPACT_TABLE) jn;

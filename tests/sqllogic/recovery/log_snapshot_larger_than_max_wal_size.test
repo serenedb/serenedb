@@ -1,0 +1,129 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE lsb (id BIGINT PRIMARY KEY, v INT) WITH (compaction_interval = 0);
+
+
+statement ok
+CREATE TABLE lsb_small (id INT);
+
+
+statement ok
+INSERT INTO lsb SELECT i, i FROM range(400000) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) lsb;
+
+
+statement ok
+UPDATE lsb SET v = v + 1;
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+SET GLOBAL max_wal_size = '1MB';
+
+
+query
+SELECT size > 1000000 AS larger FROM read_blob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/wal/snapshot');
+----
+larger
+t
+
+
+statement ok
+CREATE TEMP TABLE lsb_files AS SELECT file FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/wal/*.log');
+
+
+statement ok
+CREATE TEMP TABLE lsb_snapshot AS SELECT size, last_modified FROM read_blob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/wal/snapshot');
+
+
+statement ok
+INSERT INTO lsb_small VALUES (1);
+
+
+statement ok
+INSERT INTO lsb_small VALUES (2);
+
+
+statement ok
+INSERT INTO lsb_small VALUES (3);
+
+
+statement ok
+INSERT INTO lsb_small VALUES (4);
+
+
+statement ok
+INSERT INTO lsb_small VALUES (5);
+
+
+statement ok
+INSERT INTO lsb_small VALUES (6);
+
+
+statement ok
+INSERT INTO lsb_small VALUES (7);
+
+
+statement ok
+INSERT INTO lsb_small VALUES (8);
+
+
+statement ok
+INSERT INTO lsb_small VALUES (9);
+
+
+statement ok
+INSERT INTO lsb_small VALUES (10);
+
+
+query
+SELECT count(*) AS changed FROM (SELECT file FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/wal/*.log') EXCEPT SELECT file FROM lsb_files);
+----
+changed
+0
+
+
+query
+SELECT s.size = l.size AND s.last_modified = l.last_modified AS kept FROM read_blob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/wal/snapshot') s, lsb_snapshot l;
+----
+kept
+t
+
+
+statement ok
+RESET GLOBAL max_wal_size;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, sum(v) AS v FROM lsb;
+----
+n	v
+400000	80000200000
+
+
+connection after_crash
+query
+SELECT count(*) AS n, sum(id) AS ids FROM lsb_small;
+----
+n	ids
+10	55

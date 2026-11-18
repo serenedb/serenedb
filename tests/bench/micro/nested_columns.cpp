@@ -25,6 +25,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <duckdb.hpp>
+#include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
@@ -47,9 +48,13 @@ enum class Shape : uint8_t {
   StructRepeated,
   MapWide,
   VariantShredded,
+  ListLongRepeated,
+  ListLongUnique,
+  ListIntRepeated,
+  ListIntUnique,
 };
 
-constexpr size_t kShapes = 7;
+constexpr size_t kShapes = 11;
 constexpr irs::field_id kField = 0;
 constexpr std::string_view kSeg = "bench_seg";
 
@@ -92,6 +97,14 @@ std::string ValueSql(Shape shape) {
     case Shape::VariantShredded:
       return "{'service': 'service.' || (i % 50), 'latency': i % 1000, "
              "'trace': 'trace.' || i}::VARIANT";
+    case Shape::ListLongRepeated:
+      return "list_transform(range(64), lambda k: ((i // 37) % 300) * 64 + k)";
+    case Shape::ListLongUnique:
+      return "list_transform(range(64), lambda k: i * 64 + k)";
+    case Shape::ListIntRepeated:
+      return "[i % 50, i % 7, (i // 11) % 3]";
+    case Shape::ListIntUnique:
+      return "[i, i % 7, (i * 7919) % 1000003]";
   }
   return {};
 }
@@ -107,6 +120,10 @@ std::string EmptySql(Shape shape) {
   }
   if (shape == Shape::VariantShredded) {
     return "('leftover.' || i)::VARIANT";
+  }
+  if (shape == Shape::ListLongRepeated || shape == Shape::ListLongUnique ||
+      shape == Shape::ListIntRepeated || shape == Shape::ListIntUnique) {
+    return "[]::BIGINT[]";
   }
   return "[]::VARCHAR[]";
 }
@@ -170,6 +187,36 @@ struct Seg {
   const irs::ColumnReader* col = nullptr;
 };
 
+void HashBlocks(const irs::ColumnReader& col, const std::vector<uint8_t>& file,
+                uint64_t& hash) {
+  const auto mix = [&](uint64_t byte) {
+    hash = (hash ^ byte) * 0x100000001b3ULL;
+  };
+  for (const auto& block : col.DataBlocks()) {
+    mix(static_cast<uint64_t>(block.codec->type));
+    mix(block.tuple_count);
+    for (uint64_t i = 0; i < block.byte_size; ++i) {
+      mix(file[block.file_offset + i]);
+    }
+  }
+  col.VisitSubColumns([&](const irs::ColumnReader::SubColumn& sub) {
+    HashBlocks(sub.column, file, hash);
+  });
+}
+
+void PrintHash(Shape shape, const Seg& seg) {
+  if (!std::getenv("SDB_BENCH_HASH")) {
+    return;
+  }
+  auto in = seg.dir.open(irs::FileName(kSeg), irs::IOAdvice::SEQUENTIAL);
+  std::vector<uint8_t> file(in->Length());
+  in->ReadData(file.data(), file.size());
+  uint64_t hash = 0xcbf29ce484222325ULL;
+  HashBlocks(*seg.col, file, hash);
+  std::fprintf(stderr, "hash shape%d %016llx\n", static_cast<int>(shape),
+               static_cast<unsigned long long>(hash));
+}
+
 const Seg& GetSeg(Shape shape) {
   static std::array<std::unique_ptr<Seg>, kShapes> cache;
   auto& slot = cache[static_cast<size_t>(shape)];
@@ -185,6 +232,7 @@ const Seg& GetSeg(Shape shape) {
     std::fprintf(stderr, "column missing\n");
     std::abort();
   }
+  PrintHash(shape, *slot);
   return *slot;
 }
 
@@ -334,29 +382,63 @@ void DenseGather(benchmark::State& state, Shape shape) {
                           static_cast<int64_t>(rows.size()));
 }
 
+void PointGather(benchmark::State& state, Shape shape) {
+  constexpr size_t kPointRows = 8;
+  const auto& seg = GetSeg(shape);
+  const auto& rows = ScatteredRows();
+  irs::ReadContext ctx{*seg.reader};
+  duckdb::VectorCache cache{duckdb::Allocator::DefaultAllocator(),
+                            seg.col->Type(), STANDARD_VECTOR_SIZE};
+  duckdb::Vector batch{cache};
+  for (auto _ : state) {
+    auto st = seg.col->InitScan(ctx);
+    for (size_t i = 0; i < rows.size(); i += kPointRows) {
+      batch.ResetFromCache(cache);
+      irs::column_internal::GatherRows(
+        *seg.col, st, RowSpan{&rows[i], std::min(rows.size() - i, kPointRows)},
+        batch, 0);
+      benchmark::DoNotOptimize(batch);
+    }
+  }
+  state.SetItemsProcessed(static_cast<int64_t>(state.iterations()) *
+                          static_cast<int64_t>(rows.size()));
+}
+
 }  // namespace
 
-#define NESTED_CASES(fn)                                          \
-  BENCHMARK_CAPTURE(fn, list_repeated, Shape::ListRepeated)       \
-    ->Unit(benchmark::kMillisecond)                               \
-    ->UseRealTime();                                              \
-  BENCHMARK_CAPTURE(fn, list_unique, Shape::ListUnique)           \
-    ->Unit(benchmark::kMillisecond)                               \
-    ->UseRealTime();                                              \
-  BENCHMARK_CAPTURE(fn, map_repeated, Shape::MapRepeated)         \
-    ->Unit(benchmark::kMillisecond)                               \
-    ->UseRealTime();                                              \
-  BENCHMARK_CAPTURE(fn, map_unique, Shape::MapUnique)             \
-    ->Unit(benchmark::kMillisecond)                               \
-    ->UseRealTime();                                              \
-  BENCHMARK_CAPTURE(fn, struct_repeated, Shape::StructRepeated)   \
-    ->Unit(benchmark::kMillisecond)                               \
-    ->UseRealTime();                                              \
-  BENCHMARK_CAPTURE(fn, map_wide, Shape::MapWide)                 \
-    ->Unit(benchmark::kMillisecond)                               \
-    ->UseRealTime();                                              \
-  BENCHMARK_CAPTURE(fn, variant_shredded, Shape::VariantShredded) \
-    ->Unit(benchmark::kMillisecond)                               \
+#define NESTED_CASES(fn)                                             \
+  BENCHMARK_CAPTURE(fn, list_repeated, Shape::ListRepeated)          \
+    ->Unit(benchmark::kMillisecond)                                  \
+    ->UseRealTime();                                                 \
+  BENCHMARK_CAPTURE(fn, list_unique, Shape::ListUnique)              \
+    ->Unit(benchmark::kMillisecond)                                  \
+    ->UseRealTime();                                                 \
+  BENCHMARK_CAPTURE(fn, map_repeated, Shape::MapRepeated)            \
+    ->Unit(benchmark::kMillisecond)                                  \
+    ->UseRealTime();                                                 \
+  BENCHMARK_CAPTURE(fn, map_unique, Shape::MapUnique)                \
+    ->Unit(benchmark::kMillisecond)                                  \
+    ->UseRealTime();                                                 \
+  BENCHMARK_CAPTURE(fn, struct_repeated, Shape::StructRepeated)      \
+    ->Unit(benchmark::kMillisecond)                                  \
+    ->UseRealTime();                                                 \
+  BENCHMARK_CAPTURE(fn, map_wide, Shape::MapWide)                    \
+    ->Unit(benchmark::kMillisecond)                                  \
+    ->UseRealTime();                                                 \
+  BENCHMARK_CAPTURE(fn, variant_shredded, Shape::VariantShredded)    \
+    ->Unit(benchmark::kMillisecond)                                  \
+    ->UseRealTime();                                                 \
+  BENCHMARK_CAPTURE(fn, list_long_repeated, Shape::ListLongRepeated) \
+    ->Unit(benchmark::kMillisecond)                                  \
+    ->UseRealTime();                                                 \
+  BENCHMARK_CAPTURE(fn, list_long_unique, Shape::ListLongUnique)     \
+    ->Unit(benchmark::kMillisecond)                                  \
+    ->UseRealTime();                                                 \
+  BENCHMARK_CAPTURE(fn, list_int_repeated, Shape::ListIntRepeated)   \
+    ->Unit(benchmark::kMillisecond)                                  \
+    ->UseRealTime();                                                 \
+  BENCHMARK_CAPTURE(fn, list_int_unique, Shape::ListIntUnique)       \
+    ->Unit(benchmark::kMillisecond)                                  \
     ->UseRealTime()
 
 NESTED_CASES(WriteSeal);
@@ -365,6 +447,7 @@ NESTED_CASES(Rewrite);
 NESTED_CASES(FullScan);
 NESTED_CASES(SparseGather);
 NESTED_CASES(DenseGather);
+NESTED_CASES(PointGather);
 
 static int Main(int argc, char** argv) {
   irs::DuckDBEngine::Instance().Initialize();

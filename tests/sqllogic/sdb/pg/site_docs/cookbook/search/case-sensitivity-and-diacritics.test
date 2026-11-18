@@ -41,9 +41,6 @@ statement ok
 CREATE INDEX movies_exact_idx ON movies
     USING inverted (id, title exact_dict, description exact_dict);
 
-statement ok
-VACUUM (REFRESH_TABLE) movies;
-
 # DOCS_TEST_BODY
 
 query

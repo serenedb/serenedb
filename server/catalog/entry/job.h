@@ -28,11 +28,8 @@
 #include <memory>
 #include <string>
 
-namespace duckdb {
+#include "catalog/base_catalog.h"
 
-class DuckCatalog;
-
-}  // namespace duckdb
 namespace sdb {
 
 struct JobState;
@@ -73,7 +70,7 @@ class JobCatalogEntry final : public duckdb::StandardEntry {
   std::shared_ptr<JobState> _state;
 };
 
-void ForEachJob(duckdb::DuckCatalog& catalog,
+void ForEachJob(BaseCatalog& catalog,
                 const std::function<void(JobCatalogEntry&)>& callback);
 
 }  // namespace sdb::catalog

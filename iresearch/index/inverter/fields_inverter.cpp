@@ -47,7 +47,7 @@ std::span<const doc_id_t> SlotDocs(const ManagedVector<doc_id_t>& docs,
 
 }  // namespace
 
-void FieldsInverter::Flush(term_dict::FieldWriter& fw, FlushState& state,
+void FieldsInverter::Flush(FieldSink& fw, FlushState& state,
                            std::span<const BasicTermReader* const> extra,
                            const DocOrder& order) {
   IndexFeatures index_features{IndexFeatures::None};

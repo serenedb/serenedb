@@ -73,11 +73,13 @@ add_executable(
     analysis/wordnet_synonyms_tokenizer_tests.cpp
     duckdb/immutable_strings_tests.cpp
     duckdb/validity_mask_tests.cpp
-    formats/column/col_file_writer_test.cpp
+    formats/column/col_codec_corruption_test.cpp
+    formats/column/col_codec_paths_test.cpp
     formats/column/col_codecs_test.cpp
     formats/column/col_copy_check_test.cpp
     formats/column/col_numeric_codec_test.cpp
     formats/column/column_reader_test.cpp
+    formats/column/write_context_test.cpp
     formats/columnstore2_test.cpp
     formats/docs_slack_test.cpp
     formats/formats_10_tests.cpp
@@ -95,7 +97,6 @@ add_executable(
     formats/sparse_bitmap_test.cpp
     formats/term_dict_test.cpp
     index/assert_format.cpp
-    index/compaction/merge_ticket_tests.cpp
     index/compaction_policy_tests.cpp
     index/doc_generator.cpp
     index/doc_removal_tests.cpp
@@ -104,7 +105,6 @@ add_executable(
     index/index_adopt_tests.cpp
     index/index_column_tests.cpp
     index/index_death_tests.cpp
-    index/index_meta_tests.cpp
     index/index_profile_tests.cpp
     index/index_tests.cpp
     index/inverter_oracle_test.cpp
@@ -123,6 +123,7 @@ add_executable(
     index/merge_writer_tests.cpp
     index/norm_column_test.cpp
     index/norm_test.cpp
+    index/piece_tests.cpp
     index/segment_writer_tests.cpp
     index/sorted_index_tests.cpp
     parser/lucene_parser_test.cpp
@@ -184,6 +185,7 @@ add_executable(
     store/directory_test_case.cpp
     store/memory_directory_tests.cpp
     store/memory_index_output_tests.cpp
+    store/overlay_directory_tests.cpp
     store/store_utils_tests.cpp
     utils/bit_packing_tests.cpp
     utils/bit_utils_tests.cpp
@@ -224,7 +226,8 @@ target_link_libraries(
     iresearch-tests
     PRIVATE
         iresearch-test-support
-        iresearch-policy-compaction
+        iresearch-merge-support
+        iresearch-test-writer
         search-benchmark-common
 )
 target_include_directories(

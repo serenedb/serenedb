@@ -20,25 +20,32 @@
 
 #pragma once
 
-#include <duckdb/catalog/catalog_entry/subscription_catalog_entry.hpp>
 #include <duckdb/parser/parsed_data/create_subscription_info.hpp>
+#include <memory>
 #include <span>
 #include <vector>
 
+#include "catalog/entry/replication_lsn.h"
+
 namespace sdb::catalog {
 
-class SubscriptionCatalogEntry final : public duckdb::SubscriptionCatalogEntry {
+class SubscriptionCatalogEntry final : public ReplicationLsnEntry {
  public:
+  static constexpr duckdb::CatalogType Type =
+    duckdb::CatalogType::SUBSCRIPTION_ENTRY;
+  static constexpr const char* Name = "subscription";
+
   SubscriptionCatalogEntry(duckdb::Catalog& catalog,
                            duckdb::CreateSubscriptionInfo& info);
-  SubscriptionCatalogEntry(
-    duckdb::Catalog& catalog, duckdb::CreateSubscriptionInfo& info,
-    duckdb::shared_ptr<duckdb::ReplicationLsnState> lsn_state);
+  SubscriptionCatalogEntry(duckdb::Catalog& catalog,
+                           duckdb::CreateSubscriptionInfo& info,
+                           std::shared_ptr<ReplicationLsnState> lsn_state);
 
   const duckdb::CreateSubscriptionInfo& Config() const noexcept {
     return *_info;
   }
-  std::vector<duckdb::SubscriptionRelation> Relations() const;
+  std::vector<duckdb::SubscriptionRelation> Relations(
+    duckdb::transaction_t snapshot) const;
 
   duckdb::unique_ptr<duckdb::CatalogEntry> AlterEntry(
     duckdb::ClientContext& context, duckdb::AlterInfo& info) final;
@@ -48,7 +55,8 @@ class SubscriptionCatalogEntry final : public duckdb::SubscriptionCatalogEntry {
   std::string ToSQL() const final { return GetInfo()->ToString(); }
 
  private:
-  void FoldSynced(std::span<duckdb::SubscriptionRelation> relations) const;
+  void FoldSynced(std::span<duckdb::SubscriptionRelation> relations,
+                  duckdb::transaction_t snapshot) const;
 
   duckdb::unique_ptr<duckdb::CreateSubscriptionInfo> _info;
 };

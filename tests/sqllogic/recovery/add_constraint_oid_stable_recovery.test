@@ -68,11 +68,13 @@ connection after_crash
 statement error
 INSERT INTO acos_t VALUES (1, 2, 2);
 ----
-db error: ERROR: Duplicate key "id: 1" violates primary key constraint.
+db error: ERROR: duplicate key value violates unique constraint "acos_t_pkey"
+DETAIL: Key (id)=(1) already exists.
 
 
 connection after_crash
 statement error
 INSERT INTO acos_t VALUES (2, 2, 1);
 ----
-db error: ERROR: Duplicate key "w: 1" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "acos_t_w_key"
+DETAIL: Key (w)=(1) already exists.

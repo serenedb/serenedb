@@ -73,9 +73,7 @@
 #include "catalog/entry/search_table.h"
 #include "connector/column_id.h"
 #include "connector/common.h"
-#include "connector/duckdb_client_state.h"
 #include "connector/inverted_index_bind.h"
-#include "connector/inverted_store_index.h"
 #include "pg/connection_context.h"
 #include "search/store.h"
 #include "server/utils/simdjson_sink.h"
@@ -113,15 +111,14 @@ duckdb::optional_ptr<duckdb::TableCatalogEntry> FindEsTable(
 // already names: the index set is the table's own sibling.
 void VisitInvertedIndexes(
   duckdb::ClientContext& context, duckdb::TableCatalogEntry& table,
-  absl::FunctionRef<void(duckdb::DuckIndexEntry&)> visitor) {
-  std::vector<duckdb::reference<duckdb::DuckIndexEntry>> indexes;
+  absl::FunctionRef<void(catalog::InvertedIndexEntry&)> visitor) {
+  std::vector<duckdb::reference<catalog::InvertedIndexEntry>> indexes;
   table.ParentSchema(context).Scan(
     context, duckdb::CatalogType::INDEX_ENTRY,
     [&](duckdb::CatalogEntry& entry) {
-      auto& index = entry.Cast<duckdb::DuckIndexEntry>();
-      if (index.table_oid == table.oid &&
-          index.index_type == InvertedStoreIndex::kTypeName) {
-        indexes.emplace_back(index);
+      auto& index = entry.Cast<duckdb::IndexCatalogEntry>();
+      if (index.table_oid == table.oid && catalog::IsInvertedIndex(index)) {
+        indexes.emplace_back(entry.Cast<catalog::InvertedIndexEntry>());
       }
     });
   for (auto& index : indexes) {
@@ -320,7 +317,7 @@ void CreateTextIndex(duckdb::ClientContext& context,
     tokenizer.options["frequency"] = duckdb::Value::BOOLEAN(true);
     tokenizer.options["position"] = duckdb::Value::BOOLEAN(true);
     tokenizer.options["norm"] = duckdb::Value::BOOLEAN(true);
-    tokenizer.permissions.owner = GetSereneDBContext(context).GetRoleId();
+    tokenizer.permissions.owner = ConnectionContext::Get(context).GetRoleId();
     duckdb::Catalog::GetCatalog(
       context, duckdb::DatabaseManager::GetDefaultDatabase(context))
       .CreateTokenizer(context, tokenizer);
@@ -332,7 +329,7 @@ void CreateTextIndex(duckdb::ClientContext& context,
   info.SetSchema(duckdb::Identifier{kEsSchema});
   info.SetIndexName(duckdb::Identifier{index_name});
   info.table = table.name;
-  info.index_type = InvertedStoreIndex::kTypeName;
+  info.index_type = catalog::kInvertedIndexTypeName;
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> bound_expressions;
   for (const auto name : text_columns) {
     const duckdb::Identifier column{name};
@@ -354,20 +351,17 @@ void CreateTextIndex(duckdb::ClientContext& context,
   auto dict = ResolveOpclassTokenizer(context, schema, kTextTokenizer);
   SDB_ASSERT(dict);
   info.dependencies.AddDependency(*dict);
+  const auto& storage = table.Cast<catalog::SearchTableEntry>().Storage();
+  storage->ClaimLayout(context, table.name.GetIdentifierName(),
+                       search::TableChange::Layout);
   auto entry = schema.CreateIndex(
     schema.ParentCatalog().GetCatalogTransaction(context), info, table);
   SDB_ASSERT(entry);
   auto& index_entry = entry->Cast<catalog::InvertedIndexEntry>();
-  index_entry.SetConfig(
-    BindInvertedIndexConfig(context, index_entry, table, bound_expressions,
-                            duckdb::LogicalType::INVALID, {}));
-  PublishInvertedIndex(context, index_entry, table, bound_expressions);
-  const auto& storage = index_entry.Storage();
-  SDB_ASSERT(storage);
-  storage->StartTasks();
-  storage->TakeDeleteLog();
-  search::ThrowIfRefreshFailed(storage->Refresh(),
-                               index_entry.name.GetIdentifierName());
+  index_entry.SetConfig(BindInvertedIndexConfig(context, index_entry, table,
+                                                bound_expressions,
+                                                duckdb::LogicalType::INVALID));
+  storage->BeginIndexBuild(index_entry.oid, index_entry.Config()).Finish();
 }
 
 void EsCreateIndexExecute(duckdb::ClientContext& context,
@@ -498,11 +492,13 @@ void EsMappingExecute(duckdb::ClientContext& context,
   }
 
   irs::containers::FlatHashSet<ColumnId> inverted_columns;
-  VisitInvertedIndexes(context, *table, [&](duckdb::DuckIndexEntry& index) {
-    for (const auto id : index.column_ids) {
-      inverted_columns.insert(ColumnId{id});
-    }
-  });
+  VisitInvertedIndexes(
+    context, *table, [&](catalog::InvertedIndexEntry& index) {
+      for (const auto id : index.column_ids) {
+        inverted_columns.insert(
+          TableColumnId(table->GetColumn(duckdb::LogicalIndex{id})));
+      }
+    });
 
   simdjson::builder::string_builder sb;
   sb.append_raw(R"({"properties":{)");
@@ -512,8 +508,8 @@ void EsMappingExecute(duckdb::ClientContext& context,
     if (name == kIdColumn || name == kSourceColumn) {
       continue;
     }
-    const auto es_type =
-      LogicalToEsType(column.Type(), inverted_columns.contains(column.Oid()));
+    const auto es_type = LogicalToEsType(
+      column.Type(), inverted_columns.contains(TableColumnId(column)));
     if (es_type.empty()) {
       continue;
     }
@@ -575,18 +571,17 @@ void EsCatIndicesExecute(duckdb::ClientContext& context,
     for (auto table : tables) {
       uint64_t docs_count = 0;
       bool first = true;
-      VisitInvertedIndexes(
-        context, table.get(), [&](duckdb::DuckIndexEntry& index) {
-          if (!first) {
-            return;
-          }
-          first = false;
-          const auto& storage =
-            index.Cast<catalog::InvertedIndexEntry>().Storage();
-          if (auto snapshot = storage ? storage->Snapshot() : nullptr) {
-            docs_count = snapshot->reader.live_docs_count();
-          }
-        });
+      VisitInvertedIndexes(context, table.get(),
+                           [&](catalog::InvertedIndexEntry& index) {
+                             if (!first) {
+                               return;
+                             }
+                             first = false;
+                             if (const auto& storage = index.SearchStore();
+                                 storage && storage->HasTable()) {
+                               docs_count = storage->GetTable().LiveDocs();
+                             }
+                           });
       state.rows.emplace_back(table.get().name.GetIdentifierName(), docs_count);
     }
     absl::c_sort(state.rows);
@@ -634,8 +629,8 @@ struct EsWriteBindData final : duckdb::TableFunctionData {
 // The function's output schema IS the target table's schema, so the handler's
 // `INSERT INTO "es"."<index>" SELECT * FROM es_*(...)` lines up by position.
 duckdb::unique_ptr<EsWriteBindData> BindWriteTarget(
-  duckdb::ClientContext& context, std::string index,
-  duckdb::vector<duckdb::LogicalType>& return_types,
+  duckdb::ClientContext& context, duckdb::optional_ptr<duckdb::Binder> binder,
+  std::string index, duckdb::vector<duckdb::LogicalType>& return_types,
   duckdb::vector<duckdb::Identifier>& names) {
   auto data = duckdb::make_uniq<EsWriteBindData>();
   data->index = std::move(index);
@@ -645,6 +640,7 @@ duckdb::unique_ptr<EsWriteBindData> BindWriteTarget(
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                     ERR_MSG("no such index [", data->index, "]"));
   }
+  duckdb::Binder::RegisterEntryRead(binder, context, *table);
   size_t i = 0;
   for (const auto& column : table->GetColumns().Logical()) {
     const auto name = column.Name().GetIdentifierName();
@@ -663,15 +659,17 @@ duckdb::unique_ptr<EsWriteBindData> BindWriteTarget(
 }
 
 duckdb::unique_ptr<EsWriteBindData> BindWriteTarget(
-  duckdb::ClientContext& context, const duckdb::Value& index_arg,
+  duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
   duckdb::vector<duckdb::LogicalType>& return_types,
   duckdb::vector<duckdb::Identifier>& names) {
+  const auto& index_arg = input.inputs[0];
   if (index_arg.IsNull()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("index name cannot be NULL"));
   }
-  return BindWriteTarget(context, index_arg.GetValue<std::string>(),
-                         return_types, names);
+  return BindWriteTarget(context, input.binder,
+                         index_arg.GetValue<std::string>(), return_types,
+                         names);
 }
 
 [[noreturn]] void ThrowFieldParseError(std::string_view index,
@@ -912,7 +910,7 @@ duckdb::unique_ptr<duckdb::FunctionData> EsDocBind(
   duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
   duckdb::vector<duckdb::LogicalType>& return_types,
   duckdb::vector<duckdb::Identifier>& names) {
-  auto data = BindWriteTarget(context, input.inputs[0], return_types, names);
+  auto data = BindWriteTarget(context, input, return_types, names);
   if (input.inputs[1].IsNull() || input.inputs[2].IsNull()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("es_doc id and body cannot be NULL"));
@@ -1099,7 +1097,7 @@ struct EsBulkState final : duckdb::GlobalTableFunctionState {
     state->limit = data.body.data() + data.body.size();
     if (data.from_side_channel) {
       const auto* request =
-        GetSereneDBContext(context).GetSideChannel<const EsBulkInput>();
+        ConnectionContext::Get(context).GetSideChannel<const EsBulkInput>();
       if (!request) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                         ERR_MSG("es_bulk_source can only be called by the "
@@ -1187,7 +1185,7 @@ duckdb::unique_ptr<duckdb::FunctionData> EsBulkBind(
   duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
   duckdb::vector<duckdb::LogicalType>& return_types,
   duckdb::vector<duckdb::Identifier>& names) {
-  auto data = BindWriteTarget(context, input.inputs[0], return_types, names);
+  auto data = BindWriteTarget(context, input, return_types, names);
   if (input.inputs[1].IsNull()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("es_bulk body cannot be NULL"));
@@ -1209,7 +1207,7 @@ duckdb::unique_ptr<duckdb::FunctionData> EsBulkSourceBind(
   duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
   duckdb::vector<duckdb::LogicalType>& return_types,
   duckdb::vector<duckdb::Identifier>& names) {
-  auto data = BindWriteTarget(context, input.inputs[0], return_types, names);
+  auto data = BindWriteTarget(context, input, return_types, names);
   data->from_side_channel = true;
   if (input.inputs.size() > 1 && input.inputs[1].GetValue<bool>()) {
     input.table_function.get_partition_data = EsBulkPartitionData;
@@ -1397,8 +1395,6 @@ void EsBulkExecute(duckdb::ClientContext&, duckdb::TableFunctionInput& input,
   output.SetChildCardinality(row);
 }
 
-// --- es_refresh(index): commit inverted shards so writes become searchable -
-
 void EsRefreshExecute(duckdb::ClientContext& context,
                       duckdb::TableFunctionInput& input,
                       duckdb::DataChunk& output) {
@@ -1409,43 +1405,10 @@ void EsRefreshExecute(duckdb::ClientContext& context,
   }
   state.done = true;
   auto& data = input.bind_data->Cast<EsIndexBindData>();
-
-  auto refresh_table = [&](duckdb::TableCatalogEntry& table) {
-    VisitInvertedIndexes(context, table, [&](duckdb::DuckIndexEntry& index) {
-      if (const auto& storage =
-            irs::utils::downCast<catalog::InvertedIndexEntry>(index)
-              .Storage()) {
-        search::ThrowIfRefreshFailed(storage->Refresh(),
-                                     index.name.GetIdentifierName());
-      }
-    });
-  };
-
-  if (data.index.empty()) {
-    // Collect-then-resolve: reading a table's indexes opens the schema's
-    // index set from inside the relation set's own walk.
-    std::vector<duckdb::reference<duckdb::TableCatalogEntry>> tables;
-    if (auto schema = EsSchema(context)) {
-      schema->Scan(
-        context, duckdb::CatalogType::TABLE_ENTRY,
-        [&](duckdb::CatalogEntry& entry) {
-          if (entry.type == duckdb::CatalogType::TABLE_ENTRY) {
-            tables.emplace_back(entry.Cast<duckdb::TableCatalogEntry>());
-          }
-        });
-    }
-    for (auto table : tables) {
-      refresh_table(table.get());
-    }
-  } else {
-    auto table = FindEsTable(context, data.index);
-    if (!table) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                      ERR_MSG("no such index [", data.index, "]"));
-    }
-    refresh_table(*table);
+  if (!data.index.empty() && !FindEsTable(context, data.index)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                    ERR_MSG("no such index [", data.index, "]"));
   }
-
   output.SetChildCardinality(1);
   output.SetValue(0, 0, duckdb::Value::BOOLEAN(true));
 }

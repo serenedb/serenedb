@@ -15,8 +15,6 @@ target_sources(
         math.cpp
         metrics.cpp
         otel.cpp
-        sdb_maintenance.cpp
-        sdb_segments.cpp
         string.cpp
         minhash.cpp
         search.cpp

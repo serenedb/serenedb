@@ -25,10 +25,10 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | Not-Null Constraints    | Yes           |   |
 | Unique Constraints      | Yes           |   |
 | Primary Keys            | Yes           |   |
-| Foreign Keys            | Yes           | Enforced; over-eager on some `UPDATE`s |
+| Foreign Keys            | Yes           | Enforced; referential actions such as `ON DELETE CASCADE` are not supported |
 | Named Constraints       | Yes           |  |
 | Exclusion Constraints   | No            | See [issue](https://github.com/serenedb/serenedb/issues/205) |
-| System Columns          | Partial       | Every table has `tableoid`, `ctid`, `xmin`, `xmax`, `cmin` and `cmax`. `ctid` identifies a row and orders rows by their position, but its block and offset don't name storage pages, and the row a `ctid` names can move after `VACUUM` or a checkpoint. `xmin`, `xmax`, `cmin` and `cmax` are always `0`. |
+| System Columns          | Partial       | Every table has `tableoid`, `ctid`, `xmin`, `xmax`, `cmin` and `cmax`. `ctid` identifies a row and orders rows by their position, but its block and offset don't name storage pages, and the row a `ctid` names can move after an `UPDATE`, a commit, a compaction or an index build (see [Row IDs](../sql/statements/select/index.md#row-ids)). `xmin`, `xmax`, `cmin` and `cmax` are always `0`. |
 
 ### Table Modification (ALTER TABLE)
 | Feature            | Support State | Details                                                      |
@@ -36,8 +36,8 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | ADD COLUMN         | Yes           | A serial column can't declare `PRIMARY KEY` or `UNIQUE` on a table that already has rows |
 | DROP COLUMN        | Yes           |  |
 | ADD CHECK          | Yes           |                                                              |
-| ADD CONSTRAINT     | Yes           | `CHECK`, `UNIQUE` and `PRIMARY KEY` constraints; not `FOREIGN KEY` |
-| ADD FOREIGN KEY    | No            | Fails with `No support for adding FOREIGN_KEY constraints with ALTER TABLE` |
+| ADD CONSTRAINT     | Yes           | `CHECK`, `UNIQUE`, `PRIMARY KEY` and `FOREIGN KEY` constraints |
+| ADD FOREIGN KEY    | Yes           |  |
 | DROP CONSTRAINT    | Yes           |                                                              |
 | ALTER COLUMN       | Yes           | `TYPE`, `SET`/`DROP DEFAULT` and `SET NOT NULL` |
 | SET DEFAULT        | Yes           |                                                              |
@@ -45,7 +45,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | COLUMN TYPE        | Yes           | Not on a column that has a `CHECK` constraint |
 | RENAME COLUMN      | Yes           |  |
 | RENAME TO          | Yes           |  |
-| SET SCHEMA         | Partial       | Moves a table, a search table included, with its indexes and owned sequences, and with `ALTER VIEW`, `ALTER SEQUENCE`, `ALTER TYPE`, `ALTER FUNCTION` and `ALTER TEXT SEARCH DICTIONARY` a view, sequence, type, function or dictionary; not an entry that another object depends on |
+| SET SCHEMA         | Partial       | Moves a table with its indexes and owned sequences, and with `ALTER VIEW`, `ALTER SEQUENCE`, `ALTER TYPE`, `ALTER FUNCTION` and `ALTER TEXT SEARCH DICTIONARY` a view, sequence, type, function or dictionary; not an entry that another object depends on |
 
 ### Privileges
 | Feature               | Support State | Details                                                      |
@@ -70,8 +70,8 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | Ordered Indexes         | Yes           |  |
 | Unique Indexes          | Yes           |                                                    |
 | Indexes on Expressions  | Yes           |                                                    |
-| Partial Indexes         | Partial       | [Inverted indexes](../sql/statements/create_index/inverted.md#partial-indexes) honor `WHERE`. A plain index accepts it but filters only the rows present when it is built: rows written later are indexed whether or not they match, keyed on the value and on whether the predicate holds, so a partial `UNIQUE` index also rejects duplicates outside its predicate |
-| INCLUDE                 | Partial       | [Inverted indexes](../sql/statements/create_index/inverted.md) store `INCLUDE` columns. A plain index accepts `INCLUDE` but keeps only its key columns, so a `UNIQUE` index is unique on the keys alone, as in PostgreSQL |
+| Partial Indexes         | Partial       | [Indexes](../sql/statements/create_index/inverted.md#partial-indexes) honor `WHERE`; a partial `UNIQUE` index is not supported |
+| INCLUDE                 | Yes           | [Indexes](../sql/statements/create_index/inverted.md#include-columns) store `INCLUDE` columns, with or without `USING inverted`; a `UNIQUE` index is unique on its key columns alone, as in PostgreSQL |
 
 ### Misc
 | Feature                    | Support State | Details                                         |
@@ -791,7 +791,7 @@ The `jsonb` type is a `json` value that keeps its text as written (see [`jsonb`]
 |------------------------------------|---------------|---------|
 | pg_get_constraintdef               | Yes           | `CHECK` expressions are printed in SereneDB's form (for example `!=` and no casts) |
 | pg_get_serial_sequence             | Yes           |  |
-| pg_get_indexdef                    | Yes           | The access method is `secondary` or `inverted`. An inverted index shows its column dictionaries and options, `INCLUDE` columns and settings; ordering (`DESC`, `NULLS FIRST`) is not stored, so it is not shown |
+| pg_get_indexdef                    | Yes           | The access method is `inverted`. An inverted index shows its column dictionaries and options, `INCLUDE` columns and settings; ordering (`DESC`, `NULLS FIRST`) is not stored, so it is not shown |
 | pg_get_viewdef                     | Yes           | The view's query in SereneDB's one-line form |
 | pg_get_ruledef                     | Yes           | The `_RETURN` rule of a view, around the same query text |
 | pg_get_triggerdef                  | Yes           | A trigger runs a statement, which takes the place of `EXECUTE FUNCTION` |
@@ -933,9 +933,7 @@ Note that the use of `==` is not encouraged due to its limited portability.
 
 ### Vacuuming Tables
 
-In PostgreSQL, the `VACUUM` statement garbage collects tables and analyzes tables.
-In SereneDB, the [`VACUUM` statement](../sql/statements/vacuum/index.md) is only used to rebuild statistics.
-To reclaim space, use the `CHECKPOINT` statement or compact the database by creating a fresh copy with the [`COPY FROM DATABASE` statement](../sql/statements/copy/index.md#copy-from-database--to).
+In PostgreSQL, the `VACUUM` statement garbage collects tables and analyzes tables. In SereneDB, `VACUUM` and `ANALYZE` without options do no work on SereneDB tables: their statistics follow their rows, and background compaction drops deleted rows as it merges segments. To reclaim space at once, use [`VACUUM (COMPACT_TABLE)`](../sql/statements/vacuum/index.md), which rewrites a table's segments without its deleted rows.
 
 ### Strings
 

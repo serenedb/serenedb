@@ -23,8 +23,10 @@
 #include <duckdb.hpp>
 #include <duckdb/common/enums/row_id_handling.hpp>
 #include <duckdb/execution/physical_operator.hpp>
+#include <duckdb/planner/bound_constraint.hpp>
 #include <duckdb/planner/column_binding.hpp>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "catalog/entry/search_table.h"
@@ -39,14 +41,17 @@ class SereneDBSearchUpdate final : public duckdb::PhysicalOperator {
     duckdb::PhysicalPlan& plan, const catalog::SearchTableEntry& table,
     duckdb::vector<duckdb::PhysicalIndex> columns,
     duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> expressions,
+    duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>> constraints,
     duckdb::vector<duckdb::LogicalType> types,
     duckdb::idx_t estimated_cardinality, bool return_chunk,
-    duckdb::RowIdHandling row_id_handling);
+    duckdb::RowIdHandling row_id_handling, bool patch,
+    duckdb::idx_t update_column_count);
+
+  std::string GetName() const final;
+  duckdb::InsertionOrderPreservingMap<std::string> ParamsToString() const final;
 
   bool IsSink() const final { return true; }
-  bool ParallelSink() const final {
-    return _row_id_handling == duckdb::RowIdHandling::ASSUME_UNIQUE;
-  }
+  bool ParallelSink() const final { return true; }
   duckdb::unique_ptr<duckdb::GlobalSinkState> GetGlobalSinkState(
     duckdb::ClientContext& context) const final;
   duckdb::unique_ptr<duckdb::LocalSinkState> GetLocalSinkState(
@@ -72,7 +77,10 @@ class SereneDBSearchUpdate final : public duckdb::PhysicalOperator {
   const catalog::SearchTableEntry& _table;
   duckdb::vector<duckdb::PhysicalIndex> _columns;
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> _expressions;
+  duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>> _constraints;
   bool _return_chunk = false;
+  bool _patch = false;
+  duckdb::idx_t _update_column_count = 0;
   duckdb::RowIdHandling _row_id_handling;
 };
 

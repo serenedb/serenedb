@@ -20,7 +20,10 @@
 
 #pragma once
 
+#include <absl/functional/function_ref.h>
+
 #include <cstdint>
+#include <duckdb/main/database.hpp>
 #include <memory>
 #include <span>
 #include <vector>
@@ -109,6 +112,10 @@ class ColumnMerger {
   ColumnWriter& OpenPart(field_id column, uint32_t part,
                          ColWriter& output) const;
 
+  bool FillPart(ColumnWriter& cw, field_id column, uint32_t part,
+                uint64_t begin, uint64_t end, ColWriter& output,
+                const MergeProgress& progress);
+
   template<typename Visit>
   bool VisitRows(field_id column, uint64_t begin, uint64_t end,
                  std::span<const std::shared_ptr<ReadContext>> ctxs,
@@ -132,5 +139,9 @@ class ColumnMerger {
   containers::FlatHashMap<field_id, ColumnSlot> _slots;
   std::unique_ptr<KeptRows[]> _kept_rows;
 };
+
+std::vector<std::unique_ptr<ColumnReader>> ConcatInMemory(
+  duckdb::DatabaseInstance& db, std::span<const MergeSource> sources,
+  const IndexFieldOptions* field_options);
 
 }  // namespace irs

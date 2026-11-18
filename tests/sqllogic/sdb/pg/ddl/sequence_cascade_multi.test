@@ -75,9 +75,8 @@ id	v
 statement error
 DROP SEQUENCE clickclack_query_id_seq;
 ----
-db error: ERROR: Cannot drop entry "clickclack_query_id_seq" because there are entries that depend on it.
+db error: ERROR: cannot drop sequence clickclack_query_id_seq because other objects depend on it
 <slt:ignore>
-Use DROP...CASCADE to drop all dependents.
 
 
 

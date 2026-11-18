@@ -1,0 +1,258 @@
+statement ok
+CREATE TABLE pk_dup(i INTEGER PRIMARY KEY, t TEXT);
+
+
+statement ok
+INSERT INTO pk_dup VALUES (1, 'a'), (2, 'b');
+
+
+statement ok
+VACUUM (FLUSH_TABLE) pk_dup;
+
+
+# A key the index already holds.
+statement error
+INSERT INTO pk_dup VALUES (1, 'again');
+----
+db error: ERROR: duplicate key value violates unique constraint "pk_dup_pkey"
+DETAIL: Key (i)=(1) already exists.
+
+
+# Two rows of one statement carrying the same key.
+statement error
+INSERT INTO pk_dup VALUES (3, 'x'), (3, 'y');
+----
+db error: ERROR: duplicate key value violates unique constraint "pk_dup_pkey"
+DETAIL: Key (i)=(3) already exists.
+
+
+# A key a just-committed statement wrote.
+statement ok
+INSERT INTO pk_dup VALUES (4, 'fresh');
+
+
+query
+SELECT count(*) AS published FROM pk_dup WHERE i = 4;
+----
+published
+1
+
+
+statement error
+INSERT INTO pk_dup VALUES (4, 'again');
+----
+db error: ERROR: duplicate key value violates unique constraint "pk_dup_pkey"
+DETAIL: Key (i)=(4) already exists.
+
+
+query
+SELECT i, t FROM pk_dup ORDER BY i;
+----
+i	t
+1	a
+2	b
+4	fresh
+
+
+# An UPDATE writes the row back under the key it just deleted, which is its own
+# to take.
+statement ok
+UPDATE pk_dup SET t = 'updated' WHERE i = 1;
+
+
+statement ok
+VACUUM (FLUSH_TABLE) pk_dup;
+
+
+# The same within one transaction, spelled out.
+statement ok
+BEGIN;
+
+
+statement ok
+DELETE FROM pk_dup WHERE i = 2;
+
+
+statement ok
+INSERT INTO pk_dup VALUES (2, 'reinserted');
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT i, t FROM pk_dup ORDER BY i;
+----
+i	t
+1	updated
+2	reinserted
+4	fresh
+
+
+# Removing a row releases its key for a later statement to take again.
+statement ok
+DELETE FROM pk_dup WHERE i = 4;
+
+
+statement ok
+VACUUM (FLUSH_TABLE) pk_dup;
+
+
+statement ok
+INSERT INTO pk_dup VALUES (4, 'taken again');
+
+
+query
+SELECT i, t FROM pk_dup ORDER BY i;
+----
+i	t
+1	updated
+2	reinserted
+4	taken again
+
+
+# A composite key, with a boolean column: the member tells the two rows apart,
+# as it does in PostgreSQL, where (tenant_id, is_active) is a key like any
+# other.
+statement ok
+CREATE TABLE pk_bool(tenant_id INTEGER, is_active BOOLEAN, note TEXT,
+                     PRIMARY KEY (tenant_id, is_active));
+
+
+statement ok
+INSERT INTO pk_bool VALUES (1, true, 'on'), (1, false, 'off'), (2, true, 'two');
+
+
+statement ok
+VACUUM (FLUSH_TABLE) pk_bool;
+
+
+statement error
+INSERT INTO pk_bool VALUES (1, true, 'again');
+----
+db error: ERROR: duplicate key value violates unique constraint "pk_bool_pkey"
+DETAIL: Key (tenant_id, is_active)=(1, true) already exists.
+
+
+statement ok
+INSERT INTO pk_bool VALUES (2, false, 'fits');
+
+
+query
+SELECT tenant_id, is_active, note FROM pk_bool ORDER BY tenant_id, is_active;
+----
+tenant_id	is_active	note
+1	f	off
+1	t	on
+2	f	fits
+2	t	two
+
+
+# A TRUNCATE kills every row that exists before it, so the keys written after
+# it answer to each other and to nothing else -- including in the transaction
+# that truncates.
+statement ok
+BEGIN;
+
+
+statement ok
+TRUNCATE pk_dup;
+
+
+statement ok
+INSERT INTO pk_dup VALUES (1, 'after truncate');
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT i, t FROM pk_dup ORDER BY i;
+----
+i	t
+1	after truncate
+
+
+# A key repeated after the truncate fails its statement.
+statement ok
+BEGIN;
+
+
+statement ok
+TRUNCATE pk_dup;
+
+
+statement error
+INSERT INTO pk_dup VALUES (5, 'x'), (5, 'y');
+----
+db error: ERROR: duplicate key value violates unique constraint "pk_dup_pkey"
+DETAIL: Key (i)=(5) already exists.
+
+
+statement ok
+COMMIT;
+
+
+# The rolled-back truncate left the table as it was.
+query
+SELECT i, t FROM pk_dup ORDER BY i;
+----
+i	t
+1	after truncate
+
+
+# A truncate of its own, with the keys taken again afterwards.
+statement ok
+TRUNCATE pk_dup;
+
+
+statement ok
+INSERT INTO pk_dup VALUES (1, 'taken once more');
+
+
+# A key the truncate removed can be taken again.
+statement ok
+INSERT INTO pk_dup VALUES (8, 'unpublished');
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+TRUNCATE pk_dup;
+
+
+statement ok
+INSERT INTO pk_dup VALUES (8, 'after the barrier');
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT i, t FROM pk_dup ORDER BY i;
+----
+i	t
+8	after the barrier
+
+
+# Without a declared key nothing is certified, and repeated values are rows
+# like any other.
+statement ok
+CREATE TABLE pk_none(i INTEGER, t TEXT);
+
+
+statement ok
+INSERT INTO pk_none VALUES (1, 'a'), (1, 'b');
+
+
+query
+SELECT i, t FROM pk_none ORDER BY t;
+----
+i	t
+1	a
+1	b

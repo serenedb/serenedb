@@ -15,11 +15,6 @@ BEGIN;
 
 connection t1
 statement ok
-UPDATE cru_t SET v = v + 1 WHERE id = 2;
-
-
-connection t1
-statement ok
 CREATE TABLE cru_ddl (a INTEGER);
 
 
@@ -29,7 +24,15 @@ ALTER TABLE cru_t ADD COLUMN c INTEGER;
 
 
 connection t1
-statement error another transaction has altered this table
+statement error
+UPDATE cru_t SET v = v + 1 WHERE id = 2;
+----
+db error: ERROR: table "cru_t" was altered by a concurrent transaction
+HINT: Retry the transaction.
+
+
+connection t1
+statement ok
 COMMIT;
 
 

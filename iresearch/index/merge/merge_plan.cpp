@@ -22,8 +22,6 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/container/flat_hash_map.h>
-#include <absl/time/clock.h>
-#include <absl/time/time.h>
 
 #include <algorithm>
 #include <atomic>
@@ -45,6 +43,7 @@
 #include "iresearch/formats/flush_state.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
 #include "iresearch/index/docs_mask/docs_mask.hpp"
+#include "iresearch/index/file_names.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/merge/input_norms.hpp"
 #include "iresearch/index/merge/key_merge.hpp"
@@ -508,17 +507,17 @@ bool MergePlan::WriteIndex(MergeStepClock& clock) {
     return false;
   }
   uint64_t col_bytes = 0;
-  _segment.files = _col_dir.FlushTracked(col_bytes);
+  auto files = _col_dir.FlushTracked(col_bytes);
   auto idx_files = _idx_dir.FlushTracked(_segment.byte_size);
-  _segment.files.insert(_segment.files.end(),
-                        std::make_move_iterator(idx_files.begin()),
-                        std::make_move_iterator(idx_files.end()));
+  files.insert(files.end(), std::make_move_iterator(idx_files.begin()),
+               std::make_move_iterator(idx_files.end()));
+  _segment.kinds = SegmentFileKinds(files);
   _segment.byte_size += col_bytes;
   clock.Lap(MergeStep::Commit);
   if (_segment.live_docs_count == 0) {
     return false;
   }
-  SDB_ASSERT(!_segment.files.empty());
+  SDB_ASSERT(_segment.kinds != 0);
   return true;
 }
 
@@ -630,8 +629,7 @@ bool MergePlan::Prepare(duckdb::shared_ptr<duckdb::DedicatedPool> pool) {
 
 bool MergePlan::RunUnit(size_t unit) {
   SDB_ASSERT(unit < _units.size());
-  SDB_WAIT_ON_FAILURE("pause_merge_unit");
-  SDB_IF_FAILURE("slow_merge_unit") { absl::SleepFor(absl::Seconds(5)); }
+  SDB_PARK_ONCE_ON_FAILURE("pause_merge_unit");
   SDB_IF_FAILURE("irs::MergeUnit") {
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }

@@ -38,9 +38,9 @@
 #include <iresearch/search/detail/doc_collector.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
+#include <iresearch/utils/index_utils.hpp>
 
 #include "formats/column/test_cs_helpers.hpp"
-#include "index/compaction/policy_compaction.hpp"
 #include "index/doc_generator.hpp"
 #include "index/index_tests.hpp"
 #include "token_sink_utils.hpp"
@@ -172,7 +172,7 @@ class ScorePruneNormMergeCase : public tests::IndexTestBase {
 
   // doc with one NormField "body" of `count` tokens + a unique id.
   // tf("x") == dl == count.
-  bool InsertNormDoc(irs::IndexWriter& writer, std::string_view id_value,
+  bool InsertNormDoc(tests::IndexWriter& writer, std::string_view id_value,
                      size_t count) {
     tests::Particle p;
     p.push_back(std::make_shared<IdField>(std::string{id_value}));
@@ -183,7 +183,7 @@ class ScorePruneNormMergeCase : public tests::IndexTestBase {
   // Realistic: tf("x") = `target` but dl = `target + filler`. BM25 length
   // normalisation now varies independently of tf, which is the shape real
   // corpora hit.
-  bool InsertMixedDoc(irs::IndexWriter& writer, std::string_view id_value,
+  bool InsertMixedDoc(tests::IndexWriter& writer, std::string_view id_value,
                       size_t target, size_t filler) {
     tests::Particle p;
     p.push_back(std::make_shared<IdField>(std::string{id_value}));
@@ -192,7 +192,7 @@ class ScorePruneNormMergeCase : public tests::IndexTestBase {
   }
 
   // doc with TWO NormFields ("body" count1, "body2" count2) + id.
-  bool InsertDualNormDoc(irs::IndexWriter& writer, std::string_view id_value,
+  bool InsertDualNormDoc(tests::IndexWriter& writer, std::string_view id_value,
                          size_t count1, size_t count2) {
     tests::Particle p;
     p.push_back(std::make_shared<IdField>(std::string{id_value}));
@@ -289,7 +289,7 @@ TEST_P(ScorePruneNormMergeCase, BasicBM25PruneRoundTripAcrossCompact) {
   auto bm25 = std::make_unique<irs::BM25>();
   auto opts = MakeOpts(bm25.get());
 
-  auto writer = open_writer(irs::kOmCreate, std::move(opts));
+  auto writer = open_writer(tests::kOmCreate, std::move(opts));
   ASSERT_NE(nullptr, writer);
   for (auto c : kCountsA) {
     ASSERT_TRUE(InsertNormDoc(*writer, "a", c));
@@ -313,8 +313,8 @@ TEST_P(ScorePruneNormMergeCase, BasicBM25PruneRoundTripAcrossCompact) {
     pre_scores = Scores(RunBM25(reader, *bm25, kBody, 8));
   }
 
-  const tests::CompactionCount all;
-  ASSERT_TRUE(tests::Compact(*writer, tests::MakePolicy(all)));
+  const irs::index_utils::CompactionCount all;
+  ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(all)));
   ASSERT_TRUE(writer->RefreshCommit());
 
   {
@@ -347,7 +347,7 @@ TEST_P(ScorePruneNormMergeCase, NormMultiRgInOneSegment) {
   auto bm25 = std::make_unique<irs::BM25>();
   auto opts = MakeOpts(bm25.get(), kRgSize);
 
-  auto writer = open_writer(irs::kOmCreate, std::move(opts));
+  auto writer = open_writer(tests::kOmCreate, std::move(opts));
   ASSERT_NE(nullptr, writer);
   for (size_t i = 0; i < std::size(kCounts); ++i) {
     ASSERT_TRUE(InsertNormDoc(*writer, absl::StrCat("doc_", i), kCounts[i]));
@@ -396,7 +396,7 @@ TEST_P(ScorePruneNormMergeCase, NormMultiRgAcrossMerge) {
   auto bm25 = std::make_unique<irs::BM25>();
   auto opts = MakeOpts(bm25.get(), kRgSize);
 
-  auto writer = open_writer(irs::kOmCreate, std::move(opts));
+  auto writer = open_writer(tests::kOmCreate, std::move(opts));
   for (size_t i = 0; i < std::size(kA); ++i) {
     ASSERT_TRUE(InsertNormDoc(*writer, absl::StrCat("a_", i), kA[i]));
   }
@@ -413,8 +413,8 @@ TEST_P(ScorePruneNormMergeCase, NormMultiRgAcrossMerge) {
     pre_scores = Scores(RunBM25(reader, *bm25, kBody, 16));
   }
 
-  const tests::CompactionCount all;
-  ASSERT_TRUE(tests::Compact(*writer, tests::MakePolicy(all)));
+  const irs::index_utils::CompactionCount all;
+  ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(all)));
   ASSERT_TRUE(writer->RefreshCommit());
 
   auto reader = open_reader(MakeReaderOpts(bm25.get()));
@@ -444,7 +444,7 @@ TEST_P(ScorePruneNormMergeCase, NormMixedWidthsMerge) {
   auto bm25 = std::make_unique<irs::BM25>();
   auto opts = MakeOpts(bm25.get());  // default large RG
 
-  auto writer = open_writer(irs::kOmCreate, std::move(opts));
+  auto writer = open_writer(tests::kOmCreate, std::move(opts));
   for (size_t i = 0; i < std::size(kA); ++i) {
     ASSERT_TRUE(InsertNormDoc(*writer, absl::StrCat("a_", i), kA[i]));
   }
@@ -463,8 +463,8 @@ TEST_P(ScorePruneNormMergeCase, NormMixedWidthsMerge) {
     AssertNorms(reader[1], kBody, {{1, kB[0]}, {2, kB[1]}, {3, kB[2]}});
   }
 
-  const tests::CompactionCount all;
-  ASSERT_TRUE(tests::Compact(*writer, tests::MakePolicy(all)));
+  const irs::index_utils::CompactionCount all;
+  ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(all)));
   ASSERT_TRUE(writer->RefreshCommit());
 
   auto reader = open_reader(MakeReaderOpts(bm25.get()));
@@ -482,7 +482,7 @@ TEST_P(ScorePruneNormMergeCase, NormMixedWidthsMerge) {
 }
 
 // -------------------------------------------------------------------------
-// Deletes before compaction: the mask filter
+// Deletes before compaction: MergeNormColumnFromSources's mask filter
 // must skip the per-row bytes of removed docs and produce a compacted
 // merged column. If the mask path mis-counts bytes, post-merge norms
 // shift by the wrong offset.
@@ -494,7 +494,7 @@ TEST_P(ScorePruneNormMergeCase, NormMergeWithMask) {
   auto bm25 = std::make_unique<irs::BM25>();
   auto opts = MakeOpts(bm25.get());
 
-  auto writer = open_writer(irs::kOmCreate, std::move(opts));
+  auto writer = open_writer(tests::kOmCreate, std::move(opts));
   for (size_t i = 0; i < std::size(kA); ++i) {
     ASSERT_TRUE(InsertNormDoc(*writer, absl::StrCat("a_", i), kA[i]));
   }
@@ -519,8 +519,8 @@ TEST_P(ScorePruneNormMergeCase, NormMergeWithMask) {
     ASSERT_EQ(3, reader[1].docs_count());
   }
 
-  const tests::CompactionCount all;
-  ASSERT_TRUE(tests::Compact(*writer, tests::MakePolicy(all)));
+  const irs::index_utils::CompactionCount all;
+  ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(all)));
   ASSERT_TRUE(writer->RefreshCommit());
 
   auto reader = open_reader(MakeReaderOpts(bm25.get()));
@@ -550,7 +550,7 @@ TEST_P(ScorePruneNormMergeCase, NormTwoFieldsAcrossMerge) {
   auto bm25 = std::make_unique<irs::BM25>();
   auto opts = MakeOpts(bm25.get());
 
-  auto writer = open_writer(irs::kOmCreate, std::move(opts));
+  auto writer = open_writer(tests::kOmCreate, std::move(opts));
   for (size_t i = 0; i < std::size(kBodyA); ++i) {
     ASSERT_TRUE(
       InsertDualNormDoc(*writer, absl::StrCat("a_", i), kBodyA[i], kBody2A[i]));
@@ -574,8 +574,8 @@ TEST_P(ScorePruneNormMergeCase, NormTwoFieldsAcrossMerge) {
     AssertNorms(reader[1], kBody2, {{1, kBody2B[0]}, {2, kBody2B[1]}});
   }
 
-  const tests::CompactionCount all;
-  ASSERT_TRUE(tests::Compact(*writer, tests::MakePolicy(all)));
+  const irs::index_utils::CompactionCount all;
+  ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(all)));
   ASSERT_TRUE(writer->RefreshCommit());
 
   auto reader = open_reader(MakeReaderOpts(bm25.get()));
@@ -611,7 +611,7 @@ TEST_P(ScorePruneNormMergeCase, NormMultiSegmentCompact) {
   auto bm25 = std::make_unique<irs::BM25>();
   auto opts = MakeOpts(bm25.get());
 
-  auto writer = open_writer(irs::kOmCreate, std::move(opts));
+  auto writer = open_writer(tests::kOmCreate, std::move(opts));
   ASSERT_NE(nullptr, writer);
 
   // Build N segments. Per-doc tf grows monotonically across the whole
@@ -647,8 +647,8 @@ TEST_P(ScorePruneNormMergeCase, NormMultiSegmentCompact) {
   }
 
   // Single-shot CompactionCount with default max merges everything.
-  const tests::CompactionCount all;
-  ASSERT_TRUE(tests::Compact(*writer, tests::MakePolicy(all)));
+  const irs::index_utils::CompactionCount all;
+  ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(all)));
   ASSERT_TRUE(writer->RefreshCommit());
 
   // Post-merge: ONE segment, per-doc norms equal to expected_counts in
@@ -684,7 +684,7 @@ TEST_P(ScorePruneNormMergeCase, NormMultiSegmentMultiRgMixedWidthsCompact) {
   auto bm25 = std::make_unique<irs::BM25>();
   auto opts = MakeOpts(bm25.get(), kRgSize);
 
-  auto writer = open_writer(irs::kOmCreate, std::move(opts));
+  auto writer = open_writer(tests::kOmCreate, std::move(opts));
   ASSERT_NE(nullptr, writer);
 
   std::vector<uint32_t> expected_counts;
@@ -714,8 +714,8 @@ TEST_P(ScorePruneNormMergeCase, NormMultiSegmentMultiRgMixedWidthsCompact) {
     pre_scores = Scores(RunBM25(reader, *bm25, kBody, kSegments * kDocsPerSeg));
   }
 
-  const tests::CompactionCount all;
-  ASSERT_TRUE(tests::Compact(*writer, tests::MakePolicy(all)));
+  const irs::index_utils::CompactionCount all;
+  ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(all)));
   ASSERT_TRUE(writer->RefreshCommit());
 
   auto reader = open_reader(MakeReaderOpts(bm25.get()));
@@ -751,7 +751,7 @@ TEST_P(ScorePruneNormMergeCase, BenchShape16SegmentsRealisticTfDl) {
   auto bm25 = std::make_unique<irs::BM25>();
   auto opts = MakeOpts(bm25.get());
 
-  auto writer = open_writer(irs::kOmCreate, std::move(opts));
+  auto writer = open_writer(tests::kOmCreate, std::move(opts));
   ASSERT_NE(nullptr, writer);
 
   // Record per-doc expected norm value (dl = tf + filler). Per-segment
@@ -793,8 +793,8 @@ TEST_P(ScorePruneNormMergeCase, BenchShape16SegmentsRealisticTfDl) {
     pre_scores = Scores(RunBM25(reader, *bm25, kBody, 50));
   }
 
-  const tests::CompactionCount all;
-  ASSERT_TRUE(tests::Compact(*writer, tests::MakePolicy(all)));
+  const irs::index_utils::CompactionCount all;
+  ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(all)));
   ASSERT_TRUE(writer->RefreshCommit());
 
   auto reader = open_reader(MakeReaderOpts(bm25.get()));

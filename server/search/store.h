@@ -20,25 +20,30 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
 #include <absl/base/thread_annotations.h>
+#include <absl/container/btree_map.h>
+#include <absl/functional/function_ref.h>
 #include <absl/status/status.h>
 #include <absl/synchronization/mutex.h>
 
 #include <atomic>
 #include <cstdint>
 #include <duckdb/common/constants.hpp>
+#include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/parallel/task_executor.hpp>
 #include <duckdb/parser/column_list.hpp>
 #include <filesystem>
 #include <iresearch/formats/ann_build_env.hpp>
+#include <iresearch/formats/hnsw/hnsw_bases.hpp>
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/index/merge/merge_order.hpp>
-#include <iresearch/index/merge/sort_spec.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/search/scorers/scorer_options.hpp>
 #include <iresearch/store/directory.hpp>
+#include <iresearch/utils/async.hpp>
 #include <iresearch/utils/resource_manager.hpp>
 #include <limits>
 #include <memory>
@@ -48,7 +53,6 @@
 #include <string_view>
 #include <utility>
 #include <vector>
-#include <yaclib/async/future.hpp>
 
 #include "catalog/database_directory.h"
 #include "catalog/entry/inverted_index.h"
@@ -56,10 +60,10 @@
 #include "catalog/persistence/inverted_index.h"
 #include "connector/column_id.h"
 #include "connector/file_manifest.h"
-#include "search/compaction/merge_runner.h"
-#include "search/index_durability.h"
 #include "search/maintenance.h"
 #include "search/store_stats.h"
+#include "search/table.h"
+#include "search/table_replay.h"
 #include "search/writer_generations.h"
 #include "utils/drain_gate.h"
 
@@ -77,15 +81,24 @@ using persistence::InvertedIndexSettings;
 }  // namespace sdb::catalog
 namespace sdb::search {
 
-struct StoreSnapshot {
-  StoreSnapshot(irs::DirectoryReader&& index,
-                std::shared_ptr<const FileManifest> manifest)
-    : reader{std::move(index)}, file_manifest{std::move(manifest)} {}
-
-  irs::DirectoryReader reader;
-  const std::shared_ptr<const FileManifest> file_manifest;
+struct ReadView {
+  const irs::DirectoryReader* reader = nullptr;
+  const TableState* state = nullptr;
+  const FileManifest* manifest = nullptr;
 };
-using StoreSnapshotPtr = std::shared_ptr<StoreSnapshot>;
+
+struct StoreSnapshots {
+  duckdb::idx_t store = 0;
+  std::vector<Tick> running;
+  Tick oldest = 0;
+};
+
+inline const StoreSnapshots* FindSnapshots(
+  std::span<const StoreSnapshots> stores, duckdb::idx_t store) noexcept {
+  const auto it = absl::c_find_if(
+    stores, [&](const StoreSnapshots& own) { return own.store == store; });
+  return it == stores.end() ? nullptr : &*it;
+}
 
 struct StorageDirectory {
   std::unique_ptr<irs::Directory> directory;
@@ -97,25 +110,28 @@ StorageDirectory OpenStorageDirectory(
   const catalog::DatabaseDirectory& database, duckdb::idx_t oid, bool is_new,
   bool in_memory, const irs::ResourceManagementOptions& resources);
 
+enum class TableChange : uint8_t {
+  Layout,
+  Schema,
+};
+
 // The iresearch index the server owns for a search table, for an inverted
 // index of a DuckDB table and for an inverted index of a view. Lives in the
 // SearchEngine registry keyed by its oid, not in the catalog snapshot.
-class Store final : public std::enable_shared_from_this<Store> {
+class Store final : public std::enable_shared_from_this<Store>,
+                    public MaintainedStore {
  public:
   static constexpr duckdb::transaction_t kNoLayoutOwner =
     std::numeric_limits<duckdb::transaction_t>::max();
 
-  Store(std::shared_ptr<catalog::DatabaseDirectory> directory,
-        uint64_t attachment, bool in_memory, bool read_only,
-        duckdb::idx_t db_id, duckdb::idx_t id,
+  Store(std::shared_ptr<catalog::DatabaseDirectory> directory, bool in_memory,
+        bool read_only, duckdb::idx_t db_id, duckdb::idx_t id,
         const catalog::InvertedIndexSettings& options,
-        const std::optional<irs::ScorerOptions>& top_k_scorer,
-        std::vector<irs::SortKey> sort, bool is_new);
-  Store(std::shared_ptr<catalog::DatabaseDirectory> directory,
-        uint64_t attachment, bool in_memory, bool read_only,
-        duckdb::idx_t db_id, duckdb::idx_t id, bool is_new,
+        const std::optional<irs::ScorerOptions>& top_k_scorer, bool is_new);
+  Store(std::shared_ptr<catalog::DatabaseDirectory> directory, bool in_memory,
+        bool read_only, duckdb::idx_t db_id, duckdb::idx_t id, bool is_new,
         const catalog::SearchTableOptions& options,
-        const duckdb::ColumnList& columns, std::vector<irs::SortKey> sort);
+        const duckdb::ColumnList& columns);
   ~Store();
 
   Store(const Store&) = delete;
@@ -126,140 +142,91 @@ class Store final : public std::enable_shared_from_this<Store> {
   duckdb::idx_t GetDatabaseId() const noexcept { return _db_id; }
   std::filesystem::path Path() const { return _directory->StoragePath(_id); }
   bool Absent() const noexcept { return _absent; }
+  bool Opened() const noexcept { return _dir != nullptr; }
   bool ReadOnly() const noexcept { return !_writer; }
-  bool IsSearchTable() const noexcept {
-    return static_cast<bool>(_table_columns);
-  }
 
   void Open();
-  void OpenReader();
 
-  StoreSnapshotPtr Snapshot() const { return std::atomic_load(&_snapshot); }
-  irs::DirectoryReader GetDirectoryReader() const { return Snapshot()->reader; }
-  std::pair<irs::DirectoryReader, irs::SourcePosition> SnapshotWithPosition() {
-    return _durability.Snapshot(*_writer);
+  // A drop commits while readers may still hold this store; the destructor
+  // removes the directory once the last of them lets go. Never set on
+  // shutdown or detach, where the directory must survive.
+  void MarkDropped() noexcept {
+    if (_writer && !_read_only) {
+      _dropped.store(true, std::memory_order_release);
+    }
+  }
+  bool Dropped() const noexcept {
+    return _dropped.load(std::memory_order_acquire);
   }
 
-  std::shared_ptr<const FileManifest> GetFileManifest() const {
-    return std::atomic_load(&_file_manifest);
-  }
-  void SetFileManifest(std::shared_ptr<const FileManifest> manifest) {
-    std::atomic_store(&_file_manifest, std::move(manifest));
-  }
+  irs::DirectoryReader BuildSnapshot();
+  void PruneVersions(std::span<const Tick> running, Tick published);
+  bool FreeVersions();
 
-  // `exclusive_segment` is required of a writer that will record its flushed
-  // segments in the WAL -- see irs::IndexWriter::GetBatch.
-  irs::IndexWriter::Transaction GetTransaction(bool exclusive_segment = false) {
+  TableRead Read(const OwnWrites& own) const { return _table->Read(own); }
+  uint32_t RowGroupSize() const noexcept { return _row_group_size; }
+  bool HasTable() const noexcept { return static_cast<bool>(_table); }
+  Table& GetTable() noexcept { return *_table; }
+  const Table& GetTable() const noexcept { return *_table; }
+  Tick LastWrite() const noexcept { return _table ? _table->LastWrite() : 0; }
+  bool Unsettled() const { return _table && _table->Unsettled(); }
+  irs::IndexWriter& Writer() noexcept { return *_writer; }
+  std::vector<OwnSegment> OpenFlushed(
+    std::span<const irs::IndexWriter::FlushedSegment> flushed) const;
+  OwnSegment OpenOwn(irs::SegmentMeta meta) const;
+
+  struct Piece {
+    irs::IndexWriter::Transaction trx;
+    uint64_t id = 0;
+  };
+  Piece StartPiece();
+  void WriteOut();
+  void PiecesAdded() noexcept;
+  uint64_t PieceBytes() const noexcept {
+    return _table ? _table->PieceBytes() : 0;
+  }
+  uint64_t DirtyBytes() const noexcept {
+    return _table ? _table->DirtyBytes() : 0;
+  }
+  bool OverBudget() const noexcept {
+    return PieceBytes() + DirtyBytes() >= _segment_memory_max;
+  }
+  uint64_t InlineRowsMax() noexcept {
+    return GetTasksSettings().compaction_floor_segment_bytes.load(
+      std::memory_order_relaxed);
+  }
+  bool RewriteDirtiest();
+
+  irs::IndexWriter::Transaction GetTransaction() {
     SDB_ASSERT(_writer);
-    return _writer->GetBatch(exclusive_segment);
+    return _writer->GetBatch();
   }
 
-  void Clear(const irs::SourcePosition& position);
-  void CommitRemoval(std::shared_ptr<const irs::DocRemoval> removal);
-  void CommitRemoval(std::vector<irs::KeyRemoval> removals);
-  void CommitRemoveAll();
-
-  template<typename Visit>
-  void VisitDocMaps(std::span<const irs::DocRemoval* const> removals,
-                    const Visit& visit) const {
-    _writer->VisitDocMaps(removals, visit);
-  }
-
-  void MarkStaged(const irs::SourcePosition& position) {
-    _durability.MarkStaged(position);
-  }
-  std::optional<uint64_t> NeededWAL() const { return _durability.NeededWAL(); }
-  const irs::SourcePosition& PersistedPosition() const noexcept {
-    return _durability.Position();
-  }
-  void MarkOutOfSync() noexcept { _durability.MarkOutOfSync(); }
-  bool IsOutOfSync() const noexcept { return _durability.IsOutOfSync(); }
-
-  void PrepareCheckpoint(uint64_t iteration);
-  void FinishCheckpoint();
-  void FinishCheckpointIfIdle();
-  bool HasPendingCheckpoint() { return _durability.HasPendingCheckpoint(); }
-
-  // Launch this store's refresh + compaction loops (via SearchEngine). Call
-  // once, after the store is open and recovery (if any) finalized.
   void StartTasks();
   void ApplyOptions(const catalog::InvertedIndexSettings& options);
-  void ApplyOptions(const catalog::SearchTableOptions& options);
-  void SetDeclaredCompression(const duckdb::ColumnList& columns);
+  void ApplyOptions(const catalog::SearchTableOptions& options) {
+    SetTasksSettings(options);
+  }
 
-  // The maintenance ops the loops invoke: RefreshUnsafe publishes pending
-  // inserts, CleanupUnsafe reclaims unreferenced files.
-  ResultWithTime RefreshUnsafe(bool wait,
-                               const irs::ProgressReportCallback& progress,
-                               RefreshResult& code);
-  ResultWithTime CleanupUnsafe();
+  // `field_options` (nullable) is the per-merge per-column encoding config,
+  // pinned by the caller for the whole merge.
+  auto CompactUnsafeAsync(utils::DrainGate::Pass maintenance,
+                          const irs::CompactionPolicy& policy,
+                          const irs::MergeWriter::FlushProgress& progress,
+                          bool& empty_compaction,
+                          const irs::IndexFieldOptions* field_options,
+                          const irs::AnnBuildEnv* env)
+    -> yaclib::Future<ResultWithTime>;
+  ResultWithTime CleanupUnsafe(bool orphans);
+  void RequestCleanup() noexcept;
 
   // The field options a background merge encodes against, pinned for it; null
   // once the store's definition is gone.
   std::shared_ptr<const irs::IndexFieldOptions> CompactionOptions();
-  bool IsCurrentConfig(const irs::IndexFieldOptions* options) const;
 
-  [[nodiscard]] absl::Status Refresh(
-    const irs::ProgressReportCallback& progress = nullptr);
-  [[nodiscard]] absl::Status VacuumRefresh();
-  void Publish();
-
-  // A drop commits while readers may still hold this storage; the destructor
-  // removes the directory once the last of them lets go. Never set on
-  // shutdown or detach, where the directory must survive.
-  void MarkDropped() noexcept {
-    if (_writer) {
-      _dropped.store(true, std::memory_order_release);
-    }
-  }
-  bool Retired() const noexcept {
-    return _dropped.load(std::memory_order_acquire) ||
-           _directory->Detached(_attachment);
-  }
-
-  std::vector<irs::IndexWriter::MergeTicket> ReserveMerges(auto&& planner,
-                                                           bool& busy) {
-    return _writer->ReserveMerges(std::forward<decltype(planner)>(planner),
-                                  busy);
-  }
-  yaclib::Future<MergeResult> RunMergeAsync(
-    utils::DrainGate::Pass maintenance, irs::IndexWriter::MergeTicket ticket,
-    const irs::MergeProgress& progress,
-    const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env,
-    duckdb::shared_ptr<duckdb::DedicatedPool> pool);
-
-  auto& GetTasksSettings() noexcept { return _tasks_settings; }
-
-  size_t MergeInputsMax() const noexcept {
-    return _sort.empty() ? std::numeric_limits<size_t>::max()
-                         : irs::kSortedMergeInputsMax;
-  }
-
-  const std::shared_ptr<MergeRunner::Relation>& MergeRelation() const noexcept {
-    return _merge_relation;
-  }
-
-  // Wake the compaction coordinator: a refresh that produced new segments bumps
-  // this generation so the coordinator re-evaluates without waiting for its
-  // timer. The coordinator polls CompactionGeneration() during its backoff
-  // wait.
-  void NudgeCompaction() noexcept { _merge_relation->NudgeCompaction(); }
-  uint64_t CompactionGeneration() const noexcept {
-    return _merge_relation->CompactionGeneration();
-  }
-
-  // Demand-driven cleanup: a non-empty compaction leaves unreferenced files, so
-  // it raises stale pressure. The refresh loop runs cleanup once the pressure
-  // crosses a small threshold (or on its periodic step), clearing it.
-  void BumpStalePressure() noexcept {
-    _stale_pressure.fetch_add(1, std::memory_order_relaxed);
-  }
-  uint32_t StalePressure() const noexcept {
-    return _stale_pressure.load(std::memory_order_relaxed);
-  }
-  void ClearStalePressure() noexcept {
-    _stale_pressure.store(0, std::memory_order_relaxed);
-  }
+  bool Settle();
+  [[nodiscard]] absl::Status VacuumCompact(duckdb::ClientContext& context,
+                                           uint32_t target_segments);
 
   StoreStats GetStats() const;
 
@@ -270,17 +237,40 @@ class Store final : public std::enable_shared_from_this<Store> {
   // A search table's merged index layout: the configs of its indexes, with a
   // build in flight hidden from scans until it finishes.
   std::shared_ptr<const catalog::InvertedIndexConfig> Config() const;
-  std::shared_ptr<const catalog::InvertedIndexConfig> ScanConfig() const;
   void MergeIndexConfig(
     duckdb::idx_t index_oid,
     std::shared_ptr<const catalog::InvertedIndexConfig> config);
   void RemoveIndexConfig(duckdb::idx_t index_oid);
   void ReleaseRetiredConfig(duckdb::idx_t index_oid) noexcept;
 
-  void ClaimLayout(duckdb::ClientContext& context, std::string_view name);
+  enum class Exclusive : uint8_t {
+    None,
+    Drop,
+  };
+
+  void ClaimLayout(duckdb::ClientContext& context, std::string_view name,
+                   TableChange change);
+  void ClaimExclusive(duckdb::ClientContext& context, std::string_view name,
+                      Exclusive kind);
   [[nodiscard]] bool AcquireLayout(duckdb::transaction_t owner,
-                                   std::string_view name);
-  void ReleaseLayout(duckdb::transaction_t owner) noexcept;
+                                   std::string_view name, TableChange change);
+  void ReleaseLayout(duckdb::transaction_t owner, bool committed) noexcept;
+  std::shared_ptr<const catalog::InvertedIndexConfig> OwnScanConfig(
+    duckdb::transaction_t owner) const;
+  void CommitLayout(duckdb::transaction_t owner) noexcept;
+  void PublishLayout(Tick commit);
+  Exclusive ExclusiveClaim() const;
+
+  uint64_t SchemaEpoch() const noexcept { return _schema_epoch.load(); }
+  void AddTableColumns(const duckdb::ColumnList& columns);
+  void SetTableColumns(const duckdb::ColumnList& columns);
+  void SetConstraintKeys(std::vector<catalog::ConstraintKey> keys);
+
+  // The foreign keys referencing this table's unique keys, while a catalog
+  // version declaring one is alive.
+  void AddReferencing(std::weak_ptr<const Referencing> referencing);
+  std::vector<std::shared_ptr<const Referencing>> ReferencingKeys() const;
+  bool HasReferencing() const;
 
   class [[nodiscard]] BuildClaim {
    public:
@@ -292,9 +282,9 @@ class Store final : public std::enable_shared_from_this<Store> {
       BuildClaim{std::move(other)}.Swap(*this);
       return *this;
     }
-    ~BuildClaim() { Release(/*finished=*/false); }
+    ~BuildClaim();
 
-    void Finish() noexcept;
+    void Finish();
 
    private:
     friend class Store;
@@ -306,7 +296,6 @@ class Store final : public std::enable_shared_from_this<Store> {
       std::swap(_store, other._store);
       std::swap(_index_oid, other._index_oid);
     }
-    void Release(bool finished) noexcept;
 
     Store* _store = nullptr;
     duckdb::idx_t _index_oid = 0;
@@ -316,53 +305,28 @@ class Store final : public std::enable_shared_from_this<Store> {
     duckdb::idx_t index_oid,
     std::shared_ptr<const catalog::InvertedIndexConfig> config);
   bool BuildInFlight() const;
+  bool HasIndexes() const;
 
   [[nodiscard]] WriterGenerations::Writer RegisterWriter() noexcept {
     return _writers.Register();
   }
-  [[nodiscard]] WriterGenerations::Truncate ClaimTruncate() noexcept {
-    return _writers.ClaimTruncate();
-  }
   void DrainPriorWriters(duckdb::ClientContext& context);
 
-  void WatchTruncates();
-  void RecordTruncateForBuild(const irs::SourcePosition& position);
-  bool TruncatedAfter(const irs::SourcePosition& position) {
-    absl::MutexLock lock{&_truncate_mutex};
-    return _build_truncate > position;
-  }
+  irs::IndexWriter::CompactionFloorGuard ArmCompactionFloor(
+    duckdb::ClientContext& context);
+  void AwaitMerges(duckdb::ClientContext& context);
+  std::shared_ptr<const TableState> ReplaceSegments(
+    std::span<const irs::SubReader* const> replaced,
+    std::vector<irs::IndexWriter::Replacement> replacements);
 
-  irs::IndexWriter::CompactionFloorGuard ArmCompactionFloor() {
-    return _writer->ArmCompactionFloor();
-  }
-  void ReplaceSegments(std::span<const irs::SubReader* const> replaced,
-                       std::vector<irs::IndexWriter::Replacement> replacements);
-
-  void ReplayInsert(duckdb::ClientContext& context, duckdb::Catalog& catalog,
-                    std::span<const connector::ColumnId> column_ids,
-                    duckdb::DataChunk& chunk);
-  void ReplayDeleteRowPositions(
-    duckdb::AttachedDatabase& db, std::shared_ptr<const duckdb::data_t> entry,
-    std::span<const duckdb::WALFrozenRowPositionGroup> groups);
-  void ReplayRowPositionMaps(
-    duckdb::AttachedDatabase& db, std::shared_ptr<const duckdb::data_t> entry,
-    uint64_t source, std::span<const duckdb::WALFrozenRowPositionMap> maps);
-  void ReplayTruncate(duckdb::AttachedDatabase& db);
-  void ReplayAdoptSegments(duckdb::AttachedDatabase& db,
-                           std::vector<std::string> segments);
+  TableReplay* Replay();
+  void ScheduleRecovery(duckdb::ClientContext& context,
+                        duckdb::TaskExecutor& executor, bool orphans);
   bool FinishReplay();
-  bool Replays(duckdb::AttachedDatabase& db) const;
 
-  // Delete-log for online CREATE INDEX: open while the build runs, drained
-  // once by TakeDeleteLog after the backfill is committed, then latched
-  // forever. AppendDeleteLog hands back the rows it does not log, all of them
-  // once latched; the caller removes those natively (a delete racing publish
-  // is an ordinary post-publish remove).
-  std::vector<int64_t> AppendDeleteLog(std::vector<int64_t> rows);
-  std::vector<irs::KeyRemoval> TakeDeleteLog();
-  void SetDeleteLogRowidEnd(int64_t end) noexcept {
-    _delete_log_rowid_end.store(end, std::memory_order_relaxed);
-  }
+  std::shared_ptr<const TableState> SnapshotState(Tick snapshot,
+                                                  catalog::WalkCounters& walks);
+  std::vector<uint8_t> SnapshotRecord(const TableState& state) const;
 
   // One REINDEX at a time per index, across all connections: claim the
   // store for the whole refresh (observe -> delta/rebuild -> publish).
@@ -382,34 +346,57 @@ class Store final : public std::enable_shared_from_this<Store> {
     duckdb::idx_t oid;
     std::shared_ptr<const catalog::InvertedIndexConfig> config;
   };
+  struct SchemaUndo {
+    uint64_t epoch = 0;
+    irs::containers::FlatHashSet<irs::field_id> table_columns;
+    catalog::CompressionByColumn compression;
+    std::vector<catalog::ConstraintKey> constraint_keys;
+  };
   struct Layout {
     duckdb::transaction_t owner = kNoLayoutOwner;
+    Exclusive exclusive = Exclusive::None;
+    std::optional<SchemaUndo> schema_undo;
     std::vector<IndexConfig> configs;
     std::vector<IndexConfig> retired;
     std::optional<duckdb::idx_t> building_index;
     bool compaction_stale = false;
+    bool owner_changed = false;
     std::shared_ptr<const catalog::InvertedIndexConfig> config;
     std::shared_ptr<const catalog::InvertedIndexConfig> scan_config;
+    std::shared_ptr<const catalog::InvertedIndexConfig> published_config;
     std::shared_ptr<const catalog::InvertedIndexConfig> compaction_config;
   };
-  struct ReplaySession;
-
-  template<typename Options>
-  void SetTasksSettings(const Options& options) {
-    _tasks_settings.refresh_interval_msec = options.refresh_interval_ms;
-    _tasks_settings.compaction_interval_msec = options.compaction_interval_ms;
-    _tasks_settings.cleanup_interval_step = options.cleanup_interval_step;
-    _tasks_settings.compaction_max_segments = options.compaction_max_segments;
-    _tasks_settings.compaction_max_segments_bytes =
-      options.compaction_max_segments_bytes;
-    _tasks_settings.compaction_floor_segment_bytes =
-      options.compaction_floor_segment_bytes;
-  }
-
+  bool IsSearchTable() const noexcept { return _table_columns.has_value(); }
   irs::IndexReaderOptions ReaderOptions() const;
-  void PublishSnapshot();
-  template<typename Remove>
-  void CommitRemovalWith(const Remove& remove);
+  void OpenWriter();
+  void EnsureOpen();
+  bool OwnsFiles() const noexcept { return _on_disk && !_read_only; }
+  bool CloseFiles();
+  void ClaimColumnOids(const irs::DirectoryReader& reader) const;
+  void SyncSegments() const;
+  bool OwnerDropped() const noexcept {
+    return Dropped() || _directory->Dropped();
+  }
+  std::shared_ptr<const TableState> CommitReplace(
+    std::span<const uint64_t> replaced, std::span<const Tick> folded,
+    std::vector<std::shared_ptr<TableUnit>> added,
+    std::vector<irs::DocMap> maps, uint64_t memory_below, bool logged);
+  void CommitUnlogged(absl::FunctionRef<void(Tick)> apply);
+  std::shared_ptr<const irs::SegmentReaderImpl> ReplayPiece(
+    duckdb::ClientContext& context, std::span<const TableReplay::Chunk> chunks);
+  void MaintainPieces();
+  void RunCoalesced(std::atomic<uint64_t> Store::* requests,
+                    void (*work)(Store&), std::string_view what) noexcept;
+  bool WriteOutLocked() ABSL_EXCLUSIVE_LOCKS_REQUIRED(_write_out_mutex);
+  bool MergePiecesLocked(
+    std::span<const std::shared_ptr<const TableUnit>> pieces)
+    ABSL_EXCLUSIVE_LOCKS_REQUIRED(_write_out_mutex);
+  auto CompactUnsafeImpl(const irs::CompactionPolicy& policy,
+                         const irs::MergeWriter::FlushProgress& progress,
+                         bool& empty_compaction,
+                         const irs::IndexFieldOptions* field_options,
+                         const irs::AnnBuildEnv* env)
+    -> yaclib::Future<absl::Status>;
   std::shared_ptr<const catalog::InvertedIndexConfig> MergeConfigs(
     std::span<const IndexConfig> configs, std::span<const IndexConfig> retired,
     std::optional<duckdb::idx_t> skip) const
@@ -418,54 +405,55 @@ class Store final : public std::enable_shared_from_this<Store> {
   void RebuildConfig(Configs&& configs,
                      std::optional<duckdb::idx_t> building_index)
     ABSL_EXCLUSIVE_LOCKS_REQUIRED(_layout_mutex);
+  bool IsCurrentConfig(const irs::IndexFieldOptions* options) const;
   void FinishIndexBuild(duckdb::idx_t index_oid) noexcept;
   void AbortIndexBuild(duckdb::idx_t index_oid) noexcept;
-  ReplaySession* BeginReplay(duckdb::AttachedDatabase& db);
+  void ScanConfigChanged() ABSL_EXCLUSIVE_LOCKS_REQUIRED(_layout_mutex);
+  void AdoptOwnConfig() noexcept ABSL_EXCLUSIVE_LOCKS_REQUIRED(_layout_mutex);
 
-  TasksSettings _tasks_settings;
-  MaintenanceCounters _maintenance;
-  std::shared_ptr<catalog::DatabaseDirectory> _directory;
-  uint64_t _attachment;
-  std::unique_ptr<irs::Directory> _dir;
-  std::shared_ptr<irs::IndexWriter> _writer;
-  std::atomic<bool> _dropped{false};
-  const std::vector<irs::SortKey> _sort;
-  const std::shared_ptr<MergeRunner::Relation> _merge_relation;
-  std::atomic<uint32_t> _stale_pressure{0};
   duckdb::idx_t _id;
   duckdb::idx_t _db_id;
+  std::shared_ptr<catalog::DatabaseDirectory> _directory;
   bool _in_memory;
   bool _read_only;
   bool _is_new;
   bool _absent = false;
+  std::atomic<bool> _dropped{false};
   uint64_t _segment_memory_max;
   uint32_t _segment_docs_max = 0;
   std::optional<irs::ScorerOptions> _topk_options;
   std::unique_ptr<irs::Scorer> _topk_scorer;
-  IndexDurability _durability;
-  // Accessed via std::atomic_load/std::atomic_store (libc++ lacks
-  // std::atomic<std::shared_ptr>).
-  StoreSnapshotPtr _snapshot;
-  std::shared_ptr<const FileManifest> _file_manifest;
+  std::unique_ptr<irs::HnswBases> _hnsw_bases =
+    std::make_unique<irs::HnswBases>();
+  std::unique_ptr<irs::Directory> _dir;
+  std::shared_ptr<irs::IndexWriter> _writer;
+  std::unique_ptr<irs::Directory> _piece_dir;
+  std::shared_ptr<irs::IndexWriter> _piece_writer;
+  absl::Mutex _write_out_mutex;
+  std::atomic<Tick> _storage_tick{0};
 
   // A search table's columns and layout; empty for an inverted index.
   std::optional<irs::containers::FlatHashSet<irs::field_id>> _table_columns;
   uint32_t _row_group_size = 0;
+  uint32_t _block_size = 0;
+  catalog::CompressionByColumn _compression;
   mutable absl::Mutex _layout_mutex;
-  catalog::CompressionByColumn _compression ABSL_GUARDED_BY(_layout_mutex);
   Layout _layout ABSL_GUARDED_BY(_layout_mutex);
+  std::vector<catalog::ConstraintKey> _constraint_keys
+    ABSL_GUARDED_BY(_layout_mutex);
+  mutable absl::Mutex _referencing_mutex;
+  mutable std::vector<std::weak_ptr<const Referencing>> _referencing
+    ABSL_GUARDED_BY(_referencing_mutex);
+  std::atomic<uint64_t> _schema_epoch{0};
   WriterGenerations _writers;
-  absl::Mutex _truncate_mutex;
-  irs::SourcePosition _build_truncate ABSL_GUARDED_BY(_truncate_mutex);
-  std::unique_ptr<ReplaySession> _replay;
+  std::unique_ptr<Table> _table;
+  bool _on_disk = false;
+  std::atomic<uint64_t> _piece_requests{0};
+  std::atomic<uint64_t> _cleanup_requests{0};
+  std::atomic<uint32_t> _merges{0};
+  TableReplay _replay;
 
   std::atomic<uint32_t> _reindex_state{0};
-
-  absl::Mutex _delete_log_mutex;
-  std::atomic<bool> _delete_log_open{false};
-  std::atomic<int64_t> _delete_log_rowid_end{
-    std::numeric_limits<int64_t>::max()};
-  std::vector<irs::KeyRemoval> _delete_log ABSL_GUARDED_BY(_delete_log_mutex);
 
 #ifdef SDB_DEV
   // Dev-only tripwire: asserts StartTasks runs at most once, so a bug can't
@@ -473,8 +461,5 @@ class Store final : public std::enable_shared_from_this<Store> {
   std::atomic<bool> _tasks_started{false};
 #endif
 };
-
-void ThrowIfRefreshFailed(const absl::Status& status,
-                          std::string_view index_name);
 
 }  // namespace sdb::search

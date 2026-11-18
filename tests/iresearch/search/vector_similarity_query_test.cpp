@@ -24,6 +24,7 @@
 #include <atomic>
 #include <duckdb.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
+#include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/ivf/centroids.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
@@ -66,8 +67,7 @@ inline constexpr uint32_t kDim = 4;
 // both execution paths expose distances to the vector scorer.
 
 irs::IndexWriterOptions MakeWriterOptions(
-  duckdb::CompressionType compression =
-    duckdb::CompressionType::COMPRESSION_AUTO,
+  irs::codecs::CodecType compression = irs::codecs::CodecType::Auto,
   uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE) {
   auto opts = irs::tests::DefaultWriterOptions();
   opts.row_group_size = row_group_size;
@@ -115,7 +115,8 @@ void WriteVectorAt(irs::ColWriter& cs, irs::doc_id_t doc, float x) {
 irs::DirectoryReader BuildIndex(
   irs::Directory& dir, irs::doc_id_t n,
   irs::IndexWriterOptions opts = MakeWriterOptions()) {
-  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(opts));
+  auto writer =
+    tests::IndexWriter::Make(dir, tests::kOmCreate, std::move(opts));
   EXPECT_NE(nullptr, writer);
 
   {
@@ -178,12 +179,11 @@ class VectorSimilarityQueryTest : public ::testing::Test {
   void Build(irs::doc_id_t n) {
     _docs = n;
     _reader = BuildIndex(_dir, n);
-    ASSERT_NE(nullptr, _reader);
-    ASSERT_EQ(1U, _reader->size());
-    ASSERT_EQ(n, _reader->docs_count());
-    AssertQuantizedPath((*_reader)[0]);
+    ASSERT_EQ(1U, _reader.size());
+    ASSERT_EQ(n, _reader.docs_count());
+    AssertQuantizedPath((_reader)[0]);
     _filter = MakeKnnFilter();
-    _prepared.emplace(_filter, *_reader, nullptr, irs::IResourceManager::gNoop,
+    _prepared.emplace(_filter, _reader, nullptr, irs::IResourceManager::gNoop,
                       nullptr, ::tests::PreparedFilter::CollectMode::Single);
     ASSERT_EQ(1U, _prepared->size());
   }
@@ -239,7 +239,7 @@ TEST_F(VectorSimilarityQueryTest, ScoredLeadAndProbe) {
   opts.quant = irs::VectorQuantization::SQ8;
   opts.radius = 100000.f;
   irs::VectorSimilarityScorer scorer;
-  tests::PreparedFilter prepared{filter, *_reader, &scorer};
+  tests::PreparedFilter prepared{filter, _reader, &scorer};
 
   const auto check_scores = [](auto& node, auto&& seek) {
     constexpr std::array<irs::doc_id_t, 6> kDocs{1, 2, 127, 128, 129, 300};
@@ -275,7 +275,7 @@ TEST_F(VectorSimilarityQueryTest, ScoredLeadAndProbe) {
 TEST_F(VectorSimilarityQueryTest, KnnScoresAreTheSameInHitsLeadAndTop) {
   Build(300);
   irs::VectorSimilarityScorer scorer;
-  tests::PreparedFilter prepared{_filter, *_reader, &scorer};
+  tests::PreparedFilter prepared{_filter, _reader, &scorer};
   const auto* query = prepared.Query(0);
   ASSERT_NE(nullptr, query);
 
@@ -408,7 +408,7 @@ irs::ByVectorExact MakeExactFilter(float x, float radius, bool inclusive) {
 
 TEST_F(VectorSimilarityQueryTest, ExactRadius) {
   Build(300);
-  const auto& segment = (*_reader)[0];
+  const auto& segment = (_reader)[0];
   irs::VectorSimilarityScorer scorer;
   for (const bool inclusive : {false, true}) {
     SCOPED_TRACE(inclusive);
@@ -457,21 +457,21 @@ TEST_F(VectorSimilarityQueryTest, ExactRadius) {
 }
 
 class RerankExactDistancesTest
-  : public ::testing::TestWithParam<duckdb::CompressionType> {
+  : public ::testing::TestWithParam<irs::codecs::CodecType> {
  protected:
   static constexpr uint32_t kRowGroup = 64;
 
   void Build(irs::doc_id_t n) {
     _reader = BuildIndex(_dir, n, MakeWriterOptions(GetParam(), kRowGroup));
-    ASSERT_NE(nullptr, _reader);
-    ASSERT_EQ(1U, _reader->size());
-    const auto* column = (*_reader)[0].Column(kVec);
+    ASSERT_EQ(1U, _reader.size());
+    const auto* column = (_reader)[0].Column(kVec);
     ASSERT_NE(nullptr, column);
     const auto* child = column->Child();
     ASSERT_NE(nullptr, child);
     ASSERT_LT(1U, child->DataBlocks().size());
     for (const auto& block : child->DataBlocks()) {
-      ASSERT_EQ(GetParam(), block.codec->type);
+      ASSERT_EQ(irs::codecs::NameOf(GetParam()),
+                irs::codecs::NameOf(block.codec->type));
     }
   }
 
@@ -481,7 +481,7 @@ class RerankExactDistancesTest
 
 TEST_P(RerankExactDistancesTest, Rerank) {
   Build(300);
-  const auto& segment = (*_reader)[0];
+  const auto& segment = (_reader)[0];
   const std::vector<float> query(kDim, 0.f);
   std::vector<irs::ScoreDoc> hits;
   for (irs::doc_id_t doc :
@@ -496,9 +496,8 @@ TEST_P(RerankExactDistancesTest, Rerank) {
   }
 }
 
-INSTANTIATE_TEST_SUITE_P(
-  Codec, RerankExactDistancesTest,
-  ::testing::Values(duckdb::CompressionType::COMPRESSION_UNCOMPRESSED,
-                    duckdb::CompressionType::COMPRESSION_ALP));
+INSTANTIATE_TEST_SUITE_P(Codec, RerankExactDistancesTest,
+                         ::testing::Values(irs::codecs::CodecType::Uncompressed,
+                                           irs::codecs::CodecType::Alp));
 
 }  // namespace

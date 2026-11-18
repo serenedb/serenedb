@@ -123,7 +123,8 @@ class SubscriptionEngine final {
                              std::chrono::milliseconds delay);
   yaclib::Task<> Supervise(duckdb::idx_t subscription,
                            network::IoExecutor& exec);
-  void Disable(std::string_view database, duckdb::idx_t subscription);
+  void Disable(std::string_view database, duckdb::idx_t subscription,
+               std::string_view name);
 
   network::IoThreadPool& _pool;
   std::atomic<bool> _stopping{false};

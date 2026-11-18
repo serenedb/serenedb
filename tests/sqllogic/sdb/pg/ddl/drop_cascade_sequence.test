@@ -64,18 +64,18 @@ INSERT INTO mop_applications (v) VALUES ('a');
 statement error
 DROP SEQUENCE mop_application_id_seq;
 ----
-db error: ERROR: Cannot drop entry "mop_application_id_seq" because there are entries that depend on it.
-table "mop_applications" depends on sequence "mop_application_id_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence mop_application_id_seq because other objects depend on it
+DETAIL: default value for column id of table mop_applications depends on sequence mop_application_id_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
 statement error
 DROP SEQUENCE mop_application_id_seq RESTRICT;
 ----
-db error: ERROR: Cannot drop entry "mop_application_id_seq" because there are entries that depend on it.
-table "mop_applications" depends on sequence "mop_application_id_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence mop_application_id_seq because other objects depend on it
+DETAIL: default value for column id of table mop_applications depends on sequence mop_application_id_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -160,9 +160,8 @@ INSERT INTO iceberg_partition_specs (v) VALUES ('c');
 statement error
 DROP SEQUENCE iceberg_partition_id_seq;
 ----
-db error: ERROR: Cannot drop entry "iceberg_partition_id_seq" because there are entries that depend on it.
+db error: ERROR: cannot drop sequence iceberg_partition_id_seq because other objects depend on it
 <slt:ignore>
-Use DROP...CASCADE to drop all dependents.
 
 
 
@@ -226,18 +225,18 @@ INSERT INTO clickclack_query_log (v) VALUES ('x');
 statement error
 DROP SEQUENCE clickclack_query_log_id_seq;
 ----
-db error: ERROR: Cannot drop entry "clickclack_query_log_id_seq" because there are entries that depend on it.
-table "clickclack_query_log" depends on sequence "clickclack_query_log_id_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence clickclack_query_log_id_seq because other objects depend on it
+DETAIL: default value for column id of table clickclack_query_log depends on sequence clickclack_query_log_id_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
 statement error
 DROP SEQUENCE clickclack_query_log_id_seq RESTRICT;
 ----
-db error: ERROR: Cannot drop entry "clickclack_query_log_id_seq" because there are entries that depend on it.
-table "clickclack_query_log" depends on sequence "clickclack_query_log_id_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence clickclack_query_log_id_seq because other objects depend on it
+DETAIL: default value for column id of table clickclack_query_log depends on sequence clickclack_query_log_id_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -294,18 +293,18 @@ INSERT INTO clickclack_ops.escape_drafts (v) VALUES ('hi');
 statement error
 DROP SEQUENCE mop_escape.vedernikoff_resignation_draft_id_seq;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_resignation_draft_id_seq" because there are entries that depend on it.
-table "escape_drafts" depends on sequence "vedernikoff_resignation_draft_id_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence mop_escape.vedernikoff_resignation_draft_id_seq because other objects depend on it
+DETAIL: default value for column id of table clickclack_ops.escape_drafts depends on sequence mop_escape.vedernikoff_resignation_draft_id_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
 statement error
 DROP SEQUENCE mop_escape.vedernikoff_resignation_draft_id_seq RESTRICT;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_resignation_draft_id_seq" because there are entries that depend on it.
-table "escape_drafts" depends on sequence "vedernikoff_resignation_draft_id_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence mop_escape.vedernikoff_resignation_draft_id_seq because other objects depend on it
+DETAIL: default value for column id of table clickclack_ops.escape_drafts depends on sequence mop_escape.vedernikoff_resignation_draft_id_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 

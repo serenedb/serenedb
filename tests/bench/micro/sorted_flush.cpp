@@ -44,6 +44,7 @@
 #include <string_view>
 #include <vector>
 
+#include "index/test_index_writer.hpp"
 #include "insert_field.hpp"
 
 extern "C" int JemallocControl(const char* name, void* old_value,
@@ -231,7 +232,7 @@ void BM_Flush(benchmark::State& state) {
       options.sort = spec;
     }
     auto writer =
-      irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(options));
+      tests::IndexWriter::Make(dir, tests::kOmCreate, std::move(options));
     const auto begin = std::chrono::steady_clock::now();
     {
       auto trx = writer->GetBatch();

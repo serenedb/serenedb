@@ -32,7 +32,6 @@
 namespace irs {
 
 inline constexpr size_t kReencodeSampleRowGroups = 2;
-inline constexpr size_t kCopyMinRowGroups = 4 * kReencodeSampleRowGroups;
 inline constexpr uint64_t kReencodeMinSavingsPercent = 10;
 
 bool ReencodePays(const ReencodeEstimate& estimate) noexcept;

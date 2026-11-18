@@ -1,11 +1,3 @@
-control substitution on
-
-statement ok
-ATTACH '${__TEST_DIR__}/default_duckdb_catalog.duckdb' AS ddc_${__DATABASE__};
-
-statement ok
-USE ddc_${__DATABASE__};
-
 skipif pg-wire-extended
 query
 SELECT 999999::regclass AS r, 999999::regnamespace AS n, 999999::regtype AS t;
@@ -35,37 +27,18 @@ CREATE TYPE ddc_e AS ENUM ('x');
 
 skipif pg-wire-extended
 query
-SELECT 'ddc_t'::regclass::oid::regclass AS r, 'main'::regnamespace::oid::regnamespace AS n, (SELECT type_oid::regtype FROM duckdb_types() WHERE type_name = 'ddc_e' AND database_name = 'ddc_${__DATABASE__}') AS t;
+SELECT 'ddc_t'::regclass::oid::regclass AS r, 'public'::regnamespace::oid::regnamespace AS n, 'ddc_e'::regtype::oid::regtype AS t;
 ----
 r	n	t
-ddc_t	main	ddc_e
+ddc_t	public	ddc_e
 
 query
 SELECT has_table_privilege('ddc_t'::regclass::oid, 'SELECT') AS t,
-       has_schema_privilege('main'::regnamespace::oid, 'USAGE') AS s,
-       pg_schema_size('main'::regnamespace::oid::BIGINT) >= 0 AS size;
+       has_schema_privilege('public'::regnamespace::oid, 'USAGE') AS s,
+       pg_schema_size('public'::regnamespace::oid::BIGINT) >= 0 AS size;
 ----
 t	s	size
 t	t	t
-
-
-statement error
-CREATE SUBSCRIPTION ddc_sub CONNECTION 'host=127.0.0.1 port=1' PUBLICATION ddc_pub WITH (connect = false, slot_name = NONE);
-----
-db error: ERROR: subscriptions are not supported by database "<slt:ignore>"
-
-
-statement error
-ALTER SUBSCRIPTION ddc_sub DISABLE;
-----
-db error: ERROR: subscriptions are not supported by database "<slt:ignore>"
-
-
-statement error
-DROP SUBSCRIPTION IF EXISTS ddc_sub;
-----
-db error: ERROR: subscriptions are not supported by database "<slt:ignore>"
-
 
 statement ok
 PRAGMA serenedb_reindex_by_id(999999);
@@ -73,12 +46,11 @@ PRAGMA serenedb_reindex_by_id(999999);
 statement ok
 CREATE TABLE ddc_keyed (id int, CONSTRAINT ddc_custom_pk PRIMARY KEY (id));
 
-
-statement error
-SELECT 'ddc_custom_pk'::regclass;
+query
+SELECT 'ddc_custom_pk'::regclass::text AS r;
 ----
-db error: ERROR: relation "ddc_custom_pk" does not exist
-
+r
+ddc_custom_pk
 
 query
 SELECT count(*) AS subscriptions FROM pg_stat_get_subscription(NULL);
@@ -86,12 +58,5 @@ SELECT count(*) AS subscriptions FROM pg_stat_get_subscription(NULL);
 subscriptions
 0
 
-
 statement ok
 DROP TABLE ddc_keyed;
-
-statement ok
-USE ${__DATABASE__};
-
-statement ok
-DETACH ddc_${__DATABASE__};

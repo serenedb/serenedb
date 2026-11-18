@@ -16,9 +16,6 @@ INSERT INTO test_shingle VALUES
     (4, 'fox quick brown'),
     (5, 'quick brown cat brown fox')
 
-statement ok
-VACUUM (REFRESH_TABLE) test_shingle
-
 query
 SELECT id FROM test_shingle_idx WHERE body @@ ts_phrase('quick brown') ORDER BY id
 ----
@@ -105,47 +102,41 @@ id
 4
 5
 
-statement error
-SELECT id FROM test_shingle_idx WHERE body @@ ts_phrase('quick brown fox')
+query
+SELECT id FROM test_shingle_idx WHERE body @@ ts_phrase('quick brown fox') ORDER BY id
 ----
-db error: ERROR: ts_phrase on a column without positions needs the column's text in the index
-HINT: Add `position` to the dictionary, keep the column's text in the index with `INCLUDE` or an expression's value with `included()`, or raise `max_gram` to the phrase length.
+id
+1
 
-
-statement error
-SELECT id FROM test_shingle_idx WHERE body @@ phraseto_tsquery('quick brown fox')
+query
+SELECT id FROM test_shingle_idx WHERE body @@ phraseto_tsquery('quick brown fox') ORDER BY id
 ----
-db error: ERROR: ts_phrase on a column without positions needs the column's text in the index
-HINT: Add `position` to the dictionary, keep the column's text in the index with `INCLUDE` or an expression's value with `included()`, or raise `max_gram` to the phrase length.
+id
+1
 
-
-statement error
-SELECT id FROM test_shingle_idx WHERE body @@ ts_phrase('quick', 1, 'fox')
+query
+SELECT id FROM test_shingle_idx WHERE body @@ ts_phrase('quick', 1, 'fox') ORDER BY id
 ----
-db error: ERROR: ts_phrase on a column without positions needs the column's text in the index
-HINT: Add `position` to the dictionary, keep the column's text in the index with `INCLUDE` or an expression's value with `included()`, or raise `max_gram` to the phrase length.
+id
+1
 
-
-statement error
-SELECT id FROM test_shingle_idx WHERE body @@ (ts_phrase('quick') ## 1 ## ts_phrase('fox'))
+query
+SELECT id FROM test_shingle_idx WHERE body @@ (ts_phrase('quick') ## 1 ## ts_phrase('fox')) ORDER BY id
 ----
-db error: ERROR: ## on a column without positions needs the column's text in the index
-HINT: Add `position` to the dictionary, keep the column's text in the index with `INCLUDE` or an expression's value with `included()`, or raise `max_gram` to the phrase length.
+id
+1
 
-
-statement error
-SELECT id FROM test_shingle_idx WHERE body @@ ts_phrase('quick fox', slop := 1)
+query
+SELECT id FROM test_shingle_idx WHERE body @@ ts_phrase('quick fox', slop := 1) ORDER BY id
 ----
-db error: ERROR: ts_phrase on a column without positions needs the column's text in the index
-HINT: Add `position` to the dictionary, keep the column's text in the index with `INCLUDE` or an expression's value with `included()`, or raise `max_gram` to the phrase length.
+id
+1
 
-
-statement error
-SELECT id FROM test_shingle_idx WHERE body @@ (ts_phrase('quick brown') ## ts_like('%ox'))
+query
+SELECT id FROM test_shingle_idx WHERE body @@ (ts_phrase('quick brown') ## ts_like('%ox')) ORDER BY id
 ----
-db error: ERROR: ## on a column without positions needs the column's text in the index
-HINT: Add `position` to the dictionary, keep the column's text in the index with `INCLUDE` or an expression's value with `included()`, or raise `max_gram` to the phrase length.
-
+id
+1
 
 query
 SELECT id FROM test_shingle_idx WHERE body @@ to_tsquery('"quick brown"') ORDER BY id
@@ -162,7 +153,7 @@ EXPLAIN SELECT id FROM test_shingle_idx WHERE body @@ to_tsquery('"quick brown"'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────╮
 │ Index: test_shingle_idx │
-│ Lookup: table           │
+│ Lookup: search          │
 │ Index Filter:           │
 │ ╭─ Term ──────────────╮ │
 │ │ Field: body(string) │ │
@@ -172,12 +163,11 @@ QUERY PLAN
 │ ~1 row                  │
 ╰─────────────────────────╯
 
-statement error
-SELECT id FROM test_shingle_idx WHERE body @@ to_tsquery('"quick brown fox"')
+query
+SELECT id FROM test_shingle_idx WHERE body @@ to_tsquery('"quick brown fox"') ORDER BY id
 ----
-db error: ERROR: to_tsquery on a column without positions needs the column's text in the index
-HINT: Add `position` to the dictionary, keep the column's text in the index with `INCLUDE` or an expression's value with `included()`, or raise `max_gram` to the phrase length.
-
+id
+1
 
 query
 EXPLAIN SELECT id FROM test_shingle_idx WHERE body @@ ts_phrase('quick brown')
@@ -185,7 +175,7 @@ EXPLAIN SELECT id FROM test_shingle_idx WHERE body @@ ts_phrase('quick brown')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────╮
 │ Index: test_shingle_idx │
-│ Lookup: table           │
+│ Lookup: search          │
 │ Index Filter:           │
 │ ╭─ Term ──────────────╮ │
 │ │ Field: body(string) │ │
@@ -211,6 +201,7 @@ QUERY PLAN
 ╰─────────────┬────────────╯
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: test_shingle_idx  │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Term ──────────────╮  │
 │ │ Field: body(string) │  │
@@ -253,9 +244,6 @@ INSERT INTO test_shingle_pos VALUES
     (4, 'fox quick brown'),
     (5, 'quick brown cat brown fox')
 
-statement ok
-VACUUM (REFRESH_TABLE) test_shingle_pos
-
 query
 SELECT id FROM test_shingle_pos_idx WHERE body @@ ts_phrase('quick brown fox') ORDER BY id
 ----
@@ -287,7 +275,7 @@ EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ phraseto_tsquery('quic
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────────────╮
 │ Index: test_shingle_pos_idx                        │
-│ Lookup: table                                      │
+│ Lookup: search                                     │
 │ Index Filter:                                      │
 │ ╭─ Phrase ───────────────────────────────────────╮ │
 │ │ Field: body(string)                            │ │
@@ -311,7 +299,7 @@ EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ websearch_to_tsquery('
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────────────╮
 │ Index: test_shingle_pos_idx                        │
-│ Lookup: table                                      │
+│ Lookup: search                                     │
 │ Index Filter:                                      │
 │ ╭─ Phrase ───────────────────────────────────────╮ │
 │ │ Field: body(string)                            │ │
@@ -335,7 +323,7 @@ EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ websearch_to_tsquery('
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────╮
 │ Index: test_shingle_pos_idx      │
-│ Lookup: table                    │
+│ Lookup: search                   │
 │ Index Filter:                    │
 │ ╭─ And ────────────────────────╮ │
 │ ╰───────────────┬──────────────╯ │
@@ -366,7 +354,7 @@ EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ tsquery_phrase(ts_phra
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────────────╮
 │ Index: test_shingle_pos_idx                        │
-│ Lookup: table                                      │
+│ Lookup: search                                     │
 │ Index Filter:                                      │
 │ ╭─ Phrase ───────────────────────────────────────╮ │
 │ │ Field: body(string)                            │ │
@@ -390,7 +378,7 @@ EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ tsquery_phrase(ts_phra
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────╮
 │ Index: test_shingle_pos_idx                  │
-│ Lookup: table                                │
+│ Lookup: search                               │
 │ Index Filter:                                │
 │ ╭─ Phrase ─────────────────────────────────╮ │
 │ │ Field: body(string)                      │ │
@@ -414,7 +402,7 @@ EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ to_tsquery('"quick bro
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────────────╮
 │ Index: test_shingle_pos_idx                        │
-│ Lookup: table                                      │
+│ Lookup: search                                     │
 │ Index Filter:                                      │
 │ ╭─ Phrase ───────────────────────────────────────╮ │
 │ │ Field: body(string)                            │ │
@@ -438,7 +426,7 @@ EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ to_tsquery('"quick bro
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────────────╮
 │ Index: test_shingle_pos_idx                              │
-│ Lookup: table                                            │
+│ Lookup: search                                           │
 │ Index Filter:                                            │
 │ ╭─ Phrase ─────────────────────────────────────────────╮ │
 │ │ Field: body(string)                                  │ │
@@ -457,7 +445,7 @@ EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ to_tsquery('"quick bro
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: test_shingle_pos_idx │
-│ Lookup: table               │
+│ Lookup: search              │
 │ Index Filter:               │
 │ ╭─ Term ──────────────╮     │
 │ │ Field: body(string) │     │
@@ -487,7 +475,7 @@ EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ to_tsquery('"quick bro
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────╮
 │ Index: test_shingle_pos_idx                   │
-│ Lookup: table                                 │
+│ Lookup: search                                │
 │ Index Filter:                                 │
 │ ╭─ Phrase ──────────────────────────────────╮ │
 │ │ Field: body(string)                       │ │
@@ -511,7 +499,7 @@ EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ to_tsquery('"quick bro
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────╮
 │ Index: test_shingle_pos_idx                       │
-│ Lookup: table                                     │
+│ Lookup: search                                    │
 │ Index Filter:                                     │
 │ ╭─ Phrase ──────────────────────────────────────╮ │
 │ │ Field: body(string)                           │ │
@@ -539,7 +527,7 @@ EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ to_tsquery('"quick bro
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────╮
 │ Index: test_shingle_pos_idx            │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Or ───────────────────────────────╮ │
 │ ╰──────────────────┬─────────────────╯ │
@@ -564,7 +552,7 @@ EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ to_tsquery('fox AND ("
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────────────────────────────────────────╮
 │ Index: test_shingle_pos_idx                                                                          │
-│ Lookup: table                                                                                        │
+│ Lookup: search                                                                                       │
 │ Index Filter:                                                                                        │
 │ ╭─ And ───────────────╮                                                                              │
 │ ╰──────────┬──────────╯                                                                              │
@@ -594,7 +582,7 @@ EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE tableoid @@ to_tsquery('body:"
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────────────╮
 │ Index: test_shingle_pos_idx                        │
-│ Lookup: table                                      │
+│ Lookup: search                                     │
 │ Index Filter:                                      │
 │ ╭─ Phrase ───────────────────────────────────────╮ │
 │ │ Field: body(string)                            │ │
@@ -669,7 +657,7 @@ EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_phrase('quick brow
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────────────╮
 │ Index: test_shingle_pos_idx                        │
-│ Lookup: table                                      │
+│ Lookup: search                                     │
 │ Index Filter:                                      │
 │ ╭─ Phrase ───────────────────────────────────────╮ │
 │ │ Field: body(string)                            │ │
@@ -731,7 +719,7 @@ EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_phrase('quick brow
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────╮
 │ Index: test_shingle_pos_idx                       │
-│ Lookup: table                                     │
+│ Lookup: search                                    │
 │ Index Filter:                                     │
 │ ╭─ Phrase ──────────────────────────────────────╮ │
 │ │ Field: body(string)                           │ │
@@ -782,7 +770,7 @@ EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_phrase('quick brow
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────────────╮
 │ Index: test_shingle_pos_idx                              │
-│ Lookup: table                                            │
+│ Lookup: search                                           │
 │ Index Filter:                                            │
 │ ╭─ Phrase ─────────────────────────────────────────────╮ │
 │ │ Field: body(string)                                  │ │
@@ -807,7 +795,7 @@ EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ ts_phrase('quick brown
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────╮
 │ Index: test_shingle_pos_idx                  │
-│ Lookup: table                                │
+│ Lookup: search                               │
 │ Index Filter:                                │
 │ ╭─ Phrase ─────────────────────────────────╮ │
 │ │ Field: body(string)                      │ │
@@ -825,7 +813,7 @@ EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ ts_phrase('quick brown
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────────────╮
 │ Index: test_shingle_pos_idx                        │
-│ Lookup: table                                      │
+│ Lookup: search                                     │
 │ Index Filter:                                      │
 │ ╭─ Phrase ───────────────────────────────────────╮ │
 │ │ Field: body(string)                            │ │
@@ -843,7 +831,7 @@ EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_phrase('quick brow
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────╮
 │ Index: test_shingle_pos_idx                       │
-│ Lookup: table                                     │
+│ Lookup: search                                    │
 │ Index Filter:                                     │
 │ ╭─ Phrase ──────────────────────────────────────╮ │
 │ │ Field: body(string)                           │ │
@@ -861,7 +849,7 @@ EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_starts_with('qu') 
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────╮
 │ Index: test_shingle_pos_idx             │
-│ Lookup: table                           │
+│ Lookup: search                          │
 │ Index Filter:                           │
 │ ╭─ Phrase ────────────────────────────╮ │
 │ │ Field: body(string)                 │ │
@@ -879,7 +867,7 @@ EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ ts_phrase('quick fox',
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────╮
 │ Index: test_shingle_pos_idx            │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Phrase ───────────────────────────╮ │
 │ │ Field: body(string)                │ │
@@ -914,6 +902,7 @@ QUERY PLAN
 ╰──────────────────────────┬─────────────────────────╯
 ╭─ IRESEARCH_SCAN ─────────┴─────────────────────────╮
 │ Index: test_shingle_pos_idx                        │
+│ Lookup: search                                     │
 │ Index Filter:                                      │
 │ ╭─ Phrase ───────────────────────────────────────╮ │
 │ │ Field: body(string)                            │ │
@@ -940,7 +929,7 @@ ORDER BY BM25(test_shingle_pos_idx.tableoid) DESC LIMIT 2
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: test_shingle_pos_idx │
-│ Lookup: table               │
+│ Lookup: search              │
 │ Index Filter:               │
 │ ╭─ Term ──────────────╮     │
 │ │ Field: body(string) │     │
@@ -981,7 +970,7 @@ EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_phrase('quick brow
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────────────────╮
 │ Index: test_shingle_pos_idx                                  │
-│ Lookup: table                                                │
+│ Lookup: search                                               │
 │ Index Filter:                                                │
 │ ╭─ Phrase ─────────────────────────────────────────────────╮ │
 │ │ Field: body(string)                                      │ │
@@ -1006,7 +995,7 @@ EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_phrase('quick brow
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────╮
 │ Index: test_shingle_pos_idx                       │
-│ Lookup: table                                     │
+│ Lookup: search                                    │
 │ Index Filter:                                     │
 │ ╭─ Phrase ──────────────────────────────────────╮ │
 │ │ Field: body(string)                           │ │
@@ -1042,9 +1031,6 @@ CREATE INDEX test_shingle_joined_idx ON test_shingle_joined USING inverted(id, b
 
 statement ok
 INSERT INTO test_shingle_joined VALUES (1, 'quick brown fox'), (2, 'quick bread')
-
-statement ok
-VACUUM (REFRESH_TABLE) test_shingle_joined
 
 query
 SELECT id FROM test_shingle_joined_idx WHERE body @@ ts_phrase('quick brown fox') ORDER BY id
@@ -1088,9 +1074,6 @@ INSERT INTO test_shingle_score VALUES
     (2, 'brown fox brown fox'),
     (3, 'the brown fox jumped over things')
 
-statement ok
-VACUUM (REFRESH_TABLE) test_shingle_score
-
 query
 SELECT id FROM test_shingle_score_idx WHERE body @@ ts_phrase('brown fox')
 ORDER BY BM25(test_shingle_score_idx.tableoid) DESC, id
@@ -1122,9 +1105,6 @@ INSERT INTO test_shingle_rank VALUES
     (2, 'quick brown z brown fox y quick brown fox'),
     (3, 'quick brown fox quick brown fox'),
     (4, 'quick brown only and brown fox only')
-
-statement ok
-VACUUM (REFRESH_TABLE) test_shingle_rank
 
 query
 SELECT id FROM test_shingle_rank_idx WHERE body @@ ts_phrase('quick brown fox')
@@ -1163,9 +1143,6 @@ INSERT INTO test_shingle_terms VALUES
     (2, 'quick brown dog'),
     (3, 'brown fox quick')
 
-statement ok
-VACUUM (REFRESH_TABLE) test_shingle_terms
-
 query
 SELECT id FROM test_shingle_terms_idx WHERE body @@ ts_phrase('quick brown fox') ORDER BY id
 ----
@@ -1179,12 +1156,11 @@ id
 1
 2
 
-statement error
-SELECT id FROM test_shingle_terms_idx WHERE body @@ ts_phrase('quick brown fox jumps')
+query
+SELECT id FROM test_shingle_terms_idx WHERE body @@ ts_phrase('quick brown fox jumps') ORDER BY id
 ----
-db error: ERROR: ts_phrase on a column without positions needs the column's text in the index
-HINT: Add `position` to the dictionary, keep the column's text in the index with `INCLUDE` or an expression's value with `included()`, or raise `max_gram` to the phrase length.
-
+id
+1
 
 statement ok
 DROP TABLE test_shingle_terms
@@ -1207,9 +1183,6 @@ statement ok
 INSERT INTO test_shingle_bare VALUES
     (1, 'the quick brown fox'),
     (2, 'quick brown cat brown fox')
-
-statement ok
-VACUUM (REFRESH_TABLE) test_shingle_bare
 
 query
 SELECT id FROM test_shingle_bare_idx WHERE body @@ ts_phrase('quick brown fox') ORDER BY id
@@ -1265,9 +1238,6 @@ CREATE INDEX test_shingle_syn_idx ON test_shingle_syn USING inverted(id, body sh
 statement ok
 INSERT INTO test_shingle_syn VALUES (1, 'a red car here'), (2, 'red paint here')
 
-statement ok
-VACUUM (REFRESH_TABLE) test_shingle_syn
-
 query
 SELECT id FROM test_shingle_syn_idx WHERE body @@ ts_phrase('red automobile') ORDER BY id
 ----
@@ -1286,7 +1256,7 @@ EXPLAIN SELECT id FROM test_shingle_syn_idx WHERE body @@ ts_phrase('red auto')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────╮
 │ Index: test_shingle_syn_idx                  │
-│ Lookup: table                                │
+│ Lookup: search                               │
 │ Index Filter:                                │
 │ ╭─ Phrase ─────────────────────────────────╮ │
 │ │ Field: body(string)                      │ │
@@ -1335,9 +1305,6 @@ statement ok
 INSERT INTO test_shingle_offs VALUES
     (1, 'the quick brown fox jumps'),
     (2, 'quick brown cat and quick brown fox')
-
-statement ok
-VACUUM (REFRESH_TABLE) test_shingle_offs
 
 query
 SELECT id, ts_offsets(body) AS offsets FROM test_shingle_offs_idx WHERE body @@ 'brown' ORDER BY id
@@ -1399,7 +1366,7 @@ EXPLAIN SELECT id FROM test_shingle_offs_idx WHERE body @@ (ts_regexp('q.*k') ##
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────────────────╮
 │ Index: test_shingle_offs_idx                           │
-│ Lookup: table                                          │
+│ Lookup: search                                         │
 │ Index Filter:                                          │
 │ ╭─ Phrase ───────────────────────────────────────────╮ │
 │ │ Field: body(string)                                │ │
@@ -1456,9 +1423,6 @@ INSERT INTO test_shingle_stored VALUES
     (1, 'the quick brown fox jumps'),
     (2, 'quick brown cat and quick brown fox')
 
-statement ok
-VACUUM (REFRESH_TABLE) test_shingle_stored
-
 query
 SELECT id, ts_offsets(body) AS offsets FROM test_shingle_stored_idx WHERE body @@ 'brown' ORDER BY id
 ----
@@ -1498,7 +1462,7 @@ EXPLAIN SELECT id, ts_offsets(body) AS offsets FROM test_shingle_stored_idx WHER
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────────────────╮
 │ Index: test_shingle_stored_idx                               │
-│ Lookup: table                                                │
+│ Lookup: search                                               │
 │ Index Filter:                                                │
 │ ╭─ Phrase ─────────────────────────────────────────────────╮ │
 │ │ Field: body(string)                                      │ │
@@ -1534,9 +1498,6 @@ INSERT INTO test_shingle_freq VALUES
     (2, 'quick brown fox jumps'),
     (3, 'fox and the quick brown dog')
 
-statement ok
-VACUUM (REFRESH_TABLE) test_shingle_freq
-
 query
 SELECT id FROM test_shingle_freq_idx WHERE body @@ ts_phrase('quick brown') ORDER BY id
 ----
@@ -1558,7 +1519,7 @@ EXPLAIN SELECT id FROM test_shingle_freq_idx WHERE body @@ ts_phrase('the quick 
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────╮
 │ Index: test_shingle_freq_idx │
-│ Lookup: table                │
+│ Lookup: search               │
 │ Index Filter:                │
 │ ╭─ Term ─────────────────╮   │
 │ │ Field: body(string)    │   │
@@ -1581,7 +1542,7 @@ EXPLAIN SELECT id FROM test_shingle_freq_idx WHERE body @@ ts_phrase('quick brow
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────────────╮
 │ Index: test_shingle_freq_idx                       │
-│ Lookup: table                                      │
+│ Lookup: search                                     │
 │ Index Filter:                                      │
 │ ╭─ Phrase ───────────────────────────────────────╮ │
 │ │ Field: body(string)                            │ │
@@ -1605,7 +1566,7 @@ EXPLAIN SELECT id FROM test_shingle_freq_idx WHERE body @@ ts_phrase('the quick 
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────────────────╮
 │ Index: test_shingle_freq_idx                           │
-│ Lookup: table                                          │
+│ Lookup: search                                         │
 │ Index Filter:                                          │
 │ ╭─ Phrase ───────────────────────────────────────────╮ │
 │ │ Field: body(string)                                │ │
@@ -1636,9 +1597,6 @@ CREATE INDEX test_shingle_alpha_idx ON test_shingle_alpha USING inverted(id, bod
 statement ok
 INSERT INTO test_shingle_alpha VALUES (1, 'quick-brown fox'), (2, 'brown quick fox')
 
-statement ok
-VACUUM (REFRESH_TABLE) test_shingle_alpha
-
 query
 SELECT id FROM test_shingle_alpha_idx WHERE body @@ to_tsquery('"quick-brown fox"') ORDER BY id
 ----
@@ -1651,7 +1609,7 @@ EXPLAIN SELECT id FROM test_shingle_alpha_idx WHERE body @@ to_tsquery('"quick-b
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────────────╮
 │ Index: test_shingle_alpha_idx                      │
-│ Lookup: table                                      │
+│ Lookup: search                                     │
 │ Index Filter:                                      │
 │ ╭─ Phrase ───────────────────────────────────────╮ │
 │ │ Field: body(string)                            │ │

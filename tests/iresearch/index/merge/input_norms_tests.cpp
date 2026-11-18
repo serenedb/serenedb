@@ -58,7 +58,7 @@ struct InputShape {
   bool has_norm_field;
 };
 
-void WriteNormedDocs(irs::IndexWriter& writer,
+void WriteNormedDocs(tests::IndexWriter& writer,
                      std::span<const std::string> texts) {
   auto trx = writer.GetBatch();
   for (const auto& text : texts) {
@@ -94,7 +94,7 @@ class InputNormsTest : public ::testing::TestWithParam<bool> {
     auto options = irs::tests::DefaultWriterOptions();
     options.column_options = PlainColumns;
     options.row_group_size = kRegionRows;
-    _writer = irs::IndexWriter::Make(_dir, irs::kOmCreate, std::move(options));
+    _writer = tests::IndexWriter::Make(_dir, tests::kOmCreate, std::move(options));
     Generator gen{17};
     size_t next_id = 0;
     for (const auto& [delete_ratio, has_norm_field] :
@@ -119,18 +119,8 @@ class InputNormsTest : public ::testing::TestWithParam<bool> {
     _inputs = Segments(_reader);
     ASSERT_EQ(7, _inputs.size());
 
-    auto meta = _reader.Meta().index_meta.segments[3].meta;
-    irs::DocumentMaskBuilder all;
-    for (irs::doc_id_t doc = irs::doc_limits::min();
-         doc < meta.docs_count + irs::doc_limits::min(); ++doc) {
-      all.Add(doc);
-    }
-    meta.docs_mask =
-      std::make_shared<irs::DocumentMask>(std::move(all).Finish());
-    meta.live_docs_count = 0;
-    _deleted = irs::SegmentReaderImpl::Open(_dir, meta,
-                                            irs::tests::DefaultReaderOptions());
-    ASSERT_NE(nullptr, _deleted);
+    _deleted = AllDeleted(*_inputs[3]);
+    ASSERT_EQ(0, _deleted->live_docs_count());
 
     for (size_t i = 0; i != _inputs.size(); ++i) {
       if (i == 2) {
@@ -207,7 +197,7 @@ class InputNormsTest : public ::testing::TestWithParam<bool> {
 
   irs::MemoryDirectory _dir;
   irs::MemoryDirectory _out;
-  irs::IndexWriter::ptr _writer;
+  tests::IndexWriter::ptr _writer;
   irs::DirectoryReader _reader;
   std::vector<const irs::SubReader*> _inputs;
   std::shared_ptr<const irs::SegmentReaderImpl> _deleted;
@@ -341,7 +331,7 @@ TEST(InputNormsWideTest, FarApartPostingBlocksReadTheMergedValues) {
   irs::MemoryDirectory dir;
   auto options = irs::tests::DefaultWriterOptions();
   options.column_options = PlainColumns;
-  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(options));
+  auto writer = tests::IndexWriter::Make(dir, tests::kOmCreate, std::move(options));
   Generator gen{29};
   constexpr size_t kDocs = 20000;
   for (size_t s = 0; s != 2; ++s) {

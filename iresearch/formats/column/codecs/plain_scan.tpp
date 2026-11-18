@@ -25,20 +25,20 @@
 #include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/vector_writer.hpp>
-#include <duckdb/storage/table/column_segment.hpp>
 #include <utility>
 
 #include "iresearch/formats/column/codecs/string_layout.hpp"
 #include "iresearch/formats/column/codecs/string_scan.hpp"
 #include "iresearch/formats/column/codecs/string_scan.tpp"
+#include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
 
 namespace irs::codecs::text {
 
 template<typename Leaf>
-struct PlainFetch final : duckdb::SegmentScanState {
-  void Reset(duckdb::ColumnSegment&) noexcept {}
+struct PlainFetch final : SegmentScanState {
+  void Reset(const ColumnSegment&) noexcept {}
 
   void Read(data_ptr_t, const idx_t* rows, idx_t count, duckdb::Vector&,
             const duckdb::SelectionVector& sel, idx_t offset) {
@@ -71,13 +71,12 @@ struct PlainFetch final : duckdb::SegmentScanState {
 };
 
 template<typename Leaf>
-struct PlainScan final : duckdb::SegmentScanState {
+struct PlainScan final : SegmentScanState {
   using Fetch = PlainFetch<Leaf>;
   static constexpr Shape kShape = Shape::Plain;
-  static constexpr auto kValidity =
-    duckdb::CompressionValidity::REQUIRES_VALIDITY;
+  static constexpr auto kValidity = CompressionValidity::RequiresValidity;
 
-  PlainScan(duckdb::ColumnSegment& segment, duckdb::BufferHandle handle)
+  PlainScan(const ColumnSegment& segment, duckdb::BufferHandle handle)
     : entries{segment, std::move(handle), true} {}
 
   void EnsureDictionary() { entries.DecodeAll(); }
@@ -88,19 +87,44 @@ struct PlainScan final : duckdb::SegmentScanState {
       Stream(result, result_offset, start, count);
       return;
     }
-    WriteEntries(result, result_offset, count,
-                 [&](idx_t i) { return start + i; });
+    const auto entry_at = [&](idx_t i) { return start + i; };
+    if constexpr (Sorted(Leaf::kCodec)) {
+      if (Leaf::Scan::kEntryGroup > 1 && count <= kSparseEntries) {
+        entries.EnsureGroups(count, entry_at, static_cast<uint32_t>(start),
+                             static_cast<uint32_t>(start + count));
+        WriteRefs(result, result_offset, count, entry_at);
+        return;
+      }
+    }
+    WriteEntries(result, result_offset, count, entry_at);
   }
 
   void ScanVector(duckdb::Vector& result, idx_t start, idx_t count) {
     ScanFlat(result, 0, start, count);
   }
 
-  void Select(duckdb::Vector& result, idx_t start, idx_t,
-              const duckdb::SelectionVector& rows, idx_t count) {
+  void Select(duckdb::Vector& result, idx_t result_offset, idx_t start,
+              idx_t span, const duckdb::SelectionVector& rows, idx_t count,
+              duckdb::ScanVectorType) {
     SDB_ASSERT(!entries.streams);
-    WriteEntries(result, 0, count,
-                 [&](idx_t i) { return start + rows.get_index(i); });
+    const auto entry_at = [&](idx_t i) { return start + rows.get_index(i); };
+    if constexpr (Sorted(Leaf::kCodec)) {
+      if constexpr (Leaf::Scan::kEntryGroup > 1) {
+        entries.SelectChained(result, result_offset, count, entry_at,
+                              static_cast<uint32_t>(start),
+                              static_cast<uint32_t>(start + span));
+      } else {
+        entries.EnsureGroups(count, entry_at, static_cast<uint32_t>(start),
+                             static_cast<uint32_t>(start + span));
+        WriteRefs(result, result_offset, count, entry_at);
+      }
+    } else if constexpr (Leaf::kCodec == ByteCodec::Lz4) {
+      entries.SelectFrames(result, result_offset, count, entry_at,
+                           static_cast<uint32_t>(start),
+                           static_cast<uint32_t>(start + span), prefix);
+    } else {
+      WriteEntries(result, result_offset, count, entry_at);
+    }
   }
 
   template<typename Entry>
@@ -108,6 +132,12 @@ struct PlainScan final : duckdb::SegmentScanState {
                                      idx_t result_offset, idx_t count,
                                      Entry entry_at) {
     entries.EnsureEach(count, entry_at);
+    WriteRefs(result, result_offset, count, entry_at);
+  }
+
+  template<typename Entry>
+  IRS_FORCE_INLINE void WriteRefs(duckdb::Vector& result, idx_t result_offset,
+                                  idx_t count, Entry entry_at) {
     entries.ReferenceHeap(result);
     auto writer =
       duckdb::FlatVector::Writer<string_t>(result, count, result_offset);
@@ -147,6 +177,8 @@ struct PlainScan final : duckdb::SegmentScanState {
   }
 
   EntryFrames<Shape::Plain, Leaf> entries;
+  [[no_unique_address]] utils::Need<Leaf::kCodec == ByteCodec::Lz4, FramePrefix>
+    prefix;
   uint32_t frame = kNoFrame;
   duckdb::shared_ptr<const FrameBytes> bytes;
   ScratchVector<uint32_t> ends;

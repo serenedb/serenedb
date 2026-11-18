@@ -61,18 +61,45 @@ class OnPairTable {
   template<bool kTail>
   uint64_t Copy(const uint8_t* stream, uint64_t first, uint64_t count,
                 char* out, uint64_t capacity) const {
+    const auto* tokens = _tokens.data();
+    const auto* bytes = _bytes.data();
+    const uint64_t bits = _bits;
+    const auto mask = _mask;
+    const auto limit = _count;
     uint64_t off = 0;
-    for (uint64_t i = first; i < first + count; ++i) {
-      const auto bit = i * _bits;
+    auto bit = first * bits;
+    const auto end = (first + count) * bits;
+    if constexpr (!kTail) {
+      const uint64_t batch = (64 - 7) / bits;
+      const auto readable = (end + 7) / 8 + kOnPairPadding;
+      while (bit + batch * bits <= end &&
+             bit / 8 + sizeof(uint64_t) <= readable) {
+        uint64_t word;
+        std::memcpy(&word, stream + bit / 8, sizeof(word));
+        word >>= bit % 8;
+        for (uint64_t k = 0; k < batch; ++k) {
+          const auto code = static_cast<uint32_t>(word) & mask;
+          word >>= bits;
+          if (code >= limit) [[unlikely]] {
+            Corrupted();
+          }
+          const auto token = tokens[code];
+          std::memcpy(out + off, bytes + (token & 0xFFFFFF), kOnPairMaxToken);
+          off += token >> 24;
+        }
+        bit += batch * bits;
+      }
+    }
+    for (; bit != end; bit += bits) {
       uint32_t word = 0;
       std::memcpy(&word, stream + bit / 8, 3);
-      const auto code = (word >> (bit % 8)) & _mask;
-      if (code >= _count) [[unlikely]] {
+      const auto code = (word >> (bit % 8)) & mask;
+      if (code >= limit) [[unlikely]] {
         Corrupted();
       }
-      const auto token = _tokens[code];
+      const auto token = tokens[code];
       const auto len = token >> 24;
-      const auto* from = _bytes.data() + (token & 0xFFFFFF);
+      const auto* from = bytes + (token & 0xFFFFFF);
       if constexpr (kTail) {
         if (off + len > capacity) [[unlikely]] {
           Corrupted();

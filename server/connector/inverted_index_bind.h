@@ -26,7 +26,6 @@
 #include <duckdb/common/optional_ptr.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/main/client_context.hpp>
-#include <duckdb/parser/result_modifier.hpp>
 #include <duckdb/planner/expression.hpp>
 #include <memory>
 #include <span>
@@ -42,6 +41,8 @@ namespace sdb::connector {
 std::vector<ColumnId> KeyColumnIds(const duckdb::CatalogEntry& relation,
                                    std::span<const duckdb::column_t> columns);
 
+bool TermDictIndexable(const duckdb::LogicalType& type);
+
 duckdb::optional_ptr<catalog::TokenizerCatalogEntry> ResolveOpclassTokenizer(
   duckdb::ClientContext& context, duckdb::SchemaCatalogEntry& schema,
   std::string_view name);
@@ -54,7 +55,6 @@ std::shared_ptr<const catalog::InvertedIndexConfig> BindInvertedIndexConfig(
   duckdb::CatalogEntry& relation,
   const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>&
     bound_expressions,
-  const duckdb::LogicalType& generated_pk_type,
-  std::span<const duckdb::OrderByNode> sort_orders);
+  const duckdb::LogicalType& generated_pk_type);
 
 }  // namespace sdb::connector

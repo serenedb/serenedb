@@ -110,7 +110,8 @@ class RawVectorReader {
     : _read_ctx{col_reader, true},
       _vreader{vector_column, _read_ctx},
       _column{&vector_column},
-      _d{d} {}
+      _d{d},
+      _in_memory{vector_column.InMemory()} {}
 
   explicit RawVectorReader(const RawRecipe& recipe)
     : RawVectorReader{*recipe.column, *recipe.reader, recipe.d} {
@@ -171,6 +172,9 @@ class RawVectorReader {
 
   template<int Locality = 3>
   const byte_type* PrefetchRow(doc_id_t doc) noexcept {
+    if (_in_memory) {
+      return nullptr;
+    }
     const auto* child = _column->Child();
     const uint64_t elem = (static_cast<uint64_t>(doc) - doc_limits::min()) * _d;
     const auto w = child->Locate(elem, _win);
@@ -180,8 +184,8 @@ class RawVectorReader {
     }
     const auto& m = blocks[w.block];
     const uint64_t span = static_cast<uint64_t>(_d) * sizeof(float);
-    if (m.codec->type != duckdb::CompressionType::COMPRESSION_UNCOMPRESSED ||
-        elem < w.begin || elem + _d > w.end) {
+    if (m.codec->type != codecs::CodecType::Uncompressed || elem < w.begin ||
+        elem + _d > w.end) {
       return nullptr;
     }
     const uint64_t off = m.file_offset + (elem - w.begin) * sizeof(float);
@@ -207,7 +211,7 @@ class RawVectorReader {
 
  private:
   void HintRun(doc_id_t first, size_t count) noexcept {
-    if (!_read_ctx.HasIn()) {
+    if (_in_memory || !_read_ctx.HasIn()) {
       return;
     }
     const auto* child = _column->Child();
@@ -221,8 +225,8 @@ class RawVectorReader {
     const auto& m = blocks[w.block];
     const uint64_t end =
       std::min<uint64_t>(elem + static_cast<uint64_t>(count) * _d, w.end);
-    if (m.codec->type != duckdb::CompressionType::COMPRESSION_UNCOMPRESSED ||
-        elem < w.begin || end <= elem) {
+    if (m.codec->type != codecs::CodecType::Uncompressed || elem < w.begin ||
+        end <= elem) {
       return;
     }
     file_utils::Hint(_read_ctx.In(),
@@ -231,6 +235,11 @@ class RawVectorReader {
   }
 
   const byte_type* ReadSome(doc_id_t first, size_t count, size_t& got) {
+    if (_in_memory) {
+      got = count;
+      return reinterpret_cast<const byte_type*>(
+        _vreader.ReadDocBatch(first, count));
+    }
     const auto* child = _column->Child();
     SDB_ASSERT(child);
     const uint64_t elem =
@@ -239,7 +248,7 @@ class RawVectorReader {
     const auto window = _win;
     const auto& blocks = child->DataBlocks();
     const auto& meta = blocks[window.block];
-    if (meta.codec->type == duckdb::CompressionType::COMPRESSION_UNCOMPRESSED &&
+    if (meta.codec->type == codecs::CodecType::Uncompressed &&
         elem >= window.begin && elem < window.end) {
       const uint64_t want = elem + static_cast<uint64_t>(count) * _d;
       uint64_t end = window.end;
@@ -249,8 +258,7 @@ class RawVectorReader {
           break;
         }
         const auto& m = blocks[next.block];
-        if (m.codec->type !=
-              duckdb::CompressionType::COMPRESSION_UNCOMPRESSED ||
+        if (m.codec->type != codecs::CodecType::Uncompressed ||
             m.file_offset !=
               meta.file_offset + (next.begin - window.begin) * sizeof(float)) {
           break;
@@ -291,6 +299,7 @@ class RawVectorReader {
   VectorDistanceFn _dist = nullptr;
   std::vector<float> _query;
   uint32_t _d;
+  bool _in_memory;
 };
 
 struct AcceptAll {

@@ -38,8 +38,16 @@ statement ok
 INSERT INTO s1.t VALUES (1, 'foo'), (2, 'bar'), (3, 'bas');
 
 
+statement ok
+VACUUM (FLUSH_ALL);
+
+
+statement ok
+CHECKPOINT;
+
+
 query
-SELECT count(*) > 0 AS indexed FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/*/*');
+SELECT count(*) > 0 AS indexed FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*/*');
 ----
 indexed
 t
@@ -63,7 +71,8 @@ count
 
 connection after_index_drop
 query
-SELECT count(*) AS leftover FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/*/*');
+SELECT count(*) AS leftover FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*/*')
+WHERE file NOT LIKE '%/engine_v1/store/' || (SELECT oid FROM pg_class WHERE relname = 't') || '/%';
 ----
 leftover
 0

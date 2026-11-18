@@ -102,9 +102,9 @@ connection after_rewrite
 statement error
 DROP SEQUENCE ob_released;
 ----
-db error: ERROR: Cannot drop entry "ob_released" because there are entries that depend on it.
-table "ob_d" depends on sequence "ob_released".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence ob_released because other objects depend on it
+DETAIL: default value for column id of table ob_d depends on sequence ob_released
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 connection after_rewrite

@@ -25,17 +25,15 @@
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/vector/unified_vector_format.hpp>
+#include <iresearch/index/field_meta.hpp>
 #include <span>
 #include <string>
 #include <vector>
 
+#include "catalog/entry/inverted_index.h"
+#include "connector/column_id.h"
 #include "server/utils/primary_key.h"
 
-namespace duckdb {
-
-class RowIdDeduplicator;
-
-}  // namespace duckdb
 namespace sdb::connector::primary_key {
 
 std::vector<duckdb::LogicalIndex> KeyColumns(
@@ -52,11 +50,26 @@ void PreparePKFormats(duckdb::DataChunk& chunk,
                       std::span<const PKColumn> columns,
                       std::vector<duckdb::UnifiedVectorFormat>& formats);
 
-duckdb::idx_t KeepFirstRowIds(duckdb::RowIdDeduplicator& seen,
-                              duckdb::DataChunk& chunk, const PKColumn& rowid);
-
 void Create(std::span<const duckdb::UnifiedVectorFormat> formats,
             std::span<const PKColumn> columns, duckdb::idx_t row,
             std::string& key);
+
+// The chunk slot a declared-key column arrives in, with the name to report it
+// under, the type its values are keyed by, and the dictionary layout the index
+// wrote them under: a value is only found again under the layout it was
+// written with, so the layout belongs to the key column, not to a caller.
+struct KeySlot {
+  duckdb::idx_t input_col_idx;
+  std::string name;
+  duckdb::LogicalType type;
+  ColumnId column;
+  irs::DictLayout layout;
+};
+
+std::vector<KeySlot> KeySlots(const duckdb::TableCatalogEntry& entry,
+                              const catalog::InvertedIndexConfig& config);
+
+void VerifyNotNull(duckdb::DataChunk& chunk, std::span<const KeySlot> slots,
+                   duckdb::idx_t count);
 
 }  // namespace sdb::connector::primary_key

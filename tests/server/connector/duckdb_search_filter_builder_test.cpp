@@ -5178,8 +5178,8 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TokenizerCastNullSugar) {
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TokenizerCastNamedNoCatalog) {
-  // 'foo'::tokenize('english') against a unit-test connection has no
-  // SereneDBClientState wired up, so ResolveTokenizerAnalyzer returns
+  // 'foo'::tokenize('english') against a unit-test database has no
+  // such tokenizer in its catalog, so ResolveTokenizerAnalyzer returns
   // an empty wrapper and the cast surfaces a "tokenizer not found"
   // bind error (ERRCODE_UNDEFINED_OBJECT). End-to-end coverage with
   // a real catalog lives in sqllogic.
@@ -5195,7 +5195,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TokenizerCastNamedNoCatalog) {
 TEST_F(SearchFilterBuilderTest,
        test_TSQueryMatch_TokenizeNamedAnalyzerNoCatalog) {
   // 2-arg ts_tokenize(text, name): named analyzer requires a real catalog.
-  // The unit-test connection has no SereneDBClientState, so the
+  // The unit-test database has no such tokenizer, so the
   // resolver returns null and the filter builder throws with
   // ERRCODE_UNDEFINED_OBJECT. End-to-end coverage with a real catalog
   // lives in sqllogic.
@@ -5283,7 +5283,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_AllOfTokenizeListIdentity) {
 }
 
 // 2-arg ts_tokenize(text_array, name) requires a real catalog. The
-// unit-test connection has no SereneDBClientState, so the resolver
+// unit-test database has no such tokenizer, so the resolver
 // returns null and the filter builder throws with
 // ERRCODE_UNDEFINED_OBJECT.
 TEST_F(SearchFilterBuilderTest,
@@ -6623,13 +6623,34 @@ TEST_F(SearchFilterBuilderTest, test_RegexpMatches_TextAnchorsSkipTheirSide) {
   }
 }
 
-TEST_F(SearchFilterBuilderTest, test_RegexpMatches_DeclinesThreeArg) {
-  // 3-arg form (with options) -- not claimed.
+TEST_F(SearchFilterBuilderTest, test_RegexpMatches_ThreeArgCaseOptions) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  AssertFilter(irs::BooleanFilter{},
-               "SELECT * FROM foo WHERE regexp_matches(b, '[a-z]+', 'i')",
-               columns, false);
+  const std::pair<std::string_view, std::string_view> cases[] = {
+    {"i", "(?s:.*)(?:(?i)[a-z]+)(?s:.*)"},  {"c", "(?s:.*)(?:[a-z]+)(?s:.*)"},
+    {"ci", "(?s:.*)(?:(?i)[a-z]+)(?s:.*)"}, {"ic", "(?s:.*)(?:[a-z]+)(?s:.*)"},
+    {"mi", "(?s:.*)(?:(?i)[a-z]+)(?s:.*)"},
+  };
+  for (const auto& [options, pattern] : cases) {
+    irs::BooleanFilter expected;
+    AddRegexpFilter(expected, 1, pattern);
+    AssertFilter(expected,
+                 absl::StrCat("SELECT * FROM foo WHERE regexp_matches(b, "
+                              "'[a-z]+', '",
+                              options, "')"),
+                 columns, true);
+  }
+}
+
+TEST_F(SearchFilterBuilderTest, test_RegexpMatches_DeclinesOtherOptions) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  for (const std::string_view sql : {
+         "SELECT * FROM foo WHERE regexp_matches(b, '[a-z]+', 's')",
+         "SELECT * FROM foo WHERE regexp_matches(b, '[a-z]+', 'il')",
+       }) {
+    AssertFilter(irs::BooleanFilter{}, sql, columns, false);
+  }
 }
 
 TEST_F(SearchFilterBuilderTest, test_RegexpMatches_DeclinesNonKeywordAnalyzer) {

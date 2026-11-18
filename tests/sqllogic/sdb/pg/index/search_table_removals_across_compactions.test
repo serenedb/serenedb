@@ -1,0 +1,155 @@
+statement ok
+CREATE TABLE uc (id INT, v TEXT) WITH (compaction_interval = 0);
+
+statement ok
+INSERT INTO uc VALUES (1, 'a');
+
+statement ok
+VACUUM (COMPACT_TABLE) uc;
+
+statement ok
+INSERT INTO uc VALUES (2, 'b');
+
+connection s2
+statement ok
+BEGIN;
+
+connection s2
+statement ok
+UPDATE uc SET v = 's2' WHERE id = 1;
+
+statement ok
+VACUUM (COMPACT_TABLE) uc;
+
+query
+SELECT count(DISTINCT rowid >> 32) AS segments FROM uc;
+----
+segments
+1
+
+statement ok
+UPDATE uc SET v = 's1' WHERE id = 1;
+
+statement ok
+VACUUM (COMPACT_TABLE) uc;
+
+query
+SELECT count(DISTINCT rowid >> 32) AS segments FROM uc;
+----
+segments
+1
+
+connection s2
+statement error
+COMMIT;
+----
+db error: ERROR: could not serialize access due to concurrent update
+
+
+query
+SELECT id, v FROM uc ORDER BY id;
+----
+id	v
+1	s1
+2	b
+
+statement ok
+CREATE TABLE uc_once (id INT, v TEXT) WITH (compaction_interval = 0);
+
+statement ok
+INSERT INTO uc_once VALUES (1, 'a');
+
+statement ok
+VACUUM (COMPACT_TABLE) uc_once;
+
+statement ok
+INSERT INTO uc_once VALUES (2, 'b');
+
+connection s2
+statement ok
+BEGIN;
+
+connection s2
+statement ok
+UPDATE uc_once SET v = 's2' WHERE id = 1;
+
+statement ok
+VACUUM (COMPACT_TABLE) uc_once;
+
+statement ok
+UPDATE uc_once SET v = 's1' WHERE id = 1;
+
+connection s2
+statement error
+COMMIT;
+----
+db error: ERROR: could not serialize access due to concurrent update
+
+
+query
+SELECT id, v FROM uc_once ORDER BY id;
+----
+id	v
+1	s1
+2	b
+
+statement ok
+CREATE TABLE rp (id INT PRIMARY KEY) WITH (compaction_interval = 0);
+
+statement ok
+INSERT INTO rp VALUES (1);
+
+statement ok
+VACUUM (COMPACT_TABLE) rp;
+
+statement ok
+INSERT INTO rp VALUES (2);
+
+connection s2
+statement ok
+BEGIN;
+
+connection s2
+statement ok
+DELETE FROM rp WHERE id = 1;
+
+statement ok
+CREATE TABLE rc (pid INT REFERENCES rp (id));
+
+statement ok
+INSERT INTO rc VALUES (1);
+
+statement ok
+VACUUM (COMPACT_TABLE) rp;
+
+query
+SELECT count(DISTINCT rowid >> 32) AS segments FROM rp;
+----
+segments
+1
+
+connection s2
+statement error
+COMMIT;
+----
+db error: ERROR: update or delete on table "rp" violates foreign key constraint "rc_pid_fkey" on table "rc"
+DETAIL: Key (id)=(1) is still referenced from table "rc".
+
+
+query
+SELECT (SELECT array_agg(id ORDER BY id) FROM rp) AS parents, (SELECT array_agg(pid) FROM rc) AS children;
+----
+parents	children
+{1,2}	{1}
+
+statement ok
+DROP TABLE rc;
+
+statement ok
+DROP TABLE rp;
+
+statement ok
+DROP TABLE uc;
+
+statement ok
+DROP TABLE uc_once;

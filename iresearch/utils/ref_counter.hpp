@@ -23,7 +23,9 @@
 
 #pragma once
 
+#include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
+#include <absl/functional/any_invocable.h>
 #include <absl/synchronization/mutex.h>
 
 #include <functional>
@@ -41,6 +43,7 @@ template<typename Key,
 class RefCounter : public util::Noncopyable {
  public:
   using ref_t = std::shared_ptr<const Key>;
+  using Released = absl::AnyInvocable<void(const Key&) const noexcept>;
 
   struct EqualTo : Equal {
     using is_transparent = void;
@@ -80,12 +83,20 @@ class RefCounter : public util::Noncopyable {
   template<typename T>
   ref_t add(T&& key) {
     absl::MutexLock lock{&_lock};
+    const auto it = _refs.try_emplace(std::forward<T>(key)).first;
+    if (auto ref = it->second.lock()) {
+      return ref;
+    }
+    auto held = std::make_shared<const Held>(it->first, _hook);
+    ref_t ref{held, &held->key};
+    it->second = ref;
+    return ref;
+  }
 
-    auto it = _refs.lazy_emplace(key, [&](const auto& ctor) {
-      ctor(std::make_shared<const Key>(std::forward<T>(key)));
-    });
-
-    return *it;
+  template<typename T>
+  void Track(T&& key) {
+    absl::MutexLock lock{&_lock};
+    _refs.try_emplace(std::forward<T>(key));
   }
 
   template<typename T>
@@ -103,11 +114,8 @@ class RefCounter : public util::Noncopyable {
   template<typename T>
   size_t find(T&& key) const noexcept {
     absl::MutexLock lock{&_lock};
-    auto itr = _refs.find(std::forward<T>(key));
-
-    return itr == _refs.end()
-             ? 0
-             : (itr->use_count() - 1);  // -1 for usage by refs_ itself
+    const auto it = _refs.find(std::forward<T>(key));
+    return it == _refs.end() ? 0 : it->second.use_count();
   }
 
   bool empty() const noexcept {
@@ -116,34 +124,66 @@ class RefCounter : public util::Noncopyable {
   }
 
   template<typename Visitor>
-  bool visit(const Visitor& visitor, bool remove_unused = false) {
+  bool visit(const Visitor& visitor) const {
     absl::MutexLock lock{&_lock};
-
-    for (auto itr = _refs.begin(), end = _refs.end(); itr != end;) {
-      auto& ref = *itr;
-      SDB_ASSERT(*itr);
-
-      // -1 for usage by refs_ itself
-      auto visit_next = visitor(ref, ref.use_count() - 1);
-
-      if (remove_unused && ref.use_count() == 1) {
-        const auto erase_me = itr++;
-        _refs.erase(erase_me);
-      } else {
-        ++itr;
-      }
-
-      if (!visit_next) {
+    for (const auto& [key, held] : _refs) {
+      if (!visitor(key, static_cast<size_t>(held.use_count()))) {
         return false;
       }
     }
-
     return true;
   }
 
+  template<typename Forget>
+  void ForgetUnused(const Forget& forget) {
+    absl::MutexLock lock{&_lock};
+    absl::erase_if(_refs, [&](const auto& entry) {
+      return entry.second.expired() && forget(entry.first);
+    });
+  }
+
+  void OnRelease(Released released) { _hook->Set(std::move(released)); }
+
  private:
+  class Hook {
+   public:
+    void Set(Released released) {
+      auto shared = std::make_shared<const Released>(std::move(released));
+      absl::MutexLock lock{&_mutex};
+      _released = std::move(shared);
+    }
+
+    void Notify(const Key& key) const noexcept {
+      std::shared_ptr<const Released> released;
+      {
+        absl::MutexLock lock{&_mutex};
+        released = _released;
+      }
+      if (released) {
+        (*released)(key);
+      }
+    }
+
+   private:
+    mutable absl::Mutex _mutex;
+    std::shared_ptr<const Released> _released ABSL_GUARDED_BY(_mutex);
+  };
+
+  struct Held {
+    Held(const Key& key, std::shared_ptr<const Hook> hook)
+      : key{key}, hook{std::move(hook)} {}
+    Held(const Held&) = delete;
+    Held& operator=(const Held&) = delete;
+    ~Held() { hook->Notify(key); }
+
+    Key key;
+    std::shared_ptr<const Hook> hook;
+  };
+
   mutable absl::Mutex _lock;
-  absl::flat_hash_set<ref_t, Hash, EqualTo> _refs ABSL_GUARDED_BY(_lock);
+  absl::flat_hash_map<Key, std::weak_ptr<const Key>, Hasher, Equal> _refs
+    ABSL_GUARDED_BY(_lock);
+  std::shared_ptr<Hook> _hook = std::make_shared<Hook>();
 };
 
 }  // namespace irs

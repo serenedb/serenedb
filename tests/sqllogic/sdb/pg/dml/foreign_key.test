@@ -17,14 +17,57 @@ INSERT INTO fk_child VALUES (10, 1);
 statement error
 INSERT INTO fk_child VALUES (11, 99);
 ----
-db error: ERROR: Violates foreign key constraint because key "id: 99" does not exist in the referenced table
+db error: ERROR: insert or update on table "fk_child" violates foreign key constraint "fk_child_p_fkey"
+DETAIL: Key (p)=(99) is not present in table "fk_parent".
 
 
-# Deleting a still-referenced parent is rejected (default RESTRICT).
+# Deleting a still-referenced parent is rejected (default NO ACTION).
 statement error
 DELETE FROM fk_parent WHERE id = 1;
 ----
-db error: ERROR: Violates foreign key constraint because key "p: 1" is still referenced by a foreign key in a different table. If this is an unexpected constraint violation, please refer to our foreign key limitations in the documentation
+db error: ERROR: update or delete on table "fk_parent" violates foreign key constraint "fk_child_p_fkey" on table "fk_child"
+DETAIL: Key (id)=(1) is still referenced from table "fk_child".
+
+
+# Changing a referenced key is rejected; changing another column is not.
+statement error
+UPDATE fk_parent SET id = 5 WHERE id = 1;
+----
+db error: ERROR: update or delete on table "fk_parent" violates foreign key constraint "fk_child_p_fkey" on table "fk_child"
+DETAIL: Key (id)=(1) is still referenced from table "fk_child".
+
+
+statement count 1
+UPDATE fk_parent SET label = 'uno' WHERE id = 1;
+
+statement error
+TRUNCATE fk_parent;
+----
+db error: ERROR: cannot truncate a table referenced in a foreign key constraint
+DETAIL: Table "fk_child" references "fk_parent".
+HINT: Truncate table "fk_child" at the same time, or use TRUNCATE ... CASCADE.
+
+
+# A parent row and the child referencing it inserted in one transaction; the
+# delete of that parent row in the same transaction is refused.
+statement ok
+BEGIN
+
+statement ok
+INSERT INTO fk_parent VALUES (3, 'three')
+
+statement ok
+INSERT INTO fk_child VALUES (13, 3)
+
+statement error
+DELETE FROM fk_parent WHERE id = 3
+----
+db error: ERROR: update or delete on table "fk_parent" violates foreign key constraint "fk_child_p_fkey" on table "fk_child"
+DETAIL: Key (id)=(3) is still referenced from table "fk_child".
+
+
+statement ok
+ROLLBACK
 
 
 # An unreferenced parent deletes fine.
@@ -88,11 +131,9 @@ INSERT INTO fk_child_i VALUES (10, 1, 'valid child row');
 statement error
 INSERT INTO fk_child_i VALUES (11, 77, 'orphan child row');
 ----
-db error: ERROR: Violates foreign key constraint because key "id: 77" does not exist in the referenced table
+db error: ERROR: insert or update on table "fk_child_i" violates foreign key constraint "fk_child_i_p_fkey"
+DETAIL: Key (p)=(77) is not present in table "fk_parent_i".
 
-
-statement ok
-VACUUM (REFRESH_TABLE) fk_child_i;
 
 query
 SELECT id FROM fk_child_i_inv WHERE body @@ ts_phrase('valid child');
@@ -112,10 +153,8 @@ DROP TABLE fk_child_i;
 statement ok
 DROP TABLE fk_parent_i;
 
-# Self-referencing FOREIGN KEY must be enforced (a row's parent must exist),
-# not silently accepted. (Matches native duckdb: a row referencing itself in a
-# single INSERT is rejected because the row is not yet visible -- PG defers the
-# check, but that is a duckdb-wide behavior, so this stays in the sdb subtree.)
+# Self-referencing FOREIGN KEY: checked at the end of the statement, so rows of
+# one INSERT may reference each other.
 statement ok
 CREATE TABLE fk_self (id INTEGER PRIMARY KEY, parent INTEGER, FOREIGN KEY (parent) REFERENCES fk_self (id));
 
@@ -125,13 +164,25 @@ INSERT INTO fk_self VALUES (1, NULL);
 statement ok
 INSERT INTO fk_self VALUES (2, 1);
 
-# dangling parent must be rejected
 statement error
 INSERT INTO fk_self VALUES (3, 99);
+----
+db error: ERROR: insert or update on table "fk_self" violates foreign key constraint "fk_self_parent_fkey"
+DETAIL: Key (parent)=(99) is not present in table "fk_self".
 
-# deleting a row still referenced by another must be rejected
+
+statement ok
+INSERT INTO fk_self VALUES (5, 6), (6, 5);
+
 statement error
 DELETE FROM fk_self WHERE id = 1;
+----
+db error: ERROR: update or delete on table "fk_self" violates foreign key constraint "fk_self_parent_fkey" on table "fk_self"
+DETAIL: Key (id)=(1) is still referenced from table "fk_self".
+
+
+statement ok
+DELETE FROM fk_self WHERE id IN (5, 6);
 
 query
 SELECT id, parent FROM fk_self ORDER BY id;
@@ -156,9 +207,27 @@ CREATE TABLE fk_u_child (id INTEGER PRIMARY KEY, pid INTEGER, FOREIGN KEY (pid) 
 
 statement error
 INSERT INTO fk_u_child VALUES (10, 999);
+----
+db error: ERROR: insert or update on table "fk_u_child" violates foreign key constraint "fk_u_child_pid_fkey"
+DETAIL: Key (pid)=(999) is not present in table "fk_u_parent".
+
 
 statement ok
 INSERT INTO fk_u_child VALUES (11, 1);
+
+statement error
+ALTER TABLE fk_u_parent DROP CONSTRAINT fk_u_parent_id_key;
+----
+db error: ERROR: cannot drop constraint fk_u_parent_id_key on table fk_u_parent because other objects depend on it
+DETAIL: constraint fk_u_child_pid_fkey on table fk_u_child depends on index fk_u_parent_id_key
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+
+
+statement ok
+ALTER TABLE fk_u_parent DROP CONSTRAINT fk_u_parent_id_key CASCADE;
+
+statement ok
+INSERT INTO fk_u_child VALUES (12, 999);
 
 statement ok
 DROP TABLE fk_u_child;
@@ -191,3 +260,93 @@ DROP TABLE fk_refl_c;
 
 statement ok
 DROP TABLE fk_refl_p;
+
+# ALTER TABLE ADD FOREIGN KEY checks the rows already there, then holds on both
+# sides until the constraint is dropped.
+statement ok
+CREATE TABLE fk_a_p (a INTEGER PRIMARY KEY);
+
+statement ok
+INSERT INTO fk_a_p VALUES (1), (2);
+
+statement ok
+CREATE TABLE fk_a_c (id INTEGER, pa INTEGER);
+
+statement ok
+INSERT INTO fk_a_c VALUES (1, 1), (2, 7);
+
+statement error
+ALTER TABLE fk_a_c ADD CONSTRAINT fk_a_c_pa FOREIGN KEY (pa) REFERENCES fk_a_p (a);
+----
+db error: ERROR: insert or update on table "fk_a_c" violates foreign key constraint "fk_a_c_pa"
+DETAIL: Key (pa)=(7) is not present in table "fk_a_p".
+
+
+statement ok
+DELETE FROM fk_a_c WHERE id = 2;
+
+statement ok
+ALTER TABLE fk_a_c ADD CONSTRAINT fk_a_c_pa FOREIGN KEY (pa) REFERENCES fk_a_p (a);
+
+statement error
+INSERT INTO fk_a_c VALUES (3, 8);
+----
+db error: ERROR: insert or update on table "fk_a_c" violates foreign key constraint "fk_a_c_pa"
+DETAIL: Key (pa)=(8) is not present in table "fk_a_p".
+
+
+statement error
+DELETE FROM fk_a_p WHERE a = 1;
+----
+db error: ERROR: update or delete on table "fk_a_p" violates foreign key constraint "fk_a_c_pa" on table "fk_a_c"
+DETAIL: Key (a)=(1) is still referenced from table "fk_a_c".
+
+
+statement ok
+ALTER TABLE fk_a_c DROP CONSTRAINT fk_a_c_pa;
+
+statement count 1
+DELETE FROM fk_a_p WHERE a = 1;
+
+statement ok
+DROP TABLE fk_a_c;
+
+statement ok
+DROP TABLE fk_a_p;
+
+statement ok
+CREATE TABLE fk_w_p(id INTEGER PRIMARY KEY, u INTEGER UNIQUE);
+
+statement ok
+CREATE TABLE fk_w_c(id INTEGER PRIMARY KEY, u INTEGER REFERENCES fk_w_p(u));
+
+statement ok
+SET threads = 1;
+
+statement count 4096
+INSERT INTO fk_w_p SELECT i, CASE WHEN i = 0 THEN NULL ELSE i END FROM range(4096) t(i);
+
+statement ok
+RESET threads;
+
+statement count 1
+INSERT INTO fk_w_c VALUES (1, 2048);
+
+statement error
+DELETE FROM fk_w_p WHERE id >= 0;
+----
+db error: ERROR: update or delete on table "fk_w_p" violates foreign key constraint "fk_w_c_u_fkey" on table "fk_w_c"
+DETAIL: Key (u)=(2048) is still referenced from table "fk_w_c".
+
+
+query
+SELECT count(*) FROM fk_w_p;
+----
+count
+4096
+
+statement ok
+DROP TABLE fk_w_c;
+
+statement ok
+DROP TABLE fk_w_p;

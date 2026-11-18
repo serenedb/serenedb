@@ -762,11 +762,11 @@ std::shared_ptr<const irs::DocRemoval> RemovalOf(
     if (!field) {
       continue;
     }
-    const auto masked = segment.MaskedDocs();
+    const auto* masked = segment.docs_mask();
     for (const auto& value : terms.values) {
       field->ReadDocs(irs::ViewCast<irs::byte_type>(std::string_view{value}),
                       [&](irs::doc_id_t doc) {
-                        if (!masked.Contains(doc)) {
+                        if (!(masked && masked->Contains(doc))) {
                           removal.Add(index, doc);
                         }
                         return true;

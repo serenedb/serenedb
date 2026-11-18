@@ -49,10 +49,6 @@ statement ok
 INSERT INTO map_t VALUES (5, 'fifth',  MAP {'e': NULL, 'f': 5})
 
 
-statement ok
-VACUUM (REFRESH_TABLE) map_t
-
-
 # Sanity: the MAP column is served by the iresearch columnstore (i),
 # pk falls through to the rocksdb lookup (l).
 query
@@ -61,13 +57,13 @@ EXPLAIN SELECT pk, attrs FROM map_t_idx WHERE text_for_search @@ ts_phrase('firs
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────╮
 │ Index: map_t_idx                   │
-│ Lookup: table                      │
+│ Lookup: search                     │
 │ Index Filter:                      │
 │ ╭─ Term ─────────────────────────╮ │
 │ │ Field: text_for_search(string) │ │
 │ │ Value: first                   │ │
 │ ╰────────────────────────────────╯ │
-│ Projections: pk (l), attrs (i)     │
+│ Projections: pk, attrs             │
 │ ~1 row                             │
 ╰────────────────────────────────────╯
 

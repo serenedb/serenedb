@@ -39,10 +39,6 @@ SELECT id, body
 FROM read_json('${__TEST_DIR__}/null_writer.jsonl');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) rj_t;
-
-
 query
 SELECT count(*) FROM rj_idx;
 ----
@@ -101,10 +97,6 @@ statement ok
 UPDATE upd_t SET body = NULL WHERE id % 2 = 0;
 
 
-statement ok
-VACUUM (REFRESH_TABLE) upd_t;
-
-
 query
 SELECT count(*) FROM upd_idx;
 ----
@@ -151,10 +143,6 @@ CREATE INDEX const_idx ON const_t
 statement ok
 INSERT INTO const_t
 SELECT s::INT, NULL::VARCHAR FROM generate_series(1, 1024) AS s;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) const_t;
 
 
 query

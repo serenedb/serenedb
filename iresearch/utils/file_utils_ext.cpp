@@ -25,7 +25,6 @@
 
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_format.h>
-#include <fast_float/fast_float.h>
 
 #include <algorithm>
 #include <atomic>
@@ -54,68 +53,16 @@
 
 #include <dirent.h>
 #include <fcntl.h>
-#include <sys/file.h>
 #include <sys/mman.h>
 #include <sys/resource.h>
 #include <unistd.h>
 
 #endif  // _WIN32
 
-#include "iresearch/utils/log.hpp"
-#include "iresearch/utils/network_utils.hpp"
-
-#ifdef _WIN32
-#include <Windows.h>
-#include <process.h>  // _getpid
-#include <tlhelp32.h>
-#else
-#include <unistd.h>  // getpid
-
-#include <csignal>
-#endif
-
 #include <cstdlib>
-#include <limits>
 
-namespace irs {
+#include "iresearch/utils/log.hpp"
 
-bool IsRunning(pid_t pid) {
-#ifdef _WIN32
-  HANDLE ps = CreateToolhelp32Snapshot(TH32CS_SNAPALL, 0);
-  PROCESSENTRY32 pe = {0};
-  pe.dwSize = sizeof(pe);
-  if (Process32First(ps, &pe)) {
-    do {
-      if (pe.th32ProcessID == DWORD(pid)) {
-        CloseHandle(ps);
-        return true;
-      }
-    } while (Process32Next(ps, &pe));
-  }
-  CloseHandle(ps);
-  return false;
-#else
-  return 0 == kill(pid, 0);
-#endif
-}
-
-pid_t GetPid() {
-#ifdef _WIN32
-  return _getpid();
-#else
-  return getpid();
-#endif
-}
-
-bool IsValidPid(const char* buf) {
-  long pid = 0;
-  fast_float::from_chars(buf, buf + std::strlen(buf), pid);
-  return 0 != pid && pid <= std::numeric_limits<pid_t>::max() &&
-         pid >= std::numeric_limits<pid_t>::min() &&
-         IsRunning(static_cast<pid_t>(pid));
-}
-
-}  // namespace irs
 namespace {
 
 #ifdef _WIN32
@@ -175,31 +122,6 @@ void FileDeleter::operator()(void* f) const noexcept {
     }
     ::close(fd);
   }
-#endif
-}
-
-void LockFileDeleter::operator()(void* handle) const {
-  if (handle) {
-#ifdef _WIN32
-    if (handle != INVALID_HANDLE_VALUE) {
-      ::CloseHandle(handle);
-    }
-#else
-    const int fd = HANDLE_CAST(handle);
-    if (fd < 0) {
-      return;  // invalid desriptor
-    }
-    flock(fd, LOCK_UN);  // unlock file
-    close(fd);           // close file
-#endif
-  }
-}
-
-static bool Exists(const path_char_t* file) {
-#ifdef _WIN32
-  return TRUE == ::PathFileExists(file);
-#else
-  return 0 == access(file, F_OK);
 #endif
 }
 
@@ -515,128 +437,6 @@ long Ftell(void* fd) {
 }
 
 #ifdef _WIN32
-namespace {
-
-constexpr DWORD FS_DEFERRED_DELETE_TIMEOUT = 10;
-constexpr int CREATE_FILE_TRIES = 3;
-
-}  // namespace
-
-bool verify_lock_file(const path_char_t* file) {
-  if (!exists(file)) {
-    return false;  // not locked
-  }
-
-  HANDLE handle =
-    ::CreateFileW(file,
-                  GENERIC_WRITE | GENERIC_READ,  // write access
-                  0,                      // prevent access from other processes
-                  NULL,                   // default security attributes
-                  OPEN_EXISTING,          // open existing file
-                  FILE_ATTRIBUTE_NORMAL,  // use normal file attributes
-                  NULL);
-
-  if (INVALID_HANDLE_VALUE == handle) {
-    if (ERROR_SHARING_VIOLATION == GET_ERROR()) {
-      return true;  // locked
-    }
-    return false;  // not locked
-  }
-
-  char buf[256]{};
-  // read file content
-  {
-    DWORD size;
-    const BOOL res = ::ReadFile(handle, buf, sizeof buf, &size, NULL);
-    ::CloseHandle(handle);
-
-    if (FALSE == res || 0 == size || sizeof buf == size) {
-      // invalid file format or string too long
-      return false;  // not locked
-    }
-  }
-
-  // check hostname
-  const size_t len = strlen(buf);
-  if (!is_same_hostname(buf, len)) {
-    SDB_DEBUG(IRESEARCH, "Index locked by another host, hostname: '",
-              std::string_view{buf, len}, "', file: '", ToStr(file), "'");
-    return true;  // locked
-  }
-
-  // check pid
-  const char* pid = buf + len + 1;
-  if (is_valid_pid(pid)) {
-    SDB_DEBUG(IRESEARCH, "Index locked by another process, PID: '", pid,
-              "', file: '", ToStr(file), "'");
-    return true;  // locked
-  }
-
-  return false;  // not locked
-}
-
-lock_handle_t create_lock_file(const path_char_t* file) {
-  HANDLE fd = INVALID_HANDLE_VALUE;
-  // windows has a deferred deletion and with rapid locking/unlocking same lock
-  // file could fail to be created so we try several times
-  int try_count = CREATE_FILE_TRIES;
-  do {
-    fd = ::CreateFileW(file,
-                       GENERIC_WRITE,  // write access
-                       0,              // prevent access from other processes
-                       NULL,           // default security attributes
-                       CREATE_ALWAYS,  // always create file
-                       FILE_FLAG_DELETE_ON_CLOSE,  // allow OS to remove file
-                                                   // when process finished
-                       NULL);
-
-    if (ERROR_ACCESS_DENIED != GET_ERROR()) {
-      break;
-    } else {
-      ::Sleep(FS_DEFERRED_DELETE_TIMEOUT);  // give some time for file system to
-                                            // finalize deletion
-    }
-  } while ((--try_count) > 0);
-
-  if (INVALID_HANDLE_VALUE == fd) {
-    SDB_ERROR(IRESEARCH, "Unable to create lock file: '", ToStr(file),
-              "', error: ", GET_ERROR());
-    return nullptr;
-  }
-
-  lock_handle_t handle(reinterpret_cast<void*>(fd));
-  char buf[256];
-
-  // write hostname to lock file
-  if (const int err = get_host_name(buf, sizeof buf - 1)) {
-    SDB_ERROR(IRESEARCH, "Unable to get hostname, error: ", err);
-    return nullptr;
-  }
-
-  if (!file_utils::write(fd, buf, strlen(buf) + 1)) {  // include terminate 0
-    SDB_ERROR(IRESEARCH, "Unable to write lock file: '", ToStr(file),
-              "', error: ", GET_ERROR());
-    return nullptr;
-  }
-
-  // write PID to lock file
-  const size_t size = absl::SNPrintF(buf, sizeof(buf), "%d", get_pid());
-  if (!file_utils::write(fd, buf, size)) {
-    SDB_ERROR(IRESEARCH, "Unable to write lock file: '", ToStr(file),
-              "', error: ", GET_ERROR());
-    return nullptr;
-  }
-
-  // flush buffers
-  if (::FlushFileBuffers(fd) <= 0) {
-    SDB_ERROR(IRESEARCH, "Unable to flush lock file: '", ToStr(file),
-              "', error: ", GET_ERROR());
-    return nullptr;
-  }
-
-  return handle;
-}
-
 bool file_sync(const path_char_t* file) noexcept {
   HANDLE handle =
     ::CreateFileW(file, GENERIC_WRITE, FILE_SHARE_WRITE | FILE_SHARE_READ, NULL,
@@ -662,120 +462,6 @@ bool file_sync(int fd) noexcept {
 }
 
 #else
-
-bool VerifyLockFile(const path_char_t* file) {
-  if (!Exists(file)) {
-    return false;  // not locked
-  }
-
-  const int fd = ::open(file, O_RDONLY);
-
-  if (fd < 0) {
-    SDB_ERROR(IRESEARCH, "Unable to open lock file '", file,
-              "' for verification, error: ", GET_ERROR());
-    return false;  // not locked
-  }
-
-  char buf[256];
-  ssize_t size;
-  // read file content
-  {
-    lock_handle_t handle(reinterpret_cast<void*>(fd));
-
-    // try to apply advisory lock on lock file
-    if (flock(fd, LOCK_EX | LOCK_NB)) {
-      if (EWOULDBLOCK == GET_ERROR()) {
-        SDB_ERROR(IRESEARCH, "Lock file '", file, "' is already locked");
-        return true;  // locked
-      } else {
-        SDB_ERROR(IRESEARCH, "Unable to apply lock on lock file: '", file,
-                  "', error: ", GET_ERROR());
-        return false;  // not locked
-      }
-    }
-
-    size = Fread(handle.get(), buf, sizeof buf);
-  }
-
-  if (size <= 0 || sizeof buf == size) {
-    // invalid file format or string too long
-    return false;  // not locked
-  }
-  buf[size] = 0;  // set termination 0
-
-  // check hostname
-  const size_t len = strlen(buf);  // hostname length
-  if (!IsSameHostname(buf, len)) {
-    SDB_DEBUG(IRESEARCH, "Index locked by another host, hostname: '",
-              std::string_view{buf, len}, "', file: '", file, "'");
-    return true;  // locked
-  }
-
-  if (len >= size_t(size)) {
-    // no PID in buf
-    return false;  // not locked
-  }
-
-  // check pid
-  const char* pid = buf + len + 1;
-  if (IsValidPid(pid)) {
-    SDB_DEBUG(IRESEARCH, "Index locked by another process, PID: '", pid,
-              "', file: '", file, "'");
-    return true;  // locked
-  }
-
-  return false;  // not locked
-}
-
-lock_handle_t CreateLockFile(const path_char_t* file) {
-  const int fd = ::open(file, O_CREAT | O_EXCL | O_RDWR, S_IRUSR | S_IWUSR);
-
-  if (fd < 0) {
-    SDB_ERROR(IRESEARCH, "Unable to create lock file: '", file,
-              "', error: ", GET_ERROR());
-    return nullptr;
-  }
-
-  lock_handle_t handle(reinterpret_cast<void*>(fd));
-  char buf[256];
-
-  // write hostname to lock file
-  if (const int err = GetHostName(buf, sizeof buf - 1)) {
-    SDB_ERROR(IRESEARCH, "Unable to get hostname, error: ", err);
-    return nullptr;
-  }
-
-  if (!file_utils::Write(reinterpret_cast<void*>(fd), buf,
-                         strlen(buf) + 1)) {  // include terminated 0
-    SDB_ERROR(IRESEARCH, "Unable to write lock file: '", file,
-              "', error: ", GET_ERROR());
-    return nullptr;
-  }
-
-  // write PID to lock file
-  size_t size = absl::SNPrintF(buf, sizeof(buf), "%d", GetPid());
-  if (!file_utils::Write(reinterpret_cast<void*>(fd), buf, size)) {
-    SDB_ERROR(IRESEARCH, "Unable to write lock file: '", file,
-              "', error: ", GET_ERROR());
-    return nullptr;
-  }
-
-  // flush buffers
-  if (fsync(fd)) {
-    SDB_ERROR(IRESEARCH, "Unable to write lock file: '", file,
-              "', error: ", GET_ERROR());
-    return nullptr;
-  }
-
-  // try to apply advisory lock on lock file
-  if (flock(fd, LOCK_EX)) {
-    SDB_ERROR(IRESEARCH, "Unable to write lock file: '", file,
-              "', error: ", GET_ERROR());
-    return nullptr;
-  }
-
-  return handle;
-}
 
 bool FileSync(const path_char_t* file) noexcept {
   const int handle = ::open(file, O_WRONLY);

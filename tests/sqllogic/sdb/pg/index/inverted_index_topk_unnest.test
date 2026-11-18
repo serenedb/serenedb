@@ -3,7 +3,7 @@ CREATE TEXT SEARCH DICTIONARY itu_d AS split_text_csv(' ')
   WITH (frequency, position);
 
 statement ok
-CREATE TABLE itu (id INTEGER PRIMARY KEY, body TEXT, n INTEGER);
+CREATE TABLE itu (id INTEGER PRIMARY KEY, body TEXT, n INTEGER) WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO itu VALUES
@@ -14,11 +14,7 @@ INSERT INTO itu VALUES
   (5, 'dog', 50);
 
 statement ok
-CREATE INDEX itu_idx ON itu USING inverted(id, body itu_d) INCLUDE (n)
-  WITH (refresh_interval = 0, compaction_interval = 0);
-
-statement ok
-VACUUM (REFRESH_TABLE) itu;
+CREATE INDEX itu_idx ON itu USING inverted(id, body itu_d) INCLUDE (n);
 
 statement ok
 PREPARE itu_q AS

@@ -410,18 +410,11 @@ void OnPairCodec::Export(std::string& side) const {
   }
 }
 
-const duckdb::CompressionFunction& OnPairFunction() {
-  static const auto kFunction =
-    text::StringFunction<text::PlainScan<text::OnPairLeaf>>(
-      duckdb::CompressionType::COMPRESSION_COL_ONPAIR);
-  return kFunction;
-}
+constinit const CompressionFunction kOnPairFunction =
+  text::StringFunction<text::PlainScan<text::OnPairLeaf>>(CodecType::OnPair);
 
-const duckdb::CompressionFunction& DictOnPairFunction() {
-  static const auto kFunction =
-    text::StringFunction<text::DictionaryScan<text::OnPairLeaf>>(
-      duckdb::CompressionType::COMPRESSION_COL_DICT_ONPAIR);
-  return kFunction;
-}
+constinit const CompressionFunction kDictOnPairFunction =
+  text::StringFunction<text::DictionaryScan<text::OnPairLeaf>>(
+    CodecType::DictOnPair);
 
 }  // namespace irs::codecs

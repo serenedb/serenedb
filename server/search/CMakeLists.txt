@@ -1,17 +1,15 @@
 target_sources(
     sereneserver
     PRIVATE
-        compaction/merge_planner.cpp
-        compaction/merge_registry.cpp
-        compaction/merge_runner.cpp
-        feeder.cpp
-        index_durability.cpp
-        replay.cpp
-        row_position_wal.cpp
+        hot_keys.cpp
+        log_entry.cpp
         store.cpp
         store_stats.cpp
         search_analyzer_impl.cpp
         scorer_options.cpp
+        table.cpp
+        table_keys.cpp
+        table_replay.cpp
         task.cpp
         wal_recovery.cpp
         writer_generations.cpp

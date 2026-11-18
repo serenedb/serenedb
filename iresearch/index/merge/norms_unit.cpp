@@ -229,7 +229,7 @@ LiveNormStats ComputeLiveNormStats(field_id id,
     stats.sum += column->Sum();
     stats.non_zero += column->NonZeroCount();
     if (const auto* removed = src.reader->docs_mask()) {
-      removed->ForEachRun(nullptr, [&](doc_id_t first, doc_id_t end) {
+      removed->ForEachRun([&](doc_id_t first, doc_id_t end) {
         for (auto doc = first; doc != end;) {
           const auto n = std::min<size_t>(
             {end - doc, column->Locate(doc).end_doc - doc, kNormMergeChunk});

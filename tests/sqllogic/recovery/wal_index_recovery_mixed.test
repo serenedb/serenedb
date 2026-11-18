@@ -26,10 +26,8 @@ statement ok
 CREATE INDEX wal_mix_idx ON wal_mix_t USING inverted(a, b mix_dict);
 
 statement ok
-VACUUM (REFRESH_TABLE) wal_mix_t;
+VACUUM (FLUSH_TABLE) wal_mix_t;
 
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 # pk=2: only delete → must disappear
 statement ok
@@ -63,7 +61,7 @@ SELECT 1;
 
 connection mix_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (REFRESH_TABLE) wal_mix_t;
+SELECT 1;
 
 # pk=1 untouched
 connection mix_after

@@ -58,19 +58,12 @@ std::unique_ptr<zxc_cctx, ZxcFree> NewContext(uint8_t level) {
 
 }  // namespace
 
-const duckdb::CompressionFunction& ZxcFunction() {
-  static const auto kFunction =
-    text::StringFunction<text::PlainScan<text::BlobLeaf<Zxc>>>(
-      duckdb::CompressionType::COMPRESSION_ZXC);
-  return kFunction;
-}
+constinit const CompressionFunction kZxcFunction =
+  text::StringFunction<text::PlainScan<text::BlobLeaf<Zxc>>>(CodecType::Zxc);
 
-const duckdb::CompressionFunction& DictZxcFunction() {
-  static const auto kFunction =
-    text::StringFunction<text::DictionaryScan<text::BlobLeaf<Zxc>>>(
-      duckdb::CompressionType::COMPRESSION_DICT_ZXC);
-  return kFunction;
-}
+constinit const CompressionFunction kDictZxcFunction =
+  text::StringFunction<text::DictionaryScan<text::BlobLeaf<Zxc>>>(
+    CodecType::DictZxc);
 
 Zxc::Compressor::Compressor(uint8_t level)
   : _level{level}, _ctx{NewContext(level)} {}
@@ -78,11 +71,6 @@ Zxc::Compressor::Compressor(uint8_t level)
 bool Zxc::Compressor::Train(std::string_view frames,
                             std::span<const size_t> sizes) {
   TrainDictionary(frames, sizes, kDictionaryCap, _dictionary);
-  return Pack();
-}
-
-bool Zxc::Compressor::Adopt(std::string_view dictionary) {
-  _dictionary.assign(dictionary);
   return Pack();
 }
 

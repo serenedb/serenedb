@@ -33,9 +33,8 @@ CREATE TEXT SEARCH DICTIONARY en_prune AS
     WITH (frequency, position, norm);
 
 
-
 statement ok
-CREATE TABLE prune_huge (id INTEGER PRIMARY KEY, body VARCHAR);
+CREATE TABLE prune_huge (id INTEGER PRIMARY KEY, body VARCHAR) WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 
 
 statement ok
@@ -88,20 +87,11 @@ INSERT INTO plain_huge SELECT * FROM prune_huge;
 
 
 statement ok
-CREATE INDEX prune_huge_idx ON prune_huge USING inverted(id, body en_prune)
-  WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+CREATE INDEX prune_huge_idx ON prune_huge USING inverted(id, body en_prune);
 
 
 statement ok
 CREATE INDEX plain_huge_idx ON plain_huge USING inverted(id, body en_prune);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) prune_huge;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) plain_huge;
 
 
 # Sanity: both indexes saw the same vocabulary distribution.

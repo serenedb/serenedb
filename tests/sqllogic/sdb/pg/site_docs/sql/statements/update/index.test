@@ -61,7 +61,8 @@ CREATE OR REPLACE TABLE new AS
 
 query
 SELECT *
-FROM original;
+FROM original
+ORDER BY key;
 ----
 key	value
 1	original value
@@ -96,7 +97,8 @@ UPDATE original
 
 query
 SELECT *
-FROM original;
+FROM original
+ORDER BY key;
 ----
 key	value
 1	new value
@@ -148,9 +150,10 @@ WHERE city.country_code = country.code
 
 query
 SELECT *
-FROM city;
+FROM city
+ORDER BY name;
 ----
 name	revenue	country_code
-Paris	800	FR
-Lyon	300	FR
 Brussels	400	BE
+Lyon	300	FR
+Paris	800	FR

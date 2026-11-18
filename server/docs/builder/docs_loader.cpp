@@ -38,6 +38,8 @@
 #include <duckdb/main/query_result.hpp>
 #include <exception>
 #include <filesystem>
+#include <iresearch/index/file_names.hpp>
+#include <iresearch/index/segment_list.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/static_strings.hpp>
@@ -51,7 +53,7 @@
 #include "catalog/cluster.h"
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
-#include "connector/duckdb_client_state.h"
+#include "connector/column_id.h"
 #include "docs/builder/docs_data.h"
 #include "docs/docs_index_data.h"
 #include "pg/catalog/oids.h"
@@ -87,7 +89,7 @@ CREATE TABLE sdb_docs_build.docs (
   title TEXT NOT NULL,
   breadcrumb TEXT NOT NULL,
   content TEXT NOT NULL USING COMPRESSION zstd
-) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+) WITH (compaction_interval = 0);
 
 CREATE INDEX docs_fts ON sdb_docs_build.docs USING inverted (
   title sdb_docs_build.tokenizer,
@@ -106,7 +108,7 @@ CREATE TABLE sdb_docs_build.objects (
   category TEXT,
   breadcrumb TEXT,
   names TEXT[]
-) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+) WITH (compaction_interval = 0);
 
 CREATE INDEX objects_names ON sdb_docs_build.objects USING inverted (
   names, kind);
@@ -245,37 +247,27 @@ class Loader {
  public:
   Loader(std::string_view database, duckdb::idx_t database_id,
          std::span<const Doc> docs)
-    : _conn{irs::DuckDBEngine::Instance().CreateConnection()},
-      _ctx{std::make_shared<ConnectionContext>(
-        *_conn->context, irs::StaticStrings::kDefaultUser, std::string_view{},
-        pg::kRootUser, database, database_id, nullptr, 0, nullptr)},
-      _progress{
-        connector::SereneDBClientState::Register(*_conn->context, _ctx, false)
-          .progress_source},
-      _docs{docs} {
-    connector::SetDefaultSearchPath(*_conn->context, database);
-  }
-
-  ~Loader() {
-    _ctx->ConsumeNotices([](auto& notice) {
-      SDB_INFO(STARTUP, "embedded docs: ", notice.errmsg);
-    });
-  }
+    : _system{{.user = irs::StaticStrings::kDefaultUser,
+               .role = pg::kRootUser,
+               .database = database,
+               .database_id = database_id},
+              {.what = "embedded docs in database", .name = database}},
+      _docs{docs} {}
 
   std::vector<IndexBlob> Build() {
     if (!Run(Sql(kBuildSql)) || !Insert() ||
-        !Run(absl::StrCat("VACUUM (REFRESH_TABLE) ", kTable)) ||
         !Run(absl::StrCat(
           "INSERT INTO ", kObjectsTable,
           " SELECT *, list_filter(list_prepend(lower(name), "
           "list_transform(string_split(coalesce(aliases, ''), ','), "
           "lambda part: lower(trim(part)))), lambda term: term <> '') FROM (",
-          Sql(kObjectsSql), ")")) ||
-        !Run(absl::StrCat("VACUUM (REFRESH_TABLE) ", kObjectsTable))) {
+          Sql(kObjectsSql), ")"))) {
       return {};
     }
-    auto image = ExportImage(*_conn->context, _ctx->GetDatabase(), "docs");
-    auto objects = ExportImage(*_conn->context, _ctx->GetDatabase(), "objects");
+    auto& context = *_system.conn->context;
+    const auto& database = ConnectionContext::Get(context).GetDatabase();
+    auto image = ExportImage(context, database, "docs");
+    auto objects = ExportImage(context, database, "objects");
     if (image.empty() || objects.empty()) {
       return {};
     }
@@ -284,7 +276,7 @@ class Loader {
   }
 
   bool Run(const std::string& sql) {
-    auto result = _conn->Query(sql);
+    auto result = _system.conn->Query(sql);
     if (!result->HasError()) {
       return true;
     }
@@ -306,7 +298,7 @@ class Loader {
       }
       sql.push_back(')');
     }
-    auto prepared = _conn->Prepare(sql);
+    auto prepared = _system.conn->Prepare(sql);
     if (prepared->HasError()) {
       SDB_WARN(GENERAL,
                "embedded docs: prepare insert failed: ", prepared->GetError());
@@ -346,9 +338,7 @@ class Loader {
     return true;
   }
 
-  duckdb::unique_ptr<duckdb::Connection> _conn;
-  std::shared_ptr<ConnectionContext> _ctx;
-  pg::ProgressRegistration _progress;
+  SystemConnection _system;
   std::span<const Doc> _docs;
 };
 
@@ -386,7 +376,7 @@ std::string DescribeLayout(const catalog::SearchTableEntry& table) {
   const auto config = table.Storage()->Config();
   std::string layout;
   for (const auto& column : table.GetColumns().Logical()) {
-    const auto id = static_cast<irs::field_id>(column.Logical().index);
+    const auto id = connector::TableColumnId(column);
     absl::StrAppend(&layout, column.Name().GetIdentifierName(), " ", id);
     if (const auto* entry = config ? config->FindColumnInfo(id) : nullptr;
         entry && entry->IsTermDict()) {
@@ -419,18 +409,28 @@ std::vector<IndexBlob> ExportImage(duckdb::ClientContext& context,
       dynamic_cast<const catalog::SearchTableEntry*>(entry.get());
     if (!table) {
       SDB_ERROR(STARTUP, "cannot build the docs index: ", kSchema, ".",
-                table_name, " is not a search table in the catalog");
+                table_name, " is not a table in the catalog");
       return;
     }
-    const auto store = table->Storage()->Path();
-    for (const auto& file : std::filesystem::directory_iterator{store}) {
-      if (file.is_regular_file()) {
-        image.push_back(
-          {.name =
-             absl::StrCat(table_name, "/", file.path().filename().string()),
-           .bytes = utils::file_utils::Slurp(file.path().string())});
-      }
+    auto& store = *table->Storage();
+    store.Settle();
+    const auto path = store.Path();
+    const auto add = [&](std::string_view file) {
+      image.push_back(
+        {.name = absl::StrCat(table_name, "/", file),
+         .bytes = utils::file_utils::Slurp((path / file).string())});
+    };
+    std::string segments;
+    for (const auto& unit : store.GetTable().State()->units) {
+      SDB_ENSURE(!unit->piece && (!unit->deleted || unit->deleted->Empty()),
+                 "the documentation table ", table_name,
+                 " keeps rows in memory or deletes after settling");
+      absl::c_for_each(irs::SegmentFiles(unit->meta.name, unit->meta.kinds),
+                       add);
+      irs::AppendSegmentList(segments, unit->id, unit->meta.kinds, unit->docs);
     }
+    image.push_back({.name = absl::StrCat(table_name, "/", kSegmentsFile),
+                     .bytes = std::move(segments)});
     image.push_back({.name = absl::StrCat(table_name, "/", kLayoutFile),
                      .bytes = DescribeLayout(*table)});
   });

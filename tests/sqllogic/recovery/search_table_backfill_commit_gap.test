@@ -5,13 +5,13 @@ RESET sdb_faults;
 
 statement ok
 CREATE TABLE bcg (id BIGINT PRIMARY KEY, tag TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO bcg VALUES (1, 'keep'), (2, 'gone');
 
 statement ok
-VACUUM (REFRESH_TABLE) bcg;
+VACUUM (FLUSH_TABLE) bcg;
 
 statement ok
 SET sdb_faults = 'pause_search_backfill_before_swap';
@@ -42,35 +42,11 @@ SET sdb_faults = '-pause_search_commit_before_build_truncate:parked';
 
 connection default
 statement ok
-SET sdb_faults = 'pause_irs_commit_after_flush_switch';
-
-connection refresher
-statement async ok
-VACUUM (REFRESH_TABLE) bcg;
-
-connection default
-statement ok retry 40 backoff 250ms
-SET sdb_faults = '-pause_irs_commit_after_flush_switch:parked';
-
-connection default
-statement ok
-SET sdb_faults = 'pause_irs_commit_after_flush_switch:release';
-
-connection default
-statement ok
-SET sdb_faults = 'pause_index_refresh_lock_wait';
-
-connection default
-statement ok
 SET sdb_faults = '-pause_search_backfill_before_swap';
 
 connection default
 statement ok retry 40 backoff 250ms
-SET sdb_faults = '-pause_index_refresh_lock_wait:parked';
-
-connection default
-statement ok
-SET sdb_faults = 'pause_index_refresh_lock_wait:release';
+SELECT 1;
 
 connection default
 statement ok
@@ -80,7 +56,7 @@ wait
 
 connection default
 statement ok
-VACUUM (REFRESH_TABLE) bcg;
+VACUUM (FLUSH_TABLE) bcg;
 
 connection default
 query

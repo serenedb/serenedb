@@ -164,7 +164,7 @@ void WithHnswDist(const HnswData& data, std::span<const float> query,
 
 std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
                                   const SubReader& segment) {
-  const auto it_mask = segment.MaskedDocs();
+  const auto* mask = segment.docs_mask();
   const auto end =
     doc_limits::min() + static_cast<doc_id_t>(segment.docs_count());
   std::vector<ScoreDoc> hits;
@@ -173,7 +173,7 @@ std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
     const auto doc = static_cast<doc_id_t>(c.node) + doc_limits::min();
     SDB_ENSURE(doc >= doc_limits::min() && doc < end,
                "an hnsw hit is outside its segment");
-    if (it_mask.Contains(doc)) {
+    if (mask && mask->Contains(doc)) {
       continue;
     }
     hits.push_back({.score = c.score, .doc = doc});
@@ -193,7 +193,7 @@ std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
   absl::c_sort(order, [&](uint32_t l, uint32_t r) {
     return found[l].node < found[r].node;
   });
-  const auto it_mask = segment.MaskedDocs();
+  const auto* mask = segment.docs_mask();
   const auto end =
     doc_limits::min() + static_cast<doc_id_t>(segment.docs_count());
   std::vector<ScoreDoc> hits;
@@ -204,7 +204,7 @@ std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
     const auto doc = static_cast<doc_id_t>(found[i].node) + doc_limits::min();
     SDB_ENSURE(doc >= doc_limits::min() && doc < end,
                "an hnsw hit is outside its segment");
-    if (it_mask.Contains(doc)) {
+    if (mask && mask->Contains(doc)) {
       continue;
     }
     hits.push_back({.score = found[i].score, .doc = doc});

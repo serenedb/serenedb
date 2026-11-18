@@ -55,7 +55,6 @@
 
 #include "catalog/entry/inverted_index.h"
 #include "connector/common.h"
-#include "connector/inverted_store_index.h"
 #include "pg/catalog/engine/builtin_functions.h"
 #include "pg/catalog/engine/registry.h"
 #include "pg/catalog/functions/functions.h"
@@ -92,7 +91,7 @@ std::string RelationName(const Session& session,
                          const duckdb::CatalogEntry& relation, bool qualified) {
   if (relation.ParentCatalog().IsTemporaryCatalog()) {
     const auto& name = relation.name.GetIdentifierName();
-    return qualified ? QualifiedOutName(kTemporarySchema, name)
+    return qualified ? QualifiedOutName(irs::StaticStrings::kPgTempSchema, name)
                      : QuoteIdentifier(name);
   }
   const auto [schema, name] = NameOf(*session.transaction, relation);
@@ -296,7 +295,6 @@ struct IndexShape {
   std::string_view method;
   std::vector<IndexElement> keys;
   std::vector<IndexElement> includes;
-  std::string sorted;
   std::string options;
   std::string where;
 };
@@ -337,9 +335,7 @@ IndexShape ShapeOf(const Session& session,
                        ? index.catalog.GetCatalogTransaction(*session.context)
                        : *session.transaction)
         .get(),
-    .method = connector::IsInvertedIndex(index)
-                ? std::string_view{catalog::kInvertedIndexTypeName}
-                : std::string_view{"secondary"},
+    .method = catalog::kInvertedIndexTypeName,
     .options = Options(index.options),
   };
   for (duckdb::idx_t i = 0; i < index.parsed_expressions.size(); ++i) {
@@ -356,31 +352,14 @@ IndexShape ShapeOf(const Session& session,
     IndexElement element;
     element.attribute = IndexAttribute(*index.parsed_expressions[i]);
     element.definition = element.attribute;
-    if (!opclass.empty() && (!included || has_options)) {
+    if (!opclass.empty() && opclass != catalog::kPlainKind &&
+        (!included || has_options)) {
       absl::StrAppend(&element.definition, " ", OpclassName(opclass));
     }
     if (has_options) {
       absl::StrAppend(&element.definition, " (", Options(*options), ")");
     }
     (included ? shape.includes : shape.keys).emplace_back(std::move(element));
-  }
-  if (const auto* inverted =
-        dynamic_cast<const catalog::InvertedIndexEntry*>(&index)) {
-    std::vector<std::string> sorted;
-    for (const auto& order : inverted->SortOrders()) {
-      auto key = IndexAttribute(*order.expression);
-      const bool descending = order.type == duckdb::OrderType::DESCENDING;
-      const bool nulls_first =
-        order.null_order == duckdb::OrderByNullType::NULLS_FIRST;
-      if (descending) {
-        absl::StrAppend(&key, " DESC");
-      }
-      if (nulls_first != descending) {
-        absl::StrAppend(&key, nulls_first ? " NULLS FIRST" : " NULLS LAST");
-      }
-      sorted.push_back(std::move(key));
-    }
-    shape.sorted = absl::StrJoin(sorted, ", ");
   }
   if (index.where_clause) {
     shape.where = ExpressionText(*index.where_clause);
@@ -394,7 +373,7 @@ IndexShape ShapeOf(const duckdb::TableCatalogEntry& table,
     .name = key.constraint_name,
     .unique = true,
     .relation = &table,
-    .method = "secondary",
+    .method = catalog::kInvertedIndexTypeName,
   };
   for (auto& column : KeyColumns(table, key)) {
     shape.keys.emplace_back(
@@ -445,9 +424,6 @@ Definition IndexDefinition(const Session& session, int64_t oid, int64_t column,
     absl::StrAppend(&definition, " INCLUDE (", definitions(shape->includes),
                     ")");
   }
-  if (!shape->sorted.empty()) {
-    absl::StrAppend(&definition, " SORTED BY (", shape->sorted, ")");
-  }
   if (!shape->options.empty()) {
     absl::StrAppend(&definition, " WITH (", shape->options, ")");
   }
@@ -464,8 +440,7 @@ Definition TriggerDefinition(const Session& session, int64_t oid, bool pretty) {
     return std::nullopt;
   }
   const auto& trigger = *found;
-  const auto& table =
-    SiblingTable(*session.transaction, trigger, trigger.base_table->Table());
+  const auto& table = TriggerTable(*session.transaction, trigger);
   auto definition = absl::StrCat(
     "CREATE TRIGGER ", QuoteIdentifier(trigger.name.GetIdentifierName()));
   switch (trigger.timing) {

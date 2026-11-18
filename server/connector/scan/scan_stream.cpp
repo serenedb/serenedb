@@ -59,7 +59,7 @@ void StartUnit(ScanGlobalState& g, StreamLocalState& l) {
   SDB_ASSERT(l.hit_batcher->Empty());
   l.hit_batcher->BeginSegment(seg_idx, seg.GetColReader(), g.client_context,
                               &l.filter_states, l.seg_cls.active);
-  const auto& seg_query = EnsureSegmentQuery(g, l, seg_idx);
+  const auto& seg_query = EnsureSegmentQuery(g, &l, seg_idx);
   const auto span = g.UnitSpan(l.unit);
   l.scored = g.ScanScore();
   if (l.scored) {

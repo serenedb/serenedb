@@ -32,10 +32,6 @@ statement ok
 CREATE INDEX docs_idx ON docs USING inverted(id, body en);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) docs;
-
-
 # DFI with default measure (standardized): never negative. At least one
 # match must have a strictly positive score.
 query

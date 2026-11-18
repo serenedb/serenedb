@@ -47,6 +47,7 @@
 #include <duckdb/storage/table/scan_state.hpp>
 #include <duckdb/transaction/duck_transaction.hpp>
 #include <filesystem>
+#include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
@@ -181,66 +182,65 @@ struct Rows2 {
 
 struct ColArm {
   const char* name;
-  duckdb::CompressionType codec;
+  irs::codecs::CodecType codec;
   uint8_t level;
 };
 
 constexpr ColArm kNumArms[] = {
-  {"auto", duckdb::CompressionType::COMPRESSION_AUTO, 0},
-  {"bitpacking", duckdb::CompressionType::COMPRESSION_BITPACKING, 0},
-  {"rle", duckdb::CompressionType::COMPRESSION_RLE, 0},
-  {"alp", duckdb::CompressionType::COMPRESSION_ALP, 0},
-  {"alprd", duckdb::CompressionType::COMPRESSION_ALPRD, 0},
-  {"uncompressed", duckdb::CompressionType::COMPRESSION_UNCOMPRESSED, 0},
+  {"auto", irs::codecs::CodecType::Auto, 0},
+  {"bitpacking", irs::codecs::CodecType::Bitpacking, 0},
+  {"rle", irs::codecs::CodecType::Rle, 0},
+  {"alp", irs::codecs::CodecType::Alp, 0},
+  {"alprd", irs::codecs::CodecType::AlpRd, 0},
+  {"uncompressed", irs::codecs::CodecType::Uncompressed, 0},
 };
 
 constexpr ColArm kColArms[] = {
-  {"auto", duckdb::CompressionType::COMPRESSION_AUTO, 0},
-  {"dict_fsst", duckdb::CompressionType::COMPRESSION_DICT_FSST, 0},
-  {"fsst", duckdb::CompressionType::COMPRESSION_FSST, 0},
-  {"dict_fsst_plus", duckdb::CompressionType::COMPRESSION_COL_DICT_FSST_PLUS,
-   0},
-  {"fsst_plus", duckdb::CompressionType::COMPRESSION_COL_FSST_PLUS, 0},
-  {"dict_onpair", duckdb::CompressionType::COMPRESSION_COL_DICT_ONPAIR, 0},
-  {"onpair", duckdb::CompressionType::COMPRESSION_COL_ONPAIR, 0},
-  {"dict_fsst12", duckdb::CompressionType::COMPRESSION_COL_DICT_FSST12, 0},
-  {"fsst12", duckdb::CompressionType::COMPRESSION_COL_FSST12, 0},
-  {"dict_lz4", duckdb::CompressionType::COMPRESSION_DICT_LZ4, 0},
-  {"dict_lz4_hc2", duckdb::CompressionType::COMPRESSION_DICT_LZ4, 2},
-  {"dict_lz4_hc4", duckdb::CompressionType::COMPRESSION_DICT_LZ4, 4},
-  {"dict_lz4_hc6", duckdb::CompressionType::COMPRESSION_DICT_LZ4, 6},
-  {"dict_lz4_hc9", duckdb::CompressionType::COMPRESSION_DICT_LZ4, 9},
-  {"dict_lz4_hc12", duckdb::CompressionType::COMPRESSION_DICT_LZ4, 12},
-  {"lz4", duckdb::CompressionType::COMPRESSION_LZ4, 0},
-  {"lz4_hc4", duckdb::CompressionType::COMPRESSION_LZ4, 4},
-  {"lz4_hc9", duckdb::CompressionType::COMPRESSION_LZ4, 9},
-  {"lz4_hc12", duckdb::CompressionType::COMPRESSION_LZ4, 12},
-  {"dict_zstd1", duckdb::CompressionType::COMPRESSION_DICT_ZSTD, 1},
-  {"dict_zstd2", duckdb::CompressionType::COMPRESSION_DICT_ZSTD, 2},
-  {"dict_zstd3", duckdb::CompressionType::COMPRESSION_DICT_ZSTD, 3},
-  {"dict_zstd6", duckdb::CompressionType::COMPRESSION_DICT_ZSTD, 6},
-  {"dict_zstd9", duckdb::CompressionType::COMPRESSION_DICT_ZSTD, 9},
-  {"dict_zstd12", duckdb::CompressionType::COMPRESSION_DICT_ZSTD, 12},
-  {"dict_zstd15", duckdb::CompressionType::COMPRESSION_DICT_ZSTD, 15},
-  {"dict_zstd19", duckdb::CompressionType::COMPRESSION_DICT_ZSTD, 19},
-  {"zstd1", duckdb::CompressionType::COMPRESSION_ZSTD, 1},
-  {"zstd3", duckdb::CompressionType::COMPRESSION_ZSTD, 3},
-  {"zstd6", duckdb::CompressionType::COMPRESSION_ZSTD, 6},
-  {"zstd9", duckdb::CompressionType::COMPRESSION_ZSTD, 9},
-  {"zstd12", duckdb::CompressionType::COMPRESSION_ZSTD, 12},
-  {"zstd19", duckdb::CompressionType::COMPRESSION_ZSTD, 19},
-  {"dict_zxc1", duckdb::CompressionType::COMPRESSION_DICT_ZXC, 1},
-  {"dict_zxc2", duckdb::CompressionType::COMPRESSION_DICT_ZXC, 2},
-  {"dict_zxc3", duckdb::CompressionType::COMPRESSION_DICT_ZXC, 3},
-  {"dict_zxc4", duckdb::CompressionType::COMPRESSION_DICT_ZXC, 4},
-  {"dict_zxc5", duckdb::CompressionType::COMPRESSION_DICT_ZXC, 5},
-  {"dict_zxc6", duckdb::CompressionType::COMPRESSION_DICT_ZXC, 6},
-  {"dict_zxc7", duckdb::CompressionType::COMPRESSION_DICT_ZXC, 7},
-  {"zxc1", duckdb::CompressionType::COMPRESSION_ZXC, 1},
-  {"zxc3", duckdb::CompressionType::COMPRESSION_ZXC, 3},
-  {"zxc5", duckdb::CompressionType::COMPRESSION_ZXC, 5},
-  {"zxc7", duckdb::CompressionType::COMPRESSION_ZXC, 7},
-  {"uncompressed", duckdb::CompressionType::COMPRESSION_UNCOMPRESSED, 0},
+  {"auto", irs::codecs::CodecType::Auto, 0},
+  {"dict_fsst", irs::codecs::CodecType::DictFsst, 0},
+  {"fsst", irs::codecs::CodecType::Fsst, 0},
+  {"dict_fsst_plus", irs::codecs::CodecType::DictFsstPlus, 0},
+  {"fsst_plus", irs::codecs::CodecType::FsstPlus, 0},
+  {"dict_onpair", irs::codecs::CodecType::DictOnPair, 0},
+  {"onpair", irs::codecs::CodecType::OnPair, 0},
+  {"dict_fsst12", irs::codecs::CodecType::DictFsst12, 0},
+  {"fsst12", irs::codecs::CodecType::Fsst12, 0},
+  {"dict_lz4", irs::codecs::CodecType::DictLz4, 0},
+  {"dict_lz4_hc2", irs::codecs::CodecType::DictLz4, 2},
+  {"dict_lz4_hc4", irs::codecs::CodecType::DictLz4, 4},
+  {"dict_lz4_hc6", irs::codecs::CodecType::DictLz4, 6},
+  {"dict_lz4_hc9", irs::codecs::CodecType::DictLz4, 9},
+  {"dict_lz4_hc12", irs::codecs::CodecType::DictLz4, 12},
+  {"lz4", irs::codecs::CodecType::Lz4, 0},
+  {"lz4_hc4", irs::codecs::CodecType::Lz4, 4},
+  {"lz4_hc9", irs::codecs::CodecType::Lz4, 9},
+  {"lz4_hc12", irs::codecs::CodecType::Lz4, 12},
+  {"dict_zstd1", irs::codecs::CodecType::DictZstd, 1},
+  {"dict_zstd2", irs::codecs::CodecType::DictZstd, 2},
+  {"dict_zstd3", irs::codecs::CodecType::DictZstd, 3},
+  {"dict_zstd6", irs::codecs::CodecType::DictZstd, 6},
+  {"dict_zstd9", irs::codecs::CodecType::DictZstd, 9},
+  {"dict_zstd12", irs::codecs::CodecType::DictZstd, 12},
+  {"dict_zstd15", irs::codecs::CodecType::DictZstd, 15},
+  {"dict_zstd19", irs::codecs::CodecType::DictZstd, 19},
+  {"zstd1", irs::codecs::CodecType::Zstd, 1},
+  {"zstd3", irs::codecs::CodecType::Zstd, 3},
+  {"zstd6", irs::codecs::CodecType::Zstd, 6},
+  {"zstd9", irs::codecs::CodecType::Zstd, 9},
+  {"zstd12", irs::codecs::CodecType::Zstd, 12},
+  {"zstd19", irs::codecs::CodecType::Zstd, 19},
+  {"dict_zxc1", irs::codecs::CodecType::DictZxc, 1},
+  {"dict_zxc2", irs::codecs::CodecType::DictZxc, 2},
+  {"dict_zxc3", irs::codecs::CodecType::DictZxc, 3},
+  {"dict_zxc4", irs::codecs::CodecType::DictZxc, 4},
+  {"dict_zxc5", irs::codecs::CodecType::DictZxc, 5},
+  {"dict_zxc6", irs::codecs::CodecType::DictZxc, 6},
+  {"dict_zxc7", irs::codecs::CodecType::DictZxc, 7},
+  {"zxc1", irs::codecs::CodecType::Zxc, 1},
+  {"zxc3", irs::codecs::CodecType::Zxc, 3},
+  {"zxc5", irs::codecs::CodecType::Zxc, 5},
+  {"zxc7", irs::codecs::CodecType::Zxc, 7},
+  {"uncompressed", irs::codecs::CodecType::Uncompressed, 0},
 };
 
 uint32_t SegmentTarget() {
@@ -317,7 +317,7 @@ struct Built {
   uint64_t ours = 0;
 };
 
-Built ColBuild(irs::Directory& dir, const ColArm& arm) {
+void ColBuild(irs::Directory& dir, const ColArm& arm) {
   const auto& data = Data();
   irs::ColWriter w{dir, kSeg, CsDb(), Tier()};
   auto& cw = w.OpenColumn(
@@ -331,15 +331,29 @@ Built ColBuild(irs::Directory& dir, const ColArm& arm) {
     pos += data.counts[i];
   }
   w.Commit(pos);
+}
+
+Built Measure(irs::Directory& dir, const ColArm& arm) {
+  const auto& data = Data();
+  irs::ColReader reader{dir, std::string{kSeg}, CsDb(),
+                        irs::IOAdvice::SEQUENTIAL};
+  const auto* col = reader.Column(kField);
+  if (col == nullptr) {
+    std::fprintf(stderr, "col_codecs_real: column missing\n");
+    std::abort();
+  }
+  const auto data_blocks = col->DataBlocks();
+  const auto validity_blocks = col->Validity()
+                                 ? col->Validity()->DataBlocks()
+                                 : std::span<const irs::ColumnBlockMeta>{};
   if (std::getenv("SDB_BENCH_BREAKDOWN") &&
       data.type.InternalType() == duckdb::PhysicalType::VARCHAR) {
     auto in = dir.open(irs::FileName(kSeg), irs::IOAdvice::SEQUENTIAL);
     std::vector<uint8_t> file(in->Length());
     in->ReadData(file.data(), file.size());
     uint64_t parts[7]{};
-    for (const auto& block : cw.Meta().data) {
-      if (!block.codec || block.byte_size == 0 ||
-          !duckdb::IsSereneDBCompressionType(block.codec->type)) {
+    for (const auto& block : data_blocks) {
+      if (!block.codec || block.byte_size == 0 || !block.codec->framed) {
         continue;
       }
       const auto* p = file.data() + block.file_offset;
@@ -377,20 +391,19 @@ Built ColBuild(irs::Directory& dir, const ColArm& arm) {
         }
       }
     };
-    mix(cw.Meta().data);
-    mix(cw.Meta().validity);
+    mix(data_blocks);
+    mix(validity_blocks);
     std::fprintf(stderr, "hash %s %016llx\n", arm.name,
                  static_cast<unsigned long long>(hash));
   }
   Built built;
-  for (const auto& block : cw.Meta().data) {
+  for (const auto& block : data_blocks) {
     built.bytes += block.byte_size;
-    if (block.codec &&
-        block.codec->type == duckdb::CompressionType::COMPRESSION_COL_NUMERIC) {
+    if (block.codec && block.codec->type == irs::codecs::CodecType::Numeric) {
       built.ours += block.tuple_count;
     }
   }
-  for (const auto& block : cw.Meta().validity) {
+  for (const auto& block : validity_blocks) {
     built.bytes += block.byte_size;
   }
   return built;
@@ -408,6 +421,13 @@ duckdb::Value SourceAt(uint64_t row) {
     row -= data.counts[v];
   }
   return duckdb::Value{data.type};
+}
+
+bool Same(const duckdb::Value& got, const duckdb::Value& want) {
+  if (got.IsNull() || want.IsNull()) {
+    return got.IsNull() == want.IsNull();
+  }
+  return duckdb::Value::NotDistinctFrom(got, want);
 }
 
 void Mismatch(const ColArm& arm, const char* path, uint64_t row,
@@ -435,8 +455,7 @@ void Verify(const ColArm& arm, const ColSeg& seg) {
       seg.col->Scan(st, batch, data.counts[v]);
       for (duckdb::idx_t i = 0; i < data.counts[v]; ++i) {
         const auto got = batch.GetValue(i);
-        if (!duckdb::Value::NotDistinctFrom(got,
-                                            data.vectors[v]->GetValue(i))) {
+        if (!Same(got, data.vectors[v]->GetValue(i))) {
           Mismatch(arm, "scan", row + i, got);
         }
       }
@@ -456,7 +475,7 @@ void Verify(const ColArm& arm, const ColSeg& seg) {
                                        batch, 0);
       for (size_t k = 0; k < take; ++k) {
         const auto got = batch.GetValue(k);
-        if (!duckdb::Value::NotDistinctFrom(got, SourceAt(rows[i + k]))) {
+        if (!Same(got, SourceAt(rows[i + k]))) {
           Mismatch(arm, "gather", rows[i + k], got);
         }
       }
@@ -468,12 +487,13 @@ void Verify(const ColArm& arm, const ColSeg& seg) {
     duckdb::FlatVector::ValidityMutable(out).Reset();
     cursor.FetchRow(r, out, 0);
     const auto got = out.GetValue(0);
-    if (!duckdb::Value::NotDistinctFrom(got, SourceAt(r))) {
+    if (!Same(got, SourceAt(r))) {
       Mismatch(arm, "point", r, got);
     }
   }
   {
-    const auto& rows = ScatteredRows();
+    const std::vector<uint32_t> rows{ScatteredRows().begin(),
+                                     ScatteredRows().end()};
     irs::ColumnReader::PointReader fetch{*seg.reader, *seg.col};
     duckdb::VectorCache cache{duckdb::Allocator::DefaultAllocator(), data.type,
                               STANDARD_VECTOR_SIZE};
@@ -481,10 +501,10 @@ void Verify(const ColArm& arm, const ColSeg& seg) {
     for (size_t i = 0; i < rows.size(); i += STANDARD_VECTOR_SIZE) {
       const auto take = std::min<size_t>(rows.size() - i, STANDARD_VECTOR_SIZE);
       batch.ResetFromCache(cache);
-      fetch.FetchRows(std::span<const uint64_t>{&rows[i], take}, batch, 0);
+      fetch.FetchRows(std::span<const uint32_t>{&rows[i], take}, 0, batch, 0);
       for (size_t k = 0; k < take; ++k) {
         const auto got = batch.GetValue(k);
-        if (!duckdb::Value::NotDistinctFrom(got, SourceAt(rows[i + k]))) {
+        if (!Same(got, SourceAt(rows[i + k]))) {
           Mismatch(arm, "fetch", rows[i + k], got);
         }
       }
@@ -526,7 +546,8 @@ void Verify(const ColArm& arm, const ColSeg& seg) {
   uint64_t want = 0;
   for (size_t v = 0; v < data.vectors.size(); ++v) {
     for (duckdb::idx_t i = 0; i < data.counts[v]; ++i) {
-      want += data.vectors[v]->GetValue(i) == needle;
+      const auto value = data.vectors[v]->GetValue(i);
+      want += !value.IsNull() && !needle.IsNull() && value == needle;
     }
   }
   const auto filter = MakeFilter(false);
@@ -552,7 +573,7 @@ void Verify(const ColArm& arm, const ColSeg& seg) {
                             irs::NullCheckKind::None, filtered);
     for (duckdb::idx_t k = 0; k < hits; ++k) {
       const auto row = sel.get_index(k);
-      if (!duckdb::Value::NotDistinctFrom(filtered.GetValue(row), needle)) {
+      if (!Same(filtered.GetValue(row), needle)) {
         Mismatch(arm, "filter", anchor + row, filtered.GetValue(row));
       }
     }
@@ -575,12 +596,11 @@ void PrintSegmentInfo(const ColArm& arm, const ColSeg& seg) {
   irs::BlockWindow window{};
   uint64_t row = 0;
   for (const auto& block : seg.col->DataBlocks()) {
-    std::string key = duckdb::CompressionTypeToString(block.codec->type);
+    std::string key{irs::codecs::NameOf(block.codec->type)};
     if (block.codec->get_segment_info && block.byte_size != 0) {
       window = seg.col->Locate(row, window);
       auto segment = seg.col->OpenSegment(window.block, ctx);
-      auto info =
-        block.codec->get_segment_info(duckdb::QueryContext{}, *segment);
+      auto info = block.codec->get_segment_info(*segment);
       for (const auto* name : {"transform", "leaf", "codec", "shape",
                                "dictionary", "codes_transform"}) {
         if (info.contains(name)) {
@@ -603,7 +623,8 @@ ColSeg& GetColSeg(const ColArm* arm) {
   if (!slot) {
     slot = std::make_unique<ColSeg>();
     MakeSegDirectory(*slot, *arm);
-    const auto built = ColBuild(*slot->dir, *arm);
+    ColBuild(*slot->dir, *arm);
+    const auto built = Measure(*slot->dir, *arm);
     slot->bytes = built.bytes;
     slot->ours = built.ours;
     OpenReader(*slot);
@@ -625,12 +646,14 @@ void Counters(benchmark::State& state, const ColSeg& seg) {
 }
 
 void ColSeal(benchmark::State& state, const ColArm* arm) {
-  Built built;
   for (auto _ : state) {
     irs::MemoryDirectory dir{};
-    built = ColBuild(dir, *arm);
+    ColBuild(dir, *arm);
     benchmark::DoNotOptimize(&dir);
   }
+  irs::MemoryDirectory dir{};
+  ColBuild(dir, *arm);
+  const auto built = Measure(dir, *arm);
   Counters(state, built.bytes, built.ours);
 }
 
@@ -845,7 +868,8 @@ void ColPoint(benchmark::State& state, const ColArm* arm) {
 
 void ColFetch(benchmark::State& state, const ColArm* arm) {
   auto& seg = GetColSeg(arm);
-  const auto& rows = ScatteredRows();
+  const std::vector<uint32_t> rows{ScatteredRows().begin(),
+                                   ScatteredRows().end()};
   for (auto _ : state) {
     state.PauseTiming();
     Evict(seg);
@@ -857,7 +881,7 @@ void ColFetch(benchmark::State& state, const ColArm* arm) {
     for (size_t i = 0; i < rows.size(); i += STANDARD_VECTOR_SIZE) {
       const auto take = std::min<size_t>(rows.size() - i, STANDARD_VECTOR_SIZE);
       out.ResetFromCache(cache);
-      cursor.FetchRows(std::span<const uint64_t>{&rows[i], take}, out, 0);
+      cursor.FetchRows(std::span<const uint32_t>{&rows[i], take}, 0, out, 0);
       benchmark::DoNotOptimize(out);
     }
   }

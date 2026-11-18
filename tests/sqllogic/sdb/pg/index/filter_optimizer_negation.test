@@ -16,16 +16,13 @@ INSERT INTO fo_neg VALUES
   (3, 'gamma', 3, 'gamma delta'),
   (4, 'delta', 4, 'delta alpha');
 
-statement ok
-VACUUM (REFRESH_TABLE) fo_neg;
-
 query
 EXPLAIN SELECT id FROM fo_neg_idx WHERE NOT (t @@ ts_phrase('alpha'));
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────╮
 │ Index: fo_neg_idx                        │
-│ Lookup: table                            │
+│ Lookup: search                           │
 │ Index Filter:                            │
 │ ╭─ Not ────────────╮                     │
 │ ╰─────────┬────────╯                     │
@@ -44,7 +41,7 @@ EXPLAIN SELECT id FROM fo_neg_idx WHERE NOT (NOT (t @@ ts_phrase('alpha')));
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────╮
 │ Index: fo_neg_idx    │
-│ Lookup: table        │
+│ Lookup: search       │
 │ Index Filter:        │
 │ ╭─ Term ───────────╮ │
 │ │ Field: t(string) │ │
@@ -60,7 +57,7 @@ EXPLAIN SELECT id FROM fo_neg_idx WHERE NOT (NOT (NOT (NOT (t @@ ts_phrase('alph
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────╮
 │ Index: fo_neg_idx    │
-│ Lookup: table        │
+│ Lookup: search       │
 │ Index Filter:        │
 │ ╭─ Term ───────────╮ │
 │ │ Field: t(string) │ │
@@ -76,7 +73,7 @@ EXPLAIN SELECT id FROM fo_neg_idx WHERE NOT (NOT (NOT (t @@ ts_phrase('alpha')))
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────╮
 │ Index: fo_neg_idx                        │
-│ Lookup: table                            │
+│ Lookup: search                           │
 │ Index Filter:                            │
 │ ╭─ Not ────────────╮                     │
 │ ╰─────────┬────────╯                     │
@@ -95,7 +92,7 @@ EXPLAIN SELECT id FROM fo_neg_idx WHERE NOT (n @@ ts_between(NULL, NULL, true, t
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──╮
 │ Index: fo_neg_idx │
-│ Lookup: table     │
+│ Lookup: search    │
 │ Index Filter:     │
 │ ╭─ Empty ─╮       │
 │ ╰─────────╯       │
@@ -109,7 +106,7 @@ EXPLAIN SELECT id FROM fo_neg_idx WHERE NOT (n @@ ts_between(2, 2, false, false)
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───╮
 │ Index: fo_neg_idx  │
-│ Lookup: table      │
+│ Lookup: search     │
 │ Index Filter:      │
 │ ╭─ Not ──────────╮ │
 │ ╰────────┬───────╯ │
@@ -127,7 +124,7 @@ WHERE t @@ ts_phrase('alpha') AND NOT (t @@ ts_phrase('beta'));
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────╮
 │ Index: fo_neg_idx                          │
-│ Lookup: table                              │
+│ Lookup: search                             │
 │ Index Filter:                              │
 │ ╭─ Bool ───────────╮                       │
 │ ╰─────────┬────────╯                       │
@@ -148,7 +145,7 @@ EXPLAIN SELECT id FROM fo_neg_idx WHERE t @@ (ts_phrase('alpha') && !!ts_phrase(
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────╮
 │ Index: fo_neg_idx                          │
-│ Lookup: table                              │
+│ Lookup: search                             │
 │ Index Filter:                              │
 │ ╭─ Bool ───────────╮                       │
 │ ╰─────────┬────────╯                       │
@@ -170,7 +167,7 @@ WHERE t @@ ts_phrase('alpha') AND NOT (t @@ ts_phrase('beta')) AND NOT (t @@ ts_
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────╮
 │ Index: fo_neg_idx                                 │
-│ Lookup: table                                     │
+│ Lookup: search                                    │
 │ Index Filter:                                     │
 │ ╭─ Bool ───────────╮                              │
 │ ╰─────────┬────────╯                              │
@@ -192,7 +189,7 @@ WHERE NOT (t @@ ts_phrase('beta')) AND NOT (t @@ ts_phrase('gamma'));
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────────────╮
 │ Index: fo_neg_idx                               │
-│ Lookup: table                                   │
+│ Lookup: search                                  │
 │ Index Filter:                                   │
 │ ╭─ Not ───────────────────╮                     │
 │ ╰────────────┬────────────╯                     │
@@ -212,7 +209,7 @@ WHERE s = 'alpha' AND n = 2 AND NOT (t @@ ts_phrase('gamma')) AND NOT (t @@ ts_p
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────────────────────────────────────────────────╮
 │ Index: fo_neg_idx                                                                             │
-│ Lookup: table                                                                                 │
+│ Lookup: search                                                                                │
 │ Index Filter:                                                                                 │
 │ ╭─ Bool ───────────╮                                                                          │
 │ ╰─────────┬────────╯                                                                          │

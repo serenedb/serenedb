@@ -7,7 +7,7 @@ CREATE TEXT SEARCH DICTIONARY sb_words AS split_text_csv(' ')
 
 statement ok
 CREATE TABLE sb (id INT PRIMARY KEY, body TEXT)
-WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0,
+WITH (compaction_interval = 0,
       row_group_size = 4096)
 
 
@@ -26,7 +26,7 @@ FROM generate_series(1, 20000) s(i)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) sb
+VACUUM (FLUSH_TABLE) sb
 
 
 statement ok
@@ -36,7 +36,7 @@ FROM generate_series(20001, 40000) s(i)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) sb
+VACUUM (FLUSH_TABLE) sb
 
 
 statement ok
@@ -46,7 +46,7 @@ FROM generate_series(40001, 60000) s(i)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) sb
+VACUUM (FLUSH_TABLE) sb
 
 
 statement ok
@@ -56,7 +56,7 @@ FROM generate_series(60001, 60100) s(i)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) sb
+VACUUM (FLUSH_TABLE) sb
 
 
 statement ok
@@ -66,7 +66,7 @@ FROM generate_series(60101, 60200) s(i)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) sb
+VACUUM (FLUSH_TABLE) sb
 
 
 statement ok
@@ -76,7 +76,7 @@ FROM generate_series(60201, 60300) s(i)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) sb
+VACUUM (FLUSH_TABLE) sb
 
 
 statement ok
@@ -86,7 +86,7 @@ FROM generate_series(60301, 60400) s(i)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) sb
+VACUUM (FLUSH_TABLE) sb
 
 
 statement ok
@@ -96,7 +96,7 @@ FROM generate_series(60401, 60500) s(i)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) sb
+VACUUM (FLUSH_TABLE) sb
 
 
 statement ok
@@ -106,7 +106,7 @@ FROM generate_series(60501, 60600) s(i)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) sb
+VACUUM (FLUSH_TABLE) sb
 
 
 statement ok
@@ -116,7 +116,7 @@ FROM generate_series(60601, 60700) s(i)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) sb
+VACUUM (FLUSH_TABLE) sb
 
 
 statement ok
@@ -126,7 +126,7 @@ FROM generate_series(60701, 60800) s(i)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) sb
+VACUUM (FLUSH_TABLE) sb
 
 
 statement ok
@@ -136,7 +136,7 @@ FROM generate_series(60801, 60900) s(i)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) sb
+VACUUM (FLUSH_TABLE) sb
 
 
 statement ok
@@ -146,7 +146,7 @@ FROM generate_series(60901, 61000) s(i)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) sb
+VACUUM (FLUSH_TABLE) sb
 
 
 statement ok
@@ -156,7 +156,7 @@ FROM generate_series(61001, 61100) s(i)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) sb
+VACUUM (FLUSH_TABLE) sb
 
 
 statement ok
@@ -166,15 +166,11 @@ FROM generate_series(61101, 61200) s(i)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) sb
+VACUUM (FLUSH_TABLE) sb
 
 
 statement ok
 DELETE FROM sb WHERE id <= 1000 OR (id > 59000 AND id <= 60000)
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sb
 
 
 statement ok

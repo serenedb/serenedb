@@ -32,6 +32,7 @@
 
 #include "connector/column_id.h"
 #include "connector/row_position.h"
+#include "search/table.h"
 
 namespace duckdb {
 
@@ -59,6 +60,7 @@ inline void AddRowPositions(irs::DocRemovalBuilder& positions,
 // Per-search-table, per-transaction write buffer.
 struct LocalTableChangesEntry {
   std::unique_ptr<duckdb::ColumnDataCollection> collection;
+  uint64_t bytes = 0;
   // The shard's stored columns, in chunk order, and the catalog its sink is
   // built against -- both captured with the first buffered chunk so the rows
   // can be replayed into iresearch later, from a commit that never saw the
@@ -67,48 +69,35 @@ struct LocalTableChangesEntry {
   duckdb::Catalog* catalog = nullptr;
 
   std::vector<std::shared_ptr<const irs::DocRemoval>> removals;
+  std::vector<UnitPatch> patches;
   bool truncate = false;
-  bool clears_shard = false;
-  // Segments a bulk statement flushed, for the record to reference by name.
-  std::vector<std::string> segments;
 
   void AppendInsertRows(std::unique_ptr<duckdb::ColumnDataCollection> rows,
+                        uint64_t row_bytes,
                         std::span<const connector::ColumnId> cols,
                         duckdb::Catalog& cat) {
-    if (column_ids.empty()) {
+    bytes += row_bytes;
+    if (collection == nullptr) {
       column_ids.assign(cols.begin(), cols.end());
       catalog = &cat;
-    }
-    if (collection == nullptr) {
       collection = std::move(rows);
+    } else if (rows->Count() < STANDARD_VECTOR_SIZE) {
+      for (auto& chunk : rows->Chunks()) {
+        collection->Append(chunk);
+      }
     } else {
       collection->Combine(*rows);
     }
   }
 
-  // A truncate removes every row, including the ones this transaction has just
-  // written, so everything buffered before it is dead and is dropped here. The
-  // record writes the truncate before anything else -- which is what stops a
-  // segment ever preceding one, since replay adopts a segment whole and could
-  // not mask the part the truncate should have taken.
-  void AppendTruncate(bool clears) {
-    collection.reset();
+  void AppendTruncate(std::shared_ptr<const irs::DocRemoval> visible) {
+    ClearBufferedRows();
     removals.clear();
-    segments.clear();
+    patches.clear();
+    if (!visible->groups.empty()) {
+      removals.push_back(std::move(visible));
+    }
     truncate = true;
-    clears_shard = clears;
-  }
-
-  void AppendSegments(std::vector<std::string>&& refs) {
-    if (refs.empty()) {
-      return;
-    }
-    if (segments.empty()) {
-      segments = std::move(refs);
-      return;
-    }
-    segments.insert(segments.end(), std::make_move_iterator(refs.begin()),
-                    std::make_move_iterator(refs.end()));
   }
 
   bool HasBufferedRows() const noexcept {
@@ -118,23 +107,18 @@ struct LocalTableChangesEntry {
   // Bytes a flush would reclaim. Deletes are deliberately not counted: a flush
   // frees none of them (the record carries them to commit either way), so
   // counting them would fire the threshold on memory it cannot release.
-  uint64_t BufferedBytes() const noexcept {
-    return collection == nullptr ? 0 : collection->AllocationSize();
-  }
+  uint64_t BufferedBytes() const noexcept { return bytes; }
 
   // Drops the buffered rows once a flush has taken ownership of them. The
   // removals stay: the record has to carry them to commit.
-  void ClearBufferedRows() { collection.reset(); }
-
-  bool ClearsShard() const noexcept {
-    SDB_ASSERT(!clears_shard || removals.empty(),
-               "a clearing TRUNCATE must be the only op in its transaction");
-    return clears_shard;
+  void ClearBufferedRows() {
+    collection.reset();
+    bytes = 0;
   }
 
   bool Empty() const noexcept {
-    return collection == nullptr && removals.empty() && !truncate &&
-           segments.empty();
+    return collection == nullptr && removals.empty() && patches.empty() &&
+           !truncate;
   }
 };
 

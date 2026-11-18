@@ -4,7 +4,7 @@ statement ok
 BEGIN;
 
 statement ok
-CREATE TABLE torn (ts TIMESTAMP_NS, body VARCHAR) WITH (storage = 'search');
+CREATE TABLE torn (ts TIMESTAMP_NS, body VARCHAR);
 
 statement ok
 CREATE INDEX torn_idx ON torn USING inverted (ts, body);
@@ -28,7 +28,7 @@ BEGIN;
 
 connection lost
 statement ok
-CREATE TABLE whole (ts TIMESTAMP_NS, body VARCHAR) WITH (storage = 'search');
+CREATE TABLE whole (ts TIMESTAMP_NS, body VARCHAR);
 
 connection lost
 statement ok

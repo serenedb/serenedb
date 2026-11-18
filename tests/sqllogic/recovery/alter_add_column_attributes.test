@@ -15,6 +15,9 @@ statement ok
 INSERT INTO aca_t SELECT i, md5(i::VARCHAR) FROM generate_series(1, 5000) t(i);
 
 statement ok
+VACUUM (FLUSH_ALL);
+
+statement ok
 CHECKPOINT;
 
 query

@@ -1,0 +1,92 @@
+statement ok
+CREATE TABLE cdi_src(a INTEGER)
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+DROP TABLE cdi_src
+
+
+connection s2
+statement ok
+CREATE VIEW cdi_v1 AS SELECT a FROM cdi_src
+
+
+connection s1
+statement error
+COMMIT
+----
+db error: ERROR: Failed to commit: Could not commit DROP of "cdi_src" because a dependency was created after the transaction started
+
+
+connection s2
+statement ok
+BEGIN
+
+
+connection s2
+statement ok
+CREATE VIEW cdi_v2 AS SELECT a FROM cdi_src
+
+
+connection s1
+statement ok
+DROP TABLE cdi_src CASCADE
+
+
+connection s2
+statement error
+COMMIT
+----
+db error: ERROR: Failed to commit: Could not commit creation of dependency, subject "cdi_src" has been deleted
+
+
+statement ok
+CREATE TABLE cdi_src(a INTEGER)
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+query
+SELECT count(*) AS n FROM cdi_src
+----
+n
+0
+
+
+connection s2
+statement ok
+CREATE VIEW cdi_v3 AS SELECT a FROM cdi_src
+
+
+connection s1
+statement ok
+DROP TABLE cdi_src
+
+
+connection s1
+statement error
+COMMIT
+----
+db error: ERROR: Failed to commit: Could not commit DROP of "cdi_src" because a dependency was created after the transaction started
+
+
+query
+SELECT relname FROM pg_class WHERE relname LIKE 'cdi%' ORDER BY relname
+----
+relname
+cdi_src
+cdi_v3
+
+
+statement ok
+DROP TABLE cdi_src CASCADE

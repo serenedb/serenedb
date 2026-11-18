@@ -9,7 +9,7 @@ CREATE MACRO iel_names(l) AS list_transform(l, lambda x: x.a)
 
 
 statement ok
-CREATE TABLE iel_search (id INTEGER, tags VARCHAR[], parts STRUCT(a VARCHAR, b INTEGER)[]) WITH (storage = 'search')
+CREATE TABLE iel_search (id INTEGER, tags VARCHAR[], parts STRUCT(a VARCHAR, b INTEGER)[])
 
 
 statement ok
@@ -21,7 +21,7 @@ INSERT INTO iel_search VALUES (1, ['Red', 'Blue'], [{'a': 'Foo', 'b': 1}]), (2, 
 
 
 statement ok
-VACUUM (REFRESH_TABLE) iel_search
+VACUUM (FLUSH_TABLE) iel_search
 
 
 query
@@ -41,7 +41,7 @@ INSERT INTO iel_search VALUES (3, ['RED'], [{'a': 'Baz', 'b': 4}])
 
 
 statement ok
-VACUUM (REFRESH_TABLE) iel_search
+VACUUM (FLUSH_TABLE) iel_search
 
 
 query

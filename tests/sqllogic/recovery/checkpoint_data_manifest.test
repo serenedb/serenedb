@@ -32,7 +32,7 @@ INSERT INTO cdm_pk VALUES (1, 'x'), (2, 'y');
 
 # No row store, so no manifest record -- and the boot must not wait for one.
 statement ok
-CREATE TABLE cdm_search (id INTEGER, txt TEXT) WITH (storage='search');
+CREATE TABLE cdm_search (id INTEGER, txt TEXT);
 
 
 statement ok
@@ -102,7 +102,8 @@ connection after_crash
 statement error
 INSERT INTO cdm_pk VALUES (1, 'dup');
 ----
-db error: ERROR: Duplicate key "id: 1" violates primary key constraint.
+db error: ERROR: duplicate key value violates unique constraint "cdm_pk_pkey"
+DETAIL: Key (id)=(1) already exists.
 
 
 connection after_crash

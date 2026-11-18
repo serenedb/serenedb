@@ -137,7 +137,7 @@ class ByteKeys final : public duckdb::PresortedMergeInput {
 class TermKeysTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    _writer = irs::IndexWriter::Make(_dir, irs::kOmCreate,
+    _writer = tests::IndexWriter::Make(_dir, tests::kOmCreate,
                                      irs::tests::DefaultWriterOptions());
     _chunk.Initialize(duckdb::Allocator::DefaultAllocator(),
                       {duckdb::LogicalType::BLOB});
@@ -190,7 +190,7 @@ class TermKeysTest : public ::testing::Test {
   }
 
   irs::MemoryDirectory _dir;
-  irs::IndexWriter::ptr _writer;
+  tests::IndexWriter::ptr _writer;
   irs::DirectoryReader _reader;
   duckdb::DataChunk _chunk;
 };

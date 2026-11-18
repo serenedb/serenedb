@@ -13,10 +13,6 @@ DEFAULT_PATHS = [
     "iresearch/index/merge/",
     "iresearch/index/flush_order.cpp",
     "iresearch/formats/column/merge.cpp",
-    "server/search/compaction/",
-    "server/connector/merge_target.cpp",
-    "server/connector/functions/sdb_maintenance.cpp",
-    "server/connector/functions/sdb_segments.cpp",
 ]
 
 

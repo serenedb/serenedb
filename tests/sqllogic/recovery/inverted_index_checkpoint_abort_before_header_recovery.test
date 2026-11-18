@@ -13,7 +13,7 @@ INSERT INTO pudge_hooks SELECT i, 'hook' || (i % 5) FROM range(0, 1000) r(i);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) pudge_hooks;
+VACUUM (FLUSH_TABLE) pudge_hooks;
 
 
 statement ok
@@ -46,7 +46,7 @@ n
 
 connection after_crash
 statement ok
-VACUUM (REFRESH_TABLE) pudge_hooks;
+VACUUM (FLUSH_TABLE) pudge_hooks;
 
 
 connection after_crash
@@ -82,7 +82,7 @@ n
 
 connection after_second_crash
 statement ok
-VACUUM (REFRESH_TABLE) pudge_hooks;
+VACUUM (FLUSH_TABLE) pudge_hooks;
 
 
 connection after_second_crash

@@ -1,0 +1,57 @@
+statement ok
+CREATE TABLE jot_log (id INT);
+
+
+statement ok
+CREATE JOB jot_open AFTER 1 HOUR SUSPENDED
+  AS $$BEGIN; SET LOCAL client_min_messages = 'warning'; INSERT INTO jot_log VALUES (1);$$;
+
+
+statement ok
+EXECUTE JOB jot_open;
+
+
+query
+SELECT count(*) AS logged FROM jot_log;
+----
+logged
+0
+
+
+statement ok
+CREATE JOB jot_failed AFTER 1 HOUR SUSPENDED
+  AS $$BEGIN; SET LOCAL client_min_messages = 'warning'; INSERT INTO jot_log VALUES (2); INSERT INTO jot_missing VALUES (3); COMMIT;$$;
+
+
+statement error
+EXECUTE JOB jot_failed;
+----
+db error: ERROR: Table with name jot_missing does not exist!
+Did you mean "jot_log"?
+
+
+query
+SELECT count(*) AS logged FROM jot_log;
+----
+logged
+0
+
+
+query
+SELECT job_name, last_status FROM sdb_jobs() WHERE starts_with(job_name, 'jot_') ORDER BY job_name;
+----
+job_name	last_status
+jot_failed	failed
+jot_open	success
+
+
+statement ok
+DROP JOB jot_open;
+
+
+statement ok
+DROP JOB jot_failed;
+
+
+statement ok
+DROP TABLE jot_log;

@@ -57,7 +57,7 @@ jobs:
     name: test ${{ inputs.CONFIG }} ${{ matrix.shard }} (${{ inputs.LOCATION }})
     runs-on:
       - ${{ inputs.LOCATION }}
-      - lan
+      - test
     timeout-minutes: 360
     strategy:
       fail-fast: false

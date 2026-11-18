@@ -62,7 +62,7 @@ std::unique_ptr<ColReader> MakeCsReader(const Directory& dir,
 uint64_t ColFileId(ColReader& reader, const ColumnReader& col) {
   ReadContext ctx{reader};
   const auto segment = col.OpenSegment(col.Locate(0, BlockWindow{}).block, ctx);
-  return CacheSlotOf(*segment).file_id;
+  return segment->cache_slot.file_id;
 }
 
 ColumnWriter& OpenBlobColumn(ColWriter& w, field_id id) {

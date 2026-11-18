@@ -16,9 +16,6 @@ statement ok
 INSERT INTO t VALUES (1, 'foo');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) t;
-
 connection reader
 
 connection reader
@@ -37,11 +34,6 @@ id
 connection writer
 statement ok
 INSERT INTO t VALUES (2, 'foo');
-
-
-connection writer
-statement ok
-VACUUM (REFRESH_TABLE) t;
 
 
 # Same query in the reader's transaction must return the pinned result.
@@ -76,11 +68,6 @@ id
 connection writer
 statement ok
 INSERT INTO t VALUES (3, 'foo');
-
-
-connection writer
-statement ok
-VACUUM (REFRESH_TABLE) t;
 
 
 connection reader_rc

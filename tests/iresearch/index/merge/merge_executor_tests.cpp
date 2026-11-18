@@ -29,6 +29,7 @@
 #include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
 #include <memory>
 #include <string>
@@ -80,7 +81,7 @@ class MergeExecutorTest : public ::testing::Test {
   void SetUp() final {
     auto options = irs::tests::DefaultWriterOptions();
     options.column_options = PlainColumns;
-    _writer = irs::IndexWriter::Make(_dir, irs::kOmCreate, std::move(options));
+    _writer = tests::IndexWriter::Make(_dir, tests::kOmCreate, std::move(options));
     Generator gen{57};
     size_t next_id = 0;
     for (const double delete_ratio : {0.0, 0.3, 0.0, 0.1}) {
@@ -128,7 +129,7 @@ class MergeExecutorTest : public ::testing::Test {
 
   size_t _docs = 300;
   irs::MemoryDirectory _dir;
-  irs::IndexWriter::ptr _writer;
+  tests::IndexWriter::ptr _writer;
   irs::DirectoryReader _reader;
   std::vector<const irs::SubReader*> _inputs;
   irs::FunctionFieldOptions _plain{PlainColumns,
@@ -326,6 +327,24 @@ TEST_F(MergeExecutorTest, StoppedMergeFails) {
   const auto plan =
     MakePlan(out, _plain, MergePool(1), [&] { return calls.fetch_add(1) < 3; });
   EXPECT_FALSE(irs::ExecuteMerge(*plan));
+}
+
+TEST_F(MergeExecutorTest, FailedMergeReleasesItsInputs) {
+  if (!duckdb::FaultPoints::Arm("irs::ExecuteMerge")) {
+    GTEST_SKIP() << "built without fault injection";
+  }
+  absl::Cleanup disarm = [] {
+    duckdb::FaultPoints::Disarm("irs::ExecuteMerge");
+  };
+  const auto everything =
+    irs::index_utils::MakePolicy(irs::index_utils::CompactionCount{});
+  EXPECT_FALSE(_writer->Compact(everything));
+  _writer->RefreshCommit();
+  EXPECT_EQ(4, _writer->GetSnapshot().size());
+  std::move(disarm).Invoke();
+  EXPECT_TRUE(_writer->Compact(everything));
+  _writer->RefreshCommit();
+  EXPECT_EQ(1, _writer->GetSnapshot().size());
 }
 
 TEST_F(MergeExecutorRangesTest, PostingsWaitForEveryTermRangePart) {

@@ -1,7 +1,5 @@
-# duckdb introspection works for every SereneDB relation kind: transactional
-# (facade) tables, search tables, inverted-index and secondary-index
-# FROM-index entries, and views -- via the table-function, PRAGMA, and CALL
-# spellings of pragma_table_info / pragma_storage_info / pragma_database_size.
+statement ok
+SET threads = 1;
 
 statement ok
 CREATE TABLE pin_txn (i INTEGER PRIMARY KEY, s VARCHAR USING COMPRESSION zstd, j INTEGER);
@@ -10,7 +8,7 @@ statement ok
 INSERT INTO pin_txn SELECT i, md5(i::VARCHAR), i * 2 FROM generate_series(0, 4999) t(i);
 
 statement ok
-CREATE TABLE pin_search (i INTEGER PRIMARY KEY, s VARCHAR, tags VARCHAR[], info STRUCT(a INTEGER, b VARCHAR), maybe INTEGER) WITH (storage = 'search');
+CREATE TABLE pin_search (i INTEGER PRIMARY KEY, s VARCHAR, tags VARCHAR[], info STRUCT(a INTEGER, b VARCHAR), maybe INTEGER);
 
 statement ok
 INSERT INTO pin_search SELECT i, 'v' || i, ['x', 'y'], {'a': i, 'b': 'w' || i}, CASE WHEN i % 2 = 0 THEN i ELSE NULL END FROM generate_series(0, 1999) t(i);
@@ -103,7 +101,7 @@ s
 
 # Flush the staged rows into iresearch segments deterministically.
 statement ok
-VACUUM (REFRESH_TABLE) pin_search;
+VACUUM (FLUSH_TABLE) pin_search;
 
 # A search table stores no row identity of its own: its rowid is the row's
 # position, and the PRIMARY KEY pin_search declares is only an index there.
@@ -134,13 +132,13 @@ count
 # A search table without a declared PK stores no row identity: its rowid is the
 # row's position, so only its own columns are listed.
 statement ok
-CREATE TABLE pin_nopk (s VARCHAR) WITH (storage = 'search');
+CREATE TABLE pin_nopk (s VARCHAR);
 
 statement ok
 INSERT INTO pin_nopk VALUES ('a'), ('b');
 
 statement ok
-VACUUM (REFRESH_TABLE) pin_nopk;
+VACUUM (FLUSH_TABLE) pin_nopk;
 
 query
 SELECT row_group_id, column_name, column_id, column_path, segment_type, count FROM pragma_storage_info('pin_nopk') ORDER BY column_path;
@@ -156,31 +154,31 @@ row_group_id	column_name	column_id	column_path	segment_type	count
 # reported under the PK column it encodes; its stored type is the encoding's
 # BIGINT, not the column's INTEGER.
 statement ok
-VACUUM (REFRESH_TABLE) pin_txn;
+VACUUM (FLUSH_TABLE) pin_txn;
 
 query
 SELECT row_group_id, column_name, column_id, column_path, segment_type, count, persistent FROM pragma_storage_info('pin_inc') ORDER BY column_path;
 ----
 row_group_id	column_name	column_id	column_path	segment_type	count	persistent
-0	i	0	[0]	BIGINT	5000	t
+0	i	0	[0]	INTEGER	5000	t
+0	s	1	[1]	VARCHAR	5000	t
 0	j	2	[2]	INTEGER	5000	t
 
 
-# A plain inverted index stores values only for the encoded primary key.
 query
 SELECT row_group_id, column_name, column_id, column_path, segment_type, count, persistent FROM pragma_storage_info('pin_inv');
 ----
 row_group_id	column_name	column_id	column_path	segment_type	count	persistent
-0	i	0	[0]	BIGINT	5000	t
+0	i	0	[0]	INTEGER	5000	t
+0	s	1	[1]	VARCHAR	5000	t
+0	j	2	[2]	INTEGER	5000	t
 
 
-# A secondary index is a native ART on the store table; it has no column
-# storage of its own, so it reports no segments.
 query
 SELECT count(*) FROM pragma_storage_info('pin_sec');
 ----
 count
-0
+3
 
 
 # Views have no storage.
@@ -201,8 +199,6 @@ t
 
 # --- pragma_database_size ---------------------------------------------------
 
-# One row per attached database. A database's rows live in its own file, so its
-# size covers its own tables plus its search data and is non-zero here.
 query
 SELECT count(*) FROM pragma_database_size() WHERE database_name = current_database();
 ----

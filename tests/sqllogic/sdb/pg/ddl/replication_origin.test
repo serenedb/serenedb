@@ -248,6 +248,72 @@ setup
 f
 
 
+statement ok
+SELECT pg_replication_origin_create('rorg_b2');
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+SELECT pg_replication_origin_advance('rorg_a', '0/A00');
+
+
+statement ok
+SELECT pg_replication_origin_advance('rorg_b2', '0/B00');
+
+
+statement ok
+SELECT pg_replication_origin_advance('rorg_a', '0/C00');
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT pg_replication_origin_progress('rorg_a', false) AS a, pg_replication_origin_progress('rorg_b2', false) AS b;
+----
+a	b
+0/C00	0/B00
+
+
+statement ok
+SELECT pg_replication_origin_session_setup('rorg_a');
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+SELECT pg_replication_origin_advance('rorg_b2', '0/B10');
+
+
+statement ok
+SELECT pg_replication_origin_xact_setup('0/D00', now());
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT pg_replication_origin_progress('rorg_a', false) AS a, pg_replication_origin_progress('rorg_b2', false) AS b;
+----
+a	b
+0/D00	0/B10
+
+
+statement ok
+SELECT pg_replication_origin_session_reset();
+
+
+statement ok
+SELECT pg_replication_origin_drop('rorg_b2');
+
+
 connection other
 statement ok
 SELECT pg_replication_origin_session_setup('rorg_a');

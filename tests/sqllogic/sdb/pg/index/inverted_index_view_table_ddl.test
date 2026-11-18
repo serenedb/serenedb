@@ -14,16 +14,13 @@ statement ok
 CREATE INDEX vtd_v_idx ON vtd_v USING inverted(id, body);
 
 statement ok
-CREATE TABLE vtd_s (id BIGINT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE TABLE vtd_s (id BIGINT PRIMARY KEY, body TEXT);
 
 statement ok
 CREATE INDEX vtd_s_idx ON vtd_s USING inverted (body);
 
 statement ok
 INSERT INTO vtd_s VALUES (1, 'pudge goes mid');
-
-statement ok
-VACUUM (REFRESH_TABLE) vtd_s;
 
 statement ok
 CREATE TABLE vtd_t(a int, b text);

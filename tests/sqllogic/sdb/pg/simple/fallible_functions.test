@@ -12,7 +12,7 @@ FROM generate_series(1, 3000) AS i;
 
 
 statement ok
-FORCE CHECKPOINT;
+VACUUM (FLUSH_TABLE) sif_sizes;
 
 
 query

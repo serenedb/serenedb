@@ -51,7 +51,8 @@ a
 statement error
 INSERT INTO ud VALUES (1, 'again')
 ----
-db error: ERROR: Duplicate key "id: 1" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "ud_id"
+DETAIL: Key (id)=(1) already exists.
 
 
 statement ok
@@ -105,7 +106,8 @@ COMMIT
 statement error
 INSERT INTO udp VALUES (1, 'again')
 ----
-db error: ERROR: Duplicate key "id: 1" violates primary key constraint.
+db error: ERROR: duplicate key value violates unique constraint "udp_pkey"
+DETAIL: Key (id)=(1) already exists.
 
 
 statement ok

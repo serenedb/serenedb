@@ -51,7 +51,7 @@ void RunCountScan(duckdb::TableFunctionInput&, ScanGlobalState& g,
       const auto range = g.RangeOf(unit);
       if (l.root_seg != unit.seg || range.begin < l.root_end) {
         FinishRoot(l);
-        const auto& seg_query = EnsureSegmentQuery(g, l, unit.seg);
+        const auto& seg_query = EnsureSegmentQuery(g, &l, unit.seg);
         auto* table = BeginVerify(l.col_verify, sub, g, l);
         auto plan = irs::count::MakeRoot(
           seg_query,
@@ -73,6 +73,7 @@ void RunCountScan(duckdb::TableFunctionInput&, ScanGlobalState& g,
   }
   const auto batch = std::min<duckdb::idx_t>(l.local_count - l.local_emitted,
                                              STANDARD_VECTOR_SIZE);
+  WriteVirtualColumns(g, batch, nullptr, output);
   output.SetChildCardinality(batch);
   l.local_emitted += batch;
 }

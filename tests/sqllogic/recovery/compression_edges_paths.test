@@ -3,10 +3,10 @@
 # equal to itself, and every codec's analyze runs on the auto path -- forcing any codec masks it).
 #
 # The last coverable classes: codec-hostile SPECIAL VALUES (NaN/Inf/-0.0, INT64 extremes
-# under bitpacking's frame-of-reference, INT128 decimals, the 12/13-byte string_t inline boundary,
+# under a frame of reference, INT128 decimals, the 12/13-byte string_t inline boundary,
 # BOOLEAN), the AUTO-checkpoint write path (compression triggered by WAL size with nobody calling
 # CHECKPOINT), OPTIMISTIC writes (one transaction big enough to spill row groups before COMMIT,
-# plus its ROLLBACK twin), CONCURRENT writers, and the READ side of plus-compressed segments
+# plus its ROLLBACK twin), CONCURRENT writers, and the READ side of fsst segments
 # (point lookups by rowid, selective filters over zone maps, projection subsets) -- everything
 # else verifies via full scans only.
 
@@ -58,19 +58,19 @@ n	dbl_ok	big_ok	dec38_ok	s1213_ok	flag_ok	flt_ok	nans	fnans
 400000	t	t	t	t	t	t	8	8
 
 
-# the inline-boundary strings landed in dict_fsst. INT64_MIN/MAX spikes do NOT de-bitpack the
-# column: bitpacking chooses widths per 2048-value group, so only the spike's group degrades --
-# the deliberate contrast with UUID, where one outlier costs the whole row group its codec
+# the inline-boundary strings landed in an fsst codec. INT64_MIN/MAX spikes do NOT cost the column
+# its codec: it stays in the numeric codec -- the deliberate contrast with UUID, where one outlier
+# costs the whole row group its codec
 query
-SELECT 's1213_dict_fsst' AS combo, (SELECT bool_or(compression = 'DICT_FSST') FROM pragma_storage_info('ce.specials', include_segment_info=true) WHERE column_name='s1213' AND segment_type='VARCHAR') AS ok
+SELECT 's1213_fsst' AS combo, (SELECT bool_and(compression IN ('DICT_FSST', 'FSST')) FROM pragma_storage_info('ce.specials', include_segment_info=true) WHERE column_name='s1213' AND segment_type='VARCHAR') AS ok
 UNION ALL SELECT 'flag_bitpacks', (SELECT bool_or(compression = 'BitPacking') FROM pragma_storage_info('ce.specials', include_segment_info=true) WHERE column_name='flag' AND segment_type='BOOLEAN')
-UNION ALL SELECT 'big_extremes_still_bitpack', (SELECT bool_or(compression = 'BitPacking') FROM pragma_storage_info('ce.specials', include_segment_info=true) WHERE column_name='big' AND segment_type NOT IN ('VALIDITY'))
+UNION ALL SELECT 'big_extremes_still_numeric', (SELECT bool_and(compression = 'Numeric') FROM pragma_storage_info('ce.specials', include_segment_info=true) WHERE column_name='big' AND segment_type NOT IN ('VALIDITY'))
 ORDER BY combo;
 ----
 combo	ok
-big_extremes_still_bitpack	t
+big_extremes_still_numeric	t
 flag_bitpacks	t
-s1213_dict_fsst	t
+s1213_fsst	t
 
 
 # --- optimistic write: one transaction spills multiple row groups before COMMIT; rollback twin ---
@@ -120,10 +120,10 @@ CHECKPOINT ce;
 
 query
 SELECT count(*) AS n, bool_and(v = 'o/' || lpad((ord // 8)::VARCHAR, 7, '0') || '/' || md5(ord::VARCHAR)) AS rows_match,
-       (SELECT bool_or(compression = 'DICT_FSST') FROM pragma_storage_info('ce.opti', include_segment_info=true) WHERE column_name='v' AND segment_type='VARCHAR') AS dict_fsst
+       (SELECT bool_and(compression = 'FSST') FROM pragma_storage_info('ce.opti', include_segment_info=true) WHERE column_name='v' AND segment_type='VARCHAR') AS fsst
   FROM ce.opti;
 ----
-n	rows_match	dict_fsst
+n	rows_match	fsst
 500000	t	t
 
 
@@ -167,7 +167,7 @@ n	rows_match	dn
 240000	t	240000
 
 
-# --- the read side of plus-compressed segments: point lookups, zone-map filters, projections ---
+# --- the read side of fsst segments: point lookups, zone-map filters, projections ---
 
 statement ok
 CREATE TABLE ce.readside AS
@@ -179,13 +179,13 @@ statement ok
 CHECKPOINT ce;
 
 
-# the shape commits a plus mode, so these reads decompress cleaved segments
+# the column is stored with an fsst codec, so these reads decode single rows of its segments
 query
-SELECT bool_or(segment_info LIKE '%PLUS%') AS has_plus
+SELECT bool_and(compression IN ('DICT_FSST', 'FSST')) AS fsst
   FROM pragma_storage_info('ce.readside', include_segment_info=true)
  WHERE column_name='v' AND segment_type='VARCHAR';
 ----
-has_plus
+fsst
 t
 
 
@@ -250,7 +250,7 @@ SET wal_autocheckpoint='16.0 MiB';
 # the WAL crossed 512KB several times over, so segments exist WITHOUT any manual CHECKPOINT, and
 # every row still round-trips
 query
-SELECT (SELECT count(*) > 0 FROM pragma_storage_info('ca.autockpt', include_segment_info=true) WHERE column_name='v' AND compression='DICT_FSST') AS auto_compressed,
+SELECT (SELECT count(*) > 0 FROM pragma_storage_info('ca.autockpt', include_segment_info=true) WHERE column_name='v' AND compression='FSST') AS auto_compressed,
        (SELECT count(*) FROM ca.autockpt) AS n,
        (SELECT bool_and(v = 'a/' || lpad((ord // 8)::VARCHAR, 7, '0') || '/' || md5(ord::VARCHAR)) FROM ca.autockpt) AS rows_match;
 ----

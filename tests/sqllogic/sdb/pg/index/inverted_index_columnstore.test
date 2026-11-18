@@ -66,9 +66,6 @@ pk	big_int	dbl
 statement ok
 INSERT INTO foo VALUES (6, 66, 600, 6.5, 6.25, TRUE, 'fresh');
 
-statement ok
-VACUUM (REFRESH_TABLE) foo;
-
 query
 SELECT pk, small_int, big_int, flag FROM foo_idx WHERE txt @@ ts_phrase('fresh');
 ----
@@ -78,9 +75,6 @@ pk	small_int	big_int	flag
 # UPDATE rewrites the row; the columnstore picks up new values.
 statement ok
 UPDATE foo SET big_int = 999, flag = FALSE WHERE pk = 6;
-
-statement ok
-VACUUM (REFRESH_TABLE) foo;
 
 query
 SELECT pk, big_int, flag FROM foo_idx WHERE txt @@ ts_phrase('fresh');

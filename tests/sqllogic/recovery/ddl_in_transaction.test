@@ -103,7 +103,7 @@ BEGIN;
 
 
 statement ok
-CREATE TABLE ddl_txn_s1(id INTEGER, body TEXT) WITH (storage = 'search');
+CREATE TABLE ddl_txn_s1(id INTEGER, body TEXT);
 
 
 statement ok
@@ -144,7 +144,7 @@ BEGIN;
 
 
 statement ok
-CREATE TABLE ddl_txn_s2(id INTEGER, body TEXT) WITH (storage = 'search');
+CREATE TABLE ddl_txn_s2(id INTEGER, body TEXT);
 
 
 statement ok
@@ -155,8 +155,6 @@ statement ok
 COMMIT;
 
 
-# The search leg is eventually consistent, so the definition is what this
-# asserts; the rows are covered by the search suites.
 query
 SELECT count(*) AS n FROM pg_class WHERE relname = 'ddl_txn_s2';
 ----

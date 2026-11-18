@@ -25,7 +25,7 @@
 #include <absl/strings/str_join.h>
 
 #include <algorithm>
-#include <duckdb/common/types/hyperloglog.hpp>
+#include <duckdb/storage/statistics/distinct_statistics.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
@@ -56,10 +56,10 @@ std::vector<irs::doc_id_t> Renumber(const irs::SubReader& segment) {
   const auto end =
     static_cast<irs::doc_id_t>(segment.docs_count() + irs::doc_limits::min());
   std::vector<irs::doc_id_t> out(end, irs::doc_limits::invalid());
-  auto mask = segment.MaskedDocs();
+  const auto* mask = segment.docs_mask();
   auto next = irs::doc_limits::min();
   for (auto doc = irs::doc_limits::min(); doc < end; ++doc) {
-    if (!mask.Contains(doc)) {
+    if (!mask || !mask->Contains(doc)) {
       out[doc] = next++;
     }
   }
@@ -103,7 +103,7 @@ DumpField DumpOneField(const irs::SubReader& segment,
   for (auto it = reader.iterator(); it->next();) {
     DumpTerm term{.value = irs::bstring{it->value()}};
     PostingsCursor cursor{it->postings(meta.index_features),
-                          meta.index_features, segment.MaskedDocs()};
+                          meta.index_features, segment.docs_mask()};
     for (auto doc = cursor.Next(); !irs::doc_limits::eof(doc);
          doc = cursor.Next()) {
       DumpPosting posting{.doc = renumber[doc], .freq = cursor.GetFreq()};
@@ -138,8 +138,8 @@ DumpColumn DumpOneColumn(const irs::SubReader& segment,
   DumpColumn out{.id = col.Id(), .type = col.Type().ToString()};
   irs::ReadContext ctx{cs};
   auto state = col.InitScan(ctx);
-  const auto* stored = col.HyperLogLog();
-  duckdb::HyperLogLog rebuilt;
+  const auto* stored = col.Distinct();
+  duckdb::DistinctStatistics rebuilt;
   duckdb::Vector hashes{duckdb::LogicalType::HASH, STANDARD_VECTOR_SIZE};
   for (uint64_t row = 0; row < col.RowCount();) {
     const auto take =
@@ -147,8 +147,7 @@ DumpColumn DumpOneColumn(const irs::SubReader& segment,
     duckdb::Vector vec{col.Type(), STANDARD_VECTOR_SIZE};
     col.Scan(state, vec, take);
     if (stored != nullptr) {
-      duckdb::VectorOperations::Hash(vec, hashes, take);
-      rebuilt.Update(vec, hashes);
+      rebuilt.Update(vec, take, hashes);
     }
     for (uint64_t k = 0; k != take; ++k) {
       const auto doc = row + k + irs::doc_limits::min();
@@ -165,7 +164,7 @@ DumpColumn DumpOneColumn(const irs::SubReader& segment,
     }
   }
   if (stored != nullptr) {
-    out.sketch_matches_values = stored->Count() == rebuilt.Count();
+    out.sketch_matches_values = stored->GetCount() == rebuilt.GetCount();
   }
   return out;
 }

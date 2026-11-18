@@ -20,8 +20,6 @@
 
 #include <gtest/gtest.h>
 
-#include <cstddef>
-
 #include "network/server.h"
 #include "scheduler/background_scheduler.h"
 #include "storage_engine/search_engine.h"
@@ -29,44 +27,23 @@
 namespace sdb::search {
 namespace {
 
-size_t HoldEveryBigSlot(MergeRunner& merges) {
-  size_t held = 0;
-  while (merges.TryHoldBig()) {
-    ++held;
-  }
-  return held;
-}
-
-void ReleaseBigSlots(MergeRunner& merges, size_t held) {
-  for (; held != 0; --held) {
-    merges.ReleaseBig();
-  }
-}
-
-TEST(SearchEngineTest, AManualCompactionHoldsABigSlotOnlyWhenOneIsFree) {
+TEST(SearchEngineTest, ManualCompactionKeepsAnnWorkersWhenEverySlotIsBusy) {
   Server server;
   BackgroundScheduler scheduler;
   scheduler.start();
   SearchEngine engine;
-  engine.start();
-  auto& merges = engine.Merges();
-  const auto big = HoldEveryBigSlot(merges);
-  EXPECT_LT(0, big);
+  int held = 0;
+  while (engine.TryAcquireCompaction()) {
+    ++held;
+  }
+  ASSERT_EQ(held, SearchEngine::MaxConcurrentCompactions());
   {
     const ManualCompactionSlot slot;
-    EXPECT_TRUE(ManualCompactionSlot::AnnEnv());
+    EXPECT_TRUE(slot.AnnEnv());
   }
-  EXPECT_FALSE(merges.TryHoldBig());
-  ReleaseBigSlots(merges, big);
-  {
-    const ManualCompactionSlot slot;
-    const auto rest = HoldEveryBigSlot(merges);
-    EXPECT_EQ(big - 1, rest);
-    ReleaseBigSlots(merges, rest);
+  for (; held != 0; --held) {
+    engine.ReleaseCompaction();
   }
-  EXPECT_EQ(big, HoldEveryBigSlot(merges));
-  ReleaseBigSlots(merges, big);
-  engine.stop();
   scheduler.stop();
 }
 

@@ -6,20 +6,18 @@ hash-threshold 100
 # terms are the distinct elements, ts_dict_count is live documents per term
 # (an element listed twice in one row still counts that document once),
 # ts_dict_freq is total postings. The Key=Value facet-tag pattern is the
-# motivating shape. Background maintenance is disabled; visibility is driven
-# by VACUUM (REFRESH_TABLE).
+# motivating shape.
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY ldl_kw AS keyword() WITH (frequency)
 
 
 statement ok
-CREATE TABLE ldl(id INTEGER PRIMARY KEY, tags VARCHAR[], pair VARCHAR[2], plain VARCHAR)
+CREATE TABLE ldl(id INTEGER PRIMARY KEY, tags VARCHAR[], pair VARCHAR[2], plain VARCHAR) WITH (compaction_interval = 0)
 
 
 statement ok
 CREATE INDEX ldl_idx ON ldl USING inverted(id, tags ldl_kw, pair, plain)
-    WITH (refresh_interval = 0, compaction_interval = 0)
 
 
 statement ok
@@ -30,10 +28,6 @@ INSERT INTO ldl VALUES
   (4, NULL,                            ['a', 'b'], 'z'),
   (5, [],                              ['c', 'a'], 'x'),
   (6, ['Brand=FENDT', 'Brand=FENDT'],  ['b', 'a'], 'y')
-
-
-statement ok
-VACUUM (REFRESH_TABLE) ldl;
 
 
 # Terms are the distinct elements across all rows.
@@ -139,10 +133,6 @@ statement ok
 DELETE FROM ldl WHERE id IN (3, 6)
 
 
-statement ok
-VACUUM (REFRESH_TABLE) ldl;
-
-
 query TI
 SELECT t AS term, c AS docs
 FROM (SELECT unnest(ts_dict_agg(tags)) AS t, unnest(ts_dict_count(tags)) AS c
@@ -158,10 +148,6 @@ Status=Open	1
 # A fresh segment sums per term with the dirty one.
 statement ok
 INSERT INTO ldl VALUES (7, ['Brand=FENDT', 'Status=Open'], ['c', 'c'], 'w')
-
-
-statement ok
-VACUUM (REFRESH_TABLE) ldl;
 
 
 query TI

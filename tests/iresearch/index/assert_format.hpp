@@ -235,7 +235,7 @@ void IndexSegment::insert(IndexedFieldIterator indexed_begin,
 
 using index_t = std::vector<IndexSegment>;
 
-void AssertIndex(irs::IndexReader::ptr actual_index,
+void AssertIndex(const irs::IndexReader& actual_index,
                  const index_t& expected_index, irs::IndexFeatures features,
                  size_t skip = 0,
                  const irs::RegexpAcceptor* acceptor = nullptr);

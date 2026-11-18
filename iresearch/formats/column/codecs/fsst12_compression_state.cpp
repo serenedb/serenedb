@@ -1,0 +1,130 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#include "iresearch/formats/column/codecs/fsst12_compression_state.hpp"
+
+#include <algorithm>
+#include <duckdb/common/bitpacking.hpp>
+
+#include "iresearch/formats/column/codecs/string_compression_function.hpp"
+#include "iresearch/formats/column/codecs/string_compression_loops.tpp"
+#include "iresearch/formats/column/codecs/string_layout.hpp"
+
+namespace irs::codecs::text {
+namespace {
+
+constexpr uint64_t kEncodeExpansion = 2;
+constexpr uint64_t kEncodeSlack = 8;
+
+}  // namespace
+
+void Fsst12CompressionState::FinalizeCompress() {
+  if (_rows.SegmentShape() == Shape::Dedup) {
+    _rows.Sort(_sort);
+  }
+  const auto lengths = _rows.Lengths();
+  const auto rows = _rows.View();
+  const auto entries = rows.entries;
+  const auto first_entry = rows.first_entry;
+  auto& data = _out->bytes;
+  _lcp_stream.assign(first_entry, 0);
+  _frames.clear();
+  uint32_t max_lcp = 0;
+  uint64_t frame_raw = 0;
+  uint64_t frame_first = 0;
+  uint64_t suffixes = 0;
+  for (size_t i = 0; i < entries.size(); ++i) {
+    const auto& entry = entries[i];
+    const auto size = entry.GetSize();
+    if (frame_raw != 0 && frame_raw + size > kFsstFrameRawBytes) {
+      _frames.emplace_back(static_cast<uint32_t>(frame_first),
+                           static_cast<uint32_t>(frame_raw), 0, 0);
+      frame_raw = 0;
+      frame_first = i;
+    }
+    const uint32_t lcp = (i - frame_first) % kChainRestart == 0
+                           ? 0
+                           : CommonPrefix(entries[i - 1], entry);
+    _lcp_stream.emplace_back(lcp);
+    max_lcp = std::max(max_lcp, lcp);
+    frame_raw += size;
+    suffixes += size - lcp;
+  }
+  if (!entries.empty()) {
+    _frames.emplace_back(static_cast<uint32_t>(frame_first),
+                         static_cast<uint32_t>(frame_raw), 0, 0);
+  }
+  const auto skip = std::span{_lcp_stream}.subspan(first_entry);
+  size_t done = 0;
+  const auto encode = [&](uint64_t capacity) {
+    auto* out = data.Extend(capacity);
+    const auto encoded =
+      _codec.Encode(entries.subspan(done), skip.subspan(done), out, capacity,
+                    lengths.subspan(done));
+    data.Shrink(capacity - encoded.bytes);
+    for (auto i = done; i < done + encoded.strings; ++i) {
+      suffixes -= entries[i].GetSize() - skip[i];
+    }
+    done += encoded.strings;
+  };
+  encode(suffixes + kEncodeSlack);
+  if (done != entries.size()) {
+    encode(kEncodeExpansion * suffixes + kEncodeSlack);
+    SDB_ENSURE(done == entries.size(), "fsst12: compression ran out of space");
+  }
+  size_t off = 0;
+  uint32_t max_enc = 0;
+  for (size_t f = 0; f < _frames.size(); ++f) {
+    auto& frame = _frames[f];
+    const size_t end =
+      f + 1 < _frames.size() ? _frames[f + 1].first_entry : entries.size();
+    frame.comp_off = static_cast<uint32_t>(off);
+    for (size_t e = frame.first_entry; e < end; ++e) {
+      off += lengths[e];
+      max_enc = std::max(max_enc, lengths[e]);
+    }
+    frame.comp_len = static_cast<uint32_t>(off - frame.comp_off);
+    frame.first_entry += first_entry;
+  }
+  _lcp_stream.resize(
+    duckdb::BitpackingPrimitives::RoundUpToAlgorithmGroupSize(EntryCount(rows)),
+    0);
+  const auto symtab = _codec.SymbolTable();
+  RecordRatio(_history[static_cast<size_t>(_rows.SegmentShape())], rows.raw,
+              data.Size() + symtab.size(), _target);
+  _rows.Write(
+    {
+      .codec = kCodec,
+      .frames = _frames,
+      .max_length = max_enc,
+      .lcps = _lcp_stream,
+      .max_lcp = max_lcp,
+      .symtab = symtab,
+    },
+    *_out);
+}
+
+const StringCompressionFunction& Fsst12CompressionFunction() {
+  static constexpr auto kFunction =
+    CompressionFunctionOf<Fsst12CompressionState>();
+  return kFunction;
+}
+
+}  // namespace irs::codecs::text

@@ -31,6 +31,7 @@
 #include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/token_sinks.hpp>
 #include <iresearch/index/norm.hpp>
+#include <iresearch/index/segment_list.hpp>
 #include <iresearch/parser/parser.hpp>
 #include <iresearch/search/count/make.hpp>
 #include <iresearch/search/docs/make.hpp>
@@ -82,6 +83,17 @@ bool StripSuffix(std::string_view& name, std::string_view suffix) {
 
 }  // namespace
 
+irs::DirectoryReader OpenIndex(const irs::Directory& dir,
+                               const irs::IndexReaderOptions& options) {
+  const auto in = dir.open(kSegmentListFile, irs::IOAdvice::SEQUENTIAL);
+  if (!in) {
+    throw std::runtime_error{"the index has no segment list"};
+  }
+  std::string text(in->Length(), '\0');
+  in->ReadData(0, reinterpret_cast<irs::byte_type*>(text.data()), text.size());
+  return irs::OpenSegmentList(dir, text, options);
+}
+
 Command ParseCommand(std::string_view name) {
   Command cmd{.kind = Kind::Count};
 
@@ -131,10 +143,16 @@ Executor::Executor(std::string_view path)
   : _scorer{irs::BM25::Make(irs::BM25::Options{})},
     _tokenizer{irs::analysis::TextTokenizer::Make(
       irs::analysis::TextTokenizer::Options{})},
-    _dir{path},
-    _reader{irs::DirectoryReader(
-      _dir, {.scorer = _scorer_ptr,
-             .db = &::irs::DuckDBEngine::Instance().instance()})} {}
+    _dir{std::in_place, path},
+    _reader{
+      OpenIndex(*_dir, {.scorer = _scorer_ptr,
+                        .db = &::irs::DuckDBEngine::Instance().instance()})} {}
+
+Executor::Executor(irs::DirectoryReader reader)
+  : _scorer{irs::BM25::Make(irs::BM25::Options{})},
+    _tokenizer{irs::analysis::TextTokenizer::Make(
+      irs::analysis::TextTokenizer::Options{})},
+    _reader{std::move(reader)} {}
 
 size_t Executor::ExecuteTopK(size_t k, std::string_view query) {
   ResetResults(k);

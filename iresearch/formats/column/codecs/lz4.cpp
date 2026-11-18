@@ -45,19 +45,12 @@ same frames, each compressed with the segment's trained dictionary; or
 
 namespace irs::codecs {
 
-const duckdb::CompressionFunction& Lz4Function() {
-  static const auto kFunction =
-    text::StringFunction<text::PlainScan<text::BlobLeaf<Lz4>>>(
-      duckdb::CompressionType::COMPRESSION_LZ4);
-  return kFunction;
-}
+constinit const CompressionFunction kLz4Function =
+  text::StringFunction<text::PlainScan<text::BlobLeaf<Lz4>>>(CodecType::Lz4);
 
-const duckdb::CompressionFunction& DictLz4Function() {
-  static const auto kFunction =
-    text::StringFunction<text::DictionaryScan<text::BlobLeaf<Lz4>>>(
-      duckdb::CompressionType::COMPRESSION_DICT_LZ4);
-  return kFunction;
-}
+constinit const CompressionFunction kDictLz4Function =
+  text::StringFunction<text::DictionaryScan<text::BlobLeaf<Lz4>>>(
+    CodecType::DictLz4);
 
 size_t Lz4::Bound(size_t raw_size) noexcept {
   SDB_ASSERT(raw_size <= static_cast<size_t>(LZ4_MAX_INPUT_SIZE));
@@ -73,11 +66,6 @@ Lz4::Compressor::Compressor(uint8_t)
 bool Lz4::Compressor::Train(std::string_view frames,
                             std::span<const size_t> sizes) {
   TrainDictionary(frames, sizes, kDictionaryCap, _dictionary);
-  return Pack();
-}
-
-bool Lz4::Compressor::Adopt(std::string_view dictionary) {
-  _dictionary.assign(dictionary);
   return Pack();
 }
 
@@ -144,11 +132,6 @@ Lz4Hc::Compressor::Compressor(uint8_t level)
 bool Lz4Hc::Compressor::Train(std::string_view frames,
                               std::span<const size_t> sizes) {
   TrainDictionary(frames, sizes, kDictionaryCap, _dictionary);
-  return Pack();
-}
-
-bool Lz4Hc::Compressor::Adopt(std::string_view dictionary) {
-  _dictionary.assign(dictionary);
   return Pack();
 }
 

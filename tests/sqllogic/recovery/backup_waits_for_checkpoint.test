@@ -16,14 +16,8 @@ statement ok
 INSERT INTO bwc_db.public.t VALUES (1);
 
 
-connection writer
 statement ok
-BEGIN;
-
-
-connection writer
-statement ok
-UPDATE bwc_db.public.t SET x = 2;
+SET sdb_faults = 'pause_checkpoint';
 
 
 connection checkpointer
@@ -32,12 +26,8 @@ FORCE CHECKPOINT bwc_db;
 
 
 connection default
-query ok retry 40 backoff 250ms
-SELECT count(*) AS checkpointing FROM pg_stat_activity
-WHERE query LIKE 'FORCE CHECKPOINT bwc_db%' AND state = 'active';
-----
-checkpointing
-1
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_checkpoint:parked';
 
 
 connection cancelled
@@ -78,12 +68,20 @@ phase
 waiting for checkpoint to finish
 
 
-connection writer
+connection default
 statement ok
-COMMIT;
+SET sdb_faults = 'pause_checkpoint:release';
 
 
 wait
+
+
+connection checkpointer
+statement error
+CHECKPOINT bwc_db;
+----
+db error: ERROR: cannot checkpoint while a backup is in progress
+HINT: Retry after pg_backup_stop().
 
 
 connection starter
@@ -94,9 +92,14 @@ label
 t
 
 
+connection checkpointer
+statement ok
+CHECKPOINT bwc_db;
+
+
 connection default
 query
 SELECT x FROM bwc_db.public.t;
 ----
 x
-2
+1

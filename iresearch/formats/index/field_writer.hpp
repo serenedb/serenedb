@@ -27,6 +27,7 @@
 #include <vector>
 
 #include "iresearch/formats/basic_term_reader.hpp"
+#include "iresearch/formats/field_sink.hpp"
 #include "iresearch/formats/flush_state.hpp"
 #include "iresearch/formats/index/block_writer.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
@@ -62,7 +63,7 @@ struct PartBlocks {
   uint64_t terms = 0;
 };
 
-class FieldWriter final {
+class FieldWriter final : public FieldSink {
  public:
   explicit FieldWriter(bool compaction) noexcept : _compaction{compaction} {}
 
@@ -70,16 +71,20 @@ class FieldWriter final {
   FieldWriter& operator=(const FieldWriter&) = delete;
 
   void SetIdxWriter(IdxWriter& idx) noexcept { _idx = &idx; }
+  void prepare(const FlushState& state, uint64_t keyed_dicts) final {
+    prepare(state, keyed_dicts, {});
+  }
   void prepare(const FlushState& state, uint64_t keyed_dicts,
-               PostingsOutputs postings = {});
-  void write(DictRef dict, const BasicTermReader& reader);
+               PostingsOutputs postings);
+  void write(DictRef dict, const BasicTermReader& reader) final;
   PartsField BeginParts(DictRef dict, const BasicTermReader& reader,
                         std::span<const TermPart> parts, uint64_t docs);
   void AppendPart(PartBlocks& built);
   void EndParts(const PartsField& field);
-  void WriteSlot(field_id id, DictRef dict, std::span<const doc_id_t> docs);
-  void WriteSlot(field_id id, DictRef dict, TermPostings& docs);
-  void end();
+  void WriteSlot(field_id id, DictRef dict,
+                 std::span<const doc_id_t> docs) final;
+  void WriteSlot(field_id id, DictRef dict, TermPostings& docs) final;
+  void end() final;
 
  private:
   void Begin(field_id id, DictRef dict) noexcept;

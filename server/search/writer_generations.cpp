@@ -30,46 +30,31 @@ auto WriterGenerations::Register() noexcept -> Writer {
   auto state = _state.load(std::memory_order_relaxed);
   unsigned slot = 0;
   do {
-    if (state & kTruncating) {
-      return {};
-    }
     slot = static_cast<unsigned>(state & kGeneration);
   } while (!_state.compare_exchange_weak(state, state + One(slot)));
   return Writer{this, Leaver{slot}};
 }
 
-auto WriterGenerations::ClaimTruncate() noexcept -> Truncate {
-  auto state = _state.load(std::memory_order_relaxed);
-  do {
-    const auto writers = Writers(state, 0) + Writers(state, 1);
-    SDB_ASSERT(writers > 0);
-    if (writers != 1) {
-      return {};
-    }
-    SDB_ASSERT(!(state & kTruncating));
-  } while (!_state.compare_exchange_weak(state, state | kTruncating));
-  return Truncate{this};
-}
-
-void WriterGenerations::Drain(duckdb::ClientContext& context) {
+void WriterGenerations::Drain(duckdb::ClientContext& context,
+                              const Writer* own) {
+  SDB_ASSERT(!own || !*own || own->get() == this);
+  const auto others = [&](unsigned slot) {
+    const bool mine = own && *own && own->get_deleter().slot == slot;
+    return Writers(_state.load(), slot) - (mine ? 1 : 0);
+  };
   absl::MutexLock lock{&duckdb::ClientContext::AwaitMutex()};
   const auto prior = static_cast<unsigned>(_state.load() & kGeneration);
-  context.Await([&] { return Writers(_state.load(), prior ^ 1U) == 0; });
+  context.Await([&] { return others(prior ^ 1U) == 0; });
   _state.fetch_xor(kGeneration);
-  context.Await([&] { return Writers(_state.load(), prior) == 0; });
+  context.Await([&] { return others(prior) == 0; });
 }
 
 void WriterGenerations::Leave(unsigned slot) noexcept {
   const auto previous = _state.fetch_sub(One(slot));
   SDB_ASSERT(Writers(previous, slot) > 0);
-  if (slot != (previous & kGeneration) && Writers(previous, slot) == 1) {
+  if (slot != (previous & kGeneration) && Writers(previous, slot) <= 2) {
     duckdb::ClientContext::Notify();
   }
-}
-
-void WriterGenerations::ReleaseTruncate() noexcept {
-  [[maybe_unused]] const auto previous = _state.fetch_and(~kTruncating);
-  SDB_ASSERT(previous & kTruncating);
 }
 
 }  // namespace sdb::search

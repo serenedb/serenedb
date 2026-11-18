@@ -110,10 +110,6 @@ statement ok
 ALTER TABLE xsai_s.t OWNER TO xsai_owner;
 
 
-# ---- (2) A pending REVOKE on the schema and an OWNER TO on a table in it are
-# two writers of the same dependency edge (table -> schema), so the second is
-# refused as a write-write conflict and nothing of it lands; the ROLLBACK of the
-# first leaves the committed grant in place.
 connection default
 statement ok
 BEGIN;
@@ -125,10 +121,8 @@ REVOKE CREATE ON SCHEMA xsai_s FROM xsai_bob;
 
 
 connection c_owner user=xsai_owner password=xsai_owner_pw
-statement error
+statement ok
 ALTER TABLE xsai_s.t OWNER TO xsai_bob;
-----
-db error: ERROR: Catalog write-write conflict on alter with <slt:ignore>
 
 
 connection default
@@ -144,7 +138,7 @@ FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
 WHERE n.nspname = 'xsai_s' AND c.relname = 't';
 ----
 owner	bob_create
-xsai_owner	t
+xsai_bob	t
 
 
 connection c_owner user=xsai_owner password=xsai_owner_pw
@@ -304,7 +298,7 @@ connection default
 statement error
 GRANT USAGE ON SCHEMA xsai_s TO xsai_bob;
 ----
-db error: ERROR: Catalog write-write conflict on alter with "xsai_s"
+db error: ERROR: could not serialize access due to concurrent update of "xsai_s"
 
 
 connection c_owner user=xsai_owner password=xsai_owner_pw

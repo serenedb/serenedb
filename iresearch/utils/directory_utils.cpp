@@ -23,8 +23,10 @@
 
 #include "iresearch/utils/directory_utils.hpp"
 
+#include <algorithm>
 #include <duckdb/parallel/task_scheduler.hpp>
 
+#include "iresearch/index/file_names.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/store/directory_attributes.hpp"
 #include "iresearch/utils/attributes.hpp"
@@ -52,15 +54,26 @@ IndexFileRefs::ref_t Reference(const Directory& dir, std::string_view name) {
 
 bool RemoveAllUnreferenced(Directory& dir) {
   duckdb::TaskScheduler::BlockingScope blocking;
-  auto& refs = dir.attributes().refs();
+  auto& refs = dir.attributes().refs().refs();
 
   dir.visit([&refs](std::string_view name) {
-    refs.add(name);  // Ensure all files in dir are tracked
+    refs.Track(name);  // Ensure all files in dir are tracked
     return true;
   });
 
   DirectoryCleaner::clean(dir);
   return true;
+}
+
+uint64_t MaxSegmentId(const Directory& dir) {
+  uint64_t max_id = 0;
+  dir.visit([&max_id](std::string_view name) {
+    if (uint64_t id = 0; ParseSegmentId(name, id)) {
+      max_id = std::max(max_id, id);
+    }
+    return true;
+  });
+  return max_id;
 }
 
 }  // namespace directory_utils
@@ -107,7 +120,10 @@ bool TrackingDirectory::rename(std::string_view src,
   return false;
 }
 
-void TrackingDirectory::ClearTracked() noexcept {
+void TrackingDirectory::RemoveTracked() noexcept {
+  for (const auto& file : _files) {
+    _impl.remove(file);
+  }
   _files_size = 0;
   _files.clear();
 }

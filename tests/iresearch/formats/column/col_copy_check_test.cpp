@@ -62,7 +62,7 @@ std::string Text(uint64_t row) {
 }
 
 struct Written {
-  duckdb::CompressionType text = duckdb::CompressionType::COMPRESSION_AUTO;
+  irs::codecs::CodecType text = irs::codecs::CodecType::Auto;
   irs::WriteTier tier = irs::WriteTier::Merge;
   uint64_t rows = 6 * kRowGroup;
   bool nulls = false;
@@ -82,7 +82,7 @@ irs::FunctionFieldOptions UncompressedText() {
         return irs::ColumnOptions{};
       }
       return irs::ColumnOptions{
-        .compression = duckdb::CompressionType::COMPRESSION_UNCOMPRESSED};
+        .compression = irs::codecs::CodecType::Uncompressed};
     },
     nullptr,
     kRowGroup,
@@ -174,7 +174,7 @@ double Ratio(const irs::ReencodeEstimate& estimate) {
 }
 
 TEST_F(ColCopyCheckTest, AColumnStoredUncompressedPaysToReencode) {
-  Write({.text = duckdb::CompressionType::COMPRESSION_UNCOMPRESSED});
+  Write({.text = irs::codecs::CodecType::Uncompressed});
   const auto options = AutoOptions();
   const auto estimate = Estimate(kText, options);
   ASSERT_TRUE(estimate);
@@ -209,16 +209,15 @@ TEST_F(ColCopyCheckTest, ConstantRowGroupsDoNotHideADeclaredCodecChange) {
   Write({.constant_groups = true});
   const auto& column = Column(kNumber);
   ASSERT_TRUE(absl::c_any_of(column.DataBlocks(), [](const auto& block) {
-    return block.codec->type == duckdb::CompressionType::COMPRESSION_CONSTANT;
+    return block.codec->type == irs::codecs::CodecType::Constant;
   }));
   ASSERT_TRUE(absl::c_none_of(column.DataBlocks(), [](const auto& block) {
-    return block.codec->type == duckdb::CompressionType::COMPRESSION_RLE;
+    return block.codec->type == irs::codecs::CodecType::Rle;
   }));
   const irs::FunctionFieldOptions rle_numbers{
     [](irs::field_id id) {
       return id == kNumber
-               ? irs::ColumnOptions{.compression =
-                                      duckdb::CompressionType::COMPRESSION_RLE}
+               ? irs::ColumnOptions{.compression = irs::codecs::CodecType::Rle}
                : irs::ColumnOptions{};
     },
     nullptr,
@@ -230,7 +229,7 @@ TEST_F(ColCopyCheckTest, ConstantRowGroupsDoNotHideADeclaredCodecChange) {
 }
 
 TEST_F(ColCopyCheckTest, ADeclaredCodecTheBlocksUseIsNoChange) {
-  Write({.text = duckdb::CompressionType::COMPRESSION_UNCOMPRESSED});
+  Write({.text = irs::codecs::CodecType::Uncompressed});
   const auto options = UncompressedText();
   const auto estimate = Estimate(kText, options);
   ASSERT_TRUE(estimate);

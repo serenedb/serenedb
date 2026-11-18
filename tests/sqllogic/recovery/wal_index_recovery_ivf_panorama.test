@@ -26,7 +26,7 @@ CREATE INDEX wal_pano_idx ON wal_pano_t
   USING inverted(pk, emb ivf (metric = 'l2', quant = 'none'));
 
 statement ok
-VACUUM (REFRESH_TABLE) wal_pano_t;
+VACUUM (FLUSH_TABLE) wal_pano_t;
 
 statement ok
 SET sdb_ivf_search_nprobe = 1000;
@@ -38,11 +38,6 @@ SELECT pk FROM wal_pano_idx
 ----
 pk
 700
-
-# Freeze iresearch commits before the next batch: these rows reach the storage
-# WAL but their vectors never make it into a segment.
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 statement ok
 INSERT INTO wal_pano_t
@@ -60,7 +55,7 @@ SELECT 1;
 
 connection pano_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (REFRESH_TABLE) wal_pano_t;
+SELECT 1;
 
 connection pano_after
 statement ok

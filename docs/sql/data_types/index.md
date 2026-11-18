@@ -71,11 +71,6 @@ SereneDB supports six nested data types: `ARRAY`, `LIST`, `MAP`, `STRUCT`, `TUPL
 The keys of `MAP`s are case-sensitive, while keys of `UNION`s and `STRUCT`s are case-insensitive.
 For examples, see the [Rules for Case Sensitivity section](../../compatibility/keywords_and_identifiers.md#case-sensitivity-of-keys-in-nested-data-structures).
 
-### Updating Values of Nested Types
-
-When performing _updates_ on values of nested types, SereneDB performs a _delete_ operation followed by an _insert_ operation.
-When used in a table with ART indexes (either via explicit indexes or primary keys/unique constraints), this can lead to [unexpected constraint violations](../../sql/indexes/art.md#constraint-checking-in-update-statements).
-
 ## Nesting
 
 `ARRAY`, `LIST`, `MAP`, `STRUCT`, `TUPLE` and `UNION` types can be arbitrarily nested to any depth, so long as the type rules are observed.

@@ -21,9 +21,6 @@ CREATE INDEX jlp_idx ON jlp USING inverted(id, (doc->'nested'));
 statement ok
 INSERT INTO jlp SELECT g, ('{"nested": ' || g || '}')::JSON FROM generate_series(1, 300) g;
 
-statement ok
-VACUUM (REFRESH_TABLE) jlp;
-
 query
 SELECT count(*) FROM jlp_idx;
 ----
@@ -50,9 +47,6 @@ count
 # Before the fix this failed with the rejected transaction's stale error.
 statement ok
 INSERT INTO jlp SELECT g, ('{"nested": ' || g || '}')::JSON FROM generate_series(301, 600) g;
-
-statement ok
-VACUUM (REFRESH_TABLE) jlp;
 
 query
 SELECT count(*) FROM jlp_idx;
@@ -98,9 +92,6 @@ INSERT INTO jlp_ok SELECT g, ('{"nested": ' || g || '}')::JSON FROM generate_ser
 
 statement ok
 CREATE INDEX jlp_ok_idx ON jlp_ok USING inverted(id, (doc->'nested'));
-
-statement ok
-VACUUM (REFRESH_TABLE) jlp_ok;
 
 query
 SELECT count(*) FROM jlp_ok_idx;

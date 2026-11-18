@@ -41,6 +41,7 @@
 #include <iresearch/search/scorers/vector_similarity_scorer.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/index_utils.hpp>
 #include <memory>
 #include <random>
 #include <span>
@@ -49,7 +50,7 @@
 #include <yaclib/runtime/fair_thread_pool.hpp>
 
 #include "formats/column/test_cs_helpers.hpp"
-#include "index/compaction/policy_compaction.hpp"
+#include "index/test_index_writer.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -211,9 +212,10 @@ double Recall(const irs::DirectoryReader& reader, const Vectors& vecs,
   return static_cast<double>(matched) / static_cast<double>(total);
 }
 
-void CompactAll(irs::IndexWriter& writer, const irs::AnnBuildEnv* env) {
-  const auto result = tests::Compact(
-    writer, tests::MakePolicy(tests::CompactionCount()), nullptr, {}, env);
+void CompactAll(tests::IndexWriter& writer, const irs::AnnBuildEnv* env) {
+  const auto result = writer.Compact(
+    irs::index_utils::MakePolicy(irs::index_utils::CompactionCount()), nullptr,
+    {}, env);
   ASSERT_TRUE(result);
   writer.RefreshCommit();
 }
@@ -225,7 +227,7 @@ TEST(MergeAnnTest, SortedMergeBuildsTheGraphOverTheSortedRows) {
   const std::vector<bool> all(kRows, true);
 
   irs::MemoryDirectory dir;
-  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
+  auto writer = tests::IndexWriter::Make(dir, tests::kOmCreate,
                                        HnswWriterOptions({{.column = kKey}}));
   ASSERT_NE(nullptr, writer);
   for (const size_t parity : {0, 1}) {
@@ -245,7 +247,7 @@ TEST(MergeAnnTest, SortedMergeBuildsTheGraphOverTheSortedRows) {
 
   irs::MemoryDirectory fresh_dir;
   auto fresh_writer =
-    irs::IndexWriter::Make(fresh_dir, irs::kOmCreate, HnswWriterOptions());
+    tests::IndexWriter::Make(fresh_dir, tests::kOmCreate, HnswWriterOptions());
   ASSERT_NE(nullptr, fresh_writer);
   {
     auto trx = fresh_writer->GetBatch();
@@ -286,7 +288,7 @@ TEST(MergeAnnTest, MergeUnitsBuildTheGraphOnAnnWorkers) {
 
   irs::MemoryDirectory dir;
   auto writer =
-    irs::IndexWriter::Make(dir, irs::kOmCreate, HnswWriterOptions());
+    tests::IndexWriter::Make(dir, tests::kOmCreate, HnswWriterOptions());
   ASSERT_NE(nullptr, writer);
   for (const auto [begin, end] :
        {std::pair{size_t{0}, kBig}, std::pair{kBig, kBig + kSmall}}) {

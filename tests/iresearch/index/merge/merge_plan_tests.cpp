@@ -72,8 +72,8 @@ irs::ColumnOptions PlainColumns(irs::field_id) { return {}; }
 
 irs::ColumnOptions UncompressedText(irs::field_id id) {
   return {.compression = id == kTextColumn
-                           ? duckdb::CompressionType::COMPRESSION_UNCOMPRESSED
-                           : duckdb::CompressionType::COMPRESSION_AUTO};
+                           ? irs::codecs::CodecType::Uncompressed
+                           : irs::codecs::CodecType::Auto};
 }
 
 std::vector<size_t> UnitsOf(std::span<const irs::MergeUnit> units,
@@ -92,7 +92,7 @@ class MergePlanTest : public ::testing::Test {
   void SetUp() final {
     auto options = irs::tests::DefaultWriterOptions();
     options.column_options = PlainColumns;
-    _writer = irs::IndexWriter::Make(_dir, irs::kOmCreate, std::move(options));
+    _writer = tests::IndexWriter::Make(_dir, tests::kOmCreate, std::move(options));
     Generator gen{91};
     size_t next_id = 0;
     for (const double delete_ratio : {0.0, 0.25, 0.0}) {
@@ -142,7 +142,7 @@ class MergePlanTest : public ::testing::Test {
   }
 
   irs::MemoryDirectory _dir;
-  irs::IndexWriter::ptr _writer;
+  tests::IndexWriter::ptr _writer;
   irs::DirectoryReader _reader;
   std::vector<const irs::SubReader*> _inputs;
   irs::FunctionFieldOptions _field_options{
@@ -189,18 +189,8 @@ TEST_F(MergePlanTest, OnlyDeletedDocsGiveNoSegment) {
   std::vector<std::shared_ptr<const irs::SegmentReaderImpl>> deleted;
   _doc_map.clear();
   for (size_t i = 0; i < 2; ++i) {
-    auto meta = _reader.Meta().index_meta.segments[i].meta;
-    irs::DocumentMaskBuilder all;
-    for (irs::doc_id_t doc = irs::doc_limits::min();
-         doc < meta.docs_count + irs::doc_limits::min(); ++doc) {
-      all.Add(doc);
-    }
-    meta.docs_mask =
-      std::make_shared<irs::DocumentMask>(std::move(all).Finish());
-    meta.live_docs_count = 0;
-    deleted.push_back(irs::SegmentReaderImpl::Open(
-      _dir, meta, irs::tests::DefaultReaderOptions()));
-    ASSERT_NE(nullptr, deleted.back());
+    deleted.push_back(AllDeleted(_reader[i]));
+    ASSERT_EQ(0, deleted.back()->live_docs_count());
     _doc_map.emplace_back(deleted.back().get(), irs::IResourceManager::gNoop);
   }
   irs::MemoryDirectory out;
@@ -338,8 +328,13 @@ TEST_F(MergePlanTest, BigColumnsSplitIntoRowRanges) {
   ASSERT_LT(1, numbers.size());
   for (const auto id :
        {kTextColumn, kBigintColumn, kListColumn, kStructColumn}) {
-    const auto parts = UnitsOf(units, MergeUnitKind::Column, id);
+    auto parts = UnitsOf(units, MergeUnitKind::Column, id);
     ASSERT_LT(1, parts.size());
+    absl::c_copy(UnitsOf(units, MergeUnitKind::ColumnCopy, id),
+                 std::back_inserter(parts));
+    absl::c_sort(parts, [&](size_t lhs, size_t rhs) {
+      return units[lhs].part < units[rhs].part;
+    });
     for (uint32_t part = 0; part != parts.size(); ++part) {
       EXPECT_EQ(part, units[parts[part]].part);
       EXPECT_TRUE(
@@ -433,8 +428,7 @@ std::vector<std::string> DictionariesByBlock(const irs::ColReader& cs,
   irs::ReadContext ctx{cs};
   for (size_t block = 0; block != col.DataBlocks().size(); ++block) {
     auto seg = col.OpenSegment(block, ctx);
-    auto info = seg->GetCompressionFunction().get_segment_info(
-      duckdb::QueryContext{}, *seg);
+    auto info = seg->function.get_segment_info(*seg);
     out.push_back(info["dictionary"]);
   }
   return out;
@@ -455,7 +449,7 @@ class ColumnSplitTest : public ::testing::Test {
   void SetUp() final {
     auto options = irs::tests::DefaultWriterOptions();
     options.column_options = PlainColumns;
-    _writer = irs::IndexWriter::Make(_dir, irs::kOmCreate, std::move(options));
+    _writer = tests::IndexWriter::Make(_dir, tests::kOmCreate, std::move(options));
   }
 
   template<typename Fill>
@@ -563,7 +557,7 @@ class ColumnSplitTest : public ::testing::Test {
   }
 
   irs::MemoryDirectory _dir;
-  irs::IndexWriter::ptr _writer;
+  tests::IndexWriter::ptr _writer;
   size_t _next = 0;
   irs::DirectoryReader _reader;
   std::vector<const irs::SubReader*> _inputs;
@@ -846,7 +840,7 @@ TEST_F(ColumnSplitTest, NestedColumnsSplitIntoRowRanges) {
   }
 }
 
-using Block = std::tuple<uint64_t, uint64_t, duckdb::CompressionType>;
+using Block = std::tuple<uint64_t, uint64_t, irs::codecs::CodecType>;
 
 std::vector<Block> BlocksOf(const irs::SubReader& segment, irs::field_id id) {
   std::vector<Block> out;
@@ -985,9 +979,12 @@ TEST_F(ColumnCopyTest, CopiesSitBesideSplitEncodedRanges) {
   irs::MemoryDirectory out;
   const auto a = MergeWritten(dir_a);
   const auto b = MergeWritten(dir_b);
+  std::vector<std::string> removed;
   for (size_t s = 0; s != 3; ++s) {
     AddSegment(900, FillRow);
+    removed.emplace_back(absl::StrCat("doc-", _next - 1));
   }
+  RemoveTerms(*_writer, kIdField, removed);
   auto inputs = Fresh(3);
   inputs.insert(inputs.begin(), a.get());
   inputs.push_back(b.get());
@@ -1088,7 +1085,7 @@ TEST_F(ColumnCopyTest, CopyUnitsReencodeWhenThatPays) {
     AddSegment(kEligibleRows, [](auto& doc, size_t row) {
       auto& cw = doc.GetColWriter()->OpenColumn(
         kNumber, duckdb::LogicalType::BIGINT,
-        {.compression = duckdb::CompressionType::COMPRESSION_UNCOMPRESSED,
+        {.compression = irs::codecs::CodecType::Uncompressed,
          .codec_params = irs::ColCodecParams{.tier = irs::WriteTier::Flush}});
       duckdb::Vector v{duckdb::LogicalType::BIGINT, 1};
       v.SetValue(0, duckdb::Value::BIGINT(static_cast<int64_t>(row)));
@@ -1103,7 +1100,7 @@ TEST_F(ColumnCopyTest, CopyUnitsReencodeWhenThatPays) {
   EXPECT_EQ(2, UnitsOf(units, MergeUnitKind::ColumnCopy, kNumber).size());
   EXPECT_EQ("", FirstDifference(ExpectedMerge(_inputs), Dump(*merged)));
   for (const auto& [rows, bytes, codec] : BlocksOf(*merged, kNumber)) {
-    EXPECT_NE(duckdb::CompressionType::COMPRESSION_UNCOMPRESSED, codec);
+    EXPECT_NE(irs::codecs::CodecType::Uncompressed, codec);
   }
 }
 
@@ -1116,7 +1113,7 @@ TEST_F(ColumnCopyTest, ReencodedTextCopiesTrainTheirSegments) {
   }
   _merge_columns = [](irs::field_id) {
     return irs::ColumnOptions{.compression =
-                                duckdb::CompressionType::COMPRESSION_DICT_ZSTD};
+                                irs::codecs::CodecType::DictZstd};
   };
   irs::MemoryDirectory out;
   std::span<const irs::MergeUnit> units;
@@ -1145,7 +1142,7 @@ TEST_F(ColumnCopyTest, InputsThatCannotBeCopiedAreReencoded) {
       FillRow(doc, row);
     }
   });
-  AddSegment(kRowGroup, FillRow);
+  AddSegment(kRowGroup - 1, FillRow);
   AddSegment(kEligibleRows, [](auto& doc, size_t row) {
     WriteValue(doc, kNumber, duckdb::LogicalType::BIGINT,
                duckdb::Value::BIGINT(static_cast<int64_t>(row)));
@@ -1167,7 +1164,9 @@ TEST_F(ColumnCopyTest, NestedSketchedAndOptionlessColumnsAreNotCopied) {
   irs::MemoryDirectory dir_a;
   const auto a = MergeWritten(dir_a, FillRowWithNulls);
   _merge_columns = [](irs::field_id id) {
-    return irs::ColumnOptions{.hyperloglog = id == kNumber};
+    return irs::ColumnOptions{.distinct = id == kNumber
+                                            ? irs::DistinctStats::Exact
+                                            : irs::DistinctStats::None};
   };
   irs::MemoryDirectory out;
   std::span<const irs::MergeUnit> units;
@@ -1210,7 +1209,7 @@ TEST_F(ColumnCopyTest, BlocksThatPointOutsideThemselvesAreReencoded) {
     AddSegment(kEligibleRows, [](auto& doc, size_t row) {
       auto& cw = doc.GetColWriter()->OpenColumn(
         kText, duckdb::LogicalType::VARCHAR,
-        {.compression = duckdb::CompressionType::COMPRESSION_UNCOMPRESSED,
+        {.compression = irs::codecs::CodecType::Uncompressed,
          .codec_params = irs::ColCodecParams{.tier = irs::WriteTier::Flush}});
       duckdb::Vector v{duckdb::LogicalType::VARCHAR, 1};
       v.SetValue(0, duckdb::Value{std::string(row % 5 == 0 ? 5000 : 10, 'q')});
@@ -1257,98 +1256,6 @@ TEST_F(ColumnCopyTest, AnAbortedPlanStopsItsUnits) {
   for (size_t unit = 0; unit != units.size(); ++unit) {
     EXPECT_FALSE(_plan->RunUnit(unit)) << unit;
   }
-}
-
-TEST_F(ColumnCopyTest, StreamedDuckDBStringBlocksAreReencoded) {
-  if (!duckdb::FaultPoints::Arm("irs::ColumnWriter::DuckDBStrings")) {
-    GTEST_SKIP() << "built without fault injection";
-  }
-  absl::Cleanup remove = [] {
-    duckdb::FaultPoints::Disarm("irs::ColumnWriter::DuckDBStrings");
-  };
-  for (size_t s = 0; s != 2; ++s) {
-    AddSegment(kEligibleRows, [](auto& doc, size_t row) {
-      auto& cw = doc.GetColWriter()->OpenColumn(
-        kText, duckdb::LogicalType::VARCHAR,
-        {.compression = duckdb::CompressionType::COMPRESSION_ZSTD,
-         .codec_params = irs::ColCodecParams{.tier = irs::WriteTier::Flush}});
-      duckdb::Vector v{duckdb::LogicalType::VARCHAR, 1};
-      v.SetValue(0, duckdb::Value{absl::StrCat("streamed-", row, "-",
-                                               std::string(row % 61, 'z'))});
-      cw.Append(static_cast<uint64_t>(doc.DocId()) - irs::doc_limits::min(), v,
-                1);
-    });
-  }
-  std::move(remove).Invoke();
-  TakeSnapshot();
-  for (const auto* input : _inputs) {
-    for (const auto& block :
-         input->GetColReader()->Column(kText)->DataBlocks()) {
-      ASSERT_EQ(duckdb::CompressionType::COMPRESSION_ZSTD, block.codec->type);
-    }
-  }
-  irs::MemoryDirectory out;
-  std::span<const irs::MergeUnit> units;
-  const auto merged = MergeInputs(out, kRowGroup, 1, &units);
-  ASSERT_NE(nullptr, merged);
-  EXPECT_TRUE(UnitsOf(units, MergeUnitKind::ColumnCopy, kText).empty());
-  EXPECT_EQ("", FirstDifference(ExpectedMerge(_inputs), Dump(*merged)));
-}
-
-TEST_F(ColumnCopyTest, CopiedDuckDBBlocksBesideTrainedSegmentsCopyAgain) {
-  const auto status = [](size_t row) {
-    std::mt19937_64 rng{row};
-    return absl::StrCat("status-of-the-request-", rng() % 3);
-  };
-  const auto duckdb_blocks = [](const irs::SubReader& segment) {
-    return absl::c_count_if(BlocksOf(segment, kText), [](const Block& block) {
-      return std::get<2>(block) ==
-             duckdb::CompressionType::COMPRESSION_DICT_FSST;
-    });
-  };
-  irs::MemoryDirectory dir_trained;
-  const auto trained = TrainedSegment(dir_trained);
-  if (!duckdb::FaultPoints::Arm("irs::ColumnWriter::DuckDBStrings")) {
-    GTEST_SKIP() << "built without fault injection";
-  }
-  absl::Cleanup remove = [] {
-    duckdb::FaultPoints::Disarm("irs::ColumnWriter::DuckDBStrings");
-  };
-  AddSegment(40000, [&](auto& doc, size_t row) {
-    auto& cw = doc.GetColWriter()->OpenColumn(
-      kText, duckdb::LogicalType::VARCHAR,
-      {.row_group_size = kTrainedRowGroup,
-       .compression = duckdb::CompressionType::COMPRESSION_DICT_FSST,
-       .codec_params = irs::ColCodecParams{.tier = irs::WriteTier::Flush}});
-    duckdb::Vector v{duckdb::LogicalType::VARCHAR, 1};
-    v.SetValue(0, duckdb::Value{status(row)});
-    cw.Append(static_cast<uint64_t>(doc.DocId()) - irs::doc_limits::min(), v,
-              1);
-  });
-  std::move(remove).Invoke();
-  const auto streamed = Fresh(1);
-  const auto streamed_blocks = duckdb_blocks(*streamed.front());
-  ASSERT_EQ(
-    streamed.front()->GetColReader()->Column(kText)->DataBlocks().size(),
-    streamed_blocks);
-  irs::MemoryDirectory dir_first;
-  const auto first = MergeSegments(dir_first, {streamed.front(), trained.get()},
-                                   kTrainedRowGroup);
-  ASSERT_NE(nullptr, first);
-  ASSERT_EQ(streamed_blocks, duckdb_blocks(*first));
-  ASSERT_TRUE(
-    absl::c_linear_search(DictionariesByBlock(*first, kText), "local"));
-  AddSegment(40000, [&](auto& doc, size_t row) {
-    WriteValue(doc, kText, duckdb::LogicalType::VARCHAR,
-               duckdb::Value{status(row)});
-  });
-  auto inputs = Fresh(1);
-  inputs.insert(inputs.begin(), first.get());
-  irs::MemoryDirectory out;
-  const auto merged = MergeSegments(out, inputs, kTrainedRowGroup);
-  ASSERT_NE(nullptr, merged);
-  EXPECT_EQ(streamed_blocks, duckdb_blocks(*merged));
-  EXPECT_EQ("", FirstDifference(ExpectedMerge(_inputs), Dump(*merged)));
 }
 
 TEST_F(ColumnCopyTest, CopiedTextKeepsItsTrainedDictionaries) {

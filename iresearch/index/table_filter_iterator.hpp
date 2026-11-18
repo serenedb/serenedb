@@ -202,8 +202,9 @@ class ColFilterChain {
 
   // Binds the non-score specs against this segment's columnstore (score specs
   // are the caller's -- they filter the computed score vector, not `.col`).
-  // Every spec's column must exist: the per-segment classification resolves
-  // absent columns (all NULL there) before anything reaches a chain. Filter
+  // A single-column spec's column must exist: the per-segment classification
+  // resolves absent columns (all NULL there) before anything reaches a chain;
+  // a multi-column spec reads a column the segment lacks as NULL. Filter
   // states and scratches come from the worker's `states` cache.
   void Bind(const irs::ColReader& col_reader, irs::ReadContext& ctx,
             std::span<const ColFilterSpec> specs,
@@ -363,5 +364,13 @@ struct ColFilterClassification {
   bool segment_dead = false;
   std::vector<ColFilterSpec> active;
 };
+
+inline bool ZoneDead(duckdb::FilterPropagateResult verdict) noexcept {
+  return verdict == duckdb::FilterPropagateResult::FILTER_ALWAYS_FALSE ||
+         verdict == duckdb::FilterPropagateResult::FILTER_FALSE_OR_NULL;
+}
+
+const ColumnReader* FilteredColumn(const ColumnReader& column,
+                                   const ColFilterSpec& spec);
 
 }  // namespace irs

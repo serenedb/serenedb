@@ -1,0 +1,50 @@
+control substitution on
+
+
+statement ok
+CREATE TABLE pitr (id INT, amt DECIMAL(10, 2), u UUID);
+
+
+statement ok
+CREATE UNIQUE INDEX pitr_amt_uidx ON pitr (amt);
+
+
+statement ok
+CREATE INDEX pitr_u_idx ON pitr (u);
+
+
+statement count 2
+INSERT INTO pitr VALUES (1, 10.50, '00000000-0000-0000-0000-000000000001'), (2, 20.25, '00000000-0000-0000-0000-000000000002');
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT indexname, indexdef FROM pg_indexes WHERE tablename = 'pitr' ORDER BY 1;
+----
+indexname	indexdef
+pitr_amt_uidx	CREATE UNIQUE INDEX pitr_amt_uidx ON public.pitr USING inverted (amt)
+pitr_u_idx	CREATE INDEX pitr_u_idx ON public.pitr USING inverted (u)
+
+
+connection after_crash
+statement error
+INSERT INTO pitr VALUES (3, 10.50, NULL);
+----
+db error: ERROR: duplicate key value violates unique constraint "pitr_amt_uidx"
+DETAIL: Key (amt)=(10.50) already exists.
+
+
+connection after_crash
+query
+SELECT id FROM pitr_u_idx WHERE u = '00000000-0000-0000-0000-000000000002';
+----
+id
+2

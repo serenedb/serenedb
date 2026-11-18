@@ -546,8 +546,7 @@ duckdb::unique_ptr<duckdb::TableRef> ReplaceDocsTable(
   auto ref = duckdb::make_uniq<duckdb::TableFunctionRef>();
   ref->function = duckdb::make_uniq<duckdb::FunctionExpression>(
     duckdb::QualifiedName{
-      duckdb::Identifier::SystemCatalog(),
-      duckdb::Identifier{std::string_view{irs::StaticStrings::kDocsSchema}},
+      {duckdb::Identifier{std::string_view{irs::StaticStrings::kDocsSchema}}},
       duckdb::Identifier{table->name}},
     duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>>{});
   return std::move(ref);

@@ -29,10 +29,8 @@
 #include <cstring>
 #include <duckdb.hpp>
 #include <duckdb/common/fault_points.hpp>
-#include <duckdb/storage/checkpoint/string_checkpoint_state.hpp>
 #include <filesystem>
 #include <iresearch/formats/column/col_file_writer.hpp>
-#include <iresearch/formats/column/internal/write_context.hpp>
 #include <iresearch/formats/format_utils.hpp>
 #include <iresearch/store/fs_directory.hpp>
 #include <iresearch/store/memory_directory.hpp>
@@ -274,32 +272,6 @@ TEST_P(ColFileWriterTest, ConcurrentProducersWriteEveryByteAndItsChecksum) {
   ASSERT_EQ(end, footer.data_len);
   ExpectLaidOut(bytes, 0, end, written);
   EXPECT_EQ(Crc(bytes), footer.data_expected_crc32c);
-}
-
-TEST_P(ColFileWriterTest, WriteContextWritesThroughTheFile) {
-  duckdb::DuckDB db;
-  irs::ColFileWriter file{dir().create(kFile)};
-  irs::WriteContext ctx{*db.instance, file};
-  file.Append("ab");
-  EXPECT_EQ(2U, ctx.Position());
-  constexpr std::string_view kStream = "stream";
-  ctx.Append(reinterpret_cast<duckdb::const_data_ptr_t>(kStream.data()),
-             kStream.size());
-  EXPECT_EQ(8U, ctx.Position());
-  duckdb::UncompressedStringSegmentState state;
-  duckdb::block_id_t block = 0;
-  int32_t offset = -1;
-  ctx.WriteString(state, duckdb::string_t{"overflow"}, block, offset);
-  EXPECT_EQ(8, block);
-  EXPECT_EQ(0, offset);
-  file.Finish(kNoFooter);
-  const auto bytes = ReadData(dir());
-  ASSERT_EQ(20U, bytes.size());
-  EXPECT_EQ("abstream", bytes.substr(0, 8));
-  uint32_t length = 0;
-  std::memcpy(&length, bytes.data() + 8, sizeof(length));
-  EXPECT_EQ(8U, length);
-  EXPECT_EQ("overflow", bytes.substr(12, 8));
 }
 
 TEST_P(ColFileWriterTest, TheFooterChecksumCoversEveryAppend) {

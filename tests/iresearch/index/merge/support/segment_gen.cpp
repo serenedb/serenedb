@@ -26,6 +26,8 @@
 #include <algorithm>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
+#include <iresearch/index/segment_reader.hpp>
+#include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <memory>
 
@@ -131,15 +133,12 @@ void WriteValue(irs::IndexWriter::Document& doc, irs::field_id id,
   cw.Append(static_cast<uint64_t>(doc.DocId()) - irs::doc_limits::min(), v, 1);
 }
 
-void RemoveTerms(irs::IndexWriter& writer, irs::field_id field,
+void RemoveTerms(tests::IndexWriter& writer, irs::field_id field,
                  std::span<const std::string> terms) {
   if (terms.empty()) {
     return;
   }
-  const tests::Terms removed{field, {terms.begin(), terms.end()}};
-  auto trx = writer.GetBatch();
-  trx.Remove(tests::RemovalOf(writer, removed));
-  trx.Commit();
+  tests::Remove(writer, tests::Terms{field, {terms.begin(), terms.end()}});
   ASSERT_TRUE(writer.RefreshCommit());
 }
 
@@ -211,7 +210,7 @@ void SortDocs(std::vector<GeneratedDoc>& docs, const SegmentShape& shape,
   });
 }
 
-void InsertDocs(irs::IndexWriter& writer, const SegmentShape& shape,
+void InsertDocs(tests::IndexWriter& writer, const SegmentShape& shape,
                 std::span<const GeneratedDoc> docs) {
   const auto types = ColumnTypes();
   {
@@ -252,7 +251,7 @@ void InsertDocs(irs::IndexWriter& writer, const SegmentShape& shape,
   ASSERT_TRUE(writer.RefreshCommit());
 }
 
-void WriteSegment(irs::IndexWriter& writer, Generator& gen,
+void WriteSegment(tests::IndexWriter& writer, Generator& gen,
                   const SegmentShape& shape, size_t& next_id,
                   const std::vector<irs::SortKey>* sort) {
   auto docs = GenerateDocs(gen, shape, next_id);
@@ -291,8 +290,10 @@ SegmentShape RandomShape(Generator& gen) {
 }
 
 irs::ColumnOptions SketchedColumns(irs::field_id id) {
-  return irs::ColumnOptions{.hyperloglog =
-                              id == kFirstColumn || id == kFirstColumn + 2};
+  return irs::ColumnOptions{
+    .distinct = id == kFirstColumn || id == kFirstColumn + 2
+                  ? irs::DistinctStats::Exact
+                  : irs::DistinctStats::None};
 }
 
 std::vector<const irs::SubReader*> Segments(
@@ -302,6 +303,18 @@ std::vector<const irs::SubReader*> Segments(
     out.push_back(&segment);
   }
   return out;
+}
+
+std::shared_ptr<const irs::SegmentReaderImpl> AllDeleted(
+  const irs::SubReader& segment) {
+  irs::DocumentMaskBuilder all;
+  all.AddRange(irs::doc_limits::min(),
+               static_cast<irs::doc_id_t>(segment.Meta().docs_count +
+                                          irs::doc_limits::min()));
+  return irs::utils::downCast<irs::SegmentReader>(segment)
+    .GetImpl()
+    ->WithDocsMask(
+      std::make_shared<irs::DocumentMask>(std::move(all).Finish()));
 }
 
 }  // namespace tests::merge

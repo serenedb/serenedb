@@ -111,12 +111,12 @@ ReencodeEstimate TrialReencode(const ColReader& reader,
   estimate.reencoded_bytes =
     BlockBytes(written.data) + BlockBytes(written.validity);
   const auto encoded = [](const ColumnBlockMeta& block) {
-    return block.codec->type != duckdb::CompressionType::COMPRESSION_CONSTANT &&
-           block.codec->type != duckdb::CompressionType::COMPRESSION_EMPTY;
+    return block.codec->type != codecs::CodecType::Constant &&
+           block.codec->type != codecs::CodecType::Empty;
   };
   const auto stored = column.DataBlocks();
   estimate.codec_changed =
-    key.compression != duckdb::CompressionType::COMPRESSION_AUTO &&
+    key.compression != codecs::CodecType::Auto &&
     absl::c_any_of(stored, encoded) &&
     absl::c_none_of(stored, [&](const ColumnBlockMeta& block) {
       return encoded(block) &&

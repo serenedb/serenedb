@@ -38,95 +38,13 @@
 
 #include "catalog/catalog.h"
 #include "connector/common.h"
+#include "connector/constraint_keys.h"
 #include "connector/inet_terms.h"
 #include "connector/primary_key.h"
 #include "connector/term_dict.h"
 
 namespace sdb::connector {
 namespace {
-
-template<duckdb::LogicalTypeId Kind>
-auto ExtractNumericValue(const duckdb::UnifiedVectorFormat& fmt,
-                         duckdb::idx_t idx) {
-  if constexpr (Kind == duckdb::LogicalTypeId::TINYINT) {
-    return static_cast<int32_t>(
-      duckdb::UnifiedVectorFormat::GetData<int8_t>(fmt)[idx]);
-  } else if constexpr (Kind == duckdb::LogicalTypeId::SMALLINT) {
-    return static_cast<int32_t>(
-      duckdb::UnifiedVectorFormat::GetData<int16_t>(fmt)[idx]);
-  } else if constexpr (Kind == duckdb::LogicalTypeId::INTEGER ||
-                       Kind == duckdb::LogicalTypeId::DATE) {
-    return duckdb::UnifiedVectorFormat::GetData<int32_t>(fmt)[idx];
-  } else if constexpr (Kind == duckdb::LogicalTypeId::TIME_TZ) {
-    return TimeTzIndexTerm(
-      duckdb::UnifiedVectorFormat::GetData<int64_t>(fmt)[idx]);
-  } else if constexpr (Kind == duckdb::LogicalTypeId::BIGINT ||
-                       Kind == duckdb::LogicalTypeId::TIME ||
-                       Kind == duckdb::LogicalTypeId::TIME_NS ||
-                       Kind == duckdb::LogicalTypeId::TIMESTAMP ||
-                       Kind == duckdb::LogicalTypeId::TIMESTAMP_TZ ||
-                       Kind == duckdb::LogicalTypeId::TIMESTAMP_SEC ||
-                       Kind == duckdb::LogicalTypeId::TIMESTAMP_MS ||
-                       Kind == duckdb::LogicalTypeId::TIMESTAMP_NS ||
-                       Kind == duckdb::LogicalTypeId::TIMESTAMP_TZ_NS) {
-    return duckdb::UnifiedVectorFormat::GetData<int64_t>(fmt)[idx];
-  } else if constexpr (Kind == duckdb::LogicalTypeId::UTINYINT) {
-    return static_cast<int32_t>(
-      duckdb::UnifiedVectorFormat::GetData<uint8_t>(fmt)[idx]);
-  } else if constexpr (Kind == duckdb::LogicalTypeId::USMALLINT) {
-    return static_cast<int32_t>(
-      duckdb::UnifiedVectorFormat::GetData<uint16_t>(fmt)[idx]);
-  } else if constexpr (Kind == duckdb::LogicalTypeId::UINTEGER) {
-    return duckdb::UnifiedVectorFormat::GetData<uint32_t>(fmt)[idx];
-  } else if constexpr (Kind == duckdb::LogicalTypeId::FLOAT) {
-    return duckdb::UnifiedVectorFormat::GetData<float>(fmt)[idx];
-  } else {
-    static_assert(Kind == duckdb::LogicalTypeId::DOUBLE,
-                  "ExtractNumericValue: unsupported Kind");
-    return duckdb::UnifiedVectorFormat::GetData<double>(fmt)[idx];
-  }
-}
-
-template<typename T>
-auto PromoteNumericValue(T value) {
-  if constexpr (std::is_same_v<T, float>) {
-#ifdef FLOAT_T_IS_DOUBLE_T
-    return static_cast<double>(value);
-#else
-    return value;
-#endif
-  } else if constexpr (std::is_same_v<T, uint32_t>) {
-    return static_cast<int64_t>(value);
-  } else {
-    return value;
-  }
-}
-
-template<duckdb::LogicalTypeId Kind>
-using PromotedNumeric = decltype(PromoteNumericValue(ExtractNumericValue<Kind>(
-  std::declval<const duckdb::UnifiedVectorFormat&>(), 0)));
-
-template<duckdb::LogicalTypeId... Kinds, typename F>
-bool DispatchKind(duckdb::LogicalTypeId kind, F&& f) {
-  return (((kind == Kinds) && (f.template operator()<Kinds>(), true)) || ...);
-}
-
-template<duckdb::LogicalTypeId... Extra, typename F>
-bool DispatchNumericKind(duckdb::LogicalTypeId kind, F&& f) {
-  using enum duckdb::LogicalTypeId;
-  return DispatchKind<Extra..., TINYINT, SMALLINT, INTEGER, BIGINT, UTINYINT,
-                      USMALLINT, UINTEGER, FLOAT, DOUBLE, DATE, TIME, TIME_TZ,
-                      TIME_NS, TIMESTAMP, TIMESTAMP_TZ, TIMESTAMP_SEC,
-                      TIMESTAMP_MS, TIMESTAMP_NS, TIMESTAMP_TZ_NS>(
-    kind, std::forward<F>(f));
-}
-
-// The kinds every indexable list/array child shares.
-template<typename F>
-bool DispatchValueKind(duckdb::LogicalTypeId kind, F&& f) {
-  using enum duckdb::LogicalTypeId;
-  return DispatchNumericKind<VARCHAR, BLOB, BOOLEAN>(kind, std::forward<F>(f));
-}
 
 bool ChildValidWhereverParentIs(const duckdb::ValidityMask& parent,
                                 const duckdb::ValidityMask& child,
@@ -339,14 +257,16 @@ bool SearchSinkInsertBaseImpl::InvertDictionary(
 
 SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
   irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
-  EntryInfoProvider&& entry_info_provider, PkColumnKind pk,
+  EntryInfoProvider&& entry_info_provider, catalog::PkColumnKind pk,
   std::vector<IndexedExpression>&& indexed_exprs,
-  const catalog::InvertedIndexConfig* config)
+  const catalog::InvertedIndexConfig* config,
+  std::vector<ConstraintKeyEncoder>&& constraint_keys)
   : _tokenizer_provider{std::move(tokenizer_provider)},
     _entry_info_provider{std::move(entry_info_provider)},
     _trx{&trx},
     _pk{pk},
-    _indexed_expressions{std::move(indexed_exprs)} {
+    _indexed_expressions{std::move(indexed_exprs)},
+    _constraint_keys{std::move(constraint_keys)} {
   if (!config) {
     return;
   }
@@ -355,8 +275,12 @@ SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
       continue;
     }
     const auto* entry = config->FindEntry(key.field_id);
-    if (entry && entry->IsTermDict()) {
-      _terms_by_column[key.column_id].push_back(key.field_id);
+    if (!entry || !entry->IsTermDict()) {
+      continue;
+    }
+    auto& fields = _terms_by_column[key.column_id];
+    if (!absl::c_linear_search(fields, key.field_id)) {
+      fields.push_back(key.field_id);
     }
   }
 }
@@ -519,7 +443,8 @@ void SearchSinkInsertBaseImpl::WriteNumericColumn(const Field& field,
                               uint32_t n, irs::doc_id_t first_doc) {
     InvertField(field, [&](irs::FieldInverter& fld) {
       return fld.InvertNumericBlock(fmt, n, first_doc, [&](duckdb::idx_t idx) {
-        return PromoteNumericValue(ExtractNumericValue<Kind>(fmt, idx));
+        return term_dict::PromoteNumericValue(
+          term_dict::ExtractNumericValue<Kind>(fmt, idx));
       });
     });
   });
@@ -631,12 +556,13 @@ void SearchSinkInsertBaseImpl::WriteListBatch(const Field& field,
         members.Push(irs::BoolMember(data[child_idx]), doc);
       });
     } else {
-      using P = PromotedNumeric<ChildKind>;
+      using P = term_dict::PromotedNumeric<ChildKind>;
       InvertField(field, [&](irs::FieldInverter& fld) {
         return fld.InvertNumerics<P>([&](auto&& emit) {
           for_each_element([&](duckdb::idx_t child_idx, irs::doc_id_t doc) {
-            emit(PromoteNumericValue(
-                   ExtractNumericValue<ChildKind>(child_fmt, child_idx)),
+            emit(term_dict::PromoteNumericValue(
+                   term_dict::ExtractNumericValue<ChildKind>(child_fmt,
+                                                             child_idx)),
                  doc);
           });
         });
@@ -648,9 +574,10 @@ void SearchSinkInsertBaseImpl::WriteListBatch(const Field& field,
 bool SearchSinkInsertBaseImpl::DispatchListBatch(
   duckdb::LogicalTypeId child_kind, const Field& field, duckdb::idx_t count,
   duckdb::idx_t array_size) {
-  return DispatchValueKind(child_kind, [&]<duckdb::LogicalTypeId K>() {
-    WriteListBatch<K>(field, count, array_size);
-  });
+  return term_dict::DispatchValueKind(
+    child_kind, [&]<duckdb::LogicalTypeId K>() {
+      WriteListBatch<K>(field, count, array_size);
+    });
 }
 
 bool SearchSinkInsertBaseImpl::InvertJsonLeaf(
@@ -975,7 +902,7 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
       _field.PrepareForNumericValue(irs::NumericLayout::kNumbers);
       append_stored();
       [[maybe_unused]] const bool matched =
-        DispatchNumericKind(kind, [&]<duckdb::LogicalTypeId K>() {
+        term_dict::DispatchNumericKind(kind, [&]<duckdb::LogicalTypeId K>() {
           WriteNumericColumn<K>(_field, count);
         });
       SDB_ASSERT(matched);
@@ -997,7 +924,7 @@ void SearchSinkInsertBaseImpl::InitImpl(size_t batch_size,
                                         const duckdb::Vector* pk) {
   SDB_ASSERT(batch_size > 0);
   _document.reset();
-  _document.emplace(_trx->Insert(false, batch_size));
+  _document.emplace(_trx->Insert(batch_size));
   // Insert may flush the segment mid-transaction (a pooled segment with
   // mismatched options, a full segment): cached column writers then point
   // at the flushed segment while the terms land in the fresh one.
@@ -1123,6 +1050,11 @@ std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
       DeserializeBoundExpression(key.normalized_expression, context),
       key.field_id);
   }
+  std::vector<ConstraintKeyEncoder> constraint_keys;
+  constraint_keys.reserve(config->constraint_keys.size());
+  for (const auto& key : config->constraint_keys) {
+    constraint_keys.emplace_back(context, shard.GetId(), key);
+  }
   auto tokenizers =
     catalog::IndexTokenizers{context, catalog, *config}.AcquireAll(context);
   auto entry_of = [config](irs::field_id field_id) {
@@ -1132,29 +1064,40 @@ std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
   trx.SetFieldOptions(config);
   return std::make_unique<SearchSinkInsertBaseImpl>(
     trx, BoundTokenizers(std::move(tokenizers)), std::move(entry_of),
-    catalog::PkColumnKind::None, std::move(indexed_exprs), config.get());
+    catalog::PkColumnKind::None, std::move(indexed_exprs), config.get(),
+    std::move(constraint_keys));
 }
 
 void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
                             duckdb::DataChunk& chunk,
                             std::span<const ColumnId> column_ids,
                             duckdb::idx_t table_id,
-                            duckdb::ClientContext& context) {
+                            duckdb::ClientContext& context,
+                            std::span<const ColumnId> copied) {
   const auto num_rows = chunk.size();
   sink.InitImpl(num_rows);
   for (size_t col = 0; col < column_ids.size(); ++col) {
     const auto& vec = chunk.data[col];
     const auto& type = vec.GetType();
-    sink.AppendToColumn(column_ids[col], type, vec, num_rows);
+    if (!absl::c_linear_search(copied, column_ids[col])) {
+      sink.AppendToColumn(column_ids[col], type, vec, num_rows);
+    }
     for (const auto term_field : sink.TermFieldsForColumn(column_ids[col])) {
       sink.SwitchFieldImpl(term_field, type, vec, num_rows);
     }
   }
   for (const auto& indexed_expr : sink.IndexedExpressions()) {
-    auto result = EvaluateExprOverChunk(*indexed_expr.normalized_expr, chunk,
-                                        table_id, column_ids, context);
+    EvaluatedExpression evaluated{*indexed_expr.normalized_expr, chunk,
+                                  table_id, column_ids, context};
+    auto& result = evaluated.Result();
     sink.SwitchExpressionImpl(indexed_expr.field_id, result.GetType(), result,
                               num_rows);
+  }
+  for (const auto& key : sink.ConstraintKeys()) {
+    duckdb::Vector keys{duckdb::LogicalType::BLOB, num_rows};
+    key.Encode(chunk, column_ids, keys);
+    sink.SwitchFieldImpl(key.Key().field, duckdb::LogicalType::BLOB, keys,
+                         num_rows);
   }
   sink.FinishImpl();
 }

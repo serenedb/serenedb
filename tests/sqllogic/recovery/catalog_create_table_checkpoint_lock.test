@@ -1,14 +1,5 @@
-## A statement that creates a table registers the write on its database
-## (JoinStoreTransaction -> MetaTransaction::ModifyDatabase with
-## CREATE_CATALOG_ENTRY), and that registration is what makes duckdb refuse a
-## concurrent non-force CHECKPOINT. Lose it and a checkpoint can run against a
-## half-created relation.
-##
-## The row-write section below is the control: an open transaction that only
-## writes rows does NOT block a checkpoint, so the refusal above is the DDL
-## registration and not duckdb refusing every open transaction.
+control substitution on
 
-# --- DDL: an open CREATE blocks a non-force checkpoint ---
 
 connection writer
 statement ok
@@ -21,23 +12,14 @@ CREATE TABLE cctr_lock_probe(id INTEGER PRIMARY KEY, body TEXT);
 
 
 connection checkpointer
-statement error
+statement ok
 CHECKPOINT;
-----
-db error: ERROR: Cannot CHECKPOINT: there are other write transactions active. Try using FORCE CHECKPOINT to wait until all active transactions are finished
 
 
 connection writer
 statement ok
 COMMIT;
 
-
-connection checkpointer
-statement ok
-CHECKPOINT;
-
-
-# --- control: rows alone do not ---
 
 connection writer
 statement ok
@@ -59,13 +41,29 @@ statement ok
 COMMIT;
 
 
-# The PK-index delete path, which fails "0 out of 1" when a create is stranded
-# by an overlapping checkpoint.
 connection writer
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection writer
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id, body FROM cctr_lock_probe ORDER BY id;
+----
+id	body
+1	ok
+
+
+connection after_crash
 statement ok
 DELETE FROM cctr_lock_probe WHERE id = 1;
 
 
-connection writer
+connection after_crash
 statement ok
 DROP TABLE cctr_lock_probe;

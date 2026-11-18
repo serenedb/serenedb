@@ -95,11 +95,11 @@ CREATE INDEX IF NOT EXISTS cck_t_inv ON cck.t USING inverted (v);
 
 
 statement ok
-CREATE TABLE cck.st (id BIGINT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE TABLE cck.st (id BIGINT PRIMARY KEY, body TEXT);
 
 
 statement ok
-CREATE TABLE IF NOT EXISTS cck.st (id BIGINT PRIMARY KEY, other TEXT) WITH (storage = 'search');
+CREATE TABLE IF NOT EXISTS cck.st (id BIGINT PRIMARY KEY, other TEXT);
 
 
 statement ok
@@ -113,9 +113,9 @@ CREATE ROLE cck_role;
 statement error
 CREATE OR REPLACE TABLE cck.t (blocked INT);
 ----
-db error: ERROR: Cannot drop entry "t" because there are entries that depend on it.
-view "v" depends on table "t".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop table cck.t because other objects depend on it
+DETAIL: view cck.v depends on table cck.t
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 statement ok

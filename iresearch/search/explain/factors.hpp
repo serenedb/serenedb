@@ -48,7 +48,7 @@ uint32_t AddLength(Node& out, const ScoreContext& ctx);
 void AddAverageLength(Node& out, score_t value, const SlotStats* stats);
 
 void AddIdf(Node& out, score_t idf, const SlotStats* stats,
-            std::string_view formula, IdfOf per_term);
+            std::string_view expression, IdfOf per_term);
 
 void AddCollectionShare(Node& out, score_t value, const SlotStats* stats);
 
@@ -65,7 +65,7 @@ using TermFormula =
 void ExplainLanguageModel(const ScoreContext& ctx,
                           std::span<const score_t> shares,
                           const SlotStats* stats, Node parameter,
-                          std::string_view formula, TermFormula score,
+                          std::string_view expression, TermFormula score,
                           Node& out);
 
 void ExplainNoFreq(const ScoreContext& ctx, bool boost_as_score, Node& out);

@@ -48,7 +48,7 @@ void ConstantScore::Explain(const ScoreContext& ctx, const explain::SlotStats*,
   explain::AddBoost(out, ctx.boost);
   explain::AddDetail(out, "value", _value);
   explain::AddScale(out, ctx);
-  out.formula = ScaleOf(ctx) ? "scale * boost * value" : "boost * value";
+  out.expression = ScaleOf(ctx) ? "scale * boost * value" : "boost * value";
 }
 
 bool ConstantScore::equals(const Scorer& other) const noexcept {

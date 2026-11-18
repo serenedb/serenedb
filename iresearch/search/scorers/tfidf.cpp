@@ -106,18 +106,18 @@ void TFIDF::Explain(const ScoreContext& ctx, const explain::SlotStats* stats,
   explain::AddIdf(out, stats_cast(ctx.stats)->value, stats,
                   "log(1 + (N + 1) / (df + 1))", &TfIdfIdf);
   auto& tf = explain::AddDetail(out, "tf", score_t{0});
-  tf.formula = "sqrt(freq)";
+  tf.expression = "sqrt(freq)";
   tf.value = std::sqrt(explain::AddFreq(tf, ctx));
   const uint32_t* norm = _normalize ? FieldNormsOf(ctx) : nullptr;
   if (!norm) {
-    out.formula = "boost * idf * tf";
+    out.expression = "boost * idf * tf";
     return;
   }
   auto& length = explain::AddDetail(out, "norm", score_t{0});
-  length.formula = "1 / sqrt(dl)";
+  length.expression = "1 / sqrt(dl)";
   length.value =
     1.f / std::sqrt(TermCountToScore(explain::AddLength(length, ctx)));
-  out.formula = "boost * idf * tf * norm";
+  out.expression = "boost * idf * tf * norm";
 }
 
 ScoreFunction TFIDF::PrepareScorer(const ScoreContext& ctx) const {

@@ -90,7 +90,7 @@ struct Primitive {
 enum class Field : uint8_t {
   Clauses,
   Column,
-  Formula,
+  Expression,
   Inputs,
   Note,
   Parts,
@@ -104,8 +104,8 @@ enum class Field : uint8_t {
 };
 
 constexpr std::array<std::string_view, 13> kFieldNames{
-  "clauses", "column", "formula", "inputs", "note",  "parts", "phrase",
-  "scored",  "scorer", "slop",    "term",   "terms", "value",
+  "clauses", "column", "expression", "inputs", "note",  "parts", "phrase",
+  "scored",  "scorer", "slop",       "term",   "terms", "value",
 };
 
 duckdb::string_t Key(std::string_view key) noexcept {
@@ -149,7 +149,7 @@ class Emitter {
     const bool group = irs::explain::IsGroup(node);
     add(Field::Clauses, group && !parts.empty());
     add(Field::Column, labeled);
-    add(Field::Formula, !node.formula.empty());
+    add(Field::Expression, !node.expression.empty());
     add(Field::Inputs, !inputs.empty());
     add(Field::Note, !node.note.empty());
     add(Field::Parts, !group && !parts.empty());
@@ -176,8 +176,8 @@ class Emitter {
           case Field::Column:
             String(Column(subject.field));
             break;
-          case Field::Formula:
-            String(node.formula);
+          case Field::Expression:
+            String(node.expression);
             break;
           case Field::Inputs:
             _builder->EmitObject(
@@ -446,7 +446,7 @@ bool Has(simdjson::dom::object node, std::string_view key) {
 
 std::string_view ClauseKey(simdjson::dom::object node) {
   if (Has(node, "clauses")) {
-    return StringOf(node, "formula");
+    return StringOf(node, "expression");
   }
   bool scored = true;
   if (node["scored"].get_bool().get(scored) == simdjson::SUCCESS && !scored) {
@@ -461,9 +461,9 @@ std::string_view ClauseKey(simdjson::dom::object node) {
 
 std::string LuceneDescription(simdjson::dom::object node, std::string_view key,
                               bool has_details) {
-  const auto formula = StringOf(node, "formula");
+  const auto expression = StringOf(node, "expression");
   if (Has(node, "clauses")) {
-    return absl::StrCat(formula, " of:");
+    return absl::StrCat(expression, " of:");
   }
   std::string text{key};
   if (const auto label = Label(node); !label.empty()) {
@@ -477,10 +477,10 @@ std::string LuceneDescription(simdjson::dom::object node, std::string_view key,
   } else if (const auto meaning = MeaningOf(key); !meaning.empty()) {
     absl::StrAppend(&text, ", ", meaning);
   }
-  if (formula == "sum" || formula == "max") {
-    absl::StrAppend(&text, ", ", formula, " of:");
-  } else if (!formula.empty()) {
-    absl::StrAppend(&text, ", computed as ", formula,
+  if (expression == "sum" || expression == "max") {
+    absl::StrAppend(&text, ", ", expression, " of:");
+  } else if (!expression.empty()) {
+    absl::StrAppend(&text, ", computed as ", expression,
                     has_details ? " from:" : "");
   }
   return text;

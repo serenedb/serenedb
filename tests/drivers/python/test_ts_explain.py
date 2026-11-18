@@ -185,30 +185,30 @@ def _check_tree(node: dict, scope: dict, path: str, errors: list[str]) -> None:
     inputs = node.get("inputs") or {}
     scope = {**scope, **{k: v["value"] for k, v in inputs.items()
                          if isinstance(v.get("value"), (int, float))}}
-    formula = node.get("formula")
+    expression = node.get("expression")
     if "clauses" in node:
         values = [c["value"] for c in node["clauses"] if c.get("scored", True)]
         if "constant" in inputs:
             values.append(inputs["constant"]["value"])
-        expected = max([0, *values]) if formula == "max" else sum(values)
-        if formula not in ("sum", "max") or not _close(value, expected, 1e-4, 1e-5):
-            errors.append(f"{path}: {formula} gives {expected}, value {value}")
+        expected = max([0, *values]) if expression == "max" else sum(values)
+        if expression not in ("sum", "max") or not _close(value, expected, 1e-4, 1e-5):
+            errors.append(f"{path}: {expression} gives {expected}, value {value}")
         for i, clause in enumerate(node["clauses"]):
             _check_tree(clause, {}, f"{path}.clauses[{i}]", errors)
     elif "parts" in node:
         expected = sum(part["value"] for part in node["parts"])
-        if formula != "sum" or not _close(value, expected):
+        if expression != "sum" or not _close(value, expected):
             errors.append(f"{path}: parts add up to {expected}, value {value}")
         for i, part in enumerate(node["parts"]):
             _check_tree(part, scope, f"{path}.parts[{i}]", errors)
-    elif formula and "[i]" not in formula:
+    elif expression and "[i]" not in expression:
         names = {("lambda_" if k == "lambda" else k): v for k, v in scope.items()}
         names.setdefault("boost", 1.0)
         names.setdefault("scale", 1.0)
-        expression = formula.replace("^", "**").replace("lambda", "lambda_")
-        expected = eval(expression, {"__builtins__": {}}, {**FUNCTIONS, **names})
+        code = expression.replace("^", "**").replace("lambda", "lambda_")
+        expected = eval(code, {"__builtins__": {}}, {**FUNCTIONS, **names})
         if not _close(value, expected):
-            errors.append(f"{path}: {formula} gives {expected}, value {value}")
+            errors.append(f"{path}: {expression} gives {expected}, value {value}")
     for key, child in inputs.items():
         _check_tree(child, scope, f"{path}.{key}", errors)
 

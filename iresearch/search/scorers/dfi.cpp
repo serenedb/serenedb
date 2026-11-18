@@ -179,11 +179,11 @@ void DFI::Explain(const ScoreContext& ctx, const explain::SlotStats* stats,
     explain::AddBoost(node, ctx.boost);
     const auto freq = explain::AddFreq(node, ctx);
     auto& expected = explain::AddDetail(node, "expected", score_t{0});
-    expected.formula = "p * dl";
+    expected.expression = "p * dl";
     const auto length = TermCountToScore(explain::AddLength(expected, ctx));
     expected.value = ratio * length;
     if (freq > ratio * length) {
-      node.formula = absl::StrCat("boost * log2(1 + ", kernel, ")");
+      node.expression = absl::StrCat("boost * log2(1 + ", kernel, ")");
     } else {
       node.note = "the term occurs no more often than expected, so it scores 0";
     }

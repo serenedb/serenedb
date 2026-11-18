@@ -50,7 +50,7 @@ ORDER BY emb <-> [0, 0, 0]::FLOAT[3]
 LIMIT 1;
 ----
 id	distance	why
-3	75	{"column":"emb","formula":"sqrt(sum((emb[i] - query[i])^2))","inputs":{"dims":{"value":3},"exact":{"value":75},"k":{"value":1},"rescore_width":{"value":2}},"note":"found by an ivf search over sq8 codes","scorer":"l2_distance","value":75}
+3	75	{"column":"emb","expression":"sqrt(sum((emb[i] - query[i])^2))","inputs":{"dims":{"value":3},"exact":{"value":75},"k":{"value":1},"rescore_width":{"value":2}},"note":"found by an ivf search over sq8 codes","scorer":"l2_distance","value":75}
 
 # DOCS_TEST: example_003
 

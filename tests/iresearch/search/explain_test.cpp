@@ -196,9 +196,9 @@ class ExplainTest : public IndexTestBase {
         auto node = plan.Explain(row.doc, std::nullopt);
         EXPECT_NE("unexplained", node.key);
         if (tolerance == 0) {
-          EXPECT_EQ(row.score, ValueOf(node)) << node.formula;
+          EXPECT_EQ(row.score, ValueOf(node)) << node.expression;
         } else {
-          EXPECT_NEAR(row.score, ValueOf(node), tolerance) << node.formula;
+          EXPECT_NEAR(row.score, ValueOf(node), tolerance) << node.expression;
         }
         explained.push_back(std::move(node));
       }
@@ -219,7 +219,7 @@ TEST_P(ExplainTest, bm25_term_breaks_down_into_idf_and_tf) {
     ASSERT_EQ(1u, row.subject.terms.size());
     EXPECT_EQ(Bytes("fox"), row.subject.terms.front());
     EXPECT_EQ(bm25.ToString(), row.scorer);
-    EXPECT_EQ("boost * idf * tf", row.formula);
+    EXPECT_EQ("boost * idf * tf", row.expression);
 
     const auto* idf = Child(row, "idf");
     ASSERT_NE(nullptr, idf);

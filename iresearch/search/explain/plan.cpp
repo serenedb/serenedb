@@ -263,7 +263,7 @@ class GroupPart final : public Part {
     }
     const bool max = _merge == ScoreMergeType::Max;
     out.key = max ? "max" : "sum";
-    out.formula = out.key;
+    out.expression = out.key;
     bool scored = false;
     score_t total = 0;
     const auto add = [&](Node&& child, Outcome outcome) {

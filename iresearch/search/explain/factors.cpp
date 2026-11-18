@@ -55,7 +55,7 @@ score_t AddFreq(Node& out, const ScoreContext& ctx) {
   }
   const auto scaled = TermCountToScore(*freq) * scale[0];
   auto& node = AddDetail(out, "freq", scaled);
-  node.formula = "count * scale";
+  node.expression = "count * scale";
   AddDetail(node, "count", uint64_t{*freq});
   AddDetail(node, "scale", scale[0]);
   return scaled;
@@ -75,15 +75,15 @@ void AddAverageLength(Node& out, score_t fallback, const SlotStats* stats) {
   auto& avg = AddDetail(out, "avgdl",
                         static_cast<score_t>(stats->total_term_freq) /
                           static_cast<score_t>(stats->docs_with_field));
-  avg.formula = "L / N";
+  avg.expression = "L / N";
   AddDetail(avg, "L", stats->total_term_freq);
   AddDetail(avg, "N", stats->docs_with_field);
 }
 
 void AddIdf(Node& out, score_t idf, const SlotStats* stats,
-            std::string_view formula, IdfOf per_term) {
+            std::string_view expression, IdfOf per_term) {
   auto& node = AddDetail(out, "idf", idf);
-  node.formula = formula;
+  node.expression = expression;
   if (!stats || stats->terms.empty()) {
     return;
   }
@@ -98,11 +98,11 @@ void AddIdf(Node& out, score_t idf, const SlotStats* stats,
     add_counts(node, stats->terms.front());
     return;
   }
-  node.formula = "sum";
+  node.expression = "sum";
   for (const auto& term : stats->terms) {
     auto& one = AddDetail(
       node, "idf", per_term(stats->docs_with_field, term.docs_with_term));
-    one.formula = formula;
+    one.expression = expression;
     one.subject = {.field = stats->field, .terms = {term.term}};
     add_counts(one, term);
   }
@@ -117,7 +117,7 @@ void AddCollectionShare(Node& out, score_t value, const SlotStats* stats) {
   if (!stats || stats->terms.size() != 1) {
     return;
   }
-  node.formula = "(ttf + 1) / (L + 1)";
+  node.expression = "(ttf + 1) / (L + 1)";
   auto& ttf = AddDetail(node, "ttf", stats->terms.front().total_term_freq);
   if (blended) {
     ttf.note = "occurrences of all the matched terms over all rows";
@@ -127,13 +127,13 @@ void AddCollectionShare(Node& out, score_t value, const SlotStats* stats) {
 
 void AddShare(Node& out, score_t value, uint64_t ttf, uint64_t total) {
   auto& node = AddDetail(out, "p", value);
-  node.formula = "(ttf + 1) / (L + 1)";
+  node.expression = "(ttf + 1) / (L + 1)";
   AddDetail(node, "ttf", ttf);
   AddDetail(node, "L", total);
 }
 
 void ExplainTerms(const SlotStats* stats, Node& out, DescribeTerm describe) {
-  out.formula = "sum";
+  out.expression = "sum";
   if (!stats) {
     return;
   }
@@ -148,7 +148,7 @@ void ExplainTerms(const SlotStats* stats, Node& out, DescribeTerm describe) {
 void ExplainLanguageModel(const ScoreContext& ctx,
                           std::span<const score_t> shares,
                           const SlotStats* stats, Node parameter,
-                          std::string_view formula, TermFormula score,
+                          std::string_view expression, TermFormula score,
                           Node& out) {
   if (!FreqOf(ctx) || shares.empty()) {
     out.note = "the column records no term frequency, so the clause scores 0";
@@ -160,7 +160,7 @@ void ExplainLanguageModel(const ScoreContext& ctx,
     AddCollectionShare(out, shares.front(), stats);
     AddFreq(out, ctx);
     AddLength(out, ctx);
-    out.formula = formula;
+    out.expression = expression;
     return;
   }
   ExplainTerms(
@@ -171,7 +171,7 @@ void ExplainLanguageModel(const ScoreContext& ctx,
       const auto tf = AddFreq(part, ctx);
       const auto dl = TermCountToScore(AddLength(part, ctx));
       part.value = score(tf, dl, share);
-      part.formula = formula;
+      part.expression = expression;
     });
 }
 

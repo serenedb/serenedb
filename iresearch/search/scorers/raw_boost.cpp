@@ -40,7 +40,7 @@ void RawBoost::Explain(const ScoreContext& ctx, const explain::SlotStats*,
                        explain::Node& out) const {
   explain::AddDetail(out, "boost", ctx.boost);
   explain::AddScale(out, ctx);
-  out.formula = ScaleOf(ctx) ? "scale * boost" : "boost";
+  out.expression = ScaleOf(ctx) ? "scale * boost" : "boost";
 }
 
 }  // namespace irs

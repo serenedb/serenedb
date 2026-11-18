@@ -49,7 +49,7 @@ void IDF::Explain(const ScoreContext& ctx, const explain::SlotStats* stats,
   explain::AddIdf(out, stats_cast(ctx.stats)->value, stats,
                   "log(1 + (N - df + 0.5) / (df + 0.5))", &Bm25Idf);
   explain::AddScale(out, ctx);
-  out.formula = ScaleOf(ctx) ? "scale * boost * idf" : "boost * idf";
+  out.expression = ScaleOf(ctx) ? "scale * boost * idf" : "boost * idf";
 }
 
 }  // namespace irs

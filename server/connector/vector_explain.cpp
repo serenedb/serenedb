@@ -35,7 +35,7 @@ namespace {
 
 struct DistanceFunction {
   std::string_view name;
-  std::string_view formula;
+  std::string_view expression;
 };
 
 DistanceFunction DistanceFunctionOf(const VectorScorerOptions& vs) {
@@ -130,7 +130,7 @@ irs::explain::Node ExplainDistance(const VectorScorerOptions& vs,
   }
   const auto exact = ApplyScoreEmit(vs.score_emit, *stored);
   out.value = returned ? ApplyScoreEmit(vs.score_emit, *returned) : exact;
-  out.formula = absl::Substitute(function.formula, column);
+  out.expression = absl::Substitute(function.expression, column);
   out.note = Method(vs);
   if (!vs.exact) {
     irs::explain::AddDetail(out, "exact", exact);

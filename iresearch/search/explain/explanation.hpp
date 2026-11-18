@@ -51,7 +51,7 @@ struct Subject {
 struct Node {
   std::string_view key;
   Value value = score_t{0};
-  std::string formula;
+  std::string expression;
   std::string note;
   std::string scorer;
   Subject subject;

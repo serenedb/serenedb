@@ -95,7 +95,7 @@ TEST(vector_explain, a_norm_names_no_query_vector) {
   l2.norm = true;
   const auto node = ExplainDistance(l2, "emb", -4.f, -4.f);
   EXPECT_EQ("l2_norm", node.scorer);
-  EXPECT_EQ("sqrt(sum(emb[i]^2))", node.formula);
+  EXPECT_EQ("sqrt(sum(emb[i]^2))", node.expression);
   auto l1 = Options(L1, ZeroMinus);
   l1.query_vector = {0.f, 0.f};
   l1.exact = true;
@@ -108,7 +108,7 @@ TEST(vector_explain, an_exact_distance_lists_only_the_dimensions) {
   vs.exact = true;
   const auto node = ExplainDistance(vs, "emb", -0.25f, -0.25f);
   EXPECT_EQ(0.5f, ValueOf(node));
-  EXPECT_EQ("sqrt(sum((emb[i] - query[i])^2))", node.formula);
+  EXPECT_EQ("sqrt(sum((emb[i] - query[i])^2))", node.expression);
   EXPECT_EQ("computed from the row's stored vector", node.note);
   ASSERT_EQ(1u, node.details.size());
   EXPECT_EQ("dims", node.details.front().key);
@@ -178,7 +178,7 @@ TEST(vector_explain, a_row_without_a_vector_has_no_distance) {
   EXPECT_TRUE(std::isnan(ValueOf(node)));
   EXPECT_EQ("cosine_distance", node.scorer);
   EXPECT_EQ("emb is NULL in the row", node.note);
-  EXPECT_TRUE(node.formula.empty());
+  EXPECT_TRUE(node.expression.empty());
   EXPECT_TRUE(node.details.empty());
 }
 

@@ -319,16 +319,16 @@ The explanation is a tree of objects, and clients receive it as `json`. Every ob
 
 | Key | Meaning |
 | :--- | :--- |
-| `value` | The object's contribution: the row's score at the top, a factor of a formula or a count below it. |
-| `formula` | How `value` is computed from `inputs`, or `sum` / `max` for clauses that combine, following the query's [`::merge`](#merge) policy. |
-| `inputs` | The values `formula` reads, keyed by name. |
+| `value` | The object's contribution: the row's score at the top, a factor of an expression or a count below it. |
+| `expression` | How `value` is computed from `inputs`, or `sum` / `max` for clauses that combine, following the query's [`::merge`](#merge) policy. |
+| `inputs` | The values `expression` reads, keyed by name. |
 | `clauses` | The clauses a `sum` or `max` combines. Optional clauses that the row does not match are left out. |
 | `parts` | The terms of a phrase or an n-gram match: the idf of each term, which its `idf` adds up, or with `lm_jm`, `lm_dirichlet`, `indri_dirichlet` and `dfi`, the score of each term, which the clause adds up. |
 | `column`, `term` | The column and the term a clause matched; `terms` lists several terms of one clause. |
 | `phrase`, `slop` | A phrase's words in order: `null` for each word the phrase skips, `{"min": m, "max": n}` for a gap of `m` to `n` words, and an array for a position several words can fill, such as the words a prefix in the phrase expanded to. `slop` is the slop of a sloppy phrase. |
 | `scorer` | The scorer function of a clause, such as `bm25(k1=1.2, b=0.75)`. |
 | `scored` | `false` for a clause excluded from scoring with [`::score(NULL)`](#score-modifier): it matched and added nothing. |
-| `note` | Why a clause scores `0`, or only its boost, without a formula. |
+| `note` | Why a clause scores `0`, or only its boost, without an expression. |
 
 Read one part with dots and 1-based array indexes, and cast it where a plain value is needed:
 
@@ -367,7 +367,7 @@ A query that ranks or filters by a distance to an indexed [vector column](../../
 
 <SqlLogicTest id="sql/indexes/inverted/vector-search/ts_explain" />
 
-The top `value` is the distance the query returned for the row. `scorer` names the distance function, `formula` computes it from the column and the query vector, and `note` says how the row was found, such as `found by an ivf search over sq8 codes`. Its `inputs` are:
+The top `value` is the distance the query returned for the row. `scorer` names the distance function, `expression` computes it from the column and the query vector, and `note` says how the row was found, such as `found by an ivf search over sq8 codes`. Its `inputs` are:
 
 | Input | Meaning |
 | :--- | :--- |

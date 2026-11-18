@@ -371,7 +371,7 @@ ORDER BY column_name;
 ----
 column_name	forced	auto
 d	ZSTD	DICT_LZ4
-g	ZSTD	DELTA_LZ4
+g	ZSTD	LZ4
 h	ZSTD	DICT_LZ4
 
 query

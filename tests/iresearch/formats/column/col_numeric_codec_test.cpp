@@ -513,7 +513,7 @@ TEST_F(ColNumericCodecTest, EveryTransformIsReachable) {
       }
     }
   }
-  for (const auto* transform : {"for", "delta", "rle", "dict_ffor"}) {
+  for (const auto* transform : {"for", "rle", "dict_ffor"}) {
     EXPECT_TRUE(seen.contains(transform)) << transform;
   }
 }
@@ -1103,6 +1103,54 @@ TEST_F(ColNumericCodecTest, AutoFollowsTheDataAcrossRowGroups) {
   }
 }
 
+TEST_F(ColNumericCodecTest, AutoLeavesTheDeltaCodecsToColumnsThatNameThem) {
+  constexpr uint32_t kRowGroup = 4096;
+  constexpr uint64_t kRows = 4 * kRowGroup;
+  const Gen clustered = [](uint64_t g) -> std::optional<int64_t> {
+    return static_cast<int64_t>(1'700'000'000'000'000LL + g * 1000 +
+                                Mix(g) % 300);
+  };
+  const Gen sequence = [](uint64_t g) -> std::optional<int64_t> {
+    return static_cast<int64_t>(g * 7 + 3);
+  };
+  const auto delta = [](irs::codecs::CodecType type) {
+    return irs::codecs::IsNumeric(type) &&
+           irs::codecs::ShapeOf(type) == irs::codecs::Shape::Delta;
+  };
+  const auto codecs = [&](const duckdb::LogicalType& type, const Gen& gen,
+                          irs::WriteTier tier,
+                          irs::codecs::CodecType compression) {
+    irs::MemoryDirectory dir{};
+    Write(dir, type, {.tier = tier}, kRows, kRowGroup, gen, compression);
+    Verify(dir, type, kRows, gen);
+    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+    const auto* col = r.Column(kField);
+    EXPECT_NE(col, nullptr);
+    std::set<irs::codecs::CodecType> types;
+    for (const auto& block : col->DataBlocks()) {
+      types.insert(block.codec->type);
+    }
+    return types;
+  };
+  using irs::codecs::CodecType;
+  for (const auto tier : {irs::WriteTier::Flush, irs::WriteTier::Merge}) {
+    SCOPED_TRACE(tier == irs::WriteTier::Flush ? "flush" : "merge");
+    for (const duckdb::LogicalType type :
+         {duckdb::LogicalType::BIGINT, duckdb::LogicalType::TIMESTAMP,
+          duckdb::LogicalType::DOUBLE}) {
+      SCOPED_TRACE(type.ToString());
+      for (const auto& gen : {clustered, sequence}) {
+        for (const auto stored : codecs(type, gen, tier, CodecType::Auto)) {
+          EXPECT_FALSE(delta(stored)) << magic_enum::enum_name(stored);
+        }
+      }
+    }
+    EXPECT_EQ(
+      codecs(duckdb::LogicalType::BIGINT, clustered, tier, CodecType::DeltaLz4),
+      std::set{CodecType::DeltaLz4});
+  }
+}
+
 TEST_F(ColNumericCodecTest, AutoLeavesRleToTheTypesWithoutARunCodec) {
   constexpr uint32_t kRowGroup = 4096;
   constexpr uint64_t kRows = 4 * kRowGroup;
@@ -1380,6 +1428,7 @@ TEST_F(ColNumericCodecTest, SparseReadsCacheDecodedFrames) {
     Gen gen;
     irs::WriteTier tier;
     std::string_view stored;
+    irs::codecs::CodecType codec = irs::codecs::CodecType::Auto;
   };
   const Case cases[] = {
     {"clustered runs",
@@ -1391,16 +1440,16 @@ TEST_F(ColNumericCodecTest, SparseReadsCacheDecodedFrames) {
      {}},
     {"periodic steps",
      [](uint64_t g) { return static_cast<int64_t>(g * 1000 + g % 7); },
-     irs::WriteTier::Flush, "delta/lz4"},
+     irs::WriteTier::Flush, "delta/lz4", irs::codecs::CodecType::DeltaLz4},
     {"periodic steps over two frames",
      [](uint64_t g) { return static_cast<int64_t>(g * 1000 + g % 7 * 301); },
-     irs::WriteTier::Flush, "delta/lz4"},
+     irs::WriteTier::Flush, "delta/lz4", irs::codecs::CodecType::DeltaLz4},
   };
   for (const auto& c : cases) {
     SCOPED_TRACE(c.name);
     irs::MemoryDirectory dir{};
     Write(dir, duckdb::LogicalType::BIGINT, {.tier = c.tier}, kRows, 65536,
-          c.gen);
+          c.gen, c.codec);
     const auto transforms = Transforms(dir);
     ASSERT_TRUE(std::ranges::any_of(transforms, [&](const auto& t) {
       return c.stored.empty() ? t.ends_with("/zstd") || t.ends_with("/lz4")
@@ -1435,6 +1484,7 @@ TEST_F(ColNumericCodecTest, PointReadsOnByteShuffledFrames) {
     Gen gen;
     std::string_view transform;
     duckdb::LogicalType type = duckdb::LogicalType::BIGINT;
+    irs::codecs::CodecType codec = irs::codecs::CodecType::Auto;
   };
   const auto entry = [](uint64_t k) {
     return static_cast<int64_t>((k << 48) + (Mix(k) & 0xFFFFFFFFFFFFULL));
@@ -1445,19 +1495,19 @@ TEST_F(ColNumericCodecTest, PointReadsOnByteShuffledFrames) {
        return static_cast<int64_t>(g * 1000 + Mix(g) % 256 +
                                    (g / 997) * 1'000'000'000);
      },
-     "delta"},
+     "delta", duckdb::LogicalType::BIGINT, irs::codecs::CodecType::DeltaLz4},
     {"descending noisy steps with jumps",
      [](uint64_t g) {
        return -static_cast<int64_t>(g * 1000 + Mix(g) % 256 +
                                     (g / 997) * 1'000'000'000);
      },
-     "delta"},
+     "delta", duckdb::LogicalType::BIGINT, irs::codecs::CodecType::DeltaLz4},
     {"wide noisy steps with jumps",
      [](uint64_t g) {
        return static_cast<int64_t>(g * 100'000 + Mix(g) % 65536 +
                                    (g / 997) * 1'000'000'000'000LL);
      },
-     "delta"},
+     "delta", duckdb::LogicalType::BIGINT, irs::codecs::CodecType::DeltaLz4},
     {"offsets on two levels",
      [](uint64_t g) {
        return static_cast<int64_t>(1'000'000 + (Mix(g / 64) % 200) * 256 +
@@ -1484,7 +1534,7 @@ TEST_F(ColNumericCodecTest, PointReadsOnByteShuffledFrames) {
       SCOPED_TRACE(std::string{c.name} + " " +
                    std::to_string(static_cast<int>(tier)));
       irs::MemoryDirectory dir{};
-      Write(dir, c.type, {.tier = tier}, kRows, 65536, c.gen);
+      Write(dir, c.type, {.tier = tier}, kRows, 65536, c.gen, c.codec);
       const auto transforms = Transforms(dir);
       ASSERT_EQ(transforms.size(), 1);
       ASSERT_EQ(transforms[0].substr(0, transforms[0].find('/')), c.transform);
@@ -2034,7 +2084,8 @@ TEST_F(ColNumericCodecTest, CorruptedFrameTableIsRejected) {
   irs::codecs::CodecType block_codec = irs::codecs::CodecType::Auto;
   {
     irs::MMapDirectory dir{path};
-    Write(dir, duckdb::LogicalType::BIGINT, {}, 20000, 20000, clustered);
+    Write(dir, duckdb::LogicalType::BIGINT, {}, 20000, 20000, clustered,
+          irs::codecs::CodecType::DeltaLz4);
     irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
     const auto* col = r.Column(kField);
     ASSERT_NE(col, nullptr);
@@ -2089,6 +2140,7 @@ TEST_F(ColNumericCodecTest, RareWidthsRunLengthsAndDictionarySizes) {
     Gen gen;
     std::string_view flush;
     std::string_view merge;
+    irs::codecs::CodecType codec = irs::codecs::CodecType::Auto;
   };
   const Case cases[] = {
     {"adjacent doubles",
@@ -2104,7 +2156,8 @@ TEST_F(ColNumericCodecTest, RareWidthsRunLengthsAndDictionarySizes) {
      20000,
      [&](uint64_t g) { return adjacent(g * 300 + Mix(g) % 5000); },
      "delta/none@2",
-     "delta/none@2"},
+     "delta/none@2",
+     irs::codecs::CodecType::DeltaFfor},
     {"runs of adjacent doubles",
      {duckdb::LogicalType::DOUBLE},
      8192,
@@ -2198,8 +2251,16 @@ TEST_F(ColNumericCodecTest, RareWidthsRunLengthsAndDictionarySizes) {
      65536,
      60000,
      [](uint64_t g) { return static_cast<int64_t>(5000 + g % 7 * 3); },
-     "delta/lz4@1",
+     "for/lz4@1",
      "for/zstd@1"},
+    {"periodic small values as deltas",
+     {duckdb::LogicalType::BIGINT},
+     65536,
+     60000,
+     [](uint64_t g) { return static_cast<int64_t>(5000 + g % 7 * 3); },
+     "delta/lz4@1",
+     "delta/lz4@1",
+     irs::codecs::CodecType::DeltaLz4},
     {"cycle of wide values",
      {duckdb::LogicalType::BIGINT},
      65536,
@@ -2214,7 +2275,7 @@ TEST_F(ColNumericCodecTest, RareWidthsRunLengthsAndDictionarySizes) {
         SCOPED_TRACE(std::string{c.name} + " " + type.ToString() + " " +
                      std::to_string(static_cast<int>(tier)));
         irs::MemoryDirectory dir{};
-        Write(dir, type, {.tier = tier}, c.rows, c.rg_size, c.gen);
+        Write(dir, type, {.tier = tier}, c.rows, c.rg_size, c.gen, c.codec);
         Verify(dir, type, c.rows, c.gen);
         const auto expected = tier == irs::WriteTier::Flush ? c.flush : c.merge;
         if (expected.empty()) {

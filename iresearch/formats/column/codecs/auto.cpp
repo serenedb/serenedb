@@ -47,23 +47,27 @@ constexpr CodecType kLightweight[] = {
 
 constexpr CodecType kIntegerMerge[] = {
   CodecType::Uncompressed, CodecType::Bitpacking, CodecType::Ffor,
-  CodecType::DeltaFfor,    CodecType::RleFfor,    CodecType::DictFfor,
-  CodecType::Lz4,          CodecType::DeltaLz4,   CodecType::RleLz4,
-  CodecType::DictLz4,      CodecType::Zstd,       CodecType::DeltaZstd,
+  CodecType::RleFfor,      CodecType::DictFfor,   CodecType::Lz4,
+  CodecType::RleLz4,       CodecType::DictLz4,    CodecType::Zstd,
   CodecType::RleZstd,      CodecType::DictZstd,
 };
 
 constexpr CodecType kIntegerFlush[] = {
   CodecType::Uncompressed, CodecType::Bitpacking, CodecType::Ffor,
-  CodecType::DeltaFfor,    CodecType::RleFfor,    CodecType::DictFfor,
-  CodecType::Lz4,          CodecType::DeltaLz4,   CodecType::RleLz4,
-  CodecType::DictLz4,
+  CodecType::RleFfor,      CodecType::DictFfor,   CodecType::Lz4,
+  CodecType::RleLz4,       CodecType::DictLz4,
 };
 
 constexpr CodecType kFloat[] = {
-  CodecType::Uncompressed, CodecType::Rle,      CodecType::Alp,
-  CodecType::Alprd,        CodecType::Ffor,     CodecType::DeltaFfor,
-  CodecType::RleFfor,      CodecType::DictFfor,
+  CodecType::Uncompressed, CodecType::Rle,  CodecType::Alp,
+  CodecType::Alprd,        CodecType::Ffor, CodecType::RleFfor,
+  CodecType::DictFfor,
+};
+
+constexpr CodecType kNamedOnly[] = {
+  CodecType::DeltaFfor,
+  CodecType::DeltaLz4,
+  CodecType::DeltaZstd,
 };
 
 constexpr CodecType kText[] = {
@@ -106,7 +110,8 @@ const Orders& OrdersOf(PhysicalType physical) noexcept {
 static_assert([] {
   std::array<bool, magic_enum::enum_count<CodecType>()> listed{};
   for (const auto order :
-       {kLightweightOrders.merge, kIntegerOrders.merge, kFloatOrders.merge}) {
+       {kLightweightOrders.merge, kIntegerOrders.merge, kFloatOrders.merge,
+        std::span<const CodecType>{kNamedOnly}}) {
     for (const auto type : order) {
       listed[std::to_underlying(type)] = true;
     }

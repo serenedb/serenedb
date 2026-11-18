@@ -236,6 +236,9 @@ void CheckBinaryCopyOptions(const duckdb::CopyInfo& info, bool from) {
     if (key == "freeze" && from) {
       return;
     }
+    if (key == "on_error" && from && !ParseOnError(values)) {
+      return;
+    }
     RejectBinaryCopyOption(key.GetIdentifierName(), from);
   };
   for (const auto& [key, values] : info.options) {

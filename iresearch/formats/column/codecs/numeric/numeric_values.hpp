@@ -153,7 +153,37 @@ class Values final : public State {
     }
   }
 
+  bool AddBlock(const duckdb::Vector& input) {
+    if constexpr (std::is_integral_v<T>) {
+      if (input.GetVectorType() != duckdb::VectorType::FLAT_VECTOR ||
+          !duckdb::FlatVector::Validity(input).CannotHaveNull()) {
+        return false;
+      }
+      const std::span values{duckdb::FlatVector::GetData<T>(input),
+                             input.size()};
+      if (values.empty()) {
+        return true;
+      }
+      const auto [lo, hi] = std::ranges::minmax(values);
+      _stats.Update(lo);
+      _stats.Update(hi);
+      const auto* bits = reinterpret_cast<const U*>(values.data());
+      if (!_any_valid) {
+        absl::c_fill(_owned, bits[0]);
+        _any_valid = true;
+      }
+      _owned.insert(_owned.end(), bits, bits + values.size());
+      _last = _owned.back();
+      return true;
+    } else {
+      return false;
+    }
+  }
+
   void Add(const duckdb::Vector& input) {
+    if (AddBlock(input)) {
+      return;
+    }
     auto stats = _stats;
     for (const auto value : input.Values<T>()) {
       if (!value.IsValid()) {

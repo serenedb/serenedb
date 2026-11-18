@@ -24,7 +24,6 @@
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/execution/expression_executor_state.hpp>
-#include <duckdb/main/client_context.hpp>
 #include <iresearch/search/explain/explanation.hpp>
 #include <span>
 #include <string>
@@ -47,8 +46,7 @@ class ExplainLabels {
   const ScanBindData& _bind;
 };
 
-void WriteExplanations(duckdb::ClientContext& context,
-                       std::span<const irs::explain::Node> rows,
+void WriteExplanations(std::span<const irs::explain::Node> rows,
                        const ExplainLabels& labels, duckdb::Vector& out);
 
 void ExplainJsonFunction(duckdb::DataChunk& args,

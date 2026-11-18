@@ -35,6 +35,7 @@
 #include "iresearch/search/probe/family.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
+#include "iresearch/search/queries/phrase_query.hpp"
 #include "iresearch/search/queries/phrase_state.hpp"
 #include "iresearch/search/queries/prepared_state_visitor.hpp"
 #include "iresearch/search/queries/term_query.hpp"
@@ -47,18 +48,23 @@ namespace {
 
 using Outcome = Part::Outcome;
 
-void Describe(const Scorer& scorer, const ScoreContext& ctx,
-              const StatsIndex& index, Node& out) {
+void Describe(const Scorer& scorer, std::string_view name,
+              const ScoreContext& ctx, const StatsIndex& index, Node& out) {
   scorer.Explain(ctx, index.Find(ctx.stats), out);
-  out.scorer = scorer.ToString();
+  out.scorer = name;
 }
 
 Subject SubjectOf(const StatsIndex& index, const byte_type* slot,
                   const TermReader* field) {
   if (const auto* stats = index.Find(slot)) {
-    Subject subject{.field = stats->field, .phrase = stats->phrase};
+    Subject subject{.field = stats->field};
     for (const auto& term : stats->terms) {
-      if (!term.term.empty()) {
+      if (term.term.empty()) {
+        continue;
+      }
+      if (stats->phrase) {
+        subject.phrase.push_back({.terms = {term.term}});
+      } else {
         subject.terms.push_back(term.term);
       }
     }
@@ -67,10 +73,12 @@ Subject SubjectOf(const StatsIndex& index, const byte_type* slot,
   return {.field = field ? field->meta().id : field_limits::invalid()};
 }
 
-class PhraseNamer final : public PreparedStateVisitor {
+class LeafNamer final : public PreparedStateVisitor {
  public:
-  PhraseNamer(const TermNames& names, Subject& out) noexcept
+  LeafNamer(const TermNames& names, Subject& out) noexcept
     : _names{names}, _out{out} {}
+
+  const TermReader* Reader() const noexcept { return _reader; }
 
   bool Visit(const BooleanQuery&, score_t) final { return false; }
   bool Visit(const ByNestedQuery&, score_t) final { return false; }
@@ -78,37 +86,53 @@ class PhraseNamer final : public PreparedStateVisitor {
   bool Visit(const MultiTermQuery&, const MultiTermState&, score_t) final {
     return false;
   }
-  bool Visit(const FixedPhraseQuery&, const PhraseState& state, score_t) final {
-    Name(state);
-    return false;
-  }
-  bool Visit(const VariadicPhraseQuery&, const PhraseState& state,
+  bool Visit(const FixedPhraseQuery& query, const PhraseState& state,
              score_t) final {
-    Name(state);
+    Name(query, state);
     return false;
   }
-  bool Visit(const NGramSimilarityQuery&, const NGramState&, score_t) final {
+  bool Visit(const VariadicPhraseQuery& query, const PhraseState& state,
+             score_t) final {
+    Name(query, state);
+    return false;
+  }
+  bool Visit(const NGramSimilarityQuery&, const NGramState& state,
+             score_t) final {
+    _reader = state.reader;
     return false;
   }
 
  private:
-  void Name(const PhraseState& state) {
+  void Name(const PhraseQuery& query, const PhraseState& state) {
+    _reader = state.reader;
     if (!state.reader) {
       return;
     }
-    _out = {.field = state.reader->meta().id, .phrase = true};
-    for (const auto& meta : state.metas) {
-      const auto* name = _names.Find(*state.reader, meta);
-      if (!name) {
-        _out.terms.clear();
-        return;
+    std::vector<PhrasePosition> phrase(state.Slots());
+    for (size_t i = 0; i != phrase.size(); ++i) {
+      auto& position = phrase[i];
+      if (i != 0) {
+        position.gap_min = query.positions[i].offs_min - 1;
+        position.gap_max = query.positions[i].offs_max - 1;
       }
-      _out.terms.push_back(*name);
+      for (auto j = state.offsets[i]; j != state.offsets[i + 1]; ++j) {
+        const auto* name = _names.Find(*state.reader, state.metas[j]);
+        if (!name) {
+          return;
+        }
+        position.terms.push_back(*name);
+      }
     }
+    _out = {
+      .field = state.reader->meta().id,
+      .phrase = std::move(phrase),
+      .slop = query.slop,
+    };
   }
 
   const TermNames& _names;
   Subject& _out;
+  const TermReader* _reader = nullptr;
 };
 
 struct Fallback {
@@ -151,7 +175,7 @@ class LeafPart final : public Part {
     out.value = _score.Score();
     if (const auto inputs = _node->Inputs()) {
       const auto& recipe = inputs->recipe;
-      Describe(*recipe.args.scorer,
+      Describe(*recipe.args.scorer, ScorerName(*recipe.args.scorer),
                {
                  .segment = *recipe.segment,
                  .field = recipe.field->meta(),
@@ -170,10 +194,17 @@ class LeafPart final : public Part {
  private:
   bool Scored() const noexcept { return _fallback.args.stats != nullptr; }
 
+  std::string_view ScorerName(const Scorer& scorer) {
+    if (_scorer.empty()) {
+      _scorer = scorer.ToString();
+    }
+    return _scorer;
+  }
+
   void DescribeConstant(doc_id_t doc, Node& out) {
     const auto& args = _fallback.args;
     if (!_fallback.field) {
-      out.scorer = args.scorer->ToString();
+      out.scorer = ScorerName(*args.scorer);
       return;
     }
     const auto& field = *_fallback.field;
@@ -184,7 +215,7 @@ class LeafPart final : public Part {
     uint32_t freq = _fallback.freq.value_or(1);
     detail::LeafProvider provider;
     provider.freq.value = &freq;
-    Describe(*args.scorer,
+    Describe(*args.scorer, ScorerName(*args.scorer),
              {
                .segment = *_fallback.segment,
                .field = field,
@@ -201,6 +232,7 @@ class LeafPart final : public Part {
   const StatsIndex& _stats;
   Subject _subject;
   Fallback _fallback;
+  std::string _scorer;
   probe::Node::ptr _node;
   ScoreFunction _score;
   doc_id_t _last = doc_limits::invalid();
@@ -356,10 +388,9 @@ class Builder {
     const bool scored = query.Stats().stats != nullptr;
     const auto record = query.Stats(Scoring());
     auto subject = SubjectOf(_stats, record.stats, nullptr);
-    if (subject.terms.empty()) {
-      PhraseNamer namer{_names, subject};
-      query.Visit(namer, kNoBoost);
-    }
+    LeafNamer namer{_names, subject};
+    query.Visit(namer, kNoBoost);
+    const auto* reader = namer.Reader();
     return std::make_unique<LeafPart>(
       [&query, scoring = Scoring(), scored] {
         return query.PlanProbe(scored ? scoring : detail::ScoredCtx{}, 1);
@@ -367,6 +398,8 @@ class Builder {
       _fetcher, _stats, std::move(subject),
       Fallback{
         .segment = &query.Segment(),
+        .field =
+          reader && !ScoresPerDoc(record.scorer) ? &reader->meta() : nullptr,
         .args =
           {
             .scorer = record.scorer,
@@ -429,7 +462,7 @@ class Builder {
   ColumnArgsFetcher& _fetcher;
 };
 
-bool AgreesWith(score_t explained, score_t executed) noexcept {
+[[maybe_unused]] bool AgreesWith(score_t explained, score_t executed) noexcept {
   return std::abs(explained - executed) <=
          1e-4f * std::max({1.f, std::abs(explained), std::abs(executed)});
 }

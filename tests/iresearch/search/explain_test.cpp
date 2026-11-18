@@ -283,8 +283,7 @@ TEST_P(ExplainTest, phrase_sums_the_idf_of_its_terms) {
   ASSERT_FALSE(rows.empty());
   for (const auto& row : rows) {
     EXPECT_EQ("weight", row.key);
-    EXPECT_TRUE(row.subject.phrase);
-    EXPECT_EQ(2u, row.subject.terms.size());
+    EXPECT_EQ(2u, row.subject.phrase.size());
     const auto* idf = Child(row, "idf");
     ASSERT_NE(nullptr, idf);
     EXPECT_EQ(2u, idf->details.size());
@@ -356,12 +355,20 @@ TEST_P(ExplainTest, an_unscored_clause_names_its_terms) {
     }
     EXPECT_EQ(kBodyId, node.subject.field);
     std::string label;
-    for (const auto& term : node.subject.terms) {
+    const auto append = [&](const irs::bstring& term) {
       absl::StrAppend(&label, label.empty() ? "" : " ",
                       irs::ViewCast<char>(irs::bytes_view{term}));
+    };
+    for (const auto& position : node.subject.phrase) {
+      for (const auto& term : position.terms) {
+        append(term);
+      }
     }
-    named.push_back(node.subject.phrase ? absl::StrCat("\"", label, "\"")
-                                        : label);
+    for (const auto& term : node.subject.terms) {
+      append(term);
+    }
+    named.push_back(
+      node.subject.phrase.empty() ? label : absl::StrCat("\"", label, "\""));
   };
   for (const auto& row : Explain(filter, bm25, 1e-5f)) {
     collect(row);

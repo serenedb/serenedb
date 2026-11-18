@@ -35,10 +35,17 @@ namespace irs::explain {
 
 using Value = std::variant<score_t, uint64_t>;
 
+struct PhrasePosition {
+  uint32_t gap_min = 0;
+  uint32_t gap_max = 0;
+  std::vector<bstring> terms;
+};
+
 struct Subject {
   field_id field = field_limits::invalid();
   std::vector<bstring> terms;
-  bool phrase = false;
+  std::vector<PhrasePosition> phrase;
+  uint32_t slop = 0;
 };
 
 struct Node {

@@ -1474,7 +1474,7 @@ def test_docs_contents_fit_a_narrow_terminal(narrow_docs_terminal) -> None:
 
 def test_docs_hyperlinks_do_not_widen_a_page(narrow_docs_terminal) -> None:
     out = narrow_docs_terminal.send(
-        ".docs clients/serened-psql.md#serenedb_psql#Dot_commands\r",
+        ".docs clients/serened-psql.md#serenedb_psql#Dot_and_backslash_commands\r",
         until=".docs clients/serened-shell.md#serenedb_shell#Dot_commands")
     assert ("\x1b]8;;https://serenedb.com/docs/clients/serened-shell"
             "#dot-commands\x1b\\") in narrow_docs_terminal.raw

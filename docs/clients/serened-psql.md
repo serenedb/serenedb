@@ -155,7 +155,7 @@ serenedb psql -h localhost -p 7890 -d postgres -c "SELECT path, title FROM postg
 
 ## Dot and backslash commands
 
-`serenedb psql` accepts the same [dot commands](./serened-shell.md#dot-commands) and [backslash commands](./serened-shell.md#backslash-commands) as `serenedb shell`: from `.mode`, `.timer` and `.docs` to `\x`, `\pset` and `\copy`. `.help` and `\?` list them. `COPY ... FROM STDIN` and `COPY ... TO STDOUT` exchange their data with the client as in `serenedb shell`, see [COPY with standard input and output](./serened-shell.md#copy-with-standard-input-and-output).
+`serenedb psql` accepts the same [dot commands](./serened-shell.md#dot-commands) and [backslash commands](./serened-shell.md#backslash-commands) as `serenedb shell`: from `.mode`, `.timer` and `.docs` to `\x`, `\pset` and `\copy`. `.help` and `\?` list them. `COPY ... FROM STDIN` and `COPY ... TO STDOUT` exchange their data with the client as in `serenedb shell`, see [COPY with stdin and stdout](./serened-shell.md#copy-with-stdin-and-stdout).
 
 ## Connection options
 

@@ -423,7 +423,7 @@ A line that starts with `\` holds psql-style commands. `serened shell` and [`ser
 | `\q`, `\quit` | | Exit, also from a file that `\i` runs. |
 | `\g` | `?FILE?` | Run the statement typed so far, or the last statement again when none is pending. With `FILE` or `\|command`, its result goes there. |
 | `\gx` | `?FILE?` | `\g` with expanded output. |
-| `\copy` | `...` | `COPY` with its data on the client, see [COPY with standard input and output](#copy-with-standard-input-and-output). |
+| `\copy` | `...` | `COPY` with its data on the client, see [COPY with stdin and stdout](#copy-with-stdin-and-stdout). |
 | `\echo` | `?-n? ?TEXT...?` | Print the text on standard output, followed by a newline unless `-n` comes first. |
 | `\i`, `\include` | `FILE` | Run the commands in `FILE`, like `.read`. |
 | `\o`, `\out` | `?FILE?` | Send the results of the following statements to `FILE` or `\|command`, or back to standard output without `FILE`, like `.output`. |
@@ -460,7 +460,7 @@ s | b
 
 `-q` (`--quiet`) leaves out messages such as `Expanded display is on.`
 
-## COPY with standard input and output
+## COPY with stdin and stdout
 
 `COPY ... FROM STDIN` and `COPY ... TO STDOUT` exchange their data with the shell:
 

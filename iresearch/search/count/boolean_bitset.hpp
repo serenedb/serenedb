@@ -30,6 +30,7 @@
 #include "iresearch/search/detail/bitset_storage.hpp"
 #include "iresearch/search/detail/lazy_bitset.hpp"
 #include "iresearch/search/detail/table_filter.hpp"
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/empty.hpp"
 
 namespace irs::count {
@@ -53,12 +54,9 @@ class BooleanBitset : public Root {
     }
     const auto docs = max - min;
     const auto count = static_cast<uint32_t>((docs + kBits - 1) / kBits);
-    if (_set.WordCount() < count) [[unlikely]] {
-      _set = detail::BitsetStorage{docs};
-    } else {
-      std::fill_n(_set.Words(), count, uint64_t{0});
-    }
+    SDB_ASSERT(count <= _set.WordCount());
     auto* const words = _set.Words();
+    std::fill_n(words, count, uint64_t{0});
     detail::FillBitset(_buckets, *_doc, _docs_count, min, max, words);
     if (const auto tail = docs % kBits; tail != 0) {
       words[count - 1] &= (uint64_t{1} << tail) - 1;

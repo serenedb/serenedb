@@ -439,7 +439,7 @@ TEST_P(CountSingleValuedTest, split_counts_fill_their_range_of_many_terms) {
       bitset,
       irs::utils::downCast<irs::MultiTermQuery>(*query).State().TermsSize() >=
         irs::detail::kWindowWords);
-    auto count = irs::count::MakeRoot(*query, {.span = 4096, .partial = true});
+    auto count = irs::count::MakeRoot(*query, {.span = 10000, .partial = true});
     ASSERT_NE(nullptr, count);
     EXPECT_EQ(
       bitset,

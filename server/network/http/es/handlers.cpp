@@ -768,8 +768,8 @@ class SearchHandler final : public HttpHandler {
       absl::StrAppend(&sql, ", BM25(t.tableoid) AS \"_explained_score\"");
     }
     if (explains) {
-      absl::StrAppend(&sql,
-                      ", ts_explain(t.tableoid)::JSON AS \"_explanation\"");
+      absl::StrAppend(
+        &sql, ", ts_explain_json(ts_explain(t.tableoid)) AS \"_explanation\"");
     }
     absl::StrAppend(&sql, " FROM ", relation, " AS t");
     if (!spec.where.empty()) {
@@ -1118,7 +1118,9 @@ class ExplainHandler final : public HttpHandler {
     }
     auto sql = absl::StrCat(
       "SELECT ",
-      spec.uses_match ? "BM25(t.tableoid), ts_explain(t.tableoid)::JSON" : "1",
+      spec.uses_match
+        ? "BM25(t.tableoid), ts_explain_json(ts_explain(t.tableoid))"
+        : "1",
       " FROM ", SearchRelation(index, spec),
       " AS t WHERE \"_id\" = ", SqlLiteral(id));
     if (!spec.where.empty()) {

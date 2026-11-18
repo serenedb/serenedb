@@ -46,10 +46,9 @@ ScoreFunction ConstantScore::PrepareScorer(const ScoreContext& ctx) const {
 void ConstantScore::Explain(const ScoreContext& ctx, const explain::SlotStats*,
                             explain::Node& out) const {
   explain::AddBoost(out, ctx.boost);
-  explain::AddDetail(out, "value", _value, "value, the constant score");
+  explain::AddDetail(out, "value", _value);
   explain::AddScale(out, ctx);
-  out.description = ScaleOf(ctx) ? "computed as scale * boost * value from:"
-                                 : "computed as boost * value from:";
+  out.formula = ScaleOf(ctx) ? "scale * boost * value" : "boost * value";
 }
 
 bool ConstantScore::equals(const Scorer& other) const noexcept {

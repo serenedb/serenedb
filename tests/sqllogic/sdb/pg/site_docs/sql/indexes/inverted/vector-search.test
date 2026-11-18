@@ -50,7 +50,7 @@ ORDER BY emb <-> [0, 0, 0]::FLOAT[3]
 LIMIT 1;
 ----
 id	distance	why
-3	75	{"value":75,"description":"l2_distance(emb, query) = sqrt(sum((emb[i] - query[i])^2)), found by an ivf search over sq8 codes","details":[{"value":75,"description":"exact, the distance computed from the row's stored vector","details":[]},{"value":3,"description":"dims, dimensions of the vectors","details":[]},{"value":1,"description":"k, the number of nearest rows the search returns","details":[]},{"value":2,"description":"rescore_width, how far a code score may be off and still be read again at full precision","details":[]}]}
+3	75	{"column":"emb","formula":"sqrt(sum((emb[i] - query[i])^2))","inputs":{"dims":{"value":3},"exact":{"value":75},"k":{"value":1},"rescore_width":{"value":2}},"note":"found by an ivf search over sq8 codes","scorer":"l2_distance","value":75}
 
 # DOCS_TEST: example_003
 

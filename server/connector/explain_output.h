@@ -21,7 +21,10 @@
 #pragma once
 
 #include <duckdb/common/types.hpp>
+#include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/vector.hpp>
+#include <duckdb/execution/expression_executor_state.hpp>
+#include <duckdb/main/client_context.hpp>
 #include <iresearch/search/explain/explanation.hpp>
 #include <span>
 #include <string>
@@ -36,15 +39,20 @@ class ExplainLabels {
  public:
   explicit ExplainLabels(const ScanBindData& bind) noexcept : _bind{bind} {}
 
-  std::string Of(const irs::explain::Subject& subject) const;
+  std::string Column(irs::field_id field) const;
 
- private:
   std::string Term(irs::field_id field, irs::bytes_view term) const;
 
+ private:
   const ScanBindData& _bind;
 };
 
-void WriteExplanations(std::span<const irs::explain::Node> rows,
+void WriteExplanations(duckdb::ClientContext& context,
+                       std::span<const irs::explain::Node> rows,
                        const ExplainLabels& labels, duckdb::Vector& out);
+
+void ExplainJsonFunction(duckdb::DataChunk& args,
+                         duckdb::ExpressionState& state,
+                         duckdb::Vector& result);
 
 }  // namespace sdb::connector

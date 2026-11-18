@@ -22,7 +22,6 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/functional/any_invocable.h>
-#include <absl/strings/str_cat.h>
 
 #include <algorithm>
 #include <cmath>
@@ -51,10 +50,7 @@ using Outcome = Part::Outcome;
 void Describe(const Scorer& scorer, const ScoreContext& ctx,
               const StatsIndex& index, Node& out) {
   scorer.Explain(ctx, index.Find(ctx.stats), out);
-  out.description =
-    out.description.empty()
-      ? absl::StrCat("[", scorer.ToString(), "]")
-      : absl::StrCat("[", scorer.ToString(), "], ", out.description);
+  out.scorer = scorer.ToString();
 }
 
 Subject SubjectOf(const StatsIndex& index, const byte_type* slot,
@@ -147,7 +143,6 @@ class LeafPart final : public Part {
     out.subject = _subject;
     if (!Scored()) {
       out.key = "match";
-      out.description = "matches without scoring";
       return Outcome::Matched;
     }
     _node->FetchScoreArgs(0);
@@ -178,7 +173,7 @@ class LeafPart final : public Part {
   void DescribeConstant(doc_id_t doc, Node& out) {
     const auto& args = _fallback.args;
     if (!_fallback.field) {
-      out.description = absl::StrCat("[", args.scorer->ToString(), "]");
+      out.scorer = args.scorer->ToString();
       return;
     }
     const auto& field = *_fallback.field;
@@ -236,20 +231,14 @@ class GroupPart final : public Part {
     }
     const bool max = _merge == ScoreMergeType::Max;
     out.key = max ? "max" : "sum";
-    out.description = max ? "max of:" : "sum of:";
+    out.formula = out.key;
     bool scored = false;
     score_t total = 0;
     const auto add = [&](Node&& child, Outcome outcome) {
       if (outcome == Outcome::Scored) {
         const auto value = std::get<score_t>(child.value);
-        if (!scored) {
-          total = value;
-          scored = true;
-        } else if (max) {
-          total = std::max(total, value);
-        } else {
-          total += value;
-        }
+        total = max ? std::max(total, value) : total + value;
+        scored = true;
       }
       out.details.push_back(std::move(child));
     };
@@ -276,13 +265,7 @@ class GroupPart final : public Part {
       return Outcome::None;
     }
     if (_absorbed) {
-      add(
-        {
-          .key = "constant",
-          .value = *_absorbed,
-          .description = "constant, the score of clauses every row matches",
-        },
-        Outcome::Scored);
+      add({.key = "constant", .value = *_absorbed}, Outcome::Scored);
     }
     out.value = total;
     return scored ? Outcome::Scored : Outcome::Matched;
@@ -464,7 +447,7 @@ Node Plan::Explain(doc_id_t doc, std::optional<score_t> executed) {
     return {
       .key = "unexplained",
       .value = executed ? *executed : score_t{0},
-      .description = "the row matches, but its match could not be traced",
+      .note = "the row matches, but its match could not be traced",
     };
   }
   if (executed) {

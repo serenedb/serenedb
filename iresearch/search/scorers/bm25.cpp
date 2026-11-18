@@ -191,26 +191,24 @@ void BM25::Explain(const ScoreContext& ctx, const explain::SlotStats* stats,
                   &Bm25Idf);
   if (IsBM1()) {
     explain::AddScale(out, ctx);
-    out.description = ScaleOf(ctx) ? "computed as scale * boost * idf from:"
-                                   : "computed as boost * idf from:";
+    out.formula = ScaleOf(ctx) ? "scale * boost * idf" : "boost * idf";
     return;
   }
-  auto& tf = explain::AddDetail(out, "tf", score_t{0}, {});
+  auto& tf = explain::AddDetail(out, "tf", score_t{0});
   const auto freq = explain::AddFreq(tf, ctx);
-  explain::AddDetail(tf, "k1", _k, "k1, term saturation parameter");
+  explain::AddDetail(tf, "k1", _k);
   if (IsBM15()) {
     tf.value = freq / (freq + own.norm_const);
-    tf.description = "tf, computed as freq / (freq + k1) from:";
+    tf.formula = "freq / (freq + k1)";
   } else {
-    explain::AddDetail(tf, "b", _b, "b, length normalization parameter");
+    explain::AddDetail(tf, "b", _b);
     const auto length = TermCountToScore(explain::AddLength(tf, ctx));
     explain::AddAverageLength(tf, _k * _b / own.norm_length, stats);
     const auto c1 = own.norm_const + own.norm_length * length;
     tf.value = freq / (freq + c1);
-    tf.description =
-      "tf, computed as freq / (freq + k1 * (1 - b + b * dl / avgdl)) from:";
+    tf.formula = "freq / (freq + k1 * (1 - b + b * dl / avgdl))";
   }
-  out.description = "computed as boost * idf * tf from:";
+  out.formula = "boost * idf * tf";
 }
 
 ScoreBoundWriter::ptr BM25::PrepareScoreBoundWriter() const {

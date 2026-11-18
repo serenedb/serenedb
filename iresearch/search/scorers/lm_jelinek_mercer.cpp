@@ -94,9 +94,7 @@ void LMJelinekMercer::Explain(const ScoreContext& ctx,
                               explain::Node& out) const {
   explain::ExplainLanguageModel(
     ctx, stats_cast(ctx.stats)->collection_prob, stats,
-    {.key = "lambda",
-     .value = _lambda,
-     .description = "lambda, the share of the collection model"},
+    {.key = "lambda", .value = _lambda},
     "boost * log(1 + ((1 - lambda) * freq / dl) / (lambda * p))", out);
 }
 

@@ -98,12 +98,12 @@ void LMDirichlet::Explain(const ScoreContext& ctx,
                           const explain::SlotStats* stats,
                           explain::Node& out) const {
   if (_mu <= 0.f) {
-    out.description = "mu is not positive, so the clause scores 0";
+    out.note = "mu is not positive, so the clause scores 0";
     return;
   }
   explain::ExplainLanguageModel(
     ctx, stats_cast(ctx.stats)->collection_prob, stats,
-    {.key = "mu", .value = _mu, .description = "mu, the Dirichlet prior"},
+    {.key = "mu", .value = _mu},
     "boost * max(0, log(1 + freq / (mu * p)) - log(1 + dl / mu))", out);
 }
 

@@ -36,7 +36,6 @@ namespace {
 struct DistanceFunction {
   std::string_view name;
   std::string_view formula;
-  bool norm = false;
 };
 
 DistanceFunction DistanceFunctionOf(const VectorScorerOptions& vs) {
@@ -46,12 +45,12 @@ DistanceFunction DistanceFunctionOf(const VectorScorerOptions& vs) {
         return {kL2SqrDistance, "sum(($0[i] - query[i])^2)"};
       }
       if (vs.norm) {
-        return {kL2Norm, "sqrt(sum($0[i]^2))", true};
+        return {kL2Norm, "sqrt(sum($0[i]^2))"};
       }
       return {kL2Distance, "sqrt(sum(($0[i] - query[i])^2))"};
     case irs::VectorMetric::L1:
       if (vs.norm) {
-        return {kL1Norm, "sum(abs($0[i]))", true};
+        return {kL1Norm, "sum(abs($0[i]))"};
       }
       return {kL1Distance, "sum(abs($0[i] - query[i]))"};
     case irs::VectorMetric::Cosine:
@@ -92,29 +91,23 @@ void AddSearchParameters(const VectorScorerOptions& vs,
   using irs::explain::AddDetail;
   const bool ranged = vs.radius != std::numeric_limits<float>::max();
   if (vs.top_k != 0) {
-    AddDetail(out, "k", uint64_t{vs.top_k},
-              "k, the number of nearest rows the search returns");
+    AddDetail(out, "k", uint64_t{vs.top_k});
   }
   if (ranged) {
-    AddDetail(out, "radius", vs.radius,
-              vs.radius_inclusive
-                ? "radius, the largest distance the search returns"
-                : "radius, the search returns distances below it");
+    AddDetail(out, "radius", vs.radius).note =
+      vs.radius_inclusive ? "the largest distance the search returns"
+                          : "the search returns distances below it";
   }
   if (vs.exact || vs.top_k == 0 || ranged) {
     return;
   }
   if (vs.kind == irs::AnnKind::Hnsw) {
-    AddDetail(out, "ef_search", uint64_t{vs.ef_search},
-              "ef_search, candidates the search keeps in its beam");
+    AddDetail(out, "ef_search", uint64_t{vs.ef_search});
   } else if (vs.nprobe != 0) {
-    AddDetail(out, "nprobe", uint64_t{vs.nprobe},
-              "nprobe, clusters the search scans in each segment");
+    AddDetail(out, "nprobe", uint64_t{vs.nprobe});
   }
   if (vs.quant != irs::VectorQuantization::None && !vs.rescore_all) {
-    AddDetail(out, "rescore_width", vs.rescore_width,
-              "rescore_width, how far a code score may be off and still be "
-              "read again at full precision");
+    AddDetail(out, "rescore_width", vs.rescore_width);
   }
 }
 
@@ -125,31 +118,24 @@ irs::explain::Node ExplainDistance(const VectorScorerOptions& vs,
                                    std::optional<irs::score_t> returned,
                                    std::optional<irs::score_t> stored) {
   const auto function = DistanceFunctionOf(vs);
-  const auto call = absl::StrCat(function.name, "(", column,
-                                 function.norm ? "" : ", query", ")");
-  if (!stored) {
-    return {
-      .key = "distance",
-      .value = std::numeric_limits<irs::score_t>::quiet_NaN(),
-      .description =
-        absl::StrCat(call, " is NULL because ", column, " is NULL in the row"),
-    };
-  }
-  const auto exact = ApplyScoreEmit(vs.score_emit, *stored);
   irs::explain::Node out{
     .key = "distance",
-    .value = returned ? ApplyScoreEmit(vs.score_emit, *returned) : exact,
-    .description =
-      absl::StrCat(call, " = ", absl::Substitute(function.formula, column),
-                   ", ", Method(vs)),
+    .scorer = std::string{function.name},
+    .subject = {.field = vs.field_id},
   };
-  if (!vs.exact) {
-    irs::explain::AddDetail(
-      out, "exact", exact,
-      "exact, the distance computed from the row's stored vector");
+  if (!stored) {
+    out.value = std::numeric_limits<irs::score_t>::quiet_NaN();
+    out.note = absl::StrCat(column, " is NULL in the row");
+    return out;
   }
-  irs::explain::AddDetail(out, "dims", uint64_t{vs.dims},
-                          "dims, dimensions of the vectors");
+  const auto exact = ApplyScoreEmit(vs.score_emit, *stored);
+  out.value = returned ? ApplyScoreEmit(vs.score_emit, *returned) : exact;
+  out.formula = absl::Substitute(function.formula, column);
+  out.note = Method(vs);
+  if (!vs.exact) {
+    irs::explain::AddDetail(out, "exact", exact);
+  }
+  irs::explain::AddDetail(out, "dims", uint64_t{vs.dims});
   AddSearchParameters(vs, out);
   return out;
 }

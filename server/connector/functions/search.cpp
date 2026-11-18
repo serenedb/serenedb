@@ -176,6 +176,10 @@ void RegisterScorerFunctions(duckdb::ExtensionLoader& loader) {
   explain.AddFunction(
     duckdb::ScalarFunction({LT::BIGINT}, ExplainType(), ScorerStubFn));
   loader.RegisterFunction(std::move(explain));
+  duckdb::ScalarFunctionSet explain_json{duckdb::Identifier{kExplainJson}};
+  explain_json.AddFunction(
+    duckdb::ScalarFunction({ExplainType()}, LT::JSON(), ExplainJsonFunction));
+  loader.RegisterFunction(std::move(explain_json));
 }
 
 // ts_offsets(col [, limit]) -> INTEGER[] of interleaved start/end pairs.

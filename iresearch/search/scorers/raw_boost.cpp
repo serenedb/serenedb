@@ -38,11 +38,9 @@ ScoreFunction RawBoost::PrepareScorer(const ScoreContext& ctx) const {
 
 void RawBoost::Explain(const ScoreContext& ctx, const explain::SlotStats*,
                        explain::Node& out) const {
-  explain::AddDetail(out, "boost", ctx.boost,
-                     "boost, the query's weight for this clause");
+  explain::AddDetail(out, "boost", ctx.boost);
   explain::AddScale(out, ctx);
-  out.description = ScaleOf(ctx) ? "computed as scale * boost from:"
-                                 : "computed as boost from:";
+  out.formula = ScaleOf(ctx) ? "scale * boost" : "boost";
 }
 
 }  // namespace irs

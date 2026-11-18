@@ -44,7 +44,9 @@ struct Subject {
 struct Node {
   std::string_view key;
   Value value = score_t{0};
-  std::string description;
+  std::string formula;
+  std::string note;
+  std::string scorer;
   Subject subject;
   std::vector<Node> details;
 };
@@ -53,13 +55,12 @@ inline bool HasSubject(const Node& node) noexcept {
   return field_limits::valid(node.subject.field);
 }
 
-inline Node& AddDetail(Node& parent, std::string_view key, Value value,
-                       std::string description) {
-  return parent.details.emplace_back(Node{
-    .key = key,
-    .value = value,
-    .description = std::move(description),
-  });
+inline bool IsGroup(const Node& node) noexcept {
+  return node.key == "sum" || node.key == "max";
+}
+
+inline Node& AddDetail(Node& parent, std::string_view key, Value value) {
+  return parent.details.emplace_back(Node{.key = key, .value = value});
 }
 
 class Explainer {

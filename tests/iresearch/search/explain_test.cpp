@@ -196,9 +196,9 @@ class ExplainTest : public IndexTestBase {
         auto node = plan.Explain(row.doc, std::nullopt);
         EXPECT_NE("unexplained", node.key);
         if (tolerance == 0) {
-          EXPECT_EQ(row.score, ValueOf(node)) << node.description;
+          EXPECT_EQ(row.score, ValueOf(node)) << node.formula;
         } else {
-          EXPECT_NEAR(row.score, ValueOf(node), tolerance) << node.description;
+          EXPECT_NEAR(row.score, ValueOf(node), tolerance) << node.formula;
         }
         explained.push_back(std::move(node));
       }
@@ -218,7 +218,8 @@ TEST_P(ExplainTest, bm25_term_breaks_down_into_idf_and_tf) {
     EXPECT_EQ(kBodyId, row.subject.field);
     ASSERT_EQ(1u, row.subject.terms.size());
     EXPECT_EQ(Bytes("fox"), row.subject.terms.front());
-    EXPECT_NE(std::string::npos, row.description.find("bm25"));
+    EXPECT_EQ(bm25.ToString(), row.scorer);
+    EXPECT_EQ("boost * idf * tf", row.formula);
 
     const auto* idf = Child(row, "idf");
     ASSERT_NE(nullptr, idf);
@@ -389,7 +390,7 @@ TEST_P(ExplainTest, a_fuzzy_match_names_the_term_it_matched) {
     ASSERT_NE(nullptr, idf);
     const auto* n = Child(*idf, "n");
     ASSERT_NE(nullptr, n);
-    EXPECT_NE(std::string::npos, n->description.find("matched terms"));
+    EXPECT_NE(std::string::npos, n->note.find("matched terms"));
   }
 }
 
@@ -418,7 +419,7 @@ TEST_P(ExplainTest, every_scorer_matches_execution) {
     const auto term = Term("fox");
     for (const auto& row : Explain(*term, *scorer, 0)) {
       EXPECT_EQ("weight", row.key);
-      EXPECT_NE(std::string::npos, row.description.find(scorer->ToString()));
+      EXPECT_EQ(scorer->ToString(), row.scorer);
     }
     const auto any = AnyOf({"quick", "lazy", "brown"});
     Explain(*any, *scorer, 1e-5f);
@@ -450,7 +451,7 @@ TEST_P(ExplainTest, a_branch_keeps_its_own_scorer_or_none) {
       if (clause.key == "match") {
         saw_match = true;
         EXPECT_EQ(0.f, ValueOf(clause));
-      } else if (clause.description.find("raw_boost") != std::string::npos) {
+      } else if (clause.scorer.find("raw_boost") != std::string::npos) {
         saw_raw_boost = true;
       }
     }

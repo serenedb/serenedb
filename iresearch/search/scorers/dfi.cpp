@@ -153,17 +153,14 @@ void DFI::Explain(const ScoreContext& ctx, const explain::SlotStats* stats,
                   explain::Node& out) const {
   const auto ratio = stats_cast(ctx.stats)->ratio;
   if (!explain::FreqOf(ctx) || ratio <= 0.f) {
-    out.description =
-      "the column records no term frequency, so the clause scores 0";
+    out.note = "the column records no term frequency, so the clause scores 0";
     return;
   }
   explain::AddBoost(out, ctx.boost);
   explain::AddCollectionShare(out, ratio, stats);
   const auto freq = explain::AddFreq(out, ctx);
-  auto& expected = explain::AddDetail(
-    out, "expected", score_t{0},
-    "expected, occurrences of the term if it were spread evenly, computed as "
-    "p * dl from:");
+  auto& expected = explain::AddDetail(out, "expected", score_t{0});
+  expected.formula = "p * dl";
   const auto length = TermCountToScore(explain::AddLength(expected, ctx));
   expected.value = ratio * length;
   const auto* const kernel = [&] {
@@ -177,10 +174,13 @@ void DFI::Explain(const ScoreContext& ctx, const explain::SlotStats* stats,
     }
     return "";
   }();
-  out.description =
-    freq > std::get<score_t>(expected.value)
-      ? absl::StrCat("computed as boost * log2(1 + ", kernel, ") from:")
-      : "the term occurs no more often than expected, so the clause scores 0:";
+  if (freq > std::get<score_t>(expected.value)) {
+    out.formula = absl::StrCat("boost * log2(1 + ", kernel, ")");
+  } else {
+    out.note =
+      "the term occurs no more often than expected, so the clause "
+      "scores 0";
+  }
 }
 
 std::string DFI::ToString() const {

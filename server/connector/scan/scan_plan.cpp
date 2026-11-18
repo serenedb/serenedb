@@ -881,8 +881,9 @@ std::unique_ptr<irs::explain::Explainer> MakeExplainer(const ScanGlobalState& g,
                                               g.explain_stats, names);
 }
 
-void WriteChunkExplain(FetchLocalState& f, const ScanGlobalState& g,
-                       uint32_t seg, std::span<const irs::doc_id_t> docs,
+void WriteChunkExplain(duckdb::ClientContext& ctx, FetchLocalState& f,
+                       const ScanGlobalState& g, uint32_t seg,
+                       std::span<const irs::doc_id_t> docs,
                        const duckdb::Vector* scores,
                        duckdb::DataChunk& output) {
   if (!g.ScanExplain()) {
@@ -900,7 +901,7 @@ void WriteChunkExplain(FetchLocalState& f, const ScanGlobalState& g,
       docs[i],
       returned ? std::optional<irs::score_t>{returned[i]} : std::nullopt));
   }
-  WriteExplanations(f.explain_rows, ExplainLabels{g.Bind()},
+  WriteExplanations(ctx, f.explain_rows, ExplainLabels{g.Bind()},
                     output.data[g.explain_output_idx]);
 }
 
@@ -954,7 +955,7 @@ void BuildFetchedCopy(ScanGlobalState& g) {
   }
 }
 
-duckdb::idx_t EmitReadyBatch(duckdb::ClientContext&, ScanGlobalState& g,
+duckdb::idx_t EmitReadyBatch(duckdb::ClientContext& ctx, ScanGlobalState& g,
                              FetchLocalState& f, duckdb::DataChunk& output) {
   SDB_IF_FAILURE("SearchIncludeFetchFault") {
     if (!g.cs_projections.empty()) {
@@ -972,7 +973,8 @@ duckdb::idx_t EmitReadyBatch(duckdb::ClientContext&, ScanGlobalState& g,
   }
   if (g.WritesLateColumns()) {
     WriteChunkOffsets(f, g, batch.seg, batch.docs, output);
-    WriteChunkExplain(f, g, batch.seg, batch.docs, batch.score_vec, output);
+    WriteChunkExplain(ctx, f, g, batch.seg, batch.docs, batch.score_vec,
+                      output);
   }
   WriteRowPositions(g, batch.seg, batch.docs, output);
   WriteVirtualColumns(g, batch.count, batch.score_vec, output);

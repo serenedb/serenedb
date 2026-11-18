@@ -333,7 +333,7 @@ curl -s -u postgres: http://127.0.0.1:9200/articles/_search \
 
 ### Explaining scores
 
-With `"explain": true`, each hit carries an `_explanation`: how its BM25 score was computed, clause by clause, as [`ts_explain`](../sql/functions/search/scoring.md#ts_explain) returns it. Its `value` equals the hit's `_score`. A query without a full-text clause explains the constant `1.0`, and a query with a `sort` still explains the BM25 score its hits would have. A scroll search cannot have `explain`.
+With `"explain": true`, each hit carries an `_explanation`: how its BM25 score was computed, clause by clause, in Elasticsearch's layout of `value`, `description` and `details`, as [`ts_explain_json`](../sql/functions/search/scoring.md#ts_explain) returns it. Its `value` equals the hit's `_score`. A query without a full-text clause explains the constant `1.0`, and a query with a `sort` still explains the BM25 score its hits would have. A scroll search cannot have `explain`.
 
 `GET` or `POST` on `/<index>/_explain/<id>` explains one document for the `query` in the body, the only key it accepts:
 

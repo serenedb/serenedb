@@ -72,8 +72,7 @@ void RawTF::Explain(const ScoreContext& ctx, const explain::SlotStats*,
   }
   explain::AddBoost(out, ctx.boost);
   explain::AddFreq(out, ctx);
-  out.description = ScaleOf(ctx) ? "computed as boost * freq * scale from:"
-                                 : "computed as boost * freq from:";
+  out.formula = "boost * freq";
 }
 
 ScoreFunction RawTF::PrepareScorer(const ScoreContext& ctx) const {

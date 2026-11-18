@@ -20,8 +20,6 @@
 
 #include "iresearch/search/explain/factors.hpp"
 
-#include <absl/strings/str_cat.h>
-
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/search/scorers/score_inputs.hpp"
 
@@ -37,78 +35,74 @@ std::optional<uint32_t> FreqOf(const ScoreContext& ctx) noexcept {
 
 void AddBoost(Node& out, score_t boost) {
   if (boost != kNoBoost) {
-    AddDetail(out, "boost", boost, "boost, the query's weight for this clause");
+    AddDetail(out, "boost", boost);
   }
 }
 
 void AddScale(Node& out, const ScoreContext& ctx) {
   if (const auto* scale = ScaleOf(ctx)) {
-    AddDetail(out, "scale", scale[0],
-              "scale, the weight of this row's match within the clause");
+    AddDetail(out, "scale", scale[0]);
   }
 }
 
 score_t AddFreq(Node& out, const ScoreContext& ctx) {
   const auto freq = FreqOf(ctx);
   SDB_ASSERT(freq);
-  AddDetail(out, "freq", uint64_t{*freq},
-            "freq, occurrences of the term in the row");
   const auto* scale = ScaleOf(ctx);
   if (!scale) {
+    AddDetail(out, "freq", uint64_t{*freq});
     return TermCountToScore(*freq);
   }
-  AddScale(out, ctx);
-  return TermCountToScore(*freq) * scale[0];
+  const auto scaled = TermCountToScore(*freq) * scale[0];
+  auto& node = AddDetail(out, "freq", scaled);
+  node.formula = "count * scale";
+  AddDetail(node, "count", uint64_t{*freq});
+  AddDetail(node, "scale", scale[0]);
+  return scaled;
 }
 
 uint32_t AddLength(Node& out, const ScoreContext& ctx) {
   const auto length = NormsOf(ctx)[0];
-  AddDetail(out, "dl", uint64_t{length}, "dl, length of the column in the row");
+  AddDetail(out, "dl", uint64_t{length});
   return length;
 }
 
 void AddAverageLength(Node& out, score_t fallback, const SlotStats* stats) {
   if (!stats || stats->docs_with_field == 0 || stats->total_term_freq == 0) {
-    AddDetail(out, "avgdl", fallback, "avgdl, average length of the column");
+    AddDetail(out, "avgdl", fallback);
     return;
   }
-  auto& avg =
-    AddDetail(out, "avgdl",
-              static_cast<score_t>(stats->total_term_freq) /
-                static_cast<score_t>(stats->docs_with_field),
-              "avgdl, average length of the column, computed as L / N from:");
-  AddDetail(avg, "L", stats->total_term_freq,
-            "L, total length of the column over all rows");
-  AddDetail(avg, "N", stats->docs_with_field,
-            "N, number of rows with the column");
+  auto& avg = AddDetail(out, "avgdl",
+                        static_cast<score_t>(stats->total_term_freq) /
+                          static_cast<score_t>(stats->docs_with_field));
+  avg.formula = "L / N";
+  AddDetail(avg, "L", stats->total_term_freq);
+  AddDetail(avg, "N", stats->docs_with_field);
 }
 
 void AddIdf(Node& out, score_t idf, const SlotStats* stats,
             std::string_view formula, IdfOf per_term) {
-  auto& node =
-    AddDetail(out, "idf", idf, absl::StrCat("idf, computed as ", formula));
+  auto& node = AddDetail(out, "idf", idf);
+  node.formula = formula;
   if (!stats || stats->terms.empty()) {
     return;
   }
   const auto add_counts = [&](Node& to, const TermStats& term) {
-    AddDetail(to, "n", term.docs_with_term,
-              stats->blended
-                ? "n, the most rows any one of the matched terms occurs in"
-                : "n, number of rows containing the term");
-    AddDetail(to, "N", stats->docs_with_field,
-              "N, number of rows with the column");
+    auto& n = AddDetail(to, "n", term.docs_with_term);
+    if (stats->blended) {
+      n.note = "the most rows any one of the matched terms occurs in";
+    }
+    AddDetail(to, "N", stats->docs_with_field);
   };
   if (stats->terms.size() == 1) {
-    absl::StrAppend(&node.description, " from:");
     add_counts(node, stats->terms.front());
     return;
   }
-  node.description =
-    absl::StrCat("idf, sum of the terms' idf, each computed as ", formula, ":");
+  node.formula = "sum";
   for (const auto& term : stats->terms) {
-    auto& one =
-      AddDetail(node, "idf",
-                per_term(stats->docs_with_field, term.docs_with_term), "from:");
+    auto& one = AddDetail(
+      node, "idf", per_term(stats->docs_with_field, term.docs_with_term));
+    one.formula = formula;
     one.subject = {.field = stats->field, .terms = {term.term}};
     add_counts(one, term);
   }
@@ -116,27 +110,26 @@ void AddIdf(Node& out, score_t idf, const SlotStats* stats,
 
 void AddCollectionShare(Node& out, score_t value, const SlotStats* stats) {
   const bool blended = stats && stats->blended;
-  auto& node =
-    AddDetail(out, "p", value,
-              blended ? "p, the matched terms' share of all text in the column"
-                      : "p, the term's share of all text in the column");
+  auto& node = AddDetail(out, "p", value);
+  if (blended) {
+    node.note = "the matched terms' share of all text in the column";
+  }
   if (!stats || stats->terms.size() != 1) {
     return;
   }
-  absl::StrAppend(&node.description, ", computed as (ttf + 1) / (L + 1) from:");
-  AddDetail(node, "ttf", stats->terms.front().total_term_freq,
-            blended ? "ttf, occurrences of all the matched terms over all rows"
-                    : "ttf, occurrences of the term over all rows");
-  AddDetail(node, "L", stats->total_term_freq,
-            "L, total length of the column over all rows");
+  node.formula = "(ttf + 1) / (L + 1)";
+  auto& ttf = AddDetail(node, "ttf", stats->terms.front().total_term_freq);
+  if (blended) {
+    ttf.note = "occurrences of all the matched terms over all rows";
+  }
+  AddDetail(node, "L", stats->total_term_freq);
 }
 
 void ExplainLanguageModel(const ScoreContext& ctx, score_t collection_share,
                           const SlotStats* stats, Node parameter,
                           std::string_view formula, Node& out) {
   if (!FreqOf(ctx) || collection_share <= 0.f) {
-    out.description =
-      "the column records no term frequency, so the clause scores 0";
+    out.note = "the column records no term frequency, so the clause scores 0";
     return;
   }
   AddBoost(out, ctx.boost);
@@ -144,11 +137,11 @@ void ExplainLanguageModel(const ScoreContext& ctx, score_t collection_share,
   AddCollectionShare(out, collection_share, stats);
   AddFreq(out, ctx);
   AddLength(out, ctx);
-  out.description = absl::StrCat("computed as ", formula, " from:");
+  out.formula = formula;
 }
 
 void ExplainNoFreq(const ScoreContext& ctx, bool boost_as_score, Node& out) {
-  out.description =
+  out.note =
     boost_as_score && ctx.boost != 0.f
       ? "the column records no term frequency, so the clause scores its boost"
       : "the column records no term frequency, so the clause scores 0";

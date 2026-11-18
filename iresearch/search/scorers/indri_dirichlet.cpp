@@ -93,13 +93,13 @@ void IndriDirichlet::Explain(const ScoreContext& ctx,
                              const explain::SlotStats* stats,
                              explain::Node& out) const {
   if (_mu <= 0.f) {
-    out.description = "mu is not positive, so the clause scores 0";
+    out.note = "mu is not positive, so the clause scores 0";
     return;
   }
-  explain::ExplainLanguageModel(
-    ctx, stats_cast(ctx.stats)->collection_prob, stats,
-    {.key = "mu", .value = _mu, .description = "mu, the Dirichlet prior"},
-    "boost * log((freq + mu * p) / (dl + mu))", out);
+  explain::ExplainLanguageModel(ctx, stats_cast(ctx.stats)->collection_prob,
+                                stats, {.key = "mu", .value = _mu},
+                                "boost * log((freq + mu * p) / (dl + mu))",
+                                out);
 }
 
 std::string IndriDirichlet::ToString() const {

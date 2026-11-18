@@ -27,6 +27,7 @@
 #include <vector>
 
 #include "formats/field_columns.h"
+#include "formats/lexed_rows.h"
 
 namespace sdb::formats {
 
@@ -63,9 +64,9 @@ class TextSplitter {
   void AddField(size_t column, size_t row, std::string_view field,
                 bool backslash);
 
-  const char _delimiter;
   const size_t _columns;
   const size_t _capacity;
+  LexedRows _rows;
   std::vector<std::string_view> _fields;
   std::vector<uint32_t> _escaped;
 };

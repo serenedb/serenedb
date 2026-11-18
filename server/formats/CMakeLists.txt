@@ -3,6 +3,7 @@ target_sources(
     PRIVATE
         copy_decoder.cpp
         csv_splitter.cpp
+        lexed_rows.cpp
         text_encoding.cpp
         text_splitter.cpp
 )

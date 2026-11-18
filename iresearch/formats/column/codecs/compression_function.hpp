@@ -248,6 +248,8 @@ duckdb::idx_t CountRows(std::span<const WriteChunk> chunks) noexcept;
 
 uint64_t RawInput(ColumnDataCheckpointData& data);
 
+uint64_t PackedBytes(ColumnDataCheckpointData& data);
+
 bool HasRows(std::span<const WriteChunk> chunks) noexcept;
 
 const Codec* GetCodec(CodecType type, duckdb::PhysicalType physical);

@@ -47,13 +47,12 @@ struct ReusePolicy {
 
   void Release() noexcept { pick = CodecType::Auto; }
 
-  bool Drifted(double bytes, double input) const noexcept {
-    const auto ratio = bytes / input;
-    return ratio > reference * kDrift || ratio * kDrift < reference;
-  }
-
   bool Grew(double bytes, double input) const noexcept {
     return bytes / input > reference * kDrift;
+  }
+
+  bool Undercuts(double bytes, double input) const noexcept {
+    return bytes * kDrift < reference * input;
   }
 
   void Settle(CodecType next, double bytes, double input) noexcept {

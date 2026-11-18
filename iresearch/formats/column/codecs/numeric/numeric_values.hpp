@@ -84,6 +84,11 @@ class Values final : public State {
 
   U Scale() const noexcept { return _scale; }
 
+  uint64_t PackedBytes() {
+    return _any_valid ? (uint64_t{_values.size()} * GetFacts().for_bits + 7) / 8
+                      : 0;
+  }
+
   duckdb::BaseStatistics Stats(const duckdb::LogicalType& type) const {
     auto stats = duckdb::BaseStatistics::CreateEmpty(type);
     _stats.Merge(stats);

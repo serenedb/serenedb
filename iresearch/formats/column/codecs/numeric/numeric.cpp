@@ -66,6 +66,16 @@ const Codec* FormCodec(Shape shape, ByteCodec leaf) {
 
 }  // namespace
 
+uint64_t PackedBytes(ColumnDataCheckpointData& data) {
+  if (data.disabled.test(std::to_underlying(CodecType::Ffor))) {
+    return 0;
+  }
+  const auto physical = data.type.InternalType();
+  return WithNumericType(physical, [&]<typename T>(std::type_identity<T>) {
+    return std::is_integral_v<T> ? data.Get<Values<T>>().PackedBytes() : 0;
+  });
+}
+
 const Codec* NumericCodecOf(Shape shape, ByteCodec leaf,
                             duckdb::PhysicalType physical) {
   return WithNumericType(physical, [&]<typename T>(std::type_identity<T>) {

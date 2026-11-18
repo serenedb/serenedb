@@ -173,20 +173,15 @@ class NumericEncoder : public State {
     _out.clear();
     Write(*_best, _leaf, held ? nullptr : &_best_samples, _out);
     const auto bytes = static_cast<double>(_out.size());
-    const auto ratio =
-      bytes / std::max(static_cast<double>(PackedBound(data)) / 8, 1.0);
     const bool grew =
       held && reuse.Grew(bytes, static_cast<double>(RawInput(data)));
-    if (!named && held &&
-        (grew || (_leaf == ByteCodec::None && choice.bound_ratio != 0 &&
-                  ratio > choice.bound_ratio * kDrift))) {
+    if (!named && grew) {
       return false;
     }
     choice = {
       .packed = _best->packed,
       .narrowed = _best->narrowed,
       .shuffled = _best->shuffled,
-      .bound_ratio = held ? choice.bound_ratio : ratio,
     };
     data.FlushSegment(CodecOf(_shape, _leaf), _values.Stats(data.type),
                       _values.Get().size(), _out);
@@ -198,34 +193,6 @@ class NumericEncoder : public State {
       }
     }
     return true;
-  }
-
- private:
-  uint64_t PackedBits(Shape shape) {
-    const auto& facts = _values.GetFacts();
-    const uint64_t rows = _values.Get().size();
-    switch (shape) {
-      case Shape::Plain:
-        return rows * facts.for_bits;
-      case Shape::Delta:
-        return rows * facts.delta_bits;
-      case Shape::Runs:
-        return uint64_t{facts.runs} * (facts.for_bits + std::bit_width(rows));
-      case Shape::Dictionary:
-        break;
-    }
-    return std::numeric_limits<uint64_t>::max();
-  }
-
-  uint64_t PackedBound(const ColumnDataCheckpointData& data) {
-    auto bound = std::numeric_limits<uint64_t>::max();
-    for (const auto shape : {Shape::Plain, Shape::Delta, Shape::Runs}) {
-      if (!data.disabled.test(
-            std::to_underlying(CodecOf(shape, ByteCodec::None)))) {
-        bound = std::min(bound, PackedBits(shape));
-      }
-    }
-    return bound;
   }
 
  protected:

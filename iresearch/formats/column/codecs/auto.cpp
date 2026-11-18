@@ -130,6 +130,17 @@ const CompressionFunction* FunctionOf(std::span<const Contender> contenders,
   return it == contenders.end() ? nullptr : it->function;
 }
 
+bool PackingUndercutsHeld(ColumnDataCheckpointData& data) {
+  const auto& reuse = data.tuning.reuse;
+  const auto input = static_cast<double>(RawInput(data));
+  const auto one_bit_per_row = static_cast<double>(data.rows) / 8;
+  if (!reuse.Undercuts(one_bit_per_row, input)) {
+    return false;
+  }
+  const auto packed = PackedBytes(data);
+  return packed != 0 && reuse.Undercuts(static_cast<double>(packed), input);
+}
+
 bool CompressHeld(const CompressionFunction& held,
                   ColumnDataCheckpointData& data) {
   const auto written = data.written;
@@ -217,7 +228,7 @@ void Contest(std::span<const Contender> contenders,
              ColumnDataCheckpointData& data) {
   auto& reuse = data.tuning.reuse;
   const auto* held = reuse.Due() ? nullptr : FunctionOf(contenders, reuse.pick);
-  if (held && CompressHeld(*held, data)) {
+  if (held && !PackingUndercutsHeld(data) && CompressHeld(*held, data)) {
     return;
   }
   Decide(contenders, data);

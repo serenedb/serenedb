@@ -30,7 +30,6 @@ struct NumericChoice {
   bool packed = false;
   bool narrowed = false;
   bool shuffled = false;
-  double bound_ratio = 0;
 };
 
 struct NumericTuning {

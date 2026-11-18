@@ -1065,7 +1065,6 @@ TEST_F(ColNumericCodecTest, AutoFollowsTheDataAcrossRowGroups) {
   constexpr uint64_t kFirst = 20 * kRowGroup;
   constexpr uint64_t kRandom = 20 * kRowGroup;
   constexpr uint64_t kRows = kFirst + kRandom + 40 * kRowGroup;
-  constexpr uint64_t kMaxLag = 17 * kRowGroup;
   const Gen gen = [](uint64_t g) -> std::optional<int64_t> {
     if (g >= kFirst && g < kFirst + kRandom) {
       return static_cast<int64_t>(Mix(g));
@@ -1100,7 +1099,7 @@ TEST_F(ColNumericCodecTest, AutoFollowsTheDataAcrossRowGroups) {
       row += block.tuple_count;
     }
     ASSERT_TRUE(back.has_value());
-    EXPECT_LE(*back, kFirst + kRandom + kMaxLag);
+    EXPECT_EQ(*back, kFirst + kRandom);
   }
 }
 
@@ -1177,6 +1176,47 @@ TEST_F(ColNumericCodecTest,
     row += block.tuple_count;
   }
   EXPECT_GT(changed, 0u);
+}
+
+TEST_F(ColNumericCodecTest,
+       AHeldCodecWaitsForItsContestWhenBitPackingIsDisabled) {
+  constexpr uint32_t kRowGroup = 2048;
+  constexpr uint64_t kRandom = 40 * kRowGroup;
+  constexpr uint64_t kRows = kRandom + 32 * kRowGroup;
+  constexpr uint64_t kMaxLag = 16 * kRowGroup;
+  const Gen gen = [](uint64_t g) -> std::optional<int64_t> {
+    if (g < kRandom) {
+      return static_cast<int64_t>(Mix(g));
+    }
+    return static_cast<int64_t>(g % 1000) * 1'000'003;
+  };
+  duckdb::DBConfig::GetConfig(Db()).SetDisabledCompressionMethods(
+    {duckdb::CompressionType::COMPRESSION_COL_FFOR});
+  irs::MemoryDirectory dir{};
+  Write(dir, duckdb::LogicalType::BIGINT, {.tier = irs::WriteTier::Merge},
+        kRows, kRowGroup, gen);
+  Verify(dir, duckdb::LogicalType::BIGINT, kRows, gen);
+
+  irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto* col = r.Column(kField);
+  ASSERT_NE(col, nullptr);
+  std::optional<uint64_t> back;
+  uint64_t row = 0;
+  for (const auto& block : col->DataBlocks()) {
+    const bool numeric = irs::codecs::IsNumeric(block.codec->type);
+    EXPECT_NE(block.codec->type, irs::codecs::CodecType::Ffor);
+    if (row < kRandom) {
+      EXPECT_FALSE(numeric) << "row " << row;
+    } else if (back) {
+      EXPECT_TRUE(numeric) << "row " << row;
+    } else if (numeric) {
+      back = row;
+    }
+    row += block.tuple_count;
+  }
+  ASSERT_TRUE(back.has_value());
+  EXPECT_GT(*back, kRandom);
+  EXPECT_LE(*back, kRandom + kMaxLag);
 }
 
 TEST_F(ColNumericCodecTest, ForcedRleLeavesRowGroupsWithoutRepeatsPlain) {

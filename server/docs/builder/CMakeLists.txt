@@ -1,3 +1,6 @@
+add_library(serene_docs_builder OBJECT docs_loader.cpp docs_bootstrap.cpp)
+target_link_libraries(serene_docs_builder PRIVATE sereneserver)
+
 if(NOT SDB_EMBEDDED_DOCS)
     add_library(serene_docs_corpus OBJECT docs_data_stub.cpp)
     target_include_directories(
@@ -67,12 +70,6 @@ target_include_directories(
     serene_docs_corpus
     PRIVATE ${CMAKE_SOURCE_DIR}/server
 )
-
-add_library(serene_docs_builder OBJECT docs_loader.cpp)
-target_link_libraries(serene_docs_builder PRIVATE sereneserver)
-
-add_library(serene_docs_bootstrap OBJECT docs_bootstrap.cpp)
-target_link_libraries(serene_docs_bootstrap PRIVATE sereneserver)
 
 add_library(
     serene_docs_index

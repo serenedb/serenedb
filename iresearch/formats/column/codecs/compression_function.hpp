@@ -186,6 +186,7 @@ struct CompressionFunction {
 struct Contender {
   const CompressionFunction* function;
   CodecSet codecs;
+  uint8_t layout = 0;
 };
 
 inline constexpr uint64_t kBlockSize = duckdb::Storage::DEFAULT_BLOCK_SIZE;

@@ -47,6 +47,8 @@ extern const Codec kDictFsst12FrontCodec;
 extern const Codec kFsst12FrontCodec;
 const Codec* NumericCodecOf(Shape shape, ByteCodec leaf,
                             duckdb::PhysicalType physical);
+std::span<const Contender> NumericLayouts(Shape shape, ByteCodec leaf,
+                                          duckdb::PhysicalType physical);
 const Codec* ConstantCodec(duckdb::PhysicalType physical);
 bool CompressConstant(ColumnDataCheckpointData& data);
 const Codec* EmptyCodec(duckdb::PhysicalType physical);
@@ -59,6 +61,9 @@ const Codec* RoaringCodec(duckdb::PhysicalType physical);
 const Codec* AutoCodec(duckdb::PhysicalType physical);
 
 const Codec* GetCodec(CodecType type, duckdb::PhysicalType physical);
+
+std::span<const Contender> Layouts(CodecType type,
+                                   duckdb::PhysicalType physical);
 
 bool Writes(CodecType type, duckdb::PhysicalType physical,
             const CodecSet& disabled) noexcept;

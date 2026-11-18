@@ -157,7 +157,7 @@ class Values final : public State {
 
   containers::FlatHashSet<uint32_t, Hash, Eq> _codes{0, Hash{&distinct},
                                                      Eq{&distinct}};
-  const NumericTuning& _codes_tuning;
+  const ReusePolicy& _codes_tuning;
   DedupScratch _dedup;
   ShapeRows _rows[kTextShapeCount];
   uint32_t _last_code = 0;

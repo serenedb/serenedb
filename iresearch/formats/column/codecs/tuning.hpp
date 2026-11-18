@@ -20,14 +20,13 @@
 
 #pragma once
 
-#include "iresearch/formats/column/codecs/numeric/numeric_tuning.hpp"
+#include "iresearch/formats/column/codecs/reuse_policy.hpp"
 #include "iresearch/formats/column/codecs/text/string_tuning.hpp"
 
 namespace irs::codecs {
 
 struct ColumnTuning {
   ReusePolicy reuse;
-  NumericChoice numeric;
   StringTuning strings;
 };
 

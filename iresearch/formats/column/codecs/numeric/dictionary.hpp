@@ -50,6 +50,7 @@ class DictionaryEncoder final : public NumericEncoder<T> {
 
  public:
   static constexpr Shape kShape = Shape::Dictionary;
+  static constexpr uint8_t kLayouts[] = {0, kShuffledLayout, kPackedLayout};
   static constexpr StateId kId = StateId::DictionaryEncoder;
 
   explicit DictionaryEncoder(ColumnDataCheckpointData& data)

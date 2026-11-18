@@ -64,19 +64,18 @@ bool Less(const string_t& a, const string_t& b) noexcept {
 }  // namespace
 
 uint64_t CodesBytes(Shape shape, uint64_t rows, uint64_t entries,
-                    const NumericTuning& tuning) noexcept {
+                    const ReusePolicy& reuse) noexcept {
   if (shape != Shape::Dictionary) {
     return 0;
   }
-  return tuning.reuse.calibrated
+  return reuse.calibrated
            ? static_cast<uint64_t>(
-               static_cast<double>(rows * sizeof(uint32_t)) *
-               tuning.reuse.reference)
+               static_cast<double>(rows * sizeof(uint32_t)) * reuse.reference)
            : Packed(rows, entries);
 }
 
 void CompressCodes(
-  std::span<uint32_t> codes, NumericTuning& tuning,
+  std::span<uint32_t> codes, ReusePolicy& reuse,
   absl::FunctionRef<void(CodecType codec, std::string_view bytes)> write) {
   if (codes.empty()) {
     write(CodecType::Auto, {});
@@ -87,7 +86,7 @@ void CompressCodes(
                    reinterpret_cast<duckdb::data_ptr_t>(codes.data()),
                    codes.size()},
     codes.size()};
-  ColumnTuning column{.reuse = tuning.reuse, .numeric = tuning.choice};
+  ColumnTuning column{.reuse = reuse};
   const auto flush = [&](const Codec& codec, duckdb::BaseStatistics, uint64_t,
                          std::string_view bytes) {
     SDB_ASSERT(CodesCodec(codec.type));
@@ -102,8 +101,7 @@ void CompressCodes(
     .min_packed_run = kPackedCodeRunRows,
   };
   Compress(CodecType::Auto, data);
-  tuning.reuse = column.reuse;
-  tuning.choice = column.numeric;
+  reuse = column.reuse;
 }
 
 uint64_t EstimateEntries(const SegmentEntries& rows,

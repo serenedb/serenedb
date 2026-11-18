@@ -316,6 +316,44 @@ TEST_F(ColCompressionFunctionTest,
             CodecType::Zstd);
 }
 
+TEST_F(ColCompressionFunctionTest, ALayoutFunctionWritesItsOwnLayout) {
+  const auto layouts =
+    irs::codecs::Layouts(CodecType::Lz4, duckdb::PhysicalType::INT64);
+  ASSERT_GE(layouts.size(), 3U);
+  const auto& raw = layouts[0];
+  const auto& narrowed = layouts[2];
+  auto out = _dir.create("blocks");
+  irs::WriteContext ctx{_db.instance->GetBufferManager(), *out};
+  std::string written;
+  const auto flush = [&](const irs::codecs::Codec&, duckdb::BaseStatistics,
+                         uint64_t, std::string_view bytes) { written = bytes; };
+  ColumnDataCheckpointData data{
+    .type = duckdb::LogicalType::BIGINT,
+    .chunks = _chunks,
+    .ctx = &ctx,
+    .flush = flush,
+    .params = {.tier = irs::WriteTier::Merge},
+    .tuning = _tuning,
+    .rows = kRows,
+  };
+  const auto stored = [&] {
+    const auto* block =
+      reinterpret_cast<duckdb::const_data_ptr_t>(written.data());
+    return irs::codecs::ParseFrames(block, written.size(), CodecType::Lz4)
+      .stored;
+  };
+  const auto first =
+    raw.function->analyze(data, std::numeric_limits<double>::infinity());
+  ASSERT_EQ(first.codec, CodecType::Lz4);
+  const auto second = narrowed.function->analyze(data, first.score);
+  ASSERT_EQ(second.codec, CodecType::Lz4);
+  ASSERT_LT(second.score, first.score);
+  ASSERT_TRUE(raw.function->compress(data));
+  EXPECT_EQ(stored(), sizeof(int64_t));
+  ASSERT_TRUE(narrowed.function->compress(data));
+  EXPECT_EQ(stored(), 1);
+}
+
 TEST_F(ColCompressionFunctionTest, OnlyCodecsWithAFunctionAreWritable) {
   const auto bigint = duckdb::PhysicalType::INT64;
   EXPECT_TRUE(irs::codecs::Writes(CodecType::Rle, bigint, {}));

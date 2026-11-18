@@ -24,7 +24,6 @@
 #include <optional>
 
 #include "iresearch/formats/column/codecs/codec_type.hpp"
-#include "iresearch/formats/column/codecs/numeric/numeric_tuning.hpp"
 #include "iresearch/formats/column/codecs/reuse_policy.hpp"
 
 namespace irs::codecs {
@@ -86,7 +85,7 @@ struct StringTuning {
   TextStatistics contested_on;
   Lz4Tuning lz4[kTextShapeCount];
   RatioHistory history[kByteCodecCount][kShapeCount]{};
-  NumericTuning codes;
+  ReusePolicy codes;
   uint64_t last_distinct = 0;
 };
 

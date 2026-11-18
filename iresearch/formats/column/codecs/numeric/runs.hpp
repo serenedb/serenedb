@@ -40,6 +40,7 @@ class RunsEncoder final : public NumericEncoder<T> {
 
  public:
   static constexpr Shape kShape = Shape::Runs;
+  static constexpr uint8_t kLayouts[] = {0, kPackedLayout};
   static constexpr StateId kId = StateId::RunsEncoder;
 
   explicit RunsEncoder(ColumnDataCheckpointData& data)

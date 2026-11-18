@@ -88,6 +88,13 @@ const Codec* GetCodec(CodecType type, PhysicalType physical) {
                          : nullptr;
 }
 
+std::span<const Contender> Layouts(CodecType type, PhysicalType physical) {
+  if (!IsForm(type) || physical == PhysicalType::VARCHAR || !IsNumeric(type)) {
+    return {};
+  }
+  return NumericLayouts(ShapeOf(type), LeafOf(type), physical);
+}
+
 CodecType FindCodec(std::string_view name) {
   for (const auto type : magic_enum::enum_values<CodecType>()) {
     if (absl::EqualsIgnoreCase(magic_enum::enum_name(type), name)) {

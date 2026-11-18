@@ -29,10 +29,15 @@ namespace irs::codecs {
 
 inline constexpr double kDrift = 1.25;
 
+struct Pick {
+  CodecType codec = CodecType::Auto;
+  uint8_t layout = 0;
+};
+
 struct ReusePolicy {
   static constexpr uint32_t kMaxGap = 16;
 
-  CodecType pick = CodecType::Auto;
+  Pick pick;
   uint32_t gap = 1;
   uint32_t since = 0;
   double reference = 0;
@@ -45,7 +50,7 @@ struct ReusePolicy {
     since = 0;
   }
 
-  void Release() noexcept { pick = CodecType::Auto; }
+  void Release() noexcept { pick = {}; }
 
   bool Grew(double bytes, double input) const noexcept {
     return bytes / input > reference * kDrift;
@@ -55,8 +60,8 @@ struct ReusePolicy {
     return bytes * kDrift < reference * input;
   }
 
-  void Settle(CodecType next, double bytes, double input) noexcept {
-    gap = pick == next ? std::min(gap * 2, kMaxGap) : 1;
+  void Settle(Pick next, double bytes, double input) noexcept {
+    gap = pick.codec == next.codec ? std::min(gap * 2, kMaxGap) : 1;
     since = 0;
     calibrated = true;
     pick = next;

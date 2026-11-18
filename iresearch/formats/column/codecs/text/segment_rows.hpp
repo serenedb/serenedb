@@ -111,10 +111,10 @@ inline duckdb::string_t EntryOf(const Profile& p, size_t i) noexcept {
 }
 
 uint64_t CodesBytes(Shape shape, uint64_t rows, uint64_t entries,
-                    const NumericTuning& tuning) noexcept;
+                    const ReusePolicy& reuse) noexcept;
 
 void CompressCodes(
-  std::span<uint32_t> codes, NumericTuning& tuning,
+  std::span<uint32_t> codes, ReusePolicy& reuse,
   absl::FunctionRef<void(CodecType codec, std::string_view bytes)> write);
 
 uint64_t EstimateEntries(const SegmentEntries& rows,
@@ -126,7 +126,7 @@ void RecordRatio(RatioHistory& hist, uint64_t raw, uint64_t comp,
 class SegmentRows {
  public:
   SegmentRows(const duckdb::LogicalType& type, DedupScratch& dedup,
-              NumericTuning& codes_tuning)
+              ReusePolicy& codes_tuning)
     : _stats{type}, _type{type}, _dedup{dedup}, _codes_tuning{codes_tuning} {}
 
   void Begin(const Config& config, uint64_t first_row, size_t distinct) {
@@ -243,7 +243,7 @@ class SegmentRows {
   duckdb::StatsWriter<duckdb::string_t> _stats;
   const duckdb::LogicalType& _type;
   DedupScratch& _dedup;
-  NumericTuning& _codes_tuning;
+  ReusePolicy& _codes_tuning;
   Shape _shape = Shape::Dictionary;
   uint8_t _level = 0;
   FrameDictionary _layout = FrameDictionary::FirstFrame;

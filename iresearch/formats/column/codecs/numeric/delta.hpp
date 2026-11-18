@@ -38,6 +38,7 @@ class DeltaEncoder final : public NumericEncoder<T> {
 
  public:
   static constexpr Shape kShape = Shape::Delta;
+  static constexpr uint8_t kLayouts[] = {kPackedLayout, 0, kShuffledLayout};
   static constexpr StateId kId = StateId::DeltaEncoder;
 
   explicit DeltaEncoder(ColumnDataCheckpointData& data) : Base{data, kShape} {}

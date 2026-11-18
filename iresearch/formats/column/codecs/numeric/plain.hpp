@@ -37,6 +37,13 @@ class PlainEncoder final : public NumericEncoder<T> {
 
  public:
   static constexpr Shape kShape = Shape::Plain;
+  static constexpr uint8_t kLayouts[] = {
+    0,
+    kShuffledLayout,
+    kNarrowedLayout,
+    kNarrowedLayout | kShuffledLayout,
+    kPackedLayout,
+  };
   static constexpr StateId kId = StateId::PlainEncoder;
 
   explicit PlainEncoder(ColumnDataCheckpointData& data) : Base{data, kShape} {}

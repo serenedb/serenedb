@@ -55,6 +55,24 @@ inline double Price(ByteCodec leaf, uint64_t bytes) noexcept {
          (1.0 + kLeafPenalty[std::to_underlying(leaf)]);
 }
 
+struct NumericChoice {
+  bool packed = false;
+  bool narrowed = false;
+  bool shuffled = false;
+};
+
+inline constexpr uint8_t kShuffledLayout = 1;
+inline constexpr uint8_t kNarrowedLayout = 2;
+inline constexpr uint8_t kPackedLayout = 4;
+
+constexpr NumericChoice ChoiceOf(uint8_t layout) noexcept {
+  return {
+    .packed = (layout & kPackedLayout) != 0,
+    .narrowed = (layout & kNarrowedLayout) != 0,
+    .shuffled = (layout & kShuffledLayout) != 0,
+  };
+}
+
 struct Candidate {
   bool packed = false;
   bool narrowed = false;
@@ -70,6 +88,12 @@ struct Candidate {
 
   uint32_t ItemBytes() const noexcept { return stored + run_width; }
 };
+
+inline uint8_t LayoutOf(const Candidate& c) noexcept {
+  return static_cast<uint8_t>((c.shuffled ? kShuffledLayout : 0) |
+                              (c.narrowed ? kNarrowedLayout : 0) |
+                              (c.packed ? kPackedLayout : 0));
+}
 
 inline bool FrameCopied(const Candidate& c) noexcept {
   return c.run_width != 0 || c.shuffled;
@@ -115,80 +139,78 @@ class NumericEncoder : public State {
   static constexpr uint8_t kWidth = sizeof(T);
 
   Estimate Analyze(double bound, ByteCodec leaf) {
-    if (!_values.Usable()) {
+    if (!Ready()) {
       return {};
     }
-    if (!_complete) {
-      Rebuild(nullptr);
-    }
-    const auto rows = static_cast<double>(_values.Get().size());
-    auto best_price = bound * rows;
+    _running_price = bound * RowCount();
     bool improved = false;
     for (const auto& c : _candidates) {
-      if (leaf == ByteCodec::None ? c.shuffled : c.packed) {
-        continue;
-      }
-      const auto bytes = EstimateBytes(c, leaf, best_price);
-      if (const auto price = Price(leaf, bytes); price < best_price) {
-        best_price = price;
-        improved = true;
-        _best = &c;
-        _leaf = leaf;
-        _estimated = bytes;
-        if (leaf == ByteCodec::None) {
-          _best_samples.frames.clear();
-        } else {
-          std::swap(_samples, _best_samples);
-        }
-      }
+      improved |= Fits(c, leaf) && Improves(c, leaf);
     }
-    if (!improved) {
+    return improved ? Estimated() : Estimate{};
+  }
+
+  Estimate EstimateLayout(double bound, ByteCodec leaf, uint8_t layout,
+                          bool opens) {
+    if (!Ready()) {
       return {};
     }
-    return {
-      .codec = CodecOf(_shape, _leaf),
-      .score = static_cast<double>(_estimated) / rows *
-               (1.0 + kLeafPenalty[std::to_underlying(_leaf)]),
-    };
+    if (opens) {
+      _running_price = bound * RowCount();
+    }
+    const auto* c = Find(layout);
+    return c && Fits(*c, leaf) && Improves(*c, leaf) ? Estimated() : Estimate{};
+  }
+
+  bool Encode(ColumnDataCheckpointData& data, ByteCodec leaf, uint8_t layout) {
+    const LeafSamples* samples = nullptr;
+    bool held = false;
+    if (_best && _leaf == leaf && LayoutOf(*_best) == layout) {
+      samples = &_best_samples;
+    } else if (_complete) {
+      _best = Find(layout);
+      _leaf = leaf;
+      if (!_best) {
+        return false;
+      }
+    } else {
+      held = true;
+      if (!Hold(leaf, ChoiceOf(layout))) {
+        return false;
+      }
+    }
+    _out.clear();
+    Write(*_best, _leaf, samples, _out);
+    if (held && data.tuning.reuse.Grew(static_cast<double>(_out.size()),
+                                       static_cast<double>(RawInput(data)))) {
+      return false;
+    }
+    data.FlushSegment(CodecOf(_shape, _leaf), _values.Stats(data.type),
+                      _values.Get().size(), _out);
+    return true;
   }
 
   bool Compress(ColumnDataCheckpointData& data, ByteCodec leaf) {
-    auto& choice = data.tuning.numeric;
+    SDB_ASSERT(data.method != CodecType::Auto);
     auto& reuse = data.tuning.reuse;
-    const bool named = data.method != CodecType::Auto;
-    bool held = false;
-    if (!named) {
-      held = !_best;
-      if (held && !Hold(leaf, choice)) {
-        return false;
-      }
-    } else if (leaf != ByteCodec::None && reuse.pick == data.method) {
-      held = Hold(leaf, choice);
-    }
-    if (named && !held &&
-        Analyze(std::numeric_limits<double>::infinity(), leaf).codec ==
-          CodecType::Auto) {
+    const bool held = leaf != ByteCodec::None &&
+                      reuse.pick.codec == data.method &&
+                      Hold(leaf, ChoiceOf(reuse.pick.layout));
+    if (!held && Analyze(std::numeric_limits<double>::infinity(), leaf).codec ==
+                   CodecType::Auto) {
       return false;
     }
     _out.clear();
     Write(*_best, _leaf, held ? nullptr : &_best_samples, _out);
     const auto bytes = static_cast<double>(_out.size());
-    const bool grew =
-      held && reuse.Grew(bytes, static_cast<double>(RawInput(data)));
-    if (!named && grew) {
-      return false;
-    }
-    choice = {
-      .packed = _best->packed,
-      .narrowed = _best->narrowed,
-      .shuffled = _best->shuffled,
-    };
+    const auto input = static_cast<double>(RawInput(data));
     data.FlushSegment(CodecOf(_shape, _leaf), _values.Stats(data.type),
                       _values.Get().size(), _out);
-    if (named && _leaf != ByteCodec::None) {
+    if (_leaf != ByteCodec::None) {
       if (!held) {
-        reuse.Settle(data.method, bytes, static_cast<double>(RawInput(data)));
-      } else if (grew) {
+        reuse.Settle({.codec = data.method, .layout = LayoutOf(*_best)}, bytes,
+                     input);
+      } else if (reuse.Grew(bytes, input)) {
         reuse.Release();
       }
     }
@@ -256,6 +278,56 @@ class NumericEncoder : public State {
       .frames = frames,
       .off_data = c.packed ? duckdb::AlignValue<uint64_t, 8>(off) : off,
     };
+  }
+
+  bool Ready() {
+    if (!_values.Usable()) {
+      return false;
+    }
+    if (!_complete) {
+      Rebuild(nullptr);
+    }
+    return true;
+  }
+
+  double RowCount() const noexcept {
+    return static_cast<double>(_values.Get().size());
+  }
+
+  static bool Fits(const Candidate& c, ByteCodec leaf) noexcept {
+    return leaf == ByteCodec::None ? !c.shuffled : !c.packed;
+  }
+
+  bool Improves(const Candidate& c, ByteCodec leaf) {
+    const auto bytes = EstimateBytes(c, leaf, _running_price);
+    const auto price = Price(leaf, bytes);
+    if (price >= _running_price) {
+      return false;
+    }
+    _running_price = price;
+    _best = &c;
+    _leaf = leaf;
+    _estimated = bytes;
+    if (leaf == ByteCodec::None) {
+      _best_samples.frames.clear();
+    } else {
+      std::swap(_samples, _best_samples);
+    }
+    return true;
+  }
+
+  Estimate Estimated() const noexcept {
+    return {
+      .codec = CodecOf(_shape, _leaf),
+      .score = static_cast<double>(_estimated) / RowCount() *
+               (1.0 + kLeafPenalty[std::to_underlying(_leaf)]),
+    };
+  }
+
+  const Candidate* Find(uint8_t layout) const noexcept {
+    const auto it = absl::c_find_if(
+      _candidates, [&](const Candidate& c) { return LayoutOf(c) == layout; });
+    return it == _candidates.end() ? nullptr : &*it;
   }
 
   bool Hold(ByteCodec leaf, const NumericChoice& choice) {
@@ -471,10 +543,23 @@ class NumericEncoder : public State {
   bool _complete = false;
   ByteCodec _leaf = ByteCodec::None;
   uint64_t _estimated = 0;
+  double _running_price = 0;
   LeafSamples _samples;
   LeafSamples _best_samples;
   ScratchVector<uint8_t> _frame;
   std::string _out;
+};
+
+template<typename Form, ByteCodec kLeaf, uint8_t kLayout, bool kOpens>
+inline constexpr CompressionFunction kNumericLayout{
+  .analyze =
+    [](ColumnDataCheckpointData& data, double bound) {
+      return data.Get<Form>().EstimateLayout(bound, kLeaf, kLayout, kOpens);
+    },
+  .compress =
+    [](ColumnDataCheckpointData& data) {
+      return data.Get<Form>().Encode(data, kLeaf, kLayout);
+    },
 };
 
 template<typename Form, ByteCodec kLeaf>

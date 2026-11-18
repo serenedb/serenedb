@@ -85,14 +85,13 @@ void ColumnReader::PointReader::Evict(uint64_t incoming) {
   }
 }
 
-IRS_FORCE_INLINE bool ColumnReader::PointReader::FetchOne(
+IRS_FORCE_INLINE void ColumnReader::PointReader::FetchOne(
   Blocks& blocks, uint64_t row, duckdb::Vector& out, duckdb::idx_t out_offset) {
   auto& block = Block(blocks, row);
   const duckdb::idx_t local = row - blocks.window.begin;
   FetchSegmentRows(*block.segment, block.state, &local, 1, out,
                    *duckdb::FlatVector::IncrementalSelectionVector(),
                    out_offset);
-  return duckdb::FlatVector::Validity(out).RowIsValid(out_offset);
 }
 
 bool ColumnReader::FetchPoint(PointReader& reader, uint64_t row,
@@ -108,15 +107,20 @@ bool ColumnReader::ValidPoint(PointReader& reader, uint64_t row,
 
 bool ColumnReader::PointReader::FetchStored(uint64_t row, duckdb::Vector& out,
                                             duckdb::idx_t out_offset) {
+  auto& valid = duckdb::FlatVector::ValidityMutable(out);
   if (row >= _reader->RowCount()) {
-    duckdb::FlatVector::ValidityMutable(out).SetInvalid(out_offset);
+    valid.SetInvalid(out_offset);
     return false;
   }
-  duckdb::FlatVector::ValidityMutable(out).SetValid(out_offset);
-  if (_validity.reader && !FetchOne(_validity, row, out, out_offset)) {
-    return false;
+  valid.SetValid(out_offset);
+  if (_validity.reader) {
+    FetchOne(_validity, row, out, out_offset);
+    if (!valid.RowIsValid(out_offset)) {
+      return false;
+    }
   }
-  return FetchOne(_data, row, out, out_offset);
+  FetchOne(_data, row, out, out_offset);
+  return valid.RowIsValid(out_offset);
 }
 
 void ColumnReader::PointReader::FetchPoints(std::span<const uint32_t> ids,
@@ -233,8 +237,10 @@ bool ColumnReader::PointReader::ValidStored(uint64_t row,
   if (!_validity.reader) {
     return true;
   }
-  duckdb::FlatVector::ValidityMutable(scratch).SetValid(0);
-  return FetchOne(_validity, row, scratch, 0);
+  auto& valid = duckdb::FlatVector::ValidityMutable(scratch);
+  valid.SetValid(0);
+  FetchOne(_validity, row, scratch, 0);
+  return valid.RowIsValid(0);
 }
 
 }  // namespace irs

@@ -338,7 +338,7 @@ class ColumnReader {
     };
 
     OpenBlock& Block(Blocks& blocks, uint64_t row);
-    bool FetchOne(Blocks& blocks, uint64_t row, duckdb::Vector& out,
+    void FetchOne(Blocks& blocks, uint64_t row, duckdb::Vector& out,
                   duckdb::idx_t out_offset);
     void FetchBlock(OpenBlock& block, duckdb::Vector& out,
                     const duckdb::SelectionVector& sel, duckdb::idx_t offset);

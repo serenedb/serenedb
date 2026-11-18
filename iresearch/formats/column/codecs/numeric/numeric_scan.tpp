@@ -316,11 +316,10 @@ template<typename R>
 void FetchRows(const ColumnSegment& segment, ColumnFetchState& state,
                const idx_t* rows, idx_t count, duckdb::Vector& result,
                const duckdb::SelectionVector& result_sel, idx_t result_offset) {
-  auto& handle = state.GetOrInsertHandle(segment);
   auto& cache = state.GetOrCreateSegmentState<FetchCache<R>>(
     [] { return std::make_unique<FetchCache<R>>(); });
   if (!cache.frames) {
-    const auto* base = handle.Ptr();
+    const auto* base = state.GetOrInsertHandle(segment).Ptr();
     cache.frames.emplace(base, SegmentFrames(base, segment), segment.codec,
                          segment.cache_slot);
   }

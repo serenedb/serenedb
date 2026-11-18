@@ -1104,7 +1104,7 @@ TEST_F(ColNumericCodecTest, AutoFollowsTheDataAcrossRowGroups) {
   }
 }
 
-TEST_F(ColNumericCodecTest, AutoLeavesDuckDBsRleToTheTypesWithoutARunCodec) {
+TEST_F(ColNumericCodecTest, AutoLeavesRleToTheTypesWithoutARunCodec) {
   constexpr uint32_t kRowGroup = 4096;
   constexpr uint64_t kRows = 4 * kRowGroup;
   const Gen long_runs = [](uint64_t g) -> std::optional<int64_t> {

@@ -23,11 +23,12 @@
 
 #include <string>
 
-#include "runtime/runtime.h"
 #include "search/engine.h"
 #include "server/utils/lockfile.h"
 
 namespace sdb {
+
+class Runtime;
 
 struct StorageConfig {
   std::string directory;

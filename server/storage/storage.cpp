@@ -34,6 +34,7 @@
 #include "backup/pg_control.h"
 #include "catalog/boot.h"
 #include "network/pg/hba.h"
+#include "runtime/runtime.h"
 #include "server/utils/file_utils.h"
 #include "server/utils/lifecycle.h"
 

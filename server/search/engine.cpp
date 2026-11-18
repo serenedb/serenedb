@@ -99,6 +99,8 @@ void SearchEngine::Start() {
   }
 }
 
+bool SearchEngine::IsStopping() const noexcept { return _runtime.IsStopping(); }
+
 void SearchEngine::Stop() {
   _loops.Done();
   _loops.Wait();

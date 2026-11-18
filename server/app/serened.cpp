@@ -99,11 +99,11 @@ int Serve() {
   auto server_config = ReadServerConfig();
   Runtime runtime{ReadIoThreads()};
   Storage storage{runtime, ReadStorageConfig()};
-  JobScheduler jobs{runtime};
   if (const auto bootstrapped = docs::RunDocsBootstrap()) {
     return *bootstrapped;
   }
   replication::SubscriptionEngine subscriptions{runtime.IoPool()};
+  JobScheduler jobs{runtime};
   Server network{runtime.IoPool(), std::move(server_config)};
   SDB_INFO(STARTUP, "SereneDB is ready for business. Have fun!");
   irs::CrashHandler::SetState("running");

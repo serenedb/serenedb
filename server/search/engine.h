@@ -30,10 +30,12 @@
 #include <memory>
 #include <yaclib/algo/wait_group.hpp>
 
-#include "runtime/runtime.h"
 #include "utils/drain_gate.h"
 
 namespace sdb {
+
+class Runtime;
+
 namespace search {
 
 class Store;
@@ -62,7 +64,7 @@ class SearchEngine final {
 
   void StartTasks(const std::shared_ptr<Store>& store);
 
-  bool IsStopping() const noexcept { return _runtime.IsStopping(); }
+  bool IsStopping() const noexcept;
 
   const irs::AnnBuildEnv& AnnEnv() const noexcept { return _ann_env; }
   const irs::AnnBuildEnv& ManualAnnEnv() const noexcept {

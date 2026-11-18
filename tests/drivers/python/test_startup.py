@@ -182,14 +182,14 @@ def test_second_instance_on_the_same_datadir(tmp_path: Path) -> None:
 
 
 SEARCH_FAULT = "search_start_throws"
-JOBS_FAULT = "jobs_start_throws"
 SUBSCRIPTIONS_FAULT = "subscriptions_start_throws"
+JOBS_FAULT = "jobs_start_throws"
 LISTENERS_FAULT = "listeners_start_throws"
 
 
 @pytest.mark.faults
-@pytest.mark.parametrize("fault", [SEARCH_FAULT, JOBS_FAULT,
-                                   SUBSCRIPTIONS_FAULT, LISTENERS_FAULT])
+@pytest.mark.parametrize("fault", [SEARCH_FAULT, SUBSCRIPTIONS_FAULT,
+                                   JOBS_FAULT, LISTENERS_FAULT])
 def test_a_component_failing_to_start_stops_the_ones_before_it(
         tmp_path: Path, fault: str) -> None:
     server = _Server(tmp_path / "data", env={"SDB_FAULTS": fault})

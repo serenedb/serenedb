@@ -56,7 +56,6 @@
 #include "search/store.h"
 #include "search/table_keys.h"
 #include "search/writes.h"
-#include "server/utils/app_server.h"
 
 namespace sdb::connector {
 namespace {

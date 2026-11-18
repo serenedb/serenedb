@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
 #include <absl/container/flat_hash_map.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
@@ -34,6 +35,7 @@
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/search/filters/prefix_filter.hpp>
+#include <iresearch/search/filters/query_profile.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/search/scorers/constant_score.hpp>
 #include <iresearch/search/scorers/indri_dirichlet.hpp>
@@ -42,6 +44,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 #include "index/index_tests.hpp"
@@ -214,6 +217,23 @@ irs::Filter::ptr PhraseOf(std::span<const std::string_view> parts) {
   return filter;
 }
 
+irs::Filter::ptr GappedPhraseOf(std::string_view first,
+                                std::string_view second) {
+  auto filter = std::make_unique<irs::ByPhrase>();
+  *filter->mutable_field_id() = kBodyId;
+  auto& options = *filter->mutable_options();
+  options.push_back<irs::ByTermOptions>().term =
+    irs::bstring{irs::ViewCast<irs::byte_type>(first)};
+  if (second.ends_with('*')) {
+    options.push_back<irs::ByPrefixOptions>(1, 3).term = irs::bstring{
+      irs::ViewCast<irs::byte_type>(second.substr(0, second.size() - 1))};
+  } else {
+    options.push_back<irs::ByTermOptions>(1, 3).term =
+      irs::bstring{irs::ViewCast<irs::byte_type>(second)};
+  }
+  return filter;
+}
+
 class PrunedTopTest : public tests::IndexTestBase {
  protected:
   void Build(std::string (*text)(doc_id_t) = TermsText) {
@@ -238,8 +258,8 @@ class PrunedTopTest : public tests::IndexTestBase {
     irs::PreparedCollector collector{filter, *_ranking, _stats, 1};
     std::vector<irs::QueryBuilder::ptr> queries;
     for (const auto& segment : _reader) {
-      queries.emplace_back(
-        filter.PrepareSegment(segment, {.collector = collector.Get()}));
+      queries.emplace_back(filter.PrepareSegment(
+        segment, {.collector = collector.Get(), .profile = _profile}));
     }
     collector.Finish();
     return queries;
@@ -424,6 +444,7 @@ class PrunedTopTest : public tests::IndexTestBase {
   const irs::Scorer* _ranking = &_scorer;
   irs::StatsArena _stats{duckdb::Allocator::DefaultAllocator()};
   irs::DirectoryReader _reader;
+  irs::QueryProfile* _profile = nullptr;
 };
 
 TEST_P(PrunedTopTest, conjunctions_across_block_kinds) {
@@ -1028,6 +1049,55 @@ TEST_P(PrunedTopTest, conjunctions_with_phrases) {
        }) {
     CheckMixed(shape, irs::Occur::Must);
   }
+}
+
+TEST_P(PrunedTopTest, profiled_phrase_parts_rank_the_same) {
+  Build(PhrasesText);
+  const auto check = [&](std::string_view trace, irs::Filter::ptr phrase,
+                         auto other, irs::Occur occur) {
+    SCOPED_TRACE(trace);
+    irs::BooleanFilter filter;
+    std::vector<const irs::Filter*> filters{&filter, phrase.get()};
+    if constexpr (std::is_same_v<decltype(other), irs::Filter::ptr>) {
+      filters.push_back(other.get());
+    }
+    filter.Add(std::move(phrase), occur);
+    filter.Add(std::move(other), occur);
+    if (occur == irs::Occur::Should) {
+      filter.SetMinShouldMatch(1);
+    }
+    irs::QueryProfile profile{filters, true};
+    _profile = &profile;
+    CheckRanking(filter);
+    _profile = nullptr;
+    EXPECT_TRUE(absl::c_any_of(profile.Slots(), [](const auto& slot) {
+      return slot.node == 1 && slot.executed->calls.load() != 0;
+    }));
+  };
+  const auto phrase = [](std::string_view first, std::string_view second) {
+    return PhraseOf(std::vector<std::string_view>{first, second});
+  };
+  check("\"town of\" club", phrase("town", "of"), Clause("club"),
+        irs::Occur::Must);
+  check("\"harbor town\" | of", phrase("harbor", "town"), Clause("of"),
+        irs::Occur::Should);
+  check("\"town of\" | zephyr", phrase("town", "of"), Clause("zephyr"),
+        irs::Occur::Should);
+  check("\"town ~ of\" club", GappedPhraseOf("town", "of"), Clause("club"),
+        irs::Occur::Must);
+  check("\"town ~ of\" | zephyr", GappedPhraseOf("town", "of"),
+        Clause("zephyr"), irs::Occur::Should);
+  check("\"visit ~ port*\" club", GappedPhraseOf("visit", "port*"),
+        Clause("club"), irs::Occur::Must);
+  check("\"visit ~ port*\" | medal", GappedPhraseOf("visit", "port*"),
+        Clause("medal"), irs::Occur::Should);
+  check("\"town ~ o*\" club", GappedPhraseOf("town", "o*"), Clause("club"),
+        irs::Occur::Must);
+  auto both = std::make_unique<irs::BooleanFilter>();
+  both->Add(Clause("alpha"), irs::Occur::Must);
+  both->Add(Clause("beta"), irs::Occur::Must);
+  check("\"harbor town\" | (alpha beta)", phrase("harbor", "town"),
+        irs::Filter::ptr{std::move(both)}, irs::Occur::Should);
 }
 
 TEST_P(PrunedTopTest, required_terms_with_optional_ones) {

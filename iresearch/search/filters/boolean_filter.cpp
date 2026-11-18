@@ -26,6 +26,7 @@
 #include <utility>
 
 #include "iresearch/formats/posting/doc_input.hpp"
+#include "iresearch/search/filters/query_profile.hpp"
 #include "iresearch/search/filters/term_filter.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/utils/containers/fixed.hpp"
@@ -450,7 +451,7 @@ QueryBuilder::ptr BooleanFilter::PrepareSegment(
     [&](const Filter& filter, Occur occur) {
       advance();
       child.boost = composite_boost;
-      builder.Add(filter.PrepareSegment(segment, child), occur);
+      builder.Add(PrepareFilter(filter, segment, child), occur);
     });
 
   return builder.Finish();

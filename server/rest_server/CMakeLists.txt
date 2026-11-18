@@ -1,1 +1,0 @@
-target_sources(sereneserver PRIVATE database_path_feature.cpp)

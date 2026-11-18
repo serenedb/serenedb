@@ -279,6 +279,9 @@ std::vector<irs::ScoreDoc> RankExactly(ScanGlobalState& g, RankedLocalState& l,
       continue;
     }
     const auto query = filter->PrepareSegment(segment, {});
+    if (g.profile && !irs::QueryBuilder::IsEmpty(*query)) {
+      query->SetProfile(g.profile->Query(), 0);
+    }
     irs::ann::SharedFloor floor{static_cast<uint32_t>(slots)};
     irs::ann::Collector collector{floor, static_cast<uint32_t>(slots)};
     l.score_fetcher.Clear();

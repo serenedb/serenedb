@@ -32,7 +32,7 @@
 #include <utility>
 #include <vector>
 
-#include "scheduler/background_scheduler.h"
+#include "runtime/runtime.h"
 #include "server/utils/lifecycle.h"
 #include "utils/file_utils.h"
 
@@ -80,11 +80,12 @@ void RunRemoval(Removal&& removal) {
       return;
     }
   }
-  if (lifecycle::IsStopping() || BackgroundScheduler::instance().IsStopping()) {
+  auto& runtime = Runtime::Get();
+  if (lifecycle::IsStopping() || runtime.IsStopping()) {
     EndStorageWork(removal());
     return;
   }
-  BackgroundScheduler::instance()
+  runtime
     .Run(
       [removal = std::move(removal)]() mutable { EndStorageWork(removal()); })
     .Detach();

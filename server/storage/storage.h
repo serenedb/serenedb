@@ -22,31 +22,34 @@
 #pragma once
 
 #include <string>
-#include <string_view>
 
+#include "search/engine.h"
 #include "server/utils/lockfile.h"
 
 namespace sdb {
 
-class DatabasePathFeature final {
+class Runtime;
+
+struct StorageConfig {
+  std::string directory;
+  std::string hba_config;
+  bool default_database = true;
+};
+
+StorageConfig ReadStorageConfig();
+
+class Storage final {
  public:
-  inline static DatabasePathFeature* gInstance = nullptr;
-  static DatabasePathFeature& instance() noexcept { return *gInstance; }
-
-  DatabasePathFeature();
-  ~DatabasePathFeature();
-
-  const std::string& directory() const { return _directory; }
-
-  const std::string& hbaConfigFile() const { return _hba_config_file; }
-
-  bool initialized() const noexcept { return _initialized; }
+  Storage(Runtime& runtime, const StorageConfig& config);
+  ~Storage();
 
  private:
-  std::string _directory;
-  std::string _hba_config_file;
+  bool Lock(const std::string& directory);
+  void Close() noexcept;
+
+  Runtime& _runtime;
   FileLock _lock;
-  bool _initialized = false;
+  search::SearchEngine _search;
 };
 
 }  // namespace sdb

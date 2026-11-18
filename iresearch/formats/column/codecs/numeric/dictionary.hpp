@@ -280,6 +280,22 @@ class DictionaryReader final : public FrameReader<T> {
     return Entry(code);
   }
 
+  struct Matches {
+    bool judged = false;
+    uint32_t count = 0;
+  };
+
+  static constexpr bool kFiltersEntries = true;
+
+  uint32_t EntryCount() const noexcept { return _own.count; }
+
+  void Entries(uint32_t first, uint32_t count, T* out) const noexcept {
+    const auto* dict = this->_base + _own.offset + size_t{first} * sizeof(U);
+    for (uint32_t i = 0; i < count; ++i) {
+      out[i] = this->Scaled(duckdb::Load<U>(dict + size_t{i} * sizeof(U)));
+    }
+  }
+
   void UnpackBlock(uint64_t first, uint64_t rows, U* out) {
     const auto [packed, base, bits] = this->BlockAt(first);
     if (_codes.size() < numeric::kBlockValues) {

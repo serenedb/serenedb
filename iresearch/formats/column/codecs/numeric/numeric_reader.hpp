@@ -53,6 +53,11 @@ class FrameReader {
   using Value = T;
   using U = numeric::Bits<sizeof(T)>;
 
+  struct Matches {};
+
+  static constexpr bool kFiltersRuns = false;
+  static constexpr bool kFiltersEntries = false;
+
   uint32_t FrameOf(uint64_t row) const noexcept {
     if (_per_frame != 0) {
       return static_cast<uint32_t>(row / _per_frame);

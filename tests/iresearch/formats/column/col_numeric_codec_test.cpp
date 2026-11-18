@@ -1622,6 +1622,103 @@ TEST_F(ColNumericCodecTest, FiltersMatchTheValues) {
   }
 }
 
+TEST_F(ColNumericCodecTest, RunAndDictionaryFiltersMatchTheValues) {
+  constexpr uint64_t kRows = 20000;
+  duckdb::Connection con{_db};
+  using Cmp = duckdb::ExpressionType;
+  using irs::codecs::CodecType;
+  const auto holds = [](Cmp cmp, int64_t v, int64_t key) {
+    switch (cmp) {
+      case Cmp::COMPARE_EQUAL:
+        return v == key;
+      case Cmp::COMPARE_NOTEQUAL:
+        return v != key;
+      case Cmp::COMPARE_LESSTHAN:
+        return v < key;
+      default:
+        return v >= key;
+    }
+  };
+  const auto type = duckdb::LogicalType::BIGINT;
+  std::vector<Shape> shapes = Shapes();
+  shapes.push_back(
+    {"flags", [](uint64_t g) { return static_cast<int64_t>(Mix(g / 3) % 2); }});
+  shapes.push_back({"small_signed_runs", [](uint64_t g) {
+                      return static_cast<int64_t>(Mix(g / 40) % 7) - 3;
+                    }});
+  shapes.push_back({"small_values", [](uint64_t g) {
+                      return static_cast<int64_t>(Mix(g) % 200) + 1000;
+                    }});
+  for (const auto codec :
+       {CodecType::Auto, CodecType::Ffor, CodecType::RleFfor,
+        CodecType::RleZstd, CodecType::DictFfor, CodecType::DictZstd}) {
+    uint64_t named = 0;
+    for (const auto& shape : shapes) {
+      irs::MemoryDirectory dir{};
+      Write(dir, type, {}, kRows, 4096, shape.gen, codec);
+      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+      const auto* col = r.Column(kField);
+      ASSERT_NE(col, nullptr);
+      for (const auto& block : col->DataBlocks()) {
+        named += block.codec->type == codec;
+      }
+      std::vector<int64_t> keys{std::numeric_limits<int64_t>::min()};
+      for (const uint64_t g : {uint64_t{1}, kRows / 2, kRows - 3}) {
+        if (const auto v = shape.gen(g)) {
+          keys.push_back(*v);
+        }
+      }
+      for (const auto key : keys) {
+        for (const auto cmp :
+             {Cmp::COMPARE_EQUAL, Cmp::COMPARE_NOTEQUAL, Cmp::COMPARE_LESSTHAN,
+              Cmp::COMPARE_GREATERTHANOREQUALTO}) {
+          const duckdb::ExpressionFilter filter{
+            duckdb::BoundComparisonExpression::Create(
+              cmp, duckdb::make_uniq<duckdb::BoundReferenceExpression>(type, 0),
+              duckdb::make_uniq<duckdb::BoundConstantExpression>(
+                duckdb::Value::BIGINT(key)))};
+          auto filter_state =
+            duckdb::TableFilterState::Initialize(*con.context, filter);
+          for (const duckdb::idx_t stride : {1, 3}) {
+            auto state = col->InitScan(r.Ctx());
+            for (uint64_t anchor = 0; anchor < kRows;
+                 anchor += STANDARD_VECTOR_SIZE) {
+              const auto span =
+                std::min<uint64_t>(kRows - anchor, STANDARD_VECTOR_SIZE);
+              duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+              duckdb::idx_t offered = 0;
+              for (duckdb::idx_t i = 0; i < span; i += stride) {
+                sel.set_index(offered++, i);
+              }
+              duckdb::Vector out{type, STANDARD_VECTOR_SIZE};
+              const auto kept =
+                col->GatherFilter(state, anchor, span, sel, offered, filter,
+                                  *filter_state, irs::NullCheckKind::None, out);
+              duckdb::idx_t next = 0;
+              for (duckdb::idx_t i = 0; i < span; i += stride) {
+                const auto v = shape.gen(anchor + i);
+                const bool expected = v && holds(cmp, *v, key);
+                const bool got = next < kept && sel.get_index(next) == i;
+                next += got ? 1 : 0;
+                ASSERT_EQ(got, expected)
+                  << magic_enum::enum_name(codec) << " " << shape.name
+                  << " row " << anchor + i << " key " << key << " cmp "
+                  << duckdb::EnumUtil::ToString(cmp) << " stride " << stride;
+                if (got) {
+                  ASSERT_EQ(out.GetValue(i), duckdb::Value::BIGINT(*v));
+                }
+              }
+              ASSERT_EQ(next, kept);
+            }
+          }
+        }
+      }
+    }
+    EXPECT_TRUE(named != 0 || codec == CodecType::Auto)
+      << magic_enum::enum_name(codec);
+  }
+}
+
 TEST_F(ColNumericCodecTest, AllNullAndSingleRow) {
   const Gen all_null = [](uint64_t) { return std::optional<int64_t>{}; };
   const Gen one = [](uint64_t g) { return static_cast<int64_t>(g + 41); };

@@ -22,6 +22,7 @@
 
 #include <absl/strings/str_cat.h>
 
+#include <algorithm>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/planner/filter/zonemap_checker.hpp>
@@ -33,6 +34,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -65,6 +67,7 @@ struct ScanState final : SegmentScanState {
   duckdb::BufferHandle handle;
   R frames;
   duckdb::unique_ptr<duckdb::BaseStatistics> filter_stats;
+  [[no_unique_address]] typename R::Matches matches;
 };
 
 template<typename R>
@@ -124,6 +127,125 @@ duckdb::FilterPropagateResult FramesVerdict(
   return verdict;
 }
 
+inline constexpr uint64_t kWalkedRunRows = 4;
+inline constexpr idx_t kRunBurst = 32;
+inline constexpr uint32_t kJudgedEntries = 512;
+
+template<typename R>
+bool FilterRuns(ScanState<R>& scan, uint64_t start, idx_t count,
+                duckdb::Vector& result, duckdb::SelectionVector& sel,
+                idx_t& sel_count, duckdb::TableFilterState& filter_state) {
+  using T = typename R::Value;
+  auto& frames = scan.frames;
+  frames.Seek(start);
+  if (start + count > frames.FrameEnd()) {
+    return false;
+  }
+  T values[STANDARD_VECTOR_SIZE / kWalkedRunRows];
+  const auto runs =
+    frames.ReadRuns(start, count,
+                    std::span{values}.first(std::min<size_t>(
+                      count / kWalkedRunRows, std::size(values))));
+  if (runs.count == 0) {
+    return false;
+  }
+  duckdb::Vector judged{
+    result.GetType(), reinterpret_cast<duckdb::data_ptr_t>(values), runs.count};
+  duckdb::SelectionVector accepted;
+  idx_t accepted_count = runs.count;
+  duckdb::ColumnSegment::FilterSelection(accepted, judged, filter_state,
+                                         runs.count, accepted_count);
+  auto* out = duckdb::FlatVector::GetDataMutable<T>(result);
+  auto* picked = sel.data();
+  SDB_ASSERT(picked != accepted.data());
+  const bool every_row = sel_count == count;
+  const idx_t burst_end = count >= kRunBurst ? count - kRunBurst + 1 : 0;
+  idx_t kept = 0;
+  idx_t next = 0;
+  for (idx_t i = 0; i < accepted_count; ++i) {
+    const auto run = static_cast<uint32_t>(accepted.get_index(i));
+    const auto rows = frames.RunRows(runs.first + run, start, count);
+    const auto value = values[run];
+    const idx_t length = rows.end - rows.begin;
+    idx_t filled = 0;
+    if (rows.begin < burst_end) {
+      for (; filled < kRunBurst; ++filled) {
+        out[rows.begin + filled] = value;
+      }
+    }
+    if (filled < length) {
+      std::fill(out + rows.begin + filled, out + rows.end, value);
+    }
+    if (every_row) {
+      idx_t listed = 0;
+      if (rows.begin < burst_end) {
+        for (; listed < kRunBurst; ++listed) {
+          picked[kept + listed] =
+            static_cast<duckdb::sel_t>(rows.begin + listed);
+        }
+      }
+      for (; listed < length; ++listed) {
+        picked[kept + listed] = static_cast<duckdb::sel_t>(rows.begin + listed);
+      }
+      kept += length;
+      continue;
+    }
+    while (next < sel_count && sel.get_index(next) < rows.begin) {
+      ++next;
+    }
+    for (; next < sel_count && sel.get_index(next) < rows.end; ++next) {
+      sel.set_index(kept++, sel.get_index(next));
+    }
+  }
+  sel_count = kept;
+  return true;
+}
+
+template<typename R>
+IRS_NO_INLINE void JudgeEntries(ScanState<R>& scan,
+                                const duckdb::LogicalType& type,
+                                duckdb::TableFilterState& filter_state) {
+  auto& matches = scan.matches;
+  matches.judged = true;
+  const auto entries = scan.frames.EntryCount();
+  typename R::Value values[kJudgedEntries];
+  for (uint32_t first = 0; first < entries; first += kJudgedEntries) {
+    const auto judged_count =
+      std::min<uint32_t>(entries - first, kJudgedEntries);
+    scan.frames.Entries(first, judged_count, values);
+    duckdb::Vector judged{type, reinterpret_cast<duckdb::data_ptr_t>(values),
+                          judged_count};
+    duckdb::SelectionVector accepted;
+    idx_t accepted_count = judged_count;
+    duckdb::ColumnSegment::FilterSelection(accepted, judged, filter_state,
+                                           judged_count, accepted_count);
+    matches.count += static_cast<uint32_t>(accepted_count);
+    if (matches.count != 0 && matches.count != first + judged_count) {
+      break;
+    }
+  }
+}
+
+template<typename R>
+bool FilterEntries(const ColumnSegment& segment, ColumnScanState& state,
+                   ScanState<R>& scan, idx_t count, duckdb::Vector& result,
+                   idx_t& sel_count, duckdb::TableFilterState& filter_state) {
+  const auto& matches = scan.matches;
+  if (!matches.judged) [[unlikely]] {
+    JudgeEntries(scan, result.GetType(), filter_state);
+  }
+  if (matches.count == 0) {
+    sel_count = 0;
+    return true;
+  }
+  if (matches.count != scan.frames.EntryCount()) {
+    return false;
+  }
+  Scan<R>(segment, state, count, result, 0,
+          duckdb::ScanVectorType::SCAN_FLAT_VECTOR);
+  return true;
+}
+
 template<typename R>
 void Filter(const ColumnSegment& segment, ColumnScanState& state,
             idx_t vector_count, duckdb::Vector& result,
@@ -147,9 +269,22 @@ void Filter(const ColumnSegment& segment, ColumnScanState& state,
     return;
   }
   result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
+  const bool every_row =
+    verdict == duckdb::FilterPropagateResult::FILTER_ALWAYS_TRUE;
+  if constexpr (R::kFiltersRuns) {
+    if (!every_row && FilterRuns(scan, start, vector_count, result, sel,
+                                 sel_count, filter_state)) {
+      return;
+    }
+  } else if constexpr (R::kFiltersEntries) {
+    if (!every_row && FilterEntries(segment, state, scan, vector_count, result,
+                                    sel_count, filter_state)) {
+      return;
+    }
+  }
   Scan<R>(segment, state, vector_count, result, 0,
           duckdb::ScanVectorType::SCAN_FLAT_VECTOR);
-  if (verdict == duckdb::FilterPropagateResult::FILTER_ALWAYS_TRUE) {
+  if (every_row) {
     return;
   }
   duckdb::ColumnSegment::FilterSelection(sel, result, filter_state,

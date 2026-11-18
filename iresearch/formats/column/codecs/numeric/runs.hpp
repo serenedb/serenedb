@@ -191,6 +191,44 @@ class RunsReader final : public FrameReader<T> {
 
   T FetchApart(uint64_t row, uint64_t) { return this->Get(row); }
 
+  static constexpr bool kFiltersRuns = true;
+
+  struct Runs {
+    uint32_t first = 0;
+    uint32_t count = 0;
+  };
+
+  struct Rows {
+    uint32_t begin = 0;
+    uint32_t end = 0;
+  };
+
+  uint64_t FrameEnd() const noexcept { return this->_end; }
+
+  Runs ReadRuns(uint64_t row, uint64_t count, std::span<T> values) noexcept {
+    const auto pos = static_cast<uint32_t>(row - this->_begin);
+    const auto end = pos + static_cast<uint32_t>(count);
+    const auto first = RunOf(pos);
+    _hint = first;
+    const auto limit = std::min(values.size(), _ends.size() - first);
+    if (limit == 0 || _ends[first + limit - 1] < end) {
+      return {};
+    }
+    uint32_t read = 0;
+    do {
+      values[read] = this->Scaled(_values[first + read]);
+    } while (_ends[first + read++] < end);
+    _hint = first + read - 1;
+    return {first, read};
+  }
+
+  Rows RunRows(uint32_t run, uint64_t row, uint64_t count) const noexcept {
+    const auto pos = static_cast<uint32_t>(row - this->_begin);
+    const auto begin = run == 0 ? 0 : _ends[run - 1];
+    return {std::max(begin, pos) - pos,
+            std::min(_ends[run], pos + static_cast<uint32_t>(count)) - pos};
+  }
+
  private:
   template<uint32_t kSize>
   void CopyRuns(uint32_t pos, uint64_t count, T* out) noexcept {

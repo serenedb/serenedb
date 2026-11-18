@@ -57,28 +57,9 @@ struct LmDirFormula {
   score_t mu_p_inv;
 };
 
-template<bool HasScale>
-struct LmDirScore : public ScoreOperatorOf<LmDirScore<HasScale>> {
-  LmDirScore(score_t boost, score_t mu, const LMStats& stats,
-             const FreqBlockAttr* freq, const uint32_t* norm,
-             const score_t* scale) noexcept
-    : freq{freq},
-      norm{norm},
-      scale{scale},
-      formula{boost, 1.f / mu, 1.f / (mu * stats.collection_prob)} {}
-
-  template<ScoreMergeType MergeType = ScoreMergeType::Noop>
-  IRS_FORCE_INLINE void ScoreImpl(score_t* res,
-                                  scores_size_t n) const noexcept {
-    ScoreFreqs<MergeType, HasScale>(res, n, freq->value, norm,
-                                    TryGetValue(scale), formula);
-  }
-
-  const FreqBlockAttr* freq;
-  const uint32_t* norm;
-  [[no_unique_address]] utils::Need<HasScale, const score_t*> scale;
-  LmDirFormula formula;
-};
+LmDirFormula LmDirOf(score_t boost, score_t mu, score_t share) noexcept {
+  return {boost, 1.f / mu, 1.f / (mu * share)};
+}
 
 }  // namespace
 
@@ -87,11 +68,20 @@ void LMDirichlet::collect(byte_type* stats_buf, const FieldCollector* field,
   CollectLMStats(*stats_cast(stats_buf), field, term);
 }
 
+void LMDirichlet::CollectTerms(byte_type* stats_buf,
+                               const FieldCollector* field,
+                               std::span<const TermCollector> terms,
+                               StatsArena& arena) const {
+  CollectLMTerms(*stats_cast(stats_buf), field, terms, arena);
+}
+
 ScoreFunction LMDirichlet::PrepareScorer(const ScoreContext& ctx) const {
   if (_mu <= 0.f) {
     return ScoreFunction::Default();
   }
-  return PrepareLMScorer<LmDirScore>(ctx, *stats_cast(ctx.stats), _mu);
+  return PrepareLMScorer(ctx, *stats_cast(ctx.stats), [&](score_t share) {
+    return LmDirOf(ctx.boost, _mu, share);
+  });
 }
 
 void LMDirichlet::Explain(const ScoreContext& ctx,
@@ -102,9 +92,12 @@ void LMDirichlet::Explain(const ScoreContext& ctx,
     return;
   }
   explain::ExplainLanguageModel(
-    ctx, stats_cast(ctx.stats)->collection_prob, stats,
-    {.key = "mu", .value = _mu},
-    "boost * max(0, log(1 + freq / (mu * p)) - log(1 + dl / mu))", out);
+    ctx, SharesOf(*stats_cast(ctx.stats)), stats, {.key = "mu", .value = _mu},
+    "boost * max(0, log(1 + freq / (mu * p)) - log(1 + dl / mu))",
+    [&](score_t tf, score_t dl, score_t share) {
+      return LmDirOf(ctx.boost, _mu, share)(tf, dl);
+    },
+    out);
 }
 
 std::string LMDirichlet::ToString() const {

@@ -20,8 +20,11 @@
 
 #pragma once
 
+#include <absl/functional/function_ref.h>
+
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string_view>
 
 #include "iresearch/search/explain/explanation.hpp"
@@ -49,9 +52,21 @@ void AddIdf(Node& out, score_t idf, const SlotStats* stats,
 
 void AddCollectionShare(Node& out, score_t value, const SlotStats* stats);
 
-void ExplainLanguageModel(const ScoreContext& ctx, score_t collection_share,
+void AddShare(Node& out, score_t value, uint64_t ttf, uint64_t total);
+
+using DescribeTerm =
+  absl::FunctionRef<void(Node& part, const TermStats& term, score_t share)>;
+
+void ExplainTerms(const SlotStats* stats, Node& out, DescribeTerm describe);
+
+using TermFormula =
+  absl::FunctionRef<score_t(score_t tf, score_t dl, score_t share)>;
+
+void ExplainLanguageModel(const ScoreContext& ctx,
+                          std::span<const score_t> shares,
                           const SlotStats* stats, Node parameter,
-                          std::string_view formula, Node& out);
+                          std::string_view formula, TermFormula score,
+                          Node& out);
 
 void ExplainNoFreq(const ScoreContext& ctx, bool boost_as_score, Node& out);
 

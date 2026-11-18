@@ -55,28 +55,9 @@ struct LmJmFormula {
   score_t denom_inv;
 };
 
-template<bool HasScale>
-struct LmJmScore : public ScoreOperatorOf<LmJmScore<HasScale>> {
-  LmJmScore(score_t boost, score_t lambda, const LMStats& stats,
-            const FreqBlockAttr* freq, const uint32_t* norm,
-            const score_t* scale) noexcept
-    : freq{freq},
-      norm{norm},
-      scale{scale},
-      formula{boost, 1.f - lambda, 1.f / (lambda * stats.collection_prob)} {}
-
-  template<ScoreMergeType MergeType = ScoreMergeType::Noop>
-  IRS_FORCE_INLINE void ScoreImpl(score_t* res,
-                                  scores_size_t n) const noexcept {
-    ScoreFreqs<MergeType, HasScale>(res, n, freq->value, norm,
-                                    TryGetValue(scale), formula);
-  }
-
-  const FreqBlockAttr* freq;
-  const uint32_t* norm;
-  [[no_unique_address]] utils::Need<HasScale, const score_t*> scale;
-  LmJmFormula formula;
-};
+LmJmFormula LmJmOf(score_t boost, score_t lambda, score_t share) noexcept {
+  return {boost, 1.f - lambda, 1.f / (lambda * share)};
+}
 
 }  // namespace
 
@@ -85,17 +66,30 @@ void LMJelinekMercer::collect(byte_type* stats_buf, const FieldCollector* field,
   CollectLMStats(*stats_cast(stats_buf), field, term);
 }
 
+void LMJelinekMercer::CollectTerms(byte_type* stats_buf,
+                                   const FieldCollector* field,
+                                   std::span<const TermCollector> terms,
+                                   StatsArena& arena) const {
+  CollectLMTerms(*stats_cast(stats_buf), field, terms, arena);
+}
+
 ScoreFunction LMJelinekMercer::PrepareScorer(const ScoreContext& ctx) const {
-  return PrepareLMScorer<LmJmScore>(ctx, *stats_cast(ctx.stats), _lambda);
+  return PrepareLMScorer(ctx, *stats_cast(ctx.stats), [&](score_t share) {
+    return LmJmOf(ctx.boost, _lambda, share);
+  });
 }
 
 void LMJelinekMercer::Explain(const ScoreContext& ctx,
                               const explain::SlotStats* stats,
                               explain::Node& out) const {
   explain::ExplainLanguageModel(
-    ctx, stats_cast(ctx.stats)->collection_prob, stats,
+    ctx, SharesOf(*stats_cast(ctx.stats)), stats,
     {.key = "lambda", .value = _lambda},
-    "boost * log(1 + ((1 - lambda) * freq / dl) / (lambda * p))", out);
+    "boost * log(1 + ((1 - lambda) * freq / dl) / (lambda * p))",
+    [&](score_t tf, score_t dl, score_t share) {
+      return LmJmOf(ctx.boost, _lambda, share)(tf, dl);
+    },
+    out);
 }
 
 std::string LMJelinekMercer::ToString() const {

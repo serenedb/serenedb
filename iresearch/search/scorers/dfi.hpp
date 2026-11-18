@@ -36,6 +36,8 @@ enum class DFIMeasure : uint8_t {
 
 struct DFIStats {
   score_t ratio;
+  const score_t* ratios;
+  uint32_t terms;
 };
 
 class DFI final : public irs::ScorerBase<DFI, DFIStats> {
@@ -67,6 +69,10 @@ class DFI final : public irs::ScorerBase<DFI, DFIStats> {
 
   void collect(byte_type* stats_buf, const irs::FieldCollector* field,
                const irs::TermCollector* term) const final;
+
+  void CollectTerms(byte_type* stats_buf, const irs::FieldCollector* field,
+                    std::span<const irs::TermCollector> terms,
+                    StatsArena& arena) const final;
 
   IndexFeatures GetIndexFeatures() const noexcept final {
     return IndexFeatures::Freq | IndexFeatures::Norm;

@@ -721,9 +721,9 @@ void ByPhrase::DescribeStats(const PrepareCollector* collector,
   }
   if (CountSlots(options()).expanded != 0) {
     const auto& expanded = utils::downCast<ExpandedSlotsCollector>(*collector);
-    for (const auto& [term, counts] : expanded.ExpandedTotal()) {
+    expanded.VisitExpanded([&](bytes_view term, const TermCollector& counts) {
       stats.terms.push_back(explain::TermOf(term, counts));
-    }
+    });
   }
   out.Add(slots.Record().stats, std::move(stats));
 }

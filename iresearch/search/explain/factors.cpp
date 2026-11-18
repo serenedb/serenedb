@@ -125,19 +125,54 @@ void AddCollectionShare(Node& out, score_t value, const SlotStats* stats) {
   AddDetail(node, "L", stats->total_term_freq);
 }
 
-void ExplainLanguageModel(const ScoreContext& ctx, score_t collection_share,
+void AddShare(Node& out, score_t value, uint64_t ttf, uint64_t total) {
+  auto& node = AddDetail(out, "p", value);
+  node.formula = "(ttf + 1) / (L + 1)";
+  AddDetail(node, "ttf", ttf);
+  AddDetail(node, "L", total);
+}
+
+void ExplainTerms(const SlotStats* stats, Node& out, DescribeTerm describe) {
+  out.formula = "sum";
+  if (!stats) {
+    return;
+  }
+  for (const auto& term : stats->terms) {
+    auto& part = AddDetail(out, out.key, score_t{0});
+    part.subject = {.field = stats->field, .terms = {term.term}};
+    describe(part, term,
+             CollectionShareOf(term.total_term_freq, stats->total_term_freq));
+  }
+}
+
+void ExplainLanguageModel(const ScoreContext& ctx,
+                          std::span<const score_t> shares,
                           const SlotStats* stats, Node parameter,
-                          std::string_view formula, Node& out) {
-  if (!FreqOf(ctx) || collection_share <= 0.f) {
+                          std::string_view formula, TermFormula score,
+                          Node& out) {
+  if (!FreqOf(ctx) || shares.empty()) {
     out.note = "the column records no term frequency, so the clause scores 0";
     return;
   }
-  AddBoost(out, ctx.boost);
-  out.details.push_back(std::move(parameter));
-  AddCollectionShare(out, collection_share, stats);
-  AddFreq(out, ctx);
-  AddLength(out, ctx);
-  out.formula = formula;
+  if (shares.size() == 1) {
+    AddBoost(out, ctx.boost);
+    out.details.push_back(std::move(parameter));
+    AddCollectionShare(out, shares.front(), stats);
+    AddFreq(out, ctx);
+    AddLength(out, ctx);
+    out.formula = formula;
+    return;
+  }
+  ExplainTerms(
+    stats, out, [&](Node& part, const TermStats& term, score_t share) {
+      AddBoost(part, ctx.boost);
+      part.details.push_back(parameter);
+      AddShare(part, share, term.total_term_freq, stats->total_term_freq);
+      const auto tf = AddFreq(part, ctx);
+      const auto dl = TermCountToScore(AddLength(part, ctx));
+      part.value = score(tf, dl, share);
+      part.formula = formula;
+    });
 }
 
 void ExplainNoFreq(const ScoreContext& ctx, bool boost_as_score, Node& out) {

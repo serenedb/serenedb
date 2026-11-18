@@ -21,6 +21,7 @@
 #pragma once
 
 #include <cstdint>
+#include <span>
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/field_meta.hpp"
@@ -34,34 +35,48 @@ namespace irs {
 
 struct LMStats {
   score_t collection_prob;
+  const score_t* shares;
+  uint32_t terms;
 };
+
+inline std::span<const score_t> SharesOf(const LMStats& stats) noexcept {
+  if (stats.terms > 1) {
+    return {stats.shares, stats.terms};
+  }
+  if (stats.collection_prob > 0.f) {
+    return {&stats.collection_prob, 1};
+  }
+  return {};
+}
 
 inline void CollectLMStats(LMStats& stats, const FieldCollector* field,
                            const TermCollector* term) noexcept {
-  const auto ttf_field = field ? field->total_term_freq : 0;
-  const auto ttf_term = term ? term->total_term_freq : 0;
-
-  const double num = static_cast<double>(ttf_term) + 1.0;
-  const double den = static_cast<double>(ttf_field) + 1.0;
-  stats.collection_prob = static_cast<score_t>(num / den);
+  stats.collection_prob = CollectionShareOf(field, term);
 }
 
-template<template<bool> typename Score>
+inline void CollectLMTerms(LMStats& stats, const FieldCollector* field,
+                           std::span<const TermCollector> terms,
+                           StatsArena& arena) {
+  if (terms.size() < 2) {
+    for (const auto& term : terms) {
+      CollectLMStats(stats, field, &term);
+    }
+    return;
+  }
+  const auto shares = CollectShares(field, terms, arena);
+  stats.shares = shares.data();
+  stats.terms = static_cast<uint32_t>(shares.size());
+}
+
+template<typename MakeFormula>
 ScoreFunction PrepareLMScorer(const ScoreContext& ctx, const LMStats& stats,
-                              score_t param) {
+                              MakeFormula make_formula) {
   auto* freq = irs::get<FreqBlockAttr>(ctx.doc_attrs);
-  if (!freq || stats.collection_prob <= 0.f) {
+  const auto shares = SharesOf(stats);
+  if (!freq || shares.empty()) {
     return ScoreFunction::Default();
   }
-
-  const uint32_t* norm = NormsOf(ctx);
-
-  const auto* scale = ScaleOf(ctx);
-
-  return ResolveBool(scale != nullptr, [&]<bool HasScale>() {
-    return ScoreFunction::Make<Score<HasScale>>(ctx.boost, param, stats, freq,
-                                                norm, scale);
-  });
+  return MakeShareScore(shares, make_formula, freq, NormsOf(ctx), ScaleOf(ctx));
 }
 
 }  // namespace irs

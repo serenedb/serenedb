@@ -124,6 +124,7 @@ SCORER_QUERIES = {
     "fuzzy": "body @@ ts_levenshtein('fox', 1)",
     "column without frequency": "b @@ 'fox'",
     "column without positions": "a @@ 'fox'",
+    "ngram": "g @@ ts_ngram('hello', 0.5)",
 }
 
 QUERY = "[1, 0.2]::FLOAT[2]"

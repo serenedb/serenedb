@@ -52,28 +52,9 @@ struct IndriFormula {
   score_t mu_p;
 };
 
-template<bool HasScale>
-struct IndriScore : public ScoreOperatorOf<IndriScore<HasScale>> {
-  IndriScore(score_t boost, score_t mu, const LMStats& stats,
-             const FreqBlockAttr* freq, const uint32_t* norm,
-             const score_t* scale) noexcept
-    : freq{freq},
-      norm{norm},
-      scale{scale},
-      formula{boost, mu, mu * stats.collection_prob} {}
-
-  template<ScoreMergeType MergeType = ScoreMergeType::Noop>
-  IRS_FORCE_INLINE void ScoreImpl(score_t* res,
-                                  scores_size_t n) const noexcept {
-    ScoreFreqs<MergeType, HasScale>(res, n, freq->value, norm,
-                                    TryGetValue(scale), formula);
-  }
-
-  const FreqBlockAttr* freq;
-  const uint32_t* norm;
-  [[no_unique_address]] utils::Need<HasScale, const score_t*> scale;
-  IndriFormula formula;
-};
+IndriFormula IndriOf(score_t boost, score_t mu, score_t share) noexcept {
+  return {boost, mu, mu * share};
+}
 
 }  // namespace
 
@@ -82,11 +63,20 @@ void IndriDirichlet::collect(byte_type* stats_buf, const FieldCollector* field,
   CollectLMStats(*stats_cast(stats_buf), field, term);
 }
 
+void IndriDirichlet::CollectTerms(byte_type* stats_buf,
+                                  const FieldCollector* field,
+                                  std::span<const TermCollector> terms,
+                                  StatsArena& arena) const {
+  CollectLMTerms(*stats_cast(stats_buf), field, terms, arena);
+}
+
 ScoreFunction IndriDirichlet::PrepareScorer(const ScoreContext& ctx) const {
   if (_mu <= 0.f) {
     return ScoreFunction::Default();
   }
-  return PrepareLMScorer<IndriScore>(ctx, *stats_cast(ctx.stats), _mu);
+  return PrepareLMScorer(ctx, *stats_cast(ctx.stats), [&](score_t share) {
+    return IndriOf(ctx.boost, _mu, share);
+  });
 }
 
 void IndriDirichlet::Explain(const ScoreContext& ctx,
@@ -96,10 +86,13 @@ void IndriDirichlet::Explain(const ScoreContext& ctx,
     out.note = "mu is not positive, so the clause scores 0";
     return;
   }
-  explain::ExplainLanguageModel(ctx, stats_cast(ctx.stats)->collection_prob,
-                                stats, {.key = "mu", .value = _mu},
-                                "boost * log((freq + mu * p) / (dl + mu))",
-                                out);
+  explain::ExplainLanguageModel(
+    ctx, SharesOf(*stats_cast(ctx.stats)), stats, {.key = "mu", .value = _mu},
+    "boost * log((freq + mu * p) / (dl + mu))",
+    [&](score_t tf, score_t dl, score_t share) {
+      return IndriOf(ctx.boost, _mu, share)(tf, dl);
+    },
+    out);
 }
 
 std::string IndriDirichlet::ToString() const {

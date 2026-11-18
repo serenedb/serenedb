@@ -23,6 +23,7 @@
 #pragma once
 
 #include <absl/base/optimization.h>
+#include <absl/functional/function_ref.h>
 #include <absl/hash/hash.h>
 
 #include <algorithm>
@@ -256,6 +257,9 @@ class SlotsCollector : public FieldPrepareCollector {
   size_t Terms() const noexcept { return _counters.Terms(); }
 
   void Finish(StatsArena& stats) override;
+
+ protected:
+  void AppendTerms(std::vector<TermCollector>& out) const;
 };
 
 class ExpandedSlotsCollector final : public SlotsCollector {
@@ -273,15 +277,9 @@ class ExpandedSlotsCollector final : public SlotsCollector {
     return _expanded[thread * _expanded_size + i];
   }
 
-  Terms ExpandedTotal() const {
-    Terms total;
-    for (const auto& terms : _expanded) {
-      for (const auto& [term, counter] : terms) {
-        Accumulate(total[term], counter);
-      }
-    }
-    return total;
-  }
+  void VisitExpanded(
+    absl::FunctionRef<void(bytes_view term, const TermCollector& counts)>
+      visitor) const;
 
   void Finish(StatsArena& stats) final;
 

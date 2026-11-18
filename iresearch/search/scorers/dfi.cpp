@@ -77,57 +77,65 @@ struct DFIFormula {
   score_t ratio;
 };
 
-template<DFIMeasure M, bool HasScale>
-struct DFIScore : public ScoreOperatorOf<DFIScore<M, HasScale>> {
-  DFIScore(score_t boost, const DFIStats& stats, const FreqBlockAttr* freq,
-           const uint32_t* norm, const score_t* scale) noexcept
-    : freq{freq}, norm{norm}, scale{scale}, formula{boost, stats.ratio} {}
-
-  template<ScoreMergeType MergeType = ScoreMergeType::Noop>
-  IRS_FORCE_INLINE void ScoreImpl(score_t* res,
-                                  scores_size_t n) const noexcept {
-    ScoreFreqs<MergeType, HasScale>(res, n, freq->value, norm,
-                                    TryGetValue(scale), formula);
-  }
-
-  const FreqBlockAttr* freq;
-  const uint32_t* norm;
-  [[no_unique_address]] utils::Need<HasScale, const score_t*> scale;
-  DFIFormula<M> formula;
-};
-
 template<DFIMeasure M>
-ScoreFunction MakeScoreMeasure(const ScoreContext& ctx, const DFIStats& stats,
+ScoreFunction MakeScoreMeasure(const ScoreContext& ctx,
+                               std::span<const score_t> ratios,
                                const FreqBlockAttr* freq, const uint32_t* norm,
                                const score_t* scale) {
-  return ResolveBool(scale != nullptr, [&]<bool HasScale>() {
-    return ScoreFunction::Make<DFIScore<M, HasScale>>(ctx.boost, stats, freq,
-                                                      norm, scale);
-  });
+  return MakeShareScore(
+    ratios, [&](score_t ratio) { return DFIFormula<M>{ctx.boost, ratio}; },
+    freq, norm, scale);
+}
+
+score_t ScoreOf(DFIMeasure measure, score_t boost, score_t ratio, score_t tf,
+                score_t dl) noexcept {
+  switch (measure) {
+    case DFIMeasure::Standardized:
+      return DFIFormula<DFIMeasure::Standardized>{boost, ratio}(tf, dl);
+    case DFIMeasure::Saturated:
+      return DFIFormula<DFIMeasure::Saturated>{boost, ratio}(tf, dl);
+    case DFIMeasure::ChiSquared:
+      return DFIFormula<DFIMeasure::ChiSquared>{boost, ratio}(tf, dl);
+  }
+  return 0.f;
+}
+
+std::span<const score_t> RatiosOf(const DFIStats& stats) noexcept {
+  if (stats.terms > 1) {
+    return {stats.ratios, stats.terms};
+  }
+  if (stats.ratio > 0.f) {
+    return {&stats.ratio, 1};
+  }
+  return {};
 }
 
 }  // namespace
 
 void DFI::collect(byte_type* stats_buf, const FieldCollector* field,
                   const TermCollector* term) const {
-  auto* stats = stats_cast(stats_buf);
+  stats_cast(stats_buf)->ratio = CollectionShareOf(field, term);
+}
 
-  const auto ttf_field = field ? field->total_term_freq : 0;
-  const auto ttf_term = term ? term->total_term_freq : 0;
-
-  const double num = static_cast<double>(ttf_term) + 1.0;
-  const double den = static_cast<double>(ttf_field) + 1.0;
-  stats->ratio = static_cast<score_t>(num / den);
+void DFI::CollectTerms(byte_type* stats_buf, const FieldCollector* field,
+                       std::span<const TermCollector> terms,
+                       StatsArena& arena) const {
+  if (terms.size() < 2) {
+    for (const auto& term : terms) {
+      collect(stats_buf, field, &term);
+    }
+    return;
+  }
+  auto& stats = *stats_cast(stats_buf);
+  const auto ratios = CollectShares(field, terms, arena);
+  stats.ratios = ratios.data();
+  stats.terms = static_cast<uint32_t>(ratios.size());
 }
 
 ScoreFunction DFI::PrepareScorer(const ScoreContext& ctx) const {
   auto* freq = irs::get<FreqBlockAttr>(ctx.doc_attrs);
-  if (!freq) {
-    return ScoreFunction::Default();
-  }
-
-  auto* stats = stats_cast(ctx.stats);
-  if (stats->ratio <= 0.f) {
+  const auto ratios = RatiosOf(*stats_cast(ctx.stats));
+  if (!freq || ratios.empty()) {
     return ScoreFunction::Default();
   }
 
@@ -137,13 +145,13 @@ ScoreFunction DFI::PrepareScorer(const ScoreContext& ctx) const {
 
   switch (_measure) {
     case DFIMeasure::Standardized:
-      return MakeScoreMeasure<DFIMeasure::Standardized>(ctx, *stats, freq, norm,
+      return MakeScoreMeasure<DFIMeasure::Standardized>(ctx, ratios, freq, norm,
                                                         scale);
     case DFIMeasure::Saturated:
-      return MakeScoreMeasure<DFIMeasure::Saturated>(ctx, *stats, freq, norm,
+      return MakeScoreMeasure<DFIMeasure::Saturated>(ctx, ratios, freq, norm,
                                                      scale);
     case DFIMeasure::ChiSquared:
-      return MakeScoreMeasure<DFIMeasure::ChiSquared>(ctx, *stats, freq, norm,
+      return MakeScoreMeasure<DFIMeasure::ChiSquared>(ctx, ratios, freq, norm,
                                                       scale);
   }
   return ScoreFunction::Default();
@@ -151,18 +159,11 @@ ScoreFunction DFI::PrepareScorer(const ScoreContext& ctx) const {
 
 void DFI::Explain(const ScoreContext& ctx, const explain::SlotStats* stats,
                   explain::Node& out) const {
-  const auto ratio = stats_cast(ctx.stats)->ratio;
-  if (!explain::FreqOf(ctx) || ratio <= 0.f) {
+  const auto ratios = RatiosOf(*stats_cast(ctx.stats));
+  if (!explain::FreqOf(ctx) || ratios.empty()) {
     out.note = "the column records no term frequency, so the clause scores 0";
     return;
   }
-  explain::AddBoost(out, ctx.boost);
-  explain::AddCollectionShare(out, ratio, stats);
-  const auto freq = explain::AddFreq(out, ctx);
-  auto& expected = explain::AddDetail(out, "expected", score_t{0});
-  expected.formula = "p * dl";
-  const auto length = TermCountToScore(explain::AddLength(expected, ctx));
-  expected.value = ratio * length;
   const auto* const kernel = [&] {
     switch (_measure) {
       case DFIMeasure::Standardized:
@@ -174,13 +175,32 @@ void DFI::Explain(const ScoreContext& ctx, const explain::SlotStats* stats,
     }
     return "";
   }();
-  if (freq > std::get<score_t>(expected.value)) {
-    out.formula = absl::StrCat("boost * log2(1 + ", kernel, ")");
-  } else {
-    out.note =
-      "the term occurs no more often than expected, so the clause "
-      "scores 0";
+  const auto describe = [&](explain::Node& node, score_t ratio) {
+    explain::AddBoost(node, ctx.boost);
+    const auto freq = explain::AddFreq(node, ctx);
+    auto& expected = explain::AddDetail(node, "expected", score_t{0});
+    expected.formula = "p * dl";
+    const auto length = TermCountToScore(explain::AddLength(expected, ctx));
+    expected.value = ratio * length;
+    if (freq > ratio * length) {
+      node.formula = absl::StrCat("boost * log2(1 + ", kernel, ")");
+    } else {
+      node.note = "the term occurs no more often than expected, so it scores 0";
+    }
+    return ScoreOf(_measure, ctx.boost, ratio, freq, length);
+  };
+  if (ratios.size() == 1) {
+    explain::AddCollectionShare(out, ratios.front(), stats);
+    describe(out, ratios.front());
+    return;
   }
+  explain::ExplainTerms(
+    stats, out,
+    [&](explain::Node& part, const explain::TermStats& term, score_t ratio) {
+      explain::AddShare(part, ratio, term.total_term_freq,
+                        stats->total_term_freq);
+      part.value = describe(part, ratio);
+    });
 }
 
 std::string DFI::ToString() const {

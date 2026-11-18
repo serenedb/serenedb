@@ -56,6 +56,10 @@ class IndriDirichlet final : public irs::ScorerBase<IndriDirichlet, LMStats> {
   void collect(byte_type* stats_buf, const irs::FieldCollector* field,
                const irs::TermCollector* term) const final;
 
+  void CollectTerms(byte_type* stats_buf, const irs::FieldCollector* field,
+                    std::span<const irs::TermCollector> terms,
+                    StatsArena& arena) const final;
+
   IndexFeatures GetIndexFeatures() const noexcept final {
     return IndexFeatures::Freq | IndexFeatures::Norm;
   }

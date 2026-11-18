@@ -27,10 +27,12 @@
 #include <cstddef>
 #include <limits>
 #include <optional>
+#include <span>
 #include <type_traits>
 
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
+#include "iresearch/search/detail/stats_arena.hpp"
 #include "iresearch/search/explain/explanation.hpp"
 #include "iresearch/search/explain/stats.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
@@ -124,6 +126,10 @@ struct Scorer {
 
   virtual void collect(byte_type* stats, const FieldCollector* field,
                        const TermCollector* term) const = 0;
+
+  virtual void CollectTerms(byte_type* stats, const FieldCollector* field,
+                            std::span<const TermCollector> terms,
+                            StatsArena& arena) const;
 
   virtual IndexFeatures GetIndexFeatures() const = 0;
 

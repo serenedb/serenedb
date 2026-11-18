@@ -77,37 +77,45 @@ void ByTermsCollector::Finish(StatsArena&) {
   }
 }
 
-void SlotsCollector::Finish(StatsArena&) {
-  if (_scorer == nullptr) {
-    return;
-  }
-  const auto field = _counters.TotalField();
-  auto* const slot = Mutable(_stats);
-  for (size_t i = 0, n = _counters.Terms(); i != n; ++i) {
-    const auto term = _counters.TotalTerm(i);
-    if (term.docs_with_term == 0) {
-      continue;
-    }
-    _scorer->collect(slot, &field, &term);
+void Scorer::CollectTerms(byte_type* stats, const FieldCollector* field,
+                          std::span<const TermCollector> terms,
+                          StatsArena&) const {
+  for (const auto& term : terms) {
+    collect(stats, field, &term);
   }
 }
 
-void ExpandedSlotsCollector::Finish(StatsArena& stats) {
-  SlotsCollector::Finish(stats);
+void SlotsCollector::AppendTerms(std::vector<TermCollector>& out) const {
+  for (size_t i = 0, n = _counters.Terms(); i != n; ++i) {
+    const auto term = _counters.TotalTerm(i);
+    if (term.docs_with_term != 0) {
+      out.push_back(term);
+    }
+  }
+}
+
+void SlotsCollector::Finish(StatsArena& stats) {
   if (_scorer == nullptr) {
     return;
   }
-  const auto threads = _counters.Threads();
+  std::vector<TermCollector> terms;
+  AppendTerms(terms);
   const auto field = _counters.TotalField();
-  auto* const slot = Mutable(_stats);
+  _scorer->CollectTerms(Mutable(_stats), &field, terms, stats);
+}
+
+void ExpandedSlotsCollector::VisitExpanded(
+  absl::FunctionRef<void(bytes_view term, const TermCollector& counts)> visitor)
+  const {
+  const auto threads = _counters.Threads();
   Terms merged;
   std::vector<std::pair<uint64_t, const Terms::value_type*>> ordered;
   for (size_t i = 0; i != _expanded_size; ++i) {
-    const Terms* terms = &Expanded(0, i);
+    const Terms* terms = &_expanded[i];
     if (threads > 1) {
       merged.clear();
       for (uint32_t t = 0; t != threads; ++t) {
-        for (const auto& [term, counter] : Expanded(t, i)) {
+        for (const auto& [term, counter] : _expanded[t * _expanded_size + i]) {
           Accumulate(merged[term], counter);
         }
       }
@@ -125,9 +133,22 @@ void ExpandedSlotsCollector::Finish(StatsArena& stats) {
       return lhs.second->first < rhs.second->first;
     });
     for (const auto& [key, entry] : ordered) {
-      _scorer->collect(slot, &field, &entry->second);
+      visitor(entry->first, entry->second);
     }
   }
+}
+
+void ExpandedSlotsCollector::Finish(StatsArena& stats) {
+  if (_scorer == nullptr) {
+    return;
+  }
+  std::vector<TermCollector> collected;
+  AppendTerms(collected);
+  VisitExpanded([&](bytes_view, const TermCollector& counts) {
+    collected.push_back(counts);
+  });
+  const auto field = _counters.TotalField();
+  _scorer->CollectTerms(Mutable(_stats), &field, collected, stats);
 }
 
 void AllCollector::Finish(StatsArena&) {

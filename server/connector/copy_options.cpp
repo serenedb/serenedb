@@ -28,9 +28,8 @@
 #include <fast_float/fast_float.h>
 
 #include <array>
-#include <duckdb/parser/expression/columnref_expression.hpp>
-#include <duckdb/parser/expression/constant_expression.hpp>
-#include <duckdb/parser/expression/function_expression.hpp>
+#include <duckdb/main/client_context.hpp>
+#include <duckdb/planner/binder.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/string_utils.hpp>
@@ -219,8 +218,6 @@ void ApplyOption(PgCopyOptions& out, const duckdb::Identifier& key,
     out.default_str = values.empty() ? std::string{} : OptionString(values[0]);
   } else if (key == "ignore_errors") {
     out.ignore_errors = ParseBoolOption(values, "ON_ERROR");
-  } else if (key == "on_error") {
-    out.ignore_errors = ParseOnError(values);
   } else if (key == "rejects_limit" || key == "reject_limit") {
     out.reject_limit = ParseRejectLimit(values);
   } else if (key == "log_verbosity") {
@@ -295,47 +292,6 @@ void FinishOptions(PgCopyOptions& options, bool escape_set) {
   }
 }
 
-duckdb::vector<duckdb::Value> ParsedValues(
-  const duckdb::unique_ptr<duckdb::ParsedExpression>& expr) {
-  duckdb::vector<duckdb::Value> values;
-  if (!expr) {
-    return values;
-  }
-  const auto add = [&](const duckdb::ParsedExpression& e) {
-    switch (e.GetExpressionClass()) {
-      case duckdb::ExpressionClass::CONSTANT:
-        values.push_back(
-          e.Cast<duckdb::ConstantExpression>().GetLiteral().ToValue());
-        break;
-      case duckdb::ExpressionClass::COLUMN_REF:
-        values.emplace_back(e.Cast<duckdb::ColumnRefExpression>()
-                              .GetColumnName()
-                              .GetIdentifierName());
-        break;
-      case duckdb::ExpressionClass::STAR:
-        values.emplace_back("*");
-        break;
-      case duckdb::ExpressionClass::DEFAULT:
-        values.emplace_back("default");
-        break;
-      default:
-        values.emplace_back(e.ToString());
-        break;
-    }
-  };
-  if (expr->GetExpressionClass() == duckdb::ExpressionClass::FUNCTION) {
-    const auto& function = expr->Cast<duckdb::FunctionExpression>();
-    if (function.FunctionName() == "row") {
-      for (const auto& argument : function.GetArguments()) {
-        add(argument.GetExpression());
-      }
-      return values;
-    }
-  }
-  add(*expr);
-  return values;
-}
-
 }  // namespace
 
 PgCopyOptions ResolveCopyOptions(
@@ -351,20 +307,12 @@ PgCopyOptions ResolveCopyOptions(
   return result;
 }
 
-PgCopyOptions ResolveCopyOptions(CopyMode mode, const duckdb::CopyInfo& info) {
-  auto result = DefaultOptions(mode);
-  bool escape_set = false;
-  for (const auto& [key, expr] : info.parsed_options) {
-    const auto values = ParsedValues(expr);
-    ApplyOption(result, key, values, info.is_from);
-    escape_set |= key == "escape";
-  }
-  for (const auto& [key, values] : info.options) {
-    ApplyOption(result, key, values, info.is_from);
-    escape_set |= key == "escape";
-  }
-  FinishOptions(result, escape_set);
-  return result;
+duckdb::unique_ptr<duckdb::CopyInfo> BindCopyOptions(
+  duckdb::ClientContext& context, const duckdb::CopyInfo& info) {
+  auto bound = info.Copy();
+  context.RunFunctionInTransaction(
+    [&] { duckdb::Binder::CreateBinder(context)->BindCopyOptions(*bound); });
+  return bound;
 }
 
 void CheckCopyOptions(const PgCopyOptions& options, bool from) {
@@ -465,18 +413,6 @@ pg::CopyLogVerbosity ParseLogVerbosity(std::span<const duckdb::Value> values) {
   }
   ThrowInvalid(
     absl::StrCat("COPY LOG_VERBOSITY \"", text, "\" not recognized"));
-}
-
-bool ParseOnError(std::span<const duckdb::Value> values) {
-  const auto text = OptionText(values);
-  if (absl::EqualsIgnoreCase(text, "ignore")) {
-    return true;
-  }
-  if (absl::EqualsIgnoreCase(text, "stop")) {
-    return false;
-  }
-  ThrowInvalid(
-    absl::StrCat("invalid value for parameter \"on_error\": \"", text, "\""));
 }
 
 bool HasEncodingOption(const duckdb::CopyInfo& info) {

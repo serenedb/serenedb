@@ -32,7 +32,6 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
-#include <duckdb/parser/expression/constant_expression.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>
@@ -236,21 +235,9 @@ void CheckBinaryCopyOptions(const duckdb::CopyInfo& info, bool from) {
     if (key == "freeze" && from) {
       return;
     }
-    if (key == "on_error" && from && !ParseOnError(values)) {
-      return;
-    }
     RejectBinaryCopyOption(key.GetIdentifierName(), from);
   };
   for (const auto& [key, values] : info.options) {
-    check(key, values);
-  }
-  for (const auto& [key, expr] : info.parsed_options) {
-    duckdb::vector<duckdb::Value> values;
-    if (expr &&
-        expr->GetExpressionClass() == duckdb::ExpressionClass::CONSTANT) {
-      values.push_back(
-        expr->Cast<duckdb::ConstantExpression>().GetLiteral().ToValue());
-    }
     check(key, values);
   }
 }

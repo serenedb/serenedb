@@ -25,6 +25,7 @@
 #include <duckdb/common/identifier.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/vector.hpp>
+#include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/parsed_data/copy_info.hpp>
 #include <optional>
 #include <span>
@@ -78,7 +79,8 @@ PgCopyOptions ResolveCopyOptions(
   CopyMode mode, bool from,
   const duckdb::identifier_map_t<duckdb::vector<duckdb::Value>>& options);
 
-PgCopyOptions ResolveCopyOptions(CopyMode mode, const duckdb::CopyInfo& info);
+duckdb::unique_ptr<duckdb::CopyInfo> BindCopyOptions(
+  duckdb::ClientContext& context, const duckdb::CopyInfo& info);
 
 void CheckCopyOptions(const PgCopyOptions& options, bool from);
 
@@ -88,7 +90,6 @@ bool HasEncodingOption(const duckdb::CopyInfo& info);
 
 pg::CopyLogVerbosity ParseLogVerbosity(std::span<const duckdb::Value> values);
 
-bool ParseOnError(std::span<const duckdb::Value> values);
 
 std::vector<bool> CopyColumnMask(const CopyColumns& columns,
                                  std::span<const std::string> names,

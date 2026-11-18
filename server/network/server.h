@@ -42,6 +42,7 @@ struct ServerConfig {
   std::vector<network::ListenSpec> listeners;
   network::TlsOptions tls;
   std::string api_key;
+  std::string bearer_token;
   std::string cors_origins;
   std::uint32_t max_message = 0;
   std::uint32_t max_connections = 0;
@@ -72,8 +73,7 @@ class Server final {
   // Shared (cross-listener) auth sources; a future RBAC layer replaces them.
   std::unique_ptr<network::CredentialProvider> _credentials;
   std::unique_ptr<network::http::ApiKeyValidator> _api_key_validator;
-  std::vector<std::unique_ptr<network::http::BearerValidator>>
-    _bearer_validators;
+  std::unique_ptr<network::http::BearerValidator> _bearer_validator;
 
   std::vector<std::unique_ptr<network::AcceptorBase>> _listeners;
 };

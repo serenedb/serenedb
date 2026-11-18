@@ -49,7 +49,6 @@
 #include "network/credentials.h"
 #include "network/pg/hba.h"
 #include "network/tls_context.h"
-#include "server/utils/registry.h"
 
 ABSL_FLAG(
   std::vector<std::string>, listen, {"postgres://127.0.0.1:7890"},
@@ -150,18 +149,6 @@ class CatalogCredentialProvider final : public network::CredentialProvider {
   }
 };
 
-std::unique_ptr<network::http::BearerValidator> MakeFlagBearerValidator() {
-  auto token = absl::GetFlag(FLAGS_auth_bearer_token);
-  if (token.empty()) {
-    return nullptr;
-  }
-  SDB_DEBUG(GENERAL, "network http Bearer auth enabled");
-  return std::make_unique<network::http::FlagBearerValidator>(
-    std::move(token), std::string{irs::StaticStrings::kDefaultUser});
-}
-
-SDB_BEARER_VALIDATOR kFlagBearer{"auth_bearer_token", &MakeFlagBearerValidator};
-
 }  // namespace
 
 ServerConfig ReadServerConfig() {
@@ -176,6 +163,7 @@ ServerConfig ReadServerConfig() {
         .groups = absl::GetFlag(FLAGS_tls_groups),
       },
     .api_key = absl::GetFlag(FLAGS_auth_api_key),
+    .bearer_token = absl::GetFlag(FLAGS_auth_bearer_token),
     .cors_origins = absl::GetFlag(FLAGS_http_cors_origins),
     .max_message = static_cast<std::uint32_t>(std::min<std::uint64_t>(
       absl::GetFlag(FLAGS_pg_max_message_bytes), 0xFFFFFFFFull)),
@@ -233,6 +221,8 @@ void Server::SetupAuth() {
   _credentials = std::make_unique<CatalogCredentialProvider>();
   SDB_DEBUG(GENERAL, "network auth using per-role catalog passwords");
 
+  // The static HTTP ApiKey / Bearer credentials have no catalog store yet, so
+  // they authenticate as the bootstrap superuser.
   const std::string token_user{irs::StaticStrings::kDefaultUser};
   if (const auto& api_key = _config.api_key; !api_key.empty()) {
     const auto colon = api_key.find(':');
@@ -243,11 +233,10 @@ void Server::SetupAuth() {
       api_key.substr(0, colon), api_key.substr(colon + 1), token_user);
     SDB_DEBUG(GENERAL, "network http ApiKey auth enabled");
   }
-  using BearerValidators = Registry<network::http::BearerValidatorFactory>;
-  for (const auto name : BearerValidators::Names()) {
-    if (auto validator = BearerValidators::Find(name)->make()) {
-      _bearer_validators.push_back(std::move(validator));
-    }
+  if (!_config.bearer_token.empty()) {
+    _bearer_validator = std::make_unique<network::http::FlagBearerValidator>(
+      _config.bearer_token, token_user);
+    SDB_DEBUG(GENERAL, "network http Bearer auth enabled");
   }
 
   if (auto text = network::pg::hba::LoadPersistedHba(); !text.empty()) {
@@ -265,7 +254,7 @@ void Server::StartListeners() {
     .sessions = _sessions,
     .credentials = _credentials.get(),
     .api_keys = _api_key_validator.get(),
-    .bearer = _bearer_validators,
+    .bearer = _bearer_validator.get(),
     .tls = _config.tls,
     .max_connections = _config.max_connections,
     .max_message_bytes = _config.max_message,

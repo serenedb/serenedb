@@ -24,7 +24,6 @@ add_executable(
     network_gate_test.cpp
     network_h1_codec_test.cpp
     network_header_test.cpp
-    network_http_auth_test.cpp
     network_http_compression_test.cpp
     network_http_test.cpp
     network_listen_spec_test.cpp

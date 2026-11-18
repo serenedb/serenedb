@@ -95,7 +95,7 @@ struct ListenContext {
   yaclib::WaitGroup<>& sessions;
   const CredentialProvider* credentials = nullptr;
   const http::ApiKeyValidator* api_keys = nullptr;
-  std::span<const std::unique_ptr<http::BearerValidator>> bearer;
+  const http::BearerValidator* bearer = nullptr;
   const TlsOptions& tls;
   uint32_t max_connections = 0;
   uint32_t max_message_bytes = 0;

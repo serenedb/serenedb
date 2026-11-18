@@ -134,12 +134,14 @@ AuthResult HttpAuthenticator::ApiKey(std::string_view payload) const {
 }
 
 AuthResult HttpAuthenticator::Bearer(std::string_view payload) const {
-  for (const auto& validator : _bearer) {
-    if (auto context = validator->Validate(payload)) {
-      return {.context = std::move(*context)};
-    }
+  if (_bearer == nullptr) {
+    return {.status = HttpStatus::Unauthorized};
   }
-  return {.status = HttpStatus::Unauthorized};
+  auto context = _bearer->Validate(payload);
+  if (!context) {
+    return {.status = HttpStatus::Unauthorized};
+  }
+  return {.context = std::move(*context)};
 }
 
 namespace {

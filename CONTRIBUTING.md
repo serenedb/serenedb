@@ -104,7 +104,7 @@ A repository that keeps this tree as a submodule builds its own code into `seren
 
 ### Registries
 
-Code plugs into `serenedb` by registering itself in its own file, one line per entry: a command with `SDB_COMMAND kShell{"shell", &RunShell};`, a `--listen` scheme with `SDB_LISTEN_PROTOCOL`, an HTTP API that `?api=` names with `SDB_HTTP_API`, and a bearer token check with `SDB_BEARER_VALIDATOR`. A registration exists only when its object file is linked, so it goes into an object library or an executable's sources, never a static library: the engine's own listen protocols and HTTP APIs are in the `serene_listeners` object library. A name registered twice stops `serenedb` before `main`.
+Code plugs into `serenedb` by registering itself in its own file, one line per entry: a command with `SDB_COMMAND kShell{"shell", &RunShell};`, a `--listen` scheme with `SDB_LISTEN_PROTOCOL`, and an HTTP API that `?api=` names with `SDB_HTTP_API`. A registration exists only when its object file is linked, so it goes into an object library or an executable's sources, never a static library: the engine's own listen protocols and HTTP APIs are in the `serene_listeners` object library. A name registered twice stops `serenedb` before `main`.
 
 ### Commands
 

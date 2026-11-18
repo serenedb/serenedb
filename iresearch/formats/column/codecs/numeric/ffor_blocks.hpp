@@ -63,14 +63,21 @@ class FforBlocks {
   }
 
   uint64_t Bytes(size_t first, size_t count) const noexcept {
-    uint64_t bytes = count * kFforBlockMetaBytes;
+    uint64_t bytes = BlockMetaBytes(count, sizeof(V));
     for (size_t b = first; b < first + count; ++b) {
       bytes += numeric::PackedBytes(_bits[b]);
     }
     return bytes;
   }
 
-  uint64_t Bytes() const noexcept { return Bytes(0, _bits.size()); }
+  uint64_t Bytes(uint32_t frame_values) const noexcept {
+    const size_t per = frame_values / numeric::kBlockValues;
+    uint64_t bytes = 0;
+    for (size_t first = 0; first < _bits.size(); first += per) {
+      bytes += Bytes(first, std::min(per, _bits.size() - first));
+    }
+    return bytes;
+  }
 
   void PlanDeltas(std::span<const V> deltas, std::span<const V> values) {
     const size_t blocks =
@@ -96,14 +103,15 @@ class FforBlocks {
     const size_t at = out.size();
     out.resize_and_overwrite(at + Bytes(first, count), [&](char* buf,
                                                            size_t size) {
-      auto* meta = reinterpret_cast<uint8_t*>(buf + at);
-      auto* packed = meta + count * kFforBlockMetaBytes;
+      auto* bases = reinterpret_cast<uint8_t*>(buf + at);
+      auto* widths = bases + count * sizeof(V);
+      auto* packed = bases + BlockMetaBytes(count, sizeof(V));
+      std::fill(widths + count, packed, uint8_t{0});
       for (size_t b = 0; b < count; ++b) {
         const size_t g = first + b;
-        const uint64_t stored_base = _first.empty() ? _base[g] : _first[g];
-        std::memset(meta, 0, kFforBlockMetaBytes);
-        duckdb::Store(stored_base, meta);
-        meta[sizeof(stored_base)] = _bits[g];
+        duckdb::Store(_first.empty() ? _base[g] : _first[g],
+                      bases + b * sizeof(V));
+        widths[b] = _bits[g];
         const size_t begin = g * numeric::kBlockValues;
         const size_t n = std::min(numeric::kBlockValues, v.size() - begin);
         const V* in = v.data() + begin;
@@ -115,7 +123,6 @@ class FforBlocks {
         numeric::Pack<V>(_bits[g], in,
                          reinterpret_cast<numeric::LaneWord<V>*>(packed),
                          _base[g]);
-        meta += kFforBlockMetaBytes;
         packed += numeric::PackedBytes(_bits[g]);
       }
       return size;

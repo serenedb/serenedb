@@ -149,7 +149,7 @@ double AnalyzeDeltaFfor(ColumnDataCheckpointData& data, double bound) {
   state.analyzed = true;
   return AnalyzeBlocks<T>(data, Shape::Delta,
                           static_cast<uint32_t>(values.Get().size()),
-                          state.blocks.Bytes(), 0, bound);
+                          state.blocks.Bytes(kFforFrameRows), 0, bound);
 }
 
 template<typename T>

@@ -78,8 +78,9 @@ Data layout per segment, one block of one column holding a whole row group:
 |   the leaf makes them smaller                        |
 |   ffor, dict_ffor: 16384 rows per frame, in          |
 |   blocks of 1024 values (dictionary indexes for      |
-|   dict_ffor): a 16-byte meta (base, bit width)       |
-|   per block, then each block's values minus its      |
+|   dict_ffor): the blocks' bases in the value's       |
+|   width, their bit widths in a byte each, padding    |
+|   to 8 bytes, then each block's values minus its     |
 |   base, bitpacked                                    |
 |   rle_ffor: 1024 runs per frame, run values and      |
 |   run lengths each packed like ffor                  |
@@ -99,7 +100,11 @@ inline constexpr uint8_t kNumericShuffled = 1;
 inline constexpr uint8_t kNumericPacked = 2;
 inline constexpr uint32_t kFforFrameRows = 16384;
 inline constexpr uint8_t kFforFrameLog2 = 18;
-inline constexpr size_t kFforBlockMetaBytes = 16;
+
+constexpr size_t BlockMetaBytes(size_t blocks, size_t width) noexcept {
+  return (blocks * (width + 1) + 7) / 8 * 8;
+}
+
 inline constexpr uint32_t kRleFforFrameRuns = 1024;
 
 constexpr bool NumericWidth(uint64_t w) noexcept {

@@ -179,7 +179,7 @@ double AnalyzeFfor(ColumnDataCheckpointData& data, double bound) {
   PlanFfor(values, state);
   return AnalyzeBlocks<T>(data, Shape::Plain,
                           static_cast<uint32_t>(values.Get().size()),
-                          state.blocks.Bytes(), 0, bound);
+                          state.blocks.Bytes(kFforFrameRows), 0, bound);
 }
 
 template<typename T>

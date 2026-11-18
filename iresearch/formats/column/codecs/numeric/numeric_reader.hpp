@@ -391,10 +391,11 @@ class FrameReader {
     return _shuffled.data();
   }
 
+  template<typename V = U>
   IRS_FORCE_INLINE PackedBlock BlockAt(uint64_t row) {
     if (const auto f = static_cast<uint32_t>(row / kFforFrameRows);
         f != _ffor_frame) {
-      OpenFfor(f);
+      OpenFfor<V>(f);
     }
     return (*_ffor)[row % kFforFrameRows / numeric::kBlockValues];
   }
@@ -408,18 +409,18 @@ class FrameReader {
   template<typename V>
   size_t UnpackStream(const uint8_t* src, size_t len, size_t off, size_t blocks,
                       V* out) {
-    const auto* metas = src + off;
-    off += blocks * kFforBlockMetaBytes;
+    const auto* bases = src + off;
+    const auto* widths = bases + blocks * sizeof(V);
+    off += BlockMetaBytes(blocks, sizeof(V));
     SDB_ENSURE(off <= len, "numeric codec: corrupted blocks");
     for (size_t b = 0; b < blocks; ++b) {
-      const auto* meta = metas + b * kFforBlockMetaBytes;
-      const unsigned bits = meta[sizeof(uint64_t)];
+      const unsigned bits = widths[b];
       SDB_ENSURE(
         bits <= numeric::kMaxBits<V> && off + numeric::PackedBytes(bits) <= len,
         "numeric codec: corrupted blocks");
       numeric::Unpack<V>(bits, Words<numeric::LaneWord<V>>(src + off),
                          out + b * numeric::kBlockValues,
-                         static_cast<V>(duckdb::Load<uint64_t>(meta)));
+                         duckdb::Load<V>(bases + b * sizeof(V)));
       off += numeric::PackedBytes(bits);
     }
     return off;
@@ -430,7 +431,6 @@ class FrameReader {
   Shape _shape;
   ByteCodec _leaf;
   uint32_t _per_frame = 0;
-  unsigned _max_bits = numeric::kMaxBits<U>;
   uint64_t _begin = 0;
   uint64_t _end = 0;
   uint64_t _next = 0;
@@ -446,6 +446,7 @@ class FrameReader {
   ScratchVector<U> _block;
 
  private:
+  template<typename V>
   void OpenFfor(uint32_t f) {
     SDB_ENSURE(f < _f.frame_count, "numeric codec: frame out of range");
     if (_ffor_frames.empty()) {
@@ -453,28 +454,30 @@ class FrameReader {
     }
     auto& frame = _ffor_frames[f];
     if (!frame.front().packed) {
-      IndexFfor(f, frame);
+      IndexFfor<V>(f, frame);
     }
     _ffor = &frame;
     _ffor_frame = f;
   }
 
+  template<typename V>
   IRS_NO_INLINE void IndexFfor(uint32_t f, FforFrame& frame) {
     const auto m = Meta(f);
     const auto rows = EndRow(f) - m.frame.first_entry;
     const auto blocks =
       (rows + numeric::kBlockValues - 1) / numeric::kBlockValues;
     const auto* src = Data(m);
-    size_t off = blocks * kFforBlockMetaBytes;
+    size_t off = BlockMetaBytes(blocks, sizeof(V));
     SDB_ENSURE(m.frame.comp_len == m.frame.raw_len && off <= m.frame.raw_len,
                "numeric codec: corrupted blocks");
+    const auto* widths = src + blocks * sizeof(V);
     for (size_t b = 0; b < blocks; ++b) {
-      const auto* meta = src + b * kFforBlockMetaBytes;
-      const unsigned bits = meta[sizeof(uint64_t)];
-      SDB_ENSURE(bits <= _max_bits, "numeric codec: corrupted blocks");
+      const unsigned bits = widths[b];
+      SDB_ENSURE(bits <= numeric::kMaxBits<V>,
+                 "numeric codec: corrupted blocks");
       frame[b] = {
         .packed = src + off,
-        .base = duckdb::Load<uint64_t>(meta),
+        .base = duckdb::Load<V>(src + b * sizeof(V)),
         .bits = bits,
       };
       off += numeric::PackedBytes(bits);

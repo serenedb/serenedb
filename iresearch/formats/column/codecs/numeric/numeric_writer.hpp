@@ -459,7 +459,8 @@ bool CompressBlocks(ColumnDataCheckpointData& data, Shape shape,
   auto& out = data.Get<NumericScratch>().out;
   const auto n = static_cast<uint32_t>(values.size());
   const auto geometry = PackedGeometry(shape, n, dictionary.size());
-  SegmentWriter<T> writer{shape, geometry, blocks.Bytes(), dictionary, out};
+  SegmentWriter<T> writer{shape, geometry, blocks.Bytes(geometry.per),
+                          dictionary, out};
   for (uint32_t f = 0; f < geometry.frames; ++f) {
     const auto begin = f * geometry.per;
     const auto count = std::min(n - begin, geometry.per);

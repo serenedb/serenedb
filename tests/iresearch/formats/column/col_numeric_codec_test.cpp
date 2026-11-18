@@ -943,11 +943,12 @@ TEST_F(ColNumericCodecTest, DictFforBaseThatWrapsTheCodeRangeIsRejected) {
             "dict_ffor");
   const auto frame =
     duckdb::Load<irs::codecs::NumericFrameMeta>(block + h.off_frames).frame;
-  auto* first_block = block + h.off_data + frame.comp_off;
-  const unsigned bits = first_block[sizeof(uint64_t)];
+  auto* bases = block + h.off_data + frame.comp_off;
+  const size_t blocks =
+    irs::codecs::kFforFrameRows / irs::codecs::numeric::kBlockValues;
+  const unsigned bits = bases[blocks * sizeof(uint32_t)];
   ASSERT_GT(bits, 0U);
-  duckdb::Store<uint64_t>(uint64_t{0} - ((uint64_t{1} << bits) - 1),
-                          first_block);
+  duckdb::Store<uint32_t>(uint32_t{0} - ((uint32_t{1} << bits) - 1), bases);
   {
     std::ofstream out{file, std::ios::binary | std::ios::trunc};
     out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
@@ -966,6 +967,31 @@ TEST_F(ColNumericCodecTest, DictFforBaseThatWrapsTheCodeRangeIsRejected) {
 #else
   EXPECT_ANY_THROW(scan());
 #endif
+}
+
+TEST_F(ColNumericCodecTest, PackedBlockHeadersTakeTheValueWidthAndAByte) {
+  constexpr uint64_t kRows = 16384;
+  constexpr uint64_t kBlocks = 16;
+  const Gen flags = [](uint64_t g) -> std::optional<int64_t> {
+    return static_cast<int64_t>(Mix(g) & 1);
+  };
+  const std::pair<duckdb::LogicalType, uint64_t> cases[] = {
+    {duckdb::LogicalType::TINYINT, 1},
+    {duckdb::LogicalType::SMALLINT, 2},
+    {duckdb::LogicalType::INTEGER, 4},
+    {duckdb::LogicalType::BIGINT, 8},
+  };
+  for (const auto& [type, width] : cases) {
+    SCOPED_TRACE(type.ToString());
+    irs::MemoryDirectory dir{};
+    Write(dir, type, {.tier = irs::WriteTier::Flush}, kRows, kRows, flags,
+          irs::codecs::CodecType::Ffor);
+    Verify(dir, type, kRows, flags);
+    ASSERT_EQ(Transforms(dir), std::vector<std::string>{"ffor/none"});
+    EXPECT_EQ(SegmentInfo(dir, "data_bytes"),
+              std::vector<std::string>{
+                std::to_string(kBlocks * (1024 / 8 + width + 1))});
+  }
 }
 
 TEST_F(ColNumericCodecTest, FforPacksEveryWidth) {

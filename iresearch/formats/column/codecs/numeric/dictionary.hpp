@@ -242,7 +242,7 @@ double AnalyzeDictFfor(ColumnDataCheckpointData& data, double bound) {
   state.analyzed = true;
   return AnalyzeBlocks<T>(
     data, Shape::Dictionary, static_cast<uint32_t>(entries->codes.size()),
-    state.blocks.Bytes(), EntryBytes(*entries).size(), bound);
+    state.blocks.Bytes(kFforFrameRows), EntryBytes(*entries).size(), bound);
 }
 
 template<typename T>
@@ -292,9 +292,6 @@ class DictionaryReader final : public FrameReader<T> {
           _own.offset &&
         _own.offset + uint64_t{_own.count} * sizeof(U) <= frames.off_data,
       "numeric codec: corrupted segment header");
-    if (this->Packed()) {
-      this->_max_bits = numeric::kMaxBits<uint32_t>;
-    }
   }
 
   void Seek(uint64_t row) {
@@ -347,7 +344,7 @@ class DictionaryReader final : public FrameReader<T> {
       return this->Get(row);
     }
     if (this->Packed()) {
-      const auto [packed, base, bits] = this->BlockAt(row);
+      const auto [packed, base, bits] = this->template BlockAt<uint32_t>(row);
       return Entry(numeric::UnpackValue<uint32_t>(
         packed, bits, static_cast<uint32_t>(row % numeric::kBlockValues),
         static_cast<uint32_t>(base)));
@@ -395,7 +392,7 @@ class DictionaryReader final : public FrameReader<T> {
   }
 
   void UnpackBlock(uint64_t first, uint64_t rows, U* out) {
-    const auto [packed, base, bits] = this->BlockAt(first);
+    const auto [packed, base, bits] = this->template BlockAt<uint32_t>(first);
     if (_codes.size() < numeric::kBlockValues) {
       _codes.resize(numeric::kBlockValues);
     }

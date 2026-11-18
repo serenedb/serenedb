@@ -212,9 +212,11 @@ double AnalyzeRleFfor(ColumnDataCheckpointData& data, double bound) {
     return kNoScore;
   }
   state.analyzed = true;
-  return AnalyzeBlocks<T>(
-    data, Shape::Runs, static_cast<uint32_t>(runs->rows.size()),
-    state.value_blocks.Bytes() + state.length_blocks.Bytes(), 0, bound);
+  return AnalyzeBlocks<T>(data, Shape::Runs,
+                          static_cast<uint32_t>(runs->rows.size()),
+                          state.value_blocks.Bytes(kRleFforFrameRuns) +
+                            state.length_blocks.Bytes(kRleFforFrameRuns),
+                          0, bound);
 }
 
 template<typename T>
@@ -231,12 +233,12 @@ bool CompressRleFfor(ColumnDataCheckpointData& data) {
   auto& out = data.Get<NumericScratch>().out;
   const auto count = static_cast<uint32_t>(runs->rows.size());
   const auto geometry = PackedGeometry(Shape::Runs, count, 0);
-  SegmentWriter<T> writer{
-    Shape::Runs,
-    geometry,
-    state.value_blocks.Bytes() + state.length_blocks.Bytes(),
-    {},
-    out};
+  SegmentWriter<T> writer{Shape::Runs,
+                          geometry,
+                          state.value_blocks.Bytes(kRleFforFrameRuns) +
+                            state.length_blocks.Bytes(kRleFforFrameRuns),
+                          {},
+                          out};
   for (uint32_t f = 0; f < geometry.frames; ++f) {
     const auto begin = f * geometry.per;
     const auto items = std::min(count - begin, geometry.per);

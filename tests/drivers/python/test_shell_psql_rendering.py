@@ -1,5 +1,7 @@
 # fmt: off
 
+import pytest
+
 from shell_harness import ShellTest, requires_serenedb, shell  # noqa: F401
 
 pytestmark = requires_serenedb
@@ -42,6 +44,25 @@ def test_aligned_no_rows(shell):
     result.check_stdout("a \n---\n(0 rows)")
 
 
+def test_aligned_control_characters(shell):
+    result = run_script(shell, ".mode psql", "SELECT 'a' || chr(9) || 'b' AS t, 'x' || chr(1) || chr(127) AS c;")
+    result.check_stdout("\n".join([
+        "t     |     c     ",
+        "-----------+-----------",
+        " a       b | x\\x01\\x7F",
+        "(1 row)",
+    ]))
+
+
+@pytest.mark.parametrize("border,expected", [
+    (0, "a+c \nb   \n- -\n1 2\n(1 row)"),
+    (1, "\n a+| c \n b |   \n---+---\n 1 | 2\n(1 row)"),
+])
+def test_aligned_multi_line_header(shell, border, expected):
+    result = run_script(shell, ".mode psql", f"\\pset border {border}", 'SELECT 1 AS "a', 'b", 2 AS c;')
+    result.check_stdout(expected)
+
+
 def test_expanded(shell):
     result = run_script(shell, ".mode psql", "\\x", QUERY)
     result.check_stdout("Expanded display is on.")
@@ -62,6 +83,81 @@ def test_expanded_records(shell):
     result.check_stdout("-[ RECORD 1 ]\nn | 1\ns | a\n-[ RECORD 2 ]\nn | 2\ns | b")
 
 
+def test_expanded_no_rows(shell):
+    result = run_script(shell, ".mode psql", "\\x", "SELECT 1 AS a WHERE false;")
+    result.check_stdout("Expanded display is on.\n(0 rows)")
+    result.check_not_exist("RECORD")
+
+
+def test_expanded_border_zero_labels_records(shell):
+    result = run_script(shell, ".mode psql", "\\pset border 0", "\\x", "SELECT 'value' AS long_column_name;")
+    result.check_stdout("* Record 1           \nlong_column_name value")
+
+
+def test_expanded_border_two(shell):
+    result = run_script(
+        shell,
+        ".mode psql",
+        "\\pset border 2",
+        "\\x",
+        "SELECT 'one' || chr(10) || 'two' AS long_name, 'alpha' AS c;",
+    )
+    result.check_stdout("\n".join([
+        "+-[ RECORD 1 ]------+",
+        "| long_name | one  +|",
+        "|           | two   |",
+        "| c         | alpha |",
+        "+-----------+-------+",
+    ]))
+
+
+@pytest.mark.parametrize("border,expected", [
+    (0, ["* Record 1", "a+ x", "b ", "c  yyyyyyyy+", "   z"]),
+    (1, ["-[ RECORD 1 ]", "a+| x", "b |", "c | yyyyyyyy+", "  | z"]),
+    (2, [
+        "+-[ RECORD 1 ]-+",
+        "| a+| x        |",
+        "| b |          |",
+        "| c | yyyyyyyy+|",
+        "|   | z        |",
+        "+---+----------+",
+    ]),
+])
+def test_expanded_multi_line_header(shell, border, expected):
+    result = run_script(
+        shell,
+        ".mode psql",
+        f"\\pset border {border}",
+        "\\x",
+        "SELECT 'x' AS \"a",
+        "b\", 'yyyyyyyy' || chr(10) || 'z' AS c;",
+    )
+    result.check_stdout(expected)
+
+
+def test_expanded_border_two_widens_the_data_to_the_record_header(shell):
+    result = run_script(shell, ".mode psql", "\\pset border 2", "SELECT 1 AS n", "\\gx")
+    result.check_stdout("+-[ RECORD 1 ]-+\n| n | 1        |\n+---+----------+")
+
+
+@pytest.mark.parametrize("border,expected", [
+    (0, ["a 1", "b x", "  ", "a 2", "b y"]),
+    (1, ["a | 1", "b | x", "--+--", "a | 2", "b | y"]),
+    (2, ["+---+---+", "| a | 1 |", "| b | x |", "+---+---+", "| a | 2 |", "| b | y |", "+---+---+"]),
+])
+def test_expanded_tuples_only(shell, border, expected):
+    result = run_script(
+        shell,
+        ".mode psql",
+        f"\\pset border {border}",
+        "\\t",
+        "\\x",
+        "SELECT * FROM (VALUES (1, 'x'), (2, 'y')) t(a, b);",
+    )
+    result.check_stdout(expected)
+    result.check_not_exist("RECORD")
+
+
 def test_unaligned(shell):
     result = run_script(shell, ".mode psql", "\\a", QUERY)
     result.check_stdout("Output format is unaligned.")
@@ -77,6 +173,26 @@ def test_unaligned_field_separator(shell):
     result = run_script(shell, "\\pset format unaligned", "\\pset fieldsep ';'", "SELECT 1 AS a, 2 AS b;")
     result.check_stdout('Field separator is ";".')
     result.check_stdout("a;b\n1;2\n(1 row)")
+
+
+def test_unaligned_record_separator(shell):
+    result = run_script(shell, "\\pset format unaligned", "\\pset recordsep ';'", "SELECT * FROM (VALUES (1), (2)) t(a);")
+    result.check_stdout('Record separator is ";".')
+    result.check_stdout("a;1;2;(2 rows)")
+
+
+def test_unaligned_zero_byte_separators(shell):
+    result = run_script(
+        shell,
+        "\\pset format unaligned",
+        "\\pset fieldsep_zero",
+        "\\pset recordsep_zero",
+        "SELECT 1 AS a, 2 AS b;",
+        "\\pset",
+    )
+    result.check_stdout("Field separator is zero byte.\nRecord separator is zero byte.\na\x00b\x001\x002\x00(1 row)\x00")
+    result.check_stdout("fieldsep_zero".ljust(24) + " on")
+    result.check_stdout("recordsep_zero".ljust(24) + " on")
 
 
 def test_unaligned_expanded(shell):
@@ -113,6 +229,23 @@ def test_csv(shell):
 def test_csv_expanded(shell):
     result = run_script(shell, ".mode psql", "\\pset format csv", "\\x", "SELECT 1 AS a, 'b,c' AS b;")
     result.check_stdout('a,1\nb,"b,c"')
+
+
+def test_csv_field_separator(shell):
+    result = run_script(
+        shell,
+        ".mode psql",
+        "\\pset format csv",
+        "\\pset csv_fieldsep ';'",
+        "\\pset csv_fieldsep ab",
+        "\\pset csv_fieldsep '\"'",
+        "\\pset csv_fieldsep",
+        "SELECT 'a;b' AS x, 'c,d' AS y;",
+    )
+    assert result.stdout.count('Field separator for CSV is ";".') == 2, result.stdout
+    assert 'x;y\n"a;b";c,d' in result.stdout, result.stdout
+    result.check_stderr("\\pset: csv_fieldsep must be a single one-byte character")
+    result.check_stderr("\\pset: csv_fieldsep cannot be a double quote, a newline, or a carriage return")
 
 
 def test_null_display(shell):
@@ -173,6 +306,13 @@ def test_duckbox_stays_default(shell):
 def test_mode_psql_is_listed(shell):
     result = run_script(shell, ".mode psql", ".mode")
     result.check_stdout("current output mode: psql")
+
+
+def test_unknown_mode_lists_psql(shell):
+    result = run_script(shell, ".mode nosuch", ".mode pz")
+    message = ("Error: mode should be one of: ascii box column csv duckbox html insert json jsonlines latex line "
+               "list markdown psql quote table tabs tcl trash")
+    assert result.stderr.count(message) == 2, result.stderr
 
 
 def test_list_databases_flag(shell):

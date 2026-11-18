@@ -88,6 +88,8 @@ bool HasEncodingOption(const duckdb::CopyInfo& info);
 
 pg::CopyLogVerbosity ParseLogVerbosity(std::span<const duckdb::Value> values);
 
+bool ParseOnError(std::span<const duckdb::Value> values);
+
 std::vector<bool> CopyColumnMask(const CopyColumns& columns,
                                  std::span<const std::string> names,
                                  std::string_view option);

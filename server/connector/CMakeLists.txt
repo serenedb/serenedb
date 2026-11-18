@@ -73,14 +73,11 @@ target_sources(
 
 target_link_libraries(sereneserver PRIVATE simdjson absl::demangle_internal)
 
-# view_fast_path.cpp reads iceberg-bound snapshot ids; iceberg's REST
-# headers include yyjson unprefixed.
+# view_fast_path.cpp reads iceberg-bound snapshot ids.
 target_include_directories(
     sereneserver
     SYSTEM
-    PRIVATE
-        "${CMAKE_SOURCE_DIR}/third_party/duckdb_iceberg/src/include"
-        "${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/yyjson/include"
+    PRIVATE "${CMAKE_SOURCE_DIR}/third_party/duckdb_iceberg/src/include"
 )
 
 add_subdirectory(functions)

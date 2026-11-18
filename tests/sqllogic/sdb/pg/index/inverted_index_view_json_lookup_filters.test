@@ -1,0 +1,106 @@
+control substitution on
+
+# Filters on columns an inverted index over a read_json view does not hold run
+# inside the reader's row lookups: they return what the same filters return in
+# SQL.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY vjlf_en AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+
+statement count 6
+COPY (SELECT * FROM (VALUES
+    (1, 'red fox', 10, 'alpha'),
+    (2, 'red fox', 20, NULL),
+    (3, 'blue fox', 30, 'gamma'),
+    (4, 'red dog', 40, 'delta'),
+    (5, 'red fox', 50, 'epsilon long enough to not inline'),
+    (6, 'red fox', 60, 'alpha')) t(id, body, n, tag))
+TO '${__TEST_DIR__}/vjlf.json' (FORMAT json);
+
+
+statement ok
+CREATE VIEW vjlf AS SELECT * FROM read_json('${__TEST_DIR__}/vjlf.json');
+
+
+statement ok
+CREATE INDEX vjlf_idx ON vjlf USING inverted(id, body vjlf_en);
+
+
+query
+SELECT id, n, tag FROM vjlf_idx WHERE body @@ 'red' AND n > 15 ORDER BY id;
+----
+id	n	tag
+2	20	NULL
+4	40	delta
+5	50	epsilon long enough to not inline
+6	60	alpha
+
+
+query
+SELECT id FROM vjlf_idx WHERE body @@ 'fox' AND tag = 'alpha' ORDER BY id;
+----
+id
+1
+6
+
+
+query
+SELECT id FROM vjlf_idx WHERE body @@ 'fox' AND tag IS NULL ORDER BY id;
+----
+id
+2
+
+
+query
+SELECT count(*) AS c FROM vjlf_idx WHERE body @@ 'red' AND n BETWEEN 20 AND 50;
+----
+c
+3
+
+
+query
+SELECT id FROM vjlf_idx WHERE body @@ 'fox' AND n > 15 AND tag LIKE 'e%' ORDER BY id;
+----
+id
+5
+
+
+query
+EXPLAIN SELECT id, tag FROM vjlf_idx WHERE body @@ 'fox' AND n > 15 ORDER BY id;
+----
+QUERY PLAN
+╭─ ORDER_BY ──────────────╮
+│ Order By: id ASC        │
+│ ~1 row                  │
+╰────────────┬────────────╯
+╭─ IRESEARCH_SCAN ────────╮
+│ Index: vjlf_idx         │
+│ Lookup: json            │
+│ Index Filter:           │
+│ ╭─ Term ──────────────╮ │
+│ │ Field: body(string) │ │
+│ │ Value: fox          │ │
+│ ╰─────────────────────╯ │
+│ Column Filter: n > 15   │
+│ Projections: id, tag    │
+│ ~1 row                  │
+╰─────────────────────────╯
+
+
+statement ok
+CREATE VIEW vjlf_nd AS SELECT * FROM read_ndjson_objects('${__TEST_DIR__}/vjlf.json');
+
+
+statement ok
+CREATE INDEX vjlf_nd_idx ON vjlf_nd USING inverted(json);
+
+
+query
+SELECT json->>'id' AS id FROM vjlf_nd_idx WHERE json IS NOT NULL AND json->>'tag' = 'alpha' ORDER BY 1;
+----
+id
+1
+6

@@ -1,8 +1,8 @@
 # fmt: off
 
-from shell_harness import ShellTest, requires_serened, shell  # noqa: F401
+from shell_harness import ShellTest, requires_serenedb, shell  # noqa: F401
 
-pytestmark = requires_serened
+pytestmark = requires_serenedb
 
 QUERY = "SELECT 1 AS id, 'abc' AS name, NULL::VARCHAR AS note, 'line1' || chr(10) || 'line2' AS multi, 3.5 AS num;"
 

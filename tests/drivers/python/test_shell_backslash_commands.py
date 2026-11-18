@@ -1,8 +1,8 @@
 # fmt: off
 
-from shell_harness import ShellTest, requires_serened, shell  # noqa: F401
+from shell_harness import ShellTest, requires_serenedb, shell  # noqa: F401
 
-pytestmark = requires_serened
+pytestmark = requires_serenedb
 
 
 def run_script(shell, *lines, arguments=()):

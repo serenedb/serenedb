@@ -848,3 +848,106 @@ USE $__DATABASE__;
 
 statement ok
 DETACH parquet_overview_export_035;
+
+# DOCS_TEST: pg_types_write
+
+# DOCS_TEST_RAW
+#| CREATE TABLE devices (
+#|     id INTEGER,
+#|     mac MACADDR,
+#|     ports INT4RANGE,
+#|     coords POINT,
+#|     tags TEXT[]
+#| );
+#|
+#| INSERT INTO devices VALUES
+#|     (1, '08:00:2b:01:02:03', '[8000,8010)', '(1,2)', ARRAY['lab', 'rack 4']);
+#|
+#| COPY devices TO 'devices.parquet';
+#|
+#| SELECT pg_typeof(mac) AS mac_type, mac, ports, coords, tags
+#| FROM 'devices.parquet';
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE devices (
+    id INTEGER,
+    mac MACADDR,
+    ports INT4RANGE,
+    coords POINT,
+    tags TEXT[]
+);
+
+statement ok
+INSERT INTO devices VALUES
+    (1, '08:00:2b:01:02:03', '[8000,8010)', '(1,2)', ARRAY['lab', 'rack 4']);
+
+statement ok
+COPY devices TO '${__TEST_DIR__}/data_import_and_export_parquet_overview_devices.parquet';
+
+query
+SELECT pg_typeof(mac) AS mac_type, mac, ports, coords, tags
+FROM '${__TEST_DIR__}/data_import_and_export_parquet_overview_devices.parquet';
+----
+mac_type	mac	ports	coords	tags
+text	08:00:2b:01:02:03	[8000,8010)	(1,2)	{lab,"rack 4"}
+
+# DOCS_TEST: pg_types_read_back
+
+# DOCS_TEST_RAW
+#| CREATE TABLE devices_copy (
+#|     id INTEGER,
+#|     mac MACADDR,
+#|     ports INT4RANGE,
+#|     coords POINT,
+#|     tags TEXT[]
+#| );
+#|
+#| COPY devices_copy FROM 'devices.parquet';
+#|
+#| SELECT pg_typeof(mac) AS mac_type, pg_typeof(ports) AS ports_type, mac, ports
+#| FROM devices_copy;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE devices_copy (
+    id INTEGER,
+    mac MACADDR,
+    ports INT4RANGE,
+    coords POINT,
+    tags TEXT[]
+);
+
+statement ok
+COPY devices_copy FROM '${__TEST_DIR__}/data_import_and_export_parquet_overview_devices.parquet';
+
+query
+SELECT pg_typeof(mac) AS mac_type, pg_typeof(ports) AS ports_type, mac, ports
+FROM devices_copy;
+----
+mac_type	ports_type	mac	ports
+macaddr	int4range	08:00:2b:01:02:03	[8000,8010)
+
+# DOCS_TEST: pg_types_invalid
+
+# DOCS_TEST_RAW
+#| COPY (SELECT 2 AS id, 'not a mac' AS mac) TO 'bad.parquet';
+#|
+#| CREATE TABLE macs (id INTEGER, mac MACADDR);
+#|
+#| COPY macs FROM 'bad.parquet';
+
+# DOCS_TEST_BODY
+
+statement ok
+COPY (SELECT 2 AS id, 'not a mac' AS mac) TO '${__TEST_DIR__}/data_import_and_export_parquet_overview_bad.parquet';
+
+statement ok
+CREATE TABLE macs (id INTEGER, mac MACADDR);
+
+statement error
+COPY macs FROM '${__TEST_DIR__}/data_import_and_export_parquet_overview_bad.parquet';
+----
+db error: ERROR: invalid input syntax for type macaddr: "not a mac"

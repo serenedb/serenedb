@@ -1,0 +1,276 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+# DOCS_TEST_RAW
+#| CREATE TABLE fruit (name TEXT, variety TEXT, weight DOUBLE);
+#|
+#| INSERT INTO fruit VALUES
+#|     ('apple', 'gala', 134.2),
+#|     ('orange', 'navel', 142.1),
+#|     ('apple', 'fuji', NULL);
+#|
+#| COPY fruit TO 'fruit.arrow';
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE fruit (name TEXT, variety TEXT, weight DOUBLE);
+
+statement ok
+INSERT INTO fruit VALUES
+    ('apple', 'gala', 134.2),
+    ('orange', 'navel', 142.1),
+    ('apple', 'fuji', NULL);
+
+statement ok
+COPY fruit TO '${__TEST_DIR__}/fruit.arrow';
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_RAW
+#| COPY (SELECT * FROM fruit WHERE weight > 140) TO 'heavy.arrows';
+
+# DOCS_TEST_BODY
+
+statement ok
+COPY (SELECT * FROM fruit WHERE weight > 140) TO '${__TEST_DIR__}/heavy.arrows';
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_RAW
+#| SELECT *
+#| FROM 'fruit.arrow'
+#| ORDER BY variety;
+
+# DOCS_TEST_BODY
+
+query
+SELECT *
+FROM '${__TEST_DIR__}/fruit.arrow'
+ORDER BY variety;
+----
+name	variety	weight
+apple	fuji	NULL
+apple	gala	134.2
+orange	navel	142.1
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_RAW
+#| SELECT variety, weight
+#| FROM read_arrow('heavy.arrows');
+
+# DOCS_TEST_BODY
+
+query
+SELECT variety, weight
+FROM read_arrow('${__TEST_DIR__}/heavy.arrows');
+----
+variety	weight
+navel	142.1
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_RAW
+#| SELECT count(*) AS n
+#| FROM read_arrow(['fruit.arrow', 'heavy.arrows']);
+
+# DOCS_TEST_BODY
+
+query
+SELECT count(*) AS n
+FROM read_arrow(['${__TEST_DIR__}/fruit.arrow', '${__TEST_DIR__}/heavy.arrows']);
+----
+n
+4
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_RAW
+#| COPY fruit TO 'fruit_zstd.arrows' (COMPRESSION zstd);
+
+# DOCS_TEST_BODY
+
+statement ok
+COPY fruit TO '${__TEST_DIR__}/fruit_zstd.arrows' (COMPRESSION zstd);
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_RAW
+#| CREATE TABLE fruit_copy (name TEXT, variety TEXT, weight DOUBLE);
+#|
+#| COPY fruit_copy FROM 'fruit_zstd.arrows';
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE fruit_copy (name TEXT, variety TEXT, weight DOUBLE);
+
+statement ok
+COPY fruit_copy FROM '${__TEST_DIR__}/fruit_zstd.arrows';
+
+# DOCS_TEST_END
+
+query
+SELECT count(*) AS n, count(weight) AS weighed
+FROM fruit_copy;
+----
+n	weighed
+3	2
+
+# DOCS_TEST: stream_extension
+
+# DOCS_TEST_RAW
+#| COPY fruit TO 'fruit.ipc' (FORMAT arrows);
+#|
+#| SELECT count(*) AS n
+#| FROM read_arrow('fruit.ipc');
+
+# DOCS_TEST_BODY
+
+statement ok
+COPY fruit TO '${__TEST_DIR__}/fruit.ipc' (FORMAT arrows);
+
+query
+SELECT count(*) AS n
+FROM read_arrow('${__TEST_DIR__}/fruit.ipc');
+----
+n
+3
+
+# DOCS_TEST: union_by_name
+
+# DOCS_TEST_RAW
+#| COPY (SELECT 'apple' AS name, 'pink lady' AS variety) TO 'varieties.arrow';
+#|
+#| COPY (SELECT 'orange' AS name, 12 AS stock) TO 'stock.arrow';
+#|
+#| SELECT *
+#| FROM read_arrow(['varieties.arrow', 'stock.arrow'], union_by_name = true)
+#| ORDER BY name;
+
+# DOCS_TEST_BODY
+
+statement ok
+COPY (SELECT 'apple' AS name, 'pink lady' AS variety) TO '${__TEST_DIR__}/varieties.arrow';
+
+statement ok
+COPY (SELECT 'orange' AS name, 12 AS stock) TO '${__TEST_DIR__}/stock.arrow';
+
+query
+SELECT *
+FROM read_arrow(['${__TEST_DIR__}/varieties.arrow', '${__TEST_DIR__}/stock.arrow'], union_by_name = true)
+ORDER BY name;
+----
+name	variety	stock
+apple	pink lady	NULL
+orange	NULL	12
+
+# DOCS_TEST: row_groups_per_file
+
+# DOCS_TEST_RAW
+#| COPY (SELECT i FROM generate_series(1, 10000) AS t(i))
+#|     TO 'numbers' (FORMAT arrow, ROW_GROUP_SIZE 2048, ROW_GROUPS_PER_FILE 2);
+#|
+#| SELECT count(*) AS n, sum(i) AS total
+#| FROM read_arrow('numbers/*.arrow');
+
+# DOCS_TEST_BODY
+
+statement ok
+COPY (SELECT i FROM generate_series(1, 10000) AS t(i))
+    TO '${__TEST_DIR__}/numbers' (FORMAT arrow, ROW_GROUP_SIZE 2048, ROW_GROUPS_PER_FILE 2);
+
+query
+SELECT count(*) AS n, sum(i) AS total
+FROM read_arrow('${__TEST_DIR__}/numbers/*.arrow');
+----
+n	total
+10000	50005000
+
+# DOCS_TEST_END
+
+query
+SELECT count(*) > 1 AS several_files
+FROM glob('${__TEST_DIR__}/numbers/*.arrow');
+----
+several_files
+t
+
+# DOCS_TEST: enum_error
+
+# DOCS_TEST_RAW
+#| CREATE TYPE mood AS ENUM ('happy', 'sad');
+#|
+#| COPY (SELECT 'happy'::mood AS feeling) TO 'mood.arrow';
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TYPE mood AS ENUM ('happy', 'sad');
+
+statement error
+COPY (SELECT 'happy'::mood AS feeling) TO '${__TEST_DIR__}/mood.arrow';
+----
+db error: ERROR: Arrow IPC output does not support ENUM values in column "feeling", cast it to VARCHAR
+
+
+# DOCS_TEST: enum_text
+
+# DOCS_TEST_RAW
+#| COPY (SELECT 'happy'::mood::TEXT AS feeling) TO 'mood.arrow';
+
+# DOCS_TEST_BODY
+
+statement ok
+COPY (SELECT 'happy'::mood::TEXT AS feeling) TO '${__TEST_DIR__}/mood.arrow';
+
+# DOCS_TEST: copy_from_glob
+
+# DOCS_TEST_RAW
+#| COPY (SELECT * FROM fruit WHERE name = 'apple') TO 'harvest_apples.arrow';
+#|
+#| COPY (SELECT * FROM fruit WHERE name = 'orange') TO 'harvest_oranges.arrow';
+#|
+#| CREATE TABLE harvest (name TEXT, variety TEXT, weight DOUBLE);
+#|
+#| COPY harvest FROM 'harvest_*.arrow';
+#|
+#| SELECT name, count(*) AS n
+#| FROM harvest
+#| GROUP BY name
+#| ORDER BY name;
+
+# DOCS_TEST_BODY
+
+statement ok
+COPY (SELECT * FROM fruit WHERE name = 'apple') TO '${__TEST_DIR__}/harvest_apples.arrow';
+
+statement ok
+COPY (SELECT * FROM fruit WHERE name = 'orange') TO '${__TEST_DIR__}/harvest_oranges.arrow';
+
+statement ok
+CREATE TABLE harvest (name TEXT, variety TEXT, weight DOUBLE);
+
+statement ok
+COPY harvest FROM '${__TEST_DIR__}/harvest_*.arrow';
+
+query
+SELECT name, count(*) AS n
+FROM harvest
+GROUP BY name
+ORDER BY name;
+----
+name	n
+apple	2
+orange	1
+
+# DOCS_TEST: stdin_file
+
+# DOCS_TEST_BODY
+
+statement error
+COPY harvest FROM STDIN (FORMAT arrow);
+----
+db error: ERROR: COPY FROM STDIN (FORMAT arrow) is not supported: the Arrow file format requires a regular file; use FORMAT arrows

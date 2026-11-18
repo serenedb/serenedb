@@ -18,10 +18,10 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-// Microbench: JSON validation. Decision 2 from the SIMD string-encoding task --
-// simdjson (full DOM parse) vs DuckDB's StringUtil::ValidateJSON (yyjson with
-// ALLOW_INF_AND_NAN | ALLOW_TRAILING_COMMAS | BIGNUM_AS_RAW). Also prints a
-// semantic-agreement table for the validity-edge cases the task calls out.
+// Microbench: JSON validation. simdjson's DOM parse vs DuckDB's
+// StringUtil::ValidateJSON (DuckDB's JSON documents with ALLOW_INF_AND_NAN |
+// ALLOW_TRAILING_COMMAS | BIGNUM_AS_RAW). Also prints a semantic-agreement
+// table for the validity-edge cases.
 
 #include <benchmark/benchmark.h>
 #include <simdjson.h>
@@ -34,7 +34,7 @@
 
 namespace {
 
-bool YyjsonValid(const std::string& s) {
+bool DuckDBValid(const std::string& s) {
   return duckdb::StringUtil::ValidateJSON(s.data(), s.size()).empty();
 }
 
@@ -74,9 +74,9 @@ std::vector<Input>& Inputs() {
   return inputs;
 }
 
-void BenchYyjson(benchmark::State& state, const std::string* d) {
+void BenchDuckDB(benchmark::State& state, const std::string* d) {
   for (auto _ : state) {
-    benchmark::DoNotOptimize(YyjsonValid(*d));
+    benchmark::DoNotOptimize(DuckDBValid(*d));
   }
   state.SetBytesProcessed(static_cast<int64_t>(state.iterations()) *
                           static_cast<int64_t>(d->size()));
@@ -94,7 +94,7 @@ void BenchSimdjson(benchmark::State& state, const std::string* d) {
 void Register() {
   for (auto& in : Inputs()) {
     const std::string* d = &in.data;
-    benchmark::RegisterBenchmark("yyjson/" + in.name, BenchYyjson, d);
+    benchmark::RegisterBenchmark("duckdb/" + in.name, BenchDuckDB, d);
     benchmark::RegisterBenchmark("simdjson/" + in.name, BenchSimdjson, d);
   }
 }
@@ -132,10 +132,10 @@ void PrintSemanticTable() {
     {"just_number", "42"},
   };
   simdjson::dom::parser parser;
-  std::printf("\n=== JSON validity: yyjson(ValidateJSON) vs simdjson ===\n");
-  std::printf("%-22s %-8s %-8s %s\n", "case", "yyjson", "simdjson", "agree?");
+  std::printf("\n=== JSON validity: DuckDB (ValidateJSON) vs simdjson ===\n");
+  std::printf("%-22s %-8s %-8s %s\n", "case", "duckdb", "simdjson", "agree?");
   for (auto& e : edges) {
-    bool y = YyjsonValid(e.json);
+    bool y = DuckDBValid(e.json);
     bool s = SimdjsonValid(parser, e.json);
     std::printf("%-22s %-8s %-8s %s\n", e.label, y ? "valid" : "INVALID",
                 s ? "valid" : "INVALID", (y == s) ? "yes" : "*** NO ***");

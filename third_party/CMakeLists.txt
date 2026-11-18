@@ -741,6 +741,7 @@ sdb_update_module(
 # INTERFACE), so expose simdutf's header to the whole duckdb subtree here. The duckdb_static PUBLIC link
 # to simdutf (added below) is what pulls the compiled simdutf object code into the final binary.
 include_directories(SYSTEM ${CMAKE_CURRENT_SOURCE_DIR}/simdutf/include)
+include_directories(SYSTEM ${CMAKE_CURRENT_SOURCE_DIR}/simdjson/include)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/duckdb_versions/include)
 
 sdb_add_module(duckdb COVERAGE)
@@ -788,6 +789,7 @@ target_link_libraries(
         # one PUBLIC edge propagates the simdutf include to duckdb core and to
         # every static extension (they each link duckdb_static).
         simdutf
+        simdjson
 )
 
 if(NOT IRESEARCH_BENCH)

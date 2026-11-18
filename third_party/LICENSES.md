@@ -117,7 +117,6 @@ SereneDB and the libraries below are built into serened. `SELECT * FROM sdb_lice
 * [sse2neon](https://github.com/DLTcollab/sse2neon): `third_party/sse2neon/LICENSE`
 * [vergesort](https://github.com/Morwenn/vergesort): `third_party/duckdb/third_party/vergesort/LICENSE`
 * [YACLib](https://github.com/YACLib/YACLib): `third_party/yaclib/LICENSE`
-* [yyjson](https://github.com/ibireme/yyjson): `third_party/duckdb/third_party/yyjson/LICENSE`
 
 ### MIT AND Unicode-DFS-2015
 

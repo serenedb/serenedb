@@ -139,21 +139,23 @@ query
 EXPLAIN SELECT * FROM read_json('s3://${MINIO_BUCKET}/${__DATABASE__}_lj_one.json') ORDER BY n DESC LIMIT 3;
 ----
 QUERY PLAN
-╭─ LOOKUP_JOIN ────────────────╮
-│ Key: file_index, file_offset │
-│ ~3 rows                      │
-╰───────────────┬──────────────╯
-                ├────────────────────────────╮
-╭─ TOP_N ───────┴──────────────╮  ╭─ READ_JSON ─────────╮
-│ Top: 3                       │  │ Function: READ_JSON │
-│ Order By: n DESC             │  │ Projections: id,    │
-│ ~3 rows                      │  │              title, │
-╰───────────────┬──────────────╯  │              body,  │
-╭─ READ_JSON ───┴──────────────╮  │              note   │
-│ Function: READ_JSON          │  │ ~3 rows             │
-│ Projections: n               │  ╰─────────────────────╯
-│ ~3,019 rows                  │
-╰──────────────────────────────╯
+╭─ LOOKUP_JOIN ────────────────────╮
+│ Key: file_index, file_offset     │
+│ ~3 rows                          │
+╰─────────────────┬────────────────╯
+                  ├──────────────────────────────╮
+╭─ TOP_N ─────────┴────────────────╮  ╭─ READ_JSON ─────────╮
+│ Top: 3                           │  │ Function: READ_JSON │
+│ Order By: n DESC                 │  │ Projections: id,    │
+│ ~3 rows                          │  │              title, │
+╰─────────────────┬────────────────╯  │              body,  │
+╭─ READ_JSON ─────┴────────────────╮  │              note   │
+│ Function: READ_JSON              │  │ ~3 rows             │
+│ Projections: n                   │  ╰─────────────────────╯
+│ Column Filter:                   │
+│ optional: Dynamic Filter (n > ?) │
+│ ~3,019 rows                      │
+╰──────────────────────────────────╯
 
 query
 SELECT id, title, body, replace(note, chr(10), '|') AS note FROM read_json('s3://${MINIO_BUCKET}/${__DATABASE__}_lj_one.json') ORDER BY n DESC LIMIT 3;

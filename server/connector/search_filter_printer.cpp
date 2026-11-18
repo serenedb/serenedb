@@ -78,6 +78,12 @@ void AddMergeAttribute(ExplainNode& node, ScoreMergeType merge) {
   }
 }
 
+void AddWordsMergeAttribute(ExplainNode& node, ScoreMergeType merge) {
+  if (merge == ScoreMergeType::Sum) {
+    node.attributes["Merge"] = "sum";
+  }
+}
+
 // Prints a binary term byte-by-byte, escaping non-printable chars.
 template<typename Term>
 std::string TermToString(Term term) {
@@ -477,6 +483,7 @@ struct FilterPrinter {
       node.attributes["Field"] = FieldName(f.field_id(), f.dict());
       node.attributes["Range"] =
         RangeValue(f.options().range, FieldType(f.field_id(), f.dict()));
+      AddWordsMergeAttribute(node, f.options().merge);
       return node;
     }
     if (type == Type<ByGranularRange>::id()) {
@@ -509,6 +516,7 @@ struct FilterPrinter {
       node.attributes["Max Terms"] = o.with_ties
                                        ? absl::StrCat(o.max_terms, " with ties")
                                        : absl::StrCat(o.max_terms);
+      AddWordsMergeAttribute(node, o.merge);
       return node;
     }
     if (type == Type<ByPrefix>::id()) {
@@ -517,6 +525,7 @@ struct FilterPrinter {
       node.attributes["Field"] = FieldName(f.field_id(), f.dict());
       node.attributes["Prefix"] =
         PrefixValue(f.options().term, FieldType(f.field_id(), f.dict()));
+      AddWordsMergeAttribute(node, f.options().merge);
       return node;
     }
     if (type == Type<ByPrefixes>::id()) {
@@ -566,6 +575,7 @@ struct FilterPrinter {
         options.kind == PatternKind::Union
           ? TermToString(irs::DescribeUnion(options.pattern))
           : TermToString(options.pattern);
+      AddWordsMergeAttribute(node, options.merge);
       return node;
     }
     if (type == Type<ByWildcardNGram>::id()) {

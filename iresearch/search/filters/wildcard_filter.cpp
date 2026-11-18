@@ -35,15 +35,16 @@ QueryBuilder::ptr ByWildcard::PrepareSegment(const SubReader&,
     ERR_MSG("ByWildcard must be lowered by the optimizer before prepare"));
 }
 
-Filter::ptr LowerWildcard(irs::field_id id, DictRef dict, bytes_view term,
-                          score_t boost, bool bytes) {
-  const FieldTarget target{.id = id, .dict = dict, .boost = boost};
+Filter::ptr LowerWildcard(irs::field_id id, DictRef dict,
+                          const ByWildcardOptions& options, score_t boost) {
+  const FieldTarget target{
+    .id = id, .dict = dict, .boost = boost, .merge = options.merge};
   bstring buf;
   return ExecuteWildcard(
-    buf, term, [&](bytes_view term) { return target.Term(term); },
+    buf, options.term, [&](bytes_view term) { return target.Term(term); },
     [&](bytes_view prefix) { return target.Prefix(prefix); },
     [&](bytes_view pattern) {
-      return target.Automaton(pattern, WildcardPattern(bytes));
+      return target.Automaton(pattern, WildcardPattern(options.bytes));
     });
 }
 

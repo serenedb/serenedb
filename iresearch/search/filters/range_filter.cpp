@@ -77,20 +77,20 @@ QueryBuilder::ptr ByRange::PrepareSegment(const SubReader& segment,
   auto sub_ctx = ctx;
   sub_ctx.boost *= GetBoost();
   return PrepareSegment(segment, sub_ctx, segment.field(field_id(), dict()),
-                        options().range);
+                        options());
 }
 
 QueryBuilder::ptr ByRange::PrepareSegment(const SubReader& segment,
                                           const PrepareContext& ctx,
                                           const TermReader* reader,
-                                          const options_type::range_type& rng) {
-  if (IsEmptyRange(rng) || !reader) {
+                                          const options_type& options) {
+  if (IsEmptyRange(options.range) || !reader) {
     return QueryBuilder::Empty();
   }
   auto query = memory::make_tracked<MultiTermQuery>(
-    ctx.memory, segment, ctx.memory, ctx.boost, ScoreMergeType::Sum);
+    ctx.memory, segment, ctx.memory, ctx.boost, options.merge);
   MultiTermVisitor mtv{ctx, query->State(), *reader};
-  ByRangeIterator terms{*reader, rng};
+  ByRangeIterator terms{*reader, options.range};
   if (!terms.next()) {
     return QueryBuilder::Empty();
   }

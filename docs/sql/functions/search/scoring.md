@@ -226,18 +226,39 @@ The `^` operator multiplies a query clause's contribution to the score, so you c
 
 `raw_boost` exposes the applied factor directly. See [Relevance ranking → Boosting](../../indexes/inverted/ranking.md#boosting) for boosting across multiple columns.
 
+## Pattern and range matches {#patterns}
+
+[`ts_starts_with`](./full-text.md#ts_starts_with), [`ts_like`](./full-text.md#ts_like), [`ts_regexp`](./full-text.md#ts_regexp), [`ts_between`](./full-text.md#ts_between) and its one-sided forms match many terms. Such a match is an `OR` of the terms it matches that keeps the best of them, and it scores a constant: a matching row gets `1` times the match's [boost](#boosting) once, however many of its terms the pattern matches. Under `OR` and `AND` the match is one clause, so a row that matches two of them scores `2`. Here `dog` and `day` both start with `d`, and row 5 holds both:
+
+<SqlLogicTest id="sql/functions/full_text_search/pattern_constant_score" />
+
+To rank by the matched terms instead, put [`::score`](#score-modifier) on the match itself. Every matching term then scores with that scorer, and the row gets the best of them:
+
+<SqlLogicTest id="sql/functions/full_text_search/pattern_term_score" />
+
+[`::merge('sum')`](#merge) on the match adds its terms up instead, as an `OR` of those terms would. With a scorer, row 5 then scores both `dog` and `day`; with the constant, a row scores it once per matching term:
+
+<SqlLogicTest id="sql/functions/full_text_search/pattern_term_sum" />
+
+`::score` with a scorer that needs term statistics, put on a group, scores the group's other terms and leaves its pattern and range matches at their constant. `::score('constant(N)')` replaces the constant with `N`, on the match or on a group around it.
+
+[`ts_levenshtein`](./full-text.md#ts_levenshtein) is scored by default: each matched term scores with the `ORDER BY` scorer times its similarity to the query, and the row gets the best of them. `::score('constant(N)')` makes it score `N` once, without the similarity, and `::merge('sum')` adds its terms up.
+
+Matches on numeric, network address and geographic columns always score a constant once: `::score('constant(N)')` changes its value, while a scorer that needs term statistics and `::merge('sum')` are errors.
+
 ## Per-node score control {#per-node}
 
 Two modifiers change how a *part* of a query scores, while the rest of it stays on the `ORDER BY` scorer. Both are [`TSQUERY`](../../data_types/tsquery.md) modifiers, like [`::boost`](#boosting) and `::slop`, so they travel with the value: they apply to a parenthesized predicate, to a group built by [`ts_any`](./full-text.md#ts_any) or [`ts_all`](./full-text.md#ts_all), and to a bound parameter.
 
 ### `::merge(policy)` {#merge}
 
-Sets how a boolean node combines what its branches scored.
+Sets how a boolean node combines what its branches scored, or how a [pattern match](#patterns) combines the terms it matched.
 
 | Policy | Effect |
 | :--- | :--- |
-| `'sum'` · `'default'` | Add every matching branch's contribution. This is the behaviour without the modifier. |
-| `'max'` | Take the best matching branch and ignore the others. |
+| `'sum'` | Add every matching branch's contribution. This is the behaviour of a boolean node without the modifier. |
+| `'max'` | Take the best matching branch and ignore the others. This is the behaviour of a pattern match without the modifier. |
+| `'default'` | The node's own behaviour. |
 
 The name is read case-insensitively. Any other name is an error rather than a silent fallback.
 
@@ -261,7 +282,7 @@ Synonyms that the column's dictionary produces itself, with [`expand_solr_synony
 
 **It binds to its own node.** Nesting is therefore meaningful. With `((a OR b)::merge('max') OR c)` the inner group takes the best of `a` and `b` and the outer group still adds `c` on top. Move the modifier to the outer group and the best single branch of all three wins.
 
-**It requires a boolean group.** A leaf has no branches to combine, so `(body @@ 'fox')::merge('max')` is an error.
+**It requires a boolean group or a pattern match.** A [pattern match](#patterns) combines the terms it matches; a single term has nothing to combine, so `(body @@ 'fox')::merge('max')` is an error.
 
 `EXPLAIN` prints `Merge: max` on the node that carries the policy. Same-field branches fuse into one `Terms` node, which carries the policy of the `Or` it replaced.
 
@@ -317,7 +338,7 @@ CREATE INDEX docs_idx ON docs
     USING inverted (id, body scored_en);
 ```
 
-Pruning engages only when the `ORDER BY` scorer can use the score bounds stored for the `optimize_top_k` scorer and the filter is a single term, an `OR` of terms that any one term satisfies, an `AND` of terms or of such `OR`s (the latter when enough rows match), terms with `AND NOT` exclusions, one required term with optional scoring terms (`+fox quick`), or a phrase without slop. An `OR` prunes only when the scores of its terms add up: one that keeps the best score, such as a fuzzy match that expands to several terms or [`::merge('max')`](#merge), does not. Otherwise the query still runs correctly, just without the optimization. `EXPLAIN` shows `Top: k, optimized` on the scan when the scorer qualifies, whatever the filter. See [Relevance ranking → Top-K queries and WAND pruning](../../indexes/inverted/ranking.md#top-k-queries-and-wand-pruning) for the full conditions, including which scorers share score bounds.
+Pruning engages only when the `ORDER BY` scorer can use the score bounds stored for the `optimize_top_k` scorer and the filter is a single term, an `OR` of terms that any one term satisfies, an `AND` of terms or of such `OR`s (the latter when enough rows match), terms with `AND NOT` exclusions, one required term with optional scoring terms (`+fox quick`), or a phrase without slop. An `OR` prunes only when the scores of its terms add up: one that keeps the best score, such as a fuzzy match that expands to several terms, a [pattern match](#patterns) given a scorer, or [`::merge('max')`](#merge), does not. Otherwise the query still runs correctly, just without the optimization. `EXPLAIN` shows `Top: k, optimized` on the scan when the scorer qualifies, whatever the filter. See [Relevance ranking → Top-K queries and WAND pruning](../../indexes/inverted/ranking.md#top-k-queries-and-wand-pruning) for the full conditions, including which scorers share score bounds.
 
 ## Cross-engine notes {#cross-engine-notes}
 

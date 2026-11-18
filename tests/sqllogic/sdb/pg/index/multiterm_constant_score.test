@@ -1,0 +1,830 @@
+hash-threshold 100
+
+# A prefix, wildcard, regular-expression or range match is an OR of the terms
+# it matches that keeps the best of them, and scores a constant: a matching row
+# gets the match's constant (1 times its boost) once, however many of the
+# row's terms the pattern matches. Under OR and AND the match is one clause.
+# ::score(scorer) on the match scores its terms with that scorer and keeps the
+# best; ::merge('sum') adds them up. A fuzzy match scores its terms by
+# default. Matches on numeric columns always score a constant once.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY mcs_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm);
+
+
+statement ok
+CREATE TABLE mcs (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+CREATE INDEX mcs_idx ON mcs USING inverted(id, body mcs_en);
+
+
+# 'a' expands to apple (ids 1, 2, 3, 5), avocado (2, 3) and apricot (3).
+statement ok
+INSERT INTO mcs VALUES
+  (1, 'apple'),
+  (2, 'apple avocado'),
+  (3, 'apple apricot avocado'),
+  (4, 'banana'),
+  (5, 'banana apple'),
+  (6, 'cherry');
+
+
+# --- One constant per matching row, whatever number of terms it matches.
+
+query
+SELECT id, BM25(mcs_idx.tableoid) AS score FROM mcs_idx
+WHERE body @@ ts_starts_with('a') ORDER BY id;
+----
+id	score
+1	1
+2	1
+3	1
+5	1
+
+
+query
+SELECT id, BM25(mcs_idx.tableoid) AS score FROM mcs_idx
+WHERE body @@ ts_like('a%') ORDER BY id;
+----
+id	score
+1	1
+2	1
+3	1
+5	1
+
+
+query
+SELECT id, BM25(mcs_idx.tableoid) AS score FROM mcs_idx
+WHERE body @@ ts_regexp('a.*') ORDER BY id;
+----
+id	score
+1	1
+2	1
+3	1
+5	1
+
+
+query
+SELECT id, BM25(mcs_idx.tableoid) AS score FROM mcs_idx
+WHERE body @@ ts_lt('b') ORDER BY id;
+----
+id	score
+1	1
+2	1
+3	1
+5	1
+
+
+query
+SELECT id, BM25(mcs_idx.tableoid) AS score FROM mcs_idx
+WHERE body @@ ts_between('a', 'b', true, false) ORDER BY id;
+----
+id	score
+1	1
+2	1
+3	1
+5	1
+
+
+# The constant is the same under any ranking scorer.
+query
+SELECT id, TFIDF(mcs_idx.tableoid) AS score FROM mcs_idx
+WHERE body @@ ts_starts_with('a') ORDER BY id;
+----
+id	score
+1	1
+2	1
+3	1
+5	1
+
+
+# A boost scales the constant and ::score('constant(N)') replaces it.
+query
+SELECT id, BM25(mcs_idx.tableoid) AS score FROM mcs_idx
+WHERE body @@ (ts_like('a%') ^ 2.0) ORDER BY id;
+----
+id	score
+1	2
+2	2
+3	2
+5	2
+
+
+query
+SELECT id, BM25(mcs_idx.tableoid) AS score FROM mcs_idx
+WHERE body @@ ts_regexp('a.*')::score('constant(3)') ORDER BY id;
+----
+id	score
+1	3
+2	3
+3	3
+5	3
+
+
+query
+SELECT COUNT(*) AS hits FROM mcs_idx WHERE body @@ ts_starts_with('a');
+----
+hits
+4
+
+
+# ::merge('sum') gives the constant once per matching term; ::merge('max') is
+# the default.
+query
+SELECT id, BM25(mcs_idx.tableoid) AS score FROM mcs_idx
+WHERE body @@ ts_starts_with('a')::merge('sum') ORDER BY id;
+----
+id	score
+1	1
+2	2
+3	3
+5	1
+
+
+query
+SELECT id, BM25(mcs_idx.tableoid) AS score FROM mcs_idx
+WHERE body @@ ts_like('a%')::merge('max') ORDER BY id;
+----
+id	score
+1	1
+2	1
+3	1
+5	1
+
+
+query
+SELECT id, BM25(mcs_idx.tableoid) AS score FROM mcs_idx
+WHERE body @@ ts_regexp('a.*')::score('constant(3)')::merge('sum')
+ORDER BY id;
+----
+id	score
+1	3
+2	6
+3	9
+5	3
+
+
+query
+EXPLAIN SELECT id, BM25(mcs_idx.tableoid) FROM mcs_idx
+WHERE body @@ ts_starts_with('a')::merge('sum');
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────╮
+│ Index: mcs_idx                         │
+│ Lookup: search                         │
+│ Index Filter:                          │
+│ ╭─ Starts With ───────╮                │
+│ │ Field: body(string) │                │
+│ │ Prefix: a           │                │
+│ │ Merge: sum          │                │
+│ ╰─────────────────────╯                │
+│ Score: bm25(k1=1.2, b=0.75)            │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯
+
+
+# --- Under OR and AND a pattern is one clause.
+
+# A row matching both patterns scores 2, a row matching one of them 1.
+query
+SELECT id, BM25(mcs_idx.tableoid) AS score FROM mcs_idx
+WHERE body @@ (ts_like('ap%') || ts_regexp('av.*')) ORDER BY id;
+----
+id	score
+1	1
+2	2
+3	2
+5	1
+
+
+query
+SELECT id, BM25(mcs_idx.tableoid) AS score FROM mcs_idx
+WHERE body @@ (ts_starts_with('ap') || ts_starts_with('av')) ORDER BY id;
+----
+id	score
+1	1
+2	2
+3	2
+5	1
+
+
+query
+SELECT id, BM25(mcs_idx.tableoid) AS score FROM mcs_idx
+WHERE body @@ (ts_starts_with('ap') && ts_regexp('av.*')) ORDER BY id;
+----
+id	score
+2	2
+3	2
+
+
+# A term next to a pattern: the term's BM25 plus the pattern's constant.
+# banana has df 2 of N = 6 rows, idf = ln(1 + 4.5 / 2.5) = 1.0296194, and
+# avgdl = 10 / 6, so with k1 = 1.2, b = 0.75 a one-word row scores
+# idf / (1.2 * (0.25 + 0.75 * 0.6) + 1) = 0.5595758 and a two-word row
+# idf / (1.2 * (0.25 + 0.75 * 1.2) + 1) = 0.4326132.
+query
+SELECT id, BM25(mcs_idx.tableoid) AS score FROM mcs_idx
+WHERE body @@ ('banana'::tsquery || ts_starts_with('ap')) ORDER BY id;
+----
+id	score
+1	1
+2	1
+3	1
+4	0.5595758
+5	1.4326131
+
+
+query
+SELECT id, BM25(mcs_idx.tableoid) AS score FROM mcs_idx
+WHERE body @@ ('banana'::tsquery && ts_starts_with('ap')) ORDER BY id;
+----
+id	score
+5	1.4326131
+
+
+# apple has df 4, idf = ln(1 + 2.5 / 4.5) = 0.44183275, and row 3 has three
+# words: 0.44183275 / (1.2 * (0.25 + 0.75 * 1.8) + 1) + 1 = 1.1513126.
+query
+SELECT id, BM25(mcs_idx.tableoid) AS score FROM mcs_idx
+WHERE body @@ (ts_starts_with('apr') && 'apple'::tsquery) ORDER BY id;
+----
+id	score
+3	1.1513126
+
+
+query
+SELECT id, BM25(mcs_idx.tableoid) AS score FROM mcs_idx
+WHERE body @@ (ts_starts_with('a') && !!'avocado'::tsquery) ORDER BY id;
+----
+id	score
+1	1
+5	1
+
+
+# Under ::merge('max') a row takes its best clause.
+query
+SELECT id, BM25(mcs_idx.tableoid) AS score FROM mcs_idx
+WHERE body @@ ('banana'::tsquery || ts_starts_with('ap'))::merge('max')
+ORDER BY id;
+----
+id	score
+1	1
+2	1
+3	1
+4	0.5595758
+5	1
+
+
+# Two wildcards on one column stay two clauses when the score adds them up,
+# and become one when it takes the best of them or is not needed.
+query
+SELECT id, BM25(mcs_idx.tableoid) AS score FROM mcs_idx
+WHERE body @@ (ts_like('%ppl%') || ts_like('%voc%')) ORDER BY id;
+----
+id	score
+1	1
+2	2
+3	2
+5	1
+
+
+query
+SELECT id, BM25(mcs_idx.tableoid) AS score FROM mcs_idx
+WHERE body @@ (ts_like('%ppl%') || ts_like('%voc%'))::merge('max') ORDER BY id;
+----
+id	score
+1	1
+2	1
+3	1
+5	1
+
+
+query
+EXPLAIN SELECT id, BM25(mcs_idx.tableoid) FROM mcs_idx
+WHERE body @@ (ts_like('%ppl%') || ts_like('%voc%'));
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────────────╮
+│ Index: mcs_idx                                   │
+│ Lookup: search                                   │
+│ Index Filter:                                    │
+│ ╭─ Or ────────────────╮                          │
+│ ╰──────────┬──────────╯                          │
+│            ├────────────────────────╮            │
+│ ╭─ Automaton ─────────╮  ╭─ Automaton ─────────╮ │
+│ │ Field: body(string) │  │ Field: body(string) │ │
+│ │ Pattern: %ppl%      │  │ Pattern: %voc%      │ │
+│ ╰─────────────────────╯  ╰─────────────────────╯ │
+│ Score: bm25(k1=1.2, b=0.75)                      │
+│ Projections: id, sdb_inverted_index_score        │
+│ ~1 row                                           │
+╰──────────────────────────────────────────────────╯
+
+
+query
+EXPLAIN SELECT id, BM25(mcs_idx.tableoid) FROM mcs_idx
+WHERE body @@ (ts_like('%ppl%') || ts_like('%voc%'))::merge('max');
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────╮
+│ Index: mcs_idx                         │
+│ Lookup: search                         │
+│ Index Filter:                          │
+│ ╭─ Automaton ──────────╮               │
+│ │ Field: body(string)  │               │
+│ │ Pattern: %ppl%|%voc% │               │
+│ ╰──────────────────────╯               │
+│ Score: bm25(k1=1.2, b=0.75)            │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯
+
+
+query
+EXPLAIN SELECT id FROM mcs_idx
+WHERE body @@ (ts_like('%ppl%') || ts_like('%voc%'));
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: mcs_idx           │
+│ Lookup: search           │
+│ Index Filter:            │
+│ ╭─ Automaton ──────────╮ │
+│ │ Field: body(string)  │ │
+│ │ Pattern: %ppl%|%voc% │ │
+│ ╰──────────────────────╯ │
+│ Projections: id          │
+│ ~1 row                   │
+╰──────────────────────────╯
+
+
+# ::score(scorer) on a group scores the group's terms with it; a pattern in the
+# group keeps its constant unless the scorer is on the pattern itself. A
+# constant scorer on the group replaces the pattern's constant too.
+query
+SELECT id, BM25(mcs_idx.tableoid) AS score FROM mcs_idx
+WHERE body @@ ('banana'::tsquery || ts_starts_with('ap'))::score('bm25(1.2, 0.75)')
+ORDER BY id;
+----
+id	score
+1	1
+2	1
+3	1
+4	0.5595758
+5	1.4326131
+
+
+query
+SELECT id, BM25(mcs_idx.tableoid) AS score FROM mcs_idx
+WHERE body @@ ('banana'::tsquery || ts_starts_with('ap'))::score('constant(3)')
+ORDER BY id;
+----
+id	score
+1	3
+2	3
+3	3
+4	3
+5	6
+
+
+# --- ::score(scorer) scores the matching terms and keeps the best of them;
+# ::merge('sum') adds them up. Each kind of pattern expands 'a' to the same
+# terms, so all four score alike. With N = 6 and avgdl = 10 / 6, a term in a
+# row of dl words scores idf / (1.2 * (0.25 + 0.75 * dl / avgdl) + 1), with idf
+# ln(1 + 2.5 / 4.5) for apple, ln(2.8) for avocado and ln(1 + 5.5 / 1.5) for
+# apricot: row 3 is best at apricot, 1.5404450 / 2.92 = 0.5275496, row 2 at
+# avocado, 1.0296194 / 2.38 = 0.4326132.
+
+query
+SELECT id, BM25(mcs_idx.tableoid) AS score FROM mcs_idx
+WHERE body @@ ts_starts_with('a')::score('bm25(1.2, 0.75)')
+ORDER BY score DESC, id;
+----
+id	score
+3	0.5275496
+2	0.4326132
+1	0.24012649
+5	0.185644
+
+
+query
+SELECT id, BM25(mcs_idx.tableoid) AS score FROM mcs_idx
+WHERE body @@ ts_like('a%')::score('bm25(1.2, 0.75)')
+ORDER BY score DESC, id;
+----
+id	score
+3	0.5275496
+2	0.4326132
+1	0.24012649
+5	0.185644
+
+
+query
+SELECT id, BM25(mcs_idx.tableoid) AS score FROM mcs_idx
+WHERE body @@ ts_regexp('a.*')::score('bm25(1.2, 0.75)')
+ORDER BY score DESC, id;
+----
+id	score
+3	0.5275496
+2	0.4326132
+1	0.24012649
+5	0.185644
+
+
+query
+SELECT id, BM25(mcs_idx.tableoid) AS score FROM mcs_idx
+WHERE body @@ ts_lt('b')::score('bm25(1.2, 0.75)')
+ORDER BY score DESC, id;
+----
+id	score
+3	0.5275496
+2	0.4326132
+1	0.24012649
+5	0.185644
+
+
+query
+SELECT id, BM25(mcs_idx.tableoid) AS score FROM mcs_idx
+WHERE body @@ ts_starts_with('a')::score('bm25(1.2, 0.75)')::merge('sum')
+ORDER BY score DESC, id;
+----
+id	score
+3	1.0314716
+2	0.61825716
+1	0.24012649
+5	0.185644
+
+
+query
+SELECT id, BM25(mcs_idx.tableoid) AS score FROM mcs_idx
+WHERE body @@ ts_lt('b')::score('bm25(1.2, 0.75)')::merge('sum')
+ORDER BY score DESC, id;
+----
+id	score
+3	1.0314716
+2	0.61825716
+1	0.24012649
+5	0.185644
+
+
+# Two scored patterns under OR: each keeps its best term and the OR adds the two
+# up, so row 3 scores apricot plus avocado, 0.5275496 + 0.3526094.
+query
+SELECT id, BM25(mcs_idx.tableoid) AS score FROM mcs_idx
+WHERE body @@ (ts_starts_with('ap')::score('bm25(1.2, 0.75)') ||
+               ts_starts_with('av')::score('bm25(1.2, 0.75)'))
+ORDER BY score DESC, id;
+----
+id	score
+3	0.880159
+2	0.61825716
+1	0.24012649
+5	0.185644
+
+
+# Adding up their terms instead, they score as an OR of those terms does.
+query
+SELECT id, BM25(mcs_idx.tableoid) AS score FROM mcs_idx
+WHERE body @@ (ts_starts_with('ap')::score('bm25(1.2, 0.75)')::merge('sum') ||
+               ts_starts_with('av')::score('bm25(1.2, 0.75)')::merge('sum'))
+ORDER BY score DESC, id;
+----
+id	score
+3	1.0314716
+2	0.61825716
+1	0.24012649
+5	0.185644
+
+
+# --- A second segment keeps one constant per row.
+
+statement ok
+INSERT INTO mcs VALUES (7, 'avocado apricot'), (8, 'cherry');
+
+
+query
+SELECT id, BM25(mcs_idx.tableoid) AS score FROM mcs_idx
+WHERE body @@ ts_starts_with('a') ORDER BY id;
+----
+id	score
+1	1
+2	1
+3	1
+5	1
+7	1
+
+
+query
+SELECT id, BM25(mcs_idx.tableoid) AS score FROM mcs_idx
+WHERE body @@ (ts_like('ap%') || ts_regexp('av.*')) ORDER BY id;
+----
+id	score
+1	1
+2	2
+3	2
+5	1
+7	2
+
+
+# --- Top-k returns the same scores, with and without pruning.
+
+statement ok
+CREATE TABLE mcs_top (id INTEGER PRIMARY KEY, body VARCHAR)
+  WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+
+
+statement ok
+CREATE INDEX mcs_top_idx ON mcs_top USING inverted(id, body mcs_en);
+
+
+statement ok
+INSERT INTO mcs_top SELECT id, body FROM mcs;
+
+
+query
+SELECT COUNT(*) AS hits, MIN(score) AS lo, MAX(score) AS hi FROM (
+  SELECT BM25(mcs_top_idx.tableoid) AS score FROM mcs_top_idx
+  WHERE body @@ ts_starts_with('a')
+  ORDER BY BM25(mcs_top_idx.tableoid) DESC LIMIT 3) t;
+----
+hits	lo	hi
+3	1	1
+
+
+query
+SELECT COUNT(*) AS hits, MIN(score) AS lo, MAX(score) AS hi FROM (
+  SELECT BM25(mcs_idx.tableoid) AS score FROM mcs_idx
+  WHERE body @@ ts_starts_with('a')
+  ORDER BY BM25(mcs_idx.tableoid) DESC LIMIT 3) t;
+----
+hits	lo	hi
+3	1	1
+
+
+query
+SELECT id, BM25(mcs_top_idx.tableoid) AS score FROM mcs_top_idx
+WHERE body @@ ('banana'::tsquery || ts_starts_with('ap'))
+ORDER BY BM25(mcs_top_idx.tableoid) DESC LIMIT 1;
+----
+id	score
+5	1.5320172
+
+
+# Pruned top-k of a term and a pattern returns the best rows of the full
+# result: common and apple in two words. common has df 1500 of 3000 rows,
+# idf = ln(2), and avgdl = 11 / 6, so those rows score
+# ln(2) / (1.2 * (0.25 + 0.75 * 2 / (11 / 6)) + 1) + 1 = 1.3037697 and the
+# three-word rows ln(2) / (1.2 * (0.25 + 0.75 * 3 / (11 / 6)) + 1) + 1 =
+# 1.2499875.
+statement ok
+CREATE TABLE mcs_big (id INTEGER PRIMARY KEY, body VARCHAR)
+  WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+
+
+statement ok
+CREATE INDEX mcs_big_idx ON mcs_big USING inverted(id, body mcs_en);
+
+
+statement ok
+INSERT INTO mcs_big
+SELECT i, CASE WHEN i % 2 = 0 THEN 'common ' ELSE '' END ||
+          CASE i % 3 WHEN 0 THEN 'apple apricot' WHEN 1 THEN 'apple'
+                     ELSE 'banana' END
+FROM generate_series(1, 3000) AS s(i);
+
+
+query
+SELECT COUNT(*) AS hits, MIN(score) AS lo, MAX(score) AS hi FROM (
+  SELECT BM25(mcs_big_idx.tableoid) AS score FROM mcs_big_idx
+  WHERE body @@ ('common'::tsquery && ts_starts_with('ap'))
+  ORDER BY BM25(mcs_big_idx.tableoid) DESC LIMIT 5) t;
+----
+hits	lo	hi
+5	1.3037697	1.3037697
+
+
+query
+SELECT COUNT(*) AS hits, MIN(score) AS lo, MAX(score) AS hi FROM (
+  SELECT BM25(mcs_big_idx.tableoid) AS score FROM mcs_big_idx
+  WHERE body @@ ('common'::tsquery && ts_starts_with('ap'))) t;
+----
+hits	lo	hi
+1000	1.2499875	1.3037697
+
+
+# A pattern scored per term on a column without frequencies: each of its terms
+# scores one value of its own, and pruned top-k ranks rows by their best or by
+# their sum as the full result does: the best rows hold common and apricot, the
+# rarer term.
+statement ok
+CREATE TEXT SEARCH DICTIONARY mcs_plain AS split_text();
+
+
+statement ok
+CREATE TABLE mcs_tags (id INTEGER PRIMARY KEY, body VARCHAR, tag VARCHAR)
+  WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+
+
+statement ok
+CREATE INDEX mcs_tags_idx ON mcs_tags
+  USING inverted(id, body mcs_en, tag mcs_plain);
+
+
+statement ok
+INSERT INTO mcs_tags
+SELECT i, CASE WHEN i % 2 = 0 THEN 'common' ELSE 'rare' END,
+          CASE i % 3 WHEN 0 THEN 'apple apricot' WHEN 1 THEN 'apple'
+                     ELSE 'banana' END
+FROM generate_series(1, 3000) AS s(i);
+
+
+query
+SELECT COUNT(*) AS hits, MIN(score) AS lo, MAX(score) AS hi FROM (
+  SELECT BM25(mcs_tags_idx.tableoid) AS score FROM mcs_tags_idx
+  WHERE body @@ 'common'::tsquery
+    AND tag @@ ts_starts_with('ap')::score('bm25(1.2, 0.75)')
+  ORDER BY BM25(mcs_tags_idx.tableoid) DESC LIMIT 5) t;
+----
+hits	lo	hi
+5	0.8712419	0.8712419
+
+
+query
+SELECT COUNT(*) AS hits, MIN(score) AS lo, MAX(score) AS hi FROM (
+  SELECT BM25(mcs_tags_idx.tableoid) AS score FROM mcs_tags_idx
+  WHERE body @@ 'common'::tsquery
+    AND tag @@ ts_starts_with('ap')::score('bm25(1.2, 0.75)')) t;
+----
+hits	lo	hi
+1000	0.52040786	0.8712419
+
+
+query
+SELECT COUNT(*) AS hits, MIN(score) AS lo, MAX(score) AS hi FROM (
+  SELECT BM25(mcs_tags_idx.tableoid) AS score FROM mcs_tags_idx
+  WHERE body @@ 'common'::tsquery
+    AND tag @@ ts_starts_with('ap')::score('bm25(1.2, 0.75)')::merge('sum')
+  ORDER BY BM25(mcs_tags_idx.tableoid) DESC LIMIT 5) t;
+----
+hits	lo	hi
+5	1.0765829	1.0765829
+
+
+query
+SELECT COUNT(*) AS hits, MIN(score) AS lo, MAX(score) AS hi FROM (
+  SELECT BM25(mcs_tags_idx.tableoid) AS score FROM mcs_tags_idx
+  WHERE body @@ 'common'::tsquery
+    AND tag @@ ts_starts_with('ap')::score('bm25(1.2, 0.75)')::merge('sum')) t;
+----
+hits	lo	hi
+1000	0.52040786	1.0765829
+
+
+# A fuzzy match given a constant score weighs the same for every row, however
+# close its words are: apple is one edit from aple and apples two.
+statement ok
+CREATE TABLE mcs_fuzzy (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+CREATE INDEX mcs_fuzzy_idx ON mcs_fuzzy USING inverted(id, body mcs_en);
+
+
+statement ok
+INSERT INTO mcs_fuzzy VALUES
+  (1, 'apple'), (2, 'apples'), (3, 'apple apples'), (4, 'banana');
+
+
+query
+SELECT id, BM25(mcs_fuzzy_idx.tableoid) AS score FROM mcs_fuzzy_idx
+WHERE body @@ ts_levenshtein('aple', 2)::score('constant(1)') ORDER BY id;
+----
+id	score
+1	1
+2	1
+3	1
+
+
+query
+SELECT id, BM25(mcs_fuzzy_idx.tableoid) AS score FROM mcs_fuzzy_idx
+WHERE body @@ ('banana'::tsquery ||
+               ts_levenshtein('aple', 2)::score('constant(1)'))
+ORDER BY id;
+----
+id	score
+1	1
+2	1
+3	1
+4	0.5960261
+
+
+# Scored by BM25, a fuzzy match takes its best word scaled by its similarity,
+# alone and under OR alike.
+query
+SELECT id, BM25(mcs_fuzzy_idx.tableoid) AS score FROM mcs_fuzzy_idx
+WHERE body @@ ts_levenshtein('aple', 2) ORDER BY id;
+----
+id	score
+1	0.25735664
+2	0.17157109
+3	0.18973008
+
+
+query
+SELECT id, BM25(mcs_fuzzy_idx.tableoid) AS score FROM mcs_fuzzy_idx
+WHERE body @@ ('banana'::tsquery || ts_levenshtein('aple', 2)) ORDER BY id;
+----
+id	score
+1	0.25735664
+2	0.17157109
+3	0.18973008
+4	0.5960261
+
+
+# ::merge('sum') adds its scaled words up: row 3 holds both apple and apples.
+query
+SELECT id, BM25(mcs_fuzzy_idx.tableoid) AS score FROM mcs_fuzzy_idx
+WHERE body @@ ts_levenshtein('aple', 2)::merge('sum') ORDER BY id;
+----
+id	score
+1	0.25735664
+2	0.17157109
+3	0.31621677
+
+
+query
+SELECT id, BM25(mcs_fuzzy_idx.tableoid) AS score FROM mcs_fuzzy_idx
+WHERE body @@ ts_levenshtein('aple', 2)::score('constant(1)')::merge('sum')
+ORDER BY id;
+----
+id	score
+1	1
+2	1
+3	2
+
+
+# --- Numeric ranges always score a constant, once per row however many of
+# its values fall in the range.
+
+statement ok
+CREATE TABLE mcs_nums (id INTEGER PRIMARY KEY, nums INTEGER[]);
+
+
+statement ok
+INSERT INTO mcs_nums VALUES (1, [5, 50]), (2, [5]), (3, [500]);
+
+
+statement ok
+CREATE INDEX mcs_nums_idx ON mcs_nums USING inverted(id, nums);
+
+
+query
+SELECT id, BM25(mcs_nums_idx.tableoid) AS score FROM mcs_nums_idx
+WHERE nums @@ ts_between(1, 100, true, true) ORDER BY id;
+----
+id	score
+1	1
+2	1
+
+
+query
+SELECT id, BM25(mcs_nums_idx.tableoid) AS score FROM mcs_nums_idx
+WHERE nums @@ ts_between(1, 100, true, true)::score('constant(2)') ORDER BY id;
+----
+id	score
+1	2
+2	2
+
+
+statement error
+SELECT id FROM mcs_nums_idx
+WHERE nums @@ ts_between(1, 100, true, true)::score('bm25(1.2, 0.75)');
+----
+db error: ERROR: ::score('bm25(k1=1.2, b=0.75)') cannot apply to a match that carries no term statistics
+HINT: Such a match weighs the same for every document. Use ::score('constant(N)') or ::boost(N) here, or put the scorer on an AND / OR group that also matches an analyzed column.
+
+
+# Such a match keeps the best of its terms, so ::merge('max') changes nothing
+# and ::merge('sum') is an error.
+query
+SELECT id, BM25(mcs_nums_idx.tableoid) AS score FROM mcs_nums_idx
+WHERE nums @@ ts_between(1, 100, true, true)::merge('max') ORDER BY id;
+----
+id	score
+1	1
+2	1
+
+
+statement error
+SELECT id FROM mcs_nums_idx
+WHERE nums @@ ts_between(1, 100, true, true)::merge('sum');
+----
+db error: ERROR: ::merge('sum') cannot apply to a match that always scores a constant
+HINT: Such a match scores its constant once per row, however many of its terms the row holds.

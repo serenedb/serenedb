@@ -33,6 +33,8 @@
 #include "iresearch/search/queries/phrase_query.hpp"
 #include "iresearch/search/queries/term_query.hpp"
 #include "iresearch/search/queries/token_phrase_query.hpp"
+#include "iresearch/search/scorers/all_docs_score.hpp"
+#include "iresearch/search/scorers/constant_score.hpp"
 #include "iresearch/search/top/empty.hpp"
 #include "iresearch/search/top/family.hpp"
 
@@ -232,12 +234,17 @@ Root::ptr Family::Make(const TermQuery& query, const Context& ctx) {
 }
 
 Root::ptr Family::Make(const MultiTermQuery& query, const Context& ctx) {
+  const auto& state = query.State();
+  const auto* const scorer = query.Stats(ScoredOf(ctx)).scorer;
+  const std::span<const MultiTermState::Entry> terms{state.Terms()};
+  if (ctx.prune && terms.size() > 1 &&
+      query.MergeType() == ScoreMergeType::Max && IsConstantScore(scorer)) {
+    return irs::detail::PlanConstant<Family>(
+      query, irs::detail::AllDocsScoreOf(query, ScoredOf(ctx)), ctx);
+  }
   if (PruneByBounds(ctx)) {
-    const auto& state = query.State();
     const auto* const field = state.Reader();
-    const auto* const scorer = query.Stats(ScoredOf(ctx)).scorer;
     const auto boost = query.Boost();
-    const std::span<const MultiTermState::Entry> terms{state.Terms()};
     if (terms.size() == 1) {
       const auto posting =
         irs::detail::ClauseOf(terms.front(), field, scorer, boost);

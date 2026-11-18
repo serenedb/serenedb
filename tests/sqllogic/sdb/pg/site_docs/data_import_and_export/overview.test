@@ -269,3 +269,67 @@ FROM (
 x	filename
 42	test.parquet
 43	test.parquet
+
+# DOCS_TEST: example_014
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_overview_example_014_1_test_arrow.arrow' (FORMAT arrow);
+
+# DOCS_TEST_RAW
+#| SELECT *
+#| FROM 'test.arrow'
+#| ORDER BY id;
+
+# DOCS_TEST_BODY
+
+query
+SELECT *
+FROM '${__TEST_DIR__}/data_import_and_export_overview_example_014_1_test_arrow.arrow'
+ORDER BY id;
+----
+id	name	value
+1	alpha	10
+2	beta	20
+
+# DOCS_TEST: example_015
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_overview_example_015_1_test_arrows.arrows' (FORMAT arrows);
+
+# DOCS_TEST_RAW
+#| SELECT *
+#| FROM read_arrow('test.arrows')
+#| ORDER BY id;
+
+# DOCS_TEST_BODY
+
+query
+SELECT *
+FROM read_arrow('${__TEST_DIR__}/data_import_and_export_overview_example_015_1_test_arrows.arrows')
+ORDER BY id;
+----
+id	name	value
+1	alpha	10
+2	beta	20
+
+# DOCS_TEST: example_016
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (8, 'fixture', 1.5, 2.5, 'delta', 4, 13, 23, 33, 30, 400, 4000),
+    (9, 'sample', 3.5, 4.5, 'epsilon', 5, 14, 24, 34, 40, 500, 5000)
+) AS t("id", "name", "col1", "col2", "Some Column Name", "i", "a", "b", "c", "number", "number1", "number2")) TO '${__TEST_DIR__}/data_import_and_export_overview_example_016_1_test_arrow.arrow' (FORMAT arrow);
+
+# DOCS_TEST_RAW
+#| COPY tbl FROM 'test.arrow';
+
+# DOCS_TEST_BODY
+
+statement ok
+COPY tbl FROM '${__TEST_DIR__}/data_import_and_export_overview_example_016_1_test_arrow.arrow';

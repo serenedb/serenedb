@@ -34,7 +34,8 @@ namespace {
 
 irs::QueryBuilder::ptr PrepareSegmentQuery(const ScanGlobalState& g,
                                            uint32_t seg_idx,
-                                           const irs::PrepareContext& ctx) {
+                                           irs::PrepareContext ctx) {
+  ctx.prefetch = g.shape == ScanShape::Count;
   const auto& segment = (*g.reader)[seg_idx];
   if (g.vector_scorer != nullptr) {
     return g.filter->PrepareSegment(segment, ctx);
@@ -49,9 +50,8 @@ irs::QueryBuilder::ptr PrepareSegmentQuery(const ScanGlobalState& g,
 }  // namespace
 
 void PrepareSegmentNow(ScanGlobalState& g, uint32_t seg_idx) {
-  g.queries[seg_idx] = PrepareSegmentQuery(
-    g, seg_idx,
-    {.needs_terms = g.needs_terms, .prefetch = g.shape == ScanShape::Count});
+  g.queries[seg_idx] =
+    PrepareSegmentQuery(g, seg_idx, {.needs_terms = g.needs_terms});
   g.Segment(seg_idx).prepare.store(SegmentWork::kReady,
                                    std::memory_order_relaxed);
 }

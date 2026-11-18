@@ -468,7 +468,7 @@ COPY measurements FROM '${__TEST_DIR__}/data_import_and_export_json_loading_json
 statement error
 COPY measurements FROM '${__TEST_DIR__}/data_import_and_export_json_loading_json_example_019_1_lenient_json.json' (FORMAT json, STRICT true);
 ----
-db error: ERROR: Malformed JSON in file "<slt:ignore>", at byte 7 in line 1: unexpected character.
+db error: ERROR: Malformed JSON in file "<slt:ignore>", at byte 7 in record/value 1: unexpected character.
 
 
 # DOCS_TEST: example_020

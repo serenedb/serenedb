@@ -342,6 +342,63 @@ void WidenAdd(const uint8_t* in, size_t n, uint8_t stored, U base,
     stored, [&]<typename S> { WidenAddAs<U, S>(in, n, base, out); });
 }
 
+template<typename U, typename S>
+void PutWidened(U8x16 items, U base, U* out) noexcept {
+  using Stored = S __attribute__((vector_size(16)));
+  using Wide = U __attribute__((vector_size(16 / sizeof(S) * sizeof(U))));
+  const Wide wide =
+    __builtin_convertvector(std::bit_cast<Stored>(items), Wide) + base;
+  std::memcpy(out, &wide, sizeof(wide));
+}
+
+template<typename U>
+size_t UnshuffleWidenAdd2(const uint8_t* in, size_t n, U base,
+                          U* out) noexcept {
+  size_t i = 0;
+  for (; i + 16 <= n; i += 16) {
+    const auto a = Lane(in, n, 0, i);
+    const auto b = Lane(in, n, 1, i);
+    PutWidened<U, uint16_t>(Bytes8Lo(a, b), base, out + i);
+    PutWidened<U, uint16_t>(Bytes8Hi(a, b), base, out + i + 8);
+  }
+  return i;
+}
+
+template<typename U>
+size_t UnshuffleWidenAdd4(const uint8_t* in, size_t n, U base,
+                          U* out) noexcept {
+  size_t i = 0;
+  for (; i + 16 <= n; i += 16) {
+    const auto ab_lo = Bytes8Lo(Lane(in, n, 0, i), Lane(in, n, 1, i));
+    const auto ab_hi = Bytes8Hi(Lane(in, n, 0, i), Lane(in, n, 1, i));
+    const auto cd_lo = Bytes8Lo(Lane(in, n, 2, i), Lane(in, n, 3, i));
+    const auto cd_hi = Bytes8Hi(Lane(in, n, 2, i), Lane(in, n, 3, i));
+    PutWidened<U, uint32_t>(Bytes16Lo(ab_lo, cd_lo), base, out + i);
+    PutWidened<U, uint32_t>(Bytes16Hi(ab_lo, cd_lo), base, out + i + 4);
+    PutWidened<U, uint32_t>(Bytes16Lo(ab_hi, cd_hi), base, out + i + 8);
+    PutWidened<U, uint32_t>(Bytes16Hi(ab_hi, cd_hi), base, out + i + 12);
+  }
+  return i;
+}
+
+template<typename U>
+void UnshuffleWidenAdd(const uint8_t* in, size_t n, uint8_t stored, U base,
+                       U* out) noexcept {
+  SDB_ASSERT(stored < sizeof(U));
+  size_t done = 0;
+  if constexpr (sizeof(U) > 2) {
+    if (stored == 2) {
+      done = UnshuffleWidenAdd2(in, n, base, out);
+    } else if (stored == 4) {
+      done = UnshuffleWidenAdd4(in, n, base, out);
+    }
+  }
+  for (size_t i = done; i < n; ++i) {
+    out[i] =
+      static_cast<U>(static_cast<U>(ShuffledItem(in, n, stored, i)) + base);
+  }
+}
+
 #ifdef __AVX2__
 template<typename S>
 __m256i WidenLanes(const uint8_t* in) noexcept {

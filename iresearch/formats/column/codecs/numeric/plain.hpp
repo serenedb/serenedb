@@ -321,7 +321,9 @@ class PlainReader final : public FrameReader<T> {
       return;
     }
     if (this->Shuffled()) {
-      src = this->Unshuffled(src, rows);
+      numeric::UnshuffleWidenAdd(src, rows, this->_f.stored,
+                                 static_cast<U>(_own.base), out);
+      return;
     }
     numeric::WidenAdd(src, rows, this->_f.stored, static_cast<U>(_own.base),
                       out);

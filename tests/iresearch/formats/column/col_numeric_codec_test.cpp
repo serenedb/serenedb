@@ -710,6 +710,33 @@ TEST_F(ColNumericCodecTest, ClusteredValuesPackTheirDeltas) {
   }
 }
 
+TEST_F(ColNumericCodecTest, BlocksOfEqualStepsReadBack) {
+  constexpr uint64_t kRows = 100000;
+  const Gen steps = [](uint64_t g) -> std::optional<int64_t> {
+    return static_cast<int64_t>(g * 977 + g / 5000 * 1'000'000);
+  };
+  const Gen scaled = [](uint64_t g) -> std::optional<int64_t> {
+    return static_cast<int64_t>((g * 3 + g / 5000 * 1000) * 64);
+  };
+  const Gen sequence = [](uint64_t g) -> std::optional<int64_t> {
+    return static_cast<int64_t>(g);
+  };
+  for (const auto& gen : {steps, scaled, sequence}) {
+    for (const auto& type :
+         {duckdb::LogicalType::BIGINT, duckdb::LogicalType::INTEGER,
+          duckdb::LogicalType::UBIGINT}) {
+      SCOPED_TRACE(duckdb::LogicalType{type}.ToString());
+      irs::MemoryDirectory dir{};
+      Write(dir, type, {.tier = irs::WriteTier::Flush}, kRows, 16384, gen,
+            irs::codecs::CodecType::DeltaFfor);
+      Verify(dir, type, kRows, gen);
+      for (const auto& transform : Transforms(dir)) {
+        EXPECT_EQ(transform, "delta_ffor/none");
+      }
+    }
+  }
+}
+
 TEST_F(ColNumericCodecTest, PacksRunsAndCodesBelowByteWidths) {
   constexpr uint64_t kRows = 120000;
   struct Case {

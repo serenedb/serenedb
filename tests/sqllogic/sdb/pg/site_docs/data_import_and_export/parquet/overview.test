@@ -950,4 +950,10 @@ CREATE TABLE macs (id INTEGER, mac MACADDR);
 statement error
 COPY macs FROM '${__TEST_DIR__}/data_import_and_export_parquet_overview_bad.parquet';
 ----
-db error: ERROR: invalid input syntax for type macaddr: "not a mac"
+db error: ERROR: Error while reading file "<slt:ignore>": failed to cast column "mac" from type VARCHAR to macaddr: invalid input syntax for type macaddr: "not a mac"
+
+In file "<slt:ignore>" the column "mac" has type VARCHAR, but we are trying to load it into column "mac" with type macaddr.
+This means the Parquet schema does not match the schema of the table.
+Possible solutions:
+* Insert by name instead of by position using "INSERT INTO tbl BY NAME SELECT * FROM read_parquet(...)"
+* Manually specify which columns to insert using "INSERT INTO tbl SELECT ... FROM read_parquet(...)"

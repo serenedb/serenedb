@@ -177,3 +177,33 @@ SELECT l FROM cpar_lines WHERE l IN ('1', 'two') ORDER BY l;
 l
 1
 two
+
+
+statement count 1500000
+COPY (SELECT CASE WHEN i = 1180000 THEN 'x1' WHEN i = 1190000 THEN 'x2' ELSE i::TEXT END AS v FROM generate_series(1, 1500000) g(i))
+TO '${__TEST_DIR__}/cpar_two_errors.csv' (FORMAT csv);
+
+
+statement ok
+CREATE TABLE cpar_ints (v INTEGER);
+
+
+statement ok
+SET SESSION debug_physical_table_scan_execution_strategy = 'SYNCHRONOUS';
+
+
+statement error
+COPY cpar_ints FROM '${__TEST_DIR__}/cpar_two_errors.csv' (FORMAT csv);
+----
+db error: ERROR: invalid input syntax for type integer: "x1"
+
+
+statement ok
+SET SESSION debug_physical_table_scan_execution_strategy = 'DEFAULT';
+
+
+query
+SELECT count(*) AS n FROM cpar_ints;
+----
+n
+0

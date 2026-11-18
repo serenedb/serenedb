@@ -3,11 +3,18 @@ from sqllogic_gen import Test
 CAUSES = {
     "typmod": "Type modifiers are dropped or rejected",
     "numeric": "A bare numeric is DECIMAL(18,3)",
+    "text_search": "SereneDB's full-text search has no tsvector, tsquery or text search configurations",
 }
 
 FORMATS = ["text", "csv", "binary"]
 
-ALL = {f"{fmt} {what}" for fmt in FORMATS for what in ("bytes", "values")}
+CSV_VARIANTS = {
+    "quoted": ("FORCE_QUOTE *", ""),
+    "scanned": ("DELIMITER '.'", ", DELIMITER '.'"),
+}
+
+ALL = {f"{fmt} {what}" for fmt in [*FORMATS, *(f"csv {variant}" for variant in CSV_VARIANTS)]
+       for what in ("bytes", "values")}
 
 TEXTS = ["'a,b'", "'a\"b'", "'a\\b'", "''", "'NULL'", "'\\N'", "E'a\\tb'", "'\\.'"]
 
@@ -67,16 +74,36 @@ TYPES = [
     ("xml", ["'<a>1</a>'", "'<b x=\"1,2\"/>'"]),
     ("cfm_mood", ["'sad'", "'happy'"]),
     ("cfm_pair", ["ROW(1, 'a b')", "ROW(NULL, 'x,y')"]),
+    ("oidvector", ["'1 2'", "'3'"]),
+    ("int2vector", ["'3 4'", "'5'"]),
+    ("tsquery", ["'a & b'", "'c'"], {"text_search": ALL}),
+    ("regclass", ["'pg_class'", "0"]),
+    ("regtype", ["'int4'", "0"]),
+    ("regproc", ["'now'", "0"]),
+    ("regprocedure", ["'now()'", "0"]),
+    ("regnamespace", ["'public'", "0"]),
+    ("regrole", ["'postgres'", "0"]),
+    ("regcollation", ["'\"C\"'", "0"]),
+    ("regconfig", ["0"]),
+    ("regdictionary", ["0"]),
+    ("regoper", ["0"]),
+    ("regoperator", ["0"]),
 ]
 
 t = Test("Every type goes through COPY TO and COPY FROM a file in text, csv and binary: the text "
          "and csv bytes each format writes, and the values each format reads back, of a column "
-         "of the type and of an array of it, every answer recorded from PostgreSQL. A difference "
-         "SereneDB keeps is a pair of queries, each engine's answer recorded from it, with its "
-         "cause in CAUSES.")
+         "of the type and of an array of it; csv also with FORCE_QUOTE and with a delimiter that "
+         "may occur inside a value, each with a two-dimensional array as well. Every answer is "
+         "recorded from PostgreSQL. A difference SereneDB keeps is a pair of queries, each "
+         "engine's answer recorded from it, with its cause in CAUSES.")
 
 
-TEXT_ONLY = {"jsonb"}
+TEXT_ONLY = {"jsonb", "tsquery", "regclass", "regtype", "regproc", "regprocedure", "regnamespace",
+             "regrole", "regcollation", "regconfig", "regdictionary", "regoper", "regoperator"}
+
+
+def cause_of(causes, key):
+    return next((cause for cause, of in causes.items() if key in of), None)
 
 
 def check(sql, cause=None, binary=True):
@@ -97,6 +124,14 @@ t.statement("SET TimeZone = 'UTC'")
 t.statement("CREATE TYPE cfm_mood AS ENUM ('sad', 'ok', 'happy')")
 t.statement("CREATE TYPE cfm_pair AS (x int, y text)")
 t.statement("CREATE TABLE cfm_lines (l text)")
+t.statement("CREATE TABLE cfm_csv_lines (l text)")
+
+
+def csv_lines(path, cause=None):
+    t.statement("TRUNCATE cfm_csv_lines")
+    t.statement(f"COPY cfm_csv_lines FROM '{path}' (FORMAT csv, DELIMITER E'\\x01', QUOTE E'\\x02')")
+    check("SELECT l FROM cfm_csv_lines ORDER BY l", cause)
+
 
 for k, (name, values, *rest) in enumerate(TYPES):
     causes = rest[0] if rest else {}
@@ -113,13 +148,50 @@ for k, (name, values, *rest) in enumerate(TYPES):
         if fmt != "binary":
             t.statement("TRUNCATE cfm_lines")
             t.statement(f"COPY cfm_lines FROM '{path}' (FORMAT csv, DELIMITER E'\\x01', QUOTE E'\\x02')")
-            check("SELECT l FROM cfm_lines ORDER BY l",
-                  next((cause for cause, of in causes.items() if f"{fmt} bytes" in of), None))
+            check("SELECT l FROM cfm_lines ORDER BY l", cause_of(causes, f"{fmt} bytes"))
         t.statement(f"CREATE TABLE {table}_{fmt} (id int, v {name}, a {name}[])")
         t.statement(f"COPY {table}_{fmt} FROM '{path}' (FORMAT {fmt})")
-        check(f"SELECT id, v, a FROM {table}_{fmt} ORDER BY id",
-              next((cause for cause, of in causes.items() if f"{fmt} values" in of), None),
+        check(f"SELECT id, v, a FROM {table}_{fmt} ORDER BY id", cause_of(causes, f"{fmt} values"),
               name not in TEXT_ONLY)
+    matrix = f"SELECT id, v, a, ARRAY[ARRAY[v, NULL], ARRAY[NULL, v]] AS m FROM {table}"
+    for variant, (to_options, from_options) in CSV_VARIANTS.items():
+        path = f"${{__TEST_DIR__}}/{table}_{variant}.csv"
+        t.statement(f"COPY ({matrix}) TO '{path}' (FORMAT csv, {to_options})")
+        csv_lines(path, cause_of(causes, f"csv {variant} bytes"))
+        t.statement(f"CREATE TABLE {table}_{variant} (id int, v {name}, a {name}[], m {name}[][])")
+        t.statement(f"COPY {table}_{variant} FROM '{path}' (FORMAT csv{from_options})")
+        check(f"SELECT id, v, a, m FROM {table}_{variant} ORDER BY id",
+              cause_of(causes, f"csv {variant} values"), name not in TEXT_ONLY)
+
+CSV_FRAMINGS = {"plain": ""} | {variant: f", {to_options}"
+                                for variant, (to_options, _) in CSV_VARIANTS.items()}
+
+
+def csv_framings(name, query):
+    for variant, options in CSV_FRAMINGS.items():
+        path = f"${{__TEST_DIR__}}/cfm_{name}_{variant}.csv"
+        t.statement(f"COPY ({query}) TO '{path}' (FORMAT csv{options})")
+        csv_lines(path)
+
+
+t.section("real and double precision with extra_float_digits 0, in each csv framing.")
+t.statement("SET extra_float_digits = 0")
+csv_framings("float", "SELECT 1.1::real AS r, 0.1::double precision AS d, "
+             "ARRAY[1.1::real, NULL] AS ra, ARRAY[0.1::double precision, NULL] AS da, "
+             "ARRAY[ARRAY[1.1::real, NULL]] AS rm, ARRAY[ARRAY[0.1::double precision, NULL]] AS dm")
+t.statement("RESET extra_float_digits")
+
+t.section("bytea in the escape output format, in each csv framing.")
+t.statement("SET bytea_output = 'escape'")
+csv_framings("bytea", "SELECT '\\x01'::bytea AS b, 'a b'::bytea AS s, "
+             "ARRAY['\\x01'::bytea, NULL] AS a, ARRAY[ARRAY['a\\\\b'::bytea]] AS m")
+t.statement("RESET bytea_output")
+
+t.section("money under a csv delimiter that money text never holds.")
+path = "${__TEST_DIR__}/cfm_money_bar.csv"
+t.statement("COPY (SELECT '-1234.56'::money AS m, ARRAY['12.34'::money, NULL] AS a) "
+            f"TO '{path}' (FORMAT csv, DELIMITER '|')")
+csv_lines(path)
 
 t.statement("RESET TimeZone")
 t.write()

@@ -59,6 +59,7 @@ add_executable(
     connector/col_filter_share_test.cpp
     connector/copy_in_batches_test.cpp
     formats/csv_splitter_test.cpp
+    formats/text_encoding_test.cpp
     formats/text_splitter_test.cpp
     pg_datetime_text_test.cpp
     connector/duckdb_search_filter_builder_test.cpp

@@ -145,12 +145,36 @@ def test_line_counts_newlines_inside_quotes(conn: psycopg.Connection,
     assert error.diag.context == f'COPY {table}, line 4: "2,"open\n"'
 
 
+def test_value_error_shows_at_most_100_bytes(conn: psycopg.Connection,
+                                             table: str) -> None:
+    _create(conn, table, "a INT, b TEXT")
+    value = "x" * 99 + "é" + "y" * 50
+    shown = "x" * 99 + "..."
+    error = _copy_error(conn, f'COPY public."{table}" FROM STDIN (FORMAT csv)',
+                        f"{value},b\n".encode())
+    assert error.diag.message_primary == (
+        f'invalid input syntax for type integer: "{value}"')
+    assert error.diag.context == f'COPY {table}, line 1, column a: "{shown}"'
+    conn.notices.clear()
+    _copy_in(conn, f'COPY public."{table}" FROM STDIN '
+             "(FORMAT csv, ON_ERROR ignore, LOG_VERBOSITY verbose)",
+             f"{value},b\n1,a\n".encode())
+    assert conn.notices == [
+        f'skipping row due to data type incompatibility at line 1 for column "a": "{shown}"',
+        "1 row was skipped due to data type incompatibility",
+    ]
+
+
 @pytest.mark.parametrize("fmt,data,line,text", [
     ("csv", b"1,a\n2\n", 2, "2"),
     ("csv", b"1,a\n2,b,c\n", 2, "2,b,c"),
     ("text", b"1\ta\n2\n", 2, "2"),
     ("text", b"1\ta\n2\tb\tc\n", 2, "2\tb\tc"),
-], ids=["csv-missing", "csv-extra", "text-missing", "text-extra"])
+    ("csv", b"1,a\r\n2,b,c\r\n", 2, "2,b,c"),
+    ("text", b"1\ta\r\n2\tb\tc\r\n", 2, "2\tb\tc"),
+    ("csv", b"1,a\n2,b,c", 2, "2,b,c"),
+], ids=["csv-missing", "csv-extra", "text-missing", "text-extra", "csv-crlf",
+        "text-crlf", "csv-last-line"])
 def test_structure_errors_name_the_line(conn: psycopg.Connection, table: str,
                                         fmt: str, data: bytes, line: int,
                                         text: str) -> None:

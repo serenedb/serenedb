@@ -146,7 +146,7 @@ codecs::CodecType CodesCodec(const ListParts& parts, uint64_t rows) noexcept {
     duckdb::BitpackingPrimitives::MinimumBitWidth<uint64_t>(longest_run);
   const uint64_t bitpacked = rows * width;
   const uint64_t run_bits = runs * (width + run_width);
-  return run_bits < bitpacked ? codecs::CodecType::Rle
+  return run_bits < bitpacked ? codecs::CodecType::RleFfor
                               : codecs::CodecType::Bitpacking;
 }
 

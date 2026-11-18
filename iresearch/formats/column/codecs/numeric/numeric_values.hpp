@@ -91,7 +91,9 @@ class Values final : public State {
 
   duckdb::BaseStatistics Stats(const duckdb::LogicalType& type) const {
     auto stats = duckdb::BaseStatistics::CreateEmpty(type);
-    _stats.Merge(stats);
+    if (stats.GetStatsType() == duckdb::StatisticsType::NUMERIC_STATS) {
+      _stats.Merge(stats);
+    }
     return stats;
   }
 

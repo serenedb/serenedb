@@ -4628,6 +4628,30 @@ TEST_F(ColumnReaderTest, UniqueListRowGroupsBitpackTheirCodes) {
                  Rows{{3000, 3001, 3002, 3010, 5000, 5001}}, true);
 }
 
+TEST_F(ColumnReaderTest, ListRowGroupsOfRunsRunLengthEncodeTheirCodes) {
+  const auto type = duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> expected;
+  WriteViaSql(Db(), dir, "sseg", 62, type,
+              "SELECT CASE WHEN i % 500 = 0 THEN NULL WHEN i // 37 = 11 THEN "
+              "[]::VARCHAR[] ELSE ['u' || (i // 37), 'v' || ((i // 37) * 31)] "
+              "END FROM range(10000) t(i)",
+              4096, expected);
+  irs::ColReader r{dir, "sseg", Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto* col = r.Column(62);
+  ASSERT_NE(col, nullptr);
+  ASSERT_FALSE(col->DataBlocks().empty());
+  for (const auto& block : col->DataBlocks()) {
+    EXPECT_EQ(block.codec->type, irs::codecs::CodecType::RleFfor);
+  }
+  ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
+  ExpectGathered(*col, r.Ctx(), expected,
+                 Rows{{0, 1, 36, 37, 407, 444, 4095, 4096, 4097, 8191, 9999}},
+                 false);
+  ExpectGathered(*col, r.Ctx(), expected,
+                 Rows{{3000, 3001, 3002, 3010, 5000, 5001}}, true);
+}
+
 TEST_F(ColumnReaderTest, ListCodesStayConsecutiveOnceDedupTurnsOff) {
   const auto type = duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
   irs::ListIngest ingest{type, /*borrow=*/false};

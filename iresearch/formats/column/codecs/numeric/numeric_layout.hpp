@@ -246,6 +246,7 @@ std::invoke_result_t<F&, std::type_identity<int8_t>> WithNumericType(
     case duckdb::PhysicalType::UINT32:
       return f(std::type_identity<uint32_t>{});
     case duckdb::PhysicalType::UINT64:
+    case duckdb::PhysicalType::LIST:
       return f(std::type_identity<uint64_t>{});
     case duckdb::PhysicalType::FLOAT:
       return f(std::type_identity<float>{});

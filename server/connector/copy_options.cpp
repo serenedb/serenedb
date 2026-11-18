@@ -220,15 +220,7 @@ void ApplyOption(PgCopyOptions& out, const duckdb::Identifier& key,
   } else if (key == "ignore_errors") {
     out.ignore_errors = ParseBoolOption(values, "ON_ERROR");
   } else if (key == "on_error") {
-    const auto text = values.empty() ? std::string{} : OptionString(values[0]);
-    if (absl::EqualsIgnoreCase(text, "ignore")) {
-      out.ignore_errors = true;
-    } else if (absl::EqualsIgnoreCase(text, "stop")) {
-      out.ignore_errors = false;
-    } else {
-      ThrowInvalid(absl::StrCat("invalid value for parameter \"on_error\": \"",
-                                text, "\""));
-    }
+    out.ignore_errors = ParseOnError(values);
   } else if (key == "rejects_limit" || key == "reject_limit") {
     out.reject_limit = ParseRejectLimit(values);
   } else if (key == "log_verbosity") {
@@ -473,6 +465,18 @@ pg::CopyLogVerbosity ParseLogVerbosity(std::span<const duckdb::Value> values) {
   }
   ThrowInvalid(
     absl::StrCat("COPY LOG_VERBOSITY \"", text, "\" not recognized"));
+}
+
+bool ParseOnError(std::span<const duckdb::Value> values) {
+  const auto text = OptionText(values);
+  if (absl::EqualsIgnoreCase(text, "ignore")) {
+    return true;
+  }
+  if (absl::EqualsIgnoreCase(text, "stop")) {
+    return false;
+  }
+  ThrowInvalid(
+    absl::StrCat("invalid value for parameter \"on_error\": \"", text, "\""));
 }
 
 bool HasEncodingOption(const duckdb::CopyInfo& info) {

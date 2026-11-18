@@ -153,6 +153,30 @@ COPY cto_ints FROM '${__TEST_DIR__}/cto_mixed.txt' (FORMAT binary, ON_ERROR IGNO
 db error: ERROR: only ON_ERROR STOP is allowed in BINARY mode
 
 
+statement ok
+CREATE TABLE cto_stop (a INTEGER, b TEXT);
+
+
+statement ok
+INSERT INTO cto_stop VALUES (1, 'x'), (NULL, 'y');
+
+
+statement ok
+COPY cto_stop TO '${__TEST_DIR__}/cto_stop.bin' (FORMAT binary);
+
+
+statement ok
+COPY cto_stop FROM '${__TEST_DIR__}/cto_stop.bin' (FORMAT binary, ON_ERROR STOP);
+
+
+query
+SELECT a, b, count(*) AS n FROM cto_stop GROUP BY a, b ORDER BY b;
+----
+a	b	n
+1	x	2
+NULL	y	2
+
+
 statement error
 COPY cto_ints TO '${__TEST_DIR__}/cto_out.bin' (FORMAT binary, ON_ERROR IGNORE);
 ----

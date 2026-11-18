@@ -328,11 +328,23 @@ class ColumnReader {
       uint64_t last_use = 0;
     };
 
-    OpenBlock& Block(std::vector<OpenBlock>& blocks, const ColumnReader& reader,
-                     BlockWindow& window, uint64_t row);
-    bool FetchOne(std::vector<OpenBlock>& blocks, const ColumnReader& reader,
-                  BlockWindow& window, uint64_t row, duckdb::Vector& out,
+    struct Blocks {
+      explicit Blocks(const ColumnReader* reader)
+        : reader{reader}, open(reader ? reader->DataBlocks().size() : 0) {}
+
+      const ColumnReader* reader;
+      std::vector<OpenBlock> open;
+      BlockWindow window{};
+    };
+
+    OpenBlock& Block(Blocks& blocks, uint64_t row);
+    bool FetchOne(Blocks& blocks, uint64_t row, duckdb::Vector& out,
                   duckdb::idx_t out_offset);
+    void FetchBlock(OpenBlock& block, duckdb::Vector& out,
+                    const duckdb::SelectionVector& sel, duckdb::idx_t offset);
+    void FetchBlocks(Blocks& blocks, std::span<const uint32_t> ids,
+                     uint32_t first_id, duckdb::Vector& out,
+                     duckdb::idx_t out_offset);
     void FetchStoredRows(std::span<const uint32_t> ids, uint32_t first_id,
                          duckdb::Vector& out, duckdb::idx_t out_offset);
     void FetchPoints(std::span<const uint32_t> ids, uint32_t first_id,
@@ -342,16 +354,14 @@ class ColumnReader {
     ReadContext _ctx;
     const ColumnReader* _reader;
     bool _stored;
-    std::vector<OpenBlock> _blocks;
-    std::vector<OpenBlock> _validity_blocks;
+    Blocks _data;
+    Blocks _validity;
     std::vector<OpenBlock*> _open;
-    BlockWindow _window{};
-    BlockWindow _validity_window{};
     uint64_t _open_bytes = 0;
     uint64_t _uses = 0;
     std::vector<duckdb::idx_t> _local;
     std::vector<duckdb::idx_t> _fetched;
-    duckdb::SelectionVector _sel{STANDARD_VECTOR_SIZE};
+    duckdb::SelectionVector _sel;
   };
 
   class BlobPointReader final : public PointReader {
@@ -377,13 +387,16 @@ class ColumnReader {
 
     void FetchDocs(std::span<const doc_id_t> docs) {
       SDB_ASSERT(docs.size() <= STANDARD_VECTOR_SIZE);
-      PointReader::FetchRows(docs, doc_limits::min(), _batch.Reset(), 0);
+      if (!_batch) {
+        _batch = std::make_unique<VectorScratch>(duckdb::LogicalType::BLOB);
+      }
+      PointReader::FetchRows(docs, doc_limits::min(), _batch->Reset(), 0);
     }
     bytes_view Fetched(size_t i) const {
-      if (!duckdb::FlatVector::Validity(_batch.vector).RowIsValid(i)) {
+      if (!duckdb::FlatVector::Validity(_batch->vector).RowIsValid(i)) {
         return {};
       }
-      return Bytes(_batch.vector, i);
+      return Bytes(_batch->vector, i);
     }
 
    private:
@@ -393,7 +406,7 @@ class ColumnReader {
     }
 
     VectorScratch _buf{duckdb::LogicalType::BLOB, 1};
-    VectorScratch _batch{duckdb::LogicalType::BLOB};
+    std::unique_ptr<VectorScratch> _batch;
   };
 
  protected:

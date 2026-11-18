@@ -235,6 +235,8 @@ constexpr Refused kRefused[] = {
    "invalid sslmode in endpoint '[^']*': 'sometimes'"},
   {"postgres://127.0.0.1:1?port=5",
    "'port' query is only for a unix pg socket"},
+  {"postgres://127.0.0.1:1?backlog=lots",
+   "invalid number for 'backlog' in endpoint '[^']*': 'lots'"},
   {"postgres://127.0.0.1:1?api=es", "unknown parameter 'api' in endpoint"},
   {"http://127.0.0.1:1?api=es&sslmode=require",
    "'sslmode' is not valid on an http endpoint"},
@@ -273,8 +275,19 @@ TEST(ListenSpec, SslModeParsed) {
     PgOptions(Parse({"postgres://127.0.0.1:1?sslmode=disable"})[0]).sslmode,
     SslMode::Disable);
   EXPECT_EQ(
+    PgOptions(Parse({"postgres://127.0.0.1:1?sslmode=allow"})[0]).sslmode,
+    SslMode::Allow);
+  EXPECT_EQ(
+    PgOptions(Parse({"postgres://127.0.0.1:1?sslmode=prefer"})[0]).sslmode,
+    SslMode::Prefer);
+  EXPECT_EQ(
     PgOptions(Parse({"postgres://127.0.0.1:1?sslmode=require"})[0]).sslmode,
     SslMode::Require);
+  const auto ca =
+    PgOptions(Parse({"postgres://127.0.0.1:1?sslmode=verify-ca"})[0]).sslmode;
+  EXPECT_EQ(ca, SslMode::VerifyCa);
+  EXPECT_TRUE(RequireTls(ca));
+  EXPECT_TRUE(RequireClientCert(ca));
   const auto vf = Parse({"postgres://127.0.0.1:1?sslmode=verify-full"});
   const auto sslmode = PgOptions(vf[0]).sslmode;
   EXPECT_EQ(sslmode, SslMode::VerifyFull);

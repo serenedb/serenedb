@@ -233,7 +233,7 @@ class DeltaReader final : public FrameReader<T> {
     return rows;
   }
 
-  IRS_NO_INLINE T FetchApart(uint64_t row, uint64_t next) {
+  IRS_FORCE_INLINE T FetchApart(uint64_t row, uint64_t next) {
     if (this->Packed()) {
       if (const auto block = this->BlockAt(row); block.bits == 0) {
         return this->Scaled(
@@ -241,9 +241,32 @@ class DeltaReader final : public FrameReader<T> {
                          static_cast<U>(row % numeric::kBlockValues) *
                            static_cast<U>(_own.base)));
       }
-      return this->Get(row);
     }
-    if (this->Near(row, next)) {
+    return FetchSummed(row, next);
+  }
+
+  void UnpackBlock(uint64_t first, uint64_t rows, U* out) {
+    const auto [packed, base, bits] = this->BlockAt(first);
+    const auto step = static_cast<U>(_own.base);
+    if (bits == 0) {
+      auto value = static_cast<U>(base);
+      for (uint64_t i = 0; i < rows; ++i) {
+        out[i] = value;
+        value = static_cast<U>(value + step);
+      }
+      return;
+    }
+    this->_block.resize(numeric::kBlockValues);
+    numeric::Unpack<U>(bits, this->template Words<numeric::LaneWord<U>>(packed),
+                       this->_block.data(), U{0});
+    numeric::WidenPrefixSumAs<U, U, true>(
+      reinterpret_cast<const uint8_t*>(this->_block.data()), rows,
+      static_cast<U>(static_cast<U>(base) - step), step, out);
+  }
+
+ private:
+  IRS_NO_INLINE T FetchSummed(uint64_t row, uint64_t next) {
+    if (this->Packed() || this->Near(row, next)) {
       return this->Get(row);
     }
     if (this->Shuffled() && this->Near(row, this->_fetched)) {
@@ -274,25 +297,6 @@ class DeltaReader final : public FrameReader<T> {
     return this->Scaled(_sum);
   }
 
-  void UnpackBlock(uint64_t first, uint64_t rows, U* out) {
-    const auto [packed, base, bits] = this->BlockAt(first);
-    const auto step = static_cast<U>(_own.base);
-    if (bits == 0) {
-      for (uint64_t i = 0; i < rows; ++i) {
-        out[i] =
-          static_cast<U>(static_cast<U>(base) + static_cast<U>(i) * step);
-      }
-      return;
-    }
-    this->_block.resize(numeric::kBlockValues);
-    numeric::Unpack<U>(bits, this->template Words<numeric::LaneWord<U>>(packed),
-                       this->_block.data(), U{0});
-    numeric::WidenPrefixSumAs<U, U, true>(
-      reinterpret_cast<const uint8_t*>(this->_block.data()), rows,
-      static_cast<U>(static_cast<U>(base) - step), step, out);
-  }
-
- private:
   void DecodeInto(const NumericFrameMeta& m, uint32_t rows, U* out,
                   uint32_t frame) {
     const auto* src = this->Inflated(m, nullptr, frame, this->_held);

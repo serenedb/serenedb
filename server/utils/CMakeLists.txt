@@ -13,6 +13,7 @@ add_library(
     message_sequence_view.cpp
     metrics.cpp
     number_of_cores.cpp
+    registry.cpp
     signals.cpp
     striped_counters.cpp
 )

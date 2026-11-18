@@ -20,12 +20,15 @@
 
 #pragma once
 
+#include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 
 #include "network/credentials.h"
 #include "network/http/common.h"
+#include "server/utils/registry.h"
 
 namespace sdb::network::http {
 
@@ -50,6 +53,12 @@ class BearerValidator {
  public:
   virtual ~BearerValidator() = default;
   virtual std::optional<AuthContext> Validate(std::string_view token) const = 0;
+};
+
+struct BearerValidatorFactory {
+  static constexpr std::string_view kKind = "bearer validator";
+
+  std::unique_ptr<BearerValidator> (*make)();
 };
 
 // Default flag-configured backends (one static credential each), the same
@@ -98,7 +107,7 @@ class HttpAuthenticator {
  public:
   HttpAuthenticator(const network::CredentialProvider* credentials,
                     const ApiKeyValidator* api_keys,
-                    const BearerValidator* bearer)
+                    std::span<const std::unique_ptr<BearerValidator>> bearer)
     : _credentials{credentials}, _api_keys{api_keys}, _bearer{bearer} {}
 
   bool Enabled() const noexcept { return _credentials != nullptr; }
@@ -113,7 +122,10 @@ class HttpAuthenticator {
 
   const network::CredentialProvider* _credentials;
   const ApiKeyValidator* _api_keys;
-  const BearerValidator* _bearer;
+  std::span<const std::unique_ptr<BearerValidator>> _bearer;
 };
 
 }  // namespace sdb::network::http
+
+#define SDB_BEARER_VALIDATOR \
+  const ::sdb::Registry<::sdb::network::http::BearerValidatorFactory>::Register

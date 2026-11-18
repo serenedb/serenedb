@@ -46,6 +46,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <span>
 #include <utility>
 #include <yaclib/algo/wait_group.hpp>
 #include <yaclib/async/future.hpp>
@@ -81,7 +82,7 @@ struct HttpServerContext {
   // protocols); null => trust, matching the pg session.
   const CredentialProvider* credentials = nullptr;
   const http::ApiKeyValidator* api_keys = nullptr;
-  const http::BearerValidator* bearer = nullptr;
+  std::span<const std::unique_ptr<http::BearerValidator>> bearer;
   // Shared live-connection counter + the cap this listener enforces (0 =
   // unlimited). Over-cap connections get a 503 then close.
   std::atomic<uint32_t>* active = nullptr;

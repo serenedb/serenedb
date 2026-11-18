@@ -100,11 +100,15 @@ The `tpch` and `tpcds` extensions, linked by default, carry the TPC-H and TPC-DS
 
 ### Code from another repository
 
-A repository that keeps this tree as a submodule builds its own code into `serenedb` rather than a second binary: `-DSDB_EXTERNAL_DIRS=<dir>;...` adds each directory, absolute or relative to this tree, after this tree's own, with the same compiler, flags and libraries, and a directory links its code into the binary with `target_link_libraries(serenedb PRIVATE <object library>)`. Its commands register themselves like the built-in ones.
+A repository that keeps this tree as a submodule builds its own code into `serenedb` rather than a second binary: `-DSDB_EXTERNAL_DIRS=<dir>;...` adds each directory, absolute or relative to this tree, after this tree's own, with the same compiler, flags and libraries, and a directory links its code into the binary with `target_link_libraries(serenedb PRIVATE <object library>)`. Its code registers itself like the built-in code.
+
+### Registries
+
+Code plugs into `serenedb` by registering itself in its own file, one line per entry: a command with `SDB_COMMAND kShell{"shell", &RunShell};`, a `--listen` scheme with `SDB_LISTEN_PROTOCOL`, an HTTP API that `?api=` names with `SDB_HTTP_API`, and a bearer token check with `SDB_BEARER_VALIDATOR`. A registration exists only when its object file is linked, so it goes into an object library or an executable's sources, never a static library: the engine's own listen protocols and HTTP APIs are in the `serene_listeners` object library. A name registered twice stops `serenedb` before `main`.
 
 ### Commands
 
-`serenedb <command>` runs one of the commands that register themselves with `app::RegisterCommand` in their own files, such as `server` in `server/app/server.cpp` and `shell` and `psql` in `server/app/cli.cpp`; `serenedb` alone lists them. `serened`, a link to `serenedb` next to it, always runs `server`.
+`serenedb <command>` runs one of the registered commands, such as `server` in `server/app/server.cpp` and `shell` and `psql` in `server/app/cli.cpp`; `serenedb` alone lists them. `serened`, a link to `serenedb` next to it, always runs `server`.
 
 ### Launch
 

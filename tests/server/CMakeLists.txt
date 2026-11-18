@@ -24,6 +24,7 @@ add_executable(
     network_gate_test.cpp
     network_h1_codec_test.cpp
     network_header_test.cpp
+    network_http_auth_test.cpp
     network_http_compression_test.cpp
     network_http_test.cpp
     network_listen_spec_test.cpp
@@ -43,6 +44,7 @@ add_executable(
     number_of_cores_test.cpp
     pointer_union_test.cpp
     query_prepared_cache_test.cpp
+    registry_test.cpp
     runtime_test.cpp
     scorer_bounds_test.cpp
     search_engine_test.cpp
@@ -76,7 +78,12 @@ add_executable(
 
 target_link_libraries(
     serenedb-tests
-    PRIVATE sereneserver gtest serene_docs_corpus iresearch-test-writer
+    PRIVATE
+        sereneserver
+        serene_listeners
+        gtest
+        serene_docs_corpus
+        iresearch-test-writer
 )
 sdb_link_duckdb_extensions(serenedb-tests)
 

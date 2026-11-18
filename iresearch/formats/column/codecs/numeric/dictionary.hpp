@@ -23,6 +23,7 @@
 #include <absl/algorithm/container.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <functional>
 #include <span>
@@ -107,7 +108,7 @@ bool CollectEntries(std::span<const numeric::Bits<sizeof(T)>> rows,
 }
 
 template<typename T>
-Entries<T>* BuildEntries(ColumnDataCheckpointData& data) {
+Entries<T>* BuildEntries(ColumnDataCheckpointData& data, double bound) {
   auto& values = data.Get<Values<T>>();
   if (!values.Usable()) {
     return nullptr;
@@ -120,12 +121,18 @@ Entries<T>* BuildEntries(ColumnDataCheckpointData& data) {
   auto& entries = data.Get<Entries<T>>();
   if (!entries.built) {
     entries.built = true;
-    entries.fits = CollectEntries<T>(
-      values.Get(),
+    const auto rows = values.Get();
+    auto cap =
       stored >= 4
         ? kNumericDictMax
-        : std::min(kNumericDictMax, preferences.max_narrow_dictionary_entries),
-      entries);
+        : std::min(kNumericDictMax, preferences.max_narrow_dictionary_entries);
+    if (const auto affordable =
+          bound * static_cast<double>(rows.size()) / sizeof(T);
+        affordable <= static_cast<double>(cap)) {
+      cap =
+        affordable > 1 ? static_cast<uint32_t>(std::ceil(affordable)) - 1 : 0;
+    }
+    entries.fits = CollectEntries<T>(rows, cap, entries);
   }
   return entries.fits ? &entries : nullptr;
 }
@@ -141,8 +148,9 @@ struct Dict final : State {
 };
 
 template<typename T>
-Items DictItems(ColumnDataCheckpointData& data, FrameStore store) {
-  const auto* entries = BuildEntries<T>(data);
+Items DictItems(ColumnDataCheckpointData& data, FrameStore store,
+                double bound) {
+  const auto* entries = BuildEntries<T>(data, bound);
   if (!entries) {
     return {};
   }
@@ -172,7 +180,7 @@ const uint8_t* NarrowCodes(ColumnDataCheckpointData& data, uint8_t width) {
 template<typename T>
 double AnalyzeDict(ColumnDataCheckpointData& data, double bound,
                    FrameStore store) {
-  const auto items = DictItems<T>(data, store);
+  const auto items = DictItems<T>(data, store, bound);
   return AnalyzeFrames<T>(
     data, items, data.Get<Dict<T>>().analysis[store.shuffled], bound,
     Slices(items.stored, [&] { return NarrowCodes<T>(data, items.stored); }));
@@ -184,7 +192,7 @@ bool CompressDict(ColumnDataCheckpointData& data, FrameStore store) {
   if (!MayWrite(data, analysis.done, store.leaf)) {
     return false;
   }
-  const auto items = DictItems<T>(data, store);
+  const auto items = DictItems<T>(data, store, kNoScore);
   if (!Offered(items)) {
     return false;
   }
@@ -214,8 +222,8 @@ struct DictFfor final : State {
 
 template<typename T>
 const Entries<T>* PlanDictFfor(ColumnDataCheckpointData& data,
-                               DictFfor<T>& state) {
-  const auto* entries = BuildEntries<T>(data);
+                               DictFfor<T>& state, double bound) {
+  const auto* entries = BuildEntries<T>(data, bound);
   if (entries && !state.planned) {
     state.planned = true;
     state.blocks.Plan(std::span<const uint32_t>{entries->codes},
@@ -227,7 +235,7 @@ const Entries<T>* PlanDictFfor(ColumnDataCheckpointData& data,
 template<typename T>
 double AnalyzeDictFfor(ColumnDataCheckpointData& data, double bound) {
   auto& state = data.Get<DictFfor<T>>();
-  const auto* entries = PlanDictFfor(data, state);
+  const auto* entries = PlanDictFfor(data, state, bound);
   if (!entries) {
     return kNoScore;
   }
@@ -243,7 +251,7 @@ bool CompressDictFfor(ColumnDataCheckpointData& data) {
   if (!MayWrite(data, state.analyzed, ByteCodec::None)) {
     return false;
   }
-  const auto* entries = PlanDictFfor(data, state);
+  const auto* entries = PlanDictFfor(data, state, kNoScore);
   if (!entries) {
     return false;
   }

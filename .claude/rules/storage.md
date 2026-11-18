@@ -30,7 +30,7 @@ Test a format change the way a release meets old data: a fault point makes the w
 
 ## DuckDB database files
 
-A file with a DuckDB storage version (a plain `ATTACH`, `serened shell`) stays readable by that DuckDB release, and SereneDB reads what that release writes:
+A file with a DuckDB storage version (a plain `ATTACH`, `serenedb shell`) stays readable by that DuckDB release, and SereneDB reads what that release writes:
 
 - A SereneDB field of an upstream class takes 16384 plus the id upstream's numbering would give it; state DuckDB drops too is skipped in a DuckDB file (`"version": "serenedb_v1"`), anything else is refused there.
 - A SereneDB value of a stored upstream enum starts at 200 and is listed in `IsSereneDBEnumValue`.

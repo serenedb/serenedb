@@ -18,10 +18,19 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "docs/docs_bootstrap.h"
+#pragma once
 
-namespace sdb::docs {
+#include <string_view>
 
-[[gnu::weak]] std::optional<int> RunDocsBootstrap() { return std::nullopt; }
+namespace sdb::app {
 
-}  // namespace sdb::docs
+using Command = int (*)(int argc, char* argv[]);
+
+class RegisterCommand final {
+ public:
+  RegisterCommand(std::string_view name, Command run);
+};
+
+int RunCommand(int argc, char* argv[]);
+
+}  // namespace sdb::app

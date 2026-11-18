@@ -140,7 +140,7 @@ jobs:
             -DSDB_SANITIZE=
 
       - name: Build
-        run: ninja -k 0 -C build serened serenedb-tests
+        run: ninja -k 0 -C build serenedb serenedb-tests
 
       - name: Save ccache
         if: ${{ !cancelled() }}

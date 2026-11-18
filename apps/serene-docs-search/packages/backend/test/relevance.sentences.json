@@ -22,7 +22,7 @@
     {"cat":"sentence","q":"SereneDB works with RPostgres, an R interface to PostgreSQL using the DBI specification.","expect":["/docs/clients/r"]},
     {"cat":"sentence","q":"SereneDB works with tokio-postgres, an async PostgreSQL client for Rust.","expect":["/docs/clients/rust"]},
     {"cat":"sentence","q":"Choose a client, copy the single command, run it in a terminal, then reopen the client and run /mcp.","expect":["/docs/clients/serene-docs-search"]},
-    {"cat":"sentence","q":"To work with a local database file directly, without a running server, use serened shell instead.","expect":["/docs/clients/serened-psql"]},
+    {"cat":"sentence","q":"To work with a local database file directly, without a running server, use serenedb shell instead.","expect":["/docs/clients/serened-psql"]},
     {"cat":"sentence","q":"A search takes plain text: keywords, a question or a pasted error message.","expect":["/docs/clients/serened-shell"]},
     {"cat":"sentence","q":"In PostgreSQL, the VACUUM statement garbage collects tables and analyzes tables.","expect":["/docs/compatibility/core-sql-compatibility"]},
     {"cat":"sentence","q":"That said, SereneDB is a different engine built from scratch.","expect":["/docs/compatibility"]},

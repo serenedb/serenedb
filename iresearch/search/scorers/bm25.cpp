@@ -187,7 +187,7 @@ void BM25::Explain(const ScoreContext& ctx, const explain::SlotStats* stats,
     return;
   }
   explain::AddBoost(out, ctx.boost);
-  explain::AddIdf(out, own.idf, stats, "log(1 + (N - n + 0.5) / (n + 0.5))",
+  explain::AddIdf(out, own.idf, stats, "log(1 + (N - df + 0.5) / (df + 0.5))",
                   &Bm25Idf);
   if (IsBM1()) {
     explain::AddScale(out, ctx);

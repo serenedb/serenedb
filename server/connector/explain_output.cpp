@@ -337,7 +337,7 @@ constexpr std::array kMeanings{
   Meaning{"avgdl", "average length of the column"},
   Meaning{"L", "total length of the column over all rows"},
   Meaning{"N", "number of rows with the column"},
-  Meaning{"n", "number of rows containing the term"},
+  Meaning{"df", "number of rows containing the term"},
   Meaning{"k1", "term saturation parameter"},
   Meaning{"b", "length normalization parameter"},
   Meaning{"ttf", "occurrences of the term over all rows"},

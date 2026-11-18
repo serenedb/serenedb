@@ -224,8 +224,8 @@ TEST_P(ExplainTest, bm25_term_breaks_down_into_idf_and_tf) {
     const auto* idf = Child(row, "idf");
     ASSERT_NE(nullptr, idf);
     EXPECT_EQ(irs::Bm25Idf(6, 5), ValueOf(*idf));
-    ASSERT_NE(nullptr, Child(*idf, "n"));
-    EXPECT_EQ(5u, CountOf(*Child(*idf, "n")));
+    ASSERT_NE(nullptr, Child(*idf, "df"));
+    EXPECT_EQ(5u, CountOf(*Child(*idf, "df")));
     EXPECT_EQ(6u, CountOf(*Child(*idf, "N")));
 
     const auto* tf = Child(row, "tf");
@@ -395,9 +395,9 @@ TEST_P(ExplainTest, a_fuzzy_match_names_the_term_it_matched) {
     EXPECT_EQ(Bytes("quick"), leaf.subject.terms.front());
     const auto* idf = Child(leaf, "idf");
     ASSERT_NE(nullptr, idf);
-    const auto* n = Child(*idf, "n");
-    ASSERT_NE(nullptr, n);
-    EXPECT_NE(std::string::npos, n->note.find("matched terms"));
+    const auto* df = Child(*idf, "df");
+    ASSERT_NE(nullptr, df);
+    EXPECT_NE(std::string::npos, df->note.find("matched terms"));
   }
 }
 

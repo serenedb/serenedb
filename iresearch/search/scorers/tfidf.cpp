@@ -104,7 +104,7 @@ void TFIDF::Explain(const ScoreContext& ctx, const explain::SlotStats* stats,
   }
   explain::AddBoost(out, ctx.boost);
   explain::AddIdf(out, stats_cast(ctx.stats)->value, stats,
-                  "log(1 + (N + 1) / (n + 1))", &TfIdfIdf);
+                  "log(1 + (N + 1) / (df + 1))", &TfIdfIdf);
   auto& tf = explain::AddDetail(out, "tf", score_t{0});
   tf.formula = "sqrt(freq)";
   tf.value = std::sqrt(explain::AddFreq(tf, ctx));

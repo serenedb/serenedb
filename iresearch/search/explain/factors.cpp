@@ -88,9 +88,9 @@ void AddIdf(Node& out, score_t idf, const SlotStats* stats,
     return;
   }
   const auto add_counts = [&](Node& to, const TermStats& term) {
-    auto& n = AddDetail(to, "n", term.docs_with_term);
+    auto& df = AddDetail(to, "df", term.docs_with_term);
     if (stats->blended) {
-      n.note = "the most rows any one of the matched terms occurs in";
+      df.note = "the most rows any one of the matched terms occurs in";
     }
     AddDetail(to, "N", stats->docs_with_field);
   };

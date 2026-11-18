@@ -339,7 +339,7 @@ The names in `inputs` are:
 | Input | Meaning |
 | :--- | :--- |
 | `boost` | The query's weight for the clause, when it is not `1`. |
-| `idf` | How rare the term is, from `n`, the number of rows containing it, and `N`, the number of rows with the column. |
+| `idf` | How rare the term is, from `df`, the number of rows containing it, and `N`, the number of rows with the column. |
 | `tf` | How much the term's occurrences count, from `freq`, its occurrences in the row, the BM25 parameters `k1` and `b`, the row's length `dl` and the column's average length `avgdl`, computed as `L` / `N` from the column's total length `L`. |
 | `norm` | TF-IDF's length normalization, `1 / sqrt(dl)`. |
 | `p` | The term's share of all text in the column, `(ttf + 1) / (L + 1)`, from its occurrences `ttf` over all rows; with `mu` or `lambda`, the smoothing parameter of a language model. |
@@ -350,7 +350,7 @@ The names in `inputs` are:
 
 - The top `value` is the row's score, exactly as the scorer function returns it for that row.
 - Each word a prefix, pattern, range or fuzzy match expanded to is a clause of its own, with its `term`. A numeric range names only the `column`, as does a term in a column indexed without positions when another term of the query occurs in exactly the same rows, as often.
-- `n`, `N` and the column's average length count the whole index, as the scorer does. A fuzzy match scores every word it matched with the same statistics, so its `n` is the most rows any one of those words occurs in.
+- `df`, `N` and the column's average length count the whole index, as the scorer does. A fuzzy match scores every word it matched with the same statistics, so its `df` is the most rows any one of those words occurs in.
 - Each value is computed separately, so the values of `clauses` can differ from their total in the last digit.
 
 `ts_explain` is computed for every row the scan returns and costs about as much as running the query again for that row, so request it together with a `LIMIT`. A query without a scorer function or a vector distance on the index raises an error.

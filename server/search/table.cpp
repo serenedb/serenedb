@@ -1279,7 +1279,8 @@ Table::Replacement Table::PrepareReplace(
       }
       for (const auto& map : replacement.maps) {
         if (map.source == replaced[r]) {
-          irs::MapDocs(map, *entry.Rows(), carried_rows[map.target][entry.tick]);
+          irs::MapDocs(map, *entry.Rows(),
+                       carried_rows[map.target][entry.tick]);
         }
       }
     }
@@ -1304,8 +1305,9 @@ Table::Replacement Table::PrepareReplace(
       for (auto& [tick, rows] : it->second) {
         if (!rows.Empty()) {
           unit->patched.emplace_back(
-            tick, std::make_shared<const irs::DocumentMask>(
-                    std::move(rows).Finish(irs::DocumentMaskBuilder::kCanonical)));
+            tick,
+            std::make_shared<const irs::DocumentMask>(
+              std::move(rows).Finish(irs::DocumentMaskBuilder::kCanonical)));
         }
       }
     }

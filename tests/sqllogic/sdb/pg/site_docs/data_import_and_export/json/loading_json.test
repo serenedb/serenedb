@@ -402,3 +402,171 @@ FROM read_json('${__TEST_DIR__}/data_import_and_export_json_loading_json_example
 id	name	tags
 rec_1	FENDT 826 VARIO	{farm}
 rec_2	VENTO 375	{hvac,cooling}
+
+# DOCS_TEST: example_017
+
+statement ok
+COPY (
+    SELECT '{"a": NaN, "b": [1, 2,], "c": -Infinity,}' AS line
+) TO '${__TEST_DIR__}/data_import_and_export_json_loading_json_example_017_1_lenient_json.json' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
+
+# DOCS_TEST_RAW
+#| SELECT a, b, c
+#| FROM read_ndjson('lenient.json', columns = {a: 'DOUBLE', b: 'INTEGER[]', c: 'DOUBLE'});
+
+# DOCS_TEST_BODY
+
+query
+SELECT a, b, c
+FROM read_ndjson('${__TEST_DIR__}/data_import_and_export_json_loading_json_example_017_1_lenient_json.json', columns = {a: 'DOUBLE', b: 'INTEGER[]', c: 'DOUBLE'});
+----
+a	b	c
+NaN	{1,2}	-Infinity
+
+# DOCS_TEST: example_018
+
+statement ok
+COPY (
+    SELECT '{"a": NaN, "b": [1, 2,], "c": -Infinity,}' AS line
+) TO '${__TEST_DIR__}/data_import_and_export_json_loading_json_example_018_1_lenient_json.json' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
+
+# DOCS_TEST_RAW
+#| SELECT a, b, c
+#| FROM read_ndjson('lenient.json', columns = {a: 'DOUBLE', b: 'INTEGER[]', c: 'DOUBLE'}, strict = true);
+
+# DOCS_TEST_BODY
+
+query error
+SELECT a, b, c
+FROM read_ndjson('${__TEST_DIR__}/data_import_and_export_json_loading_json_example_018_1_lenient_json.json', columns = {a: 'DOUBLE', b: 'INTEGER[]', c: 'DOUBLE'}, strict = true);
+----
+db error: ERROR: Malformed JSON in file "<slt:ignore>", at byte 7 in line 1: unexpected character.
+
+
+# DOCS_TEST: example_019
+
+statement ok
+COPY (
+    SELECT '{"a": NaN, "b": [1, 2,], "c": -Infinity,}' AS line
+) TO '${__TEST_DIR__}/data_import_and_export_json_loading_json_example_019_1_lenient_json.json' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
+
+# DOCS_TEST_RAW
+#| CREATE TABLE measurements (a DOUBLE, b INTEGER[], c DOUBLE);
+#|
+#| COPY measurements FROM 'lenient.json' (FORMAT json);
+#|
+#| COPY measurements FROM 'lenient.json' (FORMAT json, STRICT true);
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE measurements (a DOUBLE, b INTEGER[], c DOUBLE);
+
+statement ok
+COPY measurements FROM '${__TEST_DIR__}/data_import_and_export_json_loading_json_example_019_1_lenient_json.json' (FORMAT json);
+
+statement error
+COPY measurements FROM '${__TEST_DIR__}/data_import_and_export_json_loading_json_example_019_1_lenient_json.json' (FORMAT json, STRICT true);
+----
+db error: ERROR: Malformed JSON in file "<slt:ignore>", at byte 7 in line 1: unexpected character.
+
+
+# DOCS_TEST: example_020
+
+statement ok
+COPY (
+    SELECT repeat('[', 100000) || repeat(']', 100000) AS line
+) TO '${__TEST_DIR__}/data_import_and_export_json_loading_json_example_020_1_deep_json.json' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
+
+# DOCS_TEST_RAW
+#| SELECT json_array_length(json) AS length
+#| FROM read_ndjson_objects('deep.json');
+
+# DOCS_TEST_BODY
+
+query
+SELECT json_array_length(json) AS length
+FROM read_ndjson_objects('${__TEST_DIR__}/data_import_and_export_json_loading_json_example_020_1_deep_json.json');
+----
+length
+1
+
+# DOCS_TEST: example_021
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    ('apple', 50),
+    ('banana', 150),
+    ('cherry', 250)
+) AS t("name", "price") ORDER BY price) TO '${__TEST_DIR__}/data_import_and_export_json_loading_json_example_021_1_prices_json.json' (FORMAT json);
+
+# DOCS_TEST_RAW
+#| EXPLAIN
+#| SELECT name
+#| FROM read_json('prices.json')
+#| WHERE price > 100;
+
+# DOCS_TEST_BODY
+
+query
+EXPLAIN
+SELECT name
+FROM read_json('${__TEST_DIR__}/data_import_and_export_json_loading_json_example_021_1_prices_json.json')
+WHERE price > 100;
+----
+QUERY PLAN
+╭─ READ_JSON ────────────────╮
+│ Function: READ_JSON        │
+│ Projections: name          │
+│ Column Filter: price > 100 │
+│ ~1 row                     │
+╰────────────────────────────╯
+
+# DOCS_TEST: example_022
+
+statement ok
+COPY (
+    SELECT E'{"id": 1, "customer": {"name": "Ana", "city": "Paris"}}\n{"id": 2, "customer": {"name": "Ben", "city": "Rome"}}\n{"id": 3, "customer": {"name": "Eva", "city": "Paris"}}' AS line
+) TO '${__TEST_DIR__}/data_import_and_export_json_loading_json_example_022_1_orders_json.json' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
+
+# DOCS_TEST_RAW
+#| SELECT id, customer.name AS name
+#| FROM read_json('orders.json')
+#| WHERE customer.city = 'Paris'
+#| ORDER BY id;
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, customer.name AS name
+FROM read_json('${__TEST_DIR__}/data_import_and_export_json_loading_json_example_022_1_orders_json.json')
+WHERE customer.city = 'Paris'
+ORDER BY id;
+----
+id	name
+1	Ana
+3	Eva
+
+# DOCS_TEST: example_023
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'a', '10'),
+    (2, 'b', 'x'),
+    (3, 'c', '30')
+) AS t("id", "name", "num") ORDER BY id) TO '${__TEST_DIR__}/data_import_and_export_json_loading_json_example_023_1_readings_json.json' (FORMAT json);
+
+# DOCS_TEST_RAW
+#| SELECT id, num
+#| FROM read_json('readings.json', columns = {id: 'INTEGER', name: 'VARCHAR', num: 'INTEGER'})
+#| WHERE id = 3;
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, num
+FROM read_json('${__TEST_DIR__}/data_import_and_export_json_loading_json_example_023_1_readings_json.json', columns = {id: 'INTEGER', name: 'VARCHAR', num: 'INTEGER'})
+WHERE id = 3;
+----
+id	num
+3	30

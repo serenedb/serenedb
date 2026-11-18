@@ -65,6 +65,7 @@ Below are parameters that can be passed to the [`read_csv` function](#csv-functi
 | `delimiter`                                                                    | Alias for `delim`; only available in the `COPY` statement.                                                                                                                                                                                                                                                                                                      | `VARCHAR`                | `,`                                            |
 | `escape`                                                                       | String used to escape the `quote` character within quoted values.                                                                                                                                                                                                                                                                                               | `VARCHAR`                | `"`                                            |
 | `encoding`                                                                     | Encoding used by the CSV file. Options are `utf-8`, `utf-16`, `latin-1`. Not available in the `COPY` statement (which always uses `utf-8`).                                                                                                                                                                                                                     | `VARCHAR`                | `utf-8`                                        |
+| `file_row_number`                                                              | Add a `file_row_number` column with the byte offset of the first byte of each row in its file. See [Row Positions](#row-positions).                                                                                                                                                                                                                              | `BOOL`                   | `false`                                        |
 | `filename`                                                                     | Add path of the containing file to each row, as a string column named `filename`. Relative or absolute paths are returned depending on the path or glob pattern provided to `read_csv`, not just filenames. `filename` column is added automatically as a virtual column and this option is only kept for compatibility reasons.                                | `BOOL`                   | `false`                                        |
 | `force_not_null`                                                               | Do not match values in the specified columns against the `NULL` string. In the default case where the `NULL` string is empty, this means that empty values are read as zero-length strings instead of `NULL`s.                                                                                                                                                  | `VARCHAR[]`              | `[]`                                           |
 | `header`                                                                       | First line of each file contains the column names.                                                                                                                                                                                                                                                                                                              | `BOOL`                   | `false`                                        |
@@ -76,7 +77,7 @@ Below are parameters that can be passed to the [`read_csv` function](#csv-functi
 | `normalize_names`                                                              | Normalize column names. This removes any non-alphanumeric characters from them. Column names that are reserved SQL keywords are prefixed with an underscore character (`_`).                                                                                                                                                                                    | `BOOL`                   | `false`                                        |
 | `null_padding`                                                                 | Pad the remaining columns on the right with `NULL` values when a line lacks columns.                                                                                                                                                                                                                                                                            | `BOOL`                   | `false`                                        |
 | `nullstr` or `null`                                                            | Strings that represent a `NULL` value.                                                                                                                                                                                                                                                                                                                          | `VARCHAR` or `VARCHAR[]` | (empty)                                        |
-| `parallel`                                                                     | Use the parallel CSV reader.                                                                                                                                                                                                                                                                                                                                    | `BOOL`                   | `true`                                         |
+| `parallel`                                                                     | Read a file with several threads where possible. The rows are the same as with `false`, which reads it with one thread. See [Parallel Reading](#parallel-reading).                                                                                                                                                                                              | `BOOL`                   | `true`                                         |
 | `quote`                                                                        | String used to quote values.                                                                                                                                                                                                                                                                                                                                    | `VARCHAR`                | `"`                                            |
 | `rejects_scan`                                                                 | Name of the [temporary table where information on faulty scans is stored](../../data_import_and_export/csv/reading_faulty_csv_files.md#reject-scans).                                                                                                                                                                                                           | `VARCHAR`                | `reject_scans`                                 |
 | `rejects_table`                                                                | Name of the [temporary table where information on faulty lines is stored](../../data_import_and_export/csv/reading_faulty_csv_files.md#reject-errors).                                                                                                                                                                                                          | `VARCHAR`                | `reject_errors`                                |
@@ -131,6 +132,38 @@ If we set `delim` / `sep`, `quote`, `escape`, or `header` explicitly, we can byp
 <SqlLogicTest id="data_import_and_export/csv/overview/example_010" />
 
 Multiple files can be read at once by providing a glob or a list of files. Refer to the [multiple files section](../../data_import_and_export/multiple_files/overview.md) for more information.
+
+## Filters While Reading
+
+`read_csv` applies the filters of a query's `WHERE` clause while it reads the file, so the other columns of a row are converted only when the row passes. `EXPLAIN` shows such a filter as a `Column Filter` of the `READ_CSV` scan. With this `prices.csv`:
+
+```csv
+name,price
+apple,50
+banana,150
+cherry,250
+```
+
+<SqlLogicTest id="data_import_and_export/csv/overview/example_013" />
+
+A value that does not fit its column type therefore causes no error when the filter removes its row, unless the filter uses its column, see [Faulty Values in Filtered Rows](../../data_import_and_export/csv/reading_faulty_csv_files.md#faulty-values-in-filtered-rows). With `store_rejects`, every value is converted and every faulty value is recorded.
+
+## Row Positions
+
+`file_row_number = true` adds a `file_row_number` column with the byte offset of the first byte of each row in its file. A row has the same offset however many threads read the file and whichever rows a filter keeps. With this `rows.csv`:
+
+```csv
+id,name
+1,alpha
+2,beta
+3,gamma
+```
+
+<SqlLogicTest id="data_import_and_export/csv/overview/example_014" />
+
+## Parallel Reading
+
+`read_csv` splits a file between several threads where it can. The result holds the same rows as with `parallel = false`, which reads the file with one thread, for every dialect: quoted values that span lines, escapes, comments, multi-byte delimiters and `null_padding` included.
 
 ## Writing Using the `COPY` Statement
 

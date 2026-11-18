@@ -116,6 +116,14 @@ Or use the [`COPY` statement](../sql/statements/copy/index.md#copy--from):
 
 For more details, see the [page on Arrow](../data_import_and_export/arrow/overview.md).
 
+### Markdown Loading
+
+Markdown files are read a row per file, per section or per block, for example the headings of a file:
+
+<SqlLogicTest id="data_import_and_export/overview/example_017" />
+
+For more details, see the [page on Markdown files](../data_import_and_export/markdown/overview.md).
+
 ### Returning the Filename
 
 In SereneDB the CSV, JSON, Parquet and Arrow readers support the `filename` virtual column:

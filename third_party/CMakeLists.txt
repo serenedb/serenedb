@@ -612,6 +612,21 @@ set(THREADSAFE ON CACHE BOOL "" FORCE)
 sdb_add_module(avro DIR avro/lang/c NO_WARNINGS)
 
 ################################################################################
+## nanoarrow
+################################################################################
+
+set(NANOARROW_IPC ON CACHE BOOL "" FORCE)
+set(NANOARROW_IPC_WITH_ZSTD ON CACHE BOOL "" FORCE)
+set(NANOARROW_IPC_WITH_LZ4 ON CACHE BOOL "" FORCE)
+file(WRITE ${CMAKE_FIND_PACKAGE_REDIRECTS_DIR}/zstd-config.cmake "")
+add_library(zstd::libzstd_static INTERFACE IMPORTED)
+target_link_libraries(zstd::libzstd_static INTERFACE libzstd_static)
+set(LZ4_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/lz4/lib)
+set(LZ4_LIBRARIES lz4_static)
+sdb_add_module(nanoarrow NO_WARNINGS)
+set_target_properties(flatccrt PROPERTIES POSITION_INDEPENDENT_CODE OFF)
+
+################################################################################
 ## libxml2
 ################################################################################
 
@@ -707,7 +722,7 @@ else()
         FORCE
     )
     set(STATICALLY_LINK_EXTENSIONS
-        "core_functions;parquet;${SDB_TPC_EXTENSION_NAMES}json;httpfs;avro;iceberg;postgres_scanner;autocomplete;icu;inet;azure;spatial;markdown;clickhouse_scanner"
+        "core_functions;parquet;${SDB_TPC_EXTENSION_NAMES}json;httpfs;avro;iceberg;postgres_scanner;autocomplete;icu;inet;azure;spatial;markdown;clickhouse_scanner;nanoarrow"
         CACHE STRING
         ""
         FORCE
@@ -718,6 +733,7 @@ else()
     set(DUCKDB_EXTENSION_CONFIGS
         "${CMAKE_CURRENT_SOURCE_DIR}/duckdb_clickhouse/extension_config.cmake"
         "${CMAKE_CURRENT_SOURCE_DIR}/duckdb_markdown/extension_config.cmake"
+        "${CMAKE_CURRENT_SOURCE_DIR}/duckdb_nanoarrow/extension_config.cmake"
         CACHE STRING
         ""
         FORCE
@@ -733,6 +749,7 @@ sdb_update_module(
     postgres
     duckdb_inet
     duckdb_markdown
+    duckdb_nanoarrow
     duckdb_spatial
     database-connector
 )
@@ -817,6 +834,7 @@ if(NOT IRESEARCH_BENCH)
             autocomplete_extension
             inet_extension
             markdown_extension
+            nanoarrow_extension
             spatial_extension
     )
 endif()

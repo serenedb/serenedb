@@ -570,7 +570,6 @@ duckdb::LogicalType ColumnarWrittenType(const duckdb::LogicalType& type) {
     kPgLsnAlias,
     kMacaddrAlias,
     kMacaddr8Alias,
-    kMoneyAlias,
     kRegprocAlias,
     kRegprocedureAlias,
     kRegoperAlias,

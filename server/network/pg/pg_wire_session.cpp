@@ -1487,13 +1487,15 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
   const auto& copy_info = *statement->Cast<duckdb::CopyStatement>().info;
   sdb::formats::CsvDialect dialect;
   auto encoding = sdb::formats::TextEncoding::Utf8;
+  const auto bound_info =
+    sdb::connector::BindCopyOptions(*_connection_ctx, copy_info);
   if (format == CopyFormat::Binary) {
-    sdb::connector::CheckBinaryCopyOptions(copy_info, true);
+    sdb::connector::CheckBinaryCopyOptions(*bound_info, true);
   } else if (format == CopyFormat::Text || format == CopyFormat::Csv) {
     const auto options = sdb::connector::ResolveCopyOptions(
       format == CopyFormat::Csv ? sdb::connector::CopyMode::Csv
                                 : sdb::connector::CopyMode::Text,
-      copy_info);
+      true, bound_info->options);
     sdb::connector::CheckCopyOptions(options, true);
     dialect = {options.delim, options.quote, options.escape};
     encoding = options.encoding;
@@ -1570,16 +1572,15 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyToStdout(
   const bool binary = format == CopyFormat::Binary;
   auto& copy = statement->Cast<duckdb::CopyStatement>();
   sdb::connector::PgCopyOptions options;
+  const auto bound_info =
+    sdb::connector::BindCopyOptions(*_connection_ctx, *copy.info);
   if (binary) {
-    sdb::connector::CheckBinaryCopyOptions(*copy.info, false);
+    sdb::connector::CheckBinaryCopyOptions(*bound_info, false);
   } else {
-    // The parser splits COPY options: value-form options (DELIMITER '|') land
-    // in info->options, while NULL / HEADER / FORCE_* land in parsed_options;
-    // the resolver consults both, before bind.
     options = sdb::connector::ResolveCopyOptions(
       format == CopyFormat::Csv ? sdb::connector::CopyMode::Csv
                                 : sdb::connector::CopyMode::Text,
-      *copy.info);
+      false, bound_info->options);
     sdb::connector::CheckCopyOptions(options, false);
   }
   auto inner = ExtractCopyToQuery(copy);

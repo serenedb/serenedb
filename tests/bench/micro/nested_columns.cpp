@@ -19,12 +19,14 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <benchmark/benchmark.h>
+#include <unistd.h>
 
 #include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <duckdb.hpp>
+#include <filesystem>
 #include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
@@ -33,6 +35,7 @@
 #include <iresearch/formats/column/internal/gather_arms.hpp>
 #include <iresearch/formats/column/read_context.hpp>
 #include <iresearch/store/memory_directory.hpp>
+#include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <map>
@@ -183,8 +186,24 @@ void Write(irs::Directory& dir, const Data& data, uint64_t gap = 0) {
   w.Commit(row);
 }
 
+const std::filesystem::path& SegRoot() {
+  static const std::filesystem::path root =
+    std::filesystem::temp_directory_path() /
+    ("sdb_nested_columns_" + std::to_string(::getpid()));
+  return root;
+}
+
+std::filesystem::path SegPath(Shape shape) {
+  auto path = SegRoot() / ("shape" + std::to_string(static_cast<int>(shape)));
+  std::filesystem::remove_all(path);
+  std::filesystem::create_directories(path);
+  return path;
+}
+
 struct Seg {
-  irs::MemoryDirectory dir{};
+  explicit Seg(Shape shape) : dir{SegPath(shape)} {}
+
+  irs::MMapDirectory dir;
   std::unique_ptr<irs::ColReader> reader;
   const irs::ColumnReader* col = nullptr;
 };
@@ -258,7 +277,7 @@ const Seg& GetSeg(Shape shape) {
   if (slot) {
     return *slot;
   }
-  slot = std::make_unique<Seg>();
+  slot = std::make_unique<Seg>(shape);
   Write(slot->dir, GetData(shape));
   slot->reader = std::make_unique<irs::ColReader>(
     slot->dir, std::string{kSeg}, CsDb(), irs::IOAdvice::RANDOM);
@@ -493,6 +512,8 @@ static int Main(int argc, char** argv) {
   benchmark::Initialize(&argc, argv);
   benchmark::RunSpecifiedBenchmarks();
   benchmark::Shutdown();
+  std::error_code ec;
+  std::filesystem::remove_all(SegRoot(), ec);
   irs::DuckDBEngine::Instance().Shutdown();
   return 0;
 }

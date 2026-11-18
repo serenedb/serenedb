@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <benchmark/benchmark.h>
+#include <unistd.h>
 
 #include <cstdint>
 #include <cstdio>
@@ -133,14 +134,21 @@ void FillBatch(duckdb::Vector& vec, Corpus corpus, uint64_t base,
   }
 }
 
+const std::filesystem::path& SegRoot() {
+  static const std::filesystem::path root = [] {
+    if (const char* e = std::getenv("SDB_BENCH_MMAP_DIR")) {
+      return std::filesystem::path{e};
+    }
+    return std::filesystem::temp_directory_path() /
+           ("sdb_col_codecs_" + std::to_string(::getpid()));
+  }();
+  return root;
+}
+
 std::unique_ptr<irs::Directory> MakeSegDirectory(Corpus corpus, size_t arm) {
-  const char* root = std::getenv("SDB_BENCH_MMAP_DIR");
-  if (root == nullptr) {
-    return std::make_unique<irs::MemoryDirectory>();
-  }
-  const auto path = std::filesystem::path{root} /
-                    ("col_codecs_" + std::to_string(static_cast<int>(corpus)) +
-                     "_" + std::to_string(arm));
+  const auto path =
+    SegRoot() / ("col_codecs_" + std::to_string(static_cast<int>(corpus)) +
+                 "_" + std::to_string(arm));
   std::filesystem::remove_all(path);
   std::filesystem::create_directories(path);
   return std::make_unique<irs::MMapDirectory>(path);
@@ -438,6 +446,10 @@ static int Main(int argc, char** argv) {
   benchmark::Initialize(&argc, argv);
   benchmark::RunSpecifiedBenchmarks();
   benchmark::Shutdown();
+  if (!std::getenv("SDB_BENCH_MMAP_DIR")) {
+    std::error_code ec;
+    std::filesystem::remove_all(SegRoot(), ec);
+  }
   irs::DuckDBEngine::Instance().Shutdown();
   return 0;
 }

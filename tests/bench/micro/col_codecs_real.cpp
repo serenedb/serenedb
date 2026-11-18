@@ -295,16 +295,21 @@ struct ColSeg {
   uint64_t ours = 0;
 };
 
+const std::filesystem::path& SegRoot() {
+  static const std::filesystem::path root = [] {
+    if (const char* e = std::getenv("SDB_BENCH_MMAP_DIR")) {
+      return std::filesystem::path{e};
+    }
+    return std::filesystem::temp_directory_path() /
+           ("sdb_col_codecs_real_" + std::to_string(::getpid()));
+  }();
+  return root;
+}
+
 void MakeSegDirectory(ColSeg& seg, const ColArm& arm) {
-  const char* root = std::getenv("SDB_BENCH_MMAP_DIR");
-  if (root == nullptr) {
-    seg.dir = std::make_unique<irs::MemoryDirectory>();
-    return;
-  }
   const bool numeric =
     &arm >= std::begin(kNumArms) && &arm < std::end(kNumArms);
-  seg.path = std::filesystem::path{root} /
-             (std::string{numeric ? "num_" : "col_"} + arm.name);
+  seg.path = SegRoot() / (std::string{numeric ? "num_" : "col_"} + arm.name);
   std::filesystem::remove_all(seg.path);
   std::filesystem::create_directories(seg.path);
   seg.dir = std::make_unique<irs::MMapDirectory>(seg.path);
@@ -1245,6 +1250,10 @@ static int Main(int argc, char** argv) {
   benchmark::Shutdown();
   for (const auto& path : DuckFiles()) {
     RemoveDuckFile(path);
+  }
+  if (!std::getenv("SDB_BENCH_MMAP_DIR")) {
+    std::error_code ec;
+    std::filesystem::remove_all(SegRoot(), ec);
   }
   irs::DuckDBEngine::Instance().Shutdown();
   return 0;

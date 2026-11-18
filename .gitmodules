@@ -200,3 +200,11 @@
 	url = https://gitlab.com/cmocka/cmocka.git
 	shallow = true
 	update = none
+[submodule "third_party/nanoarrow"]
+	path = third_party/nanoarrow
+	url = https://github.com/serenedb/arrow-nanoarrow.git
+	shallow = true
+[submodule "third_party/duckdb_nanoarrow"]
+	path = third_party/duckdb_nanoarrow
+	url = https://github.com/serenedb/duckdb-nanoarrow.git
+	shallow = true

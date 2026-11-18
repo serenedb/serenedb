@@ -134,50 +134,6 @@ void ProgressMetrics::Reset() {
   processed.Reset();
 }
 
-namespace {
-
-void PublishState(ProgressSource& source, BackendState state,
-                  int64_t xact_start_us, int64_t now) {
-  const auto changes = source.state_changes.load(std::memory_order_relaxed);
-  source.state_changes.store(changes + 1, std::memory_order_relaxed);
-  std::atomic_thread_fence(std::memory_order_release);
-  source.state.store(state, std::memory_order_relaxed);
-  source.xact_start_us.store(xact_start_us, std::memory_order_relaxed);
-  source.state_change_us.store(now, std::memory_order_relaxed);
-  source.state_changes.store(changes + 2, std::memory_order_release);
-}
-
-void ReadState(const ProgressSource& source, ProgressSnapshot& snapshot) {
-  for (;;) {
-    const auto changes = source.state_changes.load(std::memory_order_acquire);
-    snapshot.state = source.state.load(std::memory_order_relaxed);
-    snapshot.xact_start_us =
-      source.xact_start_us.load(std::memory_order_relaxed);
-    snapshot.state_change_us =
-      source.state_change_us.load(std::memory_order_relaxed);
-    std::atomic_thread_fence(std::memory_order_acquire);
-    if (changes % 2 == 0 &&
-        source.state_changes.load(std::memory_order_relaxed) == changes) {
-      return;
-    }
-  }
-}
-
-}  // namespace
-
-void ProgressSource::BeginQuery(std::string query_text) {
-  metrics.Reset();
-  const auto now = duckdb::Timestamp::GetCurrentTimestamp().value;
-  absl::MutexLock lock{&mu};
-  query = std::move(query_text);
-  query_start_us.store(now, std::memory_order_relaxed);
-  const auto xact_start =
-    state.load(std::memory_order_relaxed) == BackendState::Idle
-      ? now
-      : xact_start_us.load(std::memory_order_relaxed);
-  PublishState(*this, BackendState::Active, xact_start, now);
-}
-
 BackendState IdleState(duckdb::TransactionContext& transaction) {
   if (transaction.IsAutoCommit()) {
     return BackendState::Idle;
@@ -189,13 +145,59 @@ BackendState IdleState(duckdb::TransactionContext& transaction) {
   return BackendState::IdleInTransaction;
 }
 
-void ProgressSource::Ready(BackendState idle) {
-  SDB_ASSERT(idle != BackendState::Active);
-  const auto xact_start = idle == BackendState::IdleInTransaction
-                            ? xact_start_us.load(std::memory_order_relaxed)
-                            : 0;
-  PublishState(*this, idle, xact_start,
-               duckdb::Timestamp::GetCurrentTimestamp().value);
+void BackendStatusEntry::Write(const BackendStatus& status) noexcept {
+  const auto changes = _changes.load(std::memory_order_relaxed);
+  _changes.store(changes + 1, std::memory_order_relaxed);
+  std::atomic_thread_fence(std::memory_order_release);
+  _state.store(status.state, std::memory_order_relaxed);
+  _xact_start_us.store(status.xact_start_us, std::memory_order_relaxed);
+  _query_start_us.store(status.query_start_us, std::memory_order_relaxed);
+  _state_change_us.store(status.state_change_us, std::memory_order_relaxed);
+  _changes.store(changes + 2, std::memory_order_release);
+}
+
+BackendStatus BackendStatusEntry::Read() const noexcept {
+  for (;;) {
+    const auto changes = _changes.load(std::memory_order_acquire);
+    const BackendStatus status{
+      .state = _state.load(std::memory_order_relaxed),
+      .xact_start_us = _xact_start_us.load(std::memory_order_relaxed),
+      .query_start_us = _query_start_us.load(std::memory_order_relaxed),
+      .state_change_us = _state_change_us.load(std::memory_order_relaxed),
+    };
+    std::atomic_thread_fence(std::memory_order_acquire);
+    if (changes % 2 == 0 &&
+        _changes.load(std::memory_order_relaxed) == changes) {
+      return status;
+    }
+  }
+}
+
+void ProgressSource::BeginQuery(std::string query_text) {
+  metrics.Reset();
+  const auto now = duckdb::Timestamp::GetCurrentTimestamp().value;
+  const auto previous = status.Read();
+  absl::MutexLock lock{&mu};
+  query = std::move(query_text);
+  status.Write({
+    .state = BackendState::Active,
+    .xact_start_us =
+      previous.state == BackendState::Idle ? now : previous.xact_start_us,
+    .query_start_us = now,
+    .state_change_us = now,
+  });
+}
+
+void ProgressSource::ReportIdle(BackendState state) {
+  SDB_ASSERT(state != BackendState::Active);
+  const auto previous = status.Read();
+  status.Write({
+    .state = state,
+    .xact_start_us =
+      state == BackendState::IdleInTransaction ? previous.xact_start_us : 0,
+    .query_start_us = previous.query_start_us,
+    .state_change_us = duckdb::Timestamp::GetCurrentTimestamp().value,
+  });
 }
 
 namespace {
@@ -349,9 +351,8 @@ std::vector<ProgressSnapshot> ProgressRegistry::GetSnapshots() const {
 
     absl::MutexLock lock{&source->mu};
     s.query = source->query;
-    s.query_start_us = source->query_start_us.load(std::memory_order_relaxed);
-    ReadState(*source, s);
-    if (source->ctx && s.state == BackendState::Active) {
+    s.status = source->status.Read();
+    if (source->ctx && s.status.state == BackendState::Active) {
       auto progress = source->ctx->GetQueryProgress();
       s.percent = progress.GetPercentage();
       s.rows_processed = static_cast<int64_t>(progress.GetRowsProcessed());

@@ -97,14 +97,15 @@ std::optional<int64_t> MicrosOrNull(int64_t micros) {
 }
 
 constexpr std::tuple kProgressSession{
-  Col<"state">([](const auto& s) { return StateName(s.state); }),
+  Col<"state">([](const auto& s) { return StateName(s.status.state); }),
   Col<"query">(&ProgressSnapshot::query),
   Col<"backend_start_us">(&ProgressSnapshot::backend_start_us),
   Col<"xact_start_us">(
-    [](const auto& s) { return MicrosOrNull(s.xact_start_us); }),
+    [](const auto& s) { return MicrosOrNull(s.status.xact_start_us); }),
   Col<"query_start_us">(
-    [](const auto& s) { return MicrosOrNull(s.query_start_us); }),
-  Col<"state_change_us">(&ProgressSnapshot::state_change_us)};
+    [](const auto& s) { return MicrosOrNull(s.status.query_start_us); }),
+  Col<"state_change_us">(
+    [](const auto& s) { return s.status.state_change_us; })};
 
 constexpr std::tuple kProgressActive{
   Col<"rows_processed">(&ProgressSnapshot::rows_processed),
@@ -165,7 +166,7 @@ class SdbProgress final : public SystemTableScan<kSdbProgressSql> {
         return;
       }
     }
-    if (s.state != BackendState::Active) {
+    if (s.status.state != BackendState::Active) {
       Emit<kIdle>(s);
     } else if (static_cast<ProgressCommand>(s.command) ==
                ProgressCommand::None) {

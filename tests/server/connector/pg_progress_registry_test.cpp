@@ -60,7 +60,8 @@ TEST(ProgressRegistryTest, RegisterSnapshotUnregister) {
   EXPECT_EQ(snap->user, "postgres");
   EXPECT_EQ(snap->database, "postgres");
   EXPECT_EQ(snap->backend_start_us, 123456);
-  EXPECT_EQ(snap->query_start_us, 0);
+  EXPECT_EQ(snap->status.state, BackendState::Idle);
+  EXPECT_EQ(snap->status.query_start_us, 0);
   EXPECT_EQ(snap->query, "");
   EXPECT_EQ(snap->percent, -1);
 
@@ -76,20 +77,20 @@ TEST(ProgressRegistryTest, QueryLifecycle) {
   auto snap = FindByPid(1002);
   ASSERT_TRUE(snap.has_value());
   EXPECT_EQ(snap->query, "SELECT 1");
-  EXPECT_EQ(snap->state, BackendState::Active);
-  EXPECT_GT(snap->query_start_us, 0);
-  EXPECT_EQ(snap->xact_start_us, snap->query_start_us);
-  EXPECT_EQ(snap->state_change_us, snap->query_start_us);
-  const auto started = snap->query_start_us;
+  EXPECT_EQ(snap->status.state, BackendState::Active);
+  EXPECT_GT(snap->status.query_start_us, 0);
+  EXPECT_EQ(snap->status.xact_start_us, snap->status.query_start_us);
+  EXPECT_EQ(snap->status.state_change_us, snap->status.query_start_us);
+  const auto started = snap->status.query_start_us;
 
-  source->Ready(BackendState::Idle);
+  source->ReportIdle(BackendState::Idle);
   snap = FindByPid(1002);
   ASSERT_TRUE(snap.has_value());
   EXPECT_EQ(snap->query, "SELECT 1");
-  EXPECT_EQ(snap->state, BackendState::Idle);
-  EXPECT_EQ(snap->query_start_us, started);
-  EXPECT_EQ(snap->xact_start_us, 0);
-  EXPECT_GE(snap->state_change_us, started);
+  EXPECT_EQ(snap->status.state, BackendState::Idle);
+  EXPECT_EQ(snap->status.query_start_us, started);
+  EXPECT_EQ(snap->status.xact_start_us, 0);
+  EXPECT_GE(snap->status.state_change_us, started);
 
   ProgressRegistry::Instance().Unregister(source.get());
 }
@@ -99,42 +100,42 @@ TEST(ProgressRegistryTest, TransactionBlockLifecycle) {
   ProgressRegistry::Instance().Register(source);
 
   source->BeginQuery("BEGIN");
-  source->Ready(BackendState::IdleInTransaction);
+  source->ReportIdle(BackendState::IdleInTransaction);
   auto snap = FindByPid(1007);
   ASSERT_TRUE(snap.has_value());
-  const auto began = snap->xact_start_us;
+  const auto began = snap->status.xact_start_us;
   EXPECT_GT(began, 0);
-  EXPECT_EQ(snap->state, BackendState::IdleInTransaction);
+  EXPECT_EQ(snap->status.state, BackendState::IdleInTransaction);
 
   source->BeginQuery("SELECT 1/0");
   snap = FindByPid(1007);
   ASSERT_TRUE(snap.has_value());
-  EXPECT_EQ(snap->state, BackendState::Active);
-  EXPECT_EQ(snap->xact_start_us, began);
-  EXPECT_GE(snap->query_start_us, began);
+  EXPECT_EQ(snap->status.state, BackendState::Active);
+  EXPECT_EQ(snap->status.xact_start_us, began);
+  EXPECT_GE(snap->status.query_start_us, began);
 
-  source->Ready(BackendState::IdleInTransactionAborted);
+  source->ReportIdle(BackendState::IdleInTransactionAborted);
   snap = FindByPid(1007);
   ASSERT_TRUE(snap.has_value());
-  EXPECT_EQ(snap->state, BackendState::IdleInTransactionAborted);
-  EXPECT_EQ(snap->xact_start_us, 0);
+  EXPECT_EQ(snap->status.state, BackendState::IdleInTransactionAborted);
+  EXPECT_EQ(snap->status.xact_start_us, 0);
 
   source->BeginQuery("ROLLBACK");
   snap = FindByPid(1007);
   ASSERT_TRUE(snap.has_value());
-  EXPECT_EQ(snap->state, BackendState::Active);
-  EXPECT_EQ(snap->xact_start_us, 0);
-  source->Ready(BackendState::Idle);
+  EXPECT_EQ(snap->status.state, BackendState::Active);
+  EXPECT_EQ(snap->status.xact_start_us, 0);
+  source->ReportIdle(BackendState::Idle);
   snap = FindByPid(1007);
   ASSERT_TRUE(snap.has_value());
-  EXPECT_EQ(snap->state, BackendState::Idle);
-  EXPECT_EQ(snap->xact_start_us, 0);
-  EXPECT_GE(snap->state_change_us, snap->query_start_us);
+  EXPECT_EQ(snap->status.state, BackendState::Idle);
+  EXPECT_EQ(snap->status.xact_start_us, 0);
+  EXPECT_GE(snap->status.state_change_us, snap->status.query_start_us);
 
   source->BeginQuery("SELECT 2");
   snap = FindByPid(1007);
   ASSERT_TRUE(snap.has_value());
-  EXPECT_EQ(snap->xact_start_us, snap->query_start_us);
+  EXPECT_EQ(snap->status.xact_start_us, snap->status.query_start_us);
 
   ProgressRegistry::Instance().Unregister(source.get());
 }
@@ -146,9 +147,9 @@ TEST(ProgressRegistryTest, SnapshotsNeverMixTwoStates) {
   std::thread session{[&] {
     while (!stop.load(std::memory_order_relaxed)) {
       source->BeginQuery("BEGIN");
-      source->Ready(BackendState::IdleInTransaction);
+      source->ReportIdle(BackendState::IdleInTransaction);
       source->BeginQuery("COMMIT");
-      source->Ready(BackendState::Idle);
+      source->ReportIdle(BackendState::Idle);
     }
   }};
   for (int i = 0; i < 2000; ++i) {
@@ -157,7 +158,8 @@ TEST(ProgressRegistryTest, SnapshotsNeverMixTwoStates) {
       ADD_FAILURE() << "the session is not registered";
       break;
     }
-    EXPECT_EQ(snap->state == BackendState::Idle, snap->xact_start_us == 0);
+    EXPECT_EQ(snap->status.state == BackendState::Idle,
+              snap->status.xact_start_us == 0);
   }
   stop.store(true, std::memory_order_relaxed);
   session.join();
@@ -184,7 +186,7 @@ TEST(ProgressRegistryTest, BeginQueryResetsMetrics) {
   EXPECT_EQ(snap->tuples_processed, 150);
   EXPECT_EQ(snap->bytes_processed, 4096);
 
-  source->Ready(BackendState::Idle);
+  source->ReportIdle(BackendState::Idle);
   source->BeginQuery("SELECT 1");
   snap = FindByPid(1003);
   ASSERT_TRUE(snap.has_value());

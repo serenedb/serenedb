@@ -149,6 +149,28 @@ enum class BackendState : uint8_t {
   IdleInTransactionAborted,
 };
 
+BackendState IdleState(duckdb::TransactionContext& transaction);
+
+struct BackendStatus {
+  BackendState state{BackendState::Idle};
+  int64_t xact_start_us{0};
+  int64_t query_start_us{0};
+  int64_t state_change_us{0};
+};
+
+class BackendStatusEntry {
+ public:
+  void Write(const BackendStatus& status) noexcept;
+  BackendStatus Read() const noexcept;
+
+ private:
+  std::atomic<uint32_t> _changes{0};
+  std::atomic<BackendState> _state{BackendState::Idle};
+  std::atomic<int64_t> _xact_start_us{0};
+  std::atomic<int64_t> _query_start_us{0};
+  std::atomic<int64_t> _state_change_us{0};
+};
+
 // One row of sdb_progress: a live connection. Immutable identity fields are
 // set at registration; query + ctx are guarded by mu (the same detach pattern
 // as CancelToken: a snapshotting thread must never touch the ClientContext
@@ -165,21 +187,15 @@ struct ProgressSource {
   std::string query;
   duckdb::ClientContext* ctx{nullptr};
 
-  std::atomic<int64_t> query_start_us{0};
-  std::atomic<uint32_t> state_changes{0};
-  std::atomic<BackendState> state{BackendState::Idle};
-  std::atomic<int64_t> xact_start_us{0};
-  std::atomic<int64_t> state_change_us{0};
+  BackendStatusEntry status;
   std::atomic<int64_t> xact_commit{0};
   std::atomic<int64_t> xact_rollback{0};
   ProgressMetrics metrics;
 
   void BeginQuery(std::string query_text);
-  void Ready(BackendState idle);
+  void ReportIdle(BackendState state);
   void Detach();
 };
-
-BackendState IdleState(duckdb::TransactionContext& transaction);
 
 struct DatabaseStats {
   int64_t xact_commit{0};
@@ -195,10 +211,7 @@ struct ProgressSnapshot {
   std::string database;
   std::string query;
   int64_t backend_start_us{0};
-  int64_t xact_start_us{0};
-  int64_t query_start_us{0};
-  int64_t state_change_us{0};
-  BackendState state{BackendState::Idle};
+  BackendStatus status;
   double percent{-1};
   int64_t rows_processed{0};
   int64_t rows_total{0};

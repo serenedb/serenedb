@@ -143,8 +143,7 @@ ConnectionContext::ConnectionContext(duckdb::DatabaseInstance& db,
   _progress->database = _database_name;
   _progress->client_backend = identity.client_backend;
   _progress->backend_start_us = duckdb::Timestamp::GetCurrentTimestamp().value;
-  _progress->state_change_us.store(_progress->backend_start_us,
-                                   std::memory_order_relaxed);
+  _progress->status.Write({.state_change_us = _progress->backend_start_us});
   _progress->ctx = this;
   if (_database_name.empty()) {
     return;
@@ -503,7 +502,7 @@ void ConnectionContext::OnQueryEnd() {
 }
 
 void ConnectionContext::ReportIdle() {
-  _progress->Ready(pg::IdleState(transaction));
+  _progress->ReportIdle(pg::IdleState(transaction));
 }
 
 void ConnectionContext::OnTransactionPreCommit(duckdb::MetaTransaction& meta) {

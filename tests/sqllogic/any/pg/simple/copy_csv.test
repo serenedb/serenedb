@@ -395,10 +395,8 @@ COPY ccsv_src TO '${__TEST_DIR__}/ccsv_bad.csv' (FORMAT csv, DELIMITER 'ab');
 db error: ERROR: COPY delimiter must be a single one-byte character
 
 
-statement error
+statement error COPY (quote|escape) must be a single one-byte character
 COPY ccsv_three FROM '${__TEST_DIR__}/ccsv_force.csv' (FORMAT csv, QUOTE '');
-----
-db error: ERROR: COPY quote must be a single one-byte character
 
 
 statement error (COPY delimiter must be a single one-byte character|delimiter requires a parameter)

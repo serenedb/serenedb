@@ -169,7 +169,7 @@ DELETE FROM beast_four;
 
 
 statement count 1
-COPY beast_four FROM '${__TEST_DIR__}/cr_only.csv' (FORMAT csv, HEADER false, NULL_PADDING);
+COPY beast_four FROM '${__TEST_DIR__}/cr_only.csv' (FORMAT csv, HEADER false, NULL_PADDING, AUTO_DETECT false);
 
 
 query

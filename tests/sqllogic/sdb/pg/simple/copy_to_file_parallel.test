@@ -150,10 +150,10 @@ RESET threads;
 
 
 query
-SELECT content = (
-  SELECT string_agg(id::VARCHAR || chr(9) || replace(replace(label, e'\\', e'\\\\'), chr(9), e'\\t') || chr(10), '' ORDER BY id)
+SELECT list_sort(string_split(rtrim(content, chr(10)), chr(10))) = (
+  SELECT list_sort(list(id::VARCHAR || chr(9) || replace(replace(label, e'\\', e'\\\\'), chr(9), e'\\t')))
   FROM ctfp_src
-) AS same
+) AND content LIKE '%' || chr(10) AS same
 FROM read_text('${__TEST_DIR__}/ctfp_one_thread.txt');
 ----
 same

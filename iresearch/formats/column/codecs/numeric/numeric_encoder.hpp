@@ -162,6 +162,9 @@ class NumericEncoder : public State {
         return false;
       }
     } else {
+      if (_forced && leaf == ByteCodec::None) {
+        return false;
+      }
       held = true;
       if (!Hold(leaf, ChoiceOf(layout))) {
         return false;
@@ -169,8 +172,9 @@ class NumericEncoder : public State {
     }
     _out.clear();
     Write(*_best, _leaf, samples, _out);
-    if (held && data.tuning.reuse.Grew(static_cast<double>(_out.size()),
-                                       static_cast<double>(RawInput(data)))) {
+    if (held && !_forced &&
+        data.tuning.reuse.Grew(static_cast<double>(_out.size()),
+                               static_cast<double>(RawInput(data)))) {
       return false;
     }
     data.FlushSegment(CodecOf(_shape, _leaf), _values.Stats(data.type),

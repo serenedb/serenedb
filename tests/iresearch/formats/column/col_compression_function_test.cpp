@@ -224,7 +224,7 @@ TEST_F(ColCompressionFunctionTest, AWinnerThatCannotWriteLeavesItUncompressed) {
 TEST_F(ColCompressionFunctionTest, AHeldCodecThatGrowsIsContestedAgain) {
   Fake<0>::probe.estimate = 0.5;
   Fake<0>::probe.bytes = kRows / 2;
-  const Contender functions[] = {FakeOf<0>()};
+  const Contender functions[] = {FakeOf<0>(), FakeOf<1>()};
   for (int i = 0; i < 4; ++i) {
     EXPECT_EQ(Compress(functions, irs::WriteTier::Flush), CodecType::Rle);
   }
@@ -241,7 +241,7 @@ TEST_F(ColCompressionFunctionTest, AHeldCodecThatGrowsIsContestedAgain) {
 TEST_F(ColCompressionFunctionTest, AHeldCodecThatCannotWriteIsContestedAgain) {
   Fake<0>::probe.estimate = 0.5;
   Fake<0>::probe.bytes = kRows / 2;
-  const Contender functions[] = {FakeOf<0>()};
+  const Contender functions[] = {FakeOf<0>(), FakeOf<1>()};
   for (int i = 0; i < 5; ++i) {
     EXPECT_EQ(Compress(functions, irs::WriteTier::Flush), CodecType::Rle);
   }
@@ -272,8 +272,8 @@ TEST_F(ColCompressionFunctionTest,
        AHeldFunctionTheRowGroupDoesNotOfferIsNotReused) {
   Fake<0>::probe.estimate = 0.5;
   Fake<1>::probe.estimate = 0.5;
-  const Contender first[] = {FakeOf<0>()};
-  const Contender second[] = {FakeOf<1>()};
+  const Contender first[] = {FakeOf<0>(), FakeOf<2>()};
+  const Contender second[] = {FakeOf<1>(), FakeOf<2>()};
   EXPECT_EQ(Compress(first, irs::WriteTier::Flush), CodecType::Rle);
   EXPECT_EQ(Compress(first, irs::WriteTier::Flush), CodecType::Rle);
   EXPECT_EQ(Fake<0>::probe.analyzed, 2);
@@ -356,7 +356,7 @@ TEST_F(ColCompressionFunctionTest,
        AHeldFunctionIsNotContestedForBitPackingTheRowGroupDoesNotOffer) {
   Fake<0>::probe.estimate = 0.5;
   Fake<0>::probe.bytes = 4 * kRows;
-  const Contender functions[] = {FakeOf<0>()};
+  const Contender functions[] = {FakeOf<0>(), FakeOf<1>()};
   for (int i = 0; i < 3; ++i) {
     EXPECT_EQ(Compress(functions, irs::WriteTier::Flush), CodecType::Rle);
   }
@@ -367,11 +367,31 @@ TEST_F(ColCompressionFunctionTest,
        AHeldFunctionIsContestedWhenBitPackingOnOfferUndercutsIt) {
   Fake<0>::probe.estimate = 0.5;
   Fake<0>::probe.bytes = 4 * kRows;
-  const Contender functions[] = {{&kFake<0>, CodecType::Ffor}};
+  const Contender functions[] = {{&kFake<0>, CodecType::Ffor}, FakeOf<1>()};
   for (int i = 0; i < 3; ++i) {
     EXPECT_EQ(Compress(functions, irs::WriteTier::Flush), CodecType::Rle);
   }
   EXPECT_EQ(Fake<0>::probe.analyzed, 3);
+}
+
+TEST_F(ColCompressionFunctionTest,
+       FunctionsOfOneCodecAreContestedAgainOnlyWhenTheHeldOneGrows) {
+  Fake<0>::probe.estimate = 0.5;
+  Fake<0>::probe.bytes = kRows / 2;
+  Fake<1>::probe.estimate = 0.6;
+  const Contender functions[] = {{&kFake<0>, CodecType::Rle},
+                                 {&kFake<1>, CodecType::Rle}};
+  for (int i = 0; i < 20; ++i) {
+    EXPECT_EQ(Compress(functions, irs::WriteTier::Flush), CodecType::Rle);
+  }
+  EXPECT_EQ(Fake<0>::probe.analyzed, 1);
+  EXPECT_EQ(Fake<1>::probe.analyzed, 1);
+  Fake<0>::probe.bytes = 2 * kRows;
+  EXPECT_EQ(Compress(functions, irs::WriteTier::Flush), CodecType::Rle);
+  EXPECT_EQ(Fake<0>::probe.analyzed, 1);
+  EXPECT_EQ(Compress(functions, irs::WriteTier::Flush), CodecType::Rle);
+  EXPECT_EQ(Fake<0>::probe.analyzed, 2);
+  EXPECT_EQ(Fake<1>::probe.analyzed, 2);
 }
 
 TEST_F(ColCompressionFunctionTest, OnlyTheFrameOptionThatBidWritesText) {

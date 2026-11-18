@@ -167,7 +167,13 @@ bool CompressHeld(const Contender& held, ColumnDataCheckpointData& data) {
   return true;
 }
 
-void Decide(std::span<const Contender> contenders,
+bool OneCodec(std::span<const Contender> contenders) {
+  return absl::c_all_of(contenders, [&](const Contender& contender) {
+    return contender.codec == contenders.front().codec;
+  });
+}
+
+void Decide(std::span<const Contender> contenders, bool timed,
             ColumnDataCheckpointData& data) {
   auto& reuse = data.tuning.reuse;
   const auto* held = Find(contenders, reuse.held);
@@ -202,9 +208,10 @@ void Decide(std::span<const Contender> contenders,
   if (bytes == 0) {
     return;
   }
-  reuse.Settle(function,
-               function == reuse.held || (held && held->codec == codec),
-               static_cast<double>(bytes), static_cast<double>(RawInput(data)));
+  reuse.Settle(
+    function,
+    !timed || function == reuse.held || (held && held->codec == codec),
+    static_cast<double>(bytes), static_cast<double>(RawInput(data)));
 }
 
 bool CompressAuto(ColumnDataCheckpointData& data) {
@@ -243,12 +250,14 @@ constexpr Codec kAutoCodec{.type = CodecType::Auto, .compression = &kAuto};
 void Contest(std::span<const Contender> contenders,
              ColumnDataCheckpointData& data) {
   auto& reuse = data.tuning.reuse;
-  const auto* held = reuse.Due() ? nullptr : Find(contenders, reuse.held);
+  const bool timed = !OneCodec(contenders);
+  const bool due = reuse.Due() && (timed || reuse.gap == 1);
+  const auto* held = due ? nullptr : Find(contenders, reuse.held);
   if (held && !PackingUndercutsHeld(contenders, data) &&
       CompressHeld(*held, data)) {
     return;
   }
-  Decide(contenders, data);
+  Decide(contenders, timed, data);
 }
 
 const Codec* AutoCodec(PhysicalType) { return &kAutoCodec; }

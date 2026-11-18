@@ -135,3 +135,76 @@ FROM read_blob('${__TEST_DIR__}/ctfp_empty.bin');
 ----
 bytes
 5047434F50590AFF0D0A000000000000000000FFFF
+
+
+statement ok
+SET threads = 1;
+
+
+statement count 300000
+COPY ctfp_src TO '${__TEST_DIR__}/ctfp_one_thread.txt' (FORMAT text);
+
+
+statement ok
+RESET threads;
+
+
+query
+SELECT content = (
+  SELECT string_agg(id::VARCHAR || chr(9) || replace(replace(label, e'\\', e'\\\\'), chr(9), e'\\t') || chr(10), '' ORDER BY id)
+  FROM ctfp_src
+) AS same
+FROM read_text('${__TEST_DIR__}/ctfp_one_thread.txt');
+----
+same
+t
+
+
+statement ok
+SET SESSION preserve_insertion_order = false;
+
+
+statement count 300000
+COPY ctfp_src TO '${__TEST_DIR__}/ctfp_unordered.csv' (FORMAT csv);
+
+
+statement ok
+SET SESSION preserve_insertion_order = true;
+
+
+statement ok
+CREATE TABLE ctfp_unordered (id INTEGER, label TEXT);
+
+
+statement count 300000
+COPY ctfp_unordered FROM '${__TEST_DIR__}/ctfp_unordered.csv' (FORMAT csv);
+
+
+query
+SELECT count(*) AS n, sum(id) AS total
+FROM ctfp_unordered
+JOIN ctfp_src USING (id, label);
+----
+n	total
+300000	44999850000
+
+
+statement count 300000
+COPY ctfp_src TO '${__TEST_DIR__}/ctfp_zstd.txt' (FORMAT text, COMPRESSION zstd);
+
+
+statement ok
+CREATE TABLE ctfp_zstd (id INTEGER, label TEXT);
+
+
+statement count 300000
+COPY ctfp_zstd FROM '${__TEST_DIR__}/ctfp_zstd.txt' (FORMAT text, COMPRESSION zstd);
+
+
+query
+SELECT count(*) AS n, sum(id) AS total
+FROM ctfp_zstd
+JOIN ctfp_src USING (id, label);
+----
+n	total
+300000	44999850000

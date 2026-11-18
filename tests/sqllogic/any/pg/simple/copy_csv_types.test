@@ -126,13 +126,13 @@ statement error invalid input syntax for type json
 COPY ccsvt_json FROM '${__TEST_DIR__}/ccsvt_json_two.csv' (FORMAT csv);
 
 
-statement count 2
-COPY (SELECT * FROM (VALUES ('5,"[1,]"'), ('6,-Infinity')) v(l))
+statement count 3
+COPY (SELECT * FROM (VALUES ('5,"[1,]"'), ('6,-Infinity'), ('7,"[nan, -INF]"')) v(l))
 TO '${__TEST_DIR__}/ccsvt_json_lenient.csv' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
 
 
 onlyif serenedb
-statement count 2
+statement count 3
 COPY ccsvt_json FROM '${__TEST_DIR__}/ccsvt_json_lenient.csv' (FORMAT csv);
 
 
@@ -256,3 +256,252 @@ SELECT count(*) AS n FROM ccsvt_frozen;
 ----
 n
 2
+
+
+statement ok
+CREATE TABLE ccsvt_json_shapes (id INTEGER, j JSON);
+
+
+statement count 25
+COPY (SELECT * FROM (VALUES
+  ('1,0'),
+  ('2,-0'),
+  ('3,0.25e-3'),
+  ('4,12E+2'),
+  ('5,"[0, -1.5E+2, true, false, null]"'),
+  ('6,"{""a"": {""b"": [1e5, 2E-1, null]}, ""c"": false}"'),
+  ('7,"""s"""'),
+  ('8,01'),
+  ('9,-'),
+  ('10,1.'),
+  ('11,1e'),
+  ('12,"[1.]"'),
+  ('13,"[1e+]"'),
+  ('14,"[01]"'),
+  ('15,"[-]"'),
+  ('16,"[tru]"'),
+  ('17,"[nul]"'),
+  ('18,"{""a"": nul}"'),
+  ('19,"{""a"": tru}"'),
+  ('20,"[.5]"'),
+  ('21,"[1] x"'),
+  ('22,1 x'),
+  ('23,"{""a"" 1}"'),
+  ('24,"[1, {""b"": x}]"'),
+  ('25,""')) v(l))
+TO '${__TEST_DIR__}/ccsvt_json_shapes.csv' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+statement count 7
+COPY ccsvt_json_shapes FROM '${__TEST_DIR__}/ccsvt_json_shapes.csv' (FORMAT csv, ON_ERROR IGNORE);
+
+
+query
+SELECT id, j FROM ccsvt_json_shapes ORDER BY id;
+----
+id	j
+1	0
+2	-0
+3	0.25e-3
+4	12E+2
+5	[0, -1.5E+2, true, false, null]
+6	{"a": {"b": [1e5, 2E-1, null]}, "c": false}
+7	"s"
+
+
+statement error
+COPY (SELECT 'aé€' AS t) TO '${__TEST_DIR__}/ccsvt_euro.csv' (FORMAT csv, ENCODING 'LATIN1');
+----
+db error: ERROR: character with byte sequence 0xe2 0x82 0xac in encoding "UTF8" has no equivalent in encoding "LATIN1"
+
+
+statement error
+COPY (SELECT 'ÿĀ' AS t) TO '${__TEST_DIR__}/ccsvt_amacron.csv' (FORMAT csv, ENCODING 'LATIN1');
+----
+db error: ERROR: character with byte sequence 0xc4 0x80 in encoding "UTF8" has no equivalent in encoding "LATIN1"
+
+
+statement ok
+TRUNCATE ccsvt_lines;
+
+
+statement count 1
+COPY (SELECT 'Ä' AS l) TO '${__TEST_DIR__}/ccsvt_c4.csv' (FORMAT csv, ENCODING 'LATIN1');
+
+
+statement error
+COPY ccsvt_lines FROM '${__TEST_DIR__}/ccsvt_c4.csv' (FORMAT csv, DELIMITER E'\x01', QUOTE E'\x02');
+----
+db error: ERROR: invalid byte sequence for encoding "UTF8": 0xc4 0x0a
+
+
+statement count 1
+COPY (SELECT 'ü' AS l) TO '${__TEST_DIR__}/ccsvt_fc.csv' (FORMAT csv, ENCODING 'LATIN1');
+
+
+statement error
+COPY ccsvt_lines FROM '${__TEST_DIR__}/ccsvt_fc.csv' (FORMAT csv, DELIMITER E'\x01', QUOTE E'\x02');
+----
+db error: ERROR: invalid byte sequence for encoding "UTF8": 0xfc
+
+
+statement count 1
+COPY (SELECT chr(128) AS l) TO '${__TEST_DIR__}/ccsvt_80.csv' (FORMAT csv, ENCODING 'LATIN1');
+
+
+statement error
+COPY ccsvt_lines FROM '${__TEST_DIR__}/ccsvt_80.csv' (FORMAT csv, DELIMITER E'\x01', QUOTE E'\x02');
+----
+db error: ERROR: invalid byte sequence for encoding "UTF8": 0x80
+
+
+statement ok
+CREATE TABLE ccsvt_text (id INTEGER, t TEXT);
+
+
+statement count 2
+COPY (SELECT * FROM (VALUES (0, 'tab' || chr(9) || 'here'), (1, chr(9) || 'ÿ')) v(id, t))
+TO '${__TEST_DIR__}/ccsvt_latin1.txt' (FORMAT text, ENCODING 'LATIN1');
+
+
+statement error
+COPY ccsvt_text FROM '${__TEST_DIR__}/ccsvt_latin1.txt' (FORMAT text);
+----
+db error: ERROR: invalid byte sequence for encoding "UTF8": 0xff
+
+
+statement count 2
+COPY ccsvt_text FROM '${__TEST_DIR__}/ccsvt_latin1.txt' (FORMAT text, ENCODING 'LATIN1');
+
+
+query
+SELECT id, replace(t, chr(9), '<tab>') AS t FROM ccsvt_text ORDER BY id;
+----
+id	t
+0	tab<tab>here
+1	<tab>ÿ
+
+
+statement count 2
+COPY (SELECT * FROM (VALUES ('1,a,x'), ('2,ÿ')) v(l))
+TO '${__TEST_DIR__}/ccsvt_extra_bad.csv' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01', ENCODING 'LATIN1');
+
+
+statement error
+COPY ccsvt_text FROM '${__TEST_DIR__}/ccsvt_extra_bad.csv' (FORMAT csv);
+----
+db error: ERROR: extra data after last expected column
+
+
+statement ok
+CREATE TABLE ccsvt_dt (ts TIMESTAMP, tstz TIMESTAMPTZ, t TIME, ttz TIMETZ, iv INTERVAL);
+
+
+statement count 1
+COPY (SELECT 'x' AS l) TO '${__TEST_DIR__}/ccsvt_x.csv' (FORMAT csv);
+
+
+statement error
+COPY ccsvt_dt (ts) FROM '${__TEST_DIR__}/ccsvt_x.csv' (FORMAT csv);
+----
+db error: ERROR: invalid input syntax for type timestamp: "x"
+
+
+statement error
+COPY ccsvt_dt (tstz) FROM '${__TEST_DIR__}/ccsvt_x.csv' (FORMAT csv);
+----
+db error: ERROR: invalid input syntax for type timestamp with time zone: "x"
+
+
+statement error
+COPY ccsvt_dt (t) FROM '${__TEST_DIR__}/ccsvt_x.csv' (FORMAT csv);
+----
+db error: ERROR: invalid input syntax for type time: "x"
+
+
+statement error
+COPY ccsvt_dt (ttz) FROM '${__TEST_DIR__}/ccsvt_x.csv' (FORMAT csv);
+----
+db error: ERROR: invalid input syntax for type time with time zone: "x"
+
+
+statement error
+COPY ccsvt_dt (iv) FROM '${__TEST_DIR__}/ccsvt_x.csv' (FORMAT csv);
+----
+db error: ERROR: invalid input syntax for type interval: "x"
+
+
+statement ok
+CREATE TYPE ccsvt_mood AS ENUM ('sad', 'happy');
+
+
+statement ok
+CREATE TABLE ccsvt_moods (m ccsvt_mood);
+
+
+statement error (invalid input value for enum|invalid input syntax for type) ccsvt_mood: "x"
+COPY ccsvt_moods FROM '${__TEST_DIR__}/ccsvt_x.csv' (FORMAT csv);
+
+
+statement ok
+CREATE TABLE ccsvt_numarr (id INTEGER, a NUMERIC(4,1)[]);
+
+
+statement count 2
+COPY (SELECT * FROM (VALUES ('1,"{-1.5,.5,12.3,NULL}"'), ('2,{abc}')) v(l))
+TO '${__TEST_DIR__}/ccsvt_numarr.csv' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+statement count 1
+COPY ccsvt_numarr FROM '${__TEST_DIR__}/ccsvt_numarr.csv' (FORMAT csv, ON_ERROR IGNORE);
+
+
+query
+SELECT id, a FROM ccsvt_numarr ORDER BY id;
+----
+id	a
+1	{-1.5,0.5,12.3,NULL}
+
+
+statement ok
+CREATE TABLE ccsvt_num (n NUMERIC(4,1));
+
+
+statement count 1
+COPY (SELECT '1e5x' AS l) TO '${__TEST_DIR__}/ccsvt_num_exp.csv' (FORMAT csv);
+
+
+statement error
+COPY ccsvt_num FROM '${__TEST_DIR__}/ccsvt_num_exp.csv' (FORMAT csv);
+----
+db error: ERROR: invalid input syntax for type numeric: "1e5x"
+
+
+statement count 1
+COPY (SELECT '.' AS l) TO '${__TEST_DIR__}/ccsvt_num_dot.csv' (FORMAT csv);
+
+
+statement error
+COPY ccsvt_num FROM '${__TEST_DIR__}/ccsvt_num_dot.csv' (FORMAT csv);
+----
+db error: ERROR: invalid input syntax for type numeric: "."
+
+
+statement count 1
+COPY (SELECT 'x.1' AS l) TO '${__TEST_DIR__}/ccsvt_num_whole.csv' (FORMAT csv);
+
+
+statement error
+COPY ccsvt_num FROM '${__TEST_DIR__}/ccsvt_num_whole.csv' (FORMAT csv);
+----
+db error: ERROR: invalid input syntax for type numeric: "x.1"
+
+
+statement count 1
+COPY (SELECT '1.x' AS l) TO '${__TEST_DIR__}/ccsvt_num_fraction.csv' (FORMAT csv);
+
+
+statement error
+COPY ccsvt_num FROM '${__TEST_DIR__}/ccsvt_num_fraction.csv' (FORMAT csv);
+----
+db error: ERROR: invalid input syntax for type numeric: "1.x"

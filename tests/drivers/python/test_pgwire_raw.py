@@ -14,6 +14,7 @@ import json
 import select
 import socket
 import struct
+import threading
 import time
 
 import pytest
@@ -877,6 +878,19 @@ def test_malformed_typed_parameter_names_the_value(conn, sql, param, sqlstate,
     assert sqlstates(m) == [sqlstate]
     assert [(e.get("M"), e.get("W")) for e in errors(m)] == [
         (message, "unnamed portal parameter $1 = '...'")
+    ]
+
+
+def test_malformed_parameter_of_a_named_portal_names_the_portal(conn):
+    conn.parse("", "select $1::int4", oids=(0,))
+    conn.bind("p1", "", params=(b"abc",))
+    conn.execute("p1")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert sqlstates(m) == ["22P02"]
+    assert [(e.get("M"), e.get("W")) for e in errors(m)] == [
+        ('invalid input syntax for type integer: "abc"',
+         "portal \"p1\" parameter $1 = '...'")
     ]
 
 
@@ -2113,6 +2127,52 @@ def test_copy_takes_rows_while_the_client_waits(conn):
         conn.run("reset sdb_faults")
         c.close()
         conn.run("drop table if exists t_copy_taken")
+
+
+@pytest.mark.faults
+@pytest.mark.usefixtures("own_server")
+def test_copy_stops_reading_while_its_rows_wait(conn):
+    block = b"1234567890\n" * 6000
+    blocks = 800
+    sent = 0
+    finished = threading.Event()
+    c = WireConn()
+
+    def write():
+        nonlocal sent
+        try:
+            for _ in range(blocks):
+                c.send("d", block)
+                sent += 1
+        finally:
+            finished.set()
+
+    conn.run_ok("set sdb_faults='pause_copy_from_mid_stream'")
+    try:
+        c.run_ok("set threads = 1")
+        c.run_ok("drop table if exists t_copy_backlog")
+        c.run_ok("create table t_copy_backlog(a bigint)")
+        c.send("Q", _cstr("copy t_copy_backlog from stdin"))
+        assert c.read_msg()[0] == "G"
+        writer = threading.Thread(target=write, daemon=True)
+        writer.start()
+        deadline = time.time() + 60
+        last = -1
+        while sent != last:
+            assert time.time() < deadline, "the client never stopped sending"
+            last = sent
+            time.sleep(1)
+        assert not finished.is_set() and sent < blocks
+        conn.run_ok("set sdb_faults='-pause_copy_from_mid_stream'")
+        writer.join(timeout=120)
+        assert finished.is_set()
+        c.send("c")
+        m = c.drain_to_ready()
+        assert tags(m) == [b"COPY %d\x00" % (blocks * 6000)], errors(m)
+    finally:
+        conn.run("reset sdb_faults")
+        c.close()
+        conn.run("drop table if exists t_copy_backlog")
 
 
 @pytest.mark.faults

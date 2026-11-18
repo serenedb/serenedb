@@ -31,7 +31,8 @@ t = Test("Arrays and records of the DuckDB types PostgreSQL lacks print as the P
          "they map to would: one- and two-dimensional arrays with NULL elements, empty arrays, "
          "records holding the type, arrays inside records and records inside arrays, and maps, "
          "fixed-size arrays and the nested lists PostgreSQL arrays cannot hold, quoted only where "
-         "the text needs it. The binary format of a type with nanoseconds holds microseconds "
+         "the text needs it, also in the text and csv formats of COPY, which read them back. The "
+         "binary format of a type with nanoseconds holds microseconds "
          "(temporal_casts.test), and the extended engine cannot decode a record holding a "
          "geometry: those shapes are checked in text only.")
 
@@ -76,6 +77,38 @@ t.query("SELECT ROW(ARRAY[ARRAY[]::int[]]) AS e, ROW(ARRAY[NULL::int[]]) AS n, "
 
 t.section("An element type with no array output.")
 t.error("SELECT ARRAY['1'::bignum] AS a", "Array element type not supported")
+
+t.section("COPY TO a file in text and in csv, plain, with FORCE_QUOTE and with a delimiter a value "
+          "may hold, of a column of each type, an array of it and a two-dimensional array, read "
+          "back as lines and, but for geometry, as values.")
+t.control("substitution on")
+t.statement("CREATE TABLE wire_copy_lines (l text)")
+COPY_FORMATS = {
+    "text": "FORMAT text",
+    "csv": "FORMAT csv",
+    "quoted": "FORMAT csv, FORCE_QUOTE *",
+    "scanned": "FORMAT csv, DELIMITER '.'",
+}
+for k, (name, values, *rest) in enumerate(TYPES):
+    text_only = rest[0] if rest else set()
+    first, second = (f"{value}::{name}" for value in values)
+    table = f"wire_copy_{k}"
+    t.statement(f"CREATE TABLE {table} (id int, v {name}, a {name}[], m {name}[][])")
+    t.statement(f"INSERT INTO {table} VALUES "
+                f"(1, {first}, ARRAY[{first}, NULL], ARRAY[ARRAY[{first}, NULL], ARRAY[NULL, {second}]]), "
+                f"(2, {second}, ARRAY[{second}], ARRAY[ARRAY[{second}]]), (3, NULL, NULL, NULL)")
+    for fmt, options in COPY_FORMATS.items():
+        path = f"${{__TEST_DIR__}}/{table}.{fmt}"
+        t.statement(f"COPY {table} TO '{path}' ({options})")
+        t.statement("TRUNCATE wire_copy_lines")
+        t.statement(f"COPY wire_copy_lines FROM '{path}' (FORMAT csv, DELIMITER E'\\x01', QUOTE E'\\x02')")
+        t.query("SELECT l FROM wire_copy_lines ORDER BY l")
+        if name == "geometry":
+            continue
+        t.statement(f"CREATE TABLE {table}_{fmt} (id int, v {name}, a {name}[], m {name}[][])")
+        t.statement(f"COPY {table}_{fmt} FROM '{path}' ({options.replace(', FORCE_QUOTE *', '')})")
+        t.query(f"SELECT id, v, a, m FROM {table}_{fmt} ORDER BY id",
+                skipif="pg-wire-extended" if text_only else None)
 
 t.statement("RESET TimeZone")
 t.write()

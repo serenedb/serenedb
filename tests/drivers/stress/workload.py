@@ -337,14 +337,13 @@ class Workload:
                     cur.execute(f"SELECT 'index', id, ver FROM {self.index} WHERE id = {k} "
                                 f"UNION ALL SELECT 'view', id, ver FROM {self.view} WHERE id = {k}")
                     both.extend(cur.fetchall())
-                cur.execute(f"VACUUM (REFRESH_INDEX) {self.index}")
                 after = []
                 for k in ids:
                     cur.execute(f"SELECT 'index', id, ver FROM {self.index} WHERE id = {k}")
                     after.extend(cur.fetchall())
                 bad("index_view_rows_mismatch",
                     f"{stage}: {diff} differing rows: {rows}; per id: {both}; "
-                    f"index after VACUUM (REFRESH_INDEX): {after}")
+                    f"index on a second read: {after}")
             return c_view
 
         try:
@@ -389,8 +388,6 @@ class Workload:
                 cur.execute(f"SELECT metric, value FROM sdb_metrics WHERE relation_id = "
                             f"(SELECT oid FROM pg_class WHERE relname = {lit(self.index)})")
                 metrics = {m: v for m, v in cur.fetchall()}
-                if metrics.get("num_failed_commits", 0):
-                    bad("metrics_failed_commits", f"{metrics['num_failed_commits']} failed commits")
                 if "num_live_docs" in metrics and int(metrics["num_live_docs"]) != c_view:
                     bad("metrics_live_docs_mismatch",
                         f"num_live_docs {metrics['num_live_docs']} vs {c_view} rows")

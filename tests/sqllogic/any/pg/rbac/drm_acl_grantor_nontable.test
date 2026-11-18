@@ -92,7 +92,7 @@ onlyif serenedb
 statement error
 DROP ROLE dag_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dag_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dag_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 # The dependent grantee is independently pinned by the same ACL row.
@@ -107,7 +107,7 @@ onlyif serenedb
 statement error
 DROP ROLE dag_clickclack;
 ----
-db error: ERROR: Cannot drop entry "dag_clickclack" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dag_clickclack" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 # Tear down the whole column ACL (the grantor's base grant AND the dependent
@@ -171,7 +171,7 @@ onlyif serenedb
 statement error
 DROP ROLE dag_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dag_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dag_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 statement ok
@@ -233,7 +233,7 @@ onlyif serenedb
 statement error
 DROP ROLE dag_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dag_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dag_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 statement ok
@@ -295,7 +295,7 @@ onlyif serenedb
 statement error
 DROP ROLE dag_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dag_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dag_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 statement ok
@@ -358,7 +358,7 @@ onlyif serenedb
 statement error
 DROP ROLE dag_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dag_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dag_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 statement ok

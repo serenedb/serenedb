@@ -23,7 +23,8 @@ onlyif serenedb # DuckdDB error
 statement error
 INSERT INTO vedernikoff_unique VALUES (4, 'bossmann', 10);
 ----
-db error: ERROR: Duplicate key "rank: 10" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "vedernikoff_unique_rank_idx"
+DETAIL: Key (rank)=(10) already exists.
 
 
 skipif serenedb # Postgres error
@@ -298,12 +299,15 @@ query
 EXPLAIN SELECT pid, district FROM vedernikoff_safehouse WHERE code = 100;
 ----
 QUERY PLAN
-╭─ SEQ_SCAN ───────────────────╮
+╭─ IRESEARCH_SCAN ─────────────╮
 │ Table: vedernikoff_safehouse │
-│ Type: Sequential Scan        │
+│ Index Filter:                │
+│ ╭─ Term ───────────────╮     │
+│ │ Field: code(numeric) │     │
+│ │ Value: 100           │     │
+│ ╰──────────────────────╯     │
 │ Projections: pid, district   │
-│ Column Filter: code = 100    │
-│ ~2 rows                      │
+│ ~1 row                       │
 ╰──────────────────────────────╯
 
 
@@ -312,11 +316,14 @@ query
 EXPLAIN SELECT pid, district FROM vedernikoff_safehouse WHERE code IS NULL;
 ----
 QUERY PLAN
-╭─ SEQ_SCAN ───────────────────╮
+╭─ IRESEARCH_SCAN ─────────────╮
 │ Table: vedernikoff_safehouse │
-│ Type: Sequential Scan        │
+│ Index Filter:                │
+│ ╭─ Term ────────────╮        │
+│ │ Field: code(null) │        │
+│ │ Value:            │        │
+│ ╰───────────────────╯        │
 │ Projections: pid, district   │
-│ Column Filter: code IS NULL  │
 │ ~1 row                       │
 ╰──────────────────────────────╯
 
@@ -325,11 +332,14 @@ query
 EXPLAIN SELECT pid, district FROM vedernikoff_safehouse WHERE code > 100;
 ----
 QUERY PLAN
-╭─ SEQ_SCAN ───────────────────╮
+╭─ IRESEARCH_SCAN ─────────────╮
 │ Table: vedernikoff_safehouse │
-│ Type: Sequential Scan        │
+│ Index Filter:                │
+│ ╭─ Granular Range ─────╮     │
+│ │ Field: code(numeric) │     │
+│ │ Range: >100          │     │
+│ ╰──────────────────────╯     │
 │ Projections: pid, district   │
-│ Column Filter: code > 100    │
 │ ~1 row                       │
 ╰──────────────────────────────╯
 
@@ -346,13 +356,17 @@ query
 EXPLAIN SELECT pid, district FROM vedernikoff_safehouse WHERE code IS NOT NULL;
 ----
 QUERY PLAN
-╭─ SEQ_SCAN ──────────────────────╮
-│ Table: vedernikoff_safehouse    │
-│ Type: Sequential Scan           │
-│ Projections: pid, district      │
-│ Column Filter: code IS NOT NULL │
-│ ~1 row                          │
-╰─────────────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────────╮
+│ Table: vedernikoff_safehouse │
+│ Index Filter:                │
+│ ╭─ Not ─────────────╮        │
+│ ╰─────────┬─────────╯        │
+│ ╭─ Terms ─┴─────────╮        │
+│ │ Field: code(null) │        │
+│ ╰───────────────────╯        │
+│ Projections: pid, district   │
+│ ~1 row                       │
+╰──────────────────────────────╯
 
 
 query
@@ -540,14 +554,19 @@ query
 EXPLAIN SELECT pid, note FROM vedernikoff_ledger WHERE region = 1 AND tier = 10;
 ----
 QUERY PLAN
-╭─ SEQ_SCAN ─────────────────╮
-│ Table: vedernikoff_ledger  │
-│ Type: Sequential Scan      │
-│ Projections: pid, note     │
-│ Column Filter: region = 1, │
-│                tier = 10   │
-│ ~2 rows                    │
-╰────────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────────────────────────────────╮
+│ Table: vedernikoff_ledger                            │
+│ Index Filter:                                        │
+│ ╭─ And ──────────────────╮                           │
+│ ╰────────────┬───────────╯                           │
+│              ├──────────────────────────╮            │
+│ ╭─ Terms ────┴───────────╮  ╭─ Terms ───┴──────────╮ │
+│ │ Field: region(numeric) │  │ Field: tier(numeric) │ │
+│ │ Values: 1              │  │ Values: 10           │ │
+│ ╰────────────────────────╯  ╰──────────────────────╯ │
+│ Projections: pid, note                               │
+│ ~1 row                                               │
+╰──────────────────────────────────────────────────────╯
 
 query
 SELECT pid, note FROM vedernikoff_ledger WHERE region = 1 AND tier = 10;
@@ -828,7 +847,8 @@ onlyif serenedb # DuckDB error
 statement error
 INSERT INTO vedernikoff_csv_unique VALUES (4, 'bossmann', 10);
 ----
-db error: ERROR: Duplicate key "rank: 10" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "vedernikoff_csv_unique_rank_idx"
+DETAIL: Key (rank)=(10) already exists.
 
 
 skipif serenedb # Postgres error
@@ -948,7 +968,8 @@ onlyif serenedb # DuckDB error
 statement error
 INSERT INTO vedernikoff_pq_unique VALUES (4, 'bossmann', 10);
 ----
-db error: ERROR: Duplicate key "rank: 10" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "vedernikoff_pq_unique_rank_idx"
+DETAIL: Key (rank)=(10) already exists.
 
 
 skipif serenedb # Postgres error
@@ -1048,14 +1069,19 @@ query
 EXPLAIN SELECT pid, note FROM vedernikoff_tri_uniq WHERE a = 1 AND b = 1 AND c = 1;
 ----
 QUERY PLAN
-╭─ SEQ_SCAN ──────────────────╮
-│ Table: vedernikoff_tri_uniq │
-│ Type: Sequential Scan       │
-│ Projections: pid, note      │
-│ Column Filter: a = 1,       │
-│                b = 1, c = 1 │
-│ ~2 rows                     │
-╰─────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────────────────────────────────────────────╮
+│ Table: vedernikoff_tri_uniq                                         │
+│ Index Filter:                                                       │
+│ ╭─ And ─────────────╮                                               │
+│ ╰─────────┬─────────╯                                               │
+│           ├──────────────────────┬──────────────────────╮           │
+│ ╭─ Terms ─┴─────────╮  ╭─ Terms ─┴─────────╮  ╭─ Terms ─┴─────────╮ │
+│ │ Field: a(numeric) │  │ Field: b(numeric) │  │ Field: c(numeric) │ │
+│ │ Values: 1         │  │ Values: 1         │  │ Values: 1         │ │
+│ ╰───────────────────╯  ╰───────────────────╯  ╰───────────────────╯ │
+│ Projections: pid, note                                              │
+│ ~1 row                                                              │
+╰─────────────────────────────────────────────────────────────────────╯
 
 query
 SELECT pid, note FROM vedernikoff_tri_uniq WHERE a = 1 AND b = 1 AND c = 1;
@@ -1193,15 +1219,19 @@ query
 EXPLAIN SELECT pid, note FROM vedernikoff_tri_uniq WHERE a = 1 and b IS NULL and c IS NULL;
 ----
 QUERY PLAN
-╭─ SEQ_SCAN ──────────────────╮
-│ Table: vedernikoff_tri_uniq │
-│ Type: Sequential Scan       │
-│ Projections: pid, note      │
-│ Column Filter: a = 1,       │
-│                b IS NULL,   │
-│                c IS NULL    │
-│ ~9 rows                     │
-╰─────────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────────────────────────────────────────╮
+│ Table: vedernikoff_tri_uniq                                   │
+│ Index Filter:                                                 │
+│ ╭─ And ─────────────╮                                         │
+│ ╰─────────┬─────────╯                                         │
+│           ├─────────────────────┬───────────────────╮         │
+│ ╭─ Terms ─┴─────────╮  ╭─ Terms ┴───────╮  ╭─ Terms ┴───────╮ │
+│ │ Field: a(numeric) │  │ Field: b(null) │  │ Field: c(null) │ │
+│ │ Values: 1         │  ╰────────────────╯  ╰────────────────╯ │
+│ ╰───────────────────╯                                         │
+│ Projections: pid, note                                        │
+│ ~3 rows                                                       │
+╰───────────────────────────────────────────────────────────────╯
 
 query
 SELECT * FROM vedernikoff_tri_uniq WHERE a = 1 and b IS NULL and c IS NULL ORDER BY pid;
@@ -1275,7 +1305,7 @@ SELECT pid, note FROM vedernikoff_tri_uniq WHERE a = 1 AND b = 1 AND c = 1;
 pid	note
 
 query
-SELECT pid, note FROM vedernikoff_tri_uniq WHERE a = 1 AND b IS NULL AND c = 1;
+SELECT pid, note FROM vedernikoff_tri_uniq WHERE a = 1 AND b IS NULL AND c = 1 ORDER BY pid;
 ----
 pid	note
 12	b_null_1
@@ -1315,22 +1345,18 @@ query
 EXPLAIN SELECT pid, tag FROM babsky_uniq_in WHERE code IN (100, 300);
 ----
 QUERY PLAN
-╭─ PROJECTION ─────────────────────────────╮
-│ Projections: #1, #2                      │
-│ ~1 row                                   │
-╰─────────────────────┬────────────────────╯
-╭─ FILTER ────────────┴────────────────────╮
-│ Expression: (code = 100) OR (code = 300) │
-│ ~1 row                                   │
-╰─────────────────────┬────────────────────╯
-╭─ SEQ_SCAN ──────────┴────────────────────╮
-│ Table: babsky_uniq_in                    │
-│ Type: Sequential Scan                    │
-│ Projections: code, pid, tag              │
-│ Column Filter:                           │
-│ optional: (code IN (100, 300))           │
-│ ~6 rows                                  │
-╰──────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Table: babsky_uniq_in    │
+│ Index Filter:            │
+│ ╭─ Or ─────────────────╮ │
+│ ╰───────────┬──────────╯ │
+│ ╭─ Terms ───┴──────────╮ │
+│ │ Field: code(numeric) │ │
+│ │ Values: 100, 300     │ │
+│ ╰──────────────────────╯ │
+│ Projections: pid, tag    │
+│ ~1 row                   │
+╰──────────────────────────╯
 
 query
 SELECT pid, tag FROM babsky_uniq_in WHERE code IN (100, 300) ORDER BY pid;
@@ -1419,12 +1445,15 @@ query
 EXPLAIN SELECT pid, tag FROM vedernikoff_uniq_rem WHERE key = 100 AND level = 10;
 ----
 QUERY PLAN
-╭─ SEQ_SCAN ──────────────────╮
+╭─ IRESEARCH_SCAN ────────────╮
 │ Table: vedernikoff_uniq_rem │
-│ Type: Sequential Scan       │
+│ Index Filter:               │
+│ ╭─ Term ──────────────╮     │
+│ │ Field: key(numeric) │     │
+│ │ Value: 100          │     │
+│ ╰─────────────────────╯     │
+│ Column Filter: level = 10   │
 │ Projections: pid, tag       │
-│ Column Filter: key = 100,   │
-│                level = 10   │
 │ ~1 row                      │
 ╰─────────────────────────────╯
 
@@ -1954,7 +1983,7 @@ INSERT INTO vedernikoff_uniq_idx_scan VALUES (5, NULL, 'e');
 
 onlyif serenedb
 query
-SELECT pid, code, name FROM vedernikoff_uniq_idx_scan_code_idx;
+SELECT pid, code, name FROM vedernikoff_uniq_idx_scan_code_idx ORDER BY pid;
 ----
 pid	code	name
 1	30	c
@@ -1968,13 +1997,18 @@ query
 EXPLAIN SELECT pid, code, name FROM vedernikoff_uniq_idx_scan_code_idx WHERE code = 20;
 ----
 QUERY PLAN
-╭─ SEQ_SCAN ────────────────────────────────╮
-│ Table: vedernikoff_uniq_idx_scan_code_idx │
-│ Type: Sequential Scan                     │
-│ Projections: pid, code, name              │
-│ Column Filter: code = 20                  │
-│ ~2 rows                                   │
-╰───────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────────────╮
+│ Index:                             │
+│ vedernikoff_uniq_idx_scan_code_idx │
+│ Lookup: search                     │
+│ Index Filter:                      │
+│ ╭─ Term ───────────────╮           │
+│ │ Field: code(numeric) │           │
+│ │ Value: 20            │           │
+│ ╰──────────────────────╯           │
+│ Projections: pid, code, name       │
+│ ~1 row                             │
+╰────────────────────────────────────╯
 
 onlyif serenedb
 query
@@ -1985,7 +2019,7 @@ pid	code	name
 
 onlyif serenedb
 query
-SELECT pid, code, name FROM vedernikoff_uniq_idx_scan_code_idx WHERE code IS NULL;
+SELECT pid, code, name FROM vedernikoff_uniq_idx_scan_code_idx WHERE code IS NULL ORDER BY pid;
 ----
 pid	code	name
 4	NULL	d
@@ -1999,13 +2033,13 @@ DELETE FROM vedernikoff_uniq_idx_scan WHERE pid = 3;
 
 onlyif serenedb
 query
-SELECT pid, code, name FROM vedernikoff_uniq_idx_scan_code_idx;
+SELECT pid, code, name FROM vedernikoff_uniq_idx_scan_code_idx ORDER BY pid;
 ----
 pid	code	name
+1	5	c
 2	10	a
 4	NULL	d
 5	NULL	e
-1	5	c
 
 onlyif serenedb
 query
@@ -2028,13 +2062,13 @@ INSERT INTO vedernikoff_uniq_idx_scan VALUES (9, 60, 'i');
 
 onlyif serenedb
 query
-SELECT pid, code, name FROM vedernikoff_uniq_idx_scan_code_idx;
+SELECT pid, code, name FROM vedernikoff_uniq_idx_scan_code_idx ORDER BY pid;
 ----
 pid	code	name
+1	5	c
 2	10	a
 4	NULL	d
 5	NULL	e
-1	5	c
 6	40	f
 7	50	g
 8	NULL	h
@@ -2042,7 +2076,7 @@ pid	code	name
 
 onlyif serenedb
 query
-SELECT pid, code, name FROM vedernikoff_uniq_idx_scan_code_idx WHERE code IN (5, 40);
+SELECT pid, code, name FROM vedernikoff_uniq_idx_scan_code_idx WHERE code IN (5, 40) ORDER BY pid;
 ----
 pid	code	name
 1	5	c
@@ -2050,7 +2084,7 @@ pid	code	name
 
 onlyif serenedb
 query
-SELECT pid, code, name FROM vedernikoff_uniq_idx_scan_code_idx WHERE code = 10 OR code = 50;
+SELECT pid, code, name FROM vedernikoff_uniq_idx_scan_code_idx WHERE code = 10 OR code = 50 ORDER BY pid;
 ----
 pid	code	name
 2	10	a
@@ -2058,11 +2092,11 @@ pid	code	name
 
 onlyif serenedb
 query
-SELECT pid, code, name FROM vedernikoff_uniq_idx_scan_code_idx WHERE code IN (5, 5, 10);
+SELECT pid, code, name FROM vedernikoff_uniq_idx_scan_code_idx WHERE code IN (5, 5, 10) ORDER BY pid;
 ----
 pid	code	name
-2	10	a
 1	5	c
+2	10	a
 
 onlyif serenedb
 query
@@ -2098,7 +2132,7 @@ pid	code	name
 
 onlyif serenedb
 query
-SELECT pid, code, name FROM vedernikoff_uniq_idx_scan_code_idx WHERE (code = 5 AND name = 'c') OR code = 40;
+SELECT pid, code, name FROM vedernikoff_uniq_idx_scan_code_idx WHERE (code = 5 AND name = 'c') OR code = 40 ORDER BY pid;
 ----
 pid	code	name
 1	5	c
@@ -2265,7 +2299,8 @@ onlyif serenedb # DuckDB error
 statement error
 INSERT INTO include_unique VALUES (1, 2);
 ----
-db error: ERROR: Duplicate key "a: 1" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "include_unique_a_idx"
+DETAIL: Key (a)=(1) already exists.
 
 
 skipif serenedb # Postgres error

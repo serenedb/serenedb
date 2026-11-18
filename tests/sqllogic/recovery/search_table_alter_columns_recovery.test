@@ -2,7 +2,7 @@ control substitution on
 
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 CREATE TABLE sacr (id INT, a INT, b TEXT)
-WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+WITH (compaction_interval = 0);
 
 
 statement ok
@@ -14,7 +14,7 @@ INSERT INTO sacr VALUES (1, 10, 'one'), (2, 20, 'two');
 
 
 statement ok
-VACUUM (REFRESH_TABLE) sacr;
+VACUUM (FLUSH_TABLE) sacr;
 
 
 statement ok
@@ -55,7 +55,7 @@ INSERT INTO sacr VALUES (6, 'six', 600, 'y');
 
 statement ok
 CREATE TABLE sacs (id SERIAL, v INT)
-WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+WITH (compaction_interval = 0);
 
 
 statement ok
@@ -76,7 +76,7 @@ SELECT 1;
 
 connection restarted
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (REFRESH_TABLE) sacr;
+SELECT 1;
 
 
 connection restarted
@@ -107,7 +107,7 @@ INSERT INTO sacs (v) VALUES (30);
 
 connection restarted
 statement ok
-VACUUM (REFRESH_TABLE) sacs;
+VACUUM (FLUSH_TABLE) sacs;
 
 
 connection restarted
@@ -130,7 +130,7 @@ t
 connection restarted
 statement ok
 CREATE TABLE sacm (id INT, v INT)
-WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+WITH (compaction_interval = 0);
 
 
 connection restarted
@@ -140,7 +140,7 @@ INSERT INTO sacm VALUES (1, 10);
 
 connection restarted
 statement ok
-VACUUM (REFRESH_TABLE) sacm;
+VACUUM (FLUSH_TABLE) sacm;
 
 
 connection restarted
@@ -150,7 +150,7 @@ INSERT INTO sacm VALUES (2, 20);
 
 connection restarted
 statement ok
-VACUUM (REFRESH_TABLE) sacm;
+VACUUM (FLUSH_TABLE) sacm;
 
 
 connection restarted

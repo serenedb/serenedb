@@ -25,9 +25,9 @@ CREATE INDEX idd_i ON idd_s.idd_t USING inverted (id, body idd_d);
 statement error
 DROP TEXT SEARCH DICTIONARY idd_s.idd_d;
 ----
-db error: ERROR: Cannot drop entry "idd_d" because there are entries that depend on it.
-index "idd_i" depends on tokenizer "idd_d".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop text search dictionary idd_d because other objects depend on it
+DETAIL: index idd_s.idd_i depends on text search dictionary idd_d
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 statement ok
@@ -59,9 +59,9 @@ CREATE INDEX idd_h_i ON idd_h USING inverted (id, body hnsw);
 statement error
 DROP TEXT SEARCH DICTIONARY hnsw;
 ----
-db error: ERROR: Cannot drop entry "hnsw" because there are entries that depend on it.
-index "idd_h_i" depends on tokenizer "hnsw".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop text search dictionary hnsw because other objects depend on it
+DETAIL: index idd_h_i depends on text search dictionary hnsw
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 query
@@ -79,9 +79,9 @@ t
 statement error
 DROP TEXT SEARCH DICTIONARY es.standard;
 ----
-db error: ERROR: Cannot drop entry "standard" because there are entries that depend on it.
-index "idd_es$text" depends on tokenizer "standard".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop text search dictionary standard because other objects depend on it
+DETAIL: index es."idd_es$text" depends on text search dictionary standard
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 query

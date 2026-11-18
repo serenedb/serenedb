@@ -194,8 +194,7 @@ def test_roundtrip(conn: psycopg.Connection, case: tuple[TypeSpec, str, int, obj
     assert row is not None
     actual = row[0]
     assert actual == expected, (
-        f"{proto}: expected {expected!r}, got {actual!r} for sample {sample!r}"
-    )
+        f"{proto}: expected {expected!r}, got {actual!r} for sample {sample!r}")
 
 
 # ---- connection-property assertions ----------------------------------------
@@ -334,8 +333,7 @@ def test_returning_command_tags():
             cur.execute(
                 f'MERGE INTO "{table}" t USING "{table}_src" s ON t.id = s.id '
                 "WHEN MATCHED THEN UPDATE SET v = s.v "
-                "WHEN NOT MATCHED THEN INSERT VALUES (s.id, s.v) RETURNING t.id"
-            )
+                "WHEN NOT MATCHED THEN INSERT VALUES (s.id, s.v) RETURNING t.id")
             assert cur.statusmessage == "MERGE 2"
     finally:
         with c.cursor() as cur:
@@ -413,6 +411,69 @@ def test_unknown_guc_sqlstate():
         c.close()
 
 
+def test_reset_restores_the_session_start():
+    login, group = f"drv_reset_login_{os.getpid()}", f"drv_reset_group_{os.getpid()}"
+    admin = psycopg.connect(**conn_kwargs(), autocommit=True)
+    try:
+        admin.execute(f"CREATE ROLE {login} LOGIN")
+        admin.execute(f"CREATE ROLE {group}")
+        admin.execute(f"GRANT {group} TO {login}")
+        with psycopg.connect(**{**conn_kwargs(), "user": login}, autocommit=True,
+                             application_name="drv_reset_app",
+                             options="-c TimeZone=Asia/Tokyo -c search_path=public") as c:
+
+            def state():
+                return c.execute(
+                    "SELECT current_setting('application_name'), current_setting('TimeZone'), "
+                    "current_setting('search_path'), current_setting('session_authorization'), "
+                    "current_setting('role'), current_user::text").fetchone()
+
+            start = ("drv_reset_app", "Asia/Tokyo", "public", login, "none", login)
+            assert state() == start
+
+            def change():
+                c.execute("SET application_name = 'drv_reset_other'")
+                c.execute("SET TimeZone = 'Etc/UTC'")
+                c.execute("SET search_path = pg_catalog, public")
+                c.execute(f"SET ROLE {group}")
+
+            change()
+            c.execute("RESET ALL")
+            assert state() == start[:4] + (group, group)
+
+            change()
+            c.execute("RESET application_name")
+            c.execute("RESET TimeZone")
+            c.execute("RESET search_path")
+            c.execute("RESET role")
+            assert state() == start
+
+            change()
+            c.execute("DISCARD ALL")
+            assert state() == start
+
+        with psycopg.connect(**{**conn_kwargs(), "user": login}, autocommit=True,
+                             options=f"-c role={group}") as c:
+
+            def identity():
+                return c.execute(
+                    "SELECT current_user::text, current_setting('role'), "
+                    "current_setting('session_authorization')").fetchone()
+
+            assert identity() == (group, group, login)
+            c.execute("RESET role")
+            assert identity() == (group, group, login)
+            c.execute("SET SESSION AUTHORIZATION DEFAULT")
+            assert identity() == (login, "none", login)
+            c.execute(f"SET ROLE {group}")
+            c.execute("DISCARD ALL")
+            assert identity() == (login, "none", login)
+    finally:
+        admin.execute(f"DROP ROLE IF EXISTS {login}")
+        admin.execute(f"DROP ROLE IF EXISTS {group}")
+        admin.close()
+
+
 def test_binder_error_sqlstates():
     """BINDER errors get distinct SQLSTATEs, not a blanket undefined_column:
     ambiguous column -> 42702, grouping -> 42803, genuinely-missing -> 42703.
@@ -438,7 +499,7 @@ def test_binder_error_sqlstates():
         c.close()
 
 
-@pytest.mark.parametrize("storage", ["", " WITH (storage = 'search')"])
+@pytest.mark.parametrize("storage", [""])
 def test_commit_time_index_error_keeps_its_sqlstate(storage):
     table = f"rfq_commit_{os.getpid()}"
     c = psycopg.connect(**conn_kwargs(), autocommit=True)
@@ -448,12 +509,10 @@ def test_commit_time_index_error_keeps_its_sqlstate(storage):
             cur.execute(f'CREATE TABLE "{table}" (id INT, content JSON){storage}')
             cur.execute(
                 f'CREATE INDEX "{table}_idx" ON "{table}" '
-                "USING inverted (id, (content->'val'))"
-            )
+                "USING inverted (id, (content->'val'))")
             with pytest.raises(psycopg.Error) as ei:
                 cur.execute(
-                    f'INSERT INTO "{table}" VALUES (1, \'{{"val": {{"x": 1}}}}\')'
-                )
+                    f'INSERT INTO "{table}" VALUES (1, \'{{"val": {{"x": 1}}}}\')')
             assert ei.value.sqlstate == "42804", ei.value.sqlstate
     finally:
         with c.cursor() as cur:
@@ -848,6 +907,41 @@ def test_engine_warning_reaches_the_client_as_a_notice():
         c.close()
 
 
+def test_distinct_statistics_on_a_boolean_or_bit_column_warn():
+    c = psycopg.connect(**conn_kwargs(), autocommit=True)
+    diags: list[tuple] = []
+    c.add_notice_handler(lambda d: diags.append((d.severity, d.message_primary)))
+    try:
+        with c.cursor() as cur:
+            cur.execute("DROP TABLE IF EXISTS distinct_warn")
+            cur.execute(
+                "CREATE TABLE distinct_warn "
+                "(id INT PRIMARY KEY, flag BOOLEAN, bits BIT, v BIGINT)"
+            )
+            cur.execute(
+                "CREATE INDEX distinct_warn_idx ON distinct_warn USING inverted(id) "
+                "INCLUDE (flag included (distinct = 'exact'), "
+                "bits included (distinct = 'sampled'), "
+                "v included (distinct = 'exact'))"
+            )
+        assert diags == [
+            (
+                "WARNING",
+                "Column 'flag': distinct statistics of a BOOLEAN column "
+                "do not help query planning",
+            ),
+            (
+                "WARNING",
+                "Column 'bits': distinct statistics of a BIT column "
+                "do not help query planning",
+            ),
+        ], diags
+    finally:
+        with c.cursor() as cur:
+            cur.execute("DROP TABLE IF EXISTS distinct_warn")
+        c.close()
+
+
 def test_unenforced_setting_warns_when_its_value_changes():
     c = psycopg.connect(**conn_kwargs(), autocommit=True)
     notices: list[str] = []
@@ -960,8 +1054,7 @@ def test_pg_cancel_backend_cancels_running_query():
         def run_long():
             try:
                 victim.execute(
-                    "select count(*) from generate_series(1, 200000000000) g(i)"
-                )
+                    "select count(*) from generate_series(1, 200000000000) g(i)")
                 outcome["sqlstate"] = "completed"
             except psycopg.Error as e:
                 outcome["sqlstate"] = e.sqlstate
@@ -981,6 +1074,61 @@ def test_pg_cancel_backend_cancels_running_query():
     finally:
         admin.close()
         victim.close()
+
+
+REWRITE_FAULT = "slow_expression_rewrite"
+STATISTICS_FAULT = "slow_statistics_propagation"
+
+
+@pytest.mark.faults
+@pytest.mark.usefixtures("own_server")
+@pytest.mark.parametrize(
+    ("fault", "query"),
+    [
+        (
+            REWRITE_FAULT,
+            "SELECT x IN ({}) FROM (VALUES (0)) t(x)".format(
+                ", ".join(str(i) for i in range(1, 10001))),
+        ),
+        (
+            STATISTICS_FAULT,
+            " UNION ALL ".join(
+                f"SELECT DISTINCT x + {i} FROM (VALUES (0)) t(x)" for i in range(500)),
+        ),
+    ],
+    ids=["rewrite", "statistics"],
+)
+def test_statement_timeout_interrupts_planning(fault, query):
+    with psycopg.connect(**conn_kwargs(), autocommit=True) as c:
+        c.execute("SET statement_timeout = '1s'")
+        c.execute(f"SET sdb_faults = '{fault}'")
+        start = time.monotonic()
+        with pytest.raises(psycopg.errors.QueryCanceled):
+            c.execute(query)
+        elapsed = time.monotonic() - start
+        c.execute("RESET sdb_faults")
+    assert elapsed < 5, elapsed
+
+
+@pytest.mark.faults
+@pytest.mark.usefixtures("own_server")
+def test_statement_timeout_interrupts_a_vacuum_merge():
+    with psycopg.connect(**conn_kwargs(), autocommit=True) as c:
+        c.execute("CREATE TABLE vacuum_merge_timeout (id BIGINT, body TEXT) "
+                  "WITH (compaction_interval = 0)")
+        for _ in range(4):
+            c.execute("INSERT INTO vacuum_merge_timeout "
+                      "SELECT i, 'x' || i FROM range(500000) t(i)")
+        c.execute("SET statement_timeout = '1s'")
+        c.execute("SET sdb_faults = 'slow_vacuum_merge'")
+        start = time.monotonic()
+        with pytest.raises(psycopg.errors.QueryCanceled):
+            c.execute("VACUUM (COMPACT_TABLE) vacuum_merge_timeout")
+        elapsed = time.monotonic() - start
+        c.execute("RESET sdb_faults")
+        c.execute("RESET statement_timeout")
+        c.execute("DROP TABLE vacuum_merge_timeout")
+    assert elapsed < 5, elapsed
 
 
 def test_binary_parameters_after_an_untyped_null():

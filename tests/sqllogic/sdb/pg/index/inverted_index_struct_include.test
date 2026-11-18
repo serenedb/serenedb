@@ -43,10 +43,6 @@ statement ok
 INSERT INTO struct_t VALUES (4, 'fourth', ROW('delta', NULL))
 
 
-statement ok
-VACUUM (REFRESH_TABLE) struct_t
-
-
 # Sanity: the nested column is served by the iresearch columnstore (i),
 # pk falls through to the rocksdb lookup (l).
 query
@@ -55,13 +51,13 @@ EXPLAIN SELECT pk, payload FROM struct_t_idx WHERE text_for_search @@ ts_phrase(
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────╮
 │ Index: struct_t_idx                │
-│ Lookup: table                      │
+│ Lookup: search                     │
 │ Index Filter:                      │
 │ ╭─ Term ─────────────────────────╮ │
 │ │ Field: text_for_search(string) │ │
 │ │ Value: first                   │ │
 │ ╰────────────────────────────────╯ │
-│ Projections: pk (l), payload (i)   │
+│ Projections: pk, payload           │
 │ ~1 row                             │
 ╰────────────────────────────────────╯
 

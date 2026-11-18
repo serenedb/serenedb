@@ -67,10 +67,8 @@ statement ok
 DELETE FROM oci_race WHERE label = 'fresh_deleted';
 
 
-# Force the refresh that consumes the pending removes while the build is
-# still parked (in production the 1s background refresh loop does this).
 statement ok
-VACUUM (REFRESH_TABLE) oci_race;
+VACUUM (FLUSH_TABLE) oci_race;
 
 
 statement ok
@@ -81,7 +79,7 @@ wait
 
 
 statement ok
-VACUUM (REFRESH_TABLE) oci_race;
+VACUUM (FLUSH_TABLE) oci_race;
 
 
 # 500000 - 50000 deleted (x % 10 = 0) + 1 surviving fresh row.
@@ -181,7 +179,7 @@ TRUNCATE oci_trunc;
 
 
 statement ok
-VACUUM (REFRESH_TABLE) oci_trunc;
+VACUUM (FLUSH_TABLE) oci_trunc;
 
 
 statement ok
@@ -192,7 +190,7 @@ wait
 
 
 statement ok
-VACUUM (REFRESH_TABLE) oci_trunc;
+VACUUM (FLUSH_TABLE) oci_trunc;
 
 
 query

@@ -44,6 +44,7 @@
 #include <vector>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "index/test_index_writer.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -130,7 +131,7 @@ class AnnBatchTest : public ::testing::TestWithParam<BatchCase> {
       }
       return col;
     };
-    _writer = irs::IndexWriter::Make(_dir, irs::kOmCreate, std::move(opts));
+    _writer = tests::IndexWriter::Make(_dir, tests::kOmCreate, std::move(opts));
     ASSERT_NE(nullptr, _writer);
     const auto rows = MakeVectors(kRows, 7);
     {
@@ -247,7 +248,7 @@ class AnnBatchTest : public ::testing::TestWithParam<BatchCase> {
   }
 
   irs::MemoryDirectory _dir;
-  irs::IndexWriter::ptr _writer;
+  tests::IndexWriter::ptr _writer;
   irs::DirectoryReader _reader;
   std::vector<float> _queries;
   std::shared_ptr<const irs::Filter> _inner;

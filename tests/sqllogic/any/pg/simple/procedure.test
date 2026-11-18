@@ -127,6 +127,29 @@ statement ok
 DROP FUNCTION drop_mismatch_func();
 
 
+statement ok
+CREATE FUNCTION drop_signature(x INTEGER) RETURNS INTEGER AS $$ SELECT x $$ LANGUAGE sql;
+
+
+statement error function drop_signature\((integer|INTEGER), (integer|INTEGER)\) does not exist
+DROP FUNCTION drop_signature(INTEGER, INTEGER);
+
+
+statement ok
+DROP FUNCTION IF EXISTS drop_signature(INTEGER, INTEGER);
+
+
+query
+SELECT drop_signature(5);
+----
+drop_signature
+5
+
+
+statement ok
+DROP FUNCTION drop_signature(INTEGER);
+
+
 # ── Function and procedure coexist under same name ──
 
 statement ok

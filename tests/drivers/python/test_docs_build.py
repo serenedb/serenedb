@@ -223,8 +223,9 @@ def test_index_build_writes_the_docs_and_objects_indexes(
     for name in ("docs", "objects"):
         files = [p.name for p in (index / name).iterdir()]
         assert "sdb_docs.layout" in files, files
-        assert [f for f in files if f != "sdb_docs.layout" and
-                not f.startswith("segments_")], files
+        assert "sdb_docs.segments" in files, files
+        assert [f for f in files
+                if f not in ("sdb_docs.layout", "sdb_docs.segments")], files
     layout = (index / "docs" / "sdb_docs.layout").read_text()
     assert [line.split()[0] for line in layout.splitlines()] == [
         "path", "title", "breadcrumb", "content", "content_text"]

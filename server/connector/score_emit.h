@@ -94,6 +94,10 @@ struct VectorScorerOptions {
   bool maxsim = false;
   uint32_t maxsim_overfetch = 0;
 
+  bool PerRow() const noexcept {
+    return exact && top_k == 0 && radius == std::numeric_limits<float>::max();
+  }
+
   float EffectiveRadius() const {
     if (radius == std::numeric_limits<float>::max()) {
       return radius;

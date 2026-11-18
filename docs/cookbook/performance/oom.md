@@ -14,7 +14,7 @@ If you are experiencing out-of-memory issues with SereneDB, try tweaking the fol
 
 * Reduce the number of threads using the `SET threads = ...` command.
 * Setting the memory limit lower than the default 80% can help prevent out of memory errors. While this configuration sounds counter-intuitive, it helps because some of SereneDB's operations circumvent the database's buffer manager and thus they can reserve more memory than allowed by the memory limit. If this happens (e.g., SereneDB is killed by the operating system or an OOM reaper process), set the memory limit to just 50-60% of the total system memory by using the `SET memory_limit = '...'` statement. The limit takes an absolute size (e.g., `SET memory_limit = '4GB'`), so compute the value from your system memory — a percentage literal such as `'60%'` is not accepted.
-* If your query reads a large amount of data from a file or writes a large amount of data, try setting the `preserve_insertion_order` option to `false`: `SET preserve_insertion_order = false`.
+* If your query reads a large amount of data from a file or writes a large amount of data, keep the `preserve_insertion_order` option at its default, `false`: `SET preserve_insertion_order = false`.
 
 In short, try the settings:
 

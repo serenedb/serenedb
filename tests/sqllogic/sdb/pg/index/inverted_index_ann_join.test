@@ -22,7 +22,7 @@ INSERT INTO songs SELECT i, i % 3,
   [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM range(300) t(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) songs;
+VACUUM (FLUSH_TABLE) songs;
 
 statement ok
 CREATE TABLE users (id INTEGER, emb FLOAT[8]);
@@ -332,7 +332,7 @@ INSERT INTO line SELECT i, 2 * i, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]
   FROM range(10000) t(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) line;
+VACUUM (FLUSH_TABLE) line;
 
 statement ok
 CREATE TABLE spread_users AS SELECT i AS id,
@@ -372,12 +372,12 @@ QUERY PLAN
 │ ~120 rows                          │
 ╰──────────────────┬─────────────────╯
                    ├──────────────────────────────────────────╮
-╭─ SEQ_SCAN ───────┴─────────────────╮  ╭─ PROJECTION ────────┴────────────────────╮
+╭─ IRESEARCH_SCAN ─┴─────────────────╮  ╭─ PROJECTION ────────┴────────────────────╮
 │ Table: users                       │  │ Projections: #1, #0                      │
-│ Type: Sequential Scan              │  │ ~120 rows                                │
-│ Projections: emb, id               │  ╰─────────────────────┬────────────────────╯
-│ ~5 rows                            │  ╭─ HASH_JOIN ─────────┴────────────────────╮
-╰────────────────────────────────────╯  │ Join Type: INNER                         │
+│ Projections: emb, id               │  │ ~120 rows                                │
+│ ~5 rows                            │  ╰─────────────────────┬────────────────────╯
+╰────────────────────────────────────╯  ╭─ HASH_JOIN ─────────┴────────────────────╮
+                                        │ Join Type: INNER                         │
                                         │ Conditions: emb IS NOT DISTINCT FROM emb │
                                         │ ~120 rows                                │
                                         ╰─────────────────────┬────────────────────╯
@@ -404,8 +404,8 @@ QUERY PLAN
                                                               ├─────────────────────────────────────────╮
                                         ╭─ IRESEARCH_SCAN ────┴────────────────────╮  ╭─ HASH_GROUP_BY ─┴─────────────────╮
                                         │ Index: songs_hnsw                        │  │ Groups: #0                        │
-                                        │ Lookup: table                            │  │ ~2 rows                           │
-                                        │ Projections: pk (l), emb (i)             │  ╰─────────────────┬─────────────────╯
+                                        │ Lookup: search                           │  │ ~2 rows                           │
+                                        │ Projections: pk, emb                     │  ╰─────────────────┬─────────────────╯
                                         │ ~300 rows                                │  ╭─ PROJECTION ────┴─────────────────╮
                                         ╰──────────────────────────────────────────╯  │ Projections: #[0.0]               │
                                                                                       │ ~5 rows                           │
@@ -433,14 +433,13 @@ QUERY PLAN
 ╰─────────────────┬─────────────────╯
 ╭─ INOUT_FUNCTION ┴─────────────────╮
 │ Index: songs_hnsw                 │
-│ Lookup: table                     │
+│ Lookup: search                    │
 │ Score: l2_distance(emb, FLOAT[8]) │
 │ Top: 3                            │
 │ ~5 rows                           │
 ╰─────────────────┬─────────────────╯
-╭─ SEQ_SCAN ──────┴─────────────────╮
+╭─ IRESEARCH_SCAN ┴─────────────────╮
 │ Table: users                      │
-│ Type: Sequential Scan             │
 │ ~5 rows                           │
 ╰───────────────────────────────────╯
 
@@ -455,16 +454,15 @@ QUERY PLAN
 ╰──────────────────┬──────────────────╯
 ╭─ INOUT_FUNCTION ─┴──────────────────╮
 │ Index: songs_ivf                    │
-│ Lookup: table                       │
+│ Lookup: search                      │
 │ Score: l2_distance(emb, FLOAT[8])   │
 │ Exact:                              │
 │ brute force over the stored vectors │
 │ Top: 3                              │
 │ ~5 rows                             │
 ╰──────────────────┬──────────────────╯
-╭─ SEQ_SCAN ───────┴──────────────────╮
+╭─ IRESEARCH_SCAN ─┴──────────────────╮
 │ Table: users                        │
-│ Type: Sequential Scan               │
 │ ~5 rows                             │
 ╰─────────────────────────────────────╯
 
@@ -479,7 +477,7 @@ QUERY PLAN
 ╰─────────────────┬─────────────────╯
 ╭─ INOUT_FUNCTION ┴─────────────────╮
 │ Index: songs_ivf                  │
-│ Lookup: table                     │
+│ Lookup: search                    │
 │ Index Filter:                     │
 │ ╭─ Term ──────────────╮           │
 │ │ Field: cat(numeric) │           │
@@ -489,8 +487,7 @@ QUERY PLAN
 │ Top: 2                            │
 │ ~5 rows                           │
 ╰─────────────────┬─────────────────╯
-╭─ SEQ_SCAN ──────┴─────────────────╮
+╭─ IRESEARCH_SCAN ┴─────────────────╮
 │ Table: users                      │
-│ Type: Sequential Scan             │
 │ ~5 rows                           │
 ╰───────────────────────────────────╯

@@ -18,9 +18,6 @@ INSERT INTO dcp VALUES
 statement ok
 CREATE INDEX dcp_idx ON dcp USING inverted (id, body dcp_words, tags dcp_words) INCLUDE (body, tags)
 
-statement ok
-VACUUM (REFRESH_TABLE) dcp
-
 query
 SELECT id, body FROM dcp_idx WHERE body @@ ts_phrase('quick brown') ORDER BY id
 ----
@@ -40,7 +37,7 @@ QUERY PLAN
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: dcp_idx                           │
-│ Lookup: table                            │
+│ Lookup: search                           │
 │ Index Filter:                            │
 │ ╭─ And ────────────────────╮             │
 │ ╰─────────────┬────────────╯             │
@@ -55,7 +52,7 @@ QUERY PLAN
 │ │ Term:quick(0, 0); Term:brown(1, 1);  │ │
 │ │ Verify: table filter                 │ │
 │ ╰──────────────────────────────────────╯ │
-│ Projections: id (l), body (i)            │
+│ Projections: id, body                    │
 │ ~1 row                                   │
 ╰──────────────────────────────────────────╯
 
@@ -98,7 +95,7 @@ QUERY PLAN
 ╰─────────────────────────────────────────┬────────────────────────────────────────╯
 ╭─ IRESEARCH_SCAN ────────────────────────┴────────────────────────────────────────╮
 │ Index: dcp_idx                                                                   │
-│ Lookup: table                                                                    │
+│ Lookup: search                                                                   │
 │ Index Filter:                                                                    │
 │ ╭─ And ────────────────────╮                                                     │
 │ ╰─────────────┬────────────╯                                                     │
@@ -117,7 +114,7 @@ QUERY PLAN
 │ │ Term:quick(0, 0); Term:brown(1, 1);  │  │ Term:brown(0, 0); Term:dog(1, 1);  │ │
 │ │ Verify: table filter                 │  │ Verify: table filter               │ │
 │ ╰──────────────────────────────────────╯  ╰────────────────────────────────────╯ │
-│ Projections: id (l), body (i), tags (i)                                          │
+│ Projections: id, body, tags                                                      │
 │ ~1 row                                                                           │
 ╰──────────────────────────────────────────────────────────────────────────────────╯
 
@@ -134,9 +131,6 @@ INSERT INTO dcp_gen SELECT g, NULL FROM range(30001, 30101) t(g)
 
 statement ok
 CREATE INDEX dcp_gen_idx ON dcp_gen USING inverted (id, body dcp_words) INCLUDE (body)
-
-statement ok
-VACUUM (REFRESH_TABLE) dcp_gen
 
 query
 SELECT (SELECT count(*) FROM dcp_gen_idx WHERE body @@ ts_phrase('w3 w4')) AS matches,
@@ -181,9 +175,6 @@ CREATE TABLE dcp_nested AS
 
 statement ok
 CREATE INDEX dcp_nested_idx ON dcp_nested USING inverted (id, body dcp_words, tags dcp_words) INCLUDE (body, tags, s)
-
-statement ok
-VACUUM (REFRESH_TABLE) dcp_nested
 
 query
 SELECT (SELECT count(*) FROM dcp_nested_idx WHERE tags @@ ts_phrase('w1 w2')) AS matches,
@@ -279,9 +270,6 @@ INSERT INTO dcp_geo
 statement ok
 CREATE INDEX dcp_geo_idx ON dcp_geo USING inverted (id, geo dcp_shape)
 
-statement ok
-VACUUM (REFRESH_TABLE) dcp_geo
-
 query
 SELECT count(*) FROM dcp_geo_idx
 WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.60105,55.70105],[37.60505,55.70105],[37.60505,55.70505],[37.60105,55.70505],[37.60105,55.70105]]]}')
@@ -304,7 +292,7 @@ WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.601,55.701],[37.
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: dcp_geo_idx       │
-│ Lookup: table            │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Geo ──────────────╮   │
 │ │ Field: geo(string) │   │
@@ -319,8 +307,7 @@ QUERY PLAN
 │ │ Shape: S2Polygon     │ │
 │ │ Verify: table filter │ │
 │ ╰──────────────────────╯ │
-│ Projections: id (l),     │
-│              geo (i)     │
+│ Projections: id, geo     │
 │ ~2,000 rows              │
 ╰──────────────────────────╯
 

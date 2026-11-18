@@ -28,9 +28,6 @@ INSERT INTO cx VALUES
     (2, DATE '2024-06-15', TIMESTAMP '2024-06-15 12:00:00.654321',
         TIMESTAMP_NS '2024-06-15 12:00:00.999999999');
 
-statement ok
-VACUUM (REFRESH_TABLE) cx;
-
 # Casted-expression index, same-type bounds.
 query
 SELECT pk FROM cx_ms_expr WHERE ts::TIMESTAMP_MS @@ ts_between(TIMESTAMP_MS '2024-03-01 00:00:00', TIMESTAMP_MS '2024-12-31 00:00:00', true, true);

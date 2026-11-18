@@ -1,0 +1,19 @@
+query
+SELECT proname, count(*) AS overloads
+FROM pg_proc
+WHERE pronamespace = 'pg_catalog'::regnamespace
+  AND proname IN ('pg_get_expr', 'pg_my_temp_schema', 'shobj_description')
+GROUP BY proname
+ORDER BY proname
+----
+proname	overloads
+pg_get_expr	2
+pg_my_temp_schema	1
+shobj_description	1
+
+
+query
+SELECT 'pg_my_temp_schema'::regproc::oid AS temp_schema, 'shobj_description'::regproc::oid > 0 AS description
+----
+temp_schema	description
+2854	t

@@ -20,9 +20,6 @@ INSERT INTO geo_data VALUES
     (5, '{"type":"Point","coordinates":[37.701645,55.832144]}'),
     (6, '{"type":"Polygon","coordinates":[[[37.614323,55.705898],[37.615825,55.705898],[37.615825,55.706520],[37.614323,55.706520],[37.614323,55.705898]]]}');
 
-statement ok
-VACUUM (REFRESH_TABLE) geo_data;
-
 query
 SELECT id FROM geo_idx
 WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}')
@@ -94,9 +91,6 @@ INSERT INTO geo_shapes VALUES
     (4, 'POINT(37.559509 55.715895)'::GEOMETRY('OGC:CRS84')),
     (6, 'POLYGON((37.614323 55.705898, 37.615825 55.705898, 37.615825 55.706520, 37.614323 55.706520, 37.614323 55.705898))'::GEOMETRY('OGC:CRS84'));
 
-statement ok
-VACUUM (REFRESH_TABLE) geo_shapes;
-
 query
 SELECT id FROM geo_shapes_idx
 WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}')
@@ -143,9 +137,6 @@ INSERT INTO places VALUES
     (2, '{"lat":55.704831,"lng":37.616297}'),
     (3, '{"lat":55.704610,"lng":37.617053}'),
     (4, '{"lat":55.715895,"lng":37.559509}');
-
-statement ok
-VACUUM (REFRESH_TABLE) places;
 
 query
 SELECT id

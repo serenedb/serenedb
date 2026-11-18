@@ -856,7 +856,7 @@ bool OrAcceptorFusionRule::AppendParts(bstring& key, const Filter& child) {
   const auto kind = options.syntax == RegexpSyntax::Perl
                       ? (options.bytes ? Kind::PerlBytes : Kind::Perl)
                       : (options.bytes ? Kind::PosixEreBytes : Kind::PosixEre);
-  return ExecuteRegexp(buf, options.pattern, part(Kind::Term),
+  return ExecuteRegexp(buf, options.pattern, options.syntax, part(Kind::Term),
                        part(Kind::Prefix), part(kind));
 }
 

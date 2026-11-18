@@ -48,7 +48,7 @@ statement error violates unique constraint
 INSERT INTO ncc_crash VALUES (1);
 
 connection after_crash
-statement error violates primary key constraint
+statement error violates unique constraint "pk_crash_pkey"
 INSERT INTO pk_crash VALUES (2, 1);
 
 connection after_crash

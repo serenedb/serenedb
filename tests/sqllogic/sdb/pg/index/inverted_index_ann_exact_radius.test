@@ -19,7 +19,7 @@ CREATE INDEX er_ivf_idx ON er_ivf
 statement ok
 CREATE TABLE er_search (id INTEGER PRIMARY KEY, label VARCHAR, num INTEGER,
   extra INTEGER, emb FLOAT[8])
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX er_search_idx ON er_search
@@ -30,19 +30,10 @@ INSERT INTO er_hnsw SELECT i, 'l' || (i % 10)::VARCHAR, i % 100, i % 10,
   [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM range(3000) t(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) er_hnsw;
-
-statement ok
 INSERT INTO er_ivf SELECT * FROM er_hnsw;
 
 statement ok
-VACUUM (REFRESH_TABLE) er_ivf;
-
-statement ok
 INSERT INTO er_search SELECT * FROM er_hnsw;
-
-statement ok
-VACUUM (REFRESH_TABLE) er_search;
 
 statement ok
 SET sdb_ann_force_exact = true;

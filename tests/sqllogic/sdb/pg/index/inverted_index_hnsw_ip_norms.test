@@ -24,7 +24,7 @@ CREATE INDEX ip_norms_sq8 ON ip_norms
   USING inverted(id, emb hnsw (metric = 'ip', quant = 'sq8'));
 
 statement ok
-VACUUM (REFRESH_TABLE) ip_norms;
+VACUUM (FLUSH_TABLE) ip_norms;
 
 statement ok
 SET sdb_hnsw_ef_search = 100000;

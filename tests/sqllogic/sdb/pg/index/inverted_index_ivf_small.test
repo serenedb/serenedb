@@ -25,9 +25,6 @@ statement ok
 INSERT INTO small_l2 SELECT i,
   [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM range(300) t(i);
 
-statement ok
-VACUUM (REFRESH_TABLE) small_l2;
-
 query
 SELECT pk FROM small_l2_idx
   ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;

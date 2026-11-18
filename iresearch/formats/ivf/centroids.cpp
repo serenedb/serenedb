@@ -200,6 +200,7 @@ std::vector<float> GatherTrainingSample(const ColumnReader& vector_column,
     }
   }
   sample.resize(std::min<uint64_t>(seen, n_train) * d);
+  KeepTrainableRows(sample, d);
   return sample;
 }
 

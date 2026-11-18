@@ -14,9 +14,6 @@ statement ok
 CREATE INDEX tuple_inc_idx ON tuple_inc USING inverted(id)
   INCLUDE (payload, s);
 
-statement ok
-VACUUM (REFRESH_TABLE) tuple_inc;
-
 query
 SELECT id, payload FROM tuple_inc_idx ORDER BY id;
 ----
@@ -95,13 +92,10 @@ id	payload
 4	(delta,)
 
 statement ok
-CREATE TABLE tuple_inc_search WITH (storage = 'search', compaction_interval = 0) AS
+CREATE TABLE tuple_inc_search WITH (compaction_interval = 0) AS
 SELECT id::INTEGER AS id, payload
 FROM (VALUES (1, ROW('alpha', 10)), (2, NULL),
              (3, ROW(NULL, 30)), (4, ROW('delta', NULL))) AS v(id, payload);
-
-statement ok
-VACUUM (REFRESH_TABLE) tuple_inc_search;
 
 query
 SELECT id, payload[1] AS name, payload[2] AS score

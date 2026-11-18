@@ -162,13 +162,14 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> AnnJoinInitGlobal(
   duckdb::TableFunctionInitInput scan_input{&bind, state->columns, {}, nullptr};
   InitScanState(g, &context, bind, scan_input);
   g.scan = &bind;
-  g.snapshot = bind.Snapshot(context);
-  g.reader = &g.snapshot->reader;
+  g.view = bind.Read(context);
+  g.reader = g.view.reader;
   g.total_segments = g.reader->size();
-  g.workers = duckdb::TaskScheduler::GetScheduler(context).NumberOfThreads();
-  g.rg_size = bind.RowGroupSize();
+  g.workers = duckdb::TaskScheduler::QueryThreads(context);
+  g.rg_size = bind.relation.RowGroupSize();
   ClassifyColumnstoreProjections(g, bind);
   EnsureLookupable(g, bind);
+  BuildFetchedCopy(g);
 
   SDB_ASSERT(bind.score.vector && bind.score.top_k);
   auto& vs = state->vs;
@@ -585,12 +586,12 @@ void FetchAnswer(duckdb::ClientContext& ctx, AnnJoinGlobalState& g,
   if (g.scan.needs_lookup) {
     EnsureIndexSource(ctx, g.scan, l);
   }
-  const auto units = FetchUnitsOf(l.unique, g.scan.rg_size);
+  const auto units = FetchUnitsOf(g.scan, l.unique);
   for (size_t u = 0; u < units.size(); ++u) {
     const auto& unit = units[u];
     const std::span<const irs::ScoreDoc> hits{l.unique.data() + unit.first,
                                               unit.count};
-    auto fetched = FetchHits(ctx, g.scan, l, unit.seg, hits,
+    auto fetched = FetchHits(ctx, g.scan, l, l.fetch_tmp, unit.seg, hits,
                              u == 0 || units[u - 1].seg != unit.seg);
     if (g.scan.needs_lookup) {
       MaterializeHits(ctx, g.scan, l, *fetched.chunk, *fetched.pk, hits,

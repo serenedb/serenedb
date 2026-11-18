@@ -84,11 +84,23 @@ q	q2	w	w2	d	d2	t
 
 
 statement ok
-CREATE TABLE s1.docs (id INT, body TEXT);
+CREATE TABLE s1."MixedT" ("MyCol" INT);
 
 
 statement ok
-CREATE INDEX docs_inv ON s1.docs USING inverted (body) WITH (segment_docs_max = 7, compaction_max_segments = 3, cleanup_interval_step = 2);
+INSERT INTO s1."MixedT" VALUES (1);
+
+
+statement ok
+CREATE VIEW s1."MixedV" AS SELECT "MyCol" FROM s1."MixedT";
+
+
+statement ok
+CREATE TABLE s1.docs (id INT, body TEXT) WITH (compaction_max_segments = 3);
+
+
+statement ok
+CREATE INDEX docs_inv ON s1.docs USING inverted (body);
 
 
 statement ok
@@ -115,10 +127,10 @@ SELECT setval('s1.wrap', 1, true);
 
 
 query
-SELECT o = list_sort(o) AS sorted, list_contains(o, 'segment_docs_max = 7') AS kept FROM (SELECT string_split(regexp_extract(sql, 'WITH \((.*) \)', 1), ', ') AS o FROM sdb_indexes() WHERE database_name = current_database() AND index_name = 'docs_inv');
+SELECT sql LIKE '%WITH (''compaction_max_segments''=3);' AS kept FROM sdb_tables() WHERE database_name = current_database() AND table_name = 'docs';
 ----
-sorted	kept
-t	t
+kept
+t
 
 
 statement ok
@@ -131,6 +143,21 @@ USE eif_dst;
 
 statement ok
 IMPORT DATABASE '${__TEST_DIR__}/export_import_fidelity';
+
+
+query
+SELECT table_name FROM information_schema.tables WHERE table_schema = 's1' AND lower(table_name) LIKE 'mixed%' ORDER BY 1;
+----
+table_name
+MixedT
+MixedV
+
+
+query
+SELECT "MyCol" FROM s1."MixedV";
+----
+MyCol
+1
 
 
 query
@@ -195,6 +222,13 @@ query
 SELECT count(*) AS indexes, count(DISTINCT replace(sql, database_name || '.', '')) AS variants FROM sdb_indexes() WHERE database_name IN ('eif_src', 'eif_dst') AND index_name = 'docs_inv';
 ----
 indexes	variants
+2	1
+
+
+query
+SELECT count(*) AS tables, count(DISTINCT replace(sql, database_name || '.', '')) AS variants FROM sdb_tables() WHERE database_name IN ('eif_src', 'eif_dst') AND table_name = 'docs';
+----
+tables	variants
 2	1
 
 

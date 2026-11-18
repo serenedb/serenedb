@@ -94,7 +94,6 @@ sf_setof
 2
 
 
-skipif serenedb
 query
 SELECT sf_setof() ORDER BY 1;
 ----
@@ -131,7 +130,6 @@ statement ok
 CREATE FUNCTION tf_union() RETURNS TABLE(a INT) LANGUAGE sql AS $$ SELECT 1 UNION ALL SELECT 2 $$;
 
 
-skipif serenedb
 query
 SELECT a FROM tf_union() ORDER BY 1;
 ----

@@ -14,9 +14,6 @@ INSERT INTO range_words VALUES (1, 'Apa'), (2, 'Mus'), (3, 'Zebra'), (4, 'Ål');
 statement ok
 CREATE INDEX range_words_idx ON range_words USING inverted (id, w range_sv);
 
-statement ok
-VACUUM (REFRESH_TABLE) range_words;
-
 # Swedish sort keys put Ål after Zebra.
 
 query
@@ -81,9 +78,6 @@ INSERT INTO range_tags VALUES (1, 'Apple', 'Apple'), (2, 'banana', 'banana'), (3
 
 statement ok
 CREATE INDEX range_tags_idx ON range_tags USING inverted (id, t range_lower, b range_lower);
-
-statement ok
-VACUUM (REFRESH_TABLE) range_tags;
 
 # Both endpoints must be normalized, including the upper endpoint.
 
@@ -209,9 +203,6 @@ INSERT INTO range_docs VALUES (1, 'Apple'), (2, 'banana'), (3, 'Cherry'), (4, 'a
 statement ok
 CREATE INDEX range_docs_idx ON range_docs USING inverted (id, t range_split);
 
-statement ok
-VACUUM (REFRESH_TABLE) range_docs;
-
 # A single indexed term must satisfy both bounds, even on multi-token documents.
 
 query
@@ -321,9 +312,6 @@ INSERT INTO range_long VALUES
 
 statement ok
 CREATE INDEX range_long_idx ON range_long USING inverted (t range_lower);
-
-statement ok
-VACUUM (REFRESH_TABLE) range_long;
 
 query
 SELECT id FROM range_long_idx

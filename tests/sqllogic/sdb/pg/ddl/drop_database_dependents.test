@@ -1,0 +1,107 @@
+control substitution on
+
+statement ok
+CREATE DATABASE ddd_dependents;
+
+
+statement ok
+CREATE TABLE ddd_dependents.public.t (a INTEGER);
+
+
+statement ok
+INSERT INTO ddd_dependents.public.t VALUES (4);
+
+
+statement ok
+CREATE SEQUENCE ddd_dependents.public.s;
+
+
+statement ok
+CREATE TYPE ddd_dependents.public.e AS ENUM ('p', 'q');
+
+
+statement ok
+CREATE VIEW ddd_v AS SELECT a FROM ddd_dependents.public.t;
+
+
+statement ok
+CREATE TABLE ddd_two (c BIGINT DEFAULT nextval('ddd_dependents.public.s'), d BIGINT DEFAULT nextval('ddd_dependents.public.s'), x ddd_dependents.public.e);
+
+
+statement error
+DROP DATABASE ddd_dependents;
+----
+db error: ERROR: cannot drop database ddd_dependents because other objects depend on it
+DETAIL: view ddd_v depends on database ddd_dependents
+column x of table ddd_two depends on database ddd_dependents
+default value for column c of table ddd_two depends on database ddd_dependents
+default value for column d of table ddd_two depends on database ddd_dependents
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+
+
+statement ok
+INSERT INTO ddd_two (x) VALUES ('q');
+
+
+query
+SELECT c, d, x::VARCHAR AS x FROM ddd_two;
+----
+c	d	x
+1	2	q
+
+
+query
+SELECT a FROM ddd_v;
+----
+a
+4
+
+
+statement ok
+DROP TABLE ddd_two;
+
+
+statement ok
+DROP DATABASE ddd_dependents CASCADE;
+
+
+query
+SELECT count(*) AS views FROM pg_views WHERE viewname = 'ddd_v';
+----
+views
+0
+
+
+query
+SELECT count(*) AS databases FROM pg_database WHERE datname = 'ddd_dependents';
+----
+databases
+0
+
+
+statement ok
+CREATE DATABASE ddd_reader;
+
+
+statement ok
+CREATE TABLE ddd_source (a INTEGER);
+
+
+statement ok
+CREATE VIEW ddd_reader.public.v AS SELECT a FROM ${__DATABASE__}.public.ddd_source;
+
+
+statement error
+DROP TABLE ddd_source;
+----
+db error: ERROR: cannot drop table ddd_source because other objects depend on it
+DETAIL: view v depends on table ddd_source
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+
+
+statement ok
+DROP DATABASE ddd_reader;
+
+
+statement ok
+DROP TABLE ddd_source;

@@ -33,7 +33,7 @@ namespace sdb::pg::tokenizer_options {
 
 void CheckFileExists(std::string_view option, std::string_view path) {
   if (!std::filesystem::exists(path)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_CONFIG_FILE_ERROR),
                     ERR_MSG("File \"", path, "\" referenced by option \"",
                             option, "\" does not exist"));
   }

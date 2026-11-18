@@ -53,7 +53,7 @@ FIXTURE = [
     "CREATE MACRO spd_rows(n) AS TABLE SELECT * FROM range(n)",
     "CREATE FUNCTION spd_fn(a INT) RETURNS INT LANGUAGE SQL AS 'SELECT a + 1'",
     "CREATE TEXT SEARCH DICTIONARY spd_dict AS keyword() WITH (frequency)",
-    "CREATE TABLE spd_docs (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search')",
+    "CREATE TABLE spd_docs (id INT PRIMARY KEY, body TEXT)",
     "CREATE INDEX spd_docs_idx ON spd_docs USING inverted (id, body spd_dict)",
     "COMMENT ON TABLE spd_parent IS 'table'",
     "COMMENT ON COLUMN spd_parent.name IS 'column'",

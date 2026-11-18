@@ -87,6 +87,10 @@ CHECKPOINT cv;
 
 
 statement ok
+VACUUM (COMPACT_TABLE) cv.vac;
+
+
+statement ok
 SET force_compression='auto';
 
 

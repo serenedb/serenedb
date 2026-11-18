@@ -23,16 +23,17 @@
 #include <absl/base/call_once.h>
 #include <absl/synchronization/mutex.h>
 
+#include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
-#include <duckdb/catalog/catalog_set.hpp>
 #include <duckdb/catalog/dependency.hpp>
-#include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <memory>
 #include <string_view>
 #include <vector>
+
+#include "catalog/entry_set.h"
 
 namespace sdb::catalog {
 
@@ -74,16 +75,16 @@ struct CatalogSnapshot {
 
 class CatalogSnapshots final {
  public:
-  explicit CatalogSnapshots(duckdb::DuckCatalog& catalog) : _catalog{catalog} {}
+  explicit CatalogSnapshots(duckdb::Catalog& catalog) : _catalog{catalog} {}
 
   std::shared_ptr<const CatalogSnapshot> Get(duckdb::ClientContext& context,
-                                             duckdb::CatalogSet& set);
+                                             EntrySet& set);
 
  private:
-  duckdb::DuckCatalog& _catalog;
+  duckdb::Catalog& _catalog;
   absl::Mutex _mutex;
   duckdb::idx_t _version = 0;
-  irs::containers::FlatHashMap<const duckdb::CatalogSet*,
+  irs::containers::FlatHashMap<const EntrySet*,
                                std::shared_ptr<const CatalogSnapshot>>
     _snapshots;
 };

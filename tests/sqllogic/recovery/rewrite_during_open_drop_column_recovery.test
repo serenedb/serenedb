@@ -13,7 +13,7 @@ INSERT INTO pudge VALUES (1, 'fresh', 'stinky'), (2, 'fresh', 'stinky'), (3, 'ol
 
 
 statement ok
-VACUUM (REFRESH_TABLE) pudge;
+VACUUM (FLUSH_TABLE) pudge;
 
 
 connection donsimon
@@ -86,7 +86,7 @@ INSERT INTO pudge VALUES (4, 'stinky', 'clean'), (5, 'old', 'stinky');
 
 connection after_crash
 statement ok
-VACUUM (REFRESH_TABLE) pudge;
+VACUUM (FLUSH_TABLE) pudge;
 
 
 connection after_crash

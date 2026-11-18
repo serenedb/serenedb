@@ -5,14 +5,14 @@ CREATE TEXT SEARCH DICTIONARY cn_en AS
 
 statement ok
 CREATE TABLE cn (id BIGINT PRIMARY KEY, body TEXT)
-WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX cn_idx ON cn USING inverted (body cn_en);
 
 statement ok
 CREATE TABLE cn_topk (id BIGINT PRIMARY KEY, body TEXT)
-WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0,
+WITH (compaction_interval = 0,
       optimize_top_k = 'bm25(1.2, 0.75)');
 
 statement ok
@@ -25,10 +25,16 @@ statement ok
 INSERT INTO cn_topk SELECT i, 'fox ' || repeat('dog ', i % 5) FROM generate_series(1, 200) s(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) cn;
+VACUUM (FLUSH_TABLE) cn;
 
 statement ok
-VACUUM (REFRESH_TABLE) cn_topk;
+VACUUM (FLUSH_TABLE) cn_topk;
+
+query
+SELECT (SELECT count(*) FROM cn) AS cn, (SELECT count(*) FROM cn_topk) AS cn_topk;
+----
+cn	cn_topk
+200	200
 
 statement ok
 INSERT INTO cn SELECT i, 'fox ' || repeat('dog ', i % 5) FROM generate_series(201, 400) s(i);
@@ -37,10 +43,16 @@ statement ok
 INSERT INTO cn_topk SELECT i, 'fox ' || repeat('dog ', i % 5) FROM generate_series(201, 400) s(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) cn;
+VACUUM (FLUSH_TABLE) cn;
 
 statement ok
-VACUUM (REFRESH_TABLE) cn_topk;
+VACUUM (FLUSH_TABLE) cn_topk;
+
+query
+SELECT (SELECT count(*) FROM cn) AS cn, (SELECT count(*) FROM cn_topk) AS cn_topk;
+----
+cn	cn_topk
+400	400
 
 query
 SELECT c.relname, m.value FROM sdb_metrics m JOIN pg_class c ON c.oid = m.relation_id

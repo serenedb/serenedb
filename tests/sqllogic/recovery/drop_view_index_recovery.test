@@ -37,7 +37,7 @@ count
 
 statement ok
 CREATE TABLE drop_view_oids AS
-SELECT (SELECT oid FROM pg_database WHERE datname = current_database()) AS db, index_oid AS idx
+SELECT index_oid AS idx
 FROM duckdb_indexes() WHERE database_name = current_database() AND index_name = 'drop_view_idx';
 
 statement ok
@@ -73,8 +73,8 @@ count
 
 connection after_drop
 query
-SELECT count(*) AS leftover FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/**'), drop_view_oids
-WHERE file LIKE '%/engine_v1/' || db || '/' || idx || '/%';
+SELECT count(*) AS leftover FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*/*'), drop_view_oids
+WHERE file LIKE '%/engine_v1/store/' || idx || '/%';
 ----
 leftover
 0

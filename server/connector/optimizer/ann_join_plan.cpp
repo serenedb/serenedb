@@ -114,9 +114,18 @@ bool IsNotNullOf(const duckdb::Expression& conjunct,
 }
 
 bool ClaimedWhole(const connector::ScanBindData& bind) {
-  return bind.search.row_filters.empty() && bind.search.duals.empty() &&
-         !bind.search.index_only && bind.search.deferred.empty() &&
+  return bind.search.row_filters.empty() && bind.search.deferred.empty() &&
          !bind.plan_cache.deferred && !bind.plan_cache.declined_parameter;
+}
+
+duckdb::unique_ptr<duckdb::LogicalGet> CopyGet(const duckdb::LogicalGet& get) {
+  auto copy = duckdb::make_uniq<duckdb::LogicalGet>(
+    get.table_index, get.function, get.bind_data->Copy(), get.returned_types,
+    get.names, get.virtual_columns);
+  copy->GetMutableColumnIds() = get.GetColumnIds();
+  copy->projection_ids = get.projection_ids;
+  copy->types = get.types;
+  return copy;
 }
 
 void ReplaceDistance(duckdb::unique_ptr<duckdb::Expression>& expr,
@@ -285,8 +294,9 @@ duckdb::unique_ptr<duckdb::LogicalOperator> PlanAnnJoin(
       (info->maxsim && sides.column != func.GetChildren()[0].get())) {
     return nullptr;
   }
+  PlannedScan planned{get};
   const auto field_id =
-    ResolveAnnTargetFieldId(*sides.column, get, scan, context);
+    ResolveAnnTargetFieldId(*sides.column, planned, context);
   if (!irs::field_limits::valid(field_id)) {
     return nullptr;
   }
@@ -310,10 +320,40 @@ duckdb::unique_ptr<duckdb::LogicalOperator> PlanAnnJoin(
       context, std::move(query), query_type);
   }
 
-  const auto score_idx = get.GetColumnIds().size();
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> filters;
+  for (auto* conjunct : conjuncts) {
+    if (IsNotNullOf(**conjunct, *distance)) {
+      continue;
+    }
+    if (IsCorrelated(**conjunct)) {
+      return nullptr;
+    }
+    filters.push_back((*conjunct)->Copy());
+  }
+
+  auto scan_get = CopyGet(get);
+  auto& bind = scan_get->bind_data->Cast<connector::ScanBindData>();
+  bind.score.vector = MakeVectorScorer(field_id, *info, *ann, context);
+  bind.score.vector->exact = bind.score.vector->exact || join.exact_nearest;
+  bind.score.order = info->order;
+  bind.score.top_k = k;
+  if (!filters.empty()) {
+    IResearchPushdownComplexFilter(context, *scan_get,
+                                   scan_get->bind_data.get(), filters);
+    if (!filters.empty() || !ClaimedWhole(bind)) {
+      return nullptr;
+    }
+  }
+  const auto score_column =
+    PlannedScan{*scan_get}
+      .Append(connector::kInvertedIndexScoreId, duckdb::LogicalType::FLOAT,
+              connector::kScoreName)
+      .get_column;
+
   const duckdb::BoundColumnRefExpression score{
     duckdb::Identifier{connector::kScoreName}, duckdb::LogicalType::FLOAT,
-    duckdb::ColumnBinding{get.table_index, duckdb::ProjectionIndex{score_idx}}};
+    duckdb::ColumnBinding{get.table_index,
+                          duckdb::ProjectionIndex{score_column}}};
   join.right->ResolveOperatorTypes();
   const auto bindings = join.right->GetColumnBindings();
   const auto output_index = bindings.front().table_index;
@@ -335,39 +375,11 @@ duckdb::unique_ptr<duckdb::LogicalOperator> PlanAnnJoin(
     outputs.push_back(std::move(output));
   }
 
-  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> filters;
-  for (auto* conjunct : conjuncts) {
-    if (IsNotNullOf(**conjunct, *distance)) {
-      continue;
-    }
-    if (IsCorrelated(**conjunct)) {
-      return nullptr;
-    }
-    filters.push_back((*conjunct)->Copy());
-  }
-
-  auto bind =
-    duckdb::unique_ptr_cast<duckdb::FunctionData, connector::ScanBindData>(
-      get.bind_data->Copy());
-  bind->score.vector = MakeVectorScorer(field_id, *info, *ann, context);
-  bind->score.vector->exact = bind->score.vector->exact || join.exact_nearest;
-  bind->score.order = info->order;
-  bind->score.top_k = k;
-  if (!filters.empty()) {
-    IResearchPushdownComplexFilter(context, get, bind.get(), filters);
-    if (!filters.empty() || !ClaimedWhole(*bind)) {
-      return nullptr;
-    }
-  }
-
-  [[maybe_unused]] const auto appended =
-    AppendVirtualGetColumn(*bind, get, connector::kInvertedIndexScoreId,
-                           duckdb::LogicalType::FLOAT, connector::kScoreName);
-  SDB_ASSERT(appended == score_idx);
-
   auto ann_bind = duckdb::make_uniq<connector::AnnJoinBindData>();
-  ann_bind->scan = std::move(bind);
-  ann_bind->columns = get.GetColumnIds();
+  ann_bind->scan =
+    duckdb::unique_ptr_cast<duckdb::FunctionData, connector::ScanBindData>(
+      std::move(scan_get->bind_data));
+  ann_bind->columns = scan_get->GetColumnIds();
   ann_bind->left_join = join.join_type == duckdb::JoinType::LEFT;
   duckdb::vector<duckdb::Identifier> names;
   for (const auto& output : outputs) {

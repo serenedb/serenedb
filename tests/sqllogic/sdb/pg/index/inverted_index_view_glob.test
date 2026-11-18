@@ -24,6 +24,9 @@ CREATE TEXT SEARCH DICTIONARY view_glob_en AS
     split_text() | normalize_tokens('en_US.UTF-8', accent := false)
     WITH (frequency, position, norm);
 
+statement ok
+SET SESSION preserve_insertion_order = true;
+
 
 # Three-file fixture -- distinct rows per file with varying widths so the
 # per-file row positions differ across files (file_index alone wouldn't

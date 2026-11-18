@@ -93,11 +93,6 @@ namespace irs {
 
 using path_char_t = std::filesystem::path::value_type;
 
-// pid_t glue used by the lockfile primitives below + iresearch tests.
-pid_t GetPid();
-bool IsRunning(pid_t pid);
-bool IsValidPid(const char* buf);
-
 }  // namespace irs
 namespace irs::file_utils {
 
@@ -108,15 +103,6 @@ inline auto ToStr(const path_char_t* path) {
     return std::filesystem::path{path}.string();
   }
 }
-
-struct LockFileDeleter {
-  void operator()(void* handle) const;
-};
-
-typedef std::unique_ptr<void, LockFileDeleter> lock_handle_t;
-
-lock_handle_t CreateLockFile(const path_char_t* file);
-bool VerifyLockFile(const path_char_t* file);
 
 bool ByteSize(uint64_t& result, const path_char_t* file) noexcept;
 bool ByteSize(uint64_t& result, int fd) noexcept;
@@ -153,6 +139,7 @@ bool Move(const path_char_t* src_path, const path_char_t* dst_path) noexcept;
 size_t Fread(void* fd, void* buf, size_t size);
 size_t Fwrite(void* fd, const void* buf, size_t size);
 void HintWriteback(void* fd, uint64_t offset, size_t size) noexcept;
+void StartWriteback(int fd) noexcept;
 
 inline constexpr size_t kPage = 4 * 1024;
 inline constexpr size_t kMaxReadahead = 2 * 1024 * 1024;
@@ -289,6 +276,6 @@ bool VisitDirectory(const path_char_t* name,
                     const std::function<bool(const path_char_t* name)>& visitor,
                     bool include_dot_dir = true);
 
-bool FileSync(const path_char_t* name) noexcept;
+bool FileSync(int fd) noexcept;
 
 }  // namespace irs::file_utils

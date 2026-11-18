@@ -30,8 +30,11 @@
 
 namespace irs {
 
-WriteContext::WriteContext(duckdb::DatabaseInstance& db, IndexOutput& out)
-  : BlockManager{db, duckdb::Storage::DEFAULT_BLOCK_HEADER_SIZE}, _out{&out} {}
+WriteContext::WriteContext(duckdb::DatabaseInstance& db, IndexOutput& out,
+                           duckdb::idx_t block_alloc_size)
+  : BlockManager{db, block_alloc_size,
+                 duckdb::Storage::DEFAULT_BLOCK_HEADER_SIZE},
+    _out{&out} {}
 
 WriteContext::~WriteContext() = default;
 

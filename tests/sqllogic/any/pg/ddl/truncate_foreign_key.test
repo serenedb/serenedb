@@ -152,6 +152,53 @@ DROP TABLE tf_self;
 
 
 statement ok
+CREATE TABLE tf_hub (id INT PRIMARY KEY);
+
+
+statement ok
+CREATE TABLE tf_spoke_a (hid INT REFERENCES tf_hub (id));
+
+
+statement ok
+CREATE TABLE tf_spoke_b (hid INT REFERENCES tf_hub (id));
+
+
+statement ok
+INSERT INTO tf_hub VALUES (1);
+
+
+statement ok
+INSERT INTO tf_spoke_a VALUES (1);
+
+
+statement ok
+INSERT INTO tf_spoke_b VALUES (1);
+
+
+statement ok
+TRUNCATE tf_hub CASCADE;
+
+
+query
+SELECT (SELECT count(*) FROM tf_hub) AS hub, (SELECT count(*) FROM tf_spoke_a) AS a, (SELECT count(*) FROM tf_spoke_b) AS b;
+----
+hub	a	b
+0	0	0
+
+
+statement ok
+DROP TABLE tf_spoke_a;
+
+
+statement ok
+DROP TABLE tf_spoke_b;
+
+
+statement ok
+DROP TABLE tf_hub;
+
+
+statement ok
 DROP TABLE tf_grandchild;
 
 

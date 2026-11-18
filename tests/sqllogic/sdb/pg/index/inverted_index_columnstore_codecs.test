@@ -178,9 +178,6 @@ INSERT INTO codec_const VALUES
   (5, FALSE, 7, 'epsilon'),
   (6, TRUE,  9, 'zeta');
 
-statement ok
-VACUUM (REFRESH_TABLE) codec_const;
-
 query
 SELECT pk, flag, marker FROM codec_const_idx ORDER BY pk;
 ----

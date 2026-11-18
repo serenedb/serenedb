@@ -55,7 +55,6 @@
 
 #include "catalog/entry/inverted_index.h"
 #include "connector/common.h"
-#include "connector/inverted_store_index.h"
 #include "pg/catalog/engine/builtin_functions.h"
 #include "pg/catalog/engine/registry.h"
 #include "pg/catalog/functions/functions.h"
@@ -92,7 +91,7 @@ std::string RelationName(const Session& session,
                          const duckdb::CatalogEntry& relation, bool qualified) {
   if (relation.ParentCatalog().IsTemporaryCatalog()) {
     const auto& name = relation.name.GetIdentifierName();
-    return qualified ? QualifiedOutName(kTemporarySchema, name)
+    return qualified ? QualifiedOutName(irs::StaticStrings::kPgTempSchema, name)
                      : QuoteIdentifier(name);
   }
   const auto [schema, name] = NameOf(*session.transaction, relation);
@@ -336,9 +335,7 @@ IndexShape ShapeOf(const Session& session,
                        ? index.catalog.GetCatalogTransaction(*session.context)
                        : *session.transaction)
         .get(),
-    .method = connector::IsInvertedIndex(index)
-                ? std::string_view{catalog::kInvertedIndexTypeName}
-                : std::string_view{"secondary"},
+    .method = catalog::kInvertedIndexTypeName,
     .options = Options(index.options),
   };
   for (duckdb::idx_t i = 0; i < index.parsed_expressions.size(); ++i) {
@@ -355,7 +352,8 @@ IndexShape ShapeOf(const Session& session,
     IndexElement element;
     element.attribute = IndexAttribute(*index.parsed_expressions[i]);
     element.definition = element.attribute;
-    if (!opclass.empty() && (!included || has_options)) {
+    if (!opclass.empty() && opclass != catalog::kPlainKind &&
+        (!included || has_options)) {
       absl::StrAppend(&element.definition, " ", OpclassName(opclass));
     }
     if (has_options) {
@@ -375,7 +373,7 @@ IndexShape ShapeOf(const duckdb::TableCatalogEntry& table,
     .name = key.constraint_name,
     .unique = true,
     .relation = &table,
-    .method = "secondary",
+    .method = catalog::kInvertedIndexTypeName,
   };
   for (auto& column : KeyColumns(table, key)) {
     shape.keys.emplace_back(
@@ -442,8 +440,7 @@ Definition TriggerDefinition(const Session& session, int64_t oid, bool pretty) {
     return std::nullopt;
   }
   const auto& trigger = *found;
-  const auto& table =
-    SiblingTable(*session.transaction, trigger, trigger.base_table->Table());
+  const auto& table = TriggerTable(*session.transaction, trigger);
   auto definition = absl::StrCat(
     "CREATE TRIGGER ", QuoteIdentifier(trigger.name.GetIdentifierName()));
   switch (trigger.timing) {
@@ -752,6 +749,11 @@ void RegisterRuleutilsFunctions(duckdb::ExtensionLoader& loader) {
   const auto bigint = duckdb::LogicalType::BIGINT;
   const auto stability = duckdb::FunctionStability::CONSISTENT_WITHIN_QUERY;
 
+  duckdb::ScalarFunction viewdef_by_name{{text}, text, PgGetViewdefByName<>};
+  viewdef_by_name.SetFallible();
+  duckdb::ScalarFunction viewdef_by_name_pretty{
+    {text, boolean}, text, PgGetViewdefByName<bool>};
+  viewdef_by_name_pretty.SetFallible();
   RegisterScalar(
     loader, pg_catalog, "pg_get_viewdef", stability, InitSession,
     {duckdb::ScalarFunction{{oid}, text, OidFunction(ViewDefinition)},
@@ -767,8 +769,7 @@ void RegisterRuleutilsFunctions(duckdb::ExtensionLoader& loader) {
        OidArgFunction<int64_t>([](const auto& session, int64_t view, int64_t) {
          return ViewDefinition(session, view);
        })},
-     duckdb::ScalarFunction{{text}, text, PgGetViewdefByName<>},
-     duckdb::ScalarFunction{{text, boolean}, text, PgGetViewdefByName<bool>}});
+     viewdef_by_name, viewdef_by_name_pretty});
   RegisterScalar(
     loader, pg_catalog, "pg_get_ruledef", stability, InitSession,
     {duckdb::ScalarFunction{

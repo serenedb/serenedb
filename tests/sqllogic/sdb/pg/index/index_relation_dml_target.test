@@ -1,0 +1,50 @@
+statement ok
+CREATE TABLE irdt_t (a INT, b INT);
+
+
+statement ok
+INSERT INTO irdt_t VALUES (1, 10), (2, 20);
+
+
+statement ok
+CREATE INDEX irdt_idx ON irdt_t USING inverted(b);
+
+
+statement error
+MERGE INTO irdt_idx USING (SELECT 1 AS a) s ON irdt_idx.a = s.a WHEN MATCHED THEN DELETE;
+----
+db error: ERROR: cannot open relation "irdt_idx"
+DETAIL: This operation is not supported for indexes.
+
+
+statement error
+UPDATE irdt_idx SET b = 0;
+----
+db error: ERROR: cannot open relation "irdt_idx"
+DETAIL: This operation is not supported for indexes.
+
+
+statement error
+DELETE FROM irdt_idx;
+----
+db error: ERROR: cannot open relation "irdt_idx"
+DETAIL: This operation is not supported for indexes.
+
+
+statement ok
+UPDATE irdt_t SET b = irdt_idx.b + 1 FROM irdt_idx WHERE irdt_t.a = irdt_idx.a;
+
+
+statement ok
+DELETE FROM irdt_t USING irdt_idx WHERE irdt_t.a = irdt_idx.a AND irdt_idx.b = 21;
+
+
+query
+SELECT a, b FROM irdt_t ORDER BY a;
+----
+a	b
+1	11
+
+
+statement ok
+DROP TABLE irdt_t;

@@ -7,7 +7,7 @@ CREATE TEXT SEARCH DICTIONARY en_pe AS
 
 
 statement ok
-CREATE TABLE pe (id INTEGER PRIMARY KEY, body VARCHAR);
+CREATE TABLE pe (id INTEGER PRIMARY KEY, body VARCHAR) WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 
 
 statement ok
@@ -23,12 +23,7 @@ INSERT INTO pe SELECT i, CASE
 
 
 statement ok
-CREATE INDEX pe_idx ON pe USING inverted(body en_pe)
-  WITH (optimize_top_k = 'bm25(1.2, 0.75)');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) pe;
+CREATE INDEX pe_idx ON pe USING inverted(body en_pe);
 
 
 query
@@ -50,7 +45,7 @@ x w
 
 statement ok
 CREATE TABLE pes (id INTEGER PRIMARY KEY, body VARCHAR)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0,
+  WITH (compaction_interval = 0,
         optimize_top_k = 'bm25(1.2, 0.75)');
 
 
@@ -60,10 +55,6 @@ CREATE INDEX pes_idx ON pes USING inverted(body en_pe);
 
 statement ok
 INSERT INTO pes SELECT id, body FROM pe ORDER BY id;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) pes;
 
 
 query

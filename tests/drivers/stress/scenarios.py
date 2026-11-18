@@ -222,7 +222,7 @@ def pick_iceberg_views(rng, st):
             choices.append(("create_inverted_index", 8))
     if st.searchable_indexes():
         choices.extend([("search_index", 6), ("reindex_index", 4),
-                        ("vacuum_refresh_index", 4), ("drop_search_index", 4)])
+                        ("drop_search_index", 4)])
     if st.free_tokenizers():
         choices.append(("drop_tokenizer", 2))
     return _build(rng, st, rng.weighted(choices))
@@ -300,8 +300,7 @@ def pick_break_everything(rng, st):
     if lane == "iceberg" and st.env.get("iceberg_fixtures"):
         return pick_iceberg_views(rng, st)
     if lane == "maint" and st.searchable_indexes():
-        return rng.choice([ops.vacuum_refresh_index, ops.reindex_index])(
-            rng.choice(st.searchable_indexes()))
+        return ops.reindex_index(rng.choice(st.searchable_indexes()))
     return ops.catalog_read()
 
 
@@ -444,8 +443,6 @@ def _build(rng, st, what):
         return ops.search_index(key, st.search_col[key])
     if what == "reindex_index":
         return ops.reindex_index(rng.choice(st.searchable_indexes()))
-    if what == "vacuum_refresh_index":
-        return ops.vacuum_refresh_index(rng.choice(st.searchable_indexes()))
     if what == "create_foreign_server":
         return ops.create_foreign_server(n, st.env.get("host", "127.0.0.1"),
                                          st.env.get("port", 5432))

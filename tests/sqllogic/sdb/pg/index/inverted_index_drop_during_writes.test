@@ -26,9 +26,6 @@ CREATE INDEX ddw_b ON ddw USING inverted(id, txt ddw_dict);
 statement ok
 INSERT INTO ddw SELECT g, 'row ' || g || ' bravo' FROM generate_series(1, 5000) g;
 
-statement ok
-VACUUM (REFRESH_TABLE) ddw;
-
 query
 SELECT count(*) FROM ddw_a WHERE txt @@ ts_like('bravo');
 ----
@@ -54,9 +51,6 @@ count
 
 statement ok
 INSERT INTO ddw SELECT g, 'row ' || g || ' bravo' FROM generate_series(5001, 10000) g;
-
-statement ok
-VACUUM (REFRESH_TABLE) ddw;
 
 # The survivor covers both the rows written before the drop and after it.
 query

@@ -27,6 +27,10 @@ control substitution on
 
 
 statement ok
+SET compaction_interval = 0;
+
+
+statement ok
 CREATE DATABASE cbb WITH (ROW_GROUP_SIZE = 1048576);
 
 

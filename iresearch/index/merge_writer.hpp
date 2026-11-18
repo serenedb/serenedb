@@ -31,6 +31,7 @@
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/index/segment_reader_impl.hpp"
 #include "iresearch/index/segment_writer_options.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/noncopyable.hpp"
@@ -104,6 +105,11 @@ class MergeWriter : public util::Noncopyable {
   auto Flush(SegmentMeta& segment, const FlushProgress& progress = {},
              const AnnBuildEnv* env = nullptr) -> yaclib::Future<bool>;
 
+  std::shared_ptr<const SegmentReaderImpl> FlushPiece(SegmentMeta& segment,
+                                                      uint64_t id);
+
+  SegmentInputs TakeInputs() noexcept { return std::move(_inputs); }
+
   const ReaderCtx& operator[](size_t i) const noexcept {
     SDB_ASSERT(i < _readers.size());
     return _readers[i];
@@ -117,6 +123,7 @@ class MergeWriter : public util::Noncopyable {
   // Non-owning; the caller pins it for the whole merge.
   const IndexFieldOptions* _field_options = nullptr;
   HnswBases* _hnsw_bases = nullptr;
+  SegmentInputs _inputs;
 };
 
 static_assert(std::is_nothrow_move_constructible_v<MergeWriter>);

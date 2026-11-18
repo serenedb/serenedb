@@ -23,6 +23,7 @@
 
 #include <algorithm>
 #include <duckdb/common/vector/flat_vector.hpp>
+#include <iresearch/index/index_reader.hpp>
 #include <latch>
 #include <random>
 #include <span>
@@ -35,6 +36,57 @@
 namespace sdb::connector {
 namespace {
 
+class Segment final : public irs::SubReader {
+ public:
+  explicit Segment(irs::doc_id_t docs) { _meta.docs_count = docs; }
+
+  uint64_t CountMappedMemory() const final { return 0; }
+
+  const irs::SegmentInfo& Meta() const final { return _meta; }
+
+  const irs::DocumentMask* docs_mask() const final { return nullptr; }
+
+  irs::lead::Node::ptr docs_iterator() const final { return nullptr; }
+
+  std::span<const irs::field_id> field_ids() const final { return {}; }
+
+  std::span<const irs::TermReader* const> fields(irs::field_id) const final {
+    return {};
+  }
+
+  irs::NormReader::ptr norms(irs::field_id) const final { return nullptr; }
+
+ private:
+  irs::SegmentInfo _meta;
+};
+
+class View final : public irs::IndexReader {
+ public:
+  explicit View(std::span<const irs::doc_id_t> docs) {
+    _segments.reserve(docs.size());
+    for (const auto count : docs) {
+      _segments.emplace_back(count);
+      _docs += count;
+    }
+  }
+
+  uint64_t CountMappedMemory() const final { return 0; }
+
+  uint64_t live_docs_count() const final { return _docs; }
+
+  uint64_t docs_count() const final { return _docs; }
+
+  const irs::SubReader& operator[](size_t i) const final {
+    return _segments[i];
+  }
+
+  size_t size() const final { return _segments.size(); }
+
+ private:
+  std::vector<Segment> _segments;
+  uint64_t _docs = 0;
+};
+
 std::vector<int64_t> Kept(RowPositionDeduplicator& seen,
                           std::span<const uint64_t> positions) {
   duckdb::DataChunk chunk;
@@ -45,7 +97,7 @@ std::vector<int64_t> Kept(RowPositionDeduplicator& seen,
     values[i] = static_cast<int64_t>(positions[i]);
   }
   chunk.SetCardinality(positions.size());
-  const auto kept = seen.KeepFirst(chunk, 0);
+  const auto kept = seen.Register(chunk, 0);
   EXPECT_EQ(kept, chunk.size());
   std::vector<int64_t> result;
   for (duckdb::idx_t i = 0; i != chunk.size(); ++i) {
@@ -59,8 +111,8 @@ std::vector<int64_t> Ints(std::span<const uint64_t> positions) {
 }
 
 TEST(RowPositionDeduplicatorTest, KeepsTheFirstSightOfEachPosition) {
-  const irs::doc_id_t docs[] = {10, 10};
-  RowPositionDeduplicator seen{docs};
+  const View view{{10, 10}};
+  RowPositionDeduplicator seen{view};
   const uint64_t first[] = {MakeRowPosition(0, 3), MakeRowPosition(1, 3),
                             MakeRowPosition(0, 3), MakeRowPosition(0, 1)};
   const uint64_t first_kept[] = {MakeRowPosition(0, 3), MakeRowPosition(1, 3),
@@ -75,8 +127,8 @@ TEST(RowPositionDeduplicatorTest, KeepsTheFirstSightOfEachPosition) {
 
 TEST(RowPositionDeduplicatorTest, RunsAcrossWordsAndPages) {
   constexpr irs::doc_id_t kDocs = 3 * 65536;
-  const irs::doc_id_t docs[] = {kDocs};
-  RowPositionDeduplicator seen{docs};
+  const View view{{kDocs}};
+  RowPositionDeduplicator seen{view};
   std::vector<uint64_t> run;
   for (irs::doc_id_t doc = 65536 - 100; doc != 65536 + 100; ++doc) {
     run.push_back(MakeRowPosition(0, doc));
@@ -101,7 +153,8 @@ TEST(RowPositionDeduplicatorTest, RunsAcrossWordsAndPages) {
 TEST(RowPositionDeduplicatorTest, ThreadsKeepEachPositionOnce) {
   constexpr irs::doc_id_t kDocs = 200'000;
   const irs::doc_id_t docs[] = {kDocs, kDocs / 2, 7};
-  RowPositionDeduplicator seen{docs};
+  const View view{docs};
+  RowPositionDeduplicator seen{view};
   std::vector<uint64_t> all;
   for (uint32_t segment = 0; segment != std::size(docs); ++segment) {
     for (irs::doc_id_t doc = 1; doc <= docs[segment]; ++doc) {
@@ -143,8 +196,8 @@ TEST(RowPositionDeduplicatorTest, ThreadsKeepEachPositionOnce) {
 TEST(RowPositionDeduplicatorTest, ThreadsRaceToAllocateTheSamePages) {
   constexpr uint32_t kPages = 512;
   constexpr irs::doc_id_t kPageDocs = 1 << 16;
-  const irs::doc_id_t docs[] = {kPages * kPageDocs};
-  RowPositionDeduplicator seen{docs};
+  const View view{{kPages * kPageDocs}};
+  RowPositionDeduplicator seen{view};
   std::vector<uint64_t> positions;
   for (uint32_t page = 0; page != kPages; ++page) {
     positions.push_back(MakeRowPosition(0, page * kPageDocs + 1));
@@ -168,6 +221,40 @@ TEST(RowPositionDeduplicatorTest, ThreadsRaceToAllocateTheSamePages) {
   }
   absl::c_sort(merged);
   EXPECT_EQ(merged, Ints(positions));
+}
+
+TEST(RowPositionDeduplicatorTest, PositionsHoldEachKeptPositionOnce) {
+  const uint32_t units[] = {0, 1, 5, 9};
+  const irs::doc_id_t docs[] = {1,     2,     63,    64,     65535,
+                                65536, 65537, 70000, 200000, 4000000};
+  const View view{std::vector<irs::doc_id_t>(10, 4000000)};
+  RowPositionDeduplicator seen{view};
+  std::vector<uint64_t> positions;
+  for (const auto unit : units) {
+    for (const auto doc : docs) {
+      positions.push_back(MakeRowPosition(unit, doc));
+    }
+  }
+  EXPECT_EQ(Kept(seen, positions), Ints(positions));
+  EXPECT_TRUE(Kept(seen, positions).empty());
+  auto removal = std::move(seen).Positions();
+  EXPECT_FALSE(removal.Empty());
+  for (const auto unit : units) {
+    const auto mask = std::move(removal.Group(unit)).Finish();
+    std::vector<irs::doc_id_t> read(mask.Count());
+    irs::DocumentMask::Cursor cursor{mask};
+    ASSERT_EQ(read.size(), cursor.Read(read));
+    EXPECT_EQ((std::vector<irs::doc_id_t>{std::begin(docs), std::end(docs)}),
+              read)
+      << unit;
+  }
+  EXPECT_TRUE(std::move(removal.Group(2)).Finish().Empty());
+}
+
+TEST(RowPositionDeduplicatorTest, NothingSeenIsNoRemoval) {
+  const View view{{5, 5, 5}};
+  RowPositionDeduplicator seen{view};
+  EXPECT_TRUE(std::move(seen).Positions().Empty());
 }
 
 }  // namespace

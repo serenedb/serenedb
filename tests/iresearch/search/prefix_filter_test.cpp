@@ -201,7 +201,7 @@ class PrefixFilterTestCase : public tests::FilterTestCaseBase {
     {
       tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                                   &tests::NormStringJsonFieldFactory);
-      add_segment(gen, irs::kOmCreate, std::move(opts));
+      add_segment(gen, tests::kOmCreate, std::move(opts));
     }
 
     auto rdr = open_reader(reader_options);
@@ -278,7 +278,7 @@ class PrefixFilterTestCase : public tests::FilterTestCaseBase {
   void ByPrefixSchemas() {
     // write segments
     {
-      auto writer = open_writer(irs::kOmCreate);
+      auto writer = open_writer(tests::kOmCreate);
 
       std::vector<tests::DocGeneratorBase::ptr> gens;
       gens.emplace_back(new tests::JsonDocGenerator(
@@ -369,7 +369,7 @@ TEST_P(PrefixFilterTestCase, by_prefix) {
 TEST_P(PrefixFilterTestCase, by_prefixes) { ByPrefixesSequential(); }
 
 TEST_P(PrefixFilterTestCase, by_prefixes_terms) {
-  for (const auto mode : {irs::kOmCreate, irs::kOmAppend}) {
+  for (const auto mode : {tests::kOmCreate, tests::kOmAppend}) {
     tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                                 &tests::GenericJsonFieldFactory);
     add_segment(gen, mode);
@@ -512,7 +512,7 @@ TEST_P(PrefixFilterTestCase, by_prefix_order_partial_field_stats) {
           doc.insert(std::move(f));
         }
       });
-    add_segment(gen, irs::kOmAppend);
+    add_segment(gen, tests::kOmAppend);
   }
 
   auto rdr = open_reader();
@@ -561,7 +561,7 @@ TEST_P(PrefixFilterTestCase, by_prefix_order_partial_field_stats) {
 TEST_P(PrefixFilterTestCase, by_prefix_order_multiple_terms_score) {
   // single field "name", three terms with frequencies 2 / 1 / 3
   {
-    auto writer = open_writer(irs::kOmCreate);
+    auto writer = open_writer(tests::kOmCreate);
     {
       auto ctx = writer->GetBatch();
       for (const auto* value : {"aa", "aa", "ab", "ac", "ac", "ac"}) {

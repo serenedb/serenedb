@@ -46,15 +46,19 @@ query
 EXPLAIN SELECT * FROM t_choice WHERE cat = 20 AND score > 50;
 ----
 QUERY PLAN
-╭─ SEQ_SCAN ─────────────────╮
-│ Table: t_choice            │
-│ Type: Sequential Scan      │
-│ Projections: pid, cat,     │
-│              code, score   │
-│ Column Filter: cat = 20,   │
-│                score > 50  │
-│ ~1 row                     │
-╰────────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────────────────────────────╮
+│ Table: t_choice                                    │
+│ Index Filter:                                      │
+│ ╭─ And ───────────────╮                            │
+│ ╰──────────┬──────────╯                            │
+│            ├─────────────────────────╮             │
+│ ╭─ Terms ──┴──────────╮  ╭─ Granular Range ──────╮ │
+│ │ Field: cat(numeric) │  │ Field: score(numeric) │ │
+│ │ Values: 20          │  │ Range: >50            │ │
+│ ╰─────────────────────╯  ╰───────────────────────╯ │
+│ Projections: pid, cat, code, score                 │
+│ ~1 row                                             │
+╰────────────────────────────────────────────────────╯
 
 
 # --- Case 2: For point lookups, choose the index with fewer points ---
@@ -75,24 +79,21 @@ query
 EXPLAIN SELECT * FROM t_choice WHERE cat IN (10, 20, 30) AND code = 200;
 ----
 QUERY PLAN
-╭─ PROJECTION ───────────────────────────╮
-│ Projections: pid, cat, code, score     │
-│ ~1 row                                 │
-╰────────────────────┬───────────────────╯
-╭─ FILTER ───────────┴───────────────────╮
-│ Expression:                            │
-│ (cat = 10) OR (cat = 20) OR (cat = 30) │
-│ ~1 row                                 │
-╰────────────────────┬───────────────────╯
-╭─ SEQ_SCAN ─────────┴───────────────────╮
-│ Table: t_choice                        │
-│ Type: Sequential Scan                  │
-│ Projections: cat, code, pid, score     │
-│ Column Filter:                         │
-│ optional: (cat IN (10, 20, 30)),       │
-│ code = 200                             │
-│ ~1 row                                 │
-╰────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────────────────────────────╮
+│ Table: t_choice                                   │
+│ Index Filter:                                     │
+│ ╭─ And ────────────────╮                          │
+│ ╰───────────┬──────────╯                          │
+│             ├────────────────────────╮            │
+│ ╭─ Terms ───┴──────────╮  ╭─ Or ─────┴──────────╮ │
+│ │ Field: code(numeric) │  ╰──────────┬──────────╯ │
+│ │ Values: 200          │  ╭─ Terms ──┴──────────╮ │
+│ ╰──────────────────────╯  │ Field: cat(numeric) │ │
+│                           │ Values: 10, 20, 30  │ │
+│                           ╰─────────────────────╯ │
+│ Projections: pid, cat, code, score                │
+│ ~1 row                                            │
+╰───────────────────────────────────────────────────╯
 
 
 # --- Case 3: For range lookups, PK beats SK (fewer effective columns) ---
@@ -113,15 +114,19 @@ query
 EXPLAIN SELECT * FROM t_choice WHERE pid > 2 AND score > 100;
 ----
 QUERY PLAN
-╭─ SEQ_SCAN ──────────────────╮
-│ Table: t_choice             │
-│ Type: Sequential Scan       │
-│ Projections: pid, cat,      │
-│              code, score    │
-│ Column Filter: pid > 2,     │
-│                score > 100  │
-│ ~1 row                      │
-╰─────────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────────────────────────────╮
+│ Table: t_choice                                    │
+│ Index Filter:                                      │
+│ ╭─ And ───────────────╮                            │
+│ ╰──────────┬──────────╯                            │
+│            ├─────────────────────────╮             │
+│ ╭─ Granular Range ────╮  ╭─ Granular Range ──────╮ │
+│ │ Field: pid(numeric) │  │ Field: score(numeric) │ │
+│ │ Range: >2           │  │ Range: >100           │ │
+│ ╰─────────────────────╯  ╰───────────────────────╯ │
+│ Projections: pid, cat, code, score                 │
+│ ~1 row                                             │
+╰────────────────────────────────────────────────────╯
 
 
 # --- Case 4: When both PK and SK give a point lookup, PK wins ---
@@ -141,15 +146,19 @@ query
 EXPLAIN SELECT * FROM t_choice WHERE pid = 1 AND cat = 10;
 ----
 QUERY PLAN
-╭─ SEQ_SCAN ───────────────╮
-│ Table: t_choice          │
-│ Type: Sequential Scan    │
-│ Projections: pid, cat,   │
-│              code, score │
-│ Column Filter: pid = 1,  │
-│                cat = 10  │
-│ ~1 row                   │
-╰──────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────────────────────────────╮
+│ Table: t_choice                                  │
+│ Index Filter:                                    │
+│ ╭─ And ───────────────╮                          │
+│ ╰──────────┬──────────╯                          │
+│            ├────────────────────────╮            │
+│ ╭─ Terms ──┴──────────╮  ╭─ Terms ──┴──────────╮ │
+│ │ Field: pid(numeric) │  │ Field: cat(numeric) │ │
+│ │ Values: 1           │  │ Values: 10          │ │
+│ ╰─────────────────────╯  ╰─────────────────────╯ │
+│ Projections: pid, cat, code, score               │
+│ ~1 row                                           │
+╰──────────────────────────────────────────────────╯
 
 
 # --- Case 5: SK unique point beats PK with more points ---
@@ -169,15 +178,21 @@ query
 EXPLAIN SELECT * FROM t_choice WHERE pid IN (1, 2, 3) AND code = 200;
 ----
 QUERY PLAN
-╭─ SEQ_SCAN ─────────────────╮
-│ Table: t_choice            │
-│ Type: Sequential Scan      │
-│ Projections: pid, cat,     │
-│              code, score   │
-│ Column Filter: pid <= 3,   │
-│                code = 200  │
-│ ~1 row                     │
-╰────────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────────────────────────────╮
+│ Table: t_choice                                   │
+│ Index Filter:                                     │
+│ ╭─ And ────────────────╮                          │
+│ ╰───────────┬──────────╯                          │
+│             ├────────────────────────╮            │
+│ ╭─ Terms ───┴──────────╮  ╭─ Or ─────┴──────────╮ │
+│ │ Field: code(numeric) │  ╰──────────┬──────────╯ │
+│ │ Values: 200          │  ╭─ Terms ──┴──────────╮ │
+│ ╰──────────────────────╯  │ Field: pid(numeric) │ │
+│                           │ Values: 1, 2, 3     │ │
+│                           ╰─────────────────────╯ │
+│ Projections: pid, cat, code, score                │
+│ ~3 rows                                           │
+╰───────────────────────────────────────────────────╯
 
 
 # --- Case 6: SK point beats PK range (scan type wins over index type) ---
@@ -196,15 +211,19 @@ query
 EXPLAIN SELECT * FROM t_choice WHERE pid > 2 AND cat = 30;
 ----
 QUERY PLAN
-╭─ SEQ_SCAN ───────────────╮
-│ Table: t_choice          │
-│ Type: Sequential Scan    │
-│ Projections: pid, cat,   │
-│              code, score │
-│ Column Filter: pid > 2,  │
-│                cat = 30  │
-│ ~1 row                   │
-╰──────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────────────────────────────╮
+│ Table: t_choice                                  │
+│ Index Filter:                                    │
+│ ╭─ And ───────────────╮                          │
+│ ╰──────────┬──────────╯                          │
+│            ├────────────────────────╮            │
+│ ╭─ Terms ──┴──────────╮  ╭─ Granular Range ────╮ │
+│ │ Field: cat(numeric) │  │ Field: pid(numeric) │ │
+│ │ Values: 30          │  │ Range: >2           │ │
+│ ╰─────────────────────╯  ╰─────────────────────╯ │
+│ Projections: pid, cat, code, score               │
+│ ~1 row                                           │
+╰──────────────────────────────────────────────────╯
 
 
 # --- Case 7: For range lookups, wider SK beats narrower SK ---
@@ -228,11 +247,16 @@ query
 EXPLAIN SELECT * FROM t_choice WHERE score = 150 AND cat > 5;
 ----
 QUERY PLAN
-╭─ SEQ_SCAN ─────────────────╮
-│ Table: t_choice            │
-│ Type: Sequential Scan      │
-│ Projections: pid, cat,     │
-│              code, score   │
-│ Column Filter: score = 150 │
-│ ~1 row                     │
-╰────────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────────────────────────────╮
+│ Table: t_choice                                    │
+│ Index Filter:                                      │
+│ ╭─ And ─────────────────╮                          │
+│ ╰───────────┬───────────╯                          │
+│             ├─────────────────────────╮            │
+│ ╭─ Terms ───┴───────────╮  ╭─ Granular Range ────╮ │
+│ │ Field: score(numeric) │  │ Field: cat(numeric) │ │
+│ │ Values: 150           │  │ Range: >5           │ │
+│ ╰───────────────────────╯  ╰─────────────────────╯ │
+│ Projections: pid, cat, code, score                 │
+│ ~1 row                                             │
+╰────────────────────────────────────────────────────╯

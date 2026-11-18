@@ -16,18 +16,18 @@ x	payload
 statement error
 DROP SEQUENCE clickclack_query_id_seq;
 ----
-db error: ERROR: Cannot drop entry "clickclack_query_id_seq" because there are entries that depend on it.
-view "v_clickclack_load" depends on sequence "clickclack_query_id_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence clickclack_query_id_seq because other objects depend on it
+DETAIL: view v_clickclack_load depends on sequence clickclack_query_id_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
 statement error
 DROP SEQUENCE clickclack_query_id_seq RESTRICT;
 ----
-db error: ERROR: Cannot drop entry "clickclack_query_id_seq" because there are entries that depend on it.
-view "v_clickclack_load" depends on sequence "clickclack_query_id_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence clickclack_query_id_seq because other objects depend on it
+DETAIL: view v_clickclack_load depends on sequence clickclack_query_id_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -75,9 +75,9 @@ x
 statement error
 DROP SEQUENCE clickclack_cv_seq;
 ----
-db error: ERROR: Cannot drop entry "clickclack_cv_seq" because there are entries that depend on it.
-view "v_clickclack_cv" depends on sequence "clickclack_cv_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence clickclack_cv_seq because other objects depend on it
+DETAIL: view v_clickclack_cv depends on sequence clickclack_cv_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -107,9 +107,9 @@ x
 statement error
 DROP SEQUENCE clickclack_sv_seq RESTRICT;
 ----
-db error: ERROR: Cannot drop entry "clickclack_sv_seq" because there are entries that depend on it.
-view "v_clickclack_sv" depends on sequence "clickclack_sv_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence clickclack_sv_seq because other objects depend on it
+DETAIL: view v_clickclack_sv depends on sequence clickclack_sv_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -161,9 +161,8 @@ n
 statement error
 DROP SEQUENCE clickclack_shared_seq;
 ----
-db error: ERROR: Cannot drop entry "clickclack_shared_seq" because there are entries that depend on it.
+db error: ERROR: cannot drop sequence clickclack_shared_seq because other objects depend on it
 <slt:ignore>
-Use DROP...CASCADE to drop all dependents.
 
 
 
@@ -209,9 +208,9 @@ n
 statement error
 DROP SEQUENCE iceberg_seq_home.partition_seq;
 ----
-db error: ERROR: Cannot drop entry "partition_seq" because there are entries that depend on it.
-view "audit_v" depends on sequence "partition_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence iceberg_seq_home.partition_seq because other objects depend on it
+DETAIL: view iceberg_view_home.audit_v depends on sequence iceberg_seq_home.partition_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -266,18 +265,16 @@ INSERT INTO clickclack_mix_t (v) VALUES ('row');
 statement error
 DROP SEQUENCE clickclack_mix_seq;
 ----
-db error: ERROR: Cannot drop entry "clickclack_mix_seq" because there are entries that depend on it.
+db error: ERROR: cannot drop sequence clickclack_mix_seq because other objects depend on it
 <slt:ignore>
-Use DROP...CASCADE to drop all dependents.
 
 
 
 statement error
 DROP SEQUENCE clickclack_mix_seq RESTRICT;
 ----
-db error: ERROR: Cannot drop entry "clickclack_mix_seq" because there are entries that depend on it.
+db error: ERROR: cannot drop sequence clickclack_mix_seq because other objects depend on it
 <slt:ignore>
-Use DROP...CASCADE to drop all dependents.
 
 
 
@@ -327,9 +324,8 @@ CREATE VIEW v_clickclack_chain2 AS SELECT nextval('public.clickclack_chain_seq')
 statement error
 DROP SEQUENCE clickclack_chain_seq;
 ----
-db error: ERROR: Cannot drop entry "clickclack_chain_seq" because there are entries that depend on it.
+db error: ERROR: cannot drop sequence clickclack_chain_seq because other objects depend on it
 <slt:ignore>
-Use DROP...CASCADE to drop all dependents.
 
 
 
@@ -366,9 +362,9 @@ CREATE VIEW v_clickclack_all3 AS
 statement error
 DROP SEQUENCE clickclack_all3_seq;
 ----
-db error: ERROR: Cannot drop entry "clickclack_all3_seq" because there are entries that depend on it.
-view "v_clickclack_all3" depends on sequence "clickclack_all3_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence clickclack_all3_seq because other objects depend on it
+DETAIL: view v_clickclack_all3 depends on sequence clickclack_all3_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -397,18 +393,18 @@ CREATE VIEW v_clickclack_pair AS
 statement error
 DROP SEQUENCE clickclack_pair1_seq;
 ----
-db error: ERROR: Cannot drop entry "clickclack_pair1_seq" because there are entries that depend on it.
-view "v_clickclack_pair" depends on sequence "clickclack_pair1_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence clickclack_pair1_seq because other objects depend on it
+DETAIL: view v_clickclack_pair depends on sequence clickclack_pair1_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
 statement error
 DROP SEQUENCE clickclack_pair2_seq;
 ----
-db error: ERROR: Cannot drop entry "clickclack_pair2_seq" because there are entries that depend on it.
-view "v_clickclack_pair" depends on sequence "clickclack_pair2_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence clickclack_pair2_seq because other objects depend on it
+DETAIL: view v_clickclack_pair depends on sequence clickclack_pair2_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -445,9 +441,8 @@ CREATE VIEW v_clickclack_dvb AS
 statement error
 DROP SEQUENCE clickclack_d1_seq;
 ----
-db error: ERROR: Cannot drop entry "clickclack_d1_seq" because there are entries that depend on it.
+db error: ERROR: cannot drop sequence clickclack_d1_seq because other objects depend on it
 <slt:ignore>
-Use DROP...CASCADE to drop all dependents.
 
 
 
@@ -486,9 +481,8 @@ CREATE VIEW clickclack_sch.v_dashboard_b AS SELECT nextval('clickclack_sch.dashb
 statement error
 DROP SCHEMA clickclack_sch RESTRICT;
 ----
-db error: ERROR: Cannot drop entry "clickclack_sch" because there are entries that depend on it.
+db error: ERROR: cannot drop schema clickclack_sch because other objects depend on it
 <slt:ignore>
-Use DROP...CASCADE to drop all dependents.
 
 
 
@@ -519,9 +513,9 @@ CREATE VIEW v_clickclack_uses_serial AS
 statement error
 DROP TABLE clickclack_owner_t;
 ----
-db error: ERROR: Cannot drop entry "clickclack_owner_t_id_seq" because there are entries that depend on it.
-view "v_clickclack_uses_serial" depends on sequence "clickclack_owner_t_id_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop table clickclack_owner_t because other objects depend on it
+DETAIL: view v_clickclack_uses_serial depends on sequence clickclack_owner_t_id_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -592,9 +586,9 @@ n_in_subquery	t
 statement error
 DROP SEQUENCE clickclack_sub_seq;
 ----
-db error: ERROR: Cannot drop entry "clickclack_sub_seq" because there are entries that depend on it.
-view "v_clickclack_sub" depends on sequence "clickclack_sub_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence clickclack_sub_seq because other objects depend on it
+DETAIL: view v_clickclack_sub depends on sequence clickclack_sub_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -626,9 +620,9 @@ n
 statement error
 DROP SEQUENCE clickclack_cte_seq;
 ----
-db error: ERROR: Cannot drop entry "clickclack_cte_seq" because there are entries that depend on it.
-view "v_clickclack_cte" depends on sequence "clickclack_cte_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence clickclack_cte_seq because other objects depend on it
+DETAIL: view v_clickclack_cte depends on sequence clickclack_cte_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -661,9 +655,9 @@ count
 statement error
 DROP SEQUENCE clickclack_union_seq;
 ----
-db error: ERROR: Cannot drop entry "clickclack_union_seq" because there are entries that depend on it.
-view "v_clickclack_union" depends on sequence "clickclack_union_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence clickclack_union_seq because other objects depend on it
+DETAIL: view v_clickclack_union depends on sequence clickclack_union_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -695,9 +689,9 @@ CREATE VIEW v_clickclack_where AS
 statement error
 DROP SEQUENCE clickclack_where_seq;
 ----
-db error: ERROR: Cannot drop entry "clickclack_where_seq" because there are entries that depend on it.
-view "v_clickclack_where" depends on sequence "clickclack_where_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence clickclack_where_seq because other objects depend on it
+DETAIL: view v_clickclack_where depends on sequence clickclack_where_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 

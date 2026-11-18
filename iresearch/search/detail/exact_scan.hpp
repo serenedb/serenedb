@@ -21,6 +21,8 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
+#include <limits>
 #include <optional>
 #include <span>
 
@@ -36,12 +38,13 @@ class ExactScanner {
  public:
   static constexpr uint32_t kRun = doc_limits::kBlockSize;
 
-  explicit ExactScanner(const ExactVectorQuery& query)
+  ExactScanner(const ExactVectorQuery& query, bool admits_missing)
     : _reader{query.Column(), query.Columns(),
               static_cast<uint32_t>(query.Column().ArraySize())},
       _threshold{query.Threshold()},
       _entries{query.Entries()},
-      _inclusive{query.Inclusive()} {
+      _inclusive{query.Inclusive()},
+      _keep_missing{admits_missing && !_threshold} {
     if (_entries) {
       _reader.SetMaxSim(query.Query(), *_entries);
     } else {
@@ -55,7 +58,7 @@ class ExactScanner {
       _matches = docs::MakeRoot(*inner, {});
     }
     if (const auto& column = query.Column();
-        !_entries && column.HasValidity() &&
+        !_entries && (column.HasValidity() || column.InMemory()) &&
         column.MergedStatistics().CanHaveNull()) {
       _validity.emplace(query.Columns(), column);
     }
@@ -109,7 +112,7 @@ class ExactScanner {
   uint32_t NextDocs(doc_id_t* docs) {
     for (;;) {
       auto n = Collect(docs);
-      if (n != 0 && _entries) {
+      if (n != 0 && _entries && !_keep_missing) {
         uint32_t kept = 0;
         for (uint32_t i = 0; i < n; ++i) {
           const auto row = docs[i] - doc_limits::min();
@@ -122,7 +125,7 @@ class ExactScanner {
         }
         return kept;
       }
-      if (n == 0 || !_validity) {
+      if (n == 0 || !_validity || _keep_missing) {
         return n;
       }
       uint32_t kept = 0;
@@ -140,16 +143,47 @@ class ExactScanner {
   }
 
   void Distances(std::span<const doc_id_t> docs, score_t* dists) {
-    _reader.ComputeDistances(docs, {dists, docs.size()});
+    if (!_validity || !_keep_missing) {
+      _reader.ComputeDistances(docs, {dists, docs.size()});
+      return;
+    }
+    auto& present = _validity->present;
+    uint32_t count = 0;
+    for (uint32_t i = 0; i < docs.size(); ++i) {
+      if (_validity->reader.ValidRow(
+            static_cast<uint64_t>(docs[i]) - doc_limits::min(),
+            _validity->scratch)) {
+        present.docs[count] = docs[i];
+        present.slots[count] = i;
+        ++count;
+      }
+    }
+    if (count == docs.size()) {
+      _reader.ComputeDistances(docs, {dists, docs.size()});
+      return;
+    }
+    _reader.ComputeDistances({present.docs.data(), count},
+                             {present.dists.data(), count});
+    std::fill_n(dists, docs.size(), std::numeric_limits<score_t>::quiet_NaN());
+    for (uint32_t i = 0; i < count; ++i) {
+      dists[present.slots[i]] = present.dists[i];
+    }
   }
 
  private:
+  struct Present {
+    std::array<doc_id_t, kRun> docs{};
+    std::array<uint32_t, kRun> slots{};
+    std::array<score_t, kRun> dists{};
+  };
+
   struct Validity {
     Validity(const ColReader& columns, const ColumnReader& column)
       : reader{columns, column} {}
 
     ColumnReader::PointReader reader;
     duckdb::Vector scratch{duckdb::LogicalType::BOOLEAN, 1};
+    Present present;
   };
 
   uint32_t Collect(doc_id_t* docs) {
@@ -184,6 +218,7 @@ class ExactScanner {
   std::optional<score_t> _threshold;
   const AnnEntries* _entries;
   bool _inclusive;
+  bool _keep_missing;
   doc_id_t _doc;
   doc_id_t _end;
   doc_id_t _last;

@@ -23,6 +23,7 @@
 #include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
 #include <absl/strings/ascii.h>
+#include <absl/strings/charset.h>
 #include <absl/strings/escaping.h>
 #include <absl/strings/match.h>
 #include <absl/strings/numbers.h>
@@ -61,12 +62,15 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/system_compiler.hpp>
 #include <limits>
+#include <span>
 #include <string_view>
 #include <type_traits>
+#include <utility>
 
 #include "connector/functions/ts_query_codec.h"
 #include "pg/catalog/functions/pg_catalog/regproc.h"
 #include "pg/catalog/utils/session.h"
+#include "pg/connection_context.h"
 #include "pg/types/char.h"
 #include "pg/types/float.h"
 #include "pg/types/geometric.h"
@@ -241,6 +245,59 @@ void EmitEscaped(SerializationContext& ctx, std::string_view s) {
   writer.Write(s.substr(start));
 }
 
+void WriteCopyDelimEscaped(SerializationContext& ctx, std::string_view text) {
+  const char delim = ctx.copy_delim;
+  auto& writer = *ctx.writer;
+  size_t start = 0;
+  for (auto pos = text.find(delim); pos != std::string_view::npos;
+       pos = text.find(delim, start)) {
+    const auto run = pos - start;
+    CheckMessageSize(writer.Written() + run + 2);
+    char* buf = reinterpret_cast<char*>(writer.Alloc(run + 2));
+    std::memcpy(buf, text.data() + start, run);
+    buf[run] = '\\';
+    buf[run + 1] = delim;
+    start = pos + 1;
+  }
+  writer.Write(text.substr(start));
+}
+
+template<bool kCopyDelim>
+IRS_FORCE_INLINE void WriteText(SerializationContext& ctx,
+                                std::string_view text) {
+  if constexpr (kCopyDelim) {
+    WriteCopyDelimEscaped(ctx, text);
+  } else {
+    ctx.writer->Write(text);
+  }
+}
+
+template<bool kCopyDelim, size_t N>
+IRS_FORCE_INLINE void WriteText(SerializationContext& ctx,
+                                const char (&text)[N]) {
+  if constexpr (kCopyDelim) {
+    WriteCopyDelimEscaped(ctx, {text, N - 1});
+  } else {
+    ctx.writer->Write(text);
+  }
+}
+
+size_t EscapeCopyDelimInPlace(uint8_t* data, size_t size, char delim) {
+  const auto byte = static_cast<uint8_t>(delim);
+  const auto escapes =
+    static_cast<size_t>(absl::c_count(std::span{data, size}, byte));
+  auto* in = data + size;
+  auto* out = in + escapes;
+  while (in != out) {
+    const auto c = *--in;
+    *--out = c;
+    if (c == byte) {
+      *--out = '\\';
+    }
+  }
+  return size + escapes;
+}
+
 // Array escape rule:
 //   source '"'  -> previous '\\' encoding + previous '"' encoding
 //   source '\\' -> two previous '\\' encodings (count doubles)
@@ -367,13 +424,33 @@ struct CharBinCore {
   }
 };
 
-template<WrapContext InContainer>
+template<WrapContext InContainer, bool kCopyDelim = false>
 struct GeometryTextCore {
   using Value = duckdb::string_t;
+  using CopyDelimEscaped = GeometryTextCore<InContainer, true>;
   static constexpr const char* kArrayDelim = ":";
+  static constexpr absl::CharSet kCopyDelims{"ABCDEF"};
   IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value raw) {
     static constexpr char kHexUpper[] = "0123456789ABCDEF";
     const std::string_view value{raw.GetData(), raw.GetSize()};
+    if constexpr (kCopyDelim) {
+      const char delim = ctx.copy_delim;
+      ctx.writer->Write(4 * value.size(), [&](uint8_t* data) {
+        char* out = reinterpret_cast<char*>(data);
+        for (const char c : value) {
+          const auto byte = static_cast<unsigned char>(c);
+          for (const char hex :
+               {kHexUpper[byte >> 4U], kHexUpper[byte & 0x0FU]}) {
+            if (hex == delim) {
+              *out++ = '\\';
+            }
+            *out++ = hex;
+          }
+        }
+        return static_cast<size_t>(out - reinterpret_cast<char*>(data));
+      });
+      return;
+    }
     auto* data = ctx.writer->Alloc(2 * value.size());
     char* out = reinterpret_cast<char*>(data);
     for (const char c : value) {
@@ -526,6 +603,7 @@ struct DecimalTextCore {
   // budget is the physical type's max width, plus sign + leading "0" + ".".
   static constexpr uint32_t kMaxBytes =
     uint32_t{duckdb::DecimalWidth<PhysicalType>::max} + 3;
+  static constexpr absl::CharSet kCopyDelims{"-"};
   IRS_FORCE_INLINE static size_t Render(
     uint8_t* dst, SerializationContext&,
     const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t idx) {
@@ -573,6 +651,7 @@ struct HugeintTextCore {
   using Value = duckdb::hugeint_t;
   static constexpr uint32_t kMaxBytes =
     absl::numbers_internal::kFastToBuffer128Size;
+  static constexpr absl::CharSet kCopyDelims{"-"};
   IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value v) {
     char* buf = reinterpret_cast<char*>(dst);
     char* ptr = absl::numbers_internal::FastIntToBuffer(
@@ -634,20 +713,25 @@ struct ByteaHexTextCore {
   }
 };
 
+template<bool kCopyDelim>
 void ByteaOutEscape(SerializationContext& ctx, std::string_view value) {
+  const char delim = ctx.copy_delim;
   size_t backslash_cnt = 0;
   size_t non_printable_cnt = 0;
+  size_t delim_cnt = 0;
   for (char c : value) {
     if (c == '\\') {
       ++backslash_cnt;
     } else if (!absl::ascii_isprint(c)) {
       ++non_printable_cnt;
+    } else if (kCopyDelim && c == delim) {
+      ++delim_cnt;
     }
   }
   const auto bs_n = ctx.backslash_count;
   const size_t body_size = (value.size() - backslash_cnt - non_printable_cnt) +
                            backslash_cnt * 2 * bs_n +
-                           non_printable_cnt * (bs_n + 3);
+                           non_printable_cnt * (bs_n + 3) + delim_cnt;
   auto* data = ctx.writer->Alloc(body_size);
   char* p = reinterpret_cast<char*>(data);
   for (unsigned char c : value) {
@@ -667,28 +751,36 @@ void ByteaOutEscape(SerializationContext& ctx, std::string_view value) {
       p[0] = '0' + (ch & 03);
       p += 3;
     } else {
+      if constexpr (kCopyDelim) {
+        if (c == static_cast<unsigned char>(delim)) {
+          *p++ = '\\';
+        }
+      }
       *p++ = static_cast<char>(c);
     }
   }
 }
 
-template<WrapContext InContainer>
+template<WrapContext InContainer, bool kCopyDelim = false>
 struct ByteaEscapeTextCore {
   using Value = duckdb::string_t;
+  using CopyDelimEscaped = ByteaEscapeTextCore<InContainer, true>;
+  static constexpr absl::CharSet kCopyDelims = absl::CharSet::AsciiPrintable();
   IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value raw) {
     const std::string_view value{raw.GetData(), raw.GetSize()};
 
     if constexpr (InContainer == WrapContext::None) {
-      ByteaOutEscape(ctx, value);
+      ByteaOutEscape<kCopyDelim>(ctx, value);
     } else {
       const bool has_special =
         absl::c_any_of(value, [](char c) { return !absl::ascii_isprint(c); }) ||
         (InContainer == WrapContext::Array ? ArrayItemNeedQuotesAndEscape(value)
                                            : RecordItemNeedsQuoting(value));
       if (has_special) {
-        WriteWrapped<InContainer>(ctx, [&] { ByteaOutEscape(ctx, value); });
+        WriteWrapped<InContainer>(
+          ctx, [&] { ByteaOutEscape<kCopyDelim>(ctx, value); });
       } else {
-        ByteaOutEscape(ctx, value);
+        ByteaOutEscape<kCopyDelim>(ctx, value);
       }
     }
   }
@@ -733,6 +825,7 @@ template<typename Read>
 struct IntTextCore {
   using Value = Read;
   static constexpr uint32_t kMaxBytes = kIntStrMaxLen;
+  static constexpr absl::CharSet kCopyDelims{std::is_signed_v<Read> ? "-" : ""};
   IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value v) {
     char* buf = reinterpret_cast<char*>(dst);
     char* end = absl::numbers_internal::FastIntToBuffer(v, buf);
@@ -743,6 +836,7 @@ struct IntTextCore {
 struct LsnTextCore {
   using Value = uint64_t;
   static constexpr uint32_t kMaxBytes = kLsnBufferSize;
+  static constexpr absl::CharSet kCopyDelims{"/ABCDEF"};
   IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value lsn) {
     return WriteLsn(lsn, reinterpret_cast<char*>(dst));
   }
@@ -761,6 +855,7 @@ template<bool kMac8>
 struct MacTextCore {
   using Value = uint64_t;
   static constexpr uint32_t kMaxBytes = kMacaddr8Text;
+  static constexpr absl::CharSet kCopyDelims{":"};
   IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value mac) {
     auto* text = reinterpret_cast<char*>(dst);
     return kMac8 ? WriteMacaddr8(mac, text) : WriteMacaddr(mac, text);
@@ -805,6 +900,7 @@ template<typename T, bool Precise>
 struct FloatTextCore {
   using Value = T;
   static constexpr uint32_t kMaxBytes = kNumberStrMaxLen;
+  static constexpr absl::CharSet kCopyDelims{"-+IN"};
   IRS_FORCE_INLINE static size_t Render(uint8_t* dst, SerializationContext& ctx,
                                         Value v) {
     return WriteFloat<Precise>(v, ctx.extra_float_digits,
@@ -826,9 +922,13 @@ void WithWrapIfNested(SerializationContext& context, bool wrap, Body&& body) {
   body();
 }
 
-template<WrapContext InContainer>
+inline constexpr absl::CharSet kTimestampCopyDelims{"- :()BC"};
+
+template<WrapContext InContainer, bool kCopyDelim = false>
 struct TimestampSecTextCore {
   using Value = duckdb::timestamp_sec_t;
+  using CopyDelimEscaped = TimestampSecTextCore<InContainer, true>;
+  static constexpr absl::CharSet kCopyDelims = kTimestampCopyDelims;
   IRS_FORCE_INLINE static void Render(SerializationContext& ctx,
                                       Value timestamp) {
     auto str = duckdb::Timestamp::ToString(
@@ -836,23 +936,27 @@ struct TimestampSecTextCore {
         ? duckdb::Timestamp::FromEpochSeconds(timestamp.value)
         : duckdb::timestamp_t(timestamp.value));
     WithWrapIfNested<InContainer>(ctx, timestamp.IsFinite(),
-                                  [&] { ctx.writer->Write(str); });
+                                  [&] { WriteText<kCopyDelim>(ctx, str); });
   }
 };
 
-template<WrapContext InContainer>
+template<WrapContext InContainer, bool kCopyDelim = false>
 struct TidTextCore {
   using Value = int64_t;
+  using CopyDelimEscaped = TidTextCore<InContainer, true>;
+  static constexpr absl::CharSet kCopyDelims{"(,)"};
   IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value tid) {
     char buffer[kTidBufferSize];
     const std::string_view text{buffer, WriteTid(tid, buffer)};
-    WithWrapIfNested<InContainer>(ctx, true, [&] { ctx.writer->Write(text); });
+    WithWrapIfNested<InContainer>(ctx, true,
+                                  [&] { WriteText<kCopyDelim>(ctx, text); });
   }
 };
 
 struct MoneyTextCore {
   using Value = duckdb::hugeint_t;
   static constexpr uint32_t kMaxBytes = kMoneyText;
+  static constexpr absl::CharSet kCopyDelims{"$,-"};
   IRS_FORCE_INLINE static bool NeedsQuoting(Value money) {
     return money <= -kMoneyThousand || money >= kMoneyThousand;
   }
@@ -909,16 +1013,18 @@ struct TimestampSecBinCore {
   }
 };
 
-template<WrapContext InContainer>
+template<WrapContext InContainer, bool kCopyDelim = false>
 struct TimestampMsTextCore {
   using Value = duckdb::timestamp_ms_t;
+  using CopyDelimEscaped = TimestampMsTextCore<InContainer, true>;
+  static constexpr absl::CharSet kCopyDelims = kTimestampCopyDelims;
   IRS_FORCE_INLINE static void Render(SerializationContext& ctx,
                                       Value timestamp) {
     auto str = duckdb::Timestamp::ToString(
       timestamp.IsFinite() ? duckdb::Timestamp::FromEpochMs(timestamp.value)
                            : duckdb::timestamp_t(timestamp.value));
     WithWrapIfNested<InContainer>(ctx, timestamp.IsFinite(),
-                                  [&] { ctx.writer->Write(str); });
+                                  [&] { WriteText<kCopyDelim>(ctx, str); });
   }
 };
 
@@ -951,14 +1057,16 @@ int32_t DateDaysToWire(int32_t days) {
   return static_cast<int32_t>(days - kGapDays);
 }
 
-template<WrapContext InContainer>
+template<WrapContext InContainer, bool kCopyDelim = false>
 struct TimestampTextCore {
   using Value = duckdb::timestamp_t;
+  using CopyDelimEscaped = TimestampTextCore<InContainer, true>;
+  static constexpr absl::CharSet kCopyDelims = kTimestampCopyDelims;
   IRS_FORCE_INLINE static void Render(SerializationContext& ctx,
                                       Value timestamp) {
     auto str = duckdb::Timestamp::ToString(timestamp);
     WithWrapIfNested<InContainer>(ctx, timestamp.IsFinite(),
-                                  [&] { ctx.writer->Write(str); });
+                                  [&] { WriteText<kCopyDelim>(ctx, str); });
   }
 };
 
@@ -971,15 +1079,18 @@ struct TimestampBinCore {
   }
 };
 
-template<WrapContext InContainer>
+template<WrapContext InContainer, bool kCopyDelim = false>
 struct TimestampNsTextCore {
   using Value = duckdb::timestamp_ns_t;
+  using CopyDelimEscaped = TimestampNsTextCore<InContainer, true>;
+  static constexpr absl::CharSet kCopyDelims = kTimestampCopyDelims;
   IRS_FORCE_INLINE static void Render(SerializationContext& ctx,
                                       Value timestamp) {
     duckdb::StringHeap heap{duckdb::Allocator::DefaultAllocator()};
     const auto str = duckdb::StringCast::Operation(timestamp, heap);
     WithWrapIfNested<InContainer>(ctx, timestamp.IsFinite(), [&] {
-      ctx.writer->Write(std::string_view{str.GetData(), str.GetSize()});
+      WriteText<kCopyDelim>(ctx,
+                            std::string_view{str.GetData(), str.GetSize()});
     });
   }
 };
@@ -994,6 +1105,7 @@ struct TimestampNsBinCore {
 };
 
 // PG EncodeTimezone shape: ±HH[:MM[:SS]], parts only when nonzero.
+template<bool kCopyDelim>
 void WriteTzOffsetSuffix(SerializationContext& ctx, int32_t offset_secs) {
   const bool negative = offset_secs < 0;
   const auto abs_offset = negative ? -offset_secs : offset_secs;
@@ -1001,7 +1113,7 @@ void WriteTzOffsetSuffix(SerializationContext& ctx, int32_t offset_secs) {
   const auto offset_m = (abs_offset % 3600) / 60;
   const auto offset_s = abs_offset % 60;
   const size_t len = offset_s != 0 ? 9 : (offset_m != 0 ? 6 : 3);
-  ctx.writer->Write(len, [&](uint8_t* dst) {
+  ctx.writer->Write(kCopyDelim ? 2 * len : len, [&](uint8_t* dst) {
     char* buf = reinterpret_cast<char*>(dst);
     *buf++ = negative ? '-' : '+';
     *buf++ = '0' + offset_h / 10;
@@ -1015,6 +1127,9 @@ void WriteTzOffsetSuffix(SerializationContext& ctx, int32_t offset_secs) {
         *buf++ = '0' + offset_s / 10;
         *buf++ = '0' + offset_s % 10;
       }
+    }
+    if constexpr (kCopyDelim) {
+      return EscapeCopyDelimInPlace(dst, len, ctx.copy_delim);
     }
     return len;
   });
@@ -1035,9 +1150,14 @@ int32_t SessionOffsetSeconds(const SerializationContext& ctx, int64_t utc_us) {
   return SessionTzOffsetSeconds(*ctx.time_zone, utc_us / 1000);
 }
 
-template<WrapContext InContainer>
+inline constexpr absl::CharSet kTimestampTzCopyDelims =
+  kTimestampCopyDelims | absl::CharSet{"+"};
+
+template<WrapContext InContainer, bool kCopyDelim = false>
 struct TimestampTzTextCore {
   using Value = duckdb::timestamp_tz_t;
+  using CopyDelimEscaped = TimestampTzTextCore<InContainer, true>;
+  static constexpr absl::CharSet kCopyDelims = kTimestampTzCopyDelims;
   IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value tz) {
     const auto ts = duckdb::timestamp_t{tz};
     if (ctx.time_zone && ts.IsFinite()) {
@@ -1047,17 +1167,17 @@ struct TimestampTzTextCore {
             ts.value, int64_t{offset_secs} * 1'000'000, local_us)) {
         auto str = duckdb::Timestamp::ToString(duckdb::timestamp_t{local_us});
         WithWrapIfNested<InContainer>(ctx, true, [&] {
-          ctx.writer->Write(str);
-          WriteTzOffsetSuffix(ctx, offset_secs);
+          WriteText<kCopyDelim>(ctx, str);
+          WriteTzOffsetSuffix<kCopyDelim>(ctx, offset_secs);
         });
         return;
       }
     }
     auto str = duckdb::Timestamp::ToString(ts);
     WithWrapIfNested<InContainer>(ctx, ts.IsFinite(), [&] {
-      ctx.writer->Write(str);
+      WriteText<kCopyDelim>(ctx, str);
       if (ts.IsFinite()) {
-        ctx.writer->Write("+00");
+        WriteText<kCopyDelim>(ctx, "+00");
       }
     });
   }
@@ -1072,9 +1192,11 @@ struct TimestampTzBinCore {
   }
 };
 
-template<WrapContext InContainer>
+template<WrapContext InContainer, bool kCopyDelim = false>
 struct TimestampTzNsTextCore {
   using Value = duckdb::timestamp_tz_ns_t;
+  using CopyDelimEscaped = TimestampTzNsTextCore<InContainer, true>;
+  static constexpr absl::CharSet kCopyDelims = kTimestampTzCopyDelims;
   IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value tz) {
     duckdb::StringHeap heap{duckdb::Allocator::DefaultAllocator()};
     if (ctx.time_zone && tz.IsFinite()) {
@@ -1085,15 +1207,17 @@ struct TimestampTzNsTextCore {
         const auto str =
           duckdb::StringCast::Operation(duckdb::timestamp_ns_t{local_ns}, heap);
         WithWrapIfNested<InContainer>(ctx, true, [&] {
-          ctx.writer->Write(std::string_view{str.GetData(), str.GetSize()});
-          WriteTzOffsetSuffix(ctx, offset_secs);
+          WriteText<kCopyDelim>(ctx,
+                                std::string_view{str.GetData(), str.GetSize()});
+          WriteTzOffsetSuffix<kCopyDelim>(ctx, offset_secs);
         });
         return;
       }
     }
     const auto str = duckdb::StringCast::Operation(tz, heap);
     WithWrapIfNested<InContainer>(ctx, tz.IsFinite(), [&] {
-      ctx.writer->Write(std::string_view{str.GetData(), str.GetSize()});
+      WriteText<kCopyDelim>(ctx,
+                            std::string_view{str.GetData(), str.GetSize()});
     });
   }
 };
@@ -1107,10 +1231,13 @@ struct TimestampTzNsBinCore {
   }
 };
 
+template<bool kCopyDelim = false>
 struct TimeTextCore {
   using Value = duckdb::dtime_t;
+  using CopyDelimEscaped = TimeTextCore<true>;
+  static constexpr absl::CharSet kCopyDelims{":"};
   IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value time) {
-    ctx.writer->Write(duckdb::Time::ToString(time));
+    WriteText<kCopyDelim>(ctx, duckdb::Time::ToString(time));
   }
 };
 
@@ -1123,12 +1250,15 @@ struct TimeBinCore {
   }
 };
 
+template<bool kCopyDelim = false>
 struct TimeNsTextCore {
   using Value = duckdb::dtime_ns_t;
+  using CopyDelimEscaped = TimeNsTextCore<true>;
+  static constexpr absl::CharSet kCopyDelims{":"};
   IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value time) {
     duckdb::StringHeap heap{duckdb::Allocator::DefaultAllocator()};
     const auto str = duckdb::StringCast::Operation(time, heap);
-    ctx.writer->Write(std::string_view{str.GetData(), str.GetSize()});
+    WriteText<kCopyDelim>(ctx, std::string_view{str.GetData(), str.GetSize()});
   }
 };
 
@@ -1142,11 +1272,14 @@ struct TimeNsBinCore {
   }
 };
 
+template<bool kCopyDelim = false>
 struct TimeTzTextCore {
   using Value = duckdb::dtime_tz_t;
+  using CopyDelimEscaped = TimeTzTextCore<true>;
+  static constexpr absl::CharSet kCopyDelims{":+-"};
   IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value tz) {
-    ctx.writer->Write(duckdb::Time::ToString(tz.time()));
-    WriteTzOffsetSuffix(ctx, tz.offset());
+    WriteText<kCopyDelim>(ctx, duckdb::Time::ToString(tz.time()));
+    WriteTzOffsetSuffix<kCopyDelim>(ctx, tz.offset());
   }
 };
 
@@ -1193,6 +1326,7 @@ struct BitBinCore {
 struct DateTextCore {
   using Value = duckdb::date_t;
   static constexpr uint32_t kMaxBytes = sizeof("-5877641-06-25") - 1;
+  static constexpr absl::CharSet kCopyDelims{"-"};
   IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value date) {
     // days from 1970-01-01
     char* buf = reinterpret_cast<char*>(dst);
@@ -1280,6 +1414,7 @@ struct IntervalBinCore {
 struct UuidTextCore {
   using Value = duckdb::hugeint_t;
   static constexpr uint32_t kMaxBytes = 36;  // 8-4-4-4-12
+  static constexpr absl::CharSet kCopyDelims{"-"};
   IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value uuid) {
     duckdb::BaseUUID::ToString(uuid, reinterpret_cast<char*>(dst));
     return 36;
@@ -1554,25 +1689,27 @@ const RecordSerializers& GetSerializersCache(
   return it->second;
 }
 
-template<WrapContext InContainer>
+template<WrapContext InContainer, bool kCopyDelim = false>
 struct RecordTextCore {
+  using CopyDelimEscaped = RecordTextCore<InContainer, true>;
+  static constexpr absl::CharSet kCopyDelims{"(,)"};
   static void Render(SerializationContext& context,
                      const duckdb::RecursiveUnifiedVectorFormat& vdata,
                      duckdb::idx_t row) {
     const auto& cache =
       GetSerializersCache<VarFormat::Text>(context, vdata.logical_type);
     auto emit_inside = [&] {
-      context.writer->Write("(");
+      WriteText<kCopyDelim>(context, "(");
       for (size_t i = 0; i < cache.functions.size(); ++i) {
         if (i > 0) {
-          context.writer->Write(",");
+          WriteText<kCopyDelim>(context, ",");
         }
         const auto& child = vdata.children[i];
         // empty between commas means NULL in record text; the cached in-record
         // text serializer renders nothing on a NULL field.
         cache.functions[i](context, child, row);
       }
-      context.writer->Write(")");
+      WriteText<kCopyDelim>(context, ")");
     };
 
     if constexpr (InContainer == WrapContext::Array) {
@@ -1615,8 +1752,10 @@ struct RecordBinCore {
   }
 };
 
-template<WrapContext InContainer>
+template<WrapContext InContainer, bool kCopyDelim = false>
 struct RangeTextCore {
+  using CopyDelimEscaped = RangeTextCore<InContainer, true>;
+  static constexpr absl::CharSet kCopyDelims{"[(,)]"};
   static void Render(SerializationContext& context,
                      const duckdb::RecursiveUnifiedVectorFormat& vdata,
                      duckdb::idx_t row) {
@@ -1633,11 +1772,11 @@ struct RangeTextCore {
       }
     };
     WithWrapIfNested<InContainer>(context, true, [&] {
-      context.writer->Write(flags & kRangeLowerInclusive ? "[" : "(");
+      WriteText<kCopyDelim>(context, flags & kRangeLowerInclusive ? "[" : "(");
       bound(kRangeLowerChild, kRangeLowerInfinite);
-      context.writer->Write(",");
+      WriteText<kCopyDelim>(context, ",");
       bound(kRangeUpperChild, kRangeUpperInfinite);
-      context.writer->Write(flags & kRangeUpperInclusive ? "]" : ")");
+      WriteText<kCopyDelim>(context, flags & kRangeUpperInclusive ? "]" : ")");
     });
   }
 };
@@ -1660,23 +1799,26 @@ struct RangeBinCore {
   }
 };
 
-template<WrapContext InContainer>
+template<WrapContext InContainer, bool kCopyDelim = false>
 struct MultirangeTextCore {
+  using CopyDelimEscaped = MultirangeTextCore<InContainer, true>;
+  static constexpr absl::CharSet kCopyDelims =
+    absl::CharSet{"{,}"} | RangeTextCore<WrapContext::None>::kCopyDelims;
   static void Render(SerializationContext& context,
                      const duckdb::RecursiveUnifiedVectorFormat& vdata,
                      duckdb::idx_t row) {
     const auto [size, offset] = GetSliceResolved(vdata, row);
     const auto& ranges = vdata.children[0];
     const auto emit = [&] {
-      context.writer->Write("{");
+      WriteText<kCopyDelim>(context, "{");
       for (duckdb::idx_t i = 0; i < size; ++i) {
         if (i != 0) {
-          context.writer->Write(",");
+          WriteText<kCopyDelim>(context, ",");
         }
-        RangeTextCore<WrapContext::None>::Render(
+        RangeTextCore<WrapContext::None, kCopyDelim>::Render(
           context, ranges, ranges.unified.sel->get_index(offset + i));
       }
-      context.writer->Write("}");
+      WriteText<kCopyDelim>(context, "}");
     };
     if constexpr (InContainer == WrapContext::Record) {
       if (size == 0) {
@@ -1707,17 +1849,19 @@ struct MultirangeBinCore {
   }
 };
 
-template<Geometric kKind, WrapContext InContainer>
+template<Geometric kKind, WrapContext InContainer, bool kCopyDelim = false>
 struct GeometricTextCore {
+  using CopyDelimEscaped = GeometricTextCore<kKind, InContainer, true>;
   static constexpr const char* kArrayDelim =
     kKind == Geometric::Box ? ";" : ",";
+  static constexpr absl::CharSet kCopyDelims{"()<>[]{},-+IN"};
   static void Render(SerializationContext& context,
                      const duckdb::RecursiveUnifiedVectorFormat& vdata,
                      duckdb::idx_t row) {
     const auto write = [&] {
       WriteGeometric(
         kKind, vdata, row, context.extra_float_digits,
-        [&](std::string_view text) { context.writer->Write(text); });
+        [&](std::string_view text) { WriteText<kCopyDelim>(context, text); });
     };
     if constexpr (kKind == Geometric::Box &&
                   InContainer == WrapContext::Array) {
@@ -1764,6 +1908,7 @@ IRS_FORCE_INLINE void ReadInet(
 template<bool Cidr>
 struct InetTextCore {
   static constexpr uint32_t kMaxBytes = 64;
+  static constexpr absl::CharSet kCopyDelims{":/"};
   IRS_FORCE_INLINE static size_t Render(
     uint8_t* dst, SerializationContext&,
     const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t row) {
@@ -1917,13 +2062,62 @@ IRS_FORCE_INLINE void RenderValue(SerializationContext& ctx, const RUVF& v,
   }
 }
 
+template<typename Core>
+consteval absl::CharSet CopyDelimsOf() {
+  if constexpr (requires { Core::kCopyDelims; }) {
+    return Core::kCopyDelims;
+  } else {
+    return {};
+  }
+}
+
+template<typename Core>
+struct CopyDelimSized {
+  using Plain = Core;
+  static constexpr uint32_t kMaxBytes = 2 * Core::kMaxBytes;
+  IRS_FORCE_INLINE static size_t Render(uint8_t* dst, SerializationContext& ctx,
+                                        const RUVF& v, duckdb::idx_t idx) {
+    return EscapeCopyDelimInPlace(dst, RenderSized<Core>(dst, ctx, v, idx),
+                                  ctx.copy_delim);
+  }
+};
+
+template<typename Core>
+struct CopyDelimVariant {
+  using Type = Core;
+};
+
+template<typename Core>
+  requires requires { typename Core::CopyDelimEscaped; }
+struct CopyDelimVariant<Core> {
+  using Type = typename Core::CopyDelimEscaped;
+};
+
+template<typename Core>
+  requires(SizedCore<Core> && !CopyDelimsOf<Core>().empty())
+struct CopyDelimVariant<Core> {
+  using Type = CopyDelimSized<Core>;
+};
+
+template<typename Core>
+using CopyDelimVariantOf = typename CopyDelimVariant<Core>::Type;
+
+template<typename Core>
+IRS_FORCE_INLINE bool EscapesCopyDelim(const SerializationContext& context) {
+  static_assert(CopyDelimsOf<Core>().empty() ||
+                !std::is_same_v<CopyDelimVariantOf<Core>, Core>);
+  return context.copy_text && CopyDelimsOf<Core>().contains(context.copy_delim);
+}
+
 template<typename C>
 concept QuotedCore =
   requires(const typename C::Value& value) { C::NeedsQuoting(value); };
 
 template<typename Core>
 IRS_FORCE_INLINE bool ItemNeedsQuoting(const RUVF& v, duckdb::idx_t idx) {
-  if constexpr (QuotedCore<Core>) {
+  if constexpr (requires { typename Core::Plain; }) {
+    return ItemNeedsQuoting<typename Core::Plain>(v, idx);
+  } else if constexpr (QuotedCore<Core>) {
     return Core::NeedsQuoting(ReadValue<typename Core::Value>(v, idx));
   } else {
     return false;
@@ -1992,6 +2186,17 @@ bool SerializeNullColumn(SerializationContext& ctx, const RUVF&,
   return true;
 }
 
+bool SerializeCopyTextNullColumn(SerializationContext& ctx, const RUVF&,
+                                 duckdb::idx_t) {
+  ctx.writer->Write(ctx.copy_null);
+  return true;
+}
+
+bool SerializeRecordNullColumn(SerializationContext&, const RUVF&,
+                               duckdb::idx_t) {
+  return true;
+}
+
 // In-record TEXT field: no length prefix, NULL renders nothing (the empty
 // stretch between record commas means NULL). Returns true on a NULL field.
 template<typename Core>
@@ -2017,7 +2222,7 @@ struct ArrayDelim<Core, std::void_t<decltype(Core::kArrayDelim)>> {
   static constexpr const char* kValue = Core::kArrayDelim;
 };
 
-template<typename Core, VarFormat Format>
+template<typename Core, VarFormat Format, bool kCopyDelim = false>
 IRS_FORCE_INLINE bool EmitArrayElems(SerializationContext& ctx, const RUVF& cv,
                                      duckdb::idx_t off, duckdb::idx_t count) {
   bool has_null = false;
@@ -2046,7 +2251,7 @@ IRS_FORCE_INLINE bool EmitArrayElems(SerializationContext& ctx, const RUVF& cv,
           SerializeField<Framing::BinaryField, Core>(ctx, cv, off + i);
       }
     }
-  } else if constexpr (SizedCore<Core>) {
+  } else if constexpr (SizedCore<Core> && !kCopyDelim) {
     constexpr size_t kElem = (Core::kMaxBytes > 4 ? Core::kMaxBytes : 4) + 1;
     const auto quotes = QuotedCore<Core> ? 2 * ctx.quote_seq.size() : 0;
     ctx.writer->Write(count * (kElem + quotes), [&](uint8_t* out) {
@@ -2073,29 +2278,37 @@ IRS_FORCE_INLINE bool EmitArrayElems(SerializationContext& ctx, const RUVF& cv,
       return static_cast<size_t>(p - out);
     });
   } else {
+    using Elem = std::conditional_t<kCopyDelim, CopyDelimVariantOf<Core>, Core>;
     for (duckdb::idx_t i = 0; i < count; ++i) {
       if (i > 0) {
-        ctx.writer->Write(ArrayDelim<Core>::kValue);
+        WriteText<kCopyDelim>(ctx, std::string_view{ArrayDelim<Core>::kValue});
       }
       const auto idx = cv.unified.sel->get_index(off + i);
       if (!cv.unified.validity.RowIsValid(idx)) {
-        ctx.writer->Write("NULL");
+        WriteText<kCopyDelim>(ctx, "NULL");
         has_null = true;
       } else {
-        RenderValue<Core>(ctx, cv, idx);
+        RenderItem<Elem>(ctx, cv, idx);
       }
     }
   }
   return has_null;
 }
 
+inline constexpr absl::CharSet kArrayCopyDelims{"{,}NUL"};
+
 template<typename Core>
 bool ArrayNeedsQuotingInRecord(SerializationContext& ctx, const RUVF& vdata,
                                duckdb::idx_t row);
 
 template<typename Core, uint64_t ElementOID, VarFormat Format,
-         WrapContext InContainer>
+         WrapContext InContainer, bool kCopyDelim = false>
 struct OneDimArrayCore {
+  using CopyDelimEscaped =
+    OneDimArrayCore<Core, ElementOID, Format, InContainer, true>;
+  static constexpr absl::CharSet kCopyDelims =
+    kArrayCopyDelims | absl::CharSet{ArrayDelim<Core>::kValue} |
+    CopyDelimsOf<Core>();
   IRS_FORCE_INLINE static void Render(SerializationContext& context,
                                       const RUVF& vdata, duckdb::idx_t row) {
     // `row` is the source row already resolved by SerializeField; resolving
@@ -2105,10 +2318,10 @@ struct OneDimArrayCore {
     auto& child_vdata = vdata.children[0];
     if constexpr (Format == VarFormat::Text) {
       auto emit_inside = [&] {
-        context.writer->Write("{");
-        EmitArrayElems<Core, VarFormat::Text>(context, child_vdata,
-                                              array_offset, array_size);
-        context.writer->Write("}");
+        WriteText<kCopyDelim>(context, "{");
+        EmitArrayElems<Core, VarFormat::Text, kCopyDelim>(
+          context, child_vdata, array_offset, array_size);
+        WriteText<kCopyDelim>(context, "}");
       };
 
       if constexpr (InContainer == WrapContext::Record) {
@@ -2150,20 +2363,26 @@ struct OneDimArrayCore {
 };
 
 template<typename Core, uint64_t ElementOID, VarFormat Format,
-         WrapContext InContainer>
+         WrapContext InContainer, bool kCopyDelim = false>
 struct VectorArrayCore {
+  using CopyDelimEscaped =
+    VectorArrayCore<Core, ElementOID, Format, InContainer, true>;
+  static constexpr absl::CharSet kCopyDelims =
+    absl::CharSet{" "} | CopyDelimsOf<Core>();
   IRS_FORCE_INLINE static void Render(SerializationContext& context,
                                       const RUVF& vdata, duckdb::idx_t row) {
     auto [array_size, array_offset] = GetSliceResolved(vdata, row);
     auto& child_vdata = vdata.children[0];
     if constexpr (Format == VarFormat::Text) {
+      using Elem =
+        std::conditional_t<kCopyDelim, CopyDelimVariantOf<Core>, Core>;
       auto emit_inside = [&] {
         for (duckdb::idx_t i = 0; i < array_size; ++i) {
           if (i > 0) {
-            context.writer->Write(" ");
+            WriteText<kCopyDelim>(context, " ");
           }
           const auto idx = child_vdata.unified.sel->get_index(array_offset + i);
-          RenderValue<Core>(context, child_vdata, idx);
+          RenderValue<Elem>(context, child_vdata, idx);
         }
       };
       if constexpr (InContainer != WrapContext::None) {
@@ -2190,12 +2409,12 @@ template<typename Core>
 constexpr bool kListValued = false;
 
 template<typename Core, uint64_t ElementOID, VarFormat Format,
-         WrapContext InContainer>
-constexpr bool
-  kListValued<VectorArrayCore<Core, ElementOID, Format, InContainer>> = true;
+         WrapContext InContainer, bool kCopyDelim>
+constexpr bool kListValued<
+  VectorArrayCore<Core, ElementOID, Format, InContainer, kCopyDelim>> = true;
 
-template<WrapContext InContainer>
-constexpr bool kListValued<MultirangeTextCore<InContainer>> = true;
+template<WrapContext InContainer, bool kCopyDelim>
+constexpr bool kListValued<MultirangeTextCore<InContainer, kCopyDelim>> = true;
 
 template<>
 constexpr bool kListValued<MultirangeBinCore> = true;
@@ -2297,17 +2516,24 @@ void FlattenArray(SerializationContext& context, const RUVF& vdata,
 }
 
 template<typename Core, uint64_t ElementOID, VarFormat Format,
-         WrapContext InContainer>
+         WrapContext InContainer, bool kCopyDelim = false>
 struct MultiDimArrayCore {
+  using CopyDelimEscaped =
+    MultiDimArrayCore<Core, ElementOID, Format, InContainer, true>;
+  static constexpr absl::CharSet kCopyDelims =
+    kArrayCopyDelims | absl::CharSet{ArrayDelim<Core>::kValue} |
+    CopyDelimsOf<Core>();
   IRS_FORCE_INLINE static void Render(SerializationContext& context,
                                       const RUVF& vdata, duckdb::idx_t row) {
     if constexpr (Format == VarFormat::Text) {
       if (!IsDimensionOf<Core>(vdata.logical_type)) {
         // `row` is already the resolved source row.
         if (!vdata.unified.validity.RowIsValid(row)) {
-          context.writer->Write("NULL");
+          WriteText<kCopyDelim>(context, "NULL");
         } else {
-          RenderItem<Core>(context, vdata, row);
+          RenderItem<
+            std::conditional_t<kCopyDelim, CopyDelimVariantOf<Core>, Core>>(
+            context, vdata, row);
         }
         return;
       }
@@ -2316,10 +2542,11 @@ struct MultiDimArrayCore {
       auto& child_vdata = vdata.children[0];
 
       auto emit_inside = [&] {
-        context.writer->Write("{");
+        WriteText<kCopyDelim>(context, "{");
         for (duckdb::idx_t i = 0; i < array_size; ++i) {
           if (i > 0) {
-            context.writer->Write(ArrayDelim<Core>::kValue);
+            WriteText<kCopyDelim>(context,
+                                  std::string_view{ArrayDelim<Core>::kValue});
           }
           // A NULL sub-list/element must not be resolved further (its
           // list_entry is undefined); render it as the literal NULL like the
@@ -2327,14 +2554,14 @@ struct MultiDimArrayCore {
           const auto child_row =
             child_vdata.unified.sel->get_index(array_offset + i);
           if (!child_vdata.unified.validity.RowIsValid(child_row)) {
-            context.writer->Write("NULL");
+            WriteText<kCopyDelim>(context, "NULL");
             continue;
           }
-          MultiDimArrayCore<Core, ElementOID, Format,
-                            WrapContext::None>::Render(context, child_vdata,
-                                                       child_row);
+          MultiDimArrayCore<Core, ElementOID, Format, WrapContext::None,
+                            kCopyDelim>::Render(context, child_vdata,
+                                                child_row);
         }
-        context.writer->Write("}");
+        WriteText<kCopyDelim>(context, "}");
       };
 
       if constexpr (InContainer == WrapContext::Record) {
@@ -2397,9 +2624,20 @@ SerializationFunction SelectFieldSerializer(VarFormat format,
     return SerializeField<Framing::BinaryField, BinaryCore>;
   }
   if (format == VarFormat::CopyText) {
+    if constexpr (!CopyDelimsOf<TextCore>().empty()) {
+      if (EscapesCopyDelim<TextCore>(context)) {
+        return SerializeField<Framing::CopyTextField,
+                              CopyDelimVariantOf<TextCore>>;
+      }
+    }
     return SerializeField<Framing::CopyTextField, TextCore>;
   }
   if (context.in_record) {
+    if constexpr (!CopyDelimsOf<TextRecCore>().empty()) {
+      if (EscapesCopyDelim<TextRecCore>(context)) {
+        return RecordTextField<CopyDelimVariantOf<TextRecCore>>;
+      }
+    }
     return RecordTextField<TextRecCore>;
   }
   return SerializeField<Framing::BinaryField, TextCore>;
@@ -2674,13 +2912,13 @@ SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
       return MakeArraySerializer<DateTextCore, DateBinCore, kDate>(
         format, context, kind);
     case TIME:
-      return MakeArraySerializer<TimeTextCore, TimeBinCore, kTime>(
+      return MakeArraySerializer<TimeTextCore<>, TimeBinCore, kTime>(
         format, context, kind);
     case TIME_NS:
-      return MakeArraySerializer<TimeNsTextCore, TimeNsBinCore, kTime>(
+      return MakeArraySerializer<TimeNsTextCore<>, TimeNsBinCore, kTime>(
         format, context, kind);
     case TIME_TZ:
-      return MakeArraySerializer<TimeTzTextCore, TimeTzBinCore, kTimetz>(
+      return MakeArraySerializer<TimeTzTextCore<>, TimeTzBinCore, kTimetz>(
         format, context, kind);
     case TIMESTAMP_SEC:
       return MakeArraySerializer<TimestampSecTextCore<WrapContext::Array>,
@@ -2829,7 +3067,8 @@ void ByteaOutEscape(char* buf, std::string_view value) {
   }
 }
 
-void FillContext(const Config& config, SerializationContext& context) {
+void FillContext(duckdb::ClientContext& client, SerializationContext& context) {
+  auto& config = ConnectionContext::Get(client);
   context.extra_float_digits = config.GetExtraFloatDigits();
   context.bytea_output = config.GetByteaOutput();
   std::string tz_name{config.GetTimeZone()};
@@ -2841,8 +3080,29 @@ void FillContext(const Config& config, SerializationContext& context) {
   } else {
     context.zone_lut.reset();
   }
-  context.client = &config.GetClientContext();
+  context.client = &client;
   context.caches.reset();
+}
+
+void SetCopyText(SerializationContext& context, char delim,
+                 std::string null_str) {
+  context.copy_text = true;
+  context.backslash_count = 2;
+  context.quote_seq = delim == '"' ? "\\\"" : "\"";
+  context.copy_delim = delim;
+  context.copy_null = std::move(null_str);
+}
+
+void SerializeCopyTextHeader(SerializationContext& context,
+                             std::span<const duckdb::Identifier> names) {
+  bool first = true;
+  for (const auto& name : names) {
+    if (!std::exchange(first, false)) {
+      context.writer->Write({&context.copy_delim, 1});
+    }
+    EmitEscaped(context, name.GetIdentifierName());
+  }
+  context.writer->Write("\n");
 }
 
 SerializationFunction GetSerialization(const duckdb::LogicalType& type,
@@ -2852,7 +3112,11 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
   switch (type.id()) {
     using enum duckdb::LogicalTypeId;
     case SQLNULL:
-      return SerializeNullColumn;
+      if (format == VarFormat::CopyText) {
+        return SerializeCopyTextNullColumn;
+      }
+      return context.in_record ? SerializeRecordNullColumn
+                               : SerializeNullColumn;
     case BOOLEAN:
       return SelectFieldSerializer<BoolTextCore, BoolTextCore, BoolBinCore>(
         format, context);
@@ -3040,13 +3304,13 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
       return SelectFieldSerializer<DateTextCore, DateTextCore, DateBinCore>(
         format, context);
     case TIME:
-      return SelectFieldSerializer<TimeTextCore, TimeTextCore, TimeBinCore>(
+      return SelectFieldSerializer<TimeTextCore<>, TimeTextCore<>, TimeBinCore>(
         format, context);
     case TIME_NS:
-      return SelectFieldSerializer<TimeNsTextCore, TimeNsTextCore,
+      return SelectFieldSerializer<TimeNsTextCore<>, TimeNsTextCore<>,
                                    TimeNsBinCore>(format, context);
     case TIME_TZ:
-      return SelectFieldSerializer<TimeTzTextCore, TimeTzTextCore,
+      return SelectFieldSerializer<TimeTzTextCore<>, TimeTzTextCore<>,
                                    TimeTzBinCore>(format, context);
     case TIMESTAMP_SEC:
       return SelectFieldSerializer<TimestampSecTextCore<WrapContext::None>,

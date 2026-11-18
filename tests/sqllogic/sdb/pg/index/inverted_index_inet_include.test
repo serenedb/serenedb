@@ -36,10 +36,6 @@ statement ok
 INSERT INTO inet_idx_t VALUES (3, 'third',  '10.0.0.1'::INET)
 
 
-statement ok
-VACUUM (REFRESH_TABLE) inet_idx_t
-
-
 query
 SELECT pk, ip FROM inet_idx WHERE text_for_search @@ ts_phrase('first')
 ORDER BY pk;

@@ -27,19 +27,13 @@
 
 #include "search/store.h"
 
-namespace sdb::catalog {
-
-struct DataDirectory;
-
-}  // namespace sdb::catalog
 namespace sdb::connector {
 
 std::vector<std::shared_ptr<search::Store>> InvertedStorages(
   duckdb::AttachedDatabase& db);
 
 // Register the storage extension with a DuckDB config (before DB creation).
-void RegisterSereneDBStorage(duckdb::DBConfig& config,
-                             duckdb::shared_ptr<catalog::DataDirectory> layout);
+void RegisterSereneDBStorage(duckdb::DBConfig& config);
 
 // Register SereneDB optimizer extensions with a live DuckDB instance.
 void RegisterSereneDBOptimizers(duckdb::DatabaseInstance& db);

@@ -45,10 +45,6 @@ CREATE INDEX logs_idx ON logs
     INCLUDE (service, sev, tag)
 
 
-statement ok
-VACUUM (REFRESH_TABLE) logs
-
-
 # --- inverted+INCLUDE columns: equality and range filters push down ---
 
 # Compound predicate -- all three filters land inside the IRESEARCH_SCAN
@@ -60,7 +56,7 @@ WHERE body @@ 'connection' AND service = 'frontend' AND sev >= 13;
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────────────────────────────────╮
 │ Index: logs_idx                                                               │
-│ Lookup: table                                                                 │
+│ Lookup: search                                                                │
 │ Index Filter:                                                                 │
 │ ╭─ And ────────────────╮                                                      │
 │ ╰───────────┬──────────╯                                                      │
@@ -95,7 +91,7 @@ WHERE body @@ 'connection' AND tag = 'a';
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: logs_idx          │
-│ Lookup: table            │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Term ──────────────╮  │
 │ │ Field: body(string) │  │

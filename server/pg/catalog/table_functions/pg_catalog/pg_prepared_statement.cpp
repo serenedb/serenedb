@@ -27,10 +27,10 @@
 #include <string>
 #include <vector>
 
-#include "connector/duckdb_client_state.h"
 #include "network/pg/protocol_state.h"
 #include "pg/catalog/engine/system_table.h"
 #include "pg/catalog/tables/tables.h"
+#include "pg/connection_context.h"
 #include "pg/types/mapping.h"
 
 namespace sdb::pg {
@@ -79,10 +79,7 @@ std::optional<std::vector<uint32_t>> ResultTypes(
 
 SystemRows<PreparedStatement> LoadPreparedStatements(SystemScan& scan) {
   auto& context = scan.Context();
-  const auto client =
-    context.registered_state->Get<connector::SereneDBClientState>(
-      connector::kSereneDBClientStateKey);
-  const auto* protocol = client ? client->protocol_state : nullptr;
+  const auto* protocol = ConnectionContext::Get(context).protocol_state;
   std::vector<PreparedStatement> rows;
   for (const auto& [name, data] :
        duckdb::ClientData::Get(context).prepared_statements) {

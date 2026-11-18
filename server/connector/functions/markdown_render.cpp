@@ -898,12 +898,24 @@ void MarkdownToAnsiFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     });
 }
 
+duckdb::unique_ptr<duckdb::FunctionData> BindMarkdownToAnsi(
+  duckdb::BindScalarFunctionInput& input) {
+  const auto width = input.TryGetConstant(1);
+  if (!width || (!width->IsNull() && width->GetValue<int32_t>() < 0)) {
+    input.GetBoundFunction().SetFallible();
+  }
+  return nullptr;
+}
+
 }  // namespace
 
 void RegisterMarkdownRenderFunctions(duckdb::DatabaseInstance& db) {
   duckdb::ExtensionLoader loader{db, "serenedb"};
-  duckdb::ScalarFunction render{
-    "sdb_md_to_ansi", {}, duckdb::LogicalType::VARCHAR, MarkdownToAnsiFunction};
+  duckdb::ScalarFunction render{"sdb_md_to_ansi",
+                                {},
+                                duckdb::LogicalType::VARCHAR,
+                                MarkdownToAnsiFunction,
+                                BindMarkdownToAnsi};
   render.GetSignature()
     .AddParameter("markdown", duckdb::LogicalType::VARCHAR)
     .AddParameter("width", duckdb::LogicalType::INTEGER)

@@ -177,7 +177,7 @@ void WriteRanges(duckdb::DatabaseInstance& db, irs::Directory& dir,
   // encoder for each pattern (all-zero / all-one / mixed).
   auto& cw = w.OpenColumn(/*id=*/1, duckdb::LogicalType::BLOB,
                           /*skip_validity=*/false, kRowGroupSize,
-                          duckdb::CompressionType::COMPRESSION_AUTO, false);
+                          duckdb::CompressionType::COMPRESSION_AUTO);
   for (const auto& range : ranges) {
     for (irs::doc_id_t doc = range.first; doc < range.second; ++doc) {
       const auto s = PayloadFor(doc);
@@ -798,7 +798,7 @@ TEST_P(SparseBitmapTestCase, rw_sparse_blocks) {
     irs::ColWriter w{dir, kName, Db()};
     auto& cw = w.OpenColumn(/*id=*/1, duckdb::LogicalType::BLOB,
                             /*skip_validity=*/false, kRowGroupSize,
-                            duckdb::CompressionType::COMPRESSION_AUTO, false);
+                            duckdb::CompressionType::COMPRESSION_AUTO);
     for (auto doc : valid_docs) {
       const auto s = PayloadFor(doc);
       irs::tests::AppendBlob(
@@ -1077,7 +1077,7 @@ TEST_P(SparseBitmapTestCase, insert_erase) {
     irs::ColWriter w{dir, kName, Db()};
     auto& cw = w.OpenColumn(/*id=*/1, duckdb::LogicalType::BLOB,
                             /*skip_validity=*/false, kRowGroupSize,
-                            duckdb::CompressionType::COMPRESSION_AUTO, false);
+                            duckdb::CompressionType::COMPRESSION_AUTO);
     // Skip kErasedDoc -- ColumnWriter auto-pads the gap with nulls.
     for (auto doc : {kSurvivorEarlyA, kSurvivorEarlyB, kSurvivingDoc}) {
       const auto payload = PayloadFor(doc);

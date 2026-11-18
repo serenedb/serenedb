@@ -148,9 +148,6 @@ INSERT INTO tqt VALUES
     (2, 'lazy dog', 'lazy dog'),
     (3, 'grey turtle', 'grey turtle');
 
-statement ok
-VACUUM (REFRESH_TABLE) tqt;
-
 # The same string-origin value works against both columns: b indexes
 # lowercase terms, c indexes uppercase terms, and 'Quick' resolves
 # through each column's own analyzer.

@@ -2,11 +2,6 @@ control substitution on
 
 hash-threshold 100
 
-# Plain (secondary) indexes on views are not supported; views are indexed
-# with inverted indexes instead. The inverted index is static: DML on the
-# source does not refresh it.
-
-
 statement ok
 CREATE TABLE base_sk (id INTEGER PRIMARY KEY, label TEXT, score INTEGER);
 
@@ -20,23 +15,28 @@ INSERT INTO base_sk VALUES
 statement ok
 CREATE VIEW v_sk_star AS SELECT * FROM base_sk;
 
-statement error
+statement ok
 CREATE INDEX v_sk_star_idx ON v_sk_star(score);
+
+
+query
+SELECT amname FROM pg_class c JOIN pg_am a ON a.oid = c.relam WHERE c.relname = 'v_sk_star_idx';
 ----
-db error: ERROR: plain indexes on views are not supported; use an inverted index instead
+amname
+inverted
 
 
 statement error
 CREATE UNIQUE INDEX v_sk_star_uniq ON v_sk_star(label);
 ----
-db error: ERROR: plain indexes on views are not supported; use an inverted index instead
+db error: ERROR: unique indexes on views are not supported
 
 
 # The inverted-index replacement covers the same shape: index a view's
 # column, scan the index as a table.
 
 statement ok
-CREATE INDEX v_sk_star_inv ON v_sk_star USING inverted(score);
+CREATE INDEX v_sk_star_inv ON v_sk_star USING inverted(score) INCLUDE (id, label, score);
 
 query
 SELECT id, label, score FROM v_sk_star_inv ORDER BY score, id;
@@ -78,7 +78,7 @@ CREATE VIEW v_static_after_update AS
 
 statement ok
 CREATE INDEX v_static_after_update_idx
-  ON v_static_after_update USING inverted(label);
+  ON v_static_after_update USING inverted(label) INCLUDE (id, x, label);
 
 query
 SELECT id, x, label FROM v_static_after_update_idx ORDER BY id;

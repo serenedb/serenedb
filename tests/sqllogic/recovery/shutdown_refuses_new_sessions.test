@@ -1,0 +1,44 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+
+connection holder
+statement ok
+SET sdb_faults = 'hold_shutdown';
+
+
+connection holder
+statement ok
+SET sdb_faults = 'begin_shutdown_on_packet';
+
+
+connection holder
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-hold_shutdown:parked';
+
+
+connection latecomer
+statement error
+SELECT 1;
+----
+db error: FATAL: the database system is shutting down
+
+
+connection holder
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SET sdb_faults = 'hold_shutdown:release';
+
+
+connection after_shutdown
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1 AS one;
+----
+one
+1
+
+
+connection after_shutdown
+statement ok
+RESET sdb_faults;

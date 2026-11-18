@@ -49,10 +49,6 @@ CALL serenedb_reindex('use_default_idx');
 db error: ERROR: REINDEX is only supported for view-backed inverted indexes
 
 
-statement ok
-VACUUM (REFRESH_INDEX) use_default_idx;
-
-
 query
 SELECT count(*) FROM use_default_idx WHERE body @@ ts_phrase('alpha');
 ----

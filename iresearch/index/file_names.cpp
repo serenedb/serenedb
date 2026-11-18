@@ -23,20 +23,64 @@
 
 #include "file_names.hpp"
 
-#include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
-#include <absl/strings/strip.h>
+#include <absl/strings/str_format.h>
 #include <fast_float/fast_float.h>
 
+#include <array>
 #include <system_error>
 
+#include "iresearch/formats/column/col_reader.hpp"
+#include "iresearch/formats/index/idx_reader.hpp"
+#include "iresearch/formats/posting/writer.hpp"
 #include "iresearch/utils/shared.hpp"
 
 namespace irs {
+namespace {
 
-std::string FileName(std::string_view prefix, uint64_t gen) {
-  return absl::StrCat(prefix, gen);
+struct SegmentFileKind {
+  uint8_t kind;
+  std::string_view ext;
+};
+
+constexpr std::array kSegmentFileKinds{
+  SegmentFileKind{kColFile, kFormatExt},
+  SegmentFileKind{kIdxFile, kIdxFormatExt},
+  SegmentFileKind{kDocFile, PostingsWriter::kDocExt},
+  SegmentFileKind{kPosFile, PostingsWriter::kPosExt},
+  SegmentFileKind{kPayFile, PostingsWriter::kPayExt},
+};
+
+}  // namespace
+
+uint8_t SegmentFileKinds(std::span<const std::string> files) noexcept {
+  uint8_t kinds = 0;
+  for (std::string_view file : files) {
+    const auto dot = file.rfind('.');
+    if (dot == std::string_view::npos) {
+      continue;
+    }
+    const auto ext = file.substr(dot + 1);
+    for (const auto& [kind, known] : kSegmentFileKinds) {
+      if (ext == known) {
+        kinds |= kind;
+      }
+    }
+  }
+  return kinds;
 }
+
+std::vector<std::string> SegmentFiles(std::string_view segment, uint8_t kinds) {
+  std::vector<std::string> files;
+  for (const auto& [kind, ext] : kSegmentFileKinds) {
+    if ((kinds & kind) != 0) {
+      files.push_back(FileName(segment, ext));
+    }
+  }
+  return files;
+}
+
+std::string FileName(uint64_t id) { return absl::StrFormat("%016x", id); }
 
 void FileName(std::string& result, std::string_view name,
               std::string_view ext) {
@@ -44,36 +88,16 @@ void FileName(std::string& result, std::string_view name,
   absl::StrAppend(&result, name, ".", ext);
 }
 
-std::string FileName(std::string_view name, uint64_t gen,
-                     std::string_view ext) {
-  return absl::StrCat(name, ".", gen, ".", ext);
-}
-
-bool ParseFileName(std::string_view file, std::string_view ext,
-                   std::string_view& name, uint64_t& gen) noexcept {
-  if (!absl::ConsumeSuffix(&file, ext) || !absl::ConsumeSuffix(&file, ".")) {
-    return false;
-  }
-
-  const auto dot = file.rfind('.');
-
-  if (dot == std::string_view::npos || dot == 0 ||
-      !absl::SimpleAtoi(file.substr(dot + 1), &gen)) {
-    return false;
-  }
-
-  name = file.substr(0, dot);
-  return true;
-}
-
 bool ParseSegmentId(std::string_view name, uint64_t& id) noexcept {
-  if (name.size() < 2 || name.front() != '_') {
+  constexpr size_t kDigits = 16;
+  if (name.size() < kDigits ||
+      (name.size() != kDigits && name[kDigits] != '.')) {
     return false;
   }
-  const auto* begin = name.data() + 1;
-  const auto* end = name.data() + name.size();
-  const auto [ptr, ec] = fast_float::from_chars(begin, end, id);
-  return ec == std::errc{} && (ptr == end || *ptr == '.');
+  const auto* begin = name.data();
+  const auto* end = begin + kDigits;
+  const auto [ptr, ec] = fast_float::from_chars(begin, end, id, 16);
+  return ec == std::errc{} && ptr == end;
 }
 
 }  // namespace irs

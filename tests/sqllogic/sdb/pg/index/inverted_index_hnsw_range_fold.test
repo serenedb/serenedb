@@ -27,9 +27,6 @@ INSERT INTO rf SELECT i,
   FROM range(30000) t(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) rf;
-
-statement ok
 SET sdb_hnsw_filter_mode = 'scan';
 
 query

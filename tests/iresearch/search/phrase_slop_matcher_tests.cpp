@@ -442,7 +442,7 @@ TEST_P(PhraseSlopMatcherTestCase, set_slot_stats_keep_terms_apart) {
       R"([{"name":"D","phrase":"aa reo"},{"name":"E","phrase":"aa reo"},)"
       R"({"name":"F","phrase":"aa reo"}])",
       &tests::PayloadedJsonFieldFactory);
-    add_segment(g2, irs::kOmAppend);
+    add_segment(g2, tests::kOmAppend);
   }
   auto rdr = open_reader();
   ASSERT_EQ(2, rdr.size());
@@ -522,7 +522,7 @@ TEST_P(PhraseSlopMatcherTestCase, variadic_slot_stats_merge_by_term) {
       R"([{"name":"D","phrase":"aa reo"},{"name":"E","phrase":"aa rep"},)"
       R"({"name":"F","phrase":"aa rep"},{"name":"G","phrase":"aa rep"}])",
       &tests::PayloadedJsonFieldFactory);
-    add_segment(g2, irs::kOmAppend);
+    add_segment(g2, tests::kOmAppend);
   }
   auto rdr = open_reader();
   ASSERT_EQ(2, rdr.size());

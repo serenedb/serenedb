@@ -71,10 +71,6 @@ statement ok
 CREATE INDEX ixci_idx ON ixci_t USING inverted(id, body ixci_dict);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) ixci_t;
-
-
 query
 SELECT count(*) AS n FROM ixci_idx;
 ----
@@ -101,10 +97,6 @@ statement ok
 INSERT INTO ixci_t VALUES (4, 'golf hotel', 'white');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) ixci_t;
-
-
 query
 SELECT id FROM ixci_idx WHERE body @@ ts_phrase('golf');
 ----
@@ -124,10 +116,6 @@ CREATE INDEX ixci_second ON ixci_t USING inverted(id, tag ixci_dict);
 
 statement ok
 COMMIT;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) ixci_t;
 
 
 query

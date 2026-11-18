@@ -18,6 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
+#include <absl/functional/function_ref.h>
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -30,7 +32,6 @@
 #include <iresearch/index/segment_reader.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/store/memory_directory.hpp>
-#include <iresearch/utils/down_cast.hpp>
 #include <limits>
 #include <map>
 #include <memory>
@@ -52,8 +53,8 @@ constexpr uint32_t kSegments = 8;
 const irs::DirectoryReader& Segments() {
   static irs::MemoryDirectory dir;
   static const irs::DirectoryReader reader = [] {
-    auto writer = irs::IndexWriter::Make(
-      dir, irs::kOmCreate,
+    auto writer = tests::IndexWriter::Make(
+      dir, tests::kOmCreate,
       tests::EnsureWriterDb(tests::CsDefaultWriterOptions()));
     for (uint32_t segment = 0; segment != kSegments; ++segment) {
       tests::StringField field{"name", "doc"};
@@ -107,12 +108,9 @@ std::shared_ptr<const irs::DocRemoval> Build(std::span<const Row> rows) {
 std::vector<irs::doc_id_t> DocsOf(const irs::DocumentMask* docs) {
   std::vector<irs::doc_id_t> out;
   if (docs) {
-    docs->ForEachRun(nullptr, [&](irs::doc_id_t first, irs::doc_id_t last) {
-      for (auto doc = first; doc < last; ++doc) {
-        out.emplace_back(doc);
-      }
-      return true;
-    });
+    out.resize(docs->Count());
+    irs::DocumentMask::Cursor cursor{*docs};
+    EXPECT_EQ(out.size(), cursor.Read(out));
   }
   return out;
 }
@@ -173,12 +171,12 @@ TEST(ParseSegmentIdTest, InvertsFileName) {
 TEST(ParseSegmentIdTest, ParsesSegmentNamesAndTheirFiles) {
   for (const auto& [name, id] :
        std::initializer_list<std::pair<const char*, uint64_t>>{
-         {"_0", 0},
-         {"_5", 5},
-         {"_5.sm", 5},
-         {"_5.0.col", 5},
-         {"_123456789", 123456789},
-         {"_18446744073709551615", std::numeric_limits<uint64_t>::max()}}) {
+         {"0000000000000000", 0},
+         {"0000000000000005", 5},
+         {"0000000000000005.col", 5},
+         {"000000000000000a.idx", 10},
+         {"00000000075bcd15", 123456789},
+         {"ffffffffffffffff", std::numeric_limits<uint64_t>::max()}}) {
     uint64_t parsed = 0;
     EXPECT_TRUE(irs::ParseSegmentId(name, parsed)) << name;
     EXPECT_EQ(id, parsed) << name;
@@ -187,8 +185,9 @@ TEST(ParseSegmentIdTest, ParsesSegmentNamesAndTheirFiles) {
 
 TEST(ParseSegmentIdTest, RejectsOtherNames) {
   for (const auto* name :
-       {"", "_", "5", "x_5", "_x", "_5x", "_-5", "_+5", "_ 5", "__5", "_5_",
-        "_0x10", "_18446744073709551616", "segments_3"}) {
+       {"", "_", "5", "_5", "000000000000005", "00000000000000005",
+        "000000000000000g", "-000000000000005", "+000000000000005",
+        "0000000000000005col", "segments_3"}) {
     uint64_t parsed = 0;
     EXPECT_FALSE(irs::ParseSegmentId(name, parsed)) << name;
   }
@@ -298,19 +297,6 @@ TEST(DocRemovalBuilderTest, SegmentsLeftWithoutDocsAreDropped) {
   EXPECT_EQ((std::vector<irs::doc_id_t>{3}), DocsOf(&removal->groups[0].docs));
 }
 
-TEST(DocRemovalBuilderTest, AGroupHoldsTheDocMapsOfItsSegment) {
-  irs::DocRemovalBuilder builder;
-  builder.Add(1, 1);
-  builder.Add(6, 1);
-  const auto removal = std::move(builder).Finish(Segments());
-  ASSERT_EQ(IdsOf({1, 6}), SegmentsOf(removal));
-  for (size_t i = 0; const auto index : {1, 6}) {
-    const auto& segment =
-      irs::utils::downCast<irs::SegmentReader>(Segments()[index]);
-    EXPECT_EQ(segment.GetImpl()->DocMaps(), removal->groups[i++].maps);
-  }
-}
-
 TEST(DocRemovalBuilderTest, ARunOfRowsTakesAFewBytes) {
   irs::DocRemovalBuilder builder;
   for (irs::doc_id_t doc = 1; doc <= 1000000; ++doc) {
@@ -329,6 +315,44 @@ TEST(DocRemovalBuilderTest, ScatteredDocsStayCompact) {
   const auto removal = std::move(builder).Finish(Segments());
   ASSERT_EQ(1000, removal->groups[0].docs.Count());
   EXPECT_GT(4096, removal->groups[0].docs.FrozenSize());
+}
+
+TEST(DocRemovalBuilderTest, UnionMatchesOneBuilderOnRandomParts) {
+  std::mt19937 rng{42};
+  std::uniform_int_distribution<irs::doc_id_t> doc{1, 300000};
+  std::uniform_int_distribution<uint32_t> segment{0, 2};
+  constexpr uint32_t kIndexes[] = {1, 3, 5};
+  std::vector<irs::DocRemovalBuilder> parts(8);
+  irs::DocRemovalBuilder model;
+  for (size_t p = 0; p != parts.size(); ++p) {
+    for (int i = 0; i != 2000; ++i) {
+      const auto index = kIndexes[segment(rng)];
+      const auto first = doc(rng);
+      if (i % 7 == 0) {
+        const auto last = std::min<irs::doc_id_t>(first + 300, 300000);
+        parts[p].AddRange(index, first, last);
+        model.AddRange(index, first, last);
+      } else {
+        parts[p].Add(index, first);
+        model.Add(index, first);
+      }
+    }
+  }
+  parts[3].Add(6, 9);
+  model.Add(6, 9);
+  auto united = irs::DocRemovalBuilder::Union(
+    parts, [](size_t count, absl::FunctionRef<void(size_t)> body) {
+      for (auto i = count; i-- != 0;) {
+        body(i);
+      }
+    });
+  EXPECT_TRUE(absl::c_all_of(parts, [](const auto& p) { return p.Empty(); }));
+  const auto got = std::move(united).Finish(Segments());
+  const auto want = std::move(model).Finish(Segments());
+  ASSERT_EQ(SegmentsOf(want), SegmentsOf(got));
+  for (size_t g = 0; g != want->groups.size(); ++g) {
+    EXPECT_EQ(DocsOf(&want->groups[g].docs), DocsOf(&got->groups[g].docs));
+  }
 }
 
 TEST(MapDocsTest, AWindowWithoutAMaskShiftsTheDocToItsBase) {
@@ -362,12 +386,12 @@ TEST(MapDocsTest, AWindowTakesOnlyItsRanks) {
   EXPECT_EQ(irs::doc_limits::invalid(), Mapped(map, 8));
 }
 
-TEST(MapDocsTest, TellsWhetherItAddedADoc) {
+TEST(MapDocsTest, TellsWhetherADocMapped) {
   const auto map = Window(0, 10, 31);
   irs::DocumentMaskBuilder out;
   EXPECT_FALSE(irs::MapDocs(map, *MaskOf({11}), out));
   EXPECT_TRUE(irs::MapDocs(map, *MaskOf({1, 11}), out));
-  EXPECT_FALSE(irs::MapDocs(map, *MaskOf({1}), out));
+  EXPECT_TRUE(irs::MapDocs(map, *MaskOf({1}), out));
   EXPECT_EQ(1, out.Count());
 }
 
@@ -440,5 +464,48 @@ TEST(MapDocsTest, RunsMapLikeOneAtATime) {
       doc += run + gen() % 400;
     }
     ASSERT_EQ(expected, MappedDocs(map, std::move(docs).Finish())) << round;
+  }
+}
+
+TEST(MapRowsTest, SortedRowsMapLikeOneAtATime) {
+  std::mt19937 gen{37};
+  for (int round = 0; round < 30; ++round) {
+    std::vector<irs::doc_id_t> masked;
+    irs::DocumentMaskBuilder mask;
+    for (irs::doc_id_t doc = 1 + gen() % 50; round % 4 != 0 && doc < 300000;) {
+      const auto run = 1 + gen() % (round % 2 == 0 ? 2 : 900);
+      for (auto masked_doc = doc; masked_doc < doc + run; ++masked_doc) {
+        mask.Add(masked_doc);
+        masked.push_back(masked_doc);
+      }
+      doc += run + 1 + gen() % 2000;
+    }
+    const irs::doc_id_t begin = gen() % 40000;
+    const irs::DocMap map{
+      .mask = masked.empty() ? nullptr
+                             : std::make_shared<const irs::DocumentMask>(
+                                 std::move(mask).Finish()),
+      .rank_begin = begin,
+      .rank_end = static_cast<irs::doc_id_t>(begin + gen() % 300000),
+      .base = static_cast<irs::doc_id_t>(1 + gen() % 100000)};
+    std::vector<uint64_t> rows;
+    std::vector<irs::MappedRow> expected;
+    for (uint64_t row = gen() % 9; row < 400000; row += 1 + gen() % 50) {
+      if (const auto mapped = MappedAlone(
+            masked, map,
+            static_cast<irs::doc_id_t>(row + irs::doc_limits::min()));
+          irs::doc_limits::valid(mapped)) {
+        expected.push_back(
+          {.index = rows.size(), .row = mapped - irs::doc_limits::min()});
+      }
+      rows.push_back(row);
+    }
+    std::vector<irs::MappedRow> actual;
+    irs::MapRows(map, rows, actual);
+    ASSERT_EQ(expected.size(), actual.size()) << round;
+    for (size_t i = 0; i != expected.size(); ++i) {
+      ASSERT_EQ(expected[i].index, actual[i].index) << round << " " << i;
+      ASSERT_EQ(expected[i].row, actual[i].row) << round << " " << i;
+    }
   }
 }

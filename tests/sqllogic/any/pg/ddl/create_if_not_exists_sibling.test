@@ -1,0 +1,59 @@
+statement ok
+CREATE SEQUENCE cine_seq;
+
+
+statement ok
+CREATE TABLE IF NOT EXISTS cine_seq (a INT);
+
+
+query
+SELECT nextval('cine_seq') AS n;
+----
+n
+1
+
+
+statement ok
+CREATE TABLE cine_t (a INT);
+
+
+statement ok
+CREATE SEQUENCE IF NOT EXISTS cine_t;
+
+
+query
+SELECT count(*) AS n FROM cine_t;
+----
+n
+0
+
+
+statement ok
+CREATE TYPE cine_mood AS ENUM ('a');
+
+
+skipif serenedb
+statement error
+CREATE TABLE IF NOT EXISTS cine_mood (a INT);
+----
+db error: ERROR: type "cine_mood" already exists
+HINT: A relation has an associated type of the same name, so you must use a name that doesn't conflict with any existing type.
+
+
+onlyif serenedb
+statement error
+CREATE TABLE IF NOT EXISTS cine_mood (a INT);
+----
+db error: ERROR: type "cine_mood" already exists
+
+
+statement ok
+DROP TABLE cine_t;
+
+
+statement ok
+DROP SEQUENCE cine_seq;
+
+
+statement ok
+DROP TYPE cine_mood;

@@ -28,11 +28,11 @@
 #include "iresearch/search/filters/boolean_filter.hpp"
 #include "iresearch/search/filters/boolean_rules.hpp"
 #include "iresearch/search/filters/common.hpp"
+#include "iresearch/search/filters/field_target.hpp"
 #include "iresearch/search/filters/filter_optimizer.hpp"
 #include "iresearch/search/filters/levenshtein_filter.hpp"
 #include "iresearch/search/filters/ngram_similarity_filter.hpp"
 #include "iresearch/search/filters/phrase_filter.hpp"
-#include "iresearch/search/filters/prefix_filter.hpp"
 #include "iresearch/search/filters/regexp_filter.hpp"
 #include "iresearch/search/filters/term_filter.hpp"
 #include "iresearch/search/filters/wildcard_filter.hpp"
@@ -93,27 +93,12 @@ struct NGramSimilarityLowerRule {
 
 bool WildcardSimplifyRule::Apply(Filter::ptr& slot, const OptimizeContext&) {
   auto& node = irs::utils::downCast<ByWildcard>(*slot);
+  const auto target = TargetOf(node);
   bstring buf;
   auto lowered = ExecuteWildcard(
     buf, node.options().term,
-    [&](bytes_view term) -> Filter::ptr {
-      auto filter = std::make_unique<ByTerm>();
-      *filter->mutable_field_id() = node.field_id();
-      *filter->mutable_dict() = node.dict();
-      filter->mutable_options()->term = term;
-      filter->SetBoost(node.GetBoost());
-      filter->SetScorer(node.GetScorer());
-      return filter;
-    },
-    [&](bytes_view term) -> Filter::ptr {
-      auto filter = std::make_unique<ByPrefix>();
-      *filter->mutable_field_id() = node.field_id();
-      *filter->mutable_dict() = node.dict();
-      filter->mutable_options()->term = term;
-      filter->SetBoost(node.GetBoost());
-      filter->SetScorer(node.GetScorer());
-      return filter;
-    },
+    [&](bytes_view term) { return target.Term(term); },
+    [&](bytes_view prefix) { return target.Prefix(prefix); },
     [](bytes_view) -> Filter::ptr { return nullptr; });
   if (lowered == nullptr) {
     return false;
@@ -124,27 +109,12 @@ bool WildcardSimplifyRule::Apply(Filter::ptr& slot, const OptimizeContext&) {
 
 bool RegexpSimplifyRule::Apply(Filter::ptr& slot, const OptimizeContext&) {
   auto& node = irs::utils::downCast<ByRegexp>(*slot);
+  const auto target = TargetOf(node);
   bstring buf;
   auto lowered = ExecuteRegexp(
-    buf, node.options().pattern,
-    [&](bytes_view term) -> Filter::ptr {
-      auto filter = std::make_unique<ByTerm>();
-      *filter->mutable_field_id() = node.field_id();
-      *filter->mutable_dict() = node.dict();
-      filter->mutable_options()->term = term;
-      filter->SetBoost(node.GetBoost());
-      filter->SetScorer(node.GetScorer());
-      return filter;
-    },
-    [&](bytes_view prefix) -> Filter::ptr {
-      auto filter = std::make_unique<ByPrefix>();
-      *filter->mutable_field_id() = node.field_id();
-      *filter->mutable_dict() = node.dict();
-      filter->mutable_options()->term = prefix;
-      filter->SetBoost(node.GetBoost());
-      filter->SetScorer(node.GetScorer());
-      return filter;
-    },
+    buf, node.options().pattern, node.options().syntax,
+    [&](bytes_view term) { return target.Term(term); },
+    [&](bytes_view prefix) { return target.Prefix(prefix); },
     [](bytes_view) -> Filter::ptr { return nullptr; });
   if (lowered == nullptr) {
     return false;
@@ -160,15 +130,11 @@ bool EditDistanceSimplifyRule::Apply(Filter::ptr& slot,
   if (opts.max_distance != 0) {
     return false;
   }
-  auto filter = std::make_unique<ByTerm>();
-  *filter->mutable_field_id() = node.field_id();
-  *filter->mutable_dict() = node.dict();
-  auto& target = filter->mutable_options()->term;
-  target.reserve(opts.prefix.size() + opts.term.size());
-  target += opts.prefix;
-  target += opts.term;
-  filter->SetBoost(node.GetBoost());
-  filter->SetScorer(node.GetScorer());
+  auto filter = TargetOf(node).Make<ByTerm>();
+  auto& term = filter->mutable_options()->term;
+  term.reserve(opts.prefix.size() + opts.term.size());
+  term += opts.prefix;
+  term += opts.term;
   slot = std::move(filter);
   return true;
 }
@@ -215,10 +181,9 @@ bool NGramSimilarityLowerRule::Apply(Filter::ptr& slot,
   }
   const auto terms_count = ngrams.size();
   const auto threshold = std::clamp(node.options().threshold, 0.F, 1.F);
-  const auto min_match =
-    std::clamp(static_cast<size_t>(
-                 std::ceil(static_cast<float_t>(terms_count) * threshold)),
-               size_t{1}, terms_count);
+  const auto min_match = std::clamp(
+    static_cast<size_t>(std::ceil(static_cast<float>(terms_count) * threshold)),
+    size_t{1}, terms_count);
   if (terms_count == 1) {
     auto by_term = std::make_unique<ByTerm>();
     *by_term->mutable_field_id() = node.field_id();

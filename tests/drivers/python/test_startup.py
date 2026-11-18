@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import base64
 import os
 import platform
 import shutil
+import socket
+import struct
 import subprocess
 import tempfile
 import time
@@ -25,7 +28,8 @@ pytestmark = pytest.mark.skipif(
 
 
 class _Server:
-    def __init__(self, datadir: Path, listen: str | None = None) -> None:
+    def __init__(self, datadir: Path, listen: str | None = None,
+                 args: tuple[str, ...] = ()) -> None:
         self.reserved = reserve_port()
         self.port = self.reserved.getsockname()[1]
         if listen is None:
@@ -33,7 +37,7 @@ class _Server:
         self.log = datadir.parent / f"serened-{self.port}.log"
         with self.log.open("w") as out:
             self.proc = subprocess.Popen(
-                [SERENED_BIN, str(datadir), f"--listen={listen}"],
+                [SERENED_BIN, str(datadir), f"--listen={listen}", *args],
                 stdout=out, stderr=subprocess.STDOUT)
 
     def wait_ready(self, timeout: float = 60.0) -> bool:
@@ -88,7 +92,16 @@ def test_info_timeline(tmp_path: Path) -> None:
 
     second = _run_until_ready(datadir)
     assert "Created database directory" not in second.output(), second.output()
-    assert "search index recovery" not in second.output(), second.output()
+    assert "replayed the log" not in second.output(), second.output()
+
+
+def test_trace_logging_shuts_down_cleanly(tmp_path: Path) -> None:
+    server = _Server(tmp_path / "data", args=("--log_level=trace",))
+    try:
+        assert server.wait_ready(), server.output()
+    finally:
+        server.stop()
+    assert server.proc.returncode == 0, server.output()
 
 
 def test_recovery_summary_after_a_crash(tmp_path: Path) -> None:
@@ -109,8 +122,8 @@ def test_recovery_summary_after_a_crash(tmp_path: Path) -> None:
         server.proc.wait(timeout=60)
 
     restarted = _run_until_ready(datadir)
-    assert ("search index recovery: replayed the WAL into 1 of 1 inverted "
-            "index(es)" in restarted.output()), restarted.output()
+    assert ("recovery: replayed the log into 1 of 1 table(s) in "
+            in restarted.output()), restarted.output()
 
 
 def test_search_table_recovery_summary_after_a_crash(tmp_path: Path) -> None:
@@ -121,10 +134,8 @@ def test_search_table_recovery_summary_after_a_crash(tmp_path: Path) -> None:
         with psycopg.connect(host="127.0.0.1", port=server.port,
                              user="postgres", dbname="postgres",
                              autocommit=True) as conn:
-            conn.execute("CREATE TABLE tusk (id INT, body TEXT) "
-                         "WITH (storage = 'search', refresh_interval = 0)")
-            conn.execute("CREATE TABLE idle (id INT) "
-                         "WITH (storage = 'search', refresh_interval = 0)")
+            conn.execute("CREATE TABLE tusk (id INT, body TEXT) ")
+            conn.execute("CREATE TABLE idle (id INT) ")
             conn.execute("INSERT INTO tusk SELECT i, 'ice ' || i "
                          "FROM range(100) t(i)")
     finally:
@@ -132,8 +143,8 @@ def test_search_table_recovery_summary_after_a_crash(tmp_path: Path) -> None:
         server.proc.wait(timeout=60)
 
     restarted = _run_until_ready(datadir)
-    assert ("search index recovery: replayed the WAL into 1 of 2 search "
-            "table(s) in " in restarted.output()), restarted.output()
+    assert ("recovery: replayed the log into 1 of 2 table(s) in "
+            in restarted.output()), restarted.output()
 
 
 def test_terminate_while_starting(tmp_path: Path) -> None:
@@ -157,7 +168,8 @@ def test_second_instance_on_the_same_datadir(tmp_path: Path) -> None:
         second = _Server(datadir)
         try:
             assert second.proc.wait(timeout=60) != 0, second.output()
-            assert (f"database is locked by process {first.proc.pid}"
+            assert (f"the data directory is in use: '{datadir}/PG_VERSION' "
+                    "is locked by a running server or a read-only attachment"
                     in second.output()), second.output()
         finally:
             second.stop()
@@ -206,6 +218,81 @@ def test_cleartext_password_on_a_unix_socket(tmp_path: Path,
             pytest.fail(f"{error}\n{server.output()}")
     finally:
         server.stop()
+
+
+def _scram_attempt(port: int, user: str) -> tuple[str, str]:
+    sock = socket.create_connection(("127.0.0.1", port))
+
+    def recv_exact(n: int) -> bytes:
+        buf = b""
+        while len(buf) < n:
+            chunk = sock.recv(n - len(buf))
+            if not chunk:
+                raise EOFError("connection closed")
+            buf += chunk
+        return buf
+
+    def read_msg() -> tuple[bytes, bytes]:
+        t = recv_exact(1)
+        (ln,) = struct.unpack("!I", recv_exact(4))
+        return t, recv_exact(ln - 4)
+
+    def send(t: bytes, payload: bytes) -> None:
+        sock.sendall(t + struct.pack("!I", len(payload) + 4) + payload)
+
+    try:
+        params = b"user\0" + user.encode() + b"\0database\0postgres\0\0"
+        sock.sendall(struct.pack("!II", len(params) + 8, 196608) + params)
+        t, body = read_msg()
+        assert (t, struct.unpack("!I", body[:4])[0]) == (b"R", 10), (user, t,
+                                                                     body)
+        first = b"n,,n=,r=probenonce"
+        send(b"p", b"SCRAM-SHA-256\0" + struct.pack("!i", len(first)) + first)
+        t, body = read_msg()
+        assert (t, struct.unpack("!I", body[:4])[0]) == (b"R", 11), (user, t,
+                                                                     body)
+        fields = dict(part.split("=", 1)
+                      for part in body[4:].decode().split(","))
+        proof = base64.b64encode(bytes(32)).decode()
+        send(b"p", f"c=biws,r={fields['r']},p={proof}".encode())
+        t, body = read_msg()
+        assert t == b"E", (user, t, body)
+        codes = {chr(f[0]): f[1:].decode() for f in body.split(b"\0") if f}
+        return fields["s"], codes["C"]
+    finally:
+        sock.close()
+
+
+def test_scram_hides_which_roles_exist(tmp_path: Path) -> None:
+    datadir = tmp_path / "data"
+    users = ("probe_pw", "probe_nopw", "probe_md5", "probe_missing",
+             "probe_other_missing")
+    server = _Server(datadir)
+    try:
+        assert server.wait_ready(), server.output()
+        with psycopg.connect(host="127.0.0.1", port=server.port,
+                             user="postgres", dbname="postgres",
+                             autocommit=True) as admin:
+            admin.execute("CREATE ROLE probe_pw LOGIN PASSWORD 'probe_secret'")
+            admin.execute("CREATE ROLE probe_nopw LOGIN")
+            admin.execute("CREATE ROLE probe_md5 LOGIN "
+                          "PASSWORD 'md5c0f3ed6e0bd5c24ab7cd2e0a14b9be3f'")
+        attempts = {user: _scram_attempt(server.port, user) for user in users}
+        assert {code for _, code in attempts.values()} == {"28P01"}, attempts
+        assert len({salt for salt, _ in attempts.values()}) == len(users), (
+            attempts)
+        for user in users:
+            assert _scram_attempt(server.port, user) == attempts[user]
+    finally:
+        server.stop()
+
+    restarted = _Server(datadir)
+    try:
+        assert restarted.wait_ready(), restarted.output()
+        for user in users:
+            assert _scram_attempt(restarted.port, user) == attempts[user]
+    finally:
+        restarted.stop()
 
 
 def test_startup_parameters_on_a_unix_socket(tmp_path: Path,

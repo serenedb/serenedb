@@ -1035,8 +1035,8 @@ class ScalarQuantizerReader final : public QuantizerReader {
       return;
     }
     double var = weighted / 12.0;
-    if (_fast && _weights.int_ip()) {
-      const double unit = uniform ? vdiff[0] / 255.0 : 1.0;
+    if (const double unit = uniform ? vdiff[0] / 255.0 : 1.0;
+        _fast && _weights.int_ip() && unit > 0) {
       const double t = _weights.int_dot_scale / unit;
       const double mid = _weights.int_sum_scale / unit;
       double rounding = 0;

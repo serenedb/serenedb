@@ -18,6 +18,8 @@ Only the entries of the first table can be extracted from `INTERVAL`s or used to
 Except for `julian` and `epoch`, which return `DOUBLE`s, all parts are extracted as integers. Since there are no infinite integer values in SereneDB, `NULL`s are returned for infinite timestamps.
 </DocCallout>
 
+`EXTRACT(part FROM source)` is `date_part(part, source)` and returns the same integers: `second` is whole seconds and drops the fraction, which `milliseconds` and `microseconds` carry. `pg_catalog.extract(part, source)` returns a `NUMERIC` with the fraction, as PostgreSQL's `EXTRACT` does.
+
 ## Part Specifiers Usable as Date Part Specifiers and in Intervals
 
 | Specifier      | Description               | Synonyms                                                    |    Example |

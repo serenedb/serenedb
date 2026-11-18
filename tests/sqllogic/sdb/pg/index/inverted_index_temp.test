@@ -1,11 +1,5 @@
 hash-threshold 100
 
-# Inverted index over a TEMPORARY table. DuckDB's TEMP tables live in the
-# in-memory catalog (the `memory` database, `temp` schema) — separate from
-# the regular rocksdb-backed catalog where persistent tables live. Test
-# that serenedb can build an inverted index on such a table and query it
-# end-to-end, including INCLUDE'd columns.
-
 
 statement ok
 CREATE TEMPORARY TABLE temp_docs (
@@ -31,10 +25,35 @@ CREATE TEXT SEARCH DICTIONARY temp_en AS
     WITH (frequency, position);
 
 
-# TEMP tables live in DuckDB's in-memory catalog, which serenedb's
-# CREATE INDEX implementation doesn't support today (serenedb's
-# inverted/secondary indexes assume a SereneDB-managed catalog with
-# rocksdb-backed storage). Reject with a clean error rather than
-# triggering an internal assertion.
-statement error cannot CREATE INDEX on temp\.temp_docs: its catalog differs from the current one
+statement error
 CREATE INDEX temp_idx ON temp_docs USING inverted(body temp_en) INCLUDE (tag, views);
+----
+db error: ERROR: cross-database references are not implemented: "<slt:ignore>.public.temp_en"
+
+
+statement ok
+CREATE INDEX temp_tag_idx ON temp_docs (tag);
+
+
+query
+SELECT id FROM temp_docs WHERE tag = 'gameplay' ORDER BY id;
+----
+id
+1
+3
+
+
+query
+EXPLAIN SELECT id FROM temp_docs WHERE tag = 'gameplay';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────╮
+│ Table: temp_docs       │
+│ Index Filter:          │
+│ ╭─ Term ─────────────╮ │
+│ │ Field: tag(string) │ │
+│ │ Value: gameplay    │ │
+│ ╰────────────────────╯ │
+│ Projections: id        │
+│ ~1 row                 │
+╰────────────────────────╯

@@ -5,7 +5,7 @@ statement ok
 CREATE MACRO fallback(x) AS CASE WHEN len(x) = 0 THEN ['none'] ELSE x END;
 
 statement ok
-CREATE TABLE consts (id BIGINT, s VARCHAR, v VARCHAR[]) WITH (storage = 'search');
+CREATE TABLE consts (id BIGINT, s VARCHAR, v VARCHAR[]);
 
 statement ok
 CREATE INDEX consts_idx ON consts USING inverted (id,
@@ -18,9 +18,6 @@ CREATE INDEX consts_idx ON consts USING inverted (id,
 statement ok
 INSERT INTO consts VALUES (1, 'a', ['eng', 'data']), (2, 'b', []);
 
-statement ok
-VACUUM (REFRESH_TABLE) consts;
-
 query
 SELECT id FROM consts WHERE list_reverse(v) @@ ts_regexp('data') ORDER BY id;
 ----
@@ -32,8 +29,7 @@ EXPLAIN SELECT id FROM consts WHERE list_reverse(v) @@ ts_regexp('data');
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────╮
-│ Index: consts              │
-│ Lookup: search             │
+│ Table: consts              │
 │ Index Filter:              │
 │ ╭─ Term ─────────────────╮ │
 │ │ Field: list_reverse(v) │ │
@@ -54,8 +50,7 @@ EXPLAIN SELECT id FROM consts WHERE fallback(v) @@ ts_regexp('none');
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────╮
-│ Index: consts                 │
-│ Lookup: search                │
+│ Table: consts                 │
 │ Index Filter:                 │
 │ ╭─ Term ────────────────────╮ │
 │ │ Field: public.fallback(v) │ │
@@ -76,8 +71,7 @@ EXPLAIN SELECT id FROM consts WHERE CASE WHEN len(v) = 0 THEN ['none'] ELSE v EN
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────╮
-│ Index: consts                 │
-│ Lookup: search                │
+│ Table: consts                 │
 │ Index Filter:                 │
 │ ╭─ Term ────────────────────╮ │
 │ │ Field: public.fallback(v) │ │
@@ -99,8 +93,7 @@ EXPLAIN SELECT id FROM consts WHERE list_concat(v, ['x', 'y']) @@ ts_regexp('y')
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────╮
-│ Index: consts                            │
-│ Lookup: search                           │
+│ Table: consts                            │
 │ Index Filter:                            │
 │ ╭─ Term ───────────────────────────────╮ │
 │ │ Field:                               │ │
@@ -122,8 +115,7 @@ EXPLAIN SELECT id FROM consts WHERE s || '-' || (2 * 3)::VARCHAR @@ ts_regexp('b
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────────╮
-│ Index: consts                                        │
-│ Lookup: search                                       │
+│ Table: consts                                        │
 │ Index Filter:                                        │
 │ ╭─ Term ───────────────────────────────────────────╮ │
 │ │ Field:                                           │ │
@@ -145,8 +137,7 @@ EXPLAIN SELECT id FROM consts WHERE list_transform(v, lambda e: e || ['p', 'q'][
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────────────────────╮
-│ Index: consts                                                     │
-│ Lookup: search                                                    │
+│ Table: consts                                                     │
 │ Index Filter:                                                     │
 │ ╭─ Term ────────────────────────────────────────────────────────╮ │
 │ │ Field:                                                        │ │

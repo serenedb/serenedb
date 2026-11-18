@@ -51,8 +51,12 @@ duckdb::unique_ptr<duckdb::Expression> SubstituteParameters(
 duckdb::unique_ptr<duckdb::Expression> NormalizeClaimShape(
   duckdb::ClientContext& context, duckdb::unique_ptr<duckdb::Expression> expr);
 
-const duckdb::BoundColumnRefExpression* SoleColumn(
-  const duckdb::Expression& conjunct);
+struct RowForm {
+  std::vector<const duckdb::BoundColumnRefExpression*> columns;
+  duckdb::unique_ptr<duckdb::Expression> expr;
+};
+
+std::optional<RowForm> RowFormOf(const duckdb::Expression& conjunct);
 
 duckdb::unique_ptr<duckdb::Expression> ColumnFormOf(
   duckdb::unique_ptr<duckdb::Expression> conjunct);

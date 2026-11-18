@@ -1,0 +1,57 @@
+control substitution on
+
+statement ok
+CREATE TABLE sobn_t (id SERIAL, v INT);
+
+
+statement ok
+INSERT INTO sobn_t (v) VALUES (1);
+
+
+statement ok
+ALTER SEQUENCE sobn_t_id_seq OWNED BY NONE;
+
+
+query
+SELECT pg_get_serial_sequence('sobn_t', 'id') IS NULL AS detached;
+----
+detached
+t
+
+
+statement ok
+SET sdb_faults = 'shutdown_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_restart
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT pg_get_serial_sequence('sobn_t', 'id') IS NULL AS detached;
+----
+detached
+t
+
+
+connection after_restart
+statement error
+DROP SEQUENCE sobn_t_id_seq;
+----
+db error: ERROR: cannot drop sequence sobn_t_id_seq because other objects depend on it
+DETAIL: default value for column id of table sobn_t depends on sequence sobn_t_id_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+
+
+connection after_restart
+statement ok
+DROP TABLE sobn_t;
+
+
+connection after_restart
+query
+SELECT nextval('sobn_t_id_seq') > 1 AS fresh;
+----
+fresh
+t

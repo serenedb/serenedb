@@ -37,6 +37,7 @@
 #include "formats/column/test_cs_helpers.hpp"
 #include "insert_field.hpp"
 #include "postings_cursor.hpp"
+#include "test_index_writer.hpp"
 #include "test_resources.hpp"
 #include "tests_shared.hpp"
 #include "token_sink_utils.hpp"
@@ -1149,8 +1150,8 @@ namespace {
 
 TEST(InverterEndToEndTest, InsertKeywordAndTokensThroughWriter) {
   MemoryDirectory dir;
-  auto writer =
-    IndexWriter::Make(dir, kOmCreate, irs::tests::DefaultWriterOptions());
+  auto writer = ::tests::IndexWriter::Make(dir, ::tests::kOmCreate,
+                                           irs::tests::DefaultWriterOptions());
   ASSERT_NE(nullptr, writer);
 
   constexpr field_id kKeyword = 1;
@@ -1200,10 +1201,9 @@ TEST(InverterEndToEndTest, InsertKeywordAndTokensThroughWriter) {
   }
   ASSERT_TRUE(writer->RefreshCommit());
 
-  auto reader = DirectoryReader(dir, irs::tests::DefaultReaderOptions());
-  ASSERT_TRUE(reader);
-  ASSERT_EQ(3, reader->docs_count());
-  const auto& segment = (*reader)[0];
+  auto reader = ::tests::OpenReader(dir, irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(3, reader.docs_count());
+  const auto& segment = (reader)[0];
 
   const auto* keyword_reader = segment.field(kKeyword);
   ASSERT_NE(nullptr, keyword_reader);
@@ -1255,8 +1255,8 @@ TEST(InverterEndToEndTest, InsertKeywordAndTokensThroughWriter) {
 
 TEST(InverterEndToEndTest, TermCrossingScatterBlockBoundary) {
   MemoryDirectory dir;
-  auto writer =
-    IndexWriter::Make(dir, kOmCreate, irs::tests::DefaultWriterOptions());
+  auto writer = ::tests::IndexWriter::Make(dir, ::tests::kOmCreate,
+                                           irs::tests::DefaultWriterOptions());
   ASSERT_NE(nullptr, writer);
 
   constexpr field_id kFreq3 = 1;
@@ -1303,10 +1303,9 @@ TEST(InverterEndToEndTest, TermCrossingScatterBlockBoundary) {
   }
   ASSERT_TRUE(writer->RefreshCommit());
 
-  auto reader = DirectoryReader(dir, irs::tests::DefaultReaderOptions());
-  ASSERT_TRUE(reader);
-  ASSERT_EQ(kFreq1Docs, reader->docs_count());
-  const auto& segment = (*reader)[0];
+  auto reader = ::tests::OpenReader(dir, irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(kFreq1Docs, reader.docs_count());
+  const auto& segment = (reader)[0];
 
   {
     const auto* field = segment.field(kFreq3);
@@ -1361,8 +1360,8 @@ bool InsertNullIfAny(const IndexWriter::Document& doc, field_id id,
 
 TEST(InverterEndToEndTest, NullBlockUvfAllValidMaskCreatesNoField) {
   MemoryDirectory dir;
-  auto writer =
-    IndexWriter::Make(dir, kOmCreate, irs::tests::DefaultWriterOptions());
+  auto writer = ::tests::IndexWriter::Make(dir, ::tests::kOmCreate,
+                                           irs::tests::DefaultWriterOptions());
   ASSERT_NE(nullptr, writer);
 
   constexpr field_id kKeyword = 1;
@@ -1394,17 +1393,16 @@ TEST(InverterEndToEndTest, NullBlockUvfAllValidMaskCreatesNoField) {
   }
   ASSERT_TRUE(writer->RefreshCommit());
 
-  auto reader = DirectoryReader(dir, irs::tests::DefaultReaderOptions());
-  ASSERT_TRUE(reader);
-  const auto& segment = (*reader)[0];
+  auto reader = ::tests::OpenReader(dir, irs::tests::DefaultReaderOptions());
+  const auto& segment = (reader)[0];
   ASSERT_NE(nullptr, segment.field(kKeyword));
   ASSERT_EQ(nullptr, segment.field(kNull, StringLayout::kNulls));
 }
 
 TEST(InverterEndToEndTest, NullBlockUvfInvalidRows) {
   MemoryDirectory dir;
-  auto writer =
-    IndexWriter::Make(dir, kOmCreate, irs::tests::DefaultWriterOptions());
+  auto writer = ::tests::IndexWriter::Make(dir, ::tests::kOmCreate,
+                                           irs::tests::DefaultWriterOptions());
   ASSERT_NE(nullptr, writer);
 
   constexpr field_id kKeyword = 1;
@@ -1461,9 +1459,8 @@ TEST(InverterEndToEndTest, NullBlockUvfInvalidRows) {
   }
   ASSERT_TRUE(writer->RefreshCommit());
 
-  auto reader = DirectoryReader(dir, irs::tests::DefaultReaderOptions());
-  ASSERT_TRUE(reader);
-  const auto& segment = (*reader)[0];
+  auto reader = ::tests::OpenReader(dir, irs::tests::DefaultReaderOptions());
+  const auto& segment = (reader)[0];
 
   const auto* keyword_reader = segment.field(kKeyword);
   ASSERT_NE(nullptr, keyword_reader);
@@ -2284,8 +2281,8 @@ TEST(InverterEndToEndTest, EmptyPositionalFieldWritesNoStreams) {
 
   const auto run_case = [&](bool text_tokens) {
     MemoryDirectory dir;
-    auto writer =
-      IndexWriter::Make(dir, kOmCreate, irs::tests::DefaultWriterOptions());
+    auto writer = ::tests::IndexWriter::Make(
+      dir, ::tests::kOmCreate, irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
     auto batch = std::make_unique<TokenBatch>();
     {
@@ -2317,9 +2314,8 @@ TEST(InverterEndToEndTest, EmptyPositionalFieldWritesNoStreams) {
     }
     ASSERT_TRUE(writer->RefreshCommit());
 
-    auto reader = DirectoryReader(dir, irs::tests::DefaultReaderOptions());
-    ASSERT_TRUE(reader);
-    const auto& segment = (*reader)[0];
+    auto reader = ::tests::OpenReader(dir, irs::tests::DefaultReaderOptions());
+    const auto& segment = (reader)[0];
     ASSERT_NE(nullptr, segment.field(kKeyword));
     const auto* text = segment.field(kText);
     EXPECT_EQ(text_tokens, text != nullptr);

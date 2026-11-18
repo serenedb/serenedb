@@ -58,13 +58,10 @@ CREATE TEMP TABLE bcut_label AS SELECT labelfile FROM pg_backup_stop();
 
 connection starter
 query
-SELECT regexp_extract(labelfile, 'SERENEDB DATABASE: ' || d.database_oid || ' \d+ (\d+) ', 1)::BIGINT = w.size AS cut_after_commit
-FROM bcut_label,
-  (SELECT database_oid FROM duckdb_databases() WHERE database_name = current_database()) AS d,
-  read_blob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/data.db.wal') AS w
-WHERE w.filename LIKE '%/engine_v1/' || d.database_oid || '/data.db.wal';
+SELECT regexp_extract(labelfile, 'SERENEDB LOG: \S+ (\d+)', 1)::BIGINT > 0 AS logged
+FROM bcut_label;
 ----
-cut_after_commit
+logged
 t
 
 

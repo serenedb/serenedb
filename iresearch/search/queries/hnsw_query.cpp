@@ -253,7 +253,7 @@ std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
                                   const SubReader& segment,
                                   const AnnEntries* entries = nullptr,
                                   const uint64_t* admitted = nullptr) {
-  const auto it_mask = segment.MaskedDocs();
+  const auto* mask = segment.docs_mask();
   const auto end =
     doc_limits::min() + static_cast<doc_id_t>(segment.docs_count());
   std::vector<ScoreDoc> hits;
@@ -262,7 +262,7 @@ std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
     const auto row = RowOf(entries, c.node);
     SDB_ENSURE(row >= doc_limits::min() && row < end,
                "an hnsw hit is outside its segment");
-    if (it_mask.Contains(row) || !Admitted(admitted, row)) {
+    if ((mask && mask->Contains(row)) || !Admitted(admitted, row)) {
       continue;
     }
     hits.push_back({.score = c.score,
@@ -285,7 +285,7 @@ std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
   absl::c_sort(order, [&](uint32_t l, uint32_t r) {
     return found[l].node < found[r].node;
   });
-  const auto it_mask = segment.MaskedDocs();
+  const auto* mask = segment.docs_mask();
   const auto end =
     doc_limits::min() + static_cast<doc_id_t>(segment.docs_count());
   std::vector<ScoreDoc> hits;
@@ -296,7 +296,7 @@ std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
     const auto row = RowOf(entries, found[i].node);
     SDB_ENSURE(row >= doc_limits::min() && row < end,
                "an hnsw hit is outside its segment");
-    if (it_mask.Contains(row) || !Admitted(admitted, row)) {
+    if ((mask && mask->Contains(row)) || !Admitted(admitted, row)) {
       continue;
     }
     hits.push_back(

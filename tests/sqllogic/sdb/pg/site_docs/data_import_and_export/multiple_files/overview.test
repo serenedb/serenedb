@@ -1,5 +1,8 @@
 control substitution on
 
+statement ok
+SET SESSION preserve_insertion_order = true;
+
 # DOCS_TEST: example_001
 
 statement ok

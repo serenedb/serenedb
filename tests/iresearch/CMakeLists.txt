@@ -99,13 +99,13 @@ add_executable(
     index/index_adopt_tests.cpp
     index/index_column_tests.cpp
     index/index_death_tests.cpp
-    index/index_meta_tests.cpp
     index/index_profile_tests.cpp
     index/index_tests.cpp
     index/inverter_oracle_test.cpp
     index/inverter_tests.cpp
     index/merge_writer_tests.cpp
     index/norm_test.cpp
+    index/piece_tests.cpp
     index/segment_writer_tests.cpp
     index/sorted_index_tests.cpp
     parser/lucene_parser_test.cpp
@@ -115,9 +115,11 @@ add_executable(
     search/block_scoring_test.cpp
     search/bm25_test.cpp
     search/boolean_filter_tests.cpp
+    search/boolean_window_test.cpp
     search/boost_attribute_test.cpp
     search/boost_query_test.cpp
     search/col_filter_leaf_test.cpp
+    search/conjunction_leaves_test.cpp
     search/count_subtract_test.cpp
     search/dfi_test.cpp
     search/doc_collector_test.cpp
@@ -133,6 +135,7 @@ add_executable(
     search/indri_dirichlet_test.cpp
     search/levenshtein_filter_test.cpp
     search/lm_test.cpp
+    search/masked_leaf_test.cpp
     search/maxsim_test.cpp
     search/merge_consistency_test.cpp
     search/nested_filter_test.cpp
@@ -145,6 +148,7 @@ add_executable(
     search/phrase_slop_matcher_fuzz.cpp
     search/phrase_slop_matcher_tests.cpp
     search/prefix_filter_test.cpp
+    search/pruned_top_test.cpp
     search/range_filter_test.cpp
     search/raw_tf_test.cpp
     search/regexp_filter_test.cpp
@@ -167,6 +171,7 @@ add_executable(
     store/directory_cleaner_tests.cpp
     store/directory_test_case.cpp
     store/memory_index_output_tests.cpp
+    store/overlay_directory_tests.cpp
     store/store_utils_tests.cpp
     utils/bit_packing_tests.cpp
     utils/bit_utils_tests.cpp
@@ -176,6 +181,7 @@ add_executable(
     utils/crc_test.cpp
     utils/directory_utils_tests.cpp
     utils/file_utils_tests.cpp
+    utils/group_commit_test.cpp
     utils/huge_page_allocator_test.cpp
     utils/json_leaf_test.cpp
     utils/levenshtein_utils_test.cpp
@@ -204,7 +210,7 @@ add_executable(
 )
 target_link_libraries(
     iresearch-tests
-    PRIVATE iresearch-test-support search-benchmark-common
+    PRIVATE iresearch-test-support iresearch-test-writer search-benchmark-common
 )
 sdb_link_duckdb_extensions(iresearch-tests)
 

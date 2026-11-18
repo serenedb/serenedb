@@ -513,6 +513,12 @@ class EntriesReader final : public irs::BasicTermReader {
 
 class TermDictTest : public tests::DirectoryTestCaseBase<> {
  protected:
+  void TearDown() final {
+    _reader.reset();
+    _idx.reset();
+    DirectoryTestCaseBase::TearDown();
+  }
+
   void Write(std::span<const Field> fields, bool compaction = false,
              uint64_t keyed_bound = 0) {
     irs::doc_id_t docs = 0;
@@ -558,7 +564,7 @@ class TermDictTest : public tests::DirectoryTestCaseBase<> {
       writer.write(field->dict, reader);
     }
     writer.end();
-    idx.Commit();
+    idx.Commit(nullptr);
     Open(dir());
   }
 

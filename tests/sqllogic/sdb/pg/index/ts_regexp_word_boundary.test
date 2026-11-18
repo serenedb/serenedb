@@ -2,7 +2,7 @@ hash-threshold 100
 
 
 statement ok
-CREATE TABLE regexp_names (id BIGINT, name VARCHAR) WITH (storage = 'search')
+CREATE TABLE regexp_names (id BIGINT, name VARCHAR)
 
 
 statement ok
@@ -11,10 +11,6 @@ CREATE INDEX regexp_names_idx ON regexp_names USING inverted (id, name)
 
 statement ok
 INSERT INTO regexp_names VALUES (1, 'siemens'), (2, 'the siemens ag'), (3, 'The Siemens Financial Services'), (4, 'siemensland'), (5, 'thesiemens'), (6, 'siemens-energy'), (7, 'access point'), (8, 'accessories inc'), (9, 'senior data engineer'), (10, 'bigdata engineer'), (11, 'data engineering'), (12, 'Data Engineer, GCP')
-
-
-statement ok
-VACUUM (REFRESH_TABLE) regexp_names
 
 
 query

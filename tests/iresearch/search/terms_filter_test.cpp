@@ -203,7 +203,7 @@ TEST_P(TermsFilterTestCase, boost) {
       MakeFilter(kDuplicatedId, {{"abcd", 0.5f}, {"vczc", 0.25f}});
     q.SetBoost(boost);
 
-    tests::PreparedFilter prepared{q, *rdr, nullptr, counter};
+    tests::PreparedFilter prepared{q, rdr, nullptr, counter};
     ASSERT_EQ(boost, prepared.Query(0)->Boost());
   }
   EXPECT_EQ(counter.current, 0);
@@ -477,7 +477,7 @@ struct ScoreOperator : public irs::ScoreOperator {
 
 TEST_P(TermsFilterTestCase, min_match) {
   // write segments
-  auto writer = open_writer(irs::kOmCreate);
+  auto writer = open_writer(tests::kOmCreate);
 
   {
     tests::JsonDocGenerator gen{resource("AdventureWorks2014.json"),

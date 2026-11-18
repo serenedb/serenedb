@@ -39,9 +39,6 @@ CREATE INDEX m_v_expr_text_st ON m_v USING inverted(pk, (upper(v)) kw_dict)
 statement ok
 INSERT INTO m_v VALUES (1, 'alpha'), (2, 'beta'), (3, 'gamma');
 
-statement ok
-VACUUM (REFRESH_TABLE) m_v;
-
 query
 SELECT pk FROM m_v_col_text_st  WHERE v @@ ts_like('beta')       ORDER BY pk;
 ----
@@ -100,9 +97,6 @@ INSERT INTO m_vla VALUES
     (1, ['alpha', 'beta'],     ['alpha', 'beta', 'gamma']),
     (2, ['delta'],             ['delta', 'epsilon', 'zeta']);
 
-statement ok
-VACUUM (REFRESH_TABLE) m_vla;
-
 query
 SELECT pk FROM m_vla_vs_text WHERE vs @@ ts_like('beta');
 ----
@@ -146,9 +140,6 @@ INSERT INTO g2_e VALUES
     (1, 'alpha', '\\x68656c6c6f'::BLOB, 10),
     (2, 'beta',  '\\x776f726c64'::BLOB, 20),
     (3, 'gamma', '\\xdeadbeef'::BLOB,   30);
-
-statement ok
-VACUUM (REFRESH_TABLE) g2_e;
 
 query
 SELECT pk FROM g2_e_expr_wild_st WHERE upper(v) @@ ts_ngram('BET', 0.5) ORDER BY pk;

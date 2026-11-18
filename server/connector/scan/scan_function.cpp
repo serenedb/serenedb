@@ -42,6 +42,7 @@
 #include <iresearch/search/scorers/vector_similarity_scorer.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <magic_enum/magic_enum.hpp>
 
 #include "connector/column_id.h"
 #include "connector/optimizer/iresearch_plan.h"
@@ -243,12 +244,13 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
               "sub-query"));
   }
   state->scan = &ss;
-  state->snapshot = ss.Snapshot(context);
-  const auto& snapshot = *state->snapshot;
-  state->reader = &snapshot.reader;
-  state->total_segments = snapshot.reader.size();
-  if (ss.plan_cache.deferred) {
-    ApplyDeferredClaim(*state, context, ss);
+  AcquireScanSnapshot(*state, context, ss);
+  if (ss.score.text && ss.relation.kind == ScanEntryKind::SearchTable &&
+      !state->ClaimedWhere()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG(ss.score.text->Name(),
+              "() requires an inverted index scan in the same sub-query"));
   }
   state->vector_scorer = ss.score.vector ? &*ss.score.vector : nullptr;
   state->top_k = ss.score.top_k;
@@ -292,6 +294,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
                           absl::c_any_of(*state->reader, [](const auto& seg) {
                             return seg.live_docs_count() != seg.docs_count();
                           }));
+    BuildTsDictFields(*state);
     ClassifySegments(*state);
     BuildClaimPlan(*state, context);
     if (state->splittable) {
@@ -323,6 +326,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   }
 
   state->needs_terms = !ss.offsets.requests.empty();
+  BuildOffsetsOutputs(*state);
 
   if (state->shape == ScanShape::TopK || state->shape == ScanShape::Ann ||
       state->shape == ScanShape::Stream) {
@@ -376,22 +380,24 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   state->stats_barrier.Reset(static_cast<uint32_t>(state->total_segments));
 
   if (state->shape == ScanShape::TopK) {
+    BuildFetchedCopy(*state);
     InitTopKGlobal(*state, context);
   } else if (state->shape == ScanShape::Ann) {
+    BuildFetchedCopy(*state);
     InitAnnGlobal(*state, context);
   }
   return state;
 }
 
 duckdb::unique_ptr<duckdb::LocalTableFunctionState> IResearchScanInitLocal(
-  duckdb::ExecutionContext&, duckdb::TableFunctionInitInput& input,
+  duckdb::ExecutionContext&, duckdb::TableFunctionInitInput&,
   duckdb::GlobalTableFunctionState* state) {
   auto& g = state->Cast<ScanGlobalState>();
   const auto worker = g.worker_count.fetch_add(1, std::memory_order_relaxed);
   duckdb::unique_ptr<duckdb::LocalTableFunctionState> result;
   switch (g.shape) {
     case ScanShape::TsDict: {
-      result = MakeTsDictLocal(g, input);
+      result = MakeTsDictLocal(g);
       break;
     }
     case ScanShape::Count: {
@@ -401,14 +407,14 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> IResearchScanInitLocal(
     case ScanShape::TopK: {
       auto l = duckdb::make_uniq<TopKLocalState>();
       l->worker = worker;
-      InitTopKLocal(g, *l, input);
+      InitTopKLocal(g, *l);
       result = std::move(l);
       break;
     }
     case ScanShape::Ann: {
       auto l = duckdb::make_uniq<AnnLocalState>();
       l->worker = worker;
-      InitAnnLocal(g, *l, input);
+      InitAnnLocal(g, *l);
       result = std::move(l);
       break;
     }
@@ -418,7 +424,7 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> IResearchScanInitLocal(
     }
     case ScanShape::Stream: {
       auto l = duckdb::make_uniq<StreamLocalState>();
-      BuildOffsetsEntries(*l, input, g.Bind());
+      l->BindOffsets(g);
       result = std::move(l);
       break;
     }
@@ -436,10 +442,6 @@ void IResearchScanFunction(duckdb::ClientContext& context,
   }
   const bool reorder = !g.output_projection_ids.empty();
   auto& base = data.local_state->Cast<ScanLocalState>();
-  if (base.parked_on) {
-    base.parked_on->Resume();
-    base.parked_on = nullptr;
-  }
   if (reorder) {
     if (base.scan_chunk.ColumnCount() == 0) {
       base.scan_chunk.Initialize(context, g.projected_types);
@@ -504,33 +506,41 @@ void IResearchSetScanOrder(
     return;
   }
   auto& bd = bind_data->Cast<ScanBindData>();
-  if (options->row_group_offset != 0 ||
-      options->leading_null_group_offset != 0) {
-    bd.search.filter = std::make_shared<irs::Empty>();
-    return;
-  }
-  if (!options->single_order_key ||
-      (!options->row_limit.IsValid() && !options->row_limit_expression)) {
-    return;
-  }
-  if (GetBoolSetting(context, "sdb_disable_top_k_optimization")) {
-    return;
-  }
   const auto order_col =
     ScanColumnOfStorage(bd, options->column_idx.GetPrimaryIndex());
-  if (order_col >= bd.columns.ids.size()) {
+  const auto order = [&] {
+    return ScanOrderSpec{
+      .column = bd.columns.ids[order_col],
+      .order_type = options->order_type,
+      .null_order = options->null_order,
+      .order_by = options->order_by,
+      .column_type = options->column_type,
+      .storage = options->column_idx,
+      .skipped_groups = options->row_group_offset,
+      .skipped_null_groups = options->leading_null_group_offset,
+    };
+  };
+  if (options->row_group_offset != 0 ||
+      options->leading_null_group_offset != 0) {
+    SDB_ASSERT(order_col < bd.columns.ids.size() &&
+               bd.relation.Stores(bd.columns.ids[order_col]));
+    bd.scan_order = order();
+    return;
+  }
+  if (GetBoolSetting(context, "sdb_disable_top_k_optimization") ||
+      order_col >= bd.columns.ids.size()) {
     return;
   }
   const auto col_id = bd.columns.ids[order_col];
   if (col_id != kInvertedIndexScoreId) {
     if (bd.relation.Stores(col_id) && !bd.scan_order) {
-      bd.scan_order =
-        ScanOrderSpec{col_id, options->order_type, options->null_order,
-                      options->order_by, options->column_type};
+      bd.scan_order = order();
     }
     return;
   }
-  if (bd.score.HasTopK()) {
+  if (!options->single_order_key ||
+      (!options->row_limit.IsValid() && !options->row_limit_expression) ||
+      bd.score.HasTopK()) {
     return;
   }
   const auto take_limit = [&] {
@@ -549,7 +559,8 @@ void IResearchSetScanOrder(
     return;
   }
   if (bd.score.vector) {
-    if (options->order_type != bd.score.vector->natural_order) {
+    if (options->order_type != bd.score.vector->natural_order ||
+        options->null_order == duckdb::OrderByNullType::NULLS_FIRST) {
       return;
     }
     take_limit();
@@ -585,6 +596,18 @@ bool IResearchConsumeTopN(duckdb::ClientContext&,
 
 namespace {
 
+void ScanVerifyDmlTarget(duckdb::ClientContext&,
+                         duckdb::optional_ptr<duckdb::FunctionData> bind_data) {
+  const auto& bind = bind_data->Cast<ScanBindData>();
+  if (bind.relation.IsInvertedIndex()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+      ERR_MSG("cannot open relation \"",
+              bind.relation.inverted_index->name.GetIdentifierName(), "\""),
+      ERR_DETAIL("This operation is not supported for indexes."));
+  }
+}
+
 duckdb::BindInfo ScanGetBindInfo(
   const duckdb::optional_ptr<duckdb::FunctionData> bind_data) {
   auto& bind = const_cast<ScanBindData&>(bind_data->Cast<ScanBindData>());
@@ -611,7 +634,6 @@ duckdb::virtual_column_map_t ScanGetVirtualColumns(
   const auto& bind = bind_p->Cast<ScanBindData>();
   if (bind.relation.table_entry) {
     result = bind.relation.table_entry->GetVirtualColumns();
-    result.erase(duckdb::COLUMN_IDENTIFIER_TABLE_OID);
   }
   if (bind.IsViewBacked()) {
     result.insert(
@@ -635,28 +657,57 @@ duckdb::virtual_column_map_t ScanGetVirtualColumns(
   return result;
 }
 
-void ScanSerialize(duckdb::Serializer&,
-                   const duckdb::optional_ptr<duckdb::FunctionData>,
+void ScanSerialize(duckdb::Serializer& serializer,
+                   const duckdb::optional_ptr<duckdb::FunctionData> bind_data,
                    const duckdb::BoundTableFunction&) {
-  throw duckdb::NotImplementedException(
-    "iresearch_scan serialization not implemented");
+  const auto& bind = bind_data->Cast<ScanBindData>();
+  if (bind.HasPushdowns()) {
+    throw duckdb::NotImplementedException(
+      "iresearch_scan serialization of pushed-down search not implemented");
+  }
+  const auto& relation = bind.relation;
+  const duckdb::InCatalogEntry& entry =
+    relation.inverted_index
+      ? static_cast<const duckdb::InCatalogEntry&>(*relation.inverted_index)
+      : *relation.table_entry;
+  serializer.WriteProperty(100, "relation", std::string{bind.RelationName()});
+  serializer.WriteProperty(101, "catalog", entry.catalog.GetName());
+  serializer.WriteProperty(102, "oid", entry.oid);
+  serializer.WriteProperty(103, "kind",
+                           std::string{magic_enum::enum_name(relation.kind)});
+  serializer.WriteList(104, "columns", bind.columns.ids.size(),
+                       [&](auto& list, duckdb::idx_t i) {
+                         list.WriteElement(bind.columns.ids[i]);
+                       });
 }
 
 duckdb::unique_ptr<duckdb::FunctionData> ScanDeserialize(
-  duckdb::Deserializer&, duckdb::BoundTableFunction&) {
-  throw duckdb::NotImplementedException(
-    "iresearch_scan deserialization not implemented");
+  duckdb::Deserializer& deserializer, duckdb::BoundTableFunction&) {
+  deserializer.ReadProperty<std::string>(100, "relation");
+  const auto catalog =
+    deserializer.ReadProperty<duckdb::Identifier>(101, "catalog");
+  const auto oid = deserializer.ReadProperty<duckdb::idx_t>(102, "oid");
+  const auto kind = magic_enum::enum_cast<ScanEntryKind>(
+    deserializer.ReadProperty<std::string>(103, "kind"));
+  std::vector<ColumnId> columns;
+  deserializer.ReadList(104, "columns", [&](auto& list, duckdb::idx_t) {
+    columns.push_back(list.template ReadElement<ColumnId>());
+  });
+  SDB_ASSERT(kind);
+  auto bind =
+    RebindScan(deserializer.Get<duckdb::ClientContext&>(), catalog, oid, *kind);
+  SDB_ASSERT(bind->columns.ids == columns);
+  return bind;
 }
 
 }  // namespace
 
 duckdb::TableFunction CreateIResearchScanFunction() {
+  duckdb::FunctionSignature signature;
+  signature.AddArgs("path", duckdb::LogicalType::VARCHAR);
   duckdb::TableFunction func{
-    "iresearch_scan",
-    {duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR)},
-    IResearchScanFunction,
-    ScanBind,
-    IResearchScanInitGlobal,
+    "iresearch_scan", std::move(signature),    IResearchScanFunction,
+    ScanBind,         IResearchScanInitGlobal,
   };
   func.init_local = IResearchScanInitLocal;
   func.cardinality = ScanCardinality;
@@ -667,6 +718,7 @@ duckdb::TableFunction CreateIResearchScanFunction() {
   func.get_bind_info = ScanGetBindInfo;
   func.get_virtual_columns = ScanGetVirtualColumns;
   func.get_row_id_columns = IResearchGetRowIdColumns;
+  func.verify_dml_target = ScanVerifyDmlTarget;
   func.supports_lookup = &IResearchSupportsLookup;
   func.get_lookup_function = &IResearchGetLookupFunction;
   func.get_lookup_source = &IResearchGetLookupSource;
@@ -679,7 +731,6 @@ duckdb::TableFunction CreateIResearchScanFunction() {
   func.statistics_extended = &IResearchScanStatistics;
   func.serialize = ScanSerialize;
   func.deserialize = ScanDeserialize;
-  func.verify_serialization = false;
   func.projection_pushdown = true;
   func.filter_pushdown = true;
   func.filter_prune = true;

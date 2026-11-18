@@ -28,44 +28,54 @@
 
 namespace irs {
 
-QueryBuilder::ptr ByVectorExact::PrepareSegment(
-  const SubReader& segment, const PrepareContext& ctx) const {
-  const auto& opts = options();
-  const auto* column = segment.Column(field_id());
+QueryBuilder::ptr PrepareExactVectors(
+  const SubReader& segment, const PrepareContext& ctx, field_id column_id,
+  std::span<const float> query, field_id ann_id, VectorMetric metric,
+  const std::shared_ptr<const Filter>& inner_filter, float radius,
+  bool inclusive, score_t boost, bool maxsim) {
+  const auto* column = segment.Column(column_id);
   const auto* columns = segment.GetColReader();
   if (!column || !columns || !column->Child() || column->RowCount() == 0) {
     return QueryBuilder::Empty();
   }
+  const auto* ann = segment.Ann(ann_id);
   const AnnEntries* entries = nullptr;
-  if (opts.maxsim) {
-    const auto* ann = segment.Ann(opts.ann_id);
-    entries = ann ? ann->Entries(segment, field_id()) : nullptr;
+  if (maxsim) {
+    entries = ann ? ann->Entries(segment, column_id) : nullptr;
     column = column->Child();
     if (!entries || !column->Child() || column->ArraySize() == 0 ||
-        opts.query.size() % column->ArraySize() != 0) {
+        query.size() % column->ArraySize() != 0) {
       return QueryBuilder::Empty();
     }
-  } else if (column->ArraySize() != opts.query.size()) {
+  } else if (column->ArraySize() != query.size()) {
     return QueryBuilder::Empty();
   }
   QueryBuilder::ptr inner;
-  if (!PrepareInnerFilter(opts.inner, segment, ctx, inner)) {
+  if (!PrepareInnerFilter(inner_filter, segment, ctx, inner)) {
     return QueryBuilder::Empty();
   }
   AnnExactCodes codes;
-  if (const auto* ann = segment.Ann(opts.ann_id); ann && !entries) {
-    codes = ann->PrepareExact(segment, opts.query, opts.metric);
+  if (ann && !entries) {
+    codes = ann->PrepareExact(segment, query, metric);
   }
   std::optional<score_t> threshold;
-  if (opts.radius != std::numeric_limits<float>::max()) {
-    threshold = RadiusThreshold(opts.metric, opts.radius);
+  if (radius != std::numeric_limits<float>::max()) {
+    threshold = RadiusThreshold(metric, radius);
   }
   auto built = memory::make_tracked<ExactVectorQuery>(
-    ctx.memory, segment, *column, *columns, opts.query, opts.metric,
-    ctx.boost * GetBoost(), std::move(inner), std::move(codes), threshold,
-    opts.inclusive, entries);
+    ctx.memory, segment, *column, *columns,
+    std::vector<float>{query.begin(), query.end()}, metric, ctx.boost * boost,
+    std::move(inner), std::move(codes), threshold, inclusive, entries);
   built->SetStats(ctx.Record());
   return built;
+}
+
+QueryBuilder::ptr ByVectorExact::PrepareSegment(
+  const SubReader& segment, const PrepareContext& ctx) const {
+  const auto& opts = options();
+  return PrepareExactVectors(segment, ctx, field_id(), opts.query, opts.ann_id,
+                             opts.metric, opts.inner, opts.radius,
+                             opts.inclusive, GetBoost(), opts.maxsim);
 }
 
 PrepareCollector::ptr ByVectorExact::MakeCollectorImpl(const Scorer* scorer,

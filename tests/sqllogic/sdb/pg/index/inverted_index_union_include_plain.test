@@ -29,10 +29,6 @@ INSERT INTO union_inc_plain VALUES
   (4, 'delta horse', 7);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) union_inc_plain;
-
-
 query
 SELECT id, payload FROM union_inc_plain_idx WHERE body @@ ts_phrase('alpha')
 ORDER BY id;

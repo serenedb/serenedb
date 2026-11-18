@@ -80,10 +80,8 @@ export const SectionsRepository = {
         await ctx.pool.query(`DELETE FROM ${ctx.table}`);
     },
 
-    /** Make pending rows searchable + refresh BM25 term stats. */
     refreshIndex: async (): Promise<void> => {
         const ctx = getDbContext();
-        await ctx.pool.query(`VACUUM (REFRESH_TABLE) ${ctx.table}`);
         try {
             await ctx.pool.query(`VACUUM (RECOMPUTE_STATS_TABLE) ${ctx.table}`);
         } catch {

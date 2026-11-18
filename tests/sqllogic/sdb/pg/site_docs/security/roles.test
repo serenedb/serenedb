@@ -112,9 +112,8 @@ ALTER TABLE doc_sec_audit OWNER TO doc_sec_owner;
 statement error
 DROP ROLE doc_sec_owner;
 ----
-db error: ERROR: Cannot drop entry "doc_sec_owner" because there are entries that depend on it.
-table "doc_sec_audit" depends on role "doc_sec_owner".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: role "doc_sec_owner" cannot be dropped because some objects depend on it
+DETAIL: owner of table doc_sec_audit
 
 
 statement ok
@@ -139,9 +138,8 @@ GRANT SELECT ON doc_sec_log TO doc_sec_viewer;
 statement error
 DROP ROLE doc_sec_viewer;
 ----
-db error: ERROR: Cannot drop entry "doc_sec_viewer" because there are entries that depend on it.
-table "doc_sec_log" depends on role "doc_sec_viewer".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: role "doc_sec_viewer" cannot be dropped because some objects depend on it
+DETAIL: privileges for table doc_sec_log
 
 
 statement ok

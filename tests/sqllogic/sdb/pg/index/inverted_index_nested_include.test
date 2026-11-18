@@ -45,24 +45,19 @@ statement ok
 INSERT INTO n1 VALUES (4, 'four',  [])
 
 
-statement ok
-VACUUM (REFRESH_TABLE) n1
-
-
 query
 EXPLAIN SELECT pk, v FROM n1_idx WHERE t @@ ts_phrase('one');
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────╮
 │ Index: n1_idx        │
-│ Lookup: table        │
+│ Lookup: search       │
 │ Index Filter:        │
 │ ╭─ Term ───────────╮ │
 │ │ Field: t(string) │ │
 │ │ Value: one       │ │
 │ ╰──────────────────╯ │
-│ Projections: pk (l), │
-│              v (i)   │
+│ Projections: pk, v   │
 │ ~1 row               │
 ╰──────────────────────╯
 
@@ -108,25 +103,19 @@ INSERT INTO n2 VALUES (3, 'three', [['x','y','z'],[]])
 
 
 skipif pg-wire-extended
-statement ok
-VACUUM (REFRESH_TABLE) n2
-
-
-skipif pg-wire-extended
 query
 EXPLAIN SELECT pk, v FROM n2_idx WHERE t @@ ts_phrase('one');
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────╮
 │ Index: n2_idx        │
-│ Lookup: table        │
+│ Lookup: search       │
 │ Index Filter:        │
 │ ╭─ Term ───────────╮ │
 │ │ Field: t(string) │ │
 │ │ Value: one       │ │
 │ ╰──────────────────╯ │
-│ Projections: pk (l), │
-│              v (i)   │
+│ Projections: pk, v   │
 │ ~1 row               │
 ╰──────────────────────╯
 
@@ -180,25 +169,19 @@ INSERT INTO n3 VALUES (4, 'four',  ROW(NULL, NULL, [10.0, 20.0, 30.0]))
 
 
 skipif pg-wire-extended
-statement ok
-VACUUM (REFRESH_TABLE) n3
-
-
-skipif pg-wire-extended
 query
 EXPLAIN SELECT pk, v FROM n3_idx WHERE t @@ ts_phrase('one');
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────╮
 │ Index: n3_idx        │
-│ Lookup: table        │
+│ Lookup: search       │
 │ Index Filter:        │
 │ ╭─ Term ───────────╮ │
 │ │ Field: t(string) │ │
 │ │ Value: one       │ │
 │ ╰──────────────────╯ │
-│ Projections: pk (l), │
-│              v (i)   │
+│ Projections: pk, v   │
 │ ~1 row               │
 ╰──────────────────────╯
 
@@ -254,25 +237,19 @@ INSERT INTO n4 VALUES (4, 'four',  MAP {'p': NULL})
 
 
 skipif pg-wire-extended
-statement ok
-VACUUM (REFRESH_TABLE) n4
-
-
-skipif pg-wire-extended
 query
 EXPLAIN SELECT pk, v FROM n4_idx WHERE t @@ ts_phrase('one');
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────╮
 │ Index: n4_idx        │
-│ Lookup: table        │
+│ Lookup: search       │
 │ Index Filter:        │
 │ ╭─ Term ───────────╮ │
 │ │ Field: t(string) │ │
 │ │ Value: one       │ │
 │ ╰──────────────────╯ │
-│ Projections: pk (l), │
-│              v (i)   │
+│ Projections: pk, v   │
 │ ~1 row               │
 ╰──────────────────────╯
 
@@ -336,25 +313,19 @@ INSERT INTO n5 VALUES (5, 'five',  ROW(ROW('h5', NULL), [ROW(NULL, [7,8]), ROW('
 
 
 skipif pg-wire-extended
-statement ok
-VACUUM (REFRESH_TABLE) n5
-
-
-skipif pg-wire-extended
 query
 EXPLAIN SELECT pk, v FROM n5_idx WHERE t @@ ts_phrase('one');
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────╮
 │ Index: n5_idx        │
-│ Lookup: table        │
+│ Lookup: search       │
 │ Index Filter:        │
 │ ╭─ Term ───────────╮ │
 │ │ Field: t(string) │ │
 │ │ Value: one       │ │
 │ ╰──────────────────╯ │
-│ Projections: pk (l), │
-│              v (i)   │
+│ Projections: pk, v   │
 │ ~1 row               │
 ╰──────────────────────╯
 
@@ -423,25 +394,19 @@ INSERT INTO n6 VALUES (4, 'four',  [
 
 
 skipif pg-wire-extended
-statement ok
-VACUUM (REFRESH_TABLE) n6
-
-
-skipif pg-wire-extended
 query
 EXPLAIN SELECT pk, v FROM n6_idx WHERE t @@ ts_phrase('one');
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────╮
 │ Index: n6_idx        │
-│ Lookup: table        │
+│ Lookup: search       │
 │ Index Filter:        │
 │ ╭─ Term ───────────╮ │
 │ │ Field: t(string) │ │
 │ │ Value: one       │ │
 │ ╰──────────────────╯ │
-│ Projections: pk (l), │
-│              v (i)   │
+│ Projections: pk, v   │
 │ ~1 row               │
 ╰──────────────────────╯
 

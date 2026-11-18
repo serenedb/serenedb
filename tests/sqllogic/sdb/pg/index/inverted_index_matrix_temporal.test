@@ -24,9 +24,6 @@ INSERT INTO m_t VALUES
     (1, DATE '2024-01-01', TIMESTAMP '2024-01-01 00:00:00'),
     (2, DATE '2024-06-15', TIMESTAMP '2024-06-15 12:00:00');
 
-statement ok
-VACUUM (REFRESH_TABLE) m_t;
-
 query
 SELECT count(*) FROM m_t_date_col_st;
 ----
@@ -103,9 +100,6 @@ CREATE INDEX m_narrow_t16 ON m_narrow USING inverted(pk, t16);
 statement ok
 INSERT INTO m_narrow VALUES (1, -10::TINYINT, -100::SMALLINT), (2, 10::TINYINT, 100::SMALLINT);
 
-statement ok
-VACUUM (REFRESH_TABLE) m_narrow;
-
 query
 SELECT pk FROM m_narrow_t8 WHERE t8 @@ ts_between(-50::TINYINT, -5::TINYINT, true, true);
 ----
@@ -135,9 +129,6 @@ CREATE INDEX m_f_expr_ns ON m_f USING inverted(pk, (n * 2.0::FLOAT));
 statement ok
 INSERT INTO m_f VALUES (1, 1.5::FLOAT), (2, 2.5::FLOAT), (3, -0.5::FLOAT);
 
-statement ok
-VACUUM (REFRESH_TABLE) m_f;
-
 query
 SELECT pk FROM m_f_col_st WHERE n @@ ts_between(2.0::FLOAT, 3.0::FLOAT, true, true);
 ----
@@ -166,9 +157,6 @@ INSERT INTO m_tz VALUES
     (1, TIMESTAMPTZ '2024-01-01 00:00:00+00'),
     (2, TIMESTAMPTZ '2024-06-15 12:00:00+00');
 
-statement ok
-VACUUM (REFRESH_TABLE) m_tz;
-
 query
 SELECT pk FROM m_tz_col_ns WHERE ts @@ ts_between(TIMESTAMPTZ '2024-03-01 00:00:00+00', TIMESTAMPTZ '2024-12-31 00:00:00+00', true, true);
 ----
@@ -194,9 +182,6 @@ statement ok
 INSERT INTO m_dla VALUES
     (1, [DATE '2024-01-01', DATE '2024-06-15'], [DATE '2024-01-01', DATE '2024-06-15', DATE '2024-12-31']),
     (2, [DATE '2025-01-01'],                    [DATE '2025-01-01', DATE '2025-06-15', DATE '2025-12-31']);
-
-statement ok
-VACUUM (REFRESH_TABLE) m_dla;
 
 query
 SELECT pk FROM m_dla_ds WHERE ds @@ ts_between(DATE '2024-01-01', DATE '2024-12-31', true, true);
@@ -233,9 +218,6 @@ INSERT INTO m_time VALUES
     (1, TIME '06:00:00', TIMETZ '06:00:00+02', TIME_NS '06:00:00.000000001'),
     (2, TIME '18:30:00', TIMETZ '18:30:00+02', TIME_NS '18:30:00.999999999');
 
-statement ok
-VACUUM (REFRESH_TABLE) m_time;
-
 query
 SELECT pk FROM m_time_t WHERE t @@ ts_between(TIME '12:00:00', TIME '23:00:00', true, true);
 ----
@@ -249,7 +231,6 @@ SELECT pk FROM m_time_t WHERE t @@ ts_between(TIME_NS '12:00:00', TIME_NS '23:00
 ----
 pk
 2
-
 
 
 query
@@ -315,9 +296,6 @@ INSERT INTO m_scaled VALUES
         TIMESTAMP_NS '2024-01-01 00:00:00.000000001'),
     (2, TIMESTAMP_S '2024-06-15 12:00:00', TIMESTAMP_MS '2024-06-15 12:00:00.753',
         TIMESTAMP_NS '2024-06-15 12:00:00.123456789');
-
-statement ok
-VACUUM (REFRESH_TABLE) m_scaled;
 
 query
 SELECT pk FROM m_scaled_s WHERE ts_s @@ ts_between(TIMESTAMP_S '2024-03-01 00:00:00', TIMESTAMP_S '2024-12-31 00:00:00', true, true);
@@ -386,9 +364,6 @@ statement ok
 INSERT INTO m_tzns VALUES
     (1, TIMESTAMPTZ_NS '2024-01-01 00:00:00.000000001+00'),
     (2, TIMESTAMPTZ_NS '2024-06-15 12:00:00.123456789+00');
-
-statement ok
-VACUUM (REFRESH_TABLE) m_tzns;
 
 query
 SELECT pk FROM m_tzns_col WHERE ts @@ ts_between(TIMESTAMPTZ_NS '2024-03-01 00:00:00+00', TIMESTAMPTZ_NS '2024-12-31 00:00:00+00', true, true);

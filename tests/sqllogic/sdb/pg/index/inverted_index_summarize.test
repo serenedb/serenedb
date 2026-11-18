@@ -28,10 +28,6 @@ CREATE INDEX smz_idx ON smz
     INCLUDE (v, s)
 
 
-statement ok
-VACUUM (REFRESH_TABLE) smz
-
-
 query
 SUMMARIZE smz_idx;
 ----
@@ -68,10 +64,6 @@ statement ok
 CREATE INDEX smz_nested_idx ON smz_nested
     USING inverted(id)
     INCLUDE (vr, st, ls)
-
-
-statement ok
-VACUUM (REFRESH_TABLE) smz_nested
 
 
 query

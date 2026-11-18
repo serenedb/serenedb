@@ -36,8 +36,6 @@ namespace sdb::metrics {
 enum class Gauge : uint8_t {
   PgConnections,      // live pg-wire connections
   HttpConnections,    // live http connections
-  RefreshActive,      // refresh tasks running now
-  RefreshPending,     // refresh tasks queued
   CompactionActive,   // compaction tasks running now
   CompactionPending,  // compaction tasks queued
   CleanupActive,      // cleanup tasks running now

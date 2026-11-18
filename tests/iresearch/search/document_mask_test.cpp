@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
 #include <roaring/memory.h>
 
@@ -37,6 +38,7 @@
 #include <optional>
 #include <random>
 #include <roaring/roaring.hh>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -148,17 +150,25 @@ irs::DocumentMask RoundTrip(const irs::DocumentMask& mask) {
 
 std::vector<doc_id_t> DocsOfRuns(const irs::DocumentMask& mask,
                                  const irs::DocumentMask* except) {
+  irs::DocumentMaskBuilder kept{mask};
+  if (except) {
+    kept.Subtract(*except);
+  }
+  const auto live = std::move(kept).Take();
   std::vector<doc_id_t> docs;
   doc_id_t previous = 0;
-  mask.ForEachRun(except, [&](doc_id_t first, doc_id_t last) {
-    EXPECT_LT(first, last);
-    EXPECT_LT(previous, first);
-    previous = last;
-    for (auto doc = first; doc < last; ++doc) {
-      docs.push_back(doc);
+  irs::DocumentMask::Cursor cursor{live};
+  std::array<irs::MaskRun, 3> runs;
+  while (const auto count = cursor.ReadRuns(runs)) {
+    for (const auto& run : std::span{runs}.first(count)) {
+      EXPECT_LE(run.min, run.max);
+      EXPECT_LT(previous, run.min);
+      previous = run.max + 1;
+      for (auto doc = run.min; doc <= run.max; ++doc) {
+        docs.push_back(doc);
+      }
     }
-    return true;
-  });
+  }
   return docs;
 }
 
@@ -583,10 +593,9 @@ TEST_P(DocumentMaskTest, live_nodes_match_reference) {
   });
 }
 
-TEST_P(DocumentMaskTest, iterator_matches_reference) {
-  const irs::DocumentMask::Iterator it{_ptr};
+TEST_P(DocumentMaskTest, contains_matches_reference) {
   for (const auto target : Targets(false)) {
-    ASSERT_EQ(_ref->Masked(target), it.Contains(target)) << target;
+    ASSERT_EQ(_ref->Masked(target), _ptr && _ptr->Contains(target)) << target;
   }
 }
 
@@ -660,12 +669,13 @@ TEST(document_mask_test, builder_copies_a_published_mask) {
   irs::DocumentMaskBuilder builder{published};
   ASSERT_TRUE(builder.Add(2));
   ASSERT_TRUE(builder.Add(200000));
-  ASSERT_TRUE(builder.Contains(2));
-  ASSERT_TRUE(builder.Contains(200000));
-  ASSERT_FALSE(builder.Contains(5));
+  ASSERT_FALSE(builder.Add(2));
   ASSERT_FALSE(published.Contains(2));
   ASSERT_FALSE(published.Contains(200000));
   const auto mask = std::move(builder).Finish();
+  ASSERT_TRUE(mask.Contains(2));
+  ASSERT_TRUE(mask.Contains(200000));
+  ASSERT_FALSE(mask.Contains(5));
   irs::ResolveDocsMask(&mask, [&]<irs::DocsMaskType Mask>(Mask docs) {
     ASSERT_EQ(MaskKind::Mixed, Mask::kKind);
     ASSERT_EQ(1, docs.Probe(1));
@@ -679,14 +689,15 @@ TEST(document_mask_test, builder_merges_a_published_mask) {
   auto builder = Builder({1, 2, 200000});
   builder.Merge(published);
   ASSERT_EQ(published.Count() + 2, builder.Count());
-  ASSERT_TRUE(builder.Contains(1));
-  ASSERT_TRUE(builder.Contains(2));
-  ASSERT_TRUE(builder.Contains(4));
-  ASSERT_TRUE(builder.Contains(200000));
-  ASSERT_FALSE(builder.Contains(5));
   ASSERT_FALSE(published.Contains(2));
   builder.Merge(Build({}));
   ASSERT_EQ(published.Count() + 2, builder.Count());
+  const auto mask = std::move(builder).Finish();
+  ASSERT_TRUE(mask.Contains(1));
+  ASSERT_TRUE(mask.Contains(2));
+  ASSERT_TRUE(mask.Contains(4));
+  ASSERT_TRUE(mask.Contains(200000));
+  ASSERT_FALSE(mask.Contains(5));
 }
 
 TEST(document_mask_test, builder_copies_and_merges_a_frozen_mask) {
@@ -717,7 +728,6 @@ TEST(document_mask_test, builder_takes_what_finish_would_hold) {
 
 TEST(document_mask_test, builder_reports_a_failed_allocation) {
   const auto docs = Build({3, 4, 7, 9});
-  const auto except = Build({4, 9});
   roaring_init_memory_hook({
     .malloc = [](size_t) -> void* { return nullptr; },
     .realloc = [](void*, size_t) -> void* { return nullptr; },
@@ -740,7 +750,6 @@ TEST(document_mask_test, builder_reports_a_failed_allocation) {
     });
   };
   ASSERT_SQL_ERROR(irs::DocumentMaskBuilder{docs}, ERRCODE_OUT_OF_MEMORY);
-  EXPECT_EQ((std::vector<doc_id_t>{3, 7}), DocsOfRuns(docs, &except));
   std::move(restore).Invoke();
   irs::DocumentMaskBuilder copy{docs};
   ASSERT_EQ(4, copy.Count());
@@ -794,32 +803,6 @@ TEST(document_mask_test, runs_and_merges_of_any_containers_match_a_reference) {
       merged.Merge(except);
       ASSERT_EQ(all.size(), merged.Count());
       ASSERT_EQ(all, DocsOfRuns(std::move(merged).Finish(), nullptr));
-    }
-  }
-}
-
-TEST(document_mask_test, runs_stop_when_the_visitor_asks) {
-  const auto docs = Join({Every(1, 10, 1),
-                          Every(20, 30, 1),
-                          {70000, 70002},
-                          Every(140000, 140100, 1)});
-  for (const bool frozen : {false, true}) {
-    SCOPED_TRACE(frozen);
-    auto mask = Build(docs);
-    if (frozen) {
-      mask = RoundTrip(mask);
-    }
-    const auto except = Build({25});
-    for (const auto* skip :
-         {static_cast<const irs::DocumentMask*>(nullptr), &except}) {
-      for (size_t stop = 1; stop <= 6; ++stop) {
-        std::vector<std::pair<doc_id_t, doc_id_t>> runs;
-        mask.ForEachRun(skip, [&](doc_id_t first, doc_id_t last) {
-          runs.emplace_back(first, last);
-          return runs.size() < stop;
-        });
-        EXPECT_EQ(std::min<size_t>(stop, skip ? 6 : 5), runs.size()) << stop;
-      }
     }
   }
 }
@@ -908,6 +891,180 @@ TEST(document_mask_test, read_frozen_rejects_corruption) {
   std::string no_docs(empty.getFrozenSizeInBytes(), 0);
   empty.writeFrozen(no_docs.data());
   ASSERT_SQL_ERROR(ReadFrozen(no_docs), ERRCODE_INDEX_CORRUPTED);
+}
+
+TEST(document_mask_test, union_shares_the_containers_it_leaves_alone) {
+  const auto base_docs = Join({Every(1, 65536, 3),
+                               Every(70000, 70100, 1),
+                               Every(140000, 196608, 5),
+                               {200000}});
+  const auto added_docs = Join({{2, 4, 70000}, Every(270000, 270010, 1)});
+  std::vector<doc_id_t> all;
+  std::set_union(base_docs.begin(), base_docs.end(), added_docs.begin(),
+                 added_docs.end(), std::back_inserter(all));
+  const auto expected = Build(all);
+  for (const bool frozen : {false, true}) {
+    SCOPED_TRACE(frozen);
+    auto base = std::make_shared<const irs::DocumentMask>(
+      frozen ? RoundTrip(Build(base_docs)) : Build(base_docs));
+    const auto mask =
+      irs::DocumentMask::Union(base, Build(added_docs, kArrays));
+    ASSERT_EQ(all.size(), mask.Count());
+    ASSERT_EQ(expected, mask);
+    ASSERT_EQ(expected.Kind(), mask.Kind());
+    const std::span<const uint16_t> keys{mask.Keys(), mask.ContainerCount()};
+    for (uint32_t i = 0; i != base->ContainerCount(); ++i) {
+      const auto key = base->Keys()[i];
+      const auto at = absl::c_find(keys, key) - keys.begin();
+      ASSERT_LT(at, keys.size());
+      const bool touched = key == 0 || key == 1;
+      ASSERT_EQ(!touched, mask.Containers()[at] == base->Containers()[i])
+        << key;
+    }
+    ASSERT_EQ(base->Count(), irs::DocumentMask::Union(base, Build({})).Count());
+    base.reset();
+    ASSERT_EQ(all, DocsOfRuns(mask, nullptr));
+    ASSERT_EQ(mask, RoundTrip(mask));
+    irs::ResolveDocsMask(&mask, [&]<irs::DocsMaskType Mask>(Mask docs) {
+      ASSERT_EQ(1, docs.Probe(1));
+      ASSERT_EQ(70000, docs.Probe(65536));
+      ASSERT_EQ(270000, docs.Probe(200001));
+      ASSERT_EQ(kEof, docs.Probe(270010));
+    });
+  }
+}
+
+TEST(document_mask_test, unions_match_a_mask_built_at_once) {
+  auto mask = std::make_shared<const irs::DocumentMask>(Build({}));
+  std::vector<doc_id_t> all;
+  std::mt19937 gen{7};
+  for (int round = 0; round < 3000; ++round) {
+    std::vector<doc_id_t> added;
+    for (auto n = 1 + gen() % 3; n != 0; --n) {
+      added.push_back(1 + gen() % kLimit);
+    }
+    added = Join({added});
+    all.insert(all.end(), added.begin(), added.end());
+    mask = std::make_shared<const irs::DocumentMask>(
+      irs::DocumentMask::Union(mask, Build(added, kArrays)));
+  }
+  all = Join({all});
+  ASSERT_EQ(all.size(), mask->Count());
+  ASSERT_EQ(Build(all), *mask);
+  ASSERT_EQ(all, DocsOfRuns(*mask, nullptr));
+  const Reference reference{all};
+  for (doc_id_t doc = 1; doc <= kLimit; doc += 11) {
+    ASSERT_EQ(reference.Masked(doc), mask->Contains(doc)) << doc;
+  }
+}
+
+TEST(document_mask_test, builder_shifts_by_any_offset) {
+  const auto docs = Join({Every(1, 65536, 3),
+                          Every(65500, 65600, 1),
+                          Every(131000, 131100, 7),
+                          {200000}});
+  const auto mask = Build(docs);
+  for (const doc_id_t offset : {0U, 1U, 63U, 64U, 65535U, 65536U, 196613U}) {
+    SCOPED_TRACE(offset);
+    std::vector<doc_id_t> expected{5};
+    for (const auto doc : docs) {
+      expected.push_back(doc + offset);
+    }
+    expected = Join({expected});
+    auto from_mask = Builder({5});
+    from_mask.AddShifted(mask, offset);
+    EXPECT_EQ(expected, DocsOfRuns(std::move(from_mask).Finish(), nullptr));
+    auto from_builder = Builder({5});
+    from_builder.AddShifted(Builder(docs), offset);
+    EXPECT_EQ(expected, DocsOfRuns(std::move(from_builder).Finish(), nullptr));
+  }
+  auto empty = Builder({5});
+  empty.AddShifted(Build({}), 7);
+  EXPECT_EQ(std::vector<doc_id_t>{5},
+            DocsOfRuns(std::move(empty).Finish(), nullptr));
+}
+
+TEST(document_mask_test, builder_subtracts_a_mask) {
+  const auto docs = Join({Every(1, 70000, 1), Every(140000, 140100, 2)});
+  const auto gone = Join({Every(1, 70000, 3), {140000, 140050, 300000}});
+  auto builder = Builder(docs);
+  builder.Subtract(Build(gone));
+  std::vector<doc_id_t> expected;
+  absl::c_set_difference(docs, gone, std::back_inserter(expected));
+  EXPECT_EQ(expected, DocsOfRuns(std::move(builder).Finish(), nullptr));
+  auto all = Builder(docs);
+  all.Subtract(Build(docs));
+  EXPECT_TRUE(all.Empty());
+  EXPECT_EQ(0, all.Count());
+}
+
+TEST(document_mask_test, builder_adds_sorted_docs) {
+  const auto docs = Join({Every(1, 70000, 5), Every(200000, 200100, 1)});
+  irs::DocumentMaskBuilder builder;
+  builder.AddSorted(docs);
+  builder.AddSorted(std::vector<doc_id_t>{2, 3});
+  EXPECT_EQ(docs.size() + 2, builder.Count());
+  EXPECT_EQ(Join({docs, {2, 3}}),
+            DocsOfRuns(std::move(builder).Finish(), nullptr));
+}
+
+TEST(document_mask_test, words_cover_any_window) {
+  const auto docs = Join({Every(1, 300, 7), Every(65530, 65545, 1), {131073}});
+  const auto mask = Build(docs);
+  const Reference reference{docs};
+  for (const uint32_t first_word : {0U, 1U, 1023U, 1024U, 2047U, 2048U}) {
+    for (const size_t count : {1U, 3U, 33U}) {
+      std::vector<uint64_t> words(count, ~uint64_t{0});
+      mask.Words(first_word, words);
+      for (size_t bit = 0; bit != count * 64; ++bit) {
+        const auto doc = static_cast<doc_id_t>(uint64_t{first_word} * 64 + bit);
+        ASSERT_EQ(doc != 0 && reference.Masked(doc),
+                  ((words[bit / 64] >> (bit % 64)) & 1) != 0)
+          << first_word << " " << count << " " << doc;
+      }
+    }
+  }
+}
+
+TEST(document_mask_test, ranks_count_the_docs_up_to_each) {
+  const auto docs = Join({Every(1, 70000, 3), Every(140000, 140010, 1)});
+  const auto mask = Build(docs);
+  const std::vector<doc_id_t> queries{1,     2,     3,      4,     65535,
+                                      65536, 65537, 140005, 300000};
+  std::vector<uint64_t> ranks(queries.size());
+  mask.Ranks(queries, ranks);
+  for (size_t i = 0; i != queries.size(); ++i) {
+    EXPECT_EQ(absl::c_upper_bound(docs, queries[i]) - docs.begin(), ranks[i])
+      << queries[i];
+  }
+}
+
+TEST(document_mask_test, masks_intersect_and_count_together) {
+  const auto lhs = Build(Join({Every(1, 70000, 2), {200000}}));
+  const auto rhs = Build(Join({Every(1, 70000, 3), {300000}}));
+  EXPECT_TRUE(lhs.Intersects(rhs));
+  EXPECT_EQ(Every(1, 70000, 6).size(), lhs.AndCount(rhs));
+  EXPECT_FALSE(lhs.Intersects(Build({2, 300000})));
+  EXPECT_EQ(0, lhs.AndCount(Build({2, 300000})));
+}
+
+TEST(document_mask_test, cursor_reads_docs_a_buffer_at_a_time) {
+  const auto docs = Join({Every(1, 70000, 3), Every(140000, 140010, 1)});
+  for (const bool frozen : {false, true}) {
+    SCOPED_TRACE(frozen);
+    auto mask = Build(docs);
+    if (frozen) {
+      mask = RoundTrip(mask);
+    }
+    irs::DocumentMask::Cursor cursor{mask};
+    std::array<doc_id_t, 7> buffer;
+    std::vector<doc_id_t> read;
+    while (const auto count = cursor.Read(buffer)) {
+      read.insert(read.end(), buffer.begin(), buffer.begin() + count);
+    }
+    EXPECT_EQ(docs, read);
+    EXPECT_EQ(mask.Max(), docs.back());
+  }
 }
 
 }  // namespace

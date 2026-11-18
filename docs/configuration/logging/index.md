@@ -98,7 +98,7 @@ Beyond the core types above, the SereneDB server (`serened`) emits its own log t
 | Log Type    | Description                                                                                  |
 |-------------|----------------------------------------------------------------------------------------------|
 | `Startup`   | Server startup and initialization: endpoints, role creation, readiness                       |
-| `Search`    | Inverted-index (search engine) activity: background refresh and compaction, index maintenance |
+| `Search`    | Inverted-index (search engine) activity: background compaction, index maintenance             |
 | `Replication` | Logical replication: the apply workers of [subscriptions](../../sql/statements/create_subscription/index.md) |
 | `IResearch` | Low-level events from the underlying [IResearch](https://github.com/serenedb/serenedb/tree/main/iresearch) engine |
 | `HTTP`      | Errors of the server's own HTTP endpoints, such as a request handler that failed; not HTTP traffic. The name is shared with the core `HTTP` type above |

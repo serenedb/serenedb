@@ -316,13 +316,13 @@ TEST(store_utils_tests, vlong_from_array) {
 }
 
 TEST(store_utils_tests, zvfloat_read_write) {
-  tests::detail::ReadWriteCore<float_t>(
+  tests::detail::ReadWriteCore<float>(
     {
-      std::numeric_limits<float_t>::max(),
-      std::numeric_limits<float_t>::min(),
+      std::numeric_limits<float>::max(),
+      std::numeric_limits<float>::min(),
       0.f,
-      std::numeric_limits<float_t>::infinity(),
-      -std::numeric_limits<float_t>::infinity(),
+      std::numeric_limits<float>::infinity(),
+      -std::numeric_limits<float>::infinity(),
       125.f,
       53.f,
       -1.f,
@@ -333,20 +333,20 @@ TEST(store_utils_tests, zvfloat_read_write) {
     tests::ReadZvfloat, tests::WriteZvfloat);
 
   /* NaN case */
-  tests::detail::ReadWriteCoreNan<float_t>(tests::ReadZvfloat,
-                                           tests::WriteZvfloat);
+  tests::detail::ReadWriteCoreNan<float>(tests::ReadZvfloat,
+                                         tests::WriteZvfloat);
 }
 
 TEST(store_utils_tests, zvdouble_read_write) {
-  tests::detail::ReadWriteCore<double_t>(
+  tests::detail::ReadWriteCore<double>(
     {
-      std::numeric_limits<double_t>::max(),
-      std::numeric_limits<double_t>::min(),
-      std::numeric_limits<float_t>::max(),
-      std::numeric_limits<float_t>::min(),
+      std::numeric_limits<double>::max(),
+      std::numeric_limits<double>::min(),
+      std::numeric_limits<float>::max(),
+      std::numeric_limits<float>::min(),
       0.,
-      std::numeric_limits<double_t>::infinity(),
-      -std::numeric_limits<double_t>::infinity(),
+      std::numeric_limits<double>::infinity(),
+      -std::numeric_limits<double>::infinity(),
       123.,
       43.,
       -1.,
@@ -358,8 +358,8 @@ TEST(store_utils_tests, zvdouble_read_write) {
     tests::ReadZvdouble, tests::WriteZvdouble);
 
   /* NaN case */
-  tests::detail::ReadWriteCoreNan<double_t>(tests::ReadZvdouble,
-                                            tests::WriteZvdouble);
+  tests::detail::ReadWriteCoreNan<double>(tests::ReadZvdouble,
+                                          tests::WriteZvdouble);
 }
 
 static void WriteSize(DataOutput& out, size_t size) { out.WriteU64(size); }
@@ -774,6 +774,19 @@ TEST(store_utils_tests, delta_encode_decode) {
   tests::detail::DeltaEncodeDecodeCore(128,
                                        1000);     // step = 128, count = 1000
   tests::detail::DeltaEncodeDecodeCore(1000, 1);  // step = 1000, count = 1
+}
+
+TEST(store_utils_tests, bytes_view_short_read) {
+  const irs::byte_type data[] = {1, 2, 3};
+  irs::BytesViewInput in{irs::bytes_view{data, sizeof data}};
+  irs::byte_type buf[4]{};
+  EXPECT_ANY_THROW(in.ReadData(buf, 4));
+  EXPECT_ANY_THROW(in.ReadData(1, buf, 3));
+  EXPECT_ANY_THROW(in.ReadData(4, buf, 0));
+  in.ReadData(1, buf, 2);
+  EXPECT_EQ(2, buf[0]);
+  EXPECT_EQ(3, buf[1]);
+  EXPECT_EQ(3, in.Position());
 }
 
 TEST(store_utils_tests, test_remapped_bytes_view) {

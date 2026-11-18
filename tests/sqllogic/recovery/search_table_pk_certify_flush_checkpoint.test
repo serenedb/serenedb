@@ -1,0 +1,57 @@
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE pkfc(i INTEGER PRIMARY KEY, t TEXT) WITH (compaction_interval = 0);
+
+
+statement ok
+SET sdb_faults = 'search_commit_prepared';
+
+
+connection writer
+statement async error
+INSERT INTO pkfc VALUES (9, 'parked');
+----
+db error: ERROR: duplicate key value violates unique constraint "pkfc_pkey"
+DETAIL: Key (i)=(9) already exists.
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-search_commit_prepared:parked';
+
+
+connection other
+statement ok
+INSERT INTO pkfc VALUES (9, 'winner');
+
+
+connection other
+statement ok
+VACUUM (FLUSH_TABLE) pkfc;
+
+
+connection other
+statement ok
+CHECKPOINT;
+
+
+connection default
+statement ok
+SET sdb_faults = 'search_commit_prepared:release';
+
+
+wait
+
+
+statement ok
+RESET sdb_faults;
+
+
+query
+SELECT i, t FROM pkfc ORDER BY i, t;
+----
+i	t
+9	winner

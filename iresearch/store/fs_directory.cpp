@@ -26,11 +26,12 @@
 #include <absl/strings/str_cat.h>
 
 #include <cstring>
-#include <duckdb/parallel/task_scheduler.hpp>
+#include <system_error>
 
 #include "iresearch/store/directory_attributes.hpp"
 #include "iresearch/store/directory_cleaner.hpp"
 #include "iresearch/utils/crc.hpp"
+#include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/file_utils_ext.hpp"
 #include "iresearch/utils/log.hpp"
 #include "iresearch/utils/object_pool.hpp"
@@ -62,82 +63,6 @@ inline int GetPosixFadvice(IOAdvice advice) noexcept {
 }
 
 }  // namespace
-
-class FsLock : public IndexLock {
- public:
-  FsLock(const std::filesystem::path& dir, std::string_view file)
-    : _dir{dir}, _file{file} {}
-
-  bool lock() final {
-    if (_handle) {
-      // don't allow self obtaining
-      return false;
-    }
-
-    bool exists;
-
-    if (!file_utils::Exists(exists, _dir.c_str())) {
-      return false;
-    }
-
-    // create directory if it is not exists
-    if (!exists && !file_utils::Mkdir(_dir.c_str(), true)) {
-      return false;
-    }
-
-    const auto path = _dir / _file;
-
-    // create lock file
-    if (!file_utils::VerifyLockFile(path.c_str())) {
-      if (!file_utils::Exists(exists, path.c_str()) ||
-          (exists && !file_utils::Remove(path.c_str()))) {
-        return false;
-      }
-
-      _handle = file_utils::CreateLockFile(path.c_str());
-    }
-
-    return _handle != nullptr;
-  }
-
-  bool is_locked(bool& result) const noexcept final {
-    if (_handle != nullptr) {
-      result = true;
-      return true;
-    }
-
-    try {
-      const auto path = _dir / _file;
-
-      result = file_utils::VerifyLockFile(path.c_str());
-      return true;
-    } catch (...) {
-    }
-
-    return false;
-  }
-
-  bool unlock() noexcept final {
-    if (_handle != nullptr) {
-      _handle = nullptr;
-#ifdef _WIN32
-      // file will be automatically removed on close
-      return true;
-#else
-      const auto path = _dir / _file;
-
-      return file_utils::Remove(path.c_str());
-#endif
-    }
-
-    return false;
-  }
-
- private:
-  std::filesystem::path _dir;
-  std::string _file;
-  file_utils::lock_handle_t _handle;
-};
 
 class FSIndexOutput final : public IndexOutput {
  public:
@@ -171,6 +96,14 @@ class FSIndexOutput final : public IndexOutput {
     return ptr;
   }
 
+  file_utils::handle_t Release() {
+    Flush();
+    Closed(Position());
+    _crc = Crc32c{};
+    _offset = 0;
+    return std::move(_handle);
+  }
+
  private:
   void Flush() final {
     WriteHandle(_buf, Length());
@@ -183,6 +116,9 @@ class FSIndexOutput final : public IndexOutput {
   }
 
   uint64_t CloseImpl() final {
+    if (!_handle) {
+      return 0;
+    }
     Flush();
     const auto size = Position();
 
@@ -301,6 +237,14 @@ class FsIndexInput : public BufferedIndexInput {
   ptr Dup() const override { return ptr{new FsIndexInput{*this}}; }
   ptr Reopen() const override;
 
+  void StartWriteback() const noexcept final {
+    file_utils::StartWriteback(HANDLE_CAST(_handle->handle.get()));
+  }
+
+  bool Sync() const noexcept final {
+    return file_utils::FileSync(HANDLE_CAST(_handle->handle.get()));
+  }
+
   static IndexInput::ptr Open(const path_char_t* name, size_t pool_size,
                               IOAdvice advice,
                               const ResourceManagementOptions& rm) {
@@ -337,6 +281,17 @@ class FsIndexInput : public BufferedIndexInput {
     ptr input{new FsIndexInput(std::move(handle), pool_size)};
     descriptors = 0;
     return input;
+  }
+
+  static IndexInput::ptr Adopt(file_utils::handle_t file, uint64_t size,
+                               size_t pool_size, IOAdvice advice,
+                               const ResourceManagementOptions& rm) {
+    auto handle = FileHandle::make(rm);
+    handle->io_advice = advice;
+    handle->handle = std::move(file);
+    handle->size = size;
+    handle->pos = size;
+    return ptr{new FsIndexInput(std::move(handle), pool_size)};
   }
 
  protected:
@@ -550,6 +505,20 @@ IndexOutput::ptr FSDirectory::create(std::string_view name) {
   return FSIndexOutput::Open(path.c_str(), ResourceManager());
 }
 
+IndexInput::ptr FSDirectory::Finish(IndexOutput::ptr out,
+                                    IOAdvice advice) const {
+  const auto size = out->Position();
+  auto file = utils::downCast<FSIndexOutput>(*out).Release();
+  out.reset();
+  return Adopt(std::move(file), size, advice);
+}
+
+IndexInput::ptr FSDirectory::Adopt(file_utils::handle_t file, uint64_t size,
+                                   IOAdvice advice) const {
+  return FsIndexInput::Adopt(std::move(file), size, _fd_pool_size, advice,
+                             ResourceManager());
+}
+
 const std::filesystem::path& FSDirectory::path() const noexcept { return _dir; }
 
 bool FSDirectory::exists(bool& result, std::string_view name) const noexcept {
@@ -565,10 +534,6 @@ bool FSDirectory::length(uint64_t& result,
   return file_utils::ByteSize(result, path.c_str());
 }
 
-IndexLock::ptr FSDirectory::make_lock(std::string_view name) noexcept {
-  return IndexLock::ptr{new FsLock{_dir, name}};
-}
-
 bool FSDirectory::mtime(std::time_t& result,
                         std::string_view name) const noexcept {
   const auto path = _dir / name;
@@ -578,7 +543,8 @@ bool FSDirectory::mtime(std::time_t& result,
 
 bool FSDirectory::remove(std::string_view name) noexcept {
   const auto path = _dir / name;
-  return file_utils::Remove(path.c_str());
+  std::error_code error;
+  return std::filesystem::remove(path, error);
 }
 
 IndexInput::ptr FSDirectory::open(std::string_view name,
@@ -623,18 +589,6 @@ bool FSDirectory::visit(const Directory::visitor_f& visitor) const {
 #endif
 
   return file_utils::VisitDirectory(_dir.c_str(), dir_visitor, false);
-}
-
-bool FSDirectory::sync(std::string_view name) noexcept {
-  const auto path = _dir / name;
-  return file_utils::FileSync(path.c_str());
-}
-
-bool FSDirectory::sync(std::span<const std::string_view> files) noexcept {
-  duckdb::TaskScheduler::BlockingScope blocking;
-  return absl::c_all_of(files, [this](std::string_view name) mutable noexcept {
-    return this->sync(name);
-  });
 }
 
 }  // namespace irs

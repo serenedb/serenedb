@@ -954,10 +954,10 @@ void BmDocumentMaskSeekRaw(benchmark::State& state) {
   size_t hits = 0;
 
   for (auto _ : state) {
-    const irs::DocumentMask::Iterator it{&mask.Set()};
+    const auto& set = mask.Set();
     hits = 0;
     for (const auto doc : candidates) {
-      hits += static_cast<size_t>(it.Contains(doc));
+      hits += static_cast<size_t>(set.Contains(doc));
     }
     benchmark::DoNotOptimize(hits);
   }
@@ -1210,10 +1210,9 @@ BENCHMARK_TEMPLATE(BmLookupScale, 2)->Name("Scale/hashset")->Apply(ScaleArgs);
 BENCHMARK_TEMPLATE(BmLookupScale, 3)->Name("Scale/bitset")->Apply(ScaleArgs);
 
 size_t ScanWithIterator(const irs::DocumentMask& mask, doc_id_t end) {
-  const irs::DocumentMask::Iterator it_mask{&mask};
   size_t live = 0;
   for (auto doc = kBegin; doc < end; ++doc) {
-    live += static_cast<size_t>(!it_mask.Contains(doc));
+    live += static_cast<size_t>(!mask.Contains(doc));
   }
   return live;
 }

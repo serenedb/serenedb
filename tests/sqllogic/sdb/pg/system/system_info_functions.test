@@ -7,15 +7,11 @@ INSERT INTO sif_rows SELECT * FROM range(5);
 
 
 statement ok
-CREATE TABLE sif_docs (id int, body text) WITH (storage = 'search');
+CREATE TABLE sif_docs (id int, body text);
 
 
 statement ok
 INSERT INTO sif_docs VALUES (1, 'a'), (2, 'b'), (3, 'c');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sif_docs;
 
 
 query
@@ -106,7 +102,7 @@ DROP TABLE sif_rows;
 
 
 statement ok
-CREATE TABLE sif_search (id int PRIMARY KEY, body text) WITH (storage = 'search');
+CREATE TABLE sif_search (id int PRIMARY KEY, body text);
 
 
 statement ok

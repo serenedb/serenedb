@@ -34,7 +34,7 @@ SELECT 1;
 
 connection after_crash
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (REFRESH_TABLE) icwr_t;
+SELECT 1;
 
 
 connection after_crash

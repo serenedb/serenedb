@@ -150,6 +150,18 @@ TSQueryRowView ComposeParts(const TSQueryRowView& inner,
                           "against an inverted-indexed column."));
 }
 
+[[noreturn]] bool ThrowingPredicateScoreCast(duckdb::Vector&, duckdb::Vector&,
+                                             duckdb::idx_t,
+                                             duckdb::CastParameters&) {
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+    ERR_MSG("::score(...) is only meaningful on a predicate the inverted "
+            "index answers."),
+    ERR_HINT("A predicate the index does not answer, such as IN (subquery), "
+             "is checked after the search and adds nothing to the score: "
+             "remove ::score from it."));
+}
+
 [[noreturn]] bool ThrowingMinMatchCast(duckdb::Vector&, duckdb::Vector&,
                                        duckdb::idx_t, duckdb::CastParameters&) {
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -389,6 +401,15 @@ duckdb::BoundCastInfo BindTSQueryToVarcharCast(
     return duckdb::BoundCastInfo(ThrowingScoreCast);
   }
   return duckdb::BoundCastInfo(TSQueryToVarcharCast);
+}
+
+duckdb::unique_ptr<duckdb::FunctionData> TSQueryBoostBind(
+  duckdb::BindScalarFunctionInput& input) {
+  const auto factor = input.TryGetConstant(1);
+  if (!factor || (!factor->IsNull() && factor->GetValue<double>() < 0.0)) {
+    input.GetBoundFunction().SetFallible();
+  }
+  return nullptr;
 }
 
 void TSQueryBoostFn(duckdb::DataChunk& args, duckdb::ExpressionState&,
@@ -749,6 +770,15 @@ void RegisterTSQueryBoolCasts(duckdb::ExtensionLoader& loader) {
       return {ThrowingMinMatchCast,
               duckdb::make_uniq<TSQueryCastData>(TSQueryParts{})};
     }
+    if (HasScoreModifier(source) || HasScoreModifier(target)) {
+      return duckdb::BoundCastInfo(ThrowingPredicateScoreCast);
+    }
+    if (HasTokenizerModifier(source) || HasTokenizerModifier(target)) {
+      return duckdb::BoundCastInfo(ThrowingTokenizeCast);
+    }
+    if (HasSlopModifier(source) || HasSlopModifier(target)) {
+      return duckdb::BoundCastInfo(ThrowingSlopCast);
+    }
     return duckdb::BoundCastInfo(+[](duckdb::Vector&, duckdb::Vector&,
                                      duckdb::idx_t,
                                      duckdb::CastParameters&) -> bool {
@@ -1103,10 +1133,10 @@ void RegisterTSQueryOperators(duckdb::ExtensionLoader& loader) {
     loader.RegisterFunction(std::move(fn));
   }
 
-  loader.RegisterFunction(
-    duckdb::ScalarFunction(duckdb::Identifier{kTSQueryBoost},
-                           {MakeTSQueryType(), duckdb::LogicalType::DOUBLE},
-                           MakeTSQueryType(), TSQueryBoostFn));
+  loader.RegisterFunction(duckdb::ScalarFunction(
+    duckdb::Identifier{kTSQueryBoost},
+    {MakeTSQueryType(), duckdb::LogicalType::DOUBLE}, MakeTSQueryType(),
+    TSQueryBoostFn, TSQueryBoostBind));
 
   // Phrase sequence `a ## b` (strictly adjacent), `a ## N ## b` (gap N),
   // `a ## [lo, hi] ## b` (interval).

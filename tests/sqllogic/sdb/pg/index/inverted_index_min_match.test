@@ -1,7 +1,7 @@
 hash-threshold 100
 
 statement ok
-CREATE TABLE mm (id INTEGER PRIMARY KEY, title VARCHAR, skills VARCHAR, edu VARCHAR, tenure INTEGER);
+CREATE TABLE mm (id INTEGER PRIMARY KEY, title VARCHAR, skills VARCHAR, edu VARCHAR, tenure INTEGER) WITH (compaction_interval = 0);
 
 
 statement ok
@@ -19,12 +19,7 @@ CREATE TEXT SEARCH DICTIONARY mm_words AS split_text() WITH (frequency, position
 
 
 statement ok
-CREATE INDEX mm_idx ON mm USING inverted(id, title mm_words, skills mm_words, edu mm_words, tenure)
-  WITH (compaction_interval = 0);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) mm;
+CREATE INDEX mm_idx ON mm USING inverted(id, title mm_words, skills mm_words, edu mm_words, tenure);
 
 
 query
@@ -574,7 +569,6 @@ id
 5
 
 
-
 query error ::min_match used on a predicate the inverted index could not claim
 SELECT id FROM mm_idx WHERE (skills @@ 'gcp' OR id > id)::min_match(1);
 
@@ -882,7 +876,7 @@ query
 SELECT ts_offsets('mm_words', 'quick blue fox', 'quick red grey'::min_match(2)::tokenize('mm_words')) AS offsets;
 ----
 offsets
-{}
+{0,5}
 
 
 query
@@ -890,6 +884,27 @@ SELECT ts_offsets('mm_words', 'quick red fox', 'quick red grey'::min_match(2)::t
 ----
 offsets
 {0,5,6,9}
+
+
+query
+SELECT id, ts_offsets('mm_words', body, 'quick red grey'::min_match(2)::tokenize('mm_words')) AS offsets
+FROM (VALUES (1, 'quick blue fox'), (2, 'quick red fox'), (3, 'grey red')) t(id, body)
+ORDER BY id;
+----
+id	offsets
+1	{0,5}
+2	{0,5,6,9}
+3	{0,4,5,8}
+
+
+query
+SELECT id, ts_offsets('mm_words', body, 'quick'::TSQUERY && 'red') AS offsets
+FROM (VALUES (1, 'quick blue fox'), (2, 'quick red fox')) t(id, body)
+ORDER BY id;
+----
+id	offsets
+1	{0,5}
+2	{0,5,6,9}
 
 
 query
@@ -913,7 +928,7 @@ DROP TABLE mm;
 
 
 statement ok
-CREATE TABLE nm (id INTEGER PRIMARY KEY, skills VARCHAR, bonus INTEGER, tenure INTEGER);
+CREATE TABLE nm (id INTEGER PRIMARY KEY, skills VARCHAR, bonus INTEGER, tenure INTEGER) WITH (compaction_interval = 0);
 
 
 statement ok
@@ -927,12 +942,7 @@ INSERT INTO nm VALUES
 
 
 statement ok
-CREATE INDEX nm_idx ON nm USING inverted(id, skills mm_words, bonus, tenure)
-  WITH (compaction_interval = 0);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) nm;
+CREATE INDEX nm_idx ON nm USING inverted(id, skills mm_words, bonus, tenure);
 
 
 query
@@ -1001,3 +1011,105 @@ WHERE NOT ((skills @@ 'gcp' OR bonus > 5)::min_match(3) OR tenure <= 10);
 
 statement ok
 DROP TABLE nm;
+
+
+statement ok
+CREATE TABLE nk (id INTEGER PRIMARY KEY, u INTEGER UNIQUE, v INTEGER UNIQUE NOT NULL);
+
+
+statement ok
+INSERT INTO nk VALUES (1, 10, 10), (2, NULL, 20), (3, 30, 30);
+
+
+query
+SELECT id FROM nk WHERE NOT (u = 10 OR id < 0) ORDER BY id;
+----
+id
+3
+
+
+statement error
+SELECT id FROM nk WHERE NOT ((u = 10 OR id > 100)::min_match(1) OR id < 0);
+----
+db error: ERROR: ::min_match(K) is only meaningful on an OR of predicates the inverted index answers.
+
+
+statement error
+SELECT id FROM nk WHERE NOT ((u = 10)::boost(2) OR id < 0);
+----
+db error: ERROR: ::boost(K) used on a predicate the inverted index could not claim -- boost is only meaningful inside an inverted-index match. Move the boost into an `@@` match or remove it.
+
+
+statement error
+SELECT id FROM nk WHERE NOT ((u = 10)::score(NULL) OR id < 0);
+----
+db error: ERROR: ::score(...) is only meaningful on a predicate the inverted index answers.
+HINT: A predicate the index does not answer, such as IN (subquery), is checked after the search and adds nothing to the score: remove ::score from it.
+
+
+statement error
+SELECT id FROM nk WHERE NOT ((u = 10)::tokenize('keyword') OR id < 0);
+----
+db error: ERROR: ::tokenize(...) is only meaningful inside an `@@` match against an inverted-indexed column.
+
+
+statement error
+SELECT id FROM nk WHERE NOT ((u = 10)::slop(2) OR id < 0);
+----
+db error: ERROR: ::slop(N) is only meaningful inside an `@@` match against an inverted-indexed column.
+
+
+query
+SELECT id FROM nk WHERE NOT ((v = 10 OR id > 100)::min_match(1) OR id < 0) ORDER BY id;
+----
+id
+2
+3
+
+
+query
+SELECT id FROM nk WHERE NOT ((v = 10)::boost(2) OR id < 0) ORDER BY id;
+----
+id
+2
+3
+
+
+statement ok
+DROP TABLE nk;
+
+
+statement ok
+CREATE TABLE nki (id INTEGER PRIMARY KEY, u INTEGER UNIQUE);
+
+
+statement ok
+CREATE INDEX nki_idx ON nki USING inverted (id, u);
+
+
+statement ok
+INSERT INTO nki VALUES (1, 10), (2, NULL), (3, 30);
+
+
+query
+SELECT id FROM nki WHERE NOT ((u = 10)::boost(2) OR id < 0) ORDER BY id;
+----
+id
+3
+
+
+query
+SELECT id FROM nki WHERE NOT ((u = 10 OR u = 30)::boost(2) OR id < 0) ORDER BY id;
+----
+id
+
+
+query
+SELECT id FROM nki WHERE NOT ((u = 10)::score(NULL)::boost(2) OR id < 0) ORDER BY id;
+----
+id
+3
+
+
+statement ok
+DROP TABLE nki;

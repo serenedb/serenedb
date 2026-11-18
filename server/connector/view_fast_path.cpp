@@ -56,7 +56,6 @@
 #include <iresearch/utils/system_compiler.hpp>
 #include <iterator>
 
-#include "catalog/catalog.h"
 #include "pg/types/logical.h"
 #include "planning/iceberg_multi_file_list.hpp"
 
@@ -274,22 +273,6 @@ std::optional<ViewFastPath> AttachedDuckDBFastPath(duckdb::Catalog& catalog,
   return out;
 }
 
-// Views over a serenedb table ride the same rowid-keyed machinery as views
-// over an attached database.
-std::optional<ViewFastPath> SereneDBFastPath(
-  const duckdb::TableCatalogEntry& table, ViewFastPath out) {
-  // Only the check that every projected name is one of the relation's
-  // columns: a name that belongs to none is not this fast path's to serve.
-  if (!absl::c_all_of(out.projection_columns, [&](const std::string& name) {
-        return table.GetColumns().ColumnExists(duckdb::Identifier{name});
-      })) {
-    return std::nullopt;
-  }
-  out.pk_spec = PkSpec::DuckDBRowId;
-  out.supports_filters = true;
-  return out;
-}
-
 std::optional<ViewFastPath> ExternalColumnKeyFastPath(
   ViewFastPath out, std::vector<ExternalKeyColumn> keys) {
   if (keys.empty()) {
@@ -365,9 +348,6 @@ std::optional<ViewFastPath> ResolveTableSource(
   }
   if (cat_type == "duckdb") {
     return AttachedDuckDBFastPath(catalog, std::move(out));
-  }
-  if (catalog::IsSereneDB(catalog)) {
-    return SereneDBFastPath(table, std::move(out));
   }
   if (cat_type == "postgres" || cat_type == "clickhouse") {
     return ExternalFastPath(table, std::move(out), key_columns);
@@ -583,13 +563,8 @@ duckdb::unique_ptr<duckdb::LogicalGet> BindReaderSource(
   duckdb::ClientContext& context, const ViewFastPath& fp) {
   SDB_ASSERT(!fp.args.empty());
   auto& reader =
-    duckdb::Catalog::GetEntry(
-      context,
-      duckdb::EntryLookupInfo{
-        duckdb::CatalogType::TABLE_FUNCTION_ENTRY,
-        duckdb::QualifiedName(SYSTEM_CATALOG, DEFAULT_SCHEMA,
-                              duckdb::Identifier{fp.function_name})})
-      .Cast<duckdb::TableFunctionCatalogEntry>();
+    duckdb::Catalog::GetBuiltinEntry<duckdb::TableFunctionCatalogEntry>(
+      context, duckdb::Identifier{fp.function_name});
   const bool pin_snapshot =
     fp.pinned_iceberg_snapshot_id != 0 && fp.function_name == "iceberg_scan";
   const duckdb::Identifier snapshot_param{"snapshot_from_id"};

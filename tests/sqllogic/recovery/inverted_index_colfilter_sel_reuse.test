@@ -18,7 +18,7 @@ CREATE TEXT SEARCH DICTIONARY cf_en AS
 
 onlyif serenedb
 statement ok
-CREATE TABLE cf (id INT PRIMARY KEY, body TEXT, g INT)
+CREATE TABLE cf (id INT PRIMARY KEY, body TEXT, g INT) WITH (compaction_interval = 0)
 
 
 # g is INCLUDE-only (no posting list), so a filter on it is a `.col` column
@@ -27,7 +27,6 @@ CREATE TABLE cf (id INT PRIMARY KEY, body TEXT, g INT)
 onlyif serenedb
 statement ok
 CREATE INDEX cf_idx ON cf USING inverted (id, body cf_en) INCLUDE (g)
-  WITH (compaction_interval = 0)
 
 
 # Segment 1: g straddles the predicate, so the filter narrows the window and
@@ -39,7 +38,7 @@ INSERT INTO cf VALUES (1, 'alpha', 50), (2, 'alpha', 150)
 
 onlyif serenedb
 statement ok
-VACUUM (REFRESH_TABLE) cf
+VACUUM (FLUSH_TABLE) cf
 
 
 # Segment 2: every g < 100, so the zonemap answers the filter and it is dropped
@@ -48,10 +47,9 @@ onlyif serenedb
 statement ok
 INSERT INTO cf VALUES (3, 'alpha', 1), (4, 'alpha', 2), (5, 'alpha', 3)
 
-
 onlyif serenedb
 statement ok
-VACUUM (REFRESH_TABLE) cf
+VACUUM (FLUSH_TABLE) cf
 
 
 onlyif serenedb

@@ -45,9 +45,6 @@ SELECT i,
     lambda x: CASE WHEN x = 0 THEN (i * 100)::FLOAT ELSE 0.0::FLOAT END)::FLOAT[8]
 FROM range(1, 101) t(i)
 
-statement ok
-VACUUM (REFRESH_TABLE) sg_pq
-
 # Nearest to the origin: the bottom of the ladder, in order.
 query
 SELECT pk FROM sg_pq_idx
@@ -116,9 +113,6 @@ SELECT i,
     lambda x: CASE WHEN x = 0 THEN (i * 100)::FLOAT ELSE 0.0::FLOAT END)::FLOAT[8]
 FROM range(1, 101) t(i)
 
-statement ok
-VACUUM (REFRESH_TABLE) sg_rq
-
 query
 SELECT pk FROM sg_rq_idx
 ORDER BY emb <-> list_transform(range(8), lambda x: 0.0::FLOAT)::FLOAT[8] LIMIT 8;
@@ -169,9 +163,6 @@ count
 
 statement count 10
 DELETE FROM sg_pq WHERE pk BETWEEN 3 AND 12
-
-statement ok
-VACUUM (REFRESH_TABLE) sg_pq
 
 query
 SELECT pk FROM sg_pq_idx

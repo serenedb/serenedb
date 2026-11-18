@@ -25,6 +25,7 @@
 
 #include <duckdb/common/error_data.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/error_mapping.hpp>
 #include <utility>
 
 #include "network/pg/wire_frames.h"
@@ -51,7 +52,7 @@ void WriteIndexNotFound(HttpResponseWriter& writer, std::string_view index) {
 
 void WriteSqlError(HttpResponseWriter& writer, const duckdb::ErrorData& error,
                    std::string_view index) {
-  auto data = pg::ToSqlError(error);
+  auto data = irs::pg::ToSqlError(error);
   switch (data.errcode) {
     case ERRCODE_UNDEFINED_TABLE:
       if (!index.empty()) {

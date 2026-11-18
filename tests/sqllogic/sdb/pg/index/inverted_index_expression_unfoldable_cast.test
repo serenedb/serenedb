@@ -14,10 +14,6 @@ statement ok
 CREATE INDEX iuc_items_idx ON iuc_items USING inverted (id, n, (lower(title)) iuc_kw, (lower(title)) included())
 
 
-statement ok
-VACUUM (REFRESH_TABLE) iuc_items
-
-
 query
 SELECT id, CASE WHEN n > 1000 THEN CAST(300 AS TINYINT) ELSE 0 END AS v FROM iuc_items ORDER BY id
 ----
@@ -69,10 +65,6 @@ statement ok
 CREATE INDEX iuc_keys_idx ON iuc_keys USING inverted (id, (CASE WHEN n > 1000 THEN CAST(30 AS TINYINT) ELSE 0 END) included())
 
 
-statement ok
-VACUUM (REFRESH_TABLE) iuc_keys
-
-
 query
 SELECT id, CASE WHEN n > 1000 THEN CAST(30 AS TINYINT) ELSE 0 END AS v FROM iuc_keys_idx ORDER BY id
 ----
@@ -84,15 +76,15 @@ query
 EXPLAIN SELECT id, CASE WHEN n > 1000 THEN CAST(30 AS TINYINT) ELSE 0 END AS v FROM iuc_keys_idx ORDER BY id
 ----
 QUERY PLAN
-╭─ ORDER_BY ─────────────────────────────────────────────────────────╮
-│ Order By: id ASC                                                   │
-│ ~2 rows                                                            │
-╰──────────────────────────────────┬─────────────────────────────────╯
-╭─ IRESEARCH_SCAN ─────────────────┴─────────────────────────────────╮
-│ Index: iuc_keys_idx                                                │
-│ Lookup: table                                                      │
-│ Projections:                                                       │
-│ id (l),                                                            │
-│ CASE  WHEN ((n > 1000)) THEN (CAST(30 AS tinyint)) ELSE 0 END (i)  │
-│ ~2 rows                                                            │
-╰────────────────────────────────────────────────────────────────────╯
+╭─ ORDER_BY ─────────────────────────────────────────────────────╮
+│ Order By: id ASC                                               │
+│ ~2 rows                                                        │
+╰────────────────────────────────┬───────────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────────┴───────────────────────────────╮
+│ Index: iuc_keys_idx                                            │
+│ Lookup: search                                                 │
+│ Projections:                                                   │
+│ id,                                                            │
+│ CASE  WHEN ((n > 1000)) THEN (CAST(30 AS tinyint)) ELSE 0 END  │
+│ ~2 rows                                                        │
+╰────────────────────────────────────────────────────────────────╯

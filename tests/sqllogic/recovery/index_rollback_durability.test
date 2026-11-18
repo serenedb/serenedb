@@ -85,7 +85,7 @@ CREATE INDEX irb_ok_inv ON irb_t USING inverted(id, body irb_dict);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) irb_t;
+VACUUM (FLUSH_TABLE) irb_t;
 
 
 # ----------------------------------------------------------------------
@@ -200,7 +200,7 @@ INSERT INTO irb_t VALUES (3, 30, 'echo foxtrot', 'note three');
 
 connection after_crash
 statement ok
-VACUUM (REFRESH_TABLE) irb_t;
+VACUUM (FLUSH_TABLE) irb_t;
 
 
 connection after_crash
@@ -242,7 +242,7 @@ CREATE INDEX irb_rb_inv ON irb_t USING inverted(id, note irb_dict);
 
 connection after_crash
 statement ok
-VACUUM (REFRESH_TABLE) irb_t;
+VACUUM (FLUSH_TABLE) irb_t;
 
 
 connection after_crash

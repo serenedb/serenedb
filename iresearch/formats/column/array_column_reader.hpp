@@ -54,11 +54,10 @@ class ArrayColumnReader final : public ColumnReader {
     return _array_size != 0 ? child / _array_size : child;
   }
 
-  // The child lives in element space; blocks seal at row-group boundaries,
-  // so element ends are exact multiples of the array size.
   uint64_t RowGroupEnd(uint64_t row) const noexcept final {
     SDB_ASSERT(_array_size != 0 && !_children.empty());
-    return _children.front()->RowGroupEnd(row * _array_size) / _array_size;
+    const auto end = _children.front()->RowGroupEnd(row * _array_size);
+    return (end + _array_size - 1) / _array_size;
   }
 
   duckdb::idx_t Scan(ScanState& s, duckdb::Vector& result,

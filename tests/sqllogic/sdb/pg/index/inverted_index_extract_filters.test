@@ -3,12 +3,11 @@ hash-threshold 100
 statement ok
 CREATE TABLE ef (pk INTEGER PRIMARY KEY, txt VARCHAR,
   meta STRUCT(cat INTEGER, name VARCHAR, inner_s STRUCT(k INTEGER)),
-  v VARIANT)
+  v VARIANT) WITH (row_group_size = 2048)
 
 
 statement ok
 CREATE INDEX ef_idx ON ef USING inverted(pk, txt) INCLUDE (meta, v)
-  WITH (row_group_size = 2048)
 
 
 statement ok
@@ -17,10 +16,6 @@ INSERT INTO ef SELECT i, 'w' || (i % 3),
        ELSE {'cat': i // 2500, 'name': 'n' || i, 'inner_s': {'k': i % 4}} END,
   CASE WHEN i % 2 = 0 THEN {'a': i % 5}::VARIANT ELSE (i % 5)::VARIANT END
 FROM range(10000) t(i)
-
-
-statement ok
-VACUUM (REFRESH_TABLE) ef
 
 
 query

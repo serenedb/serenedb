@@ -53,11 +53,11 @@ CREATE TABLE dm.ser (id SERIAL PRIMARY KEY, v TEXT);
 
 
 statement ok
-CREATE TABLE dm.st (id BIGINT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE TABLE dm.st (id BIGINT PRIMARY KEY, body TEXT);
 
 
 statement ok
-CREATE TABLE dm.st_inv (a INT, body TEXT) WITH (storage = 'search');
+CREATE TABLE dm.st_inv (a INT, body TEXT);
 
 
 statement ok
@@ -185,10 +185,6 @@ CREATE INDEX dm_sec_b ON dm.sec (b);
 
 
 statement ok
-ALTER INDEX dm.dm_inv_body SET (refresh_interval = 500);
-
-
-statement ok
 ALTER TABLE dm.inv RENAME COLUMN a TO a2;
 
 
@@ -289,11 +285,11 @@ INSERT INTO dm.ser (v) VALUES ('r3');
 
 
 statement ok
-VACUUM (REFRESH_TABLE) dm.st;
+VACUUM (FLUSH_TABLE) dm.st;
 
 
 statement ok
-VACUUM (REFRESH_TABLE) dm.st_inv;
+VACUUM (FLUSH_TABLE) dm.st_inv;
 
 
 connection pending
@@ -314,7 +310,6 @@ CREATE TABLE dm.ghost (g INT);
 connection pending
 statement ok
 ALTER TABLE dm.uq RENAME COLUMN code TO pending_code;
-
 
 
 query
@@ -566,7 +561,8 @@ connection after_crash
 statement error
 INSERT INTO dm.pk VALUES (1, 'dup');
 ----
-db error: ERROR: Duplicate key "id: 1" violates primary key constraint.
+db error: ERROR: duplicate key value violates unique constraint "pk_pkey"
+DETAIL: Key (id)=(1) already exists.
 
 
 connection after_crash
@@ -580,14 +576,16 @@ connection after_crash
 statement error
 INSERT INTO dm.uq (id, code) VALUES (9, 'x');
 ----
-db error: ERROR: Duplicate key "code: x" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "uq_code_key"
+DETAIL: Key (code)=(x) already exists.
 
 
 connection after_crash
 statement error
 INSERT INTO dm.child VALUES (99, 99);
 ----
-db error: ERROR: Violates foreign key constraint because key "id: 99" does not exist in the referenced table
+db error: ERROR: insert or update on table "child" violates foreign key constraint "child_parent_id_fkey"
+DETAIL: Key (parent_id)=(99) is not present in table "parent".
 
 
 connection after_crash
@@ -601,7 +599,8 @@ connection after_crash
 statement error
 INSERT INTO dm.parent VALUES (3, 'dup parent');
 ----
-db error: ERROR: Duplicate key "id: 3" violates primary key constraint.
+db error: ERROR: duplicate key value violates unique constraint "parent_pkey"
+DETAIL: Key (id)=(3) already exists.
 
 
 connection after_crash

@@ -1,0 +1,168 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pmr_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm);
+
+
+statement ok
+CREATE TABLE pmr (id BIGINT PRIMARY KEY, body TEXT) WITH (compaction_interval = 0);
+
+
+statement ok
+CREATE INDEX pmr_idx ON pmr USING inverted (body pmr_en);
+
+
+statement ok
+SET sdb_faults = 'pause_search_pieces_merged';
+
+
+statement ok
+INSERT INTO pmr VALUES (1, 'red fox');
+
+
+statement ok
+INSERT INTO pmr VALUES (2, 'blue fox');
+
+
+statement ok
+INSERT INTO pmr VALUES (3, 'red dog');
+
+
+statement ok
+INSERT INTO pmr VALUES (4, 'blue dog');
+
+
+statement ok
+INSERT INTO pmr VALUES (5, 'red cat');
+
+
+statement ok
+INSERT INTO pmr VALUES (6, 'blue cat');
+
+
+statement ok
+INSERT INTO pmr VALUES (7, 'red owl');
+
+
+statement ok
+INSERT INTO pmr VALUES (8, 'blue owl');
+
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_pieces_merged:parked';
+
+
+statement ok
+SET sdb_faults = 'pause_search_pieces_merged:release';
+
+
+statement ok
+DELETE FROM pmr WHERE id = 3;
+
+
+statement ok
+UPDATE pmr SET body = 'green fox' WHERE id = 5;
+
+
+statement error
+INSERT INTO pmr VALUES (2, 'again');
+----
+db error: ERROR: duplicate key value violates unique constraint "pmr_pkey"
+DETAIL: Key (id)=(2) already exists.
+
+
+query
+SELECT id, body FROM pmr ORDER BY id;
+----
+id	body
+1	red fox
+2	blue fox
+4	blue dog
+5	green fox
+6	blue cat
+7	red owl
+8	blue owl
+
+
+query
+SELECT id FROM pmr_idx WHERE body @@ 'fox' ORDER BY id;
+----
+id
+1
+2
+5
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_crash
+query
+SELECT id, body FROM pmr ORDER BY id;
+----
+id	body
+1	red fox
+2	blue fox
+4	blue dog
+5	green fox
+6	blue cat
+7	red owl
+8	blue owl
+
+
+connection after_crash
+query
+SELECT id FROM pmr_idx WHERE body @@ 'red' ORDER BY id;
+----
+id
+1
+7
+
+
+connection after_crash
+statement error
+INSERT INTO pmr VALUES (4, 'again');
+----
+db error: ERROR: duplicate key value violates unique constraint "pmr_pkey"
+DETAIL: Key (id)=(4) already exists.
+
+
+connection after_crash
+statement ok
+INSERT INTO pmr VALUES (3, 'red dog again');
+
+
+connection after_crash
+statement ok
+VACUUM (FLUSH_TABLE) pmr;
+
+
+connection after_crash
+query
+SELECT id, body FROM pmr ORDER BY id;
+----
+id	body
+1	red fox
+2	blue fox
+3	red dog again
+4	blue dog
+5	green fox
+6	blue cat
+7	red owl
+8	blue owl

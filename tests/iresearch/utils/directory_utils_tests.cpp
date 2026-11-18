@@ -50,10 +50,6 @@ class DirectoryUtilsTests : public ::testing::Test {
       return false;
     }
 
-    irs::IndexLock::ptr make_lock(std::string_view) noexcept final {
-      return nullptr;
-    }
-
     bool mtime(std::time_t&, std::string_view) const noexcept final {
       return false;
     }
@@ -64,13 +60,14 @@ class DirectoryUtilsTests : public ::testing::Test {
                       ERR_MSG("cannot open ", name));
     }
 
+    irs::IndexInput::ptr Finish(irs::IndexOutput::ptr,
+                                irs::IOAdvice) const final {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR), ERR_MSG("cannot finish"));
+    }
+
     bool remove(std::string_view) noexcept final { return false; }
 
     bool rename(std::string_view, std::string_view) noexcept final {
-      return false;
-    }
-
-    bool sync(std::span<const std::string_view>) noexcept final {
       return false;
     }
 
@@ -135,21 +132,6 @@ TEST_F(DirectoryUtilsTests, test_ref_tracking_dir) {
     ASSERT_EQ(&(dir.attributes()), &(track_dir.attributes()));
   }
 
-  // test make_lock
-  {
-    irs::MemoryDirectory dir;
-    irs::RefTrackingDirectory track_dir(dir);
-    auto lock1 = dir.make_lock("abc");
-    ASSERT_FALSE(!lock1);
-    auto lock2 = track_dir.make_lock("abc");
-    ASSERT_FALSE(!lock2);
-
-    ASSERT_TRUE(lock1->lock());
-    ASSERT_FALSE(lock2->lock());
-    ASSERT_TRUE(lock1->unlock());
-    ASSERT_TRUE(lock2->lock());
-  }
-
   // test open
   {
     irs::MemoryDirectory dir;
@@ -164,8 +146,6 @@ TEST_F(DirectoryUtilsTests, test_ref_tracking_dir) {
     auto file2 = track_dir.open(file, irs::IOAdvice::RANDOM);
 
     ASSERT_FALSE(!file2);
-    // does nothing in memory_directory, but adds line coverage
-    ASSERT_TRUE(track_dir.sync({&file, 1}));
     ASSERT_EQ(1, file2->Length());
     ASSERT_TRUE(track_dir.rename(file, "def"));
     file1.reset();  // release before remove
@@ -260,9 +240,6 @@ TEST_F(DirectoryUtilsTests, test_ref_tracking_dir) {
       return false;
     }
     bool visit(const visitor_f&) const final { return false; }
-    irs::IndexLock::ptr make_lock(std::string_view) noexcept final {
-      return nullptr;
-    }
     bool mtime(std::time_t&, std::string_view) const noexcept final {
       return false;
     }
@@ -271,11 +248,12 @@ TEST_F(DirectoryUtilsTests, test_ref_tracking_dir) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
                       ERR_MSG("cannot open ", name));
     }
+    irs::IndexInput::ptr Finish(irs::IndexOutput::ptr,
+                                irs::IOAdvice) const final {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR), ERR_MSG("cannot finish"));
+    }
     bool remove(std::string_view) noexcept final { return false; }
     bool rename(std::string_view, std::string_view) noexcept final {
-      return false;
-    }
-    bool sync(std::span<const std::string_view>) noexcept final {
       return false;
     }
   } error_dir{irs::ResourceManagementOptions::gDefault};
@@ -310,21 +288,6 @@ TEST_F(DirectoryUtilsTests, test_tracking_dir) {
     ASSERT_EQ(&(dir.attributes()), &(track_dir.attributes()));
   }
 
-  // test make_lock
-  {
-    irs::MemoryDirectory dir;
-    irs::TrackingDirectory track_dir(dir);
-    auto lock1 = dir.make_lock("abc");
-    ASSERT_FALSE(!lock1);
-    auto lock2 = track_dir.make_lock("abc");
-    ASSERT_FALSE(!lock2);
-
-    ASSERT_TRUE(lock1->lock());
-    ASSERT_FALSE(lock2->lock());
-    ASSERT_TRUE(lock1->unlock());
-    ASSERT_TRUE(lock2->lock());
-  }
-
   // test create
   {
     irs::MemoryDirectory dir;
@@ -336,7 +299,6 @@ TEST_F(DirectoryUtilsTests, test_tracking_dir) {
       file1->WriteByte(42);
       file1->Flush();
     }
-    ASSERT_TRUE(track_dir.sync({&file, 1}));
     uint64_t byte_size{0};
     ASSERT_TRUE(track_dir.length(byte_size, file));
     ASSERT_EQ(1, byte_size);

@@ -21,6 +21,7 @@
 #include <faiss/impl/ScalarQuantizer.h>
 #include <faiss/utils/random.h>
 
+#include <cmath>
 #include <core_functions/array_kernels.hpp>
 #include <limits>
 #include <numbers>
@@ -1049,7 +1050,7 @@ class TurboQuantizerCodebook final : public QuantizerCodebook {
     _qi.resize(lay.rd);
     for (uint32_t j = 0; j < lay.rd; ++j) {
       _qi[j] = static_cast<int8_t>(
-        std::clamp(std::nearbyint(_rot_query[j] * scale_q), -127.f, 127.f));
+        std::clamp<int64_t>(std::lrint(_rot_query[j] * scale_q), -127, 127));
     }
     const bool uniform = lay.bits_hi == lay.bits_lo;
     _nsegs = uniform ? 1 : 2;
@@ -1393,8 +1394,8 @@ class TurboQuantizerReader final : public QuantizerReader {
       return;
     }
     SDB_ASSERT(_cluster);
-    _cc = ComputeDistance<VectorMetric::InnerProduct>(
-      _cluster, _cluster, static_cast<uint16_t>(_lay.d));
+    _cc =
+      ComputeDistance<VectorMetric::InnerProduct>(_cluster, _cluster, _lay.d);
     const TurboQuantCentroids& tc = _cb->Stats().Centroids();
     const size_t segs = _lay.bits_hi == _lay.bits_lo ? 1 : 2;
 #ifdef __AVX2__
@@ -1704,13 +1705,13 @@ class TurboQuantizerReader final : public QuantizerReader {
     }
     const std::span<const float> query = _cur->Query();
     const float qc_sq = -ComputeDistance<VectorMetric::L2Sqr>(
-      query.data(), _cluster, static_cast<uint16_t>(query.size()));
+      query.data(), _cluster, query.size());
     _qc_norm = std::sqrt(std::max(0.f, qc_sq));
     if constexpr (M == VectorMetric::L2Sqr) {
       _qc = qc_sq;
     } else {
-      _qc = ComputeDistance<VectorMetric::InnerProduct>(
-        query.data(), _cluster, static_cast<uint16_t>(query.size()));
+      _qc = ComputeDistance<VectorMetric::InnerProduct>(query.data(), _cluster,
+                                                        query.size());
     }
   }
 

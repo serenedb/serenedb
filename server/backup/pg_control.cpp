@@ -20,11 +20,13 @@
 
 #include "backup/pg_control.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/crc/crc32c.h>
 #include <absl/random/random.h>
 #include <absl/strings/str_cat.h>
 #include <absl/time/clock.h>
 #include <fcntl.h>
+#include <openssl/rand.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -50,6 +52,7 @@ constexpr int32_t kWalLevelReplica = 1;
 constexpr uint32_t kBlockSize = 8192;
 
 static_assert(sizeof(ControlFileData) <= kPgControlMaxSafeSize);
+static_assert(kMockAuthNonceLen == kMockNonceLen);
 
 uint32_t ControlCrc(const ControlFileData& data) {
   return static_cast<uint32_t>(absl::ComputeCrc32c(std::string_view{
@@ -89,6 +92,8 @@ ControlFileData MakeControl(const ControlState& state) {
   data.loblksize = 2048;
   data.float8_by_val = true;
   data.default_char_signedness = true;
+  std::memcpy(data.mock_authentication_nonce.data(), state.mock_nonce.data(),
+              kMockNonceLen);
   data.crc = ControlCrc(data);
   return data;
 }
@@ -105,6 +110,13 @@ uint64_t NewSystemIdentifier() {
 
 uint64_t ClockPosition() {
   return static_cast<uint64_t>(absl::ToUnixMicros(absl::Now()));
+}
+
+std::array<uint8_t, kMockNonceLen> NewMockNonce() {
+  std::array<uint8_t, kMockNonceLen> nonce{};
+  SDB_ENSURE(RAND_bytes(nonce.data(), static_cast<int>(nonce.size())) == 1,
+             "could not generate the mock authentication nonce");
+  return nonce;
 }
 
 }  // namespace
@@ -133,8 +145,11 @@ std::optional<ControlState> ReadPgControl(
       ERR_CODE(ERRCODE_DATA_CORRUPTED),
       ERR_MSG("\"", path.string(), "\" is not a valid SereneDB control file"));
   }
-  return ControlState{.system_identifier = data.system_identifier,
-                      .checkpoint = data.check_point};
+  ControlState state{.system_identifier = data.system_identifier,
+                     .checkpoint = data.check_point};
+  std::memcpy(state.mock_nonce.data(), data.mock_authentication_nonce.data(),
+              kMockNonceLen);
+  return state;
 }
 
 void WritePgControl(const std::filesystem::path& data_dir,
@@ -154,17 +169,27 @@ void WritePgControl(const std::filesystem::path& data_dir,
   utils::file_utils::ReplaceFile(path, buffer);
 }
 
-void EnsurePgVersion(const std::filesystem::path& data_dir) {
+std::filesystem::path PendingPgVersion(const std::filesystem::path& data_dir) {
+  auto path = data_dir / kPendingPgVersionFile;
+  const int fd =
+    ::open(path.c_str(), O_WRONLY | O_CREAT | O_CLOEXEC, S_IRUSR | S_IWUSR);
+  if (fd < 0) {
+    utils::file_utils::ThrowFileError("create file", path.string(), errno);
+  }
+  ::close(fd);
+  return path;
+}
+
+void PublishPgVersion(const std::filesystem::path& data_dir) {
+  const auto pending = data_dir / kPendingPgVersionFile;
   const auto path = data_dir / kPgVersionFile;
-  std::error_code ec;
-  if (std::filesystem::exists(path, ec)) {
-    return;
-  }
-  if (ec) {
-    utils::file_utils::ThrowFileError("check", path.string(), ec);
-  }
-  utils::file_utils::Spit(path.string(),
+  utils::file_utils::Spit(pending.string(),
                           absl::StrCat(pg::kPgMajorVersion, "\n"), true);
+  std::error_code ec;
+  std::filesystem::rename(pending, path, ec);
+  if (ec) {
+    utils::file_utils::ThrowFileError("rename", pending.string(), ec);
+  }
   utils::file_utils::SyncDirectory(data_dir);
 }
 
@@ -179,10 +204,24 @@ void PositionSource::Open(const std::filesystem::path& data_dir) {
   if (!state) {
     state =
       ControlState{.system_identifier = NewSystemIdentifier(), .checkpoint = 0};
+  }
+  if (absl::c_all_of(state->mock_nonce, [](uint8_t b) { return b == 0; })) {
+    state->mock_nonce = NewMockNonce();
     WritePgControl(data_dir, *state);
   }
   _data_dir = data_dir;
   _state = state;
+}
+
+std::array<uint8_t, kMockNonceLen> PositionSource::MockNonce() {
+  absl::MutexLock lock{&_mutex};
+  if (_state) {
+    return _state->mock_nonce;
+  }
+  if (!_volatile_nonce) {
+    _volatile_nonce = NewMockNonce();
+  }
+  return *_volatile_nonce;
 }
 
 uint64_t PositionSource::SystemIdentifier() {

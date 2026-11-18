@@ -21,10 +21,11 @@
 #include <absl/algorithm/container.h>
 
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
-#include <duckdb/catalog/dependency_manager.hpp>
 #include <duckdb/main/attached_database.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <ranges>
 
+#include "catalog/catalog.h"
 #include "catalog/cluster.h"
 #include "pg/catalog/engine/system_table.h"
 #include "pg/catalog/tables/tables.h"
@@ -74,25 +75,41 @@ class PgShdepend final : public SystemTableScan<kPgShdependSql> {
     if (role.oid == kRootUser) {
       return;
     }
-    auto& cluster = catalog::ClusterOf(Context());
-    cluster.GetDependencyManager()->ScanDependentEntries(
-      cluster.GetCatalogTransaction(Context()), role,
-      [&](duckdb::CatalogEntry& entry) {
-        if (entry.type != duckdb::CatalogType::DATABASE_ENTRY) {
-          Entry(entry.ParentCatalog().GetAttached().oid, role.oid, entry);
-          return;
-        }
-        Entry(kInvalidOid, role.oid, entry);
-        VisitDefaultAcls(
-          Context(), entry,
-          [&](duckdb::idx_t oid, const duckdb::DefaultAcl& row) {
-            if (row.role == role.oid) {
-              Depend(entry.oid, kPgDefaultAclTable, oid, 0, role.oid, 'o');
-            } else if (Names(row.acl, role.oid)) {
-              Depend(entry.oid, kPgDefaultAclTable, oid, 0, role.oid, 'a');
-            }
-          });
-      });
+    auto& context = Context();
+    for (const auto& db :
+         catalog::SereneDBDatabases(duckdb::DatabaseManager::Get(context))) {
+      auto& database = db->GetCatalog().Cast<catalog::SereneDBCatalog>();
+      const auto transaction = database.GetCatalogTransaction(context);
+      database.Set(duckdb::CatalogType::SCHEMA_ENTRY)
+        .Scan(transaction, [&](duckdb::CatalogEntry& schema) {
+          Entry(db->oid, role.oid, schema);
+          schema.Cast<catalog::Schema>().ScanTree(
+            transaction, [&](duckdb::CatalogEntry& member) {
+              Entry(db->oid, role.oid, member);
+            });
+        });
+      for (auto* set : {&database.Servers(), &database.Subscriptions()}) {
+        set->Scan(transaction, [&](duckdb::CatalogEntry& entry) {
+          Entry(db->oid, role.oid, entry);
+        });
+      }
+    }
+    auto& cluster = catalog::ClusterOf(context);
+    cluster.Set(duckdb::CatalogType::DATABASE_ENTRY)
+      .Scan(
+        cluster.GetCatalogTransaction(context),
+        [&](duckdb::CatalogEntry& entry) {
+          Entry(kInvalidOid, role.oid, entry);
+          VisitDefaultAcls(
+            Context(), entry,
+            [&](duckdb::idx_t oid, const duckdb::DefaultAcl& row) {
+              if (row.role == role.oid) {
+                Depend(entry.oid, kPgDefaultAclTable, oid, 0, role.oid, 'o');
+              } else if (Names(row.acl, role.oid)) {
+                Depend(entry.oid, kPgDefaultAclTable, oid, 0, role.oid, 'a');
+              }
+            });
+        });
   }
 
  private:

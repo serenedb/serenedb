@@ -27,9 +27,4 @@ utils::DrainGate& CommitGate() {
   return gGate;
 }
 
-utils::DrainGate& CheckpointGate() {
-  static utils::DrainGate gGate;
-  return gGate;
-}
-
 }  // namespace sdb::backup

@@ -1,0 +1,55 @@
+# CREATE INDEX does not wait for the other transactions that wrote the table.
+# Rows a transaction still holds in memory are indexed when it commits; a
+# transaction that already stored its rows before the index existed fails at
+# COMMIT.
+
+statement ok
+CREATE TABLE cicw (id INT PRIMARY KEY, body TEXT);
+
+statement ok
+INSERT INTO cicw VALUES (1, 'alpha');
+
+connection cicw_bulk
+statement ok
+BEGIN;
+
+connection cicw_bulk
+statement ok
+INSERT INTO cicw SELECT i, 'bulk' FROM range(2, 5002) t(i);
+
+connection cicw_small
+statement ok
+BEGIN;
+
+connection cicw_small
+statement ok
+INSERT INTO cicw VALUES (9000, 'small');
+
+statement ok
+CREATE INDEX cicw_idx ON cicw USING inverted (id, body);
+
+connection cicw_bulk
+statement error
+COMMIT;
+----
+db error: ERROR: could not serialize access due to concurrent update
+
+
+connection cicw_small
+statement ok
+COMMIT;
+
+query
+SELECT id FROM cicw_idx WHERE body @@ 'small' ORDER BY id;
+----
+id
+9000
+
+query
+SELECT count(*) AS n FROM cicw;
+----
+n
+2
+
+statement ok
+DROP TABLE cicw;

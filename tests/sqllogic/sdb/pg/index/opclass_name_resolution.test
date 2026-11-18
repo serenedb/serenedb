@@ -29,9 +29,6 @@ CREATE INDEX shadow_ivf_col_idx ON shadow_ivf_col USING inverted(id, s ivf);
 statement ok
 INSERT INTO shadow_ivf_col VALUES (1, 'foo'), (2, 'bar'), (3, 'foo');
 
-statement ok
-VACUUM (REFRESH_TABLE) shadow_ivf_col;
-
 query
 SELECT id FROM shadow_ivf_col_idx WHERE s = 'foo' ORDER BY id;
 ----
@@ -49,9 +46,6 @@ CREATE INDEX shadow_inc_col_idx ON shadow_inc_col USING inverted(id, s included)
 
 statement ok
 INSERT INTO shadow_inc_col VALUES (1, 'foo'), (2, 'bar'), (3, 'foo');
-
-statement ok
-VACUUM (REFRESH_TABLE) shadow_inc_col;
 
 query
 SELECT id FROM shadow_inc_col_idx WHERE s = 'foo' ORDER BY id;
@@ -72,9 +66,6 @@ CREATE INDEX shadow_ivf_expr_idx ON shadow_ivf_expr USING inverted(
 statement ok
 INSERT INTO shadow_ivf_expr VALUES (1, 'foo', 'bar'), (2, 'baz', 'qux');
 
-statement ok
-VACUUM (REFRESH_TABLE) shadow_ivf_expr;
-
 query
 SELECT id FROM shadow_ivf_expr_idx WHERE a || b = 'foobar';
 ----
@@ -92,9 +83,6 @@ CREATE INDEX shadow_inc_expr_idx ON shadow_inc_expr USING inverted(
 
 statement ok
 INSERT INTO shadow_inc_expr VALUES (1, 'foo', 'bar'), (2, 'baz', 'qux');
-
-statement ok
-VACUUM (REFRESH_TABLE) shadow_inc_expr;
 
 query
 SELECT id FROM shadow_inc_expr_idx WHERE a || b = 'foobar';
@@ -119,9 +107,6 @@ INSERT INTO parens_ivf_col VALUES
     (2, [10, 10, 10]),
     (3, [0, 0, 0]);
 
-statement ok
-VACUUM (REFRESH_TABLE) parens_ivf_col;
-
 query
 SELECT id FROM parens_ivf_col_idx ORDER BY emb <-> [1, 2, 3]::FLOAT[3] LIMIT 1;
 ----
@@ -139,9 +124,6 @@ CREATE INDEX parens_inc_col_idx ON parens_inc_col USING inverted(
 
 statement ok
 INSERT INTO parens_inc_col VALUES (1, 'foo'), (2, 'bar');
-
-statement ok
-VACUUM (REFRESH_TABLE) parens_inc_col;
 
 query
 SELECT id, s FROM parens_inc_col_idx WHERE id = 1;
@@ -161,9 +143,6 @@ CREATE INDEX parens_ivf_expr_idx ON parens_ivf_expr USING inverted(
 statement ok
 INSERT INTO parens_ivf_expr VALUES (1, 1, 2, 3), (2, 10, 10, 10);
 
-statement ok
-VACUUM (REFRESH_TABLE) parens_ivf_expr;
-
 query
 SELECT id FROM parens_ivf_expr_idx
 ORDER BY array_value(x, y, z) <-> [1, 2, 3]::FLOAT[3] LIMIT 1;
@@ -182,9 +161,6 @@ CREATE INDEX parens_inc_expr_idx ON parens_inc_expr USING inverted(
 
 statement ok
 INSERT INTO parens_inc_expr VALUES (1, 10, 20), (2, 5, 5);
-
-statement ok
-VACUUM (REFRESH_TABLE) parens_inc_expr;
 
 query
 SELECT id, a + b AS s FROM parens_inc_expr_idx ORDER BY id;

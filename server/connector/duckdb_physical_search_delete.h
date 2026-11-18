@@ -62,6 +62,10 @@ class SereneDBSearchDelete final : public duckdb::PhysicalOperator {
   duckdb::SinkCombineResultType Combine(
     duckdb::ExecutionContext& context,
     duckdb::OperatorSinkCombineInput& input) const final;
+  duckdb::SinkFinalizeType Finalize(
+    duckdb::Pipeline& pipeline, duckdb::Event& event,
+    duckdb::ClientContext& context,
+    duckdb::OperatorSinkFinalizeInput& input) const final;
 
   bool IsSource() const final { return true; }
   duckdb::unique_ptr<duckdb::GlobalSourceState> GetGlobalSourceState(

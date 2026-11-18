@@ -420,8 +420,7 @@ void HnswComputeDistances(const float* q, const float* base, uint32_t d,
     } else if constexpr (kKernel == VectorMetric::InnerProduct) {
       out[i] = faiss::fvec_inner_product(q, row(ids[i]), d);
     } else {
-      out[i] =
-        ComputeDistance<kKernel>(q, row(ids[i]), static_cast<uint16_t>(d));
+      out[i] = ComputeDistance<kKernel>(q, row(ids[i]), d);
     }
   }
 }

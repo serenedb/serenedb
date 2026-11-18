@@ -20,12 +20,16 @@
 
 #pragma once
 
+#include <duckdb/parser/parsed_data/copy_info.hpp>
+
 namespace duckdb {
 
 class DatabaseInstance;
 }
 
 namespace sdb::connector {
+
+void CheckBinaryCopyOptions(const duckdb::CopyInfo& info, bool from);
 
 // Registers the "binary" CopyFunction, giving COPY ... (FORMAT binary) the
 // PostgreSQL COPY binary (PGCOPY) wire format. DuckDB ships no binary copy

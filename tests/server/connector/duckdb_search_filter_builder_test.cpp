@@ -5178,8 +5178,8 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TokenizerCastNullSugar) {
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TokenizerCastNamedNoCatalog) {
-  // 'foo'::tokenize('english') against a unit-test connection has no
-  // SereneDBClientState wired up, so ResolveTokenizerAnalyzer returns
+  // 'foo'::tokenize('english') against a unit-test database has no
+  // such tokenizer in its catalog, so ResolveTokenizerAnalyzer returns
   // an empty wrapper and the cast surfaces a "tokenizer not found"
   // bind error (ERRCODE_UNDEFINED_OBJECT). End-to-end coverage with
   // a real catalog lives in sqllogic.
@@ -5195,7 +5195,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TokenizerCastNamedNoCatalog) {
 TEST_F(SearchFilterBuilderTest,
        test_TSQueryMatch_TokenizeNamedAnalyzerNoCatalog) {
   // 2-arg ts_tokenize(text, name): named analyzer requires a real catalog.
-  // The unit-test connection has no SereneDBClientState, so the
+  // The unit-test database has no such tokenizer, so the
   // resolver returns null and the filter builder throws with
   // ERRCODE_UNDEFINED_OBJECT. End-to-end coverage with a real catalog
   // lives in sqllogic.
@@ -5283,7 +5283,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_AllOfTokenizeListIdentity) {
 }
 
 // 2-arg ts_tokenize(text_array, name) requires a real catalog. The
-// unit-test connection has no SereneDBClientState, so the resolver
+// unit-test database has no such tokenizer, so the resolver
 // returns null and the filter builder throws with
 // ERRCODE_UNDEFINED_OBJECT.
 TEST_F(SearchFilterBuilderTest,
@@ -7470,18 +7470,14 @@ TEST_F(SearchFilterBuilderTest, test_SlopModifierOnTsqueryPhrasePart) {
                "must not carry a slop modifier");
 }
 
-TEST_F(SearchFilterBuilderTest, test_SlopModifierOnNullDeclined) {
-  // NULL::TSQUERY::slop(2) -- the NULL constant retypes through both
-  // casts without cast nodes, so `@@` sees a constant NULL argument and
-  // folds to SQL NULL at bind. The builder declines the predicate and
-  // row-level NULL semantics yield 0 rows (pinned in
-  // sloppy_phrase.test); the slop budget dissolves with the NULL.
+TEST_F(SearchFilterBuilderTest, test_SlopModifierOnNullEmpty) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
-  irs::BooleanFilter expected;  // not claimed
+  irs::BooleanFilter expected;
+  AddChild<irs::Empty>(expected);
   AssertFilter(expected,
                "SELECT * FROM foo WHERE category @@ NULL::TSQUERY::slop(2)",
-               columns, false, SegmentationAnalyzerProvider);
+               columns, true, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_SlopModifierOnTsqueryPhraseRejected) {

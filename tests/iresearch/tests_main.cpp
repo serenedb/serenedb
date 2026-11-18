@@ -46,7 +46,6 @@
 #include <iresearch/utils/file_utils_ext.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/mmap_utils.hpp>
-#include <iresearch/utils/network_utils.hpp>
 #include <vector>
 
 #include "index/doc_generator.hpp"

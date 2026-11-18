@@ -20,10 +20,6 @@ statement count 3
 INSERT INTO dar VALUES (1, 'alpha'), (2, 'beta'), (3, 'gamma');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) dar;
-
-
 query
 SELECT count(*) AS hits FROM dar_idx WHERE body @@ ts_phrase('alpha');
 ----
@@ -33,10 +29,6 @@ hits
 
 statement count 3
 DELETE FROM dar;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) dar;
 
 
 query

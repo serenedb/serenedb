@@ -62,7 +62,7 @@ onlyif serenedb
 statement error
 DROP ROLE dotype_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dotype_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dotype_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 # Drop the type -> ownership dependency gone -> DROP ROLE succeeds.
@@ -98,7 +98,7 @@ onlyif serenedb
 statement error
 DROP ROLE dotype_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dotype_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dotype_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 # Reassign ownership to another role -> dependency gone for vedernikoff -> ok.
@@ -130,7 +130,7 @@ onlyif serenedb
 statement error
 DROP ROLE dotype_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dotype_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dotype_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 statement ok
@@ -195,7 +195,7 @@ onlyif serenedb
 statement error
 DROP ROLE dotype_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dotype_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dotype_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 # Drop one type: still refused because the other type is still owned.
@@ -214,7 +214,7 @@ onlyif serenedb
 statement error
 DROP ROLE dotype_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dotype_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dotype_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 # Drop the last owned type -> dependency fully cleared -> DROP ROLE succeeds.
@@ -255,7 +255,7 @@ onlyif serenedb
 statement error
 DROP ROLE dotype_kostya;
 ----
-db error: ERROR: Cannot drop entry "dotype_kostya" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dotype_kostya" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 statement ok
@@ -283,7 +283,7 @@ onlyif serenedb
 statement error
 DROP ROLE dotype_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dotype_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dotype_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 # Plain DROP TYPE fails: the table column depends on the type.

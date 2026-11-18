@@ -36,9 +36,8 @@ query
 EXPLAIN SELECT * FROM tbl;
 ----
 QUERY PLAN
-╭─ SEQ_SCAN ─────────────────────╮
+╭─ IRESEARCH_SCAN ───────────────╮
 │ Table: tbl                     │
-│ Type: Sequential Scan          │
 │ Projections: id, name, col1,   │
 │              col2,             │
 │              Some Column Name, │
@@ -82,9 +81,8 @@ QUERY PLAN
 │ ~1 row                │
 ╰───────────┬───────────╯
             ├─────────────────────────────╮
-╭─ SEQ_SCAN ┴───────────╮  ╭─ SEQ_SCAN ───┴──────────────╮
+╭─ IRESEARCH_SCAN ──────╮  ╭─ IRESEARCH_SCAN ────────────╮
 │ Table: exams          │  │ Table: students             │
-│ Type: Sequential Scan │  │ Type: Sequential Scan       │
 │ Projections: sid      │  │ Projections: sid, name      │
 │ ~3 rows               │  │ Column Filter: name >= 'Ma' │
 ╰───────────────────────╯  │ ~1 row                      │
@@ -105,9 +103,8 @@ query
 EXPLAIN SELECT * FROM tbl;
 ----
 QUERY PLAN
-╭─ SEQ_SCAN ─────────────────────╮
+╭─ IRESEARCH_SCAN ───────────────╮
 │ Table: tbl                     │
-│ Type: Sequential Scan          │
 │ Projections: id, name, col1,   │
 │              col2,             │
 │              Some Column Name, │
@@ -141,9 +138,8 @@ QUERY PLAN
 │              number2           │
 │ ~3 rows                        │
 ╰────────────────┬───────────────╯
-╭─ SEQ_SCAN ─────┴───────────────╮
+╭─ IRESEARCH_SCAN ───────────────╮
 │ Table: tbl                     │
-│ Type: Sequential Scan          │
 │ ~3 rows                        │
 ╰────────────────────────────────╯
 
@@ -171,9 +167,8 @@ logical_plan
 │              number, number1,  │
 │              number2           │
 ╰────────────────┬───────────────╯
-╭─ SEQ_SCAN ─────┴───────────────╮
+╭─ IRESEARCH_SCAN ───────────────╮
 │ Table: tbl                     │
-│ Type: Sequential Scan          │
 ╰────────────────────────────────╯
 logical_opt
 ╭─ PROJECTION ───────────────────╮
@@ -185,15 +180,13 @@ logical_opt
 │              number2           │
 │ ~3 rows                        │
 ╰────────────────┬───────────────╯
-╭─ SEQ_SCAN ─────┴───────────────╮
+╭─ IRESEARCH_SCAN ───────────────╮
 │ Table: tbl                     │
-│ Type: Sequential Scan          │
 │ ~3 rows                        │
 ╰────────────────────────────────╯
 physical_plan
-╭─ SEQ_SCAN ─────────────────────╮
+╭─ IRESEARCH_SCAN ───────────────╮
 │ Table: tbl                     │
-│ Type: Sequential Scan          │
 │ Projections: id, name, col1,   │
 │              col2,             │
 │              Some Column Name, │
@@ -214,4 +207,4 @@ query
 EXPLAIN (FORMAT compact) SELECT * FROM tbl WHERE i > 1;
 ----
 QUERY PLAN
-SEQ_SCAN (est=1) Table: tbl; Type: Sequential Scan; Projections: id, name, col1, col2, Some Column Name, i, a, b, c, number, number1, number2; Column Filter: (i > 1)
+IRESEARCH_SCAN (est=1) Table: tbl; Projections: id, name, col1, col2, Some Column Name, i, a, b, c, number, number1, number2; Column Filter: (i > 1)

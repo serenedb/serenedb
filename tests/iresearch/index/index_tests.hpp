@@ -23,10 +23,12 @@
 
 #pragma once
 
+#include <absl/container/flat_hash_map.h>
+#include <absl/synchronization/mutex.h>
+
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/index/directory_reader.hpp>
-#include <iresearch/index/directory_reader_impl.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/utils/timer_utils.hpp>
 
@@ -78,10 +80,6 @@ class DirectoryMock : public irs::Directory {
     return _impl.length(result, name);
   }
 
-  irs::IndexLock::ptr make_lock(std::string_view name) noexcept override {
-    return _impl.make_lock(name);
-  }
-
   bool mtime(std::time_t& result,
              std::string_view name) const noexcept override {
     return _impl.mtime(result, name);
@@ -92,6 +90,11 @@ class DirectoryMock : public irs::Directory {
     return _impl.open(name, advice);
   }
 
+  irs::IndexInput::ptr Finish(irs::IndexOutput::ptr out,
+                              irs::IOAdvice advice) const override {
+    return _impl.Finish(std::move(out), advice);
+  }
+
   bool remove(std::string_view name) noexcept override {
     return _impl.remove(name);
   }
@@ -100,16 +103,123 @@ class DirectoryMock : public irs::Directory {
     return _impl.rename(src, dst);
   }
 
-  bool sync(std::span<const std::string_view> files) noexcept override {
-    return _impl.sync(files);
-  }
-
   bool visit(const irs::Directory::visitor_f& visitor) const final {
     return _impl.visit(visitor);
   }
 
  private:
   irs::Directory& _impl;
+};
+
+class ForwardingIndexInput : public irs::IndexInput {
+ public:
+  explicit ForwardingIndexInput(irs::IndexInput::ptr impl) noexcept
+    : _impl(std::move(impl)) {}
+
+  const irs::byte_type* ReadStable(uint64_t count) final {
+    return _impl->ReadStable(count);
+  }
+  const irs::byte_type* ReadStable(uint64_t offset, uint64_t count) final {
+    return _impl->ReadStable(offset, count);
+  }
+  const irs::byte_type* ReadVolatile(uint64_t offset, uint64_t count) final {
+    return _impl->ReadVolatile(offset, count);
+  }
+  const irs::byte_type* ReadVolatile(uint64_t count) final {
+    return _impl->ReadVolatile(count);
+  }
+
+  irs::byte_type ReadByte() final { return _impl->ReadByte(); }
+  using DataInput::ReadData;
+  void ReadData(irs::byte_type* b, uint64_t count) final {
+    _impl->ReadData(b, count);
+  }
+  void ReadData(duckdb::QueryContext context, irs::byte_type* b,
+                uint64_t count) final {
+    _impl->ReadData(context, b, count);
+  }
+  void ReadData(uint64_t offset, irs::byte_type* b, size_t count) final {
+    _impl->ReadData(offset, b, count);
+  }
+
+  int16_t ReadI16() final { return _impl->ReadI16(); }
+  int32_t ReadI32() final { return _impl->ReadI32(); }
+  int64_t ReadI64() final { return _impl->ReadI64(); }
+  uint32_t ReadV32() final { return _impl->ReadV32(); }
+  uint64_t ReadV64() final { return _impl->ReadV64(); }
+
+  void SkipV32() final { _impl->SkipV32(); }
+  void SkipV64() final { _impl->SkipV64(); }
+  void Skip(uint64_t count) final { _impl->Skip(count); }
+  void Seek(uint64_t pos) final { _impl->Seek(pos); }
+
+  uint64_t Position() const noexcept final { return _impl->Position(); }
+  uint64_t Length() const noexcept final { return _impl->Length(); }
+  bool IsEOF() const noexcept final { return _impl->IsEOF(); }
+
+  ptr Dup() const override { return _impl->Dup(); }
+  ptr Reopen() const override { return _impl->Reopen(); }
+
+  uint32_t Checksum(uint64_t offset) const final {
+    return _impl->Checksum(offset);
+  }
+
+  uint64_t CountMappedMemory() const final {
+    return _impl->CountMappedMemory();
+  }
+  void Prefetch(uint64_t offset, uint64_t size) const noexcept final {
+    _impl->Prefetch(offset, size);
+  }
+  void Evict(uint64_t offset, uint64_t size) const noexcept final {
+    _impl->Evict(offset, size);
+  }
+  bool Resident(uint64_t offset, uint64_t size) const noexcept final {
+    return _impl->Resident(offset, size);
+  }
+  uint64_t Warm(uint64_t offset, uint64_t size) const noexcept final {
+    return _impl->Warm(offset, size);
+  }
+  void MarkWarm(uint64_t offset, uint64_t size) const noexcept final {
+    _impl->MarkWarm(offset, size);
+  }
+  void StartWriteback() const noexcept final { _impl->StartWriteback(); }
+  bool Sync() const noexcept override { return _impl->Sync(); }
+
+ private:
+  irs::IndexInput::ptr _impl;
+};
+
+class FinishHookDirectory : public DirectoryMock {
+ public:
+  using DirectoryMock::DirectoryMock;
+
+  irs::IndexOutput::ptr create(std::string_view name) override {
+    auto out = DirectoryMock::create(name);
+    absl::MutexLock lock{&_mutex};
+    _names.insert_or_assign(out.get(), std::string{name});
+    return out;
+  }
+
+  irs::IndexInput::ptr Finish(irs::IndexOutput::ptr out,
+                              irs::IOAdvice advice) const final {
+    std::string name;
+    {
+      absl::MutexLock lock{&_mutex};
+      if (auto node = _names.extract(out.get())) {
+        name = std::move(node.mapped());
+      }
+    }
+    return Finished(DirectoryMock::Finish(std::move(out), advice), name);
+  }
+
+ protected:
+  virtual irs::IndexInput::ptr Finished(irs::IndexInput::ptr in,
+                                        std::string_view name) const = 0;
+
+ private:
+  mutable absl::Mutex _mutex;
+  mutable absl::flat_hash_map<const irs::IndexOutput*, std::string> _names
+    ABSL_GUARDED_BY(_mutex);
 };
 
 struct BlockingDirectory : DirectoryMock {
@@ -167,7 +277,8 @@ struct CallbackDirectory : DirectoryMock {
 
 typedef std::tuple<tests::dir_param_f> index_test_context;
 
-void AssertSnapshotEquality(irs::DirectoryReader lhs, irs::DirectoryReader rhs);
+void AssertSnapshotEquality(const irs::DirectoryReader& lhs,
+                            const irs::DirectoryReader& rhs);
 
 // A posting list is written before anything is deleted, so a reader walking
 // one sees documents the segment no longer has. Only a plan knows about the
@@ -176,7 +287,7 @@ inline std::unique_ptr<PostingsCursor> MaskPostings(
   const irs::SubReader& segment, irs::TermPostings::ptr&& postings,
   irs::IndexFeatures features = irs::IndexFeatures::None) {
   return std::make_unique<PostingsCursor>(std::move(postings), features,
-                                          segment.MaskedDocs());
+                                          segment.docs_mask());
 }
 
 class IndexTestBase : public virtual TestParamBase<index_test_context> {
@@ -193,37 +304,37 @@ class IndexTestBase : public virtual TestParamBase<index_test_context> {
 
   irs::doc_id_t GetPostingsBlockSize() const;
 
-  irs::IndexWriter::ptr open_writer(
-    irs::Directory& dir, irs::OpenMode mode = irs::kOmCreate,
+  tests::IndexWriter::ptr open_writer(
+    irs::Directory& dir, tests::OpenMode mode = tests::kOmCreate,
     irs::IndexWriterOptions options = CsDefaultWriterOptions()) const {
-    return irs::IndexWriter::Make(dir, mode,
-                                  EnsureWriterDb(std::move(options)));
+    return tests::IndexWriter::Make(dir, mode,
+                                    EnsureWriterDb(std::move(options)));
   }
 
-  irs::IndexWriter::ptr open_writer(
-    irs::OpenMode mode = irs::kOmCreate,
+  tests::IndexWriter::ptr open_writer(
+    tests::OpenMode mode = tests::kOmCreate,
     irs::IndexWriterOptions options = CsDefaultWriterOptions()) const {
-    return irs::IndexWriter::Make(*_dir, mode,
-                                  EnsureWriterDb(std::move(options)));
+    return tests::IndexWriter::Make(*_dir, mode,
+                                    EnsureWriterDb(std::move(options)));
   }
 
   irs::DirectoryReader open_reader(
     const irs::IndexReaderOptions& options = CsDefaultReaderOptions()) const {
-    return irs::DirectoryReader{*_dir, options};
+    return tests::OpenReader(*_dir, options);
   }
 
-  void AssertSnapshotEquality(const irs::IndexWriter& writer);
+  void AssertSnapshotEquality(const tests::IndexWriter& writer);
 
   void assert_index(irs::IndexFeatures features, size_t skip = 0,
                     const irs::RegexpAcceptor* acceptor = nullptr) const {
-    tests::AssertIndex(open_reader().GetImpl(), index(), features, skip,
-                       acceptor);
+    tests::AssertIndex(open_reader(), index(), features, skip, acceptor);
   }
 
   void SetUp() final {
     TestBase::SetUp();
 
     // set directory
+    _dir = nullptr;
     _dir = get_directory(*this);
     ASSERT_NE(nullptr, _dir);
   }
@@ -240,26 +351,26 @@ class IndexTestBase : public virtual TestParamBase<index_test_context> {
   using StoreHook =
     std::function<void(irs::IndexWriter::Document&, const tests::Document&)>;
 
-  void write_segment(irs::IndexWriter& writer, tests::IndexSegment& segment,
+  void write_segment(tests::IndexWriter& writer, tests::IndexSegment& segment,
                      tests::DocGeneratorBase& gen, const StoreHook& store = {});
 
-  void write_segment_batched(irs::IndexWriter& writer,
+  void write_segment_batched(tests::IndexWriter& writer,
                              tests::IndexSegment& segment,
                              tests::DocGeneratorBase& gen, size_t batch_size);
 
-  void add_segment(irs::IndexWriter& writer, tests::DocGeneratorBase& gen,
+  void add_segment(tests::IndexWriter& writer, tests::DocGeneratorBase& gen,
                    const StoreHook& store = {});
 
-  void add_segments(irs::IndexWriter& writer,
+  void add_segments(tests::IndexWriter& writer,
                     std::vector<DocGeneratorBase::ptr>& gens);
 
   void add_segment(tests::DocGeneratorBase& gen,
-                   irs::OpenMode mode = irs::kOmCreate,
+                   tests::OpenMode mode = tests::kOmCreate,
                    irs::IndexWriterOptions opts = CsDefaultWriterOptions(),
                    const StoreHook& store = {});
   void add_segment_batched(
     tests::DocGeneratorBase& gen, size_t batch_size,
-    irs::OpenMode mode = irs::kOmCreate,
+    tests::OpenMode mode = tests::kOmCreate,
     irs::IndexWriterOptions opts = CsDefaultWriterOptions());
 
  private:

@@ -1,0 +1,259 @@
+statement ok
+CREATE TABLE oca_null (id INT, u INT UNIQUE);
+
+
+statement ok
+INSERT INTO oca_null VALUES (1, NULL), (2, NULL) ON CONFLICT DO NOTHING;
+
+
+query
+SELECT id FROM oca_null ORDER BY id;
+----
+id
+1
+2
+
+
+statement ok
+CREATE TABLE oca_two (a INT PRIMARY KEY, b INT UNIQUE);
+
+
+statement ok
+INSERT INTO oca_two VALUES (1, 9);
+
+
+statement ok
+INSERT INTO oca_two VALUES (5, 9), (5, 10), (6, 11), (6, 12) ON CONFLICT DO NOTHING;
+
+
+query
+SELECT a, b FROM oca_two ORDER BY a;
+----
+a	b
+1	9
+5	10
+6	11
+
+
+query
+INSERT INTO oca_two VALUES (7, 13), (7, 14), (8, 9) ON CONFLICT DO NOTHING RETURNING a, b;
+----
+a	b
+7	13
+
+
+statement error duplicate key value violates unique constraint
+INSERT INTO oca_two VALUES (9, 9) ON CONFLICT (a) DO NOTHING;
+
+
+statement ok
+INSERT INTO oca_two VALUES (1, 20) ON CONFLICT (a) DO NOTHING;
+
+
+statement ok
+INSERT INTO oca_two VALUES (1, 30), (10, 30) ON CONFLICT DO NOTHING;
+
+
+query
+SELECT a, b FROM oca_two ORDER BY a;
+----
+a	b
+1	9
+5	10
+6	11
+7	13
+10	30
+
+
+statement ok
+CREATE TABLE oca_expr (id INT PRIMARY KEY, team INT, email TEXT);
+
+
+statement ok
+CREATE UNIQUE INDEX oca_expr_team_email ON oca_expr (team, lower(email));
+
+
+statement ok
+INSERT INTO oca_expr VALUES (1, 1, 'a@x');
+
+
+statement ok
+INSERT INTO oca_expr VALUES (2, 1, 'A@X'), (3, 2, 'a@x') ON CONFLICT DO NOTHING;
+
+
+query
+SELECT id, team, email FROM oca_expr ORDER BY id;
+----
+id	team	email
+1	1	a@x
+3	2	a@x
+
+
+statement ok
+CREATE TABLE oca_plain (a INT);
+
+
+statement ok
+INSERT INTO oca_plain VALUES (1), (1) ON CONFLICT DO NOTHING;
+
+
+query
+SELECT count(*) AS n FROM oca_plain;
+----
+n
+2
+
+
+statement ok
+CREATE TABLE oca_txn (k INT PRIMARY KEY, v TEXT);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO oca_txn VALUES (1, 'a');
+
+
+statement ok
+INSERT INTO oca_txn VALUES (1, 'b'), (2, 'c') ON CONFLICT DO NOTHING;
+
+
+statement ok
+DELETE FROM oca_txn WHERE k = 2;
+
+
+statement ok
+INSERT INTO oca_txn VALUES (2, 'd'), (3, 'e') ON CONFLICT DO NOTHING;
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT k, v FROM oca_txn ORDER BY k;
+----
+k	v
+1	a
+2	d
+3	e
+
+
+statement ok
+CREATE TABLE oca_parent (id INT PRIMARY KEY);
+
+
+statement ok
+CREATE TABLE oca_child (id INT PRIMARY KEY, parent INT REFERENCES oca_parent (id));
+
+
+statement ok
+INSERT INTO oca_parent VALUES (1);
+
+
+statement ok
+INSERT INTO oca_child VALUES (1, 1);
+
+
+statement ok
+INSERT INTO oca_child VALUES (1, 99) ON CONFLICT DO NOTHING;
+
+
+statement error violates foreign key constraint
+INSERT INTO oca_child VALUES (2, 99) ON CONFLICT DO NOTHING;
+
+
+statement ok
+CREATE TABLE oca_upd (id INT, u INT UNIQUE, v TEXT);
+
+
+statement ok
+INSERT INTO oca_upd VALUES (1, NULL, 'a'), (2, NULL, 'b') ON CONFLICT (u) DO UPDATE SET v = excluded.v;
+
+
+query
+SELECT id, v FROM oca_upd ORDER BY id;
+----
+id	v
+1	a
+2	b
+
+
+statement ok
+INSERT INTO oca_upd VALUES (3, 30, 'c');
+
+
+statement error cannot affect row a second time
+INSERT INTO oca_upd VALUES (4, 30, 'x'), (5, 30, 'y') ON CONFLICT (u) DO UPDATE SET v = excluded.v;
+
+
+statement error cannot affect row a second time
+INSERT INTO oca_upd VALUES (6, 40, 'x'), (7, 40, 'y') ON CONFLICT (u) DO UPDATE SET v = excluded.v;
+
+
+query
+SELECT id, u, v FROM oca_upd ORDER BY id;
+----
+id	u	v
+1	NULL	a
+2	NULL	b
+3	30	c
+
+
+statement ok
+INSERT INTO oca_upd VALUES (8, 30, 'w'), (9, 50, 'q') ON CONFLICT (u) DO UPDATE SET v = excluded.v;
+
+
+query
+SELECT id, u, v FROM oca_upd ORDER BY id;
+----
+id	u	v
+1	NULL	a
+2	NULL	b
+3	30	w
+9	50	q
+
+
+statement ok
+CREATE TABLE oca_chk (a INT PRIMARY KEY, b INT CHECK (b > 0), c INT NOT NULL, d INT);
+
+
+statement error constraint
+INSERT INTO oca_chk VALUES (1, -1, 1, 1) ON CONFLICT DO NOTHING;
+
+
+statement error null value|NOT NULL constraint failed
+INSERT INTO oca_chk VALUES (1, 1, NULL, 1) ON CONFLICT DO NOTHING;
+
+
+statement error matching the ON CONFLICT specification|not referenced by a UNIQUE/PRIMARY KEY
+INSERT INTO oca_chk VALUES (1, 1, 1, 1) ON CONFLICT (d) DO NOTHING;
+
+
+query
+SELECT count(*) AS n FROM oca_chk;
+----
+n
+0
+
+
+statement ok
+INSERT INTO oca_chk VALUES (1, 1, 1, 1);
+
+
+statement error constraint
+INSERT INTO oca_chk VALUES (1, -1, 1, 1) ON CONFLICT DO NOTHING;
+
+
+statement ok
+INSERT INTO oca_chk VALUES (1, 2, 2, 2), (2, 2, 2, 2) ON CONFLICT DO NOTHING;
+
+
+query
+SELECT a, b FROM oca_chk ORDER BY a;
+----
+a	b
+1	1
+2	2

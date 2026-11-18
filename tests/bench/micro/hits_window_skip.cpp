@@ -44,6 +44,7 @@
 #include <string>
 #include <string_view>
 
+#include "index/test_index_writer.hpp"
 #include "insert_field.hpp"
 
 namespace {
@@ -115,7 +116,7 @@ const Index& IndexOf(size_t docs) {
   opts.column_options = [](irs::field_id) -> irs::ColumnOptions { return {}; };
   opts.norm_column_id = [](irs::field_id id) { return id + kNormBase; };
   auto writer =
-    irs::IndexWriter::Make(*index.dir, irs::kOmCreate, std::move(opts));
+    tests::IndexWriter::Make(*index.dir, tests::kOmCreate, std::move(opts));
   {
     auto trx = writer->GetBatch();
     BodyField field;
@@ -128,7 +129,7 @@ const Index& IndexOf(size_t docs) {
   }
   writer->RefreshCommit();
   index.reader =
-    irs::DirectoryReader{*index.dir, irs::IndexReaderOptions{.db = db}};
+    tests::OpenReader(*index.dir, irs::IndexReaderOptions{.db = db});
   return index;
 }
 

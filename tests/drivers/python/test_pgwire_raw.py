@@ -980,6 +980,48 @@ def test_numeric_param_rounds_into_its_column(conn):
     conn.run_ok("drop table raw_numeric_param")
 
 
+def execute_named(conn, stmt, params, describe=False):
+    conn.bind("", stmt, params=params)
+    if describe:
+        conn.describe("P")
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    return m
+
+
+def test_untyped_params_run_one_statement_many_times(conn):
+    conn.run_ok("drop table if exists raw_untyped_reuse")
+    conn.run_ok("create table raw_untyped_reuse (id int, s text)")
+    conn.parse("ins", "insert into raw_untyped_reuse values ($1, 'v' || $2)")
+    for i in range(3):
+        execute_named(conn, "ins", (str(i).encode(), f"x{i}".encode()), i != 1)
+    m = conn.run_ok(
+        "select string_agg(id::text || s, ',' order by id) from raw_untyped_reuse"
+    )
+    assert first_field(m) == b"0vx0,1vx1,2vx2"
+    conn.run_ok("drop table raw_untyped_reuse")
+
+
+def test_numeric_params_of_any_scale_on_one_statement(conn):
+    conn.parse("num", "select $1::text", oids=(1700,))
+    for value in (b"1.5", b"123.4567", b"7", b"1.5"):
+        assert first_field(execute_named(conn, "num", (value,))) == value
+
+
+def test_untyped_params_follow_a_recreated_table(conn):
+    conn.run_ok("drop table if exists raw_untyped_ddl")
+    conn.run_ok("create table raw_untyped_ddl (a text)")
+    conn.parse("cnt", "select count(*) from raw_untyped_ddl where a = 'p' || $1")
+    assert first_field(execute_named(conn, "cnt", (b"x",))) == b"0"
+    conn.run_ok("drop table raw_untyped_ddl")
+    conn.run_ok("create table raw_untyped_ddl (a text, b int)")
+    conn.run_ok("insert into raw_untyped_ddl values ('px', 1)")
+    assert first_field(execute_named(conn, "cnt", (b"x",), True)) == b"1"
+    conn.run_ok("drop table raw_untyped_ddl")
+
+
 def parameter_types(msgs):
     for t, p in msgs:
         if t == "t":
@@ -2104,6 +2146,43 @@ def test_copy_csv_keeps_eod_marker_as_data(conn):
         conn.run_ok("drop table if exists smoke_csv_eod")
 
 
+def test_copy_text_eod_marker_across_frames(conn):
+    marker_alone = "end-of-copy marker is not alone on its line"
+    cases = [
+        ([b"1\tone\n\\", b".\n"], (1, 1), None),
+        ([b"1\tone\r\n\\.", b"\r\n"], (1, 1), None),
+        ([b"1\tone\r\n\\.\r", b"\n"], (1, 1), None),
+        ([b"1\tone\n\\", b".", b"\n"], (1, 1), None),
+        ([b"1\tone\n\\."], (1, 1), None),
+        ([b"1\tone\n\\.\n", b"2\ttwo\n"], (1, 1), None),
+        ([b"1\tone\n\\", b"N\ttwo\n"], (2, 1), None),
+        ([b"\\N\tone\n"], (1, 0), None),
+        ([b"1\tone\n\\.x\n"], None, marker_alone),
+        ([b"1\tone\n\\.\rx\n"], None, marker_alone),
+        ([b"1\ta\\.b\n"], None, marker_alone),
+    ]
+    conn.run_ok("drop table if exists smoke_copy_eod_frames")
+    assert "E" not in types(conn.run("create table smoke_copy_eod_frames(a int, b text)"))
+    try:
+        for frames, counts, error in cases:
+            conn.run_ok("delete from smoke_copy_eod_frames")
+            conn.send("Q", _cstr("copy smoke_copy_eod_frames from stdin"))
+            assert conn.read_msg()[0] == "G", frames
+            for frame in frames:
+                conn.send("d", frame)
+            conn.send("c")
+            m = conn.drain_to_ready()
+            if error:
+                assert [e.get("M") for e in errors(m)] == [error], (frames, errors(m))
+                continue
+            assert tags(m) == [f"COPY {counts[0]}\x00".encode()], (frames, errors(m))
+            m = conn.run("select count(*), count(a), min(b) from smoke_copy_eod_frames")
+            assert all_fields(m) == [str(counts[0]).encode(), str(counts[1]).encode(),
+                                     b"one"], (frames, all_fields(m))
+    finally:
+        conn.run_ok("drop table if exists smoke_copy_eod_frames")
+
+
 def test_copy_binary_data_after_eof_marker_rejected(conn):
     # PG requires CopyDone to follow the PGCOPY -1 trailer immediately; any bytes
     # between the trailer and CopyDone are rejected with 22P04. Regression:
@@ -2945,11 +3024,12 @@ def test_copy_binary_rejects_format_options(conn):
     conn.run_ok("drop table if exists smoke_copy_binopt")
     assert "E" not in types(conn.run("create table smoke_copy_binopt(x int)"))
     try:
-        for opt in ("delimiter ','", "header", "null 'x'", "quote '\"'"):
+        for opt, sqlstate in (("delimiter ','", "42601"), ("header", "0A000"),
+                              ("null 'x'", "42601"), ("quote '\"'", "0A000")):
             conn.send("Q", _cstr(f"COPY smoke_copy_binopt TO STDOUT (FORMAT binary, {opt})"))
             m = conn.drain_to_ready()
             assert "H" not in types(m), (opt, types(m))  # no CopyOutResponse
-            assert sqlstates(m) == ["0A000"], (opt, sqlstates(m))
+            assert sqlstates(m) == [sqlstate], (opt, sqlstates(m))
     finally:
         conn.run_ok("drop table if exists smoke_copy_binopt")
 
@@ -3154,7 +3234,6 @@ def test_dml_then_ddl_one_implicit_block_inverted_index(conn):
     assert not errors(m), errors(m)
     assert statuses(m) == ["I"], statuses(m)
 
-    assert not errors(conn.run("VACUUM (REFRESH_TABLE) iidw"))
     m = conn.run(
         "SELECT id FROM iidw_idx WHERE body @@ ts_phrase('alpha bravo')"
     )
@@ -3666,6 +3745,27 @@ def test_protocol_and_sql_statements_share_names(conn):
     assert sqlstates(_simple(conn, "PREPARE ns_shared_proto AS SELECT 4")) == ["42P05"]
 
 
+def test_sql_prepare_binds_and_describes_over_the_protocol(conn):
+    assert not errors(_simple(conn, "PREPARE ns_sql_bound(int4) AS SELECT $1 + 1 AS n"))
+    conn.describe("S", "ns_sql_bound")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert not errors(m), errors(m)
+    assert parameter_types(m) == [23], parameter_types(m)
+    assert [c[0] for c in row_description(m)] == ["n"], row_description(m)
+    conn.bind("", "ns_sql_bound", params=(b"41",))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert not errors(m), errors(m)
+    assert rows(m) and rows(m)[0].endswith(b"42"), rows(m)
+    m = _simple(conn, "EXECUTE ns_sql_bound(1)")
+    assert not errors(m), errors(m)
+    assert rows(m) and rows(m)[0].endswith(b"2"), rows(m)
+    assert not errors(_simple(conn, "DEALLOCATE ns_sql_bound"))
+    assert _bind_sqlstates(conn, "ns_sql_bound") == ["26000"]
+
+
 def test_prepared_statement_sqlstates(conn):
     assert sqlstates(_simple(conn, "EXECUTE ns_missing")) == ["26000"]
     assert sqlstates(_simple(conn, "DEALLOCATE ns_missing")) == ["26000"]
@@ -3826,4 +3926,65 @@ def test_like_and_similar_to_escape_errors(conn, query, sqlstate, message, hint)
     m = conn.run(query)
     assert [(e["C"], e["M"], e.get("H")) for e in errors(m)] == [
         (sqlstate, message, hint)
+    ]
+
+
+@pytest.mark.parametrize(
+    "query, message",
+    [
+        ("SELECT 'abc' ~ '('", "missing ): ("),
+        ("SELECT 'abc' ~ p FROM (VALUES ('(')) AS t(p)", "missing ): ("),
+        ("SELECT regexp_replace('abc', '(', 'x')", "missing ): ("),
+        ("SELECT regexp_split_to_array('abc', '(')", "missing ): ("),
+        ("SELECT substring('abc' from '(')", "missing ): ("),
+        ("SELECT 'abc' SIMILAR TO '('", "missing ): ^(?:(?:)$"),
+        ("SELECT regexp_match('abc', '(')", "missing ): ("),
+        ("SELECT COLUMNS('(') FROM (VALUES (1)) AS t(a)", "missing ): ("),
+    ],
+)
+def test_invalid_regular_expression(conn, query, message):
+    m = conn.run(query)
+    assert [(e["C"], e["M"]) for e in errors(m)] == [
+        ("2201B", "invalid regular expression: " + message)
+    ]
+
+
+@pytest.mark.parametrize(
+    "definition, sqlstate",
+    [
+        ("split_by_pattern('(')", "2201B"),
+        ("split_by_pattern('')", "22023"),
+        ("split_by_pattern('a', group := 2)", "22023"),
+        ("remove_stopwords(stopwords_path := '/nonexistent/drv_stopwords')", "F0000"),
+        ("classify_text(model_location := '/nonexistent/drv_model.bin')", "F0000"),
+        ("split_text_csv(',') | lambda x: x || random()::text", "42P17"),
+        ("split_text_csv(',') | lambda x: x || (SELECT 'a')", "0A000"),
+        ("split_text_csv(',') | lambda x: no_such_fn(x)", "42P17"),
+        ("split_text_csv(',') | lambda x: upper(x) || y", "42703"),
+        ("split_text_csv(',') | lambda x: x::int", "42804"),
+    ],
+)
+def test_text_search_dictionary_errors(conn, definition, sqlstate):
+    m = conn.run(f"CREATE TEXT SEARCH DICTIONARY drv_bad_dictionary AS {definition}")
+    assert [e["C"] for e in errors(m)] == [sqlstate]
+
+
+def test_on_conflict_target_without_unique_key(conn):
+    assert not errors(conn.run("DROP TABLE IF EXISTS drv_on_conflict"))
+    assert not errors(
+        conn.run("CREATE TABLE drv_on_conflict (id INT PRIMARY KEY, x INT)")
+    )
+    m = conn.run("INSERT INTO drv_on_conflict VALUES (1, 1) ON CONFLICT (x) DO NOTHING")
+    assert [e["C"] for e in errors(m)] == ["42P10"]
+    assert not errors(conn.run("DROP TABLE drv_on_conflict"))
+
+
+def test_string_over_the_size_limit(conn):
+    m = conn.run(
+        "SELECT length(concat(r, r, r, r, r)) "
+        "FROM (SELECT repeat('x', 1073741824) AS r) AS t"
+    )
+    assert [(e["C"], e["M"]) for e in errors(m)] == [
+        ("54000", "Cannot create a string of size: '5368709120', the maximum "
+                  "supported string size is: '4294967295'")
     ]

@@ -34,9 +34,6 @@ CREATE INDEX wc_nr_pos_idx ON wc_nr_t USING inverted(id, b wc_nr_pos_dict)
 statement ok
 CREATE INDEX wc_nr_bin_idx ON wc_nr_t USING inverted(id, b wc_nr_bin_dict)
 
-statement ok
-VACUUM (REFRESH_TABLE) wc_nr_t
-
 query
 SELECT id FROM wc_nr_idx WHERE b @@ ts_like('%') ORDER BY id
 ----
@@ -153,7 +150,7 @@ EXPLAIN SELECT id FROM wc_nr_idx WHERE b @@ ts_like('%ai%')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: wc_nr_idx            │
-│ Lookup: table               │
+│ Lookup: search              │
 │ Index Filter:               │
 │ ╭─ Wildcard NGram ────────╮ │
 │ │ Field: b(string)        │ │
@@ -187,7 +184,7 @@ EXPLAIN SELECT id FROM wc_nr_bin_idx WHERE b @@ ts_like('%ai%')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: wc_nr_bin_idx        │
-│ Lookup: table               │
+│ Lookup: search              │
 │ Index Filter:               │
 │ ╭─ Wildcard NGram ────────╮ │
 │ │ Field: b(string)        │ │

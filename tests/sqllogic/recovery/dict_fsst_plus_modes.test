@@ -15,6 +15,10 @@ SET force_compression='dict_fsst';
 
 
 statement ok
+SET threads = 1;
+
+
+statement ok
 CREATE DATABASE own;
 
 

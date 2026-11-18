@@ -27,6 +27,7 @@
 #include <limits>
 #include <pcg_random.hpp>
 
+#include "iresearch/formats/ivf/clustering.hpp"
 #include "iresearch/formats/ivf/quantizers/common.hpp"
 #include "iresearch/index/vector_distance.hpp"
 #include "iresearch/utils/empty.hpp"
@@ -132,6 +133,7 @@ class ProductQuantizerWriter final : public QuantizerWriter {
     if (niter != 0) {
       _pq.cp.niter = static_cast<int>(niter);
     }
+    _pq.cp.check_input_data_for_NaNs = false;
     _packed.resize(kFastScanBbs * FastScanNsq(_pq.M) / 2);
     _res_tile.resize(kFastScanBbs * size_t{_d});
     _codes_tile.resize(kFastScanBbs * _pq.code_size);
@@ -148,6 +150,10 @@ class ProductQuantizerWriter final : public QuantizerWriter {
     if (n == 0) {
       return;
     }
+    std::vector<float> kept;
+    const auto rows = TrainableRows({vecs, n * _d}, _d, kept);
+    vecs = rows.data();
+    n = rows.size() / _d;
     const size_t ksub = _pq.ksub;
     if (n >= ksub) {
       _pq.train(n, vecs);
@@ -375,8 +381,8 @@ class ProductQuantizerReader final : public QuantizerReader {
     const std::span<const float> query = _cb->Query();
     // IP(q, c + r) = IP(q, c) + IP(q, r); the packed LUT for IP(q, r) is
     // query-only and precomputed once per query in the codebook.
-    _qc = ComputeDistance<VectorMetric::InnerProduct>(
-      query.data(), centroid, static_cast<uint16_t>(query.size()));
+    _qc = ComputeDistance<VectorMetric::InnerProduct>(query.data(), centroid,
+                                                      query.size());
   }
 
   void ComputeBlock(std::span<const byte_type> block, score_t /*threshold*/,
@@ -808,6 +814,10 @@ class ProductQuantizer8Writer final : public QuantizerWriter {
     if (n == 0) {
       return;
     }
+    std::vector<float> kept;
+    const auto rows = TrainableRows({vecs, n * _d}, _d, kept);
+    vecs = rows.data();
+    n = rows.size() / _d;
     const size_t ksub = _pq.ksub;
     std::vector<float> padded;
     if (n < ksub) {

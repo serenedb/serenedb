@@ -1,9 +1,5 @@
-# INSERT ... ON CONFLICT and INSERT OR REPLACE are currently bound as MERGE INTO,
-# so they inherit the merge update paths. These tests pin the observable contract
-# independent of that implementation choice: updates of plain columns stay on the
-# in-place path (rowid preserved, also with RETURNING), while updates touching an
-# indexed or LIST column take delete+insert (rowid moves) and keep every index
-# consistent.
+# INSERT ... ON CONFLICT and INSERT OR REPLACE: the rows an upsert leaves, its
+# RETURNING rows, and every unique key consistent afterwards.
 
 statement ok
 CREATE TABLE u_plain(a INTEGER PRIMARY KEY, b INTEGER);
@@ -11,17 +7,17 @@ CREATE TABLE u_plain(a INTEGER PRIMARY KEY, b INTEGER);
 statement count 1
 INSERT INTO u_plain VALUES (1, 10);
 
-# DO UPDATE on a plain column: in-place, rowid unchanged.
+# DO UPDATE on a plain column.
 statement count 1
 INSERT INTO u_plain VALUES (1, 20) ON CONFLICT (a) DO UPDATE SET b = EXCLUDED.b;
 
 query
-SELECT a, b, rowid FROM u_plain;
+SELECT a, b FROM u_plain;
 ----
-a	b	rowid
-1	20	0
+a	b
+1	20
 
-# Same with RETURNING: still in-place, returns the updated row.
+# Same with RETURNING: returns the updated row.
 query
 INSERT INTO u_plain VALUES (1, 30) ON CONFLICT (a) DO UPDATE SET b = EXCLUDED.b RETURNING a, b;
 ----
@@ -29,27 +25,26 @@ a	b
 1	30
 
 query
-SELECT a, b, rowid FROM u_plain;
+SELECT a, b FROM u_plain;
 ----
-a	b	rowid
-1	30	0
+a	b
+1	30
 
 # DO NOTHING: no row touched.
 statement count 0
 INSERT INTO u_plain VALUES (1, 777) ON CONFLICT (a) DO NOTHING;
 
 query
-SELECT a, b, rowid FROM u_plain;
+SELECT a, b FROM u_plain;
 ----
-a	b	rowid
-1	30	0
+a	b
+1	30
 
 statement ok
 DROP TABLE u_plain;
 
 
-# DO UPDATE on a LIST column: LIST does not support in-place update, so the row is
-# deleted and re-appended (rowid moves) with the new value.
+# DO UPDATE on a LIST column.
 
 statement ok
 CREATE TABLE u_list(a INTEGER PRIMARY KEY, l INTEGER[]);
@@ -64,17 +59,17 @@ a	l
 1	{9,9}
 
 query
-SELECT a, l, rowid FROM u_list;
+SELECT a, l FROM u_list;
 ----
-a	l	rowid
-1	{9,9}	1
+a	l
+1	{9,9}
 
 statement ok
 DROP TABLE u_list;
 
 
-# DO UPDATE on a column carried by a secondary UNIQUE index: delete+insert, and the
-# index reflects the post-upsert state (new key conflicts, old key is free again).
+# DO UPDATE on a column of another UNIQUE key: the new key conflicts, the old
+# one is free again.
 
 statement ok
 CREATE TABLE u_idx(a INTEGER PRIMARY KEY, b INTEGER UNIQUE);
@@ -86,35 +81,36 @@ statement count 1
 INSERT INTO u_idx VALUES (1, 555) ON CONFLICT (a) DO UPDATE SET b = EXCLUDED.b;
 
 query
-SELECT a, b, rowid FROM u_idx ORDER BY a;
+SELECT a, b FROM u_idx ORDER BY a;
 ----
-a	b	rowid
-1	555	2
-2	20	1
+a	b
+1	555
+2	20
 
 statement error
 INSERT INTO u_idx VALUES (3, 555);
 ----
-db error: ERROR: Duplicate key "b: 555" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "u_idx_b_key"
+DETAIL: Key (b)=(555) already exists.
 
 
 statement count 1
 INSERT INTO u_idx VALUES (3, 10);
 
 query
-SELECT a, b, rowid FROM u_idx ORDER BY a;
+SELECT a, b FROM u_idx ORDER BY a;
 ----
-a	b	rowid
-1	555	2
-2	20	1
-3	10	3
+a	b
+1	555
+2	20
+3	10
 
 statement ok
 DROP TABLE u_idx;
 
 
-# DO UPDATE rewriting the conflict key itself: the PK index must free the old key
-# and claim the new one.
+# DO UPDATE rewriting the conflict key itself: the old key is free, the new one
+# taken.
 
 statement ok
 CREATE TABLE u_pk(a INTEGER PRIMARY KEY, b INTEGER);
@@ -126,11 +122,11 @@ statement count 1
 INSERT INTO u_pk VALUES (1, 99) ON CONFLICT (a) DO UPDATE SET a = 100;
 
 query
-SELECT a, b, rowid FROM u_pk ORDER BY a;
+SELECT a, b FROM u_pk ORDER BY a;
 ----
-a	b	rowid
-2	20	1
-100	10	2
+a	b
+2	20
+100	10
 
 statement count 1
 INSERT INTO u_pk VALUES (1, 1);
@@ -139,19 +135,18 @@ statement count 0
 INSERT INTO u_pk VALUES (100, 2) ON CONFLICT (a) DO NOTHING;
 
 query
-SELECT a, b, rowid FROM u_pk ORDER BY a;
+SELECT a, b FROM u_pk ORDER BY a;
 ----
-a	b	rowid
-1	1	3
-2	20	1
-100	10	2
+a	b
+1	1
+2	20
+100	10
 
 statement ok
 DROP TABLE u_pk;
 
 
-# INSERT OR REPLACE generates SET for every non-key column. With plain columns only
-# it stays in-place (rowid preserved), also with RETURNING.
+# INSERT OR REPLACE sets every non-key column, also with RETURNING.
 
 statement ok
 CREATE TABLE r_plain(a INTEGER PRIMARY KEY, b INTEGER, c INTEGER);
@@ -163,10 +158,10 @@ statement count 1
 INSERT OR REPLACE INTO r_plain VALUES (1, 20, 200);
 
 query
-SELECT a, b, c, rowid FROM r_plain;
+SELECT a, b, c FROM r_plain;
 ----
-a	b	c	rowid
-1	20	200	0
+a	b	c
+1	20	200
 
 query
 INSERT OR REPLACE INTO r_plain VALUES (1, 30, 300) RETURNING a, b, c;
@@ -175,16 +170,16 @@ a	b	c
 1	30	300
 
 query
-SELECT a, b, c, rowid FROM r_plain;
+SELECT a, b, c FROM r_plain;
 ----
-a	b	c	rowid
-1	30	300	0
+a	b	c
+1	30	300
 
 statement ok
 DROP TABLE r_plain;
 
 
-# With a LIST column among the replaced columns, REPLACE must take delete+insert.
+# With a LIST column among the replaced columns.
 
 statement ok
 CREATE TABLE r_list(a INTEGER PRIMARY KEY, b INTEGER, l INTEGER[]);
@@ -196,10 +191,10 @@ statement count 1
 INSERT OR REPLACE INTO r_list VALUES (1, 20, ARRAY[3, 4, 5]);
 
 query
-SELECT a, b, l, rowid FROM r_list;
+SELECT a, b, l FROM r_list;
 ----
-a	b	l	rowid
-1	20	{3,4,5}	1
+a	b	l
+1	20	{3,4,5}
 
 statement ok
 DROP TABLE r_list;

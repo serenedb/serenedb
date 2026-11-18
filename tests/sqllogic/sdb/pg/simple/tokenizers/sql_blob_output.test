@@ -105,9 +105,6 @@ INSERT INTO blob_docs VALUES (1, 'ab'), (2, 'abc'), (3, 'xyz'), (4, NULL);
 statement ok
 CREATE INDEX blob_docs_idx ON blob_docs USING inverted(pk, body sql_blob_list);
 
-statement ok
-VACUUM (REFRESH_TABLE) blob_docs;
-
 query
 SELECT pk FROM blob_docs_idx WHERE body @@ 'ab' ORDER BY pk;
 ----

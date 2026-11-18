@@ -121,6 +121,7 @@ class MockPostingsField final : public irs::TermReader {
     return irs::SeekTermIterator::empty();
   }
   void ReadDocs(irs::bytes_view, Acceptor) const final {}
+  void ReadDocs(const irs::PostingMeta&, Acceptor) const final {}
   irs::PostingMeta Lookup(irs::bytes_view) const final { return {}; }
   void LookupBatch(size_t, TermAt, FoundTerm) const final {}
   void VisitRange(irs::bytes_view, irs::bytes_view, RangeVisitor) const final {}
@@ -255,7 +256,7 @@ class Format15TestCase : public tests::FormatTestCase {
   using Docs = std::vector<Doc>;
   using DocsView = std::span<const Doc>;
 
-  Docs GenerateDocs(size_t count, float_t mean, float_t dev, size_t step);
+  Docs GenerateDocs(size_t count, float mean, float dev, size_t step);
 
   struct ReadMeta {
     irs::PostingMeta meta;
@@ -523,15 +524,14 @@ void Format15TestCase::AssertDocsSeq(irs::PostingsReader& reader, DocsView docs,
   ASSERT_TRUE(irs::doc_limits::eof(actual->Seek(docs.back().first + 42)));
 }
 
-Format15TestCase::Docs Format15TestCase::GenerateDocs(size_t count,
-                                                      float_t mean, float_t dev,
-                                                      size_t step) {
+Format15TestCase::Docs Format15TestCase::GenerateDocs(size_t count, float mean,
+                                                      float dev, size_t step) {
   std::vector<std::pair<irs::doc_id_t, uint32_t>> docs;
   docs.reserve(count);
   std::generate_n(
     std::back_inserter(docs), count,
     [i = (irs::doc_limits::min)(), gen = std::mt19937{},
-     distr = std::normal_distribution<float_t>{mean, dev}, step]() mutable {
+     distr = std::normal_distribution<float>{mean, dev}, step]() mutable {
       const irs::doc_id_t doc = i;
       const auto freq = static_cast<uint32_t>(std::roundf(distr(gen)));
       i += step;

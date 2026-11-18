@@ -1,0 +1,42 @@
+statement ok
+CREATE TABLE rbd_t (a INT);
+
+
+connection holder
+statement ok
+BEGIN;
+
+
+connection holder
+query
+SELECT count(*) AS n FROM rbd_t;
+----
+n
+0
+
+
+connection default
+statement ok
+ALTER TABLE rbd_t RENAME TO rbd_u;
+
+
+connection default
+statement ok
+ALTER TABLE rbd_u RENAME TO rbd_t;
+
+
+connection default
+statement ok
+CREATE VIEW rbd_v AS SELECT a FROM rbd_t;
+
+
+connection holder
+statement ok
+COMMIT;
+
+
+query
+SELECT count(*) AS n FROM rbd_v;
+----
+n
+0

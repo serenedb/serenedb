@@ -39,7 +39,8 @@ connection after_crash
 statement error
 INSERT INTO fk_child VALUES (30, 999);
 ----
-db error: ERROR: Violates foreign key constraint because key "id: 999" does not exist in the referenced table
+db error: ERROR: insert or update on table "fk_child" violates foreign key constraint "fk_child_parent_id_fkey"
+DETAIL: Key (parent_id)=(999) is not present in table "fk_parent".
 
 
 # A valid child insert still works post-recovery.
@@ -53,7 +54,8 @@ connection after_crash
 statement error
 DELETE FROM fk_parent WHERE id = 1;
 ----
-db error: ERROR: Violates foreign key constraint because key "parent_id: 1" is still referenced by a foreign key in a different table. If this is an unexpected constraint violation, please refer to our foreign key limitations in the documentation
+db error: ERROR: update or delete on table "fk_parent" violates foreign key constraint "fk_child_parent_id_fkey" on table "fk_child"
+DETAIL: Key (id)=(1) is still referenced from table "fk_child".
 
 
 connection after_crash

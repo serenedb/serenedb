@@ -1,0 +1,109 @@
+control substitution on
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS rsv_${__DATABASE__} (TYPE postgres);
+
+
+statement ok
+CALL postgres_execute('rsv_${__DATABASE__}', 'SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name LIKE ''rsv\_%''');
+
+
+statement ok
+CALL postgres_execute('rsv_${__DATABASE__}', 'DO $$ BEGIN DROP PUBLICATION IF EXISTS rsv_pub; DROP TABLE IF EXISTS rsv_rows; CREATE TABLE rsv_rows (id int PRIMARY KEY); INSERT INTO rsv_rows SELECT generate_series(1, 1000); CREATE PUBLICATION rsv_pub FOR TABLE rsv_rows; END $$');
+
+
+statement ok
+CREATE TABLE rsv_rows (id INTEGER);
+
+
+statement ok
+SET sdb_faults = 'pause_lsn_commit_before_publish';
+
+
+statement ok
+CREATE SUBSCRIPTION rsv_sub CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' PUBLICATION rsv_pub WITH (slot_name = 'rsv_sub');
+
+
+statement ok retry 240 backoff 250ms
+SET sdb_faults = '-pause_lsn_commit_before_publish:parked';
+
+
+query
+SELECT count(*) FILTER (WHERE srsubstate = 'r') AS ready FROM pg_subscription_rel;
+----
+ready
+0
+
+
+query
+SELECT count(*) AS n FROM rsv_rows;
+----
+n
+0
+
+
+connection before_sync
+statement ok
+BEGIN;
+
+
+connection before_sync
+query
+SELECT count(*) AS n FROM rsv_rows;
+----
+n
+0
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_lsn_commit_before_publish:release';
+
+
+connection default
+query ok retry 120 backoff 250ms
+SELECT count(*) FILTER (WHERE srsubstate = 'r') AS ready FROM pg_subscription_rel;
+----
+ready
+1
+
+
+connection default
+query
+SELECT count(*) AS n FROM rsv_rows;
+----
+n
+1000
+
+
+connection before_sync
+query
+SELECT count(*) FILTER (WHERE srsubstate = 'r') AS ready FROM pg_subscription_rel;
+----
+ready
+0
+
+
+connection before_sync
+query
+SELECT count(*) AS n FROM rsv_rows;
+----
+n
+0
+
+
+connection before_sync
+statement ok
+COMMIT;
+
+
+statement ok
+DROP SUBSCRIPTION rsv_sub;
+
+
+statement ok
+CALL postgres_execute('rsv_${__DATABASE__}', 'DO $$ BEGIN DROP PUBLICATION rsv_pub; DROP TABLE rsv_rows; END $$');
+
+
+statement ok
+DETACH rsv_${__DATABASE__};

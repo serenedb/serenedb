@@ -52,15 +52,15 @@ All examples use this example table:
 
 <SqlLogicTest id="sql/query_syntax/orderby/index/example_003" />
 
-Select the planets, ordered by kind using the default `NULL` order and default order:
+Select the planets, ordered by the number of moons using the default `NULL` order and default order:
 
 <SqlLogicTest id="sql/query_syntax/orderby/index/example_004" />
 
-Select the planets, ordered by kind in descending order with nulls at the end:
+Select the planets, ordered by the number of moons in descending order with nulls at the end:
 
 <SqlLogicTest id="sql/query_syntax/orderby/index/example_005" />
 
-Order by kind and then by planet, both using the default orderings:
+Rows that are equal on every `ORDER BY` expression, such as the two terrestrial planets when ordering by kind alone, come back in any order. Order by kind and then by planet, both using the default orderings, to make the order unique:
 
 <SqlLogicTest id="sql/query_syntax/orderby/index/example_006" />
 

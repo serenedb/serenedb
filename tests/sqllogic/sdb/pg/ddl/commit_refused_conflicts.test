@@ -13,11 +13,6 @@ BEGIN;
 
 connection t1
 statement ok
-UPDATE crc_t SET v = 100 WHERE id = 1;
-
-
-connection t1
-statement ok
 CREATE TABLE crc_side (a INTEGER);
 
 
@@ -32,7 +27,15 @@ ALTER TABLE crc_t ADD COLUMN c INTEGER;
 
 
 connection t1
-statement error another transaction has altered this table
+statement error
+UPDATE crc_t SET v = 100 WHERE id = 1;
+----
+db error: ERROR: table "crc_t" was altered by a concurrent transaction
+HINT: Retry the transaction.
+
+
+connection t1
+statement ok
 COMMIT;
 
 
@@ -79,11 +82,6 @@ BEGIN;
 
 connection t1
 statement ok
-DELETE FROM crc_t WHERE id = 3;
-
-
-connection t1
-statement ok
 INSERT INTO crc_side VALUES (1);
 
 
@@ -98,7 +96,15 @@ ALTER TABLE crc_t DROP COLUMN c;
 
 
 connection t1
-statement error another transaction has altered this table
+statement error
+INSERT INTO crc_t VALUES (4, 4, 4);
+----
+db error: ERROR: table "crc_t" was altered by a concurrent transaction
+HINT: Retry the transaction.
+
+
+connection t1
+statement ok
 COMMIT;
 
 

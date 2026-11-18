@@ -53,6 +53,7 @@
 #include <system_error>
 #include <vector>
 
+#include "index/test_index_writer.hpp"
 #include "insert_field.hpp"
 
 namespace {
@@ -206,7 +207,7 @@ void FilterPrepareFixture::BuildIndex(size_t num_segments) {
     return next->fetch_add(1, std::memory_order_relaxed);
   };
   auto writer =
-    irs::IndexWriter::Make(*_dir, irs::kOmCreate, std::move(writer_opts));
+    tests::IndexWriter::Make(*_dir, tests::kOmCreate, std::move(writer_opts));
 
   KeywordField kw_field{.id = kKwFieldId};
   TextField body_field{.id = kBodyFieldId};
@@ -228,7 +229,7 @@ void FilterPrepareFixture::BuildIndex(size_t num_segments) {
     writer->RefreshCommit();
   }
 
-  _reader = irs::DirectoryReader{*_dir, irs::IndexReaderOptions{.db = db}};
+  _reader = tests::OpenReader(*_dir, irs::IndexReaderOptions{.db = db});
 }
 
 void ApplyArgs(benchmark::internal::Benchmark* b) {

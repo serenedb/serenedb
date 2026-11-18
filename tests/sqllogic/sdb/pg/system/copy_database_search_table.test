@@ -13,7 +13,7 @@ statement ok
 CREATE DATABASE cdst_dst_${__DATABASE__};
 
 statement ok
-CREATE TABLE cdst_src_${__DATABASE__}.public.cdst (id INT, body TEXT) WITH (storage = 'search');
+CREATE TABLE cdst_src_${__DATABASE__}.public.cdst (id INT, body TEXT);
 
 statement ok
 COPY FROM DATABASE cdst_src_${__DATABASE__} TO cdst_dst_${__DATABASE__} (SCHEMA);
@@ -26,9 +26,6 @@ cdst
 
 statement ok
 INSERT INTO cdst_dst_${__DATABASE__}.public.cdst VALUES (1, 'pudge goes mid');
-
-statement ok
-VACUUM (REFRESH_TABLE) cdst_dst_${__DATABASE__}.public.cdst;
 
 query
 SELECT id, body FROM cdst_dst_${__DATABASE__}.public.cdst;
@@ -58,7 +55,7 @@ statement ok
 CREATE TABLE cdst_seq_src_${__DATABASE__}.public.cdst_serial (id SERIAL, v INT);
 
 statement ok
-CREATE TABLE cdst_seq_src_${__DATABASE__}.public.cdst_numbered (id INT, body TEXT) WITH (storage = 'search');
+CREATE TABLE cdst_seq_src_${__DATABASE__}.public.cdst_numbered (id INT, body TEXT);
 
 statement ok
 COPY FROM DATABASE cdst_seq_src_${__DATABASE__} TO cdst_seq_dst_${__DATABASE__} (SCHEMA);

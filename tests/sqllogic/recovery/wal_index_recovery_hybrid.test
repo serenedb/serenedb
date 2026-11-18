@@ -6,10 +6,8 @@ control substitution on
 # field quantized with sq8 (the default) sets IndexFeatures::Vec. Both live in
 # one segment and share the ".pay" stream, so the segment aggregate carries
 # Offs|Pay at once. This confirms the mixed-feature fields serialize and survive
-# WAL recovery: pre-crash rows go through a normal iresearch commit (on-disk
-# reference), post-crash rows land in the WAL only (we freeze
-# SearchRefreshTask::commitUnsafe before INSERTing them, then crash), and after
-# restart both text search and vector kNN must resolve every row.
+# WAL recovery: after restart both text search and vector kNN must resolve every
+# row.
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY hy_dict AS
@@ -38,7 +36,7 @@ INSERT INTO wal_hy_t VALUES
     (2, 'blue swimming goggles', 'water sport equipment',  [0,100,0]::FLOAT[3], [0,10,0,0]::FLOAT[4]);
 
 statement ok
-VACUUM (REFRESH_TABLE) wal_hy_t;
+VACUUM (FLUSH_TABLE) wal_hy_t;
 
 # Pre-crash sanity: text and vector both resolve from the committed segment.
 query
@@ -52,12 +50,6 @@ SELECT pk FROM wal_hy_idx ORDER BY va <-> [100,0,0]::FLOAT[3] LIMIT 1;
 ----
 pk
 1
-
-# Freeze iresearch commits BEFORE the second batch. These rows reach WAL
-# but the iresearch trx never flushes -- their fields only exist
-# as WAL bytes when we crash.
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 statement ok
 INSERT INTO wal_hy_t VALUES
@@ -75,7 +67,7 @@ SELECT 1;
 
 connection hy_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (REFRESH_TABLE) wal_hy_t;
+SELECT 1;
 
 # All four rows visible after recovery.
 connection hy_after

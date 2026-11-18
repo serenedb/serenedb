@@ -45,7 +45,7 @@ class NativeIndexSource final : public ViewIndexSourceBase {
  public:
   NativeIndexSource(duckdb::ClientContext& context, ViewFastPath fast_path,
                     duckdb::optional_ptr<duckdb::TableCatalogEntry> table,
-                    std::shared_ptr<const search::FileManifest> file_manifest,
+                    const search::FileManifest* file_manifest,
                     std::span<const duckdb::idx_t> projected_columns,
                     std::span<const duckdb::LogicalType> projected_types,
                     std::span<const ColumnId> bind_column_ids,

@@ -1,0 +1,62 @@
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE ucd (id INTEGER PRIMARY KEY, v INTEGER);
+
+
+statement ok
+INSERT INTO ucd VALUES (1, 0), (2, 0);
+
+
+statement ok
+SET sdb_faults = 'search_update_before_key_check';
+
+
+connection late
+statement ok
+BEGIN;
+
+
+connection late
+statement async error
+UPDATE ucd SET v = v + 1 WHERE id = 1;
+----
+db error: ERROR: could not serialize access due to concurrent update
+
+
+connection first
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-search_update_before_key_check:parked';
+
+
+connection first
+statement ok
+UPDATE ucd SET v = v + 10 WHERE id = 1;
+
+
+connection first
+statement ok
+SET sdb_faults = 'search_update_before_key_check:release';
+
+
+wait
+
+
+connection late
+statement ok
+ROLLBACK;
+
+
+connection late
+statement ok
+UPDATE ucd SET v = v + 100 WHERE id = 2;
+
+
+query
+SELECT id, v FROM ucd ORDER BY id;
+----
+id	v
+1	10
+2	100

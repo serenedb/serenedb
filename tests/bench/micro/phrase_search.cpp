@@ -48,6 +48,7 @@
 #include <string_view>
 #include <vector>
 
+#include "index/test_index_writer.hpp"
 #include "insert_field.hpp"
 
 namespace {
@@ -220,8 +221,8 @@ Index BuildIndex(const std::vector<std::string>& docs,
   irs::IndexWriterOptions writer_opts;
   writer_opts.db = db;
   writer_opts.reader_options.db = db;
-  auto writer =
-    irs::IndexWriter::Make(*index.dir, irs::kOmCreate, std::move(writer_opts));
+  auto writer = tests::IndexWriter::Make(*index.dir, tests::kOmCreate,
+                                         std::move(writer_opts));
 
   BenchField field{
     .tokenizer = index.tokenizer.get(),
@@ -242,7 +243,7 @@ Index BuildIndex(const std::vector<std::string>& docs,
 
   irs::IndexReaderOptions reader_opts;
   reader_opts.db = db;
-  index.reader = irs::DirectoryReader{*index.dir, reader_opts};
+  index.reader = tests::OpenReader(*index.dir, reader_opts);
   return index;
 }
 

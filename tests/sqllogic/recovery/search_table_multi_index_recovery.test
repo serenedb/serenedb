@@ -21,7 +21,7 @@ CREATE TEXT SEARCH DICTIONARY plain_en AS
 
 statement ok
 CREATE TABLE m(id BIGINT PRIMARY KEY, body TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX m_stem ON m USING inverted (body stem_en);
@@ -37,11 +37,8 @@ statement ok
 INSERT INTO m VALUES (1, 'running'), (2, 'walking');
 
 statement ok
-VACUUM (REFRESH_TABLE) m;
+VACUUM (FLUSH_TABLE) m;
 
-# Crash AFTER the WAL commit: (3,'running fast') is fsynced into the WAL but never
-# refresh-published, so it exists ONLY in the WAL; recovery must rebuild it into
-# both indexes' fields.
 statement ok
 SET sdb_faults = 'crash_after_commit';
 

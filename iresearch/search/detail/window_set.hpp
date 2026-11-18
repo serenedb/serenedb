@@ -109,10 +109,6 @@ inline bool ScoresPerDocTerm(const PostingClause& posting) noexcept {
          FreqOf(own) && ScoresPerDoc(posting.stats.scorer);
 }
 
-inline constexpr auto kPlanFillDocs = [](const QueryBuilder& child) {
-  return child.PlanFill({}, ScoreMergeType::Noop);
-};
-
 template<typename Term, typename PlanChild>
 bool CollectDense(std::span<const Term> terms,
                   std::span<const QueryBuilder::ptr> filters,

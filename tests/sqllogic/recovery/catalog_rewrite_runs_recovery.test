@@ -161,10 +161,6 @@ statement ok
 DROP TABLE melstroi_churn_19;
 
 
-statement ok
-CREATE TEMP TABLE wal_size AS SELECT size AS grown FROM read_blob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/catalog.wal');
-
-
 connection pudge
 statement ok
 BEGIN;
@@ -192,9 +188,9 @@ SET sdb_faults = '-compact_inside_ddl';
 
 connection default
 query
-SELECT size > (SELECT grown FROM wal_size) AS deferred FROM read_blob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/catalog.wal');
+SELECT value < 4096 AS truncated FROM sdb_metrics WHERE metric = 'catalog_wal_since_snapshot_bytes';
 ----
-deferred
+truncated
 t
 
 
@@ -220,9 +216,9 @@ SET sdb_faults = '-compact_inside_ddl';
 
 connection default
 query
-SELECT size < (SELECT grown FROM wal_size) AS rewritten FROM read_blob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/catalog.wal');
+SELECT value < 4096 AS truncated FROM sdb_metrics WHERE metric = 'catalog_wal_since_snapshot_bytes';
 ----
-rewritten
+truncated
 t
 
 

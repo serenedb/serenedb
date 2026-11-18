@@ -35,7 +35,6 @@
 #include <vector>
 
 #include "catalog/cluster.h"
-#include "connector/duckdb_client_state.h"
 #include "connector/functions/otel.h"
 #include "network/http/common.h"
 #include "otel/schema_sql.h"
@@ -54,9 +53,7 @@ class Creator {
                .database = database,
                .database_id = database_id},
               {.what = "OpenTelemetry schema in database", .name = database}},
-      _schema{schema} {
-    connector::SetDefaultSearchPath(*_system.conn->context, database);
-  }
+      _schema{schema} {}
 
   bool Exists(std::string_view table) {
     auto result = _system.conn->Query(
@@ -138,7 +135,7 @@ class Creator {
   }
 
  private:
-  connector::SystemConnection _system;
+  SystemConnection _system;
   std::string _schema;
 };
 

@@ -45,19 +45,19 @@ statement ok
 ALTER TABLE otel_logs_renamed RENAME TO otel_logs;
 
 statement error
-CREATE TABLE otel_probe_bad (a VARCHAR) WITH (storage = 'search', row_group_size = 1024);
+CREATE TABLE otel_probe_bad (a VARCHAR) WITH (row_group_size = 1024);
 ----
 db error: ERROR: invalid value for parameter "row_group_size": "1024" (must be a positive multiple of the vector size 2048)
 
 
 statement ok
-CREATE TABLE otel_probe (a VARCHAR) WITH (storage = 'search');
+CREATE TABLE otel_probe (a VARCHAR);
 
 statement error
 CREATE INDEX otel_probe_idx ON otel_probe USING inverted (a) WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 ----
-db error: ERROR: optimize_top_k is a table option on a search-backed table
-HINT: Set it in CREATE TABLE ... WITH (storage = 'search', optimize_top_k = '...'); the table's store keeps the score bounds every index on it prunes with.
+db error: ERROR: optimize_top_k is a table option
+HINT: Set it in CREATE TABLE ... WITH (optimize_top_k = ...).
 
 
 statement ok
@@ -82,9 +82,6 @@ VALUES (TIMESTAMP_NS '2026-09-08 12:00:10.000000123',
         NULL, NULL, NULL, 0, 'WARN', 13, 'checkout', 'cache.evict',
         'connection reset while draining pool', NULL, NULL, NULL, NULL, NULL, NULL,
         '{"http.status_code":"503"}');
-
-statement ok
-VACUUM (REFRESH_TABLE) otel_logs;
 
 query
 SELECT epoch_ns("timestamp") AS ts FROM otel_logs ORDER BY 1;
@@ -199,9 +196,6 @@ VALUES (TIMESTAMP_NS '2026-09-08 12:00:00.000000000',
         NULL, 'POST /cart', 'Server', 'cart', 300000000,
         'Unset', NULL, NULL, NULL, NULL, NULL, NULL, NULL,
         '{}', '[]', '[]', ARRAY[]::VARCHAR[], ARRAY[]::VARCHAR[]);
-
-statement ok
-VACUUM (REFRESH_TABLE) otel_traces;
 
 query
 SELECT span_id, span_name, duration_ns FROM otel_traces
@@ -333,21 +327,6 @@ VALUES (TIMESTAMP_NS '2026-09-08 12:00:00', NULL, 'cart', 'rpc.duration',
         NULL, 's', NULL, NULL, NULL, NULL, NULL, NULL, '{}', 0,
         3, 1.5, ARRAY[0.5, 0.99]::DOUBLE PRECISION[], ARRAY[0.4, 1.1]::DOUBLE PRECISION[]);
 
-statement ok
-VACUUM (REFRESH_TABLE) otel_metrics_gauge;
-
-statement ok
-VACUUM (REFRESH_TABLE) otel_metrics_sum;
-
-statement ok
-VACUUM (REFRESH_TABLE) otel_metrics_histogram;
-
-statement ok
-VACUUM (REFRESH_TABLE) otel_metrics_exponential_histogram;
-
-statement ok
-VACUUM (REFRESH_TABLE) otel_metrics_summary;
-
 query
 SELECT metric_name, metric_unit, value, attributes ->> 'pool' AS pool
 FROM otel_metrics_gauge WHERE metric_name @@ 'process.memory.usage';
@@ -437,24 +416,6 @@ SELECT * FROM otel_parse_metrics_exponential_histogram('{"resourceMetrics":[{"re
 
 statement count 1
 INSERT INTO otel_metrics_summary SELECT * FROM otel_parse_metrics_summary('{"resourceMetrics":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"checkout"}}]},"scopeMetrics":[{"scope":{"name":"runtime","version":"1.0"},"metrics":[{"name":"process.memory.usage","description":"resident set size","unit":"By","gauge":{"dataPoints":[{"timeUnixNano":"1788868800000000000","asInt":"1048576","attributes":[{"key":"pool","value":{"stringValue":"heap"}}]}]}},{"name":"http.server.request_count","unit":"{request}","sum":{"aggregationTemporality":2,"isMonotonic":true,"dataPoints":[{"startTimeUnixNano":"1788865200000000000","timeUnixNano":"1788868800000000000","asDouble":42,"attributes":[{"key":"http.status_code","value":{"intValue":"200"}}]}]}},{"name":"http.server.duration","unit":"ms","histogram":{"aggregationTemporality":2,"dataPoints":[{"timeUnixNano":"1788868800000000000","count":"10","sum":55,"bucketCounts":["1","2","7"],"explicitBounds":[1,5],"min":0.5,"max":9,"exemplars":[{"timeUnixNano":"1788868800000000000","asDouble":8.5,"traceId":"0af7651916cd43dd8448eb211c80319c","spanId":"b7ad6b7169203331","filteredAttributes":[]}]}]}},{"name":"rpc.duration","unit":"s","summary":{"dataPoints":[{"timeUnixNano":"1788868800000000000","count":"3","sum":1.5,"quantileValues":[{"quantile":0.5,"value":0.4},{"quantile":0.99,"value":1.1}]}]}}]}]}]}');
-
-statement ok
-VACUUM (REFRESH_TABLE) otel_logs;
-
-statement ok
-VACUUM (REFRESH_TABLE) otel_traces;
-
-statement ok
-VACUUM (REFRESH_TABLE) otel_metrics_gauge;
-
-statement ok
-VACUUM (REFRESH_TABLE) otel_metrics_sum;
-
-statement ok
-VACUUM (REFRESH_TABLE) otel_metrics_histogram;
-
-statement ok
-VACUUM (REFRESH_TABLE) otel_metrics_summary;
 
 query
 SELECT epoch_ns("timestamp") AS ts, epoch_ns(observed_timestamp) AS observed,
@@ -579,18 +540,6 @@ statement count 1
 INSERT INTO otel_metrics_summary
 SELECT * FROM otel_parse_metrics_summary('CvIDChwKGgoMc2VydmljZS5uYW1lEgoKCGNoZWNrb3V0EtEDCg4KB3J1bnRpbWUSAzEuMBJTChRwcm9jZXNzLm1lbW9yeS51c2FnZRIRcmVzaWRlbnQgc2V0IHNpemUaAkJ5KiQKIhkAgMcdslbTGDEAABAAAAAAADoOCgRwb29sEgYKBGhlYXASYgoZaHR0cC5zZXJ2ZXIucmVxdWVzdF9jb3VudBoJe3JlcXVlc3R9OjoKNBEA4A7ta1PTGBkAgMcdslbTGCEAAAAAAABFQDoXChBodHRwLnN0YXR1c19jb2RlEgMYyAEQAhgBEqsBChRodHRwLnNlcnZlci5kdXJhdGlvbhoCbXNKjgEKiQEZAIDHHbJW0xghCgAAAAAAAAApAAAAAACAS0AyGAEAAAAAAAAAAgAAAAAAAAAHAAAAAAAAADoQAAAAAAAA8D8AAAAAAAAUQEIuEQCAxx2yVtMYGQAAAAAAACFAIgi3rWtxaSAzMSoQCvdlGRbNQ92ESOshHIAxnFkAAAAAAADgP2EAAAAAAAAiQBACElgKDHJwYy5kdXJhdGlvbhoBc1pFCkMZAIDHHbJW0xghAwAAAAAAAAApAAAAAAAA+D8yEgkAAAAAAADgPxGamZmZmZnZPzISCa5H4XoUru8/EZqZmZmZmfE/', 'protobuf');
 
-statement ok
-VACUUM (REFRESH_TABLE) otel_logs;
-
-statement ok
-VACUUM (REFRESH_TABLE) otel_traces;
-
-statement ok
-VACUUM (REFRESH_TABLE) otel_metrics_gauge;
-
-statement ok
-VACUUM (REFRESH_TABLE) otel_metrics_summary;
-
 query
 SELECT count(*) AS shapes_from_both_decoders FROM (
   SELECT concat_ws('|',
@@ -694,24 +643,6 @@ INSERT INTO otel_metrics_sum SELECT * FROM otel_parse_metrics_sum('CoUCChwKGgoMc
 statement count 1
 INSERT INTO otel_metrics_histogram
 SELECT * FROM otel_parse_metrics_histogram('CoUCChwKGgoMc2VydmljZS5uYW1lEgoKCHBheW1lbnRzEuQBCgASfwoLcXVldWUuZGVwdGgaBntpdGVtfSpoCiAZAIDHHbJW0xgx////////3/86DAoFcXVldWUSAwoBYQogGQCAxx2yVtMYIQAAAAAAAOA/OgwKBXF1ZXVlEgMKAWIKIhkA2A4WwFbTGDEAAAAAAAAAADoMCgVxdWV1ZRIDCgFjQAESOAoOam9icy5jb21wbGV0ZWQaBXtqb2J9Oh8KGxEA4A7ta1PTGBkAgMcdslbTGDEHAAAAAAAAABABEiUKCmJhdGNoLnNpemVKFwoTGQCAxx2yVtMYMggAAAAAAAAAABAB', 'protobuf');
-
-statement ok
-VACUUM (REFRESH_TABLE) otel_logs;
-
-statement ok
-VACUUM (REFRESH_TABLE) otel_traces;
-
-statement ok
-VACUUM (REFRESH_TABLE) otel_metrics_exponential_histogram;
-
-statement ok
-VACUUM (REFRESH_TABLE) otel_metrics_gauge;
-
-statement ok
-VACUUM (REFRESH_TABLE) otel_metrics_sum;
-
-statement ok
-VACUUM (REFRESH_TABLE) otel_metrics_histogram;
 
 query
 SELECT span_name, span_kind, status_code, status_message, duration_ns
@@ -831,12 +762,6 @@ statement count 1
 INSERT INTO otel_metrics_exponential_histogram
 SELECT * FROM otel_parse_metrics_exponential_histogram('CvkECh4KHAoMc2VydmljZS5uYW1lEgwKCm15LnNlcnZpY2US1gQKQQoKbXkubGlicmFyeRIFMS4wLjAaLAoSbXkuc2NvcGUuYXR0cmlidXRlEhYKFHNvbWUgc2NvcGUgYXR0cmlidXRlEmMKCm15LmNvdW50ZXISDkkgYW0gYSBDb3VudGVyGgExOkIKPBEA6zr1+utvFRkA6zr1+utvFSEAAAAAAAAUQDofCg9teS5jb3VudGVyLmF0dHISDAoKc29tZSB2YWx1ZRABGAESUAoIbXkuZ2F1Z2USDEkgYW0gYSBHYXVnZRoBMSozCjEZAOs69frrbxUhAAAAAAAAJEA6HQoNbXkuZ2F1Z2UuYXR0chIMCgpzb21lIHZhbHVlEp4BCgxteS5oaXN0b2dyYW0SEEkgYW0gYSBIaXN0b2dyYW0aATFKeQp1EQDrOvX6628VGQDrOvX6628VIQIAAAAAAAAAKQAAAAAAAABAMhABAAAAAAAAAAEAAAAAAAAAOggAAAAAAADwP0ohChFteS5oaXN0b2dyYW0uYXR0chIMCgpzb21lIHZhbHVlWQAAAAAAAAAAYQAAAAAAAABAEAESuAEKGG15LmV4cG9uZW50aWFsLmhpc3RvZ3JhbRIdSSBhbSBhbiBFeHBvbmVudGlhbCBIaXN0b2dyYW0aATFSegp2Ci0KHW15LmV4cG9uZW50aWFsLmhpc3RvZ3JhbS5hdHRyEgwKCnNvbWUgdmFsdWURAOs69frrbxUZAOs69frrbxUhAwAAAAAAAAApAAAAAAAAJEA5AQAAAAAAAABCBggCEgIAAmEAAAAAAAAAAGkAAAAAAAAUQBAB', 'protobuf');
 
-statement ok
-VACUUM (REFRESH_TABLE) otel_logs;
-
-statement ok
-VACUUM (REFRESH_TABLE) otel_traces;
-
 query
 SELECT trace_id, span_id, severity_text, severity_number, body, log_attributes
 FROM otel_logs WHERE body = 'Example log record' LIMIT 1;
@@ -857,9 +782,6 @@ INSERT INTO otel_traces SELECT * FROM otel_parse_traces('{"resourceSpans":[{"res
 statement count 2
 INSERT INTO otel_traces SELECT * FROM otel_parse_traces('Cs4BChwKGgoMc2VydmljZS5uYW1lEgoKCGVudW10ZXN0Eq0BCgcKBW5hbWVzElQKEKq7zN3u/wARIjNEVWZ3iJkSCAARIjNEVWZ3KhdraW5kIGFuZCBzdGF0dXMgYnkgbmFtZTAEOQBIWeP6628VQQVIWeP6628VegkSBW5hbWVkGAISTAoQqrvM3e7/ABEiM0RVZneImRIIABEiM0RVZngqFnNuYWtlX2Nhc2UgZmllbGQgbmFtZXMwBTkASFnj+utvFUEJSFnj+utvFXoCGAE=', 'protobuf');
 
-statement ok
-VACUUM (REFRESH_TABLE) otel_traces;
-
 query
 SELECT span_name, span_kind, status_code, status_message, trace_id, span_id,
        duration_ns
@@ -875,10 +797,7 @@ statement ok
 INSERT INTO otel_logs ("timestamp", body) VALUES (TIMESTAMP_NS '2026-09-08 12:00:00', 'x');
 
 statement ok
-VACUUM (REFRESH_TABLE) otel_logs;
-
-statement ok
-CREATE TABLE IF NOT EXISTS otel_logs ("timestamp" TIMESTAMP_NS NOT NULL) WITH (storage = 'search');
+CREATE TABLE IF NOT EXISTS otel_logs ("timestamp" TIMESTAMP_NS NOT NULL);
 
 statement ok
 CREATE INDEX IF NOT EXISTS otel_logs_idx ON otel_logs USING inverted ("timestamp", body otel_body_dict);

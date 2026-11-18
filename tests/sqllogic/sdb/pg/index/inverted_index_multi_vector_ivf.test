@@ -19,8 +19,7 @@ CREATE INDEX mv_ivf ON mv
     USING inverted(pk, a ivf (metric = 'l2'), b ivf (metric = 'cosine'));
 
 # A second index over the same two columns, each quantized with a different
-# metric (a: l2/sq8, b: ip/sq8). Created up front so REFRESH builds it together
-# with mv_ivf over the same rows.
+# metric (a: l2/sq8, b: ip/sq8).
 statement ok
 CREATE INDEX mv_ivf_q ON mv
     USING inverted(pk, a ivf (metric = 'l2', quant = 'sq8'),
@@ -32,9 +31,6 @@ INSERT INTO mv VALUES
     (2, [0,100,0]::FLOAT[3],   [8,6,0,0]::FLOAT[4]),
     (3, [0,0,100]::FLOAT[3],   [6,8,0,0]::FLOAT[4]),
     (4, [100,100,0]::FLOAT[3], [0,0,10,0]::FLOAT[4]);
-
-statement ok
-VACUUM (REFRESH_TABLE) mv;
 
 # Exhaustive scan so the tiny-table kNN is exact (nprobe >= nlist).
 statement ok
@@ -49,7 +45,7 @@ EXPLAIN SELECT pk FROM mv_ivf
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────╮
 │ Index: mv_ivf                   │
-│ Lookup: table                   │
+│ Lookup: search                  │
 │ Score: l2_distance(a, FLOAT[3]) │
 │ Top: 2                          │
 │ Projections: pk                 │
@@ -63,7 +59,7 @@ EXPLAIN SELECT pk FROM mv_ivf
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────╮
 │ Index: mv_ivf                       │
-│ Lookup: table                       │
+│ Lookup: search                      │
 │ Score: cosine_distance(b, FLOAT[4]) │
 │ Top: 2                              │
 │ Projections: pk                     │
@@ -166,9 +162,6 @@ INSERT INTO mv VALUES
     (6, [20,20,20]::FLOAT[3], [2,2,1,0]::FLOAT[4]),
     (7, [5,5,5]::FLOAT[3],    [0,1,0,0]::FLOAT[4]),
     (8, [30,30,30]::FLOAT[3], [9,1,0,0]::FLOAT[4]);
-
-statement ok
-VACUUM (REFRESH_TABLE) mv;
 
 statement ok
 VACUUM (COMPACT_TABLE) mv;

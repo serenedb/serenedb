@@ -63,9 +63,6 @@ FROM generate_series(1, 16384) AS t(x);
 statement ok
 CREATE INDEX lzs_idx ON lzs USING inverted(id, body lzs_en);
 
-statement ok
-VACUUM (REFRESH_TABLE) lzs;
-
 
 # ============================================================================
 # Cardinalities (catch data-gen drift before relying on assertions).

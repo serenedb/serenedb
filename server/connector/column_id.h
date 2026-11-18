@@ -27,9 +27,11 @@
 #include <duckdb/parser/column_definition.hpp>
 #include <duckdb/planner/column_binding.hpp>
 #include <iresearch/types.hpp>
+#include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace sdb::connector {
 
@@ -40,8 +42,8 @@ using ColumnId = irs::field_id;
 inline constexpr ColumnId kInvalidColumnId = irs::field_limits::invalid();
 
 inline ColumnId TableColumnId(const duckdb::ColumnDefinition& column) {
-  return column.CatalogOid() != 0 ? ColumnId{column.CatalogOid()}
-                                  : ColumnId{column.Oid()};
+  SDB_ASSERT(column.CatalogOid() != 0);
+  return ColumnId{column.CatalogOid()};
 }
 
 struct BindingKey {
@@ -50,6 +52,11 @@ struct BindingKey {
 
   auto operator<=>(const BindingKey&) const = default;
 };
+
+template<typename H>
+H AbslHashValue(H h, const BindingKey& key) {
+  return H::combine(std::move(h), key.table, key.column);
+}
 
 inline BindingKey MakeBindingKey(const duckdb::ColumnBinding& binding) {
   return {.table = binding.table_index.index,

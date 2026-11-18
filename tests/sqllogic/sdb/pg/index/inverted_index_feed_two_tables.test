@@ -39,14 +39,6 @@ COMMIT;
 
 
 statement ok
-VACUUM (REFRESH_TABLE) ift_a1;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) ift_b1;
-
-
-statement ok
 CREATE TABLE ift_a2 (id INT PRIMARY KEY, body TEXT);
 
 
@@ -83,14 +75,6 @@ COMMIT;
 
 
 statement ok
-VACUUM (REFRESH_TABLE) ift_a2;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) ift_b2;
-
-
-statement ok
 CREATE TABLE ift_a3 (id INT PRIMARY KEY, body TEXT);
 
 
@@ -124,14 +108,6 @@ INSERT INTO ift_b3 SELECT i, 'beta' FROM range(30720, 63488) t(i);
 
 statement ok
 COMMIT;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) ift_a3;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) ift_b3;
 
 
 query

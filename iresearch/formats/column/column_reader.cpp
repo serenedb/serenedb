@@ -103,12 +103,13 @@ ColumnBlockMeta DeserializeColumnBlockMeta(duckdb::BinaryDeserializer& d,
 void SerializeBlockMetas(duckdb::BinarySerializer& s, duckdb::field_id_t id,
                          const char* tag,
                          const std::vector<ColumnBlockMeta>& blocks) {
-  s.WriteList(id, tag, blocks.size(),
-              [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-                list.WriteObject([&](duckdb::BinarySerializer& obj) {
-                  SerializeColumnBlockMeta(obj, blocks[i]);
-                });
-              });
+  s.WriteOptionalList(
+    id, tag, blocks.size(),
+    [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+      list.WriteObject([&](duckdb::BinarySerializer& obj) {
+        SerializeColumnBlockMeta(obj, blocks[i]);
+      });
+    });
 }
 
 struct GatherBands {
@@ -171,41 +172,32 @@ bool ScatterWins(const ColumnBlockMeta& block, const duckdb::LogicalType& type,
 void SerializeColumnMeta(duckdb::BinarySerializer& s, const ColumnMeta& meta) {
   s.WriteProperty(0, "id", meta.id);
   s.WriteProperty(1, "type", meta.type);
-  if (!meta.data.empty()) {
-    SerializeBlockMetas(s, 2, "data", meta.data);
-  }
-  if (!meta.validity.empty()) {
-    SerializeBlockMetas(s, 3, "validity", meta.validity);
-  }
-  if (!meta.children.empty()) {
-    s.WriteList(4, "children", meta.children.size(),
-                [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-                  list.WriteObject([&](duckdb::BinarySerializer& obj) {
-                    SerializeColumnMeta(obj, meta.children[i]);
-                  });
-                });
-  }
-  if (!meta.variant_rgs.empty()) {
-    s.WriteList(5, "variant_rgs", meta.variant_rgs.size(),
-                [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-                  const auto& rg = meta.variant_rgs[i];
-                  list.WriteObject([&](duckdb::BinarySerializer& obj) {
-                    obj.WriteProperty(0, "row_count", rg.row_count);
-                    obj.WriteObject(1, "unshredded",
-                                    [&](duckdb::BinarySerializer& unshredded) {
-                                      SerializeColumnMeta(unshredded,
-                                                          *rg.unshredded);
-                                    });
-                    if (rg.shredded) {
-                      obj.WriteObject(
-                        2, "shredded", [&](duckdb::BinarySerializer& shredded) {
-                          SerializeColumnMeta(shredded, *rg.shredded);
+  SerializeBlockMetas(s, 2, "data", meta.data);
+  SerializeBlockMetas(s, 3, "validity", meta.validity);
+  s.WriteOptionalList(
+    4, "children", meta.children.size(),
+    [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+      list.WriteObject([&](duckdb::BinarySerializer& obj) {
+        SerializeColumnMeta(obj, meta.children[i]);
+      });
+    });
+  s.WriteOptionalList(
+    5, "variant_rgs", meta.variant_rgs.size(),
+    [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+      const auto& rg = meta.variant_rgs[i];
+      list.WriteObject([&](duckdb::BinarySerializer& obj) {
+        obj.WriteProperty(0, "row_count", rg.row_count);
+        obj.WriteObject(1, "unshredded",
+                        [&](duckdb::BinarySerializer& unshredded) {
+                          SerializeColumnMeta(unshredded, *rg.unshredded);
                         });
-                    }
-                  });
-                });
-  }
-  s.WritePropertyWithDefault(6, "hyperloglog", meta.hyperloglog);
+        obj.WriteOptionalObject(2, "shredded", rg.shredded != nullptr,
+                                [&](duckdb::BinarySerializer& shredded) {
+                                  SerializeColumnMeta(shredded, *rg.shredded);
+                                });
+      });
+    });
+  s.WritePropertyWithDefault(7, "distinct", meta.distinct);
 }
 
 ColumnMeta DeserializeColumnMeta(duckdb::BinaryDeserializer& d) {
@@ -257,7 +249,7 @@ ColumnMeta DeserializeColumnMeta(duckdb::BinaryDeserializer& d) {
         meta.variant_rgs.push_back(std::move(rg));
       });
     });
-  d.ReadPropertyWithDefault(6, "hyperloglog", meta.hyperloglog);
+  d.ReadPropertyWithDefault(7, "distinct", meta.distinct);
   return meta;
 }
 
@@ -275,6 +267,7 @@ ColumnReader::ColumnReader(field_id id, duckdb::LogicalType type,
     _type{std::move(type)},
     _segments{std::move(segments)},
     _validity{std::move(validity)},
+    _validity_view{_validity.get()},
     _children{std::move(children)},
     _array_size{_type.id() == duckdb::LogicalTypeId::ARRAY
                   ? duckdb::ArrayType::GetSize(_type)
@@ -301,7 +294,7 @@ bool ColumnReader::NullsInData() const noexcept {
 void ColumnReader::FinishStats(duckdb::BaseStatistics stats) {
   if (_validity) {
     stats.Merge(_validity->MergedStatistics());
-  } else if (_row_count > 0 && !_children.empty()) {
+  } else if (_row_count > 0 && (!_children.empty() || _segments.empty())) {
     // A nested parent rebuilds its stats from CreateEmpty (its own blocks are
     // plumbing, e.g. list offsets), so the null flags only come from the
     // validity child -- and its absence means the writer counted every row
@@ -596,8 +589,7 @@ bool ColumnReader::FetchSparse(ScanState& s, uint64_t anchor,
   const uint64_t cur = ColumnReader::GatherCursor(s);
   SDB_ASSERT(first >= cur);
   const auto window = Locate(first, s.window);
-  if (last >= window.end || (s.initialized && window.block == s.window.block) ||
-      (s.fetch.segment && s.fetch_window.block == window.block)) {
+  if (s.initialized && window.block == s.window.block) {
     return false;
   }
   if (first > cur) {
@@ -841,8 +833,14 @@ void ColumnReader::SkipRows(ScanState& s, duckdb::idx_t count) const {
 }
 
 std::unique_ptr<ColumnReader> ColumnReader::Make(ColumnMeta&& meta) {
+  const auto id = meta.type.id();
+  const bool fieldless =
+    meta.children.empty() &&
+    (id == duckdb::LogicalTypeId::STRUCT ||
+     id == duckdb::LogicalTypeId::TUPLE || id == duckdb::LogicalTypeId::UNION);
   std::unique_ptr<ColumnReader> validity;
-  if (absl::c_any_of(meta.validity, [](const ColumnBlockMeta& m) {
+  if ((fieldless && !meta.validity.empty()) ||
+      absl::c_any_of(meta.validity, [](const ColumnBlockMeta& m) {
         return m.codec->type != duckdb::CompressionType::COMPRESSION_EMPTY;
       })) {
     validity.reset(new ColumnReader{
@@ -896,7 +894,7 @@ std::unique_ptr<ColumnReader> ColumnReader::Make(ColumnMeta&& meta) {
       });
       break;
   }
-  col->_hyperloglog = std::move(meta.hyperloglog);
+  col->_distinct = std::move(meta.distinct);
   return col;
 }
 
@@ -953,14 +951,25 @@ IRS_FORCE_INLINE bool ColumnReader::PointReader::FetchValidity(
   return duckdb::FlatVector::Validity(out).RowIsValid(out_offset);
 }
 
-bool ColumnReader::PointReader::FetchRow(uint64_t row, duckdb::Vector& out,
-                                         duckdb::idx_t out_offset) {
+bool ColumnReader::FetchPoint(PointReader& reader, uint64_t row,
+                              duckdb::Vector& out,
+                              duckdb::idx_t out_offset) const {
+  return reader.FetchStored(row, out, out_offset);
+}
+
+bool ColumnReader::ValidPoint(PointReader& reader, uint64_t row,
+                              duckdb::Vector& scratch) const {
+  return reader.ValidStored(row, scratch);
+}
+
+bool ColumnReader::PointReader::FetchStored(uint64_t row, duckdb::Vector& out,
+                                            duckdb::idx_t out_offset) {
   if (row >= _reader->RowCount()) {
     duckdb::FlatVector::ValidityMutable(out).SetInvalid(out_offset);
     return false;
   }
   duckdb::FlatVector::ValidityMutable(out).SetValid(out_offset);
-  const auto* validity = _reader->_validity.get();
+  const auto* validity = _reader->_validity_view;
   if (validity && !FetchValidity(*validity, row, out, out_offset)) {
     return false;
   }
@@ -971,12 +980,12 @@ bool ColumnReader::PointReader::FetchRow(uint64_t row, duckdb::Vector& out,
   return duckdb::FlatVector::Validity(out).RowIsValid(out_offset);
 }
 
-bool ColumnReader::PointReader::ValidRow(uint64_t row,
-                                         duckdb::Vector& scratch) {
+bool ColumnReader::PointReader::ValidStored(uint64_t row,
+                                            duckdb::Vector& scratch) {
   if (row >= _reader->RowCount()) {
     return false;
   }
-  const auto* validity = _reader->_validity.get();
+  const auto* validity = _reader->_validity_view;
   if (!validity) {
     return true;
   }

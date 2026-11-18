@@ -65,7 +65,7 @@ INSERT INTO rcik_inv VALUES (3, true, 'red'), (4, false, 'red');
 
 connection after_crash
 statement ok
-VACUUM (REFRESH_TABLE) rcik_inv;
+VACUUM (FLUSH_TABLE) rcik_inv;
 
 connection after_crash
 query
@@ -94,7 +94,7 @@ INSERT INTO rcik_gen (id, a, body) VALUES (3, 3, 'red');
 
 connection after_crash
 statement ok
-VACUUM (REFRESH_TABLE) rcik_gen;
+VACUUM (FLUSH_TABLE) rcik_gen;
 
 connection after_crash
 query

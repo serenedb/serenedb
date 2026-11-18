@@ -55,7 +55,7 @@ CREATE INDEX docs_hnsw_sq8 ON docs
   USING inverted(pk, cat, toks hnsw (metric = 'ip', quant = 'sq8'));
 
 statement ok
-VACUUM (REFRESH_TABLE) docs;
+VACUUM (FLUSH_TABLE) docs;
 
 # A multi-vector index scores by inner product, which maxsim() sums
 
@@ -173,15 +173,15 @@ SELECT count(*) FROM (
 count
 0
 
-# Without LIMIT every row with vectors is scored: 2000 rows, less 87 NULL and
-# 69 empty ones, 3 of them both
+# Without LIMIT every row is returned, as without the index: the 87 NULL and
+# 69 empty lists, 3 of them both, score NULL
 
 query
 SELECT count(*), count(s), min(s) = (SELECT min(maxsim(toks, toks(5.5, 2))) FROM docs)
   FROM (SELECT maxsim(toks, toks(5.5, 2)) AS s FROM docs_ivf ORDER BY s DESC) t;
 ----
 count	count	?column?
-1847	1847	t
+2000	1847	t
 
 # Parameters bind like constants; an empty or NULL query list is refused, as a
 # NULL query vector is, and an untyped list literal takes the column's type
@@ -290,7 +290,7 @@ EXPLAIN SELECT pk FROM docs_ivf ORDER BY maxsim(toks, toks(1.5, 2)) DESC LIMIT 3
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────╮
 │ Index: docs_ivf                 │
-│ Lookup: table                   │
+│ Lookup: search                  │
 │ Score: maxsim(toks, FLOAT[8][]) │
 │ Top: 3                          │
 │ Projections: pk                 │
@@ -303,7 +303,7 @@ EXPLAIN SELECT pk FROM docs_hnsw ORDER BY maxsim(toks, [[1, 0, 0, 0, 0, 0, 0, 0]
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────╮
 │ Index: docs_hnsw                │
-│ Lookup: table                   │
+│ Lookup: search                  │
 │ Score: maxsim(toks, FLOAT[8][]) │
 │ Top: 3                          │
 │ Projections: pk                 │
@@ -315,21 +315,22 @@ EXPLAIN SELECT pk FROM docs_ivf ORDER BY maxsim(toks, toks(1.5, 2)) LIMIT 3;
 ----
 QUERY PLAN
 ╭─ LOOKUP_JOIN ───────────────────────────────────────────╮
-│ Key: iresearch_pk                                       │
+│ Key: rowid                                              │
 │ ~3 rows                                                 │
 ╰────────────────────────────┬────────────────────────────╯
                              ├─────────────────────────────────────────╮
 ╭─ TOP_N ────────────────────┴────────────────────────────╮  ╭─ IRESEARCH_SCAN ─╮
 │ Top: 3                                                  │  │ Index: docs_ivf  │
-│ Order By: #0 ASC                                        │  │ Lookup: table    │
+│ Order By: #0 ASC                                        │  │ Lookup: search   │
 │ ~3 rows                                                 │  │ Projections: pk  │
 ╰────────────────────────────┬────────────────────────────╯  │ ~3 rows          │
 ╭─ IRESEARCH_SCAN ───────────┴────────────────────────────╮  ╰──────────────────╯
 │ Index: docs_ivf                                         │
+│ Lookup: search                                          │
 │ Score: maxsim(toks, FLOAT[8][])                         │
 │ Exact:                                                  │
 │ brute force over the stored vectors                     │
-│ Projections: sdb_inverted_index_score, iresearch_pk     │
+│ Projections: sdb_inverted_index_score, rowid            │
 │ Column Filter:                                          │
 │ optional: Dynamic Filter (sdb_inverted_index_score < ?) │
 │ ~2,000 rows                                             │
@@ -350,24 +351,25 @@ QUERY PLAN
 │ ~3 rows                                   │
 ╰─────────────────────┬─────────────────────╯
 ╭─ LOOKUP_JOIN ───────┴─────────────────────╮
-│ Key: iresearch_pk                         │
+│ Key: rowid                                │
 │ ~3 rows                                   │
 ╰─────────────────────┬─────────────────────╯
                       ├──────────────────────────────────╮
 ╭─ TOP_N ─────────────┴─────────────────────╮  ╭─ IRESEARCH_SCAN ─╮
 │ Top: 3                                    │  │ Index: docs_ivf  │
-│ Order By: #0 DESC                         │  │ Lookup: table    │
+│ Order By: #0 DESC                         │  │ Lookup: search   │
 │ ~3 rows                                   │  │ Projections: pk  │
 ╰─────────────────────┬─────────────────────╯  │ ~3 rows          │
 ╭─ PROJECTION ────────┴─────────────────────╮  ╰──────────────────╯
 │ Projections:                              │
 │ maxsim([[1, 0, 0, 0, 0, 0, 0, 0]], toks), │
-│ iresearch_pk, toks                        │
+│ rowid, toks                               │
 │ ~2,000 rows                               │
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: docs_ivf                           │
-│ Projections: toks, iresearch_pk           │
+│ Lookup: search                            │
+│ Projections: toks, rowid                  │
 │ ~2,000 rows                               │
 ╰───────────────────────────────────────────╯
 
@@ -398,7 +400,7 @@ statement ok
 INSERT INTO docs SELECT i, i % 3, toks(i, 1 + i % 7) FROM range(2000, 2600) t(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) docs;
+VACUUM (FLUSH_TABLE) docs;
 
 query
 SELECT count(*) FROM (
@@ -527,14 +529,13 @@ QUERY PLAN
 ╰────────────────┬────────────────╯
 ╭─ INOUT_FUNCTION ────────────────╮
 │ Index: docs_ivf                 │
-│ Lookup: table                   │
+│ Lookup: search                  │
 │ Score: maxsim(toks, FLOAT[8][]) │
 │ Top: 3                          │
 │ ~5 rows                         │
 ╰────────────────┬────────────────╯
-╭─ SEQ_SCAN ─────┴────────────────╮
+╭─ IRESEARCH_SCAN ────────────────╮
 │ Table: users                    │
-│ Type: Sequential Scan           │
 │ ~5 rows                         │
 ╰─────────────────────────────────╯
 

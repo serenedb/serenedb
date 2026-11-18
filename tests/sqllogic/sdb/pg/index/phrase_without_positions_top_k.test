@@ -5,7 +5,7 @@ statement ok
 CREATE TEXT SEARCH DICTIONARY ptk_words_pos AS split_text() WITH (frequency, position, norm)
 
 statement ok
-CREATE TABLE ptk AS
+CREATE TABLE ptk WITH (optimize_top_k = 'bm25(1.2, 0.75)', compaction_interval = 0) AS
 SELECT g AS id,
        (g // 250) % 10 AS n,
        'w' || (g % 3) || ' w' || (g % 5) || ' ' ||
@@ -16,14 +16,9 @@ FROM range(1, 6001) t(g)
 
 statement ok
 CREATE INDEX ptk_text_idx ON ptk USING inverted (id, body ptk_words) INCLUDE (body, n)
-    WITH (optimize_top_k = 'bm25(1.2, 0.75)', compaction_interval = 0)
 
 statement ok
 CREATE INDEX ptk_pos_idx ON ptk USING inverted (id, body ptk_words_pos) INCLUDE (n)
-    WITH (optimize_top_k = 'bm25(1.2, 0.75)', compaction_interval = 0)
-
-statement ok
-VACUUM (REFRESH_TABLE) ptk
 
 query
 EXPLAIN SELECT id FROM ptk_text_idx WHERE body @@ ts_phrase('w1 w2')
@@ -32,7 +27,7 @@ ORDER BY BM25(ptk_text_idx.tableoid) DESC LIMIT 5
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────╮
 │ Index: ptk_text_idx                       │
-│ Lookup: table                             │
+│ Lookup: search                            │
 │ Index Filter:                             │
 │ ╭─ Phrase ──────────────────────────────╮ │
 │ │ Field: body(string)                   │ │
@@ -226,9 +221,6 @@ FROM range(6001, 6004) t(g)
 
 statement ok
 DELETE FROM ptk WHERE id IN (6000, 5500, 6002)
-
-statement ok
-VACUUM (REFRESH_TABLE) ptk
 
 query
 SELECT id, round(BM25(ptk_text_idx.tableoid)::numeric, 4) AS score

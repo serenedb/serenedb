@@ -32,36 +32,36 @@ id	v
 statement error
 DROP SEQUENCE iceberg_partition_seq;
 ----
-db error: ERROR: Cannot drop entry "iceberg_partition_seq" because there are entries that depend on it.
-table "iceberg_manifest" depends on sequence "iceberg_partition_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence iceberg_partition_seq because other objects depend on it
+DETAIL: default value for column id of table iceberg_manifest depends on sequence iceberg_partition_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
 statement error
 DROP SEQUENCE iceberg_partition_seq RESTRICT;
 ----
-db error: ERROR: Cannot drop entry "iceberg_partition_seq" because there are entries that depend on it.
-table "iceberg_manifest" depends on sequence "iceberg_partition_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence iceberg_partition_seq because other objects depend on it
+DETAIL: default value for column id of table iceberg_manifest depends on sequence iceberg_partition_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
 statement error
 DROP SEQUENCE iceberg_snapshot_seq;
 ----
-db error: ERROR: Cannot drop entry "iceberg_snapshot_seq" because there are entries that depend on it.
-table "iceberg_manifest" depends on sequence "iceberg_snapshot_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence iceberg_snapshot_seq because other objects depend on it
+DETAIL: default value for column id of table iceberg_manifest depends on sequence iceberg_snapshot_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
 statement error
 DROP SEQUENCE iceberg_snapshot_seq RESTRICT;
 ----
-db error: ERROR: Cannot drop entry "iceberg_snapshot_seq" because there are entries that depend on it.
-table "iceberg_manifest" depends on sequence "iceberg_snapshot_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence iceberg_snapshot_seq because other objects depend on it
+DETAIL: default value for column id of table iceberg_manifest depends on sequence iceberg_snapshot_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -136,9 +136,9 @@ v
 statement error
 DROP SEQUENCE clickclack_query_seq;
 ----
-db error: ERROR: Cannot drop entry "clickclack_query_seq" because there are entries that depend on it.
-table "clickclack_query_log" depends on sequence "clickclack_query_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence clickclack_query_seq because other objects depend on it
+DETAIL: default value for column v of table clickclack_query_log depends on sequence clickclack_query_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -254,9 +254,10 @@ INSERT INTO solid_violations_ironically (payload) VALUES ('r');
 statement error
 DROP TABLE solid_module;
 ----
-db error: ERROR: Cannot drop entry "solid_module_id_seq" because there are entries that depend on it.
-table "solid_violations_ironically" depends on sequence "solid_module_id_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop table solid_module because other objects depend on it
+DETAIL: default value for column a of table solid_violations_ironically depends on sequence solid_module_id_seq
+default value for column b of table solid_violations_ironically depends on sequence solid_module_id_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -329,27 +330,27 @@ v
 statement error
 DROP SEQUENCE clickclack_ingest_a;
 ----
-db error: ERROR: Cannot drop entry "clickclack_ingest_a" because there are entries that depend on it.
-table "clickclack_ingest_job" depends on sequence "clickclack_ingest_a".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence clickclack_ingest_a because other objects depend on it
+DETAIL: default value for column v of table clickclack_ingest_job depends on sequence clickclack_ingest_a
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
 statement error
 DROP SEQUENCE clickclack_ingest_b;
 ----
-db error: ERROR: Cannot drop entry "clickclack_ingest_b" because there are entries that depend on it.
-table "clickclack_ingest_job" depends on sequence "clickclack_ingest_b".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence clickclack_ingest_b because other objects depend on it
+DETAIL: default value for column v of table clickclack_ingest_job depends on sequence clickclack_ingest_b
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
 statement error
 DROP SEQUENCE clickclack_ingest_c;
 ----
-db error: ERROR: Cannot drop entry "clickclack_ingest_c" because there are entries that depend on it.
-table "clickclack_ingest_job" depends on sequence "clickclack_ingest_c".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence clickclack_ingest_c because other objects depend on it
+DETAIL: default value for column v of table clickclack_ingest_job depends on sequence clickclack_ingest_c
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -401,18 +402,18 @@ v	payload
 statement error
 DROP SEQUENCE ml_loss_seq;
 ----
-db error: ERROR: Cannot drop entry "ml_loss_seq" because there are entries that depend on it.
-table "ml_weights" depends on sequence "ml_loss_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence ml_loss_seq because other objects depend on it
+DETAIL: default value for column v of table ml_weights depends on sequence ml_loss_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
 statement error
 DROP SEQUENCE ml_loss_seq RESTRICT;
 ----
-db error: ERROR: Cannot drop entry "ml_loss_seq" because there are entries that depend on it.
-table "ml_weights" depends on sequence "ml_loss_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence ml_loss_seq because other objects depend on it
+DETAIL: default value for column v of table ml_weights depends on sequence ml_loss_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -467,18 +468,18 @@ v	payload
 statement error
 DROP SEQUENCE ml_lecture_seq;
 ----
-db error: ERROR: Cannot drop entry "ml_lecture_seq" because there are entries that depend on it.
-table "ml_lectures" depends on sequence "ml_lecture_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence ml_lecture_seq because other objects depend on it
+DETAIL: default value for column v of table ml_lectures depends on sequence ml_lecture_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
 statement error
 DROP SEQUENCE ml_lecture_seq RESTRICT;
 ----
-db error: ERROR: Cannot drop entry "ml_lecture_seq" because there are entries that depend on it.
-table "ml_lectures" depends on sequence "ml_lecture_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence ml_lecture_seq because other objects depend on it
+DETAIL: default value for column v of table ml_lectures depends on sequence ml_lecture_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -548,27 +549,27 @@ v
 statement error
 DROP SEQUENCE vedernikoff_seq_a;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_seq_a" because there are entries that depend on it.
-table "vedernikoff_journal" depends on sequence "vedernikoff_seq_a".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence vedernikoff_seq_a because other objects depend on it
+DETAIL: default value for column v of table vedernikoff_journal depends on sequence vedernikoff_seq_a
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
 statement error
 DROP SEQUENCE vedernikoff_seq_b;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_seq_b" because there are entries that depend on it.
-table "vedernikoff_journal" depends on sequence "vedernikoff_seq_b".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence vedernikoff_seq_b because other objects depend on it
+DETAIL: default value for column v of table vedernikoff_journal depends on sequence vedernikoff_seq_b
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
 statement error
 DROP SEQUENCE vedernikoff_seq_c;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_seq_c" because there are entries that depend on it.
-table "vedernikoff_journal" depends on sequence "vedernikoff_seq_c".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence vedernikoff_seq_c because other objects depend on it
+DETAIL: default value for column v of table vedernikoff_journal depends on sequence vedernikoff_seq_c
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 

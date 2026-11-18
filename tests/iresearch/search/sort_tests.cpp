@@ -195,7 +195,7 @@ TEST(ScoreFunctionTest, reset) {
 TEST(ScoreFunctionTest, move) {
   // move construction
   {
-    float_t tmp{1};
+    float tmp{1};
 
     auto func = irs::ScoreFunction::Make<Impl>();
     func.Score(&tmp, 1);
@@ -211,7 +211,7 @@ TEST(ScoreFunctionTest, move) {
 
   // move assignment
   {
-    float_t tmp{1};
+    float tmp{1};
 
     irs::ScoreFunction moved;
     moved.Score(&tmp, 1);

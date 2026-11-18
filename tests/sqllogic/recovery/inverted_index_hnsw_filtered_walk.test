@@ -23,7 +23,7 @@ CREATE INDEX walk_docs_l2 ON walk_docs
 
 
 statement ok
-VACUUM (REFRESH_TABLE) walk_docs;
+VACUUM (FLUSH_TABLE) walk_docs;
 
 
 statement ok
@@ -79,7 +79,7 @@ CREATE INDEX corner_docs_l2 ON corner_docs
 
 
 statement ok
-VACUUM (REFRESH_TABLE) corner_docs;
+VACUUM (FLUSH_TABLE) corner_docs;
 
 
 statement ok

@@ -59,7 +59,7 @@ VACUUM (COMPACT_INDEX) rdrc_idx;
 
 connection default
 statement ok
-VACUUM (REFRESH_INDEX) rdrc_idx;
+VACUUM (FLUSH_INDEX) rdrc_idx;
 
 
 connection default

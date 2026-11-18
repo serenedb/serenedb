@@ -22,9 +22,6 @@ INSERT INTO products VALUES
 (5, 'running socks',       'apparel');
 
 statement ok
-VACUUM (REFRESH_TABLE) products;
-
-statement ok
 CREATE TABLE orders (order_id INTEGER PRIMARY KEY, product_id INTEGER, qty INTEGER, amount INTEGER);
 
 statement ok

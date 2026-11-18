@@ -35,10 +35,6 @@ statement ok
 INSERT INTO arr_t VALUES (3, 'third',  [-1.0, 0.0, 1.0])
 
 
-statement ok
-VACUUM (REFRESH_TABLE) arr_t
-
-
 query
 SELECT pk, vec FROM arr_t_idx WHERE text_for_search @@ ts_phrase('first')
 ORDER BY pk;

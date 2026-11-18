@@ -119,17 +119,17 @@ DROP JOB jei.jei_inner.jei_nested;
 statement error
 DROP JOB jei_paused;
 ----
-db error: ERROR: Cannot drop entry "jei_paused" because there are entries that depend on it.
-view "jei_v" depends on job "jei_paused".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop job jei_paused because other objects depend on it
+DETAIL: view jei_v depends on job jei_paused
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 statement error
 DROP JOB jei.jei_spread;
 ----
-db error: ERROR: Cannot drop entry "jei_spread" because there are entries that depend on it.
-table macro function "jei_m" depends on job "jei_spread".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop job jei_spread because other objects depend on it
+DETAIL: function jei_m() depends on job jei_spread
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 statement ok

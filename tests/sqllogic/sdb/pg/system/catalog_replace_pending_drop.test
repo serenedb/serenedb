@@ -1,0 +1,61 @@
+statement ok
+CREATE TABLE crpd_t (a INT)
+
+
+statement ok
+INSERT INTO crpd_t VALUES (1), (2)
+
+
+statement ok
+CREATE VIEW crpd_v AS SELECT a FROM crpd_t
+
+
+connection dropper
+statement ok
+BEGIN
+
+
+connection dropper
+statement ok
+DROP VIEW crpd_v
+
+
+connection replacer
+statement error
+CREATE OR REPLACE VIEW crpd_v AS SELECT a + 10 AS a FROM crpd_t
+----
+db error: ERROR: could not serialize access due to concurrent update of "crpd_v"
+
+
+connection dropper
+statement ok
+ROLLBACK
+
+
+connection replacer
+query
+SELECT sum(a) AS s FROM crpd_v;
+----
+s
+3
+
+
+connection replacer
+statement ok
+CREATE OR REPLACE VIEW crpd_v AS SELECT a + 10 AS a FROM crpd_t
+
+
+connection replacer
+query
+SELECT sum(a) AS s FROM crpd_v;
+----
+s
+23
+
+
+statement ok
+DROP VIEW crpd_v
+
+
+statement ok
+DROP TABLE crpd_t

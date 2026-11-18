@@ -20,8 +20,12 @@
 
 #pragma once
 
+#include <absl/synchronization/mutex.h>
+
 #include <array>
 #include <iresearch/analysis/text_tokenizer.hpp>
+#include <iresearch/index/index_meta.hpp>
+#include <iresearch/store/directory_attributes.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <span>
 
@@ -66,7 +70,6 @@ using BatchHandlerFactory = std::unique_ptr<IBatchHandler> (*)();
 struct IndexBuilderOptions {
   size_t batch_size = 100000;
   size_t indexer_threads = 1;
-  size_t refresh_interval_ms = 0;
   size_t compaction_interval_ms = 5000;
   size_t compaction_threads = 0;
   bool compact_all = true;
@@ -81,18 +84,24 @@ class IndexBuilder {
 
   void IndexFrom(LineSource& source, BatchHandlerFactory factory);
 
-  irs::MMapDirectory& GetDirectory() { return _dir; }
-  irs::IndexWriter& GetWriter() { return *_writer; }
-  auto GetReader() { return _writer->GetSnapshot(); }
+  irs::DirectoryReader GetReader();
+  void Remove(const irs::DocRemoval& removal);
 
  private:
-  void CompactAll();
+  void Add(std::span<const irs::IndexWriter::FlushedSegment> flushed);
+  void Repin() ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
+  void Compact(const irs::CompactionPolicy& policy);
+  void WriteSegmentList();
 
   IndexBuilderOptions _opts;
   irs::Scorer::ptr _scorer;
   irs::Scorer* _scorer_ptr{_scorer.get()};
   irs::MMapDirectory _dir;
+  irs::IndexReaderOptions _reader_options;
   irs::IndexWriter::ptr _writer;
+  absl::Mutex _mutex;
+  std::vector<irs::SegmentMeta> _segments ABSL_GUARDED_BY(_mutex);
+  irs::FileRefs _pins ABSL_GUARDED_BY(_mutex);
 };
 
 inline constexpr auto kTextIndexFeatures =

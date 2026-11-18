@@ -40,16 +40,15 @@
 #include <vector>
 
 #include "catalog/entry/inverted_index.h"
-#include "connector/duckdb_client_state.h"
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/duckdb_reindex_function.h"
 #include "connector/file_manifest.h"
+#include "connector/inverted_index_bind.h"
 #include "connector/view_fast_path.h"
 #include "pg/connection_context.h"
 #include "pg/types/logical.h"
 #include "query/config_variable_names.h"
 #include "search/store.h"
-#include "search/writes.h"
 
 namespace sdb::connector {
 namespace {
@@ -272,38 +271,19 @@ duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnView(
 duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnSearchTable(
   duckdb::Binder& binder, duckdb::CreateStatement& stmt,
   catalog::SearchTableEntry& table,
-  duckdb::unique_ptr<duckdb::LogicalOperator> plan) {
+  duckdb::unique_ptr<duckdb::LogicalOperator> plan, bool plain) {
   auto& context = binder.context;
   auto info = TakeInfo(stmt);
   if (info->index_type != catalog::kInvertedIndexTypeName) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG("only inverted indexes are supported on a search-backed table"));
+    if (!duckdb::DBConfig::GetConfig(context).GetIndexTypes().FindByName(
+          info->index_type)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+        ERR_MSG("access method \"", info->index_type, "\" does not exist"));
+    }
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("only inverted indexes are supported on a table"));
   }
-  if (info->options.contains(kOptimizeTopKSetting)) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG(kOptimizeTopKSetting,
-              " is a table option on a search-backed table"),
-      ERR_HINT("Set it in CREATE TABLE ... WITH (storage = 'search', ",
-               kOptimizeTopKSetting,
-               " = '...'); the table's store keeps the score bounds every "
-               "index on it prunes with."));
-  }
-  if (info->where_clause) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG("partial indexes are not supported on a search-backed table"));
-  }
-  if (!IndexNameTaken(context, *info, table) &&
-      GetSereneDBContext(context).SearchTxn().HasWritesFor(table.oid)) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
-      ERR_MSG("CREATE INDEX on a search-backed table cannot run in a "
-              "transaction that has already written to \"",
-              table.name.GetIdentifierName(), "\""));
-  }
-
   auto& dependencies = info->dependencies;
   auto& catalog = table.ParentCatalog();
   duckdb::catalog_entry_callback_t lookup_callback =
@@ -318,6 +298,29 @@ duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnSearchTable(
   expressions.reserve(info->expressions.size());
   for (auto& expr : info->expressions) {
     expressions.emplace_back(index_binder.BindKey(expr));
+  }
+  if (plain) {
+    info->column_opclasses.resize(expressions.size());
+    info->column_opclass_options.resize(expressions.size());
+    for (size_t i = 0; i < expressions.size(); ++i) {
+      if (info->column_opclasses[i].empty() &&
+          !TermDictIndexable(expressions[i]->GetReturnType())) {
+        info->column_opclasses[i] = catalog::kPlainKind;
+        info->column_opclass_options[i].emplace();
+      }
+    }
+  }
+  if (info->where_clause) {
+    if (info->constraint_type == duckdb::IndexConstraintType::UNIQUE) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("partial unique indexes are not supported on a table"));
+    }
+    duckdb::IndexBinder where_binder(binder, context, &table, info.get());
+    where_binder.target_type = duckdb::LogicalType::BOOLEAN;
+    where_binder.SetCatalogLookupCallback(lookup_callback);
+    auto where_copy = info->where_clause->Copy();
+    where_binder.BindKey(where_copy);
   }
 
   auto& get = plan->Cast<duckdb::LogicalGet>();

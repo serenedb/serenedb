@@ -1,0 +1,69 @@
+statement ok
+DROP TABLE IF EXISTS cum_rink;
+
+
+statement ok
+DROP ROLE IF EXISTS cum_zamboni;
+
+
+statement ok
+CREATE TABLE cum_rink (id int, goals int, saves int, total int GENERATED ALWAYS AS (goals * 2) STORED);
+
+
+statement ok
+INSERT INTO cum_rink (id, goals, saves) VALUES (1, 1, 10), (2, 2, 20);
+
+
+statement ok
+CREATE ROLE cum_zamboni LOGIN PASSWORD 'cum_zamboni_pw';
+
+
+statement ok
+GRANT SELECT (id) ON cum_rink TO cum_zamboni;
+
+
+statement ok
+GRANT UPDATE (goals) ON cum_rink TO cum_zamboni;
+
+
+connection cum_a user=cum_zamboni password=cum_zamboni_pw
+statement ok
+UPDATE cum_rink SET goals = 5 WHERE id = 2;
+
+
+connection cum_b user=cum_zamboni password=cum_zamboni_pw
+statement error
+UPDATE cum_rink SET saves = 0 WHERE id = 2;
+----
+db error: ERROR: permission denied for table cum_rink
+
+
+connection cum_c user=cum_zamboni password=cum_zamboni_pw
+statement ok
+MERGE INTO cum_rink r USING (VALUES (1, 7)) s(id, goals) ON r.id = s.id
+WHEN MATCHED THEN UPDATE SET goals = s.goals;
+
+
+connection cum_d user=cum_zamboni password=cum_zamboni_pw
+statement error
+MERGE INTO cum_rink r USING (VALUES (1, 7)) s(id, saves) ON r.id = s.id
+WHEN MATCHED THEN UPDATE SET saves = s.saves;
+----
+db error: ERROR: permission denied for table cum_rink
+
+
+connection default
+query
+SELECT id, goals, saves, total FROM cum_rink ORDER BY id;
+----
+id	goals	saves	total
+1	7	10	14
+2	5	20	10
+
+
+statement ok
+DROP TABLE cum_rink;
+
+
+statement ok
+DROP ROLE cum_zamboni;

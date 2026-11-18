@@ -67,4 +67,8 @@ const DocumentMask* SegmentReader::docs_mask() const {
   return _impl->docs_mask();
 }
 
+uint64_t SegmentReader::PatchedDocs() const noexcept {
+  return _impl->PatchedDocs();
+}
+
 }  // namespace irs

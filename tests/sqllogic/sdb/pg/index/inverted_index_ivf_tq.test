@@ -39,9 +39,6 @@ INSERT INTO tq_l2 VALUES
   (5, [10, 10, 10]::FLOAT[3], 'xyz'),
   (6, [20, 0, 0]::FLOAT[3], 'x2')
 
-statement ok
-VACUUM (REFRESH_TABLE) tq_l2
-
 query
 SELECT pk, label FROM tq_l2_idx
   ORDER BY emb <-> [11, 0, 0]::FLOAT[3] LIMIT 3;
@@ -87,9 +84,6 @@ INSERT INTO tq_mc VALUES
   (5, [0, 0, 100]::FLOAT[3]),
   (6, [0, 0, 101]::FLOAT[3])
 
-statement ok
-VACUUM (REFRESH_TABLE) tq_mc
-
 query
 SELECT pk FROM tq_mc_idx ORDER BY emb <-> [100, 0, 0]::FLOAT[3] LIMIT 2;
 ----
@@ -119,9 +113,6 @@ INSERT INTO tq_half VALUES
   (4, [0, 101, 0]::FLOAT[3]),
   (5, [0, 0, 100]::FLOAT[3]),
   (6, [0, 0, 101]::FLOAT[3])
-
-statement ok
-VACUUM (REFRESH_TABLE) tq_half
 
 query
 SELECT pk FROM tq_half_idx ORDER BY emb <-> [100, 0, 0]::FLOAT[3] LIMIT 2;
@@ -159,9 +150,6 @@ INSERT INTO tq_ip VALUES
   (3, [0, 0, 10]::FLOAT[3]),
   (4, [20, 0, 0]::FLOAT[3])
 
-statement ok
-VACUUM (REFRESH_TABLE) tq_ip
-
 query
 SELECT pk FROM tq_ip_idx ORDER BY emb <#> [1, 0, 0]::FLOAT[3] LIMIT 2;
 ----
@@ -188,9 +176,6 @@ INSERT INTO tq_cos VALUES
   (3, [0, 0, 10]::FLOAT[3]),
   (4, [5, 5, 0]::FLOAT[3])
 
-statement ok
-VACUUM (REFRESH_TABLE) tq_cos
-
 query
 SELECT pk FROM tq_cos_idx ORDER BY emb <=> [9, 1, 0]::FLOAT[3] LIMIT 2;
 ----
@@ -213,9 +198,6 @@ statement count 2
 INSERT INTO tq_alias VALUES
   (1, [10, 0, 0]::FLOAT[3]),
   (2, [0, 10, 0]::FLOAT[3])
-
-statement ok
-VACUUM (REFRESH_TABLE) tq_alias
 
 query
 SELECT pk FROM tq_alias_idx ORDER BY emb <-> [11, 0, 0]::FLOAT[3] LIMIT 1;
@@ -242,9 +224,6 @@ INSERT INTO tq_dml VALUES
   (3, [0, 0, 15]::FLOAT[3], 'c'),
   (4, [20, 0, 0]::FLOAT[3], 'd')
 
-statement ok
-VACUUM (REFRESH_TABLE) tq_dml
-
 query
 SELECT pk, label FROM tq_dml_idx
   ORDER BY emb <-> [11, 0, 0]::FLOAT[3] LIMIT 2;
@@ -256,9 +235,6 @@ pk	label
 statement count 1
 DELETE FROM tq_dml WHERE pk = 1
 
-statement ok
-VACUUM (REFRESH_TABLE) tq_dml
-
 query
 SELECT pk, label FROM tq_dml_idx
   ORDER BY emb <-> [11, 0, 0]::FLOAT[3] LIMIT 2;
@@ -269,9 +245,6 @@ pk	label
 
 statement count 1
 UPDATE tq_dml SET emb = [12, 0, 0]::FLOAT[3] WHERE pk = 2
-
-statement ok
-VACUUM (REFRESH_TABLE) tq_dml
 
 query
 SELECT pk, label FROM tq_dml_idx

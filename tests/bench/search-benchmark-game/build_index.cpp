@@ -27,6 +27,7 @@
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/remap_executable.hpp>
 #include <iresearch/utils/timer_utils.hpp>
+#include <thread>
 
 #include "executor.h"
 #include "index_builder.h"
@@ -38,7 +39,8 @@ int main(int argc, const char* argv[]) {
     absl::FPrintF(stderr, "usage: %s [indexer threads] < corpus\n", argv[0]);
     return 1;
   }
-  irs::RemapExecutable(SDB_REMAP_EXECUTABLE);
+  irs::RemapExecutable(SDB_REMAP_EXECUTABLE,
+                       std::thread::hardware_concurrency());
   // DuckDBEngine owns the process-wide DuckDB the cs codec / writer use.
   // Bring it up before the first iresearch construction and tear it down
   // before main returns -- duckdb's BlockAllocator dtor reads a
@@ -85,7 +87,6 @@ int main(int argc, const char* argv[]) {
     bench::IndexBuilderOptions builder_options{
       .batch_size = 100000,
       .indexer_threads = threads,
-      .refresh_interval_ms = 0,
       .compaction_interval_ms = 5000,
       .compaction_threads = 0,
       .compact_all = true,

@@ -179,7 +179,6 @@ for name in JSON_INDEXES:
         t.part()
         json_table()
         t.index(f"{name}_idx", "gdm", f"id, geo {name}")
-        t.refresh("gdm")
         t.section(f"JSON column, {DICTS[name]}.")
         for pred in geo_predicates("geo"):
             check(f"{name}_idx", pred, extra)
@@ -192,7 +191,6 @@ for idx, dictionary in (("gdm_g_source_idx", "gdm_shape"), ("gdm_g_s2point_idx",
             t.insert("gdm_g", (f"({i}, '{wkt(shapes[i])}'::GEOMETRY('OGC:CRS84'))"
                                for i in range(ROWS)))
             t.index(idx, "gdm_g", f"id, geo {dictionary}")
-            t.refresh("gdm_g")
             t.section(f"GEOMETRY column ({idx}), GeoJSON and GEOMETRY query shapes.")
             for pred in geo_predicates("geo", as_geometry):
                 check(idx, pred, extra)
@@ -203,17 +201,15 @@ for extra in CONTEXTS[:2]:
     t.insert("gdm_p", (f"({i}, '{{\"lat\":{s['coordinates'][1]},\"lng\":{s['coordinates'][0]}}}')"
                        for i, s in enumerate(points)), chunk=None)
     t.index("gdm_p_idx", "gdm_p", "id, geo gdm_geopoint")
-    t.refresh("gdm_p")
     t.section("encode_geopoint over latitude and longitude fields.")
     for pred in geo_predicates("geo"):
         check("gdm_p_idx", pred, extra)
 
 t.part()
 json_table()
-t.table("gdm_s", "id INTEGER, geo JSON", search=True)
+t.table("gdm_s", "id INTEGER, geo JSON")
 t.index("gdm_s_idx", "gdm_s", "id, geo gdm_shape")
 t.statement("INSERT INTO gdm_s SELECT id, geo FROM gdm")
-t.refresh("gdm_s")
 t.section("Search table.")
 for pred in geo_predicates("geo"):
     check("gdm_s_idx", pred, "")

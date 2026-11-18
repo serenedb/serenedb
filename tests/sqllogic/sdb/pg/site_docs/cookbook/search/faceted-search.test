@@ -31,9 +31,6 @@ statement ok
 CREATE INDEX products_idx ON products
     USING inverted (category, brand, price_band, title tx);
 
-statement ok
-VACUUM (REFRESH_TABLE) products;
-
 # DOCS_TEST: example_001
 
 # DOCS_TEST_BODY

@@ -69,7 +69,7 @@ std::unique_ptr<irs::ByPhrase> Phrase(
 }
 
 std::unique_ptr<irs::ByNGramSimilarity> NGram(
-  std::initializer_list<std::string_view> ngrams, float_t threshold) {
+  std::initializer_list<std::string_view> ngrams, float threshold) {
   auto filter = std::make_unique<irs::ByNGramSimilarity>();
   *filter->mutable_field_id() = kBodyId;
   auto* opts = filter->mutable_options();
@@ -115,7 +115,7 @@ void PerNodeScorerTest::BuildFixture() {
   tests::Document doc3;
   doc3.insert(make_body("fox cat"), true, false);
 
-  auto writer = open_writer(irs::kOmCreate, irs::IndexWriterOptions{});
+  auto writer = open_writer(tests::kOmCreate, irs::IndexWriterOptions{});
   ASSERT_NE(nullptr, writer);
   ASSERT_TRUE(tests::Insert(*writer, doc1.indexed.begin(), doc1.indexed.end()));
   ASSERT_TRUE(tests::Insert(*writer, doc2.indexed.begin(), doc2.indexed.end()));
@@ -126,10 +126,10 @@ void PerNodeScorerTest::BuildFixture() {
 std::map<irs::doc_id_t, irs::score_t> PerNodeScorerTest::Score(
   const irs::Filter& filter, const irs::Scorer& root) {
   auto index = open_reader();
-  EXPECT_EQ(1, index->size());
+  EXPECT_EQ(1, index.size());
 
   MaxMemoryCounter counter;
-  tests::PreparedFilter prepared{filter, *index, &root, counter};
+  tests::PreparedFilter prepared{filter, index, &root, counter};
 
   irs::ColumnArgsFetcher fetcher;
   auto docs = prepared.ExecuteScored(0, fetcher);

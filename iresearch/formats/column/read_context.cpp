@@ -50,17 +50,18 @@ class ColMapping final : public duckdb::MemoryMappedFile {
 }  // namespace
 
 ReadContext::ReadContext(duckdb::DatabaseInstance& db) noexcept
-  : BlockManager{db, /*block_header_size=*/0} {}
+  : BlockManager{db, DEFAULT_BLOCK_ALLOC_SIZE, /*block_header_size=*/0} {}
 
 ReadContext::ReadContext(const ColReader& reader, bool random_access)
-  : ReadContext{reader.Database()} {
+  : BlockManager{reader.Database(), reader.BlockAllocSize(),
+                 /*block_header_size=*/0} {
   _random_access = random_access;
   _in = reader.ReopenIn();
   ResetMapping();
 }
 
 ReadContext::ReadContext(duckdb::DatabaseInstance& db, IndexInput::ptr in)
-  : ReadContext{db} {
+  : BlockManager{db, duckdb::optional_idx{}, /*block_header_size=*/0} {
   _in = std::move(in);
   ResetMapping();
 }
@@ -74,6 +75,7 @@ void ReadContext::Reset(const ColReader& reader) {
   SDB_ASSERT(_db == &reader.Database(),
              "ReadContext::Reset: Database mismatch");
   SDB_ASSERT(_live_handles == 0, "ReadContext::Reset with live block handles");
+  SDB_ASSERT(GetBlockAllocSize() == reader.BlockAllocSize());
   _in = reader.ReopenIn();
   ResetMapping();
 }

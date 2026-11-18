@@ -15,9 +15,6 @@ INSERT INTO mh_docs VALUES
 statement ok
 CREATE INDEX mh_idx ON mh_docs USING inverted(id, (minhash(regexp_split_to_array(lower(body), '\W+'), 16)));
 
-statement ok
-VACUUM (REFRESH_TABLE) mh_docs;
-
 
 # --- At least two of the query's signatures must match ---
 
@@ -141,9 +138,6 @@ CREATE TEXT SEARCH DICTIONARY mh_words AS
 statement ok
 CREATE INDEX mh_lexize_idx ON mh_docs USING inverted(id, (minhash(ts_lexize('mh_words', body), 16)));
 
-statement ok
-VACUUM (REFRESH_TABLE) mh_docs;
-
 query
 SELECT id FROM mh_lexize_idx
 WHERE minhash(ts_lexize('mh_words', body), 16)
@@ -157,9 +151,9 @@ id
 statement error
 DROP TEXT SEARCH DICTIONARY mh_words;
 ----
-db error: ERROR: Cannot drop entry "mh_words" because there are entries that depend on it.
-index "mh_lexize_idx" depends on tokenizer "mh_words".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop text search dictionary mh_words because other objects depend on it
+DETAIL: index mh_lexize_idx depends on text search dictionary mh_words
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 statement ok
@@ -171,9 +165,9 @@ CREATE VIEW mh_lexized AS SELECT id, ts_lexize('mh_words', body) AS words FROM m
 statement error
 DROP TEXT SEARCH DICTIONARY mh_words;
 ----
-db error: ERROR: Cannot drop entry "mh_words" because there are entries that depend on it.
-view "mh_lexized" depends on tokenizer "mh_words".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop text search dictionary mh_words because other objects depend on it
+DETAIL: view mh_lexized depends on text search dictionary mh_words
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 statement ok
@@ -188,9 +182,6 @@ DROP TEXT SEARCH DICTIONARY mh_words;
 statement ok
 INSERT INTO mh_docs VALUES (5, 'a quick brown cat');
 
-statement ok
-VACUUM (REFRESH_TABLE) mh_docs;
-
 query
 SELECT id FROM mh_idx
 WHERE minhash(regexp_split_to_array(lower(body), '\W+'), 16)
@@ -204,9 +195,6 @@ id
 
 statement ok
 DELETE FROM mh_docs WHERE id = 2;
-
-statement ok
-VACUUM (REFRESH_TABLE) mh_docs;
 
 query
 SELECT id FROM mh_idx
@@ -230,9 +218,6 @@ CREATE TEXT SEARCH DICTIONARY mh_sql AS
 
 statement ok
 CREATE INDEX mh_sql_idx ON mh_docs USING inverted(id, body mh_sql);
-
-statement ok
-VACUUM (REFRESH_TABLE) mh_docs;
 
 query
 SELECT id FROM mh_sql_idx WHERE body @@ ts_any(ts_tokenize(['quick brown']), 2) ORDER BY id;

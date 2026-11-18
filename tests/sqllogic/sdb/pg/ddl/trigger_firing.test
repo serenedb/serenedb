@@ -217,7 +217,8 @@ CREATE TABLE tfire_child (id INTEGER PRIMARY KEY, parent INTEGER REFERENCES tfir
 statement error
 INSERT INTO tfire_child VALUES (1, 10);
 ----
-db error: ERROR: Violates foreign key constraint because key "id: 10" does not exist in the referenced table
+db error: ERROR: insert or update on table "tfire_child" violates foreign key constraint "tfire_child_parent_fkey"
+DETAIL: Key (parent)=(10) is not present in table "tfire_parent".
 
 
 statement ok

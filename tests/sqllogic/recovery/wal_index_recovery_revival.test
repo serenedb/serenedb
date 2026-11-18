@@ -24,10 +24,8 @@ statement ok
 CREATE INDEX rv_idx ON rv_t USING inverted(id, body rv_dict);
 
 statement ok
-VACUUM (REFRESH_TABLE) rv_t;
+VACUUM (FLUSH_TABLE) rv_t;
 
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 # Scenario A: pk=2 — delete then re-insert with new content (revival).
 statement ok
@@ -67,7 +65,7 @@ SELECT 1;
 
 connection rv_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (REFRESH_TABLE) rv_t;
+SELECT 1;
 
 # pk=1 untouched
 connection rv_after

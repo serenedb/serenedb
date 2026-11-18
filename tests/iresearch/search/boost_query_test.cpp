@@ -140,7 +140,7 @@ class BoostQueryTestCase : public tests::IndexTestBase {
   //   doc C - "open source software"  (required + 2 optionals)
   //   doc D - "source software"       (no required term -> must be excluded)
   irs::DirectoryReader CreateIndex() {
-    auto writer = open_writer(irs::kOmCreate);
+    auto writer = open_writer(tests::kOmCreate);
 
     auto insert = [&](std::string_view content) {
       SpaceField f{kContentFieldId};
@@ -160,8 +160,7 @@ class BoostQueryTestCase : public tests::IndexTestBase {
 
     writer->RefreshCommit();
 
-    auto reader =
-      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
+    auto reader = tests::OpenReader(dir(), irs::tests::DefaultReaderOptions());
     EXPECT_EQ(1, reader.size());
     return reader;
   }
@@ -286,7 +285,7 @@ TEST_P(BoostQueryTestCase, OptimizerPreservesDistinctDisjunction) {
 }
 
 TEST_P(BoostQueryTestCase, OptimizerPreservesMixedDistinct) {
-  auto writer = open_writer(irs::kOmCreate);
+  auto writer = open_writer(tests::kOmCreate);
   auto insert = [&](std::string_view content) {
     SpaceField f{kContentFieldId};
     f.value(content);
@@ -303,7 +302,7 @@ TEST_P(BoostQueryTestCase, OptimizerPreservesMixedDistinct) {
   insert("alpha beta");
   insert("gamma delta epsilon");
   writer->RefreshCommit();
-  auto reader = irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
+  auto reader = tests::OpenReader(dir(), irs::tests::DefaultReaderOptions());
 
   auto build = [] {
     auto root = std::make_unique<irs::BooleanFilter>();

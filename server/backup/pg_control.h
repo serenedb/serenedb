@@ -22,6 +22,7 @@
 
 #include <absl/synchronization/mutex.h>
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <optional>
@@ -31,19 +32,23 @@ namespace sdb::backup {
 
 inline constexpr std::string_view kPgControlFile = "global/pg_control";
 inline constexpr std::string_view kPgVersionFile = "PG_VERSION";
+inline constexpr std::string_view kPendingPgVersionFile = "PG_VERSION.new";
 inline constexpr uint32_t kTimeline = 1;
 inline constexpr uint32_t kWalSegmentSize = uint32_t{16} << 20;
+inline constexpr size_t kMockNonceLen = 32;
 
 struct ControlState {
   uint64_t system_identifier = 0;
   uint64_t checkpoint = 0;
+  std::array<uint8_t, kMockNonceLen> mock_nonce{};
 };
 
 std::optional<ControlState> ReadPgControl(
   const std::filesystem::path& data_dir);
 void WritePgControl(const std::filesystem::path& data_dir,
                     const ControlState& state);
-void EnsurePgVersion(const std::filesystem::path& data_dir);
+std::filesystem::path PendingPgVersion(const std::filesystem::path& data_dir);
+void PublishPgVersion(const std::filesystem::path& data_dir);
 
 class PositionSource final {
  public:
@@ -52,11 +57,14 @@ class PositionSource final {
   void Open(const std::filesystem::path& data_dir);
   uint64_t SystemIdentifier();
   uint64_t Issue();
+  std::array<uint8_t, kMockNonceLen> MockNonce();
 
  private:
   absl::Mutex _mutex;
   std::filesystem::path _data_dir ABSL_GUARDED_BY(_mutex);
   std::optional<ControlState> _state ABSL_GUARDED_BY(_mutex);
+  std::optional<std::array<uint8_t, kMockNonceLen>> _volatile_nonce
+    ABSL_GUARDED_BY(_mutex);
 };
 
 }  // namespace sdb::backup

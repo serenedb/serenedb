@@ -13,9 +13,6 @@ INSERT INTO tr_ranges VALUES (1, [1, 0, 0]), (2, [0, 1, 0]), (3, [0, 0, 1])
 statement ok
 INSERT INTO tr_ranges SELECT i, [20 + (i % 300)::FLOAT, 20 + (i % 7)::FLOAT / 7, 20 + (i % 11)::FLOAT / 11] FROM range(100, 30100) t(i)
 
-statement ok
-VACUUM (REFRESH_TABLE) tr_ranges
-
 query
 SELECT pk FROM (
   SELECT pk FROM tr_ranges_sq8 ORDER BY emb <-> [0.5, 0.5, 0.5]::FLOAT[3] LIMIT 3

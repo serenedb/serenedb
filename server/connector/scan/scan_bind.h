@@ -20,26 +20,31 @@
 
 #pragma once
 
+#include <array>
 #include <duckdb.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/planner/table_filter.hpp>
+#include <duckdb/storage/storage_info.hpp>
 #include <functional>
 #include <iresearch/search/filters/filter.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <limits>
+#include <magic_enum/magic_enum.hpp>
 #include <map>
 #include <memory>
 #include <optional>
 #include <set>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "catalog/entry/inverted_index.h"
 #include "connector/column_id.h"
+#include "connector/functions/ts_offsets.h"
 #include "connector/score_emit.h"
 #include "connector/view_fast_path.h"
 #include "search/store.h"
@@ -50,8 +55,6 @@ class SearchTableEntry;
 
 }  // namespace sdb::catalog
 namespace sdb::connector {
-
-struct OffsetsBindData;
 
 enum class ScanEntryKind : uint8_t {
   InvertedIndex,
@@ -79,9 +82,6 @@ struct SearchSpec {
   std::vector<DeferredCheck> deferred;
   std::vector<std::shared_ptr<irs::Scorer>> filter_scorers;
   std::vector<RowFilter> row_filters;
-  std::function<search::StoreSnapshotPtr(duckdb::ClientContext&)>
-    acquire_snapshot;
-  std::weak_ptr<const irs::DirectoryReaderImpl> planned_reader;
 
   bool MatchAll() const noexcept { return !filter; }
 };
@@ -107,14 +107,20 @@ struct ScanOrderSpec {
   duckdb::OrderByNullType null_order;
   duckdb::OrderByStatistics order_by;
   duckdb::OrderByColumnType column_type;
+  duckdb::StorageIndex storage;
+  duckdb::idx_t skipped_groups = 0;
+  duckdb::idx_t skipped_null_groups = 0;
+
+  bool Skips() const noexcept {
+    return skipped_groups != 0 || skipped_null_groups != 0;
+  }
 };
 
 struct OffsetsRequest {
   ColumnId column_id;
   ColumnId display_id = kInvalidColumnId;
   size_t limit = std::numeric_limits<size_t>::max();
-  duckdb::idx_t get_col_idx = 0;
-  OffsetsBindData* bind = nullptr;
+  duckdb::idx_t bind_column = duckdb::DConstants::INVALID_INDEX;
 };
 
 struct OffsetsSpec {
@@ -132,15 +138,41 @@ enum class TsDictTermUses : uint8_t {
 
 ENABLE_BITMASK_ENUM(TsDictTermUses);
 
+enum class TsDictColumn : uint8_t {
+  Term,
+  TermRaw,
+  Count,
+  Freq,
+  Score,
+};
+
+class TsDictColumns {
+ public:
+  auto& operator[](this auto& self, TsDictColumn kind) noexcept {
+    return self._columns[std::to_underlying(kind)];
+  }
+
+  auto begin() const noexcept { return _columns.begin(); }
+  auto end() const noexcept { return _columns.end(); }
+
+ private:
+  using Columns =
+    std::array<duckdb::idx_t, magic_enum::enum_count<TsDictColumn>()>;
+
+  static constexpr Columns kNone = [] {
+    Columns none{};
+    none.fill(duckdb::DConstants::INVALID_INDEX);
+    return none;
+  }();
+
+  Columns _columns = kNone;
+};
+
 struct TsDictRequest {
   irs::field_id field_id = irs::field_limits::invalid();
   irs::field_id display_id = irs::field_limits::invalid();
   std::shared_ptr<irs::Filter> having_filter;
-  duckdb::idx_t term_col_idx = duckdb::DConstants::INVALID_INDEX;
-  duckdb::idx_t term_raw_col_idx = duckdb::DConstants::INVALID_INDEX;
-  duckdb::idx_t count_col_idx = duckdb::DConstants::INVALID_INDEX;
-  duckdb::idx_t freq_col_idx = duckdb::DConstants::INVALID_INDEX;
-  duckdb::idx_t score_col_idx = duckdb::DConstants::INVALID_INDEX;
+  TsDictColumns bind_columns;
   TsDictTermUses term_uses = TsDictTermUses::None;
   irs::DictLayout layout = irs::DictLayout::String;
   bool nulls = false;
@@ -195,6 +227,9 @@ struct RelationSpec {
   ScanEntryKind kind = ScanEntryKind::InvertedIndex;
   uint32_t row_group_size = 0;
 
+  uint64_t RowGroupSize() const noexcept {
+    return row_group_size != 0 ? row_group_size : DEFAULT_ROW_GROUP_SIZE;
+  }
   bool IsInvertedIndex() const noexcept {
     return kind != ScanEntryKind::SearchTable;
   }
@@ -240,23 +275,21 @@ struct ScanBindData final : duckdb::FunctionData {
   }
   bool Equals(const duckdb::FunctionData& other) const final;
   bool ReadsParametersAtExecution() const final;
-  duckdb::shared_ptr<duckdb::PlanDataVersion> GetPlanDataVersion() const final;
+  bool RegistersDataVersions() const final { return true; }
+  bool IsPointRead() const final;
 
-  search::StoreSnapshotPtr Snapshot(duckdb::ClientContext& context) const {
-    return search.acquire_snapshot(context);
-  }
+  search::ReadView Read(duckdb::ClientContext& context) const;
 
   bool IsViewBacked() const noexcept { return view.has_value(); }
-  uint64_t RowGroupSize() const noexcept {
-    return relation.row_group_size != 0 ? relation.row_group_size
-                                        : DEFAULT_ROW_GROUP_SIZE;
-  }
   bool DefersChecks() const noexcept {
     return offsets.requests.empty() && !score.vector;
   }
   bool KeepsColumnForms() const noexcept {
     return score.vector && score.vector->kind == irs::AnnKind::Hnsw &&
            score.vector->radius == std::numeric_limits<float>::max();
+  }
+  bool ReadsRowsOnlySegments() const noexcept {
+    return relation.kind != ScanEntryKind::InvertedIndex && !score.vector;
   }
   bool IsMatchAll() const noexcept {
     return search.MatchAll() && !score.vector.has_value();
@@ -265,6 +298,7 @@ struct ScanBindData final : duckdb::FunctionData {
     return IsMatchAll() && search.deferred.empty() &&
            search.row_filters.empty() && !score.HasTopK() && !ts_dict.Active();
   }
+  bool HasPushdowns() const noexcept;
 
   using ColumnVisitor =
     std::function<void(ColumnId, const duckdb::LogicalType&)>;
@@ -299,6 +333,11 @@ duckdb::TableFunction BindSearchTableScan(
   duckdb::ClientContext& context, catalog::SearchTableEntry& entry,
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data);
 
+duckdb::unique_ptr<ScanBindData> RebindScan(duckdb::ClientContext& context,
+                                            const duckdb::Identifier& catalog,
+                                            duckdb::idx_t oid,
+                                            ScanEntryKind kind);
+
 bool LooksUpByPk(const ScanBindData& bind);
 
 duckdb::idx_t ScanColumnOfStorage(const ScanBindData& bind,
@@ -321,18 +360,33 @@ struct DeferredColumnFilter {
   duckdb::unique_ptr<duckdb::TableFilter> filter;
 };
 
+struct DeferredRowFilter {
+  std::vector<ColumnId> columns;
+  std::vector<duckdb::LogicalType> types;
+  duckdb::unique_ptr<duckdb::TableFilter> filter;
+};
+
 struct DeferredBuild {
   std::shared_ptr<const irs::Filter> filter;
   std::shared_ptr<const irs::Filter> index_only;
   std::vector<std::shared_ptr<irs::Scorer>> scorers;
   std::vector<DeferredColumnFilter> column_filters;
-  std::vector<DeferredColumnFilter> dual_filters;
+  std::vector<DeferredRowFilter> dual_filters;
   std::vector<DeferredCheck> checks;
 };
 
 DeferredBuild BuildDeferredFilter(duckdb::ClientContext& context,
                                   const ScanBindData& scan,
-                                  const search::StoreSnapshot& snapshot);
+                                  const irs::DirectoryReader& reader);
+
+bool RowsOnlySegment(const irs::SubReader& segment);
+
+std::optional<uint64_t> UniqueMatchBound(const ScanBindData& scan,
+                                         const irs::Filter& filter);
+
+std::optional<uint64_t> UniqueColumnBound(const ScanBindData& scan,
+                                          ColumnId column,
+                                          const duckdb::Expression& filter);
 
 inline const irs::Scorer* ResolvePruneScorer(
   const std::optional<catalog::ScorerOptions>& topk,

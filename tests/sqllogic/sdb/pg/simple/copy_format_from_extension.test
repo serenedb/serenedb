@@ -69,3 +69,127 @@ ORDER BY 1;
 a	b
 1	x
 2	y
+
+
+statement ok
+CREATE TABLE cfx_text (a INT, b TEXT);
+
+
+statement count 2
+COPY (SELECT 1 AS a, NULL::TEXT AS b UNION ALL SELECT 2 AS a, 'x' || chr(9) || 'y' AS b ORDER BY a)
+TO '${__TEST_DIR__}/cfx.tsv';
+
+
+query
+SELECT replace(replace(content, chr(9), '<tab>'), chr(10), '<lf>') AS content
+FROM read_text('${__TEST_DIR__}/cfx.tsv');
+----
+content
+1<tab>\\N<lf>2<tab>x\\ty<lf>
+
+
+statement count 2
+COPY cfx_text FROM '${__TEST_DIR__}/cfx.tsv';
+
+
+query
+SELECT a, coalesce(replace(b, chr(9), '<tab>'), '<null>') AS b FROM cfx_text ORDER BY a;
+----
+a	b
+1	<null>
+2	x<tab>y
+
+
+statement count 1
+COPY (SELECT 5 AS a, NULL AS b) TO '${__TEST_DIR__}/cfx_untyped.tsv';
+
+
+query
+SELECT replace(replace(content, chr(9), '<tab>'), chr(10), '<lf>') AS content
+FROM read_text('${__TEST_DIR__}/cfx_untyped.tsv');
+----
+content
+5<tab>\\N<lf>
+
+
+statement count 1
+COPY cfx_text FROM '${__TEST_DIR__}/cfx_untyped.tsv';
+
+
+statement count 1
+COPY (SELECT 6 AS a, NULL AS b) TO '${__TEST_DIR__}/cfx_untyped_nil.tsv' (NULL 'nil');
+
+
+query
+SELECT replace(replace(content, chr(9), '<tab>'), chr(10), '<lf>') AS content
+FROM read_text('${__TEST_DIR__}/cfx_untyped_nil.tsv');
+----
+content
+6<tab>nil<lf>
+
+
+statement count 1
+COPY cfx_text FROM '${__TEST_DIR__}/cfx_untyped_nil.tsv' (NULL 'nil');
+
+
+query
+SELECT a, coalesce(b, '<null>') AS b FROM cfx_text WHERE a > 4 ORDER BY a;
+----
+a	b
+5	<null>
+6	<null>
+
+
+statement ok
+DELETE FROM cfx_text WHERE a > 4;
+
+
+statement count 2
+COPY (SELECT 1 AS a, NULL::TEXT AS b UNION ALL SELECT 2 AS a, 'x' || chr(9) || 'y' AS b ORDER BY a)
+TO '${__TEST_DIR__}/cfx.tsv.gz';
+
+
+query
+SELECT hex(substr(content, 1, 2)) AS magic FROM read_blob('${__TEST_DIR__}/cfx.tsv.gz');
+----
+magic
+1F8B
+
+
+statement ok
+TRUNCATE cfx_text;
+
+
+statement count 2
+COPY cfx_text FROM '${__TEST_DIR__}/cfx.tsv.gz';
+
+
+query
+SELECT a, coalesce(replace(b, chr(9), '<tab>'), '<null>') AS b FROM cfx_text ORDER BY a;
+----
+a	b
+1	<null>
+2	x<tab>y
+
+
+statement ok
+COPY (SELECT ('3' || chr(9) || '\\N' || chr(10) || '4' || chr(9) || 'c\\\\d' || chr(10))::BLOB)
+TO '${__TEST_DIR__}/cfx.dat' (FORMAT BLOB);
+
+
+statement count 2
+COPY cfx_text FROM '${__TEST_DIR__}/cfx.dat';
+
+
+query
+SELECT a, coalesce(b, '<null>') AS b FROM cfx_text WHERE a > 2 ORDER BY a;
+----
+a	b
+3	<null>
+4	c\\d
+
+
+statement error
+COPY cfx_text FROM '${__TEST_DIR__}/cfx.dat' (QUOTE '"');
+----
+db error: ERROR: COPY option "quote" is only available in CSV mode

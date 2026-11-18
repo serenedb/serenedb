@@ -286,7 +286,7 @@ def main():
                 f"CREATE INDEX items_idx ON items USING inverted"
                 f"(id, emb {args.index} ({options}))"
             ),
-            conn.execute("VACUUM (REFRESH_TABLE) items"),
+            conn.execute("VACUUM (FLUSH_TABLE) items"),
         ))
         print(json.dumps({"event": "built", "seconds": round(build, 3)}), flush=True)
 

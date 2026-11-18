@@ -23,6 +23,8 @@
 
 #include "iresearch/index/segment_writer.hpp"
 
+#include <absl/algorithm/container.h>
+
 #include <duckdb/storage/buffer_manager.hpp>
 
 #include "index_meta.hpp"
@@ -31,6 +33,7 @@
 #include "iresearch/formats/ann_writer.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/col_writer.hpp"
+#include "iresearch/formats/column/hot_column_reader.hpp"
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/formats/flush_state.hpp"
@@ -38,8 +41,10 @@
 #include "iresearch/index/inverter/columnar_flush.hpp"
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/async.hpp"
+#include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/index_utils.hpp"
 #include "iresearch/utils/log.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -53,13 +58,14 @@ duckdb::DatabaseInstance& DerefDb(duckdb::DatabaseInstance* db) {
 
 }  // namespace
 
-doc_id_t SegmentWriter::begin(uint64_t tick, doc_id_t batch_size) {
-  SDB_ASSERT(LastDocId() < doc_limits::eof());
-  _valid = true;
+doc_id_t SegmentWriter::begin(doc_id_t batch_size) {
   SDB_ASSERT(batch_size > 0);
+  SDB_ENSURE(buffered_docs() + batch_size <= doc_limits::kMaxDocs,
+             "a segment of more than ", doc_limits::kMaxDocs, " documents");
+  _valid = true;
 
   _batch_first_doc_id = LastDocId() + 1;
-  _docs_context.Append(batch_size, tick);
+  _docs += batch_size;
 
   return _batch_first_doc_id;
 }
@@ -70,13 +76,12 @@ std::unique_ptr<SegmentWriter> SegmentWriter::make(
 }
 
 size_t SegmentWriter::memory_active() const noexcept {
-  return _docs_context.MemoryActive() + _docs_mask.ByteSize() +
-         _fields.MemoryActive();
+  return _docs_mask.ByteSize() + _fields.MemoryActive();
 }
 
 size_t SegmentWriter::memory_reserved() const noexcept {
-  return sizeof(SegmentWriter) + _docs_context.MemoryReserved() +
-         _docs_mask.ByteCapacity() + _fields.MemoryReserved();
+  return sizeof(SegmentWriter) + _docs_mask.ByteCapacity() +
+         _fields.MemoryReserved();
 }
 
 bool SegmentWriter::remove(doc_id_t doc_id) noexcept {
@@ -93,7 +98,6 @@ SegmentWriter::SegmentWriter(ConstructToken, Directory& dir,
                              const SegmentWriterOptions& options) noexcept
   : _dir{dir},
     _scorer{options.scorer},
-    _docs_context{options.resource_manager},
     _fields{InverterMemory{
       duckdb::BufferManager::GetBufferManager(DerefDb(options.db))
         .GetBufferAllocator(),
@@ -115,10 +119,8 @@ void SegmentWriter::FlushFields(FlushState& state,
   }
 }
 
-void SegmentWriter::flush(IndexSegment& segment,
-                          DocumentMaskBuilder& docs_mask) {
-  auto& meta = segment.meta;
-
+SegmentInputs SegmentWriter::flush(SegmentMeta& meta,
+                                   DocumentMaskBuilder& docs_mask) {
   FlushState state{
     .dir = &_dir,
     .norms = this,
@@ -133,6 +135,7 @@ void SegmentWriter::flush(IndexSegment& segment,
   if (_col_writer) {
     _col_writer->SetIdxWriter(idx);
     _fields.FinalizeNorms();
+    CopyColumns();
     _col_writer->Commit(buffered_docs());
     if (_ann_env != nullptr) {
       GetBlocking(_col_writer->ComputeAnn(_ann_env).ToFuture());
@@ -140,17 +143,20 @@ void SegmentWriter::flush(IndexSegment& segment,
       GetReady(_col_writer->ComputeAnn(/*env=*/nullptr).ToFuture());
     }
     ann_writers = _col_writer->TakeAnnWriters();
+    _col_reader = _col_writer->TakeReader();
     _col_writer.reset();
+  } else {
+    _col_reader = std::make_unique<ColReader>(_db, nullptr, ColFooter{});
   }
 
+  PostingsInputs postings;
   if (state.doc_count != 0) {
-    _col_reader =
-      std::make_unique<ColReader>(_dir, _seg_name, _db, IOAdvice::SEQUENTIAL);
     _field_writer->SetIdxWriter(idx);
     std::optional<ReadContext> ivf_ctx;
     const auto cluster_readers =
       PrepareIvfClusterReaders(ann_writers, _col_reader.get(), ivf_ctx);
     FlushFields(state, cluster_readers);
+    postings = _field_writer->TakePostings();
   }
 
   for (const auto& w : ann_writers) {
@@ -159,16 +165,111 @@ void SegmentWriter::flush(IndexSegment& segment,
     }
   }
 
-  _col_reader.reset();
-
-  idx.Commit();
+  SegmentInputs inputs{
+    .col = std::move(_col_reader),
+    .idx = idx.Commit(_hnsw_bases),
+    .postings = std::move(postings),
+  };
 
   docs_mask = std::move(_docs_mask);
 
   meta.docs_count = state.doc_count;
   meta.live_docs_count =
     meta.docs_count - static_cast<doc_id_t>(docs_mask.Count());
-  meta.files = _dir.FlushTracked(meta.byte_size);
+  meta.kinds = SegmentFileKinds(_dir.FlushTracked(meta.byte_size));
+  return inputs;
+}
+
+void SegmentWriter::CopyRows(const ColReader& source,
+                             std::span<const field_id> columns, uint64_t first,
+                             uint64_t count) {
+  SDB_ASSERT(_copied_rows.empty() || absl::c_equal(_copied_columns, columns));
+  if (_copied_rows.empty()) {
+    _copied_columns.assign(columns.begin(), columns.end());
+  } else if (auto& last = _copied_rows.back();
+             last.source == &source && last.first + last.count == first) {
+    last.count += count;
+    return;
+  }
+  _copied_rows.push_back({.source = &source, .first = first, .count = count});
+}
+
+void SegmentWriter::CopyColumns() {
+  if (_copied_rows.empty()) {
+    return;
+  }
+  SDB_ASSERT(absl::c_accumulate(_copied_rows, uint64_t{0},
+                                [](uint64_t rows, const CopiedRows& run) {
+                                  return rows + run.count;
+                                }) == buffered_docs());
+  for (const auto id : _copied_columns) {
+    ColumnWriter* writer = nullptr;
+    uint64_t row = 0;
+    for (const auto& run : _copied_rows) {
+      const auto* column = run.source->Column(id);
+      if (column && run.first < column->RowCount()) {
+        if (!writer) {
+          writer = &_col_writer->OpenColumn(id, column->Type());
+        }
+        ReadContext context{*run.source};
+        writer->CopyRows(row, *column, context, run.first,
+                         std::min(run.count, column->RowCount() - run.first));
+      }
+      row += run.count;
+    }
+    if (writer) {
+      writer->PadNullsTo(row);
+    }
+  }
+}
+
+std::shared_ptr<const SegmentReaderImpl> SegmentWriter::SealPiece(uint64_t id) {
+  const auto docs = buffered_docs();
+  SDB_ASSERT(docs != 0);
+  SDB_ASSERT(_copied_rows.empty());
+  std::vector<std::unique_ptr<ColumnReader>> columns;
+  SealedNorms norms;
+  size_t column_bytes = 0;
+  if (_col_writer) {
+    _fields.FinalizeNorms();
+    norms = _col_writer->SealNorms(docs);
+    HotChunkStats stats;
+    for (auto& column : _col_writer->Snapshot(docs)) {
+      auto& reader = columns.emplace_back(
+        HotColumnReader::Make(_db, std::move(column), &stats));
+      column_bytes += utils::downCast<HotColumnReader>(*reader).Bytes();
+    }
+  }
+  auto fields = std::make_shared<PieceFields>();
+  FlushState state{.dir = &_dir, .name = _seg_name, .doc_count = docs};
+  PieceFieldWriter field_writer{*fields, /*compaction=*/false};
+  _fields.Flush(field_writer, state, {});
+  SegmentMeta meta;
+  meta.name = _seg_name;
+  meta.docs_count = static_cast<doc_id_t>(docs);
+  if (!_docs_mask.Empty()) {
+    meta.docs_mask = std::make_shared<const DocumentMask>(
+      DocumentMaskBuilder{_docs_mask}.Finish());
+  }
+  meta.live_docs_count = meta.docs_count - RemovalCount(meta);
+  const auto files = _dir.FlushTracked(meta.byte_size);
+  meta.byte_size += column_bytes + fields->Bytes();
+  auto postings = field_writer.TakePostings();
+  fields->Open(
+    ReaderState{
+      .dir = &_dir,
+      .meta = &meta,
+      .postings = postings.doc ? &postings : nullptr,
+    },
+    field_writer.Features());
+  for (const auto& file : files) {
+    _dir.remove(file);
+  }
+  return SegmentReaderImpl::OpenPiece(
+    meta, id,
+    std::make_unique<ColReader>(_db, std::move(columns), std::move(norms.in),
+                                std::move(norms.columns)),
+    std::move(fields));
 }
 
 void SegmentWriter::SetFieldOptions(
@@ -190,8 +291,7 @@ void SegmentWriter::SetFieldOptions(
 
 void SegmentWriter::ResetState() noexcept {
   _initialized = false;
-  _dir.ClearTracked();
-  _docs_context.Clear();
+  _docs = 0;
   _docs_mask.Clear();
   _batch_first_doc_id = doc_limits::eof();
   _fields.Reset();
@@ -200,6 +300,9 @@ void SegmentWriter::ResetState() noexcept {
     _col_writer->Rollback();
     _col_writer.reset();
   }
+  _copied_columns.clear();
+  _copied_rows.clear();
+  _dir.RemoveTracked();
 }
 
 void SegmentWriter::reset() noexcept {
@@ -224,6 +327,7 @@ void SegmentWriter::reset(const SegmentMeta& meta) {
 
   const auto* active = ActiveFieldOptions();
   _col_writer = std::make_unique<ColWriter>(_dir, meta.name, _db);
+  _col_writer->SetDeferredSeal(_deferred_columns);
   _col_writer->SetFieldOptions(active);
   _col_writer->SetHnswBases(_hnsw_bases);
   _fields.SetColWriter(_col_writer.get());

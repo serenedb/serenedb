@@ -1,0 +1,43 @@
+statement ok
+CREATE TABLE dom (id BIGINT, v INT) WITH (compaction_interval = 0, segment_memory_max = 8192)
+
+statement ok
+SET threads = 1
+
+statement ok
+INSERT INTO dom SELECT i, 0 FROM range(100000) t(i)
+
+statement ok
+RESET threads
+
+statement ok
+VACUUM (FLUSH_TABLE) dom
+
+statement ok
+VACUUM (COMPACT_TABLE) dom
+
+query
+SELECT max(value) FILTER (WHERE metric = 'num_docs') AS docs, max(value) FILTER (WHERE metric = 'num_live_docs') AS live, max(value) FILTER (WHERE metric = 'num_segments') AS segments
+FROM sdb_metrics WHERE relation_id = 'dom'::regclass
+----
+docs	live	segments
+100000	100000	1
+
+statement ok
+DELETE FROM dom WHERE id % 2 = 0
+
+query ok retry 40 backoff 250ms
+SELECT max(value) FILTER (WHERE metric = 'num_docs') AS docs, max(value) FILTER (WHERE metric = 'num_live_docs') AS live
+FROM sdb_metrics WHERE relation_id = 'dom'::regclass
+----
+docs	live
+50000	50000
+
+query
+SELECT count(*) AS n, min(id) AS lo, max(id) AS hi FROM dom
+----
+n	lo	hi
+50000	1	99999
+
+statement ok
+DROP TABLE dom

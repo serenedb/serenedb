@@ -74,7 +74,7 @@ CREATE TABLE invoker(a INTEGER, g INTEGER GENERATED ALWAYS AS (a * 2) STORED);
 statement error
 ALTER TABLE invoker ALTER COLUMN g SET DEFAULT 5;
 ----
-db error: ERROR: Cannot SET DEFAULT for generated column "g"
+db error: ERROR: cannot set a default for generated column "g"
 
 
 statement ok

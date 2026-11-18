@@ -41,6 +41,7 @@
 #include <vector>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "index/test_index_writer.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -120,7 +121,7 @@ class MaxSimTest : public ::testing::TestWithParam<irs::AnnKind> {
       }
       return col;
     };
-    _writer = irs::IndexWriter::Make(_dir, irs::kOmCreate, std::move(opts));
+    _writer = tests::IndexWriter::Make(_dir, tests::kOmCreate, std::move(opts));
     ASSERT_NE(nullptr, _writer);
     uint32_t total = 0;
     for (uint32_t row = 0; row < kRows; ++row) {
@@ -240,7 +241,7 @@ class MaxSimTest : public ::testing::TestWithParam<irs::AnnKind> {
   }
 
   irs::MemoryDirectory _dir;
-  irs::IndexWriter::ptr _writer;
+  tests::IndexWriter::ptr _writer;
   irs::DirectoryReader _reader;
   std::vector<uint32_t> _first;
   std::vector<float> _tokens;

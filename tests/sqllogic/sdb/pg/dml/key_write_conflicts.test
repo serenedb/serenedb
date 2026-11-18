@@ -1,0 +1,214 @@
+statement ok
+CREATE TABLE kwc (id INTEGER PRIMARY KEY, v INTEGER)
+
+statement ok
+INSERT INTO kwc VALUES (100, 0)
+
+connection b
+statement ok
+BEGIN ISOLATION LEVEL REPEATABLE READ
+
+connection b
+query
+SELECT count(*) AS n FROM kwc
+----
+n
+1
+
+connection a
+statement ok
+INSERT INTO kwc VALUES (1, 10)
+
+connection b
+statement error
+INSERT INTO kwc VALUES (1, 20) ON CONFLICT (id) DO UPDATE SET v = excluded.v
+----
+db error: ERROR: could not serialize access due to concurrent update
+
+
+connection b
+statement ok
+ROLLBACK
+
+connection b
+statement ok
+BEGIN ISOLATION LEVEL REPEATABLE READ
+
+connection b
+query
+SELECT count(*) AS n FROM kwc
+----
+n
+2
+
+connection a
+statement ok
+INSERT INTO kwc VALUES (2, 10)
+
+connection b
+statement error
+INSERT INTO kwc VALUES (2, 20) ON CONFLICT DO NOTHING
+----
+db error: ERROR: could not serialize access due to concurrent update
+
+
+connection b
+statement ok
+ROLLBACK
+
+connection b
+statement ok
+BEGIN ISOLATION LEVEL REPEATABLE READ
+
+connection b
+query
+SELECT count(*) AS n FROM kwc
+----
+n
+3
+
+connection a
+statement ok
+INSERT INTO kwc VALUES (3, 10)
+
+connection b
+statement error
+INSERT OR REPLACE INTO kwc VALUES (3, 20)
+----
+db error: ERROR: could not serialize access due to concurrent update
+
+
+connection b
+statement ok
+ROLLBACK
+
+connection b
+statement ok
+BEGIN ISOLATION LEVEL REPEATABLE READ
+
+connection b
+query
+SELECT count(*) AS n FROM kwc
+----
+n
+4
+
+connection a
+statement ok
+INSERT INTO kwc VALUES (4, 10)
+
+connection b
+statement error
+INSERT INTO kwc VALUES (4, 20)
+----
+db error: ERROR: duplicate key value violates unique constraint "kwc_pkey"
+DETAIL: Key (id)=(4) already exists.
+
+
+connection b
+statement ok
+ROLLBACK
+
+connection b
+statement ok
+BEGIN ISOLATION LEVEL REPEATABLE READ
+
+connection b
+query
+SELECT count(*) AS n FROM kwc
+----
+n
+5
+
+connection a
+statement ok
+INSERT INTO kwc VALUES (5, 10)
+
+connection b
+statement error
+MERGE INTO kwc t USING (SELECT 5 AS id, 20 AS v) s ON t.id = s.id WHEN MATCHED THEN UPDATE SET v = s.v WHEN NOT MATCHED THEN INSERT VALUES (s.id, s.v)
+----
+db error: ERROR: could not serialize access due to concurrent update
+
+
+connection b
+statement ok
+ROLLBACK
+
+connection b
+statement ok
+BEGIN ISOLATION LEVEL REPEATABLE READ
+
+connection b
+statement error
+INSERT INTO kwc VALUES (100, 20)
+----
+db error: ERROR: duplicate key value violates unique constraint "kwc_pkey"
+DETAIL: Key (id)=(100) already exists.
+
+
+connection b
+statement ok
+ROLLBACK
+
+connection b
+statement ok
+INSERT INTO kwc VALUES (1, 20) ON CONFLICT (id) DO UPDATE SET v = excluded.v
+
+connection b
+statement ok
+BEGIN ISOLATION LEVEL READ COMMITTED
+
+connection b
+query
+SELECT count(*) AS n FROM kwc
+----
+n
+6
+
+connection a
+statement ok
+INSERT INTO kwc VALUES (6, 10)
+
+connection b
+statement ok
+INSERT INTO kwc VALUES (6, 20) ON CONFLICT (id) DO UPDATE SET v = excluded.v
+
+connection b
+statement ok
+COMMIT
+
+connection b
+statement ok
+BEGIN
+
+connection b
+statement ok
+INSERT INTO kwc VALUES (7, 20) ON CONFLICT (id) DO UPDATE SET v = excluded.v
+
+connection a
+statement ok
+INSERT INTO kwc VALUES (7, 10)
+
+connection b
+statement error
+COMMIT
+----
+db error: ERROR: could not serialize access due to concurrent update
+
+
+query
+SELECT id, v FROM kwc ORDER BY id
+----
+id	v
+1	20
+2	10
+3	10
+4	10
+5	10
+6	20
+7	10
+100	0
+
+statement ok
+DROP TABLE kwc

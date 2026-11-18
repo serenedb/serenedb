@@ -26,8 +26,6 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
-#include <duckdb/common/types/timestamp.hpp>
-#include <functional>
 #include <memory>
 #include <vector>
 #include <yaclib/async/future.hpp>
@@ -77,15 +75,13 @@ class BackgroundScheduler final {
   // parked until OpenDelays() while the io pool has never been up).
   yaclib::Future<> Delay(clock::duration d);
 
-  void RunAt(duckdb::timestamp_t at, std::function<void()> task);
-
   // Startup: the io pool is up, so Delay can arm real timers. Releases every
   // waiter parked during boot. Called once, after Server::StartIoPool().
   void OpenDelays();
 
   // Shutdown: wake every armed Delay and complete future ones immediately.
   // Stop flags are only checked when a sleeper wakes, so without this a loop
-  // parked on a long timer (e.g. a stretched refresh delay) holds up its join
+  // parked on a long timer holds up its join
   // for the timer's remainder.
   void CancelDelays();
 

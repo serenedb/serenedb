@@ -28,9 +28,6 @@ INSERT INTO docs VALUES
   (3, 'fox pad pad pad', 33, 1),
   (4, 'dog pad pad pad', 44, 1);
 
-statement ok
-VACUUM (REFRESH_TABLE) docs;
-
 # Sanity: unfiltered top-k.
 query
 SELECT id FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_idx.tableoid) DESC LIMIT 2;
@@ -72,9 +69,6 @@ id
 statement ok
 INSERT INTO docs VALUES (5, 'fox pad pad pad', NULL, 1);
 
-statement ok
-VACUUM (REFRESH_TABLE) docs;
-
 query
 SELECT id FROM docs_idx WHERE body @@ ts_phrase('fox') AND val IS NULL ORDER BY BM25(docs_idx.tableoid) DESC LIMIT 2;
 ----
@@ -104,9 +98,6 @@ INSERT INTO vecs VALUES
   (2, [2, 0, 0]::FLOAT[3], 0),
   (3, [3, 0, 0]::FLOAT[3], 1),
   (4, [4, 0, 0]::FLOAT[3], 1);
-
-statement ok
-VACUUM (REFRESH_TABLE) vecs;
 
 # Sanity: unfiltered ANN top-k.
 query

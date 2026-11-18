@@ -1,17 +1,8 @@
-# A user inverted index on a search table survives a crash + WAL replay: the
-# index is storage-less (its terms live in the table's own iresearch store), so
-# recovery must (a) rebuild the shard's merged index config at boot from the
-# persisted index definition, and (b) re-index the WAL-replayed rows through
-# that config. Rows fsynced to the WAL but never refresh-published exist ONLY in
-# the WAL; after restart a @@ predicate through the index scan (a term filter the
-# columnstore cannot evaluate) must still return those replayed rows -- which
-# proves their terms were rebuilt, not just their stored values.
-
 control substitution on
 
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 CREATE TABLE sidx(id BIGINT PRIMARY KEY, tag TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX sidx_tag ON sidx USING inverted (tag);
@@ -24,11 +15,8 @@ statement ok
 INSERT INTO sidx VALUES (1, 'red'), (2, 'blue');
 
 statement ok
-VACUUM (REFRESH_TABLE) sidx;
+VACUUM (FLUSH_TABLE) sidx;
 
-# Crash AFTER the WAL commit: (3,'red'),(4,'green') are fsynced into the WAL but
-# never refresh-published, so they exist ONLY in the WAL; recovery must rebuild
-# them into iresearch -- terms included.
 statement ok
 SET sdb_faults = 'crash_after_commit';
 
@@ -67,14 +55,13 @@ query
 EXPLAIN SELECT id FROM sidx WHERE tag = 'red';
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─╮
-│ Index: sidx      │
-│ Lookup: search   │
-│ Index Filter:    │
-│ ╭─ Term ─────╮   │
-│ │ Field: tag │   │
-│ │ Value: red │   │
-│ ╰────────────╯   │
-│ Projections: id  │
-│ ~1 row           │
-╰──────────────────╯
+╭─ IRESEARCH_SCAN ───────╮
+│ Table: sidx            │
+│ Index Filter:          │
+│ ╭─ Term ─────────────╮ │
+│ │ Field: tag(string) │ │
+│ │ Value: red         │ │
+│ ╰────────────────────╯ │
+│ Projections: id        │
+│ ~1 row                 │
+╰────────────────────────╯

@@ -50,7 +50,6 @@
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "connector/common.h"
-#include "connector/duckdb_client_state.h"
 #include "pg/catalog/builtin/builtin.h"
 #include "pg/catalog/engine/builtin_functions.h"
 #include "pg/catalog/engine/registry.h"
@@ -67,7 +66,6 @@ namespace sdb::pg {
 namespace {
 
 using connector::AsView;
-using connector::GetSereneDBContext;
 using duckdb::AclMode;
 using duckdb::CatalogType;
 using duckdb::Identifier;
@@ -105,6 +103,23 @@ const DefaultAcl kDefaultAcls[] = {
   {'p', AclMode::NoRights, AclMode::Set | AclMode::AlterSystem},
 };
 
+const DefaultAcl* FindDefaultAcl(std::string_view type) {
+  const auto it = absl::c_find_if(kDefaultAcls, [&](const DefaultAcl& acl) {
+    return !type.empty() && type[0] == acl.objtype;
+  });
+  return it == std::end(kDefaultAcls) ? nullptr : &*it;
+}
+
+duckdb::unique_ptr<duckdb::FunctionData> AclDefaultBind(
+  duckdb::BindScalarFunctionInput& input) {
+  const auto objtype = input.TryGetConstant(0);
+  if (!objtype || (!objtype->IsNull() &&
+                   !FindDefaultAcl(duckdb::StringValue::Get(*objtype)))) {
+    input.GetBoundFunction().SetFallible();
+  }
+  return nullptr;
+}
+
 void AclDefaultFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                         duckdb::Vector& result) {
   const auto roles = auth::RolesOf(&state.GetContext());
@@ -123,10 +138,8 @@ void AclDefaultFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
       continue;
     }
     const auto type = AsView(objtype.GetValue());
-    const auto it = absl::c_find_if(kDefaultAcls, [&](const DefaultAcl& acl) {
-      return type.size() == 1 && type[0] == acl.objtype;
-    });
-    if (it == std::end(kDefaultAcls)) {
+    const auto* it = FindDefaultAcl(type);
+    if (!it) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                       ERR_MSG("unrecognized object type abbreviation: ", type));
     }
@@ -195,9 +208,11 @@ void LoadAcls(duckdb::ClientContext& context, duckdb::DataChunk& input,
       continue;
     }
     for (const auto item : list.GetChildValues()) {
-      if (item.IsValid()) {
-        ExplodeAcl(*roles, AsView(item.GetValue()), rows);
+      if (!item.IsValid()) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+                        ERR_MSG("ACL arrays must not contain null values"));
       }
+      ExplodeAcl(*roles, AsView(item.GetValue()), rows);
     }
   }
 }
@@ -683,9 +698,8 @@ struct ServerPrivileges : ObjectPrivileges<ServerPrivileges> {
 
   static uint64_t Resolve(const Session& session, std::string_view name) {
     SDB_ASSERT(session.database);
-    if (const auto entry =
-          session.database->GetCatalogSet(CatalogType::FOREIGN_SERVER_ENTRY)
-            .GetEntry(*session.transaction, Identifier{name})) {
+    if (const auto entry = session.database->Servers().Get(*session.transaction,
+                                                           Identifier{name})) {
       return entry->oid;
     }
     ThrowUndefinedObject("server", name);
@@ -1002,7 +1016,8 @@ duckdb::ScalarFunction PrivilegeFunction() {
                       ->Cast<PrivilegeCheck<F>>()
                       .ForChunk();
       if constexpr (std::is_void_v<Role>) {
-        const auto role = GetSereneDBContext(state.GetContext()).GetRoleId();
+        const auto role =
+          ConnectionContext::Get(state.GetContext()).GetRoleId();
         duckdb::VariadicExecutor::Execute<bool, Object..., duckdb::string_t>(
           args, result, [&](Object... object, duckdb::string_t text) {
             return check.Answer(role, text, object...);
@@ -1058,7 +1073,8 @@ void RegisterAclFunctions(duckdb::ExtensionLoader& loader) {
                  duckdb::FunctionStability::CONSISTENT_WITHIN_QUERY, nullptr,
                  {duckdb::ScalarFunction{{duckdb::LogicalType::VARCHAR, OID()},
                                          duckdb::LogicalType::LIST(ACLITEM()),
-                                         AclDefaultFunction}});
+                                         AclDefaultFunction,
+                                         AclDefaultBind}});
   duckdb::TableFunction function{
     "aclexplode", {duckdb::LogicalType::LIST(ACLITEM())},
     nullptr,      AclExplodeBind,

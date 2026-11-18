@@ -21,21 +21,17 @@ When deciding on whether to query these files directly or to first load them to 
 
 **Availability of basic statistics:** Parquet files use a columnar storage format and contain basic statistics such as [zonemaps](./indexing.md#zonemaps). Thanks to these features, SereneDB can leverage optimizations such as projection and filter pushdown on Parquet files. Therefore, workloads that combine projection, filtering, and aggregation tend to perform quite well when run on Parquet files.
 
-**Storage considerations:** Loading the data from Parquet files will require approximately the same amount of space for the SereneDB database file. Therefore, if the available disk space is constrained, it is worth running the queries directly on Parquet files.
+**Storage considerations:** Loading the data from Parquet files will require approximately the same amount of space for the SereneDB tables. Therefore, if the available disk space is constrained, it is worth running the queries directly on Parquet files.
 
 ### Reasons against Querying Parquet Files
 
-**Lack of advanced statistics:** The SereneDB database format has the [hyperloglog statistics](https://en.wikipedia.org/wiki/HyperLogLog) that Parquet files do not have. These improve the accuracy of cardinality estimates, and are especially important if the queries contain a large number of join operators.
+**Lack of distinct-value statistics:** A SereneDB table knows how many distinct values a column holds from a single-column key, a foreign key or an index without a tokenizing dictionary on it, and from a [`distinct`](../../sql/statements/create_index/inverted.md#include-columns) count an index keeps for it; Parquet files have no such counts. These improve the accuracy of cardinality estimates, and are especially important if the queries contain a large number of join operators.
 
 **Tip.** If you find that SereneDB produces a suboptimal join order on Parquet files, try loading the Parquet files to SereneDB tables. The improved statistics likely help obtain a better join order.
 
 **Repeated queries:** If you plan to run multiple queries on the same dataset, it is worth loading the data into SereneDB. The queries will always be somewhat faster, which over time amortizes the initial load time.
 
 **High decompression times:** Some Parquet files are compressed using heavyweight compression algorithms such as gzip. In these cases, querying the Parquet files will necessitate an expensive decompression time every time the file is accessed. Meanwhile, lightweight compression methods like Snappy, LZ4, and zstd, are faster to decompress. You may use the [`parquet_metadata` function](../../data_import_and_export/parquet/metadata.md#parquet-metadata) to find out the compression algorithm used.
-
-#### Microbenchmark: Running TPC-H on a SereneDB Database vs. Parquet
-
-The queries on the TPC-H benchmark run approximately 1.1-5.0× slower on Parquet files than on a SereneDB database.
 
 <DocCallout type="bestPractice">
 

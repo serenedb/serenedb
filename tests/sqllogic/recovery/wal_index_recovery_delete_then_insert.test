@@ -27,11 +27,7 @@ CREATE INDEX del_then_insert_idx ON del_then_insert_t
   USING inverted(a, b del_then_insert_dict);
 
 statement ok
-VACUUM (REFRESH_TABLE) del_then_insert_t;
-
-# Block iresearch commit so all subsequent ops only land in the WAL.
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
+VACUUM (FLUSH_TABLE) del_then_insert_t;
 
 statement ok
 INSERT INTO del_then_insert_t VALUES (1, 'stale token apple');
@@ -52,7 +48,7 @@ SELECT 1;
 
 connection after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (REFRESH_TABLE) del_then_insert_t;
+SELECT 1;
 
 # The stale token must NOT be searchable: if Delete didn't clear indexed_cols
 # in the recovery accumulator, the pre-delete Put would leak through.

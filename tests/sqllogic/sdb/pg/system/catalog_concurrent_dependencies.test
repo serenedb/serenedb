@@ -1,0 +1,309 @@
+statement ok
+CREATE TABLE cdi_src(a INTEGER)
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+DROP TABLE cdi_src
+
+
+connection s2
+statement ok
+CREATE VIEW cdi_v1 AS SELECT a FROM cdi_src
+
+
+connection s1
+statement error
+COMMIT
+----
+db error: ERROR: Failed to commit: Could not commit DROP of "cdi_src" because a dependency was created after the transaction started
+
+
+connection s2
+statement ok
+BEGIN
+
+
+connection s2
+statement ok
+CREATE VIEW cdi_v2 AS SELECT a FROM cdi_src
+
+
+connection s1
+statement ok
+DROP TABLE cdi_src CASCADE
+
+
+connection s2
+statement error
+COMMIT
+----
+db error: ERROR: Failed to commit: Could not commit creation of dependency, subject "cdi_src" has been deleted
+
+
+statement ok
+CREATE TABLE cdi_src(a INTEGER)
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+query
+SELECT count(*) AS n FROM cdi_src
+----
+n
+0
+
+
+connection s2
+statement ok
+CREATE VIEW cdi_v3 AS SELECT a FROM cdi_src
+
+
+connection s1
+statement ok
+DROP TABLE cdi_src
+
+
+connection s1
+statement error
+COMMIT
+----
+db error: ERROR: Failed to commit: Could not commit DROP of "cdi_src" because a dependency was created after the transaction started
+
+
+query
+SELECT relname FROM pg_class WHERE relname LIKE 'cdi%' ORDER BY relname
+----
+relname
+cdi_src
+cdi_v3
+
+
+statement ok
+DROP TABLE cdi_src CASCADE
+
+
+statement ok
+CREATE TABLE cdi_c(a INTEGER, z INTEGER)
+
+
+statement ok
+INSERT INTO cdi_c VALUES (1, 2)
+
+
+connection s2
+statement ok
+BEGIN
+
+
+connection s2
+statement ok
+CREATE VIEW cdi_cv1 AS SELECT a FROM cdi_c
+
+
+connection s1
+statement ok
+ALTER TABLE cdi_c RENAME COLUMN a TO b
+
+
+connection s2
+statement error
+COMMIT
+----
+db error: ERROR: Failed to commit: Could not commit creation of dependency, columns of "cdi_c" were changed by another transaction
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+ALTER TABLE cdi_c RENAME COLUMN b TO c
+
+
+connection s2
+statement ok
+CREATE VIEW cdi_cv2 AS SELECT b FROM cdi_c
+
+
+connection s1
+statement error
+COMMIT
+----
+db error: ERROR: Failed to commit: Could not commit ALTER of "cdi_c" because a dependency was created after the transaction started
+
+
+connection s2
+statement ok
+BEGIN
+
+
+connection s2
+statement ok
+CREATE VIEW cdi_cv3 AS SELECT z FROM cdi_c
+
+
+connection s1
+statement ok
+ALTER TABLE cdi_c DROP COLUMN z
+
+
+connection s2
+statement error
+COMMIT
+----
+db error: ERROR: Failed to commit: Could not commit creation of dependency, columns of "cdi_c" were changed by another transaction
+
+
+connection s2
+statement ok
+BEGIN
+
+
+connection s2
+statement ok
+CREATE VIEW cdi_cv4 AS SELECT b FROM cdi_c
+
+
+connection s1
+statement ok
+ALTER TABLE cdi_c ADD COLUMN y INTEGER
+
+
+connection s2
+statement ok
+COMMIT
+
+
+statement ok
+CREATE TABLE cdi_log(x INTEGER)
+
+
+connection s2
+statement ok
+BEGIN
+
+
+connection s2
+statement ok
+CREATE TRIGGER cdi_trg AFTER INSERT ON cdi_c FOR EACH ROW INSERT INTO cdi_log VALUES (NEW.b)
+
+
+connection s1
+statement ok
+ALTER TABLE cdi_c RENAME COLUMN y TO w
+
+
+connection s2
+statement error
+COMMIT
+----
+db error: ERROR: Failed to commit: Could not commit creation of dependency, columns of "cdi_c" were changed by another transaction
+
+
+statement ok
+CREATE TABLE cdi_r(a INTEGER)
+
+
+statement ok
+INSERT INTO cdi_r VALUES (3)
+
+
+connection s2
+statement ok
+BEGIN
+
+
+connection s2
+statement ok
+CREATE VIEW cdi_rv1 AS SELECT a FROM cdi_r
+
+
+connection s1
+statement ok
+ALTER TABLE cdi_r RENAME TO cdi_r2
+
+
+connection s2
+statement error
+COMMIT
+----
+db error: ERROR: Failed to commit: Could not commit creation of dependency, a subject was renamed to "cdi_r2" by another transaction
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+ALTER TABLE cdi_r2 RENAME TO cdi_r3
+
+
+connection s2
+statement ok
+CREATE VIEW cdi_rv2 AS SELECT a FROM cdi_r2
+
+
+connection s1
+statement error
+COMMIT
+----
+db error: ERROR: Failed to commit: Could not commit ALTER of "cdi_r2" because a dependency was created after the transaction started
+
+
+query
+SELECT relname FROM pg_class WHERE relname LIKE 'cdi%' ORDER BY relname
+----
+relname
+cdi_c
+cdi_cv2
+cdi_cv4
+cdi_log
+cdi_r2
+cdi_rv2
+
+
+query
+SELECT b FROM cdi_cv2
+----
+b
+1
+
+
+query
+SELECT b FROM cdi_cv4
+----
+b
+1
+
+
+query
+SELECT a FROM cdi_rv2
+----
+a
+3
+
+
+statement ok
+DROP TABLE cdi_c CASCADE
+
+
+statement ok
+DROP TABLE cdi_r2 CASCADE
+
+
+statement ok
+DROP TABLE cdi_log

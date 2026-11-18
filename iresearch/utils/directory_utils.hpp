@@ -39,6 +39,8 @@ IndexFileRefs::ref_t Reference(const Directory& dir, std::string_view name);
 // return success
 bool RemoveAllUnreferenced(Directory& dir);
 
+uint64_t MaxSegmentId(const Directory& dir);
+
 }  // namespace directory_utils
 
 // Track files created/opened via file names
@@ -61,10 +63,6 @@ struct TrackingDirectory final : public Directory {
     return _impl.length(result, name);
   }
 
-  IndexLock::ptr make_lock(std::string_view name) noexcept final {
-    return _impl.make_lock(name);
-  }
-
   bool mtime(std::time_t& result, std::string_view name) const noexcept final {
     return _impl.mtime(result, name);
   }
@@ -73,13 +71,13 @@ struct TrackingDirectory final : public Directory {
     return _impl.open(name, advice);
   }
 
+  IndexInput::ptr Finish(IndexOutput::ptr out, IOAdvice advice) const final {
+    return _impl.Finish(std::move(out), advice);
+  }
+
   bool remove(std::string_view name) noexcept final;
 
   bool rename(std::string_view src, std::string_view dst) noexcept final;
-
-  bool sync(std::span<const std::string_view> files) noexcept final {
-    return _impl.sync(files);
-  }
 
   bool visit(const visitor_f& visitor) const final {
     return _impl.visit(visitor);
@@ -87,7 +85,7 @@ struct TrackingDirectory final : public Directory {
 
   std::vector<std::string> FlushTracked(uint64_t& files_size);
 
-  void ClearTracked() noexcept;
+  void RemoveTracked() noexcept;
 
  private:
   using FileSet = absl::flat_hash_set<std::string>;
@@ -124,23 +122,19 @@ struct RefTrackingDirectory : public Directory {
     return _impl.length(result, name);
   }
 
-  IndexLock::ptr make_lock(std::string_view name) noexcept final {
-    return _impl.make_lock(name);
-  }
-
   bool mtime(std::time_t& result, std::string_view name) const noexcept final {
     return _impl.mtime(result, name);
   }
 
   IndexInput::ptr open(std::string_view name, IOAdvice advice) const final;
 
+  IndexInput::ptr Finish(IndexOutput::ptr out, IOAdvice advice) const final {
+    return _impl.Finish(std::move(out), advice);
+  }
+
   bool remove(std::string_view name) noexcept final;
 
   bool rename(std::string_view src, std::string_view dst) noexcept final;
-
-  bool sync(std::span<const std::string_view> names) noexcept final {
-    return _impl.sync(names);
-  }
 
   bool visit(const visitor_f& visitor) const final {
     return _impl.visit(visitor);

@@ -24,9 +24,8 @@ QUERY PLAN
 │ __internal_date_trunc_bucket(ts, 3600000000, 0)    │
 │ ~2,002 rows                                        │
 ╰──────────────────────────┬─────────────────────────╯
-╭─ SEQ_SCAN ───────────────┴─────────────────────────╮
+╭─ IRESEARCH_SCAN ─────────┴─────────────────────────╮
 │ Table: events                                      │
-│ Type: Sequential Scan                              │
 │ Projections: ts                                    │
 │ ~2,002 rows                                        │
 ╰────────────────────────────────────────────────────╯
@@ -108,9 +107,8 @@ QUERY PLAN
 │ Projections: h           │
 │ ~2,004 rows              │
 ╰─────────────┬────────────╯
-╭─ SEQ_SCAN ──┴────────────╮
+╭─ IRESEARCH_SCAN ─────────╮
 │ Table: inf_events        │
-│ Type: Sequential Scan    │
 │ Projections: ts          │
 │ ~2,004 rows              │
 ╰──────────────────────────╯
@@ -257,9 +255,8 @@ QUERY PLAN
 │ __internal_date_trunc_month_bucket(ts, 3, 0)    │
 │ ~1,007 rows                                     │
 ╰────────────────────────┬────────────────────────╯
-╭─ SEQ_SCAN ─────────────┴────────────────────────╮
+╭─ IRESEARCH_SCAN ───────┴────────────────────────╮
 │ Table: epochs                                   │
-│ Type: Sequential Scan                           │
 │ Projections: ts                                 │
 │ ~1,007 rows                                     │
 ╰─────────────────────────────────────────────────╯
@@ -346,9 +343,8 @@ QUERY PLAN
 │ __internal_date_trunc_month_bucket(ts, 1, 0)    │
 │ ~1,008 rows                                     │
 ╰────────────────────────┬────────────────────────╯
-╭─ SEQ_SCAN ─────────────┴────────────────────────╮
+╭─ IRESEARCH_SCAN ───────┴────────────────────────╮
 │ Table: ad1                                      │
-│ Type: Sequential Scan                           │
 │ Projections: ts                                 │
 │ ~1,008 rows                                     │
 ╰─────────────────────────────────────────────────╯
@@ -384,9 +380,8 @@ QUERY PLAN
 │ Projections: d           │
 │ ~1,008 rows              │
 ╰─────────────┬────────────╯
-╭─ SEQ_SCAN ──┴────────────╮
+╭─ IRESEARCH_SCAN ─────────╮
 │ Table: bc                │
-│ Type: Sequential Scan    │
 │ Projections: ts          │
 │ ~1,008 rows              │
 ╰──────────────────────────╯

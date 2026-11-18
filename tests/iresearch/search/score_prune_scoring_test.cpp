@@ -382,6 +382,7 @@ TableTop TopThroughTable(const irs::DirectoryReader& reader,
                                      .fetcher = fetcher,
                                      .table = &rows,
                                      .prune = prune,
+                                     .bounds = true,
                                      .k = static_cast<uint32_t>(k)});
     if (!plan) {
       continue;
@@ -476,13 +477,13 @@ void ScorePruneFieldFactory(tests::Document& doc, const std::string& name,
     auto& field = (doc.indexed.end() - 1).as<DoubleField>();
     field.Name(name);
     field.id = ColumnIdFor(name);
-    field.value(data.as_number<double_t>());
+    field.value(data.as_number<double>());
   }
 }
 
 class ScorePruneScoringTestCase : public IndexTestBase {
  protected:
-  void WriteSegment(irs::IndexWriter& writer, auto& gens) {
+  void WriteSegment(tests::IndexWriter& writer, auto& gens) {
     auto& index = const_cast<tests::index_t&>(this->index());
     for (auto& gen : gens) {
       index.emplace_back();
@@ -496,7 +497,7 @@ class ScorePruneScoringTestCase : public IndexTestBase {
                                         size_t multiplier = 1) {
     irs::IndexWriterOptions opts;
     opts.reader_options.scorer = &scorer;
-    auto writer = open_writer(irs::kOmCreate, std::move(opts));
+    auto writer = open_writer(tests::kOmCreate, std::move(opts));
 
     std::vector<tests::JsonDocGenerator> gens;
     for (size_t i = 0; i < multiplier; ++i) {
@@ -518,7 +519,7 @@ class ScorePruneScoringTestCase : public IndexTestBase {
                                                size_t multiplier = 1) {
     irs::IndexWriterOptions opts;
     opts.reader_options.scorer = &scorer;
-    auto writer = open_writer(irs::kOmCreate, std::move(opts));
+    auto writer = open_writer(tests::kOmCreate, std::move(opts));
     auto& index_ref = const_cast<tests::index_t&>(index());
 
     const std::string files[] = {
@@ -917,7 +918,7 @@ TEST_P(ScorePruneScoringTestCase,
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
   irs::IndexWriterOptions opts;
   opts.reader_options.scorer = &scorer;
-  auto writer = open_writer(irs::kOmCreate, std::move(opts));
+  auto writer = open_writer(tests::kOmCreate, std::move(opts));
   const auto add = [&](std::string_view text, size_t count) {
     for (size_t i = 0; i != count; ++i) {
       tests::Document doc;
@@ -1028,7 +1029,7 @@ TEST_P(ScorePruneScoringTestCase, ShortListNonEssentialFromTheFirstWindow) {
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
   irs::IndexWriterOptions opts;
   opts.reader_options.scorer = &scorer;
-  auto writer = open_writer(irs::kOmCreate, std::move(opts));
+  auto writer = open_writer(tests::kOmCreate, std::move(opts));
   auto& index_ref = const_cast<tests::index_t&>(index());
   constexpr ContentDocs kFirst[] = {
     {"alpha f f f f f f f f f", 1000},
@@ -1059,7 +1060,7 @@ TEST_P(ScorePruneScoringTestCase, ScoredRunPastAGapMatchesAContiguousRun) {
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
   irs::IndexWriterOptions opts;
   opts.reader_options.scorer = &scorer;
-  auto writer = open_writer(irs::kOmCreate, std::move(opts));
+  auto writer = open_writer(tests::kOmCreate, std::move(opts));
   constexpr std::string_view kTexts[] = {
     "alpha beta gamma f",
     "alpha beta f f",

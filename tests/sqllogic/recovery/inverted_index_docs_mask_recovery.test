@@ -6,11 +6,10 @@ CREATE TEXT SEARCH DICTIONARY dmf_dict AS
     WITH (frequency, position);
 
 statement ok
-CREATE TABLE dmf(id INTEGER PRIMARY KEY, grp INTEGER, txt TEXT);
+CREATE TABLE dmf(id INTEGER PRIMARY KEY, grp INTEGER, txt TEXT) WITH (compaction_interval = 0);
 
 statement ok
-CREATE INDEX dmf_idx ON dmf USING inverted(id, grp, txt dmf_dict)
-  WITH (refresh_interval = 0, compaction_interval = 0);
+CREATE INDEX dmf_idx ON dmf USING inverted(id, grp, txt dmf_dict);
 
 statement ok
 INSERT INTO dmf
@@ -18,14 +17,14 @@ SELECT g, (g * 7919) % 100, 'row ' || g || ' alpha'
 FROM generate_series(1, 20000) g;
 
 statement ok
-VACUUM (REFRESH_TABLE) dmf;
+VACUUM (FLUSH_TABLE) dmf;
 
 statement ok
 VACUUM (COMPACT_INDEX) dmf_idx;
 
 query
 SELECT metric, value FROM sdb_metrics
-WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'dmf_idx')
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'dmf')
   AND metric IN ('num_docs', 'num_live_docs', 'num_segments')
 ORDER BY metric;
 ----
@@ -38,13 +37,13 @@ statement ok
 DELETE FROM dmf WHERE grp < 60;
 
 statement ok
-VACUUM (REFRESH_TABLE) dmf;
+VACUUM (FLUSH_TABLE) dmf;
 
 statement ok
 DELETE FROM dmf WHERE grp = 60;
 
 statement ok
-VACUUM (REFRESH_TABLE) dmf;
+VACUUM (FLUSH_TABLE) dmf;
 
 query
 SELECT count(*) FROM dmf_idx WHERE txt @@ ts_like('alpha');
@@ -69,7 +68,7 @@ count
 connection after_crash
 query
 SELECT metric, value FROM sdb_metrics
-WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'dmf_idx')
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'dmf')
   AND metric IN ('num_docs', 'num_live_docs', 'num_segments')
 ORDER BY metric;
 ----
@@ -95,7 +94,7 @@ DELETE FROM dmf WHERE grp = 61;
 
 connection after_crash
 statement ok
-VACUUM (REFRESH_TABLE) dmf;
+VACUUM (FLUSH_TABLE) dmf;
 
 connection after_crash
 statement ok
@@ -103,7 +102,7 @@ DELETE FROM dmf WHERE grp = 62;
 
 connection after_crash
 statement ok
-VACUUM (REFRESH_TABLE) dmf;
+VACUUM (FLUSH_TABLE) dmf;
 
 connection after_crash
 query
@@ -131,7 +130,7 @@ count
 connection after_second_crash
 query
 SELECT metric, value FROM sdb_metrics
-WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'dmf_idx')
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'dmf')
   AND metric IN ('num_docs', 'num_live_docs', 'num_segments')
 ORDER BY metric;
 ----
@@ -168,7 +167,7 @@ DELETE FROM dmf WHERE grp = 63;
 
 connection after_second_crash
 statement ok
-VACUUM (REFRESH_TABLE) dmf;
+VACUUM (FLUSH_TABLE) dmf;
 
 connection after_second_crash
 query

@@ -182,7 +182,8 @@ class RawVectorReader {
     : _read_ctx{col_reader, true},
       _vreader{vector_column, _read_ctx},
       _column{&vector_column},
-      _d{d} {}
+      _d{d},
+      _in_memory{vector_column.InMemory()} {}
 
   explicit RawVectorReader(const RawRecipe& recipe)
     : RawVectorReader{*recipe.column, *recipe.reader, recipe.d} {
@@ -207,6 +208,9 @@ class RawVectorReader {
     const auto row = static_cast<uint32_t>(doc - doc_limits::min());
     auto entry = _entries->First(row);
     const auto end = _entries->End(row);
+    if (entry == end) {
+      return std::numeric_limits<score_t>::quiet_NaN();
+    }
     _best.assign(queries.size() / _d, std::numeric_limits<float>::lowest());
     while (entry < end) {
       size_t got = 0;
@@ -248,7 +252,6 @@ class RawVectorReader {
       Hint(docs);
     }
     const auto* q = reinterpret_cast<const byte_type*>(_query.data());
-    const auto d = static_cast<uint16_t>(_d);
     for (size_t i = 0; i < docs.size();) {
       size_t run = ConsecutiveRunLength(docs, i);
       if (run == 1 && i + 2 < docs.size()) {
@@ -267,7 +270,7 @@ class RawVectorReader {
               __builtin_prefetch(ahead + off, 0, 3);
             }
           }
-          out[i + k] = _dist(q, base + k * stride, d);
+          out[i + k] = _dist(q, base + k * stride, _d);
         }
         i += got;
         run -= got;
@@ -289,12 +292,14 @@ class RawVectorReader {
       size_t got = 0;
       row = ReadSome(doc, 1, got);
     }
-    return _dist(reinterpret_cast<const byte_type*>(_query.data()), row,
-                 static_cast<uint16_t>(_d));
+    return _dist(reinterpret_cast<const byte_type*>(_query.data()), row, _d);
   }
 
   template<int Locality = 3>
   const byte_type* PrefetchRow(doc_id_t doc) noexcept {
+    if (_in_memory) {
+      return nullptr;
+    }
     if (_entries) {
       const auto row = static_cast<uint32_t>(doc - doc_limits::min());
       const auto first = _entries->First(row);
@@ -337,7 +342,7 @@ class RawVectorReader {
 
  private:
   void HintRun(doc_id_t first, size_t count) noexcept {
-    if (!_read_ctx.HasIn()) {
+    if (_in_memory || !_read_ctx.HasIn()) {
       return;
     }
     const auto* child = _column->Child();
@@ -361,6 +366,11 @@ class RawVectorReader {
   }
 
   const byte_type* ReadSome(doc_id_t first, size_t count, size_t& got) {
+    if (_in_memory) {
+      got = count;
+      return reinterpret_cast<const byte_type*>(
+        _vreader.ReadDocBatch(first, count));
+    }
     const auto* child = _column->Child();
     SDB_ASSERT(child);
     const uint64_t elem =
@@ -423,6 +433,7 @@ class RawVectorReader {
   std::vector<float> _best;
   const AnnEntries* _entries = nullptr;
   uint32_t _d;
+  bool _in_memory;
 };
 
 struct AcceptAll {

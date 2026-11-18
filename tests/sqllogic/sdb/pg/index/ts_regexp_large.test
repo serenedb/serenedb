@@ -2,7 +2,7 @@ hash-threshold 100
 
 
 statement ok
-CREATE TABLE regexp_large (id BIGINT, k VARCHAR) WITH (storage = 'search')
+CREATE TABLE regexp_large (id BIGINT, k VARCHAR)
 
 
 statement ok
@@ -11,10 +11,6 @@ CREATE INDEX regexp_large_idx ON regexp_large USING inverted (id, k)
 
 statement ok
 INSERT INTO regexp_large SELECT i, md5(i::VARCHAR)[1:8] FROM range(1000) r(i)
-
-
-statement ok
-VACUUM (REFRESH_TABLE) regexp_large
 
 
 query
@@ -43,6 +39,18 @@ SELECT count(*) FROM regexp_large WHERE k @@ ts_regexp('(cfcd.{0,3}(2084)?|c4ca.
 ----
 count
 1000
+
+
+statement error
+SELECT count(*) FROM regexp_large WHERE k @@ ts_like(repeat('_', 400000))
+----
+db error: ERROR: pattern is too complex
+
+
+statement error
+SELECT count(*) FROM regexp_large WHERE k @@ ts_regexp('(?:' || repeat('.', 1100000) || '){2}')
+----
+db error: ERROR: invalid regular expression: regular expression is too complex
 
 
 statement ok

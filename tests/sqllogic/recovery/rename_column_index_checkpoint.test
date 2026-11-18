@@ -47,7 +47,7 @@ query
 SELECT sql FROM duckdb_indexes() WHERE index_name = 'rcc_i';
 ----
 sql
-CREATE UNIQUE INDEX rcc_i ON public.rcc_t(c);
+CREATE UNIQUE INDEX rcc_i ON public.rcc_t USING inverted (c);
 
 connection after_crash
 statement ok

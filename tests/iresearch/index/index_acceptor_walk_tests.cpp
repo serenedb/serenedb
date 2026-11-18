@@ -284,8 +284,6 @@ class AcceptorWalkIndexTestCase : public tests::IndexTestBase {
         ASSERT_NE(nullptr, expected_terms);
         auto actual_terms = field->iterator(acceptor);
         ASSERT_NE(nullptr, actual_terms);
-        const auto* payload = irs::get<irs::PayAttr>(*actual_terms);
-        ASSERT_NE(nullptr, payload);
 
         while (expected_terms->next()) {
           const auto expected_term = expected_terms->value();
@@ -319,6 +317,8 @@ class AcceptorWalkIndexTestCase : public tests::IndexTestBase {
                        << irs::ViewCast<char>(expected_term) << "'");
           ASSERT_TRUE(actual_terms->next());
           ASSERT_EQ(expected_term, actual_terms->value());
+          const auto* payload = irs::get<irs::PayAttr>(*actual_terms);
+          ASSERT_NE(nullptr, payload);
           ASSERT_EQ(1, payload->value.size());
           ASSERT_EQ(edit_distance, payload->value[0]);
         }
@@ -405,7 +405,6 @@ TEST_P(AcceptorWalkIndexTestCase, levenshtein_walk_matches_scan) {
   AddEuroparl();
 
   auto reader = open_reader();
-  ASSERT_NE(nullptr, reader);
 
   for (const auto& description : descriptions) {
     for (const auto target : kTargets) {
@@ -415,10 +414,10 @@ TEST_P(AcceptorWalkIndexTestCase, levenshtein_walk_matches_scan) {
       const auto fuzzy = std::make_shared<const irs::LevenshteinAcceptor>(
         description, irs::kEmptyStringView<irs::byte_type>,
         irs::ViewCast<irs::byte_type>(target));
-      AssertWalk(*reader.GetImpl(), *fuzzy, true);
+      AssertWalk(reader, *fuzzy, true);
       const auto dfa = irs::FuzzyConjunction::Make(fuzzy);
       ASSERT_NE(nullptr, dfa);
-      AssertWalk(*reader.GetImpl(), *dfa, true);
+      AssertWalk(reader, *dfa, true);
     }
   }
 }
@@ -430,7 +429,6 @@ TEST_P(AcceptorWalkIndexTestCase, levenshtein_payload_is_edit_distance) {
   AddEuroparl();
 
   auto reader = open_reader();
-  ASSERT_NE(nullptr, reader);
 
   irs::containers::SmallVector<uint32_t, 16> target_chars;
   irs::utf8_utils::ToUTF32<false>(irs::ViewCast<irs::byte_type>(kTarget),
@@ -443,7 +441,7 @@ TEST_P(AcceptorWalkIndexTestCase, levenshtein_payload_is_edit_distance) {
   ASSERT_NE(nullptr, dfa);
 
   size_t checked = 0;
-  for (auto& segment : *reader.GetImpl()) {
+  for (auto& segment : reader) {
     for (auto field_id : segment.field_ids()) {
       const auto* field = StringsOf(segment, field_id);
       if (!field) {
@@ -484,14 +482,13 @@ TEST_P(AcceptorWalkIndexTestCase, levenshtein_walk_is_the_edit_distance_set) {
   AddEuroparl();
 
   auto reader = open_reader();
-  ASSERT_NE(nullptr, reader);
 
   for (const auto& description : descriptions) {
     for (const auto target : kTargets) {
       SCOPED_TRACE(testing::Message("Target: '")
                    << target << testing::Message("', Edit distance: ")
                    << size_t(description.max_distance()));
-      AssertEditDistanceOracle(*reader.GetImpl(), description, target);
+      AssertEditDistanceOracle(reader, description, target);
     }
   }
 }
@@ -504,13 +501,12 @@ TEST_P(AcceptorWalkIndexTestCase, regexp_walk_matches_scan) {
   AddEuroparl();
 
   auto reader = open_reader();
-  ASSERT_NE(nullptr, reader);
 
   for (const auto pattern : kPatterns) {
     SCOPED_TRACE(testing::Message("Pattern: '") << pattern << "'");
     const irs::RegexpAcceptor acceptor{irs::ViewCast<irs::byte_type>(pattern)};
     ASSERT_TRUE(acceptor.ok());
-    AssertWalk(*reader.GetImpl(), acceptor, false);
+    AssertWalk(reader, acceptor, false);
   }
 }
 
@@ -522,14 +518,13 @@ TEST_P(AcceptorWalkIndexTestCase, wildcard_walk_matches_scan) {
   AddEuroparl();
 
   auto reader = open_reader();
-  ASSERT_NE(nullptr, reader);
 
   for (const auto pattern : kPatterns) {
     SCOPED_TRACE(testing::Message("Pattern: '") << pattern << "'");
     const irs::RegexpAcceptor acceptor{irs::RegexpAcceptor::WildcardTag{},
                                        irs::ViewCast<irs::byte_type>(pattern)};
     ASSERT_TRUE(acceptor.ok());
-    AssertWalk(*reader.GetImpl(), acceptor, false);
+    AssertWalk(reader, acceptor, false);
   }
 }
 
@@ -544,7 +539,6 @@ TEST_P(AcceptorWalkIndexTestCase, regexp_walk_past_the_row_budget) {
   AddEuroparl();
 
   auto reader = open_reader();
-  ASSERT_NE(nullptr, reader);
 
   for (const auto pattern : kPatterns) {
     const irs::RegexpAcceptor unbounded{irs::ViewCast<irs::byte_type>(pattern)};
@@ -556,8 +550,8 @@ TEST_P(AcceptorWalkIndexTestCase, regexp_walk_past_the_row_budget) {
         irs::ViewCast<irs::byte_type>(pattern), irs::RegexpSyntax::Perl,
         irs::RegexpAcceptor::kDefaultMaxMem, budget};
       ASSERT_TRUE(bounded.ok());
-      AssertWalk(*reader.GetImpl(), bounded, false);
-      for (auto& segment : *reader.GetImpl()) {
+      AssertWalk(reader, bounded, false);
+      for (auto& segment : reader) {
         for (auto field_id : segment.field_ids()) {
           const auto* field = StringsOf(segment, field_id);
           if (!field) {
@@ -592,20 +586,19 @@ TEST_P(AcceptorWalkIndexTestCase, walk_selects_multibyte_terms) {
   AddTerms(kTerms);
 
   auto reader = open_reader();
-  ASSERT_NE(nullptr, reader);
 
   for (const auto pattern : kWildcards) {
     SCOPED_TRACE(testing::Message("Wildcard: '") << pattern << "'");
     const irs::RegexpAcceptor acceptor{irs::RegexpAcceptor::WildcardTag{},
                                        irs::ViewCast<irs::byte_type>(pattern)};
     ASSERT_TRUE(acceptor.ok());
-    AssertWalk(*reader.GetImpl(), acceptor, false);
+    AssertWalk(reader, acceptor, false);
   }
   for (const auto pattern : kRegexps) {
     SCOPED_TRACE(testing::Message("Regexp: '") << pattern << "'");
     const irs::RegexpAcceptor acceptor{irs::ViewCast<irs::byte_type>(pattern)};
     ASSERT_TRUE(acceptor.ok());
-    AssertWalk(*reader.GetImpl(), acceptor, false);
+    AssertWalk(reader, acceptor, false);
   }
 
   const irs::RegexpAcceptor single{
@@ -643,20 +636,19 @@ TEST_P(AcceptorWalkIndexTestCase, walk_crosses_block_boundaries) {
   AddTerms(terms);
 
   auto reader = open_reader();
-  ASSERT_NE(nullptr, reader);
 
   for (const auto pattern : kWildcards) {
     SCOPED_TRACE(testing::Message("Wildcard: '") << pattern << "'");
     const irs::RegexpAcceptor acceptor{irs::RegexpAcceptor::WildcardTag{},
                                        irs::ViewCast<irs::byte_type>(pattern)};
     ASSERT_TRUE(acceptor.ok());
-    AssertWalk(*reader.GetImpl(), acceptor, false);
+    AssertWalk(reader, acceptor, false);
   }
   for (const auto pattern : kRegexps) {
     SCOPED_TRACE(testing::Message("Regexp: '") << pattern << "'");
     const irs::RegexpAcceptor acceptor{irs::ViewCast<irs::byte_type>(pattern)};
     ASSERT_TRUE(acceptor.ok());
-    AssertWalk(*reader.GetImpl(), acceptor, false);
+    AssertWalk(reader, acceptor, false);
   }
 }
 
@@ -664,12 +656,11 @@ TEST_P(AcceptorWalkIndexTestCase, conjunction_source_is_the_intersection) {
   AddEuroparl();
 
   auto reader = open_reader();
-  ASSERT_NE(nullptr, reader);
 
   constexpr std::string_view kDriver = "bur%";
   constexpr std::string_view kResidual = "%n";
 
-  for (auto& segment : *reader.GetImpl()) {
+  for (auto& segment : reader) {
     for (auto field_id : segment.field_ids()) {
       const auto* field = StringsOf(segment, field_id);
       if (!field) {
@@ -720,7 +711,6 @@ TEST_P(AcceptorWalkIndexTestCase, conjunction_source_honours_its_bounds) {
   AddEuroparl();
 
   auto reader = open_reader();
-  ASSERT_NE(nullptr, reader);
 
   constexpr std::string_view kPrefix = "bur";
   constexpr std::string_view kDriver = "bur%";
@@ -732,7 +722,7 @@ TEST_P(AcceptorWalkIndexTestCase, conjunction_source_honours_its_bounds) {
   ASSERT_EQ(irs::ViewCast<irs::byte_type>("bus"sv),
             irs::bytes_view{bounds.upper});
 
-  for (auto& segment : *reader.GetImpl()) {
+  for (auto& segment : reader) {
     for (auto field_id : segment.field_ids()) {
       const auto* field = StringsOf(segment, field_id);
       if (!field) {
@@ -797,7 +787,6 @@ TEST_P(AcceptorWalkIndexTestCase, levenshtein_transpositions_and_prefix) {
   AddEuroparl();
 
   auto reader = open_reader();
-  ASSERT_NE(nullptr, reader);
 
   for (const auto distance : {uint8_t{1}, uint8_t{2}}) {
     for (const bool transpositions : {false, true}) {
@@ -811,9 +800,9 @@ TEST_P(AcceptorWalkIndexTestCase, levenshtein_transpositions_and_prefix) {
         const irs::LevenshteinAcceptor acceptor{
           description, irs::ViewCast<irs::byte_type>(prefix),
           irs::ViewCast<irs::byte_type>(target)};
-        AssertWalk(*reader.GetImpl(), acceptor, true);
-        AssertEditDistanceOracle(*reader.GetImpl(), description, transpositions,
-                                 prefix, target);
+        AssertWalk(reader, acceptor, true);
+        AssertEditDistanceOracle(reader, description, transpositions, prefix,
+                                 target);
       }
     }
   }
@@ -847,7 +836,6 @@ TEST_P(AcceptorWalkIndexTestCase, levenshtein_multibyte_targets) {
   AddTerms(views);
 
   auto reader = open_reader();
-  ASSERT_NE(nullptr, reader);
 
   struct Case {
     std::string_view prefix;
@@ -875,8 +863,8 @@ TEST_P(AcceptorWalkIndexTestCase, levenshtein_multibyte_targets) {
                      << prefix << "', target: '" << target
                      << "', distance: " << size_t{distance}
                      << ", transpositions: " << transpositions);
-        AssertEditDistanceOracle(*reader.GetImpl(), description, transpositions,
-                                 prefix, target);
+        AssertEditDistanceOracle(reader, description, transpositions, prefix,
+                                 target);
       }
     }
   }
@@ -886,7 +874,6 @@ TEST_P(AcceptorWalkIndexTestCase, fuzzy_source_walks_the_parametric_language) {
   AddEuroparl();
 
   auto reader = open_reader();
-  ASSERT_NE(nullptr, reader);
 
   const auto narrow = irs::MakeParametricDescription(1, false);
   const auto small = std::make_shared<const irs::LevenshteinAcceptor>(
@@ -908,7 +895,7 @@ TEST_P(AcceptorWalkIndexTestCase, fuzzy_source_walks_the_parametric_language) {
     const auto source = irs::MakeFuzzySource(fuzzy);
     ASSERT_NE(nullptr, source);
     size_t total = 0;
-    for (auto& segment : *reader.GetImpl()) {
+    for (auto& segment : reader) {
       for (auto field_id : segment.field_ids()) {
         const auto* field = StringsOf(segment, field_id);
         if (!field) {
@@ -1042,7 +1029,6 @@ void AcceptorWalkIndexTestCase::AssertRe2Perl(size_t part, size_t parts) {
   AddEuroparl();
 
   auto reader = open_reader();
-  ASSERT_NE(nullptr, reader);
 
   RE2::Options perl;
   perl.set_log_errors(false);
@@ -1053,14 +1039,14 @@ void AcceptorWalkIndexTestCase::AssertRe2Perl(size_t part, size_t parts) {
     ASSERT_TRUE(acceptor.ok());
     const RE2 re{pattern, perl};
     ASSERT_TRUE(re.ok());
-    AssertWalk(*reader.GetImpl(), acceptor, false);
-    AssertOracle(
-      *reader.GetImpl(), acceptor, IsUtf8,
-      [&](std::string_view term) { return RE2::FullMatch(term, re); });
+    AssertWalk(reader, acceptor, false);
+    AssertOracle(reader, acceptor, IsUtf8, [&](std::string_view term) {
+      return RE2::FullMatch(term, re);
+    });
     const auto source = irs::MakePatternSource(
       irs::ViewCast<irs::byte_type>(pattern), irs::PatternKind::RegexpPerl);
     ASSERT_NE(nullptr, source);
-    AssertSourceMatchesWalk(*reader.GetImpl(), acceptor, *source);
+    AssertSourceMatchesWalk(reader, acceptor, *source);
   }
 }
 
@@ -1085,7 +1071,6 @@ TEST_P(AcceptorWalkIndexTestCase, walks_match_re2) {
   AddEuroparl();
 
   auto reader = open_reader();
-  ASSERT_NE(nullptr, reader);
 
   RE2::Options posix;
   posix.set_log_errors(false);
@@ -1101,10 +1086,10 @@ TEST_P(AcceptorWalkIndexTestCase, walks_match_re2) {
     ASSERT_TRUE(acceptor.ok());
     const RE2 re{pattern, posix};
     ASSERT_TRUE(re.ok());
-    AssertWalk(*reader.GetImpl(), acceptor, false);
-    AssertOracle(
-      *reader.GetImpl(), acceptor, IsUtf8,
-      [&](std::string_view term) { return RE2::FullMatch(term, re); });
+    AssertWalk(reader, acceptor, false);
+    AssertOracle(reader, acceptor, IsUtf8, [&](std::string_view term) {
+      return RE2::FullMatch(term, re);
+    });
   }
 
   RE2::Options like;
@@ -1121,9 +1106,9 @@ TEST_P(AcceptorWalkIndexTestCase, walks_match_re2) {
     ASSERT_TRUE(acceptor.ok());
     const RE2 re{LikeRegex(pattern), like};
     ASSERT_TRUE(re.ok());
-    AssertWalk(*reader.GetImpl(), acceptor, false);
+    AssertWalk(reader, acceptor, false);
     AssertOracle(
-      *reader.GetImpl(), acceptor, [](irs::bytes_view) { return true; },
+      reader, acceptor, [](irs::bytes_view) { return true; },
       [&](std::string_view term) { return RE2::PartialMatch(term, re); });
   }
 }
@@ -1162,7 +1147,6 @@ TEST_P(AcceptorWalkIndexTestCase, union_walk_is_the_union_of_its_parts) {
   AddEuroparl();
 
   auto reader = open_reader();
-  ASSERT_NE(nullptr, reader);
 
   using Kind = irs::RegexpAcceptor::PartKind;
   using Part = irs::RegexpAcceptor::Part;
@@ -1226,9 +1210,9 @@ TEST_P(AcceptorWalkIndexTestCase, union_walk_is_the_union_of_its_parts) {
                  << irs::DescribeUnion(key) << "'");
     const irs::RegexpAcceptor acceptor{std::span{parts}};
     ASSERT_TRUE(acceptor.ok());
-    AssertWalk(*reader.GetImpl(), acceptor, false);
+    AssertWalk(reader, acceptor, false);
     AssertOracle(
-      *reader.GetImpl(), acceptor, [](irs::bytes_view) { return true; },
+      reader, acceptor, [](irs::bytes_view) { return true; },
       [&](std::string_view term) {
         return std::any_of(parts.begin(), parts.end(), [&](const Part& p) {
           return alone(p, irs::ViewCast<irs::byte_type>(term));
@@ -1236,7 +1220,7 @@ TEST_P(AcceptorWalkIndexTestCase, union_walk_is_the_union_of_its_parts) {
       });
     const auto source = irs::MakePatternSource(key, irs::PatternKind::Union);
     ASSERT_NE(nullptr, source);
-    AssertSourceMatchesWalk(*reader.GetImpl(), acceptor, *source);
+    AssertSourceMatchesWalk(reader, acceptor, *source);
   }
 }
 
@@ -1289,7 +1273,6 @@ TEST_P(AcceptorWalkIndexTestCase, conjunction_walk_is_the_intersection) {
   AddEuroparl();
 
   auto reader = open_reader();
-  ASSERT_NE(nullptr, reader);
 
   using Kind = irs::RegexpAcceptor::PartKind;
   const auto make = [](Kind kind, std::string_view pattern) {
@@ -1362,16 +1345,15 @@ TEST_P(AcceptorWalkIndexTestCase, conjunction_walk_is_the_intersection) {
            {irs::RegexpAcceptor::kDefaultMaxDfaMem, size_t{4096}, size_t{0}}) {
         SCOPED_TRACE(testing::Message("Budget: ") << max_mem);
         const irs::RegexpConjunction conjunction{patterns, max_mem};
-        AssertWalk(*reader.GetImpl(), conjunction, false);
-        AssertOracle(*reader.GetImpl(), conjunction, covers,
-                     [&](std::string_view term) {
-                       return matches(irs::ViewCast<irs::byte_type>(term));
-                     });
+        AssertWalk(reader, conjunction, false);
+        AssertOracle(reader, conjunction, covers, [&](std::string_view term) {
+          return matches(irs::ViewCast<irs::byte_type>(term));
+        });
       }
       const irs::RegexpConjunction conjunction{patterns};
       const auto source = irs::MakeJointSource(patterns, nullptr);
       ASSERT_NE(nullptr, source);
-      AssertSourceMatchesWalk(*reader.GetImpl(), conjunction, *source);
+      AssertSourceMatchesWalk(reader, conjunction, *source);
       continue;
     }
     auto fuzzy = std::make_shared<const irs::LevenshteinAcceptor>(
@@ -1381,17 +1363,16 @@ TEST_P(AcceptorWalkIndexTestCase, conjunction_walk_is_the_intersection) {
          {irs::RegexpAcceptor::kDefaultMaxDfaMem, size_t{16384}, size_t{0}}) {
       SCOPED_TRACE(testing::Message("Budget: ") << max_mem);
       const irs::FuzzyConjunction conjunction{patterns, fuzzy, max_mem};
-      AssertWalk(*reader.GetImpl(), conjunction, false);
-      AssertOracle(*reader.GetImpl(), conjunction, covers,
-                   [&](std::string_view term) {
-                     const auto bytes = irs::ViewCast<irs::byte_type>(term);
-                     return matches(bytes) && fuzzy->Matches(bytes);
-                   });
+      AssertWalk(reader, conjunction, false);
+      AssertOracle(reader, conjunction, covers, [&](std::string_view term) {
+        const auto bytes = irs::ViewCast<irs::byte_type>(term);
+        return matches(bytes) && fuzzy->Matches(bytes);
+      });
     }
     const irs::FuzzyConjunction conjunction{patterns, fuzzy};
     const auto source = irs::MakeJointSource(patterns, fuzzy);
     ASSERT_NE(nullptr, source);
-    AssertSourceMatchesWalk(*reader.GetImpl(), conjunction, *source);
+    AssertSourceMatchesWalk(reader, conjunction, *source);
   }
 }
 

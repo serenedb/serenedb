@@ -36,6 +36,7 @@
 #include <duckdb/transaction/transaction_context.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/error_mapping.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>
 #include <optional>
@@ -111,6 +112,7 @@ class Statement {
   }
   void SetPrepared(duckdb::unique_ptr<duckdb::PreparedStatement> prepared,
                    CatalogEpoch epoch) {
+    DropResolution();
     _prepared = std::move(prepared);
     _epoch = epoch;
     _kind = Kind::Prepared;
@@ -157,9 +159,22 @@ class Statement {
   // the life of the plan -- and duckdb's attach path waits on the first
   // attachment rather than sharing it.
   void ReleaseUnusedPlan() {
+    DropResolution();
     if (_prepared.use_count() == 1) {
       _prepared.reset();
     }
+  }
+
+  PlanPtr Resolution(
+    const PlanPtr& base,
+    const duckdb::case_insensitive_map_t<duckdb::LogicalType>& hints) const {
+    return base && base == _prepared && _resolved_hints == hints ? _resolved
+                                                                 : nullptr;
+  }
+  void SetResolution(duckdb::case_insensitive_map_t<duckdb::LogicalType> hints,
+                     PlanPtr resolved) {
+    _resolved_hints = std::move(hints);
+    _resolved = std::move(resolved);
   }
 
   // The Parse-time parameter type hints (the client's Parse OIDs), replayed on
@@ -226,9 +241,16 @@ class Statement {
   const duckdb::SQLStatement& GetCopy() const { return *_statements.front(); }
 
  private:
+  void DropResolution() {
+    _resolved.reset();
+    _resolved_hints.clear();
+  }
+
   Kind _kind = Kind::Unbound;
   bool _described = false;
   PlanPtr _prepared;
+  PlanPtr _resolved;
+  duckdb::case_insensitive_map_t<duckdb::LogicalType> _resolved_hints;
   CatalogEpoch _epoch = 0;
   duckdb::unique_ptr<duckdb::SQLStatement> _source;
   duckdb::case_insensitive_map_t<duckdb::LogicalType> _type_hints;
@@ -451,7 +473,7 @@ class ImplicitTxnState {
       _txn.Commit();
       return std::nullopt;
     } catch (const std::exception& exception) {
-      return ToSqlError(exception);
+      return irs::pg::ToSqlError(exception);
     }
   }
 

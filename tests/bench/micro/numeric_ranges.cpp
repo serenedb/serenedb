@@ -28,6 +28,7 @@
 #include <bit>
 #include <cstdlib>
 #include <cstring>
+#include <duckdb/common/radix.hpp>
 #include <filesystem>
 #include <iresearch/formats/index/field_reader.hpp>
 #include <iresearch/formats/index/field_writer.hpp>
@@ -126,8 +127,12 @@ constexpr Selectivity kSelectivities[]{
 };
 
 bytes_view Key(irs::byte_type* buf, uint64_t sortable, uint32_t shift) {
-  return {buf,
-          irs::numeric_utils::Encode<uint64_t>(sortable ^ kSign, buf, shift)};
+  irs::byte_type key[sizeof(uint64_t)];
+  duckdb::Radix::EncodeData(key, sortable & ~((uint64_t{1} << shift) - 1));
+  const size_t size = 1 + (63 - shift) / 8;
+  buf[0] = irs::numeric_utils::kNumericTermMagic<int64_t> + shift;
+  std::memcpy(buf + 1, key, size);
+  return {buf, 1 + size};
 }
 
 struct Terms {
@@ -271,7 +276,7 @@ void Write(irs::Directory& dir, const Terms& terms, Ladder ladder,
   writer.prepare(state, 1);
   writer.write(irs::NumericLayout::kNumbers, TermsReader{terms, ladder});
   writer.end();
-  idx.Commit();
+  idx.Commit(nullptr);
 }
 
 uint64_t DirectoryBytes(const irs::Directory& dir) {

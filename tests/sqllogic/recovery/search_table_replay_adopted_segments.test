@@ -11,19 +11,19 @@ SET GLOBAL debug_skip_checkpoint_on_commit = true;
 
 statement ok
 CREATE TABLE ras1 (id BIGINT, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE TABLE ras2 (id BIGINT, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE TABLE ras3 (id BIGINT, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE TABLE ras4 (id BIGINT, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO ras1 VALUES (1, 'a'), (2, 'b');
@@ -38,16 +38,16 @@ statement ok
 INSERT INTO ras4 VALUES (1, 'a'), (2, 'b');
 
 statement ok
-VACUUM (REFRESH_TABLE) ras1;
+VACUUM (FLUSH_TABLE) ras1;
 
 statement ok
-VACUUM (REFRESH_TABLE) ras2;
+VACUUM (FLUSH_TABLE) ras2;
 
 statement ok
-VACUUM (REFRESH_TABLE) ras3;
+VACUUM (FLUSH_TABLE) ras3;
 
 statement ok
-VACUUM (REFRESH_TABLE) ras4;
+VACUUM (FLUSH_TABLE) ras4;
 
 connection serial
 statement ok
@@ -154,7 +154,7 @@ SELECT
   (SELECT count(*) FROM ras4) AS ras4;
 ----
 ras1	ras2	ras3	ras4
-2	2	2	2
+5001	10001	5001	150000
 
 connection default
 statement ok
@@ -183,7 +183,7 @@ ras4	150000	150000	200000	449999
 
 connection after_crash
 statement ok
-VACUUM (REFRESH_TABLE) ras1;
+VACUUM (FLUSH_TABLE) ras1;
 
 connection after_crash
 statement ok

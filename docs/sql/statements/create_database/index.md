@@ -38,10 +38,10 @@ As an alternative to reconnecting, switch to the new database within the current
 
 | Option           | Description                                                                         | Default  |
 |------------------|-------------------------------------------------------------------------------------|----------|
-| `BLOCK_SIZE`     | The block size of the database file in bytes: a power of two from 16384 to 262144. | `262144` |
-| `ROW_GROUP_SIZE` | The number of rows in a row group: a multiple of 2048.                              | `122880` |
+| `BLOCK_SIZE`     | The block size in bytes of the tables created in the database: a power of two from 16384 to 262144. | `262144` |
+| `ROW_GROUP_SIZE` | The number of rows in a row group of the tables created in the database: a multiple of 2048. | `122880` |
 
-The options are stored with the database, so the server opens it with them again after a restart. `BLOCK_SIZE` is fixed once the file exists; `ROW_GROUP_SIZE` applies to the row groups written from then on. Any other option is refused.
+The options are stored with the database and become the defaults of the tables created in it; a table's own `WITH (block_size = …)` or `WITH (row_group_size = …)` overrides them. Any other option is refused.
 
 A database created inside a transaction is visible to other sessions only once that transaction commits. Until then, creating a database of the same name from another session fails.
 
@@ -51,7 +51,7 @@ A database created inside a transaction is visible to other sessions only once t
 
 <SqlLogicTest id="sql/statements/create_database/index/example_005" />
 
-Only the owner of a database, or a member of the owning role, can drop it. A database that other sessions are connected to cannot be dropped: as in PostgreSQL, `DROP DATABASE` gives them five seconds to disconnect and fails if any is still connected then. Neither can the database the session itself is connected to or has switched to with `USE` be dropped:
+Only the owner of a database, or a member of the owning role, can drop it. A database that other sessions are connected to cannot be dropped: as in PostgreSQL, `DROP DATABASE` gives them five seconds to disconnect and fails if any is still connected then. The database's own [jobs](../create_job/index.md) don't count as sessions: `DROP DATABASE` drops them with the database and interrupts their running runs, as `DROP JOB` does. Neither can the database the session itself is connected to or has switched to with `USE` be dropped:
 
 <SqlLogicTest id="sql/statements/create_database/index/example_006" />
 

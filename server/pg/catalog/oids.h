@@ -46,15 +46,10 @@ inline constexpr duckdb::idx_t kMaxSystem = 262144;
 
 #include "pg/catalog/generated/catalog_oids.gen.inc"
 
-inline constexpr duckdb::idx_t kClusterCatalog = kMinSystem + 1;
-
-inline constexpr duckdb::idx_t kPgMainSchema = kMinSystem + 4;
-
 inline constexpr duckdb::idx_t kRootUser = kMinSystem;
 
 inline constexpr duckdb::idx_t kPgAmInverted = kMinSystem + 300;
 inline constexpr duckdb::idx_t kPgAmIResearch = kMinSystem + 301;
-inline constexpr duckdb::idx_t kPgAmSecondary = kMinSystem + 303;
 
 inline constexpr duckdb::idx_t kPgOpclassIvf = kMinSystem + 200;
 inline constexpr duckdb::idx_t kPgOpclassIncluded = kMinSystem + 201;
@@ -75,6 +70,8 @@ inline constexpr std::array kForeignDataWrappers{
   SystemObject{kMinSystem + 500, "clickhouse_fdw"},
   SystemObject{kMinSystem + 501, "iceberg_fdw"},
   SystemObject{kMinSystem + 502, "postgres_fdw"},
+  SystemObject{kMinSystem + 503, "duckdb_fdw"},
+  SystemObject{kMinSystem + 504, "serenedb_fdw"},
 };
 
 inline constexpr std::array kSystemNamespaces{
@@ -111,7 +108,6 @@ inline constexpr std::array kSystemAccessMethods{
   SystemAccessMethod{kPgAmHeap, "heap", 't', kPgAmHeapHandler},
   SystemAccessMethod{kPgAmInverted, "inverted", 'i', kInvalidOid},
   SystemAccessMethod{kPgAmIResearch, "iresearch", 't', kInvalidOid},
-  SystemAccessMethod{kPgAmSecondary, "secondary", 'i', kInvalidOid},
 };
 
 template<typename T, size_t N>

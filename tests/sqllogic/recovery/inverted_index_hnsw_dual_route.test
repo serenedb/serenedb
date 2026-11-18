@@ -16,7 +16,7 @@ CREATE MACRO route_vec(i) AS
 statement ok
 CREATE TABLE route_docs (id INTEGER PRIMARY KEY, half INTEGER, rare INTEGER,
   far INTEGER, emb FLOAT[16])
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 
 statement ok
@@ -33,7 +33,7 @@ FROM range(20000) t(i);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) route_docs;
+VACUUM (FLUSH_TABLE) route_docs;
 
 
 statement ok

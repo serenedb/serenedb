@@ -38,10 +38,6 @@ statement ok
 COMMIT;
 
 
-statement ok
-VACUUM (REFRESH_TABLE) papich_chat;
-
-
 query
 SELECT (SELECT count(*) FROM papich_chat_word) AS words, (SELECT count(*) FROM papich_chat_mood) AS moods, (SELECT count(*) FROM papich_chat_word WHERE word @@ 'word2') AS word2, (SELECT count(*) FROM papich_chat_mood WHERE mood @@ 'mood1') AS mood1;
 ----
@@ -51,10 +47,6 @@ words	moods	word2	mood1
 
 statement ok
 DELETE FROM papich_chat WHERE id % 2 = 0;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) papich_chat;
 
 
 query

@@ -81,3 +81,20 @@ SELECT ARRAY[ARRAY['1 2'::int2vector], ARRAY['3'::int2vector]] AS a, ROW(ARRAY['
 ----
 a	b	c
 {{"1 2"},{3}}	("{""1 2""}")	{"1 2",3}
+
+query
+SELECT pg_typeof(ARRAY[23::oid]::oidvector) AS a, pg_typeof('23 25'::oidvector::oid[]) AS b,
+       pg_typeof(ARRAY[1::int2]::int2vector) AS c;
+----
+a	b	c
+oidvector	oid[]	int2vector
+
+query
+SELECT a.o
+FROM (VALUES (23::oid), (25::oid), (26::oid)) AS a(o)
+JOIN (VALUES ('23'::oidvector), ('26'::oidvector)) AS b(v) ON ARRAY[a.o]::oidvector = b.v
+ORDER BY a.o;
+----
+o
+23
+26

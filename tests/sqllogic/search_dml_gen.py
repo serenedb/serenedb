@@ -51,7 +51,6 @@ class Dml:
         self.statement(sql.format(t=self.ref), conn)
 
     def check(self, conn=None):
-        self.statement(f"VACUUM (REFRESH_TABLE) {self.table};", conn)
         if conn:
             self.t.connection(conn)
         self.t.expect(
@@ -84,15 +83,15 @@ class Dml:
         self.statement(f"VACUUM (COMPACT_TABLE) {self.table};", conn)
 
     def run(self, ops):
-        intervals = ("compaction_interval = 20, refresh_interval = 0"
+        intervals = ("compaction_interval = 20"
                      if self.background else
-                     "compaction_interval = 0, refresh_interval = 0")
+                     "compaction_interval = 0")
         self.statement(f"CREATE TABLE {self.table} (id BIGINT, grp INT, v TEXT) "
-                       f"WITH (storage = 'search', {intervals});")
+                       f"WITH ({intervals});")
         self.statement(f"CREATE TABLE {self.ref} (id BIGINT, grp INT, v TEXT);")
         for _ in range(4):
             self.insert()
-            self.statement(f"VACUUM (REFRESH_TABLE) {self.table};")
+            self.statement(f"VACUUM (FLUSH_TABLE) {self.table};")
         self.check()
         for _ in range(ops):
             x = self.rng.random()
@@ -113,7 +112,7 @@ class Dml:
                 self.rng.choice([self.delete, self.update])("w1")
                 if self.rng.random() < 0.3:
                     self.insert("w2")
-                    self.statement(f"VACUUM (REFRESH_TABLE) {self.table};", "w2")
+                    self.statement(f"VACUUM (FLUSH_TABLE) {self.table};", "w2")
                 if self.rng.random() < 0.7:
                     self.compact("w2")
                 self.statement(

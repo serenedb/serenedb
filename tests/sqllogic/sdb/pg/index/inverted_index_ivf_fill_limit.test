@@ -11,9 +11,6 @@ statement ok
 CREATE INDEX ivf_fill_idx ON ivf_fill
   USING inverted(id, cat, emb ivf (metric = 'l2')) INCLUDE (price);
 
-statement ok
-VACUUM (REFRESH_TABLE) ivf_fill;
-
 query
 SELECT count(*) FROM (
   SELECT id FROM ivf_fill_idx ORDER BY emb <-> [1, 0, 0.5] LIMIT 100000);

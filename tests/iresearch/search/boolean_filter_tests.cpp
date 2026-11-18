@@ -345,16 +345,6 @@ class FillDocs : public irs::fill::Node {
     return next;
   }
 
-  irs::doc_id_t FillAnd(irs::doc_id_t min, irs::doc_id_t max,
-                        uint64_t* IRS_RESTRICT mask) final {
-    const auto words = irs::detail::WindowWords(min, max);
-    const auto next = _list.Window(min, max, _own.data());
-    for (size_t w = 0; w != words; ++w) {
-      mask[w] &= _own[w];
-    }
-    return next;
-  }
-
   irs::doc_id_t FillAndNot(irs::doc_id_t min, irs::doc_id_t max,
                            uint64_t* IRS_RESTRICT mask) final {
     const auto words = irs::detail::WindowWords(min, max);
@@ -4153,7 +4143,7 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
 TEST_P(BooleanFilterTestCase, and_schemas) {
   // write segments
   {
-    auto writer = open_writer(irs::kOmCreate);
+    auto writer = open_writer(tests::kOmCreate);
 
     std::vector<DocGeneratorBase::ptr> gens;
 
@@ -4283,10 +4273,10 @@ TEST_P(BooleanFilterTestCase, not_standalone_sequential_ordered) {
     };
 
     tests::PreparedFilter prepared_filter{
-      *tests::Optimized(std::move(not_node), &sort), *rdr, &sort};
+      *tests::Optimized(std::move(not_node), &sort), rdr, &sort};
     std::multimap<irs::score_t, irs::doc_id_t, std::greater<>> scored_result;
 
-    ASSERT_EQ(1, rdr->size());
+    ASSERT_EQ(1, rdr.size());
 
     ASSERT_EQ(26, prepared_filter.Estimate(0));
 
@@ -4382,10 +4372,10 @@ TEST_P(BooleanFilterTestCase, not_sequential_ordered) {
     };
 
     tests::PreparedFilter prepared_filter{
-      *tests::Optimized(std::move(root), &sort), *rdr, &sort};
+      *tests::Optimized(std::move(root), &sort), rdr, &sort};
     std::multimap<irs::score_t, irs::doc_id_t, std::greater<>> scored_result;
 
-    ASSERT_EQ(1, rdr->size());
+    ASSERT_EQ(1, rdr.size());
 
     ASSERT_EQ(26, prepared_filter.Estimate(0));
 
@@ -5196,7 +5186,6 @@ TEST_P(BooleanFilterTestCase, mixed_ordered) {
   }
 
   auto rdr = open_reader();
-  ASSERT_TRUE(bool(rdr));
 
   {
     irs::BooleanFilter root;
@@ -5220,7 +5209,7 @@ TEST_P(BooleanFilterTestCase, mixed_ordered) {
     irs::TFIDF tfidf_scorer;
 
     tests::PreparedFilter prepared{
-      *tests::Optimized(std::move(root), &tfidf_scorer), *rdr, &tfidf_scorer};
+      *tests::Optimized(std::move(root), &tfidf_scorer), rdr, &tfidf_scorer};
     ASSERT_NE(nullptr, prepared.Query(0));
 
     std::vector<irs::doc_id_t> expected_docs{

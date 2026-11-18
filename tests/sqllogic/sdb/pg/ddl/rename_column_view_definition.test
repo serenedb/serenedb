@@ -1,0 +1,348 @@
+statement ok
+CREATE TABLE rcv_t (a INTEGER, b INTEGER);
+
+
+statement ok
+CREATE TABLE rcv_u (a INTEGER, x INTEGER);
+
+
+statement ok
+INSERT INTO rcv_t VALUES (1, 10), (2, 20);
+
+
+statement ok
+INSERT INTO rcv_u VALUES (1, 100), (3, 300);
+
+
+statement ok
+CREATE VIEW rcv_cte AS WITH c AS (SELECT a FROM rcv_t) SELECT a FROM c;
+
+
+statement ok
+CREATE VIEW rcv_union AS SELECT a FROM rcv_t UNION ALL SELECT 5 AS a;
+
+
+statement ok
+CREATE VIEW rcv_recursive AS WITH RECURSIVE r(n) AS (SELECT a FROM rcv_t WHERE a = 1 UNION ALL SELECT n + 1 FROM r WHERE n < 3) SELECT n FROM r;
+
+
+statement ok
+CREATE VIEW rcv_join AS SELECT rcv_t.a, rcv_u.a AS ua, x FROM rcv_t JOIN rcv_u ON rcv_t.a = rcv_u.a;
+
+
+statement ok
+CREATE VIEW rcv_subquery AS SELECT s.a FROM (SELECT a FROM rcv_t) s;
+
+
+statement ok
+CREATE VIEW rcv_function AS SELECT rcv_t.a, r.range AS g FROM rcv_t, range(2) r;
+
+
+statement ok
+CREATE VIEW rcv_scalar AS SELECT (SELECT max(a) FROM rcv_t) AS m;
+
+
+statement ok
+CREATE VIEW rcv_star AS SELECT rcv_t.* FROM rcv_t;
+
+
+statement ok
+CREATE VIEW rcv_grouped AS SELECT a, count(*) AS n FROM rcv_t GROUP BY a HAVING count(a) > 0 ORDER BY a;
+
+
+statement ok
+CREATE VIEW rcv_qualify AS SELECT a FROM rcv_t QUALIFY row_number() OVER (ORDER BY a DESC) = 1;
+
+
+statement ok
+CREATE MACRO rcv_macro() AS TABLE SELECT a FROM rcv_t;
+
+
+statement ok
+ALTER TABLE rcv_t RENAME COLUMN a TO a2;
+
+
+query
+SELECT viewname, definition FROM pg_views WHERE schemaname = 'public' AND viewname LIKE 'rcv%' ORDER BY viewname;
+----
+viewname	definition
+rcv_cte	WITH c AS (SELECT a2 AS a FROM rcv_t) SELECT a FROM c;
+rcv_function	SELECT rcv_t.a2 AS a, r."range" AS g FROM rcv_t , "range"(2) AS r;
+rcv_grouped	SELECT a2 AS a, count_star() AS n FROM rcv_t GROUP BY a2 HAVING (count(a2) > 0) ORDER BY a2;
+rcv_join	SELECT rcv_t.a2 AS a, rcv_u.a AS ua, x FROM (rcv_t INNER JOIN rcv_u ON ((rcv_t.a2 = rcv_u.a)));
+rcv_qualify	SELECT a2 AS a FROM rcv_t QUALIFY (row_number() OVER (ORDER BY a2 DESC) = 1);
+rcv_recursive	WITH RECURSIVE r (n) AS ((SELECT a2 AS a FROM rcv_t WHERE (a2 = 1)) UNION ALL (SELECT (n + 1) FROM r WHERE (n < 3))) SELECT n FROM r;
+rcv_scalar	SELECT (SELECT max(a2) FROM rcv_t) AS m;
+rcv_star	SELECT * FROM (SELECT rcv_t.* FROM rcv_t) AS rcv_star(a, b);
+rcv_subquery	SELECT s.a FROM (SELECT a2 AS a FROM rcv_t) AS s;
+rcv_union	(SELECT a2 AS a FROM rcv_t) UNION ALL (SELECT 5 AS a);
+
+
+query
+SELECT a FROM rcv_cte ORDER BY a;
+----
+a
+1
+2
+
+
+query
+SELECT a FROM rcv_union ORDER BY a;
+----
+a
+1
+2
+5
+
+
+query
+SELECT n FROM rcv_recursive ORDER BY n;
+----
+n
+1
+2
+3
+
+
+query
+SELECT a, ua, x FROM rcv_join;
+----
+a	ua	x
+1	1	100
+
+
+query
+SELECT a FROM rcv_subquery ORDER BY a;
+----
+a
+1
+2
+
+
+query
+SELECT a, g FROM rcv_function ORDER BY a, g;
+----
+a	g
+1	0
+1	1
+2	0
+2	1
+
+
+query
+SELECT m FROM rcv_scalar;
+----
+m
+2
+
+
+query
+SELECT a, b FROM rcv_star ORDER BY a;
+----
+a	b
+1	10
+2	20
+
+
+query
+SELECT a, n FROM rcv_grouped;
+----
+a	n
+1	1
+2	1
+
+
+query
+SELECT a FROM rcv_qualify;
+----
+a
+2
+
+
+query
+SELECT a FROM rcv_macro() ORDER BY a;
+----
+a
+1
+2
+
+
+statement error
+ALTER TABLE rcv_t DROP COLUMN a2;
+----
+db error: ERROR: cannot drop column a2 of table rcv_t because other objects depend on it
+DETAIL: view rcv_cte depends on column a2 of table rcv_t
+view rcv_union depends on column a2 of table rcv_t
+view rcv_recursive depends on column a2 of table rcv_t
+view rcv_join depends on column a2 of table rcv_t
+view rcv_subquery depends on column a2 of table rcv_t
+view rcv_function depends on column a2 of table rcv_t
+view rcv_scalar depends on column a2 of table rcv_t
+view rcv_star depends on column a2 of table rcv_t
+view rcv_grouped depends on column a2 of table rcv_t
+view rcv_qualify depends on column a2 of table rcv_t
+function rcv_macro() depends on column a2 of table rcv_t
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+
+
+statement ok
+ALTER TABLE rcv_t DROP COLUMN a2 CASCADE;
+
+
+query
+SELECT count(*) AS views FROM pg_views WHERE schemaname = 'public' AND viewname LIKE 'rcv%';
+----
+views
+0
+
+
+query
+SELECT b FROM rcv_t ORDER BY b;
+----
+b
+10
+20
+
+
+statement ok
+CREATE TABLE rcv_p (id INTEGER PRIMARY KEY, id2 INTEGER UNIQUE);
+
+
+statement ok
+CREATE TABLE rcv_c (x INTEGER REFERENCES rcv_p (id), y INTEGER REFERENCES rcv_p (id2));
+
+
+statement ok
+ALTER TABLE rcv_p RENAME COLUMN id TO pid;
+
+
+query
+SELECT pg_get_constraintdef(oid) AS fk FROM pg_constraint WHERE conrelid = 'rcv_c'::regclass ORDER BY fk;
+----
+fk
+FOREIGN KEY (x) REFERENCES rcv_p(pid)
+FOREIGN KEY (y) REFERENCES rcv_p(id2)
+
+
+statement ok
+INSERT INTO rcv_p VALUES (1, 2);
+
+
+statement ok
+INSERT INTO rcv_c VALUES (1, 2);
+
+
+statement error
+INSERT INTO rcv_c VALUES (5, 2);
+----
+db error: ERROR: insert or update on table "rcv_c" violates foreign key constraint "rcv_c_x_fkey"
+DETAIL: Key (x)=(5) is not present in table "rcv_p".
+
+
+statement ok
+DROP TABLE rcv_c;
+
+
+statement ok
+DROP TABLE rcv_p;
+
+
+statement ok
+DROP TABLE rcv_u;
+
+
+statement ok
+DROP TABLE rcv_t;
+
+
+statement ok
+CREATE TABLE rcv_tf (a INTEGER);
+
+
+statement ok
+INSERT INTO rcv_tf VALUES (1);
+
+
+statement ok
+CREATE VIEW rcv_tf_v AS SELECT a, r.range AS g FROM rcv_tf, range(2) r;
+
+
+statement ok
+ALTER TABLE rcv_tf RENAME COLUMN a TO a2;
+
+
+query
+SELECT a, g FROM rcv_tf_v ORDER BY g;
+----
+a	g
+1	0
+1	1
+
+
+statement ok
+CREATE TABLE rcv_l (k INTEGER, v INTEGER);
+
+
+statement ok
+CREATE TABLE rcv_r (k INTEGER, w INTEGER);
+
+
+statement ok
+CREATE VIEW rcv_using AS SELECT v, w FROM rcv_l JOIN rcv_r USING (k);
+
+
+statement error
+ALTER TABLE rcv_l RENAME COLUMN k TO k2;
+----
+db error: ERROR: cannot rename column k of table rcv_l because other objects depend on it
+DETAIL: view rcv_using refers to the column where its rename cannot be followed
+
+
+statement error
+ALTER TABLE rcv_l DROP COLUMN k;
+----
+db error: ERROR: cannot drop column k of table rcv_l because other objects depend on it
+DETAIL: view rcv_using depends on column k of table rcv_l
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+
+
+statement ok
+CREATE TABLE rcv_o (a INTEGER);
+
+
+statement ok
+INSERT INTO rcv_o VALUES (3);
+
+
+statement ok
+CREATE TABLE rcv_k (a INTEGER, y INTEGER);
+
+
+statement ok
+INSERT INTO rcv_k VALUES (3, 30), (4, 40);
+
+
+statement ok
+CREATE VIEW rcv_corr AS SELECT (SELECT a) AS x, (SELECT max(y) FROM rcv_k WHERE rcv_k.a = rcv_o.a) AS y, (SELECT max(rcv_o.a) FROM rcv_k AS rcv_o) AS shadowed FROM rcv_o;
+
+
+statement ok
+ALTER TABLE rcv_o RENAME COLUMN a TO a2;
+
+
+query
+SELECT x, y, shadowed FROM rcv_corr;
+----
+x	y	shadowed
+3	30	4
+
+
+statement ok
+CREATE VIEW rcv_corr_fn AS SELECT (SELECT a2 FROM range(1)) AS x FROM rcv_o;
+
+
+statement error
+ALTER TABLE rcv_o RENAME COLUMN a2 TO a3;
+----
+db error: ERROR: cannot rename column a2 of table rcv_o because other objects depend on it
+DETAIL: view rcv_corr_fn refers to the column where its rename cannot be followed

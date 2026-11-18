@@ -1,0 +1,371 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE mrr (id BIGINT PRIMARY KEY, body TEXT) WITH (compaction_interval = 0);
+
+
+statement ok
+CREATE TABLE mri (id BIGINT PRIMARY KEY, body TEXT) WITH (compaction_interval = 0);
+
+
+statement ok
+CREATE TABLE mrs (id BIGINT PRIMARY KEY, body TEXT) WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO mrr SELECT i, 'row ' || i FROM range(0, 2000) r(i);
+
+
+statement ok
+INSERT INTO mrr SELECT i, 'row ' || i FROM range(2000, 4000) r(i);
+
+
+statement ok
+INSERT INTO mrr SELECT i, 'row ' || i FROM range(4000, 6000) r(i);
+
+
+statement ok
+INSERT INTO mrr SELECT i, 'row ' || i FROM range(6000, 8000) r(i);
+
+
+statement ok
+INSERT INTO mrr SELECT i, 'row ' || i FROM range(8000, 10000) r(i);
+
+
+statement ok
+INSERT INTO mrr SELECT i, 'row ' || i FROM range(10000, 12000) r(i);
+
+
+statement ok
+INSERT INTO mrr SELECT i, 'row ' || i FROM range(12000, 14000) r(i);
+
+
+statement ok
+INSERT INTO mrr SELECT i, 'row ' || i FROM range(14000, 16000) r(i);
+
+
+statement ok
+INSERT INTO mrr SELECT i, 'row ' || i FROM range(16000, 18000) r(i);
+
+
+statement ok
+INSERT INTO mrr SELECT i, 'row ' || i FROM range(18000, 20000) r(i);
+
+
+statement ok
+INSERT INTO mrr SELECT i, 'row ' || i FROM range(20000, 22000) r(i);
+
+
+statement ok
+INSERT INTO mrr SELECT i, 'row ' || i FROM range(22000, 24000) r(i);
+
+
+statement ok
+INSERT INTO mrr SELECT i, 'row ' || i FROM range(24000, 26000) r(i);
+
+
+statement ok
+INSERT INTO mrr SELECT i, 'row ' || i FROM range(26000, 28000) r(i);
+
+
+statement ok
+INSERT INTO mrr SELECT i, 'row ' || i FROM range(28000, 30000) r(i);
+
+
+statement ok
+INSERT INTO mrr SELECT i, 'row ' || i FROM range(30000, 32000) r(i);
+
+
+statement ok
+INSERT INTO mrr SELECT i, 'row ' || i FROM range(32000, 34000) r(i);
+
+
+statement ok
+INSERT INTO mrr SELECT i, 'row ' || i FROM range(34000, 36000) r(i);
+
+
+statement ok
+INSERT INTO mrr SELECT i, 'row ' || i FROM range(36000, 38000) r(i);
+
+
+statement ok
+DELETE FROM mrr WHERE id >= 4000 AND id < 8000;
+
+
+statement ok
+UPDATE mrr SET body = 'changed 10' WHERE id = 10;
+
+
+statement ok
+UPDATE mrr SET body = 'changed 33000' WHERE id = 33000;
+
+
+statement ok
+SET sdb_faults = 'pause_search_pieces_merged';
+
+
+statement ok
+INSERT INTO mri VALUES (1, 'one');
+
+
+statement ok
+INSERT INTO mri VALUES (2, 'two');
+
+
+statement ok
+INSERT INTO mri VALUES (3, 'three');
+
+
+statement ok
+INSERT INTO mri SELECT i, 'many ' || i FROM range(100, 200) r(i);
+
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_pieces_merged:parked';
+
+
+statement ok
+SET sdb_faults = 'pause_search_pieces_merged:release';
+
+
+statement ok
+DELETE FROM mri WHERE id = 2 OR id = 150;
+
+
+statement ok
+UPDATE mri SET body = 'changed 3' WHERE id = 3;
+
+
+statement ok
+UPDATE mri SET body = 'changed 199' WHERE id = 199;
+
+
+statement ok
+SET threads = 1;
+
+
+statement ok
+INSERT INTO mrs SELECT i, 'segment ' || i FROM range(0, 3000) r(i);
+
+
+statement ok
+INSERT INTO mrs SELECT i, 'kept ' || i FROM range(3000, 6000) r(i);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO mrs SELECT i, 'gone ' || i FROM range(6000, 9000) r(i);
+
+
+statement ok
+DELETE FROM mrs WHERE id >= 6000;
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+DELETE FROM mrs WHERE id < 3000;
+
+
+statement ok
+UPDATE mrs SET body = 'changed 4000' WHERE id = 4000;
+
+
+statement ok
+RESET threads;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_log
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_log
+query
+SELECT count(*) AS n, sum(id) AS ids FROM mrr;
+----
+n	ids
+34000	697983000
+
+
+connection after_log
+query
+SELECT id, body FROM mrr WHERE id IN (10, 3999, 4000, 7999, 8000, 33000) ORDER BY id;
+----
+id	body
+10	changed 10
+3999	row 3999
+8000	row 8000
+33000	changed 33000
+
+
+connection after_log
+query
+SELECT id, body FROM mri ORDER BY id LIMIT 4;
+----
+id	body
+1	one
+3	changed 3
+100	many 100
+101	many 101
+
+
+connection after_log
+query
+SELECT count(*) AS n, sum(id) AS ids, max(body) AS last FROM mri WHERE id >= 100;
+----
+n	ids	last
+99	14800	many 198
+
+
+connection after_log
+query
+SELECT body FROM mri WHERE id = 199;
+----
+body
+changed 199
+
+
+connection after_log
+query
+SELECT count(*) AS n, min(id) AS first, max(id) AS last FROM mrs;
+----
+n	first	last
+3000	3000	5999
+
+
+connection after_log
+query
+SELECT body FROM mrs WHERE id = 4000;
+----
+body
+changed 4000
+
+
+connection after_log
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT (SELECT value FROM sdb_metrics WHERE metric = 'catalog_wal_since_snapshot_bytes') < 4096 AS small_log,
+       (SELECT value FROM sdb_metrics WHERE metric = 'num_buffered_docs' AND relation_id = 'mrr'::regclass) AS in_memory;
+----
+small_log	in_memory
+t	34000
+
+
+connection after_log
+statement error
+INSERT INTO mrr VALUES (100, 'again');
+----
+db error: ERROR: duplicate key value violates unique constraint "mrr_pkey"
+DETAIL: Key (id)=(100) already exists.
+
+
+connection after_log
+statement ok
+INSERT INTO mrr VALUES (5000, 'back');
+
+
+connection after_log
+statement ok
+DELETE FROM mrr WHERE id >= 20000 AND id < 20100;
+
+
+connection after_log
+statement ok
+UPDATE mrr SET body = 'changed 21000' WHERE id = 21000;
+
+
+connection after_log
+statement ok
+INSERT INTO mrr VALUES (38000, 'last');
+
+
+connection after_log
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_log
+statement error connection closed
+SELECT 1;
+
+
+connection after_snapshot
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_snapshot
+query
+SELECT count(*) AS n, sum(id) AS ids FROM mrr;
+----
+n	ids
+33902	696021050
+
+
+connection after_snapshot
+query
+SELECT id, body FROM mrr WHERE id IN (10, 5000, 20000, 20100, 21000, 33000, 38000) ORDER BY id;
+----
+id	body
+10	changed 10
+5000	back
+20100	row 20100
+21000	changed 21000
+33000	changed 33000
+38000	last
+
+
+connection after_snapshot
+query
+SELECT count(*) AS n, sum(id) AS ids FROM mri;
+----
+n	ids
+101	14804
+
+
+connection after_snapshot
+query
+SELECT count(*) AS n, min(id) AS first, max(id) AS last FROM mrs;
+----
+n	first	last
+3000	3000	5999
+
+
+connection after_snapshot
+statement error
+INSERT INTO mri VALUES (199, 'again');
+----
+db error: ERROR: duplicate key value violates unique constraint "mri_pkey"
+DETAIL: Key (id)=(199) already exists.
+
+
+connection after_snapshot
+statement ok
+INSERT INTO mri VALUES (2, 'two again');
+
+
+connection after_snapshot
+query
+SELECT id, body FROM mri WHERE id < 100 ORDER BY id;
+----
+id	body
+1	one
+2	two again
+3	changed 3

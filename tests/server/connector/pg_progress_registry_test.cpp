@@ -25,7 +25,6 @@
 #include <memory>
 #include <thread>
 
-#include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
 #include "pg/progress_registry.h"
 
@@ -98,9 +97,8 @@ TEST(ProgressRegistryTest, BeginQueryResetsMetrics) {
   m.SetCommand(ProgressCommand::CopyFrom);
   m.SetIoType(ProgressIoType::Pipe);
   ProgressMetrics::Set(m.relid, 42);
-  ProgressMetrics::Add(m.tuples_processed, 100);
-  ProgressMetrics::Add(m.tuples_processed, 50);
-  ProgressMetrics::Add(m.bytes_processed, 4096);
+  m.AddTuples(100);
+  m.AddProcessed(50, 4096);
 
   auto snap = FindByPid(1003);
   ASSERT_TRUE(snap.has_value());
@@ -167,15 +165,15 @@ TEST(ProgressRegistryTest, DetachedSourceReportsNoDuckDBProgress) {
 TEST(ProgressRegistryTest,
      ClosedRegistrationDetachesBeforeTheConnectionIsDestroyed) {
   duckdb::DuckDB db{nullptr};
-  auto conn = std::make_unique<duckdb::Connection>(db);
-  auto& state = connector::SereneDBClientState::Register(
-    *conn->context,
-    std::make_shared<ConnectionContext>(*conn->context, "postgres",
-                                        std::string_view{}, 0, "memory", 0,
-                                        nullptr, 1006, nullptr),
-    true);
-  ProgressRegistration registration{state.progress_source};
-  state.progress_source->BeginQuery("SELECT 1");
+  auto conn = std::make_unique<duckdb::Connection>(
+    duckdb::make_shared_ptr<ConnectionContext>(
+      *db.instance, SessionIdentity{.user = "postgres",
+                                    .database = "memory",
+                                    .backend_pid = 1006,
+                                    .client_backend = true}));
+  auto& state = ConnectionContext::Get(*conn->context);
+  ProgressRegistration registration{state.ProgressSource()};
+  state.ProgressSource()->BeginQuery("SELECT 1");
 
   bool listed = false;
   std::atomic_bool snapshotted;

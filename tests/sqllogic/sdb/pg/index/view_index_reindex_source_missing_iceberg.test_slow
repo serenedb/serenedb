@@ -46,9 +46,6 @@ DETACH vsm_${__DATABASE__};
 statement error Table with name "vsm_.*vsm_t" does not exist
 REINDEX INDEX vsm_idx;
 
-statement ok
-VACUUM (REFRESH_INDEX) vsm_idx;
-
 query
 SELECT count(*) AS n FROM vsm_idx WHERE body @@ ts_phrase('pudge');
 ----

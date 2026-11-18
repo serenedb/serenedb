@@ -23,9 +23,8 @@
 #include <absl/algorithm/container.h>
 
 #include <duckdb/catalog/catalog_transaction.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/main/client_context.hpp>
-#include <duckdb/transaction/duck_transaction.hpp>
-#include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <memory>
@@ -34,7 +33,7 @@
 
 #include "catalog/cluster.h"
 #include "catalog/entry/role.h"
-#include "connector/duckdb_client_state.h"
+#include "catalog/transaction.h"
 #include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
 
@@ -129,7 +128,7 @@ std::vector<duckdb::idx_t> Reachable(const RoleGraph& graph, duckdb::idx_t role,
 std::shared_ptr<const RoleGraph> BuildRoleGraph(
   catalog::ClusterCatalog& cluster, duckdb::CatalogTransaction transaction) {
   auto graph = std::make_shared<RoleGraph>();
-  cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
+  cluster.Set(duckdb::CatalogType::ROLE_ENTRY)
     .Scan(transaction, [&](duckdb::CatalogEntry& entry) {
       const auto& role = entry.Cast<catalog::RoleCatalogEntry>();
       auto& node = graph->nodes[role.oid];
@@ -151,29 +150,27 @@ bool WritesCatalog(duckdb::ClientContext& context,
   }
   auto transaction = context.transaction.ActiveTransaction().TryGetTransaction(
     cluster.GetAttached());
-  return transaction &&
-         transaction->Cast<duckdb::DuckTransaction>().catalog_version >=
-           duckdb::TRANSACTION_ID_START;
+  return transaction && transaction->Cast<catalog::DatabaseTransaction>()
+                          .Session()
+                          .HasChanges();
 }
 
 std::shared_ptr<const RoleGraph> Publish(catalog::ClusterCatalog& cluster,
                                          RoleCache& cache) {
-  const auto durable =
-    duckdb::DuckTransactionManager::Get(cluster.GetAttached())
-      .GetDurableSnapshot();
+  SDB_PARK_ONCE_ON_FAILURE("pause_role_publish");
+  const catalog::CommittedView view;
+  const auto version =
+    catalog::Transactions::Get().CatalogEpoch(view.Snapshot());
   {
     absl::MutexLock lock{&cache.mutex};
-    if (cache.roles && cache.version >= durable.catalog_version) {
+    if (cache.roles && cache.version >= version) {
       return cache.roles;
     }
   }
-  auto roles = BuildRoleGraph(
-    cluster, duckdb::CatalogTransaction{cluster.GetDatabase(),
-                                        duckdb::TRANSACTION_ID_START - 1,
-                                        durable.visibility_bound});
+  auto roles = BuildRoleGraph(cluster, view.Transaction(cluster.GetDatabase()));
   absl::MutexLock lock{&cache.mutex};
-  if (!cache.roles || durable.catalog_version > cache.version) {
-    cache.version = durable.catalog_version;
+  if (!cache.roles || version > cache.version) {
+    cache.version = version;
     cache.roles = std::move(roles);
     cache.closures.clear();
   }
@@ -263,8 +260,7 @@ std::shared_ptr<const RoleClosure> ClosureFor(duckdb::ClientContext* context,
 
 std::shared_ptr<const RoleClosure> SessionClosure(
   duckdb::ClientContext& context) {
-  const auto* connection = connector::GetSereneDBContextPtr(context);
-  return connection ? ClosureFor(&context, connection->GetRoleId()) : nullptr;
+  return ClosureFor(&context, ConnectionContext::Get(context).GetRoleId());
 }
 
 bool RoleClosure::Can(duckdb::CatalogType type, const duckdb::Permissions& perm,

@@ -33,7 +33,7 @@ bool HasTerms(const FieldInverter* field) noexcept {
 
 }  // namespace
 
-void FieldsInverter::Flush(term_dict::FieldWriter& fw, FlushState& state,
+void FieldsInverter::Flush(FieldSink& fw, FlushState& state,
                            std::span<const BasicTermReader* const> extra) {
   IndexFeatures index_features{IndexFeatures::None};
   uint64_t keyed_dicts = extra.size();

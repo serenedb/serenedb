@@ -131,7 +131,7 @@ irs::TermClause Clause(std::string_view value) {
 class CountSubtractTest : public tests::IndexTestBase {
  protected:
   void Build() {
-    auto writer = open_writer(irs::kOmCreate);
+    auto writer = open_writer(tests::kOmCreate);
     auto body = std::make_shared<tests::TextField<std::string>>("body");
     body->id = kBodyId;
     tests::Document doc;

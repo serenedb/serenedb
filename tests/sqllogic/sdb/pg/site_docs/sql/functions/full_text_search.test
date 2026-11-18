@@ -21,9 +21,6 @@ INSERT INTO docs VALUES
     (4, 'something else entirely', 'comedy', 'z');
 
 statement ok
-VACUUM (REFRESH_TABLE) docs;
-
-statement ok
 CREATE TABLE titles (id INTEGER PRIMARY KEY, title VARCHAR);
 
 statement ok
@@ -36,9 +33,6 @@ statement ok
 INSERT INTO titles VALUES (1, 'hello'), (2, 'help'), (3, 'world'), (4, 'held');
 
 statement ok
-VACUUM (REFRESH_TABLE) titles;
-
-statement ok
 CREATE TABLE vecs (id INTEGER, emb FLOAT[3]);
 
 statement ok
@@ -46,9 +40,6 @@ CREATE INDEX vecs_l2 ON vecs USING inverted (id, emb ivf (metric = 'l2'));
 
 statement ok
 INSERT INTO vecs VALUES (1, [1, 0, 0]::FLOAT[3]), (2, [0, 5, 0]::FLOAT[3]), (3, [0, 0, 1]::FLOAT[3]);
-
-statement ok
-VACUUM (REFRESH_TABLE) vecs;
 
 statement ok
 CREATE TABLE vecs_c (id INTEGER, emb FLOAT[3]);
@@ -60,9 +51,6 @@ statement ok
 INSERT INTO vecs_c VALUES (1, [1, 0, 0]::FLOAT[3]), (2, [0, 1, 0]::FLOAT[3]), (3, [1, 1, 0]::FLOAT[3]);
 
 statement ok
-VACUUM (REFRESH_TABLE) vecs_c;
-
-statement ok
 CREATE TABLE vecs_l (id INTEGER, emb FLOAT[3]);
 
 statement ok
@@ -72,9 +60,6 @@ statement ok
 INSERT INTO vecs_l VALUES (1, [1, 0, 0]::FLOAT[3]), (2, [0, 5, 0]::FLOAT[3]), (3, [0, 0, 1]::FLOAT[3]);
 
 statement ok
-VACUUM (REFRESH_TABLE) vecs_l;
-
-statement ok
 CREATE TABLE vecs_i (id INTEGER, emb FLOAT[3]);
 
 statement ok
@@ -82,9 +67,6 @@ CREATE INDEX vecs_ip ON vecs_i USING inverted (id, emb ivf (metric = 'ip'));
 
 statement ok
 INSERT INTO vecs_i VALUES (1, [1, 0, 0]::FLOAT[3]), (2, [0, 5, 0]::FLOAT[3]), (3, [2, 2, 2]::FLOAT[3]);
-
-statement ok
-VACUUM (REFRESH_TABLE) vecs_i;
 
 statement ok
 CREATE TABLE geo (id INTEGER PRIMARY KEY, geo GEOMETRY('OGC:CRS84'));
@@ -99,9 +81,6 @@ statement ok
 INSERT INTO geo VALUES
     (1, 'POINT(37.6 55.7)'::GEOMETRY('OGC:CRS84')),
     (2, 'POINT(37.7 55.8)'::GEOMETRY('OGC:CRS84'));
-
-statement ok
-VACUUM (REFRESH_TABLE) geo;
 
 statement ok
 CREATE TABLE scored (id INTEGER PRIMARY KEY, body VARCHAR);
@@ -123,9 +102,6 @@ INSERT INTO scored VALUES
     (5, 'the lazy dog sleeps all day');
 
 statement ok
-VACUUM (REFRESH_TABLE) scored;
-
-statement ok
 CREATE TABLE geo_demo (id INTEGER PRIMARY KEY, name VARCHAR, shape JSON);
 
 statement ok
@@ -141,9 +117,6 @@ INSERT INTO geo_demo VALUES
     (3, 'edge_point',  '{"type":"Point","coordinates":[10,5]}'),
     (4, 'far_point',   '{"type":"Point","coordinates":[50,50]}'),
     (5, 'overlap_box', '{"type":"Polygon","coordinates":[[[5,5],[15,5],[15,15],[5,15],[5,5]]]}');
-
-statement ok
-VACUUM (REFRESH_TABLE) geo_demo;
 
 statement ok
 CREATE TABLE cities (id INTEGER PRIMARY KEY, name VARCHAR, loc GEOMETRY('OGC:CRS84'));
@@ -162,9 +135,6 @@ INSERT INTO cities VALUES
     (4, 'spb_palace', 'POINT(30.314611 59.939095)'::GEOMETRY('OGC:CRS84'));
 
 statement ok
-VACUUM (REFRESH_TABLE) cities;
-
-statement ok
 CREATE TABLE passages (id INTEGER PRIMARY KEY, body VARCHAR);
 
 statement ok
@@ -180,9 +150,6 @@ INSERT INTO passages VALUES
     (1, 'the quick brown fox jumps over the lazy dog'),
     (2, 'a quick red fox runs fast'),
     (3, 'First sentence here. The quick brown fox is in this sentence. Third one.');
-
-statement ok
-VACUUM (REFRESH_TABLE) passages;
 
 
 # DOCS_TEST: column--tsquery

@@ -605,3 +605,57 @@ key	value
 1	110
 2	120
 3	130
+
+
+###############################################################################
+# 13. A transaction that wrote still reads the latest commits
+#     conn1 updates a row, conn2 inserts and commits a row, conn1 sees both
+#     its own update and conn2's row
+###############################################################################
+
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+statement count 1
+UPDATE t_upd SET value = 1 WHERE key = 1;
+
+connection conn2
+statement ok
+INSERT INTO t_upd VALUES (4, 40);
+
+query
+SELECT * FROM t_upd ORDER BY key;
+----
+key	value
+1	1
+2	120
+3	130
+4	40
+
+statement count 1
+DELETE FROM t_upd WHERE key = 4;
+
+connection conn2
+statement ok
+INSERT INTO t_upd VALUES (5, 50);
+
+query
+SELECT * FROM t_upd ORDER BY key;
+----
+key	value
+1	1
+2	120
+3	130
+5	50
+
+statement ok
+COMMIT;
+
+query
+SELECT * FROM t_upd ORDER BY key;
+----
+key	value
+1	1
+2	120
+3	130
+5	50

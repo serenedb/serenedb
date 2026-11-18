@@ -1,0 +1,45 @@
+statement ok
+DROP TABLE IF EXISTS ejes_vault;
+
+
+statement ok
+DROP ROLE IF EXISTS ejes_reader;
+
+
+statement ok
+CREATE TABLE ejes_vault (id int, secret text);
+
+
+statement ok
+INSERT INTO ejes_vault VALUES (1, 'clickclack');
+
+
+statement ok
+CREATE ROLE ejes_reader LOGIN PASSWORD 'ejes_pw';
+
+
+connection c_reader user=ejes_reader password=ejes_pw
+statement error
+SELECT * FROM json_execute_serialized_sql(json_serialize_sql('SELECT secret FROM ejes_vault'));
+----
+db error: ERROR: permission denied for table ejes_vault<slt:ignore>
+
+
+statement ok
+GRANT SELECT ON ejes_vault TO ejes_reader;
+
+
+connection c_reader user=ejes_reader password=ejes_pw
+query
+SELECT * FROM json_execute_serialized_sql(json_serialize_sql('SELECT secret FROM ejes_vault'));
+----
+secret
+clickclack
+
+
+statement ok
+DROP TABLE ejes_vault;
+
+
+statement ok
+DROP ROLE ejes_reader;

@@ -70,9 +70,6 @@ CREATE INDEX g17_v_expr_ng ON g17_v USING inverted(pk, (upper(v)) ng_dict);
 statement ok
 INSERT INTO g17_v VALUES (1, 'alpha'), (2, 'beta');
 
-statement ok
-VACUUM (REFRESH_TABLE) g17_v;
-
 query
 SELECT count(*) FROM g17_v_expr_ng;
 ----
@@ -97,9 +94,6 @@ statement ok
 INSERT INTO g17_b VALUES
     (1, '\\x68656c6c6f'::BLOB),
     (2, '\\xdeadbeef'::BLOB);
-
-statement ok
-VACUUM (REFRESH_TABLE) g17_b;
 
 query
 SELECT count(*) FROM g17_b_col_ng_st;
@@ -139,9 +133,6 @@ statement ok
 INSERT INTO g17_j VALUES
     (1, '"alpha"'::JSON),
     (2, '"beta"'::JSON);
-
-statement ok
-VACUUM (REFRESH_TABLE) g17_j;
 
 query
 SELECT count(*) FROM g17_j_col_ng;
@@ -203,9 +194,6 @@ statement ok
 INSERT INTO g17_vla VALUES
     (1, ['alpha', 'beta'], ['alpha', 'beta', 'gamma']),
     (2, ['delta'],         ['delta', 'epsilon', 'zeta']);
-
-statement ok
-VACUUM (REFRESH_TABLE) g17_vla;
 
 query
 SELECT count(*) FROM g17_vla_va_col_ng;
@@ -272,9 +260,6 @@ CREATE INDEX g17_vla_vs_expr_wc   ON g17_vla USING inverted(pk, (vs) wc_dict);
 
 statement ok
 CREATE INDEX g17_vla_va_expr_wc   ON g17_vla USING inverted(pk, (va) wc_dict);
-
-statement ok
-VACUUM (REFRESH_TABLE) g17_vla;
 
 query
 SELECT pk FROM g17_vla_vs_col_wc WHERE vs @@ ts_like('%lph%') ORDER BY pk;
@@ -371,9 +356,6 @@ INSERT INTO g17_bla VALUES
     (1, ['hello'::BLOB, 'world'::BLOB], ['aaa'::BLOB, 'bbb'::BLOB, 'ccc'::BLOB]),
     (2, ['deadbeef'::BLOB],             ['ddd'::BLOB, 'eee'::BLOB, 'fff'::BLOB]);
 
-statement ok
-VACUUM (REFRESH_TABLE) g17_bla;
-
 query
 SELECT count(*) FROM g17_bla_bs_col_ng;
 ----
@@ -437,9 +419,6 @@ CREATE INDEX g17_bla_ba_col_wc    ON g17_bla USING inverted(pk, ba wc_dict);
 statement ok
 CREATE INDEX g17_bla_bs_expr_wc   ON g17_bla USING inverted(pk, (bs) wc_dict);
 
-statement ok
-VACUUM (REFRESH_TABLE) g17_bla;
-
 query
 SELECT pk FROM g17_bla_bs_col_wc WHERE bs @@ ts_like('%orl%') ORDER BY pk;
 ----
@@ -480,9 +459,6 @@ statement ok
 INSERT INTO g17_jl VALUES
     (1, ARRAY['"alpha"'::JSON, '"beta"'::JSON]),
     (2, ARRAY['"gamma"'::JSON]);
-
-statement ok
-VACUUM (REFRESH_TABLE) g17_jl;
 
 query
 SELECT count(*) FROM g17_jl_js_expr_imp;

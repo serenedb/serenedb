@@ -22,6 +22,8 @@
 
 #pragma once
 
+#include <limits>
+
 #include "data_input.hpp"
 #include "data_output.hpp"
 #include "directory.hpp"
@@ -29,7 +31,6 @@
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 #include "iresearch/utils/number_utils.hpp"
-#include "iresearch/utils/numeric_utils.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/std.hpp"
 #include "iresearch/utils/string.hpp"
@@ -188,7 +189,7 @@ class BytesViewInput : public IndexInput {
   void ReadData(duckdb::QueryContext, byte_type* b, uint64_t count) final {
     BytesViewInput::ReadData(b, count);
   }
-  void ReadData(uint64_t offset, byte_type* b, size_t count) noexcept final;
+  void ReadData(uint64_t offset, byte_type* b, size_t count) final;
 
   int16_t ReadI16() noexcept final { return irs::read<uint16_t>(_pos); }
   int32_t ReadI32() noexcept final { return irs::read<uint32_t>(_pos); }
@@ -284,7 +285,7 @@ class RemappedBytesViewInput final : public IndexInput {
   void ReadData(duckdb::QueryContext, byte_type* b, uint64_t size) final {
     _input.ReadData(b, size);
   }
-  void ReadData(uint64_t offset, byte_type* b, size_t size) noexcept final {
+  void ReadData(uint64_t offset, byte_type* b, size_t size) final {
     _input.ReadData(SourceToInternal(offset), b, size);
   }
 

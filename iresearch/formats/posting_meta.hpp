@@ -44,6 +44,8 @@ struct PostingMeta {
 
   bytes_view Inline() const noexcept { return {inline_data, inline_size}; }
 
+  bool operator==(const PostingMeta&) const noexcept = default;
+
   uint32_t docs_count = 0;  // How many documents a particular term contains
   uint32_t freq = 0;  // How many times a particular term occur in documents
   uint64_t doc_start = 0;  // where this term's postings start in the .doc file

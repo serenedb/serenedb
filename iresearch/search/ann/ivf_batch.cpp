@@ -204,8 +204,7 @@ void IvfQueryScan::Keep(Collector& collector, std::span<const doc_id_t> docs,
     collector.Append(_docs.data(), _kept.data(), _spreads.data(), kept);
     return;
   }
-  _fetcher->Fetch(std::span<const doc_id_t>{_docs.data(), kept});
-  _score.Score(_scores.data(), static_cast<scores_size_t>(kept));
+  FetchAndScore(*_fetcher, _score, _docs.data(), _scores.data(), kept);
   kept = Narrow(kept);
   collector.Append(_docs.data(), _scores.data(), _spreads.data(), kept);
 }

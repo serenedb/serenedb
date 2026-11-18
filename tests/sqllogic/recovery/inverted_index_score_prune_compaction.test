@@ -39,12 +39,11 @@ CREATE TEXT SEARCH DICTIONARY en_prune AS
 
 
 statement ok
-CREATE TABLE prune_cons (id INTEGER PRIMARY KEY, body VARCHAR);
+CREATE TABLE prune_cons (id INTEGER PRIMARY KEY, body VARCHAR) WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 
 
 statement ok
-CREATE INDEX prune_cons_idx ON prune_cons USING inverted(id, body en_prune)
-  WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+CREATE INDEX prune_cons_idx ON prune_cons USING inverted(id, body en_prune);
 
 
 # Segment 1: 1000 rows.
@@ -60,7 +59,7 @@ INSERT INTO prune_cons SELECT i, CASE i % 5
 
 
 statement ok
-VACUUM (REFRESH_TABLE) prune_cons;
+VACUUM (FLUSH_TABLE) prune_cons;
 
 
 # Segment 2: 1000 more rows under a disjoint pk range.
@@ -76,7 +75,7 @@ INSERT INTO prune_cons SELECT i, CASE i % 5
 
 
 statement ok
-VACUUM (REFRESH_TABLE) prune_cons;
+VACUUM (FLUSH_TABLE) prune_cons;
 
 
 # === Pre-merge sanity: pruning fires on the initial-flush segments. ===

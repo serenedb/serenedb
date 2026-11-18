@@ -38,9 +38,6 @@ INSERT INTO wc_list_t VALUES
     (9, ['bear', 'lynx']),
     (10, ['sew', 'much'])
 
-statement ok
-VACUUM (REFRESH_TABLE) wc_list_t
-
 query
 SELECT id FROM wc_list_idx WHERE tags @@ ts_like('%ear%') ORDER BY id
 ----
@@ -150,9 +147,6 @@ DELETE FROM wc_list_t WHERE id = 2
 statement ok
 UPDATE wc_list_t SET tags = ['pear', 'kiwi'] WHERE id = 4
 
-statement ok
-VACUUM (REFRESH_TABLE) wc_list_t
-
 query
 SELECT id FROM wc_list_idx WHERE tags @@ ts_like('%ear%') ORDER BY id
 ----
@@ -200,9 +194,6 @@ CREATE INDEX wc_arr_idx ON wc_arr_t
     USING inverted(id, tags wc_list_dict)
     INCLUDE (id, tags)
 
-statement ok
-VACUUM (REFRESH_TABLE) wc_arr_t
-
 query
 SELECT id FROM wc_arr_idx WHERE tags @@ ts_like('%ear%') ORDER BY id
 ----
@@ -235,9 +226,6 @@ INSERT INTO wc_expr_t VALUES
 statement ok
 CREATE INDEX wc_expr_idx ON wc_expr_t
     USING inverted(id, (string_to_array(body, ' ')) wc_list_dict)
-
-statement ok
-VACUUM (REFRESH_TABLE) wc_expr_t
 
 query
 SELECT id FROM wc_expr_idx
@@ -276,9 +264,6 @@ INSERT INTO wc_bulk_t SELECT 6000, list('w' || g) FROM generate_series(1, 400) g
 
 statement ok
 INSERT INTO wc_bulk_t VALUES (6001, ['café crème', 'naïve'])
-
-statement ok
-VACUUM (REFRESH_TABLE) wc_bulk_t
 
 query
 SELECT count(*) FROM wc_bulk_idx WHERE tags @@ ts_like('%999')
@@ -333,9 +318,6 @@ statement ok
 CREATE INDEX txt_list_idx ON txt_list_t
     USING inverted(id, tags txt_list_dict)
 
-statement ok
-VACUUM (REFRESH_TABLE) txt_list_t
-
 query
 SELECT id FROM txt_list_idx WHERE tags @@ 'brown' ORDER BY id
 ----
@@ -382,9 +364,6 @@ CREATE INDEX sh_list_idx ON sh_list_t
 statement ok
 INSERT INTO sh_list_t VALUES
     (5, ['brown bear', NULL, 'fox den'])
-
-statement ok
-VACUUM (REFRESH_TABLE) sh_list_t
 
 query
 SELECT id FROM sh_list_idx WHERE tags @@ 'fox' ORDER BY id

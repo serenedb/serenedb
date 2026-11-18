@@ -85,6 +85,11 @@ struct NormColumnMeta {
   std::vector<NormRegionMeta> regions;
 };
 
+struct NormColumnSpec {
+  field_id id = 0;
+  NormColumnMeta meta;
+};
+
 inline uint64_t NormSlotsSize(const NormRegionMeta& region) noexcept {
   return region.stats.rows * (region.bits / 8);
 }
@@ -131,6 +136,7 @@ class NormColumnWriter final {
   }
 
   const NormColumnMeta& Meta() const noexcept { return _meta; }
+  NormColumnMeta TakeMeta() noexcept { return std::move(_meta); }
 
  private:
   void FlushRowGroup();

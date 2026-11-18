@@ -34,9 +34,8 @@ QUERY PLAN
 │ __internal_icu_date_trunc_bucket('month', tstz) │
 │ ~1,501 rows                                     │
 ╰────────────────────────┬────────────────────────╯
-╭─ SEQ_SCAN ─────────────┴────────────────────────╮
+╭─ IRESEARCH_SCAN ───────┴────────────────────────╮
 │ Table: tp                                       │
-│ Type: Sequential Scan                           │
 │ Projections: tstz                               │
 │ ~1,501 rows                                     │
 ╰─────────────────────────────────────────────────╯
@@ -59,9 +58,8 @@ QUERY PLAN
 │ Projections: CAST(h AS TINYINT)  │
 │ ~1,501 rows                      │
 ╰─────────────────┬────────────────╯
-╭─ SEQ_SCAN ──────┴────────────────╮
+╭─ IRESEARCH_SCAN ┴────────────────╮
 │ Table: tp                        │
-│ Type: Sequential Scan            │
 │ Projections: tstz                │
 │ ~1,501 rows                      │
 ╰──────────────────────────────────╯
@@ -79,9 +77,8 @@ QUERY PLAN
 │ Projections: y           │
 │ ~1,502 rows              │
 ╰─────────────┬────────────╯
-╭─ SEQ_SCAN ──┴────────────╮
+╭─ IRESEARCH_SCAN ─────────╮
 │ Table: tp_inf            │
-│ Type: Sequential Scan    │
 │ Projections: tstz        │
 │ ~1,502 rows              │
 ╰──────────────────────────╯

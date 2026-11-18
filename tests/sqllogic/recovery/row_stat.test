@@ -23,24 +23,23 @@ query
 EXPLAIN SELECT t.id, f.value FROM f JOIN t ON f.id = t.id;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────╮
-│ Projections: id,      │
-│              value    │
-│ ~5 rows               │
-╰───────────┬───────────╯
-╭─ HASH_JOIN ───────────╮
-│ Join Type: INNER      │
-│ Conditions: id = id   │
-│ ~5 rows               │
-╰───────────┬───────────╯
-            ├──────────────────────────╮
-╭─ SEQ_SCAN ┴───────────╮  ╭─ SEQ_SCAN ┴───────────╮
-│ Table: t              │  │ Table: f              │
-│ Type: Sequential Scan │  │ Type: Sequential Scan │
-│ Projections: id       │  │ Projections: id,      │
-│ ~1,000 rows           │  │              value    │
-╰───────────────────────╯  │ ~3 rows               │
-                           ╰───────────────────────╯
+╭─ PROJECTION ────────╮
+│ Projections: id,    │
+│              value  │
+│ ~1,000 rows         │
+╰──────────┬──────────╯
+╭─ HASH_JOIN ─────────╮
+│ Join Type: INNER    │
+│ Conditions: id = id │
+│ ~1,000 rows         │
+╰──────────┬──────────╯
+           ├────────────────────────╮
+╭─ IRESEARCH_SCAN ────╮  ╭─ IRESEARCH_SCAN ────╮
+│ Table: t            │  │ Table: f            │
+│ Projections: id     │  │ Projections: id,    │
+│ ~1,000 rows         │  │              value  │
+╰─────────────────────╯  │ ~3 rows             │
+                         ╰─────────────────────╯
 
 
 statement ok

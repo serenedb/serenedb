@@ -49,10 +49,6 @@ statement ok
 INSERT INTO list_n VALUES (4, 'fourth', [])
 
 
-statement ok
-VACUUM (REFRESH_TABLE) list_n
-
-
 # Sanity: the LIST column is served by the iresearch columnstore (i), so
 # the NULL/empty/null-element roundtrip below proves the cs materialiser
 # handles parent + element validity (the bug this test was written for).
@@ -62,13 +58,13 @@ EXPLAIN SELECT pk, tags FROM list_n_idx WHERE text_for_search @@ ts_phrase('seco
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────╮
 │ Index: list_n_idx                  │
-│ Lookup: table                      │
+│ Lookup: search                     │
 │ Index Filter:                      │
 │ ╭─ Term ─────────────────────────╮ │
 │ │ Field: text_for_search(string) │ │
 │ │ Value: second                  │ │
 │ ╰────────────────────────────────╯ │
-│ Projections: pk (l), tags (i)      │
+│ Projections: pk, tags              │
 │ ~1 row                             │
 ╰────────────────────────────────────╯
 
@@ -172,17 +168,13 @@ INSERT INTO list_n2 VALUES
 
 
 statement ok
-VACUUM (REFRESH_TABLE) list_n2
+VACUUM (FLUSH_TABLE) list_n2
 
 
 statement ok
 INSERT INTO list_n2 VALUES
   (4, 'fourth', NULL),
   (5, 'fifth',  ['epsilon'])
-
-
-statement ok
-VACUUM (REFRESH_TABLE) list_n2
 
 
 query
@@ -257,15 +249,11 @@ INSERT INTO list_n3 VALUES
 
 
 statement ok
-VACUUM (REFRESH_TABLE) list_n3
+VACUUM (FLUSH_TABLE) list_n3
 
 
 statement ok
 INSERT INTO list_n3 VALUES (3, 'third', NULL)
-
-
-statement ok
-VACUUM (REFRESH_TABLE) list_n3
 
 
 query
@@ -314,10 +302,6 @@ INSERT INTO list_n4 VALUES
   (1, 'first',  ['alpha']),
   (2, 'second', ['gamma', NULL, 'delta']),
   (3, 'third',  [])
-
-
-statement ok
-VACUUM (REFRESH_TABLE) list_n4
 
 
 query

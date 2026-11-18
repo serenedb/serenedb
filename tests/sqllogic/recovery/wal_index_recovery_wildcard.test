@@ -32,7 +32,7 @@ CREATE INDEX wal_wild_idx ON wal_wild_t
   INCLUDE (b);
 
 statement ok
-VACUUM (REFRESH_TABLE) wal_wild_t;
+VACUUM (FLUSH_TABLE) wal_wild_t;
 
 # Plan check: ts_like filter served by the inverted index.
 query
@@ -41,7 +41,7 @@ EXPLAIN SELECT pk FROM wal_wild_idx WHERE b @@ ts_like('percent_alpha_one');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────╮
 │ Index: wal_wild_idx                        │
-│ Lookup: table                              │
+│ Lookup: search                             │
 │ Index Filter:                              │
 │ ╭─ Wildcard NGram ───────────────────────╮ │
 │ │ Field: b(string)                       │ │
@@ -82,10 +82,6 @@ WHERE b @@ ts_like('percent_alpha_one');
 pk	b
 1	percent_alpha_one
 
-# Freeze iresearch commits before the post-crash batch.
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
-
 statement ok
 INSERT INTO wal_wild_t VALUES (2, 'percent_beta_two'),
                               (3, 'percent_gamma_three');
@@ -101,7 +97,7 @@ SELECT 1;
 
 connection wal_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (REFRESH_TABLE) wal_wild_t;
+SELECT 1;
 
 # Pre-crash row queryable.
 connection wal_after

@@ -76,6 +76,7 @@
 
 #include "comparison_op.hpp"
 #include "connector/common.h"
+#include "connector/constraint_keys.h"
 #include "connector/index_expression.hpp"
 #include "connector/term_dict.h"
 #include "functions/search.h"
@@ -521,12 +522,13 @@ bool AnyExprNode(const duckdb::Expression& expr, const Pred& pred) {
   return found;
 }
 
+bool IsNullConstant(const duckdb::Expression& expr) {
+  return expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_CONSTANT &&
+         expr.Cast<duckdb::BoundConstantExpression>().GetValue().IsNull();
+}
+
 bool ContainsNullConstant(const duckdb::Expression& expr) {
-  return AnyExprNode(expr, [](const duckdb::Expression& node) {
-    return node.GetExpressionClass() ==
-             duckdb::ExpressionClass::BOUND_CONSTANT &&
-           node.Cast<duckdb::BoundConstantExpression>().GetValue().IsNull();
-  });
+  return AnyExprNode(expr, IsNullConstant);
 }
 
 }  // namespace
@@ -579,21 +581,49 @@ bool IsStrictComparisonShape(const duckdb::Expression& expr) {
 const SearchColumnInfo* FindColumnRefInfo(
   const FilterContext& ctx, const duckdb::BoundColumnRefExpression& ref);
 
+const SearchColumnInfo* FindKeyColumnInfo(const FilterContext& ctx,
+                                          const duckdb::Expression& expr);
+
 namespace {
+
+bool ReachesNullableKey(const FilterContext& ctx,
+                        const duckdb::Expression& expr) {
+  if (const auto* info = FindKeyColumnInfo(ctx, expr)) {
+    return info->nullable;
+  }
+  bool reaches = false;
+  duckdb::ExpressionIterator::EnumerateChildren(
+    expr, [&](const duckdb::Expression& child) {
+      reaches = reaches || ReachesNullableKey(ctx, child);
+    });
+  return reaches;
+}
 
 // UNKNOWN exactly on NULL operands; false for shapes whose null behavior
 // is not provably strict.
 bool IsStrictPredicate(const duckdb::Expression& expr) {
-  if (IsStrictComparisonShape(expr)) {
+  const auto& peeled = PeelGroupModifiers(expr);
+  if (IsStrictComparisonShape(peeled)) {
     return true;
   }
-  if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_FUNCTION) {
-    return IsIndexOnlyPredicateName(expr.Cast<duckdb::BoundFunctionExpression>()
-                                      .Function()
-                                      .GetName()
-                                      .GetIdentifierName());
+  if (peeled.GetExpressionClass() == duckdb::ExpressionClass::BOUND_FUNCTION) {
+    return IsIndexOnlyPredicateName(
+      peeled.Cast<duckdb::BoundFunctionExpression>()
+        .Function()
+        .GetName()
+        .GetIdentifierName());
   }
   return false;
+}
+
+bool IsStrictDisjunct(const duckdb::Expression& expr) {
+  const auto& peeled = PeelGroupModifiers(expr);
+  if (peeled.GetExpressionType() != duckdb::ExpressionType::CONJUNCTION_OR) {
+    return IsStrictPredicate(peeled);
+  }
+  return absl::c_all_of(
+    peeled.Cast<duckdb::BoundConjunctionExpression>().GetChildren(),
+    [](const auto& child) { return IsStrictDisjunct(*child); });
 }
 
 void RejectRewrittenMinMatch(const duckdb::BoundFunctionExpression& cast,
@@ -705,13 +735,19 @@ absl::Status MakeGroup(BoolTarget parent, const FilterContext& ctx,
   bool null_aware_groups = false;
   if (ctx.negated && absl::c_all_of(conj.GetChildren(), [](const auto& child) {
         SDB_ASSERT(child);
-        return IsComparisonExpr(*child);
+        return IsComparisonExpr(*child) || IsNullConstant(*child);
       })) {
     // De Morgan's law: if we negate a group of comparisons, comparisons
     // consume negation by inversion so we can reduce NOT filters.
     group_is_union = is_and;
     group = open(parent, group_is_union);
   } else if (ctx.negated) {
+    if (absl::c_any_of(conj.GetChildren(), [&](const auto& child) {
+          return ReachesNullableKey(ctx, *child);
+        })) {
+      return absl::UnimplementedError(
+        "a negated key lookup would admit the column's NULL rows");
+    }
     if (absl::c_any_of(conj.GetChildren(), [](const auto& child) {
           return ContainsNullConstant(*child);
         })) {
@@ -740,7 +776,7 @@ absl::Status MakeGroup(BoolTarget parent, const FilterContext& ctx,
     if (!markers.empty() || has_nullable_group) {
       const bool claimable =
         !is_and && absl::c_all_of(conj.GetChildren(), [](const auto& child) {
-          return IsStrictPredicate(*child) || AsStrictMinMatchGroup(*child);
+          return IsStrictDisjunct(*child) || AsStrictMinMatchGroup(*child);
         });
       if (!claimable) {
         if (absl::c_any_of(conj.GetChildren(), [](const auto& child) {
@@ -842,6 +878,39 @@ absl::Status FromIsNull(BoolTarget filter, const FilterContext& ctx,
   return absl::OkStatus();
 }
 
+bool LooksUpKey(const SearchColumnInfo& info) {
+  return info.key_field != irs::field_limits::invalid();
+}
+
+absl::Status FromKeyLookup(BoolTarget filter, const FilterContext& ctx,
+                           const SearchColumnInfo& info,
+                           std::span<const duckdb::Value* const> values,
+                           bool negated) {
+  if (negated && info.nullable) {
+    return absl::UnimplementedError(
+      "a negated key lookup would admit the column's NULL rows");
+  }
+  if (!duckdb::StringType::GetCollation(info.logical_type).empty()) {
+    return absl::UnimplementedError(
+      "a key lookup on a collated column compares the collation's form");
+  }
+  std::vector<irs::bstring> terms;
+  terms.reserve(values.size());
+  for (const auto* value : values) {
+    if (value->type() != info.logical_type) {
+      return absl::UnimplementedError("the value's type is not the key's");
+    }
+    const auto key = EncodeKeyValue(*value);
+    terms.emplace_back(irs::ViewCast<irs::byte_type>(std::string_view{key}));
+  }
+  auto& node = AddTermSet(negated ? NegateScoped(filter, info) : filter,
+                          info.key_field, kConstraintKeyDict, terms,
+                          /*min_match=*/1);
+  node.SetBoost(ctx.boost);
+  node.SetScorer(LeafScorer(info));
+  return absl::OkStatus();
+}
+
 template<bool GenericVersion>
 absl::Status FromBinaryEq(BoolTarget filter, const FilterContext& ctx,
                           const duckdb::Expression& left_expr,
@@ -862,6 +931,9 @@ absl::Status FromBinaryEq(BoolTarget filter, const FilterContext& ctx,
   }
 
   const auto* column_info = FindColumnInfoForExpr(ctx, left_expr);
+  if (!column_info) {
+    column_info = FindKeyColumnInfo(ctx, left_expr);
+  }
   const auto* const_val = TryGetConstant(right_expr);
 
   if (!column_info || !const_val) {
@@ -877,6 +949,10 @@ absl::Status FromBinaryEq(BoolTarget filter, const FilterContext& ctx,
     // foo == NULL is always false and foo != NULL is false too.
     AddFilter<irs::Empty>(filter);
     return absl::OkStatus();
+  }
+  if (LooksUpKey(*column_info)) {
+    return FromKeyLookup(filter, ctx, *column_info, {&const_val, 1},
+                         ctx.negated != not_equal);
   }
   if constexpr (GenericVersion) {
     if (auto s =
@@ -903,17 +979,12 @@ inline constexpr double kMaxIndexRangeShare = 1.0 / 32;
 
 std::optional<double> RangeShare(const SearchColumnInfo& info, double lo,
                                  double hi) {
-  if (!info.stats || !duckdb::NumericStats::HasMinMax(*info.stats)) {
+  double min = 0;
+  double max = 0;
+  if (!info.stats ||
+      !duckdb::NumericStats::TryCastRange(*info.stats, min, max)) {
     return std::nullopt;
   }
-  const auto number = [&](const duckdb::Value& value) {
-    double out = 0;
-    WithNumericValue(info.logical_type.id(), value,
-                     [&](auto v) { out = static_cast<double>(v); });
-    return out;
-  };
-  const auto min = number(duckdb::NumericStats::Min(*info.stats));
-  const auto max = number(duckdb::NumericStats::Max(*info.stats));
   if (!(max > min)) {
     return std::nullopt;
   }
@@ -1223,6 +1294,9 @@ absl::Status FromIn(BoolTarget filter, const FilterContext& ctx,
   const auto* column_info =
     FindColumnInfoForExpr(ctx, *op_expr.GetChildren()[0]);
   if (!column_info) {
+    column_info = FindKeyColumnInfo(ctx, *op_expr.GetChildren()[0]);
+  }
+  if (!column_info) {
     return absl::InvalidArgumentError(
       "IN input is not a reference to an indexed column");
   }
@@ -1231,10 +1305,12 @@ absl::Status FromIn(BoolTarget filter, const FilterContext& ctx,
   }
 
   if constexpr (GenericVersion) {
-    if (auto s = RequireKeywordAnalyzed(
-          *column_info,
-          "Use `col @@ ts_any('a', 'b', ...)` (tokenised) or `col @@ "
-          "ts_any('a'::tokenize('keyword'), ...)` (raw).");
+    if (auto s = LooksUpKey(*column_info)
+                   ? absl::OkStatus()
+                   : RequireKeywordAnalyzed(
+                       *column_info,
+                       "Use `col @@ ts_any('a', 'b', ...)` (tokenised) or `col "
+                       "@@ ts_any('a'::tokenize('keyword'), ...)` (raw).");
         !s.ok()) {
       return s;
     }
@@ -1263,6 +1339,10 @@ absl::Status FromIn(BoolTarget filter, const FilterContext& ctx,
   if ((ctx.negated && has_null) || values.empty()) {
     AddFilter<irs::Empty>(filter);
     return absl::OkStatus();
+  }
+
+  if (LooksUpKey(*column_info)) {
+    return FromKeyLookup(filter, ctx, *column_info, values, ctx.negated);
   }
 
   auto type_id = column_info->logical_type.id();
@@ -1487,8 +1567,8 @@ std::string TSRegexpPattern(std::string_view literal) {
   re2::RegexpStatus status;
   auto* re = ParseRegexp(literal, status);
   if (!re) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG(status.Text()));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_REGULAR_EXPRESSION),
+                    ERR_MSG("invalid regular expression: ", status.Text()));
   }
   const bool at_start = AnchoredAtText(re, true);
   const bool at_end = AnchoredAtText(re, false);
@@ -2431,6 +2511,12 @@ absl::Status FromExpression(BoolTarget filter, const FilterContext& ctx,
     case duckdb::ExpressionClass::BOUND_FUNCTION:
       return FromFunctionExpression(
         filter, ctx, expr.Cast<duckdb::BoundFunctionExpression>());
+    case duckdb::ExpressionClass::BOUND_CONSTANT:
+      if (expr.Cast<duckdb::BoundConstantExpression>().GetValue().IsNull()) {
+        AddFilter<irs::Empty>(filter);
+        return absl::OkStatus();
+      }
+      [[fallthrough]];
     default:
       return absl::UnimplementedError(
         absl::StrCat("Unsupported expression class: ",
@@ -2463,7 +2549,9 @@ void UnwrapElementType(duckdb::LogicalType& type) {
   }
 }
 
-const SearchColumnInfo* FindColumnRefInfo(
+namespace {
+
+const SearchColumnInfo* LookupColumnRef(
   const FilterContext& ctx, const duckdb::BoundColumnRefExpression& ref) {
   auto cache_it = ctx.column_cache.find(ref.Binding());
   if (cache_it != ctx.column_cache.end()) {
@@ -2481,12 +2569,35 @@ const SearchColumnInfo* FindColumnRefInfo(
             .first->second;
 }
 
+bool KeyOnly(const SearchColumnInfo& info) {
+  return !irs::field_limits::valid(info.field_id) &&
+         irs::field_limits::valid(info.key_field);
+}
+
+}  // namespace
+
+const SearchColumnInfo* FindColumnRefInfo(
+  const FilterContext& ctx, const duckdb::BoundColumnRefExpression& ref) {
+  const auto* info = LookupColumnRef(ctx, ref);
+  return info && !KeyOnly(*info) ? info : nullptr;
+}
+
 const duckdb::BoundColumnRefExpression* TryGetColumnRef(
   const duckdb::Expression& expr) {
   if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_COLUMN_REF) {
     return nullptr;
   }
   return &expr.Cast<duckdb::BoundColumnRefExpression>();
+}
+
+const SearchColumnInfo* FindKeyColumnInfo(const FilterContext& ctx,
+                                          const duckdb::Expression& expr) {
+  const auto* ref = TryGetColumnRef(expr);
+  if (!ref) {
+    return nullptr;
+  }
+  const auto* info = LookupColumnRef(ctx, *ref);
+  return info && KeyOnly(*info) ? info : nullptr;
 }
 
 struct UnwrappedField {

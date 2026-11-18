@@ -66,7 +66,7 @@ query
 SELECT tablename, indexdef FROM pg_indexes WHERE indexname = 'rio_i';
 ----
 tablename	indexdef
-rio_t	CREATE INDEX rio_i ON public.rio_t USING inverted (body) WITH (row_group_size='122880', refresh_interval='1000', compaction_interval='1000', cleanup_interval_step='1', segment_memory_max='268435456', segment_docs_max='0', compaction_max_segments='10', compaction_max_segments_bytes='5368709120', compaction_floor_segment_bytes='2097152')
+rio_t	CREATE INDEX rio_i ON public.rio_t USING inverted (body)
 
 
 # The owner of the index's table may replace it, on its own table or on one it
@@ -87,7 +87,7 @@ query
 SELECT tablename, indexdef FROM pg_indexes WHERE indexname = 'rio_i';
 ----
 tablename	indexdef
-rio_t	CREATE INDEX rio_i ON public.rio_t USING secondary (x)
+rio_t	CREATE INDEX rio_i ON public.rio_t USING inverted (x)
 
 
 statement ok
@@ -110,7 +110,7 @@ query
 SELECT tablename, indexdef FROM pg_indexes WHERE indexname = 'rio_i';
 ----
 tablename	indexdef
-rio_u	CREATE INDEX rio_i ON public.rio_u USING secondary (y)
+rio_u	CREATE INDEX rio_i ON public.rio_u USING inverted (y)
 
 
 statement ok

@@ -865,9 +865,9 @@ skipif postgres
 statement error
 DROP VIEW corpg_dep2;
 ----
-db error: ERROR: Cannot drop entry "corpg_dep2" because there are entries that depend on it.
-view "corpg_dep3" depends on view "corpg_dep2".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop view corpg_dep2 because other objects depend on it
+DETAIL: view corpg_dep3 depends on view corpg_dep2
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 skipif serenedb
@@ -953,9 +953,9 @@ skipif postgres
 statement error
 DROP TABLE corpg_e1;
 ----
-db error: ERROR: Cannot drop entry "corpg_e1" because there are entries that depend on it.
-view "corpg_ev" depends on table "corpg_e1".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop table corpg_e1 because other objects depend on it
+DETAIL: view corpg_ev depends on table corpg_e1
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 skipif serenedb
@@ -979,9 +979,9 @@ skipif postgres
 statement error
 DROP TABLE corpg_e2;
 ----
-db error: ERROR: Cannot drop entry "corpg_e2" because there are entries that depend on it.
-view "corpg_ev" depends on table "corpg_e2".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop table corpg_e2 because other objects depend on it
+DETAIL: view corpg_ev depends on table corpg_e2
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 skipif serenedb
@@ -1075,9 +1075,9 @@ skipif postgres
 statement error
 DROP TABLE corpg_e3;
 ----
-db error: ERROR: Cannot drop entry "corpg_e3" because there are entries that depend on it.
-view "corpg_ev" depends on table "corpg_e3".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop table corpg_e3 because other objects depend on it
+DETAIL: view corpg_ev depends on table corpg_e3
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 skipif serenedb
@@ -1404,9 +1404,9 @@ skipif postgres
 statement error
 DROP FUNCTION corpg_callee(INT);
 ----
-db error: ERROR: Cannot drop entry "corpg_callee" because there are entries that depend on it.
-macro function "corpg_caller" depends on macro function "corpg_callee".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop function corpg_callee(integer) because other objects depend on it
+DETAIL: function corpg_caller(integer) depends on function corpg_callee(integer)
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 skipif serenedb
@@ -1459,9 +1459,9 @@ skipif postgres
 statement error
 DROP VIEW corpg_atv;
 ----
-db error: ERROR: Cannot drop entry "corpg_atv" because there are entries that depend on it.
-macro function "corpg_atf" depends on view "corpg_atv".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop view corpg_atv because other objects depend on it
+DETAIL: function corpg_atf() depends on view corpg_atv
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 skipif serenedb

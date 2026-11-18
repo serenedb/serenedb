@@ -10,7 +10,7 @@
 # Phases:
 #   1. setup     -- populate the table with N rows from the case's setup SQL
 #   2. backfill  -- CREATE INDEX over the populated table
-#   3. compact   -- VACUUM (REFRESH_TABLE) the table to force segment merge
+#   3. compact   -- VACUUM (FLUSH_TABLE) + (COMPACT_TABLE) to force segment merge
 #   4. hot       -- run the query 10x with warm caches
 #   5. cold_open -- vmtouch -e the data dir then run the query once
 #                 (covers reader-open + cold-fetch cost)
@@ -117,8 +117,8 @@ run_phase setup "$PSQL <<<\"$SETUP_SQL\""
 BACKFILL_SQL="CREATE INDEX sweep_idx ON sweep_t USING inverted(${_idx_clause});"
 run_phase backfill "$PSQL <<<\"\$BACKFILL_SQL\""
 
-# --- phase 3: compaction (force segment merge via REFRESH_TABLE) ---
-COMPACT_SQL='VACUUM (REFRESH_TABLE) sweep_t;'
+# --- phase 3: compaction (force segment merge via COMPACT_TABLE) ---
+COMPACT_SQL='VACUUM (FLUSH_TABLE) sweep_t; VACUUM (COMPACT_TABLE) sweep_t;'
 run_phase compact "$PSQL <<<\"\$COMPACT_SQL\""
 
 # --- phase 4: hot read (10x query, warm cache) ---

@@ -1,16 +1,10 @@
 control substitution on
 
-# A database is a file, and its committed catalog record is the decision
-# point: the attach creates the file, the append happens at commit, and a
-# file whose id no committed record names is garbage reclaimed at boot.
-
 
 statement ok
 CREATE DATABASE dbfile_keep;
 
 
-# Rolled back: the file was created, the record never landed.
-#
 # CREATE DATABASE is the one statement whose entries do not all belong to the
 # transaction that made them: the attach happens before the entry install can
 # reach it, so the schemas it seeds -- public -- are written with a system
@@ -77,9 +71,6 @@ statement ok
 DROP DATABASE dbfile_rolled;
 
 
-# Crashing after the catalog append is the other side of the same rule: the
-# record is the decision, so the database is there after the restart with the
-# file the attach created for it.
 statement ok
 SET sdb_faults = 'crash_after_catalog_before_data';
 
@@ -117,10 +108,12 @@ count
 
 connection after_crash
 query
-SELECT (SELECT count(*) FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/data.db')) = (SELECT count(*) FROM pg_database) AS one_file_per_database;
+SELECT count(*) AS orphans FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*/*')
+WHERE regexp_extract(file, '/engine_v1/store/([0-9]+)/', 1)::BIGINT NOT IN (
+  SELECT table_oid FROM duckdb_tables() UNION ALL SELECT index_oid FROM duckdb_indexes());
 ----
-one_file_per_database
-t
+orphans
+0
 
 
 connection after_crash
@@ -143,10 +136,12 @@ dbfile_keep
 
 connection after_drop_crash
 query
-SELECT (SELECT count(*) FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/data.db')) = (SELECT count(*) FROM pg_database) AS one_file_per_database;
+SELECT count(*) AS orphans FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*/*')
+WHERE regexp_extract(file, '/engine_v1/store/([0-9]+)/', 1)::BIGINT NOT IN (
+  SELECT table_oid FROM duckdb_tables() UNION ALL SELECT index_oid FROM duckdb_indexes());
 ----
-one_file_per_database
-t
+orphans
+0
 
 
 connection after_drop_crash

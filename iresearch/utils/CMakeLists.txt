@@ -17,8 +17,7 @@ target_sources(
         log.cpp
         log_flags.cpp
         mmap_utils.cpp
-        network_utils.cpp
-        numeric_utils.cpp
+        pg/error_mapping.cpp
         regexp_acceptor.cpp
         regexp_ngram.cpp
         regexp_utils.cpp

@@ -22,10 +22,6 @@ statement ok
 CREATE INDEX pdc_pos_idx ON pdc_docs USING inverted (id, body pdc_words_pos)
 
 
-statement ok
-VACUUM (REFRESH_TABLE) pdc_docs
-
-
 query
 SELECT id, constant(pdc_pos_idx.tableoid, 2.0) AS score FROM pdc_pos_idx
 WHERE body @@ (ts_phrase('quick') ## ts_starts_with('br')) ORDER BY id
@@ -53,7 +49,7 @@ QUERY PLAN
 ╰─────────────────────────┬────────────────────────╯
 ╭─ IRESEARCH_SCAN ────────┴────────────────────────╮
 │ Index: pdc_text_idx                              │
-│ Lookup: table                                    │
+│ Lookup: search                                   │
 │ Index Filter:                                    │
 │ ╭─ And ───────────────╮                          │
 │ │ Merge: max          │                          │
@@ -119,7 +115,7 @@ QUERY PLAN
 ╰───────────────────────────────┬──────────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────────┴──────────────────────────────╮
 │ Index: pdc_text_idx                                          │
-│ Lookup: table                                                │
+│ Lookup: search                                               │
 │ Index Filter:                                                │
 │ ╭─ And ───────────────╮                                      │
 │ │ Merge: max          │                                      │
@@ -187,7 +183,7 @@ QUERY PLAN
 ╰────────────────────────────────────────┬───────────────────────────────────────╯
 ╭─ IRESEARCH_SCAN ───────────────────────┴───────────────────────────────────────╮
 │ Index: pdc_text_idx                                                            │
-│ Lookup: table                                                                  │
+│ Lookup: search                                                                 │
 │ Index Filter:                                                                  │
 │ ╭─ And ───────────────╮                                                        │
 │ ╰──────────┬──────────╯                                                        │
@@ -239,10 +235,6 @@ statement ok
 CREATE INDEX pdc_syn_pos_idx ON pdc_syn_docs USING inverted (id, body pdc_syn_pos)
 
 
-statement ok
-VACUUM (REFRESH_TABLE) pdc_syn_docs
-
-
 query
 SELECT id, constant(pdc_syn_pos_idx.tableoid, 2.0) AS score FROM pdc_syn_pos_idx
 WHERE body @@ (ts_phrase('quick') ## ts_starts_with('br')) ORDER BY id
@@ -270,7 +262,7 @@ QUERY PLAN
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: pdc_syn_text_idx                              │
-│ Lookup: table                                        │
+│ Lookup: search                                       │
 │ Index Filter:                                        │
 │ ╭─ And ───────────────────╮                          │
 │ │ Merge: max              │                          │

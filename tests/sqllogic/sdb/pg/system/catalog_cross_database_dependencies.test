@@ -60,17 +60,17 @@ CREATE VIEW cxd_v AS SELECT a FROM cxd_db.public.t
 statement error
 DROP TABLE cxd_db.public.t
 ----
-db error: ERROR: Cannot drop entry "t" because there are entries that depend on it.
-view "cxd_v" depends on table "t".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop table t because other objects depend on it
+DETAIL: view cxd_v depends on table t
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 statement error
 ALTER TABLE cxd_db.public.t DROP COLUMN a
 ----
-db error: ERROR: Cannot alter entry "t" because there are entries that depend on it.
-view "cxd_v" depends on table "t".
-Drop the dependent entries first and recreate them after the change.
+db error: ERROR: cannot drop column a of table t because other objects depend on it
+DETAIL: view cxd_v depends on column a of table t
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 statement ok
@@ -84,9 +84,9 @@ ALTER TABLE cxd_db.public.t ADD COLUMN c INTEGER
 statement error
 DROP DATABASE cxd_db
 ----
-db error: ERROR: Cannot drop entry "cxd_db" because there are entries that depend on it.
-view "cxd_v" depends on database "cxd_db".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop database cxd_db because other objects depend on it
+DETAIL: view cxd_v depends on database cxd_db
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 query
@@ -119,9 +119,9 @@ CREATE VIEW cxd_db.public.v_back AS SELECT a FROM ${__DATABASE__}.public.local_t
 statement error
 DROP TABLE local_t
 ----
-db error: ERROR: Cannot drop entry "local_t" because there are entries that depend on it.
-view "v_back" depends on table "local_t".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop table local_t because other objects depend on it
+DETAIL: view v_back depends on table local_t
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 statement ok
@@ -143,9 +143,9 @@ CREATE MACRO cxd_m() AS (SELECT count(*) FROM cxd_db.public.m)
 statement error
 DROP TABLE cxd_db.public.m
 ----
-db error: ERROR: Cannot drop entry "m" because there are entries that depend on it.
-macro function "cxd_m" depends on table "m".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop table m because other objects depend on it
+DETAIL: function cxd_m() depends on table m
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 statement ok
@@ -191,9 +191,8 @@ cxd_reader	a	t
 statement error
 DROP ROLE cxd_reader
 ----
-db error: ERROR: Cannot drop entry "cxd_reader" because there are entries that depend on it.
-table "cxd_owned" depends on role "cxd_reader".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: role "cxd_reader" cannot be dropped because some objects depend on it
+DETAIL: 1 object in database cxd_db
 
 
 statement ok
@@ -211,9 +210,8 @@ ALTER ROLE cxd_owner RENAME TO cxd_owner2
 statement error
 DROP ROLE cxd_owner2
 ----
-db error: ERROR: Cannot drop entry "cxd_owner2" because there are entries that depend on it.
-table "cxd_owned" depends on role "cxd_owner2".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: role "cxd_owner2" cannot be dropped because some objects depend on it
+DETAIL: 1 object in database cxd_db
 
 
 statement ok
@@ -255,9 +253,9 @@ COPY FROM DATABASE cxd_copy_src TO cxd_copy_dst
 statement error
 DROP TABLE cxd_copy_dst.public.cxd_local
 ----
-db error: ERROR: Cannot drop entry "cxd_local" because there are entries that depend on it.
-view "v_local" depends on table "cxd_local".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop table cxd_local because other objects depend on it
+DETAIL: view v_local depends on table cxd_local
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 statement ok
@@ -275,9 +273,9 @@ DROP VIEW cxd_copy_src.public.v_remote
 statement error
 DROP TABLE cxd_db.public.cxd_remote
 ----
-db error: ERROR: Cannot drop entry "cxd_remote" because there are entries that depend on it.
-view "v_remote" depends on table "cxd_remote".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop table cxd_remote because other objects depend on it
+DETAIL: view v_remote depends on table cxd_remote
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 statement ok
@@ -318,7 +316,7 @@ connection default
 statement error
 GRANT INSERT ON cxd_db.public.cxd_conflict TO cxd_grantee
 ----
-db error: ERROR: Catalog write-write conflict on alter with "cxd_conflict"
+db error: ERROR: could not serialize access due to concurrent update of "cxd_conflict"
 
 
 connection cxd_c1
@@ -425,17 +423,17 @@ INSERT INTO cxd_def (a) VALUES (1)
 statement error
 DROP SEQUENCE cxd_db.public.cxd_seq
 ----
-db error: ERROR: Cannot drop entry "cxd_seq" because there are entries that depend on it.
-table "cxd_def" depends on sequence "cxd_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence cxd_seq because other objects depend on it
+DETAIL: default value for column id of table cxd_def depends on sequence cxd_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 statement error
 DROP DATABASE cxd_db
 ----
-db error: ERROR: Cannot drop entry "cxd_db" because there are entries that depend on it.
-table "cxd_def" depends on database "cxd_db".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop database cxd_db because other objects depend on it
+DETAIL: default value for column id of table cxd_def depends on database cxd_db
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 statement ok
@@ -457,9 +455,9 @@ ALTER TABLE cxd_def ALTER COLUMN id SET DEFAULT nextval('cxd_db.public.cxd_seq2'
 statement error
 DROP SEQUENCE cxd_db.public.cxd_seq2
 ----
-db error: ERROR: Cannot drop entry "cxd_seq2" because there are entries that depend on it.
-table "cxd_def" depends on sequence "cxd_seq2".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence cxd_seq2 because other objects depend on it
+DETAIL: default value for column id of table cxd_def depends on sequence cxd_seq2
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 statement ok
@@ -488,9 +486,9 @@ CREATE TABLE cxd_typed (m cxd_db.public.cxd_mood)
 statement error
 DROP TYPE cxd_db.public.cxd_mood
 ----
-db error: ERROR: Cannot drop entry "cxd_mood" because there are entries that depend on it.
-table "cxd_typed" depends on type "cxd_mood".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop type cxd_mood because other objects depend on it
+DETAIL: column m of table cxd_typed depends on type cxd_mood
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 statement ok
@@ -555,9 +553,9 @@ a
 statement error
 DROP VIEW cxd_db.public.cxd_same
 ----
-db error: ERROR: Cannot drop entry "cxd_same" because there are entries that depend on it.
-view "cxd_same" depends on view "cxd_same".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop view cxd_same because other objects depend on it
+DETAIL: view cxd_same depends on view cxd_same
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 statement ok
@@ -608,3 +606,57 @@ n
 
 statement ok
 DROP TABLE cxd_def
+
+
+statement ok
+DROP DATABASE IF EXISTS cxd_quiet
+
+
+statement ok
+CREATE DATABASE cxd_quiet
+
+
+connection cxd_quiet_c database=cxd_quiet
+statement ok
+BEGIN
+
+
+connection cxd_quiet_c database=cxd_quiet
+statement ok
+DROP SCHEMA public
+
+
+connection default
+statement ok
+CREATE TABLE cxd_unrelated (a INTEGER)
+
+
+connection cxd_quiet_c database=cxd_quiet
+statement ok
+COMMIT
+
+
+connection cxd_quiet_c database=cxd_quiet
+query
+SELECT count(*) AS n FROM pg_namespace WHERE nspname = 'public'
+----
+n
+0
+
+
+connection default
+statement ok
+DROP TABLE cxd_unrelated
+
+
+connection default
+query
+SELECT count(*) FILTER (WHERE pg_terminate_backend(pid)) AS terminated FROM pg_stat_activity WHERE datname = 'cxd_quiet'
+----
+terminated
+1
+
+
+connection default
+statement ok
+DROP DATABASE cxd_quiet

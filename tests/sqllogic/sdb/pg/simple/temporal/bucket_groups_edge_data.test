@@ -32,9 +32,8 @@ QUERY PLAN
 │ Projections: k           │
 │ ~4 rows                  │
 ╰─────────────┬────────────╯
-╭─ SEQ_SCAN ──┴────────────╮
+╭─ IRESEARCH_SCAN ─────────╮
 │ Table: edge_inf          │
-│ Type: Sequential Scan    │
 │ Projections: ts          │
 │ ~4 rows                  │
 ╰──────────────────────────╯
@@ -52,9 +51,8 @@ QUERY PLAN
 │ Projections: k           │
 │ ~4 rows                  │
 ╰─────────────┬────────────╯
-╭─ SEQ_SCAN ──┴────────────╮
+╭─ IRESEARCH_SCAN ─────────╮
 │ Table: edge_inf          │
-│ Type: Sequential Scan    │
 │ Projections: ts          │
 │ ~4 rows                  │
 ╰──────────────────────────╯

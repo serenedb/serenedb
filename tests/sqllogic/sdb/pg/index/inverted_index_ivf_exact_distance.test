@@ -50,12 +50,6 @@ INSERT INTO ed_l2_n VALUES
   (3, [0, 0, 12]::FLOAT[3]),
   (4, [9, 12, 0]::FLOAT[3])
 
-statement ok
-VACUUM (REFRESH_TABLE) ed_l2
-
-statement ok
-VACUUM (REFRESH_TABLE) ed_l2_n
-
 # pure ORDER BY score LIMIT k (TopK scan): exact distances.
 query
 SELECT pk, emb <-> [0, 0, 0]::FLOAT[3] AS d FROM ed_l2_sq8 ORDER BY d LIMIT 3;
@@ -108,9 +102,6 @@ INSERT INTO ed_l2_sq4t VALUES
   (3, [0, 0, 12]::FLOAT[3]),
   (4, [9, 12, 0]::FLOAT[3])
 
-statement ok
-VACUUM (REFRESH_TABLE) ed_l2_sq4t
-
 query
 SELECT pk, emb <-> [0, 0, 0]::FLOAT[3] AS d FROM ed_l2_sq4 ORDER BY d, pk LIMIT 3;
 ----
@@ -133,9 +124,6 @@ INSERT INTO ed_ip VALUES
   (2, [2, 0, 0]::FLOAT[3]),
   (3, [3, 0, 0]::FLOAT[3])
 
-statement ok
-VACUUM (REFRESH_TABLE) ed_ip
-
 query
 SELECT pk, emb <#> [1, 0, 0]::FLOAT[3] AS d FROM ed_ip_sq8 ORDER BY d, pk;
 ----
@@ -156,9 +144,6 @@ statement count 2
 INSERT INTO ed_cos VALUES
   (1, [10, 0, 0]::FLOAT[3]),
   (2, [0, 5, 0]::FLOAT[3])
-
-statement ok
-VACUUM (REFRESH_TABLE) ed_cos
 
 query
 SELECT pk, emb <=> [2, 0, 0]::FLOAT[3] AS d FROM ed_cos_sq8 ORDER BY d, pk;

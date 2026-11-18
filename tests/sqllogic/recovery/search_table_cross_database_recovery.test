@@ -5,11 +5,11 @@ CREATE DATABASE xs_other;
 
 statement ok
 CREATE TABLE xs_local (id BIGINT PRIMARY KEY, body TEXT)
-WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+WITH (compaction_interval = 0);
 
 statement ok
 CREATE TABLE xs_other.public.xs_remote (id BIGINT PRIMARY KEY, body TEXT)
-WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+WITH (compaction_interval = 0);
 
 statement ok
 RESET sdb_faults;

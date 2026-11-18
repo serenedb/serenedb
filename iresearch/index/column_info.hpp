@@ -178,12 +178,18 @@ struct AnnInfo {
   friend bool operator==(const AnnInfo&, const AnnInfo&) = default;
 };
 
+enum class DistinctStats : uint8_t {
+  None,
+  Sampled,
+  Exact,
+};
+
 struct ColumnOptions {
   bool skip_validity = false;
   duckdb::CompressionType compression =
     duckdb::CompressionType::COMPRESSION_AUTO;
   std::optional<AnnInfo> ann_info;
-  bool hyperloglog = false;
+  DistinctStats distinct = DistinctStats::None;
 };
 
 using ColumnOptionsProvider = std::function<ColumnOptions(field_id)>;
@@ -199,6 +205,7 @@ using AnnFieldsByColumn =
 class IndexFieldOptions {
  public:
   uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
+  uint32_t block_size = DEFAULT_BLOCK_ALLOC_SIZE;
   AnnFieldsByColumn anns;
 
   std::span<const field_id> AnnFields(field_id column) const noexcept {

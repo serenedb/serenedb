@@ -67,78 +67,101 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
 
   _impl->in = dir.open(filename, IOAdvice::RANDOM);
 
+  IdxFooter footer;
   format_utils::ReadFooter(
     *_impl->in, filename,
-    [&](duckdb::BinaryDeserializer& footer, uint64_t data_size) {
+    [&](duckdb::BinaryDeserializer& in, uint64_t data_size) {
 #ifndef IRESEARCH_NO_VECTOR
-      footer.ReadOptionalList(
+      in.ReadOptionalList(
         kIdxFieldIvf, "ivf",
         [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
           list.ReadObject([&](duckdb::BinaryDeserializer& obj) {
-            const auto id = obj.ReadProperty<uint64_t>(0, "id");
-            const auto tree_offset =
-              obj.ReadProperty<uint64_t>(1, "tree_offset");
-            const auto tree_byte_size =
-              obj.ReadProperty<uint64_t>(2, "tree_byte_size");
-            const auto stats_offset =
-              obj.ReadProperty<uint64_t>(3, "stats_offset");
-            const auto stats_byte_size =
-              obj.ReadProperty<uint64_t>(4, "stats_byte_size");
-            const auto root_byte_size =
-              obj.ReadProperty<uint64_t>(5, "root_byte_size");
-            _impl->ann_ends.push_back(tree_offset + tree_byte_size);
-            _impl->ann_ends.push_back(stats_offset + stats_byte_size);
-
-            auto body = _impl->in->Dup();
-            body->Seek(tree_offset);
-            auto entry = CentroidsTree::Deserialize(*body, root_byte_size);
-            entry.SetQuantStatsOffset(stats_offset);
-
-            const size_t idx = _impl->ann_entries.size();
-            _impl->ann_entries.emplace_back(
-              id, std::make_unique<IvfIndex>(std::move(entry)));
-            _impl->ann_by_id.emplace(id, idx);
+            footer.ivf.push_back({
+              .id = obj.ReadProperty<uint64_t>(0, "id"),
+              .meta =
+                {
+                  .tree_offset = obj.ReadProperty<uint64_t>(1, "tree_offset"),
+                  .tree_byte_size =
+                    obj.ReadProperty<uint64_t>(2, "tree_byte_size"),
+                  .stats_offset = obj.ReadProperty<uint64_t>(3, "stats_offset"),
+                  .stats_byte_size =
+                    obj.ReadProperty<uint64_t>(4, "stats_byte_size"),
+                  .root_byte_size =
+                    obj.ReadProperty<uint64_t>(5, "root_byte_size"),
+                },
+            });
           });
         });
-      footer.ReadOptionalList(
+      in.ReadOptionalList(
         kIdxFieldHnsw, "hnsw",
         [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
           list.ReadObject([&](duckdb::BinaryDeserializer& obj) {
-            const auto id = obj.ReadProperty<uint64_t>(0, "id");
-            const HnswMeta meta{
-              .offset = obj.ReadProperty<uint64_t>(1, "offset"),
-              .byte_size = obj.ReadProperty<uint64_t>(2, "byte_size"),
-              .header =
+            footer.hnsw.push_back({
+              .id = obj.ReadProperty<uint64_t>(0, "id"),
+              .meta =
                 {
-                  .d = obj.ReadProperty<uint32_t>(3, "d"),
-                  .metric = static_cast<VectorMetric>(
-                    obj.ReadProperty<uint8_t>(4, "metric")),
-                  .quant = static_cast<VectorQuantization>(
-                    obj.ReadProperty<uint8_t>(5, "quant")),
-                  .ef_construction =
-                    obj.ReadProperty<uint32_t>(6, "ef_construction"),
-                  .record_size = obj.ReadProperty<uint32_t>(7, "record_size"),
-                  .rows = obj.ReadProperty<uint64_t>(8, "rows"),
-                  .rotated = obj.ReadProperty<bool>(9, "rotated"),
+                  .offset = obj.ReadProperty<uint64_t>(1, "offset"),
+                  .byte_size = obj.ReadProperty<uint64_t>(2, "byte_size"),
+                  .header =
+                    {
+                      .d = obj.ReadProperty<uint32_t>(3, "d"),
+                      .metric = static_cast<VectorMetric>(
+                        obj.ReadProperty<uint8_t>(4, "metric")),
+                      .quant = static_cast<VectorQuantization>(
+                        obj.ReadProperty<uint8_t>(5, "quant")),
+                      .ef_construction =
+                        obj.ReadProperty<uint32_t>(6, "ef_construction"),
+                      .record_size =
+                        obj.ReadProperty<uint32_t>(7, "record_size"),
+                      .rows = obj.ReadProperty<uint64_t>(8, "rows"),
+                      .rotated = obj.ReadProperty<bool>(9, "rotated"),
+                    },
                 },
-            };
-            _impl->ann_ends.push_back(meta.offset + meta.byte_size);
-
-            const size_t idx = _impl->ann_entries.size();
-            _impl->ann_entries.emplace_back(
-              id, std::make_unique<HnswIndex>(meta, id, hnsw_bases));
-            _impl->ann_by_id.emplace(id, idx);
+            });
           });
         });
 #endif
-      footer.ReadOptionalObject(
+      in.ReadOptionalObject(
         kIdxFieldTerms, "terms", [&](duckdb::BinaryDeserializer& terms) {
           auto meta = term_dict::ReadTerms(terms, data_size);
           if (keep_terms) {
-            _impl->terms = std::move(meta);
+            footer.terms = std::move(meta);
           }
         });
     });
+  Adopt(std::move(footer), hnsw_bases);
+}
+
+IdxReader::IdxReader(IndexInput::ptr in, IdxFooter footer,
+                     HnswBases* hnsw_bases)
+  : _impl{std::make_unique<Impl>()} {
+  _impl->in = std::move(in);
+  Adopt(std::move(footer), hnsw_bases);
+}
+
+void IdxReader::Adopt(IdxFooter footer, HnswBases* hnsw_bases) {
+#ifndef IRESEARCH_NO_VECTOR
+  for (const auto& [id, meta] : footer.ivf) {
+    _impl->ann_ends.push_back(meta.tree_offset + meta.tree_byte_size);
+    _impl->ann_ends.push_back(meta.stats_offset + meta.stats_byte_size);
+    auto body = _impl->in->Dup();
+    body->Seek(meta.tree_offset);
+    auto entry = CentroidsTree::Deserialize(*body, meta.root_byte_size);
+    entry.SetQuantStatsOffset(meta.stats_offset);
+    _impl->ann_by_id.emplace(id, _impl->ann_entries.size());
+    _impl->ann_entries.emplace_back(
+      id, std::make_unique<IvfIndex>(std::move(entry)));
+  }
+  for (const auto& [id, meta] : footer.hnsw) {
+    _impl->ann_ends.push_back(meta.offset + meta.byte_size);
+    _impl->ann_by_id.emplace(id, _impl->ann_entries.size());
+    _impl->ann_entries.emplace_back(
+      id, std::make_unique<HnswIndex>(meta, id, hnsw_bases));
+  }
+#else
+  SDB_ASSERT(footer.ivf.empty() && footer.hnsw.empty());
+#endif
+  _impl->terms = std::move(footer.terms);
 }
 
 IdxReader::~IdxReader() = default;

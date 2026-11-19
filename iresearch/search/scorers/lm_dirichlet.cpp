@@ -20,10 +20,12 @@
 
 #include "lm_dirichlet.hpp"
 
+#include <absl/container/inlined_vector.h>
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
 #include <cmath>
+#include <span>
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/posting/score_bound_writer.hpp"
@@ -61,6 +63,33 @@ LmDirFormula LmDirOf(score_t boost, score_t mu, score_t share) noexcept {
   return {boost, 1.f / mu, 1.f / (mu * share)};
 }
 
+struct LmDirTermsFormula {
+  IRS_FORCE_INLINE score_t operator()(score_t tf, score_t dl) const noexcept {
+    const double doc_norm = 1 / (1 + dl * mu_inv);
+    const double* const mu_p_inv = mu_p_invs.data();
+    return static_cast<score_t>(LogOfProduct<double>(
+             mu_p_invs.size(),
+             [&](size_t i) {
+               return std::max((1 + tf * mu_p_inv[i]) * doc_norm, 1.0);
+             })) *
+           boost;
+  }
+
+  score_t boost;
+  double mu_inv;
+  absl::InlinedVector<double, 4> mu_p_invs;
+};
+
+LmDirTermsFormula LmDirTermsOf(score_t boost, score_t mu,
+                               std::span<const score_t> shares) {
+  LmDirTermsFormula formula{.boost = boost, .mu_inv = 1 / double{mu}};
+  formula.mu_p_invs.reserve(shares.size());
+  for (const auto share : shares) {
+    formula.mu_p_invs.push_back(1 / (double{mu} * share));
+  }
+  return formula;
+}
+
 }  // namespace
 
 void LMDirichlet::collect(byte_type* stats_buf, const FieldCollector* field,
@@ -72,9 +101,12 @@ ScoreFunction LMDirichlet::PrepareScorer(const ScoreContext& ctx) const {
   if (_mu <= 0.f) {
     return ScoreFunction::Default();
   }
-  return PrepareLMScorer(ctx, *stats_cast(ctx.stats), [&](score_t share) {
-    return LmDirOf(ctx.boost, _mu, share);
-  });
+  return PrepareLMScorer(
+    ctx, *stats_cast(ctx.stats),
+    [&](score_t share) { return LmDirOf(ctx.boost, _mu, share); },
+    [&](std::span<const score_t> shares) {
+      return LmDirTermsOf(ctx.boost, _mu, shares);
+    });
 }
 
 void LMDirichlet::Explain(const ScoreContext& ctx,

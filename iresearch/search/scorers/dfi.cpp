@@ -20,9 +20,12 @@
 
 #include "dfi.hpp"
 
+#include <absl/container/inlined_vector.h>
 #include <absl/strings/str_cat.h>
 
+#include <algorithm>
 #include <cmath>
+#include <span>
 #include <string_view>
 
 #include "iresearch/analysis/token_attributes.hpp"
@@ -61,6 +64,12 @@ struct Measure<DFIMeasure::Standardized> {
                                          score_t expected) noexcept {
     return diff / std::sqrt(expected);
   }
+
+  static double Inverse(double value) noexcept { return 1 / std::sqrt(value); }
+
+  IRS_FORCE_INLINE static double Growth(double diff, double inverse) noexcept {
+    return 1 + diff * inverse;
+  }
 };
 
 template<>
@@ -72,6 +81,12 @@ struct Measure<DFIMeasure::Saturated> {
                                          score_t expected) noexcept {
     return diff / expected;
   }
+
+  static double Inverse(double value) noexcept { return 1 / value; }
+
+  IRS_FORCE_INLINE static double Growth(double diff, double inverse) noexcept {
+    return 1 + diff * inverse;
+  }
 };
 
 template<>
@@ -82,6 +97,12 @@ struct Measure<DFIMeasure::ChiSquared> {
   IRS_FORCE_INLINE static score_t Kernel(score_t diff,
                                          score_t expected) noexcept {
     return diff * diff / expected;
+  }
+
+  static double Inverse(double value) noexcept { return 1 / value; }
+
+  IRS_FORCE_INLINE static double Growth(double diff, double inverse) noexcept {
+    return 1 + diff * diff * inverse;
   }
 };
 
@@ -114,6 +135,46 @@ struct DFIFormula {
   score_t ratio;
 };
 
+template<DFIMeasure M>
+struct DFITermsFormula {
+  IRS_FORCE_INLINE score_t operator()(score_t tf, score_t dl) const noexcept {
+    constexpr double kInvLn2 = 1.4426950408889634;
+    if (tf <= min_ratio * dl) {
+      return 0.f;
+    }
+    const double doc_inverse = Measure<M>::Inverse(dl);
+    const auto* const term = terms.data();
+    const double log = LogOfProduct<double>(terms.size(), [&](size_t i) {
+      const score_t expected = term[i].ratio * dl;
+      if (tf > expected && expected > 0.f) {
+        return Measure<M>::Growth(tf - expected, term[i].inverse * doc_inverse);
+      }
+      return 1.0;
+    });
+    return static_cast<score_t>(log * kInvLn2) * boost;
+  }
+
+  struct Term {
+    score_t ratio;
+    double inverse;
+  };
+
+  score_t boost;
+  score_t min_ratio;
+  absl::InlinedVector<Term, 4> terms;
+};
+
+template<DFIMeasure M>
+DFITermsFormula<M> DFITermsOf(score_t boost, std::span<const score_t> ratios) {
+  DFITermsFormula<M> formula{.boost = boost,
+                             .min_ratio = std::ranges::min(ratios)};
+  formula.terms.reserve(ratios.size());
+  for (const auto ratio : ratios) {
+    formula.terms.push_back({ratio, Measure<M>::Inverse(ratio)});
+  }
+  return formula;
+}
+
 }  // namespace
 
 void DFI::collect(byte_type* stats_buf, const FieldCollector* field,
@@ -135,6 +196,9 @@ ScoreFunction DFI::PrepareScorer(const ScoreContext& ctx) const {
   return WithMeasure(_measure, [&]<DFIMeasure M> {
     return MakeShareScore(
       ratios, [&](score_t ratio) { return DFIFormula<M>{ctx.boost, ratio}; },
+      [&](std::span<const score_t> shares) {
+        return DFITermsOf<M>(ctx.boost, shares);
+      },
       freq, norm, scale);
   });
 }

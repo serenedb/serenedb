@@ -210,6 +210,7 @@ target_sources(
         scorers/make_window.cpp
         scorers/root_window.cpp
         scorers/score_function.cpp
+        scorers/score_inputs.cpp
         top/make.cpp
         top/make_all.cpp
         top/make_posting.cpp

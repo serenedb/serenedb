@@ -35,15 +35,16 @@ namespace irs {
 
 using LMStats = ShareStats;
 
-template<typename MakeFormula>
+template<typename MakeTerm, typename MakeTerms>
 ScoreFunction PrepareLMScorer(const ScoreContext& ctx, const LMStats& stats,
-                              MakeFormula make_formula) {
+                              MakeTerm make_term, MakeTerms make_terms) {
   auto* freq = irs::get<FreqBlockAttr>(ctx.doc_attrs);
   const auto shares = SharesOf(stats);
   if (!freq || shares.empty()) {
     return ScoreFunction::Default();
   }
-  return MakeShareScore(shares, make_formula, freq, NormsOf(ctx), ScaleOf(ctx));
+  return MakeShareScore(shares, make_term, make_terms, freq, NormsOf(ctx),
+                        ScaleOf(ctx));
 }
 
 }  // namespace irs

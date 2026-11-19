@@ -20,9 +20,11 @@
 
 #include "indri_dirichlet.hpp"
 
+#include <absl/container/inlined_vector.h>
 #include <absl/strings/str_cat.h>
 
 #include <cmath>
+#include <span>
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/field_meta.hpp"
@@ -56,6 +58,30 @@ IndriFormula IndriOf(score_t boost, score_t mu, score_t share) noexcept {
   return {boost, mu, mu * share};
 }
 
+struct IndriTermsFormula {
+  IRS_FORCE_INLINE score_t operator()(score_t tf, score_t dl) const noexcept {
+    const score_t doc_inv = 1.f / (dl + mu);
+    const score_t* const mu_p = mu_ps.data();
+    return LogOfProduct<score_t>(
+             mu_ps.size(), [&](size_t i) { return (tf + mu_p[i]) * doc_inv; }) *
+           boost;
+  }
+
+  score_t boost;
+  score_t mu;
+  absl::InlinedVector<score_t, 4> mu_ps;
+};
+
+IndriTermsFormula IndriTermsOf(score_t boost, score_t mu,
+                               std::span<const score_t> shares) {
+  IndriTermsFormula formula{.boost = boost, .mu = mu};
+  formula.mu_ps.reserve(shares.size());
+  for (const auto share : shares) {
+    formula.mu_ps.push_back(mu * share);
+  }
+  return formula;
+}
+
 }  // namespace
 
 void IndriDirichlet::collect(byte_type* stats_buf, const FieldCollector* field,
@@ -68,9 +94,12 @@ ScoreFunction IndriDirichlet::PrepareScorer(const ScoreContext& ctx) const {
   if (_mu <= 0.f) {
     return ScoreFunction::Default();
   }
-  return PrepareLMScorer(ctx, *stats_cast(ctx.stats), [&](score_t share) {
-    return IndriOf(ctx.boost, _mu, share);
-  });
+  return PrepareLMScorer(
+    ctx, *stats_cast(ctx.stats),
+    [&](score_t share) { return IndriOf(ctx.boost, _mu, share); },
+    [&](std::span<const score_t> shares) {
+      return IndriTermsOf(ctx.boost, _mu, shares);
+    });
 }
 
 void IndriDirichlet::Explain(const ScoreContext& ctx,

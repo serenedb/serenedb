@@ -60,6 +60,17 @@ id	score	sum_of_terms
 1	4.5218	4.5218
 
 query
+SELECT id,
+       round(lm_jm(phrase_idx.tableoid), 4) AS score,
+       round(2 * ln(1 + (0.9 * 1 / 3) / (0.1 * 7 / 13)) + ln(1 + (0.9 * 1 / 3) / (0.1 * 3 / 13)), 4) AS sum_of_terms
+FROM phrase_idx
+WHERE body @@ ts_phrase('red fox red')
+ORDER BY id;
+----
+id	score	sum_of_terms
+1	6.4045	6.4045
+
+query
 SELECT id, round(lm_jm(phrase_idx.tableoid), 4) AS score, regexp_replace(ts_explain(phrase_idx.tableoid)::JSON::VARCHAR, '(\.[0-9]{4})[0-9]+', '\1', 'g') AS why
 FROM phrase_idx
 WHERE body @@ ts_phrase('red fox')
@@ -76,3 +87,16 @@ ORDER BY id;
 ----
 id	score	why
 1	0.454	{"column":"body","expression":"sum","parts":[{"column":"body","inputs":{"expected":{"expression":"p * dl","inputs":{"dl":{"value":3}},"value":1.6153},"freq":{"value":1},"p":{"expression":"(ttf + 1) / (L + 1)","inputs":{"L":{"value":12},"ttf":{"value":6}},"value":0.5384}},"note":"the term occurs no more often than expected, so it scores 0","term":"red","value":0},{"column":"body","expression":"boost * log2(1 + (freq - expected) / sqrt(expected))","inputs":{"expected":{"expression":"p * dl","inputs":{"dl":{"value":3}},"value":0.6923},"freq":{"value":1},"p":{"expression":"(ttf + 1) / (L + 1)","inputs":{"L":{"value":12},"ttf":{"value":2}},"value":0.2307}},"term":"fox","value":0.4539}],"phrase":["red","fox"],"scorer":"dfi(measure=standardized)","value":0.4539}
+
+query
+SELECT 'dfi' AS scorer, id, dfi(phrase_idx.tableoid) AS score FROM phrase_idx WHERE body @@ ts_phrase('a fox')
+UNION ALL
+SELECT 'dfi saturated', id, dfi(phrase_idx.tableoid, 'saturated') FROM phrase_idx WHERE body @@ ts_phrase('a fox')
+UNION ALL
+SELECT 'dfi chi_squared', id, dfi(phrase_idx.tableoid, 'chi_squared') FROM phrase_idx WHERE body @@ ts_phrase('a fox')
+ORDER BY scorer;
+----
+scorer	id	score
+dfi	3	0
+dfi chi_squared	3	0
+dfi saturated	3	0

@@ -20,13 +20,14 @@
 
 #pragma once
 
-#include <absl/container/inlined_vector.h>
+#include <absl/functional/function_ref.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <span>
-#include <type_traits>
 #include <utility>
 
 #include "iresearch/analysis/token_attributes.hpp"
@@ -87,11 +88,27 @@ inline void CollectShare(ShareStats& stats, const FieldCollector* field,
   stats.shares[stats.terms++] = share;
 }
 
+double LogOfProductInChunks(size_t n,
+                            absl::FunctionRef<double(size_t)> factor) noexcept;
+
+template<typename T, typename Factor>
+IRS_FORCE_INLINE T LogOfProduct(size_t n, Factor factor) noexcept {
+  T product = 1;
+  for (size_t i = 0; i != n; ++i) {
+    product *= factor(i);
+  }
+  if (product >= std::numeric_limits<T>::min() &&
+      product <= std::numeric_limits<T>::max()) [[likely]] {
+    return std::log(product);
+  }
+  return static_cast<T>(LogOfProductInChunks(n, factor));
+}
+
 template<bool HasScale, typename Formula>
 struct FreqScore : public ScoreOperatorOf<FreqScore<HasScale, Formula>> {
   FreqScore(Formula formula, const FreqBlockAttr* freq, const uint32_t* norm,
             const score_t* scale) noexcept
-    : freq{freq}, norm{norm}, scale{scale}, formula{formula} {}
+    : freq{freq}, norm{norm}, scale{scale}, formula{std::move(formula)} {}
 
   template<ScoreMergeType MergeType = ScoreMergeType::Noop>
   IRS_FORCE_INLINE void ScoreImpl(score_t* res,
@@ -107,58 +124,23 @@ struct FreqScore : public ScoreOperatorOf<FreqScore<HasScale, Formula>> {
 };
 
 template<typename Formula>
-struct SumOf {
-  IRS_FORCE_INLINE score_t operator()(score_t tf, score_t dl) const noexcept {
-    score_t sum = 0.f;
-    for (const auto& formula : formulas) {
-      sum += formula(tf, dl);
-    }
-    return sum;
-  }
+ScoreFunction MakeFreqScore(Formula formula, const FreqBlockAttr* freq,
+                            const uint32_t* norm, const score_t* scale) {
+  return ResolveBool(scale != nullptr, [&]<bool HasScale>() {
+    return ScoreFunction::Make<FreqScore<HasScale, Formula>>(std::move(formula),
+                                                             freq, norm, scale);
+  });
+}
 
-  std::span<const Formula> formulas;
-};
-
-template<bool HasScale, typename Formula>
-struct SumScore : public ScoreOperatorOf<SumScore<HasScale, Formula>> {
-  SumScore(absl::InlinedVector<Formula, 4> formulas, const FreqBlockAttr* freq,
-           const uint32_t* norm, const score_t* scale) noexcept
-    : freq{freq}, norm{norm}, scale{scale}, formulas{std::move(formulas)} {}
-
-  template<ScoreMergeType MergeType = ScoreMergeType::Noop>
-  IRS_FORCE_INLINE void ScoreImpl(score_t* res,
-                                  scores_size_t n) const noexcept {
-    ScoreFreqs<MergeType, HasScale>(
-      res, n, freq->value, norm, TryGetValue(scale), SumOf<Formula>{formulas});
-  }
-
-  const FreqBlockAttr* freq;
-  const uint32_t* norm;
-  [[no_unique_address]] utils::Need<HasScale, const score_t*> scale;
-  absl::InlinedVector<Formula, 4> formulas;
-};
-
-template<typename MakeFormula>
+template<typename MakeTerm, typename MakeTerms>
 ScoreFunction MakeShareScore(std::span<const score_t> shares,
-                             MakeFormula make_formula,
+                             MakeTerm make_term, MakeTerms make_terms,
                              const FreqBlockAttr* freq, const uint32_t* norm,
                              const score_t* scale) {
-  using Formula = std::invoke_result_t<MakeFormula&, score_t>;
   if (shares.size() == 1) {
-    return ResolveBool(scale != nullptr, [&]<bool HasScale>() {
-      return ScoreFunction::Make<FreqScore<HasScale, Formula>>(
-        make_formula(shares.front()), freq, norm, scale);
-    });
+    return MakeFreqScore(make_term(shares.front()), freq, norm, scale);
   }
-  absl::InlinedVector<Formula, 4> formulas;
-  formulas.reserve(shares.size());
-  for (const auto share : shares) {
-    formulas.push_back(make_formula(share));
-  }
-  return ResolveBool(scale != nullptr, [&]<bool HasScale>() {
-    return ScoreFunction::Make<SumScore<HasScale, Formula>>(std::move(formulas),
-                                                            freq, norm, scale);
-  });
+  return MakeFreqScore(make_terms(shares), freq, norm, scale);
 }
 
 inline const score_t* ScaleOf(const ScoreContext& ctx) noexcept {

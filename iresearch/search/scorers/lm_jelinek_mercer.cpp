@@ -20,9 +20,11 @@
 
 #include "lm_jelinek_mercer.hpp"
 
+#include <absl/container/inlined_vector.h>
 #include <absl/strings/str_cat.h>
 
 #include <cmath>
+#include <span>
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/posting/score_bound_writer.hpp"
@@ -59,6 +61,32 @@ LmJmFormula LmJmOf(score_t boost, score_t lambda, score_t share) noexcept {
   return {boost, 1.f - lambda, 1.f / (lambda * share)};
 }
 
+struct LmJmTermsFormula {
+  IRS_FORCE_INLINE score_t operator()(score_t tf, score_t dl) const noexcept {
+    SDB_ASSERT(dl != 0.f);
+    const double x = num * tf / dl;
+    const double* const denom_inv = denom_invs.data();
+    return static_cast<score_t>(LogOfProduct<double>(
+             denom_invs.size(),
+             [&](size_t i) { return 1 + x * denom_inv[i]; })) *
+           boost;
+  }
+
+  score_t boost;
+  score_t num;
+  absl::InlinedVector<double, 4> denom_invs;
+};
+
+LmJmTermsFormula LmJmTermsOf(score_t boost, score_t lambda,
+                             std::span<const score_t> shares) {
+  LmJmTermsFormula formula{.boost = boost, .num = 1.f - lambda};
+  formula.denom_invs.reserve(shares.size());
+  for (const auto share : shares) {
+    formula.denom_invs.push_back(1 / (static_cast<double>(lambda) * share));
+  }
+  return formula;
+}
+
 }  // namespace
 
 void LMJelinekMercer::collect(byte_type* stats_buf, const FieldCollector* field,
@@ -68,9 +96,12 @@ void LMJelinekMercer::collect(byte_type* stats_buf, const FieldCollector* field,
 }
 
 ScoreFunction LMJelinekMercer::PrepareScorer(const ScoreContext& ctx) const {
-  return PrepareLMScorer(ctx, *stats_cast(ctx.stats), [&](score_t share) {
-    return LmJmOf(ctx.boost, _lambda, share);
-  });
+  return PrepareLMScorer(
+    ctx, *stats_cast(ctx.stats),
+    [&](score_t share) { return LmJmOf(ctx.boost, _lambda, share); },
+    [&](std::span<const score_t> shares) {
+      return LmJmTermsOf(ctx.boost, _lambda, shares);
+    });
 }
 
 void LMJelinekMercer::Explain(const ScoreContext& ctx,

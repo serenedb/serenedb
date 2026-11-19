@@ -22,6 +22,7 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
+#include <absl/cleanup/cleanup.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/escaping.h>
 #include <absl/time/clock.h>
@@ -1553,6 +1554,12 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
       stream_key, duckdb::make_shared_ptr<duckdb::RowStreamState>(
                     duckdb::make_shared_ptr<sdb::pg::CopyInStream>(batches)));
   }
+  absl::Cleanup unregister_stream = [&] {
+    if (scans_stream) {
+      duckdb::ClientContext& client = *_connection_ctx;
+      client.registered_state->Remove(stream_key);
+    }
+  };
   _feeder_done.store(false, std::memory_order_relaxed);
   _copy_route.store(true, std::memory_order_release);
   WriteCopyInResponse(this->_send, IsBinaryWireFormat(format), copy_columns);
@@ -1590,10 +1597,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
   _copy_route.store(false, std::memory_order_release);
   _copy_room.Kick();
   _connection_ctx->SetSideChannel<sdb::pg::CopyInBatches>(nullptr);
-  if (scans_stream) {
-    duckdb::ClientContext& client = *_connection_ctx;
-    client.registered_state->Remove(stream_key);
-  }
+  std::move(unregister_stream).Invoke();
   if (error) {
     std::rethrow_exception(error);
   }

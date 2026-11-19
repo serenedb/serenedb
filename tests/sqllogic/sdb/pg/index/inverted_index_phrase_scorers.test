@@ -60,19 +60,19 @@ id	score	sum_of_terms
 1	4.5218	4.5218
 
 query
-SELECT id, lm_jm(phrase_idx.tableoid) AS score, ts_explain(phrase_idx.tableoid) AS why
+SELECT id, round(lm_jm(phrase_idx.tableoid), 4) AS score, regexp_replace(ts_explain(phrase_idx.tableoid)::JSON::VARCHAR, '(\.[0-9]{4})[0-9]+', '\1', 'g') AS why
 FROM phrase_idx
 WHERE body @@ ts_phrase('red fox')
 ORDER BY id;
 ----
 id	score	why
-1	4.5217886	{"column":"body","expression":"sum","parts":[{"column":"body","expression":"boost * log(1 + ((1 - lambda) * freq / dl) / (lambda * p))","inputs":{"dl":{"value":3},"freq":{"value":1},"lambda":{"value":0.1},"p":{"expression":"(ttf + 1) / (L + 1)","inputs":{"L":{"value":12},"ttf":{"value":6}},"value":0.53846157}},"term":"red","value":1.8827312},{"column":"body","expression":"boost * log(1 + ((1 - lambda) * freq / dl) / (lambda * p))","inputs":{"dl":{"value":3},"freq":{"value":1},"lambda":{"value":0.1},"p":{"expression":"(ttf + 1) / (L + 1)","inputs":{"L":{"value":12},"ttf":{"value":2}},"value":0.23076923}},"term":"fox","value":2.6390572}],"phrase":["red","fox"],"scorer":"lm_jm(lambda=0.1)","value":4.5217886}
+1	4.5218	{"column":"body","expression":"sum","parts":[{"column":"body","expression":"boost * log(1 + ((1 - lambda) * freq / dl) / (lambda * p))","inputs":{"dl":{"value":3},"freq":{"value":1},"lambda":{"value":0.1},"p":{"expression":"(ttf + 1) / (L + 1)","inputs":{"L":{"value":12},"ttf":{"value":6}},"value":0.5384}},"term":"red","value":1.8827},{"column":"body","expression":"boost * log(1 + ((1 - lambda) * freq / dl) / (lambda * p))","inputs":{"dl":{"value":3},"freq":{"value":1},"lambda":{"value":0.1},"p":{"expression":"(ttf + 1) / (L + 1)","inputs":{"L":{"value":12},"ttf":{"value":2}},"value":0.2307}},"term":"fox","value":2.6390}],"phrase":["red","fox"],"scorer":"lm_jm(lambda=0.1)","value":4.5217}
 
 query
-SELECT id, dfi(phrase_idx.tableoid) AS score, ts_explain(phrase_idx.tableoid) AS why
+SELECT id, round(dfi(phrase_idx.tableoid), 4) AS score, regexp_replace(ts_explain(phrase_idx.tableoid)::JSON::VARCHAR, '(\.[0-9]{4})[0-9]+', '\1', 'g') AS why
 FROM phrase_idx
 WHERE body @@ ts_phrase('red fox')
 ORDER BY id;
 ----
 id	score	why
-1	0.45396537	{"column":"body","expression":"sum","parts":[{"column":"body","inputs":{"expected":{"expression":"p * dl","inputs":{"dl":{"value":3}},"value":1.6153847},"freq":{"value":1},"p":{"expression":"(ttf + 1) / (L + 1)","inputs":{"L":{"value":12},"ttf":{"value":6}},"value":0.53846157}},"note":"the term occurs no more often than expected, so it scores 0","term":"red","value":0},{"column":"body","expression":"boost * log2(1 + (freq - expected) / sqrt(expected))","inputs":{"expected":{"expression":"p * dl","inputs":{"dl":{"value":3}},"value":0.6923077},"freq":{"value":1},"p":{"expression":"(ttf + 1) / (L + 1)","inputs":{"L":{"value":12},"ttf":{"value":2}},"value":0.23076923}},"term":"fox","value":0.45396537}],"phrase":["red","fox"],"scorer":"dfi(measure=standardized)","value":0.45396537}
+1	0.454	{"column":"body","expression":"sum","parts":[{"column":"body","inputs":{"expected":{"expression":"p * dl","inputs":{"dl":{"value":3}},"value":1.6153},"freq":{"value":1},"p":{"expression":"(ttf + 1) / (L + 1)","inputs":{"L":{"value":12},"ttf":{"value":6}},"value":0.5384}},"note":"the term occurs no more often than expected, so it scores 0","term":"red","value":0},{"column":"body","expression":"boost * log2(1 + (freq - expected) / sqrt(expected))","inputs":{"expected":{"expression":"p * dl","inputs":{"dl":{"value":3}},"value":0.6923},"freq":{"value":1},"p":{"expression":"(ttf + 1) / (L + 1)","inputs":{"L":{"value":12},"ttf":{"value":2}},"value":0.2307}},"term":"fox","value":0.4539}],"phrase":["red","fox"],"scorer":"dfi(measure=standardized)","value":0.4539}

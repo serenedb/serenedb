@@ -20,26 +20,15 @@
 
 #pragma once
 
-#include <atomic>
-#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <optional>
-#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
-#include <yaclib/algo/wait_group.hpp>
 
-#include "network/acceptor.h"
-#include "network/cancel_registry.h"
-#include "network/credentials.h"
-#include "network/http/auth.h"
-#include "network/io_context.h"
 #include "network/proxy_protocol.h"
-#include "network/tls_context.h"
 #include "server/utils/asio_ns.h"
-#include "server/utils/registry.h"
 
 namespace sdb::network {
 
@@ -88,35 +77,6 @@ struct ListenSpec {
   std::shared_ptr<const ListenOptions> options;
 };
 
-struct ListenContext {
-  IoThreadPool& pool;
-  CancelRegistry& cancel;
-  std::atomic<uint32_t>& active;
-  yaclib::WaitGroup<>& sessions;
-  const CredentialProvider* credentials = nullptr;
-  const http::ApiKeyValidator* api_keys = nullptr;
-  const http::BearerValidator* bearer = nullptr;
-  const TlsOptions& tls;
-  uint32_t max_connections = 0;
-  uint32_t max_message_bytes = 0;
-  std::chrono::milliseconds auth_timeout{0};
-  std::string_view cors_origins;
-};
-
-struct ListenProtocol {
-  static constexpr std::string_view kKind = "listen protocol";
-
-  std::shared_ptr<const ListenOptions> (*parse)(
-    const ListenSpec& spec, std::span<const ListenParam> params);
-  std::unique_ptr<AcceptorBase> (*listen)(const ListenContext& context,
-                                          const ListenSpec& spec);
-};
-
-struct ListenTls {
-  bool required = false;
-  bool client_cert = false;
-};
-
 // Parse the --listen flag value list into concrete listener specs: ada URL
 // parse (strict; fatal on any malformed/inapplicable input), DNS/wildcard
 // resolution into one spec per bound address, and the historical default when
@@ -131,15 +91,4 @@ bool ParseBoolParam(std::string_view value, std::string_view key,
 uint32_t ParseUintParam(std::string_view value, std::string_view key,
                         std::string_view url, int base = 10);
 
-AcceptorOptions MakeAcceptorOptions(const ListenSpec& spec);
-
-std::unique_ptr<asio_ns::ssl::context> MakeTls(const ListenContext& context,
-                                               const ListenSpec& spec,
-                                               ListenTls tls);
-
-void LogListening(const ListenSpec& spec, bool tls);
-
 }  // namespace sdb::network
-
-#define SDB_LISTEN_PROTOCOL \
-  const ::sdb::Registry<::sdb::network::ListenProtocol>::Register

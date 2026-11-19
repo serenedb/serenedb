@@ -33,6 +33,8 @@
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/string_utils.hpp>
 
+#include "network/listen_protocol.h"
+
 namespace sdb::network {
 namespace {
 
@@ -248,57 +250,6 @@ uint32_t ParseUintParam(std::string_view value, std::string_view key,
               "': '", value, "'");
   }
   return parsed;
-}
-
-AcceptorOptions MakeAcceptorOptions(const ListenSpec& spec) {
-  return {
-    .v6_only = spec.v6_only,
-    .reuseport = spec.reuseport,
-    .backlog = spec.backlog,
-    .keepalive = spec.keepalive,
-    .keepidle = spec.keepidle,
-    .keepintvl = spec.keepintvl,
-    .keepcnt = spec.keepcnt,
-    .unix_mode = spec.unix_mode,
-    .unix_group = spec.unix_group,
-  };
-}
-
-std::unique_ptr<asio_ns::ssl::context> MakeTls(const ListenContext& context,
-                                               const ListenSpec& spec,
-                                               ListenTls tls) {
-  TlsOptions options = context.tls;
-  if (!spec.cert.empty()) {
-    options.cert_file = spec.cert;
-  }
-  if (!spec.key.empty()) {
-    options.key_file = spec.key;
-  }
-  if (!spec.ca.empty()) {
-    options.ca_file = spec.ca;
-  }
-  if (options.cert_file.empty() || options.key_file.empty()) {
-    if (tls.required) {
-      SDB_FATAL(GENERAL, "endpoint '", spec.url,
-                "' requires TLS but no certificate is configured (set "
-                "--tls_cert/--tls_key or ?cert=&key=)");
-    }
-    return nullptr;
-  }
-  if (tls.client_cert && options.ca_file.empty()) {
-    SDB_FATAL(GENERAL, "endpoint '", spec.url,
-              "' uses sslmode=verify-* but no client-cert CA is configured "
-              "(set --tls_ca or ?ca=)");
-  }
-  options.require_client_cert = tls.client_cert;
-  return std::make_unique<asio_ns::ssl::context>(
-    BuildServerTlsContext(options));
-}
-
-void LogListening(const ListenSpec& spec, bool tls) {
-  SDB_INFO(STARTUP, "listening on ", spec.url, " (",
-           spec.endpoint.address().to_string(), ":", spec.endpoint.port(),
-           tls ? ", tls" : "", ")");
 }
 
 std::vector<ListenSpec> ParseListenSpecs(

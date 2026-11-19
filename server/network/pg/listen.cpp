@@ -20,14 +20,22 @@
 
 #include "network/pg/listen.h"
 
+#include <absl/flags/flag.h>
 #include <absl/strings/str_cat.h>
 
-#include <iresearch/utils/assert.hpp>
+#include <algorithm>
+#include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/log.hpp>
 #include <memory>
 #include <string>
 
+#include "network/connection.h"
+#include "network/listen_protocol.h"
 #include "network/pg/pg_wire_session.h"
+
+ABSL_FLAG(uint64_t, pg_max_message_bytes, sdb::network::kDefaultMaxMessageBytes,
+          "Maximum size of a single pg-wire message (statement text / bound "
+          "parameter value). Bulk data should use COPY, which streams.");
 
 namespace sdb::network {
 namespace {
@@ -87,12 +95,13 @@ class PgListener final : public AcceptorBase {
   PgListener(const ListenContext& context, const ListenSpec& spec) {
     _deps.credentials = context.credentials;
     _deps.cancel = &context.cancel;
-    _deps.max_message_bytes = context.max_message_bytes;
+    _deps.max_message_bytes = static_cast<uint32_t>(std::min<uint64_t>(
+      absl::GetFlag(FLAGS_pg_max_message_bytes), 0xFFFFFFFFull));
     _deps.active = &context.active;
     _deps.sessions = &context.sessions;
     _deps.max_connections =
       spec.max_connections.value_or(context.max_connections);
-    _deps.auth_timeout = context.auth_timeout;
+    _deps.auth_timeout = AuthTimeout();
     _deps.proxy = spec.proxy;
     if (spec.transport == ListenTransport::Unix) {
       ListenOnUnix(context, spec);
@@ -163,8 +172,7 @@ SDB_LISTEN_PROTOCOL kPostgresql{"postgresql", &ParsePg, &ListenPg};
 }  // namespace
 
 const PgListenOptions& PgOptions(const ListenSpec& spec) {
-  SDB_ASSERT(spec.protocol->parse == &ParsePg);
-  return static_cast<const PgListenOptions&>(*spec.options);
+  return irs::utils::downCast<PgListenOptions>(*spec.options);
 }
 
 bool RequireTls(SslMode mode) {

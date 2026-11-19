@@ -114,7 +114,7 @@ Success
 # DOCS_TEST: example_012
 
 # DOCS_TEST_RAW
-#| -- normalized: creates `/var/log/serenedb/duckdb_log_contexts.csv` and `/var/log/serenedb/duckdb_log_entries.csv`
+#| -- normalized: creates `/var/log/serenedb/sdb_log_contexts.csv` and `/var/log/serenedb/duckdb_log_entries.csv`
 #| CALL enable_logging(storage_path = '/var/log/serenedb');
 #|
 #| -- denormalized: creates `/var/log/serenedb/logs.csv`
@@ -123,7 +123,7 @@ Success
 # DOCS_TEST_BODY
 
 statement ok
--- normalized: creates `${__TEST_DIR__}/duckdb_log_contexts.csv` and `${__TEST_DIR__}/duckdb_log_entries.csv`
+-- normalized: creates `${__TEST_DIR__}/sdb_log_contexts.csv` and `${__TEST_DIR__}/duckdb_log_entries.csv`
 CALL enable_logging(storage_path = '${__TEST_DIR__}');
 
 query

@@ -63,7 +63,7 @@ pudge goes mid
 
 connection after_crash
 query
-SELECT * FROM serenedb_reindex('vimp_idx');
+SELECT * FROM sdb_reindex('vimp_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0

@@ -48,7 +48,7 @@ View	v
 # The same number on duckdb's own side.
 query
 SELECT t.table_name, (t.table_oid = c.oid) AS same
-FROM duckdb_tables() t
+FROM sdb_tables() t
 JOIN pg_namespace n ON n.nspname = t.schema_name
 JOIN pg_class c ON c.relname = t.table_name AND c.relnamespace = n.oid
 WHERE t.schema_name = 'cei'
@@ -60,7 +60,7 @@ t	t
 
 query
 SELECT i.index_name, (i.index_oid = c.oid) AS same
-FROM duckdb_indexes() i
+FROM sdb_indexes() i
 JOIN pg_namespace n ON n.nspname = i.schema_name
 JOIN pg_class c ON c.relname = i.index_name AND c.relnamespace = n.oid
 WHERE i.schema_name = 'cei'

@@ -25,7 +25,7 @@
 namespace sdb::pg {
 namespace {
 
-constexpr SystemSqlColumn kSerenedbLicensesColumns[] = {
+constexpr SystemSqlColumn kSdbLicensesColumns[] = {
   {"name", kText, 0, false, false, kCCollation, 0, SystemKey::None},
   {"license", kText, 0, false, false, kCCollation, 0, SystemKey::None},
   {"url", kText, 0, false, false, kCCollation, 0, SystemKey::None},
@@ -33,18 +33,20 @@ constexpr SystemSqlColumn kSerenedbLicensesColumns[] = {
   {"license_text", kText, 0, false, false, kCCollation, 0, SystemKey::None},
 };
 
-constexpr SystemSql kSerenedbLicensesSql{.oid = kSerenedbLicensesTable,
-                                         .schema = "pg_catalog",
-                                         .name = "serenedb_licenses",
-                                         .relkind = 'r',
-                                         .replident = 'n',
-                                         .columns = kSerenedbLicensesColumns};
+constexpr SystemSql kSdbLicensesSql{
+  .oid = kSdbLicensesTable,
+  .schema = "pg_catalog",
+  .name = "sdb_licenses",
+  .relkind = 'r',
+  .replident = 'n',
+  .columns = kSdbLicensesColumns,
+};
 
 using credits::License;
 
 SystemRows<License> LoadLicenses(SystemScan&) { return credits::Licenses(); }
 
-constexpr auto kLicense = Shape<kSerenedbLicensesSql, const License>(
+constexpr auto kLicense = Shape<kSdbLicensesSql, const License>(
   Col<"name">(&License::name), Col<"license">(&License::license),
   Col<"url">(&License::url), Col<"license_file">([](const auto& row) {
     return NonEmpty<std::string_view>(row.file);
@@ -54,7 +56,6 @@ constexpr auto kLicense = Shape<kSerenedbLicensesSql, const License>(
 
 }  // namespace
 
-SystemTable gSerenedbLicenses =
-  SystemTableOf<ArrayTable<kLicense, &LoadLicenses>>();
+SystemTable gSdbLicenses = SystemTableOf<ArrayTable<kLicense, &LoadLicenses>>();
 
 }  // namespace sdb::pg

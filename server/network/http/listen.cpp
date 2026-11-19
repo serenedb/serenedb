@@ -73,9 +73,8 @@ std::unique_ptr<http::ApiKeyValidator> MakeApiKeyValidator() {
   if (colon == std::string::npos) {
     SDB_FATAL(GENERAL, "--auth_api_key must be 'id:key'");
   }
-  return std::make_unique<http::FlagApiKeyValidator>(
-    api_key.substr(0, colon), api_key.substr(colon + 1),
-    std::string{irs::StaticStrings::kDefaultUser});
+  return std::make_unique<http::FlagApiKeyValidator>(api_key.substr(0, colon),
+                                                     api_key.substr(colon + 1));
 }
 
 std::unique_ptr<http::BearerValidator> MakeBearerValidator() {
@@ -83,12 +82,11 @@ std::unique_ptr<http::BearerValidator> MakeBearerValidator() {
   if (token.empty()) {
     return nullptr;
   }
-  return std::make_unique<http::FlagBearerValidator>(
-    std::move(token), std::string{irs::StaticStrings::kDefaultUser});
+  return std::make_unique<http::FlagBearerValidator>(std::move(token));
 }
 
 void SetTimeouts() {
-  constexpr std::chrono::milliseconds kOff{0};
+  static constexpr std::chrono::milliseconds kOff{0};
   if (const auto timeout = AuthTimeout(); timeout > kOff) {
     gHttpHeaderTimeout = timeout;
   }

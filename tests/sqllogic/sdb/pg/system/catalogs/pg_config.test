@@ -9,8 +9,8 @@ CONFIGURE	t
 CXX	t
 CXXFLAGS	t
 LDFLAGS	t
-SERENEDB_COMMIT	t
-SERENEDB_VERSION	t
+SDB_COMMIT	t
+SDB_VERSION	t
 SYSCONFDIR	t
 VERSION	t
 
@@ -25,7 +25,7 @@ t
 
 query
 SELECT (SELECT setting FROM pg_config WHERE name = 'VERSION') || ' (SereneDB ' ||
-       (SELECT setting FROM pg_config WHERE name = 'SERENEDB_VERSION') || ')' =
+       (SELECT setting FROM pg_config WHERE name = 'SDB_VERSION') || ')' =
        version() AS matches;
 ----
 matches
@@ -34,10 +34,20 @@ t
 
 query
 SELECT setting ~ '^[0-9a-f]{40}(-dirty)?$' AS commit
-FROM pg_config WHERE name = 'SERENEDB_COMMIT';
+FROM pg_config WHERE name = 'SDB_COMMIT';
 ----
 commit
 t
+
+
+query
+SELECT library_version = (SELECT setting FROM pg_config WHERE name = 'SDB_VERSION') AS version,
+       source_id = (SELECT setting FROM pg_config WHERE name = 'SDB_COMMIT') AS commit,
+       codename IS NULL AS no_codename
+FROM pragma_version();
+----
+version	commit	no_codename
+t	t	t
 
 
 query
@@ -50,7 +60,7 @@ t
 
 
 query
-SELECT count(*) AS n FROM pg_config() WHERE name = 'SERENEDB_COMMIT';
+SELECT count(*) AS n FROM pg_config() WHERE name = 'SDB_COMMIT';
 ----
 n
 1

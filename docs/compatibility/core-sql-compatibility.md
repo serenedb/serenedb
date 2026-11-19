@@ -795,7 +795,7 @@ The `jsonb` type is a `json` value that keeps its text as written (see [`jsonb`]
 | pg_get_viewdef                     | Yes           | The view's query in SereneDB's one-line form |
 | pg_get_ruledef                     | Yes           | The `_RETURN` rule of a view, around the same query text |
 | pg_get_triggerdef                  | Yes           | A trigger runs a statement, which takes the place of `EXECUTE FUNCTION` |
-| pg_get_functiondef                 | Yes           | The body is printed in SereneDB's form; a DuckDB macro is printed as `CREATE MACRO` |
+| pg_get_functiondef                 | Yes           | The body is printed in SereneDB's form; a macro is printed as `CREATE MACRO` |
 | pg_get_function_arguments          | Yes           |  |
 | pg_get_function_identity_arguments | Yes           |  |
 | pg_get_function_result             | Yes           |  |
@@ -911,7 +911,7 @@ The rule works both ways: a table created with a quoted name is not found under 
 
 Case insensitivity therefore only works if you never quote identifiers with different cases. Column names follow the same rule; aliases inside one query, such as the output columns of a subquery, match regardless of case.
 
-`serenedb shell` keeps DuckDB's behavior instead: identifiers are case-insensitive everywhere, even when quoted, and keep the case they were created with. A server session gets the same with the [`preserve_identifier_case` option](../configuration/overview.md), under which the scripts above complete successfully:
+`serenedb shell` behaves differently: identifiers are case-insensitive everywhere, even when quoted, and keep the case they were created with. A server session gets the same with the [`preserve_identifier_case` option](../configuration/overview.md), under which the scripts above complete successfully:
 
 <SqlLogicTest id="sql/dialect/postgresql_compatibility/preserved_case_tables/example_007" />
 

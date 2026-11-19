@@ -400,7 +400,7 @@ t2
 
 connection s2
 query
-SELECT table_name FROM duckdb_tables() WHERE schema_name = 'csv_s' ORDER BY 1
+SELECT table_name FROM sdb_tables() WHERE schema_name = 'csv_s' ORDER BY 1
 ----
 table_name
 t
@@ -409,7 +409,7 @@ t2
 
 connection s1
 query
-SELECT table_name FROM duckdb_tables() WHERE schema_name = 'csv_s' ORDER BY 1
+SELECT table_name FROM sdb_tables() WHERE schema_name = 'csv_s' ORDER BY 1
 ----
 table_name
 t
@@ -532,7 +532,7 @@ connection s2
 query
 SELECT has_schema_privilege('csv_r1', 'csv_new', 'USAGE') AS usage,
        (SELECT count(*) FROM csv_new.t) AS n,
-       (SELECT schema_name FROM duckdb_tables() WHERE schema_name = 'csv_new') AS via_table
+       (SELECT schema_name FROM sdb_tables() WHERE schema_name = 'csv_new') AS via_table
 ----
 usage	n	via_table
 t	1	csv_new

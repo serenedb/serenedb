@@ -4,7 +4,7 @@
 
 ## Built into serened
 
-SereneDB and the libraries below are built into serened. `SELECT * FROM serenedb_licenses` lists the ones a server was built with, with the text of each license file.
+SereneDB and the libraries below are built into serened. `SELECT * FROM sdb_licenses` lists the ones a server was built with, with the text of each license file.
 
 ### Apache-2.0
 

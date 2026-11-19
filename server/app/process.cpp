@@ -83,7 +83,7 @@ void ParseOptions(int argc, char* argv[]) {
     "Usage:\n"
     "  serened <data-dir> [--flag=value ...]\n"
     "  serenedb server <data-dir> [--flag=value ...]\n"
-    "  serenedb shell [duckdb-shell args ...]\n"
+    "  serenedb shell [shell args ...]\n"
     "  serenedb psql  [psql args ...]\n\n"
     "Flag sources (absl built-in, full definitions under --helpfull):\n"
     "  --flagfile=path1,path2     Read flags from one or more files (one\n"

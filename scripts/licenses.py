@@ -58,7 +58,7 @@ def section(components):
         groups.setdefault(component["license"], []).append(component)
     lines = [BEGIN, "", "## Built into serened", "",
              "SereneDB and the libraries below are built into serened. "
-             "`SELECT * FROM serenedb_licenses` lists the ones a server was "
+             "`SELECT * FROM sdb_licenses` lists the ones a server was "
              "built with, with the text of each license file.", ""]
     for license in sorted(groups, key=str.casefold):
         lines += [f"### {license}", ""]

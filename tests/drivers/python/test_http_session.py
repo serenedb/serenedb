@@ -95,7 +95,7 @@ def test_each_request_runs_as_the_role_it_authenticated_as(role, http_conn):
 def test_the_bearer_token_is_masked_in_settings():
     with psycopg.connect(**conn_kwargs(), autocommit=True) as conn:
         setting = conn.execute(
-            "SELECT setting FROM sdb_settings WHERE name = 'auth_bearer_token'"
+            "SELECT setting FROM sdb_flags WHERE name = 'auth_bearer_token'"
         ).fetchone()[0]
     assert setting == "***"
 

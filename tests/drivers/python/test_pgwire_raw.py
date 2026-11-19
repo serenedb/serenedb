@@ -4003,7 +4003,7 @@ def test_sequence_sqlstates(conn):
 
 def test_deallocate_all_releases_protocol_statements(conn):
     handles = (
-        "SELECT count(*) FROM duckdb_prepared_statements()"
+        "SELECT count(*) FROM sdb_prepared_statements()"
         " WHERE name LIKE 'duckdb_prepare_internal_%'"
     )
     _parse_ok(conn, "ns_release_a", "select 1")

@@ -47,7 +47,7 @@ n
 
 connection after_before
 query
-SELECT count(*) AS n FROM duckdb_databases() WHERE database_name = 'sfc_before';
+SELECT count(*) AS n FROM sdb_databases() WHERE database_name = 'sfc_before';
 ----
 n
 0
@@ -151,7 +151,7 @@ sfc_locked
 
 connection after_restart
 query
-SELECT database_name FROM duckdb_databases() WHERE database_name LIKE 'sfc_%' ORDER BY database_name;
+SELECT database_name FROM sdb_databases() WHERE database_name LIKE 'sfc_%' ORDER BY database_name;
 ----
 database_name
 sfc_kept

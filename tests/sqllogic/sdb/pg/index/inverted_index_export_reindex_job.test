@@ -180,8 +180,8 @@ arelav is skuf
 
 
 query
-SELECT (SELECT count(*) FROM duckdb_functions() WHERE database_name = current_database() AND function_name = 'exrj_refresh') AS macros,
-       (SELECT count(*) FROM duckdb_views() WHERE database_name = current_database() AND view_name = 'exrj_paused_run') AS views;
+SELECT (SELECT count(*) FROM sdb_functions() WHERE database_name = current_database() AND function_name = 'exrj_refresh') AS macros,
+       (SELECT count(*) FROM sdb_views() WHERE database_name = current_database() AND view_name = 'exrj_paused_run') AS views;
 ----
 macros	views
 1	1

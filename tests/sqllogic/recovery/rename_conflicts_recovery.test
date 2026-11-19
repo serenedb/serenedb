@@ -134,7 +134,7 @@ id
 
 connection after_wal_replay
 query
-SELECT schema_name, table_name, index_name FROM duckdb_indexes() WHERE schema_name LIKE 'rcr%' ORDER BY 3;
+SELECT schema_name, table_name, index_name FROM sdb_indexes() WHERE schema_name LIKE 'rcr%' ORDER BY 3;
 ----
 schema_name	table_name	index_name
 rcr2	t2	rcr_t_v2

@@ -18,16 +18,39 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#pragma once
-
-#include <duckdb/main/database.hpp>
-#include <duckdb/main/extension/extension_loader.hpp>
 #include <string_view>
 
-namespace sdb::connector {
+#include "pg/catalog/engine/system_table.h"
+#include "pg/catalog/tables/tables.h"
+#include "server/utils/credits.h"
 
-void RegisterScalarAlias(duckdb::ExtensionLoader& loader,
-                         std::string_view source_name, std::string_view alias);
-void RegisterDuckDBAliases(duckdb::DatabaseInstance& db);
+namespace sdb::pg {
+namespace {
 
-}  // namespace sdb::connector
+constexpr SystemSqlColumn kSdbContributorsColumns[] = {
+  {"name", kText, 0, false, false, kCCollation, 0, SystemKey::None},
+};
+
+constexpr SystemSql kSdbContributorsSql{
+  .oid = kSdbContributorsTable,
+  .schema = "pg_catalog",
+  .name = "sdb_contributors",
+  .relkind = 'r',
+  .replident = 'n',
+  .columns = kSdbContributorsColumns,
+};
+
+SystemRows<std::string_view> LoadContributors(SystemScan&) {
+  return credits::Contributors();
+}
+
+constexpr auto kContributor =
+  Shape<kSdbContributorsSql, const std::string_view>(
+    Col<"name">([](std::string_view name) { return name; }));
+
+}  // namespace
+
+SystemTable gSdbContributors =
+  SystemTableOf<ArrayTable<kContributor, &LoadContributors>>();
+
+}  // namespace sdb::pg

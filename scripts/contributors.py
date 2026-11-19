@@ -38,7 +38,7 @@ def problems(names):
 def main():
     parser = argparse.ArgumentParser(
         description="Write resources/contributors.txt, the commit authors "
-        "serenedb_contributors lists, from the git history and .mailmap.")
+        "sdb_contributors lists, from the git history and .mailmap.")
     parser.add_argument("--check", action="store_true",
                         help="check the file's form, without reading the history")
     args = parser.parse_args()

@@ -100,7 +100,7 @@ count
 3
 
 statement ok
-CALL serenedb_reindex('rvps3_idx');
+CALL sdb_reindex('rvps3_idx');
 
 query
 SELECT count(*) FROM rvps3_idx;

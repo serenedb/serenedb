@@ -9,7 +9,7 @@ CREATE ROLE courier_licenses_reader LOGIN PASSWORD 'courier_licenses_pw';
 query
 SELECT c.relkind, n.nspname, c.relnatts
 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-WHERE c.relname = 'serenedb_licenses';
+WHERE c.relname = 'sdb_licenses';
 ----
 relkind	nspname	relnatts
 r	pg_catalog	5
@@ -18,7 +18,7 @@ r	pg_catalog	5
 query
 SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
 FROM pg_attribute
-WHERE attrelid = 'serenedb_licenses'::regclass AND attnum > 0
+WHERE attrelid = 'sdb_licenses'::regclass AND attnum > 0
 ORDER BY attnum;
 ----
 attname	type	attnotnull
@@ -31,7 +31,7 @@ license_text	text	f
 
 query
 SELECT name, license, url, license_file
-FROM serenedb_licenses
+FROM sdb_licenses
 WHERE name IN ('Abseil', 'ALP', 'DuckDB', 'SereneDB')
 ORDER BY lower(name), license_file;
 ----
@@ -46,8 +46,8 @@ SereneDB	Apache-2.0	https://github.com/serenedb/serenedb	NOTICE.md
 query
 SELECT license_text LIKE 'Copyright 2018-% Stichting DuckDB Foundation%' AS duckdb,
        (SELECT license_text LIKE '%Apache License%Version 2.0%'
-        FROM serenedb_licenses WHERE license_file = 'LICENSE') AS serenedb
-FROM serenedb_licenses
+        FROM sdb_licenses WHERE license_file = 'LICENSE') AS serenedb
+FROM sdb_licenses
 WHERE name = 'DuckDB';
 ----
 duckdb	serenedb
@@ -59,7 +59,7 @@ SELECT count(*) FILTER (WHERE (license_file IS NULL) <> (license_text IS NULL)) 
        count(*) FILTER (WHERE license_file IS NULL AND license <> 'NOASSERTION') AS unexplained,
        count(*) FILTER (WHERE name IS NULL OR license IS NULL OR url IS NULL) AS incomplete,
        count(*) = count(DISTINCT name || ' ' || coalesce(license_file, '')) AS unique_rows
-FROM serenedb_licenses;
+FROM sdb_licenses;
 ----
 mismatched	unexplained	incomplete	unique_rows
 0	0	0	t
@@ -67,7 +67,7 @@ mismatched	unexplained	incomplete	unique_rows
 
 query
 SELECT name, license, license_file IS NULL AS no_file
-FROM serenedb_licenses
+FROM sdb_licenses
 WHERE name IN ('TPC-DS dsdgen', 'TPC-H dbgen')
 ORDER BY name;
 ----
@@ -79,7 +79,7 @@ TPC-H dbgen	LicenseRef-TPC-EULA	f
 connection courier_licenses user=courier_licenses_reader password=courier_licenses_pw
 query
 SELECT count(*) > 0 AS readable
-FROM serenedb_licenses
+FROM sdb_licenses
 WHERE name = 'SereneDB';
 ----
 readable

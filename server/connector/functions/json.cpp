@@ -56,7 +56,7 @@
 #include <vector>
 
 #include "connector/common.h"
-#include "connector/functions/duckdb_aliases.h"
+#include "connector/functions/function_alias.h"
 
 namespace sdb::connector {
 namespace {

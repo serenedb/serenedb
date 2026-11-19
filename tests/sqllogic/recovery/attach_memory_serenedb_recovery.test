@@ -20,7 +20,7 @@ HINT: Attach the data directory of another server with READ_ONLY.
 
 
 query
-SELECT count(*) AS n FROM duckdb_databases() WHERE database_name IN ('amsr_mem', 'amsr_nowal');
+SELECT count(*) AS n FROM sdb_databases() WHERE database_name IN ('amsr_mem', 'amsr_nowal');
 ----
 n
 0

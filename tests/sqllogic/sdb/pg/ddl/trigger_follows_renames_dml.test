@@ -96,7 +96,7 @@ id	amount
 
 
 query
-SELECT trigger_name, sql FROM duckdb_triggers()
+SELECT trigger_name, sql FROM sdb_triggers()
 WHERE trigger_name IN ('tfd_upd', 'tfd_ups', 'tfd_del')
 ORDER BY trigger_name;
 ----
@@ -220,7 +220,7 @@ ALTER TABLE tfd_ja RENAME COLUMN k TO k2;
 
 
 query
-SELECT trigger_name, sql FROM duckdb_triggers() WHERE trigger_name IN ('tfd_jupd', 'tfd_jdel') ORDER BY trigger_name;
+SELECT trigger_name, sql FROM sdb_triggers() WHERE trigger_name IN ('tfd_jupd', 'tfd_jdel') ORDER BY trigger_name;
 ----
 trigger_name	sql
 tfd_jdel	CREATE TRIGGER tfd_jdel AFTER INSERT ON tfd_jev FOR EACH STATEMENT DELETE FROM tfd_jlog USING (tfd_ja INNER JOIN tfd_jb ON ((tfd_ja.k2 = tfd_jb.k))) WHERE ((tfd_jb.id = tfd_jlog.id) AND (tfd_jlog.amount = 0));

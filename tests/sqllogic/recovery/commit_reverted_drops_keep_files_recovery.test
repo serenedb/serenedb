@@ -96,7 +96,7 @@ n
 
 connection after_restart
 query
-SELECT (SELECT count(*) FROM duckdb_tables() WHERE table_name = 'crd_other') AS t;
+SELECT (SELECT count(*) FROM sdb_tables() WHERE table_name = 'crd_other') AS t;
 ----
 t
 0

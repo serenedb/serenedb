@@ -1175,7 +1175,7 @@ CREATE OR REPLACE TABLE cmr_ti(b INTEGER)
 
 connection s1
 query
-SELECT count(*) AS n FROM duckdb_indexes() WHERE database_name = current_database() AND index_name LIKE 'cmr\_ti%'
+SELECT count(*) AS n FROM sdb_indexes() WHERE database_name = current_database() AND index_name LIKE 'cmr\_ti%'
 ----
 n
 0
@@ -1183,7 +1183,7 @@ n
 
 connection s2
 query
-SELECT index_name FROM duckdb_indexes() WHERE database_name = current_database() AND index_name LIKE 'cmr\_ti%'
+SELECT index_name FROM sdb_indexes() WHERE database_name = current_database() AND index_name LIKE 'cmr\_ti%'
 ----
 index_name
 cmr_ti_i
@@ -1204,7 +1204,7 @@ COMMIT
 
 connection s1
 query
-SELECT index_name FROM duckdb_indexes() WHERE database_name = current_database() AND index_name LIKE 'cmr\_ti%' ORDER BY 1
+SELECT index_name FROM sdb_indexes() WHERE database_name = current_database() AND index_name LIKE 'cmr\_ti%' ORDER BY 1
 ----
 index_name
 
@@ -1754,7 +1754,7 @@ m	f	via_view
 
 connection s2
 query
-SELECT function_name, macro_definition FROM duckdb_functions()
+SELECT function_name, macro_definition FROM sdb_functions()
 WHERE database_name = current_database() AND function_name LIKE 'cmr\_%' ORDER BY 1
 ----
 function_name	macro_definition
@@ -2156,7 +2156,7 @@ v
 
 connection s2
 query
-SELECT start_value FROM duckdb_sequences() WHERE database_name = current_database() AND sequence_name = 'cmr_sq'
+SELECT start_value FROM sdb_sequences() WHERE database_name = current_database() AND sequence_name = 'cmr_sq'
 ----
 start_value
 1
@@ -2169,7 +2169,7 @@ BEGIN
 
 connection s3
 query
-SELECT start_value FROM duckdb_sequences() WHERE database_name = current_database() AND sequence_name = 'cmr_sq'
+SELECT start_value FROM sdb_sequences() WHERE database_name = current_database() AND sequence_name = 'cmr_sq'
 ----
 start_value
 1
@@ -2190,7 +2190,7 @@ v
 
 connection s3
 query
-SELECT start_value FROM duckdb_sequences() WHERE database_name = current_database() AND sequence_name = 'cmr_sq'
+SELECT start_value FROM sdb_sequences() WHERE database_name = current_database() AND sequence_name = 'cmr_sq'
 ----
 start_value
 1
@@ -2203,7 +2203,7 @@ COMMIT
 
 connection s3
 query
-SELECT start_value FROM duckdb_sequences() WHERE database_name = current_database() AND sequence_name = 'cmr_sq'
+SELECT start_value FROM sdb_sequences() WHERE database_name = current_database() AND sequence_name = 'cmr_sq'
 ----
 start_value
 100
@@ -2549,7 +2549,7 @@ CREATE OR REPLACE TYPE cmr_ty AS STRUCT(i INTEGER)
 
 connection s1
 query
-SELECT logical_type FROM duckdb_types() WHERE database_name = current_database() AND type_name = 'cmr_ty'
+SELECT logical_type FROM sdb_types() WHERE database_name = current_database() AND type_name = 'cmr_ty'
 ----
 logical_type
 STRUCT
@@ -2557,7 +2557,7 @@ STRUCT
 
 connection s2
 query
-SELECT logical_type FROM duckdb_types() WHERE database_name = current_database() AND type_name = 'cmr_ty'
+SELECT logical_type FROM sdb_types() WHERE database_name = current_database() AND type_name = 'cmr_ty'
 ----
 logical_type
 ENUM
@@ -2793,8 +2793,8 @@ n
 
 connection s2
 query
-SELECT (SELECT count(*) FROM duckdb_functions() WHERE database_name = current_database() AND function_name = 'cmr_nm') AS macros,
-       (SELECT count(*) FROM duckdb_types() WHERE database_name = current_database() AND type_name = 'cmr_nty') AS types
+SELECT (SELECT count(*) FROM sdb_functions() WHERE database_name = current_database() AND function_name = 'cmr_nm') AS macros,
+       (SELECT count(*) FROM sdb_types() WHERE database_name = current_database() AND type_name = 'cmr_nty') AS types
 ----
 macros	types
 0	0
@@ -3307,7 +3307,7 @@ BEGIN
 
 connection s3
 query
-SELECT start_value FROM duckdb_sequences() WHERE database_name = current_database() AND sequence_name = 'cmr_osq'
+SELECT start_value FROM sdb_sequences() WHERE database_name = current_database() AND sequence_name = 'cmr_osq'
 ----
 start_value
 1
@@ -3490,7 +3490,7 @@ INSERT INTO cmr_ott VALUES (1)
 
 query
 SELECT (SELECT x FROM cmr_ov) AS v, cmr_om() AS m, enum_range(NULL::cmr_oty) AS ty,
-       (SELECT start_value FROM duckdb_sequences() WHERE database_name = current_database() AND sequence_name = 'cmr_osq') AS sq,
+       (SELECT start_value FROM sdb_sequences() WHERE database_name = current_database() AND sequence_name = 'cmr_osq') AS sq,
        (SELECT a FROM cmr_ota) AS fired, (SELECT x FROM cmr_onv) AS nv, (SELECT x FROM cmr_onv2) AS nv2
 ----
 v	m	ty	sq	fired	nv	nv2
@@ -3769,7 +3769,7 @@ CREATE OR REPLACE TRIGGER cmr_tr AFTER INSERT ON cmr_tt FOR EACH ROW
 
 connection s1
 query
-SELECT sql FROM duckdb_triggers() WHERE trigger_name = 'cmr_tr'
+SELECT sql FROM sdb_triggers() WHERE trigger_name = 'cmr_tr'
 ----
 sql
 CREATE TRIGGER cmr_tr AFTER INSERT ON cmr_tt FOR EACH ROW INSERT INTO cmr_ta (VALUES ('v2', "new".a));
@@ -3777,7 +3777,7 @@ CREATE TRIGGER cmr_tr AFTER INSERT ON cmr_tt FOR EACH ROW INSERT INTO cmr_ta (VA
 
 connection s2
 query
-SELECT sql FROM duckdb_triggers() WHERE trigger_name = 'cmr_tr'
+SELECT sql FROM sdb_triggers() WHERE trigger_name = 'cmr_tr'
 ----
 sql
 CREATE TRIGGER cmr_tr AFTER INSERT ON cmr_tt FOR EACH ROW INSERT INTO cmr_ta (VALUES ('v1', "new".a));
@@ -4085,7 +4085,7 @@ ROLLBACK
 
 connection s2
 query
-SELECT sql FROM duckdb_triggers() WHERE trigger_name = 'cmr_tr'
+SELECT sql FROM sdb_triggers() WHERE trigger_name = 'cmr_tr'
 ----
 sql
 CREATE TRIGGER cmr_tr AFTER INSERT ON cmr_tt FOR EACH ROW INSERT INTO cmr_ta (VALUES ('v1', "new".a));
@@ -4126,7 +4126,7 @@ ROLLBACK
 
 connection s1
 query
-SELECT sql FROM duckdb_triggers() WHERE trigger_name = 'cmr_tr'
+SELECT sql FROM sdb_triggers() WHERE trigger_name = 'cmr_tr'
 ----
 sql
 CREATE TRIGGER cmr_tr AFTER INSERT ON cmr_tt FOR EACH ROW INSERT INTO cmr_ta (VALUES ('v1', "new".a));

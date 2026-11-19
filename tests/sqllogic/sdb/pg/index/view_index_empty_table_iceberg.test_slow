@@ -35,13 +35,13 @@ SELECT id FROM vet_idx WHERE body @@ ts_phrase('pudge');
 id
 
 query
-SELECT * FROM serenedb_reindex('vet_idx');
+SELECT * FROM sdb_reindex('vet_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0
 
 query
-SELECT * FROM serenedb_reindex('vet_idx');
+SELECT * FROM sdb_reindex('vet_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0
@@ -50,7 +50,7 @@ statement count 1
 INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.vet_t VALUES (1, 'pudge goes mid');
 
 query
-SELECT * FROM serenedb_reindex('vet_idx');
+SELECT * FROM sdb_reindex('vet_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	1	0	0	0
@@ -71,7 +71,7 @@ statement count 1
 DELETE FROM srv_${__DATABASE__}.${__DATABASE__}.vet_t;
 
 query
-SELECT * FROM serenedb_reindex('vet_idx');
+SELECT * FROM sdb_reindex('vet_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	0	1	0	0
@@ -83,7 +83,7 @@ count
 0
 
 query
-SELECT * FROM serenedb_reindex('vet_idx');
+SELECT * FROM sdb_reindex('vet_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0
@@ -92,7 +92,7 @@ statement count 2
 INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.vet_t VALUES (2, 'second row'), (3, 'third row');
 
 query
-SELECT * FROM serenedb_reindex('vet_idx');
+SELECT * FROM sdb_reindex('vet_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	1	0	0	0

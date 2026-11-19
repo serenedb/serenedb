@@ -204,12 +204,12 @@ oid	relname	reltablespace	relkind
 12449	_pg_user_mappings	0	v
 12452	user_mapping_options	0	v
 12455	user_mappings	0	v
-16784	sdb_settings	0	r
+16784	sdb_flags	0	r
 16785	sdb_metrics	0	r
 16786	sdb_progress	0	r
 16787	pg_stat_progress_create_table_as	0	v
-16788	serenedb_licenses	0	r
-16789	serenedb_contributors	0	r
+16788	sdb_licenses	0	r
+16789	sdb_contributors	0	r
 
 
 statement ok

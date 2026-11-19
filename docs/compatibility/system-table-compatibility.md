@@ -98,7 +98,7 @@ System views provide convenient access to system information. System tables ofte
 | pg_available_extensions | 🟡 | Lists available extensions. |
 | pg_available_extension_versions | 🟡 | Shows available versions of extensions. |
 | pg_backend_memory_contexts | 🟡 | Displays memory contexts of the backend. |
-| pg_config | 🟢 | How the server was built, readable by superusers as in PostgreSQL: `BINDIR`, `SYSCONFDIR`, `CONFIGURE` (the CMake options of the build), `CC`, `CXX`, `CFLAGS`, `CXXFLAGS`, `LDFLAGS`, `VERSION` (the PostgreSQL version SereneDB reports), `SERENEDB_VERSION` and `SERENEDB_COMMIT` (the commit the server was built from, ending in `-dirty` when the source differed from it). |
+| pg_config | 🟢 | How the server was built, readable by superusers as in PostgreSQL: `BINDIR`, `SYSCONFDIR`, `CONFIGURE` (the CMake options of the build), `CC`, `CXX`, `CFLAGS`, `CXXFLAGS`, `LDFLAGS`, `VERSION` (the PostgreSQL version SereneDB reports), `SDB_VERSION` and `SDB_COMMIT` (the commit the server was built from, ending in `-dirty` when the source differed from it). |
 | pg_cursors | 🟡 | Lists open cursors. |
 | pg_file_settings | 🟡 | Summarizes contents of configuration files. |
 | pg_group | 🟢 | Displays groups of database users. |
@@ -117,7 +117,7 @@ System views provide convenient access to system information. System tables ofte
 | pg_rules | 🟡 | Shows information about rules. |
 | pg_seclabels | 🟡 | Displays security labels. |
 | pg_sequences | 🟢 | Lists sequences. |
-| pg_settings | 🟢 | Lists SereneDB and DuckDB settings and the [PostgreSQL settings SereneDB accepts](../configuration/overview.md), each with SereneDB's own value, with PostgreSQL's columns. A lookup by `name` reads only that setting. |
+| pg_settings | 🟢 | Lists SereneDB's settings and the [PostgreSQL settings it accepts](../configuration/overview.md), each with SereneDB's own value, with PostgreSQL's columns. A lookup by `name` reads only that setting. |
 | pg_shadow | 🟢 | Displays database users. |
 | pg_shmem_allocations | 🟡 | Shows shared memory allocations. |
 | pg_stat_activity | 🟡 | Shows one row per session. `state` (`active`, `idle`, `idle in transaction` or `idle in transaction (aborted)`), `backend_start`, `xact_start`, `query_start` (the last statement's start while idle), `state_change` and `query` follow PostgreSQL. `application_name`, the client's address, host name and port, the wait events, `backend_xid`, `backend_xmin`, `leader_pid` and `query_id` are `NULL`, and `backend_type` is `client backend`. Another role's sessions show only their `pid`, database and user, with `query` `<insufficient privilege>`, unless you are a superuser or a member of that role. |

@@ -6,7 +6,7 @@ CAUSES = {
                        "feature, the column types of system views",
     "deparse": "Deparsed definitions differ: defaults lose their casts, checks print IN and BETWEEN, views "
                "print count_star()",
-    "duckdb_types": "SereneDB has types PostgreSQL lacks: geometry, union, variant",
+    "sdb_types": "SereneDB has types PostgreSQL lacks: geometry, union, variant",
     "fk_operators": "pg_constraint leaves foreign key operators NULL and pg_depend lacks a default's dependency "
                     "on its type",
     "group_by": "GROUP BY a table alias that is also an output column name is rejected",
@@ -198,8 +198,8 @@ t.statement("GRANT SELECT ON customers TO conf_reader")
 t.statement("GRANT SELECT, INSERT ON orders TO conf_reader")
 t.statement("GRANT SELECT ON app.order_totals TO conf_reader")
 
-UNMATCHED = ("('sdb_progress', 'sdb_metrics', 'sdb_settings', 'serenedb_contributors', "
-             "'serenedb_licenses', 'pg_stat_progress_create_table_as')")
+UNMATCHED = ("('sdb_progress', 'sdb_metrics', 'sdb_flags', 'sdb_contributors', "
+             "'sdb_licenses', 'pg_stat_progress_create_table_as')")
 
 
 def shape(namespace, differing=""):
@@ -1048,7 +1048,7 @@ check('''SELECT q.nspname, q.oid::regtype::text AS oid, q.typname, q.typtype, q.
 SELECT ns.nspname, t.oid, t.typname, t.typtype, t.typnotnull, t.elemtypoid FROM ( SELECT typ.oid, typ.typnamespace, typ.typname, typ.typtype, typ.typrelid, typ.typnotnull, typ.relkind, elemtyp.oid AS elemtypoid, elemtyp.typname AS elemtypname, elemcls.relkind AS elemrelkind, CASE WHEN elemproc.proname='array_recv' THEN 'a' ELSE elemtyp.typtype END AS elemtyptype FROM ( SELECT typ.oid, typnamespace, typname, typrelid, typnotnull, relkind, typelem AS elemoid, CASE WHEN proc.proname='array_recv' THEN 'a' ELSE typ.typtype END AS typtype, CASE WHEN proc.proname='array_recv' THEN typ.typelem WHEN typ.typtype='r' THEN rngsubtype WHEN typ.typtype='m' THEN (SELECT rngtypid FROM pg_range WHERE rngmultitypid = typ.oid) WHEN typ.typtype='d' THEN typ.typbasetype END AS elemtypoid FROM pg_type AS typ LEFT JOIN pg_class AS cls ON (cls.oid = typ.typrelid) LEFT JOIN pg_proc AS proc ON proc.oid = typ.typreceive LEFT JOIN pg_range ON (pg_range.rngtypid = typ.oid) ) AS typ LEFT JOIN pg_type AS elemtyp ON elemtyp.oid = elemtypoid LEFT JOIN pg_class AS elemcls ON (elemcls.oid = elemtyp.typrelid) LEFT JOIN pg_proc AS elemproc ON elemproc.oid = elemtyp.typreceive ) AS t JOIN pg_namespace AS ns ON (ns.oid = typnamespace) WHERE typtype IN ('b', 'r', 'm', 'e', 'd') OR (typtype = 'c' AND relkind='c') OR (typtype = 'p' AND typname IN ('record', 'void', 'unknown')) OR (typtype = 'a' AND ( elemtyptype IN ('b', 'r', 'm', 'e', 'd') OR (elemtyptype = 'p' AND elemtypname IN ('record', 'void')) OR (elemtyptype = 'c' AND elemrelkind='c') )) ORDER BY CASE WHEN typtype IN ('b', 'e', 'p') THEN 0 WHEN typtype = 'r' THEN 1 WHEN typtype = 'm' THEN 2 WHEN typtype = 'c' THEN 3 WHEN typtype = 'd' AND elemtyptype <> 'a' THEN 4 WHEN typtype = 'a' THEN 5 WHEN typtype = 'd' AND elemtyptype = 'a' THEN 6 END
 ) q
 WHERE q.typname @NOT IN ('_geometry', '_union', '_variant', 'geometry', 'union', 'variant')
-ORDER BY q.typname::text COLLATE "C"''', "duckdb_types")
+ORDER BY q.typname::text COLLATE "C"''', "sdb_types")
 check(f'''SELECT q.schemaname, q.tablename, q.indexname, q.tablespace,
   replace(q.indexdef, ' USING inverted ', ' USING btree ') AS indexdef FROM (
 SELECT schemaname, tablename, indexname, tablespace, indexdef FROM pg_indexes WHERE schemaname IN ('public', 'app')
@@ -1227,7 +1227,7 @@ select b.oid, b.typarray from pg_catalog.pg_type a left join pg_catalog.pg_type 
 ) q
 WHERE q.oid::regtype::text @NOT IN ('geometry', 'information_schema."columns"', 'information_schema.columns', '"union"',
     'union', 'variant')
-ORDER BY q.oid::regtype::text COLLATE "C"''', "duckdb_types", "quoted_keywords")
+ORDER BY q.oid::regtype::text COLLATE "C"''', "sdb_types", "quoted_keywords")
 ADDRESS_FIELDS = ("SELECT t.typname AS name, t.oid AS oid, t.typarray AS array_oid, t.oid::regtype::text AS regtype, "
                   "coalesce(a.fnames, '{}') AS field_names, coalesce(a.ftypes, '{}') AS field_types FROM pg_type t LEFT "
                   "JOIN ( SELECT attrelid, array_agg(attname) AS fnames, array_agg(atttypid) AS ftypes FROM ( SELECT "
@@ -1295,7 +1295,7 @@ check('''SELECT q.oid::regtype::text AS oid, q.typname, q.typelem::regtype::text
 SELECT t.oid, t.typname, t.typelem, t.typdelim, t.typinput, r.rngsubtype, t.typtype, t.typbasetype FROM pg_type as t LEFT JOIN pg_range as r ON oid = rngtypid WHERE t.typname IN ('int2', 'int4', 'int8', 'oid', 'float4', 'float8', 'numeric', 'bool', 'timestamp', 'timestamptz') OR t.typtype IN ('r', 'e', 'd') OR t.typinput = 'array_in(cstring,oid,integer)'::regprocedure OR t.typelem != 0
 ) q
 WHERE q.typname @NOT IN ('_columns', '_geometry', '_union', '_variant')
-ORDER BY q.typname::text COLLATE "C"''', "duckdb_types", "quoted_keywords")
+ORDER BY q.typname::text COLLATE "C"''', "sdb_types", "quoted_keywords")
 check("""SELECT q.attname, q.nspname, q.relname FROM (
 SELECT attr.attname, nsp.nspname, seq.relname FROM pg_class seq, pg_attribute attr, pg_depend dep, pg_constraint cons, pg_namespace nsp WHERE seq.oid = dep.objid AND seq.relkind = 'S' AND attr.attrelid = dep.refobjid AND attr.attnum = dep.refobjsubid AND attr.attrelid = cons.conrelid AND attr.attnum = cons.conkey[1] AND seq.relnamespace = nsp.oid AND cons.contype = 'p' AND dep.classid = 'pg_class'::regclass AND dep.refobjid = '"orders"'::regclass
 ) q""")
@@ -1871,9 +1871,9 @@ pgonly("CREATE FUNCTION pgonly.touch() RETURNS trigger LANGUAGE plpgsql AS $$ BE
 pgonly("CREATE TRIGGER parent_touch BEFORE UPDATE ON pgonly.parent FOR EACH ROW EXECUTE FUNCTION pgonly.touch()",
        'syntax error at or near "EXECUTE"')
 pgonly("ALTER TABLE pgonly.parent ENABLE ROW LEVEL SECURITY",
-       "Pragma Function with name serenedb_alter_table_row_security does not exist!")
+       "Pragma Function with name sdb_alter_table_row_security does not exist!")
 pgonly("CREATE POLICY parent_reader ON pgonly.parent FOR SELECT TO conf_reader USING (id > 0)",
-       "Pragma Function with name serenedb_create_policy does not exist!")
+       "Pragma Function with name sdb_create_policy does not exist!")
 pgonly("COMMENT ON SCHEMA pgonly IS 'Objects SereneDB cannot create yet'", "Adding comments to schemas is not implemented")
 pgonly("COMMENT ON CONSTRAINT identity_tab_qty_check ON pgonly.identity_tab IS 'Allowed quantities'",
        'syntax error at or near "CONSTRAINT"')

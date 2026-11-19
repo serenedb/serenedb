@@ -1,0 +1,139 @@
+# DuckDB's system table functions, the views over them, its table macros and
+# its scalar functions are named sdb_, natively: no duckdb_ name exists, and
+# no sdb_ name is an alias.
+
+statement ok
+DROP TABLE IF EXISTS son_t
+
+statement ok
+CREATE TABLE son_t (id INT PRIMARY KEY, name TEXT)
+
+query
+SELECT count(*) AS duckdb_named
+FROM sdb_functions()
+WHERE function_name LIKE '%duckdb\_%' ESCAPE '\'
+----
+duckdb_named
+0
+
+query
+SELECT count(*) AS duckdb_named
+FROM sdb_views()
+WHERE view_name LIKE '%duckdb\_%' ESCAPE '\'
+----
+duckdb_named
+0
+
+query
+SELECT DISTINCT function_name, function_type, alias_of IS NULL AS native
+FROM sdb_functions()
+WHERE function_name IN ('sdb_tables', 'sdb_settings', 'sdb_logs_parsed',
+                        'sdb_profiling_settings', 'sdb_format_sql',
+                        'truncate_sdb_logs', 'parse_sdb_log_message')
+ORDER BY ALL
+----
+function_name	function_type	native
+parse_sdb_log_message	scalar	t
+sdb_format_sql	scalar	t
+sdb_logs_parsed	table_macro	t
+sdb_profiling_settings	table_macro	t
+sdb_settings	table	t
+sdb_tables	table	t
+truncate_sdb_logs	table	t
+
+query
+SELECT DISTINCT view_name
+FROM sdb_views()
+WHERE view_name LIKE 'sdb\_%' ESCAPE '\' AND internal
+ORDER BY ALL
+----
+view_name
+sdb_columns
+sdb_constraints
+sdb_databases
+sdb_indexes
+sdb_logs
+sdb_schemas
+sdb_tables
+sdb_types
+sdb_views
+
+query
+SELECT
+  (SELECT count(*) FROM sdb_tables
+   WHERE database_name = current_database() AND table_name = 'son_t') AS view_rows,
+  (SELECT count(*) FROM sdb_tables()
+   WHERE database_name = current_database() AND table_name = 'son_t') AS function_rows,
+  (SELECT count(*) FROM sdb_columns) < (SELECT count(*) FROM sdb_columns())
+    AS view_filters_internal
+----
+view_rows	function_rows	view_filters_internal
+1	1	t
+
+query
+SELECT sdb_format_sql('select 1') AS one,
+       sdb_format_sql('select 1', MAP {'keyword_case': 'lower'}) AS two
+----
+one	two
+SELECT 1	select 1
+
+query
+SELECT
+  (SELECT count(*) FROM (DESCRIBE SELECT * FROM sdb_logs_parsed('QueryLog'))) > 0
+    AS logs_parsed,
+  (SELECT count(*) FROM sdb_profiling_settings()) > 0 AS profiling_settings
+----
+logs_parsed	profiling_settings
+t	t
+
+query error
+SELECT * FROM duckdb_tables()
+----
+db error: ERROR: Table Function with name duckdb_tables does not exist!
+Did you mean "sdb_tables"?
+
+
+query error
+SELECT * FROM duckdb_tables
+----
+db error: ERROR: Table with name duckdb_tables does not exist!
+Did you mean "sdb_tables"?
+
+
+query error
+SELECT * FROM duckdb_logs_parsed('QueryLog')
+----
+db error: ERROR: Table Function with name duckdb_logs_parsed does not exist!
+Did you mean "sdb_logs_parsed"?
+
+
+query error
+SELECT duckdb_format_sql('select 1')
+----
+db error: ERROR: Scalar Function with name duckdb_format_sql does not exist!
+Did you mean "sdb_format_sql"?
+
+
+query error
+SELECT * FROM sdb_extensions()
+----
+db error: ERROR: Table Function with name sdb_extensions does not exist!
+Did you mean "sdb_constraints"?
+
+
+query error
+SELECT * FROM sdb_extension_repositories()
+----
+db error: ERROR: Table Function with name sdb_extension_repositories does not exist!
+Did you mean "sdb_external_resources"?
+
+
+statement error
+PRAGMA extension_versions
+----
+db error: ERROR: Pragma Function with name extension_versions does not exist!
+Did you mean "create_subscription"?
+
+
+statement ok
+DROP TABLE son_t

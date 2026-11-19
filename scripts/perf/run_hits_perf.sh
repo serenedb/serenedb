@@ -245,7 +245,7 @@ run_sql "create_text_search_dict (${PERF_DICT_TEMPLATE})" "${BUILD_THREADS}" "${
 # Every column (including Title itself) goes into INCLUDE so the .cs storage
 # and the create_index timing are directly comparable to native_db.hits_native
 # (which always materializes every column). Derive the list from `DESCRIBE`:
-# both information_schema.columns and duckdb_columns() are empty for a
+# both information_schema.columns and sdb_columns() are empty for a
 # read_parquet-backed view in serened today, but DESCRIBE enumerates them.
 # quote each name so quoted CamelCase identifiers match the case-insensitive
 # column resolver.

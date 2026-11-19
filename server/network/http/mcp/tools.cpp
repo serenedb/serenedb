@@ -303,14 +303,14 @@ yaclib::Task<ToolResult> DescribeObject(RequestContext& ctx,
                 "NULL THEN '' ELSE ', ...' END || ')' || coalesce(' -> ' || "
                 "return_type, '') AS signature, coalesce(description, '') AS "
                 "description "
-                "FROM duckdb_functions() WHERE lower(function_name) = lower(",
+                "FROM sdb_functions() WHERE lower(function_name) = lower(",
                 literal, ")", settings ? " UNION ALL " : "")
             : "",
           settings
             ? absl::StrCat(
                 "SELECT 'setting', name || ' ' || input_type || ' = ' || "
                 "coalesce(value, 'NULL'), coalesce(description, '') FROM "
-                "duckdb_settings() WHERE lower(name) = lower(",
+                "sdb_settings() WHERE lower(name) = lower(",
                 literal, ")")
             : "",
           ") ORDER BY kind, signature LIMIT 12"),

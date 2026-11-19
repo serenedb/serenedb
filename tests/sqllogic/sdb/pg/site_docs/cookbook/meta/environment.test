@@ -20,7 +20,7 @@ version
 #| PRAGMA version;
 #| ----
 #| library_version	source_id	codename
-#| v1.6.0-dev7012	5212023fb8	Development Version
+#| 26.11.0	3f9c2a7d41b0e8c56d2f1a9b7e4c3d2a1f0e9b8c	NULL
 
 # DOCS_TEST_BODY
 
@@ -46,37 +46,29 @@ PRAGMA platform;
 platform
 <slt:ignore>
 
-# DOCS_TEST: example_004
-
-# DOCS_TEST_BODY
-
-statement ok
-SELECT *
-FROM sdb_extensions();
-
 # DOCS_TEST: example_005
 
 # DOCS_TEST_RAW
 #| SELECT name, setting
 #| FROM pg_config
-#| WHERE name LIKE 'SERENEDB%'
+#| WHERE name LIKE 'SDB%'
 #| ORDER BY name;
 #| ----
 #| name	setting
-#| SERENEDB_COMMIT	3f9c2a7d41b0e8c56d2f1a9b7e4c3d2a1f0e9b8c
-#| SERENEDB_VERSION	26.11.0
+#| SDB_COMMIT	3f9c2a7d41b0e8c56d2f1a9b7e4c3d2a1f0e9b8c
+#| SDB_VERSION	26.11.0
 
 # DOCS_TEST_BODY
 
 query
 SELECT name, setting
 FROM pg_config
-WHERE name LIKE 'SERENEDB%'
+WHERE name LIKE 'SDB%'
 ORDER BY name;
 ----
 name	setting
-SERENEDB_COMMIT	<slt:ignore>
-SERENEDB_VERSION	<slt:ignore>
+SDB_COMMIT	<slt:ignore>
+SDB_VERSION	<slt:ignore>
 
 # DOCS_TEST: example_006
 
@@ -84,7 +76,7 @@ SERENEDB_VERSION	<slt:ignore>
 
 query
 SELECT name, license, license_file
-FROM serenedb_licenses
+FROM sdb_licenses
 WHERE name IN ('DuckDB', 'Zstandard')
 ORDER BY name;
 ----
@@ -96,7 +88,7 @@ Zstandard	BSD-3-Clause OR GPL-2.0-only	third_party/zstd/LICENSE
 
 # DOCS_TEST_RAW
 #| SELECT count(*) AS contributors
-#| FROM serenedb_contributors;
+#| FROM sdb_contributors;
 #| ----
 #| contributors
 #| 19
@@ -105,7 +97,7 @@ Zstandard	BSD-3-Clause OR GPL-2.0-only	third_party/zstd/LICENSE
 
 query
 SELECT count(*) AS contributors
-FROM serenedb_contributors;
+FROM sdb_contributors;
 ----
 contributors
 <slt:ignore>

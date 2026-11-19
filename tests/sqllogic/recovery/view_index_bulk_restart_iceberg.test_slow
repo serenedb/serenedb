@@ -105,7 +105,7 @@ count
 
 connection after_crash
 query
-SELECT * FROM serenedb_reindex('vibk_idx');
+SELECT * FROM sdb_reindex('vibk_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0
@@ -116,7 +116,7 @@ INSERT INTO vibk.${__DATABASE__}.t SELECT i::INTEGER, 'doc ' || i || CASE WHEN i
 
 connection after_crash
 query
-SELECT * FROM serenedb_reindex('vibk_idx');
+SELECT * FROM sdb_reindex('vibk_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	1	0	0	0

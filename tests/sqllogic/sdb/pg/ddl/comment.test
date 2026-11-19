@@ -1,6 +1,6 @@
 # COMMENT ON TABLE / COLUMN persists in the catalog and surfaces in
-# duckdb_tables()/duckdb_columns(), matching a native duckdb table. IS NULL
-# clears the comment. (duckdb_tables/columns are serenedb/duckdb catalog
+# sdb_tables()/sdb_columns(), matching a native duckdb table. IS NULL
+# clears the comment. (sdb_tables/columns are serenedb/duckdb catalog
 # functions, not PG, so this is an sdb-subtree test.)
 
 statement ok
@@ -12,7 +12,7 @@ COMMENT ON TABLE cmt_t IS 'my table';
 
 
 query
-SELECT comment FROM duckdb_tables() WHERE table_name = 'cmt_t';
+SELECT comment FROM sdb_tables() WHERE table_name = 'cmt_t';
 ----
 comment
 my table
@@ -23,7 +23,7 @@ COMMENT ON COLUMN cmt_t.a IS 'col a note';
 
 
 query
-SELECT comment FROM duckdb_columns() WHERE table_name = 'cmt_t' AND column_name = 'a';
+SELECT comment FROM sdb_columns() WHERE table_name = 'cmt_t' AND column_name = 'a';
 ----
 comment
 col a note
@@ -35,7 +35,7 @@ COMMENT ON COLUMN cmt_t.a IS NULL;
 
 
 query
-SELECT comment FROM duckdb_columns() WHERE table_name = 'cmt_t' AND column_name = 'a';
+SELECT comment FROM sdb_columns() WHERE table_name = 'cmt_t' AND column_name = 'a';
 ----
 comment
 NULL
@@ -55,7 +55,7 @@ ALTER TABLE cmt_t RENAME COLUMN b TO bb;
 
 
 query
-SELECT comment FROM duckdb_tables() WHERE table_name = 'cmt_t';
+SELECT comment FROM sdb_tables() WHERE table_name = 'cmt_t';
 ----
 comment
 my table
@@ -67,7 +67,7 @@ COMMENT ON TABLE cmt_t IS NULL;
 
 
 query
-SELECT comment FROM duckdb_tables() WHERE table_name = 'cmt_t';
+SELECT comment FROM sdb_tables() WHERE table_name = 'cmt_t';
 ----
 comment
 NULL

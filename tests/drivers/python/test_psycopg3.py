@@ -1003,7 +1003,7 @@ def test_reindex_forwards_the_notices_of_its_scan(tmp_path):
                 "COPY (SELECT i AS id, 'row ' || i AS body "
                 f"FROM range(3, 5) t(i)) TO '{tmp_path}/{name}_2.parquet'")
             notices.clear()
-            cur.execute(f"SELECT * FROM serenedb_reindex('{name}_idx')")
+            cur.execute(f"SELECT * FROM sdb_reindex('{name}_idx')")
             assert cur.fetchall() == [("delta", 1, 0, 0, 0)]
         assert notices == ["PID -1 is not a PostgreSQL backend process"] * 2, notices
     finally:

@@ -3,7 +3,7 @@ control substitution on
 # Situational coverage for FOREIGN SERVER behavior in the ClickHouse-style model
 # (credentials in OPTIONS, no USER MAPPINGs) that the create_server / fdw_creds /
 # fdw_permissions tests don't reach: the transient attach secret never lingering
-# in duckdb_secrets(), several servers coexisting with independent OPTIONS
+# in sdb_secrets(), several servers coexisting with independent OPTIONS
 # credentials and attachments, the superuser-only pg_foreign_server showing the
 # `password` server-OPTIONS key verbatim, and that a DROP SERVER takes its USAGE
 # grants with it (a re-created
@@ -35,7 +35,7 @@ CREATE SERVER fs_a FOREIGN DATA WRAPPER clickhouse_fdw
 # Nothing lingers. Retried: a CONCURRENT fdw test (shared single-port server)
 # legitimately holds its own transient secret for the duration of its ATTACH.
 query ok retry 10 backoff 200ms
-SELECT count(*) AS n FROM duckdb_secrets() WHERE name LIKE '__sdb_fdw_secret_%';
+SELECT count(*) AS n FROM sdb_secrets() WHERE name LIKE '__sdb_fdw_secret_%';
 ----
 n
 0

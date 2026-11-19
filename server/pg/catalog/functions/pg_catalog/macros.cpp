@@ -46,7 +46,7 @@ constexpr SystemMacro kMacros[] = {
                      WHEN bool_or(keyword_category = 'type_function') THEN 'T'
                      ELSE 'C'
                    END::"char" AS catcode
-            FROM duckdb_keywords()
+            FROM sdb_keywords()
             GROUP BY keyword_name)
       ORDER BY word)"},
 

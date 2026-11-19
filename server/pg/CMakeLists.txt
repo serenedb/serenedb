@@ -66,9 +66,9 @@ target_sources(
         catalog/tables/pg_catalog/pg_type.cpp
         catalog/tables/sdb/sdb_metrics.cpp
         catalog/tables/sdb/sdb_progress.cpp
-        catalog/tables/sdb/sdb_settings.cpp
-        catalog/tables/sdb/serenedb_contributors.cpp
-        catalog/tables/sdb/serenedb_licenses.cpp
+        catalog/tables/sdb/sdb_flags.cpp
+        catalog/tables/sdb/sdb_contributors.cpp
+        catalog/tables/sdb/sdb_licenses.cpp
         catalog/utils/acl.cpp
         catalog/utils/columns.cpp
         catalog/utils/lookup.cpp

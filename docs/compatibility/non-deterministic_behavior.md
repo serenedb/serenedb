@@ -29,7 +29,7 @@ Both results `A`, `B` and `B`, `A` are correct.
 
 ## Different Results on Different Platforms: `array_distinct`
 
-The `array_distinct` function may return results [in a different order on different platforms](https://github.com/duckdb/duckdb/issues/13746):
+The `array_distinct` function may return results in a different order on different platforms:
 
 <SqlLogicTest id="compatibility/non-deterministic_behavior/example_002" />
 
@@ -38,7 +38,7 @@ For this query, both `[A, B]` and `[B, A]` are valid results.
 ## Floating-Point Aggregate Operations with Multi-Threading
 
 Floating-point inaccuracies may produce different results when run in multi-threaded configurations:
-For example, [`stddev` and `corr` may produce non-deterministic results](https://github.com/duckdb/duckdb/issues/13763):
+For example, `stddev` and `corr` may produce non-deterministic results:
 
 <SqlLogicTest id="compatibility/non-deterministic_behavior/floating_point_aggregates/example_003" />
 

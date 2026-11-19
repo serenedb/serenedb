@@ -31,6 +31,10 @@ The `pg_config` view, which superusers can read, lists the same and how the serv
 
 <SqlLogicTest id="cookbook/meta/environment/example_005" />
 
+## Server Flags
+
+The `sdb_flags` table lists the command-line flags of the server, those `serenedb server --help` prints, in the columns of `pg_settings`: `setting` is the value the server runs with, `boot_val` the default, and `context` is always `postmaster`, since a flag changes only when the server restarts. The values of `auth_api_key` and `auth_bearer_token` show as `***`. SQL settings, the ones `SET` changes, are in `pg_settings` and `sdb_settings()`.
+
 ## Platform
 
 The platform information consists of the operating system, system architecture, and, optionally, the compiler.
@@ -42,11 +46,11 @@ The platform string combines the operating system and architecture — for examp
 
 ## Licenses and Contributors
 
-The `serenedb_licenses` table lists SereneDB and the third-party libraries the server was built with: each one's name, its license as an SPDX expression, its home page, and one row per license file with the file's path in the SereneDB source tree and its text. A library without a license file has the license `NOASSERTION` and no file or text.
+The `sdb_licenses` table lists SereneDB and the third-party libraries the server was built with: each one's name, its license as an SPDX expression, its home page, and one row per license file with the file's path in the SereneDB source tree and its text. A library without a license file has the license `NOASSERTION` and no file or text.
 
 <SqlLogicTest id="cookbook/meta/environment/example_006" />
 
-The `serenedb_contributors` table lists the names of the people who wrote SereneDB's commits.
+The `sdb_contributors` table lists the names of the people who wrote SereneDB's commits.
 
 <SqlLogicTest id="cookbook/meta/environment/example_007" />
 
@@ -58,7 +62,6 @@ SereneDB has the following built-in table functions to obtain metadata about ava
 * [`sdb_constraints()`](../../sql/functions/metadata.md#sdb_constraints): constraints
 * [`sdb_databases()`](../../sql/functions/metadata.md#sdb_databases): lists the databases that are accessible from within the current SereneDB process
 * [`sdb_dependencies()`](../../sql/functions/metadata.md#sdb_dependencies): dependencies between objects
-* [`sdb_extensions()`](../../sql/functions/metadata.md#sdb_extensions): extensions
 * [`sdb_functions()`](../../sql/functions/metadata.md#sdb_functions): functions
 * [`sdb_indexes()`](../../sql/functions/metadata.md#sdb_indexes): secondary indexes
 * [`sdb_keywords()`](../../sql/functions/metadata.md#sdb_keywords): SereneDB's keywords and reserved words

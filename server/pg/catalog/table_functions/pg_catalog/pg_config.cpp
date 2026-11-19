@@ -51,8 +51,8 @@ SystemRows<ConfigSetting> LoadSettings(SystemScan&) {
     ConfigSetting{"CXXFLAGS", SERENEDB_CXXFLAGS},
     ConfigSetting{"LDFLAGS", SERENEDB_LDFLAGS},
     ConfigSetting{"VERSION", kVersion},
-    ConfigSetting{"SERENEDB_VERSION", SERENEDB_VERSION},
-    ConfigSetting{"SERENEDB_COMMIT", build::Commit()},
+    ConfigSetting{"SDB_VERSION", SERENEDB_VERSION},
+    ConfigSetting{"SDB_COMMIT", build::Commit()},
   };
   return std::span<const ConfigSetting>{kSettings};
 }

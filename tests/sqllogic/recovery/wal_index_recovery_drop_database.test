@@ -60,7 +60,7 @@ SELECT 1;
 # Transient database really is gone.
 connection dd_after
 query
-SELECT count(*) FROM duckdb_databases() WHERE database_name = 'dd_transient';
+SELECT count(*) FROM sdb_databases() WHERE database_name = 'dd_transient';
 ----
 count
 0

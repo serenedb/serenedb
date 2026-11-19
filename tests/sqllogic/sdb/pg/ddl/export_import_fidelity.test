@@ -189,7 +189,7 @@ id	t_null	t_len	v_null	v_len	l
 
 
 query
-SELECT sequence_name, start_value, last_value FROM duckdb_sequences() WHERE database_name = current_database() ORDER BY 1;
+SELECT sequence_name, start_value, last_value FROM sdb_sequences() WHERE database_name = current_database() ORDER BY 1;
 ----
 sequence_name	start_value	last_value
 done	1	2

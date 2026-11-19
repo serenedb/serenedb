@@ -1,0 +1,152 @@
+control substitution on
+
+statement ok
+CREATE TABLE rendered (id int, l int[], b boolean, d date);
+
+
+statement ok
+INSERT INTO rendered VALUES (1, ARRAY[1, 2], true, '2024-01-02'), (2, ARRAY[3], false, '2024-03-04');
+
+
+statement ok
+COPY (SELECT * FROM rendered ORDER BY id) TO '${__TEST_DIR__}/rendered_pg.csv' (FORMAT csv);
+
+
+statement ok
+COPY (SELECT * FROM rendered ORDER BY id) TO '${__TEST_DIR__}/rendered_duckdb.csv' (FORMAT csv, RENDERING duckdb);
+
+
+statement ok
+COPY (SELECT * FROM rendered ORDER BY id) TO '${__TEST_DIR__}/rendered_duckdb.txt' (FORMAT text, RENDERING 'DuckDB');
+
+
+query
+SELECT replace(content, chr(10), '|') AS content FROM read_text('${__TEST_DIR__}/rendered_pg.csv');
+----
+content
+1,"{1,2}",t,2024-01-02|2,{3},f,2024-03-04|
+
+
+query
+SELECT replace(content, chr(10), '|') AS content FROM read_text('${__TEST_DIR__}/rendered_duckdb.csv');
+----
+content
+1,"[1, 2]",true,2024-01-02|2,[3],false,2024-03-04|
+
+
+query
+SELECT replace(replace(content, chr(10), '|'), chr(9), ' ') AS content FROM read_text('${__TEST_DIR__}/rendered_duckdb.txt');
+----
+content
+1 [1, 2] true 2024-01-02|2 [3] false 2024-03-04|
+
+
+statement ok
+CREATE TABLE back (id int, l int[], b boolean, d date);
+
+
+statement ok
+COPY back FROM '${__TEST_DIR__}/rendered_duckdb.csv' (FORMAT csv, RENDERING duckdb);
+
+
+statement ok
+COPY back FROM '${__TEST_DIR__}/rendered_duckdb.txt' (FORMAT text, RENDERING duckdb);
+
+
+query
+SELECT id, l, b, d FROM back ORDER BY id, l;
+----
+id	l	b	d
+1	{1,2}	t	2024-01-02
+1	{1,2}	t	2024-01-02
+2	{3}	f	2024-03-04
+2	{3}	f	2024-03-04
+
+
+statement error
+COPY back FROM '${__TEST_DIR__}/rendered_duckdb.csv' (FORMAT csv);
+----
+db error: ERROR: invalid input syntax for type integer[]: "[1, 2]"
+
+
+statement error
+COPY back FROM '${__TEST_DIR__}/rendered_pg.csv' (FORMAT csv, RENDERING sql);
+----
+db error: ERROR: RENDERING must be 'duckdb' or 'postgres', got 'sql'
+
+
+query
+SELECT id, l, b, d FROM read_csv('${__TEST_DIR__}/rendered_pg.csv', header = false, columns = {'id': 'INTEGER', 'l': 'INTEGER[]', 'b': 'BOOLEAN', 'd': 'DATE'}, rendering = 'postgres') ORDER BY id;
+----
+id	l	b	d
+1	{1,2}	t	2024-01-02
+2	{3}	f	2024-03-04
+
+
+statement ok
+COPY (SELECT 1.5 AS n, 'on' AS b, '{1,2}' AS l) TO '${__TEST_DIR__}/rendered.json' (FORMAT json);
+
+
+query
+SELECT n FROM read_json('${__TEST_DIR__}/rendered.json', columns = {'n': 'INTEGER'});
+----
+n
+2
+
+
+query error
+SELECT b FROM read_json('${__TEST_DIR__}/rendered.json', columns = {'b': 'BOOLEAN'});
+----
+db error: ERROR: JSON transform error in file "<slt:ignore>/rendered.json", in line 1: Failed to cast value to numerical: "on"
+Try setting 'auto_detect' to true, specifying 'format' or 'records' manually, or setting 'ignore_errors' to true.
+
+
+query
+SELECT b FROM read_json('${__TEST_DIR__}/rendered.json', columns = {'b': 'BOOLEAN'}, rendering = 'postgres');
+----
+b
+t
+
+
+statement error
+SELECT n FROM read_json('${__TEST_DIR__}/rendered.json', columns = {'n': 'INTEGER'}, rendering = 'postgres');
+----
+db error: ERROR: JSON transform error in file "<slt:ignore>/rendered.json", in line 1: invalid input syntax for type integer: "1.5"
+ If this error occurred during read_json, line/object number information is approximate
+Try setting 'auto_detect' to true, specifying 'format' or 'records' manually, or setting 'ignore_errors' to true.
+
+
+statement ok
+SET sdb_rendering = 'duckdb';
+
+
+skipif pg-wire-extended
+query
+SELECT ARRAY[1, 2] AS l, true AS b, ROW(1, 'a') AS r;
+----
+l	b	r
+[1, 2]	true	(1, a)
+
+onlyif pg-wire-extended
+query
+SELECT ARRAY[1, 2] AS l, true AS b, ROW(1, 'a') AS r;
+----
+l	b	r
+{1,2}	t	(1,a)
+
+
+statement ok
+RESET sdb_rendering;
+
+
+query
+SELECT ARRAY[1, 2] AS l, true AS b;
+----
+l	b
+{1,2}	t
+
+
+statement error
+SET sdb_rendering = 'sql';
+----
+db error: ERROR: invalid value for parameter "sdb_rendering": "sql" (postgres or duckdb)

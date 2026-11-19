@@ -229,6 +229,9 @@ void ApplyOption(PgCopyOptions& out, const duckdb::Identifier& key,
       values.empty() ? std::string{} : OptionString(values[0])};
   } else if (key == "encoding") {
     out.encoding = formats::ParseTextEncoding(OptionText(values));
+  } else if (key == "rendering") {
+    out.rendering =
+      duckdb::ValueRenderingFromString(OptionText(values), "RENDERING");
   } else if (key == "quote") {
     if (!csv) {
       ThrowRequiresCsv("QUOTE");
@@ -264,13 +267,13 @@ void ApplyOption(PgCopyOptions& out, const duckdb::Identifier& key,
 }
 
 bool IsPgCopyOption(const duckdb::Identifier& key) {
-  static constexpr std::array<std::string_view, 22> kOptions{
+  static constexpr std::array<std::string_view, 23> kOptions{
     "format",         "delimiter",     "delim",         "sep",
     "separator",      "null",          "nullstr",       "header",
     "default",        "ignore_errors", "rejects_limit", "reject_limit",
     "compression",    "quote",         "escape",        "force_quote",
     "force_not_null", "force_null",    "on_error",      "log_verbosity",
-    "freeze",         "encoding",
+    "freeze",         "encoding",      "rendering",
   };
   return absl::c_any_of(kOptions,
                         [&](std::string_view option) { return key == option; });

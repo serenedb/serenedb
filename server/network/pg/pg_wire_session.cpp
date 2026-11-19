@@ -33,6 +33,7 @@
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/timestamp.hpp>
+#include <duckdb/formats/value_codecs.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/main/parse_iterator.hpp>
@@ -46,6 +47,7 @@
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/error_mapping.hpp>
 #include <iresearch/utils/system_compiler.hpp>
+#include <magic_enum/magic_enum.hpp>
 
 #include "auth/role_closure.h"
 #include "catalog/cluster.h"
@@ -58,6 +60,7 @@
 #include "network/pg/startup_request.h"
 #include "pg/copy_batch_builder.h"
 #include "pg/input_error.h"
+#include "query/config.h"
 #include "server/utils/lifecycle.h"
 #include "server/utils/metrics.h"
 
@@ -723,6 +726,10 @@ std::shared_ptr<WireSinkContext> PgWireSession<Kind>::MakeWireContext(
     _wire_ctx->task = &*this->_task;
   }
   _wire_ctx->formats.assign(formats.begin(), formats.end());
+  static constexpr auto kRenderings = magic_enum::enum_names<Rendering>();
+  _wire_ctx->duckdb_rendering =
+    GetEnumSetting(*_connection_ctx, "sdb_rendering", kRenderings) ==
+    static_cast<uint32_t>(Rendering::Duckdb);
   return _wire_ctx;
 }
 
@@ -1727,6 +1734,8 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyToStdout(
   auto wire = MakeWireContext(formats);
   wire->row_encoding = binary ? RowEncoding::CopyBinary : RowEncoding::CopyText;
   wire->copy_binary_header = binary;
+  wire->duckdb_rendering =
+    !binary && options.rendering == duckdb::ValueRendering::NATIVE;
   if (!binary) {
     sdb::connector::SetCopyFormat(wire->proto, options,
                                   prepared->ColumnCount());

@@ -50,6 +50,11 @@ enum class ByteaOutput : uint8_t {
   Escape,
 };
 
+enum class Rendering : uint8_t {
+  Postgres,
+  Duckdb,
+};
+
 using IsolationLevel = duckdb::TransactionIsolationLevel;
 
 uint32_t GetIntSetting(duckdb::ClientContext& context, std::string_view name);

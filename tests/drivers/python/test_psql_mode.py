@@ -1601,7 +1601,7 @@ def test_terminal_copy_from_stdin_again_after_an_eof_signal(terminal) -> None:
 
 
 def test_terminal_recalls_a_backslash_command_from_the_history(tmp_path: Path) -> None:
-    (tmp_path / ".duckdb_history").write_text("SELECT 1;\n\\echo 'recalled\\x21'\n")
+    (tmp_path / ".sdb_history").write_text("SELECT 1;\n\\echo 'recalled\\x21'\n")
     terminal = _Terminal(tmp_path, 160)
     try:
         terminal.send("\x1b[A", until="recalled\\x21")

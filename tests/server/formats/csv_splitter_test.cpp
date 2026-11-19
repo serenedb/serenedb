@@ -22,6 +22,8 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <duckdb/formats/row_lexer.hpp>
+#include <limits>
 #include <random>
 #include <string>
 #include <string_view>
@@ -224,6 +226,62 @@ TEST(CsvSplitter, RecordEndFollowsQuotes) {
   EXPECT_EQ(sdb::formats::CsvRecordEnd(input, 5, dialect, state),
             std::string_view::npos);
   EXPECT_TRUE(state.in_quote);
+}
+
+size_t LexerRecordEnd(std::string_view bytes, size_t from,
+                      const CsvDialect& dialect,
+                      sdb::formats::CsvQuoteState& state, bool first) {
+  const duckdb::RowLexer lexer{
+    duckdb::RowDialect::PostgresCsv(dialect.delimiter, dialect.quote,
+                                    dialect.escape),
+    1, std::numeric_limits<duckdb::idx_t>::max(), true};
+  duckdb::RowCursor cursor;
+  lexer.Start(cursor, from, true, false);
+  cursor.in_quotes = state.in_quote;
+  cursor.escape_carry = state.escaped;
+  lexer.Feed(cursor, bytes.data(), 0, bytes.size(), true, nullptr);
+  const auto term = first ? cursor.first_term : cursor.last_term;
+  if (term == duckdb::DConstants::INVALID_INDEX) {
+    state.in_quote = cursor.in_quotes != 0;
+    state.escaped = cursor.escape_carry != 0;
+    return std::string_view::npos;
+  }
+  if (first) {
+    state = {};
+  } else {
+    state.in_quote = cursor.in_quotes != 0;
+    state.escaped = cursor.escape_carry != 0;
+  }
+  return term;
+}
+
+TEST(CsvSplitter, RecordEndsMatchTheLexer) {
+  constexpr char kBytes[] = {'a', ',', '"', '"', '\'', '\n', '\n', '\r', ' '};
+  std::mt19937_64 rng{23};
+  for (int iter = 0; iter < 200000; ++iter) {
+    const char quote = iter % 3 == 2 ? '\'' : '"';
+    const CsvDialect dialect{',', quote, quote};
+    const size_t len = rng() % 300;
+    std::string input;
+    for (size_t i = 0; i < len; ++i) {
+      input.push_back(kBytes[rng() % sizeof(kBytes)]);
+    }
+    const size_t from = rng() % (len + 1);
+    const bool in_quote = rng() % 2;
+    for (const bool first : {true, false}) {
+      sdb::formats::CsvQuoteState got_state{in_quote, false};
+      sdb::formats::CsvQuoteState want_state{in_quote, false};
+      const auto got =
+        first ? sdb::formats::CsvRecordEnd(input, from, dialect, got_state)
+              : sdb::formats::CsvLastRecordEnd(input, dialect, got_state);
+      const auto want =
+        LexerRecordEnd(input, first ? from : 0, dialect, want_state, first);
+      ASSERT_EQ(got, want) << "iteration " << iter << " first " << first;
+      ASSERT_EQ(got_state.in_quote, want_state.in_quote)
+        << "iteration " << iter << " first " << first;
+      ASSERT_EQ(got_state.escaped, want_state.escaped);
+    }
+  }
 }
 
 TEST(CsvSplitter, RecordEndKeepsEscapeAcrossChunks) {

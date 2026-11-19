@@ -20,11 +20,12 @@
 
 #pragma once
 
+#include <string>
 #include <string_view>
 
 namespace sdb::build {
 
 std::string_view Commit() noexcept;
-std::string_view VersionLine() noexcept;
+std::string VersionLine(std::string_view program);
 
 }  // namespace sdb::build

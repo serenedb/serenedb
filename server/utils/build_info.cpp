@@ -20,6 +20,8 @@
 
 #include "server/utils/build_info.h"
 
+#include <absl/strings/str_cat.h>
+
 #include "server/utils/build.h"
 #include "server/utils/build_commit.h"
 
@@ -27,8 +29,9 @@ namespace sdb::build {
 
 std::string_view Commit() noexcept { return SERENEDB_COMMIT; }
 
-std::string_view VersionLine() noexcept {
-  return "serened (SereneDB) " SERENEDB_VERSION " (" SERENEDB_COMMIT ")";
+std::string VersionLine(std::string_view program) {
+  return absl::StrCat(program,
+                      " (SereneDB) " SERENEDB_VERSION " (" SERENEDB_COMMIT ")");
 }
 
 }  // namespace sdb::build

@@ -40,9 +40,11 @@ namespace sdb::app {
 
 void ParseOptions(int argc, char* argv[]) {
   absl::FlagsUsageConfig usage_config;
-  usage_config.version_string = [] {
-    return absl::StrCat(build::VersionLine(), "\n");
-  };
+  const std::string_view path{argv[0]};
+  usage_config.version_string =
+    [program = std::string{path.substr(path.rfind('/') + 1)}] {
+      return absl::StrCat(build::VersionLine(program), "\n");
+    };
   usage_config.contains_help_flags = [](std::string_view file) {
     return file.find("third_party/") == std::string_view::npos;
   };

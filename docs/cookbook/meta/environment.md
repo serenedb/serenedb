@@ -25,7 +25,7 @@ Using a `PRAGMA`:
 
 ## Build
 
-`serened --version` prints the release and the commit the server was built from, such as `serened (SereneDB) 26.11.0 (3f9c2a7d41b0e8c56d2f1a9b7e4c3d2a1f0e9b8c)`. The commit ends in `-dirty` when the source the server was built from differed from it.
+`serenedb --version` prints the release and the commit the binary was built from, such as `serenedb (SereneDB) 26.11.0 (3f9c2a7d41b0e8c56d2f1a9b7e4c3d2a1f0e9b8c)`; `serened --version` prints the same line naming `serened`. The commit ends in `-dirty` when the source the binary was built from differed from it.
 
 The `pg_config` view, which superusers can read, lists the same and how the server was built: the compilers, their flags and the CMake options of the build. The [system table compatibility](../../compatibility/system-table-compatibility.md) page lists its rows.
 

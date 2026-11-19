@@ -328,6 +328,12 @@ SELECT ts_explain(1);
 db error: ERROR: ts_explain() requires an inverted index scan in the same sub-query
 
 
+statement error
+SELECT ts_explain(pg_class.tableoid) FROM pg_class LIMIT 1;
+----
+db error: ERROR: ts_explain() requires an inverted index scan in the same sub-query
+
+
 query
 EXPLAIN SELECT id, ts_explain(explain_idx.tableoid)
 FROM explain_idx

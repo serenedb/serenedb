@@ -37,6 +37,7 @@
 #include "iresearch/formats/index/term_dict_key.hpp"
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/byte_set.hpp"
 #include "iresearch/utils/bytes_output.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -218,22 +219,25 @@ uint64_t StrideValue(bytes_view key, uint32_t prefix) noexcept {
   return absl::big_endian::Load64(word.data());
 }
 
-uint32_t KeyBits(bytes_view first, bytes_view last, uint32_t prefix) noexcept {
+uint64_t KeyRange(bytes_view first, bytes_view last, uint32_t prefix) noexcept {
   if (!PacksKeys(first.size() - prefix)) {
     return 0;
   }
-  return static_cast<uint32_t>(
-    std::bit_width(StrideValue(last, prefix) - StrideValue(first, prefix)));
+  return StrideValue(last, prefix) - StrideValue(first, prefix);
 }
 
 uint64_t FixedBytes(uint64_t count, uint64_t records, uint64_t width,
-                    uint64_t prefix, uint32_t bits) noexcept {
+                    uint64_t prefix, uint64_t universe) noexcept {
   const uint64_t stride = width - prefix;
-  const uint64_t groups = FixedHeads(count);
-  const uint64_t keys =
-    PacksKeys(stride) ? 1 + stride + PackedBytes(count, bits) : count * stride;
-  return 1 + VSize(count) + VSize(groups) + VSize(stride) + VSize(prefix) +
-         prefix + FixedHeadBytes(stride) * groups + keys + records + kSlack;
+  uint64_t keys = 0;
+  if (PacksKeys(stride)) {
+    const auto shape = EfShapeOf(count, universe);
+    keys = 1 + VSize(shape.highs) + stride + EfBytes(count, shape);
+  } else {
+    keys = kHeadBytes * FixedHeads(count) + count * stride;
+  }
+  return 1 + VSize(count) + VSize(stride) + VSize(prefix) + prefix + keys +
+         records + kSlack;
 }
 
 bytes_view KeyAt(const BlockBuilder& block, size_t i) noexcept {
@@ -405,23 +409,35 @@ void WriteHeads(DataOutput& out, const BlockBuilder& block, size_t step,
   }
 }
 
-void WriteFixedHeads(DataOutput& out, const BlockBuilder& block) {
-  if (FixedHeadBytes(FixedWidth(block) - block.prefix) == sizeof(uint32_t)) {
-    WriteHeads(out, block, kFixedHeadInterval, block.prefix);
-    return;
-  }
-  for (size_t i = 0; i < block.ends.size(); i += kFixedHeadInterval) {
-    out.WriteU16(
-      static_cast<uint16_t>(HeadAt(KeyAt(block, i), block.prefix) >> 48));
-  }
-}
-
-void WritePackedKeys(DataOutput& out, const BlockBuilder& block,
-                     uint32_t bits) {
+void WriteEfKeys(DataOutput& out, const BlockBuilder& block, EfShape shape) {
+  const auto count = block.ends.size();
   const uint64_t base = StrideValue(KeyAt(block, 0), block.prefix);
-  WritePacked(out, block.ends.size(), bits, [&](uint64_t i) {
+  const auto value = [&](uint64_t i) {
     return StrideValue(KeyAt(block, i), block.prefix) - base;
-  });
+  };
+  const auto position = [&](uint64_t i) {
+    return (value(i) >> shape.low_bits) + i;
+  };
+  for (uint64_t i = 0; i < count; i += kEfSample) {
+    SDB_ASSERT(position(i) <= std::numeric_limits<uint16_t>::max());
+    out.WriteU16(static_cast<uint16_t>(position(i)));
+  }
+  const uint64_t words = EfUpperBytes(count, shape.highs) / sizeof(uint64_t);
+  uint64_t word = 0;
+  uint64_t bits = 0;
+  for (uint64_t i = 0; i != count; ++i) {
+    const uint64_t at = position(i);
+    for (; word != at / kEfWordBits; ++word) {
+      out.WriteU64(std::exchange(bits, 0));
+    }
+    bits |= uint64_t{1} << (at % kEfWordBits);
+  }
+  for (; word != words; ++word) {
+    out.WriteU64(std::exchange(bits, 0));
+  }
+  const uint64_t mask = (uint64_t{1} << shape.low_bits) - 1;
+  WritePacked(out, count, shape.low_bits,
+              [&](uint64_t i) { return value(i) & mask; });
 }
 
 void Serialize(const BlockBuilder& block, DataOutput& out) {
@@ -461,20 +477,20 @@ void Serialize(const BlockBuilder& block, DataOutput& out) {
     out.WriteData(columns.suffixes.data(), columns.suffixes.size());
   } else {
     const uint32_t stride = FixedWidth(block) - block.prefix;
-    out.WriteV32(static_cast<uint32_t>(FixedHeads(count)));
     out.WriteV32(stride);
     out.WriteV32(block.prefix);
-    const auto bits =
-      KeyBits(KeyAt(block, 0), KeyAt(block, count - 1), block.prefix);
     if (PacksKeys(stride)) {
-      out.WriteByte(static_cast<byte_type>(bits));
+      const auto shape = EfShapeOf(
+        count,
+        KeyRange(KeyAt(block, 0), KeyAt(block, count - 1), block.prefix));
+      out.WriteByte(static_cast<byte_type>(shape.low_bits));
+      out.WriteV64(shape.highs);
       out.WriteData(block.keys.data() + block.prefix, stride);
-    }
-    out.WriteData(block.keys.data(), block.prefix);
-    WriteFixedHeads(out, block);
-    if (PacksKeys(stride)) {
-      WritePackedKeys(out, block, bits);
+      out.WriteData(block.keys.data(), block.prefix);
+      WriteEfKeys(out, block, shape);
     } else {
+      out.WriteData(block.keys.data(), block.prefix);
+      WriteHeads(out, block, kFixedHeadInterval, block.prefix);
       for (size_t i = 0; i != count; ++i) {
         out.WriteData(KeyAt(block, i).data() + block.prefix, stride);
       }
@@ -692,6 +708,7 @@ void FieldWriter::write(DictRef dict, const BasicTermReader& reader) {
   _reader = &reader;
   _trained = _width != 0;
   _trie.Reset();
+  _masks.clear();
   if (IsSubsetOf(IndexFeatures::Ranges, props.index_features) && _width != 0) {
     SDB_ASSERT(!IsSubsetOf(IndexFeatures::Pos, props.index_features));
     _ranges.Begin(_pw, _docs);
@@ -750,7 +767,41 @@ void FieldWriter::write(DictRef dict, const BasicTermReader& reader) {
     Cut();
   }
   CloseRun();
+  if (_ranges.Active() && _ranges.Height() != 0) {
+    WriteLevels(_heads.back());
+  }
   ResetField();
+}
+
+void FieldWriter::WriteLevels(FieldHead& head) {
+  SDB_ASSERT(head.term_count > 1 && head.levels.empty());
+  head.levels.reserve(_ranges.Height());
+  for (size_t level = 0; level != _ranges.Height(); ++level) {
+    _min.clear();
+    _terms = 0;
+    _first_block = kNoBlock;
+    _trie.Reset();
+    _masks.clear();
+    _block.run.Start(head.features);
+    const uint64_t first_inline = _inline.size();
+    const uint32_t count = _ranges.Count(level);
+    for (uint32_t i = 0; i != count; ++i) {
+      const auto entry = _ranges.At(level, i);
+      Add(entry.key, entry.meta);
+    }
+    SDB_ASSERT(_terms == count && count > 1);
+    auto& dict = head.levels.emplace_back();
+    dict.id = head.id;
+    dict.layout = head.layout;
+    dict.member = head.member;
+    dict.features = head.features;
+    dict.term_count = count;
+    dict.doc_count = head.doc_count;
+    dict.width = head.width;
+    dict.min = ViewCast<char>(bytes_view{_min});
+    EndKeyed(dict, first_inline);
+    CloseRun();
+  }
 }
 
 void FieldWriter::Add(bytes_view term, const PostingMeta& meta) {
@@ -808,8 +859,16 @@ void FieldWriter::FeedTrie() {
   const auto first = _first_block == _blocks ? _first_entry : 0;
   const auto last = static_cast<uint32_t>(_block.ends.size() - 1);
   if (_dict.member == DictMember::Strings && _width == 0) {
+    ByteSet seen;
     for (uint32_t i = first; i <= last; ++i) {
-      _trie.Add(KeyAt(_block, i).substr(prefix), block);
+      const auto term = KeyAt(_block, i).substr(prefix);
+      _trie.Add(term, block);
+      AddBytes(seen, term);
+    }
+    for (size_t i = 0; i != kBlockMaskWords; ++i) {
+      char word[sizeof(uint64_t)];
+      absl::little_endian::Store64(word, seen.words[i]);
+      _masks.append(word, sizeof(word));
     }
     return;
   }
@@ -848,8 +907,9 @@ bool FieldWriter::AppendFixedKey(bytes_view key, uint64_t records) {
     count == 0
       ? width
       : static_cast<uint32_t>(CommonPrefixLength(KeyAt(block, 0), key));
-  const uint32_t bits = count == 0 ? 0 : KeyBits(KeyAt(block, 0), key, prefix);
-  const uint64_t size = FixedBytes(count + 1, records, width, prefix, bits);
+  const uint64_t universe =
+    count == 0 ? 0 : KeyRange(KeyAt(block, 0), key, prefix);
+  const uint64_t size = FixedBytes(count + 1, records, width, prefix, universe);
   if (count != 0 && size > kPage) {
     return false;
   }
@@ -1027,37 +1087,29 @@ void FieldWriter::EndField(field_id id, const FieldProperties& props,
     head.record_inline = ViewCast<char>(_single.Inline());
     return;
   }
-  const auto max =
-    KeyAt(_block, _block.ends.size() - 1).substr(_key_prefix.size());
-  head.max = ViewCast<char>(max);
+  if (_fsst_used) {
+    head.fsst_table = std::move(_fsst_table);
+  }
+  EndKeyed(head, first_inline);
+}
+
+void FieldWriter::EndKeyed(FieldHead& head, uint64_t first_inline) {
+  head.max = ViewCast<char>(
+    KeyAt(_block, _block.ends.size() - 1).substr(_key_prefix.size()));
   head.first_block = _first_block;
   head.first_entry = _first_entry;
   head.first_record = _first_record;
   head.last_block = _blocks;
   head.last_entry = static_cast<uint32_t>(_block.ends.size() - 1);
-  if (_fsst_used) {
-    head.fsst_table = std::move(_fsst_table);
-  }
   if (_first_block == _blocks) {
     head.inline_base = first_inline;
     head.inline_size = _inline.size() - first_inline;
   } else {
     FeedTrie();
     head.prefix_trie = _trie.Finish();
+    head.block_masks = std::move(_masks);
   }
-  if (_ranges.Active()) {
-    const auto prefix = CommonPrefixLength(bytes_view{_min}, max);
-    const auto offset = _range_regions.size();
-    auto& ranges = head.ranges;
-    _ranges.Write(_range_regions, prefix, ranges.counts);
-    if (!ranges.counts.empty()) {
-      SDB_ASSERT(_dict.member == DictMember::Numbers);
-      ranges.offset = offset;
-      ranges.size = _range_regions.size() - offset;
-      ranges.prefix = static_cast<uint32_t>(prefix);
-    }
-    SDB_ASSERT(!ranges.counts.empty() || _range_regions.size() == offset);
-  }
+  _masks.clear();
 }
 
 void FieldWriter::ResetField() noexcept {
@@ -1078,7 +1130,6 @@ void FieldWriter::Reset() noexcept {
   _inline.clear();
   _spans.clear();
   _inline_starts.clear();
-  _range_regions.clear();
   _heads.clear();
   _first_page = 0;
   _inline_start = 0;
@@ -1101,14 +1152,12 @@ void FieldWriter::end() {
       .spans = std::move(_spans),
       .inline_offset = out.Position(),
       .inline_size = _inline.size(),
-      .ranges_size = _range_regions.size(),
       .fields = std::move(_heads),
       .inline_starts =
         _inline.empty() ? std::string{} : std::move(_inline_starts),
       .ordinal_bytes = _ordinal_bytes,
     };
     out.WriteData(_inline.data(), _inline.size());
-    out.WriteData(_range_regions.data(), _range_regions.size());
     _idx->SetTerms(std::move(terms));
   }
   Reset();

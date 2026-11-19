@@ -23,6 +23,8 @@
 #include <algorithm>
 #include <cstdint>
 #include <iresearch/utils/conjunction_acceptor.hpp>
+#include <iresearch/utils/levenshtein_acceptor.hpp>
+#include <iresearch/utils/levenshtein_utils.hpp>
 #include <iresearch/utils/regexp_acceptor.hpp>
 #include <iresearch/utils/regexp_utils.hpp>
 #include <latch>
@@ -2515,6 +2517,102 @@ TEST_F(RegexpUtilsTest, required_suffix) {
   const irs::RegexpAcceptor unconstrained{open};
   EXPECT_EQ("", suffix(unconstrained));
   EXPECT_TRUE(unconstrained.ExemptKeys().empty());
+}
+
+TEST_F(RegexpUtilsTest, required_bytes) {
+  const auto bytes = [](const irs::ByteSet& set) {
+    std::string out;
+    for (uint32_t b = 0; b != 256; ++b) {
+      if (set.Contains(static_cast<irs::byte_type>(b))) {
+        out.push_back(static_cast<char>(b));
+      }
+    }
+    return out;
+  };
+  const auto perl = [&](std::string_view pattern) {
+    return bytes(FromPerl(pattern).RequiredBytes());
+  };
+  const auto wildcard = [&](std::string_view pattern) {
+    return bytes(irs::RegexpAcceptor{irs::RegexpAcceptor::WildcardTag{},
+                                     ToBytesView(pattern)}
+                   .RequiredBytes());
+  };
+  EXPECT_EQ("inot", wildcard("%tion"));
+  EXPECT_EQ("inot", wildcard("%tion%"));
+  EXPECT_EQ("abr", wildcard("b_r%a%"));
+  EXPECT_EQ("", wildcard("%"));
+  EXPECT_EQ("abc", perl("(ab)+c"));
+  EXPECT_EQ("", perl("a|b"));
+  EXPECT_EQ("a", perl("ab|ac"));
+  EXPECT_EQ("y", perl("x{0,2}y"));
+  EXPECT_EQ("xy", perl("x{1,2}y"));
+  EXPECT_EQ("y", perl("x*y?y"));
+  EXPECT_EQ("qz", perl("[q]z"));
+  EXPECT_EQ("", perl("[ab]"));
+  EXPECT_EQ("", perl("(?i)ab"));
+  EXPECT_EQ("1", perl("(?i)a1"));
+  EXPECT_EQ("", perl(".*"));
+  EXPECT_EQ("\xB0\xB4\xD0", perl("\xD0\xB4\xD0\xB0"));
+
+  using Part = irs::RegexpAcceptor::Part;
+  using Kind = irs::RegexpAcceptor::PartKind;
+  const Part parts[] = {
+    {Kind::Prefix, ToBytesView("auto")},
+    {Kind::Wildcard, ToBytesView("%ska")},
+    {Kind::Term, ToBytesView("zeta")},
+  };
+  EXPECT_EQ("a", bytes(irs::RegexpAcceptor{parts}.RequiredBytes()));
+
+  const std::shared_ptr<const irs::RegexpAcceptor> patterns[]{
+    std::make_shared<const irs::RegexpAcceptor>(ToBytesView("a.*")),
+    std::make_shared<const irs::RegexpAcceptor>(ToBytesView(".*b")),
+  };
+  EXPECT_EQ("ab", bytes(irs::RegexpConjunction{patterns}.RequiredBytes()));
+
+  const auto description = irs::MakeParametricDescription(1, false);
+  const irs::LevenshteinAcceptor fuzzy{description, ToBytesView("x"),
+                                       ToBytesView("aabc")};
+  EXPECT_EQ("ax", bytes(fuzzy.RequiredBytes()));
+  EXPECT_EQ("abx", bytes(irs::FuzzyConjunction{
+                     std::span{patterns}.last(1),
+                     std::make_shared<const irs::LevenshteinAcceptor>(
+                       description, ToBytesView("x"), ToBytesView("aabc"))}
+                           .RequiredBytes()));
+}
+
+TEST_F(RegexpUtilsTest, required_bytes_hold_in_every_match) {
+  constexpr std::string_view kAlphabet = "abxy01";
+  std::vector<std::string> terms{""};
+  for (size_t from = 0; terms.back().size() != 5;) {
+    const size_t to = terms.size();
+    for (size_t i = from; i != to; ++i) {
+      for (const char c : kAlphabet) {
+        terms.push_back(terms[i] + c);
+      }
+    }
+    from = to;
+  }
+  for (const std::string_view pattern :
+       {"(ab|ba)+x?", "a(b|x)y*", "(a|b)(a|b)0", "x{2,}|xa", "[ab]1+y",
+        ".*a.*b.*", "(xy)*1", "a?b?x", "(?i)AB1", "(a1|1a)(y|y0)"}) {
+    const auto a = FromPerl(pattern);
+    ASSERT_TRUE(a.ok()) << pattern;
+    const auto& required = a.RequiredBytes();
+    size_t hits = 0;
+    for (const auto& term : terms) {
+      if (!Accepts(a, term)) {
+        continue;
+      }
+      ++hits;
+      irs::ByteSet seen;
+      irs::AddBytes(seen, ToBytesView(term));
+      for (size_t i = 0; i != seen.words.size(); ++i) {
+        EXPECT_EQ(required.words[i], required.words[i] & seen.words[i])
+          << pattern << " " << term;
+      }
+    }
+    EXPECT_NE(0, hits) << pattern;
+  }
 }
 
 TEST_F(RegexpUtilsTest, finite_language) {

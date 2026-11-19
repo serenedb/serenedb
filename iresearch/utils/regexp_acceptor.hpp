@@ -132,6 +132,8 @@ class RegexpAcceptor {
 
   bytes_view RequiredInfix() const noexcept { return _infix; }
 
+  const ByteSet& RequiredBytes() const noexcept { return _required; }
+
   bool Finite() const noexcept { return _finite; }
 
   std::span<const bstring> Literals() const noexcept { return _literals; }
@@ -252,6 +254,7 @@ class RegexpAcceptor {
   bstring _infix;
   bstring _contained;
   std::vector<bstring> _literals;
+  ByteSet _required;
   std::string _error;
   bool _finite{false};
   size_t _max_dfa_mem{kDefaultMaxDfaMem};

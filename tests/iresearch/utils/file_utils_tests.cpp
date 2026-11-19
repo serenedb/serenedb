@@ -434,3 +434,25 @@ TEST(file_utils_tests, residency_epoch) {
   irs::file_utils::InvalidateResidency();
   ASSERT_NE(epoch, irs::file_utils::ResidencyEpoch());
 }
+
+TEST(file_utils_tests, will_need_chunks_end_on_absolute_boundaries) {
+  constexpr uint64_t kChunk = irs::file_utils::kWillNeedChunk;
+  for (const uint64_t start :
+       {uint64_t{0}, uint64_t{4096}, kChunk - 1, kChunk, 3 * kChunk + 12288}) {
+    for (const uint64_t size :
+         {uint64_t{1}, uint64_t{4096}, kChunk, 5 * kChunk + 7}) {
+      const uint64_t end = start + size;
+      uint64_t pieces = 0;
+      uint64_t at = start;
+      while (at < end) {
+        const auto next = irs::file_utils::WillNeedChunkEnd(at, end);
+        ASSERT_LT(at, next);
+        ASSERT_TRUE(next == end || next % kChunk == 0) << start << " " << size;
+        at = next;
+        ++pieces;
+      }
+      ASSERT_EQ(end, at);
+      ASSERT_EQ((end - 1) / kChunk - start / kChunk + 1, pieces);
+    }
+  }
+}

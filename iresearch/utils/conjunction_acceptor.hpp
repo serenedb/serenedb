@@ -105,6 +105,8 @@ class RegexpConjunction {
 
   bytes_view RequiredInfix() const noexcept { return _infix; }
 
+  const ByteSet& RequiredBytes() const noexcept { return _required; }
+
   static bool Alive(State state) noexcept { return !state->dead; }
 
   static bool Unknown(State state) noexcept { return state->unknown; }
@@ -159,6 +161,7 @@ class RegexpConjunction {
   bytes_view _lower;
   std::span<const bstring> _suffixes;
   bytes_view _infix;
+  ByteSet _required;
   size_t _max_mem;
   mutable std::mutex _mutex;
   mutable absl::flat_hash_map<Parts, Row*> _rows;
@@ -220,6 +223,8 @@ class FuzzyConjunction {
   }
 
   bytes_view RequiredInfix() const noexcept { return _infix; }
+
+  const ByteSet& RequiredBytes() const noexcept { return _required; }
 
   static bool Alive(State state) noexcept { return !state->dead; }
 
@@ -290,6 +295,7 @@ class FuzzyConjunction {
   bytes_view _lower;
   std::span<const bstring> _suffixes;
   bytes_view _infix;
+  ByteSet _required;
   size_t _max_mem;
   mutable std::mutex _mutex;
   mutable absl::flat_hash_map<Key, Row*> _rows;

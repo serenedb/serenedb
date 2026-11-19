@@ -42,21 +42,6 @@ uint64_t FieldReader::CountMappedMemory() const {
   return bytes;
 }
 
-bytes_view FieldReader::Load(IndexInput& in, uint64_t offset, uint64_t size) {
-  if (_base) {
-    return {_base + offset, size};
-  }
-  const auto [it, inserted] = _copies.try_emplace(offset);
-  auto& copy = it->second;
-  if (inserted) {
-    Account(size);
-    copy.resize(size);
-    in.ReadData(offset, copy.data(), size);
-  }
-  SDB_ASSERT(copy.size() == size);
-  return copy;
-}
-
 bytes_view FieldReader::Copy(uint64_t offset, uint64_t size) {
   const auto [it, inserted] = _copies.try_emplace(offset);
   auto& copy = it->second;
@@ -97,7 +82,6 @@ void FieldReader::Bind(const TermsMeta& terms) {
   _first_page = terms.first_page;
   _inline_offset = terms.inline_offset;
   _inline_size = terms.inline_size;
-  _ranges_size = terms.ranges_size;
   const auto blocks = _block_count;
   if (terms.spans.size() > blocks) {
     Corrupted("block directory");
@@ -174,9 +158,18 @@ void FieldReader::prepare(const ReaderState& state) {
     if (head.term_count == 1) {
       _dicts.push_back(&_singles.emplace_back(*this, head));
     } else {
+      const uint32_t own = ordinal++;
+      std::vector<const TermReaderImpl*> levels;
+      levels.reserve(head.levels.size());
+      for (const auto& level : head.levels) {
+        prefix.clear();
+        AppendOrdinal(prefix, ordinal++, terms.ordinal_bytes);
+        levels.push_back(&_keyed.emplace_back(*this, level, prefix, *_in));
+      }
       prefix.clear();
-      AppendOrdinal(prefix, ordinal++, terms.ordinal_bytes);
-      _dicts.push_back(&_keyed.emplace_back(*this, head, prefix, *_in));
+      AppendOrdinal(prefix, own, terms.ordinal_bytes);
+      _dicts.push_back(
+        &_keyed.emplace_back(*this, head, prefix, *_in, std::move(levels)));
     }
     ++_by_id
         .try_emplace(

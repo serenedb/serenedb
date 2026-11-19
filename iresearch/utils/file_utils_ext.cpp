@@ -177,8 +177,6 @@ void StartWriteback(int fd) noexcept {
 #ifndef _WIN32
 namespace {
 
-constexpr size_t kWillNeedChunk = 32 * 1024;
-
 size_t SystemPage() noexcept {
   static const size_t kPageSize = ::sysconf(_SC_PAGESIZE);
   return kPageSize;
@@ -201,27 +199,27 @@ void Prefetch(const void* addr, size_t size) noexcept {
     return;
   }
   const auto [aligned, total] = PageRange(addr, size);
-  for (size_t offset = 0; offset < total; offset += kWillNeedChunk) {
-    ::madvise(reinterpret_cast<void*>(aligned + offset),
-              std::min(kWillNeedChunk, total - offset), MADV_WILLNEED);
+  for (uint64_t at = aligned, end = aligned + total; at < end;) {
+    const auto next = WillNeedChunkEnd(at, end);
+    ::madvise(reinterpret_cast<void*>(at), next - at, MADV_WILLNEED);
+    at = next;
   }
 #endif
 }
 
 void Prefetch(int fd, uint64_t offset, uint64_t size) noexcept {
 #ifndef _WIN32
-  for (uint64_t at = 0; at < size; at += kWillNeedChunk) {
+  for (uint64_t at = offset, end = offset + size; at < end;) {
+    const auto next = WillNeedChunkEnd(at, end);
 #ifdef __APPLE__
-    radvisory advice{.ra_offset = static_cast<off_t>(offset + at),
-                     .ra_count = static_cast<int>(
-                       std::min<uint64_t>(kWillNeedChunk, size - at))};
+    radvisory advice{.ra_offset = static_cast<off_t>(at),
+                     .ra_count = static_cast<int>(next - at)};
     ::fcntl(fd, F_RDADVISE, &advice);
 #else
-    ::posix_fadvise(
-      fd, static_cast<off_t>(offset + at),
-      static_cast<off_t>(std::min<uint64_t>(kWillNeedChunk, size - at)),
-      POSIX_FADV_WILLNEED);
+    ::posix_fadvise(fd, static_cast<off_t>(at), static_cast<off_t>(next - at),
+                    POSIX_FADV_WILLNEED);
 #endif
+    at = next;
   }
 #endif
 }

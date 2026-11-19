@@ -1274,12 +1274,19 @@ bool MatchesByLiteral(const A& a) noexcept {
 }
 
 template<typename A>
+const ByteSet* NeedOf(const TermReaderImpl& field, const A& a) noexcept {
+  const auto& need = a.RequiredBytes();
+  return field.Masked() && (need.words[0] | need.words[1]) != 0 ? &need
+                                                                : nullptr;
+}
+
+template<typename A>
 class BlockPlan {
  public:
   using State = typename A::State;
 
   BlockPlan(const TermReaderImpl& field, const A& a) noexcept
-    : _field{&field}, _a{&a} {}
+    : _field{&field}, _a{&a}, _need{NeedOf(field, a)} {}
 
   void Run(uint32_t block, uint32_t end, uint64_t budget) {
     const uint64_t limit = _field->BlockOffset(block) + budget;
@@ -1308,7 +1315,7 @@ class BlockPlan {
   static constexpr size_t kMaxDepth = 64;
 
   bool Visit(TrieCursor cursor, State state, size_t depth) {
-    if (cursor.hi < _first || cursor.hi < _run_end) {
+    if (cursor.hi < _first || cursor.hi < _seen) {
       return true;
     }
     if (cursor.lo >= _end) {
@@ -1353,7 +1360,7 @@ class BlockPlan {
     for (auto slot = static_cast<uint32_t>(
            absl::c_lower_bound(labels, range.lo) - labels.begin());
          slot < labels.size(); ++slot) {
-      if (const uint32_t from = std::max(_first, _run_end); from != reach) {
+      if (const uint32_t from = std::max(_first, _seen); from != reach) {
         reach = from;
         slot = trie.SlotReaching(cursor, slot, reach);
         if (slot == labels.size()) {
@@ -1378,6 +1385,18 @@ class BlockPlan {
     if (lo >= end) {
       return;
     }
+    _seen = std::max(_seen, end);
+    if (!_need) {
+      Extend(lo, end);
+      return;
+    }
+    for (auto block = _field->Holding(lo, end, *_need); block < end;
+         block = _field->Holding(block + 1, end, *_need)) {
+      Extend(block, block + 1);
+    }
+  }
+
+  void Extend(uint32_t lo, uint32_t end) {
     if (lo > _run_end) {
       Flush();
       _run_begin = lo;
@@ -1397,8 +1416,10 @@ class BlockPlan {
 
   const TermReaderImpl* _field;
   const A* _a;
+  const ByteSet* _need;
   uint32_t _first = 0;
   uint32_t _end = 0;
+  uint32_t _seen = 0;
   uint32_t _run_begin = 0;
   uint32_t _run_end = 0;
 };
@@ -1450,6 +1471,7 @@ class AcceptorIterator : public SeekTermIterator {
 
   AcceptorIterator(const TermReaderImpl& field, const A& a)
     : _a{&a},
+      _need{NeedOf(field, a)},
       _k{field.KeyPrefix().size()},
       _valid{_k},
       _by_literal{MatchesByLiteral(a)},
@@ -1563,11 +1585,18 @@ class AcceptorIterator : public SeekTermIterator {
       valid);
   }
 
-  bool Land(uint32_t block, size_t valid) {
+  uint32_t Holding(uint32_t block) const noexcept {
     const auto& field = _cursor.Field();
-    SDB_ASSERT(block < field.Blocks());
+    return _need ? field.Holding(block, field.Blocks(), *_need) : block;
+  }
+
+  bool Land(uint32_t block, size_t valid) {
+    SDB_ASSERT(block < _cursor.Field().Blocks());
     _filter.Restart();
     _check = true;
+    if (const auto held = Holding(block); held != block) {
+      return Enter(held, valid);
+    }
     if (_cursor.BlockIndex() != block) {
       _cursor.Load(block);
     }
@@ -1575,10 +1604,14 @@ class AcceptorIterator : public SeekTermIterator {
       _valid = std::min(valid, _cursor.Shared());
       return true;
     }
-    if (block + 1 == field.Blocks()) {
+    return Enter(Holding(block + 1), valid);
+  }
+
+  bool Enter(uint32_t block, size_t valid) {
+    if (block >= _cursor.Field().Blocks()) {
       return false;
     }
-    _cursor.Load(block + 1);
+    _cursor.Load(block);
     _cursor.Next();
     _valid = std::min(valid, CommonPrefixLength(_targets.Key(), _cursor.Key()));
     return true;
@@ -1586,12 +1619,15 @@ class AcceptorIterator : public SeekTermIterator {
 
   IRS_NO_INLINE bool NextBlock() {
     const auto& field = _cursor.Field();
-    const auto next = _cursor.BlockIndex() + 1;
+    const auto next = Holding(_cursor.BlockIndex() + 1);
     if (next >= field.Blocks()) {
       return false;
     }
     if (_by_literal) {
-      for (auto block = next;; ++block) {
+      for (auto block = next;; block = Holding(block + 1)) {
+        if (block >= field.Blocks()) {
+          return false;
+        }
         _cursor.Load(block);
         const auto group = _filter.FirstLiveGroup(_cursor);
         if (group == 0) {
@@ -1601,9 +1637,6 @@ class AcceptorIterator : public SeekTermIterator {
         if (group * kRestartInterval < _cursor.Stop()) {
           _cursor.Group(group);
           break;
-        }
-        if (block + 1 == field.Blocks()) {
-          return false;
         }
       }
       _valid = _k;
@@ -1687,6 +1720,7 @@ class AcceptorIterator : public SeekTermIterator {
   }
 
   const A* _a;
+  const ByteSet* _need;
   size_t _k;
   size_t _valid;
   bool _by_literal;

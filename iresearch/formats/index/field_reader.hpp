@@ -90,9 +90,6 @@ class FieldReader final {
   InlinePages::Span InlineSpan(uint32_t block) const noexcept {
     return _inline_pages.Of(block);
   }
-  uint64_t RangesBegin() const noexcept { return InlineEnd(); }
-  uint64_t RangesSize() const noexcept { return _ranges_size; }
-  bytes_view Load(IndexInput& in, uint64_t offset, uint64_t size);
   bytes_view Copy(uint64_t offset, uint64_t size);
   const byte_type* CopyBlock(uint32_t block, uint64_t length);
   const byte_type* KeepInline(bytes_view bytes);
@@ -129,7 +126,6 @@ class FieldReader final {
   uint64_t _first_page = 0;
   uint64_t _inline_offset = 0;
   uint64_t _inline_size = 0;
-  uint64_t _ranges_size = 0;
   uint32_t _block_count = 0;
   std::vector<PendingCopy> _pending;
   uint64_t _bytes = 0;

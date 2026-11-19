@@ -44,7 +44,6 @@ constexpr duckdb::field_id_t kTermsFirstPage = 2;
 constexpr duckdb::field_id_t kTermsSpans = 3;
 constexpr duckdb::field_id_t kTermsInlineOffset = 4;
 constexpr duckdb::field_id_t kTermsInlineSize = 5;
-constexpr duckdb::field_id_t kTermsRangesSize = 6;
 constexpr duckdb::field_id_t kTermsFields = 7;
 constexpr duckdb::field_id_t kTermsInlineStarts = 8;
 constexpr duckdb::field_id_t kTermsOrdinalBytes = 9;
@@ -87,19 +86,15 @@ constexpr duckdb::field_id_t kDictLastEntry = 12;
 constexpr duckdb::field_id_t kDictInlineBase = 13;
 constexpr duckdb::field_id_t kDictInlineSize = 14;
 constexpr duckdb::field_id_t kDictText = 15;
-constexpr duckdb::field_id_t kDictRanges = 16;
 constexpr duckdb::field_id_t kDictSingleValued = 17;
 constexpr duckdb::field_id_t kDictFsst = 18;
 constexpr duckdb::field_id_t kDictPrefixTrie = 19;
+constexpr duckdb::field_id_t kDictLevels = 20;
+constexpr duckdb::field_id_t kDictBlockMasks = 21;
 
 constexpr duckdb::field_id_t kTextTotalFreq = 0;
 constexpr duckdb::field_id_t kTextScoreBounds = 1;
 constexpr duckdb::field_id_t kTextNorm = 2;
-
-constexpr duckdb::field_id_t kRangesOffset = 0;
-constexpr duckdb::field_id_t kRangesSize = 1;
-constexpr duckdb::field_id_t kRangesPrefix = 2;
-constexpr duckdb::field_id_t kRangesCounts = 3;
 
 [[noreturn]] void Unsupported(std::string_view what, uint64_t value) {
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -128,8 +123,7 @@ bool Empty(const TextHead& text) noexcept {
 
 void WriteSlot(duckdb::BinarySerializer& out, const FieldHead& head) {
   SDB_ASSERT(head.term_count == 1 && head.features == IndexFeatures::None &&
-             head.min.empty() && Empty(head.text) &&
-             head.ranges.counts.empty());
+             head.min.empty() && Empty(head.text) && head.levels.empty());
   WriteBytes(out, kSlotRecord, "record", head.record);
   WriteOptionalBytes(out, kSlotRecordInline, "record_inline",
                      head.record_inline);
@@ -144,20 +138,9 @@ void WriteText(duckdb::BinarySerializer& out, const TextHead& text) {
                                          field_limits::invalid());
 }
 
-void WriteRanges(duckdb::BinarySerializer& out, const RangesHead& ranges) {
-  out.WriteProperty<uint64_t>(kRangesOffset, "offset", ranges.offset);
-  out.WriteProperty<uint64_t>(kRangesSize, "size", ranges.size);
-  out.WritePropertyWithDefault<uint32_t>(kRangesPrefix, "prefix", ranges.prefix,
-                                         0);
-  out.WriteList(kRangesCounts, "counts", ranges.counts.size(),
-                [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-                  list.WriteElement(ranges.counts[i]);
-                });
-}
-
 void WriteKeyed(duckdb::BinarySerializer& out, const FieldHead& head) {
   SDB_ASSERT(head.member == DictMember::Strings || Empty(head.text));
-  SDB_ASSERT(head.member == DictMember::Numbers || head.ranges.counts.empty());
+  SDB_ASSERT(head.member == DictMember::Numbers || head.levels.empty());
   out.WritePropertyWithDefault<uint32_t>(
     kDictFeatures, "features", static_cast<uint32_t>(head.features), 0);
   out.WritePropertyWithDefault<uint64_t>(kDictTermCount, "term_count",
@@ -189,13 +172,6 @@ void WriteKeyed(duckdb::BinarySerializer& out, const FieldHead& head) {
   out.WriteOptionalObject(
     kDictText, "text", !Empty(head.text),
     [&](duckdb::BinarySerializer& object) { WriteText(object, head.text); });
-  SDB_ASSERT(
-    head.ranges.counts.empty() ||
-    (IsSubsetOf(IndexFeatures::Ranges, head.features) && head.width != 0));
-  out.WriteOptionalObject(kDictRanges, "ranges", !head.ranges.counts.empty(),
-                          [&](duckdb::BinarySerializer& object) {
-                            WriteRanges(object, head.ranges);
-                          });
   if (head.term_count != 1) {
     out.WritePropertyWithDefault<bool>(kDictSingleValued, "single_valued",
                                        head.single_valued, false);
@@ -204,6 +180,19 @@ void WriteKeyed(duckdb::BinarySerializer& out, const FieldHead& head) {
   WriteOptionalBytes(out, kDictFsst, "fsst_table", head.fsst_table);
   SDB_ASSERT(head.term_count != 1 || head.prefix_trie.empty());
   WriteOptionalBytes(out, kDictPrefixTrie, "prefix_trie", head.prefix_trie);
+  SDB_ASSERT(
+    head.levels.empty() ||
+    (IsSubsetOf(IndexFeatures::Ranges, head.features) && head.width != 0));
+  out.WriteOptionalList(
+    kDictLevels, "levels", head.levels.size(),
+    [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+      list.WriteObject([&](duckdb::BinarySerializer& level) {
+        SDB_ASSERT(head.levels[i].levels.empty());
+        WriteKeyed(level, head.levels[i]);
+      });
+    });
+  SDB_ASSERT(head.term_count != 1 || head.block_masks.empty());
+  WriteOptionalBytes(out, kDictBlockMasks, "block_masks", head.block_masks);
 }
 
 void WriteField(duckdb::BinarySerializer& out,
@@ -246,17 +235,6 @@ void ReadText(duckdb::BinaryDeserializer& in, TextHead& text) {
     kTextScoreBounds, "has_score_bounds", false);
   text.norm = in.ReadPropertyWithExplicitDefault<uint64_t>(
     kTextNorm, "norm", field_limits::invalid());
-}
-
-void ReadRanges(duckdb::BinaryDeserializer& in, RangesHead& ranges) {
-  ranges.offset = in.ReadProperty<uint64_t>(kRangesOffset, "offset");
-  ranges.size = in.ReadProperty<uint64_t>(kRangesSize, "size");
-  ranges.prefix =
-    in.ReadPropertyWithExplicitDefault<uint32_t>(kRangesPrefix, "prefix", 0);
-  in.ReadList(kRangesCounts, "counts",
-              [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
-                ranges.counts.push_back(list.ReadElement<uint64_t>());
-              });
 }
 
 void ReadKeyed(duckdb::BinaryDeserializer& in, FieldHead& head) {
@@ -303,11 +281,6 @@ void ReadKeyed(duckdb::BinaryDeserializer& in, FieldHead& head) {
     in.ReadOptionalObject(
       kDictText, "text",
       [&](duckdb::BinaryDeserializer& object) { ReadText(object, head.text); });
-  } else {
-    in.ReadOptionalObject(kDictRanges, "ranges",
-                          [&](duckdb::BinaryDeserializer& object) {
-                            ReadRanges(object, head.ranges);
-                          });
   }
   head.single_valued =
     head.term_count == 1 || in.ReadPropertyWithExplicitDefault<bool>(
@@ -319,11 +292,29 @@ void ReadKeyed(duckdb::BinaryDeserializer& in, FieldHead& head) {
   }
   head.prefix_trie =
     in.ReadPropertyWithDefault<std::string>(kDictPrefixTrie, "prefix_trie");
+  in.ReadOptionalList(
+    kDictLevels, "levels",
+    [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
+      list.ReadObject([&](duckdb::BinaryDeserializer& object) {
+        auto& level = head.levels.emplace_back();
+        level.id = head.id;
+        level.layout = head.layout;
+        level.member = head.member;
+        ReadKeyed(object, level);
+        if (level.term_count < 2 || level.width != head.width ||
+            level.features != head.features || !level.levels.empty()) {
+          Corrupted("range level", head.id);
+        }
+      });
+    });
+  head.block_masks =
+    in.ReadPropertyWithDefault<std::string>(kDictBlockMasks, "block_masks");
   const bool ranged =
     IsSubsetOf(IndexFeatures::Ranges, head.features) && head.width != 0;
-  const bool has_ranges = !head.ranges.counts.empty() || head.ranges.size != 0;
-  if ((has_ranges && (!ranged || head.term_count == 1)) ||
-      (head.term_count == 1 && !head.prefix_trie.empty()) ||
+  if ((!head.levels.empty() && (!ranged || head.term_count == 1 ||
+                                head.member != DictMember::Numbers)) ||
+      (head.term_count == 1 &&
+       (!head.prefix_trie.empty() || !head.block_masks.empty())) ||
       (field_limits::valid(head.text.norm) &&
        !IsSubsetOf(IndexFeatures::Norm, head.features))) {
     Corrupted("dictionary", head.id);
@@ -385,8 +376,6 @@ void WriteTerms(duckdb::BinarySerializer& out, const TermsMeta& terms) {
                                          terms.inline_offset, 0);
   out.WritePropertyWithDefault<uint64_t>(kTermsInlineSize, "inline_size",
                                          terms.inline_size, 0);
-  out.WritePropertyWithDefault<uint64_t>(kTermsRangesSize, "ranges_size",
-                                         terms.ranges_size, 0);
   const std::span<const FieldHead> heads{terms.fields};
   size_t fields = 0;
   for (size_t i = 0; i != heads.size(); ++i) {
@@ -436,8 +425,6 @@ TermsMeta ReadTerms(duckdb::BinaryDeserializer& in, uint64_t data_size) {
     kTermsInlineOffset, "inline_offset", 0);
   terms.inline_size = in.ReadPropertyWithExplicitDefault<uint64_t>(
     kTermsInlineSize, "inline_size", 0);
-  terms.ranges_size = in.ReadPropertyWithExplicitDefault<uint64_t>(
-    kTermsRangesSize, "ranges_size", 0);
   in.ReadList(kTermsFields, "fields",
               [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
                 list.ReadObject([&](duckdb::BinaryDeserializer& field) {
@@ -451,14 +438,15 @@ TermsMeta ReadTerms(duckdb::BinaryDeserializer& in, uint64_t data_size) {
   if (terms.ordinal_bytes == 0 || terms.ordinal_bytes > kMaxOrdinalBytes) {
     Unsupported("ordinal width", terms.ordinal_bytes);
   }
-  const auto keyed = absl::c_count_if(
-    terms.fields, [](const FieldHead& head) { return head.term_count > 1; });
-  if (static_cast<uint64_t>(keyed) > OrdinalLimit(terms.ordinal_bytes)) {
+  uint64_t keyed = 0;
+  for (const auto& head : terms.fields) {
+    keyed += head.term_count > 1 ? 1 + head.levels.size() : 0;
+  }
+  if (keyed > OrdinalLimit(terms.ordinal_bytes)) {
     Corrupted("ordinal width");
   }
   if (terms.inline_offset > data_size ||
-      terms.inline_size > data_size - terms.inline_offset ||
-      terms.ranges_size > data_size - terms.inline_offset - terms.inline_size) {
+      terms.inline_size > data_size - terms.inline_offset) {
     Corrupted("inline postings");
   }
   return terms;

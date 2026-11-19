@@ -25,6 +25,7 @@
 
 #include <fcntl.h>  // open/_wopen
 
+#include <algorithm>
 #include <atomic>
 #include <bit>
 #include <cstdio>
@@ -144,6 +145,11 @@ void StartWriteback(int fd) noexcept;
 inline constexpr size_t kPage = 4 * 1024;
 inline constexpr size_t kMaxReadahead = 2 * 1024 * 1024;
 inline constexpr size_t kPrefetchChunk = 128 * 1024;
+inline constexpr size_t kWillNeedChunk = 32 * 1024;
+
+constexpr uint64_t WillNeedChunkEnd(uint64_t at, uint64_t end) noexcept {
+  return std::min<uint64_t>(end, (at / kWillNeedChunk + 1) * kWillNeedChunk);
+}
 
 void Prefetch(const void* addr, size_t size) noexcept;
 void Prefetch(int fd, uint64_t offset, uint64_t size) noexcept;

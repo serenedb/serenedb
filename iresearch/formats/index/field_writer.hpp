@@ -129,6 +129,8 @@ class FieldWriter final : public FieldSink {
   void WriteBlock();
   void EndField(field_id id, const FieldProperties& props, uint64_t total_freq,
                 uint64_t docs_sum, uint64_t first_inline);
+  void EndKeyed(FieldHead& head, uint64_t first_inline);
+  void WriteLevels(FieldHead& head);
   void ResetField() noexcept;
   void Reset() noexcept;
 
@@ -148,9 +150,9 @@ class FieldWriter final : public FieldSink {
   std::vector<unsigned char*> _coded_starts;
   std::vector<SpanningBlock> _spans;
   std::string _inline_starts;
-  bstring _range_regions;
   std::vector<FieldHead> _heads;
   PrefixTrieBuilder _trie;
+  std::string _masks;
   bstring _key_prefix;
   bstring _min;
   PostingMeta _single;

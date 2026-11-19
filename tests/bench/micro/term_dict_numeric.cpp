@@ -1,0 +1,547 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#include <absl/algorithm/container.h>
+#include <absl/strings/str_cat.h>
+#include <benchmark/benchmark.h>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/resource.h>
+#include <unistd.h>
+
+#include <array>
+#include <filesystem>
+#include <iresearch/formats/index/field_reader.hpp>
+#include <iresearch/formats/index/field_writer.hpp>
+#include <iresearch/formats/index/idx_reader.hpp>
+#include <iresearch/formats/index/idx_writer.hpp>
+#include <iresearch/formats/index/term_dict_cursor.hpp>
+#include <iresearch/formats/index/term_dict_reader.hpp>
+#include <iresearch/index/index_meta.hpp>
+#include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/utils/file_utils_ext.hpp>
+#include <iresearch/utils/numeric_utils.hpp>
+#include <memory>
+#include <numeric>
+#include <random>
+#include <span>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace {
+
+using irs::bstring;
+using irs::bytes_view;
+
+constexpr size_t kTerms = 2'000'000;
+constexpr size_t kProbes = 1 << 16;
+constexpr size_t kBatch = 256;
+constexpr size_t kBatches = 64;
+constexpr size_t kCovers = 256;
+constexpr size_t kColdCovers = 64;
+constexpr int64_t kEpochMicros = 1'700'000'000'000'000;
+constexpr double kMeanGapMicros = 315;
+
+enum class Shape : uint8_t {
+  Random,
+  Timestamps,
+  TimestampsShuffled,
+  Dense,
+  Interval,
+};
+
+constexpr std::string_view kShapeNames[]{
+  "random", "timestamps", "timestamps_shuffled", "dense", "interval",
+};
+
+std::vector<int64_t> Values(Shape shape, std::mt19937_64& rng) {
+  std::vector<int64_t> values;
+  values.reserve(kTerms);
+  switch (shape) {
+    case Shape::Random:
+      for (size_t i = 0; i != kTerms; ++i) {
+        values.push_back(static_cast<int64_t>(rng()));
+      }
+      absl::c_sort(values);
+      values.erase(std::unique(values.begin(), values.end()), values.end());
+      break;
+    case Shape::Timestamps:
+    case Shape::TimestampsShuffled: {
+      std::exponential_distribution<double> gap{1 / kMeanGapMicros};
+      int64_t value = kEpochMicros;
+      for (size_t i = 0; i != kTerms; ++i) {
+        value += 1 + static_cast<int64_t>(gap(rng));
+        values.push_back(value);
+      }
+      break;
+    }
+    case Shape::Dense:
+      for (size_t i = 0; i != kTerms; ++i) {
+        values.push_back(1'000'000 + static_cast<int64_t>(i));
+      }
+      break;
+    case Shape::Interval:
+      for (size_t i = 0; i != kTerms; ++i) {
+        values.push_back(kEpochMicros + static_cast<int64_t>(i) * 1'000'000);
+      }
+      break;
+  }
+  return values;
+}
+
+bstring Encode(int64_t value) {
+  irs::byte_type buf[irs::numeric_utils::kNumericTermMaxSize];
+  return bstring{irs::numeric_utils::EncodeNumericTerm(buf, value)};
+}
+
+class ValuesIterator : public irs::TermOnlyIterator {
+ public:
+  ValuesIterator(std::span<const bstring> keys,
+                 std::span<const irs::doc_id_t> docs) noexcept
+    : _keys{keys}, _docs{docs} {}
+
+  bytes_view value() const noexcept final { return _keys[_next - 1]; }
+  bool next() final { return _next++ < _keys.size(); }
+  irs::TermPostings::ptr postings(irs::IndexFeatures) const final {
+    return irs::TermPostings::empty();
+  }
+  irs::Attribute* GetMutable(irs::TypeInfo::type_id) noexcept final {
+    return nullptr;
+  }
+
+  size_t NextTermsWithPostings(std::span<bytes_view> terms,
+                               std::span<irs::PostingRows> postings,
+                               irs::IndexFeatures) final {
+    const size_t n =
+      std::min({terms.size(), postings.size(), _keys.size() - _next});
+    for (size_t i = 0; i != n; ++i, ++_next) {
+      terms[i] = _keys[_next];
+      postings[i] = {.span = {.docs = &_docs[_next], .count = 1}};
+    }
+    return n;
+  }
+
+ private:
+  std::span<const bstring> _keys;
+  std::span<const irs::doc_id_t> _docs;
+  size_t _next = 0;
+};
+
+class ValuesReader final : public irs::BasicTermReader {
+ public:
+  ValuesReader(std::span<const bstring> keys,
+               std::span<const irs::doc_id_t> docs) noexcept
+    : _keys{keys}, _docs{docs} {
+    key_width = static_cast<uint32_t>(keys.front().size());
+  }
+
+  irs::TermOnlyIterator::ptr iterator() const final {
+    return irs::memory::make_managed<irs::TermOnlyIterator, ValuesIterator>(
+      _keys, _docs);
+  }
+  irs::field_id id() const final { return 1; }
+  irs::FieldProperties properties() const final {
+    return {.index_features = irs::IndexFeatures::Ranges};
+  }
+
+ private:
+  std::span<const bstring> _keys;
+  std::span<const irs::doc_id_t> _docs;
+};
+
+struct Data {
+  Shape shape;
+  std::vector<bstring> keys;
+  std::vector<irs::doc_id_t> docs;
+  std::vector<bstring> hits;
+  std::vector<bstring> misses;
+  std::vector<std::vector<bstring>> batches;
+  std::unique_ptr<irs::MMapDirectory> dir;
+  std::unique_ptr<irs::IdxReader> idx;
+  std::unique_ptr<irs::term_dict::FieldReader> fields;
+  const irs::term_dict::TermReaderImpl* field = nullptr;
+};
+
+std::filesystem::path BenchPath() {
+  return std::filesystem::temp_directory_path() /
+         "serenedb-bench-term-dict-numeric";
+}
+
+void Write(Data& data) {
+  const auto path = BenchPath();
+  std::filesystem::remove_all(path);
+  std::filesystem::create_directories(path);
+  data.dir = std::make_unique<irs::MMapDirectory>(path);
+  const irs::FlushState state{
+    .dir = data.dir.get(),
+    .name = "segment",
+    .doc_count = data.keys.size(),
+  };
+  irs::IdxWriter idx{*data.dir, "segment"};
+  irs::term_dict::FieldWriter writer{false};
+  writer.SetIdxWriter(idx);
+  writer.prepare(state, 1);
+  writer.write(irs::NumericLayout::kNumbers,
+               ValuesReader{data.keys, data.docs});
+  writer.end();
+  idx.Commit(nullptr);
+}
+
+void Open(Data& data) {
+  static const irs::SegmentMeta kMeta{[] {
+    irs::SegmentMeta meta;
+    meta.name = "segment";
+    return meta;
+  }()};
+  data.idx = std::make_unique<irs::IdxReader>(*data.dir, "segment", nullptr);
+  data.fields =
+    std::make_unique<irs::term_dict::FieldReader>(irs::IResourceManager::gNoop);
+  data.fields->prepare(irs::ReaderState{
+    .dir = data.dir.get(), .meta = &kMeta, .idx = data.idx.get()});
+  data.field = &static_cast<const irs::term_dict::TermReaderImpl&>(
+    *data.fields->fields(1).front());
+}
+
+const Data& Load(Shape shape) {
+  static std::unique_ptr<Data> gData;
+  if (gData && gData->shape == shape) {
+    return *gData;
+  }
+  gData.reset();
+  auto data = std::make_unique<Data>();
+  data->shape = shape;
+  std::mt19937_64 rng{static_cast<uint64_t>(shape) + 7};
+  const auto values = Values(shape, rng);
+  data->keys.reserve(values.size());
+  for (const auto value : values) {
+    data->keys.push_back(Encode(value));
+  }
+  data->docs.resize(values.size());
+  std::iota(data->docs.begin(), data->docs.end(), irs::doc_limits::min());
+  if (shape == Shape::Random || shape == Shape::TimestampsShuffled) {
+    absl::c_shuffle(data->docs, rng);
+  }
+  std::uniform_int_distribution<size_t> pick{0, values.size() - 1};
+  for (size_t i = 0; i != kProbes; ++i) {
+    const size_t at = pick(rng);
+    data->hits.push_back(data->keys[at]);
+    if (at + 1 != values.size() && values[at] + 1 != values[at + 1]) {
+      data->misses.push_back(Encode(values[at] + 1));
+    }
+  }
+  for (size_t b = 0; b != kBatches; ++b) {
+    auto& batch = data->batches.emplace_back();
+    for (size_t i = 0; i != kBatch; ++i) {
+      batch.push_back(data->keys[pick(rng)]);
+    }
+    absl::c_sort(batch);
+  }
+  Write(*data);
+  Open(*data);
+  gData = std::move(data);
+  return *gData;
+}
+
+void Layout(benchmark::State& state, const Data& data) {
+  const auto& field = *data.field;
+  irs::term_dict::BlockBuffer buffer;
+  uint64_t key_bytes = 0;
+  for (uint32_t block = 0; block != field.Blocks(); ++block) {
+    const auto* begin = field.Block(block, buffer);
+    const auto view = irs::term_dict::Parse(begin, field.Fsst());
+    key_bytes += static_cast<uint64_t>(view.records - begin);
+  }
+  const auto terms = static_cast<double>(field.size());
+  state.counters["blocks"] = static_cast<double>(field.Blocks());
+  state.counters["terms_per_block"] = terms / field.Blocks();
+  state.counters["page_bits_per_term"] =
+    8.0 * static_cast<double>(field.BlocksEnd() - field.BlockOffset(0)) / terms;
+  state.counters["key_bits_per_term"] =
+    8.0 * static_cast<double>(key_bytes) / terms;
+  const auto trie_bytes = [](const irs::term_dict::TermReaderImpl& dict) {
+    return dict.Trie().Blocks() == 0 ? 0 : dict.Trie().MemoryBytes();
+  };
+  const auto levels = field.RangeLevels();
+  uint64_t level_trie_bytes = 0;
+  uint64_t level_blocks = 0;
+  for (const auto* level : levels) {
+    level_trie_bytes += trie_bytes(*level);
+    level_blocks += level->Blocks();
+  }
+  state.counters["levels"] = static_cast<double>(levels.size());
+  state.counters["level0_entries"] =
+    static_cast<double>(levels.empty() ? 0 : levels.front()->size());
+  state.counters["level_blocks"] = static_cast<double>(level_blocks);
+  state.counters["trie_bytes"] = static_cast<double>(trie_bytes(field));
+  state.counters["level_trie_bytes"] = static_cast<double>(level_trie_bytes);
+}
+
+template<typename Probe>
+void Probes(benchmark::State& state, size_t count, Probe&& probe) {
+  for (auto _ : state) {
+    uint64_t sum = 0;
+    for (size_t i = 0; i != count; ++i) {
+      sum += probe(i);
+    }
+    benchmark::DoNotOptimize(sum);
+  }
+  state.SetItemsProcessed(static_cast<int64_t>(state.iterations() * count));
+  state.counters["ns_per_item"] = benchmark::Counter(
+    static_cast<double>(state.iterations() * count),
+    benchmark::Counter::kIsRate | benchmark::Counter::kInvert);
+}
+
+void Locate(benchmark::State& state, Shape shape) {
+  const auto& data = Load(shape);
+  const auto& field = *data.field;
+  std::vector<irs::term_dict::PaddedKey> keys(data.hits.size());
+  std::vector<irs::term_dict::Probe> probes;
+  for (size_t i = 0; i != data.hits.size(); ++i) {
+    probes.push_back(keys[i].Assign(field.KeyPrefix(), data.hits[i]));
+  }
+  Probes(state, probes.size(),
+         [&](size_t i) { return field.BlockOf(probes[i]); });
+  Layout(state, data);
+}
+
+void Cover(benchmark::State& state, Shape shape, size_t span) {
+  const auto& data = Load(shape);
+  std::mt19937_64 rng{span};
+  std::uniform_int_distribution<size_t> pick{0, data.keys.size() - span - 1};
+  std::vector<std::pair<bytes_view, bytes_view>> ranges;
+  for (size_t i = 0; i != kCovers; ++i) {
+    const size_t at = pick(rng);
+    ranges.emplace_back(data.keys[at], data.keys[at + span]);
+  }
+  uint64_t postings = 0;
+  Probes(state, ranges.size(), [&](size_t i) {
+    uint64_t docs = 0;
+    data.field->CoverRange(ranges[i].first, ranges[i].second,
+                           [&](bytes_view, const irs::PostingMeta& meta) {
+                             docs += meta.docs_count;
+                             ++postings;
+                             return true;
+                           });
+    return docs;
+  });
+  state.counters["postings_per_range"] =
+    static_cast<double>(postings) /
+    static_cast<double>(state.iterations() * ranges.size());
+}
+
+void Lookup(benchmark::State& state, Shape shape, bool hit) {
+  const auto& data = Load(shape);
+  const auto& keys = hit ? data.hits : data.misses;
+  if (keys.empty()) {
+    state.SkipWithError("no probes");
+    return;
+  }
+  Probes(state, keys.size(),
+         [&](size_t i) { return data.field->Lookup(keys[i]).docs_count; });
+}
+
+void LookupBatch(benchmark::State& state, Shape shape) {
+  const auto& data = Load(shape);
+  Probes(state, data.batches.size(), [&](size_t b) {
+    const auto& batch = data.batches[b];
+    uint64_t sum = 0;
+    data.field->LookupBatch(
+      batch.size(), [&](size_t i) { return bytes_view{batch[i]}; },
+      [&](size_t, const irs::PostingMeta& meta) { sum += meta.docs_count; });
+    return sum;
+  });
+  state.counters["ns_per_item"] = benchmark::Counter(
+    static_cast<double>(state.iterations() * data.batches.size() * kBatch),
+    benchmark::Counter::kIsRate | benchmark::Counter::kInvert);
+}
+
+void Seek(benchmark::State& state, Shape shape) {
+  const auto& data = Load(shape);
+  auto it = data.field->iterator();
+  Probes(state, data.hits.size(), [&](size_t i) {
+    return static_cast<uint64_t>(it->seek_ge(data.hits[i]));
+  });
+}
+
+void Scan(benchmark::State& state, Shape shape) {
+  const auto& data = Load(shape);
+  Probes(state, 1, [&](size_t) {
+    uint64_t sum = 0;
+    for (auto it = data.field->iterator(); it->next();) {
+      sum += it->value().back();
+    }
+    return sum;
+  });
+  state.counters["ns_per_item"] = benchmark::Counter(
+    static_cast<double>(state.iterations() * data.keys.size()),
+    benchmark::Counter::kIsRate | benchmark::Counter::kInvert);
+}
+
+class ColdCache {
+ public:
+  explicit ColdCache(const Data& data) {
+    const auto& owner = data.field->Owner();
+    const auto page = static_cast<uintptr_t>(::sysconf(_SC_PAGESIZE));
+    const auto base = reinterpret_cast<uintptr_t>(owner.Base());
+    _begin = base & ~(page - 1);
+    _length = base + owner.Input().Length() - _begin;
+    _resident.resize((_length + page - 1) / page);
+    for (const auto& entry : std::filesystem::directory_iterator(BenchPath())) {
+      _files.push_back(::open(entry.path().c_str(), O_RDONLY));
+    }
+  }
+
+  ~ColdCache() {
+    for (const int fd : _files) {
+      ::close(fd);
+    }
+  }
+
+  void Evict() {
+    ::madvise(reinterpret_cast<void*>(_begin), _length, MADV_DONTNEED);
+    for (const int fd : _files) {
+      ::posix_fadvise(fd, 0, 0, POSIX_FADV_DONTNEED);
+    }
+    irs::file_utils::InvalidateResidency();
+  }
+
+  uint64_t Resident() {
+    if (::mincore(reinterpret_cast<void*>(_begin), _length, _resident.data()) !=
+        0) {
+      return 0;
+    }
+    return absl::c_count_if(_resident,
+                            [](unsigned char page) { return page & 1; });
+  }
+
+ private:
+  uintptr_t _begin = 0;
+  size_t _length = 0;
+  std::vector<unsigned char> _resident;
+  std::vector<int> _files;
+};
+
+uint64_t MajorFaults() {
+  rusage usage;
+  ::getrusage(RUSAGE_THREAD, &usage);
+  return static_cast<uint64_t>(usage.ru_majflt);
+}
+
+void ColdCover(benchmark::State& state, Shape shape, size_t span) {
+  const auto& data = Load(shape);
+  std::mt19937_64 rng{span + 1};
+  std::uniform_int_distribution<size_t> pick{0, data.keys.size() - span - 1};
+  std::vector<std::pair<bytes_view, bytes_view>> ranges;
+  for (size_t i = 0; i != kColdCovers; ++i) {
+    const size_t at = pick(rng);
+    ranges.emplace_back(data.keys[at], data.keys[at + span]);
+  }
+  ColdCache cache{data};
+  uint64_t covers = 0;
+  uint64_t faults = 0;
+  uint64_t pages = 0;
+  uint64_t left = 0;
+  for (auto _ : state) {
+    for (const auto& [from, to] : ranges) {
+      state.PauseTiming();
+      cache.Evict();
+      const uint64_t resident = cache.Resident();
+      left += resident;
+      const uint64_t before = MajorFaults();
+      state.ResumeTiming();
+      uint64_t docs = 0;
+      data.field->CoverRange(from, to,
+                             [&](bytes_view, const irs::PostingMeta& meta) {
+                               docs += meta.docs_count;
+                               return true;
+                             });
+      benchmark::DoNotOptimize(docs);
+      state.PauseTiming();
+      faults += MajorFaults() - before;
+      pages += cache.Resident() - resident;
+      ++covers;
+      state.ResumeTiming();
+    }
+  }
+  const auto per = [&](uint64_t value) {
+    return static_cast<double>(value) / static_cast<double>(covers);
+  };
+  state.counters["us_per_cover"] = benchmark::Counter(
+    static_cast<double>(covers) * 1e-6,
+    benchmark::Counter::kIsRate | benchmark::Counter::kInvert);
+  state.counters["faults_per_cover"] = per(faults);
+  state.counters["pages_per_cover"] = per(pages);
+  state.counters["pages_left_after_evict"] = per(left);
+}
+
+int Main(int argc, char** argv) {
+  for (size_t s = 0; s != std::size(kShapeNames); ++s) {
+    const auto shape = static_cast<Shape>(s);
+    const auto name = kShapeNames[s];
+    benchmark::RegisterBenchmark(
+      absl::StrCat("locate/", name),
+      [shape](benchmark::State& state) { Locate(state, shape); });
+    benchmark::RegisterBenchmark(
+      absl::StrCat("cover_1k/", name),
+      [shape](benchmark::State& state) { Cover(state, shape, 1000); });
+    benchmark::RegisterBenchmark(
+      absl::StrCat("cover_10pct/", name),
+      [shape](benchmark::State& state) { Cover(state, shape, kTerms / 10); });
+    benchmark::RegisterBenchmark(
+      absl::StrCat("cold_cover_1k/", name),
+      [shape](benchmark::State& state) { ColdCover(state, shape, 1000); })
+      ->UseRealTime()
+      ->Iterations(1);
+    benchmark::RegisterBenchmark(absl::StrCat("cold_cover_10pct/", name),
+                                 [shape](benchmark::State& state) {
+                                   ColdCover(state, shape, kTerms / 10);
+                                 })
+      ->UseRealTime()
+      ->Iterations(1);
+    benchmark::RegisterBenchmark(
+      absl::StrCat("lookup_hit/", name),
+      [shape](benchmark::State& state) { Lookup(state, shape, true); });
+    benchmark::RegisterBenchmark(
+      absl::StrCat("lookup_miss/", name),
+      [shape](benchmark::State& state) { Lookup(state, shape, false); });
+    benchmark::RegisterBenchmark(
+      absl::StrCat("lookup_batch/", name),
+      [shape](benchmark::State& state) { LookupBatch(state, shape); });
+    benchmark::RegisterBenchmark(
+      absl::StrCat("seek/", name),
+      [shape](benchmark::State& state) { Seek(state, shape); });
+    benchmark::RegisterBenchmark(
+      absl::StrCat("scan/", name),
+      [shape](benchmark::State& state) { Scan(state, shape); });
+  }
+  benchmark::Initialize(&argc, argv);
+  if (benchmark::ReportUnrecognizedArguments(argc, argv)) {
+    return 1;
+  }
+  benchmark::RunSpecifiedBenchmarks();
+  benchmark::Shutdown();
+  return 0;
+}
+
+[[maybe_unused]] const bool kMain =
+  sdb::bench::AddMain(SDB_BENCH_MODULE, &Main);
+
+}  // namespace

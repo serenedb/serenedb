@@ -83,7 +83,8 @@ uint64_t PatternsKey(
 void Collect(std::span<const std::shared_ptr<const RegexpAcceptor>> patterns,
              std::span<std::shared_ptr<const RegexpAcceptor>> owned,
              RegexpConjunction::Parts& start, bytes_view& lower,
-             std::span<const bstring>& suffixes, bytes_view& infix) {
+             std::span<const bstring>& suffixes, bytes_view& infix,
+             ByteSet& required) {
   SDB_ASSERT(patterns.size() <= owned.size());
   const auto shortest = [](std::span<const bstring> set) {
     size_t size = set.empty() ? 0 : std::numeric_limits<size_t>::max();
@@ -105,6 +106,7 @@ void Collect(std::span<const std::shared_ptr<const RegexpAcceptor>> patterns,
     if (pattern.RequiredInfix().size() > infix.size()) {
       infix = pattern.RequiredInfix();
     }
+    AddAll(required, pattern.RequiredBytes());
   }
 }
 
@@ -130,7 +132,7 @@ RegexpConjunction::RegexpConjunction(
   size_t max_mem)
   : _size{patterns.size()}, _max_mem{max_mem} {
   Parts start{};
-  Collect(patterns, _patterns, start, _lower, _suffixes, _infix);
+  Collect(patterns, _patterns, start, _lower, _suffixes, _infix, _required);
   _classes =
     Refine([&](uint32_t label) { return PatternsKey(patterns, label); },
            _bytemap, _representative);
@@ -240,7 +242,8 @@ FuzzyConjunction::FuzzyConjunction(
   SDB_ASSERT(_fuzzy);
   Parts start{};
   _lower = _fuzzy->LowerBound();
-  Collect(patterns, _patterns, start, _lower, _suffixes, _infix);
+  _required = _fuzzy->RequiredBytes();
+  Collect(patterns, _patterns, start, _lower, _suffixes, _infix, _required);
   const auto fuzzy_bytemap = _fuzzy->Bytemap();
   if (patterns.empty()) {
     _bytemap = fuzzy_bytemap;

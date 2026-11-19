@@ -63,7 +63,7 @@ uint32_t Find(const BlockView& view, Probe key,
         view.prefix) {
     return kNoEntry;
   }
-  const auto entry = FixedLowerBound(view, key, from);
+  const auto [entry, at] = FixedLowerBound(view, key, from);
   from = entry / kFixedHeadInterval;
   if (entry == view.count) {
     return kNoEntry;
@@ -71,7 +71,7 @@ uint32_t Find(const BlockView& view, Probe key,
   const auto* rest = key.data + view.prefix;
   const bool equal =
     PacksKeys(view.stride)
-      ? view.packed_keys.base + PackedKey(view, entry) ==
+      ? view.ef.base + view.ef.ValueAt(entry, at) ==
           LoadStride(rest, view.stride)
       : PaddedMismatch(view.keys + uint64_t{entry} * view.stride, rest,
                        view.stride) == view.stride;
@@ -180,12 +180,14 @@ class TermIteratorImpl : public SeekTermIterator {
 }  // namespace
 
 TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
-                               bytes_view prefix, IndexInput& in)
+                               bytes_view prefix, IndexInput& in,
+                               std::vector<const TermReaderImpl*> levels)
   : _owner{&owner},
     _meta{head.id, head.features},
     _terms{head.term_count},
     _docs{head.doc_count},
-    _has_score_bounds{head.text.has_score_bounds} {
+    _has_score_bounds{head.text.has_score_bounds},
+    _range_levels{std::move(levels)} {
   _meta.norm = head.text.norm;
   _meta.dict = {.layout = head.layout, .member = head.member};
   SDB_ENSURE(head.text.total_freq <= std::numeric_limits<uint32_t>::max(),
@@ -224,7 +226,21 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
       Corrupted("prefix trie", head.id);
     }
     bytes += _trie.MemoryBytes();
-  } else if (!head.prefix_trie.empty()) {
+    if (const auto& masks = head.block_masks; !masks.empty()) {
+      if (masks.size() != size_t{_blocks} * kBlockMaskBytes) {
+        Corrupted("block masks", head.id);
+      }
+      _masks.resize(_blocks);
+      const auto* at = masks.data();
+      for (auto& mask : _masks) {
+        for (auto& word : mask) {
+          word = absl::little_endian::Load64(at);
+          at += sizeof(word);
+        }
+      }
+      bytes += _masks.capacity() * sizeof(BlockMask);
+    }
+  } else if (!head.prefix_trie.empty() || !head.block_masks.empty()) {
     corrupted();
   } else {
     _inline_base = head.inline_base;
@@ -234,11 +250,7 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
       corrupted();
     }
   }
-  if (!head.ranges.counts.empty()) {
-    bytes += ReadRanges(owner, in, head.ranges);
-  } else if (head.ranges.size != 0) {
-    corrupted();
-  }
+  bytes += _range_levels.capacity() * sizeof(const TermReaderImpl*);
   if (const auto& table = head.fsst_table; !table.empty()) {
     _fsst = std::make_unique<duckdb_fsst_decoder_t>();
     const auto consumed = duckdb_fsst_import(
@@ -262,57 +274,6 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
     }
   }
   owner.Account(bytes);
-}
-
-uint64_t TermReaderImpl::ReadRanges(FieldReader& owner, IndexInput& in,
-                                    const RangesHead& ranges) {
-  const auto corrupted = [&] { Corrupted("range levels", _meta.id); };
-  const auto offset = ranges.offset;
-  const auto size = ranges.size;
-  const auto height = ranges.counts.size();
-  _range_prefix = ranges.prefix;
-  if (size == 0 || offset > owner.RangesSize() ||
-      size > owner.RangesSize() - offset || height > kMaxRangeLevels ||
-      key_width == 0 || _range_prefix > key_width ||
-      min().substr(0, _range_prefix) != max().substr(0, _range_prefix)) {
-    corrupted();
-  }
-  const auto* p = owner.Load(in, owner.RangesBegin() + offset, size).data();
-  const auto* const end = p + size;
-  const uint64_t stride = key_width - _range_prefix;
-  _levels.reserve(height);
-  for (size_t k = 0; k != height; ++k) {
-    const auto count = ranges.counts[k];
-    if (count < 2 || count > std::numeric_limits<uint32_t>::max()) {
-      corrupted();
-    }
-    RangeLevel level{};
-    level.count = static_cast<uint32_t>(count);
-    const uint64_t firsts = k == 0 ? 0 : level.count * sizeof(uint32_t);
-    const uint64_t offsets = (uint64_t{level.count} + 1) * sizeof(uint32_t);
-    if (static_cast<uint64_t>(end - p) <
-        level.count * stride + firsts + offsets) {
-      corrupted();
-    }
-    level.starts = p;
-    p += level.count * stride;
-    level.firsts = k == 0 ? nullptr : p;
-    p += firsts;
-    level.offsets = p;
-    p += offsets;
-    level.records = p;
-    const uint32_t records =
-      absl::little_endian::Load32(level.offsets + offsets - sizeof(uint32_t));
-    if (static_cast<uint64_t>(end - p) < records) {
-      corrupted();
-    }
-    p += records;
-    _levels.push_back(level);
-  }
-  if (static_cast<uint64_t>(end - p) != kSlack) {
-    corrupted();
-  }
-  return _levels.capacity() * sizeof(RangeLevel);
 }
 
 void TermReaderImpl::SampleTerms(

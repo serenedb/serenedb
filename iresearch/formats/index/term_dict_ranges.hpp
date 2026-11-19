@@ -32,13 +32,19 @@ namespace irs::term_dict {
 
 class RangeWriter final {
  public:
+  struct Entry {
+    bytes_view key;
+    PostingMeta meta;
+  };
+
   bool Active() const noexcept { return _pw != nullptr; }
   DocTee Tee() noexcept;
   void Begin(PostingsWriter& pw, uint64_t docs) noexcept;
   void Add(bytes_view term, const PostingMeta& meta);
   void Finish(uint64_t terms);
-  void Write(bstring& region, size_t prefix,
-             std::vector<uint64_t>& counts) const;
+  size_t Height() const noexcept { return _height; }
+  uint32_t Count(size_t level) const noexcept { return _levels[level].count; }
+  Entry At(size_t level, uint32_t i) const noexcept;
   void Clear() noexcept;
 
  private:
@@ -48,15 +54,14 @@ class RangeWriter final {
     PostingMeta meta;
     std::array<byte_type, PostingMeta::kInlineBytes> inline_bytes{};
     uint64_t docs_count = 0;
-    uint32_t first = 0;
     bool join = false;
   };
 
   struct Level {
     bstring starts;
-    std::vector<uint32_t> firsts;
-    std::vector<uint32_t> ends;
-    bstring records;
+    std::vector<PostingMeta> metas;
+    std::vector<uint32_t> inline_at;
+    bstring inlines;
     RangePosting group;
     RangePosting held;
     uint32_t count = 0;
@@ -69,7 +74,6 @@ class RangeWriter final {
     const PostingMeta& meta;
     std::span<const doc_id_t> docs;
     uint64_t docs_count;
-    uint32_t index;
   };
 
   static void Keep(RangePosting& posting, const PostingMeta& meta) noexcept;
@@ -79,7 +83,6 @@ class RangeWriter final {
 
   std::array<Level, kMaxRangeLevels> _levels;
   PostingsWriter* _pw = nullptr;
-  RecordOutput _record;
   uint64_t _heavy = 0;
   size_t _height = 0;
 };

@@ -35,6 +35,7 @@
 #include "iresearch/formats/index/term_dict_records.hpp"
 #include "iresearch/formats/posting/block_codec.hpp"
 #include "iresearch/formats/posting/common.hpp"
+#include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 #include "iresearch/utils/containers/small_vector.hpp"
 #include "iresearch/utils/lower_bound.hpp"
@@ -66,10 +67,109 @@ struct PackedHeaders {
   uint32_t len_bits;
 };
 
-struct PackedKeys {
+struct FixedBound {
+  uint32_t entry;
+  uint32_t at;
+};
+
+struct EfKeys {
+  IRS_FORCE_INLINE uint64_t Word(uint32_t word) const noexcept {
+    return absl::little_endian::Load64(upper + sizeof(uint64_t) * word);
+  }
+  IRS_FORCE_INLINE bool Bit(uint32_t at) const noexcept {
+    return (Word(at / kEfWordBits) >> (at % kEfWordBits) & 1) != 0;
+  }
+  IRS_FORCE_INLINE uint32_t Sample(uint32_t sample) const noexcept {
+    return absl::little_endian::Load16(samples + kEfSampleBytes * sample);
+  }
+  IRS_FORCE_INLINE uint64_t Low(uint32_t entry) const noexcept {
+    const uint64_t bit = uint64_t{entry} * low_bits;
+    const auto* p = lows + bit / 8;
+    const auto shift = static_cast<uint32_t>(bit % 8);
+    uint64_t word = absl::little_endian::Load64(p) >> shift;
+    if (low_bits + shift > 64) [[unlikely]] {
+      word |= uint64_t{p[sizeof(uint64_t)]} << (64 - shift);
+    }
+    return word & low_mask;
+  }
+  IRS_FORCE_INLINE uint64_t ValueAt(uint32_t entry,
+                                    uint32_t at) const noexcept {
+    return uint64_t{at - entry} << low_bits | Low(entry);
+  }
+
+  uint32_t At(uint32_t entry) const noexcept {
+    const uint32_t from = Sample(entry / kEfSample);
+    uint64_t rank = entry % kEfSample;
+    if (rank == 0) {
+      return from;
+    }
+    uint32_t word = from / kEfWordBits;
+    uint64_t bits = Word(word) & (~uint64_t{0} << (from % kEfWordBits));
+    for (auto count = static_cast<uint64_t>(std::popcount(bits)); count <= rank;
+         count = static_cast<uint64_t>(std::popcount(bits))) {
+      rank -= count;
+      bits = Word(++word);
+    }
+    return word * kEfWordBits + static_cast<uint32_t>(SelectInWord(bits, rank));
+  }
+
+  uint32_t After(uint32_t at) const noexcept {
+    uint32_t word = at / kEfWordBits;
+    uint64_t bits = Word(word) & (~uint64_t{1} << (at % kEfWordBits));
+    while (bits == 0) {
+      bits = Word(++word);
+    }
+    return word * kEfWordBits + static_cast<uint32_t>(std::countr_zero(bits));
+  }
+
+  uint32_t Zero(uint32_t zero) const noexcept {
+    uint32_t lo = 0;
+    for (auto size = static_cast<uint32_t>(EfSamples(count)); size > 1;) {
+      const uint32_t half = size / 2;
+      const uint32_t mid = lo + half;
+      lo = Sample(mid) - kEfSample * mid <= zero ? mid : lo;
+      size -= half;
+    }
+    const uint32_t from = Sample(lo);
+    uint64_t rank = zero - (from - kEfSample * lo);
+    uint32_t word = from / kEfWordBits;
+    uint64_t bits = ~Word(word) & (~uint64_t{0} << (from % kEfWordBits));
+    for (auto count = static_cast<uint64_t>(std::popcount(bits)); count <= rank;
+         count = static_cast<uint64_t>(std::popcount(bits))) {
+      rank -= count;
+      bits = ~Word(++word);
+    }
+    return word * kEfWordBits + static_cast<uint32_t>(SelectInWord(bits, rank));
+  }
+
+  FixedBound LowerBound(uint64_t value) const noexcept {
+    const uint64_t high = value >> low_bits;
+    if (high > highs) {
+      return {.entry = count, .at = 0};
+    }
+    uint32_t entry = 0;
+    uint32_t at = 0;
+    if (high != 0) {
+      at = Zero(static_cast<uint32_t>(high - 1)) + 1;
+      entry = at - static_cast<uint32_t>(high);
+    }
+    const uint64_t low = value & low_mask;
+    for (; entry != count && Bit(at); ++entry, ++at) {
+      if (Low(entry) >= low) {
+        return {.entry = entry, .at = at};
+      }
+    }
+    return {.entry = entry, .at = entry == count ? 0 : After(at)};
+  }
+
   uint64_t base;
-  uint64_t mask;
-  uint32_t bits;
+  uint64_t low_mask;
+  const byte_type* samples;
+  const byte_type* lows;
+  const byte_type* upper;
+  uint64_t highs;
+  uint32_t low_bits;
+  uint32_t count;
 };
 
 struct BlockView {
@@ -83,7 +183,7 @@ struct BlockView {
   Column lcps;
   Column lens;
   PackedHeaders headers;
-  PackedKeys packed_keys;
+  EfKeys ef;
   const byte_type* table;
   const byte_type* heads;
   const byte_type* suffixes;
@@ -105,34 +205,15 @@ IRS_FORCE_INLINE inline uint64_t LoadStride(const byte_type* p,
   return absl::big_endian::Load64(p) >> (8 * (sizeof(uint64_t) - stride));
 }
 
-inline constexpr uint32_t kWordKeyBits = 64 - 7;
-
-template<bool Wide = true>
-IRS_FORCE_INLINE inline uint64_t PackedKey(const BlockView& view,
-                                           uint32_t entry) noexcept {
-  const auto& packed = view.packed_keys;
-  SDB_ASSERT(Wide || packed.bits <= kWordKeyBits);
-  const uint64_t bit = uint64_t{entry} * packed.bits;
-  const auto* p = view.keys + bit / 8;
-  const auto shift = static_cast<uint32_t>(bit % 8);
-  uint64_t word = absl::little_endian::Load64(p) >> shift;
-  if constexpr (Wide) {
-    if (packed.bits + shift > 64) [[unlikely]] {
-      word |= uint64_t{p[sizeof(uint64_t)]} << (64 - shift);
-    }
-  }
-  return word & packed.mask;
-}
-
 using StrideBuffer = std::array<byte_type, sizeof(uint64_t)>;
 
-inline bytes_view FixedKey(const BlockView& view, uint32_t entry,
+inline bytes_view FixedKey(const BlockView& view, uint32_t entry, uint32_t at,
                            StrideBuffer& buffer) noexcept {
   if (!PacksKeys(view.stride)) {
     return {view.keys + uint64_t{entry} * view.stride, view.stride};
   }
   absl::big_endian::Store64(buffer.data(),
-                            (view.packed_keys.base + PackedKey(view, entry))
+                            (view.ef.base + view.ef.ValueAt(entry, at))
                               << (8 * (sizeof(uint64_t) - view.stride)));
   return {buffer.data(), view.stride};
 }
@@ -205,33 +286,36 @@ inline BlockView Parse(const byte_type* p, const duckdb_fsst_decoder_t* fsst) {
     return view;
   }
   if (view.fixed) {
-    const auto groups = vread<uint32_t>(p);
-    if (groups != FixedHeads(view.count)) [[unlikely]] {
-      corrupted("group count", groups);
-    }
     view.stride = vread<uint32_t>(p);
     view.prefix = vread<uint32_t>(p);
-    const bool packs = PacksKeys(view.stride);
-    auto& packed = view.packed_keys;
-    if (packs) {
-      packed.bits = *p++;
-      if (packed.bits > 8 * view.stride) [[unlikely]] {
-        corrupted("key bits", packed.bits);
-      }
-      packed.mask = packed.bits == 64 ? std::numeric_limits<uint64_t>::max()
-                                      : (uint64_t{1} << packed.bits) - 1;
-      packed.base = LoadStride(p, view.stride);
-      p += view.stride;
-    }
-    view.table = p + view.prefix;
-    view.restarts = groups;
-    view.heads = view.table;
-    view.keys = view.heads + FixedHeadBytes(view.stride) * groups;
-    if (packs) {
-      view.records = view.keys + PackedBytes(view.count, packed.bits);
-    } else {
+    if (!PacksKeys(view.stride)) {
+      view.table = p + view.prefix;
+      view.restarts = static_cast<uint32_t>(FixedHeads(view.count));
+      view.heads = view.table;
+      view.keys = view.heads + kHeadBytes * view.restarts;
       view.records = view.keys + uint64_t{view.count} * view.stride;
+      return view;
     }
+    auto& ef = view.ef;
+    ef.count = view.count;
+    ef.low_bits = *p++;
+    if (ef.low_bits >= 8 * view.stride) [[unlikely]] {
+      corrupted("key low bits", ef.low_bits);
+    }
+    ef.highs = vread<uint64_t>(p);
+    const uint64_t max = ~uint64_t{0} >> (8 * (sizeof(uint64_t) - view.stride));
+    if (ef.count == 0 || ef.highs > max >> ef.low_bits ||
+        ef.highs + ef.count > 8 * uint64_t{kPage}) [[unlikely]] {
+      corrupted("key high bits", ef.highs);
+    }
+    ef.low_mask = (uint64_t{1} << ef.low_bits) - 1;
+    ef.base = LoadStride(p, view.stride);
+    p += view.stride;
+    view.table = p + view.prefix;
+    ef.samples = view.table;
+    ef.upper = ef.samples + kEfSampleBytes * EfSamples(ef.count);
+    ef.lows = ef.upper + EfUpperBytes(ef.count, ef.highs);
+    view.records = ef.lows + PackedBytes(ef.count, ef.low_bits);
     return view;
   }
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
@@ -587,65 +671,55 @@ inline Bound VarLowerBound(const BlockView& view, Probe probe,
   return {.entry = end, .restarts = restarts, .equal = false};
 }
 
-inline uint32_t FixedLowerBound(const BlockView& view, Probe probe,
-                                uint32_t from = 0) noexcept {
+inline FixedBound FixedLowerBound(const BlockView& view, Probe probe,
+                                  uint32_t from = 0) noexcept {
+  constexpr FixedBound kFirst{.entry = 0, .at = 0};
+  const FixedBound end{.entry = view.count, .at = 0};
   const auto prefix = Prefix(view);
   const size_t head = std::min(prefix.size(), probe.size);
   if (const size_t common = PaddedMismatch(prefix.data(), probe.data, head);
       common != head) {
-    return prefix[common] < probe.data[common] ? view.count : 0;
+    return prefix[common] < probe.data[common] ? end : kFirst;
   }
   if (probe.size < prefix.size()) {
-    return 0;
+    return kFirst;
   }
   const Probe rest{probe.data + prefix.size(), probe.size - prefix.size()};
   const uint32_t stride = view.stride;
   const bool longer = rest.size > stride;
-  const auto search = [&]<bool Shallow = false>(auto&& less) {
-    const auto counts = FixedHeadBytes(stride) == sizeof(uint32_t)
-                          ? CountHeads(view.heads, from, view.restarts,
-                                       absl::big_endian::Load32(rest.data))
-                          : CountHeads(view.heads, from, view.restarts,
-                                       absl::big_endian::Load16(rest.data));
+  if (stride == 0) {
+    return rest.size == 0 ? kFirst : end;
+  }
+  if (PacksKeys(stride)) {
+    const uint64_t value = LoadStride(rest.data, stride);
+    if (value < view.ef.base) {
+      return kFirst;
+    }
+    uint64_t delta = value - view.ef.base;
+    if (longer) {
+      if (delta == std::numeric_limits<uint64_t>::max()) {
+        return end;
+      }
+      ++delta;
+    }
+    return view.ef.LowerBound(delta);
+  }
+  const auto search = [&](auto&& less) {
+    const auto counts = CountHeads(view.heads, from, view.restarts,
+                                   absl::big_endian::Load32(rest.data));
     const auto groups = static_cast<uint32_t>(PartitionIndex(
       counts.less, counts.not_after,
       [&](size_t group) { return less(group * kFixedHeadInterval); }));
     if (groups == 0) {
-      return uint32_t{0};
+      return kFirst;
     }
     const uint32_t first = (groups - 1) * kFixedHeadInterval + 1;
     const uint32_t last = std::min(groups * kFixedHeadInterval, view.count);
-    if constexpr (Shallow) {
-      uint32_t entry = first;
-      for (uint32_t i = first + 1; i < last; i += 2) {
-        entry += 2 * uint32_t{less(i)};
-      }
-      if (entry < last) {
-        entry += uint32_t{less(entry)};
-      }
-      return entry;
-    }
-    return static_cast<uint32_t>(PartitionIndex(first, last, less));
-  };
-  if (stride == 0) {
-    return rest.size == 0 ? 0 : view.count;
-  }
-  if (PacksKeys(stride)) {
-    const uint64_t value = LoadStride(rest.data, stride);
-    if (value < view.packed_keys.base) {
-      return 0;
-    }
-    const uint64_t delta = value - view.packed_keys.base;
-    const auto packed = [&]<bool Wide> {
-      return search.template operator()<true>([&](size_t i) {
-        const uint64_t key = PackedKey<Wide>(view, static_cast<uint32_t>(i));
-        return key < delta || (longer && key == delta);
-      });
+    return FixedBound{
+      .entry = static_cast<uint32_t>(PartitionIndex(first, last, less)),
+      .at = 0,
     };
-    return view.packed_keys.bits <= kWordKeyBits
-             ? packed.template operator()<false>()
-             : packed.template operator()<true>();
-  }
+  };
   if (stride <= 2 * sizeof(uint64_t)) {
     const uint32_t shift = 8 * (2 * sizeof(uint64_t) - stride);
     const uint64_t high = absl::big_endian::Load64(rest.data);
@@ -942,6 +1016,7 @@ class Cursor {
     _block = kNoEntry;
     _entry = kNoEntry;
     _record = kNoEntry;
+    _decoded = kNoEntry;
     _restart = 0;
     if (!_field->Small()) {
       Watch(block);
@@ -1057,12 +1132,12 @@ class Cursor {
 
   bool LowerBound(Probe probe) {
     if (_view.fixed) {
-      const auto entry = FixedLowerBound(_view, probe);
-      if (entry >= _stop) {
+      const auto bound = FixedLowerBound(_view, probe);
+      if (bound.entry >= _stop) {
         return false;
       }
-      _entry = entry;
-      SetFixed(entry);
+      _entry = bound.entry;
+      SetFixed(bound.entry, bound.at);
       _shared = Common(probe);
       return true;
     }
@@ -1274,10 +1349,44 @@ class Cursor {
     return DecodeInto(*_field->Fsst(), suffix, key, need);
   }
 
-  uint32_t SetFixed(uint32_t entry) {
+  uint32_t SetFixed(uint32_t entry, uint32_t at = kNoEntry) {
+    if (!PacksKeys(_view.stride)) {
+      StrideBuffer buffer;
+      return SetKey(FixedKey(_view, entry, 0, buffer));
+    }
+    const auto& ef = _view.ef;
+    if (at == kNoEntry) {
+      at = _decoded == entry ? _decoded_at
+           : _decoded != kNoEntry && _decoded + 1 == entry
+             ? ef.After(_decoded_at)
+             : ef.At(entry);
+    }
+    const uint64_t value = ef.base + ef.ValueAt(entry, at);
+    const uint32_t stride = _view.stride;
+    const uint32_t shift = 8 * (sizeof(uint64_t) - stride);
+    if (_decoded == kNoEntry) {
+      StrideBuffer buffer;
+      absl::big_endian::Store64(buffer.data(), value << shift);
+      _decoded = entry;
+      _decoded_at = at;
+      _decoded_value = value;
+      return SetKey({buffer.data(), stride});
+    }
+    const uint64_t diff = (value ^ _decoded_value) << shift;
+    const uint32_t shared =
+      diff == 0 ? stride : static_cast<uint32_t>(std::countl_zero(diff)) / 8;
+    absl::big_endian::Store64(Reserve(_view.prefix + stride) + _view.prefix,
+                              value << shift);
+    _size = _view.prefix + stride;
+    _mat = _size;
+    _decoded = entry;
+    _decoded_at = at;
+    _decoded_value = value;
+    return _view.prefix + shared;
+  }
+
+  uint32_t SetKey(bytes_view stride) {
     const bytes_view prefix = Prefix(_view);
-    StrideBuffer buffer;
-    const bytes_view stride = FixedKey(_view, entry, buffer);
     size_t lcp = CommonPrefixLength(Key(), prefix);
     const bool same = lcp == prefix.size();
     if (same) {
@@ -1378,6 +1487,9 @@ class Cursor {
   size_t _mat = 0;
   size_t _shared = 0;
   uint32_t _entry = kNoEntry;
+  uint64_t _decoded_value = 0;
+  uint32_t _decoded = kNoEntry;
+  uint32_t _decoded_at = 0;
   uint32_t _restart = 0;
   uint32_t _stop = 0;
   uint32_t _pendings = 0;

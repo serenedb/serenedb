@@ -38,13 +38,6 @@ struct TextHead {
   bool has_score_bounds = false;
 };
 
-struct RangesHead {
-  uint64_t offset = 0;
-  uint64_t size = 0;
-  uint32_t prefix = 0;
-  std::vector<uint64_t> counts;
-};
-
 struct FieldHead {
   field_id id = field_limits::invalid();
   DictLayout layout = DictLayout::String;
@@ -66,8 +59,9 @@ struct FieldHead {
   uint64_t inline_size = 0;
   std::string fsst_table;
   std::string prefix_trie;
+  std::string block_masks;
   TextHead text;
-  RangesHead ranges;
+  std::vector<FieldHead> levels;
   bool single_valued = false;
 };
 
@@ -82,7 +76,6 @@ struct TermsMeta {
   std::vector<SpanningBlock> spans;
   uint64_t inline_offset = 0;
   uint64_t inline_size = 0;
-  uint64_t ranges_size = 0;
   std::vector<FieldHead> fields;
   std::string inline_starts;
   uint32_t ordinal_bytes = 1;

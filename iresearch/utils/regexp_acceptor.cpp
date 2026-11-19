@@ -218,6 +218,69 @@ void AppendRune(bstring& out, re2::Rune rune, bool latin1) {
   out.append(reinterpret_cast<const byte_type*>(utf8), static_cast<size_t>(n));
 }
 
+void AddRune(ByteSet& out, re2::Rune rune, int flags) {
+  if ((flags & re2::Regexp::FoldCase) != 0 &&
+      re2::CycleFoldRune(rune) != rune) {
+    return;
+  }
+  if ((flags & re2::Regexp::Latin1) != 0) {
+    out.Add(static_cast<byte_type>(rune));
+    return;
+  }
+  char utf8[re2::UTFmax];
+  const int n = re2::runetochar(utf8, &rune);
+  AddBytes(out,
+           {reinterpret_cast<const byte_type*>(utf8), static_cast<size_t>(n)});
+}
+
+constexpr size_t kMaxRequiredDepth = 64;
+
+ByteSet RequiredBytesOf(re2::Regexp* re, size_t depth) {
+  ByteSet out;
+  if (depth == kMaxRequiredDepth) {
+    return out;
+  }
+  const int flags = re->parse_flags();
+  switch (re->op()) {
+    case re2::kRegexpLiteral:
+      AddRune(out, re->rune(), flags);
+      break;
+    case re2::kRegexpLiteralString:
+      for (int i = 0; i != re->nrunes(); ++i) {
+        AddRune(out, re->runes()[i], flags);
+      }
+      break;
+    case re2::kRegexpCharClass:
+      if (re->cc()->size() == 1) {
+        AddRune(out, re->cc()->begin()->lo, flags & ~re2::Regexp::FoldCase);
+      }
+      break;
+    case re2::kRegexpConcat:
+      for (int i = 0; i != re->nsub(); ++i) {
+        AddAll(out, RequiredBytesOf(re->sub()[i], depth + 1));
+      }
+      break;
+    case re2::kRegexpAlternate:
+      out = RequiredBytesOf(re->sub()[0], depth + 1);
+      for (int i = 1; i != re->nsub(); ++i) {
+        KeepCommon(out, RequiredBytesOf(re->sub()[i], depth + 1));
+      }
+      break;
+    case re2::kRegexpPlus:
+    case re2::kRegexpCapture:
+      out = RequiredBytesOf(re->sub()[0], depth + 1);
+      break;
+    case re2::kRegexpRepeat:
+      if (re->min() > 0) {
+        out = RequiredBytesOf(re->sub()[0], depth + 1);
+      }
+      break;
+    default:
+      break;
+  }
+  return out;
+}
+
 bool AppendExact(std::span<re2::Regexp* const> pieces, bstring& out) {
   std::vector<re2::Rune> runes;
   for (auto* piece : pieces) {
@@ -997,6 +1060,7 @@ void RegexpAcceptor::Compile(bytes_view pattern, RegexpSyntax syntax,
     } else {
       _literals.clear();
     }
+    _required = RequiredBytesOf(re, 0);
     _prog.reset(re->CompileToProg(max_mem));
     re->Decref();
     if (!_prog) {
@@ -1109,6 +1173,13 @@ void RegexpAcceptor::CompileParts(std::span<const Part> parts,
     _finite = true;
   } else {
     _literals.clear();
+  }
+
+  if (trees[0] || trees[1]) {
+    _required = RequiredBytesOf(trees[0] ? trees[0] : trees[1], 0);
+    if (trees[0] && trees[1]) {
+      KeepCommon(_required, RequiredBytesOf(trees[1], 0));
+    }
   }
 
   std::unique_ptr<re2::Prog> progs[2];

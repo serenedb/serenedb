@@ -36,6 +36,7 @@
 #include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/store/data_input.hpp"
+#include "iresearch/utils/byte_set.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::term_dict {
@@ -47,18 +48,11 @@ struct BlockBuffer {
   bstring copy;
 };
 
-struct RangeLevel {
-  const byte_type* starts;
-  const byte_type* firsts;
-  const byte_type* offsets;
-  const byte_type* records;
-  uint32_t count;
-};
-
 class TermReaderImpl final : public TermReader {
  public:
   TermReaderImpl(FieldReader& owner, const FieldHead& head, bytes_view prefix,
-                 IndexInput& in);
+                 IndexInput& in,
+                 std::vector<const TermReaderImpl*> levels = {});
 
   SeekTermIterator::ptr iterator() const final;
   SeekTermIterator::ptr IteratorUntil(bytes_view upper) const final;
@@ -116,6 +110,19 @@ class TermReaderImpl final : public TermReader {
     return Gated() ? _trie.Root() : kTrieUngated;
   }
   uint32_t BlockEnd(bytes_view upper) const;
+  bool Masked() const noexcept { return !_masks.empty(); }
+  bool Holds(uint32_t block, const ByteSet& need) const noexcept {
+    const auto& mask = _masks[block];
+    return (mask[0] & need.words[0]) == need.words[0] &&
+           (mask[1] & need.words[1]) == need.words[1];
+  }
+  uint32_t Holding(uint32_t block, uint32_t end,
+                   const ByteSet& need) const noexcept {
+    SDB_ASSERT(end <= _masks.size());
+    for (; block < end && !Holds(block, need); ++block) {
+    }
+    return block;
+  }
   bytes_view KeyPrefix() const noexcept {
     return bytes_view{_min_key}.substr(0, _prefix_size);
   }
@@ -130,16 +137,15 @@ class TermReaderImpl final : public TermReader {
   InlinePages::Span InlineSpan(uint32_t block) const noexcept;
   void PrefetchLookup(uint32_t block) const;
   const PrefixTrie& Trie() const noexcept { return _trie; }
-  std::span<const RangeLevel> RangeLevels() const noexcept { return _levels; }
-  uint32_t RangePrefix() const noexcept { return _range_prefix; }
+  std::span<const TermReaderImpl* const> RangeLevels() const noexcept {
+    return _range_levels;
+  }
   uint64_t InlineBegin() const noexcept;
   uint64_t InlineEnd() const noexcept;
   const byte_type* ResolveInline(uint64_t end, uint8_t size) const;
 
  private:
   bool Excludes(bytes_view term) const noexcept;
-  uint64_t ReadRanges(FieldReader& owner, IndexInput& in,
-                      const RangesHead& ranges);
 
   const FieldReader* _owner;
   FieldMeta _meta;
@@ -158,10 +164,10 @@ class TermReaderImpl final : public TermReader {
   uint32_t _last_entry = 0;
   bool _has_score_bounds;
   FreqAttr _freq;
-  std::vector<RangeLevel> _levels;
+  std::vector<const TermReaderImpl*> _range_levels;
   PrefixTrie _trie;
+  std::vector<BlockMask> _masks;
   std::unique_ptr<duckdb_fsst_decoder_t> _fsst;
-  uint32_t _range_prefix = 0;
 };
 
 }  // namespace irs::term_dict

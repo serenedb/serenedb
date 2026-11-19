@@ -30,6 +30,7 @@
 
 #include "iresearch/types.hpp"
 #include "iresearch/utils/shared.hpp"
+#include "iresearch/utils/string.hpp"
 
 namespace irs {
 
@@ -43,6 +44,24 @@ struct ByteSet {
 
   alignas(16) std::array<uint64_t, 4> words{};
 };
+
+inline void AddAll(ByteSet& to, const ByteSet& from) noexcept {
+  for (size_t i = 0; i != to.words.size(); ++i) {
+    to.words[i] |= from.words[i];
+  }
+}
+
+inline void KeepCommon(ByteSet& to, const ByteSet& from) noexcept {
+  for (size_t i = 0; i != to.words.size(); ++i) {
+    to.words[i] &= from.words[i];
+  }
+}
+
+inline void AddBytes(ByteSet& to, bytes_view bytes) noexcept {
+  for (const auto b : bytes) {
+    to.Add(b);
+  }
+}
 
 IRS_FORCE_INLINE inline uint32_t ClassifyByteSet16(
   const byte_type* block, const ByteSet& set) noexcept {

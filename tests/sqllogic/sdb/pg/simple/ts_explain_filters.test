@@ -140,6 +140,37 @@ id	why
 query
 SELECT id, ts_explain(xf_idx.tableoid) AS why
 FROM xf_idx
+WHERE body @@ 'fox' OR (body @@ 'red' AND body @@ 'dog')::score(NULL)
+ORDER BY BM25(xf_idx.tableoid) DESC, id;
+----
+id	why
+1	{"clauses":[{"column":"body","expression":"boost * idf * tf","inputs":{"idf":{"expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":3},"df":{"value":2}},"value":0.47000363},"tf":{"expression":"freq / (freq + k1 * (1 - b + b * dl / avgdl))","inputs":{"avgdl":{"expression":"L / N","inputs":{"L":{"value":6},"N":{"value":3}},"value":2},"b":{"value":0.75},"dl":{"value":2},"freq":{"value":1},"k1":{"value":1.2}},"value":0.45454544}},"scorer":"bm25(k1=1.2, b=0.75)","term":"fox","value":0.21363801}],"expression":"sum","value":0.21363801}
+3	{"clauses":[{"column":"body","expression":"boost * idf * tf","inputs":{"idf":{"expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":3},"df":{"value":2}},"value":0.47000363},"tf":{"expression":"freq / (freq + k1 * (1 - b + b * dl / avgdl))","inputs":{"avgdl":{"expression":"L / N","inputs":{"L":{"value":6},"N":{"value":3}},"value":2},"b":{"value":0.75},"dl":{"value":2},"freq":{"value":1},"k1":{"value":1.2}},"value":0.45454544}},"scorer":"bm25(k1=1.2, b=0.75)","term":"fox","value":0.21363801}],"expression":"sum","value":0.21363801}
+2	{"clauses":[{"clauses":[{"column":"body","scored":false,"term":"dog","value":0},{"column":"body","scored":false,"term":"red","value":0}],"expression":"sum","value":0}],"expression":"sum","value":0}
+
+query
+SELECT id, round(dfi(xf_idx.tableoid), 4) AS score, regexp_replace(ts_explain(xf_idx.tableoid)::JSON::VARCHAR, '(\.[0-9]{4})[0-9]+', '\1', 'g') AS why
+FROM xf_idx
+WHERE g @@ ts_ngram('hezz', 0.3)
+ORDER BY score DESC, id;
+----
+id	score	why
+1	1.3219	{"column":"g","expression":"boost * log2(1 + (freq - expected) / sqrt(expected))","inputs":{"expected":{"expression":"p * dl","inputs":{"dl":{"note":"the column records no lengths, so every row counts as 1","value":1}},"value":0.25},"freq":{"value":1},"p":{"expression":"(ttf + 1) / (L + 1)","inputs":{"L":{"value":11},"ttf":{"value":2}},"value":0.25}},"scorer":"dfi(measure=standardized)","term":"he","value":1.3219}
+2	1.3219	{"column":"g","expression":"boost * log2(1 + (freq - expected) / sqrt(expected))","inputs":{"expected":{"expression":"p * dl","inputs":{"dl":{"note":"the column records no lengths, so every row counts as 1","value":1}},"value":0.25},"freq":{"value":1},"p":{"expression":"(ttf + 1) / (L + 1)","inputs":{"L":{"value":11},"ttf":{"value":2}},"value":0.25}},"scorer":"dfi(measure=standardized)","term":"he","value":1.3219}
+
+query
+SELECT id, round(lm_dirichlet(xf_idx.tableoid), 4) AS score, regexp_replace(ts_explain(xf_idx.tableoid)::JSON::VARCHAR, '(\.[0-9]{4})[0-9]+', '\1', 'g') AS why
+FROM xf_idx
+WHERE g @@ ts_ngram('hezz', 0.3)
+ORDER BY score DESC, id;
+----
+id	score	why
+1	0.0015	{"column":"g","expression":"boost * max(0, log(1 + freq / (mu * p)) - log(1 + dl / mu))","inputs":{"dl":{"note":"the column records no lengths, so every row counts as 1","value":1},"freq":{"value":1},"mu":{"value":2000},"p":{"expression":"(ttf + 1) / (L + 1)","inputs":{"L":{"value":11},"ttf":{"value":2}},"value":0.25}},"scorer":"lm_dirichlet(mu=2000)","term":"he","value":0.0014}
+2	0.0015	{"column":"g","expression":"boost * max(0, log(1 + freq / (mu * p)) - log(1 + dl / mu))","inputs":{"dl":{"note":"the column records no lengths, so every row counts as 1","value":1},"freq":{"value":1},"mu":{"value":2000},"p":{"expression":"(ttf + 1) / (L + 1)","inputs":{"L":{"value":11},"ttf":{"value":2}},"value":0.25}},"scorer":"lm_dirichlet(mu=2000)","term":"he","value":0.0014}
+
+query
+SELECT id, ts_explain(xf_idx.tableoid) AS why
+FROM xf_idx
 WHERE body @@ 'red' AND opt IS NOT NULL
 ORDER BY BM25(xf_idx.tableoid) DESC, id;
 ----

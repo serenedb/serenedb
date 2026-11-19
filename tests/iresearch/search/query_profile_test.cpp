@@ -28,6 +28,8 @@
 #include <iresearch/search/filters/query_profile.hpp>
 #include <iresearch/search/lead/node.hpp>
 #include <iresearch/search/probe/node.hpp>
+#include <iresearch/search/scorers/all_docs_score.hpp>
+#include <iresearch/search/scorers/score_provider.hpp>
 #include <iresearch/utils/memory.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <typeinfo>
@@ -92,6 +94,18 @@ class FakeLead : public irs::lead::Node {
 class FakeProbe : public irs::probe::Node {
  public:
   irs::doc_id_t Probe(irs::doc_id_t target) final { return target; }
+};
+
+class InputsProbe : public irs::probe::Node {
+ public:
+  irs::doc_id_t Probe(irs::doc_id_t target) final { return target; }
+
+  std::optional<irs::detail::ScoreInputs> Inputs() const final {
+    return irs::detail::ScoreInputs{.recipe = recipe,
+                                    .attrs = irs::detail::NoAttributes()};
+  }
+
+  irs::detail::LeafRecipe recipe;
 };
 
 class EvenDocs final : public irs::detail::TableFilter {
@@ -261,6 +275,21 @@ TEST(query_profile, handed_off_plan_belongs_to_the_filter_returning_it) {
   CheckHandOff<FakeFill>();
   CheckHandOff<FakeLead>();
   CheckHandOff<FakeProbe>();
+}
+
+TEST(query_profile, a_profiled_probe_reports_the_score_inputs_of_its_node) {
+  const irs::All root;
+  const irs::All part;
+  const std::array<const irs::Filter*, 2> filters{&root, &part};
+  irs::QueryProfile profile{filters, true};
+  auto node = irs::memory::make_managed<InputsProbe>();
+  const auto* raw = node.get();
+  const auto planned = profile.Wrap(irs::probe::Node::ptr{std::move(node)}, 1);
+  ASSERT_NE(raw, planned.get());
+  const auto inputs = planned->Inputs();
+  ASSERT_TRUE(inputs);
+  EXPECT_EQ(&raw->recipe, &inputs->recipe);
+  EXPECT_FALSE(FakeProbe{}.Inputs());
 }
 
 TEST(query_profile, roots_are_profiled_without_nested_parts) {

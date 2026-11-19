@@ -128,6 +128,10 @@ bool PlanDeltaFfor(Values<T>& values, DeltaFfor<T>& state) {
   if (!state.planned) {
     state.planned = true;
     const auto rows = values.Get();
+    if (facts.delta_bits == 0) {
+      state.blocks.PlanEqualSteps(rows);
+      return true;
+    }
     const auto n = static_cast<uint32_t>(rows.size());
     state.wide.resize(n);
     for (uint32_t i = 0; i < n; ++i) {
@@ -165,9 +169,11 @@ bool CompressDeltaFfor(ColumnDataCheckpointData& data) {
       !PlanDeltaFfor(values, state)) {
     return false;
   }
-  return CompressBlocks<T>(data, Shape::Delta, state.blocks,
-                           std::span<const U>{state.wide}, {}, state.analyzed,
-                           DeltaHeader{.base = values.GetFacts().delta_offset});
+  const auto& facts = values.GetFacts();
+  return CompressBlocks<T>(
+    data, Shape::Delta, state.blocks,
+    facts.delta_bits == 0 ? values.Get() : std::span<const U>{state.wide}, {},
+    state.analyzed, DeltaHeader{.base = facts.delta_offset});
 }
 
 template<typename T>
@@ -235,6 +241,29 @@ class DeltaReader final : public FrameReader<T> {
     DecodeInto(this->Meta(f), rows, out, f);
     this->_next = end;
     return rows;
+  }
+
+  IRS_FORCE_INLINE duckdb::idx_t FetchSteps(const duckdb::idx_t* rows,
+                                            duckdb::idx_t count, T* out,
+                                            const duckdb::SelectionVector& sel,
+                                            duckdb::idx_t offset) {
+    if (count < 2 || !this->Packed()) {
+      return 0;
+    }
+    const auto step = static_cast<U>(_own.base);
+    duckdb::idx_t i = 0;
+    for (; i < count; ++i) {
+      const auto row = static_cast<uint64_t>(rows[i]);
+      SDB_ENSURE(row < this->_f.row_count, "numeric codec: row out of range");
+      const auto block = this->BlockAt(row);
+      if (block.bits != 0) {
+        break;
+      }
+      out[offset + sel.get_index(i)] = this->Scaled(
+        static_cast<U>(static_cast<U>(block.base) +
+                       static_cast<U>(row % numeric::kBlockValues) * step));
+    }
+    return i;
   }
 
   IRS_FORCE_INLINE T FetchApart(uint64_t row, uint64_t next) {

@@ -79,6 +79,17 @@ class FforBlocks {
     return bytes;
   }
 
+  void PlanEqualSteps(std::span<const V> values) {
+    const size_t blocks =
+      (values.size() + numeric::kBlockValues - 1) / numeric::kBlockValues;
+    _base.assign(blocks, 0);
+    _bits.assign(blocks, 0);
+    _first.resize(blocks);
+    for (size_t b = 0; b < blocks; ++b) {
+      _first[b] = values[b * numeric::kBlockValues];
+    }
+  }
+
   void PlanDeltas(std::span<const V> deltas, std::span<const V> values) {
     const size_t blocks =
       (deltas.size() + numeric::kBlockValues - 1) / numeric::kBlockValues;

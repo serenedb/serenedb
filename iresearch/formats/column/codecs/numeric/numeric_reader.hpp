@@ -32,7 +32,6 @@
 #include <optional>
 #include <string>
 #include <type_traits>
-#include <vector>
 
 #include "iresearch/formats/column/codecs/bytes/lz4.hpp"
 #include "iresearch/formats/column/codecs/bytes/zstd.hpp"
@@ -398,7 +397,7 @@ class FrameReader {
         f != _ffor_frame) {
       OpenFfor<V>(f);
     }
-    return (*_ffor)[row % kFforFrameRows / numeric::kBlockValues];
+    return _ffor[row % kFforFrameRows / numeric::kBlockValues];
   }
 
   template<typename W>
@@ -448,21 +447,10 @@ class FrameReader {
 
  private:
   template<typename V>
-  void OpenFfor(uint32_t f) {
+  IRS_NO_INLINE void OpenFfor(uint32_t f) {
     SDB_ENSURE(f < _f.frame_count, "numeric codec: frame out of range");
-    if (_ffor_frames.empty()) {
-      _ffor_frames.resize(_f.frame_count);
-    }
-    auto& frame = _ffor_frames[f];
-    if (!frame.front().packed) {
-      IndexFfor<V>(f, frame);
-    }
-    _ffor = &frame;
-    _ffor_frame = f;
-  }
-
-  template<typename V>
-  IRS_NO_INLINE void IndexFfor(uint32_t f, FforFrame& frame) {
+    _ffor_frame = kNoFrame;
+    auto& frame = _ffor;
     const auto m = Meta(f);
     const auto rows = EndRow(f) - m.frame.first_entry;
     const auto blocks =
@@ -477,6 +465,7 @@ class FrameReader {
         frame[b] = {.packed = src, .base = start, .step = step, .bits = 0};
         start = static_cast<V>(start + uint64_t{numeric::kBlockValues} * step);
       }
+      _ffor_frame = f;
       return;
     }
     size_t off = BlockMetaBytes(blocks, sizeof(V));
@@ -504,6 +493,7 @@ class FrameReader {
       off += numeric::PackedBytes(bits);
     }
     SDB_ENSURE(off == m.frame.raw_len, "numeric codec: corrupted blocks");
+    _ffor_frame = f;
   }
 
   duckdb::ObjectCache* _cache;
@@ -515,9 +505,8 @@ class FrameReader {
   ScratchVector<U> _rows;
   ScratchVector<uint8_t> _raw;
   ScratchVector<uint8_t> _shuffled;
-  const FforFrame* _ffor = nullptr;
+  FforFrame _ffor;
   uint32_t _ffor_frame = kNoFrame;
-  std::vector<FforFrame> _ffor_frames;
   std::optional<Zstd::Decompressor> _zstd;
 };
 

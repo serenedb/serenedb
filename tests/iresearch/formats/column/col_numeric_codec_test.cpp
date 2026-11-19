@@ -221,6 +221,12 @@ duckdb::Value Cast(int64_t v, const duckdb::LogicalType& type) {
       return duckdb::Value::UBIGINT(static_cast<uint64_t>(v));
     case duckdb::LogicalTypeId::HUGEINT:
       return duckdb::Value::HUGEINT(duckdb::hugeint_t{v});
+    case duckdb::LogicalTypeId::UHUGEINT:
+      return duckdb::Value::UHUGEINT(
+        duckdb::uhugeint_t{static_cast<uint64_t>(v)});
+    case duckdb::LogicalTypeId::UUID:
+      return duckdb::Value::UUID(
+        duckdb::hugeint_t{v, Mix(static_cast<uint64_t>(v))});
     case duckdb::LogicalTypeId::FLOAT:
       return duckdb::Value::FLOAT(static_cast<float>(v % 100000) / 8.0f);
     case duckdb::LogicalTypeId::DOUBLE:
@@ -1337,7 +1343,75 @@ TEST_F(ColNumericCodecTest, BooleansUseTheOneByteTransforms) {
   }
 }
 
-TEST_F(ColNumericCodecTest, AutoLeavesRleToTheTypesWithoutARunCodec) {
+TEST_F(ColNumericCodecTest, WideIntegersUseTheNumericTransforms) {
+  constexpr uint32_t kRowGroup = 4096;
+  constexpr uint64_t kRows = 4 * kRowGroup;
+  const Gen small = [](uint64_t g) -> std::optional<int64_t> {
+    return static_cast<int64_t>(Mix(g) % 1000) - 500;
+  };
+  const Gen sequence = [](uint64_t g) -> std::optional<int64_t> {
+    return static_cast<int64_t>(g);
+  };
+  const Gen runs = [](uint64_t g) -> std::optional<int64_t> {
+    return static_cast<int64_t>(Mix(g / 64) % 30000);
+  };
+  const Gen sparse = [](uint64_t g) -> std::optional<int64_t> {
+    if (g % 7 == 3) {
+      return std::nullopt;
+    }
+    return static_cast<int64_t>(Mix(g) % 100000);
+  };
+  const Gen random = [](uint64_t g) -> std::optional<int64_t> {
+    return static_cast<int64_t>(Mix(g));
+  };
+  using irs::codecs::CodecType;
+  const auto codecs = [&](const duckdb::LogicalType& type, const Gen& gen,
+                          irs::WriteTier tier, CodecType codec) {
+    irs::MemoryDirectory dir{};
+    Write(dir, type, {.tier = tier}, kRows, kRowGroup, gen, codec);
+    Verify(dir, type, kRows, gen);
+    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+    const auto* col = r.Column(kField);
+    EXPECT_NE(col, nullptr);
+    std::set<CodecType> types;
+    for (const auto& block : col->DataBlocks()) {
+      types.insert(block.codec->type);
+    }
+    return types;
+  };
+  for (const auto tier : {irs::WriteTier::Flush, irs::WriteTier::Merge}) {
+    SCOPED_TRACE(tier == irs::WriteTier::Flush ? "flush" : "merge");
+    for (const duckdb::LogicalType type :
+         {duckdb::LogicalType::HUGEINT, duckdb::LogicalType::UHUGEINT}) {
+      SCOPED_TRACE(type.ToString());
+      for (const auto& gen : {small, sequence, runs, sparse}) {
+        for (const auto codec : codecs(type, gen, tier, CodecType::Auto)) {
+          EXPECT_TRUE(irs::codecs::IsNumeric(codec))
+            << magic_enum::enum_name(codec);
+        }
+      }
+      EXPECT_EQ(codecs(type, small, tier, CodecType::Ffor),
+                std::set{CodecType::Ffor});
+      EXPECT_EQ(codecs(type, sequence, tier, CodecType::DeltaFfor),
+                std::set{CodecType::DeltaFfor});
+      EXPECT_EQ(codecs(type, runs, tier, CodecType::RleFfor),
+                std::set{CodecType::RleFfor});
+    }
+    const auto uuid = duckdb::LogicalType::UUID;
+    for (const auto codec : codecs(uuid, sequence, tier, CodecType::Auto)) {
+      EXPECT_TRUE(irs::codecs::IsNumeric(codec))
+        << magic_enum::enum_name(codec);
+    }
+    EXPECT_EQ(codecs(uuid, sequence, tier, CodecType::DeltaFfor),
+              std::set{CodecType::DeltaFfor});
+    EXPECT_EQ(codecs(uuid, random, tier, CodecType::Auto),
+              std::set{CodecType::Uncompressed});
+    EXPECT_EQ(codecs(uuid, random, tier, CodecType::Ffor),
+              std::set{CodecType::Uncompressed});
+  }
+}
+
+TEST_F(ColNumericCodecTest, AutoStoresRunsOfEveryIntegerTypeWithTheRunCodecs) {
   constexpr uint32_t kRowGroup = 4096;
   constexpr uint64_t kRows = 4 * kRowGroup;
   const Gen long_runs = [](uint64_t g) -> std::optional<int64_t> {
@@ -1365,7 +1439,8 @@ TEST_F(ColNumericCodecTest, AutoLeavesRleToTheTypesWithoutARunCodec) {
     SCOPED_TRACE(tier == irs::WriteTier::Flush ? "flush" : "merge");
     for (const duckdb::LogicalType type :
          {duckdb::LogicalType::SMALLINT, duckdb::LogicalType::INTEGER,
-          duckdb::LogicalType::UBIGINT, duckdb::LogicalType::TIMESTAMP}) {
+          duckdb::LogicalType::UBIGINT, duckdb::LogicalType::TIMESTAMP,
+          duckdb::LogicalType::HUGEINT}) {
       SCOPED_TRACE(type.ToString());
       for (const auto type_of_block : codecs(type, long_runs, tier)) {
         EXPECT_TRUE(irs::codecs::IsNumeric(type_of_block))
@@ -1373,8 +1448,6 @@ TEST_F(ColNumericCodecTest, AutoLeavesRleToTheTypesWithoutARunCodec) {
       }
       EXPECT_FALSE(codecs(type, short_runs, tier).contains(CodecType::Rle));
     }
-    EXPECT_EQ(codecs(duckdb::LogicalType::HUGEINT, long_runs, tier),
-              std::set{CodecType::Rle});
   }
 }
 

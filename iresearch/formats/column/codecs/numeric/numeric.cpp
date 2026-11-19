@@ -27,32 +27,51 @@
 #include "iresearch/formats/column/codecs/numeric/numeric_scan.tpp"
 #include "iresearch/formats/column/codecs/numeric/plain.hpp"
 #include "iresearch/formats/column/codecs/numeric/runs.hpp"
+#include "iresearch/formats/column/codecs/numeric/wide.hpp"
 #include "iresearch/formats/column/codecs/registry.hpp"
 
 namespace irs::codecs {
 namespace {
 
+template<typename T>
+constexpr bool kIsWide = sizeof(T) == 16;
+
+template<typename T>
+using Inner = std::conditional_t<kIsWide<T>, uint64_t, T>;
+
+template<typename T>
+constexpr bool kPacks = std::is_integral_v<T> || kIsWide<T>;
+
+template<typename T, const CompressionFunction& kInner>
+constexpr const CompressionFunction& Of() noexcept {
+  if constexpr (kIsWide<T>) {
+    return kWide<T, kInner>;
+  } else {
+    return kInner;
+  }
+}
+
 template<typename T, ByteCodec kLeaf>
 CompressionFunctions PlainContenders() {
   if constexpr (kLeaf != ByteCodec::None) {
     static constexpr const CompressionFunction* kContenders[] = {
-      &kRaw<T, kLeaf, false>,
-      &kRaw<T, kLeaf, true>,
-      &kFor<T, kLeaf, false>,
-      &kFor<T, kLeaf, true>,
+      &Of<T, kRaw<Inner<T>, kLeaf, false>>(),
+      &Of<T, kRaw<Inner<T>, kLeaf, true>>(),
+      &Of<T, kFor<Inner<T>, kLeaf, false>>(),
+      &Of<T, kFor<Inner<T>, kLeaf, true>>(),
     };
     return kContenders;
-  } else if constexpr (std::is_integral_v<T>) {
+  } else if constexpr (kPacks<T>) {
     static constexpr const CompressionFunction* kContenders[] = {
-      &kRaw<T, kLeaf, false>,
-      &kFor<T, kLeaf, false>,
-      &kFfor<T>,
+      &Of<T, kRaw<Inner<T>, kLeaf, false>>(),
+      &Of<T, kFor<Inner<T>, kLeaf, false>>(),
+      &Of<T, kFfor<Inner<T>>>(),
     };
     return kContenders;
   } else {
     static constexpr const CompressionFunction* kContenders[] = {
-      &kRaw<T, kLeaf, false>,
-      &kFor<T, kLeaf, false>,
+      &Of<T, kRaw<Inner<T>, kLeaf, false>>(),
+      &Of<T, kFor<Inner<T>, kLeaf, false>>(),
     };
     return kContenders;
   }
@@ -62,19 +81,19 @@ template<typename T, ByteCodec kLeaf>
 CompressionFunctions DeltaContenders() {
   if constexpr (kLeaf != ByteCodec::None) {
     static constexpr const CompressionFunction* kContenders[] = {
-      &kDelta<T, kLeaf, false>,
-      &kDelta<T, kLeaf, true>,
+      &Of<T, kDelta<Inner<T>, kLeaf, false>>(),
+      &Of<T, kDelta<Inner<T>, kLeaf, true>>(),
     };
     return kContenders;
-  } else if constexpr (std::is_integral_v<T>) {
+  } else if constexpr (kPacks<T>) {
     static constexpr const CompressionFunction* kContenders[] = {
-      &kDeltaFfor<T>,
-      &kDelta<T, kLeaf, false>,
+      &Of<T, kDeltaFfor<Inner<T>>>(),
+      &Of<T, kDelta<Inner<T>, kLeaf, false>>(),
     };
     return kContenders;
   } else {
     static constexpr const CompressionFunction* kContenders[] = {
-      &kDelta<T, kLeaf, false>,
+      &Of<T, kDelta<Inner<T>, kLeaf, false>>(),
     };
     return kContenders;
   }
@@ -84,13 +103,13 @@ template<typename T, ByteCodec kLeaf>
 CompressionFunctions RunsContenders() {
   if constexpr (kLeaf != ByteCodec::None) {
     static constexpr const CompressionFunction* kContenders[] = {
-      &kRle<T, kLeaf>,
+      &Of<T, kRle<Inner<T>, kLeaf>>(),
     };
     return kContenders;
   } else {
     static constexpr const CompressionFunction* kContenders[] = {
-      &kRle<T, kLeaf>,
-      &kRleFfor<T>,
+      &Of<T, kRle<Inner<T>, kLeaf>>(),
+      &Of<T, kRleFfor<Inner<T>>>(),
     };
     return kContenders;
   }
@@ -100,14 +119,14 @@ template<typename T, ByteCodec kLeaf>
 CompressionFunctions DictionaryContenders() {
   if constexpr (kLeaf != ByteCodec::None) {
     static constexpr const CompressionFunction* kContenders[] = {
-      &kDict<T, kLeaf, false>,
-      &kDict<T, kLeaf, true>,
+      &Of<T, kDict<Inner<T>, kLeaf, false>>(),
+      &Of<T, kDict<Inner<T>, kLeaf, true>>(),
     };
     return kContenders;
   } else {
     static constexpr const CompressionFunction* kContenders[] = {
-      &kDict<T, kLeaf, false>,
-      &kDictFfor<T>,
+      &Of<T, kDict<Inner<T>, kLeaf, false>>(),
+      &Of<T, kDictFfor<Inner<T>>>(),
     };
     return kContenders;
   }
@@ -129,13 +148,23 @@ CompressionFunctions ContendersOf() {
 template<typename T, Shape kShape>
 constexpr auto ReaderType() {
   if constexpr (kShape == Shape::Plain) {
-    return std::type_identity<PlainReader<T>>{};
+    return std::type_identity<PlainReader<Inner<T>>>{};
   } else if constexpr (kShape == Shape::Delta) {
-    return std::type_identity<DeltaReader<T>>{};
+    return std::type_identity<DeltaReader<Inner<T>>>{};
   } else if constexpr (kShape == Shape::Runs) {
-    return std::type_identity<RunsReader<T>>{};
+    return std::type_identity<RunsReader<Inner<T>>>{};
   } else {
-    return std::type_identity<DictionaryReader<T>>{};
+    return std::type_identity<DictionaryReader<Inner<T>>>{};
+  }
+}
+
+template<typename T, Shape kShape>
+constexpr const DecompressionFunction* DecompressionOf() noexcept {
+  using Reader = typename decltype(ReaderType<T, kShape>())::type;
+  if constexpr (kIsWide<T>) {
+    return &kWideDecompression<WideReader<T, Reader>>;
+  } else {
+    return &numeric::kDecompression<Reader>;
   }
 }
 
@@ -153,8 +182,7 @@ template<typename T, Shape kShape, ByteCodec kLeaf>
 constexpr Codec kCodec{
   .type = CodecOf(kShape, kLeaf),
   .compression = &kContest<T, kShape, kLeaf>,
-  .decompression =
-    &numeric::kDecompression<typename decltype(ReaderType<T, kShape>())::type>,
+  .decompression = DecompressionOf<T, kShape>(),
 };
 
 template<typename T, Shape kShape>
@@ -220,17 +248,26 @@ const Codec* FormCodec(Shape shape, ByteCodec leaf) {
 
 uint64_t PackedBytes(ColumnDataCheckpointData& data) {
   const auto physical = data.type.InternalType();
-  return WithNumericType(physical, [&]<typename T>(std::type_identity<T>) {
-    return std::is_integral_v<T> ? data.Get<Values<T>>().PackedBytes() : 0;
-  });
+  return WithNumericType(physical,
+                         [&]<typename T>(std::type_identity<T>) -> uint64_t {
+                           if constexpr (std::is_integral_v<T>) {
+                             return data.Get<Values<T>>().PackedBytes();
+                           } else {
+                             return 0;
+                           }
+                         });
 }
 
 uint64_t SampledLz4Bytes(ColumnDataCheckpointData& data) {
   const auto physical = data.type.InternalType();
-  return WithNumericType(
-    physical, [&]<typename T>(std::type_identity<T>) -> uint64_t {
-      return std::is_integral_v<T> ? SampledForLz4Bytes<T>(data) : 0;
-    });
+  return WithNumericType(physical,
+                         [&]<typename T>(std::type_identity<T>) -> uint64_t {
+                           if constexpr (std::is_integral_v<T>) {
+                             return SampledForLz4Bytes<T>(data);
+                           } else {
+                             return 0;
+                           }
+                         });
 }
 
 CompressionFunctions NumericContenders(Shape shape, ByteCodec leaf,

@@ -23,8 +23,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <duckdb/common/helper.hpp>
+#include <duckdb/common/hugeint.hpp>
 #include <duckdb/common/typedefs.hpp>
 #include <duckdb/common/types.hpp>
+#include <duckdb/common/uhugeint.hpp>
 #include <string_view>
 #include <type_traits>
 
@@ -95,6 +97,11 @@ Data layout per segment, one block of one column holding a whole row group:
 +------------------------------------------------------+
 The header holds the section offsets; bit-packed data starts at an
 8-byte boundary.
+
+A segment of 128-bit values starts with a WideHeader of 32 bytes and holds
+such segments of 64-bit values: one, of every value's distance from the
+smallest value in the header, or two, of the low halves and, at the next
+8-byte boundary, of the high halves.
 */
 
 namespace irs::codecs {
@@ -264,6 +271,10 @@ std::invoke_result_t<F&, std::type_identity<int8_t>> WithNumericType(
     case duckdb::PhysicalType::UINT64:
     case duckdb::PhysicalType::LIST:
       return f(std::type_identity<uint64_t>{});
+    case duckdb::PhysicalType::INT128:
+      return f(std::type_identity<duckdb::hugeint_t>{});
+    case duckdb::PhysicalType::UINT128:
+      return f(std::type_identity<duckdb::uhugeint_t>{});
     case duckdb::PhysicalType::FLOAT:
       return f(std::type_identity<float>{});
     case duckdb::PhysicalType::DOUBLE:

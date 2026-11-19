@@ -121,6 +121,7 @@ enum class StateId : uint8_t {
   NumericLz4,
   NumericZstd,
   NumericScratch,
+  WideValues,
   Raw,
   For,
   Ffor,

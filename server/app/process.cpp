@@ -23,6 +23,7 @@
 #include <absl/flags/parse.h>
 #include <absl/flags/usage.h>
 #include <absl/flags/usage_config.h>
+#include <absl/strings/str_cat.h>
 #include <absl/strings/str_split.h>
 
 #include <cstdio>
@@ -32,12 +33,18 @@
 #include <string>
 #include <tuple>
 
+#include "server/utils/build_info.h"
 #include "server/utils/lifecycle.h"
 
 namespace sdb::app {
 
 void ParseOptions(int argc, char* argv[]) {
   absl::FlagsUsageConfig usage_config;
+  const std::string_view path{argv[0]};
+  usage_config.version_string =
+    [program = std::string{path.substr(path.rfind('/') + 1)}] {
+      return absl::StrCat(build::VersionLine(program), "\n");
+    };
   usage_config.contains_help_flags = [](std::string_view file) {
     return file.find("third_party/") == std::string_view::npos;
   };
@@ -52,6 +59,9 @@ void ParseOptions(int argc, char* argv[]) {
       {"server/storage/storage.cpp", "server"},
       {"server/app/server.cpp", "server"},
       {"server/network/server.cpp", "server"},
+      {"server/network/listen_protocol.cpp", "server"},
+      {"server/network/pg/listen.cpp", "server"},
+      {"server/network/http/listen.cpp", "server"},
       {"server/query/server_engine.cpp", "server"},
       {"server/runtime/runtime.cpp", "server"},
       {"iresearch/utils/log_flags.cpp", "log"},
@@ -73,7 +83,7 @@ void ParseOptions(int argc, char* argv[]) {
     "Usage:\n"
     "  serened <data-dir> [--flag=value ...]\n"
     "  serenedb server <data-dir> [--flag=value ...]\n"
-    "  serenedb shell [duckdb-shell args ...]\n"
+    "  serenedb shell [shell args ...]\n"
     "  serenedb psql  [psql args ...]\n\n"
     "Flag sources (absl built-in, full definitions under --helpfull):\n"
     "  --flagfile=path1,path2     Read flags from one or more files (one\n"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -39,6 +40,20 @@ def test_serenedb_help_lists_the_commands(flag: str) -> None:
     assert r.returncode == 0, r
     assert COMMANDS in r.stdout
     assert "serened is serenedb server." in r.stdout
+
+
+@pytest.mark.parametrize("args,program", [
+    ((SERENEDB_BIN, "--version"), "serenedb"),
+    ((SERENEDB_BIN, "server", "--version"), "serenedb"),
+    ((SERENED_BIN, "--version"), "serened"),
+])
+def test_version_names_the_program_the_release_and_the_commit(
+        args: tuple[str, ...], program: str) -> None:
+    r = _run(*args)
+    assert r.returncode == 0, r
+    assert re.fullmatch(
+        rf"{program} \(SereneDB\) \d+\.\d+\.\S+ \([0-9a-f]{{40}}(-dirty)?\)\n",
+        r.stdout), r.stdout
 
 
 def test_serenedb_rejects_an_unknown_command() -> None:

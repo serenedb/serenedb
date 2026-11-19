@@ -277,7 +277,7 @@ for shape in ${SHAPES}; do
 				status="create_failed"
 				break
 			fi
-			db_path=$(plain_sql "SELECT path FROM duckdb_databases() WHERE database_name='${alias}';")
+			db_path=$(plain_sql "SELECT path FROM sdb_databases() WHERE database_name='${alias}';")
 
 			timed_sql "CREATE TABLE ${alias}.t AS SELECT ord, ${expr_sql} AS s FROM range(${srows}) t(ord) ORDER BY ord;"
 			if [[ ${SQL_RC} -ne 0 ]]; then

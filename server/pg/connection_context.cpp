@@ -425,8 +425,24 @@ bool ConnectionContext::EmitWarning(const char* message) {
 
 bool ConnectionContext::IsSettingVisible(const std::string& name) {
   static const irs::containers::FlatHashSet<std::string_view> kHidden = {
-    "sdb_faults", "debug_verification", "is_superuser", "role",
-    "session_authorization"};
+    "sdb_faults",
+    "debug_verification",
+    "duckdb_api",
+    "is_superuser",
+    "session_authorization",
+    "role",
+    "allow_community_extensions",
+    "allow_extension_repositories",
+    "allow_extensions_metadata_mismatch",
+    "allow_unsigned_extensions",
+    "autoinstall_extension_repository",
+    "autoinstall_known_extensions",
+    "autoload_known_extensions",
+    "custom_extension_repository",
+    "extension_directories",
+    "extension_directory",
+    "extension_repository_directory",
+  };
   return !kHidden.contains(name);
 }
 

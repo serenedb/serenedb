@@ -10,7 +10,7 @@ SET TimeZone = 'UTC';
 
 
 query
-SELECT loaded AS icu_loaded FROM duckdb_extensions() WHERE extension_name = 'icu';
+SELECT count(*) > 0 AS icu_loaded FROM sdb_functions() WHERE function_name = 'icu_sort_key';
 ----
 icu_loaded
 t

@@ -145,7 +145,7 @@ To allow this behavior, use the `order_by_non_integer_literal` option:
 
 #### Version
 
-`PRAGMA version` shows the version of the query engine library built into SereneDB, not the SereneDB release. `SELECT version()` returns the release, for example `PostgreSQL 18.3 (SereneDB 26.10.0)`.
+`PRAGMA version` shows the SereneDB release and the commit it was built from, the `SDB_VERSION` and `SDB_COMMIT` rows of [`pg_config`](../cookbook/meta/environment.md#build); `codename` is `NULL`. `SELECT version()` returns the release with the PostgreSQL version SereneDB reports, for example `PostgreSQL 18.3 (SereneDB 26.10.0)`.
 
 <SqlLogicTest id="configuration/pragmas/example_020" />
 
@@ -157,7 +157,7 @@ To allow this behavior, use the `order_by_non_integer_literal` option:
 
 #### User Agent
 
-The following statement returns the user agent information, `duckdb/<engine library version>(<platform>) cpp`:
+The following statement returns the user agent that HTTP requests carry, `serenedb/<version>(<platform>) cpp`:
 
 <SqlLogicTest id="configuration/pragmas/example_022" />
 

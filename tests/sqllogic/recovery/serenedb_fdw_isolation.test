@@ -187,7 +187,7 @@ n	s
 300000	44999850000
 
 query
-SELECT count(*) AS n FROM duckdb_databases() WHERE database_name = 'sfi_copy';
+SELECT count(*) AS n FROM sdb_databases() WHERE database_name = 'sfi_copy';
 ----
 n
 0

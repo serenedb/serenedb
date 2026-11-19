@@ -223,7 +223,7 @@ DROP TABLE drawers;
 
 
 query
-SELECT schema_name, sequence_name FROM duckdb_sequences() WHERE database_name = current_database() ORDER BY 1, 2;
+SELECT schema_name, sequence_name FROM sdb_sequences() WHERE database_name = current_database() ORDER BY 1, 2;
 ----
 schema_name	sequence_name
 public	free
@@ -247,7 +247,7 @@ DROP TABLE drawers;
 
 
 query
-SELECT schema_name, sequence_name FROM duckdb_sequences() WHERE database_name = current_database() ORDER BY 1, 2;
+SELECT schema_name, sequence_name FROM sdb_sequences() WHERE database_name = current_database() ORDER BY 1, 2;
 ----
 schema_name	sequence_name
 public	free
@@ -347,7 +347,7 @@ IMPORT DATABASE '${__TEST_DIR__}/eios_duck';
 
 
 query
-SELECT schema_name, sequence_name FROM duckdb_sequences() WHERE database_name = current_database() ORDER BY 1, 2;
+SELECT schema_name, sequence_name FROM sdb_sequences() WHERE database_name = current_database() ORDER BY 1, 2;
 ----
 schema_name	sequence_name
 b	by_top
@@ -358,7 +358,7 @@ public	owner_seq
 
 query
 SELECT schema_name, table_name
-FROM duckdb_tables()
+FROM sdb_tables()
 WHERE database_name = current_database() AND schema_name NOT IN ('information_schema', 'pg_catalog')
 ORDER BY 1, 2;
 ----
@@ -393,7 +393,7 @@ USE ${__DATABASE__};
 
 
 query
-SELECT sequence_name FROM duckdb_sequences() WHERE database_name = 'eios_duck_dst_${__DATABASE__}' ORDER BY 1;
+SELECT sequence_name FROM sdb_sequences() WHERE database_name = 'eios_duck_dst_${__DATABASE__}' ORDER BY 1;
 ----
 sequence_name
 by_sequence
@@ -403,7 +403,7 @@ owner_seq
 
 
 query
-SELECT table_name FROM duckdb_tables() WHERE database_name = 'eios_duck_dst_${__DATABASE__}' ORDER BY 1;
+SELECT table_name FROM sdb_tables() WHERE database_name = 'eios_duck_dst_${__DATABASE__}' ORDER BY 1;
 ----
 table_name
 t

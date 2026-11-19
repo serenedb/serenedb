@@ -24,7 +24,7 @@ VACUUM (FLUSH_TABLE) rmc_kept;
 
 statement ok
 CREATE TABLE rmc_oids AS
-  SELECT table_oid AS oid FROM duckdb_tables()
+  SELECT table_oid AS oid FROM sdb_tables()
   WHERE database_name = current_database() AND table_name = 'rmc_gone';
 
 

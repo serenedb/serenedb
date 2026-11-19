@@ -89,7 +89,7 @@ statement count 1000
 DELETE FROM srv_${__DATABASE__}.${__DATABASE__}.vbk_t WHERE id BETWEEN 3001 AND 4000;
 
 query
-SELECT action, files_added, files_changed FROM serenedb_reindex('vbk_idx');
+SELECT action, files_added, files_changed FROM sdb_reindex('vbk_idx');
 ----
 action	files_added	files_changed
 delta	0	1
@@ -131,7 +131,7 @@ statement count 500
 UPDATE srv_${__DATABASE__}.${__DATABASE__}.vbk_t SET body = body || ' touched' WHERE id BETWEEN 1 AND 500;
 
 query
-SELECT action FROM serenedb_reindex('vbk_idx');
+SELECT action FROM sdb_reindex('vbk_idx');
 ----
 action
 delta
@@ -171,7 +171,7 @@ count
 0
 
 query
-SELECT * FROM serenedb_reindex('vbk_idx');
+SELECT * FROM sdb_reindex('vbk_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0

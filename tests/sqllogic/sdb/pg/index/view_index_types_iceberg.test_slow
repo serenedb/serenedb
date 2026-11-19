@@ -108,7 +108,7 @@ statement count 1
 INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.vty_t VALUES (5, TIMESTAMP '2026-05-06 07:08:09', 2.5, true, 'e', 'ещё одна строка');
 
 query
-SELECT action FROM serenedb_reindex('vty_idx');
+SELECT action FROM sdb_reindex('vty_idx');
 ----
 action
 delta

@@ -21,6 +21,7 @@
 #include <gtest/gtest.h>
 #include <unistd.h>
 
+#include <iresearch/utils/down_cast.hpp>
 #include <memory>
 #include <span>
 #include <string>
@@ -28,6 +29,7 @@
 #include <vector>
 
 #include "network/http/listen.h"
+#include "network/listen_protocol.h"
 #include "network/listen_spec.h"
 #include "network/pg/listen.h"
 
@@ -105,7 +107,7 @@ TEST(ListenSpec, RegisteredProtocolParsesItsOwnParams) {
   EXPECT_EQ(specs[0].endpoint.port(), 9999);
   ASSERT_TRUE(specs[0].backlog);
   EXPECT_EQ(*specs[0].backlog, 7);
-  EXPECT_EQ(static_cast<const FlavorOptions&>(*specs[0].options).flavor,
+  EXPECT_EQ(irs::utils::downCast<FlavorOptions>(*specs[0].options).flavor,
             "plain");
 }
 
@@ -116,7 +118,8 @@ TEST(ListenSpec, UnknownSchemeListsTheRegisteredOnes) {
       Parse({"mysql://127.0.0.1:3306"});
     },
     "unsupported scheme 'mysql' in endpoint 'mysql://127.0.0.1:3306' "
-    "\\(http, https, listen-spec-test, postgres, postgresql\\)");
+    "\\(([^)]*, )?http(, [^)]*)?, https(, [^)]*)?, postgres(, [^)]*)?, "
+    "postgresql(, [^)]*)?\\)");
 }
 
 TEST(ListenSpec, IPv6Brackets) {
@@ -178,8 +181,8 @@ TEST(ListenSpec, UnknownApiIsRejected) {
       dup2(STDERR_FILENO, STDOUT_FILENO);
       Parse({"http://127.0.0.1:9300?api=no-such-api"});
     },
-    "unknown api 'no-such-api' in endpoint '[^']*' \\(known: es, "
-    "listen-spec-test, mcp, otel, ");
+    "unknown api 'no-such-api' in endpoint '[^']*' \\(known: ([^)]*, )?es(, "
+    "[^)]*)?, mcp(, [^)]*)?, otel(, [^)]*)?, test(, [^)]*)?\\)");
 }
 
 TEST(ListenSpec, HttpDatabaseParam) {

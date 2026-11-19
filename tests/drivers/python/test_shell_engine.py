@@ -171,7 +171,7 @@ def test_a_view_keeps_its_table() -> None:
         "CREATE TABLE t (i INTEGER);\n"
         "CREATE VIEW v AS SELECT i FROM t;\n"
         "DROP TABLE t;\n"
-        "SELECT count(*) AS views FROM duckdb_views() WHERE view_name = 'v';\n"
+        "SELECT count(*) AS views FROM sdb_views() WHERE view_name = 'v';\n"
     )
     assert "depend" in result.stderr, result.stderr
     assert list(csv.reader(io.StringIO(result.stdout))) == [["views"], ["1"]]

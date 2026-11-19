@@ -18,7 +18,7 @@ db error: ERROR: renaming a database is not supported
 # The refusal runs before anything is touched: the database keeps its name and
 # the server stays healthy.
 query
-SELECT database_name FROM duckdb_databases() WHERE database_name = 'adb_target'
+SELECT database_name FROM sdb_databases() WHERE database_name = 'adb_target'
 ----
 database_name
 adb_target

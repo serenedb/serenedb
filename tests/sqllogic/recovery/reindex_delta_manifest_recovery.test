@@ -28,7 +28,7 @@ COPY (SELECT i AS id, 'doc ' || i AS body FROM range(5, 8) t(i)) TO '${__TEST_DI
 
 
 query
-SELECT action, files_added FROM serenedb_reindex('rdmr_idx');
+SELECT action, files_added FROM sdb_reindex('rdmr_idx');
 ----
 action	files_added
 delta	1
@@ -65,7 +65,7 @@ id	body
 
 connection after_crash
 query
-SELECT * FROM serenedb_reindex('rdmr_idx');
+SELECT * FROM sdb_reindex('rdmr_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0

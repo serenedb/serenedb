@@ -124,13 +124,13 @@ COPY (SELECT 5 AS id, 'pudge races the cron' AS body)
 TO '${__TEST_DIR__}/rvp_glob/f4.parquet' (FORMAT PARQUET);
 
 statement ok
-CALL serenedb_reindex('rvp_idx');
+CALL sdb_reindex('rvp_idx');
 
 statement ok
-CALL serenedb_reindex('rvp_idx');
+CALL sdb_reindex('rvp_idx');
 
 statement ok
-CALL serenedb_reindex('rvp_idx');
+CALL sdb_reindex('rvp_idx');
 
 query
 SELECT count(*) FROM rvp_idx;
@@ -189,7 +189,7 @@ count
 5
 
 statement ok
-CALL serenedb_reindex('rvp_idx');
+CALL sdb_reindex('rvp_idx');
 
 query
 SELECT count(*) FROM rvp_idx;
@@ -280,7 +280,7 @@ statement ok
 DROP VIEW rvp_v CASCADE;
 
 query
-SELECT count(*) FROM duckdb_indexes() WHERE index_name = 'rvp_idx';
+SELECT count(*) FROM sdb_indexes() WHERE index_name = 'rvp_idx';
 ----
 count
 0

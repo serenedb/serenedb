@@ -40,13 +40,7 @@ struct LMStats {
 };
 
 inline std::span<const score_t> SharesOf(const LMStats& stats) noexcept {
-  if (stats.shares) {
-    return {stats.shares, stats.terms};
-  }
-  if (stats.collection_prob > 0.f) {
-    return {&stats.collection_prob, 1};
-  }
-  return {};
+  return {stats.shares ? stats.shares : &stats.collection_prob, stats.terms};
 }
 
 inline void CollectLMStats(LMStats& stats, const FieldCollector* field,
@@ -56,6 +50,7 @@ inline void CollectLMStats(LMStats& stats, const FieldCollector* field,
     stats.shares[stats.terms++] = share;
   } else {
     stats.collection_prob = share;
+    stats.terms = 1;
   }
 }
 

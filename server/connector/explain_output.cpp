@@ -40,9 +40,7 @@
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
-#include <iresearch/utils/system_compiler.hpp>
 #include <system_error>
-#include <type_traits>
 #include <variant>
 #include <vector>
 
@@ -56,34 +54,6 @@ namespace {
 using Builder = simdjson::builder::string_builder;
 using duckdb::VariantLogicalType;
 using irs::explain::Node;
-
-struct Primitive {
-  std::string_view text;
-  double real = 0;
-  uint64_t whole = 0;
-  int64_t negative = 0;
-
-  template<typename T>
-  T GetData() const noexcept {
-    if constexpr (std::is_same_v<T, double>) {
-      return real;
-    } else if constexpr (std::is_same_v<T, uint64_t>) {
-      return whole;
-    } else if constexpr (std::is_same_v<T, int64_t>) {
-      return negative;
-    } else {
-      SDB_UNREACHABLE();
-    }
-  }
-
-  duckdb::string_t GetString() const noexcept {
-    return {text.data(), static_cast<uint32_t>(text.size())};
-  }
-
-  duckdb::VariantDecimalData GetDecimalProperties() const noexcept {
-    SDB_UNREACHABLE();
-  }
-};
 
 enum class Field : uint8_t {
   Clauses,
@@ -191,8 +161,7 @@ class Emitter {
             Phrase(subject);
             break;
           case Field::Scored:
-            _builder->EmitPrimitiveNode(Primitive{},
-                                        VariantLogicalType::BOOL_FALSE);
+            _builder->EmitBool(false);
             break;
           case Field::Scorer:
             String(node.scorer);
@@ -250,13 +219,22 @@ class Emitter {
   }
 
   void String(std::string_view text) {
-    _builder->EmitPrimitiveNode(Primitive{.text = text},
-                                VariantLogicalType::VARCHAR);
+    _builder->EmitString(
+      VariantLogicalType::VARCHAR,
+      duckdb::string_t{text.data(), static_cast<uint32_t>(text.size())});
   }
 
   void Whole(uint64_t value) {
-    _builder->EmitPrimitiveNode(Primitive{.whole = value},
-                                VariantLogicalType::UINT64);
+    _builder->EmitFixed(VariantLogicalType::UINT64, value);
+  }
+
+  template<typename T>
+  void Parsed(std::string_view text, VariantLogicalType type) {
+    T value = 0;
+    [[maybe_unused]] const auto parsed =
+      fast_float::from_chars(text.data(), text.data() + text.size(), value);
+    SDB_ASSERT(parsed.ec == std::errc{});
+    _builder->EmitFixed(type, value);
   }
 
   void Number(const irs::explain::Value& value) {
@@ -275,22 +253,12 @@ class Emitter {
     char buffer[pg::kNumberStrMaxLen];
     const auto* end = pg::WriteShortestFloat(score, buffer);
     const std::string_view text{buffer, static_cast<size_t>(end - buffer)};
-    Primitive number;
     if (text.find_first_of(".eE") != std::string_view::npos) {
-      [[maybe_unused]] const auto parsed = fast_float::from_chars(
-        text.data(), text.data() + text.size(), number.real);
-      SDB_ASSERT(parsed.ec == std::errc{});
-      _builder->EmitPrimitiveNode(number, VariantLogicalType::DOUBLE);
+      Parsed<double>(text, VariantLogicalType::DOUBLE);
     } else if (text.front() == '-') {
-      [[maybe_unused]] const auto parsed = fast_float::from_chars(
-        text.data(), text.data() + text.size(), number.negative);
-      SDB_ASSERT(parsed.ec == std::errc{});
-      _builder->EmitPrimitiveNode(number, VariantLogicalType::INT64);
+      Parsed<int64_t>(text, VariantLogicalType::INT64);
     } else {
-      [[maybe_unused]] const auto parsed = fast_float::from_chars(
-        text.data(), text.data() + text.size(), number.whole);
-      SDB_ASSERT(parsed.ec == std::errc{});
-      _builder->EmitPrimitiveNode(number, VariantLogicalType::UINT64);
+      Parsed<uint64_t>(text, VariantLogicalType::UINT64);
     }
   }
 

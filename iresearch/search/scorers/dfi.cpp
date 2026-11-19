@@ -49,17 +49,53 @@ namespace irs {
 namespace {
 
 template<DFIMeasure M>
-IRS_FORCE_INLINE score_t MeasureKernel(score_t diff,
-                                       score_t expected) noexcept {
-  if constexpr (M == DFIMeasure::Standardized) {
+struct Measure;
+
+template<>
+struct Measure<DFIMeasure::Standardized> {
+  static constexpr std::string_view kName = "standardized";
+  static constexpr std::string_view kKernel =
+    "(freq - expected) / sqrt(expected)";
+
+  IRS_FORCE_INLINE static score_t Kernel(score_t diff,
+                                         score_t expected) noexcept {
     return diff / std::sqrt(expected);
-  } else if constexpr (M == DFIMeasure::Saturated) {
-    return diff / expected;
-  } else if constexpr (M == DFIMeasure::ChiSquared) {
-    return diff * diff / expected;
-  } else {
-    static_assert(false);
   }
+};
+
+template<>
+struct Measure<DFIMeasure::Saturated> {
+  static constexpr std::string_view kName = "saturated";
+  static constexpr std::string_view kKernel = "(freq - expected) / expected";
+
+  IRS_FORCE_INLINE static score_t Kernel(score_t diff,
+                                         score_t expected) noexcept {
+    return diff / expected;
+  }
+};
+
+template<>
+struct Measure<DFIMeasure::ChiSquared> {
+  static constexpr std::string_view kName = "chi_squared";
+  static constexpr std::string_view kKernel = "(freq - expected)^2 / expected";
+
+  IRS_FORCE_INLINE static score_t Kernel(score_t diff,
+                                         score_t expected) noexcept {
+    return diff * diff / expected;
+  }
+};
+
+template<typename F>
+decltype(auto) WithMeasure(DFIMeasure measure, F&& f) {
+  switch (measure) {
+    case DFIMeasure::Standardized:
+      return f.template operator()<DFIMeasure::Standardized>();
+    case DFIMeasure::Saturated:
+      return f.template operator()<DFIMeasure::Saturated>();
+    case DFIMeasure::ChiSquared:
+      return f.template operator()<DFIMeasure::ChiSquared>();
+  }
+  SDB_UNREACHABLE();
 }
 
 template<DFIMeasure M>
@@ -69,7 +105,7 @@ struct DFIFormula {
     const score_t expected = ratio * dl;
     score_t r = 0.f;
     if (tf > expected && expected > 0.f) {
-      r = std::log1p(MeasureKernel<M>(tf - expected, expected)) * kInvLn2;
+      r = std::log1p(Measure<M>::Kernel(tf - expected, expected)) * kInvLn2;
     }
     return r * boost;
   }
@@ -78,49 +114,8 @@ struct DFIFormula {
   score_t ratio;
 };
 
-template<DFIMeasure M>
-ScoreFunction MakeScoreMeasure(const ScoreContext& ctx,
-                               std::span<const score_t> ratios,
-                               const FreqBlockAttr* freq, const uint32_t* norm,
-                               const score_t* scale) {
-  return MakeShareScore(
-    ratios, [&](score_t ratio) { return DFIFormula<M>{ctx.boost, ratio}; },
-    freq, norm, scale);
-}
-
-score_t ScoreOf(DFIMeasure measure, score_t boost, score_t ratio, score_t tf,
-                score_t dl) noexcept {
-  switch (measure) {
-    case DFIMeasure::Standardized:
-      return DFIFormula<DFIMeasure::Standardized>{boost, ratio}(tf, dl);
-    case DFIMeasure::Saturated:
-      return DFIFormula<DFIMeasure::Saturated>{boost, ratio}(tf, dl);
-    case DFIMeasure::ChiSquared:
-      return DFIFormula<DFIMeasure::ChiSquared>{boost, ratio}(tf, dl);
-  }
-  SDB_UNREACHABLE();
-}
-
-std::string_view KernelOf(DFIMeasure measure) noexcept {
-  switch (measure) {
-    case DFIMeasure::Standardized:
-      return "(freq - expected) / sqrt(expected)";
-    case DFIMeasure::Saturated:
-      return "(freq - expected) / expected";
-    case DFIMeasure::ChiSquared:
-      return "(freq - expected)^2 / expected";
-  }
-  SDB_UNREACHABLE();
-}
-
 std::span<const score_t> RatiosOf(const DFIStats& stats) noexcept {
-  if (stats.ratios) {
-    return {stats.ratios, stats.terms};
-  }
-  if (stats.ratio > 0.f) {
-    return {&stats.ratio, 1};
-  }
-  return {};
+  return {stats.ratios ? stats.ratios : &stats.ratio, stats.terms};
 }
 
 }  // namespace
@@ -133,6 +128,7 @@ void DFI::collect(byte_type* stats_buf, const FieldCollector* field,
     stats.ratios[stats.terms++] = ratio;
   } else {
     stats.ratio = ratio;
+    stats.terms = 1;
   }
 }
 
@@ -154,18 +150,11 @@ ScoreFunction DFI::PrepareScorer(const ScoreContext& ctx) const {
 
   const auto* scale = ScaleOf(ctx);
 
-  switch (_measure) {
-    case DFIMeasure::Standardized:
-      return MakeScoreMeasure<DFIMeasure::Standardized>(ctx, ratios, freq, norm,
-                                                        scale);
-    case DFIMeasure::Saturated:
-      return MakeScoreMeasure<DFIMeasure::Saturated>(ctx, ratios, freq, norm,
-                                                     scale);
-    case DFIMeasure::ChiSquared:
-      return MakeScoreMeasure<DFIMeasure::ChiSquared>(ctx, ratios, freq, norm,
-                                                      scale);
-  }
-  return ScoreFunction::Default();
+  return WithMeasure(_measure, [&]<DFIMeasure M> {
+    return MakeShareScore(
+      ratios, [&](score_t ratio) { return DFIFormula<M>{ctx.boost, ratio}; },
+      freq, norm, scale);
+  });
 }
 
 void DFI::Explain(const ScoreContext& ctx, const explain::SlotStats* stats,
@@ -175,7 +164,8 @@ void DFI::Explain(const ScoreContext& ctx, const explain::SlotStats* stats,
     explain::ExplainNoFreq(ctx, false, out);
     return;
   }
-  const auto kernel = KernelOf(_measure);
+  const auto kernel =
+    WithMeasure(_measure, []<DFIMeasure M> { return Measure<M>::kKernel; });
   const auto describe = [&](explain::Node& node, score_t ratio) {
     explain::AddBoost(node, ctx.boost);
     const auto freq = explain::AddFreq(node, ctx);
@@ -188,7 +178,9 @@ void DFI::Explain(const ScoreContext& ctx, const explain::SlotStats* stats,
     } else {
       node.note = "the term occurs no more often than expected, so it scores 0";
     }
-    return ScoreOf(_measure, ctx.boost, ratio, freq, length);
+    return WithMeasure(_measure, [&]<DFIMeasure M> {
+      return DFIFormula<M>{ctx.boost, ratio}(freq, length);
+    });
   };
   if (ratios.size() == 1) {
     explain::AddCollectionShare(out, ratios.front(), stats);
@@ -205,18 +197,9 @@ void DFI::Explain(const ScoreContext& ctx, const explain::SlotStats* stats,
 }
 
 std::string DFI::ToString() const {
-  const auto* measure = [&]() -> const char* {
-    switch (_measure) {
-      case DFIMeasure::Standardized:
-        return "standardized";
-      case DFIMeasure::Saturated:
-        return "saturated";
-      case DFIMeasure::ChiSquared:
-        return "chi_squared";
-    }
-    return "?";
-  }();
-  return absl::StrCat("dfi(measure=", measure, ")");
+  return absl::StrCat(
+    "dfi(measure=",
+    WithMeasure(_measure, []<DFIMeasure M> { return Measure<M>::kName; }), ")");
 }
 
 bool DFI::equals(const Scorer& other) const noexcept {

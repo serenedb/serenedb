@@ -35,9 +35,9 @@
 #include "iresearch/search/probe/family.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
+#include "iresearch/search/queries/ngram_similarity_query.hpp"
 #include "iresearch/search/queries/phrase_query.hpp"
 #include "iresearch/search/queries/phrase_state.hpp"
-#include "iresearch/search/queries/prepared_state_visitor.hpp"
 #include "iresearch/search/queries/term_query.hpp"
 #include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/scorers/score_provider.hpp"
@@ -75,68 +75,27 @@ Subject SubjectOf(const StatsIndex& index, const byte_type* slot,
           .dict = dict};
 }
 
-class LeafNamer final : public PreparedStateVisitor {
- public:
-  LeafNamer(const TermNames& names, Subject& out) noexcept
-    : _names{names}, _out{out} {}
-
-  const TermReader* Reader() const noexcept { return _reader; }
-
-  bool Visit(const BooleanQuery&, score_t) final { return false; }
-  bool Visit(const ByNestedQuery&, score_t) final { return false; }
-  bool Visit(const TermState&, score_t) final { return false; }
-  bool Visit(const MultiTermQuery&, const MultiTermState&, score_t) final {
-    return false;
-  }
-  bool Visit(const FixedPhraseQuery& query, const PhraseState& state,
-             score_t) final {
-    Name(query, state);
-    return false;
-  }
-  bool Visit(const VariadicPhraseQuery& query, const PhraseState& state,
-             score_t) final {
-    Name(query, state);
-    return false;
-  }
-  bool Visit(const NGramSimilarityQuery&, const NGramState& state,
-             score_t) final {
-    _reader = state.reader;
-    return false;
-  }
-
- private:
-  void Name(const PhraseQuery& query, const PhraseState& state) {
-    _reader = state.reader;
-    if (!state.reader) {
-      return;
+std::vector<PhrasePosition> WordsOf(const PhraseQuery& query,
+                                    const TermNames& names) {
+  const auto& state = query.state;
+  SDB_ASSERT(state.reader);
+  std::vector<PhrasePosition> words(state.Slots());
+  for (size_t i = 0; i != words.size(); ++i) {
+    auto& position = words[i];
+    if (i != 0) {
+      position.gap_min = query.positions[i].offs_min - 1;
+      position.gap_max = query.positions[i].offs_max - 1;
     }
-    std::vector<PhrasePosition> phrase(state.Slots());
-    for (size_t i = 0; i != phrase.size(); ++i) {
-      auto& position = phrase[i];
-      if (i != 0) {
-        position.gap_min = query.positions[i].offs_min - 1;
-        position.gap_max = query.positions[i].offs_max - 1;
+    for (auto j = state.offsets[i]; j != state.offsets[i + 1]; ++j) {
+      const auto* name = names.Find(*state.reader, state.metas[j]);
+      if (!name) {
+        return {};
       }
-      for (auto j = state.offsets[i]; j != state.offsets[i + 1]; ++j) {
-        const auto* name = _names.Find(*state.reader, state.metas[j]);
-        if (!name) {
-          return;
-        }
-        position.terms.push_back(*name);
-      }
+      position.terms.push_back(*name);
     }
-    _out = {
-      .field = state.reader->meta().id,
-      .dict = state.reader->meta().dict,
-      .phrase = std::move(phrase),
-      .slop = query.slop,
-    };
   }
-
-  const TermNames& _names;
-  Subject& _out;
-  const TermReader* _reader = nullptr;
-};
+  return words;
+}
 
 struct Fallback {
   const SubReader* segment = nullptr;
@@ -340,8 +299,6 @@ class Builder {
         return MakeClause(query.Segment(),
                           {term.State(), term.Boost(), term.Stats(Scoring())});
       }
-      case QueryKind::DocsMask:
-        return nullptr;
       default:
         return MakeLeaf(query);
     }
@@ -393,13 +350,30 @@ class Builder {
 
   std::unique_ptr<Part> MakeLeaf(const QueryBuilder& query) {
     const auto record = query.Stats(Scoring());
-    auto subject = SubjectOf(_stats, record.stats, nullptr);
-    LeafNamer namer{_names, subject};
-    query.Visit(namer, kNoBoost);
-    const auto* reader = namer.Reader();
-    if (reader) {
-      subject.field = reader->meta().id;
-      subject.dict = reader->meta().dict;
+    const TermReader* reader = nullptr;
+    Subject subject;
+    switch (query.Kind()) {
+      case QueryKind::Phrase: {
+        const auto& phrase = utils::downCast<PhraseQuery>(query);
+        reader = phrase.state.reader;
+        if (auto words = WordsOf(phrase, _names); !words.empty()) {
+          subject = {
+            .field = reader->meta().id,
+            .dict = reader->meta().dict,
+            .phrase = std::move(words),
+            .slop = phrase.slop,
+          };
+        } else {
+          subject = SubjectOf(_stats, record.stats, reader);
+        }
+      } break;
+      case QueryKind::NGram:
+        reader = utils::downCast<NGramSimilarityQuery>(query).State().reader;
+        subject = SubjectOf(_stats, record.stats, reader);
+        break;
+      default:
+        subject = SubjectOf(_stats, record.stats, nullptr);
+        break;
     }
     return std::make_unique<LeafPart>(
       [&query, scoring = Scoring(), scored = record.stats != nullptr] {

@@ -89,6 +89,7 @@ enum class QueryKind : uint32_t {
   Terms,
   Boolean,
   Phrase,
+  NGram,
   DocsMask,
   Ann,
 };

@@ -111,11 +111,15 @@ struct LoggedRows {
   irs::compression::Compressed packed;
 };
 
+using PackedValues =
+  std::vector<std::shared_ptr<const irs::compression::Compressed>>;
+
 struct UnitDelta {
   uint64_t unit = 0;
   std::shared_ptr<const irs::DocumentMask> deleted;
   std::vector<irs::FieldPatch> patches;
   std::shared_ptr<const irs::DocumentMask> patched;
+  PackedValues packed;
 };
 
 struct TableDelta {
@@ -135,6 +139,7 @@ struct UnitPatch {
   std::vector<irs::FieldPatch> fields;
   bool same_rows = false;
   std::vector<std::shared_ptr<const irs::DocumentMask>> rows;
+  PackedValues packed;
 };
 
 void UniteRows(UnitPatch& patch);

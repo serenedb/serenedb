@@ -48,7 +48,9 @@ namespace {
 
 constexpr std::string_view kBlobsFlag = "--blobs=";
 constexpr std::string_view kRealTime = "/real_time";
-constexpr size_t kFrameSizes[] = {size_t{1} << 20, size_t{4} << 20};
+constexpr size_t kFrameSizes[] = {size_t{64} << 10,  size_t{128} << 10,
+                                  size_t{256} << 10, size_t{512} << 10,
+                                  size_t{1} << 20,   size_t{4} << 20};
 constexpr uint32_t kInvalidNode = std::numeric_limits<uint32_t>::max();
 
 struct Codec {
@@ -354,7 +356,7 @@ void LoadRegion(const std::filesystem::path& bin) {
   Inputs().push_back({absl::StrCat(key, "/record"), blobs, raw, slots});
   for (const auto frame : kFrameSizes) {
     if (largest > frame) {
-      Inputs().push_back({absl::StrCat(key, "/frame_", frame >> 20, "m"),
+      Inputs().push_back({absl::StrCat(key, "/frame_", frame >> 10, "k"),
                           Split(blobs, frame), raw, slots});
     }
   }

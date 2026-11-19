@@ -20,6 +20,10 @@ FROM range(0, 2000) t(i);
 
 
 statement ok
+VACUUM (FLUSH_TABLE) lc;
+
+
+statement ok
 RESET sdb_log_compression;
 
 

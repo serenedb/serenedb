@@ -727,10 +727,9 @@ catalog::RecordBuffer Store::SnapshotRecord(const TableState& state) const {
   }
   if (catalog::Transactions::Get().LogCompression()) {
     auto& db = irs::DuckDBEngine::Instance().instance();
-    PackRows(delta.rows,
-             [&](size_t count, absl::FunctionRef<void(size_t)> body) {
-               ParallelFor(db, count, body);
-             });
+    const auto parallel = ParallelOn(db);
+    PackRows(delta.rows, irs::compression::kFrameBytes, parallel);
+    PackPatches(delta.segments, irs::compression::kFrameBytes, parallel);
   }
   delta.manifest = state.manifest;
   return catalog::SearchRecord(_db_id, _id, delta);

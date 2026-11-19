@@ -21,6 +21,7 @@
 #pragma once
 
 #include <absl/container/inlined_vector.h>
+#include <absl/functional/function_ref.h>
 
 #include <cstdint>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
@@ -28,6 +29,7 @@
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <memory>
 #include <span>
+#include <vector>
 
 #include "iresearch/types.hpp"
 #include "iresearch/utils/parallel_for.hpp"
@@ -56,6 +58,7 @@ struct Frames {
   uint64_t raw_bytes = 0;
   uint32_t frame_bytes = kFrameBytes;
   absl::InlinedVector<uint32_t, 1> sizes;
+  absl::InlinedVector<uint32_t, 1> raw_sizes;
 };
 
 struct Compressed {
@@ -68,10 +71,39 @@ struct Packed {
   bytes_view stored;
 };
 
+class FrameWriter final : public duckdb::WriteStream {
+ public:
+  explicit FrameWriter(uint32_t frame_bytes);
+
+  void WriteData(duckdb::const_data_ptr_t data, duckdb::idx_t size) final;
+  duckdb::data_ptr_t Alloc(duckdb::idx_t size) final;
+
+  uint32_t FrameBytes() const noexcept { return _frame_bytes; }
+  uint64_t RawBytes() const noexcept { return _raw_bytes; }
+  void ForEachFrame(absl::FunctionRef<void(bytes_view)> visit) const;
+
+ private:
+  struct Piece {
+    std::unique_ptr<byte_type[]> data;
+    uint64_t begin = 0;
+    uint64_t end = 0;
+  };
+
+  uint64_t Room() const noexcept;
+  void AddPiece(uint64_t size);
+
+  uint32_t _frame_bytes;
+  uint64_t _raw_bytes = 0;
+  std::vector<Piece> _pieces;
+};
+
 uint64_t StoredBytes(const Frames& frames) noexcept;
 
 Compressed Compress(Method method, bytes_view raw,
                     uint32_t frame_bytes = kFrameBytes,
+                    ParallelFor parallel = SerialFor);
+
+Compressed Compress(Method method, const FrameWriter& raw,
                     ParallelFor parallel = SerialFor);
 
 void Decompress(const Frames& frames, bytes_view stored,

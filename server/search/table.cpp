@@ -294,24 +294,33 @@ void FollowPatch(const TableState& state, uint64_t id, irs::field_id field,
   }
 }
 
+bool Current(const TableState& state, const UnitPatch& patch) {
+  return FindUnit(state, patch.unit) || !FindMoved(state, patch.unit);
+}
+
 bool PatchesCurrent(const TableState& state,
                     std::span<const UnitPatch> patches) {
-  return absl::c_all_of(patches, [&](const UnitPatch& patch) {
-    return FindUnit(state, patch.unit) || !FindMoved(state, patch.unit);
-  });
+  return absl::c_all_of(
+    patches, [&](const UnitPatch& patch) { return Current(state, patch); });
 }
 
 std::vector<UnitPatch> FollowPatches(const TableState& state,
-                                     std::span<const UnitPatch> patches) {
+                                     std::vector<UnitPatch> patches) {
   std::vector<UnitPatch> followed;
   for (const auto& patch : patches) {
+    if (Current(state, patch)) {
+      continue;
+    }
     for (const auto& [field, column] : patch.fields) {
       const auto entries = column->EntriesSince(nullptr);
       FollowPatch(state, patch.unit, field, column->Type(), entries.rows,
                   entries.values, followed);
     }
   }
-  return followed;
+  std::erase_if(patches,
+                [&](const UnitPatch& patch) { return !Current(state, patch); });
+  MergeUnitPatches(patches, std::move(followed));
+  return patches;
 }
 
 void CarryEntries(irs::field_id field, const duckdb::LogicalType& type,
@@ -526,7 +535,7 @@ std::vector<UnitPatch> ResolvePatches(const TableState& state,
   if (PatchesCurrent(state, patches)) {
     return std::move(patches);
   }
-  return FollowPatches(state, patches);
+  return FollowPatches(state, std::move(patches));
 }
 
 void MergeUnitPatches(std::vector<UnitPatch>& into,
@@ -548,6 +557,7 @@ void MergeUnitPatches(std::vector<UnitPatch>& into,
     } else {
       it->rows.clear();
     }
+    it->packed.clear();
     MergePatches(it->fields, patch.fields, 0);
   }
 }
@@ -792,7 +802,7 @@ irs::DirectoryReader Table::Build(const TableState& state, const OwnWrites& own,
   std::vector<UnitPatch> followed;
   auto own_patches = own.patches;
   if (!PatchesCurrent(state, own_patches)) {
-    followed = FollowPatches(state, own_patches);
+    followed = FollowPatches(state, {own_patches.begin(), own_patches.end()});
     own_patches = followed;
   }
   const auto with_patches =
@@ -1090,6 +1100,11 @@ TableDelta Table::CommitDelta(const TableCommit& commit,
       target->patches.empty() && patch.same_rows && patch.rows.size() == 1
         ? patch.rows.front()
         : nullptr;
+    if (!patch.packed.empty()) {
+      SDB_ASSERT(patch.packed.size() == patch.fields.size());
+      target->packed.resize(target->patches.size());
+      absl::c_copy(patch.packed, std::back_inserter(target->packed));
+    }
     absl::c_copy(patch.fields, std::back_inserter(target->patches));
   }
   delta.manifest = commit.manifest;
@@ -1149,10 +1164,7 @@ bool Table::Apply(duckdb::ClientContext& context, Tick tick,
     }
   }
   const auto oldest = catalog::Transactions::Get().Oldest();
-  const auto parallel = [&](size_t count,
-                            absl::FunctionRef<void(size_t)> body) {
-    ParallelFor(context, count, body);
-  };
+  const auto parallel = ParallelOn(context);
   parallel(changes.size(), [&](size_t c) {
     auto& change = changes[c];
     auto unit = std::make_shared<TableUnit>(*units[change.index]);

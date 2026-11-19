@@ -32,8 +32,14 @@
 
 namespace sdb::search {
 
-void PackRows(std::span<LoggedRows> runs,
-              irs::ParallelFor parallel = irs::SerialFor);
+inline constexpr uint32_t kLogFrameBytes = uint32_t{256} << 10;
+
+void PackRows(std::span<LoggedRows> runs, uint32_t frame_bytes,
+              irs::ParallelFor parallel);
+void PackPatches(std::span<UnitPatch> patches, uint32_t frame_bytes,
+                 irs::ParallelFor parallel);
+void PackPatches(std::span<UnitDelta> units, uint32_t frame_bytes,
+                 irs::ParallelFor parallel);
 
 void WriteTableDelta(duckdb::BinarySerializer& object,
                      catalog::RecordBuffer& out, const TableDelta& delta);

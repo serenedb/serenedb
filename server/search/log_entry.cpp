@@ -74,29 +74,29 @@ std::shared_ptr<const irs::DocumentMask> ReadMask(
   return std::make_shared<const irs::DocumentMask>(std::move(frozen), size);
 }
 
-void WriteValues(duckdb::BinarySerializer& column,
+void WriteValues(duckdb::BinarySerializer& values,
                  const irs::ColumnPatch& patch) {
   std::vector<const duckdb::Vector*> parts;
   patch.ForEachChunk([&](uint64_t, const irs::ColumnPatch::Chunk& chunk) {
     parts.push_back(&chunk.values);
   });
-  column.WriteObject(102, "values", [&](duckdb::BinarySerializer& values) {
-    duckdb::Vector::SerializeParts(values, patch.Type(), parts);
-  });
+  duckdb::Vector::SerializeParts(values, patch.Type(), parts);
 }
 
 void WritePatches(duckdb::BinarySerializer& unit, catalog::RecordBuffer& out,
-                  std::span<const irs::FieldPatch> patches,
-                  const irs::DocumentMask* patched) {
-  std::vector<std::vector<const irs::FieldPatch*>> groups;
-  for (const auto& field : patches) {
+                  const UnitDelta& changed) {
+  const auto& patches = changed.patches;
+  const auto* patched = changed.patched.get();
+  std::vector<std::vector<size_t>> groups;
+  for (size_t f = 0; f != patches.size(); ++f) {
     const auto it = absl::c_find_if(groups, [&](const auto& group) {
-      return patched || group.front()->patch->SameRows(*field.patch);
+      return patched ||
+             patches[group.front()].patch->SameRows(*patches[f].patch);
     });
     if (it == groups.end()) {
-      groups.push_back({&field});
+      groups.push_back({f});
     } else {
-      it->push_back(&field);
+      it->push_back(f);
     }
   }
   unit.WriteOptionalList(
@@ -108,7 +108,7 @@ void WritePatches(duckdb::BinarySerializer& unit, catalog::RecordBuffer& out,
           WriteMask(object, out, 100, "rows", *patched);
         } else {
           irs::DocumentMaskBuilder rows;
-          group.front()->patch->AddRows(rows);
+          patches[group.front()].patch->AddRows(rows);
           WriteMask(
             object, out, 100, "rows",
             std::move(rows).Finish(irs::DocumentMaskBuilder::kCanonical));
@@ -116,11 +116,24 @@ void WritePatches(duckdb::BinarySerializer& unit, catalog::RecordBuffer& out,
         object.WriteList(
           101, "columns", group.size(),
           [&](duckdb::BinarySerializer::List& columns, duckdb::idx_t c) {
-            const auto& [field, patch] = *group[c];
+            const auto f = group[c];
+            const auto& [field, patch] = patches[f];
+            const auto* packed =
+              f < changed.packed.size() ? changed.packed[f].get() : nullptr;
             columns.WriteObject([&](duckdb::BinarySerializer& column) {
               column.WriteProperty<uint64_t>(100, "field", field);
               column.WriteProperty(101, "type", patch->Type());
-              WriteValues(column, *patch);
+              if (packed) {
+                column.WriteObject(
+                  103, "packed_values", [&](duckdb::BinarySerializer& object) {
+                    irs::compression::WritePacked(object, *packed);
+                  });
+              } else {
+                column.WriteObject(102, "values",
+                                   [&](duckdb::BinarySerializer& values) {
+                                     WriteValues(values, *patch);
+                                   });
+              }
             });
           });
       });
@@ -139,9 +152,40 @@ void WriteUnits(duckdb::BinarySerializer& object, catalog::RecordBuffer& out,
         if (changed.deleted) {
           WriteMask(unit, out, 101, "deleted", *changed.deleted);
         }
-        WritePatches(unit, out, changed.patches, changed.patched.get());
+        WritePatches(unit, out, changed);
       });
     });
+}
+
+struct PackJob {
+  const irs::ColumnPatch* patch = nullptr;
+  std::shared_ptr<const irs::compression::Compressed>* packed = nullptr;
+};
+
+void AddPackJobs(std::span<const irs::FieldPatch> fields, PackedValues& packed,
+                 std::vector<PackJob>& jobs) {
+  if (fields.empty()) {
+    return;
+  }
+  packed.resize(fields.size());
+  for (size_t f = 0; f != fields.size(); ++f) {
+    if (!packed[f]) {
+      jobs.push_back({.patch = fields[f].patch.get(), .packed = &packed[f]});
+    }
+  }
+}
+
+void RunPackJobs(std::span<const PackJob> jobs, uint32_t frame_bytes,
+                 irs::ParallelFor parallel) {
+  parallel(jobs.size(), [&](size_t j) {
+    irs::compression::FrameWriter raw{frame_bytes};
+    duckdb::BinarySerializer serializer{raw};
+    serializer.Begin();
+    WriteValues(serializer, *jobs[j].patch);
+    serializer.End();
+    *jobs[j].packed = std::make_shared<const irs::compression::Compressed>(
+      irs::compression::Compress(irs::compression::kZstd1, raw, parallel));
+  });
 }
 
 void WriteChunks(duckdb::BinarySerializer& object, duckdb::field_id_t field,
@@ -235,19 +279,11 @@ class RowsReader {
     if (_pending.empty()) {
       return;
     }
-    const auto parallel = [&](size_t count,
-                              absl::FunctionRef<void(size_t)> body) {
-      ParallelFor(_context, count, body);
-    };
+    const auto parallel = ParallelOn(_context);
     std::vector<std::unique_ptr<irs::byte_type[]>> raw(_pending.size());
-    if (_pending.size() == 1) {
-      raw.front() =
-        irs::compression::Decompress(_pending.front().packed, parallel);
-    } else {
-      parallel(_pending.size(), [&](size_t i) {
-        raw[i] = irs::compression::Decompress(_pending[i].packed);
-      });
-    }
+    parallel(_pending.size(), [&](size_t i) {
+      raw[i] = irs::compression::Decompress(_pending[i].packed, parallel);
+    });
     for (size_t i = 0; i != _pending.size(); ++i) {
       const auto& run = _pending[i];
       auto row = run.first;
@@ -288,23 +324,46 @@ class RowsReader {
   std::vector<Run> _pending;
 };
 
-void ReadPatchGroup(duckdb::BinaryDeserializer& group, uint64_t first,
-                    std::vector<irs::FieldPatch>& patches) {
+std::shared_ptr<const irs::ColumnPatch> ReadValues(
+  duckdb::BinaryDeserializer& object, const duckdb::LogicalType& type,
+  std::span<const uint64_t> rows) {
+  duckdb::Vector values{type, rows.size()};
+  values.Deserialize(object, rows.size());
+  if (values.GetVectorType() == duckdb::VectorType::FLAT_VECTOR ||
+      values.GetVectorType() == duckdb::VectorType::CONSTANT_VECTOR) {
+    duckdb::FlatVector::SetSize(values, rows.size());
+  }
+  irs::ColumnPatch::Builder builder{type};
+  builder.Add(rows, values);
+  return std::move(builder).Finish();
+}
+
+struct PackedColumn {
+  size_t at = 0;
+  duckdb::LogicalType type;
+  std::shared_ptr<const std::vector<uint64_t>> rows;
+  irs::compression::Packed packed;
+};
+
+void ReadPatchGroup(duckdb::BinaryDeserializer& group,
+                    duckdb::MemoryStream& stream, uint64_t first,
+                    std::vector<irs::FieldPatch>& patches,
+                    std::vector<PackedColumn>& packed) {
   group.OnPropertyBegin(100, "rows");
   const auto mask = ReadMask(group);
   group.OnPropertyEnd();
-  std::vector<uint64_t> rows;
-  rows.reserve(mask->Count());
+  auto rows = std::make_shared<std::vector<uint64_t>>();
+  rows->reserve(mask->Count());
   {
     irs::DocumentMask::Cursor cursor{*mask};
     std::array<irs::doc_id_t, 1024> docs;
     while (const auto count = cursor.Read(docs)) {
       for (const auto doc : std::span{docs}.first(count)) {
-        rows.push_back(first + doc - irs::doc_limits::min());
+        rows->push_back(first + doc - irs::doc_limits::min());
       }
     }
   }
-  if (rows.empty()) {
+  if (rows->empty()) {
     Corrupted("a column patch without rows");
   }
   group.ReadList(
@@ -313,27 +372,33 @@ void ReadPatchGroup(duckdb::BinaryDeserializer& group, uint64_t first,
       columns.ReadObject([&](duckdb::BinaryDeserializer& column) {
         const auto field = static_cast<irs::field_id>(
           column.ReadProperty<uint64_t>(100, "field"));
-        const auto type = column.ReadProperty<duckdb::LogicalType>(101, "type");
-        duckdb::Vector values{type, rows.size()};
-        column.ReadObject(102, "values",
-                          [&](duckdb::BinaryDeserializer& vector) {
-                            values.Deserialize(vector, rows.size());
-                          });
-        if (values.GetVectorType() == duckdb::VectorType::FLAT_VECTOR ||
-            values.GetVectorType() == duckdb::VectorType::CONSTANT_VECTOR) {
-          duckdb::FlatVector::SetSize(values, rows.size());
+        auto type = column.ReadProperty<duckdb::LogicalType>(101, "type");
+        const auto at = patches.size();
+        patches.push_back({.field = field});
+        const auto plain = column.ReadOptionalObject(
+          102, "values", [&](duckdb::BinaryDeserializer& values) {
+            patches[at].patch = ReadValues(values, type, *rows);
+          });
+        if (plain) {
+          return;
         }
-        irs::ColumnPatch::Builder builder{type};
-        builder.Add(rows, values);
-        patches.push_back(
-          {.field = field, .patch = std::move(builder).Finish()});
+        column.ReadObject(
+          103, "packed_values", [&](duckdb::BinaryDeserializer& object) {
+            packed.push_back(
+              {.at = at,
+               .type = std::move(type),
+               .rows = rows,
+               .packed = irs::compression::ReadPacked(object, stream)});
+          });
       });
     });
 }
 
 template<typename Apply>
-void ReadUnits(duckdb::BinaryDeserializer& object, duckdb::field_id_t field,
-               const char* tag, bool piece, const Apply& apply) {
+void ReadUnits(duckdb::BinaryDeserializer& object, duckdb::MemoryStream& stream,
+               duckdb::field_id_t field, const char* tag, bool piece,
+               const TableReplay* replay, irs::ParallelFor parallel,
+               const Apply& apply) {
   object.ReadOptionalList(
     field, tag, [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
       list.ReadObject([&](duckdb::BinaryDeserializer& unit) {
@@ -345,13 +410,29 @@ void ReadUnits(duckdb::BinaryDeserializer& object, duckdb::field_id_t field,
         }
         unit.OnOptionalPropertyEnd(has_deleted);
         std::vector<irs::FieldPatch> patches;
+        std::vector<PackedColumn> packed;
         unit.ReadOptionalList(
           102, "patches",
           [&](duckdb::BinaryDeserializer::List& groups, duckdb::idx_t) {
             groups.ReadObject([&](duckdb::BinaryDeserializer& group) {
-              ReadPatchGroup(group, piece ? id : 0, patches);
+              ReadPatchGroup(group, stream, piece ? id : 0, patches, packed);
             });
           });
+        if (!replay) {
+          return;
+        }
+        parallel(packed.size(), [&](size_t p) {
+          const auto& column = packed[p];
+          const auto raw =
+            irs::compression::Decompress(column.packed, parallel);
+          duckdb::MemoryStream values{raw.get(),
+                                      column.packed.frames.raw_bytes};
+          duckdb::BinaryDeserializer deserializer{values};
+          deserializer.Begin();
+          patches[column.at].patch =
+            ReadValues(deserializer, column.type, *column.rows);
+          deserializer.End();
+        });
         apply(id, deleted.get(), patches);
       });
     });
@@ -359,23 +440,37 @@ void ReadUnits(duckdb::BinaryDeserializer& object, duckdb::field_id_t field,
 
 }  // namespace
 
-void PackRows(std::span<LoggedRows> runs, irs::ParallelFor parallel) {
-  const auto pack = [&](LoggedRows& rows, irs::ParallelFor frames) {
-    duckdb::MemoryStream raw;
+void PackRows(std::span<LoggedRows> runs, uint32_t frame_bytes,
+              irs::ParallelFor parallel) {
+  parallel(runs.size(), [&](size_t i) {
+    auto& rows = runs[i];
+    irs::compression::FrameWriter raw{frame_bytes};
     duckdb::BinarySerializer serializer{raw};
     serializer.Begin();
     WriteChunks(serializer, 100, rows);
     serializer.End();
-    rows.packed = irs::compression::Compress(
-      irs::compression::kZstd1, {raw.GetData(), raw.GetPosition()},
-      irs::compression::kFrameBytes, frames);
+    rows.packed =
+      irs::compression::Compress(irs::compression::kZstd1, raw, parallel);
     rows.scan = nullptr;
-  };
-  if (runs.size() == 1) {
-    pack(runs.front(), parallel);
-    return;
+  });
+}
+
+void PackPatches(std::span<UnitPatch> patches, uint32_t frame_bytes,
+                 irs::ParallelFor parallel) {
+  std::vector<PackJob> jobs;
+  for (auto& patch : patches) {
+    AddPackJobs(patch.fields, patch.packed, jobs);
   }
-  parallel(runs.size(), [&](size_t i) { pack(runs[i], irs::SerialFor); });
+  RunPackJobs(jobs, frame_bytes, parallel);
+}
+
+void PackPatches(std::span<UnitDelta> units, uint32_t frame_bytes,
+                 irs::ParallelFor parallel) {
+  std::vector<PackJob> jobs;
+  for (auto& unit : units) {
+    AddPackJobs(unit.patches, unit.packed, jobs);
+  }
+  RunPackJobs(jobs, frame_bytes, parallel);
 }
 
 void WriteTableDelta(duckdb::BinarySerializer& object,
@@ -444,12 +539,10 @@ void ReplayTableDelta(duckdb::ClientContext& context, TableReplay* replay,
       list.ReadObject([&](duckdb::BinaryDeserializer& run) { rows.Read(run); });
     });
   rows.Flush();
-  ReadUnits(object, 104, "segments", false,
+  const auto parallel = ParallelOn(context);
+  ReadUnits(object, stream, 104, "segments", false, replay, parallel,
             [&](uint64_t segment, const irs::DocumentMask* deleted,
                 std::span<const irs::FieldPatch> patches) {
-              if (!replay) {
-                return;
-              }
               if (deleted) {
                 replay->Delete(segment, *deleted);
               }
@@ -457,12 +550,9 @@ void ReplayTableDelta(duckdb::ClientContext& context, TableReplay* replay,
                 replay->Update(segment, patches);
               }
             });
-  ReadUnits(object, 105, "pieces", true,
+  ReadUnits(object, stream, 105, "pieces", true, replay, parallel,
             [&](uint64_t first, const irs::DocumentMask* deleted,
                 std::span<const irs::FieldPatch> patches) {
-              if (!replay) {
-                return;
-              }
               if (deleted) {
                 replay->DeleteMemory(first, *deleted);
               }

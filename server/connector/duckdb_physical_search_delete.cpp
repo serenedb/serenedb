@@ -206,14 +206,10 @@ duckdb::SinkFinalizeType SereneDBSearchDelete::Finalize(
   duckdb::OperatorSinkFinalizeInput& input) const {
   auto& gstate = input.global_state.Cast<SearchTableDeleteState>();
   auto& search_txn = gstate.sdb_txn->SearchTxn();
-  auto positions =
-    gstate.deleted_rows
-      ? std::move(*gstate.deleted_rows).Positions()
-      : irs::DocRemovalBuilder::Union(
-          gstate.positions,
-          [&](size_t count, absl::FunctionRef<void(size_t)> body) {
-            search::ParallelFor(context, count, body);
-          });
+  auto positions = gstate.deleted_rows
+                     ? std::move(*gstate.deleted_rows).Positions()
+                     : irs::DocRemovalBuilder::Union(
+                         gstate.positions, search::ParallelOn(context));
   if (!positions.Empty()) {
     search_txn.AddRemoval(context, gstate.search_table, std::move(positions));
   }

@@ -21,6 +21,7 @@
 #include <absl/strings/str_cat.h>
 
 #include <array>
+#include <cstring>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <iresearch/utils/compression.hpp>
 #include <magic_enum/magic_enum.hpp>
@@ -109,6 +110,7 @@ Bytes RoundTrip(compression::Method method, const Bytes& raw) {
   EXPECT_EQ(packed.frames.raw_bytes, raw.size());
   EXPECT_EQ(packed.frames.frame_bytes, kFrame);
   EXPECT_EQ(packed.frames.sizes, compressed.frames.sizes);
+  EXPECT_TRUE(packed.frames.raw_sizes.empty());
   EXPECT_TRUE(packed.stored == Stored(compressed));
   const auto decoded = compression::Decompress(packed);
   return Bytes(decoded.get(), decoded.get() + raw.size());
@@ -166,6 +168,98 @@ TEST(Compression, FramesCompressAndDecompressInParallel) {
                             Threads);
     EXPECT_EQ(decoded, raw);
   }
+}
+
+void WriteInPieces(compression::FrameWriter& writer, const Bytes& raw) {
+  constexpr std::array kPieces{size_t{1000}, size_t{7}, size_t{kFrame} + 5,
+                               size_t{1}, size_t{kFrame} * 3};
+  size_t at = 0;
+  for (size_t piece = 0; at < raw.size(); ++piece) {
+    const auto take =
+      std::min(kPieces[piece % kPieces.size()], raw.size() - at);
+    if (piece % 2 == 0) {
+      writer.WriteData(raw.data() + at, take);
+    } else {
+      auto* room = writer.Alloc(take);
+      ASSERT_TRUE(room);
+      std::memcpy(room, raw.data() + at, take);
+    }
+    at += take;
+  }
+}
+
+std::vector<Bytes> WrittenFrames(const compression::FrameWriter& writer) {
+  std::vector<Bytes> frames;
+  writer.ForEachFrame([&](irs::bytes_view frame) {
+    frames.emplace_back(frame.begin(), frame.end());
+  });
+  return frames;
+}
+
+Bytes PackedRoundTrip(const compression::Compressed& compressed) {
+  auto bytes = WritePacked(compressed);
+  const auto packed = ReadPacked(bytes);
+  EXPECT_EQ(packed.frames.sizes, compressed.frames.sizes);
+  EXPECT_EQ(packed.frames.raw_sizes, compressed.frames.raw_sizes);
+  const auto decoded = compression::Decompress(packed, Threads);
+  return Bytes(decoded.get(), decoded.get() + packed.frames.raw_bytes);
+}
+
+TEST(Compression, FrameWriterFramesRoundTrip) {
+  for (const auto method : kMethods) {
+    for (const size_t size :
+         {size_t{0}, size_t{1}, size_t{kFrame}, size_t{kFrame} * 3 + 17,
+          size_t{kFrame} * 20 + 3}) {
+      const auto raw = Text(size);
+      compression::FrameWriter writer{kFrame};
+      WriteInPieces(writer, raw);
+      ASSERT_EQ(writer.RawBytes(), raw.size());
+      const auto frames = WrittenFrames(writer);
+      Bytes joined;
+      for (const auto& frame : frames) {
+        EXPECT_FALSE(frame.empty());
+        EXPECT_LE(frame.size(), kFrame);
+        joined.insert(joined.end(), frame.begin(), frame.end());
+      }
+      EXPECT_EQ(joined, raw);
+      const auto compressed = compression::Compress(method, writer, Threads);
+      EXPECT_EQ(compressed.frames.raw_bytes, raw.size());
+      EXPECT_EQ(compressed.frames.frame_bytes, kFrame);
+      EXPECT_EQ(compressed.frames.sizes.size(), frames.size());
+      EXPECT_EQ(PackedRoundTrip(compressed), raw)
+        << magic_enum::enum_name(method.codec) << " " << size;
+    }
+  }
+}
+
+TEST(Compression, FrameWriterEndsFramesWithTheirPiece) {
+  const auto raw = Text(size_t{kFrame} * 4 + 50);
+  compression::FrameWriter writer{kFrame};
+  EXPECT_FALSE(writer.Alloc(0));
+  writer.WriteData(raw.data(), 100);
+  const size_t big = size_t{kFrame} * 2 + 10;
+  auto* room = writer.Alloc(big);
+  ASSERT_TRUE(room);
+  std::memcpy(room, raw.data() + 100, big);
+  auto* small = writer.Alloc(5);
+  ASSERT_TRUE(small);
+  std::memcpy(small, raw.data() + 100 + big, 5);
+  writer.WriteData(raw.data() + 105 + big, raw.size() - 105 - big);
+  ASSERT_EQ(writer.RawBytes(), raw.size());
+  const absl::InlinedVector<uint32_t, 1> expected{100, kFrame, kFrame, kFrame,
+                                                  kFrame - 50};
+  const auto frames = WrittenFrames(writer);
+  ASSERT_EQ(frames.size(), expected.size());
+  size_t at = 0;
+  for (size_t frame = 0; frame != frames.size(); ++frame) {
+    const auto begin = raw.begin() + static_cast<ptrdiff_t>(at);
+    EXPECT_EQ(frames[frame], Bytes(begin, begin + expected[frame])) << frame;
+    at += expected[frame];
+  }
+  const auto compressed =
+    compression::Compress(compression::kZstd1, writer, Threads);
+  EXPECT_EQ(compressed.frames.raw_sizes, expected);
+  EXPECT_EQ(PackedRoundTrip(compressed), raw);
 }
 
 TEST(Compression, TruncatedFrameIsCorrupted) {
@@ -234,6 +328,30 @@ TEST(Compression, ReadPackedRejectsInconsistentFrames) {
   auto larger = valid;
   larger.sizes[1] = 11;
   ASSERT_SQL_ERROR(ReadFrames(packed(larger)), ERRCODE_DATA_CORRUPTED);
+
+  auto uneven = valid;
+  uneven.raw_sizes = {kFrame - 5, 15};
+  EXPECT_EQ(ReadFrames(packed(uneven)).raw_sizes, uneven.raw_sizes);
+
+  auto raw_count = uneven;
+  raw_count.raw_sizes.push_back(1);
+  ASSERT_SQL_ERROR(ReadFrames(packed(raw_count)), ERRCODE_DATA_CORRUPTED);
+
+  auto raw_empty = uneven;
+  raw_empty.raw_sizes = {kFrame, 0};
+  ASSERT_SQL_ERROR(ReadFrames(packed(raw_empty)), ERRCODE_DATA_CORRUPTED);
+
+  auto raw_over = uneven;
+  raw_over.raw_sizes = {kFrame + 1, 9};
+  ASSERT_SQL_ERROR(ReadFrames(packed(raw_over)), ERRCODE_DATA_CORRUPTED);
+
+  auto raw_sum = uneven;
+  raw_sum.raw_sizes = {kFrame - 5, 14};
+  ASSERT_SQL_ERROR(ReadFrames(packed(raw_sum)), ERRCODE_DATA_CORRUPTED);
+
+  auto raw_larger = uneven;
+  raw_larger.sizes[1] = 16;
+  ASSERT_SQL_ERROR(ReadFrames(packed(raw_larger)), ERRCODE_DATA_CORRUPTED);
 }
 
 }  // namespace

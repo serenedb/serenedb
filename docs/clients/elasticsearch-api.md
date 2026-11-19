@@ -342,7 +342,7 @@ curl -s -u postgres: http://127.0.0.1:9200/articles/_explain/2 \
   -H 'Content-Type: application/json' -d '{"query": {"match": {"title": "search"}}}'
 ```
 
-The answer has `"matched": true` and the `explanation`, or `"matched": false` when the document does not match the query. A missing ID answers `404` with `"matched": false`.
+The answer has `"matched": true` and the `explanation`, or `"matched": false` when the document does not match the query. A missing ID answers `404` with `"matched": false`, and a request without a `query` answers `400`.
 
 ### Sorting and paging
 

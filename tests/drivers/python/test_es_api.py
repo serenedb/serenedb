@@ -939,6 +939,34 @@ def test_explain_one_document(conn, corpus):
     assert body["matched"] is True
     assert body["explanation"]["value"] == 1.0
 
+    status, body = _request(conn, "POST", f"/{corpus}/_explain/3",
+                            {"query": {"term": {"author": "aesop"}}})
+    assert status == 200, body
+    assert body["matched"] is False
+
+    status, body = _request(conn, "POST", f"/{corpus}/_explain/9",
+                            {"query": {"match_all": {}}})
+    assert status == 404, body
+    assert body == {"_index": corpus, "_id": "9", "matched": False}
+
+
+def test_explain_errors(conn, corpus):
+    cases = [
+        (f"/{corpus}/_explain/1", None, 400,
+         "action_request_validation_exception"),
+        (f"/{corpus}/_explain/1", {}, 400,
+         "action_request_validation_exception"),
+        (f"/{corpus}/_explain/1", {"match_all": {}}, 400, "parsing_exception"),
+        (f"/{corpus}/_explain/1", {"query": {"term": {"year": "abc"}}}, 400,
+         "mapper_parsing_exception"),
+        ("/drv_es_missing/_explain/1", {"query": {"match_all": {}}}, 404,
+         "index_not_found_exception"),
+    ]
+    for path, body, status, error in cases:
+        got, response = _request(conn, "POST", path, body)
+        assert got == status, (path, body, response)
+        assert response["error"]["type"] == error, (path, body, response)
+
 
 # --- aggregations + scroll ---------------------------------------------------
 

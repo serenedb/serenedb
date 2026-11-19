@@ -102,4 +102,7 @@ bool TranslateStoredQuery(std::string_view query_json, const FieldTypes& fields,
 bool ParseCountBody(std::string_view body, const FieldTypes& fields,
                     SearchRequest& out, HttpResponseWriter& writer);
 
+bool ParseExplainBody(std::string_view body, const FieldTypes& fields,
+                      SearchRequest& out, HttpResponseWriter& writer);
+
 }  // namespace sdb::network::http::es

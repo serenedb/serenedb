@@ -1113,19 +1113,22 @@ class ExplainHandler final : public HttpHandler {
       co_return {};
     }
     SearchRequest spec;
-    if (!ParseCountBody(FlattenBody(request.body), fields, spec, writer)) {
+    if (!ParseExplainBody(FlattenBody(request.body), fields, spec, writer)) {
       co_return {};
     }
+    const auto key = SqlLiteral(id);
     auto sql = absl::StrCat(
-      "SELECT ",
+      "SELECT m.hit FROM \"es\".", SqlIdentifier(index),
+      " AS d LEFT JOIN (SELECT ",
       spec.uses_match
         ? "BM25(t.tableoid), ts_explain_json(ts_explain(t.tableoid))"
-        : "1",
-      " FROM ", SearchRelation(index, spec),
-      " AS t WHERE \"_id\" = ", SqlLiteral(id));
+        : "TRUE",
+      " AS hit FROM ", SearchRelation(index, spec),
+      " AS t WHERE \"_id\" = ", key);
     if (!spec.where.empty()) {
       absl::StrAppend(&sql, " AND (", spec.where, ")");
     }
+    absl::StrAppend(&sql, ") AS m ON TRUE WHERE d.\"_id\" = ", key);
     auto result = co_await RunSql(ctx, sql, writer, index);
     if (!result) {
       co_return {};
@@ -1135,35 +1138,24 @@ class ExplainHandler final : public HttpHandler {
     sb.escape_and_append_with_quotes(index);
     sb.append_raw(R"(,"_id":)");
     sb.escape_and_append_with_quotes(id);
-    if (result->RowCount() != 0) {
-      sb.append_raw(R"(,"matched":true,"explanation":)");
-      if (spec.uses_match) {
-        sb.append_raw(
-          result->Collection().GetValue(1, 0).GetValue<std::string>());
-      } else {
-        sb.append_raw(kConstantExplanation);
-      }
-      sb.append_raw("}");
-      WriteJson(writer, HttpStatus::Ok, std::string_view{sb.view().value()});
-      co_return {};
-    }
-    auto exists = co_await RunSql(
-      ctx,
-      absl::StrCat("SELECT 1 FROM \"es\".", SqlIdentifier(index),
-                   " WHERE \"_id\" = ", SqlLiteral(id)),
-      writer, index);
-    if (!exists) {
-      co_return {};
-    }
-    if (exists->RowCount() == 0) {
+    if (result->RowCount() == 0) {
       sb.append_raw(R"(,"matched":false})");
       WriteJson(writer, HttpStatus::NotFound,
                 std::string_view{sb.view().value()});
       co_return {};
     }
-    sb.append_raw(R"(,"matched":false,"explanation":{"value":0.0,)"
-                  R"("description":"the document does not match the query",)"
-                  R"("details":[]}})");
+    const auto hit = result->Collection().GetValue(0, 0);
+    if (hit.IsNull()) {
+      sb.append_raw(R"(,"matched":false,"explanation":{"value":0.0,)"
+                    R"("description":"the document does not match the query",)"
+                    R"("details":[]}})");
+    } else {
+      sb.append_raw(R"(,"matched":true,"explanation":)");
+      sb.append_raw(spec.uses_match
+                      ? std::string_view{duckdb::StringValue::Get(hit)}
+                      : kConstantExplanation);
+      sb.append_raw("}");
+    }
     WriteJson(writer, HttpStatus::Ok, std::string_view{sb.view().value()});
     co_return {};
   }

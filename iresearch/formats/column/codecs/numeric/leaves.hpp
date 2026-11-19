@@ -26,6 +26,7 @@
 #include "iresearch/formats/column/codecs/bytes/lz4.hpp"
 #include "iresearch/formats/column/codecs/bytes/zstd.hpp"
 #include "iresearch/formats/column/codecs/compression_function.hpp"
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
 
 namespace irs::codecs {
@@ -49,9 +50,6 @@ struct Leaf final : State {
   ScratchVector<char> out;
 };
 
-using CompressLeafFn = std::span<const char> (*)(ColumnDataCheckpointData& data,
-                                                 std::span<const uint8_t> raw);
-
 template<typename Codec>
 std::span<const char> CompressLeaf(ColumnDataCheckpointData& data,
                                    std::span<const uint8_t> raw) {
@@ -65,15 +63,12 @@ std::span<const char> CompressLeaf(ColumnDataCheckpointData& data,
   return {leaf.out.data(), n};
 }
 
-template<ByteCodec kLeaf>
-inline constexpr CompressLeafFn kCompressLeaf = nullptr;
-
-template<>
-inline constexpr CompressLeafFn kCompressLeaf<ByteCodec::Lz4> =
-  CompressLeaf<Lz4AnyLevel>;
-
-template<>
-inline constexpr CompressLeafFn kCompressLeaf<ByteCodec::Zstd> =
-  CompressLeaf<Zstd>;
+inline std::span<const char> CompressLeaf(ByteCodec leaf,
+                                          ColumnDataCheckpointData& data,
+                                          std::span<const uint8_t> raw) {
+  SDB_ASSERT(leaf == ByteCodec::Lz4 || leaf == ByteCodec::Zstd);
+  return leaf == ByteCodec::Lz4 ? CompressLeaf<Lz4>(data, raw)
+                                : CompressLeaf<Zstd>(data, raw);
+}
 
 }  // namespace irs::codecs

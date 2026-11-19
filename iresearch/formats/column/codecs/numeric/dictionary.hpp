@@ -206,8 +206,8 @@ bool CompressDict(ColumnDataCheckpointData& data, FrameStore store) {
 }
 
 template<typename T, ByteCodec kLeaf, bool kShuffled>
-inline constexpr auto& kDict =
-  kStoredFrames<AnalyzeDict<T>, CompressDict<T>, kLeaf, kShuffled>;
+inline constexpr auto& kDict = kStoredFrames<Shape::Dictionary, AnalyzeDict<T>,
+                                             CompressDict<T>, kLeaf, kShuffled>;
 
 template<typename T>
 struct DictFfor final : State {
@@ -272,6 +272,7 @@ template<typename T>
 inline constexpr CompressionFunction kDictFfor{
   .analyze = AnalyzeDictFfor<T>,
   .compress = CompressDictFfor<T>,
+  .codec = CodecType::DictFfor,
 };
 
 template<typename T>

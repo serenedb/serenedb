@@ -131,14 +131,12 @@ class TextEncoder final : public State {
 
   void CompressAs(ColumnDataCheckpointData& data, const Config& config) {
     const auto target = _params.segment_target;
-    With(config, [&](auto& state) {
-      if (config.shape == Shape::Plain) {
-        SealRows(state, config, data, target, _segment);
-      } else {
-        CompressRows(state, config, data.Get<Values>(), 0, target, _segment,
-                     data);
-      }
-    });
+    if (config.shape == Shape::Plain) {
+      SealRows(_codec, config, data, target, _segment);
+    } else {
+      CompressRows(_codec, config, data.Get<Values>(), 0, target, _segment,
+                   data);
+    }
   }
 
   bool Compress(ColumnDataCheckpointData& data, Shape shape) {
@@ -164,9 +162,7 @@ class TextEncoder final : public State {
     const auto rest = first.begin + first.rows;
     data.FlushSegment(CodecOf(shape, kLeaf), std::move(*first.stats),
                       first.rows, first.bytes.View());
-    With(config, [&](auto& state) {
-      CompressRows(state, config, values, rest, target, first, data);
-    });
+    CompressRows(_codec, config, values, rest, target, first, data);
     return true;
   }
 
@@ -190,19 +186,17 @@ class TextEncoder final : public State {
       }
     }
     auto& seg = *_trials.emplace_back(std::make_unique<Segment>(_buffers));
-    With(config, [&](auto& state) {
-      if (values.trial.rows != 0) {
-        CompressRange(state, config, values, 0, values.trial.rows, seg);
-        return;
-      }
-      CutRows(state, config, values, 0, _params.segment_target, seg);
-      values.trial = {
-        .rows = seg.rows,
-        .input = seg.input,
-        .nulls = seg.nulls,
-        .max_len = seg.max_len,
-      };
-    });
+    if (values.trial.rows != 0) {
+      CompressRange(_codec, config, values, 0, values.trial.rows, seg);
+      return seg;
+    }
+    CutRows(_codec, config, values, 0, _params.segment_target, seg);
+    values.trial = {
+      .rows = seg.rows,
+      .input = seg.input,
+      .nulls = seg.nulls,
+      .max_len = seg.max_len,
+    };
     return seg;
   }
 
@@ -213,15 +207,6 @@ class TextEncoder final : public State {
       return Codec{type, dedup, tuning, target};
     } else {
       return Codec{type, dedup, tuning};
-    }
-  }
-
-  template<typename Visit>
-  void With(const Config& config, Visit&& visit) {
-    if constexpr (requires { _codec.With(config, visit); }) {
-      _codec.With(config, visit);
-    } else {
-      visit(_codec);
     }
   }
 
@@ -320,6 +305,7 @@ inline constexpr CompressionFunction kTextFunction{
     [](ColumnDataCheckpointData& data) {
       return data.Get<TextEncoder<Codec>>().Compress(data, kShape);
     },
+  .codec = CodecOf(kShape, Codec::kCodec),
 };
 
 template<typename Codec, Shape kShape>
@@ -330,6 +316,7 @@ inline constexpr CompressionFunction kNamedTextFunction{
         data, NamedConfig(kShape, Codec::kCodec, data.params));
       return true;
     },
+  .codec = CodecOf(kShape, Codec::kCodec),
 };
 
 template<typename Codec, Shape kShape, FrameDictionary kFrames>
@@ -343,6 +330,7 @@ inline constexpr CompressionFunction kFramedTextFunction{
     [](ColumnDataCheckpointData& data) {
       return data.Get<TextEncoder<Codec>>().Compress(data, kShape, kFrames);
     },
+  .codec = CodecOf(kShape, Codec::kCodec),
 };
 
 }  // namespace irs::codecs::text

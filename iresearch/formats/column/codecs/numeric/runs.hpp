@@ -171,7 +171,7 @@ bool CompressRle(ColumnDataCheckpointData& data, FrameStore store) {
 
 template<typename T, ByteCodec kLeaf>
 inline constexpr auto& kRle =
-  kStoredFrames<AnalyzeRle<T>, CompressRle<T>, kLeaf, false>;
+  kStoredFrames<Shape::Runs, AnalyzeRle<T>, CompressRle<T>, kLeaf, false>;
 
 template<typename T>
 struct RleFfor final : State {
@@ -267,6 +267,7 @@ template<typename T>
 inline constexpr CompressionFunction kRleFfor{
   .analyze = AnalyzeRleFfor<T>,
   .compress = CompressRleFfor<T>,
+  .codec = CodecType::RleFfor,
 };
 
 template<typename T>

@@ -33,92 +33,88 @@ namespace irs::codecs {
 namespace {
 
 template<typename T, ByteCodec kLeaf>
-std::span<const Contender> PlainContenders() {
-  static constexpr auto kCodec = CodecOf(Shape::Plain, kLeaf);
+CompressionFunctions PlainContenders() {
   if constexpr (kLeaf != ByteCodec::None) {
-    static constexpr Contender kContenders[] = {
-      {&kRaw<T, kLeaf, false>, kCodec},
-      {&kRaw<T, kLeaf, true>, kCodec},
-      {&kFor<T, kLeaf, false>, kCodec},
-      {&kFor<T, kLeaf, true>, kCodec},
+    static constexpr const CompressionFunction* kContenders[] = {
+      &kRaw<T, kLeaf, false>,
+      &kRaw<T, kLeaf, true>,
+      &kFor<T, kLeaf, false>,
+      &kFor<T, kLeaf, true>,
     };
     return kContenders;
   } else if constexpr (std::is_integral_v<T>) {
-    static constexpr Contender kContenders[] = {
-      {&kRaw<T, kLeaf, false>, kCodec},
-      {&kFor<T, kLeaf, false>, kCodec},
-      {&kFfor<T>, kCodec},
+    static constexpr const CompressionFunction* kContenders[] = {
+      &kRaw<T, kLeaf, false>,
+      &kFor<T, kLeaf, false>,
+      &kFfor<T>,
     };
     return kContenders;
   } else {
-    static constexpr Contender kContenders[] = {
-      {&kRaw<T, kLeaf, false>, kCodec},
-      {&kFor<T, kLeaf, false>, kCodec},
+    static constexpr const CompressionFunction* kContenders[] = {
+      &kRaw<T, kLeaf, false>,
+      &kFor<T, kLeaf, false>,
     };
     return kContenders;
   }
 }
 
 template<typename T, ByteCodec kLeaf>
-std::span<const Contender> DeltaContenders() {
-  static constexpr auto kCodec = CodecOf(Shape::Delta, kLeaf);
+CompressionFunctions DeltaContenders() {
   if constexpr (kLeaf != ByteCodec::None) {
-    static constexpr Contender kContenders[] = {
-      {&kDelta<T, kLeaf, false>, kCodec},
-      {&kDelta<T, kLeaf, true>, kCodec},
+    static constexpr const CompressionFunction* kContenders[] = {
+      &kDelta<T, kLeaf, false>,
+      &kDelta<T, kLeaf, true>,
     };
     return kContenders;
   } else if constexpr (std::is_integral_v<T>) {
-    static constexpr Contender kContenders[] = {
-      {&kDeltaFfor<T>, kCodec},
-      {&kDelta<T, kLeaf, false>, kCodec},
+    static constexpr const CompressionFunction* kContenders[] = {
+      &kDeltaFfor<T>,
+      &kDelta<T, kLeaf, false>,
     };
     return kContenders;
   } else {
-    static constexpr Contender kContenders[] = {
-      {&kDelta<T, kLeaf, false>, kCodec},
+    static constexpr const CompressionFunction* kContenders[] = {
+      &kDelta<T, kLeaf, false>,
     };
     return kContenders;
   }
 }
 
 template<typename T, ByteCodec kLeaf>
-std::span<const Contender> RunsContenders() {
-  static constexpr auto kCodec = CodecOf(Shape::Runs, kLeaf);
+CompressionFunctions RunsContenders() {
   if constexpr (kLeaf != ByteCodec::None) {
-    static constexpr Contender kContenders[] = {
-      {&kRle<T, kLeaf>, kCodec},
+    static constexpr const CompressionFunction* kContenders[] = {
+      &kRle<T, kLeaf>,
     };
     return kContenders;
   } else {
-    static constexpr Contender kContenders[] = {
-      {&kRle<T, kLeaf>, kCodec},
-      {&kRleFfor<T>, kCodec},
+    static constexpr const CompressionFunction* kContenders[] = {
+      &kRle<T, kLeaf>,
+      &kRleFfor<T>,
     };
     return kContenders;
   }
 }
 
 template<typename T, ByteCodec kLeaf>
-std::span<const Contender> DictionaryContenders() {
-  static constexpr auto kCodec = CodecOf(Shape::Dictionary, kLeaf);
+CompressionFunctions DictionaryContenders() {
   if constexpr (kLeaf != ByteCodec::None) {
-    static constexpr Contender kContenders[] = {
-      {&kDict<T, kLeaf, false>, kCodec},
-      {&kDict<T, kLeaf, true>, kCodec},
+    static constexpr const CompressionFunction* kContenders[] = {
+      &kDict<T, kLeaf, false>,
+      &kDict<T, kLeaf, true>,
     };
     return kContenders;
   } else {
-    static constexpr Contender kContenders[] = {
-      {&kDict<T, kLeaf, false>, kCodec},
-      {&kDictFfor<T>, kCodec},
+    static constexpr const CompressionFunction* kContenders[] = {
+      &kDict<T, kLeaf, false>,
+      &kDictFfor<T>,
     };
     return kContenders;
   }
 }
 
 template<typename T, Shape kShape, ByteCodec kLeaf>
-std::span<const Contender> ContendersOf() {
+CompressionFunctions ContendersOf() {
   if constexpr (kShape == Shape::Plain) {
     return PlainContenders<T, kLeaf>();
   } else if constexpr (kShape == Shape::Delta) {
@@ -150,6 +146,7 @@ constexpr CompressionFunction kContest{
       Contest(ContendersOf<T, kShape, kLeaf>(), data);
       return true;
     },
+  .codec = CodecOf(kShape, kLeaf),
 };
 
 template<typename T, Shape kShape, ByteCodec kLeaf>
@@ -168,7 +165,7 @@ constexpr const Codec* kCodecs[] = {
 };
 
 template<typename T, Shape kShape>
-std::span<const Contender> LeafContenders(ByteCodec leaf) {
+CompressionFunctions LeafContenders(ByteCodec leaf) {
   switch (leaf) {
     case ByteCodec::None:
       return ContendersOf<T, kShape, ByteCodec::None>();
@@ -182,7 +179,7 @@ std::span<const Contender> LeafContenders(ByteCodec leaf) {
 }
 
 template<typename T>
-std::span<const Contender> ShapeContenders(Shape shape, ByteCodec leaf) {
+CompressionFunctions ShapeContenders(Shape shape, ByteCodec leaf) {
   switch (shape) {
     case Shape::Plain:
       return LeafContenders<T, Shape::Plain>(leaf);
@@ -236,8 +233,8 @@ uint64_t SampledLz4Bytes(ColumnDataCheckpointData& data) {
     });
 }
 
-std::span<const Contender> NumericContenders(Shape shape, ByteCodec leaf,
-                                             duckdb::PhysicalType physical) {
+CompressionFunctions NumericContenders(Shape shape, ByteCodec leaf,
+                                       duckdb::PhysicalType physical) {
   return WithNumericType(physical, [&]<typename T>(std::type_identity<T>) {
     return ShapeContenders<T>(shape, leaf);
   });

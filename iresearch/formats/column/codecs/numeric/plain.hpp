@@ -76,7 +76,7 @@ bool CompressRaw(ColumnDataCheckpointData& data, FrameStore store) {
 
 template<typename T, ByteCodec kLeaf, bool kShuffled>
 inline constexpr auto& kRaw =
-  kStoredFrames<AnalyzeRaw<T>, CompressRaw<T>, kLeaf, kShuffled>;
+  kStoredFrames<Shape::Plain, AnalyzeRaw<T>, CompressRaw<T>, kLeaf, kShuffled>;
 
 template<typename T>
 struct For final : State {
@@ -147,7 +147,7 @@ bool CompressFor(ColumnDataCheckpointData& data, FrameStore store) {
 
 template<typename T, ByteCodec kLeaf, bool kShuffled>
 inline constexpr auto& kFor =
-  kStoredFrames<AnalyzeFor<T>, CompressFor<T>, kLeaf, kShuffled>;
+  kStoredFrames<Shape::Plain, AnalyzeFor<T>, CompressFor<T>, kLeaf, kShuffled>;
 
 template<typename T>
 uint64_t SampledForLz4Bytes(ColumnDataCheckpointData& data) {
@@ -181,8 +181,7 @@ uint64_t SampledForLz4Bytes(ColumnDataCheckpointData& data) {
       bytes = {scratch.shuffled.data(), bytes.size()};
     }
     sampled += bytes.size();
-    compressed +=
-      std::min(CompressLeaf<Lz4AnyLevel>(data, bytes).size(), bytes.size());
+    compressed += std::min(CompressLeaf<Lz4>(data, bytes).size(), bytes.size());
   }
   return sampled == 0 ? 0 : rows.size() * stored * compressed / sampled;
 }
@@ -236,6 +235,7 @@ template<typename T>
 inline constexpr CompressionFunction kFfor{
   .analyze = AnalyzeFfor<T>,
   .compress = CompressFfor<T>,
+  .codec = CodecType::Ffor,
 };
 
 template<typename T>

@@ -106,7 +106,8 @@ bool CompressDelta(ColumnDataCheckpointData& data, FrameStore store) {
 
 template<typename T, ByteCodec kLeaf, bool kShuffled>
 inline constexpr auto& kDelta =
-  kStoredFrames<AnalyzeDelta<T>, CompressDelta<T>, kLeaf, kShuffled>;
+  kStoredFrames<Shape::Delta, AnalyzeDelta<T>, CompressDelta<T>, kLeaf,
+                kShuffled>;
 
 template<typename T>
 struct DeltaFfor final : State {
@@ -237,6 +238,7 @@ template<typename T>
 inline constexpr CompressionFunction kDeltaFfor{
   .analyze = AnalyzeDeltaFfor<T>,
   .compress = CompressDeltaFfor<T>,
+  .codec = CodecType::DeltaFfor,
 };
 
 template<typename T>

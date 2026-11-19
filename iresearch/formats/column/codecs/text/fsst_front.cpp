@@ -635,20 +635,18 @@ Sections start at 8-byte boundaries.
 namespace {
 
 template<Shape kShape>
-constexpr Contender kFsstContender{
-  .function =
-    &text::kTextFunction<text::fsst_front::CompressionState<text::fsst::Fsst8>,
-                         kShape>,
-  .codec = CodecOf(kShape, ByteCodec::Fsst),
+constexpr const CompressionFunction* kFsstContenders[] = {
+  &text::kTextFunction<text::fsst_front::CompressionState<text::fsst::Fsst8>,
+                       kShape>,
 };
 
 }  // namespace
 
-std::span<const Contender> FsstTextContenders(Shape shape) {
+CompressionFunctions FsstTextContenders(Shape shape) {
   if (shape == Shape::Plain) {
-    return {&kFsstContender<Shape::Plain>, 1};
+    return kFsstContenders<Shape::Plain>;
   }
-  return {&kFsstContender<Shape::Dictionary>, 1};
+  return kFsstContenders<Shape::Dictionary>;
 }
 
 constinit const Codec kFsstFrontCodec =

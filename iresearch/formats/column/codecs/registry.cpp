@@ -88,7 +88,7 @@ const Codec* GetCodec(CodecType type, PhysicalType physical) {
                          : nullptr;
 }
 
-std::span<const Contender> Contenders(CodecType type, PhysicalType physical) {
+CompressionFunctions Contenders(CodecType type, PhysicalType physical) {
   if (!IsForm(type)) {
     return {};
   }

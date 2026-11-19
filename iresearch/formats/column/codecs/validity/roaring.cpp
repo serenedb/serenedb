@@ -1718,6 +1718,7 @@ constexpr CompressionFunction kFunction{
                               data.Get<Containers<kPhysical>>().state);
       return true;
     },
+  .codec = CodecType::Roaring,
 };
 
 std::unique_ptr<SegmentScanState> InitScan(const ColumnSegment& segment) {

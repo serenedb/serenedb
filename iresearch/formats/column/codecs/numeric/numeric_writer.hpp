@@ -117,7 +117,6 @@ struct NumericScratch final : State {
 struct FrameStore {
   ByteCodec leaf = ByteCodec::None;
   bool shuffled = false;
-  CompressLeafFn compress = nullptr;
 };
 
 template<typename Raw, typename Beaten>
@@ -146,7 +145,7 @@ uint64_t EstimateLeaf(const Geometry& geometry, uint32_t items,
       bytes.size() ==
       uint64_t{std::min(items - frame(k) * geometry.per, geometry.per)} *
         item_bytes);
-    const auto stored = store.compress(data, bytes);
+    const auto stored = CompressLeaf(store.leaf, data, bytes);
     compressed += std::min(stored.size(), bytes.size());
     samples.frames.push_back(frame(k));
     if (stored.size() < bytes.size()) {
@@ -217,7 +216,7 @@ class SegmentWriter {
     const std::span<const uint8_t> bytes = raw();
     m.frame.raw_len = static_cast<uint32_t>(bytes.size());
     if (compressible) {
-      const auto stored = store.compress(data, bytes);
+      const auto stored = CompressLeaf(store.leaf, data, bytes);
       if (stored.size() < bytes.size()) {
         _out.append(stored.data(), stored.size());
         m.frame.comp_len = static_cast<uint32_t>(stored.size());
@@ -429,18 +428,18 @@ bool CompressFrames(ColumnDataCheckpointData& data, const Items& items,
   return FlushNumeric<T>(data, items.shape, leaf, analysis.done);
 }
 
-template<auto kAnalyze, auto kCompress, ByteCodec kLeaf, bool kShuffled>
+template<Shape kShape, auto kAnalyze, auto kCompress, ByteCodec kLeaf,
+         bool kShuffled>
 inline constexpr CompressionFunction kStoredFrames{
   .analyze =
     [](ColumnDataCheckpointData& data, double bound) {
-      return kAnalyze(data, bound,
-                      FrameStore{kLeaf, kShuffled, kCompressLeaf<kLeaf>});
+      return kAnalyze(data, bound, FrameStore{kLeaf, kShuffled});
     },
   .compress =
     [](ColumnDataCheckpointData& data) {
-      return kCompress(data,
-                       FrameStore{kLeaf, kShuffled, kCompressLeaf<kLeaf>});
+      return kCompress(data, FrameStore{kLeaf, kShuffled});
     },
+  .codec = CodecOf(kShape, kLeaf),
 };
 
 template<typename T>

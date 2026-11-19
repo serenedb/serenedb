@@ -188,12 +188,10 @@ inline constexpr double kNoScore = std::numeric_limits<double>::infinity();
 struct CompressionFunction {
   double (*analyze)(ColumnDataCheckpointData& data, double bound) = nullptr;
   bool (*compress)(ColumnDataCheckpointData& data) = nullptr;
+  CodecType codec = CodecType::Auto;
 };
 
-struct Contender {
-  const CompressionFunction* function;
-  CodecType codec;
-};
+using CompressionFunctions = std::span<const CompressionFunction* const>;
 
 inline constexpr uint64_t kBlockSize = duckdb::Storage::DEFAULT_BLOCK_SIZE;
 
@@ -291,10 +289,10 @@ template<CodecType kType, auto kAnalyze, auto kCompress,
 inline constexpr CompressionFunction kStreamed{
   .analyze = Streamed<kType, kAnalyze, kCompress, kAccepts>::Analyze,
   .compress = Streamed<kType, kAnalyze, kCompress, kAccepts>::Compress,
+  .codec = kType,
 };
 
-void Contest(std::span<const Contender> contenders,
-             ColumnDataCheckpointData& data);
+void Contest(CompressionFunctions contenders, ColumnDataCheckpointData& data);
 
 const CompressionFunction& UncompressedCompression(
   duckdb::PhysicalType physical);

@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
@@ -50,7 +51,8 @@ class Utf8Decoder {
 
  private:
   TextEncoding _encoding;
-  std::string _carry;
+  std::array<char, 4> _carry{};
+  size_t _carry_size = 0;
 };
 
 class Utf8Encoder {

@@ -28,11 +28,12 @@
 
 #include <array>
 #include <bit>
-#include <cstring>
+#include <duckdb/function/encoding_function.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/system_compiler.hpp>
 #include <source_location>
 #include <string>
 
@@ -97,16 +98,35 @@ std::string HexBytes(std::string_view bytes) {
   std::rethrow_exception(InvalidUtf8Error(utf8, valid));
 }
 
-template<typename Unit>
-std::basic_string<Unit> Units(std::string_view bytes, bool swap) {
-  std::basic_string<Unit> units(bytes.size() / sizeof(Unit), Unit{});
-  std::memcpy(units.data(), bytes.data(), units.size() * sizeof(Unit));
-  if (swap) {
-    for (auto& unit : units) {
-      unit = std::byteswap(unit);
-    }
+duckdb::TextEncoding DuckDBEncoding(TextEncoding encoding) {
+  switch (encoding) {
+    case TextEncoding::Latin1:
+      return duckdb::TextEncoding::LATIN1;
+    case TextEncoding::Utf16Le:
+      return duckdb::TextEncoding::UTF16_LE;
+    case TextEncoding::Utf16Be:
+      return duckdb::TextEncoding::UTF16_BE;
+    case TextEncoding::Utf32Le:
+      return duckdb::TextEncoding::UTF32_LE;
+    case TextEncoding::Utf32Be:
+      return duckdb::TextEncoding::UTF32_BE;
+    case TextEncoding::Utf8:
+      break;
   }
-  return units;
+  SDB_UNREACHABLE();
+}
+
+size_t DecodeInto(TextEncoding encoding, std::string_view input,
+                  std::string& out) {
+  const auto result = duckdb::DecodeToUtf8(DuckDBEncoding(encoding),
+                                           input.data(), input.size(), out);
+  if (result.status == duckdb::Utf8DecodeStatus::INVALID) {
+    ThrowInvalid(encoding, encoding == TextEncoding::Utf32Le ||
+                               encoding == TextEncoding::Utf32Be
+                             ? "invalid UTF-32 code point"
+                             : "invalid UTF-16 code unit");
+  }
+  return result.read;
 }
 
 template<typename Unit>
@@ -175,56 +195,29 @@ std::string_view TextEncodingName(TextEncoding encoding) {
 }
 
 void Utf8Decoder::Decode(std::string_view input, std::string& out) {
-  const auto old = out.size();
-  switch (_encoding) {
-    case TextEncoding::Utf8:
-      out.append(input);
-      return;
-    case TextEncoding::Latin1:
-      out.resize(old +
-                 simdutf::utf8_length_from_latin1(input.data(), input.size()));
-      std::ignore = simdutf::convert_latin1_to_utf8(input.data(), input.size(),
-                                                    out.data() + old);
-      return;
-    case TextEncoding::Utf16Le:
-    case TextEncoding::Utf16Be: {
-      _carry.append(input);
-      auto units = Units<char16_t>(_carry, _encoding == TextEncoding::Utf16Be);
-      if (!units.empty() && units.back() >= 0xD800 && units.back() < 0xDC00) {
-        units.pop_back();
-      }
-      out.resize(old +
-                 simdutf::utf8_length_from_utf16le(units.data(), units.size()));
-      const auto written = simdutf::convert_utf16le_to_utf8(
-        units.data(), units.size(), out.data() + old);
-      if (written == 0 && !units.empty()) {
-        ThrowInvalid(_encoding, "invalid UTF-16 code unit");
-      }
-      out.resize(old + written);
-      _carry.erase(0, units.size() * sizeof(char16_t));
-      return;
-    }
-    case TextEncoding::Utf32Le:
-    case TextEncoding::Utf32Be: {
-      _carry.append(input);
-      const auto units =
-        Units<char32_t>(_carry, _encoding == TextEncoding::Utf32Be);
-      out.resize(old +
-                 simdutf::utf8_length_from_utf32(units.data(), units.size()));
-      const auto written = simdutf::convert_utf32_to_utf8(
-        units.data(), units.size(), out.data() + old);
-      if (written == 0 && !units.empty()) {
-        ThrowInvalid(_encoding, "invalid UTF-32 code point");
-      }
-      out.resize(old + written);
-      _carry.erase(0, units.size() * sizeof(char32_t));
-      return;
-    }
+  if (_encoding == TextEncoding::Utf8) {
+    out.append(input);
+    return;
   }
+  if (_carry_size != 0) {
+    const auto take =
+      input.copy(_carry.data() + _carry_size, _carry.size() - _carry_size);
+    const auto read =
+      DecodeInto(_encoding, {_carry.data(), _carry_size + take}, out);
+    if (read == 0) {
+      _carry_size += take;
+      return;
+    }
+    SDB_ASSERT(read > _carry_size);
+    input.remove_prefix(read - _carry_size);
+  }
+  const auto read = DecodeInto(_encoding, input, out);
+  SDB_ASSERT(input.size() - read < _carry.size());
+  _carry_size = input.copy(_carry.data(), _carry.size(), read);
 }
 
 void Utf8Decoder::Finish() const {
-  if (!_carry.empty()) {
+  if (_carry_size != 0) {
     ThrowInvalid(_encoding, "incomplete character at the end of the input");
   }
 }

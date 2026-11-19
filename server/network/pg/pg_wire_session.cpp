@@ -22,6 +22,7 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
+#include <absl/strings/ascii.h>
 #include <absl/strings/escaping.h>
 #include <absl/time/clock.h>
 #include <absl/time/time.h>
@@ -33,6 +34,7 @@
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/timestamp.hpp>
+#include <duckdb/formats/row_stream.hpp>
 #include <duckdb/formats/value_codecs.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/database_manager.hpp>
@@ -59,6 +61,7 @@
 #include "network/pg/scram_messages.h"
 #include "network/pg/startup_request.h"
 #include "pg/copy_batch_builder.h"
+#include "pg/copy_in_stream.h"
 #include "pg/input_error.h"
 #include "query/config.h"
 #include "server/utils/lifecycle.h"
@@ -330,6 +333,26 @@ inline bool IsTemporaryCreate(const duckdb::SQLStatement& statement) {
 // itself: TO STDOUT through the wire collector (parallel, zero-copy), FROM
 // STDIN through the batch queue. The other formats (json/parquet/...) go
 // through DuckDB's own CopyFunction instead.
+inline bool ScansCopyStream(const duckdb::CopyInfo& info) {
+  if (info.format != "csv" && info.format != "json") {
+    return false;
+  }
+  for (const auto& [name, values] : info.options) {
+    if (values.empty() || values.back().IsNull()) {
+      continue;
+    }
+    const auto value = absl::AsciiStrToLower(values.back().ToString());
+    if (name == "compression" && value != "none" && value != "uncompressed" &&
+        value != "auto" && value != "auto_detect") {
+      return false;
+    }
+    if (name == "encoding" && value != "utf-8") {
+      return false;
+    }
+  }
+  return true;
+}
+
 inline bool IsNativeCopyFormat(CopyFormat format) {
   return format == CopyFormat::Binary || format == CopyFormat::Text ||
          format == CopyFormat::Csv;
@@ -1647,6 +1670,15 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
     sdb::pg::kCopyBatchesPerThread};
   batches.OnStarve([this] { _copy_gate.Kick(); });
   _connection_ctx->SetSideChannel(&batches);
+  const auto stream_key = duckdb::RowStreamKey(copy_info.file_path);
+  const bool scans_stream =
+    format == CopyFormat::Other && ScansCopyStream(*bound_info);
+  if (scans_stream) {
+    duckdb::ClientContext& client = *_connection_ctx;
+    client.registered_state->Insert(
+      stream_key, duckdb::make_shared_ptr<duckdb::RowStreamState>(
+                    duckdb::make_shared_ptr<sdb::pg::CopyInStream>(batches)));
+  }
   _feeder_done.store(false, std::memory_order_relaxed);
   _copy_route.store(true, std::memory_order_release);
   WriteCopyInResponse(this->_send, IsBinaryWireFormat(format), copy_columns);
@@ -1684,6 +1716,10 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
   _copy_route.store(false, std::memory_order_release);
   _copy_room.Kick();
   _connection_ctx->SetSideChannel<sdb::pg::CopyInBatches>(nullptr);
+  if (scans_stream) {
+    duckdb::ClientContext& client = *_connection_ctx;
+    client.registered_state->Remove(stream_key);
+  }
   if (error) {
     std::rethrow_exception(error);
   }

@@ -79,6 +79,7 @@ target_sources(
         catalog/views/sdb/pg_stat_progress_create_table_as.cpp
         command_tag.cpp
         copy_in_batches.cpp
+        copy_in_stream.cpp
         copy_batch_builder.cpp
         connection_context.cpp
         types/aclitem.cpp

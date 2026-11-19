@@ -76,6 +76,67 @@ def test_copy_from_stdin(conn: psycopg.Connection, table_name: str,
         _drop(conn, table_name)
 
 
+_STREAM_ROWS = 400_000
+
+
+def _stream_payload(fmt: str, bad_line: int | None = None) -> bytes:
+    rows = []
+    for i in range(_STREAM_ROWS):
+        label = f"row {i} " + "x" * (i % 37)
+        if i + 1 == bad_line:
+            rows.append('{"x": oops}')
+        elif fmt == "csv":
+            rows.append(f'{i},"{label}"')
+        else:
+            rows.append(json.dumps({"x": i, "label": label}))
+    if fmt == "json_array":
+        return ("[\n" + ",\n".join(rows) + "\n]\n").encode()
+    return ("\n".join(rows) + "\n").encode()
+
+
+@pytest.mark.parametrize(
+    "fmt,options",
+    [
+        ("json", "FORMAT json"),
+        ("json_array", "FORMAT json"),
+        ("csv", "FORMAT csv, SAMPLE_SIZE 1000"),
+    ],
+    ids=["json_lines", "json_array", "csv_duckdb_option"],
+)
+def test_copy_from_stdin_reads_the_stream_in_ranges(conn: psycopg.Connection,
+                                                    table_name: str, fmt: str,
+                                                    options: str) -> None:
+    _create_int_varchar(conn, table_name)
+    payload = _stream_payload(fmt)
+    try:
+        with conn.cursor() as cur:
+            with cur.copy(
+                f'COPY public."{table_name}" FROM STDIN ({options})'
+            ) as cp:
+                for begin in range(0, len(payload), 1 << 20):
+                    cp.write(payload[begin:begin + (1 << 20)])
+            cur.execute(f'SELECT count(*), sum(x), sum(length(label)) '
+                        f'FROM public."{table_name}"')
+            assert cur.fetchone() == (
+                _STREAM_ROWS, _STREAM_ROWS * (_STREAM_ROWS - 1) // 2,
+                sum(len(f"row {i} ") + i % 37 for i in range(_STREAM_ROWS)))
+    finally:
+        _drop(conn, table_name)
+
+
+def test_copy_from_stdin_json_error_names_its_line(conn: psycopg.Connection,
+                                                   table_name: str) -> None:
+    _create_int_varchar(conn, table_name)
+    try:
+        with conn.cursor() as cur:
+            with pytest.raises(psycopg.errors.Error, match="line 300001"):
+                with cur.copy(f'COPY public."{table_name}" FROM STDIN '
+                              "(FORMAT json)") as cp:
+                    cp.write(_stream_payload("json", bad_line=300_001))
+    finally:
+        _drop(conn, table_name)
+
+
 _ENCODED_LABELS = {
     "LATIN1": ("latin-1", ["café", "ÿ a\\b"]),
     "UTF16LE": ("utf-16-le", ["é€😀", "a\\b 😀z"]),

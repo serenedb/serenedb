@@ -67,7 +67,7 @@ struct LmDirTermsFormula {
   IRS_FORCE_INLINE score_t operator()(score_t tf, score_t dl) const noexcept {
     const double doc_norm = 1 / (1 + dl * mu_inv);
     const double* const mu_p_inv = mu_p_invs.data();
-    return static_cast<score_t>(LogOfProduct<double>(
+    return static_cast<score_t>(LogOfProduct(
              mu_p_invs.size(),
              [&](size_t i) {
                return std::max((1 + tf * mu_p_inv[i]) * doc_norm, 1.0);

@@ -66,9 +66,9 @@ struct LmJmTermsFormula {
     SDB_ASSERT(dl != 0.f);
     const double x = num * tf / dl;
     const double* const denom_inv = denom_invs.data();
-    return static_cast<score_t>(LogOfProduct<double>(
-             denom_invs.size(),
-             [&](size_t i) { return 1 + x * denom_inv[i]; })) *
+    return static_cast<score_t>(
+             LogOfProduct(denom_invs.size(),
+                          [&](size_t i) { return 1 + x * denom_inv[i]; })) *
            boost;
   }
 

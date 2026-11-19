@@ -100,3 +100,23 @@ scorer	id	score
 dfi	3	0
 dfi chi_squared	3	0
 dfi saturated	3	0
+
+statement ok
+CREATE TABLE long_docs (id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+CREATE INDEX long_idx ON long_docs USING inverted (id, body phrase_words);
+
+statement ok
+INSERT INTO long_docs SELECT 1, repeat('x ', 2000) || 'a b c d e f g h i j k l m n o p';
+
+query
+SELECT id,
+       round(indri_dirichlet(long_idx.tableoid, 10), 3) AS score,
+       round(16 * ln((1 + 10 * 2.0 / 2017) / (2016 + 10)), 3) AS sum_of_terms
+FROM long_idx
+WHERE body @@ ts_phrase('a b c d e f g h i j k l m n o p')
+ORDER BY id;
+----
+id	score	sum_of_terms
+1	-121.663	-121.663

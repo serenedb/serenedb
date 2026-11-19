@@ -91,17 +91,17 @@ inline void CollectShare(ShareStats& stats, const FieldCollector* field,
 double LogOfProductInChunks(size_t n,
                             absl::FunctionRef<double(size_t)> factor) noexcept;
 
-template<typename T, typename Factor>
-IRS_FORCE_INLINE T LogOfProduct(size_t n, Factor factor) noexcept {
-  T product = 1;
+template<typename Factor>
+IRS_FORCE_INLINE double LogOfProduct(size_t n, Factor factor) noexcept {
+  double product = 1;
   for (size_t i = 0; i != n; ++i) {
     product *= factor(i);
   }
-  if (product >= std::numeric_limits<T>::min() &&
-      product <= std::numeric_limits<T>::max()) [[likely]] {
+  if (product >= std::numeric_limits<double>::min() &&
+      product <= std::numeric_limits<double>::max()) [[likely]] {
     return std::log(product);
   }
-  return static_cast<T>(LogOfProductInChunks(n, factor));
+  return LogOfProductInChunks(n, factor);
 }
 
 template<bool HasScale, typename Formula>
@@ -113,8 +113,16 @@ struct FreqScore : public ScoreOperatorOf<FreqScore<HasScale, Formula>> {
   template<ScoreMergeType MergeType = ScoreMergeType::Noop>
   IRS_FORCE_INLINE void ScoreImpl(score_t* res,
                                   scores_size_t n) const noexcept {
-    ScoreFreqs<MergeType, HasScale>(res, n, freq->value, norm,
-                                    TryGetValue(scale), formula);
+    if constexpr (requires {
+                    formula.template ScoreBlock<MergeType, HasScale>(
+                      res, n, freq->value, norm, TryGetValue(scale));
+                  }) {
+      formula.template ScoreBlock<MergeType, HasScale>(
+        res, n, freq->value, norm, TryGetValue(scale));
+    } else {
+      ScoreFreqs<MergeType, HasScale>(res, n, freq->value, norm,
+                                      TryGetValue(scale), formula);
+    }
   }
 
   const FreqBlockAttr* freq;

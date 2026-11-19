@@ -45,20 +45,11 @@ using namespace tests;
 
 TEST(lm_test, log_of_product_keeps_its_value_past_the_range_of_double) {
   const auto log_of = [](double factor) {
-    return irs::LogOfProduct<double>(40, [&](size_t) { return factor; });
+    return irs::LogOfProduct(40, [&](size_t) { return factor; });
   };
   EXPECT_NEAR(40 * std::log(1.5), log_of(1.5), 1e-12);
   EXPECT_NEAR(40 * std::log(1e20), log_of(1e20), 1e-9);
   EXPECT_NEAR(40 * std::log(1e-20), log_of(1e-20), 1e-9);
-}
-
-TEST(lm_test, log_of_product_keeps_its_value_past_the_range_of_float) {
-  const auto log_of = [](float factor) {
-    return irs::LogOfProduct<float>(4, [&](size_t) { return factor; });
-  };
-  EXPECT_FLOAT_EQ(4 * std::log(1.5f), log_of(1.5f));
-  EXPECT_FLOAT_EQ(4 * std::log(1e20f), log_of(1e20f));
-  EXPECT_FLOAT_EQ(4 * std::log(1e-20f), log_of(1e-20f));
 }
 
 TEST(lm_test, jm_consts) {

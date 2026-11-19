@@ -23,7 +23,9 @@
 #include <absl/container/inlined_vector.h>
 #include <absl/strings/str_cat.h>
 
+#include <algorithm>
 #include <cmath>
+#include <limits>
 #include <span>
 
 #include "iresearch/analysis/token_attributes.hpp"
@@ -59,12 +61,41 @@ IndriFormula IndriOf(score_t boost, score_t mu, score_t share) noexcept {
 }
 
 struct IndriTermsFormula {
-  IRS_FORCE_INLINE score_t operator()(score_t tf, score_t dl) const noexcept {
-    const score_t doc_inv = 1.f / (dl + mu);
-    const score_t* const mu_p = mu_ps.data();
-    return LogOfProduct<score_t>(
-             mu_ps.size(), [&](size_t i) { return (tf + mu_p[i]) * doc_inv; }) *
-           boost;
+  template<ScoreMergeType MergeType, bool HasScale>
+  IRS_FORCE_INLINE void ScoreBlock(
+    score_t* IRS_RESTRICT res, scores_size_t n,
+    const uint32_t* IRS_RESTRICT freq, const uint32_t* IRS_RESTRICT norm,
+    [[maybe_unused]] const score_t* IRS_RESTRICT scale) const noexcept {
+    score_t tf[kScoreBlock];
+    score_t doc_inv[kScoreBlock];
+    score_t product[kScoreBlock];
+    for (scores_size_t begin = 0; begin < n; begin += kScoreBlock) {
+      const auto size = std::min<scores_size_t>(kScoreBlock, n - begin);
+      for (scores_size_t i = 0; i != size; ++i) {
+        tf[i] = ScaledFreq<HasScale>(freq, scale, begin + i);
+        doc_inv[i] = 1.f / (TermCountToScore(norm[begin + i]) + mu);
+        product[i] = 1.f;
+      }
+      for (const auto mu_p : mu_ps) {
+        for (scores_size_t i = 0; i != size; ++i) {
+          product[i] *= (tf[i] + mu_p) * doc_inv[i];
+        }
+      }
+      for (scores_size_t i = 0; i != size; ++i) {
+        Merge<MergeType>(res[begin + i],
+                         LogOf(product[i], tf[i], doc_inv[i]) * boost);
+      }
+    }
+  }
+
+  IRS_FORCE_INLINE score_t LogOf(score_t product, score_t tf,
+                                 score_t doc_inv) const noexcept {
+    if (product >= std::numeric_limits<score_t>::min() &&
+        product <= std::numeric_limits<score_t>::max()) [[likely]] {
+      return std::log(product);
+    }
+    return static_cast<score_t>(LogOfProductInChunks(
+      mu_ps.size(), [&](size_t i) { return (tf + mu_ps[i]) * doc_inv; }));
   }
 
   score_t boost;

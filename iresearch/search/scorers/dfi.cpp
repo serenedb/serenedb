@@ -144,7 +144,7 @@ struct DFITermsFormula {
     }
     const double doc_inverse = Measure<M>::Inverse(dl);
     const auto* const term = terms.data();
-    const double log = LogOfProduct<double>(terms.size(), [&](size_t i) {
+    const double log = LogOfProduct(terms.size(), [&](size_t i) {
       const score_t expected = term[i].ratio * dl;
       if (tf > expected && expected > 0.f) {
         return Measure<M>::Growth(tf - expected, term[i].inverse * doc_inverse);

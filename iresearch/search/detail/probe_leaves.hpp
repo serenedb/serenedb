@@ -86,8 +86,8 @@ bool ConcreteClauses(std::span<const Term> terms,
   return doc != nullptr;
 }
 
-template<typename Result, typename Term, typename Scoring, typename ProbeClause,
-         typename Make>
+template<typename Result, Slice kSlice = Slice{}, typename Term,
+         typename Scoring, typename ProbeClause, typename Make>
 Result BuildProbeLeaves(std::span<const Term> terms,
                         std::span<const QueryBuilder::ptr> filters,
                         const TermReader* field, const SubReader& segment,
@@ -98,7 +98,7 @@ Result BuildProbeLeaves(std::span<const Term> terms,
   SDB_ASSERT(!terms.empty() || !filters.empty());
   const IndexInput* doc = nullptr;
   if (ConcreteClauses(terms, filters, field, scoring, doc)) {
-    return ResolveInput(*doc, [&]<typename Input> -> Result {
+    return ResolveInput<kSlice>(*doc, [&]<typename Input> -> Result {
       if constexpr (kScored) {
         using Leaf = PostingProbeScored<Input>;
         return make.template operator()<Leaf>(

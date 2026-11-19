@@ -28,6 +28,7 @@
 #include "iresearch/formats/ivf/ivf_reader.hpp"
 #include "iresearch/formats/ivf/quantizer.hpp"
 #include "iresearch/formats/posting_meta.hpp"
+#include "iresearch/search/detail/make_query.hpp"
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/detail/vector_slots.hpp"
 #include "iresearch/search/probe/impl.hpp"
@@ -180,6 +181,20 @@ template<typename Family, typename Ctx>
 typename Family::Result MakeKnnVector(const KnnVectorQuery& query,
                                       const Ctx& ctx) {
   return MakeVectorScored<Family, AcceptAll>(query, ctx, Unbounded());
+}
+
+template<typename Family, typename Ctx>
+typename Family::Result MakeQuery(const RangeVectorQuery& query,
+                                  const Ctx& ctx) {
+  return ResolveBool(query.Inclusive(), [&]<bool Inclusive>() {
+    if constexpr (kScoredPlan<Family, Ctx>) {
+      return MakeVectorScored<Family, RadiusGate<Inclusive>>(query, ctx,
+                                                             query.Threshold());
+    } else {
+      return MakeVectorDocs<Family, RadiusGate<Inclusive>>(query, ctx,
+                                                           query.Threshold());
+    }
+  });
 }
 
 }  // namespace irs::detail

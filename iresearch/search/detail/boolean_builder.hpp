@@ -76,13 +76,13 @@ Result<Family> MakeBitset(const BooleanGroups& groups, const SubReader& segment,
                                            Family::BitsetSpan(ctx, docs_count));
 }
 
-template<typename Family, typename Excludes, typename ExcludesArgs,
-         typename Ctx>
+template<typename Family, typename Excludes, Slice kSlice = Slice{},
+         typename ExcludesArgs, typename Ctx>
 Result<Family> MakeWindowOfTerms(std::span<const PostingClause> terms,
                                  const IndexInput& doc, bool batches,
                                  ExcludesArgs&& excludes, const Ctx& ctx) {
   SDB_ASSERT(terms.size() >= 2);
-  return ResolveInput(doc, [&]<typename Input> -> Result<Family> {
+  return ResolveInput<kSlice>(doc, [&]<typename Input> -> Result<Family> {
     using Leaf = PostingFill<Input>;
     using Others = fill::AndLeaves<Leaf>;
     const auto& own = FieldOf(terms.front(), nullptr);
@@ -105,13 +105,13 @@ Result<Family> MakeWindowOfTerms(std::span<const PostingClause> terms,
   });
 }
 
-template<typename Family, typename Term, typename Ctx>
+template<typename Family, Slice kSlice = Slice{}, typename Term, typename Ctx>
 Result<Family> MakeWindowDisjunctionOfTerms(std::span<const Term> terms,
                                             const TermReader* field,
                                             const IndexInput& doc,
                                             const Ctx& ctx) {
   SDB_ASSERT(terms.size() > 1);
-  return ResolveInput(doc, [&]<typename Input> -> Result<Family> {
+  return ResolveInput<kSlice>(doc, [&]<typename Input> -> Result<Family> {
     using Leaf = PostingFill<Input>;
     using Optional = OrGroup<fill::SetLeaves<Leaf>>;
     return Family::template MakeWindow<utils::Empty, utils::Empty, Optional,
@@ -202,14 +202,15 @@ TermScoring ScoringOf(const SubReader& segment, const Ctx& ctx,
           .merge = merge};
 }
 
-template<typename Family, typename Term, typename Scoring, typename Ctx>
+template<typename Family, Slice kSlice = Slice{}, typename Term,
+         typename Scoring, typename Ctx>
 Result<Family> MakeWindowDisjunction(std::span<const Term> terms,
                                      const TermReader* field,
                                      const IndexInput* doc,
                                      std::vector<FillNode::ptr>& rest,
                                      const Scoring& scoring, const Ctx& ctx,
                                      score_t absorbed) {
-  return BuildWindowSet<Result<Family>>(
+  return BuildWindowSet<Result<Family>, kSlice>(
     terms, field, doc, rest, scoring,
     [&]<typename Set>(auto&&... args) -> Result<Family> {
       return Family::template MakeWindow<utils::Empty, utils::Empty,
@@ -229,7 +230,8 @@ inline constexpr uint64_t kScoredScanValues = 2;
 inline constexpr uint64_t kWindowPasses = 2;
 inline constexpr uint64_t kMaskWordsPerLeadDoc = 2;
 
-template<typename Family, typename Scoring, typename Ctx>
+template<typename Family, Slice kSlice = Slice{}, typename Scoring,
+         typename Ctx>
 Result<Family> MakeScoredLeadWindow(std::span<const PostingClause> must,
                                     std::span<const PostingClause> should,
                                     const SubReader& segment,
@@ -262,7 +264,7 @@ Result<Family> MakeScoredLeadWindow(std::span<const PostingClause> must,
   if (scanned >= probed) {
     return {};
   }
-  return ResolveInput(*doc, [&]<typename Input> -> Result<Family> {
+  return ResolveInput<kSlice>(*doc, [&]<typename Input> -> Result<Family> {
     const auto make = [&]<ScoreMergeType M> -> Result<Family> {
       using Leaf = PostingFillScored<Input, M>;
       const auto clause =
@@ -294,7 +296,7 @@ template<typename Family>
 inline constexpr bool kWindowBatches =
   requires { requires Family::kWindowBatches; };
 
-template<typename Family, typename Ctx>
+template<typename Family, Slice kSlice = Slice{}, typename Ctx>
 Result<Family> MakeWindowConjunction(std::span<const PostingClause> terms,
                                      std::span<const QueryBuilder::ptr> filters,
                                      const SubReader& segment, const Ctx& ctx) {
@@ -316,12 +318,12 @@ Result<Family> MakeWindowConjunction(std::span<const PostingClause> terms,
                              : !DenseConjunction(terms, docs_count)) {
     return {};
   }
-  return MakeWindowOfTerms<Family, utils::Empty>(
+  return MakeWindowOfTerms<Family, utils::Empty, kSlice>(
     terms, *doc, !DenseConjunction(terms, docs_count), std::forward_as_tuple(),
     ctx);
 }
 
-template<typename Result, MaskSlice kSlice = MaskSlice::All, typename Term,
+template<typename Result, Slice kSlice = Slice{}, typename Term,
          typename Make>
 Result BuildNegationWindow(std::span<const Term> terms,
                            std::span<const QueryBuilder::ptr> filters,
@@ -375,7 +377,7 @@ Result<Family> MakeWindowNegation(
     });
 }
 
-template<typename Family, MaskSlice kSlice, typename Ctx>
+template<typename Family, Slice kSlice, typename Ctx>
 Result<Family> MakeWindowExclusion(
   std::span<const PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters,
@@ -400,7 +402,7 @@ Result<Family> MakeWindowExclusion(
         return {};
       }
       const auto& front = CookieOf(terms.front());
-      return ResolveInput(*doc, [&]<typename Input> -> Result<Family> {
+      return ResolveInput<kSlice>(*doc, [&]<typename Input> -> Result<Family> {
         return BuildWindowExcludes<Result<Family>, kSlice>(
           exclude_terms, exclude_filters, nullptr, segment, candidates,
           [&]<typename Excludes>(auto&& excludes) -> Result<Family> {
@@ -440,13 +442,14 @@ Result<Family> MakeWindowExclusion(
   return BuildWindowExcludes<Result<Family>, kSlice>(
     exclude_terms, exclude_filters, nullptr, segment, candidates,
     [&]<typename Excludes>(auto&& excludes) -> Result<Family> {
-      return MakeWindowOfTerms<Family, Excludes>(
+      return MakeWindowOfTerms<Family, Excludes, kSlice>(
         terms, *doc, !DenseConjunction(terms, docs_count),
         std::forward<decltype(excludes)>(excludes), ctx);
     });
 }
 
-template<typename Family, typename Scoring, typename Ctx>
+template<typename Family, Slice kSlice = Slice{}, typename Scoring,
+         typename Ctx>
 Result<Family> MakeWindowThreshold(std::span<const PostingClause> terms,
                                    const IndexInput* doc,
                                    std::vector<FillNode::ptr>& rest,
@@ -477,7 +480,7 @@ Result<Family> MakeWindowThreshold(std::span<const PostingClause> terms,
   };
   if (min_match > kBitplaneMaxMatch && rest.empty() &&
       scoring.uniformity != Terms::Mixed) {
-    auto counted = ResolveCountLeaves<Result<Family>>(
+    auto counted = ResolveCountLeaves<Result<Family>, kSlice>(
       *doc, scoring, [&]<typename Leaf, typename Plain> -> Result<Family> {
         return BuildWindowTerms<Result<Family>, Leaf, Plain>(
           terms, nullptr, doc, scoring,
@@ -490,7 +493,7 @@ Result<Family> MakeWindowThreshold(std::span<const PostingClause> terms,
       return counted;
     }
   }
-  return BuildWindowSet<Result<Family>>(
+  return BuildWindowSet<Result<Family>, kSlice>(
     terms, nullptr, doc, rest, scoring,
     [&]<typename Set>(auto&&... args) -> Result<Family> {
       return window.template operator()<ThresholdGroup, Set>(
@@ -498,14 +501,15 @@ Result<Family> MakeWindowThreshold(std::span<const PostingClause> terms,
     });
 }
 
-template<typename Family, typename Scoring, typename Make, typename Ctx>
+template<typename Family, Slice kSlice = Slice{}, typename Scoring,
+         typename Make, typename Ctx>
 Result<Family> BuildSparseConjunction(
   std::span<const PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters, const SubReader& segment,
   const Ctx& ctx, const Scoring& scoring, Make&& make) {
   if constexpr (kScores<Scoring>) {
     const auto& child = Family::Scoring(ctx);
-    return BuildConjunction<Result<Family>>(
+    return BuildConjunction<Result<Family>, kSlice>(
       terms, filters, nullptr, segment, scoring,
       probe::ScoredClauseOf(segment, child, scoring.recipe),
       [&](const QueryBuilder& filter) -> LeadNode::ptr {
@@ -513,18 +517,19 @@ Result<Family> BuildSparseConjunction(
       },
       std::forward<Make>(make));
   } else {
-    return BuildConjunction<Result<Family>>(
+    return BuildConjunction<Result<Family>, kSlice>(
       terms, filters, nullptr, segment, scoring, ProbeClauseOf(segment),
       kPlanLeadDocs, std::forward<Make>(make));
   }
 }
 
-template<typename Family, typename Scoring, typename Score, typename Ctx>
+template<typename Family, Slice kSlice = Slice{}, typename Scoring,
+         typename Score, typename Ctx>
 Result<Family> MakeSparseConjunction(std::span<const PostingClause> terms,
                                      std::span<const QueryBuilder::ptr> filters,
                                      const SubReader& segment, const Ctx& ctx,
                                      const Scoring& scoring, Score score) {
-  return BuildSparseConjunction<Family>(
+  return BuildSparseConjunction<Family, kSlice>(
     terms, filters, segment, ctx, scoring,
     [&]<typename Head, typename Tail>(auto&& head,
                                       auto&& tail) -> Result<Family> {
@@ -536,7 +541,7 @@ Result<Family> MakeSparseConjunction(std::span<const PostingClause> terms,
     });
 }
 
-template<typename Family, MaskSlice kSlice = MaskSlice::All, typename Score,
+template<typename Family, Slice kSlice = Slice{}, typename Score,
          typename Ctx>
 Result<Family> MakeSparseExclusionOf(
   LeadNode::ptr include, std::span<const PostingClause> exclude_terms,
@@ -590,7 +595,7 @@ Result<Family> MakeSparseNegation(
     });
 }
 
-template<typename Family, MaskSlice kSlice, typename Ctx>
+template<typename Family, Slice kSlice, typename Ctx>
 Result<Family> MakeSparseExclusion(
   std::span<const PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters,
@@ -605,7 +610,7 @@ Result<Family> MakeSparseExclusion(
         std::move(folded), exclude_terms, exclude_filters, segment, candidates,
         ctx, ScoreMergeType::Noop, utils::Empty{});
     }
-    return BuildSparseConjunction<Family>(
+    return BuildSparseConjunction<Family, kSlice>(
       terms, filters, segment, ctx, NoScoring{},
       [&]<typename Head, typename Tail>(auto&& head,
                                         auto&& tail) -> Result<Family> {
@@ -632,7 +637,7 @@ Result<Family> MakeSparseExclusion(
   }
   const auto& own = *terms.front().state.reader;
   const auto& meta = terms.front().state.cookie;
-  return ResolveInput(*DocOf(own), [&]<typename Input> -> Result<Family> {
+  return ResolveInput<kSlice>(*DocOf(own), [&]<typename Input> -> Result<Family> {
     using Include = PostingLead<Input>;
     return BuildExcludeSideOf<Result<Family>, Input, kSlice>(
       exclude_terms, exclude_filters, nullptr, segment, candidates,
@@ -648,7 +653,8 @@ Result<Family> MakeSparseExclusion(
   });
 }
 
-template<typename Family, typename Term, typename Scoring, typename Ctx>
+template<typename Family, Slice kSlice = Slice{}, typename Term,
+         typename Scoring, typename Ctx>
 Result<Family> MakeDisjunction(std::span<const Term> terms,
                                std::span<const QueryBuilder::ptr> filters,
                                const TermReader* field,
@@ -670,11 +676,12 @@ Result<Family> MakeDisjunction(std::span<const Term> terms,
       return folded;
     }
   }
-  return MakeWindowDisjunction<Family>(terms, field, doc, rest, scoring, ctx,
-                                       absorbed);
+  return MakeWindowDisjunction<Family, kSlice>(terms, field, doc, rest, scoring,
+                                               ctx, absorbed);
 }
 
-template<typename Family, typename Scoring, typename Ctx>
+template<typename Family, Slice kSlice = Slice{}, typename Scoring,
+         typename Ctx>
 Result<Family> MakeThreshold(std::span<const PostingClause> terms,
                              std::span<const QueryBuilder::ptr> filters,
                              const SubReader& segment, uint32_t min_match,
@@ -689,8 +696,8 @@ Result<Family> MakeThreshold(std::span<const PostingClause> terms,
                     })) {
     return {};
   }
-  return MakeWindowThreshold<Family>(terms, doc, rest, min_match, scoring, ctx,
-                                     absorbed);
+  return MakeWindowThreshold<Family, kSlice>(terms, doc, rest, min_match,
+                                             scoring, ctx, absorbed);
 }
 
 }  // namespace irs::detail::builder

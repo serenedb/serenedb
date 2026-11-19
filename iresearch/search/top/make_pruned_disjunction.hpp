@@ -43,8 +43,7 @@
 namespace irs::top {
 
 template<bool kExcludes, typename Leaf,
-         irs::detail::MaskSlice kSlice = irs::detail::MaskSlice::All,
-         typename Init>
+         irs::detail::Slice kSlice = irs::detail::Slice{}, typename Init>
 Root::ptr MakeDisjunctionOf(
   Init& init, size_t size, uint64_t postings,
   std::span<const irs::detail::PostingClause> excludes,
@@ -73,7 +72,7 @@ Root::ptr MakeDisjunctionOf(
     ctx, size, docs_count, init, std::forward_as_tuple());
 }
 
-template<bool kExcludes, typename Term, irs::detail::MaskSlice kSlice>
+template<bool kExcludes, typename Term, irs::detail::Slice kSlice>
 Root::ptr MakePrunedDisjunction(
   std::span<const Term> terms, std::span<const QueryBuilder::ptr> filters,
   irs::detail::Terms uniformity, const TermReader* field, const Scorer* scorer,
@@ -106,7 +105,7 @@ Root::ptr MakePrunedDisjunction(
         irs::detail::ClauseOf(terms[i], field, scorer, boost);
       const auto& own = *posting.state.reader;
       const auto* const doc = irs::detail::DocOf(own);
-      members.push_back(irs::detail::ResolveInput(
+      members.push_back(irs::detail::ResolveInput<kSlice>(
         *doc, [&]<typename Input> -> UnionMember::ptr {
           return memory::make_managed<TermUnionMember<Input>>(
             posting.state.cookie, *doc, irs::detail::LayoutOf(own), segment,
@@ -133,7 +132,7 @@ Root::ptr MakePrunedDisjunction(
   }
   const auto* const doc =
     irs::detail::DocOf(irs::detail::FieldOf(terms.front(), field));
-  return irs::detail::ResolveInput(*doc, [&]<typename Input> -> Root::ptr {
+  return irs::detail::ResolveInput<kSlice>(*doc, [&]<typename Input> -> Root::ptr {
     using Leaf = PostingPrunedDisj<Input>;
     const auto init = [&](Leaf& leaf, size_t i) {
       const auto posting =

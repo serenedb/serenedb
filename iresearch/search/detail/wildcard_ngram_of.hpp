@@ -23,6 +23,7 @@
 #include "iresearch/search/detail/boolean_groups.hpp"
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/make.hpp"
+#include "iresearch/search/detail/make_query.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/wildcard_ngram_slots.hpp"
 #include "iresearch/search/fill/all_docs.hpp"
@@ -145,6 +146,12 @@ Result Build(WildcardNGramKind, const WildcardNGramQuery& query,
         std::forward_as_tuple());
     });
   }
+}
+
+template<typename Family, typename Ctx>
+typename Family::Result MakeQuery(const WildcardNGramQuery& query,
+                                  const Ctx& ctx) {
+  return MakeKind<Family, WildcardNGramKind>(query, ctx);
 }
 
 }  // namespace irs::detail

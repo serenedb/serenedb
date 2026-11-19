@@ -96,19 +96,12 @@ Root::ptr MakePrunedPosting(
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
   const Context& ctx);
 
-Root::ptr MakePrunedConjunction(
-  std::span<const irs::detail::PostingClause> terms,
-  std::span<const QueryBuilder::ptr> filters, irs::detail::Terms uniformity,
-  std::span<const irs::detail::PostingClause> excludes,
-  std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
-  const Context& ctx, ScoreMergeType merge);
-
 Root::ptr MakePrunedReqOpt(const irs::detail::PostingClause& required,
                            std::span<const irs::detail::PostingClause> optional,
                            const SubReader& segment, const Context& ctx,
                            ScoreMergeType merge);
 
-template<irs::detail::MaskSlice kSlice>
+template<irs::detail::Slice kSlice>
 Root::ptr MakePrunedConjunctionIn(
   std::span<const irs::detail::PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters, irs::detail::Terms uniformity,
@@ -116,7 +109,7 @@ Root::ptr MakePrunedConjunctionIn(
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
   const Context& ctx, ScoreMergeType merge);
 
-template<irs::detail::MaskSlice kSlice>
+template<irs::detail::Slice kSlice>
 Root::ptr MakeNestedPrunedConjunctionIn(
   std::span<const irs::detail::PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters,
@@ -124,15 +117,8 @@ Root::ptr MakeNestedPrunedConjunctionIn(
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
   const Context& ctx, ScoreMergeType merge);
 
-Root::ptr MakePrunedDisjunction(
-  std::span<const irs::detail::PostingClause> terms,
-  std::span<const QueryBuilder::ptr> filters, irs::detail::Terms uniformity,
-  std::span<const irs::detail::PostingClause> excludes,
-  std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
-  const Context& ctx, ScoreMergeType merge, uint32_t min_match);
-
 template<bool kExcludes, typename Term,
-         irs::detail::MaskSlice kSlice = irs::detail::MaskSlice::All>
+         irs::detail::Slice kSlice = irs::detail::Slice{}>
 Root::ptr MakePrunedDisjunction(
   std::span<const Term> terms, std::span<const QueryBuilder::ptr> filters,
   irs::detail::Terms uniformity, const TermReader* field, const Scorer* scorer,

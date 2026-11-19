@@ -22,12 +22,39 @@
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/make_query.hpp"
+#include "iresearch/search/detail/with_mask.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/search/top/family.hpp"
 #include "iresearch/search/top/make.hpp"
 
 namespace irs::top {
 namespace {
+
+Root::ptr SlicedConjunction(const BooleanQuery& query, const Context& ctx) {
+  const std::span exclude_filters = query.Queries(Occur::MustNot);
+  return irs::detail::ResolveSlice(
+    exclude_filters, query.Segment(),
+    [&]<irs::detail::Slice kSlice> -> Root::ptr {
+      return MakePrunedConjunctionIn<kSlice>(
+        query.Terms(Occur::Must), query.Queries(Occur::Must),
+        query.Uniformity(Occur::Must),
+        query.Terms(Occur::MustNot), exclude_filters, query.Segment(), ctx,
+        query.MergeType());
+    });
+}
+
+Root::ptr SlicedDisjunction(const BooleanQuery& query, const Context& ctx) {
+  const std::span exclude_filters = query.Queries(Occur::MustNot);
+  return irs::detail::ResolveSlice(
+    exclude_filters, query.Segment(),
+    [&]<irs::detail::Slice kSlice> -> Root::ptr {
+      return MakePrunedDisjunction<true, irs::detail::PostingClause, kSlice>(
+        query.Terms(Occur::Should), query.Queries(Occur::Should),
+        query.Uniformity(Occur::Should), nullptr, nullptr, kNoBoost,
+        query.Terms(Occur::MustNot), exclude_filters, query.Segment(), ctx,
+        query.MergeType(), query.MinShouldMatch());
+    });
+}
 
 Root::ptr MakePruned(const BooleanQuery& query, const Context& ctx) {
   const auto merge = query.MergeType();
@@ -52,9 +79,7 @@ Root::ptr MakePruned(const BooleanQuery& query, const Context& ctx) {
         should.size() + should_filters.size() == 1) {
       return {};
     }
-    return MakePrunedDisjunction(
-      should, should_filters, query.Uniformity(Occur::Should), excludes,
-      exclude_filters, segment, ctx, merge, min_match);
+    return SlicedDisjunction(query, ctx);
   }
   if (!optional) {
     if (must.size() == 1 && must_filters.empty() &&
@@ -62,9 +87,7 @@ Root::ptr MakePruned(const BooleanQuery& query, const Context& ctx) {
       return MakePrunedPosting(must.front(), excludes, exclude_filters, segment,
                                ctx);
     }
-    return MakePrunedConjunction(must, must_filters,
-                                 query.Uniformity(Occur::Must), excludes,
-                                 exclude_filters, segment, ctx, merge);
+    return SlicedConjunction(query, ctx);
   }
   if (excludes.empty() && exclude_filters.empty() && min_match == 0 &&
       must.size() == 1 && must_filters.empty() && should_filters.empty() &&
@@ -88,10 +111,7 @@ Root::ptr MakeDenseConjunction(const BooleanQuery& query, const Context& ctx) {
         must, static_cast<doc_id_t>(segment.docs_count()))) {
     return {};
   }
-  return MakePrunedConjunction(
-    must, must_filters, query.Uniformity(Occur::Must),
-    query.Terms(Occur::MustNot), query.Queries(Occur::MustNot), segment, ctx,
-    merge);
+  return SlicedConjunction(query, ctx);
 }
 
 }  // namespace

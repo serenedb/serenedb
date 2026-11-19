@@ -56,7 +56,7 @@
 
 namespace irs::detail::builder {
 
-template<typename Family, typename Ctx>
+template<typename Family, Slice kSlice, typename Ctx>
 Result<Family> MakeRequired(std::span<const PostingClause> must,
                             std::span<const QueryBuilder::ptr> must_filters,
                             std::span<const PostingClause> should,
@@ -65,18 +65,18 @@ Result<Family> MakeRequired(std::span<const PostingClause> must,
                             const SubReader& segment, const Ctx& ctx,
                             ScoreMergeType merge, score_t absorbed);
 
-template<typename Family, typename Ctx, MaskSlice kSlice>
+template<typename Family, typename Ctx, Slice kSlice>
 Result<Family> MakeExclusionIn(const BooleanQuery& query, const Ctx& ctx,
                                ScoreMergeType merge, score_t absorbed);
 
 template<typename Family, typename Ctx>
 Result<Family> MakeExclusion(const BooleanQuery& query, const Ctx& ctx,
                              ScoreMergeType merge, score_t absorbed) {
-  return ResolveMaskSlice(query.Queries(Occur::MustNot), query.Segment(),
-                          [&]<MaskSlice kSlice> -> Result<Family> {
-                            return MakeExclusionIn<Family, Ctx, kSlice>(
-                              query, ctx, merge, absorbed);
-                          });
+  return ResolveSlice(query.Queries(Occur::MustNot), query.Segment(),
+                      [&]<Slice kSlice> -> Result<Family> {
+                        return MakeExclusionIn<Family, Ctx, kSlice>(
+                          query, ctx, merge, absorbed);
+                      });
 }
 
 template<typename Family, typename Ctx>
@@ -103,11 +103,14 @@ Result<Family> Make(const BooleanQuery& query, const Ctx& ctx,
       }
     }
   }
-  return MakeRequired<Family>(
-    query.Terms(Occur::Must), query.Queries(Occur::Must),
-    query.Terms(Occur::Should), query.Queries(Occur::Should),
-    query.Uniformity(Occur::Should), query.MinShouldMatch(), query.Segment(),
-    ctx, merge, absorbed);
+  return ResolveInputSlice<MaskSlice::Unmasked>(
+    query.Segment(), [&]<Slice kSlice> -> Result<Family> {
+      return MakeRequired<Family, kSlice>(
+        query.Terms(Occur::Must), query.Queries(Occur::Must),
+        query.Terms(Occur::Should), query.Queries(Occur::Should),
+        query.Uniformity(Occur::Should), query.MinShouldMatch(),
+        query.Segment(), ctx, merge, absorbed);
+    });
 }
 
 }  // namespace irs::detail::builder

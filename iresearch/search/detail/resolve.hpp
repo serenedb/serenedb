@@ -22,6 +22,7 @@
 
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/detail/slice.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/store/store_utils.hpp"
 
@@ -41,14 +42,6 @@ inline bool BoundsOf(const TermReader& field) noexcept {
 
 inline bool FreqOf(const TermReader& field) noexcept {
   return FeaturesHaveFreq(field.meta().index_features);
-}
-
-template<typename F>
-auto ResolveInput(const IndexInput& in, F&& f) {
-  if (in.GetType() == DataInput::Type::BytesViewInput) {
-    return f.template operator()<BytesViewInput>();
-  }
-  return f.template operator()<IndexInput>();
 }
 
 template<typename F>
@@ -111,6 +104,11 @@ inline const IndexInput* SegmentDoc(const SubReader& segment) {
     }
   }
   return nullptr;
+}
+
+inline InputSlice InputSliceOf(const SubReader& segment) {
+  const auto* doc = SegmentDoc(segment);
+  return doc && Mapped(*doc) ? InputSlice::Mapped : InputSlice::Stream;
 }
 
 inline bool ResolvePhrase(const TermReader* reader, PhraseHandles& out) {

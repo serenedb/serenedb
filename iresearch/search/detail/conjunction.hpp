@@ -43,8 +43,9 @@
 
 namespace irs::detail {
 
-template<typename Result, typename Term, typename Scoring, typename ProbeClause,
-         typename LeadClause, typename Make>
+template<typename Result, Slice kSlice = Slice{}, typename Term,
+         typename Scoring, typename ProbeClause, typename LeadClause,
+         typename Make>
 Result BuildConjunction(std::span<const Term> terms,
                         std::span<const QueryBuilder::ptr> filters,
                         const TermReader* field, const SubReader& segment,
@@ -196,7 +197,7 @@ Result BuildConjunction(std::span<const Term> terms,
       return build_opaque.template operator()<lead::Erased>(
         std::forward_as_tuple(std::move(node)));
     }
-    return ResolveInput(
+    return ResolveInput<kSlice>(
       *DocOf(FieldOf(rest.front(), field)), [&]<typename Input> -> Result {
         return build_concrete.template operator()<Input, lead::Erased>(
           std::forward_as_tuple(std::move(node)));
@@ -213,14 +214,14 @@ Result BuildConjunction(std::span<const Term> terms,
       return build_erased_lead(
         lead::MakePostingScored(posting, segment, scoring.recipe));
     }
-    return ResolveInput(*DocOf(own), [&]<typename Input> -> Result {
+    return ResolveInput<kSlice>(*DocOf(own), [&]<typename Input> -> Result {
       return build.template operator()<Input, PostingLeadScored<Input>>(
         std::forward_as_tuple(
           CookieOf(terms.front()), *DocOf(own), segment, own,
           scoring.recipe.Args(posting.stats, posting.boost)));
     });
   } else {
-    return ResolveInput(*DocOf(own), [&]<typename Input> -> Result {
+    return ResolveInput<kSlice>(*DocOf(own), [&]<typename Input> -> Result {
       return build.template operator()<Input, PostingLead<Input>>(
         std::forward_as_tuple(CookieOf(terms.front()), *DocOf(own),
                               LayoutOf(own), BoundsOf(own)));

@@ -33,7 +33,7 @@
 
 namespace irs::probe {
 
-template<typename Scoring, detail::MaskSlice kSlice>
+template<typename Scoring, detail::Slice kSlice>
 Node::ptr MakeExclusionIn(const BooleanQuery& query, uint64_t interrogations,
                           const Scoring& scoring, const detail::ScoredCtx& ctx,
                           score_t absorbed) {
@@ -63,7 +63,7 @@ Node::ptr MakeExclusionIn(const BooleanQuery& query, uint64_t interrogations,
       const auto& posting = must.front();
       const auto& own = *posting.state.reader;
       const auto& doc = *detail::DocOf(own);
-      return detail::ResolveInput(doc, [&]<typename Input> -> Node::ptr {
+      return detail::ResolveInput<kSlice>(doc, [&]<typename Input> -> Node::ptr {
         return detail::BuildExcludeSideOf<Node::ptr, Input, kSlice>(
           excludes, exclude_filters, nullptr, segment, reach, lead,
           [&]<typename Exclude>(auto&& excluded) -> Node::ptr {
@@ -78,7 +78,8 @@ Node::ptr MakeExclusionIn(const BooleanQuery& query, uint64_t interrogations,
           });
       });
     }
-    auto include = MakeIncluded(query, interrogations, scoring, ctx, absorbed);
+    auto include =
+      MakeIncluded<kSlice>(query, interrogations, scoring, ctx, absorbed);
     if (!include) {
       return {};
     }
@@ -121,7 +122,7 @@ Node::ptr MakeExclusionIn(const BooleanQuery& query, uint64_t interrogations,
       return excluded.template operator()<utils::Empty, Erased>(
         std::forward_as_tuple(), std::forward_as_tuple(std::move(optional)));
     }
-    return BuildMusts(
+    return BuildMusts<kSlice>(
       must, must_filters, segment, interrogations, scoring, ctx,
       [&]<typename Musts>(auto&& musts) -> Node::ptr {
         if (!optional) {

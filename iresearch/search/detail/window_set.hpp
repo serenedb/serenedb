@@ -69,14 +69,15 @@ auto ScoreOf(const Scoring& scoring, score_t absorbed) noexcept {
   }
 }
 
-template<typename Result, typename Scoring, typename Make>
+template<typename Result, Slice kSlice = Slice{}, typename Scoring,
+         typename Make>
 Result ResolveCountLeaves(const IndexInput& doc, const Scoring& scoring,
                           Make&& make) {
   if constexpr (kScores<Scoring>) {
-    return ResolveCountScored<Result>(doc, scoring.uniformity >= Terms::Scored,
-                                      scoring.merge, make);
+    return ResolveCountScored<Result, kSlice>(
+      doc, scoring.uniformity >= Terms::Scored, scoring.merge, make);
   } else {
-    return ResolveInput(doc, [&]<typename Input> -> Result {
+    return ResolveInput<kSlice>(doc, [&]<typename Input> -> Result {
       return make
         .template operator()<PostingCount<Input>, PostingCount<Input>>();
     });
@@ -260,7 +261,8 @@ inline fill::Node::ptr ScoredTermOf(const PostingClause& term,
     });
 }
 
-template<typename Result, typename Term, typename Scoring, typename Make>
+template<typename Result, Slice kSlice = Slice{}, typename Term,
+         typename Scoring, typename Make>
 Result BuildWindowSet(std::span<const Term> terms, const TermReader* field,
                       const IndexInput* doc, std::vector<FillNode::ptr>& rest,
                       const Scoring& scoring, Make&& make) {
@@ -272,14 +274,14 @@ Result BuildWindowSet(std::span<const Term> terms, const TermReader* field,
       });
   }
   if constexpr (!kScores<Scoring>) {
-    return ResolveInput(*doc, [&]<typename Input> -> Result {
+    return ResolveInput<kSlice>(*doc, [&]<typename Input> -> Result {
       using Leaf = PostingFill<Input>;
       return BuildWindowMix<Result, Leaf, Leaf>(terms, field, doc, rest,
                                                 scoring, make);
     });
   } else {
     if (scoring.uniformity != Terms::Mixed) {
-      return ResolveFillScored<Result>(
+      return ResolveFillScored<Result, kSlice>(
         *doc, scoring.uniformity >= Terms::Scored, scoring.merge,
         [&]<typename Leaf, typename Plain> -> Result {
           return BuildWindowMix<Result, Leaf, Plain>(terms, field, doc, rest,

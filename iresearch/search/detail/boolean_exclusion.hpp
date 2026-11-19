@@ -32,7 +32,7 @@
 
 namespace irs::detail::builder {
 
-template<typename Family, typename Ctx, MaskSlice kSlice>
+template<typename Family, typename Ctx, Slice kSlice>
 Result<Family> MakeExclusionWindowIn(const BooleanQuery& query, const Ctx& ctx,
                                      ScoreMergeType merge, score_t absorbed,
                                      uint64_t candidates);
@@ -43,7 +43,7 @@ Result<Family> MakeNegation(std::span<const PostingClause> excludes,
                             const SubReader& segment, uint64_t candidates,
                             const Ctx& ctx);
 
-template<typename Family, typename Ctx, MaskSlice kSlice>
+template<typename Family, typename Ctx, Slice kSlice>
 Result<Family> MakeExclusionIn(const BooleanQuery& query, const Ctx& ctx,
                                ScoreMergeType merge, score_t absorbed) {
   const auto& segment = query.Segment();
@@ -75,7 +75,7 @@ Result<Family> MakeExclusionIn(const BooleanQuery& query, const Ctx& ctx,
       const auto& own = *posting.state.reader;
       const auto& doc = *DocOf(own);
       const auto recipe = RecipeOf<Family>(segment, ctx);
-      return ResolveInput(doc, [&]<typename Input> -> Result<Family> {
+      return ResolveInput<kSlice>(doc, [&]<typename Input> -> Result<Family> {
         return BuildExcludesOf<Result<Family>, Input, kSlice>(
           Family::kRoot ? ExcludeUse::PerBlock : ExcludeUse::PerDoc, excludes,
           exclude_filters, nullptr, segment, candidates, candidates,
@@ -97,7 +97,7 @@ Result<Family> MakeExclusionIn(const BooleanQuery& query, const Ctx& ctx,
           });
       });
     }
-    auto include = MakeRequired<lead::Family>(
+    auto include = MakeRequired<lead::Family, InputOnly(kSlice)>(
       must, must_filters, should, should_filters,
       query.Uniformity(Occur::Should), min_match, segment,
       ScoredCtx{Family::Scoring(ctx)}, query.MergeType(), absorbed);
@@ -143,7 +143,7 @@ Result<Family> MakeExclusionIn(const BooleanQuery& query, const Ctx& ctx,
                                                  exclude_filters, segment,
                                                  candidates, ctx);
     }
-    auto include = MakeRequired<lead::Family>(
+    auto include = MakeRequired<lead::Family, InputOnly(kSlice)>(
       must, must_filters, should, should_filters, Terms::Mixed, min_match,
       segment, utils::Empty{}, ScoreMergeType::Noop, score_t{0});
     if (!include) {

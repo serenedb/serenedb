@@ -292,8 +292,8 @@ class ExcludeCosts {
   double _bitset_lead = 0;
 };
 
-template<typename Result, typename Input, bool kConcrete = true, typename Term,
-         typename Make>
+template<typename Result, typename Input, bool kConcrete = true,
+         Slice kSlice = Slice{}, typename Term, typename Make>
 Result BuildExcludeProbes(std::span<const Term> metas,
                           std::span<const QueryBuilder::ptr> filters,
                           const TermReader* field, const SubReader& segment,
@@ -317,7 +317,7 @@ Result BuildExcludeProbes(std::span<const Term> metas,
           }));
       };
       if constexpr (std::is_void_v<Input>) {
-        return ResolveInput(*doc, concrete);
+        return ResolveInput<kSlice>(*doc, concrete);
       } else {
         return concrete.template operator()<Input>();
       }
@@ -369,8 +369,8 @@ Result BuildExcludeFills(std::span<const Term> metas,
 
 inline constexpr auto kNoMaskFold = [](BitsetStorage&) noexcept {};
 
-template<typename Result, typename Input, bool kConcrete, typename Term,
-         typename Fold, typename Make>
+template<typename Result, typename Input, bool kConcrete,
+         Slice kSlice = Slice{}, typename Term, typename Fold, typename Make>
 Result BuildRestExcludes(ExcludeUse use, std::span<const Term> metas,
                          std::span<const QueryBuilder::ptr> filters,
                          std::span<const QueryBuilder::ptr> costed,
@@ -384,7 +384,7 @@ Result BuildRestExcludes(ExcludeUse use, std::span<const Term> metas,
                                  span,  docs_count, use};
   switch (costs.Probed(doc != nullptr)) {
     case ExcludeForm::Probes:
-      return BuildExcludeProbes<Result, Input, kConcrete>(
+      return BuildExcludeProbes<Result, Input, kConcrete, kSlice>(
         metas, filters, field, segment, candidates, make);
     case ExcludeForm::Bitset:
       return BuildExcludeBitset<Result>(
@@ -404,7 +404,7 @@ Result BuildRestExcludes(ExcludeUse use, std::span<const Term> metas,
     });
 }
 
-template<typename Result, typename Folded, MaskSlice kSlice, typename Term,
+template<typename Result, typename Folded, Slice kSlice, typename Term,
          typename Build, typename Make>
 Result PeelMask(std::span<const Term> metas,
                 std::span<const QueryBuilder::ptr> filters,
@@ -438,7 +438,7 @@ Result PeelMask(std::span<const Term> metas,
     });
 }
 
-template<typename Result, typename Input, MaskSlice kSlice = MaskSlice::All,
+template<typename Result, typename Input, Slice kSlice = Slice{},
          typename Term, typename Make>
 Result BuildExcludesOf(ExcludeUse use, std::span<const Term> metas,
                        std::span<const QueryBuilder::ptr> filters,
@@ -448,14 +448,14 @@ Result BuildExcludesOf(ExcludeUse use, std::span<const Term> metas,
     metas, filters, segment,
     [&]<bool kConcrete>(std::span<const QueryBuilder::ptr> rest, auto&& fold,
                         auto&& wrap) -> Result {
-      return BuildRestExcludes<Result, Input, kConcrete>(
+      return BuildRestExcludes<Result, Input, kConcrete, kSlice>(
         use, metas, rest, filters, field, segment, candidates, span, fold,
         wrap);
     },
     make);
 }
 
-template<typename Result, typename Input, MaskSlice kSlice = MaskSlice::All,
+template<typename Result, typename Input, Slice kSlice = Slice{},
          typename Term, typename Make>
 Result BuildExcludeSideOf(std::span<const Term> metas,
                           std::span<const QueryBuilder::ptr> filters,
@@ -466,7 +466,7 @@ Result BuildExcludeSideOf(std::span<const Term> metas,
     std::forward<Make>(make));
 }
 
-template<typename Result, typename Input, MaskSlice kSlice = MaskSlice::All,
+template<typename Result, typename Input, Slice kSlice = Slice{},
          typename Term, typename Make>
 Result BuildExcludeSideOf(std::span<const Term> metas,
                           std::span<const QueryBuilder::ptr> filters,
@@ -477,7 +477,7 @@ Result BuildExcludeSideOf(std::span<const Term> metas,
     std::forward<Make>(make));
 }
 
-template<typename Result, MaskSlice kSlice = MaskSlice::All, typename Term,
+template<typename Result, Slice kSlice = Slice{}, typename Term,
          typename Make>
 Result BuildExcludeSide(std::span<const Term> terms,
                         std::span<const QueryBuilder::ptr> filters,
@@ -488,7 +488,7 @@ Result BuildExcludeSide(std::span<const Term> terms,
     std::forward<Make>(make));
 }
 
-template<typename Result, MaskSlice kSlice = MaskSlice::All, typename Term,
+template<typename Result, Slice kSlice = Slice{}, typename Term,
          typename Make>
 Result BuildExcludeSide(std::span<const Term> terms,
                         std::span<const QueryBuilder::ptr> filters,
@@ -499,7 +499,7 @@ Result BuildExcludeSide(std::span<const Term> terms,
                                                 std::forward<Make>(make));
 }
 
-template<typename Result, typename Input, MaskSlice kSlice = MaskSlice::All,
+template<typename Result, typename Input, Slice kSlice = Slice{},
          typename Term, typename Make>
 Result BuildBlockExcludesOf(std::span<const Term> metas,
                             std::span<const QueryBuilder::ptr> filters,
@@ -510,7 +510,7 @@ Result BuildBlockExcludesOf(std::span<const Term> metas,
     std::forward<Make>(make));
 }
 
-template<typename Result, MaskSlice kSlice = MaskSlice::All, typename Term,
+template<typename Result, Slice kSlice = Slice{}, typename Term,
          typename Make>
 Result BuildBlockExcludes(std::span<const Term> terms,
                           std::span<const QueryBuilder::ptr> filters,
@@ -547,8 +547,8 @@ Result BuildExcludeBitset(std::span<const Term> metas,
     BuildBitset(buckets, doc, static_cast<doc_id_t>(segment.docs_count())));
 }
 
-template<typename Result, bool kConcrete, typename Term, typename Fold,
-         typename Make>
+template<typename Result, bool kConcrete, Slice kSlice = Slice{},
+         typename Term, typename Fold, typename Make>
 Result BuildRestWindowExcludes(std::span<const Term> metas,
                                std::span<const QueryBuilder::ptr> filters,
                                std::span<const QueryBuilder::ptr> costed,
@@ -567,7 +567,7 @@ Result BuildRestWindowExcludes(std::span<const Term> metas,
   };
   switch (costs.Windowed(doc != nullptr)) {
     case ExcludeForm::Probes:
-      return BuildExcludeProbes<Result, void, kConcrete>(
+      return BuildExcludeProbes<Result, void, kConcrete, kSlice>(
         metas, filters, field, segment, candidates, probed);
     case ExcludeForm::Bitset:
       return BuildExcludeBitset<Result>(
@@ -587,7 +587,7 @@ Result BuildRestWindowExcludes(std::span<const Term> metas,
     });
 }
 
-template<typename Result, MaskSlice kSlice = MaskSlice::All, typename Term,
+template<typename Result, Slice kSlice = Slice{}, typename Term,
          typename Make>
 Result BuildWindowExcludes(std::span<const Term> metas,
                            std::span<const QueryBuilder::ptr> filters,
@@ -597,7 +597,7 @@ Result BuildWindowExcludes(std::span<const Term> metas,
     metas, filters, segment,
     [&]<bool kConcrete>(std::span<const QueryBuilder::ptr> rest, auto&& fold,
                         auto&& wrap) -> Result {
-      return BuildRestWindowExcludes<Result, kConcrete>(
+      return BuildRestWindowExcludes<Result, kConcrete, kSlice>(
         metas, rest, filters, field, segment, candidates, fold, wrap);
     },
     make);

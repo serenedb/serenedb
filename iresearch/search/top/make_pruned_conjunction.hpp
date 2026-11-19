@@ -38,7 +38,7 @@
 
 namespace irs::top {
 
-template<irs::detail::MaskSlice kSlice>
+template<irs::detail::Slice kSlice>
 Root::ptr MakePrunedConjunctionIn(
   std::span<const irs::detail::PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters, irs::detail::Terms uniformity,
@@ -59,7 +59,7 @@ Root::ptr MakePrunedConjunctionIn(
     irs::detail::DocOf(irs::detail::FieldOf(terms.front(), nullptr));
   SDB_ASSERT(doc != nullptr);
   const auto size = terms.size();
-  return irs::detail::ResolveInput(*doc, [&]<typename Input> -> Root::ptr {
+  return irs::detail::ResolveInput<kSlice>(*doc, [&]<typename Input> -> Root::ptr {
     using Lead = PostingPrunedLead<Input>;
     using Clause = PostingPrunedClause<Input>;
     const auto init = [&](auto& leaf, size_t i) {

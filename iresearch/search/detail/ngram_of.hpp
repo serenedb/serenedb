@@ -27,6 +27,7 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/make.hpp"
+#include "iresearch/search/detail/make_query.hpp"
 #include "iresearch/search/detail/ngram_all_slots.hpp"
 #include "iresearch/search/detail/ngram_slots.hpp"
 #include "iresearch/search/detail/plan.hpp"
@@ -82,6 +83,14 @@ std::optional<score_t> ConstantOf(NGramKind<M>,
 template<NGramMatch M>
 const TermReader& FieldOf(NGramKind<M>, const NGramSimilarityQuery& query) {
   return *query.State().reader;
+}
+
+template<typename Family, typename Ctx>
+typename Family::Result MakeQuery(const NGramSimilarityQuery& query,
+                                  const Ctx& ctx) {
+  return ResolveNGram(query, [&]<NGramMatch M> {
+    return MakeKind<Family, NGramKind<M>>(query, ctx);
+  });
 }
 
 }  // namespace irs::detail

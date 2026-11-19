@@ -30,7 +30,7 @@
 
 namespace irs::detail::builder {
 
-template<typename Family, MaskSlice kSlice, typename Ctx>
+template<typename Family, Slice kSlice, typename Ctx>
 Result<Family> MakeScoredNegation(
   std::span<const PostingClause> excludes,
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
@@ -47,7 +47,7 @@ Result<Family> MakeScoredNegation(
     });
 }
 
-template<typename Family, typename Ctx, MaskSlice kSlice>
+template<typename Family, typename Ctx, Slice kSlice>
 Result<Family> MakeExclusionWindowIn(const BooleanQuery& query, const Ctx& ctx,
                                      ScoreMergeType merge, score_t absorbed,
                                      uint64_t candidates) {
@@ -91,7 +91,7 @@ Result<Family> MakeExclusionWindowIn(const BooleanQuery& query, const Ctx& ctx,
     return BuildWindowExcludes<Result<Family>, kSlice>(
       excludes, exclude_filters, nullptr, segment, candidates,
       [&]<typename Excludes>(auto&& negated) -> Result<Family> {
-        return BuildWindowSet<Result<Family>>(
+        return BuildWindowSet<Result<Family>, kSlice>(
           terms, nullptr, doc, rest, scoring,
           [&]<typename Set>(auto&&... args) -> Result<Family> {
             return Family::template MakeWindow<utils::Empty, utils::Empty,

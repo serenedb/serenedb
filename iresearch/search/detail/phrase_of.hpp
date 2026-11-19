@@ -28,6 +28,8 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/make.hpp"
+#include "iresearch/search/detail/make_query.hpp"
+#include "iresearch/search/detail/phrase_match.hpp"
 #include "iresearch/search/detail/phrase_slop_matcher.hpp"
 #include "iresearch/search/detail/phrase_slots.hpp"
 #include "iresearch/search/detail/plan.hpp"
@@ -146,6 +148,22 @@ template<PhraseMatch M, typename Query>
 const TermReader& FieldOf(PhraseKind<M>, const Query& query) {
   SDB_ASSERT(query.state.reader);
   return *query.state.reader;
+}
+
+template<typename Family, typename Ctx>
+typename Family::Result MakeQuery(const FixedPhraseQuery& query,
+                                  const Ctx& ctx) {
+  return ResolveMatch(query, [&]<PhraseMatch M> {
+    return MakeKind<Family, PhraseKind<M>>(query, ctx);
+  });
+}
+
+template<typename Family, typename Ctx>
+typename Family::Result MakeQuery(const VariadicPhraseQuery& query,
+                                  const Ctx& ctx) {
+  return ResolveMatch(query, [&]<PhraseMatch M> {
+    return MakeKind<Family, PhraseKind<M>>(query, ctx);
+  });
 }
 
 }  // namespace irs::detail

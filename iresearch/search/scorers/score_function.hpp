@@ -25,6 +25,8 @@
 #include <limits>
 
 #include "iresearch/types.hpp"
+#include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -46,6 +48,24 @@ enum class ScoreMergeType {
   Sum,
 
   Max,
+};
+
+struct MergeAxis : Axis<ScoreMergeType::Max, ScoreMergeType::Sum> {
+  static constexpr ScoreMergeType Of(ScoreMergeType type) noexcept {
+    SDB_ASSERT(type != ScoreMergeType::Noop);
+    return type;
+  }
+
+  static constexpr bool Matches(ScoreMergeType type,
+                                ScoreMergeType key) noexcept {
+    return key == ScoreMergeType::Max ? type == key
+                                      : type != ScoreMergeType::Max;
+  }
+};
+
+template<>
+struct AxisFor<ScoreMergeType> {
+  using Type = MergeAxis;
 };
 
 struct ScoreOperator : memory::Managed {

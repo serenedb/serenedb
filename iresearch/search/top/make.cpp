@@ -139,7 +139,7 @@ Ptr ProfileMember(const QueryBuilder& query, Ptr node) {
 
 template<typename Query>
 Root::ptr MakeAnyPhrase(const Query& query, const Context& ctx) {
-  return irs::detail::ResolveMatch(
+  return Resolve<irs::detail::PhraseMatchAxis>(
     query, [&]<irs::detail::PhraseMatch M> -> Root::ptr {
       if constexpr (M != irs::detail::PhraseMatch::Slop) {
         if (ctx.prune) {
@@ -159,7 +159,7 @@ Result MakePhraseOf(const QueryBuilder& query, Make&& make) {
     return {};
   }
   const auto resolve = [&](const auto& phrase) {
-    return irs::detail::ResolveMatch(
+    return Resolve<irs::detail::PhraseMatchAxis>(
       phrase, [&]<irs::detail::PhraseMatch M> -> Result {
         if constexpr (M != irs::detail::PhraseMatch::Slop) {
           return make.template operator()<M>(phrase);

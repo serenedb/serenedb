@@ -62,8 +62,8 @@ Root::ptr MakeNGram(const NGramSimilarityQuery& query) {
     return {};
   }
   const std::span metas{state.metas.data(), state.metas.size()};
-  return detail::ResolveBounds(h.bounds, [&]<bool Bounds> -> Root::ptr {
-    return Resolve<detail::InputAxis>(*h.doc, [&]<typename Input> -> Root::ptr {
+  return Resolve<detail::BoundsAxis>(h.bounds, [&]<bool Bounds> -> Root::ptr {
+    return Resolve(*h.doc, [&]<typename Input> -> Root::ptr {
       using Leaf = detail::PostingPos<Input, Bounds, true>;
       if constexpr (M == detail::NGramMatch::All) {
         using Slots = detail::NGramAllSlots<Leaf, 0, false, true>;
@@ -100,8 +100,8 @@ inline offsets::Root::ptr MakePostingOffsets(const PostingMeta& meta,
   if (!h.HasOffsets() || meta.docs_count == 0) {
     return {};
   }
-  return ResolveBounds(h.bounds, [&]<bool Bounds> -> offsets::Root::ptr {
-    return Resolve<InputAxis>(*h.doc, [&]<typename Input> -> offsets::Root::ptr {
+  return Resolve<BoundsAxis>(h.bounds, [&]<bool Bounds> -> offsets::Root::ptr {
+    return Resolve(*h.doc, [&]<typename Input> -> offsets::Root::ptr {
       using Leaf = detail::PostingPos<Input, Bounds, true>;
       using Impl = offsets::Impl<offsets::Posting<Leaf>>;
       return memory::make_managed<Impl>(meta, *h.doc, h.Layout(), *h.pos,

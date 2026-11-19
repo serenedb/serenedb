@@ -42,10 +42,10 @@ Result Build(NGramKind<M>, const NGramSimilarityQuery& query, uint64_t, F&& f) {
   const auto& state = query.State();
   const auto& h = state.handles;
   const std::span metas{state.metas.data(), state.metas.size()};
-  return ResolveBounds(h.bounds, [&]<bool Bounds> {
-    return Resolve<InputAxis>(*h.doc, [&]<typename Input> {
+  return Resolve<BoundsAxis>(h.bounds, [&]<bool Bounds> {
+    return Resolve(*h.doc, [&]<typename Input> {
       using Leaf = PostingPos<Input, Bounds>;
-      return ResolveArity<kSlotArity, kSlotFloor>(metas.size(), [&]<size_t N> {
+      return Resolve<ArityAxis<kSlotArity, kSlotFloor>>(metas.size(), [&]<size_t N> {
         if constexpr (M == NGramMatch::All) {
           return f.template operator()<NGramAllSlots<Leaf, N, Scored>>(
             metas, *h.doc, h.Layout(), *h.pos, h.pay, query.TotalTerms());
@@ -88,7 +88,7 @@ const TermReader& FieldOf(NGramKind<M>, const NGramSimilarityQuery& query) {
 template<typename Family, typename Ctx>
 typename Family::Result MakeQuery(const NGramSimilarityQuery& query,
                                   const Ctx& ctx) {
-  return ResolveNGram(query, [&]<NGramMatch M> {
+  return Resolve<NGramMatchAxis>(query, [&]<NGramMatch M> {
     return MakeKind<Family, NGramKind<M>>(query, ctx);
   });
 }

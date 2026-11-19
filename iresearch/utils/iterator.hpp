@@ -25,7 +25,6 @@
 #include <memory>
 
 #include "iresearch/utils/memory.hpp"
-#include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/std.hpp"
 

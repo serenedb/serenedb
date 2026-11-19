@@ -104,7 +104,8 @@ Result<Family> Make(const BooleanQuery& query, const Ctx& ctx,
     }
   }
   return ResolvePins<InputAxis>(
-    std::forward_as_tuple(query.Segment()), [&]<typename P> -> Result<Family> {
+    std::forward_as_tuple(SegmentDoc(query.Segment())),
+    [&]<typename P> -> Result<Family> {
       return MakeRequired<Family, P>(
         query.Terms(Occur::Must), query.Queries(Occur::Must),
         query.Terms(Occur::Should), query.Queries(Occur::Should),

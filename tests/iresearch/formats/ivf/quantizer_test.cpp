@@ -337,7 +337,7 @@ TEST_P(none_quantizer_test, roundtrip_is_bit_exact) {
   }
   EXPECT_EQ(std::memcmp(stored.data(), points.data(), stored.size()), 0);
 
-  ResolveEnum<VectorMetric>(metric, [&]<VectorMetric M> {
+  Resolve(metric, [&]<VectorMetric M> {
     for (size_t i = 0; i < n; ++i) {
       const score_t want = ComputeDistance<EffectiveQuantMetric(M)>(
         query.data(), points.data() + i * d, static_cast<uint16_t>(d));
@@ -472,7 +472,7 @@ TEST_P(panorama_quantizer_test, unpruned_matches_raw_basis) {
     scorer.Block(b, m, kNoPrune, scores.data() + b);
   }
 
-  ResolveEnum<VectorMetric>(metric, [&]<VectorMetric M> {
+  Resolve(metric, [&]<VectorMetric M> {
     for (size_t i = 0; i < n; ++i) {
       const score_t want = ComputeDistance<M>(
         query.data(), points.data() + i * d, static_cast<uint16_t>(d));
@@ -2142,7 +2142,7 @@ std::string BoundCaseName(const ::testing::TestParamInfo<BoundCase>& info) {
 float ExactScore(VectorMetric metric, const float* q, const float* x,
                  uint32_t d) {
   float out = 0.f;
-  ResolveEnum<VectorMetric>(metric, [&]<VectorMetric M>() {
+  Resolve(metric, [&]<VectorMetric M>() {
     out = ComputeDistance<M>(q, x, static_cast<uint16_t>(d));
   });
   return out;

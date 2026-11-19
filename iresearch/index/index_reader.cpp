@@ -22,7 +22,6 @@
 
 #include "index_reader.hpp"
 
-#include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/resource_manager.hpp"
 
 namespace irs {

@@ -317,7 +317,7 @@ Result BuildExcludeProbes(std::span<const Term> metas,
           }));
       };
       if constexpr (std::is_void_v<Input>) {
-        return Resolve<InputAxis, P>(*doc, concrete);
+        return Resolve<P>(*doc, concrete);
       } else {
         return concrete.template operator()<Input>();
       }
@@ -387,7 +387,7 @@ Result BuildRestExcludes(ExcludeUse use, std::span<const Term> metas,
       return BuildExcludeProbes<Result, Input, kConcrete, P>(
         metas, filters, field, segment, candidates, make);
     case ExcludeForm::Bitset:
-      return BuildExcludeBitset<Result>(
+      return BuildExcludeBitset<Result, P>(
         metas, filters, field, segment, *doc, [&](auto&& set) -> Result {
           fold(set);
           return make.template operator()<probe::BitsetDocs>(
@@ -521,7 +521,7 @@ Result BuildBlockExcludes(std::span<const Term> terms,
     std::forward<Make>(make));
 }
 
-template<typename Result, typename Term, typename Make>
+template<typename Result, typename P = NoPins, typename Term, typename Make>
 Result BuildExcludeBitset(std::span<const Term> metas,
                           std::span<const QueryBuilder::ptr> filters,
                           const TermReader* field, const SubReader& segment,
@@ -544,7 +544,7 @@ Result BuildExcludeBitset(std::span<const Term> metas,
     buckets.must.clear();
   }
   return make(
-    BuildBitset(buckets, doc, static_cast<doc_id_t>(segment.docs_count())));
+    BuildBitset<P>(buckets, doc, static_cast<doc_id_t>(segment.docs_count())));
 }
 
 template<typename Result, bool kConcrete, typename P = NoPins,
@@ -570,7 +570,7 @@ Result BuildRestWindowExcludes(std::span<const Term> metas,
       return BuildExcludeProbes<Result, void, kConcrete, P>(
         metas, filters, field, segment, candidates, probed);
     case ExcludeForm::Bitset:
-      return BuildExcludeBitset<Result>(
+      return BuildExcludeBitset<Result, P>(
         metas, filters, field, segment, *doc, [&](auto&& set) -> Result {
           fold(set);
           return probed.template operator()<probe::BitsetDocs>(

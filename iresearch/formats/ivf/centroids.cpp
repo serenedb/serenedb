@@ -464,7 +464,7 @@ void CentroidsTree::Search(std::span<const float> query, IndexInput& in,
     .size = _root.size};
   std::vector<LayerBuffers> layers;
   std::vector<CentroidsNode::Candidate> leaves;
-  irs::ResolveEnum<VectorMetric>(_head.metric, [&]<VectorMetric Metric>() {
+  Resolve(_head.metric, [&]<VectorMetric Metric>() {
     CentroidsNode::Search<Metric>(query, in, width, _root.level,
                                   std::span{&root_view, 1}, 0, _root.size,
                                   layers, leaves);

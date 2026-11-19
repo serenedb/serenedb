@@ -402,15 +402,16 @@ struct BitsetBuckets {
   }
 };
 
-inline BitsetStorage BuildBitset(BitsetBuckets& buckets, const IndexInput& doc,
-                                 doc_id_t docs_count) {
+template<typename P = NoPins>
+BitsetStorage BuildBitset(BitsetBuckets& buckets, const IndexInput& doc,
+                          doc_id_t docs_count) {
   SDB_ASSERT(!buckets.must.empty() || !buckets.fills.empty());
   SDB_ASSERT(buckets.fills.empty() || buckets.must.size() <= 1);
   BitsetStorage bits{docs_count};
   auto* const words = bits.Words();
   const auto seed = buckets.Seed(docs_count);
 
-  Resolve<InputAxis>(doc, [&]<typename Input> {
+  Resolve<P>(doc, [&]<typename Input> {
     PostingReader<Input> reader{doc};
     if (!buckets.must.empty()) {
       OrBits or_seed{words};
@@ -469,8 +470,10 @@ inline BitsetStorage BuildBitset(BitsetBuckets& buckets, const IndexInput& doc,
     }
   });
 
-  if (buckets.masked != nullptr) {
-    ResolveDocsMask(*buckets.masked, [&]<DocsMaskType Mask>(Mask mask) {
+  if constexpr (P::template Pinned<MaskedAxis>(false)) {
+    SDB_ASSERT(buckets.masked == nullptr);
+  } else if (buckets.masked != nullptr) {
+    ResolveDocsMask<P>(*buckets.masked, [&]<DocsMaskType Mask>(Mask mask) {
       mask.Remove(BitsetStorage::kMin, bits.End(), words);
     });
   }

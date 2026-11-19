@@ -52,7 +52,7 @@ Result Build(TokenPhraseKind, const TokenPhraseQuery& query,
                                         query, Scored);
   };
   if constexpr (Scored) {
-    return ResolveBool(IsSloppy(query), make);
+    return Resolve(IsSloppy(query), make);
   } else {
     return make.template operator()<false>();
   }

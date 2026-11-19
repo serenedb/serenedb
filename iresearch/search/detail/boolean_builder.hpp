@@ -67,11 +67,11 @@ consteval bool LazyGroups() {
   }
 }
 
-template<typename Family, typename Ctx>
+template<typename Family, typename P = NoPins, typename Ctx>
 Result<Family> MakeBitset(const BooleanGroups& groups, const SubReader& segment,
                           const Ctx& ctx) {
   const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
-  return MakeBooleanBitset<Result<Family>>(groups, segment,
+  return MakeBooleanBitset<Result<Family>, P>(groups, segment,
                                            Family::BitsetTable(ctx),
                                            Family::BitsetSpan(ctx, docs_count));
 }
@@ -82,7 +82,7 @@ Result<Family> MakeWindowOfTerms(std::span<const PostingClause> terms,
                                  const IndexInput& doc, bool batches,
                                  ExcludesArgs&& excludes, const Ctx& ctx) {
   SDB_ASSERT(terms.size() >= 2);
-  return Resolve<InputAxis, P>(doc, [&]<typename Input> -> Result<Family> {
+  return Resolve<P>(doc, [&]<typename Input> -> Result<Family> {
     using Leaf = PostingFill<Input>;
     using Others = fill::AndLeaves<Leaf>;
     const auto& own = FieldOf(terms.front(), nullptr);
@@ -111,7 +111,7 @@ Result<Family> MakeWindowDisjunctionOfTerms(std::span<const Term> terms,
                                             const IndexInput& doc,
                                             const Ctx& ctx) {
   SDB_ASSERT(terms.size() > 1);
-  return Resolve<InputAxis, P>(doc, [&]<typename Input> -> Result<Family> {
+  return Resolve<P>(doc, [&]<typename Input> -> Result<Family> {
     using Leaf = PostingFill<Input>;
     using Optional = OrGroup<fill::SetLeaves<Leaf>>;
     return Family::template MakeWindow<utils::Empty, utils::Empty, Optional,
@@ -132,19 +132,19 @@ Result<Family> MakeWindowDisjunctionOfTerms(std::span<const Term> terms,
   });
 }
 
-template<typename Family, typename Term, typename Ctx>
+template<typename Family, typename P = NoPins, typename Term, typename Ctx>
 Result<Family> MakeDisjunctionOfTerms(std::span<const Term> terms,
                                       const TermReader* field,
                                       const IndexInput& doc,
                                       doc_id_t docs_count, const Ctx& ctx) {
   SDB_ASSERT(terms.size() > 1);
   if (Family::BitsetSpan(ctx, docs_count) >= docs_count) {
-    if (auto folded = MakeBitsetOf<Result<Family>>(
+    if (auto folded = MakeBitsetOf<Result<Family>, P>(
           terms, field, doc, docs_count, Family::BitsetTable(ctx))) {
       return folded;
     }
   }
-  return MakeWindowDisjunctionOfTerms<Family>(terms, field, doc, ctx);
+  return MakeWindowDisjunctionOfTerms<Family, P>(terms, field, doc, ctx);
 }
 
 template<typename Family, typename Ctx>
@@ -264,7 +264,7 @@ Result<Family> MakeScoredLeadWindow(std::span<const PostingClause> must,
   if (scanned >= probed) {
     return {};
   }
-  return Resolve<InputAxis, P>(*doc, [&]<typename Input> -> Result<Family> {
+  return Resolve<P>(*doc, [&]<typename Input> -> Result<Family> {
     const auto make = [&]<ScoreMergeType M> -> Result<Family> {
       using Leaf = PostingFillScored<Input, M>;
       const auto clause =
@@ -284,11 +284,7 @@ Result<Family> MakeScoredLeadWindow(std::span<const PostingClause> must,
                               }),
         std::forward_as_tuple());
     };
-    if (scoring.merge == ScoreMergeType::Max) {
-      return make.template operator()<ScoreMergeType::Max>();
-    }
-    SDB_ASSERT(scoring.merge == ScoreMergeType::Sum);
-    return make.template operator()<ScoreMergeType::Sum>();
+    return Resolve<P>(scoring.merge, make);
   });
 }
 
@@ -402,7 +398,7 @@ Result<Family> MakeWindowExclusion(
         return {};
       }
       const auto& front = CookieOf(terms.front());
-      return Resolve<InputAxis, P>(*doc, [&]<typename Input> -> Result<Family> {
+      return Resolve<P>(*doc, [&]<typename Input> -> Result<Family> {
         return BuildWindowExcludes<Result<Family>, P>(
           exclude_terms, exclude_filters, nullptr, segment, candidates,
           [&]<typename Excludes>(auto&& excludes) -> Result<Family> {
@@ -604,7 +600,7 @@ Result<Family> MakeSparseExclusion(
   uint64_t candidates, const Ctx& ctx) {
   SDB_ASSERT(!terms.empty() || !filters.empty());
   if (terms.size() + filters.size() > 1) {
-    if (auto folded = MakeConjunctionBitset<LeadNode::ptr>(
+    if (auto folded = MakeConjunctionBitset<LeadNode::ptr, P>(
           terms, filters, nullptr, segment, nullptr)) {
       return MakeSparseExclusionOf<Family, P>(
         std::move(folded), exclude_terms, exclude_filters, segment, candidates,
@@ -637,7 +633,7 @@ Result<Family> MakeSparseExclusion(
   }
   const auto& own = *terms.front().state.reader;
   const auto& meta = terms.front().state.cookie;
-  return Resolve<InputAxis, P>(*DocOf(own), [&]<typename Input> -> Result<Family> {
+  return Resolve<P>(*DocOf(own), [&]<typename Input> -> Result<Family> {
     using Include = PostingLead<Input>;
     return BuildExcludeSideOf<Result<Family>, Input, P>(
       exclude_terms, exclude_filters, nullptr, segment, candidates,
@@ -670,7 +666,7 @@ Result<Family> MakeDisjunction(std::span<const Term> terms,
     return {};
   }
   if constexpr (!kScores<Scoring>) {
-    if (auto folded = MakeBitset<Family>(
+    if (auto folded = MakeBitset<Family, P>(
           {.should = terms, .should_filters = filters, .should_fills = &rest},
           segment, ctx)) {
       return folded;

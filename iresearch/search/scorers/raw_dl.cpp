@@ -28,7 +28,7 @@
 #include "iresearch/search/scorers/score_inputs.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/utils/empty.hpp"
-#include "iresearch/utils/misc.hpp"
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/shared.hpp"
 
 namespace irs {
@@ -80,7 +80,7 @@ ScoreFunction RawDL::PrepareScorer(const ScoreContext& ctx) const {
 
   const auto* scale = ScaleOf(ctx);
 
-  return ResolveBool(scale != nullptr, [&]<bool HasScale>() {
+  return Resolve(scale != nullptr, [&]<bool HasScale>() {
     return ScoreFunction::Make<RawDLScore<HasScale>>(ctx.boost, norm, scale);
   });
 }

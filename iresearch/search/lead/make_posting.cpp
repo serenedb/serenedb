@@ -75,7 +75,7 @@ Node::ptr MakePostingScored(const detail::PostingClause& posting,
       });
   }
   const auto& doc = *detail::DocOf(own);
-  return Resolve<detail::InputAxis>(doc, [&]<typename Input> -> Node::ptr {
+  return Resolve(doc, [&]<typename Input> -> Node::ptr {
     using Leaf = detail::PostingLeadScored<Input>;
     return memory::make_managed<Impl<Leaf>>(meta, doc, segment, own, args);
   });

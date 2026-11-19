@@ -24,6 +24,7 @@
 #include <type_traits>
 
 #include "iresearch/search/detail/phrase_match.hpp"
+#include "iresearch/utils/dispatch.hpp"
 
 namespace irs::detail {
 
@@ -42,13 +43,12 @@ struct NGramKind {
   static constexpr bool kConstant = false;
 };
 
-template<typename Query, typename F>
-auto ResolveNGram(const Query& query, F&& f) {
-  if (query.Every()) {
-    return f.template operator()<NGramMatch::All>();
+struct NGramMatchAxis : EnumAxis<NGramMatch> {
+  template<typename Query>
+  static NGramMatch Of(const Query& query) noexcept {
+    return query.Every() ? NGramMatch::All : NGramMatch::Threshold;
   }
-  return f.template operator()<NGramMatch::Threshold>();
-}
+};
 
 struct TokenPhraseKind {
   static constexpr bool kConstant = false;

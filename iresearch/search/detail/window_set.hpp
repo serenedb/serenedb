@@ -77,7 +77,7 @@ Result ResolveCountLeaves(const IndexInput& doc, const Scoring& scoring,
     return ResolveCountScored<Result, P>(
       doc, scoring.uniformity >= Terms::Scored, scoring.merge, make);
   } else {
-    return Resolve<InputAxis, P>(doc, [&]<typename Input> -> Result {
+    return Resolve<P>(doc, [&]<typename Input> -> Result {
       return make
         .template operator()<PostingCount<Input>, PostingCount<Input>>();
     });
@@ -237,9 +237,9 @@ Result BuildWindowMix(std::span<const Term> terms, const TermReader* field,
     });
 }
 
-inline fill::Node::ptr ScoredTermOf(const PostingClause& term,
-                                    const ScoreRecipe& recipe,
-                                    ScoreMergeType merge) {
+template<typename P = NoPins>
+fill::Node::ptr ScoredTermOf(const PostingClause& term,
+                             const ScoreRecipe& recipe, ScoreMergeType merge) {
   SDB_ASSERT(term.state.reader != nullptr);
   const auto& own = *term.state.reader;
   SDB_ASSERT(DocOf(own) != nullptr);
@@ -247,12 +247,12 @@ inline fill::Node::ptr ScoredTermOf(const PostingClause& term,
   const auto& meta = term.state.cookie;
   const auto bounds = meta.docs_count != 1 && BoundsOf(own);
   if (term.stats.stats == nullptr) {
-    return Resolve<InputAxis>(doc, [&]<typename Input> -> fill::Node::ptr {
+    return Resolve<P>(doc, [&]<typename Input> -> fill::Node::ptr {
       return memory::make_managed<fill::Impl<PlainFillScored<Input>>>(
         meta, doc, LayoutOf(own), bounds, meta.docs_count != 1 && FreqOf(own));
     });
   }
-  return ResolveFillScored<fill::Node::ptr>(
+  return ResolveFillScored<fill::Node::ptr, P>(
     doc, FreqOf(own) && ScoresPerDoc(term.stats.scorer), merge,
     [&]<typename Leaf, typename Plain> -> fill::Node::ptr {
       return memory::make_managed<fill::Impl<Leaf>>(
@@ -274,7 +274,7 @@ Result BuildWindowSet(std::span<const Term> terms, const TermReader* field,
       });
   }
   if constexpr (!kScores<Scoring>) {
-    return Resolve<InputAxis, P>(*doc, [&]<typename Input> -> Result {
+    return Resolve<P>(*doc, [&]<typename Input> -> Result {
       using Leaf = PostingFill<Input>;
       return BuildWindowMix<Result, Leaf, Leaf>(terms, field, doc, rest,
                                                 scoring, make);
@@ -292,7 +292,7 @@ Result BuildWindowSet(std::span<const Term> terms, const TermReader* field,
     leaves.reserve(terms.size() + rest.size());
     for (size_t i = 0; i != terms.size(); ++i) {
       auto node =
-        ScoredTermOf(ClauseOf(terms[i], field, scoring.scorer, scoring.boost),
+        ScoredTermOf<P>(ClauseOf(terms[i], field, scoring.scorer, scoring.boost),
                      scoring.recipe, scoring.merge);
       if (!node) {
         return {};

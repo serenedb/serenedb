@@ -52,7 +52,7 @@
 #include "iresearch/utils/geo/geo_params.hpp"
 #include "iresearch/utils/log.hpp"
 #include "iresearch/utils/memory.hpp"
-#include "iresearch/utils/misc.hpp"
+#include "iresearch/utils/dispatch.hpp"
 
 namespace irs {
 namespace {
@@ -297,8 +297,8 @@ GeoPlan PlanInterval(const GeoDistanceFilterOptions& options) {
   auto terms =
     irs::geo_terms::QueryTerms(options.options, ring, options.prefix);
 
-  return ResolveBool(min_incl, [&]<bool MinIncl>() {
-    return ResolveBool(max_incl, [&]<bool MaxIncl>() {
+  return Resolve(min_incl, [&]<bool MinIncl>() {
+    return Resolve(max_incl, [&]<bool MaxIncl>() {
       return Cells(std::move(terms), GeoDistanceRangeAcceptor<MinIncl, MaxIncl>{
                                        min_bound, max_bound});
     });

@@ -105,7 +105,7 @@ Root::ptr MakePrunedDisjunction(
         irs::detail::ClauseOf(terms[i], field, scorer, boost);
       const auto& own = *posting.state.reader;
       const auto* const doc = irs::detail::DocOf(own);
-      members.push_back(Resolve<irs::detail::InputAxis, P>(
+      members.push_back(Resolve<P>(
         *doc, [&]<typename Input> -> UnionMember::ptr {
           return memory::make_managed<TermUnionMember<Input>>(
             posting.state.cookie, *doc, irs::detail::LayoutOf(own), segment,
@@ -132,7 +132,7 @@ Root::ptr MakePrunedDisjunction(
   }
   const auto* const doc =
     irs::detail::DocOf(irs::detail::FieldOf(terms.front(), field));
-  return Resolve<irs::detail::InputAxis, P>(*doc, [&]<typename Input> -> Root::ptr {
+  return Resolve<P>(*doc, [&]<typename Input> -> Root::ptr {
     using Leaf = PostingPrunedDisj<Input>;
     const auto init = [&](Leaf& leaf, size_t i) {
       const auto posting =

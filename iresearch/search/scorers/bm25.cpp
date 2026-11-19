@@ -167,7 +167,7 @@ ScoreFunction BM25::PrepareScorer(const ScoreContext& ctx) const {
   auto* stats = stats_cast(ctx.stats);
   const auto* scale = ScaleOf(ctx);
 
-  return ResolveBool(scale != nullptr, [&]<bool HasScale>() {
+  return Resolve(scale != nullptr, [&]<bool HasScale>() {
     if (IsBM15()) {
       return ScoreFunction::Make<Bm15Score<HasScale>>(ctx.boost, *stats, freq,
                                                       scale);

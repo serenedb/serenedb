@@ -2834,14 +2834,14 @@ SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
       return MakeArraySerializer<UhugeintTextCore, UhugeintBinCore, kNumeric>(
         format, context, kind);
     case FLOAT:
-      return irs::ResolveBool(
+      return irs::Resolve(
         context.extra_float_digits > 0, [&]<bool Precise> {
           return MakeArraySerializer<FloatTextCore<float, Precise>,
                                      FloatBinCore<float>, kFloat4>(
             format, context, kind);
         });
     case DOUBLE:
-      return irs::ResolveBool(
+      return irs::Resolve(
         context.extra_float_digits > 0, [&]<bool Precise> {
           return MakeArraySerializer<FloatTextCore<double, Precise>,
                                      FloatBinCore<double>, kFloat8>(
@@ -3220,14 +3220,14 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
       return SelectFieldSerializer<UhugeintTextCore, UhugeintTextCore,
                                    UhugeintBinCore>(format, context);
     case FLOAT:
-      return irs::ResolveBool(
+      return irs::Resolve(
         context.extra_float_digits > 0, [&]<bool Precise> {
           return SelectFieldSerializer<FloatTextCore<float, Precise>,
                                        FloatTextCore<float, Precise>,
                                        FloatBinCore<float>>(format, context);
         });
     case DOUBLE:
-      return irs::ResolveBool(
+      return irs::Resolve(
         context.extra_float_digits > 0, [&]<bool Precise> {
           return SelectFieldSerializer<FloatTextCore<double, Precise>,
                                        FloatTextCore<double, Precise>,

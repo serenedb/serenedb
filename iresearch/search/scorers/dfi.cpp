@@ -39,7 +39,7 @@
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/empty.hpp"
-#include "iresearch/utils/misc.hpp"
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/string.hpp"
 
@@ -99,7 +99,7 @@ template<DFIMeasure M>
 ScoreFunction MakeScoreMeasure(const ScoreContext& ctx, const DFIStats& stats,
                                const FreqBlockAttr* freq, const uint32_t* norm,
                                const score_t* scale) {
-  return ResolveBool(scale != nullptr, [&]<bool HasScale>() {
+  return Resolve(scale != nullptr, [&]<bool HasScale>() {
     return ScoreFunction::Make<DFIScore<M, HasScale>>(ctx.boost, stats, freq,
                                                       norm, scale);
   });

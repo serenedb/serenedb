@@ -60,17 +60,16 @@ bool OnlyMask(std::span<const Term> terms,
          filters.front()->Kind() == QueryKind::DocsMask;
 }
 
-struct MaskedAxis : BoolAxis {};
-
 template<typename Make>
 decltype(auto) ResolveExcludePins(std::span<const QueryBuilder::ptr> filters,
                                   const SubReader& segment, Make&& make) {
+  const auto* doc = SegmentDoc(segment);
   if (!SplitMask(filters).masked) {
     return ResolvePinsFrom<Pins<Pin<MaskedAxis, false>>, InputAxis>(
-      std::forward_as_tuple(segment), std::forward<Make>(make));
+      std::forward_as_tuple(doc), std::forward<Make>(make));
   }
   return ResolvePinsFrom<Pins<Pin<MaskedAxis, true>>, DocsMaskAxis, InputAxis>(
-    std::forward_as_tuple(DocsMaskOf{segment.docs_mask()}, segment),
+    std::forward_as_tuple(DocsMaskOf{segment.docs_mask()}, doc),
     std::forward<Make>(make));
 }
 

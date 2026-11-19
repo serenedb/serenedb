@@ -38,6 +38,7 @@
 #include "iresearch/types.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/bit_utils.hpp"
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/system_compiler.hpp"
 
 namespace irs::block_codec {
@@ -177,18 +178,33 @@ inline IRS_FORCE_INLINE BitsetView ParseBitset(const byte_type* in) noexcept {
   IRS_BLOCK_CODEC_CASES16(V + 16)  \
   IRS_BLOCK_CODEC_CASES16(V + 32) IRS_BLOCK_CODEC_CASES16(V + 48)
 
-template<uint32_t N, typename Func>
-IRS_FORCE_INLINE decltype(auto) ResolveByte(uint32_t value, Func&& func) {
+template<uint32_t N, typename = std::make_integer_sequence<uint32_t, N>>
+struct ByteKeys;
+
+template<uint32_t N, uint32_t... V>
+struct ByteKeys<N, std::integer_sequence<uint32_t, V...>> : Axis<V...> {};
+
+template<uint32_t N>
+struct ByteAxis : ByteKeys<N> {
   static_assert(N <= 256);
-  SDB_ASSERT(value < N);
-  switch (value) {
-    IRS_BLOCK_CODEC_CASES64(0)
-    IRS_BLOCK_CODEC_CASES64(64)
-    IRS_BLOCK_CODEC_CASES64(128)
-    IRS_BLOCK_CODEC_CASES64(192)
+
+  static constexpr uint32_t Of(uint32_t value) noexcept {
+    SDB_ASSERT(value < N);
+    return value;
   }
-  SDB_UNREACHABLE();
-}
+
+  template<typename Func>
+  IRS_FORCE_INLINE static decltype(auto) Dispatch(uint32_t value,
+                                                  Func&& func) {
+    switch (value) {
+      IRS_BLOCK_CODEC_CASES64(0)
+      IRS_BLOCK_CODEC_CASES64(64)
+      IRS_BLOCK_CODEC_CASES64(128)
+      IRS_BLOCK_CODEC_CASES64(192)
+    }
+    SDB_UNREACHABLE();
+  }
+};
 
 #undef IRS_BLOCK_CODEC_CASES64
 #undef IRS_BLOCK_CODEC_CASES16
@@ -429,7 +445,7 @@ IRS_NO_INLINE void PackWidth(const uint32_t* in, uint32_t len,
 template<bool Full, bool Mask>
 void PackBits(uint32_t bits, const uint32_t* in, uint32_t len,
               byte_type* out) noexcept {
-  ResolveByte<kMaxWidth + 1>(bits, [&]<uint32_t B>() IRS_FORCE_INLINE {
+  Resolve<ByteAxis<kMaxWidth + 1>>(bits, [&]<uint32_t B>() IRS_FORCE_INLINE {
     PackWidth<B, Full, Mask>(in, len, out);
   });
 }
@@ -1081,7 +1097,7 @@ IRS_NO_INLINE const byte_type* DecodeValuesToken(const byte_type* in,
 template<uint32_t Add, bool Full>
 const byte_type* DispatchValues(const byte_type* in, uint32_t len,
                                 uint32_t* out) noexcept {
-  return ResolveByte<Code(ValueEncoding::End)>(
+  return Resolve<ByteAxis<Code(ValueEncoding::End)>>(
     in[0], [&]<uint32_t Token>() IRS_FORCE_INLINE {
       if constexpr (Inlined<Full>(Token)) {
         return DecodeValuesBody<Token, Add, Full>(in, len, out);

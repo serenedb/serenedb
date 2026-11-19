@@ -108,7 +108,7 @@ class ScoredChild {
  private:
   void Flush() {
     FetchAndScore(*_fetcher, _score, _docs, _batch, _held);
-    irs::ResolveMergeType(_merge, [&]<ScoreMergeType Merge> {
+    Resolve(_merge, [&]<ScoreMergeType Merge> {
       for (scores_size_t i = 0; i != _held; ++i) {
         irs::Merge<Merge>(_sum, _batch[i]);
       }

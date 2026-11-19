@@ -98,8 +98,8 @@ sdb_instantiation_axis(
 )
 sdb_instantiation_axis(
     IRS_INPUTS
-    "mapped PIN=irs::Pin<irs::detail::InputAxis,irs::detail::InputKey::Mapped>"
-    "stream PIN=irs::Pin<irs::detail::InputAxis,irs::detail::InputKey::Stream>"
+    "mapped PIN=irs::Pin<irs::InputAxis,irs::InputKey::Mapped>"
+    "stream PIN=irs::Pin<irs::InputAxis,irs::InputKey::Stream>"
 )
 set(irs_slice "irs::Pins<@MASK.PIN@,@INPUT.PIN@>")
 set(irs_input_slice "irs::Pins<@INPUT.PIN@>")

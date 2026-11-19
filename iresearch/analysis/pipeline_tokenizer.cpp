@@ -288,7 +288,7 @@ void PipelineTokenizer::ChainSink::DriveTerminal(TokenBatch& batch,
 
 void PipelineTokenizer::ChainSink::RebaseConsume(TokenBatch& batch,
                                                  DocRuns runs) {
-  ResolveLayout(_out_layout, [&]<TokenLayout L>() {
+  Resolve(_out_layout, [&]<TokenLayout L>() {
     uint32_t base = 0;
     for (size_t r = 0, n = runs.size(); r < n; ++r) {
       const auto run = runs[r];

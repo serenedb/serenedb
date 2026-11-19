@@ -89,7 +89,7 @@ Result BuildConjunction(std::span<const Term> terms,
     [&]<typename Input, typename Head>(auto&& head) -> Result {
     using Probe = std::conditional_t<kScored, PostingProbeScored<Input>,
                                      PostingProbe<Input>>;
-    return ResolveArity<kTailArity, kTailFloor>(
+    return Resolve<ArityAxis<kTailArity, kTailFloor>>(
       rest.size(), [&]<size_t N> -> Result {
         if constexpr (N == 1) {
           return make.template operator()<Head, Probe>(
@@ -149,7 +149,7 @@ Result BuildConjunction(std::span<const Term> terms,
         std::forward<decltype(head)>(head),
         std::forward_as_tuple(std::move(probes.front())));
     } else {
-      return ResolveArity<kTailArity, kTailFloor>(
+      return Resolve<ArityAxis<kTailArity, kTailFloor>>(
         probes.size(), [&]<size_t N> -> Result {
           if constexpr (N == 1) {
             return make.template operator()<Head, probe::Erased>(
@@ -197,7 +197,7 @@ Result BuildConjunction(std::span<const Term> terms,
       return build_opaque.template operator()<lead::Erased>(
         std::forward_as_tuple(std::move(node)));
     }
-    return Resolve<InputAxis, P>(
+    return Resolve<P>(
       *DocOf(FieldOf(rest.front(), field)), [&]<typename Input> -> Result {
         return build_concrete.template operator()<Input, lead::Erased>(
           std::forward_as_tuple(std::move(node)));
@@ -214,14 +214,14 @@ Result BuildConjunction(std::span<const Term> terms,
       return build_erased_lead(
         lead::MakePostingScored(posting, segment, scoring.recipe));
     }
-    return Resolve<InputAxis, P>(*DocOf(own), [&]<typename Input> -> Result {
+    return Resolve<P>(*DocOf(own), [&]<typename Input> -> Result {
       return build.template operator()<Input, PostingLeadScored<Input>>(
         std::forward_as_tuple(
           CookieOf(terms.front()), *DocOf(own), segment, own,
           scoring.recipe.Args(posting.stats, posting.boost)));
     });
   } else {
-    return Resolve<InputAxis, P>(*DocOf(own), [&]<typename Input> -> Result {
+    return Resolve<P>(*DocOf(own), [&]<typename Input> -> Result {
       return build.template operator()<Input, PostingLead<Input>>(
         std::forward_as_tuple(CookieOf(terms.front()), *DocOf(own),
                               LayoutOf(own), BoundsOf(own)));

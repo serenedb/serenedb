@@ -50,7 +50,7 @@ Root::ptr Family::MakePosting(const irs::detail::PostingClause& posting,
                               std::forward<decltype(rest)>(rest)...);
       });
   }
-  return Resolve<irs::detail::InputAxis>(*doc, [&]<typename Input> -> Root::ptr {
+  return Resolve(*doc, [&]<typename Input> -> Root::ptr {
     auto root =
       memory::make_managed<Posting<Input, utils::Empty, utils::Empty>>(
         std::piecewise_construct, std::forward_as_tuple(),

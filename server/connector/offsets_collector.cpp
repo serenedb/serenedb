@@ -41,7 +41,7 @@ void PrepareFilterEntry(FilterEntry& entry, const irs::TermReader* reader) {
   // by each shape: a field that stores no offsets has none for any of its
   // terms, whichever shape asks.
   irs::offsets::Handles handles;
-  if (!irs::offsets::Resolve(reader, handles)) {
+  if (!irs::offsets::HandlesOf(reader, handles)) {
     entry.absent = true;
     return;
   }

@@ -36,7 +36,7 @@
 #include "iresearch/utils/geo/s2/multi_point_region.hpp"
 #include "iresearch/utils/geo/s2/multi_polyline_region.hpp"
 #include "iresearch/utils/geo/shape_container.hpp"
-#include "iresearch/utils/misc.hpp"
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::geo {
@@ -167,7 +167,7 @@ class WkbReader {
 };
 
 // Reads the byte-order byte from the cursor (1 = LE, 0 = BE per OGC),
-// resolves LittleEndian at compile time via irs::ResolveBool, constructs
+// resolves LittleEndian at compile time via irs::Resolve, constructs
 // a WkbReader<LittleEndian> over the same cursor, and invokes `func`
 // with that reader. Used both at the top level (ParseShapeWKB) and at
 // every Multi* sub-geometry header so each sub-geometry can carry its
@@ -181,7 +181,7 @@ void WithGeometryReader(WkbCursor& cursor, Func&& func) {
   if (b > 1) {
     THROW_SQL_ERROR(ERR_MSG("WKB: bad byte-order byte"));
   }
-  irs::ResolveBool(b == 1, [&]<bool LittleEndian> {
+  Resolve(b == 1, [&]<bool LittleEndian> {
     WkbReader<LittleEndian> r{cursor};
     std::forward<Func>(func).template operator()<WkbReader<LittleEndian>>(r);
   });

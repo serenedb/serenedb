@@ -52,7 +52,7 @@ Root::ptr Family::MakePosting(const irs::detail::PostingClause& posting,
                               std::forward<decltype(rest)>(rest)...);
       });
   }
-  return Resolve<irs::detail::InputAxis>(*doc, [&]<typename Input> -> Root::ptr {
+  return Resolve(*doc, [&]<typename Input> -> Root::ptr {
     return irs::detail::WithTable(ctx.table, [&](auto table) -> Root::ptr {
       auto root =
         memory::make_managed<Posting<Input, utils::Empty, decltype(table)>>(

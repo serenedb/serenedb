@@ -47,7 +47,7 @@ Result ResolvePostingDocs(const detail::PostingClause& posting, Make&& make) {
   SDB_ASSERT(posting.state.reader != nullptr);
   const auto& own = *posting.state.reader;
   const auto& doc = *detail::DocOf(own);
-  return Resolve<detail::InputAxis>(doc, [&]<typename Input> -> Result {
+  return Resolve(doc, [&]<typename Input> -> Result {
     return make.template operator()<detail::PostingLead<Input>>(
       meta, doc, detail::LayoutOf(own), detail::BoundsOf(own));
   });

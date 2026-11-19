@@ -228,7 +228,7 @@ Root::ptr MakeNestedPrunedConjunctionIn(
   SDB_ASSERT(doc != nullptr);
   const bool posting_lead = clauses.front().terms.size() == 1;
   const auto size = clauses.size();
-  return Resolve<irs::detail::InputAxis, P>(*doc, [&]<typename Input> -> Root::ptr {
+  return Resolve<P>(*doc, [&]<typename Input> -> Root::ptr {
     using Leaf = PostingPrunedClause<Input>;
     using Group = probe::OrLeaves<Leaf, 0, true>;
     using Window =

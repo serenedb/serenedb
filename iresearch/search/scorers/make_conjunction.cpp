@@ -148,17 +148,6 @@ class ConjunctionConstScore
   ABSL_CACHELINE_ALIGNED mutable score_t _scratch[kScoreBlock];
 };
 
-template<template<ScoreMergeType> typename Score, typename... Args>
-ScoreFunction Resolve(ScoreMergeType inner, Args&&... args) {
-  if (inner == ScoreMergeType::Max) {
-    return ScoreFunction::Make<Score<ScoreMergeType::Max>>(
-      std::forward<Args>(args)...);
-  }
-  SDB_ASSERT(inner == ScoreMergeType::Sum);
-  return ScoreFunction::Make<Score<ScoreMergeType::Sum>>(
-    std::forward<Args>(args)...);
-}
-
 void DropDefaults(std::vector<ScoreFunction>& children) {
   std::erase_if(children, [](const ScoreFunction& s) { return s.IsDefault(); });
 }
@@ -173,7 +162,10 @@ ScoreFunction MakeConjunctionScore(ScoreMergeType inner,
     if (children.empty()) {
       return ScoreFunction::Constant(constant);
     }
-    return Resolve<ConjunctionConstScore>(inner, std::move(children), constant);
+    return Resolve(inner, [&]<ScoreMergeType M> {
+      return ScoreFunction::Make<ConjunctionConstScore<M>>(std::move(children),
+                                                           constant);
+    });
   }
   if (children.empty()) {
     return ScoreFunction::Default();
@@ -181,7 +173,9 @@ ScoreFunction MakeConjunctionScore(ScoreMergeType inner,
   if (children.size() == 1) {
     return std::move(children.front());
   }
-  return Resolve<ConjunctionScore>(inner, std::move(children));
+  return Resolve(inner, [&]<ScoreMergeType M> {
+    return ScoreFunction::Make<ConjunctionScore<M>>(std::move(children));
+  });
 }
 
 }  // namespace irs::detail

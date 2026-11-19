@@ -29,7 +29,7 @@
 #include "iresearch/formats/ivf/clustering.hpp"
 #include "iresearch/formats/ivf/quantizers/common.hpp"
 #include "iresearch/index/vector_distance.hpp"
-#include "iresearch/utils/misc.hpp"
+#include "iresearch/utils/dispatch.hpp"
 
 namespace irs::quantizers {
 namespace {
@@ -372,7 +372,7 @@ PanoramaQuantizerStats<M>::MakeCodebook(std::span<const float> query) const {
 std::shared_ptr<const QuantizerStats> MakePanoramaStats(
   VectorMetric metric, uint32_t d, std::span<const byte_type> blob) {
   std::shared_ptr<const QuantizerStats> stats;
-  ResolveEnum<VectorMetric>(EffectiveQuantMetric(metric), [&]<VectorMetric M> {
+  Resolve(EffectiveQuantMetric(metric), [&]<VectorMetric M> {
     stats = std::make_shared<const PanoramaQuantizerStats<M>>(d, blob);
   });
   return stats;

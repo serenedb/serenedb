@@ -102,15 +102,17 @@ template<>
 inline constexpr FoldEmit kFoldEmit<count::Root::ptr>{0.3, 1.0, false};
 
 template<>
-inline count::Root::ptr MakeBitsetNode<count::Root::ptr>(
-  BitsetBuckets&& buckets, const IndexInput& doc, doc_id_t docs_count,
-  TableFilter* table) {
-  if (table != nullptr) {
-    return memory::make_managed<count::BooleanBitset<TableFilter*>>(
-      std::move(buckets), doc, docs_count, table);
+struct BitsetNode<count::Root::ptr> {
+  template<typename P>
+  static count::Root::ptr Make(BitsetBuckets&& buckets, const IndexInput& doc,
+                               doc_id_t docs_count, TableFilter* table) {
+    if (table != nullptr) {
+      return memory::make_managed<count::BooleanBitset<TableFilter*>>(
+        std::move(buckets), doc, docs_count, table);
+    }
+    return memory::make_managed<count::BooleanBitset<utils::Empty>>(
+      std::move(buckets), doc, docs_count, utils::Empty{});
   }
-  return memory::make_managed<count::BooleanBitset<utils::Empty>>(
-    std::move(buckets), doc, docs_count, utils::Empty{});
-}
+};
 
 }  // namespace irs::detail

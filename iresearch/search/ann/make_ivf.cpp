@@ -183,7 +183,7 @@ ann::Root::ptr KnnVectorQuery::PlanAnn(const ann::Context& ctx) const {
 }
 
 ann::Root::ptr RangeVectorQuery::PlanAnn(const ann::Context& ctx) const {
-  return detail::ResolveBool(Inclusive(), [&]<bool Inclusive>() {
+  return Resolve(Inclusive(), [&]<bool Inclusive>() {
     return detail::MakeVectorScored<ann::Family, detail::RadiusGate<Inclusive>>(
       *this, ctx, Threshold());
   });

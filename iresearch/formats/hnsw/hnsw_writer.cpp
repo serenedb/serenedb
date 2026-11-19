@@ -52,7 +52,7 @@
 #include "iresearch/utils/bytes_output.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/log.hpp"
-#include "iresearch/utils/misc.hpp"
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/topic.hpp"
 
@@ -1415,7 +1415,7 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
   }
   const float* base = raw_build ? build_vectors.data() : _vectors.data();
   yaclib::Future<> built;
-  ResolveEnum<VectorMetric>(
+  Resolve(
     EffectiveQuantMetric(_info.metric), [&]<VectorMetric M>() {
       HnswRawDistFactory<M> factory{.base = base, .d = _d};
       built = BuildDispatch(_graph, factory, valid, m, ef, kHnswBuildSeed,

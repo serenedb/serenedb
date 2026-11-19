@@ -482,7 +482,7 @@ class PhraseSlopMatcher {
     }
 #endif
     if constexpr (N == 0) {
-      return detail::ResolveArity<detail::kSlotArity, detail::kSlotFloor>(
+      return Resolve<detail::ArityAxis<detail::kSlotArity, detail::kSlotFloor>>(
         _pos.size(), [&]<size_t Arity> { return Run<Arity>(); });
     } else {
       return Run<N>();

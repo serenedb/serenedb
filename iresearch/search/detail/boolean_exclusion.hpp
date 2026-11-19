@@ -75,7 +75,7 @@ Result<Family> MakeExclusionIn(const BooleanQuery& query, const Ctx& ctx,
       const auto& own = *posting.state.reader;
       const auto& doc = *DocOf(own);
       const auto recipe = RecipeOf<Family>(segment, ctx);
-      return Resolve<InputAxis, P>(doc, [&]<typename Input> -> Result<Family> {
+      return Resolve<P>(doc, [&]<typename Input> -> Result<Family> {
         return BuildExcludesOf<Result<Family>, Input, P>(
           Family::kRoot ? ExcludeUse::PerBlock : ExcludeUse::PerDoc, excludes,
           exclude_filters, nullptr, segment, candidates, candidates,
@@ -128,7 +128,7 @@ Result<Family> MakeExclusionIn(const BooleanQuery& query, const Ctx& ctx,
         }
       }
       if (auto folded =
-            MakeBitset<Family>({.must = must,
+            MakeBitset<Family, P>({.must = must,
                                 .must_filters = must_filters,
                                 .must_not = excludes,
                                 .must_not_filters = exclude_filters},

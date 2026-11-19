@@ -68,7 +68,7 @@ Node::ptr BuildMusts(std::span<const detail::PostingClause> terms,
         if (detail::ScoresPerDocTerm(posting)) {
           const auto& own = *posting.state.reader;
           const auto& doc = *detail::DocOf(own);
-          return Resolve<detail::InputAxis, P>(
+          return Resolve<P>(
             doc, [&]<typename Input> -> Node::ptr {
             return make.template operator()<detail::PostingProbeScored<Input>>(
               std::forward_as_tuple(
@@ -98,7 +98,7 @@ Node::ptr BuildMusts(std::span<const detail::PostingClause> terms,
     terms, filters, nullptr, segment, interrogations,
     detail::ProbeOrder::Narrowest, scoring, clause,
     [&]<typename Leaf>(size_t size, auto&& init) -> Node::ptr {
-      return detail::ResolveArity<detail::kRunArity, detail::kRunFloor>(
+      return Resolve<detail::ArityAxis<detail::kRunArity, detail::kRunFloor>>(
         size, [&]<size_t N> -> Node::ptr {
           return make.template operator()<AndLeaves<Leaf, N>>(
             std::forward_as_tuple(size, std::forward<decltype(init)>(init)));
@@ -201,7 +201,7 @@ Node::ptr MakeBoost(const BooleanQuery& query, uint64_t interrogations,
       detail::ProbeOrder::Densest, should_scoring,
       ClauseFor(segment, ctx, should_scoring),
       [&]<typename Leaf>(size_t size, auto&& init) -> Node::ptr {
-        return detail::ResolveArity<detail::kTailArity, detail::kTailFloor>(
+        return Resolve<detail::ArityAxis<detail::kTailArity, detail::kTailFloor>>(
           size, [&]<size_t N> -> Node::ptr {
             return MakeSparse<Head, BoostLeaves<Leaf, N>, utils::Empty>(
               detail::Scored{scoring.merge, absorbed},

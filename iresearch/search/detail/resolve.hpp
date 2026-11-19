@@ -44,18 +44,11 @@ inline bool FreqOf(const TermReader& field) noexcept {
   return FeaturesHaveFreq(field.meta().index_features);
 }
 
-template<typename F>
-auto ResolveBool(bool value, F&& f) {
-  if (value) {
-    return f.template operator()<true>();
-  }
-  return f.template operator()<false>();
-}
+struct BoundsAxis : BoolAxis {};
 
-template<typename F>
-auto ResolveBounds(bool has_bounds, F&& f) {
-  return ResolveBool(has_bounds, std::forward<F>(f));
-}
+struct MaskedAxis : BoolAxis {};
+
+struct PerDocAxis : BoolAxis {};
 
 inline constexpr size_t kTailArity = 1;
 inline constexpr size_t kTailFloor = 1;
@@ -66,18 +59,23 @@ inline constexpr size_t kSlotFloor = 2;
 inline constexpr size_t kRunArity = 2;
 inline constexpr size_t kRunFloor = 2;
 
-template<size_t Max, size_t Min, typename F>
-auto ResolveArity(size_t count, F&& f) {
-  SDB_ASSERT(count != 0);
-  if constexpr (Max >= Min && Max != 0) {
-    if (count == Max) {
-      return f.template operator()<Max>();
-    }
-    return ResolveArity<Max - 1, Min>(count, std::forward<F>(f));
-  } else {
-    return f.template operator()<0>();
+template<size_t Max, size_t Min,
+         typename = std::make_index_sequence<
+           Max >= Min && Max != 0 ? Max - Min + 1 : 0>>
+struct ArityAxis;
+
+template<size_t Max, size_t Min, size_t... I>
+struct ArityAxis<Max, Min, std::index_sequence<I...>>
+  : Axis<(Max - I)..., size_t{0}> {
+  static constexpr size_t Of(size_t count) noexcept {
+    SDB_ASSERT(count != 0);
+    return count;
   }
-}
+
+  static constexpr bool Matches(size_t count, size_t key) noexcept {
+    return key != 0 ? count == key : count < Min || Max < count;
+  }
+};
 
 struct PhraseHandles {
   const IndexInput* doc = nullptr;
@@ -106,29 +104,6 @@ inline const IndexInput* SegmentDoc(const SubReader& segment) {
   return nullptr;
 }
 
-enum class InputKey : uint8_t {
-  Mapped,
-  Stream,
-};
-
-struct InputAxis : Axis<InputKey::Mapped, InputKey::Stream> {
-  static InputKey Of(const IndexInput& in) noexcept {
-    return in.GetType() == DataInput::Type::BytesViewInput ? InputKey::Mapped
-                                                          : InputKey::Stream;
-  }
-
-  static InputKey Of(const SubReader& segment) {
-    const auto* doc = SegmentDoc(segment);
-    return doc ? Of(*doc) : InputKey::Stream;
-  }
-
-  template<InputKey K, typename F>
-  IRS_FORCE_INLINE static decltype(auto) Call(F&& f) {
-    using Input =
-      std::conditional_t<K == InputKey::Mapped, BytesViewInput, IndexInput>;
-    return std::forward<F>(f).template operator()<Input>();
-  }
-};
 
 inline bool ResolvePhrase(const TermReader* reader, PhraseHandles& out) {
   if (reader == nullptr) {

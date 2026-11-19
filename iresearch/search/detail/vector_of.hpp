@@ -88,7 +88,7 @@ auto ResolveClusters(const Query& query, Emit&& emit) {
                                           state.cookies.size() * state.d};
   const auto count = state.cookies.size();
 
-  return Resolve<detail::InputAxis>(
+  return Resolve(
     *detail::DocOf(*state.reader), [&]<typename InputType>() {
       return emit.template operator()<VectorCluster<InputType, Gate>>(count,
                                                                       feed);
@@ -101,7 +101,7 @@ auto ResolveVector(const Query& query, score_t edge, probe::Node::ptr inner,
   const auto recipe = RecipeOf(query);
   return ResolveClusters<Gate>(
     query, [&]<typename Cluster>(size_t count, const ClusterFeed& feed) {
-      return ResolveBool(inner != nullptr, [&]<bool HasInner>() {
+      return Resolve(inner != nullptr, [&]<bool HasInner>() {
         using Slots = VectorSlots<Cluster, Gate, HasInner, Rescore>;
         return emit.template operator()<Slots>(count, feed, edge,
                                                std::move(inner), recipe);
@@ -123,7 +123,7 @@ auto ResolveRescore(const Query& query, F&& f) {
   if constexpr (Gate::kAll) {
     return f.template operator()<false>();
   } else {
-    return ResolveBool(query.Rescored(), f);
+    return Resolve(query.Rescored(), f);
   }
 }
 
@@ -186,7 +186,7 @@ typename Family::Result MakeKnnVector(const KnnVectorQuery& query,
 template<typename Family, typename Ctx>
 typename Family::Result MakeQuery(const RangeVectorQuery& query,
                                   const Ctx& ctx) {
-  return ResolveBool(query.Inclusive(), [&]<bool Inclusive>() {
+  return Resolve(query.Inclusive(), [&]<bool Inclusive>() {
     if constexpr (kScoredPlan<Family, Ctx>) {
       return MakeVectorScored<Family, RadiusGate<Inclusive>>(query, ctx,
                                                              query.Threshold());

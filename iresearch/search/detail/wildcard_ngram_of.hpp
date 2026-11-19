@@ -104,7 +104,7 @@ Result Build(WildcardNGramKind, const WildcardNGramQuery& query,
     kind == QueryKind::Term ? &AsTerm(ngrams).cookie : nullptr;
 
   if (single != nullptr) {
-    return Resolve<InputAxis>(*DocOf(*field), [&]<typename Input> -> Result {
+    return Resolve(*DocOf(*field), [&]<typename Input> -> Result {
       if constexpr (kProbed) {
         using Leaf = PostingProbe<Input>;
         return make.template operator()<Leaf>(
@@ -120,7 +120,7 @@ Result Build(WildcardNGramKind, const WildcardNGramQuery& query,
   const auto& terms = AsTerms(ngrams).Terms();
   SDB_ASSERT(terms.size() > 1);
   if constexpr (kProbed) {
-    return Resolve<InputAxis>(*DocOf(*field), [&]<typename Input> -> Result {
+    return Resolve(*DocOf(*field), [&]<typename Input> -> Result {
       using Leaf = PostingProbe<Input>;
       return make.template operator()<probe::OrLeaves<Leaf>>(
         terms.size(), [&](Leaf& leaf, size_t i) {
@@ -129,7 +129,7 @@ Result Build(WildcardNGramKind, const WildcardNGramQuery& query,
         });
     });
   } else {
-    return Resolve<InputAxis>(*DocOf(*field), [&]<typename Input> -> Result {
+    return Resolve(*DocOf(*field), [&]<typename Input> -> Result {
       using Leaf = PostingFill<Input>;
       using Optional = OrGroup<fill::SetLeaves<Leaf>>;
       using Node =

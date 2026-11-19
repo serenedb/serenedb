@@ -43,19 +43,47 @@ struct Axis {
   }
 };
 
-struct BoolAxis : Axis<false, true> {
+struct BoolAxis : Axis<true, false> {
   static constexpr bool Of(bool value) noexcept { return value; }
 };
 
-template<typename Enum, typename = std::make_index_sequence<
-                          magic_enum::enum_count<Enum>()>>
-struct EnumAxis;
+template<auto Values, typename = std::make_index_sequence<Values.size()>>
+struct ArrayAxis;
 
-template<typename Enum, size_t... I>
-struct EnumAxis<Enum, std::index_sequence<I...>>
-  : Axis<magic_enum::enum_values<Enum>()[I]...> {
-  static constexpr Enum Of(Enum value) noexcept { return value; }
+template<auto Values, size_t... I>
+struct ArrayAxis<Values, std::index_sequence<I...>> : Axis<Values[I]...> {
+  using Key = typename Axis<Values[I]...>::Key;
+
+  static constexpr Key Of(Key value) noexcept { return value; }
 };
+
+template<typename Enum>
+using EnumAxis = ArrayAxis<magic_enum::enum_values<Enum>()>;
+
+template<typename T>
+struct AxisFor;
+
+template<>
+struct AxisFor<bool> {
+  using Type = BoolAxis;
+};
+
+template<typename T>
+struct AxisFor<T*> {
+  using Type = BoolAxis;
+};
+
+template<typename E>
+  requires std::is_enum_v<E>
+struct AxisFor<E> {
+  using Type = EnumAxis<E>;
+};
+
+template<typename T>
+using AxisOf = typename AxisFor<std::remove_cvref_t<T>>::Type;
+
+template<typename A>
+concept DispatchAxis = requires { A::kKeys; };
 
 template<typename A, auto K>
 struct Pin {
@@ -74,6 +102,15 @@ struct Pins {
     return Find<A, Ps...>();
   }
 
+  template<typename A>
+  static consteval bool Pinned(typename A::Key key) {
+    if constexpr (kHas<A>) {
+      return KeyOf<A>() == key;
+    } else {
+      return false;
+    }
+  }
+
  private:
   template<typename A, typename P, typename... Rest>
   static consteval typename A::Key Find() {
@@ -87,16 +124,31 @@ struct Pins {
 
 using NoPins = Pins<>;
 
+template<typename T>
+inline constexpr bool kIsPins = false;
+
+template<typename... Ps>
+inline constexpr bool kIsPins<Pins<Ps...>> = true;
+
 template<typename P, typename... As>
 using Restrict = Pins<Pin<As, P::template KeyOf<As>()>...>;
 
 namespace dispatch {
 
-template<typename A, size_t I, typename F>
-IRS_FORCE_INLINE decltype(auto) KeyAt(typename A::Key key, F& f) {
+template<typename A, typename Value>
+constexpr bool Matches(Value value, typename A::Key key) noexcept {
+  if constexpr (requires { A::Matches(value, key); }) {
+    return A::Matches(value, key);
+  } else {
+    return value == key;
+  }
+}
+
+template<typename A, size_t I, typename Value, typename F>
+IRS_FORCE_INLINE decltype(auto) KeyAt(Value key, F& f) {
   constexpr auto kKey = A::kKeys[I];
   if constexpr (I + 1 == A::kKeys.size()) {
-    SDB_ASSERT(key == kKey);
+    SDB_ASSERT(Matches<A>(key, kKey));
     return f.template operator()<kKey>();
   } else {
     if (key == kKey) {
@@ -124,19 +176,27 @@ IRS_FORCE_INLINE decltype(auto) ResolveKey(
   [[maybe_unused]] const Selector& selector, F&& f) {
   if constexpr (P::template kHas<A>) {
     constexpr auto kKey = P::template KeyOf<A>();
-    SDB_ASSERT(A::Of(selector) == kKey);
+    SDB_ASSERT(dispatch::Matches<A>(A::Of(selector), kKey));
     return std::forward<F>(f).template operator()<kKey>();
+  } else if constexpr (requires { A::Dispatch(A::Of(selector), f); }) {
+    return A::Dispatch(A::Of(selector), f);
   } else {
     return dispatch::KeyAt<A, 0>(A::Of(selector), f);
   }
 }
 
-template<typename A, typename P = NoPins, typename Selector, typename F>
+template<DispatchAxis A, typename P = NoPins, typename Selector, typename F>
 IRS_FORCE_INLINE decltype(auto) Resolve(const Selector& selector, F&& f) {
   return ResolveKey<A, P>(
     selector, [&]<typename A::Key K> IRS_FORCE_INLINE -> decltype(auto) {
       return A::template Call<K>(f);
     });
+}
+
+template<typename P = NoPins, typename Selector, typename F>
+  requires kIsPins<P>
+IRS_FORCE_INLINE decltype(auto) Resolve(const Selector& selector, F&& f) {
+  return Resolve<AxisOf<Selector>, P>(selector, std::forward<F>(f));
 }
 
 namespace dispatch {

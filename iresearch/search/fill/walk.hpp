@@ -134,7 +134,7 @@ class WalkScored {
   void Settle(doc_id_t min, const doc_id_t* IRS_RESTRICT docs,
               const score_t* IRS_RESTRICT batch, scores_size_t n,
               score_t* IRS_RESTRICT scores) const {
-    irs::ResolveMergeType(_merge, [&]<ScoreMergeType Merge> {
+    Resolve(_merge, [&]<ScoreMergeType Merge> {
       for (scores_size_t i = 0; i != n; ++i) {
         irs::Merge<Merge>(scores[docs[i] - min], batch[i]);
       }

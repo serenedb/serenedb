@@ -51,6 +51,32 @@ struct DocsMaskAxis : EnumAxis<MaskKind> {
     }
     return of.single ? of.mask->Kind() : docs_mask::Plural(of.mask->Kind());
   }
+
+  template<typename F>
+  IRS_FORCE_INLINE static decltype(auto) Dispatch(MaskKind kind, F&& f) {
+    switch (kind) {
+      case MaskKind::Bitsets:
+        return f.template operator()<MaskKind::Bitsets>();
+      case MaskKind::Arrays:
+        return f.template operator()<MaskKind::Arrays>();
+      case MaskKind::Runs:
+        return f.template operator()<MaskKind::Runs>();
+      case MaskKind::Bitset:
+        return f.template operator()<MaskKind::Bitset>();
+      case MaskKind::Array:
+        return f.template operator()<MaskKind::Array>();
+      case MaskKind::Run:
+        return f.template operator()<MaskKind::Run>();
+      case MaskKind::Mixed:
+        break;
+    }
+    return f.template operator()<MaskKind::Mixed>();
+  }
+};
+
+template<>
+struct AxisFor<DocsMaskOf> {
+  using Type = DocsMaskAxis;
 };
 
 template<typename P = NoPins, typename Make>

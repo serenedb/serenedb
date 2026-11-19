@@ -98,7 +98,7 @@ Result BuildProbeLeaves(std::span<const Term> terms,
   SDB_ASSERT(!terms.empty() || !filters.empty());
   const IndexInput* doc = nullptr;
   if (ConcreteClauses(terms, filters, field, scoring, doc)) {
-    return Resolve<InputAxis, P>(*doc, [&]<typename Input> -> Result {
+    return Resolve<P>(*doc, [&]<typename Input> -> Result {
       if constexpr (kScored) {
         using Leaf = PostingProbeScored<Input>;
         return make.template operator()<Leaf>(

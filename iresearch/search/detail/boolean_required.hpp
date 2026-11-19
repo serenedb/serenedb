@@ -32,7 +32,7 @@ namespace irs::detail::builder {
 template<typename Family, typename F>
 Result<Family> ResolveBoostArity(size_t size, F&& f) {
   if constexpr (Family::kBoostArity) {
-    return ResolveArity<kTailArity, kTailFloor>(size, std::forward<F>(f));
+    return Resolve<ArityAxis<kTailArity, kTailFloor>>(size, std::forward<F>(f));
   } else {
     return f.template operator()<0>();
   }
@@ -146,7 +146,7 @@ Result<Family> MakeConjunction(
         return windowed;
       }
       if (!must_filters.empty()) {
-        if (auto folded = MakeBitset<Family>(
+        if (auto folded = MakeBitset<Family, P>(
               {.must = must, .must_filters = must_filters}, segment, ctx)) {
           return folded;
         }
@@ -174,7 +174,7 @@ Result<Family> MakeConjunction(
   }
   if constexpr (!kScoredPlan<Family, Ctx>) {
     if (must.size() + must_filters.size() > 1) {
-      if (auto folded = MakeConjunctionBitset<LeadNode::ptr>(
+      if (auto folded = MakeConjunctionBitset<LeadNode::ptr, P>(
             must, must_filters, nullptr, segment, nullptr)) {
         return Family::template MakeSparse<lead::Erased, utils::Empty,
                                            probe::Erased, utils::Empty>(

@@ -54,58 +54,35 @@ struct DuckCsvCopy final : public duckdb::TableFunctionInfo {
   duckdb::CopyFunction function;
 };
 
+sdb::pg::SerializationContext TextCopyContext(duckdb::ClientContext& context,
+                                              const PgCopyOptions& options,
+                                              size_t columns) {
+  sdb::pg::SerializationContext ctx;
+  sdb::pg::FillContext(ConnectionContext::Get(context), ctx);
+  SetCopyFormat(ctx, options, columns);
+  return ctx;
+}
+
 class PgTextCopyEncoder final : public CopyChunkEncoder {
  public:
   PgTextCopyEncoder(duckdb::ClientContext& context,
                     std::span<const duckdb::LogicalType> types,
                     const PgCopyOptions& options,
                     std::span<const sdb::pg::VarFormat> formats)
-    : _separate{!options.suffix.empty()} {
-    sdb::pg::FillContext(ConnectionContext::Get(context), _ctx);
-    SetCopyFormat(_ctx, options, types.size());
-    _serializers.reserve(types.size());
-    for (size_t column = 0; column < types.size(); ++column) {
-      _serializers.push_back(
-        sdb::pg::GetSerialization(types[column], formats[column], _ctx));
-    }
+    : _ctx{TextCopyContext(context, options, types.size())},
+      _serializer{types, formats, _ctx},
+      _shape{.delimited = true} {
+    (options.suffix.empty() ? _shape.after : _shape.before) = _ctx.copy_newline;
   }
 
   void Encode(const duckdb::DataChunk& chunk, message::Buffer& out) final {
-    const auto rows = chunk.size();
-    if (rows == 0) {
-      return;
-    }
-    const auto columns = chunk.ColumnCount();
-    auto& decoded = _ctx.decoded;
-    decoded.clear();
-    decoded.resize(columns);
-    for (duckdb::idx_t column = 0; column < columns; ++column) {
-      duckdb::Vector::RecursiveToUnifiedFormat(chunk.data[column], rows,
-                                               decoded[column]);
-    }
-    for (duckdb::idx_t row = 0; row < rows; ++row) {
-      message::Writer writer{out};
-      _ctx.writer = &writer;
-      if (_separate) {
-        writer.Write(_ctx.copy_newline);
-      }
-      for (duckdb::idx_t column = 0; column < columns; ++column) {
-        if (column > 0) {
-          writer.Write({&_ctx.copy_delim, 1});
-        }
-        _serializers[column](_ctx, decoded[column], row);
-      }
-      if (!_separate) {
-        writer.Write(_ctx.copy_newline);
-      }
-      writer.Commit(false);
-    }
+    _serializer.Write(out, _ctx, chunk, 0, chunk.size(), _shape);
   }
 
  private:
-  const bool _separate;
   sdb::pg::SerializationContext _ctx;
-  std::vector<sdb::pg::SerializationFunction> _serializers;
+  sdb::pg::ChunkSerializer _serializer;
+  sdb::pg::RowShape _shape;
 };
 
 class PgTextCopyBindData final : public CopyToFileBindData {

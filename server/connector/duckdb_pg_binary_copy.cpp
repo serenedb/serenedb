@@ -99,45 +99,30 @@ constexpr std::array<uint8_t, 19> kPgCopyHeader{
                   ERR_MSG("COPY option \"", key, "\" not recognized"));
 }
 
+sdb::pg::SerializationContext BinaryCopyContext(
+  duckdb::ClientContext& context) {
+  sdb::pg::SerializationContext ctx;
+  sdb::pg::FillContext(ConnectionContext::Get(context), ctx);
+  return ctx;
+}
+
 class PgBinaryCopyEncoder final : public CopyChunkEncoder {
  public:
   PgBinaryCopyEncoder(duckdb::ClientContext& context,
-                      std::span<const duckdb::LogicalType> types) {
-    sdb::pg::FillContext(ConnectionContext::Get(context), _ctx);
-    _serializers.reserve(types.size());
-    for (const auto& type : types) {
-      _serializers.push_back(
-        sdb::pg::GetSerialization(type, sdb::pg::VarFormat::Binary, _ctx));
-    }
-  }
+                      std::span<const duckdb::LogicalType> types)
+    : _ctx{BinaryCopyContext(context)},
+      _serializer{types,
+                  std::vector<sdb::pg::VarFormat>(types.size(),
+                                                  sdb::pg::VarFormat::Binary),
+                  _ctx} {}
 
   void Encode(const duckdb::DataChunk& chunk, message::Buffer& out) final {
-    const auto rows = chunk.size();
-    if (rows == 0) {
-      return;
-    }
-    const auto columns = static_cast<uint16_t>(chunk.ColumnCount());
-    auto& decoded = _ctx.decoded;
-    decoded.clear();
-    decoded.resize(columns);
-    for (uint16_t column = 0; column < columns; ++column) {
-      duckdb::Vector::RecursiveToUnifiedFormat(chunk.data[column], rows,
-                                               decoded[column]);
-    }
-    for (duckdb::idx_t row = 0; row < rows; ++row) {
-      message::Writer writer{out};
-      _ctx.writer = &writer;
-      absl::big_endian::Store16(writer.Alloc(2), columns);
-      for (uint16_t column = 0; column < columns; ++column) {
-        _serializers[column](_ctx, decoded[column], row);
-      }
-      writer.Commit(false);
-    }
+    _serializer.Write(out, _ctx, chunk, 0, chunk.size(), {.field_count = true});
   }
 
  private:
   sdb::pg::SerializationContext _ctx;
-  std::vector<sdb::pg::SerializationFunction> _serializers;
+  sdb::pg::ChunkSerializer _serializer;
 };
 
 class PgBinaryCopyBindData final : public CopyToFileBindData {

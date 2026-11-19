@@ -191,14 +191,38 @@ IRS_FORCE_INLINE size_t NextEscape(const char* p, size_t from, size_t n,
 #endif
 }
 
-void EmitEscaped(SerializationContext& ctx, std::string_view s) {
+IRS_FORCE_INLINE bool EscapesNothing(const SerializationContext& ctx) {
+  return !ctx.copy_text && ctx.quote_seq.size() == 1 &&
+         ctx.backslash_count == 1;
+}
+
+struct WriterSink {
+  message::Writer& writer;
+
+  IRS_FORCE_INLINE char* Alloc(size_t n) {
+    CheckMessageSize(writer.Written() + n);
+    return reinterpret_cast<char*>(writer.Alloc(n));
+  }
+  IRS_FORCE_INLINE void Write(std::string_view s) { writer.Write(s); }
+};
+
+struct RawSink {
+  uint8_t* out;
+
+  IRS_FORCE_INLINE char* Alloc(size_t n) {
+    return reinterpret_cast<char*>(std::exchange(out, out + n));
+  }
+  IRS_FORCE_INLINE void Write(std::string_view s) {
+    std::memcpy(out, s.data(), s.size());
+    out += s.size();
+  }
+};
+
+template<typename Sink>
+IRS_FORCE_INLINE void EscapeTo(const SerializationContext& ctx,
+                               std::string_view s, Sink& sink) {
   const auto quote_seq_size = ctx.quote_seq.size();
   const auto backslash_count = ctx.backslash_count;
-  auto& writer = *ctx.writer;
-  if (!ctx.copy_text && quote_seq_size == 1 && backslash_count == 1) {
-    writer.Write(s);
-    return;
-  }
   const bool copy_text = ctx.copy_text;
   const char copy_delim = ctx.copy_delim;
   const char* p = s.data();
@@ -210,17 +234,15 @@ void EmitEscaped(SerializationContext& ctx, std::string_view s) {
     const char c = p[i];
     const size_t run = i - start;
     if (c == '"') {
-      CheckMessageSize(writer.Written() + run + quote_seq_size);
-      char* buf = reinterpret_cast<char*>(writer.Alloc(run + quote_seq_size));
+      char* buf = sink.Alloc(run + quote_seq_size);
       std::memcpy(buf, p + start, run);
       std::memcpy(buf + run, ctx.quote_seq.data(), quote_seq_size);
     } else if (c == '\\') {
-      CheckMessageSize(writer.Written() + run + backslash_count);
-      char* buf = reinterpret_cast<char*>(writer.Alloc(run + backslash_count));
+      char* buf = sink.Alloc(run + backslash_count);
       std::memcpy(buf, p + start, run);
       std::memset(buf + run, '\\', backslash_count);
     } else {
-      char* buf = reinterpret_cast<char*>(writer.Alloc(run + 2));
+      char* buf = sink.Alloc(run + 2);
       std::memcpy(buf, p + start, run);
       buf[run] = '\\';
       char& letter = buf[run + 1];
@@ -252,7 +274,16 @@ void EmitEscaped(SerializationContext& ctx, std::string_view s) {
     i = NextEscape(p, start, n, quote_seq_size != 1, backslash_count != 1,
                    copy_text, copy_delim);
   }
-  writer.Write(s.substr(start));
+  sink.Write(s.substr(start));
+}
+
+void EmitEscaped(SerializationContext& ctx, std::string_view s) {
+  if (EscapesNothing(ctx)) {
+    ctx.writer->Write(s);
+    return;
+  }
+  WriterSink sink{*ctx.writer};
+  EscapeTo(ctx, s, sink);
 }
 
 void WriteCopyDelimEscaped(SerializationContext& ctx, std::string_view text) {
@@ -537,8 +568,14 @@ struct NumericUnsigned<absl::uint128> {
 };
 
 template<typename T>
-void WriteAsNumericBinary(SerializationContext& context, T value,
-                          int32_t scale) {
+inline constexpr uint32_t kNumericBinaryMaxBytes =
+  8 +
+  2 * ((std::numeric_limits<typename NumericUnsigned<T>::Type>::digits10 + 4) /
+         4 +
+       1);
+
+template<typename T>
+size_t RenderNumericBinary(uint8_t* data, T value, int32_t scale) {
   static constexpr int32_t kBase = 10'000;
   static constexpr int16_t kPositive = 0x0000;
   static constexpr int16_t kNegative = 0x4000;
@@ -582,7 +619,7 @@ void WriteAsNumericBinary(SerializationContext& context, T value,
   }(mag);
 
   auto weight = static_cast<int16_t>(ndigits - ((scale + 3) / 4) - 1);
-  auto* data = context.writer->Alloc(8 + ndigits * 2);
+  const auto size = static_cast<size_t>(8 + ndigits * 2);
   absl::big_endian::Store16(data, ndigits);
   absl::big_endian::Store16(data + 2, weight);
   absl::big_endian::Store16(data + 4, sign);
@@ -605,6 +642,15 @@ void WriteAsNumericBinary(SerializationContext& context, T value,
     mag /= static_cast<U>(kBase);
   }
   SDB_ASSERT(ndigits == 0);
+  return size;
+}
+
+template<typename T>
+void WriteAsNumericBinary(SerializationContext& context, T value,
+                          int32_t scale) {
+  context.writer->Write(kNumericBinaryMaxBytes<T>, [&](uint8_t* data) {
+    return RenderNumericBinary(data, value, scale);
+  });
 }
 
 template<typename PhysicalType>
@@ -634,18 +680,25 @@ struct DecimalTextCore {
 };
 
 template<typename PhysicalType>
+using NumericOf =
+  std::conditional_t<std::is_same_v<PhysicalType, duckdb::hugeint_t>,
+                     absl::int128, PhysicalType>;
+
+template<typename PhysicalType>
 struct DecimalBinCore {
-  IRS_FORCE_INLINE static void Render(
-    SerializationContext& ctx,
+  static constexpr uint32_t kMaxBytes =
+    kNumericBinaryMaxBytes<NumericOf<PhysicalType>>;
+  IRS_FORCE_INLINE static size_t Render(
+    uint8_t* dst, SerializationContext&,
     const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t idx) {
     const auto scale = duckdb::DecimalType::GetScale(vdata.logical_type);
     const auto value = duckdb::UnifiedVectorFormat::GetDataUnsafe<PhysicalType>(
       vdata.unified)[idx];
     if constexpr (std::is_same_v<PhysicalType, duckdb::hugeint_t>) {
-      WriteAsNumericBinary(ctx, absl::MakeInt128(value.upper, value.lower),
-                           scale);
+      return RenderNumericBinary(
+        dst, absl::MakeInt128(value.upper, value.lower), scale);
     } else {
-      WriteAsNumericBinary(ctx, value, scale);
+      return RenderNumericBinary(dst, value, scale);
     }
   }
 };
@@ -2836,6 +2889,358 @@ SerializationFunction SelectFieldSerializer(VarFormat format,
   return SerializeField<Framing::BinaryField, TextCore>;
 }
 
+template<Framing F>
+IRS_FORCE_INLINE uint8_t* WriteNullField(const SerializationContext& ctx,
+                                         uint8_t* d) {
+  if constexpr (F == Framing::BinaryField) {
+    absl::big_endian::Store32(d, -1);
+    return d + 4;
+  } else {
+    std::memcpy(d, ctx.copy_null.data(), ctx.copy_null.size());
+    return d + ctx.copy_null.size();
+  }
+}
+
+template<Framing F>
+IRS_FORCE_INLINE uint8_t* FinishField(const SerializationContext& ctx,
+                                      uint8_t* d, size_t n) {
+  if constexpr (F == Framing::BinaryField) {
+    absl::big_endian::Store32(d, static_cast<int32_t>(n));
+    return d + 4 + n;
+  } else if constexpr (kCsvFraming<F>) {
+    bool quote = true;
+    const std::string_view field{reinterpret_cast<const char*>(d), n};
+    if constexpr (F == Framing::CsvPlainField) {
+      quote = field == ctx.copy_null;
+    } else if constexpr (F == Framing::CsvField) {
+      quote = CsvNeedsQuotes(ctx, field);
+    }
+    return d +
+           (quote ? QuoteCsvInPlace(d, n, ctx.csv_quote, ctx.csv_escape) : n);
+  } else {
+    return d + n;
+  }
+}
+
+template<Framing F>
+constexpr size_t kBodyOffset = F == Framing::BinaryField ? 4 : 0;
+
+template<Framing F>
+size_t FieldBound(size_t body) {
+  if constexpr (F == Framing::BinaryField) {
+    return 4 + body;
+  } else if constexpr (kCsvFraming<F>) {
+    return 2 * body + 2;
+  } else {
+    return body;
+  }
+}
+
+template<Framing F>
+size_t NullBound(const SerializationContext& ctx) {
+  return F == Framing::BinaryField ? 4 : ctx.copy_null.size();
+}
+
+template<Framing F, typename Core>
+void WriteSizedColumn(SerializationContext& ctx, const RUVF& v,
+                      duckdb::idx_t begin, duckdb::idx_t end,
+                      uint8_t** cursors) {
+  const auto& unified = v.unified;
+  const auto render = [&](duckdb::idx_t idx, uint8_t* d) {
+    return FinishField<F>(ctx, d,
+                          RenderSized<Core>(d + kBodyOffset<F>, ctx, v, idx));
+  };
+  if (unified.validity.AllValid()) {
+    for (auto row = begin; row < end; ++row, ++cursors) {
+      *cursors = render(unified.sel->get_index(row), *cursors);
+    }
+    return;
+  }
+  for (auto row = begin; row < end; ++row, ++cursors) {
+    const auto idx = unified.sel->get_index(row);
+    *cursors = unified.validity.RowIsValid(idx)
+                 ? render(idx, *cursors)
+                 : WriteNullField<F>(ctx, *cursors);
+  }
+}
+
+template<Framing F, typename Core>
+ColumnSerializer SizedColumn(const SerializationContext& ctx) {
+  return {
+    .write = WriteSizedColumn<F, Core>,
+    .fixed = std::max(FieldBound<F>(Core::kMaxBytes), NullBound<F>(ctx)),
+  };
+}
+
+template<typename TextCore, typename BinaryCore>
+ColumnSerializer SelectSizedColumn(VarFormat format,
+                                   const SerializationContext& context) {
+  if (format == VarFormat::Binary) {
+    return SizedColumn<Framing::BinaryField, BinaryCore>(context);
+  }
+  if ((format == VarFormat::CopyCsv || format == VarFormat::CopyCsvQuoted) &&
+      context.csv_quote == '\0') {
+    return SizedColumn<Framing::CopyTextField, TextCore>(context);
+  }
+  if (format == VarFormat::CopyCsvQuoted) {
+    return SizedColumn<Framing::CsvQuotedField, TextCore>(context);
+  }
+  if (format == VarFormat::CopyCsv) {
+    if (!CsvScanNeeded<TextCore>(context)) {
+      return SizedColumn<Framing::CsvPlainField, TextCore>(context);
+    }
+    return SizedColumn<Framing::CsvField, TextCore>(context);
+  }
+  if (format == VarFormat::CopyText) {
+    if constexpr (!CopyDelimsOf<TextCore>().empty()) {
+      if (EscapesCopyDelim<TextCore>(context)) {
+        return SizedColumn<Framing::CopyTextField,
+                           CopyDelimVariantOf<TextCore>>(context);
+      }
+    }
+    return SizedColumn<Framing::CopyTextField, TextCore>(context);
+  }
+  SDB_ASSERT(format == VarFormat::Text);
+  return SizedColumn<Framing::BinaryField, TextCore>(context);
+}
+
+struct RawBody {
+  IRS_FORCE_INLINE static size_t Bound(const SerializationContext&,
+                                       size_t size) {
+    return size;
+  }
+  IRS_FORCE_INLINE static size_t Render(const SerializationContext&,
+                                        std::string_view value, uint8_t* d) {
+    std::memcpy(d, value.data(), value.size());
+    return value.size();
+  }
+};
+
+IRS_FORCE_INLINE size_t EscapedBound(const SerializationContext& ctx,
+                                     size_t size) {
+  if (EscapesNothing(ctx)) {
+    return size;
+  }
+  return size * std::max({size_t{2}, ctx.quote_seq.size(),
+                          size_t{ctx.backslash_count}});
+}
+
+IRS_FORCE_INLINE size_t RenderEscaped(const SerializationContext& ctx,
+                                      std::string_view value, uint8_t* d) {
+  if (EscapesNothing(ctx)) {
+    return RawBody::Render(ctx, value, d);
+  }
+  RawSink sink{d};
+  EscapeTo(ctx, value, sink);
+  return static_cast<size_t>(sink.out - d);
+}
+
+struct VarcharBody {
+  IRS_FORCE_INLINE static size_t Bound(const SerializationContext& ctx,
+                                       size_t size) {
+    return EscapedBound(ctx, size);
+  }
+  IRS_FORCE_INLINE static size_t Render(const SerializationContext& ctx,
+                                        std::string_view value, uint8_t* d) {
+    return RenderEscaped(ctx, value, d);
+  }
+};
+
+struct ByteaHexBody {
+  IRS_FORCE_INLINE static size_t Bound(const SerializationContext& ctx,
+                                       size_t size) {
+    return EscapedBound(ctx, 1) + 1 + 2 * size;
+  }
+  IRS_FORCE_INLINE static size_t Render(const SerializationContext& ctx,
+                                        std::string_view value, uint8_t* d) {
+    auto* p = d + RenderEscaped(ctx, "\\", d);
+    *p++ = 'x';
+    absl::BytesToHexStringInternal(
+      reinterpret_cast<const unsigned char*>(value.data()),
+      reinterpret_cast<char*>(p), value.size());
+    return static_cast<size_t>(p - d) + 2 * value.size();
+  }
+};
+
+template<Framing F, typename Body>
+void BoundStringColumn(const SerializationContext& ctx, const RUVF& v,
+                       duckdb::idx_t begin, duckdb::idx_t end, size_t* bounds) {
+  const auto& unified = v.unified;
+  const auto* data =
+    duckdb::UnifiedVectorFormat::GetDataUnsafe<duckdb::string_t>(unified);
+  const auto null_bound = NullBound<F>(ctx);
+  for (auto row = begin; row < end; ++row, ++bounds) {
+    const auto idx = unified.sel->get_index(row);
+    *bounds += unified.validity.RowIsValid(idx)
+                 ? FieldBound<F>(Body::Bound(ctx, data[idx].GetSize()))
+                 : null_bound;
+  }
+}
+
+template<Framing F, typename Body>
+void WriteStringColumn(SerializationContext& ctx, const RUVF& v,
+                       duckdb::idx_t begin, duckdb::idx_t end,
+                       uint8_t** cursors) {
+  const auto& unified = v.unified;
+  const auto* data =
+    duckdb::UnifiedVectorFormat::GetDataUnsafe<duckdb::string_t>(unified);
+  for (auto row = begin; row < end; ++row, ++cursors) {
+    const auto idx = unified.sel->get_index(row);
+    auto* d = *cursors;
+    if (!unified.validity.RowIsValid(idx)) {
+      *cursors = WriteNullField<F>(ctx, d);
+      continue;
+    }
+    const auto& value = data[idx];
+    *cursors =
+      FinishField<F>(ctx, d,
+                     Body::Render(ctx, {value.GetData(), value.GetSize()},
+                                  d + kBodyOffset<F>));
+  }
+}
+
+template<Framing F, typename Body>
+ColumnSerializer StringColumn() {
+  return {
+    .write = WriteStringColumn<F, Body>,
+    .bound = BoundStringColumn<F, Body>,
+  };
+}
+
+template<typename TextBody>
+ColumnSerializer SelectStringColumn(VarFormat format,
+                                    const SerializationContext& context) {
+  if (format == VarFormat::Binary) {
+    return StringColumn<Framing::BinaryField, RawBody>();
+  }
+  if ((format == VarFormat::CopyCsv || format == VarFormat::CopyCsvQuoted) &&
+      context.csv_quote == '\0') {
+    return StringColumn<Framing::CopyTextField, TextBody>();
+  }
+  if (format == VarFormat::CopyCsvQuoted) {
+    return StringColumn<Framing::CsvQuotedField, TextBody>();
+  }
+  if (format == VarFormat::CopyCsv) {
+    return StringColumn<Framing::CsvField, TextBody>();
+  }
+  if (format == VarFormat::CopyText) {
+    return StringColumn<Framing::CopyTextField, TextBody>();
+  }
+  SDB_ASSERT(format == VarFormat::Text);
+  return StringColumn<Framing::BinaryField, TextBody>();
+}
+
+ColumnSerializer GetColumnSerialization(const duckdb::LogicalType& type,
+                                        VarFormat format,
+                                        SerializationContext& context) {
+  if (!type.HasAlias()) {
+    switch (type.id()) {
+      using enum duckdb::LogicalTypeId;
+      case BOOLEAN:
+        return SelectSizedColumn<BoolTextCore, BoolBinCore>(format, context);
+      case TINYINT:
+        return SelectSizedColumn<IntTextCore<int8_t>,
+                                 IntBinCore<int8_t, int16_t>>(format, context);
+      case SMALLINT:
+        return SelectSizedColumn<IntTextCore<int16_t>, IntBinCore<int16_t>>(
+          format, context);
+      case INTEGER:
+        return SelectSizedColumn<IntTextCore<int32_t>, IntBinCore<int32_t>>(
+          format, context);
+      case BIGINT:
+        return SelectSizedColumn<IntTextCore<int64_t>, IntBinCore<int64_t>>(
+          format, context);
+      case UTINYINT:
+        return SelectSizedColumn<IntTextCore<uint8_t>,
+                                 IntBinCore<uint8_t, int16_t>>(format, context);
+      case USMALLINT:
+        return SelectSizedColumn<IntTextCore<uint16_t>,
+                                 IntBinCore<uint16_t, int32_t>>(format,
+                                                                context);
+      case UINTEGER:
+        return SelectSizedColumn<IntTextCore<uint32_t>,
+                                 IntBinCore<uint32_t, int64_t>>(format,
+                                                                context);
+      case FLOAT:
+        return irs::ResolveBool(
+          context.extra_float_digits > 0, [&]<bool Precise> {
+            return SelectSizedColumn<FloatTextCore<float, Precise>,
+                                     FloatBinCore<float>>(format, context);
+          });
+      case DOUBLE:
+        return irs::ResolveBool(
+          context.extra_float_digits > 0, [&]<bool Precise> {
+            return SelectSizedColumn<FloatTextCore<double, Precise>,
+                                     FloatBinCore<double>>(format, context);
+          });
+      case DECIMAL:
+        switch (type.InternalType()) {
+          using enum duckdb::PhysicalType;
+          case INT16:
+            return SelectSizedColumn<DecimalTextCore<int16_t>,
+                                     DecimalBinCore<int16_t>>(format, context);
+          case INT32:
+            return SelectSizedColumn<DecimalTextCore<int32_t>,
+                                     DecimalBinCore<int32_t>>(format, context);
+          case INT64:
+            return SelectSizedColumn<DecimalTextCore<int64_t>,
+                                     DecimalBinCore<int64_t>>(format, context);
+          case INT128:
+            return SelectSizedColumn<DecimalTextCore<duckdb::hugeint_t>,
+                                     DecimalBinCore<duckdb::hugeint_t>>(
+              format, context);
+          default:
+            break;
+        }
+        break;
+      case DATE:
+        return SelectSizedColumn<DateTextCore, DateBinCore>(format, context);
+      case UUID:
+        return SelectSizedColumn<UuidTextCore, UuidBinCore>(format, context);
+      case CHAR:
+      case VARCHAR:
+        return SelectStringColumn<VarcharBody>(format, context);
+      case BLOB:
+        if (context.bytea_output == ByteaOutput::Hex) {
+          return SelectStringColumn<ByteaHexBody>(format, context);
+        }
+        break;
+      default:
+        break;
+    }
+  }
+  return {.field = GetSerialization(type, format, context)};
+}
+
+constexpr size_t kRowTagBytes = 5;
+constexpr size_t kMinRowGroupBytes = 4 << 10;
+constexpr size_t kMaxRowGroupBytes = 128 << 10;
+
+IRS_FORCE_INLINE uint8_t* Append(uint8_t* d, std::string_view bytes) {
+  if (!bytes.empty()) {
+    std::memcpy(d, bytes.data(), bytes.size());
+  }
+  return d + bytes.size();
+}
+
+uint8_t* CopyScratch(message::Chunk* chunk, size_t offset, size_t size,
+                     uint8_t* d) {
+  while (size != 0) {
+    const auto available = chunk->GetEnd() - offset;
+    if (available == 0) {
+      chunk = chunk->Next();
+      offset = chunk->GetBegin();
+      continue;
+    }
+    const auto n = std::min(available, size);
+    std::memcpy(d, chunk->WritableData() + offset, n);
+    d += n;
+    offset += n;
+    size -= n;
+  }
+  return d;
+}
+
 void AttachSession(VarFormat format, SerializationContext& context) {
   if (format == VarFormat::Binary) {
     return;
@@ -3639,6 +4044,139 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                       ERR_MSG("Type '", type.ToString(), "' is not supported"));
   }
+}
+
+ChunkSerializer::ChunkSerializer(std::span<const duckdb::LogicalType> types,
+                                 std::span<const VarFormat> formats,
+                                 SerializationContext& context) {
+  SDB_ASSERT(types.size() == formats.size());
+  _columns.reserve(types.size());
+  for (size_t column = 0; column < types.size(); ++column) {
+    _fixed += _columns
+                .emplace_back(GetColumnSerialization(types[column],
+                                                     formats[column], context))
+                .fixed;
+  }
+}
+
+void ChunkSerializer::Write(message::Buffer& out, SerializationContext& context,
+                            const duckdb::DataChunk& chunk, duckdb::idx_t begin,
+                            duckdb::idx_t end, const RowShape& shape) {
+  if (begin >= end) {
+    return;
+  }
+  const auto columns = _columns.size();
+  SDB_ASSERT(chunk.ColumnCount() == columns);
+  auto& decoded = context.decoded;
+  decoded.clear();
+  decoded.resize(columns);
+  for (size_t column = 0; column < columns; ++column) {
+    duckdb::Vector::RecursiveToUnifiedFormat(chunk.data[column], chunk.size(),
+                                             decoded[column]);
+  }
+  const auto count = static_cast<size_t>(end - begin);
+  const auto framing = (shape.tag != '\0' ? kRowTagBytes : 0) +
+                       (shape.field_count ? 2 : 0) + shape.before.size() +
+                       shape.after.size() +
+                       (shape.delimited && columns > 0 ? columns - 1 : 0);
+  _bounds.assign(count, framing + _fixed);
+  _bounds.front() += shape.first.size();
+  _cursors.resize(count);
+  _fields.clear();
+  _scratch.Clear();
+  for (size_t column = 0; column < columns; ++column) {
+    const auto& serializer = _columns[column];
+    if (serializer.bound) {
+      serializer.bound(context, decoded[column], begin, end, _bounds.data());
+    } else if (serializer.field) {
+      for (auto row = begin; row < end; ++row) {
+        message::Writer writer{_scratch};
+        context.writer = &writer;
+        const auto mark = writer.Position();
+        serializer.field(context, decoded[column], row);
+        _fields.push_back({mark.chunk, mark.end, writer.Written()});
+        _bounds[row - begin] += writer.Written();
+        writer.Commit(false);
+      }
+    }
+  }
+  context.writer = nullptr;
+  for (size_t first = 0; first < count;) {
+    message::Writer writer{out};
+    const auto room = writer.Room();
+    const auto budget = room < kMinRowGroupBytes
+                          ? kMaxRowGroupBytes
+                          : std::min(room, kMaxRowGroupBytes);
+    auto last = first + 1;
+    auto total = _bounds[first];
+    for (; last < count && total + _bounds[last] <= budget; ++last) {
+      total += _bounds[last];
+    }
+    writer.Write(total, [&](uint8_t* base) {
+      return WriteRows(context, shape, base, begin, first, last, count);
+    });
+    writer.Commit(false);
+    first = last;
+  }
+}
+
+size_t ChunkSerializer::WriteRows(SerializationContext& context,
+                                  const RowShape& shape, uint8_t* base,
+                                  duckdb::idx_t begin, size_t first,
+                                  size_t last, size_t count) {
+  const auto columns = _columns.size();
+  auto* slot = base;
+  for (auto i = first; i < last; ++i) {
+    auto* d = slot + (shape.tag != '\0' ? kRowTagBytes : 0);
+    if (i == 0) {
+      d = Append(d, shape.first);
+    }
+    if (shape.field_count) {
+      absl::big_endian::Store16(d, static_cast<uint16_t>(columns));
+      d += 2;
+    }
+    _cursors[i] = Append(d, shape.before);
+    slot += _bounds[i];
+  }
+  auto** cursors = _cursors.data() + first;
+  const auto rows = last - first;
+  size_t scratch = 0;
+  for (size_t column = 0; column < columns; ++column) {
+    if (column > 0 && shape.delimited) {
+      for (size_t i = 0; i < rows; ++i) {
+        *cursors[i]++ = static_cast<uint8_t>(context.copy_delim);
+      }
+    }
+    const auto& serializer = _columns[column];
+    if (serializer.write) {
+      serializer.write(context, context.decoded[column], begin + first,
+                       begin + last, cursors);
+      continue;
+    }
+    const auto* field = _fields.data() + scratch++ * count + first;
+    for (size_t i = 0; i < rows; ++i) {
+      cursors[i] =
+        CopyScratch(field[i].chunk, field[i].offset, field[i].size, cursors[i]);
+    }
+  }
+  auto* out = base;
+  slot = base;
+  for (auto i = first; i < last; ++i) {
+    const auto size =
+      static_cast<size_t>(Append(_cursors[i], shape.after) - slot);
+    SDB_ASSERT(size <= _bounds[i]);
+    if (shape.tag != '\0') {
+      CheckMessageSize(size - 1);
+      slot[0] = static_cast<uint8_t>(shape.tag);
+      absl::big_endian::Store32(slot + 1, static_cast<uint32_t>(size - 1));
+    }
+    if (out != slot) {
+      std::memmove(out, slot, size);
+    }
+    out += size;
+    slot += _bounds[i];
+  }
+  return static_cast<size_t>(out - base);
 }
 
 }  // namespace sdb::pg

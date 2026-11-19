@@ -16,7 +16,7 @@ SERENEDB_BIN = os.environ.get(
 
 _AGENT_ENVIRONMENT = ("AI_AGENT", "AGENT", "CLAUDECODE", "CODEX_CI", "CODEX_SANDBOX",
                       "CODEX_THREAD_ID", "CURSOR_AGENT", "GEMINI_CLI", "COPILOT_AGENT",
-                      "COPILOT_CLI", "COPILOT_AGENT_SESSION_ID", "DUCKDB_AGENT_MODE")
+                      "COPILOT_CLI", "COPILOT_AGENT_SESSION_ID", "SDB_AGENT_MODE")
 
 
 def _have_binary() -> bool:

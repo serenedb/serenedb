@@ -263,6 +263,8 @@ class Writer {
   // Bytes written into this message so far (since the checkpoint).
   size_t Written() const { return _written; }
 
+  size_t Room() const noexcept { return _buffer->_tail->FreeSpace(); }
+
   struct Mark {
     Chunk* chunk;
     size_t end;

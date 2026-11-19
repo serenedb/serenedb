@@ -72,6 +72,7 @@ add_executable(
     connector/inet_terms_test.cpp
     connector/pg_progress_registry_test.cpp
     connector/pg_serialize_array_test.cpp
+    connector/pg_serialize_chunk_test.cpp
     connector/pgoutput_test.cpp
     connector/reindex_removes_test.cpp
     connector/row_position_deduplicator_test.cpp

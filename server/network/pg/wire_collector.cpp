@@ -29,6 +29,8 @@
 #include <duckdb/main/prepared_statement_data.hpp>
 #include <duckdb/main/query_result.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
+#include <optional>
+#include <vector>
 
 #include "network/connection.h"
 #include "network/pg/wire_frames.h"
@@ -72,7 +74,7 @@ class PgWireCollectorLocalState final : public duckdb::LocalSinkState {
   // small chain (or none in direct mode).
   message::Buffer buffer{kWireChunkMin, kWireChunkMax};
   sdb::pg::SerializationContext sctx;
-  std::vector<sdb::pg::SerializationFunction> serializers;
+  std::optional<sdb::pg::ChunkSerializer> serializer;
   // Committed-bytes watermark at the last Seal; the gap to the buffer's
   // TotalCommitted() drives the next seal. Direct mode reads ctx.send instead.
   size_t sealed_total = 0;
@@ -145,14 +147,18 @@ class PhysicalPgWireCollector final : public duckdb::PhysicalResultCollector {
       if (!RenderColumns(context.client, ctx, types, lstate)) {
         lstate.rendered.clear();
       }
-      lstate.serializers.reserve(types.size());
+      duckdb::vector<duckdb::LogicalType> column_types;
+      std::vector<sdb::pg::VarFormat> formats;
+      column_types.reserve(types.size());
+      formats.reserve(types.size());
       for (size_t column = 0; column < types.size(); ++column) {
         const bool rendered =
           !lstate.rendered.empty() && lstate.rendered[column];
-        lstate.serializers.push_back(sdb::pg::GetSerialization(
-          rendered ? duckdb::LogicalType::VARCHAR : types[column],
-          FormatFor(ctx.formats, column), lstate.sctx));
+        column_types.push_back(rendered ? duckdb::LogicalType::VARCHAR
+                                        : types[column]);
+        formats.push_back(FormatFor(ctx.formats, column));
       }
+      lstate.serializer.emplace(column_types, formats, lstate.sctx);
       if (ctx.row_encoding != RowEncoding::DataRow) {
         lstate.progress = &ConnectionContext::Get(context.client).Progress();
       }
@@ -180,7 +186,7 @@ class PhysicalPgWireCollector final : public duckdb::PhysicalResultCollector {
       const duckdb::idx_t take =
         std::min<duckdb::idx_t>(chunk.size() - start, budget - sent);
       WriteDataChunk(out, Rendered(context.client, chunk, lstate),
-                     lstate.serializers, lstate.sctx, start, start + take);
+                     *lstate.serializer, lstate.sctx, start, start + take);
       ctx.direct_committed.store(out.TotalCommitted(),
                                  std::memory_order_release);
       ctx.rows.fetch_add(take, std::memory_order_release);
@@ -196,13 +202,13 @@ class PhysicalPgWireCollector final : public duckdb::PhysicalResultCollector {
     auto& rows = Rendered(context.client, chunk, lstate);
     switch (ctx.row_encoding) {
       case RowEncoding::DataRow:
-        WriteDataChunk(out, rows, lstate.serializers, lstate.sctx, 0,
+        WriteDataChunk(out, rows, *lstate.serializer, lstate.sctx, 0,
                        rows.size());
         break;
       case RowEncoding::CopyBinary: {
         const bool header = ctx.mode == WireSinkContext::Mode::Direct &&
                             ctx.copy_binary_header && rows.size() > 0;
-        WriteCopyChunk<RowEncoding::CopyBinary>(out, rows, lstate.serializers,
+        WriteCopyChunk<RowEncoding::CopyBinary>(out, rows, *lstate.serializer,
                                                 lstate.sctx, header);
         if (header) {
           ctx.copy_binary_header = false;
@@ -210,7 +216,7 @@ class PhysicalPgWireCollector final : public duckdb::PhysicalResultCollector {
         break;
       }
       case RowEncoding::CopyText:
-        WriteCopyChunk<RowEncoding::CopyText>(out, rows, lstate.serializers,
+        WriteCopyChunk<RowEncoding::CopyText>(out, rows, *lstate.serializer,
                                               lstate.sctx, false);
         break;
     }

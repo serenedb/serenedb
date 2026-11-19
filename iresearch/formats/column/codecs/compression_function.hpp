@@ -118,7 +118,8 @@ using FlushSegmentFn =
 
 enum class StateId : uint8_t {
   NumericValues,
-  NumericLeaves,
+  NumericLz4,
+  NumericZstd,
   NumericScratch,
   Raw,
   For,

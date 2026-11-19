@@ -114,10 +114,17 @@ struct NumericScratch final : State {
   std::string out;
 };
 
+struct FrameStore {
+  ByteCodec leaf = ByteCodec::None;
+  bool shuffled = false;
+  CompressLeafFn compress = nullptr;
+};
+
 template<typename Raw, typename Beaten>
 uint64_t EstimateLeaf(const Geometry& geometry, uint32_t items,
-                      uint32_t item_bytes, ByteCodec leaf, Leaves& leaves,
-                      LeafSamples& samples, Raw&& raw, Beaten&& beaten) {
+                      uint32_t item_bytes, ColumnDataCheckpointData& data,
+                      FrameStore store, LeafSamples& samples, Raw&& raw,
+                      Beaten&& beaten) {
   const uint64_t total = uint64_t{items} * item_bytes;
   const auto count = std::min<uint32_t>(geometry.frames, kSampleFrames);
   const auto frame = [&](uint32_t k) {
@@ -139,11 +146,11 @@ uint64_t EstimateLeaf(const Geometry& geometry, uint32_t items,
       bytes.size() ==
       uint64_t{std::min(items - frame(k) * geometry.per, geometry.per)} *
         item_bytes);
-    const auto n = leaves.Compress(leaf, bytes.data(), bytes.size());
-    compressed += std::min<uint64_t>(n, bytes.size());
+    const auto stored = store.compress(data, bytes);
+    compressed += std::min(stored.size(), bytes.size());
     samples.frames.push_back(frame(k));
-    if (n < bytes.size()) {
-      samples.bytes[k].assign(leaves.Out(), n);
+    if (stored.size() < bytes.size()) {
+      samples.bytes[k].assign(stored.data(), stored.size());
     } else {
       samples.bytes[k].clear();
     }
@@ -193,8 +200,8 @@ class SegmentWriter {
 
   template<typename Raw>
   void Leaf(NumericFrameMeta& m, uint32_t frame, uint32_t raw_len,
-            ByteCodec leaf, Leaves& leaves, const LeafSamples* samples,
-            Raw&& raw) {
+            ColumnDataCheckpointData& data, FrameStore store,
+            const LeafSamples* samples, Raw&& raw) {
     bool compressible = true;
     if (samples && _sample < samples->frames.size() &&
         samples->frames[_sample] == frame) {
@@ -210,10 +217,10 @@ class SegmentWriter {
     const std::span<const uint8_t> bytes = raw();
     m.frame.raw_len = static_cast<uint32_t>(bytes.size());
     if (compressible) {
-      const auto n = leaves.Compress(leaf, bytes.data(), bytes.size());
-      if (n < bytes.size()) {
-        _out.append(leaves.Out(), n);
-        m.frame.comp_len = static_cast<uint32_t>(n);
+      const auto stored = store.compress(data, bytes);
+      if (stored.size() < bytes.size()) {
+        _out.append(stored.data(), stored.size());
+        m.frame.comp_len = static_cast<uint32_t>(stored.size());
         return;
       }
     }
@@ -287,11 +294,6 @@ bool FlushNumeric(ColumnDataCheckpointData& data, Shape shape, ByteCodec leaf,
   return true;
 }
 
-struct FrameStore {
-  ByteCodec leaf = ByteCodec::None;
-  bool shuffled = false;
-};
-
 struct Items {
   Shape shape = Shape::Plain;
   FrameStore store;
@@ -344,7 +346,7 @@ double AnalyzeFrames(ColumnDataCheckpointData& data, const Items& items,
   }
   auto& samples = data.Get<NumericScratch>().samples;
   const auto size = EstimateLeaf(
-    geometry, items.count, item, leaf, data.Get<Leaves>(), samples,
+    geometry, items.count, item, data, items.store, samples,
     [&](uint32_t sample, uint32_t f) -> std::span<const uint8_t> {
       auto& copy = analysis.copies[sample];
       if (sample < analysis.copied) {
@@ -382,7 +384,6 @@ bool CompressFrames(ColumnDataCheckpointData& data, const Items& items,
   if (!Offered(items) || !MayWrite(data, analysis.done, leaf)) {
     return false;
   }
-  auto& leaves = data.Get<Leaves>();
   auto& scratch = data.Get<NumericScratch>();
   const uint32_t item = uint32_t{items.stored} + items.run_width;
   const auto geometry = GeometryOf(items);
@@ -404,7 +405,7 @@ bool CompressFrames(ColumnDataCheckpointData& data, const Items& items,
       writer.Close(m);
       continue;
     }
-    writer.Leaf(m, f, count * item, leaf, leaves, samples,
+    writer.Leaf(m, f, count * item, data, items.store, samples,
                 [&]() -> std::span<const uint8_t> {
                   const std::span<const uint8_t> raw =
                     frame(begin, count, scratch.frame);
@@ -420,7 +421,7 @@ bool CompressFrames(ColumnDataCheckpointData& data, const Items& items,
   writer.Finish(
     {
       .stored = items.stored,
-      .level = leaf == ByteCodec::None ? uint8_t{0} : leaves.Level(),
+      .level = leaf == ByteCodec::None ? uint8_t{0} : LeafLevel(data),
       .flags = items.store.shuffled ? kNumericShuffled : uint8_t{0},
       .raw_bytes = raw_bytes,
     },
@@ -432,11 +433,13 @@ template<auto kAnalyze, auto kCompress, ByteCodec kLeaf, bool kShuffled>
 inline constexpr CompressionFunction kStoredFrames{
   .analyze =
     [](ColumnDataCheckpointData& data, double bound) {
-      return kAnalyze(data, bound, FrameStore{kLeaf, kShuffled});
+      return kAnalyze(data, bound,
+                      FrameStore{kLeaf, kShuffled, kCompressLeaf<kLeaf>});
     },
   .compress =
     [](ColumnDataCheckpointData& data) {
-      return kCompress(data, FrameStore{kLeaf, kShuffled});
+      return kCompress(data,
+                       FrameStore{kLeaf, kShuffled, kCompressLeaf<kLeaf>});
     },
 };
 

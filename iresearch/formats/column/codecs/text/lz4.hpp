@@ -68,7 +68,7 @@ class Lz4CompressionState {
 
   template<typename Visit>
   void With(const Config& config, Visit&& visit) {
-    if (EffectiveLevel<Lz4>(config.level) > 1) {
+    if (Lz4Hc::Serves(config.level)) {
       visit(_high ? *_high : _high.emplace(_type, _dedup, _tuning));
     } else {
       visit(_fast ? *_fast : _fast.emplace(_type, _dedup, _tuning));
@@ -114,7 +114,7 @@ class Lz4CompressionState {
     if (const auto* trial = encoder.Find(config)) {
       return trial->Size();
     }
-    if (EffectiveLevel<Lz4>(config.level) > 1) {
+    if (Lz4Hc::Serves(config.level)) {
       return Estimate(_high_estimator, values, config);
     }
     const auto& trial = values.trial;

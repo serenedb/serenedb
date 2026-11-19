@@ -26,6 +26,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -93,6 +94,10 @@ struct Lz4Hc {
 
   static size_t Bound(size_t raw_size) noexcept { return Lz4::Bound(raw_size); }
 
+  static constexpr bool Serves(uint8_t level) noexcept {
+    return EffectiveLevel<Lz4>(level) > 1;
+  }
+
   class Compressor final : public DictionaryCompressor {
    public:
     explicit Compressor(uint8_t level);
@@ -112,6 +117,32 @@ struct Lz4Hc {
     int _level;
     std::unique_ptr<LZ4_streamHC_t, Lz4HcFree> _work;
     std::unique_ptr<LZ4_streamHC_t> _attached;
+  };
+};
+
+struct Lz4AnyLevel {
+  static constexpr ByteCodec kCodec = ByteCodec::Lz4;
+
+  static size_t Bound(size_t raw_size) noexcept { return Lz4::Bound(raw_size); }
+
+  class Compressor {
+   public:
+    explicit Compressor(uint8_t level) {
+      if (Lz4Hc::Serves(level)) {
+        _high.emplace(level);
+      } else {
+        _fast.emplace(level);
+      }
+    }
+
+    size_t Compress(const char* src, size_t size, char* dst, size_t capacity) {
+      return _high ? _high->Compress(src, size, dst, capacity)
+                   : _fast->Compress(src, size, dst, capacity);
+    }
+
+   private:
+    std::optional<Lz4::Compressor> _fast;
+    std::optional<Lz4Hc::Compressor> _high;
   };
 };
 

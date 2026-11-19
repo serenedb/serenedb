@@ -120,6 +120,9 @@ void WritePatches(duckdb::BinarySerializer& unit, catalog::RecordBuffer& out,
             const auto& [field, patch] = patches[f];
             const auto* packed =
               f < changed.packed.size() ? changed.packed[f].get() : nullptr;
+            if (packed && !packed->slots) {
+              packed = nullptr;
+            }
             columns.WriteObject([&](duckdb::BinarySerializer& column) {
               column.WriteProperty<uint64_t>(100, "field", field);
               column.WriteProperty(101, "type", patch->Type());
@@ -183,8 +186,11 @@ void RunPackJobs(std::span<const PackJob> jobs, uint32_t frame_bytes,
     serializer.Begin();
     WriteValues(serializer, *jobs[j].patch);
     serializer.End();
+    auto packed =
+      irs::compression::Compress(irs::compression::kZstd1, raw, parallel);
     *jobs[j].packed = std::make_shared<const irs::compression::Compressed>(
-      irs::compression::Compress(irs::compression::kZstd1, raw, parallel));
+      irs::compression::Pays(packed) ? std::move(packed)
+                                     : irs::compression::Compressed{});
   });
 }
 
@@ -449,9 +455,12 @@ void PackRows(std::span<LoggedRows> runs, uint32_t frame_bytes,
     serializer.Begin();
     WriteChunks(serializer, 100, rows);
     serializer.End();
-    rows.packed =
+    auto packed =
       irs::compression::Compress(irs::compression::kZstd1, raw, parallel);
-    rows.scan = nullptr;
+    if (irs::compression::Pays(packed)) {
+      rows.packed = std::move(packed);
+      rows.scan = nullptr;
+    }
   });
 }
 

@@ -54,6 +54,10 @@ void WritePackedMeta(duckdb::BinarySerializer& meta, FooterWriter write) {
   serializer.End();
   const auto packed = compression::Compress(compression::kLz4Hc9,
                                             {raw.GetData(), raw.GetPosition()});
+  if (!compression::Pays(packed)) {
+    write(meta);
+    return;
+  }
   meta.WriteObject(kMetaFieldPacked, "packed",
                    [&](duckdb::BinarySerializer& object) {
                      compression::WritePacked(object, packed);

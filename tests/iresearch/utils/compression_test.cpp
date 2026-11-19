@@ -179,6 +179,27 @@ TEST(Compression, FramesCompressAndDecompressInParallel) {
   }
 }
 
+TEST(Compression, PaysOnlyWhenThePackedFormIsSmaller) {
+  for (const auto method : kMethods) {
+    for (const size_t size : {size_t{1}, size_t{16}, size_t{64}, size_t{256},
+                              size_t{kFrame}, size_t{kFrame} * 3 + 5}) {
+      for (const auto& raw : {Text(size), Noise(size)}) {
+        const auto compressed =
+          compression::Compress(method, View(raw), kFrame);
+        EXPECT_EQ(compression::Pays(compressed),
+                  WritePacked(compressed).size() < raw.size())
+          << magic_enum::enum_name(method.codec) << " " << size;
+      }
+    }
+    EXPECT_FALSE(
+      compression::Pays(compression::Compress(method, View(Text(16)), kFrame)));
+    EXPECT_FALSE(compression::Pays(
+      compression::Compress(method, View(Noise(kFrame)), kFrame)));
+    EXPECT_TRUE(compression::Pays(
+      compression::Compress(method, View(Text(kFrame)), kFrame)));
+  }
+}
+
 TEST(Compression, CompressesIntoReusedSlots) {
   Bytes slots(size_t{kFrame} * 4);
   for (const auto method : kMethods) {

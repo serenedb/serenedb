@@ -417,6 +417,18 @@ Compressed CompressOwned(Method method, uint32_t frame_bytes,
   return out;
 }
 
+class CountingStream final : public duckdb::WriteStream {
+ public:
+  void WriteData(duckdb::const_data_ptr_t, duckdb::idx_t size) final {
+    _bytes += size;
+  }
+
+  uint64_t Bytes() const noexcept { return _bytes; }
+
+ private:
+  uint64_t _bytes = 0;
+};
+
 void SplitFrames(bytes_view raw, uint32_t frame_bytes,
                  absl::FunctionRef<void(bytes_view)> visit) {
   for (size_t at = 0; at < raw.size(); at += frame_bytes) {
@@ -587,6 +599,15 @@ void WritePacked(duckdb::BinarySerializer& object, const Compressed& packed) {
       ForEachStored(packed.frames, packed.slots.get(),
                     [&](bytes_view frame) { put(frame.data(), frame.size()); });
     });
+}
+
+bool Pays(const Compressed& packed) {
+  CountingStream counter;
+  duckdb::BinarySerializer serializer{counter};
+  serializer.Begin();
+  WritePacked(serializer, packed);
+  serializer.End();
+  return counter.Bytes() < packed.frames.raw_bytes;
 }
 
 Packed ReadPacked(duckdb::BinaryDeserializer& object,

@@ -631,6 +631,40 @@ TEST_P(FormatTestCase, format_utils_footer_packs_its_meta) {
   EXPECT_LT(packed * 4, unpacked);
 }
 
+TEST_P(FormatTestCase, format_utils_footer_keeps_a_small_meta_plain) {
+  const auto write = [&](std::string_view name) {
+    auto stream = dir().create(name);
+    ASSERT_NE(nullptr, stream);
+    irs::format_utils::WriteFooter(*stream, [](duckdb::BinarySerializer& meta) {
+      meta.WriteProperty<uint32_t>(0, "value", 42);
+    });
+  };
+  const auto read = [&](std::string_view name) -> uint64_t {
+    auto stream = dir().open(name, irs::IOAdvice::RANDOM);
+    EXPECT_NE(nullptr, stream);
+    uint32_t value = 0;
+    irs::format_utils::ReadFooter(
+      *stream, name, [&](duckdb::BinaryDeserializer& meta, uint64_t) {
+        value = meta.ReadProperty<uint32_t>(0, "value");
+      });
+    EXPECT_EQ(value, 42U);
+    return stream->Length();
+  };
+
+  write("small");
+  const auto small = read("small");
+
+  constexpr std::string_view kUnpacked = "irs::FooterMetaUnpacked";
+  if (!duckdb::FaultPoints::Arm(kUnpacked)) {
+    GTEST_SKIP() << "this build has no fault injection";
+  }
+  {
+    absl::Cleanup disarm = [&] { duckdb::FaultPoints::Disarm(kUnpacked); };
+    write("unpacked");
+  }
+  EXPECT_EQ(small, read("unpacked"));
+}
+
 TEST_P(FormatTestCase, format_utils_footer_damaged) {
   {
     auto stream = dir().create("file");

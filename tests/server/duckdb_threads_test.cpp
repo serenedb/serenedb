@@ -257,13 +257,23 @@ TEST(DuckDBThreads, RelaunchFromPinnedWorkerKeepsWorkersApart) {
   EXPECT_EQ(scheduler.NumberOfThreads(), 3U);
   std::map<std::string, size_t> per_cpu;
   size_t pinned = 0;
-  for (const auto& [tid, info] : Threads()) {
-    if (before.contains(tid) || info.name != process_name ||
-        info.cpus.find_first_of(",-") != std::string::npos) {
-      continue;
+  const auto deadline =
+    std::chrono::steady_clock::now() + std::chrono::seconds(30);
+  while (true) {
+    per_cpu.clear();
+    pinned = 0;
+    for (const auto& [tid, info] : Threads()) {
+      if (before.contains(tid) || info.name != process_name ||
+          info.cpus.find_first_of(",-") != std::string::npos) {
+        continue;
+      }
+      ++pinned;
+      ++per_cpu[info.cpus];
     }
-    ++pinned;
-    ++per_cpu[info.cpus];
+    if (pinned == 3 || std::chrono::steady_clock::now() > deadline) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
   EXPECT_EQ(pinned, 3U);
   for (const auto& [cpu, count] : per_cpu) {

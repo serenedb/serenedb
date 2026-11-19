@@ -92,8 +92,8 @@ void SetTimeouts() {
   if (const auto timeout = AuthTimeout(); timeout > kOff) {
     gHttpHeaderTimeout = timeout;
   }
-  if (const auto timeout = absl::ToChronoMilliseconds(
-        absl::GetFlag(FLAGS_idle_session_timeout));
+  if (const auto timeout =
+        absl::ToChronoMilliseconds(absl::GetFlag(FLAGS_idle_session_timeout));
       timeout > kOff) {
     gHttpKeepAliveTimeout = timeout;
   }

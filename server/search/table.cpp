@@ -308,21 +308,22 @@ bool PatchesCurrent(const TableState& state,
 
 std::vector<UnitPatch> FollowPatches(const TableState& state,
                                      std::vector<UnitPatch> patches) {
-  std::vector<UnitPatch> followed;
-  for (const auto& patch : patches) {
+  std::vector<UnitPatch> result;
+  std::vector<UnitPatch> next;
+  for (auto& patch : patches) {
+    next.clear();
     if (Current(state, patch)) {
-      continue;
+      next.push_back(std::move(patch));
+    } else {
+      for (const auto& [field, column] : patch.fields) {
+        const auto entries = column->EntriesSince(nullptr);
+        FollowPatch(state, patch.unit, field, column->Type(), entries.rows,
+                    entries.values, next);
+      }
     }
-    for (const auto& [field, column] : patch.fields) {
-      const auto entries = column->EntriesSince(nullptr);
-      FollowPatch(state, patch.unit, field, column->Type(), entries.rows,
-                  entries.values, followed);
-    }
+    MergeUnitPatches(result, std::move(next));
   }
-  std::erase_if(patches,
-                [&](const UnitPatch& patch) { return !Current(state, patch); });
-  MergeUnitPatches(patches, std::move(followed));
-  return patches;
+  return result;
 }
 
 void CarryEntries(irs::field_id field, const duckdb::LogicalType& type,

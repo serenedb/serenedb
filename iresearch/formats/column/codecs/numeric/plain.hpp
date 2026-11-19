@@ -268,24 +268,14 @@ class PlainReader final : public FrameReader<T> {
     return rows;
   }
 
-  IRS_NO_INLINE T FetchApart(uint64_t row, uint64_t next) {
-    if (this->Near(row, next)) {
-      return this->Get(row);
-    }
-    if (this->Packed()) {
+  IRS_FORCE_INLINE T FetchApart(uint64_t row, uint64_t next) {
+    if (this->Packed() && !this->Near(row, next)) {
       const auto [packed, base, bits] = this->BlockAt(row);
       return this->Scaled(numeric::UnpackValue<U>(
         packed, bits, static_cast<uint32_t>(row % numeric::kBlockValues),
         static_cast<U>(base)));
     }
-    if (this->Shuffled()) {
-      return ReadLanes(row);
-    }
-    const auto item = this->SourceItem(row);
-    U v = 0;
-    numeric::Widen(item.source + size_t{item.at} * this->_f.stored, 1,
-                   this->_f.stored, &v);
-    return this->Scaled(static_cast<U>(v + static_cast<U>(_own.base)));
+    return FetchFramed(row, next);
   }
 
   void UnpackBlock(uint64_t first, uint64_t rows, U* out) {
@@ -303,6 +293,20 @@ class PlainReader final : public FrameReader<T> {
  private:
   bool For() const noexcept {
     return !this->Packed() && this->_f.stored < this->_f.width;
+  }
+
+  IRS_NO_INLINE T FetchFramed(uint64_t row, uint64_t next) {
+    if (this->Near(row, next)) {
+      return this->Get(row);
+    }
+    if (this->Shuffled()) {
+      return ReadLanes(row);
+    }
+    const auto item = this->SourceItem(row);
+    U v = 0;
+    numeric::Widen(item.source + size_t{item.at} * this->_f.stored, 1,
+                   this->_f.stored, &v);
+    return this->Scaled(static_cast<U>(v + static_cast<U>(_own.base)));
   }
 
   void DecodeInto(const NumericFrameMeta& m, uint32_t rows, U* out,

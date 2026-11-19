@@ -23,6 +23,7 @@
 #include <absl/strings/str_cat.h>
 
 #include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/index/norm.hpp"
 #include "iresearch/search/scorers/score_inputs.hpp"
 
 namespace irs::explain {
@@ -64,8 +65,12 @@ score_t AddFreq(Node& out, const ScoreContext& ctx) {
 }
 
 uint32_t AddLength(Node& out, const ScoreContext& ctx) {
-  const auto length = NormsOf(ctx)[0];
-  AddDetail(out, "dl", uint64_t{length});
+  const auto* norms = FieldNormsOf(ctx);
+  const auto length = norms ? norms[0] : kNorms[0];
+  auto& dl = AddDetail(out, "dl", uint64_t{length});
+  if (!norms) {
+    dl.note = "the column records no lengths, so every row counts as 1";
+  }
   return length;
 }
 

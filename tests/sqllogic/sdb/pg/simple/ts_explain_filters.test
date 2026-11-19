@@ -110,8 +110,8 @@ WHERE car @@ ts_phrase('red car')
 ORDER BY BM25(xf_idx.tableoid) DESC, id;
 ----
 id	why
-1	{"column":"car","expression":"boost * idf * tf","inputs":{"idf":{"expression":"sum","parts":[{"column":"car","expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":3},"df":{"value":2}},"term":"red","value":0.47000363},{"column":"car","expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":3},"df":{"value":2}},"term":"auto","value":0.47000363},{"column":"car","expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":3},"df":{"value":2}},"term":"automobile","value":0.47000363},{"column":"car","expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":3},"df":{"value":2}},"term":"car","value":0.47000363}],"value":1.8800145},"tf":{"expression":"freq / (freq + k1 * (1 - b + b * dl / avgdl))","inputs":{"avgdl":{"expression":"L / N","inputs":{"L":{"value":13},"N":{"value":3}},"value":4.3333335},"b":{"value":0.75},"dl":{"value":1},"freq":{"value":1},"k1":{"value":1.2}},"value":0.6632653}},"phrase":["red",["auto","automobile","car"]],"scorer":"bm25(k1=1.2, b=0.75)","value":1.2469485}
-2	{"column":"car","expression":"boost * idf * tf","inputs":{"idf":{"expression":"sum","parts":[{"column":"car","expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":3},"df":{"value":2}},"term":"red","value":0.47000363},{"column":"car","expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":3},"df":{"value":2}},"term":"auto","value":0.47000363},{"column":"car","expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":3},"df":{"value":2}},"term":"automobile","value":0.47000363},{"column":"car","expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":3},"df":{"value":2}},"term":"car","value":0.47000363}],"value":1.8800145},"tf":{"expression":"freq / (freq + k1 * (1 - b + b * dl / avgdl))","inputs":{"avgdl":{"expression":"L / N","inputs":{"L":{"value":13},"N":{"value":3}},"value":4.3333335},"b":{"value":0.75},"dl":{"value":1},"freq":{"value":1},"k1":{"value":1.2}},"value":0.6632653}},"phrase":["red",["auto","automobile","car"]],"scorer":"bm25(k1=1.2, b=0.75)","value":1.2469485}
+1	{"column":"car","expression":"boost * idf * tf","inputs":{"idf":{"expression":"sum","parts":[{"column":"car","expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":3},"df":{"value":2}},"term":"red","value":0.47000363},{"column":"car","expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":3},"df":{"value":2}},"term":"auto","value":0.47000363},{"column":"car","expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":3},"df":{"value":2}},"term":"automobile","value":0.47000363},{"column":"car","expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":3},"df":{"value":2}},"term":"car","value":0.47000363}],"value":1.8800145},"tf":{"expression":"freq / (freq + k1 * (1 - b + b * dl / avgdl))","inputs":{"avgdl":{"expression":"L / N","inputs":{"L":{"value":13},"N":{"value":3}},"value":4.3333335},"b":{"value":0.75},"dl":{"note":"the column records no lengths, so every row counts as 1","value":1},"freq":{"value":1},"k1":{"value":1.2}},"value":0.6632653}},"phrase":["red",["auto","automobile","car"]],"scorer":"bm25(k1=1.2, b=0.75)","value":1.2469485}
+2	{"column":"car","expression":"boost * idf * tf","inputs":{"idf":{"expression":"sum","parts":[{"column":"car","expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":3},"df":{"value":2}},"term":"red","value":0.47000363},{"column":"car","expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":3},"df":{"value":2}},"term":"auto","value":0.47000363},{"column":"car","expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":3},"df":{"value":2}},"term":"automobile","value":0.47000363},{"column":"car","expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":3},"df":{"value":2}},"term":"car","value":0.47000363}],"value":1.8800145},"tf":{"expression":"freq / (freq + k1 * (1 - b + b * dl / avgdl))","inputs":{"avgdl":{"expression":"L / N","inputs":{"L":{"value":13},"N":{"value":3}},"value":4.3333335},"b":{"value":0.75},"dl":{"note":"the column records no lengths, so every row counts as 1","value":1},"freq":{"value":1},"k1":{"value":1.2}},"value":0.6632653}},"phrase":["red",["auto","automobile","car"]],"scorer":"bm25(k1=1.2, b=0.75)","value":1.2469485}
 
 query
 SELECT id, ts_explain(xf_idx.tableoid) AS why
@@ -120,8 +120,8 @@ WHERE g @@ ts_ngram('he', 0.5)
 ORDER BY BM25(xf_idx.tableoid) DESC, id;
 ----
 id	why
-1	{"column":"g","expression":"boost * idf * tf","inputs":{"idf":{"expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":3},"df":{"value":2}},"value":0.47000363},"tf":{"expression":"freq / (freq + k1 * (1 - b + b * dl / avgdl))","inputs":{"avgdl":{"expression":"L / N","inputs":{"L":{"value":11},"N":{"value":3}},"value":3.6666667},"b":{"value":0.75},"dl":{"value":1},"freq":{"value":1},"k1":{"value":1.2}},"value":0.64705884}},"scorer":"bm25(k1=1.2, b=0.75)","term":"he","value":0.30412}
-2	{"column":"g","expression":"boost * idf * tf","inputs":{"idf":{"expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":3},"df":{"value":2}},"value":0.47000363},"tf":{"expression":"freq / (freq + k1 * (1 - b + b * dl / avgdl))","inputs":{"avgdl":{"expression":"L / N","inputs":{"L":{"value":11},"N":{"value":3}},"value":3.6666667},"b":{"value":0.75},"dl":{"value":1},"freq":{"value":1},"k1":{"value":1.2}},"value":0.64705884}},"scorer":"bm25(k1=1.2, b=0.75)","term":"he","value":0.30412}
+1	{"column":"g","expression":"boost * idf * tf","inputs":{"idf":{"expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":3},"df":{"value":2}},"value":0.47000363},"tf":{"expression":"freq / (freq + k1 * (1 - b + b * dl / avgdl))","inputs":{"avgdl":{"expression":"L / N","inputs":{"L":{"value":11},"N":{"value":3}},"value":3.6666667},"b":{"value":0.75},"dl":{"note":"the column records no lengths, so every row counts as 1","value":1},"freq":{"value":1},"k1":{"value":1.2}},"value":0.64705884}},"scorer":"bm25(k1=1.2, b=0.75)","term":"he","value":0.30412}
+2	{"column":"g","expression":"boost * idf * tf","inputs":{"idf":{"expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":3},"df":{"value":2}},"value":0.47000363},"tf":{"expression":"freq / (freq + k1 * (1 - b + b * dl / avgdl))","inputs":{"avgdl":{"expression":"L / N","inputs":{"L":{"value":11},"N":{"value":3}},"value":3.6666667},"b":{"value":0.75},"dl":{"note":"the column records no lengths, so every row counts as 1","value":1},"freq":{"value":1},"k1":{"value":1.2}},"value":0.64705884}},"scorer":"bm25(k1=1.2, b=0.75)","term":"he","value":0.30412}
 
 query
 SELECT id, ts_explain(xf_idx.tableoid) AS why
@@ -154,6 +154,28 @@ ORDER BY BM25(xf_idx.tableoid) DESC, id;
 ----
 id	why
 2	{"column":"id","expression":"boost * value","inputs":{"value":{"value":1}},"scorer":"constant(value=1)","term":"2","value":1}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY xf_freq AS split_text(case := 'lower') WITH (frequency);
+
+statement ok
+CREATE TABLE xf_same (id INTEGER PRIMARY KEY, f VARCHAR);
+
+statement ok
+CREATE INDEX xf_same_idx ON xf_same USING inverted (id, f xf_freq);
+
+statement ok
+INSERT INTO xf_same VALUES (1, 'alpha alps'), (2, 'alpine'), (3, 'beta');
+
+query
+SELECT id, ts_explain(xf_same_idx.tableoid) AS why
+FROM xf_same_idx
+WHERE f @@ ts_starts_with('al')
+ORDER BY BM25(xf_same_idx.tableoid) DESC, id;
+----
+id	why
+1	{"clauses":[{"column":"f","expression":"boost * value","inputs":{"value":{"value":1}},"scorer":"constant(value=1)","value":1},{"column":"f","expression":"boost * value","inputs":{"value":{"value":1}},"scorer":"constant(value=1)","value":1}],"expression":"sum","value":2}
+2	{"clauses":[{"column":"f","expression":"boost * value","inputs":{"value":{"value":1}},"scorer":"constant(value=1)","term":"alpine","value":1}],"expression":"sum","value":1}
 
 query
 SELECT ts_explain(NULL) IS NULL AS is_null;

@@ -49,6 +49,7 @@ DUCKDB_PARK_FAULTS = frozenset(
         "catalog_all_schemas_listed",
         "duckdb_databases_listed",
         "read_duckdb_reader_attached",
+        "row_range_lex",
         "scheduler_woken_worker_pauses",
     }
 )
@@ -59,6 +60,7 @@ DUCKDB_TESTED_FAULTS = frozenset(
         "block_load_before_loaded",
         "block_unload_before_temporary_write",
         "remote_write_cache_block",
+        "row_range_lex",
     }
 )
 TEST_DIR = "tests"

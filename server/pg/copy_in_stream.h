@@ -27,6 +27,9 @@
 #include <duckdb/common/allocator.hpp>
 #include <duckdb/common/optional_idx.hpp>
 #include <duckdb/formats/row_ranges.hpp>
+#include <memory>
+#include <string_view>
+#include <vector>
 
 #include "pg/copy_in_batches.h"
 
@@ -34,7 +37,8 @@ namespace sdb::pg {
 
 class CopyInStream final : public duckdb::RowSource {
  public:
-  explicit CopyInStream(CopyInBatches& batches) : _batches{batches} {}
+  CopyInStream(CopyInBatches& batches, size_t window)
+    : _batches{batches}, _window{window} {}
 
   duckdb::idx_t Read(char* data, duckdb::idx_t count,
                      duckdb::idx_t offset) const final;
@@ -42,17 +46,27 @@ class CopyInStream final : public duckdb::RowSource {
   duckdb::optional_idx End() const final;
 
  private:
+  struct UnitBytes {
+    CopyBatchLease lease;
+    duckdb::AllocatedData owned;
+    std::vector<std::string_view> segments;
+  };
+
   struct Unit {
     duckdb::idx_t offset;
     duckdb::idx_t size;
-    duckdb::AllocatedData bytes;
+    std::shared_ptr<UnitBytes> bytes;
   };
 
-  void Pull() const;
+  void Pull(duckdb::idx_t end) const;
+  void Spill() const ABSL_EXCLUSIVE_LOCKS_REQUIRED(_lock);
 
   CopyInBatches& _batches;
+  const size_t _window;
   mutable absl::Mutex _lock;
   mutable std::deque<Unit> _units ABSL_GUARDED_BY(_lock);
+  mutable std::vector<duckdb::AllocatedData> _spare ABSL_GUARDED_BY(_lock);
+  mutable size_t _leased ABSL_GUARDED_BY(_lock) = 0;
   mutable duckdb::idx_t _pulled ABSL_GUARDED_BY(_lock) = 0;
   mutable bool _pulling ABSL_GUARDED_BY(_lock) = false;
   mutable bool _finished ABSL_GUARDED_BY(_lock) = false;

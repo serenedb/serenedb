@@ -44,6 +44,20 @@
 namespace irs::codecs {
 
 template<typename T>
+struct Runs final : State {
+  static constexpr StateId kId = StateId::Runs;
+
+  explicit Runs(ColumnDataCheckpointData&) {}
+
+  ScratchVector<numeric::Bits<sizeof(T)>> values;
+  ScratchVector<uint32_t> lengths;
+  ScratchVector<uint32_t> rows;
+  bool checked = false;
+  bool none = false;
+  bool located = false;
+};
+
+template<typename T>
 class Values final : public State {
  public:
   static constexpr StateId kId = StateId::NumericValues;
@@ -66,10 +80,16 @@ class Values final : public State {
     if (!ReadInPlace()) {
       Gather(data.rows);
     }
-    Measure();
+    if (const auto* runs = data.template Find<Runs<T>>();
+        runs && runs->located) {
+      MeasureRuns(*runs);
+    } else {
+      Measure();
+    }
   }
 
   static constexpr bool kSigned = std::is_integral_v<T> && std::is_signed_v<T>;
+  static constexpr size_t kScaleSeeds = 8;
 
   static bool Less(U a, U b) noexcept {
     if constexpr (kSigned) {
@@ -101,6 +121,28 @@ class Values final : public State {
       _scale = FoundScale();
     }
     return _scale;
+  }
+
+  U Scale(std::span<const U> every_value) const noexcept {
+    if (_scale == 0) {
+      _scale = _sequence ? FoundScale() : ScaleOf(every_value);
+    }
+    return _scale;
+  }
+
+  static U ScaleOf(std::span<const U> values) noexcept {
+    U gcd = 0;
+    if constexpr (std::is_integral_v<T>) {
+      size_t at = 0;
+      for (; at < values.size() && at < kScaleSeeds; ++at) {
+        gcd = std::gcd(gcd, Magnitude(values[at]));
+      }
+      for (; at < values.size() && gcd > 1; at += numeric::kBlockValues) {
+        gcd = Dividing(gcd, values.data() + at,
+                       std::min(numeric::kBlockValues, values.size() - at));
+      }
+    }
+    return gcd > 1 ? gcd : U{1};
   }
 
   U Step() const noexcept {
@@ -404,6 +446,46 @@ class Values final : public State {
     }
   }
 
+  void MeasureRuns(const Runs<T>& runs) {
+    const size_t count = runs.rows.size();
+    const U* values = runs.values.data();
+    _bounds.resize((_size + numeric::kBlockValues - 1) / numeric::kBlockValues);
+    size_t r = 0;
+    for (size_t b = 0; b < _bounds.size(); ++b) {
+      const size_t first = b * numeric::kBlockValues;
+      const size_t end = std::min(_size, first + numeric::kBlockValues);
+      while (r + 1 < count && runs.rows[r + 1] <= first) {
+        ++r;
+      }
+      BlockBounds<U> bounds{values[r], values[r]};
+      for (; r + 1 < count && runs.rows[r + 1] < end; ++r) {
+        const U value = values[r + 1];
+        bounds.lo = Less(value, bounds.lo) ? value : bounds.lo;
+        bounds.hi = Less(bounds.hi, value) ? value : bounds.hi;
+      }
+      _bounds[b] = bounds;
+      if (b == 0 || Less(bounds.lo, _lo)) {
+        _lo = bounds.lo;
+      }
+      if (b == 0 || Less(_hi, bounds.hi)) {
+        _hi = bounds.hi;
+      }
+    }
+    _first = values[0];
+    _step = count > 1 && runs.rows[1] == 1 ? static_cast<U>(values[1] - _first)
+                                           : U{0};
+    bool stepped = count == 1 || count == _size;
+    for (size_t i = 1; i < count && count == _size && stepped; ++i) {
+      stepped = static_cast<U>(values[i] - values[i - 1]) == _step;
+    }
+    _runs = static_cast<uint32_t>(count);
+    _sequence = stepped && Monotone();
+    if constexpr (std::is_integral_v<T>) {
+      _stats.Update(std::bit_cast<T>(_lo));
+      _stats.Update(std::bit_cast<T>(_hi));
+    }
+  }
+
   void MeasureFloats(const U* values, size_t count) {
     constexpr size_t kLanes = 8;
     constexpr auto kSign = static_cast<U>(U{1} << (8 * sizeof(U) - 1));
@@ -566,25 +648,25 @@ class Values final : public State {
             break;
           }
         }
-        if (gcd > 1) {
-          const auto rows = Raw();
-          for (size_t b = 0; b < rows.Blocks() && gcd != 1; ++b) {
-            if (_bounds[b].lo == _bounds[b].hi) {
-              continue;
-            }
-            const U* values = rows.Block(b);
-            const size_t count = rows.BlockSize(b);
-            if (Multiples(values, count, gcd)) {
-              continue;
-            }
-            for (size_t i = 0; i < count && gcd != 1; ++i) {
-              gcd = std::gcd(gcd, Magnitude(values[i]));
-            }
+        const auto rows = Raw();
+        for (size_t b = 0; b < rows.Blocks() && gcd > 1; ++b) {
+          if (_bounds[b].lo != _bounds[b].hi) {
+            gcd = Dividing(gcd, rows.Block(b), rows.BlockSize(b));
           }
         }
       }
     }
     return gcd > 1 ? gcd : U{1};
+  }
+
+  static U Dividing(U gcd, const U* values, size_t count) noexcept {
+    if (Multiples(values, count, gcd)) {
+      return gcd;
+    }
+    for (size_t i = 0; i < count && gcd != 1; ++i) {
+      gcd = std::gcd(gcd, Magnitude(values[i]));
+    }
+    return gcd;
   }
 
   U Divided(U value) const noexcept {

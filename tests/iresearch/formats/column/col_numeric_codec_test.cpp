@@ -1518,6 +1518,60 @@ TEST_F(ColNumericCodecTest, WideValuesRepeatedAcrossARowGroupTakeADictionary) {
   }
 }
 
+TEST_F(ColNumericCodecTest, WideRowGroupsOfLongRunsReadBack) {
+  constexpr uint32_t kRowGroup = 16384;
+  constexpr uint64_t kRows = 2 * kRowGroup + 5000;
+  const Gen long_runs = [](uint64_t g) -> std::optional<int64_t> {
+    return static_cast<int64_t>(Mix(g / 500) % 30000);
+  };
+  const Gen both_signs = [](uint64_t g) -> std::optional<int64_t> {
+    return static_cast<int64_t>(g / 300 % 11) - 5;
+  };
+  const Gen multiples = [](uint64_t g) -> std::optional<int64_t> {
+    return static_cast<int64_t>(Mix(g / 700) % 9) * 1000003;
+  };
+  const Gen one_value = [](uint64_t) -> std::optional<int64_t> { return 42; };
+  const Gen runs_at_block_starts = [](uint64_t g) -> std::optional<int64_t> {
+    return g % 1024 < 64 ? 7 : static_cast<int64_t>(Mix(g) % 1000);
+  };
+  using irs::codecs::CodecType;
+  const auto codecs = [&](const duckdb::LogicalType& type, const Gen& gen,
+                          irs::WriteTier tier, CodecType codec) {
+    irs::MemoryDirectory dir{};
+    Write(dir, type, {.tier = tier}, kRows, kRowGroup, gen, codec);
+    Verify(dir, type, kRows, gen);
+    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+    const auto* col = r.Column(kField);
+    EXPECT_NE(col, nullptr);
+    std::set<CodecType> types;
+    for (const auto& block : col->DataBlocks()) {
+      types.insert(block.codec->type);
+    }
+    return types;
+  };
+  for (const auto tier : {irs::WriteTier::Flush, irs::WriteTier::Merge}) {
+    SCOPED_TRACE(tier == irs::WriteTier::Flush ? "flush" : "merge");
+    for (const duckdb::LogicalType type :
+         {duckdb::LogicalType::HUGEINT, duckdb::LogicalType::UHUGEINT,
+          duckdb::LogicalType::UUID}) {
+      SCOPED_TRACE(type.ToString());
+      for (const auto& gen : {long_runs, both_signs, multiples, one_value,
+                              runs_at_block_starts}) {
+        for (const auto codec : {CodecType::Ffor, CodecType::DeltaFfor,
+                                 CodecType::DictFfor, CodecType::Auto}) {
+          codecs(type, gen, tier, codec);
+        }
+      }
+      for (const auto& gen : {long_runs, both_signs, multiples}) {
+        EXPECT_EQ(codecs(type, gen, tier, CodecType::RleFfor),
+                  std::set{CodecType::RleFfor});
+      }
+      codecs(type, one_value, tier, CodecType::RleFfor);
+      codecs(type, runs_at_block_starts, tier, CodecType::RleFfor);
+    }
+  }
+}
+
 TEST_F(ColNumericCodecTest, WideRowGroupsWithNullsReadBack) {
   constexpr uint32_t kRowGroup = 16384;
   constexpr uint64_t kRows = 2 * kRowGroup + 5000;

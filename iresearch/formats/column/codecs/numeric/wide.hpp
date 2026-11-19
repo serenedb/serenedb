@@ -47,6 +47,7 @@
 #include "iresearch/formats/column/codecs/numeric/numeric_kernels.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_layout.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_scan.tpp"
+#include "iresearch/formats/column/codecs/numeric/numeric_values.hpp"
 #include "iresearch/formats/column/codecs/preferences.hpp"
 #include "iresearch/formats/column/codecs/tuning.hpp"
 #include "iresearch/formats/column/internal/write_chunk.hpp"
@@ -63,6 +64,7 @@ inline constexpr size_t kWideSampleEvery = 8;
 inline constexpr size_t kWideSampledBlocks = 16;
 inline constexpr size_t kWideSampledRows = 64;
 inline constexpr unsigned kWideHalvesBits = 113;
+inline constexpr size_t kWideRunRows = 8;
 
 struct WideHeader {
   uint8_t form = 0;
@@ -141,7 +143,7 @@ struct WidePart {
   struct Keep {
     void operator()(const Codec&, duckdb::BaseStatistics, uint64_t,
                     std::string_view segment) const {
-      part->bytes.assign(segment);
+      part->bytes = segment;
       part->flushed = true;
     }
 
@@ -175,7 +177,7 @@ struct WidePart {
   WriteChunk chunk;
   ColumnTuning tuning;
   Preferences preferences;
-  std::string bytes;
+  std::string_view bytes;
   bool flushed = false;
   Keep keep{this};
   ColumnDataCheckpointData data;
@@ -300,6 +302,65 @@ struct WideValues final : State {
         return sample_few;
     }
     return false;
+  }
+
+  bool ReadRuns(ColumnDataCheckpointData& data) {
+    const size_t limit = data.rows / kWideRunRows * 2;
+    ScratchVector<absl::uint128> keys(limit);
+    ScratchVector<uint32_t> rows(limit);
+    absl::uint128 last = 0;
+    size_t count = 0;
+    size_t row = 0;
+    for (const auto& chunk : data.chunks) {
+      const size_t size = chunk.data.size();
+      if (chunk.data.GetVectorType() != duckdb::VectorType::FLAT_VECTOR ||
+          !duckdb::FlatVector::Validity(chunk.data).CannotHaveNull()) {
+        return false;
+      }
+      const W* values = duckdb::FlatVector::GetData<W>(chunk.data);
+      for (size_t i = 0; i < size; ++i) {
+        const auto key = WideKey<W>(values[i]);
+        if (key == last && count != 0) [[likely]] {
+          continue;
+        }
+        if (count == limit) {
+          return false;
+        }
+        last = key;
+        keys[count] = key;
+        rows[count++] = static_cast<uint32_t>(row + i);
+      }
+      row += size;
+    }
+    if (count == 0) {
+      return false;
+    }
+    const std::span<const absl::uint128> found{keys.data(), count};
+    const auto [lowest, highest] = absl::c_minmax_element(found);
+    if (absl::Uint128High64(*highest - *lowest) != 0) {
+      return false;
+    }
+    usable = true;
+    narrow = true;
+    least = *lowest;
+    most = *highest;
+    base = absl::Uint128High64(most) == absl::Uint128High64(least)
+             ? absl::MakeUint128(absl::Uint128High64(least), 0)
+             : least;
+    lows.resize(data.rows);
+    low.emplace(data, lows);
+    auto& runs = low->data.template Get<Runs<uint64_t>>();
+    runs.values.resize(count);
+    rows.resize(count);
+    for (size_t r = 0; r < count; ++r) {
+      const uint64_t value = absl::Uint128Low64(keys[r] - base);
+      runs.values[r] = value;
+      std::fill(lows.data() + rows[r],
+                lows.data() + (r + 1 < count ? rows[r + 1] : data.rows), value);
+    }
+    runs.rows = std::move(rows);
+    runs.located = true;
+    return true;
   }
 
   bool ReadLowerHalves(ColumnDataCheckpointData& data) {
@@ -431,34 +492,41 @@ struct WideValues final : State {
 
   void Read(ColumnDataCheckpointData& data) {
     read = true;
+    if (sampled && sample_narrow &&
+        sample_repeats * kWideRunRows >= sample_pairs * (kWideRunRows - 1) &&
+        ReadRuns(data)) {
+      return;
+    }
     if ((!sampled || sample_narrow) && ReadLowerHalves(data)) {
       return;
     }
     usable = false;
     has_null = false;
-    ScratchVector<absl::uint128> keys(data.rows);
-    ReadKeys(data, keys.data());
+    lows.resize(data.rows);
+    highs.resize(data.rows);
+    ReadHalves(data);
     if (!usable) {
       sampled = true;
       sample_narrow = false;
       return;
     }
     if (!sampled) {
-      const auto [every, rows] = WideSampleOf(keys.size());
-      for (size_t at = 0; at < keys.size();
+      const auto [every, rows] = WideSampleOf(lows.size());
+      for (size_t at = 0; at < lows.size();
            at += every * numeric::kBlockValues) {
-        const auto block =
-          std::span{keys}.subspan(at, std::min(rows, keys.size() - at));
-        sample.insert(sample.end(), block.begin(), block.end());
+        for (size_t i = at, stop = std::min(lows.size(), at + rows); i < stop;
+             ++i) {
+          sample.push_back(absl::MakeUint128(highs[i], lows[i]));
+        }
       }
       SampleKeys(rows);
     }
     narrow = absl::Uint128High64(most - least) == 0;
-    lows.resize(keys.size());
     if (narrow) {
       base = least;
-      for (size_t i = 0; i < keys.size(); ++i) {
-        lows[i] = absl::Uint128Low64(keys[i] - least);
+      const uint64_t lowest = absl::Uint128Low64(least);
+      for (auto& lower : lows) {
+        lower -= lowest;
       }
       low.emplace(data, lows);
       return;
@@ -467,29 +535,26 @@ struct WideValues final : State {
         !MayPack(Shape::Dictionary, data)) {
       return;
     }
-    highs.resize(keys.size());
-    for (size_t i = 0; i < keys.size(); ++i) {
-      lows[i] = absl::Uint128Low64(keys[i]);
-      highs[i] = absl::Uint128High64(keys[i]);
-    }
     low.emplace(data, lows);
     high.emplace(data, highs);
   }
 
-  void ReadKeys(ColumnDataCheckpointData& data, absl::uint128* keys) {
+  void ReadHalves(ColumnDataCheckpointData& data) {
     uint64_t lo_upper = 0;
     uint64_t lo_lower = 0;
     uint64_t hi_upper = 0;
     uint64_t hi_lower = 0;
-    absl::uint128 last = 0;
+    uint64_t last_upper = 0;
+    uint64_t last_lower = 0;
     size_t at = 0;
-    const auto start = [&](absl::uint128 key) {
+    const auto start = [&](uint64_t upper, uint64_t lower) {
       if (usable) {
         return;
       }
-      std::fill_n(keys, at, key);
-      lo_upper = hi_upper = absl::Uint128High64(key);
-      lo_lower = hi_lower = absl::Uint128Low64(key);
+      std::fill_n(highs.data(), at, upper);
+      std::fill_n(lows.data(), at, lower);
+      lo_upper = hi_upper = upper;
+      lo_lower = hi_lower = lower;
       usable = true;
     };
     const auto take = [&](uint64_t upper, uint64_t lower) {
@@ -508,28 +573,35 @@ struct WideValues final : State {
           chunk.data.GetVectorType() == duckdb::VectorType::FLAT_VECTOR &&
           duckdb::FlatVector::Validity(chunk.data).CannotHaveNull()) {
         const W* values = duckdb::FlatVector::GetData<W>(chunk.data);
-        start(WideKey<W>(values[0]));
-        auto* out = keys + at;
+        start(static_cast<uint64_t>(values[0].upper) ^ kWideBias<W>,
+              values[0].lower);
+        auto* upper_out = highs.data() + at;
+        auto* lower_out = lows.data() + at;
         for (size_t i = 0; i < count; ++i) {
           const uint64_t upper =
             static_cast<uint64_t>(values[i].upper) ^ kWideBias<W>;
           const uint64_t lower = values[i].lower;
           take(upper, lower);
-          out[i] = absl::MakeUint128(upper, lower);
+          upper_out[i] = upper;
+          lower_out[i] = lower;
         }
-        last = out[count - 1];
+        last_upper = upper_out[count - 1];
+        last_lower = lower_out[count - 1];
         at += count;
         continue;
       }
       for (const auto value : chunk.data.template Values<W>()) {
         if (value.IsValid()) {
-          last = WideKey<W>(value.GetValue());
-          start(last);
-          take(absl::Uint128High64(last), absl::Uint128Low64(last));
+          const auto key = WideKey<W>(value.GetValue());
+          last_upper = absl::Uint128High64(key);
+          last_lower = absl::Uint128Low64(key);
+          start(last_upper, last_lower);
+          take(last_upper, last_lower);
         } else {
           has_null = true;
         }
-        keys[at++] = last;
+        highs[at] = last_upper;
+        lows[at++] = last_lower;
       }
     }
     least = absl::MakeUint128(lo_upper, lo_lower);

@@ -36,19 +36,6 @@
 
 namespace irs::codecs {
 
-template<typename T>
-struct Runs final : State {
-  static constexpr StateId kId = StateId::Runs;
-
-  explicit Runs(ColumnDataCheckpointData&) {}
-
-  ScratchVector<numeric::Bits<sizeof(T)>> values;
-  ScratchVector<uint32_t> lengths;
-  ScratchVector<uint32_t> rows;
-  bool checked = false;
-  bool none = false;
-};
-
 inline constexpr uint32_t kSparseRunRows = 16;
 
 template<typename T>
@@ -95,26 +82,9 @@ bool KnownWithoutRuns(ColumnDataCheckpointData& data) {
 }
 
 template<typename T>
-Runs<T>* ScanRuns(ColumnDataCheckpointData& data) {
+void LocateRuns(const Values<T>& values, uint32_t count, Runs<T>& runs) {
   using U = numeric::Bits<sizeof(T)>;
-  if (KnownWithoutRuns<T>(data)) {
-    return nullptr;
-  }
-  const auto& values = data.Get<Values<T>>();
-  if (!values.Usable()) {
-    return nullptr;
-  }
   const auto n = static_cast<uint32_t>(values.Size());
-  const auto count = values.RunCount();
-  if (count == n ||
-      static_cast<double>(count) >
-        static_cast<double>(n) * data.preferences->max_runs_per_row) {
-    return nullptr;
-  }
-  auto& runs = data.Get<Runs<T>>();
-  if (!runs.rows.empty()) {
-    return &runs;
-  }
   const auto rows = values.Raw();
   const auto bounds = values.RawBounds();
   const bool dense = uint64_t{count} * kSparseRunRows >= n;
@@ -161,8 +131,35 @@ Runs<T>* ScanRuns(ColumnDataCheckpointData& data) {
   SDB_ASSERT(run == count);
   runs.values.resize(count);
   runs.rows.resize(count);
+}
+
+template<typename T>
+Runs<T>* ScanRuns(ColumnDataCheckpointData& data) {
+  if (KnownWithoutRuns<T>(data)) {
+    return nullptr;
+  }
+  const auto& values = data.Get<Values<T>>();
+  if (!values.Usable()) {
+    return nullptr;
+  }
+  const auto n = static_cast<uint32_t>(values.Size());
+  const auto count = values.RunCount();
+  if (count == n ||
+      static_cast<double>(count) >
+        static_cast<double>(n) * data.preferences->max_runs_per_row) {
+    return nullptr;
+  }
+  auto& runs = data.Get<Runs<T>>();
+  if (!runs.lengths.empty()) {
+    return &runs;
+  }
+  if (!runs.located) {
+    LocateRuns(values, count, runs);
+  }
+  auto* run_values = runs.values.data();
+  const auto* run_rows = runs.rows.data();
   runs.lengths.resize(count);
-  if (const auto scale = values.Scale(); scale > 1) {
+  if (const auto scale = values.Scale({run_values, count}); scale > 1) {
     numeric::DivideExact<Values<T>::kSigned>(run_values, count, scale,
                                              run_values);
   }

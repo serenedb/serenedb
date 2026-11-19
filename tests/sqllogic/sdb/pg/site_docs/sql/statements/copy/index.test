@@ -980,3 +980,44 @@ statement error
 COPY words TO '${__TEST_DIR__}/copy_index_words_win1252.csv' (FORMAT csv, ENCODING 'WIN1252');
 ----
 db error: ERROR: COPY ENCODING "WIN1252" is not supported
+
+
+# DOCS_TEST: rendering
+
+# DOCS_TEST_RAW
+#| COPY (SELECT 1 AS id, ARRAY[1, 2] AS l, true AS b) TO 'rendered.csv' (FORMAT csv, RENDERING duckdb);
+#|
+#| SELECT rtrim(content, chr(10)) AS content
+#| FROM read_text('rendered.csv');
+#|
+#| CREATE TABLE rendered (id INTEGER, l INTEGER[], b BOOLEAN);
+#|
+#| COPY rendered FROM 'rendered.csv' (FORMAT csv, RENDERING duckdb);
+#|
+#| SELECT *
+#| FROM rendered;
+
+# DOCS_TEST_BODY
+
+statement ok
+COPY (SELECT 1 AS id, ARRAY[1, 2] AS l, true AS b) TO '${__TEST_DIR__}/copy_index_rendered.csv' (FORMAT csv, RENDERING duckdb);
+
+query
+SELECT rtrim(content, chr(10)) AS content
+FROM read_text('${__TEST_DIR__}/copy_index_rendered.csv');
+----
+content
+1,"[1, 2]",true
+
+statement ok
+CREATE TABLE rendered (id INTEGER, l INTEGER[], b BOOLEAN);
+
+statement ok
+COPY rendered FROM '${__TEST_DIR__}/copy_index_rendered.csv' (FORMAT csv, RENDERING duckdb);
+
+query
+SELECT *
+FROM rendered;
+----
+id	l	b
+1	{1,2}	t

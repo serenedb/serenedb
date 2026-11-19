@@ -192,6 +192,39 @@ def test_copy_to_stdout_takes_an_expression_option(conn: psycopg.Connection,
             assert b"".join(bytes(chunk) for chunk in cp) == b"1|2\n"
 
 
+@pytest.mark.parametrize(
+    "fmt,duckdb,postgres",
+    [
+        ("text", b"1\t[1, 2]\ttrue\n", b"1\t{1,2}\tt\n"),
+        ("csv", b'1,"[1, 2]",true\n', b'1,"{1,2}",t\n'),
+    ],
+    ids=["text", "csv"],
+)
+def test_copy_stdio_rendering(conn: psycopg.Connection, table_name: str,
+                              fmt: str, duckdb: bytes, postgres: bytes) -> None:
+    query = "SELECT 1 AS id, ARRAY[1, 2] AS l, true AS b"
+    with conn.cursor() as cur:
+        with cur.copy(f"COPY ({query}) TO STDOUT "
+                      f"(FORMAT {fmt}, RENDERING duckdb)") as cp:
+            assert b"".join(bytes(chunk) for chunk in cp) == duckdb
+        with cur.copy(f"COPY ({query}) TO STDOUT (FORMAT {fmt})") as cp:
+            assert b"".join(bytes(chunk) for chunk in cp) == postgres
+        cur.execute(f'CREATE TABLE public."{table_name}"'
+                    "(id INT, l INT[], b BOOLEAN)")
+        try:
+            with cur.copy(f'COPY public."{table_name}" FROM STDIN '
+                          f"(FORMAT {fmt}, RENDERING duckdb)") as cp:
+                cp.write(duckdb)
+            cur.execute(f'SELECT id, l, b FROM public."{table_name}"')
+            assert cur.fetchall() == [(1, [1, 2], True)]
+            with pytest.raises(psycopg.errors.DataError):
+                with cur.copy(f'COPY public."{table_name}" FROM STDIN '
+                              f"(FORMAT {fmt})") as cp:
+                    cp.write(duckdb)
+        finally:
+            _drop(conn, table_name)
+
+
 def test_copy_from_stdin_crlf_end_marker(conn: psycopg.Connection,
                                          table_name: str) -> None:
     with conn.cursor() as cur:

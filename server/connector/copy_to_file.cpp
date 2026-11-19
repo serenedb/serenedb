@@ -230,12 +230,22 @@ void SetCopyToFileCallbacks(duckdb::CopyFunction& function) {
 
 duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> CopyToSelect(
   duckdb::CopyToSelectInput& input, std::string_view date_format,
-  std::string_view timestamp_format) {
+  std::string_view timestamp_format, duckdb::ValueRendering rendering) {
   bool changed = false;
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> result;
   result.reserve(input.select_list.size());
   for (auto& expr : input.select_list) {
     const auto type = expr->GetReturnType();
+    if (rendering == duckdb::ValueRendering::NATIVE &&
+        type != duckdb::LogicalType::VARCHAR) {
+      auto alias = expr->GetAlias();
+      expr = duckdb::BoundCastExpression::AddCastToType(
+        input.context, std::move(expr), duckdb::LogicalType::VARCHAR);
+      expr->SetAlias(std::move(alias));
+      result.push_back(std::move(expr));
+      changed = true;
+      continue;
+    }
     const bool timestamp = type.id() == duckdb::LogicalTypeId::TIMESTAMP ||
                            type.id() == duckdb::LogicalTypeId::TIMESTAMP_TZ;
     const auto format = type.id() == duckdb::LogicalTypeId::DATE ? date_format

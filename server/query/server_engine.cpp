@@ -60,6 +60,7 @@
 #include "connector/iresearch_replacement_scan.h"
 #include "connector/scan/scan_function.h"
 #include "docs/docs_functions.h"
+#include "formats/pg_value_decoder.h"
 #include "pg/catalog/engine/registry.h"
 #include "pg/catalog/engine/scan_function.h"
 #include "pg/catalog/functions/functions.h"
@@ -107,6 +108,7 @@ void ConfigureEngineDBConfig(duckdb::DBConfig& config,
   config.create_client_context = CreateClientContext;
   config.create_secret_storage = catalog::CreateSecretStorage;
   config.copy_to_written_type = sdb::pg::ColumnarWrittenType;
+  config.create_postgres_decoder = sdb::formats::MakePostgresDecoder;
   connector::RegisterSereneDBStorage(config);
   connector::RegisterConfigVariables(config);
   config.AddExtensionOption(

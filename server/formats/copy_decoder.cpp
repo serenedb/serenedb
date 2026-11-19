@@ -158,6 +158,11 @@ CopyDecoder::CopyDecoder(duckdb::ClientContext& context,
   for (const auto& type : _target.types) {
     _decoders.push_back(pg::GetDeserialization<pg::ColumnSink>(
       type, _target.binary ? pg::VarFormat::Binary : pg::VarFormat::Text));
+    if (!_target.binary &&
+        _target.rendering != duckdb::ValueRendering::POSTGRES) {
+      _rendered.push_back(
+        duckdb::MakeValueDecoder(context, type, _target.rendering));
+    }
   }
   if (_target.csv) {
     _csv.emplace(CsvDialect{_target.delim, _target.quote, _target.escape},
@@ -771,8 +776,8 @@ duckdb::idx_t CopyDecoder::Decode(duckdb::DataChunk& output, duckdb::idx_t row,
   for (size_t column = 0; column < _decoders.size(); ++column) {
     std::fill_n(_failed.begin(), words, 0);
     _dctx.column_error = nullptr;
-    if (_decoders[column](_dctx, fields.Column(column, rows),
-                          output.data[column], row, _failed.data()) == 0) {
+    if (DecodeColumn(column, fields.Column(column, rows), output.data[column],
+                     row) == 0) {
       continue;
     }
     failed = true;
@@ -858,14 +863,52 @@ duckdb::idx_t CopyDecoder::Decode(duckdb::DataChunk& output, duckdb::idx_t row,
     }
   }
   for (size_t column = 0; column < _decoders.size(); ++column) {
-    _decoders[column](_dctx, fields.Column(column, kept), output.data[column],
-                      row, _failed.data());
+    DecodeColumn(column, fields.Column(column, kept), output.data[column], row);
   }
   CountRejected(rows - kept);
   if (!_defaulted.empty()) {
     ApplyDefaults(output, row, kept);
   }
   return kept;
+}
+
+duckdb::idx_t CopyDecoder::DecodeColumn(size_t column,
+                                        std::span<std::string_view> fields,
+                                        duckdb::Vector& out,
+                                        duckdb::idx_t row) {
+  if (_rendered.empty()) {
+    return _decoders[column](_dctx, fields, out, row, _failed.data());
+  }
+  const auto count = fields.size();
+  duckdb::Vector text{duckdb::LogicalType::VARCHAR, count};
+  auto* values = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(text);
+  auto& valid = duckdb::FlatVector::ValidityMutable(text);
+  for (size_t i = 0; i < count; ++i) {
+    if (!fields[i].data()) {
+      valid.SetInvalid(i);
+      continue;
+    }
+    values[i] = duckdb::string_t{fields[i].data(),
+                                 static_cast<uint32_t>(fields[i].size())};
+  }
+  duckdb::Vector decoded{out.GetType(), count};
+  std::string error;
+  duckdb::idx_t failures = 0;
+  if (!_rendered[column]->Decode(text, decoded, count, error)) {
+    const auto& decoded_valid = duckdb::FlatVector::Validity(decoded);
+    for (size_t i = 0; i < count; ++i) {
+      if (fields[i].data() && !decoded_valid.RowIsValid(i)) {
+        _failed[i / 64] |= uint64_t{1} << (i % 64);
+        ++failures;
+      }
+    }
+    if (failures != 0 && !_dctx.column_error) {
+      _dctx.column_error =
+        CopyError(ERRCODE_INVALID_TEXT_REPRESENTATION, error);
+    }
+  }
+  duckdb::VectorOperations::Copy(decoded, out, count, 0, row);
+  return failures;
 }
 
 size_t CopyDecoder::WalkBinary(std::string_view data, size_t max_rows) {

@@ -22,6 +22,7 @@
 
 #include <duckdb/common/enums/file_compression_type.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/formats/value_codecs.hpp>
 #include <duckdb/function/copy_function.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <memory>
@@ -59,6 +60,6 @@ void SetCopyToFileCallbacks(duckdb::CopyFunction& function);
 
 duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> CopyToSelect(
   duckdb::CopyToSelectInput& input, std::string_view date_format,
-  std::string_view timestamp_format);
+  std::string_view timestamp_format, duckdb::ValueRendering rendering);
 
 }  // namespace sdb::connector

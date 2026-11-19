@@ -25,11 +25,13 @@
 #include <cstdint>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/execution/expression_executor.hpp>
+#include <duckdb/formats/value_codecs.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <exception>
 #include <limits>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -116,6 +118,8 @@ class CopyDecoder {
   void ApplyDefaults(duckdb::DataChunk& output, duckdb::idx_t row, size_t rows);
   duckdb::idx_t Decode(duckdb::DataChunk& output, duckdb::idx_t row,
                        size_t rows, FieldColumns fields);
+  duckdb::idx_t DecodeColumn(size_t column, std::span<std::string_view> fields,
+                             duckdb::Vector& out, duckdb::idx_t row);
   size_t WalkBinary(std::string_view data, size_t max_rows);
   std::exception_ptr MatchHeader(FieldColumns fields, size_t columns) const;
   std::exception_ptr StructureError(RowError error, size_t column) const;
@@ -130,6 +134,7 @@ class CopyDecoder {
   duckdb::ClientContext& _context;
   pg::CopyInTarget _target;
   std::vector<pg::DeserializationFunction<pg::ColumnSink>> _decoders;
+  std::vector<duckdb::unique_ptr<duckdb::ValueDecoder>> _rendered;
   pg::DeserializeContext _dctx;
   TextSplitter _splitter;
   std::optional<CsvSplitter> _csv;

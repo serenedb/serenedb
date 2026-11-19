@@ -974,6 +974,19 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
+      "sdb_rendering",
+      {
+        LogicalTypeId::VARCHAR,
+        "The text form of the values in query results sent as text: "
+        "'postgres' writes them as PostgreSQL does (arrays as {1,2}, booleans "
+        "as t and f), 'duckdb' as DuckDB's casts to VARCHAR do ([1, 2], true "
+        "and false). COPY takes its RENDERING option instead. Default "
+        "'postgres'.",
+        [] { return duckdb::Value{"postgres"}; },
+        OneOfEnum<Rendering, "sdb_rendering">,
+      },
+    },
+    {
       "sdb_ann_force_exact",
       {
         LogicalTypeId::BOOLEAN,

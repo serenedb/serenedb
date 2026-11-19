@@ -1201,6 +1201,38 @@ TEST_F(ColNumericCodecTest, AutoFollowsTheDataAcrossRowGroups) {
   }
 }
 
+TEST_F(ColNumericCodecTest,
+       AutoLeavesAHeldBitPackedCodecWhenBytesStartToRepeat) {
+  constexpr uint32_t kRowGroup = 4096;
+  constexpr uint64_t kSwitch = 9 * kRowGroup;
+  constexpr uint64_t kRows = kSwitch + 4 * kRowGroup;
+  const Gen gen = [](uint64_t g) -> std::optional<int64_t> {
+    return static_cast<int64_t>(Mix(g < kSwitch ? g : g / 16) % 100000);
+  };
+  using irs::codecs::CodecType;
+  for (const auto tier : {irs::WriteTier::Flush, irs::WriteTier::Merge}) {
+    SCOPED_TRACE(tier == irs::WriteTier::Flush ? "flush" : "merge");
+    const auto type = duckdb::LogicalType::BIGINT;
+    irs::MemoryDirectory dir{};
+    Write(dir, type, {.tier = tier}, kRows, kRowGroup, gen, CodecType::Auto);
+    Verify(dir, type, kRows, gen);
+    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+    const auto* col = r.Column(kField);
+    ASSERT_NE(col, nullptr);
+    std::vector<CodecType> codecs;
+    for (const auto& block : col->DataBlocks()) {
+      codecs.push_back(block.codec->type);
+    }
+    ASSERT_EQ(codecs.size(), kRows / kRowGroup);
+    const auto first = codecs.begin() + kSwitch / kRowGroup;
+    EXPECT_TRUE(
+      std::all_of(codecs.begin(), first,
+                  [](CodecType codec) { return codec == CodecType::Ffor; }))
+      << ::testing::PrintToString(codecs);
+    EXPECT_NE(*first, CodecType::Ffor) << ::testing::PrintToString(codecs);
+  }
+}
+
 TEST_F(ColNumericCodecTest, AutoPacksTheDeltasOfSortedIntegers) {
   constexpr uint32_t kRowGroup = 4096;
   constexpr uint64_t kRows = 4 * kRowGroup;

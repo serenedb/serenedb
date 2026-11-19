@@ -153,6 +153,21 @@ bool PackingUndercutsHeld(std::span<const Contender> contenders,
   return packed != 0 && reuse.Undercuts(static_cast<double>(packed), input);
 }
 
+bool Lz4UndercutsHeld(std::span<const Contender> contenders,
+                      const Contender& held, ColumnDataCheckpointData& data) {
+  if (!IsNumeric(held.codec) || LeafOf(held.codec) != ByteCodec::None ||
+      absl::c_none_of(contenders, [](const Contender& contender) {
+        return contender.codec == CodecType::Lz4;
+      })) {
+    return false;
+  }
+  const auto price =
+    data.preferences->leaf_price[std::to_underlying(ByteCodec::Lz4)];
+  const auto sampled = static_cast<double>(SampledLz4Bytes(data)) * price;
+  return sampled != 0 && data.tuning.reuse.Undercuts(
+                           sampled, static_cast<double>(RawInput(data)));
+}
+
 bool CompressHeld(const Contender& held, ColumnDataCheckpointData& data) {
   const auto written = data.written;
   if (!held.function->compress(data)) {
@@ -255,11 +270,15 @@ void Contest(std::span<const Contender> contenders,
   const bool timed = !OneCodec(contenders);
   const bool due = reuse.Due() && (timed || reuse.gap == 1);
   const auto* held = due ? nullptr : Find(contenders, reuse.held);
-  if (held && !PackingUndercutsHeld(contenders, data) &&
-      CompressHeld(*held, data)) {
-    return;
+  bool probed = false;
+  if (held && !PackingUndercutsHeld(contenders, data)) {
+    probed = !reuse.probed && Lz4UndercutsHeld(contenders, *held, data);
+    if (!probed && CompressHeld(*held, data)) {
+      return;
+    }
   }
   Decide(contenders, timed, data);
+  reuse.probed = probed && reuse.held == held->function;
 }
 
 const Codec* AutoCodec(PhysicalType) { return &kAutoCodec; }

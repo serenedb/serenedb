@@ -37,6 +37,7 @@ struct ReusePolicy {
   uint32_t since = 0;
   double reference = 0;
   bool calibrated = false;
+  bool probed = false;
 
   bool Due() noexcept { return !calibrated || ++since >= gap; }
 

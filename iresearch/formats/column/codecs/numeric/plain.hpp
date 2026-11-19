@@ -150,6 +150,44 @@ inline constexpr auto& kFor =
   kStoredFrames<AnalyzeFor<T>, CompressFor<T>, kLeaf, kShuffled>;
 
 template<typename T>
+uint64_t SampledForLz4Bytes(ColumnDataCheckpointData& data) {
+  using U = numeric::Bits<sizeof(T)>;
+  constexpr size_t kSamples = 2;
+  auto& values = data.Get<Values<T>>();
+  if (!values.Usable()) {
+    return 0;
+  }
+  const auto rows = values.Get();
+  const auto& facts = values.GetFacts();
+  const size_t stored = facts.for_stored;
+  auto& scratch = data.Get<NumericScratch>();
+  uint64_t sampled = 0;
+  uint64_t compressed = 0;
+  for (size_t k = 0; k < kSamples; ++k) {
+    const size_t begin = rows.size() * (2 * k + 1) / (2 * kSamples) /
+                         numeric::kBlockValues * numeric::kBlockValues;
+    const size_t count = std::min(numeric::kBlockValues, rows.size() - begin);
+    scratch.frame.resize(count * stored);
+    numeric::Narrow<sizeof(T)>(
+      count, facts.for_stored, scratch.frame.data(),
+      [v = rows.data() + begin, lo = facts.lo](size_t i) {
+        return static_cast<U>(v[i] - lo);
+      });
+    std::span<const uint8_t> bytes{scratch.frame.data(), count * stored};
+    if (stored > 1) {
+      scratch.shuffled.resize(bytes.size());
+      numeric::Shuffle(bytes.data(), count, facts.for_stored,
+                       scratch.shuffled.data());
+      bytes = {scratch.shuffled.data(), bytes.size()};
+    }
+    sampled += bytes.size();
+    compressed +=
+      std::min(CompressLeaf<Lz4AnyLevel>(data, bytes).size(), bytes.size());
+  }
+  return sampled == 0 ? 0 : rows.size() * stored * compressed / sampled;
+}
+
+template<typename T>
 struct Ffor final : State {
   static constexpr StateId kId = StateId::Ffor;
 

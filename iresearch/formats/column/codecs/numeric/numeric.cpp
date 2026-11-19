@@ -228,6 +228,14 @@ uint64_t PackedBytes(ColumnDataCheckpointData& data) {
   });
 }
 
+uint64_t SampledLz4Bytes(ColumnDataCheckpointData& data) {
+  const auto physical = data.type.InternalType();
+  return WithNumericType(
+    physical, [&]<typename T>(std::type_identity<T>) -> uint64_t {
+      return std::is_integral_v<T> ? SampledForLz4Bytes<T>(data) : 0;
+    });
+}
+
 std::span<const Contender> NumericContenders(Shape shape, ByteCodec leaf,
                                              duckdb::PhysicalType physical) {
   return WithNumericType(physical, [&]<typename T>(std::type_identity<T>) {

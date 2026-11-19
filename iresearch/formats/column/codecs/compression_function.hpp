@@ -257,6 +257,8 @@ uint64_t RawInput(ColumnDataCheckpointData& data);
 
 uint64_t PackedBytes(ColumnDataCheckpointData& data);
 
+uint64_t SampledLz4Bytes(ColumnDataCheckpointData& data);
+
 bool HasRows(std::span<const WriteChunk> chunks) noexcept;
 
 const Codec* GetCodec(CodecType type, duckdb::PhysicalType physical);

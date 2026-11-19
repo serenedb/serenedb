@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/numeric/int128.h>
+
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
@@ -27,6 +29,7 @@
 #include <limits>
 #include <span>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -62,8 +65,8 @@ inline Geometry BytesGeometry(Shape shape, ByteCodec leaf, uint32_t items,
     .log2 = log2,
     .per = per,
     .frames = frames,
-    .off_data =
-      HeaderSize(shape) + uint64_t{frames} * kNumericFrameMetaSize + dictionary,
+    .off_data = HeaderSize(shape, false) +
+                uint64_t{frames} * kNumericFrameMetaSize + dictionary,
   };
 }
 
@@ -79,12 +82,16 @@ inline Geometry PackedGeometry(Shape shape, uint32_t items, size_t dictionary,
     .frames = frames,
     .meta = meta,
     .off_data = duckdb::AlignValue<uint64_t, 8>(
-      HeaderSize(shape) + uint64_t{frames} * meta + dictionary),
+      HeaderSize(shape, true) + uint64_t{frames} * meta + dictionary),
   };
 }
 
+inline bool Packed(const Geometry& geometry) noexcept {
+  return geometry.meta != kNumericFrameMetaSize;
+}
+
 inline uint32_t FrameTableEnd(Shape shape, const Geometry& geometry) noexcept {
-  return HeaderSize(shape) + geometry.frames * geometry.meta;
+  return HeaderSize(shape, Packed(geometry)) + geometry.frames * geometry.meta;
 }
 
 inline double ScoreOf(uint64_t bytes, size_t rows, double price) noexcept {
@@ -230,49 +237,48 @@ class SegmentWriter {
 
   template<typename Own>
   void Finish(FrameHeader h, const Own& own, const Values<T>& values) {
-    const auto rows = values.Get();
     h.width = sizeof(T);
     h.frame_log2 = _geometry.log2;
-    h.row_count = static_cast<uint32_t>(rows.size());
+    h.row_count = static_cast<uint32_t>(values.Size());
     h.frame_count = _geometry.frames;
-    h.off_frames = HeaderSize(_shape);
+    h.off_frames = HeaderSize(_shape, Packed(_geometry));
     h.off_data = static_cast<uint32_t>(_geometry.off_data);
     h.scale = values.Scale() > 1 ? values.Scale() : 0;
     for (uint32_t f = 0; f < h.frame_count; ++f) {
       auto& m = _metas[f];
       const uint32_t end =
         f + 1 < h.frame_count ? _metas[f + 1].frame.first_entry : h.row_count;
-      U lo = rows[m.frame.first_entry];
-      U hi = lo;
-      for (auto r = m.frame.first_entry + 1; r < end; ++r) {
-        if (Values<T>::Less(rows[r], lo)) {
-          lo = rows[r];
-        }
-        if (Values<T>::Less(hi, rows[r])) {
-          hi = rows[r];
-        }
-      }
-      m.min = lo;
-      m.max = hi;
+      const auto bounds = values.Bounds(m.frame.first_entry, end);
+      m.min = bounds.lo;
+      m.max = bounds.hi;
     }
     SDB_ENSURE(_out.size() <= std::numeric_limits<uint32_t>::max(),
                "numeric codec: segment too large");
     h.data_size = static_cast<uint32_t>(_out.size() - h.off_data);
     auto* head = reinterpret_cast<duckdb::data_ptr_t>(_out.data());
     duckdb::Store(h, head);
-    duckdb::Store(own, head + sizeof(FrameHeader));
+    if (h.off_frames != sizeof(FrameHeader)) {
+      duckdb::Store(own, head + sizeof(FrameHeader));
+    }
     for (uint32_t f = 0; f < h.frame_count; ++f) {
       const auto& m = _metas[f];
       auto* at = head + h.off_frames + f * _geometry.meta;
-      if (_geometry.meta == kNumericFrameMetaSize) {
+      if (!Packed(_geometry)) {
         duckdb::Store(m, at);
         continue;
       }
       duckdb::Store(m.frame.comp_off, at);
-      duckdb::Store(static_cast<U>(m.base), at + sizeof(uint32_t));
-      duckdb::Store(static_cast<U>(m.min), at + sizeof(uint32_t) + sizeof(U));
-      duckdb::Store(static_cast<U>(m.max),
-                    at + sizeof(uint32_t) + 2 * sizeof(U));
+      at += sizeof(uint32_t);
+      if (_shape == Shape::Runs) {
+        duckdb::Store(m.frame.first_entry, at);
+        duckdb::Store(static_cast<uint16_t>(m.base), at + sizeof(uint32_t));
+        at += sizeof(uint32_t) + sizeof(uint16_t);
+      } else {
+        duckdb::Store(static_cast<U>(m.base), at);
+        at += sizeof(U);
+      }
+      duckdb::Store(static_cast<U>(m.min), at);
+      duckdb::Store(static_cast<U>(m.max), at + sizeof(U));
     }
   }
 
@@ -300,7 +306,7 @@ bool FlushNumeric(ColumnDataCheckpointData& data, Shape shape, ByteCodec leaf,
     return false;
   }
   data.FlushSegment(CodecOf(shape, leaf), values.Stats(data.type),
-                    values.Get().size(), out);
+                    values.Size(), out);
   return true;
 }
 
@@ -345,7 +351,7 @@ double AnalyzeFrames(ColumnDataCheckpointData& data, const Items& items,
   }
   analysis.done = true;
   const auto leaf = items.store.leaf;
-  const auto rows = data.Get<Values<T>>().Get().size();
+  const auto rows = data.Get<Values<T>>().Size();
   const uint32_t item = uint32_t{items.stored} + items.run_width;
   const auto geometry = GeometryOf(items);
   const auto price = data.preferences->leaf_price[std::to_underlying(leaf)];
@@ -459,7 +465,7 @@ double AnalyzeBlocks(ColumnDataCheckpointData& data, Shape shape,
                      double bound) {
   const auto score = ScoreOf(
     PackedGeometry(shape, items, dictionary, sizeof(T)).off_data + packed,
-    data.Get<Values<T>>().Get().size(),
+    data.Get<Values<T>>().Size(),
     data.preferences->leaf_price[std::to_underlying(ByteCodec::None)]);
   return score < bound ? score : kNoScore;
 }
@@ -479,8 +485,79 @@ bool CompressBlocks(ColumnDataCheckpointData& data, Shape shape,
     const auto count = std::min(n - begin, geometry.per);
     auto& m = writer.Open(f, begin);
     blocks.Append(
-      values, begin / numeric::kBlockValues,
+      BlockRows<V>{values}, begin / numeric::kBlockValues,
       (size_t{count} + numeric::kBlockValues - 1) / numeric::kBlockValues, out);
+    writer.Close(m);
+  }
+  writer.Finish(
+    {
+      .stored = sizeof(T),
+      .flags = kNumericPacked,
+      .raw_bytes = uint64_t{n} * sizeof(T),
+    },
+    own, data.Get<Values<T>>());
+  return FlushNumeric<T>(data, shape, ByteCodec::None, analyzed);
+}
+
+template<typename T>
+bool ArithmeticFrame(const FforBlocks<numeric::Bits<sizeof(T)>>& blocks,
+                     BlockRows<numeric::Bits<sizeof(T)>> rows, uint32_t begin,
+                     uint32_t count) {
+  using U = numeric::Bits<sizeof(T)>;
+  const size_t first = begin / numeric::kBlockValues;
+  if (!blocks.EqualSteps(
+        first, (count + numeric::kBlockValues - 1) / numeric::kBlockValues)) {
+    return false;
+  }
+  const auto wide = [](U v) {
+    return std::is_signed_v<T>
+             ? absl::int128{static_cast<std::make_signed_t<U>>(v)}
+             : absl::int128{v};
+  };
+  const absl::int128 step{
+    static_cast<std::make_signed_t<U>>(blocks.FrameStep(first))};
+  return wide(rows[begin + count - 1]) - wide(rows[begin]) ==
+         step * (count - 1);
+}
+
+template<typename T>
+uint64_t SteppedBytes(const FforBlocks<numeric::Bits<sizeof(T)>>& blocks,
+                      BlockRows<numeric::Bits<sizeof(T)>> rows) {
+  uint64_t bytes = 0;
+  const auto n = static_cast<uint32_t>(rows.size());
+  for (uint32_t begin = 0; begin < n; begin += kFforFrameRows) {
+    const auto count = std::min(n - begin, kFforFrameRows);
+    if (!ArithmeticFrame<T>(blocks, rows, begin, count)) {
+      bytes += blocks.Bytes(
+        begin / numeric::kBlockValues,
+        (count + numeric::kBlockValues - 1) / numeric::kBlockValues);
+    }
+  }
+  return bytes;
+}
+
+template<typename T, typename Own>
+bool CompressStepped(ColumnDataCheckpointData& data, Shape shape,
+                     FforBlocks<numeric::Bits<sizeof(T)>>& blocks,
+                     BlockRows<numeric::Bits<sizeof(T)>> rows, bool analyzed,
+                     const Own& own) {
+  auto& out = data.Get<NumericScratch>().out;
+  const auto n = static_cast<uint32_t>(rows.size());
+  const auto geometry = PackedGeometry(shape, n, 0, sizeof(T));
+  SegmentWriter<T> writer{
+    shape, geometry, SteppedBytes<T>(blocks, rows), {}, out};
+  for (uint32_t f = 0; f < geometry.frames; ++f) {
+    const auto begin = f * geometry.per;
+    const auto count = std::min(n - begin, geometry.per);
+    const size_t first = begin / numeric::kBlockValues;
+    auto& m = writer.Open(f, begin);
+    m.base = blocks.FrameStep(first);
+    if (!ArithmeticFrame<T>(blocks, rows, begin, count)) {
+      blocks.Append(
+        rows, first,
+        (size_t{count} + numeric::kBlockValues - 1) / numeric::kBlockValues,
+        out);
+    }
     writer.Close(m);
   }
   writer.Finish(

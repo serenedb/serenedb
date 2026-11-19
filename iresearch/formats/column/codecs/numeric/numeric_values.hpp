@@ -36,6 +36,7 @@
 #include <vector>
 
 #include "iresearch/formats/column/codecs/compression_function.hpp"
+#include "iresearch/formats/column/codecs/numeric/ffor_blocks.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_kernels.hpp"
 
 namespace irs::codecs {
@@ -49,42 +50,78 @@ class Values final : public State {
 
   struct Facts {
     U lo = 0;
-    U delta_offset = 0;
     uint8_t for_stored = 0;
-    uint8_t delta_stored = 0;
     uint8_t for_bits = 0;
-    uint8_t delta_bits = 0;
-    uint32_t runs = 0;
   };
 
-  explicit Values(ColumnDataCheckpointData& data) {
-    if (data.chunks.size() != 1 || !Borrow(data.chunks.front().data)) {
-      _owned.reserve(data.rows);
-      for (const auto& chunk : data.chunks) {
-        Add(chunk.data);
-      }
-      _values = _owned;
+  struct Steps {
+    U offset = 0;
+    uint8_t stored = 0;
+    uint8_t bits = 0;
+  };
+
+  explicit Values(ColumnDataCheckpointData& data) : _chunks{data.chunks} {
+    if (!ReadInPlace()) {
+      Gather(data.rows);
     }
+    Measure();
     DivideByGcd();
   }
 
+  static constexpr bool kSigned = std::is_integral_v<T> && std::is_signed_v<T>;
+
   static bool Less(U a, U b) noexcept {
-    if constexpr (std::is_integral_v<T> && std::is_signed_v<T>) {
+    if constexpr (kSigned) {
       return static_cast<T>(a) < static_cast<T>(b);
     } else {
       return a < b;
     }
   }
 
-  std::span<const U> Get() const noexcept { return _values; }
+  size_t Size() const noexcept { return _size; }
+
+  BlockRows<U> Rows() const noexcept {
+    return _values.size() == _size ? BlockRows<U>{_values}
+                                   : BlockRows<U>{_blocks.data(), _size};
+  }
+
+  std::span<const BlockBounds<U>> Bounds() const noexcept { return _bounds; }
+
+  BlockBounds<U> Bounds(size_t first, size_t end) const noexcept {
+    const auto rows = Rows();
+    BlockBounds<U> bounds{rows[first], rows[first]};
+    for (size_t row = first; row < end;) {
+      const size_t block = row / numeric::kBlockValues;
+      const size_t stop = std::min(end, (block + 1) * numeric::kBlockValues);
+      const auto part =
+        row % numeric::kBlockValues == 0 && stop - row == rows.BlockSize(block)
+          ? _bounds[block]
+          : BoundsOf<kSigned>(rows.Block(block) + row % numeric::kBlockValues,
+                              stop - row);
+      if (Less(part.lo, bounds.lo)) {
+        bounds.lo = part.lo;
+      }
+      if (Less(bounds.hi, part.hi)) {
+        bounds.hi = part.hi;
+      }
+      row = stop;
+    }
+    return bounds;
+  }
+
+  std::span<const U> Get() {
+    if (_values.size() != _size) {
+      Own();
+    }
+    return _values;
+  }
 
   bool Usable() const noexcept { return _any_valid; }
 
   U Scale() const noexcept { return _scale; }
 
-  uint64_t PackedBytes() {
-    return _any_valid ? (uint64_t{_values.size()} * GetFacts().for_bits + 7) / 8
-                      : 0;
+  uint64_t PackedBytes() const noexcept {
+    return _any_valid ? (uint64_t{_size} * GetFacts().for_bits + 7) / 8 : 0;
   }
 
   duckdb::BaseStatistics Stats(const duckdb::LogicalType& type) const {
@@ -95,72 +132,150 @@ class Values final : public State {
     return stats;
   }
 
-  const Facts& GetFacts() {
-    if (_facts) {
-      return *_facts;
-    }
-    const auto n = static_cast<uint32_t>(_values.size());
-    using S = std::make_signed_t<U>;
-    U lo = _values[0];
-    U hi = _values[0];
-    S dlo = std::numeric_limits<S>::max();
-    S dhi = std::numeric_limits<S>::min();
-    uint32_t runs = 1;
-    for (uint32_t i = 1; i < n; ++i) {
-      const U v = _values[i];
-      if (Less(v, lo)) {
-        lo = v;
-      }
-      if (Less(hi, v)) {
-        hi = v;
-      }
-      const auto d = static_cast<S>(static_cast<U>(v - _values[i - 1]));
-      dlo = std::min(dlo, d);
-      dhi = std::max(dhi, d);
-      runs += v != _values[i - 1];
-    }
-    if (n == 1) {
-      dlo = 0;
-      dhi = 0;
-    }
-    const auto delta_offset = static_cast<U>(dlo);
-    const auto range = static_cast<U>(hi - lo);
-    const auto delta_range = static_cast<U>(static_cast<U>(dhi) - delta_offset);
-    return _facts.emplace(Facts{
-      .lo = lo,
-      .delta_offset = delta_offset,
+  Facts GetFacts() const noexcept {
+    const auto range = static_cast<U>(_hi - _lo);
+    return {
+      .lo = _lo,
       .for_stored = numeric::BytesFor(range),
-      .delta_stored = numeric::BytesFor(delta_range),
       .for_bits = static_cast<uint8_t>(std::bit_width(range)),
-      .delta_bits = static_cast<uint8_t>(std::bit_width(delta_range)),
-      .runs = runs,
+    };
+  }
+
+  uint32_t RunCount() const noexcept { return _runs; }
+
+  const Steps& GetSteps() {
+    if (_steps) {
+      return *_steps;
+    }
+    using S = std::make_signed_t<U>;
+    S lo = std::numeric_limits<S>::max();
+    S hi = std::numeric_limits<S>::min();
+    const auto fold = [&](U step) {
+      lo = std::min(lo, static_cast<S>(step));
+      hi = std::max(hi, static_cast<S>(step));
+    };
+    const auto rows = Rows();
+    U last = 0;
+    for (size_t b = 0; b < rows.Blocks(); ++b) {
+      const U* values = rows.Block(b);
+      const size_t count = rows.BlockSize(b);
+      if (b != 0) {
+        fold(static_cast<U>(values[0] - last));
+      }
+      for (size_t i = 1; i < count; ++i) {
+        fold(static_cast<U>(values[i] - values[i - 1]));
+      }
+      last = values[count - 1];
+    }
+    if (_size < 2) {
+      lo = 0;
+      hi = 0;
+    }
+    const auto offset = static_cast<U>(lo);
+    const auto range = static_cast<U>(static_cast<U>(hi) - offset);
+    return _steps.emplace(Steps{
+      .offset = offset,
+      .stored = numeric::BytesFor(range),
+      .bits = static_cast<uint8_t>(std::bit_width(range)),
     });
   }
 
  private:
-  bool Borrow(const duckdb::Vector& input) {
+  bool ReadInPlace() {
     if constexpr (std::is_integral_v<T>) {
-      if (input.GetVectorType() != duckdb::VectorType::FLAT_VECTOR ||
-          !duckdb::FlatVector::Validity(input).CannotHaveNull()) {
-        return false;
+      size_t rows = 0;
+      for (size_t c = 0; c < _chunks.size(); ++c) {
+        const auto& input = _chunks[c].data;
+        if (input.GetVectorType() != duckdb::VectorType::FLAT_VECTOR ||
+            !duckdb::FlatVector::Validity(input).CheckAllValid(input.size()) ||
+            (c + 1 != _chunks.size() &&
+             input.size() % numeric::kBlockValues != 0)) {
+          return false;
+        }
+        rows += input.size();
       }
-      const auto* data = duckdb::FlatVector::GetData<T>(input);
-      const auto count = input.size();
-      for (duckdb::idx_t i = 0; i < count; ++i) {
-        _stats.Update(data[i]);
+      for (const auto& chunk : _chunks) {
+        const auto* bits = reinterpret_cast<const U*>(
+          duckdb::FlatVector::GetData<T>(chunk.data));
+        if (_chunks.size() == 1) {
+          _values = {bits, rows};
+          break;
+        }
+        for (size_t at = 0; at < chunk.data.size();
+             at += numeric::kBlockValues) {
+          _blocks.push_back(bits + at);
+        }
       }
-      _values = {reinterpret_cast<const U*>(data), count};
-      _any_valid = count != 0;
+      _size = rows;
+      _any_valid = rows != 0;
       return true;
     } else {
       return false;
     }
   }
 
+  void Gather(uint64_t rows) {
+    _owned.reserve(rows);
+    for (const auto& chunk : _chunks) {
+      Add(chunk.data);
+    }
+    _values = _owned;
+    _size = _owned.size();
+  }
+
+  void Own() {
+    if (!_owned.empty()) {
+      return;
+    }
+    _owned.reserve(_size);
+    const auto rows = Rows();
+    for (size_t b = 0; b < rows.Blocks(); ++b) {
+      _owned.insert(_owned.end(), rows.Block(b),
+                    rows.Block(b) + rows.BlockSize(b));
+    }
+    _values = _owned;
+  }
+
+  void Measure() {
+    if (!_any_valid) {
+      return;
+    }
+    const auto rows = Rows();
+    _bounds.resize(rows.Blocks());
+    uint32_t runs = 0;
+    U last = 0;
+    for (size_t b = 0; b < rows.Blocks(); ++b) {
+      const U* values = rows.Block(b);
+      const size_t count = rows.BlockSize(b);
+      const auto bounds = BoundsOf<kSigned>(values, count);
+      _bounds[b] = bounds;
+      runs += b == 0 || values[0] != last;
+      if (bounds.lo != bounds.hi) {
+        uint32_t changes = 0;
+        for (size_t i = 1; i < count; ++i) {
+          changes += values[i] != values[i - 1];
+        }
+        runs += changes;
+      }
+      last = values[count - 1];
+      if (b == 0 || Less(bounds.lo, _lo)) {
+        _lo = bounds.lo;
+      }
+      if (b == 0 || Less(_hi, bounds.hi)) {
+        _hi = bounds.hi;
+      }
+    }
+    _runs = runs;
+    if (_owned.empty()) {
+      _stats.Update(std::bit_cast<T>(_lo));
+      _stats.Update(std::bit_cast<T>(_hi));
+    }
+  }
+
   bool AddBlock(const duckdb::Vector& input) {
     if constexpr (std::is_integral_v<T>) {
       if (input.GetVectorType() != duckdb::VectorType::FLAT_VECTOR ||
-          !duckdb::FlatVector::Validity(input).CannotHaveNull()) {
+          !duckdb::FlatVector::Validity(input).CheckAllValid(input.size())) {
         return false;
       }
       const std::span values{duckdb::FlatVector::GetData<T>(input),
@@ -208,39 +323,71 @@ class Values final : public State {
     _stats = stats;
   }
 
-  void DivideByGcd() noexcept {
+  static U Magnitude(U bits) noexcept {
+    if constexpr (std::is_signed_v<T>) {
+      if (static_cast<T>(bits) < 0) {
+        return static_cast<U>(U{0} - bits);
+      }
+    }
+    return bits;
+  }
+
+  void DivideByGcd() {
     if constexpr (std::is_integral_v<T>) {
       U gcd = 0;
-      for (const U bits : _values) {
-        U magnitude = bits;
-        if constexpr (std::is_signed_v<T>) {
-          if (static_cast<T>(bits) < 0) {
-            magnitude = static_cast<U>(U{0} - bits);
-          }
-        }
-        gcd = std::gcd(gcd, magnitude);
+      for (const auto& bounds : _bounds) {
+        gcd =
+          std::gcd(gcd, std::gcd(Magnitude(bounds.lo), Magnitude(bounds.hi)));
         if (gcd == 1) {
           break;
         }
       }
+      if (gcd > 1) {
+        const auto rows = Rows();
+        U folded = 0;
+        for (size_t b = 0; b < rows.Blocks() && gcd != 1; ++b) {
+          if (_bounds[b].lo == _bounds[b].hi) {
+            continue;
+          }
+          const U* values = rows.Block(b);
+          const size_t count = rows.BlockSize(b);
+          for (size_t i = 0; i < count && gcd != 1; ++i) {
+            if (values[i] == folded) {
+              continue;
+            }
+            folded = values[i];
+            gcd = std::gcd(gcd, Magnitude(folded));
+          }
+        }
+      }
       _scale = gcd > 1 ? gcd : 1;
       if (_scale > 1) {
-        if (_owned.empty()) {
-          _owned.assign(_values.begin(), _values.end());
+        Own();
+        constexpr bool kSigned = std::is_signed_v<T>;
+        numeric::DivideExact<kSigned>(_owned.data(), _owned.size(), _scale);
+        for (auto& bounds : _bounds) {
+          numeric::DivideExact<kSigned>(&bounds.lo, 1, _scale);
+          numeric::DivideExact<kSigned>(&bounds.hi, 1, _scale);
         }
-        numeric::DivideExact<std::is_signed_v<T>>(_owned.data(), _owned.size(),
-                                                  _scale);
-        _values = _owned;
+        numeric::DivideExact<kSigned>(&_lo, 1, _scale);
+        numeric::DivideExact<kSigned>(&_hi, 1, _scale);
       }
     }
   }
 
+  std::span<const WriteChunk> _chunks;
   duckdb::StatsWriter<T> _stats;
+  std::vector<const U*> _blocks;
+  std::vector<BlockBounds<U>> _bounds;
   std::vector<U> _owned;
   std::span<const U> _values;
-  std::optional<Facts> _facts;
+  std::optional<Steps> _steps;
+  size_t _size = 0;
+  U _lo = 0;
+  U _hi = 0;
   U _last = 0;
   U _scale = 0;
+  uint32_t _runs = 0;
   bool _any_valid = false;
 };
 

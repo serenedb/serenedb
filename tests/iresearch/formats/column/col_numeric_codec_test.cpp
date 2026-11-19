@@ -695,7 +695,12 @@ TEST_F(ColNumericCodecTest, ClusteredValuesPackTheirDeltas) {
     }
     return -static_cast<int64_t>(g * 977 + Mix(g) % 11);
   };
-  for (const auto& gen : {steps, falling}) {
+  struct Case {
+    Gen gen;
+    uint64_t most_bytes;
+  };
+  for (const auto& [gen, most_bytes] :
+       {Case{steps, kRows * 6 / 8}, Case{falling, kRows * 12 / 8}}) {
     for (const auto& type :
          {duckdb::LogicalType::BIGINT, duckdb::LogicalType::INTEGER,
           duckdb::LogicalType::UBIGINT}) {
@@ -709,11 +714,12 @@ TEST_F(ColNumericCodecTest, ClusteredValuesPackTheirDeltas) {
       for (const auto& transform : transforms) {
         EXPECT_EQ(transform, "delta_ffor/none");
       }
+      EXPECT_LT(NumericBytes(packed), most_bytes);
       irs::MemoryDirectory plain{};
       Write(plain, type, {.tier = irs::WriteTier::Flush}, kRows, 16384, gen,
             irs::codecs::CodecType::Ffor);
       Verify(plain, type, kRows, gen);
-      EXPECT_LT(NumericBytes(packed), NumericBytes(plain));
+      EXPECT_LE(NumericBytes(plain), NumericBytes(packed));
     }
   }
 }
@@ -938,9 +944,8 @@ TEST_F(ColNumericCodecTest, CorruptedRunCountIsRejected) {
   const auto h = irs::codecs::ParseFrames(block, size, block_codec);
   ASSERT_EQ(irs::codecs::TransformName(irs::codecs::ShapeOf(block_codec), h),
             "rle_ffor");
-  auto meta = duckdb::Load<irs::codecs::NumericFrameMeta>(block + h.off_frames);
-  meta.base += 1;
-  duckdb::Store(meta, block + h.off_frames);
+  auto* runs = block + h.off_frames + 2 * sizeof(uint32_t);
+  duckdb::Store(static_cast<uint16_t>(duckdb::Load<uint16_t>(runs) + 1), runs);
   {
     std::ofstream out{file, std::ios::binary | std::ios::trunc};
     out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
@@ -1280,7 +1285,14 @@ TEST_F(ColNumericCodecTest, AutoPacksTheDeltasOfSortedIntegers) {
            {duckdb::LogicalType::BIGINT, duckdb::LogicalType::TIMESTAMP}) {
         SCOPED_TRACE(type.ToString());
         EXPECT_EQ(codecs(type, gen, tier, CodecType::Auto),
-                  std::set{CodecType::DeltaFfor});
+                  std::set{CodecType::Ffor});
+        irs::MemoryDirectory chosen{};
+        Write(chosen, type, {.tier = tier}, kRows, kRowGroup, gen,
+              CodecType::Auto);
+        irs::MemoryDirectory differences{};
+        Write(differences, type, {.tier = tier}, kRows, kRowGroup, gen,
+              CodecType::DeltaFfor);
+        EXPECT_LE(NumericBytes(chosen), NumericBytes(differences));
       }
       for (const auto stored :
            codecs(duckdb::LogicalType::DOUBLE, gen, tier, CodecType::Auto)) {
@@ -1408,6 +1420,50 @@ TEST_F(ColNumericCodecTest, WideIntegersUseTheNumericTransforms) {
     EXPECT_EQ(codecs(uuid, random, tier, CodecType::Ffor),
               std::set{CodecType::Uncompressed});
   }
+}
+
+TEST_F(ColNumericCodecTest, BlocksStoreDifferencesWhereTheyAreSmaller) {
+  constexpr uint64_t kRows = 16 * 1024;
+  const auto type = duckdb::LogicalType::BIGINT;
+  const Gen mixed = [](uint64_t g) {
+    return g / 1024 % 2 == 0
+             ? static_cast<int64_t>(1'000'000'000 + g * 1000 + Mix(g) % 16)
+             : static_cast<int64_t>(Mix(g) % 1024);
+  };
+  const auto bytes = [&](irs::codecs::CodecType codec) {
+    irs::MemoryDirectory dir;
+    Write(dir, type, {}, kRows, 16384, mixed, codec);
+    Verify(dir, type, kRows, mixed);
+    return NumericBytes(dir);
+  };
+  const auto ffor = bytes(irs::codecs::CodecType::Ffor);
+  EXPECT_LT(ffor, bytes(irs::codecs::CodecType::DeltaFfor));
+  EXPECT_LT(ffor, kRows * 9 / 8);
+}
+
+TEST_F(ColNumericCodecTest, ASequenceUnderFforStoresNoData) {
+  constexpr uint64_t kRows = 60000;
+  const auto type = duckdb::LogicalType::BIGINT;
+  const Gen sequence = [](uint64_t g) {
+    return static_cast<int64_t>(7 + g * 3);
+  };
+  irs::MemoryDirectory dir;
+  Write(dir, type, {}, kRows, 60000, sequence, irs::codecs::CodecType::Ffor);
+  Verify(dir, type, kRows, sequence);
+  EXPECT_EQ(Transforms(dir), std::vector<std::string>{"ffor/none"});
+  EXPECT_EQ(SegmentInfo(dir, "data_bytes"), std::vector<std::string>{"0"});
+}
+
+TEST_F(ColNumericCodecTest, DifferencesAsWideAsTheTypeAreStoredAsOffsets) {
+  constexpr uint64_t kRows = 5000;
+  const auto type = duckdb::LogicalType::BIGINT;
+  const Gen swings = [](uint64_t g) {
+    return g % 2 == 0 ? int64_t{0} : std::numeric_limits<int64_t>::max();
+  };
+  irs::MemoryDirectory dir;
+  Write(dir, type, {}, kRows, 8192, swings, irs::codecs::CodecType::DeltaFfor);
+  Verify(dir, type, kRows, swings);
+  EXPECT_EQ(Transforms(dir), std::vector<std::string>{"delta_ffor/none"});
 }
 
 TEST_F(ColNumericCodecTest, ARunThatCoversAVectorReadsAsAConstant) {

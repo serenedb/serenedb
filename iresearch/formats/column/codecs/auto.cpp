@@ -53,16 +53,16 @@ constexpr CodecType kBool[] = {
 };
 
 constexpr CodecType kIntegerMerge[] = {
-  CodecType::Uncompressed, CodecType::Ffor,     CodecType::DeltaFfor,
-  CodecType::RleFfor,      CodecType::DictFfor, CodecType::Lz4,
-  CodecType::RleLz4,       CodecType::DictLz4,  CodecType::Zstd,
-  CodecType::RleZstd,      CodecType::DictZstd,
+  CodecType::Uncompressed, CodecType::Ffor, CodecType::RleFfor,
+  CodecType::DictFfor,     CodecType::Lz4,  CodecType::RleLz4,
+  CodecType::DictLz4,      CodecType::Zstd, CodecType::RleZstd,
+  CodecType::DictZstd,
 };
 
 constexpr CodecType kIntegerFlush[] = {
-  CodecType::Uncompressed, CodecType::Ffor,     CodecType::DeltaFfor,
-  CodecType::RleFfor,      CodecType::DictFfor, CodecType::Lz4,
-  CodecType::RleLz4,       CodecType::DictLz4,
+  CodecType::Uncompressed, CodecType::Ffor, CodecType::RleFfor,
+  CodecType::DictFfor,     CodecType::Lz4,  CodecType::RleLz4,
+  CodecType::DictLz4,
 };
 
 constexpr CodecType kFloat[] = {
@@ -71,6 +71,7 @@ constexpr CodecType kFloat[] = {
 };
 
 constexpr CodecType kNamedOnly[] = {
+  CodecType::DeltaFfor,
   CodecType::DeltaLz4,
   CodecType::DeltaZstd,
 };

@@ -361,7 +361,6 @@ void FetchRows(const ColumnSegment& segment, ColumnFetchState& state,
                    })
                    .frames;
   auto* data = duckdb::FlatVector::GetDataMutable<typename R::Value>(result);
-  constexpr auto kNone = std::numeric_limits<uint64_t>::max();
   idx_t i = 0;
   if constexpr (requires {
                   frames.FetchSteps(rows, count, data, result_sel,
@@ -372,7 +371,7 @@ void FetchRows(const ColumnSegment& segment, ColumnFetchState& state,
   for (; i < count; ++i) {
     const auto row = static_cast<uint64_t>(rows[i]);
     SDB_ENSURE(row < segment.count, "numeric codec: row out of range");
-    const uint64_t next = i + 1 < count ? rows[i + 1] : kNone;
+    const uint64_t next = i + 1 < count ? rows[i + 1] : kNoRow;
     data[result_offset + result_sel.get_index(i)] = frames.Fetch(row, next);
   }
 }

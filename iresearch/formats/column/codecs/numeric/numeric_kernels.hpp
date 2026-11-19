@@ -632,8 +632,8 @@ U UnpackLoneValue(const uint8_t* packed, unsigned bits, uint32_t index,
                   U base) noexcept {
   using Word = LaneWord<U>;
   constexpr unsigned kWordBits = 8 * sizeof(Word);
-  if (bits == 0) {
-    return base;
+  if (bits * 4 <= kWordBits) {
+    return UnpackValue<U>(packed, bits, index, base);
   }
   const unsigned bit = index / kLanes<U> * bits;
   const auto* at = packed + (size_t{bit / kWordBits} * kLanes<U> +

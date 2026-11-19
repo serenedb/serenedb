@@ -48,13 +48,14 @@ struct Runs final : State {
 
 template<typename T>
 Runs<T>* ScanRuns(ColumnDataCheckpointData& data) {
-  auto& values = data.Get<Values<T>>();
+  using U = numeric::Bits<sizeof(T)>;
+  const auto& values = data.Get<Values<T>>();
   if (!values.Usable()) {
     return nullptr;
   }
-  const auto rows = values.Get();
+  const auto rows = values.Rows();
   const auto n = static_cast<uint32_t>(rows.size());
-  const auto count = values.GetFacts().runs;
+  const auto count = values.RunCount();
   if (count == n ||
       static_cast<double>(count) >
         static_cast<double>(n) * data.preferences->max_runs_per_row) {
@@ -64,19 +65,33 @@ Runs<T>* ScanRuns(ColumnDataCheckpointData& data) {
   if (!runs.rows.empty()) {
     return &runs;
   }
-  runs.values.reserve(count);
-  runs.lengths.reserve(count);
-  runs.rows.reserve(count);
-  for (uint32_t i = 0; i < n;) {
-    uint32_t j = i + 1;
-    while (j < n && rows[j] == rows[i]) {
-      ++j;
+  runs.values.resize(size_t{count} + 1);
+  runs.rows.resize(size_t{count} + 1);
+  const auto bounds = values.Bounds();
+  auto previous = static_cast<U>(~rows[0]);
+  uint32_t run = 0;
+  for (size_t b = 0; b < rows.Blocks(); ++b) {
+    if (bounds[b].lo == previous && bounds[b].hi == previous) {
+      continue;
     }
-    runs.values.push_back(rows[i]);
-    runs.lengths.push_back(j - i);
-    runs.rows.push_back(i);
-    i = j;
+    const U* block = rows.Block(b);
+    const auto first = static_cast<uint32_t>(b * numeric::kBlockValues);
+    const auto size = static_cast<uint32_t>(rows.BlockSize(b));
+    for (uint32_t i = 0; i < size; ++i) {
+      runs.values[run] = block[i];
+      runs.rows[run] = first + i;
+      run += block[i] != previous;
+      previous = block[i];
+    }
   }
+  SDB_ASSERT(run == count);
+  runs.values.resize(count);
+  runs.rows.resize(count);
+  runs.lengths.resize(count);
+  for (uint32_t r = 0; r + 1 < count; ++r) {
+    runs.lengths[r] = runs.rows[r + 1] - runs.rows[r];
+  }
+  runs.lengths[count - 1] = n - runs.rows[count - 1];
   return &runs;
 }
 
@@ -86,8 +101,6 @@ struct Rle final : State {
 
   explicit Rle(ColumnDataCheckpointData&) {}
 
-  ScratchVector<uint8_t> value_bytes;
-  ScratchVector<uint8_t> length_bytes;
   uint8_t stored = 0;
   uint8_t run_width = 0;
   Analysis analysis;
@@ -101,20 +114,8 @@ Items RleItems(ColumnDataCheckpointData& data, FrameStore store) {
   }
   auto& rle = data.Get<Rle<T>>();
   if (rle.run_width == 0) {
-    const auto& facts = data.Get<Values<T>>().GetFacts();
-    const auto count = runs->rows.size();
-    rle.stored = facts.for_stored;
+    rle.stored = data.Get<Values<T>>().GetFacts().for_stored;
     rle.run_width = numeric::BytesFor(std::ranges::max(runs->lengths));
-    rle.value_bytes.resize(count * rle.stored);
-    rle.length_bytes.resize(count * rle.run_width);
-    numeric::Narrow<sizeof(T)>(
-      count, rle.stored, rle.value_bytes.data(),
-      [v = runs->values.data(), lo = facts.lo](size_t r) {
-        return static_cast<numeric::Bits<sizeof(T)>>(v[r] - lo);
-      });
-    numeric::Narrow<sizeof(uint32_t)>(
-      count, rle.run_width, rle.length_bytes.data(),
-      [l = runs->lengths.data()](size_t r) { return l[r]; });
   }
   return {
     .shape = Shape::Runs,
@@ -126,17 +127,21 @@ Items RleItems(ColumnDataCheckpointData& data, FrameStore store) {
 }
 
 template<typename T>
-auto RleFrames(const Rle<T>& state) {
-  return [rle = &state](
-           uint32_t begin, uint32_t count,
-           ScratchVector<uint8_t>& scratch) -> std::span<const uint8_t> {
-    scratch.resize(size_t{count} * (rle->stored + rle->run_width));
-    std::memcpy(scratch.data(),
-                rle->value_bytes.data() + size_t{begin} * rle->stored,
-                size_t{count} * rle->stored);
-    std::memcpy(scratch.data() + size_t{count} * rle->stored,
-                rle->length_bytes.data() + size_t{begin} * rle->run_width,
-                size_t{count} * rle->run_width);
+auto RleFrames(ColumnDataCheckpointData& data) {
+  return [&data](uint32_t begin, uint32_t count,
+                 ScratchVector<uint8_t>& scratch) -> std::span<const uint8_t> {
+    const auto& rle = data.Get<Rle<T>>();
+    const auto& runs = data.Get<Runs<T>>();
+    scratch.resize(size_t{count} * (rle.stored + rle.run_width));
+    numeric::Narrow<sizeof(T)>(
+      count, rle.stored, scratch.data(),
+      [v = runs.values.data() + begin,
+       lo = data.Get<Values<T>>().GetFacts().lo](size_t r) {
+        return static_cast<numeric::Bits<sizeof(T)>>(v[r] - lo);
+      });
+    numeric::Narrow<sizeof(uint32_t)>(
+      count, rle.run_width, scratch.data() + size_t{count} * rle.stored,
+      [l = runs.lengths.data() + begin](size_t r) { return l[r]; });
     return scratch;
   };
 }
@@ -146,7 +151,7 @@ double AnalyzeRle(ColumnDataCheckpointData& data, double bound,
                   FrameStore store) {
   const auto items = RleItems<T>(data, store);
   auto& rle = data.Get<Rle<T>>();
-  return AnalyzeFrames<T>(data, items, rle.analysis, bound, RleFrames(rle));
+  return AnalyzeFrames<T>(data, items, rle.analysis, bound, RleFrames<T>(data));
 }
 
 template<typename T>
@@ -164,7 +169,7 @@ bool CompressRle(ColumnDataCheckpointData& data, FrameStore store) {
     data, items, rle.analysis,
     RunsHeader{.base = data.Get<Values<T>>().GetFacts().lo,
                .run_width = rle.run_width},
-    RleFrames(rle), [&](NumericFrameMeta& m, uint32_t begin) {
+    RleFrames<T>(data), [&](NumericFrameMeta& m, uint32_t begin) {
       m.frame.first_entry = rows[begin];
     });
 }
@@ -187,19 +192,19 @@ struct RleFfor final : State {
 
 template<typename T>
 const Runs<T>* PlanRleFfor(ColumnDataCheckpointData& data, RleFfor<T>& state) {
-  auto& values = data.Get<Values<T>>();
+  using U = numeric::Bits<sizeof(T)>;
+  const auto& values = data.Get<Values<T>>();
   if (!values.Usable() ||
-      uint64_t{values.GetFacts().runs} * data.min_packed_run >
-        values.Get().size()) {
+      uint64_t{values.RunCount()} * data.min_packed_run > values.Size()) {
     return nullptr;
   }
   const auto* runs = ScanRuns<T>(data);
   if (runs && !state.planned) {
     state.planned = true;
-    state.value_blocks.Plan(
-      std::span<const numeric::Bits<sizeof(T)>>{runs->values}, Values<T>::Less);
-    state.length_blocks.Plan(std::span<const uint32_t>{runs->lengths},
-                             std::less<uint32_t>{});
+    state.value_blocks.template Plan<Values<T>::kSigned>(
+      BlockRows<U>{std::span<const U>{runs->values}});
+    state.length_blocks.template Plan<false>(
+      BlockRows<uint32_t>{std::span<const uint32_t>{runs->lengths}});
   }
   return runs;
 }
@@ -214,8 +219,8 @@ double AnalyzeRleFfor(ColumnDataCheckpointData& data, double bound) {
   state.analyzed = true;
   return AnalyzeBlocks<T>(data, Shape::Runs,
                           static_cast<uint32_t>(runs->rows.size()),
-                          state.value_blocks.Bytes(kRleFforFrameRuns) +
-                            state.length_blocks.Bytes(kRleFforFrameRuns),
+                          state.value_blocks.StreamBytes(kRleFforFrameRuns) +
+                            state.length_blocks.StreamBytes(kRleFforFrameRuns),
                           0, bound);
 }
 
@@ -235,8 +240,8 @@ bool CompressRleFfor(ColumnDataCheckpointData& data) {
   const auto geometry = PackedGeometry(Shape::Runs, count, 0, sizeof(T));
   SegmentWriter<T> writer{Shape::Runs,
                           geometry,
-                          state.value_blocks.Bytes(kRleFforFrameRuns) +
-                            state.length_blocks.Bytes(kRleFforFrameRuns),
+                          state.value_blocks.StreamBytes(kRleFforFrameRuns) +
+                            state.length_blocks.StreamBytes(kRleFforFrameRuns),
                           {},
                           out};
   for (uint32_t f = 0; f < geometry.frames; ++f) {
@@ -247,10 +252,11 @@ bool CompressRleFfor(ColumnDataCheckpointData& data) {
       (size_t{items} + numeric::kBlockValues - 1) / numeric::kBlockValues;
     auto& m = writer.Open(f, runs->rows[begin]);
     m.base = items;
-    state.value_blocks.Append(std::span<const U>{runs->values}, first, blocks,
-                              out);
-    state.length_blocks.Append(std::span<const uint32_t>{runs->lengths}, first,
-                               blocks, out);
+    state.value_blocks.AppendStream(
+      BlockRows<U>{std::span<const U>{runs->values}}, first, blocks, out);
+    state.length_blocks.AppendStream(
+      BlockRows<uint32_t>{std::span<const uint32_t>{runs->lengths}}, first,
+      blocks, out);
     writer.Close(m);
   }
   writer.Finish(
@@ -282,10 +288,11 @@ class RunsReader final : public FrameReader<T> {
   RunsReader(duckdb::const_data_ptr_t base, const FrameHeader& frames,
              CodecType codec, const ReadContext::CacheSlot& slot = {})
     : Base{base, frames, codec, slot},
-      _own{duckdb::Load<RunsHeader>(base + sizeof(FrameHeader))} {
-    SDB_ENSURE((this->Packed() ? _own.base == 0
-                               : NumericWidth(_own.run_width) &&
-                                   _own.run_width <= sizeof(uint32_t)),
+      _own{this->Packed()
+             ? RunsHeader{}
+             : duckdb::Load<RunsHeader>(base + sizeof(FrameHeader))} {
+    SDB_ENSURE(this->Packed() || (NumericWidth(_own.run_width) &&
+                                  _own.run_width <= sizeof(uint32_t)),
                "numeric codec: corrupted segment header");
   }
 
@@ -329,7 +336,7 @@ class RunsReader final : public FrameReader<T> {
 
   bool RunHolds(uint64_t row, uint64_t count, T& value) {
     Seek(row);
-    if (_longest < count) {
+    if (_length_bound < count) {
       return false;
     }
     const auto pos = static_cast<uint32_t>(row - this->_begin);
@@ -356,6 +363,8 @@ class RunsReader final : public FrameReader<T> {
   };
 
   uint64_t FrameEnd() const noexcept { return this->_end; }
+
+  bool LongRuns() const noexcept { return _long_runs; }
 
   Runs ReadRuns(uint64_t row, uint64_t count, std::span<T> values) noexcept {
     const auto pos = static_cast<uint32_t>(row - this->_begin);
@@ -421,6 +430,7 @@ class RunsReader final : public FrameReader<T> {
                       _values.data());
     numeric::Widen(src + size_t{runs} * this->_f.stored, runs, _own.run_width,
                    _ends.data());
+    _length_bound = (uint64_t{1} << (8 * _own.run_width)) - 1;
     EndRuns(rows);
   }
 
@@ -434,27 +444,38 @@ class RunsReader final : public FrameReader<T> {
     _values.resize(blocks * numeric::kBlockValues);
     _ends.resize(blocks * numeric::kBlockValues);
     const auto* src = this->Data(m);
-    auto off =
+    const auto lengths =
       this->UnpackStream(src, m.frame.raw_len, 0, runs, _values.data());
-    off = this->UnpackStream(src, m.frame.raw_len, off, runs, _ends.data());
+    const auto off =
+      this->UnpackStream(src, m.frame.raw_len, lengths, runs, _ends.data());
     SDB_ENSURE(off == m.frame.raw_len, "numeric codec: corrupted runs");
+    _length_bound = LengthBound(src + lengths, blocks);
     _values.resize(runs);
     _ends.resize(runs);
     EndRuns(rows);
   }
 
+  static uint64_t LengthBound(const uint8_t* lengths, size_t blocks) noexcept {
+    const auto* widths = lengths + blocks * sizeof(uint32_t);
+    uint64_t bound = 0;
+    for (size_t b = 0; b < blocks; ++b) {
+      bound = std::max(
+        bound,
+        uint64_t{duckdb::Load<uint32_t>(lengths + b * sizeof(uint32_t))} +
+          ((uint64_t{1} << widths[b]) - 1));
+    }
+    return bound;
+  }
+
   void EndRuns(uint32_t rows) {
     uint64_t total = 0;
-    uint32_t longest = 0;
     for (auto& end : _ends) {
       SDB_ENSURE(end != 0, "numeric codec: corrupted runs");
-      longest = std::max(longest, end);
       total += end;
       end = static_cast<uint32_t>(total);
     }
     SDB_ENSURE(total == rows, "numeric codec: corrupted runs");
     _long_runs = total >= uint64_t{kBurst} * _ends.size();
-    _longest = longest;
     _hint = 0;
   }
 
@@ -490,8 +511,8 @@ class RunsReader final : public FrameReader<T> {
   RunsHeader _own;
   ScratchVector<U> _values;
   ScratchVector<uint32_t> _ends;
+  uint64_t _length_bound = 0;
   uint32_t _hint = 0;
-  uint32_t _longest = 0;
   bool _long_runs = false;
 };
 

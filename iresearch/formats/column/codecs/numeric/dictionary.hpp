@@ -64,27 +64,34 @@ std::span<const uint8_t> EntryBytes(const Entries<T>& entries) noexcept {
 }
 
 template<typename T>
-bool CollectEntries(std::span<const numeric::Bits<sizeof(T)>> rows,
-                    uint32_t cap, Entries<T>& entries) {
+bool CollectEntries(BlockRows<numeric::Bits<sizeof(T)>> rows, uint32_t cap,
+                    Entries<T>& entries) {
   using U = numeric::Bits<sizeof(T)>;
   const auto n = static_cast<uint32_t>(rows.size());
   auto& values = entries.values;
   auto& codes = entries.codes;
   codes.resize(n);
   uint32_t entry = 0;
-  for (uint32_t i = 0; i < n; ++i) {
-    if (i == 0 || rows[i] != rows[i - 1]) {
-      const auto [it, added] = entries.index.try_emplace(
-        rows[i], static_cast<uint32_t>(values.size()));
-      if (added) {
-        if (entries.index.size() > cap) {
-          return false;
+  uint32_t row = 0;
+  U previous = 0;
+  for (size_t b = 0; b < rows.Blocks(); ++b) {
+    const U* block = rows.Block(b);
+    const size_t size = rows.BlockSize(b);
+    for (size_t i = 0; i < size; ++i, ++row) {
+      if (row == 0 || block[i] != previous) {
+        previous = block[i];
+        const auto [it, added] = entries.index.try_emplace(
+          previous, static_cast<uint32_t>(values.size()));
+        if (added) {
+          if (entries.index.size() > cap) {
+            return false;
+          }
+          values.push_back(previous);
         }
-        values.push_back(rows[i]);
+        entry = it->second;
       }
-      entry = it->second;
+      codes[row] = entry;
     }
-    codes[i] = entry;
   }
   if constexpr (std::is_integral_v<T> && std::is_signed_v<T>) {
     std::span keys{reinterpret_cast<std::make_signed_t<U>*>(values.data()),
@@ -121,7 +128,7 @@ Entries<T>* BuildEntries(ColumnDataCheckpointData& data, double bound) {
   auto& entries = data.Get<Entries<T>>();
   if (!entries.built) {
     entries.built = true;
-    const auto rows = values.Get();
+    const auto rows = values.Rows();
     auto cap =
       stored >= 4
         ? kNumericDictMax
@@ -226,8 +233,8 @@ const Entries<T>* PlanDictFfor(ColumnDataCheckpointData& data,
   const auto* entries = BuildEntries<T>(data, bound);
   if (entries && !state.planned) {
     state.planned = true;
-    state.blocks.Plan(std::span<const uint32_t>{entries->codes},
-                      std::less<uint32_t>{});
+    state.blocks.template Plan<false>(
+      BlockRows<uint32_t>{std::span<const uint32_t>{entries->codes}});
   }
   return entries;
 }
@@ -349,11 +356,10 @@ class DictionaryReader final : public FrameReader<T> {
       const auto block = this->template BlockAt<uint32_t>(row);
       const auto index = static_cast<uint32_t>(row % numeric::kBlockValues);
       const auto base = static_cast<uint32_t>(block.base);
-      return Entry(row / numeric::kBlockValues == next / numeric::kBlockValues
-                     ? numeric::UnpackValue<uint32_t>(block.packed, block.bits,
-                                                      index, base)
-                     : numeric::UnpackLoneValue<uint32_t>(
-                         block.packed, block.bits, index, base));
+      return Entry(next == kNoRow ? numeric::UnpackLoneValue<uint32_t>(
+                                      block.packed, block.bits, index, base)
+                                  : numeric::UnpackValue<uint32_t>(
+                                      block.packed, block.bits, index, base));
     }
     uint32_t code = 0;
     if (this->Shuffled()) {

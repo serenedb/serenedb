@@ -51,8 +51,8 @@ Items DeltaItems(ColumnDataCheckpointData& data, FrameStore store) {
   return {
     .shape = Shape::Delta,
     .store = store,
-    .stored = values.Usable() ? values.GetFacts().delta_stored : uint8_t{0},
-    .count = static_cast<uint32_t>(values.Get().size()),
+    .stored = values.Usable() ? values.GetSteps().stored : uint8_t{0},
+    .count = static_cast<uint32_t>(values.Size()),
   };
 }
 
@@ -62,12 +62,12 @@ const uint8_t* Deltas(ColumnDataCheckpointData& data) {
   if (deltas.empty()) {
     auto& values = data.Get<Values<T>>();
     const auto rows = values.Get();
-    const auto& facts = values.GetFacts();
-    deltas.resize(rows.size() * facts.delta_stored);
-    std::memset(deltas.data(), 0, facts.delta_stored);
+    const auto& steps = values.GetSteps();
+    deltas.resize(rows.size() * steps.stored);
+    std::memset(deltas.data(), 0, steps.stored);
     numeric::Narrow<sizeof(T)>(
-      rows.size() - 1, facts.delta_stored, deltas.data() + facts.delta_stored,
-      [v = rows.data(), offset = facts.delta_offset](size_t i) {
+      rows.size() - 1, steps.stored, deltas.data() + steps.stored,
+      [v = rows.data(), offset = steps.offset](size_t i) {
         return static_cast<numeric::Bits<sizeof(T)>>(v[i + 1] - v[i] - offset);
       });
   }
@@ -94,7 +94,7 @@ bool CompressDelta(ColumnDataCheckpointData& data, FrameStore store) {
   }
   auto& values = data.Get<Values<T>>();
   const auto rows = values.Get();
-  const auto offset = values.GetFacts().delta_offset;
+  const auto offset = values.GetSteps().offset;
   return CompressFrames<T>(
     data, items, data.Get<Delta<T>>().analysis[store.shuffled],
     DeltaHeader{.base = offset},
@@ -115,7 +115,6 @@ struct DeltaFfor final : State {
 
   explicit DeltaFfor(ColumnDataCheckpointData&) {}
 
-  ScratchVector<numeric::Bits<sizeof(T)>> wide;
   FforBlocks<numeric::Bits<sizeof(T)>> blocks;
   bool planned = false;
   bool analyzed = false;
@@ -127,49 +126,12 @@ void PlanDeltaFfor(Values<T>& values, DeltaFfor<T>& state) {
     return;
   }
   state.planned = true;
-  const auto rows = values.Get();
-  if (const auto& facts = values.GetFacts(); facts.delta_bits == 0) {
-    state.blocks.PlanEqualSteps(rows, facts.delta_offset);
+  const auto rows = values.Rows();
+  if (const auto& steps = values.GetSteps(); steps.bits == 0) {
+    state.blocks.PlanEqualSteps(rows, steps.offset);
   } else {
-    state.blocks.PlanDeltas(rows, state.wide);
+    state.blocks.template PlanDeltas<Values<T>::kSigned>(rows);
   }
-}
-
-template<typename T>
-bool ArithmeticFrame(const DeltaFfor<T>& state,
-                     std::span<const numeric::Bits<sizeof(T)>> rows,
-                     uint32_t begin, uint32_t count) {
-  using U = numeric::Bits<sizeof(T)>;
-  const size_t first = begin / numeric::kBlockValues;
-  if (!state.blocks.EqualSteps(
-        first, (count + numeric::kBlockValues - 1) / numeric::kBlockValues)) {
-    return false;
-  }
-  const auto wide = [](U v) {
-    return std::is_signed_v<T>
-             ? absl::int128{static_cast<std::make_signed_t<U>>(v)}
-             : absl::int128{v};
-  };
-  const absl::int128 step{
-    static_cast<std::make_signed_t<U>>(state.blocks.FrameStep(first))};
-  return wide(rows[begin + count - 1]) - wide(rows[begin]) ==
-         step * (count - 1);
-}
-
-template<typename T>
-uint64_t DeltaFforBytes(const DeltaFfor<T>& state,
-                        std::span<const numeric::Bits<sizeof(T)>> rows) {
-  uint64_t bytes = 0;
-  const auto n = static_cast<uint32_t>(rows.size());
-  for (uint32_t begin = 0; begin < n; begin += kFforFrameRows) {
-    const auto count = std::min(n - begin, kFforFrameRows);
-    if (!ArithmeticFrame(state, rows, begin, count)) {
-      bytes += state.blocks.Bytes(
-        begin / numeric::kBlockValues,
-        (count + numeric::kBlockValues - 1) / numeric::kBlockValues);
-    }
-  }
-  return bytes;
 }
 
 template<typename T>
@@ -180,7 +142,7 @@ double AnalyzeDeltaFfor(ColumnDataCheckpointData& data, double bound) {
   if (!values.Usable()) {
     return kNoScore;
   }
-  const auto rows = values.Get();
+  const auto rows = values.Rows();
   const auto price = data.preferences->delta_ffor_price;
   if (!state.planned && ScoreOf(FforBlocks<U>::SampledDeltaBytes(rows),
                                 rows.size(), price) >= bound) {
@@ -190,48 +152,19 @@ double AnalyzeDeltaFfor(ColumnDataCheckpointData& data, double bound) {
   state.analyzed = true;
   return price * AnalyzeBlocks<T>(
                    data, Shape::Delta, static_cast<uint32_t>(rows.size()),
-                   DeltaFforBytes(state, rows), 0, bound / price);
+                   SteppedBytes<T>(state.blocks, rows), 0, bound / price);
 }
 
 template<typename T>
 bool CompressDeltaFfor(ColumnDataCheckpointData& data) {
-  using U = numeric::Bits<sizeof(T)>;
   auto& values = data.Get<Values<T>>();
   auto& state = data.Get<DeltaFfor<T>>();
   if (!values.Usable() || !MayWrite(data, state.analyzed, ByteCodec::None)) {
     return false;
   }
   PlanDeltaFfor(values, state);
-  const auto rows = values.Get();
-  const auto packed =
-    values.GetFacts().delta_bits == 0 ? rows : std::span<const U>{state.wide};
-  auto& out = data.Get<NumericScratch>().out;
-  const auto n = static_cast<uint32_t>(rows.size());
-  const auto geometry = PackedGeometry(Shape::Delta, n, 0, sizeof(T));
-  SegmentWriter<T> writer{
-    Shape::Delta, geometry, DeltaFforBytes(state, rows), {}, out};
-  for (uint32_t f = 0; f < geometry.frames; ++f) {
-    const auto begin = f * geometry.per;
-    const auto count = std::min(n - begin, geometry.per);
-    const size_t first = begin / numeric::kBlockValues;
-    auto& m = writer.Open(f, begin);
-    m.base = state.blocks.FrameStep(first);
-    if (!ArithmeticFrame(state, rows, begin, count)) {
-      state.blocks.Append(
-        packed, first,
-        (size_t{count} + numeric::kBlockValues - 1) / numeric::kBlockValues,
-        out);
-    }
-    writer.Close(m);
-  }
-  writer.Finish(
-    {
-      .stored = sizeof(T),
-      .flags = kNumericPacked,
-      .raw_bytes = uint64_t{n} * sizeof(T),
-    },
-    DeltaHeader{}, values);
-  return FlushNumeric<T>(data, Shape::Delta, ByteCodec::None, state.analyzed);
+  return CompressStepped<T>(data, Shape::Delta, state.blocks, values.Rows(),
+                            state.analyzed, DeltaHeader{});
 }
 
 template<typename T>
@@ -247,6 +180,8 @@ class DeltaReader final : public FrameReader<T> {
   using typename Base::U;
 
  public:
+  using Base::FetchSteps;
+
   DeltaReader(duckdb::const_data_ptr_t base, const FrameHeader& frames,
               CodecType codec, const ReadContext::CacheSlot& slot = {})
     : Base{base, frames, codec, slot},
@@ -302,64 +237,16 @@ class DeltaReader final : public FrameReader<T> {
     return rows;
   }
 
-  IRS_FORCE_INLINE duckdb::idx_t FetchSteps(const duckdb::idx_t* rows,
-                                            duckdb::idx_t count, T* out,
-                                            const duckdb::SelectionVector& sel,
-                                            duckdb::idx_t offset) {
-    if (count < 2 || !this->Packed()) {
-      return 0;
-    }
-    duckdb::idx_t i = 0;
-    for (; i < count; ++i) {
-      const auto row = static_cast<uint64_t>(rows[i]);
-      SDB_ENSURE(row < this->_f.row_count, "numeric codec: row out of range");
-      const auto block = this->BlockAt(row);
-      if (block.bits != 0) {
-        break;
-      }
-      out[offset + sel.get_index(i)] = this->Scaled(
-        static_cast<U>(static_cast<U>(block.base) +
-                       static_cast<U>(row % numeric::kBlockValues) *
-                         static_cast<U>(block.step)));
-    }
-    return i;
-  }
-
   IRS_FORCE_INLINE T FetchApart(uint64_t row, uint64_t next) {
     if (this->Packed()) {
-      if (const auto block = this->BlockAt(row); block.bits == 0) {
-        return this->Scaled(
-          static_cast<U>(static_cast<U>(block.base) +
-                         static_cast<U>(row % numeric::kBlockValues) *
-                           static_cast<U>(block.step)));
-      }
+      return this->FetchPacked(row, next);
     }
     return FetchSummed(row, next);
   }
 
-  void UnpackBlock(uint64_t first, uint64_t rows, U* out) {
-    const auto block = this->BlockAt(first);
-    const auto step = static_cast<U>(block.step);
-    if (block.bits == 0) {
-      auto value = static_cast<U>(block.base);
-      for (uint64_t i = 0; i < rows; ++i) {
-        out[i] = value;
-        value = static_cast<U>(value + step);
-      }
-      return;
-    }
-    this->_block.resize(numeric::kBlockValues);
-    numeric::Unpack<U>(
-      block.bits, this->template BlockWords<U>(block.packed, block.bits, rows),
-      this->_block.data(), U{0});
-    numeric::WidenPrefixSumAs<U, U, true>(
-      reinterpret_cast<const uint8_t*>(this->_block.data()), rows,
-      static_cast<U>(static_cast<U>(block.base) - step), step, out);
-  }
-
  private:
   IRS_NO_INLINE T FetchSummed(uint64_t row, uint64_t next) {
-    if (this->Packed() || this->Near(row, next)) {
+    if (this->Near(row, next)) {
       return this->Get(row);
     }
     if (this->Shuffled() && this->Near(row, this->_fetched)) {

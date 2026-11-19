@@ -37,7 +37,6 @@ namespace irs::codecs {
 inline constexpr CodecSet kCodesGroup =
   CodecSet{}
     .set(std::to_underlying(CodecType::Ffor))
-    .set(std::to_underlying(CodecType::DeltaFfor))
     .set(std::to_underlying(CodecType::RleFfor));
 
 constexpr bool CodesCodec(CodecType type) noexcept {

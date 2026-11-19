@@ -379,20 +379,15 @@ class WideReader {
     if (_lows.size() < count) {
       _lows.resize(count);
     }
-    if constexpr (R::kHasRuns) {
-      if (!_high) {
-        FillRuns(row, count, out);
-        return;
-      }
-    }
-    _low.Read(row, count, _lows.data());
     if (!_high) {
-      const auto base = Base();
-      for (uint64_t i = 0; i < count; ++i) {
-        out[i] = WideValue<W>(base + _lows[i]);
+      if constexpr (R::kHasRuns) {
+        ReadRunFrames(row, count, out);
+      } else {
+        ReadOffsets(row, count, out);
       }
       return;
     }
+    _low.Read(row, count, _lows.data());
     if (_highs.size() < count) {
       _highs.resize(count);
     }
@@ -414,12 +409,25 @@ class WideReader {
                               : Base() + low);
   }
 
-  void FillRuns(uint64_t row, uint64_t count, W* out) {
+  void ReadOffsets(uint64_t row, uint64_t count, W* out) {
+    _low.Read(row, count, _lows.data());
+    const auto base = Base();
+    for (uint64_t i = 0; i < count; ++i) {
+      out[i] = WideValue<W>(base + _lows[i]);
+    }
+  }
+
+  void ReadRunFrames(uint64_t row, uint64_t count, W* out) {
     const auto base = Base();
     for (uint64_t done = 0; done < count;) {
       const auto at = row + done;
       _low.Seek(at);
       const auto take = std::min<uint64_t>(count - done, _low.FrameEnd() - at);
+      if (!_low.LongRuns()) {
+        ReadOffsets(at, take, out + done);
+        done += take;
+        continue;
+      }
       const auto runs = _low.ReadRuns(at, take, std::span{_lows.data(), take});
       SDB_ASSERT(runs.count != 0);
       for (uint32_t i = 0; i < runs.count; ++i) {

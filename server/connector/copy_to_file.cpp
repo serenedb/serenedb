@@ -20,6 +20,7 @@
 
 #include "connector/copy_to_file.h"
 
+#include <absl/cleanup/cleanup.h>
 #include <absl/synchronization/mutex.h>
 
 #include <atomic>
@@ -38,6 +39,7 @@ namespace sdb::connector {
 namespace {
 
 constexpr size_t kFlushBytes = 1 << 20;
+constexpr size_t kQueuedBytes = 32 << 20;
 constexpr size_t kBufferChunkMin = 64 << 10;
 constexpr size_t kBufferChunkMax = 1 << 20;
 constexpr duckdb::idx_t kBatchRows = 64 * STANDARD_VECTOR_SIZE;
@@ -45,11 +47,13 @@ constexpr duckdb::idx_t kBatchRows = 64 * STANDARD_VECTOR_SIZE;
 struct CopyToFileGlobal final : public duckdb::GlobalFunctionData {
   duckdb::unique_ptr<duckdb::FileHandle> handle;
   formats::TextEncoding encoding = formats::TextEncoding::Utf8;
-  bool positional = false;
   size_t strip = 0;
   bool started = false;
   std::atomic<uint64_t> offset{0};
   absl::Mutex lock;
+  message::Chain queued;
+  bool writing = false;
+  bool failed = false;
 };
 
 duckdb::idx_t FileSize(duckdb::GlobalFunctionData& gstate) {
@@ -66,10 +70,16 @@ struct CopyToFileBatch final : public duckdb::PreparedBatchData {
   message::Chain chain;
 };
 
-void Write(duckdb::ClientContext& context, CopyToFileGlobal& g,
-           message::Chain& chain, bool rows) {
+void WriteOut(duckdb::ClientContext& context, CopyToFileGlobal& g,
+              message::Chain& chain, bool rows) {
   if (chain.bytes == 0) {
     return;
+  }
+  if (rows && !std::exchange(g.started, true) && g.strip != 0) {
+    auto& head = *chain.head;
+    SDB_ASSERT(head.Size() >= g.strip);
+    head.SetBegin(head.GetBegin() + g.strip);
+    chain.bytes -= g.strip;
   }
   const auto write = [&](auto&& write_part) {
     for (auto* chunk = chain.head; chunk; chunk = chunk->Next()) {
@@ -80,21 +90,6 @@ void Write(duckdb::ClientContext& context, CopyToFileGlobal& g,
       }
     }
   };
-  if (g.positional) {
-    auto at = g.offset.fetch_add(chain.bytes, std::memory_order_relaxed);
-    write([&](uint8_t* data, duckdb::idx_t size) {
-      g.handle->Write(context, data, size, at);
-      at += size;
-    });
-    return;
-  }
-  absl::MutexLock lock{&g.lock};
-  if (rows && !std::exchange(g.started, true) && g.strip != 0) {
-    auto& head = *chain.head;
-    SDB_ASSERT(head.Size() >= g.strip);
-    head.SetBegin(head.GetBegin() + g.strip);
-    chain.bytes -= g.strip;
-  }
   if (g.encoding != formats::TextEncoding::Utf8) {
     formats::Utf8Encoder encoder{g.encoding};
     std::string converted;
@@ -111,16 +106,57 @@ void Write(duckdb::ClientContext& context, CopyToFileGlobal& g,
   g.offset.fetch_add(chain.bytes, std::memory_order_relaxed);
 }
 
-void Write(duckdb::ClientContext& context, CopyToFileGlobal& g,
-           message::Buffer& buffer, bool rows) {
+void WriteOut(duckdb::ClientContext& context, CopyToFileGlobal& g,
+              message::Buffer& buffer) {
   auto chain = buffer.ReleaseChain();
-  Write(context, g, chain, rows);
+  WriteOut(context, g, chain, false);
+}
+
+bool QueueHasRoom(CopyToFileGlobal* g) {
+  return g->failed || g->queued.bytes < kQueuedBytes;
+}
+
+void Write(duckdb::ClientContext& context, CopyToFileGlobal& g,
+           message::Chain&& chain) {
+  if (chain.bytes == 0) {
+    return;
+  }
+  {
+    absl::MutexLock lock{&g.lock};
+    g.lock.Await(absl::Condition{QueueHasRoom, &g});
+    if (g.failed) {
+      return;
+    }
+    g.queued.Append(std::move(chain));
+    if (std::exchange(g.writing, true)) {
+      return;
+    }
+  }
+  absl::Cleanup fail = [&] {
+    absl::MutexLock lock{&g.lock};
+    g.writing = false;
+    g.failed = true;
+    g.queued = {};
+  };
+  for (;;) {
+    message::Chain batch;
+    {
+      absl::MutexLock lock{&g.lock};
+      if (!g.queued.head) {
+        g.writing = false;
+        std::move(fail).Cancel();
+        return;
+      }
+      batch = std::move(g.queued);
+    }
+    WriteOut(context, g, batch, true);
+  }
 }
 
 void Flush(duckdb::ClientContext& context, CopyToFileGlobal& g,
            CopyToFileLocal& l) {
   l.released = l.buffer.TotalCommitted();
-  Write(context, g, l.buffer, true);
+  Write(context, g, l.buffer.ReleaseChain());
 }
 
 duckdb::unique_ptr<duckdb::GlobalFunctionData> InitGlobal(
@@ -134,11 +170,9 @@ duckdb::unique_ptr<duckdb::GlobalFunctionData> InitGlobal(
                  bind.Compression());
   g->strip = bind.RowSeparator().size();
   g->encoding = bind.Encoding();
-  g->positional = g->strip == 0 && g->encoding == formats::TextEncoding::Utf8 &&
-                  g->handle->OnDiskFile() && g->handle->CanSeek();
   message::Buffer header{kBufferChunkMin, kBufferChunkMax};
   bind.WriteHeader(context, header);
-  Write(context, *g, header, false);
+  WriteOut(context, *g, header);
   return g;
 }
 
@@ -171,7 +205,7 @@ void Finalize(duckdb::ClientContext& context, duckdb::FunctionData& bind_data,
   auto& g = gstate.Cast<CopyToFileGlobal>();
   message::Buffer trailer{kBufferChunkMin, kBufferChunkMax};
   bind_data.Cast<CopyToFileBindData>().WriteTrailer(trailer);
-  Write(context, g, trailer, false);
+  WriteOut(context, g, trailer);
   g.handle->Close();
 }
 
@@ -204,8 +238,7 @@ void FlushBatch(duckdb::ClientContext& context, duckdb::FunctionData&,
                 duckdb::GlobalFunctionData& gstate,
                 duckdb::PreparedBatchData& batch) {
   auto& prepared = batch.Cast<CopyToFileBatch>();
-  Write(context, gstate.Cast<CopyToFileGlobal>(), prepared.chain, true);
-  prepared.chain = {};
+  Write(context, gstate.Cast<CopyToFileGlobal>(), std::move(prepared.chain));
 }
 
 duckdb::optional_idx DesiredBatchSize(duckdb::ClientContext&,
@@ -226,6 +259,7 @@ void SetCopyToFileCallbacks(duckdb::CopyFunction& function) {
   function.flush_batch = FlushBatch;
   function.desired_batch_size = DesiredBatchSize;
   function.file_size_bytes = FileSize;
+  function.parallel_sink = true;
 }
 
 duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> CopyToSelect(

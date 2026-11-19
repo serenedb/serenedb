@@ -1,0 +1,49 @@
+statement ok
+CREATE TABLE psafs_holder (pid integer);
+
+
+connection psafs_session
+statement ok
+INSERT INTO psafs_holder VALUES (pg_backend_pid());
+
+
+connection psafs_session
+statement ok
+BEGIN;
+
+
+connection psafs_session
+statement error
+SELEC 1;
+----
+db error: ERROR: syntax error at or near "1"
+
+
+query
+SELECT state, query LIKE 'SELEC %' AS shows_failed_statement FROM pg_stat_activity WHERE pid = (SELECT pid FROM psafs_holder);
+----
+state	shows_failed_statement
+idle in transaction (aborted)	t
+
+
+connection psafs_session
+statement error
+SELECT 2;
+----
+db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+
+
+query
+SELECT state, query LIKE 'SELECT 2%' AS shows_rejected_statement FROM pg_stat_activity WHERE pid = (SELECT pid FROM psafs_holder);
+----
+state	shows_rejected_statement
+idle in transaction (aborted)	t
+
+
+connection psafs_session
+statement ok
+ROLLBACK;
+
+
+statement ok
+DROP TABLE psafs_holder;

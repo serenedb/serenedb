@@ -232,6 +232,7 @@ class ConnectionContext final : public duckdb::ClientContext {
     return _progress;
   }
   void ReportIdle();
+  void ReportQuery(std::string query);
 
   int copy_stdin_open_count = 0;
   bool copy_stdin_done = false;

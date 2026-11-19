@@ -1399,6 +1399,7 @@ yaclib::Task<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
     WriteEmptyFrame(this->_send, PQ_MSG_EMPTY_QUERY_RESPONSE);
     co_return {};
   }
+  _connection_ctx->ReportQuery(std::string{query});
   duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>> parsed;
   for (duckdb::ParseIterator parser{*_conn->context, query}; parser.Peek();) {
     parsed.push_back(parser.GetStatement());
@@ -2041,6 +2042,7 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
   // and bound at Execute via RunCopyFromStdin. Everything else binds the
   // already-parsed statement now, so the common path parses once.
   duckdb::vector<duckdb::idx_t> raw_statement_ends;
+  _connection_ctx->ReportQuery(std::string{query});
   auto extracted = _conn->ExtractStatements(query, &raw_statement_ends,
                                             /*wrap_multi=*/false);
   if (raw_statement_ends.size() > 1) {

@@ -334,21 +334,195 @@ void LogBaseFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     });
 }
 
-// cotd(x) -> double -- PG-compatible, ported from Velox PgCotD
 constexpr double kDegreesToRadians = M_PI / 180.0;
 
-void CotDFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
-                  duckdb::Vector& result) {
-  duckdb::UnaryExecutor::Execute<double, double>(
-    args.data[0], result, args.size(), [](double x) -> double {
-      if (std::isinf(x)) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
-                        ERR_MSG("input is out of range"));
+struct DegreeConstants {
+  double sin_30 = 0;
+  double one_minus_cos_60 = 0;
+  double asin_0_5 = 0;
+  double acos_0_5 = 0;
+  double atan_1_0 = 0;
+  double tan_45 = 0;
+  double cot_45 = 0;
+};
+
+double SinTo30(const DegreeConstants& c, double x) {
+  volatile double sin_x = std::sin(x * kDegreesToRadians);
+  return (sin_x / c.sin_30) / 2.0;
+}
+
+double CosTo60(const DegreeConstants& c, double x) {
+  volatile double one_minus_cos_x = 1.0 - std::cos(x * kDegreesToRadians);
+  return 1.0 - (one_minus_cos_x / c.one_minus_cos_60) / 2.0;
+}
+
+double SinQ1(const DegreeConstants& c, double x) {
+  return x <= 30.0 ? SinTo30(c, x) : CosTo60(c, 90.0 - x);
+}
+
+double CosQ1(const DegreeConstants& c, double x) {
+  return x <= 60.0 ? CosTo60(c, x) : SinTo30(c, 90.0 - x);
+}
+
+double AsinQ1(const DegreeConstants& c, double x) {
+  if (x <= 0.5) {
+    volatile double asin_x = std::asin(x);
+    return (asin_x / c.asin_0_5) * 30.0;
+  }
+  volatile double acos_x = std::acos(x);
+  return 90.0 - (acos_x / c.acos_0_5) * 60.0;
+}
+
+double AcosQ1(const DegreeConstants& c, double x) {
+  if (x <= 0.5) {
+    volatile double asin_x = std::asin(x);
+    return 90.0 - (asin_x / c.asin_0_5) * 30.0;
+  }
+  volatile double acos_x = std::acos(x);
+  return (acos_x / c.acos_0_5) * 60.0;
+}
+
+DegreeConstants MakeDegreeConstants() {
+  volatile double thirty = 30.0;
+  volatile double forty_five = 45.0;
+  volatile double sixty = 60.0;
+  volatile double one_half = 0.5;
+  volatile double one = 1.0;
+  DegreeConstants c{
+    .sin_30 = std::sin(thirty * kDegreesToRadians),
+    .one_minus_cos_60 = 1.0 - std::cos(sixty * kDegreesToRadians),
+    .asin_0_5 = std::asin(one_half),
+    .acos_0_5 = std::acos(one_half),
+    .atan_1_0 = std::atan(one),
+  };
+  c.tan_45 = SinQ1(c, forty_five) / CosQ1(c, forty_five);
+  c.cot_45 = CosQ1(c, forty_five) / SinQ1(c, forty_five);
+  return c;
+}
+
+const DegreeConstants& Degrees() {
+  static const DegreeConstants kDegrees = MakeDegreeConstants();
+  return kDegrees;
+}
+
+double FiniteDegrees(double x) {
+  if (std::isinf(x)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                    ERR_MSG("input is out of range"));
+  }
+  return std::fmod(x, 360.0);
+}
+
+double UnitInterval(double x) {
+  if (x < -1.0 || x > 1.0) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                    ERR_MSG("input is out of range"));
+  }
+  return x;
+}
+
+double SinD(double x) {
+  if (std::isnan(x)) {
+    return x;
+  }
+  x = FiniteDegrees(x);
+  double sign = 1;
+  if (x < 0.0) {
+    x = -x;
+    sign = -sign;
+  }
+  if (x > 180.0) {
+    x = 360.0 - x;
+    sign = -sign;
+  }
+  if (x > 90.0) {
+    x = 180.0 - x;
+  }
+  return sign * SinQ1(Degrees(), x);
+}
+
+double CosD(double x) {
+  if (std::isnan(x)) {
+    return x;
+  }
+  x = std::abs(FiniteDegrees(x));
+  double sign = 1;
+  if (x > 180.0) {
+    x = 360.0 - x;
+  }
+  if (x > 90.0) {
+    x = 180.0 - x;
+    sign = -sign;
+  }
+  return sign * CosQ1(Degrees(), x);
+}
+
+template<bool Cotangent>
+double TanD(double x) {
+  if (std::isnan(x)) {
+    return x;
+  }
+  x = FiniteDegrees(x);
+  double sign = 1;
+  if (x < 0.0) {
+    x = -x;
+    sign = -sign;
+  }
+  if (x > 180.0) {
+    x = 360.0 - x;
+    sign = -sign;
+  }
+  if (x > 90.0) {
+    x = 180.0 - x;
+    sign = -sign;
+  }
+  const auto& c = Degrees();
+  volatile double ratio =
+    Cotangent ? CosQ1(c, x) / SinQ1(c, x) : SinQ1(c, x) / CosQ1(c, x);
+  const double result = sign * (ratio / (Cotangent ? c.cot_45 : c.tan_45));
+  return result == 0.0 ? 0.0 : result;
+}
+
+double AsinD(double x) {
+  if (std::isnan(x)) {
+    return x;
+  }
+  x = UnitInterval(x);
+  return x >= 0.0 ? AsinQ1(Degrees(), x) : -AsinQ1(Degrees(), -x);
+}
+
+double AcosD(double x) {
+  if (std::isnan(x)) {
+    return x;
+  }
+  x = UnitInterval(x);
+  return x >= 0.0 ? AcosQ1(Degrees(), x) : 90.0 + AsinQ1(Degrees(), -x);
+}
+
+double AtanD(double x) {
+  if (std::isnan(x)) {
+    return x;
+  }
+  volatile double atan_x = std::atan(x);
+  return (atan_x / Degrees().atan_1_0) * 45.0;
+}
+
+template<double (*F)(double)>
+void DegreeFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                    duckdb::Vector& result) {
+  duckdb::UnaryExecutor::Execute<double, double>(args.data[0], result,
+                                                 args.size(), F);
+}
+
+void Atan2DFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                    duckdb::Vector& result) {
+  duckdb::BinaryExecutor::Execute<double, double, double>(
+    args.data[0], args.data[1], result, args.size(), [](double y, double x) {
+      if (std::isnan(y) || std::isnan(x)) {
+        return std::numeric_limits<double>::quiet_NaN();
       }
-      if (x == 0.0) {
-        return std::numeric_limits<double>::infinity();
-      }
-      return 1.0 / std::tan(x * kDegreesToRadians);
+      volatile double atan2_yx = std::atan2(y, x);
+      return (atan2_yx / Degrees().atan_1_0) * 45.0;
     });
 }
 
@@ -420,10 +594,13 @@ void MakeTimestampFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
 duckdb::unique_ptr<duckdb::FunctionData> BindDateBin(
   duckdb::BindScalarFunctionInput& input) {
   const auto stride = input.TryGetConstant(0);
-  if (!stride) {
+  const auto interval =
+    stride ? stride->DefaultTryCastAs(duckdb::LogicalType::INTERVAL)
+           : std::optional<duckdb::Value>{};
+  if (!interval) {
     input.GetBoundFunction().SetFallible();
-  } else if (!stride->IsNull()) {
-    const auto value = stride->GetValue<duckdb::interval_t>();
+  } else if (!interval->IsNull()) {
+    const auto value = interval->GetValue<duckdb::interval_t>();
     if (value.months != 0 ||
         value.micros + static_cast<int64_t>(value.days) * 86400'000'000LL <=
           0) {
@@ -1235,13 +1412,34 @@ void RegisterPgMathFunctions(duckdb::DatabaseInstance& db) {
     loader.RegisterFunction(log_set);
   }
 
-  // cotd(x) -> double
-  duckdb::ScalarFunction cotd{"cotd",
-                              {duckdb::LogicalType::DOUBLE},
-                              duckdb::LogicalType::DOUBLE,
-                              CotDFunction};
-  cotd.SetFallible();
-  loader.RegisterFunction(std::move(cotd));
+  struct Degree {
+    std::string_view name;
+    duckdb::scalar_function_t function;
+    bool fallible;
+  };
+  for (const auto& [name, function, fallible] : {
+         Degree{"sind", DegreeFunction<SinD>, true},
+         Degree{"cosd", DegreeFunction<CosD>, true},
+         Degree{"tand", DegreeFunction<TanD<false>>, true},
+         Degree{"cotd", DegreeFunction<TanD<true>>, true},
+         Degree{"asind", DegreeFunction<AsinD>, true},
+         Degree{"acosd", DegreeFunction<AcosD>, true},
+         Degree{"atand", DegreeFunction<AtanD>, false},
+       }) {
+    duckdb::ScalarFunction degree{duckdb::Identifier{name},
+                                  {duckdb::LogicalType::DOUBLE},
+                                  duckdb::LogicalType::DOUBLE,
+                                  function};
+    if (fallible) {
+      degree.SetFallible();
+    }
+    loader.RegisterFunction(std::move(degree));
+  }
+  loader.RegisterFunction(duckdb::ScalarFunction{
+    duckdb::Identifier{"atan2d"},
+    {duckdb::LogicalType::DOUBLE, duckdb::LogicalType::DOUBLE},
+    duckdb::LogicalType::DOUBLE,
+    Atan2DFunction});
 
   // make_timestamp(year, month, day, hour, min, sec) -> timestamp
   duckdb::ScalarFunction make_timestamp{

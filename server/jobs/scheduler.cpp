@@ -217,6 +217,7 @@ duckdb::ErrorData RunQuery(JobState& state, const JobDefinition& job,
     {.what = "job", .name = job.name.GetIdentifierName()}};
   ConnectionContext::Get(*connection.conn->context).job_depth = depth;
   context = connection.conn->context;
+  context->caller = caller.get();
   if (!temporary && !job.schema->parent) {
     context->client_data->catalog_search_path->Set(
       {duckdb::CatalogSearchEntry{database->GetName(), job.schema->Name()}},

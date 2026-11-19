@@ -493,8 +493,13 @@ void ConnectionContext::OnQueryBegin() {
   if (_internal_statements != 0) {
     return;
   }
-  _query_in_transaction = true;
-  _progress->BeginQuery(GetCurrentQuery());
+  const bool continues = std::exchange(_query_in_transaction, true);
+  _progress->BeginQuery(
+    GetCurrentQuery(),
+    continues || !transaction.HasActiveTransaction()
+      ? duckdb::Timestamp::GetCurrentTimestamp().value
+      : transaction.ActiveTransaction().start_timestamp.value,
+    continues);
   if (pending_copy_command != pg::ProgressCommand::None) {
     auto& metrics = _progress->metrics;
     metrics.SetCommand(pending_copy_command);
@@ -524,6 +529,15 @@ void ConnectionContext::OnQueryEnd() {
 
 void ConnectionContext::ReportIdle() {
   _progress->ReportIdle(pg::IdleState(transaction));
+}
+
+void ConnectionContext::ReportQuery(std::string query) {
+  if (_internal_statements != 0) {
+    return;
+  }
+  _progress->BeginQuery(std::move(query),
+                        duckdb::Timestamp::GetCurrentTimestamp().value,
+                        _query_in_transaction);
 }
 
 void ConnectionContext::OnTransactionPreCommit(duckdb::MetaTransaction& meta) {

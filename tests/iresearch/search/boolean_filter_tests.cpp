@@ -3424,6 +3424,41 @@ TEST(OrAcceptorFusion_test, scored_requires_uniform_boosts) {
   }
 }
 
+TEST(OrAcceptorFusion_test, scored_sum_fuses_only_when_each_word_matches_once) {
+  irs::TFIDF tfidf;
+  const auto optimized = [&](irs::ScoreMergeType merge,
+                             std::span<const std::string_view> prefixes,
+                             std::span<const std::string_view> terms) {
+    auto root = std::make_unique<irs::BooleanFilter>();
+    for (const auto term : terms) {
+      AddTerm(*root, irs::Occur::Should, kFieldTestField, term, irs::kNoBoost,
+              &tfidf);
+    }
+    for (const auto prefix : prefixes) {
+      auto& child = Append<irs::ByPrefix>(*root, irs::Occur::Should,
+                                          kFieldTestField, prefix);
+      child.SetScorer(&tfidf);
+      child.mutable_options()->merge = merge;
+    }
+    root->SetMergeType(merge);
+    AsDisjunction(*root);
+    irs::Filter::ptr filter = std::move(root);
+    irs::Optimize(filter, {.scored = true, .fuse_seekable_acceptors = true});
+    return filter;
+  };
+  constexpr std::string_view kDisjoint[] = {"ax", "ban"};
+  constexpr std::string_view kNested[] = {"ax", "bana", "ban"};
+  constexpr std::string_view kUnderPrefix[] = {"axle"};
+  constexpr std::string_view kBesidePrefixes[] = {"kiwi"};
+  EXPECT_NE(nullptr, FusedOf(optimized(irs::ScoreMergeType::Sum, kDisjoint,
+                                       kBesidePrefixes)));
+  EXPECT_EQ(nullptr, FusedOf(optimized(irs::ScoreMergeType::Sum, kNested, {})));
+  EXPECT_EQ(nullptr, FusedOf(optimized(irs::ScoreMergeType::Sum, kDisjoint,
+                                       kUnderPrefix)));
+  EXPECT_NE(nullptr, FusedOf(optimized(irs::ScoreMergeType::Max, kDisjoint,
+                                       kUnderPrefix)));
+}
+
 TEST(OrAcceptorFusion_test, scored_constants_stay_clauses) {
   auto root = std::make_unique<irs::BooleanFilter>();
   Append<irs::ByPrefix>(*root, irs::Occur::Should, kFieldTestField, "ax");

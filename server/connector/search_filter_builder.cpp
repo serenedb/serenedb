@@ -479,7 +479,15 @@ namespace {
 void CollectNullableMarkers(const FilterContext& ctx,
                             const duckdb::Expression& expr,
                             std::vector<NullMarker>& markers) {
-  if (const auto* info = FindIndexedExpressionInfo(ctx, expr)) {
+  const auto* info = FindIndexedExpressionInfo(ctx, expr);
+  if (!info && duckdb::BoundComparisonExpression::IsComparison(expr)) {
+    auto negated = expr.Copy();
+    duckdb::BoundComparisonExpression::SetType(
+      negated->Cast<duckdb::BoundFunctionExpression>(),
+      duckdb::NegateComparisonExpression(expr.GetExpressionType()));
+    info = FindIndexedExpressionInfo(ctx, *negated);
+  }
+  if (info) {
     if (info->nullable) {
       markers.push_back(NullMarkerOf(*info));
     }
@@ -1993,6 +2001,37 @@ const irs::Scorer* ResolveScoreOverride(const FilterContext& ctx,
   return scorer;
 }
 
+irs::BooleanFilter* InnermostGroup(irs::BooleanFilter& scope) {
+  irs::BooleanFilter* group = nullptr;
+  for (auto* node = &scope;;) {
+    const auto clauses = node->Filters(irs::Occur::Must);
+    if (clauses.size() != 1 || node->Size(irs::Occur::Must) != 1 ||
+        node->Size(irs::Occur::Should) != 0 ||
+        node->Size(irs::Occur::MustNot) != 0 ||
+        clauses[0]->type() != irs::Type<irs::BooleanFilter>::id()) {
+      break;
+    }
+    group = &irs::utils::downCast<irs::BooleanFilter>(*clauses[0]);
+    node = group;
+  }
+  return group;
+}
+
+irs::Filter* SingleLeaf(irs::BooleanFilter& node) {
+  if (node.Size(irs::Occur::MustNot) != 0 ||
+      node.Size(irs::Occur::Must) + node.Size(irs::Occur::Should) != 1 ||
+      node.MinShouldMatch() > 1) {
+    return nullptr;
+  }
+  const auto clauses = node.Filters(
+    node.Size(irs::Occur::Must) == 1 ? irs::Occur::Must : irs::Occur::Should);
+  if (clauses.size() != 1 ||
+      clauses[0]->type() == irs::Type<irs::BooleanFilter>::id()) {
+    return nullptr;
+  }
+  return clauses[0].get();
+}
+
 bool HasScorableLeaf(const irs::Filter& filter) {
   if (filter.type() != irs::Type<irs::BooleanFilter>::id()) {
     return !irs::IsConstScoreSingleton(filter.GetScorer());
@@ -2028,6 +2067,12 @@ void ApplyScoreOverride(irs::BooleanFilter& scope, const irs::Scorer* scorer) {
       }
     }
   }
+  if (auto* group = InnermostGroup(scope)) {
+    if (auto* leaf = SingleLeaf(*group);
+        leaf && leaf->GetScorer() == &irs::DefaultConstScore()) {
+      leaf->SetScorer(scorer);
+    }
+  }
   if (irs::NeedsTermStats(*scorer) && scored_clauses != 0 &&
       !HasScorableLeaf(scope)) {
     THROW_SQL_ERROR(
@@ -2056,33 +2101,6 @@ void CloseScope(BoolTarget parent, std::unique_ptr<irs::BooleanFilter> scope) {
   if (!scope->Empty()) {
     parent.Add(std::move(scope));
   }
-}
-
-irs::BooleanFilter* InnermostGroup(irs::BooleanFilter& scope) {
-  irs::BooleanFilter* group = nullptr;
-  for (auto* node = &scope;;) {
-    const auto clauses = node->Filters(irs::Occur::Must);
-    if (clauses.size() != 1 || node->Size(irs::Occur::Must) != 1 ||
-        node->Size(irs::Occur::Should) != 0 ||
-        node->Size(irs::Occur::MustNot) != 0 ||
-        clauses[0]->type() != irs::Type<irs::BooleanFilter>::id()) {
-      break;
-    }
-    group = &irs::utils::downCast<irs::BooleanFilter>(*clauses[0]);
-    node = group;
-  }
-  return group;
-}
-
-irs::Filter* SingleLeaf(irs::BooleanFilter& node) {
-  const auto clauses = node.Filters(irs::Occur::Must);
-  if (clauses.size() != 1 || node.Size(irs::Occur::Must) != 1 ||
-      node.Size(irs::Occur::Should) != 0 ||
-      node.Size(irs::Occur::MustNot) != 0 ||
-      clauses[0]->type() == irs::Type<irs::BooleanFilter>::id()) {
-    return nullptr;
-  }
-  return clauses[0].get();
 }
 
 irs::ScoreMergeType* WordsMerge(irs::Filter& filter) {

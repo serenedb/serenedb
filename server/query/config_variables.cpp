@@ -1646,10 +1646,12 @@ constexpr std::pair<std::string_view, VariableDescription>
     {
       "TimeZone",
       {
-        LogicalTypeId::VARCHAR,
-        "Sets the time zone for displaying and interpreting time stamps.",
-        [] { return duckdb::Value{"Etc/UTC"}; },
-        CheckTimeZone,
+        .type = LogicalTypeId::VARCHAR,
+        .description =
+          "Sets the time zone for displaying and interpreting time stamps.",
+        .default_value = [] { return duckdb::Value{"Etc/UTC"}; },
+        .set_callback = CheckTimeZone,
+        .rebind = true,
       },
     },
     {

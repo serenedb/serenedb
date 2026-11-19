@@ -1,0 +1,32 @@
+statement ok
+CREATE TABLE glua_1 (k INT)
+
+statement ok
+INSERT INTO glua_1 VALUES (1), (2), (3)
+
+statement ok
+CREATE TABLE glua_2 (k INT)
+
+statement ok
+INSERT INTO glua_2 VALUES (2), (3), (4)
+
+query
+SELECT k, count(*) FROM (SELECT k FROM glua_1 UNION ALL SELECT k FROM glua_2) s GROUP BY k ORDER BY k
+----
+k	count
+1	1
+2	2
+3	2
+4	1
+
+query
+SELECT count(*), bool_and(c = CASE WHEN k IN (2, 3) THEN 2 ELSE 1 END) FROM (SELECT k, count(*) AS c FROM (SELECT k FROM glua_1 UNION ALL SELECT k FROM glua_2) s GROUP BY k LIMIT 3) q
+----
+count	bool_and
+3	t
+
+query
+SELECT count(*) FROM (SELECT DISTINCT k FROM (SELECT k FROM glua_1 UNION ALL SELECT k FROM glua_2) s LIMIT 3) q
+----
+count
+3

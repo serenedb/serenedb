@@ -1,0 +1,59 @@
+statement ok
+CREATE TABLE stmar_txn (x BIGINT) WITH (compaction_interval = 0)
+
+statement ok
+INSERT INTO stmar_txn VALUES (1)
+
+statement ok
+BEGIN
+
+statement ok
+DELETE FROM stmar_txn WHERE x = 1
+
+statement ok
+INSERT INTO stmar_txn VALUES (5)
+
+statement ok
+COMMIT
+
+query
+SELECT count(*), min(x), max(x) FROM stmar_txn
+----
+count	min	max
+1	5	5
+
+statement ok
+CREATE TABLE stmar_flush (id BIGINT, x BIGINT) WITH (compaction_interval = 0)
+
+statement ok
+INSERT INTO stmar_flush VALUES (1, 1), (2, 10)
+
+statement ok
+UPDATE stmar_flush SET x = 5 WHERE id = 1
+
+statement ok
+VACUUM (FLUSH_TABLE) stmar_flush
+
+query
+SELECT min(x), max(x) FROM stmar_flush
+----
+min	max
+5	10
+
+statement ok
+CREATE TABLE stmar_default (id BIGINT, x BIGINT)
+
+statement ok
+INSERT INTO stmar_default SELECT i, i FROM generate_series(1, 1000) g(i)
+
+statement ok
+UPDATE stmar_default SET x = 500 WHERE id IN (1, 1000)
+
+statement ok
+VACUUM (FLUSH_TABLE) stmar_default
+
+query
+SELECT min(x), max(x) FROM stmar_default
+----
+min	max
+2	999

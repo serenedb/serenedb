@@ -780,6 +780,39 @@ size_t DriverRank(const Filter& filter) noexcept {
   return kRangeRank + 1;
 }
 
+bool MatchesEachWordOnce(std::span<const TermClause> terms,
+                         std::span<const Filter::ptr> filters) {
+  absl::InlinedVector<bytes_view, 8> prefixes;
+  for (const auto& child : filters) {
+    if (child->type() != Type<ByPrefix>::id()) {
+      return false;
+    }
+    prefixes.emplace_back(
+      irs::utils::downCast<ByPrefix>(*child).options().term);
+  }
+  absl::c_sort(prefixes);
+  for (size_t i = 1; i < prefixes.size(); ++i) {
+    if (prefixes[i].starts_with(prefixes[i - 1])) {
+      return false;
+    }
+  }
+  absl::InlinedVector<bytes_view, 8> words;
+  for (const auto& term : terms) {
+    words.emplace_back(term.term);
+  }
+  absl::c_sort(words);
+  for (size_t i = 0; i < words.size(); ++i) {
+    if (i != 0 && words[i] == words[i - 1]) {
+      return false;
+    }
+    const auto it = absl::c_upper_bound(prefixes, words[i]);
+    if (it != prefixes.begin() && words[i].starts_with(*std::prev(it))) {
+      return false;
+    }
+  }
+  return true;
+}
+
 }  // namespace
 
 std::optional<OrAcceptorFusionRule::AcceptorInfo> OrAcceptorFusionRule::InfoOf(
@@ -877,6 +910,10 @@ bool OrAcceptorFusionRule::Apply(Filter::ptr& slot,
   const bool scores = !ScoreIsIgnored(node, ctx);
   const auto terms = node.Terms(Occur::Should);
   const auto filters = node.Filters(Occur::Should);
+  if (scores && node.MergeType() != ScoreMergeType::Max &&
+      !MatchesEachWordOnce(terms, filters)) {
+    return false;
+  }
 
   field_id field;
   DictRef dict;

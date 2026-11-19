@@ -86,7 +86,7 @@ CompositeReader::CompositeReader(const CompositeReader& base,
   for (const auto& reader : added) {
     AddTerms(*reader, /*keep_sorted=*/true);
   }
-  if (!removed.empty() && _docs != base._docs) {
+  if (!removed.empty()) {
     for (const auto& reader : _readers) {
       AddColumns(*reader, /*new_docs=*/true);
     }
@@ -100,9 +100,6 @@ CompositeReader::CompositeReader(const CompositeReader& base,
                .merged = column.merged->ToUnique(),
                .distinct = column.distinct ? column.distinct->Copy() : nullptr,
                .docs = column.docs});
-  }
-  for (const auto& reader : removed) {
-    RemoveColumns(*reader);
   }
   for (const auto& reader : added) {
     AddColumns(*reader, /*new_docs=*/true);

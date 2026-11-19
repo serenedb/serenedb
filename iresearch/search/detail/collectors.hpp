@@ -251,12 +251,12 @@ class SlotsCollector : public FieldPrepareCollector {
     return _counters.Term(thread, i);
   }
 
-  void Finish(StatsArena& stats) override;
+  void Finish(StatsArena& stats) final;
 
  protected:
   using TermCounts = absl::InlinedVector<TermCollector, 8>;
 
-  void AppendTerms(TermCounts& out) const;
+  virtual void AppendExpanded(TermCounts&) const {}
 };
 
 class ExpandedSlotsCollector final : public SlotsCollector {
@@ -279,9 +279,9 @@ class ExpandedSlotsCollector final : public SlotsCollector {
     absl::FunctionRef<void(bytes_view term, const TermCollector& counts)>
       visitor) const;
 
-  void Finish(StatsArena& stats) final;
-
  private:
+  void AppendExpanded(TermCounts& out) const final;
+
   size_t _expanded_size;
   containers::Fixed<Terms> _expanded;
 };

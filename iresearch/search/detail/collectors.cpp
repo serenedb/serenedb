@@ -85,21 +85,18 @@ void Scorer::CollectTerms(byte_type* stats, const FieldCollector* field,
   }
 }
 
-void SlotsCollector::AppendTerms(TermCounts& out) const {
-  for (size_t i = 0, n = _counters.Terms(); i != n; ++i) {
-    const auto term = _counters.TotalTerm(i);
-    if (term.docs_with_term != 0) {
-      out.push_back(term);
-    }
-  }
-}
-
 void SlotsCollector::Finish(StatsArena& stats) {
   if (_scorer == nullptr) {
     return;
   }
   TermCounts terms;
-  AppendTerms(terms);
+  for (size_t i = 0, n = _counters.Terms(); i != n; ++i) {
+    const auto term = _counters.TotalTerm(i);
+    if (term.docs_with_term != 0) {
+      terms.push_back(term);
+    }
+  }
+  AppendExpanded(terms);
   const auto field = _counters.TotalField();
   _scorer->CollectTerms(Mutable(_stats), &field, terms, stats);
 }
@@ -138,17 +135,9 @@ void ExpandedSlotsCollector::VisitExpanded(
   }
 }
 
-void ExpandedSlotsCollector::Finish(StatsArena& stats) {
-  if (_scorer == nullptr) {
-    return;
-  }
-  TermCounts collected;
-  AppendTerms(collected);
-  VisitExpanded([&](bytes_view, const TermCollector& counts) {
-    collected.push_back(counts);
-  });
-  const auto field = _counters.TotalField();
-  _scorer->CollectTerms(Mutable(_stats), &field, collected, stats);
+void ExpandedSlotsCollector::AppendExpanded(TermCounts& out) const {
+  VisitExpanded(
+    [&](bytes_view, const TermCollector& counts) { out.push_back(counts); });
 }
 
 void AllCollector::Finish(StatsArena&) {

@@ -129,6 +129,10 @@ class DocumentMask final {
 
   bool Empty() const noexcept { return _count == 0; }
 
+  doc_id_t Min() const noexcept {
+    return roaring::api::roaring_bitmap_minimum(&_set);
+  }
+
   doc_id_t Max() const noexcept {
     return roaring::api::roaring_bitmap_maximum(&_set);
   }

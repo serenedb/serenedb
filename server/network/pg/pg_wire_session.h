@@ -377,7 +377,9 @@ class PgWireSession
     duckdb::unique_ptr<duckdb::SQLStatement> statement,
     duckdb::optional_ptr<
       const duckdb::case_insensitive_map_t<duckdb::LogicalType>>
-      hints = nullptr);
+      hints = nullptr,
+    const duckdb::shared_ptr<duckdb::PreparedStatementEntry>& entry = nullptr,
+    bool custom = false);
   BindInfo ParseBindVars(std::string_view cursor, const Statement& stmt,
                          std::string_view statement_name);
 

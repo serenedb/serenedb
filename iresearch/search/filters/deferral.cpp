@@ -59,7 +59,7 @@ duckdb::LogicalType StoredColumnType(const IndexReader& reader,
 Filter::ptr PartsConjunction(const ByPhrase& phrase,
                              const OptimizeContext& ctx) {
   const auto* scorer = ScorerOf(phrase, ctx);
-  const bool constant = scorer && scorer->type() == Type<ConstantScore>::id();
+  const bool constant = IsConstantScore(scorer);
   if (scorer && !constant && !IsUnscored(*scorer)) {
     return nullptr;
   }

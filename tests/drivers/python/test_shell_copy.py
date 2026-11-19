@@ -1,4 +1,4 @@
-"""COPY ... FROM STDIN / TO STDOUT inside `serened shell`."""
+"""COPY ... FROM STDIN / TO STDOUT inside `serenedb shell`."""
 
 from __future__ import annotations
 
@@ -10,26 +10,26 @@ from pathlib import Path
 import pytest
 
 
-SERENED_BIN = os.environ.get(
-    "SDB_DRV_SERENED_BIN",
-    str(Path(__file__).resolve().parents[3] / "build" / "bin" / "serened"),
+SERENEDB_BIN = os.environ.get(
+    "SDB_DRV_SERENEDB_BIN",
+    str(Path(__file__).resolve().parents[3] / "build" / "bin" / "serenedb"),
 )
 
 
 def _have_binary() -> bool:
-    return Path(SERENED_BIN).is_file() and os.access(SERENED_BIN, os.X_OK)
+    return Path(SERENEDB_BIN).is_file() and os.access(SERENEDB_BIN, os.X_OK)
 
 
 pytestmark = pytest.mark.skipif(
     not _have_binary(),
-    reason=f"serened binary not found or not executable: {SERENED_BIN}",
+    reason=f"serenedb binary not found or not executable: {SERENEDB_BIN}",
 )
 
 
 def _run_shell(script: str, *, db_path: str = ":memory:",
              extra_args: list[str] | None = None,
              timeout: float = 30.0) -> subprocess.CompletedProcess:
-    argv = [SERENED_BIN, "shell", db_path]
+    argv = [SERENEDB_BIN, "shell", db_path]
     if extra_args:
         argv.extend(extra_args)
     return subprocess.run(
@@ -48,7 +48,7 @@ def _run_shell_with_data(sql: str, stdin_data: bytes, *,
     # SQL via -c, COPY data on stdin -- the only combination that works
     # for COPY FROM STDIN when the shell isn't attached to a terminal.
     return subprocess.run(
-        [SERENED_BIN, "shell", db_path, "-c", sql],
+        [SERENEDB_BIN, "shell", db_path, "-c", sql],
         input=stdin_data,
         capture_output=True,
         timeout=timeout,
@@ -66,7 +66,7 @@ def test_shell_copy_from_stdin_csv(tmp_path: Path) -> None:
     # Seed the table first via a separate invocation (so the second
     # invocation's stdin is purely COPY data).
     seed = subprocess.run(
-        [SERENED_BIN, "shell", str(db),
+        [SERENEDB_BIN, "shell", str(db),
          "-c", "CREATE TABLE main.t(x INT, label VARCHAR);"],
         capture_output=True, text=True, timeout=15,
         env={**os.environ, "NO_COLOR": "1", "TERM": "dumb"},
@@ -87,7 +87,7 @@ def test_shell_copy_from_stdin_csv(tmp_path: Path) -> None:
 def test_shell_copy_from_stdin_bare_keyword(tmp_path: Path) -> None:
     db = tmp_path / "shell.duckdb"
     seed = subprocess.run(
-        [SERENED_BIN, "shell", str(db),
+        [SERENEDB_BIN, "shell", str(db),
          "-c", "CREATE TABLE main.t(x INT);"],
         capture_output=True, text=True, timeout=15,
         env={**os.environ, "NO_COLOR": "1", "TERM": "dumb"},
@@ -130,7 +130,7 @@ def test_shell_copy_to_stdout_bare_keyword(tmp_path: Path) -> None:
 
 
 def test_shell_postgres_scanner_round_trip() -> None:
-    # serened shell attaches the running pg-wire endpoint via postgres_scanner
+    # serenedb shell attaches the running pg-wire endpoint via postgres_scanner
     # and exercises CREATE / INSERT (which the scanner emits as COPY ... FROM
     # STDIN) / SELECT end-to-end. Regression: pre-fix this failed with
     # "No files found that match the pattern 'stdin'".
@@ -151,7 +151,7 @@ def test_shell_postgres_scanner_round_trip() -> None:
         f"DROP TABLE public.\"{table}\";"
     )
     r = subprocess.run(
-        [SERENED_BIN, "shell", "-c", sql],
+        [SERENEDB_BIN, "shell", "-c", sql],
         capture_output=True, text=True, timeout=30,
         env={**os.environ, "NO_COLOR": "1", "TERM": "dumb"},
     )
@@ -165,14 +165,14 @@ def test_shell_postgres_scanner_round_trip() -> None:
 def test_shell_copy_one_shot_command(tmp_path: Path) -> None:
     db = tmp_path / "shell.duckdb"
     seed = subprocess.run(
-        [SERENED_BIN, "shell", str(db),
+        [SERENEDB_BIN, "shell", str(db),
          "-c", "CREATE TABLE main.t(x INT); INSERT INTO main.t VALUES (5),(6),(7);"],
         capture_output=True, text=True, timeout=15,
         env={**os.environ, "NO_COLOR": "1", "TERM": "dumb"},
     )
     assert seed.returncode == 0, f"seed failed: {seed.stderr}"
     out = subprocess.run(
-        [SERENED_BIN, "shell", str(db),
+        [SERENEDB_BIN, "shell", str(db),
          "-c", "COPY (SELECT x FROM main.t ORDER BY x) TO STDOUT (FORMAT CSV);"],
         capture_output=True, text=True, timeout=15,
         env={**os.environ, "NO_COLOR": "1", "TERM": "dumb"},

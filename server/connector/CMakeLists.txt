@@ -34,6 +34,7 @@ target_sources(
         scan/scan_lookup.cpp
         scan/scan_plan.cpp
         scan/scan_prepare.cpp
+        scan/scan_profile.cpp
         scan/scan_pushdown.cpp
         scan/scan_stats.cpp
         scan/scan_stream.cpp
@@ -66,7 +67,7 @@ target_sources(
         highlight/memory_index.cpp
 )
 
-target_link_libraries(sereneserver PRIVATE simdjson)
+target_link_libraries(sereneserver PRIVATE simdjson absl::demangle_internal)
 
 # view_fast_path.cpp reads iceberg-bound snapshot ids; iceberg's REST
 # headers include yyjson unprefixed.

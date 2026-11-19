@@ -3,6 +3,7 @@ target_link_libraries(
     serenedb-bench-micro
     PRIVATE
         sereneserver
+        serene_listeners
         benchmark
         search-benchmark-common
         iresearch-test-writer

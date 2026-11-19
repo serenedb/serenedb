@@ -55,12 +55,12 @@
 #include "catalog/cluster.h"
 #include "catalog/entry/role.h"
 #include "catalog/transaction.h"
+#include "jobs/scheduler.h"
 #include "pg/connection_context.h"
 #include "pg/types/xml.h"
 #include "pg/version.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
-#include "scheduler/job_scheduler.h"
 
 namespace sdb {
 namespace {
@@ -1116,6 +1116,17 @@ constexpr std::pair<std::string_view, VariableDescription>
         "When true, the optimizer skips pulling `ORDER BY <scorer>(...) DESC "
         "LIMIT k` into the inverted-index scan, so block-max score pruning "
         "never engages. Default: false (optimization on).",
+        [] { return duckdb::Value::BOOLEAN(false); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      },
+    },
+    {
+      "sdb_index_profile_nodes",
+      {
+        LogicalTypeId::BOOLEAN,
+        "When true, a profiled inverted-index scan also times the nested "
+        "parts of its execution plans, at a cost per document. Default: "
+        "false.",
         [] { return duckdb::Value::BOOLEAN(false); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
       },

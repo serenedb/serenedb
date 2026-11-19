@@ -3,7 +3,6 @@ configure_file(build.h.in build.h NEWLINE_STYLE UNIX)
 add_library(
     serene
     STATIC
-    app_server.cpp
     drain_gate.cpp
     file_utils.cpp
     files.cpp
@@ -14,6 +13,7 @@ add_library(
     message_sequence_view.cpp
     metrics.cpp
     number_of_cores.cpp
+    registry.cpp
     signals.cpp
     striped_counters.cpp
 )

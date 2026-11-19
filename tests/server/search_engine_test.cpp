@@ -20,18 +20,15 @@
 
 #include <gtest/gtest.h>
 
-#include "network/server.h"
-#include "scheduler/background_scheduler.h"
-#include "storage_engine/search_engine.h"
+#include "runtime/runtime.h"
+#include "search/engine.h"
 
 namespace sdb::search {
 namespace {
 
 TEST(SearchEngineTest, ManualCompactionKeepsAnnWorkersWhenEverySlotIsBusy) {
-  Server server;
-  BackgroundScheduler scheduler;
-  scheduler.start();
-  SearchEngine engine;
+  Runtime runtime{1};
+  SearchEngine engine{runtime};
   int held = 0;
   while (engine.TryAcquireCompaction()) {
     ++held;
@@ -44,7 +41,6 @@ TEST(SearchEngineTest, ManualCompactionKeepsAnnWorkersWhenEverySlotIsBusy) {
   for (; held != 0; --held) {
     engine.ReleaseCompaction();
   }
-  scheduler.stop();
 }
 
 }  // namespace

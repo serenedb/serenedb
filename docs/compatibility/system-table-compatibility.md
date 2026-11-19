@@ -108,7 +108,7 @@ System views provide convenient access to system information. System tables ofte
 | pg_locks | 🟡 | Displays locks currently held or awaited. |
 | pg_matviews | 🟡 | Lists materialized views. |
 | pg_policies | 🟡 | Displays information about policies. |
-| pg_prepared_statements | 🟢 | Lists the session's prepared statements, from `PREPARE` and from the extended protocol; `generic_plans` and `custom_plans` are always NULL. |
+| pg_prepared_statements | 🟢 | Lists the session's prepared statements, from `PREPARE` and from the extended protocol. `generic_plans` counts the executions that ran the statement's existing plan and `custom_plans` those that planned it again, whatever the reason: a plan rebuilt after a change counts as custom, where PostgreSQL counts a rebuilt generic plan as generic, and the first executions run the plan made at `PREPARE`, where PostgreSQL plans the first five with their values. |
 | pg_prepared_xacts | 🟡 | Shows prepared transactions. |
 | pg_publication_tables | 🟡 | Displays publications and their associated tables. |
 | pg_replication_origin_status | 🟢 | Shows each replication origin, of a subscription or made with `pg_replication_origin_create`, with the remote position it has durably applied; `local_lsn` is always `0/0`. |
@@ -120,6 +120,7 @@ System views provide convenient access to system information. System tables ofte
 | pg_settings | 🟢 | Lists SereneDB and DuckDB settings and the [PostgreSQL settings SereneDB accepts](../configuration/overview.md), each with SereneDB's own value, with PostgreSQL's columns. A lookup by `name` reads only that setting. |
 | pg_shadow | 🟢 | Displays database users. |
 | pg_shmem_allocations | 🟡 | Shows shared memory allocations. |
+| pg_stat_activity | 🟡 | Shows one row per session. `state` (`active`, `idle`, `idle in transaction` or `idle in transaction (aborted)`), `backend_start`, `xact_start`, `query_start` (the last statement's start while idle), `state_change` and `query` follow PostgreSQL. `application_name`, the client's address, host name and port, the wait events, `backend_xid`, `backend_xmin`, `leader_pid` and `query_id` are `NULL`, and `backend_type` is `client backend`. Another role's sessions show only their `pid`, database and user, with `query` `<insufficient privilege>`, unless you are a superuser or a member of that role. |
 | pg_stat_database | 🟢 | Shows one row per database, plus a row with `datid` `0` for shared objects. `numbackends`, `xact_commit`, `xact_rollback`, `sessions` and `session_time` count from the moment the server started; a restart sets them back to `0`. The other counters are always `0` and `stats_reset` is `NULL`. |
 | pg_stats | 🟡 | Provides planner statistics. |
 | pg_stats_ext | 🟡 | Displays extended planner statistics. |

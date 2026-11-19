@@ -40,7 +40,7 @@ services:
     volumes:
       - "${WORKSPACE}:/workspace:ro"
     environment:
-      - SERENED=/workspace/out/docker-rta-serened
+      - SERENED=/workspace/out/docker-rta/serened
     command: ["/workspace/tests/drivers/network/run.sh"]
 
   tests:

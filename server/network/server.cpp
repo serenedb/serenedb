@@ -29,26 +29,26 @@
 #include <algorithm>
 #include <chrono>
 #include <duckdb/catalog/catalog_transaction.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <memory>
 #include <utility>
 
+#include "backup/backup_session.h"
 #include "backup/pg_control.h"
 #include "catalog/catalog.h"
+#include "catalog/cluster.h"
 #include "catalog/entry/role.h"
 #include "network/connection.h"
 #include "network/credentials.h"
-#include "network/http/otel/schema.h"
-#include "network/http/routes.h"
 #include "network/pg/hba.h"
-#include "network/socket.h"
 #include "network/tls_context.h"
-#include "server/utils/number_of_cores.h"
 
 ABSL_FLAG(
   std::vector<std::string>, listen, {"postgres://127.0.0.1:7890"},
@@ -89,10 +89,6 @@ ABSL_FLAG(std::string, auth_bearer_token, "",
 ABSL_FLAG(uint64_t, pg_max_message_bytes, sdb::network::kDefaultMaxMessageBytes,
           "Maximum size of a single pg-wire message (statement text / bound "
           "parameter value). Bulk data should use COPY, which streams.");
-
-ABSL_FLAG(uint64_t, io_threads, 0,
-          "IO threads for HTTP and pg-wire connections (0 = max(1, "
-          "cpu_count / 4)).");
 
 ABSL_FLAG(uint64_t, max_connections, 0,
           "Max concurrent client connections across all listeners (0 = "
@@ -155,45 +151,68 @@ class CatalogCredentialProvider final : public network::CredentialProvider {
 
 }  // namespace
 
-Server::Server()
-  : _listen{absl::GetFlag(FLAGS_listen)},
-    _tls_cert{absl::GetFlag(FLAGS_tls_cert)},
-    _tls_key{absl::GetFlag(FLAGS_tls_key)},
-    _tls_ca{absl::GetFlag(FLAGS_tls_ca)},
-    _tls_ciphers{absl::GetFlag(FLAGS_tls_ciphers)},
-    _tls_groups{absl::GetFlag(FLAGS_tls_groups)},
-    _api_key{absl::GetFlag(FLAGS_auth_api_key)},
-    _bearer_token{absl::GetFlag(FLAGS_auth_bearer_token)},
-    _cors_origins{absl::GetFlag(FLAGS_http_cors_origins)},
-    _io_threads{static_cast<std::uint32_t>(absl::GetFlag(FLAGS_io_threads))} {
-  if (_io_threads == 0) {
-    // One independent single-threaded asio reactor per PHYSICAL core: the
-    // reactors are round-robin pinned with no shared queue (no contention, so
-    // no ceiling) and idle ones just park in epoll_wait, but hyper-thread
-    // siblings add nothing to epoll-bound reactors -- so physical, not logical,
-    // cores.
-    _io_threads = static_cast<std::uint32_t>(CountPhysicalCores());
-  }
-  absl::SetFlag(&FLAGS_io_threads, _io_threads);
+ServerConfig ReadServerConfig() {
+  ServerConfig config{
+    .listeners = network::ParseListenSpecs(absl::GetFlag(FLAGS_listen)),
+    .tls =
+      {
+        .cert_file = absl::GetFlag(FLAGS_tls_cert),
+        .key_file = absl::GetFlag(FLAGS_tls_key),
+        .ca_file = absl::GetFlag(FLAGS_tls_ca),
+        .ciphers = absl::GetFlag(FLAGS_tls_ciphers),
+        .groups = absl::GetFlag(FLAGS_tls_groups),
+      },
+    .api_key = absl::GetFlag(FLAGS_auth_api_key),
+    .bearer_token = absl::GetFlag(FLAGS_auth_bearer_token),
+    .cors_origins = absl::GetFlag(FLAGS_http_cors_origins),
+    .max_message = static_cast<std::uint32_t>(std::min<std::uint64_t>(
+      absl::GetFlag(FLAGS_pg_max_message_bytes), 0xFFFFFFFFull)),
+    .max_connections = static_cast<std::uint32_t>(std::min<std::uint64_t>(
+      absl::GetFlag(FLAGS_max_connections), 0xFFFFFFFFull)),
+    .auth_timeout =
+      absl::ToChronoMilliseconds(absl::GetFlag(FLAGS_auth_timeout)),
+    .idle_timeout =
+      absl::ToChronoMilliseconds(absl::GetFlag(FLAGS_idle_session_timeout)),
+    .body_timeout =
+      absl::ToChronoMilliseconds(absl::GetFlag(FLAGS_http_body_timeout)),
+  };
   const auto min_version = absl::GetFlag(FLAGS_tls_min_version);
   if (min_version == "1.2") {
-    _tls_min_version = network::TlsMinVersion::Tls12;
+    config.tls.min_version = network::TlsMinVersion::Tls12;
   } else if (min_version == "1.3") {
-    _tls_min_version = network::TlsMinVersion::Tls13;
+    config.tls.min_version = network::TlsMinVersion::Tls13;
   } else {
     SDB_FATAL(GENERAL,
               "--tls_min_version must be 1.2 or 1.3 (legacy TLS is "
               "not supported), got '",
               min_version, "'");
   }
-  _max_message = static_cast<std::uint32_t>(std::min<std::uint64_t>(
-    absl::GetFlag(FLAGS_pg_max_message_bytes), 0xFFFFFFFFull));
-  _max_connections = static_cast<std::uint32_t>(std::min<std::uint64_t>(
-    absl::GetFlag(FLAGS_max_connections), 0xFFFFFFFFull));
-  gInstance = this;
+  return config;
 }
 
-Server::~Server() { gInstance = nullptr; }
+Server::Server(network::IoThreadPool& pool, ServerConfig config)
+  : _pool{pool}, _config{std::move(config)} {
+  if (_config.auth_timeout > std::chrono::milliseconds::zero()) {
+    network::gHttpHeaderTimeout = _config.auth_timeout;
+  }
+  if (_config.idle_timeout > std::chrono::milliseconds::zero()) {
+    network::gHttpKeepAliveTimeout = _config.idle_timeout;
+  }
+  if (_config.body_timeout > std::chrono::milliseconds::zero()) {
+    network::gHttpBodyTimeout = _config.body_timeout;
+  }
+  StartListeners();
+}
+
+Server::~Server() {
+  for (auto& listener : _listeners) {
+    listener->Stop();
+  }
+  _cancel.TerminateAll();
+  _sessions.Done();
+  _sessions.Wait();
+  backup::BackupSession::Instance().End();
+}
 
 void Server::SetupAuth() {
   // Auth resolves every connection through the catalog's per-role credentials
@@ -205,18 +224,18 @@ void Server::SetupAuth() {
   // The static HTTP ApiKey / Bearer credentials have no catalog store yet, so
   // they authenticate as the bootstrap superuser.
   const std::string token_user{irs::StaticStrings::kDefaultUser};
-  if (!_api_key.empty()) {
-    const auto colon = _api_key.find(':');
+  if (const auto& api_key = _config.api_key; !api_key.empty()) {
+    const auto colon = api_key.find(':');
     if (colon == std::string::npos) {
       SDB_FATAL(GENERAL, "--auth_api_key must be 'id:key'");
     }
     _api_key_validator = std::make_unique<network::http::FlagApiKeyValidator>(
-      _api_key.substr(0, colon), _api_key.substr(colon + 1), token_user);
+      api_key.substr(0, colon), api_key.substr(colon + 1), token_user);
     SDB_DEBUG(GENERAL, "network http ApiKey auth enabled");
   }
-  if (!_bearer_token.empty()) {
+  if (!_config.bearer_token.empty()) {
     _bearer_validator = std::make_unique<network::http::FlagBearerValidator>(
-      _bearer_token, token_user);
+      _config.bearer_token, token_user);
     SDB_DEBUG(GENERAL, "network http Bearer auth enabled");
   }
 
@@ -226,235 +245,31 @@ void Server::SetupAuth() {
   }
 }
 
-asio_ns::ssl::context* Server::BuildTls(const network::ListenSpec& spec) {
-  if (!spec.TlsCapable()) {
-    return nullptr;
-  }
-  std::string cert = spec.cert.empty() ? _tls_cert : spec.cert;
-  std::string key = spec.key.empty() ? _tls_key : spec.key;
-  std::string ca = spec.ca.empty() ? _tls_ca : spec.ca;
-  if (cert.empty() || key.empty()) {
-    if (spec.protocol == network::ListenProtocol::Http || spec.RequireTls()) {
-      SDB_FATAL(GENERAL, "endpoint '", spec.url,
-                "' requires TLS but no certificate is configured (set "
-                "--tls_cert/--tls_key or ?cert=&key=)");
-    }
-    return nullptr;
-  }
-  if (spec.RequireClientCert() && ca.empty()) {
-    SDB_FATAL(GENERAL, "endpoint '", spec.url,
-              "' uses sslmode=verify-* but no client-cert CA is configured "
-              "(set --tls_ca or ?ca=)");
-  }
-  network::TlsOptions options;
-  options.cert_file = std::move(cert);
-  options.key_file = std::move(key);
-  options.ca_file = std::move(ca);
-  options.require_client_cert = spec.RequireClientCert();
-  options.min_version = _tls_min_version;
-  options.ciphers = _tls_ciphers;
-  options.groups = _tls_groups;
-  _ssl_ctxs.emplace_back(network::BuildServerTlsContext(options));
-  return &_ssl_ctxs.back();
-}
-
-network::HttpRouter& Server::BuildRouter(const network::ListenSpec& spec) {
-  network::HttpRouter& router = _routers.emplace_back();
-  network::http::AddRoutes(router, spec.apis);
-  return router;
-}
-
-void Server::AddUnixListener(const network::ListenSpec& spec) {
-  network::AcceptorOptions opts;
-  opts.backlog = spec.backlog;
-  opts.unix_mode = spec.unix_mode;
-  opts.unix_group = spec.unix_group;
-  std::string path;
-  if (spec.unix_abstract) {
-    path = std::string(1, '\0') + spec.unix_path;
-  } else if (spec.unix_port) {
-    path = spec.unix_path + "/.s.PGSQL." + absl::StrCat(*spec.unix_port);
-  } else {
-    path = spec.unix_path;
-  }
-  const asio_ns::local::stream_protocol::endpoint ep{path};
-
-  SDB_ASSERT(spec.protocol == network::ListenProtocol::Pg);
-  network::pg::PgServerContext& deps = _pg_ctxs.emplace_back();
-  deps.credentials = _credentials.get();
-  deps.allow_cleartext_without_tls = true;
-  deps.cancel = &_cancel;
-  deps.max_message_bytes = _max_message;
-  deps.active = &_active;
-  deps.sessions = &_sessions;
-  deps.max_connections = spec.max_connections.value_or(_max_connections);
-  deps.auth_timeout = _auth_timeout;
-  deps.proxy = spec.proxy;
-  auto acceptor = std::make_shared<
-    network::Acceptor<network::pg::PgWireSession<network::SocketKind::Unix>>>(
-    *_pool, ep, deps, opts);
-  acceptor->Start();
-  _acceptors.push_back(std::move(acceptor));
-  SDB_INFO(STARTUP, "listening on ", spec.url,
-           " (unix:", spec.unix_abstract ? "@" + spec.unix_path : path, ")");
-}
-
-void Server::AddListener(const network::ListenSpec& spec) {
-  if (spec.transport == network::ListenTransport::Unix) {
-    AddUnixListener(spec);
-    return;
-  }
-  if (spec.https && spec.proxy != network::ProxyMode::Off) {
-    SDB_FATAL(GENERAL, "proxy_protocol is not supported on an https listener '",
-              spec.url, "' (the PROXY header precedes the TLS handshake)");
-  }
-  asio_ns::ssl::context* ssl = BuildTls(spec);
-  network::AcceptorOptions opts;
-  opts.v6_only = spec.v6_only;
-  opts.reuseport = spec.reuseport;
-  opts.backlog = spec.backlog;
-  opts.keepalive = spec.keepalive;
-  opts.keepidle = spec.keepidle;
-  opts.keepintvl = spec.keepintvl;
-  opts.keepcnt = spec.keepcnt;
-
-  std::shared_ptr<network::AcceptorBase> acceptor;
-  if (spec.protocol == network::ListenProtocol::Pg) {
-    network::pg::PgServerContext& deps = _pg_ctxs.emplace_back();
-    deps.ssl = ssl;
-    deps.credentials = _credentials.get();
-    deps.allow_cleartext_without_tls = false;
-    deps.require_tls = spec.RequireTls() && ssl;
-    deps.cancel = &_cancel;
-    deps.max_message_bytes = _max_message;
-    deps.active = &_active;
-    deps.sessions = &_sessions;
-    deps.max_connections = spec.max_connections.value_or(_max_connections);
-    deps.auth_timeout = _auth_timeout;
-    deps.proxy = spec.proxy;
-    if (ssl) {
-      acceptor = std::make_shared<network::Acceptor<
-        network::pg::PgWireSession<network::SocketKind::MaybeTls>>>(
-        *_pool, spec.endpoint, deps, opts);
-    } else {
-      acceptor = std::make_shared<network::Acceptor<
-        network::pg::PgWireSession<network::SocketKind::Tcp>>>(
-        *_pool, spec.endpoint, deps, opts);
-    }
-  } else {
-    network::HttpRouter& router = BuildRouter(spec);
-    network::HttpServerContext& deps =
-      _http_ctxs.emplace_back(network::HttpServerContext{router});
-    deps.ssl = ssl;
-    deps.credentials = _credentials.get();
-    deps.api_keys = _api_key_validator.get();
-    deps.bearer = _bearer_validator.get();
-    deps.active = &_active;
-    deps.cancel = &_cancel;
-    deps.sessions = &_sessions;
-    deps.max_connections = spec.max_connections.value_or(_max_connections);
-    deps.max_body_bytes = network::http::MaxBodyBytes(spec.apis);
-    deps.cors_origins = _cors_origins;
-    deps.database = spec.database;
-    deps.schema = spec.schema;
-    deps.proxy = spec.proxy;
-    if (ssl != nullptr) {
-      acceptor = std::make_shared<
-        network::Acceptor<network::HttpSession<network::SocketKind::Ssl>>>(
-        *_pool, spec.endpoint, deps, opts);
-    } else {
-      acceptor = std::make_shared<
-        network::Acceptor<network::HttpSession<network::SocketKind::Tcp>>>(
-        *_pool, spec.endpoint, deps, opts);
-    }
-  }
-  acceptor->Start();
-  _acceptors.push_back(std::move(acceptor));
-  SDB_INFO(STARTUP, "listening on ", spec.url, " (",
-           spec.endpoint.address().to_string(), ":", spec.endpoint.port(),
-           ssl ? ", tls" : "", ")");
-}
-
-void Server::StartIoPool() {
-  // Validate the listen specs up front so a bad --listen fails before anything
-  // else comes up, even though the listeners themselves start later.
-  network::ParseListenSpecs(_listen);
-  _auth_timeout = absl::ToChronoMilliseconds(absl::GetFlag(FLAGS_auth_timeout));
-  if (_auth_timeout > std::chrono::milliseconds::zero()) {
-    network::gHttpHeaderTimeout = _auth_timeout;
-  }
-  if (const auto idle =
-        absl::ToChronoMilliseconds(absl::GetFlag(FLAGS_idle_session_timeout));
-      idle > std::chrono::milliseconds::zero()) {
-    network::gHttpKeepAliveTimeout = idle;
-  }
-  if (const auto body =
-        absl::ToChronoMilliseconds(absl::GetFlag(FLAGS_http_body_timeout));
-      body > std::chrono::milliseconds::zero()) {
-    network::gHttpBodyTimeout = body;
-  }
-  _pool = std::make_unique<network::IoThreadPool>(_io_threads);
-  _pool->Start();
-}
-
 void Server::StartListeners() {
-  const auto specs = network::ParseListenSpecs(_listen);
   SetupAuth();
-  for (const auto& spec : specs) {
-    if (spec.protocol != network::ListenProtocol::Http) {
-      continue;
-    }
-    const std::string_view database = spec.database.empty()
-                                        ? irs::StaticStrings::kDefaultDatabase
-                                        : spec.database;
-    const bool serves_otel =
-      absl::c_linear_search(spec.apis, network::HttpApi::Otel);
-    const std::string_view schema =
-      spec.schema.empty() ? std::string_view{"public"} : spec.schema;
-    if (serves_otel && spec.create_schema) {
-      if (const auto status = otel::EnsureSchema(database, schema);
-          !status.ok()) {
-        SDB_FATAL(GENERAL, "endpoint '", spec.url,
-                  "': OpenTelemetry schema: ", status.message());
-      }
-    }
-    if (!catalog::ReadDatabase(database,
-                               [](const catalog::DatabaseCatalogEntry&) {})) {
-      SDB_FATAL(GENERAL, "endpoint '", spec.url, "': database '", database,
-                "' does not exist");
-    }
-    if (serves_otel && !spec.create_schema) {
-      if (const auto status = otel::CheckSchema(database, schema);
-          !status.ok()) {
-        SDB_WARN(GENERAL, "endpoint '", spec.url,
-                 "': OpenTelemetry schema: ", status.message(),
-                 ". Exports answer 503 until it matches.");
-      }
-    }
+  const network::ListenContext context{
+    .pool = _pool,
+    .cancel = _cancel,
+    .active = _active,
+    .sessions = _sessions,
+    .credentials = _credentials.get(),
+    .api_keys = _api_key_validator.get(),
+    .bearer = _bearer_validator.get(),
+    .tls = _config.tls,
+    .max_connections = _config.max_connections,
+    .max_message_bytes = _config.max_message,
+    .auth_timeout = _config.auth_timeout,
+    .cors_origins = _config.cors_origins,
+  };
+  for (const auto& spec : _config.listeners) {
+    _listeners.push_back(spec.protocol->listen(context, spec));
   }
-  for (const auto& spec : specs) {
-    AddListener(spec);
+  SDB_IF_FAILURE("listeners_start_throws") {
+    THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
-}
-
-void Server::RequestStop() noexcept {
-  for (auto& acceptor : _acceptors) {
-    acceptor->Stop();
+  for (const auto& listener : _listeners) {
+    listener->Start();
   }
-  _cancel.TerminateAll();
-}
-
-void Server::stop() {
-  // Every session completes here: terminated by RequestStop(), it unwinds on
-  // the live io pool and DuckDB workers against the still-live engine. Only
-  // then can the pool go down -- nothing is parked on it anymore.
-  _sessions.Done();
-  _sessions.Wait();
-  if (_pool) {
-    _pool->Stop();
-    _pool.reset();
-  }
-  _acceptors.clear();
 }
 
 }  // namespace sdb

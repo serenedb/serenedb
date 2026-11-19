@@ -74,7 +74,7 @@ When different buckets need different credentials, give each secret a `SCOPE` â€
 
 A key written into a `CREATE SECRET` statement ends up wherever the statement does: a script, a shell history, a notebook. Read it from the environment instead.
 
-In `serened shell`, `getenv()` works inside the statement:
+In `serenedb shell`, `getenv()` works inside the statement:
 
 ```sql
 CREATE SECRET (

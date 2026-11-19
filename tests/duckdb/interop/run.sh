@@ -10,9 +10,9 @@ WORKSPACE=$(cd "$SCRIPT_DIR/../../.." && pwd)
 : "${INTEROP_STORAGE_VERSIONS:=v1.0.0 v1.5.0}"
 : "${INTEROP_COMPRESSIONS:=uncompressed rle dictionary bitpacking fsst alp alprd zstd roaring dict_fsst}"
 
-SERENED="$WORKSPACE/$BUILD_DIR/bin/serened"
-if [[ ! -x "$SERENED" ]]; then
-	echo "ERROR: $SERENED is not built" >&2
+SERENEDB="$WORKSPACE/$BUILD_DIR/bin/serenedb"
+if [[ ! -x "$SERENEDB" ]]; then
+	echo "ERROR: $SERENEDB is not built" >&2
 	exit 1
 fi
 
@@ -36,7 +36,7 @@ failed=()
 
 engine() {
 	case "$1" in
-	fork) "$SERENED" shell -bail -csv :memory: ;;
+	fork) "$SERENEDB" shell -bail -csv :memory: ;;
 	vanilla) "$VANILLA_DUCKDB" -bail -csv :memory: ;;
 	esac
 }
@@ -188,7 +188,7 @@ scenario() {
 	record "$name" $?
 }
 
-echo "===== [duckdb interop] fork: $SERENED"
+echo "===== [duckdb interop] fork: $SERENEDB"
 echo "===== [duckdb interop] vanilla: $("$VANILLA_DUCKDB" --version) ($VANILLA_DUCKDB)"
 for version in $INTEROP_STORAGE_VERSIONS; do
 	for writer in fork vanilla; do

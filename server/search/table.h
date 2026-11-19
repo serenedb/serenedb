@@ -72,7 +72,15 @@ constexpr uint64_t OwnRowsId(uint64_t generation) noexcept {
 irs::doc_id_t PieceDocs(const irs::IndexWriter::Transaction& trx) noexcept;
 
 struct PatchedRows {
-  Tick tick = 0;
+  PatchedRows(Tick tick_p, std::shared_ptr<const irs::DocumentMask> rows_p);
+
+  bool Intersects(const irs::DocumentMask& docs, irs::doc_id_t docs_first,
+                  irs::doc_id_t docs_last) const noexcept;
+  std::shared_ptr<const irs::DocumentMask> Rows() const;
+
+  Tick tick;
+  irs::doc_id_t first;
+  irs::doc_id_t last;
   std::shared_ptr<const irs::DocumentMask> rows;
 };
 
@@ -196,6 +204,7 @@ struct TableState {
       config{other.config},
       manifest{other.manifest},
       tick{other.tick},
+      layout{other.layout},
       memory_end{other.memory_end} {}
   TableState& operator=(const TableState&) = delete;
 
@@ -204,6 +213,7 @@ struct TableState {
   std::shared_ptr<const catalog::InvertedIndexConfig> config;
   std::shared_ptr<const FileManifest> manifest;
   Tick tick = 0;
+  Tick layout = 0;
   uint64_t memory_end = 0;
   irs::DirectoryReader reader;
 };
@@ -396,7 +406,7 @@ class Table final {
                                    const TableState& next) const;
   std::shared_ptr<TableState> SameUnits() const
     ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
-  void Publish(std::shared_ptr<TableState> state, Tick tick)
+  void Publish(std::shared_ptr<TableState> state, Tick tick, Tick layout)
     ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
   void CountPieces(const TableState& state) noexcept;
 

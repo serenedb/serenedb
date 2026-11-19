@@ -315,7 +315,8 @@ void StatementTimestampFunction(duckdb::DataChunk& args,
                                 duckdb::Vector& result) {
   const auto start = ConnectionContext::Get(state.GetContext())
                        .ProgressSource()
-                       ->query_start_us.load(std::memory_order_relaxed);
+                       ->status.Read()
+                       .query_start_us;
   result.Reference(duckdb::Value::TIMESTAMPTZ(duckdb::timestamp_tz_t{start}),
                    duckdb::count_t(args.size()));
 }

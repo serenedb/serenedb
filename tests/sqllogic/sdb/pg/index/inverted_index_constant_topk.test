@@ -1,0 +1,291 @@
+hash-threshold 100
+
+# Top-k over a match that scores one constant for every row it keeps, a pure
+# negation or a pattern, returns k rows with that constant, also when a column
+# filter or a score filter in the scan narrows them. Ordered by the score alone,
+# the top-k runs in the scan. The rows tie, so any k of them are the answer:
+# the checks are the number of rows, their scores and that each of them passes
+# the filters.
+
+statement ok
+SET threads = 1;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ctk_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm);
+
+
+statement ok
+CREATE TABLE ctk (id INTEGER PRIMARY KEY, body VARCHAR, year INTEGER);
+
+
+# Rows whose id leaves 2 when divided by 3 hold banana.
+statement ok
+INSERT INTO ctk
+SELECT i, CASE i % 3 WHEN 0 THEN 'apple pie' WHEN 1 THEN 'apricot jam'
+                     ELSE 'banana bread' END,
+       2000 + i % 10
+FROM generate_series(1, 20000) AS s(i);
+
+
+statement ok
+CREATE INDEX ctk_idx ON ctk USING inverted(id, body ctk_en) INCLUDE (year);
+
+
+# A pure negation scores 0, or the constant of a constant scorer given to it.
+query
+SELECT COUNT(*) AS hits, MIN(score) AS lo, MAX(score) AS hi,
+       bool_and(id % 3 <> 2) AS kept FROM (
+  SELECT id, BM25(ctk_idx.tableoid) AS score FROM ctk_idx
+  WHERE body @@ !!'banana'::tsquery
+  ORDER BY BM25(ctk_idx.tableoid) DESC LIMIT 3) t;
+----
+hits	lo	hi	kept
+3	0	0	t
+
+
+query
+SELECT COUNT(*) AS hits, MIN(score) AS lo, MAX(score) AS hi,
+       bool_and(id % 3 <> 2) AS kept FROM (
+  SELECT id, BM25(ctk_idx.tableoid) AS score FROM ctk_idx
+  WHERE body @@ (!!'banana'::tsquery)::score('constant(2)')
+  ORDER BY BM25(ctk_idx.tableoid) DESC LIMIT 3) t;
+----
+hits	lo	hi	kept
+3	2	2	t
+
+
+query
+SELECT COUNT(*) AS hits, MIN(score) AS lo, MAX(score) AS hi,
+       bool_and(id % 3 <> 2 AND year >= 2008) AS kept FROM (
+  SELECT id, year, BM25(ctk_idx.tableoid) AS score FROM ctk_idx
+  WHERE body @@ !!'banana'::tsquery AND year >= 2008
+  ORDER BY BM25(ctk_idx.tableoid) DESC LIMIT 3) t;
+----
+hits	lo	hi	kept
+3	0	0	t
+
+
+# A lower bound on the score starts the top-k at it.
+query
+SELECT COUNT(*) AS hits, MIN(score) AS lo, MAX(score) AS hi,
+       bool_and(id % 3 <> 2) AS kept FROM (
+  SELECT id, BM25(ctk_idx.tableoid) AS score FROM ctk_idx
+  WHERE body @@ (!!'banana'::tsquery)::score('constant(2)')
+    AND BM25(ctk_idx.tableoid) > 1.5
+  ORDER BY BM25(ctk_idx.tableoid) DESC LIMIT 3) t;
+----
+hits	lo	hi	kept
+3	2	2	t
+
+
+query
+SELECT COUNT(*) AS hits FROM (
+  SELECT id FROM ctk_idx
+  WHERE body @@ (!!'banana'::tsquery)::score('constant(2)')
+    AND BM25(ctk_idx.tableoid) > 2.5
+  ORDER BY BM25(ctk_idx.tableoid) DESC LIMIT 3) t;
+----
+hits
+0
+
+
+# Any other check on the score runs on the scores of the rows the scan keeps.
+query
+SELECT COUNT(*) AS hits, MIN(score) AS lo, MAX(score) AS hi,
+       bool_and(id % 3 <> 2) AS kept FROM (
+  SELECT id, BM25(ctk_idx.tableoid) AS score FROM ctk_idx
+  WHERE body @@ (!!'banana'::tsquery)::score('constant(2)')
+    AND BM25(ctk_idx.tableoid) = 2
+  ORDER BY BM25(ctk_idx.tableoid) DESC LIMIT 3) t;
+----
+hits	lo	hi	kept
+3	2	2	t
+
+
+query
+SELECT COUNT(*) AS hits, MIN(score) AS lo, MAX(score) AS hi,
+       bool_and(id % 3 <> 2 AND year >= 2008) AS kept FROM (
+  SELECT id, year, BM25(ctk_idx.tableoid) AS score FROM ctk_idx
+  WHERE body @@ (!!'banana'::tsquery)::score('constant(2)')
+    AND BM25(ctk_idx.tableoid) = 2 AND year >= 2008
+  ORDER BY BM25(ctk_idx.tableoid) DESC LIMIT 3) t;
+----
+hits	lo	hi	kept
+3	2	2	t
+
+
+query
+SELECT COUNT(*) AS hits FROM (
+  SELECT id FROM ctk_idx
+  WHERE body @@ (!!'banana'::tsquery)::score('constant(2)')
+    AND BM25(ctk_idx.tableoid) = 1
+  ORDER BY BM25(ctk_idx.tableoid) DESC LIMIT 3) t;
+----
+hits
+0
+
+
+query
+SELECT COUNT(*) AS hits, MIN(score) AS lo, MAX(score) AS hi,
+       bool_and(id % 3 <> 2 AND year >= 2008) AS kept FROM (
+  SELECT id, year, BM25(ctk_idx.tableoid) AS score FROM ctk_idx
+  WHERE body @@ ts_starts_with('ap') AND year >= 2008
+  ORDER BY BM25(ctk_idx.tableoid) DESC LIMIT 3) t;
+----
+hits	lo	hi	kept
+3	1	1	t
+
+
+query
+SELECT COUNT(*) AS hits, MIN(score) AS lo, MAX(score) AS hi,
+       bool_and(id % 3 <> 2) AS kept FROM (
+  SELECT id, BM25(ctk_idx.tableoid) AS score FROM ctk_idx
+  WHERE body @@ ts_starts_with('ap') AND BM25(ctk_idx.tableoid) > 0.5
+  ORDER BY BM25(ctk_idx.tableoid) DESC LIMIT 3) t;
+----
+hits	lo	hi	kept
+3	1	1	t
+
+
+statement ok
+SET profiling_renderer_settings = {'deterministic': true};
+
+
+statement ok
+SET sdb_index_profile_nodes = true;
+
+
+query
+EXPLAIN ANALYZE
+SELECT id FROM ctk_idx
+WHERE body @@ (!!'banana'::tsquery)::score('constant(2)')
+  AND BM25(ctk_idx.tableoid) = 2 AND year >= 2008
+ORDER BY BM25(ctk_idx.tableoid) DESC LIMIT 3;
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TABLE_SCAN ──────────────────────────────────────────────────────────────────╮
+│ Index: ctk_idx                                                                │
+│ Lookup: search                                                                │
+│ Score: bm25(k1=1.2, b=0.75)                                                   │
+│ Top: 3                                                                        │
+│ Projections: id                                                               │
+│                                                                               │
+├─ Index Filter Prepare ────────────────────────────────────────────────────────┤
+│                                                                               │
+│ Total: 0µs                                                                    │
+│ Snapshot: 0µs                                                                 │
+│ Segments: 1 of 1                                                              │
+│ Stats: 0µs                                                                    │
+│                                                                               │
+│ ╭─ Bool ────────────────────╮                                                 │
+│ │ Estimated Matches: 13,333 │                                                 │
+│ │ Total: 0µs                │                                                 │
+│ │ Time: 0µs                 │                                                 │
+│ ╰─────────────┬─────────────╯                                                 │
+│               ├───────────────────────────╮                                   │
+│ ╭─ Must ──────┴─────────────╮  ╭─ Must Not ──────────╮                        │
+│ ╰─────────────┬─────────────╯  ╰──────────┬──────────╯                        │
+│ ╭─ All ───────┴─────────────╮             ├───────────────────────╮           │
+│ │ Score: constant(value=2)  │  ╭─ Terms ──┴──────────╮  ╭─ Terms ─┴─────────╮ │
+│ │ Estimated Matches: 20,000 │  │ Field: body(string) │  │ Field: body(null) │ │
+│ │ Time: 0µs                 │  │ Values: 'banana'    │  ╰───────────────────╯ │
+│ ╰───────────────────────────╯  ╰─────────────────────╯                        │
+│                                                                               │
+├─ Index Filter Execute ────────────────────────────────────────────────────────┤
+│                                                                               │
+│ Total: 0µs                                                                    │
+│ Rows: 545                                                                     │
+│                                                                               │
+│ ╭─ top::BooleanWindow ─╮                                                      │
+│ │ Plans: 1             │                                                      │
+│ │ Calls: 1             │                                                      │
+│ │ Plan: 0µs            │                                                      │
+│ │ Time: 0µs            │                                                      │
+│ │ Rows: 545            │                                                      │
+│ ╰──────────────────────╯                                                      │
+│                                                                               │
+├─ Column Filter ───────────────────────────────────────────────────────────────┤
+│                                                                               │
+│ Rows: 2,731                                                                   │
+│ Rows Removed: 2,186                                                           │
+│ Time: 0µs                                                                     │
+│                                                                               │
+│ ╭─ And ───────────────╮                                                       │
+│ ╰──────────┬──────────╯                                                       │
+│            ├───────────────────────╮                                          │
+│ ╭─ Column ─┴──────────╮  ╭─ Score ─┴────────╮                                 │
+│ │ Field: year         │  │ Field: score     │                                 │
+│ │ Check: year >= 2008 │  │ Check: score = 2 │                                 │
+│ ╰─────────────────────╯  ╰──────────────────╯                                 │
+│                                                                               │
+├───────────────────────────────────────────────────────────────────────────────┤
+│ 3 rows                                                                    0µs │
+╰───────────────────────────────────────────────────────────────────────────────╯
+
+
+query
+EXPLAIN ANALYZE
+SELECT id FROM ctk_idx
+WHERE body @@ ts_starts_with('ap') AND year >= 2008
+ORDER BY BM25(ctk_idx.tableoid) DESC LIMIT 3;
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TABLE_SCAN ──────────────────────────╮
+│ Index: ctk_idx                        │
+│ Lookup: search                        │
+│ Score: bm25(k1=1.2, b=0.75)           │
+│ Top: 3                                │
+│ Projections: id                       │
+│                                       │
+├─ Index Filter Prepare ────────────────┤
+│                                       │
+│ Total: 0µs                            │
+│ Snapshot: 0µs                         │
+│ Segments: 1 of 1                      │
+│ Stats: 0µs                            │
+│                                       │
+│ ╭─ Starts With ─────────────╮         │
+│ │ Field: body(string)       │         │
+│ │ Prefix: ap                │         │
+│ │ Posting Lists: 2          │         │
+│ │ Estimated Matches: 13,333 │         │
+│ │ Postings: 13,333          │         │
+│ │ Time: 0µs                 │         │
+│ ╰───────────────────────────╯         │
+│                                       │
+├─ Index Filter Execute ────────────────┤
+│                                       │
+│ Total: 0µs                            │
+│ Rows: 6                               │
+│                                       │
+│ ╭─ top::ConstantWalk<lead::Erased> ─╮ │
+│ │ Plans: 1                          │ │
+│ │ Calls: 1                          │ │
+│ │ Plan: 0µs                         │ │
+│ │ Time: 0µs                         │ │
+│ │ Rows: 6                           │ │
+│ ╰───────────────────────────────────╯ │
+│                                       │
+├─ Column Filter ───────────────────────┤
+│                                       │
+│ Rows: 32                              │
+│ Rows Removed: 26                      │
+│ Time: 0µs                             │
+│                                       │
+│ ╭─ Column ────────────╮               │
+│ │ Field: year         │               │
+│ │ Check: year >= 2008 │               │
+│ ╰─────────────────────╯               │
+│                                       │
+├───────────────────────────────────────┤
+│ 3 rows                            0µs │
+╰───────────────────────────────────────╯

@@ -83,14 +83,16 @@ struct ByWildcardOptions : ByWildcardFilterOptions {
   using filter_options = ByWildcardFilterOptions;
   using ByWildcardFilterOptions::ByWildcardFilterOptions;
 
+  ScoreMergeType merge{ScoreMergeType::Max};
+
   bool operator==(const ByWildcardOptions& rhs) const noexcept = default;
 };
 
 Filter::ptr CreateByWildcard(irs::field_id id, DictRef dict, bytes_view term,
                              score_t boost = kNoBoost, bool bytes = false);
 
-Filter::ptr LowerWildcard(irs::field_id id, DictRef dict, bytes_view term,
-                          score_t boost, bool bytes);
+Filter::ptr LowerWildcard(irs::field_id id, DictRef dict,
+                          const ByWildcardOptions& options, score_t boost);
 
 class ByWildcard final : public FilterWithField<ByWildcardOptions> {
  public:

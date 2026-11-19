@@ -36,6 +36,7 @@
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/settings.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
+#include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
@@ -56,7 +57,6 @@
 #include "catalog/entry/role.h"
 #include "connector/iresearch_replacement_scan.h"
 #include "pg/catalog/oids.h"
-#include "server/utils/app_server.h"
 
 namespace sdb::pg {
 
@@ -143,6 +143,7 @@ ConnectionContext::ConnectionContext(duckdb::DatabaseInstance& db,
   _progress->database = _database_name;
   _progress->client_backend = identity.client_backend;
   _progress->backend_start_us = duckdb::Timestamp::GetCurrentTimestamp().value;
+  _progress->status.Write({.state_change_us = _progress->backend_start_us});
   _progress->ctx = this;
   if (_database_name.empty()) {
     return;
@@ -469,9 +470,10 @@ void ConnectionContext::OnQueryBegin() {
       !transaction.IsAutoCommit()) {
     transaction.ActiveTransaction().RefreshStartTime();
   }
-  if (_internal_statements == 0) {
-    _query_in_transaction = true;
+  if (_internal_statements != 0) {
+    return;
   }
+  _query_in_transaction = true;
   _progress->BeginQuery(GetCurrentQuery());
   if (pending_copy_command != pg::ProgressCommand::None) {
     auto& metrics = _progress->metrics;
@@ -491,11 +493,17 @@ void ConnectionContext::OnQueryBegin() {
 void ConnectionContext::OnQueryEnd() {
   copy_stdin_open_count = 0;
   copy_stdin_done = false;
-  _progress->EndQuery();
+  if (!_progress->client_backend && _internal_statements == 0) {
+    ReportIdle();
+  }
   RefreshCatalogEpoch();
   if (_transaction) {
     _transaction->ResetSearchPins(!IsStableSnapshot());
   }
+}
+
+void ConnectionContext::ReportIdle() {
+  _progress->ReportIdle(pg::IdleState(transaction));
 }
 
 void ConnectionContext::OnTransactionPreCommit(duckdb::MetaTransaction& meta) {

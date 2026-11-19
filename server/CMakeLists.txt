@@ -22,38 +22,59 @@ target_link_libraries(
 
 target_include_directories(sereneserver PUBLIC ${CMAKE_SOURCE_DIR}/server)
 
+add_subdirectory(app)
 add_subdirectory(auth)
 add_subdirectory(backup)
 add_subdirectory(catalog)
 add_subdirectory(connector)
 add_subdirectory(docs)
+add_subdirectory(jobs)
 add_subdirectory(network)
 add_subdirectory(otel)
 add_subdirectory(pg)
 add_subdirectory(query)
 add_subdirectory(replication)
-add_subdirectory(rest_server)
-add_subdirectory(scheduler)
-add_subdirectory(storage_engine)
+add_subdirectory(runtime)
+add_subdirectory(storage)
 add_subdirectory(search)
 
-add_executable(serened rest_server/serened.cpp)
+add_executable(
+    serenedb
+    app/main.cpp
+    app/cli.cpp
+    app/command.cpp
+    app/docs_builder.cpp
+    app/server.cpp
+)
 target_compile_definitions(
-    serened
+    serenedb
     PRIVATE
         SDB_REMAP_EXECUTABLE=$<IF:$<BOOL:${SDB_REMAP_EXECUTABLE}>,true,false>
 )
-target_link_libraries(serened PRIVATE serene_docs_shell)
-sdb_link_duckdb_extensions(serened)
+target_link_libraries(
+    serenedb
+    PRIVATE serene_docs_shell serene_docs_builder serene_listeners
+)
+sdb_link_duckdb_extensions(serenedb)
 if(SDB_EMBEDDED_DOCS)
-    target_link_libraries(
-        serened
-        PRIVATE serene_docs_builder serene_docs_bootstrap serene_docs_index
-    )
-    sdb_build_docs_index(serened)
+    target_link_libraries(serenedb PRIVATE serene_docs_index)
+    sdb_build_docs_index(serenedb)
 endif()
+add_custom_command(
+    TARGET serenedb
+    POST_BUILD
+    COMMAND
+        ${CMAKE_COMMAND} -E create_symlink serenedb
+        $<TARGET_FILE_DIR:serenedb>/serened
+    VERBATIM
+)
 
-install(TARGETS serened RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} OPTIONAL)
+install(TARGETS serenedb RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} OPTIONAL)
+install(
+    PROGRAMS $<TARGET_FILE_DIR:serenedb>/serened
+    DESTINATION ${CMAKE_INSTALL_BINDIR}
+    OPTIONAL
+)
 configure_file(
     ${CMAKE_SOURCE_DIR}/etc/serenedb/serened.conf.in
     ${CMAKE_BINARY_DIR}/etc/serenedb/serened.conf

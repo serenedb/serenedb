@@ -25,6 +25,7 @@
 #include <duckdb/common/identifier.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/vector.hpp>
+#include <duckdb/formats/value_codecs.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/parsed_data/copy_info.hpp>
 #include <optional>
@@ -67,6 +68,7 @@ struct PgCopyOptions {
   duckdb::FileCompressionType compression =
     duckdb::FileCompressionType::AUTO_DETECT;
   formats::TextEncoding encoding = formats::TextEncoding::Utf8;
+  duckdb::ValueRendering rendering = duckdb::ValueRendering::POSTGRES;
   std::string new_line = "\n";
   std::string prefix;
   std::string suffix;

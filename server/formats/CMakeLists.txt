@@ -4,6 +4,7 @@ target_sources(
         copy_decoder.cpp
         csv_splitter.cpp
         lexed_unit.cpp
+        pg_value_decoder.cpp
         text_encoding.cpp
         text_splitter.cpp
 )

@@ -23,6 +23,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <duckdb/formats/value_codecs.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/parallel/interrupt.hpp>
 #include <duckdb/planner/expression.hpp>
@@ -76,6 +77,7 @@ struct CopyInTarget {
   std::string table;
   CopyLogVerbosity log_verbosity = CopyLogVerbosity::Default;
   formats::TextEncoding encoding = formats::TextEncoding::Utf8;
+  duckdb::ValueRendering rendering = duckdb::ValueRendering::POSTGRES;
   bool binary = false;
   bool csv = false;
   char delim = '\t';

@@ -248,7 +248,7 @@ void RegisterPgBinaryCopyFunction(duckdb::DatabaseInstance& db) {
   func.extension = "binary";
   func.copy_to_bind = BindCopyTo;
   func.copy_to_select = [](duckdb::CopyToSelectInput& input) {
-    return CopyToSelect(input, {}, {});
+    return CopyToSelect(input, {}, {}, duckdb::ValueRendering::POSTGRES);
   };
   SetCopyToFileCallbacks(func);
   func.copy_from_bind = BindFrom;

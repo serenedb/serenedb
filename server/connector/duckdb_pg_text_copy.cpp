@@ -199,12 +199,14 @@ duckdb::unique_ptr<duckdb::FunctionData> BindCopyTo(
 duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> SelectCsv(
   duckdb::CopyToSelectInput& input) {
   const auto options = ResolveCopyOptions(CopyMode::Csv, false, input.options);
-  return CopyToSelect(input, options.date_format, options.timestamp_format);
+  return CopyToSelect(input, options.date_format, options.timestamp_format,
+                      options.rendering);
 }
 
 duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> SelectText(
   duckdb::CopyToSelectInput& input) {
-  return CopyToSelect(input, {}, {});
+  const auto options = ResolveCopyOptions(CopyMode::Text, false, input.options);
+  return CopyToSelect(input, {}, {}, options.rendering);
 }
 
 struct PgTextCopyFromBindData final : public duckdb::TableFunctionData {
@@ -259,6 +261,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> InitGlobalFrom(
       .table = bind.table,
       .log_verbosity = options.log_verbosity,
       .encoding = options.encoding,
+      .rendering = options.rendering,
       .binary = false,
       .csv = options.mode == CopyMode::Csv,
       .delim = options.delim,

@@ -48,7 +48,6 @@ class StripedCounters {
   };
 
   std::vector<Line> _lines;
-  std::vector<std::atomic_uint64_t> _touched;
 };
 
 }  // namespace sdb

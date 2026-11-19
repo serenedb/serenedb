@@ -20,7 +20,6 @@
 
 #include "server/utils/striped_counters.h"
 
-#include <bit>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <iresearch/utils/assert.hpp>
 
@@ -29,20 +28,14 @@
 namespace sdb {
 
 StripedCounters::StripedCounters()
-  : _lines(static_cast<size_t>(CountLogicalCores())),
-    _touched((_lines.size() + 63) / 64) {}
+  : _lines(static_cast<size_t>(CountLogicalCores())) {}
 
 void StripedCounters::Add(std::span<const int64_t> deltas) noexcept {
   SDB_ASSERT(deltas.size() <= kCounters);
-  const auto index = duckdb::TaskScheduler::GetEstimatedCPUId() % _lines.size();
-  auto& line = _lines[index];
+  auto& line =
+    _lines[duckdb::TaskScheduler::GetEstimatedCPUId() % _lines.size()];
   for (size_t i = 0; i != deltas.size(); ++i) {
     line.values[i].fetch_add(deltas[i], std::memory_order_relaxed);
-  }
-  auto& touched = _touched[index / 64];
-  const auto bit = uint64_t{1} << (index % 64);
-  if ((touched.load(std::memory_order_relaxed) & bit) == 0) {
-    touched.fetch_or(bit, std::memory_order_relaxed);
   }
 }
 
@@ -55,14 +48,9 @@ int64_t StripedCounters::Read(size_t counter) const noexcept {
 }
 
 void StripedCounters::Reset() noexcept {
-  for (size_t word = 0; word != _touched.size(); ++word) {
-    auto bits = _touched[word].load(std::memory_order_relaxed);
-    if (bits == 0) {
-      continue;
-    }
-    _touched[word].store(0, std::memory_order_relaxed);
-    for (; bits != 0; bits &= bits - 1) {
-      for (auto& value : _lines[word * 64 + std::countr_zero(bits)].values) {
+  for (auto& line : _lines) {
+    for (auto& value : line.values) {
+      if (value.load(std::memory_order_relaxed) != 0) {
         value.store(0, std::memory_order_relaxed);
       }
     }

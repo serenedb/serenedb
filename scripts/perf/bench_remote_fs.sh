@@ -5,10 +5,10 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")"/../.. && pwd)
 
 usage() {
 	cat <<'EOF'
-bench_remote_fs.sh -- remote file read/write benchmark: serened shell vs upstream duckdb CLI.
+bench_remote_fs.sh -- remote file read/write benchmark: serenedb shell vs upstream duckdb CLI.
 
 Engines (BRFS_ENGINES):
-  sdb               serened shell (patched httpfs, curl-only; azure routed through duckdb's HTTPUtil)
+  sdb               serenedb shell (patched httpfs, curl-only; azure routed through duckdb's HTTPUtil)
   duckdb-curl       duckdb CLI, SET httpfs_client_implementation='curl'    (s3/http backends)
   duckdb-azure-sdk  duckdb CLI, Azure SDK transport (libcurl on Linux)     (az backend)
 
@@ -47,7 +47,7 @@ EOF
 	exit 0
 }
 
-: "${BRFS_SDB_BIN:=$ROOT/build_bench/bin/serened}"
+: "${BRFS_SDB_BIN:=$ROOT/build_bench/bin/serenedb}"
 : "${BRFS_DUCKDB_BIN:=}"
 : "${BRFS_DUCKDB_VERSION:=v1.5.5}"
 : "${BRFS_DATA:=${HOME}/.cache/serenedb-bench-remote-fs}"

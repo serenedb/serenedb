@@ -18,25 +18,25 @@ from pathlib import Path
 import pytest
 
 
-SERENED_BIN = os.environ.get(
-    "SDB_DRV_SERENED_BIN",
-    str(Path(__file__).resolve().parents[3] / "build" / "bin" / "serened"),
+SERENEDB_BIN = os.environ.get(
+    "SDB_DRV_SERENEDB_BIN",
+    str(Path(__file__).resolve().parents[3] / "build" / "bin" / "serenedb"),
 )
 
 
 def _have_binary() -> bool:
-    return Path(SERENED_BIN).is_file() and os.access(SERENED_BIN, os.X_OK)
+    return Path(SERENEDB_BIN).is_file() and os.access(SERENEDB_BIN, os.X_OK)
 
 
 pytestmark = pytest.mark.skipif(
     not _have_binary(),
-    reason=f"serened binary not found or not executable: {SERENED_BIN}",
+    reason=f"serenedb binary not found or not executable: {SERENEDB_BIN}",
 )
 
 
 def _shell(script: str, *, timeout: float = 30.0) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [SERENED_BIN, "shell", "-no-agent", ":memory:", "--csv"],
+        [SERENEDB_BIN, "shell", "-no-agent", ":memory:", "--csv"],
         input=script,
         capture_output=True,
         text=True,
@@ -61,7 +61,7 @@ def _interactive(
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", rows, 200, 0, 0))
     process = subprocess.Popen(
-        [SERENED_BIN, "shell", "-dark-mode", ":memory:"],
+        [SERENEDB_BIN, "shell", "-dark-mode", ":memory:"],
         stdin=slave,
         stdout=slave,
         stderr=slave,

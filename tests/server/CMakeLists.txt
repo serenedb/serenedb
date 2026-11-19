@@ -43,6 +43,7 @@ add_executable(
     number_of_cores_test.cpp
     pointer_union_test.cpp
     query_prepared_cache_test.cpp
+    registry_test.cpp
     runtime_test.cpp
     scorer_bounds_test.cpp
     search_engine_test.cpp
@@ -76,12 +77,17 @@ add_executable(
 
 target_link_libraries(
     serenedb-tests
-    PRIVATE sereneserver gtest serene_docs_corpus iresearch-test-writer
+    PRIVATE
+        sereneserver
+        serene_listeners
+        gtest
+        serene_docs_corpus
+        iresearch-test-writer
 )
 sdb_link_duckdb_extensions(serenedb-tests)
 
 if(SDB_EMBEDDED_DOCS)
     target_link_libraries(serenedb-tests PRIVATE serene_docs_index)
-    add_dependencies(serenedb-tests serened)
+    add_dependencies(serenedb-tests serenedb)
     sdb_embed_docs_index(serenedb-tests)
 endif()

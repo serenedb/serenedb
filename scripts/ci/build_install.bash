@@ -25,9 +25,9 @@ if [[ ! -f "$BUILDIR/build.ninja" ]]; then
 	exit 1
 fi
 
-if [[ ! -f "$BUILDIR/bin/serened" ]]; then
-	echo "Error: $BUILDIR/bin/serened not found."
-	echo "Run build.bash with 'serened' target first."
+if [[ ! -f "$BUILDIR/bin/serenedb" ]]; then
+	echo "Error: $BUILDIR/bin/serenedb not found."
+	echo "Run build.bash with 'serenedb' target first."
 	exit 1
 fi
 

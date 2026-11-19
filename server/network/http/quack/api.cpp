@@ -18,10 +18,34 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "docs/docs_bootstrap.h"
+#include "network/http/api.h"
 
-namespace sdb::docs {
+#include <array>
+#include <memory>
 
-[[gnu::weak]] std::optional<int> RunDocsBootstrap() { return std::nullopt; }
+#include "network/http/common.h"
+#include "network/http/quack/handlers.h"
+#include "network/http/quack/service.h"
 
-}  // namespace sdb::docs
+namespace sdb::network::http::quack {
+namespace {
+
+template<Endpoint E>
+std::unique_ptr<HttpHandler> Handler() {
+  return Make(E);
+}
+
+constexpr auto kRoutes = std::to_array<Route>({
+  {HttpMethod::Post, "/quack", Handler<Endpoint::Rpc>},
+  {HttpMethod::Get, "/quack", Handler<Endpoint::Banner>},
+});
+
+std::shared_ptr<void> Start(const ListenContext& context,
+                            const ListenSpec& spec) {
+  return Service::Open(context.cancel, context.sessions, spec.url);
+}
+
+SDB_HTTP_API kQuack{"quack", kRoutes, kQuackMaxBodyBytes, &Start};
+
+}  // namespace
+}  // namespace sdb::network::http::quack

@@ -1,4 +1,4 @@
-"""The quack protocol between two serened processes and from `serened shell`.
+"""The quack protocol between two serened processes and from `serenedb shell`.
 
 Server B serves quack on an HTTP listener (api=quack); server A and the shell
 ATTACH it. B runs with a short --http_body_timeout, so a statement that takes
@@ -26,6 +26,10 @@ from serened import Serened
 SERENED_BIN = os.environ.get(
     "SDB_DRV_SERENED_BIN",
     str(Path(__file__).resolve().parents[3] / "build" / "bin" / "serened"),
+)
+SERENEDB_BIN = os.environ.get(
+    "SDB_DRV_SERENEDB_BIN",
+    str(Path(__file__).resolve().parents[3] / "build" / "bin" / "serenedb"),
 )
 
 pytestmark = pytest.mark.skipif(
@@ -142,7 +146,7 @@ def _setting(conn: psycopg.Connection, name: str,
 
 def _shell(sql: str) -> list[str]:
     result = subprocess.run(
-        [SERENED_BIN, "shell", ":memory:", "-csv", "-c", sql],
+        [SERENEDB_BIN, "shell", ":memory:", "-csv", "-c", sql],
         capture_output=True, text=True, timeout=60,
         env={**os.environ, "NO_COLOR": "1", "TERM": "dumb"},
     )

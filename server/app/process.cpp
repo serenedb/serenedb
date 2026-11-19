@@ -50,7 +50,7 @@ void ParseOptions(int argc, char* argv[]) {
     };
     static constexpr CategoryRule kRules[] = {
       {"server/storage/storage.cpp", "server"},
-      {"server/app/serened.cpp", "server"},
+      {"server/app/server.cpp", "server"},
       {"server/network/server.cpp", "server"},
       {"server/query/server_engine.cpp", "server"},
       {"server/runtime/runtime.cpp", "server"},
@@ -72,8 +72,9 @@ void ParseOptions(int argc, char* argv[]) {
     "serened -- SereneDB pg-wire server\n\n"
     "Usage:\n"
     "  serened <data-dir> [--flag=value ...]\n"
-    "  serened shell [duckdb-shell args ...]\n"
-    "  serened psql  [psql args ...]\n\n"
+    "  serenedb server <data-dir> [--flag=value ...]\n"
+    "  serenedb shell [duckdb-shell args ...]\n"
+    "  serenedb psql  [psql args ...]\n\n"
     "Flag sources (absl built-in, full definitions under --helpfull):\n"
     "  --flagfile=path1,path2     Read flags from one or more files (one\n"
     "                             '--flag=value' per line, '#' comments OK).\n"

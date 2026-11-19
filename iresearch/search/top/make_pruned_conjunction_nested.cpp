@@ -100,8 +100,9 @@ bool ConstantTerms(const QueryBuilder& child, const SubReader& segment,
   const auto& state = query.State();
   const auto* const field = state.Reader();
   const auto* const scorer = query.Stats(ScoredOf(ctx)).scorer;
-  if (query.MergeType() != ScoreMergeType::Sum || field == nullptr ||
-      scorer == nullptr || irs::detail::DocOf(*field) == nullptr ||
+  const auto merge = query.MergeType();
+  if (merge == ScoreMergeType::Noop || field == nullptr || scorer == nullptr ||
+      irs::detail::DocOf(*field) == nullptr ||
       irs::detail::UniformityOf(*field, scorer) !=
         irs::detail::Terms::Constant) {
     return false;
@@ -112,11 +113,13 @@ bool ConstantTerms(const QueryBuilder& child, const SubReader& segment,
     if (entry.stats == nullptr) {
       return false;
     }
-    bound += irs::detail::AllDocsScore(
+    const auto score = irs::detail::AllDocsScore(
       segment, irs::detail::ScoreArgs{.scorer = scorer,
                                       .stats = entry.stats,
                                       .fetcher = &ctx.fetcher,
                                       .boost = entry.boost * boost});
+    bound =
+      merge == ScoreMergeType::Max ? std::max(bound, score) : bound + score;
   }
   out = {.docs = query.EstimateMax(), .constant = &child, .bound = bound};
   return true;

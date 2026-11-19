@@ -577,3 +577,20 @@ def test_cancel_compact(obs, faults, va_schema, driver):
         run=lambda: driver.execute(f"VACUUM (COMPACT_SCHEMA) {va_schema}"),
         pid_sql="SELECT pid FROM pg_stat_progress_vacuum",
         empty_sql="SELECT count(*) FROM pg_stat_progress_vacuum")
+
+
+def test_replanned_statement_starts_once(obs):
+    probe = (
+        "SELECT state, query LIKE '%replan_probe%', "
+        "xact_start_us = query_start_us AND state_change_us = query_start_us "
+        "FROM sdb_progress "
+        "WHERE pid = pg_backend_pid() AND 'replan_probe' IS NOT NULL")
+    with psycopg.connect(**conn_kwargs(), autocommit=True,
+                         prepare_threshold=0) as c:
+        assert c.execute(probe).fetchone() == ("active", True, True)
+        obs.execute(f"CREATE TABLE replan_{RUN}(x INT)")
+        try:
+            c.execute("SELECT 1")
+            assert c.execute(probe).fetchone() == ("active", True, True)
+        finally:
+            obs.execute(f"DROP TABLE replan_{RUN}")

@@ -20,30 +20,9 @@
 
 #include "iresearch/search/scorers/root_window.hpp"
 
-#include <bit>
-
 #include "iresearch/search/scorers/scorer.hpp"
-#include "iresearch/utils/bit_utils.hpp"
 
 namespace irs::detail {
-namespace {
-
-template<ScoreMergeType Inner>
-IRS_FORCE_INLINE void MergeHeld(score_t* IRS_RESTRICT window,
-                                const uint64_t* IRS_RESTRICT mask, size_t words,
-                                score_t constant) noexcept {
-  for (size_t w = 0; w != words; ++w) {
-    auto bits = mask[w];
-    const size_t base = w * BitsRequired<uint64_t>();
-    while (bits != 0) {
-      irs::Merge<Inner>(
-        window[base + static_cast<uint32_t>(std::countr_zero(bits))], constant);
-      bits = PopBit(bits);
-    }
-  }
-}
-
-}  // namespace
 
 void RootWindowScore::Apply(score_t* IRS_RESTRICT window,
                             const uint64_t* IRS_RESTRICT mask,
@@ -52,9 +31,9 @@ void RootWindowScore::Apply(score_t* IRS_RESTRICT window,
     return;
   }
   if (_inner == ScoreMergeType::Max) {
-    MergeHeld<ScoreMergeType::Max>(window, mask, words, _constant);
+    irs::MergeAtBits<ScoreMergeType::Max>(window, mask, words, _constant);
   } else {
-    MergeHeld<ScoreMergeType::Sum>(window, mask, words, _constant);
+    irs::MergeAtBits<ScoreMergeType::Sum>(window, mask, words, _constant);
   }
 }
 

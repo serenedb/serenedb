@@ -169,14 +169,14 @@ def test_a_changed_test_source_picks_the_compiled_tests_it_defines(monkeypatch, 
 
 
 @pytest.mark.parametrize("config,args,targets", [
-    ("perf", [], "serened iresearch-examples serenedb-bench-micro search-benchmark-game"),
-    ("dev", [], "serened iresearch-examples serenedb-bench-micro search-benchmark-game "
+    ("perf", [], "serenedb iresearch-examples serenedb-bench-micro search-benchmark-game"),
+    ("dev", [], "serenedb iresearch-examples serenedb-bench-micro search-benchmark-game "
                 "croaring-tests iresearch-load-tests iresearch-tests re2-tests serenedb-tests "
                 "unittest"),
     ("asan", ["--suite", "sqllogic", "--suite", "gtest", "--changed", "origin/main"],
-     "serened serenedb-tests"),
+     "serenedb serenedb-tests"),
     ("tsan", ["--suite", "gtest", "--suite", "re2", "--suite", "duckdb", "--duckdb-suite", "core"],
-     "serened re2-tests serenedb-tests unittest"),
+     "serenedb re2-tests serenedb-tests unittest"),
 ])
 def test_a_build_makes_only_the_binaries_of_the_suites_it_tests(config, args, targets):
     script = 'source scripts/ci/config.sh && sdb_config "$@" && echo "${TARGETS[*]}"'

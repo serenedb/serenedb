@@ -39,13 +39,14 @@ struct AutomatonOptions {
   bstring pattern;
   TermAcceptorSource::ptr source;
   PatternKind kind{PatternKind::RegexpPerl};
+  ScoreMergeType merge{ScoreMergeType::Max};
 
   AutomatonOptions() = default;
   AutomatonOptions(bytes_view pattern, PatternKind kind);
   AutomatonOptions(bytes_view pattern, TermAcceptorSource::ptr source);
 
   bool operator==(const AutomatonOptions& rhs) const noexcept {
-    return pattern == rhs.pattern && kind == rhs.kind;
+    return pattern == rhs.pattern && kind == rhs.kind && merge == rhs.merge;
   }
 };
 

@@ -5,7 +5,7 @@ split: headings
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
-SereneDB attaches another SereneDB server over the Quack protocol, or any other server that speaks it, such as DuckDB. The server needs an HTTP listener with `?api=quack`, as the [Quack API page](../../../clients/quack.md) describes. The same `ATTACH` works in [`serened shell`](../../../clients/serened-shell.md). For the general `ATTACH` and `DETACH` syntax, see [ATTACH AND DETACH](./index.md).
+SereneDB attaches another SereneDB server over the Quack protocol, or any other server that speaks it, such as DuckDB. The server needs an HTTP listener with `?api=quack`, as the [Quack API page](../../../clients/quack.md) describes. The same `ATTACH` works in [`serenedb shell`](../../../clients/serened-shell.md). For the general `ATTACH` and `DETACH` syntax, see [ATTACH AND DETACH](./index.md).
 
 <SqlLogicTest id="sql/statements/attach/quack/example_001" />
 

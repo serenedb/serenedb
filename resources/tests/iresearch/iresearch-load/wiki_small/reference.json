@@ -17546,25 +17546,25 @@
   {
     "query": "climate clim*",
     "count": 87755,
-    "top_100": 87755,
+    "top_100": 962,
     "result_type": "Hash",
     "top_100_result": [
-      "3ae434bc0697928fa4cdc331cac1ff42d92bc5186ea6ceb5fb4307300489bf46"
+      "5654516f8e89caefc5e7d67a5a45baf50078c91cd8f4ae8c46828b4431ef9786"
     ],
     "top_100_count_result": [
-      "3ae434bc0697928fa4cdc331cac1ff42d92bc5186ea6ceb5fb4307300489bf46"
+      "5654516f8e89caefc5e7d67a5a45baf50078c91cd8f4ae8c46828b4431ef9786"
     ]
   },
   {
     "query": "energy ener*",
     "count": 77353,
-    "top_100": 77353,
+    "top_100": 873,
     "result_type": "Hash",
     "top_100_result": [
-      "948e24c6abeb61939e34b52a0d4d6604fe1ca75617cf8e0700b110935f956895"
+      "436793088c6eb91a8f442c4ad192c8d767e38cfccae7f4ec5f6725314eb4b0d1"
     ],
     "top_100_count_result": [
-      "948e24c6abeb61939e34b52a0d4d6604fe1ca75617cf8e0700b110935f956895"
+      "436793088c6eb91a8f442c4ad192c8d767e38cfccae7f4ec5f6725314eb4b0d1"
     ]
   },
   {
@@ -17573,22 +17573,22 @@
     "top_100": 42009,
     "result_type": "Hash",
     "top_100_result": [
-      "3ae434bc0697928fa4cdc331cac1ff42d92bc5186ea6ceb5fb4307300489bf46"
+      "5654516f8e89caefc5e7d67a5a45baf50078c91cd8f4ae8c46828b4431ef9786"
     ],
     "top_100_count_result": [
-      "3ae434bc0697928fa4cdc331cac1ff42d92bc5186ea6ceb5fb4307300489bf46"
+      "5654516f8e89caefc5e7d67a5a45baf50078c91cd8f4ae8c46828b4431ef9786"
     ]
   },
   {
     "query": "world stat* histor*",
     "count": 1918328,
-    "top_100": 1918328,
+    "top_100": 47333,
     "result_type": "Hash",
     "top_100_result": [
-      "f029c032efefeb554a45df7c4fbed5fe271fd424ab63c193939dee7c0070cb33"
+      "b487530a8946eb85d76bc153d7cd0ee3cf7dff1ad5d6a033a3abd5c9efa33559"
     ],
     "top_100_count_result": [
-      "f029c032efefeb554a45df7c4fbed5fe271fd424ab63c193939dee7c0070cb33"
+      "b487530a8946eb85d76bc153d7cd0ee3cf7dff1ad5d6a033a3abd5c9efa33559"
     ]
   },
   {
@@ -17726,121 +17726,121 @@
   {
     "query": "stat*",
     "count": 1258115,
-    "top_100": 1258115,
+    "top_100": 128,
     "result_type": "Hash",
     "top_100_result": [
-      "30921ec64f770caf01b113dcdc68c6765f4b5466de38877bd39375c3419dbada"
+      "2add156960f7bfbdced21eb4db3435fdd2a44e94da129a7948a1fa1f4d090a6c"
     ],
     "top_100_count_result": [
-      "30921ec64f770caf01b113dcdc68c6765f4b5466de38877bd39375c3419dbada"
+      "2add156960f7bfbdced21eb4db3435fdd2a44e94da129a7948a1fa1f4d090a6c"
     ]
   },
   {
     "query": "histor*",
     "count": 844680,
-    "top_100": 844680,
+    "top_100": 128,
     "result_type": "Hash",
     "top_100_result": [
-      "cbba77445b1f021c1ef3d7bd67a12d65f2f496444b06bdf6735400993df20829"
+      "04c59a4e1b16397479a4f925b37da4201ba3880200c67fc4910055cc62195c23"
     ],
     "top_100_count_result": [
-      "cbba77445b1f021c1ef3d7bd67a12d65f2f496444b06bdf6735400993df20829"
+      "04c59a4e1b16397479a4f925b37da4201ba3880200c67fc4910055cc62195c23"
     ]
   },
   {
     "query": "popu*",
     "count": 610822,
-    "top_100": 610822,
+    "top_100": 128,
     "result_type": "Hash",
     "top_100_result": [
-      "c13fdeb35b55c6934b95473db542dc14e53b788fb7c64e9dbfba47dee00158f9"
+      "47124256b5ac47dec65455d626d25f1e80be9236b1d0dcbe02a8bf23a98ebcd3"
     ],
     "top_100_count_result": [
-      "c13fdeb35b55c6934b95473db542dc14e53b788fb7c64e9dbfba47dee00158f9"
+      "47124256b5ac47dec65455d626d25f1e80be9236b1d0dcbe02a8bf23a98ebcd3"
     ]
   },
   {
     "query": "rese*",
     "count": 357520,
-    "top_100": 357520,
+    "top_100": 128,
     "result_type": "Hash",
     "top_100_result": [
-      "e1317e3b9ccae2fb3939dc019e63642aeb7af39963141dcd79f9b21e4a5ed17e"
+      "323480ec5697ebd53bf35529d493d52b4e09e5154259353469ef107fd45d5061"
     ],
     "top_100_count_result": [
-      "e1317e3b9ccae2fb3939dc019e63642aeb7af39963141dcd79f9b21e4a5ed17e"
+      "323480ec5697ebd53bf35529d493d52b4e09e5154259353469ef107fd45d5061"
     ]
   },
   {
     "query": "tran*",
     "count": 551918,
-    "top_100": 551918,
+    "top_100": 128,
     "result_type": "Hash",
     "top_100_result": [
-      "30ede95e5bf06e003686d9c5577993c43cf6e66c137a2696e0c9fd52f3bfd5a9"
+      "a37a4abf5fba8fbb6ea5a25ac3d68e4bf48a552a7e927794725adee72820e768"
     ],
     "top_100_count_result": [
-      "30ede95e5bf06e003686d9c5577993c43cf6e66c137a2696e0c9fd52f3bfd5a9"
+      "a37a4abf5fba8fbb6ea5a25ac3d68e4bf48a552a7e927794725adee72820e768"
     ]
   },
   {
     "query": "un*",
     "count": 2071043,
-    "top_100": 2071043,
+    "top_100": 128,
     "result_type": "Hash",
     "top_100_result": [
-      "d1b3668a751b85aa00cb0a9cb6b081ce831851d6c96f6c29e3567732e6778287"
+      "270394e205fbf8feedd0f1f94badb6a131d6b0b3ef1af742224ded60f0ffe4e4"
     ],
     "top_100_count_result": [
-      "d1b3668a751b85aa00cb0a9cb6b081ce831851d6c96f6c29e3567732e6778287"
+      "270394e205fbf8feedd0f1f94badb6a131d6b0b3ef1af742224ded60f0ffe4e4"
     ]
   },
   {
     "query": "a*",
     "count": 4382998,
-    "top_100": 4382998,
+    "top_100": 128,
     "result_type": "Hash",
     "top_100_result": [
-      "93cd2790bd358b1f31026e248f59adc8e1309c72bb5b60e134290ae5d02c6dd5"
+      "65f932090deaf65aea0658baad61aabf80c44d6e2a14cac1385f5c1f8bee8103"
     ],
     "top_100_count_result": [
-      "93cd2790bd358b1f31026e248f59adc8e1309c72bb5b60e134290ae5d02c6dd5"
+      "65f932090deaf65aea0658baad61aabf80c44d6e2a14cac1385f5c1f8bee8103"
     ]
   },
   {
     "query": "restoratio*",
     "count": 34329,
-    "top_100": 34329,
+    "top_100": 128,
     "result_type": "Hash",
     "top_100_result": [
-      "399f85846b44317d0e4329c77170fd4819c05ec3719727dd38a6950eafcb5e71"
+      "6e9ca5db1733ce22a273569409a335e9bfe63d9b9cbf74744cb4fd16057129a2"
     ],
     "top_100_count_result": [
-      "399f85846b44317d0e4329c77170fd4819c05ec3719727dd38a6950eafcb5e71"
+      "6e9ca5db1733ce22a273569409a335e9bfe63d9b9cbf74744cb4fd16057129a2"
     ]
   },
   {
     "query": "scan*",
     "count": 49450,
-    "top_100": 49450,
+    "top_100": 128,
     "result_type": "Hash",
     "top_100_result": [
-      "0b4735a2ab352e37dfd2accd91b8bad009309f3f44e6c76fe27321d14f433e9f"
+      "b2e7664407c331f792e9925163067f75c1ad0ef33a9ddc9c481fdff50de15417"
     ],
     "top_100_count_result": [
-      "0b4735a2ab352e37dfd2accd91b8bad009309f3f44e6c76fe27321d14f433e9f"
+      "b2e7664407c331f792e9925163067f75c1ad0ef33a9ddc9c481fdff50de15417"
     ]
   },
   {
     "query": "obse*",
     "count": 126933,
-    "top_100": 126933,
+    "top_100": 128,
     "result_type": "Hash",
     "top_100_result": [
-      "cacd7198c7705cb46e3a390823fe043d3a50c09ab5a73a8df18deca49e03ee7d"
+      "863c1efb1e13d587f8f424447183dd7dc98f87c68ef1d74483e2fb90c00fa10e"
     ],
     "top_100_count_result": [
-      "cacd7198c7705cb46e3a390823fe043d3a50c09ab5a73a8df18deca49e03ee7d"
+      "863c1efb1e13d587f8f424447183dd7dc98f87c68ef1d74483e2fb90c00fa10e"
     ]
   },
   {
@@ -17858,37 +17858,37 @@
   {
     "query": "world stat* histor* popu*",
     "count": 2162544,
-    "top_100": 2162544,
+    "top_100": 55460,
     "result_type": "Hash",
     "top_100_result": [
-      "05b936972dca7ec523467ec0ee25a4f94496c6116f92d2ddbc90eb55e90dc555"
+      "b2be38c163713195680a064dd8421c72c31f7832d23e50fc3963f7d8a25e9bdd"
     ],
     "top_100_count_result": [
-      "05b936972dca7ec523467ec0ee25a4f94496c6116f92d2ddbc90eb55e90dc555"
+      "b2be38c163713195680a064dd8421c72c31f7832d23e50fc3963f7d8a25e9bdd"
     ]
   },
   {
     "query": "+the +stat*",
     "count": 1235370,
-    "top_100": 314502,
+    "top_100": 1123,
     "result_type": "Hash",
     "top_100_result": [
-      "0bc1bf3bd08496b415eb0c24b21a45d703ed88e1f7b5105661a4041cac080394"
+      "12f4f6c521b47f9283127482fbdfb859cbb406668fc9afef1ea1d9c37a25af48"
     ],
     "top_100_count_result": [
-      "0bc1bf3bd08496b415eb0c24b21a45d703ed88e1f7b5105661a4041cac080394"
+      "12f4f6c521b47f9283127482fbdfb859cbb406668fc9afef1ea1d9c37a25af48"
     ]
   },
   {
     "query": "+the +histor*",
     "count": 840838,
-    "top_100": 215102,
+    "top_100": 1063,
     "result_type": "Hash",
     "top_100_result": [
-      "594e095ae576cb30af8476995f9b955612548380ee3da23e94d28a80439293e7"
+      "5f7e45c9a605bfd6c9c14c477c19bf1231bcab5ecb00dda561f19c0bd4a83f63"
     ],
     "top_100_count_result": [
-      "594e095ae576cb30af8476995f9b955612548380ee3da23e94d28a80439293e7"
+      "5f7e45c9a605bfd6c9c14c477c19bf1231bcab5ecb00dda561f19c0bd4a83f63"
     ]
   },
   {
@@ -17897,10 +17897,10 @@
     "top_100": 10621,
     "result_type": "Hash",
     "top_100_result": [
-      "f87f1aad3d20b2136ec1c99594b9ab47b76eba2e55dac49fd737049da01291cb"
+      "9430bb5b71d65d50c7706d6ecf535c71e04a6716a92f3fe93f89e210c377d5b3"
     ],
     "top_100_count_result": [
-      "f87f1aad3d20b2136ec1c99594b9ab47b76eba2e55dac49fd737049da01291cb"
+      "9430bb5b71d65d50c7706d6ecf535c71e04a6716a92f3fe93f89e210c377d5b3"
     ]
   },
   {
@@ -17909,10 +17909,10 @@
     "top_100": 2276,
     "result_type": "Hash",
     "top_100_result": [
-      "b56002ba4bfae2df04dc51aca1fcdd5f116616c9ca53146a9604d0b5b0dc4493"
+      "c030ecd2058ef55ff25184d656198aa232c293257297adec99afefb01242b9b3"
     ],
     "top_100_count_result": [
-      "b56002ba4bfae2df04dc51aca1fcdd5f116616c9ca53146a9604d0b5b0dc4493"
+      "c030ecd2058ef55ff25184d656198aa232c293257297adec99afefb01242b9b3"
     ]
   },
   {
@@ -17921,10 +17921,10 @@
     "top_100": 2643,
     "result_type": "Hash",
     "top_100_result": [
-      "50749f0533b97cd0119cb2aafdfd8ce0ab00ab16563c35fc526436bd3afaa451"
+      "09510a6a27c8b1576e0fc808293181d989aff95e021b7565459bf4e33cf49049"
     ],
     "top_100_count_result": [
-      "50749f0533b97cd0119cb2aafdfd8ce0ab00ab16563c35fc526436bd3afaa451"
+      "09510a6a27c8b1576e0fc808293181d989aff95e021b7565459bf4e33cf49049"
     ]
   },
   {
@@ -18242,13 +18242,13 @@
   {
     "query": "+(world state) +histor*",
     "count": 360844,
-    "top_100": 193147,
+    "top_100": 947,
     "result_type": "Hash",
     "top_100_result": [
-      "164cea661d50ddde049775057845e9d41a8fd5daff870f2d5ffd67d0ad72cbaa"
+      "092c42ce5258e1c063ac789be984cdf88e40dbec28e7869f833538a639e79ad1"
     ],
     "top_100_count_result": [
-      "164cea661d50ddde049775057845e9d41a8fd5daff870f2d5ffd67d0ad72cbaa"
+      "092c42ce5258e1c063ac789be984cdf88e40dbec28e7869f833538a639e79ad1"
     ]
   },
   {
@@ -18257,10 +18257,10 @@
     "top_100": 254702,
     "result_type": "Hash",
     "top_100_result": [
-      "eb8952479a3e729c0b27222bb383135f1d4680a828336715b8d422f8cb0f8d90"
+      "364e45aa3b562ebb60ccd1a2ad6458903d12c3d0b764e68d01c9cf5a832030e2"
     ],
     "top_100_count_result": [
-      "eb8952479a3e729c0b27222bb383135f1d4680a828336715b8d422f8cb0f8d90"
+      "364e45aa3b562ebb60ccd1a2ad6458903d12c3d0b764e68d01c9cf5a832030e2"
     ]
   },
   {
@@ -18365,10 +18365,10 @@
     "top_100": 1129372,
     "result_type": "Hash",
     "top_100_result": [
-      "10b42f68e4c525520a298bac80d7497616d8aa40f69b3e1027709b3cb8f8205e"
+      "e93c4faa1208e2872803b3a8447b6e1242e1cdbcf67d25e8a74df78e8a823f9a"
     ],
     "top_100_count_result": [
-      "10b42f68e4c525520a298bac80d7497616d8aa40f69b3e1027709b3cb8f8205e"
+      "e93c4faa1208e2872803b3a8447b6e1242e1cdbcf67d25e8a74df78e8a823f9a"
     ]
   },
   {
@@ -18410,13 +18410,13 @@
   {
     "query": "histor* \"united states\"",
     "count": 1121082,
-    "top_100": 1121082,
+    "top_100": 2013,
     "result_type": "Hash",
     "top_100_result": [
-      "72debde49023f377c4badbd47dad6a49538f790f523f400b4e5254b83e84a0da"
+      "29565ae26c6cc4e021a7367541acf5ed9f4f28c0177b3f9904fc0b310eddfe40"
     ],
     "top_100_count_result": [
-      "72debde49023f377c4badbd47dad6a49538f790f523f400b4e5254b83e84a0da"
+      "29565ae26c6cc4e021a7367541acf5ed9f4f28c0177b3f9904fc0b310eddfe40"
     ]
   },
   {
@@ -18425,10 +18425,10 @@
     "top_100": 1109833,
     "result_type": "Hash",
     "top_100_result": [
-      "177a827d458431c31129878bce89f9364944c0f9b020e9a533a600772cc4e247"
+      "3660cec5a427992fa7448e1f3db7c8805999f9c49bd15b64449ed7cd43560f35"
     ],
     "top_100_count_result": [
-      "177a827d458431c31129878bce89f9364944c0f9b020e9a533a600772cc4e247"
+      "3660cec5a427992fa7448e1f3db7c8805999f9c49bd15b64449ed7cd43560f35"
     ]
   },
   {
@@ -18437,10 +18437,10 @@
     "top_100": 1629157,
     "result_type": "Hash",
     "top_100_result": [
-      "ed69126147d0302e8a3681e87fccac1e60d1c376cccf8b114ccd58a1b7fda747"
+      "3660cec5a427992fa7448e1f3db7c8805999f9c49bd15b64449ed7cd43560f35"
     ],
     "top_100_count_result": [
-      "ed69126147d0302e8a3681e87fccac1e60d1c376cccf8b114ccd58a1b7fda747"
+      "3660cec5a427992fa7448e1f3db7c8805999f9c49bd15b64449ed7cd43560f35"
     ]
   },
   {

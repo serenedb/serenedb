@@ -33,15 +33,18 @@ QueryBuilder::ptr ByRegexp::PrepareSegment(const SubReader&,
     ERR_MSG("ByRegexp must be lowered by the optimizer before prepare"));
 }
 
-Filter::ptr LowerRegexp(irs::field_id id, DictRef dict, bytes_view pattern,
-                        RegexpSyntax syntax, score_t boost, bool bytes) {
-  const FieldTarget target{.id = id, .dict = dict, .boost = boost};
+Filter::ptr LowerRegexp(irs::field_id id, DictRef dict,
+                        const ByRegexpOptions& options, score_t boost) {
+  const FieldTarget target{
+    .id = id, .dict = dict, .boost = boost, .merge = options.merge};
   bstring buf;
   return ExecuteRegexp(
-    buf, pattern, syntax, [&](bytes_view term) { return target.Term(term); },
+    buf, options.pattern, options.syntax,
+    [&](bytes_view term) { return target.Term(term); },
     [&](bytes_view prefix) { return target.Prefix(prefix); },
     [&](bytes_view pattern) {
-      return target.Automaton(pattern, RegexpPattern(syntax, bytes));
+      return target.Automaton(pattern,
+                              RegexpPattern(options.syntax, options.bytes));
     });
 }
 

@@ -740,6 +740,7 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
           }
           if (_connection_ctx) {
             _connection_ctx->DiscardNotices();
+            _connection_ctx->ReportIdle();
           }
         } else {
           writer.Error(http::HttpStatus::NotFound, "not_found");

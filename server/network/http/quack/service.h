@@ -57,13 +57,19 @@ struct ConnectionSnapshot {
   std::optional<size_t> cached_rows;
 };
 
-// The Quack protocol on serened's HTTP listeners: the clients' sessions, their
-// leases and the statements they run.
-class Service final {
+// The Quack protocol on the server's HTTP listeners: the clients' sessions,
+// their leases and the statements they run.
+class Service final : public std::enable_shared_from_this<Service> {
  public:
   Service(CancelRegistry& cancel, yaclib::WaitGroup<>& tasks,
           std::string server_id);
   ~Service();
+
+  // The service of the listener at `url`: the first Quack listener opens it,
+  // the others share it, and it ends with the last of them.
+  static std::shared_ptr<Service> Open(CancelRegistry& cancel,
+                                       yaclib::WaitGroup<>& tasks,
+                                       std::string_view url);
 
   // The service of this server, null while no listener serves Quack.
   static Service* Instance() noexcept { return gInstance; }
@@ -129,7 +135,7 @@ class Service final {
   // The sweep reads the service, so the service outlives it
   yaclib::WaitGroup<> _sweep{1};
   duckdb::DatabaseInstance& _db;
-  const std::string _server_id;
+  std::string _server_id;
   // Keys the HMAC of a client's CLIENT_ID in quack_active_connections()
   const std::string _client_id_key;
   std::atomic<bool> _stopping{false};

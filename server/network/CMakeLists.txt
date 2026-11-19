@@ -54,3 +54,16 @@ target_include_directories(
     SYSTEM
     PUBLIC "${CMAKE_SOURCE_DIR}/third_party/duckdb_quack/src/include"
 )
+
+add_library(
+    serene_listeners
+    OBJECT
+    pg/listen.cpp
+    http/listen.cpp
+    http/es/api.cpp
+    http/mcp/api.cpp
+    http/otel/api.cpp
+    http/quack/api.cpp
+    http/test/api.cpp
+)
+target_link_libraries(serene_listeners PRIVATE sereneserver)

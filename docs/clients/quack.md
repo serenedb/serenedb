@@ -8,7 +8,7 @@ import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
 # Quack API
 
-A SereneDB server can serve Quack, DuckDB's client/server protocol, over HTTP. Another SereneDB server or [`serened shell`](./serened-shell.md) then attaches it with `ATTACH 'quack:host:port'` and queries its tables like a local catalog, as the [Quack ATTACH page](../sql/statements/attach/quack.md) shows. A query that reads only the attached server runs there as a whole.
+A SereneDB server can serve Quack, DuckDB's client/server protocol, over HTTP. Another SereneDB server or [`serenedb shell`](./serened-shell.md) then attaches it with `ATTACH 'quack:host:port'` and queries its tables like a local catalog, as the [Quack ATTACH page](../sql/statements/attach/quack.md) shows. A query that reads only the attached server runs there as a whole.
 
 ## Enabling the API
 

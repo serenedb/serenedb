@@ -23,7 +23,6 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
-#include <deque>
 #include <memory>
 #include <string>
 #include <vector>
@@ -31,25 +30,17 @@
 
 #include "network/acceptor.h"
 #include "network/cancel_registry.h"
-#include "network/http/quack/service.h"
-#include "network/http/router.h"
-#include "network/http/session.h"
+#include "network/credentials.h"
+#include "network/http/auth.h"
 #include "network/io_context.h"
 #include "network/listen_spec.h"
-#include "network/pg/pg_wire_session.h"
 #include "network/tls_context.h"
-#include "server/utils/asio_ns.h"
 
 namespace sdb {
 
 struct ServerConfig {
   std::vector<network::ListenSpec> listeners;
-  std::string tls_cert;
-  std::string tls_key;
-  std::string tls_ca;
-  std::string tls_ciphers;
-  std::string tls_groups;
-  network::TlsMinVersion tls_min_version = network::TlsMinVersion::Tls12;
+  network::TlsOptions tls;
   std::string api_key;
   std::string bearer_token;
   std::string cors_origins;
@@ -70,19 +61,10 @@ class Server final {
  private:
   void StartListeners();
   void SetupAuth();
-  void AddListener(const network::ListenSpec& spec);
-  void AddUnixListener(const network::ListenSpec& spec);
-  // Per-listener TLS context (null when the listener is plaintext); built from
-  // the listener's own cert/key/ca or the global --tls_* defaults.
-  asio_ns::ssl::context* BuildTls(const network::ListenSpec& spec);
-  // Per-listener HTTP router assembled from the listener's ?api= module set.
-  network::HttpRouter& BuildRouter(const network::ListenSpec& spec);
 
   network::IoThreadPool& _pool;
   const ServerConfig _config;
 
-  // Declared before the per-listener deps + acceptors so they outlive the
-  // sessions that point at them via the per-listener contexts.
   network::CancelRegistry _cancel;
   std::atomic<std::uint32_t> _active{0};
   // Every accepted session's Run() future; the slot is taken by the acceptor
@@ -92,16 +74,8 @@ class Server final {
   std::unique_ptr<network::CredentialProvider> _credentials;
   std::unique_ptr<network::http::ApiKeyValidator> _api_key_validator;
   std::unique_ptr<network::http::BearerValidator> _bearer_validator;
-  std::unique_ptr<network::http::quack::Service> _quack;
 
-  // Stable per-listener storage: acceptors hold references/pointers into these,
-  // so deque (never relocates existing elements) not vector.
-  std::deque<network::HttpRouter> _routers;
-  std::deque<asio_ns::ssl::context> _ssl_ctxs;
-  std::deque<network::pg::PgServerContext> _pg_ctxs;
-  std::deque<network::HttpServerContext> _http_ctxs;
-
-  std::vector<std::shared_ptr<network::AcceptorBase>> _acceptors;
+  std::vector<std::unique_ptr<network::AcceptorBase>> _listeners;
 };
 
 }  // namespace sdb

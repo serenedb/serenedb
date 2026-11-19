@@ -229,13 +229,12 @@ void LowerNode(Filter::ptr& slot) {
   const auto type = slot->type();
   if (type == Type<ByWildcard>::id()) {
     auto& node = irs::utils::downCast<ByWildcard>(*slot);
-    slot = LowerWildcard(node.field_id(), node.dict(), node.options().term,
-                         node.GetBoost(), node.options().bytes);
+    slot = LowerWildcard(node.field_id(), node.dict(), node.options(),
+                         node.GetBoost());
   } else if (type == Type<ByRegexp>::id()) {
     auto& node = irs::utils::downCast<ByRegexp>(*slot);
-    slot =
-      LowerRegexp(node.field_id(), node.dict(), node.options().pattern,
-                  node.options().syntax, node.GetBoost(), node.options().bytes);
+    slot = LowerRegexp(node.field_id(), node.dict(), node.options(),
+                       node.GetBoost());
   } else if (type == Type<ByEditDistance>::id()) {
     auto& node = irs::utils::downCast<ByEditDistance>(*slot);
     slot = LowerLevenshtein(node.field_id(), node.dict(), node.options(),

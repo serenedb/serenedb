@@ -20,62 +20,48 @@
 
 #pragma once
 
-#include <array>
+#include <atomic>
+#include <chrono>
 #include <cstdint>
+#include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
-#include <utility>
 #include <vector>
+#include <yaclib/algo/wait_group.hpp>
 
+#include "network/acceptor.h"
+#include "network/cancel_registry.h"
+#include "network/credentials.h"
+#include "network/http/auth.h"
+#include "network/io_context.h"
+#include "network/proxy_protocol.h"
+#include "network/tls_context.h"
 #include "server/utils/asio_ns.h"
+#include "server/utils/registry.h"
 
 namespace sdb::network {
-
-enum class ListenProtocol : uint8_t {
-  Pg,
-  Http,
-};
 
 enum class ListenTransport : uint8_t {
   Tcp,
   Unix,
 };
 
-enum class SslMode : uint8_t {
-  Disable,
-  Allow,
-  Prefer,
-  Require,
-  VerifyCa,
-  VerifyFull,
+struct ListenOptions {
+  virtual ~ListenOptions() = default;
 };
 
-enum class ProxyMode : uint8_t {
-  Off,
-  Optional,
-  Require,
+struct ListenParam {
+  std::string key;
+  std::string_view value;
 };
 
-enum class HttpApi {
-  Es,
-  Test,
-  Mcp,
-  Otel,
-  Quack,
-};
-
-constexpr std::array<std::pair<std::string_view, HttpApi>, 5> kHttpApis{{
-  {"es", HttpApi::Es},
-  {"test", HttpApi::Test},
-  {"mcp", HttpApi::Mcp},
-  {"otel", HttpApi::Otel},
-  {"quack", HttpApi::Quack},
-}};
+struct ListenProtocol;
 
 struct ListenSpec {
   std::string url;
-  ListenProtocol protocol = ListenProtocol::Pg;
+  const ListenProtocol* protocol = nullptr;
   ListenTransport transport = ListenTransport::Tcp;
 
   asio_ns::ip::tcp::endpoint endpoint;
@@ -85,23 +71,10 @@ struct ListenSpec {
   bool unix_abstract = false;
   std::optional<uint32_t> unix_mode;
   std::string unix_group;
-  // For a pg unix listener: when set, the socket file is named
-  // <unix_path>/.s.PGSQL.<unix_port> (libpq-compatible; connect with
-  // host=<unix_path> port=<unix_port>). Unset => the literal unix_path is used.
-  std::optional<uint16_t> unix_port;
 
-  SslMode sslmode = SslMode::Prefer;
-  bool https = false;
   std::string cert;
   std::string key;
   std::string ca;
-
-  std::vector<HttpApi> apis;
-  // http only: the database this listener's sessions work in (the OTel
-  // schema is created there); empty means the default database.
-  std::string database;
-  std::string schema;
-  bool create_schema = true;
 
   std::optional<int> backlog;
   std::optional<bool> reuseport;
@@ -112,20 +85,36 @@ struct ListenSpec {
   std::optional<uint32_t> max_connections;
   ProxyMode proxy = ProxyMode::Off;
 
-  bool TlsCapable() const {
-    if (protocol == ListenProtocol::Http) {
-      return https;
-    }
-    return transport == ListenTransport::Tcp && sslmode != SslMode::Disable;
-  }
-  bool RequireTls() const {
-    return protocol == ListenProtocol::Pg &&
-           (sslmode == SslMode::Require || sslmode == SslMode::VerifyCa ||
-            sslmode == SslMode::VerifyFull);
-  }
-  bool RequireClientCert() const {
-    return sslmode == SslMode::VerifyCa || sslmode == SslMode::VerifyFull;
-  }
+  std::shared_ptr<const ListenOptions> options;
+};
+
+struct ListenContext {
+  IoThreadPool& pool;
+  CancelRegistry& cancel;
+  std::atomic<uint32_t>& active;
+  yaclib::WaitGroup<>& sessions;
+  const CredentialProvider* credentials = nullptr;
+  const http::ApiKeyValidator* api_keys = nullptr;
+  const http::BearerValidator* bearer = nullptr;
+  const TlsOptions& tls;
+  uint32_t max_connections = 0;
+  uint32_t max_message_bytes = 0;
+  std::chrono::milliseconds auth_timeout{0};
+  std::string_view cors_origins;
+};
+
+struct ListenProtocol {
+  static constexpr std::string_view kKind = "listen protocol";
+
+  std::shared_ptr<const ListenOptions> (*parse)(
+    const ListenSpec& spec, std::span<const ListenParam> params);
+  std::unique_ptr<AcceptorBase> (*listen)(const ListenContext& context,
+                                          const ListenSpec& spec);
+};
+
+struct ListenTls {
+  bool required = false;
+  bool client_cert = false;
 };
 
 // Parse the --listen flag value list into concrete listener specs: ada URL
@@ -134,4 +123,23 @@ struct ListenSpec {
 // empty. Fatal (SDB_FATAL) on any error -- this runs once at startup.
 std::vector<ListenSpec> ParseListenSpecs(const std::vector<std::string>& urls);
 
+std::string PercentDecode(std::string_view value);
+
+bool ParseBoolParam(std::string_view value, std::string_view key,
+                    std::string_view url);
+
+uint32_t ParseUintParam(std::string_view value, std::string_view key,
+                        std::string_view url, int base = 10);
+
+AcceptorOptions MakeAcceptorOptions(const ListenSpec& spec);
+
+std::unique_ptr<asio_ns::ssl::context> MakeTls(const ListenContext& context,
+                                               const ListenSpec& spec,
+                                               ListenTls tls);
+
+void LogListening(const ListenSpec& spec, bool tls);
+
 }  // namespace sdb::network
+
+#define SDB_LISTEN_PROTOCOL \
+  const ::sdb::Registry<::sdb::network::ListenProtocol>::Register

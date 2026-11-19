@@ -1,4 +1,4 @@
-"""`serened psql` subcommand against the harness's pg-wire endpoint."""
+"""`serenedb psql` subcommand against the harness's pg-wire endpoint."""
 
 from __future__ import annotations
 
@@ -19,19 +19,19 @@ import pytest
 from spec_loader import conn_kwargs  # type: ignore[import-untyped]
 
 
-SERENED_BIN = os.environ.get(
-    "SDB_DRV_SERENED_BIN",
-    str(Path(__file__).resolve().parents[3] / "build" / "bin" / "serened"),
+SERENEDB_BIN = os.environ.get(
+    "SDB_DRV_SERENEDB_BIN",
+    str(Path(__file__).resolve().parents[3] / "build" / "bin" / "serenedb"),
 )
 
 
 def _have_binary() -> bool:
-    return Path(SERENED_BIN).is_file() and os.access(SERENED_BIN, os.X_OK)
+    return Path(SERENEDB_BIN).is_file() and os.access(SERENEDB_BIN, os.X_OK)
 
 
 pytestmark = pytest.mark.skipif(
     not _have_binary(),
-    reason=f"serened binary not found or not executable: {SERENED_BIN}",
+    reason=f"serenedb binary not found or not executable: {SERENEDB_BIN}",
 )
 
 
@@ -42,7 +42,7 @@ def _run(args: list[str], *, env_extra: dict[str, str] | None = None,
     if env_extra:
         env.update(env_extra)
     return subprocess.run(
-        [SERENED_BIN, "psql", *args],
+        [SERENEDB_BIN, "psql", *args],
         input=input_text,
         capture_output=True,
         text=True,
@@ -64,7 +64,7 @@ def _kw() -> dict[str, str]:
 def test_psql_help() -> None:
     r = _run(["--help"])
     assert r.returncode == 0
-    assert "serened psql" in r.stdout
+    assert "serenedb psql" in r.stdout
     assert "--host=HOSTNAME" in r.stdout
     assert "--port=PORT" in r.stdout
 
@@ -140,7 +140,7 @@ def test_psql_user_default_falls_back_to_os_user() -> None:
             "USER": "zzz_sentinel_user",
         })
         r = subprocess.run(
-            [SERENED_BIN, "psql", "-c",
+            [SERENEDB_BIN, "psql", "-c",
              "SELECT path FROM duckdb_databases() WHERE database_name='postgres';"],
             capture_output=True, text=True, timeout=20, env=env,
         )
@@ -173,7 +173,7 @@ def test_psql_no_password_flag_accepted() -> None:
 def test_psql_round_trip() -> None:
     # CREATE / INSERT (postgres_scanner -> COPY FROM STDIN) / SELECT / DROP
     # against the attached server -- the original regression that motivated
-    # the COPY STDIN fix, exercised through `serened psql`.
+    # the COPY STDIN fix, exercised through `serenedb psql`.
     k = _kw()
     table = f"psql_probe_{uuid.uuid4().hex[:10]}"
     sql = (
@@ -230,7 +230,7 @@ def test_psql_create_drop_database() -> None:
 
 
 def test_psql_unknown_flag_passes_through() -> None:
-    # --csv is a duckdb shell flag; serened psql should leave it alone so
+    # --csv is a duckdb shell flag; serenedb psql should leave it alone so
     # the embedded shell sees it.
     k = _kw()
     r = _run(["-h", k["host"], "-p", k["port"], "-U", k["user"],
@@ -372,7 +372,7 @@ def test_psql_version_long() -> None:
 def test_psql_question_mark_is_help() -> None:
     r = _run(["-?"])
     assert r.returncode == 0
-    assert "serened psql" in r.stdout
+    assert "serenedb psql" in r.stdout
     assert "Connection options" in r.stdout
 
 
@@ -512,7 +512,7 @@ def test_psql_default_host_localhost() -> None:
     env.pop("PGHOST", None)
     env["PGPORT"] = "1"
     r = subprocess.run(
-        [SERENED_BIN, "psql", "-c", "SELECT 1;"],
+        [SERENEDB_BIN, "psql", "-c", "SELECT 1;"],
         capture_output=True, text=True, timeout=20, env=env,
     )
     assert "host=localhost" in (r.stdout + r.stderr), \
@@ -525,7 +525,7 @@ def test_psql_default_port_5432(tmp_path) -> None:
     env = {**os.environ, "NO_COLOR": "1", "TERM": "dumb", "PGHOST": str(tmp_path)}
     env.pop("PGPORT", None)
     r = subprocess.run(
-        [SERENED_BIN, "psql", "-h", str(tmp_path), "-c", "SELECT 1;"],
+        [SERENEDB_BIN, "psql", "-h", str(tmp_path), "-c", "SELECT 1;"],
         capture_output=True, text=True, timeout=20, env=env,
     )
     assert "port=5432" in (r.stdout + r.stderr), \
@@ -575,7 +575,7 @@ def test_psql_missing_required_argument() -> None:
 def test_psql_help_has_all_sections() -> None:
     r = _run(["--help"])
     assert r.returncode == 0
-    assert "serened psql" in r.stdout
+    assert "serenedb psql" in r.stdout
     # all five sections present in psql mode
     for header in ["General options:", "Input and output options:",
                    "Output format options:", "Database options:",
@@ -919,7 +919,7 @@ def test_pset_format_warning_mentions_both_namespaces() -> None:
 def test_shell_command_long_alias() -> None:
     # shell mode accepts --command as an alias for -c.
     r = subprocess.run(
-        [SERENED_BIN, "shell", "--command=SELECT 42 AS v;"],
+        [SERENEDB_BIN, "shell", "--command=SELECT 42 AS v;"],
         capture_output=True, text=True, timeout=20.0,
         env={**os.environ, "NO_COLOR": "1", "TERM": "dumb"},
     )
@@ -932,7 +932,7 @@ def test_shell_file_long_alias(tmp_path: Path) -> None:
     sql_file = tmp_path / "test.sql"
     sql_file.write_text("SELECT 'hello' AS greeting;\n")
     r = subprocess.run(
-        [SERENED_BIN, "shell", f"--file={sql_file}"],
+        [SERENEDB_BIN, "shell", f"--file={sql_file}"],
         capture_output=True, text=True, timeout=20.0,
         env={**os.environ, "NO_COLOR": "1", "TERM": "dumb"},
     )
@@ -943,7 +943,7 @@ def test_shell_file_long_alias(tmp_path: Path) -> None:
 def test_shell_short_V_alias() -> None:
     # shell mode accepts -V as an alias for --version.
     r = subprocess.run(
-        [SERENED_BIN, "shell", "-V"],
+        [SERENEDB_BIN, "shell", "-V"],
         capture_output=True, text=True, timeout=20.0,
         env={**os.environ, "NO_COLOR": "1", "TERM": "dumb"},
     )
@@ -955,7 +955,7 @@ def test_shell_short_V_alias() -> None:
 
 def _run_shell(args: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [SERENED_BIN, "shell", *args],
+        [SERENEDB_BIN, "shell", *args],
         capture_output=True, text=True, timeout=20.0,
         env={**os.environ, "NO_COLOR": "1", "TERM": "dumb"},
     )
@@ -964,7 +964,7 @@ def _run_shell(args: list[str]) -> subprocess.CompletedProcess:
 def test_shell_help_has_all_sections_except_connection() -> None:
     r = _run_shell(["--help"])
     assert r.returncode == 0, r.stderr
-    assert "serened shell" in r.stdout
+    assert "serenedb shell" in r.stdout
     for header in ["General options:", "Input and output options:",
                    "Output format options:", "Database options:"]:
         assert header in r.stdout, f"missing section: {header}"
@@ -1013,7 +1013,7 @@ def test_shell_accepts_psql_tuples_only() -> None:
 def _run_shell_as_agent(args: list[str]) -> subprocess.CompletedProcess:
     env = {k: v for k, v in os.environ.items() if k != "DUCKDB_AGENT_MODE"}
     return subprocess.run(
-        [SERENED_BIN, "shell", *args, "-c", "SELECT 1 AS id;"],
+        [SERENEDB_BIN, "shell", *args, "-c", "SELECT 1 AS id;"],
         capture_output=True, text=True, timeout=20.0,
         env={**env, "NO_COLOR": "1", "TERM": "dumb", "AI_AGENT": "1"},
     )
@@ -1118,7 +1118,7 @@ def test_docs_looks_up_an_object_by_name() -> None:
 
 def _docs_session(*commands: str) -> subprocess.CompletedProcess:
     r = subprocess.run(
-        [SERENED_BIN, "shell"],
+        [SERENEDB_BIN, "shell"],
         input="".join(f"{command}\n" for command in commands),
         capture_output=True, text=True, timeout=20.0,
         env={**os.environ, "NO_COLOR": "1", "TERM": "dumb"},
@@ -1271,8 +1271,8 @@ class _Terminal:
             env = {**os.environ, "TERM": "xterm-256color", "HOME": str(home),
                    "DUCKDB_PAGER": "echo PAGER_USED; cat"}
             env.pop("NO_COLOR", None)
-            os.execve(SERENED_BIN,
-                      [SERENED_BIN, "shell", "-dark-mode", "--no-init"], env)
+            os.execve(SERENEDB_BIN,
+                      [SERENEDB_BIN, "shell", "-dark-mode", "--no-init"], env)
         fcntl.ioctl(self._fd, termios.TIOCSWINSZ,
                     struct.pack("HHHH", 40, columns, 0, 0))
         self.read_until(".help")
@@ -1455,8 +1455,8 @@ def test_docs_contents_fit_a_narrow_terminal(narrow_docs_terminal) -> None:
 
 def test_docs_hyperlinks_do_not_widen_a_page(narrow_docs_terminal) -> None:
     out = narrow_docs_terminal.send(
-        ".docs clients/serened-psql.md#serened_psql#Dot_commands\r",
-        until=".docs clients/serened-shell.md#serened_shell#Dot_commands")
+        ".docs clients/serened-psql.md#serenedb_psql#Dot_commands\r",
+        until=".docs clients/serened-shell.md#serenedb_shell#Dot_commands")
     assert ("\x1b]8;;https://serenedb.com/docs/clients/serened-shell"
             "#dot-commands\x1b\\") in narrow_docs_terminal.raw
     assert "PAGER_USED" not in out

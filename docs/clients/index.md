@@ -47,22 +47,22 @@ Elasticsearch clients and tools connect over HTTP to the subset of the Elasticse
 
 ## Quack clients
 
-Another SereneDB server, `serened shell` and DuckDB attach a SereneDB server over HTTP with Quack, DuckDB's client/server protocol.
+Another SereneDB server, `serenedb shell` and DuckDB attach a SereneDB server over HTTP with Quack, DuckDB's client/server protocol.
 
 | Client | Version | Support | Guide |
 |---|---|---|---|
-| SereneDB, `serened shell` | bundled | Partial | [Guide](./quack.md) |
+| SereneDB, `serenedb shell` | bundled | Partial | [Guide](./quack.md) |
 | DuckDB with the `quack` extension | 2.0 | Partial | [Guide](./quack.md#duckdb-clients) |
 
 ## Tools
 
-SereneDB also ships its own command-line clients inside the `serened` binary: [`serened psql`](./serened-psql.md), a PostgreSQL-compatible client for a running server, and [`serened shell`](./serened-shell.md), a local shell for querying database files directly.
+SereneDB also ships its own command-line clients inside the `serenedb` binary: [`serenedb psql`](./serened-psql.md), a PostgreSQL-compatible client for a running server, and [`serenedb shell`](./serened-shell.md), a local shell for querying database files directly.
 
 | Tool | Version | Support | Guide |
 |---|---|---|---|
 | psql | any | Full | [Guide](./psql.md) |
-| serened psql | bundled | Full | [Guide](./serened-psql.md) |
-| serened shell | bundled | Full | [Guide](./serened-shell.md) |
+| serenedb psql | bundled | Full | [Guide](./serened-psql.md) |
+| serenedb shell | bundled | Full | [Guide](./serened-shell.md) |
 | DBeaver | 24.2.2 | Partial | [Guide](./dbeaver.md) |
 | DataGrip | 2024.2.2 | Partial | [Guide](./datagrip.md) |
 | Grafana | 10.4.2 | Partial | [Guide](./grafana.md) |

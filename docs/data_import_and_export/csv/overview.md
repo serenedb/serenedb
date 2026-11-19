@@ -23,7 +23,7 @@ Use the `read_csv` function with custom options:
 Read a CSV from stdin, auto-infer options:
 
 ```batch
-cat flights.csv | serened shell -c "SELECT * FROM read_csv('/dev/stdin')"
+cat flights.csv | serenedb shell -c "SELECT * FROM read_csv('/dev/stdin')"
 ```
 
 Read a CSV file into a table:

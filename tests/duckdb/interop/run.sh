@@ -10,9 +10,9 @@ WORKSPACE=$(cd "$SCRIPT_DIR/../../.." && pwd)
 : "${INTEROP_STORAGE_VERSIONS:=v1.0.0 v2.0.0}"
 : "${INTEROP_COMPRESSIONS:=uncompressed rle dictionary bitpacking fsst alp alprd zstd roaring dict_fsst}"
 
-SERENED="$WORKSPACE/$BUILD_DIR/bin/serened"
-if [[ ! -x "$SERENED" ]]; then
-	echo "ERROR: $SERENED is not built" >&2
+SERENEDB="$WORKSPACE/$BUILD_DIR/bin/serenedb"
+if [[ ! -x "$SERENEDB" ]]; then
+	echo "ERROR: $SERENEDB is not built" >&2
 	exit 1
 fi
 
@@ -44,7 +44,7 @@ failed=()
 
 engine() {
 	case "$1" in
-	fork) "$SERENED" shell -bail -csv :memory: ;;
+	fork) "$SERENEDB" shell -bail -csv :memory: ;;
 	vanilla) "$VANILLA_DUCKDB" -bail -csv :memory: ;;
 	esac
 }
@@ -217,7 +217,7 @@ quack_vanilla_client() {
 	local pg quack pid remote
 	pg=$(free_port)
 	quack=$(free_port)
-	"$SERENED" "$WORK/quack-server" --listen="postgres://127.0.0.1:$pg,http://127.0.0.1:$quack?api=quack" \
+	"$SERENEDB" server "$WORK/quack-server" --listen="postgres://127.0.0.1:$pg,http://127.0.0.1:$quack?api=quack" \
 		>"$WORK/quack-server.log" 2>&1 &
 	pid=$!
 	quack_pids+=("$pid")
@@ -275,7 +275,7 @@ CALL quack_serve('quack:127.0.0.1:$port', token := 'interop');" >&$feed
 		show "vanilla did not serve:" "$WORK/quack-vanilla.log"
 		return 1
 	fi
-	"$SERENED" shell -bail -csv :memory: >"$WORK/quack-fork-client.csv" 2>&1 <<EOF
+	"$SERENEDB" shell -bail -csv :memory: >"$WORK/quack-fork-client.csv" 2>&1 <<EOF
 ATTACH 'quack:127.0.0.1:$port' AS v (TOKEN 'interop');
 SELECT count(*) AS n, sum(id) AS s FROM v.served;
 SELECT * FROM v.query('SELECT 42 AS answer');
@@ -328,7 +328,7 @@ CALL quack_serve('quack:127.0.0.1:$port', token := 'interop', disable_ssl := fal
 		show "vanilla did not serve over TLS:" "$WORK/quack-tls.log"
 		return 1
 	fi
-	"$SERENED" shell -bail -csv :memory: >"$WORK/quack-tls-fork-client.csv" 2>&1 <<EOF
+	"$SERENEDB" shell -bail -csv :memory: >"$WORK/quack-tls-fork-client.csv" 2>&1 <<EOF
 ATTACH 'quack:127.0.0.1:$port' AS v (TOKEN 'interop', SSL_FINGERPRINT '$fingerprint');
 SELECT x FROM v.served;
 SELECT * FROM quack_query('quack:127.0.0.1:$port', 'SELECT 41 AS a', token := 'interop', ssl_fingerprint := '$fingerprint');
@@ -338,7 +338,7 @@ SELECT x FROM by_scope.served;
 ATTACH 'quack:127.0.0.1:$port' AS by_name (SECRET 'pinned');
 SELECT x FROM by_name.served;
 EOF
-	"$SERENED" shell -csv :memory: >"$WORK/quack-tls-refused.log" 2>&1 <<EOF
+	"$SERENEDB" shell -csv :memory: >"$WORK/quack-tls-refused.log" 2>&1 <<EOF
 ATTACH 'quack:127.0.0.1:$port' AS unpinned (TOKEN 'interop', DISABLE_SSL false);
 ATTACH 'quack:127.0.0.1:$port' AS wrong (TOKEN 'interop', SSL_FINGERPRINT '$wrong');
 EOF
@@ -347,7 +347,7 @@ EOF
 	wait "$pid"
 	pg=$(free_port)
 	quack=$(free_port)
-	"$SERENED" "$WORK/quack-tls-server" --listen="postgres://127.0.0.1:$pg,https://127.0.0.1:$quack?api=quack" \
+	"$SERENEDB" server "$WORK/quack-tls-server" --listen="postgres://127.0.0.1:$pg,https://127.0.0.1:$quack?api=quack" \
 		--tls_cert="$keys/server.pem" --tls_key="$keys/private_key.pem" >"$WORK/quack-tls-server.log" 2>&1 &
 	server=$!
 	quack_pids+=("$server")
@@ -387,7 +387,7 @@ EOF
 	)
 }
 
-echo "===== [duckdb interop] fork: $SERENED"
+echo "===== [duckdb interop] fork: $SERENEDB"
 echo "===== [duckdb interop] vanilla: $("$VANILLA_DUCKDB" --version) ($VANILLA_DUCKDB)"
 for version in $INTEROP_STORAGE_VERSIONS; do
 	for writer in fork vanilla; do

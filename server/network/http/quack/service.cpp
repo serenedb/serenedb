@@ -321,6 +321,16 @@ Service::Service(CancelRegistry& cancel, yaclib::WaitGroup<>& tasks,
   gInstance = this;
 }
 
+std::shared_ptr<Service> Service::Open(CancelRegistry& cancel,
+                                       yaclib::WaitGroup<>& tasks,
+                                       std::string_view url) {
+  if (gInstance) {
+    absl::StrAppend(&gInstance->_server_id, ",", url);
+    return gInstance->shared_from_this();
+  }
+  return std::make_shared<Service>(cancel, tasks, std::string{url});
+}
+
 Service::~Service() {
   gInstance = nullptr;
   RequestStop();

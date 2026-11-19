@@ -126,6 +126,7 @@ yaclib::Future<> Session::Drive() {
     }
     runner.reset();
     _ctx->DiscardNotices();
+    _ctx->ReportIdle();
   }
   co_return {};
 }

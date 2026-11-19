@@ -1174,35 +1174,43 @@ struct TimestampNsBinCore {
   }
 };
 
+inline constexpr size_t kTzOffsetText = 9;
+
 // PG EncodeTimezone shape: ±HH[:MM[:SS]], parts only when nonzero.
-template<bool kCopyDelim>
-void WriteTzOffsetSuffix(SerializationContext& ctx, int32_t offset_secs) {
+size_t RenderTzOffset(char* buf, int32_t offset_secs) {
   const bool negative = offset_secs < 0;
   const auto abs_offset = negative ? -offset_secs : offset_secs;
   const auto offset_h = abs_offset / 3600;
   const auto offset_m = (abs_offset % 3600) / 60;
   const auto offset_s = abs_offset % 60;
   const size_t len = offset_s != 0 ? 9 : (offset_m != 0 ? 6 : 3);
-  ctx.writer->Write(kCopyDelim ? 2 * len : len, [&](uint8_t* dst) {
-    char* buf = reinterpret_cast<char*>(dst);
-    *buf++ = negative ? '-' : '+';
-    *buf++ = '0' + offset_h / 10;
-    *buf++ = '0' + offset_h % 10;
-    if (len > 3) {
+  *buf++ = negative ? '-' : '+';
+  *buf++ = '0' + offset_h / 10;
+  *buf++ = '0' + offset_h % 10;
+  if (len > 3) {
+    *buf++ = ':';
+    *buf++ = '0' + offset_m / 10;
+    *buf++ = '0' + offset_m % 10;
+    if (len > 6) {
       *buf++ = ':';
-      *buf++ = '0' + offset_m / 10;
-      *buf++ = '0' + offset_m % 10;
-      if (len > 6) {
-        *buf++ = ':';
-        *buf++ = '0' + offset_s / 10;
-        *buf++ = '0' + offset_s % 10;
+      *buf++ = '0' + offset_s / 10;
+      *buf++ = '0' + offset_s % 10;
+    }
+  }
+  return len;
+}
+
+template<bool kCopyDelim>
+void WriteTzOffsetSuffix(SerializationContext& ctx, int32_t offset_secs) {
+  ctx.writer->Write(
+    kCopyDelim ? 2 * kTzOffsetText : kTzOffsetText, [&](uint8_t* dst) {
+      const auto len =
+        RenderTzOffset(reinterpret_cast<char*>(dst), offset_secs);
+      if constexpr (kCopyDelim) {
+        return EscapeCopyDelimInPlace(dst, len, ctx.copy_delim);
       }
-    }
-    if constexpr (kCopyDelim) {
-      return EscapeCopyDelimInPlace(dst, len, ctx.copy_delim);
-    }
-    return len;
-  });
+      return len;
+    });
 }
 
 int32_t SessionTzOffsetSeconds(const duckdb::TimeZone& tz, int64_t utc_ms) {
@@ -1266,6 +1274,53 @@ struct TimestampTzTextCore {
         WriteText<kCopyDelim>(ctx, "+00");
       }
     });
+  }
+};
+
+inline constexpr uint32_t kTimestampTextBound = 64;
+
+IRS_FORCE_INLINE size_t RenderTimestampText(char* buf, int64_t micros) {
+  if (const auto size = FormatTimestamp(buf, micros)) {
+    return size;
+  }
+  const auto text = duckdb::Timestamp::ToString(duckdb::timestamp_t{micros});
+  SDB_ASSERT(text.size() <= kTimestampTextBound);
+  std::memcpy(buf, text.data(), text.size());
+  return text.size();
+}
+
+struct TimestampTextSized {
+  using Value = duckdb::timestamp_t;
+  static constexpr uint32_t kMaxBytes = kTimestampTextBound;
+  static constexpr absl::CharSet kCopyDelims = kTimestampCopyDelims;
+  IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value timestamp) {
+    return RenderTimestampText(reinterpret_cast<char*>(dst), timestamp.value);
+  }
+};
+
+struct TimestampTzTextSized {
+  using Value = duckdb::timestamp_tz_t;
+  static constexpr uint32_t kMaxBytes = kTimestampTextBound + kTzOffsetText;
+  static constexpr absl::CharSet kCopyDelims = kTimestampTzCopyDelims;
+  IRS_FORCE_INLINE static size_t Render(uint8_t* dst, SerializationContext& ctx,
+                                        Value tz) {
+    auto* buf = reinterpret_cast<char*>(dst);
+    const auto ts = duckdb::timestamp_t{tz};
+    if (ctx.time_zone && ts.IsFinite()) {
+      const auto offset_secs = SessionOffsetSeconds(ctx, ts.value);
+      int64_t local_us = 0;
+      if (duckdb::TryAddOperator::Operation(
+            ts.value, int64_t{offset_secs} * 1'000'000, local_us)) {
+        const auto size = RenderTimestampText(buf, local_us);
+        return size + RenderTzOffset(buf + size, offset_secs);
+      }
+    }
+    const auto size = RenderTimestampText(buf, ts.value);
+    if (!ts.IsFinite()) {
+      return size;
+    }
+    std::memcpy(buf + size, "+00", 3);
+    return size + 3;
   }
 };
 
@@ -3195,6 +3250,12 @@ ColumnSerializer GetColumnSerialization(const duckdb::LogicalType& type,
         break;
       case DATE:
         return SelectSizedColumn<DateTextCore, DateBinCore>(format, context);
+      case TIMESTAMP:
+        return SelectSizedColumn<TimestampTextSized, TimestampBinCore>(format,
+                                                                       context);
+      case TIMESTAMP_TZ:
+        return SelectSizedColumn<TimestampTzTextSized, TimestampTzBinCore>(
+          format, context);
       case UUID:
         return SelectSizedColumn<UuidTextCore, UuidBinCore>(format, context);
       case CHAR:

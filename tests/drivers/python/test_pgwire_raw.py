@@ -592,6 +592,34 @@ def test_set_local_revert_not_reported(conn):
         conn.run_ok("reset search_path")
 
 
+def test_rowdescription_domain_sends_base_type(conn):
+    # PG sends a domain column's base type in RowDescription (printtup.c, getBaseTypeAndTypmod), so clients
+    # decode it without knowing the domain. An array of a domain is its own array type, not a domain, and is
+    # sent as is; a domain over a user type sends that type, and a domain over a domain sends the bottom base.
+    setup = [
+        "create type wire_dom_enum as enum ('x', 'y')",
+        "create domain wire_dom_int as int4",
+        "create domain wire_dom_over as wire_dom_int",
+        "create domain wire_dom_e as wire_dom_enum",
+    ]
+    try:
+        for sql in setup:
+            m = conn.run(sql)
+            assert "E" not in types(m), errors(m)
+        enum_oid = int(first_field(conn.run("select 'wire_dom_enum'::regtype::oid")))
+        array_oid = int(first_field(conn.run("select 'wire_dom_int[]'::regtype::oid")))
+        conn.send("Q", _cstr(
+            "select 1::wire_dom_int as a, 2::wire_dom_over as b, 'x'::wire_dom_e as c, array[1]::wire_dom_int[] as d"))
+        m = conn.drain_to_ready()
+        assert "E" not in types(m), errors(m)
+        cols = row_description(m)
+        assert cols == [("a", 23, -1), ("b", 23, -1), ("c", enum_oid, -1), ("d", array_oid, -1)], cols
+    finally:
+        for name in ("wire_dom_e", "wire_dom_over", "wire_dom_int"):
+            conn.run(f"drop domain if exists {name}")
+        conn.run("drop type if exists wire_dom_enum")
+
+
 def test_rowdescription_numeric_typmod(conn):
     # PG sends the real atttypmod; for numeric(p,s) it's ((p<<16)|s)+4 so clients
     # (JDBC getPrecision/getScale, psycopg .precision/.scale) recover the declared

@@ -85,6 +85,7 @@ target_sources(
         types/bytea.cpp
         types/cast.cpp
         types/char.cpp
+        types/domain.cpp
         types/float.cpp
         types/function.cpp
         types/geometric.cpp

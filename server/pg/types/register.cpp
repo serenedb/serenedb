@@ -25,6 +25,7 @@
 #include "pg/types/aclitem.h"
 #include "pg/types/bytea.h"
 #include "pg/types/char.h"
+#include "pg/types/domain.h"
 #include "pg/types/float.h"
 #include "pg/types/function.h"
 #include "pg/types/geometric.h"
@@ -55,6 +56,7 @@ void RegisterTypes(duckdb::DatabaseInstance& db) {
   RegisterXml(casts, functions);
   RegisterRange(casts, functions);
   RegisterGeometric(casts, functions);
+  RegisterDomain(casts);
   RegisterFunctions(db, std::move(functions));
 }
 

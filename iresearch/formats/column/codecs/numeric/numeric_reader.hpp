@@ -131,6 +131,7 @@ class FrameReader {
   struct PackedBlock {
     const uint8_t* packed = nullptr;
     uint64_t base = 0;
+    uint64_t step = 0;
     unsigned bits = 0;
   };
 
@@ -467,17 +468,37 @@ class FrameReader {
     const auto blocks =
       (rows + numeric::kBlockValues - 1) / numeric::kBlockValues;
     const auto* src = Data(m);
+    const bool delta = _shape == Shape::Delta;
+    if (delta && m.frame.raw_len == 0) {
+      const auto step = static_cast<V>(m.base);
+      auto start = static_cast<V>(
+        static_cast<std::make_signed_t<V>>(step) < 0 ? m.max : m.min);
+      for (size_t b = 0; b < blocks; ++b) {
+        frame[b] = {.packed = src, .base = start, .step = step, .bits = 0};
+        start = static_cast<V>(start + uint64_t{numeric::kBlockValues} * step);
+      }
+      return;
+    }
     size_t off = BlockMetaBytes(blocks, sizeof(V));
     SDB_ENSURE(m.frame.comp_len == m.frame.raw_len && off <= m.frame.raw_len,
                "numeric codec: corrupted blocks");
     const auto* widths = src + blocks * sizeof(V);
     for (size_t b = 0; b < blocks; ++b) {
-      const unsigned bits = widths[b];
+      unsigned bits = widths[b];
+      uint64_t step = delta ? m.base : 0;
+      if (delta && (bits & kBlockOwnStep) != 0) {
+        SDB_ENSURE(off + sizeof(uint64_t) <= m.frame.raw_len,
+                   "numeric codec: corrupted blocks");
+        bits ^= kBlockOwnStep;
+        step = duckdb::Load<uint64_t>(src + off);
+        off += sizeof(uint64_t);
+      }
       SDB_ENSURE(bits <= numeric::kMaxBits<V>,
                  "numeric codec: corrupted blocks");
       frame[b] = {
         .packed = src + off,
         .base = duckdb::Load<V>(src + b * sizeof(V)),
+        .step = step,
         .bits = bits,
       };
       off += numeric::PackedBytes(bits);

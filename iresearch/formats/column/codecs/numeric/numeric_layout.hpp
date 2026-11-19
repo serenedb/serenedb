@@ -54,8 +54,8 @@ Data layout per segment, one block of one column holding a whole row group:
 |   +----------------------------------------------+   |
 |   first row, decoded size and stored range of        |
 |   each frame in Data, its min and max, and a         |
-|   base: delta's previous value, rle_ffor's           |
-|   run count                                          |
+|   base: delta's previous value, delta_ffor's         |
+|   smallest difference, rle_ffor's run count          |
 +------------------------------------------------------+
 |                      Dictionary                      |
 |   +----------------------------------------------+   |
@@ -82,6 +82,14 @@ Data layout per segment, one block of one column holding a whole row group:
 |   width, their bit widths in a byte each, padding    |
 |   to 8 bytes, then each block's values minus its     |
 |   base, bitpacked                                    |
+|   delta_ffor: the same frames; a block's base is     |
+|   its first value, and its differences minus the     |
+|   frame's smallest one are bitpacked; a block        |
+|   whose width byte has its top bit set starts        |
+|   with its own smallest difference in 8 bytes; a     |
+|   frame that is one arithmetic run stores nothing:   |
+|   its first value is the frame's min, or its max     |
+|   when the difference is negative                    |
 |   rle_ffor: 1024 runs per frame, run values and      |
 |   run lengths each packed like ffor                  |
 +------------------------------------------------------+
@@ -100,6 +108,8 @@ inline constexpr uint8_t kNumericShuffled = 1;
 inline constexpr uint8_t kNumericPacked = 2;
 inline constexpr uint32_t kFforFrameRows = 16384;
 inline constexpr uint8_t kFforFrameLog2 = 18;
+
+inline constexpr uint8_t kBlockOwnStep = 0x80;
 
 constexpr size_t BlockMetaBytes(size_t blocks, size_t width) noexcept {
   return (blocks * (width + 1) + 7) / 8 * 8;

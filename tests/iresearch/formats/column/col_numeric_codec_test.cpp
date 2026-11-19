@@ -710,6 +710,29 @@ TEST_F(ColNumericCodecTest, ClusteredValuesPackTheirDeltas) {
   }
 }
 
+TEST_F(ColNumericCodecTest, ABackwardStepWidensOnlyItsBlock) {
+  constexpr uint64_t kRows = 32768;
+  const Gen steady = [](uint64_t g) -> std::optional<int64_t> {
+    return static_cast<int64_t>(1'700'000'000'000'000LL + g * 1000 +
+                                Mix(g) % 16);
+  };
+  const Gen jumped = [&](uint64_t g) -> std::optional<int64_t> {
+    return *steady(g) - (g >= 20000 ? 3'600'000'000LL : 0);
+  };
+  const auto data_bytes = [&](const Gen& gen) {
+    const auto type = duckdb::LogicalType::BIGINT;
+    irs::MemoryDirectory dir{};
+    Write(dir, type, {.tier = irs::WriteTier::Flush}, kRows, kRows, gen,
+          irs::codecs::CodecType::DeltaFfor);
+    Verify(dir, type, kRows, gen);
+    EXPECT_EQ(Transforms(dir), std::vector<std::string>{"delta_ffor/none"});
+    return std::stoull(SegmentInfo(dir, "data_bytes").front());
+  };
+  const auto smooth = data_bytes(steady);
+  EXPECT_LT(smooth, kRows);
+  EXPECT_LT(data_bytes(jumped), smooth + 8 * 1024);
+}
+
 TEST_F(ColNumericCodecTest, BlocksOfEqualStepsReadBack) {
   constexpr uint64_t kRows = 100000;
   const Gen steps = [](uint64_t g) -> std::optional<int64_t> {
@@ -721,7 +744,18 @@ TEST_F(ColNumericCodecTest, BlocksOfEqualStepsReadBack) {
   const Gen sequence = [](uint64_t g) -> std::optional<int64_t> {
     return static_cast<int64_t>(g);
   };
-  for (const auto& gen : {steps, scaled, sequence}) {
+  const Gen falling = [](uint64_t g) -> std::optional<int64_t> {
+    return 1'000'000 - static_cast<int64_t>(g) * 3;
+  };
+  const Gen crossing = [](uint64_t g) -> std::optional<int64_t> {
+    return static_cast<int64_t>(g) - 5;
+  };
+  const Gen faster_block = [](uint64_t g) -> std::optional<int64_t> {
+    const uint64_t faster = g < 7168 ? 0 : std::min<uint64_t>(g - 7168, 1024);
+    return static_cast<int64_t>(g * 3 + faster * 2);
+  };
+  for (const auto& gen :
+       {steps, scaled, sequence, falling, crossing, faster_block}) {
     for (const auto& type :
          {duckdb::LogicalType::BIGINT, duckdb::LogicalType::INTEGER,
           duckdb::LogicalType::UBIGINT}) {
@@ -735,6 +769,17 @@ TEST_F(ColNumericCodecTest, BlocksOfEqualStepsReadBack) {
       }
     }
   }
+  const auto data_bytes = [&](const Gen& gen) {
+    irs::MemoryDirectory dir{};
+    Write(dir, duckdb::LogicalType::BIGINT, {.tier = irs::WriteTier::Flush},
+          kRows, 16384, gen, irs::codecs::CodecType::DeltaFfor);
+    return SegmentInfo(dir, "data_bytes");
+  };
+  for (const auto& bytes : data_bytes(sequence)) {
+    EXPECT_EQ(bytes, "0");
+  }
+  EXPECT_EQ(data_bytes(faster_block).front(),
+            std::to_string(16 * (sizeof(int64_t) + 1) + sizeof(uint64_t)));
 }
 
 TEST_F(ColNumericCodecTest, PacksRunsAndCodesBelowByteWidths) {

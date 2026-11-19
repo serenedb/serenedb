@@ -270,23 +270,26 @@ class PlainReader final : public FrameReader<T> {
 
   IRS_FORCE_INLINE T FetchApart(uint64_t row, uint64_t next) {
     if (this->Packed() && !this->Near(row, next)) {
-      const auto [packed, base, bits] = this->BlockAt(row);
+      const auto block = this->BlockAt(row);
       return this->Scaled(numeric::UnpackValue<U>(
-        packed, bits, static_cast<uint32_t>(row % numeric::kBlockValues),
-        static_cast<U>(base)));
+        block.packed, block.bits,
+        static_cast<uint32_t>(row % numeric::kBlockValues),
+        static_cast<U>(block.base)));
     }
     return FetchFramed(row, next);
   }
 
   void UnpackBlock(uint64_t first, uint64_t rows, U* out) {
-    const auto [packed, base, bits] = this->BlockAt(first);
-    const auto* words = this->template Words<numeric::LaneWord<U>>(packed);
+    const auto block = this->BlockAt(first);
+    const auto* words =
+      this->template Words<numeric::LaneWord<U>>(block.packed);
+    const auto base = static_cast<U>(block.base);
     if (rows == numeric::kBlockValues) {
-      numeric::Unpack<U>(bits, words, out, static_cast<U>(base));
+      numeric::Unpack<U>(block.bits, words, out, base);
       return;
     }
     this->_block.resize(numeric::kBlockValues);
-    numeric::Unpack<U>(bits, words, this->_block.data(), static_cast<U>(base));
+    numeric::Unpack<U>(block.bits, words, this->_block.data(), base);
     std::memcpy(out, this->_block.data(), rows * sizeof(U));
   }
 

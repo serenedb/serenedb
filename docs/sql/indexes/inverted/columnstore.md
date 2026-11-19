@@ -65,7 +65,7 @@ Under `auto`, a numeric column (integers, decimals, floating point, dates and ti
 | frame of reference | each value minus the row group's smallest | values within a narrow range |
 | bit-packed frame of reference | each value minus the smallest of its block | integers that vary less within a block than across the row group |
 | delta | each value minus the previous one | sorted or clustered values, such as timestamps and row ids; only when a `delta_*` codec is named |
-| bit-packed delta | the same differences, bit-packed | integers written in order whose steps fit in a few bits, such as timestamps, row ids and sequences |
+| bit-packed delta | the same differences, bit-packed; values that advance by one constant step, such as a sequence, take no data bytes | integers written in order whose steps fit in a few bits, such as timestamps, row ids and sequences |
 | run length | each run of equal values once, with its length | long runs of repeated values |
 | bit-packed run length | each run's value and length, bit-packed | runs of small integers, short runs of wide values such as identifiers repeated over a few rows, and the row codes of text dictionaries |
 | dictionary | a code into the row group's sorted distinct values | few distinct wide values, such as repeated hashes |

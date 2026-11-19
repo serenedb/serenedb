@@ -344,10 +344,11 @@ class DictionaryReader final : public FrameReader<T> {
       return this->Get(row);
     }
     if (this->Packed()) {
-      const auto [packed, base, bits] = this->template BlockAt<uint32_t>(row);
+      const auto block = this->template BlockAt<uint32_t>(row);
       return Entry(numeric::UnpackValue<uint32_t>(
-        packed, bits, static_cast<uint32_t>(row % numeric::kBlockValues),
-        static_cast<uint32_t>(base)));
+        block.packed, block.bits,
+        static_cast<uint32_t>(row % numeric::kBlockValues),
+        static_cast<uint32_t>(block.base)));
     }
     uint32_t code = 0;
     if (this->Shuffled()) {
@@ -392,14 +393,15 @@ class DictionaryReader final : public FrameReader<T> {
   }
 
   void UnpackBlock(uint64_t first, uint64_t rows, U* out) {
-    const auto [packed, base, bits] = this->template BlockAt<uint32_t>(first);
+    const auto block = this->template BlockAt<uint32_t>(first);
+    const auto base = static_cast<uint32_t>(block.base);
     if (_codes.size() < numeric::kBlockValues) {
       _codes.resize(numeric::kBlockValues);
     }
-    numeric::Unpack<uint32_t>(bits, this->template Words<uint32_t>(packed),
-                              _codes.data(), static_cast<uint32_t>(base));
-    const auto largest =
-      uint64_t{static_cast<uint32_t>(base)} + (uint64_t{1} << bits) - 1;
+    numeric::Unpack<uint32_t>(block.bits,
+                              this->template Words<uint32_t>(block.packed),
+                              _codes.data(), base);
+    const auto largest = uint64_t{base} + (uint64_t{1} << block.bits) - 1;
     Gather<uint32_t>(reinterpret_cast<const uint8_t*>(_codes.data()),
                      static_cast<uint32_t>(rows), out, largest >= _own.count);
   }

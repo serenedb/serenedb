@@ -20,17 +20,20 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <random>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "formats/lexed_unit.h"
 #include "formats/text_splitter.h"
 #include "pg/copy_batch_builder.h"
 
 namespace {
 
+using sdb::formats::LexedUnit;
 using sdb::formats::TextSplitter;
 
 struct Row {
@@ -42,8 +45,14 @@ struct Expected {
   std::vector<Row> rows;
   bool marker = false;
   bool error = false;
-  size_t pos = 0;
 };
+
+size_t ReadRows(duckdb::RowRangeReader& reader, size_t max_rows) {
+  if (reader.Advance(max_rows) == duckdb::RowReadResult::DONE) {
+    return 0;
+  }
+  return std::min<size_t>(reader.Ready(), max_rows);
+}
 
 std::vector<std::string_view> SplitLine(std::string_view line, char delim,
                                         std::vector<bool>& escaped) {
@@ -68,9 +77,10 @@ std::vector<std::string_view> SplitLine(std::string_view line, char delim,
   return fields;
 }
 
-Expected Reference(std::string_view bytes, size_t pos, size_t columns,
-                   size_t max_rows, char delim) {
+Expected Reference(std::string_view bytes, size_t columns, size_t max_rows,
+                   char delim) {
   Expected result;
+  size_t pos = 0;
   while (pos < bytes.size() && result.rows.size() < max_rows) {
     const auto end = sdb::pg::FindRowEnd(bytes, pos);
     const auto next = end == std::string_view::npos ? bytes.size() : end + 1;
@@ -85,7 +95,6 @@ Expected Reference(std::string_view bytes, size_t pos, size_t columns,
     row.fields = SplitLine(line, delim, row.escaped);
     if (row.fields.size() == 1 && row.fields[0] == "\\.") {
       result.marker = true;
-      result.pos = next;
       return result;
     }
     if (row.fields.size() != columns) {
@@ -95,7 +104,6 @@ Expected Reference(std::string_view bytes, size_t pos, size_t columns,
     result.rows.push_back(std::move(row));
     pos = next;
   }
-  result.pos = pos;
   return result;
 }
 
@@ -110,16 +118,17 @@ TEST(TextSplitter, MatchesScalarReference) {
       input.push_back(kAlphabet[rng() % sizeof(kAlphabet)]);
     }
     const size_t max_rows = 1 + rng() % 8;
-    const auto expected = Reference(input, 0, columns, max_rows, '\t');
-    TextSplitter splitter{'\t', columns, max_rows};
-    size_t pos = 0;
-    const auto split = splitter.Split(input, pos, max_rows);
+    const auto expected = Reference(input, columns, max_rows, '\t');
+    LexedUnit unit{duckdb::RowDialect::PostgresText('\t'), columns};
+    auto& reader = unit.Read(input);
+    TextSplitter splitter{columns, max_rows};
+    const auto split =
+      splitter.FillLexed(reader, 0, ReadRows(reader, max_rows));
     const bool error = split.error != sdb::formats::RowError::None;
     ASSERT_EQ(error, expected.error) << iter;
     ASSERT_EQ(split.rows, expected.rows.size()) << iter;
     if (!error) {
       ASSERT_EQ(split.marker, expected.marker) << iter;
-      ASSERT_EQ(pos, expected.pos) << iter;
     }
     std::vector<bool> escaped(columns * max_rows);
     for (const auto index : splitter.Escaped()) {
@@ -144,12 +153,13 @@ TEST(TextSplitter, ContinuesAtTheRowItStoppedAt) {
   for (int i = 0; i < 500; ++i) {
     input += std::to_string(i) + "\tv\\\\" + std::to_string(i) + "\n";
   }
-  TextSplitter splitter{'\t', 2, 7};
-  size_t pos = 0;
+  LexedUnit unit{duckdb::RowDialect::PostgresText('\t'), 2};
+  auto& reader = unit.Read(input);
+  TextSplitter splitter{2, 7};
   int next = 0;
-  while (pos < input.size()) {
-    const auto split = splitter.Split(input, pos, 7);
-    ASSERT_GT(split.rows, 0);
+  for (size_t rows; (rows = ReadRows(reader, 7)) != 0; reader.Emit(rows)) {
+    const auto split = splitter.FillLexed(reader, 0, rows);
+    ASSERT_EQ(split.rows, rows);
     for (size_t row = 0; row < split.rows; ++row, ++next) {
       EXPECT_EQ(splitter.Column(0, split.rows)[row], std::to_string(next));
       EXPECT_EQ(splitter.Column(1, split.rows)[row],

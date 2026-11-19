@@ -41,7 +41,6 @@
 #include <utility>
 
 #include "formats/text_encoding.h"
-#include "pg/copy_batch_builder.h"
 #include "pg/input_error.h"
 
 namespace sdb::formats {
@@ -135,12 +134,18 @@ size_t FirstSet(const uint64_t* words, size_t count) {
 
 }  // namespace
 
+duckdb::RowDialect RowDialectOf(const pg::CopyInTarget& target) {
+  return target.csv ? duckdb::RowDialect::PostgresCsv(
+                        target.delim, target.quote, target.escape)
+                    : duckdb::RowDialect::PostgresText(target.delim);
+}
+
 CopyDecoder::CopyDecoder(duckdb::ClientContext& context,
                          pg::CopyInTarget target, CopyTextEnd& end,
                          std::atomic<uint64_t>& rejected)
   : _context{context},
     _target{std::move(target)},
-    _splitter{_target.delim, _target.types.size(), STANDARD_VECTOR_SIZE},
+    _splitter{_target.types.size(), STANDARD_VECTOR_SIZE},
     _failed(kWords),
     _rejected_rows(kWords),
     _reject_columns(_target.log_verbosity == pg::CopyLogVerbosity::Verbose
@@ -157,6 +162,9 @@ CopyDecoder::CopyDecoder(duckdb::ClientContext& context,
   if (_target.csv) {
     _csv.emplace(CsvDialect{_target.delim, _target.quote, _target.escape},
                  _target.types.size(), STANDARD_VECTOR_SIZE);
+  }
+  if (!_target.binary) {
+    _unit.emplace(RowDialectOf(_target), _target.types.size());
   }
   if (_target.default_str) {
     _defaulted.assign(_target.types.size() * kWords, 0);
@@ -264,6 +272,7 @@ void CopyDecoder::Start(const pg::CopyBatch& batch) {
   _segment = 0;
   _pos = 0;
   _lines = 0;
+  _lexing = false;
   _ended = false;
   _skip = _target.header && !_target.binary && batch.seq == 0;
   if (_target.binary || _target.csv) {
@@ -279,10 +288,29 @@ void CopyDecoder::Start(const pg::CopyBatch& batch) {
 }
 
 duckdb::idx_t CopyDecoder::Parse(duckdb::DataChunk& output, duckdb::idx_t row) {
-  if (_target.binary) {
-    return ParseBinary(output, row);
+  return _target.binary ? ParseBinary(output, row) : ParseRows(output, row);
+}
+
+duckdb::idx_t CopyDecoder::ParseRows(duckdb::DataChunk& output,
+                                     duckdb::idx_t row) {
+  const auto& segments = _batch->segments;
+  while (row < STANDARD_VECTOR_SIZE && _segment != segments.size() &&
+         !Failed()) {
+    auto& reader = std::exchange(_lexing, true)
+                     ? _unit->Reader()
+                     : _unit->Read(segments[_segment]);
+    if (reader.Advance(STANDARD_VECTOR_SIZE - row) ==
+        duckdb::RowReadResult::DONE) {
+      _lexing = false;
+      ++_segment;
+      continue;
+    }
+    const auto rows =
+      std::min<duckdb::idx_t>(reader.Ready(), STANDARD_VECTOR_SIZE - row);
+    row = ParseLexed(output, row, reader, rows);
+    reader.Emit(rows);
   }
-  return _csv ? ParseCsv(output, row) : ParseText(output, row);
+  return row;
 }
 
 void CopyDecoder::FailRow(uint64_t line, std::exception_ptr error,
@@ -341,91 +369,6 @@ std::exception_ptr CopyDecoder::MatchHeader(FieldColumns fields,
   return nullptr;
 }
 
-void CopyDecoder::SkipHeader(std::string_view data) {
-  const auto start = _pos;
-  const auto end = pg::FindRowEnd(data, start);
-  _pos = end == std::string_view::npos ? data.size() : end + 1;
-  if (!_target.header_match) {
-    return;
-  }
-  const auto line = LineText(data.substr(start, _pos - start));
-  TextSplitter header{_target.delim, _target.names.size(), 1};
-  size_t pos = start;
-  size_t columns = _target.names.size();
-  if (header.Split(data, pos, 1).error != RowError::None) {
-    columns = static_cast<size_t>(absl::c_count(line, _target.delim)) + 1;
-  }
-  std::string unescaped(data.size(), '\0');
-  char* out = unescaped.data();
-  for (const auto index : header.Escaped()) {
-    auto& field = header.Field(index);
-    if (field == _target.null_str) {
-      field = {};
-      continue;
-    }
-    field = UnescapeText(field, out);
-    out += field.size();
-  }
-  if (auto error = MatchHeader(header.Fields(), columns)) {
-    FailRow(_lines + 1, std::move(error), kNoColumn, line, true);
-  }
-}
-
-void CopyDecoder::SkipCsvHeader(std::string_view data) {
-  const auto start = _pos;
-  CsvQuoteState state;
-  const auto end = CsvRecordEnd(data, start, _csv->Dialect(), state);
-  _pos = end == std::string_view::npos ? data.size() : end + 1;
-  const auto record = data.substr(start, _pos - start);
-  const auto newlines = static_cast<uint64_t>(absl::c_count(record, '\n'));
-  const auto header_line =
-    _lines + 1 + newlines - (end == std::string_view::npos ? 0 : 1);
-  _lines += newlines;
-  if (!_target.header_match) {
-    return;
-  }
-  const auto line = end == std::string_view::npos ? record : LineText(record);
-  CsvSplitter header{_csv->Dialect(), _target.names.size(), 1};
-  size_t pos = start;
-  if (header.Split(data, pos, 1).unterminated) {
-    FailRow(
-      header_line,
-      CopyError(ERRCODE_BAD_COPY_FILE_FORMAT, "unterminated CSV quoted field"),
-      kNoColumn, line, true);
-    return;
-  }
-  size_t columns = _target.names.size();
-  for (size_t column = 0; column < _target.names.size(); ++column) {
-    if (header.Flags(column, 1)[0] & kCsvMissing) {
-      columns = column;
-      break;
-    }
-  }
-  if (!header.ExtraRows().empty()) {
-    ++columns;
-  }
-  std::string unquoted(data.size(), '\0');
-  char* out = unquoted.data();
-  const std::string_view null_str = _target.null_str;
-  for (size_t column = 0; column < columns && column < _target.names.size();
-       ++column) {
-    auto& field = header.Column(column, 1)[0];
-    const auto flags = header.Flags(column, 1)[0];
-    if (!(flags & kCsvQuoted)) {
-      if (field == null_str) {
-        field = {};
-      }
-      continue;
-    }
-    field = (flags & kCsvComplex) ? UnquoteCsv(field, _csv->Dialect(), out)
-                                  : field.substr(1, field.size() - 2);
-    out += field.size();
-  }
-  if (auto error = MatchHeader(header.Fields(), columns)) {
-    FailRow(header_line, std::move(error), kNoColumn, line, true);
-  }
-}
-
 uint64_t CopyDecoder::UnitLine(size_t row) const {
   if (!_csv) {
     return _lines + row + 1;
@@ -451,85 +394,6 @@ std::string_view CopyDecoder::RowText(size_t row) const {
                                                        : LineText(record);
 }
 
-void CopyDecoder::CheckAfterMarker(std::string_view rest) const {
-  for (size_t i = 0; i < rest.size(); ++i) {
-    if (rest[i] == '\n') {
-      continue;
-    }
-    if (rest[i] == '\r' && (i + 1 == rest.size() || rest[i + 1] == '\n')) {
-      continue;
-    }
-    ThrowDataAfterMarker();
-  }
-}
-
-duckdb::idx_t CopyDecoder::ParseText(duckdb::DataChunk& output,
-                                     duckdb::idx_t row) {
-  const auto& segments = _batch->segments;
-  while (row < STANDARD_VECTOR_SIZE && _segment != segments.size() &&
-         !Failed()) {
-    const auto data = segments[_segment];
-    if (_pos == data.size()) {
-      ++_segment;
-      _pos = 0;
-      continue;
-    }
-    if (std::exchange(_skip, false)) {
-      SkipHeader(data);
-      ++_lines;
-      continue;
-    }
-    if (_ended) {
-      CheckAfterMarker(data.substr(_pos));
-      _pos = data.size();
-      continue;
-    }
-    const auto start = _pos;
-    const auto split = _splitter.Split(data, _pos, STANDARD_VECTOR_SIZE - row);
-    size_t end = _pos;
-    if (split.error != RowError::None) {
-      const auto row_end = pg::FindRowEnd(data, split.row_start);
-      end = row_end == std::string_view::npos ? data.size() : row_end + 1;
-    }
-    size_t rows = split.rows;
-    auto invalid = FindInvalidUtf8(data.substr(start, end - start));
-    if (invalid != std::string_view::npos) {
-      invalid += start;
-      rows = std::min(rows, static_cast<size_t>(absl::c_count(
-                              data.substr(start, invalid - start), '\n')));
-    }
-    if (rows != 0) {
-      ResolveText(rows);
-      const auto decoded =
-        Failed() ? 0 : Decode(output, row, rows, _splitter.Fields());
-      if (Failed()) {
-        break;
-      }
-      row += decoded;
-      _lines += rows;
-    }
-    if (invalid != std::string_view::npos) {
-      FailRow(_lines + 1, InvalidUtf8Error(data, invalid), kNoColumn, {},
-              false);
-      break;
-    }
-    if (split.error != RowError::None) {
-      const auto end = pg::FindRowEnd(data, split.row_start);
-      const auto line =
-        LineText(data.substr(split.row_start, end == std::string_view::npos
-                                                ? data.size() - split.row_start
-                                                : end + 1 - split.row_start));
-      FailRow(_lines + 1, StructureError(split.error, split.fields), kNoColumn,
-              line, true);
-      break;
-    }
-    if (split.marker) {
-      EndMarker();
-    }
-  }
-  return row;
-}
-
 std::exception_ptr CopyDecoder::StructureError(RowError error,
                                                size_t column) const {
   switch (error) {
@@ -547,83 +411,6 @@ std::exception_ptr CopyDecoder::StructureError(RowError error,
       break;
   }
   SDB_UNREACHABLE();
-}
-
-duckdb::idx_t CopyDecoder::ParseCsv(duckdb::DataChunk& output,
-                                    duckdb::idx_t row) {
-  const auto& segments = _batch->segments;
-  while (row < STANDARD_VECTOR_SIZE && _segment != segments.size() &&
-         !Failed()) {
-    const auto data = segments[_segment];
-    if (_pos == data.size()) {
-      ++_segment;
-      _pos = 0;
-      continue;
-    }
-    if (std::exchange(_skip, false)) {
-      SkipCsvHeader(data);
-      continue;
-    }
-    const auto start = _pos;
-    const auto split = _csv->Split(data, _pos, STANDARD_VECTOR_SIZE - row);
-    _split_data = data;
-    _split_start = start;
-    _split_rows = split.rows;
-    _split_unterminated = split.unterminated;
-    size_t good = split.unterminated ? split.rows - 1 : split.rows;
-    auto error = RowError::None;
-    size_t error_column = 0;
-    if (const auto extra = _csv->ExtraRows();
-        !extra.empty() && extra.front() < good) {
-      good = extra.front();
-      error = RowError::ExtraData;
-    }
-    if (const auto missing = FirstMissing(good); missing.row < good) {
-      good = missing.row;
-      error = RowError::MissingData;
-      error_column = missing.column;
-    }
-    auto invalid = FindInvalidUtf8(data.substr(start, _pos - start));
-    if (invalid != std::string_view::npos) {
-      invalid += start;
-      const auto offsets = _csv->RowOffsets(split.rows);
-      const auto bad = static_cast<size_t>(
-        std::upper_bound(offsets.begin(), offsets.end(), invalid) -
-        offsets.begin() - 1);
-      if (bad <= good) {
-        good = bad;
-        error = RowError::None;
-      } else {
-        invalid = std::string_view::npos;
-      }
-    }
-    if (good != 0) {
-      ResolveCsv(good);
-      const auto decoded =
-        Failed() ? 0 : Decode(output, row, good, _csv->Fields());
-      if (Failed()) {
-        break;
-      }
-      row += decoded;
-    }
-    if (invalid != std::string_view::npos) {
-      FailRow(UnitLine(good), InvalidUtf8Error(data, invalid), kNoColumn, {},
-              false);
-      break;
-    }
-    if (good != split.rows) {
-      FailRow(UnitLine(good),
-              error == RowError::None
-                ? CopyError(ERRCODE_BAD_COPY_FILE_FORMAT,
-                            "unterminated CSV quoted field")
-                : StructureError(error, error_column),
-              kNoColumn, RowText(good), true);
-      break;
-    }
-    _lines += split.lines;
-    SDB_ASSERT(_pos > start || split.rows == 0);
-  }
-  return row;
 }
 
 duckdb::idx_t CopyDecoder::ParseLexed(duckdb::DataChunk& output,
@@ -673,7 +460,7 @@ void CopyDecoder::LexedHeader(const duckdb::RowRangeReader& reader) {
   }
   const auto line = terminated ? LineText(record) : record;
   if (!_csv) {
-    TextSplitter header{_target.delim, _target.names.size(), 1};
+    TextSplitter header{_target.names.size(), 1};
     const auto split = header.FillLexed(reader, 0, 1);
     const size_t columns =
       split.error != RowError::None ? split.fields : _target.names.size();

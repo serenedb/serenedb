@@ -55,7 +55,6 @@ CsvSplitter::CsvSplitter(CsvDialect dialect, size_t columns, size_t capacity)
   : _dialect{dialect},
     _columns{columns},
     _capacity{capacity},
-    _rows{RowDialectOf(dialect), columns},
     _fields(columns * capacity),
     _flags(columns * capacity),
     _offsets(capacity) {}
@@ -93,35 +92,6 @@ void CsvSplitter::FinishRow(size_t columns_seen, size_t row) {
   if (columns_seen > _columns) {
     _extra.push_back(static_cast<uint32_t>(row));
   }
-}
-
-CsvRows CsvSplitter::Split(std::string_view bytes, size_t& pos,
-                           size_t max_rows) {
-  _extra.clear();
-  CsvRows result;
-  const char* const data = bytes.data();
-  const size_t start = pos;
-  _rows.Prepare(bytes, pos, max_rows);
-  size_t row = 0;
-  for (; row < _rows.Rows() && row < max_rows; ++row) {
-    const auto first = _rows.FirstField(row);
-    const auto fields = _rows.LastField(row) - first;
-    _offsets[row] = static_cast<uint32_t>(_rows.RowStart(row));
-    for (size_t column = 0; column < fields; ++column) {
-      const auto index = first + column;
-      const auto begin = _rows.FieldBegin(row, index);
-      const std::string_view field{data + begin, _rows.FieldEnd(index) - begin};
-      AddField(column, row, field, FieldFlags(field, _rows.Flagged(index)));
-    }
-    FinishRow(fields, row);
-  }
-  result.rows = row;
-  result.unterminated = _rows.Unterminated() && row != 0 && row == _rows.Rows();
-  pos = row != 0 ? _rows.After(row - 1) : bytes.size();
-  result.lines =
-    static_cast<size_t>(std::count(data + start, data + pos, '\n'));
-  _rows.Consume(row);
-  return result;
 }
 
 CsvRows CsvSplitter::FillLexed(const duckdb::RowRangeReader& reader,

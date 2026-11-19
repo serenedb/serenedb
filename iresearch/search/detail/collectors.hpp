@@ -254,9 +254,10 @@ class SlotsCollector : public FieldPrepareCollector {
   void Finish(StatsArena& stats) final;
 
  protected:
-  using TermCounts = absl::InlinedVector<TermCollector, 8>;
+  virtual size_t ExpandedTerms() const noexcept { return 0; }
 
-  virtual void AppendExpanded(TermCounts&) const {}
+  virtual void CollectExpanded(byte_type* slot,
+                               const FieldCollector& field) const {}
 };
 
 class ExpandedSlotsCollector final : public SlotsCollector {
@@ -280,7 +281,13 @@ class ExpandedSlotsCollector final : public SlotsCollector {
       visitor) const;
 
  private:
-  void AppendExpanded(TermCounts& out) const final;
+  template<typename Visitor>
+  void WalkExpanded(Visitor&& visitor) const;
+
+  size_t ExpandedTerms() const noexcept final;
+
+  void CollectExpanded(byte_type* slot,
+                       const FieldCollector& field) const final;
 
   size_t _expanded_size;
   containers::Fixed<Terms> _expanded;

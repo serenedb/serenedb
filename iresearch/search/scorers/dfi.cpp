@@ -102,7 +102,7 @@ score_t ScoreOf(DFIMeasure measure, score_t boost, score_t ratio, score_t tf,
 }
 
 std::span<const score_t> RatiosOf(const DFIStats& stats) noexcept {
-  if (stats.terms > 1) {
+  if (stats.ratios) {
     return {stats.ratios, stats.terms};
   }
   if (stats.ratio > 0.f) {
@@ -115,22 +115,20 @@ std::span<const score_t> RatiosOf(const DFIStats& stats) noexcept {
 
 void DFI::collect(byte_type* stats_buf, const FieldCollector* field,
                   const TermCollector* term) const {
-  stats_cast(stats_buf)->ratio = CollectionShareOf(field, term);
+  auto& stats = *stats_cast(stats_buf);
+  const auto ratio = CollectionShareOf(field, term);
+  if (stats.ratios) {
+    stats.ratios[stats.terms++] = ratio;
+  } else {
+    stats.ratio = ratio;
+  }
 }
 
-void DFI::CollectTerms(byte_type* stats_buf, const FieldCollector* field,
-                       std::span<const TermCollector> terms,
+void DFI::ReserveTerms(byte_type* stats_buf, size_t terms,
                        StatsArena& arena) const {
-  if (terms.size() < 2) {
-    for (const auto& term : terms) {
-      collect(stats_buf, field, &term);
-    }
-    return;
+  if (terms > 1) {
+    stats_cast(stats_buf)->ratios = AllocateShares(arena, terms);
   }
-  auto& stats = *stats_cast(stats_buf);
-  const auto ratios = CollectShares(field, terms, arena);
-  stats.ratios = ratios.data();
-  stats.terms = static_cast<uint32_t>(ratios.size());
 }
 
 ScoreFunction DFI::PrepareScorer(const ScoreContext& ctx) const {

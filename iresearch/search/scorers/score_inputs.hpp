@@ -53,15 +53,8 @@ inline score_t CollectionShareOf(const FieldCollector* field,
                            field ? field->total_term_freq : 0);
 }
 
-inline std::span<const score_t> CollectShares(
-  const FieldCollector* field, std::span<const TermCollector> terms,
-  StatsArena& arena) {
-  auto* shares =
-    reinterpret_cast<score_t*>(arena.Allocate(terms.size() * sizeof(score_t)));
-  for (size_t i = 0; i != terms.size(); ++i) {
-    shares[i] = CollectionShareOf(field, &terms[i]);
-  }
-  return {shares, terms.size()};
+inline score_t* AllocateShares(StatsArena& arena, size_t terms) {
+  return reinterpret_cast<score_t*>(arena.Allocate(terms * sizeof(score_t)));
 }
 
 template<bool HasScale, typename Formula>

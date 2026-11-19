@@ -63,11 +63,9 @@ void IndriDirichlet::collect(byte_type* stats_buf, const FieldCollector* field,
   CollectLMStats(*stats_cast(stats_buf), field, term);
 }
 
-void IndriDirichlet::CollectTerms(byte_type* stats_buf,
-                                  const FieldCollector* field,
-                                  std::span<const TermCollector> terms,
+void IndriDirichlet::ReserveTerms(byte_type* stats_buf, size_t terms,
                                   StatsArena& arena) const {
-  CollectLMTerms(*stats_cast(stats_buf), field, terms, arena);
+  ReserveLMTerms(*stats_cast(stats_buf), terms, arena);
 }
 
 ScoreFunction IndriDirichlet::PrepareScorer(const ScoreContext& ctx) const {

@@ -77,33 +77,25 @@ void ByTermsCollector::Finish(StatsArena&) {
   }
 }
 
-void Scorer::CollectTerms(byte_type* stats, const FieldCollector* field,
-                          std::span<const TermCollector> terms,
-                          StatsArena&) const {
-  for (const auto& term : terms) {
-    collect(stats, field, &term);
-  }
-}
-
 void SlotsCollector::Finish(StatsArena& stats) {
   if (_scorer == nullptr) {
     return;
   }
-  TermCounts terms;
+  const auto field = _counters.TotalField();
+  auto* const slot = Mutable(_stats);
+  _scorer->ReserveTerms(slot, _counters.Terms() + ExpandedTerms(), stats);
   for (size_t i = 0, n = _counters.Terms(); i != n; ++i) {
     const auto term = _counters.TotalTerm(i);
-    if (term.docs_with_term != 0) {
-      terms.push_back(term);
+    if (term.docs_with_term == 0) {
+      continue;
     }
+    _scorer->collect(slot, &field, &term);
   }
-  AppendExpanded(terms);
-  const auto field = _counters.TotalField();
-  _scorer->CollectTerms(Mutable(_stats), &field, terms, stats);
+  CollectExpanded(slot, field);
 }
 
-void ExpandedSlotsCollector::VisitExpanded(
-  absl::FunctionRef<void(bytes_view term, const TermCollector& counts)> visitor)
-  const {
+template<typename Visitor>
+void ExpandedSlotsCollector::WalkExpanded(Visitor&& visitor) const {
   const auto threads = _counters.Threads();
   Terms merged;
   std::vector<std::pair<uint64_t, const Terms::value_type*>> ordered;
@@ -135,9 +127,25 @@ void ExpandedSlotsCollector::VisitExpanded(
   }
 }
 
-void ExpandedSlotsCollector::AppendExpanded(TermCounts& out) const {
-  VisitExpanded(
-    [&](bytes_view, const TermCollector& counts) { out.push_back(counts); });
+void ExpandedSlotsCollector::VisitExpanded(
+  absl::FunctionRef<void(bytes_view term, const TermCollector& counts)> visitor)
+  const {
+  WalkExpanded(visitor);
+}
+
+size_t ExpandedSlotsCollector::ExpandedTerms() const noexcept {
+  size_t terms = 0;
+  for (size_t i = 0; i != _expanded.size(); ++i) {
+    terms += _expanded[i].size();
+  }
+  return terms;
+}
+
+void ExpandedSlotsCollector::CollectExpanded(
+  byte_type* slot, const FieldCollector& field) const {
+  WalkExpanded([&](bytes_view, const TermCollector& counts) {
+    _scorer->collect(slot, &field, &counts);
+  });
 }
 
 void AllCollector::Finish(StatsArena&) {

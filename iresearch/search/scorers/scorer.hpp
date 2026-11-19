@@ -127,9 +127,8 @@ struct Scorer {
   virtual void collect(byte_type* stats, const FieldCollector* field,
                        const TermCollector* term) const = 0;
 
-  virtual void CollectTerms(byte_type* stats, const FieldCollector* field,
-                            std::span<const TermCollector> terms,
-                            StatsArena& arena) const;
+  virtual void ReserveTerms(byte_type* stats, size_t terms,
+                            StatsArena& arena) const {}
 
   virtual IndexFeatures GetIndexFeatures() const = 0;
 

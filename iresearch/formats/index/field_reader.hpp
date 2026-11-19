@@ -32,11 +32,11 @@
 #include <vector>
 
 #include "iresearch/formats/index/term_dict_format.hpp"
-#include "iresearch/formats/index/term_dict_inline.hpp"
 #include "iresearch/formats/index/term_dict_key.hpp"
 #include "iresearch/formats/index/term_dict_meta.hpp"
 #include "iresearch/formats/index/term_dict_reader.hpp"
 #include "iresearch/formats/index/term_dict_single.hpp"
+#include "iresearch/formats/index/term_dict_store.hpp"
 #include "iresearch/formats/posting/reader.hpp"
 #include "iresearch/formats/reader_state.hpp"
 #include "iresearch/formats/term_reader.hpp"
@@ -48,8 +48,7 @@ namespace irs::term_dict {
 
 class FieldReader final {
  public:
-  explicit FieldReader(IResourceManager& rm) noexcept : _rm{&rm} {}
-  ~FieldReader();
+  explicit FieldReader(IResourceManager& rm) noexcept : _store{rm} {}
 
   FieldReader(const FieldReader&) = delete;
   FieldReader& operator=(const FieldReader&) = delete;
@@ -62,52 +61,17 @@ class FieldReader final {
   size_t size() const noexcept { return _dicts.size(); }
 
   const PostingsReader& Postings() const noexcept { return _pr; }
-  const IndexInput& Input() const noexcept { return *_in; }
-  const byte_type* Base() const noexcept { return _base; }
-  void Account(uint64_t bytes) {
-    if (bytes != 0) {
-      _rm->Increase(bytes);
-      _bytes += bytes;
-    }
+  template<typename Self>
+  auto&& Store(this Self&& self) noexcept {
+    return std::forward<Self>(self)._store;
   }
-  uint32_t BlockCount() const noexcept { return _block_count; }
-  uint64_t BlockOffset(size_t block) const noexcept {
-    uint64_t page = _first_page + block;
-    if (!_spans.empty()) [[unlikely]] {
-      const auto it = absl::c_lower_bound(
-        _spans, block, [](const SpanningBlock& span, size_t b) noexcept {
-          return span.block < b;
-        });
-      if (it != _spans.begin()) {
-        page += std::prev(it)->extra;
-      }
-    }
-    return std::min(page * kPage, _inline_offset);
-  }
-  uint64_t InlineBegin() const noexcept { return _inline_offset; }
-  uint64_t InlineEnd() const noexcept { return _inline_offset + _inline_size; }
-  const byte_type* InlineRegion() const noexcept { return _inline_region; }
-  InlinePages::Span InlineSpan(uint32_t block) const noexcept {
-    return _inline_pages.Of(block);
-  }
-  bytes_view Copy(uint64_t offset, uint64_t size);
-  const byte_type* CopyBlock(uint32_t block, uint64_t length);
   const byte_type* KeepInline(bytes_view bytes);
 
  private:
-  struct PendingCopy {
-    uint64_t offset;
-    uint64_t size;
-    byte_type* data;
-  };
-
   struct FieldDicts {
     uint32_t first = 0;
     uint32_t count = 0;
   };
-
-  void Bind(const TermsMeta& terms);
-  void FillCopies();
 
   std::deque<TermReaderImpl> _keyed;
   std::deque<SingleTermReader> _singles;
@@ -115,20 +79,8 @@ class FieldReader final {
   containers::FlatHashMap<field_id, FieldDicts> _by_id;
   std::vector<field_id> _ids;
   PostingsReader _pr;
-  IndexInput::ptr _in;
-  const byte_type* _base = nullptr;
-  IResourceManager* _rm;
-  std::vector<SpanningBlock> _spans;
-  InlinePages _inline_pages;
-  containers::NodeHashMap<uint64_t, bstring> _copies;
+  BlockStore _store;
   std::vector<byte_type> _single_inline;
-  const byte_type* _inline_region = nullptr;
-  uint64_t _first_page = 0;
-  uint64_t _inline_offset = 0;
-  uint64_t _inline_size = 0;
-  uint32_t _block_count = 0;
-  std::vector<PendingCopy> _pending;
-  uint64_t _bytes = 0;
 };
 
 inline TermPostings::ptr TermReaderImpl::PostingsOf(
@@ -138,37 +90,16 @@ inline TermPostings::ptr TermReaderImpl::PostingsOf(
                                      _has_score_bounds, std::move(reuse));
 }
 
+inline const BlockStore& TermReaderImpl::Store() const noexcept {
+  return _owner->Store();
+}
+
 inline uint64_t TermReaderImpl::BlockOffset(size_t block) const noexcept {
-  return _owner->BlockOffset(_first_block + block);
+  return Store().BlockOffset(_first_block + block);
 }
 
-inline InlinePages::Span TermReaderImpl::InlineSpan(
-  uint32_t block) const noexcept {
-  return _owner->InlineSpan(_first_block + block);
-}
-
-inline uint64_t TermReaderImpl::InlineBegin() const noexcept {
-  return _owner->InlineBegin();
-}
-
-inline uint64_t TermReaderImpl::InlineEnd() const noexcept {
-  return _owner->InlineEnd();
-}
-
-inline const byte_type* TermReaderImpl::ResolveInline(uint64_t end,
-                                                      uint8_t size) const {
-  const byte_type* base = _owner->InlineRegion();
-  uint64_t begin = 0;
-  uint64_t limit = InlineEnd() - InlineBegin();
-  if (Small()) {
-    base = _small_inline.data();
-    begin = _inline_base;
-    limit = _inline_base + _small_inline.size();
-  }
-  if (end < begin + size || end > limit) [[unlikely]] {
-    Corrupted("inline postings", _meta.id);
-  }
-  return base + (end - size - begin);
+inline const byte_type* TermReaderImpl::Block(size_t block) const noexcept {
+  return _small ? _small : Store().Base() + BlockOffset(block);
 }
 
 }  // namespace irs::term_dict

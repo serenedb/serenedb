@@ -20,10 +20,6 @@
 
 #include "iresearch/formats/index/field_reader.hpp"
 
-#include <absl/algorithm/container.h>
-
-#include <limits>
-#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -32,108 +28,23 @@
 
 namespace irs::term_dict {
 
-FieldReader::~FieldReader() { _rm->DecreaseChecked(_bytes); }
-
 uint64_t FieldReader::CountMappedMemory() const {
-  uint64_t bytes = _pr.CountMappedMemory();
-  if (_in) {
-    bytes += _in->CountMappedMemory();
-  }
-  return bytes;
-}
-
-bytes_view FieldReader::Copy(uint64_t offset, uint64_t size) {
-  const auto [it, inserted] = _copies.try_emplace(offset);
-  auto& copy = it->second;
-  if (inserted) {
-    Account(size);
-    copy.resize(size);
-    _pending.push_back({.offset = offset, .size = size, .data = copy.data()});
-  }
-  return copy;
-}
-
-const byte_type* FieldReader::CopyBlock(uint32_t block, uint64_t length) {
-  const uint64_t offset = BlockOffset(block);
-  return Copy(offset, std::min(BlockOffset(block + 1), length) - offset).data();
-}
-
-void FieldReader::FillCopies() {
-  absl::c_sort(_pending, [](const PendingCopy& lhs, const PendingCopy& rhs) {
-    return lhs.offset < rhs.offset;
-  });
-  for (size_t i = 0; i != _pending.size();) {
-    const uint64_t begin = _pending[i].offset;
-    uint64_t end = begin + _pending[i].size;
-    while (++i != _pending.size() && _pending[i].offset <= end) {
-      end = std::max(end, _pending[i].offset + _pending[i].size);
-    }
-    _in->Prefetch(begin, end - begin);
-  }
-  for (const auto& copy : _pending) {
-    _in->ReadData(copy.offset, copy.data, copy.size);
-  }
-  _pending.clear();
-  _pending.shrink_to_fit();
-}
-
-void FieldReader::Bind(const TermsMeta& terms) {
-  _block_count = terms.blocks;
-  _first_page = terms.first_page;
-  _inline_offset = terms.inline_offset;
-  _inline_size = terms.inline_size;
-  const auto blocks = _block_count;
-  if (terms.spans.size() > blocks) {
-    Corrupted("block directory");
-  }
-  _spans.reserve(terms.spans.size());
-  uint64_t extra = 0;
-  for (const auto& span : terms.spans) {
-    extra += span.extra;
-    if (span.extra == 0 || span.block >= blocks ||
-        (!_spans.empty() && span.block <= _spans.back().block) ||
-        extra > std::numeric_limits<uint32_t>::max()) {
-      Corrupted("block directory");
-    }
-    _spans.push_back(
-      {.block = span.block, .extra = static_cast<uint32_t>(extra)});
-  }
-  if (blocks != 0 && (_first_page > _inline_offset / kPage ||
-                      BlockOffset(blocks - 1) >= _inline_offset)) {
-    Corrupted("block directory");
-  }
-
-  if (terms.inline_starts.empty() != (_inline_size == 0)) {
-    Corrupted("inline starts");
-  }
-  if (_inline_size != 0) {
-    if (InlineEnd() > _in->Length() || _in->Length() - InlineEnd() < kSlack) {
-      Corrupted("inline postings");
-    }
-    _inline_pages =
-      InlinePages{ViewCast<byte_type>(std::string_view{terms.inline_starts}),
-                  blocks, _inline_offset, _inline_size};
-    _inline_region = _base ? _base + _inline_offset
-                           : Copy(_inline_offset, _inline_size + kSlack).data();
-  }
-  Account(_spans.capacity() * sizeof(SpanningBlock) +
-          _inline_pages.MemoryBytes());
+  return _pr.CountMappedMemory() + _store.CountMappedMemory();
 }
 
 void FieldReader::prepare(const ReaderState& state) {
   SDB_ASSERT(state.idx);
   auto terms = state.idx->TakeTerms();
-  _in = state.idx->ReopenIn();
-  if (!_in) {
+  _store.Open(state.idx->ReopenIn());
+  if (!_store.Opened()) {
     SDB_ENSURE(terms.fields.empty(),
                "term dictionary: fields but no `.idx` stream");
     return;
   }
 
-  _base = _in->ReadStable(0, _in->Length());
   const auto& heads = terms.fields;
   if (!heads.empty()) {
-    Bind(terms);
+    _store.Bind(terms);
   }
 
   IndexFeatures features = IndexFeatures::None;
@@ -148,7 +59,7 @@ void FieldReader::prepare(const ReaderState& state) {
   }
   if (single_inline != 0) {
     _single_inline.reserve(single_inline + kSlack);
-    Account(_single_inline.capacity());
+    _store.Account(_single_inline.capacity());
   }
   _by_id.reserve(heads.size());
   _dicts.reserve(heads.size());
@@ -164,12 +75,12 @@ void FieldReader::prepare(const ReaderState& state) {
       for (const auto& level : head.levels) {
         prefix.clear();
         AppendOrdinal(prefix, ordinal++, terms.ordinal_bytes);
-        levels.push_back(&_keyed.emplace_back(*this, level, prefix, *_in));
+        levels.push_back(&_keyed.emplace_back(*this, level, prefix));
       }
       prefix.clear();
       AppendOrdinal(prefix, own, terms.ordinal_bytes);
       _dicts.push_back(
-        &_keyed.emplace_back(*this, head, prefix, *_in, std::move(levels)));
+        &_keyed.emplace_back(*this, head, prefix, std::move(levels)));
     }
     ++_by_id
         .try_emplace(
@@ -183,7 +94,7 @@ void FieldReader::prepare(const ReaderState& state) {
   if (single_inline != 0) {
     _single_inline.resize(_single_inline.size() + kSlack);
   }
-  FillCopies();
+  _store.FillCopies();
 }
 
 const byte_type* FieldReader::KeepInline(bytes_view bytes) {

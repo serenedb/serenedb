@@ -20,484 +20,27 @@
 
 #include "iresearch/formats/index/field_writer.hpp"
 
-#include <absl/algorithm/container.h>
-#include <absl/base/internal/endian.h>
-#include <absl/strings/str_cat.h>
-
 #include <algorithm>
-#include <array>
-#include <bit>
 #include <cstring>
-#include <iterator>
-#include <limits>
-#include <ranges>
 #include <span>
-#include <vector>
 
-#include "iresearch/formats/index/term_dict_key.hpp"
-#include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/byte_set.hpp"
 #include "iresearch/utils/bytes_output.hpp"
-#include "iresearch/utils/bytes_utils.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
-#include "iresearch/utils/string_utils.hpp"
 
 namespace irs::term_dict {
 namespace {
 
-constexpr uint64_t kFsstSampleBytes = 32 << 10;
-constexpr uint64_t kFsstMinRatioPct = 115;
 constexpr byte_type kZeros[kPage]{};
+constexpr uint64_t kMaxBlockPages = 16;
 
-uint64_t VSize(uint64_t value) noexcept {
-  return bytes_io<uint64_t, sizeof(uint64_t)>::vsize(value);
-}
-
-struct Packing {
-  uint32_t base;
-  uint32_t escaped;
-};
-
-struct Shape {
-  uint32_t lcp_width;
-  uint32_t len_width;
-  Packing packing;
-};
-
-uint64_t HeaderBytes(uint64_t count, const Shape& shape) noexcept {
-  return VSize(shape.packing.base) + VSize(shape.packing.escaped) + count +
-         shape.packing.escaped *
-           (kEscapedEntry + uint64_t{shape.lcp_width} + shape.len_width);
-}
-
-uint64_t ColumnBytes(uint64_t count, const Shape& shape) noexcept {
-  return count * (uint64_t{shape.lcp_width} + shape.len_width);
-}
-
-bool Packed(uint64_t count, const Shape& shape) noexcept {
-  return HeaderBytes(count, shape) <= ColumnBytes(count, shape);
-}
-
-uint64_t VarBytes(uint64_t count, uint64_t head_skip, uint64_t suffixes,
-                  uint64_t records, const Shape& shape) noexcept {
-  const uint64_t restarts = (count + kRestartInterval - 1) / kRestartInterval;
-  return 4 + VSize(count) + VSize(restarts) + VSize(suffixes) +
-         VSize(head_skip) + (kVarRestart + kHeadBytes) * restarts +
-         std::min(HeaderBytes(count, shape), ColumnBytes(count, shape)) +
-         suffixes + records + kSlack;
-}
-
-uint32_t Base(uint32_t base) noexcept { return base == kNoBase ? 0 : base; }
-
-uint32_t MisfitMask(uint32_t lcp, uint32_t len, uint32_t base) noexcept {
-  constexpr uint32_t kAll = (1U << kLenSplits) - 1;
-  if (lcp < base) {
-    return kAll;
+uint32_t PagesFor(const BlockShare& share) noexcept {
+  const uint64_t keyed = share.bytes - share.inline_bytes;
+  if (keyed == 0) {
+    return 1;
   }
-  const uint32_t delta = lcp - base;
-  const auto low = static_cast<uint32_t>(std::bit_width(len));
-  const auto delta_bits = static_cast<uint32_t>(std::bit_width(delta));
-  if (low > kHeaderBits || delta_bits > kHeaderBits - low) {
-    return kAll;
-  }
-  const uint32_t high = kHeaderBits - delta_bits;
-  uint32_t fits = ((2U << high) - 1) & ~((1U << low) - 1);
-  if (len == (1U << low) - 1 && delta == (kEscapedHeader >> low)) {
-    fits &= ~(1U << low);
-  }
-  SDB_ASSERT(absl::c_all_of(
-    std::views::iota(uint32_t{0}, kLenSplits), [&](uint32_t len_bits) {
-      return ((fits >> len_bits & 1) != 0) == Packs(delta, len, len_bits);
-    }));
-  return kAll & ~fits;
-}
-
-void Count(Misfits& misfits, uint32_t lcp, uint32_t len,
-           uint32_t base) noexcept {
-  const uint32_t mask = MisfitMask(lcp, len, base);
-  for (uint32_t len_bits = 0; len_bits != kLenSplits; ++len_bits) {
-    misfits[len_bits] += mask >> len_bits & 1;
-  }
-}
-
-struct StoredHeader {
-  uint32_t lcp;
-  uint32_t len;
-};
-
-StoredHeader StoredAt(const VarColumns& columns, size_t entry,
-                      uint32_t base) noexcept {
-  if (entry == 0) {
-    SDB_ASSERT(columns.lcps[0] == 0 && base <= columns.lens[0]);
-    return {.lcp = base, .len = columns.lens[0] - base};
-  }
-  return {.lcp = columns.lcps[entry], .len = columns.lens[entry]};
-}
-
-Misfits Recount(const VarColumns& columns, uint32_t base) noexcept {
-  Misfits misfits{};
-  for (size_t i = 0; i != columns.lcps.size(); ++i) {
-    const auto stored = StoredAt(columns, i, base);
-    Count(misfits, stored.lcp, stored.len, base);
-  }
-  return misfits;
-}
-
-uint32_t BaseWith(const VarColumns& columns, uint32_t lcp) noexcept {
-  return columns.lcps.empty() ? columns.base : std::min(columns.base, lcp);
-}
-
-Misfits MisfitsAt(const VarColumns& columns, uint32_t base) noexcept {
-  return base == columns.base ? columns.misfits : Recount(columns, Base(base));
-}
-
-uint32_t LenBits(const Misfits& misfits) noexcept {
-  return static_cast<uint32_t>(absl::c_min_element(misfits) - misfits.begin());
-}
-
-Packing PackingOf(const VarColumns& columns) noexcept {
-  return {
-    .base = Base(columns.base),
-    .escaped = columns.misfits[LenBits(columns.misfits)],
-  };
-}
-
-Packing PackingWith(const VarColumns& columns, uint32_t lcp,
-                    uint32_t len) noexcept {
-  const uint32_t base = BaseWith(columns, lcp);
-  auto misfits = MisfitsAt(columns, base);
-  Count(misfits, lcp, len, Base(base));
-  return {.base = Base(base), .escaped = misfits[LenBits(misfits)]};
-}
-
-Packing PackingBound(const VarColumns& columns, uint32_t lcp,
-                     uint32_t deferred) noexcept {
-  const uint32_t base = BaseWith(columns, lcp);
-  const auto misfits = MisfitsAt(columns, base);
-  return {.base = Base(base), .escaped = misfits[LenBits(misfits)] + deferred};
-}
-
-Shape ShapeOf(const VarColumns& columns) noexcept {
-  return {
-    .lcp_width = ColumnWidth(columns.max_lcp),
-    .len_width = ColumnWidth(columns.max_len),
-    .packing = PackingOf(columns),
-  };
-}
-
-Shape ShapeWith(const VarColumns& columns, uint32_t lcp,
-                uint32_t len) noexcept {
-  return {
-    .lcp_width = ColumnWidth(std::max(columns.max_lcp, lcp)),
-    .len_width = ColumnWidth(std::max(columns.max_len, len)),
-    .packing = PackingWith(columns, lcp, len),
-  };
-}
-
-void Lower(VarColumns& columns, uint32_t lcp) noexcept {
-  const uint32_t base = BaseWith(columns, lcp);
-  if (base != columns.base) {
-    columns.misfits = Recount(columns, Base(base));
-    columns.base = base;
-  }
-}
-
-void LowerTo(VarColumns& columns, uint32_t base) noexcept {
-  if (base < columns.base) {
-    columns.misfits = Recount(columns, base);
-    columns.base = base;
-  }
-}
-
-uint64_t StrideValue(bytes_view key, uint32_t prefix) noexcept {
-  const auto stride = key.substr(prefix);
-  SDB_ASSERT(PacksKeys(stride.size()));
-  std::array<byte_type, sizeof(uint64_t)> word{};
-  std::memcpy(word.data() + word.size() - stride.size(), stride.data(),
-              stride.size());
-  return absl::big_endian::Load64(word.data());
-}
-
-uint64_t KeyRange(bytes_view first, bytes_view last, uint32_t prefix) noexcept {
-  if (!PacksKeys(first.size() - prefix)) {
-    return 0;
-  }
-  return StrideValue(last, prefix) - StrideValue(first, prefix);
-}
-
-uint64_t FixedBytes(uint64_t count, uint64_t records, uint64_t width,
-                    uint64_t prefix, uint64_t universe) noexcept {
-  const uint64_t stride = width - prefix;
-  uint64_t keys = 0;
-  if (PacksKeys(stride)) {
-    const auto shape = EfShapeOf(count, universe);
-    keys = 1 + VSize(shape.highs) + stride + EfBytes(count, shape);
-  } else {
-    keys = kHeadBytes * FixedHeads(count) + count * stride;
-  }
-  return 1 + VSize(count) + VSize(stride) + VSize(prefix) + prefix + keys +
-         records + kSlack;
-}
-
-bytes_view KeyAt(const BlockBuilder& block, size_t i) noexcept {
-  const uint32_t begin = i == 0 ? 0 : block.ends[i - 1];
-  return {block.keys.data() + begin, block.ends[i] - begin};
-}
-
-uint32_t FixedWidth(const BlockBuilder& block) noexcept {
-  SDB_ASSERT(block.kind == BlockKind::FixedStride);
-  return static_cast<uint32_t>(KeyAt(block, 0).size());
-}
-
-VarEntry VarEntryAt(const BlockBuilder& block, uint32_t index,
-                    bytes_view key) noexcept {
-  const bool restart = index % kRestartInterval == 0;
-  const size_t lcp =
-    index == 0 ? 0 : CommonPrefixLength(KeyAt(block, index - 1), key);
-  uint32_t head_skip = block.head_skip;
-  if (restart) {
-    head_skip = static_cast<uint32_t>(
-      index == 0 ? key.size() : CommonPrefixLength(KeyAt(block, 0), key));
-  }
-  return {
-    .suffix = restart ? key : key.substr(lcp),
-    .lcp = lcp,
-    .head_skip = head_skip,
-    .restart = restart,
-  };
-}
-
-void Clear(VarColumns& columns) noexcept {
-  columns.lcps.clear();
-  columns.lens.clear();
-  columns.suffixes.clear();
-  columns.restarts.clear();
-  columns.misfits = {};
-  columns.base = kNoBase;
-  columns.max_lcp = 0;
-  columns.max_len = 0;
-}
-
-void Clear(BlockBuilder& block) noexcept {
-  block.keys.clear();
-  block.ends.clear();
-  block.records.clear();
-  block.run.Clear();
-  Clear(block.columns);
-  block.size = 0;
-  block.deferred = 0;
-  block.deferred_len = 0;
-  block.coded = 0;
-  block.prefix = 0;
-  block.head_skip = 0;
-  block.kind = BlockKind::Var;
-}
-
-std::vector<unsigned char*> SampleStarts(bstring& arena,
-                                         std::span<const size_t> lengths) {
-  std::vector<unsigned char*> starts(lengths.size());
-  auto* start = arena.data();
-  for (size_t i = 0; i != lengths.size(); ++i) {
-    starts[i] = start;
-    start += lengths[i];
-  }
-  return starts;
-}
-
-bool Compresses(duckdb_fsst_encoder_t* encoder, bstring& arena,
-                std::vector<size_t>& lengths, uint64_t table_size) {
-  auto starts = SampleStarts(arena, lengths);
-  const uint64_t raw = arena.size();
-  bstring out(7 + 2 * raw, 0);
-  std::vector<size_t> out_lengths(lengths.size());
-  std::vector<unsigned char*> out_starts(lengths.size());
-  const size_t done = duckdb_fsst_compress(
-    encoder, lengths.size(), lengths.data(), starts.data(), out.size(),
-    out.data(), out_lengths.data(), out_starts.data());
-  const uint64_t coded = absl::c_accumulate(out_lengths, uint64_t{0});
-  return done == lengths.size() &&
-         raw * 100 >= coded * kFsstMinRatioPct + table_size * 100;
-}
-
-void AppendEntry(VarColumns& columns, bool restart, size_t lcp,
-                 bytes_view suffix) {
-  if (restart) {
-    columns.restarts.push_back(static_cast<uint16_t>(columns.suffixes.size()));
-  }
-  const auto len = static_cast<uint32_t>(suffix.size() - (restart ? lcp : 0));
-  columns.max_lcp = std::max(columns.max_lcp, static_cast<uint32_t>(lcp));
-  columns.max_len = std::max(columns.max_len, len);
-  Lower(columns, static_cast<uint32_t>(lcp));
-  const uint32_t base = Base(columns.base);
-  if (columns.lcps.empty()) {
-    SDB_ASSERT(lcp == 0 && base <= len);
-    Count(columns.misfits, base, len - base, base);
-  } else {
-    Count(columns.misfits, static_cast<uint32_t>(lcp), len, base);
-  }
-  columns.lcps.push_back(static_cast<uint32_t>(lcp));
-  columns.lens.push_back(len);
-  columns.suffixes.append(suffix);
-}
-
-uint64_t SizeWith(const VarColumns& columns, uint32_t count,
-                  const VarEntry& entry, size_t suffix,
-                  uint64_t records) noexcept {
-  const auto len =
-    static_cast<uint32_t>(suffix - (entry.restart ? entry.lcp : 0));
-  return VarBytes(count + 1, entry.head_skip, columns.suffixes.size() + suffix,
-                  records,
-                  ShapeWith(columns, static_cast<uint32_t>(entry.lcp), len));
-}
-
-void WriteValue(DataOutput& out, uint32_t value, uint32_t width) {
-  switch (width) {
-    case 1:
-      out.WriteByte(static_cast<byte_type>(value));
-      break;
-    case 2:
-      out.WriteU16(static_cast<uint16_t>(value));
-      break;
-    default:
-      out.WriteU32(value);
-      break;
-  }
-}
-
-void WriteColumn(DataOutput& out, std::span<const uint32_t> values,
-                 uint32_t width) {
-  for (const auto value : values) {
-    WriteValue(out, value, width);
-  }
-}
-
-void WriteHeaders(DataOutput& out, const VarColumns& columns,
-                  const Shape& shape, uint32_t len_bits) {
-  const auto count = columns.lcps.size();
-  const uint32_t base = shape.packing.base;
-  const auto escapes = [&](StoredHeader stored) {
-    return (MisfitMask(stored.lcp, stored.len, base) >> len_bits & 1) != 0;
-  };
-  for (size_t i = 0; i != count; ++i) {
-    const auto stored = StoredAt(columns, i, base);
-    out.WriteByte(escapes(stored)
-                    ? kEscapedHeader
-                    : Pack(stored.lcp - base, stored.len, len_bits));
-  }
-  for (size_t i = 0; i != count; ++i) {
-    if (escapes(StoredAt(columns, i, base))) {
-      out.WriteU16(static_cast<uint16_t>(i));
-    }
-  }
-  for (size_t i = 0; i != count; ++i) {
-    if (const auto stored = StoredAt(columns, i, base); escapes(stored)) {
-      WriteValue(out, stored.lcp, shape.lcp_width);
-    }
-  }
-  for (size_t i = 0; i != count; ++i) {
-    if (const auto stored = StoredAt(columns, i, base); escapes(stored)) {
-      WriteValue(out, stored.len, shape.len_width);
-    }
-  }
-}
-
-void WriteHeads(DataOutput& out, const BlockBuilder& block, size_t step,
-                size_t skip) {
-  for (size_t i = 0; i < block.ends.size(); i += step) {
-    out.WriteU32(static_cast<uint32_t>(HeadAt(KeyAt(block, i), skip) >> 32));
-  }
-}
-
-void WriteEfKeys(DataOutput& out, const BlockBuilder& block, EfShape shape) {
-  const auto count = block.ends.size();
-  const uint64_t base = StrideValue(KeyAt(block, 0), block.prefix);
-  const auto value = [&](uint64_t i) {
-    return StrideValue(KeyAt(block, i), block.prefix) - base;
-  };
-  const auto position = [&](uint64_t i) {
-    return (value(i) >> shape.low_bits) + i;
-  };
-  for (uint64_t i = 0; i < count; i += kEfSample) {
-    SDB_ASSERT(position(i) <= std::numeric_limits<uint16_t>::max());
-    out.WriteU16(static_cast<uint16_t>(position(i)));
-  }
-  const uint64_t words = EfUpperBytes(count, shape.highs) / sizeof(uint64_t);
-  uint64_t word = 0;
-  uint64_t bits = 0;
-  for (uint64_t i = 0; i != count; ++i) {
-    const uint64_t at = position(i);
-    for (; word != at / kEfWordBits; ++word) {
-      out.WriteU64(std::exchange(bits, 0));
-    }
-    bits |= uint64_t{1} << (at % kEfWordBits);
-  }
-  for (; word != words; ++word) {
-    out.WriteU64(std::exchange(bits, 0));
-  }
-  const uint64_t mask = (uint64_t{1} << shape.low_bits) - 1;
-  WritePacked(out, count, shape.low_bits,
-              [&](uint64_t i) { return value(i) & mask; });
-}
-
-void Serialize(const BlockBuilder& block, DataOutput& out) {
-  const auto count = static_cast<uint32_t>(block.ends.size());
-  SDB_ASSERT(block.run.Empty());
-  out.WriteByte(static_cast<byte_type>(block.kind));
-  out.WriteV32(count);
-  if (block.kind != BlockKind::FixedStride) {
-    SDB_ASSERT(block.kind == BlockKind::Var || block.coded == count);
-    const auto& columns = block.columns;
-    SDB_ASSERT(count <= std::numeric_limits<uint16_t>::max());
-    const auto shape = ShapeOf(columns);
-    const bool packed = Packed(count, shape);
-    const uint32_t len_bits = LenBits(columns.misfits);
-    out.WriteV32(static_cast<uint32_t>(columns.restarts.size()));
-    out.WriteByte(static_cast<byte_type>(shape.lcp_width));
-    out.WriteByte(static_cast<byte_type>(shape.len_width));
-    out.WriteV64(columns.suffixes.size());
-    out.WriteV32(block.head_skip);
-    if (packed) {
-      out.WriteByte(static_cast<byte_type>(len_bits));
-      out.WriteV32(shape.packing.base);
-      out.WriteV32(shape.packing.escaped);
-    } else {
-      out.WriteByte(kColumnHeaders);
-    }
-    for (const auto restart : columns.restarts) {
-      out.WriteU16(restart);
-    }
-    WriteHeads(out, block, kRestartInterval, block.head_skip);
-    if (packed) {
-      WriteHeaders(out, columns, shape, len_bits);
-    } else {
-      WriteColumn(out, columns.lcps, shape.lcp_width);
-      WriteColumn(out, columns.lens, shape.len_width);
-    }
-    out.WriteData(columns.suffixes.data(), columns.suffixes.size());
-  } else {
-    const uint32_t stride = FixedWidth(block) - block.prefix;
-    out.WriteV32(stride);
-    out.WriteV32(block.prefix);
-    if (PacksKeys(stride)) {
-      const auto shape = EfShapeOf(
-        count,
-        KeyRange(KeyAt(block, 0), KeyAt(block, count - 1), block.prefix));
-      out.WriteByte(static_cast<byte_type>(shape.low_bits));
-      out.WriteV64(shape.highs);
-      out.WriteData(block.keys.data() + block.prefix, stride);
-      out.WriteData(block.keys.data(), block.prefix);
-      WriteEfKeys(out, block, shape);
-    } else {
-      out.WriteData(block.keys.data(), block.prefix);
-      WriteHeads(out, block, kFixedHeadInterval, block.prefix);
-      for (size_t i = 0; i != count; ++i) {
-        out.WriteData(KeyAt(block, i).data() + block.prefix, stride);
-      }
-    }
-  }
-  out.WriteData(block.records.data(), block.records.size());
-  out.WriteData(kZeros, kSlack);
+  return static_cast<uint32_t>(
+    std::clamp<uint64_t>((share.bytes + keyed / 2) / keyed, 1, kMaxBlockPages));
 }
 
 }  // namespace
@@ -508,126 +51,9 @@ void RecordOutput::WriteDirect(const byte_type*, size_t) {
                           kMaxRecordBytes, " bytes"));
 }
 
-void FsstEncoderDelete::operator()(
-  duckdb_fsst_encoder_t* encoder) const noexcept {
-  duckdb_fsst_destroy(encoder);
-}
-
-duckdb_fsst_encoder_t* FieldWriter::Encoder() {
-  if (!_trained) {
-    _trained = true;
-    TrainFsst();
-  }
-  return _fsst.get();
-}
-
-void FieldWriter::TrainFsst() {
-  bstring arena;
-  std::vector<size_t> lengths;
-  _reader->SampleTerms(kFsstSampleBytes, [&](std::span<const bytes_view> run) {
-    for (size_t i = 1; i < run.size(); ++i) {
-      const auto suffix = run[i].substr(CommonPrefixLength(run[i - 1], run[i]));
-      if (!suffix.empty()) {
-        arena.append(suffix);
-        lengths.push_back(suffix.size());
-      }
-    }
-  });
-  if (lengths.empty()) {
-    return;
-  }
-  auto starts = SampleStarts(arena, lengths);
-  FsstEncoder encoder{
-    duckdb_fsst_create(lengths.size(), lengths.data(), starts.data(), 0)};
-  if (!encoder) {
-    return;
-  }
-  unsigned char table[FSST_MAXHEADER];
-  const auto table_size = duckdb_fsst_export(encoder.get(), table);
-  if (!Compresses(encoder.get(), arena, lengths, table_size)) {
-    return;
-  }
-  _fsst = std::move(encoder);
-  _fsst_table.assign(reinterpret_cast<const char*>(table), table_size);
-}
-
 bool FieldWriter::OwnsBlock() const noexcept {
   return _first_block != kNoBlock &&
          (_first_block != _blocks || _first_entry == 0);
-}
-
-void FieldWriter::EncodeEntries(VarColumns& columns, uint32_t from, uint32_t to,
-                                const VarEntry* last) {
-  auto& block = _block;
-  const auto count = static_cast<uint32_t>(block.ends.size());
-  SDB_ASSERT(to <= count || (to == count + 1 && last));
-  _batch_entries.clear();
-  _batch_lengths.clear();
-  _batch_starts.clear();
-  uint64_t raw = 0;
-  uint32_t base = kNoBase;
-  for (uint32_t i = from; i != to; ++i) {
-    const auto& entry = _batch_entries.emplace_back(
-      i < count ? VarEntryAt(block, i, KeyAt(block, i)) : *last);
-    if (i != 0) {
-      base = std::min(base, static_cast<uint32_t>(entry.lcp));
-    }
-    if (!entry.restart) {
-      _batch_lengths.push_back(entry.suffix.size());
-      _batch_starts.push_back(const_cast<unsigned char*>(entry.suffix.data()));
-      raw += entry.suffix.size();
-    }
-  }
-  const size_t n = _batch_lengths.size();
-  _coded_lengths.resize(n);
-  _coded_starts.resize(n);
-  if (n != 0) {
-    utils::StrResizeAmortized(_coded, 7 * n + 2 * raw);
-    const size_t done =
-      duckdb_fsst_compress(_fsst.get(), n, _batch_lengths.data(),
-                           _batch_starts.data(), _coded.size(), _coded.data(),
-                           _coded_lengths.data(), _coded_starts.data());
-    SDB_ASSERT(done == n);
-  }
-  LowerTo(columns, base);
-  size_t coded = 0;
-  for (const auto& entry : _batch_entries) {
-    if (entry.restart) {
-      AppendEntry(columns, true, entry.lcp, entry.suffix);
-    } else {
-      AppendEntry(columns, false, entry.lcp,
-                  {_coded_starts[coded], _coded_lengths[coded]});
-      ++coded;
-    }
-  }
-}
-
-void FieldWriter::EncodeDeferred() {
-  auto& block = _block;
-  const auto count = static_cast<uint32_t>(block.ends.size());
-  if (block.coded == count) {
-    return;
-  }
-  EncodeEntries(block.columns, block.coded, count, nullptr);
-  block.coded = count;
-  block.deferred = 0;
-  block.deferred_len = 0;
-}
-
-bytes_view FieldWriter::EncodeSuffix(bytes_view suffix) {
-  if (suffix.empty()) {
-    return {};
-  }
-  size_t length = suffix.size();
-  auto* input = const_cast<unsigned char*>(suffix.data());
-  utils::StrResizeAmortized(_coded, 7 + 2 * length);
-  size_t out_length = 0;
-  unsigned char* out = nullptr;
-  const size_t done =
-    duckdb_fsst_compress(_fsst.get(), 1, &length, &input, _coded.size(),
-                         _coded.data(), &out_length, &out);
-  SDB_ASSERT(done == 1);
-  return {out, out_length};
 }
 
 void FieldWriter::prepare(const FlushState& state, uint64_t keyed_dicts) {
@@ -703,18 +129,16 @@ void FieldWriter::write(DictRef dict, const BasicTermReader& reader) {
   const auto props = reader.properties();
   _pw.SetTermPayloadWriter(reader.PayloadWriter());
   _pw.BeginField(props);
-  _block.run.Start(props.index_features);
+  _records.run.Start(props.index_features);
   _width = reader.key_width <= kMaxStride ? reader.key_width : 0;
-  _reader = &reader;
-  _trained = _width != 0;
-  _trie.Reset();
-  _masks.clear();
+  _encoder.StartField(reader, _width);
+  StartBlocks();
+  _index.Reset(GatesTerms(_dict.member, _width));
   if (IsSubsetOf(IndexFeatures::Ranges, props.index_features) && _width != 0) {
     SDB_ASSERT(!IsSubsetOf(IndexFeatures::Pos, props.index_features));
     _ranges.Begin(_pw, _docs);
   }
 
-  const uint64_t first_inline = _inline.size();
   uint64_t total_freq = 0;
   uint64_t docs_sum = 0;
   const bool freq_exists =
@@ -762,8 +186,8 @@ void FieldWriter::write(DictRef dict, const BasicTermReader& reader) {
     }
   }
 
-  EndField(id, props, total_freq, docs_sum, first_inline);
-  if (_block.kind == BlockKind::VarFsst) {
+  EndField(id, props, total_freq, docs_sum);
+  if (_encoder.Coded()) {
     Cut();
   }
   CloseRun();
@@ -780,10 +204,9 @@ void FieldWriter::WriteLevels(FieldHead& head) {
     _min.clear();
     _terms = 0;
     _first_block = kNoBlock;
-    _trie.Reset();
-    _masks.clear();
-    _block.run.Start(head.features);
-    const uint64_t first_inline = _inline.size();
+    _index.Reset(GatesTerms(_dict.member, _width));
+    _records.run.Start(head.features);
+    StartBlocks();
     const uint32_t count = _ranges.Count(level);
     for (uint32_t i = 0; i != count; ++i) {
       const auto entry = _ranges.At(level, i);
@@ -799,7 +222,7 @@ void FieldWriter::WriteLevels(FieldHead& head) {
     dict.doc_count = head.doc_count;
     dict.width = head.width;
     dict.min = ViewCast<char>(bytes_view{_min});
-    EndKeyed(dict, first_inline);
+    EndKeyed(dict);
     CloseRun();
   }
 }
@@ -828,234 +251,91 @@ void FieldWriter::Add(bytes_view term, const PostingMeta& meta) {
 void FieldWriter::Commit(bytes_view term, const PostingMeta& meta) {
   if (!Append(term, meta)) {
     if (_first_block != kNoBlock) {
-      FeedTrie();
+      FeedIndex();
     }
     Cut();
     Append(term, meta);
   }
-  _inline.append(meta.Inline());
   if (_first_block == kNoBlock) {
     _first_block = _blocks;
-    _first_entry = static_cast<uint32_t>(_block.ends.size() - 1);
-    _first_record = static_cast<uint32_t>(_block.records.size());
+    _first_entry = _encoder.Count() - 1;
+    _first_record = static_cast<uint32_t>(_records.bytes.size());
   }
 }
 
 void FieldWriter::CloseRun() {
-  auto& block = _block;
-  if (block.run.Empty()) {
+  auto& run = _records.run;
+  auto& bytes = _records.bytes;
+  if (run.Empty()) {
     return;
   }
-  [[maybe_unused]] const auto size = block.records.size() + block.run.Bytes();
-  BytesOutput out{block.records};
-  block.run.Write(out);
-  SDB_ASSERT(block.records.size() == size);
-  block.run.Clear();
-}
-
-void FieldWriter::FeedTrie() {
-  const auto prefix = _key_prefix.size();
-  const auto block = _blocks - _first_block;
-  const auto first = _first_block == _blocks ? _first_entry : 0;
-  const auto last = static_cast<uint32_t>(_block.ends.size() - 1);
-  if (_dict.member == DictMember::Strings && _width == 0) {
-    ByteSet seen;
-    for (uint32_t i = first; i <= last; ++i) {
-      const auto term = KeyAt(_block, i).substr(prefix);
-      _trie.Add(term, block);
-      AddBytes(seen, term);
-    }
-    for (size_t i = 0; i != kBlockMaskWords; ++i) {
-      char word[sizeof(uint64_t)];
-      absl::little_endian::Store64(word, seen.words[i]);
-      _masks.append(word, sizeof(word));
-    }
-    return;
-  }
-  _trie.Add(KeyAt(_block, first).substr(prefix), block);
-  if (last != first) {
-    _trie.Add(KeyAt(_block, last).substr(prefix), block);
-  }
+  [[maybe_unused]] const auto size = bytes.size() + run.Bytes();
+  BytesOutput out{bytes};
+  run.Write(out);
+  SDB_ASSERT(bytes.size() == size);
+  _records.inline_bytes += run.InlineBytes();
+  run.Clear();
 }
 
 bool FieldWriter::Append(bytes_view term, const PostingMeta& meta) {
-  auto& block = _block;
-  const auto staged = block.run.Stage(meta, _inline.size());
-  const uint64_t records = block.records.size() + block.run.SizeOf(staged);
-  const auto at = block.keys.size();
-  block.keys.append(_key_prefix);
-  block.keys.append(term);
-  const auto key = bytes_view{block.keys}.substr(at);
-  const bool fixed =
-    _width != 0 &&
-    (block.ends.empty() ||
-     (block.kind == BlockKind::FixedStride && FixedWidth(block) == key.size()));
-  if (!(fixed ? AppendFixedKey(key, records) : AppendVarKey(key, records))) {
-    block.keys.resize(at);
+  auto& run = _records.run;
+  const auto staged = run.Stage(meta);
+  const uint64_t records = _records.bytes.size() + run.SizeOf(staged);
+  if (!_encoder.Append(_key_prefix, term, records, OwnsBlock())) {
     return false;
   }
-  block.run.Commit(meta, staged);
-  block.ends.push_back(static_cast<uint32_t>(block.keys.size()));
+  run.Commit(meta, staged);
   return true;
 }
 
-bool FieldWriter::AppendFixedKey(bytes_view key, uint64_t records) {
-  auto& block = _block;
-  const auto count = static_cast<uint32_t>(block.ends.size());
-  const auto width = static_cast<uint32_t>(key.size());
-  const auto prefix =
-    count == 0
-      ? width
-      : static_cast<uint32_t>(CommonPrefixLength(KeyAt(block, 0), key));
-  const uint64_t universe =
-    count == 0 ? 0 : KeyRange(KeyAt(block, 0), key, prefix);
-  const uint64_t size = FixedBytes(count + 1, records, width, prefix, universe);
-  if (count != 0 && size > kPage) {
-    return false;
-  }
-  block.size = size;
-  block.prefix = prefix;
-  block.kind = BlockKind::FixedStride;
-  return true;
-}
-
-bool FieldWriter::AppendVarKey(bytes_view key, uint64_t records) {
-  auto& block = _block;
-  const auto count = static_cast<uint32_t>(block.ends.size());
-  if (block.kind == BlockKind::VarFsst) {
-    return AppendCodedKey(VarEntryAt(block, count, key), records);
-  }
-  const bool converts = block.kind == BlockKind::FixedStride;
-  if (converts) {
-    for (uint32_t i = 0; i != count; ++i) {
-      const auto entry = VarEntryAt(block, i, KeyAt(block, i));
-      block.head_skip = entry.head_skip;
-      AppendEntry(block.columns, entry.restart, entry.lcp, entry.suffix);
-    }
-  }
-  const auto entry = VarEntryAt(block, count, key);
-  const uint64_t size =
-    SizeWith(block.columns, count, entry, entry.suffix.size(), records);
-  if (count != 0 && size > kPage) {
-    if (converts) {
-      Clear(block.columns);
-      block.head_skip = 0;
-      return false;
-    }
-    return OwnsBlock() && EncodeBlock(entry, records);
-  }
-  block.kind = BlockKind::Var;
-  AppendEntry(block.columns, entry.restart, entry.lcp, entry.suffix);
-  block.size = size;
-  block.head_skip = entry.head_skip;
-  return true;
-}
-
-bool FieldWriter::EncodeBlock(const VarEntry& entry, uint64_t records) {
-  if (!Encoder()) {
-    return false;
-  }
-  auto& block = _block;
-  const auto count = static_cast<uint32_t>(block.ends.size());
-  Clear(_encoded);
-  EncodeEntries(_encoded, 0, count + 1, &entry);
-  const auto head_skip = entry.head_skip;
-  const uint64_t size = VarBytes(count + 1, head_skip, _encoded.suffixes.size(),
-                                 records, ShapeOf(_encoded));
-  if (size > kPage) {
-    return false;
-  }
-  std::swap(block.columns, _encoded);
-  block.kind = BlockKind::VarFsst;
-  block.size = size;
-  block.coded = count + 1;
-  block.head_skip = head_skip;
-  _fsst_used = true;
-  return true;
-}
-
-bool FieldWriter::AppendCodedKey(const VarEntry& entry, uint64_t records) {
-  auto& block = _block;
-  const auto count = static_cast<uint32_t>(block.ends.size());
-  const uint64_t worst = entry.suffix.size() * (entry.restart ? 1 : 2);
-  const auto lcp = static_cast<uint32_t>(entry.lcp);
-  const auto deferred_len =
-    std::max(block.deferred_len, static_cast<uint32_t>(worst));
-  const Shape shape{
-    .lcp_width = ColumnWidth(std::max(block.columns.max_lcp, lcp)),
-    .len_width = ColumnWidth(std::max(block.columns.max_len, deferred_len)),
-    .packing = PackingBound(block.columns, lcp, count + 1 - block.coded),
-  };
-  const uint64_t bound = VarBytes(
-    count + 1, entry.head_skip,
-    block.columns.suffixes.size() + block.deferred + worst, records, shape);
-  if (bound <= kPage) {
-    Lower(block.columns, lcp);
-    block.columns.max_lcp = std::max(block.columns.max_lcp, lcp);
-    block.deferred += worst;
-    block.deferred_len = deferred_len;
-    block.size = bound;
-    block.head_skip = entry.head_skip;
-    return true;
-  }
-  EncodeDeferred();
-  const auto suffix = entry.restart ? entry.suffix : EncodeSuffix(entry.suffix);
-  const uint64_t size =
-    SizeWith(block.columns, count, entry, suffix.size(), records);
-  if (size > kPage) {
-    return false;
-  }
-  AppendEntry(block.columns, entry.restart, entry.lcp, suffix);
-  block.coded = count + 1;
-  block.size = size;
-  block.head_skip = entry.head_skip;
-  return true;
-}
-
-void FieldWriter::Seal() {
-  auto& block = _block;
-  if (block.kind != BlockKind::VarFsst) {
-    return;
-  }
-  EncodeDeferred();
-  block.size =
-    VarBytes(block.ends.size(), block.head_skip, block.columns.suffixes.size(),
-             block.records.size(), ShapeOf(block.columns));
+void FieldWriter::FeedIndex() {
+  const auto prefix = _key_prefix.size();
+  const auto first = _first_block == _blocks ? _first_entry : 0;
+  _index.Add(_blocks - _first_block, _encoder.Count() - first, [&](uint32_t i) {
+    return _encoder.Key(first + i).substr(prefix);
+  });
 }
 
 void FieldWriter::Cut() {
-  if (_block.ends.empty()) {
+  if (_encoder.Empty()) {
     return;
   }
   CloseRun();
-  Seal();
-  WriteBlock();
-  StringOutput{_inline_starts}.WriteV64(_inline_start - _inline_last);
-  _inline_last = _inline_start;
-  _inline_start = _inline.size();
-  Clear(_block);
+  const uint64_t size = _encoder.Seal(_records.bytes.size());
+  WriteBlock(size);
+  _share.bytes += size;
+  _share.inline_bytes += _records.inline_bytes;
+  _encoder.Reset();
+  _encoder.SetPages(PagesFor(_share));
+  _records.bytes.clear();
+  _records.inline_bytes = 0;
 }
 
-void FieldWriter::WriteBlock() {
+void FieldWriter::StartBlocks() noexcept {
+  _share = {};
+  if (_encoder.Empty()) {
+    _encoder.SetPages(1);
+  }
+}
+
+void FieldWriter::WriteBlock(uint64_t size) {
   const uint64_t position = _out->Position();
   const uint64_t pad = (kPage - position % kPage) % kPage;
   _out->WriteData(kZeros, pad);
   if (_blocks == 0) {
     _first_page = (position + pad) / kPage;
   }
-  const uint64_t size = _block.size;
   const auto pages = static_cast<uint32_t>((size + kPage - 1) / kPage);
   if (pages != 1) {
     _spans.push_back({.block = _blocks, .extra = pages - 1});
   }
-  Serialize(_block, *_out);
+  _encoder.Serialize(*_out, _records.bytes);
   SDB_ASSERT(_out->Position() == position + pad + size);
   ++_blocks;
 }
 
 void FieldWriter::EndField(field_id id, const FieldProperties& props,
-                           uint64_t total_freq, uint64_t docs_sum,
-                           uint64_t first_inline) {
+                           uint64_t total_freq, uint64_t docs_sum) {
   if (_ranges.Active()) {
     _ranges.Finish(_terms);
   }
@@ -1087,29 +367,22 @@ void FieldWriter::EndField(field_id id, const FieldProperties& props,
     head.record_inline = ViewCast<char>(_single.Inline());
     return;
   }
-  if (_fsst_used) {
-    head.fsst_table = std::move(_fsst_table);
-  }
-  EndKeyed(head, first_inline);
+  head.fsst_table = _encoder.TakeFsstTable();
+  EndKeyed(head);
 }
 
-void FieldWriter::EndKeyed(FieldHead& head, uint64_t first_inline) {
-  head.max = ViewCast<char>(
-    KeyAt(_block, _block.ends.size() - 1).substr(_key_prefix.size()));
+void FieldWriter::EndKeyed(FieldHead& head) {
+  const uint32_t last = _encoder.Count() - 1;
+  head.max = ViewCast<char>(_encoder.Key(last).substr(_key_prefix.size()));
   head.first_block = _first_block;
   head.first_entry = _first_entry;
   head.first_record = _first_record;
   head.last_block = _blocks;
-  head.last_entry = static_cast<uint32_t>(_block.ends.size() - 1);
-  if (_first_block == _blocks) {
-    head.inline_base = first_inline;
-    head.inline_size = _inline.size() - first_inline;
-  } else {
-    FeedTrie();
-    head.prefix_trie = _trie.Finish();
-    head.block_masks = std::move(_masks);
+  head.last_entry = last;
+  if (_first_block != _blocks) {
+    FeedIndex();
+    _index.Finish(head);
   }
-  _masks.clear();
 }
 
 void FieldWriter::ResetField() noexcept {
@@ -1117,23 +390,20 @@ void FieldWriter::ResetField() noexcept {
   _min.clear();
   _terms = 0;
   _first_block = kNoBlock;
-  _fsst.reset();
-  _fsst_table.clear();
-  _reader = nullptr;
-  _trained = false;
-  _fsst_used = false;
+  _encoder.EndField();
 }
 
 void FieldWriter::Reset() noexcept {
   ResetField();
-  Clear(_block);
-  _inline.clear();
+  _encoder.Reset();
+  _encoder.SetPages(1);
+  _share = {};
+  _records.run.Clear();
+  _records.bytes.clear();
+  _records.inline_bytes = 0;
   _spans.clear();
-  _inline_starts.clear();
   _heads.clear();
   _first_page = 0;
-  _inline_start = 0;
-  _inline_last = 0;
   _blocks = 0;
   _ordinal = 0;
   _ordinal_bytes = 1;
@@ -1151,13 +421,9 @@ void FieldWriter::end() {
       .first_page = _first_page,
       .spans = std::move(_spans),
       .inline_offset = out.Position(),
-      .inline_size = _inline.size(),
       .fields = std::move(_heads),
-      .inline_starts =
-        _inline.empty() ? std::string{} : std::move(_inline_starts),
       .ordinal_bytes = _ordinal_bytes,
     };
-    out.WriteData(_inline.data(), _inline.size());
     _idx->SetTerms(std::move(terms));
   }
   Reset();

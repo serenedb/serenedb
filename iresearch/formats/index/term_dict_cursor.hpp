@@ -20,741 +20,23 @@
 
 #pragma once
 
-#include <absl/base/internal/endian.h>
-
 #include <algorithm>
-#include <array>
-#include <bit>
-#include <cstring>
-#include <limits>
-#include <type_traits>
+#include <cstdint>
+#include <utility>
 
-#include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/index/field_reader.hpp"
+#include "iresearch/formats/index/term_dict_block.hpp"
 #include "iresearch/formats/index/term_dict_format.hpp"
 #include "iresearch/formats/index/term_dict_records.hpp"
-#include "iresearch/formats/posting/block_codec.hpp"
-#include "iresearch/formats/posting/common.hpp"
-#include "iresearch/utils/bit_utils.hpp"
-#include "iresearch/utils/bytes_utils.hpp"
-#include "iresearch/utils/containers/small_vector.hpp"
-#include "iresearch/utils/lower_bound.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.hpp"
+#include "iresearch/utils/file_utils_ext.hpp"
 #include "iresearch/utils/string.hpp"
-#include "iresearch/utils/string_utils.hpp"
 
 namespace irs::term_dict {
-
-inline constexpr uint32_t kNoEntry = std::numeric_limits<uint32_t>::max();
-inline constexpr uint32_t kNoSkip = std::numeric_limits<uint32_t>::max();
 
 enum class Position : uint8_t {
   Before,
   At,
   After,
-};
-
-struct Column {
-  const byte_type* data;
-  uint32_t width;
-};
-
-struct PackedHeaders {
-  const byte_type* codes;
-  const byte_type* escaped_entries;
-  uint32_t escaped;
-  uint32_t lcp_base;
-  uint32_t len_bits;
-};
-
-struct FixedBound {
-  uint32_t entry;
-  uint32_t at;
-};
-
-struct EfKeys {
-  IRS_FORCE_INLINE uint64_t Word(uint32_t word) const noexcept {
-    return absl::little_endian::Load64(upper + sizeof(uint64_t) * word);
-  }
-  IRS_FORCE_INLINE bool Bit(uint32_t at) const noexcept {
-    return (Word(at / kEfWordBits) >> (at % kEfWordBits) & 1) != 0;
-  }
-  IRS_FORCE_INLINE uint32_t Sample(uint32_t sample) const noexcept {
-    return absl::little_endian::Load16(samples + kEfSampleBytes * sample);
-  }
-  IRS_FORCE_INLINE uint64_t Low(uint32_t entry) const noexcept {
-    const uint64_t bit = uint64_t{entry} * low_bits;
-    const auto* p = lows + bit / 8;
-    const auto shift = static_cast<uint32_t>(bit % 8);
-    uint64_t word = absl::little_endian::Load64(p) >> shift;
-    if (low_bits + shift > 64) [[unlikely]] {
-      word |= uint64_t{p[sizeof(uint64_t)]} << (64 - shift);
-    }
-    return word & low_mask;
-  }
-  IRS_FORCE_INLINE uint64_t ValueAt(uint32_t entry,
-                                    uint32_t at) const noexcept {
-    return uint64_t{at - entry} << low_bits | Low(entry);
-  }
-
-  uint32_t At(uint32_t entry) const noexcept {
-    const uint32_t from = Sample(entry / kEfSample);
-    uint64_t rank = entry % kEfSample;
-    if (rank == 0) {
-      return from;
-    }
-    uint32_t word = from / kEfWordBits;
-    uint64_t bits = Word(word) & (~uint64_t{0} << (from % kEfWordBits));
-    for (auto count = static_cast<uint64_t>(std::popcount(bits)); count <= rank;
-         count = static_cast<uint64_t>(std::popcount(bits))) {
-      rank -= count;
-      bits = Word(++word);
-    }
-    return word * kEfWordBits + static_cast<uint32_t>(SelectInWord(bits, rank));
-  }
-
-  uint32_t After(uint32_t at) const noexcept {
-    uint32_t word = at / kEfWordBits;
-    uint64_t bits = Word(word) & (~uint64_t{1} << (at % kEfWordBits));
-    while (bits == 0) {
-      bits = Word(++word);
-    }
-    return word * kEfWordBits + static_cast<uint32_t>(std::countr_zero(bits));
-  }
-
-  uint32_t Zero(uint32_t zero) const noexcept {
-    uint32_t lo = 0;
-    for (auto size = static_cast<uint32_t>(EfSamples(count)); size > 1;) {
-      const uint32_t half = size / 2;
-      const uint32_t mid = lo + half;
-      lo = Sample(mid) - kEfSample * mid <= zero ? mid : lo;
-      size -= half;
-    }
-    const uint32_t from = Sample(lo);
-    uint64_t rank = zero - (from - kEfSample * lo);
-    uint32_t word = from / kEfWordBits;
-    uint64_t bits = ~Word(word) & (~uint64_t{0} << (from % kEfWordBits));
-    for (auto count = static_cast<uint64_t>(std::popcount(bits)); count <= rank;
-         count = static_cast<uint64_t>(std::popcount(bits))) {
-      rank -= count;
-      bits = ~Word(++word);
-    }
-    return word * kEfWordBits + static_cast<uint32_t>(SelectInWord(bits, rank));
-  }
-
-  FixedBound LowerBound(uint64_t value) const noexcept {
-    const uint64_t high = value >> low_bits;
-    if (high > highs) {
-      return {.entry = count, .at = 0};
-    }
-    uint32_t entry = 0;
-    uint32_t at = 0;
-    if (high != 0) {
-      at = Zero(static_cast<uint32_t>(high - 1)) + 1;
-      entry = at - static_cast<uint32_t>(high);
-    }
-    const uint64_t low = value & low_mask;
-    for (; entry != count && Bit(at); ++entry, ++at) {
-      if (Low(entry) >= low) {
-        return {.entry = entry, .at = at};
-      }
-    }
-    return {.entry = entry, .at = entry == count ? 0 : After(at)};
-  }
-
-  uint64_t base;
-  uint64_t low_mask;
-  const byte_type* samples;
-  const byte_type* lows;
-  const byte_type* upper;
-  uint64_t highs;
-  uint32_t low_bits;
-  uint32_t count;
-};
-
-struct BlockView {
-  bool fixed;
-  bool coded;
-  uint32_t count;
-  uint32_t restarts;
-  uint32_t stride;
-  uint32_t prefix;
-  uint32_t head_skip;
-  Column lcps;
-  Column lens;
-  PackedHeaders headers;
-  EfKeys ef;
-  const byte_type* table;
-  const byte_type* heads;
-  const byte_type* suffixes;
-  const byte_type* keys;
-  const byte_type* records;
-};
-
-inline uint32_t SuffixOffset(const BlockView& view, uint32_t restart) noexcept {
-  return absl::little_endian::Load16(view.table + kVarRestart * restart);
-}
-
-inline bytes_view Prefix(const BlockView& view) noexcept {
-  return {view.table - view.prefix, view.prefix};
-}
-
-IRS_FORCE_INLINE inline uint64_t LoadStride(const byte_type* p,
-                                            uint32_t stride) noexcept {
-  SDB_ASSERT(PacksKeys(stride));
-  return absl::big_endian::Load64(p) >> (8 * (sizeof(uint64_t) - stride));
-}
-
-using StrideBuffer = std::array<byte_type, sizeof(uint64_t)>;
-
-inline bytes_view FixedKey(const BlockView& view, uint32_t entry, uint32_t at,
-                           StrideBuffer& buffer) noexcept {
-  if (!PacksKeys(view.stride)) {
-    return {view.keys + uint64_t{entry} * view.stride, view.stride};
-  }
-  absl::big_endian::Store64(buffer.data(),
-                            (view.ef.base + view.ef.ValueAt(entry, at))
-                              << (8 * (sizeof(uint64_t) - view.stride)));
-  return {buffer.data(), view.stride};
-}
-
-inline BlockView Parse(const byte_type* p, const duckdb_fsst_decoder_t* fsst) {
-  BlockView view{};
-  const auto kind = static_cast<BlockKind>(*p++);
-  view.fixed = kind == BlockKind::FixedStride;
-  view.coded = kind == BlockKind::VarFsst;
-  if (view.coded && !fsst) [[unlikely]] {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
-                    ERR_MSG("term dictionary: FSST-coded block in a segment "
-                            "without an FSST table"));
-  }
-  view.count = vread<uint32_t>(p);
-  const auto corrupted = [](std::string_view what, uint64_t value) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
-                    ERR_MSG("term dictionary: block ", what, " ", value));
-  };
-  if (kind == BlockKind::Var || kind == BlockKind::VarFsst) {
-    view.restarts = vread<uint32_t>(p);
-    if (view.restarts != (uint64_t{view.count} + kRestartInterval - 1) /
-                           kRestartInterval) [[unlikely]] {
-      corrupted("restart count", view.restarts);
-    }
-    const auto width = [&] {
-      const uint32_t width = *p++;
-      if (width != 1 && width != 2 && width != 4) [[unlikely]] {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
-                        ERR_MSG("term dictionary: column width ", width));
-      }
-      return width;
-    };
-    view.lcps.width = width();
-    view.lens.width = width();
-    const auto suffixes = vread<uint64_t>(p);
-    view.head_skip = vread<uint32_t>(p);
-    if (view.head_skip > suffixes) [[unlikely]] {
-      corrupted("head skip", view.head_skip);
-    }
-    const uint32_t layout = *p++;
-    const bool packed = layout != kColumnHeaders;
-    auto& headers = view.headers;
-    uint32_t columns = view.count;
-    if (packed) {
-      if (layout > kHeaderBits) [[unlikely]] {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
-                        ERR_MSG("term dictionary: header layout ", layout));
-      }
-      headers.len_bits = layout;
-      headers.lcp_base = vread<uint32_t>(p);
-      headers.escaped = vread<uint32_t>(p);
-      if (headers.escaped > view.count) [[unlikely]] {
-        corrupted("escaped headers", headers.escaped);
-      }
-      columns = headers.escaped;
-    }
-    view.table = p;
-    view.heads = p + kVarRestart * view.restarts;
-    view.lcps.data = view.heads + kHeadBytes * view.restarts;
-    if (packed) {
-      headers.codes = view.lcps.data;
-      headers.escaped_entries = headers.codes + view.count;
-      view.lcps.data =
-        headers.escaped_entries + kEscapedEntry * headers.escaped;
-    }
-    view.lens.data = view.lcps.data + uint64_t{columns} * view.lcps.width;
-    view.suffixes = view.lens.data + uint64_t{columns} * view.lens.width;
-    view.records = view.suffixes + suffixes;
-    return view;
-  }
-  if (view.fixed) {
-    view.stride = vread<uint32_t>(p);
-    view.prefix = vread<uint32_t>(p);
-    if (!PacksKeys(view.stride)) {
-      view.table = p + view.prefix;
-      view.restarts = static_cast<uint32_t>(FixedHeads(view.count));
-      view.heads = view.table;
-      view.keys = view.heads + kHeadBytes * view.restarts;
-      view.records = view.keys + uint64_t{view.count} * view.stride;
-      return view;
-    }
-    auto& ef = view.ef;
-    ef.count = view.count;
-    ef.low_bits = *p++;
-    if (ef.low_bits >= 8 * view.stride) [[unlikely]] {
-      corrupted("key low bits", ef.low_bits);
-    }
-    ef.highs = vread<uint64_t>(p);
-    const uint64_t max = ~uint64_t{0} >> (8 * (sizeof(uint64_t) - view.stride));
-    if (ef.count == 0 || ef.highs > max >> ef.low_bits ||
-        ef.highs + ef.count > 8 * uint64_t{kPage}) [[unlikely]] {
-      corrupted("key high bits", ef.highs);
-    }
-    ef.low_mask = (uint64_t{1} << ef.low_bits) - 1;
-    ef.base = LoadStride(p, view.stride);
-    p += view.stride;
-    view.table = p + view.prefix;
-    ef.samples = view.table;
-    ef.upper = ef.samples + kEfSampleBytes * EfSamples(ef.count);
-    ef.lows = ef.upper + EfUpperBytes(ef.count, ef.highs);
-    view.records = ef.lows + PackedBytes(ef.count, ef.low_bits);
-    return view;
-  }
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
-                  ERR_MSG("term dictionary: unknown block kind ",
-                          static_cast<uint32_t>(kind)));
-}
-
-struct Header {
-  uint32_t lcp;
-  uint32_t len;
-};
-
-IRS_FORCE_INLINE inline uint32_t ColumnAt(Column column,
-                                          uint32_t entry) noexcept {
-  if (column.width == 1) [[likely]] {
-    return column.data[entry];
-  }
-  if (column.width == 2) {
-    return absl::little_endian::Load16(column.data + 2 * uint64_t{entry});
-  }
-  return absl::little_endian::Load32(column.data + 4 * uint64_t{entry});
-}
-
-IRS_FORCE_INLINE inline Header ColumnsAt(const BlockView& view,
-                                         uint32_t i) noexcept {
-  return {
-    .lcp = ColumnAt(view.lcps, i),
-    .len = ColumnAt(view.lens, i),
-  };
-}
-
-IRS_NO_INLINE inline Header EscapedHeaderAt(const BlockView& view,
-                                            uint32_t entry) noexcept {
-  const auto& headers = view.headers;
-  const auto at =
-    static_cast<uint32_t>(PartitionIndex(0, headers.escaped, [&](size_t i) {
-      return absl::little_endian::Load16(headers.escaped_entries +
-                                         kEscapedEntry * i) < entry;
-    }));
-  SDB_ASSERT(at < headers.escaped &&
-             absl::little_endian::Load16(headers.escaped_entries +
-                                         kEscapedEntry * at) == entry);
-  return ColumnsAt(view, at);
-}
-
-IRS_FORCE_INLINE inline Header HeaderAt(const BlockView& view,
-                                        uint32_t entry) noexcept {
-  const auto& headers = view.headers;
-  Header header;
-  if (!headers.codes) {
-    header = ColumnsAt(view, entry);
-  } else if (const uint32_t code = headers.codes[entry]; code == kEscapedHeader)
-    [[unlikely]] {
-    header = EscapedHeaderAt(view, entry);
-  } else {
-    header = {
-      .lcp = headers.lcp_base + (code >> headers.len_bits),
-      .len = code & ((uint32_t{1} << headers.len_bits) - 1),
-    };
-  }
-  if (entry % kRestartInterval == 0) {
-    header.len += header.lcp;
-  }
-  return header;
-}
-
-inline bytes_view SymbolAt(const duckdb_fsst_decoder_t& decoder,
-                           size_t code) noexcept {
-  static_assert(std::endian::native == std::endian::little);
-  return {reinterpret_cast<const byte_type*>(&decoder.symbol[code]),
-          decoder.len[code]};
-}
-
-struct Symbol {
-  uint64_t word;
-  uint32_t len;
-};
-
-IRS_FORCE_INLINE inline Symbol NextSymbol(const duckdb_fsst_decoder_t& decoder,
-                                          const byte_type* codes,
-                                          size_t& i) noexcept {
-  const size_t code = codes[i++];
-  if (code != FSST_ESC) [[likely]] {
-    return {
-      .word = absl::little_endian::Load64(SymbolAt(decoder, code).data()),
-      .len = decoder.len[code],
-    };
-  }
-  return {.word = codes[i++], .len = 1};
-}
-
-inline size_t DecodeInto(const duckdb_fsst_decoder_t& decoder, bytes_view codes,
-                         byte_type* out, size_t limit) noexcept {
-  size_t pos = 0;
-  for (size_t i = 0; i != codes.size() && pos < limit;) {
-    const auto symbol = NextSymbol(decoder, codes.data(), i);
-    absl::little_endian::Store64(out + pos, symbol.word);
-    pos += symbol.len;
-  }
-  return pos;
-}
-
-inline size_t DecodeAll(const duckdb_fsst_decoder_t& decoder, bytes_view codes,
-                        byte_type* out) noexcept {
-  size_t pos = 0;
-  for (size_t i = 0; i != codes.size();) {
-    const auto symbol = NextSymbol(decoder, codes.data(), i);
-    absl::little_endian::Store64(out + pos, symbol.word);
-    pos += symbol.len;
-  }
-  return pos;
-}
-
-inline void DecodeRange(const duckdb_fsst_decoder_t& decoder, bytes_view codes,
-                        size_t from, size_t to, byte_type* out) noexcept {
-  size_t pos = 0;
-  for (size_t i = 0; i != codes.size() && pos < to;) {
-    const auto symbol = NextSymbol(decoder, codes.data(), i);
-    const size_t end = pos + symbol.len;
-    for (size_t at = std::max(pos, from); at < std::min(end, to); ++at) {
-      out[at - from] = static_cast<byte_type>(symbol.word >> (8 * (at - pos)));
-    }
-    pos = end;
-  }
-  SDB_ASSERT(pos >= to);
-}
-
-inline void BytesBefore(const BlockView& view,
-                        const duckdb_fsst_decoder_t* decoder, uint32_t entry,
-                        const byte_type* data, uint32_t lcp, uint32_t count,
-                        byte_type* out) noexcept {
-  SDB_ASSERT(count <= lcp);
-  if (entry % kRestartInterval == 0) {
-    std::memcpy(out, data - count, count);
-    return;
-  }
-  const uint32_t lo = lcp - count;
-  uint32_t hi = lcp;
-  for (uint32_t j = entry; hi > lo;) {
-    SDB_ASSERT(j % kRestartInterval != 0);
-    --j;
-    const auto header = HeaderAt(view, j);
-    data -= header.len;
-    const bool restart = j % kRestartInterval == 0;
-    const uint32_t start = restart ? 0 : header.lcp;
-    if (start >= hi) {
-      continue;
-    }
-    const uint32_t from = std::max(start, lo);
-    if (restart || !view.coded) {
-      std::memcpy(out + (from - lo), data + (from - start), hi - from);
-    } else {
-      SDB_ASSERT(decoder);
-      DecodeRange(*decoder, {data, header.len}, from - start, hi - start,
-                  out + (from - lo));
-    }
-    hi = from;
-  }
-}
-
-enum class Order : uint8_t {
-  Less,
-  Equal,
-  Greater,
-};
-
-struct Compared {
-  size_t common;
-  Order order;
-};
-
-IRS_FORCE_INLINE inline Compared CompareRaw(const byte_type* suffix,
-                                            size_t size, Probe rest) noexcept {
-  const size_t n = std::min(size, rest.size);
-  const size_t common = PaddedMismatch(suffix, rest.data, n);
-  if (common != n) {
-    return {
-      .common = common,
-      .order =
-        suffix[common] < rest.data[common] ? Order::Less : Order::Greater,
-    };
-  }
-  return {
-    .common = common,
-    .order = size == rest.size
-               ? Order::Equal
-               : (size < rest.size ? Order::Less : Order::Greater),
-  };
-}
-
-struct CodedCompared {
-  Compared compared;
-  size_t code;
-  size_t decoded;
-};
-
-template<bool Materialize>
-IRS_FORCE_INLINE CodedCompared
-CompareCoded(const duckdb_fsst_decoder_t& decoder, bytes_view codes, Probe rest,
-             byte_type* out) noexcept {
-  size_t pos = 0;
-  for (size_t i = 0; i != codes.size();) {
-    const auto [symbol, len] = NextSymbol(decoder, codes.data(), i);
-    if constexpr (Materialize) {
-      absl::little_endian::Store64(out + pos, symbol);
-    }
-    const size_t left = rest.size - pos;
-    const uint64_t diff = symbol ^ absl::little_endian::Load64(rest.data + pos);
-    const size_t at = std::countr_zero(diff) / 8;
-    if (at < std::min<size_t>(len, left)) {
-      const auto byte = static_cast<byte_type>(symbol >> (8 * at));
-      return {
-        .compared = {.common = pos + at,
-                     .order = byte < rest.data[pos + at] ? Order::Less
-                                                         : Order::Greater},
-        .code = i,
-        .decoded = pos + len,
-      };
-    }
-    if (len > left) {
-      return {
-        .compared = {.common = rest.size, .order = Order::Greater},
-        .code = i,
-        .decoded = pos + len,
-      };
-    }
-    pos += len;
-  }
-  return {
-    .compared = {.common = pos,
-                 .order = pos == rest.size ? Order::Equal : Order::Less},
-    .code = codes.size(),
-    .decoded = pos,
-  };
-}
-
-inline bytes_view RestartKey(const BlockView& view, uint32_t restart) noexcept {
-  const auto header = HeaderAt(view, restart * kRestartInterval);
-  return {view.suffixes + SuffixOffset(view, restart), header.len};
-}
-
-struct HeadCounts {
-  uint32_t less;
-  uint32_t not_after;
-};
-
-template<typename Head>
-IRS_FORCE_INLINE inline HeadCounts CountHeads(const byte_type* heads,
-                                              uint32_t from, uint32_t count,
-                                              Head head) noexcept {
-  static_assert(std::endian::native == std::endian::little);
-  static_assert(std::is_same_v<Head, uint16_t> ||
-                std::is_same_v<Head, uint32_t>);
-  constexpr uint32_t kLanes = 16 / sizeof(Head);
-  constexpr uint32_t kMaskBits = 64 / kLanes;
-  using Lanes = Head __attribute__((vector_size(16)));
-  using MaskLane = std::conditional_t<kMaskBits == 16, int16_t, int8_t>;
-  using Mask = MaskLane __attribute__((vector_size(8)));
-  const auto load = [&](uint32_t i) {
-    Head value;
-    std::memcpy(&value, heads + i * sizeof(Head), sizeof(Head));
-    return value;
-  };
-  uint32_t not_after = from;
-  for (uint32_t i = from; i < count; i += kLanes) {
-    Lanes lanes;
-    std::memcpy(&lanes, heads + i * sizeof(Head), sizeof(lanes));
-    const auto bits =
-      std::bit_cast<uint64_t>(__builtin_convertvector(lanes <= head, Mask));
-    const auto run = std::min<uint32_t>(
-      count - i, static_cast<uint32_t>(std::countr_one(bits)) / kMaskBits);
-    not_after = i + run;
-    if (run != kLanes) {
-      break;
-    }
-  }
-  uint32_t less = not_after;
-  while (less != from && load(less - 1) == head) {
-    --less;
-  }
-  return {.less = less, .not_after = not_after};
-}
-
-inline uint32_t RestartsNotAfter(const BlockView& view, Probe probe,
-                                 uint32_t from = 0) noexcept {
-  const size_t skip = view.head_skip;
-  const auto* first = view.suffixes;
-  SDB_ASSERT(SuffixOffset(view, 0) == 0);
-  SDB_ASSERT(skip <= RestartKey(view, 0).size());
-  const size_t shared = std::min(skip, probe.size);
-  if (const size_t common = PaddedMismatch(first, probe.data, shared);
-      common != shared) {
-    return first[common] < probe.data[common] ? view.restarts : 0;
-  }
-  if (probe.size < skip) {
-    return 0;
-  }
-  const auto counts = CountHeads(view.heads, from, view.restarts,
-                                 absl::big_endian::Load32(probe.data + skip));
-  return static_cast<uint32_t>(
-    PartitionIndex(counts.less, counts.not_after, [&](size_t restart) {
-      const auto key = RestartKey(view, static_cast<uint32_t>(restart));
-      return CompareRaw(key.data(), key.size(), probe).order != Order::Greater;
-    }));
-}
-
-IRS_FORCE_INLINE inline Order Locate(const byte_type* suffix, uint32_t size,
-                                     uint32_t lcp, Probe probe,
-                                     const duckdb_fsst_decoder_t* fsst,
-                                     size_t& matched) noexcept {
-  if (lcp != matched) {
-    return lcp > matched ? Order::Less : Order::Greater;
-  }
-  const Probe rest{probe.data + matched, probe.size - matched};
-  const auto compared =
-    fsst ? CompareCoded<false>(*fsst, {suffix, size}, rest, nullptr).compared
-         : CompareRaw(suffix, size, rest);
-  matched += compared.common;
-  return compared.order;
-}
-
-struct Bound {
-  uint32_t entry;
-  uint32_t restarts;
-  bool equal;
-};
-
-inline Bound VarLowerBound(const BlockView& view, Probe probe,
-                           const duckdb_fsst_decoder_t* fsst,
-                           uint32_t from = 0) noexcept {
-  const uint32_t restarts = RestartsNotAfter(view, probe, from);
-  if (restarts == 0) {
-    return {.entry = 0, .restarts = 0, .equal = false};
-  }
-  const uint32_t group = restarts - 1;
-  const uint32_t first = group * kRestartInterval;
-  const uint32_t end = std::min(first + kRestartInterval, view.count);
-  const auto* sp = view.suffixes + SuffixOffset(view, group);
-  size_t matched = 0;
-  for (uint32_t entry = first; entry != end; ++entry) {
-    const auto header = HeaderAt(view, entry);
-    const auto* suffix = sp;
-    sp += header.len;
-    const bool restart = entry == first;
-    const auto order =
-      Locate(suffix, header.len, restart ? 0 : header.lcp, probe,
-             view.coded && !restart ? fsst : nullptr, matched);
-    if (order != Order::Less) {
-      return {
-        .entry = entry, .restarts = restarts, .equal = order == Order::Equal};
-    }
-  }
-  return {.entry = end, .restarts = restarts, .equal = false};
-}
-
-inline FixedBound FixedLowerBound(const BlockView& view, Probe probe,
-                                  uint32_t from = 0) noexcept {
-  constexpr FixedBound kFirst{.entry = 0, .at = 0};
-  const FixedBound end{.entry = view.count, .at = 0};
-  const auto prefix = Prefix(view);
-  const size_t head = std::min(prefix.size(), probe.size);
-  if (const size_t common = PaddedMismatch(prefix.data(), probe.data, head);
-      common != head) {
-    return prefix[common] < probe.data[common] ? end : kFirst;
-  }
-  if (probe.size < prefix.size()) {
-    return kFirst;
-  }
-  const Probe rest{probe.data + prefix.size(), probe.size - prefix.size()};
-  const uint32_t stride = view.stride;
-  const bool longer = rest.size > stride;
-  if (stride == 0) {
-    return rest.size == 0 ? kFirst : end;
-  }
-  if (PacksKeys(stride)) {
-    const uint64_t value = LoadStride(rest.data, stride);
-    if (value < view.ef.base) {
-      return kFirst;
-    }
-    uint64_t delta = value - view.ef.base;
-    if (longer) {
-      if (delta == std::numeric_limits<uint64_t>::max()) {
-        return end;
-      }
-      ++delta;
-    }
-    return view.ef.LowerBound(delta);
-  }
-  const auto search = [&](auto&& less) {
-    const auto counts = CountHeads(view.heads, from, view.restarts,
-                                   absl::big_endian::Load32(rest.data));
-    const auto groups = static_cast<uint32_t>(PartitionIndex(
-      counts.less, counts.not_after,
-      [&](size_t group) { return less(group * kFixedHeadInterval); }));
-    if (groups == 0) {
-      return kFirst;
-    }
-    const uint32_t first = (groups - 1) * kFixedHeadInterval + 1;
-    const uint32_t last = std::min(groups * kFixedHeadInterval, view.count);
-    return FixedBound{
-      .entry = static_cast<uint32_t>(PartitionIndex(first, last, less)),
-      .at = 0,
-    };
-  };
-  if (stride <= 2 * sizeof(uint64_t)) {
-    const uint32_t shift = 8 * (2 * sizeof(uint64_t) - stride);
-    const uint64_t high = absl::big_endian::Load64(rest.data);
-    const uint64_t low =
-      absl::big_endian::Load64(rest.data + sizeof(uint64_t)) >> shift;
-    return search([&](size_t i) {
-      const auto* key = view.keys + i * stride;
-      const uint64_t key_high = absl::big_endian::Load64(key);
-      const uint64_t key_low =
-        absl::big_endian::Load64(key + sizeof(uint64_t)) >> shift;
-      return key_high < high || (key_high == high &&
-                                 (key_low < low || (longer && key_low == low)));
-    });
-  }
-  return search([&](size_t i) {
-    return CompareRaw(view.keys + i * stride, stride, rest).order ==
-           Order::Less;
-  });
-}
-
-inline constexpr size_t kInlineKey = 64;
-using KeyBuffer = containers::SmallVector<byte_type, kInlineKey>;
-
-inline byte_type* Grow(KeyBuffer& buffer, size_t size) {
-  if (buffer.size() < size) {
-    buffer.resize(size, boost::container::default_init);
-  }
-  return buffer.data();
-}
-
-struct PendingSuffix {
-  const byte_type* data;
-  uint32_t lcp;
-  uint32_t size;
-  bool restart = false;
 };
 
 struct ReadWindow {
@@ -784,27 +66,6 @@ inline HintSpan Slide(ReadWindow& window, uint64_t at, uint64_t end,
   return {.from = from, .to = to};
 }
 
-inline const byte_type* RunStart(const TermReaderImpl& field,
-                                 const BlockView& view,
-                                 uint32_t block) noexcept {
-  return view.records + (block == 0 ? field.FirstRecord() : 0);
-}
-
-inline uint32_t RunEntry(const TermReaderImpl& field, uint32_t block,
-                         uint32_t entry) noexcept {
-  const uint32_t first = block == 0 ? field.FirstEntry() : 0;
-  SDB_ASSERT(entry >= first);
-  return entry - first;
-}
-
-inline void BindInline(const TermReaderImpl& field,
-                       const RecordDecoder& decoder, PostingMeta& meta) {
-  if (meta.inline_size != 0) {
-    meta.inline_data =
-      field.ResolveInline(decoder.InlineEnd(), meta.inline_size);
-  }
-}
-
 struct ColdBlocks {
   virtual void Reached(uint32_t block) = 0;
 
@@ -812,192 +73,23 @@ struct ColdBlocks {
   ~ColdBlocks() = default;
 };
 
-class Cursor {
+class BlockStream {
  public:
-  explicit Cursor(const TermReaderImpl& field) noexcept
-    : _field{&field},
-      _decoder{field.meta().index_features},
-      _end{field.Blocks()} {}
+  explicit BlockStream(uint32_t blocks) noexcept : _end{blocks} {}
 
-  void ReadaheadUntil(uint32_t end, bool eager) noexcept {
-    _end = std::min(end, _field->Blocks());
+  void ReadaheadUntil(const TermReaderImpl& field, uint32_t end,
+                      bool eager) noexcept {
+    _end = std::min(end, field.Blocks());
     _eager = eager;
-    _inline_state = InlineState::Armed;
   }
 
   void WatchCold(ColdBlocks& cold) noexcept { _cold = &cold; }
 
-  const TermReaderImpl& Field() const noexcept { return *_field; }
-  bytes_view Key() const noexcept {
-    SDB_ASSERT(_pendings == 0);
-    return {_key.data(), _size};
-  }
-  bytes_view Term() const noexcept {
-    return Key().substr(_field->KeyPrefix().size());
-  }
-  const PendingSuffix* Pending() const noexcept {
-    return _pendings == 0 ? nullptr : &_pending[_pendings - 1];
-  }
-  const BlockView& View() const noexcept { return _view; }
-  uint32_t BlockIndex() const noexcept { return _block; }
-  uint32_t Entry() const noexcept { return _entry; }
-  const byte_type* NextSuffix() const noexcept { return _sp; }
-  bool AtBlockEnd() const noexcept {
-    return _entry != kNoEntry && _entry + 1 == _stop;
-  }
-  uint32_t Stop() const noexcept { return _stop; }
-  bool AtGroupEnd() const noexcept {
-    return !_view.fixed && _entry != kNoEntry && _entry + 1 == _restart &&
-           _restart < _stop;
-  }
-  uint32_t NextGroup() const noexcept { return _restart / kRestartInterval; }
-
-  void Group(uint32_t group) {
-    _entry = group == 0 ? kNoEntry : group * kRestartInterval - 1;
-    _restart = group * kRestartInterval;
-    _sp = _view.suffixes + SuffixOffset(_view, group);
-    _jumped = true;
-    Next();
-  }
-
-  void SkipGroups(uint32_t group) noexcept {
-    SDB_ASSERT(AtGroupEnd() && group > NextGroup());
-    _pendings = 0;
-    _partial = true;
-    _jumped = true;
-    _size = _mat;
-    const uint32_t restart = group * kRestartInterval;
-    if (restart >= _stop) {
-      _entry = _stop - 1;
-      return;
-    }
-    _entry = restart - 1;
-    _restart = restart;
-    _sp = _view.suffixes + SuffixOffset(_view, group);
-  }
-
-  int ByteAt(size_t depth) {
-    if (depth < _mat) {
-      return _key[depth];
-    }
-    if (const auto* last = Pending(); last && depth == last->lcp) {
-      const auto* data = last->data;
-      SDB_ASSERT(last->size != 0);
-      if (!_view.coded || last->restart) {
-        return data[0];
-      }
-      if (data[0] == FSST_ESC) {
-        return data[1];
-      }
-      return static_cast<byte_type>(_field->Fsst()->symbol[data[0]]);
-    }
-    Materialize();
-    return depth < _size ? _key[depth] : -1;
-  }
-
-  IRS_FORCE_INLINE uint32_t Skip() {
-    if (_view.fixed) {
-      return Next();
-    }
-    const auto entry = _entry == kNoEntry ? 0 : _entry + 1;
-    if (entry == _restart) {
-      if (entry == 0) {
-        return Next();
-      }
-      return SkipRestart(entry);
-    }
-    _entry = entry;
-    SDB_ASSERT(_entry < _stop);
-    const auto header = HeaderAt(_view, entry);
-    PushPending(_sp, header);
-    _mat = std::min<size_t>(_mat, header.lcp);
-    _sp += header.len;
-    return header.lcp;
-  }
-
-  IRS_FORCE_INLINE uint32_t SkipRestart(uint32_t entry) {
-    _entry = entry;
-    SDB_ASSERT(_entry < _stop);
-    _restart += kRestartInterval;
-    const auto header = HeaderAt(_view, entry);
-    uint32_t shared = header.lcp;
-    if (std::exchange(_jumped, false)) {
-      shared = static_cast<uint32_t>(
-        PaddedMismatch(_key.data(), _sp, std::min<size_t>(_mat, header.len)));
-    }
-    PushRestart(_sp, header);
-    _mat = std::min<size_t>(_mat, shared);
-    _sp += header.len;
-    return shared;
-  }
-
-  template<typename Reject>
-  IRS_FORCE_INLINE uint32_t SkipWhile(Reject&& reject) {
-    const auto [first, end] = SkipSpan();
-    if (first >= end) {
-      return kNoSkip;
-    }
-    const auto* sp = _sp;
-    uint32_t entry = first;
-    uint32_t lcp = kNoSkip;
-    for (; entry < end; ++entry) {
-      const auto header = HeaderAt(_view, entry);
-      if (!Rejects(reject, entry, sp, header)) {
-        break;
-      }
-      lcp = std::min(lcp, header.lcp);
-      sp += header.len;
-    }
-    return Skipped(first, entry, end, sp, lcp);
-  }
-
-  template<typename Reject>
-  IRS_FORCE_INLINE bool Rejects(Reject& reject, uint32_t entry,
-                                const byte_type* sp, Header header) const {
-    if (entry % kRestartInterval != 0) [[likely]] {
-      return reject(sp, header, false, entry);
-    }
-    return reject(sp + header.lcp,
-                  Header{.lcp = header.lcp, .len = header.len - header.lcp},
-                  true, entry);
-  }
-
-  void Materialize() {
-    if (_pendings == 0) {
-      return;
-    }
-    std::array<uint32_t, kRestartInterval> needs;
-    uint32_t need = std::numeric_limits<uint32_t>::max();
-    for (uint32_t i = _pendings; i-- != 0;) {
-      const auto lcp = _pending[i].lcp;
-      needs[i] = need > lcp ? need - lcp : 0;
-      need = std::min(need, lcp);
-    }
-    for (uint32_t i = 0; i != _pendings; ++i) {
-      const auto& pending = _pending[i];
-      if (pending.restart) {
-        SDB_ASSERT(i == 0 && _mat <= pending.lcp);
-        const size_t end = pending.lcp + std::min(pending.size, needs[i]);
-        std::memcpy(Reserve(end) + _mat, pending.data - pending.lcp + _mat,
-                    end - _mat);
-        _size = end;
-      } else if (needs[i] != 0) {
-        _size = pending.lcp +
-                Expand({pending.data, pending.size}, pending.lcp, needs[i]);
-      }
-    }
-    _mat = _size;
-    _pendings = 0;
-  }
-
-  void Load(uint32_t block) {
-    _pendings = 0;
-    _partial = false;
-    _size = _mat;
-    if (_block != kNoEntry && block == _block + 1) {
-      ReadAhead(block);
-      FetchLines(block + 1);
-    } else if (_block != kNoEntry && block > _block) {
+  void Enter(const TermReaderImpl& field, uint32_t from, uint32_t block) {
+    if (from != kNoBlock && block == from + 1) {
+      ReadAhead(field, block);
+      FetchLines(field, block + 1);
+    } else if (from != kNoBlock && block > from) {
       _blocks_ahead.ahead =
         std::max<uint64_t>(_blocks_ahead.ahead, uint64_t{block} + 1);
       _blocks_ahead.size =
@@ -1010,32 +102,165 @@ class Cursor {
       };
       _epoch = file_utils::ResidencyEpoch();
       if (_eager) {
-        ReadAhead(block);
+        ReadAhead(field, block);
       }
     }
-    _block = kNoEntry;
-    _entry = kNoEntry;
-    _record = kNoEntry;
-    _decoded = kNoEntry;
-    _restart = 0;
-    if (!_field->Small()) {
-      Watch(block);
+    if (!field.Small()) {
+      Watch(field, block);
     }
-    _view = Parse(_field->Block(block, _buffer), _field->Fsst());
-    _stop =
-      block + 1 == _field->Blocks() ? _field->LastEntry() + 1 : _view.count;
+  }
+
+ private:
+  struct WarmRange {
+    uint64_t read = 0;
+    uint32_t from = 0;
+    uint32_t to = 0;
+    uint32_t epoch = 0;
+  };
+
+  static constexpr uint32_t kWarmBlocks = 32;
+  static constexpr uint32_t kFirstWindow = 4;
+  static constexpr uint32_t kLastWindow =
+    file_utils::kMaxReadahead / file_utils::kPage;
+
+  static void FetchLines(const TermReaderImpl& field, uint32_t block) noexcept {
+    constexpr uint64_t kLine = 64;
+    const auto* base = field.Store().Base();
+    if (!base || block >= field.Blocks()) {
+      return;
+    }
+    const uint64_t begin = field.BlockOffset(block);
+    const uint64_t end =
+      std::min(field.BlockOffset(block + 1), begin + file_utils::kPage);
+    for (uint64_t at = begin; at < end; at += kLine) {
+      __builtin_prefetch(base + at, 0, 2);
+    }
+  }
+
+  void Watch(const TermReaderImpl& field, uint32_t block) {
+    const uint64_t offset = field.BlockOffset(block);
+    const uint64_t size = field.BlockOffset(block + 1) - offset;
+    const uint64_t touched = std::min<uint64_t>(size, file_utils::kPage);
+    if (block >= _warm.from && block < _warm.to &&
+        file_utils::ResidencyEpoch() == _warm.epoch) {
+      _warm.read += touched;
+      return;
+    }
+    const auto& in = field.Store().Input();
+    const uint32_t last = std::min(block + kWarmBlocks, field.Blocks());
+    const uint64_t window = field.BlockOffset(last) - offset;
+    const uint64_t read = std::exchange(_warm.read, 0) + touched;
+    _warm.to = _warm.from;
+    if (in.Warm(offset, window) == window && !file_utils::PollResidency(read)) {
+      _warm.from = block;
+      _warm.to = last;
+      _warm.epoch = file_utils::ResidencyEpoch();
+      return;
+    }
+    if (file_utils::Evicted(in, offset, size, _epoch)) {
+      _blocks_ahead.ahead = uint64_t{block} + 1;
+      _blocks_ahead.issued = 0;
+      ReadAhead(field, block);
+    }
+    if (_cold && in.Warm(offset, size) != size) {
+      _cold->Reached(block);
+      in.MarkWarm(offset, size);
+    }
+  }
+
+  void ReadAhead(const TermReaderImpl& field, uint32_t block) noexcept {
+    const auto span =
+      Slide(_blocks_ahead, uint64_t{block} + 1, _end, kLastWindow);
+    if (span.from < span.to) {
+      const uint64_t offset = field.BlockOffset(span.from);
+      file_utils::Hint(field.Store().Input(), offset,
+                       field.BlockOffset(span.to) - offset);
+    }
+  }
+
+  ReadWindow _blocks_ahead{.ahead = 0, .issued = 0, .size = kFirstWindow};
+  WarmRange _warm;
+  ColdBlocks* _cold = nullptr;
+  uint32_t _end;
+  uint32_t _epoch = 0;
+  bool _eager = false;
+};
+
+class RecordCursor {
+ public:
+  explicit RecordCursor(IndexFeatures features) noexcept : _decoder{features} {}
+
+  void Reset() noexcept { _entry = kNoEntry; }
+  bool Holds(uint32_t entry) const noexcept { return _entry == entry; }
+  const PostingMeta& Meta() const noexcept { return _meta; }
+
+  const PostingMeta& Read(const TermReaderImpl& field, const BlockView& view,
+                          uint32_t block, uint32_t entry) {
+    if (_entry != kNoEntry && _entry + 1 == entry) {
+      _decoder.Next(_meta);
+    } else {
+      const uint32_t first = block == 0 ? field.FirstEntry() : 0;
+      SDB_ASSERT(entry >= first);
+      if (_entry == kNoEntry) {
+        _decoder.Reset(view.records + (block == 0 ? field.FirstRecord() : 0));
+      }
+      _decoder.Seek(entry - first, _meta);
+    }
+    if (_meta.inline_size != 0) {
+      _meta.inline_data = _decoder.InlineData();
+    }
+    _entry = entry;
+    return _meta;
+  }
+
+ private:
+  RecordDecoder _decoder;
+  PostingMeta _meta;
+  uint32_t _entry = kNoEntry;
+};
+
+class Cursor {
+ public:
+  explicit Cursor(const TermReaderImpl& field) noexcept
+    : _field{&field},
+      _stream{field.Blocks()},
+      _entries{field.Fsst()},
+      _records{field.meta().index_features} {}
+
+  void ReadaheadUntil(uint32_t end, bool eager) noexcept {
+    _stream.ReadaheadUntil(*_field, end, eager);
+  }
+  void WatchCold(ColdBlocks& cold) noexcept { _stream.WatchCold(cold); }
+
+  const TermReaderImpl& Field() const noexcept { return *_field; }
+  template<typename Self>
+  auto&& Entries(this Self&& self) noexcept {
+    return std::forward<Self>(self)._entries;
+  }
+  bytes_view Term() const noexcept {
+    return _entries.Key().substr(_field->KeyPrefix().size());
+  }
+  uint32_t BlockIndex() const noexcept { return _block; }
+  bool AtBlockEnd() const noexcept { return _entries.AtEnd(); }
+
+  void Load(uint32_t block) {
+    _stream.Enter(*_field, _block, block);
+    _block = kNoBlock;
+    _records.Reset();
+    _entries.Open(_field->Block(block), block + 1 == _field->Blocks()
+                                          ? _field->LastEntry() + 1
+                                          : kNoEntry);
     _block = block;
-    _sp = _view.suffixes;
   }
 
   void First() {
     Load(0);
     if (_field->FirstEntry() == 0) {
-      Next();
+      _entries.Next();
       return;
     }
-    LowerBound(_probe.Assign(_field->MinKey()));
-    SDB_ASSERT(_entry == _field->FirstEntry());
+    _entries.LowerBound(_probe.Assign(_field->Index().MinKey()));
+    SDB_ASSERT(_entries.Entry() == _field->FirstEntry());
   }
 
   void Start(uint32_t block) {
@@ -1044,480 +269,57 @@ class Cursor {
       return;
     }
     Load(block);
-    Next();
-  }
-
-  uint32_t Next() {
-    _partial = false;
-    _entry = _entry == kNoEntry ? 0 : _entry + 1;
-    SDB_ASSERT(_entry < _stop);
-    if (_view.fixed) {
-      return SetFixed(_entry);
-    }
-    const auto header = HeaderAt(_view, _entry);
-    const bytes_view suffix{_sp, header.len};
-    _sp += header.len;
-    const bool jumped = std::exchange(_jumped, false);
-    if (_entry == _restart) {
-      _restart += kRestartInterval;
-      return Restart(suffix, jumped || _entry == 0 ? kNoSkip : header.lcp);
-    }
-    Materialize();
-    _size = header.lcp +
-            Expand(suffix, header.lcp, std::numeric_limits<uint32_t>::max());
-    _mat = _size;
-    return header.lcp;
+    _entries.Next();
   }
 
   bool Advance() {
-    if (AtBlockEnd()) {
+    if (_entries.AtEnd()) {
       if (_block + 1 >= _field->Blocks()) {
         return false;
       }
       Load(_block + 1);
     }
-    Next();
+    _entries.Next();
     return true;
   }
 
-  size_t Shared() const noexcept { return _shared; }
-
-  SeekResult SeekGe(bytes_view key, bool prefetch) {
+  SeekResult SeekGe(bytes_view key) {
     const auto& field = *_field;
     if (field.size() == 0 || key > field.max()) {
       return SeekResult::End;
     }
     const auto probe = _probe.Assign(field.KeyPrefix(), key);
-    const uint32_t block = field.BlockOf(probe);
-    if (block != _block || _entry == kNoEntry) {
-      if (prefetch) {
-        field.PrefetchLookup(block);
-      }
+    const uint32_t block = field.Index().BlockOf(probe);
+    if (block != _block || _entries.Entry() == kNoEntry) {
       Load(block);
     }
-    if (!LowerBound(probe)) {
+    if (!_entries.LowerBound(probe)) {
       SDB_ASSERT(block + 1 < field.Blocks());
       Load(block + 1);
-      Next();
+      _entries.Next();
       return SeekResult::NotFound;
     }
-    return _shared == probe.size && _size == probe.size ? SeekResult::Found
-                                                        : SeekResult::NotFound;
+    return _entries.Shared() == probe.size &&
+               _entries.Key().size() == probe.size
+             ? SeekResult::Found
+             : SeekResult::NotFound;
   }
 
   const PostingMeta& Meta() {
-    if (_record == _entry) {
-      return _meta;
+    const uint32_t entry = _entries.Entry();
+    if (_records.Holds(entry)) {
+      return _records.Meta();
     }
-    if (_record != kNoEntry && _record + 1 == _entry) {
-      _decoder.Next(_meta);
-    } else {
-      if (_record == kNoEntry) {
-        _decoder.Reset(RunStart(*_field, _view, _block));
-      }
-      _decoder.Seek(RunEntry(*_field, _block, _entry), _meta);
-    }
-    BindInline(*_field, _decoder, _meta);
-    if (_meta.inline_size != 0 && !_field->Small() && _field->Owner().Base()) {
-      InlineAhead(_field->InlineBegin() + InlineAt());
-    }
-    _record = _entry;
-    return _meta;
-  }
-
-  uint64_t InlineAt() const noexcept {
-    SDB_ASSERT(_meta.inline_size != 0);
-    return _decoder.InlineEnd() - _meta.inline_size;
-  }
-
-  bool LowerBound(Probe probe) {
-    if (_view.fixed) {
-      const auto bound = FixedLowerBound(_view, probe);
-      if (bound.entry >= _stop) {
-        return false;
-      }
-      _entry = bound.entry;
-      SetFixed(bound.entry, bound.at);
-      _shared = Common(probe);
-      return true;
-    }
-    if (_entry != kNoEntry && _pendings == 0 && !_partial) {
-      if (const size_t common = Common(probe); Before(probe, common)) {
-        return SeekAhead(probe, common);
-      }
-    }
-    const uint32_t restarts = RestartsNotAfter(_view, probe);
-    Group(restarts == 0 ? 0 : restarts - 1);
-    _shared = Common(probe);
-    if (restarts == 0 || !Before(probe, _shared)) {
-      return true;
-    }
-    return ScanTo(probe, _shared);
-  }
-
-  bool SeekAhead(Probe probe, size_t matched) {
-    if (_view.fixed) {
-      return LowerBound(probe);
-    }
-    SDB_ASSERT(_entry != kNoEntry);
-    SDB_ASSERT(_pendings == 0);
-    const uint32_t from = _entry / kRestartInterval + 1;
-    const uint32_t to = RestartsNotAfter(_view, probe, from);
-    SDB_ASSERT(to >= from);
-    if (to != from) {
-      Group(to - 1);
-      _shared = Common(probe);
-      if (!Before(probe, _shared)) {
-        return true;
-      }
-      matched = _shared;
-    }
-    return ScanTo(probe, matched);
+    return _records.Read(*_field, _entries.View(), _block, entry);
   }
 
  private:
-  size_t Common(Probe probe) const noexcept {
-    return PaddedMismatch(_key.data(), probe.data, std::min(_size, probe.size));
-  }
-
-  bool Before(Probe probe, size_t common) const noexcept {
-    return common == std::min(_size, probe.size)
-             ? _size < probe.size
-             : _key[common] < probe.data[common];
-  }
-
-  struct Span {
-    uint32_t first;
-    uint32_t end;
-  };
-
-  Span SkipSpan() const noexcept {
-    if (_view.fixed || _entry == kNoEntry || _jumped) {
-      return {.first = 0, .end = 0};
-    }
-    return {.first = _entry + 1, .end = _stop};
-  }
-
-  uint32_t Skipped(uint32_t first, uint32_t entry, uint32_t end,
-                   const byte_type* sp, uint32_t lcp) noexcept {
-    if (entry == first) {
-      return kNoSkip;
-    }
-    _mat = std::min<size_t>(_mat, lcp);
-    const uint32_t group = (entry - 1) / kRestartInterval;
-    if (entry == end) {
-      _size = _mat;
-      _pendings = 0;
-      _partial = true;
-    } else {
-      uint32_t skipped = first;
-      const auto* pending = _sp;
-      if (group * kRestartInterval > first) {
-        skipped = group * kRestartInterval;
-        pending = _view.suffixes + SuffixOffset(_view, group);
-      }
-      for (; skipped != entry; ++skipped) {
-        const auto header = HeaderAt(_view, skipped);
-        if (skipped % kRestartInterval == 0) {
-          PushRestart(pending, header);
-        } else {
-          PushPending(pending, header);
-        }
-        pending += header.len;
-      }
-    }
-    _entry = entry - 1;
-    _restart = (group + 1) * kRestartInterval;
-    _sp = sp;
-    return lcp;
-  }
-
-  void PushRestart(const byte_type* key, Header header) noexcept {
-    SDB_ASSERT(header.lcp < header.len);
-    _partial = false;
-    _pendings = 0;
-    _pending[_pendings++] = {
-      .data = key + header.lcp,
-      .lcp = header.lcp,
-      .size = header.len - header.lcp,
-      .restart = true,
-    };
-  }
-
-  void PushPending(const byte_type* data, Header header) noexcept {
-    SDB_ASSERT(_pendings < _pending.size());
-    _pending[_pendings++] = {
-      .data = data,
-      .lcp = header.lcp,
-      .size = header.len,
-    };
-  }
-
-  bool ScanTo(Probe probe, size_t matched) {
-    SDB_ASSERT(_pendings == 0);
-    const auto* fsst = _view.coded ? _field->Fsst() : nullptr;
-    const uint32_t end = std::min(_restart, _stop);
-    const auto* sp = _sp;
-    for (uint32_t entry = _entry + 1; entry != end; ++entry) {
-      const auto header = HeaderAt(_view, entry);
-      const auto* suffix = sp;
-      sp += header.len;
-      if (header.lcp > matched) {
-        continue;
-      }
-      _sp = sp;
-      _entry = entry;
-      if (header.lcp < matched) {
-        return Land(probe, header.lcp,
-                    Expand({suffix, header.len}, header.lcp,
-                           std::numeric_limits<uint32_t>::max()),
-                    header.lcp);
-      }
-      const Probe rest{probe.data + matched, probe.size - matched};
-      if (fsst) {
-        auto* out =
-          Reserve(header.lcp + size_t{header.len} * sizeof(uint64_t)) +
-          header.lcp;
-        const auto coded =
-          CompareCoded<true>(*fsst, {suffix, header.len}, rest, out);
-        matched += coded.compared.common;
-        if (coded.compared.order == Order::Less) {
-          continue;
-        }
-        size_t size = coded.decoded;
-        if (coded.code != header.len) {
-          size +=
-            DecodeInto(*fsst, {suffix + coded.code, header.len - coded.code},
-                       out + size, std::numeric_limits<uint32_t>::max());
-        }
-        return Land(probe, header.lcp, size, matched);
-      }
-      const auto compared = CompareRaw(suffix, header.len, rest);
-      matched += compared.common;
-      if (compared.order == Order::Less) {
-        continue;
-      }
-      std::memcpy(Reserve(header.lcp + header.len) + header.lcp, suffix,
-                  header.len);
-      return Land(probe, header.lcp, header.len, matched);
-    }
-    if (end == _stop) {
-      _entry = kNoEntry;
-      return false;
-    }
-    _sp = sp;
-    _entry = end - 1;
-    Next();
-    _shared = Common(probe);
-    return true;
-  }
-
-  bool Land(Probe probe, size_t lcp, size_t size, size_t shared) {
-    _partial = false;
-    std::memcpy(_key.data(), probe.data, lcp);
-    _size = lcp + size;
-    _mat = _size;
-    _shared = shared;
-    return true;
-  }
-
-  byte_type* Reserve(size_t size) { return Grow(_key, size + kKeyPad); }
-
-  uint32_t Restart(bytes_view key, uint32_t lcp) {
-    const auto shared =
-      lcp != kNoSkip
-        ? lcp
-        : static_cast<uint32_t>(PaddedMismatch(
-            _key.data(), key.data(), std::min<size_t>(_mat, key.size())));
-    _pendings = 0;
-    std::memcpy(Reserve(key.size()), key.data(), key.size());
-    _size = key.size();
-    _mat = _size;
-    return shared;
-  }
-
-  size_t Expand(bytes_view suffix, uint32_t lcp, uint32_t need) {
-    if (!_view.coded) {
-      const size_t size = std::min<size_t>(suffix.size(), need);
-      std::memcpy(Reserve(lcp + size) + lcp, suffix.data(), size);
-      return size;
-    }
-    auto* key = Reserve(lcp + suffix.size() * sizeof(uint64_t)) + lcp;
-    if (need == std::numeric_limits<uint32_t>::max()) {
-      return DecodeAll(*_field->Fsst(), suffix, key);
-    }
-    return DecodeInto(*_field->Fsst(), suffix, key, need);
-  }
-
-  uint32_t SetFixed(uint32_t entry, uint32_t at = kNoEntry) {
-    if (!PacksKeys(_view.stride)) {
-      StrideBuffer buffer;
-      return SetKey(FixedKey(_view, entry, 0, buffer));
-    }
-    const auto& ef = _view.ef;
-    if (at == kNoEntry) {
-      at = _decoded == entry ? _decoded_at
-           : _decoded != kNoEntry && _decoded + 1 == entry
-             ? ef.After(_decoded_at)
-             : ef.At(entry);
-    }
-    const uint64_t value = ef.base + ef.ValueAt(entry, at);
-    const uint32_t stride = _view.stride;
-    const uint32_t shift = 8 * (sizeof(uint64_t) - stride);
-    if (_decoded == kNoEntry) {
-      StrideBuffer buffer;
-      absl::big_endian::Store64(buffer.data(), value << shift);
-      _decoded = entry;
-      _decoded_at = at;
-      _decoded_value = value;
-      return SetKey({buffer.data(), stride});
-    }
-    const uint64_t diff = (value ^ _decoded_value) << shift;
-    const uint32_t shared =
-      diff == 0 ? stride : static_cast<uint32_t>(std::countl_zero(diff)) / 8;
-    absl::big_endian::Store64(Reserve(_view.prefix + stride) + _view.prefix,
-                              value << shift);
-    _size = _view.prefix + stride;
-    _mat = _size;
-    _decoded = entry;
-    _decoded_at = at;
-    _decoded_value = value;
-    return _view.prefix + shared;
-  }
-
-  uint32_t SetKey(bytes_view stride) {
-    const bytes_view prefix = Prefix(_view);
-    size_t lcp = CommonPrefixLength(Key(), prefix);
-    const bool same = lcp == prefix.size();
-    if (same) {
-      lcp += CommonPrefixLength(Key().substr(lcp), stride);
-    }
-    auto* key = Reserve(prefix.size() + stride.size());
-    if (!same) {
-      std::memcpy(key, prefix.data(), prefix.size());
-    }
-    std::memcpy(key + prefix.size(), stride.data(), stride.size());
-    _size = prefix.size() + stride.size();
-    _mat = _size;
-    return static_cast<uint32_t>(lcp);
-  }
-
-  void FetchLines(uint32_t block) const noexcept {
-    constexpr uint64_t kLine = 64;
-    const auto* base = _field->Owner().Base();
-    if (!base || block >= _field->Blocks()) {
-      return;
-    }
-    const uint64_t end = _field->BlockOffset(block + 1);
-    for (uint64_t at = _field->BlockOffset(block); at < end; at += kLine) {
-      __builtin_prefetch(base + at, 0, 2);
-    }
-  }
-
-  void Watch(uint32_t block) {
-    const uint64_t offset = _field->BlockOffset(block);
-    const uint64_t size = _field->BlockOffset(block + 1) - offset;
-    if (block >= _warm_from && block < _warm_to &&
-        file_utils::ResidencyEpoch() == _warm_epoch) {
-      _warm_read += size;
-      return;
-    }
-    const auto& in = _field->Owner().Input();
-    const uint32_t last = std::min(block + kWarmBlocks, _field->Blocks());
-    const uint64_t window = _field->BlockOffset(last) - offset;
-    const uint64_t read = std::exchange(_warm_read, 0) + size;
-    _warm_to = _warm_from;
-    if (in.Warm(offset, window) == window && !file_utils::PollResidency(read)) {
-      _warm_from = block;
-      _warm_to = last;
-      _warm_epoch = file_utils::ResidencyEpoch();
-      return;
-    }
-    if (file_utils::Evicted(in, offset, size, _epoch)) {
-      _blocks_ahead.ahead = uint64_t{block} + 1;
-      _blocks_ahead.issued = 0;
-      ReadAhead(block);
-    }
-    if (_cold && in.Warm(offset, size) != size) {
-      _cold->Reached(block);
-      in.MarkWarm(offset, size);
-    }
-  }
-
-  void ReadAhead(uint32_t block) noexcept {
-    const auto span =
-      Slide(_blocks_ahead, uint64_t{block} + 1, _end, kLastWindow);
-    if (span.from < span.to) {
-      const uint64_t offset = _field->BlockOffset(span.from);
-      file_utils::Hint(_field->Owner().Input(), offset,
-                       _field->BlockOffset(span.to) - offset);
-    }
-  }
-
-  void InlineAhead(uint64_t at) noexcept {
-    if (_inline_state != InlineState::Running) {
-      if (_inline_state == InlineState::Armed) {
-        _inline_ahead.ahead = at - at % file_utils::kPage + file_utils::kPage;
-        _inline_state = InlineState::Running;
-      }
-      return;
-    }
-    const auto span =
-      Slide(_inline_ahead, at, _field->InlineEnd(), file_utils::kMaxReadahead);
-    if (span.from < span.to) {
-      file_utils::Hint(_field->Owner().Input(), span.from, span.to - span.from);
-    }
-  }
-
-  enum class InlineState : uint8_t {
-    Off,
-    Armed,
-    Running,
-  };
-
-  static constexpr uint32_t kWarmBlocks = 32;
-  static constexpr uint32_t kFirstWindow = 4;
-  static constexpr uint32_t kLastWindow =
-    file_utils::kMaxReadahead / file_utils::kPage;
-
   const TermReaderImpl* _field;
-  BlockView _view{};
-  const byte_type* _sp = nullptr;
-  size_t _size = 0;
-  size_t _mat = 0;
-  size_t _shared = 0;
-  uint32_t _entry = kNoEntry;
-  uint64_t _decoded_value = 0;
-  uint32_t _decoded = kNoEntry;
-  uint32_t _decoded_at = 0;
-  uint32_t _restart = 0;
-  uint32_t _stop = 0;
-  uint32_t _pendings = 0;
-  uint32_t _block = kNoEntry;
-  uint32_t _record = kNoEntry;
-  bool _partial = false;
-  bool _jumped = false;
-  KeyBuffer _key;
-  std::array<PendingSuffix, kRestartInterval> _pending;
-  RecordDecoder _decoder;
-  PostingMeta _meta;
+  BlockStream _stream;
+  BlockCursor _entries;
+  RecordCursor _records;
   PaddedKey _probe;
-  BlockBuffer _buffer;
-  ReadWindow _blocks_ahead{.ahead = 0, .issued = 0, .size = kFirstWindow};
-  ReadWindow _inline_ahead{
-    .ahead = 0,
-    .issued = 0,
-    .size = file_utils::kPrefetchChunk,
-  };
-  uint32_t _end;
-  uint32_t _epoch = 0;
-  uint32_t _warm_from = 0;
-  uint32_t _warm_to = 0;
-  uint32_t _warm_epoch = 0;
-  uint64_t _warm_read = 0;
-  ColdBlocks* _cold = nullptr;
-  InlineState _inline_state = InlineState::Off;
-  bool _eager = false;
+  uint32_t _block = kNoBlock;
 };
 
 }  // namespace irs::term_dict

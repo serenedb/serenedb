@@ -68,12 +68,43 @@ IRS_FORCE_INLINE bool Less(bytes_view lhs, bytes_view rhs) noexcept {
   }
 }
 
+class RangeAhead final : public ColdBlocks {
+ public:
+  explicit RangeAhead(const TermReaderImpl& field) noexcept : _field{&field} {}
+
+  void Arm(Cursor& cursor, bytes_view to) noexcept {
+    _to = to;
+    _armed = true;
+    cursor.WatchCold(*this);
+  }
+
+  void Reached(uint32_t block) final {
+    if (!std::exchange(_armed, false)) {
+      return;
+    }
+    const auto& field = *_field;
+    const uint32_t end = std::max(field.Index().BlockEnd(_to), block + 1);
+    const uint64_t offset = field.BlockOffset(block);
+    const uint64_t size =
+      std::min(field.BlockOffset(end) - offset, file_utils::kMaxReadahead);
+    if (size > file_utils::kPage) {
+      file_utils::Hint(field.Store().Input(), offset, size);
+    }
+  }
+
+ private:
+  const TermReaderImpl* _field;
+  bytes_view _to;
+  bool _armed = false;
+};
+
 template<size_t Width>
-bool Ascending(Cursor& cursor, bytes_view from, bytes_view to,
-               TermReader::TermVisitor visit) {
+bool Ascending(Cursor& cursor, RangeAhead& ahead, bytes_view from,
+               bytes_view to, TermReader::TermVisitor visit) {
+  ahead.Arm(cursor, to);
   if (from.empty()) {
     cursor.First();
-  } else if (cursor.SeekGe(from, true) == SeekResult::End) {
+  } else if (cursor.SeekGe(from) == SeekResult::End) {
     return true;
   }
   do {
@@ -121,7 +152,8 @@ class LevelWalk {
 
   bool Run() {
     size_t top = 0;
-    while (top != _levels.size() && Seek(top, _from) && Fits(_entries[top])) {
+    while (top != _levels.size() && Seek(top, _from, _to) &&
+           Fits(_entries[top])) {
       ++top;
     }
     if (top == 0) {
@@ -157,15 +189,17 @@ class LevelWalk {
       entry.last ? bytes_view{} : entry.starts[!entry.at].Assign(cursor.Term());
   }
 
-  bool Seek(size_t level, bytes_view key) {
+  bool Seek(size_t level, bytes_view key, bytes_view end) {
     auto& slot = _cursors[level];
     if (!slot) {
       slot.emplace(*_levels[level]);
+      _ahead[level].emplace(*_levels[level]);
     }
     auto& cursor = *slot;
+    _ahead[level]->Arm(cursor, end);
     if (key.empty()) {
       cursor.First();
-    } else if (cursor.SeekGe(key, true) == SeekResult::End) {
+    } else if (cursor.SeekGe(key) == SeekResult::End) {
       return false;
     }
     auto& entry = _entries[level];
@@ -186,7 +220,7 @@ class LevelWalk {
         return true;
       }
       if (!Fits(entry)) {
-        if (level != 0 && Seek(level - 1, entry.start)) {
+        if (level != 0 && Seek(level - 1, entry.start, entry.next)) {
           Emit(level - 1, entry.next);
         }
         return false;
@@ -209,6 +243,7 @@ class LevelWalk {
 
   std::span<const TermReaderImpl* const> _levels;
   std::array<std::optional<Cursor>, kMaxRangeLevels> _cursors;
+  std::array<std::optional<RangeAhead>, kMaxRangeLevels> _ahead;
   std::array<Entry, kMaxRangeLevels> _entries;
   RangeVisitor _visit;
   bytes_view _from;
@@ -220,6 +255,7 @@ template<size_t Width>
 bool Cover(const TermReaderImpl& field, bytes_view from, bytes_view to,
            TermReader::TermVisitor visit) {
   Cursor cursor{field};
+  RangeAhead ahead{field};
   byte_type lower[kMaxStride];
   byte_type upper[kMaxStride];
   size_t lower_size = 0;
@@ -243,19 +279,19 @@ bool Cover(const TermReaderImpl& field, bytes_view from, bytes_view to,
     return true;
   }
   if (!covered) {
-    Ascending<Width>(cursor, from, to, visit);
+    Ascending<Width>(cursor, ahead, from, to, visit);
     return false;
   }
   bytes_view head_from = from;
   bytes_view head_to{lower, lower_size};
   if (Narrow(field, head_from, head_to) &&
-      !Ascending<Width>(cursor, head_from, head_to, visit)) {
+      !Ascending<Width>(cursor, ahead, head_from, head_to, visit)) {
     return true;
   }
   bytes_view tail_from{upper, upper_size};
   bytes_view tail_to = to;
   if (upper_size != 0 && Narrow(field, tail_from, tail_to)) {
-    Ascending<Width>(cursor, tail_from, tail_to, visit);
+    Ascending<Width>(cursor, ahead, tail_from, tail_to, visit);
   }
   return true;
 }

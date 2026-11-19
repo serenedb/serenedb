@@ -52,32 +52,6 @@ constexpr uint32_t PositionValues(const PostingFeatures& features) noexcept {
   return features.offs ? 2 : 1;
 }
 
-template<typename Value>
-void WritePacked(DataOutput& out, uint64_t count, uint32_t bits,
-                 Value&& value) {
-  SDB_ASSERT(bits <= 64);
-  if (bits == 0) {
-    return;
-  }
-  std::array<byte_type, sizeof(uint64_t)> word;
-  uint64_t pending = 0;
-  uint32_t filled = 0;
-  for (uint64_t i = 0; i != count; ++i) {
-    const uint64_t v = value(i);
-    SDB_ASSERT(static_cast<uint32_t>(std::bit_width(v)) <= bits);
-    pending |= v << filled;
-    filled += bits;
-    if (filled >= 64) {
-      absl::little_endian::Store64(word.data(), pending);
-      out.WriteData(word.data(), word.size());
-      filled -= 64;
-      pending = filled == 0 ? 0 : v >> (bits - filled);
-    }
-  }
-  absl::little_endian::Store64(word.data(), pending);
-  out.WriteData(word.data(), (filled + 7) / 8);
-}
-
 struct Packed {
   IRS_FORCE_INLINE uint64_t At(uint64_t i) const noexcept {
     const uint64_t bit = i * bits;
@@ -178,7 +152,7 @@ struct RunView {
   Sparse crossings;
   Sparse extents;
   uint64_t single_base = 0;
-  uint64_t inline_base = 0;
+  const byte_type* inline_area = nullptr;
   uint64_t start_base = 0;
   uint64_t pos_start = 0;
   uint64_t pay_start = 0;
@@ -199,8 +173,8 @@ class RecordDecoder {
   void Reset(const byte_type* run) { _view = ParseRun(run, _features); }
 
   uint32_t Count() const noexcept { return _view.count; }
-  uint64_t InlineEnd() const noexcept {
-    return _view.inline_base + _bytes + _size;
+  const byte_type* InlineData() const noexcept {
+    return _view.inline_area + _bytes;
   }
 
   void Seek(uint32_t i, PostingMeta& meta) {
@@ -352,7 +326,6 @@ class RecordRun {
     uint64_t docs = 0;
     uint64_t excess = 0;
     uint64_t sizes = 0;
-    uint64_t inline_base = 0;
     uint64_t inline_bytes = 0;
     uint64_t inline_anchor = 0;
     uint64_t pos_start = 0;
@@ -375,7 +348,8 @@ class RecordRun {
   void Clear() noexcept;
   bool Empty() const noexcept { return _stats.count == 0; }
   uint64_t Bytes() const noexcept { return SizeOf(_stats); }
-  Stats Stage(const PostingMeta& meta, uint64_t inline_at) const;
+  uint64_t InlineBytes() const noexcept { return _stats.inline_bytes; }
+  Stats Stage(const PostingMeta& meta) const;
   uint64_t SizeOf(const Stats& stats) const noexcept;
   void Commit(const PostingMeta& meta, const Stats& staged);
   void Write(DataOutput& out) const;
@@ -411,6 +385,7 @@ class RecordRun {
   std::vector<uint64_t> _excess;
   std::vector<uint64_t> _sizes;
   std::vector<uint64_t> _inline_anchors;
+  bstring _inline;
   std::vector<uint64_t> _starts;
   std::vector<uint64_t> _freq_anchors;
   std::vector<uint64_t> _vec_starts;

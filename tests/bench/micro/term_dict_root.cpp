@@ -134,6 +134,30 @@ class KeysReader final : public irs::BasicTermReader {
   irs::field_id id() const final { return 1; }
   irs::FieldProperties properties() const final { return {}; }
 
+  void SampleTerms(
+    uint64_t bytes,
+    absl::FunctionRef<void(std::span<const bytes_view>)> visit) const final {
+    constexpr size_t kRun = 16;
+    uint64_t total = 0;
+    for (const auto& key : _keys) {
+      total += key.size();
+    }
+    if (total == 0) {
+      return;
+    }
+    const uint64_t runs =
+      std::max<uint64_t>(1, bytes * _keys.size() / total / kRun);
+    const size_t stride = std::max<size_t>(kRun, _keys.size() / runs);
+    std::array<bytes_view, kRun> run;
+    for (size_t i = 0; i < _keys.size(); i += stride) {
+      const size_t n = std::min(kRun, _keys.size() - i);
+      for (size_t j = 0; j != n; ++j) {
+        run[j] = _keys[i + j];
+      }
+      visit({run.data(), n});
+    }
+  }
+
  private:
   std::span<const bstring> _keys;
 };
@@ -239,13 +263,14 @@ void Locate(benchmark::State& state, const std::string& base, bool hit) {
   for (auto _ : state) {
     size_t sum = 0;
     for (const auto probe : padded.probes) {
-      sum += field.BlockOf(probe);
+      sum += field.Index().BlockOf(probe);
     }
     benchmark::DoNotOptimize(sum);
   }
   state.SetItemsProcessed(
     static_cast<int64_t>(state.iterations() * padded.probes.size()));
-  state.counters["bytes"] = static_cast<double>(field.Trie().MemoryBytes());
+  state.counters["bytes"] =
+    static_cast<double>(field.Index().Trie().MemoryBytes());
   state.counters["blocks"] = static_cast<double>(field.Blocks());
   state.counters["ns_per_probe"] = benchmark::Counter(
     static_cast<double>(state.iterations() * padded.probes.size()),

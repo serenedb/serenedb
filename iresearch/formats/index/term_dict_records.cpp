@@ -81,7 +81,6 @@ RunView ParseRun(const byte_type* p, PostingFeatures features) {
     view.excess.bits = bits();
   }
   if (inlines) {
-    view.inline_base = vread<uint64_t>(p);
     view.sizes.bits = bits();
     view.inline_anchors.bits = bits();
   }
@@ -159,6 +158,7 @@ RunView ParseRun(const byte_type* p, PostingFeatures features) {
     column(view.vec_starts, count);
     column(view.lanes, count);
   }
+  view.inline_area = p;
   return view;
 }
 
@@ -171,6 +171,7 @@ void RecordRun::Clear() noexcept {
   _excess.clear();
   _sizes.clear();
   _inline_anchors.clear();
+  _inline.clear();
   _starts.clear();
   _freq_anchors.clear();
   _vec_starts.clear();
@@ -180,8 +181,7 @@ void RecordRun::Clear() noexcept {
   _extents.Clear();
 }
 
-RecordRun::Stats RecordRun::Stage(const PostingMeta& meta,
-                                  uint64_t inline_at) const {
+RecordRun::Stats RecordRun::Stage(const PostingMeta& meta) const {
   SDB_ASSERT(meta.docs_count != 0);
   Stats s = _stats;
   const uint32_t i = s.count++;
@@ -193,10 +193,6 @@ RecordRun::Stats RecordRun::Stage(const PostingMeta& meta,
     ++s.multis;
     s.docs = std::max<uint64_t>(s.docs, meta.docs_count - 2);
     if (meta.inline_size != 0) {
-      if (s.inlines == 0) {
-        s.inline_base = inline_at;
-      }
-      SDB_ASSERT(inline_at == s.inline_base + s.inline_bytes);
       if (s.inlines != 0 && s.inlines % kRecordAnchor == 0) {
         s.inline_anchor = s.inline_bytes;
       }
@@ -264,6 +260,7 @@ void RecordRun::Commit(const PostingMeta& meta, const Stats& staged) {
     _inline_bits.push_back(uint8_t{inlined});
     if (inlined) {
       _sizes.push_back(meta.inline_size - 1);
+      _inline.append(meta.Inline());
       if (old.inlines != 0 && old.inlines % kRecordAnchor == 0) {
         _inline_anchors.push_back(old.inline_bytes);
       }
@@ -327,8 +324,9 @@ uint64_t RecordRun::SizeOf(const Stats& s) const noexcept {
     size += 1 + PackedBytes(s.count, Bits(s.excess));
   }
   if (s.inlines != 0) {
-    size += VSize(s.inline_base) + 2 + PackedBytes(s.inlines, Bits(s.sizes)) +
-            PackedBytes(Anchors(s.inlines), Bits(s.inline_anchor));
+    size += 2 + PackedBytes(s.inlines, Bits(s.sizes)) +
+            PackedBytes(Anchors(s.inlines), Bits(s.inline_anchor)) +
+            s.inline_bytes;
   }
   if (s.inlines != 0 && stored != 0) {
     size += PackedBytes(s.multis, 1);
@@ -393,7 +391,6 @@ void RecordRun::Write(DataOutput& out) const {
     out.WriteByte(static_cast<byte_type>(Bits(s.excess)));
   }
   if (s.inlines != 0) {
-    out.WriteV64(s.inline_base);
     out.WriteByte(static_cast<byte_type>(Bits(s.sizes)));
     out.WriteByte(static_cast<byte_type>(Bits(s.inline_anchor)));
   }
@@ -449,6 +446,8 @@ void RecordRun::Write(DataOutput& out) const {
     WritePacked(out, s.count, Bits(s.lanes),
                 [&](uint64_t j) { return _lanes[j]; });
   }
+  SDB_ASSERT(_inline.size() == s.inline_bytes);
+  out.WriteData(_inline.data(), _inline.size());
 }
 
 }  // namespace irs::term_dict

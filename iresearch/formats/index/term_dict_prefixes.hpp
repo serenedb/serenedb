@@ -37,8 +37,7 @@
 
 namespace irs::term_dict {
 
-inline constexpr uint32_t kTrieExactBytes = 4;
-inline constexpr uint64_t kTrieLeafTerms = 1;
+inline constexpr uint32_t kNoLabel = 256;
 inline constexpr uint64_t kTrieTermsPerByte = 2;
 inline constexpr uint64_t kTrieMinBudget = 16384;
 
@@ -52,12 +51,10 @@ struct TrieCursor {
   uint32_t hi = 0;
   uint16_t fanout = 0;
   uint8_t width = 0;
-  bool terminal = false;
 };
 
 inline constexpr uint32_t kTrieBelow = std::numeric_limits<uint32_t>::max();
 inline constexpr uint32_t kTrieMissing = kTrieBelow - 1;
-inline constexpr uint32_t kTrieEnd = kTrieMissing - 1;
 inline constexpr TrieCursor kTrieUngated{
   .node = kTrieBelow, .labels = 0, .matched = 0};
 
@@ -69,11 +66,8 @@ struct Located {
 enum class TrieKind : uint8_t {
   Leaf = 0,
   Inner = 1,
-  End = 2,
 };
 
-inline constexpr byte_type kTrieTerminal = 1;
-inline constexpr uint32_t kTrieWidthShift = 1;
 inline constexpr uint32_t kTrieWidths[]{0, 1, 2, 4};
 
 struct TrieNode {
@@ -81,18 +75,13 @@ struct TrieNode {
   const byte_type* labels;
   const byte_type* kinds;
   const byte_type* deltas;
-  const byte_type* starts;
   const byte_type* children;
   uint32_t edge_size;
   uint32_t fanout;
   uint32_t width;
-  bool terminal;
 
   TrieKind KindAt(uint32_t slot) const noexcept {
     return static_cast<TrieKind>(kinds[slot / 4] >> (2 * (slot % 4)) & 3);
-  }
-  bool StartsAt(uint32_t slot) const noexcept {
-    return width != 0 && (starts[slot / 8] >> (slot % 8) & 1) != 0;
   }
   uint32_t BlockAt(uint32_t slot, uint32_t lo) const noexcept {
     switch (width) {
@@ -146,7 +135,7 @@ class PrefixTrie {
   }
 
   static constexpr size_t BlockBytes(uint32_t fanout, uint32_t width) noexcept {
-    return width == 0 ? 0 : width * size_t{fanout} + (fanout + 7) / 8;
+    return width * size_t{fanout};
   }
 
   static bool Gates(TrieCursor cursor) noexcept {
@@ -173,16 +162,12 @@ class PrefixTrie {
             cursor.edge_size - cursor.matched};
   }
 
-  bool MayEnd(TrieCursor cursor) const noexcept {
-    return cursor.node >= kTrieEnd ||
-           (cursor.terminal && cursor.matched == cursor.edge_size);
+  static bool MayEnd(TrieCursor cursor) noexcept {
+    return cursor.matched == cursor.edge_size;
   }
 
   bytes_view Labels(TrieCursor cursor) const noexcept {
     SDB_ASSERT(Gates(cursor));
-    if (cursor.node == kTrieEnd) {
-      return {};
-    }
     if (cursor.matched != cursor.edge_size) {
       return {_nodes.data() + cursor.edge + cursor.matched, 1};
     }
@@ -197,18 +182,11 @@ class PrefixTrie {
     }
     const auto node = NodeOf(cursor);
     const uint32_t lo = node.BlockAt(slot, cursor.lo);
-    const uint32_t hi =
-      slot + 1 == node.fanout
-        ? cursor.hi
-        : node.BlockAt(slot + 1, cursor.lo) - uint32_t{node.StartsAt(slot + 1)};
-    switch (node.KindAt(slot)) {
-      case TrieKind::Inner:
-        return At(node.ChildAt(slot), lo, hi);
-      case TrieKind::End:
-        return {
-          .node = kTrieEnd, .labels = 0, .matched = 0, .lo = lo, .hi = hi};
-      case TrieKind::Leaf:
-        break;
+    const uint32_t hi = slot + 1 == node.fanout
+                          ? cursor.hi
+                          : node.BlockAt(slot + 1, cursor.lo);
+    if (node.KindAt(slot) == TrieKind::Inner) {
+      return At(node.ChildAt(slot), lo, hi);
     }
     return {.node = kTrieBelow, .labels = 0, .matched = 0, .lo = lo, .hi = hi};
   }
@@ -230,18 +208,15 @@ class PrefixTrie {
     const auto* labels = _nodes.data() + cursor.labels;
     const auto* kinds = labels + cursor.fanout;
     const auto* deltas = kinds + (cursor.fanout + 3) / 4;
-    const auto* starts = deltas + size_t{cursor.width} * cursor.fanout;
     return {
       .edge = _nodes.data() + cursor.edge,
       .labels = labels,
       .kinds = kinds,
       .deltas = deltas,
-      .starts = starts,
-      .children = starts + (cursor.width == 0 ? 0 : (cursor.fanout + 7) / 8),
+      .children = deltas + size_t{cursor.width} * cursor.fanout,
       .edge_size = cursor.edge_size,
       .fanout = cursor.fanout,
       .width = cursor.width,
-      .terminal = cursor.terminal,
     };
   }
   TrieNode Node(uint32_t offset) const noexcept;
@@ -260,13 +235,11 @@ class PrefixTrieBuilder {
 
  private:
   static constexpr uint32_t kLeaf = std::numeric_limits<uint32_t>::max();
-  static constexpr uint32_t kEnd = kLeaf - 1;
 
   struct Child {
     uint32_t node;
     uint32_t block;
     byte_type label;
-    bool starts;
   };
 
   struct Built {
@@ -274,7 +247,6 @@ class PrefixTrieBuilder {
     uint32_t depth;
     uint32_t edge_start;
     uint16_t fanout;
-    bool terminal;
     bool spans;
   };
 
@@ -283,34 +255,39 @@ class PrefixTrieBuilder {
     uint32_t begin;
     uint32_t first_block;
     uint32_t last_block;
-    bool starts;
+    uint32_t level;
     bool terminal;
   };
 
-  static Frame Open(uint32_t begin, uint32_t block, bool starts) noexcept {
-    return {.count = 0,
-            .begin = begin,
-            .first_block = block,
-            .last_block = block,
-            .starts = starts,
-            .terminal = false};
-  }
+  struct Rank {
+    uint32_t level;
+    uint64_t count;
+  };
 
-  static bool Prunable(const Built& node) noexcept {
-    return node.depth >= kTrieExactBytes && !node.spans;
+  static constexpr Rank kKeepAll{.level = std::numeric_limits<uint32_t>::max(),
+                                 .count = 0};
+
+  static bool Prunable(const Built& node) noexcept { return !node.spans; }
+
+  static bool PrunedBefore(Rank lhs, Rank rhs) noexcept {
+    return lhs.level != rhs.level ? lhs.level > rhs.level
+                                  : lhs.count < rhs.count;
   }
 
   static uint32_t EdgeSize(const Built& node) noexcept {
     return node.depth - node.edge_start;
   }
 
+  bool Drops(Rank rank) const noexcept { return !PrunedBefore(_cut, rank); }
+
   uint32_t InnerOf(uint32_t from, uint32_t fanout) const noexcept;
+  void Push(uint32_t block);
+  bool Branches(size_t frame) const noexcept;
   void Deepen(size_t depth);
   void CloseTo(size_t depth);
   uint32_t MakeNode(size_t depth, const Frame& frame);
   void Materialize();
-  void Shrink(uint64_t budget);
-  void Prune();
+  void Prune(uint64_t target);
   void Encode(uint32_t root, std::string& out) const;
 
   bstring _prev;
@@ -320,14 +297,12 @@ class PrefixTrieBuilder {
   bstring _labels;
   std::vector<uint32_t> _nodes;
   std::vector<uint32_t> _blocks;
-  bstring _starts;
   bstring _edges;
   uint64_t _terms = 0;
-  uint64_t _limit = kTrieLeafTerms;
+  Rank _cut = kKeepAll;
   uint64_t _bytes = 0;
   uint32_t _carry = kLeaf;
   uint32_t _prev_block = 0;
-  bool _prev_starts = false;
 };
 
 }  // namespace irs::term_dict

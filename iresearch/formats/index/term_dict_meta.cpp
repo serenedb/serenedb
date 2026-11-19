@@ -31,6 +31,7 @@
 #include <string>
 #include <string_view>
 
+#include "iresearch/formats/index/term_dict_block_format.hpp"
 #include "iresearch/formats/index/term_dict_format.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"

@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <duckdb/common/helper.hpp>
@@ -59,7 +60,9 @@ namespace irs::codecs {
 inline constexpr uint8_t kWideOffsets = 1;
 inline constexpr uint8_t kWideHalves = 2;
 inline constexpr size_t kWideSampleEvery = 8;
-inline constexpr size_t kWideSampledValues = 4096;
+inline constexpr size_t kWideSampledBlocks = 16;
+inline constexpr size_t kWideSampledRows = 64;
+inline constexpr unsigned kWideHalvesBits = 113;
 
 struct WideHeader {
   uint8_t form = 0;
@@ -95,6 +98,23 @@ constexpr bool StoresHalves(CodecType codec) noexcept {
          codec == CodecType::RleFfor || codec == CodecType::DictFfor;
 }
 
+struct WideSample {
+  size_t every;
+  size_t rows;
+};
+
+constexpr WideSample WideSampleOf(size_t rows) noexcept {
+  const size_t blocks =
+    (rows + numeric::kBlockValues - 1) / numeric::kBlockValues;
+  const size_t every =
+    std::clamp<size_t>(blocks / kWideSampledBlocks, 1, kWideSampleEvery);
+  const size_t sampled = std::max<size_t>((blocks + every - 1) / every, 1);
+  return {
+    .every = every,
+    .rows = std::max(kWideSampledRows, numeric::kBlockValues / sampled),
+  };
+}
+
 inline unsigned SampledBits(std::span<const absl::uint128> block,
                             bool high) noexcept {
   const auto half = [&](size_t i) {
@@ -115,36 +135,6 @@ inline unsigned SampledBits(std::span<const absl::uint128> block,
   return static_cast<unsigned>(std::min(
     std::bit_width(hi - lo), std::bit_width(static_cast<uint64_t>(most) -
                                             static_cast<uint64_t>(least))));
-}
-
-inline bool HalvesMayPack(std::span<const absl::uint128> keys) {
-  const size_t blocks =
-    (keys.size() + numeric::kBlockValues - 1) / numeric::kBlockValues;
-  uint64_t bits = 0;
-  uint64_t sampled = 0;
-  uint64_t repeats = 0;
-  for (size_t b = 0; b < blocks; b += kWideSampleEvery) {
-    const auto block = keys.subspan(
-      b * numeric::kBlockValues,
-      std::min(numeric::kBlockValues, keys.size() - b * numeric::kBlockValues));
-    bits += (SampledBits(block, true) + SampledBits(block, false)) *
-            uint64_t{block.size()};
-    sampled += block.size();
-    for (size_t i = 1; i < block.size(); ++i) {
-      repeats += block[i] == block[i - 1];
-    }
-  }
-  if (bits * 8 <= sampled * 128 * 7 || repeats * 2 >= sampled) {
-    return true;
-  }
-  const size_t count = std::min(keys.size(), kWideSampledValues);
-  const size_t stride = keys.size() / count;
-  containers::FlatHashSet<absl::uint128> distinct;
-  distinct.reserve(count);
-  for (size_t i = 0; i < count; ++i) {
-    distinct.insert(keys[i * stride]);
-  }
-  return distinct.size() * 2 <= count;
 }
 
 struct WidePart {
@@ -195,51 +185,23 @@ template<typename W>
 struct WideValues final : State {
   static constexpr StateId kId = StateId::WideValues;
 
-  explicit WideValues(ColumnDataCheckpointData& data) {
-    ScratchVector<absl::uint128> keys;
-    keys.reserve(data.rows);
-    absl::uint128 last = 0;
-    for (const auto& chunk : data.chunks) {
-      for (const auto value : chunk.data.template Values<W>()) {
-        if (!value.IsValid()) {
-          has_null = true;
-          keys.push_back(last);
-          continue;
-        }
-        last = WideKey<W>(value.GetValue());
-        if (!usable) {
-          absl::c_fill(keys, last);
-          least = last;
-          most = last;
-          usable = true;
-        }
-        least = std::min(least, last);
-        most = std::max(most, last);
-        keys.push_back(last);
+  explicit WideValues(ColumnDataCheckpointData&) {}
+
+  bool Offers(bool halves, Shape shape, ColumnDataCheckpointData& data) {
+    if (!started) {
+      started = true;
+      SampleChunks(data);
+    }
+    if (!read) {
+      if (sampled && !sample_narrow && !(halves && MayPack(shape, data))) {
+        return false;
       }
-    }
-    if (!usable) {
-      return;
-    }
-    narrow = absl::Uint128High64(most - least) == 0;
-    if (!narrow && !HalvesMayPack(keys)) {
-      return;
-    }
-    lows.resize(keys.size());
-    if (narrow) {
-      for (size_t i = 0; i < keys.size(); ++i) {
-        lows[i] = absl::Uint128Low64(keys[i] - least);
+      if (shape == Shape::Runs && WithoutRuns(data)) {
+        return false;
       }
-      low.emplace(data, lows);
-      return;
+      Read(data);
     }
-    highs.resize(keys.size());
-    for (size_t i = 0; i < keys.size(); ++i) {
-      lows[i] = absl::Uint128Low64(keys[i]);
-      highs[i] = absl::Uint128High64(keys[i]);
-    }
-    low.emplace(data, lows);
-    high.emplace(data, highs);
+    return low && (narrow || (high && halves && MayPack(shape, data)));
   }
 
   duckdb::BaseStatistics Stats(const duckdb::LogicalType& type) const {
@@ -260,36 +222,340 @@ struct WideValues final : State {
   bool narrow = false;
   bool has_null = false;
   bool contested = false;
+  bool started = false;
+  bool read = false;
+  bool sampled = false;
+  bool runs_checked = false;
+  bool runs_absent = false;
+  bool sample_narrow = true;
+  bool counted = false;
+  bool sample_few = false;
+  uint64_t sample_bits = 0;
+  uint64_t sample_rows = 0;
+  uint64_t sample_pairs = 0;
+  uint64_t sample_repeats = 0;
+  absl::uint128 base = 0;
   absl::uint128 least = 0;
   absl::uint128 most = 0;
+  ScratchVector<absl::uint128> sample;
   ScratchVector<uint64_t> lows;
   ScratchVector<uint64_t> highs;
   std::optional<WidePart> low;
   std::optional<WidePart> high;
   std::string out;
+
+  bool WithoutRuns(ColumnDataCheckpointData& data) {
+    if (runs_checked) {
+      return runs_absent;
+    }
+    runs_checked = true;
+    bool any = false;
+    W last{};
+    for (const auto& chunk : data.chunks) {
+      const size_t count = chunk.data.size();
+      if (chunk.data.GetVectorType() != duckdb::VectorType::FLAT_VECTOR ||
+          !duckdb::FlatVector::Validity(chunk.data).CannotHaveNull()) {
+        return false;
+      }
+      if (count == 0) {
+        continue;
+      }
+      const W* values = duckdb::FlatVector::GetData<W>(chunk.data);
+      bool repeats = any && values[0] == last;
+      for (size_t i = 1; i < count; ++i) {
+        repeats |= values[i] == values[i - 1];
+      }
+      if (repeats) {
+        return false;
+      }
+      last = values[count - 1];
+      any = true;
+    }
+    runs_absent = any;
+    return runs_absent;
+  }
+
+  bool MayPack(Shape shape, const ColumnDataCheckpointData& data) {
+    switch (shape) {
+      case Shape::Plain:
+      case Shape::Delta:
+        return sample_bits < sample_rows * kWideHalvesBits;
+      case Shape::Runs:
+        return sample_repeats * 2 >= sample_pairs;
+      case Shape::Dictionary:
+        if (!counted) {
+          containers::FlatHashSet<absl::uint128> distinct;
+          distinct.reserve(sample.size());
+          for (const auto key : sample) {
+            distinct.insert(key);
+          }
+          const auto most = std::min(
+            static_cast<double>(data.rows) / 2,
+            static_cast<double>(data.preferences->max_wide_dictionary_entries));
+          sample_few =
+            static_cast<double>(distinct.size()) <=
+            most * -std::expm1(-static_cast<double>(sample.size()) / most);
+          counted = true;
+        }
+        return sample_few;
+    }
+    return false;
+  }
+
+  bool ReadLowerHalves(ColumnDataCheckpointData& data) {
+    lows.resize(data.rows);
+    uint64_t upper = 0;
+    uint64_t lo = std::numeric_limits<uint64_t>::max();
+    uint64_t hi = 0;
+    uint64_t last = 0;
+    size_t at = 0;
+    for (const auto& chunk : data.chunks) {
+      if (chunk.data.GetVectorType() != duckdb::VectorType::FLAT_VECTOR) {
+        return false;
+      }
+      const size_t count = chunk.data.size();
+      const W* values = duckdb::FlatVector::GetData<W>(chunk.data);
+      const auto& validity = duckdb::FlatVector::Validity(chunk.data);
+      const bool all_valid = validity.CannotHaveNull();
+      size_t first = 0;
+      if (!usable) {
+        while (first < count && !all_valid &&
+               !validity.RowIsValidUnsafe(first)) {
+          ++first;
+        }
+        if (first == count) {
+          has_null |= count != 0;
+          at += count;
+          continue;
+        }
+        upper = static_cast<uint64_t>(values[first].upper);
+        last = values[first].lower;
+        std::fill_n(lows.data(), at + first, last);
+        has_null |= at + first != 0;
+        usable = true;
+      }
+      uint64_t differs = 0;
+      if (all_valid) {
+        for (size_t i = first; i < count; ++i) {
+          const uint64_t lower = values[i].lower;
+          differs |= static_cast<uint64_t>(values[i].upper) ^ upper;
+          lo = std::min(lo, lower);
+          hi = std::max(hi, lower);
+          lows[at + i] = lower;
+        }
+        last = count != 0 ? uint64_t{values[count - 1].lower} : last;
+      } else {
+        bool nulls = false;
+        for (size_t i = first; i < count; ++i) {
+          const bool valid = validity.RowIsValidUnsafe(i);
+          nulls |= !valid;
+          differs |= valid ? static_cast<uint64_t>(values[i].upper) ^ upper : 0;
+          last = valid ? uint64_t{values[i].lower} : last;
+          lo = std::min(lo, last);
+          hi = std::max(hi, last);
+          lows[at + i] = last;
+        }
+        has_null |= nulls;
+      }
+      if (differs != 0) {
+        return false;
+      }
+      at += count;
+    }
+    if (!usable) {
+      return true;
+    }
+    const uint64_t key = upper ^ kWideBias<W>;
+    narrow = true;
+    base = absl::MakeUint128(key, 0);
+    least = absl::MakeUint128(key, lo);
+    most = absl::MakeUint128(key, hi);
+    low.emplace(data, lows);
+    return true;
+  }
+
+  void SampleChunks(ColumnDataCheckpointData& data) {
+    const auto [every, rows] = WideSampleOf(data.rows);
+    size_t row = 0;
+    for (const auto& chunk : data.chunks) {
+      const size_t count = chunk.data.size();
+      if (count == 0) {
+        continue;
+      }
+      if (chunk.data.GetVectorType() != duckdb::VectorType::FLAT_VECTOR ||
+          !duckdb::FlatVector::Validity(chunk.data).CannotHaveNull()) {
+        sample.clear();
+        return;
+      }
+      const W* values = duckdb::FlatVector::GetData<W>(chunk.data);
+      for (size_t i = 0; i < count;) {
+        const size_t block = (row + i) / numeric::kBlockValues;
+        const size_t at = (row + i) % numeric::kBlockValues;
+        const size_t stop = std::min(count, i + numeric::kBlockValues - at);
+        if (block % every == 0 && at < rows) {
+          for (size_t k = i, end = std::min(stop, i + rows - at); k < end;
+               ++k) {
+            sample.push_back(WideKey<W>(values[k]));
+          }
+        }
+        i = stop;
+      }
+      row += count;
+    }
+    if (!sample.empty()) {
+      SampleKeys(rows);
+    }
+  }
+
+  void SampleKeys(size_t rows) {
+    const std::span<const absl::uint128> keys{sample};
+    auto lo = keys[0];
+    auto hi = keys[0];
+    for (size_t at = 0; at < keys.size(); at += rows) {
+      const auto block = keys.subspan(at, std::min(rows, keys.size() - at));
+      sample_bits += (SampledBits(block, true) + SampledBits(block, false)) *
+                     uint64_t{block.size()};
+      sample_rows += block.size();
+      sample_pairs += block.size() - 1;
+      lo = std::min(lo, block[0]);
+      hi = std::max(hi, block[0]);
+      for (size_t i = 1; i < block.size(); ++i) {
+        sample_repeats += block[i] == block[i - 1];
+        lo = std::min(lo, block[i]);
+        hi = std::max(hi, block[i]);
+      }
+    }
+    sample_narrow = absl::Uint128High64(hi - lo) == 0;
+    sampled = true;
+  }
+
+  void Read(ColumnDataCheckpointData& data) {
+    read = true;
+    if ((!sampled || sample_narrow) && ReadLowerHalves(data)) {
+      return;
+    }
+    usable = false;
+    has_null = false;
+    ScratchVector<absl::uint128> keys(data.rows);
+    ReadKeys(data, keys.data());
+    if (!usable) {
+      sampled = true;
+      sample_narrow = false;
+      return;
+    }
+    if (!sampled) {
+      const auto [every, rows] = WideSampleOf(keys.size());
+      for (size_t at = 0; at < keys.size();
+           at += every * numeric::kBlockValues) {
+        const auto block =
+          std::span{keys}.subspan(at, std::min(rows, keys.size() - at));
+        sample.insert(sample.end(), block.begin(), block.end());
+      }
+      SampleKeys(rows);
+    }
+    narrow = absl::Uint128High64(most - least) == 0;
+    lows.resize(keys.size());
+    if (narrow) {
+      base = least;
+      for (size_t i = 0; i < keys.size(); ++i) {
+        lows[i] = absl::Uint128Low64(keys[i] - least);
+      }
+      low.emplace(data, lows);
+      return;
+    }
+    if (!MayPack(Shape::Plain, data) && !MayPack(Shape::Runs, data) &&
+        !MayPack(Shape::Dictionary, data)) {
+      return;
+    }
+    highs.resize(keys.size());
+    for (size_t i = 0; i < keys.size(); ++i) {
+      lows[i] = absl::Uint128Low64(keys[i]);
+      highs[i] = absl::Uint128High64(keys[i]);
+    }
+    low.emplace(data, lows);
+    high.emplace(data, highs);
+  }
+
+  void ReadKeys(ColumnDataCheckpointData& data, absl::uint128* keys) {
+    uint64_t lo_upper = 0;
+    uint64_t lo_lower = 0;
+    uint64_t hi_upper = 0;
+    uint64_t hi_lower = 0;
+    absl::uint128 last = 0;
+    size_t at = 0;
+    const auto start = [&](absl::uint128 key) {
+      if (usable) {
+        return;
+      }
+      std::fill_n(keys, at, key);
+      lo_upper = hi_upper = absl::Uint128High64(key);
+      lo_lower = hi_lower = absl::Uint128Low64(key);
+      usable = true;
+    };
+    const auto take = [&](uint64_t upper, uint64_t lower) {
+      const bool below =
+        upper < lo_upper || (upper == lo_upper && lower < lo_lower);
+      const bool above =
+        upper > hi_upper || (upper == hi_upper && lower > hi_lower);
+      lo_upper = below ? upper : lo_upper;
+      lo_lower = below ? lower : lo_lower;
+      hi_upper = above ? upper : hi_upper;
+      hi_lower = above ? lower : hi_lower;
+    };
+    for (const auto& chunk : data.chunks) {
+      const size_t count = chunk.data.size();
+      if (count != 0 &&
+          chunk.data.GetVectorType() == duckdb::VectorType::FLAT_VECTOR &&
+          duckdb::FlatVector::Validity(chunk.data).CannotHaveNull()) {
+        const W* values = duckdb::FlatVector::GetData<W>(chunk.data);
+        start(WideKey<W>(values[0]));
+        auto* out = keys + at;
+        for (size_t i = 0; i < count; ++i) {
+          const uint64_t upper =
+            static_cast<uint64_t>(values[i].upper) ^ kWideBias<W>;
+          const uint64_t lower = values[i].lower;
+          take(upper, lower);
+          out[i] = absl::MakeUint128(upper, lower);
+        }
+        last = out[count - 1];
+        at += count;
+        continue;
+      }
+      for (const auto value : chunk.data.template Values<W>()) {
+        if (value.IsValid()) {
+          last = WideKey<W>(value.GetValue());
+          start(last);
+          take(absl::Uint128High64(last), absl::Uint128Low64(last));
+        } else {
+          has_null = true;
+        }
+        keys[at++] = last;
+      }
+    }
+    least = absl::MakeUint128(lo_upper, lo_lower);
+    most = absl::MakeUint128(hi_upper, hi_lower);
+  }
 };
 
 template<typename W, const CompressionFunction& kInner>
 double AnalyzeWide(ColumnDataCheckpointData& data, double bound) {
   auto& wide = data.Get<WideValues<W>>();
   wide.contested = true;
-  if (!wide.low) {
+  if (!wide.Offers(StoresHalves(kInner.codec), ShapeOf(kInner.codec), data)) {
     return kNoScore;
   }
   if (wide.narrow) {
     return kInner.analyze(wide.low->data, bound);
   }
-  if (!StoresHalves(kInner.codec)) {
-    return kNoScore;
-  }
-  const auto price = data.preferences->halves_price;
-  const auto low = kInner.analyze(wide.low->data, bound / price);
-  if (!(low < bound / price)) {
+  const auto limit = std::min(bound, static_cast<double>(sizeof(W)));
+  constexpr double price = 8.0 * sizeof(W) / kWideHalvesBits;
+  const auto low = kInner.analyze(wide.low->data, limit / price);
+  if (!(low < limit / price)) {
     return kNoScore;
   }
   const auto score =
-    (low + kInner.analyze(wide.high->data, bound / price - low)) * price;
-  return score < bound ? score : kNoScore;
+    (low + kInner.analyze(wide.high->data, limit / price - low)) * price;
+  return score < limit ? score : kNoScore;
 }
 
 inline bool CompressPart(const CompressionFunction& inner, WidePart& part) {
@@ -300,13 +566,14 @@ inline bool CompressPart(const CompressionFunction& inner, WidePart& part) {
 template<typename W, const CompressionFunction& kInner>
 bool CompressWide(ColumnDataCheckpointData& data) {
   auto& wide = data.Get<WideValues<W>>();
-  if (!wide.low || !CompressPart(kInner, *wide.low)) {
+  if (!wide.Offers(StoresHalves(kInner.codec), ShapeOf(kInner.codec), data) ||
+      !CompressPart(kInner, *wide.low)) {
     return false;
   }
   WideHeader header{
     .form = kWideOffsets,
-    .base_low = absl::Uint128Low64(wide.least),
-    .base_high = absl::Uint128High64(wide.least),
+    .base_low = absl::Uint128Low64(wide.base),
+    .base_high = absl::Uint128High64(wide.base),
   };
   const auto& low = wide.low->bytes;
   auto& out = wide.out;
@@ -314,7 +581,7 @@ bool CompressWide(ColumnDataCheckpointData& data) {
     out.resize(sizeof(WideHeader));
     out.append(low);
   } else {
-    if (!StoresHalves(kInner.codec) || !CompressPart(kInner, *wide.high)) {
+    if (!CompressPart(kInner, *wide.high)) {
       return false;
     }
     header = {.form = kWideHalves, .low_size = low.size()};
@@ -407,6 +674,34 @@ class WideReader {
     const auto low = _low.Fetch(row, next);
     return WideValue<W>(_high ? absl::MakeUint128(_high->Fetch(row, next), low)
                               : Base() + low);
+  }
+
+  void FetchRows(const duckdb::idx_t* rows, duckdb::idx_t count, W* out,
+                 const duckdb::SelectionVector& sel, duckdb::idx_t offset)
+    requires requires(R& half, uint64_t* halves) {
+      half.FetchRows(rows, count, halves, sel, offset);
+    }
+  {
+    const duckdb::SelectionVector in_order;
+    if (_lows.size() < count) {
+      _lows.resize(count);
+    }
+    _low.FetchRows(rows, count, _lows.data(), in_order, 0);
+    if (!_high) {
+      const auto base = Base();
+      for (duckdb::idx_t i = 0; i < count; ++i) {
+        out[offset + sel.get_index(i)] = WideValue<W>(base + _lows[i]);
+      }
+      return;
+    }
+    if (_highs.size() < count) {
+      _highs.resize(count);
+    }
+    _high->FetchRows(rows, count, _highs.data(), in_order, 0);
+    for (duckdb::idx_t i = 0; i < count; ++i) {
+      out[offset + sel.get_index(i)] =
+        WideValue<W>(absl::MakeUint128(_highs[i], _lows[i]));
+    }
   }
 
   void ReadOffsets(uint64_t row, uint64_t count, W* out) {

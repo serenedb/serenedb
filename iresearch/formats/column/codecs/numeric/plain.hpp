@@ -256,6 +256,7 @@ class PlainReader final : public FrameReader<T> {
  public:
   using Base::ConstantRows;
   using Base::FetchRows;
+  using Base::NarrowBounds;
 
   PlainReader(duckdb::const_data_ptr_t base, const FrameHeader& frames,
               CodecType codec, const ReadContext::CacheSlot& slot = {})

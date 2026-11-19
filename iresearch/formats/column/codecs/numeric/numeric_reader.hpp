@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/numeric/int128.h>
+
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -523,6 +525,71 @@ class FrameReader {
     return true;
   }
 
+  IRS_FORCE_INLINE bool NarrowBounds(this auto& self, uint64_t row,
+                                     uint64_t count, T& min, T& max) {
+    if (!self.Packed()) {
+      return false;
+    }
+    if (const auto f = static_cast<uint32_t>(row / kFforFrameRows);
+        f != self._bounds_frame) {
+      const auto m = self.MetaAt(f);
+      self._bounds_frame = f;
+      self._bounds_limit =
+        static_cast<U>(static_cast<U>(m.max) - static_cast<U>(m.min)) / 2;
+    }
+    const auto block = self.BlockAt(row);
+    const U mask = block.bits >= numeric::kMaxBits<U>
+                     ? std::numeric_limits<U>::max()
+                     : static_cast<U>((uint64_t{1} << block.bits) - 1);
+    if (mask > (block.delta ? self._bounds_limit / (numeric::kBlockValues - 1)
+                            : self._bounds_limit)) {
+      return false;
+    }
+    return self.BlockBounds(row, count, min, max);
+  }
+
+  IRS_NO_INLINE bool BlockBounds(this auto& self, uint64_t row, uint64_t count,
+                                 T& min, T& max) {
+    using S = std::make_signed_t<U>;
+    constexpr absl::int128 kLeast{std::numeric_limits<T>::min()};
+    constexpr absl::int128 kMost{std::numeric_limits<T>::max()};
+    const auto wide = [](uint64_t bits) {
+      return absl::int128{std::bit_cast<T>(static_cast<U>(bits))};
+    };
+    const absl::int128 limit{self._bounds_limit};
+    absl::int128 lo = kMost;
+    absl::int128 hi = kLeast;
+    for (uint64_t at = row, end = row + count; at < end;) {
+      const auto block = self.BlockAt(at);
+      const uint64_t from = at % numeric::kBlockValues;
+      const uint64_t to =
+        std::min<uint64_t>(numeric::kBlockValues, from + (end - at)) - 1;
+      const auto base = wide(block.base);
+      const auto mask = (absl::int128{1} << block.bits) - 1;
+      auto first = base;
+      auto last = std::min(base + mask, kMost);
+      if (block.delta) {
+        const absl::int128 least{static_cast<S>(static_cast<U>(block.step))};
+        const auto most = least + mask;
+        first = base + std::min(least * from, least * to);
+        last = base + std::max(most * from, most * to);
+        if (first < kLeast || last > kMost) {
+          return false;
+        }
+      }
+      lo = std::min(lo, first);
+      hi = std::max(hi, last);
+      if (hi - lo > limit) {
+        return false;
+      }
+      at += to + 1 - from;
+    }
+    const absl::int128 scale{std::max<uint64_t>(self._f.scale, 1)};
+    min = static_cast<T>(std::max(lo * scale, kLeast));
+    max = static_cast<T>(std::min(hi * scale, kMost));
+    return true;
+  }
+
   IRS_NO_INLINE duckdb::idx_t FetchSummed(this auto& self,
                                           const duckdb::idx_t* rows,
                                           duckdb::idx_t i, duckdb::idx_t count,
@@ -844,6 +911,8 @@ class FrameReader {
   ScratchVector<uint64_t> _words;
   FforFrame _ffor;
   uint32_t _ffor_frame = kNoFrame;
+  uint32_t _bounds_frame = kNoFrame;
+  U _bounds_limit = 0;
   std::optional<Zstd::Decompressor> _zstd;
 };
 

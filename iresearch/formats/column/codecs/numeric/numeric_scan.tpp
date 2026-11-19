@@ -349,13 +349,14 @@ void Filter(const ColumnSegment& segment, ColumnScanState& state,
       verdict = FramesVerdict(scan, segment.stats.GetType(), start,
                               start + vector_count, checker);
       if constexpr (requires(typename R::Value value) {
-                      scan.frames.ConstantRows(start, start, value);
+                      scan.frames.NarrowBounds(start, start, value, value);
                     }) {
-        if (typename R::Value value;
-            verdict == duckdb::FilterPropagateResult::NO_PRUNING_POSSIBLE &&
-            scan.frames.ConstantRows(start, vector_count, value)) {
+        typename R::Value min;
+        typename R::Value max;
+        if (verdict == duckdb::FilterPropagateResult::NO_PRUNING_POSSIBLE &&
+            scan.frames.NarrowBounds(start, vector_count, min, max)) {
           verdict = VerdictOf(scan, scan.value_verdict, segment.stats.GetType(),
-                              value, value, checker);
+                              min, max, checker);
         }
       }
     }

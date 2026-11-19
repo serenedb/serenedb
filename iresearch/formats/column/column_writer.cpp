@@ -882,6 +882,7 @@ void ColumnWriter::SealRowGroup() {
     return;
   }
   std::span<WriteChunk> chunks{_staged.data(), _staged_chunks};
+  DropAllValidMask(chunks.back());
   if (_options.distinct != DistinctStats::None) {
     for (auto& chunk : chunks) {
       UpdateDistinct(*_meta.distinct, _options.distinct, chunk.data,

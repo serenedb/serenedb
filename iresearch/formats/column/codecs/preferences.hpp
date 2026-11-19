@@ -34,10 +34,10 @@ struct Preferences {
   double delta_ffor_price = 1.0;
   double text_lz4_price[kTextShapeCount] = {1.0, 1.0};
   double roaring_price = 1.0;
-  double halves_price = 1.0;
   double max_runs_per_row = 1.0;
   uint8_t min_dictionary_value_bytes = 0;
   uint32_t max_narrow_dictionary_entries = std::numeric_limits<uint32_t>::max();
+  uint32_t max_wide_dictionary_entries = std::numeric_limits<uint32_t>::max();
   bool hold_leafless = false;
   bool contest_grown = false;
   bool differences_over_nulls = false;
@@ -51,10 +51,10 @@ inline constexpr Preferences kFlushPreferences{
   .delta_ffor_price = 1.05,
   .text_lz4_price = {1.05, 1.05},
   .roaring_price = 2.0,
-  .halves_price = 8.0 / 7.0,
   .max_runs_per_row = 0.5,
   .min_dictionary_value_bytes = 2,
   .max_narrow_dictionary_entries = 256,
+  .max_wide_dictionary_entries = 2048,
   .hold_leafless = true,
   .contest_grown = true,
   .differences_over_nulls = true,

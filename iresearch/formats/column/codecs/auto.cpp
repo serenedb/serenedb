@@ -114,6 +114,7 @@ const Orders& OrdersOf(PhysicalType physical) noexcept {
     case PhysicalType::UINT64:
     case PhysicalType::INT128:
     case PhysicalType::UINT128:
+    case PhysicalType::LIST:
       return kIntegerOrders;
     default:
       return kLightweightOrders;

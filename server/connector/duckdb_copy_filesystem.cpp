@@ -24,6 +24,7 @@
 #include <cstdint>
 #include <cstring>
 #include <duckdb/common/file_opener.hpp>
+#include <duckdb/formats/row_stream.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -55,21 +56,23 @@ ConnectionContext& GetConnection(duckdb::FileOpener* opener,
 
 }  // namespace
 
-// Reads the non-seekable COPY FROM STDIN wire stream SINGLE-PASS. Every COPY
-// format opens it exactly once (csv/json sniff+scan share one buffer-manager
-// pass), so the ctor rejects an unexpected re-open -- a non-seekable stream has
-// nothing to replay. The session has already sent CopyInResponse by the time
-// the handle exists.
+// Reads the COPY FROM STDIN wire stream in order: through the session's
+// registered row stream when the format's reader scans it directly (csv,
+// json), else SINGLE-PASS from the batches, where the ctor rejects a re-open --
+// a non-seekable stream has nothing to replay. The session has already sent
+// CopyInResponse by the time the handle exists.
 struct CopyInFileHandle final : public duckdb::FileHandle {
   CopyInFileHandle(duckdb::FileSystem& fs, ConnectionContext& state,
-                   pg::CopyInBatches& batches)
+                   pg::CopyInBatches& batches,
+                   duckdb::shared_ptr<duckdb::RowSource> stream)
     : duckdb::FileHandle(
         fs, std::string{kDevStdin},
         duckdb::FileOpenFlags(duckdb::FileOpenFlags::FILE_FLAGS_READ)),
       _state{state},
-      _batches{batches} {
+      _batches{batches},
+      _stream{std::move(stream)} {
     const auto open_idx = _state.copy_stdin_open_count++;
-    if (open_idx != 0) {
+    if (open_idx != 0 && !_stream) {
       // A re-open would need to replay from offset 0, but the wire stream is
       // non-seekable and already drained past that point. No COPY format does
       // this (csv/json sniff+scan share a single buffer-manager pass), so fail
@@ -85,6 +88,13 @@ struct CopyInFileHandle final : public duckdb::FileHandle {
   void Close() final {}
 
   int64_t DoRead(void* buf, int64_t nr_bytes) {
+    if (_stream) {
+      const auto read =
+        _stream->Read(static_cast<char*>(buf),
+                      static_cast<duckdb::idx_t>(nr_bytes), _position);
+      _position += read;
+      return static_cast<int64_t>(read);
+    }
     // Short-circuit once CopyDone/EOF has been seen instead of re-blocking.
     if (_state.copy_stdin_done) {
       return 0;
@@ -122,6 +132,8 @@ struct CopyInFileHandle final : public duckdb::FileHandle {
  private:
   ConnectionContext& _state;
   pg::CopyInBatches& _batches;
+  duckdb::shared_ptr<duckdb::RowSource> _stream;
+  duckdb::idx_t _position = 0;
   pg::CopyBatchLease _batch;
   size_t _segment = 0;
   size_t _offset = 0;
@@ -173,7 +185,11 @@ duckdb::unique_ptr<duckdb::FileHandle> SereneDBCopyFileSystem::OpenFile(
         ERR_MSG("COPY ", path,
                 " requires a PG wire connection (transport not attached)"));
     }
-    return duckdb::make_uniq<CopyInFileHandle>(*this, connection, *batches);
+    return duckdb::make_uniq<CopyInFileHandle>(
+      *this, connection, *batches,
+      duckdb::FindRowStream(
+        *duckdb::FileOpener::TryGetClientContext(opener.get()),
+        std::string{path}));
   }
   if (path == kDevStdout) {
     auto& connection = GetConnection(opener.get(), path);

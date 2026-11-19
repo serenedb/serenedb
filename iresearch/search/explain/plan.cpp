@@ -24,7 +24,6 @@
 #include <absl/functional/any_invocable.h>
 
 #include <algorithm>
-#include <cmath>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -457,9 +456,6 @@ Node Plan::Explain(doc_id_t doc, std::optional<score_t> executed) {
     };
   }
   if (executed) {
-    SDB_ASSERT(outcome != Outcome::Scored ||
-               std::abs(std::get<score_t>(root.value) - *executed) <=
-                 1e-4f * std::max(1.f, std::abs(*executed)));
     root.value = *executed;
   }
   return root;

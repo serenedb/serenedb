@@ -26,7 +26,7 @@ PostingKey::PostingKey(const TermReader& reader,
                        const PostingMeta& meta) noexcept
   : reader{&reader},
     doc_start{meta.doc_start},
-    inline_data{meta.inline_data},
+    inline_data{meta.inline_size != 0 ? meta.inline_data : nullptr},
     pos_start{meta.pos_start},
     doc_delta{meta.doc_delta},
     freq{meta.freq},

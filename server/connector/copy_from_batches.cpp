@@ -448,7 +448,7 @@ struct RowsGlobalState final : public CopyFromGlobalState {
     ranges.path = file->GetPath();
   }
 
-  duckdb::idx_t MaxThreads() const final { return ranges.range_count; }
+  duckdb::idx_t MaxThreads() const final { return ranges.RangeCount(); }
 
   std::unique_ptr<duckdb::FileHandle> file;
   uint64_t size;

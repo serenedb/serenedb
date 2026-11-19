@@ -163,7 +163,7 @@ id,name
 
 ## Parallel Reading
 
-`read_csv` splits a file between several threads where it can. The result holds the same rows as with `parallel = false`, which reads the file with one thread, for every dialect: quoted values that span lines, escapes, comments, multi-byte delimiters and `null_padding` included.
+`read_csv` splits a file between several threads, compressed files and pipes included. The result holds the same rows as with `parallel = false`, which reads the file with one thread, for every dialect: quoted values that span lines, escapes, comments, multi-byte delimiters and `null_padding` included.
 
 ## Writing Using the `COPY` Statement
 

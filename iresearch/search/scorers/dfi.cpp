@@ -101,6 +101,18 @@ score_t ScoreOf(DFIMeasure measure, score_t boost, score_t ratio, score_t tf,
   SDB_UNREACHABLE();
 }
 
+std::string_view KernelOf(DFIMeasure measure) noexcept {
+  switch (measure) {
+    case DFIMeasure::Standardized:
+      return "(freq - expected) / sqrt(expected)";
+    case DFIMeasure::Saturated:
+      return "(freq - expected) / expected";
+    case DFIMeasure::ChiSquared:
+      return "(freq - expected)^2 / expected";
+  }
+  SDB_UNREACHABLE();
+}
+
 std::span<const score_t> RatiosOf(const DFIStats& stats) noexcept {
   if (stats.ratios) {
     return {stats.ratios, stats.terms};
@@ -163,17 +175,7 @@ void DFI::Explain(const ScoreContext& ctx, const explain::SlotStats* stats,
     explain::ExplainNoFreq(ctx, false, out);
     return;
   }
-  const auto* const kernel = [&] {
-    switch (_measure) {
-      case DFIMeasure::Standardized:
-        return "(freq - expected) / sqrt(expected)";
-      case DFIMeasure::Saturated:
-        return "(freq - expected) / expected";
-      case DFIMeasure::ChiSquared:
-        return "(freq - expected)^2 / expected";
-    }
-    SDB_UNREACHABLE();
-  }();
+  const auto kernel = KernelOf(_measure);
   const auto describe = [&](explain::Node& node, score_t ratio) {
     explain::AddBoost(node, ctx.boost);
     const auto freq = explain::AddFreq(node, ctx);

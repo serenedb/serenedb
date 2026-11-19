@@ -27,6 +27,7 @@
 #include <iresearch/search/explain/stats.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/levenshtein_filter.hpp>
+#include <iresearch/search/filters/ngram_similarity_filter.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/search/filters/prefix_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
@@ -96,6 +97,29 @@ std::unique_ptr<irs::ByPhrase> Phrase(
   }
   return phrase;
 }
+
+class UndescribedFilter final : public irs::Filter {
+ public:
+  explicit UndescribedFilter(irs::Filter::ptr inner)
+    : _inner{std::move(inner)} {}
+
+  irs::QueryBuilder::ptr PrepareSegment(
+    const irs::SubReader& segment, const irs::PrepareContext& ctx) const final {
+    return _inner->PrepareSegment(segment, ctx);
+  }
+
+  irs::TypeInfo::type_id type() const noexcept final { return _inner->type(); }
+
+ protected:
+  irs::PrepareCollector::ptr MakeCollectorImpl(const irs::Scorer* scorer,
+                                               irs::StatsArena& stats,
+                                               uint32_t threads) const final {
+    return _inner->MakeCollector(*scorer, stats, threads);
+  }
+
+ private:
+  irs::Filter::ptr _inner;
+};
 
 irs::score_t ValueOf(const irs::explain::Node& node) {
   return std::get<irs::score_t>(node.value);
@@ -478,6 +502,48 @@ TEST_P(ExplainTest, a_scorer_without_a_breakdown_still_explains_its_value) {
     EXPECT_EQ(boost.ToString(), row.scorer);
     EXPECT_TRUE(row.expression.empty());
     EXPECT_TRUE(row.details.empty());
+  }
+}
+
+TEST_P(ExplainTest, a_filter_without_statistics_still_explains_its_value) {
+  BuildFixture();
+  irs::BM25 bm25;
+  for (const auto& row : Explain(UndescribedFilter{Term("fox")}, bm25, 0)) {
+    const auto* idf = Child(row, "idf");
+    ASSERT_NE(nullptr, idf);
+    EXPECT_TRUE(idf->details.empty());
+    const auto* tf = Child(row, "tf");
+    ASSERT_NE(nullptr, tf);
+    const auto* avgdl = Child(*tf, "avgdl");
+    ASSERT_NE(nullptr, avgdl);
+    EXPECT_TRUE(avgdl->details.empty());
+  }
+  irs::LMDirichlet lm;
+  for (const auto& row : Explain(UndescribedFilter{Term("fox")}, lm, 0)) {
+    const auto* p = Child(row, "p");
+    ASSERT_NE(nullptr, p);
+    EXPECT_TRUE(p->details.empty());
+  }
+  for (const auto& row :
+       Explain(UndescribedFilter{Phrase({"brown", "fox"})}, lm, 0)) {
+    EXPECT_EQ("sum", row.expression);
+    EXPECT_TRUE(row.details.empty());
+  }
+}
+
+TEST_P(ExplainTest, a_single_ngram_explains_as_its_term) {
+  BuildFixture();
+  irs::BM25 bm25;
+  irs::ByNGramSimilarity filter;
+  *filter.mutable_field_id() = kBodyId;
+  filter.mutable_options()->ngrams.push_back(Bytes("fox"));
+  const auto rows = Explain(filter, bm25, 0);
+  ASSERT_EQ(5u, rows.size());
+  for (const auto& row : rows) {
+    EXPECT_EQ(kBodyId, row.subject.field);
+    ASSERT_EQ(1u, row.subject.terms.size());
+    EXPECT_EQ(Bytes("fox"), row.subject.terms.front());
+    EXPECT_NE(nullptr, Child(row, "idf"));
   }
 }
 

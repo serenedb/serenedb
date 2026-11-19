@@ -204,7 +204,14 @@ void PlanFfor(const ColumnDataCheckpointData& data, const Values<T>& values,
     return;
   }
   state.planned = true;
+  if (values.Sequence()) {
+    state.blocks.PlanEqualSteps(values.Size(), values.Bounds(), values.Step());
+    return;
+  }
   state.blocks.PlanMixed(values.Rows(), values.Bounds(),
+                         data.preferences->differences_over_nulls
+                           ? std::span<const uint8_t>{}
+                           : values.NullBlocks(),
                          data.preferences->delta_ffor_price);
 }
 
@@ -217,9 +224,9 @@ double AnalyzeFfor(ColumnDataCheckpointData& data, double bound) {
   auto& state = data.Get<Ffor<T>>();
   state.analyzed = true;
   PlanFfor(data, values, state);
-  return AnalyzeBlocks<T>(
-    data, Shape::Plain, static_cast<uint32_t>(values.Size()),
-    SteppedBytes<T>(state.blocks, values.Rows()), 0, bound);
+  return AnalyzeBlocks<T>(data, Shape::Plain,
+                          static_cast<uint32_t>(values.Size()),
+                          SteppedBytes<T>(state.blocks, values), 0, bound);
 }
 
 template<typename T>
@@ -230,8 +237,8 @@ bool CompressFfor(ColumnDataCheckpointData& data) {
     return false;
   }
   PlanFfor(data, values, state);
-  return CompressStepped<T>(data, Shape::Plain, state.blocks, values.Rows(),
-                            state.analyzed, PlainHeader{});
+  return CompressStepped<T>(data, Shape::Plain, state.blocks, state.analyzed,
+                            PlainHeader{});
 }
 
 template<typename T>
@@ -247,12 +254,13 @@ class PlainReader final : public FrameReader<T> {
   using typename Base::U;
 
  public:
-  using Base::FetchSteps;
+  using Base::ConstantRows;
+  using Base::FetchRows;
 
   PlainReader(duckdb::const_data_ptr_t base, const FrameHeader& frames,
               CodecType codec, const ReadContext::CacheSlot& slot = {})
     : Base{base, frames, codec, slot},
-      _own{duckdb::Load<PlainHeader>(base + sizeof(FrameHeader))} {
+      _own{duckdb::Load<PlainHeader>(base + OwnHeaderOffset(frames.flags))} {
     SDB_ENSURE(For() || _own.base == 0,
                "numeric codec: corrupted segment header");
   }
@@ -318,11 +326,6 @@ class PlainReader final : public FrameReader<T> {
     return FetchFramed(row, next);
   }
 
- private:
-  bool For() const noexcept {
-    return !this->Packed() && this->_f.stored < this->_f.width;
-  }
-
   IRS_NO_INLINE T FetchFramed(uint64_t row, uint64_t next) {
     if (this->Near(row, next)) {
       return this->Get(row);
@@ -335,6 +338,11 @@ class PlainReader final : public FrameReader<T> {
     numeric::Widen(item.source + size_t{item.at} * this->_f.stored, 1,
                    this->_f.stored, &v);
     return this->Scaled(static_cast<U>(v + static_cast<U>(_own.base)));
+  }
+
+ private:
+  bool For() const noexcept {
+    return !this->Packed() && this->_f.stored < this->_f.width;
   }
 
   void DecodeInto(const NumericFrameMeta& m, uint32_t rows, U* out,

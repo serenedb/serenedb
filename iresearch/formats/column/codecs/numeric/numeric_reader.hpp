@@ -193,7 +193,7 @@ class FrameReader {
 
   T Scaled(U v) const noexcept {
     if constexpr (std::is_integral_v<T>) {
-      if (const auto scale = static_cast<U>(_f.scale); scale > 1) {
+      if (const auto scale = static_cast<U>(_f.scale); scale > 1) [[unlikely]] {
         numeric::MultiplyBy(&v, 1, scale);
       }
     }
@@ -437,27 +437,143 @@ class FrameReader {
     return _ffor[row % kFforFrameRows / numeric::kBlockValues];
   }
 
-  IRS_FORCE_INLINE duckdb::idx_t FetchSteps(const duckdb::idx_t* rows,
-                                            duckdb::idx_t count, T* out,
-                                            const duckdb::SelectionVector& sel,
-                                            duckdb::idx_t offset) {
-    if (count < 2 || !Packed()) {
-      return 0;
-    }
-    duckdb::idx_t i = 0;
-    for (; i < count; ++i) {
-      const auto row = static_cast<uint64_t>(rows[i]);
-      SDB_ENSURE(row < _f.row_count, "numeric codec: row out of range");
-      const auto block = BlockAt(row);
-      if (!block.delta || block.bits != 0) {
-        break;
+  static bool NearInBlock(uint64_t row, uint64_t next) noexcept {
+    return next - row <= numeric::kBlockValues / kNearShare &&
+           (row ^ next) < numeric::kBlockValues;
+  }
+
+  IRS_FORCE_INLINE void FetchRows(this auto& self, const duckdb::idx_t* rows,
+                                  duckdb::idx_t count, T* out,
+                                  const duckdb::SelectionVector& sel,
+                                  duckdb::idx_t offset) {
+    if (!self.Packed()) {
+      for (duckdb::idx_t i = 0; i < count; ++i) {
+        const auto row = static_cast<uint64_t>(rows[i]);
+        SDB_ASSERT(row < self._f.row_count);
+        out[offset + sel.get_index(i)] =
+          self.Holds(row)
+            ? self.At(row)
+            : self.FetchFramed(row,
+                               i + 1 < count ? uint64_t{rows[i + 1]} : kNoRow);
       }
-      out[offset + sel.get_index(i)] =
-        Scaled(static_cast<U>(static_cast<U>(block.base) +
-                              static_cast<U>(row % numeric::kBlockValues) *
-                                static_cast<U>(block.step)));
+      return;
     }
-    return i;
+    for (duckdb::idx_t i = 0; i < count; ++i) {
+      const auto row = static_cast<uint64_t>(rows[i]);
+      SDB_ASSERT(row < self._f.row_count);
+      T value;
+      if (self.Holds(row)) {
+        value = self.At(row);
+      } else if (const auto block = self.BlockAt(row); block.bits == 0) {
+        const uint64_t first = row - row % numeric::kBlockValues;
+        const auto base = static_cast<U>(block.base);
+        const auto step = static_cast<U>(block.step);
+        for (;; ++i) {
+          SDB_ASSERT(rows[i] < self._f.row_count);
+          out[offset + sel.get_index(i)] = self.Scaled(
+            static_cast<U>(base + static_cast<U>(rows[i] - first) * step));
+          if (i + 1 == count || rows[i + 1] - first >= numeric::kBlockValues) {
+            break;
+          }
+        }
+        continue;
+      } else if (block.delta) {
+        i += self.FetchSummed(rows, i, count, out, sel, offset) - 1;
+        continue;
+      } else if (i + 1 != count && NearInBlock(row, rows[i + 1])) {
+        value = self.Get(row);
+      } else {
+        value = self.Scaled(numeric::UnpackValue<U>(
+          block.packed, block.bits,
+          static_cast<uint32_t>(row % numeric::kBlockValues),
+          static_cast<U>(block.base)));
+      }
+      out[offset + sel.get_index(i)] = value;
+    }
+  }
+
+  bool ConstantRows(this auto& self, uint64_t row, uint64_t count, T& value) {
+    if (!self.Packed()) {
+      return false;
+    }
+    const uint64_t end = row + count;
+    U base = 0;
+    for (uint64_t at = row; at < end;
+         at += numeric::kBlockValues - at % numeric::kBlockValues) {
+      const auto block = self.BlockAt(at);
+      if (block.bits != 0 || block.step != 0 ||
+          (at != row && static_cast<U>(block.base) != base)) {
+        return false;
+      }
+      base = static_cast<U>(block.base);
+    }
+    value = self.Scaled(base);
+    return true;
+  }
+
+  IRS_NO_INLINE duckdb::idx_t FetchSummed(this auto& self,
+                                          const duckdb::idx_t* rows,
+                                          duckdb::idx_t i, duckdb::idx_t count,
+                                          T* out,
+                                          const duckdb::SelectionVector& sel,
+                                          duckdb::idx_t offset) {
+    const auto row = static_cast<uint64_t>(rows[i]);
+    duckdb::idx_t end = i + 1;
+    while (end < count && (rows[end] ^ row) < numeric::kBlockValues) {
+      SDB_ASSERT(rows[end] < self._f.row_count);
+      ++end;
+    }
+    const bool decoded =
+      (end - i) * 2 >= numeric::kBlockValues || NearInBlock(self._fetched, row);
+    self._fetched = rows[end - 1];
+    if (decoded) {
+      self.Seek(row);
+      for (auto k = i; k < end; ++k) {
+        out[offset + sel.get_index(k)] = self.At(rows[k]);
+      }
+      return end - i;
+    }
+    if (self._steps_block != row - row % numeric::kBlockValues) {
+      self.LoadSteps(row);
+    }
+    for (auto k = i; k < end; ++k) {
+      out[offset + sel.get_index(k)] = self.Scaled(self.SummedTo(rows[k]));
+    }
+    return end - i;
+  }
+
+  IRS_NO_INLINE void LoadSteps(uint64_t row) {
+    const uint64_t first = row - row % numeric::kBlockValues;
+    const auto block = BlockAt(row);
+    _block.resize(numeric::kBlockValues);
+    numeric::Unpack<U>(block.bits,
+                       BlockWords<U>(block.packed, block.bits,
+                                     std::min<uint64_t>(numeric::kBlockValues,
+                                                        _f.row_count - first)),
+                       _block.data(), U{0});
+    _steps_block = first;
+    _steps_summed = 0;
+    _steps_sum = 0;
+  }
+
+  U SummedTo(uint64_t row) {
+    SDB_ASSERT(_steps_block == row - row % numeric::kBlockValues);
+    const auto block = BlockAt(row);
+    const auto index = static_cast<size_t>(row % numeric::kBlockValues);
+    if (index + 1 < _steps_summed) {
+      _steps_summed = 0;
+      _steps_sum = 0;
+    }
+    U sum = _steps_sum;
+    const U* steps = _block.data();
+    for (size_t j = _steps_summed; j <= index; ++j) {
+      sum = static_cast<U>(sum + steps[j]);
+    }
+    _steps_sum = sum;
+    _steps_summed = index + 1;
+    return static_cast<U>(static_cast<U>(block.base) +
+                          static_cast<U>(index) * static_cast<U>(block.step) +
+                          sum);
   }
 
   void UnpackBlock(uint64_t first, uint64_t rows, U* out) {
@@ -469,6 +585,7 @@ class FrameReader {
         numeric::Unpack<U>(block.bits, words, out, base);
         return;
       }
+      _steps_block = kNoRow;
       _block.resize(numeric::kBlockValues);
       numeric::Unpack<U>(block.bits, words, _block.data(), base);
       std::memcpy(out, _block.data(), rows * sizeof(U));
@@ -483,6 +600,7 @@ class FrameReader {
       }
       return;
     }
+    _steps_block = kNoRow;
     _block.resize(numeric::kBlockValues);
     numeric::Unpack<U>(block.bits,
                        BlockWords<U>(block.packed, block.bits, rows),
@@ -496,18 +614,23 @@ class FrameReader {
     const auto block = self.BlockAt(row);
     const auto index = static_cast<uint32_t>(row % numeric::kBlockValues);
     const auto base = static_cast<U>(block.base);
-    if (block.delta) {
-      if (block.bits != 0) {
-        return self.Get(row);
-      }
+    if (block.bits == 0) {
       return self.Scaled(static_cast<U>(base + static_cast<U>(index) *
                                                  static_cast<U>(block.step)));
     }
-    if (next == kNoRow) {
-      return self.Scaled(
-        numeric::UnpackLoneValue<U>(block.packed, block.bits, index, base));
+    if (block.delta) {
+      const bool decoded = (next != kNoRow && NearInBlock(row, next)) ||
+                           NearInBlock(self._fetched, row);
+      self._fetched = row;
+      if (decoded) {
+        return self.Get(row);
+      }
+      if (self._steps_block != row - index) {
+        self.LoadSteps(row);
+      }
+      return self.Scaled(self.SummedTo(row));
     }
-    if (self.Near(row, next)) {
+    if (next != kNoRow && NearInBlock(row, next)) {
       return self.Get(row);
     }
     return self.Scaled(
@@ -547,28 +670,54 @@ class FrameReader {
     off += BlockMetaBytes(blocks, sizeof(V));
     SDB_ENSURE(off <= len, "numeric codec: corrupted blocks");
     for (size_t b = 0; b < blocks; ++b) {
-      const unsigned bits = widths[b];
+      const uint8_t kind = widths[b];
       const size_t count =
         std::min(numeric::kBlockValues, values - b * numeric::kBlockValues);
+      auto* block = out + b * numeric::kBlockValues;
+      const auto base = duckdb::Load<V>(bases + b * sizeof(V));
+      const bool stepped = (kind & kBlockDelta) != 0;
+      unsigned bits = kind;
+      V from = base;
+      if (stepped) {
+        SDB_ENSURE(count > 1 && off + sizeof(uint64_t) <= len,
+                   "numeric codec: corrupted blocks");
+        from = static_cast<V>(duckdb::Load<uint64_t>(src + off));
+        off += sizeof(uint64_t);
+        if (kind & kBlockOwnStep) {
+          SDB_ENSURE(kind == kStreamAlternates,
+                     "numeric codec: corrupted blocks");
+          for (size_t i = 0; i < count; ++i) {
+            block[i] = static_cast<V>(base + (i % 2 == 0 ? V{0} : from));
+          }
+          continue;
+        }
+        bits = kind & kBlockDeltaBits;
+      }
       const auto stored =
         count == numeric::kBlockValues
           ? numeric::PackedBytes(bits)
           : duckdb::BitpackingPrimitives::GetRequiredSize(count, bits);
       SDB_ENSURE(bits <= numeric::kMaxBits<V> && off + stored <= len,
                  "numeric codec: corrupted blocks");
-      auto* block = out + b * numeric::kBlockValues;
-      const auto base = duckdb::Load<V>(bases + b * sizeof(V));
       if (count == numeric::kBlockValues) {
         numeric::Unpack<V>(bits, Words<numeric::LaneWord<V>>(src + off), block,
-                           base);
+                           from);
       } else if (bits == 0) {
-        std::fill_n(block, count, base);
+        std::fill_n(block, count, from);
       } else {
         duckdb::BitpackingPrimitives::UnPackBuffer<V>(
           reinterpret_cast<duckdb::data_ptr_t>(block), src + off, count, bits,
           true);
         for (size_t i = 0; i < count; ++i) {
-          block[i] = static_cast<V>(block[i] + base);
+          block[i] = static_cast<V>(block[i] + from);
+        }
+      }
+      if (stepped) {
+        V value = base;
+        block[0] = value;
+        for (size_t i = 1; i < count; ++i) {
+          value = static_cast<V>(value + block[i]);
+          block[i] = value;
         }
       }
       off += stored;
@@ -595,6 +744,10 @@ class FrameReader {
   uint32_t _source_opens = 0;
   uint64_t _fetched = std::numeric_limits<uint64_t>::max();
   ScratchVector<U> _block;
+  uint64_t _steps_block = kNoRow;
+  size_t _steps_summed = 0;
+  U _steps_sum = 0;
+  uint8_t _code_base_bytes = sizeof(uint32_t);
 
  private:
   template<typename V>
@@ -625,10 +778,17 @@ class FrameReader {
       _ffor_frame = f;
       return;
     }
-    size_t off = BlockMetaBytes(blocks, sizeof(V));
+    const auto origin = stepped ? static_cast<V>(m.min) : V{0};
+    const size_t base_bytes =
+      stepped ? numeric::BytesFor(static_cast<V>(m.max - m.min))
+              : _code_base_bytes;
+    size_t off = BlockMetaBytes(blocks, base_bytes);
     SDB_ENSURE(m.frame.comp_len == m.frame.raw_len && off <= m.frame.raw_len,
                "numeric codec: corrupted blocks");
-    const auto* widths = src + blocks * sizeof(V);
+    const auto* widths = src + blocks * base_bytes;
+    V bases[kFforFrameRows / numeric::kBlockValues];
+    numeric::WidenAdd<V>(src, blocks, static_cast<uint8_t>(base_bytes), origin,
+                         bases);
     for (size_t b = 0; b < blocks; ++b) {
       unsigned bits = widths[b];
       const bool delta = stepped && (bits & kBlockDelta) != 0;
@@ -647,7 +807,7 @@ class FrameReader {
                  "numeric codec: corrupted blocks");
       frame[b] = {
         .packed = src + off,
-        .base = duckdb::Load<V>(src + b * sizeof(V)),
+        .base = bases[b],
         .step = step,
         .bits = bits,
         .delta = delta,

@@ -620,8 +620,8 @@ row group is cut into segments of about kDefaultColSegmentTarget encoded bytes:
 |   |   FSST symbol table: at most 2066 bytes      |   |
 |   |   with 8-bit codes, 36872 with 12-bit ones   |   |
 |   +----------------------------------------------+   |
-|   trained per row group and again when its data      |
-|   drifts; each FSST segment stores a copy            |
+|   trained once per row group; each FSST segment      |
+|   stores a copy                                      |
 +------------------------------------------------------+
 |                         Data                         |
 |   +----------------------------------------------+   |
@@ -733,8 +733,8 @@ encoded bytes:
 |   |   FSST symbol table: at most 2066 bytes      |   |
 |   |   with 8-bit codes, 36872 with 12-bit ones   |   |
 |   +----------------------------------------------+   |
-|   trained per row group and again when its data      |
-|   drifts; each FSST segment stores a copy            |
+|   trained once per row group; each FSST segment      |
+|   stores a copy                                      |
 +------------------------------------------------------+
 |                         Data                         |
 |   +----------------------------------------------+   |

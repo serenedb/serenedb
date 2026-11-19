@@ -2854,9 +2854,18 @@ TEST_F(ColCodecsTest, CorruptedDictionaryCodesAreRejected) {
   auto* block = reinterpret_cast<duckdb::data_ptr_t>(bytes.data() + offset);
   const auto h = irs::codecs::Header::Parse(block, size, block_codec);
   ASSERT_EQ(irs::codecs::ShapeOf(block_codec), irs::codecs::Shape::Dictionary);
-  auto codes = duckdb::Load<irs::codecs::FrameHeader>(block + h.off_codes);
-  codes.scale = h.entry_count;
-  duckdb::Store(codes, block + h.off_codes);
+  auto* codes = block + h.off_codes;
+  const auto frames = irs::codecs::ParseFrames(
+    codes, h.off_symtab - h.off_codes, h.row_count, h.codes);
+  ASSERT_EQ(irs::codecs::TransformName(irs::codecs::ShapeOf(h.codes), frames),
+            "ffor");
+  auto* bounds = codes + frames.off_frames + sizeof(uint32_t) + frames.width;
+  for (auto* bound : {bounds, bounds + frames.width}) {
+    uint64_t value = 0;
+    std::memcpy(&value, bound, frames.width);
+    value += h.entry_count;
+    std::memcpy(bound, &value, frames.width);
+  }
   {
     std::ofstream out{file, std::ios::binary | std::ios::trunc};
     out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));

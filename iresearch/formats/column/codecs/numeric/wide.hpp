@@ -490,9 +490,7 @@ class WideReader {
 
   static FrameHeader Frames(duckdb::const_data_ptr_t base, uint64_t size,
                             uint64_t rows, CodecType codec) {
-    const auto frames = ParseFrames(base, size, codec);
-    SDB_ENSURE(frames.row_count == rows, "numeric codec: row count mismatch");
-    return frames;
+    return ParseFrames(base, size, rows, codec);
   }
 
   absl::uint128 Base() const noexcept {

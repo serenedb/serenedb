@@ -81,6 +81,12 @@ struct BlockBounds {
   V hi = 0;
 };
 
+template<typename V>
+struct BlockBases {
+  V origin = 0;
+  uint8_t bytes = sizeof(V);
+};
+
 template<bool kSigned, typename V>
 BlockBounds<V> BoundsOf(const V* values, size_t count) noexcept {
   using Ordered = std::conditional_t<kSigned, std::make_signed_t<V>, V>;
@@ -116,19 +122,19 @@ class FforBlocks {
     }
   }
 
-  uint64_t Bytes(size_t first, size_t count) const noexcept {
-    uint64_t bytes = BlockMetaBytes(count, sizeof(V));
+  uint64_t Bytes(size_t first, size_t count, size_t base_bytes) const noexcept {
+    uint64_t bytes = BlockMetaBytes(count, base_bytes);
     for (size_t b = first; b < first + count; ++b) {
       bytes += StoredBytes(b);
     }
     return bytes;
   }
 
-  uint64_t Bytes(uint32_t frame_values) const noexcept {
+  uint64_t Bytes(uint32_t frame_values, size_t base_bytes) const noexcept {
     const size_t per = frame_values / numeric::kBlockValues;
     uint64_t bytes = 0;
     for (size_t first = 0; first < _bits.size(); first += per) {
-      bytes += Bytes(first, std::min(per, _bits.size() - first));
+      bytes += Bytes(first, std::min(per, _bits.size() - first), base_bytes);
     }
     return bytes;
   }
@@ -146,6 +152,38 @@ class FforBlocks {
     return bytes;
   }
 
+  template<bool kSigned>
+  void PlanStream(BlockRows<V> rows) {
+    Resize(rows.size());
+    _first.resize(_bits.size());
+    for (size_t b = 0; b < _bits.size(); ++b) {
+      const V* values = rows.Block(b);
+      const size_t count = rows.BlockSize(b);
+      const auto [lo, hi] = BoundsOf<kSigned>(values, count);
+      _first[b] = lo;
+      _base[b] = lo;
+      _bits[b] = static_cast<uint8_t>(std::bit_width(static_cast<V>(hi - lo)));
+      const auto offsets = StreamBlockBytes(count, _bits[b]);
+      if (count < 2 || offsets <= sizeof(uint64_t)) {
+        continue;
+      }
+      if (Alternates(values, count)) {
+        _first[b] = values[0];
+        _base[b] = static_cast<V>(values[1] - values[0]);
+        _bits[b] = kStreamAlternates;
+        continue;
+      }
+      const auto [least, most] = StepBounds(values, count);
+      const unsigned width = std::bit_width(static_cast<V>(most - least));
+      if (width <= kBlockDeltaBits &&
+          sizeof(uint64_t) + StreamBlockBytes(count, width) < offsets) {
+        _first[b] = values[0];
+        _base[b] = least;
+        _bits[b] = static_cast<uint8_t>(kBlockDelta | width);
+      }
+    }
+  }
+
   void AppendStream(BlockRows<V> rows, size_t first, size_t count,
                     std::string& out) {
     _scratch.resize(numeric::kBlockValues);
@@ -161,22 +199,41 @@ class FforBlocks {
       std::fill(widths + count, packed, uint8_t{0});
       for (size_t b = 0; b < count; ++b) {
         const size_t g = first + b;
-        duckdb::Store(_base[g], bases + b * sizeof(V));
-        widths[b] = _bits[g];
+        const uint8_t kind = _bits[g];
+        duckdb::Store(_first.empty() ? _base[g] : _first[g],
+                      bases + b * sizeof(V));
+        widths[b] = kind;
         const size_t n = Values(g);
         const V* in = rows.Block(g);
+        unsigned bits = kind;
+        if (kind & kBlockDelta) {
+          duckdb::Store(uint64_t{_base[g]}, packed);
+          packed += sizeof(uint64_t);
+          if (kind == kStreamAlternates) {
+            continue;
+          }
+          bits = kind & kBlockDeltaBits;
+          if (bits == 0) {
+            continue;
+          }
+          _scratch[0] = _base[g];
+          for (size_t i = 1; i < n; ++i) {
+            _scratch[i] = static_cast<V>(in[i] - in[i - 1]);
+          }
+          in = _scratch.data();
+        }
         if (n == numeric::kBlockValues) {
-          numeric::Pack<V>(_bits[g], in,
+          numeric::Pack<V>(bits, in,
                            reinterpret_cast<numeric::LaneWord<V>*>(packed),
                            _base[g]);
-        } else if (_bits[g] != 0) {
+        } else if (bits != 0) {
           for (size_t i = 0; i < n; ++i) {
             _scratch[i] = static_cast<V>(in[i] - _base[g]);
           }
           duckdb::BitpackingPrimitives::PackBuffer<V, false>(
-            packed, _scratch.data(), n, _bits[g]);
+            packed, _scratch.data(), n, bits);
         }
-        packed += StreamBytes(g);
+        packed += StreamBlockBytes(n, bits);
       }
       return size;
     });
@@ -213,14 +270,18 @@ class FforBlocks {
   }
 
   void PlanEqualSteps(BlockRows<V> rows, V step) {
-    Resize(rows.size());
-    const size_t blocks = _bits.size();
-    _base.assign(blocks, step);
-    _bits.assign(blocks, kBlockDelta);
-    _steps.assign((blocks + kFrameBlocks - 1) / kFrameBlocks, step);
-    _first.resize(blocks);
-    for (size_t b = 0; b < blocks; ++b) {
+    PlanEqualSteps(rows.size(), step);
+    for (size_t b = 0; b < _first.size(); ++b) {
       _first[b] = rows.Block(b)[0];
+    }
+  }
+
+  void PlanEqualSteps(size_t rows, std::span<const BlockBounds<V>> bounds,
+                      V step) {
+    PlanEqualSteps(rows, step);
+    SDB_ASSERT(bounds.size() == _first.size());
+    for (size_t b = 0; b < _first.size(); ++b) {
+      _first[b] = static_cast<S>(step) < 0 ? bounds[b].hi : bounds[b].lo;
     }
   }
 
@@ -240,7 +301,7 @@ class FforBlocks {
   }
 
   void PlanMixed(BlockRows<V> rows, std::span<const BlockBounds<V>> bounds,
-                 double delta_price) {
+                 std::span<const uint8_t> offsets_only, double delta_price) {
     if (const V step =
           rows.size() < 2 ? V{0} : static_cast<V>(rows[1] - rows[0]);
         EveryStepIs(step, rows)) {
@@ -259,7 +320,9 @@ class FforBlocks {
       const auto delta_bytes =
         (_own[b] ? sizeof(uint64_t) : 0) +
         numeric::PackedBytes<V>(DeltaWidth(b), Values(b));
-      if (DeltaWidth(b) <= kBlockDeltaBits &&
+      const bool allowed =
+        DeltaWidth(b) == 0 || offsets_only.empty() || offsets_only[b] == 0;
+      if (allowed && DeltaWidth(b) <= kBlockDeltaBits &&
           (delta_bytes == 0 || static_cast<double>(delta_bytes) * delta_price <
                                  static_cast<double>(for_bytes))) {
         PlanDelta(b);
@@ -269,55 +332,61 @@ class FforBlocks {
     }
   }
 
-  void Append(BlockRows<V> rows, size_t first, size_t count, std::string& out) {
+  void Append(BlockRows<V> rows, size_t first, size_t count,
+              BlockBases<V> stored, std::string& out) {
     _scratch.resize(numeric::kBlockValues);
     const size_t at = out.size();
-    out.resize_and_overwrite(at + Bytes(first, count), [&](char* buf,
-                                                           size_t size) {
-      auto* bases = reinterpret_cast<uint8_t*>(buf + at);
-      auto* widths = bases + count * sizeof(V);
-      auto* packed = bases + BlockMetaBytes(count, sizeof(V));
-      std::fill(widths + count, packed, uint8_t{0});
-      for (size_t b = 0; b < count; ++b) {
-        const size_t g = first + b;
-        duckdb::Store(_first.empty() ? _base[g] : _first[g],
-                      bases + b * sizeof(V));
-        widths[b] = _bits[g];
-        const unsigned bits = Width(_bits[g]);
-        if (OwnStep(_bits[g])) {
-          duckdb::Store(uint64_t{_base[g]}, packed);
-          packed += sizeof(uint64_t);
-        }
-        if (bits == 0) {
-          continue;
-        }
-        const size_t n = Values(g);
-        const V* in = rows.Block(g);
-        if (_bits[g] & kBlockDelta) {
-          _scratch[0] = _base[g];
-          for (size_t i = 1; i < n; ++i) {
-            _scratch[i] = static_cast<V>(in[i] - in[i - 1]);
+    out.resize_and_overwrite(
+      at + Bytes(first, count, stored.bytes), [&](char* buf, size_t size) {
+        auto* bases = reinterpret_cast<uint8_t*>(buf + at);
+        auto* widths = bases + count * stored.bytes;
+        auto* packed = bases + BlockMetaBytes(count, stored.bytes);
+        std::fill(widths + count, packed, uint8_t{0});
+        for (size_t b = 0; b < count; ++b) {
+          const size_t g = first + b;
+          const auto base = static_cast<V>(
+            (_first.empty() ? _base[g] : _first[g]) - stored.origin);
+          SDB_ASSERT(stored.bytes == sizeof(V) ||
+                     uint64_t{base} >> (8 * stored.bytes) == 0);
+          std::memcpy(bases + b * stored.bytes, &base, stored.bytes);
+          widths[b] = _bits[g];
+          const unsigned bits = Width(_bits[g]);
+          if (OwnStep(_bits[g])) {
+            duckdb::Store(uint64_t{_base[g]}, packed);
+            packed += sizeof(uint64_t);
           }
-          in = _scratch.data();
-        } else if (n < numeric::kBlockValues) {
-          std::memcpy(_scratch.data(), in, n * sizeof(V));
-          in = _scratch.data();
+          if (bits == 0) {
+            continue;
+          }
+          const size_t n = Values(g);
+          const V* in = rows.Block(g);
+          if (_bits[g] & kBlockDelta) {
+            _scratch[0] = _base[g];
+            for (size_t i = 1; i < n; ++i) {
+              _scratch[i] = static_cast<V>(in[i] - in[i - 1]);
+            }
+            in = _scratch.data();
+          } else if (n < numeric::kBlockValues) {
+            std::memcpy(_scratch.data(), in, n * sizeof(V));
+            in = _scratch.data();
+          }
+          if (n < numeric::kBlockValues) {
+            std::fill_n(_scratch.data() + n, numeric::kBlockValues - n,
+                        _base[g]);
+            _words.resize(numeric::kBlockValues * sizeof(V) /
+                          sizeof(numeric::LaneWord<V>));
+            numeric::Pack<V>(bits, in, _words.data(), _base[g]);
+            std::memcpy(packed, _words.data(),
+                        numeric::PackedBytes<V>(bits, n));
+          } else {
+            numeric::Pack<V>(bits, in,
+                             reinterpret_cast<numeric::LaneWord<V>*>(packed),
+                             _base[g]);
+          }
+          packed += numeric::PackedBytes<V>(bits, n);
         }
-        if (n < numeric::kBlockValues) {
-          std::fill_n(_scratch.data() + n, numeric::kBlockValues - n, _base[g]);
-          _words.resize(numeric::kBlockValues * sizeof(V) /
-                        sizeof(numeric::LaneWord<V>));
-          numeric::Pack<V>(bits, in, _words.data(), _base[g]);
-          std::memcpy(packed, _words.data(), numeric::PackedBytes<V>(bits, n));
-        } else {
-          numeric::Pack<V>(bits, in,
-                           reinterpret_cast<numeric::LaneWord<V>*>(packed),
-                           _base[g]);
-        }
-        packed += numeric::PackedBytes<V>(bits, n);
-      }
-      return size;
-    });
+        return size;
+      });
   }
 
  private:
@@ -348,11 +417,33 @@ class FforBlocks {
            (kBlockDelta | kBlockOwnStep);
   }
 
+  static uint64_t StreamBlockBytes(size_t values, unsigned bits) noexcept {
+    return values == numeric::kBlockValues
+             ? numeric::PackedBytes(bits)
+             : duckdb::BitpackingPrimitives::GetRequiredSize(values, bits);
+  }
+
   uint64_t StreamBytes(size_t block) const noexcept {
-    return Values(block) == numeric::kBlockValues
-             ? numeric::PackedBytes(_bits[block])
-             : duckdb::BitpackingPrimitives::GetRequiredSize(Values(block),
-                                                             _bits[block]);
+    const uint8_t kind = _bits[block];
+    if (kind == kStreamAlternates) {
+      return sizeof(uint64_t);
+    }
+    if (kind & kBlockDelta) {
+      return sizeof(uint64_t) +
+             StreamBlockBytes(Values(block), kind & kBlockDeltaBits);
+    }
+    return StreamBlockBytes(Values(block), kind);
+  }
+
+  static bool Alternates(const V* values, size_t count) noexcept {
+    if (values[0] == values[1]) {
+      return false;
+    }
+    V other = 0;
+    for (size_t i = 2; i < count; ++i) {
+      other = static_cast<V>(other | (values[i] ^ values[i - 2]));
+    }
+    return other == 0;
   }
 
   uint64_t StoredBytes(size_t block) const noexcept {
@@ -370,6 +461,15 @@ class FforBlocks {
       hi = i == 1 ? step : std::max(hi, step);
     }
     return {static_cast<V>(lo), static_cast<V>(hi)};
+  }
+
+  void PlanEqualSteps(size_t rows, V step) {
+    Resize(rows);
+    const size_t blocks = _bits.size();
+    _base.assign(blocks, step);
+    _bits.assign(blocks, kBlockDelta);
+    _steps.assign((blocks + kFrameBlocks - 1) / kFrameBlocks, step);
+    _first.resize(blocks);
   }
 
   void PlanSteps(BlockRows<V> rows) {

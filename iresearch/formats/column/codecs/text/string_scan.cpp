@@ -168,9 +168,10 @@ duckdb::InsertionOrderPreservingMap<std::string> SegmentInfo(
   info["codec"] = std::string{SnakeCaseName(LeafOf(segment.codec))};
   info["level"] = absl::StrCat(static_cast<uint32_t>(h.level));
   if (shape == Shape::Dictionary) {
-    info["codes_transform"] = std::string{TransformName(
-      ShapeOf(h.codes),
-      ParseFrames(base + h.off_codes, h.off_symtab - h.off_codes, h.codes))};
+    info["codes_transform"] = std::string{
+      TransformName(ShapeOf(h.codes),
+                    ParseFrames(base + h.off_codes, h.off_symtab - h.off_codes,
+                                h.row_count, h.codes))};
   }
   info["entries"] = absl::StrCat(h.entry_count);
   info["frames"] = absl::StrCat(h.frame_count);

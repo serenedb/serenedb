@@ -477,7 +477,7 @@ U OddInverse(U odd) noexcept {
 }
 
 template<bool kSigned, typename U>
-void DivideExact(U* v, size_t n, U divisor) noexcept {
+void DivideExact(const U* in, size_t n, U divisor, U* out) noexcept {
   using S = std::make_signed_t<U>;
   using W = WideWord<U>;
   const auto shift = std::countr_zero(divisor);
@@ -485,11 +485,11 @@ void DivideExact(U* v, size_t n, U divisor) noexcept {
   for (size_t i = 0; i < n; ++i) {
     U x;
     if constexpr (kSigned) {
-      x = static_cast<U>(static_cast<S>(v[i]) >> shift);
+      x = static_cast<U>(static_cast<S>(in[i]) >> shift);
     } else {
-      x = static_cast<U>(v[i] >> shift);
+      x = static_cast<U>(in[i] >> shift);
     }
-    v[i] = static_cast<U>(static_cast<W>(x) * inverse);
+    out[i] = static_cast<U>(static_cast<W>(x) * inverse);
   }
 }
 
@@ -606,34 +606,12 @@ void UnpackBlock(const LaneWord<U>* IRS_RESTRICT in, U* IRS_RESTRICT out,
 }
 
 template<typename U>
-U UnpackValue(const uint8_t* packed, unsigned bits, uint32_t index,
-              U base) noexcept {
+IRS_FORCE_INLINE U UnpackValue(const uint8_t* packed, unsigned bits,
+                               uint32_t index, U base) noexcept {
   using Word = LaneWord<U>;
   constexpr unsigned kWordBits = 8 * sizeof(Word);
   if (bits == 0) {
     return base;
-  }
-  const unsigned bit = index / kLanes<U> * bits;
-  const auto* at = packed + (size_t{bit / kWordBits} * kLanes<U> +
-                             index % kLanes<U>)*sizeof(Word);
-  const unsigned shift = bit % kWordBits;
-  Word v = duckdb::Load<Word>(at) >> shift;
-  if (shift + bits > kWordBits) {
-    v |= duckdb::Load<Word>(at + kLanes<U> * sizeof(Word))
-         << (kWordBits - shift);
-  }
-  const Word mask =
-    bits == kWordBits ? ~Word{0} : static_cast<Word>((Word{1} << bits) - 1);
-  return static_cast<U>(static_cast<U>(v & mask) + base);
-}
-
-template<typename U>
-U UnpackLoneValue(const uint8_t* packed, unsigned bits, uint32_t index,
-                  U base) noexcept {
-  using Word = LaneWord<U>;
-  constexpr unsigned kWordBits = 8 * sizeof(Word);
-  if (bits * 4 <= kWordBits) {
-    return UnpackValue<U>(packed, bits, index, base);
   }
   const unsigned bit = index / kLanes<U> * bits;
   const auto* at = packed + (size_t{bit / kWordBits} * kLanes<U> +

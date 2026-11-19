@@ -52,6 +52,7 @@
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/down_cast.hpp"
+#include "iresearch/utils/shared.hpp"
 
 namespace irs::codecs {
 
@@ -101,7 +102,7 @@ struct ColumnFetchState {
   duckdb::BufferHandle& GetOrInsertHandle(const ColumnSegment& segment);
 
   template<typename T, typename Create>
-  T& GetOrCreateSegmentState(Create&& create) {
+  IRS_FORCE_INLINE T& GetOrCreateSegmentState(Create&& create) {
     if (!segment_state) {
       segment_state = create();
     }
@@ -192,6 +193,11 @@ struct ColumnDataCheckpointData {
       state = std::make_unique<S>(*this);
     }
     return static_cast<S&>(*state);
+  }
+
+  template<typename S>
+  S* Find() noexcept {
+    return static_cast<S*>(states[std::to_underlying(S::kId)].get());
   }
 
   const duckdb::LogicalType& type;

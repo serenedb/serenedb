@@ -128,7 +128,7 @@ Entries<T>* BuildEntries(ColumnDataCheckpointData& data, double bound) {
   auto& entries = data.Get<Entries<T>>();
   if (!entries.built) {
     entries.built = true;
-    const auto rows = values.Rows();
+    const auto rows = values.Raw();
     auto cap =
       stored >= 4
         ? kNumericDictMax
@@ -140,6 +140,11 @@ Entries<T>* BuildEntries(ColumnDataCheckpointData& data, double bound) {
         affordable > 1 ? static_cast<uint32_t>(std::ceil(affordable)) - 1 : 0;
     }
     entries.fits = CollectEntries<T>(rows, cap, entries);
+    if (const auto scale = values.Scale(); entries.fits && scale > 1) {
+      numeric::DivideExact<Values<T>::kSigned>(entries.values.data(),
+                                               entries.values.size(), scale,
+                                               entries.values.data());
+    }
   }
   return entries.fits ? &entries : nullptr;
 }
@@ -207,7 +212,7 @@ bool CompressDict(ColumnDataCheckpointData& data, FrameStore store) {
     data, items, analysis,
     DictionaryHeader{
       .count = static_cast<uint32_t>(items.dictionary.size() / sizeof(T)),
-      .offset = FrameTableEnd(Shape::Dictionary, GeometryOf(items)),
+      .offset = FrameTableEnd(GeometryOf(items, Scaled<T>(data))),
     },
     Slices(items.stored, [&] { return NarrowCodes<T>(data, items.stored); }));
 }
@@ -249,7 +254,9 @@ double AnalyzeDictFfor(ColumnDataCheckpointData& data, double bound) {
   state.analyzed = true;
   return AnalyzeBlocks<T>(
     data, Shape::Dictionary, static_cast<uint32_t>(entries->codes.size()),
-    state.blocks.Bytes(kFforFrameRows), EntryBytes(*entries).size(), bound);
+    state.blocks.Bytes(kFforFrameRows, numeric::BytesFor(static_cast<uint32_t>(
+                                         entries->values.size() - 1))),
+    EntryBytes(*entries).size(), bound);
 }
 
 template<typename T>
@@ -269,9 +276,8 @@ bool CompressDictFfor(ColumnDataCheckpointData& data) {
     std::span<const uint32_t>{entries->codes}, dictionary, state.analyzed,
     DictionaryHeader{
       .count = static_cast<uint32_t>(entries->values.size()),
-      .offset = FrameTableEnd(
-        Shape::Dictionary,
-        PackedGeometry(Shape::Dictionary, n, dictionary.size(), sizeof(T))),
+      .offset = FrameTableEnd(PackedGeometry(
+        Shape::Dictionary, n, dictionary.size(), sizeof(T), Scaled<T>(data))),
     });
 }
 
@@ -291,7 +297,8 @@ class DictionaryReader final : public FrameReader<T> {
   DictionaryReader(duckdb::const_data_ptr_t base, const FrameHeader& frames,
                    CodecType codec, const ReadContext::CacheSlot& slot = {})
     : Base{base, frames, codec, slot},
-      _own{duckdb::Load<DictionaryHeader>(base + sizeof(FrameHeader))} {
+      _own{
+        duckdb::Load<DictionaryHeader>(base + OwnHeaderOffset(frames.flags))} {
     SDB_ENSURE(
       _own.count != 0 && _own.count <= kNumericDictMax &&
         (this->Packed() || frames.stored <= kDictionaryCodeBytes<T>) &&
@@ -301,6 +308,7 @@ class DictionaryReader final : public FrameReader<T> {
           _own.offset &&
         _own.offset + uint64_t{_own.count} * sizeof(U) <= frames.off_data,
       "numeric codec: corrupted segment header");
+    this->_code_base_bytes = numeric::BytesFor(_own.count - 1);
   }
 
   void Seek(uint64_t row) {
@@ -356,10 +364,8 @@ class DictionaryReader final : public FrameReader<T> {
       const auto block = this->template BlockAt<uint32_t>(row);
       const auto index = static_cast<uint32_t>(row % numeric::kBlockValues);
       const auto base = static_cast<uint32_t>(block.base);
-      return Entry(next == kNoRow ? numeric::UnpackLoneValue<uint32_t>(
-                                      block.packed, block.bits, index, base)
-                                  : numeric::UnpackValue<uint32_t>(
-                                      block.packed, block.bits, index, base));
+      return Entry(
+        numeric::UnpackValue<uint32_t>(block.packed, block.bits, index, base));
     }
     uint32_t code = 0;
     if (this->Shuffled()) {

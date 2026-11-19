@@ -21,6 +21,7 @@
 #pragma once
 
 #include <algorithm>
+#include <bit>
 #include <cstdint>
 #include <cstring>
 #include <functional>
@@ -41,20 +42,67 @@ struct Runs final : State {
 
   explicit Runs(ColumnDataCheckpointData&) {}
 
-  std::vector<numeric::Bits<sizeof(T)>> values;
-  std::vector<uint32_t> lengths;
-  std::vector<uint32_t> rows;
+  ScratchVector<numeric::Bits<sizeof(T)>> values;
+  ScratchVector<uint32_t> lengths;
+  ScratchVector<uint32_t> rows;
+  bool checked = false;
+  bool none = false;
 };
+
+template<typename T>
+bool EveryRowDiffers(std::span<const WriteChunk> chunks) {
+  using U = numeric::Bits<sizeof(T)>;
+  bool any = false;
+  U last = 0;
+  for (const auto& chunk : chunks) {
+    const auto& input = chunk.data;
+    const size_t count = input.size();
+    if (input.GetVectorType() != duckdb::VectorType::FLAT_VECTOR ||
+        !duckdb::FlatVector::Validity(input).CheckAllValid(count)) {
+      return false;
+    }
+    if (count == 0) {
+      continue;
+    }
+    const T* values = duckdb::FlatVector::GetData<T>(input);
+    bool repeats = any && std::bit_cast<U>(values[0]) == last;
+    for (size_t i = 1; i < count; ++i) {
+      repeats |= std::bit_cast<U>(values[i]) == std::bit_cast<U>(values[i - 1]);
+    }
+    if (repeats) {
+      return false;
+    }
+    last = std::bit_cast<U>(values[count - 1]);
+    any = true;
+  }
+  return any;
+}
+
+template<typename T>
+bool KnownWithoutRuns(ColumnDataCheckpointData& data) {
+  if constexpr (std::is_integral_v<T>) {
+    return false;
+  } else {
+    auto& runs = data.Get<Runs<T>>();
+    if (!runs.checked) {
+      runs.checked = true;
+      runs.none = !data.Find<Values<T>>() && EveryRowDiffers<T>(data.chunks);
+    }
+    return runs.none;
+  }
+}
 
 template<typename T>
 Runs<T>* ScanRuns(ColumnDataCheckpointData& data) {
   using U = numeric::Bits<sizeof(T)>;
+  if (KnownWithoutRuns<T>(data)) {
+    return nullptr;
+  }
   const auto& values = data.Get<Values<T>>();
   if (!values.Usable()) {
     return nullptr;
   }
-  const auto rows = values.Rows();
-  const auto n = static_cast<uint32_t>(rows.size());
+  const auto n = static_cast<uint32_t>(values.Size());
   const auto count = values.RunCount();
   if (count == n ||
       static_cast<double>(count) >
@@ -65,9 +113,14 @@ Runs<T>* ScanRuns(ColumnDataCheckpointData& data) {
   if (!runs.rows.empty()) {
     return &runs;
   }
-  runs.values.resize(size_t{count} + 1);
-  runs.rows.resize(size_t{count} + 1);
-  const auto bounds = values.Bounds();
+  const auto rows = values.Raw();
+  const auto bounds = values.RawBounds();
+  runs.values.resize(count);
+  runs.rows.resize(count);
+  runs.lengths.resize(count);
+  auto* run_values = runs.values.data();
+  auto* run_rows = runs.rows.data();
+  uint8_t changed[numeric::kBlockValues + sizeof(uint64_t)];
   auto previous = static_cast<U>(~rows[0]);
   uint32_t run = 0;
   for (size_t b = 0; b < rows.Blocks(); ++b) {
@@ -77,21 +130,31 @@ Runs<T>* ScanRuns(ColumnDataCheckpointData& data) {
     const U* block = rows.Block(b);
     const auto first = static_cast<uint32_t>(b * numeric::kBlockValues);
     const auto size = static_cast<uint32_t>(rows.BlockSize(b));
-    for (uint32_t i = 0; i < size; ++i) {
-      runs.values[run] = block[i];
-      runs.rows[run] = first + i;
-      run += block[i] != previous;
-      previous = block[i];
+    changed[0] = block[0] != previous;
+    for (uint32_t i = 1; i < size; ++i) {
+      changed[i] = block[i] != block[i - 1];
     }
+    std::memset(changed + size, 0, sizeof(uint64_t));
+    for (uint32_t at = 0; at < size; at += sizeof(uint64_t)) {
+      for (auto word = duckdb::Load<uint64_t>(changed + at); word != 0;
+           word &= word - 1) {
+        const auto i = at + static_cast<uint32_t>(std::countr_zero(word) / 8);
+        run_values[run] = block[i];
+        run_rows[run] = first + i;
+        ++run;
+      }
+    }
+    previous = block[size - 1];
   }
   SDB_ASSERT(run == count);
-  runs.values.resize(count);
-  runs.rows.resize(count);
-  runs.lengths.resize(count);
-  for (uint32_t r = 0; r + 1 < count; ++r) {
-    runs.lengths[r] = runs.rows[r + 1] - runs.rows[r];
+  if (const auto scale = values.Scale(); scale > 1) {
+    numeric::DivideExact<Values<T>::kSigned>(run_values, count, scale,
+                                             run_values);
   }
-  runs.lengths[count - 1] = n - runs.rows[count - 1];
+  for (uint32_t r = 0; r + 1 < count; ++r) {
+    runs.lengths[r] = run_rows[r + 1] - run_rows[r];
+  }
+  runs.lengths[count - 1] = n - run_rows[count - 1];
   return &runs;
 }
 
@@ -193,6 +256,9 @@ struct RleFfor final : State {
 template<typename T>
 const Runs<T>* PlanRleFfor(ColumnDataCheckpointData& data, RleFfor<T>& state) {
   using U = numeric::Bits<sizeof(T)>;
+  if (KnownWithoutRuns<T>(data)) {
+    return nullptr;
+  }
   const auto& values = data.Get<Values<T>>();
   if (!values.Usable() ||
       uint64_t{values.RunCount()} * data.min_packed_run > values.Size()) {
@@ -201,9 +267,9 @@ const Runs<T>* PlanRleFfor(ColumnDataCheckpointData& data, RleFfor<T>& state) {
   const auto* runs = ScanRuns<T>(data);
   if (runs && !state.planned) {
     state.planned = true;
-    state.value_blocks.template Plan<Values<T>::kSigned>(
+    state.value_blocks.template PlanStream<Values<T>::kSigned>(
       BlockRows<U>{std::span<const U>{runs->values}});
-    state.length_blocks.template Plan<false>(
+    state.length_blocks.template PlanStream<false>(
       BlockRows<uint32_t>{std::span<const uint32_t>{runs->lengths}});
   }
   return runs;
@@ -237,7 +303,8 @@ bool CompressRleFfor(ColumnDataCheckpointData& data) {
   }
   auto& out = data.Get<NumericScratch>().out;
   const auto count = static_cast<uint32_t>(runs->rows.size());
-  const auto geometry = PackedGeometry(Shape::Runs, count, 0, sizeof(T));
+  const auto geometry =
+    PackedGeometry(Shape::Runs, count, 0, sizeof(T), Scaled<T>(data));
   SegmentWriter<T> writer{Shape::Runs,
                           geometry,
                           state.value_blocks.StreamBytes(kRleFforFrameRuns) +
@@ -263,9 +330,12 @@ bool CompressRleFfor(ColumnDataCheckpointData& data) {
     {
       .stored = sizeof(T),
       .flags = kNumericPacked,
-      .raw_bytes = uint64_t{count} * sizeof(T),
     },
-    RunsHeader{}, data.Get<Values<T>>());
+    RunsHeader{}, data.Get<Values<T>>(), [&](uint32_t f, uint32_t, uint32_t) {
+      const auto begin = f * geometry.per;
+      return BoundsOf<Values<T>::kSigned>(
+        runs->values.data() + begin, std::min(count - begin, geometry.per));
+    });
   return FlushNumeric<T>(data, Shape::Runs, ByteCodec::None, state.analyzed);
 }
 
@@ -290,7 +360,7 @@ class RunsReader final : public FrameReader<T> {
     : Base{base, frames, codec, slot},
       _own{this->Packed()
              ? RunsHeader{}
-             : duckdb::Load<RunsHeader>(base + sizeof(FrameHeader))} {
+             : duckdb::Load<RunsHeader>(base + OwnHeaderOffset(frames.flags))} {
     SDB_ENSURE(this->Packed() || (NumericWidth(_own.run_width) &&
                                   _own.run_width <= sizeof(uint32_t)),
                "numeric codec: corrupted segment header");
@@ -459,6 +529,9 @@ class RunsReader final : public FrameReader<T> {
     const auto* widths = lengths + blocks * sizeof(uint32_t);
     uint64_t bound = 0;
     for (size_t b = 0; b < blocks; ++b) {
+      if (widths[b] & kBlockDelta) {
+        return std::numeric_limits<uint64_t>::max();
+      }
       bound = std::max(
         bound,
         uint64_t{duckdb::Load<uint32_t>(lengths + b * sizeof(uint32_t))} +

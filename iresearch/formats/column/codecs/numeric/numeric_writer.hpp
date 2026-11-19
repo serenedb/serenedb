@@ -52,37 +52,49 @@ struct Geometry {
   uint32_t per = 0;
   uint32_t frames = 0;
   uint32_t meta = kNumericFrameMetaSize;
+  uint32_t off_frames = 0;
   uint64_t off_data = 0;
 };
 
+constexpr uint32_t FramesOffset(Shape shape, bool packed,
+                                bool scaled) noexcept {
+  return OwnHeaderOffset(scaled ? kNumericScaled : uint8_t{0}) +
+         OwnHeaderSize(shape, packed);
+}
+
 inline Geometry BytesGeometry(Shape shape, ByteCodec leaf, uint32_t items,
-                              uint32_t item_bytes, size_t dictionary) noexcept {
+                              uint32_t item_bytes, size_t dictionary,
+                              bool scaled) noexcept {
   const uint8_t log2 =
     leaf == ByteCodec::None ? kNumericFrameLog2 : kNumericLeafFrameLog2;
   const uint32_t per = (uint32_t{1} << log2) / item_bytes;
   const uint32_t frames = (items + per - 1) / per;
+  const auto off_frames = FramesOffset(shape, false, scaled);
   return {
     .log2 = log2,
     .per = per,
     .frames = frames,
-    .off_data = HeaderSize(shape, false) +
-                uint64_t{frames} * kNumericFrameMetaSize + dictionary,
+    .off_frames = off_frames,
+    .off_data =
+      off_frames + uint64_t{frames} * kNumericFrameMetaSize + dictionary,
   };
 }
 
 inline Geometry PackedGeometry(Shape shape, uint32_t items, size_t dictionary,
-                               size_t width) noexcept {
+                               size_t width, bool scaled) noexcept {
   const uint32_t per =
     shape == Shape::Runs ? kRleFforFrameRuns : kFforFrameRows;
   const uint32_t frames = (items + per - 1) / per;
   const auto meta = static_cast<uint32_t>(FrameMetaSize(shape, true, width));
+  const auto off_frames = FramesOffset(shape, true, scaled);
   return {
     .log2 = kFforFrameLog2,
     .per = per,
     .frames = frames,
     .meta = meta,
+    .off_frames = off_frames,
     .off_data = duckdb::AlignValue<uint64_t, 8>(
-      HeaderSize(shape, true) + uint64_t{frames} * meta + dictionary),
+      off_frames + uint64_t{frames} * meta + dictionary),
   };
 }
 
@@ -90,8 +102,8 @@ inline bool Packed(const Geometry& geometry) noexcept {
   return geometry.meta != kNumericFrameMetaSize;
 }
 
-inline uint32_t FrameTableEnd(Shape shape, const Geometry& geometry) noexcept {
-  return HeaderSize(shape, Packed(geometry)) + geometry.frames * geometry.meta;
+inline uint32_t FrameTableEnd(const Geometry& geometry) noexcept {
+  return geometry.off_frames + geometry.frames * geometry.meta;
 }
 
 inline double ScoreOf(uint64_t bytes, size_t rows, double price) noexcept {
@@ -189,7 +201,7 @@ class SegmentWriter {
   }
 
   uint32_t DictionaryOffset() const noexcept {
-    return FrameTableEnd(_shape, _geometry);
+    return FrameTableEnd(_geometry);
   }
 
   NumericFrameMeta& Open(uint32_t frame, uint32_t first_entry) noexcept {
@@ -237,18 +249,32 @@ class SegmentWriter {
 
   template<typename Own>
   void Finish(FrameHeader h, const Own& own, const Values<T>& values) {
+    Finish(h, own, values, [&](uint32_t, uint32_t first, uint32_t end) {
+      return values.Bounds(first, end);
+    });
+  }
+
+  template<typename Own, typename FrameBounds>
+  void Finish(FrameHeader h, const Own& own, const Values<T>& values,
+              FrameBounds&& frame_bounds) {
     h.width = sizeof(T);
     h.frame_log2 = _geometry.log2;
     h.row_count = static_cast<uint32_t>(values.Size());
     h.frame_count = _geometry.frames;
-    h.off_frames = HeaderSize(_shape, Packed(_geometry));
+    h.off_frames = _geometry.off_frames;
     h.off_data = static_cast<uint32_t>(_geometry.off_data);
-    h.scale = values.Scale() > 1 ? values.Scale() : 0;
+    if (values.Scale() > 1) {
+      h.scale = values.Scale();
+      h.flags |= kNumericScaled;
+    }
+    const auto own_offset = OwnHeaderOffset(h.flags);
+    SDB_ASSERT(h.off_frames ==
+               own_offset + OwnHeaderSize(_shape, Packed(_geometry)));
     for (uint32_t f = 0; f < h.frame_count; ++f) {
       auto& m = _metas[f];
       const uint32_t end =
         f + 1 < h.frame_count ? _metas[f + 1].frame.first_entry : h.row_count;
-      const auto bounds = values.Bounds(m.frame.first_entry, end);
+      const auto bounds = frame_bounds(f, m.frame.first_entry, end);
       m.min = bounds.lo;
       m.max = bounds.hi;
     }
@@ -256,9 +282,12 @@ class SegmentWriter {
                "numeric codec: segment too large");
     h.data_size = static_cast<uint32_t>(_out.size() - h.off_data);
     auto* head = reinterpret_cast<duckdb::data_ptr_t>(_out.data());
-    duckdb::Store(h, head);
-    if (h.off_frames != sizeof(FrameHeader)) {
-      duckdb::Store(own, head + sizeof(FrameHeader));
+    std::memcpy(head, &h, kNumericHeaderSize);
+    if (h.scale != 0) {
+      duckdb::Store(h.scale, head + kNumericHeaderSize);
+    }
+    if (h.off_frames != own_offset) {
+      duckdb::Store(own, head + own_offset);
     }
     for (uint32_t f = 0; f < h.frame_count; ++f) {
       const auto& m = _metas[f];
@@ -324,10 +353,15 @@ inline bool Offered(const Items& items) noexcept {
          !(items.store.shuffled && (items.stored == 1 || items.run_width != 0));
 }
 
-inline Geometry GeometryOf(const Items& items) noexcept {
+inline Geometry GeometryOf(const Items& items, bool scaled) noexcept {
   return BytesGeometry(items.shape, items.store.leaf, items.count,
                        uint32_t{items.stored} + items.run_width,
-                       items.dictionary.size());
+                       items.dictionary.size(), scaled);
+}
+
+template<typename T>
+bool Scaled(ColumnDataCheckpointData& data) {
+  return data.Get<Values<T>>().Scale() > 1;
 }
 
 template<typename Bytes>
@@ -353,7 +387,7 @@ double AnalyzeFrames(ColumnDataCheckpointData& data, const Items& items,
   const auto leaf = items.store.leaf;
   const auto rows = data.Get<Values<T>>().Size();
   const uint32_t item = uint32_t{items.stored} + items.run_width;
-  const auto geometry = GeometryOf(items);
+  const auto geometry = GeometryOf(items, Scaled<T>(data));
   const auto price = data.preferences->leaf_price[std::to_underlying(leaf)];
   if (leaf == ByteCodec::None) {
     const auto score =
@@ -402,7 +436,7 @@ bool CompressFrames(ColumnDataCheckpointData& data, const Items& items,
   }
   auto& scratch = data.Get<NumericScratch>();
   const uint32_t item = uint32_t{items.stored} + items.run_width;
-  const auto geometry = GeometryOf(items);
+  const auto geometry = GeometryOf(items, Scaled<T>(data));
   const uint64_t raw_bytes = uint64_t{items.count} * item;
   SegmentWriter<T> writer{items.shape, geometry,
                           leaf == ByteCodec::None ? raw_bytes : 0,
@@ -439,7 +473,6 @@ bool CompressFrames(ColumnDataCheckpointData& data, const Items& items,
       .stored = items.stored,
       .level = leaf == ByteCodec::None ? uint8_t{0} : LeafLevel(data),
       .flags = items.store.shuffled ? kNumericShuffled : uint8_t{0},
-      .raw_bytes = raw_bytes,
     },
     own, data.Get<Values<T>>());
   return FlushNumeric<T>(data, items.shape, leaf, analysis.done);
@@ -463,10 +496,12 @@ template<typename T>
 double AnalyzeBlocks(ColumnDataCheckpointData& data, Shape shape,
                      uint32_t items, uint64_t packed, size_t dictionary,
                      double bound) {
-  const auto score = ScoreOf(
-    PackedGeometry(shape, items, dictionary, sizeof(T)).off_data + packed,
-    data.Get<Values<T>>().Size(),
-    data.preferences->leaf_price[std::to_underlying(ByteCodec::None)]);
+  const auto score =
+    ScoreOf(PackedGeometry(shape, items, dictionary, sizeof(T), Scaled<T>(data))
+                .off_data +
+              packed,
+            data.Get<Values<T>>().Size(),
+            data.preferences->leaf_price[std::to_underlying(ByteCodec::None)]);
   return score < bound ? score : kNoScore;
 }
 
@@ -477,23 +512,28 @@ bool CompressBlocks(ColumnDataCheckpointData& data, Shape shape,
                     const Own& own) {
   auto& out = data.Get<NumericScratch>().out;
   const auto n = static_cast<uint32_t>(values.size());
-  const auto geometry = PackedGeometry(shape, n, dictionary.size(), sizeof(T));
-  SegmentWriter<T> writer{shape, geometry, blocks.Bytes(geometry.per),
-                          dictionary, out};
+  const auto geometry =
+    PackedGeometry(shape, n, dictionary.size(), sizeof(T), Scaled<T>(data));
+  const BlockBases<V> stored{
+    .bytes =
+      numeric::BytesFor(static_cast<V>(dictionary.size() / sizeof(T) - 1)),
+  };
+  SegmentWriter<T> writer{
+    shape, geometry, blocks.Bytes(geometry.per, stored.bytes), dictionary, out};
   for (uint32_t f = 0; f < geometry.frames; ++f) {
     const auto begin = f * geometry.per;
     const auto count = std::min(n - begin, geometry.per);
     auto& m = writer.Open(f, begin);
     blocks.Append(
       BlockRows<V>{values}, begin / numeric::kBlockValues,
-      (size_t{count} + numeric::kBlockValues - 1) / numeric::kBlockValues, out);
+      (size_t{count} + numeric::kBlockValues - 1) / numeric::kBlockValues,
+      stored, out);
     writer.Close(m);
   }
   writer.Finish(
     {
       .stored = sizeof(T),
       .flags = kNumericPacked,
-      .raw_bytes = uint64_t{n} * sizeof(T),
     },
     own, data.Get<Values<T>>());
   return FlushNumeric<T>(data, shape, ByteCodec::None, analyzed);
@@ -501,14 +541,17 @@ bool CompressBlocks(ColumnDataCheckpointData& data, Shape shape,
 
 template<typename T>
 bool ArithmeticFrame(const FforBlocks<numeric::Bits<sizeof(T)>>& blocks,
-                     BlockRows<numeric::Bits<sizeof(T)>> rows, uint32_t begin,
-                     uint32_t count) {
+                     const Values<T>& values, uint32_t begin, uint32_t count) {
   using U = numeric::Bits<sizeof(T)>;
   const size_t first = begin / numeric::kBlockValues;
   if (!blocks.EqualSteps(
         first, (count + numeric::kBlockValues - 1) / numeric::kBlockValues)) {
     return false;
   }
+  if (values.Sequence()) {
+    return true;
+  }
+  const auto rows = values.Rows();
   const auto wide = [](U v) {
     return std::is_signed_v<T>
              ? absl::int128{static_cast<std::make_signed_t<U>>(v)}
@@ -521,16 +564,29 @@ bool ArithmeticFrame(const FforBlocks<numeric::Bits<sizeof(T)>>& blocks,
 }
 
 template<typename T>
+BlockBases<numeric::Bits<sizeof(T)>> FrameBases(const Values<T>& values,
+                                                uint32_t begin,
+                                                uint32_t count) {
+  using U = numeric::Bits<sizeof(T)>;
+  const auto bounds = values.Bounds(begin, begin + count);
+  return {
+    .origin = bounds.lo,
+    .bytes = numeric::BytesFor(static_cast<U>(bounds.hi - bounds.lo)),
+  };
+}
+
+template<typename T>
 uint64_t SteppedBytes(const FforBlocks<numeric::Bits<sizeof(T)>>& blocks,
-                      BlockRows<numeric::Bits<sizeof(T)>> rows) {
+                      const Values<T>& values) {
   uint64_t bytes = 0;
-  const auto n = static_cast<uint32_t>(rows.size());
+  const auto n = static_cast<uint32_t>(values.Size());
   for (uint32_t begin = 0; begin < n; begin += kFforFrameRows) {
     const auto count = std::min(n - begin, kFforFrameRows);
-    if (!ArithmeticFrame<T>(blocks, rows, begin, count)) {
+    if (!ArithmeticFrame<T>(blocks, values, begin, count)) {
       bytes += blocks.Bytes(
         begin / numeric::kBlockValues,
-        (count + numeric::kBlockValues - 1) / numeric::kBlockValues);
+        (count + numeric::kBlockValues - 1) / numeric::kBlockValues,
+        FrameBases(values, begin, count).bytes);
     }
   }
   return bytes;
@@ -539,24 +595,24 @@ uint64_t SteppedBytes(const FforBlocks<numeric::Bits<sizeof(T)>>& blocks,
 template<typename T, typename Own>
 bool CompressStepped(ColumnDataCheckpointData& data, Shape shape,
                      FforBlocks<numeric::Bits<sizeof(T)>>& blocks,
-                     BlockRows<numeric::Bits<sizeof(T)>> rows, bool analyzed,
-                     const Own& own) {
+                     bool analyzed, const Own& own) {
+  const auto& values = data.Get<Values<T>>();
   auto& out = data.Get<NumericScratch>().out;
-  const auto n = static_cast<uint32_t>(rows.size());
-  const auto geometry = PackedGeometry(shape, n, 0, sizeof(T));
+  const auto n = static_cast<uint32_t>(values.Size());
+  const auto geometry = PackedGeometry(shape, n, 0, sizeof(T), Scaled<T>(data));
   SegmentWriter<T> writer{
-    shape, geometry, SteppedBytes<T>(blocks, rows), {}, out};
+    shape, geometry, SteppedBytes<T>(blocks, values), {}, out};
   for (uint32_t f = 0; f < geometry.frames; ++f) {
     const auto begin = f * geometry.per;
     const auto count = std::min(n - begin, geometry.per);
     const size_t first = begin / numeric::kBlockValues;
     auto& m = writer.Open(f, begin);
     m.base = blocks.FrameStep(first);
-    if (!ArithmeticFrame<T>(blocks, rows, begin, count)) {
+    if (!ArithmeticFrame<T>(blocks, values, begin, count)) {
       blocks.Append(
-        rows, first,
+        values.Rows(), first,
         (size_t{count} + numeric::kBlockValues - 1) / numeric::kBlockValues,
-        out);
+        FrameBases(values, begin, count), out);
     }
     writer.Close(m);
   }
@@ -564,9 +620,8 @@ bool CompressStepped(ColumnDataCheckpointData& data, Shape shape,
     {
       .stored = sizeof(T),
       .flags = kNumericPacked,
-      .raw_bytes = uint64_t{n} * sizeof(T),
     },
-    own, data.Get<Values<T>>());
+    own, values);
   return FlushNumeric<T>(data, shape, ByteCodec::None, analyzed);
 }
 

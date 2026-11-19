@@ -40,6 +40,7 @@ struct Preferences {
   uint32_t max_narrow_dictionary_entries = std::numeric_limits<uint32_t>::max();
   bool hold_leafless = false;
   bool contest_grown = false;
+  bool differences_over_nulls = false;
 };
 
 inline constexpr Preferences kNoPreferences;
@@ -56,6 +57,7 @@ inline constexpr Preferences kFlushPreferences{
   .max_narrow_dictionary_entries = 256,
   .hold_leafless = true,
   .contest_grown = true,
+  .differences_over_nulls = true,
 };
 
 inline constexpr Preferences kMergePreferences = [] {

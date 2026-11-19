@@ -333,7 +333,8 @@ TEST_F(ColCompressionFunctionTest, ALayoutFunctionWritesItsOwnLayout) {
   const auto stored = [&] {
     const auto* block =
       reinterpret_cast<duckdb::const_data_ptr_t>(written.data());
-    return irs::codecs::ParseFrames(block, written.size(), CodecType::Lz4)
+    return irs::codecs::ParseFrames(block, written.size(), kRows,
+                                    CodecType::Lz4)
       .stored;
   };
   const auto first =

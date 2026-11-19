@@ -66,9 +66,8 @@ class RowCodes {
  public:
   RowCodes(const_data_ptr_t base, const Header& h) {
     const auto* codes = base + h.off_codes;
-    const auto frames = ParseFrames(codes, h.off_symtab - h.off_codes, h.codes);
-    SDB_ENSURE(frames.row_count == h.row_count,
-               "col codec: corrupted row codes");
+    const auto frames =
+      ParseFrames(codes, h.off_symtab - h.off_codes, h.row_count, h.codes);
     _shape = ShapeOf(h.codes);
     switch (_shape) {
       case Shape::Plain:

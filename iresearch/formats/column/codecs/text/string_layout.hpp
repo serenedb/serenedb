@@ -71,8 +71,8 @@ kDefaultColSegmentTarget encoded bytes:
 |   +----------------------------------------------+   |
 |   |   Header, 72 bytes                           |   |
 |   +----------------------------------------------+   |
-|   shape, leaf, level, bit widths, counts,            |
-|   section offsets, flags                             |
+|   codec of the row codes, level, bit widths,         |
+|   counts, section offsets, flags, decoded size       |
 +------------------------------------------------------+
 |                     Frame table                      |
 |   +----------------------------------------------+   |
@@ -117,8 +117,8 @@ kDefaultColSegmentTarget encoded bytes:
 |   +----------------------------------------------+   |
 |   |   Header, 72 bytes                           |   |
 |   +----------------------------------------------+   |
-|   shape, leaf, level, bit widths, counts,            |
-|   section offsets, flags                             |
+|   codec of the row codes, level, bit widths,         |
+|   counts, section offsets, flags, decoded size       |
 +------------------------------------------------------+
 |                     Frame table                      |
 |   +----------------------------------------------+   |

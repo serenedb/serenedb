@@ -51,10 +51,7 @@ using duckdb::idx_t;
 
 inline FrameHeader SegmentFrames(const_data_ptr_t base,
                                  const ColumnSegment& segment) {
-  const auto frames = ParseFrames(base, segment.size, segment.codec);
-  SDB_ENSURE(frames.row_count == segment.count,
-             "numeric codec: row count mismatch");
-  return frames;
+  return ParseFrames(base, segment.size, segment.count, segment.codec);
 }
 
 inline constexpr uint64_t kWalkedRunRows = 4;
@@ -84,6 +81,15 @@ R OpenReader(const_data_ptr_t base, const ColumnSegment& segment) {
   }
 }
 
+template<typename T>
+struct RangeVerdict {
+  const duckdb::ZonemapChecker* checker = nullptr;
+  T min{};
+  T max{};
+  duckdb::FilterPropagateResult result =
+    duckdb::FilterPropagateResult::NO_PRUNING_POSSIBLE;
+};
+
 template<typename R>
 struct ScanState final : SegmentScanState {
   ScanState(const ColumnSegment& segment, duckdb::BufferHandle handle_p)
@@ -100,6 +106,8 @@ struct ScanState final : SegmentScanState {
   duckdb::BufferHandle handle;
   R frames;
   duckdb::unique_ptr<duckdb::BaseStatistics> filter_stats;
+  RangeVerdict<typename R::Value> frame_verdict;
+  RangeVerdict<typename R::Value> value_verdict;
   std::unique_ptr<EntryBatch<typename R::Value>> batch;
   [[no_unique_address]] typename R::Matches matches;
 };
@@ -158,19 +166,37 @@ void Select(const ColumnSegment&, ColumnScanState& state, idx_t vector_count,
 }
 
 template<typename R>
+duckdb::FilterPropagateResult VerdictOf(ScanState<R>& scan,
+                                        RangeVerdict<typename R::Value>& kept,
+                                        const duckdb::LogicalType& type,
+                                        typename R::Value min,
+                                        typename R::Value max,
+                                        const duckdb::ZonemapChecker& checker) {
+  using T = typename R::Value;
+  if (kept.checker != &checker || kept.min != min || kept.max != max) {
+    if (!scan.filter_stats) {
+      scan.filter_stats = duckdb::NumericStats::CreateEmpty(type).ToUnique();
+      scan.filter_stats->SetHasNoNullFast();
+    }
+    duckdb::NumericStats::SetMin<T>(*scan.filter_stats, min);
+    duckdb::NumericStats::SetMax<T>(*scan.filter_stats, max);
+    kept = {
+      .checker = &checker,
+      .min = min,
+      .max = max,
+      .result = checker.Check(*scan.filter_stats, nullptr),
+    };
+  }
+  return kept.result;
+}
+
+template<typename R>
 duckdb::FilterPropagateResult FramesVerdict(
   ScanState<R>& scan, const duckdb::LogicalType& type, uint64_t begin,
   uint64_t end, const duckdb::ZonemapChecker& checker) {
-  using T = typename R::Value;
-  if (!scan.filter_stats) {
-    scan.filter_stats = duckdb::NumericStats::CreateEmpty(type).ToUnique();
-    scan.filter_stats->SetHasNoNullFast();
-  }
-  auto& stats = *scan.filter_stats;
   const auto check = [&](uint32_t f) {
-    duckdb::NumericStats::SetMin<T>(stats, scan.frames.FrameMin(f));
-    duckdb::NumericStats::SetMax<T>(stats, scan.frames.FrameMax(f));
-    return checker.Check(stats, nullptr);
+    return VerdictOf(scan, scan.frame_verdict, type, scan.frames.FrameMin(f),
+                     scan.frames.FrameMax(f), checker);
   };
   const auto first = scan.frames.FrameOf(begin);
   const auto last = scan.frames.FrameOf(end - 1);
@@ -312,6 +338,16 @@ void Filter(const ColumnSegment& segment, ColumnScanState& state,
     if (checker.IsFullyCompiled()) {
       verdict = FramesVerdict(scan, segment.stats.GetType(), start,
                               start + vector_count, checker);
+      if constexpr (requires(typename R::Value value) {
+                      scan.frames.ConstantRows(start, start, value);
+                    }) {
+        if (typename R::Value value;
+            verdict == duckdb::FilterPropagateResult::NO_PRUNING_POSSIBLE &&
+            scan.frames.ConstantRows(start, vector_count, value)) {
+          verdict = VerdictOf(scan, scan.value_verdict, segment.stats.GetType(),
+                              value, value, checker);
+        }
+      }
     }
   }
   if (verdict == duckdb::FilterPropagateResult::FILTER_ALWAYS_FALSE ||
@@ -361,26 +397,44 @@ void FetchRows(const ColumnSegment& segment, ColumnFetchState& state,
                    })
                    .frames;
   auto* data = duckdb::FlatVector::GetDataMutable<typename R::Value>(result);
-  idx_t i = 0;
   if constexpr (requires {
-                  frames.FetchSteps(rows, count, data, result_sel,
-                                    result_offset);
+                  frames.FetchRows(rows, count, data, result_sel,
+                                   result_offset);
                 }) {
-    i = frames.FetchSteps(rows, count, data, result_sel, result_offset);
+    frames.FetchRows(rows, count, data, result_sel, result_offset);
+  } else {
+    for (idx_t i = 0; i < count; ++i) {
+      const auto row = static_cast<uint64_t>(rows[i]);
+      SDB_ASSERT(row < segment.count);
+      const uint64_t next = i + 1 < count ? rows[i + 1] : kNoRow;
+      data[result_offset + result_sel.get_index(i)] = frames.Fetch(row, next);
+    }
   }
-  for (; i < count; ++i) {
-    const auto row = static_cast<uint64_t>(rows[i]);
-    SDB_ENSURE(row < segment.count, "numeric codec: row out of range");
-    const uint64_t next = i + 1 < count ? rows[i + 1] : kNoRow;
-    data[result_offset + result_sel.get_index(i)] = frames.Fetch(row, next);
+}
+
+inline uint64_t RawBytes(const_data_ptr_t base, const FrameHeader& h,
+                         Shape shape) {
+  const bool packed = h.flags & kNumericPacked;
+  if (packed && shape != Shape::Runs) {
+    return uint64_t{h.row_count} * h.width;
   }
+  const auto meta = FrameMetaSize(shape, packed, h.width);
+  uint64_t raw = 0;
+  for (uint32_t f = 0; f < h.frame_count; ++f) {
+    const auto* at = base + h.off_frames + size_t{f} * meta;
+    raw +=
+      packed
+        ? uint64_t{duckdb::Load<uint16_t>(at + 2 * sizeof(uint32_t))} * h.width
+        : duckdb::Load<NumericFrameMeta>(at).frame.raw_len;
+  }
+  return raw;
 }
 
 inline duckdb::InsertionOrderPreservingMap<std::string> SegmentInfo(
   const ColumnSegment& segment) {
   auto handle = segment.Pin();
   const auto* base = handle.Ptr();
-  const auto h = ParseFrames(base, segment.size, segment.codec);
+  const auto h = SegmentFrames(base, segment);
   const auto shape = ShapeOf(segment.codec);
   duckdb::InsertionOrderPreservingMap<std::string> info;
   info["transform"] = TransformName(shape, h);
@@ -391,9 +445,9 @@ inline duckdb::InsertionOrderPreservingMap<std::string> SegmentInfo(
   info["frames"] = absl::StrCat(h.frame_count);
   info["entries"] = absl::StrCat(
     shape == Shape::Dictionary
-      ? duckdb::Load<DictionaryHeader>(base + sizeof(FrameHeader)).count
+      ? duckdb::Load<DictionaryHeader>(base + OwnHeaderOffset(h.flags)).count
       : 0);
-  info["raw_bytes"] = absl::StrCat(h.raw_bytes);
+  info["raw_bytes"] = absl::StrCat(RawBytes(base, h, shape));
   info["data_bytes"] = absl::StrCat(h.data_size);
   info["scale"] = absl::StrCat(h.scale > 1 ? h.scale : 1);
   return info;

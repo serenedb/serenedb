@@ -152,7 +152,7 @@ double AnalyzeDeltaFfor(ColumnDataCheckpointData& data, double bound) {
   state.analyzed = true;
   return price * AnalyzeBlocks<T>(
                    data, Shape::Delta, static_cast<uint32_t>(rows.size()),
-                   SteppedBytes<T>(state.blocks, rows), 0, bound / price);
+                   SteppedBytes<T>(state.blocks, values), 0, bound / price);
 }
 
 template<typename T>
@@ -163,8 +163,8 @@ bool CompressDeltaFfor(ColumnDataCheckpointData& data) {
     return false;
   }
   PlanDeltaFfor(values, state);
-  return CompressStepped<T>(data, Shape::Delta, state.blocks, values.Rows(),
-                            state.analyzed, DeltaHeader{});
+  return CompressStepped<T>(data, Shape::Delta, state.blocks, state.analyzed,
+                            DeltaHeader{});
 }
 
 template<typename T>
@@ -180,12 +180,13 @@ class DeltaReader final : public FrameReader<T> {
   using typename Base::U;
 
  public:
-  using Base::FetchSteps;
+  using Base::ConstantRows;
+  using Base::FetchRows;
 
   DeltaReader(duckdb::const_data_ptr_t base, const FrameHeader& frames,
               CodecType codec, const ReadContext::CacheSlot& slot = {})
     : Base{base, frames, codec, slot},
-      _own{duckdb::Load<DeltaHeader>(base + sizeof(FrameHeader))} {}
+      _own{duckdb::Load<DeltaHeader>(base + OwnHeaderOffset(frames.flags))} {}
 
   void Seek(uint64_t row) {
     if (this->Holds(row)) {
@@ -241,11 +242,10 @@ class DeltaReader final : public FrameReader<T> {
     if (this->Packed()) {
       return this->FetchPacked(row, next);
     }
-    return FetchSummed(row, next);
+    return FetchFramed(row, next);
   }
 
- private:
-  IRS_NO_INLINE T FetchSummed(uint64_t row, uint64_t next) {
+  IRS_NO_INLINE T FetchFramed(uint64_t row, uint64_t next) {
     if (this->Near(row, next)) {
       return this->Get(row);
     }
@@ -277,6 +277,7 @@ class DeltaReader final : public FrameReader<T> {
     return this->Scaled(_sum);
   }
 
+ private:
   void DecodeInto(const NumericFrameMeta& m, uint32_t rows, U* out,
                   uint32_t frame) {
     const auto* src = this->Inflated(m, nullptr, frame, this->_held);

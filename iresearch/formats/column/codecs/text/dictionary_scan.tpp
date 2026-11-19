@@ -106,6 +106,7 @@ struct DictionaryFetch final : SegmentScanState {
   void Reset(const ColumnSegment& segment) {
     code_frames.reset();
     frames.decoded = CachedDictionary(segment.cache_slot);
+    kept = HasRoom(segment.cache_slot, DictionaryBytes(frames.header));
   }
 
   void Read(data_ptr_t base, const idx_t* rows, idx_t count,
@@ -158,17 +159,36 @@ struct DictionaryFetch final : SegmentScanState {
     absl::c_sort(order, [](const EntryAt& l, const EntryAt& r) {
       return l.entry > r.entry;
     });
-    return 2 * (frames.leaf.DecodedBytes() +
-                TouchedBytes(frames.header, base, order)) >=
-           frames.header.raw_bytes;
+    const auto& h = frames.header;
+    if (!kept) {
+      if constexpr (Sorted(Leaf::kCodec)) {
+        return 2 * (frames.leaf.Walked() +
+                    DistinctEntries(order) * kMeanChainWalk) >=
+               h.entry_count;
+      } else if (Distinct()) {
+        return false;
+      }
+    }
+    return 2 * (frames.leaf.DecodedBytes() + TouchedBytes(h, base, order)) >=
+           h.raw_bytes;
   }
 
   bool Whole() const noexcept {
+    if constexpr (!Sorted(Leaf::kCodec)) {
+      if (!kept && Distinct()) {
+        return false;
+      }
+    }
     return frames.leaf.Walked() >= frames.header.entry_count ||
            frames.leaf.DecodedBytes() >= frames.header.raw_bytes;
   }
 
+  bool Distinct() const noexcept {
+    return 2 * uint64_t{frames.header.entry_count} > frames.header.row_count;
+  }
+
   FetchFrames<Leaf> frames;
+  bool kept = false;
   std::optional<RowCodes> code_frames;
 };
 
@@ -324,10 +344,9 @@ struct DictionaryScan final : SegmentScanState {
     if (!cache_slot.touched || !SecondTouch(cache_slot)) {
       return;
     }
-    auto& cache = *cache_slot.cache;
     const auto bytes = entries.CacheBytes();
-    if (cache.GetCurrentMemoryRacy() + bytes <= cache.GetMaxMemoryRacy()) {
-      cache.Put(
+    if (HasRoom(cache_slot, bytes)) {
+      cache_slot.cache->Put(
         DictionaryCacheKey(cache_slot.file_id, cache_slot.file_offset),
         duckdb::make_shared_ptr<DecodedDictionary>(entries.dictionary, bytes));
     }

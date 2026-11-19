@@ -59,6 +59,7 @@ inline constexpr size_t kDictionaryFrameBytes = 16 * 1024;
 inline constexpr size_t kZstdDictionaryFrameBytes = 32 * 1024;
 inline constexpr size_t kMaxDictionaryBytes = 64 * 1024;
 inline constexpr uint32_t kChainRestart = 16;
+inline constexpr uint32_t kMeanChainWalk = 4;
 inline constexpr duckdb::idx_t kGroup =
   duckdb::BitpackingPrimitives::BITPACKING_ALGORITHM_GROUP_SIZE;
 

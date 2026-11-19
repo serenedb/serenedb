@@ -243,8 +243,7 @@ struct EntryFrames {
   }
 
   uint64_t CacheBytes() const noexcept {
-    return header.raw_bytes + (leaf ? leaf->HeapBytes() : 0) +
-           static_cast<uint64_t>(header.entry_count) * (sizeof(string_t) + 1);
+    return DictionaryBytes(header) + (leaf ? leaf->HeapBytes() : 0);
   }
 
   void ReferenceHeap(duckdb::Vector& result) {

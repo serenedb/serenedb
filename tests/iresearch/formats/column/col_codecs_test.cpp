@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
 #include <absl/container/flat_hash_set.h>
 #include <absl/strings/str_cat.h>
 
@@ -1453,6 +1454,58 @@ TEST_F(ColCodecsTest, PointReadsUseTheCachedDictionary) {
     duckdb::FlatVector::ValidityMutable(one).Reset();
     cursor.FetchRow(g, one, 0);
     ExpectRow(one, 0, g, cached);
+  }
+}
+
+TEST_F(ColCodecsTest, BatchedPointReadsCopyTheirValuesWhenTheCacheHasNoRoom) {
+  constexpr uint64_t kRows = 8000;
+  const Value distinct = [](uint64_t g) -> std::optional<std::string> {
+    return absl::StrCat("https://example.org/catalog/", 100000000 + g,
+                        "/reviews?page=", g % 7);
+  };
+  const Value repeating = [&](uint64_t g) -> std::optional<std::string> {
+    return distinct(g % 200);
+  };
+  auto& cache = Db().GetObjectCache();
+  const auto room = cache.GetMaxMemory();
+  const absl::Cleanup restore = [&] { cache.SetMaxMemory(room); };
+  std::vector<uint32_t> rows;
+  for (uint64_t g = 7; g < kRows * 6 / 10; g += 79) {
+    rows.push_back(g);
+  }
+  ASSERT_LT(rows.size(), 64u);
+  for (const auto codec :
+       {irs::codecs::CodecType::DictFsst, irs::codecs::CodecType::DictLz4}) {
+    for (const auto* value : {&distinct, &repeating}) {
+      SCOPED_TRACE(absl::StrCat(Written(codec), value == &distinct
+                                                  ? ", distinct values"
+                                                  : ", repeating values"));
+      irs::MemoryDirectory dir;
+      Write(dir, codec, {}, kRows, 8192, *value);
+      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+      const auto* col = r.Column(kField);
+      ASSERT_NE(col, nullptr);
+      ASSERT_EQ(col->DataBlocks().size(), 1u);
+      ASSERT_EQ(magic_enum::enum_name(col->DataBlocks().front().codec->type),
+                Written(codec));
+      const auto copied_bytes = [&] {
+        irs::ColumnReader::PointReader cursor{r, *col};
+        duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+        cursor.FetchRows(rows, 0, out, 0);
+        for (size_t k = 0; k < rows.size(); ++k) {
+          ExpectRow(out, k, rows[k], *value);
+        }
+        return duckdb::StringVector::GetStringAllocator(out).SizeInBytes();
+      };
+      cache.SetMaxMemory(cache.GetCurrentMemory());
+      if (value == &distinct) {
+        EXPECT_GT(copied_bytes(), 0u);
+      } else {
+        EXPECT_EQ(copied_bytes(), 0u);
+      }
+      cache.SetMaxMemory(room);
+      EXPECT_EQ(copied_bytes(), 0u);
+    }
   }
 }
 

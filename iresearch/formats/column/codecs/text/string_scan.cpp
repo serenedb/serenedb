@@ -50,6 +50,11 @@ duckdb::shared_ptr<DecodedDictionary> CachedDictionary(
     DictionaryCacheKey(slot.file_id, slot.file_offset));
 }
 
+bool HasRoom(const ReadContext::CacheSlot& slot, uint64_t bytes) {
+  return slot.touched && slot.cache->GetCurrentMemoryRacy() + bytes <=
+                           slot.cache->GetMaxMemoryRacy();
+}
+
 Header SegmentHeader(duckdb::const_data_ptr_t base,
                      const ColumnSegment& segment, Shape shape,
                      ByteCodec codec) {
@@ -124,6 +129,14 @@ uint64_t TouchedBytes(const Header& h, duckdb::const_data_ptr_t base,
     bytes += FrameAt(table, counted).raw_len;
   }
   return bytes;
+}
+
+uint64_t DistinctEntries(std::span<const EntryAt> order) noexcept {
+  uint64_t distinct = 0;
+  for (size_t i = 0; i < order.size(); ++i) {
+    distinct += i == 0 || order[i].entry != order[i - 1].entry;
+  }
+  return distinct;
 }
 
 void ReferenceOnce(HeapReference& reference, const duckdb::Vector& source,

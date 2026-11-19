@@ -442,15 +442,18 @@ statement ok
 CREATE TEXT SEARCH DICTIONARY explain_kw AS keyword() WITH (frequency);
 
 statement ok
-CREATE TABLE explain_labels (id INTEGER PRIMARY KEY, body VARCHAR, ip INET, flag BOOLEAN, doc JSON);
+CREATE TABLE explain_labels (
+    id INTEGER PRIMARY KEY, body VARCHAR, ip INET, flag BOOLEAN, doc JSON, n INTEGER, big BIGINT, d DOUBLE,
+    net CIDR, txt VARCHAR, g INTEGER GENERATED ALWAYS AS (n * 10) STORED);
 
 statement ok
-CREATE INDEX explain_labels_idx ON explain_labels USING inverted (id, body explain_plain, ip, flag, (doc->'v') explain_kw);
+CREATE INDEX explain_labels_idx ON explain_labels USING inverted (
+    id, body explain_plain, ip, flag, (doc->'v') explain_kw, n, big, d, net, txt, (doc->>'host'), (LOWER(txt)), g);
 
 statement ok
-INSERT INTO explain_labels VALUES
-    (1, 'crème brûlée', '10.0.0.1', true, '{"v": 30}'),
-    (2, 'crème', '192.168.1.7', false, '{"v": true}');
+INSERT INTO explain_labels (id, body, ip, flag, doc, n, big, d, net, txt) VALUES
+    (1, 'crème brûlée', '10.0.0.1', true, '{"v": 30, "host": "web-01"}', 42, 9000000000, 1.5, '10.0.0.0/8', 'Crème'),
+    (2, 'crème', '192.168.1.7', false, '{"v": true, "host": "web-02"}', 7, 1, 2.5, '192.168.0.0/16', 'thé');
 
 query
 SELECT id, ts_explain(explain_labels_idx.tableoid) AS why
@@ -470,3 +473,13 @@ ORDER BY BM25(explain_labels_idx.tableoid) DESC, id;
 id	why
 1	{"clauses":[{"column":"body","expression":"boost * idf * tf","inputs":{"idf":{"expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":2},"df":{"value":2}},"value":0.18232156},"tf":{"expression":"freq / (freq + k1 * (1 - b + b * dl / avgdl))","inputs":{"avgdl":{"expression":"L / N","inputs":{"L":{"value":3},"N":{"value":2}},"value":1.5},"b":{"value":0.75},"dl":{"value":1},"freq":{"value":1},"k1":{"value":1.2}},"value":0.52631575}},"scorer":"bm25(k1=1.2, b=0.75)","term":"crème","value":0.09595872},{"clauses":[{"column":"flag","expression":"boost * value","inputs":{"value":{"value":1}},"scorer":"constant(value=1)","term":"true","value":1},{"column":"(doc -> 'v')","expression":"boost * value","inputs":{"value":{"value":1}},"scorer":"constant(value=1)","term":"30","value":1}],"expression":"sum","value":2}],"expression":"sum","value":2.0959587}
 2	{"clauses":[{"column":"body","expression":"boost * idf * tf","inputs":{"idf":{"expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":2},"df":{"value":2}},"value":0.18232156},"tf":{"expression":"freq / (freq + k1 * (1 - b + b * dl / avgdl))","inputs":{"avgdl":{"expression":"L / N","inputs":{"L":{"value":3},"N":{"value":2}},"value":1.5},"b":{"value":0.75},"dl":{"value":1},"freq":{"value":1},"k1":{"value":1.2}},"value":0.52631575}},"scorer":"bm25(k1=1.2, b=0.75)","term":"crème","value":0.09595872},{"clauses":[{"column":"(doc -> 'v')","expression":"boost * value","inputs":{"value":{"value":1}},"scorer":"constant(value=1)","term":"true","value":1}],"expression":"sum","value":1}],"expression":"sum","value":1.0959587}
+
+query
+SELECT id, ts_explain(explain_labels_idx.tableoid) AS why
+FROM explain_labels_idx
+WHERE n = 42 OR big = 9000000000 OR d = 1.5 OR net = '10.0.0.0/8'::CIDR OR txt = 'Crème'
+    OR doc->>'host' = 'web-01' OR LOWER(txt) = 'crème' OR g = 420
+ORDER BY constant(explain_labels_idx.tableoid, 1) DESC, id;
+----
+id	why
+1	{"clauses":[{"column":"n","expression":"boost * value","inputs":{"value":{"value":1}},"scorer":"constant(value=1)","term":"42","value":1},{"column":"big","expression":"boost * value","inputs":{"value":{"value":1}},"scorer":"constant(value=1)","term":"9000000000","value":1},{"column":"d","expression":"boost * value","inputs":{"value":{"value":1}},"scorer":"constant(value=1)","term":"1.5","value":1},{"column":"net","expression":"boost * value","inputs":{"value":{"value":1}},"scorer":"constant(value=1)","term":"10.0.0.0/8","value":1},{"column":"txt","expression":"boost * value","inputs":{"value":{"value":1}},"scorer":"constant(value=1)","term":"Crème","value":1},{"column":"(doc ->> 'host')","expression":"boost * value","inputs":{"value":{"value":1}},"scorer":"constant(value=1)","term":"web-01","value":1},{"column":"lower(txt)","expression":"boost * value","inputs":{"value":{"value":1}},"scorer":"constant(value=1)","term":"crème","value":1},{"column":"g","expression":"boost * value","inputs":{"value":{"value":1}},"scorer":"constant(value=1)","term":"420","value":1}],"expression":"sum","value":8}

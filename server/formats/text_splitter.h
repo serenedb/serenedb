@@ -22,6 +22,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <duckdb/formats/row_ranges.hpp>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -51,6 +52,8 @@ class TextSplitter {
   TextSplitter(char delimiter, size_t columns, size_t capacity);
 
   TextRows Split(std::string_view bytes, size_t& pos, size_t max_rows);
+  TextRows FillLexed(const duckdb::RowRangeReader& reader, size_t first,
+                     size_t rows);
 
   std::span<std::string_view> Column(size_t column, size_t rows) noexcept {
     return {_fields.data() + column * _capacity, rows};

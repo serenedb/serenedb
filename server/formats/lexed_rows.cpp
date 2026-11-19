@@ -67,6 +67,8 @@ void LexedRows::Prepare(std::string_view bytes, size_t pos, size_t rows) {
             static_cast<uint32_t>(_size - _origin) | duckdb::ROW_FIELD_FLAG;
           ++_cursor.rows;
         }
+      } else {
+        _unterminated = _cursor.unfinished;
       }
       _finished = true;
     }

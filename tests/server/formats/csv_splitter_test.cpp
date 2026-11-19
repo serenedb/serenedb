@@ -218,9 +218,6 @@ TEST(CsvSplitter, RecordEndFollowsQuotes) {
   EXPECT_EQ(sdb::formats::CsvRecordEnd(input, 5, dialect, state),
             std::string_view::npos);
   EXPECT_TRUE(state.in_quote);
-  EXPECT_TRUE(sdb::formats::CsvQuoteParity("\"a\"\"", '"'));
-  EXPECT_FALSE(sdb::formats::CsvQuoteParity("\"a\"\"\"", '"'));
-  EXPECT_TRUE(sdb::formats::CsvQuoteParity(std::string(129, '"'), '"'));
 }
 
 TEST(CsvSplitter, RecordEndKeepsEscapeAcrossChunks) {

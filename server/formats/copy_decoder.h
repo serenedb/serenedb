@@ -74,13 +74,16 @@ class CopyDecoder {
               CopyTextEnd& end, std::atomic<uint64_t>& rejected);
 
   void Start(const pg::CopyBatch& batch);
+  void StartLexed(uint64_t seq);
   bool Active() const noexcept { return static_cast<bool>(_batch); }
   bool Exhausted() const noexcept {
     return _segment == _batch->segments.size();
   }
-  uint64_t Seq() const noexcept { return _batch->seq; }
+  uint64_t Seq() const noexcept { return _seq; }
   void Stop() noexcept { _batch = nullptr; }
   duckdb::idx_t Parse(duckdb::DataChunk& output, duckdb::idx_t row);
+  duckdb::idx_t ParseLexed(duckdb::DataChunk& output, duckdb::idx_t row,
+                           const duckdb::RowRangeReader& reader, size_t rows);
 
   bool Failed() const noexcept { return static_cast<bool>(_error.error); }
   uint64_t FailedLine() const noexcept { return _error.line; }
@@ -94,6 +97,15 @@ class CopyDecoder {
   duckdb::idx_t ParseText(duckdb::DataChunk& output, duckdb::idx_t row);
   duckdb::idx_t ParseCsv(duckdb::DataChunk& output, duckdb::idx_t row);
   duckdb::idx_t ParseBinary(duckdb::DataChunk& output, duckdb::idx_t row);
+  duckdb::idx_t ParseLexedText(duckdb::DataChunk& output, duckdb::idx_t row,
+                               const duckdb::RowRangeReader& reader,
+                               size_t first, size_t count);
+  duckdb::idx_t ParseLexedCsv(duckdb::DataChunk& output, duckdb::idx_t row,
+                              const duckdb::RowRangeReader& reader,
+                              size_t first, size_t count);
+  void LexedHeader(const duckdb::RowRangeReader& reader);
+  void LexedAfterMarker(const duckdb::RowRangeReader& reader, size_t first,
+                        size_t count) const;
   void ResolveText(size_t rows);
   void ResolveCsv(size_t rows);
   CsvMissing FirstMissing(size_t rows);
@@ -140,6 +152,7 @@ class CopyDecoder {
   CopyTextEnd& _end;
   std::atomic<uint64_t>& _rejected;
   const pg::CopyBatch* _batch = nullptr;
+  uint64_t _seq = 0;
   size_t _segment = 0;
   size_t _pos = 0;
   bool _skip = false;

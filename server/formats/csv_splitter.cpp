@@ -124,8 +124,40 @@ CsvRows CsvSplitter::Split(std::string_view bytes, size_t& pos,
   return result;
 }
 
-bool CsvQuoteParity(std::string_view bytes, char quote) noexcept {
-  return (absl::c_count(bytes, quote) & 1) != 0;
+CsvRows CsvSplitter::FillLexed(const duckdb::RowRangeReader& reader,
+                               size_t first, size_t rows) {
+  _extra.clear();
+  CsvRows result;
+  const auto& fields = reader.fields;
+  const auto& window = *reader.bytes;
+  const char* const data = window.data;
+  const size_t shift = reader.cursor.anchor - window.offset;
+  const size_t delimiter = reader.dialect.delimiter_size;
+  for (size_t row = 0; row < rows; ++row) {
+    const size_t lexed = first + row;
+    const auto* anomaly =
+      fields.anomalies.empty() ? nullptr : fields.Anomaly(lexed);
+    const size_t count = anomaly ? anomaly->fields : _columns;
+    const size_t row_start = fields.rows[lexed] + shift;
+    _offsets[row] = static_cast<uint32_t>(row_start);
+    for (size_t column = 0; column < std::min(count, _columns); ++column) {
+      const size_t index = lexed * _columns + column;
+      const uint32_t end_bits = fields.ends[index];
+      const size_t begin =
+        column == 0 ? row_start
+                    : (fields.ends[index - 1] & duckdb::ROW_FIELD_MASK) +
+                        shift + delimiter;
+      const std::string_view field{
+        data + begin, (end_bits & duckdb::ROW_FIELD_MASK) + shift - begin};
+      AddField(column, row, field,
+               FieldFlags(field, (end_bits & duckdb::ROW_FIELD_FLAG) != 0));
+    }
+    FinishRow(count, row);
+  }
+  result.rows = rows;
+  result.unterminated = reader.cursor.unfinished && reader.Finished() &&
+                        first + rows == fields.row_count;
+  return result;
 }
 
 size_t CsvRecordEnd(std::string_view bytes, size_t from,

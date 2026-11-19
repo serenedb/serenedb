@@ -22,6 +22,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <duckdb/formats/row_ranges.hpp>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -52,6 +53,8 @@ class CsvSplitter {
   CsvSplitter(CsvDialect dialect, size_t columns, size_t capacity);
 
   CsvRows Split(std::string_view bytes, size_t& pos, size_t max_rows);
+  CsvRows FillLexed(const duckdb::RowRangeReader& reader, size_t first,
+                    size_t rows);
 
   std::span<std::string_view> Column(size_t column, size_t rows) noexcept {
     return {_fields.data() + column * _capacity, rows};
@@ -86,8 +89,6 @@ struct CsvQuoteState {
   bool in_quote = false;
   bool escaped = false;
 };
-
-bool CsvQuoteParity(std::string_view bytes, char quote) noexcept;
 
 size_t CsvRecordEnd(std::string_view bytes, size_t from,
                     const CsvDialect& dialect, CsvQuoteState& state);

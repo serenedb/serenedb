@@ -104,6 +104,48 @@ TextRows TextSplitter::Split(std::string_view bytes, size_t& pos,
   return result;
 }
 
+TextRows TextSplitter::FillLexed(const duckdb::RowRangeReader& reader,
+                                 size_t first, size_t rows) {
+  _escaped.clear();
+  TextRows result;
+  const auto& fields = reader.fields;
+  const auto& window = *reader.bytes;
+  const std::string_view bytes{window.data, window.size};
+  const size_t shift = reader.cursor.anchor - window.offset;
+  const size_t delimiter = reader.dialect.delimiter_size;
+  for (size_t row = first; row < first + rows; ++row) {
+    const auto* anomaly =
+      fields.anomalies.empty() ? nullptr : fields.Anomaly(row);
+    const size_t count = anomaly ? anomaly->fields : _columns;
+    const size_t row_start = fields.rows[row] + shift;
+    const size_t first_end =
+      (fields.ends[row * _columns] & duckdb::ROW_FIELD_MASK) + shift;
+    if (count == 1 && bytes.substr(row_start, first_end - row_start) == "\\.") {
+      result.marker = true;
+      return result;
+    }
+    if (count != _columns) {
+      result.error = BadRow(bytes, row_start, count, _columns);
+      result.fields = count;
+      result.row_start = row_start;
+      return result;
+    }
+    for (size_t column = 0; column < _columns; ++column) {
+      const uint32_t end_bits = fields.ends[row * _columns + column];
+      const size_t begin = column == 0
+                             ? row_start
+                             : (fields.ends[row * _columns + column - 1] &
+                                duckdb::ROW_FIELD_MASK) +
+                                 shift + delimiter;
+      const size_t end = (end_bits & duckdb::ROW_FIELD_MASK) + shift;
+      AddField(column, result.rows, bytes.substr(begin, end - begin),
+               (end_bits & duckdb::ROW_FIELD_FLAG) != 0);
+    }
+    ++result.rows;
+  }
+  return result;
+}
+
 std::string_view UnescapeText(std::string_view field, char* out) {
   char* const begin = out;
   for (size_t i = 0; i < field.size();) {

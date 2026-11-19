@@ -23,6 +23,7 @@
 #include <cstdint>
 
 #include "iresearch/index/field_meta.hpp"
+#include "iresearch/search/scorers/score_inputs.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
@@ -34,11 +35,7 @@ enum class DFIMeasure : uint8_t {
   ChiSquared,
 };
 
-struct DFIStats {
-  score_t* ratios;
-  score_t ratio;
-  uint32_t terms;
-};
+using DFIStats = ShareStats;
 
 class DFI final : public irs::ScorerBase<DFI, DFIStats> {
  public:
@@ -68,10 +65,7 @@ class DFI final : public irs::ScorerBase<DFI, DFIStats> {
   explicit DFI(DFIMeasure measure = MEASURE()) noexcept : _measure{measure} {}
 
   void collect(byte_type* stats_buf, const irs::FieldCollector* field,
-               const irs::TermCollector* term) const final;
-
-  void ReserveTerms(byte_type* stats_buf, size_t terms,
-                    StatsArena& arena) const final;
+               const irs::TermCollector* term, StatsArena& arena) const final;
 
   IndexFeatures GetIndexFeatures() const noexcept final {
     return IndexFeatures::Freq | IndexFeatures::Norm;

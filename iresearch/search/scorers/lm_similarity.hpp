@@ -33,32 +33,7 @@
 
 namespace irs {
 
-struct LMStats {
-  score_t* shares;
-  score_t collection_prob;
-  uint32_t terms;
-};
-
-inline std::span<const score_t> SharesOf(const LMStats& stats) noexcept {
-  return {stats.shares ? stats.shares : &stats.collection_prob, stats.terms};
-}
-
-inline void CollectLMStats(LMStats& stats, const FieldCollector* field,
-                           const TermCollector* term) noexcept {
-  const auto share = CollectionShareOf(field, term);
-  if (stats.shares) {
-    stats.shares[stats.terms++] = share;
-  } else {
-    stats.collection_prob = share;
-    stats.terms = 1;
-  }
-}
-
-inline void ReserveLMTerms(LMStats& stats, size_t terms, StatsArena& arena) {
-  if (terms > 1) {
-    stats.shares = AllocateShares(arena, terms);
-  }
-}
+using LMStats = ShareStats;
 
 template<typename MakeFormula>
 ScoreFunction PrepareLMScorer(const ScoreContext& ctx, const LMStats& stats,

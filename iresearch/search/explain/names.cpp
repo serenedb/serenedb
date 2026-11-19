@@ -20,28 +20,17 @@
 
 #include "iresearch/search/explain/names.hpp"
 
-#include <absl/algorithm/container.h>
-
-#include "iresearch/utils/assert.hpp"
-
 namespace irs::explain {
 
 PostingKey::PostingKey(const TermReader& reader,
                        const PostingMeta& meta) noexcept
   : reader{&reader},
     doc_start{meta.doc_start},
+    inline_data{meta.inline_data},
     pos_start{meta.pos_start},
-    pay_start{meta.pay_start},
-    docs_count{meta.docs_count},
-    freq{meta.freq},
     doc_delta{meta.doc_delta},
-    pos_extent{meta.pos_extent},
-    pay_extent{meta.pay_extent},
-    pos_offset{meta.pos_offset},
-    inline_size{meta.inline_size} {
-  SDB_ASSERT(meta.inline_size <= PostingMeta::kInlineBytes);
-  absl::c_copy(meta.Inline(), inline_bytes.begin());
-}
+    freq{meta.freq},
+    pos_offset{meta.pos_offset} {}
 
 void TermNames::Add(const TermReader& reader, const PostingMeta& meta,
                     bytes_view term) {

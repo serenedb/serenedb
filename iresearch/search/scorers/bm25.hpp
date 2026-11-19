@@ -90,7 +90,7 @@ class BM25 final : public irs::ScorerBase<BM25, BM25Stats> {
       _approximate{approximate} {}
 
   void collect(byte_type* stats_buf, const irs::FieldCollector* field,
-               const irs::TermCollector* term) const final;
+               const irs::TermCollector* term, StatsArena&) const final;
 
   bool ScoresPerDoc() const noexcept final { return !IsBM1(); }
 

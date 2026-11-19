@@ -71,8 +71,8 @@ PrepareCollector::ptr ByTerm::MakeCollectorImpl(const Scorer* scorer,
   return std::make_unique<ByTermsCollector>(scorer, 1, stats, threads);
 }
 
-void ByTerm::DescribeStats(const PrepareCollector* collector,
-                           explain::StatsIndex& out) const {
+void ByTerm::ExplainStats(const PrepareCollector* collector,
+                          explain::StatsIndex& out) const {
   if (collector != nullptr) {
     explain::DescribeTerm(utils::downCast<ByTermsCollector>(*collector), 0,
                           field_id(), options().term, out);

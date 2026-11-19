@@ -64,13 +64,8 @@ LmDirFormula LmDirOf(score_t boost, score_t mu, score_t share) noexcept {
 }  // namespace
 
 void LMDirichlet::collect(byte_type* stats_buf, const FieldCollector* field,
-                          const TermCollector* term) const {
-  CollectLMStats(*stats_cast(stats_buf), field, term);
-}
-
-void LMDirichlet::ReserveTerms(byte_type* stats_buf, size_t terms,
-                               StatsArena& arena) const {
-  ReserveLMTerms(*stats_cast(stats_buf), terms, arena);
+                          const TermCollector* term, StatsArena& arena) const {
+  CollectShare(*stats_cast(stats_buf), field, term, arena);
 }
 
 ScoreFunction LMDirichlet::PrepareScorer(const ScoreContext& ctx) const {

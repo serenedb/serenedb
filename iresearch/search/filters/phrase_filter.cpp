@@ -690,8 +690,8 @@ PrepareCollector::ptr ByPhrase::MakeCollectorImpl(const Scorer* scorer,
     scorer, counts.terms, counts.expanded, stats, threads);
 }
 
-void ByPhrase::DescribeStats(const PrepareCollector* collector,
-                             explain::StatsIndex& out) const {
+void ByPhrase::ExplainStats(const PrepareCollector* collector,
+                            explain::StatsIndex& out) const {
   if (collector == nullptr) {
     return;
   }
@@ -728,11 +728,11 @@ void ByPhrase::DescribeStats(const PrepareCollector* collector,
   out.Add(slots.Record().stats, std::move(stats));
 }
 
-void ByPhrase::DescribeTerms(const SubReader& segment,
-                             explain::TermNames& out) const {
+void ByPhrase::ExplainTerms(const SubReader& segment,
+                            explain::TermNames& out) const {
   for (const auto& word : options()) {
     PartFilter(field_id(), dict(), word.part, false)
-      ->DescribeTerms(segment, out);
+      ->ExplainTerms(segment, out);
   }
 }
 

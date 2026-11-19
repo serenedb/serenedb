@@ -105,8 +105,8 @@ PrepareCollector::ptr ByRange::MakeCollectorImpl(const Scorer* scorer,
   return MakeMultiTermCollector(scorer, stats, threads);
 }
 
-void ByRange::DescribeStats(const PrepareCollector* collector,
-                            explain::StatsIndex& out) const {
+void ByRange::ExplainStats(const PrepareCollector* collector,
+                           explain::StatsIndex& out) const {
   explain::DescribeMultiTerm(collector, field_id(), out);
 }
 

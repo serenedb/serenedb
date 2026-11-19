@@ -226,10 +226,10 @@ class Filter {
     return MakeCollectorImpl(own, stats, threads);
   }
 
-  virtual void DescribeStats(const PrepareCollector*,
-                             explain::StatsIndex&) const {}
+  virtual void ExplainStats(const PrepareCollector*,
+                            explain::StatsIndex&) const {}
 
-  virtual void DescribeTerms(const SubReader&, explain::TermNames&) const {}
+  virtual void ExplainTerms(const SubReader&, explain::TermNames&) const {}
 
   virtual TypeInfo::type_id type() const noexcept = 0;
 
@@ -320,8 +320,8 @@ class FilterWithField : public FilterWithOptions<Options> {
   DictRef dict() const noexcept { return _dict; }
   DictRef* mutable_dict() noexcept { return &_dict; }
 
-  void DescribeTerms(const SubReader& segment,
-                     explain::TermNames& out) const override {
+  void ExplainTerms(const SubReader& segment,
+                    explain::TermNames& out) const override {
     const auto* reader = segment.field(_field_id, _dict);
     if (!reader) {
       return;

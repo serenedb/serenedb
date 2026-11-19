@@ -93,8 +93,9 @@ class CapturingScorer final : public irs::Scorer {
   void Target(BlockAttrs& attrs) noexcept { _attrs = &attrs; }
 
   void collect(irs::byte_type* stats, const irs::FieldCollector* field,
-               const irs::TermCollector* term) const final {
-    _impl.collect(stats, field, term);
+               const irs::TermCollector* term,
+               irs::StatsArena& arena) const final {
+    _impl.collect(stats, field, term, arena);
   }
 
   irs::IndexFeatures GetIndexFeatures() const final {
@@ -131,7 +132,7 @@ class CapturingScorer final : public irs::Scorer {
 class TermOrderScorer final : public irs::ScorerBase<TermOrderScorer, void> {
  public:
   void collect(irs::byte_type*, const irs::FieldCollector*,
-               const irs::TermCollector* term) const final {
+               const irs::TermCollector* term, irs::StatsArena&) const final {
     if (term != nullptr) {
       docs_with_term.push_back(term->docs_with_term);
     }

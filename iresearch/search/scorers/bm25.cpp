@@ -124,7 +124,7 @@ struct Bm25Score : public ScoreOperatorOf<Bm25Score<HasScale>> {
 }  // namespace
 
 void BM25::collect(byte_type* stats_buf, const irs::FieldCollector* field,
-                   const irs::TermCollector* term) const {
+                   const irs::TermCollector* term, StatsArena&) const {
   auto* stats = stats_cast(stats_buf);
 
   const auto docs_with_field = field ? field->docs_with_field : 0;

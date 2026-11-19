@@ -440,11 +440,6 @@ class Builder {
   ColumnArgsFetcher& _fetcher;
 };
 
-[[maybe_unused]] bool AgreesWith(score_t explained, score_t executed) noexcept {
-  return std::abs(explained - executed) <=
-         1e-4f * std::max({1.f, std::abs(explained), std::abs(executed)});
-}
-
 }  // namespace
 
 Plan::Plan(const QueryBuilder& query, const Scorer& scorer,
@@ -463,7 +458,8 @@ Node Plan::Explain(doc_id_t doc, std::optional<score_t> executed) {
   }
   if (executed) {
     SDB_ASSERT(outcome != Outcome::Scored ||
-               AgreesWith(std::get<score_t>(root.value), *executed));
+               std::abs(std::get<score_t>(root.value) - *executed) <=
+                 1e-4f * std::max(1.f, std::abs(*executed)));
     root.value = *executed;
   }
   return root;

@@ -117,8 +117,8 @@ PrepareCollector::ptr ByNGramSimilarity::MakeCollectorImpl(
   return std::make_unique<SlotsCollector>(scorer, terms_count, stats, threads);
 }
 
-void ByNGramSimilarity::DescribeStats(const PrepareCollector* collector,
-                                      explain::StatsIndex& out) const {
+void ByNGramSimilarity::ExplainStats(const PrepareCollector* collector,
+                                     explain::StatsIndex& out) const {
   if (collector == nullptr) {
     return;
   }

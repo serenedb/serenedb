@@ -90,7 +90,7 @@ struct CustomSort final : public irs::ScorerBase<void> {
   };
 
   void collect(irs::byte_type* stats, const irs::FieldCollector* field,
-               const irs::TermCollector* term) const final {
+               const irs::TermCollector* term, irs::StatsArena&) const final {
     if (collector_finish) {
       collector_finish(stats, field, term);
     }

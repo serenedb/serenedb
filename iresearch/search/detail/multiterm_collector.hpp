@@ -62,7 +62,7 @@ class MultiTermCollector final : public FieldPrepareCollector {
     return it->second.stats;
   }
 
-  void Finish(StatsArena&) final {
+  void Finish(StatsArena& stats) final {
     if (_scorer == nullptr) {
       return;
     }
@@ -82,7 +82,7 @@ class MultiTermCollector final : public FieldPrepareCollector {
     }
     for (auto& [term, one] : merged) {
       auto* const first = one.slots.front();
-      _scorer->collect(first, &field, &one.counter);
+      _scorer->collect(first, &field, &one.counter, stats);
       for (size_t i = 1; i != one.slots.size(); ++i) {
         std::memcpy(one.slots[i], first, _slot);
       }
@@ -144,13 +144,13 @@ class BlendedTermsCollector final : public FieldPrepareCollector {
     _threads[thread].try_emplace(term).first->second.Collect(meta);
   }
 
-  void Finish(StatsArena&) final {
+  void Finish(StatsArena& stats) final {
     if (_scorer == nullptr) {
       return;
     }
     const auto field = _counters.TotalField();
     const auto blended = Blended();
-    _scorer->collect(const_cast<byte_type*>(_stats), &field, &blended);
+    _scorer->collect(const_cast<byte_type*>(_stats), &field, &blended, stats);
   }
 
   TermCollector Blended() const {

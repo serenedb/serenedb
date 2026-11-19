@@ -256,8 +256,8 @@ PrepareCollector::ptr ByWildcardNGram::MakeCollectorImpl(const Scorer* scorer,
   return std::make_unique<AllCollector>(scorer, stats);
 }
 
-void ByWildcardNGram::DescribeStats(const PrepareCollector* collector,
-                                    explain::StatsIndex& out) const {
+void ByWildcardNGram::ExplainStats(const PrepareCollector* collector,
+                                   explain::StatsIndex& out) const {
   explain::DescribeSlot(collector, field_id(), out);
 }
 

@@ -196,11 +196,11 @@ class ByPhrase : public FilterWithField<ByPhraseOptions> {
                                           StatsArena& stats,
                                           uint32_t threads) const final;
 
-  void DescribeStats(const PrepareCollector* collector,
-                     explain::StatsIndex& out) const final;
+  void ExplainStats(const PrepareCollector* collector,
+                    explain::StatsIndex& out) const final;
 
-  void DescribeTerms(const SubReader& segment,
-                     explain::TermNames& out) const final;
+  void ExplainTerms(const SubReader& segment,
+                    explain::TermNames& out) const final;
 };
 
 Filter::ptr PartFilter(field_id field, DictRef dict,

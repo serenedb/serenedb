@@ -22,7 +22,9 @@
 
 #include <absl/container/inlined_vector.h>
 
+#include <algorithm>
 #include <cstdint>
+#include <cstring>
 #include <span>
 #include <type_traits>
 #include <utility>
@@ -53,8 +55,36 @@ inline score_t CollectionShareOf(const FieldCollector* field,
                            field ? field->total_term_freq : 0);
 }
 
-inline score_t* AllocateShares(StatsArena& arena, size_t terms) {
-  return reinterpret_cast<score_t*>(arena.Allocate(terms * sizeof(score_t)));
+struct ShareStats {
+  score_t* shares;
+  score_t share;
+  uint32_t terms;
+  uint32_t capacity;
+};
+
+inline std::span<const score_t> SharesOf(const ShareStats& stats) noexcept {
+  return {stats.shares ? stats.shares : &stats.share, stats.terms};
+}
+
+inline void CollectShare(ShareStats& stats, const FieldCollector* field,
+                         const TermCollector* term, StatsArena& arena) {
+  const auto share = CollectionShareOf(field, term);
+  if (stats.terms == 0) {
+    stats.share = share;
+    stats.terms = 1;
+    return;
+  }
+  const uint32_t capacity = stats.shares ? stats.capacity : 1;
+  if (stats.terms == capacity) {
+    const auto grown = std::max<uint32_t>(4, 2 * capacity);
+    auto* shares =
+      reinterpret_cast<score_t*>(arena.Allocate(grown * sizeof(score_t)));
+    std::memcpy(shares, stats.shares ? stats.shares : &stats.share,
+                stats.terms * sizeof(score_t));
+    stats.shares = shares;
+    stats.capacity = grown;
+  }
+  stats.shares[stats.terms++] = share;
 }
 
 template<bool HasScale, typename Formula>

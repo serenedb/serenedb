@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <array>
 #include <cstdint>
 #include <utility>
 
@@ -39,24 +38,18 @@ struct PostingKey {
 
   const TermReader* reader;
   uint64_t doc_start;
+  const byte_type* inline_data;
   uint64_t pos_start;
-  uint64_t pay_start;
-  uint32_t docs_count;
-  uint32_t freq;
   uint32_t doc_delta;
-  uint32_t pos_extent;
-  uint32_t pay_extent;
+  uint32_t freq;
   uint16_t pos_offset;
-  uint8_t inline_size;
-  std::array<byte_type, PostingMeta::kInlineBytes> inline_bytes{};
 };
 
 template<typename H>
 H AbslHashValue(H state, const PostingKey& key) {
-  return H::combine(std::move(state), key.reader, key.doc_start, key.pos_start,
-                    key.pay_start, key.docs_count, key.freq, key.doc_delta,
-                    key.pos_extent, key.pay_extent, key.pos_offset,
-                    key.inline_size, key.inline_bytes);
+  return H::combine(std::move(state), key.reader, key.doc_start,
+                    key.inline_data, key.pos_start, key.doc_delta, key.freq,
+                    key.pos_offset);
 }
 
 class TermNames {

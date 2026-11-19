@@ -183,11 +183,11 @@ class BooleanFilter final : public FilterWithType<BooleanFilter> {
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final;
 
-  void DescribeStats(const PrepareCollector* collector,
-                     explain::StatsIndex& out) const final;
+  void ExplainStats(const PrepareCollector* collector,
+                    explain::StatsIndex& out) const final;
 
-  void DescribeTerms(const SubReader& segment,
-                     explain::TermNames& out) const final;
+  void ExplainTerms(const SubReader& segment,
+                    explain::TermNames& out) const final;
 
  protected:
   PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer,

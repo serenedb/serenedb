@@ -73,8 +73,8 @@ PrepareCollector::ptr ByGranularRange::MakeCollectorImpl(
   return MakeMultiTermCollector(scorer, stats, threads);
 }
 
-void ByGranularRange::DescribeStats(const PrepareCollector* collector,
-                                    explain::StatsIndex& out) const {
+void ByGranularRange::ExplainStats(const PrepareCollector* collector,
+                                   explain::StatsIndex& out) const {
   explain::DescribeMultiTerm(collector, field_id(), out);
 }
 

@@ -139,7 +139,7 @@ void AddShare(Node& out, score_t value, uint64_t ttf, uint64_t total) {
   AddDetail(node, "L", total);
 }
 
-void ExplainTerms(const SlotStats* stats, Node& out, ExplainTerm describe) {
+void ExplainParts(const SlotStats* stats, Node& out, ExplainPart describe) {
   out.expression = "sum";
   if (!stats) {
     return;
@@ -170,7 +170,7 @@ void ExplainLanguageModel(const ScoreContext& ctx,
     out.expression = expression;
     return;
   }
-  ExplainTerms(
+  ExplainParts(
     stats, out, [&](Node& part, const TermStats& term, score_t share) {
       AddBoost(part, ctx.boost);
       part.details.push_back(parameter);

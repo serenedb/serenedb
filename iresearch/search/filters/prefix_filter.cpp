@@ -154,8 +154,8 @@ PrepareCollector::ptr ByPrefix::MakeCollectorImpl(const Scorer* scorer,
   return MakeMultiTermCollector(scorer, stats, threads);
 }
 
-void ByPrefix::DescribeStats(const PrepareCollector* collector,
-                             explain::StatsIndex& out) const {
+void ByPrefix::ExplainStats(const PrepareCollector* collector,
+                            explain::StatsIndex& out) const {
   explain::DescribeMultiTerm(collector, field_id(), out);
 }
 
@@ -204,8 +204,8 @@ PrepareCollector::ptr ByPrefixes::MakeCollectorImpl(const Scorer* scorer,
   return MakeMultiTermCollector(scorer, stats, threads);
 }
 
-void ByPrefixes::DescribeStats(const PrepareCollector* collector,
-                               explain::StatsIndex& out) const {
+void ByPrefixes::ExplainStats(const PrepareCollector* collector,
+                              explain::StatsIndex& out) const {
   explain::DescribeMultiTerm(collector, field_id(), out);
 }
 

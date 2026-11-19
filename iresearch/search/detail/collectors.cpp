@@ -49,12 +49,12 @@ void FieldCollector::Collect(const TermReader& field) noexcept {
   }
 }
 
-void FieldPrepareCollector::Finish(StatsArena&) {
+void FieldPrepareCollector::Finish(StatsArena& stats) {
   if (_scorer == nullptr) {
     return;
   }
   const auto field = _counters.TotalField();
-  _scorer->collect(Mutable(_stats), &field, nullptr);
+  _scorer->collect(Mutable(_stats), &field, nullptr, stats);
 }
 
 ByTermsCollector::ByTermsCollector(const Scorer* scorer, size_t size,
@@ -66,14 +66,14 @@ ByTermsCollector::ByTermsCollector(const Scorer* scorer, size_t size,
   _stats = stats.Allocate(_slot * size);
 }
 
-void ByTermsCollector::Finish(StatsArena&) {
+void ByTermsCollector::Finish(StatsArena& stats) {
   if (_scorer == nullptr) {
     return;
   }
   const auto field = _counters.TotalField();
   for (size_t i = 0; i != _size; ++i) {
     const auto term = _counters.TotalTerm(i);
-    _scorer->collect(Mutable(_stats) + i * _slot, &field, &term);
+    _scorer->collect(Mutable(_stats) + i * _slot, &field, &term, stats);
   }
 }
 
@@ -83,15 +83,13 @@ void SlotsCollector::Finish(StatsArena& stats) {
   }
   const auto field = _counters.TotalField();
   auto* const slot = Mutable(_stats);
-  _scorer->ReserveTerms(slot, _counters.Terms() + ExpandedTerms(), stats);
   for (size_t i = 0, n = _counters.Terms(); i != n; ++i) {
     const auto term = _counters.TotalTerm(i);
     if (term.docs_with_term == 0) {
       continue;
     }
-    _scorer->collect(slot, &field, &term);
+    _scorer->collect(slot, &field, &term, stats);
   }
-  CollectExpanded(slot, field);
 }
 
 template<typename Visitor>
@@ -133,26 +131,23 @@ void ExpandedSlotsCollector::VisitExpanded(
   WalkExpanded(visitor);
 }
 
-size_t ExpandedSlotsCollector::ExpandedTerms() const noexcept {
-  size_t terms = 0;
-  for (size_t i = 0; i != _expanded.size(); ++i) {
-    terms += _expanded[i].size();
-  }
-  return terms;
-}
-
-void ExpandedSlotsCollector::CollectExpanded(
-  byte_type* slot, const FieldCollector& field) const {
-  WalkExpanded([&](bytes_view, const TermCollector& counts) {
-    _scorer->collect(slot, &field, &counts);
-  });
-}
-
-void AllCollector::Finish(StatsArena&) {
+void ExpandedSlotsCollector::Finish(StatsArena& stats) {
+  SlotsCollector::Finish(stats);
   if (_scorer == nullptr) {
     return;
   }
-  _scorer->collect(Mutable(_stats), nullptr, nullptr);
+  const auto field = _counters.TotalField();
+  auto* const slot = Mutable(_stats);
+  WalkExpanded([&](bytes_view, const TermCollector& counts) {
+    _scorer->collect(slot, &field, &counts, stats);
+  });
+}
+
+void AllCollector::Finish(StatsArena& stats) {
+  if (_scorer == nullptr) {
+    return;
+  }
+  _scorer->collect(Mutable(_stats), nullptr, nullptr, stats);
 }
 
 void CompoundCollector::Finish(StatsArena& stats) {

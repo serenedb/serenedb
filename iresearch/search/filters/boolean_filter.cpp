@@ -377,8 +377,8 @@ PrepareCollector::ptr BooleanFilter::MakeCollectorImpl(const Scorer* scorer,
   return compound;
 }
 
-void BooleanFilter::DescribeStats(const PrepareCollector* collector,
-                                  explain::StatsIndex& out) const {
+void BooleanFilter::ExplainStats(const PrepareCollector* collector,
+                                 explain::StatsIndex& out) const {
   if (collector == nullptr) {
     return;
   }
@@ -397,12 +397,12 @@ void BooleanFilter::DescribeStats(const PrepareCollector* collector,
       }
     },
     [&](const Filter& filter, Occur) {
-      filter.DescribeStats(compound.Child(idx++), out);
+      filter.ExplainStats(compound.Child(idx++), out);
     });
 }
 
-void BooleanFilter::DescribeTerms(const SubReader& segment,
-                                  explain::TermNames& out) const {
+void BooleanFilter::ExplainTerms(const SubReader& segment,
+                                 explain::TermNames& out) const {
   for (const auto occur : {Occur::Must, Occur::Should}) {
     const TermClause* opened = nullptr;
     const TermReader* reader = nullptr;
@@ -418,7 +418,7 @@ void BooleanFilter::DescribeTerms(const SubReader& segment,
       }
     }
     for (const auto& child : Filters(occur)) {
-      child->DescribeTerms(segment, out);
+      child->ExplainTerms(segment, out);
     }
   }
 }

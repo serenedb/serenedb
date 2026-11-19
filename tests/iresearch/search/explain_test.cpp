@@ -201,7 +201,7 @@ class ExplainTest : public IndexTestBase {
     MaxMemoryCounter counter;
     tests::PreparedFilter prepared{filter, index, &scorer, counter};
     irs::explain::StatsIndex stats;
-    filter.DescribeStats(prepared.Collector(), stats);
+    filter.ExplainStats(prepared.Collector(), stats);
     std::vector<irs::explain::Node> explained;
     const auto rows = Execute(prepared);
     EXPECT_FALSE(rows.empty());
@@ -211,7 +211,7 @@ class ExplainTest : public IndexTestBase {
         continue;
       }
       irs::explain::TermNames names;
-      filter.DescribeTerms(query->Segment(), names);
+      filter.ExplainTerms(query->Segment(), names);
       irs::explain::Plan plan{*query, scorer, stats, names};
       for (const auto& row : rows) {
         if (row.segment != segment) {
@@ -566,11 +566,11 @@ TEST_P(ExplainTest, rows_in_any_order_are_explained) {
   MaxMemoryCounter counter;
   tests::PreparedFilter prepared{*filter, index, &bm25, counter};
   irs::explain::StatsIndex stats;
-  filter->DescribeStats(prepared.Collector(), stats);
+  filter->ExplainStats(prepared.Collector(), stats);
   const auto rows = Execute(prepared);
   for (size_t segment = 0; segment != prepared.size(); ++segment) {
     irs::explain::TermNames names;
-    filter->DescribeTerms(prepared.Query(segment)->Segment(), names);
+    filter->ExplainTerms(prepared.Query(segment)->Segment(), names);
     irs::explain::Plan plan{*prepared.Query(segment), bm25, stats, names};
     for (auto it = rows.rbegin(); it != rows.rend(); ++it) {
       if (it->segment != segment) {

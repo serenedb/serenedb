@@ -378,8 +378,8 @@ PrepareCollector::ptr LevenshteinAutomatonFilter::MakeCollectorImpl(
   return std::make_unique<BlendedTermsCollector>(scorer, stats, threads);
 }
 
-void LevenshteinAutomatonFilter::DescribeStats(
-  const PrepareCollector* collector, explain::StatsIndex& out) const {
+void LevenshteinAutomatonFilter::ExplainStats(const PrepareCollector* collector,
+                                              explain::StatsIndex& out) const {
   explain::DescribeBlended(collector, field_id(), out);
 }
 

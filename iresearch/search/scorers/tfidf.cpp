@@ -88,7 +88,7 @@ struct TfIdfScore : public ScoreOperatorOf<TfIdfScore<HasNorm, HasScale>> {
 }  // namespace
 
 void TFIDF::collect(byte_type* stats_buf, const FieldCollector* field,
-                    const TermCollector* term) const {
+                    const TermCollector* term, StatsArena&) const {
   const auto docs_with_field = field ? field->docs_with_field : 0;
   const auto docs_with_term = term ? term->docs_with_term : 0;
 

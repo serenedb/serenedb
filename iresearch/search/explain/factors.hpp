@@ -53,10 +53,10 @@ void AddCollectionShare(Node& out, score_t value, const SlotStats* stats);
 
 void AddShare(Node& out, score_t value, uint64_t ttf, uint64_t total);
 
-using ExplainTerm =
+using ExplainPart =
   absl::FunctionRef<void(Node& part, const TermStats& term, score_t share)>;
 
-void ExplainTerms(const SlotStats* stats, Node& out, ExplainTerm describe);
+void ExplainParts(const SlotStats* stats, Node& out, ExplainPart describe);
 
 using TermFormula =
   absl::FunctionRef<score_t(score_t tf, score_t dl, score_t share)>;

@@ -876,7 +876,7 @@ std::unique_ptr<irs::explain::Explainer> MakeExplainer(const ScanGlobalState& g,
   const auto& seg_query = g.queries[seg];
   SDB_ASSERT(seg_query && g.scorer_obj);
   irs::explain::TermNames names;
-  g.filter->DescribeTerms(seg_query->Segment(), names);
+  g.filter->ExplainTerms(seg_query->Segment(), names);
   return std::make_unique<irs::explain::Plan>(*seg_query, *g.scorer_obj,
                                               g.explain_stats, names);
 }

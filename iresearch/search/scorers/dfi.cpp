@@ -114,34 +114,16 @@ struct DFIFormula {
   score_t ratio;
 };
 
-std::span<const score_t> RatiosOf(const DFIStats& stats) noexcept {
-  return {stats.ratios ? stats.ratios : &stats.ratio, stats.terms};
-}
-
 }  // namespace
 
 void DFI::collect(byte_type* stats_buf, const FieldCollector* field,
-                  const TermCollector* term) const {
-  auto& stats = *stats_cast(stats_buf);
-  const auto ratio = CollectionShareOf(field, term);
-  if (stats.ratios) {
-    stats.ratios[stats.terms++] = ratio;
-  } else {
-    stats.ratio = ratio;
-    stats.terms = 1;
-  }
-}
-
-void DFI::ReserveTerms(byte_type* stats_buf, size_t terms,
-                       StatsArena& arena) const {
-  if (terms > 1) {
-    stats_cast(stats_buf)->ratios = AllocateShares(arena, terms);
-  }
+                  const TermCollector* term, StatsArena& arena) const {
+  CollectShare(*stats_cast(stats_buf), field, term, arena);
 }
 
 ScoreFunction DFI::PrepareScorer(const ScoreContext& ctx) const {
   auto* freq = irs::get<FreqBlockAttr>(ctx.doc_attrs);
-  const auto ratios = RatiosOf(*stats_cast(ctx.stats));
+  const auto ratios = SharesOf(*stats_cast(ctx.stats));
   if (!freq || ratios.empty()) {
     return ScoreFunction::Default();
   }
@@ -159,7 +141,7 @@ ScoreFunction DFI::PrepareScorer(const ScoreContext& ctx) const {
 
 void DFI::Explain(const ScoreContext& ctx, const explain::SlotStats* stats,
                   explain::Node& out) const {
-  const auto ratios = RatiosOf(*stats_cast(ctx.stats));
+  const auto ratios = SharesOf(*stats_cast(ctx.stats));
   if (!explain::FreqOf(ctx) || ratios.empty()) {
     explain::ExplainNoFreq(ctx, false, out);
     return;
@@ -187,7 +169,7 @@ void DFI::Explain(const ScoreContext& ctx, const explain::SlotStats* stats,
     describe(out, ratios.front());
     return;
   }
-  explain::ExplainTerms(
+  explain::ExplainParts(
     stats, out,
     [&](explain::Node& part, const explain::TermStats& term, score_t ratio) {
       explain::AddShare(part, ratio, term.total_term_freq,

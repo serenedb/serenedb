@@ -46,8 +46,8 @@ PrepareCollector::ptr All::MakeCollectorImpl(const Scorer* scorer,
   return std::make_unique<AllCollector>(scorer, stats);
 }
 
-void All::DescribeStats(const PrepareCollector* collector,
-                        explain::StatsIndex& out) const {
+void All::ExplainStats(const PrepareCollector* collector,
+                       explain::StatsIndex& out) const {
   explain::DescribeSlot(collector, field_limits::invalid(), out);
 }
 

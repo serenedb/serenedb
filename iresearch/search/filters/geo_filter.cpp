@@ -389,8 +389,8 @@ PrepareCollector::ptr GeoFilter::MakeCollectorImpl(const Scorer* scorer,
   return std::make_unique<AllCollector>(scorer, stats);
 }
 
-void GeoFilter::DescribeStats(const PrepareCollector* collector,
-                              explain::StatsIndex& out) const {
+void GeoFilter::ExplainStats(const PrepareCollector* collector,
+                             explain::StatsIndex& out) const {
   explain::DescribeSlot(collector, field_id(), out);
 }
 
@@ -419,8 +419,8 @@ PrepareCollector::ptr GeoDistanceFilter::MakeCollectorImpl(const Scorer* scorer,
   return std::make_unique<AllCollector>(scorer, stats);
 }
 
-void GeoDistanceFilter::DescribeStats(const PrepareCollector* collector,
-                                      explain::StatsIndex& out) const {
+void GeoDistanceFilter::ExplainStats(const PrepareCollector* collector,
+                                     explain::StatsIndex& out) const {
   explain::DescribeSlot(collector, field_id(), out);
 }
 

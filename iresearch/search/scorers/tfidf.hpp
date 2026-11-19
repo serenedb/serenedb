@@ -67,7 +67,7 @@ class TFIDF final : public irs::ScorerBase<TFIDF, TFIDFStats> {
     : _normalize{normalize}, _boost_as_score{boost_as_score} {}
 
   void collect(byte_type* stats_buf, const irs::FieldCollector* field,
-               const irs::TermCollector* term) const final;
+               const irs::TermCollector* term, StatsArena&) const final;
 
   IndexFeatures GetIndexFeatures() const noexcept final {
     if (normalize()) {

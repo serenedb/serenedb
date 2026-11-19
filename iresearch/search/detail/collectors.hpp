@@ -251,13 +251,7 @@ class SlotsCollector : public FieldPrepareCollector {
     return _counters.Term(thread, i);
   }
 
-  void Finish(StatsArena& stats) final;
-
- protected:
-  virtual size_t ExpandedTerms() const noexcept { return 0; }
-
-  virtual void CollectExpanded(byte_type* slot,
-                               const FieldCollector& field) const {}
+  void Finish(StatsArena& stats) override;
 };
 
 class ExpandedSlotsCollector final : public SlotsCollector {
@@ -280,14 +274,11 @@ class ExpandedSlotsCollector final : public SlotsCollector {
     absl::FunctionRef<void(bytes_view term, const TermCollector& counts)>
       visitor) const;
 
+  void Finish(StatsArena& stats) final;
+
  private:
   template<typename Visitor>
   void WalkExpanded(Visitor&& visitor) const;
-
-  size_t ExpandedTerms() const noexcept final;
-
-  void CollectExpanded(byte_type* slot,
-                       const FieldCollector& field) const final;
 
   size_t _expanded_size;
   containers::Fixed<Terms> _expanded;

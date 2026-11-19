@@ -75,8 +75,8 @@ PrepareCollector::ptr AutomatonFilter::MakeCollectorImpl(
   return MakeMultiTermCollector(scorer, stats, threads);
 }
 
-void AutomatonFilter::DescribeStats(const PrepareCollector* collector,
-                                    explain::StatsIndex& out) const {
+void AutomatonFilter::ExplainStats(const PrepareCollector* collector,
+                                   explain::StatsIndex& out) const {
   explain::DescribeMultiTerm(collector, field_id(), out);
 }
 

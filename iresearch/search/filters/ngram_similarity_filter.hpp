@@ -59,8 +59,8 @@ class ByNGramSimilarity : public FilterWithField<ByNGramSimilarityOptions> {
                                           StatsArena& stats,
                                           uint32_t threads) const final;
 
-  void DescribeStats(const PrepareCollector* collector,
-                     explain::StatsIndex& out) const final;
+  void ExplainStats(const PrepareCollector* collector,
+                    explain::StatsIndex& out) const final;
 };
 
 }  // namespace irs

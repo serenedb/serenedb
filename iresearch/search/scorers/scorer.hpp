@@ -125,10 +125,7 @@ struct Scorer {
   virtual ~Scorer() = default;
 
   virtual void collect(byte_type* stats, const FieldCollector* field,
-                       const TermCollector* term) const = 0;
-
-  virtual void ReserveTerms(byte_type* stats, size_t terms,
-                            StatsArena& arena) const {}
+                       const TermCollector* term, StatsArena& arena) const = 0;
 
   virtual IndexFeatures GetIndexFeatures() const = 0;
 
@@ -209,8 +206,8 @@ class ScorerBase : public Scorer {
     return irs::Type<Impl>::id();
   }
 
-  void collect(byte_type*, const FieldCollector*,
-               const TermCollector*) const override {}
+  void collect(byte_type*, const FieldCollector*, const TermCollector*,
+               StatsArena&) const override {}
 
   IRS_FORCE_INLINE static const StatsType* stats_cast(
     const byte_type* buf) noexcept {

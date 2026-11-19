@@ -42,7 +42,7 @@ class IDF final : public irs::ScorerBase<IDF, IDFStats> {
   }
 
   void collect(byte_type* stats_buf, const irs::FieldCollector* field,
-               const irs::TermCollector* term) const final;
+               const irs::TermCollector* term, StatsArena&) const final;
 
   IndexFeatures GetIndexFeatures() const noexcept final {
     return IndexFeatures::None;

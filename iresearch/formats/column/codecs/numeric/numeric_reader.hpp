@@ -149,6 +149,8 @@ class FrameReader {
       _f{frames},
       _shape{ShapeOf(codec)},
       _leaf{LeafOf(codec)},
+      _meta_size{static_cast<uint32_t>(FrameMetaSize(
+        ShapeOf(codec), frames.flags & kNumericPacked, sizeof(T)))},
       _cache{slot.touched ? slot.cache : nullptr},
       _slot{slot} {
     SDB_ENSURE(_f.width == sizeof(T), "numeric codec: width mismatch");
@@ -201,6 +203,9 @@ class FrameReader {
   }
 
   uint64_t FirstRow(uint32_t f) const noexcept {
+    if (_meta_size != kNumericFrameMetaSize) {
+      return uint64_t{f} * kFforFrameRows;
+    }
     return duckdb::Load<uint32_t>(_base + _f.off_frames +
                                   f * kNumericFrameMetaSize);
   }
@@ -211,8 +216,22 @@ class FrameReader {
 
   NumericFrameMeta MetaAt(uint32_t f) const noexcept {
     SDB_ASSERT(f < _f.frame_count);
-    return duckdb::Load<NumericFrameMeta>(_base + _f.off_frames +
-                                          f * kNumericFrameMetaSize);
+    const auto* at = _base + _f.off_frames + size_t{f} * _meta_size;
+    if (_meta_size == kNumericFrameMetaSize) {
+      return duckdb::Load<NumericFrameMeta>(at);
+    }
+    NumericFrameMeta m;
+    m.frame.first_entry = f * kFforFrameRows;
+    m.frame.comp_off = duckdb::Load<uint32_t>(at);
+    m.frame.raw_len =
+      (f + 1 < _f.frame_count ? duckdb::Load<uint32_t>(at + _meta_size)
+                              : _f.data_size) -
+      m.frame.comp_off;
+    m.frame.comp_len = m.frame.raw_len;
+    m.base = duckdb::Load<U>(at + sizeof(uint32_t));
+    m.min = duckdb::Load<U>(at + sizeof(uint32_t) + sizeof(U));
+    m.max = duckdb::Load<U>(at + sizeof(uint32_t) + 2 * sizeof(U));
+    return m;
   }
 
   NumericFrameMeta Meta(uint32_t f) const {
@@ -366,7 +385,10 @@ class FrameReader {
   void DecodeBlock(this auto& self, uint64_t row) {
     const auto first = row - row % numeric::kBlockValues;
     auto* rows = self.Rows(numeric::kBlockValues);
-    self.UnpackBlock(first, numeric::kBlockValues, rows);
+    self.UnpackBlock(
+      first,
+      std::min<uint64_t>(numeric::kBlockValues, self._f.row_count - first),
+      rows);
     self.Window(
       reinterpret_cast<const uint8_t*>(rows), first,
       std::min<uint64_t>(first + numeric::kBlockValues, self._f.row_count));
@@ -407,21 +429,42 @@ class FrameReader {
   }
 
   template<typename V>
-  size_t UnpackStream(const uint8_t* src, size_t len, size_t off, size_t blocks,
+  const numeric::LaneWord<V>* BlockWords(const uint8_t* packed, unsigned bits,
+                                         size_t values) {
+    if (values == numeric::kBlockValues) {
+      return Words<numeric::LaneWord<V>>(packed);
+    }
+    const auto stored = numeric::PackedBytes<V>(bits, values);
+    const auto whole = numeric::PackedBytes(bits);
+    if (_words.size() * sizeof(uint64_t) < whole) {
+      _words.resize(whole / sizeof(uint64_t));
+    }
+    auto* words = reinterpret_cast<uint8_t*>(_words.data());
+    std::memcpy(words, packed, stored);
+    std::memset(words + stored, 0, whole - stored);
+    return reinterpret_cast<const numeric::LaneWord<V>*>(words);
+  }
+
+  template<typename V>
+  size_t UnpackStream(const uint8_t* src, size_t len, size_t off, size_t values,
                       V* out) {
+    const size_t blocks =
+      (values + numeric::kBlockValues - 1) / numeric::kBlockValues;
     const auto* bases = src + off;
     const auto* widths = bases + blocks * sizeof(V);
     off += BlockMetaBytes(blocks, sizeof(V));
     SDB_ENSURE(off <= len, "numeric codec: corrupted blocks");
     for (size_t b = 0; b < blocks; ++b) {
       const unsigned bits = widths[b];
-      SDB_ENSURE(
-        bits <= numeric::kMaxBits<V> && off + numeric::PackedBytes(bits) <= len,
-        "numeric codec: corrupted blocks");
-      numeric::Unpack<V>(bits, Words<numeric::LaneWord<V>>(src + off),
+      const size_t count =
+        std::min(numeric::kBlockValues, values - b * numeric::kBlockValues);
+      SDB_ENSURE(bits <= numeric::kMaxBits<V> &&
+                   off + numeric::PackedBytes<V>(bits, count) <= len,
+                 "numeric codec: corrupted blocks");
+      numeric::Unpack<V>(bits, BlockWords<V>(src + off, bits, count),
                          out + b * numeric::kBlockValues,
                          duckdb::Load<V>(bases + b * sizeof(V)));
-      off += numeric::PackedBytes(bits);
+      off += numeric::PackedBytes<V>(bits, count);
     }
     return off;
   }
@@ -430,6 +473,7 @@ class FrameReader {
   FrameHeader _f;
   Shape _shape;
   ByteCodec _leaf;
+  uint32_t _meta_size;
   uint32_t _per_frame = 0;
   uint64_t _begin = 0;
   uint64_t _end = 0;
@@ -490,7 +534,9 @@ class FrameReader {
         .step = step,
         .bits = bits,
       };
-      off += numeric::PackedBytes(bits);
+      off += numeric::PackedBytes<V>(
+        bits, std::min<uint64_t>(numeric::kBlockValues,
+                                 rows - b * numeric::kBlockValues));
     }
     SDB_ENSURE(off == m.frame.raw_len, "numeric codec: corrupted blocks");
     _ffor_frame = f;
@@ -505,6 +551,7 @@ class FrameReader {
   ScratchVector<U> _rows;
   ScratchVector<uint8_t> _raw;
   ScratchVector<uint8_t> _shuffled;
+  ScratchVector<uint64_t> _words;
   FforFrame _ffor;
   uint32_t _ffor_frame = kNoFrame;
   std::optional<Zstd::Decompressor> _zstd;

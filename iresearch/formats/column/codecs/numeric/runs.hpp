@@ -232,7 +232,7 @@ bool CompressRleFfor(ColumnDataCheckpointData& data) {
   }
   auto& out = data.Get<NumericScratch>().out;
   const auto count = static_cast<uint32_t>(runs->rows.size());
-  const auto geometry = PackedGeometry(Shape::Runs, count, 0);
+  const auto geometry = PackedGeometry(Shape::Runs, count, 0, sizeof(T));
   SegmentWriter<T> writer{Shape::Runs,
                           geometry,
                           state.value_blocks.Bytes(kRleFforFrameRuns) +
@@ -419,8 +419,8 @@ class RunsReader final : public FrameReader<T> {
     _ends.resize(blocks * numeric::kBlockValues);
     const auto* src = this->Data(m);
     auto off =
-      this->UnpackStream(src, m.frame.raw_len, 0, blocks, _values.data());
-    off = this->UnpackStream(src, m.frame.raw_len, off, blocks, _ends.data());
+      this->UnpackStream(src, m.frame.raw_len, 0, runs, _values.data());
+    off = this->UnpackStream(src, m.frame.raw_len, off, runs, _ends.data());
     SDB_ENSURE(off == m.frame.raw_len, "numeric codec: corrupted runs");
     _values.resize(runs);
     _ends.resize(runs);

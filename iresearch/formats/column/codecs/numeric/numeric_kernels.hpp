@@ -516,6 +516,13 @@ constexpr size_t PackedBytes(unsigned bits) noexcept {
   return kBlockValues / 8 * bits;
 }
 
+template<typename U>
+constexpr size_t PackedBytes(unsigned bits, size_t values) noexcept {
+  constexpr size_t kWordBits = 8 * sizeof(LaneWord<U>);
+  const size_t rows = (values + kLanes<U> - 1) / kLanes<U>;
+  return (rows * bits + kWordBits - 1) / kWordBits * (kBlockValues / 8);
+}
+
 template<typename U, unsigned W, unsigned J>
 IRS_FORCE_INLINE void PackStep(const U* IRS_RESTRICT in,
                                LaneWord<U>* IRS_RESTRICT out, U base,

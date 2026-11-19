@@ -262,9 +262,9 @@ bool CompressDictFfor(ColumnDataCheckpointData& data) {
     std::span<const uint32_t>{entries->codes}, dictionary, state.analyzed,
     DictionaryHeader{
       .count = static_cast<uint32_t>(entries->values.size()),
-      .offset =
-        FrameTableEnd(Shape::Dictionary,
-                      PackedGeometry(Shape::Dictionary, n, dictionary.size())),
+      .offset = FrameTableEnd(
+        Shape::Dictionary,
+        PackedGeometry(Shape::Dictionary, n, dictionary.size(), sizeof(T))),
     });
 }
 
@@ -289,7 +289,8 @@ class DictionaryReader final : public FrameReader<T> {
       _own.count != 0 && _own.count <= kNumericDictMax &&
         (this->Packed() || frames.stored <= kDictionaryCodeBytes<T>) &&
         uint64_t{frames.off_frames} +
-            uint64_t{frames.frame_count} * kNumericFrameMetaSize <=
+            uint64_t{frames.frame_count} *
+              FrameMetaSize(Shape::Dictionary, this->Packed(), sizeof(T)) <=
           _own.offset &&
         _own.offset + uint64_t{_own.count} * sizeof(U) <= frames.off_data,
       "numeric codec: corrupted segment header");
@@ -399,9 +400,10 @@ class DictionaryReader final : public FrameReader<T> {
     if (_codes.size() < numeric::kBlockValues) {
       _codes.resize(numeric::kBlockValues);
     }
-    numeric::Unpack<uint32_t>(block.bits,
-                              this->template Words<uint32_t>(block.packed),
-                              _codes.data(), base);
+    numeric::Unpack<uint32_t>(
+      block.bits,
+      this->template BlockWords<uint32_t>(block.packed, block.bits, rows),
+      _codes.data(), base);
     const auto largest = uint64_t{base} + (uint64_t{1} << block.bits) - 1;
     Gather<uint32_t>(reinterpret_cast<const uint8_t*>(_codes.data()),
                      static_cast<uint32_t>(rows), out, largest >= _own.count);

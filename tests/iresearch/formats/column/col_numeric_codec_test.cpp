@@ -994,9 +994,8 @@ TEST_F(ColNumericCodecTest, DictFforBaseThatWrapsTheCodeRangeIsRejected) {
   const auto h = irs::codecs::ParseFrames(block, size, block_codec);
   ASSERT_EQ(irs::codecs::TransformName(irs::codecs::ShapeOf(block_codec), h),
             "dict_ffor");
-  const auto frame =
-    duckdb::Load<irs::codecs::NumericFrameMeta>(block + h.off_frames).frame;
-  auto* bases = block + h.off_data + frame.comp_off;
+  auto* bases =
+    block + h.off_data + duckdb::Load<uint32_t>(block + h.off_frames);
   const size_t blocks =
     irs::codecs::kFforFrameRows / irs::codecs::numeric::kBlockValues;
   const unsigned bits = bases[blocks * sizeof(uint32_t)];
@@ -2391,6 +2390,13 @@ TEST_F(ColNumericCodecTest, RareWidthsRunLengthsAndDictionarySizes) {
   const auto adjacent = [](uint64_t k) {
     return static_cast<int64_t>(((uint64_t{1} << 52) + k) * 16);
   };
+  std::vector<uint32_t> ragged(20000);
+  for (uint32_t row = 0, run = 0; row != ragged.size(); ++run) {
+    const auto length = 1 + Mix(run) % 255;
+    for (uint64_t i = 0; i != length && row != ragged.size(); ++i) {
+      ragged[row++] = run;
+    }
+  }
   struct Case {
     const char* name;
     std::vector<duckdb::LogicalType> types;
@@ -2422,22 +2428,38 @@ TEST_F(ColNumericCodecTest, RareWidthsRunLengthsAndDictionarySizes) {
      8192,
      20000,
      [&](uint64_t g) { return adjacent(Mix(g / 8) % 60000); },
-     "rle/none@2",
+     "rle_ffor/none@8",
      "rle_ffor/none@8"},
     {"runs of nearby doubles",
      {duckdb::LogicalType::DOUBLE},
      8192,
      20000,
      [&](uint64_t g) { return adjacent(Mix(g / 8) % (uint64_t{1} << 31)); },
-     "rle/none@4",
-     "rle/none@4"},
+     "rle_ffor/none@8",
+     "rle_ffor/none@8"},
     {"short runs of adjacent doubles",
      {duckdb::LogicalType::DOUBLE},
      8192,
      20000,
      [&](uint64_t g) { return adjacent(Mix(g / 3) % 60000); },
-     "rle/none@2",
+     "rle_ffor/none@8",
      "rle_ffor/none@8"},
+    {"ragged runs that fill two bytes",
+     {duckdb::LogicalType::DOUBLE},
+     8192,
+     20000,
+     [&](uint64_t g) { return adjacent(Mix(ragged[g] + 1000) % 65536); },
+     "rle/none@2",
+     "rle/none@2"},
+    {"ragged runs that fill four bytes",
+     {duckdb::LogicalType::DOUBLE},
+     8192,
+     20000,
+     [&](uint64_t g) {
+       return adjacent(Mix(ragged[g] + 1000) % (uint64_t{1} << 32));
+     },
+     "rle/none@4",
+     "rle/none@4"},
     {"short runs in a two byte range",
      {duckdb::LogicalType::UBIGINT},
      8192,

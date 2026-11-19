@@ -207,7 +207,7 @@ bool CompressDeltaFfor(ColumnDataCheckpointData& data) {
     values.GetFacts().delta_bits == 0 ? rows : std::span<const U>{state.wide};
   auto& out = data.Get<NumericScratch>().out;
   const auto n = static_cast<uint32_t>(rows.size());
-  const auto geometry = PackedGeometry(Shape::Delta, n, 0);
+  const auto geometry = PackedGeometry(Shape::Delta, n, 0, sizeof(T));
   SegmentWriter<T> writer{
     Shape::Delta, geometry, DeltaFforBytes(state, rows), {}, out};
   for (uint32_t f = 0; f < geometry.frames; ++f) {
@@ -349,9 +349,9 @@ class DeltaReader final : public FrameReader<T> {
       return;
     }
     this->_block.resize(numeric::kBlockValues);
-    numeric::Unpack<U>(block.bits,
-                       this->template Words<numeric::LaneWord<U>>(block.packed),
-                       this->_block.data(), U{0});
+    numeric::Unpack<U>(
+      block.bits, this->template BlockWords<U>(block.packed, block.bits, rows),
+      this->_block.data(), U{0});
     numeric::WidenPrefixSumAs<U, U, true>(
       reinterpret_cast<const uint8_t*>(this->_block.data()), rows,
       static_cast<U>(static_cast<U>(block.base) - step), step, out);

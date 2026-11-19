@@ -48,6 +48,7 @@ struct Geometry {
   uint8_t log2 = 0;
   uint32_t per = 0;
   uint32_t frames = 0;
+  uint32_t meta = kNumericFrameMetaSize;
   uint64_t off_data = 0;
 };
 
@@ -66,24 +67,24 @@ inline Geometry BytesGeometry(Shape shape, ByteCodec leaf, uint32_t items,
   };
 }
 
-inline Geometry PackedGeometry(Shape shape, uint32_t items,
-                               size_t dictionary) noexcept {
+inline Geometry PackedGeometry(Shape shape, uint32_t items, size_t dictionary,
+                               size_t width) noexcept {
   const uint32_t per =
     shape == Shape::Runs ? kRleFforFrameRuns : kFforFrameRows;
   const uint32_t frames = (items + per - 1) / per;
+  const auto meta = static_cast<uint32_t>(FrameMetaSize(shape, true, width));
   return {
     .log2 = kFforFrameLog2,
     .per = per,
     .frames = frames,
+    .meta = meta,
     .off_data = duckdb::AlignValue<uint64_t, 8>(
-      HeaderSize(shape) + uint64_t{frames} * kNumericFrameMetaSize +
-      dictionary),
+      HeaderSize(shape) + uint64_t{frames} * meta + dictionary),
   };
 }
 
 inline uint32_t FrameTableEnd(Shape shape, const Geometry& geometry) noexcept {
-  return HeaderSize(shape) +
-         geometry.frames * static_cast<uint32_t>(kNumericFrameMetaSize);
+  return HeaderSize(shape) + geometry.frames * geometry.meta;
 }
 
 inline double ScoreOf(uint64_t bytes, size_t rows, double price) noexcept {
@@ -261,7 +262,17 @@ class SegmentWriter {
     duckdb::Store(h, head);
     duckdb::Store(own, head + sizeof(FrameHeader));
     for (uint32_t f = 0; f < h.frame_count; ++f) {
-      duckdb::Store(_metas[f], head + h.off_frames + f * kNumericFrameMetaSize);
+      const auto& m = _metas[f];
+      auto* at = head + h.off_frames + f * _geometry.meta;
+      if (_geometry.meta == kNumericFrameMetaSize) {
+        duckdb::Store(m, at);
+        continue;
+      }
+      duckdb::Store(m.frame.comp_off, at);
+      duckdb::Store(static_cast<U>(m.base), at + sizeof(uint32_t));
+      duckdb::Store(static_cast<U>(m.min), at + sizeof(uint32_t) + sizeof(U));
+      duckdb::Store(static_cast<U>(m.max),
+                    at + sizeof(uint32_t) + 2 * sizeof(U));
     }
   }
 
@@ -446,10 +457,10 @@ template<typename T>
 double AnalyzeBlocks(ColumnDataCheckpointData& data, Shape shape,
                      uint32_t items, uint64_t packed, size_t dictionary,
                      double bound) {
-  const auto score =
-    ScoreOf(PackedGeometry(shape, items, dictionary).off_data + packed,
-            data.Get<Values<T>>().Get().size(),
-            data.preferences->leaf_price[std::to_underlying(ByteCodec::None)]);
+  const auto score = ScoreOf(
+    PackedGeometry(shape, items, dictionary, sizeof(T)).off_data + packed,
+    data.Get<Values<T>>().Get().size(),
+    data.preferences->leaf_price[std::to_underlying(ByteCodec::None)]);
   return score < bound ? score : kNoScore;
 }
 
@@ -460,7 +471,7 @@ bool CompressBlocks(ColumnDataCheckpointData& data, Shape shape,
                     const Own& own) {
   auto& out = data.Get<NumericScratch>().out;
   const auto n = static_cast<uint32_t>(values.size());
-  const auto geometry = PackedGeometry(shape, n, dictionary.size());
+  const auto geometry = PackedGeometry(shape, n, dictionary.size(), sizeof(T));
   SegmentWriter<T> writer{shape, geometry, blocks.Bytes(geometry.per),
                           dictionary, out};
   for (uint32_t f = 0; f < geometry.frames; ++f) {

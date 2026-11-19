@@ -44,6 +44,7 @@ class FforBlocks {
   void Plan(std::span<const V> v, Less less) {
     const size_t blocks =
       (v.size() + numeric::kBlockValues - 1) / numeric::kBlockValues;
+    _size = v.size();
     _base.resize(blocks);
     _bits.resize(blocks);
     for (size_t b = 0; b < blocks; ++b) {
@@ -67,7 +68,7 @@ class FforBlocks {
   uint64_t Bytes(size_t first, size_t count) const noexcept {
     uint64_t bytes = BlockMetaBytes(count, sizeof(V));
     for (size_t b = first; b < first + count; ++b) {
-      bytes += StoredBytes(_bits[b]);
+      bytes += StoredBytes(b);
     }
     return bytes;
   }
@@ -122,6 +123,7 @@ class FforBlocks {
   void PlanEqualSteps(std::span<const V> values, V step) {
     const size_t blocks =
       (values.size() + numeric::kBlockValues - 1) / numeric::kBlockValues;
+    _size = values.size();
     _base.assign(blocks, step);
     _bits.assign(blocks, 0);
     _steps.assign((blocks + kFrameBlocks - 1) / kFrameBlocks, step);
@@ -134,6 +136,7 @@ class FforBlocks {
   void PlanDeltas(std::span<const V> values, ScratchVector<V>& deltas) {
     const size_t blocks =
       (values.size() + numeric::kBlockValues - 1) / numeric::kBlockValues;
+    _size = values.size();
     _base.resize(blocks);
     _top.resize(blocks);
     _bits.resize(blocks);
@@ -195,16 +198,21 @@ class FforBlocks {
           packed += sizeof(uint64_t);
         }
         const size_t begin = g * numeric::kBlockValues;
-        const size_t n = std::min(numeric::kBlockValues, v.size() - begin);
+        const size_t n = Values(g);
         const V* in = v.data() + begin;
         if (n < numeric::kBlockValues) {
           std::memcpy(_scratch.data(), in, n * sizeof(V));
           std::fill_n(_scratch.data() + n, numeric::kBlockValues - n, _base[g]);
-          in = _scratch.data();
+          _words.resize(numeric::kBlockValues * sizeof(V) /
+                        sizeof(numeric::LaneWord<V>));
+          numeric::Pack<V>(bits, _scratch.data(), _words.data(), _base[g]);
+          std::memcpy(packed, _words.data(), numeric::PackedBytes<V>(bits, n));
+        } else {
+          numeric::Pack<V>(bits, in,
+                           reinterpret_cast<numeric::LaneWord<V>*>(packed),
+                           _base[g]);
         }
-        numeric::Pack<V>(
-          bits, in, reinterpret_cast<numeric::LaneWord<V>*>(packed), _base[g]);
-        packed += numeric::PackedBytes(bits);
+        packed += numeric::PackedBytes<V>(bits, n);
       }
       return size;
     });
@@ -216,22 +224,30 @@ class FforBlocks {
   static constexpr size_t kFrameBlocks = kFforFrameRows / numeric::kBlockValues;
   static constexpr uint64_t kNoShare = std::numeric_limits<uint64_t>::max();
 
-  static uint64_t StoredBytes(uint8_t bits) noexcept {
+  size_t Values(size_t block) const noexcept {
+    return std::min(numeric::kBlockValues,
+                    _size - block * numeric::kBlockValues);
+  }
+
+  uint64_t StoredBytes(size_t block) const noexcept {
+    const auto bits = _bits[block];
     return bits & kBlockOwnStep
-             ? sizeof(uint64_t) + numeric::PackedBytes(bits ^ kBlockOwnStep)
-             : numeric::PackedBytes(bits);
+             ? sizeof(uint64_t) +
+                 numeric::PackedBytes<V>(bits ^ kBlockOwnStep, Values(block))
+             : numeric::PackedBytes<V>(bits, Values(block));
   }
 
   uint64_t OwnStepBytes(size_t b) const noexcept {
-    return sizeof(uint64_t) + numeric::PackedBytes(std::bit_width(
-                                static_cast<V>(_top[b] - _base[b])));
+    return sizeof(uint64_t) +
+           numeric::PackedBytes<V>(
+             std::bit_width(static_cast<V>(_top[b] - _base[b])), Values(b));
   }
 
   uint64_t SharedStepBytes(size_t b, V step) const noexcept {
     return static_cast<S>(_base[b]) < static_cast<S>(step)
              ? kNoShare
-             : numeric::PackedBytes(
-                 std::bit_width(static_cast<V>(_top[b] - step)));
+             : numeric::PackedBytes<V>(
+                 std::bit_width(static_cast<V>(_top[b] - step)), Values(b));
   }
 
   V LeastBytesStep(size_t first, size_t end) const noexcept {
@@ -255,7 +271,9 @@ class FforBlocks {
   std::vector<V> _first;
   std::vector<V> _steps;
   std::vector<uint8_t> _bits;
+  size_t _size = 0;
   ScratchVector<V> _scratch;
+  ScratchVector<numeric::LaneWord<V>> _words;
 };
 
 }  // namespace irs::codecs

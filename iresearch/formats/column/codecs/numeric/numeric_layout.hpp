@@ -57,7 +57,10 @@ Data layout per segment, one block of one column holding a whole row group:
 |   first row, decoded size and stored range of        |
 |   each frame in Data, its min and max, and a         |
 |   base: delta's previous value, delta_ffor's         |
-|   smallest difference, rle_ffor's run count          |
+|   smallest difference, rle_ffor's run count;         |
+|   a frame of ffor, delta_ffor or dict_ffor takes     |
+|   its offset in Data and, in the value's width,      |
+|   its base, min and max                              |
 +------------------------------------------------------+
 |                      Dictionary                      |
 |   +----------------------------------------------+   |
@@ -83,7 +86,8 @@ Data layout per segment, one block of one column holding a whole row group:
 |   dict_ffor): the blocks' bases in the value's       |
 |   width, their bit widths in a byte each, padding    |
 |   to 8 bytes, then each block's values minus its     |
-|   base, bitpacked                                    |
+|   base, bitpacked; a block of fewer than 1024        |
+|   values ends with the last word its values reach    |
 |   delta_ffor: the same frames; a block's base is     |
 |   its first value, and its differences minus the     |
 |   frame's smallest one are bitpacked; a block        |
@@ -126,6 +130,12 @@ inline constexpr uint32_t kRleFforFrameRuns = 1024;
 
 constexpr bool NumericWidth(uint64_t w) noexcept {
   return w == 1 || w == 2 || w == 4 || w == 8;
+}
+
+constexpr size_t FrameMetaSize(Shape shape, bool packed,
+                               size_t width) noexcept {
+  return packed && shape != Shape::Runs ? sizeof(uint32_t) + 3 * width
+                                        : kNumericFrameMetaSize;
 }
 
 struct NumericFrameMeta {
@@ -241,7 +251,8 @@ inline FrameHeader ParseFrames(duckdb::const_data_ptr_t p, uint64_t size,
         (reinterpret_cast<uintptr_t>(p) + f.off_data) % sizeof(uint64_t) ==
           0)) &&
       f.off_frames >= HeaderSize(shape) &&
-      f.off_frames + uint64_t{f.frame_count} * kNumericFrameMetaSize <=
+      f.off_frames +
+          uint64_t{f.frame_count} * FrameMetaSize(shape, packed, f.width) <=
         f.off_data &&
       uint64_t{f.off_data} + f.data_size <= size && f.frame_log2 >= 10 &&
       f.frame_log2 <= 20 && (f.frame_count != 0 || f.row_count == 0),

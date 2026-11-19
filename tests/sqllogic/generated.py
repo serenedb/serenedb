@@ -12,15 +12,27 @@ KEY_WIDTH = 16
 NEW_ERRORS = "SDB_RECORD_NEW_ERRORS"
 
 
+def multiline_error(block):
+    start = head(block)
+    return block[start] in ("query error", "statement error") and "----" in block[start:]
+
+
 def blocks(text):
     out = []
     current = []
+    gap = False
     for line in text.split("\n"):
         if line:
+            if gap:
+                current.append("")
+                gap = False
             current.append(line)
+        elif current and not gap and multiline_error(current):
+            gap = True
         elif current:
             out.append(current)
             current = []
+            gap = False
     if current:
         out.append(current)
     return out

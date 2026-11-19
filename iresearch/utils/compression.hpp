@@ -27,6 +27,7 @@
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
+#include <limits>
 #include <memory>
 #include <span>
 #include <vector>
@@ -40,6 +41,7 @@ namespace irs::compression {
 enum class Codec : uint8_t {
   Lz4Hc = 0,
   Zstd = 1,
+  Strip = 2,
 };
 
 struct Method {
@@ -49,6 +51,11 @@ struct Method {
 
 inline constexpr Method kLz4Hc9{.codec = Codec::Lz4Hc, .level = 9};
 inline constexpr Method kZstd1{.codec = Codec::Zstd, .level = 1};
+inline constexpr uint32_t kStripPadding = std::numeric_limits<uint32_t>::max();
+
+constexpr Method Strip(uint32_t slots) noexcept {
+  return {.codec = Codec::Strip, .level = static_cast<int>(slots)};
+}
 
 inline constexpr uint32_t kFrameBytes = uint32_t{4} << 20;
 inline constexpr uint32_t kMaxFrameBytes = uint32_t{256} << 20;
@@ -97,7 +104,14 @@ class FrameWriter final : public duckdb::WriteStream {
   std::vector<Piece> _pieces;
 };
 
+struct FrameStart {
+  uint64_t stored = 0;
+  uint64_t raw = 0;
+};
+
 uint64_t StoredBytes(const Frames& frames) noexcept;
+
+absl::InlinedVector<FrameStart, 1> FrameStarts(const Frames& frames);
 
 Compressed Compress(Method method, bytes_view raw,
                     uint32_t frame_bytes = kFrameBytes,
@@ -109,8 +123,16 @@ Compressed Compress(Method method, const FrameWriter& raw,
 void Decompress(const Frames& frames, bytes_view stored,
                 std::span<byte_type> raw, ParallelFor parallel = SerialFor);
 
+void Decompress(const Frames& frames, size_t first, size_t last,
+                bytes_view stored, std::span<byte_type> raw,
+                ParallelFor parallel = SerialFor);
+
 std::unique_ptr<byte_type[]> Decompress(const Packed& packed,
                                         ParallelFor parallel = SerialFor);
+
+void WriteFrames(duckdb::BinarySerializer& serializer, const Frames& frames);
+
+Frames ReadFrames(duckdb::BinaryDeserializer& deserializer);
 
 void WritePacked(duckdb::BinarySerializer& object, const Compressed& packed);
 

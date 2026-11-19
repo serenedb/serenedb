@@ -847,7 +847,7 @@ void OpenColWriter(duckdb::DatabaseInstance& db, TrackingDirectory& dir,
                    std::vector<MergeSource>& sources,
                    std::unique_ptr<ColWriter>& col_writer,
                    const IndexFieldOptions* field_options,
-                   HnswBases* hnsw_bases) {
+                   HnswBases* hnsw_bases, ParallelForFn parallel) {
   sources.reserve(readers.size());
   for (auto& ctx : readers) {
     sources.push_back(MergeSource{
@@ -858,7 +858,7 @@ void OpenColWriter(duckdb::DatabaseInstance& db, TrackingDirectory& dir,
   }
   col_writer = std::make_unique<ColWriter>(dir, segment_name, db);
   col_writer->SetFieldOptions(field_options);
-  col_writer->SetHnswBases(hnsw_bases);
+  col_writer->SetHnsw(hnsw_bases, parallel);
 }
 
 }  // namespace
@@ -901,7 +901,7 @@ auto MergeWriter::Flush(SegmentMeta& segment,
   std::vector<MergeSource> sources;
   std::unique_ptr<ColWriter> col_writer;
   OpenColWriter(_db, track_dir, segment.name, _readers, sources, col_writer,
-                _field_options, _hnsw_bases);
+                _field_options, _hnsw_bases, _parallel);
   SDB_ASSERT(col_writer);
 
   const auto merged_norm_ids =
@@ -974,7 +974,7 @@ auto MergeWriter::Flush(SegmentMeta& segment,
 
   _inputs = {
     .col = std::move(col_reader),
-    .idx = idx.Commit(_hnsw_bases),
+    .idx = idx.Commit(_hnsw_bases, _parallel),
     .postings = std::move(postings),
   };
 
@@ -1009,7 +1009,7 @@ std::shared_ptr<const SegmentReaderImpl> MergeWriter::FlushPiece(
   std::vector<MergeSource> sources;
   std::unique_ptr<ColWriter> col_writer;
   OpenColWriter(_db, track_dir, segment.name, _readers, sources, col_writer,
-                _field_options, _hnsw_bases);
+                _field_options, _hnsw_bases, _parallel);
   const auto merged_norm_ids =
     MergeNorms(*col_writer, sources, field_meta_map, _field_options);
   auto norms = col_writer->SealNorms(segment.docs_count);

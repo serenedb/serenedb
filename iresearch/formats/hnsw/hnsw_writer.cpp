@@ -28,6 +28,7 @@
 #include <chrono>
 #include <core_functions/array_kernels.hpp>
 #include <cstring>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
@@ -1225,8 +1226,8 @@ void ComputeCodeTails(const QuantizerStats& stats, const byte_type* codes,
 
 }  // namespace
 
-HnswWriter::HnswWriter(AnnInfo info, HnswBases* bases)
-  : _info{std::move(info)}, _bases{bases} {}
+HnswWriter::HnswWriter(AnnInfo info, HnswBases* bases, ParallelForFn parallel)
+  : _info{std::move(info)}, _bases{bases}, _parallel{parallel} {}
 
 HnswWriter::~HnswWriter() = default;
 
@@ -1448,7 +1449,14 @@ void HnswWriter::Flush() {
     out.WriteData(reinterpret_cast<const byte_type*>(values.data()),
                   values.size() * sizeof(float));
   };
-  _graph.Serialize(out);
+  HnswGraphFrames graph;
+  bool raw = false;
+  SDB_IF_FAILURE("irs::HnswRawGraph") { raw = true; }
+  if (raw) {
+    _graph.Serialize(out);
+  } else {
+    graph = _graph.SerializePacked(out, _parallel);
+  }
   if (_qw) {
     _qw->Serialize(out);
     if (!_centroid.empty()) {
@@ -1467,6 +1475,7 @@ void HnswWriter::Flush() {
                                   .offset = offset,
                                   .byte_size = out.Position() - offset,
                                   .header = header,
+                                  .graph = std::move(graph),
                                 });
 
   _vectors.clear();

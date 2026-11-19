@@ -262,6 +262,89 @@ TEST(Compression, FrameWriterEndsFramesWithTheirPiece) {
   EXPECT_EQ(PackedRoundTrip(compressed), raw);
 }
 
+Bytes Lists(uint32_t slots, size_t lists, uint32_t max_id, uint64_t seed) {
+  std::mt19937_64 random{seed};
+  std::vector<uint32_t> ids(size_t{slots} * lists, compression::kStripPadding);
+  for (size_t list = 0; list != lists; ++list) {
+    const auto count = random() % (uint64_t{slots} + 1);
+    for (size_t slot = 0; slot != count; ++slot) {
+      ids[list * slots + slot] =
+        static_cast<uint32_t>(random() % (uint64_t{max_id} + 1));
+    }
+  }
+  const auto* bytes = reinterpret_cast<const irs::byte_type*>(ids.data());
+  return Bytes(bytes, bytes + ids.size() * sizeof(uint32_t));
+}
+
+Bytes Decoded(const compression::Compressed& compressed) {
+  Bytes decoded(compressed.frames.raw_bytes);
+  compression::Decompress(compressed.frames, Stored(compressed), decoded,
+                          Threads);
+  return decoded;
+}
+
+TEST(Compression, StripRoundTripsListsOfEveryWidth) {
+  for (const uint32_t slots : {1U, 3U, 64U, 300U}) {
+    for (const uint32_t max_id : {0U, 1U, 1000U, 0xFFFFFFFEU}) {
+      const auto raw = Lists(slots, 500, max_id, slots * 31 + max_id);
+      const auto frame = slots * uint32_t{sizeof(uint32_t)} * 37;
+      const auto compressed = compression::Compress(compression::Strip(slots),
+                                                    View(raw), frame, Threads);
+      EXPECT_EQ(compressed.frames.codec, compression::Codec::Strip);
+      EXPECT_EQ(Decoded(compressed), raw) << slots << " " << max_id;
+      if (max_id <= 1000) {
+        EXPECT_LT(compression::StoredBytes(compressed.frames), raw.size() / 2)
+          << slots << " " << max_id;
+      }
+    }
+  }
+}
+
+TEST(Compression, StripStoresAFrameWithPaddingBeforeAnIdRaw) {
+  constexpr uint32_t kSlots = 4;
+  auto raw = Lists(kSlots, 64, 100, 7);
+  const std::array<uint32_t, kSlots> gap{5, compression::kStripPadding, 7,
+                                         compression::kStripPadding};
+  std::memcpy(raw.data() + kSlots * sizeof(uint32_t) * 40, gap.data(),
+              sizeof(gap));
+  const auto frame = kSlots * uint32_t{sizeof(uint32_t)} * 32;
+  const auto compressed =
+    compression::Compress(compression::Strip(kSlots), View(raw), frame);
+  ASSERT_EQ(compressed.frames.sizes.size(), 2U);
+  EXPECT_LT(compressed.frames.sizes[0], frame);
+  EXPECT_EQ(compressed.frames.sizes[1], frame);
+  EXPECT_EQ(Decoded(compressed), raw);
+}
+
+TEST(Compression, CorruptStripFramesAreRejected) {
+  constexpr uint32_t kSlots = 8;
+  const auto raw = Lists(kSlots, 100, 1000, 11);
+  const auto compressed =
+    compression::Compress(compression::Strip(kSlots), View(raw), raw.size());
+  ASSERT_EQ(compressed.frames.sizes.size(), 1U);
+  ASSERT_LT(compressed.frames.sizes[0], raw.size());
+  const auto stored = Stored(compressed);
+  Bytes decoded(raw.size());
+
+  auto truncated = compressed.frames;
+  --truncated.sizes[0];
+  ASSERT_SQL_ERROR(compression::Decompress(
+                     truncated, stored.substr(0, truncated.sizes[0]), decoded),
+                   ERRCODE_DATA_CORRUPTED);
+
+  Bytes wrong_slots(stored.begin(), stored.end());
+  wrong_slots[0] = 3;
+  ASSERT_SQL_ERROR(
+    compression::Decompress(compressed.frames, View(wrong_slots), decoded),
+    ERRCODE_DATA_CORRUPTED);
+
+  Bytes wrong_width(stored.begin(), stored.end());
+  wrong_width[sizeof(uint32_t)] = 33;
+  ASSERT_SQL_ERROR(
+    compression::Decompress(compressed.frames, View(wrong_width), decoded),
+    ERRCODE_DATA_CORRUPTED);
+}
+
 TEST(Compression, TruncatedFrameIsCorrupted) {
   for (const auto method : kMethods) {
     const auto raw = Text(kFrame);

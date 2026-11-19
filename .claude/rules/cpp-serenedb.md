@@ -36,7 +36,7 @@ Naming is in `.clang-tidy` (clangd shows it), formatting and include order in `.
 - `std::unique_ptr` for ownership, `std::shared_ptr` only for real shared ownership, `make_unique`/`make_shared`; no raw owning pointers; references where ownership doesn't matter; values on the stack over the heap; no `&&` for trivially copyable types.
 - Errors are `THROW_SQL_ERROR` (`check-no-raw-throw` rejects any other `throw` in `server/` except a rethrow, `irs::SqlException` and `duckdb::NotImplementedException`).
 - Cleanup on every way out is an `absl::Cleanup` declared before the call, never `catch (...) { Clean(); throw; }`.
-- `SDB_ASSERT(cond)`, without a message, states an invariant, also where a comment would; `SDB_ENSURE`/`SDB_VERIFY` only for guarantees that are hard to see locally. A condition that can really fail gets real handling.
+- `SDB_ASSERT(cond)`, without a message, states an invariant, also where a comment would; `SDB_ENSURE`/`SDB_VERIFY` only for guarantees that are hard to see locally. A condition that can really fail gets real handling. Its condition has no side effects: only `SDB_DEV` builds evaluate it, so work done inside it silently vanishes from release builds.
 
 ## Libraries
 

@@ -52,7 +52,8 @@ class IdxWriter final {
 
   void SetTerms(term_dict::TermsMeta terms) noexcept;
 
-  std::unique_ptr<IdxReader> Commit(HnswBases* hnsw_bases);
+  std::unique_ptr<IdxReader> Commit(HnswBases* hnsw_bases,
+                                    ParallelForFn parallel = SerialFor);
 
  private:
   void EnsureOut();

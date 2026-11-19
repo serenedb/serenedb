@@ -29,6 +29,9 @@ namespace irs {
 using ParallelFor =
   absl::FunctionRef<void(size_t count, absl::FunctionRef<void(size_t)> body)>;
 
+using ParallelForFn = void (*)(size_t count,
+                               absl::FunctionRef<void(size_t)> body);
+
 inline void SerialFor(size_t count, absl::FunctionRef<void(size_t)> body) {
   for (size_t i = 0; i != count; ++i) {
     body(i);

@@ -38,7 +38,7 @@ class ReadContext;
 
 class HnswWriter final : public AnnWriter {
  public:
-  HnswWriter(AnnInfo info, HnswBases* bases);
+  HnswWriter(AnnInfo info, HnswBases* bases, ParallelForFn parallel);
   ~HnswWriter() final;
 
   AnnKind Kind() const noexcept final { return AnnKind::Hnsw; }
@@ -66,6 +66,7 @@ class HnswWriter final : public AnnWriter {
 
   AnnInfo _info;
   HnswBases* _bases;
+  ParallelForFn _parallel;
   std::span<const MergeSource> _merge_sources;
   HnswGraphWriter _graph;
   std::vector<float> _vectors;

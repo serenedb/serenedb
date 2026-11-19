@@ -24,6 +24,7 @@
 
 #include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
+#include "iresearch/utils/parallel_for.hpp"
 
 namespace duckdb {
 
@@ -39,6 +40,7 @@ struct IndexReaderOptions {
   ScorerPtr scorer = nullptr;
   duckdb::DatabaseInstance* db = nullptr;
   HnswBases* hnsw_bases = nullptr;
+  ParallelForFn parallel = SerialFor;
   bool index = true;  // Open inverted index
 };
 

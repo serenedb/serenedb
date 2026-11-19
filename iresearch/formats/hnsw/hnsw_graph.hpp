@@ -36,6 +36,7 @@
 #include <span>
 #include <vector>
 
+#include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/index/vector_distance.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -294,7 +295,11 @@ class HnswGraph {
   }
 
   void Serialize(DataOutput& out) const;
+  HnswGraphFrames SerializePacked(DataOutput& out, ParallelFor parallel) const;
   static HnswGraph Deserialize(IndexInput& in);
+  static HnswGraph DeserializePacked(IndexInput& in,
+                                     const HnswGraphFrames& frames,
+                                     ParallelFor parallel);
 
  private:
   friend class HnswGraphWriter;
@@ -372,6 +377,9 @@ class HnswGraphWriter {
   }
 
   void Serialize(DataOutput& out) const { _graph.Serialize(out); }
+  HnswGraphFrames SerializePacked(DataOutput& out, ParallelFor parallel) const {
+    return _graph.SerializePacked(out, parallel);
+  }
 
  private:
   HnswGraph _graph;

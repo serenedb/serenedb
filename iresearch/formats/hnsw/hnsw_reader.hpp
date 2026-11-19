@@ -56,8 +56,12 @@ struct HnswSearchLimits {
 
 class HnswIndex final : public AnnIndex {
  public:
-  HnswIndex(HnswMeta meta, field_id field, HnswBases* bases) noexcept
-    : _meta{meta}, _field{field}, _bases{bases} {}
+  HnswIndex(HnswMeta meta, field_id field, HnswBases* bases,
+            ParallelForFn parallel) noexcept
+    : _meta{std::move(meta)},
+      _field{field},
+      _bases{bases},
+      _parallel{parallel} {}
 
   AnnKind Kind() const noexcept final { return AnnKind::Hnsw; }
 
@@ -98,6 +102,7 @@ class HnswIndex final : public AnnIndex {
   HnswMeta _meta;
   field_id _field;
   HnswBases* _bases;
+  ParallelForFn _parallel;
   mutable absl::once_flag _once;
   mutable std::shared_ptr<const HnswData> _data;
 };

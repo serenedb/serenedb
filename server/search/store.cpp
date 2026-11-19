@@ -280,6 +280,7 @@ irs::IndexReaderOptions Store::ReaderOptions() const {
   options.db = &irs::DuckDBEngine::Instance().instance();
   options.scorer = _topk_scorer.get();
   options.hnsw_bases = _hnsw_bases.get();
+  options.parallel = EngineParallelFor;
   return options;
 }
 

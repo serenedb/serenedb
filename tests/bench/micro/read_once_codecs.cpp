@@ -29,18 +29,17 @@
 #include <zstd.h>
 #include <zxc.h>
 
-#include <bit>
 #include <cstdint>
 #include <cstring>
 #include <deque>
 #include <filesystem>
-#include <limits>
 #include <map>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "iresearch/utils/compression.hpp"
 #include "server/utils/file_utils.h"
 
 namespace sdb::bench {
@@ -51,7 +50,6 @@ constexpr std::string_view kRealTime = "/real_time";
 constexpr size_t kFrameSizes[] = {size_t{64} << 10,  size_t{128} << 10,
                                   size_t{256} << 10, size_t{512} << 10,
                                   size_t{1} << 20,   size_t{4} << 20};
-constexpr uint32_t kInvalidNode = std::numeric_limits<uint32_t>::max();
 
 struct Codec {
   std::string name;
@@ -124,141 +122,35 @@ int64_t ZxcDecompress(std::string_view in, char* out, size_t raw, int) {
   return zxc_decompress(in.data(), in.size(), out, raw);
 }
 
-class BitWriter {
- public:
-  explicit BitWriter(char* at) : _at{at} {}
-
-  void Put(uint64_t value, uint32_t width) {
-    _bits |= value << _filled;
-    _filled += width;
-    if (_filled >= 32) {
-      std::memcpy(_at, &_bits, sizeof(uint32_t));
-      _at += sizeof(uint32_t);
-      _bits >>= 32;
-      _filled -= 32;
-    }
-  }
-
-  char* Finish() {
-    const auto tail = (_filled + 7) / 8;
-    std::memcpy(_at, &_bits, tail);
-    return _at + tail;
-  }
-
- private:
-  char* _at;
-  uint64_t _bits = 0;
-  uint32_t _filled = 0;
-};
-
-class BitReader {
- public:
-  BitReader(const char* at, const char* end) : _at{at}, _end{end} {}
-
-  uint32_t Get(uint32_t width) {
-    if (_available < width) {
-      uint32_t word = 0;
-      const auto take =
-        std::min<size_t>(sizeof(uint32_t), static_cast<size_t>(_end - _at));
-      std::memcpy(&word, _at, take);
-      _at += take;
-      _bits |= uint64_t{word} << _available;
-      _available += 32;
-    }
-    const auto value =
-      static_cast<uint32_t>(_bits & ((uint64_t{1} << width) - 1));
-    _bits >>= width;
-    _available -= width;
-    return value;
-  }
-
- private:
-  const char* _at;
-  const char* _end;
-  uint64_t _bits = 0;
-  uint32_t _available = 0;
-};
-
-uint32_t IdAt(std::string_view in, size_t i) {
-  uint32_t id = 0;
-  std::memcpy(&id, in.data() + i * sizeof(uint32_t), sizeof(id));
-  return id;
+irs::bytes_view AsBytes(std::string_view in) {
+  return {reinterpret_cast<const irs::byte_type*>(in.data()), in.size()};
 }
 
-void PutId(char* out, size_t i, uint32_t id) {
-  std::memcpy(out + i * sizeof(uint32_t), &id, sizeof(id));
-}
-
-uint32_t MaxId(std::string_view in) {
-  uint32_t max = 0;
-  for (size_t i = 0; i < in.size() / sizeof(uint32_t); ++i) {
-    if (const auto id = IdAt(in, i); id != kInvalidNode) {
-      max = std::max(max, id);
-    }
-  }
-  return max;
-}
-
-size_t NodeIdsBound(size_t raw) { return 1 + raw / 2 + raw + sizeof(uint64_t); }
-
-struct Lists {
-  size_t count = 0;
-  uint32_t slots = 0;
-};
-
-Lists ListsOf(std::string_view in, int level) {
-  const auto slots = static_cast<uint32_t>(level);
-  const auto ids = in.size() / sizeof(uint32_t);
-  if (slots == 0 || slots > 255 || ids % slots != 0) {
-    return {};
-  }
-  return {.count = ids / slots, .slots = slots};
-}
+size_t StripBound(size_t raw) { return raw; }
 
 int64_t StripCompress(std::string_view in, char* out, size_t, int level) {
-  const auto lists = ListsOf(in, level);
-  if (lists.count == 0) {
+  const auto slots = static_cast<uint64_t>(level) * sizeof(uint32_t);
+  if (in.empty() || in.size() % slots != 0 ||
+      in.size() > irs::compression::kMaxFrameBytes) {
     return -1;
   }
-  const auto width =
-    static_cast<uint32_t>(std::max(1, std::bit_width(MaxId(in))));
-  out[0] = static_cast<char>(width);
-  auto* counts = out + 1;
-  BitWriter writer{counts + lists.count};
-  for (size_t list = 0; list < lists.count; ++list) {
-    uint32_t count = 0;
-    for (uint32_t slot = 0; slot < lists.slots; ++slot) {
-      const auto id = IdAt(in, list * lists.slots + slot);
-      if (id == kInvalidNode) {
-        continue;
-      }
-      if (count != slot) {
-        return -1;
-      }
-      writer.Put(id, width);
-      ++count;
-    }
-    counts[list] = static_cast<char>(count);
-  }
-  return writer.Finish() - out;
+  const auto packed = irs::compression::Compress(
+    irs::compression::Strip(static_cast<uint32_t>(level)), AsBytes(in),
+    static_cast<uint32_t>(in.size()));
+  const auto size = irs::compression::StoredBytes(packed.frames);
+  std::memcpy(out, packed.bytes.get(), size);
+  return static_cast<int64_t>(size);
 }
 
-int64_t StripDecompress(std::string_view in, char* out, size_t raw, int level) {
-  const auto slots = static_cast<uint32_t>(level);
-  const auto lists = raw / sizeof(uint32_t) / slots;
-  const auto width = static_cast<uint32_t>(in[0]);
-  const auto* counts = reinterpret_cast<const uint8_t*>(in.data() + 1);
-  BitReader reader{in.data() + 1 + lists, in.data() + in.size()};
-  for (size_t list = 0; list < lists; ++list) {
-    const auto first = list * slots;
-    uint32_t slot = 0;
-    for (; slot < counts[list]; ++slot) {
-      PutId(out, first + slot, reader.Get(width));
-    }
-    for (; slot < slots; ++slot) {
-      PutId(out, first + slot, kInvalidNode);
-    }
-  }
+int64_t StripDecompress(std::string_view in, char* out, size_t raw, int) {
+  const irs::compression::Frames frames{
+    .codec = irs::compression::Codec::Strip,
+    .raw_bytes = raw,
+    .frame_bytes = static_cast<uint32_t>(raw),
+    .sizes = {static_cast<uint32_t>(in.size())},
+  };
+  irs::compression::Decompress(frames, AsBytes(in),
+                               {reinterpret_cast<irs::byte_type*>(out), raw});
   return static_cast<int64_t>(raw);
 }
 
@@ -278,7 +170,7 @@ std::vector<Codec> Codecs(uint32_t list_slots) {
                       ZxcDecompress, level});
   }
   if (list_slots != 0) {
-    codecs.push_back({"strip", NodeIdsBound, StripCompress, StripDecompress,
+    codecs.push_back({"strip", StripBound, StripCompress, StripDecompress,
                       static_cast<int>(list_slots)});
   }
   return codecs;

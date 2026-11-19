@@ -43,6 +43,32 @@
 
 namespace irs {
 
+#ifndef IRESEARCH_NO_VECTOR
+namespace {
+
+void ReadGraphFrames(duckdb::BinaryDeserializer& graph,
+                     std::string_view filename, HnswGraphFrames& frames) {
+  graph.ReadObject(kHnswGraphLevels, "levels",
+                   [&](duckdb::BinaryDeserializer& object) {
+                     frames.levels = compression::ReadFrames(object);
+                   });
+  graph.ReadObject(kHnswGraphBase, "base",
+                   [&](duckdb::BinaryDeserializer& object) {
+                     frames.base = compression::ReadFrames(object);
+                   });
+  graph.ReadObject(kHnswGraphUpper, "upper",
+                   [&](duckdb::BinaryDeserializer& object) {
+                     frames.upper = compression::ReadFrames(object);
+                   });
+  if (!frames.Packed()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
+                    ERR_MSG("HNSW graph in ", filename, " has no levels"));
+  }
+}
+
+}  // namespace
+#endif
+
 struct IdxReader::Impl {
   IndexInput::ptr in;
   std::vector<std::pair<field_id, std::unique_ptr<AnnIndex>>> ann_entries;
@@ -52,7 +78,8 @@ struct IdxReader::Impl {
 };
 
 IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
-                     HnswBases* hnsw_bases, bool keep_terms)
+                     HnswBases* hnsw_bases, bool keep_terms,
+                     ParallelForFn parallel)
   : _impl{std::make_unique<Impl>()} {
   const auto filename = absl::StrCat(segment_name, ".", kIdxFormatExt);
   bool exists = false;
@@ -96,7 +123,7 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
         kIdxFieldHnsw, "hnsw",
         [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
           list.ReadObject([&](duckdb::BinaryDeserializer& obj) {
-            footer.hnsw.push_back({
+            auto& entry = footer.hnsw.emplace_back(HnswEntry{
               .id = obj.ReadProperty<uint64_t>(0, "id"),
               .meta =
                 {
@@ -118,6 +145,10 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
                     },
                 },
             });
+            obj.ReadOptionalObject(
+              kHnswMetaGraph, "graph", [&](duckdb::BinaryDeserializer& graph) {
+                ReadGraphFrames(graph, filename, entry.meta.graph);
+              });
           });
         });
 #endif
@@ -129,17 +160,18 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
           }
         });
     });
-  Adopt(std::move(footer), hnsw_bases);
+  Adopt(std::move(footer), hnsw_bases, parallel);
 }
 
 IdxReader::IdxReader(IndexInput::ptr in, IdxFooter footer,
-                     HnswBases* hnsw_bases)
+                     HnswBases* hnsw_bases, ParallelForFn parallel)
   : _impl{std::make_unique<Impl>()} {
   _impl->in = std::move(in);
-  Adopt(std::move(footer), hnsw_bases);
+  Adopt(std::move(footer), hnsw_bases, parallel);
 }
 
-void IdxReader::Adopt(IdxFooter footer, HnswBases* hnsw_bases) {
+void IdxReader::Adopt(IdxFooter footer, HnswBases* hnsw_bases,
+                      ParallelForFn parallel) {
 #ifndef IRESEARCH_NO_VECTOR
   for (const auto& [id, meta] : footer.ivf) {
     _impl->ann_ends.push_back(meta.tree_offset + meta.tree_byte_size);
@@ -152,11 +184,12 @@ void IdxReader::Adopt(IdxFooter footer, HnswBases* hnsw_bases) {
     _impl->ann_entries.emplace_back(
       id, std::make_unique<IvfIndex>(std::move(entry)));
   }
-  for (const auto& [id, meta] : footer.hnsw) {
+  for (auto& [id, meta] : footer.hnsw) {
     _impl->ann_ends.push_back(meta.offset + meta.byte_size);
     _impl->ann_by_id.emplace(id, _impl->ann_entries.size());
     _impl->ann_entries.emplace_back(
-      id, std::make_unique<HnswIndex>(meta, id, hnsw_bases));
+      id,
+      std::make_unique<HnswIndex>(std::move(meta), id, hnsw_bases, parallel));
   }
 #else
   SDB_ASSERT(footer.ivf.empty() && footer.hnsw.empty());

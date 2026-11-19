@@ -25,6 +25,8 @@
 #include <duckdb/parallel/task_executor.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 
+#include "iresearch/utils/duckdb_engine.hpp"
+
 namespace sdb::search {
 namespace {
 
@@ -78,6 +80,10 @@ void ParallelFor(duckdb::DatabaseInstance& db, size_t count,
   auto& scheduler = duckdb::TaskScheduler::GetScheduler(db);
   Run(static_cast<size_t>(scheduler.NumberOfThreads()), count, body,
       [&] { return duckdb::TaskExecutor{scheduler}; });
+}
+
+void EngineParallelFor(size_t count, absl::FunctionRef<void(size_t)> body) {
+  ParallelFor(irs::DuckDBEngine::Instance().instance(), count, body);
 }
 
 }  // namespace sdb::search

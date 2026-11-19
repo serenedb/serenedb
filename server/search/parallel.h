@@ -33,6 +33,8 @@ void ParallelFor(duckdb::ClientContext& context, size_t count,
 void ParallelFor(duckdb::DatabaseInstance& db, size_t count,
                  absl::FunctionRef<void(size_t)> body);
 
+void EngineParallelFor(size_t count, absl::FunctionRef<void(size_t)> body);
+
 auto ParallelOn(auto& scope) {
   return [&scope](size_t count, absl::FunctionRef<void(size_t)> body) {
     ParallelFor(scope, count, body);

@@ -41,6 +41,7 @@
 #include "iresearch/store/directory.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
+#include "iresearch/utils/parallel_for.hpp"
 
 namespace irs {
 
@@ -64,7 +65,10 @@ class ColWriter final {
 
   void SetFieldOptions(const IndexFieldOptions* field_options) noexcept;
 
-  void SetHnswBases(HnswBases* bases) noexcept { _hnsw_bases = bases; }
+  void SetHnsw(HnswBases* bases, ParallelForFn parallel) noexcept {
+    _hnsw_bases = bases;
+    _parallel = parallel;
+  }
 
   void SetDeferredSeal(bool deferred) noexcept {
     SDB_ASSERT(_columns.empty());
@@ -140,6 +144,7 @@ class ColWriter final {
   duckdb::DatabaseInstance* _db;
   const IndexFieldOptions* _field_options = nullptr;
   HnswBases* _hnsw_bases = nullptr;
+  ParallelForFn _parallel = SerialFor;
   IndexOutput::ptr _out;
   std::unique_ptr<ColReader> _reader;
   std::unique_ptr<WriteContext> _write_ctx;

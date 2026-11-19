@@ -21,12 +21,14 @@
 #include "iresearch/utils/compression.hpp"
 
 #include <absl/algorithm/container.h>
+#include <absl/base/internal/endian.h>
 #include <absl/functional/function_ref.h>
 #include <lz4.h>
 #include <lz4hc.h>
 #include <zstd.h>
 
 #include <algorithm>
+#include <bit>
 #include <cstring>
 #include <magic_enum/magic_enum.hpp>
 #include <string_view>
@@ -61,10 +63,172 @@ size_t FrameCount(uint64_t raw_bytes, uint32_t frame_bytes) noexcept {
                              (raw_bytes % frame_bytes != 0));
 }
 
+constexpr size_t kStripHeaderBytes = sizeof(uint32_t) + sizeof(uint8_t);
+
+class BitWriter {
+ public:
+  explicit BitWriter(byte_type* at) noexcept : _at{at} {}
+
+  void Put(uint32_t value, uint32_t width) noexcept {
+    _bits |= uint64_t{value} << _filled;
+    _filled += width;
+    if (_filled >= 32) {
+      absl::little_endian::Store32(_at, static_cast<uint32_t>(_bits));
+      _at += sizeof(uint32_t);
+      _bits >>= 32;
+      _filled -= 32;
+    }
+  }
+
+  byte_type* Finish() noexcept {
+    for (; _filled > 0; _filled -= std::min<uint32_t>(_filled, 8)) {
+      *_at++ = static_cast<byte_type>(_bits);
+      _bits >>= 8;
+    }
+    return _at;
+  }
+
+ private:
+  byte_type* _at;
+  uint64_t _bits = 0;
+  uint32_t _filled = 0;
+};
+
+class BitReader {
+ public:
+  explicit BitReader(bytes_view in) noexcept : _in{in} {}
+
+  uint32_t Get(uint32_t width) noexcept {
+    if (_available < width) {
+      uint32_t word = 0;
+      const auto left = _in.size() - _at;
+      if (left >= sizeof(word)) {
+        word = absl::little_endian::Load32(_in.data() + _at);
+        _at += sizeof(word);
+      } else {
+        for (size_t i = 0; i != left; ++i) {
+          word |= uint32_t{_in[_at + i]} << (8 * i);
+        }
+        _at = _in.size();
+      }
+      _bits |= uint64_t{word} << _available;
+      _available += 32;
+    }
+    const auto value =
+      static_cast<uint32_t>(_bits & ((uint64_t{1} << width) - 1));
+    _bits >>= width;
+    _available -= width;
+    _read += width;
+    return value;
+  }
+
+  uint64_t Read() const noexcept { return _read; }
+
+ private:
+  bytes_view _in;
+  size_t _at = 0;
+  uint64_t _bits = 0;
+  uint32_t _available = 0;
+  uint64_t _read = 0;
+};
+
+uint32_t LoadId(const byte_type* at) noexcept {
+  uint32_t value = 0;
+  std::memcpy(&value, at, sizeof(value));
+  return value;
+}
+
+size_t EncodeStrip(uint32_t slots, bytes_view in, byte_type* out,
+                   size_t capacity) noexcept {
+  const auto list_bytes = uint64_t{slots} * sizeof(uint32_t);
+  if (slots == 0 || in.size() % list_bytes != 0) {
+    return 0;
+  }
+  const auto lists = in.size() / list_bytes;
+  const auto* ids = in.data();
+  uint32_t max_id = 0;
+  uint64_t kept = 0;
+  for (size_t list = 0; list != lists; ++list) {
+    const auto* slot = ids + list * list_bytes;
+    uint32_t count = 0;
+    for (; count != slots; ++count) {
+      const auto id = LoadId(slot + uint64_t{count} * sizeof(uint32_t));
+      if (id == kStripPadding) {
+        break;
+      }
+      max_id = std::max(max_id, id);
+    }
+    for (auto rest = count; rest != slots; ++rest) {
+      if (LoadId(slot + uint64_t{rest} * sizeof(uint32_t)) != kStripPadding) {
+        return 0;
+      }
+    }
+    kept += count;
+  }
+  const auto width =
+    std::max<uint32_t>(1, static_cast<uint32_t>(std::bit_width(max_id)));
+  const auto count_width = static_cast<uint32_t>(std::bit_width(slots));
+  const auto bits = uint64_t{lists} * count_width + kept * width;
+  const auto size = kStripHeaderBytes + (bits + 7) / 8;
+  if (size > capacity) {
+    return 0;
+  }
+  absl::little_endian::Store32(out, slots);
+  out[sizeof(slots)] = static_cast<byte_type>(width);
+  BitWriter writer{out + kStripHeaderBytes};
+  for (size_t list = 0; list != lists; ++list) {
+    const auto* slot = ids + list * list_bytes;
+    uint32_t count = 0;
+    while (count != slots &&
+           LoadId(slot + uint64_t{count} * sizeof(uint32_t)) != kStripPadding) {
+      ++count;
+    }
+    writer.Put(count, count_width);
+    for (uint32_t i = 0; i != count; ++i) {
+      writer.Put(LoadId(slot + uint64_t{i} * sizeof(uint32_t)), width);
+    }
+  }
+  [[maybe_unused]] const auto* end = writer.Finish();
+  SDB_ASSERT(static_cast<size_t>(end - out) == size);
+  return size;
+}
+
+bool DecodeStrip(bytes_view in, std::span<byte_type> out) noexcept {
+  if (in.size() < kStripHeaderBytes) {
+    return false;
+  }
+  const auto slots = absl::little_endian::Load32(in.data());
+  const uint32_t width = in[sizeof(slots)];
+  const auto list_bytes = uint64_t{slots} * sizeof(uint32_t);
+  if (slots == 0 || width == 0 || width > 32 || out.size() % list_bytes != 0) {
+    return false;
+  }
+  const auto count_width = static_cast<uint32_t>(std::bit_width(slots));
+  BitReader reader{in.substr(kStripHeaderBytes)};
+  auto* at = out.data();
+  for (size_t list = 0, lists = out.size() / list_bytes; list != lists;
+       ++list) {
+    const auto count = reader.Get(count_width);
+    if (count > slots) {
+      return false;
+    }
+    for (uint32_t slot = 0; slot != slots; ++slot) {
+      const auto id = slot < count ? reader.Get(width) : kStripPadding;
+      std::memcpy(at, &id, sizeof(id));
+      at += sizeof(id);
+    }
+  }
+  return (reader.Read() + 7) / 8 == in.size() - kStripHeaderBytes;
+}
+
 size_t Encode(Method method, bytes_view in, byte_type* out) noexcept {
   const auto capacity = in.size() - 1;
   size_t size = 0;
   switch (method.codec) {
+    case Codec::Strip:
+      size =
+        EncodeStrip(static_cast<uint32_t>(method.level), in, out, capacity);
+      break;
     case Codec::Lz4Hc: {
       const auto written = LZ4_compress_HC(
         reinterpret_cast<const char*>(in.data()), reinterpret_cast<char*>(out),
@@ -106,6 +270,9 @@ void Decode(Codec codec, bytes_view in, std::span<byte_type> out) {
       decoded = !ZSTD_isError(size) && size == out.size();
       break;
     }
+    case Codec::Strip:
+      decoded = DecodeStrip(in, out);
+      break;
   }
   if (!decoded) {
     Corrupted("a frame does not decode to its size");
@@ -121,6 +288,8 @@ uint32_t FrameRawBytes(const Frames& frames, size_t frame) noexcept {
   return static_cast<uint32_t>(
     std::min<uint64_t>(frames.frame_bytes, frames.raw_bytes - begin));
 }
+
+}  // namespace
 
 void WriteFrames(duckdb::BinarySerializer& serializer, const Frames& frames) {
   serializer.WriteProperty<uint8_t>(kFramesCodec.id, kFramesCodec.tag,
@@ -194,6 +363,8 @@ Frames ReadFrames(duckdb::BinaryDeserializer& deserializer) {
   }
   return frames;
 }
+
+namespace {
 
 using FrameSource =
   absl::FunctionRef<void(absl::FunctionRef<void(bytes_view)>)>;
@@ -319,27 +490,46 @@ Compressed Compress(Method method, const FrameWriter& raw,
     parallel);
 }
 
-void Decompress(const Frames& frames, bytes_view stored,
-                std::span<byte_type> raw, ParallelFor parallel) {
-  if (raw.size() != frames.raw_bytes || stored.size() != StoredBytes(frames)) {
+absl::InlinedVector<FrameStart, 1> FrameStarts(const Frames& frames) {
+  absl::InlinedVector<FrameStart, 1> starts(frames.sizes.size() + 1);
+  for (size_t frame = 0; frame != frames.sizes.size(); ++frame) {
+    starts[frame + 1] = {
+      .stored = starts[frame].stored + frames.sizes[frame],
+      .raw = starts[frame].raw + FrameRawBytes(frames, frame),
+    };
+  }
+  return starts;
+}
+
+void Decompress(const Frames& frames, size_t first, size_t last,
+                bytes_view stored, std::span<byte_type> raw,
+                ParallelFor parallel) {
+  SDB_ASSERT(first <= last && last <= frames.sizes.size());
+  absl::InlinedVector<FrameStart, 1> starts(last - first + 1);
+  for (size_t frame = first; frame != last; ++frame) {
+    const auto& start = starts[frame - first];
+    starts[frame - first + 1] = {
+      .stored = start.stored + frames.sizes[frame],
+      .raw = start.raw + FrameRawBytes(frames, frame),
+    };
+  }
+  if (stored.size() != starts.back().stored ||
+      raw.size() != starts.back().raw) {
     Corrupted("its sizes do not match its frames");
   }
-  struct Offsets {
-    uint64_t stored = 0;
-    uint64_t raw = 0;
-  };
-  absl::InlinedVector<Offsets, 1> offsets(frames.sizes.size());
-  Offsets at;
-  for (size_t frame = 0; frame != offsets.size(); ++frame) {
-    offsets[frame] = at;
-    at.stored += frames.sizes[frame];
-    at.raw += FrameRawBytes(frames, frame);
-  }
-  parallel(offsets.size(), [&](size_t frame) {
-    Decode(frames.codec,
-           stored.substr(offsets[frame].stored, frames.sizes[frame]),
-           raw.subspan(offsets[frame].raw, FrameRawBytes(frames, frame)));
+  parallel(last - first, [&](size_t i) {
+    const auto frame = first + i;
+    Decode(frames.codec, stored.substr(starts[i].stored, frames.sizes[frame]),
+           raw.subspan(starts[i].raw, FrameRawBytes(frames, frame)));
   });
+}
+
+void Decompress(const Frames& frames, bytes_view stored,
+                std::span<byte_type> raw, ParallelFor parallel) {
+  if (raw.size() != frames.raw_bytes) {
+    Corrupted("its sizes do not match its frames");
+  }
+  Decompress(frames, 0, frames.sizes.size(), stored, raw, parallel);
 }
 
 std::unique_ptr<byte_type[]> Decompress(const Packed& packed,

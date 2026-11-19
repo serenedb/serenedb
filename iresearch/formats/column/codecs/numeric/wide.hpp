@@ -45,6 +45,7 @@
 #include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_kernels.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_layout.hpp"
+#include "iresearch/formats/column/codecs/numeric/numeric_scan.tpp"
 #include "iresearch/formats/column/codecs/preferences.hpp"
 #include "iresearch/formats/column/codecs/tuning.hpp"
 #include "iresearch/formats/column/internal/write_chunk.hpp"
@@ -344,21 +345,29 @@ class WideReader {
  public:
   using Value = W;
 
-  WideReader(duckdb::const_data_ptr_t base, uint64_t size, uint64_t rows,
-             CodecType codec, const ReadContext::CacheSlot& slot)
-    : _header{Header(base, size)},
+  struct Matches {};
+
+  static constexpr bool kHasRuns = R::kHasRuns;
+  static constexpr bool kFiltersRuns = R::kHasRuns;
+  static constexpr bool kFiltersEntries = false;
+
+  WideReader(duckdb::const_data_ptr_t base, const ColumnSegment& segment)
+    : _header{Header(base, segment.size)},
       _low_frames{Frames(base + sizeof(WideHeader),
                          _header.form == kWideHalves
                            ? _header.low_size
-                           : size - sizeof(WideHeader),
-                         rows, codec)},
-      _low{base + sizeof(WideHeader), _low_frames, codec, slot} {
+                           : segment.size - sizeof(WideHeader),
+                         segment.count, segment.codec)},
+      _low{base + sizeof(WideHeader), _low_frames, segment.codec,
+           segment.cache_slot} {
     if (_header.form == kWideHalves) {
       const auto at = HighOffset(_header);
-      auto high_slot = slot;
+      auto high_slot = segment.cache_slot;
       high_slot.file_offset += at;
-      _high.emplace(base + at, Frames(base + at, size - at, rows, codec), codec,
-                    high_slot);
+      _high.emplace(
+        base + at,
+        Frames(base + at, segment.size - at, segment.count, segment.codec),
+        segment.codec, high_slot);
     }
   }
 
@@ -369,6 +378,12 @@ class WideReader {
   void Read(uint64_t row, uint64_t count, W* out) {
     if (_lows.size() < count) {
       _lows.resize(count);
+    }
+    if constexpr (R::kHasRuns) {
+      if (!_high) {
+        FillRuns(row, count, out);
+        return;
+      }
     }
     _low.Read(row, count, _lows.data());
     if (!_high) {
@@ -397,6 +412,55 @@ class WideReader {
     const auto low = _low.Fetch(row, next);
     return WideValue<W>(_high ? absl::MakeUint128(_high->Fetch(row, next), low)
                               : Base() + low);
+  }
+
+  void FillRuns(uint64_t row, uint64_t count, W* out) {
+    const auto base = Base();
+    for (uint64_t done = 0; done < count;) {
+      const auto at = row + done;
+      _low.Seek(at);
+      const auto take = std::min<uint64_t>(count - done, _low.FrameEnd() - at);
+      const auto runs = _low.ReadRuns(at, take, std::span{_lows.data(), take});
+      SDB_ASSERT(runs.count != 0);
+      for (uint32_t i = 0; i < runs.count; ++i) {
+        const auto rows = _low.RunRows(runs.first + i, at, take);
+        std::fill(out + done + rows.begin, out + done + rows.end,
+                  WideValue<W>(base + _lows[i]));
+      }
+      done += take;
+    }
+  }
+
+  void Seek(uint64_t row) { _low.Seek(row); }
+
+  uint64_t FrameEnd() const noexcept { return _high ? 0 : _low.FrameEnd(); }
+
+  auto ReadRuns(uint64_t row, uint64_t count, std::span<W> values) {
+    if (_lows.size() < values.size()) {
+      _lows.resize(values.size());
+    }
+    const auto runs =
+      _low.ReadRuns(row, count, std::span{_lows.data(), values.size()});
+    const auto base = Base();
+    for (uint32_t i = 0; i < runs.count; ++i) {
+      values[i] = WideValue<W>(base + _lows[i]);
+    }
+    return runs;
+  }
+
+  auto RunRows(uint32_t run, uint64_t row, uint64_t count) const noexcept {
+    return _low.RunRows(run, row, count);
+  }
+
+  bool RunHolds(uint64_t row, uint64_t count, W& value) {
+    uint64_t low = 0;
+    uint64_t high = 0;
+    if (!_low.RunHolds(row, count, low) ||
+        (_high && !_high->RunHolds(row, count, high))) {
+      return false;
+    }
+    value = WideValue<W>(_high ? absl::MakeUint128(high, low) : Base() + low);
+    return true;
   }
 
  private:
@@ -436,79 +500,10 @@ class WideReader {
 };
 
 template<typename R>
-struct WideScanState final : SegmentScanState {
-  WideScanState(const ColumnSegment& segment, duckdb::BufferHandle handle_p)
-    : handle{std::move(handle_p)},
-      reader{handle.Ptr(), segment.size, segment.count, segment.codec,
-             segment.cache_slot} {}
-
-  duckdb::BufferHandle handle;
-  R reader;
-};
-
-template<typename R>
-struct WideFetchCache final : SegmentScanState {
-  std::optional<R> reader;
-};
-
-template<typename R>
-std::unique_ptr<SegmentScanState> InitWideScan(const ColumnSegment& segment) {
-  return std::make_unique<WideScanState<R>>(segment, segment.Pin());
-}
-
-template<typename R>
-void ScanWide(const ColumnSegment&, ColumnScanState& state,
-              duckdb::idx_t scan_count, duckdb::Vector& result,
-              duckdb::idx_t result_offset, duckdb::ScanVectorType) {
-  state.scan_state->Cast<WideScanState<R>>().reader.Read(
-    state.GetPositionInSegment(), scan_count,
-    duckdb::FlatVector::GetDataMutable<typename R::Value>(result) +
-      result_offset);
-}
-
-template<typename R>
-void SelectWide(const ColumnSegment&, ColumnScanState& state, duckdb::idx_t,
-                duckdb::Vector& result, duckdb::idx_t result_offset,
-                const duckdb::SelectionVector& sel, duckdb::idx_t sel_count,
-                duckdb::ScanVectorType) {
-  auto& reader = state.scan_state->Cast<WideScanState<R>>().reader;
-  auto* out = duckdb::FlatVector::GetDataMutable<typename R::Value>(result) +
-              result_offset;
-  const uint64_t start = state.GetPositionInSegment();
-  for (duckdb::idx_t i = 0; i < sel_count; ++i) {
-    out[i] = reader.Get(start + sel.get_index(i));
-  }
-}
-
-template<typename R>
-void FetchWideRows(const ColumnSegment& segment, ColumnFetchState& state,
-                   const duckdb::idx_t* rows, duckdb::idx_t count,
-                   duckdb::Vector& result,
-                   const duckdb::SelectionVector& result_sel,
-                   duckdb::idx_t result_offset) {
-  auto& cache = state.GetOrCreateSegmentState<WideFetchCache<R>>(
-    [] { return std::make_unique<WideFetchCache<R>>(); });
-  if (!cache.reader) {
-    cache.reader.emplace(state.GetOrInsertHandle(segment).Ptr(), segment.size,
-                         segment.count, segment.codec, segment.cache_slot);
-  }
-  auto& reader = *cache.reader;
-  auto* data = duckdb::FlatVector::GetDataMutable<typename R::Value>(result);
-  constexpr auto kNone = std::numeric_limits<uint64_t>::max();
-  for (duckdb::idx_t i = 0; i < count; ++i) {
-    const auto row = static_cast<uint64_t>(rows[i]);
-    SDB_ENSURE(row < segment.count, "numeric codec: row out of range");
-    const uint64_t next = i + 1 < count ? rows[i + 1] : kNone;
-    data[result_offset + result_sel.get_index(i)] = reader.Fetch(row, next);
-  }
-}
-
-template<typename R>
 duckdb::InsertionOrderPreservingMap<std::string> WideSegmentInfo(
   const ColumnSegment& segment) {
   auto handle = segment.Pin();
-  R reader{handle.Ptr(), segment.size, segment.count, segment.codec,
-           segment.cache_slot};
+  R reader{handle.Ptr(), segment};
   duckdb::InsertionOrderPreservingMap<std::string> info;
   info["transform"] = TransformName(ShapeOf(segment.codec), reader.LowFrames());
   info["wide"] = reader.Halves() ? "halves" : "offsets";
@@ -517,10 +512,11 @@ duckdb::InsertionOrderPreservingMap<std::string> WideSegmentInfo(
 
 template<typename R>
 inline constexpr DecompressionFunction kWideDecompression{
-  .init_scan = InitWideScan<R>,
-  .scan = ScanWide<R>,
-  .select = SelectWide<R>,
-  .fetch_rows = FetchWideRows<R>,
+  .init_scan = numeric::InitScan<R>,
+  .scan = numeric::Scan<R>,
+  .select = numeric::Select<R>,
+  .filter = numeric::Filter<R>,
+  .fetch_rows = numeric::FetchRows<R>,
   .get_segment_info = WideSegmentInfo<R>,
 };
 

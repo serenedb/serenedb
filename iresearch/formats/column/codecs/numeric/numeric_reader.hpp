@@ -54,6 +54,7 @@ class FrameReader {
 
   struct Matches {};
 
+  static constexpr bool kHasRuns = false;
   static constexpr bool kFiltersRuns = false;
   static constexpr bool kFiltersEntries = false;
 

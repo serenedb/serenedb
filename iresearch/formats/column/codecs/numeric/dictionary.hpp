@@ -347,10 +347,13 @@ class DictionaryReader final : public FrameReader<T> {
     }
     if (this->Packed()) {
       const auto block = this->template BlockAt<uint32_t>(row);
-      return Entry(numeric::UnpackValue<uint32_t>(
-        block.packed, block.bits,
-        static_cast<uint32_t>(row % numeric::kBlockValues),
-        static_cast<uint32_t>(block.base)));
+      const auto index = static_cast<uint32_t>(row % numeric::kBlockValues);
+      const auto base = static_cast<uint32_t>(block.base);
+      return Entry(row / numeric::kBlockValues == next / numeric::kBlockValues
+                     ? numeric::UnpackValue<uint32_t>(block.packed, block.bits,
+                                                      index, base)
+                     : numeric::UnpackLoneValue<uint32_t>(
+                         block.packed, block.bits, index, base));
     }
     uint32_t code = 0;
     if (this->Shuffled()) {

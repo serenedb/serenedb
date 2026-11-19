@@ -309,10 +309,12 @@ class PlainReader final : public FrameReader<T> {
   IRS_FORCE_INLINE T FetchApart(uint64_t row, uint64_t next) {
     if (this->Packed() && !this->Near(row, next)) {
       const auto block = this->BlockAt(row);
-      return this->Scaled(numeric::UnpackValue<U>(
-        block.packed, block.bits,
-        static_cast<uint32_t>(row % numeric::kBlockValues),
-        static_cast<U>(block.base)));
+      const auto index = static_cast<uint32_t>(row % numeric::kBlockValues);
+      const auto base = static_cast<U>(block.base);
+      return this->Scaled(
+        row / numeric::kBlockValues == next / numeric::kBlockValues
+          ? numeric::UnpackValue<U>(block.packed, block.bits, index, base)
+          : numeric::UnpackLoneValue<U>(block.packed, block.bits, index, base));
     }
     return FetchFramed(row, next);
   }

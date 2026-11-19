@@ -74,11 +74,21 @@ struct EntryBatch {
 };
 
 template<typename R>
+R OpenReader(const_data_ptr_t base, const ColumnSegment& segment) {
+  if constexpr (std::is_constructible_v<R, const_data_ptr_t,
+                                        const ColumnSegment&>) {
+    return R{base, segment};
+  } else {
+    return R{base, SegmentFrames(base, segment), segment.codec,
+             segment.cache_slot};
+  }
+}
+
+template<typename R>
 struct ScanState final : SegmentScanState {
   ScanState(const ColumnSegment& segment, duckdb::BufferHandle handle_p)
     : handle{std::move(handle_p)},
-      frames{handle.Ptr(), SegmentFrames(handle.Ptr(), segment), segment.codec,
-             segment.cache_slot} {}
+      frames{OpenReader<R>(handle.Ptr(), segment)} {}
 
   EntryBatch<typename R::Value>& Batch(const duckdb::LogicalType& type) {
     if (!batch) [[unlikely]] {
@@ -100,23 +110,48 @@ std::unique_ptr<SegmentScanState> InitScan(const ColumnSegment& segment) {
 }
 
 template<typename R>
-void Scan(const ColumnSegment&, ColumnScanState& state, idx_t scan_count,
-          duckdb::Vector& result, idx_t result_offset, duckdb::ScanVectorType) {
-  state.scan_state->Cast<ScanState<R>>().frames.Read(
-    state.GetPositionInSegment(), scan_count,
-    duckdb::FlatVector::GetDataMutable<typename R::Value>(result) +
-      result_offset);
+bool ScanWholeRun(R& reader, uint64_t start, idx_t vector_count,
+                  duckdb::ScanVectorType scan_type, duckdb::Vector& result) {
+  if constexpr (R::kHasRuns) {
+    typename R::Value value{};
+    if (scan_type == duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR &&
+        vector_count == STANDARD_VECTOR_SIZE &&
+        reader.RunHolds(start, vector_count, value)) {
+      duckdb::FlatVector::GetDataMutable<typename R::Value>(result)[0] = value;
+      result.SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
+      duckdb::FlatVector::SetSize(result, duckdb::count_t(vector_count));
+      return true;
+    }
+  }
+  return false;
 }
 
 template<typename R>
-void Select(const ColumnSegment&, ColumnScanState& state, idx_t,
+void Scan(const ColumnSegment&, ColumnScanState& state, idx_t scan_count,
+          duckdb::Vector& result, idx_t result_offset,
+          duckdb::ScanVectorType scan_type) {
+  auto& frames = state.scan_state->Cast<ScanState<R>>().frames;
+  const uint64_t start = state.GetPositionInSegment();
+  if (ScanWholeRun(frames, start, scan_count, scan_type, result)) {
+    return;
+  }
+  frames.Read(start, scan_count,
+              duckdb::FlatVector::GetDataMutable<typename R::Value>(result) +
+                result_offset);
+}
+
+template<typename R>
+void Select(const ColumnSegment&, ColumnScanState& state, idx_t vector_count,
             duckdb::Vector& result, idx_t result_offset,
             const duckdb::SelectionVector& sel, idx_t sel_count,
-            duckdb::ScanVectorType) {
+            duckdb::ScanVectorType scan_type) {
   auto& frames = state.scan_state->Cast<ScanState<R>>().frames;
+  const uint64_t start = state.GetPositionInSegment();
+  if (ScanWholeRun(frames, start, vector_count, scan_type, result)) {
+    return;
+  }
   auto* out = duckdb::FlatVector::GetDataMutable<typename R::Value>(result) +
               result_offset;
-  const uint64_t start = state.GetPositionInSegment();
   for (idx_t i = 0; i < sel_count; ++i) {
     out[i] = frames.Get(start + sel.get_index(i));
   }
@@ -309,21 +344,22 @@ void Filter(const ColumnSegment& segment, ColumnScanState& state,
 
 template<typename R>
 struct FetchCache final : SegmentScanState {
-  std::optional<R> frames;
+  FetchCache(const_data_ptr_t base, const ColumnSegment& segment)
+    : frames{OpenReader<R>(base, segment)} {}
+
+  R frames;
 };
 
 template<typename R>
 void FetchRows(const ColumnSegment& segment, ColumnFetchState& state,
                const idx_t* rows, idx_t count, duckdb::Vector& result,
                const duckdb::SelectionVector& result_sel, idx_t result_offset) {
-  auto& cache = state.GetOrCreateSegmentState<FetchCache<R>>(
-    [] { return std::make_unique<FetchCache<R>>(); });
-  if (!cache.frames) {
-    const auto* base = state.GetOrInsertHandle(segment).Ptr();
-    cache.frames.emplace(base, SegmentFrames(base, segment), segment.codec,
-                         segment.cache_slot);
-  }
-  auto& frames = *cache.frames;
+  auto& frames = state
+                   .GetOrCreateSegmentState<FetchCache<R>>([&] {
+                     return std::make_unique<FetchCache<R>>(
+                       state.GetOrInsertHandle(segment).Ptr(), segment);
+                   })
+                   .frames;
   auto* data = duckdb::FlatVector::GetDataMutable<typename R::Value>(result);
   constexpr auto kNone = std::numeric_limits<uint64_t>::max();
   idx_t i = 0;

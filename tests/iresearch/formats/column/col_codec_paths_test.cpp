@@ -731,6 +731,44 @@ TEST_F(ColCodecPathsTest, RleReadsRunsOfEveryType) {
   }
 }
 
+TEST_F(ColCodecPathsTest, WideIntegersReadThroughEveryPath) {
+  for (const LogicalType type : {LogicalType::HUGEINT, LogicalType::UHUGEINT}) {
+    const auto name = [&](std::string_view shape) {
+      return absl::StrCat(type.ToString(), " ", shape);
+    };
+    const auto halves = [&](uint64_t k) {
+      return Value::HUGEINT(duckdb::hugeint_t{static_cast<int64_t>(k), Mix(k)})
+        .DefaultCastAs(type);
+    };
+    const auto narrow = [&](uint64_t g) {
+      return Int(type, static_cast<int64_t>((g / 1024) % 4 * 25 + Mix(g) % 16));
+    };
+    Check({name("narrow"), type, CodecType::Ffor, All, narrow});
+    Check({name("narrow with nulls"), type, CodecType::Ffor, Periodic, narrow});
+    Check({name("steps"), type, CodecType::DeltaFfor, All,
+           [&](uint64_t g) { return Int(type, static_cast<int64_t>(g / 3)); }});
+    Check({name("runs"), type, CodecType::RleFfor, All, [&](uint64_t g) {
+             return Int(type, static_cast<int64_t>((g / 37) % 11));
+           }});
+    Check({name("runs with nulls"), type, CodecType::RleFfor, Periodic,
+           [&](uint64_t g) {
+             return Int(type, static_cast<int64_t>((g / 13) % 100));
+           }});
+    Check(
+      {name("runs longer than a vector"), type, CodecType::RleFfor, All,
+       [&](uint64_t g) { return Int(type, static_cast<int64_t>(g / 5000)); }});
+    Check({name("few values"), type, CodecType::DictFfor, All, [&](uint64_t g) {
+             return Int(type, static_cast<int64_t>(Mix(g) % 40 * 1000003));
+           }});
+    Check({name("runs in two halves"), type, CodecType::RleFfor, All,
+           [&](uint64_t g) { return halves((g / 37) % 11); }});
+    Check({name("long runs in two halves"), type, CodecType::RleFfor, All,
+           [&](uint64_t g) { return halves(g / 5000); }});
+    Check({name("few values in two halves"), type, CodecType::DictFfor, All,
+           [&](uint64_t g) { return halves(Mix(g) % 40); }});
+  }
+}
+
 TEST_F(ColCodecPathsTest, NumericCodecsReadEveryTypeThroughEveryPath) {
   const LogicalType types[] = {
     LogicalType::TINYINT,   LogicalType::UTINYINT, LogicalType::SMALLINT,

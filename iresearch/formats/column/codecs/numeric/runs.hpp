@@ -327,6 +327,22 @@ class RunsReader final : public FrameReader<T> {
 
   T FetchApart(uint64_t row, uint64_t) { return this->Get(row); }
 
+  bool RunHolds(uint64_t row, uint64_t count, T& value) {
+    Seek(row);
+    if (_longest < count) {
+      return false;
+    }
+    const auto pos = static_cast<uint32_t>(row - this->_begin);
+    const auto r = RunOf(pos);
+    _hint = r;
+    if (_ends[r] - pos < count) {
+      return false;
+    }
+    value = this->Scaled(_values[r]);
+    return true;
+  }
+
+  static constexpr bool kHasRuns = true;
   static constexpr bool kFiltersRuns = true;
 
   struct Runs {
@@ -429,13 +445,16 @@ class RunsReader final : public FrameReader<T> {
 
   void EndRuns(uint32_t rows) {
     uint64_t total = 0;
+    uint32_t longest = 0;
     for (auto& end : _ends) {
       SDB_ENSURE(end != 0, "numeric codec: corrupted runs");
+      longest = std::max(longest, end);
       total += end;
       end = static_cast<uint32_t>(total);
     }
     SDB_ENSURE(total == rows, "numeric codec: corrupted runs");
     _long_runs = total >= uint64_t{kBurst} * _ends.size();
+    _longest = longest;
     _hint = 0;
   }
 
@@ -472,6 +491,7 @@ class RunsReader final : public FrameReader<T> {
   ScratchVector<U> _values;
   ScratchVector<uint32_t> _ends;
   uint32_t _hint = 0;
+  uint32_t _longest = 0;
   bool _long_runs = false;
 };
 

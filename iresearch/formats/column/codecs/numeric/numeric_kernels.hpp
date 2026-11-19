@@ -628,6 +628,31 @@ U UnpackValue(const uint8_t* packed, unsigned bits, uint32_t index,
 }
 
 template<typename U>
+U UnpackLoneValue(const uint8_t* packed, unsigned bits, uint32_t index,
+                  U base) noexcept {
+  using Word = LaneWord<U>;
+  constexpr unsigned kWordBits = 8 * sizeof(Word);
+  if (bits == 0) {
+    return base;
+  }
+  const unsigned bit = index / kLanes<U> * bits;
+  const auto* at = packed + (size_t{bit / kWordBits} * kLanes<U> +
+                             index % kLanes<U>)*sizeof(Word);
+  const unsigned shift = bit % kWordBits;
+  const bool split = shift + bits > kWordBits;
+  const auto low = duckdb::Load<Word>(at);
+  const auto high =
+    duckdb::Load<Word>(at + (split ? kLanes<U> * sizeof(Word) : 0));
+  const auto carried =
+    static_cast<Word>(static_cast<Word>(high << 1) << (kWordBits - 1 - shift));
+  const auto v = static_cast<Word>(
+    (low >> shift) | (carried & static_cast<Word>(-static_cast<Word>(split))));
+  const Word mask =
+    bits == kWordBits ? ~Word{0} : static_cast<Word>((Word{1} << bits) - 1);
+  return static_cast<U>(static_cast<U>(v & mask) + base);
+}
+
+template<typename U>
 IRS_FORCE_INLINE void Pack(unsigned bits, const U* IRS_RESTRICT in,
                            LaneWord<U>* IRS_RESTRICT out, U base) noexcept {
   [&]<unsigned... W>(std::integer_sequence<unsigned, W...>) IRS_FORCE_INLINE {

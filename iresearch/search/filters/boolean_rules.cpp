@@ -724,6 +724,7 @@ struct OrAcceptorFusionRule {
     field_id field;
     DictRef dict;
     score_t boost;
+    std::optional<ScoreMergeType> merge;
   };
 
   static std::optional<AcceptorInfo> InfoOf(const Filter& child);
@@ -783,7 +784,12 @@ size_t DriverRank(const Filter& filter) noexcept {
 std::optional<OrAcceptorFusionRule::AcceptorInfo> OrAcceptorFusionRule::InfoOf(
   const Filter& child) {
   const auto info = [](const auto& filter) -> std::optional<AcceptorInfo> {
-    return AcceptorInfo{filter.field_id(), filter.dict(), filter.GetBoost()};
+    std::optional<ScoreMergeType> merge;
+    if constexpr (requires { filter.options().merge; }) {
+      merge = filter.options().merge;
+    }
+    return AcceptorInfo{filter.field_id(), filter.dict(), filter.GetBoost(),
+                        merge};
   };
   const auto type = child.type();
   if (type == Type<ByTerm>::id()) {
@@ -905,7 +911,8 @@ bool OrAcceptorFusionRule::Apply(Filter::ptr& slot,
         (scores && child->GetScorer() != scorer)) {
       return false;
     }
-    if (scores && info->boost != boost) {
+    if (scores && (info->boost != boost ||
+                   (info->merge && *info->merge != node.MergeType()))) {
       return false;
     }
     seekable += child->type() == Type<ByPrefix>::id();
@@ -929,6 +936,9 @@ bool OrAcceptorFusionRule::Apply(Filter::ptr& slot,
   AutomatonOptions options{key, PatternKind::Union};
   if (!options.source->ok()) {
     return false;
+  }
+  if (scores) {
+    options.merge = node.MergeType();
   }
   auto fused = std::make_unique<AutomatonFilter>();
   *fused->mutable_field_id() = field;

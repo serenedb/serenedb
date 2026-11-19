@@ -77,4 +77,25 @@ TEST(StripedCounters, ResetZeroesEveryCounter) {
   EXPECT_EQ(counters.Read(0), 2);
 }
 
+TEST(StripedCounters, ResetZeroesTheLinesOfEveryThread) {
+  StripedCounters counters;
+  constexpr int64_t kThreads = 16;
+  const auto add_from_threads = [&] {
+    std::vector<std::jthread> threads;
+    for (int64_t t = 0; t < kThreads; ++t) {
+      threads.emplace_back([&] { counters.Add({1, 2}); });
+    }
+  };
+  add_from_threads();
+  EXPECT_EQ(counters.Read(0), kThreads);
+  counters.Reset();
+  EXPECT_EQ(counters.Read(0), 0);
+  EXPECT_EQ(counters.Read(1), 0);
+  add_from_threads();
+  EXPECT_EQ(counters.Read(1), 2 * kThreads);
+  counters.Reset();
+  EXPECT_EQ(counters.Read(0), 0);
+  EXPECT_EQ(counters.Read(1), 0);
+}
+
 }  // namespace

@@ -57,11 +57,12 @@ struct ByEditDistanceOptions : ByEditDistanceAllOptions {
   using FilterType = ByEditDistance;
 
   size_t max_terms{};
+  ScoreMergeType merge{ScoreMergeType::Max};
 
   bool operator==(const ByEditDistanceOptions& rhs) const noexcept {
     return term == rhs.term && max_distance == rhs.max_distance &&
            with_transpositions == rhs.with_transpositions &&
-           max_terms == rhs.max_terms;
+           max_terms == rhs.max_terms && merge == rhs.merge;
   }
 };
 
@@ -109,6 +110,7 @@ struct LevenshteinAutomatonOptions {
   bool with_transpositions{false};
   bool with_ties{false};
   size_t max_terms{};
+  ScoreMergeType merge{ScoreMergeType::Max};
 
   LevenshteinAutomatonOptions() = default;
   LevenshteinAutomatonOptions(const ParametricDescription& d,
@@ -120,7 +122,8 @@ struct LevenshteinAutomatonOptions {
     return target == rhs.target && utf8_target_size == rhs.utf8_target_size &&
            no_distance == rhs.no_distance &&
            with_transpositions == rhs.with_transpositions &&
-           with_ties == rhs.with_ties && max_terms == rhs.max_terms;
+           with_ties == rhs.with_ties && max_terms == rhs.max_terms &&
+           merge == rhs.merge;
   }
 };
 

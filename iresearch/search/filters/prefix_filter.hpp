@@ -46,8 +46,10 @@ struct ByPrefixOptions : ByPrefixFilterOptions {
   using FilterType = ByPrefix;
   using filter_options = ByPrefixFilterOptions;
 
+  ScoreMergeType merge{ScoreMergeType::Max};
+
   bool operator==(const ByPrefixOptions& rhs) const noexcept {
-    return filter_options::operator==(rhs);
+    return filter_options::operator==(rhs) && merge == rhs.merge;
   }
 };
 
@@ -71,7 +73,7 @@ class ByPrefix : public FilterWithField<ByPrefixOptions> {
   static QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                           const PrepareContext& ctx,
                                           const TermReader* reader,
-                                          const bytes_view term);
+                                          const ByPrefixOptions& options);
 
   PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer,
                                           StatsArena& stats,

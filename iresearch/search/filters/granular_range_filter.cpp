@@ -60,7 +60,7 @@ QueryBuilder::ptr ByGranularRange::PrepareSegment(const SubReader& segment,
   const bstring to =
     has_max ? RangeUpper(rng.max, rng.max_type) : UpperBoundOf(type_tag);
   auto query = memory::make_tracked<MultiTermQuery>(
-    ctx.memory, segment, ctx.memory, ctx.boost, ScoreMergeType::Sum);
+    ctx.memory, segment, ctx.memory, ctx.boost, ScoreMergeType::Max);
   MultiTermVisitor mtv{ctx, query->State(), *reader};
   reader->VisitRange(from, to, [&](bytes_view term, const PostingMeta& meta) {
     mtv.Visit(term, meta, kNoBoost);

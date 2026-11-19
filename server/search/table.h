@@ -71,7 +71,15 @@ constexpr uint64_t OwnRowsId(uint64_t generation) noexcept {
 irs::doc_id_t PieceDocs(const irs::IndexWriter::Transaction& trx) noexcept;
 
 struct PatchedRows {
-  Tick tick = 0;
+  PatchedRows(Tick tick_p, std::shared_ptr<const irs::DocumentMask> rows_p);
+
+  bool Intersects(const irs::DocumentMask& docs, irs::doc_id_t docs_first,
+                  irs::doc_id_t docs_last) const noexcept;
+  std::shared_ptr<const irs::DocumentMask> Rows() const;
+
+  Tick tick;
+  irs::doc_id_t first;
+  irs::doc_id_t last;
   std::shared_ptr<const irs::DocumentMask> rows;
 };
 

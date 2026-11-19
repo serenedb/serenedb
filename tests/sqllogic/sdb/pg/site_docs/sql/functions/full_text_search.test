@@ -1048,6 +1048,42 @@ id	score
 1	0.84187967
 3	0.599651
 
+# DOCS_TEST: pattern_constant_score
+# DOCS_TEST_BODY
+query
+SELECT id, BM25(scored_idx.tableoid) AS score
+FROM scored_idx
+WHERE body @@ ts_starts_with('d')
+ORDER BY id;
+----
+id	score
+4	1
+5	1
+
+# DOCS_TEST: pattern_term_score
+# DOCS_TEST_BODY
+query
+SELECT id, BM25(scored_idx.tableoid) AS score
+FROM scored_idx
+WHERE body @@ ts_starts_with('d')::score('bm25(1.2, 0.75)')
+ORDER BY score DESC, id;
+----
+id	score
+5	0.6213684
+4	0.45580956
+
+# DOCS_TEST: pattern_term_sum
+# DOCS_TEST_BODY
+query
+SELECT id, BM25(scored_idx.tableoid) AS score
+FROM scored_idx
+WHERE body @@ ts_starts_with('d')::score('bm25(1.2, 0.75)')::merge('sum')
+ORDER BY score DESC, id;
+----
+id	score
+5	1.0137732
+4	0.45580956
+
 # DOCS_TEST: ts_phrase_gap
 # DOCS_TEST_BODY
 query

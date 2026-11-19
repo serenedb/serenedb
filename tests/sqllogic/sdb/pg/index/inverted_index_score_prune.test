@@ -435,6 +435,99 @@ missing	extra
 0	0
 
 
+# === A term or a pattern -- top-K equivalence ===
+#
+# A pattern scores its constant once per row, so a pruned disjunction bounds it
+# by that constant. Every lazy row holds fox, so the best rows need the pattern
+# as well as the term; rare_token rows hold no word starting with f, so the term
+# alone fills the top-K and the pattern only adds to the rows it finds; fox is
+# in most rows and weighs little next to the constant of ra*, which leads.
+# Without a tie-break the top-K runs in the scan, pruned on the score-bound
+# index; rows tie, so the two indexes are compared by their top-K scores.
+
+query
+EXPLAIN SELECT round(BM25(prune_big_idx.tableoid), 5) AS score
+FROM prune_big_idx
+WHERE body @@ (ts_phrase('lazy') || ts_starts_with('f'))
+ORDER BY BM25(prune_big_idx.tableoid) DESC LIMIT 100;
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────────╮
+│ Projections: score                               │
+│ ~10,000 rows                                     │
+╰─────────────────────────┬────────────────────────╯
+╭─ IRESEARCH_SCAN ────────┴────────────────────────╮
+│ Index: prune_big_idx                             │
+│ Lookup: search                                   │
+│ Index Filter:                                    │
+│ ╭─ Or ────────────────╮                          │
+│ ╰──────────┬──────────╯                          │
+│            ├────────────────────────╮            │
+│ ╭─ Terms ──┴──────────╮  ╭─ Starts With ───────╮ │
+│ │ Field: body(string) │  │ Field: body(string) │ │
+│ │ Values: 'lazy'      │  │ Prefix: f           │ │
+│ ╰─────────────────────╯  ╰─────────────────────╯ │
+│ Score: bm25(k1=1.2, b=0.75)                      │
+│ Top: 100, optimized                              │
+│ Projections: sdb_inverted_index_score            │
+│ ~10,000 rows                                     │
+╰──────────────────────────────────────────────────╯
+
+
+query
+WITH w AS (SELECT round(BM25(prune_big_idx.tableoid), 5) AS score
+           FROM prune_big_idx
+           WHERE body @@ (ts_phrase('lazy') || ts_starts_with('f'))
+           ORDER BY BM25(prune_big_idx.tableoid) DESC
+           LIMIT 100),
+     p AS (SELECT round(BM25(plain_big_idx.tableoid), 5) AS score
+           FROM plain_big_idx
+           WHERE body @@ (ts_phrase('lazy') || ts_starts_with('f'))
+           ORDER BY BM25(plain_big_idx.tableoid) DESC
+           LIMIT 100)
+SELECT (SELECT COUNT(*) FROM (SELECT * FROM w EXCEPT ALL SELECT * FROM p) d) AS missing,
+       (SELECT COUNT(*) FROM (SELECT * FROM p EXCEPT ALL SELECT * FROM w) d) AS extra;
+----
+missing	extra
+0	0
+
+
+query
+WITH w AS (SELECT round(BM25(prune_big_idx.tableoid), 5) AS score
+           FROM prune_big_idx
+           WHERE body @@ (ts_phrase('rare_token') || ts_starts_with('f'))
+           ORDER BY BM25(prune_big_idx.tableoid) DESC
+           LIMIT 100),
+     p AS (SELECT round(BM25(plain_big_idx.tableoid), 5) AS score
+           FROM plain_big_idx
+           WHERE body @@ (ts_phrase('rare_token') || ts_starts_with('f'))
+           ORDER BY BM25(plain_big_idx.tableoid) DESC
+           LIMIT 100)
+SELECT (SELECT COUNT(*) FROM (SELECT * FROM w EXCEPT ALL SELECT * FROM p) d) AS missing,
+       (SELECT COUNT(*) FROM (SELECT * FROM p EXCEPT ALL SELECT * FROM w) d) AS extra;
+----
+missing	extra
+0	0
+
+
+query
+WITH w AS (SELECT round(BM25(prune_big_idx.tableoid), 5) AS score
+           FROM prune_big_idx
+           WHERE body @@ (ts_phrase('fox') || ts_starts_with('ra'))
+           ORDER BY BM25(prune_big_idx.tableoid) DESC
+           LIMIT 100),
+     p AS (SELECT round(BM25(plain_big_idx.tableoid), 5) AS score
+           FROM plain_big_idx
+           WHERE body @@ (ts_phrase('fox') || ts_starts_with('ra'))
+           ORDER BY BM25(plain_big_idx.tableoid) DESC
+           LIMIT 100)
+SELECT (SELECT COUNT(*) FROM (SELECT * FROM w EXCEPT ALL SELECT * FROM p) d) AS missing,
+       (SELECT COUNT(*) FROM (SELECT * FROM p EXCEPT ALL SELECT * FROM w) d) AS extra;
+----
+missing	extra
+0	0
+
+
 # === Non-engaging shapes still correct on the score-bound index ===
 
 # No LIMIT -- whole result set, ordered. Pruning is impossible (no k);

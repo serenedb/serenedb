@@ -43,6 +43,7 @@
 #include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/string.hpp"
+#include "iresearch/utils/system_compiler.hpp"
 
 namespace irs {
 namespace {
@@ -97,7 +98,7 @@ score_t ScoreOf(DFIMeasure measure, score_t boost, score_t ratio, score_t tf,
     case DFIMeasure::ChiSquared:
       return DFIFormula<DFIMeasure::ChiSquared>{boost, ratio}(tf, dl);
   }
-  return 0.f;
+  SDB_UNREACHABLE();
 }
 
 std::span<const score_t> RatiosOf(const DFIStats& stats) noexcept {
@@ -173,7 +174,7 @@ void DFI::Explain(const ScoreContext& ctx, const explain::SlotStats* stats,
       case DFIMeasure::ChiSquared:
         return "(freq - expected)^2 / expected";
     }
-    return "";
+    SDB_UNREACHABLE();
   }();
   const auto describe = [&](explain::Node& node, score_t ratio) {
     explain::AddBoost(node, ctx.boost);

@@ -467,6 +467,20 @@ TEST_P(ExplainTest, a_branch_keeps_its_own_scorer_or_none) {
   EXPECT_TRUE(saw_raw_boost);
 }
 
+TEST_P(ExplainTest, a_scorer_without_a_breakdown_still_explains_its_value) {
+  BuildFixture();
+  tests::sort::Boost boost;
+  const auto filter = Term("fox");
+  const auto rows = Explain(*filter, boost, 0);
+  ASSERT_EQ(5u, rows.size());
+  for (const auto& row : rows) {
+    EXPECT_EQ("weight", row.key);
+    EXPECT_EQ(boost.ToString(), row.scorer);
+    EXPECT_TRUE(row.expression.empty());
+    EXPECT_TRUE(row.details.empty());
+  }
+}
+
 TEST_P(ExplainTest, a_column_without_frequency_counts_each_match_once) {
   BuildFixture();
   irs::BM25 bm25;

@@ -40,6 +40,7 @@
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/system_compiler.hpp>
 #include <system_error>
 #include <type_traits>
 #include <variant>
@@ -71,8 +72,7 @@ struct Primitive {
     } else if constexpr (std::is_same_v<T, int64_t>) {
       return negative;
     } else {
-      SDB_ASSERT(false);
-      return T{};
+      SDB_UNREACHABLE();
     }
   }
 
@@ -81,8 +81,7 @@ struct Primitive {
   }
 
   duckdb::VariantDecimalData GetDecimalProperties() const noexcept {
-    SDB_ASSERT(false);
-    return {0, 0, nullptr};
+    SDB_UNREACHABLE();
   }
 };
 

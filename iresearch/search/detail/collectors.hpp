@@ -169,7 +169,9 @@ class PrepareCollector {
  public:
   using ptr = std::unique_ptr<PrepareCollector>;
 
-  explicit PrepareCollector(const Scorer* scorer) noexcept : _scorer{scorer} {}
+  explicit PrepareCollector(const Scorer* scorer) noexcept : _scorer{scorer} {
+    SDB_ASSERT(_scorer);
+  }
 
   virtual ~PrepareCollector() = default;
 
@@ -201,8 +203,6 @@ class FieldPrepareCollector : public PrepareCollector {
   TermCollector TermTotal(size_t i) const noexcept {
     return _counters.TotalTerm(i);
   }
-
-  void Finish(StatsArena& stats) override;
 
  protected:
   FieldPrepareCollector(const Scorer* scorer, StatsArena& stats,

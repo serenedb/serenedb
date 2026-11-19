@@ -63,9 +63,6 @@ class MultiTermCollector final : public FieldPrepareCollector {
   }
 
   void Finish(StatsArena& stats) final {
-    if (_scorer == nullptr) {
-      return;
-    }
     const auto field = _counters.TotalField();
     struct Merged {
       TermCollector counter;
@@ -145,9 +142,6 @@ class BlendedTermsCollector final : public FieldPrepareCollector {
   }
 
   void Finish(StatsArena& stats) final {
-    if (_scorer == nullptr) {
-      return;
-    }
     const auto field = _counters.TotalField();
     const auto blended = Blended();
     _scorer->collect(const_cast<byte_type*>(_stats), &field, &blended, stats);

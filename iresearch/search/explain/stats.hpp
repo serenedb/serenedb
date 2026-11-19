@@ -41,7 +41,6 @@ struct SlotStats {
   uint64_t docs_with_field = 0;
   uint64_t total_term_freq = 0;
   std::vector<TermStats> terms;
-  bool phrase = false;
   bool blended = false;
 };
 

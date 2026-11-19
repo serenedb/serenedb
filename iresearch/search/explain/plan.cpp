@@ -59,12 +59,7 @@ Subject SubjectOf(const StatsIndex& index, const byte_type* slot,
   if (const auto* stats = index.Find(slot)) {
     Subject subject{.field = stats->field, .dict = dict};
     for (const auto& term : stats->terms) {
-      if (term.term.empty()) {
-        continue;
-      }
-      if (stats->phrase) {
-        subject.phrase.push_back({.terms = {term.term}});
-      } else {
+      if (!term.term.empty()) {
         subject.terms.push_back(term.term);
       }
     }

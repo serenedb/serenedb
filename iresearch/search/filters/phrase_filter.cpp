@@ -697,7 +697,6 @@ void ByPhrase::ExplainStats(const PrepareCollector* collector,
   }
   const auto& slots = utils::downCast<SlotsCollector>(*collector);
   auto stats = explain::FieldStats(slots, field_id());
-  stats.phrase = true;
   size_t i = 0;
   const auto add = [&](bytes_view term) {
     const auto counts = slots.TermTotal(i++);

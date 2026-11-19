@@ -49,14 +49,6 @@ void FieldCollector::Collect(const TermReader& field) noexcept {
   }
 }
 
-void FieldPrepareCollector::Finish(StatsArena& stats) {
-  if (_scorer == nullptr) {
-    return;
-  }
-  const auto field = _counters.TotalField();
-  _scorer->collect(Mutable(_stats), &field, nullptr, stats);
-}
-
 ByTermsCollector::ByTermsCollector(const Scorer* scorer, size_t size,
                                    StatsArena& stats, uint32_t threads)
   : FieldPrepareCollector{scorer, stats, threads, size, false},
@@ -67,9 +59,6 @@ ByTermsCollector::ByTermsCollector(const Scorer* scorer, size_t size,
 }
 
 void ByTermsCollector::Finish(StatsArena& stats) {
-  if (_scorer == nullptr) {
-    return;
-  }
   const auto field = _counters.TotalField();
   for (size_t i = 0; i != _size; ++i) {
     const auto term = _counters.TotalTerm(i);
@@ -78,9 +67,6 @@ void ByTermsCollector::Finish(StatsArena& stats) {
 }
 
 void SlotsCollector::Finish(StatsArena& stats) {
-  if (_scorer == nullptr) {
-    return;
-  }
   const auto field = _counters.TotalField();
   auto* const slot = Mutable(_stats);
   for (size_t i = 0, n = _counters.Terms(); i != n; ++i) {
@@ -133,9 +119,6 @@ void ExpandedSlotsCollector::VisitExpanded(
 
 void ExpandedSlotsCollector::Finish(StatsArena& stats) {
   SlotsCollector::Finish(stats);
-  if (_scorer == nullptr) {
-    return;
-  }
   const auto field = _counters.TotalField();
   auto* const slot = Mutable(_stats);
   WalkExpanded([&](bytes_view, const TermCollector& counts) {
@@ -144,9 +127,6 @@ void ExpandedSlotsCollector::Finish(StatsArena& stats) {
 }
 
 void AllCollector::Finish(StatsArena& stats) {
-  if (_scorer == nullptr) {
-    return;
-  }
   _scorer->collect(Mutable(_stats), nullptr, nullptr, stats);
 }
 

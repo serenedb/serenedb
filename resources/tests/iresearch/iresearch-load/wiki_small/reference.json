@@ -17546,7 +17546,7 @@
   {
     "query": "climate clim*",
     "count": 87755,
-    "top_100": 87755,
+    "top_100": 962,
     "result_type": "Hash",
     "top_100_result": [
       "5654516f8e89caefc5e7d67a5a45baf50078c91cd8f4ae8c46828b4431ef9786"
@@ -17558,7 +17558,7 @@
   {
     "query": "energy ener*",
     "count": 77353,
-    "top_100": 77353,
+    "top_100": 873,
     "result_type": "Hash",
     "top_100_result": [
       "436793088c6eb91a8f442c4ad192c8d767e38cfccae7f4ec5f6725314eb4b0d1"
@@ -17582,7 +17582,7 @@
   {
     "query": "world stat* histor*",
     "count": 1918328,
-    "top_100": 1918328,
+    "top_100": 47333,
     "result_type": "Hash",
     "top_100_result": [
       "b487530a8946eb85d76bc153d7cd0ee3cf7dff1ad5d6a033a3abd5c9efa33559"
@@ -17858,7 +17858,7 @@
   {
     "query": "world stat* histor* popu*",
     "count": 2162544,
-    "top_100": 2162544,
+    "top_100": 55460,
     "result_type": "Hash",
     "top_100_result": [
       "b2be38c163713195680a064dd8421c72c31f7832d23e50fc3963f7d8a25e9bdd"
@@ -18410,7 +18410,7 @@
   {
     "query": "histor* \"united states\"",
     "count": 1121082,
-    "top_100": 1121082,
+    "top_100": 2013,
     "result_type": "Hash",
     "top_100_result": [
       "29565ae26c6cc4e021a7367541acf5ed9f4f28c0177b3f9904fc0b310eddfe40"

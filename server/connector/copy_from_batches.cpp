@@ -29,9 +29,9 @@
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/common/serializer/async_memory_governor.hpp>
+#include <duckdb/formats/row_ranges.hpp>
 #include <duckdb/main/settings.hpp>
 #include <duckdb/parallel/async_result.hpp>
-#include <duckdb/parallel/scan_read_ahead.hpp>
 #include <duckdb/parallel/task_executor.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/planner/binder.hpp>
@@ -54,7 +54,9 @@ namespace sdb::connector {
 namespace {
 
 constexpr std::string_view kCopyStdinPath = "/dev/stdin";
-constexpr uint64_t kCopyFileRangeBytes = 8 << 20;
+constexpr uint64_t kRangeMinBytes = 1 << 20;
+constexpr uint64_t kTextRangeMaxBytes = 8 << 20;
+constexpr uint64_t kCsvRangeMaxBytes = 2 << 20;
 
 pg::CopyBatchFormat BatchFormatOf(const pg::CopyInTarget& target) {
   if (target.binary) {
@@ -205,8 +207,42 @@ class CopyFileReader {
 
 enum class CopyFromSource : uint8_t {
   Batches,
-  Ranges,
+  Rows,
 };
+
+class FileRowSource final : public duckdb::RowSource {
+ public:
+  FileRowSource(duckdb::FileHandle& file, uint64_t size)
+    : _file{file}, _size{size} {}
+
+  duckdb::idx_t Read(char* data, duckdb::idx_t count,
+                     duckdb::idx_t offset) const final {
+    const auto available = offset < _size ? std::min(count, _size - offset) : 0;
+    if (available != 0) {
+      _file.Read(data, available, offset);
+    }
+    return available;
+  }
+
+ private:
+  duckdb::FileHandle& _file;
+  const uint64_t _size;
+};
+
+duckdb::RowDialect RowDialectOf(const pg::CopyInTarget& target) {
+  return target.csv ? duckdb::RowDialect::PostgresCsv(
+                        target.delim, target.quote, target.escape)
+                    : duckdb::RowDialect::PostgresText(target.delim);
+}
+
+uint64_t RangeBytes(duckdb::ClientContext& context,
+                    const pg::CopyInTarget& target, uint64_t size) {
+  const uint64_t threads =
+    std::max<uint64_t>(duckdb::TaskScheduler::QueryThreads(context), 1);
+  return std::clamp<uint64_t>(
+    size / (threads * 4), kRangeMinBytes,
+    target.csv ? kCsvRangeMaxBytes : kTextRangeMaxBytes);
+}
 
 using Guard = duckdb::annotated_lock_guard<duckdb::annotated_mutex>;
 using Lock = duckdb::annotated_unique_lock<duckdb::annotated_mutex>;
@@ -398,46 +434,40 @@ struct BatchesLocalState final : public CopyFromLocalState {
   size_t next = 0;
 };
 
-struct RangeJobState {
-  uint64_t range = 0;
-  std::string buffer;
-};
-
-using RangeJob = duckdb::ScanReadAheadJobWrapper<RangeJobState>;
-
-struct RangesGlobalState final : public CopyFromGlobalState {
-  RangesGlobalState(duckdb::ClientContext& context,
-                    std::unique_ptr<duckdb::FileHandle> file,
-                    pg::CopyInTarget target, bool ordered)
-    : CopyFromGlobalState{context, CopyFromSource::Ranges, std::move(target),
+struct RowsGlobalState final : public CopyFromGlobalState {
+  RowsGlobalState(duckdb::ClientContext& context,
+                  std::unique_ptr<duckdb::FileHandle> file_p,
+                  pg::CopyInTarget target, bool ordered)
+    : CopyFromGlobalState{context, CopyFromSource::Rows, std::move(target),
                           ordered},
-      file{std::move(file)},
-      size{this->file->GetFileSize()},
-      range_count{(size + kCopyFileRangeBytes - 1) / kCopyFileRangeBytes},
-      read_ahead{duckdb::ScanReadAhead::Create(context)} {
-    if (this->target.csv) {
-      parity = std::make_unique<std::atomic<int8_t>[]>(range_count);
-      for (uint64_t range = 0; range < range_count; ++range) {
-        parity[range].store(-1, std::memory_order_relaxed);
-      }
-    }
+      file{std::move(file_p)},
+      size{file->GetFileSize()},
+      source{*file, size},
+      lexer{RowDialectOf(this->target),
+            this->target.types.size(),
+            std::numeric_limits<duckdb::idx_t>::max(),
+            true,
+            false,
+            true},
+      ranges{lexer, source, 0, size, RangeBytes(context, this->target, size),
+             true} {
+    ranges.path = file->GetPath();
   }
 
-  duckdb::idx_t MaxThreads() const final {
-    return std::max<uint64_t>(range_count, 1);
-  }
+  duckdb::idx_t MaxThreads() const final { return ranges.range_count; }
 
   std::unique_ptr<duckdb::FileHandle> file;
   uint64_t size;
-  uint64_t range_count;
-  std::atomic<uint64_t> next{0};
-  duckdb::unique_ptr<duckdb::ScanReadAhead> read_ahead;
-  std::unique_ptr<std::atomic<int8_t>[]> parity;
+  FileRowSource source;
+  duckdb::RowLexer lexer;
+  duckdb::RowRanges ranges;
 };
 
-struct RangesLocalState final : public CopyFromLocalState {
-  pg::CopyBatch batch;
-  duckdb::unique_ptr<RangeJob> job;
+struct RowsLocalState final : public CopyFromLocalState {
+  std::optional<duckdb::RowRangeReader> reader;
+  duckdb::idx_t range = 0;
+  bool scanning = false;
+  bool decoding = false;
 };
 
 duckdb::OperatorPartitionData CopyFromPartitionData(
@@ -498,286 +528,59 @@ void ScanBatches(duckdb::ClientContext& context,
   output.SetChildCardinality(row);
 }
 
-size_t ReadAt(RangesGlobalState& g, std::string& buffer, uint64_t location,
-              size_t bytes) {
-  bytes = std::min<uint64_t>(bytes, g.size - std::min(location, g.size));
-  const size_t old = buffer.size();
-  buffer.resize(old + bytes);
-  if (bytes != 0) {
-    g.file->Read(buffer.data() + old, bytes, location);
-  }
-  return bytes;
-}
-
-size_t FindCut(std::string_view bytes, size_t from) {
-  for (auto pos = bytes.find('\n', from); pos != std::string_view::npos;
-       pos = bytes.find('\n', pos + 1)) {
-    if (pos == 0 || bytes[pos - 1] != '\\') {
-      return pos;
-    }
-  }
-  return std::string_view::npos;
-}
-
-size_t SkipBlankLines(std::string_view bytes, size_t cut) {
-  for (;;) {
-    if (cut + 1 < bytes.size() && bytes[cut + 1] == '\n') {
-      ++cut;
-    } else if (cut + 2 < bytes.size() && bytes[cut + 1] == '\r' &&
-               bytes[cut + 2] == '\n') {
-      cut += 2;
-    } else {
-      return cut;
-    }
-  }
-}
-
-bool BlankRunOpen(std::string_view bytes, size_t cut) {
-  return cut + 1 == bytes.size() ||
-         (cut + 2 == bytes.size() && bytes[cut + 1] == '\r');
-}
-
-uint64_t RangeFrom(uint64_t range) {
-  const uint64_t begin = range * kCopyFileRangeBytes;
-  return begin == 0 ? 0 : begin - 2;
-}
-
-uint64_t RangeBegin(uint64_t range) { return range * kCopyFileRangeBytes; }
-
-uint64_t RangeEnd(const RangesGlobalState& g, uint64_t range) {
-  return std::min<uint64_t>((range + 1) * kCopyFileRangeBytes, g.size);
-}
-
-void StoreParity(RangesGlobalState& g, uint64_t range, std::string_view bytes) {
-  g.parity[range].store(formats::CsvQuoteParity(bytes, g.target.quote) ? 1 : 0,
-                        std::memory_order_release);
-}
-
-void ReadRange(RangesGlobalState& g, RangeJobState& job) {
-  const uint64_t end = RangeEnd(g, job.range);
-  const uint64_t from = RangeFrom(job.range);
-  job.buffer.clear();
-  ReadAt(g, job.buffer, from, end - from);
-  if (g.parity) {
-    StoreParity(
-      g, job.range,
-      std::string_view{job.buffer}.substr(RangeBegin(job.range) - from));
-  }
-}
-
-bool CsvStartsQuoted(RangesGlobalState& g, uint64_t range) {
-  bool quoted = false;
-  std::string scratch;
-  for (uint64_t earlier = 0; earlier < range; ++earlier) {
-    auto parity = g.parity[earlier].load(std::memory_order_acquire);
-    if (parity < 0) {
-      scratch.clear();
-      ReadAt(g, scratch, RangeBegin(earlier),
-             RangeEnd(g, earlier) - RangeBegin(earlier));
-      StoreParity(g, earlier, scratch);
-      parity = g.parity[earlier].load(std::memory_order_acquire);
-    }
-    quoted ^= parity != 0;
-  }
-  return quoted;
-}
-
-bool CutCsvRange(RangesGlobalState& g, RangeJobState& job,
-                 pg::CopyBatch& batch) {
-  auto& buffer = job.buffer;
-  if (buffer.empty()) {
-    return false;
-  }
-  const auto dialect = CsvDialectOf(g.target);
-  const uint64_t from = RangeFrom(job.range);
-  const size_t begin = RangeBegin(job.range) - from;
-  const size_t end = RangeEnd(g, job.range) - from;
-  const bool quoted = CsvStartsQuoted(g, job.range);
-  size_t first = begin;
-  if (job.range != 0 && (quoted || buffer[begin - 1] != '\n')) {
-    formats::CsvQuoteState state{.in_quote = quoted};
-    const auto cut = formats::CsvRecordEnd(
-      std::string_view{buffer}.substr(0, end), begin, dialect, state);
-    if (cut == std::string_view::npos || cut + 1 >= end) {
-      return false;
-    }
-    first = cut + 1;
-  }
-  formats::CsvQuoteState state{
-    .in_quote =
-      quoted != (g.parity[job.range].load(std::memory_order_acquire) != 0),
-  };
-  size_t stop = end;
-  if (state.in_quote || buffer[end - 1] != '\n') {
-    for (size_t scanned = end;;) {
-      const auto cut = formats::CsvRecordEnd(buffer, scanned, dialect, state);
-      if (cut != std::string_view::npos) {
-        stop = cut + 1;
-        break;
-      }
-      scanned = buffer.size();
-      if (ReadAt(g, buffer, from + scanned, pg::kCopyBatchBytes) == 0) {
-        stop = buffer.size();
-        break;
-      }
-    }
-  }
-  batch.segments.clear();
-  batch.bytes = 0;
-  batch.seq = job.range;
-  batch.AddView(std::string_view{buffer}.substr(first, stop - first));
-  return true;
-}
-
-class RangeReadTask final : public duckdb::AsyncTask {
- public:
-  RangeReadTask(RangesGlobalState& g, RangeJobState& job) : _g{g}, _job{job} {}
-
-  void Execute() final { ReadRange(_g, _job); }
-
-  duckdb::idx_t GetIOSize() const final { return kCopyFileRangeBytes; }
-
- private:
-  RangesGlobalState& _g;
-  RangeJobState& _job;
-};
-
-bool CutRange(RangesGlobalState& g, RangeJobState& job, pg::CopyBatch& batch) {
-  const uint64_t from = RangeFrom(job.range);
-  auto& buffer = job.buffer;
-  if (buffer.empty()) {
-    return false;
-  }
-  size_t first = 0;
-  if (job.range != 0) {
-    auto cut = FindCut(buffer, 1);
-    if (cut == std::string::npos) {
-      return false;
-    }
-    cut = SkipBlankLines(buffer, cut);
-    if (BlankRunOpen(buffer, cut)) {
-      return false;
-    }
-    first = cut + 1;
-  }
-  auto last = FindCut(buffer, buffer.size() - 1);
-  while (last == std::string::npos) {
-    const auto scanned = buffer.size();
-    if (ReadAt(g, buffer, from + scanned, pg::kCopyBatchBytes) == 0) {
-      last = scanned - 1;
-      break;
-    }
-    last = FindCut(buffer, scanned);
-  }
-  for (last = SkipBlankLines(buffer, last);
-       BlankRunOpen(buffer, last) &&
-       ReadAt(g, buffer, from + buffer.size(), pg::kCopyBatchBytes) != 0;
-       last = SkipBlankLines(buffer, last)) {
-  }
-  batch.segments.clear();
-  batch.bytes = 0;
-  batch.seq = job.range;
-  batch.AddView(std::string_view{buffer}.substr(first, last + 1 - first));
-  return true;
-}
-
-duckdb::unique_ptr<RangeJob> ClaimRange(RangesGlobalState& g) {
-  const auto range = g.next.fetch_add(1, std::memory_order_relaxed);
-  if (range >= g.range_count) {
-    return nullptr;
-  }
-  auto job = duckdb::make_uniq<RangeJob>();
-  job->range = range;
-  job->batch_index = range;
-  return job;
-}
-
-bool AcquireRange(duckdb::ClientContext& context,
-                  duckdb::TableFunctionInput& input, RangesGlobalState& g,
-                  RangesLocalState& l) {
-  if (!g.read_ahead) {
-    l.job = ClaimRange(g);
-    if (l.job) {
-      ReadRange(g, *l.job);
-    }
-    return static_cast<bool>(l.job);
-  }
-  duckdb::unique_ptr<duckdb::ScanReadAheadJob> claimed;
-  const auto acquired = g.read_ahead->AcquireJob(
-    context, input,
-    [&](duckdb::vector<duckdb::unique_ptr<duckdb::AsyncTask>>& io_tasks)
-      -> duckdb::unique_ptr<duckdb::ScanReadAheadJob> {
-      auto job = ClaimRange(g);
-      if (job) {
-        io_tasks.emplace_back(duckdb::make_uniq<RangeReadTask>(g, *job));
-      }
-      return job;
-    },
-    claimed);
-  if (acquired == duckdb::ScanReadAheadAcquire::EXHAUSTED) {
-    return false;
-  }
-  l.job = duckdb::unique_ptr_cast<duckdb::ScanReadAheadJob, RangeJob>(
-    std::move(claimed));
-  return acquired == duckdb::ScanReadAheadAcquire::ACQUIRED;
-}
-
-bool NextRange(duckdb::ClientContext& context,
-               duckdb::TableFunctionInput& input, RangesGlobalState& g,
-               RangesLocalState& l) {
-  for (;;) {
-    if (!l.job) {
-      if (!AcquireRange(context, input, g, l)) {
-        return false;
-      }
-    } else if (l.job->io_completion) {
-      g.read_ahead->WaitForJob(*l.job);
-    }
-    if (g.target.csv ? CutCsvRange(g, *l.job, l.batch)
-                     : CutRange(g, *l.job, l.batch)) {
-      l.batch_index = l.job->batch_index;
-      return true;
-    }
-    g.lines.Finish(l.job->range, 0, {});
-    l.job.reset();
-  }
-}
-
-void ScanRanges(duckdb::ClientContext& context,
-                duckdb::TableFunctionInput& input, duckdb::DataChunk& output) {
-  auto& g = input.global_state->Cast<RangesGlobalState>();
-  auto& l = input.local_state->Cast<RangesLocalState>();
+void ScanRows(duckdb::ClientContext& context, duckdb::TableFunctionInput& input,
+              duckdb::DataChunk& output) {
+  auto& g = input.global_state->Cast<RowsGlobalState>();
+  auto& l = input.local_state->Cast<RowsLocalState>();
   auto& parser = StartWorker(context, g, l);
   if (parser.Failed()) {
     output.SetChildCardinality(0);
     LocateError(g, input, parser);
     return;
   }
+  if (!l.reader) {
+    l.reader.emplace(g.ranges);
+  }
+  auto& reader = *l.reader;
   duckdb::idx_t row = 0;
   while (row < STANDARD_VECTOR_SIZE) {
-    if (!parser.Active()) {
+    if (!l.scanning) {
       if (row != 0) {
         break;
       }
-      if (!NextRange(context, input, g, l)) {
-        if (input.async_result.GetResultType() !=
-            duckdb::AsyncResultType::BLOCKED) {
-          FinishWorker(context, g, l);
-        }
+      if (!g.ranges.Claim(l.range)) {
+        FinishWorker(context, g, l);
         break;
       }
-      parser.Start(l.batch);
+      reader.Start(l.range, true, false, false);
+      l.batch_index = l.range;
+      l.scanning = true;
+      l.decoding = false;
     }
-    row = parser.Parse(output, row);
-    if (parser.Failed()) {
-      output.SetChildCardinality(0);
-      LocateError(g, input, parser);
-      return;
+    const auto result = reader.Advance(STANDARD_VECTOR_SIZE - row);
+    if (result == duckdb::RowReadResult::ROWS ||
+        result == duckdb::RowReadResult::FLUSH) {
+      if (!std::exchange(l.decoding, true)) {
+        parser.StartLexed(l.range);
+      }
+      const auto rows =
+        std::min<duckdb::idx_t>(reader.Ready(), STANDARD_VECTOR_SIZE - row);
+      row = parser.ParseLexed(output, row, reader, rows);
+      reader.Emit(rows);
+      if (parser.Failed()) {
+        output.SetChildCardinality(0);
+        LocateError(g, input, parser);
+        return;
+      }
+      continue;
     }
-    if (parser.Exhausted()) {
+    if (l.decoding) {
       FinishUnit(g, parser);
-      l.job.reset();
+    } else {
+      g.lines.Finish(l.range, 0, {});
     }
+    g.ranges.Finish(l.range);
+    l.scanning = false;
   }
   output.SetChildCardinality(row);
 }
@@ -840,21 +643,20 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> InitCopyFromGlobal(
                        duckdb::FileFlags::FILE_FLAGS_PARALLEL_ACCESS) |
     compression;
   auto file = duckdb::FileSystem::GetFileSystem(context).OpenFile(path, flags);
-  if (target.binary || !file->CanSeek() ||
-      target.encoding != formats::TextEncoding::Utf8 ||
-      (target.csv && target.escape != target.quote)) {
+  if (target.binary || target.types.empty() || !file->CanSeek() ||
+      target.encoding != formats::TextEncoding::Utf8) {
     return duckdb::make_uniq<BatchesGlobalState>(context, std::move(file),
                                                  std::move(target), ordered);
   }
-  return duckdb::make_uniq<RangesGlobalState>(context, std::move(file),
-                                              std::move(target), ordered);
+  return duckdb::make_uniq<RowsGlobalState>(context, std::move(file),
+                                            std::move(target), ordered);
 }
 
 duckdb::unique_ptr<duckdb::LocalTableFunctionState> InitCopyFromLocal(
   duckdb::ExecutionContext&, duckdb::TableFunctionInitInput&,
   duckdb::GlobalTableFunctionState* global) {
-  if (global->Cast<CopyFromGlobalState>().source == CopyFromSource::Ranges) {
-    return duckdb::make_uniq<RangesLocalState>();
+  if (global->Cast<CopyFromGlobalState>().source == CopyFromSource::Rows) {
+    return duckdb::make_uniq<RowsLocalState>();
   }
   return duckdb::make_uniq<BatchesLocalState>();
 }
@@ -863,8 +665,8 @@ void ScanCopyFrom(duckdb::ClientContext& context,
                   duckdb::TableFunctionInput& input,
                   duckdb::DataChunk& output) {
   if (input.global_state->Cast<CopyFromGlobalState>().source ==
-      CopyFromSource::Ranges) {
-    ScanRanges(context, input, output);
+      CopyFromSource::Rows) {
+    ScanRows(context, input, output);
   } else {
     ScanBatches(context, input, output);
   }

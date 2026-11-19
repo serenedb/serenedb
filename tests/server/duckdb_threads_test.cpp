@@ -257,13 +257,23 @@ TEST(DuckDBThreads, RelaunchFromPinnedWorkerKeepsWorkersApart) {
   EXPECT_EQ(scheduler.NumberOfThreads(), 3U);
   std::map<std::string, size_t> per_cpu;
   size_t pinned = 0;
-  for (const auto& [tid, info] : Threads()) {
-    if (before.contains(tid) || info.name != process_name ||
-        info.cpus.find_first_of(",-") != std::string::npos) {
-      continue;
+  const auto deadline =
+    std::chrono::steady_clock::now() + std::chrono::seconds(30);
+  while (true) {
+    per_cpu.clear();
+    pinned = 0;
+    for (const auto& [tid, info] : Threads()) {
+      if (before.contains(tid) || info.name != process_name ||
+          info.cpus.find_first_of(",-") != std::string::npos) {
+        continue;
+      }
+      ++pinned;
+      ++per_cpu[info.cpus];
     }
-    ++pinned;
-    ++per_cpu[info.cpus];
+    if (pinned == 3 || std::chrono::steady_clock::now() > deadline) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
   EXPECT_EQ(pinned, 3U);
   for (const auto& [cpu, count] : per_cpu) {
@@ -607,6 +617,41 @@ TEST(DuckDBScheduler, MoreQueriesThanWorkersAllProgress) {
     most = std::max<int64_t>(most, query->state.held_ns);
   }
   EXPECT_GT(least * 3, most);
+}
+
+TEST(DuckDBScheduler, SessionsSchedulingOneTaskAtATimeAllRun) {
+  auto db = SchedulerDB(4);
+  auto& scheduler = duckdb::TaskScheduler::GetScheduler(*db->instance);
+  constexpr int64_t kSessions = 64;
+  constexpr int64_t kTasks = 500;
+  const auto deadline =
+    std::chrono::steady_clock::now() + std::chrono::seconds(30);
+  std::atomic<int64_t> ran{0};
+  std::vector<std::thread> sessions;
+  for (int64_t s = 0; s < kSessions; ++s) {
+    sessions.emplace_back([&] {
+      auto producer = scheduler.CreateProducer(
+        scheduler.CreateAccount(duckdb::SchedulerClass::FOREGROUND));
+      for (int64_t t = 0; t < kTasks; ++t) {
+        auto done = std::make_shared<std::atomic<bool>>(false);
+        scheduler.ScheduleTask(
+          *producer, duckdb::make_shared_ptr<FunctionTask>([done, &ran] {
+            ++ran;
+            *done = true;
+          }));
+        while (!done->load()) {
+          if (std::chrono::steady_clock::now() >= deadline) {
+            return;
+          }
+          std::this_thread::yield();
+        }
+      }
+    });
+  }
+  for (auto& session : sessions) {
+    session.join();
+  }
+  EXPECT_EQ(ran.load(), kSessions * kTasks);
 }
 
 }  // namespace

@@ -230,6 +230,7 @@ class ConnectionContext final : public duckdb::ClientContext {
   const std::shared_ptr<pg::ProgressSource>& ProgressSource() const noexcept {
     return _progress;
   }
+  void ReportIdle();
 
   int copy_stdin_open_count = 0;
   bool copy_stdin_done = false;

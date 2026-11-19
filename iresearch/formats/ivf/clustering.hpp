@@ -29,6 +29,7 @@
 
 #include "faiss/VectorTransform.h"
 #include "iresearch/formats/column/column_reader.hpp"
+#include "iresearch/formats/ivf/ivf_cuda.hpp"
 #include "iresearch/index/column_info.hpp"
 
 namespace irs {
@@ -63,12 +64,14 @@ std::vector<float> TrainCentroids(VectorMetric metric, const float* data,
                                   uint32_t seed, uint32_t niter = 8,
                                   uint32_t nredo = 1,
                                   ClusteringAlgo algo = ClusteringAlgo::Auto,
-                                  const float* rotation = nullptr);
+                                  const float* rotation = nullptr,
+                                  IvfCudaIndex* assignment = nullptr);
 
 void AssignNearestGrouped(VectorMetric metric, std::span<const float> centroids,
                           size_t d, std::span<float> data,
                           std::span<size_t> ids, std::span<size_t> perm = {},
-                          std::span<std::span<const float>> gathered = {});
+                          std::span<std::span<const float>> gathered = {},
+                          IvfCudaIndex* assignment = nullptr);
 
 // Streams the vector column row-batch by row-batch. `vector_column` is the
 // parent ARRAY(FLOAT,d) reader; each batch is materialized through the modern

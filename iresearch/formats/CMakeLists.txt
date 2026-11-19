@@ -54,3 +54,13 @@ target_sources(
         ivf/quantizers/scalar.cpp
         ivf/quantizers/tq.cpp
 )
+
+if(SDB_IVF_BUILD_CUDA)
+    target_sources(iresearch PRIVATE ivf/ivf_cuda.cpp)
+    set_source_files_properties(
+        "${CMAKE_CURRENT_SOURCE_DIR}/ivf/ivf_writer.cpp"
+        TARGET_DIRECTORY iresearch
+        PROPERTIES COMPILE_DEFINITIONS SDB_IVF_BUILD_CUDA=1
+    )
+    target_link_libraries(iresearch PRIVATE sdb_ivf_cuda)
+endif()

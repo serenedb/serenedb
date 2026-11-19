@@ -1,0 +1,41 @@
+statement ok
+SET sdb_ivf_posting_size = 8;
+
+statement ok
+SET sdb_ivf_sample_factor = 1;
+
+statement ok
+CREATE TABLE ivf_ip_rows (id INTEGER PRIMARY KEY, emb FLOAT[4])
+  WITH (compaction_interval = 0);
+
+statement ok
+INSERT INTO ivf_ip_rows
+SELECT i, CASE WHEN i < 32
+  THEN [(i + 1)::FLOAT, 0, 1, 0]::FLOAT[4]
+  ELSE [0, (i + 1)::FLOAT, 1, 0]::FLOAT[4]
+END
+FROM range(64) AS t(i);
+
+statement ok
+CREATE INDEX ivf_ip_index ON ivf_ip_rows
+  USING inverted (id, emb ivf (metric = 'ip', quant = 'none'));
+
+statement ok
+VACUUM (FLUSH_INDEX) ivf_ip_index;
+
+statement ok
+SET sdb_ivf_search_nprobe = 64;
+
+query
+WITH exact AS (
+  SELECT id, emb <#> [1, 0, 0, 0]::FLOAT[4] AS distance
+  FROM ivf_ip_rows ORDER BY distance LIMIT 10
+), indexed AS (
+  SELECT id, emb <#> [1, 0, 0, 0]::FLOAT[4] AS distance
+  FROM ivf_ip_index ORDER BY distance LIMIT 10
+)
+SELECT count(*) AS matching
+FROM exact JOIN indexed USING (id, distance);
+----
+matching
+10

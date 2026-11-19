@@ -163,6 +163,7 @@ struct BuildSettings {
   size_t max_fanout;
   VectorMetric metric;
   size_t niter;
+  IvfCudaIndex* assignment;
 
   bool IsLeaf(size_t sample_size) const noexcept {
     return sample_size <= posting_size;
@@ -199,13 +200,15 @@ size_t RemoveEmptyCentroids(std::vector<float>& centroids,
 }
 
 auto BuildAndSplit(std::span<float> data, size_t d, std::span<size_t> ids,
-                   size_t n_clusters, VectorMetric metric, size_t niter,
+                   size_t n_clusters, const BuildSettings& settings,
                    const float* rotation) {
   auto centroids = TrainCentroids(
-    metric, data.data(), data.size() / d, static_cast<uint32_t>(n_clusters),
-    static_cast<uint32_t>(d), kTrainSeed, static_cast<uint32_t>(niter),
-    static_cast<uint32_t>(kClusterRedos), ClusteringAlgo::Auto, rotation);
-  AssignNearestGrouped(metric, centroids, d, data, ids);
+    settings.metric, data.data(), data.size() / d,
+    static_cast<uint32_t>(n_clusters), static_cast<uint32_t>(d), kTrainSeed,
+    static_cast<uint32_t>(settings.niter), kClusterRedos, ClusteringAlgo::Auto,
+    rotation, settings.assignment);
+  AssignNearestGrouped(settings.metric, centroids, d, data, ids, {}, {},
+                       settings.assignment);
   RemoveEmptyCentroids(centroids, ids, d);
   return centroids;
 }
@@ -268,8 +271,8 @@ void Build(std::vector<CentroidsBuilder::Node>& nodes, std::span<float> data,
     }
     const size_t n_clusters = settings.Fanout(sample_size);
     auto centroids =
-      BuildAndSplit(entry.sample, d, entry.ids, n_clusters, settings.metric,
-                    settings.niter, rotation_for(sample_size, n_clusters));
+      BuildAndSplit(entry.sample, d, entry.ids, n_clusters, settings,
+                    rotation_for(sample_size, n_clusters));
     size_t n_built = centroids.size() / d;
 
     if (n_built == 1) {
@@ -496,12 +499,13 @@ void CentroidsTree::Search(std::span<const float> query,
 }
 
 void CentroidsBuilder::BuildTree(std::vector<float> sample, size_t leaf_size,
-                                 size_t max_fanout) {
+                                 size_t max_fanout, IvfCudaIndex* assignment) {
   BuildSettings settings{
     .posting_size = std::max<size_t>(1, leaf_size),
     .max_fanout = max_fanout,
     .metric = _metric,
     .niter = kClusterIters,
+    .assignment = assignment,
   };
   const size_t n = sample.size() / _d;
   std::vector<size_t> ids(n);
@@ -516,16 +520,14 @@ void CentroidsBuilder::BuildTree(std::vector<float> sample, size_t leaf_size,
   }
 }
 
-CentroidsBuilder CentroidsBuilder::BuildFromSample(std::vector<float> sample,
-                                                   uint32_t d,
-                                                   VectorMetric metric,
-                                                   size_t leaf_size,
-                                                   size_t max_fanout) {
+CentroidsBuilder CentroidsBuilder::BuildFromSample(
+  std::vector<float> sample, uint32_t d, VectorMetric metric, size_t leaf_size,
+  size_t max_fanout, IvfCudaIndex* assignment) {
   CentroidsBuilder builder;
   builder._metric = metric;
   builder._d = d;
   builder.BuildTree(std::move(sample), leaf_size,
-                    max_fanout != 0 ? max_fanout : kMaxFanout);
+                    max_fanout != 0 ? max_fanout : kMaxFanout, assignment);
   return builder;
 }
 
@@ -550,7 +552,14 @@ CentroidsBuilder CentroidsBuilder::Create(const ColumnReader& vector_column,
           1, static_cast<size_t>(static_cast<double>(sample_size) / rows * t));
   auto sample =
     GatherTrainingSample(vector_column, rows, d, ctx, sample_size, kTrainSeed);
-  return BuildFromSample(std::move(sample), d, metric, tau, params.max_fanout);
+  using Clock = std::chrono::steady_clock;
+  const auto start = params.training_time ? Clock::now() : Clock::time_point{};
+  auto builder = BuildFromSample(std::move(sample), d, metric, tau,
+                                 params.max_fanout, params.assignment);
+  if (params.training_time) {
+    *params.training_time = Clock::now() - start;
+  }
+  return builder;
 }
 
 CentroidsBuilder CentroidsBuilder::CreateFromSample(
@@ -558,7 +567,7 @@ CentroidsBuilder CentroidsBuilder::CreateFromSample(
   const CentroidsBuildParams& params) {
   SDB_ASSERT(params.posting_size > 0);
   return BuildFromSample(std::move(sample), d, metric, params.posting_size,
-                         params.max_fanout);
+                         params.max_fanout, params.assignment);
 }
 
 CentroidsSpan CentroidsBuilder::Serialize(duckdb::WriteStream& out) const {
@@ -643,11 +652,11 @@ CentroidsSpan CentroidsBuilder::Serialize(duckdb::WriteStream& out) const {
 
 void CentroidsBuilder::AssignCentroidsImpl(
   size_t node_index, std::span<float> data, size_t d, std::span<size_t> ids,
-  std::span<size_t> perm,
-  std::span<std::span<const float>> centroids_out) const {
+  std::span<size_t> perm, std::span<std::span<const float>> centroids_out,
+  IvfCudaIndex* assignment) const {
   const auto& node = _nodes[node_index];
   AssignNearestGrouped(_metric, node.centroids, d, data, ids, perm,
-                       centroids_out);
+                       centroids_out, assignment);
   ForEachGroup(ids, node.Rows(d), [&](size_t i, size_t start, size_t count) {
     if (node.children[i] == 0) {
       absl::c_fill(ids.subspan(start, count), _row_bases[node_index] + i);
@@ -658,13 +667,15 @@ void CentroidsBuilder::AssignCentroidsImpl(
                         perm.empty() ? perm : perm.subspan(start, count),
                         centroids_out.empty()
                           ? centroids_out
-                          : centroids_out.subspan(start, count));
+                          : centroids_out.subspan(start, count),
+                        assignment);
   });
 }
 
 AssignedCentroids CentroidsBuilder::AssignCentroids(
   std::span<float> data, size_t d,
-  std::span<std::span<const float>> centroids_out) const {
+  std::span<std::span<const float>> centroids_out,
+  IvfCudaIndex* assignment) const {
   const size_t n = data.size() / d;
   AssignedCentroids result;
   result.ids.resize(n);
@@ -673,7 +684,8 @@ AssignedCentroids CentroidsBuilder::AssignCentroids(
   if (_nodes.empty()) {
     return result;
   }
-  AssignCentroidsImpl(0, data, d, result.ids, result.perm, centroids_out);
+  AssignCentroidsImpl(0, data, d, result.ids, result.perm, centroids_out,
+                      assignment);
   return result;
 }
 

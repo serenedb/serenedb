@@ -105,6 +105,15 @@ option(
 )
 
 option(SDB_EMBEDDED_DOCS "embed the documentation from docs/ into serenedb" ON)
+option(
+    SDB_IVF_BUILD_CUDA
+    "use CUDA to build uncompressed inner-product IVF indexes"
+    OFF
+)
+
+if(SDB_IVF_BUILD_CUDA AND NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    message(FATAL_ERROR "SDB_IVF_BUILD_CUDA requires Linux")
+endif()
 
 option(
     SDB_TPC_EXTENSIONS
@@ -262,6 +271,10 @@ option(
 )
 
 option(SDB_STATIC "link executables statically" OFF)
+
+if(SDB_IVF_BUILD_CUDA AND SDB_STATIC)
+    message(FATAL_ERROR "SDB_IVF_BUILD_CUDA requires SDB_STATIC=OFF")
+endif()
 
 option(
     SDB_VTUNE

@@ -81,12 +81,14 @@ std::vector<float> RunSuperKMeans(const float* data, size_t n, uint32_t k,
 
 std::vector<float> RunLloyd(const float* data, size_t n, uint32_t k, uint32_t d,
                             uint32_t seed, uint32_t niter, uint32_t nredo,
-                            bool spherical = false) {
+                            bool spherical, IvfCudaIndex* assignment) {
   faiss::ClusteringParameters cp;
   ConfigureClusteringParams(cp, niter, nredo, seed, n, k);
   cp.spherical = spherical;
   faiss::Clustering clus(static_cast<int>(d), static_cast<int>(k), cp);
-  if (spherical) {
+  if (assignment) {
+    assignment->TrainClustering(clus, static_cast<faiss::idx_t>(n), data);
+  } else if (spherical) {
     faiss::IndexFlatIP index(static_cast<int>(d));
     clus.train(static_cast<faiss::idx_t>(n), data, index);
   } else {
@@ -244,7 +246,8 @@ void KeepTrainableRows(std::vector<float>& rows, size_t d) {
 std::vector<float> TrainCentroids(VectorMetric metric, const float* data,
                                   size_t n, uint32_t k, uint32_t d,
                                   uint32_t seed, uint32_t niter, uint32_t nredo,
-                                  ClusteringAlgo algo, const float* rotation) {
+                                  ClusteringAlgo algo, const float* rotation,
+                                  IvfCudaIndex* assignment) {
   if (n == 0 || k == 0) {
     return {};
   }
@@ -252,7 +255,7 @@ std::vector<float> TrainCentroids(VectorMetric metric, const float* data,
   k = static_cast<uint32_t>(std::min<size_t>(k, n));
   const bool angular = VectorMetricIsAngular(metric);
   if (!use_skm) {
-    return RunLloyd(data, n, k, d, seed, niter, nredo, /*spherical=*/angular);
+    return RunLloyd(data, n, k, d, seed, niter, nredo, angular, assignment);
   }
   auto centroids = RunSuperKMeans(data, n, k, d, seed, niter, nredo, rotation);
   if (angular) {
@@ -321,7 +324,8 @@ void AssignNearest(VectorMetric metric, const float* data, size_t n,
 void AssignNearestGrouped(VectorMetric metric, std::span<const float> centroids,
                           size_t d, std::span<float> data,
                           std::span<size_t> ids, std::span<size_t> perm,
-                          std::span<std::span<const float>> gathered) {
+                          std::span<std::span<const float>> gathered,
+                          IvfCudaIndex* assignment) {
   const size_t n = data.size() / d;
   const size_t k = centroids.size() / d;
   SDB_ASSERT(ids.size() * d == data.size());
@@ -332,8 +336,22 @@ void AssignNearestGrouped(VectorMetric metric, std::span<const float> centroids,
     return;
   }
   std::vector<uint32_t> assign;
-  AssignNearest(metric, data.data(), n, centroids.data(),
-                static_cast<uint32_t>(k), static_cast<uint32_t>(d), assign);
+  if (assignment && k > 1) {
+    SDB_ASSERT(metric == VectorMetric::InnerProduct);
+    assignment->reset();
+    assignment->add(static_cast<faiss::idx_t>(k), centroids.data());
+    std::vector<faiss::idx_t> indexes(n);
+    std::vector<float> distances(n);
+    assignment->search(static_cast<faiss::idx_t>(n), data.data(), 1,
+                       distances.data(), indexes.data());
+    assign.resize(n);
+    for (size_t i = 0; i < n; ++i) {
+      assign[i] = indexes[i] < 0 ? 0 : static_cast<uint32_t>(indexes[i]);
+    }
+  } else {
+    AssignNearest(metric, data.data(), n, centroids.data(),
+                  static_cast<uint32_t>(k), static_cast<uint32_t>(d), assign);
+  }
 
   std::vector<size_t> cursor(k, 0);
   for (const uint32_t a : assign) {

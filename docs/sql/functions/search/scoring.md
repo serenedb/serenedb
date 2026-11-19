@@ -328,7 +328,7 @@ The explanation is a tree of objects, and clients receive it as `json`. Every ob
 | `phrase`, `slop` | A phrase's words in order: `null` for each word the phrase skips, `{"min": m, "max": n}` for a gap of `m` to `n` words, and an array for a position several words can fill, such as the words a prefix in the phrase expanded to. `slop` is the slop of a sloppy phrase. |
 | `scorer` | The scorer function of a clause, such as `bm25(k1=1.2, b=0.75)`. |
 | `scored` | `false` for a clause excluded from scoring with [`::score(NULL)`](#score-modifier): it matched and added nothing. |
-| `note` | Why a clause scores `0`, or only its boost, without an expression. |
+| `note` | Why a clause scores `0`, or only its boost, without an expression; on an input, how it was counted, such as a `dl` of `1` on a column without the [`norm`](#requirements) flag. |
 
 Read one part with dots and 1-based array indexes, and cast it where a plain value is needed:
 

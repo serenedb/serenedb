@@ -39,7 +39,7 @@
 namespace irs::top {
 
 template<typename P>
-Root::ptr MakePrunedConjunctionIn(
+Root::ptr PrunedConjunctionMaker<P>::Make(
   std::span<const irs::detail::PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters, irs::detail::Terms uniformity,
   std::span<const irs::detail::PostingClause> excludes,
@@ -49,7 +49,7 @@ Root::ptr MakePrunedConjunctionIn(
     return {};
   }
   if (!filters.empty()) {
-    return MakeNestedPrunedConjunctionIn<P>(
+    return NestedPrunedConjunctionMaker<P>::Make(
       terms, filters, excludes, exclude_filters, segment, ctx, merge);
   }
   if (terms.size() < 2 || uniformity != irs::detail::Terms::Bounded) {
@@ -115,11 +115,3 @@ Root::ptr MakePrunedConjunctionIn(
 }
 
 }  // namespace irs::top
-
-#define IRS_MAKE_PRUNED_CONJUNCTION(...)                                  \
-  template Root::ptr MakePrunedConjunctionIn<__VA_ARGS__>(                \
-    std::span<const irs::detail::PostingClause>,                          \
-    std::span<const QueryBuilder::ptr>, irs::detail::Terms,               \
-    std::span<const irs::detail::PostingClause>,                          \
-    std::span<const QueryBuilder::ptr>, const SubReader&, const Context&, \
-    ScoreMergeType)

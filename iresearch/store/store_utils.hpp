@@ -256,12 +256,10 @@ enum class InputKey : uint8_t {
 };
 
 struct InputAxis : Axis<InputKey::Mapped, InputKey::Stream> {
-  static constexpr InputKey Of(DataInput::Type type) noexcept {
-    return type == DataInput::Type::BytesViewInput ? InputKey::Mapped
-                                                   : InputKey::Stream;
+  static InputKey Of(const IndexInput& in) noexcept {
+    return in.GetType() == DataInput::Type::BytesViewInput ? InputKey::Mapped
+                                                           : InputKey::Stream;
   }
-
-  static InputKey Of(const IndexInput& in) noexcept { return Of(in.GetType()); }
 
   static InputKey Of(const IndexInput* in) noexcept {
     return in ? Of(*in) : InputKey::Stream;

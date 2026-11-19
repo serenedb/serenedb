@@ -140,9 +140,8 @@ Result<Family> MakeConjunction(
                : Family::MakePosting(must.front(), segment, ctx, merge);
     }
     if constexpr (!kScoredPlan<Family, Ctx>) {
-      if (auto windowed =
-            MakeWindowConjunction<Family, P>(must, must_filters, segment,
-                                                  ctx)) {
+      if (auto windowed = MakeWindowConjunction<Family, P>(must, must_filters,
+                                                           segment, ctx)) {
         return windowed;
       }
       if (!must_filters.empty()) {
@@ -193,14 +192,14 @@ Result<Family> MakeConjunction(
   });
 }
 
-template<typename Family, typename P, typename Ctx>
-Result<Family> MakeRequired(std::span<const PostingClause> must,
-                            std::span<const QueryBuilder::ptr> must_filters,
-                            std::span<const PostingClause> should,
-                            std::span<const QueryBuilder::ptr> should_filters,
-                            Terms uniformity, uint32_t min_match,
-                            const SubReader& segment, const Ctx& ctx,
-                            ScoreMergeType merge, score_t absorbed) {
+template<typename Family, typename Ctx, typename P>
+Result<Family> RequiredMaker<Family, Ctx, P>::Make(
+  std::span<const PostingClause> must,
+  std::span<const QueryBuilder::ptr> must_filters,
+  std::span<const PostingClause> should,
+  std::span<const QueryBuilder::ptr> should_filters, Terms uniformity,
+  uint32_t min_match, const SubReader& segment, const Ctx& ctx,
+  ScoreMergeType merge, score_t absorbed) {
   const bool optional = (!should.empty() || !should_filters.empty()) &&
                         (kScoredPlan<Family, Ctx> || min_match != 0);
   if (must.empty() && must_filters.empty() && (!optional || min_match != 0)) {
@@ -210,14 +209,14 @@ Result<Family> MakeRequired(std::span<const PostingClause> must,
     const auto scoring = ScoringFor<Family>(segment, ctx, merge, uniformity);
     if (min_match == 1) {
       return MakeDisjunction<Family, P>(should, should_filters, nullptr,
-                                             segment, scoring, ctx, absorbed);
+                                        segment, scoring, ctx, absorbed);
     }
-    return MakeThreshold<Family, P>(should, should_filters, segment,
-                                         min_match, scoring, ctx, absorbed);
+    return MakeThreshold<Family, P>(should, should_filters, segment, min_match,
+                                    scoring, ctx, absorbed);
   }
-  return MakeConjunction<Family, P>(must, must_filters, should,
-                                         should_filters, uniformity, min_match,
-                                         segment, ctx, merge, absorbed);
+  return MakeConjunction<Family, P>(must, must_filters, should, should_filters,
+                                    uniformity, min_match, segment, ctx, merge,
+                                    absorbed);
 }
 
 }  // namespace irs::detail::builder

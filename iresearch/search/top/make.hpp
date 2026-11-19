@@ -72,15 +72,13 @@ Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx);
 Root::ptr MakeEmpty();
 
 template<irs::detail::PhraseMatch M, typename Query>
-Root::ptr MakePhrasePruned(const Query& query, const Context& ctx);
-
-template<irs::detail::PhraseMatch M, typename Query>
-UnionMember::ptr MakePhraseMember(const Query& query, const Context& ctx);
+struct PhraseMaker {
+  static Root::ptr Pruned(const Query& query, const Context& ctx);
+  static UnionMember::ptr Member(const Query& query, const Context& ctx);
+  static PrunedClause::ptr Clause(const Query& query, const Context& ctx);
+};
 
 UnionMember::ptr MakeUnionMember(const QueryBuilder& query, const Context& ctx);
-
-template<irs::detail::PhraseMatch M, typename Query>
-PrunedClause::ptr MakePhraseClause(const Query& query, const Context& ctx);
 
 PrunedClause::ptr MakeConjunctionClause(const QueryBuilder& query,
                                         const Context& ctx);
@@ -102,28 +100,36 @@ Root::ptr MakePrunedReqOpt(const irs::detail::PostingClause& required,
                            ScoreMergeType merge);
 
 template<typename P>
-Root::ptr MakePrunedConjunctionIn(
-  std::span<const irs::detail::PostingClause> terms,
-  std::span<const QueryBuilder::ptr> filters, irs::detail::Terms uniformity,
-  std::span<const irs::detail::PostingClause> excludes,
-  std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
-  const Context& ctx, ScoreMergeType merge);
+struct PrunedConjunctionMaker {
+  static Root::ptr Make(std::span<const irs::detail::PostingClause> terms,
+                        std::span<const QueryBuilder::ptr> filters,
+                        irs::detail::Terms uniformity,
+                        std::span<const irs::detail::PostingClause> excludes,
+                        std::span<const QueryBuilder::ptr> exclude_filters,
+                        const SubReader& segment, const Context& ctx,
+                        ScoreMergeType merge);
+};
 
 template<typename P>
-Root::ptr MakeNestedPrunedConjunctionIn(
-  std::span<const irs::detail::PostingClause> terms,
-  std::span<const QueryBuilder::ptr> filters,
-  std::span<const irs::detail::PostingClause> excludes,
-  std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
-  const Context& ctx, ScoreMergeType merge);
+struct NestedPrunedConjunctionMaker {
+  static Root::ptr Make(std::span<const irs::detail::PostingClause> terms,
+                        std::span<const QueryBuilder::ptr> filters,
+                        std::span<const irs::detail::PostingClause> excludes,
+                        std::span<const QueryBuilder::ptr> exclude_filters,
+                        const SubReader& segment, const Context& ctx,
+                        ScoreMergeType merge);
+};
 
-template<bool kExcludes, typename Term,
-         typename P = NoPins>
-Root::ptr MakePrunedDisjunction(
-  std::span<const Term> terms, std::span<const QueryBuilder::ptr> filters,
-  irs::detail::Terms uniformity, const TermReader* field, const Scorer* scorer,
-  score_t boost, std::span<const irs::detail::PostingClause> excludes,
-  std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
-  const Context& ctx, ScoreMergeType merge, uint32_t min_match = 1);
+template<bool kExcludes, typename Term, typename P = NoPins>
+struct PrunedDisjunctionMaker {
+  static Root::ptr Make(std::span<const Term> terms,
+                        std::span<const QueryBuilder::ptr> filters,
+                        irs::detail::Terms uniformity, const TermReader* field,
+                        const Scorer* scorer, score_t boost,
+                        std::span<const irs::detail::PostingClause> excludes,
+                        std::span<const QueryBuilder::ptr> exclude_filters,
+                        const SubReader& segment, const Context& ctx,
+                        ScoreMergeType merge, uint32_t min_match = 1);
+};
 
 }  // namespace irs::top

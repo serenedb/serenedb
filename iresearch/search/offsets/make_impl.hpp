@@ -31,6 +31,7 @@
 #include "iresearch/search/detail/posting_pos.hpp"
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/offsets/impl.hpp"
+#include "iresearch/search/offsets/make.hpp"
 #include "iresearch/search/offsets/ngram.hpp"
 #include "iresearch/search/offsets/phrase.hpp"
 #include "iresearch/search/offsets/posting.hpp"
@@ -42,7 +43,7 @@
 namespace irs::offsets {
 
 template<detail::PhraseMatch M, typename Query>
-Root::ptr MakePhrase(const Query& query) {
+Root::ptr PhraseMaker<M, Query>::Make(const Query& query) {
   if (!query.state.handles.HasOffsets()) {
     return {};
   }
@@ -55,7 +56,7 @@ Root::ptr MakePhrase(const Query& query) {
 }
 
 template<detail::NGramMatch M>
-Root::ptr MakeNGram(const NGramSimilarityQuery& query) {
+Root::ptr NGramMaker<M>::Make(const NGramSimilarityQuery& query) {
   const auto& state = query.State();
   const auto& h = state.handles;
   if (!h.HasOffsets()) {
@@ -85,14 +86,6 @@ Root::ptr MakeNGram(const NGramSimilarityQuery& query) {
 }
 
 }  // namespace irs::offsets
-
-#define IRS_OFFSETS_PHRASE(Query, Match) \
-  template Root::ptr MakePhrase<detail::PhraseMatch::Match>(const Query&)
-
-#define IRS_OFFSETS_NGRAM(Match)                           \
-  template Root::ptr MakeNGram<detail::NGramMatch::Match>( \
-    const NGramSimilarityQuery&)
-
 namespace irs::detail {
 
 inline offsets::Root::ptr MakePostingOffsets(const PostingMeta& meta,

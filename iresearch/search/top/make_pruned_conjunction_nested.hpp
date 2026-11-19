@@ -137,7 +137,7 @@ inline bool PhraseOf(const QueryBuilder& child, NestedClause& out) noexcept {
 }
 
 template<typename P>
-Root::ptr MakeNestedPrunedConjunctionIn(
+Root::ptr NestedPrunedConjunctionMaker<P>::Make(
   std::span<const irs::detail::PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters,
   std::span<const irs::detail::PostingClause> excludes,
@@ -325,11 +325,3 @@ Root::ptr MakeNestedPrunedConjunctionIn(
 }
 
 }  // namespace irs::top
-
-#define IRS_MAKE_NESTED_PRUNED_CONJUNCTION(...)                           \
-  template Root::ptr MakeNestedPrunedConjunctionIn<__VA_ARGS__>(          \
-    std::span<const irs::detail::PostingClause>,                          \
-    std::span<const QueryBuilder::ptr>,                                   \
-    std::span<const irs::detail::PostingClause>,                          \
-    std::span<const QueryBuilder::ptr>, const SubReader&, const Context&, \
-    ScoreMergeType)

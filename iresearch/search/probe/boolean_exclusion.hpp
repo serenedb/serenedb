@@ -34,9 +34,11 @@
 namespace irs::probe {
 
 template<typename Scoring, typename P>
-Node::ptr MakeExclusionIn(const BooleanQuery& query, uint64_t interrogations,
-                          const Scoring& scoring, const detail::ScoredCtx& ctx,
-                          score_t absorbed) {
+Node::ptr ExclusionMaker<Scoring, P>::Make(const BooleanQuery& query,
+                                           uint64_t interrogations,
+                                           const Scoring& scoring,
+                                           const detail::ScoredCtx& ctx,
+                                           score_t absorbed) {
   const auto& segment = query.Segment();
   const std::span must = query.Terms(Occur::Must);
   const std::span must_filters = query.Queries(Occur::Must);
@@ -137,8 +139,3 @@ Node::ptr MakeExclusionIn(const BooleanQuery& query, uint64_t interrogations,
 }
 
 }  // namespace irs::probe
-
-#define IRS_MAKE_PROBE_EXCLUSION(Scoring, ...)                               \
-  template Node::ptr MakeExclusionIn<Scoring, __VA_ARGS__>(                  \
-    const BooleanQuery&, uint64_t, const Scoring&, const detail::ScoredCtx&, \
-    score_t)

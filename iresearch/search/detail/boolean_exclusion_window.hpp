@@ -48,9 +48,9 @@ Result<Family> MakeScoredNegation(
 }
 
 template<typename Family, typename Ctx, typename P>
-Result<Family> MakeExclusionWindowIn(const BooleanQuery& query, const Ctx& ctx,
-                                     ScoreMergeType merge, score_t absorbed,
-                                     uint64_t candidates) {
+Result<Family> ExclusionWindowMaker<Family, Ctx, P>::Make(
+  const BooleanQuery& query, const Ctx& ctx, ScoreMergeType merge,
+  score_t absorbed, uint64_t candidates) {
   const auto& segment = query.Segment();
   const std::span must = query.Terms(Occur::Must);
   const std::span must_filters = query.Queries(Occur::Must);
@@ -64,8 +64,8 @@ Result<Family> MakeExclusionWindowIn(const BooleanQuery& query, const Ctx& ctx,
     std::span<const QueryBuilder::ptr> filters;
     if (must.empty() && must_filters.empty()) {
       if (should.empty() && should_filters.empty()) {
-        return MakeScoredNegation<Family, P>(
-          excludes, exclude_filters, segment, merge, absorbed, ctx);
+        return MakeScoredNegation<Family, P>(excludes, exclude_filters, segment,
+                                             merge, absorbed, ctx);
       }
       if (query.MinShouldMatch() != 1) {
         return {};

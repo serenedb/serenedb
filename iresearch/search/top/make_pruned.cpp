@@ -33,22 +33,19 @@ namespace {
 Root::ptr PinnedConjunction(const BooleanQuery& query, const Context& ctx) {
   const std::span exclude_filters = query.Queries(Occur::MustNot);
   return irs::detail::ResolveExcludePins(
-    exclude_filters, query.Segment(),
-    [&]<typename P> -> Root::ptr {
-      return MakePrunedConjunctionIn<P>(
+    exclude_filters, query.Segment(), [&]<typename P> -> Root::ptr {
+      return PrunedConjunctionMaker<P>::Make(
         query.Terms(Occur::Must), query.Queries(Occur::Must),
-        query.Uniformity(Occur::Must),
-        query.Terms(Occur::MustNot), exclude_filters, query.Segment(), ctx,
-        query.MergeType());
+        query.Uniformity(Occur::Must), query.Terms(Occur::MustNot),
+        exclude_filters, query.Segment(), ctx, query.MergeType());
     });
 }
 
 Root::ptr PinnedDisjunction(const BooleanQuery& query, const Context& ctx) {
   const std::span exclude_filters = query.Queries(Occur::MustNot);
   return irs::detail::ResolveExcludePins(
-    exclude_filters, query.Segment(),
-    [&]<typename P> -> Root::ptr {
-      return MakePrunedDisjunction<true, irs::detail::PostingClause, P>(
+    exclude_filters, query.Segment(), [&]<typename P> -> Root::ptr {
+      return PrunedDisjunctionMaker<true, irs::detail::PostingClause, P>::Make(
         query.Terms(Occur::Should), query.Queries(Occur::Should),
         query.Uniformity(Occur::Should), nullptr, nullptr, kNoBoost,
         query.Terms(Occur::MustNot), exclude_filters, query.Segment(), ctx,

@@ -42,8 +42,7 @@
 
 namespace irs::top {
 
-template<bool kExcludes, typename Leaf,
-         typename P = NoPins, typename Init>
+template<bool kExcludes, typename Leaf, typename P = NoPins, typename Init>
 Root::ptr MakeDisjunctionOf(
   Init& init, size_t size, uint64_t postings,
   std::span<const irs::detail::PostingClause> excludes,
@@ -73,7 +72,7 @@ Root::ptr MakeDisjunctionOf(
 }
 
 template<bool kExcludes, typename Term, typename P>
-Root::ptr MakePrunedDisjunction(
+Root::ptr PrunedDisjunctionMaker<kExcludes, Term, P>::Make(
   std::span<const Term> terms, std::span<const QueryBuilder::ptr> filters,
   irs::detail::Terms uniformity, const TermReader* field, const Scorer* scorer,
   score_t boost, std::span<const irs::detail::PostingClause> excludes,
@@ -105,8 +104,8 @@ Root::ptr MakePrunedDisjunction(
         irs::detail::ClauseOf(terms[i], field, scorer, boost);
       const auto& own = *posting.state.reader;
       const auto* const doc = irs::detail::DocOf(own);
-      members.push_back(Resolve<P>(
-        *doc, [&]<typename Input> -> UnionMember::ptr {
+      members.push_back(
+        Resolve<P>(*doc, [&]<typename Input> -> UnionMember::ptr {
           return memory::make_managed<TermUnionMember<Input>>(
             posting.state.cookie, *doc, irs::detail::LayoutOf(own), segment,
             own, posting.Args(&ctx.fetcher));
@@ -150,12 +149,3 @@ Root::ptr MakePrunedDisjunction(
 }
 
 }  // namespace irs::top
-
-#define IRS_MAKE_PRUNED_DISJUNCTION(...)                                       \
-  template Root::ptr                                                           \
-  MakePrunedDisjunction<true, irs::detail::PostingClause, __VA_ARGS__>(        \
-    std::span<const irs::detail::PostingClause>,                               \
-    std::span<const QueryBuilder::ptr>, irs::detail::Terms, const TermReader*, \
-    const Scorer*, score_t, std::span<const irs::detail::PostingClause>,       \
-    std::span<const QueryBuilder::ptr>, const SubReader&, const Context&,      \
-    ScoreMergeType, uint32_t)

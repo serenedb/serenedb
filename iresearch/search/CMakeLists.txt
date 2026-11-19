@@ -74,16 +74,16 @@ target_sources(
 
 sdb_instantiation_axis(
     IRS_PLANS
-    "count FAMILY=count::Family CTX=count::Context MAKE=IRS_MAKE_DOCS GEO=IRS_MAKE_GEO_DOCS INCLUDE=iresearch/search/count/family.hpp"
-    "docs FAMILY=docs::Family CTX=docs::Context MAKE=IRS_MAKE_DOCS GEO=IRS_MAKE_GEO_DOCS INCLUDE=iresearch/search/docs/family.hpp"
-    "fill_docs FAMILY=fill::Family CTX=utils::Empty MAKE=IRS_MAKE_DOCS GEO=IRS_MAKE_GEO_DOCS INCLUDE=iresearch/search/fill/family.hpp"
-    "fill_scored FAMILY=fill::Family CTX=fill::Family::ScoredContext MAKE=IRS_MAKE_SCORED GEO=IRS_MAKE_GEO_SCORED INCLUDE=iresearch/search/fill/family.hpp"
-    "hits FAMILY=hits::Family CTX=hits::Context MAKE=IRS_MAKE_SCORED GEO=IRS_MAKE_GEO_SCORED INCLUDE=iresearch/search/hits/family.hpp"
-    "lead_docs FAMILY=lead::Family CTX=utils::Empty MAKE=IRS_MAKE_DOCS GEO=IRS_MAKE_GEO_DOCS INCLUDE=iresearch/search/lead/family.hpp"
-    "lead_scored FAMILY=lead::Family CTX=ScoredCtx MAKE=IRS_MAKE_SCORED GEO=IRS_MAKE_GEO_SCORED INCLUDE=iresearch/search/lead/family.hpp"
-    "probe_docs FAMILY=probe::Family CTX=probe::Family::DocsContext MAKE=IRS_MAKE_DOCS GEO=IRS_MAKE_GEO_DOCS INCLUDE=iresearch/search/probe/family.hpp PLANNER=iresearch/search/probe/boolean_planner.hpp"
-    "probe_scored FAMILY=probe::Family CTX=probe::Family::ScoredContext MAKE=IRS_MAKE_SCORED GEO=IRS_MAKE_GEO_SCORED INCLUDE=iresearch/search/probe/family.hpp PLANNER=iresearch/search/probe/boolean_planner.hpp"
-    "top FAMILY=top::Family CTX=top::Context MAKE=IRS_MAKE_SCORED GEO=IRS_MAKE_GEO_SCORED INCLUDE=iresearch/search/top/family.hpp"
+    "count FAMILY=count::Family CTX=count::Context MAKER=DocsMaker INCLUDE=iresearch/search/count/family.hpp"
+    "docs FAMILY=docs::Family CTX=docs::Context MAKER=DocsMaker INCLUDE=iresearch/search/docs/family.hpp"
+    "fill_docs FAMILY=fill::Family CTX=utils::Empty MAKER=DocsMaker INCLUDE=iresearch/search/fill/family.hpp"
+    "fill_scored FAMILY=fill::Family CTX=fill::Family::ScoredContext MAKER=ScoredMaker INCLUDE=iresearch/search/fill/family.hpp"
+    "hits FAMILY=hits::Family CTX=hits::Context MAKER=ScoredMaker INCLUDE=iresearch/search/hits/family.hpp"
+    "lead_docs FAMILY=lead::Family CTX=utils::Empty MAKER=DocsMaker INCLUDE=iresearch/search/lead/family.hpp"
+    "lead_scored FAMILY=lead::Family CTX=ScoredCtx MAKER=ScoredMaker INCLUDE=iresearch/search/lead/family.hpp"
+    "probe_docs FAMILY=probe::Family CTX=probe::Family::DocsContext MAKER=DocsMaker INCLUDE=iresearch/search/probe/family.hpp PLANNER=iresearch/search/probe/boolean_planner.hpp"
+    "probe_scored FAMILY=probe::Family CTX=probe::Family::ScoredContext MAKER=ScoredMaker INCLUDE=iresearch/search/probe/family.hpp PLANNER=iresearch/search/probe/boolean_planner.hpp"
+    "top FAMILY=top::Family CTX=top::Context MAKER=ScoredMaker INCLUDE=iresearch/search/top/family.hpp"
 )
 sdb_instantiation_axis(
     IRS_MASK_SLICES
@@ -140,23 +140,21 @@ sdb_instantiate(
     NAMESPACE irs::detail
     INCLUDE
         iresearch/search/detail/boolean_planner.hpp
-        iresearch/search/detail/make_boolean.hpp
         @PLAN.INCLUDE@
         @PLAN.PLANNER@
-    CALL "IRS_MAKE_BOOLEAN(@PLAN.FAMILY@, @PLAN.CTX@);"
+    CALL "template struct BooleanMaker<@PLAN.FAMILY@, @PLAN.CTX@>;"
     AXES PLAN=IRS_PLANS
 )
 sdb_instantiate(
     iresearch
     DIR search/boolean
     PREFIX required
-    NAMESPACE irs::detail
+    NAMESPACE irs::detail::builder
     INCLUDE
         iresearch/search/detail/boolean_required.hpp
-        iresearch/search/detail/make_boolean.hpp
         @PLAN.INCLUDE@
     CALL
-        "IRS_MAKE_BOOLEAN_REQUIRED(@PLAN.FAMILY@, @PLAN.CTX@, ${irs_input_slice});"
+        "template struct RequiredMaker<@PLAN.FAMILY@, @PLAN.CTX@, ${irs_input_slice}>;"
     AXES PLAN=IRS_PLANS INPUT=IRS_INPUTS
     SKIP probe_docs probe_scored
 )
@@ -164,13 +162,12 @@ sdb_instantiate(
     iresearch
     DIR search/boolean
     PREFIX exclusion
-    NAMESPACE irs::detail
+    NAMESPACE irs::detail::builder
     INCLUDE
         iresearch/search/detail/boolean_exclusion.hpp
-        iresearch/search/detail/make_boolean.hpp
         @PLAN.INCLUDE@
     CALL
-        "IRS_MAKE_BOOLEAN_EXCLUSION(@PLAN.FAMILY@, @PLAN.CTX@, ${irs_slice});"
+        "template struct ExclusionMaker<@PLAN.FAMILY@, @PLAN.CTX@, ${irs_slice}>;"
     AXES PLAN=IRS_PLANS MASK=IRS_MASK_SLICES INPUT=IRS_INPUTS
     SKIP probe_docs probe_scored
 )
@@ -178,13 +175,12 @@ sdb_instantiate(
     iresearch
     DIR search/boolean
     PREFIX exclusion_window
-    NAMESPACE irs::detail
+    NAMESPACE irs::detail::builder
     INCLUDE
         iresearch/search/detail/boolean_exclusion_window.hpp
-        iresearch/search/detail/make_boolean.hpp
         @PLAN.INCLUDE@
     CALL
-        "IRS_MAKE_BOOLEAN_EXCLUSION_WINDOW(@PLAN.FAMILY@, @PLAN.CTX@, ${irs_slice});"
+        "template struct ExclusionWindowMaker<@PLAN.FAMILY@, @PLAN.CTX@, ${irs_slice}>;"
     AXES PLAN=IRS_PLANS MASK=IRS_MASK_SLICES INPUT=IRS_INPUTS
     SKIP fill_scored lead_scored probe_docs probe_scored
 )
@@ -192,12 +188,11 @@ sdb_instantiate(
     iresearch
     DIR search/boolean
     PREFIX negation
-    NAMESPACE irs::detail
+    NAMESPACE irs::detail::builder
     INCLUDE
         iresearch/search/detail/boolean_negation.hpp
-        iresearch/search/detail/make_boolean.hpp
         @PLAN.INCLUDE@
-    CALL "IRS_MAKE_BOOLEAN_NEGATION(@PLAN.FAMILY@, @PLAN.CTX@);"
+    CALL "template struct NegationMaker<@PLAN.FAMILY@, @PLAN.CTX@>;"
     AXES PLAN=IRS_PLANS
     SKIP count fill_scored hits lead_scored probe_docs probe_scored top
 )
@@ -207,7 +202,7 @@ sdb_instantiate(
     PREFIX probe_exclusion
     NAMESPACE irs::probe
     INCLUDE iresearch/search/probe/boolean_exclusion.hpp
-    CALL "IRS_MAKE_PROBE_EXCLUSION(@SCORING.SCORING@, ${irs_slice});"
+    CALL "template struct ExclusionMaker<@SCORING.SCORING@, ${irs_slice}>;"
     AXES SCORING=IRS_SCORING MASK=IRS_MASK_SLICES INPUT=IRS_INPUTS
 )
 sdb_instantiate(
@@ -216,7 +211,7 @@ sdb_instantiate(
     PREFIX probe_optional
     NAMESPACE irs::probe
     INCLUDE iresearch/search/probe/boolean_optional.hpp
-    CALL "IRS_MAKE_PROBE_OPTIONAL(@SCORING.SCORING@);"
+    CALL "template struct OptionalMaker<@SCORING.SCORING@>;"
     AXES SCORING=IRS_SCORING
 )
 sdb_instantiate(
@@ -225,7 +220,7 @@ sdb_instantiate(
     PREFIX pruned_conjunction
     NAMESPACE irs::top
     INCLUDE iresearch/search/top/make_pruned_conjunction.hpp
-    CALL "IRS_MAKE_PRUNED_CONJUNCTION(${irs_slice});"
+    CALL "template struct PrunedConjunctionMaker<${irs_slice}>;"
     AXES MASK=IRS_MASK_SLICES INPUT=IRS_INPUTS
 )
 sdb_instantiate(
@@ -234,7 +229,7 @@ sdb_instantiate(
     PREFIX pruned_conjunction_nested
     NAMESPACE irs::top
     INCLUDE iresearch/search/top/make_pruned_conjunction_nested.hpp
-    CALL "IRS_MAKE_NESTED_PRUNED_CONJUNCTION(${irs_slice});"
+    CALL "template struct NestedPrunedConjunctionMaker<${irs_slice}>;"
     AXES MASK=IRS_MASK_SLICES INPUT=IRS_INPUTS
 )
 sdb_instantiate(
@@ -243,7 +238,8 @@ sdb_instantiate(
     PREFIX pruned_disjunction
     NAMESPACE irs::top
     INCLUDE iresearch/search/top/make_pruned_disjunction.hpp
-    CALL "IRS_MAKE_PRUNED_DISJUNCTION(${irs_slice});"
+    CALL
+        "template struct PrunedDisjunctionMaker<true, irs::detail::PostingClause, ${irs_slice}>;"
     AXES MASK=IRS_MASK_SLICES INPUT=IRS_INPUTS
 )
 sdb_instantiate(
@@ -252,7 +248,8 @@ sdb_instantiate(
     PREFIX pruned_phrase
     NAMESPACE irs::top
     INCLUDE iresearch/search/top/make_phrase_pruned.hpp
-    CALL "IRS_TOP_PHRASE_PRUNED(@PHRASE.QUERY@, @MATCH.MATCH@);"
+    CALL
+        "template struct PhraseMaker<irs::detail::PhraseMatch::@MATCH.MATCH@, @PHRASE.QUERY@>;"
     AXES PHRASE=IRS_PHRASES MATCH=IRS_PHRASE_MATCHES
     SKIP slop
 )
@@ -265,7 +262,7 @@ sdb_instantiate(
         iresearch/search/detail/phrase_of.hpp
         @PLAN.INCLUDE@
     CALL
-        "@PLAN.MAKE@(@PLAN.FAMILY@, PhraseKind<PhraseMatch::@MATCH.MATCH@>, @PHRASE.QUERY@);"
+        "template struct @PLAN.MAKER@<@PLAN.FAMILY@, PhraseKind<PhraseMatch::@MATCH.MATCH@>, @PHRASE.QUERY@>;"
     AXES PLAN=IRS_PLANS PHRASE=IRS_PHRASES MATCH=IRS_PHRASE_MATCHES
 )
 sdb_instantiate(
@@ -277,7 +274,7 @@ sdb_instantiate(
         iresearch/search/detail/ngram_of.hpp
         @PLAN.INCLUDE@
     CALL
-        "@PLAN.MAKE@(@PLAN.FAMILY@, NGramKind<NGramMatch::@MATCH.MATCH@>, NGramSimilarityQuery);"
+        "template struct @PLAN.MAKER@<@PLAN.FAMILY@, NGramKind<NGramMatch::@MATCH.MATCH@>, NGramSimilarityQuery>;"
     AXES PLAN=IRS_PLANS MATCH=IRS_NGRAM_MATCHES
 )
 sdb_instantiate(
@@ -288,7 +285,8 @@ sdb_instantiate(
         iresearch/search/detail/make_impl.hpp
         iresearch/search/detail/token_phrase_of.hpp
         @PLAN.INCLUDE@
-    CALL "@PLAN.MAKE@(@PLAN.FAMILY@, TokenPhraseKind, TokenPhraseQuery);"
+    CALL
+        "template struct @PLAN.MAKER@<@PLAN.FAMILY@, TokenPhraseKind, TokenPhraseQuery>;"
     AXES PLAN=IRS_PLANS
 )
 sdb_instantiate(
@@ -299,7 +297,8 @@ sdb_instantiate(
         iresearch/search/detail/make_impl.hpp
         iresearch/search/detail/wildcard_ngram_of.hpp
         @PLAN.INCLUDE@
-    CALL "@PLAN.MAKE@(@PLAN.FAMILY@, WildcardNGramKind, WildcardNGramQuery);"
+    CALL
+        "template struct @PLAN.MAKER@<@PLAN.FAMILY@, WildcardNGramKind, WildcardNGramQuery>;"
     AXES PLAN=IRS_PLANS
 )
 sdb_instantiate(
@@ -364,6 +363,23 @@ sdb_instantiation_axis(
     "is_contained ACCEPTOR=GeoIsContainedAcceptor"
 )
 sdb_instantiation_axis(
+    IRS_GEO_PARSERS
+    "json PARSER=SourceJsonParser"
+    "wkb PARSER=SourceWkbParser"
+    "point PARSER=SourcePointParser"
+    "s2_shape PARSER=S2ShapeParser"
+    "s2_point PARSER=S2PointParser"
+)
+sdb_instantiation_axis(
+    IRS_GEO_DISTANCE_ACCEPTORS
+    "exclusive ACCEPTOR=GeoDistanceAcceptor<false>"
+    "inclusive ACCEPTOR=GeoDistanceAcceptor<true>"
+    "range_open ACCEPTOR=GeoDistanceRangeAcceptor<false,false>"
+    "range_max_inclusive ACCEPTOR=GeoDistanceRangeAcceptor<false,true>"
+    "range_min_inclusive ACCEPTOR=GeoDistanceRangeAcceptor<true,false>"
+    "range_closed ACCEPTOR=GeoDistanceRangeAcceptor<true,true>"
+)
+sdb_instantiation_axis(
     IRS_FULL_QUERY_BUILDERS
     "exact_vector TYPE=ExactVectorQuery MAKE=iresearch/search/detail/make_query.hpp HEADER=iresearch/search/queries/vector_exact_query.hpp"
     "hnsw TYPE=HnswQuery MAKE=iresearch/search/detail/make_query.hpp HEADER=iresearch/search/queries/hnsw_query.hpp"
@@ -377,12 +393,16 @@ sdb_instantiate(
     DIR search/geo
     NAMESPACE irs::detail
     INCLUDE
-        iresearch/search/detail/geo_instantiate.hpp
         iresearch/search/detail/geo_of.hpp
+        iresearch/search/detail/geo_parsers.hpp
+        iresearch/search/filters/geo_filter.hpp
+        iresearch/search/queries/geo_query.hpp
         iresearch/search/detail/make_impl.hpp
         @PLAN.INCLUDE@
-    CALL "IRS_GEO_PARSERS(@PLAN.GEO@, @PLAN.FAMILY@, @ACCEPTOR.ACCEPTOR@)"
+    CALL
+        "template struct @PLAN.MAKER@<@PLAN.FAMILY@, GeoKind, GeoQuery<@PARSER.PARSER@, @ACCEPTOR.ACCEPTOR@>>;"
     AXES PLAN=IRS_PLANS ACCEPTOR=IRS_GEO_ACCEPTORS
+    EXPAND PARSER=IRS_GEO_PARSERS
 )
 sdb_instantiate(
     iresearch
@@ -390,12 +410,16 @@ sdb_instantiate(
     PREFIX distance
     NAMESPACE irs::detail
     INCLUDE
-        iresearch/search/detail/geo_instantiate.hpp
         iresearch/search/detail/geo_of.hpp
+        iresearch/search/detail/geo_parsers.hpp
+        iresearch/search/filters/geo_filter.hpp
+        iresearch/search/queries/geo_query.hpp
         iresearch/search/detail/make_impl.hpp
         @PLAN.INCLUDE@
-    CALL "IRS_GEO_DISTANCE_ACCEPTORS(@PLAN.GEO@, @PLAN.FAMILY@)"
+    CALL
+        "template struct @PLAN.MAKER@<@PLAN.FAMILY@, GeoKind, GeoQuery<@PARSER.PARSER@, @ACCEPTOR.ACCEPTOR@>>;"
     AXES PLAN=IRS_PLANS
+    EXPAND PARSER=IRS_GEO_PARSERS ACCEPTOR=IRS_GEO_DISTANCE_ACCEPTORS
 )
 sdb_instantiate(
     iresearch
@@ -414,7 +438,8 @@ sdb_instantiate(
     PREFIX phrase
     NAMESPACE irs::offsets
     INCLUDE iresearch/search/offsets/make_impl.hpp
-    CALL "IRS_OFFSETS_PHRASE(@PHRASE.QUERY@, @MATCH.MATCH@);"
+    CALL
+        "template struct PhraseMaker<detail::PhraseMatch::@MATCH.MATCH@, @PHRASE.QUERY@>;"
     AXES PHRASE=IRS_PHRASES MATCH=IRS_PHRASE_MATCHES
 )
 sdb_instantiate(
@@ -423,6 +448,6 @@ sdb_instantiate(
     PREFIX ngram
     NAMESPACE irs::offsets
     INCLUDE iresearch/search/offsets/make_impl.hpp
-    CALL "IRS_OFFSETS_NGRAM(@MATCH.MATCH@);"
+    CALL "template struct NGramMaker<detail::NGramMatch::@MATCH.MATCH@>;"
     AXES MATCH=IRS_NGRAM_MATCHES
 )

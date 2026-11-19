@@ -33,19 +33,10 @@
 namespace irs::detail::builder {
 
 template<typename Family, typename Ctx, typename P>
-Result<Family> MakeExclusionWindowIn(const BooleanQuery& query, const Ctx& ctx,
-                                     ScoreMergeType merge, score_t absorbed,
-                                     uint64_t candidates);
-
-template<typename Family, typename Ctx>
-Result<Family> MakeNegation(std::span<const PostingClause> excludes,
-                            std::span<const QueryBuilder::ptr> exclude_filters,
-                            const SubReader& segment, uint64_t candidates,
-                            const Ctx& ctx);
-
-template<typename Family, typename Ctx, typename P>
-Result<Family> MakeExclusionIn(const BooleanQuery& query, const Ctx& ctx,
-                               ScoreMergeType merge, score_t absorbed) {
+Result<Family> ExclusionMaker<Family, Ctx, P>::Make(const BooleanQuery& query,
+                                                    const Ctx& ctx,
+                                                    ScoreMergeType merge,
+                                                    score_t absorbed) {
   const auto& segment = query.Segment();
   const std::span must = query.Terms(Occur::Must);
   const std::span must_filters = query.Queries(Occur::Must);
@@ -63,7 +54,7 @@ Result<Family> MakeExclusionIn(const BooleanQuery& query, const Ctx& ctx,
   }
   if constexpr (kScoredPlan<Family, Ctx>) {
     if constexpr (Family::kRoot) {
-      if (auto windowed = MakeExclusionWindowIn<Family, Ctx, P>(
+      if (auto windowed = ExclusionWindowMaker<Family, Ctx, P>::Make(
             query, ctx, merge, absorbed, candidates)) {
         return windowed;
       }
@@ -97,10 +88,11 @@ Result<Family> MakeExclusionIn(const BooleanQuery& query, const Ctx& ctx,
           });
       });
     }
-    auto include = MakeRequired<lead::Family, Restrict<P, InputAxis>>(
-      must, must_filters, should, should_filters,
-      query.Uniformity(Occur::Should), min_match, segment,
-      ScoredCtx{Family::Scoring(ctx)}, query.MergeType(), absorbed);
+    auto include =
+      RequiredMaker<lead::Family, ScoredCtx, Restrict<P, InputAxis>>::Make(
+        must, must_filters, should, should_filters,
+        query.Uniformity(Occur::Should), min_match, segment,
+        ScoredCtx{Family::Scoring(ctx)}, query.MergeType(), absorbed);
     if (!include) {
       return {};
     }
@@ -123,29 +115,30 @@ Result<Family> MakeExclusionIn(const BooleanQuery& query, const Ctx& ctx,
           return Family::MakeNegation(excludes, exclude_filters, segment,
                                       candidates, ctx);
         } else {
-          return MakeNegation<Family>(excludes, exclude_filters, segment,
-                                      candidates, ctx);
+          return NegationMaker<Family, Ctx>::Make(excludes, exclude_filters,
+                                                  segment, candidates, ctx);
         }
       }
       if (auto folded =
             MakeBitset<Family, P>({.must = must,
-                                .must_filters = must_filters,
-                                .must_not = excludes,
-                                .must_not_filters = exclude_filters},
-                               segment, ctx)) {
+                                   .must_filters = must_filters,
+                                   .must_not = excludes,
+                                   .must_not_filters = exclude_filters},
+                                  segment, ctx)) {
         return folded;
       }
-      if (auto windowed = MakeExclusionWindowIn<Family, Ctx, P>(
+      if (auto windowed = ExclusionWindowMaker<Family, Ctx, P>::Make(
             query, ctx, merge, absorbed, candidates)) {
         return windowed;
       }
       return MakeSparseExclusion<Family, P>(must, must_filters, excludes,
-                                                 exclude_filters, segment,
-                                                 candidates, ctx);
+                                            exclude_filters, segment,
+                                            candidates, ctx);
     }
-    auto include = MakeRequired<lead::Family, Restrict<P, InputAxis>>(
-      must, must_filters, should, should_filters, Terms::Mixed, min_match,
-      segment, utils::Empty{}, ScoreMergeType::Noop, score_t{0});
+    auto include =
+      RequiredMaker<lead::Family, utils::Empty, Restrict<P, InputAxis>>::Make(
+        must, must_filters, should, should_filters, Terms::Mixed, min_match,
+        segment, utils::Empty{}, ScoreMergeType::Noop, score_t{0});
     if (!include) {
       return {};
     }

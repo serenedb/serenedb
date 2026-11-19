@@ -28,11 +28,11 @@
 namespace irs::probe {
 
 template<typename Scoring>
-Node::ptr MakeOptional(std::span<const detail::PostingClause> should,
-                       std::span<const QueryBuilder::ptr> should_filters,
-                       uint32_t min_match, const SubReader& segment,
-                       uint64_t interrogations, const Scoring& scoring,
-                       const detail::ScoredCtx& ctx, score_t absorbed) {
+Node::ptr OptionalMaker<Scoring>::Make(
+  std::span<const detail::PostingClause> should,
+  std::span<const QueryBuilder::ptr> should_filters, uint32_t min_match,
+  const SubReader& segment, uint64_t interrogations, const Scoring& scoring,
+  const detail::ScoredCtx& ctx, score_t absorbed) {
   SDB_ASSERT(min_match != 0);
   return min_match == 1
            ? MakeDisjunction(should, should_filters, nullptr, segment,
@@ -42,9 +42,3 @@ Node::ptr MakeOptional(std::span<const detail::PostingClause> should,
 }
 
 }  // namespace irs::probe
-
-#define IRS_MAKE_PROBE_OPTIONAL(Scoring)                                      \
-  template Node::ptr MakeOptional(                                            \
-    std::span<const detail::PostingClause>,                                   \
-    std::span<const QueryBuilder::ptr>, uint32_t, const SubReader&, uint64_t, \
-    const Scoring&, const detail::ScoredCtx&, score_t)

@@ -56,25 +56,44 @@
 
 namespace irs::detail::builder {
 
-template<typename Family, typename P, typename Ctx>
-Result<Family> MakeRequired(std::span<const PostingClause> must,
-                            std::span<const QueryBuilder::ptr> must_filters,
-                            std::span<const PostingClause> should,
-                            std::span<const QueryBuilder::ptr> should_filters,
-                            Terms uniformity, uint32_t min_match,
-                            const SubReader& segment, const Ctx& ctx,
-                            ScoreMergeType merge, score_t absorbed);
+template<typename Family, typename Ctx, typename P>
+struct RequiredMaker {
+  static Result<Family> Make(std::span<const PostingClause> must,
+                             std::span<const QueryBuilder::ptr> must_filters,
+                             std::span<const PostingClause> should,
+                             std::span<const QueryBuilder::ptr> should_filters,
+                             Terms uniformity, uint32_t min_match,
+                             const SubReader& segment, const Ctx& ctx,
+                             ScoreMergeType merge, score_t absorbed);
+};
 
 template<typename Family, typename Ctx, typename P>
-Result<Family> MakeExclusionIn(const BooleanQuery& query, const Ctx& ctx,
-                               ScoreMergeType merge, score_t absorbed);
+struct ExclusionMaker {
+  static Result<Family> Make(const BooleanQuery& query, const Ctx& ctx,
+                             ScoreMergeType merge, score_t absorbed);
+};
+
+template<typename Family, typename Ctx, typename P>
+struct ExclusionWindowMaker {
+  static Result<Family> Make(const BooleanQuery& query, const Ctx& ctx,
+                             ScoreMergeType merge, score_t absorbed,
+                             uint64_t candidates);
+};
+
+template<typename Family, typename Ctx>
+struct NegationMaker {
+  static Result<Family> Make(std::span<const PostingClause> excludes,
+                             std::span<const QueryBuilder::ptr> exclude_filters,
+                             const SubReader& segment, uint64_t candidates,
+                             const Ctx& ctx);
+};
 
 template<typename Family, typename Ctx>
 Result<Family> MakeExclusion(const BooleanQuery& query, const Ctx& ctx,
                              ScoreMergeType merge, score_t absorbed) {
   return ResolveExcludePins(query.Queries(Occur::MustNot), query.Segment(),
                             [&]<typename P> -> Result<Family> {
-                              return MakeExclusionIn<Family, Ctx, P>(
+                              return ExclusionMaker<Family, Ctx, P>::Make(
                                 query, ctx, merge, absorbed);
                             });
 }
@@ -106,7 +125,7 @@ Result<Family> Make(const BooleanQuery& query, const Ctx& ctx,
   return ResolvePins<InputAxis>(
     std::forward_as_tuple(SegmentDoc(query.Segment())),
     [&]<typename P> -> Result<Family> {
-      return MakeRequired<Family, P>(
+      return RequiredMaker<Family, Ctx, P>::Make(
         query.Terms(Occur::Must), query.Queries(Occur::Must),
         query.Terms(Occur::Should), query.Queries(Occur::Should),
         query.Uniformity(Occur::Should), query.MinShouldMatch(),
@@ -118,7 +137,8 @@ Result<Family> Make(const BooleanQuery& query, const Ctx& ctx,
 namespace irs::detail {
 
 template<typename Family, typename Ctx>
-typename Family::Result MakeQuery(const BooleanQuery& query, const Ctx& ctx) {
+typename Family::Result BooleanMaker<Family, Ctx>::Make(
+  const BooleanQuery& query, const Ctx& ctx) {
   if constexpr (kProbePlan<Family>) {
     if constexpr (kScoredPlan<Family, Ctx>) {
       const auto& segment = query.Segment();

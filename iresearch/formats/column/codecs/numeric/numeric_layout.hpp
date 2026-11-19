@@ -121,7 +121,8 @@ Data layout per segment, one block of one column holding a whole row group:
 |   width bytes, padding to 8 bytes and the packed     |
 |   values minus the base; a block of fewer than       |
 |   1024 runs packs its values 32 at a time, each      |
-|   group in 4 * width bytes; a width byte with its    |
+|   group in 4 * width bytes; values that need 63      |
+|   bits are stored in 64; a width byte with its       |
 |   top bit set stores differences: the base is the    |
 |   first value, 8 bytes hold the smallest             |
 |   difference and the low six bits are the width of   |

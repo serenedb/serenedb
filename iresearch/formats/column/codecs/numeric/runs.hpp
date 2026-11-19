@@ -49,6 +49,8 @@ struct Runs final : State {
   bool none = false;
 };
 
+inline constexpr uint32_t kSparseRunRows = 16;
+
 template<typename T>
 bool EveryRowDiffers(std::span<const WriteChunk> chunks) {
   using U = numeric::Bits<sizeof(T)>;
@@ -115,9 +117,9 @@ Runs<T>* ScanRuns(ColumnDataCheckpointData& data) {
   }
   const auto rows = values.Raw();
   const auto bounds = values.RawBounds();
-  runs.values.resize(count);
-  runs.rows.resize(count);
-  runs.lengths.resize(count);
+  const bool dense = uint64_t{count} * kSparseRunRows >= n;
+  runs.values.resize(size_t{count} + 1);
+  runs.rows.resize(size_t{count} + 1);
   auto* run_values = runs.values.data();
   auto* run_rows = runs.rows.data();
   uint8_t changed[numeric::kBlockValues + sizeof(uint64_t)];
@@ -130,6 +132,16 @@ Runs<T>* ScanRuns(ColumnDataCheckpointData& data) {
     const U* block = rows.Block(b);
     const auto first = static_cast<uint32_t>(b * numeric::kBlockValues);
     const auto size = static_cast<uint32_t>(rows.BlockSize(b));
+    if (dense) {
+      for (uint32_t i = 0; i < size; ++i) {
+        const U value = block[i];
+        run_values[run] = value;
+        run_rows[run] = first + i;
+        run += value != previous;
+        previous = value;
+      }
+      continue;
+    }
     changed[0] = block[0] != previous;
     for (uint32_t i = 1; i < size; ++i) {
       changed[i] = block[i] != block[i - 1];
@@ -147,6 +159,9 @@ Runs<T>* ScanRuns(ColumnDataCheckpointData& data) {
     previous = block[size - 1];
   }
   SDB_ASSERT(run == count);
+  runs.values.resize(count);
+  runs.rows.resize(count);
+  runs.lengths.resize(count);
   if (const auto scale = values.Scale(); scale > 1) {
     numeric::DivideExact<Values<T>::kSigned>(run_values, count, scale,
                                              run_values);

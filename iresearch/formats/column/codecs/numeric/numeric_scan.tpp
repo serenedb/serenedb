@@ -118,20 +118,30 @@ std::unique_ptr<SegmentScanState> InitScan(const ColumnSegment& segment) {
 }
 
 template<typename R>
-bool ScanWholeRun(R& reader, uint64_t start, idx_t vector_count,
-                  duckdb::ScanVectorType scan_type, duckdb::Vector& result) {
-  if constexpr (R::kHasRuns) {
-    typename R::Value value{};
-    if (scan_type == duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR &&
-        vector_count == STANDARD_VECTOR_SIZE &&
-        reader.RunHolds(start, vector_count, value)) {
-      duckdb::FlatVector::GetDataMutable<typename R::Value>(result)[0] = value;
-      result.SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
-      duckdb::FlatVector::SetSize(result, duckdb::count_t(vector_count));
-      return true;
-    }
+IRS_FORCE_INLINE bool ScanConstant(R& reader, uint64_t start,
+                                   idx_t vector_count,
+                                   duckdb::ScanVectorType scan_type,
+                                   duckdb::Vector& result) {
+  if (scan_type != duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR ||
+      vector_count != STANDARD_VECTOR_SIZE) {
+    return false;
   }
-  return false;
+  typename R::Value value{};
+  if constexpr (R::kHasRuns) {
+    if (!reader.RunHolds(start, vector_count, value)) {
+      return false;
+    }
+  } else if constexpr (requires { reader.ConstantRows(start, start, value); }) {
+    if (!reader.ConstantRows(start, vector_count, value)) {
+      return false;
+    }
+  } else {
+    return false;
+  }
+  duckdb::FlatVector::GetDataMutable<typename R::Value>(result)[0] = value;
+  result.SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
+  duckdb::FlatVector::SetSize(result, duckdb::count_t(vector_count));
+  return true;
 }
 
 template<typename R>
@@ -140,7 +150,7 @@ void Scan(const ColumnSegment&, ColumnScanState& state, idx_t scan_count,
           duckdb::ScanVectorType scan_type) {
   auto& frames = state.scan_state->Cast<ScanState<R>>().frames;
   const uint64_t start = state.GetPositionInSegment();
-  if (ScanWholeRun(frames, start, scan_count, scan_type, result)) {
+  if (ScanConstant(frames, start, scan_count, scan_type, result)) {
     return;
   }
   frames.Read(start, scan_count,
@@ -155,7 +165,7 @@ void Select(const ColumnSegment&, ColumnScanState& state, idx_t vector_count,
             duckdb::ScanVectorType scan_type) {
   auto& frames = state.scan_state->Cast<ScanState<R>>().frames;
   const uint64_t start = state.GetPositionInSegment();
-  if (ScanWholeRun(frames, start, vector_count, scan_type, result)) {
+  if (ScanConstant(frames, start, vector_count, scan_type, result)) {
     return;
   }
   auto* out = duckdb::FlatVector::GetDataMutable<typename R::Value>(result) +

@@ -558,7 +558,11 @@ IRS_FORCE_INLINE void PackLane(const U* IRS_RESTRICT in,
 template<typename U, unsigned W>
 void PackBlock(const U* IRS_RESTRICT in, LaneWord<U>* IRS_RESTRICT out,
                U base) noexcept {
-  if constexpr (W != 0) {
+  if constexpr (W == 8 * sizeof(LaneWord<U>)) {
+    for (unsigned i = 0; i < kBlockValues; ++i) {
+      out[i] = static_cast<LaneWord<U>>(static_cast<U>(in[i] - base));
+    }
+  } else if constexpr (W != 0) {
     constexpr unsigned kRows = 8 * sizeof(LaneWord<U>);
     for (unsigned l = 0; l < kLanes<U>; ++l) {
       PackLane<U, W>(in, out, base, l,
@@ -596,6 +600,10 @@ void UnpackBlock(const LaneWord<U>* IRS_RESTRICT in, U* IRS_RESTRICT out,
                  U base) noexcept {
   if constexpr (W == 0) {
     std::fill_n(out, kBlockValues, base);
+  } else if constexpr (W == 8 * sizeof(LaneWord<U>)) {
+    for (unsigned i = 0; i < kBlockValues; ++i) {
+      out[i] = static_cast<U>(in[i] + base);
+    }
   } else {
     constexpr unsigned kRows = 8 * sizeof(LaneWord<U>);
     for (unsigned l = 0; l < kLanes<U>; ++l) {

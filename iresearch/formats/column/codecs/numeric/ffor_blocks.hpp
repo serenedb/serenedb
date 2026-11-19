@@ -162,7 +162,7 @@ class FforBlocks {
       const auto [lo, hi] = BoundsOf<kSigned>(values, count);
       _first[b] = lo;
       _base[b] = lo;
-      _bits[b] = static_cast<uint8_t>(std::bit_width(static_cast<V>(hi - lo)));
+      _bits[b] = static_cast<uint8_t>(StreamWidth(static_cast<V>(hi - lo)));
       const auto offsets = StreamBlockBytes(count, _bits[b]);
       if (count < 2 || offsets <= sizeof(uint64_t)) {
         continue;
@@ -173,8 +173,17 @@ class FforBlocks {
         _bits[b] = kStreamAlternates;
         continue;
       }
+      if (count > kSampledSteps) {
+        const auto [low, high] = StepBounds(values, kSampledSteps);
+        if (sizeof(uint64_t) +
+              StreamBlockBytes(count,
+                               StreamWidth(static_cast<V>(high - low))) >=
+            offsets) {
+          continue;
+        }
+      }
       const auto [least, most] = StepBounds(values, count);
-      const unsigned width = std::bit_width(static_cast<V>(most - least));
+      const unsigned width = StreamWidth(static_cast<V>(most - least));
       if (width <= kBlockDeltaBits &&
           sizeof(uint64_t) + StreamBlockBytes(count, width) < offsets) {
         _first[b] = values[0];
@@ -393,6 +402,7 @@ class FforBlocks {
   using S = std::make_signed_t<V>;
 
   static constexpr size_t kFrameBlocks = kFforFrameRows / numeric::kBlockValues;
+  static constexpr size_t kSampledSteps = 64;
   static constexpr uint64_t kNoShare = std::numeric_limits<uint64_t>::max();
 
   void Resize(size_t rows) {
@@ -417,6 +427,12 @@ class FforBlocks {
            (kBlockDelta | kBlockOwnStep);
   }
 
+  static unsigned StreamWidth(V range) noexcept {
+    constexpr unsigned kWordBits = 8 * sizeof(uint64_t);
+    const unsigned bits = std::bit_width(range);
+    return bits + 1 == kWordBits ? kWordBits : bits;
+  }
+
   static uint64_t StreamBlockBytes(size_t values, unsigned bits) noexcept {
     return values == numeric::kBlockValues
              ? numeric::PackedBytes(bits)
@@ -436,7 +452,7 @@ class FforBlocks {
   }
 
   static bool Alternates(const V* values, size_t count) noexcept {
-    if (values[0] == values[1]) {
+    if (values[0] == values[1] || (count > 2 && values[2] != values[0])) {
       return false;
     }
     V other = 0;

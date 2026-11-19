@@ -1802,6 +1802,33 @@ TEST_F(ColNumericCodecTest, DifferencesAsWideAsTheTypeAreStoredAsOffsets) {
   EXPECT_EQ(Transforms(dir), std::vector<std::string>{"delta_ffor/none"});
 }
 
+TEST_F(ColNumericCodecTest, ShortRunsOfUnevenLengthsReadBack) {
+  constexpr uint64_t kRows = 70000;
+  const Gen uneven = [](uint64_t g) -> std::optional<int64_t> {
+    return static_cast<int64_t>(Mix(g >> (1 + Mix(g >> 6) % 3)) % 100);
+  };
+  const Gen uneven_with_nulls = [&](uint64_t g) -> std::optional<int64_t> {
+    if (Mix(g) % 9 == 0) {
+      return std::nullopt;
+    }
+    return uneven(g);
+  };
+  for (const auto id :
+       {duckdb::LogicalType::BIGINT, duckdb::LogicalType::SMALLINT,
+        duckdb::LogicalType::UTINYINT}) {
+    const duckdb::LogicalType type{id};
+    for (const auto& gen : {uneven, uneven_with_nulls}) {
+      SCOPED_TRACE(type.ToString());
+      irs::MemoryDirectory dir;
+      Write(dir, type, {}, kRows, 16384, gen, irs::codecs::CodecType::RleFfor);
+      Verify(dir, type, kRows, gen);
+      for (const auto& transform : Transforms(dir)) {
+        EXPECT_EQ(transform, "rle_ffor/none");
+      }
+    }
+  }
+}
+
 TEST_F(ColNumericCodecTest, RunsOfTwoValuesStoreNoValueBits) {
   constexpr uint64_t kRows = 200000;
   const auto type = duckdb::LogicalType::SMALLINT;
@@ -1842,6 +1869,20 @@ TEST_F(ColNumericCodecTest, RunValuesInOrderStoreDifferences) {
   };
   EXPECT_LT(bytes(even), 500U);
   EXPECT_LT(bytes(uneven), 2000U);
+}
+
+TEST_F(ColNumericCodecTest, RunValuesOneBitShortOfAWordStoreWholeWords) {
+  constexpr uint64_t kRuns = 3 * 1024 + 350;
+  constexpr uint64_t kRows = 2 * kRuns;
+  const auto type = duckdb::LogicalType::BIGINT;
+  const Gen gen = [](uint64_t g) -> std::optional<int64_t> {
+    return static_cast<int64_t>(Mix(g / 2) >> 1);
+  };
+  irs::MemoryDirectory dir;
+  Write(dir, type, {}, kRows, 16384, gen, irs::codecs::CodecType::RleFfor);
+  Verify(dir, type, kRows, gen);
+  EXPECT_EQ(Transforms(dir), std::vector<std::string>{"rle_ffor/none"});
+  EXPECT_GE(NumericBytes(dir), kRuns * sizeof(int64_t));
 }
 
 TEST_F(ColNumericCodecTest, ARunThatCoversAVectorReadsAsAConstant) {
@@ -1903,6 +1944,71 @@ TEST_F(ColNumericCodecTest, ARunThatCoversAVectorReadsAsAConstant) {
       }
     }
     EXPECT_GT(constants, 0);
+  }
+}
+
+TEST_F(ColNumericCodecTest, ConstantBlocksThatCoverAVectorReadAsAConstant) {
+  constexpr uint64_t kRows = 40000;
+  constexpr uint64_t kRun = 5000;
+  const Gen gen = [](uint64_t g) { return static_cast<int64_t>(g / kRun % 2); };
+  const auto one_run = [](uint64_t pos) {
+    return pos + STANDARD_VECTOR_SIZE <= kRows &&
+           pos / kRun == (pos + STANDARD_VECTOR_SIZE - 1) / kRun;
+  };
+  for (const duckdb::LogicalType type :
+       {duckdb::LogicalType::BOOLEAN, duckdb::LogicalType::BIGINT,
+        duckdb::LogicalType::HUGEINT, duckdb::LogicalType::UUID}) {
+    for (const auto codec :
+         {irs::codecs::CodecType::Ffor, irs::codecs::CodecType::DeltaFfor}) {
+      SCOPED_TRACE(type.ToString() + " " +
+                   std::string{magic_enum::enum_name(codec)});
+      irs::MemoryDirectory dir;
+      Write(dir, type, {}, kRows, 16384, gen, codec);
+      for (const auto& transform : Transforms(dir)) {
+        EXPECT_TRUE(transform.contains("ffor")) << transform;
+      }
+      Verify(dir, type, kRows, gen);
+      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+      const auto* col = r.Column(kField);
+      ASSERT_NE(col, nullptr);
+      auto state = col->InitScan(r.Ctx());
+      for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+        const auto take = std::min<uint64_t>(kRows - pos, STANDARD_VECTOR_SIZE);
+        duckdb::Vector out{type, STANDARD_VECTOR_SIZE};
+        col->Scan(state, out, take);
+        EXPECT_EQ(out.GetVectorType() == duckdb::VectorType::CONSTANT_VECTOR,
+                  one_run(pos))
+          << pos;
+        out.Flatten(take);
+        for (duckdb::idx_t k = 0; k < take; k += 331) {
+          ExpectRow(out, k, pos + k, gen, type);
+        }
+      }
+      size_t constants = 0;
+      for (uint64_t pos = 0; pos + STANDARD_VECTOR_SIZE <= kRows;
+           pos += STANDARD_VECTOR_SIZE) {
+        std::vector<uint64_t> picked;
+        for (uint64_t k = 0; k < STANDARD_VECTOR_SIZE; k += 8) {
+          picked.push_back(pos + k);
+        }
+        picked.push_back(pos + STANDARD_VECTOR_SIZE - 1);
+        auto gather = col->InitScan(r.Ctx());
+        duckdb::Vector out{type, STANDARD_VECTOR_SIZE};
+        duckdb::FlatVector::ValidityMutable(out).Reset(STANDARD_VECTOR_SIZE);
+        irs::column_internal::GatherRows(*col, gather,
+                                         Rows2{picked.data(), picked.size()},
+                                         out, 0, /*whole_output=*/true);
+        if (out.GetVectorType() == duckdb::VectorType::CONSTANT_VECTOR) {
+          EXPECT_TRUE(one_run(pos)) << pos;
+          ++constants;
+        }
+        out.Flatten(picked.size());
+        for (size_t k = 0; k < picked.size(); ++k) {
+          ExpectRow(out, k, picked[k], gen, type);
+        }
+      }
+      EXPECT_GT(constants, 0);
+    }
   }
 }
 

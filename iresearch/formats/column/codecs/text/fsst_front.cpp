@@ -591,8 +591,8 @@ row group is cut into segments of about kDefaultColSegmentTarget encoded bytes:
 |   +----------------------------------------------+   |
 |   |   Header (string_layout.hpp), 72 bytes       |   |
 |   +----------------------------------------------+   |
-|   shape, leaf, level, bit widths, counts,            |
-|   section offsets, flags                             |
+|   codec of the row codes, level, bit widths,         |
+|   counts, section offsets, flags, decoded size       |
 +------------------------------------------------------+
 |                     Frame table                      |
 |   +----------------------------------------------+   |
@@ -617,8 +617,8 @@ row group is cut into segments of about kDefaultColSegmentTarget encoded bytes:
 +------------------------------------------------------+
 |                     Symbol table                     |
 |   +----------------------------------------------+   |
-|   |   FSST symbol table: at most 2066 bytes      |   |
-|   |   with 8-bit codes, 36872 with 12-bit ones   |   |
+|   |   FSST symbol table: about 2 KiB at most     |   |
+|   |   with 8-bit codes, 36 KiB with 12-bit ones  |   |
 |   +----------------------------------------------+   |
 |   trained once per row group; each FSST segment      |
 |   stores a copy                                      |
@@ -627,7 +627,8 @@ row group is cut into segments of about kDefaultColSegmentTarget encoded bytes:
 |   +----------------------------------------------+   |
 |   |   FSST-encoded suffixes                      |   |
 |   +----------------------------------------------+   |
-|   frames of up to 16 KiB of decoded entries          |
+|   frames of up to 16 KiB of decoded entries; a       |
+|   longer entry is a frame of its own                 |
 +------------------------------------------------------+
 Sections start at 8-byte boundaries.
 */
@@ -697,8 +698,8 @@ encoded bytes:
 |   +----------------------------------------------+   |
 |   |   Header (string_layout.hpp), 72 bytes       |   |
 |   +----------------------------------------------+   |
-|   shape, leaf, level, bit widths, counts,            |
-|   section offsets, flags                             |
+|   codec of the row codes, level, bit widths,         |
+|   counts, section offsets, flags, decoded size       |
 +------------------------------------------------------+
 |                     Frame table                      |
 |   +----------------------------------------------+   |
@@ -730,8 +731,8 @@ encoded bytes:
 +------------------------------------------------------+
 |                     Symbol table                     |
 |   +----------------------------------------------+   |
-|   |   FSST symbol table: at most 2066 bytes      |   |
-|   |   with 8-bit codes, 36872 with 12-bit ones   |   |
+|   |   FSST symbol table: about 2 KiB at most     |   |
+|   |   with 8-bit codes, 36 KiB with 12-bit ones  |   |
 |   +----------------------------------------------+   |
 |   trained once per row group; each FSST segment      |
 |   stores a copy                                      |
@@ -740,7 +741,8 @@ encoded bytes:
 |   +----------------------------------------------+   |
 |   |   FSST-encoded suffixes                      |   |
 |   +----------------------------------------------+   |
-|   frames of up to 16 KiB of decoded entries          |
+|   frames of up to 16 KiB of decoded entries; a       |
+|   longer entry is a frame of its own                 |
 +------------------------------------------------------+
 Sections start at 8-byte boundaries.
 */

@@ -471,6 +471,21 @@ class WideReader {
     return true;
   }
 
+  bool ConstantRows(uint64_t row, uint64_t count, W& value)
+    requires requires(R& half, uint64_t& part) {
+      half.ConstantRows(row, count, part);
+    }
+  {
+    uint64_t low = 0;
+    uint64_t high = 0;
+    if (!_low.ConstantRows(row, count, low) ||
+        (_high && !_high->ConstantRows(row, count, high))) {
+      return false;
+    }
+    value = WideValue<W>(_high ? absl::MakeUint128(high, low) : Base() + low);
+    return true;
+  }
+
  private:
   static WideHeader Header(duckdb::const_data_ptr_t base, uint64_t size) {
     SDB_ENSURE(size >= sizeof(WideHeader),

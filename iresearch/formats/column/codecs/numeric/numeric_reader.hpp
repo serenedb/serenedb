@@ -492,22 +492,34 @@ class FrameReader {
     }
   }
 
-  bool ConstantRows(this auto& self, uint64_t row, uint64_t count, T& value) {
+  IRS_FORCE_INLINE bool ConstantRows(this auto& self, uint64_t row,
+                                     uint64_t count, T& value) {
     if (!self.Packed()) {
       return false;
     }
-    const uint64_t end = row + count;
-    U base = 0;
-    for (uint64_t at = row; at < end;
-         at += numeric::kBlockValues - at % numeric::kBlockValues) {
-      const auto block = self.BlockAt(at);
-      if (block.bits != 0 || block.step != 0 ||
-          (at != row && static_cast<U>(block.base) != base)) {
-        return false;
-      }
-      base = static_cast<U>(block.base);
+    const auto block = self.BlockAt(row);
+    if (block.bits != 0 || block.step != 0) {
+      return false;
+    }
+    const auto base = static_cast<U>(block.base);
+    const uint64_t next =
+      row + numeric::kBlockValues - row % numeric::kBlockValues;
+    if (next < row + count && !self.ConstantBlocks(next, row + count, base)) {
+      return false;
     }
     value = self.Scaled(base);
+    return true;
+  }
+
+  IRS_NO_INLINE bool ConstantBlocks(this auto& self, uint64_t row, uint64_t end,
+                                    U base) {
+    for (uint64_t at = row; at < end; at += numeric::kBlockValues) {
+      const auto block = self.BlockAt(at);
+      if (block.bits != 0 || block.step != 0 ||
+          static_cast<U>(block.base) != base) {
+        return false;
+      }
+    }
     return true;
   }
 

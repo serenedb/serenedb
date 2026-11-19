@@ -555,7 +555,8 @@ stores the rest of its codes.
 |   +----------------------------------------------+   |
 |   |   each entry's codes after its group's       |   |
 |   +----------------------------------------------+   |
-|   frames of up to 16 KiB of decoded entries          |
+|   frames of up to 16 KiB of decoded entries; a       |
+|   longer entry is a frame of its own                 |
 +------------------------------------------------------+
 */
 

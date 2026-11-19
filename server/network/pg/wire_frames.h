@@ -73,7 +73,7 @@ enum class RowEncoding : uint8_t {
 // [begin, end) -- the sub-range serves Execute max_rows paging; a full chunk is
 // [0, chunk.size()).
 void WriteDataChunk(message::Buffer& out, const duckdb::DataChunk& chunk,
-                    std::span<const sdb::pg::SerializationFunction> serializers,
+                    sdb::pg::ChunkSerializer& serializer,
                     sdb::pg::SerializationContext& context, duckdb::idx_t begin,
                     duckdb::idx_t end);
 
@@ -82,7 +82,7 @@ void WriteDataChunk(message::Buffer& out, const duckdb::DataChunk& chunk,
 // PGCOPY/COPY row sequence.
 template<RowEncoding Encoding>
 void WriteCopyChunk(message::Buffer& out, const duckdb::DataChunk& chunk,
-                    std::span<const sdb::pg::SerializationFunction> serializers,
+                    sdb::pg::ChunkSerializer& serializer,
                     sdb::pg::SerializationContext& context, bool binary_header);
 
 void WriteCopyBinaryHeader(message::Buffer& out, message::Chain& first);

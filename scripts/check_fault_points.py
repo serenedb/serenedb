@@ -51,6 +51,7 @@ DUCKDB_PARK_FAULTS = frozenset(
         "duckdb_databases_listed",
         "read_duckdb_reader_attached",
         "recursive_cte_wait",
+        "row_range_lex",
         "scheduler_woken_worker_pauses",
     }
 )
@@ -63,6 +64,7 @@ DUCKDB_TESTED_FAULTS = frozenset(
         "recursive_cte_task_lost",
         "recursive_cte_wait",
         "remote_write_cache_block",
+        "row_range_lex",
     }
 )
 TEST_DIR = "tests"

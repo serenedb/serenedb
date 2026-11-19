@@ -254,6 +254,11 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   const auto snapshot_start = profiled ? duckdb::TimePoint::Now() : 0;
   AcquireScanSnapshot(*state, context, ss);
   const auto snapshot_ticks = profiled ? ElapsedTicks(snapshot_start) : 0;
+  if (input.sample_options) {
+    state->sampling = duckdb::ScanSamplingInfo::FromOptions(
+      *input.sample_options, state->reader->live_docs_count());
+    state->sample_seed = input.sample_options->seed;
+  }
   if (ss.score.text && ss.relation.kind == ScanEntryKind::SearchTable &&
       !state->ClaimedWhere()) {
     THROW_SQL_ERROR(
@@ -467,6 +472,17 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> IResearchScanInitLocal(
   return result;
 }
 
+duckdb::RandomEngine& SampleRandom(const ScanGlobalState& g,
+                                   ScanLocalState& l) {
+  if (!l.sample_seeded) {
+    if (g.sample_seed.IsValid()) {
+      l.sample_random.SetSeed(g.sample_seed.GetIndex());
+    }
+    l.sample_seeded = true;
+  }
+  return l.sample_random;
+}
+
 void IResearchScanFunction(duckdb::ClientContext& context,
                            duckdb::TableFunctionInput& data,
                            duckdb::DataChunk& output) {
@@ -558,6 +574,7 @@ void IResearchSetScanOrder(
       .storage = options->column_idx,
       .skipped_groups = options->row_group_offset,
       .skipped_null_groups = options->leading_null_group_offset,
+      .row_limit = options->row_limit,
     };
   };
   if (options->row_group_offset != 0 ||
@@ -605,6 +622,14 @@ void IResearchSetScanOrder(
     }
     take_limit();
   }
+}
+
+void IResearchSetPartitionsToScan(
+  duckdb::vector<duckdb::idx_t> partition_indices,
+  duckdb::optional_ptr<duckdb::FunctionData> bind_data) {
+  auto& bd = bind_data->Cast<ScanBindData>();
+  bd.partitions_to_scan.emplace(partition_indices.begin(),
+                                partition_indices.end());
 }
 
 bool IResearchConsumeTopN(duckdb::ClientContext&,
@@ -765,6 +790,7 @@ duckdb::TableFunction CreateIResearchScanFunction() {
   func.pushdown_complex_filter = &optimizer::IResearchPushdownComplexFilter;
   func.pushdown_expression = &IResearchPushdownExpression;
   func.set_scan_order = &IResearchSetScanOrder;
+  func.set_partitions_to_scan = &IResearchSetPartitionsToScan;
   func.consume_top_n = &IResearchConsumeTopN;
   func.supports_pushdown_extract = &IResearchSupportsPushdownExtract;
   func.supports_pushdown_filter = &IResearchSupportsPushdownFilter;
@@ -774,6 +800,9 @@ duckdb::TableFunction CreateIResearchScanFunction() {
   func.projection_pushdown = true;
   func.filter_pushdown = true;
   func.filter_prune = true;
+  func.sampling_pushdown = true;
+  func.multi_column_filter_pushdown = true;
+  func.ordered_filter_pushdown = true;
   func.order_preservation_type = duckdb::OrderPreservationType::NO_ORDER;
   return func;
 }

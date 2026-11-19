@@ -26,11 +26,13 @@
 #include <array>
 #include <atomic>
 #include <duckdb.hpp>
+#include <duckdb/common/random_engine.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/filter/table_filter_functions.hpp>
 #include <duckdb/planner/table_filter.hpp>
 #include <duckdb/storage/table/row_group_reorderer.hpp>
+#include <duckdb/storage/table/scan_state.hpp>
 #include <iresearch/index/column_extract.hpp>
 #include <iresearch/index/docs_mask/docs_mask.hpp>
 #include <iresearch/index/hit_batcher.hpp>
@@ -151,16 +153,24 @@ struct ABSL_CACHELINE_ALIGNED SegmentWork {
   std::atomic_uint8_t claim{kUnclaimed};
   std::atomic_uint8_t prepare{kUnprepared};
   bool dead = false;
+  bool skips = false;
   std::unique_ptr<OrderedUnits> ordered;
-  std::vector<uint32_t> skipped_rgs;
+  std::span<const uint32_t> live_rgs;
   ABSL_CACHELINE_ALIGNED std::atomic_uint32_t next_start{0};
   ABSL_CACHELINE_ALIGNED std::atomic_uint32_t done_rgs{0};
 
   uint32_t LiveCount() const noexcept {
-    return dead ? 0 : rg_count - static_cast<uint32_t>(skipped_rgs.size());
+    if (dead) {
+      return 0;
+    }
+    return skips ? static_cast<uint32_t>(live_rgs.size()) : rg_count;
   }
 
   uint32_t Units() const noexcept { return LiveCount(); }
+
+  uint32_t UnitRowGroup(uint32_t unit) const noexcept {
+    return skips ? live_rgs[unit] : unit;
+  }
 };
 
 class ScanBarrier {
@@ -215,6 +225,8 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   size_t top_offset = 0;
   bool empty_answer = false;
   std::optional<VectorScorerOptions> owned_vector_scorer;
+  duckdb::ScanSamplingInfo sampling;
+  duckdb::optional_idx sample_seed;
 
   std::vector<duckdb::idx_t> projected_columns;
   std::vector<duckdb::LogicalType> projected_types;
@@ -299,6 +311,7 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
 
   std::vector<uint32_t> segment_order;
   std::unique_ptr<SegmentWork[]> segments;
+  std::vector<uint32_t> live_row_groups;
   struct ABSL_CACHELINE_ALIGNED RangeSlot {
     std::atomic_uint64_t range{0};
   };
@@ -401,6 +414,11 @@ struct RowGroupCheck {
   irs::BlockWindow window;
 };
 
+struct MultiColumnCheck {
+  const duckdb::ExpressionFilter* filter;
+  std::vector<const irs::ColumnReader*> readers;
+};
+
 struct ScanLocalState : public duckdb::LocalTableFunctionState {
   duckdb::DataChunk scan_chunk;
   uint32_t worker = std::numeric_limits<uint32_t>::max();
@@ -411,6 +429,8 @@ struct ScanLocalState : public duckdb::LocalTableFunctionState {
   irs::ColFilterClassification column_form_cls;
   uint32_t checked_seg = std::numeric_limits<uint32_t>::max();
   std::vector<RowGroupCheck> rg_checks;
+  std::vector<MultiColumnCheck> multi_checks;
+  duckdb::vector<duckdb::BaseStatistics> multi_stats;
   uint32_t current_seg = std::numeric_limits<uint32_t>::max();
   uint32_t owned_seg = std::numeric_limits<uint32_t>::max();
   uint32_t claimed_end = 0;
@@ -424,11 +444,15 @@ struct ScanLocalState : public duckdb::LocalTableFunctionState {
   bool starts_exhausted = false;
   uint64_t rg_units = 0;
   uint64_t produced_rows = 0;
+  duckdb::RandomEngine sample_random{-1};
+  bool sample_seeded = false;
 
   void Classify(ScanGlobalState& g, uint32_t seg);
 
   virtual void ReleasePlans() {}
 };
+
+duckdb::RandomEngine& SampleRandom(const ScanGlobalState& g, ScanLocalState& l);
 
 struct FetchLocalState {
   std::unique_ptr<irs::HitBatcher> hit_batcher;
@@ -471,6 +495,8 @@ struct StreamLocalState final : public ScanLocalState, FetchLocalState {
   uint64_t stop_row = 0;
   bool unit_done = true;
   bool started = false;
+  uint64_t sample_vector = std::numeric_limits<uint64_t>::max();
+  bool sample_keeps = false;
 
   void ReleasePlans() final { root = nullptr; }
 };

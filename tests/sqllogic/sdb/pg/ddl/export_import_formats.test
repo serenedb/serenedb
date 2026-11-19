@@ -129,7 +129,7 @@ query
 SELECT id, n::TEXT AS n, encode(b, 'hex') AS b, j::TEXT AS j, j IS NULL AS j_null, bits::TEXT AS bits, iv::TEXT AS iv, t FROM exf_json.public.f ORDER BY id;
 ----
 id	n	b	j	j_null	bits	iv	t
-1	1234567890.0123457536	5c7830305c784646	{"a":[1,2]}	f	1011	1 day 02:03:04	x
+1	1234567890.0123456789	5c7830305c784646	{"a":[1,2]}	f	1011	1 day 02:03:04	x
 2	0.0000000000	(empty)	NULL	t	0	00:00:00	(empty)
 3	NULL	NULL	NULL	t	NULL	NULL	NULL
 

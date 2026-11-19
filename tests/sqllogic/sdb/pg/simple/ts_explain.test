@@ -210,8 +210,8 @@ WHERE body @@ ts_starts_with('d')
 ORDER BY BM25(explain_idx.tableoid) DESC, id;
 ----
 id	first	second
-5	dog	day
 4	dog	NULL
+5	dog	day
 
 query
 SELECT id, ts_explain(explain_idx.tableoid) AS why

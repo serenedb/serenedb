@@ -281,18 +281,15 @@ class Builder {
           ColumnArgsFetcher& fetcher) noexcept
     : _scorer{scorer}, _stats{stats}, _names{names}, _fetcher{fetcher} {}
 
-  std::unique_ptr<Part> Make(const QueryBuilder& query,
-                             std::optional<ScoreMergeType> merge) {
+  std::unique_ptr<Part> Make(const QueryBuilder& query) {
     if (QueryBuilder::IsEmpty(query)) {
       return nullptr;
     }
     switch (query.Kind()) {
       case QueryKind::Boolean:
         return MakeBoolean(utils::downCast<BooleanQuery>(query));
-      case QueryKind::Terms: {
-        const auto& terms = utils::downCast<MultiTermQuery>(query);
-        return MakeTerms(terms, merge.value_or(terms.MergeType()));
-      }
+      case QueryKind::Terms:
+        return MakeTerms(utils::downCast<MultiTermQuery>(query));
       case QueryKind::Term: {
         const auto& term = utils::downCast<TermQuery>(query);
         return MakeClause(query.Segment(),
@@ -393,11 +390,10 @@ class Builder {
       });
   }
 
-  std::unique_ptr<Part> MakeTerms(const MultiTermQuery& query,
-                                  ScoreMergeType merge) {
+  std::unique_ptr<Part> MakeTerms(const MultiTermQuery& query) {
     const auto& state = query.State();
     auto group = std::make_unique<GroupPart>(
-      Planner{}, merge == ScoreMergeType::Max, std::nullopt);
+      Planner{}, query.MergeType() == ScoreMergeType::Max, std::nullopt);
     const auto* const scorer = query.Stats(Scoring()).scorer;
     for (const auto& entry : state.Terms()) {
       group->Add(MakeClause(
@@ -427,7 +423,7 @@ class Builder {
         group->Add(MakeClause(query.Segment(), clause));
       }
       for (const auto& child : bucket.filters) {
-        group->Add(Make(*child, query.MergeType()));
+        group->Add(Make(*child));
       }
     }
     return group;
@@ -443,7 +439,7 @@ class Builder {
 
 Plan::Plan(const QueryBuilder& query, const Scorer& scorer,
            const StatsIndex& stats, const TermNames& names)
-  : _root{Builder{scorer, stats, names, _fetcher}.Make(query, std::nullopt)} {}
+  : _root{Builder{scorer, stats, names, _fetcher}.Make(query)} {}
 
 Node Plan::Explain(doc_id_t doc, std::optional<score_t> executed) {
   Node root;

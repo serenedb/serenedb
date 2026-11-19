@@ -325,12 +325,13 @@ TEST_P(ExplainTest, phrase_sums_the_idf_of_its_terms) {
 TEST_P(ExplainTest, prefix_names_each_expanded_term) {
   BuildFixture();
   irs::BM25 bm25;
-  const auto expanded = [&](const irs::ByPrefix& filter) {
+  const auto expanded = [&](const irs::ByPrefix& filter,
+                            std::string_view merge) {
     const auto rows = Explain(filter, bm25, 1e-5f);
     EXPECT_EQ(1u, rows.size());
     std::vector<irs::bstring> terms;
     for (const auto& row : rows) {
-      EXPECT_EQ("sum", row.key);
+      EXPECT_EQ(merge, row.key);
       for (const auto& leaf : row.details) {
         EXPECT_EQ(kBodyId, leaf.subject.field);
         EXPECT_EQ(1u, leaf.subject.terms.size());
@@ -345,13 +346,16 @@ TEST_P(ExplainTest, prefix_names_each_expanded_term) {
   irs::ByPrefix constant;
   *constant.mutable_field_id() = kBodyId;
   constant.mutable_options()->term = Bytes("a");
-  EXPECT_EQ(expected, expanded(constant));
+  EXPECT_EQ(expected, expanded(constant, "max"));
 
   irs::ByPrefix scored;
   *scored.mutable_field_id() = kBodyId;
   scored.mutable_options()->term = Bytes("a");
   scored.SetScorer(&bm25);
-  EXPECT_EQ(expected, expanded(scored));
+  EXPECT_EQ(expected, expanded(scored, "max"));
+
+  scored.mutable_options()->merge = irs::ScoreMergeType::Sum;
+  EXPECT_EQ(expected, expanded(scored, "sum"));
 }
 
 TEST_P(ExplainTest, an_unscored_clause_names_its_terms) {

@@ -287,6 +287,75 @@ def test_hba_config_resolves_against_the_data_directory(
         server.output())
 
 
+@pytest.mark.parametrize(("listen", "message"), [
+    ("postgres://127.0.0.1:{port}?sslmode=require",
+     "requires TLS but no certificate is configured"),
+    ("https://127.0.0.1:{port}?api=es",
+     "requires TLS but no certificate is configured"),
+    ("postgres://127.0.0.1:{port}?sslmode=verify-full"
+     "&cert=/no/such/cert.pem&key=/no/such/key.pem",
+     "uses sslmode=verify-* but no client-cert CA is configured"),
+])
+def test_tls_listener_without_its_files(tmp_path: Path, listen: str,
+                                        message: str) -> None:
+    reserved = reserve_port()
+    server = _Server(tmp_path / "data",
+                     listen.format(port=reserved.getsockname()[1]))
+    try:
+        assert server.proc.wait(timeout=60) != 0, server.output()
+        assert message in server.output(), server.output()
+    finally:
+        server.stop()
+        reserved.close()
+
+
+def _wait_listening(server: _Server, port: int) -> None:
+    deadline = time.monotonic() + 60
+    while not listens_on(server.proc.pid, [port]):
+        assert server.proc.poll() is None, server.output()
+        assert time.monotonic() < deadline, server.output()
+        time.sleep(0.2)
+
+
+def test_verify_full_listener_with_its_own_ca(tmp_path: Path) -> None:
+    pem = Path(__file__).resolve().parents[3] / "resources" / "ca.pem"
+    reserved = reserve_port()
+    port = reserved.getsockname()[1]
+    server = _Server(tmp_path / "data",
+                     f"postgres://127.0.0.1:{port}?sslmode=verify-full"
+                     f"&cert={pem}&key={pem}&ca={pem}",
+                     args=("--tls_min_version=1.3",))
+    try:
+        _wait_listening(server, port)
+        assert f"listening on postgres://127.0.0.1:{port}" in server.output()
+        assert ", tls)" in server.output(), server.output()
+    finally:
+        server.stop()
+        reserved.close()
+
+
+@pytest.mark.skipif(platform.system() != "Linux",
+                    reason="abstract unix sockets are Linux-only")
+def test_abstract_unix_socket(tmp_path: Path) -> None:
+    name = f"sdb-test-{os.getpid()}-{time.monotonic_ns()}"
+    server = _Server(tmp_path / "data", f"postgres:///@{name}")
+    try:
+        deadline = time.monotonic() + 60
+        while True:
+            assert server.proc.poll() is None, server.output()
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+                try:
+                    sock.connect("\0" + name)
+                    break
+                except (ConnectionRefusedError, FileNotFoundError):
+                    pass
+            assert time.monotonic() < deadline, server.output()
+            time.sleep(0.2)
+        assert f"(unix:@{name})" in server.output(), server.output()
+    finally:
+        server.stop()
+
+
 def test_unknown_unix_socket_group(tmp_path: Path, socket_dir: Path) -> None:
     server = _Server(tmp_path / "data",
                      f"postgres://{socket_dir / 'sdb.sock'}"

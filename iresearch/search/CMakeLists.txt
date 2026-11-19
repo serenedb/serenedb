@@ -21,6 +21,7 @@ target_sources(
         fill/make_all_docs.cpp
         fill/make_all_scored.cpp
         fill/make_posting.cpp
+        fill/make_root.cpp
         filters/all_filter.cpp
         filters/automaton_filter.cpp
         filters/boolean_filter.cpp
@@ -35,6 +36,7 @@ target_sources(
         filters/ngram_similarity_filter.cpp
         filters/phrase_filter.cpp
         filters/prefix_filter.cpp
+        filters/query_profile.cpp
         filters/range_filter.cpp
         filters/range_rules.cpp
         filters/regexp_filter.cpp

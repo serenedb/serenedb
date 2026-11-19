@@ -1,0 +1,801 @@
+statement ok
+SET profiling_renderer_settings = {'deterministic': true};
+
+
+statement ok
+SET threads = 1;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY columns_words AS
+    split_text(case := 'lower')
+    WITH (frequency, position);
+
+
+statement ok
+CREATE TABLE columns_docs (id INTEGER PRIMARY KEY, body VARCHAR, year INTEGER)
+WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+
+
+statement ok
+INSERT INTO columns_docs
+SELECT i,
+       CASE WHEN i % 7 = 0 THEN 'new york city'
+            WHEN i % 3 = 0 THEN 'york city'
+            ELSE 'other words here' END,
+       2000 + i % 30
+FROM range(0, 20000) t(i);
+
+
+statement ok
+CREATE INDEX columns_idx ON columns_docs USING inverted (id, body columns_words) INCLUDE (year);
+
+
+statement ok
+SET sdb_index_profile_nodes = true;
+
+
+query
+EXPLAIN ANALYZE
+SELECT count(*)
+FROM columns_idx
+WHERE body @@ 'city' AND year >= 2020;
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ UNGROUPED_AGGREGATE ──────────────────╮
+│ Aggregates: count_star()               │
+│ 1 row                              0µs │
+╰────────────────────┒┎──────────────────╯
+╭─ TABLE_SCAN ───────┚┖──────────────────╮
+│ Index: columns_idx                     │
+│ Lookup: search                         │
+│ Output: row-count only                 │
+│                                        │
+├─ Index Filter Prepare ─────────────────┤
+│                                        │
+│ Total: 0µs                             │
+│ Snapshot: 0µs                          │
+│ Segments: 1 of 1                       │
+│                                        │
+│ ╭─ Term ───────────────────╮           │
+│ │ Field: body(string)      │           │
+│ │ Value: city              │           │
+│ │ Posting Lists: 1         │           │
+│ │ Estimated Matches: 8,572 │           │
+│ │ Postings: 8,572          │           │
+│ │ Time: 0µs                │           │
+│ ╰──────────────────────────╯           │
+│                                        │
+├─ Index Filter Execute ─────────────────┤
+│                                        │
+│ Total: 0µs                             │
+│ Rows: 2,664                            │
+│                                        │
+│ ╭─ count::Walk<detail::PostingLead> ─╮ │
+│ │ Plans: 1                           │ │
+│ │ Calls: 3                           │ │
+│ │ Plan: 0µs                          │ │
+│ │ Time: 0µs                          │ │
+│ │ Rows: 2,664                        │ │
+│ ╰────────────────────────────────────╯ │
+│                                        │
+├─ Column Filter ────────────────────────┤
+│                                        │
+│ Rows: 8,572                            │
+│ Rows Removed: 5,908                    │
+│ Time: 0µs                              │
+│                                        │
+│ ╭─ Column ────────────╮                │
+│ │ Field: year         │                │
+│ │ Check: year >= 2020 │                │
+│ ╰─────────────────────╯                │
+│                                        │
+├────────────────────────────────────────┤
+│ 1 row                              0µs │
+╰────────────────────────────────────────╯
+
+
+query
+SELECT count(*) FILTER (WHERE body LIKE '%city%') AS checked,
+       count(*) FILTER (WHERE body LIKE '%city%' AND year >= 2020) AS kept
+FROM columns_docs;
+----
+checked	kept
+8572	2664
+
+
+query
+EXPLAIN ANALYZE
+SELECT id
+FROM columns_idx
+WHERE body @@ 'city' AND year >= 2020
+ORDER BY bm25(columns_idx.tableoid) DESC
+LIMIT 5;
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TABLE_SCAN ─────────────────╮
+│ Index: columns_idx           │
+│ Lookup: search               │
+│ Score: bm25(k1=1.2, b=0.75)  │
+│ Top: 5, optimized            │
+│ Projections: id              │
+│                              │
+├─ Index Filter Prepare ───────┤
+│                              │
+│ Total: 0µs                   │
+│ Snapshot: 0µs                │
+│ Segments: 1 of 1             │
+│ Stats: 0µs                   │
+│                              │
+│ ╭─ Term ───────────────────╮ │
+│ │ Field: body(string)      │ │
+│ │ Value: city              │ │
+│ │ Posting Lists: 1         │ │
+│ │ Estimated Matches: 8,572 │ │
+│ │ Postings: 8,572          │ │
+│ │ Time: 0µs                │ │
+│ ╰──────────────────────────╯ │
+│                              │
+├─ Index Filter Execute ───────┤
+│                              │
+│ Total: 0µs                   │
+│ Rows: 2,664                  │
+│                              │
+│ ╭─ top::Posting ─╮           │
+│ │ Plans: 1       │           │
+│ │ Calls: 1       │           │
+│ │ Plan: 0µs      │           │
+│ │ Time: 0µs      │           │
+│ │ Rows: 2,664    │           │
+│ ╰────────────────╯           │
+│                              │
+├─ Column Filter ──────────────┤
+│                              │
+│ Rows: 8,572                  │
+│ Rows Removed: 5,908          │
+│ Time: 0µs                    │
+│                              │
+│ ╭─ Column ────────────╮      │
+│ │ Field: year         │      │
+│ │ Check: year >= 2020 │      │
+│ ╰─────────────────────╯      │
+│                              │
+├──────────────────────────────┤
+│ 5 rows                   0µs │
+╰──────────────────────────────╯
+
+
+query
+EXPLAIN ANALYZE
+SELECT id
+FROM columns_idx
+WHERE body @@ 'york' AND year = 2025
+ORDER BY id;
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ ORDER_BY ───────────────────╮
+│ Order By: id ASC             │
+│ 95 rows                  0µs │
+╰───────────────┒┎─────────────╯
+╭─ TABLE_SCAN ──┚┖─────────────╮
+│ Index: columns_idx           │
+│ Lookup: search               │
+│ Projections: id              │
+│                              │
+├─ Index Filter Prepare ───────┤
+│                              │
+│ Total: 0µs                   │
+│ Snapshot: 0µs                │
+│ Segments: 1 of 1             │
+│                              │
+│ ╭─ Term ───────────────────╮ │
+│ │ Field: body(string)      │ │
+│ │ Value: york              │ │
+│ │ Posting Lists: 1         │ │
+│ │ Estimated Matches: 8,572 │ │
+│ │ Postings: 8,572          │ │
+│ │ Time: 0µs                │ │
+│ ╰──────────────────────────╯ │
+│                              │
+├─ Index Filter Execute ───────┤
+│                              │
+│ Total: 0µs                   │
+│ Rows: 8,572                  │
+│                              │
+│ ╭─ docs::Posting ─╮          │
+│ │ Plans: 1        │          │
+│ │ Calls: 10       │          │
+│ │ Plan: 0µs       │          │
+│ │ Time: 0µs       │          │
+│ │ Rows: 8,572     │          │
+│ ╰─────────────────╯          │
+│                              │
+├─ Column Filter ──────────────┤
+│                              │
+│ ╭─ Column ───────────╮       │
+│ │ Field: year        │       │
+│ │ Check: year = 2025 │       │
+│ ╰────────────────────╯       │
+│                              │
+├──────────────────────────────┤
+│ 95 rows                  0µs │
+╰──────────────────────────────╯
+
+
+query
+EXPLAIN ANALYZE
+SELECT id
+FROM columns_idx
+WHERE body @@ 'city' AND bm25(columns_idx.tableoid) > 0.5
+ORDER BY id
+LIMIT 3;
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TOP_N ──────────────────────────────────────────────────────────────╮
+│ Top: 3                                                               │
+│ Order By: id ASC                                                     │
+│ 3 rows                                                           0µs │
+╰───────────────────────────────────┒┎─────────────────────────────────╯
+╭─ TABLE_SCAN ──────────────────────┚┖─────────────────────────────────╮
+│ Index: columns_idx                                                   │
+│ Lookup: search                                                       │
+│ Score: bm25(k1=1.2, b=0.75)                                          │
+│ Min Score: 0.5                                                       │
+│ Projections: id                                                      │
+│                                                                      │
+├─ Index Filter Prepare ───────────────────────────────────────────────┤
+│                                                                      │
+│ Total: 0µs                                                           │
+│ Snapshot: 0µs                                                        │
+│ Segments: 1 of 1                                                     │
+│ Stats: 0µs                                                           │
+│                                                                      │
+│ ╭─ Term ───────────────────╮                                         │
+│ │ Field: body(string)      │                                         │
+│ │ Value: city              │                                         │
+│ │ Posting Lists: 1         │                                         │
+│ │ Estimated Matches: 8,572 │                                         │
+│ │ Postings: 8,572          │                                         │
+│ │ Time: 0µs                │                                         │
+│ ╰──────────────────────────╯                                         │
+│                                                                      │
+├─ Index Filter Execute ───────────────────────────────────────────────┤
+│                                                                      │
+│ Total: 0µs                                                           │
+│ Rows: 8,572                                                          │
+│                                                                      │
+│ ╭─ hits::Posting ─╮                                                  │
+│ │ Plans: 1        │                                                  │
+│ │ Calls: 10       │                                                  │
+│ │ Plan: 0µs       │                                                  │
+│ │ Time: 0µs       │                                                  │
+│ │ Rows: 8,572     │                                                  │
+│ ╰─────────────────╯                                                  │
+│                                                                      │
+├─ Column Filter ──────────────────────────────────────────────────────┤
+│                                                                      │
+│ ╭─ And ────────────────────────────────────╮                         │
+│ ╰─────────────────────┬────────────────────╯                         │
+│                       ├──────────────────────────────────╮           │
+│ ╭─ Dynamic Column ────┴────────────────────╮  ╭─ Score ──┴─────────╮ │
+│ │ Field: id                                │  │ Field: score       │ │
+│ │ Check: optional: Dynamic Filter (id < ?) │  │ Check: score > 0.5 │ │
+│ ╰──────────────────────────────────────────╯  ╰────────────────────╯ │
+│                                                                      │
+├──────────────────────────────────────────────────────────────────────┤
+│ 878 rows                                                         0µs │
+╰──────────────────────────────────────────────────────────────────────╯
+
+
+statement ok
+CREATE TABLE columns_years (year INTEGER);
+
+
+statement ok
+INSERT INTO columns_years VALUES (2001), (2002);
+
+
+statement ok
+SET disabled_optimizers = 'compressed_materialization';
+
+
+query
+EXPLAIN ANALYZE
+SELECT count(*)
+FROM columns_idx d JOIN columns_years y ON d.year = y.year
+WHERE d.body @@ 'city';
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ UNGROUPED_AGGREGATE ─────────────────────────────────────────────────╮
+│ Aggregates: count_star()                                              │
+│ 1 row                                                             0µs │
+╰───────────────────────────────────┒┎──────────────────────────────────╯
+╭─ HASH_JOIN ───────────────────────┚┖──────────────────────────────────╮
+│ Join Type: INNER                                                      │
+│ Conditions: year = year                                               │
+│ 190 rows                                                          0µs │
+╰───────────────────────────────────┰┰──────────────────────────────────╯
+                                    ┃┠──────────────────────────────────────────────────╮
+╭─ TABLE_SCAN ──────────────────────┚┖──────────────────────────────────╮  ╭─ TABLE_SCAN ───────────╮
+│ Index: columns_idx                                                    │  │ Table: columns_years   │
+│ Lookup: search                                                        │  │ Projections: year      │
+│ Projections: year                                                     │  │                        │
+│                                                                       │  ├─ Index Filter Prepare ─┤
+├─ Index Filter Prepare ────────────────────────────────────────────────┤  │                        │
+│                                                                       │  │ Total: 0µs             │
+│ Total: 0µs                                                            │  │ Snapshot: 0µs          │
+│ Snapshot: 0µs                                                         │  │ Segments: 1 of 1       │
+│ Segments: 1 of 1                                                      │  │                        │
+│                                                                       │  ├────────────────────────┤
+│ ╭─ Term ───────────────────╮                                          │  │ 2 rows             0µs │
+│ │ Field: body(string)      │                                          │  ╰────────────────────────╯
+│ │ Value: city              │                                          │
+│ │ Posting Lists: 1         │                                          │
+│ │ Estimated Matches: 8,572 │                                          │
+│ │ Postings: 8,572          │                                          │
+│ │ Time: 0µs                │                                          │
+│ ╰──────────────────────────╯                                          │
+│                                                                       │
+├─ Index Filter Execute ────────────────────────────────────────────────┤
+│                                                                       │
+│ Total: 0µs                                                            │
+│ Rows: 8,572                                                           │
+│                                                                       │
+│ ╭─ docs::Posting ─╮                                                   │
+│ │ Plans: 1        │                                                   │
+│ │ Calls: 10       │                                                   │
+│ │ Plan: 0µs       │                                                   │
+│ │ Time: 0µs       │                                                   │
+│ │ Rows: 8,572     │                                                   │
+│ ╰─────────────────╯                                                   │
+│                                                                       │
+├─ Column Filter ───────────────────────────────────────────────────────┤
+│                                                                       │
+│ ╭─ Column ──────────────────────────────────────────────────────────╮ │
+│ │ Field: year                                                       │ │
+│ │ Check:                                                            │ │
+│ │ (year >= 2001) AND (year <= 2002) AND optional: year IN PRF(year) │ │
+│ ╰───────────────────────────────────────────────────────────────────╯ │
+│                                                                       │
+├───────────────────────────────────────────────────────────────────────┤
+│ 190 rows                                                          0µs │
+╰───────────────────────────────────────────────────────────────────────╯
+
+
+statement ok
+RESET disabled_optimizers;
+
+
+query
+EXPLAIN (FORMAT compact)
+SELECT count(*)
+FROM columns_idx
+WHERE body @@ ts_phrase('new york') AND year >= 2020;
+----
+QUERY PLAN
+UNGROUPED_AGGREGATE (est=1) Aggregates: count_star()
+  IRESEARCH_SCAN (est=800) Index: columns_idx; Lookup: search; Column Filter: (year >= 2020); Output: row-count only
+    Index Filter:
+      Phrase {Field: body(string); Parts: "Term:new(0, 0); Term:york(1, 1);"}
+
+
+query
+EXPLAIN (ANALYZE, FORMAT compact)
+SELECT count(*)
+FROM columns_idx
+WHERE body @@ ts_phrase('new york') AND year >= 2020;
+----
+QUERY PLAN
+QUERY (time=<slt:ignore>)
+RESULT_COLLECTOR (rows=0, time=<slt:ignore>)
+  EXPLAIN_ANALYZE (rows=0, time=<slt:ignore>)
+    UNGROUPED_AGGREGATE (est=1, rows=1, time=<slt:ignore>) Aggregates: count_star()
+      TABLE_SCAN (est=800, rows=1, time=<slt:ignore>) Index: columns_idx; Lookup: search; Output: row-count only
+        Index Filter Prepare: Total: <slt:ignore>; Snapshot: <slt:ignore>; Segments: 1 of 1
+          Phrase {Field: body(string); Parts: "Term:new(0, 0); Term:york(1, 1);"; Posting Lists: 2; Estimated Matches: 1,872; Postings: 11,430; Time: <slt:ignore>}
+        Index Filter Execute: Total: <slt:ignore>; Rows: 952
+          count::Walk<lead::TwoPhase> {Plans: 1; Calls: 3; Plan: <slt:ignore>; Time: <slt:ignore>; Rows: 952}
+        Column Filter: Rows: 2,858; Rows Removed: 1,906; Time: <slt:ignore>
+          Column {Field: year; Check: year >= 2020}
+
+
+query
+EXPLAIN (FORMAT json)
+SELECT count(*)
+FROM columns_idx
+WHERE body @@ ts_phrase('new york') AND year >= 2020;
+----
+QUERY PLAN
+[\n    {\n        "name": "UNGROUPED_AGGREGATE",\n        "children": [\n            {\n                "name": "IRESEARCH_SCAN",\n                "children": [],\n                "extra_info": {\n                    "Index": "columns_idx",\n                    "Lookup": "search",\n                    "Index Filter": {\n                        "name": "Phrase",\n                        "Field": "body(string)",\n                        "Parts": "Term:new(0, 0); Term:york(1, 1); "\n                    },\n                    "Column Filter": "(year >= 2020)",\n                    "Output": "row-count only",\n                    "Projections": "",\n                    "Estimated Cardinality": "800"\n                }\n            }\n        ],\n        "extra_info": {\n            "Aggregates": "count_star()",\n            "Estimated Cardinality": "1"\n        }\n    }\n]
+
+
+query
+EXPLAIN (FORMAT yaml)
+SELECT count(*)
+FROM columns_idx
+WHERE body @@ ts_phrase('new york') AND year >= 2020;
+----
+QUERY PLAN
+- name: "UNGROUPED_AGGREGATE"\n  "Aggregates": "count_star()"\n  "Estimated Cardinality": "1"\n  children: \n    - name: "IRESEARCH_SCAN"\n      "Index": "columns_idx"\n      "Lookup": "search"\n      "Index Filter":\n        - "Phrase"\n        - "  Field: body(string)"\n        - "  Parts: Term:new(0, 0); Term:york(1, 1); "\n      "Column Filter": "(year >= 2020)"\n      "Output": "row-count only"\n      "Projections": ""\n      "Estimated Cardinality": "800"
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY columns_shapes AS encode_geojson();
+
+
+statement ok
+CREATE TABLE columns_places (id INTEGER PRIMARY KEY, geo GEOMETRY('OGC:CRS84'));
+
+
+statement ok
+CREATE INDEX columns_places_idx ON columns_places USING inverted (id, geo columns_shapes);
+
+
+statement ok
+INSERT INTO columns_places
+SELECT i, ('POINT(' || (37 + (i % 100) / 100.0) || ' ' || (55 + (i % 50) / 50.0) || ')')::GEOMETRY('OGC:CRS84')
+FROM range(0, 2000) t(i);
+
+
+query
+EXPLAIN ANALYZE
+SELECT count(*)
+FROM columns_places
+WHERE ST_Intersects(geo, 'POLYGON((37 55,37.5 55,37.5 55.5,37 55.5,37 55))'::GEOMETRY('OGC:CRS84'));
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ UNGROUPED_AGGREGATE ──────╮
+│ Aggregates: count_star()   │
+│ 1 row                  0µs │
+╰──────────────┒┎────────────╯
+╭─ TABLE_SCAN ─┚┖────────────╮
+│ Table: columns_places      │
+│ Output: row-count only     │
+│                            │
+├─ Index Filter Prepare ─────┤
+│                            │
+│ Total: 0µs                 │
+│ Snapshot: 0µs              │
+│ Segments: 1 of 1           │
+│                            │
+│ ╭─ Geo ──────────────────╮ │
+│ │ Field: geo(string)     │ │
+│ │ Op: Intersects         │ │
+│ │ Shape: S2Polygon       │ │
+│ │ Verify: false          │ │
+│ │ Estimated Matches: 640 │ │
+│ │ Time: 0µs              │ │
+│ ╰────────────────────────╯ │
+│                            │
+├─ Index Filter Execute ─────┤
+│                            │
+│ Total: 0µs                 │
+│ Rows: 520                  │
+│                            │
+│ ╭─ count::BooleanWindow ─╮ │
+│ │ Plans: 1               │ │
+│ │ Calls: 3               │ │
+│ │ Plan: 0µs              │ │
+│ │ Time: 0µs              │ │
+│ │ Rows: 520              │ │
+│ ╰────────────────────────╯ │
+│                            │
+├─ Column Filter ────────────┤
+│                            │
+│ Rows: 640                  │
+│ Rows Removed: 120          │
+│ Time: 0µs                  │
+│                            │
+│ ╭─ Geo ────────────────╮   │
+│ │ Field: geo(string)   │   │
+│ │ Op: Intersects       │   │
+│ │ Shape: S2Polygon     │   │
+│ │ Verify: table filter │   │
+│ ╰──────────────────────╯   │
+│                            │
+├────────────────────────────┤
+│ 1 row                  0µs │
+╰────────────────────────────╯
+
+
+statement ok
+CREATE TABLE columns_vectors (pk INTEGER PRIMARY KEY, emb FLOAT[8], cat INTEGER, num INTEGER, tag VARCHAR)
+WITH (compaction_interval = 0);
+
+
+statement ok
+CREATE INDEX columns_vectors_idx ON columns_vectors
+USING inverted (pk, cat, num, tag, emb hnsw (metric = 'l2', quant = 'none'));
+
+
+statement ok
+INSERT INTO columns_vectors
+SELECT i, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8], i % 10, i,
+       CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END
+FROM range(3000) t(i);
+
+
+query
+EXPLAIN ANALYZE
+SELECT pk
+FROM columns_vectors
+WHERE cat = 4 AND num < 2000 AND tag @@ 'even'
+ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]
+LIMIT 4;
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TABLE_SCAN ───────────────────────────────────────────────────────────────────────╮
+│ Table: columns_vectors                                                             │
+│ Index or Column Filter: num < 2000, cat = 4                                        │
+│ Score: l2_distance(emb, FLOAT[8])                                                  │
+│ Top: 4                                                                             │
+│ Projections: pk                                                                    │
+│                                                                                    │
+├─ Index Filter Prepare ─────────────────────────────────────────────────────────────┤
+│                                                                                    │
+│ Total: 0µs                                                                         │
+│ Snapshot: 0µs                                                                      │
+│ Segments: 1 of 1                                                                   │
+│                                                                                    │
+│ ╭─ Vector Similarity ──────╮                                                       │
+│ │ Field: emb               │                                                       │
+│ │ Metric: l2               │                                                       │
+│ │ Top: 4                   │                                                       │
+│ │ Estimated Matches: 3,000 │                                                       │
+│ │ Total: 0µs               │                                                       │
+│ │ Time: 0µs                │                                                       │
+│ ╰─────────────┬────────────╯                                                       │
+│ ╭─ And ───────┴────────────╮                                                       │
+│ │ Posting Lists: 2         │                                                       │
+│ │ Estimated Matches: 101   │                                                       │
+│ │ Postings: 1,800          │                                                       │
+│ │ Total: 0µs               │                                                       │
+│ │ Time: 0µs                │                                                       │
+│ ╰─────────────┬────────────╯                                                       │
+│               ├──────────────────────────┬──────────────────────────╮              │
+│ ╭─ Terms ─────┴────────────╮  ╭─ Terms ──┴─────────╮  ╭─ Granular Range ─────────╮ │
+│ │ Field: cat(numeric)      │  │ Field: tag(string) │  │ Field: num(numeric)      │ │
+│ │ Values: 4                │  │ Values: 'even'     │  │ Range: <2000             │ │
+│ ╰──────────────────────────╯  ╰────────────────────╯  │ Posting Lists: 49        │ │
+│                                                       │ Estimated Matches: 2,000 │ │
+│                                                       │ Postings: 1,188          │ │
+│                                                       │ Time: 0µs                │ │
+│                                                       ╰──────────────────────────╯ │
+│                                                                                    │
+├─ Index Filter Execute ─────────────────────────────────────────────────────────────┤
+│                                                                                    │
+│ Total: 0µs                                                                         │
+│ Rows: 160                                                                          │
+│                                                                                    │
+│ ╭─ ann::HnswHits ───────────────────╮                                              │
+│ │ Plans: 1                          │                                              │
+│ │ Calls: 1                          │                                              │
+│ │ Plan: 0µs                         │                                              │
+│ │ Total: 0µs                        │                                              │
+│ │ Time: 0µs                         │                                              │
+│ │ Rows: 160                         │                                              │
+│ ╰─────────────────┬─────────────────╯                                              │
+│ ╭─ fill::Impl<fill::BooleanWindow> ─╮                                              │
+│ │ Filter: And                       │                                              │
+│ │ Plans: 1                          │                                              │
+│ │ Calls: 1                          │                                              │
+│ │ Time: 0µs                         │                                              │
+│ │ Rows: 200                         │                                              │
+│ ╰───────────────────────────────────╯                                              │
+│                                                                                    │
+├────────────────────────────────────────────────────────────────────────────────────┤
+│ 4 rows                                                                         0µs │
+╰────────────────────────────────────────────────────────────────────────────────────╯
+
+
+query
+EXPLAIN (FORMAT compact)
+SELECT pk
+FROM columns_vectors
+WHERE cat = 4 AND num < 2000 AND tag @@ 'even'
+ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]
+LIMIT 4;
+----
+QUERY PLAN
+IRESEARCH_SCAN (est=600) Table: columns_vectors; Index or Column Filter: (num < 2000), (cat = 4); Score: l2_distance(emb, FLOAT[8]); Top: 4; Projections: pk
+  Index Filter:
+    And
+      Terms {Field: cat(numeric); Values: 4}
+      Terms {Field: tag(string); Values: 'even'}
+      Granular Range {Field: num(numeric); Range: <2000}
+
+
+statement ok
+SET sdb_hnsw_filter_mode = 'walk';
+
+
+statement ok
+SET sdb_hnsw_column_filter = 'read';
+
+
+query
+EXPLAIN ANALYZE
+SELECT pk
+FROM columns_vectors
+WHERE cat = 4 AND num < 2000 AND tag @@ 'even'
+ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]
+LIMIT 4;
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TABLE_SCAN ───────────────────────────────────────────────────────────────────────╮
+│ Table: columns_vectors                                                             │
+│ Score: l2_distance(emb, FLOAT[8])                                                  │
+│ Top: 4                                                                             │
+│ Projections: pk                                                                    │
+│                                                                                    │
+├─ Index Filter Prepare ─────────────────────────────────────────────────────────────┤
+│                                                                                    │
+│ Total: 0µs                                                                         │
+│ Snapshot: 0µs                                                                      │
+│ Segments: 1 of 1                                                                   │
+│                                                                                    │
+│ ╭─ Vector Similarity ──────╮                                                       │
+│ │ Field: emb               │                                                       │
+│ │ Metric: l2               │                                                       │
+│ │ Top: 4                   │                                                       │
+│ │ Estimated Matches: 3,000 │                                                       │
+│ │ Total: 0µs               │                                                       │
+│ │ Time: 0µs                │                                                       │
+│ ╰─────────────┬────────────╯                                                       │
+│ ╭─ And ───────┴────────────╮                                                       │
+│ │ Posting Lists: 2         │                                                       │
+│ │ Estimated Matches: 101   │                                                       │
+│ │ Postings: 1,800          │                                                       │
+│ │ Total: 0µs               │                                                       │
+│ │ Time: 0µs                │                                                       │
+│ ╰─────────────┬────────────╯                                                       │
+│               ├──────────────────────────┬──────────────────────────╮              │
+│ ╭─ Terms ─────┴────────────╮  ╭─ Terms ──┴─────────╮  ╭─ Granular Range ─────────╮ │
+│ │ Field: cat(numeric)      │  │ Field: tag(string) │  │ Field: num(numeric)      │ │
+│ │ Values: 4                │  │ Values: 'even'     │  │ Range: <2000             │ │
+│ ╰──────────────────────────╯  ╰────────────────────╯  │ Posting Lists: 49        │ │
+│                                                       │ Estimated Matches: 2,000 │ │
+│                                                       │ Postings: 1,188          │ │
+│                                                       │ Time: 0µs                │ │
+│                                                       ╰──────────────────────────╯ │
+│                                                                                    │
+├─ Index Filter Execute ─────────────────────────────────────────────────────────────┤
+│                                                                                    │
+│ Total: 0µs                                                                         │
+│ Rows: 160                                                                          │
+│                                                                                    │
+│ ╭─ ann::HnswHits ─╮                                                                │
+│ │ Plans: 1        │                                                                │
+│ │ Calls: 1        │                                                                │
+│ │ Plan: 0µs       │                                                                │
+│ │ Time: 0µs       │                                                                │
+│ │ Rows: 160       │                                                                │
+│ ╰─────────────────╯                                                                │
+│                                                                                    │
+├─ Column Filter ────────────────────────────────────────────────────────────────────┤
+│                                                                                    │
+│ Rows: 1,551                                                                        │
+│ Rows Removed: 1,341                                                                │
+│ Time: 0µs                                                                          │
+│                                                                                    │
+│ ╭─ And ─────────────╮                                                              │
+│ ╰─────────┬─────────╯                                                              │
+│           ├─────────────────────╮                                                  │
+│ ╭─ Column ┴─────────╮  ╭─ Column ───────╮                                          │
+│ │ Field: num        │  │ Field: cat     │                                          │
+│ │ Check: num < 2000 │  │ Check: cat = 4 │                                          │
+│ ╰───────────────────╯  ╰────────────────╯                                          │
+│                                                                                    │
+├────────────────────────────────────────────────────────────────────────────────────┤
+│ 4 rows                                                                         0µs │
+╰────────────────────────────────────────────────────────────────────────────────────╯
+
+
+statement ok
+RESET sdb_hnsw_column_filter;
+
+
+statement ok
+RESET sdb_hnsw_filter_mode;
+
+
+statement ok
+CREATE TABLE columns_rows (pk INTEGER PRIMARY KEY, emb FLOAT[8], label VARCHAR, grp INTEGER);
+
+
+statement ok
+CREATE INDEX columns_rows_idx ON columns_rows
+USING inverted (pk, emb hnsw (metric = 'l2', quant = 'none'))
+INCLUDE (label, grp);
+
+
+statement ok
+INSERT INTO columns_rows
+SELECT i, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8],
+       CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END, i % 7
+FROM range(300) t(i);
+
+
+query
+EXPLAIN ANALYZE
+SELECT pk
+FROM columns_rows_idx
+WHERE label = 'even' OR grp = 3
+ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]
+LIMIT 4;
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TABLE_SCAN ─────────────────────────────╮
+│ Index: columns_rows_idx                  │
+│ Lookup: search                           │
+│ Score: l2_distance(emb, FLOAT[8])        │
+│ Top: 4                                   │
+│ Projections: pk                          │
+│                                          │
+├─ Index Filter Prepare ───────────────────┤
+│                                          │
+│ Total: 0µs                               │
+│ Snapshot: 0µs                            │
+│ Segments: 1 of 1                         │
+│                                          │
+│ ╭─ Vector Similarity ────╮               │
+│ │ Field: emb             │               │
+│ │ Metric: l2             │               │
+│ │ Top: 4                 │               │
+│ │ Estimated Matches: 300 │               │
+│ │ Time: 0µs              │               │
+│ ╰────────────────────────╯               │
+│                                          │
+├─ Index Filter Execute ───────────────────┤
+│                                          │
+│ Total: 0µs                               │
+│ Rows: 147                                │
+│                                          │
+│ ╭─ ann::ExactChain ─╮                    │
+│ │ Plans: 1          │                    │
+│ │ Calls: 1          │                    │
+│ │ Plan: 0µs         │                    │
+│ │ Time: 0µs         │                    │
+│ │ Rows: 147         │                    │
+│ ╰───────────────────╯                    │
+│                                          │
+├─ Column Filter ──────────────────────────┤
+│                                          │
+│ Rows: 256                                │
+│ Rows Removed: 109                        │
+│ Time: 0µs                                │
+│                                          │
+│ ╭─ Row ────────────────────────────────╮ │
+│ │ Check: (label = 'even') OR (grp = 3) │ │
+│ ╰──────────────────────────────────────╯ │
+│                                          │
+├──────────────────────────────────────────┤
+│ 4 rows                               0µs │
+╰──────────────────────────────────────────╯

@@ -13,6 +13,10 @@
 
 
 statement ok
+SET threads = 1;
+
+
+statement ok
 CREATE TABLE pudge_pt(a INTEGER, b INTEGER);
 
 
@@ -36,16 +40,41 @@ QUERY PLAN
 ╭─ Summary ───────────╮
 │ Total Time: 0.0000s │
 ╰─────────────────────╯
-╭─ TABLE_SCAN ──────────╮
-│ Table: pudge_pt       │
-│ Index Filter:         │
-│ ╭─ Term ────────────╮ │
-│ │ Field: b(numeric) │ │
-│ │ Value: 12345      │ │
-│ ╰───────────────────╯ │
-│ Projections: a        │
-│ 1 row             0µs │
-╰───────────────────────╯
+╭─ TABLE_SCAN ──────────────╮
+│ Table: pudge_pt           │
+│ Projections: a            │
+│                           │
+├─ Index Filter Prepare ────┤
+│                           │
+│ Total: 0µs                │
+│ Snapshot: 0µs             │
+│ Segments: 1 of 1          │
+│                           │
+│ ╭─ Term ───────────────╮  │
+│ │ Field: b(numeric)    │  │
+│ │ Value: 12345         │  │
+│ │ Posting Lists: 1     │  │
+│ │ Estimated Matches: 1 │  │
+│ │ Postings: 1          │  │
+│ │ Time: 0µs            │  │
+│ ╰──────────────────────╯  │
+│                           │
+├─ Index Filter Execute ────┤
+│                           │
+│ Total: 0µs                │
+│ Rows: 1                   │
+│                           │
+│ ╭─ docs::SinglePosting ─╮ │
+│ │ Plans: 1              │ │
+│ │ Calls: 49             │ │
+│ │ Plan: 0µs             │ │
+│ │ Time: 0µs             │ │
+│ │ Rows: 1               │ │
+│ ╰───────────────────────╯ │
+│                           │
+├───────────────────────────┤
+│ 1 row                 0µs │
+╰───────────────────────────╯
 
 
 query
@@ -63,16 +92,41 @@ QUERY PLAN
 ╭─ Summary ───────────╮
 │ Total Time: 0.0000s │
 ╰─────────────────────╯
-╭─ TABLE_SCAN ──────────╮
-│ Table: pudge_pt       │
-│ Index Filter:         │
-│ ╭─ Granular Range ──╮ │
-│ │ Field: b(numeric) │ │
-│ │ Range: <60000     │ │
-│ ╰───────────────────╯ │
-│ Projections: a        │
-│ 60,000 rows       0µs │
-╰───────────────────────╯
+╭─ TABLE_SCAN ──────────────────╮
+│ Table: pudge_pt               │
+│ Projections: a                │
+│                               │
+├─ Index Filter Prepare ────────┤
+│                               │
+│ Total: 0µs                    │
+│ Snapshot: 0µs                 │
+│ Segments: 1 of 1              │
+│                               │
+│ ╭─ Granular Range ──────────╮ │
+│ │ Field: b(numeric)         │ │
+│ │ Range: <60000             │ │
+│ │ Posting Lists: 54         │ │
+│ │ Estimated Matches: 60,000 │ │
+│ │ Postings: 60,000          │ │
+│ │ Time: 0µs                 │ │
+│ ╰───────────────────────────╯ │
+│                               │
+├─ Index Filter Execute ────────┤
+│                               │
+│ Total: 0µs                    │
+│ Rows: 60,000                  │
+│                               │
+│ ╭─ docs::BooleanWindow ─╮     │
+│ │ Plans: 1              │     │
+│ │ Calls: 49             │     │
+│ │ Plan: 0µs             │     │
+│ │ Time: 0µs             │     │
+│ │ Rows: 60,000          │     │
+│ ╰───────────────────────╯     │
+│                               │
+├───────────────────────────────┤
+│ 60,000 rows               0µs │
+╰───────────────────────────────╯
 
 
 query
@@ -97,12 +151,37 @@ QUERY PLAN
 ╰─────────────────────╯
 ╭─ TABLE_SCAN ─────────────────────────╮
 │ Table: pudge_pt                      │
-│ Index Filter:                        │
+│ Projections: a                       │
+│                                      │
+├─ Index Filter Prepare ───────────────┤
+│                                      │
+│ Total: 0µs                           │
+│ Snapshot: 0µs                        │
+│ Segments: 1 of 1                     │
+│                                      │
 │ ╭─ Term ───────────────────────────╮ │
 │ │ Field: abs((b - 50000))(numeric) │ │
 │ │ Value: 42                        │ │
+│ │ Posting Lists: 1                 │ │
+│ │ Estimated Matches: 2             │ │
+│ │ Postings: 2                      │ │
+│ │ Time: 0µs                        │ │
 │ ╰──────────────────────────────────╯ │
-│ Projections: a                       │
+│                                      │
+├─ Index Filter Execute ───────────────┤
+│                                      │
+│ Total: 0µs                           │
+│ Rows: 2                              │
+│                                      │
+│ ╭─ docs::Posting ─╮                  │
+│ │ Plans: 1        │                  │
+│ │ Calls: 49       │                  │
+│ │ Plan: 0µs       │                  │
+│ │ Time: 0µs       │                  │
+│ │ Rows: 2         │                  │
+│ ╰─────────────────╯                  │
+│                                      │
+├──────────────────────────────────────┤
 │ 2 rows                           0µs │
 ╰──────────────────────────────────────╯
 

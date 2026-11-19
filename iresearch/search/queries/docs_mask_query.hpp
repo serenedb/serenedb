@@ -21,6 +21,7 @@
 #pragma once
 
 #include "iresearch/search/filters/filter.hpp"
+#include "iresearch/search/filters/query_profile.hpp"
 #include "iresearch/types.hpp"
 
 namespace irs {
@@ -32,7 +33,7 @@ QueryBuilder::ptr WithDocsMask(QueryBuilder::ptr query,
 inline QueryBuilder::ptr PrepareMasked(const Filter& filter,
                                        const SubReader& segment,
                                        const PrepareContext& ctx) {
-  return WithDocsMask(filter.PrepareSegment(segment, ctx), segment, ctx);
+  return WithDocsMask(PrepareFilter(filter, segment, ctx), segment, ctx);
 }
 
 }  // namespace irs

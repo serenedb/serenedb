@@ -1,0 +1,1630 @@
+control substitution on
+
+statement ok
+SET profiling_renderer_settings = {'deterministic': true};
+
+
+statement ok
+SET threads = 1;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY profile_words AS
+    split_text(case := 'lower')
+    WITH (frequency, position);
+
+
+statement ok
+CREATE TABLE profile_docs (id INTEGER PRIMARY KEY, body VARCHAR, year INTEGER);
+
+
+statement ok
+INSERT INTO profile_docs
+SELECT i,
+       CASE WHEN i % 7 = 0 THEN 'new york city'
+            WHEN i % 5 = 0 THEN 'new york town'
+            WHEN i % 3 = 0 THEN 'york city'
+            ELSE 'other words here' END,
+       2000 + i % 30
+FROM range(0, 10000) t(i);
+
+
+statement ok
+CREATE INDEX profile_idx ON profile_docs USING inverted (id, body profile_words) INCLUDE (year);
+
+
+query
+EXPLAIN ANALYZE
+SELECT id
+FROM profile_idx
+WHERE body @@ ts_phrase('new york') AND (body @@ 'city' OR body @@ 'town')
+ORDER BY bm25(profile_idx.tableoid) DESC
+LIMIT 10;
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TABLE_SCAN ───────────────────────────────────────────────────────────────╮
+│ Index: profile_idx                                                         │
+│ Lookup: search                                                             │
+│ Score: bm25(k1=1.2, b=0.75)                                                │
+│ Top: 10                                                                    │
+│ Projections: id                                                            │
+│                                                                            │
+├─ Index Filter Prepare ─────────────────────────────────────────────────────┤
+│                                                                            │
+│ Total: 0µs                                                                 │
+│ Snapshot: 0µs                                                              │
+│ Segments: 1 of 1                                                           │
+│ Stats: 0µs                                                                 │
+│                                                                            │
+│ ╭─ And ────────────────────────────────────╮                               │
+│ │ Estimated Matches: 1,110                 │                               │
+│ │ Total: 0µs                               │                               │
+│ │ Time: 0µs                                │                               │
+│ ╰─────────────────────┬────────────────────╯                               │
+│                       ├─────────────────────────────────────╮              │
+│ ╭─ Phrase ────────────┴────────────────────╮  ╭─ Or ────────┴────────────╮ │
+│ │ Field: body(string)                      │  │ Posting Lists: 2         │ │
+│ │ Parts: Term:new(0, 0); Term:york(1, 1);  │  │ Estimated Matches: 4,792 │ │
+│ │ Posting Lists: 2                         │  │ Postings: 5,429          │ │
+│ │ Estimated Matches: 2,316                 │  │ Time: 0µs                │ │
+│ │ Postings: 8,572                          │  ╰─────────────┬────────────╯ │
+│ │ Time: 0µs                                │  ╭─ Terms ─────┴────────────╮ │
+│ ╰──────────────────────────────────────────╯  │ Field: body(string)      │ │
+│                                               │ Values: 'city', 'town'   │ │
+│                                               ╰──────────────────────────╯ │
+│                                                                            │
+├─ Index Filter Execute ─────────────────────────────────────────────────────┤
+│                                                                            │
+│ Total: 0µs                                                                 │
+│ Rows: 3,143                                                                │
+│                                                                            │
+│ ╭─ top::Walk<lead::BooleanSparse> ─╮                                       │
+│ │ Plans: 1                         │                                       │
+│ │ Calls: 1                         │                                       │
+│ │ Plan: 0µs                        │                                       │
+│ │ Time: 0µs                        │                                       │
+│ │ Rows: 3,143                      │                                       │
+│ ╰──────────────────────────────────╯                                       │
+│                                                                            │
+├────────────────────────────────────────────────────────────────────────────┤
+│ 10 rows                                                                0µs │
+╰────────────────────────────────────────────────────────────────────────────╯
+
+
+query
+EXPLAIN ANALYZE
+SELECT count(*)
+FROM profile_idx
+WHERE body @@ 'york';
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ UNGROUPED_AGGREGATE ────────╮
+│ Aggregates: count_star()     │
+│ 1 row                    0µs │
+╰───────────────┒┎─────────────╯
+╭─ TABLE_SCAN ──┚┖─────────────╮
+│ Index: profile_idx           │
+│ Lookup: search               │
+│ Output: row-count only       │
+│                              │
+├─ Index Filter Prepare ───────┤
+│                              │
+│ Total: 0µs                   │
+│ Snapshot: 0µs                │
+│ Segments: 1 of 1             │
+│                              │
+│ ╭─ Term ───────────────────╮ │
+│ │ Field: body(string)      │ │
+│ │ Value: york              │ │
+│ │ Posting Lists: 1         │ │
+│ │ Estimated Matches: 5,429 │ │
+│ │ Postings: 5,429          │ │
+│ │ Time: 0µs                │ │
+│ ╰──────────────────────────╯ │
+│                              │
+├─ Index Filter Execute ───────┤
+│                              │
+│ Total: 0µs                   │
+│ Rows: 5,429                  │
+│                              │
+│ ╭─ count::TermCount ─╮       │
+│ │ Plans: 1           │       │
+│ │ Calls: 3           │       │
+│ │ Plan: 0µs          │       │
+│ │ Time: 0µs          │       │
+│ │ Rows: 5,429        │       │
+│ ╰────────────────────╯       │
+│                              │
+├──────────────────────────────┤
+│ 1 row                    0µs │
+╰──────────────────────────────╯
+
+
+query
+EXPLAIN ANALYZE
+SELECT id
+FROM profile_idx
+WHERE body @@ 'city' AND year >= 2020;
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TABLE_SCAN ─────────────────╮
+│ Index: profile_idx           │
+│ Lookup: search               │
+│ Projections: id              │
+│                              │
+├─ Index Filter Prepare ───────┤
+│                              │
+│ Total: 0µs                   │
+│ Snapshot: 0µs                │
+│ Segments: 1 of 1             │
+│                              │
+│ ╭─ Term ───────────────────╮ │
+│ │ Field: body(string)      │ │
+│ │ Value: city              │ │
+│ │ Posting Lists: 1         │ │
+│ │ Estimated Matches: 3,715 │ │
+│ │ Postings: 3,715          │ │
+│ │ Time: 0µs                │ │
+│ ╰──────────────────────────╯ │
+│                              │
+├─ Index Filter Execute ───────┤
+│                              │
+│ Total: 0µs                   │
+│ Rows: 3,715                  │
+│                              │
+│ ╭─ docs::Posting ─╮          │
+│ │ Plans: 1        │          │
+│ │ Calls: 5        │          │
+│ │ Plan: 0µs       │          │
+│ │ Time: 0µs       │          │
+│ │ Rows: 3,715     │          │
+│ ╰─────────────────╯          │
+│                              │
+├─ Column Filter ──────────────┤
+│                              │
+│ ╭─ Column ────────────╮      │
+│ │ Field: year         │      │
+│ │ Check: year >= 2020 │      │
+│ ╰─────────────────────╯      │
+│                              │
+├──────────────────────────────┤
+│ 1,332 rows               0µs │
+╰──────────────────────────────╯
+
+
+query
+EXPLAIN ANALYZE
+SELECT id, body
+FROM profile_idx
+WHERE body @@ 'town';
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TABLE_SCAN ─────────────────╮
+│ Index: profile_idx           │
+│ Lookup: search               │
+│ Projections: id, body        │
+│                              │
+├─ Index Filter Prepare ───────┤
+│                              │
+│ Total: 0µs                   │
+│ Snapshot: 0µs                │
+│ Segments: 1 of 1             │
+│                              │
+│ ╭─ Term ───────────────────╮ │
+│ │ Field: body(string)      │ │
+│ │ Value: town              │ │
+│ │ Posting Lists: 1         │ │
+│ │ Estimated Matches: 1,714 │ │
+│ │ Postings: 1,714          │ │
+│ │ Time: 0µs                │ │
+│ ╰──────────────────────────╯ │
+│                              │
+├─ Index Filter Execute ───────┤
+│                              │
+│ Total: 0µs                   │
+│ Rows: 1,714                  │
+│                              │
+│ ╭─ docs::Posting ─╮          │
+│ │ Plans: 1        │          │
+│ │ Calls: 5        │          │
+│ │ Plan: 0µs       │          │
+│ │ Time: 0µs       │          │
+│ │ Rows: 1,714     │          │
+│ ╰─────────────────╯          │
+│                              │
+├──────────────────────────────┤
+│ 1,714 rows               0µs │
+╰──────────────────────────────╯
+
+
+query
+EXPLAIN ANALYZE
+SELECT id, bm25(profile_idx.tableoid) AS score
+FROM profile_idx
+WHERE body @@ ts_phrase('new york') AND body @@ 'city';
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TABLE_SCAN ─────────────────────────────────────────────────────────────╮
+│ Index: profile_idx                                                       │
+│ Lookup: search                                                           │
+│ Score: bm25(k1=1.2, b=0.75)                                              │
+│ Projections: id, sdb_inverted_index_score                                │
+│                                                                          │
+├─ Index Filter Prepare ───────────────────────────────────────────────────┤
+│                                                                          │
+│ Total: 0µs                                                               │
+│ Snapshot: 0µs                                                            │
+│ Segments: 1 of 1                                                         │
+│ Stats: 0µs                                                               │
+│                                                                          │
+│ ╭─ And ──────────────────╮                                               │
+│ │ Posting Lists: 1       │                                               │
+│ │ Estimated Matches: 860 │                                               │
+│ │ Postings: 3,715        │                                               │
+│ │ Total: 0µs             │                                               │
+│ │ Time: 0µs              │                                               │
+│ ╰────────────┬───────────╯                                               │
+│              ├────────────────────────────────────╮                      │
+│ ╭─ Terms ────┴───────────╮  ╭─ Phrase ────────────┴────────────────────╮ │
+│ │ Field: body(string)    │  │ Field: body(string)                      │ │
+│ │ Values: 'city'         │  │ Parts: Term:new(0, 0); Term:york(1, 1);  │ │
+│ ╰────────────────────────╯  │ Posting Lists: 2                         │ │
+│                             │ Estimated Matches: 2,316                 │ │
+│                             │ Postings: 8,572                          │ │
+│                             │ Time: 0µs                                │ │
+│                             ╰──────────────────────────────────────────╯ │
+│                                                                          │
+├─ Index Filter Execute ───────────────────────────────────────────────────┤
+│                                                                          │
+│ Total: 0µs                                                               │
+│ Rows: 1,429                                                              │
+│                                                                          │
+│ ╭─ hits::Walk<lead::BooleanSparse> ─╮                                    │
+│ │ Plans: 1                          │                                    │
+│ │ Calls: 5                          │                                    │
+│ │ Plan: 0µs                         │                                    │
+│ │ Time: 0µs                         │                                    │
+│ │ Rows: 1,429                       │                                    │
+│ ╰───────────────────────────────────╯                                    │
+│                                                                          │
+├──────────────────────────────────────────────────────────────────────────┤
+│ 1,429 rows                                                           0µs │
+╰──────────────────────────────────────────────────────────────────────────╯
+
+
+statement ok
+COPY (
+    SELECT i AS n,
+           CASE WHEN i % 5 = 0 THEN 'new york town' ELSE 'other words here' END AS body,
+           'title ' || i AS title
+    FROM range(0, 10000) t(i)
+) TO '${__TEST_DIR__}/profile_lookup.parquet' (FORMAT parquet);
+
+
+statement ok
+CREATE VIEW profile_lookup AS SELECT * FROM read_parquet('${__TEST_DIR__}/profile_lookup.parquet');
+
+
+statement ok
+CREATE INDEX profile_lookup_idx ON profile_lookup USING inverted (body profile_words, n) INCLUDE (n);
+
+
+query
+EXPLAIN ANALYZE
+SELECT title, n
+FROM profile_lookup_idx
+WHERE body @@ 'town';
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TABLE_SCAN ─────────────────╮
+│ Index: profile_lookup_idx    │
+│ Projections: title (l),      │
+│              n (i)           │
+│                              │
+├─ Index Filter Prepare ───────┤
+│                              │
+│ Total: 0µs                   │
+│ Snapshot: 0µs                │
+│ Segments: 1 of 1             │
+│                              │
+│ ╭─ Term ───────────────────╮ │
+│ │ Field: body(string)      │ │
+│ │ Value: town              │ │
+│ │ Posting Lists: 1         │ │
+│ │ Estimated Matches: 2,000 │ │
+│ │ Postings: 2,000          │ │
+│ │ Time: 0µs                │ │
+│ ╰──────────────────────────╯ │
+│                              │
+├─ Index Filter Execute ───────┤
+│                              │
+│ Total: 0µs                   │
+│ Rows: 2,000                  │
+│                              │
+│ ╭─ docs::Posting ─╮          │
+│ │ Plans: 1        │          │
+│ │ Calls: 5        │          │
+│ │ Plan: 0µs       │          │
+│ │ Time: 0µs       │          │
+│ │ Rows: 2,000     │          │
+│ ╰─────────────────╯          │
+│                              │
+├─ Lookup ─────────────────────┤
+│                              │
+│ Source: parquet              │
+│ Rows: 2,000                  │
+│ Rows Removed: 0              │
+│ Time: 0µs                    │
+│                              │
+├──────────────────────────────┤
+│ 2,000 rows               0µs │
+╰──────────────────────────────╯
+
+
+statement ok
+SET late_materialization_lookup_max_rows = 0;
+
+
+query
+EXPLAIN ANALYZE
+SELECT title, n
+FROM profile_lookup_idx
+WHERE body @@ 'town'
+ORDER BY bm25(profile_lookup_idx.tableoid) DESC
+LIMIT 3;
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TABLE_SCAN ─────────────────╮
+│ Index: profile_lookup_idx    │
+│ Score: bm25(k1=1.2, b=0.75)  │
+│ Top: 3                       │
+│ Projections: title (l),      │
+│              n (i)           │
+│                              │
+├─ Index Filter Prepare ───────┤
+│                              │
+│ Total: 0µs                   │
+│ Snapshot: 0µs                │
+│ Segments: 1 of 1             │
+│ Stats: 0µs                   │
+│                              │
+│ ╭─ Term ───────────────────╮ │
+│ │ Field: body(string)      │ │
+│ │ Value: town              │ │
+│ │ Posting Lists: 1         │ │
+│ │ Estimated Matches: 2,000 │ │
+│ │ Postings: 2,000          │ │
+│ │ Time: 0µs                │ │
+│ ╰──────────────────────────╯ │
+│                              │
+├─ Index Filter Execute ───────┤
+│                              │
+│ Total: 0µs                   │
+│ Rows: 2,000                  │
+│                              │
+│ ╭─ top::Posting ─╮           │
+│ │ Plans: 1       │           │
+│ │ Calls: 1       │           │
+│ │ Plan: 0µs      │           │
+│ │ Time: 0µs      │           │
+│ │ Rows: 2,000    │           │
+│ ╰────────────────╯           │
+│                              │
+├─ Lookup ─────────────────────┤
+│                              │
+│ Source: parquet              │
+│ Rows: 3                      │
+│ Rows Removed: 0              │
+│ Time: 0µs                    │
+│                              │
+├──────────────────────────────┤
+│ 3 rows                   0µs │
+╰──────────────────────────────╯
+
+
+statement ok
+RESET late_materialization_lookup_max_rows;
+
+
+query
+EXPLAIN ANALYZE
+SELECT unnest(ts_dict_agg(body)) AS term
+FROM profile_idx
+WHERE body @@ 'york';
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ HASH_GROUP_BY ───────────────────────╮
+│ Groups: #0                            │
+│ 7 rows                            0µs │
+╰───────────────────┒┎──────────────────╯
+╭─ TABLE_SCAN ──────┚┖──────────────────╮
+│ Index: profile_idx                    │
+│ Lookup: search                        │
+│ TsDict: body                          │
+│ Projections:                          │
+│ sdb_inverted_index_term$body          │
+│                                       │
+├─ Index Filter Prepare ────────────────┤
+│                                       │
+│ Total: 0µs                            │
+│ Snapshot: 0µs                         │
+│ Segments: 1 of 1                      │
+│                                       │
+│ ╭─ Term ───────────────────╮          │
+│ │ Field: body(string)      │          │
+│ │ Value: york              │          │
+│ │ Posting Lists: 1         │          │
+│ │ Estimated Matches: 5,429 │          │
+│ │ Postings: 5,429          │          │
+│ │ Time: 0µs                │          │
+│ ╰──────────────────────────╯          │
+│                                       │
+├─ Index Filter Execute ────────────────┤
+│                                       │
+│ Total: 0µs                            │
+│ Rows: 2,224                           │
+│                                       │
+│ ╭─ fill::Impl<detail::PostingFill> ─╮ │
+│ │ Plans: 1                          │ │
+│ │ Calls: 1                          │ │
+│ │ Plan: 0µs                         │ │
+│ │ Time: 0µs                         │ │
+│ │ Rows: 2,224                       │ │
+│ ╰───────────────────────────────────╯ │
+│                                       │
+├───────────────────────────────────────┤
+│ 7 rows                            0µs │
+╰───────────────────────────────────────╯
+
+
+query
+EXPLAIN ANALYZE
+SELECT unnest(ts_dict_agg(body)) AS term
+FROM profile_idx;
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ HASH_GROUP_BY ────────────────╮
+│ Groups: #0                     │
+│ 7 rows                     0µs │
+╰────────────────┒┎──────────────╯
+╭─ TABLE_SCAN ───┚┖──────────────╮
+│ Index: profile_idx             │
+│ Lookup: search                 │
+│ TsDict: body                   │
+│ Projections:                   │
+│ sdb_inverted_index_term$body   │
+│                                │
+├─ Index Filter Prepare ─────────┤
+│                                │
+│ Total: 0µs                     │
+│ Snapshot: 0µs                  │
+│ Segments: 1 of 1               │
+│                                │
+├────────────────────────────────┤
+│ 7 rows                     0µs │
+╰────────────────────────────────╯
+
+
+statement ok
+SET sdb_index_profile_nodes = true;
+
+
+query
+EXPLAIN ANALYZE
+SELECT id
+FROM profile_idx
+WHERE body @@ ts_phrase('new york') AND (body @@ 'city' OR body @@ 'town')
+ORDER BY bm25(profile_idx.tableoid) DESC
+LIMIT 10;
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TABLE_SCAN ──────────────────────────────────────────────────────────────────╮
+│ Index: profile_idx                                                            │
+│ Lookup: search                                                                │
+│ Score: bm25(k1=1.2, b=0.75)                                                   │
+│ Top: 10                                                                       │
+│ Projections: id                                                               │
+│                                                                               │
+├─ Index Filter Prepare ────────────────────────────────────────────────────────┤
+│                                                                               │
+│ Total: 0µs                                                                    │
+│ Snapshot: 0µs                                                                 │
+│ Segments: 1 of 1                                                              │
+│ Stats: 0µs                                                                    │
+│                                                                               │
+│ ╭─ And ────────────────────────────────────╮                                  │
+│ │ Estimated Matches: 1,110                 │                                  │
+│ │ Total: 0µs                               │                                  │
+│ │ Time: 0µs                                │                                  │
+│ ╰─────────────────────┬────────────────────╯                                  │
+│                       ├─────────────────────────────────────╮                 │
+│ ╭─ Phrase ────────────┴────────────────────╮  ╭─ Or ────────┴────────────╮    │
+│ │ Field: body(string)                      │  │ Posting Lists: 2         │    │
+│ │ Parts: Term:new(0, 0); Term:york(1, 1);  │  │ Estimated Matches: 4,792 │    │
+│ │ Posting Lists: 2                         │  │ Postings: 5,429          │    │
+│ │ Estimated Matches: 2,316                 │  │ Time: 0µs                │    │
+│ │ Postings: 8,572                          │  ╰─────────────┬────────────╯    │
+│ │ Time: 0µs                                │  ╭─ Terms ─────┴────────────╮    │
+│ ╰──────────────────────────────────────────╯  │ Field: body(string)      │    │
+│                                               │ Values: 'city', 'town'   │    │
+│                                               ╰──────────────────────────╯    │
+│                                                                               │
+├─ Index Filter Execute ────────────────────────────────────────────────────────┤
+│                                                                               │
+│ Total: 0µs                                                                    │
+│ Rows: 3,143                                                                   │
+│                                                                               │
+│ ╭─ top::Walk<lead::BooleanSparse> ─╮                                          │
+│ │ Plans: 1                         │                                          │
+│ │ Calls: 1                         │                                          │
+│ │ Plan: 0µs                        │                                          │
+│ │ Total: 0µs                       │                                          │
+│ │ Time: 0µs                        │                                          │
+│ │ Rows: 3,143                      │                                          │
+│ ╰─────────────────┬────────────────╯                                          │
+│                   ├──────────────────────────────────────╮                    │
+│ ╭─ lead::Impl<lead::TwoPhase> ─────╮  ╭─ probe::Impl<probe::BooleanWindow> ─╮ │
+│ │ Filter: Phrase                   │  │ Filter: Or                          │ │
+│ │ Plans: 1                         │  │ Plans: 1                            │ │
+│ │ Calls: 3,144                     │  │ Calls: 3,143                        │ │
+│ │ Timed: 108                       │  │ Timed: 108                          │ │
+│ │ Time: 0µs                        │  │ Time: 0µs                           │ │
+│ │ Rows: 3,143                      │  │ Rows: 3,143                         │ │
+│ ╰──────────────────────────────────╯  ╰─────────────────────────────────────╯ │
+│                                                                               │
+├───────────────────────────────────────────────────────────────────────────────┤
+│ 10 rows                                                                   0µs │
+╰───────────────────────────────────────────────────────────────────────────────╯
+
+
+query
+EXPLAIN ANALYZE
+SELECT id
+FROM profile_idx
+WHERE body @@ ts_phrase('new york') OR body @@ ts_phrase('york city')
+ORDER BY bm25(profile_idx.tableoid) DESC
+LIMIT 10;
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TABLE_SCAN ─────────────────────────────────────────────────────────────────────────╮
+│ Index: profile_idx                                                                   │
+│ Lookup: search                                                                       │
+│ Score: bm25(k1=1.2, b=0.75)                                                          │
+│ Top: 10                                                                              │
+│ Projections: id                                                                      │
+│                                                                                      │
+├─ Index Filter Prepare ───────────────────────────────────────────────────────────────┤
+│                                                                                      │
+│ Total: 0µs                                                                           │
+│ Snapshot: 0µs                                                                        │
+│ Segments: 1 of 1                                                                     │
+│ Stats: 0µs                                                                           │
+│                                                                                      │
+│ ╭─ Or ─────────────────────────────────────╮                                         │
+│ │ Estimated Matches: 4,420                 │                                         │
+│ │ Total: 0µs                               │                                         │
+│ │ Time: 0µs                                │                                         │
+│ ╰─────────────────────┬────────────────────╯                                         │
+│                       ├──────────────────────────────────────────╮                   │
+│ ╭─ Phrase ────────────┴────────────────────╮  ╭─ Phrase ─────────┴─────────────────╮ │
+│ │ Field: body(string)                      │  │ Field: body(string)                │ │
+│ │ Parts: Term:new(0, 0); Term:york(1, 1);  │  │ Parts:                             │ │
+│ │ Posting Lists: 2                         │  │ Term:york(0, 0); Term:city(1, 1);  │ │
+│ │ Estimated Matches: 2,316                 │  │ Posting Lists: 2                   │ │
+│ │ Postings: 8,572                          │  │ Estimated Matches: 2,738           │ │
+│ │ Time: 0µs                                │  │ Postings: 9,144                    │ │
+│ ╰──────────────────────────────────────────╯  │ Time: 0µs                          │ │
+│                                               ╰────────────────────────────────────╯ │
+│                                                                                      │
+├─ Index Filter Execute ───────────────────────────────────────────────────────────────┤
+│                                                                                      │
+│ Total: 0µs                                                                           │
+│ Rows: 5,429                                                                          │
+│                                                                                      │
+│ ╭─ top::BooleanWindow ───────────╮                                                   │
+│ │ Plans: 1                       │                                                   │
+│ │ Calls: 1                       │                                                   │
+│ │ Plan: 0µs                      │                                                   │
+│ │ Total: 0µs                     │                                                   │
+│ │ Time: 0µs                      │                                                   │
+│ │ Rows: 5,429                    │                                                   │
+│ ╰────────────────┬───────────────╯                                                   │
+│                  ├───────────────────────────────────╮                               │
+│ ╭─ fill::Impl<fill::WalkScored> ─╮  ╭─ fill::Impl<fill::WalkScored> ─╮               │
+│ │ Filter: Phrase                 │  │ Filter: Phrase                 │               │
+│ │ Plans: 1                       │  │ Plans: 1                       │               │
+│ │ Calls: 3                       │  │ Calls: 3                       │               │
+│ │ Time: 0µs                      │  │ Time: 0µs                      │               │
+│ │ Rows: 1,714                    │  │ Rows: 3,715                    │               │
+│ ╰────────────────────────────────╯  ╰────────────────────────────────╯               │
+│                                                                                      │
+├──────────────────────────────────────────────────────────────────────────────────────┤
+│ 10 rows                                                                          0µs │
+╰──────────────────────────────────────────────────────────────────────────────────────╯
+
+
+query
+EXPLAIN ANALYZE
+SELECT id
+FROM profile_idx
+WHERE body @@ ts_phrase('new york') AND body @@ ts_phrase('york city')
+ORDER BY bm25(profile_idx.tableoid) DESC
+LIMIT 10;
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TABLE_SCAN ─────────────────────────────────────────────────────────────────────────╮
+│ Index: profile_idx                                                                   │
+│ Lookup: search                                                                       │
+│ Score: bm25(k1=1.2, b=0.75)                                                          │
+│ Top: 10                                                                              │
+│ Projections: id                                                                      │
+│                                                                                      │
+├─ Index Filter Prepare ───────────────────────────────────────────────────────────────┤
+│                                                                                      │
+│ Total: 0µs                                                                           │
+│ Snapshot: 0µs                                                                        │
+│ Segments: 1 of 1                                                                     │
+│ Stats: 0µs                                                                           │
+│                                                                                      │
+│ ╭─ And ────────────────────────────────────╮                                         │
+│ │ Estimated Matches: 634                   │                                         │
+│ │ Total: 0µs                               │                                         │
+│ │ Time: 0µs                                │                                         │
+│ ╰─────────────────────┬────────────────────╯                                         │
+│                       ├──────────────────────────────────────────╮                   │
+│ ╭─ Phrase ────────────┴────────────────────╮  ╭─ Phrase ─────────┴─────────────────╮ │
+│ │ Field: body(string)                      │  │ Field: body(string)                │ │
+│ │ Parts: Term:new(0, 0); Term:york(1, 1);  │  │ Parts:                             │ │
+│ │ Posting Lists: 2                         │  │ Term:york(0, 0); Term:city(1, 1);  │ │
+│ │ Estimated Matches: 2,316                 │  │ Posting Lists: 2                   │ │
+│ │ Postings: 8,572                          │  │ Estimated Matches: 2,738           │ │
+│ │ Time: 0µs                                │  │ Postings: 9,144                    │ │
+│ ╰──────────────────────────────────────────╯  │ Time: 0µs                          │ │
+│                                               ╰────────────────────────────────────╯ │
+│                                                                                      │
+├─ Index Filter Execute ───────────────────────────────────────────────────────────────┤
+│                                                                                      │
+│ Total: 0µs                                                                           │
+│ Rows: 1,429                                                                          │
+│                                                                                      │
+│ ╭─ top::Walk<lead::BooleanSparse> ─╮                                                 │
+│ │ Plans: 1                         │                                                 │
+│ │ Calls: 1                         │                                                 │
+│ │ Plan: 0µs                        │                                                 │
+│ │ Total: 0µs                       │                                                 │
+│ │ Time: 0µs                        │                                                 │
+│ │ Rows: 1,429                      │                                                 │
+│ ╰─────────────────┬────────────────╯                                                 │
+│                   ├────────────────────────────────────╮                             │
+│ ╭─ lead::Impl<lead::TwoPhase> ─────╮  ╭─ probe::Impl<probe::TwoPhase> ─╮             │
+│ │ Filter: Phrase                   │  │ Filter: Phrase                 │             │
+│ │ Plans: 1                         │  │ Plans: 1                       │             │
+│ │ Calls: 3,144                     │  │ Calls: 3,143                   │             │
+│ │ Timed: 108                       │  │ Timed: 108                     │             │
+│ │ Time: 0µs                        │  │ Time: 0µs                      │             │
+│ │ Rows: 3,143                      │  │ Rows: 1,429                    │             │
+│ ╰──────────────────────────────────╯  ╰────────────────────────────────╯             │
+│                                                                                      │
+├──────────────────────────────────────────────────────────────────────────────────────┤
+│ 10 rows                                                                          0µs │
+╰──────────────────────────────────────────────────────────────────────────────────────╯
+
+
+query
+EXPLAIN ANALYZE
+SELECT count(*)
+FROM profile_idx
+WHERE body @@ ts_phrase('new york') AND body @@ 'city';
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ UNGROUPED_AGGREGATE ────────────────────────────────────────────────────╮
+│ Aggregates: count_star()                                                 │
+│ 1 row                                                                0µs │
+╰─────────────────────────────────────┒┎───────────────────────────────────╯
+╭─ TABLE_SCAN ────────────────────────┚┖───────────────────────────────────╮
+│ Index: profile_idx                                                       │
+│ Lookup: search                                                           │
+│ Output: row-count only                                                   │
+│                                                                          │
+├─ Index Filter Prepare ───────────────────────────────────────────────────┤
+│                                                                          │
+│ Total: 0µs                                                               │
+│ Snapshot: 0µs                                                            │
+│ Segments: 1 of 1                                                         │
+│                                                                          │
+│ ╭─ And ──────────────────╮                                               │
+│ │ Posting Lists: 1       │                                               │
+│ │ Estimated Matches: 860 │                                               │
+│ │ Postings: 3,715        │                                               │
+│ │ Total: 0µs             │                                               │
+│ │ Time: 0µs              │                                               │
+│ ╰────────────┬───────────╯                                               │
+│              ├────────────────────────────────────╮                      │
+│ ╭─ Terms ────┴───────────╮  ╭─ Phrase ────────────┴────────────────────╮ │
+│ │ Field: body(string)    │  │ Field: body(string)                      │ │
+│ │ Values: 'city'         │  │ Parts: Term:new(0, 0); Term:york(1, 1);  │ │
+│ ╰────────────────────────╯  │ Posting Lists: 2                         │ │
+│                             │ Estimated Matches: 2,316                 │ │
+│                             │ Postings: 8,572                          │ │
+│                             │ Time: 0µs                                │ │
+│                             ╰──────────────────────────────────────────╯ │
+│                                                                          │
+├─ Index Filter Execute ───────────────────────────────────────────────────┤
+│                                                                          │
+│ Total: 0µs                                                               │
+│ Rows: 1,429                                                              │
+│                                                                          │
+│ ╭─ count::BooleanWindow ───────╮                                         │
+│ │ Plans: 1                     │                                         │
+│ │ Calls: 3                     │                                         │
+│ │ Plan: 0µs                    │                                         │
+│ │ Total: 0µs                   │                                         │
+│ │ Time: 0µs                    │                                         │
+│ │ Rows: 1,429                  │                                         │
+│ ╰───────────────┬──────────────╯                                         │
+│ ╭─ fill::Impl<fill::WalkDocs> ─╮                                         │
+│ │ Filter: Phrase               │                                         │
+│ │ Plans: 1                     │                                         │
+│ │ Calls: 3                     │                                         │
+│ │ Time: 0µs                    │                                         │
+│ │ Rows: 3,143                  │                                         │
+│ ╰──────────────────────────────╯                                         │
+│                                                                          │
+├──────────────────────────────────────────────────────────────────────────┤
+│ 1 row                                                                0µs │
+╰──────────────────────────────────────────────────────────────────────────╯
+
+
+query
+EXPLAIN ANALYZE
+SELECT id
+FROM profile_idx
+WHERE body @@ ts_phrase('new york') OR body @@ 'city';
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TABLE_SCAN ───────────────────────────────────────────────────────────────╮
+│ Index: profile_idx                                                         │
+│ Lookup: search                                                             │
+│ Projections: id                                                            │
+│                                                                            │
+├─ Index Filter Prepare ─────────────────────────────────────────────────────┤
+│                                                                            │
+│ Total: 0µs                                                                 │
+│ Snapshot: 0µs                                                              │
+│ Segments: 1 of 1                                                           │
+│                                                                            │
+│ ╭─ Or ─────────────────────╮                                               │
+│ │ Posting Lists: 1         │                                               │
+│ │ Estimated Matches: 5,171 │                                               │
+│ │ Postings: 3,715          │                                               │
+│ │ Total: 0µs               │                                               │
+│ │ Time: 0µs                │                                               │
+│ ╰─────────────┬────────────╯                                               │
+│               ├─────────────────────────────────────╮                      │
+│ ╭─ Terms ─────┴────────────╮  ╭─ Phrase ────────────┴────────────────────╮ │
+│ │ Field: body(string)      │  │ Field: body(string)                      │ │
+│ │ Values: 'city'           │  │ Parts: Term:new(0, 0); Term:york(1, 1);  │ │
+│ ╰──────────────────────────╯  │ Posting Lists: 2                         │ │
+│                               │ Estimated Matches: 2,316                 │ │
+│                               │ Postings: 8,572                          │ │
+│                               │ Time: 0µs                                │ │
+│                               ╰──────────────────────────────────────────╯ │
+│                                                                            │
+├─ Index Filter Execute ─────────────────────────────────────────────────────┤
+│                                                                            │
+│ Total: 0µs                                                                 │
+│ Rows: 5,429                                                                │
+│                                                                            │
+│ ╭─ docs::BooleanWindow ────────╮                                           │
+│ │ Plans: 1                     │                                           │
+│ │ Calls: 5                     │                                           │
+│ │ Plan: 0µs                    │                                           │
+│ │ Total: 0µs                   │                                           │
+│ │ Time: 0µs                    │                                           │
+│ │ Rows: 5,429                  │                                           │
+│ ╰───────────────┬──────────────╯                                           │
+│ ╭─ fill::Impl<fill::WalkDocs> ─╮                                           │
+│ │ Filter: Phrase               │                                           │
+│ │ Plans: 1                     │                                           │
+│ │ Calls: 3                     │                                           │
+│ │ Time: 0µs                    │                                           │
+│ │ Rows: 1,714                  │                                           │
+│ ╰──────────────────────────────╯                                           │
+│                                                                            │
+├────────────────────────────────────────────────────────────────────────────┤
+│ 5,429 rows                                                             0µs │
+╰────────────────────────────────────────────────────────────────────────────╯
+
+
+query
+EXPLAIN ANALYZE
+SELECT id, bm25(profile_idx.tableoid) AS score
+FROM profile_idx
+WHERE body @@ ts_phrase('new york') AND body @@ 'city';
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TABLE_SCAN ─────────────────────────────────────────────────────────────╮
+│ Index: profile_idx                                                       │
+│ Lookup: search                                                           │
+│ Score: bm25(k1=1.2, b=0.75)                                              │
+│ Projections: id, sdb_inverted_index_score                                │
+│                                                                          │
+├─ Index Filter Prepare ───────────────────────────────────────────────────┤
+│                                                                          │
+│ Total: 0µs                                                               │
+│ Snapshot: 0µs                                                            │
+│ Segments: 1 of 1                                                         │
+│ Stats: 0µs                                                               │
+│                                                                          │
+│ ╭─ And ──────────────────╮                                               │
+│ │ Posting Lists: 1       │                                               │
+│ │ Estimated Matches: 860 │                                               │
+│ │ Postings: 3,715        │                                               │
+│ │ Total: 0µs             │                                               │
+│ │ Time: 0µs              │                                               │
+│ ╰────────────┬───────────╯                                               │
+│              ├────────────────────────────────────╮                      │
+│ ╭─ Terms ────┴───────────╮  ╭─ Phrase ────────────┴────────────────────╮ │
+│ │ Field: body(string)    │  │ Field: body(string)                      │ │
+│ │ Values: 'city'         │  │ Parts: Term:new(0, 0); Term:york(1, 1);  │ │
+│ ╰────────────────────────╯  │ Posting Lists: 2                         │ │
+│                             │ Estimated Matches: 2,316                 │ │
+│                             │ Postings: 8,572                          │ │
+│                             │ Time: 0µs                                │ │
+│                             ╰──────────────────────────────────────────╯ │
+│                                                                          │
+├─ Index Filter Execute ───────────────────────────────────────────────────┤
+│                                                                          │
+│ Total: 0µs                                                               │
+│ Rows: 1,429                                                              │
+│                                                                          │
+│ ╭─ hits::Walk<lead::BooleanSparse> ─╮                                    │
+│ │ Plans: 1                          │                                    │
+│ │ Calls: 5                          │                                    │
+│ │ Plan: 0µs                         │                                    │
+│ │ Total: 0µs                        │                                    │
+│ │ Time: 0µs                         │                                    │
+│ │ Rows: 1,429                       │                                    │
+│ ╰─────────────────┬─────────────────╯                                    │
+│ ╭─ lead::Impl<lead::TwoPhase> ──────╮                                    │
+│ │ Filter: Phrase                    │                                    │
+│ │ Plans: 1                          │                                    │
+│ │ Calls: 3,144                      │                                    │
+│ │ Timed: 108                        │                                    │
+│ │ Time: 0µs                         │                                    │
+│ │ Rows: 3,143                       │                                    │
+│ ╰───────────────────────────────────╯                                    │
+│                                                                          │
+├──────────────────────────────────────────────────────────────────────────┤
+│ 1,429 rows                                                           0µs │
+╰──────────────────────────────────────────────────────────────────────────╯
+
+
+query
+EXPLAIN ANALYZE
+SELECT unnest(ts_dict_agg(body)) AS term
+FROM profile_idx
+WHERE body @@ ts_phrase('new york') AND body @@ 'city';
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ HASH_GROUP_BY ──────────────────────────────────────────────────────────╮
+│ Groups: #0                                                               │
+│ 3 rows                                                               0µs │
+╰─────────────────────────────────────┒┎───────────────────────────────────╯
+╭─ TABLE_SCAN ────────────────────────┚┖───────────────────────────────────╮
+│ Index: profile_idx                                                       │
+│ Lookup: search                                                           │
+│ TsDict: body                                                             │
+│ Projections:                                                             │
+│ sdb_inverted_index_term$body                                             │
+│                                                                          │
+├─ Index Filter Prepare ───────────────────────────────────────────────────┤
+│                                                                          │
+│ Total: 0µs                                                               │
+│ Snapshot: 0µs                                                            │
+│ Segments: 1 of 1                                                         │
+│                                                                          │
+│ ╭─ And ──────────────────╮                                               │
+│ │ Posting Lists: 1       │                                               │
+│ │ Estimated Matches: 860 │                                               │
+│ │ Postings: 3,715        │                                               │
+│ │ Total: 0µs             │                                               │
+│ │ Time: 0µs              │                                               │
+│ ╰────────────┬───────────╯                                               │
+│              ├────────────────────────────────────╮                      │
+│ ╭─ Terms ────┴───────────╮  ╭─ Phrase ────────────┴────────────────────╮ │
+│ │ Field: body(string)    │  │ Field: body(string)                      │ │
+│ │ Values: 'city'         │  │ Parts: Term:new(0, 0); Term:york(1, 1);  │ │
+│ ╰────────────────────────╯  │ Posting Lists: 2                         │ │
+│                             │ Estimated Matches: 2,316                 │ │
+│                             │ Postings: 8,572                          │ │
+│                             │ Time: 0µs                                │ │
+│                             ╰──────────────────────────────────────────╯ │
+│                                                                          │
+├─ Index Filter Execute ───────────────────────────────────────────────────┤
+│                                                                          │
+│ Total: 0µs                                                               │
+│ Rows: 1,429                                                              │
+│                                                                          │
+│ ╭─ fill::Impl<fill::WalkDocs> ─╮                                         │
+│ │ Plans: 1                     │                                         │
+│ │ Calls: 3                     │                                         │
+│ │ Plan: 0µs                    │                                         │
+│ │ Total: 0µs                   │                                         │
+│ │ Time: 0µs                    │                                         │
+│ │ Rows: 1,429                  │                                         │
+│ ╰───────────────┬──────────────╯                                         │
+│ ╭─ lead::Impl<lead::TwoPhase> ─╮                                         │
+│ │ Filter: Phrase               │                                         │
+│ │ Plans: 1                     │                                         │
+│ │ Calls: 3,144                 │                                         │
+│ │ Timed: 108                   │                                         │
+│ │ Time: 0µs                    │                                         │
+│ │ Rows: 3,143                  │                                         │
+│ ╰──────────────────────────────╯                                         │
+│                                                                          │
+├──────────────────────────────────────────────────────────────────────────┤
+│ 3 rows                                                               0µs │
+╰──────────────────────────────────────────────────────────────────────────╯
+
+
+query
+SELECT id
+FROM profile_idx
+WHERE body @@ ts_phrase('new york') AND (body @@ 'city' OR body @@ 'town')
+ORDER BY bm25(profile_idx.tableoid) DESC, id
+LIMIT 3;
+----
+id
+5
+10
+15
+
+
+statement ok
+RESET sdb_index_profile_nodes;
+
+
+statement ok
+SET enable_profiling = 'json';
+
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/inverted_index_profile.json';
+
+
+query
+SELECT count(*) AS n
+FROM profile_idx
+WHERE body @@ 'york';
+----
+n
+5429
+
+
+statement ok
+RESET enable_profiling;
+
+
+query
+SELECT t.value ->> 'type' AS type, (t.value ->> 'timing')::DOUBLE > 0 AS timed
+FROM read_text('${__TEST_DIR__}/inverted_index_profile.json') f, json_tree(f.content) t
+WHERE t.type = 'OBJECT' AND t.value ->> 'type' IS NOT NULL
+ORDER BY t.id;
+----
+type	timed
+RESULT_COLLECTOR	t
+UNGROUPED_AGGREGATE	t
+TABLE_SCAN	t
+
+
+query
+SELECT t.key AS detail,
+       list_filter(from_json(t.value, '["VARCHAR"]'),
+                   lambda line: NOT regexp_matches(line, '(Total|Time|Snapshot|Plan): ')) AS lines
+FROM read_text('${__TEST_DIR__}/inverted_index_profile.json') f, json_tree(f.content) t
+WHERE t.key IN ('Index Filter Prepare', 'Index Filter Execute')
+ORDER BY t.id;
+----
+detail	lines
+Index Filter Prepare	{"Segments: 1 of 1",Term,"  Field: body(string)","  Value: york","  Posting Lists: 1","  Estimated Matches: 5,429","  Postings: 5,429"}
+Index Filter Execute	{"Rows: 5,429",count::TermCount,"  Plans: 1","  Calls: 3","  Rows: 5,429"}
+
+
+statement ok
+SET tracked_metrics = ['operator.timing', 'operator.intermediate_rows', 'operator.extra_info', 'operator.type'];
+
+
+query
+EXPLAIN ANALYZE
+SELECT count(*)
+FROM profile_idx
+WHERE body @@ 'york';
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ UNGROUPED_AGGREGATE ────╮
+│ Aggregates: count_star() │
+│ 1 row                0µs │
+╰─────────────┒┎───────────╯
+╭─ TABLE_SCAN ┚┖───────────╮
+│ Index: profile_idx       │
+│ Lookup: search           │
+│ Index Filter:            │
+│ ╭─ Term ──────────────╮  │
+│ │ Field: body(string) │  │
+│ │ Value: york         │  │
+│ ╰─────────────────────╯  │
+│ Output: row-count only   │
+│ 1 row                0µs │
+╰──────────────────────────╯
+
+
+statement ok
+RESET tracked_metrics;
+
+
+statement ok
+CREATE TABLE profile_vectors (id INTEGER PRIMARY KEY, emb FLOAT[4], label VARCHAR);
+
+
+statement ok
+INSERT INTO profile_vectors
+SELECT i,
+       [i::FLOAT, (i % 7)::FLOAT, 0, 0]::FLOAT[4],
+       CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END
+FROM range(0, 1000) t(i);
+
+
+statement ok
+CREATE INDEX profile_hnsw_idx ON profile_vectors USING inverted (id, label, emb hnsw (metric = 'l2'));
+
+
+statement ok
+CREATE INDEX profile_ivf_idx ON profile_vectors USING inverted (id, label, emb ivf (metric = 'l2'));
+
+
+query
+EXPLAIN ANALYZE
+SELECT id
+FROM profile_hnsw_idx
+ORDER BY emb <-> [500.4, 3, 0, 0]::FLOAT[4]
+LIMIT 3;
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TABLE_SCAN ──────────────────────╮
+│ Index: profile_hnsw_idx           │
+│ Lookup: search                    │
+│ Score: l2_distance(emb, FLOAT[4]) │
+│ Top: 3                            │
+│ Projections: id                   │
+│                                   │
+├─ Index Filter Prepare ────────────┤
+│                                   │
+│ Total: 0µs                        │
+│ Snapshot: 0µs                     │
+│ Segments: 1 of 1                  │
+│                                   │
+│ ╭─ Vector Similarity ──────╮      │
+│ │ Field: emb               │      │
+│ │ Metric: l2               │      │
+│ │ Top: 3                   │      │
+│ │ Estimated Matches: 1,000 │      │
+│ │ Time: 0µs                │      │
+│ ╰──────────────────────────╯      │
+│                                   │
+├─ Index Filter Execute ────────────┤
+│                                   │
+│ Total: 0µs                        │
+│ Rows: 4                           │
+│                                   │
+│ ╭─ ann::HnswHits ─╮               │
+│ │ Plans: 1        │               │
+│ │ Calls: 1        │               │
+│ │ Plan: 0µs       │               │
+│ │ Time: 0µs       │               │
+│ │ Rows: 4         │               │
+│ ╰─────────────────╯               │
+│                                   │
+├───────────────────────────────────┤
+│ 3 rows                        0µs │
+╰───────────────────────────────────╯
+
+
+query
+EXPLAIN ANALYZE
+SELECT id
+FROM profile_hnsw_idx
+WHERE label = 'even'
+ORDER BY emb <-> [500.4, 3, 0, 0]::FLOAT[4]
+LIMIT 3;
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TABLE_SCAN ───────────────────────────╮
+│ Index: profile_hnsw_idx                │
+│ Lookup: search                         │
+│ Index or Column Filter: label = 'even' │
+│ Score: l2_distance(emb, FLOAT[4])      │
+│ Top: 3                                 │
+│ Projections: id                        │
+│                                        │
+├─ Index Filter Prepare ─────────────────┤
+│                                        │
+│ Total: 0µs                             │
+│ Snapshot: 0µs                          │
+│ Segments: 1 of 1                       │
+│                                        │
+│ ╭─ Vector Similarity ──────╮           │
+│ │ Field: emb               │           │
+│ │ Metric: l2               │           │
+│ │ Top: 3                   │           │
+│ │ Estimated Matches: 1,000 │           │
+│ │ Total: 0µs               │           │
+│ │ Time: 0µs                │           │
+│ ╰─────────────┬────────────╯           │
+│ ╭─ Term ──────┴────────────╮           │
+│ │ Field: label(string)     │           │
+│ │ Value: even              │           │
+│ │ Posting Lists: 1         │           │
+│ │ Estimated Matches: 500   │           │
+│ │ Postings: 500            │           │
+│ │ Time: 0µs                │           │
+│ ╰──────────────────────────╯           │
+│                                        │
+├─ Index Filter Execute ─────────────────┤
+│                                        │
+│ Total: 0µs                             │
+│ Rows: 6                                │
+│                                        │
+│ ╭─ ann::HnswHits ─╮                    │
+│ │ Plans: 1        │                    │
+│ │ Calls: 1        │                    │
+│ │ Plan: 0µs       │                    │
+│ │ Time: 0µs       │                    │
+│ │ Rows: 6         │                    │
+│ ╰─────────────────╯                    │
+│                                        │
+├────────────────────────────────────────┤
+│ 3 rows                             0µs │
+╰────────────────────────────────────────╯
+
+
+query
+EXPLAIN ANALYZE
+SELECT id
+FROM profile_ivf_idx
+ORDER BY emb <-> [500.4, 3, 0, 0]::FLOAT[4]
+LIMIT 3;
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TABLE_SCAN ──────────────────────╮
+│ Index: profile_ivf_idx            │
+│ Lookup: search                    │
+│ Score: l2_distance(emb, FLOAT[4]) │
+│ Top: 3                            │
+│ Projections: id                   │
+│                                   │
+├─ Index Filter Prepare ────────────┤
+│                                   │
+│ Total: 0µs                        │
+│ Snapshot: 0µs                     │
+│ Segments: 1 of 1                  │
+│                                   │
+│ ╭─ Vector Similarity ──────╮      │
+│ │ Field: emb               │      │
+│ │ Metric: l2               │      │
+│ │ Top: 3                   │      │
+│ │ Estimated Matches: 1,000 │      │
+│ │ Time: 0µs                │      │
+│ ╰──────────────────────────╯      │
+│                                   │
+├─ Index Filter Execute ────────────┤
+│                                   │
+│ Total: 0µs                        │
+│ Rows: 512                         │
+│                                   │
+│ ╭─ ann::VectorChain ─╮            │
+│ │ Plans: 1           │            │
+│ │ Calls: 1           │            │
+│ │ Plan: 0µs          │            │
+│ │ Time: 0µs          │            │
+│ │ Rows: 512          │            │
+│ ╰────────────────────╯            │
+│                                   │
+├───────────────────────────────────┤
+│ 3 rows                        0µs │
+╰───────────────────────────────────╯
+
+
+query
+EXPLAIN ANALYZE
+SELECT id
+FROM profile_ivf_idx
+WHERE label = 'even'
+ORDER BY emb <-> [500.4, 3, 0, 0]::FLOAT[4]
+LIMIT 3;
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TABLE_SCAN ──────────────────────╮
+│ Index: profile_ivf_idx            │
+│ Lookup: search                    │
+│ Score: l2_distance(emb, FLOAT[4]) │
+│ Top: 3                            │
+│ Projections: id                   │
+│                                   │
+├─ Index Filter Prepare ────────────┤
+│                                   │
+│ Total: 0µs                        │
+│ Snapshot: 0µs                     │
+│ Segments: 1 of 1                  │
+│                                   │
+│ ╭─ Vector Similarity ──────╮      │
+│ │ Field: emb               │      │
+│ │ Metric: l2               │      │
+│ │ Top: 3                   │      │
+│ │ Estimated Matches: 1,000 │      │
+│ │ Total: 0µs               │      │
+│ │ Time: 0µs                │      │
+│ ╰─────────────┬────────────╯      │
+│ ╭─ Term ──────┴────────────╮      │
+│ │ Field: label(string)     │      │
+│ │ Value: even              │      │
+│ │ Posting Lists: 1         │      │
+│ │ Estimated Matches: 500   │      │
+│ │ Postings: 500            │      │
+│ │ Time: 0µs                │      │
+│ ╰──────────────────────────╯      │
+│                                   │
+├─ Index Filter Execute ────────────┤
+│                                   │
+│ Total: 0µs                        │
+│ Rows: 256                         │
+│                                   │
+│ ╭─ ann::VectorChain ─╮            │
+│ │ Plans: 1           │            │
+│ │ Calls: 1           │            │
+│ │ Plan: 0µs          │            │
+│ │ Time: 0µs          │            │
+│ │ Rows: 256          │            │
+│ ╰────────────────────╯            │
+│                                   │
+├─ Column Filter ───────────────────┤
+│                                   │
+│ Rows: 512                         │
+│ Rows Removed: 256                 │
+│ Time: 0µs                         │
+│                                   │
+│ ╭─ Column ──────────────╮         │
+│ │ Field: label          │         │
+│ │ Check: label = 'even' │         │
+│ ╰───────────────────────╯         │
+│                                   │
+├───────────────────────────────────┤
+│ 3 rows                        0µs │
+╰───────────────────────────────────╯
+
+
+statement ok
+SET sdb_index_profile_nodes = true;
+
+
+query
+EXPLAIN ANALYZE
+SELECT id
+FROM profile_hnsw_idx
+WHERE label = 'even'
+ORDER BY emb <-> [500.4, 3, 0, 0]::FLOAT[4]
+LIMIT 3;
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TABLE_SCAN ───────────────────────────────────────────────╮
+│ Index: profile_hnsw_idx                                    │
+│ Lookup: search                                             │
+│ Index or Column Filter: label = 'even'                     │
+│ Score: l2_distance(emb, FLOAT[4])                          │
+│ Top: 3                                                     │
+│ Projections: id                                            │
+│                                                            │
+├─ Index Filter Prepare ─────────────────────────────────────┤
+│                                                            │
+│ Total: 0µs                                                 │
+│ Snapshot: 0µs                                              │
+│ Segments: 1 of 1                                           │
+│                                                            │
+│ ╭─ Vector Similarity ──────╮                               │
+│ │ Field: emb               │                               │
+│ │ Metric: l2               │                               │
+│ │ Top: 3                   │                               │
+│ │ Estimated Matches: 1,000 │                               │
+│ │ Total: 0µs               │                               │
+│ │ Time: 0µs                │                               │
+│ ╰─────────────┬────────────╯                               │
+│ ╭─ Term ──────┴────────────╮                               │
+│ │ Field: label(string)     │                               │
+│ │ Value: even              │                               │
+│ │ Posting Lists: 1         │                               │
+│ │ Estimated Matches: 500   │                               │
+│ │ Postings: 500            │                               │
+│ │ Time: 0µs                │                               │
+│ ╰──────────────────────────╯                               │
+│                                                            │
+├─ Index Filter Execute ─────────────────────────────────────┤
+│                                                            │
+│ Total: 0µs                                                 │
+│ Rows: 6                                                    │
+│                                                            │
+│ ╭─ ann::HnswHits ───────────────────╮                      │
+│ │ Plans: 1                          │                      │
+│ │ Calls: 1                          │                      │
+│ │ Plan: 0µs                         │                      │
+│ │ Total: 0µs                        │                      │
+│ │ Time: 0µs                         │                      │
+│ │ Rows: 6                           │                      │
+│ ╰─────────────────┬─────────────────╯                      │
+│                   ├─────────────────────────────╮          │
+│ ╭─ fill::Impl<detail::PostingFill> ─╮  ╭─ docs::Posting ─╮ │
+│ │ Filter: Term                      │  │ Filter: Term    │ │
+│ │ Plans: 1                          │  │ Plans: 1        │ │
+│ │ Calls: 0                          │  │ Calls: 1        │ │
+│ │ Time: 0µs                         │  │ Plan: 0µs       │ │
+│ │ Rows: 0                           │  │ Time: 0µs       │ │
+│ ╰───────────────────────────────────╯  │ Rows: 500       │ │
+│                                        ╰─────────────────╯ │
+│                                                            │
+├────────────────────────────────────────────────────────────┤
+│ 3 rows                                                 0µs │
+╰────────────────────────────────────────────────────────────╯
+
+
+query
+EXPLAIN ANALYZE
+SELECT id
+FROM profile_ivf_idx
+WHERE label = 'even'
+ORDER BY emb <-> [500.4, 3, 0, 0]::FLOAT[4]
+LIMIT 3;
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TABLE_SCAN ──────────────────────╮
+│ Index: profile_ivf_idx            │
+│ Lookup: search                    │
+│ Score: l2_distance(emb, FLOAT[4]) │
+│ Top: 3                            │
+│ Projections: id                   │
+│                                   │
+├─ Index Filter Prepare ────────────┤
+│                                   │
+│ Total: 0µs                        │
+│ Snapshot: 0µs                     │
+│ Segments: 1 of 1                  │
+│                                   │
+│ ╭─ Vector Similarity ──────╮      │
+│ │ Field: emb               │      │
+│ │ Metric: l2               │      │
+│ │ Top: 3                   │      │
+│ │ Estimated Matches: 1,000 │      │
+│ │ Total: 0µs               │      │
+│ │ Time: 0µs                │      │
+│ ╰─────────────┬────────────╯      │
+│ ╭─ Term ──────┴────────────╮      │
+│ │ Field: label(string)     │      │
+│ │ Value: even              │      │
+│ │ Posting Lists: 1         │      │
+│ │ Estimated Matches: 500   │      │
+│ │ Postings: 500            │      │
+│ │ Time: 0µs                │      │
+│ ╰──────────────────────────╯      │
+│                                   │
+├─ Index Filter Execute ────────────┤
+│                                   │
+│ Total: 0µs                        │
+│ Rows: 256                         │
+│                                   │
+│ ╭─ ann::VectorChain ─╮            │
+│ │ Plans: 1           │            │
+│ │ Calls: 1           │            │
+│ │ Plan: 0µs          │            │
+│ │ Time: 0µs          │            │
+│ │ Rows: 256          │            │
+│ ╰────────────────────╯            │
+│                                   │
+├─ Column Filter ───────────────────┤
+│                                   │
+│ Rows: 512                         │
+│ Rows Removed: 256                 │
+│ Time: 0µs                         │
+│                                   │
+│ ╭─ Column ──────────────╮         │
+│ │ Field: label          │         │
+│ │ Check: label = 'even' │         │
+│ ╰───────────────────────╯         │
+│                                   │
+├───────────────────────────────────┤
+│ 3 rows                        0µs │
+╰───────────────────────────────────╯
+
+
+query
+SELECT id
+FROM profile_ivf_idx
+WHERE label = 'even'
+ORDER BY emb <-> [500.4, 3, 0, 0]::FLOAT[4]
+LIMIT 3;
+----
+id
+500
+502
+498
+
+
+statement ok
+COPY (
+  SELECT i AS id, i % 100 AS extra, [i::FLOAT, 0, 0, 0]::FLOAT[4] AS emb
+  FROM range(0, 3000) t(i)
+) TO '${__TEST_DIR__}/profile_vector_lookup.parquet' (FORMAT PARQUET);
+
+
+statement ok
+CREATE VIEW profile_vector_lookup AS
+SELECT id, extra, emb::FLOAT[4] AS emb
+FROM read_parquet('${__TEST_DIR__}/profile_vector_lookup.parquet');
+
+
+statement ok
+CREATE INDEX profile_vector_lookup_idx ON profile_vector_lookup USING inverted (id, emb hnsw (metric = 'l2'));
+
+
+query
+EXPLAIN ANALYZE
+SELECT id
+FROM profile_vector_lookup_idx
+WHERE extra = 7
+ORDER BY emb <-> [1500.4, 0, 0, 0]::FLOAT[4]
+LIMIT 5;
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TABLE_SCAN ──────────────────────╮
+│ Index: profile_vector_lookup_idx  │
+│ Score: l2_distance(emb, FLOAT[4]) │
+│ Top: 5                            │
+│ Projections: id                   │
+│                                   │
+├─ Index Filter Prepare ────────────┤
+│                                   │
+│ Total: 0µs                        │
+│ Snapshot: 0µs                     │
+│ Segments: 1 of 1                  │
+│                                   │
+│ ╭─ Vector Similarity ──────╮      │
+│ │ Field: emb               │      │
+│ │ Metric: l2               │      │
+│ │ Top: 5                   │      │
+│ │ Estimated Matches: 3,000 │      │
+│ │ Time: 0µs                │      │
+│ ╰──────────────────────────╯      │
+│                                   │
+├─ Index Filter Execute ────────────┤
+│                                   │
+│ Total: 0µs                        │
+│ Rows: 3,200                       │
+│                                   │
+│ ╭─ ann::ExactChain ─╮             │
+│ │ Plans: 1          │             │
+│ │ Calls: 1          │             │
+│ │ Plan: 0µs         │             │
+│ │ Time: 0µs         │             │
+│ │ Rows: 3,000       │             │
+│ ╰───────────────────╯             │
+│                                   │
+│ ╭─ ann::HnswHits ─╮               │
+│ │ Plans: 1        │               │
+│ │ Calls: 1        │               │
+│ │ Plan: 0µs       │               │
+│ │ Time: 0µs       │               │
+│ │ Rows: 200       │               │
+│ ╰─────────────────╯               │
+│                                   │
+├─ Column Filter ───────────────────┤
+│                                   │
+│ ╭─ Column ─────────╮              │
+│ │ Field: extra     │              │
+│ │ Check: extra = 7 │              │
+│ │ Verify: lookup   │              │
+│ ╰──────────────────╯              │
+│                                   │
+├─ Lookup ──────────────────────────┤
+│                                   │
+│ Source: parquet                   │
+│ Rows: 1,000                       │
+│ Rows Removed: 990                 │
+│ Time: 0µs                         │
+│                                   │
+├───────────────────────────────────┤
+│ 5 rows                        0µs │
+╰───────────────────────────────────╯
+
+
+query
+SELECT id
+FROM profile_vector_lookup_idx
+WHERE extra = 7
+ORDER BY emb <-> [1500.4, 0, 0, 0]::FLOAT[4]
+LIMIT 5;
+----
+id
+1507
+1407
+1607
+1307
+1707

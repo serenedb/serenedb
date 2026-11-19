@@ -13,7 +13,7 @@ SereneDB ships prebuilt for 64-bit Linux. Pick the method that fits where you ar
 
 | Method | Best for | Guide |
 |---|---|---|
-| **Shell script** | The fastest way to get a single host or your laptop running. Installs the `serened` binary into your home directory, no root required. | [Shell script](./shell-script.md) |
+| **Shell script** | The fastest way to get a single host or your laptop running. Installs the `serenedb` binary and its `serened` link into your home directory, no root required. | [Shell script](./shell-script.md) |
 | **Docker** | Containers, CI and trying SereneDB on macOS or Windows. | [Docker](./docker.md) |
 | **`.deb` package** | Debian and Ubuntu servers that should run SereneDB as a systemd-managed service. | [Debian / Ubuntu](./debian.md) |
 | **Tarball** | Air-gapped hosts, custom install paths or when you manage the service yourself. | [Tarball](./tarball.md) |

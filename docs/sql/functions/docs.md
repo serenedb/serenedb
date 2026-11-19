@@ -23,7 +23,7 @@ out of the index compiled into the binary, so they do not appear in
 error.
 
 The same tables and functions work in `psql`, DBeaver, Grafana and anything else that
-speaks SQL, and in [`serened shell` and `serened psql`](../../clients/serened-shell.md#browsing-the-documentation),
+speaks SQL, and in [`serenedb shell` and `serenedb psql`](../../clients/serened-shell.md#browsing-the-documentation),
 which also render the documentation with the `.docs` command. Every surface runs the
 same search code over the same index, so a query returns the same pages in the same
 order wherever it runs.

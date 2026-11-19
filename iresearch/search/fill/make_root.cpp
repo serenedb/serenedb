@@ -18,10 +18,14 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "docs/docs_bootstrap.h"
+#include "iresearch/search/fill/make.hpp"
+#include "iresearch/search/filters/query_profile.hpp"
 
-namespace sdb::docs {
+namespace irs::fill {
 
-[[gnu::weak]] std::optional<int> RunDocsBootstrap() { return std::nullopt; }
+Node::ptr MakeRoot(const QueryBuilder& query) {
+  return ProfileRoot(query,
+                     [&] { return query.PlanFill({}, ScoreMergeType::Noop); });
+}
 
-}  // namespace sdb::docs
+}  // namespace irs::fill

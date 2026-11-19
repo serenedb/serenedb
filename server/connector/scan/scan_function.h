@@ -33,6 +33,7 @@
 #include <vector>
 
 #include "connector/scan/scan_plan.h"
+#include "connector/search_filter_printer.hpp"
 
 namespace sdb::connector {
 
@@ -78,6 +79,9 @@ duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue> ScanToStringValue(
 
 duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue>
 IndexLookupToStringValue(duckdb::TableFunctionToStringInput& input);
+
+irs::FilterTree IndexFilterTree(const ScanBindData& bind,
+                                const irs::Filter& filter);
 
 bool IResearchSupportsPushdownExtract(const duckdb::FunctionData& bind_data,
                                       const duckdb::LogicalIndex& col_idx);

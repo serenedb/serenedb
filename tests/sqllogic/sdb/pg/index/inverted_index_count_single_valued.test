@@ -14,6 +14,10 @@ CREATE INDEX csv_idx ON csv_t USING inverted (id, v, s)
 
 
 statement ok
+SET threads = 1
+
+
+statement ok
 INSERT INTO csv_t
 SELECT i, CASE WHEN i % 10 = 0 THEN NULL ELSE i % 5000 END, 'k' || (i % 100)
 FROM generate_series(1, 20000) g(i)
@@ -31,6 +35,10 @@ FROM generate_series(20001, 30000) g(i)
 
 statement ok
 VACUUM (FLUSH_TABLE) csv_t
+
+
+statement ok
+RESET threads
 
 
 query
@@ -253,6 +261,10 @@ statement ok
 SET threads = 1
 
 
+statement ok
+SET profiling_renderer_settings = {'deterministic': true};
+
+
 # One worker hands its whole count over in one row.
 query
 EXPLAIN ANALYZE SELECT count(*) FROM csv_idx WHERE v BETWEEN 10 AND 4000
@@ -261,21 +273,54 @@ QUERY PLAN
 ╭─ Summary ───────────╮
 │ Total Time: <slt:ignore>s │
 ╰─────────────────────╯
-╭─ UNGROUPED_AGGREGATE ────╮
-│ Aggregates: count_star() │
-│ 1 row                0µs │
-╰─────────────┒┎───────────╯
-╭─ TABLE_SCAN ┚┖───────────╮
-│ Index: csv_idx           │
-│ Lookup: search           │
-│ Index Filter:            │
-│ ╭─ Granular Range ────╮  │
-│ │ Field: v(numeric)   │  │
-│ │ Range: >=10, <=4000 │  │
-│ ╰─────────────────────╯  │
-│ Output: row-count only   │
-│ 1 row                0µs │
-╰──────────────────────────╯
+╭─ UNGROUPED_AGGREGATE ─────────╮
+│ Aggregates: count_star()      │
+│ 1 row                     0µs │
+╰───────────────┒┎──────────────╯
+╭─ TABLE_SCAN ──┚┖──────────────╮
+│ Index: csv_idx                │
+│ Lookup: search                │
+│ Output: row-count only        │
+│                               │
+├─ Index Filter Prepare ────────┤
+│                               │
+│ Total: 0µs                    │
+│ Snapshot: 0µs                 │
+│ Segments: 2 of 2              │
+│                               │
+│ ╭─ Granular Range ──────────╮ │
+│ │ Field: v(numeric)         │ │
+│ │ Range: >=10, <=4000       │ │
+│ │ Posting Lists: 132        │ │
+│ │ Estimated Matches: 21,546 │ │
+│ │ Postings: 10,334          │ │
+│ │ Time: 0µs                 │ │
+│ ╰───────────────────────────╯ │
+│                               │
+├─ Index Filter Execute ────────┤
+│                               │
+│ Total: 0µs                    │
+│ Rows: 17,955                  │
+│                               │
+│ ╭─ count::BooleanWindow ─╮    │
+│ │ Plans: 1               │    │
+│ │ Calls: 21              │    │
+│ │ Plan: 0µs              │    │
+│ │ Time: 0µs              │    │
+│ │ Rows: 10,773           │    │
+│ ╰────────────────────────╯    │
+│                               │
+│ ╭─ count::Subtract ─╮         │
+│ │ Plans: 1          │         │
+│ │ Calls: 11         │         │
+│ │ Plan: 0µs         │         │
+│ │ Time: 0µs         │         │
+│ │ Rows: 7,182       │         │
+│ ╰───────────────────╯         │
+│                               │
+├───────────────────────────────┤
+│ 1 row                     0µs │
+╰───────────────────────────────╯
 
 
 # Three rows per value keep every posting inline in the dictionary: a term that

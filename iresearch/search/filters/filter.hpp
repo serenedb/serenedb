@@ -57,6 +57,7 @@ namespace irs {
 
 struct IndexReader;
 struct PreparedStateVisitor;
+class QueryProfile;
 
 struct PrepareContext {
   PrepareCollector* collector = nullptr;
@@ -66,6 +67,7 @@ struct PrepareContext {
   uint32_t thread = 0;
   bool needs_terms = false;
   bool prefetch = true;
+  QueryProfile* profile = nullptr;
 
   void Boost(score_t b) noexcept { boost *= b; }
 
@@ -133,6 +135,15 @@ class QueryBuilder : public memory::Managed {
     return _stats.scorer != nullptr && !IsUnscored(*_stats.scorer);
   }
 
+  void SetProfile(QueryProfile& profile, uint32_t node) const noexcept {
+    _profile = &profile;
+    _profile_node = node;
+  }
+
+  QueryProfile* Profile() const noexcept { return _profile; }
+
+  uint32_t ProfileNode() const noexcept { return _profile_node; }
+
   ~QueryBuilder() override = default;
 
   static QueryBuilder::ptr Empty();
@@ -178,6 +189,8 @@ class QueryBuilder : public memory::Managed {
 
  private:
   detail::StatsRecord _stats;
+  mutable QueryProfile* _profile = nullptr;
+  mutable uint32_t _profile_node = 0;
 };
 
 class Filter {

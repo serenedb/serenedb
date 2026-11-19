@@ -151,6 +151,9 @@ install_tar() {
 		if [ "${SERENED_BIN}" != "${INST}/serened" ]; then
 			ln -sf "${SERENED_BIN}" "${INST}/serened"
 		fi
+		if [ -f "${INST}/usr/bin/serenedb" ]; then
+			ln -sf "${INST}/usr/bin/serenedb" "${INST}/serenedb"
+		fi
 		smoke_test "${INST}/serened" "${VER}"
 	fi
 
@@ -169,6 +172,14 @@ install_tar() {
 		[ ! -f "${LOCALBIN}/serened" ]; then
 		ln -s "${LATEST}/serened" "${LOCALBIN}/serened"
 		echo "Also created symlink: ${LOCALBIN}/serened -> ${LATEST}/serened"
+	fi
+	if [ "${VER}" = "${LATEST_VER}" ] &&
+		[ -d "${LOCALBIN}" ] &&
+		[ -w "${LOCALBIN}" ] &&
+		[ -e "${LATEST}/serenedb" ] &&
+		[ ! -e "${LOCALBIN}/serenedb" ]; then
+		ln -s "${LATEST}/serenedb" "${LOCALBIN}/serenedb"
+		echo "Also created symlink: ${LOCALBIN}/serenedb -> ${LATEST}/serenedb"
 	fi
 
 	echo

@@ -38,7 +38,7 @@ NOT_BUILD_INPUTS = (
 BUILD_INPUT_EXCEPTIONS = ("docs/*", "tests/sqllogic/sdb/pg/site_docs/*", "tests/sqllogic/recovery/site_docs/*")
 SQLLOGIC_TEST_DIR = "tests/sqllogic/"
 BUNDLE_PATHS = (
-    "bin/serened", "bin/serenedb-tests", "bin/iresearch-tests", "bin/iresearch-load-tests",
+    "bin/serenedb", "bin/serened", "bin/serenedb-tests", "bin/iresearch-tests", "bin/iresearch-load-tests",
     "bin/re2-tests", "bin/croaring-tests", "third_party/duckdb/test/unittest", "CMakeCache.txt",
 )
 BUNDLE_CACHE = Path(os.environ.get("SDB_BUNDLE_CACHE", "/mnt/data/sdb-ci/bundles"))
@@ -148,7 +148,7 @@ def cmd_stage(args):
             if source.is_dir():
                 shutil.copytree(source, tmp_dir / rel)
             else:
-                shutil.copy2(source, tmp_dir / rel)
+                shutil.copy2(source, tmp_dir / rel, follow_symlinks=False)
         (tmp_dir / ".complete").write_text(args.digest)
         tmp_dir.chmod(0o755)
         if dest.exists():

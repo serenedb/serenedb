@@ -442,8 +442,8 @@ bool WriteImage(std::span<const IndexBlob> image,
   try {
     if (std::filesystem::exists(out) && !std::filesystem::is_empty(out)) {
       SDB_ERROR(STARTUP, "cannot build the docs index: ", out.string(),
-                " already exists and is not empty; point --build_docs_index at "
-                "a new or empty directory");
+                " already exists and is not empty; give docs-index a new or "
+                "empty directory");
       return false;
     }
     size_t bytes = 0;

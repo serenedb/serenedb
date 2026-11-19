@@ -53,7 +53,7 @@ Use the `read_json` function with custom options:
 Read a JSON file from stdin, auto-infer options:
 
 ```batch
-cat data/json/todos.json | serened shell -c "SELECT * FROM read_json('/dev/stdin')"
+cat data/json/todos.json | serenedb shell -c "SELECT * FROM read_json('/dev/stdin')"
 ```
 
 Read a JSON file into a table:

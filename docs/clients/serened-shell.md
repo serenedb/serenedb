@@ -1,19 +1,19 @@
 ---
-title: serened shell
+title: serenedb shell
 sidebar_position: 10
 split: headings
 ---
 
-# serened shell
+# serenedb shell
 
-`serened shell` is a local, embedded SQL shell built into the `serened` binary. It runs queries directly against a DuckDB database file — or an in-memory database — **without starting a server or opening a network connection**. It is handy for ad-hoc queries, exploring data files (CSV, Parquet, DuckDB), scripting, and formatting SQL.
+`serenedb shell` is a local, embedded SQL shell built into the `serenedb` binary. It runs queries directly against a DuckDB database file — or an in-memory database — **without starting a server or opening a network connection**. It is handy for ad-hoc queries, exploring data files (CSV, Parquet, DuckDB), scripting, and formatting SQL.
 
-To connect to a running SereneDB server instead, use [`serened psql`](./serened-psql.md).
+To connect to a running SereneDB server instead, use [`serenedb psql`](./serened-psql.md).
 
 ## Usage
 
 ```sh
-serened shell [OPTION]... [FILENAME [SQL]]
+serenedb shell [OPTION]... [FILENAME [SQL]]
 ```
 
 `FILENAME` is the path to a DuckDB database file; a new file is created if it does not exist. Omit it (or pass `:memory:`) for an in-memory database. The optional `SQL` argument is run before the interactive prompt starts.
@@ -21,13 +21,13 @@ serened shell [OPTION]... [FILENAME [SQL]]
 Open an in-memory shell:
 
 ```sh
-serened shell
+serenedb shell
 ```
 
 Open a database file:
 
 ```sh
-serened shell my_data.db
+serenedb shell my_data.db
 ```
 
 ## Running a single command
@@ -35,7 +35,7 @@ serened shell my_data.db
 Use `-c` to run one statement and exit:
 
 ```sh
-serened shell :memory: -c "SELECT 1 + 1 AS sum;"
+serenedb shell :memory: -c "SELECT 1 + 1 AS sum;"
 ```
 
 ```text
@@ -52,7 +52,7 @@ serened shell :memory: -c "SELECT 1 + 1 AS sum;"
 The shell reads files directly through table functions such as `read_csv` and `read_parquet`:
 
 ```sh
-serened shell :memory: -c "SELECT * FROM read_csv('data.csv');"
+serenedb shell :memory: -c "SELECT * FROM read_csv('data.csv');"
 ```
 
 ```text
@@ -68,7 +68,7 @@ serened shell :memory: -c "SELECT * FROM read_csv('data.csv');"
 You can also pipe a script via standard input:
 
 ```sh
-echo "SELECT 'piped' AS src;" | serened shell
+echo "SELECT 'piped' AS src;" | serenedb shell
 ```
 
 ## SQL dialect
@@ -79,7 +79,7 @@ What lives in a server's catalog or session needs a server: the `pg_catalog` and
 
 ## Safe mode
 
-`--safe`, or `.safe_mode` inside a session, turns off everything that reaches outside the engine: file and network access from SQL (reading and writing files, `COPY`, attaching database files, remote URLs) and the dot commands `.shell`, `.system`, `.open`, `.read`, `.import`, `.output`, `.once`, `.cd` and `.log`. It also locks the configuration for the rest of the session. The built-in documentation keeps working, since it is part of the binary, so `serened shell --safe -c ".docs <topic>"` gives a script or an agent the docs and nothing else.
+`--safe`, or `.safe_mode` inside a session, turns off everything that reaches outside the engine: file and network access from SQL (reading and writing files, `COPY`, attaching database files, remote URLs) and the dot commands `.shell`, `.system`, `.open`, `.read`, `.import`, `.output`, `.once`, `.cd` and `.log`. It also locks the configuration for the rest of the session. The built-in documentation keeps working, since it is part of the binary, so `serenedb shell --safe -c ".docs <topic>"` gives a script or an agent the docs and nothing else.
 
 To let a session read and write a few locations only, allow them first and switch safe mode on afterwards:
 
@@ -96,7 +96,7 @@ Files under the listed directories and URL prefixes can be read and written; eve
 Unlike a server connection, the shell does not pre-select a default database. To create objects, first select a database with `USE` (or fully-qualify the name), otherwise SereneDB reports `Catalog Error: no schema has been selected to create in`:
 
 ```sh
-serened shell :memory: -c "USE memory; CREATE TABLE t (i INTEGER); INSERT INTO t VALUES (1), (2); SELECT count(*) AS rows FROM t;"
+serenedb shell :memory: -c "USE memory; CREATE TABLE t (i INTEGER); INSERT INTO t VALUES (1), (2); SELECT count(*) AS rows FROM t;"
 ```
 
 ```text
@@ -113,7 +113,7 @@ serened shell :memory: -c "USE memory; CREATE TABLE t (i INTEGER); INSERT INTO t
 The default output is the aligned `duckbox` table. Switch modes with a `--MODE` flag (`box`, `csv`, `json`, `markdown`, `line`, …) or with `-P format=…`:
 
 ```sh
-serened shell :memory: --markdown -c "SELECT 1 AS a, 2 AS b;"
+serenedb shell :memory: --markdown -c "SELECT 1 AS a, 2 AS b;"
 ```
 
 ```text
@@ -127,7 +127,7 @@ serened shell :memory: --markdown -c "SELECT 1 AS a, 2 AS b;"
 `--format` pretty-prints SQL read from standard input (use `--format-file` for a file):
 
 ```sh
-echo "select a,b from t where a>1 order by b" | serened shell --format
+echo "select a,b from t where a>1 order by b" | serenedb shell --format
 ```
 
 ```text
@@ -140,13 +140,13 @@ ORDER BY b
 ## Browsing the documentation
 
 The `.docs` dot-command renders this documentation set inside the shell. The pages are
-compiled into the `serened` binary, so `.docs` needs no server connection, works
+compiled into the `serenedb` binary, so `.docs` needs no server connection, works
 offline, and always matches the version you are running.
 
 With no argument it lists the top-level sections:
 
 ```sh
-serened shell -c ".docs"
+serenedb shell -c ".docs"
 ```
 
 ```text
@@ -228,7 +228,7 @@ matches, search results, the closest candidates, the pages of a section, the obj
 a kind and the `Sections` footer of a page. `.docs <number>` opens an item of the last list, and
 opening a page makes its own sections the list, so a few numbers walk from a page down
 to the heading you want. The list lives for the session, so a number means nothing to
-`serened shell -c`; use the path printed under each item there.
+`serenedb shell -c`; use the path printed under each item there.
 
 In an interactive terminal these lists open in the completion menu instead of being
 printed, the same menu `Tab` shows while you type SQL. `.docs` prints the heading, the
@@ -245,7 +245,7 @@ Rendering a page ends with a `Sections` footer listing its immediate subsections
 number and as pasteable commands:
 
 ```sh
-serened shell -c ".docs sql/indexes/index.md"
+serenedb shell -c ".docs sql/indexes/index.md"
 ```
 
 ```text
@@ -278,7 +278,7 @@ Output is wrapped to the terminal width, colored only when standard output is a
 terminal, and paged the same way query results are. `NO_COLOR=1` or `TERM=dumb` turns
 the colors off.
 
-The same command is available in [`serened psql`](./serened-psql.md) and renders the
+The same command is available in [`serenedb psql`](./serened-psql.md) and renders the
 same pages, because both read the same source: a prebuilt inverted index compiled into
 the binary. Every `.docs` argument is a query against it, browsing and name lookup as
 much as search, so none of them needs a connection, and search ranks with the same
@@ -491,5 +491,5 @@ The interactive line editor takes these keys, which `.help shortcuts` also lists
 | `--ui`                   | Launch a web interface via the `ui` extension        |
 
 :::note
-The flags `-h`, `-l` and `-s` differ from [`serened psql`](./serened-psql.md): in the shell, `-h` shows the help message, `-l` selects list output mode, and `-s` is an alias for `-c`.
+The flags `-h`, `-l` and `-s` differ from [`serenedb psql`](./serened-psql.md): in the shell, `-h` shows the help message, `-l` selects list output mode, and `-s` is an alias for `-c`.
 :::

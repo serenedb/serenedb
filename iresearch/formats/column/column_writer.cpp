@@ -129,10 +129,18 @@ codecs::CodecType CodesCodec(const ListParts& parts, uint64_t rows) noexcept {
   uint64_t runs = 0;
   uint64_t run = 0;
   uint64_t longest_run = 0;
+  int64_t least_step = std::numeric_limits<int64_t>::max();
+  int64_t largest_step = std::numeric_limits<int64_t>::min();
   for (size_t i = 0; i < parts.codes.size(); ++i) {
-    if (i != 0 && parts.codes[i] == parts.codes[i - 1]) {
-      ++run;
-      continue;
+    if (i != 0) {
+      const auto step =
+        static_cast<int64_t>(parts.codes[i] - parts.codes[i - 1]);
+      least_step = std::min(least_step, step);
+      largest_step = std::max(largest_step, step);
+      if (step == 0) {
+        ++run;
+        continue;
+      }
     }
     longest_run = std::max(longest_run, run);
     run = 1;
@@ -146,8 +154,17 @@ codecs::CodecType CodesCodec(const ListParts& parts, uint64_t rows) noexcept {
     duckdb::BitpackingPrimitives::MinimumBitWidth<uint64_t>(longest_run);
   const uint64_t bitpacked = rows * width;
   const uint64_t run_bits = runs * (width + run_width);
-  return run_bits < bitpacked ? codecs::CodecType::RleFfor
-                              : codecs::CodecType::Bitpacking;
+  if (run_bits < bitpacked) {
+    return codecs::CodecType::RleFfor;
+  }
+  const uint64_t step_width =
+    parts.codes.size() < 2
+      ? 0
+      : duckdb::BitpackingPrimitives::MinimumBitWidth<uint64_t>(
+          static_cast<uint64_t>(largest_step) -
+          static_cast<uint64_t>(least_step));
+  return step_width < width ? codecs::CodecType::DeltaFfor
+                            : codecs::CodecType::Ffor;
 }
 
 bool SelfContained(const ColumnBlockMeta& block) noexcept {
@@ -340,7 +357,7 @@ void ColumnWriter::SealListParts(const duckdb::LogicalType& type,
                    reinterpret_cast<duckdb::data_ptr_t>(parts.ends.data()),
                    parts.ends.size()},
     parts.ends.size()};
-  CompressPlain(duckdb::LogicalType::UBIGINT, codecs::CodecType::Bitpacking,
+  CompressPlain(duckdb::LogicalType::UBIGINT, codecs::CodecType::DeltaFfor,
                 {&end_chunk, parts.ends.empty() ? 0U : 1U}, ends.data);
 }
 

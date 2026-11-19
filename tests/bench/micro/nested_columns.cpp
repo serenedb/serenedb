@@ -241,6 +241,7 @@ void PrintHash(Shape shape, const Seg& seg) {
 void PrintSegmentInfo(const Seg& seg, const irs::ColumnReader& col,
                       const std::string& path) {
   std::map<std::string, uint64_t> rows;
+  std::map<std::string, uint64_t> bytes;
   irs::ReadContext ctx{*seg.reader};
   irs::BlockWindow window{};
   uint64_t row = 0;
@@ -259,12 +260,14 @@ void PrintSegmentInfo(const Seg& seg, const irs::ColumnReader& col,
       }
     }
     rows[key] += block.tuple_count;
+    bytes[key] += block.byte_size;
     row += block.tuple_count;
   }
   for (const auto& [key, count] : rows) {
-    std::fprintf(stderr, "seginfo %s %s %s rows %llu\n", path.c_str(),
-                 col.Type().ToString().c_str(), key.c_str(),
-                 static_cast<unsigned long long>(count));
+    std::fprintf(stderr, "seginfo %s %s %s rows %llu bytes %llu\n",
+                 path.c_str(), col.Type().ToString().c_str(), key.c_str(),
+                 static_cast<unsigned long long>(count),
+                 static_cast<unsigned long long>(bytes[key]));
   }
   col.VisitSubColumns([&](const irs::ColumnReader::SubColumn& sub) {
     PrintSegmentInfo(seg, sub.column, path + "/" + std::to_string(sub.index));

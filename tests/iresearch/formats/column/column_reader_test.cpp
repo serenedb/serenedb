@@ -4605,7 +4605,7 @@ TEST_F(ColumnReaderTest, UniqueListsKeepEveryRow) {
   ExpectGathered(*col, r.Ctx(), expected, Rows{{1, 7, 8, 4096, 9999}}, false);
 }
 
-TEST_F(ColumnReaderTest, UniqueListRowGroupsBitpackTheirCodes) {
+TEST_F(ColumnReaderTest, UniqueListRowGroupsStoreTheirCodesAsSteps) {
   const auto type = duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
   irs::MemoryDirectory dir{};
   std::vector<duckdb::Value> expected;
@@ -4619,7 +4619,7 @@ TEST_F(ColumnReaderTest, UniqueListRowGroupsBitpackTheirCodes) {
   ASSERT_NE(col, nullptr);
   ASSERT_FALSE(col->DataBlocks().empty());
   for (const auto& block : col->DataBlocks()) {
-    EXPECT_EQ(block.codec->type, irs::codecs::CodecType::Bitpacking);
+    EXPECT_EQ(block.codec->type, irs::codecs::CodecType::DeltaFfor);
   }
   ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
   ExpectGathered(*col, r.Ctx(), expected,

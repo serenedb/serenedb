@@ -153,7 +153,7 @@ void ExplainLanguageModel(const ScoreContext& ctx,
                           std::string_view expression, TermFormula score,
                           Node& out) {
   if (!FreqOf(ctx) || shares.empty()) {
-    out.note = "the column records no term frequency, so the clause scores 0";
+    ExplainNoFreq(ctx, false, out);
     return;
   }
   if (shares.size() == 1) {
@@ -180,8 +180,8 @@ void ExplainLanguageModel(const ScoreContext& ctx,
 void ExplainNoFreq(const ScoreContext& ctx, bool boost_as_score, Node& out) {
   out.note =
     boost_as_score && ctx.boost != 0.f
-      ? "the column records no term frequency, so the clause scores its boost"
-      : "the column records no term frequency, so the clause scores 0";
+      ? "the match has no term frequency, so the clause scores its boost"
+      : "the match has no term frequency, so the clause scores 0";
 }
 
 }  // namespace irs::explain

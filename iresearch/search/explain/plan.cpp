@@ -39,6 +39,7 @@
 #include "iresearch/search/queries/phrase_state.hpp"
 #include "iresearch/search/queries/prepared_state_visitor.hpp"
 #include "iresearch/search/queries/term_query.hpp"
+#include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/scorers/score_provider.hpp"
 #include "iresearch/utils/down_cast.hpp"
 
@@ -221,7 +222,16 @@ class LeafPart final : public Part {
   void DescribeConstant(doc_id_t doc, Node& out) {
     const auto& args = _fallback.args;
     if (!_fallback.field) {
-      out.scorer = ScorerName(*args.scorer);
+      Describe(*args.scorer, ScorerName(*args.scorer),
+               {
+                 .segment = *_fallback.segment,
+                 .field = detail::NoField(),
+                 .doc_attrs = detail::NoAttributes(),
+                 .fetcher = _fetcher,
+                 .stats = args.stats,
+                 .boost = args.boost,
+               },
+               _stats, out);
       return;
     }
     const auto& field = *_fallback.field;
@@ -385,6 +395,7 @@ class Builder {
     query.Visit(namer, kNoBoost);
     const auto* reader = namer.Reader();
     if (reader) {
+      subject.field = reader->meta().id;
       subject.dict = reader->meta().dict;
     }
     return std::make_unique<LeafPart>(

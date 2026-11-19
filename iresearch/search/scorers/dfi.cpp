@@ -161,7 +161,7 @@ void DFI::Explain(const ScoreContext& ctx, const explain::SlotStats* stats,
                   explain::Node& out) const {
   const auto ratios = RatiosOf(*stats_cast(ctx.stats));
   if (!explain::FreqOf(ctx) || ratios.empty()) {
-    out.note = "the column records no term frequency, so the clause scores 0";
+    explain::ExplainNoFreq(ctx, false, out);
     return;
   }
   const auto* const kernel = [&] {

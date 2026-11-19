@@ -1,0 +1,165 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY xf_text AS split_text(case := 'lower') WITH (frequency, position, norm);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY xf_syn AS
+    split_text(case := 'lower') | expand_solr_synonyms('car, automobile, auto')
+    WITH (frequency, position);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY xf_geo AS encode_geojson();
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY xf_wild AS generate_wildcard_ngrams(keyword(), 3);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY xf_gram AS generate_ngrams(2, 2) WITH (frequency, position);
+
+statement ok
+CREATE TABLE xf (id INTEGER PRIMARY KEY, body VARCHAR, car VARCHAR, geo JSON, w VARCHAR, net CIDR, g VARCHAR, opt VARCHAR);
+
+statement ok
+CREATE INDEX xf_idx ON xf USING inverted (id, body xf_text, car xf_syn, geo xf_geo, w xf_wild, net, g xf_gram, opt);
+
+statement ok
+INSERT INTO xf VALUES
+    (1, 'red fox', 'a red car here', '{"type":"Point","coordinates":[37.6,55.71]}', 'percent_alpha_one', '10.0.0.0/8', 'hello', 'x'),
+    (2, 'red dog', 'the red automobile', '{"type":"Point","coordinates":[10,10]}', 'beta_two', '192.168.0.0/16', 'help', NULL),
+    (3, 'blue fox', 'blue paint', '{"type":"Point","coordinates":[37.61,55.72]}', 'alpha', '10.1.0.0/16', 'world', 'y');
+
+query
+SELECT scorer, why
+FROM (
+    (SELECT 'bm25' AS scorer, BM25(xf_idx.tableoid) AS score, ts_explain(xf_idx.tableoid) AS why FROM xf_idx WHERE body @@ ts_between(NULL, NULL, true, true) ORDER BY id LIMIT 1)
+    UNION ALL
+    (SELECT 'tfidf', TFIDF(xf_idx.tableoid), ts_explain(xf_idx.tableoid) FROM xf_idx WHERE body @@ ts_between(NULL, NULL, true, true) ORDER BY id LIMIT 1)
+    UNION ALL
+    (SELECT 'raw_tf', raw_tf(xf_idx.tableoid), ts_explain(xf_idx.tableoid) FROM xf_idx WHERE body @@ ts_between(NULL, NULL, true, true) ORDER BY id LIMIT 1)
+    UNION ALL
+    (SELECT 'raw_dl', raw_dl(xf_idx.tableoid), ts_explain(xf_idx.tableoid) FROM xf_idx WHERE body @@ ts_between(NULL, NULL, true, true) ORDER BY id LIMIT 1)
+    UNION ALL
+    (SELECT 'lm_jm', lm_jm(xf_idx.tableoid), ts_explain(xf_idx.tableoid) FROM xf_idx WHERE body @@ ts_between(NULL, NULL, true, true) ORDER BY id LIMIT 1)
+    UNION ALL
+    (SELECT 'lm_dirichlet', lm_dirichlet(xf_idx.tableoid), ts_explain(xf_idx.tableoid) FROM xf_idx WHERE body @@ ts_between(NULL, NULL, true, true) ORDER BY id LIMIT 1)
+    UNION ALL
+    (SELECT 'indri_dirichlet', indri_dirichlet(xf_idx.tableoid), ts_explain(xf_idx.tableoid) FROM xf_idx WHERE body @@ ts_between(NULL, NULL, true, true) ORDER BY id LIMIT 1)
+    UNION ALL
+    (SELECT 'dfi', dfi(xf_idx.tableoid), ts_explain(xf_idx.tableoid) FROM xf_idx WHERE body @@ ts_between(NULL, NULL, true, true) ORDER BY id LIMIT 1)
+    UNION ALL
+    (SELECT 'idf', idf(xf_idx.tableoid), ts_explain(xf_idx.tableoid) FROM xf_idx WHERE body @@ ts_between(NULL, NULL, true, true) ORDER BY id LIMIT 1)
+    UNION ALL
+    (SELECT 'constant', constant(xf_idx.tableoid, 2), ts_explain(xf_idx.tableoid) FROM xf_idx WHERE body @@ ts_between(NULL, NULL, true, true) ORDER BY id LIMIT 1)
+)
+ORDER BY scorer;
+----
+scorer	why
+bm25	{"note":"the match has no term frequency, so the clause scores 0","scorer":"bm25(k1=1.2, b=0.75)","value":0}
+constant	{"expression":"boost * value","inputs":{"value":{"value":2}},"scorer":"constant(value=2)","value":2}
+dfi	{"note":"the match has no term frequency, so the clause scores 0","scorer":"dfi(measure=standardized)","value":0}
+idf	{"expression":"boost * idf","inputs":{"idf":{"expression":"log(1 + (N - df + 0.5) / (df + 0.5))","value":0.6931472}},"scorer":"idf()","value":0.6931472}
+indri_dirichlet	{"note":"the match has no term frequency, so the clause scores 0","scorer":"indri_dirichlet(mu=2000)","value":0}
+lm_dirichlet	{"note":"the match has no term frequency, so the clause scores 0","scorer":"lm_dirichlet(mu=2000)","value":0}
+lm_jm	{"note":"the match has no term frequency, so the clause scores 0","scorer":"lm_jm(lambda=0.1)","value":0}
+raw_dl	{"note":"the match has no term frequency, so the clause scores 0","scorer":"raw_dl()","value":0}
+raw_tf	{"note":"the match has no term frequency, so the clause scores 0","scorer":"raw_tf()","value":0}
+tfidf	{"note":"the match has no term frequency, so the clause scores 0","scorer":"tfidf(with_norms=false)","value":0}
+
+query
+SELECT id, ts_explain(xf_idx.tableoid) AS why
+FROM xf_idx
+WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.5,55.6],[37.7,55.6],[37.7,55.8],[37.5,55.8],[37.5,55.6]]]}')
+ORDER BY constant(xf_idx.tableoid, 2) DESC, id;
+----
+id	why
+1	{"column":"geo","expression":"boost * value","inputs":{"value":{"value":2}},"scorer":"constant(value=2)","value":2}
+3	{"column":"geo","expression":"boost * value","inputs":{"value":{"value":2}},"scorer":"constant(value=2)","value":2}
+
+query
+SELECT id, ts_explain(xf_idx.tableoid) AS why
+FROM xf_idx
+WHERE ST_Distance_Between(geo, '{"type":"Point","coordinates":[37.6,55.71]}', 0, 5000)
+ORDER BY constant(xf_idx.tableoid, 2) DESC, id;
+----
+id	why
+1	{"column":"geo","expression":"boost * value","inputs":{"value":{"value":2}},"scorer":"constant(value=2)","value":2}
+3	{"column":"geo","expression":"boost * value","inputs":{"value":{"value":2}},"scorer":"constant(value=2)","value":2}
+
+query
+SELECT id, ts_explain(xf_idx.tableoid) AS why
+FROM xf_idx
+WHERE (w @@ ts_like('%alpha%') ^ 2)::score('constant(3)')
+ORDER BY BM25(xf_idx.tableoid) DESC, id;
+----
+id	why
+1	{"column":"w","expression":"boost * value","inputs":{"boost":{"value":2},"value":{"value":3}},"scorer":"constant(value=3)","value":6}
+3	{"column":"w","expression":"boost * value","inputs":{"boost":{"value":2},"value":{"value":3}},"scorer":"constant(value=3)","value":6}
+
+query
+SELECT id, ts_explain(xf_idx.tableoid) AS why
+FROM xf_idx
+WHERE net >> '10.0.0.1'::INET
+ORDER BY BM25(xf_idx.tableoid) DESC, id;
+----
+id	why
+1	{"column":"net","expression":"boost * value","inputs":{"value":{"value":1}},"scorer":"constant(value=1)","term":"10.0.0.0/8","value":1}
+
+query
+SELECT id, ts_explain(xf_idx.tableoid) AS why
+FROM xf_idx
+WHERE car @@ ts_phrase('red car')
+ORDER BY BM25(xf_idx.tableoid) DESC, id;
+----
+id	why
+1	{"column":"car","expression":"boost * idf * tf","inputs":{"idf":{"expression":"sum","parts":[{"column":"car","expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":3},"df":{"value":2}},"term":"red","value":0.47000363},{"column":"car","expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":3},"df":{"value":2}},"term":"auto","value":0.47000363},{"column":"car","expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":3},"df":{"value":2}},"term":"automobile","value":0.47000363},{"column":"car","expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":3},"df":{"value":2}},"term":"car","value":0.47000363}],"value":1.8800145},"tf":{"expression":"freq / (freq + k1 * (1 - b + b * dl / avgdl))","inputs":{"avgdl":{"expression":"L / N","inputs":{"L":{"value":13},"N":{"value":3}},"value":4.3333335},"b":{"value":0.75},"dl":{"value":1},"freq":{"value":1},"k1":{"value":1.2}},"value":0.6632653}},"phrase":["red",["auto","automobile","car"]],"scorer":"bm25(k1=1.2, b=0.75)","value":1.2469485}
+2	{"column":"car","expression":"boost * idf * tf","inputs":{"idf":{"expression":"sum","parts":[{"column":"car","expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":3},"df":{"value":2}},"term":"red","value":0.47000363},{"column":"car","expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":3},"df":{"value":2}},"term":"auto","value":0.47000363},{"column":"car","expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":3},"df":{"value":2}},"term":"automobile","value":0.47000363},{"column":"car","expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":3},"df":{"value":2}},"term":"car","value":0.47000363}],"value":1.8800145},"tf":{"expression":"freq / (freq + k1 * (1 - b + b * dl / avgdl))","inputs":{"avgdl":{"expression":"L / N","inputs":{"L":{"value":13},"N":{"value":3}},"value":4.3333335},"b":{"value":0.75},"dl":{"value":1},"freq":{"value":1},"k1":{"value":1.2}},"value":0.6632653}},"phrase":["red",["auto","automobile","car"]],"scorer":"bm25(k1=1.2, b=0.75)","value":1.2469485}
+
+query
+SELECT id, ts_explain(xf_idx.tableoid) AS why
+FROM xf_idx
+WHERE g @@ ts_ngram('he', 0.5)
+ORDER BY BM25(xf_idx.tableoid) DESC, id;
+----
+id	why
+1	{"column":"g","expression":"boost * idf * tf","inputs":{"idf":{"expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":3},"df":{"value":2}},"value":0.47000363},"tf":{"expression":"freq / (freq + k1 * (1 - b + b * dl / avgdl))","inputs":{"avgdl":{"expression":"L / N","inputs":{"L":{"value":11},"N":{"value":3}},"value":3.6666667},"b":{"value":0.75},"dl":{"value":1},"freq":{"value":1},"k1":{"value":1.2}},"value":0.64705884}},"scorer":"bm25(k1=1.2, b=0.75)","term":"he","value":0.30412}
+2	{"column":"g","expression":"boost * idf * tf","inputs":{"idf":{"expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":3},"df":{"value":2}},"value":0.47000363},"tf":{"expression":"freq / (freq + k1 * (1 - b + b * dl / avgdl))","inputs":{"avgdl":{"expression":"L / N","inputs":{"L":{"value":11},"N":{"value":3}},"value":3.6666667},"b":{"value":0.75},"dl":{"value":1},"freq":{"value":1},"k1":{"value":1.2}},"value":0.64705884}},"scorer":"bm25(k1=1.2, b=0.75)","term":"he","value":0.30412}
+
+query
+SELECT id, ts_explain(xf_idx.tableoid) AS why
+FROM xf_idx
+WHERE body @@ 'fox'
+    OR (g @@ ts_ngram('hello', 0.5))::score(NULL)
+    OR (body @@ ts_starts_with('do'))::score(NULL)
+    OR (body @@ ts_levenshtein('fix', 1))::score(NULL)
+ORDER BY BM25(xf_idx.tableoid) DESC, id;
+----
+id	why
+1	{"clauses":[{"column":"body","expression":"boost * idf * tf","inputs":{"idf":{"expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":3},"df":{"value":2}},"value":0.47000363},"tf":{"expression":"freq / (freq + k1 * (1 - b + b * dl / avgdl))","inputs":{"avgdl":{"expression":"L / N","inputs":{"L":{"value":6},"N":{"value":3}},"value":2},"b":{"value":0.75},"dl":{"value":2},"freq":{"value":1},"k1":{"value":1.2}},"value":0.45454544}},"scorer":"bm25(k1=1.2, b=0.75)","term":"fox","value":0.21363801},{"column":"body","scored":false,"term":"fox","value":0},{"column":"g","scored":false,"value":0}],"expression":"sum","value":0.21363801}
+3	{"clauses":[{"column":"body","expression":"boost * idf * tf","inputs":{"idf":{"expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":3},"df":{"value":2}},"value":0.47000363},"tf":{"expression":"freq / (freq + k1 * (1 - b + b * dl / avgdl))","inputs":{"avgdl":{"expression":"L / N","inputs":{"L":{"value":6},"N":{"value":3}},"value":2},"b":{"value":0.75},"dl":{"value":2},"freq":{"value":1},"k1":{"value":1.2}},"value":0.45454544}},"scorer":"bm25(k1=1.2, b=0.75)","term":"fox","value":0.21363801},{"column":"body","scored":false,"term":"fox","value":0}],"expression":"sum","value":0.21363801}
+2	{"clauses":[{"column":"body","scored":false,"term":"dog","value":0},{"column":"g","scored":false,"value":0}],"expression":"sum","value":0}
+
+query
+SELECT id, ts_explain(xf_idx.tableoid) AS why
+FROM xf_idx
+WHERE body @@ 'red' AND opt IS NOT NULL
+ORDER BY BM25(xf_idx.tableoid) DESC, id;
+----
+id	why
+1	{"clauses":[{"column":"body","expression":"boost * idf * tf","inputs":{"idf":{"expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":3},"df":{"value":2}},"value":0.47000363},"tf":{"expression":"freq / (freq + k1 * (1 - b + b * dl / avgdl))","inputs":{"avgdl":{"expression":"L / N","inputs":{"L":{"value":6},"N":{"value":3}},"value":2},"b":{"value":0.75},"dl":{"value":2},"freq":{"value":1},"k1":{"value":1.2}},"value":0.45454544}},"scorer":"bm25(k1=1.2, b=0.75)","term":"red","value":0.21363801}],"expression":"sum","value":0.21363801}
+
+query
+SELECT id, ts_explain(xf_idx.tableoid) AS why
+FROM xf_idx
+WHERE id = 2
+ORDER BY BM25(xf_idx.tableoid) DESC, id;
+----
+id	why
+2	{"column":"id","expression":"boost * value","inputs":{"value":{"value":1}},"scorer":"constant(value=1)","term":"2","value":1}
+
+query
+SELECT ts_explain(NULL) IS NULL AS is_null;
+----
+is_null
+t
+
+statement ok
+EXPLAIN ANALYZE SELECT id, ts_explain(xf_idx.tableoid) AS why FROM xf_idx WHERE body @@ 'fox' ORDER BY BM25(xf_idx.tableoid) DESC;

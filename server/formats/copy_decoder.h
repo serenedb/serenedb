@@ -36,11 +36,14 @@
 
 #include "formats/csv_splitter.h"
 #include "formats/field_columns.h"
+#include "formats/lexed_unit.h"
 #include "formats/text_splitter.h"
 #include "pg/copy_in_batches.h"
 #include "pg/deserialize.h"
 
 namespace sdb::formats {
+
+duckdb::RowDialect RowDialectOf(const pg::CopyInTarget& target);
 
 struct CopyTextEnd {
   std::atomic<uint64_t> marker{std::numeric_limits<uint64_t>::max()};
@@ -94,8 +97,7 @@ class CopyDecoder {
   }
 
  private:
-  duckdb::idx_t ParseText(duckdb::DataChunk& output, duckdb::idx_t row);
-  duckdb::idx_t ParseCsv(duckdb::DataChunk& output, duckdb::idx_t row);
+  duckdb::idx_t ParseRows(duckdb::DataChunk& output, duckdb::idx_t row);
   duckdb::idx_t ParseBinary(duckdb::DataChunk& output, duckdb::idx_t row);
   duckdb::idx_t ParseLexedText(duckdb::DataChunk& output, duckdb::idx_t row,
                                const duckdb::RowRangeReader& reader,
@@ -115,8 +117,6 @@ class CopyDecoder {
   duckdb::idx_t Decode(duckdb::DataChunk& output, duckdb::idx_t row,
                        size_t rows, FieldColumns fields);
   size_t WalkBinary(std::string_view data, size_t max_rows);
-  void SkipHeader(std::string_view data);
-  void SkipCsvHeader(std::string_view data);
   std::exception_ptr MatchHeader(FieldColumns fields, size_t columns) const;
   std::exception_ptr StructureError(RowError error, size_t column) const;
   std::exception_ptr TypeError(size_t column, std::string_view value) const;
@@ -124,7 +124,6 @@ class CopyDecoder {
                std::string_view value, bool has_value);
   uint64_t UnitLine(size_t row) const;
   std::string_view RowText(size_t row) const;
-  void CheckAfterMarker(std::string_view rest) const;
   void EndMarker();
   void CountRejected(uint64_t rejected);
 
@@ -134,6 +133,7 @@ class CopyDecoder {
   pg::DeserializeContext _dctx;
   TextSplitter _splitter;
   std::optional<CsvSplitter> _csv;
+  std::optional<LexedUnit> _unit;
   std::string _unescaped;
   std::vector<uint64_t> _failed;
   std::vector<uint64_t> _rejected_rows;
@@ -155,6 +155,7 @@ class CopyDecoder {
   uint64_t _seq = 0;
   size_t _segment = 0;
   size_t _pos = 0;
+  bool _lexing = false;
   bool _skip = false;
   bool _ended = false;
   bool _null_has_backslash = true;

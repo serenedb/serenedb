@@ -229,12 +229,6 @@ class FileRowSource final : public duckdb::RowSource {
   const uint64_t _size;
 };
 
-duckdb::RowDialect RowDialectOf(const pg::CopyInTarget& target) {
-  return target.csv ? duckdb::RowDialect::PostgresCsv(
-                        target.delim, target.quote, target.escape)
-                    : duckdb::RowDialect::PostgresText(target.delim);
-}
-
 uint64_t RangeBytes(duckdb::ClientContext& context,
                     const pg::CopyInTarget& target, uint64_t size) {
   const uint64_t threads =
@@ -443,7 +437,7 @@ struct RowsGlobalState final : public CopyFromGlobalState {
       file{std::move(file_p)},
       size{file->GetFileSize()},
       source{*file, size},
-      lexer{RowDialectOf(this->target),
+      lexer{formats::RowDialectOf(this->target),
             this->target.types.size(),
             std::numeric_limits<duckdb::idx_t>::max(),
             true,

@@ -22,6 +22,7 @@
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/detail/vector_of.hpp"
 #include "iresearch/search/scorers/score_provider.hpp"
+#include "iresearch/utils/dispatch.hpp"
 
 namespace irs::ann {
 namespace {
@@ -47,11 +48,7 @@ class VectorChain : public Root {
   }
 
   void Run(Collector& collector) final {
-    if (_width > 0.f) {
-      Scan<true>(collector);
-    } else {
-      Scan<false>(collector);
-    }
+    Resolve(_width > 0.f, [&]<bool kWidth> { Scan<kWidth>(collector); });
   }
 
  private:

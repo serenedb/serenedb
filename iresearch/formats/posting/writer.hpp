@@ -38,6 +38,7 @@
 #include "iresearch/utils/bytes_output.hpp"
 #include "iresearch/utils/containers/bitset.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
+#include "iresearch/utils/dispatch.hpp"
 
 namespace irs {
 
@@ -882,11 +883,9 @@ inline void PostingsWriter::Write(TermPostings& docs, PostingMeta& meta,
       _doc.last = docs_out[take - 1];
 
       if (has_pos) {
-        if (has_offs) {
-          PushDeltas<true>(docs, positions);
-        } else {
-          PushDeltas<false>(docs, positions);
-        }
+        Resolve(has_offs, [&]<bool kOffs> IRS_FORCE_INLINE {
+          PushDeltas<kOffs>(docs, positions);
+        });
       }
       total_freq += static_cast<uint32_t>(positions);
       k += take;

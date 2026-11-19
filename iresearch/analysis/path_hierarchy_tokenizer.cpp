@@ -24,6 +24,7 @@
 #include <string_view>
 
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
+#include "iresearch/utils/dispatch.hpp"
 
 namespace irs::analysis {
 
@@ -324,24 +325,6 @@ struct Type<
 
 }  // namespace irs
 namespace irs::analysis {
-namespace {
-
-template<bool Reverse>
-Tokenizer::ptr MakePathHierarchy(PathHierarchyTokenizer::Options&& opts,
-                                 bool single_char, bool no_replacement) {
-  const auto pick = [&]<bool SingleChar>() -> Tokenizer::ptr {
-    if (no_replacement) {
-      return std::make_unique<
-        PathHierarchyTokenizerImpl<Reverse, SingleChar, true>>(std::move(opts));
-    }
-    return std::make_unique<
-      PathHierarchyTokenizerImpl<Reverse, SingleChar, false>>(std::move(opts));
-  };
-  return single_char ? pick.template operator()<true>()
-                     : pick.template operator()<false>();
-}
-
-}  // namespace
 
 Tokenizer::ptr PathHierarchyTokenizer::Make(Options opts) {
   if (opts.delimiter.empty()) {
@@ -356,10 +339,15 @@ Tokenizer::ptr PathHierarchyTokenizer::Make(Options opts) {
   const bool single_char = (opts.delimiter.size() == 1);
   const bool no_replacement = (opts.delimiter == opts.replacement);
 
-  return opts.reverse ? MakePathHierarchy<true>(std::move(opts), single_char,
-                                                no_replacement)
-                      : MakePathHierarchy<false>(std::move(opts), single_char,
-                                                 no_replacement);
+  return Resolve(opts.reverse, [&]<bool kReverse> {
+    return Resolve(single_char, [&]<bool kSingleChar> {
+      return Resolve(
+        no_replacement, [&]<bool kNoReplacement> -> Tokenizer::ptr {
+          return std::make_unique<PathHierarchyTokenizerImpl<
+            kReverse, kSingleChar, kNoReplacement>>(std::move(opts));
+        });
+    });
+  });
 }
 
 }  // namespace irs::analysis

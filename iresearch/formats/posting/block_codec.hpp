@@ -324,11 +324,8 @@ class Stats {
     if constexpr (!Full) {
       _vectors = (len + sizeof(I8x32) - 1) / sizeof(I8x32);
     }
-    if (width > kFloatExactWidth) {
-      Fill<true>(values);
-    } else {
-      Fill<false>(values);
-    }
+    Resolve(width > kFloatExactWidth,
+            [&]<bool kWide> IRS_FORCE_INLINE { Fill<kWide>(values); });
   }
 
   uint32_t Len() const noexcept { return _len; }

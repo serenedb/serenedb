@@ -61,6 +61,7 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/system_compiler.hpp>
+#include <iresearch/utils/dispatch.hpp>
 #include <limits>
 #include <span>
 #include <string_view>
@@ -2975,7 +2976,7 @@ SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
                                                               kind);
       }
       if (const auto geometric = GeometricOf(type)) {
-        return VisitGeometric(*geometric, [&]<Geometric kKind>() {
+        return irs::Resolve(*geometric, [&]<Geometric kKind>() {
           return MakeArraySerializer<
             GeometricTextCore<kKind, WrapContext::Array>,
             GeometricBinCore<kKind>, kDynamicOid>(format, context, kind);
@@ -3371,7 +3372,7 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
                                      RangeBinCore>(format, context);
       }
       if (const auto geometric = GeometricOf(type)) {
-        return VisitGeometric(*geometric, [&]<Geometric kKind>() {
+        return irs::Resolve(*geometric, [&]<Geometric kKind>() {
           return SelectFieldSerializer<
             GeometricTextCore<kKind, WrapContext::None>,
             GeometricTextCore<kKind, WrapContext::Record>,

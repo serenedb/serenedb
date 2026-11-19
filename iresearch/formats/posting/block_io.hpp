@@ -31,6 +31,7 @@
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/system_compiler.hpp"
 #include "iresearch/utils/type_limits.hpp"
+#include "iresearch/utils/dispatch.hpp"
 
 namespace irs::block_io {
 
@@ -263,9 +264,11 @@ inline uint64_t HolesToBitset(const byte_type* in, uint32_t len,
 
 inline uint64_t HolesToBitset(const byte_type* in, uint32_t len,
                               uint64_t* IRS_RESTRICT bitset) noexcept {
-  return in[0] == block_codec::Code(block_codec::DeltaEncoding::PatchByte)
-           ? HolesToBitset<true>(in, len, bitset)
-           : HolesToBitset<false>(in, len, bitset);
+  return Resolve(
+    in[0] == block_codec::Code(block_codec::DeltaEncoding::PatchByte),
+    [&]<bool kPatched> IRS_FORCE_INLINE {
+      return HolesToBitset<kPatched>(in, len, bitset);
+    });
 }
 
 IRS_FORCE_INLINE inline doc_id_t BitsetMax(

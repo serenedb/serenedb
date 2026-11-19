@@ -134,18 +134,9 @@ ScoreFunction DFI::PrepareScorer(const ScoreContext& ctx) const {
 
   const auto* scale = ScaleOf(ctx);
 
-  switch (_measure) {
-    case DFIMeasure::Standardized:
-      return MakeScoreMeasure<DFIMeasure::Standardized>(ctx, *stats, freq, norm,
-                                                        scale);
-    case DFIMeasure::Saturated:
-      return MakeScoreMeasure<DFIMeasure::Saturated>(ctx, *stats, freq, norm,
-                                                     scale);
-    case DFIMeasure::ChiSquared:
-      return MakeScoreMeasure<DFIMeasure::ChiSquared>(ctx, *stats, freq, norm,
-                                                      scale);
-  }
-  return ScoreFunction::Default();
+  return Resolve(_measure, [&]<DFIMeasure M> {
+    return MakeScoreMeasure<M>(ctx, *stats, freq, norm, scale);
+  });
 }
 
 std::string DFI::ToString() const {

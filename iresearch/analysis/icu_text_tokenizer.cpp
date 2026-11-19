@@ -26,6 +26,7 @@
 #include "iresearch/analysis/text/segment/fill.hpp"
 #include "iresearch/analysis/token_batch.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
+#include "iresearch/utils/dispatch.hpp"
 
 namespace irs::analysis {
 namespace {
@@ -136,13 +137,10 @@ Tokenizer::ptr IcuTextTokenizer::Make(Options options) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("split_text_icu: locale is required"));
   }
-  using Separate = Options::Separate;
-  switch (options.separate) {
-    case Separate::Word:
-      return std::make_unique<IcuTextAnalyzerImpl<Separate::Word>>(options);
-    case Separate::Sentence:
-      return std::make_unique<IcuTextAnalyzerImpl<Separate::Sentence>>(options);
-  }
+  return Resolve(options.separate,
+                 [&]<Options::Separate S> -> Tokenizer::ptr {
+                   return std::make_unique<IcuTextAnalyzerImpl<S>>(options);
+                 });
 }
 
 }  // namespace irs::analysis

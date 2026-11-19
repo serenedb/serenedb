@@ -45,6 +45,7 @@ namespace sdb::pg {
 
 inline constexpr size_t kCopyBatchBytes = 1 << 20;
 inline constexpr size_t kCopyBatchesPerThread = 2;
+inline constexpr size_t kCopyStreamBatchesPerThread = 4;
 inline constexpr size_t kCopyBatchesInFlight = 64;
 
 struct CopyBatch {

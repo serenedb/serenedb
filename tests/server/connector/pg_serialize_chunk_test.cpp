@@ -32,6 +32,8 @@
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <functional>
+#include <icu-helpers.hpp>
+#include <icu-zone-lut.hpp>
 #include <limits>
 #include <memory>
 #include <random>
@@ -229,6 +231,10 @@ duckdb::Value RandomValue(const duckdb::LogicalType& type,
         return duckdb::Value::TIMESTAMPTZ(
           duckdb::timestamp_tz_t{duckdb::timestamp_t::ninfinity()});
       }
+      if (bits % 16 == 1) {
+        return duckdb::Value::TIMESTAMPTZ(duckdb::timestamp_tz_t{
+          Mod<int64_t>(bits >> 4, 9'000'000'000'000'000'000)});
+      }
       return duckdb::Value::TIMESTAMPTZ(duckdb::timestamp_tz_t{
         Mod<int64_t>(bits, 4'000'000'000'000'000) - 600'000'000'000'000});
     case INTERVAL:
@@ -357,6 +363,10 @@ std::vector<Mode> Modes() {
     return [format](size_t) { return format; };
   };
   const auto none = [](sdb::pg::SerializationContext&) {};
+  const auto berlin = [](sdb::pg::SerializationContext& ctx) {
+    ctx.time_zone = duckdb::ICUHelpers::TryGetTimeZone("Europe/Berlin");
+    ctx.zone_lut = duckdb::ZoneLUT::Get(*ctx.time_zone);
+  };
   const auto text = [](char delim, std::string null) {
     return [delim, null](sdb::pg::SerializationContext& ctx) {
       sdb::pg::SetCopyText(ctx, delim, null);
@@ -373,6 +383,17 @@ std::vector<Mode> Modes() {
      none,
      all(VarFormat::Text),
      {.tag = 'D', .field_count = true}},
+    {"data row text in a time zone",
+     berlin,
+     all(VarFormat::Text),
+     {.tag = 'D', .field_count = true}},
+    {"copy text in a time zone",
+     [=](sdb::pg::SerializationContext& ctx) {
+       berlin(ctx);
+       sdb::pg::SetCopyText(ctx, ' ', "\\N");
+     },
+     all(VarFormat::CopyText),
+     {.delimited = true, .after = "\n"}},
     {"data row binary",
      none,
      all(VarFormat::Binary),

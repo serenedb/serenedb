@@ -23,6 +23,7 @@
 #pragma once
 
 #include <absl/base/optimization.h>
+#include <absl/container/inlined_vector.h>
 #include <absl/functional/function_ref.h>
 #include <absl/hash/hash.h>
 
@@ -197,6 +198,10 @@ class FieldPrepareCollector : public PrepareCollector {
 
   FieldCollector FieldTotal() const noexcept { return _counters.TotalField(); }
 
+  TermCollector TermTotal(size_t i) const noexcept {
+    return _counters.TotalTerm(i);
+  }
+
   void Finish(StatsArena& stats) override;
 
  protected:
@@ -227,10 +232,6 @@ class ByTermsCollector final : public FieldPrepareCollector {
     return _counters.Term(thread, i);
   }
 
-  TermCollector TermTotal(size_t i) const noexcept {
-    return _counters.TotalTerm(i);
-  }
-
   size_t Size() const noexcept { return _size; }
 
   void Finish(StatsArena& stats) final;
@@ -250,16 +251,12 @@ class SlotsCollector : public FieldPrepareCollector {
     return _counters.Term(thread, i);
   }
 
-  TermCollector TermTotal(size_t i) const noexcept {
-    return _counters.TotalTerm(i);
-  }
-
-  size_t Terms() const noexcept { return _counters.Terms(); }
-
   void Finish(StatsArena& stats) override;
 
  protected:
-  void AppendTerms(std::vector<TermCollector>& out) const;
+  using TermCounts = absl::InlinedVector<TermCollector, 8>;
+
+  void AppendTerms(TermCounts& out) const;
 };
 
 class ExpandedSlotsCollector final : public SlotsCollector {
@@ -272,9 +269,10 @@ class ExpandedSlotsCollector final : public SlotsCollector {
       _expanded_size{expanded},
       _expanded(static_cast<size_t>(threads) * expanded) {}
 
-  Terms& Expanded(uint32_t thread, size_t i) noexcept {
-    SDB_ASSERT(i < _expanded_size);
-    return _expanded[thread * _expanded_size + i];
+  template<typename Self>
+  auto& Expanded(this Self& self, uint32_t thread, size_t i) noexcept {
+    SDB_ASSERT(i < self._expanded_size);
+    return self._expanded[thread * self._expanded_size + i];
   }
 
   void VisitExpanded(

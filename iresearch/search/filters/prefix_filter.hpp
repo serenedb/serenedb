@@ -80,9 +80,6 @@ class ByPrefix : public FilterWithField<ByPrefixOptions> {
   void DescribeStats(const PrepareCollector* collector,
                      explain::StatsIndex& out) const final;
 
-  void DescribeTerms(const SubReader& segment,
-                     explain::TermNames& out) const final;
-
   TermPredicate::ptr CompileTermPredicate() const final;
 
   TermIterator::ptr CompileTermIterator(const TermReader& reader) const final;
@@ -122,9 +119,6 @@ class ByPrefixes : public FilterWithField<ByPrefixesOptions> {
 
   void DescribeStats(const PrepareCollector* collector,
                      explain::StatsIndex& out) const final;
-
-  void DescribeTerms(const SubReader& segment,
-                     explain::TermNames& out) const final;
 
   TermPredicate::ptr CompileTermPredicate() const final;
 

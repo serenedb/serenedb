@@ -138,13 +138,6 @@ std::string TermValue(bytes_view term, const duckdb::LogicalType& type) {
   return TermToString(term);
 }
 
-namespace {
-
-std::string PrefixValue(bytes_view prefix, const LogicalType& type) {
-  return sdb::pg::IsInetOrCidr(type) ? TermValue(prefix, type)
-                                     : TermToString(prefix);
-}
-
 std::string DictTermValue(DictRef dict, bytes_view term,
                           const LogicalType& type) {
   switch (dict.member) {
@@ -155,6 +148,13 @@ std::string DictTermValue(DictRef dict, bytes_view term,
     default:
       return TermValue(term, type);
   }
+}
+
+namespace {
+
+std::string PrefixValue(bytes_view prefix, const LogicalType& type) {
+  return sdb::pg::IsInetOrCidr(type) ? TermValue(prefix, type)
+                                     : TermToString(prefix);
 }
 
 template<typename T>

@@ -383,11 +383,6 @@ void LevenshteinAutomatonFilter::DescribeStats(
   explain::DescribeBlended(collector, field_id(), out);
 }
 
-void LevenshteinAutomatonFilter::DescribeTerms(const SubReader& segment,
-                                               explain::TermNames& out) const {
-  explain::DescribeTerms(*this, segment, field_id(), dict(), out);
-}
-
 LevenshteinAutomatonOptions::LevenshteinAutomatonOptions(
   const ParametricDescription& d, ByEditDistanceAllOptions::pdp_f provider,
   bool with_transpositions, bytes_view prefix, bytes_view term,

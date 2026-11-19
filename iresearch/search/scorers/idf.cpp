@@ -22,7 +22,6 @@
 
 #include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/detail/scale_score.hpp"
-#include "iresearch/search/explain/factors.hpp"
 #include "iresearch/search/scorers/bm25.hpp"
 #include "iresearch/search/scorers/score_inputs.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -45,11 +44,7 @@ ScoreFunction IDF::PrepareScorer(const ScoreContext& ctx) const {
 
 void IDF::Explain(const ScoreContext& ctx, const explain::SlotStats* stats,
                   explain::Node& out) const {
-  explain::AddBoost(out, ctx.boost);
-  explain::AddIdf(out, stats_cast(ctx.stats)->value, stats,
-                  "log(1 + (N - df + 0.5) / (df + 0.5))", &Bm25Idf);
-  explain::AddScale(out, ctx);
-  out.expression = ScaleOf(ctx) ? "scale * boost * idf" : "boost * idf";
+  ExplainBm25Idf(ctx, stats_cast(ctx.stats)->value, stats, out);
 }
 
 }  // namespace irs

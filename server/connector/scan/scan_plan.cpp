@@ -68,7 +68,7 @@ std::optional<duckdb::LogicalType> VirtualIndexColumnType(ColumnId col_id) {
     return MakeOffsetsType();
   }
   if (col_id == kInvertedIndexExplainId) {
-    return ExplainType();
+    return duckdb::LogicalType::VARIANT();
   }
   if (col_id == kInvertedIndexTermId) {
     return duckdb::LogicalType::VARCHAR;
@@ -900,7 +900,7 @@ void WriteChunkExplain(FetchLocalState& f, const ScanGlobalState& g,
       docs[i],
       returned ? std::optional<irs::score_t>{returned[i]} : std::nullopt));
   }
-  WriteExplanations(f.explain_rows, ExplainLabels{g.Bind()},
+  WriteExplanations(f.explain_rows, g.Bind(),
                     output.data[g.explain_output_idx]);
 }
 
@@ -970,10 +970,8 @@ duckdb::idx_t EmitReadyBatch(duckdb::ClientContext&, ScanGlobalState& g,
     batch.pk->Flatten(batch.count);
     f.pk_column = batch.pk;
   }
-  if (g.WritesLateColumns()) {
-    WriteChunkOffsets(f, g, batch.seg, batch.docs, output);
-    WriteChunkExplain(f, g, batch.seg, batch.docs, batch.score_vec, output);
-  }
+  WriteChunkOffsets(f, g, batch.seg, batch.docs, output);
+  WriteChunkExplain(f, g, batch.seg, batch.docs, batch.score_vec, output);
   WriteRowPositions(g, batch.seg, batch.docs, output);
   WriteVirtualColumns(g, batch.count, batch.score_vec, output);
   if (g.ScanScore() && g.vector_scorer && g.vector_scorer->PerRow()) {

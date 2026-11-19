@@ -413,6 +413,18 @@ id	score	why
 query
 SELECT id, BM25(tx_idx.tableoid) AS score, ts_explain(tx_idx.tableoid) AS why
 FROM tx_idx
+WHERE body @@ 'fox' OR (body @@ 'quick' AND NOT body @@ 'brown')
+ORDER BY id;
+----
+id	score	why
+1	0.29845488	{"clauses":[{"column":"body","expression":"boost * idf * tf","inputs":{"idf":{"expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":9},"df":{"value":4}},"value":0.7985077},"tf":{"expression":"freq / (freq + k1 * (1 - b + b * dl / avgdl))","inputs":{"avgdl":{"expression":"L / N","inputs":{"L":{"value":53},"N":{"value":9}},"value":5.888889},"b":{"value":0.75},"dl":{"value":9},"freq":{"value":1},"k1":{"value":1.2}},"value":0.37376586}},"scorer":"bm25(k1=1.2, b=0.75)","term":"fox","value":0.29845488}],"expression":"sum","value":0.29845488}
+2	0.5680659	{"clauses":[{"column":"body","expression":"boost * idf * tf","inputs":{"idf":{"expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":9},"df":{"value":4}},"value":0.7985077},"tf":{"expression":"freq / (freq + k1 * (1 - b + b * dl / avgdl))","inputs":{"avgdl":{"expression":"L / N","inputs":{"L":{"value":53},"N":{"value":9}},"value":5.888889},"b":{"value":0.75},"dl":{"value":6},"freq":{"value":3},"k1":{"value":1.2}},"value":0.71140945}},"scorer":"bm25(k1=1.2, b=0.75)","term":"fox","value":0.5680659}],"expression":"sum","value":0.5680659}
+3	0.29845488	{"clauses":[{"column":"body","expression":"boost * idf * tf","inputs":{"idf":{"expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":9},"df":{"value":4}},"value":0.7985077},"tf":{"expression":"freq / (freq + k1 * (1 - b + b * dl / avgdl))","inputs":{"avgdl":{"expression":"L / N","inputs":{"L":{"value":53},"N":{"value":9}},"value":5.888889},"b":{"value":0.75},"dl":{"value":9},"freq":{"value":1},"k1":{"value":1.2}},"value":0.37376586}},"scorer":"bm25(k1=1.2, b=0.75)","term":"fox","value":0.29845488}],"expression":"sum","value":0.29845488}
+7	0.83371466	{"clauses":[{"column":"body","expression":"boost * idf * tf","inputs":{"idf":{"expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":9},"df":{"value":4}},"value":0.7985077},"tf":{"expression":"freq / (freq + k1 * (1 - b + b * dl / avgdl))","inputs":{"avgdl":{"expression":"L / N","inputs":{"L":{"value":53},"N":{"value":9}},"value":5.888889},"b":{"value":0.75},"dl":{"value":6},"freq":{"value":1},"k1":{"value":1.2}},"value":0.4510638}},"scorer":"bm25(k1=1.2, b=0.75)","term":"fox","value":0.36017793},{"clauses":[{"column":"body","expression":"boost * idf * tf","inputs":{"idf":{"expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":9},"df":{"value":3}},"value":1.0498221},"tf":{"expression":"freq / (freq + k1 * (1 - b + b * dl / avgdl))","inputs":{"avgdl":{"expression":"L / N","inputs":{"L":{"value":53},"N":{"value":9}},"value":5.888889},"b":{"value":0.75},"dl":{"value":6},"freq":{"value":1},"k1":{"value":1.2}},"value":0.4510638}},"scorer":"bm25(k1=1.2, b=0.75)","term":"quick","value":0.47353673}],"expression":"sum","value":0.47353673}],"expression":"sum","value":0.83371466}
+
+query
+SELECT id, BM25(tx_idx.tableoid) AS score, ts_explain(tx_idx.tableoid) AS why
+FROM tx_idx
 WHERE body @@ 'brown' OR (body @@ 'lazy')::score(NULL)
 ORDER BY score DESC
 LIMIT 3;

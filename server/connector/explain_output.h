@@ -26,28 +26,13 @@
 #include <duckdb/execution/expression_executor_state.hpp>
 #include <iresearch/search/explain/explanation.hpp>
 #include <span>
-#include <string>
 
 #include "connector/scan/scan_bind.h"
 
 namespace sdb::connector {
 
-duckdb::LogicalType ExplainType();
-
-class ExplainLabels {
- public:
-  explicit ExplainLabels(const ScanBindData& bind) noexcept : _bind{bind} {}
-
-  std::string Column(irs::field_id field) const;
-
-  std::string Term(irs::field_id field, irs::bytes_view term) const;
-
- private:
-  const ScanBindData& _bind;
-};
-
 void WriteExplanations(std::span<const irs::explain::Node> rows,
-                       const ExplainLabels& labels, duckdb::Vector& out);
+                       const ScanBindData& bind, duckdb::Vector& out);
 
 void ExplainJsonFunction(duckdb::DataChunk& args,
                          duckdb::ExpressionState& state,

@@ -20,17 +20,16 @@
 
 #include "iresearch/search/explain/factors.hpp"
 
+#include <absl/strings/str_cat.h>
+
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/search/scorers/score_inputs.hpp"
 
 namespace irs::explain {
 
-std::optional<uint32_t> FreqOf(const ScoreContext& ctx) noexcept {
+const uint32_t* FreqOf(const ScoreContext& ctx) noexcept {
   const auto* freq = irs::get<FreqBlockAttr>(ctx.doc_attrs);
-  if (!freq) {
-    return std::nullopt;
-  }
-  return freq->value[0];
+  return freq ? freq->value : nullptr;
 }
 
 void AddBoost(Node& out, score_t boost) {
@@ -39,14 +38,17 @@ void AddBoost(Node& out, score_t boost) {
   }
 }
 
-void AddScale(Node& out, const ScoreContext& ctx) {
+void AddScale(Node& out, const ScoreContext& ctx, std::string_view product) {
   if (const auto* scale = ScaleOf(ctx)) {
     AddDetail(out, "scale", scale[0]);
+    out.expression = absl::StrCat("scale * ", product);
+  } else {
+    out.expression = product;
   }
 }
 
 score_t AddFreq(Node& out, const ScoreContext& ctx) {
-  const auto freq = FreqOf(ctx);
+  const auto* freq = FreqOf(ctx);
   SDB_ASSERT(freq);
   const auto* scale = ScaleOf(ctx);
   if (!scale) {
@@ -132,7 +134,7 @@ void AddShare(Node& out, score_t value, uint64_t ttf, uint64_t total) {
   AddDetail(node, "L", total);
 }
 
-void ExplainTerms(const SlotStats* stats, Node& out, DescribeTerm describe) {
+void ExplainTerms(const SlotStats* stats, Node& out, ExplainTerm describe) {
   out.expression = "sum";
   if (!stats) {
     return;

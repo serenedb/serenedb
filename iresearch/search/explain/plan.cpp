@@ -39,7 +39,6 @@
 #include "iresearch/search/queries/phrase_state.hpp"
 #include "iresearch/search/queries/prepared_state_visitor.hpp"
 #include "iresearch/search/queries/term_query.hpp"
-#include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/scorers/score_provider.hpp"
 #include "iresearch/utils/down_cast.hpp"
 
@@ -56,8 +55,9 @@ void Describe(const Scorer& scorer, std::string_view name,
 
 Subject SubjectOf(const StatsIndex& index, const byte_type* slot,
                   const TermReader* field) {
+  const auto dict = field ? field->meta().dict : DictRef{};
   if (const auto* stats = index.Find(slot)) {
-    Subject subject{.field = stats->field};
+    Subject subject{.field = stats->field, .dict = dict};
     for (const auto& term : stats->terms) {
       if (term.term.empty()) {
         continue;
@@ -70,7 +70,8 @@ Subject SubjectOf(const StatsIndex& index, const byte_type* slot,
     }
     return subject;
   }
-  return {.field = field ? field->meta().id : field_limits::invalid()};
+  return {.field = field ? field->meta().id : field_limits::invalid(),
+          .dict = dict};
 }
 
 class LeafNamer final : public PreparedStateVisitor {
@@ -125,6 +126,7 @@ class LeafNamer final : public PreparedStateVisitor {
     }
     _out = {
       .field = state.reader->meta().id,
+      .dict = state.reader->meta().dict,
       .phrase = std::move(phrase),
       .slop = query.slop,
     };
@@ -139,29 +141,44 @@ struct Fallback {
   const SubReader* segment = nullptr;
   const FieldProperties* field = nullptr;
   detail::ScoreArgs args;
-  std::optional<uint32_t> freq;
+  uint32_t freq = 1;
+};
+
+using Planner = absl::AnyInvocable<probe::Node::ptr()>;
+
+struct Cursor {
+  bool Seek(doc_id_t doc) {
+    const bool planned = !node || doc < last;
+    if (planned) {
+      node = plan();
+    }
+    last = doc;
+    return planned;
+  }
+
+  bool Matches(doc_id_t doc) { return node && node->Probe(doc) == doc; }
+
+  Planner plan;
+  probe::Node::ptr node;
+  doc_id_t last = doc_limits::invalid();
 };
 
 class LeafPart final : public Part {
  public:
-  using Planner = absl::AnyInvocable<probe::Node::ptr()>;
-
   LeafPart(Planner plan, ColumnArgsFetcher& fetcher, const StatsIndex& stats,
            Subject subject, Fallback fallback)
-    : _plan{std::move(plan)},
+    : _cursor{.plan = std::move(plan)},
       _fetcher{fetcher},
       _stats{stats},
       _subject{std::move(subject)},
       _fallback{std::move(fallback)} {}
 
   Outcome Explain(doc_id_t doc, Node& out) final {
-    if (!_node || doc < _last) {
-      _node = _plan();
-      _score =
-        Scored() && _node ? _node->PrepareScore() : ScoreFunction::Default();
+    if (_cursor.Seek(doc)) {
+      _score = Scored() && _cursor.node ? _cursor.node->PrepareScore()
+                                        : ScoreFunction::Default();
     }
-    _last = doc;
-    if (!_node || _node->Probe(doc) != doc) {
+    if (!_cursor.Matches(doc)) {
       return Outcome::None;
     }
     out.subject = _subject;
@@ -169,11 +186,11 @@ class LeafPart final : public Part {
       out.key = "match";
       return Outcome::Matched;
     }
-    _node->FetchScoreArgs(0);
+    _cursor.node->FetchScoreArgs(0);
     _fetcher.Fetch(doc);
     out.key = "weight";
     out.value = _score.Score();
-    if (const auto inputs = _node->Inputs()) {
+    if (const auto inputs = _cursor.node->Inputs()) {
       const auto& recipe = inputs->recipe;
       Describe(*recipe.args.scorer, ScorerName(*recipe.args.scorer),
                {
@@ -212,7 +229,7 @@ class LeafPart final : public Part {
       _fetcher.AddNorms(field.norm, _fallback.segment->norms(field.norm));
       _fetcher.Fetch(doc);
     }
-    uint32_t freq = _fallback.freq.value_or(1);
+    uint32_t freq = _fallback.freq;
     detail::LeafProvider provider;
     provider.freq.value = &freq;
     Describe(*args.scorer, ScorerName(*args.scorer),
@@ -227,73 +244,53 @@ class LeafPart final : public Part {
              _stats, out);
   }
 
-  Planner _plan;
+  Cursor _cursor;
   ColumnArgsFetcher& _fetcher;
   const StatsIndex& _stats;
   Subject _subject;
   Fallback _fallback;
   std::string _scorer;
-  probe::Node::ptr _node;
   ScoreFunction _score;
-  doc_id_t _last = doc_limits::invalid();
 };
 
 class GroupPart final : public Part {
  public:
-  GroupPart(ScoreMergeType merge, uint32_t min_match, bool matches_all,
-            std::optional<score_t> absorbed)
-    : _merge{merge},
-      _min_match{min_match},
-      _matches_all{matches_all},
-      _absorbed{absorbed} {}
+  GroupPart(Planner plan, bool max, std::optional<score_t> absorbed)
+    : _cursor{.plan = std::move(plan)}, _max{max}, _absorbed{absorbed} {}
 
-  void Add(std::unique_ptr<Part> part, bool required) {
-    if (!part) {
-      if (required) {
-        _never = true;
-      }
-      return;
+  void Add(std::unique_ptr<Part> part) {
+    if (part) {
+      _parts.push_back(std::move(part));
     }
-    (required ? _required : _optional).push_back(std::move(part));
   }
 
   Outcome Explain(doc_id_t doc, Node& out) final {
-    if (_never) {
-      return Outcome::None;
+    if (_cursor.plan) {
+      _cursor.Seek(doc);
+      if (!_cursor.Matches(doc)) {
+        return Outcome::None;
+      }
     }
-    const bool max = _merge == ScoreMergeType::Max;
-    out.key = max ? "max" : "sum";
+    out.key = _max ? "max" : "sum";
     out.expression = out.key;
     bool scored = false;
     score_t total = 0;
     const auto add = [&](Node&& child, Outcome outcome) {
       if (outcome == Outcome::Scored) {
         const auto value = std::get<score_t>(child.value);
-        total = max ? std::max(total, value) : total + value;
+        total = _max ? std::max(total, value) : total + value;
         scored = true;
       }
       out.details.push_back(std::move(child));
     };
-    for (auto& part : _required) {
+    for (auto& part : _parts) {
       Node child;
-      const auto outcome = part->Explain(doc, child);
-      if (outcome == Outcome::None) {
-        return Outcome::None;
+      if (const auto outcome = part->Explain(doc, child);
+          outcome != Outcome::None) {
+        add(std::move(child), outcome);
       }
-      add(std::move(child), outcome);
     }
-    uint32_t matched = 0;
-    for (auto& part : _optional) {
-      Node child;
-      const auto outcome = part->Explain(doc, child);
-      if (outcome == Outcome::None) {
-        continue;
-      }
-      ++matched;
-      add(std::move(child), outcome);
-    }
-    if (matched < _min_match ||
-        (_required.empty() && matched == 0 && !_matches_all)) {
+    if (!_cursor.plan && out.details.empty()) {
       return Outcome::None;
     }
     if (_absorbed) {
@@ -304,12 +301,9 @@ class GroupPart final : public Part {
   }
 
  private:
-  std::vector<std::unique_ptr<Part>> _required;
-  std::vector<std::unique_ptr<Part>> _optional;
-  ScoreMergeType _merge;
-  uint32_t _min_match;
-  bool _matches_all;
-  bool _never = false;
+  Cursor _cursor;
+  std::vector<std::unique_ptr<Part>> _parts;
+  bool _max;
   std::optional<score_t> _absorbed;
 };
 
@@ -385,14 +379,16 @@ class Builder {
   }
 
   std::unique_ptr<Part> MakeLeaf(const QueryBuilder& query) {
-    const bool scored = query.Stats().stats != nullptr;
     const auto record = query.Stats(Scoring());
     auto subject = SubjectOf(_stats, record.stats, nullptr);
     LeafNamer namer{_names, subject};
     query.Visit(namer, kNoBoost);
     const auto* reader = namer.Reader();
+    if (reader) {
+      subject.dict = reader->meta().dict;
+    }
     return std::make_unique<LeafPart>(
-      [&query, scoring = Scoring(), scored] {
+      [&query, scoring = Scoring(), scored = record.stats != nullptr] {
         return query.PlanProbe(scored ? scoring : detail::ScoredCtx{}, 1);
       },
       _fetcher, _stats, std::move(subject),
@@ -403,7 +399,7 @@ class Builder {
         .args =
           {
             .scorer = record.scorer,
-            .stats = scored ? record.stats : nullptr,
+            .stats = record.stats,
             .fetcher = &_fetcher,
             .boost = query.Boost(),
           },
@@ -412,45 +408,38 @@ class Builder {
 
   std::unique_ptr<Part> MakeTerms(const MultiTermQuery& query) {
     const auto& state = query.State();
-    const auto merge = query.MergeType();
     auto group = std::make_unique<GroupPart>(
-      merge == ScoreMergeType::Noop ? ScoreMergeType::Sum : merge, 1, false,
-      std::nullopt);
+      Planner{}, query.MergeType() == ScoreMergeType::Max, std::nullopt);
     const auto* const scorer = query.Stats(Scoring()).scorer;
     for (const auto& entry : state.Terms()) {
-      group->Add(
-        MakeClause(query.Segment(), detail::ClauseOf(entry, state.Reader(),
-                                                     scorer, query.Boost())),
-        false);
+      group->Add(MakeClause(
+        query.Segment(),
+        detail::ClauseOf(entry, state.Reader(), scorer, query.Boost())));
     }
     return group;
   }
 
   std::unique_ptr<Part> MakeBoolean(const BooleanQuery& query) {
-    const auto& must = query.Bucket(Occur::Must);
-    const auto& should = query.Bucket(Occur::Should);
-    const bool matches_all = !must.all_docs.empty() || !should.all_docs.empty();
     const auto scores_all = [](const BooleanQuery::PreparedBucket& bucket) {
       return absl::c_any_of(bucket.all_docs, [](const auto& clause) {
         return clause.stats.stats != nullptr;
       });
     };
     std::optional<score_t> absorbed;
-    if (scores_all(must) || scores_all(should)) {
+    if (scores_all(query.Bucket(Occur::Must)) ||
+        scores_all(query.Bucket(Occur::Should))) {
       absorbed = query.Absorbed(_fetcher);
     }
-    const auto merge = query.MergeType();
     auto group = std::make_unique<GroupPart>(
-      merge == ScoreMergeType::Noop ? ScoreMergeType::Sum : merge,
-      query.MinShouldMatch(), matches_all, absorbed);
+      [&query] { return query.PlanProbe(detail::ScoredCtx{}, 1); },
+      query.MergeType() == ScoreMergeType::Max, absorbed);
     for (const auto occur : {Occur::Must, Occur::Should}) {
-      const bool required = occur == Occur::Must;
       const auto& bucket = query.Bucket(occur);
       for (const auto& clause : bucket.postings) {
-        group->Add(MakeClause(query.Segment(), clause), required);
+        group->Add(MakeClause(query.Segment(), clause));
       }
       for (const auto& child : bucket.filters) {
-        group->Add(Make(*child), required);
+        group->Add(Make(*child));
       }
     }
     return group;

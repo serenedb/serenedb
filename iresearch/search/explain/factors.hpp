@@ -23,7 +23,6 @@
 #include <absl/functional/function_ref.h>
 
 #include <cstdint>
-#include <optional>
 #include <span>
 #include <string_view>
 
@@ -35,11 +34,11 @@ namespace irs::explain {
 
 using IdfOf = score_t (*)(uint64_t docs_with_field, uint64_t docs_with_term);
 
-std::optional<uint32_t> FreqOf(const ScoreContext& ctx) noexcept;
+const uint32_t* FreqOf(const ScoreContext& ctx) noexcept;
 
 void AddBoost(Node& out, score_t boost);
 
-void AddScale(Node& out, const ScoreContext& ctx);
+void AddScale(Node& out, const ScoreContext& ctx, std::string_view product);
 
 score_t AddFreq(Node& out, const ScoreContext& ctx);
 
@@ -54,10 +53,10 @@ void AddCollectionShare(Node& out, score_t value, const SlotStats* stats);
 
 void AddShare(Node& out, score_t value, uint64_t ttf, uint64_t total);
 
-using DescribeTerm =
+using ExplainTerm =
   absl::FunctionRef<void(Node& part, const TermStats& term, score_t share)>;
 
-void ExplainTerms(const SlotStats* stats, Node& out, DescribeTerm describe);
+void ExplainTerms(const SlotStats* stats, Node& out, ExplainTerm describe);
 
 using TermFormula =
   absl::FunctionRef<score_t(score_t tf, score_t dl, score_t share)>;

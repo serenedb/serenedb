@@ -34,8 +34,8 @@
 namespace irs {
 
 struct LMStats {
-  score_t collection_prob;
   const score_t* shares;
+  score_t collection_prob;
   uint32_t terms;
 };
 

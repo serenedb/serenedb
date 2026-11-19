@@ -319,6 +319,17 @@ class FilterWithField : public FilterWithOptions<Options> {
   DictRef dict() const noexcept { return _dict; }
   DictRef* mutable_dict() noexcept { return &_dict; }
 
+  void DescribeTerms(const SubReader& segment,
+                     explain::TermNames& out) const override {
+    const auto* reader = segment.field(_field_id, _dict);
+    if (!reader) {
+      return;
+    }
+    if (auto terms = this->CompileTermIterator(*reader)) {
+      out.AddAll(*reader, *terms);
+    }
+  }
+
  protected:
   bool equals(const Filter& rhs) const noexcept final {
     if (!FilterWithOptions<options_type>::equals(rhs)) {

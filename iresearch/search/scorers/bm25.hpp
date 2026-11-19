@@ -36,6 +36,9 @@ inline score_t Bm25Idf(uint64_t docs_with_field,
                (static_cast<double>(docs_with_term) + 0.5)));
 }
 
+void ExplainBm25Idf(const ScoreContext& ctx, score_t idf,
+                    const explain::SlotStats* stats, explain::Node& out);
+
 struct BM25Stats {
   score_t idf;
   score_t norm_const;

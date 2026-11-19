@@ -85,7 +85,7 @@ void Scorer::CollectTerms(byte_type* stats, const FieldCollector* field,
   }
 }
 
-void SlotsCollector::AppendTerms(std::vector<TermCollector>& out) const {
+void SlotsCollector::AppendTerms(TermCounts& out) const {
   for (size_t i = 0, n = _counters.Terms(); i != n; ++i) {
     const auto term = _counters.TotalTerm(i);
     if (term.docs_with_term != 0) {
@@ -98,7 +98,7 @@ void SlotsCollector::Finish(StatsArena& stats) {
   if (_scorer == nullptr) {
     return;
   }
-  std::vector<TermCollector> terms;
+  TermCounts terms;
   AppendTerms(terms);
   const auto field = _counters.TotalField();
   _scorer->CollectTerms(Mutable(_stats), &field, terms, stats);
@@ -111,11 +111,11 @@ void ExpandedSlotsCollector::VisitExpanded(
   Terms merged;
   std::vector<std::pair<uint64_t, const Terms::value_type*>> ordered;
   for (size_t i = 0; i != _expanded_size; ++i) {
-    const Terms* terms = &_expanded[i];
+    const Terms* terms = &Expanded(0, i);
     if (threads > 1) {
       merged.clear();
       for (uint32_t t = 0; t != threads; ++t) {
-        for (const auto& [term, counter] : _expanded[t * _expanded_size + i]) {
+        for (const auto& [term, counter] : Expanded(t, i)) {
           Accumulate(merged[term], counter);
         }
       }
@@ -142,7 +142,7 @@ void ExpandedSlotsCollector::Finish(StatsArena& stats) {
   if (_scorer == nullptr) {
     return;
   }
-  std::vector<TermCollector> collected;
+  TermCounts collected;
   AppendTerms(collected);
   VisitExpanded([&](bytes_view, const TermCollector& counts) {
     collected.push_back(counts);

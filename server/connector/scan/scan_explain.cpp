@@ -164,49 +164,8 @@ duckdb::LogicalType ElementType(const duckdb::LogicalType& type) {
 }
 
 auto MakeFieldTypeResolver(const ScanBindData& bind_data) {
-  return [&bind_data](ColumnId col_id,
-                      irs::DictRef dict) -> duckdb::LogicalType {
-    if (const auto* key = KeyOfField(bind_data, col_id)) {
-      return bind_data.ColumnTypeById(key->columns.front());
-    }
-    const auto& config = *bind_data.relation.inverted_config;
-    const auto lookup = config.LookupField(col_id);
-    if (lookup.entry_field_id == term_dict::kPKFieldId) {
-      return duckdb::LogicalType::BIGINT;
-    }
-    switch (dict.member) {
-      case irs::DictMember::Nulls:
-      case irs::DictMember::JsonNulls:
-      case irs::DictMember::NullElements:
-        return duckdb::LogicalType::SQLNULL;
-      case irs::DictMember::False:
-      case irs::DictMember::True:
-        return duckdb::LogicalType::BOOLEAN;
-      case irs::DictMember::Numbers:
-        if (irs::IsJson(dict.layout)) {
-          return duckdb::LogicalType::DOUBLE;
-        }
-        break;
-      case irs::DictMember::Strings:
-        break;
-    }
-    if (lookup.entry && col_id == lookup.entry_field_id) {
-      if (const auto expr_type = config.ExpressionType(col_id);
-          expr_type.id() != duckdb::LogicalTypeId::INVALID) {
-        return ElementType(expr_type);
-      }
-      const auto column_type =
-        bind_data.ColumnTypeById(config.ColumnOf(col_id));
-      if (column_type.id() != duckdb::LogicalTypeId::INVALID) {
-        return ElementType(column_type);
-      }
-      return duckdb::LogicalType::VARCHAR;
-    }
-    const auto column_type = bind_data.ColumnTypeById(config.ColumnOf(col_id));
-    if (column_type.id() != duckdb::LogicalTypeId::INVALID) {
-      return ElementType(column_type);
-    }
-    return duckdb::LogicalType{};
+  return [&bind_data](ColumnId col_id, irs::DictRef dict) {
+    return bind_data.FieldType(col_id, dict);
   };
 }
 
@@ -419,6 +378,50 @@ duckdb::ExplainNode TableFilterNode(std::span<const DeferredCheck> checks,
 }
 
 }  // namespace
+
+duckdb::LogicalType ScanBindData::FieldType(ColumnId col_id,
+                                            irs::DictRef dict) const {
+  if (const auto* key = KeyOfField(*this, col_id)) {
+    return ColumnTypeById(key->columns.front());
+  }
+  const auto& config = *relation.inverted_config;
+  const auto lookup = config.LookupField(col_id);
+  if (lookup.entry_field_id == term_dict::kPKFieldId) {
+    return duckdb::LogicalType::BIGINT;
+  }
+  switch (dict.member) {
+    case irs::DictMember::Nulls:
+    case irs::DictMember::JsonNulls:
+    case irs::DictMember::NullElements:
+      return duckdb::LogicalType::SQLNULL;
+    case irs::DictMember::False:
+    case irs::DictMember::True:
+      return duckdb::LogicalType::BOOLEAN;
+    case irs::DictMember::Numbers:
+      if (irs::IsJson(dict.layout)) {
+        return duckdb::LogicalType::DOUBLE;
+      }
+      break;
+    case irs::DictMember::Strings:
+      break;
+  }
+  if (lookup.entry && col_id == lookup.entry_field_id) {
+    if (const auto expr_type = config.ExpressionType(col_id);
+        expr_type.id() != duckdb::LogicalTypeId::INVALID) {
+      return ElementType(expr_type);
+    }
+    const auto column_type = ColumnTypeById(config.ColumnOf(col_id));
+    if (column_type.id() != duckdb::LogicalTypeId::INVALID) {
+      return ElementType(column_type);
+    }
+    return duckdb::LogicalType::VARCHAR;
+  }
+  const auto column_type = ColumnTypeById(config.ColumnOf(col_id));
+  if (column_type.id() != duckdb::LogicalTypeId::INVALID) {
+    return ElementType(column_type);
+  }
+  return duckdb::LogicalType{};
+}
 
 void ScanBindData::AppendSummary(
   duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue>& out) const {

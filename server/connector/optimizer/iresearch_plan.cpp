@@ -69,7 +69,6 @@
 
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
-#include "connector/explain_output.h"
 #include "connector/functions/search.h"
 #include "connector/functions/ts_common.hpp"
 #include "connector/functions/ts_offsets.h"
@@ -704,16 +703,21 @@ const duckdb::BoundColumnRefExpression* AnchorOf(
   return &children[0]->Cast<duckdb::BoundColumnRefExpression>();
 }
 
+duckdb::unique_ptr<duckdb::Expression> MakeVirtualRef(
+  PlanIndex& index, PlannedScan& scan, duckdb::TableIndex anchor,
+  connector::ColumnId id, const duckdb::LogicalType& type,
+  std::string_view name) {
+  const auto get_column = scan.Ensure(id, type, name);
+  return duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
+    duckdb::Identifier{name}, type,
+    index.Expose(anchor, scan, get_column, name, type));
+}
+
 duckdb::unique_ptr<duckdb::Expression> MakeScoreRef(PlanIndex& index,
                                                     PlannedScan& scan,
                                                     duckdb::TableIndex anchor) {
-  const auto get_column =
-    scan.Ensure(connector::kInvertedIndexScoreId, duckdb::LogicalType::FLOAT,
-                connector::kScoreName);
-  return duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
-    duckdb::Identifier{connector::kScoreName}, duckdb::LogicalType::FLOAT,
-    index.Expose(anchor, scan, get_column, connector::kScoreName,
-                 duckdb::LogicalType::FLOAT));
+  return MakeVirtualRef(index, scan, anchor, connector::kInvertedIndexScoreId,
+                        duckdb::LogicalType::FLOAT, connector::kScoreName);
 }
 
 duckdb::unique_ptr<duckdb::Expression> PushdownScorerCall(
@@ -753,13 +757,10 @@ duckdb::unique_ptr<duckdb::Expression> PushdownExplainCall(
     return nullptr;
   }
   scan->Bind().score.explain = true;
-  const auto type = connector::ExplainType();
-  const auto get_column = scan->Ensure(connector::kInvertedIndexExplainId, type,
-                                       connector::kExplainName);
-  auto ref = duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
-    duckdb::Identifier{connector::kExplainName}, type,
-    index.Expose(anchor->Binding().table_index, *scan, get_column,
-                 connector::kExplainName, type));
+  auto ref =
+    MakeVirtualRef(index, *scan, anchor->Binding().table_index,
+                   connector::kInvertedIndexExplainId,
+                   duckdb::LogicalType::VARIANT(), connector::kExplainName);
   if (!func.GetAlias().empty()) {
     ref->SetAlias(func.GetAlias());
   }
@@ -1129,32 +1130,20 @@ void RewriteCallInExpr(duckdb::unique_ptr<duckdb::Expression>& expr,
   if (cls == duckdb::ExpressionClass::BOUND_FUNCTION) {
     auto& func = expr->Cast<duckdb::BoundFunctionExpression>();
     const auto& name = func.Function().GetName().GetIdentifierName();
-    if (IsScorerFunctionName(name)) {
+    if (const bool explain = name == connector::kExplain;
+        explain || IsScorerFunctionName(name)) {
       if (StrictOverNull(func)) {
         expr = duckdb::make_uniq<duckdb::BoundConstantExpression>(
           duckdb::Value{func.GetReturnType()});
         return;
       }
-      if (auto repl = PushdownScorerCall(func, index)) {
+      if (auto repl = explain ? PushdownExplainCall(func, index)
+                              : PushdownScorerCall(func, index)) {
         expr = std::move(repl);
         return;
       }
       // Native scans cannot materialize the tableoid argument, so the
       // runtime stub would never be reached; raise its error here.
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                      ERR_MSG(name,
-                              "() requires an inverted index scan in the same "
-                              "sub-query"));
-    } else if (name == connector::kExplain) {
-      if (StrictOverNull(func)) {
-        expr = duckdb::make_uniq<duckdb::BoundConstantExpression>(
-          duckdb::Value{func.GetReturnType()});
-        return;
-      }
-      if (auto repl = PushdownExplainCall(func, index)) {
-        expr = std::move(repl);
-        return;
-      }
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                       ERR_MSG(name,
                               "() requires an inverted index scan in the same "

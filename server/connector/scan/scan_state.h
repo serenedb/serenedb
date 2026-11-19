@@ -247,10 +247,6 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
     return explain_output_idx != duckdb::DConstants::INVALID_INDEX;
   }
 
-  bool WritesLateColumns() const noexcept {
-    return !offsets_outputs.empty() || ScanExplain();
-  }
-
   std::vector<irs::ColumnstoreProjection> cs_projections;
   std::vector<duckdb::idx_t> lookup_projected_columns;
   bool needs_lookup = false;

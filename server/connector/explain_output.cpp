@@ -47,7 +47,6 @@
 
 #include "connector/functions/vector.h"
 #include "connector/search_filter_printer.hpp"
-#include "connector/term_dict.h"
 #include "pg/types/float.h"
 
 namespace sdb::connector {
@@ -119,11 +118,12 @@ bool IsInput(const Node& parent, const Node& child) noexcept {
 
 class Emitter {
  public:
-  explicit Emitter(const ExplainLabels& labels) noexcept : _labels{labels} {}
+  Emitter(std::span<const Node> rows, const ScanBindData& bind) noexcept
+    : _rows{rows}, _bind{bind} {}
 
-  bool Emit(const Node& row, duckdb::VariantBuilder& builder) {
+  bool Emit(duckdb::idx_t row, duckdb::VariantBuilder& builder) {
     _builder = &builder;
-    Tree(row);
+    Tree(_rows[row]);
     return false;
   }
 
@@ -202,11 +202,11 @@ class Emitter {
             Whole(subject.slop);
             break;
           case Field::Term:
-            String(_labels.Term(subject.field, subject.terms.front()));
+            Term(subject, subject.terms.front());
             break;
           case Field::Terms:
             _builder->EmitArray(subject.terms.size(), [&](duckdb::idx_t j) {
-              String(_labels.Term(subject.field, subject.terms[j]));
+              Term(subject, subject.terms[j]);
             });
             break;
           case Field::Value:
@@ -241,10 +241,10 @@ class Emitter {
             Whole(j == 0 ? position->gap_max : position->gap_min);
           });
       } else if (position->terms.size() == 1) {
-        String(_labels.Term(subject.field, position->terms.front()));
+        Term(subject, position->terms.front());
       } else {
         _builder->EmitArray(position->terms.size(), [&](duckdb::idx_t j) {
-          String(_labels.Term(subject.field, position->terms[j]));
+          Term(subject, position->terms[j]);
         });
       }
     });
@@ -298,29 +298,34 @@ class Emitter {
   std::string_view Column(irs::field_id field) {
     auto [it, added] = _columns.try_emplace(field);
     if (added) {
-      it->second = _labels.Column(field);
+      it->second = _bind.DisplayColumnName(field);
     }
     return it->second;
   }
 
-  const ExplainLabels& _labels;
-  irs::containers::FlatHashMap<irs::field_id, std::string> _columns;
-  duckdb::VariantBuilder* _builder = nullptr;
-};
-
-class ExplanationSource {
- public:
-  ExplanationSource(std::span<const Node> rows,
-                    const ExplainLabels& labels) noexcept
-    : _rows{rows}, _emitter{labels} {}
-
-  bool Emit(duckdb::idx_t row, duckdb::VariantBuilder& builder) {
-    return _emitter.Emit(_rows[row], builder);
+  void Term(const irs::explain::Subject& subject, irs::bytes_view term) {
+    auto [it, added] =
+      _types.try_emplace(std::pair{subject.field, subject.dict});
+    if (added) {
+      it->second = _bind.FieldType(subject.field, subject.dict);
+    }
+    const std::string_view text{reinterpret_cast<const char*>(term.data()),
+                                term.size()};
+    if (it->second.id() == duckdb::LogicalTypeId::VARCHAR &&
+        simdutf::validate_utf8(text.data(), text.size())) {
+      String(text);
+    } else {
+      String(irs::DictTermValue(subject.dict, term, it->second));
+    }
   }
 
- private:
   std::span<const Node> _rows;
-  Emitter _emitter;
+  const ScanBindData& _bind;
+  irs::containers::FlatHashMap<irs::field_id, std::string> _columns;
+  irs::containers::FlatHashMap<std::pair<irs::field_id, irs::DictRef>,
+                               duckdb::LogicalType>
+    _types;
+  duckdb::VariantBuilder* _builder = nullptr;
 };
 
 struct Meaning {
@@ -541,31 +546,10 @@ void AppendLucene(Builder& out, simdjson::dom::object node,
 
 }  // namespace
 
-duckdb::LogicalType ExplainType() { return duckdb::LogicalType::VARIANT(); }
-
-std::string ExplainLabels::Column(irs::field_id field) const {
-  return _bind.DisplayColumnName(field);
-}
-
-std::string ExplainLabels::Term(irs::field_id field,
-                                irs::bytes_view term) const {
-  auto type = _bind.ColumnTypeById(field);
-  if (type.id() == duckdb::LogicalTypeId::INVALID) {
-    type = _bind.relation.inverted_config->ExpressionType(field);
-  }
-  const auto* data = reinterpret_cast<const char*>(term.data());
-  if (!term_dict::IsNumeric(type.id()) &&
-      type.id() != duckdb::LogicalTypeId::BOOLEAN &&
-      simdutf::validate_utf8(data, term.size())) {
-    return std::string{data, term.size()};
-  }
-  return irs::TermValue(term, type);
-}
-
-void WriteExplanations(std::span<const Node> rows, const ExplainLabels& labels,
+void WriteExplanations(std::span<const Node> rows, const ScanBindData& bind,
                        duckdb::Vector& out) {
-  ExplanationSource source{rows, labels};
-  duckdb::BuildVariant(source, rows.size(), out);
+  Emitter emitter{rows, bind};
+  duckdb::BuildVariant(emitter, rows.size(), out);
 }
 
 void ExplainJsonFunction(duckdb::DataChunk& args,

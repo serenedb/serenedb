@@ -35,8 +35,8 @@ enum class DFIMeasure : uint8_t {
 };
 
 struct DFIStats {
-  score_t ratio;
   const score_t* ratios;
+  score_t ratio;
   uint32_t terms;
 };
 

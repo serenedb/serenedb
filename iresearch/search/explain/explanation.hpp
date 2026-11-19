@@ -27,6 +27,7 @@
 #include <variant>
 #include <vector>
 
+#include "iresearch/index/field_meta.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -43,6 +44,7 @@ struct PhrasePosition {
 
 struct Subject {
   field_id field = field_limits::invalid();
+  DictRef dict;
   std::vector<bstring> terms;
   std::vector<PhrasePosition> phrase;
   uint32_t slop = 0;

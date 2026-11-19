@@ -53,6 +53,9 @@
 namespace irs {
 namespace {
 
+constexpr std::string_view kIdfExpression =
+  "log(1 + (N - df + 0.5) / (df + 0.5))";
+
 struct Bm15Formula {
   IRS_FORCE_INLINE score_t operator()(score_t tf) const noexcept {
     return num - num / (1.f + tf * norm_const_inv);
@@ -179,21 +182,26 @@ ScoreFunction BM25::PrepareScorer(const ScoreContext& ctx) const {
   });
 }
 
+void ExplainBm25Idf(const ScoreContext& ctx, score_t idf,
+                    const explain::SlotStats* stats, explain::Node& out) {
+  explain::AddBoost(out, ctx.boost);
+  explain::AddIdf(out, idf, stats, kIdfExpression, &Bm25Idf);
+  explain::AddScale(out, ctx, "boost * idf");
+}
+
 void BM25::Explain(const ScoreContext& ctx, const explain::SlotStats* stats,
                    explain::Node& out) const {
   const auto& own = *stats_cast(ctx.stats);
-  if (!IsBM1() && !explain::FreqOf(ctx)) {
+  if (IsBM1()) {
+    ExplainBm25Idf(ctx, own.idf, stats, out);
+    return;
+  }
+  if (!explain::FreqOf(ctx)) {
     explain::ExplainNoFreq(ctx, _boost_as_score, out);
     return;
   }
   explain::AddBoost(out, ctx.boost);
-  explain::AddIdf(out, own.idf, stats, "log(1 + (N - df + 0.5) / (df + 0.5))",
-                  &Bm25Idf);
-  if (IsBM1()) {
-    explain::AddScale(out, ctx);
-    out.expression = ScaleOf(ctx) ? "scale * boost * idf" : "boost * idf";
-    return;
-  }
+  explain::AddIdf(out, own.idf, stats, kIdfExpression, &Bm25Idf);
   auto& tf = explain::AddDetail(out, "tf", score_t{0});
   const auto freq = explain::AddFreq(tf, ctx);
   explain::AddDetail(tf, "k1", _k);

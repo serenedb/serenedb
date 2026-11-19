@@ -174,11 +174,11 @@ void RegisterScorerFunctions(duckdb::ExtensionLoader& loader) {
   }
   duckdb::ScalarFunctionSet explain{duckdb::Identifier{kExplain}};
   explain.AddFunction(
-    duckdb::ScalarFunction({LT::BIGINT}, ExplainType(), ScorerStubFn));
+    duckdb::ScalarFunction({LT::BIGINT}, LT::VARIANT(), ScorerStubFn));
   loader.RegisterFunction(std::move(explain));
   duckdb::ScalarFunctionSet explain_json{duckdb::Identifier{kExplainJson}};
   explain_json.AddFunction(
-    duckdb::ScalarFunction({ExplainType()}, LT::JSON(), ExplainJsonFunction));
+    duckdb::ScalarFunction({LT::VARIANT()}, LT::JSON(), ExplainJsonFunction));
   loader.RegisterFunction(std::move(explain_json));
 }
 

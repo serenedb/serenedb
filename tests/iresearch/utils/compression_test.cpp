@@ -73,8 +73,11 @@ void Threads(size_t count, absl::FunctionRef<void(size_t)> body) {
   }
 }
 
-irs::bytes_view Stored(const compression::Compressed& compressed) {
-  return {compressed.bytes.get(), compression::StoredBytes(compressed.frames)};
+irs::bstring Stored(const compression::Compressed& compressed) {
+  irs::bstring stored;
+  compression::ForEachStored(compressed.frames, compressed.slots.get(),
+                             [&](irs::bytes_view frame) { stored += frame; });
+  return stored;
 }
 
 std::string WritePacked(const compression::Compressed& packed) {
@@ -99,7 +102,13 @@ compression::Packed ReadPacked(std::string& bytes) {
 }
 
 compression::Frames ReadFrames(std::string bytes) {
-  return ReadPacked(bytes).frames;
+  duckdb::MemoryStream stream{
+    reinterpret_cast<duckdb::data_ptr_t>(bytes.data()), bytes.size()};
+  duckdb::BinaryDeserializer deserializer{stream};
+  deserializer.Begin();
+  auto frames = compression::ReadFrames(deserializer);
+  deserializer.End();
+  return frames;
 }
 
 Bytes RoundTrip(compression::Method method, const Bytes& raw) {
@@ -167,6 +176,29 @@ TEST(Compression, FramesCompressAndDecompressInParallel) {
     compression::Decompress(parallel.frames, Stored(parallel), decoded,
                             Threads);
     EXPECT_EQ(decoded, raw);
+  }
+}
+
+TEST(Compression, CompressesIntoReusedSlots) {
+  Bytes slots(size_t{kFrame} * 4);
+  for (const auto method : kMethods) {
+    for (const size_t size : {size_t{kFrame} * 4, size_t{kFrame} * 2 + 9}) {
+      auto raw = Text(size);
+      const auto noise = Noise(kFrame);
+      std::copy(noise.begin(), noise.end(), raw.begin() + kFrame);
+      const auto owned = compression::Compress(method, View(raw), kFrame);
+      const auto frames =
+        compression::Compress(method, View(raw), kFrame, slots, Threads);
+      ASSERT_EQ(frames.sizes, owned.frames.sizes);
+      EXPECT_EQ(frames.raw_bytes, raw.size());
+      irs::bstring stored;
+      compression::ForEachStored(frames, slots.data(),
+                                 [&](irs::bytes_view f) { stored += f; });
+      EXPECT_TRUE(stored == Stored(owned));
+      Bytes decoded(raw.size());
+      compression::Decompress(frames, stored, decoded);
+      EXPECT_EQ(decoded, raw);
+    }
   }
 }
 
@@ -373,14 +405,15 @@ TEST(Compression, SizesThatDoNotMatchTheFramesAreCorrupted) {
                    ERRCODE_DATA_CORRUPTED);
 }
 
-TEST(Compression, ReadPackedRejectsInconsistentFrames) {
+TEST(Compression, ReadFramesRejectsInconsistentFrames) {
   const auto packed = [](const compression::Frames& frames) {
-    const auto size = compression::StoredBytes(frames);
-    compression::Compressed out{
-      .frames = frames,
-      .bytes = std::make_unique<irs::byte_type[]>(size),
-    };
-    return WritePacked(out);
+    duckdb::MemoryStream stream;
+    duckdb::BinarySerializer serializer{stream};
+    serializer.Begin();
+    compression::WriteFrames(serializer, frames);
+    serializer.End();
+    return std::string{reinterpret_cast<const char*>(stream.GetData()),
+                       stream.GetPosition()};
   };
   const compression::Frames valid{
     .codec = compression::Codec::Lz4Hc,

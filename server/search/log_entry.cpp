@@ -212,7 +212,7 @@ void WriteRows(duckdb::BinarySerializer& run, const LoggedRows& rows) {
                 [&](duckdb::BinarySerializer::List& columns, duckdb::idx_t c) {
                   columns.WriteElement<uint64_t>(rows.columns[c]);
                 });
-  if (rows.packed.bytes) {
+  if (rows.packed.slots) {
     run.WriteObject(103, "packed_chunks",
                     [&](duckdb::BinarySerializer& packed) {
                       irs::compression::WritePacked(packed, rows.packed);

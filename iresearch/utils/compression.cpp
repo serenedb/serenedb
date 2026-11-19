@@ -369,8 +369,10 @@ namespace {
 using FrameSource =
   absl::FunctionRef<void(absl::FunctionRef<void(bytes_view)>)>;
 
-Compressed CompressFrames(Method method, uint32_t frame_bytes,
-                          FrameSource for_each_frame, ParallelFor parallel) {
+Frames CompressFrames(Method method, uint32_t frame_bytes,
+                      FrameSource for_each_frame,
+                      absl::FunctionRef<byte_type*(uint64_t)> slots,
+                      ParallelFor parallel) {
   SDB_ASSERT(frame_bytes != 0 && frame_bytes <= kMaxFrameBytes);
   absl::InlinedVector<bytes_view, 1> raws;
   absl::InlinedVector<uint64_t, 1> offsets;
@@ -383,30 +385,43 @@ Compressed CompressFrames(Method method, uint32_t frame_bytes,
     offsets.push_back(raw_bytes);
     raw_bytes += raw.size();
   });
-  Compressed out{
-    .frames = {.codec = method.codec,
-               .raw_bytes = raw_bytes,
-               .frame_bytes = frame_bytes},
-    .bytes = std::make_unique_for_overwrite<byte_type[]>(raw_bytes),
+  Frames frames{
+    .codec = method.codec,
+    .raw_bytes = raw_bytes,
+    .frame_bytes = frame_bytes,
   };
-  auto& frames = out.frames;
   frames.sizes.resize(raws.size());
   if (!full) {
     for (const auto raw : raws) {
       frames.raw_sizes.push_back(static_cast<uint32_t>(raw.size()));
     }
   }
-  auto* bytes = out.bytes.get();
+  auto* out = slots(raw_bytes);
   parallel(raws.size(), [&](size_t frame) {
-    frames.sizes[frame] = static_cast<uint32_t>(
-      Encode(method, raws[frame], bytes + offsets[frame]));
+    frames.sizes[frame] =
+      static_cast<uint32_t>(Encode(method, raws[frame], out + offsets[frame]));
   });
-  uint64_t used = 0;
-  for (size_t frame = 0; frame != raws.size(); ++frame) {
-    std::memmove(bytes + used, bytes + offsets[frame], frames.sizes[frame]);
-    used += frames.sizes[frame];
-  }
+  return frames;
+}
+
+Compressed CompressOwned(Method method, uint32_t frame_bytes,
+                         FrameSource for_each_frame, ParallelFor parallel) {
+  Compressed out;
+  out.frames = CompressFrames(
+    method, frame_bytes, for_each_frame,
+    [&](uint64_t raw_bytes) {
+      out.slots = std::make_unique_for_overwrite<byte_type[]>(raw_bytes);
+      return out.slots.get();
+    },
+    parallel);
   return out;
+}
+
+void SplitFrames(bytes_view raw, uint32_t frame_bytes,
+                 absl::FunctionRef<void(bytes_view)> visit) {
+  for (size_t at = 0; at < raw.size(); at += frame_bytes) {
+    visit(raw.substr(at, frame_bytes));
+  }
 }
 
 }  // namespace
@@ -472,22 +487,43 @@ uint64_t StoredBytes(const Frames& frames) noexcept {
 
 Compressed Compress(Method method, bytes_view raw, uint32_t frame_bytes,
                     ParallelFor parallel) {
-  return CompressFrames(
+  return CompressOwned(
     method, frame_bytes,
     [&](absl::FunctionRef<void(bytes_view)> visit) {
-      for (size_t at = 0; at < raw.size(); at += frame_bytes) {
-        visit(raw.substr(at, frame_bytes));
-      }
+      SplitFrames(raw, frame_bytes, visit);
     },
     parallel);
 }
 
 Compressed Compress(Method method, const FrameWriter& raw,
                     ParallelFor parallel) {
-  return CompressFrames(
+  return CompressOwned(
     method, raw.FrameBytes(),
     [&](absl::FunctionRef<void(bytes_view)> visit) { raw.ForEachFrame(visit); },
     parallel);
+}
+
+Frames Compress(Method method, bytes_view raw, uint32_t frame_bytes,
+                std::span<byte_type> slots, ParallelFor parallel) {
+  return CompressFrames(
+    method, frame_bytes,
+    [&](absl::FunctionRef<void(bytes_view)> visit) {
+      SplitFrames(raw, frame_bytes, visit);
+    },
+    [&](uint64_t raw_bytes) {
+      SDB_ASSERT(raw_bytes <= slots.size());
+      return slots.data();
+    },
+    parallel);
+}
+
+void ForEachStored(const Frames& frames, const byte_type* slots,
+                   absl::FunctionRef<void(bytes_view)> visit) {
+  uint64_t raw = 0;
+  for (size_t frame = 0; frame != frames.sizes.size(); ++frame) {
+    visit({slots + raw, frames.sizes[frame]});
+    raw += FrameRawBytes(frames, frame);
+  }
 }
 
 absl::InlinedVector<FrameStart, 1> FrameStarts(const Frames& frames) {
@@ -545,8 +581,12 @@ void WritePacked(duckdb::BinarySerializer& object, const Compressed& packed) {
                      [&](duckdb::BinarySerializer& frames) {
                        WriteFrames(frames, packed.frames);
                      });
-  object.WriteProperty(kPackedBytes.id, kPackedBytes.tag, packed.bytes.get(),
-                       StoredBytes(packed.frames));
+  object.WritePropertyInParts(
+    kPackedBytes.id, kPackedBytes.tag, StoredBytes(packed.frames),
+    [&](auto put, auto) {
+      ForEachStored(packed.frames, packed.slots.get(),
+                    [&](bytes_view frame) { put(frame.data(), frame.size()); });
+    });
 }
 
 Packed ReadPacked(duckdb::BinaryDeserializer& object,

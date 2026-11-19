@@ -138,7 +138,7 @@ int64_t StripCompress(std::string_view in, char* out, size_t, int level) {
     irs::compression::Strip(static_cast<uint32_t>(level)), AsBytes(in),
     static_cast<uint32_t>(in.size()));
   const auto size = irs::compression::StoredBytes(packed.frames);
-  std::memcpy(out, packed.bytes.get(), size);
+  std::memcpy(out, packed.slots.get(), size);
   return static_cast<int64_t>(size);
 }
 

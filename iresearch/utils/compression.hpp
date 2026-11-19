@@ -70,7 +70,7 @@ struct Frames {
 
 struct Compressed {
   Frames frames;
-  std::unique_ptr<byte_type[]> bytes;
+  std::unique_ptr<byte_type[]> slots;
 };
 
 struct Packed {
@@ -119,6 +119,12 @@ Compressed Compress(Method method, bytes_view raw,
 
 Compressed Compress(Method method, const FrameWriter& raw,
                     ParallelFor parallel = SerialFor);
+
+Frames Compress(Method method, bytes_view raw, uint32_t frame_bytes,
+                std::span<byte_type> slots, ParallelFor parallel = SerialFor);
+
+void ForEachStored(const Frames& frames, const byte_type* slots,
+                   absl::FunctionRef<void(bytes_view)> visit);
 
 void Decompress(const Frames& frames, bytes_view stored,
                 std::span<byte_type> raw, ParallelFor parallel = SerialFor);

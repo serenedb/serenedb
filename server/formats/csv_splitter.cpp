@@ -23,6 +23,9 @@
 #include <absl/algorithm/container.h>
 
 #include <algorithm>
+#include <bit>
+#include <cstring>
+#include <duckdb/formats/csv_simd.hpp>
 #include <limits>
 
 namespace sdb::formats {
@@ -47,6 +50,39 @@ duckdb::RowCursor ProbeCursor(const duckdb::RowLexer& lexer, size_t from,
   cursor.in_quotes = state.in_quote;
   cursor.escape_carry = state.escaped;
   return cursor;
+}
+
+template<bool kFirst>
+size_t UnquotedLineFeed(std::string_view bytes, size_t from, char quote,
+                        CsvQuoteState& state) {
+  uint64_t inside = state.in_quote ? ~uint64_t{0} : 0;
+  size_t found = std::string_view::npos;
+  char tail[duckdb::CSV_BLOCK_BYTES];
+  for (size_t pos = from; pos < bytes.size();) {
+    const char* block = bytes.data() + pos;
+    const size_t size = std::min(bytes.size() - pos, duckdb::CSV_BLOCK_BYTES);
+    if (size < duckdb::CSV_BLOCK_BYTES) {
+      std::memset(tail, 0, sizeof(tail));
+      std::memcpy(tail, block, size);
+      block = tail;
+    }
+    const duckdb::CsvVector vector{block};
+    const uint64_t quotes = vector.Equal(quote);
+    const uint64_t in = (quotes ? duckdb::CsvPrefixXor(quotes) : 0) ^ inside;
+    const uint64_t feeds = vector.Equal('\n') & ~in;
+    if (feeds) {
+      if constexpr (kFirst) {
+        state = {};
+        return pos + std::countr_zero(feeds);
+      }
+      found = pos + 63 - std::countl_zero(feeds);
+    }
+    inside = duckdb::CsvSpread((in >> (size - 1)) & 1);
+    pos += size;
+  }
+  state.in_quote = inside != 0;
+  state.escaped = false;
+  return found;
 }
 
 }  // namespace
@@ -132,6 +168,9 @@ CsvRows CsvSplitter::FillLexed(const duckdb::RowRangeReader& reader,
 
 size_t CsvRecordEnd(std::string_view bytes, size_t from,
                     const CsvDialect& dialect, CsvQuoteState& state) {
+  if (dialect.escape == dialect.quote) {
+    return UnquotedLineFeed<true>(bytes, from, dialect.quote, state);
+  }
   const auto lexer = ProbeLexer(dialect);
   auto cursor = ProbeCursor(lexer, from, state);
   while (cursor.pos < bytes.size()) {
@@ -149,6 +188,9 @@ size_t CsvRecordEnd(std::string_view bytes, size_t from,
 
 size_t CsvLastRecordEnd(std::string_view bytes, const CsvDialect& dialect,
                         CsvQuoteState& state) {
+  if (dialect.escape == dialect.quote) {
+    return UnquotedLineFeed<false>(bytes, 0, dialect.quote, state);
+  }
   const auto lexer = ProbeLexer(dialect);
   auto cursor = ProbeCursor(lexer, 0, state);
   lexer.Feed(cursor, bytes.data(), 0, bytes.size(), true, nullptr);

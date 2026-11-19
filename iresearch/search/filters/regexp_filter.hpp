@@ -70,6 +70,8 @@ struct ByRegexpOptions : ByRegexpFilterOptions {
   using filter_options = ByRegexpFilterOptions;
   using ByRegexpFilterOptions::ByRegexpFilterOptions;
 
+  ScoreMergeType merge{ScoreMergeType::Max};
+
   bool operator==(const ByRegexpOptions& rhs) const noexcept = default;
 };
 
@@ -77,8 +79,8 @@ Filter::ptr CreateByRegexp(irs::field_id id, DictRef dict, bytes_view pattern,
                            RegexpSyntax syntax = RegexpSyntax::Perl,
                            score_t boost = kNoBoost, bool bytes = false);
 
-Filter::ptr LowerRegexp(irs::field_id id, DictRef dict, bytes_view pattern,
-                        RegexpSyntax syntax, score_t boost, bool bytes);
+Filter::ptr LowerRegexp(irs::field_id id, DictRef dict,
+                        const ByRegexpOptions& options, score_t boost);
 
 class ByRegexp final : public FilterWithField<ByRegexpOptions> {
  public:

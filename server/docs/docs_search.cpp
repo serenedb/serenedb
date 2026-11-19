@@ -695,7 +695,7 @@ constexpr std::string_view kStopwords[] = {
   "yes",   "you",  "your"};
 
 constexpr irs::score_t kPhraseBoost = 2;
-constexpr irs::score_t kStemBoost = 0.1F;
+constexpr irs::score_t kStemBoost = 1;
 
 std::string_view Stem(std::string_view word) {
   constexpr std::string_view kSuffixes[] = {

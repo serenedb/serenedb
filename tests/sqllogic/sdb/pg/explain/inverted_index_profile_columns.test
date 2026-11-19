@@ -94,7 +94,7 @@ QUERY PLAN
 │ ╰─────────────────────╯                │
 │                                        │
 ├────────────────────────────────────────┤
-│ 1 row                              0µs │
+│ 2,664 rows                         0µs │
 ╰────────────────────────────────────────╯
 
 
@@ -405,7 +405,7 @@ QUERY (time=<slt:ignore>)
 RESULT_COLLECTOR (rows=0, time=<slt:ignore>)
   EXPLAIN_ANALYZE (rows=0, time=<slt:ignore>)
     UNGROUPED_AGGREGATE (est=1, rows=1, time=<slt:ignore>) Aggregates: count_star()
-      TABLE_SCAN (est=800, rows=1, time=<slt:ignore>) Index: columns_idx; Lookup: search; Output: row-count only
+      TABLE_SCAN (est=800, rows=952, time=<slt:ignore>) Index: columns_idx; Lookup: search; Output: row-count only
         Index Filter Prepare: Total: <slt:ignore>; Snapshot: <slt:ignore>; Segments: 1 of 1
           Phrase {Field: body(string); Parts: "Term:new(0, 0); Term:york(1, 1);"; Posting Lists: 2; Estimated Matches: 1,872; Postings: 11,430; Time: <slt:ignore>}
         Index Filter Execute: Total: <slt:ignore>; Rows: 952
@@ -512,7 +512,7 @@ QUERY PLAN
 │ ╰──────────────────────╯   │
 │                            │
 ├────────────────────────────┤
-│ 1 row                  0µs │
+│ 520 rows               0µs │
 ╰────────────────────────────╯
 
 

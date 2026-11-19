@@ -214,6 +214,7 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   std::optional<size_t> top_k;
   size_t top_offset = 0;
   bool empty_answer = false;
+  bool row_count_only = false;
   std::optional<VectorScorerOptions> owned_vector_scorer;
 
   std::vector<duckdb::idx_t> projected_columns;
@@ -576,7 +577,6 @@ inline ScoreEmit ScoreEmitOf(const ScanGlobalState& g) noexcept {
 
 void RunCountScan(duckdb::TableFunctionInput& input, ScanGlobalState& g,
                   CountLocalState& l, duckdb::DataChunk& output);
-uint64_t TakeCount(ScanGlobalState& g, CountLocalState& l);
 
 void RunColScan(duckdb::ClientContext& ctx, duckdb::TableFunctionInput& input,
                 ScanGlobalState& g, ColScanLocalState& l,

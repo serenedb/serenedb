@@ -39,10 +39,19 @@ void FinishRoot(CountLocalState& l) {
 }
 
 void Emit(ScanGlobalState& g, CountLocalState& l, duckdb::DataChunk& output) {
-  const auto batch = std::min<uint64_t>(l.local_count, STANDARD_VECTOR_SIZE);
+  const auto batch = g.row_count_only ? l.local_count
+                                      : std::min<uint64_t>(l.local_count,
+                                                           STANDARD_VECTOR_SIZE);
   l.local_count -= batch;
   if (batch != 0) {
     WriteVirtualColumns(g, batch, nullptr, output);
+  }
+  if (batch > STANDARD_VECTOR_SIZE) {
+    for (auto& column : output.data) {
+      if (column.GetVectorType() != duckdb::VectorType::CONSTANT_VECTOR) {
+        duckdb::ConstantVector::SetNull(column, duckdb::count_t(batch));
+      }
+    }
   }
   output.SetChildCardinality(batch);
 }
@@ -81,15 +90,10 @@ bool CountUnit(ScanGlobalState& g, CountLocalState& l) {
 
 }  // namespace
 
-uint64_t TakeCount(ScanGlobalState& g, CountLocalState& l) {
-  while (CountUnit(g, l)) {
-  }
-  return std::exchange(l.local_count, 0);
-}
-
 void RunCountScan(duckdb::TableFunctionInput&, ScanGlobalState& g,
                   CountLocalState& l, duckdb::DataChunk& output) {
-  while (!(l.whole_backlog && l.local_count >= STANDARD_VECTOR_SIZE) &&
+  while ((g.row_count_only || !l.whole_backlog ||
+          l.local_count < STANDARD_VECTOR_SIZE) &&
          CountUnit(g, l)) {
   }
   Emit(g, l, output);

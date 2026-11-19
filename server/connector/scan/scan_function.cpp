@@ -242,6 +242,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   };
 
   InitScanState(*state, &context, bind_data, input);
+  state->row_count_only = input.row_count_only;
 
   const auto& ss = bind_data;
   if (!ss.offsets.requests.empty() && !ss.search.filter) {
@@ -506,27 +507,6 @@ duckdb::DataChunk& ScanChunk(duckdb::ClientContext& context,
   return base.scan_chunk;
 }
 
-void EmitRowCount(duckdb::ClientContext& context,
-                  duckdb::TableFunctionInput& data, ScanGlobalState& g,
-                  ScanLocalState& base, duckdb::DataChunk& output) {
-  uint64_t rows = 0;
-  if (g.shape == ScanShape::Count) {
-    rows = TakeCount(g, data.local_state->Cast<CountLocalState>());
-  } else {
-    auto& out = ScanChunk(context, g, base);
-    RunShape(context, data, g, out);
-    rows = out.size();
-  }
-  base.produced_rows += rows;
-  if (rows == 0) {
-    output.SetChildCardinality(0);
-    return;
-  }
-  duckdb::FlatVector::GetDataMutable<int64_t>(output.data[0])[0] =
-    static_cast<int64_t>(rows);
-  output.SetChildCardinality(1);
-}
-
 }  // namespace
 
 void IResearchScanFunction(duckdb::ClientContext& context,
@@ -537,10 +517,6 @@ void IResearchScanFunction(duckdb::ClientContext& context,
     return;
   }
   auto& base = data.local_state->Cast<ScanLocalState>();
-  if (g.Bind().emits_counts) {
-    EmitRowCount(context, data, g, base, output);
-    return;
-  }
   const bool reorder = !g.output_projection_ids.empty();
   auto& out = reorder ? ScanChunk(context, g, base) : output;
   RunShape(context, data, g, out);
@@ -548,12 +524,6 @@ void IResearchScanFunction(duckdb::ClientContext& context,
   if (reorder) {
     output.ReferenceColumns(out, g.output_projection_ids);
   }
-}
-
-bool IResearchConsumeCount(duckdb::ClientContext&,
-                           duckdb::FunctionData& bind_data) {
-  bind_data.Cast<ScanBindData>().emits_counts = true;
-  return true;
 }
 
 void IResearchScanGetMetrics(duckdb::TableFunctionGetMetricsInput& input) {
@@ -810,7 +780,6 @@ duckdb::TableFunction CreateIResearchScanFunction() {
   func.pushdown_expression = &IResearchPushdownExpression;
   func.set_scan_order = &IResearchSetScanOrder;
   func.consume_top_n = &IResearchConsumeTopN;
-  func.consume_count = &IResearchConsumeCount;
   func.supports_pushdown_extract = &IResearchSupportsPushdownExtract;
   func.supports_pushdown_filter = &IResearchSupportsPushdownFilter;
   func.statistics_extended = &IResearchScanStatistics;

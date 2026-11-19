@@ -268,7 +268,6 @@ struct ScanBindData final : duckdb::FunctionData {
   PlanCacheSpec plan_cache;
   LookupSpec lookup;
   std::optional<ViewSpec> view;
-  bool emits_counts = false;
 
   duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
     return duckdb::make_uniq<ScanBindData>(*this);

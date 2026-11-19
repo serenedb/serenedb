@@ -22,9 +22,9 @@
 
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/detail/slice.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/store/store_utils.hpp"
+#include "iresearch/utils/dispatch.hpp"
 
 namespace irs::detail {
 
@@ -106,10 +106,29 @@ inline const IndexInput* SegmentDoc(const SubReader& segment) {
   return nullptr;
 }
 
-inline InputSlice InputSliceOf(const SubReader& segment) {
-  const auto* doc = SegmentDoc(segment);
-  return doc && Mapped(*doc) ? InputSlice::Mapped : InputSlice::Stream;
-}
+enum class InputKey : uint8_t {
+  Mapped,
+  Stream,
+};
+
+struct InputAxis : Axis<InputKey::Mapped, InputKey::Stream> {
+  static InputKey Of(const IndexInput& in) noexcept {
+    return in.GetType() == DataInput::Type::BytesViewInput ? InputKey::Mapped
+                                                          : InputKey::Stream;
+  }
+
+  static InputKey Of(const SubReader& segment) {
+    const auto* doc = SegmentDoc(segment);
+    return doc ? Of(*doc) : InputKey::Stream;
+  }
+
+  template<InputKey K, typename F>
+  IRS_FORCE_INLINE static decltype(auto) Call(F&& f) {
+    using Input =
+      std::conditional_t<K == InputKey::Mapped, BytesViewInput, IndexInput>;
+    return std::forward<F>(f).template operator()<Input>();
+  }
+};
 
 inline bool ResolvePhrase(const TermReader* reader, PhraseHandles& out) {
   if (reader == nullptr) {

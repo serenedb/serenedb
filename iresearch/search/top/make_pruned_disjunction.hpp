@@ -43,7 +43,7 @@
 namespace irs::top {
 
 template<bool kExcludes, typename Leaf,
-         irs::detail::Slice kSlice = irs::detail::Slice{}, typename Init>
+         typename P = NoPins, typename Init>
 Root::ptr MakeDisjunctionOf(
   Init& init, size_t size, uint64_t postings,
   std::span<const irs::detail::PostingClause> excludes,
@@ -54,7 +54,7 @@ Root::ptr MakeDisjunctionOf(
     if (!excludes.empty() || !exclude_filters.empty()) {
       const auto candidates =
         std::min<uint64_t>(postings, segment.docs_count());
-      return irs::detail::BuildBlockExcludes<Root::ptr, kSlice>(
+      return irs::detail::BuildBlockExcludes<Root::ptr, P>(
         excludes, exclude_filters, nullptr, segment, candidates, candidates,
         [&]<typename Exclude>(auto&& negated) -> Root::ptr {
           return irs::detail::MakeRemovable(
@@ -72,7 +72,7 @@ Root::ptr MakeDisjunctionOf(
     ctx, size, docs_count, init, std::forward_as_tuple());
 }
 
-template<bool kExcludes, typename Term, irs::detail::Slice kSlice>
+template<bool kExcludes, typename Term, typename P>
 Root::ptr MakePrunedDisjunction(
   std::span<const Term> terms, std::span<const QueryBuilder::ptr> filters,
   irs::detail::Terms uniformity, const TermReader* field, const Scorer* scorer,
@@ -105,7 +105,7 @@ Root::ptr MakePrunedDisjunction(
         irs::detail::ClauseOf(terms[i], field, scorer, boost);
       const auto& own = *posting.state.reader;
       const auto* const doc = irs::detail::DocOf(own);
-      members.push_back(irs::detail::ResolveInput<kSlice>(
+      members.push_back(Resolve<irs::detail::InputAxis, P>(
         *doc, [&]<typename Input> -> UnionMember::ptr {
           return memory::make_managed<TermUnionMember<Input>>(
             posting.state.cookie, *doc, irs::detail::LayoutOf(own), segment,
@@ -127,12 +127,12 @@ Root::ptr MakePrunedDisjunction(
       leaf.Reset(std::move(members[i]));
       return costs[i];
     };
-    return MakeDisjunctionOf<kExcludes, ErasedUnionLeaf, kSlice>(
+    return MakeDisjunctionOf<kExcludes, ErasedUnionLeaf, P>(
       init, members.size(), postings, excludes, exclude_filters, segment, ctx);
   }
   const auto* const doc =
     irs::detail::DocOf(irs::detail::FieldOf(terms.front(), field));
-  return irs::detail::ResolveInput<kSlice>(*doc, [&]<typename Input> -> Root::ptr {
+  return Resolve<irs::detail::InputAxis, P>(*doc, [&]<typename Input> -> Root::ptr {
     using Leaf = PostingPrunedDisj<Input>;
     const auto init = [&](Leaf& leaf, size_t i) {
       const auto posting =
@@ -143,7 +143,7 @@ Root::ptr MakePrunedDisjunction(
                    segment, own, posting.Args(&ctx.fetcher));
       return posting.state.cookie.docs_count;
     };
-    return MakeDisjunctionOf<kExcludes, Leaf, kSlice>(
+    return MakeDisjunctionOf<kExcludes, Leaf, P>(
       init, terms.size(), irs::detail::SumDocs(terms), excludes,
       exclude_filters, segment, ctx);
   });
@@ -151,9 +151,9 @@ Root::ptr MakePrunedDisjunction(
 
 }  // namespace irs::top
 
-#define IRS_MAKE_PRUNED_DISJUNCTION(Slice)                                     \
+#define IRS_MAKE_PRUNED_DISJUNCTION(...)                                       \
   template Root::ptr                                                           \
-  MakePrunedDisjunction<true, irs::detail::PostingClause, Slice>(              \
+  MakePrunedDisjunction<true, irs::detail::PostingClause, __VA_ARGS__>(        \
     std::span<const irs::detail::PostingClause>,                               \
     std::span<const QueryBuilder::ptr>, irs::detail::Terms, const TermReader*, \
     const Scorer*, score_t, std::span<const irs::detail::PostingClause>,       \

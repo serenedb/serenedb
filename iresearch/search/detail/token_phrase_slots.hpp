@@ -70,7 +70,7 @@ inline std::unique_ptr<AnchorFreqs> MakeAnchorFreqs(
     return nullptr;
   }
   const auto& field = query.Reader();
-  return ResolveInput(*DocOf(field),
+  return Resolve<InputAxis>(*DocOf(field),
                       [&]<typename Input> -> std::unique_ptr<AnchorFreqs> {
                         return std::make_unique<AnchorFreqsOf<Input>>(
                           *meta, query.Segment(), field);

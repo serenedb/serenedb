@@ -27,11 +27,6 @@
 
 namespace irs::offsets {
 
-bool Resolve(const TermReader* field, Handles& out) {
-  return detail::ResolvePhrase(field, out) && out.HasOffsets() &&
-         out.pay != nullptr;
-}
-
 Root::ptr Make(const FixedPhraseQuery& query) {
   return detail::ResolveMatch(
     query, [&]<detail::PhraseMatch M> { return MakePhrase<M>(query); });

@@ -87,24 +87,22 @@ sdb_instantiation_axis(
 )
 sdb_instantiation_axis(
     IRS_MASK_SLICES
-    "unmasked SLICE=irs::detail::MaskSlice::Unmasked"
-    "bitsets SLICE=irs::detail::MaskSlice::Bitsets"
-    "arrays SLICE=irs::detail::MaskSlice::Arrays"
-    "runs SLICE=irs::detail::MaskSlice::Runs"
-    "mixed SLICE=irs::detail::MaskSlice::Mixed"
-    "bitset SLICE=irs::detail::MaskSlice::Bitset"
-    "array SLICE=irs::detail::MaskSlice::Array"
-    "run SLICE=irs::detail::MaskSlice::Run"
+    "unmasked PIN=irs::Pin<irs::detail::MaskedAxis,false>"
+    "bitsets PIN=irs::Pin<irs::detail::MaskedAxis,true>,irs::Pin<irs::DocsMaskAxis,irs::MaskKind::Bitsets>"
+    "arrays PIN=irs::Pin<irs::detail::MaskedAxis,true>,irs::Pin<irs::DocsMaskAxis,irs::MaskKind::Arrays>"
+    "runs PIN=irs::Pin<irs::detail::MaskedAxis,true>,irs::Pin<irs::DocsMaskAxis,irs::MaskKind::Runs>"
+    "mixed PIN=irs::Pin<irs::detail::MaskedAxis,true>,irs::Pin<irs::DocsMaskAxis,irs::MaskKind::Mixed>"
+    "bitset PIN=irs::Pin<irs::detail::MaskedAxis,true>,irs::Pin<irs::DocsMaskAxis,irs::MaskKind::Bitset>"
+    "array PIN=irs::Pin<irs::detail::MaskedAxis,true>,irs::Pin<irs::DocsMaskAxis,irs::MaskKind::Array>"
+    "run PIN=irs::Pin<irs::detail::MaskedAxis,true>,irs::Pin<irs::DocsMaskAxis,irs::MaskKind::Run>"
 )
 sdb_instantiation_axis(
     IRS_INPUTS
-    "mapped SLICE=irs::detail::InputSlice::Mapped"
-    "stream SLICE=irs::detail::InputSlice::Stream"
+    "mapped PIN=irs::Pin<irs::detail::InputAxis,irs::detail::InputKey::Mapped>"
+    "stream PIN=irs::Pin<irs::detail::InputAxis,irs::detail::InputKey::Stream>"
 )
-set(irs_slice "(irs::detail::Slice{@MASK.SLICE@, @INPUT.SLICE@})")
-set(irs_input_slice
-    "(irs::detail::Slice{irs::detail::MaskSlice::Unmasked, @INPUT.SLICE@})"
-)
+set(irs_slice "irs::Pins<@MASK.PIN@,@INPUT.PIN@>")
+set(irs_input_slice "irs::Pins<@INPUT.PIN@>")
 sdb_instantiation_axis(
     IRS_SCORING
     "docs SCORING=detail::NoScoring"

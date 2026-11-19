@@ -69,15 +69,15 @@ auto ScoreOf(const Scoring& scoring, score_t absorbed) noexcept {
   }
 }
 
-template<typename Result, Slice kSlice = Slice{}, typename Scoring,
+template<typename Result, typename P = NoPins, typename Scoring,
          typename Make>
 Result ResolveCountLeaves(const IndexInput& doc, const Scoring& scoring,
                           Make&& make) {
   if constexpr (kScores<Scoring>) {
-    return ResolveCountScored<Result, kSlice>(
+    return ResolveCountScored<Result, P>(
       doc, scoring.uniformity >= Terms::Scored, scoring.merge, make);
   } else {
-    return ResolveInput<kSlice>(doc, [&]<typename Input> -> Result {
+    return Resolve<InputAxis, P>(doc, [&]<typename Input> -> Result {
       return make
         .template operator()<PostingCount<Input>, PostingCount<Input>>();
     });
@@ -247,7 +247,7 @@ inline fill::Node::ptr ScoredTermOf(const PostingClause& term,
   const auto& meta = term.state.cookie;
   const auto bounds = meta.docs_count != 1 && BoundsOf(own);
   if (term.stats.stats == nullptr) {
-    return ResolveInput(doc, [&]<typename Input> -> fill::Node::ptr {
+    return Resolve<InputAxis>(doc, [&]<typename Input> -> fill::Node::ptr {
       return memory::make_managed<fill::Impl<PlainFillScored<Input>>>(
         meta, doc, LayoutOf(own), bounds, meta.docs_count != 1 && FreqOf(own));
     });
@@ -261,7 +261,7 @@ inline fill::Node::ptr ScoredTermOf(const PostingClause& term,
     });
 }
 
-template<typename Result, Slice kSlice = Slice{}, typename Term,
+template<typename Result, typename P = NoPins, typename Term,
          typename Scoring, typename Make>
 Result BuildWindowSet(std::span<const Term> terms, const TermReader* field,
                       const IndexInput* doc, std::vector<FillNode::ptr>& rest,
@@ -274,14 +274,14 @@ Result BuildWindowSet(std::span<const Term> terms, const TermReader* field,
       });
   }
   if constexpr (!kScores<Scoring>) {
-    return ResolveInput<kSlice>(*doc, [&]<typename Input> -> Result {
+    return Resolve<InputAxis, P>(*doc, [&]<typename Input> -> Result {
       using Leaf = PostingFill<Input>;
       return BuildWindowMix<Result, Leaf, Leaf>(terms, field, doc, rest,
                                                 scoring, make);
     });
   } else {
     if (scoring.uniformity != Terms::Mixed) {
-      return ResolveFillScored<Result, kSlice>(
+      return ResolveFillScored<Result, P>(
         *doc, scoring.uniformity >= Terms::Scored, scoring.merge,
         [&]<typename Leaf, typename Plain> -> Result {
           return BuildWindowMix<Result, Leaf, Plain>(terms, field, doc, rest,

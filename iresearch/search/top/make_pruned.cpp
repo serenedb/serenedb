@@ -30,12 +30,12 @@
 namespace irs::top {
 namespace {
 
-Root::ptr SlicedConjunction(const BooleanQuery& query, const Context& ctx) {
+Root::ptr PinnedConjunction(const BooleanQuery& query, const Context& ctx) {
   const std::span exclude_filters = query.Queries(Occur::MustNot);
-  return irs::detail::ResolveSlice(
+  return irs::detail::ResolveExcludePins(
     exclude_filters, query.Segment(),
-    [&]<irs::detail::Slice kSlice> -> Root::ptr {
-      return MakePrunedConjunctionIn<kSlice>(
+    [&]<typename P> -> Root::ptr {
+      return MakePrunedConjunctionIn<P>(
         query.Terms(Occur::Must), query.Queries(Occur::Must),
         query.Uniformity(Occur::Must),
         query.Terms(Occur::MustNot), exclude_filters, query.Segment(), ctx,
@@ -43,12 +43,12 @@ Root::ptr SlicedConjunction(const BooleanQuery& query, const Context& ctx) {
     });
 }
 
-Root::ptr SlicedDisjunction(const BooleanQuery& query, const Context& ctx) {
+Root::ptr PinnedDisjunction(const BooleanQuery& query, const Context& ctx) {
   const std::span exclude_filters = query.Queries(Occur::MustNot);
-  return irs::detail::ResolveSlice(
+  return irs::detail::ResolveExcludePins(
     exclude_filters, query.Segment(),
-    [&]<irs::detail::Slice kSlice> -> Root::ptr {
-      return MakePrunedDisjunction<true, irs::detail::PostingClause, kSlice>(
+    [&]<typename P> -> Root::ptr {
+      return MakePrunedDisjunction<true, irs::detail::PostingClause, P>(
         query.Terms(Occur::Should), query.Queries(Occur::Should),
         query.Uniformity(Occur::Should), nullptr, nullptr, kNoBoost,
         query.Terms(Occur::MustNot), exclude_filters, query.Segment(), ctx,
@@ -79,7 +79,7 @@ Root::ptr MakePruned(const BooleanQuery& query, const Context& ctx) {
         should.size() + should_filters.size() == 1) {
       return {};
     }
-    return SlicedDisjunction(query, ctx);
+    return PinnedDisjunction(query, ctx);
   }
   if (!optional) {
     if (must.size() == 1 && must_filters.empty() &&
@@ -87,7 +87,7 @@ Root::ptr MakePruned(const BooleanQuery& query, const Context& ctx) {
       return MakePrunedPosting(must.front(), excludes, exclude_filters, segment,
                                ctx);
     }
-    return SlicedConjunction(query, ctx);
+    return PinnedConjunction(query, ctx);
   }
   if (excludes.empty() && exclude_filters.empty() && min_match == 0 &&
       must.size() == 1 && must_filters.empty() && should_filters.empty() &&
@@ -111,7 +111,7 @@ Root::ptr MakeDenseConjunction(const BooleanQuery& query, const Context& ctx) {
         must, static_cast<doc_id_t>(segment.docs_count()))) {
     return {};
   }
-  return SlicedConjunction(query, ctx);
+  return PinnedConjunction(query, ctx);
 }
 
 }  // namespace

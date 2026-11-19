@@ -43,7 +43,7 @@
 
 namespace irs::detail {
 
-template<typename Result, Slice kSlice = Slice{}, typename Term,
+template<typename Result, typename P = NoPins, typename Term,
          typename Scoring, typename ProbeClause, typename LeadClause,
          typename Make>
 Result BuildConjunction(std::span<const Term> terms,
@@ -197,7 +197,7 @@ Result BuildConjunction(std::span<const Term> terms,
       return build_opaque.template operator()<lead::Erased>(
         std::forward_as_tuple(std::move(node)));
     }
-    return ResolveInput<kSlice>(
+    return Resolve<InputAxis, P>(
       *DocOf(FieldOf(rest.front(), field)), [&]<typename Input> -> Result {
         return build_concrete.template operator()<Input, lead::Erased>(
           std::forward_as_tuple(std::move(node)));
@@ -214,14 +214,14 @@ Result BuildConjunction(std::span<const Term> terms,
       return build_erased_lead(
         lead::MakePostingScored(posting, segment, scoring.recipe));
     }
-    return ResolveInput<kSlice>(*DocOf(own), [&]<typename Input> -> Result {
+    return Resolve<InputAxis, P>(*DocOf(own), [&]<typename Input> -> Result {
       return build.template operator()<Input, PostingLeadScored<Input>>(
         std::forward_as_tuple(
           CookieOf(terms.front()), *DocOf(own), segment, own,
           scoring.recipe.Args(posting.stats, posting.boost)));
     });
   } else {
-    return ResolveInput<kSlice>(*DocOf(own), [&]<typename Input> -> Result {
+    return Resolve<InputAxis, P>(*DocOf(own), [&]<typename Input> -> Result {
       return build.template operator()<Input, PostingLead<Input>>(
         std::forward_as_tuple(CookieOf(terms.front()), *DocOf(own),
                               LayoutOf(own), BoundsOf(own)));

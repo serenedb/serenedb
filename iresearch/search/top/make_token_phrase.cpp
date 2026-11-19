@@ -175,7 +175,7 @@ Root::ptr MakeTokenPhrasePruned(const TokenPhraseQuery& query,
                                     .stats = record.stats,
                                     .fetcher = &ctx.fetcher,
                                     .boost = query.Boost()};
-  return irs::detail::ResolveInput(*irs::detail::DocOf(field),
+  return Resolve<irs::detail::InputAxis>(*irs::detail::DocOf(field),
                                    [&]<typename Input> -> Root::ptr {
                                      return MakeShape<PrunedTokenPhrase, Input>(
                                        ctx, query, std::move(approx), args);

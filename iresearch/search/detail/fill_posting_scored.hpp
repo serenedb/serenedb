@@ -29,10 +29,10 @@
 
 namespace irs::detail {
 
-template<typename Result, Slice kSlice = Slice{}, typename Make>
+template<typename Result, typename P = NoPins, typename Make>
 Result ResolveFillScored(const IndexInput& doc, bool per_doc,
                          ScoreMergeType merge, Make&& make) {
-  return ResolveInput<kSlice>(doc, [&]<typename Input> -> Result {
+  return Resolve<InputAxis, P>(doc, [&]<typename Input> -> Result {
     using Plain = PlainFillScored<Input>;
     const auto with = [&]<ScoreMergeType M> -> Result {
       if (per_doc) {
@@ -48,10 +48,10 @@ Result ResolveFillScored(const IndexInput& doc, bool per_doc,
   });
 }
 
-template<typename Result, Slice kSlice = Slice{}, typename Make>
+template<typename Result, typename P = NoPins, typename Make>
 Result ResolveCountScored(const IndexInput& doc, bool per_doc,
                           ScoreMergeType merge, Make&& make) {
-  return ResolveInput<kSlice>(doc, [&]<typename Input> -> Result {
+  return Resolve<InputAxis, P>(doc, [&]<typename Input> -> Result {
     using Plain = PlainCountScored<Input>;
     const auto with = [&]<ScoreMergeType M> -> Result {
       if (per_doc) {

@@ -333,7 +333,7 @@ inline constexpr size_t kWindowLeafBytes =
 
 inline bool FoldIsSmaller(size_t terms, const IndexInput& doc,
                           doc_id_t docs_count) noexcept {
-  const uint64_t leaf = ResolveInput(doc, []<typename Input> -> uint64_t {
+  const uint64_t leaf = Resolve<InputAxis>(doc, []<typename Input> -> uint64_t {
     return kWindowLeafBytes<PostingFill<Input>>;
   });
   return terms * leaf >= (uint64_t{docs_count} + doc_limits::min()) / 8;

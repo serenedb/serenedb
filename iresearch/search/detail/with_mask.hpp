@@ -31,7 +31,6 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/exclude_block.hpp"
 #include "iresearch/search/detail/resolve.hpp"
-#include "iresearch/search/detail/slice.hpp"
 #include "iresearch/search/fill/leaves.hpp"
 #include "iresearch/search/filters/filter.hpp"
 #include "iresearch/types.hpp"
@@ -61,50 +60,30 @@ bool OnlyMask(std::span<const Term> terms,
          filters.front()->Kind() == QueryKind::DocsMask;
 }
 
-template<MaskSlice kMask, typename Make>
-decltype(auto) ResolveInputSlice(const SubReader& segment, Make&& make) {
-  if (InputSliceOf(segment) == InputSlice::Mapped) {
-    return make.template operator()<Slice{kMask, InputSlice::Mapped}>();
-  }
-  return make.template operator()<Slice{kMask, InputSlice::Stream}>();
-}
+struct MaskedAxis : BoolAxis {};
 
 template<typename Make>
-decltype(auto) ResolveSlice(std::span<const QueryBuilder::ptr> filters,
-                            const SubReader& segment, Make&& make) {
+decltype(auto) ResolveExcludePins(std::span<const QueryBuilder::ptr> filters,
+                                  const SubReader& segment, Make&& make) {
   if (!SplitMask(filters).masked) {
-    return ResolveInputSlice<MaskSlice::Unmasked>(segment,
-                                                  std::forward<Make>(make));
+    return ResolvePinsFrom<Pins<Pin<MaskedAxis, false>>, InputAxis>(
+      std::forward_as_tuple(segment), std::forward<Make>(make));
   }
-  return ResolveDocsMask(segment,
-                         [&]<DocsMaskType Mask>(const Mask&) -> decltype(auto) {
-                           return ResolveInputSlice<SliceOf(Mask::kKind)>(
-                             segment, std::forward<Make>(make));
-                         });
+  return ResolvePinsFrom<Pins<Pin<MaskedAxis, true>>, DocsMaskAxis, InputAxis>(
+    std::forward_as_tuple(DocsMaskOf{segment.docs_mask()}, segment),
+    std::forward<Make>(make));
 }
 
-template<Slice kSlice, typename Result, typename Unmasked, typename Masked>
-Result ResolveSlicedMask(bool masked, const SubReader& segment,
-                         Unmasked&& unmasked, Masked&& make) {
-  if (!masked) {
-    if constexpr (HasUnmasked(kSlice)) {
-      return unmasked();
+template<typename P, typename Result, typename Unmasked, typename Masked>
+Result ResolveMask(bool masked, const SubReader& segment, Unmasked&& unmasked,
+                   Masked&& make) {
+  return ResolveKey<MaskedAxis, P>(masked, [&]<bool kMasked> -> Result {
+    if constexpr (kMasked) {
+      return ResolveDocsMask<P>(segment, make);
     } else {
-      SDB_UNREACHABLE();
+      return unmasked();
     }
-  }
-  if constexpr (kSlice.mask == MaskSlice::Unmasked) {
-    SDB_UNREACHABLE();
-  } else {
-    return ResolveDocsMask(segment,
-                           [&]<DocsMaskType Mask>(Mask docs_mask) -> Result {
-                             if constexpr (InSlice(kSlice, Mask::kKind)) {
-                               return make(std::move(docs_mask));
-                             } else {
-                               SDB_UNREACHABLE();
-                             }
-                           });
-  }
+  });
 }
 
 template<DocsMaskType Mask>

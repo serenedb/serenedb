@@ -33,7 +33,7 @@
 
 namespace irs::probe {
 
-template<typename Scoring, detail::Slice kSlice>
+template<typename Scoring, typename P>
 Node::ptr MakeExclusionIn(const BooleanQuery& query, uint64_t interrogations,
                           const Scoring& scoring, const detail::ScoredCtx& ctx,
                           score_t absorbed) {
@@ -63,8 +63,8 @@ Node::ptr MakeExclusionIn(const BooleanQuery& query, uint64_t interrogations,
       const auto& posting = must.front();
       const auto& own = *posting.state.reader;
       const auto& doc = *detail::DocOf(own);
-      return detail::ResolveInput<kSlice>(doc, [&]<typename Input> -> Node::ptr {
-        return detail::BuildExcludeSideOf<Node::ptr, Input, kSlice>(
+      return Resolve<detail::InputAxis, P>(doc, [&]<typename Input> -> Node::ptr {
+        return detail::BuildExcludeSideOf<Node::ptr, Input, P>(
           excludes, exclude_filters, nullptr, segment, reach, lead,
           [&]<typename Exclude>(auto&& excluded) -> Node::ptr {
             return MakeSparse<detail::PostingProbeScored<Input>, utils::Empty,
@@ -79,11 +79,11 @@ Node::ptr MakeExclusionIn(const BooleanQuery& query, uint64_t interrogations,
       });
     }
     auto include =
-      MakeIncluded<kSlice>(query, interrogations, scoring, ctx, absorbed);
+      MakeIncluded<P>(query, interrogations, scoring, ctx, absorbed);
     if (!include) {
       return {};
     }
-    return detail::BuildExcludeSide<Node::ptr, kSlice>(
+    return detail::BuildExcludeSide<Node::ptr, P>(
       excludes, exclude_filters, nullptr, segment, reach, lead,
       [&]<typename Exclude>(auto&& excluded) -> Node::ptr {
         return MakeSparse<Erased, utils::Empty, Exclude>(
@@ -102,7 +102,7 @@ Node::ptr MakeExclusionIn(const BooleanQuery& query, uint64_t interrogations,
     }
     const auto excluded = [&]<typename Musts, typename Optional>(
                             auto&& musts, auto&& optional_args) -> Node::ptr {
-      return detail::BuildExcludeSide<Node::ptr, kSlice>(
+      return detail::BuildExcludeSide<Node::ptr, P>(
         excludes, exclude_filters, nullptr, segment, reach, lead,
         [&]<typename Exclude>(auto&& exclude) -> Node::ptr {
           return MakeSparse<Musts, Optional, Exclude>(
@@ -122,7 +122,7 @@ Node::ptr MakeExclusionIn(const BooleanQuery& query, uint64_t interrogations,
       return excluded.template operator()<utils::Empty, Erased>(
         std::forward_as_tuple(), std::forward_as_tuple(std::move(optional)));
     }
-    return BuildMusts<kSlice>(
+    return BuildMusts<P>(
       must, must_filters, segment, interrogations, scoring, ctx,
       [&]<typename Musts>(auto&& musts) -> Node::ptr {
         if (!optional) {
@@ -138,7 +138,7 @@ Node::ptr MakeExclusionIn(const BooleanQuery& query, uint64_t interrogations,
 
 }  // namespace irs::probe
 
-#define IRS_MAKE_PROBE_EXCLUSION(Scoring, Slice)                             \
-  template Node::ptr MakeExclusionIn<Scoring, Slice>(                        \
+#define IRS_MAKE_PROBE_EXCLUSION(Scoring, ...)                               \
+  template Node::ptr MakeExclusionIn<Scoring, __VA_ARGS__>(                  \
     const BooleanQuery&, uint64_t, const Scoring&, const detail::ScoredCtx&, \
     score_t)

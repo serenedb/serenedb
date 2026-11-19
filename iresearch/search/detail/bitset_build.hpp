@@ -410,7 +410,7 @@ inline BitsetStorage BuildBitset(BitsetBuckets& buckets, const IndexInput& doc,
   auto* const words = bits.Words();
   const auto seed = buckets.Seed(docs_count);
 
-  ResolveInput(doc, [&]<typename Input> {
+  Resolve<InputAxis>(doc, [&]<typename Input> {
     PostingReader<Input> reader{doc};
     if (!buckets.must.empty()) {
       OrBits or_seed{words};

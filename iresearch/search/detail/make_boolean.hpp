@@ -26,18 +26,19 @@
   template Family::Result MakeQuery<Family, Ctx>(const BooleanQuery&, \
                                                  const Ctx&)
 
-#define IRS_MAKE_BOOLEAN_REQUIRED(Family, Ctx, Slice)                          \
-  template Family::Result builder::MakeRequired<Family, Slice, Ctx>(           \
+#define IRS_MAKE_BOOLEAN_REQUIRED(Family, Ctx, ...)                            \
+  template Family::Result builder::MakeRequired<Family, __VA_ARGS__, Ctx>(     \
     std::span<const PostingClause>, std::span<const QueryBuilder::ptr>,        \
     std::span<const PostingClause>, std::span<const QueryBuilder::ptr>, Terms, \
     uint32_t, const SubReader&, const Ctx&, ScoreMergeType, score_t)
 
-#define IRS_MAKE_BOOLEAN_EXCLUSION(Family, Ctx, Slice)                  \
-  template Family::Result builder::MakeExclusionIn<Family, Ctx, Slice>( \
+#define IRS_MAKE_BOOLEAN_EXCLUSION(Family, Ctx, ...)                          \
+  template Family::Result builder::MakeExclusionIn<Family, Ctx, __VA_ARGS__>( \
     const BooleanQuery&, const Ctx&, ScoreMergeType, score_t)
 
-#define IRS_MAKE_BOOLEAN_EXCLUSION_WINDOW(Family, Ctx, Slice)                 \
-  template Family::Result builder::MakeExclusionWindowIn<Family, Ctx, Slice>( \
+#define IRS_MAKE_BOOLEAN_EXCLUSION_WINDOW(Family, Ctx, ...)               \
+  template Family::Result                                                 \
+  builder::MakeExclusionWindowIn<Family, Ctx, __VA_ARGS__>(               \
     const BooleanQuery&, const Ctx&, ScoreMergeType, score_t, uint64_t)
 
 #define IRS_MAKE_BOOLEAN_NEGATION(Family, Ctx)                          \

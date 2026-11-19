@@ -101,7 +101,7 @@ Root::ptr MakePrunedReqOpt(const irs::detail::PostingClause& required,
                            const SubReader& segment, const Context& ctx,
                            ScoreMergeType merge);
 
-template<irs::detail::Slice kSlice>
+template<typename P>
 Root::ptr MakePrunedConjunctionIn(
   std::span<const irs::detail::PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters, irs::detail::Terms uniformity,
@@ -109,7 +109,7 @@ Root::ptr MakePrunedConjunctionIn(
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
   const Context& ctx, ScoreMergeType merge);
 
-template<irs::detail::Slice kSlice>
+template<typename P>
 Root::ptr MakeNestedPrunedConjunctionIn(
   std::span<const irs::detail::PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters,
@@ -118,7 +118,7 @@ Root::ptr MakeNestedPrunedConjunctionIn(
   const Context& ctx, ScoreMergeType merge);
 
 template<bool kExcludes, typename Term,
-         irs::detail::Slice kSlice = irs::detail::Slice{}>
+         typename P = NoPins>
 Root::ptr MakePrunedDisjunction(
   std::span<const Term> terms, std::span<const QueryBuilder::ptr> filters,
   irs::detail::Terms uniformity, const TermReader* field, const Scorer* scorer,

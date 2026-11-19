@@ -37,7 +37,7 @@ Node::ptr MakePostingDocs(const detail::PostingClause& posting,
   SDB_ASSERT(posting.state.reader != nullptr);
   const auto& own = *posting.state.reader;
   const auto& doc = *detail::DocOf(own);
-  return detail::ResolveInput(doc, [&]<typename Input> -> Node::ptr {
+  return Resolve<detail::InputAxis>(doc, [&]<typename Input> -> Node::ptr {
     return memory::make_managed<Impl<detail::PostingFill<Input>>>(
       posting.state.cookie, doc, detail::LayoutOf(own), detail::BoundsOf(own),
       detail::FreqOf(own));
@@ -63,7 +63,7 @@ Node::ptr MakePostingScored(const detail::PostingClause& posting,
   const auto freq = detail::FreqOf(own);
 
   if (posting.stats.stats == nullptr) {
-    return detail::ResolveInput(doc, [&]<typename Input> -> Node::ptr {
+    return Resolve<detail::InputAxis>(doc, [&]<typename Input> -> Node::ptr {
       using Leaf = detail::PlainFillScored<Input>;
       return memory::make_managed<Impl<Leaf>>(meta, doc, detail::LayoutOf(own),
                                               bounds, freq);
@@ -73,7 +73,7 @@ Node::ptr MakePostingScored(const detail::PostingClause& posting,
   if (const auto constant =
         detail::ConstantOf(segment, own, posting.Args(ctx.fetcher))) {
     const auto value = *constant;
-    return detail::ResolveInput(doc, [&]<typename Input> -> Node::ptr {
+    return Resolve<detail::InputAxis>(doc, [&]<typename Input> -> Node::ptr {
       using Approx = detail::PostingFill<Input>;
       using Node = ConstantScored<Approx>;
       return memory::make_managed<Impl<Node>>(

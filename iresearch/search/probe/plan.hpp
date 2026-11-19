@@ -41,7 +41,7 @@
 
 namespace irs::probe {
 
-template<typename Result, detail::Slice kSlice = detail::Slice{},
+template<typename Result, typename P = NoPins,
          typename Make>
 Result ResolvePostingDocs(const detail::PostingClause& posting, Make&& make) {
   const auto& meta = posting.state.cookie;
@@ -50,7 +50,7 @@ Result ResolvePostingDocs(const detail::PostingClause& posting, Make&& make) {
     return make.template operator()<SinglePostingDocs>(meta);
   }
   const auto& own = *posting.state.reader;
-  return detail::ResolveInput<kSlice>(
+  return Resolve<detail::InputAxis, P>(
     *detail::DocOf(own), [&]<typename Input> -> Result {
       return make.template operator()<detail::PostingProbe<Input>>(
         meta, *detail::DocOf(own), detail::LayoutOf(own),

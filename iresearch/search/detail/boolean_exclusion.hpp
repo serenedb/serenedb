@@ -32,7 +32,7 @@
 
 namespace irs::detail::builder {
 
-template<typename Family, typename Ctx, Slice kSlice>
+template<typename Family, typename Ctx, typename P>
 Result<Family> MakeExclusionWindowIn(const BooleanQuery& query, const Ctx& ctx,
                                      ScoreMergeType merge, score_t absorbed,
                                      uint64_t candidates);
@@ -43,7 +43,7 @@ Result<Family> MakeNegation(std::span<const PostingClause> excludes,
                             const SubReader& segment, uint64_t candidates,
                             const Ctx& ctx);
 
-template<typename Family, typename Ctx, Slice kSlice>
+template<typename Family, typename Ctx, typename P>
 Result<Family> MakeExclusionIn(const BooleanQuery& query, const Ctx& ctx,
                                ScoreMergeType merge, score_t absorbed) {
   const auto& segment = query.Segment();
@@ -63,7 +63,7 @@ Result<Family> MakeExclusionIn(const BooleanQuery& query, const Ctx& ctx,
   }
   if constexpr (kScoredPlan<Family, Ctx>) {
     if constexpr (Family::kRoot) {
-      if (auto windowed = MakeExclusionWindowIn<Family, Ctx, kSlice>(
+      if (auto windowed = MakeExclusionWindowIn<Family, Ctx, P>(
             query, ctx, merge, absorbed, candidates)) {
         return windowed;
       }
@@ -75,8 +75,8 @@ Result<Family> MakeExclusionIn(const BooleanQuery& query, const Ctx& ctx,
       const auto& own = *posting.state.reader;
       const auto& doc = *DocOf(own);
       const auto recipe = RecipeOf<Family>(segment, ctx);
-      return ResolveInput<kSlice>(doc, [&]<typename Input> -> Result<Family> {
-        return BuildExcludesOf<Result<Family>, Input, kSlice>(
+      return Resolve<InputAxis, P>(doc, [&]<typename Input> -> Result<Family> {
+        return BuildExcludesOf<Result<Family>, Input, P>(
           Family::kRoot ? ExcludeUse::PerBlock : ExcludeUse::PerDoc, excludes,
           exclude_filters, nullptr, segment, candidates, candidates,
           [&]<typename Exclude>(auto&& negated) -> Result<Family> {
@@ -97,7 +97,7 @@ Result<Family> MakeExclusionIn(const BooleanQuery& query, const Ctx& ctx,
           });
       });
     }
-    auto include = MakeRequired<lead::Family, InputOnly(kSlice)>(
+    auto include = MakeRequired<lead::Family, Restrict<P, InputAxis>>(
       must, must_filters, should, should_filters,
       query.Uniformity(Occur::Should), min_match, segment,
       ScoredCtx{Family::Scoring(ctx)}, query.MergeType(), absorbed);
@@ -105,11 +105,11 @@ Result<Family> MakeExclusionIn(const BooleanQuery& query, const Ctx& ctx,
       return {};
     }
     if constexpr (Family::kRoot) {
-      return MakeSparseExclusionOf<Family, kSlice>(
+      return MakeSparseExclusionOf<Family, P>(
         std::move(include), excludes, exclude_filters, segment, candidates, ctx,
         merge, Scored{merge, 0});
     } else {
-      return MakeSparseExclusionOf<Family, kSlice>(
+      return MakeSparseExclusionOf<Family, P>(
         std::move(include), excludes, exclude_filters, segment, candidates, ctx,
         merge, Inherited{});
     }
@@ -135,21 +135,21 @@ Result<Family> MakeExclusionIn(const BooleanQuery& query, const Ctx& ctx,
                                segment, ctx)) {
         return folded;
       }
-      if (auto windowed = MakeExclusionWindowIn<Family, Ctx, kSlice>(
+      if (auto windowed = MakeExclusionWindowIn<Family, Ctx, P>(
             query, ctx, merge, absorbed, candidates)) {
         return windowed;
       }
-      return MakeSparseExclusion<Family, kSlice>(must, must_filters, excludes,
+      return MakeSparseExclusion<Family, P>(must, must_filters, excludes,
                                                  exclude_filters, segment,
                                                  candidates, ctx);
     }
-    auto include = MakeRequired<lead::Family, InputOnly(kSlice)>(
+    auto include = MakeRequired<lead::Family, Restrict<P, InputAxis>>(
       must, must_filters, should, should_filters, Terms::Mixed, min_match,
       segment, utils::Empty{}, ScoreMergeType::Noop, score_t{0});
     if (!include) {
       return {};
     }
-    return MakeSparseExclusionOf<Family, kSlice>(
+    return MakeSparseExclusionOf<Family, P>(
       std::move(include), excludes, exclude_filters, segment, candidates, ctx,
       merge, utils::Empty{});
   }

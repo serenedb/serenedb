@@ -84,7 +84,7 @@ Node::ptr MakePostingScored(const detail::PostingClause& posting,
         });
     }
   }
-  return detail::ResolveInput(
+  return Resolve<detail::InputAxis>(
     *detail::DocOf(own), [&]<typename Input> -> Node::ptr {
       if (!scores) {
         using Leaf = detail::PlainProbeScored<Input>;

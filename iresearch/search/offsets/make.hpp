@@ -36,8 +36,6 @@ namespace irs::offsets {
 
 using Handles = detail::PhraseHandles;
 
-bool Resolve(const TermReader* field, Handles& out);
-
 Root::ptr MakePosting(const PostingMeta& meta, const Handles& handles);
 
 Root::ptr Make(const FixedPhraseQuery& query);

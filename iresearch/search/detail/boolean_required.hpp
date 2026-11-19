@@ -57,7 +57,7 @@ auto ScoreFor(ScoreMergeType merge, score_t absorbed) {
   }
 }
 
-template<typename Family, Slice kSlice, typename Ctx>
+template<typename Family, typename P, typename Ctx>
 Result<Family> MakeConjunction(
   std::span<const PostingClause> must,
   std::span<const QueryBuilder::ptr> must_filters,
@@ -71,7 +71,7 @@ Result<Family> MakeConjunction(
   SDB_ASSERT(!no_must || optional);
   const auto score = ScoreFor<Family, Ctx>(merge, absorbed);
   const auto conjunction = [&]<typename Make>(Make&& make) -> Result<Family> {
-    return BuildSparseConjunction<Family, kSlice>(
+    return BuildSparseConjunction<Family, P>(
       must, must_filters, segment, ctx,
       ScoringFor<Family>(segment, ctx, merge, Terms::Mixed),
       std::forward<Make>(make));
@@ -87,7 +87,7 @@ Result<Family> MakeConjunction(
       }
       if constexpr (kScoredLeadWindow<Family>) {
         if (must_filters.empty() && should_filters.empty()) {
-          if (auto windowed = MakeScoredLeadWindow<Family, kSlice>(
+          if (auto windowed = MakeScoredLeadWindow<Family, P>(
                 must, should, segment,
                 ScoringFor<Family>(segment, ctx, merge, uniformity), ctx,
                 absorbed)) {
@@ -96,7 +96,7 @@ Result<Family> MakeConjunction(
         }
       }
       const auto recipe = RecipeOf<Family>(segment, ctx);
-      return BuildProbeLeaves<Result<Family>, kSlice>(
+      return BuildProbeLeaves<Result<Family>, P>(
         should, should_filters, nullptr, segment,
         IncludeCandidates(must, must_filters, segment), ProbeOrder::Densest,
         TermScoring{.scorer = nullptr,
@@ -141,7 +141,7 @@ Result<Family> MakeConjunction(
     }
     if constexpr (!kScoredPlan<Family, Ctx>) {
       if (auto windowed =
-            MakeWindowConjunction<Family, kSlice>(must, must_filters, segment,
+            MakeWindowConjunction<Family, P>(must, must_filters, segment,
                                                   ctx)) {
         return windowed;
       }
@@ -193,7 +193,7 @@ Result<Family> MakeConjunction(
   });
 }
 
-template<typename Family, Slice kSlice, typename Ctx>
+template<typename Family, typename P, typename Ctx>
 Result<Family> MakeRequired(std::span<const PostingClause> must,
                             std::span<const QueryBuilder::ptr> must_filters,
                             std::span<const PostingClause> should,
@@ -209,13 +209,13 @@ Result<Family> MakeRequired(std::span<const PostingClause> must,
     }
     const auto scoring = ScoringFor<Family>(segment, ctx, merge, uniformity);
     if (min_match == 1) {
-      return MakeDisjunction<Family, kSlice>(should, should_filters, nullptr,
+      return MakeDisjunction<Family, P>(should, should_filters, nullptr,
                                              segment, scoring, ctx, absorbed);
     }
-    return MakeThreshold<Family, kSlice>(should, should_filters, segment,
+    return MakeThreshold<Family, P>(should, should_filters, segment,
                                          min_match, scoring, ctx, absorbed);
   }
-  return MakeConjunction<Family, kSlice>(must, must_filters, should,
+  return MakeConjunction<Family, P>(must, must_filters, should,
                                          should_filters, uniformity, min_match,
                                          segment, ctx, merge, absorbed);
 }

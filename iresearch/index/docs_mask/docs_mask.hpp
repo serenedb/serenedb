@@ -33,12 +33,27 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
 
-template<typename Make>
+struct DocsMaskOf {
+  const DocumentMask* mask = nullptr;
+  bool single = true;
+};
+
+struct DocsMaskAxis : EnumAxis<MaskKind> {
+  static MaskKind Of(const DocsMaskOf& of) noexcept {
+    if (of.mask == nullptr || of.mask->Empty()) {
+      return MaskKind::Runs;
+    }
+    return of.single ? of.mask->Kind() : docs_mask::Plural(of.mask->Kind());
+  }
+};
+
+template<typename P = NoPins, typename Make>
 decltype(auto) ResolveDocsMask(const DocumentMask* mask, Make&& make,
                                bool single = true);
 
@@ -49,7 +64,7 @@ template<MaskKind K>
 class DocsMask final : public docs_mask::Chunked<DocsMask<K>, K> {
   using Base = docs_mask::Chunked<DocsMask<K>, K>;
 
-  template<typename Make>
+  template<typename P, typename Make>
   friend decltype(auto) ResolveDocsMask(const DocumentMask* mask, Make&& make,
                                         bool single);
   friend DocsMask<MaskKind::Mixed> MakeGenericDocsMask(
@@ -116,7 +131,7 @@ class DocsMask<K> final : public docs_mask::Chunked<DocsMask<K>, K> {
   using Base = docs_mask::Chunked<DocsMask<K>, K>;
   using Base::_layout;
 
-  template<typename Make>
+  template<typename P, typename Make>
   friend decltype(auto) ResolveDocsMask(const DocumentMask* mask, Make&& make,
                                         bool single);
   friend DocsMask<MaskKind::Mixed> MakeGenericDocsMask(
@@ -262,34 +277,19 @@ class DocsMask<K> final : public docs_mask::Chunked<DocsMask<K>, K> {
 
 using GenericDocsMask = DocsMask<MaskKind::Mixed>;
 
-template<typename Make>
+template<typename P, typename Make>
 decltype(auto) ResolveDocsMask(const DocumentMask* mask, Make&& make,
                                bool single) {
-  if (mask == nullptr || mask->Empty()) {
-    return make(DocsMask<MaskKind::Runs>{nullptr});
-  }
-  switch (single ? mask->Kind() : docs_mask::Plural(mask->Kind())) {
-    case MaskKind::Bitsets:
-      return make(DocsMask<MaskKind::Bitsets>{mask});
-    case MaskKind::Arrays:
-      return make(DocsMask<MaskKind::Arrays>{mask});
-    case MaskKind::Runs:
-      return make(DocsMask<MaskKind::Runs>{mask});
-    case MaskKind::Bitset:
-      return make(DocsMask<MaskKind::Bitset>{mask});
-    case MaskKind::Array:
-      return make(DocsMask<MaskKind::Array>{mask});
-    case MaskKind::Run:
-      return make(DocsMask<MaskKind::Run>{mask});
-    case MaskKind::Mixed:
-      break;
-  }
-  return make(DocsMask<MaskKind::Mixed>{mask});
+  const auto* live = mask == nullptr || mask->Empty() ? nullptr : mask;
+  return ResolveKey<DocsMaskAxis, P>(
+    DocsMaskOf{mask, single}, [&]<MaskKind K> -> decltype(auto) {
+      return make(DocsMask<K>{live});
+    });
 }
 
-template<typename Make>
+template<typename P = NoPins, typename Make>
 decltype(auto) ResolveDocsMask(const SubReader& segment, Make&& make) {
-  return ResolveDocsMask(segment.docs_mask(), std::forward<Make>(make));
+  return ResolveDocsMask<P>(segment.docs_mask(), std::forward<Make>(make));
 }
 
 inline GenericDocsMask MakeGenericDocsMask(const DocumentMask* mask) noexcept {

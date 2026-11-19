@@ -38,7 +38,7 @@
 
 namespace irs::top {
 
-template<irs::detail::Slice kSlice>
+template<typename P>
 Root::ptr MakePrunedConjunctionIn(
   std::span<const irs::detail::PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters, irs::detail::Terms uniformity,
@@ -49,7 +49,7 @@ Root::ptr MakePrunedConjunctionIn(
     return {};
   }
   if (!filters.empty()) {
-    return MakeNestedPrunedConjunctionIn<kSlice>(
+    return MakeNestedPrunedConjunctionIn<P>(
       terms, filters, excludes, exclude_filters, segment, ctx, merge);
   }
   if (terms.size() < 2 || uniformity != irs::detail::Terms::Bounded) {
@@ -59,7 +59,7 @@ Root::ptr MakePrunedConjunctionIn(
     irs::detail::DocOf(irs::detail::FieldOf(terms.front(), nullptr));
   SDB_ASSERT(doc != nullptr);
   const auto size = terms.size();
-  return irs::detail::ResolveInput<kSlice>(*doc, [&]<typename Input> -> Root::ptr {
+  return Resolve<irs::detail::InputAxis, P>(*doc, [&]<typename Input> -> Root::ptr {
     using Lead = PostingPrunedLead<Input>;
     using Clause = PostingPrunedClause<Input>;
     const auto init = [&](auto& leaf, size_t i) {
@@ -89,7 +89,7 @@ Root::ptr MakePrunedConjunctionIn(
           std::forward_as_tuple());
       }
       const uint64_t lead = terms.front().state.cookie.docs_count;
-      return irs::detail::BuildBlockExcludes<Root::ptr, kSlice>(
+      return irs::detail::BuildBlockExcludes<Root::ptr, P>(
         excludes, exclude_filters, nullptr, segment, lead, lead,
         [&]<typename Exclude>(auto&& negated) -> Root::ptr {
           return MakeShape<PrunedConjunction, Lead, Others, Joined, Exclude>(
@@ -116,8 +116,8 @@ Root::ptr MakePrunedConjunctionIn(
 
 }  // namespace irs::top
 
-#define IRS_MAKE_PRUNED_CONJUNCTION(Slice)                                \
-  template Root::ptr MakePrunedConjunctionIn<Slice>(                      \
+#define IRS_MAKE_PRUNED_CONJUNCTION(...)                                  \
+  template Root::ptr MakePrunedConjunctionIn<__VA_ARGS__>(                \
     std::span<const irs::detail::PostingClause>,                          \
     std::span<const QueryBuilder::ptr>, irs::detail::Terms,               \
     std::span<const irs::detail::PostingClause>,                          \

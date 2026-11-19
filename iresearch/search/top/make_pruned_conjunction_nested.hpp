@@ -136,7 +136,7 @@ inline bool PhraseOf(const QueryBuilder& child, NestedClause& out) noexcept {
   return true;
 }
 
-template<irs::detail::Slice kSlice>
+template<typename P>
 Root::ptr MakeNestedPrunedConjunctionIn(
   std::span<const irs::detail::PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters,
@@ -228,7 +228,7 @@ Root::ptr MakeNestedPrunedConjunctionIn(
   SDB_ASSERT(doc != nullptr);
   const bool posting_lead = clauses.front().terms.size() == 1;
   const auto size = clauses.size();
-  return irs::detail::ResolveInput<kSlice>(*doc, [&]<typename Input> -> Root::ptr {
+  return Resolve<irs::detail::InputAxis, P>(*doc, [&]<typename Input> -> Root::ptr {
     using Leaf = PostingPrunedClause<Input>;
     using Group = probe::OrLeaves<Leaf, 0, true>;
     using Window =
@@ -280,7 +280,7 @@ Root::ptr MakeNestedPrunedConjunctionIn(
                                        others_args, std::forward_as_tuple());
       }
       const uint64_t lead_docs = clauses.front().docs;
-      return irs::detail::BuildBlockExcludes<Root::ptr, kSlice>(
+      return irs::detail::BuildBlockExcludes<Root::ptr, P>(
         excludes, exclude_filters, nullptr, segment, lead_docs, lead_docs,
         [&]<typename Exclude>(auto&& negated) -> Root::ptr {
           return MakeShape<PrunedConjunction, Lead, Others, utils::Empty,
@@ -326,8 +326,8 @@ Root::ptr MakeNestedPrunedConjunctionIn(
 
 }  // namespace irs::top
 
-#define IRS_MAKE_NESTED_PRUNED_CONJUNCTION(Slice)                         \
-  template Root::ptr MakeNestedPrunedConjunctionIn<Slice>(                \
+#define IRS_MAKE_NESTED_PRUNED_CONJUNCTION(...)                           \
+  template Root::ptr MakeNestedPrunedConjunctionIn<__VA_ARGS__>(          \
     std::span<const irs::detail::PostingClause>,                          \
     std::span<const QueryBuilder::ptr>,                                   \
     std::span<const irs::detail::PostingClause>,                          \

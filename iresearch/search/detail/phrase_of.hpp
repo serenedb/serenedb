@@ -77,7 +77,7 @@ auto BuildPhrase(const FixedPhraseQuery& query, F&& f) {
   const std::span<const TermInterval> intervals{query.positions};
   const PhraseTerms terms{{state.metas.data(), state.metas.size()}, intervals};
   return ResolveBounds(h.bounds, [&]<bool Bounds> {
-    return ResolveInput(*h.doc, [&]<typename Input> {
+    return Resolve<InputAxis>(*h.doc, [&]<typename Input> {
       using Leaf = PostingPos<Input, Bounds, Offs>;
       const auto build = [&]<size_t N> {
         return ResolveMatcherOf<M, N, HasFreq, Offs>(
@@ -109,7 +109,7 @@ auto BuildPhrase(const VariadicPhraseQuery& query, F&& f) {
   const std::span<const TermInterval> intervals{query.positions};
   SDB_ASSERT(!state.Fixed());
   return ResolveBounds(h.bounds, [&]<bool Bounds> {
-    return ResolveInput(*h.doc, [&]<typename Input> {
+    return Resolve<InputAxis>(*h.doc, [&]<typename Input> {
       const auto build = [&]<bool HasBoost> {
         return ResolveSlotMatcherOf<M, Bounds, Input, HasFreq, Offs, HasBoost>(
           query, [&]<typename Matcher, typename Leaf>(auto&&... args) {

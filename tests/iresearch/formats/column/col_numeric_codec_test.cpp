@@ -201,6 +201,8 @@ std::vector<duckdb::LogicalType> Types() {
 
 duckdb::Value Cast(int64_t v, const duckdb::LogicalType& type) {
   switch (type.id()) {
+    case duckdb::LogicalTypeId::BOOLEAN:
+      return duckdb::Value::BOOLEAN(v != 0);
     case duckdb::LogicalTypeId::TINYINT:
       return duckdb::Value::TINYINT(static_cast<int8_t>(v));
     case duckdb::LogicalTypeId::SMALLINT:
@@ -1283,6 +1285,55 @@ TEST_F(ColNumericCodecTest, AutoPacksTheDeltasOfSortedIntegers) {
     EXPECT_EQ(
       codecs(duckdb::LogicalType::BIGINT, clustered, tier, CodecType::DeltaLz4),
       std::set{CodecType::DeltaLz4});
+  }
+}
+
+TEST_F(ColNumericCodecTest, BooleansUseTheOneByteTransforms) {
+  constexpr uint32_t kRowGroup = 4096;
+  constexpr uint64_t kRows = 4 * kRowGroup;
+  const auto type = duckdb::LogicalType::BOOLEAN;
+  const Gen flags = [](uint64_t g) -> std::optional<int64_t> {
+    return static_cast<int64_t>(Mix(g) & 1);
+  };
+  const Gen runs = [](uint64_t g) -> std::optional<int64_t> {
+    return static_cast<int64_t>(g / 500 % 2);
+  };
+  const Gen sparse = [](uint64_t g) -> std::optional<int64_t> {
+    if (g % 97 == 13) {
+      return std::nullopt;
+    }
+    return static_cast<int64_t>(Mix(g) % 50 == 0);
+  };
+  const Gen constant = [](uint64_t) -> std::optional<int64_t> { return 1; };
+  using irs::codecs::CodecType;
+  const auto codecs = [&](const Gen& gen, irs::WriteTier tier,
+                          CodecType codec) {
+    irs::MemoryDirectory dir{};
+    Write(dir, type, {.tier = tier}, kRows, kRowGroup, gen, codec);
+    Verify(dir, type, kRows, gen);
+    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+    const auto* col = r.Column(kField);
+    EXPECT_NE(col, nullptr);
+    std::set<CodecType> types;
+    for (const auto& block : col->DataBlocks()) {
+      types.insert(block.codec->type);
+    }
+    return types;
+  };
+  for (const auto tier : {irs::WriteTier::Flush, irs::WriteTier::Merge}) {
+    SCOPED_TRACE(tier == irs::WriteTier::Flush ? "flush" : "merge");
+    for (const auto& gen : {flags, runs, sparse}) {
+      for (const auto codec : codecs(gen, tier, CodecType::Auto)) {
+        EXPECT_TRUE(codec == CodecType::Ffor || codec == CodecType::RleFfor ||
+                    codec == CodecType::Roaring)
+          << magic_enum::enum_name(codec);
+      }
+      EXPECT_EQ(codecs(gen, tier, CodecType::Ffor), std::set{CodecType::Ffor});
+    }
+    EXPECT_EQ(codecs(runs, tier, CodecType::RleFfor),
+              std::set{CodecType::RleFfor});
+    EXPECT_EQ(codecs(constant, tier, CodecType::Auto),
+              std::set{CodecType::Constant});
   }
 }
 

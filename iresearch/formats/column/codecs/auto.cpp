@@ -45,6 +45,13 @@ constexpr CodecType kLightweight[] = {
   CodecType::Roaring,
 };
 
+constexpr CodecType kBool[] = {
+  CodecType::Uncompressed,
+  CodecType::Ffor,
+  CodecType::RleFfor,
+  CodecType::Roaring,
+};
+
 constexpr CodecType kIntegerMerge[] = {
   CodecType::Uncompressed, CodecType::Ffor,     CodecType::DeltaFfor,
   CodecType::RleFfor,      CodecType::DictFfor, CodecType::Lz4,
@@ -59,9 +66,8 @@ constexpr CodecType kIntegerFlush[] = {
 };
 
 constexpr CodecType kFloat[] = {
-  CodecType::Uncompressed, CodecType::Rle,  CodecType::Alp,
-  CodecType::Alprd,        CodecType::Ffor, CodecType::RleFfor,
-  CodecType::DictFfor,
+  CodecType::Uncompressed, CodecType::Alp,     CodecType::Alprd,
+  CodecType::Ffor,         CodecType::RleFfor, CodecType::DictFfor,
 };
 
 constexpr CodecType kNamedOnly[] = {
@@ -83,6 +89,7 @@ struct Orders {
 
 constexpr Orders kLightweightOrders{.flush = kLightweight,
                                     .merge = kLightweight};
+constexpr Orders kBoolOrders{.flush = kBool, .merge = kBool};
 constexpr Orders kIntegerOrders{.flush = kIntegerFlush, .merge = kIntegerMerge};
 constexpr Orders kFloatOrders{.flush = kFloat, .merge = kFloat};
 constexpr Orders kTextOrders{.flush = kText, .merge = kText};
@@ -94,6 +101,8 @@ const Orders& OrdersOf(PhysicalType physical) noexcept {
     case PhysicalType::FLOAT:
     case PhysicalType::DOUBLE:
       return kFloatOrders;
+    case PhysicalType::BOOL:
+      return kBoolOrders;
     case PhysicalType::INT8:
     case PhysicalType::INT16:
     case PhysicalType::INT32:

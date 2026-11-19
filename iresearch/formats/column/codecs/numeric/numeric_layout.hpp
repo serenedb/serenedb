@@ -246,6 +246,7 @@ template<typename F>
 std::invoke_result_t<F&, std::type_identity<int8_t>> WithNumericType(
   duckdb::PhysicalType physical, F&& f) {
   switch (physical) {
+    case duckdb::PhysicalType::BOOL:
     case duckdb::PhysicalType::INT8:
       return f(std::type_identity<int8_t>{});
     case duckdb::PhysicalType::INT16:

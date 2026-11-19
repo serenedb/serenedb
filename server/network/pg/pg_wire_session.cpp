@@ -1540,19 +1540,21 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
         static_cast<int16_t>(table->GetColumns().LogicalColumnCount());
     }
   }
-  sdb::pg::CopyInBatches batches{
-    duckdb::TaskScheduler::QueryThreads(*_conn->context) *
-    sdb::pg::kCopyBatchesPerThread};
+  const bool scans_stream =
+    format == CopyFormat::Other && ScansCopyStream(*bound_info);
+  const auto window = duckdb::TaskScheduler::QueryThreads(*_conn->context) *
+                      (scans_stream ? sdb::pg::kCopyStreamBatchesPerThread
+                                    : sdb::pg::kCopyBatchesPerThread);
+  sdb::pg::CopyInBatches batches{window};
   batches.OnStarve([this] { _copy_gate.Kick(); });
   _connection_ctx->SetSideChannel(&batches);
   const auto stream_key = duckdb::RowStreamKey(copy_info.file_path);
-  const bool scans_stream =
-    format == CopyFormat::Other && ScansCopyStream(*bound_info);
   if (scans_stream) {
     duckdb::ClientContext& client = *_connection_ctx;
     client.registered_state->Insert(
-      stream_key, duckdb::make_shared_ptr<duckdb::RowStreamState>(
-                    duckdb::make_shared_ptr<sdb::pg::CopyInStream>(batches)));
+      stream_key,
+      duckdb::make_shared_ptr<duckdb::RowStreamState>(
+        duckdb::make_shared_ptr<sdb::pg::CopyInStream>(batches, window)));
   }
   absl::Cleanup unregister_stream = [&] {
     if (scans_stream) {

@@ -28,7 +28,6 @@
 #include <vector>
 
 #include "formats/field_columns.h"
-#include "formats/lexed_rows.h"
 
 namespace sdb::formats {
 
@@ -49,9 +48,8 @@ struct TextRows {
 
 class TextSplitter {
  public:
-  TextSplitter(char delimiter, size_t columns, size_t capacity);
+  TextSplitter(size_t columns, size_t capacity);
 
-  TextRows Split(std::string_view bytes, size_t& pos, size_t max_rows);
   TextRows FillLexed(const duckdb::RowRangeReader& reader, size_t first,
                      size_t rows);
 
@@ -69,7 +67,6 @@ class TextSplitter {
 
   const size_t _columns;
   const size_t _capacity;
-  LexedRows _rows;
   std::vector<std::string_view> _fields;
   std::vector<uint32_t> _escaped;
 };

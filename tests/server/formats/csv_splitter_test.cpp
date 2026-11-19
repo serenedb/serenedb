@@ -20,6 +20,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <random>
 #include <string>
@@ -27,11 +28,13 @@
 #include <vector>
 
 #include "formats/csv_splitter.h"
+#include "formats/lexed_unit.h"
 
 namespace {
 
 using sdb::formats::CsvDialect;
 using sdb::formats::CsvSplitter;
+using sdb::formats::LexedUnit;
 
 struct RefField {
   std::string value;
@@ -135,26 +138,29 @@ Reference Parse(std::string_view input, const CsvDialect& d) {
 void Check(const std::string& input, const CsvDialect& dialect, size_t columns,
            size_t max_rows, int iter) {
   const auto expected = Parse(input, dialect);
+  LexedUnit unit{duckdb::RowDialect::PostgresCsv(dialect.delimiter,
+                                                 dialect.quote, dialect.escape),
+                 columns};
+  auto& reader = unit.Read(input);
   CsvSplitter splitter{dialect, columns, max_rows};
-  size_t pos = 0;
+  const auto next_rows = [&] {
+    if (reader.Advance(max_rows) == duckdb::RowReadResult::DONE) {
+      return size_t{0};
+    }
+    return std::min<size_t>(reader.Ready(), max_rows);
+  };
   size_t next = 0;
   bool unterminated = false;
   std::vector<char> out(input.size() + 1);
   if (expected.unterminated) {
-    while (pos < input.size()) {
-      unterminated |= splitter.Split(input, pos, max_rows).unterminated;
+    for (size_t rows; (rows = next_rows()) != 0; reader.Emit(rows)) {
+      unterminated |= splitter.FillLexed(reader, 0, rows).unterminated;
     }
     ASSERT_TRUE(unterminated) << iter;
     return;
   }
-  while (pos < input.size()) {
-    const auto start = pos;
-    const auto split = splitter.Split(input, pos, max_rows);
-    ASSERT_EQ(split.lines,
-              static_cast<size_t>(
-                std::count(input.begin() + static_cast<ptrdiff_t>(start),
-                           input.begin() + static_cast<ptrdiff_t>(pos), '\n')))
-      << iter;
+  for (size_t rows; (rows = next_rows()) != 0; reader.Emit(rows)) {
+    const auto split = splitter.FillLexed(reader, 0, rows);
     unterminated |= split.unterminated;
     std::vector<bool> extra(split.rows);
     for (const auto row : splitter.ExtraRows()) {

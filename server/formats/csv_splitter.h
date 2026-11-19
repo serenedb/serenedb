@@ -28,7 +28,6 @@
 #include <vector>
 
 #include "formats/field_columns.h"
-#include "formats/lexed_rows.h"
 
 namespace sdb::formats {
 
@@ -44,7 +43,6 @@ inline constexpr uint8_t kCsvMissing = 4;
 
 struct CsvRows {
   size_t rows = 0;
-  size_t lines = 0;
   bool unterminated = false;
 };
 
@@ -52,7 +50,6 @@ class CsvSplitter {
  public:
   CsvSplitter(CsvDialect dialect, size_t columns, size_t capacity);
 
-  CsvRows Split(std::string_view bytes, size_t& pos, size_t max_rows);
   CsvRows FillLexed(const duckdb::RowRangeReader& reader, size_t first,
                     size_t rows);
 
@@ -78,7 +75,6 @@ class CsvSplitter {
   const CsvDialect _dialect;
   const size_t _columns;
   const size_t _capacity;
-  LexedRows _rows;
   std::vector<std::string_view> _fields;
   std::vector<uint8_t> _flags;
   std::vector<uint32_t> _offsets;

@@ -125,25 +125,92 @@ void RecordRatio(RatioHistory& hist, uint64_t raw, uint64_t comp,
 
 class SegmentRows {
  public:
-  SegmentRows(const duckdb::LogicalType& type, DedupScratch& dedup,
-              ReusePolicy& codes_tuning)
-    : _stats{type}, _type{type}, _dedup{dedup}, _codes_tuning{codes_tuning} {}
+  IRS_FORCE_INLINE bool EstimateDue(uint32_t target) noexcept {
+    if (_rows % kEstimateEvery != 0 &&
+        _raw - _estimated_raw < target / kEstimateSteps) {
+      return false;
+    }
+    _estimated_raw = _raw;
+    return true;
+  }
 
-  void Begin(const Config& config, uint64_t first_row, size_t distinct) {
-    _shape = config.shape;
+  SegmentEntries View() const noexcept {
+    return {
+      .entries = _entries,
+      .first_entry = _first_entry,
+      .raw = _raw,
+      .max_len = _max_len,
+      .first_row = _next - _rows,
+      .row_count = _rows,
+    };
+  }
+
+  std::span<uint32_t> Lengths() {
+    SDB_ASSERT(_rows != 0);
+    _lengths.assign(
+      duckdb::BitpackingPrimitives::RoundUpToAlgorithmGroupSize(EntryCount()),
+      0);
+    return std::span{_lengths}.subspan(_first_entry, _entries.size());
+  }
+
+ protected:
+  SegmentRows(const duckdb::LogicalType& type, uint32_t first_entry)
+    : _stats{type}, _type{type}, _first_entry{first_entry} {}
+
+  void Begin(const Config& config, uint64_t first_row) {
     _level = config.level;
     _layout = config.layout;
     _next = first_row;
     _estimated_raw = _raw;
-    if (_shape == Shape::Dictionary) {
-      _dedup.Begin(distinct);
-    }
+  }
+
+  size_t EntryCount() const noexcept { return _entries.size() + _first_entry; }
+
+  template<typename Append>
+  IRS_FORCE_INLINE void AppendEntry(const duckdb::string_t& value,
+                                    Append& append) {
+    _entries.emplace_back(value);
+    const auto size = value.GetSize();
+    _max_len = std::max<uint32_t>(_max_len, size);
+    _raw += size;
+    append(value, static_cast<uint32_t>(EntryCount()) - 1);
+  }
+
+  void Assemble(const EncodedFrames& frames, CodecType codes_codec,
+                std::string_view codes, Segment& out);
+
+  void Finish(const EncodedFrames& frames, Shape shape, Segment& out);
+
+  duckdb::StatsWriter<duckdb::string_t> _stats;
+  const duckdb::LogicalType& _type;
+  uint32_t _first_entry;
+  uint8_t _level = 0;
+  FrameDictionary _layout = FrameDictionary::FirstFrame;
+  uint64_t _next = 0;
+
+  std::vector<duckdb::string_t> _entries;
+  uint64_t _rows = 0;
+  uint64_t _raw = 0;
+  uint64_t _estimated_raw = 0;
+  uint32_t _max_len = 0;
+  uint64_t _nulls = 0;
+  uint64_t _input = 0;
+  std::vector<uint32_t> _lengths;
+};
+
+class PlainRows final : public SegmentRows {
+ public:
+  static constexpr Shape kShape = Shape::Plain;
+
+  explicit PlainRows(const duckdb::LogicalType& type) : SegmentRows{type, 0} {}
+
+  void Begin(const Config& config, uint64_t first_row, size_t) {
+    SegmentRows::Begin(config, first_row);
   }
 
   template<typename Append>
   IRS_FORCE_INLINE void AddValue(const duckdb::string_t* value,
                                  Append&& append) {
-    SDB_ASSERT(_shape == Shape::Plain);
     ++_next;
     if (value) {
       _input += value->GetSize();
@@ -161,10 +228,31 @@ class SegmentRows {
   IRS_FORCE_INLINE void AddCode(uint32_t code,
                                 std::span<const duckdb::string_t* const> values,
                                 Append&& append) {
-    if (_shape == Shape::Plain) {
-      AddValue(code == 0 ? nullptr : values[code - 1], append);
-      return;
-    }
+    AddValue(code == 0 ? nullptr : values[code - 1], append);
+  }
+
+  uint64_t Estimate() const noexcept;
+
+  void Write(const EncodedFrames& frames, Segment& out);
+};
+
+class DictionaryRows final : public SegmentRows {
+ public:
+  static constexpr Shape kShape = Shape::Dictionary;
+
+  DictionaryRows(const duckdb::LogicalType& type, DedupScratch& dedup,
+                 ReusePolicy& codes_tuning)
+    : SegmentRows{type, 1}, _dedup{dedup}, _codes_tuning{codes_tuning} {}
+
+  void Begin(const Config& config, uint64_t first_row, size_t distinct) {
+    SegmentRows::Begin(config, first_row);
+    _dedup.Begin(distinct);
+  }
+
+  template<typename Append>
+  IRS_FORCE_INLINE void AddCode(uint32_t code,
+                                std::span<const duckdb::string_t* const> values,
+                                Append&& append) {
     ++_next;
     if (code == 0) {
       _stats.SetHasNull();
@@ -187,85 +275,37 @@ class SegmentRows {
     ++_rows;
   }
 
-  IRS_FORCE_INLINE bool EstimateDue(uint32_t target) noexcept {
-    if (_rows % kEstimateEvery != 0 &&
-        _raw - _estimated_raw < target / kEstimateSteps) {
-      return false;
-    }
-    _estimated_raw = _raw;
-    return true;
-  }
-
   uint64_t Estimate() const noexcept;
 
-  SegmentEntries View() const noexcept {
-    return {
-      .entries = _entries,
-      .first_entry = FirstEntry(),
-      .raw = _raw,
-      .max_len = _max_len,
-      .first_row = _next - _rows,
-      .row_count = _rows,
-    };
-  }
-
-  Shape SegmentShape() const noexcept { return _shape; }
-
   void Sort(SortScratch& scratch);
-
-  std::span<uint32_t> Lengths() {
-    SDB_ASSERT(_rows != 0);
-    _lengths.assign(
-      duckdb::BitpackingPrimitives::RoundUpToAlgorithmGroupSize(EntryCount()),
-      0);
-    return std::span{_lengths}.subspan(FirstEntry(), _entries.size());
-  }
 
   void Write(const EncodedFrames& frames, Segment& out);
 
  private:
-  uint32_t FirstEntry() const noexcept {
-    return _shape == Shape::Dictionary ? 1 : 0;
-  }
-
-  size_t EntryCount() const noexcept { return _entries.size() + FirstEntry(); }
-
-  template<typename Append>
-  IRS_FORCE_INLINE void AppendEntry(const duckdb::string_t& value,
-                                    Append& append) {
-    _entries.emplace_back(value);
-    const auto size = value.GetSize();
-    _max_len = std::max<uint32_t>(_max_len, size);
-    _raw += size;
-    append(value, static_cast<uint32_t>(EntryCount()) - 1);
-  }
-
-  duckdb::StatsWriter<duckdb::string_t> _stats;
-  const duckdb::LogicalType& _type;
   DedupScratch& _dedup;
   ReusePolicy& _codes_tuning;
-  Shape _shape = Shape::Dictionary;
-  uint8_t _level = 0;
-  FrameDictionary _layout = FrameDictionary::FirstFrame;
-  uint64_t _next = 0;
-
-  std::vector<duckdb::string_t> _entries;
   ScratchVector<uint32_t> _codes;
-  uint64_t _rows = 0;
-  uint64_t _raw = 0;
-  uint64_t _estimated_raw = 0;
-  uint32_t _max_len = 0;
-  uint64_t _nulls = 0;
-  uint64_t _input = 0;
-  std::vector<uint32_t> _lengths;
 };
 
+template<typename Rows>
+Rows MakeRows(const duckdb::LogicalType& type, DedupScratch& dedup,
+              ReusePolicy& codes_tuning) {
+  if constexpr (Rows::kShape == Shape::Dictionary) {
+    return Rows{type, dedup, codes_tuning};
+  } else {
+    return Rows{type};
+  }
+}
+
+template<typename Rows>
 class SortedCompressionState {
  public:
+  static constexpr Shape kShape = Rows::kShape;
+
   SortedCompressionState(ByteCodec codec, const duckdb::LogicalType& type,
                          DedupScratch& dedup, StringTuning& tuning,
                          uint32_t target)
-    : _rows{type, dedup, tuning.codes},
+    : _rows{MakeRows<Rows>(type, dedup, tuning.codes)},
       _history{tuning.history[static_cast<size_t>(codec)]},
       _target{target} {}
 
@@ -287,17 +327,24 @@ class SortedCompressionState {
 
   IRS_FORCE_INLINE bool Full(uint32_t target) {
     return _rows.EstimateDue(target) &&
-           _rows.Estimate() +
-               EstimateEntries(
-                 _rows.View(),
-                 _history[static_cast<size_t>(_rows.SegmentShape())]) >=
+           _rows.Estimate() + EstimateEntries(_rows.View(), History()) >=
              target;
   }
 
  protected:
+  void Sort() {
+    if constexpr (kShape == Shape::Dictionary) {
+      _rows.Sort(_sort);
+    }
+  }
+
+  RatioHistory& History() const noexcept {
+    return _history[static_cast<size_t>(kShape)];
+  }
+
   uint64_t Written() const noexcept { return _out->bytes.Size(); }
 
-  SegmentRows _rows;
+  Rows _rows;
   SortScratch _sort;
   RatioHistory* _history;
   uint32_t _target;

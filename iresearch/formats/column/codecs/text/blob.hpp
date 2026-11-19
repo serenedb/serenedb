@@ -41,12 +41,14 @@
 
 #include "iresearch/formats/column/codecs/bytes/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/bytes/segment_dictionary.hpp"
+#include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
 #include "iresearch/formats/column/codecs/text/frame_spans.hpp"
 #include "iresearch/formats/column/codecs/text/segment_rows.hpp"
 #include "iresearch/formats/column/codecs/text/string_layout.hpp"
 #include "iresearch/formats/column/codecs/text/string_scan.hpp"
 #include "iresearch/formats/column/codecs/text/string_tuning.hpp"
+#include "iresearch/formats/column/codecs/tuning.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
@@ -91,16 +93,16 @@ size_t CompressedSize(std::string_view raw, std::string& scratch,
   return n;
 }
 
-template<typename Codec>
+template<typename Codec, typename Rows>
 class CompressionState {
  public:
   static constexpr ByteCodec kCodec = Codec::kCodec;
+  static constexpr Shape kShape = Rows::kShape;
   static_assert(!Sorted(kCodec));
 
-  CompressionState(const duckdb::LogicalType& type, DedupScratch& dedup,
-                   StringTuning& tuning)
-    : _rows{type, dedup, tuning.codes},
-      _history{tuning.history[static_cast<size_t>(kCodec)]} {}
+  CompressionState(ColumnDataCheckpointData& data, DedupScratch& dedup)
+    : _rows{MakeRows<Rows>(data.type, dedup, data.tuning.strings.codes)},
+      _history{data.tuning.strings.history[static_cast<size_t>(kCodec)]} {}
 
   void InitCompression(const Config& config, uint64_t first_row,
                        size_t distinct, Segment& out) {
@@ -185,7 +187,7 @@ class CompressionState {
   }
 
   RatioHistory& History() const noexcept {
-    return _history[static_cast<size_t>(_rows.SegmentShape())];
+    return _history[static_cast<size_t>(kShape)];
   }
 
   void Configure(uint8_t level, FrameDictionary layout) {
@@ -283,7 +285,7 @@ class CompressionState {
     return n;
   }
 
-  SegmentRows _rows;
+  Rows _rows;
   RatioHistory* _history;
   std::optional<typename Codec::Compressor> _codec;
   std::optional<typename Codec::Compressor> _probe;

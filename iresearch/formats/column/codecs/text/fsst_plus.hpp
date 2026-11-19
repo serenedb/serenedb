@@ -27,24 +27,36 @@
 #include <vector>
 
 #include "iresearch/formats/column/codecs/bytes/byte_codec.hpp"
+#include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
 #include "iresearch/formats/column/codecs/text/fsst.hpp"
 #include "iresearch/formats/column/codecs/text/segment_rows.hpp"
 #include "iresearch/formats/column/codecs/text/string_tuning.hpp"
+#include "iresearch/formats/column/codecs/tuning.hpp"
 
 namespace irs::codecs::text::fsst_plus {
 
-class CompressionState : public SortedCompressionState {
+template<typename Rows>
+class CompressionState final : public SortedCompressionState<Rows> {
+  using Base = SortedCompressionState<Rows>;
+
  public:
   static constexpr ByteCodec kCodec = ByteCodec::FsstPlus;
 
-  CompressionState(const duckdb::LogicalType& type, DedupScratch& dedup,
-                   StringTuning& tuning, uint32_t target)
-    : SortedCompressionState{kCodec, type, dedup, tuning, target} {}
+  CompressionState(ColumnDataCheckpointData& data, DedupScratch& dedup)
+    : Base{kCodec, data.type, dedup, data.tuning.strings,
+           data.params.segment_target},
+      _codec{data.Get<fsst::SharedEncoder<fsst::Fsst8, kCodec>>().encoder} {}
 
   void FinalizeCompress();
 
  private:
+  using Base::_frames;
+  using Base::_out;
+  using Base::_rows;
+  using Base::_target;
+  using Base::Written;
+
   struct Node {
     uint32_t left;
     uint32_t right;
@@ -58,7 +70,7 @@ class CompressionState : public SortedCompressionState {
 
   void Cleave(uint32_t first_entry);
 
-  fsst::Encoder<fsst::Fsst8> _codec;
+  fsst::Encoder<fsst::Fsst8>& _codec;
   std::string _encoded;
   std::string _prefixes;
   std::string _side;

@@ -35,6 +35,7 @@
 #include <vector>
 
 #include "iresearch/formats/column/codecs/bytes/byte_codec.hpp"
+#include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/dictionary_cache.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -209,6 +210,15 @@ class Encoder {
   std::vector<const unsigned char*> _in_ptrs;
   std::vector<size_t> _out_lengths;
   std::vector<unsigned char*> _out_ptrs;
+};
+
+template<typename Impl, ByteCodec kLeaf = Impl::kCodec>
+struct SharedEncoder final : State {
+  static constexpr StateId kId = FsstEncoderState(kLeaf);
+
+  explicit SharedEncoder(ColumnDataCheckpointData&) {}
+
+  Encoder<Impl> encoder;
 };
 
 template<typename Impl>

@@ -33,9 +33,11 @@
 #include <vector>
 
 #include "iresearch/formats/column/codecs/bytes/byte_codec.hpp"
+#include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
 #include "iresearch/formats/column/codecs/text/segment_rows.hpp"
 #include "iresearch/formats/column/codecs/text/string_tuning.hpp"
+#include "iresearch/formats/column/codecs/tuning.hpp"
 
 namespace irs::codecs::text::onpair {
 
@@ -175,17 +177,26 @@ class Codec {
   uint8_t _bits = 8;
 };
 
-class CompressionState : public SortedCompressionState {
+template<typename Rows>
+class CompressionState final : public SortedCompressionState<Rows> {
+  using Base = SortedCompressionState<Rows>;
+
  public:
   static constexpr ByteCodec kCodec = ByteCodec::OnPair;
 
-  CompressionState(const duckdb::LogicalType& type, DedupScratch& dedup,
-                   StringTuning& tuning, uint32_t target)
-    : SortedCompressionState{kCodec, type, dedup, tuning, target} {}
+  CompressionState(ColumnDataCheckpointData& data, DedupScratch& dedup)
+    : Base{kCodec, data.type, dedup, data.tuning.strings,
+           data.params.segment_target} {}
 
   void FinalizeCompress();
 
  private:
+  using Base::_frames;
+  using Base::_out;
+  using Base::_rows;
+  using Base::_target;
+  using Base::Written;
+
   void Pack(std::span<const duckdb::string_t> entries,
             std::span<const uint32_t> lengths, size_t first, size_t end,
             uint64_t region);

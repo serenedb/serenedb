@@ -142,15 +142,40 @@ enum class StateId : uint8_t {
   TextFsstPlus,
   TextOnPair,
   TextFsst12,
+  TextDictLz4,
+  TextDictZstd,
+  TextDictFsst,
+  TextDictZxc,
+  TextDictFsstPlus,
+  TextDictOnPair,
+  TextDictFsst12,
+  FsstEncoder,
+  FsstPlusEncoder,
+  Fsst12Encoder,
 };
 
-constexpr StateId TextState(ByteCodec leaf) noexcept {
-  return static_cast<StateId>(std::to_underlying(StateId::TextLz4) +
-                              std::to_underlying(leaf) -
-                              std::to_underlying(ByteCodec::Lz4));
+constexpr StateId TextState(Shape shape, ByteCodec leaf) noexcept {
+  return static_cast<StateId>(
+    std::to_underlying(shape == Shape::Dictionary ? StateId::TextDictLz4
+                                                  : StateId::TextLz4) +
+    std::to_underlying(leaf) - std::to_underlying(ByteCodec::Lz4));
 }
 
-static_assert(TextState(ByteCodec::Fsst12) == StateId::TextFsst12);
+static_assert(TextState(Shape::Plain, ByteCodec::Fsst12) ==
+              StateId::TextFsst12);
+static_assert(TextState(Shape::Dictionary, ByteCodec::Fsst12) ==
+              StateId::TextDictFsst12);
+
+constexpr StateId FsstEncoderState(ByteCodec leaf) noexcept {
+  switch (leaf) {
+    case ByteCodec::FsstPlus:
+      return StateId::FsstPlusEncoder;
+    case ByteCodec::Fsst12:
+      return StateId::Fsst12Encoder;
+    default:
+      return StateId::FsstEncoder;
+  }
+}
 
 struct State {
   virtual ~State() = default;

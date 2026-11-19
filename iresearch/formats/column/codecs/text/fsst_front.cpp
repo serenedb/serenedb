@@ -634,28 +634,59 @@ Sections start at 8-byte boundaries.
 
 namespace {
 
-template<Shape kShape>
-constexpr const CompressionFunction* kFsstContenders[] = {
-  &text::kTextFunction<text::fsst_front::CompressionState<text::fsst::Fsst8>,
-                       kShape>,
+template<typename Impl>
+using PlainFsst = text::fsst_front::CompressionState<Impl, text::PlainRows>;
+
+template<typename Impl>
+using DictFsst = text::fsst_front::CompressionState<Impl, text::DictionaryRows>;
+
+double AnalyzeFsst(ColumnDataCheckpointData& data, double bound) {
+  return text::AnalyzeTrial<PlainFsst<text::fsst::Fsst8>>(data, bound);
+}
+
+bool CompressFsst(ColumnDataCheckpointData& data) {
+  return text::CompressContested<PlainFsst<text::fsst::Fsst8>>(data);
+}
+
+double AnalyzeDictFsst(ColumnDataCheckpointData& data, double bound) {
+  return text::AnalyzeTrial<DictFsst<text::fsst::Fsst8>>(data, bound);
+}
+
+bool CompressDictFsst(ColumnDataCheckpointData& data) {
+  return text::CompressContested<DictFsst<text::fsst::Fsst8>>(data);
+}
+
+constexpr CompressionFunction kFsst{
+  .analyze = AnalyzeFsst,
+  .compress = CompressFsst,
+  .codec = CodecType::Fsst,
 };
+
+constexpr CompressionFunction kDictFsst{
+  .analyze = AnalyzeDictFsst,
+  .compress = CompressDictFsst,
+  .codec = CodecType::DictFsst,
+};
+
+constexpr const CompressionFunction* kFsstContenders[] = {&kFsst};
+constexpr const CompressionFunction* kDictFsstContenders[] = {&kDictFsst};
 
 }  // namespace
 
 CompressionFunctions FsstTextContenders(Shape shape) {
   if (shape == Shape::Plain) {
-    return kFsstContenders<Shape::Plain>;
+    return kFsstContenders;
   }
-  return kFsstContenders<Shape::Dictionary>;
+  return kDictFsstContenders;
 }
 
 constinit const Codec kFsstFrontCodec =
   text::StringCodec<text::PlainScan<text::fsst_front::Scan<text::fsst::Fsst8>>,
-                    text::fsst_front::CompressionState<text::fsst::Fsst8>>();
+                    PlainFsst<text::fsst::Fsst8>>();
 
 constinit const Codec kFsst12FrontCodec =
   text::StringCodec<text::PlainScan<text::fsst_front::Scan<text::fsst::Fsst12>>,
-                    text::fsst_front::CompressionState<text::fsst::Fsst12>>();
+                    PlainFsst<text::fsst::Fsst12>>();
 
 /*
 Data layout per DictionaryScan segment, one block of one column; a text
@@ -716,10 +747,10 @@ Sections start at 8-byte boundaries.
 
 constinit const Codec kDictFsstFrontCodec = text::StringCodec<
   text::DictionaryScan<text::fsst_front::Scan<text::fsst::Fsst8>>,
-  text::fsst_front::CompressionState<text::fsst::Fsst8>>();
+  DictFsst<text::fsst::Fsst8>>();
 
 constinit const Codec kDictFsst12FrontCodec = text::StringCodec<
   text::DictionaryScan<text::fsst_front::Scan<text::fsst::Fsst12>>,
-  text::fsst_front::CompressionState<text::fsst::Fsst12>>();
+  DictFsst<text::fsst::Fsst12>>();
 
 }  // namespace irs::codecs

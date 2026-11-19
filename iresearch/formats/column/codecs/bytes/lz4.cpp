@@ -30,52 +30,10 @@
 #include <span>
 #include <utility>
 
-#include "iresearch/formats/column/codecs/registry.hpp"
-#include "iresearch/formats/column/codecs/text/blob.hpp"
-#include "iresearch/formats/column/codecs/text/dictionary_scan.tpp"
-#include "iresearch/formats/column/codecs/text/lz4.hpp"
-#include "iresearch/formats/column/codecs/text/plain_scan.tpp"
-#include "iresearch/formats/column/codecs/text/text_encoder.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
-/*
-lz4 frames in Data (string_layout.hpp draws the segments): frame 0 holds up
-to 32 KiB and is the dictionary of the later frames of up to 16 KiB; or the
-same frames, each compressed with the segment's trained dictionary; or
-64 KiB frames without a dictionary.
-*/
-
 namespace irs::codecs {
-namespace {
-
-template<Shape kShape, FrameDictionary kFrames>
-constexpr auto& kFramed =
-  text::kFramedTextFunction<text::blob::Lz4CompressionState, kShape, kFrames>;
-
-template<Shape kShape>
-constexpr const CompressionFunction* kContenders[] = {
-  &kFramed<kShape, FrameDictionary::FirstFrame>,
-  &kFramed<kShape, FrameDictionary::Local>,
-  &kFramed<kShape, FrameDictionary::None>,
-};
-
-}  // namespace
-
-CompressionFunctions Lz4TextContenders(Shape shape) {
-  if (shape == Shape::Plain) {
-    return kContenders<Shape::Plain>;
-  }
-  return kContenders<Shape::Dictionary>;
-}
-
-constinit const Codec kLz4Codec =
-  text::StringCodec<text::PlainScan<text::blob::Lz4Scan>,
-                    text::blob::Lz4CompressionState>();
-
-constinit const Codec kDictLz4Codec =
-  text::StringCodec<text::DictionaryScan<text::blob::Lz4Scan>,
-                    text::blob::Lz4CompressionState>();
 
 size_t Lz4::Bound(size_t raw_size) noexcept {
   SDB_ASSERT(raw_size <= static_cast<size_t>(LZ4_MAX_INPUT_SIZE));

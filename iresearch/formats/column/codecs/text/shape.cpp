@@ -53,33 +53,46 @@ bool Contested(const CodecSet& disabled, Shape shape) noexcept {
          !disabled.test(std::to_underlying(CodecOf(shape, ByteCodec::Lz4)));
 }
 
+template<typename Rows>
+auto& Lz4Of(ColumnDataCheckpointData& data) {
+  return data.Get<TextEncoder<blob::Lz4CompressionState<Rows>>>();
+}
+
+template<typename Rows>
+double Slack(ColumnDataCheckpointData& data) {
+  return Lz4Of<Rows>(data).Find(Fast(Rows::kShape)) ? 0.0 : kShapeSlack;
+}
+
 Shape MeasuredShape(ColumnDataCheckpointData& data, Values& values) {
-  auto& lz4 = data.Get<TextEncoder<blob::Lz4CompressionState>>();
   if (values.trial.rows == 0) {
-    lz4.Trial(Fast(values.Repeats() ? Shape::Dictionary : Shape::Plain),
-              values);
+    if (values.Repeats()) {
+      Lz4Of<DictionaryRows>(data).Trial(Fast(Shape::Dictionary), values);
+    } else {
+      Lz4Of<PlainRows>(data).Trial(Fast(Shape::Plain), values);
+    }
   }
   const bool repeats = values.TrialRepeats();
-  const auto slack = [&](Shape shape) {
-    return lz4.Find(Fast(shape)) ? 0.0 : kShapeSlack;
-  };
-  auto dictionary =
-    static_cast<double>(lz4.Size(Fast(Shape::Dictionary), values));
+  auto dictionary = static_cast<double>(
+    Lz4Of<DictionaryRows>(data).Size(Fast(Shape::Dictionary), values));
   const auto& trial = values.trial;
   const auto least =
     static_cast<double>(kHeaderSize + Packed(trial.rows, trial.max_len) +
                         trial.input / kLz4MaxRatio);
-  if (!PlainWins(repeats, dictionary * (1.0 + slack(Shape::Dictionary)),
+  if (!PlainWins(repeats, dictionary * (1.0 + Slack<DictionaryRows>(data)),
                  least)) {
     return Shape::Dictionary;
   }
-  auto plain = static_cast<double>(lz4.Size(Fast(Shape::Plain), values));
-  const auto margin = std::max(slack(Shape::Dictionary), slack(Shape::Plain));
+  auto plain = static_cast<double>(
+    Lz4Of<PlainRows>(data).Size(Fast(Shape::Plain), values));
+  const auto margin =
+    std::max(Slack<DictionaryRows>(data), Slack<PlainRows>(data));
   if (PlainWins(repeats, dictionary * (1.0 - margin), plain) !=
       PlainWins(repeats, dictionary * (1.0 + margin), plain)) {
-    dictionary =
-      static_cast<double>(lz4.Trial(Fast(Shape::Dictionary), values).Size());
-    plain = static_cast<double>(lz4.Trial(Fast(Shape::Plain), values).Size());
+    dictionary = static_cast<double>(Lz4Of<DictionaryRows>(data)
+                                       .Trial(Fast(Shape::Dictionary), values)
+                                       .Size());
+    plain = static_cast<double>(
+      Lz4Of<PlainRows>(data).Trial(Fast(Shape::Plain), values).Size());
   }
   return PlainWins(repeats, dictionary, plain) ? Shape::Plain
                                                : Shape::Dictionary;

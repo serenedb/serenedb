@@ -62,76 +62,49 @@ inline Config NamedConfig(Shape shape, ByteCodec leaf,
   };
 }
 
-template<typename Codec>
+template<typename Compression>
 class TextEncoder final : public State {
  public:
-  static constexpr StateId kId = TextState(Codec::kCodec);
-  static constexpr ByteCodec kLeaf = Codec::kCodec;
+  static constexpr ByteCodec kLeaf = Compression::kCodec;
+  static constexpr Shape kShape = Compression::kShape;
+  static constexpr StateId kId = TextState(kShape, kLeaf);
 
   explicit TextEncoder(ColumnDataCheckpointData& data)
     : _params{data.params},
       _tuning{data.tuning.strings},
       _buffers{data.ctx->BufferManager()},
-      _codec{Make(data.type, _dedup, _tuning, data.params.segment_target)},
+      _codec{data, _dedup},
       _segment{_buffers} {}
 
-  double Analyze(ColumnDataCheckpointData& data, double bound, Shape shape) {
+  Compression& Codec() noexcept { return _codec; }
+
+  bool Contests(ColumnDataCheckpointData& data) {
     auto& values = data.Get<Values>();
     if (values.Rows() == 0) {
-      return kNoScore;
+      return false;
     }
-    const auto tier = _params.tier;
-    auto& config = _config[std::to_underlying(shape)];
-    config = {.shape = shape, .leaf = kLeaf};
+    _config = {.shape = kShape, .leaf = kLeaf};
     if (values.trial.rows == 0 && _tuning.config &&
-        _tuning.config->shape == shape && _tuning.config->leaf == kLeaf) {
+        _tuning.config->shape == kShape && _tuning.config->leaf == kLeaf) {
       Trial(*_tuning.config, values);
     }
-    if (ContestedShape(data) != shape) {
-      return kNoScore;
-    }
-    const auto price =
-      kLeaf == ByteCodec::Lz4
-        ? data.preferences->text_lz4_price[std::to_underlying(shape)]
-        : 1.0;
-    const auto score = [&](uint64_t bytes) {
-      return Score(values, price, bytes);
-    };
-    uint64_t bytes = 0;
-    if constexpr (requires {
-                    _codec.Measure(*this, values, shape, tier, bound, score);
-                  }) {
-      const auto measured =
-        _codec.Measure(*this, values, shape, tier, bound, score);
-      config = measured.config;
-      bytes = measured.bytes;
-    } else {
-      bytes = Trial(config, values).Size();
-    }
-    return score(bytes);
+    return ContestedShape(data) == kShape;
   }
 
-  double Analyze(ColumnDataCheckpointData& data, double bound, Shape shape,
-                 FrameDictionary frames) {
-    auto& measured = _measured[std::to_underlying(shape)];
-    if (!measured.done) {
-      measured = {.done = true, .score = Analyze(data, bound, shape)};
-    }
-    return _config[std::to_underlying(shape)].layout == frames ? measured.score
-                                                               : kNoScore;
-  }
+  void Contest(const Config& config) noexcept { _config = config; }
 
-  bool Compress(ColumnDataCheckpointData& data, Shape shape,
-                FrameDictionary frames) {
-    const auto* config = data.Get<Values>().trial.rows != 0
-                           ? &_config[std::to_underlying(shape)]
-                           : (_tuning.config ? &*_tuning.config : nullptr);
-    return config && config->layout == frames && Compress(data, shape);
+  const Config& Contested() const noexcept { return _config; }
+
+  const Config* Chosen(const Values& values) const noexcept {
+    if (values.trial.rows != 0) {
+      return &_config;
+    }
+    return _tuning.config ? &*_tuning.config : nullptr;
   }
 
   void CompressAs(ColumnDataCheckpointData& data, const Config& config) {
     const auto target = _params.segment_target;
-    if (config.shape == Shape::Plain) {
+    if constexpr (kShape == Shape::Plain) {
       SealRows(_codec, config, data, target, _segment);
     } else {
       CompressRows(_codec, config, data.Get<Values>(), 0, target, _segment,
@@ -139,12 +112,12 @@ class TextEncoder final : public State {
     }
   }
 
-  bool Compress(ColumnDataCheckpointData& data, Shape shape) {
+  bool Compress(ColumnDataCheckpointData& data) {
     const auto target = _params.segment_target;
     auto& values = data.Get<Values>();
     Config config;
     if (values.trial.rows != 0) {
-      config = _config[std::to_underlying(shape)];
+      config = _config;
       _tuning.config = config;
       _tuning.contested_on = values.Statistics();
     } else {
@@ -153,14 +126,14 @@ class TextEncoder final : public State {
         return false;
       }
       config = *_tuning.config;
-      SDB_ASSERT(config.shape == shape && config.leaf == kLeaf);
+      SDB_ASSERT(config.shape == kShape && config.leaf == kLeaf);
     }
     auto& first = Trial(config, values);
     if (first.Size() > PlainStorageBytes(first)) {
       return false;
     }
     const auto rest = first.begin + first.rows;
-    data.FlushSegment(CodecOf(shape, kLeaf), std::move(*first.stats),
+    data.FlushSegment(CodecOf(kShape, kLeaf), std::move(*first.stats),
                       first.rows, first.bytes.View());
     CompressRows(_codec, config, values, rest, target, first, data);
     return true;
@@ -201,17 +174,7 @@ class TextEncoder final : public State {
   }
 
  private:
-  static Codec Make(const duckdb::LogicalType& type, DedupScratch& dedup,
-                    StringTuning& tuning, uint32_t target) {
-    if constexpr (Sorted(Codec::kCodec)) {
-      return Codec{type, dedup, tuning, target};
-    } else {
-      return Codec{type, dedup, tuning};
-    }
-  }
-
-  template<typename State>
-  IRS_NO_INLINE static void CutRows(State& state, const Config& config,
+  IRS_NO_INLINE static void CutRows(Compression& state, const Config& config,
                                     const Values& values, uint64_t begin,
                                     uint32_t target, Segment& seg) {
     const std::span<const uint32_t> codes = values.codes;
@@ -226,8 +189,7 @@ class TextEncoder final : public State {
     state.FinalizeCompress();
   }
 
-  template<typename State>
-  IRS_NO_INLINE static void SealRows(State& state, const Config& config,
+  IRS_NO_INLINE static void SealRows(Compression& state, const Config& config,
                                      ColumnDataCheckpointData& data,
                                      uint32_t target, Segment& seg) {
     const auto seal = [&] {
@@ -254,8 +216,8 @@ class TextEncoder final : public State {
     }
   }
 
-  template<typename State>
-  IRS_NO_INLINE static void CompressRows(State& state, const Config& config,
+  IRS_NO_INLINE static void CompressRows(Compression& state,
+                                         const Config& config,
                                          const Values& values, uint64_t begin,
                                          uint32_t target, Segment& seg,
                                          ColumnDataCheckpointData& data) {
@@ -266,8 +228,8 @@ class TextEncoder final : public State {
     }
   }
 
-  template<typename State>
-  IRS_NO_INLINE static void CompressRange(State& state, const Config& config,
+  IRS_NO_INLINE static void CompressRange(Compression& state,
+                                          const Config& config,
                                           const Values& values, uint64_t begin,
                                           uint64_t end, Segment& seg) {
     const std::span<const uint32_t> codes = values.codes;
@@ -279,58 +241,42 @@ class TextEncoder final : public State {
     state.FinalizeCompress();
   }
 
-  struct Measured {
-    bool done = false;
-    double score = kNoScore;
-  };
-
   const ColCodecParams& _params;
   StringTuning& _tuning;
   duckdb::BufferManager& _buffers;
   DedupScratch _dedup;
-  Codec _codec;
+  Compression _codec;
   Segment _segment;
   std::vector<std::unique_ptr<Segment>> _trials;
-  Config _config[kTextShapeCount];
-  Measured _measured[kTextShapeCount];
+  Config _config;
 };
 
-template<typename Codec, Shape kShape>
-inline constexpr CompressionFunction kTextFunction{
-  .analyze =
-    [](ColumnDataCheckpointData& data, double bound) {
-      return data.Get<TextEncoder<Codec>>().Analyze(data, bound, kShape);
-    },
-  .compress =
-    [](ColumnDataCheckpointData& data) {
-      return data.Get<TextEncoder<Codec>>().Compress(data, kShape);
-    },
-  .codec = CodecOf(kShape, Codec::kCodec),
-};
+template<typename Compression>
+double AnalyzeTrial(ColumnDataCheckpointData& data, double) {
+  auto& encoder = data.Get<TextEncoder<Compression>>();
+  if (!encoder.Contests(data)) {
+    return kNoScore;
+  }
+  auto& values = data.Get<Values>();
+  return Score(values, 1.0, encoder.Trial(encoder.Contested(), values).Size());
+}
 
-template<typename Codec, Shape kShape>
+template<typename Compression>
+bool CompressContested(ColumnDataCheckpointData& data) {
+  return data.Get<TextEncoder<Compression>>().Compress(data);
+}
+
+template<typename Compression>
+bool CompressNamed(ColumnDataCheckpointData& data) {
+  data.Get<TextEncoder<Compression>>().CompressAs(
+    data, NamedConfig(Compression::kShape, Compression::kCodec, data.params));
+  return true;
+}
+
+template<typename Compression>
 inline constexpr CompressionFunction kNamedTextFunction{
-  .compress =
-    [](ColumnDataCheckpointData& data) {
-      data.Get<TextEncoder<Codec>>().CompressAs(
-        data, NamedConfig(kShape, Codec::kCodec, data.params));
-      return true;
-    },
-  .codec = CodecOf(kShape, Codec::kCodec),
-};
-
-template<typename Codec, Shape kShape, FrameDictionary kFrames>
-inline constexpr CompressionFunction kFramedTextFunction{
-  .analyze =
-    [](ColumnDataCheckpointData& data, double bound) {
-      return data.Get<TextEncoder<Codec>>().Analyze(data, bound, kShape,
-                                                    kFrames);
-    },
-  .compress =
-    [](ColumnDataCheckpointData& data) {
-      return data.Get<TextEncoder<Codec>>().Compress(data, kShape, kFrames);
-    },
-  .codec = CodecOf(kShape, Codec::kCodec),
+  .compress = CompressNamed<Compression>,
+  .codec = CodecOf(Compression::kShape, Compression::kCodec),
 };
 
 }  // namespace irs::codecs::text

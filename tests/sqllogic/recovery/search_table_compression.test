@@ -579,7 +579,7 @@ GROUP BY column_name ORDER BY column_name;
 column_name	compression
 body	LZ4
 host	LZ4
-url	DICT_FSST
+url	DICT_LZ4
 
 query
 SELECT count(*) AS hits FROM obj_auto WHERE url = 'https://example.org/section/42/page?id=0';
@@ -631,7 +631,7 @@ statement ok
 VACUUM (FLUSH_TABLE) bg_merge;
 
 query ?? retry 300 backoff 100ms
-SELECT bool_or(compression = 'DICT_FSST') AS objective
+SELECT bool_or(compression = 'DICT_LZ4' AND count > 20000) AS objective
 FROM pragma_storage_info('bg_merge') WHERE column_name = 'url' AND segment_type <> 'VALIDITY';
 ----
 objective

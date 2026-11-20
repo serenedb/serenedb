@@ -175,11 +175,10 @@ Root::ptr MakeTokenPhrasePruned(const TokenPhraseQuery& query,
                                     .stats = record.stats,
                                     .fetcher = &ctx.fetcher,
                                     .boost = query.Boost()};
-  return Resolve(*irs::detail::DocOf(field),
-                                   [&]<typename Input> -> Root::ptr {
-                                     return MakeShape<PrunedTokenPhrase, Input>(
-                                       ctx, query, std::move(approx), args);
-                                   });
+  return Resolve(*irs::detail::DocOf(field), [&]<typename Input> -> Root::ptr {
+    return MakeShape<PrunedTokenPhrase, Input>(ctx, query, std::move(approx),
+                                               args);
+  });
 }
 
 }  // namespace irs::top

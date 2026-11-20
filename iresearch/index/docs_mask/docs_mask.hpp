@@ -308,9 +308,8 @@ decltype(auto) ResolveDocsMask(const DocumentMask* mask, Make&& make,
                                bool single) {
   const auto* live = mask == nullptr || mask->Empty() ? nullptr : mask;
   return ResolveKey<DocsMaskAxis, P>(
-    DocsMaskOf{mask, single}, [&]<MaskKind K> -> decltype(auto) {
-      return make(DocsMask<K>{live});
-    });
+    DocsMaskOf{mask, single},
+    [&]<MaskKind K> -> decltype(auto) { return make(DocsMask<K>{live}); });
 }
 
 template<typename P = NoPins, typename Make>

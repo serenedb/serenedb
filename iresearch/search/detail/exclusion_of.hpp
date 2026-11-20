@@ -369,8 +369,8 @@ Result BuildExcludeFills(std::span<const Term> metas,
 
 inline constexpr auto kNoMaskFold = [](BitsetStorage&) noexcept {};
 
-template<typename Result, typename Input, bool kConcrete,
-         typename P = NoPins, typename Term, typename Fold, typename Make>
+template<typename Result, typename Input, bool kConcrete, typename P = NoPins,
+         typename Term, typename Fold, typename Make>
 Result BuildRestExcludes(ExcludeUse use, std::span<const Term> metas,
                          std::span<const QueryBuilder::ptr> filters,
                          std::span<const QueryBuilder::ptr> costed,
@@ -438,8 +438,8 @@ Result PeelMask(std::span<const Term> metas,
     });
 }
 
-template<typename Result, typename Input, typename P = NoPins,
-         typename Term, typename Make>
+template<typename Result, typename Input, typename P = NoPins, typename Term,
+         typename Make>
 Result BuildExcludesOf(ExcludeUse use, std::span<const Term> metas,
                        std::span<const QueryBuilder::ptr> filters,
                        const TermReader* field, const SubReader& segment,
@@ -455,8 +455,8 @@ Result BuildExcludesOf(ExcludeUse use, std::span<const Term> metas,
     make);
 }
 
-template<typename Result, typename Input, typename P = NoPins,
-         typename Term, typename Make>
+template<typename Result, typename Input, typename P = NoPins, typename Term,
+         typename Make>
 Result BuildExcludeSideOf(std::span<const Term> metas,
                           std::span<const QueryBuilder::ptr> filters,
                           const TermReader* field, const SubReader& segment,
@@ -466,8 +466,8 @@ Result BuildExcludeSideOf(std::span<const Term> metas,
     std::forward<Make>(make));
 }
 
-template<typename Result, typename Input, typename P = NoPins,
-         typename Term, typename Make>
+template<typename Result, typename Input, typename P = NoPins, typename Term,
+         typename Make>
 Result BuildExcludeSideOf(std::span<const Term> metas,
                           std::span<const QueryBuilder::ptr> filters,
                           const TermReader* field, const SubReader& segment,
@@ -477,8 +477,7 @@ Result BuildExcludeSideOf(std::span<const Term> metas,
     std::forward<Make>(make));
 }
 
-template<typename Result, typename P = NoPins, typename Term,
-         typename Make>
+template<typename Result, typename P = NoPins, typename Term, typename Make>
 Result BuildExcludeSide(std::span<const Term> terms,
                         std::span<const QueryBuilder::ptr> filters,
                         const TermReader* field, const SubReader& segment,
@@ -488,19 +487,18 @@ Result BuildExcludeSide(std::span<const Term> terms,
     std::forward<Make>(make));
 }
 
-template<typename Result, typename P = NoPins, typename Term,
-         typename Make>
+template<typename Result, typename P = NoPins, typename Term, typename Make>
 Result BuildExcludeSide(std::span<const Term> terms,
                         std::span<const QueryBuilder::ptr> filters,
                         const TermReader* field, const SubReader& segment,
                         uint64_t candidates, Make&& make) {
   return BuildExcludeSide<Result, P, Term>(terms, filters, field, segment,
-                                                candidates, candidates,
-                                                std::forward<Make>(make));
+                                           candidates, candidates,
+                                           std::forward<Make>(make));
 }
 
-template<typename Result, typename Input, typename P = NoPins,
-         typename Term, typename Make>
+template<typename Result, typename Input, typename P = NoPins, typename Term,
+         typename Make>
 Result BuildBlockExcludesOf(std::span<const Term> metas,
                             std::span<const QueryBuilder::ptr> filters,
                             const TermReader* field, const SubReader& segment,
@@ -510,8 +508,7 @@ Result BuildBlockExcludesOf(std::span<const Term> metas,
     std::forward<Make>(make));
 }
 
-template<typename Result, typename P = NoPins, typename Term,
-         typename Make>
+template<typename Result, typename P = NoPins, typename Term, typename Make>
 Result BuildBlockExcludes(std::span<const Term> terms,
                           std::span<const QueryBuilder::ptr> filters,
                           const TermReader* field, const SubReader& segment,
@@ -547,8 +544,8 @@ Result BuildExcludeBitset(std::span<const Term> metas,
     BuildBitset<P>(buckets, doc, static_cast<doc_id_t>(segment.docs_count())));
 }
 
-template<typename Result, bool kConcrete, typename P = NoPins,
-         typename Term, typename Fold, typename Make>
+template<typename Result, bool kConcrete, typename P = NoPins, typename Term,
+         typename Fold, typename Make>
 Result BuildRestWindowExcludes(std::span<const Term> metas,
                                std::span<const QueryBuilder::ptr> filters,
                                std::span<const QueryBuilder::ptr> costed,
@@ -587,8 +584,7 @@ Result BuildRestWindowExcludes(std::span<const Term> metas,
     });
 }
 
-template<typename Result, typename P = NoPins, typename Term,
-         typename Make>
+template<typename Result, typename P = NoPins, typename Term, typename Make>
 Result BuildWindowExcludes(std::span<const Term> metas,
                            std::span<const QueryBuilder::ptr> filters,
                            const TermReader* field, const SubReader& segment,

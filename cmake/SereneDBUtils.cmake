@@ -111,11 +111,7 @@ function(_sdb_instantiate_axis binding out_placeholder out_values)
             "sdb_instantiate(${arg_DIR}): an axis binding is PLACEHOLDER=AXIS, got ${binding}"
         )
     endif()
-    get_property(
-        values
-        GLOBAL
-        PROPERTY SDB_INSTANTIATION_AXIS_${CMAKE_MATCH_2}
-    )
+    get_property(values GLOBAL PROPERTY SDB_INSTANTIATION_AXIS_${CMAKE_MATCH_2})
     if(NOT values)
         message(
             FATAL_ERROR
@@ -126,7 +122,14 @@ function(_sdb_instantiate_axis binding out_placeholder out_values)
     set(${out_values} "${values}" PARENT_SCOPE)
 endfunction()
 
-function(_sdb_instantiate_bind placeholder value text out_name out_text)
+function(
+    _sdb_instantiate_bind
+    placeholder
+    value
+    text
+    out_name
+    out_text
+)
     string(REGEX MATCHALL "[^ ]+" tokens "${value}")
     list(POP_FRONT tokens name)
     string(REPLACE "@${placeholder}@" "${name}" text "${text}")
@@ -138,8 +141,7 @@ function(_sdb_instantiate_bind placeholder value text out_name out_text)
             )
         endif()
         string(
-            REPLACE
-            "@${placeholder}.${CMAKE_MATCH_1}@"
+            REPLACE "@${placeholder}.${CMAKE_MATCH_1}@"
             "${CMAKE_MATCH_2}"
             text
             "${text}"
@@ -181,8 +183,7 @@ function(_sdb_instantiate_emit name call includes)
         endif()
     endforeach()
     string(
-        APPEND
-        content
+        APPEND content
         "\nnamespace ${arg_NAMESPACE} {\n\n${call}\n}  // namespace ${arg_NAMESPACE}\n"
     )
     set(file ${CMAKE_CURRENT_BINARY_DIR}/instantiate/${arg_DIR}/${name}.cpp)
@@ -216,14 +217,18 @@ endfunction()
 
 function(sdb_instantiate target)
     cmake_parse_arguments(
-        PARSE_ARGV
-        1
+        PARSE_ARGV 1
         arg
         ""
         "DIR;PREFIX;NAMESPACE;CALL"
         "INCLUDE;AXES;EXPAND;SKIP"
     )
-    if(arg_UNPARSED_ARGUMENTS OR NOT arg_DIR OR NOT arg_NAMESPACE OR NOT arg_CALL)
+    if(
+        arg_UNPARSED_ARGUMENTS
+        OR NOT arg_DIR
+        OR NOT arg_NAMESPACE
+        OR NOT arg_CALL
+    )
         message(
             FATAL_ERROR
             "sdb_instantiate(${target}): DIR, NAMESPACE and CALL are required, got ${ARGN}"

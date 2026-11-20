@@ -69,8 +69,7 @@ auto ScoreOf(const Scoring& scoring, score_t absorbed) noexcept {
   }
 }
 
-template<typename Result, typename P = NoPins, typename Scoring,
-         typename Make>
+template<typename Result, typename P = NoPins, typename Scoring, typename Make>
 Result ResolveCountLeaves(const IndexInput& doc, const Scoring& scoring,
                           Make&& make) {
   if constexpr (kScores<Scoring>) {
@@ -261,8 +260,8 @@ fill::Node::ptr ScoredTermOf(const PostingClause& term,
     });
 }
 
-template<typename Result, typename P = NoPins, typename Term,
-         typename Scoring, typename Make>
+template<typename Result, typename P = NoPins, typename Term, typename Scoring,
+         typename Make>
 Result BuildWindowSet(std::span<const Term> terms, const TermReader* field,
                       const IndexInput* doc, std::vector<FillNode::ptr>& rest,
                       const Scoring& scoring, Make&& make) {
@@ -291,9 +290,9 @@ Result BuildWindowSet(std::span<const Term> terms, const TermReader* field,
     std::vector<FillNode::ptr> leaves;
     leaves.reserve(terms.size() + rest.size());
     for (size_t i = 0; i != terms.size(); ++i) {
-      auto node =
-        ScoredTermOf<P>(ClauseOf(terms[i], field, scoring.scorer, scoring.boost),
-                     scoring.recipe, scoring.merge);
+      auto node = ScoredTermOf<P>(
+        ClauseOf(terms[i], field, scoring.scorer, scoring.boost),
+        scoring.recipe, scoring.merge);
       if (!node) {
         return {};
       }

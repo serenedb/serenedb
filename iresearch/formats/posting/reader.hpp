@@ -267,17 +267,16 @@ inline TermPostings::ptr PostingsReader::Postings(
   return IteratorImpl(
     field_features, required_features,
     [&]<typename IteratorTraits, typename FieldTraits> -> TermPostings::ptr {
-      return Resolve(
-        *_doc_in, [&]<typename InputType> -> TermPostings::ptr {
-          using Stream = PostingsStream<IteratorTraits, FieldTraits, InputType>;
-          if (!reuse) {
-            reuse = memory::make_managed<Stream>();
-          }
-          SDB_ASSERT(dynamic_cast<Stream*>(reuse.get()) != nullptr);
-          static_cast<Stream&>(*reuse).Prepare(meta, *_doc_in, _pos_in.get(),
-                                               _pay_in.get(), has_score_bounds);
-          return std::move(reuse);
-        });
+      return Resolve(*_doc_in, [&]<typename InputType> -> TermPostings::ptr {
+        using Stream = PostingsStream<IteratorTraits, FieldTraits, InputType>;
+        if (!reuse) {
+          reuse = memory::make_managed<Stream>();
+        }
+        SDB_ASSERT(dynamic_cast<Stream*>(reuse.get()) != nullptr);
+        static_cast<Stream&>(*reuse).Prepare(meta, *_doc_in, _pos_in.get(),
+                                             _pay_in.get(), has_score_bounds);
+        return std::move(reuse);
+      });
     });
 }
 

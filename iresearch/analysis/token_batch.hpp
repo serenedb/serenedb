@@ -59,7 +59,7 @@ enum class TokenLayout : uint8_t {
 struct LayoutAxis : EnumAxis<TokenLayout> {
   template<typename Visitor>
   IRS_FORCE_INLINE static constexpr decltype(auto) Dispatch(TokenLayout layout,
-                                                           Visitor&& visit) {
+                                                            Visitor&& visit) {
     switch (layout) {
       case TokenLayout::Terms:
         return visit.template operator()<TokenLayout::Terms>();

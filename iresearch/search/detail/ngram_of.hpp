@@ -45,19 +45,20 @@ Result Build(NGramKind<M>, const NGramSimilarityQuery& query, uint64_t, F&& f) {
   return Resolve<BoundsAxis>(h.bounds, [&]<bool Bounds> {
     return Resolve(*h.doc, [&]<typename Input> {
       using Leaf = PostingPos<Input, Bounds>;
-      return Resolve<ArityAxis<kSlotArity, kSlotFloor>>(metas.size(), [&]<size_t N> {
-        if constexpr (M == NGramMatch::All) {
-          return f.template operator()<NGramAllSlots<Leaf, N, Scored>>(
-            metas, *h.doc, h.Layout(), *h.pos, h.pay, query.TotalTerms());
-        } else {
-          return f.template operator()<NGramSlots<Leaf, Scored, false, N>>(
-            metas.size(),
-            [&](Leaf& leaf, size_t i) {
-              leaf.Prepare(metas[i], *h.doc, h.Layout(), *h.pos, h.pay);
-            },
-            static_cast<uint32_t>(query.MinMatchCount()), query.TotalTerms());
-        }
-      });
+      return Resolve<ArityAxis<kSlotArity, kSlotFloor>>(
+        metas.size(), [&]<size_t N> {
+          if constexpr (M == NGramMatch::All) {
+            return f.template operator()<NGramAllSlots<Leaf, N, Scored>>(
+              metas, *h.doc, h.Layout(), *h.pos, h.pay, query.TotalTerms());
+          } else {
+            return f.template operator()<NGramSlots<Leaf, Scored, false, N>>(
+              metas.size(),
+              [&](Leaf& leaf, size_t i) {
+                leaf.Prepare(metas[i], *h.doc, h.Layout(), *h.pos, h.pay);
+              },
+              static_cast<uint32_t>(query.MinMatchCount()), query.TotalTerms());
+          }
+        });
     });
   });
 }

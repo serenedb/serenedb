@@ -26,8 +26,8 @@
 #include "iresearch/search/scorers/score_inputs.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/search/scorers/scorer_options.hpp"
-#include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/dispatch.hpp"
+#include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/shared.hpp"
 
 namespace irs {

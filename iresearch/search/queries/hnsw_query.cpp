@@ -142,24 +142,22 @@ void WithHnswDist(const HnswData& data, std::span<const float> query,
     fn(dist);
     return;
   }
-  Resolve(
-    EffectiveQuantMetric(metric), [&]<VectorMetric M>() {
-      if constexpr (M == VectorMetric::L2Sqr ||
-                    M == VectorMetric::InnerProduct) {
-        if (panorama) {
-          HnswPanoramaDist<M> dist{.base = data.vectors.data(),
-                                   .d = d,
-                                   .q = panorama->rotated.data(),
-                                   .tails = panorama->tails.data(),
-                                   .norms = data.norms.data()};
-          fn(dist);
-          return;
-        }
+  Resolve(EffectiveQuantMetric(metric), [&]<VectorMetric M>() {
+    if constexpr (M == VectorMetric::L2Sqr || M == VectorMetric::InnerProduct) {
+      if (panorama) {
+        HnswPanoramaDist<M> dist{.base = data.vectors.data(),
+                                 .d = d,
+                                 .q = panorama->rotated.data(),
+                                 .tails = panorama->tails.data(),
+                                 .norms = data.norms.data()};
+        fn(dist);
+        return;
       }
-      HnswQueryDist<M> dist{
-        .base = data.vectors.data(), .d = d, .q = query.data()};
-      fn(dist);
-    });
+    }
+    HnswQueryDist<M> dist{
+      .base = data.vectors.data(), .d = d, .q = query.data()};
+    fn(dist);
+  });
 }
 
 std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,

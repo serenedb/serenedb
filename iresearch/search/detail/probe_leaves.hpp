@@ -86,8 +86,8 @@ bool ConcreteClauses(std::span<const Term> terms,
   return doc != nullptr;
 }
 
-template<typename Result, typename P = NoPins, typename Term,
-         typename Scoring, typename ProbeClause, typename Make>
+template<typename Result, typename P = NoPins, typename Term, typename Scoring,
+         typename ProbeClause, typename Make>
 Result BuildProbeLeaves(std::span<const Term> terms,
                         std::span<const QueryBuilder::ptr> filters,
                         const TermReader* field, const SubReader& segment,

@@ -121,8 +121,7 @@ inline constexpr VectorMetric EffectiveQuantMetric(
   return metric == VectorMetric::Cosine ? VectorMetric::InnerProduct : metric;
 }
 
-struct QuantMetricAxis
-  : Axis<VectorMetric::L2Sqr, VectorMetric::InnerProduct> {
+struct QuantMetricAxis : Axis<VectorMetric::L2Sqr, VectorMetric::InnerProduct> {
   static constexpr VectorMetric Of(VectorMetric metric) noexcept {
     return EffectiveQuantMetric(metric);
   }

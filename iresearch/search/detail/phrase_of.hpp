@@ -90,7 +90,7 @@ auto BuildPhrase(const FixedPhraseQuery& query, F&& f) {
       if constexpr (!Offs) {
         if (terms.repeats.empty()) {
           return Resolve<ArityAxis<kSlotArity, kSlotFloor>>(terms.metas.size(),
-                                                      build);
+                                                            build);
         }
       }
       return build.template operator()<0>();

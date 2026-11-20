@@ -104,10 +104,9 @@ struct Type<analysis::UnicodeAnalyzerImpl<S>> : Type<analysis::TextTokenizer> {
 namespace irs::analysis {
 
 Tokenizer::ptr TextTokenizer::Make(Options options) {
-  return Resolve(options.separate,
-                 [&]<Options::Separate S> -> Tokenizer::ptr {
-                   return std::make_unique<UnicodeAnalyzerImpl<S>>(options);
-                 });
+  return Resolve(options.separate, [&]<Options::Separate S> -> Tokenizer::ptr {
+    return std::make_unique<UnicodeAnalyzerImpl<S>>(options);
+  });
 }
 
 }  // namespace irs::analysis

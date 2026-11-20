@@ -91,10 +91,10 @@ IRS_FORCE_INLINE constexpr decltype(auto) ResolveValues(Visitor&& visit,
         rest...);
     }
   };
-  return Resolve<ValuesAxis<T>>(
-    value, [&]<T V> IRS_FORCE_INLINE -> decltype(auto) {
-      return with(std::integral_constant<T, V>{});
-    });
+  return Resolve<ValuesAxis<T>>(value,
+                                [&]<T V> IRS_FORCE_INLINE -> decltype(auto) {
+                                  return with(std::integral_constant<T, V>{});
+                                });
 }
 
 template<typename Impl, typename Fill, typename... Lead>

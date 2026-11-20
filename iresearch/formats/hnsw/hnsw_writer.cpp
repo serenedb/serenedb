@@ -50,9 +50,9 @@
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/bytes_output.hpp"
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/log.hpp"
-#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/topic.hpp"
 
@@ -1415,12 +1415,11 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
   }
   const float* base = raw_build ? build_vectors.data() : _vectors.data();
   yaclib::Future<> built;
-  Resolve(
-    EffectiveQuantMetric(_info.metric), [&]<VectorMetric M>() {
-      HnswRawDistFactory<M> factory{.base = base, .d = _d};
-      built = BuildDispatch(_graph, factory, valid, m, ef, kHnswBuildSeed,
-                            donor, env, HnswOriginals{}, _d);
-    });
+  Resolve(EffectiveQuantMetric(_info.metric), [&]<VectorMetric M>() {
+    HnswRawDistFactory<M> factory{.base = base, .d = _d};
+    built = BuildDispatch(_graph, factory, valid, m, ef, kHnswBuildSeed, donor,
+                          env, HnswOriginals{}, _d);
+  });
   SDB_ASSERT(built.Valid());
   co_await std::move(built);
   co_return {};

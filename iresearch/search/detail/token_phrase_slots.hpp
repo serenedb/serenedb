@@ -71,10 +71,10 @@ inline std::unique_ptr<AnchorFreqs> MakeAnchorFreqs(
   }
   const auto& field = query.Reader();
   return Resolve(*DocOf(field),
-                      [&]<typename Input> -> std::unique_ptr<AnchorFreqs> {
-                        return std::make_unique<AnchorFreqsOf<Input>>(
-                          *meta, query.Segment(), field);
-                      });
+                 [&]<typename Input> -> std::unique_ptr<AnchorFreqs> {
+                   return std::make_unique<AnchorFreqsOf<Input>>(
+                     *meta, query.Segment(), field);
+                 });
 }
 
 class PhraseRows {

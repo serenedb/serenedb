@@ -34,8 +34,8 @@
 #include "iresearch/search/detail/vector_filter_util.hpp"
 #include "iresearch/search/queries/vector_similarity_query.hpp"
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/dispatch.hpp"
+#include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
@@ -60,8 +60,8 @@ uint32_t IvfSearchBeam(uint32_t nprobe, uint32_t min_fanout,
 
 VectorDistanceFn ResolveScoringDistance(VectorMetric metric) {
   VectorDistanceFn fn = nullptr;
-  Resolve(
-    metric, [&]<VectorMetric Metric>() { fn = &ComputeDistance<Metric>; });
+  Resolve(metric,
+          [&]<VectorMetric Metric>() { fn = &ComputeDistance<Metric>; });
   return fn;
 }
 

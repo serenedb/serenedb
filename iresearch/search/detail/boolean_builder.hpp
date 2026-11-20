@@ -71,9 +71,9 @@ template<typename Family, typename P = NoPins, typename Ctx>
 Result<Family> MakeBitset(const BooleanGroups& groups, const SubReader& segment,
                           const Ctx& ctx) {
   const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
-  return MakeBooleanBitset<Result<Family>, P>(groups, segment,
-                                           Family::BitsetTable(ctx),
-                                           Family::BitsetSpan(ctx, docs_count));
+  return MakeBooleanBitset<Result<Family>, P>(
+    groups, segment, Family::BitsetTable(ctx),
+    Family::BitsetSpan(ctx, docs_count));
 }
 
 template<typename Family, typename Excludes, typename P = NoPins,
@@ -202,8 +202,8 @@ TermScoring ScoringOf(const SubReader& segment, const Ctx& ctx,
           .merge = merge};
 }
 
-template<typename Family, typename P = NoPins, typename Term,
-         typename Scoring, typename Ctx>
+template<typename Family, typename P = NoPins, typename Term, typename Scoring,
+         typename Ctx>
 Result<Family> MakeWindowDisjunction(std::span<const Term> terms,
                                      const TermReader* field,
                                      const IndexInput* doc,
@@ -230,8 +230,7 @@ inline constexpr uint64_t kScoredScanValues = 2;
 inline constexpr uint64_t kWindowPasses = 2;
 inline constexpr uint64_t kMaskWordsPerLeadDoc = 2;
 
-template<typename Family, typename P = NoPins, typename Scoring,
-         typename Ctx>
+template<typename Family, typename P = NoPins, typename Scoring, typename Ctx>
 Result<Family> MakeScoredLeadWindow(std::span<const PostingClause> must,
                                     std::span<const PostingClause> should,
                                     const SubReader& segment,
@@ -319,8 +318,7 @@ Result<Family> MakeWindowConjunction(std::span<const PostingClause> terms,
     ctx);
 }
 
-template<typename Result, typename P = NoPins, typename Term,
-         typename Make>
+template<typename Result, typename P = NoPins, typename Term, typename Make>
 Result BuildNegationWindow(std::span<const Term> terms,
                            std::span<const QueryBuilder::ptr> filters,
                            const SubReader& segment, Make&& make) {
@@ -444,8 +442,7 @@ Result<Family> MakeWindowExclusion(
     });
 }
 
-template<typename Family, typename P = NoPins, typename Scoring,
-         typename Ctx>
+template<typename Family, typename P = NoPins, typename Scoring, typename Ctx>
 Result<Family> MakeWindowThreshold(std::span<const PostingClause> terms,
                                    const IndexInput* doc,
                                    std::vector<FillNode::ptr>& rest,
@@ -497,8 +494,8 @@ Result<Family> MakeWindowThreshold(std::span<const PostingClause> terms,
     });
 }
 
-template<typename Family, typename P = NoPins, typename Scoring,
-         typename Make, typename Ctx>
+template<typename Family, typename P = NoPins, typename Scoring, typename Make,
+         typename Ctx>
 Result<Family> BuildSparseConjunction(
   std::span<const PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters, const SubReader& segment,
@@ -519,8 +516,8 @@ Result<Family> BuildSparseConjunction(
   }
 }
 
-template<typename Family, typename P = NoPins, typename Scoring,
-         typename Score, typename Ctx>
+template<typename Family, typename P = NoPins, typename Scoring, typename Score,
+         typename Ctx>
 Result<Family> MakeSparseConjunction(std::span<const PostingClause> terms,
                                      std::span<const QueryBuilder::ptr> filters,
                                      const SubReader& segment, const Ctx& ctx,
@@ -537,8 +534,7 @@ Result<Family> MakeSparseConjunction(std::span<const PostingClause> terms,
     });
 }
 
-template<typename Family, typename P = NoPins, typename Score,
-         typename Ctx>
+template<typename Family, typename P = NoPins, typename Score, typename Ctx>
 Result<Family> MakeSparseExclusionOf(
   LeadNode::ptr include, std::span<const PostingClause> exclude_terms,
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
@@ -649,8 +645,8 @@ Result<Family> MakeSparseExclusion(
   });
 }
 
-template<typename Family, typename P = NoPins, typename Term,
-         typename Scoring, typename Ctx>
+template<typename Family, typename P = NoPins, typename Term, typename Scoring,
+         typename Ctx>
 Result<Family> MakeDisjunction(std::span<const Term> terms,
                                std::span<const QueryBuilder::ptr> filters,
                                const TermReader* field,
@@ -672,12 +668,11 @@ Result<Family> MakeDisjunction(std::span<const Term> terms,
       return folded;
     }
   }
-  return MakeWindowDisjunction<Family, P>(terms, field, doc, rest, scoring,
-                                               ctx, absorbed);
+  return MakeWindowDisjunction<Family, P>(terms, field, doc, rest, scoring, ctx,
+                                          absorbed);
 }
 
-template<typename Family, typename P = NoPins, typename Scoring,
-         typename Ctx>
+template<typename Family, typename P = NoPins, typename Scoring, typename Ctx>
 Result<Family> MakeThreshold(std::span<const PostingClause> terms,
                              std::span<const QueryBuilder::ptr> filters,
                              const SubReader& segment, uint32_t min_match,
@@ -692,8 +687,8 @@ Result<Family> MakeThreshold(std::span<const PostingClause> terms,
                     })) {
     return {};
   }
-  return MakeWindowThreshold<Family, P>(terms, doc, rest, min_match,
-                                             scoring, ctx, absorbed);
+  return MakeWindowThreshold<Family, P>(terms, doc, rest, min_match, scoring,
+                                        ctx, absorbed);
 }
 
 }  // namespace irs::detail::builder

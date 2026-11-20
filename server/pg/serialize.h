@@ -28,6 +28,7 @@
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/vector/unified_vector_format.hpp>
+#include <duckdb/formats/csv_encoder.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
 #include <limits>
@@ -109,6 +110,7 @@ struct SerializationContext {
   char csv_quote = '"';
   char csv_escape = '"';
   bool csv_single_column = false;
+  duckdb::CsvSpecials csv_specials;
   std::string csv_scratch;
   // Null means UTC (the default) and keeps the cheap ToString + "+00" path.
   duckdb::unique_ptr<duckdb::TimeZone> time_zone;

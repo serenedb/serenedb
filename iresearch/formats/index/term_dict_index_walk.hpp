@@ -362,6 +362,22 @@ class BlockFilter {
     return _live;
   }
 
+  template<typename StateAt>
+  bool LiveAt(uint32_t block, StateAt&& state_at) {
+    if (_need && !_index->Holds(block, *_need)) {
+      return false;
+    }
+    if (!_trie || _index->Small()) {
+      return true;
+    }
+    if (block != _last) {
+      _last = block;
+      const auto link = _index->Link(block);
+      _live = ExploreBlock(block, link, state_at(link.depth));
+    }
+    return _live;
+  }
+
   uint32_t Next(uint32_t block, uint32_t end) {
     while (block < end && !Live(block)) {
       ++block;
@@ -381,35 +397,39 @@ class BlockFilter {
   bool Compute(uint32_t block) {
     const auto& index = *_index;
     const size_t k = index.KeyPrefix().size();
-    const bool last = block + 1 == index.Blocks();
     const bytes_view lower =
       block == 0 ? index.MinKey() : index.Separator(block);
-    const bytes_view upper = last ? index.MaxKey() : index.Separator(block + 1);
-    const size_t shared = CommonPrefixLength(lower, upper);
-    const auto prefix = lower.substr(k, shared - k);
+    const bytes_view upper =
+      block + 1 == index.Blocks() ? index.MaxKey() : index.Separator(block + 1);
+    const auto prefix = lower.substr(k, CommonPrefixLength(lower, upper) - k);
     if (_states.empty()) {
       _states.assign(1, _a->Start());
-      _nodes.assign(1, PrefixTrie::kRoot);
     }
     const size_t reuse = CommonPrefixLength(bytes_view{_path}, prefix);
     _path.resize(reuse);
     _states.resize(reuse + 1);
-    _nodes.resize(reuse + 1);
     for (size_t at = reuse; at != prefix.size(); ++at) {
       const auto next = _a->Step(_states.back(), prefix[at]);
       if (!A::Alive(next)) {
         return false;
       }
-      _nodes.push_back(ChildNode(_trie, _nodes.back(), prefix[at]));
       _states.push_back(next);
       _path.push_back(prefix[at]);
     }
-    const uint32_t node = _nodes.back();
-    if (!Gated(_trie, node)) {
-      return true;
-    }
-    return Explore(node, _states.back(), lower.substr(shared),
-                   upper.substr(shared), true, true, last);
+    const auto link = index.Link(block);
+    return ExploreBlock(block, link, _states[link.depth]);
+  }
+
+  bool ExploreBlock(uint32_t block, DictIndex::BlockLink link,
+                    const State& state) const {
+    const auto& index = *_index;
+    const size_t skip = index.KeyPrefix().size() + link.depth;
+    const bool last = block + 1 == index.Blocks();
+    const bytes_view lower =
+      block == 0 ? index.MinKey() : index.Separator(block);
+    const bytes_view upper = last ? index.MaxKey() : index.Separator(block + 1);
+    return Explore(link.node, state, lower.substr(skip), upper.substr(skip),
+                   true, true, last);
   }
 
   bool Explore(uint32_t node, const State& state, bytes_view lo, bytes_view hi,
@@ -458,7 +478,6 @@ class BlockFilter {
   bool _live = false;
   bstring _path;
   containers::SmallVector<State, 32> _states;
-  containers::SmallVector<uint32_t, 32> _nodes;
 };
 
 }  // namespace irs::term_dict

@@ -90,6 +90,14 @@ class DictIndex {
 
   const PrefixTrie& Trie() const noexcept { return _trie; }
 
+  struct BlockLink {
+    uint32_t node;
+    uint32_t depth;
+  };
+  BlockLink Link(uint32_t block) const noexcept {
+    return {.node = _link_nodes[block], .depth = _link_depths[block]};
+  }
+
   bool Masked() const noexcept { return !_masks.empty(); }
   bool Holds(uint32_t block, const ByteSet& need) const noexcept {
     const auto& mask = _masks[block];
@@ -113,6 +121,8 @@ class DictIndex {
   bstring _max_key;
   Root _root;
   PrefixTrie _trie;
+  std::vector<uint32_t> _link_nodes;
+  std::vector<uint8_t> _link_depths;
   std::vector<BlockMask> _masks;
   BlockMask _held{~uint64_t{0}, ~uint64_t{0}};
   uint32_t _prefix_size;

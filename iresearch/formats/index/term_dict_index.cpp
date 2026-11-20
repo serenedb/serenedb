@@ -22,7 +22,9 @@
 
 #include <absl/base/internal/endian.h>
 
+#include <algorithm>
 #include <string_view>
+#include <vector>
 
 #include "iresearch/formats/index/term_dict_format.hpp"
 
@@ -61,6 +63,35 @@ DictIndex::DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks,
   }
   _trie = PrefixTrie{ViewCast<byte_type>(std::string_view{head.block_prefixes}),
                      head.id};
+  _link_nodes.reserve(blocks);
+  _link_depths.reserve(blocks);
+  std::vector<uint32_t> path{PrefixTrie::kRoot};
+  bstring previous;
+  for (uint32_t block = 0; block != blocks; ++block) {
+    const bytes_view lower =
+      block == 0 ? bytes_view{_min_key} : _root.Separator(block);
+    const bytes_view upper =
+      block + 1 == blocks ? bytes_view{_max_key} : _root.Separator(block + 1);
+    const auto term = lower.substr(
+      prefix.size(), CommonPrefixLength(lower, upper) - prefix.size());
+    const size_t keep =
+      std::min(CommonPrefixLength(bytes_view{previous}, term), path.size() - 1);
+    path.resize(keep + 1);
+    for (size_t at = keep; at != term.size(); ++at) {
+      const uint32_t node = path.back();
+      if (_trie.Open(node) || _trie.Leaf(node)) {
+        break;
+      }
+      const uint32_t child = _trie.ChildOf(node, term[at]);
+      if (child == kNoNode) {
+        break;
+      }
+      path.push_back(child);
+    }
+    previous.assign(term);
+    _link_nodes.push_back(path.back());
+    _link_depths.push_back(static_cast<uint8_t>(path.size() - 1));
+  }
   const auto& masks = head.block_masks;
   if (masks.empty()) {
     return;
@@ -82,6 +113,7 @@ DictIndex::DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks,
 
 size_t DictIndex::MemoryBytes() const noexcept {
   return (Small() ? 0 : _root.MemoryBytes() + _trie.MemoryBytes()) +
+         _link_nodes.capacity() * sizeof(uint32_t) + _link_depths.capacity() +
          _masks.capacity() * sizeof(BlockMask);
 }
 

@@ -4703,14 +4703,46 @@ size_t AssertTrieNode(const irs::term_dict::PrefixTrie& trie, uint32_t node,
     EXPECT_LT(kTrieSpan, count);
   }
   size_t below = 0;
-  for (auto child = trie.FirstChild(node); child != trie.EndChild(node);
-       ++child) {
-    path.push_back(trie.Label(child));
-    below += AssertTrieNode(trie, child, path, terms);
+  for (auto child = trie.NextChild(node, 0); child.label != kNoLabel;
+       child = trie.NextChild(node, child.label + 1)) {
+    EXPECT_EQ(child.node,
+              trie.ChildOf(node, static_cast<irs::byte_type>(child.label)));
+    path.push_back(static_cast<irs::byte_type>(child.label));
+    below += AssertTrieNode(trie, child.node, path, terms);
     path.pop_back();
   }
   EXPECT_EQ(continuations, below);
   return count;
+}
+
+void AssertLinks(const Prefixed& dict) {
+  const auto& index = *dict.index;
+  const auto& trie = index.Trie();
+  const auto separators = irs::term_dict::Slice(dict.separators);
+  const uint32_t blocks = index.Blocks();
+  for (uint32_t block = 0; block != blocks; ++block) {
+    SCOPED_TRACE(testing::Message("block ") << block);
+    const irs::bytes_view lower =
+      block == 0 ? irs::bytes_view{dict.terms.front()}
+                 : irs::term_dict::SeparatorAt(separators, block - 1);
+    const irs::bytes_view upper =
+      block + 1 == blocks ? irs::bytes_view{dict.terms.back()}
+                          : irs::term_dict::SeparatorAt(separators, block);
+    const auto prefix = lower.substr(0, irs::CommonPrefixLength(lower, upper));
+    uint32_t node = irs::term_dict::PrefixTrie::kRoot;
+    uint32_t depth = 0;
+    while (depth != prefix.size() && !trie.Open(node) && !trie.Leaf(node)) {
+      const auto child = trie.ChildOf(node, prefix[depth]);
+      if (child == irs::term_dict::kNoNode) {
+        break;
+      }
+      node = child;
+      ++depth;
+    }
+    const auto link = index.Link(block);
+    ASSERT_EQ(node, link.node);
+    ASSERT_EQ(depth, link.depth);
+  }
 }
 
 template<typename... Acceptors>
@@ -4724,6 +4756,7 @@ void AssertTrie(std::vector<irs::bstring> terms, size_t block_size,
     ASSERT_EQ(dict->terms.size(),
               AssertTrieNode(trie, irs::term_dict::PrefixTrie::kRoot, path,
                              dict->terms));
+    AssertLinks(*dict);
   }
   const auto check = [&](const auto& a) {
     const auto live = LiveBlocksOf(*dict, a);

@@ -307,7 +307,9 @@ class AcceptorIterator : public SeekTermIterator {
         block = index.FindFrom(block + 1, _targets.View());
         continue;
       }
-      if (_blocks.Live(block)) {
+      if (_blocks.LiveAt(block, [&](size_t at) -> const State& {
+            return _targets.StateAt(_k + at);
+          })) {
         if (_cursor.BlockIndex() != block) {
           _cursor.Load(block);
         }

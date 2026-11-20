@@ -20,6 +20,7 @@
 
 #include "iresearch/formats/index/term_dict_prefixes.hpp"
 
+#include <bit>
 #include <iterator>
 #include <utility>
 
@@ -42,35 +43,90 @@ PrefixTrie::PrefixTrie(bytes_view encoded, field_id id) {
     corrupted();
   }
   const uint32_t nodes = *count;
-  _labels.resize(nodes);
-  _flags.resize(nodes);
-  _first.resize(size_t{nodes} + 1);
+  std::vector<byte_type> flags(nodes);
+  std::vector<byte_type> labels(nodes);
+  std::vector<uint32_t> depths(nodes);
+  std::vector<uint32_t> first(size_t{nodes} + 1);
   uint32_t next = 1;
   for (uint32_t node = 0; node != nodes; ++node) {
     if (p == end || (node != 0 && node >= next)) {
       corrupted();
     }
-    const byte_type flags = *p++;
+    const byte_type flag = *p++;
     const auto children = ReadVarint<uint32_t>(p, end);
-    if (!children || (flags & ~(kTrieTerminal | kTrieOpen)) != 0 ||
+    if (!children || (flag & ~(kTrieTerminal | kTrieOpen)) != 0 ||
         *children > static_cast<size_t>(end - p) || *children > nodes - next ||
-        ((flags & kTrieOpen) != 0 && *children != 0)) {
+        ((flag & kTrieOpen) != 0 && *children != 0)) {
       corrupted();
     }
-    _flags[node] = flags;
-    _first[node] = next;
+    flags[node] = flag;
+    first[node] = next;
     for (uint32_t i = 0; i != *children; ++i) {
       if (i != 0 && p[i] <= p[i - 1]) {
         corrupted();
       }
-      _labels[next + i] = p[i];
+      labels[next + i] = p[i];
+      depths[next + i] = depths[node] + 1;
     }
     p += *children;
     next += *children;
   }
-  _first[nodes] = next;
+  first[nodes] = next;
   if (next != nodes || p != end) {
     corrupted();
+  }
+
+  uint32_t dense = 0;
+  while (dense != nodes) {
+    uint32_t level_end = dense;
+    uint64_t children = 0;
+    while (level_end != nodes && depths[level_end] == depths[dense]) {
+      children += first[level_end + 1] - first[level_end];
+      ++level_end;
+    }
+    if (children < uint64_t{kDenseFanout} * (level_end - dense)) {
+      break;
+    }
+    dense = level_end;
+  }
+
+  _nodes = nodes;
+  _dense = dense;
+  _dense_words.assign(4 * size_t{dense}, 0);
+  _dense_first.resize(dense);
+  for (uint32_t node = 0; node != dense; ++node) {
+    _dense_first[node] = first[node];
+    auto* words = _dense_words.data() + 4 * size_t{node};
+    for (auto child = first[node]; child != first[node + 1]; ++child) {
+      words[labels[child] / 64] |= uint64_t{1} << (labels[child] % 64);
+    }
+  }
+  const uint32_t sparse = nodes - dense;
+  _labels.assign(labels.data() + dense, sparse);
+  _inner.assign((size_t{sparse} + 63) / 64, 0);
+  _inner_rank.resize(_inner.size());
+  for (uint32_t at = 0; at != sparse; ++at) {
+    const uint32_t node = dense + at;
+    if (first[node + 1] != first[node]) {
+      _inner[at / 64] |= uint64_t{1} << (at % 64);
+      _first.push_back(first[node]);
+    }
+  }
+  _first.push_back(nodes);
+  uint32_t rank = 0;
+  for (size_t word = 0; word != _inner.size(); ++word) {
+    _inner_rank[word] = rank;
+    rank += static_cast<uint32_t>(std::popcount(_inner[word]));
+  }
+  _terminal.assign((size_t{nodes} + 63) / 64, 0);
+  _open.assign(_terminal.size(), 0);
+  for (uint32_t node = 0; node != nodes; ++node) {
+    if ((flags[node] & kTrieTerminal) != 0) {
+      _terminal[node / 64] |= uint64_t{1} << (node % 64);
+    }
+    if ((flags[node] & kTrieOpen) != 0) {
+      _open[node / 64] |= uint64_t{1} << (node % 64);
+    }
   }
 }
 

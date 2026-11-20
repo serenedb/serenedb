@@ -1,0 +1,117 @@
+statement ok
+DROP TABLE IF EXISTS ett_t;
+
+
+statement ok
+DROP TABLE IF EXISTS ett_log;
+
+
+onlyif postgres
+statement ok
+DROP FUNCTION IF EXISTS ett_note();
+
+
+statement ok
+DROP ROLE IF EXISTS ett_writer;
+
+
+statement ok
+CREATE ROLE ett_writer LOGIN PASSWORD 'ett_pw';
+
+
+statement ok
+CREATE TABLE ett_t (a integer, secret text);
+
+
+statement ok
+CREATE TABLE ett_log (a integer);
+
+
+onlyif postgres
+statement ok
+CREATE FUNCTION ett_note() RETURNS trigger LANGUAGE plpgsql AS 'BEGIN INSERT INTO ett_log SELECT a FROM new_rows; RETURN NULL; END';
+
+
+onlyif postgres
+statement ok
+CREATE TRIGGER ett_trg AFTER INSERT ON ett_t REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION ett_note();
+
+
+skipif postgres
+statement ok
+CREATE TRIGGER ett_trg AFTER INSERT ON ett_t REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT INSERT INTO ett_log SELECT a FROM new_rows;
+
+
+statement ok
+GRANT INSERT ON ett_t TO ett_writer;
+
+
+statement ok
+GRANT INSERT ON ett_log TO ett_writer;
+
+
+connection c_ett user=ett_writer password=ett_pw
+statement ok
+INSERT INTO ett_t VALUES (1, 'one');
+
+
+connection c_ett user=ett_writer password=ett_pw
+statement error
+INSERT INTO ett_t VALUES (2, 'two') RETURNING a;
+----
+db error: ERROR: permission denied for table ett_t
+
+
+statement ok
+GRANT SELECT (a) ON ett_t TO ett_writer;
+
+
+connection c_ett user=ett_writer password=ett_pw
+query
+INSERT INTO ett_t VALUES (3, 'three') RETURNING a;
+----
+a
+3
+
+
+connection c_ett user=ett_writer password=ett_pw
+statement error
+INSERT INTO ett_t VALUES (4, 'four') RETURNING secret;
+----
+db error: ERROR: permission denied for table ett_t
+
+
+statement ok
+REVOKE INSERT ON ett_log FROM ett_writer;
+
+
+connection c_ett user=ett_writer password=ett_pw
+statement error
+INSERT INTO ett_t VALUES (5, 'five');
+----
+db error: ERROR: permission denied for table ett_log
+
+
+query
+SELECT a FROM ett_log ORDER BY a;
+----
+a
+1
+3
+
+
+statement ok
+DROP TABLE ett_t;
+
+
+statement ok
+DROP TABLE ett_log;
+
+
+onlyif postgres
+statement ok
+DROP FUNCTION ett_note();
+
+
+statement ok
+DROP ROLE ett_writer;

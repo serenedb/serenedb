@@ -27,6 +27,7 @@
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_versions.hpp>
+#include <duckdb/catalog/permissions.hpp>
 #include <duckdb/catalog/schema_info.hpp>
 #include <duckdb/catalog/standard_entry.hpp>
 #include <duckdb/main/database_manager.hpp>
@@ -38,6 +39,7 @@
 #include "catalog/base_catalog.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
+#include "catalog/entry/role.h"
 #include "catalog/entry/search_table.h"
 #include "catalog/transaction.h"
 
@@ -123,13 +125,13 @@ void ForEachSubject(
       }
     }
   }
+  duckdb::ForEachRoleReference(
+    version, [&](duckdb::idx_t role) { subject(role, nullptr); });
   if (version.type == duckdb::CatalogType::ROLE_ENTRY) {
-    return;
-  }
-  subject(version.permissions.owner, nullptr);
-  for (const auto& item : version.permissions.acl) {
-    subject(item.grantee, nullptr);
-    subject(item.grantor, nullptr);
+    for (const auto& membership : version.Cast<RoleCatalogEntry>().MemberOf()) {
+      subject(membership.role, nullptr);
+      subject(membership.grantor, nullptr);
+    }
   }
 }
 
@@ -480,11 +482,7 @@ void OidIndex::CheckCreated(const duckdb::SnapshotView& view,
       roles.CheckLive(view, role, false);
     }
   };
-  check_role(version.permissions.owner);
-  for (const auto& item : version.permissions.acl) {
-    check_role(item.grantee);
-    check_role(item.grantor);
-  }
+  duckdb::ForEachRoleReference(version, check_role);
 }
 
 void OidIndex::CheckLive(const duckdb::SnapshotView& view, duckdb::idx_t oid,
@@ -802,9 +800,8 @@ duckdb::CatalogEntry& EntrySet::Push(
   if (head->type == duckdb::CatalogType::SCHEMA_ENTRY) {
     head->Cast<duckdb::SchemaCatalogEntry>().GetSchemaInfo()->versions->Install(
       *head);
-  } else if (head->type == duckdb::CatalogType::TABLE_ENTRY) {
-    _oids.Alias(head->Cast<duckdb::TableCatalogEntry>().GetSubObjectOids(),
-                head->oid);
+  } else if (const auto oids = head->GetSubObjectOids(); !oids.empty()) {
+    _oids.Alias(oids, head->oid);
   }
   PushChange(transaction, Change{.set = this,
                                  .version = head.get(),

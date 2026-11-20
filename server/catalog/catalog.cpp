@@ -59,7 +59,6 @@
 #include <utility>
 #include <vector>
 
-#include "auth/enforce.h"
 #include "catalog/cluster.h"
 #include "catalog/entry/database.h"
 #include "catalog/entry/inverted_index.h"
@@ -265,7 +264,8 @@ void SereneDBCatalog::Place(duckdb::CatalogTransaction transaction,
     }
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED), ERR_MSG(refusal));
   }
-  auth::RequireTablespaceCreate(context, *tablespace);
+  duckdb::RequireEntryPrivilege(context.CurrentRole(), *tablespace,
+                                duckdb::AclMode::Create);
   info.dependencies.AddDependency(*tablespace);
   info.tablespace_oid = tablespace->oid;
 }
@@ -282,7 +282,9 @@ void SereneDBCatalog::Initialize(bool) {
   info.SetQualifiedName(
     duckdb::QualifiedName({*GetDefaultSchema()}, duckdb::Identifier()));
   info.on_conflict = duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
-  info.permissions = pg::SchemaPermissions();
+  info.permissions = GetAttached().IsTemporary()
+                       ? pg::SchemaPermissions()
+                       : pg::PublicSchemaPermissions();
   info.oid = GetAttached().IsTemporary()
                ? duckdb::DatabaseManager::Get(GetDatabase()).NextOid()
                : pg::kPgPublicSchema;
@@ -315,15 +317,27 @@ void SereneDBCatalog::OnDetach(duckdb::ClientContext& context) {
   BaseCatalog::OnDetach(context);
 }
 
-EntrySet& SereneDBCatalog::Set(duckdb::CatalogType type) {
+EntrySet* SereneDBCatalog::FindSet(duckdb::CatalogType type) {
   switch (type) {
     case duckdb::CatalogType::FOREIGN_SERVER_ENTRY:
-      return _servers;
+      return &_servers;
     case duckdb::CatalogType::SUBSCRIPTION_ENTRY:
-      return _subscriptions;
+      return &_subscriptions;
     default:
-      return BaseCatalog::Set(type);
+      return BaseCatalog::FindSet(type);
   }
+}
+
+void SereneDBCatalog::ScanEntries(
+  duckdb::CatalogTransaction transaction,
+  absl::FunctionRef<void(duckdb::CatalogEntry&)> callback) {
+  Set(duckdb::CatalogType::SCHEMA_ENTRY)
+    .Scan(transaction, [&](duckdb::CatalogEntry& schema) {
+      callback(schema);
+      schema.Cast<Schema>().ScanTree(transaction, callback);
+    });
+  _servers.Scan(transaction, callback);
+  _subscriptions.Scan(transaction, callback);
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateForeignServer(
@@ -344,20 +358,6 @@ void SereneDBCatalog::DropForeignServer(duckdb::CatalogTransaction transaction,
            info);
 }
 
-duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSubscription(
-  duckdb::CatalogTransaction transaction,
-  duckdb::CreateSubscriptionInfo& info) {
-  return AddTo(_subscriptions, transaction,
-               duckdb::make_uniq<SubscriptionCatalogEntry>(*this, info),
-               info.on_conflict);
-}
-
-void SereneDBCatalog::DropSubscription(duckdb::CatalogTransaction transaction,
-                                       duckdb::DropInfo& info) {
-  DropFrom(_subscriptions, transaction, duckdb::CatalogType::SUBSCRIPTION_ENTRY,
-           info);
-}
-
 void SereneDBCatalog::ReplayCreate(
   duckdb::ClientContext& context, duckdb::unique_ptr<duckdb::CreateInfo> info) {
   switch (info->type) {
@@ -368,8 +368,10 @@ void SereneDBCatalog::ReplayCreate(
             info->on_conflict);
       return;
     case duckdb::CatalogType::SUBSCRIPTION_ENTRY:
-      CreateSubscription(GetCatalogTransaction(context),
-                         info->Cast<duckdb::CreateSubscriptionInfo>());
+      AddTo(_subscriptions, GetCatalogTransaction(context),
+            duckdb::make_uniq<SubscriptionCatalogEntry>(
+              *this, info->Cast<duckdb::CreateSubscriptionInfo>()),
+            info->on_conflict);
       return;
     default:
       BaseCatalog::ReplayCreate(context, std::move(info));
@@ -403,30 +405,30 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSchema(
 
 void SereneDBCatalog::Alter(duckdb::CatalogTransaction transaction,
                             duckdb::AlterInfo& info) {
+  if (info.type == duckdb::AlterType::REASSIGN_OWNED) {
+    ReassignOwned(transaction, info.Cast<duckdb::ReassignOwnedInfo>());
+    return;
+  }
+  if (info.type == duckdb::AlterType::DROP_OWNED) {
+    DropOwned(transaction, info.Cast<duckdb::DropOwnedInfo>());
+    return;
+  }
   if (const auto new_name = info.GetNewName();
       new_name && info.GetCatalogType() == duckdb::CatalogType::SCHEMA_ENTRY &&
       IsReservedSchemaName(*new_name)) {
     ThrowReservedSchemaName(*new_name);
   }
-  if (const auto type = info.GetCatalogType();
-      type == duckdb::CatalogType::FOREIGN_SERVER_ENTRY ||
-      type == duckdb::CatalogType::SUBSCRIPTION_ENTRY) {
-    DeclareModified(transaction, *this,
-                    duckdb::DatabaseModificationType::ALTER_TABLE);
-    const auto& name = info.GetQualifiedName().Name();
-    auto& set = Set(type);
-    auto entry = set.Get(transaction, name);
-    if (!entry) {
-      if (info.if_not_found == duckdb::OnEntryNotFound::RETURN_NULL) {
-        return;
-      }
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                      ERR_MSG(type == duckdb::CatalogType::SUBSCRIPTION_ENTRY
-                                ? "subscription \""
-                                : "server \"",
-                              name.GetIdentifierName(), "\" does not exist"));
+  if (info.GetCatalogType() == duckdb::CatalogType::SUBSCRIPTION_ENTRY) {
+    AlterSubscription(transaction, info);
+    return;
+  }
+  if (info.GetCatalogType() == duckdb::CatalogType::FOREIGN_SERVER_ENTRY) {
+    const auto [server, altered] = AlterIn(_servers, transaction, info);
+    if (altered && transaction.HasContext() &&
+        info.bind_mode == duckdb::AlterBindMode::BIND_ON_ALTER) {
+      altered->Cast<ForeignServerCatalogEntry>().FollowOwner(
+        transaction.GetContext(), server->permissions.owner);
     }
-    catalog::AlterEntry(transaction, set, *entry, info);
     return;
   }
   if (transaction.HasContext() &&
@@ -737,8 +739,9 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindAlterAddIndex(
   duckdb::unique_ptr<duckdb::LogicalOperator>,
   duckdb::unique_ptr<duckdb::CreateIndexInfo>,
   duckdb::unique_ptr<duckdb::AlterTableInfo> alter_info) {
-  return duckdb::make_uniq<duckdb::LogicalAlter>(
-    duckdb::unique_ptr<duckdb::AlterInfo>{std::move(alter_info)});
+  duckdb::vector<duckdb::unique_ptr<duckdb::AlterInfo>> infos;
+  infos.push_back(std::move(alter_info));
+  return duckdb::make_uniq<duckdb::LogicalAlter>(std::move(infos));
 }
 
 duckdb::ErrorData SereneDBCatalog::SupportsCreateTable(

@@ -68,6 +68,10 @@ The `CASCADE` modifier drops both myschema and `myschema.t1`:
 
 <SqlLogicTest id="sql/statements/drop/index/example_011" />
 
+A `DROP` statement may name several objects of one kind, separated by commas. They are dropped together: an object that depends on another object of the list does not stop the drop, whatever order they are listed in. If one of the names does not exist (without `IF EXISTS`), or an object outside the list depends on one of them, the statement fails and drops nothing:
+
+<SqlLogicTest id="sql/statements/drop/index/example_016" />
+
 The following dependencies are tracked and thus will raise an error if the user tries to drop the depending object without the `CASCADE` modifier.
 
 | Depending object type | Dependent object type |

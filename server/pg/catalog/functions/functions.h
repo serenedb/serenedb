@@ -30,13 +30,13 @@
 #include <duckdb/main/database.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/parser/parsed_expression.hpp>
+#include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/planner_extension.hpp>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
-#include "auth/role_closure.h"
 #include "pg/catalog/utils/session.h"
 
 namespace sdb::pg {
@@ -72,10 +72,13 @@ void RegisterTable(duckdb::ExtensionLoader& loader, std::string_view schema,
 duckdb::unique_ptr<duckdb::Expression> BindNull(
   duckdb::FunctionBindExpressionInput& input);
 
+duckdb::RoleAccess CallerAccess(duckdb::ExpressionState& state);
+
 inline duckdb::unique_ptr<duckdb::FunctionLocalState> InitSession(
-  duckdb::ExpressionState& state, const duckdb::BoundFunctionExpression&,
+  duckdb::ExpressionState& state, const duckdb::BoundFunctionExpression& expr,
   duckdb::FunctionData*) {
-  return duckdb::make_uniq<SessionState>(&state.GetContext());
+  return duckdb::make_uniq<SessionState>(&state.GetContext(),
+                                         expr.CallerRole());
 }
 
 inline const Session& SessionOf(duckdb::ExpressionState& state) {
@@ -86,7 +89,7 @@ inline const Session& SessionOf(duckdb::ExpressionState& state) {
 
 void WriteAclTexts(
   duckdb::VectorWriter<duckdb::VectorListType<duckdb::string_t>>& writer,
-  std::span<const duckdb::AclItem> items, const auth::RoleGraph& roles,
+  std::span<const duckdb::AclItem> items, const duckdb::SecuritySnapshot& roles,
   std::string& text);
 
 template<typename Row>

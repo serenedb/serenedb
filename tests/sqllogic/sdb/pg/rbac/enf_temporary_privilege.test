@@ -1,0 +1,73 @@
+control substitution on
+
+statement ok
+DROP TABLE IF EXISTS etp_votes;
+
+
+statement ok
+DROP ROLE IF EXISTS etp_vedernikoff;
+
+
+statement ok
+CREATE ROLE etp_vedernikoff LOGIN PASSWORD 'etp_pw';
+
+
+statement ok
+CREATE TABLE etp_votes (choice text);
+
+
+statement ok
+INSERT INTO etp_votes VALUES ('pudge'), ('pudge'), ('clickclack');
+
+
+statement ok
+GRANT SELECT ON etp_votes TO etp_vedernikoff;
+
+
+connection c_etp user=etp_vedernikoff password=etp_pw
+query
+SELECT * FROM (PIVOT etp_votes ON choice USING count(*));
+----
+clickclack	pudge
+1	2
+
+
+statement ok
+REVOKE TEMPORARY ON DATABASE ${__DATABASE__} FROM PUBLIC;
+
+
+connection c_etp2 user=etp_vedernikoff password=etp_pw
+statement error
+CREATE TEMP TABLE etp_scratch (a integer);
+----
+db error: ERROR: permission denied to create temporary tables in database "<slt:ignore>"
+
+
+statement ok
+GRANT TEMPORARY ON DATABASE ${__DATABASE__} TO etp_vedernikoff;
+
+
+connection c_etp2 user=etp_vedernikoff password=etp_pw
+statement ok
+CREATE TEMP TABLE etp_scratch (a integer);
+
+
+connection c_etp2 user=etp_vedernikoff password=etp_pw
+statement ok
+DROP TABLE etp_scratch;
+
+
+statement ok
+REVOKE TEMPORARY ON DATABASE ${__DATABASE__} FROM etp_vedernikoff;
+
+
+statement ok
+GRANT TEMPORARY ON DATABASE ${__DATABASE__} TO PUBLIC;
+
+
+statement ok
+DROP TABLE etp_votes;
+
+
+statement ok
+DROP ROLE etp_vedernikoff;

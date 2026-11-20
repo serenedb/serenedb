@@ -81,6 +81,43 @@ readable
 t
 
 
+connection default
+statement ok
+CREATE TABLE cat_su_hidden (a INTEGER);
+
+
+connection c_su_intern user=cat_su_intern password=cat_su_intern_pw
+query
+SELECT count(*) AS listed FROM pg_class WHERE relname = 'cat_su_hidden';
+----
+listed
+1
+
+
+connection c_su_intern user=cat_su_intern password=cat_su_intern_pw
+query
+SELECT count(*) AS listed
+FROM pg_attribute a
+JOIN pg_class c ON a.attrelid = c.oid
+WHERE c.relname = 'cat_su_hidden' AND a.attname = 'a';
+----
+listed
+1
+
+
+connection c_su_intern user=cat_su_intern password=cat_su_intern_pw
+query
+SELECT count(*) AS listed FROM information_schema.tables WHERE table_name = 'cat_su_hidden';
+----
+listed
+0
+
+
+connection default
+statement ok
+DROP TABLE cat_su_hidden;
+
+
 # The superuser owner reads every restricted catalog directly without error.
 connection default
 query

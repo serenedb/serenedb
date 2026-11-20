@@ -6,11 +6,6 @@
 # unprivileged CreateFunction, so a non-owner could delete or replace another
 # role's function overloads -- PG denies all of these with "must be owner".)
 #
-# The DROP denials assert behaviorally (the overload count is unchanged): PG
-# renders the schema-qualified name in DROP errors ("must be owner of function
-# s.f") while serenedb renders the bare name, so the text is pinned only for the
-# CREATE OR REPLACE case where both engines emit the unqualified name.
-#
 # Lore: vedernikoff owns the schema and the functions; babsky holds USAGE+CREATE
 # on the schema but owns nothing.
 
@@ -63,8 +58,7 @@ statement error
 DROP FUNCTION xao_ofn_mop.clickclack(int);
 
 
-# (b) non-owner cannot replace an overload's body (same unqualified-name form on
-# both engines, so the exact message is pinned here).
+# (b) non-owner cannot replace an overload's body.
 connection cbabsky2 user=xao_ofn_babsky password=xao_ofn_babsky_pw
 statement error
 CREATE OR REPLACE FUNCTION xao_ofn_mop.clickclack(int) RETURNS int LANGUAGE sql AS 'SELECT $1 + 99';

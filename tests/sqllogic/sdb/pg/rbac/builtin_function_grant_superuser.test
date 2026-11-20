@@ -1,0 +1,120 @@
+statement ok
+DROP ROLE IF EXISTS bfgs_admin;
+
+
+statement ok
+CREATE ROLE bfgs_admin;
+
+
+query
+SELECT has_function_privilege('bfgs_admin', 'sdb_secrets()', 'EXECUTE') AS exec,
+       array_to_string(proacl, ',') AS acl,
+       pg_get_acl('pg_proc'::regclass, oid, 0) IS NOT DISTINCT FROM proacl AS same
+FROM pg_proc WHERE oid = 'sdb_secrets()'::regprocedure;
+----
+exec	acl	same
+f	postgres=X/postgres	t
+
+
+statement ok
+SET ROLE bfgs_admin;
+
+
+statement error
+SELECT count(*) >= 0 AS listed FROM sdb_secrets();
+----
+db error: ERROR: permission denied for function sdb_secrets
+
+
+statement ok
+RESET ROLE;
+
+
+statement error
+GRANT EXECUTE ON FUNCTION sdb_secrets() TO bfgs_admin;
+----
+db error: ERROR: Cannot alter entry "sdb_secrets" because it is an internal system entry
+
+
+statement ok
+DROP ROLE bfgs_admin;
+
+
+statement ok
+DROP ROLE IF EXISTS bfgs_member;
+
+
+statement ok
+CREATE ROLE bfgs_member;
+
+
+statement ok
+GRANT postgres TO bfgs_member;
+
+
+query
+SELECT has_function_privilege('bfgs_member', 'sdb_temporary_files()', 'EXECUTE') AS exec;
+----
+exec
+t
+
+
+statement ok
+SET ROLE bfgs_member;
+
+
+query
+SELECT count(*) >= 0 AS listed FROM sdb_temporary_files();
+----
+listed
+t
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP ROLE bfgs_member;
+
+
+statement ok
+DROP ROLE IF EXISTS bfgs_checkpointer;
+
+
+statement ok
+CREATE ROLE bfgs_checkpointer;
+
+
+query
+SELECT has_function_privilege('bfgs_checkpointer', 'force_checkpoint()', 'EXECUTE') AS checkpointer;
+----
+checkpointer
+f
+
+
+statement ok
+GRANT pg_checkpoint TO bfgs_checkpointer;
+
+
+query
+SELECT has_function_privilege('bfgs_checkpointer', 'force_checkpoint()', 'EXECUTE') AS checkpointer;
+----
+checkpointer
+t
+
+
+statement ok
+SET ROLE bfgs_checkpointer;
+
+
+statement ok
+FORCE CHECKPOINT;
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP ROLE bfgs_checkpointer;

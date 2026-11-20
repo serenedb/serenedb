@@ -9,17 +9,6 @@
 # storage, has_column_privilege reads (plain and the grant-option mode), and the
 # live read each role can or cannot perform.
 #
-# SCOPED OUT (SereneDB diverges from PostgreSQL -- dependent-privilege tracking
-# on the grant-option revoke):
-#   With the dependent chained grant (r2) still in place, PG refuses a bare
-#   REVOKE GRANT OPTION FOR with "ERROR: dependent privileges exist" (HINT: use
-#   CASCADE), and CASCADE then drops r2's grant along with the downgrade.
-#   SereneDB tracks no such dependency: the bare revoke succeeds, downgrades the
-#   star, and leaves r2's grant orphaned. To stay byte-identical the chain below
-#   first has the grantor (r1) revoke its own grant to r2 -- which both engines
-#   honour, since r1 is that grant's grantor -- so no dependent grant remains
-#   when the option is revoked.
-#
 # Lore: iceberg is the table (owned by postgres); clickclack/babsky/mop are its
 # columns. vedernikoff is the option-holding grantee (r1); babsky is the role
 # vedernikoff re-grants to (r2); mop is the role babsky fails to grant to (r3).

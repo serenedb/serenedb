@@ -45,7 +45,8 @@ void ScanDependents(duckdb::CatalogTransaction transaction,
                     duckdb::CatalogEntry& subject, EdgeVisitor visit);
 
 void DropDependents(duckdb::CatalogTransaction transaction,
-                    duckdb::CatalogEntry& entry, bool cascade);
+                    duckdb::CatalogEntry& entry, bool cascade,
+                    std::span<const duckdb::idx_t> together = {});
 
 std::vector<duckdb::Identifier> DropOwnedSequences(
   duckdb::CatalogTransaction transaction, duckdb::TableCatalogEntry& table,
@@ -60,6 +61,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> OwnerOf(
 void RefuseDependents(
   duckdb::CatalogTransaction transaction, duckdb::CatalogEntry& entry,
   absl::FunctionRef<bool(const duckdb::CatalogEntry&)> refuses);
+
+void RefuseDroppingTogether(duckdb::CatalogTransaction transaction,
+                            const duckdb::catalog_entry_vector_t& entries);
 
 struct PendingDefault {
   duckdb::idx_t table = 0;

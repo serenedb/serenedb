@@ -1,0 +1,129 @@
+statement ok
+DROP ROLE IF EXISTS cof_owner;
+
+
+statement ok
+CREATE ROLE cof_owner;
+
+
+statement ok
+CREATE FUNCTION cof_f(x INT) RETURNS INT LANGUAGE SQL AS 'SELECT x';
+
+
+statement ok
+CREATE FUNCTION cof_f(x TEXT) RETURNS TEXT LANGUAGE SQL AS 'SELECT x';
+
+
+statement ok
+COMMENT ON FUNCTION cof_f(integer) IS 'for integers';
+
+
+query
+SELECT oid::regprocedure::text AS f, obj_description(oid, 'pg_proc') AS comment FROM pg_proc WHERE proname = 'cof_f' ORDER BY 1;
+----
+f	comment
+cof_f(integer)	for integers
+cof_f(text)	NULL
+
+
+statement error
+COMMENT ON FUNCTION cof_f IS 'ambiguous';
+----
+db error: ERROR: function name "cof_f" is not unique
+HINT: Specify the argument list to select the function unambiguously.
+
+
+statement ok
+COMMENT ON FUNCTION cof_f(text) IS 'for text';
+
+
+statement ok
+COMMENT ON FUNCTION cof_f(integer) IS NULL;
+
+
+query
+SELECT oid::regprocedure::text AS f, obj_description(oid, 'pg_proc') AS comment FROM pg_proc WHERE proname = 'cof_f' ORDER BY 1;
+----
+f	comment
+cof_f(integer)	NULL
+cof_f(text)	for text
+
+
+statement ok
+ALTER FUNCTION cof_f(text) OWNER TO cof_owner;
+
+
+statement ok
+SET ROLE cof_owner;
+
+
+statement ok
+COMMENT ON FUNCTION cof_f(text) IS 'mine';
+
+
+statement error
+COMMENT ON FUNCTION cof_f(integer) IS 'not mine';
+----
+db error: ERROR: must be owner of function cof_f
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT oid::regprocedure::text AS f, obj_description(oid, 'pg_proc') AS comment FROM pg_proc WHERE proname = 'cof_f' ORDER BY 1;
+----
+f	comment
+cof_f(integer)	NULL
+cof_f(text)	mine
+
+
+statement ok
+CREATE PROCEDURE cof_p(x INT) LANGUAGE SQL AS 'SELECT 1';
+
+
+statement ok
+COMMENT ON PROCEDURE cof_p(integer) IS 'a procedure';
+
+
+query
+SELECT obj_description('cof_p(integer)'::regprocedure, 'pg_proc') AS comment;
+----
+comment
+a procedure
+
+
+statement ok
+DROP PROCEDURE cof_p(integer);
+
+
+statement ok
+CREATE FUNCTION cof_s(x INT) RETURNS SETOF INT LANGUAGE SQL AS 'SELECT x';
+
+
+statement ok
+COMMENT ON FUNCTION cof_s IS 'a set';
+
+
+query
+SELECT obj_description('cof_s(integer)'::regprocedure, 'pg_proc') AS comment;
+----
+comment
+a set
+
+
+statement ok
+DROP FUNCTION cof_s(integer);
+
+
+statement ok
+DROP FUNCTION cof_f(integer);
+
+
+statement ok
+DROP FUNCTION cof_f(text);
+
+
+statement ok
+DROP ROLE cof_owner;

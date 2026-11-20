@@ -71,6 +71,7 @@ const duckdb::CreateMacroInfo* GetSystemFunction(std::string_view schema,
 
 const duckdb::Permissions& SystemPermissions(bool superuser_only);
 const duckdb::Permissions& SchemaPermissions();
+const duckdb::Permissions& PublicSchemaPermissions();
 
 void VisitSystemTables(std::string_view schema,
                        absl::FunctionRef<void(const SystemTable&)> visitor);

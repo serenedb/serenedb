@@ -132,7 +132,7 @@ statement error
 PRAGMA extension_versions
 ----
 db error: ERROR: Pragma Function with name extension_versions does not exist!
-Did you mean "create_subscription"?
+Did you mean "json_execute_serialized_sql"?
 
 
 statement ok

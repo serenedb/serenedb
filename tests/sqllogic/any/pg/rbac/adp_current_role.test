@@ -76,6 +76,12 @@ statement ok
 ALTER DEFAULT PRIVILEGES REVOKE SELECT ON TABLES FROM adp_vedernikoff;
 
 
+statement error
+ALTER DEFAULT PRIVILEGES FOR ROLE adp_vedernikoff GRANT SELECT ON TABLES TO adp_clickclack;
+----
+db error: ERROR: permission denied to change default privileges
+
+
 statement ok
 RESET ROLE;
 

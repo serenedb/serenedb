@@ -33,6 +33,7 @@
 #include <deque>
 #include <duckdb/common/enums/checkpoint_abort.hpp>
 #include <duckdb/common/error_data.hpp>
+#include <duckdb/common/optional_ptr.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/transaction/transaction.hpp>
 #include <duckdb/transaction/transaction_manager.hpp>
@@ -158,7 +159,7 @@ class SessionTransaction final {
 
   void PrepareCommit(duckdb::ClientContext& context);
   void Commit(duckdb::ClientContext& context);
-  void Rollback() noexcept;
+  void Rollback(duckdb::optional_ptr<duckdb::ClientContext> context) noexcept;
 
  private:
   void Release() noexcept;

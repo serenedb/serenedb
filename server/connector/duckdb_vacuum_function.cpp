@@ -27,6 +27,7 @@
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
+#include <duckdb/catalog/catalog_entry_retriever.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/function/pragma_function.hpp>
@@ -43,7 +44,6 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/system_compiler.hpp>
 
-#include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
@@ -158,8 +158,7 @@ struct ResolvedName {
 duckdb::optional_ptr<duckdb::CatalogEntry> FindEntry(
   duckdb::ClientContext& context, duckdb::CatalogType type,
   const ResolvedName& target) {
-  return duckdb::Catalog::GetEntry(
-    context,
+  return duckdb::CatalogEntryRetriever{context}.GetEntry(
     duckdb::EntryLookupInfo{
       type, duckdb::QualifiedName{duckdb::Identifier{target.database},
                                   duckdb::Identifier{target.schema},
@@ -225,6 +224,7 @@ duckdb::Catalog& LookupDatabase(duckdb::ClientContext& context,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
                     ERR_MSG("database \"", name, "\" does not exist"));
   }
+  context.CheckDatabaseReference(context.CurrentRole(), *found);
   return *found;
 }
 
@@ -301,7 +301,8 @@ CollectMaintainTargets(duckdb::ClientContext& context,
       [&](duckdb::CatalogEntry& entry) {
         // Tables and views share one set, so the scan hands
         // back both.
-        if (entry.type != duckdb::CatalogType::TABLE_ENTRY || entry.internal) {
+        if (entry.type != duckdb::CatalogType::TABLE_ENTRY || entry.internal ||
+            !context.CanSee(entry)) {
           return;
         }
         auto& table = entry.Cast<duckdb::TableCatalogEntry>();
@@ -338,9 +339,8 @@ void CollectInvertedSteps(duckdb::ClientContext& context,
 
 bool MayMaintain(ConnectionContext& conn_ctx, const duckdb::Permissions& perm,
                  std::string_view name, std::string_view verb) {
-  if (auth::ClosureFor(&conn_ctx, conn_ctx.GetRoleId())
-        ->Can(duckdb::CatalogType::TABLE_ENTRY, perm,
-              duckdb::AclMode::Maintain)) {
+  if (conn_ctx.CurrentRole().Can(duckdb::CatalogType::TABLE_ENTRY, perm,
+                                 duckdb::AclMode::Maintain)) {
     return true;
   }
   conn_ctx.AddNotice(SQL_ERROR_DATA(
@@ -421,7 +421,7 @@ void DispatchStores(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
     auto relation =
       index->GetRelation(index->catalog.GetCatalogTransaction(context));
     if (relation && !MayMaintain(conn_ctx, relation->permissions,
-                                 relation->name.GetIdentifierName(), verb)) {
+                                 index->name.GetIdentifierName(), verb)) {
       return;
     }
     if (inverted->Storage()) {

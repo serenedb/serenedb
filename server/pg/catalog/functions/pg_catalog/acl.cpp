@@ -30,15 +30,22 @@
 #include <array>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/macro_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
+#include <duckdb/common/vector/vector_iterator.hpp>
+#include <duckdb/common/vector/vector_writer.hpp>
 #include <duckdb/common/vector_operations/variadic_executor.hpp>
 #include <duckdb/function/table_function.hpp>
+#include <duckdb/main/database_manager.hpp>
+#include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
+#include <limits>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <string>
 #include <string_view>
@@ -47,7 +54,6 @@
 #include <utility>
 #include <vector>
 
-#include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
 #include "connector/common.h"
@@ -61,6 +67,7 @@
 #include "pg/catalog/utils/columns.h"
 #include "pg/catalog/utils/lookup.h"
 #include "pg/connection_context.h"
+#include "pg/types/char.h"
 #include "pg/types/logical.h"
 
 namespace sdb::pg {
@@ -83,26 +90,7 @@ struct DefaultAcl {
   AclMode owner;
 };
 
-DefaultAcl ClassAcl(char objtype, CatalogType type) {
-  return {objtype, duckdb::Permissions::PublicPrivileges(type),
-          duckdb::Permissions::AllPrivileges(type)};
-}
-
-const DefaultAcl kDefaultAcls[] = {
-  {'c', AclMode::NoRights, AclMode::NoRights},
-  ClassAcl('r', CatalogType::TABLE_ENTRY),
-  ClassAcl('s', CatalogType::SEQUENCE_ENTRY),
-  ClassAcl('d', CatalogType::DATABASE_ENTRY),
-  ClassAcl('f', CatalogType::MACRO_ENTRY),
-  {'l', AclMode::Usage, AclMode::Usage},
-  {'L', AclMode::NoRights, AclMode::Select | AclMode::Update},
-  ClassAcl('n', CatalogType::SCHEMA_ENTRY),
-  {'t', AclMode::NoRights, AclMode::Create},
-  {'F', AclMode::NoRights, AclMode::Usage},
-  ClassAcl('S', CatalogType::FOREIGN_SERVER_ENTRY),
-  ClassAcl('T', CatalogType::TYPE_ENTRY),
-  {'p', AclMode::NoRights, AclMode::Set | AclMode::AlterSystem},
-};
+#include "pg/catalog/generated/acl_defaults.gen.inc"
 
 const DefaultAcl* FindDefaultAcl(std::string_view type) {
   const auto it = absl::c_find_if(kDefaultAcls, [&](const DefaultAcl& acl) {
@@ -123,7 +111,7 @@ duckdb::unique_ptr<duckdb::FunctionData> AclDefaultBind(
 
 void AclDefaultFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                         duckdb::Vector& result) {
-  const auto roles = auth::RolesOf(&state.GetContext());
+  const auto roles = catalog::RolesOf(&state.GetContext());
   const auto count = args.size();
   const auto objtypes = args.data[0].Values<duckdb::string_t>();
   const auto owners = args.data[1].Values<int64_t>();
@@ -165,18 +153,18 @@ struct ExplodedAcl {
   bool grantable;
 };
 
-void ExplodeAcl(const auth::RoleGraph& roles, std::string_view text,
+void ExplodeAcl(const duckdb::SecuritySnapshot& roles, std::string_view text,
                 std::vector<ExplodedAcl>& rows) {
   duckdb::AclItem item{};
   if (auto error = ParseAcl(text, roles, true, item)) {
     THROW_SQL_ERROR_FROM_DATA(std::move(*error));
   }
-  for (const auto& privilege : kAclPrivileges) {
+  for (const auto& privilege : duckdb::ACL_PRIVILEGES) {
     if ((item.privs & privilege.mode) != AclMode::NoRights) {
       rows.emplace_back(ExplodedAcl{
         .grantor = static_cast<int64_t>(item.grantor),
         .grantee = static_cast<int64_t>(item.grantee),
-        .privilege = privilege.name,
+        .privilege = privilege.keyword,
         .grantable =
           (item.grant_option & privilege.mode) != AclMode::NoRights});
     }
@@ -200,7 +188,7 @@ duckdb::unique_ptr<duckdb::FunctionData> AclExplodeBind(
 
 void LoadAcls(duckdb::ClientContext& context, duckdb::DataChunk& input,
               std::vector<ExplodedAcl>& rows) {
-  const auto roles = auth::RolesOf(&context);
+  const auto roles = catalog::RolesOf(&context);
   const auto lists =
     input.data[0].Values<duckdb::VectorListType<duckdb::string_t>>();
   for (duckdb::idx_t row = 0; row < input.size(); ++row) {
@@ -244,20 +232,6 @@ struct PrivilegeModes {
                   ERR_MSG("unrecognized privilege type: \"", privilege, "\""));
 }
 
-std::optional<AclMode> FindPrivilege(std::string_view keyword) {
-  if (absl::EqualsIgnoreCase(keyword, "TEMP")) {
-    return AclMode::CreateTemp;
-  }
-  const auto it =
-    absl::c_find_if(kAclPrivileges, [&](const AclPrivilege& privilege) {
-      return absl::EqualsIgnoreCase(privilege.name, keyword);
-    });
-  if (it == kAclPrivileges.end()) {
-    return std::nullopt;
-  }
-  return it->mode;
-}
-
 PrivilegeModes ParsePrivileges(std::string_view text, AclMode allowed) {
   constexpr std::string_view kGrantOption = " WITH GRANT OPTION";
   PrivilegeModes modes;
@@ -271,11 +245,11 @@ PrivilegeModes ParsePrivileges(std::string_view text, AclMode allowed) {
       keyword.remove_suffix(kGrantOption.size());
       held = &modes.grant_options;
     }
-    const auto mode = FindPrivilege(keyword);
-    if (!mode || (*mode & allowed) != *mode) {
+    const auto mode = duckdb::FindPrivilege(keyword);
+    if (mode == AclMode::NoRights || (mode & allowed) != mode) {
       ThrowUnrecognizedPrivilege(chunk);
     }
-    *held |= *mode;
+    *held |= mode;
   }
   return modes;
 }
@@ -283,7 +257,7 @@ PrivilegeModes ParsePrivileges(std::string_view text, AclMode allowed) {
 void MakeAclItemFunction(duckdb::DataChunk& args,
                          duckdb::ExpressionState& state,
                          duckdb::Vector& result) {
-  const auto roles = auth::RolesOf(&state.GetContext());
+  const auto roles = catalog::RolesOf(&state.GetContext());
   std::string text;
   duckdb::VariadicExecutor::Execute<duckdb::string_t, int64_t, int64_t,
                                     duckdb::string_t, bool>(
@@ -294,11 +268,11 @@ void MakeAclItemFunction(duckdb::DataChunk& args,
       for (const std::string_view token :
            absl::StrSplit(AsView(privileges), ',')) {
         const auto chunk = absl::StripAsciiWhitespace(token);
-        const auto mode = FindPrivilege(chunk);
-        if (!mode) {
+        const auto mode = duckdb::FindPrivilege(chunk);
+        if (mode == AclMode::NoRights) {
           ThrowUnrecognizedPrivilege(chunk);
         }
-        privs |= *mode;
+        privs |= mode;
       }
       text.clear();
       AppendAcl(text,
@@ -319,9 +293,10 @@ struct ObjectTarget {
   bool owner_only;
   const duckdb::ColumnList* any_column;
   AclMode rights = ~AclMode::NoRights;
+  duckdb::RoleCapability capability = duckdb::RoleCapability::None;
 };
 
-bool Holds(const auth::RoleClosure& closure, CatalogType type,
+bool Holds(const duckdb::RoleAccess& closure, CatalogType type,
            const ObjectTarget& target, const PrivilegeModes& requested) {
   const auto& permissions = *target.permissions;
   if (permissions.owner == kInvalidOid) {
@@ -338,24 +313,22 @@ bool Holds(const auth::RoleClosure& closure, CatalogType type,
     return closure.is_superuser;
   }
   if (modes.privs != AclMode::NoRights &&
-      closure.CanAny(type, permissions, modes.privs)) {
+      ((target.capability != duckdb::RoleCapability::None &&
+        closure.Has(target.capability)) ||
+       closure.CanAny(type, permissions, modes.privs))) {
     return true;
   }
-  auto columns = target.columns;
-  if (target.any_column) {
-    for (const auto& column : target.any_column->Logical()) {
-      if (!column.Acl().empty()) {
-        columns.emplace_back(column.Acl());
-      }
-    }
-  }
-  if (modes.privs != AclMode::NoRights && !columns.empty()) {
-    for (auto bits = std::to_underlying(modes.privs); bits != 0;
-         bits &= bits - 1) {
-      const auto privilege = static_cast<AclMode>(bits & (~bits + 1));
-      if (closure.CanAnyColumn(permissions, privilege, columns)) {
-        return true;
-      }
+  if (modes.privs != AclMode::NoRights) {
+    const auto grants = [&](std::span<const duckdb::AclItem> acl) {
+      return (closure.HeldModes(acl) & modes.privs) != AclMode::NoRights;
+    };
+    if (absl::c_any_of(target.columns, grants) ||
+        (target.any_column &&
+         absl::c_any_of(target.any_column->Logical(),
+                        [&](const duckdb::ColumnDefinition& column) {
+                          return grants(column.Acl());
+                        }))) {
+      return true;
     }
   }
   if (modes.grant_options == AclMode::NoRights) {
@@ -365,17 +338,18 @@ bool Holds(const auth::RoleClosure& closure, CatalogType type,
     return true;
   }
   auto held = closure.GrantableModes(permissions.acl);
-  for (const auto acl : columns) {
+  for (const auto acl : target.columns) {
     held |= closure.GrantableModes(acl);
+  }
+  if (target.any_column) {
+    for (const auto& column : target.any_column->Logical()) {
+      held |= closure.GrantableModes(column.Acl());
+    }
   }
   return (held & modes.grant_options) != AclMode::NoRights;
 }
 
 const duckdb::Permissions kBuiltinPermissions{.owner = kRootUser};
-
-const duckdb::Permissions kForeignDataWrapperPermissions{
-  .owner = kRootUser,
-  .acl = {kForeignDataWrapperAcl.begin(), kForeignDataWrapperAcl.end()}};
 
 CatalogType RelationType(const Relation& relation) {
   return relation.entry ? relation.entry->type : CatalogType::INVALID;
@@ -388,28 +362,29 @@ bool OwnerOnly(const Relation& relation) {
 
 AclMode RelationRights(const Relation& relation) {
   return RelationType(relation) == CatalogType::SEQUENCE_ENTRY
-           ? duckdb::Permissions::AllPrivileges(CatalogType::SEQUENCE_ENTRY)
+           ? duckdb::ObjectKindOf(CatalogType::SEQUENCE_ENTRY).privileges
            : ~AclMode::NoRights;
 }
 
-duckdb::idx_t RoleIdByName(const auth::RoleGraph& roles,
+duckdb::idx_t RoleIdByName(const duckdb::SecuritySnapshot& roles,
                            std::string_view name) {
-  if (const auto* role = roles.FindByName(name)) {
-    return role->first;
+  if (const auto role = roles.FindByName(name); role.IsValid()) {
+    return role.GetIndex();
   }
   ThrowUndefinedObject("role", name);
 }
 
 struct ObjectScope : Session {
-  std::shared_ptr<const auth::RoleGraph> roles;
+  duckdb::shared_ptr<const duckdb::SecuritySnapshot> roles;
 };
 
 template<typename F>
 struct ObjectPrivileges {
   using Scope = ObjectScope;
 
-  static ObjectScope Begin(duckdb::ClientContext& context) {
-    return {MakeSession(&context), auth::RolesOf(&context)};
+  static ObjectScope Begin(duckdb::ClientContext& context,
+                           duckdb::optional_idx caller) {
+    return {MakeSession(&context, caller), catalog::RolesOf(&context)};
   }
 
   static duckdb::idx_t Role(const ObjectScope& scope, duckdb::string_t name) {
@@ -426,8 +401,9 @@ struct ObjectPrivileges {
     return ParsePrivileges(text, F::kModes);
   }
 
-  static bool Check(const auth::RoleClosure& closure, duckdb::idx_t,
-                    const ObjectTarget& target, const PrivilegeModes& modes) {
+  static bool Check(const ObjectScope&, const duckdb::RoleAccess& closure,
+                    duckdb::idx_t, const ObjectTarget& target,
+                    const PrivilegeModes& modes) {
     return Holds(closure, F::kType, target, modes);
   }
 };
@@ -439,9 +415,10 @@ struct RelationPrivileges : ObjectPrivileges<F> {
   }
 
   template<typename... Rest>
-  static std::optional<ObjectTarget> Find(const Session& session, uint64_t oid,
-                                          Rest... rest) {
-    const auto relation = RelationByOid(session, oid);
+  static std::optional<ObjectTarget> Find(
+    const Session& session, uint64_t oid,
+    duckdb::optional_ptr<duckdb::CatalogEntry> entry, Rest... rest) {
+    const auto relation = RelationByOid(session, oid, entry);
     if (!relation) {
       return std::nullopt;
     }
@@ -458,17 +435,15 @@ struct RelationPrivileges : ObjectPrivileges<F> {
                                       &PrivilegePermissions(*entry)},
                        rest...);
     }
-    return Find(session, Resolve(session, name), rest...);
+    const auto oid = Resolve(session, name);
+    return Find(session, oid, EntryByOid(session, oid), rest...);
   }
 };
 
 struct TablePrivileges : RelationPrivileges<TablePrivileges> {
   static constexpr std::string_view kName = "has_table_privilege";
   static constexpr CatalogType kType = CatalogType::TABLE_ENTRY;
-  static constexpr AclMode kModes = AclMode::Select | AclMode::Insert |
-                                    AclMode::Update | AclMode::Delete |
-                                    AclMode::Truncate | AclMode::References |
-                                    AclMode::Trigger | AclMode::Maintain;
+  static constexpr AclMode kModes = duckdb::ObjectKindOf(kType).privileges;
   static constexpr bool kSuperuserFirst = false;
 
   static std::optional<ObjectTarget> Target(const Session&,
@@ -481,8 +456,7 @@ struct TablePrivileges : RelationPrivileges<TablePrivileges> {
   }
 };
 
-constexpr AclMode kColumnModes =
-  AclMode::Select | AclMode::Insert | AclMode::Update | AclMode::References;
+constexpr AclMode kColumnModes = duckdb::ACL_COLUMN_PRIVILEGES;
 
 struct AnyColumnPrivileges : RelationPrivileges<AnyColumnPrivileges> {
   static constexpr std::string_view kName = "has_any_column_privilege";
@@ -499,6 +473,12 @@ struct AnyColumnPrivileges : RelationPrivileges<AnyColumnPrivileges> {
                         RelationRights(relation)};
     if (!target.owner_only) {
       target.any_column = TableColumns(relation);
+      if (RelationType(relation) == CatalogType::VIEW_ENTRY) {
+        for (const auto& column :
+             relation.entry->Cast<duckdb::ViewCatalogEntry>().column_acls) {
+          target.columns.emplace_back(column.acl);
+        }
+      }
     }
     return target;
   }
@@ -528,12 +508,12 @@ struct ColumnPrivileges : RelationPrivileges<ColumnPrivileges> {
       if (absl::c_linear_search(kSequenceColumns, AsView(column))) {
         return ObjectTarget{relation.permissions};
       }
-    } else if (RelationType(relation) == CatalogType::VIEW_ENTRY &&
-               ViewAttnum(
-                 *session.context,
-                 relation.entry.get_mutable()->Cast<duckdb::ViewCatalogEntry>(),
-                 name) != 0) {
-      return ObjectTarget{relation.permissions};
+    } else if (RelationType(relation) == CatalogType::VIEW_ENTRY) {
+      auto& view =
+        relation.entry.get_mutable()->Cast<duckdb::ViewCatalogEntry>();
+      if (const auto attnum = ViewAttnum(*session.context, view, name)) {
+        return ObjectTarget{relation.permissions, {view.ColumnAcl(attnum - 1)}};
+      }
     }
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
                     ERR_MSG("column \"", AsView(column), "\" of relation \"",
@@ -566,11 +546,14 @@ struct ColumnPrivileges : RelationPrivileges<ColumnPrivileges> {
     if (RelationType(relation) == CatalogType::SEQUENCE_ENTRY) {
       count = kSequenceColumns.size();
     } else if (RelationType(relation) == CatalogType::VIEW_ENTRY) {
-      const auto info = ViewColumns(
-        *session.context,
-        relation.entry.get_mutable()->Cast<duckdb::ViewCatalogEntry>());
+      auto& view =
+        relation.entry.get_mutable()->Cast<duckdb::ViewCatalogEntry>();
+      const auto info = ViewColumns(*session.context, view);
       SDB_ASSERT(info);
-      count = info->types.size();
+      if (static_cast<duckdb::idx_t>(attnum) > info->types.size()) {
+        return std::nullopt;
+      }
+      return ObjectTarget{relation.permissions, {view.ColumnAcl(attnum - 1)}};
     }
     if (static_cast<duckdb::idx_t>(attnum) > count) {
       return std::nullopt;
@@ -582,7 +565,7 @@ struct ColumnPrivileges : RelationPrivileges<ColumnPrivileges> {
 struct SchemaPrivileges : ObjectPrivileges<SchemaPrivileges> {
   static constexpr std::string_view kName = "has_schema_privilege";
   static constexpr CatalogType kType = CatalogType::SCHEMA_ENTRY;
-  static constexpr AclMode kModes = AclMode::Usage | AclMode::Create;
+  static constexpr AclMode kModes = duckdb::ObjectKindOf(kType).privileges;
   static constexpr bool kSuperuserFirst = true;
 
   static uint64_t Resolve(const Session& session, std::string_view name) {
@@ -604,8 +587,7 @@ struct SchemaPrivileges : ObjectPrivileges<SchemaPrivileges> {
 struct SequencePrivileges : RelationPrivileges<SequencePrivileges> {
   static constexpr std::string_view kName = "has_sequence_privilege";
   static constexpr CatalogType kType = CatalogType::SEQUENCE_ENTRY;
-  static constexpr AclMode kModes =
-    AclMode::Usage | AclMode::Select | AclMode::Update;
+  static constexpr AclMode kModes = duckdb::ObjectKindOf(kType).privileges;
   static constexpr bool kSuperuserFirst = false;
 
   static std::optional<ObjectTarget> Target(const Session& session,
@@ -622,44 +604,93 @@ struct SequencePrivileges : RelationPrivileges<SequencePrivileges> {
 struct FunctionPrivileges : ObjectPrivileges<FunctionPrivileges> {
   static constexpr std::string_view kName = "has_function_privilege";
   static constexpr CatalogType kType = CatalogType::MACRO_ENTRY;
-  static constexpr AclMode kModes = AclMode::Execute;
+  static constexpr AclMode kModes = duckdb::ObjectKindOf(kType).privileges;
   static constexpr bool kSuperuserFirst = true;
 
   static uint64_t Resolve(const Session& session, std::string_view name) {
     return *RegIn(session, RegKind::Procedure, name, nullptr);
   }
 
-  static std::optional<ObjectTarget> Find(const Session& session,
-                                          uint64_t oid) {
-    if (const auto* macro = FindMacro(session, oid)) {
-      return ObjectTarget{&PrivilegePermissions(*macro)};
+  static std::optional<ObjectTarget> Find(
+    const Session& session, uint64_t oid,
+    duckdb::optional_ptr<duckdb::CatalogEntry> entry) {
+    MacroOverload found;
+    if (!entry) {
+      if (oid >= kMaxSystem) {
+        found = FindMacro(session, oid);
+      }
+    } else if (duckdb::ObjectKindOf(entry->type).pg_class == kPgProcTable) {
+      const auto& macro = entry->Cast<duckdb::MacroCatalogEntry>();
+      found = {.entry = &macro, .macro = macro.FindOverload(oid).get()};
     }
-    if (!GetBuiltinFunctions(*session.context)->Find(oid)) {
+    if (found.macro) {
+      return ObjectTarget{duckdb::IsUnowned(*found.entry)
+                            ? &PrivilegePermissions(*found.entry)
+                            : &found.entry->OverloadPermissions(*found.macro)};
+    }
+    if (found.entry) {
       return std::nullopt;
     }
-    return ObjectTarget{&kBuiltinPermissions};
+    const auto builtins = GetBuiltinFunctions(*session.context);
+    const auto* builtin = builtins->Find(oid);
+    if (!builtin) {
+      return std::nullopt;
+    }
+    return ObjectTarget{.permissions = &BuiltinFunctionPermissions(*builtin),
+                        .capability = builtin->capability};
   }
 };
 
 struct TypePrivileges : ObjectPrivileges<TypePrivileges> {
   static constexpr std::string_view kName = "has_type_privilege";
   static constexpr CatalogType kType = CatalogType::TYPE_ENTRY;
-  static constexpr AclMode kModes = AclMode::Usage;
+  static constexpr AclMode kModes = duckdb::ObjectKindOf(kType).privileges;
   static constexpr bool kSuperuserFirst = true;
 
   static uint64_t Resolve(const Session& session, std::string_view name) {
     return *RegIn(session, RegKind::Type, name, nullptr);
   }
 
-  static std::optional<ObjectTarget> Find(const Session& session,
-                                          uint64_t oid) {
-    if (const auto entry = EntryByOid(session, oid)) {
+  static std::optional<ObjectTarget> Find(
+    const Session& session, uint64_t oid,
+    duckdb::optional_ptr<duckdb::CatalogEntry> entry) {
+    return Type(session, oid, entry, true);
+  }
+
+  static std::optional<ObjectTarget> Row(
+    const Session& session, uint64_t oid,
+    duckdb::optional_ptr<duckdb::CatalogEntry> entry) {
+    return Type(session, oid, entry, false);
+  }
+
+  static std::optional<ObjectTarget> Type(
+    const Session& session, uint64_t oid,
+    duckdb::optional_ptr<duckdb::CatalogEntry> entry, bool element_of_array) {
+    if (entry) {
       if (entry->type != CatalogType::TYPE_ENTRY) {
         return std::nullopt;
       }
       return ObjectTarget{&PrivilegePermissions(*entry)};
     }
-    if (oid >= kMaxSystem || !FindBuiltinType(static_cast<int32_t>(oid))) {
+    if (oid & kRowTypeOidBit) {
+      const auto relation = EntryByOid(session, RowTypeRelation(oid));
+      if (!relation ||
+          duckdb::ObjectKindOf(relation->type).pg_class != kPgClassTable) {
+        return std::nullopt;
+      }
+      return ObjectTarget{&kBuiltinPermissions};
+    }
+    if (oid >= kMaxSystem) {
+      const auto element = ArrayElementOid(session, oid);
+      if (element == kInvalidOid) {
+        return std::nullopt;
+      }
+      if (!element_of_array) {
+        return ObjectTarget{&kBuiltinPermissions};
+      }
+      return Type(session, element, EntryByOid(session, element), true);
+    }
+    if (!FindBuiltinType(static_cast<int32_t>(oid))) {
       return std::nullopt;
     }
     return ObjectTarget{&kBuiltinPermissions};
@@ -669,8 +700,7 @@ struct TypePrivileges : ObjectPrivileges<TypePrivileges> {
 struct DatabasePrivileges : ObjectPrivileges<DatabasePrivileges> {
   static constexpr std::string_view kName = "has_database_privilege";
   static constexpr CatalogType kType = CatalogType::DATABASE_ENTRY;
-  static constexpr AclMode kModes =
-    AclMode::Create | AclMode::CreateTemp | AclMode::Connect;
+  static constexpr AclMode kModes = duckdb::ObjectKindOf(kType).privileges;
   static constexpr bool kSuperuserFirst = true;
 
   static uint64_t Resolve(const Session& session, std::string_view name) {
@@ -694,7 +724,7 @@ struct DatabasePrivileges : ObjectPrivileges<DatabasePrivileges> {
 struct ServerPrivileges : ObjectPrivileges<ServerPrivileges> {
   static constexpr std::string_view kName = "has_server_privilege";
   static constexpr CatalogType kType = CatalogType::FOREIGN_SERVER_ENTRY;
-  static constexpr AclMode kModes = AclMode::Usage;
+  static constexpr AclMode kModes = duckdb::ObjectKindOf(kType).privileges;
   static constexpr bool kSuperuserFirst = true;
 
   static uint64_t Resolve(const Session& session, std::string_view name) {
@@ -706,9 +736,9 @@ struct ServerPrivileges : ObjectPrivileges<ServerPrivileges> {
     ThrowUndefinedObject("server", name);
   }
 
-  static std::optional<ObjectTarget> Find(const Session& session,
-                                          uint64_t oid) {
-    const auto entry = EntryByOid(session, oid);
+  static std::optional<ObjectTarget> Find(
+    const Session& session, uint64_t,
+    duckdb::optional_ptr<duckdb::CatalogEntry> entry) {
     if (!entry || entry->type != CatalogType::FOREIGN_SERVER_ENTRY) {
       return std::nullopt;
     }
@@ -720,9 +750,32 @@ struct ForeignDataWrapperPrivileges
   : ObjectPrivileges<ForeignDataWrapperPrivileges> {
   static constexpr std::string_view kName =
     "has_foreign_data_wrapper_privilege";
-  static constexpr CatalogType kType = CatalogType::FOREIGN_SERVER_ENTRY;
-  static constexpr AclMode kModes = AclMode::Usage;
+  static constexpr CatalogType kType = CatalogType::FOREIGN_DATA_WRAPPER_ENTRY;
+  static constexpr AclMode kModes = duckdb::ObjectKindOf(kType).privileges;
   static constexpr bool kSuperuserFirst = true;
+
+  struct Scope : ObjectScope {
+    std::array<duckdb::Permissions, kForeignDataWrappers.size()> wrappers;
+  };
+
+  static Scope Begin(duckdb::ClientContext& context,
+                     duckdb::optional_idx caller) {
+    Scope scope{ObjectPrivileges::Begin(context, caller)};
+    const auto database = FindDatabase(
+      context,
+      duckdb::DatabaseManager::GetDefaultDatabase(context).GetIdentifierName());
+    for (size_t i = 0; i < kForeignDataWrappers.size(); ++i) {
+      auto& wrapper = scope.wrappers[i];
+      wrapper.owner = kRootUser;
+      if (database) {
+        const auto acl = database->permissions.RowAcl(
+          duckdb::CatalogType::FOREIGN_DATA_WRAPPER_ENTRY,
+          kForeignDataWrappers[i].oid);
+        wrapper.acl.assign(acl.begin(), acl.end());
+      }
+    }
+    return scope;
+  }
 
   static uint64_t Resolve(const Session&, std::string_view name) {
     if (const auto* wrapper = FindSystemObject(kForeignDataWrappers, name)) {
@@ -731,11 +784,12 @@ struct ForeignDataWrapperPrivileges
     ThrowUndefinedObject("foreign-data wrapper", name);
   }
 
-  static std::optional<ObjectTarget> Find(const Session&, uint64_t oid) {
-    if (!FindSystemObject(kForeignDataWrappers, oid)) {
+  static std::optional<ObjectTarget> Find(const Scope& scope, uint64_t oid) {
+    const auto* wrapper = FindSystemObject(kForeignDataWrappers, oid);
+    if (!wrapper) {
       return std::nullopt;
     }
-    return ObjectTarget{&kForeignDataWrapperPermissions};
+    return ObjectTarget{&scope.wrappers[wrapper - kForeignDataWrappers.data()]};
   }
 };
 
@@ -769,8 +823,8 @@ struct TablespacePrivileges : ObjectPrivileges<TablespacePrivileges> {
 
 struct LanguagePrivileges : ObjectPrivileges<LanguagePrivileges> {
   static constexpr std::string_view kName = "has_language_privilege";
-  static constexpr CatalogType kType = CatalogType::TYPE_ENTRY;
-  static constexpr AclMode kModes = AclMode::Usage;
+  static constexpr CatalogType kType = CatalogType::LANGUAGE_ENTRY;
+  static constexpr AclMode kModes = duckdb::ObjectKindOf(kType).privileges;
   static constexpr bool kSuperuserFirst = true;
 
   static uint64_t Resolve(const Session&, std::string_view name) {
@@ -790,20 +844,42 @@ struct LanguagePrivileges : ObjectPrivileges<LanguagePrivileges> {
 
 struct ParameterPrivileges : ObjectPrivileges<ParameterPrivileges> {
   static constexpr std::string_view kName = "has_parameter_privilege";
-  static constexpr AclMode kModes = AclMode::Set | AclMode::AlterSystem;
+  static constexpr CatalogType kType = CatalogType::PARAMETER_ENTRY;
+  static constexpr AclMode kModes = duckdb::ObjectKindOf(kType).privileges;
   static constexpr bool kSuperuserFirst = false;
 
-  static uint64_t Resolve(const Session&, std::string_view) {
-    return kInvalidOid;
+  struct Parameter {
+    std::string name;
+    duckdb::Permissions permissions;
+  };
+
+  struct Scope : ObjectScope {
+    std::vector<Parameter> parameters;
+  };
+
+  static Scope Begin(duckdb::ClientContext& context,
+                     duckdb::optional_idx caller) {
+    Scope scope{ObjectPrivileges::Begin(context, caller)};
+    auto& cluster = catalog::ClusterOf(context);
+    const auto root =
+      cluster.LookupOid(cluster.GetCatalogTransaction(context), kRootUser);
+    if (root) {
+      for (const auto& row : root->permissions.Rows().OfKind(
+             duckdb::CatalogType::PARAMETER_ENTRY)) {
+        scope.parameters.push_back(
+          {row.name, duckdb::Permissions{.owner = kRootUser, .acl = row.acl}});
+      }
+    }
+    return scope;
   }
 
-  static std::optional<ObjectTarget> Find(const Session&, uint64_t) {
-    return ObjectTarget{&kBuiltinPermissions};
-  }
-
-  static bool Check(const auth::RoleClosure& closure, duckdb::idx_t,
-                    const ObjectTarget&, const PrivilegeModes&) {
-    return closure.is_superuser;
+  static std::optional<ObjectTarget> FindNamed(const Scope& scope,
+                                               std::string_view name) {
+    const auto row = absl::c_find_if(scope.parameters, [&](const auto& entry) {
+      return absl::EqualsIgnoreCase(entry.name, name);
+    });
+    return ObjectTarget{row == scope.parameters.end() ? &kBuiltinPermissions
+                                                      : &row->permissions};
   }
 };
 
@@ -816,11 +892,120 @@ struct LargeObjectPrivileges : ObjectPrivileges<LargeObjectPrivileges> {
     return std::nullopt;
   }
 
-  static bool Check(const auth::RoleClosure&, duckdb::idx_t,
-                    const ObjectTarget&, const PrivilegeModes&) {
+  static bool Check(const ObjectScope&, const duckdb::RoleAccess&,
+                    duckdb::idx_t, const ObjectTarget&, const PrivilegeModes&) {
     SDB_UNREACHABLE();
   }
 };
+
+#include "pg/catalog/generated/object_classes.gen.inc"
+
+class ObjectAcls final : public duckdb::FunctionLocalState {
+ public:
+  ObjectAcls(duckdb::ClientContext& context, duckdb::optional_idx caller)
+    : _wrappers{ForeignDataWrapperPrivileges::Begin(context, caller)} {}
+
+  std::span<const duckdb::AclItem> Of(uint64_t classid, uint64_t objid,
+                                      int32_t objsubid) const {
+    const bool column = classid == kPgClassTable && objsubid != 0;
+    const auto target = Find(classid, objid, column ? objsubid : 0);
+    if (!target || target->owner_only) {
+      return {};
+    }
+    if (!column) {
+      return target->permissions->acl;
+    }
+    return target->columns.empty() ? std::span<const duckdb::AclItem>{}
+                                   : target->columns.front();
+  }
+
+  const duckdb::SecuritySnapshot& Roles() const { return *_wrappers.roles; }
+
+ private:
+  std::optional<ObjectTarget> Find(uint64_t classid, uint64_t objid,
+                                   int32_t objsubid) const {
+    const Session& session = _wrappers;
+    if (classid == kPgClassTable) {
+      if (objsubid == 0) {
+        return TablePrivileges::Find(session, objid,
+                                     EntryByOid(session, objid));
+      }
+      if (objsubid < 1 || objsubid > std::numeric_limits<int16_t>::max()) {
+        return std::nullopt;
+      }
+      return ColumnPrivileges::Find(session, objid, EntryByOid(session, objid),
+                                    static_cast<int16_t>(objsubid));
+    }
+    if (classid == kPgProcTable) {
+      return FunctionPrivileges::Find(session, objid,
+                                      EntryByOid(session, objid));
+    }
+    if (classid == kPgTypeTable) {
+      return TypePrivileges::Row(session, objid, EntryByOid(session, objid));
+    }
+    if (classid == kPgNamespaceTable) {
+      return SchemaPrivileges::Find(session, objid);
+    }
+    if (classid == kPgDatabaseTable) {
+      return DatabasePrivileges::Find(session, objid);
+    }
+    if (classid == kPgForeignServerTable) {
+      return ServerPrivileges::Find(session, objid, EntryByOid(session, objid));
+    }
+    if (classid == kPgForeignDataWrapperTable) {
+      return ForeignDataWrapperPrivileges::Find(_wrappers, objid);
+    }
+    if (classid == kPgLanguageTable) {
+      return LanguagePrivileges::Find(session, objid);
+    }
+    if (classid == kPgTablespaceTable) {
+      return TablespacePrivileges::Find(session, objid);
+    }
+    return std::nullopt;
+  }
+
+  ForeignDataWrapperPrivileges::Scope _wrappers;
+};
+
+duckdb::unique_ptr<duckdb::FunctionLocalState> InitObjectAcls(
+  duckdb::ExpressionState& state, const duckdb::BoundFunctionExpression& expr,
+  duckdb::FunctionData*) {
+  return duckdb::make_uniq<ObjectAcls>(state.GetContext(), expr.CallerRole());
+}
+
+void PgGetAclFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
+                      duckdb::Vector& result) {
+  const auto& acls =
+    duckdb::ExecuteFunctionState::GetFunctionState(state)->Cast<ObjectAcls>();
+  const auto classids = args.data[0].Values<int64_t>();
+  const auto objids = args.data[1].Values<int64_t>();
+  const auto objsubids = args.data[2].Values<int32_t>();
+  auto writer =
+    duckdb::FlatVector::Writer<duckdb::VectorListType<duckdb::string_t>>(
+      result, args.size());
+  std::string text;
+  for (duckdb::idx_t row = 0; row < args.size(); ++row) {
+    const auto classid = classids[row];
+    const auto objid = objids[row];
+    const auto objsubid = objsubids[row];
+    if (!classid.IsValid() || !objid.IsValid() || !objsubid.IsValid()) {
+      writer.WriteNull();
+      continue;
+    }
+    const auto oid = static_cast<uint64_t>(classid.GetValue());
+    if (!absl::c_linear_search(kAclClasses, oid)) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                      ERR_MSG("unrecognized class ID: ", oid));
+    }
+    const auto acl = acls.Of(oid, static_cast<uint64_t>(objid.GetValue()),
+                             objsubid.GetValue());
+    if (acl.empty()) {
+      writer.WriteNull();
+      continue;
+    }
+    WriteAclTexts(writer, acl, acls.Roles(), text);
+  }
+}
 
 struct RolePrivMask {
   bool usage = false;
@@ -834,11 +1019,22 @@ struct RolePrivileges {
   static constexpr bool kSuperuserFirst = false;
 
   struct Scope {
-    std::shared_ptr<const auth::RoleGraph> roles;
+    duckdb::shared_ptr<const duckdb::SecuritySnapshot> roles;
+    mutable duckdb::idx_t member = kInvalidOid;
+    mutable duckdb::RoleMemberships memberships;
   };
 
-  static Scope Begin(duckdb::ClientContext& context) {
-    return {auth::RolesOf(&context)};
+  static Scope Begin(duckdb::ClientContext& context, duckdb::optional_idx) {
+    return {.roles = catalog::RolesOf(&context)};
+  }
+
+  static const duckdb::RoleMemberships& MembershipsOf(const Scope& scope,
+                                                      duckdb::idx_t member) {
+    if (scope.member != member) {
+      scope.memberships = scope.roles->MembershipsOf(member);
+      scope.member = member;
+    }
+    return scope.memberships;
   }
 
   static duckdb::idx_t Role(const Scope& scope, duckdb::string_t name) {
@@ -884,18 +1080,27 @@ struct RolePrivileges {
     return mask;
   }
 
-  static bool Check(const auth::RoleClosure& closure, duckdb::idx_t member,
-                    duckdb::idx_t role, const RolePrivMask& mask) {
+  static bool Check(const Scope& scope, const duckdb::RoleAccess& closure,
+                    duckdb::idx_t member, duckdb::idx_t role,
+                    const RolePrivMask& mask) {
     if (closure.is_superuser) {
       return true;
     }
     if (member == role) {
       return mask.usage || mask.member || mask.set;
     }
-    return (mask.usage && closure.MemberOf(role)) ||
-           (mask.member && closure.IsMember(role)) ||
-           (mask.set && closure.CanSet(role)) ||
-           (mask.admin && closure.IsAdminOf(role));
+    if (mask.usage && closure.MemberOf(role)) {
+      return true;
+    }
+    if (mask.set && closure.CanSet(role)) {
+      return true;
+    }
+    if (!mask.member && !mask.admin) {
+      return false;
+    }
+    const auto& memberships = MembershipsOf(scope, member);
+    return (mask.member && memberships.IsMember(role)) ||
+           (mask.admin && memberships.IsAdminOf(role));
   }
 };
 
@@ -910,31 +1115,31 @@ duckdb::LogicalType PrivilegeArgument() {
   }
 }
 
-template<typename F, typename... Rest>
-auto FindObject(const typename F::Scope& scope, duckdb::string_t name,
-                Rest... rest) {
-  if constexpr (requires { F::FindNamed(scope, AsView(name), rest...); }) {
-    return F::FindNamed(scope, AsView(name), rest...);
-  } else {
-    return F::Find(scope, F::Resolve(scope, AsView(name)), rest...);
-  }
-}
-
-template<typename F, typename... Rest>
-auto FindObject(const typename F::Scope& scope, int64_t oid, Rest... rest) {
-  return F::Find(scope, static_cast<uint64_t>(oid), rest...);
-}
-
 template<typename F>
 class PrivilegeCheck final : public duckdb::FunctionLocalState {
  public:
-  explicit PrivilegeCheck(duckdb::ClientContext& context)
-    : _context{context}, _scope{F::Begin(context)} {}
+  PrivilegeCheck(duckdb::ClientContext& context, duckdb::optional_idx caller)
+    : _scope{F::Begin(context, caller)} {}
 
   PrivilegeCheck& ForChunk() {
     _named.reset();
     _modes.reset();
     return *this;
+  }
+
+  void Prefetch(duckdb::Vector& oids) {
+    if constexpr (kFindsEntries) {
+      _oids.clear();
+      _next = 0;
+      if (oids.GetVectorType() == duckdb::VectorType::CONSTANT_VECTOR) {
+        return;
+      }
+      for (const auto oid : oids.ValidValues<int64_t>()) {
+        _oids.push_back(static_cast<duckdb::idx_t>(oid.GetValue()));
+      }
+      _entries.resize(_oids.size());
+      EntriesByOid(_scope, _oids, _entries);
+    }
   }
 
   duckdb::idx_t Role(duckdb::string_t name) {
@@ -949,10 +1154,10 @@ class PrivilegeCheck final : public duckdb::FunctionLocalState {
   template<typename Object, typename... Rest>
   duckdb::optional<bool> Answer(duckdb::idx_t role, duckdb::string_t text,
                                 Object object, Rest... rest) {
-    const auto target = FindObject<F>(_scope, object, rest...);
+    const auto target = FindObject(object, rest...);
     const auto& modes = Modes(text);
     if (target) {
-      return F::Check(Closure(role), role, *target, modes);
+      return F::Check(_scope, Closure(role), role, *target, modes);
     }
     if constexpr (F::kSuperuserFirst) {
       if (Closure(role).is_superuser) {
@@ -963,6 +1168,12 @@ class PrivilegeCheck final : public duckdb::FunctionLocalState {
   }
 
  private:
+  static constexpr bool kFindsEntries =
+    requires(const typename F::Scope& scope, uint64_t oid,
+             duckdb::optional_ptr<duckdb::CatalogEntry> entry) {
+      F::Find(scope, oid, entry);
+    };
+
   struct NamedRole {
     duckdb::string_t name;
     duckdb::idx_t role;
@@ -973,10 +1184,33 @@ class PrivilegeCheck final : public duckdb::FunctionLocalState {
     typename F::Modes modes;
   };
 
-  struct RoleClosureOf {
-    duckdb::idx_t role;
-    std::shared_ptr<const auth::RoleClosure> closure;
-  };
+  template<typename... Rest>
+  auto FindObject(duckdb::string_t name, Rest... rest) {
+    if constexpr (requires { F::FindNamed(_scope, AsView(name), rest...); }) {
+      return F::FindNamed(_scope, AsView(name), rest...);
+    } else {
+      return FindObject(F::Resolve(_scope, AsView(name)), rest...);
+    }
+  }
+
+  template<typename... Rest>
+  auto FindObject(uint64_t oid, Rest... rest) {
+    if constexpr (kFindsEntries) {
+      return F::Find(_scope, oid, Entry(oid), rest...);
+    } else {
+      return F::Find(_scope, oid, rest...);
+    }
+  }
+
+  duckdb::optional_ptr<duckdb::CatalogEntry> Entry(uint64_t oid) {
+    for (auto next = _next; next < _oids.size(); ++next) {
+      if (_oids[next] == oid) {
+        _next = next + 1;
+        return _entries[next];
+      }
+    }
+    return EntryByOid(_scope, oid);
+  }
 
   const typename F::Modes& Modes(duckdb::string_t text) {
     if (!_modes || text != _modes->text) {
@@ -985,26 +1219,28 @@ class PrivilegeCheck final : public duckdb::FunctionLocalState {
     return _modes->modes;
   }
 
-  const auth::RoleClosure& Closure(duckdb::idx_t role) {
+  const duckdb::RoleAccess& Closure(duckdb::idx_t role) {
     if (!_closure || role != _closure->role) {
-      _closure = RoleClosureOf{.role = role,
-                               .closure = auth::ClosureFor(&_context, role)};
+      _closure = _scope.roles->AccessOf(role);
     }
-    return *_closure->closure;
+    return *_closure;
   }
 
-  duckdb::ClientContext& _context;
   typename F::Scope _scope;
   std::optional<NamedRole> _named;
   std::optional<ParsedModes> _modes;
-  std::optional<RoleClosureOf> _closure;
+  std::optional<duckdb::RoleAccess> _closure;
+  std::vector<duckdb::idx_t> _oids;
+  std::vector<duckdb::optional_ptr<duckdb::CatalogEntry>> _entries;
+  size_t _next = 0;
 };
 
 template<typename F>
 duckdb::unique_ptr<duckdb::FunctionLocalState> InitPrivilegeCheck(
-  duckdb::ExpressionState& state, const duckdb::BoundFunctionExpression&,
+  duckdb::ExpressionState& state, const duckdb::BoundFunctionExpression& expr,
   duckdb::FunctionData*) {
-  return duckdb::make_uniq<PrivilegeCheck<F>>(state.GetContext());
+  return duckdb::make_uniq<PrivilegeCheck<F>>(state.GetContext(),
+                                              expr.CallerRole());
 }
 
 template<typename F, typename Role, typename... Object>
@@ -1023,9 +1259,18 @@ duckdb::ScalarFunction PrivilegeFunction() {
       auto& check = duckdb::ExecuteFunctionState::GetFunctionState(state)
                       ->Cast<PrivilegeCheck<F>>()
                       .ForChunk();
+      if constexpr (std::is_same_v<
+                      std::tuple_element_t<0, std::tuple<Object...>>,
+                      int64_t>) {
+        check.Prefetch(args.data[std::is_void_v<Role> ? 0 : 1]);
+      }
       if constexpr (std::is_void_v<Role>) {
+        const auto caller =
+          state.expr.Cast<duckdb::BoundFunctionExpression>().CallerRole();
         const auto role =
-          ConnectionContext::Get(state.GetContext()).GetRoleId();
+          caller.IsValid()
+            ? caller.GetIndex()
+            : ConnectionContext::Get(state.GetContext()).GetRoleId();
         duckdb::VariadicExecutor::Execute<bool, Object..., duckdb::string_t>(
           args, result, [&](Object... object, duckdb::string_t text) {
             return check.Answer(role, text, object...);
@@ -1065,10 +1310,14 @@ void RegisterPrivilegeFunctions(duckdb::ExtensionLoader& loader) {
 
 void WriteAclTexts(
   duckdb::VectorWriter<duckdb::VectorListType<duckdb::string_t>>& writer,
-  std::span<const duckdb::AclItem> items, const auth::RoleGraph& roles,
+  std::span<const duckdb::AclItem> items, const duckdb::SecuritySnapshot& roles,
   std::string& text) {
-  auto item = items.begin();
-  for (auto& child : writer.WriteList(items.size())) {
+  const auto granting = [](const duckdb::AclItem& item) {
+    return !item.GrantsNothing();
+  };
+  auto granted = items | std::views::filter(granting);
+  auto item = granted.begin();
+  for (auto& child : writer.WriteList(absl::c_count_if(items, granting))) {
     text.clear();
     AppendAcl(text, *item++, roles);
     child.WriteValue(duckdb::string_t{text});
@@ -1079,7 +1328,7 @@ void RegisterAclFunctions(duckdb::ExtensionLoader& loader) {
   const std::string_view pg_catalog = irs::StaticStrings::kPgCatalogSchema;
   RegisterScalar(loader, pg_catalog, "acldefault",
                  duckdb::FunctionStability::CONSISTENT_WITHIN_QUERY, nullptr,
-                 {duckdb::ScalarFunction{{duckdb::LogicalType::VARCHAR, OID()},
+                 {duckdb::ScalarFunction{{CHAR(), OID()},
                                          duckdb::LogicalType::LIST(ACLITEM()),
                                          AclDefaultFunction,
                                          AclDefaultBind}});
@@ -1120,6 +1369,12 @@ void RegisterAclFunctions(duckdb::ExtensionLoader& loader) {
   RegisterScalar(loader, pg_catalog, "makeaclitem",
                  duckdb::FunctionStability::CONSISTENT_WITHIN_QUERY, nullptr,
                  {make_aclitem});
+  RegisterScalar(
+    loader, pg_catalog, "pg_get_acl",
+    duckdb::FunctionStability::CONSISTENT_WITHIN_QUERY, InitObjectAcls,
+    {duckdb::ScalarFunction{{OID(), OID(), duckdb::LogicalType::INTEGER},
+                            duckdb::LogicalType::LIST(ACLITEM()),
+                            PgGetAclFunction}});
 }
 
 }  // namespace sdb::pg

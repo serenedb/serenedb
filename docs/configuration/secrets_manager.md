@@ -88,10 +88,14 @@ CREATE SECRET (TYPE clickhouse, host 'clickhouse.internal', user 'reader', passw
 ATTACH 'database=events' AS analytics (TYPE clickhouse);
 ```
 
+## Who Uses Secrets
+
+A function that reads files or URLs, such as `read_parquet`, uses secrets only for a superuser: for another role it reads without them, also when the role may read server files and URLs. A view reads with its owner's secrets when its owner is a superuser. A [foreign server](../sql/statements/create_server/index.md) owned by a role that is not a superuser connects without secrets.
+
 ## Listing Secrets
 
 Secrets can be listed using the built-in table-producing function, e.g., by using the [`sdb_secrets()` table function](../sql/functions/metadata.md#sdb_secrets):
 
 <SqlLogicTest id="configuration/secrets_manager/example_008" />
 
-`sdb_secrets()` shows some sensitive values as `redacted`, but it does not hide every credential a secret holds, so do not rely on it to keep credentials from the users who can call it. For an `s3`, `r2`, `gcs` or `aws` secret, `secret`, `session_token`, `http_proxy_password` and `refresh_info` are redacted.
+`sdb_secrets()` can be called only by a superuser. It shows the credentials of a secret as `redacted`: the `secret`, `session_token` and `http_proxy_password` of an `s3`, `r2`, `gcs` or `aws` secret, and its whole `refresh_info`, which repeats the options the secret was created with.

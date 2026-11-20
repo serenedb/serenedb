@@ -664,20 +664,35 @@ duckdb::unique_ptr<duckdb::FunctionData> ScanBind(
     path.emplace_back(part.GetValue<std::string>());
   }
   const auto qualified = duckdb::QualifiedName::FromPath(std::move(path));
-  auto index = duckdb::Catalog::GetEntry<duckdb::IndexCatalogEntry>(
-    context, qualified, duckdb::OnEntryNotFound::RETURN_NULL);
-  if (!index || !catalog::IsInvertedIndex(*index)) {
+  const duckdb::EntryLookupInfo lookup{duckdb::CatalogType::INDEX_ENTRY,
+                                       qualified};
+  auto found = input.binder
+                 ? input.binder->EntryRetriever().GetEntry(
+                     lookup, duckdb::OnEntryNotFound::RETURN_NULL)
+                 : duckdb::Catalog::GetEntry(
+                     context, lookup, duckdb::OnEntryNotFound::RETURN_NULL);
+  if (!found || found->type != duckdb::CatalogType::INDEX_ENTRY ||
+      !catalog::IsInvertedIndex(found->Cast<duckdb::IndexCatalogEntry>())) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                     ERR_MSG("relation \"", qualified.Name().GetIdentifierName(),
                             "\" does not exist"));
   }
+  auto& index = found->Cast<duckdb::IndexCatalogEntry>();
   if (input.binder) {
     auto& properties = input.binder->GetStatementProperties();
-    properties.RegisterDBRead(index->ParentCatalog(), context);
-    properties.RegisterDataRead(*index, context, input.table_index);
+    properties.RegisterDBRead(index.ParentCatalog(), context);
+    properties.RegisterDataRead(index, context, input.table_index);
+  }
+  const auto& role =
+    input.binder ? input.binder->CheckAs() : context.CurrentRole();
+  if (auto host =
+        index.GetRelation(index.catalog.GetCatalogTransaction(context));
+      host && host->type == duckdb::CatalogType::VIEW_ENTRY &&
+      !duckdb::IsUnowned(*host)) {
+    duckdb::RequireEntryPrivilege(role, *host, duckdb::AclMode::Select);
   }
   auto data = BindIndexScan(
-    context, irs::utils::downCast<catalog::InvertedIndexEntry>(*index));
+    context, irs::utils::downCast<catalog::InvertedIndexEntry>(index));
   data->IterateColumns([&](ColumnId id, const duckdb::LogicalType& type) {
     return_types.emplace_back(type);
     names.emplace_back(data->ColumnNameById(id));

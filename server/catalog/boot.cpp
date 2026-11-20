@@ -258,7 +258,7 @@ void InitCatalog(bool default_database, bool initialized) {
   }
   context.RunFunctionInTransaction(
     [&] { cluster.Bootstrap(context, default_database); });
-  auth::PublishRoles(cluster);
+  cluster.PublishSecurity();
   if (layout.InMemory()) {
     return;
   }
@@ -295,6 +295,7 @@ void InitCatalog(bool default_database, bool initialized) {
         servers.emplace_back(entry.Cast<ForeignServerCatalogEntry>());
       });
   }
+  context.RefreshSecurity();
   for (auto& server : servers) {
     try {
       context.RunFunctionInTransaction([&] { server.get().Attach(context); });

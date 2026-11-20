@@ -1,0 +1,69 @@
+statement ok
+DROP TABLE IF EXISTS pco_t;
+
+
+statement ok
+DROP ROLE IF EXISTS pco_user;
+
+
+statement ok
+CREATE ROLE pco_user LOGIN PASSWORD 'pco_pw';
+
+
+statement ok
+CREATE TABLE pco_t (a INTEGER, b INTEGER);
+
+
+statement ok
+GRANT SELECT (a) ON pco_t TO pco_user;
+
+
+connection c_pco user=pco_user password=pco_pw
+statement error (column "pco_missing" does not exist|Referenced column "pco_missing" not found)
+SELECT b, pco_missing FROM pco_t;
+
+
+connection c_pco user=pco_user password=pco_pw
+statement error (column "pco_missing" of relation "pco_t" does not exist|Referenced update column pco_missing not found)
+UPDATE pco_t SET pco_missing = 1;
+
+
+connection c_pco user=pco_user password=pco_pw
+statement error (column "pco_missing" of relation "pco_t" does not exist|does not have a column with name "pco_missing")
+INSERT INTO pco_t (pco_missing) VALUES (1);
+
+
+connection c_pco user=pco_user password=pco_pw
+statement error
+SELECT b FROM pco_t;
+----
+db error: ERROR: permission denied for table pco_t
+
+
+connection c_pco user=pco_user password=pco_pw
+statement error
+UPDATE pco_t SET a = 1;
+----
+db error: ERROR: permission denied for table pco_t
+
+
+connection c_pco user=pco_user password=pco_pw
+statement error
+INSERT INTO pco_t (a) VALUES (1);
+----
+db error: ERROR: permission denied for table pco_t
+
+
+connection c_pco user=pco_user password=pco_pw
+query
+SELECT a FROM pco_t;
+----
+a
+
+
+statement ok
+DROP TABLE pco_t;
+
+
+statement ok
+DROP ROLE pco_user;

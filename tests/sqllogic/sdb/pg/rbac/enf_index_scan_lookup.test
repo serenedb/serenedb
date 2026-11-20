@@ -1,0 +1,95 @@
+control substitution on
+
+statement ok
+DROP ROLE IF EXISTS eisl_vedernikoff;
+
+
+statement ok
+CREATE ROLE eisl_vedernikoff LOGIN PASSWORD 'eisl_pw';
+
+
+statement ok
+CREATE SCHEMA eisl_hidden;
+
+
+statement ok
+CREATE TABLE eisl_hidden.eisl_docs (id INTEGER PRIMARY KEY, n INTEGER);
+
+
+statement ok
+CREATE INDEX eisl_hidden_idx ON eisl_hidden.eisl_docs USING inverted(id, n);
+
+
+statement ok
+GRANT SELECT ON eisl_hidden.eisl_docs TO eisl_vedernikoff;
+
+
+statement ok
+CREATE DATABASE eisl_other_${__DATABASE__};
+
+
+statement ok
+CREATE TABLE eisl_other_${__DATABASE__}.public.eisl_remote (id INTEGER PRIMARY KEY, n INTEGER);
+
+
+statement ok
+CREATE INDEX eisl_remote_idx ON eisl_other_${__DATABASE__}.public.eisl_remote USING inverted(id, n);
+
+
+statement ok
+GRANT SELECT ON eisl_other_${__DATABASE__}.public.eisl_remote TO eisl_vedernikoff;
+
+
+statement ok
+REVOKE CONNECT ON DATABASE eisl_other_${__DATABASE__} FROM PUBLIC;
+
+
+connection c_eisl user=eisl_vedernikoff password=eisl_pw
+statement error
+SELECT count(*) FROM eisl_hidden.eisl_hidden_idx;
+----
+db error: ERROR: permission denied for schema eisl_hidden
+
+
+connection c_eisl user=eisl_vedernikoff password=eisl_pw
+statement error
+SELECT count(*) FROM eisl_other_${__DATABASE__}.public.eisl_remote_idx;
+----
+db error: ERROR: permission denied for database "eisl_other_<slt:ignore>"
+DETAIL: User does not have CONNECT privilege.
+
+
+statement ok
+GRANT USAGE ON SCHEMA eisl_hidden TO eisl_vedernikoff;
+
+
+statement ok
+GRANT CONNECT ON DATABASE eisl_other_${__DATABASE__} TO eisl_vedernikoff;
+
+
+connection c_eisl user=eisl_vedernikoff password=eisl_pw
+query
+SELECT count(*) AS n FROM eisl_hidden.eisl_hidden_idx;
+----
+n
+0
+
+
+connection c_eisl user=eisl_vedernikoff password=eisl_pw
+query
+SELECT count(*) AS n FROM eisl_other_${__DATABASE__}.public.eisl_remote_idx;
+----
+n
+0
+
+
+statement ok
+DROP SCHEMA eisl_hidden CASCADE;
+
+
+statement ok retry 40 backoff 250ms
+DROP DATABASE eisl_other_${__DATABASE__};
+
+
+statement ok
+DROP ROLE eisl_vedernikoff;

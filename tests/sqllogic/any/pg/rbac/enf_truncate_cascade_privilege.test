@@ -1,0 +1,83 @@
+statement ok
+DROP TABLE IF EXISTS etc_child;
+
+
+statement ok
+DROP TABLE IF EXISTS etc_parent;
+
+
+statement ok
+DROP ROLE IF EXISTS etc_cleaner;
+
+
+statement ok
+CREATE ROLE etc_cleaner LOGIN PASSWORD 'etc_pw';
+
+
+statement ok
+CREATE TABLE etc_parent (id integer PRIMARY KEY);
+
+
+statement ok
+CREATE TABLE etc_child (id integer PRIMARY KEY, parent_id integer REFERENCES etc_parent (id));
+
+
+statement ok
+INSERT INTO etc_parent VALUES (1);
+
+
+statement ok
+INSERT INTO etc_child VALUES (10, 1);
+
+
+statement ok
+GRANT TRUNCATE ON etc_parent TO etc_cleaner;
+
+
+connection c_etc user=etc_cleaner password=etc_pw
+statement error
+TRUNCATE etc_parent CASCADE;
+----
+db error: ERROR: permission denied for table etc_child
+
+
+connection c_etc user=etc_cleaner password=etc_pw
+statement error
+TRUNCATE etc_parent, etc_child;
+----
+db error: ERROR: permission denied for table etc_child
+
+
+query
+SELECT (SELECT count(*) FROM etc_parent) AS parents, (SELECT count(*) FROM etc_child) AS children;
+----
+parents	children
+1	1
+
+
+statement ok
+GRANT TRUNCATE ON etc_child TO etc_cleaner;
+
+
+connection c_etc user=etc_cleaner password=etc_pw
+statement ok
+TRUNCATE etc_parent CASCADE;
+
+
+query
+SELECT (SELECT count(*) FROM etc_parent) AS parents, (SELECT count(*) FROM etc_child) AS children;
+----
+parents	children
+0	0
+
+
+statement ok
+DROP TABLE etc_child;
+
+
+statement ok
+DROP TABLE etc_parent;
+
+
+statement ok
+DROP ROLE etc_cleaner;

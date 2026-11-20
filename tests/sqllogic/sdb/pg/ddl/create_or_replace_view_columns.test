@@ -144,6 +144,7 @@ statement error
 CREATE OR REPLACE PROCEDURE corv_f(x INT) AS x + 5;
 ----
 db error: ERROR: cannot change routine kind
+DETAIL: "corv_f" is a function.
 
 
 # Recursion is not a dependency: a function may be redefined to call itself,

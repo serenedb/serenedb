@@ -1,0 +1,101 @@
+control substitution on
+
+statement ok
+CREATE FUNCTION forr_f(x INT) RETURNS INT LANGUAGE SQL AS 'SELECT x + 1';
+
+
+statement ok
+CREATE FUNCTION forr_f(x TEXT) RETURNS TEXT LANGUAGE SQL AS 'SELECT x || x';
+
+
+statement ok
+CREATE FUNCTION forr_f(x BIGINT) RETURNS BIGINT LANGUAGE SQL AS 'SELECT x * 2';
+
+
+statement ok
+COMMENT ON FUNCTION forr_f(integer) IS 'first';
+
+
+statement ok
+COMMENT ON FUNCTION forr_f(text) IS 'second';
+
+
+statement ok
+ALTER FUNCTION forr_f(bigint) RENAME TO forr_g;
+
+
+statement ok
+COMMENT ON FUNCTION forr_g(bigint) IS 'moved';
+
+
+query
+SELECT oid::regprocedure::text AS f, obj_description(oid, 'pg_proc') AS comment
+FROM pg_proc WHERE proname IN ('forr_f', 'forr_g') ORDER BY 1;
+----
+f	comment
+forr_f(integer)	first
+forr_f(text)	second
+forr_g(bigint)	moved
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_crash
+query
+SELECT oid::regprocedure::text AS f, obj_description(oid, 'pg_proc') AS comment
+FROM pg_proc WHERE proname IN ('forr_f', 'forr_g') ORDER BY 1;
+----
+f	comment
+forr_f(integer)	first
+forr_f(text)	second
+forr_g(bigint)	moved
+
+
+connection after_crash
+query
+SELECT forr_f(1) AS i, forr_f('a') AS t, forr_g(2::bigint) AS b;
+----
+i	t	b
+2	aa	4
+
+
+connection after_crash
+statement ok
+FORCE CHECKPOINT;
+
+
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+
+connection after_checkpoint
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_checkpoint
+query
+SELECT oid::regprocedure::text AS f, obj_description(oid, 'pg_proc') AS comment
+FROM pg_proc WHERE proname IN ('forr_f', 'forr_g') ORDER BY 1;
+----
+f	comment
+forr_f(integer)	first
+forr_f(text)	second
+forr_g(bigint)	moved

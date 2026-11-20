@@ -1,0 +1,391 @@
+statement ok
+DROP FUNCTION IF EXISTS public.efsp_pinned();
+
+
+statement ok
+DROP FUNCTION IF EXISTS public.efsp_floating();
+
+
+statement ok
+DROP FUNCTION IF EXISTS public.efsp_current();
+
+
+statement ok
+DROP FUNCTION IF EXISTS public.efsp_rows();
+
+
+statement ok
+DROP FUNCTION IF EXISTS public.efsp_definer();
+
+
+statement ok
+DROP FUNCTION IF EXISTS public.efsp_definer_floating();
+
+
+statement ok
+DROP FUNCTION IF EXISTS public.efsp_zoned();
+
+
+statement ok
+DROP FUNCTION IF EXISTS public.efsp_outer();
+
+
+statement ok
+DROP FUNCTION IF EXISTS public.efsp_echo(text);
+
+
+statement ok
+DROP FUNCTION IF EXISTS public.efsp_echo_rows(text);
+
+
+statement ok
+DROP SCHEMA IF EXISTS efsp_a CASCADE;
+
+
+statement ok
+DROP SCHEMA IF EXISTS efsp_b CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS efsp_owner;
+
+
+statement ok
+DROP ROLE IF EXISTS efsp_user;
+
+
+statement ok
+CREATE SCHEMA efsp_a;
+
+
+statement ok
+CREATE SCHEMA efsp_b;
+
+
+statement ok
+CREATE TABLE efsp_a.t (v text);
+
+
+statement ok
+INSERT INTO efsp_a.t VALUES ('a');
+
+
+statement ok
+CREATE TABLE efsp_b.t (v text);
+
+
+statement ok
+INSERT INTO efsp_b.t VALUES ('b');
+
+
+statement ok
+CREATE FUNCTION public.efsp_pinned() RETURNS text LANGUAGE SQL SET search_path = efsp_a AS 'SELECT v FROM t';
+
+
+statement ok
+CREATE FUNCTION public.efsp_rows() RETURNS TABLE (v text) LANGUAGE SQL SET search_path TO efsp_a AS 'SELECT v FROM t';
+
+
+statement ok
+SET search_path = efsp_b, public;
+
+
+statement ok
+CREATE FUNCTION public.efsp_floating() RETURNS text LANGUAGE SQL AS 'SELECT v FROM t';
+
+
+statement ok
+CREATE FUNCTION public.efsp_current() RETURNS text LANGUAGE SQL SET search_path FROM CURRENT AS 'SELECT v FROM t';
+
+
+query
+SELECT efsp_pinned() AS pinned, efsp_floating() AS floating, efsp_current() AS current;
+----
+pinned	floating	current
+a	b	b
+
+
+query
+SELECT v FROM efsp_rows();
+----
+v
+a
+
+
+statement ok
+SET search_path = efsp_a, public;
+
+
+query
+SELECT efsp_pinned() AS pinned, efsp_floating() AS floating, efsp_current() AS current;
+----
+pinned	floating	current
+a	a	b
+
+
+query
+SELECT proname, proconfig FROM pg_proc
+WHERE proname IN ('efsp_pinned', 'efsp_rows', 'efsp_floating', 'efsp_current')
+ORDER BY proname;
+----
+proname	proconfig
+efsp_current	{"search_path=efsp_b, public"}
+efsp_floating	NULL
+efsp_pinned	{search_path=efsp_a}
+efsp_rows	{search_path=efsp_a}
+
+
+query
+SELECT pg_get_functiondef('public.efsp_current()'::regprocedure) AS def;
+----
+def
+CREATE OR REPLACE FUNCTION public.efsp_current()\n RETURNS text\n LANGUAGE sql\n SET search_path TO 'efsp_b', 'public'\nAS $function$SELECT v FROM t$function$\n
+
+
+statement ok
+ALTER FUNCTION public.efsp_floating() SET search_path = efsp_b;
+
+
+query
+SELECT efsp_floating() AS floating;
+----
+floating
+b
+
+
+query
+SELECT proconfig FROM pg_proc WHERE proname = 'efsp_floating';
+----
+proconfig
+{search_path=efsp_b}
+
+
+statement ok
+ALTER FUNCTION public.efsp_floating() RESET search_path;
+
+
+query
+SELECT efsp_floating() AS floating;
+----
+floating
+a
+
+
+statement ok
+SET search_path = efsp_b, public;
+
+
+statement ok
+ALTER FUNCTION public.efsp_pinned() RESET ALL;
+
+
+query
+SELECT efsp_pinned() AS pinned, proconfig FROM pg_proc WHERE proname = 'efsp_pinned';
+----
+pinned	proconfig
+b	NULL
+
+
+statement ok
+CREATE OR REPLACE FUNCTION public.efsp_current() RETURNS text LANGUAGE SQL AS 'SELECT v FROM t';
+
+
+query
+SELECT proconfig FROM pg_proc WHERE proname = 'efsp_current';
+----
+proconfig
+NULL
+
+
+statement ok
+CREATE FUNCTION public.efsp_echo(x text) RETURNS text LANGUAGE SQL SET search_path = efsp_a AS 'SELECT v || x FROM t';
+
+
+statement ok
+CREATE FUNCTION public.efsp_echo_rows(x text) RETURNS TABLE (v text) LANGUAGE SQL SET search_path = efsp_a AS 'SELECT v || x FROM t';
+
+
+statement ok
+CREATE FUNCTION public.efsp_outer() RETURNS text LANGUAGE SQL SET search_path = efsp_a AS 'SELECT public.efsp_floating()';
+
+
+query
+SELECT efsp_echo((SELECT v FROM t)) AS echoed, efsp_outer() AS nested;
+----
+echoed	nested
+ab	a
+
+
+query
+SELECT v FROM efsp_echo_rows((SELECT v FROM t));
+----
+v
+ab
+
+
+statement ok
+RESET search_path;
+
+
+statement ok
+CREATE ROLE efsp_owner LOGIN PASSWORD 'efsp_pw';
+
+
+statement ok
+CREATE ROLE efsp_user LOGIN PASSWORD 'efsp_pw';
+
+
+statement ok
+GRANT CREATE ON SCHEMA public TO efsp_owner;
+
+
+statement ok
+GRANT USAGE ON SCHEMA efsp_a, efsp_b TO efsp_owner;
+
+
+statement ok
+GRANT SELECT ON efsp_a.t, efsp_b.t TO efsp_owner;
+
+
+statement ok
+GRANT USAGE ON SCHEMA efsp_b TO efsp_user;
+
+
+statement ok
+GRANT SELECT ON efsp_b.t TO efsp_user;
+
+
+connection c_owner user=efsp_owner password=efsp_pw
+statement ok
+CREATE FUNCTION public.efsp_definer() RETURNS text LANGUAGE SQL SECURITY DEFINER SET search_path = efsp_a AS 'SELECT v FROM t';
+
+
+connection c_owner user=efsp_owner password=efsp_pw
+statement ok
+SET search_path = efsp_a, public;
+
+
+connection c_owner user=efsp_owner password=efsp_pw
+statement ok
+CREATE FUNCTION public.efsp_definer_floating() RETURNS text LANGUAGE SQL SECURITY DEFINER AS 'SELECT v FROM t';
+
+
+connection c_user user=efsp_user password=efsp_pw
+statement ok
+SET search_path = efsp_b, public;
+
+
+connection c_user user=efsp_user password=efsp_pw
+query
+SELECT efsp_definer() AS pinned, efsp_definer_floating() AS floating;
+----
+pinned	floating
+a	b
+
+
+connection c_user user=efsp_user password=efsp_pw
+statement error
+SELECT v FROM efsp_a.t;
+----
+db error: ERROR: permission denied for schema efsp_a
+
+
+onlyif postgres
+statement error
+SELECT efsp_echo(v) OVER () FROM efsp_a.t;
+----
+db error: ERROR: OVER specified, but efsp_echo is not a window function nor an aggregate function
+
+
+skipif postgres
+statement error
+SELECT efsp_echo(v) OVER () FROM efsp_a.t;
+----
+db error: ERROR: a function with SET search_path cannot be called as a window function
+
+
+onlyif postgres
+statement error
+SELECT efsp_definer() OVER () FROM efsp_a.t;
+----
+db error: ERROR: OVER specified, but efsp_definer is not a window function nor an aggregate function
+
+
+skipif postgres
+statement error
+SELECT efsp_definer() OVER () FROM efsp_a.t;
+----
+db error: ERROR: a SECURITY DEFINER function cannot be called as a window function
+
+
+onlyif postgres
+statement ok
+CREATE FUNCTION public.efsp_zoned() RETURNS text LANGUAGE SQL SET TimeZone = 'UTC' AS 'SELECT 1::text';
+
+
+skipif postgres
+statement error
+CREATE FUNCTION public.efsp_zoned() RETURNS text LANGUAGE SQL SET TimeZone = 'UTC' AS 'SELECT 1::text';
+----
+db error: ERROR: SET of parameter "timezone" on a function is not supported
+DETAIL: A function can set only search_path.
+
+
+statement ok
+DROP FUNCTION IF EXISTS public.efsp_zoned();
+
+
+statement ok
+DROP FUNCTION public.efsp_definer_floating();
+
+
+statement ok
+DROP FUNCTION public.efsp_definer();
+
+
+statement ok
+DROP FUNCTION public.efsp_outer();
+
+
+statement ok
+DROP FUNCTION public.efsp_echo(text);
+
+
+statement ok
+DROP FUNCTION public.efsp_echo_rows(text);
+
+
+statement ok
+DROP FUNCTION public.efsp_current();
+
+
+statement ok
+DROP FUNCTION public.efsp_rows();
+
+
+statement ok
+DROP FUNCTION public.efsp_floating();
+
+
+statement ok
+DROP FUNCTION public.efsp_pinned();
+
+
+statement ok
+REVOKE CREATE ON SCHEMA public FROM efsp_owner;
+
+
+statement ok
+DROP SCHEMA efsp_a CASCADE;
+
+
+statement ok
+DROP SCHEMA efsp_b CASCADE;
+
+
+statement ok
+DROP ROLE efsp_owner;
+
+
+statement ok
+DROP ROLE efsp_user;

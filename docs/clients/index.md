@@ -10,6 +10,8 @@ Use SereneDB applications, or connect with any PostgreSQL-compatible client or d
 
 PostgreSQL connections require a user name. If the startup packet omits the database name or sends an empty one, SereneDB connects to the database named after that user. An explicit database name takes precedence.
 
+Any other parameter in the startup packet, such as `search_path`, `TimeZone` or `role`, is applied as if the session ran `SET` with the user's privileges, after the user's [role defaults](../sql/statements/alter_role/index.md). A parameter the user may not set, such as a `role` the user cannot `SET ROLE` to, refuses the connection. The `options` parameter takes PostgreSQL's `-c name=value` and `--name=value` arguments, applied the same way before the other parameters.
+
 A connection keeps one paged result open at a time. A result fetched a page at a time (a portal executed with a row limit, as JDBC's `setFetchSize`, psycopg's server-side cursors and asyncpg's cursors do) is closed by any other statement run on the same connection, and its next fetch fails with SQLSTATE `22023`. Read such a result to its end before running another statement, or run the other statements on another connection.
 
 ## Apps

@@ -1,0 +1,140 @@
+statement ok
+DROP ROLE IF EXISTS bg_user;
+
+
+statement ok
+CREATE ROLE bg_user;
+
+
+query
+SELECT has_function_privilege('bg_user', 'lower(text)', 'EXECUTE') AS function,
+       has_type_privilege('bg_user', 'int4', 'USAGE') AS type,
+       has_type_privilege('bg_user', 'int4[]', 'USAGE') AS array_type,
+       has_language_privilege('bg_user', 'sql', 'USAGE') AS language,
+       has_schema_privilege('bg_user', 'pg_catalog', 'USAGE') AS catalog_schema,
+       has_schema_privilege('bg_user', 'information_schema', 'USAGE') AS info_schema,
+       has_table_privilege('bg_user', 'pg_catalog.pg_class', 'SELECT') AS catalog_table,
+       has_table_privilege('bg_user', 'pg_catalog.pg_authid', 'SELECT') AS superuser_catalog;
+----
+function	type	array_type	language	catalog_schema	info_schema	catalog_table	superuser_catalog
+t	t	t	t	t	t	t	f
+
+
+onlyif postgres
+statement ok
+GRANT EXECUTE ON FUNCTION lower(text) TO bg_user;
+
+
+onlyif postgres
+statement ok
+REVOKE EXECUTE ON FUNCTION lower(text) FROM bg_user;
+
+
+skipif postgres
+statement error
+GRANT EXECUTE ON FUNCTION lower(text) TO bg_user;
+----
+db error: ERROR: Cannot alter entry "lower" because it is an internal system entry
+
+
+skipif postgres
+statement error
+REVOKE EXECUTE ON FUNCTION lower(text) FROM PUBLIC;
+----
+db error: ERROR: Cannot alter entry "lower" because it is an internal system entry
+
+
+onlyif postgres
+statement ok
+GRANT USAGE ON TYPE int4 TO bg_user;
+
+
+onlyif postgres
+statement ok
+REVOKE USAGE ON TYPE int4 FROM bg_user;
+
+
+skipif postgres
+statement error
+GRANT USAGE ON TYPE int4 TO bg_user;
+----
+db error: ERROR: Cannot alter entry "int4" because it is an internal system entry
+
+
+onlyif postgres
+statement ok
+GRANT SELECT ON pg_catalog.pg_authid TO bg_user;
+
+
+onlyif postgres
+statement ok
+REVOKE SELECT ON pg_catalog.pg_authid FROM bg_user;
+
+
+skipif postgres
+statement error
+GRANT SELECT ON pg_catalog.pg_authid TO bg_user;
+----
+db error: ERROR: Cannot alter entry "pg_authid" because it is an internal system entry
+
+
+onlyif postgres
+statement ok
+GRANT SELECT (rolname) ON pg_catalog.pg_authid TO bg_user;
+
+
+onlyif postgres
+statement ok
+REVOKE SELECT (rolname) ON pg_catalog.pg_authid FROM bg_user;
+
+
+skipif postgres
+statement error
+GRANT SELECT (rolname) ON pg_catalog.pg_authid TO bg_user;
+----
+db error: ERROR: Cannot alter entry "pg_authid" because it is an internal system entry
+
+
+onlyif postgres
+statement ok
+GRANT USAGE ON SCHEMA information_schema TO bg_user;
+
+
+onlyif postgres
+statement ok
+REVOKE USAGE ON SCHEMA information_schema FROM bg_user;
+
+
+skipif postgres
+statement error
+GRANT USAGE ON SCHEMA information_schema TO bg_user;
+----
+db error: ERROR: Cannot alter entry "information_schema" because it is an internal system entry
+
+
+statement ok
+GRANT SELECT ON ALL TABLES IN SCHEMA pg_catalog TO bg_user;
+
+
+onlyif postgres
+query
+SELECT has_table_privilege('bg_user', 'pg_catalog.pg_authid', 'SELECT') AS authid;
+----
+authid
+t
+
+
+skipif postgres
+query
+SELECT has_table_privilege('bg_user', 'pg_catalog.pg_authid', 'SELECT') AS authid;
+----
+authid
+f
+
+
+statement ok
+REVOKE SELECT ON ALL TABLES IN SCHEMA pg_catalog FROM bg_user;
+
+
+statement ok
+DROP ROLE bg_user;

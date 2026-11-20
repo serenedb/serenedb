@@ -17,6 +17,10 @@ hand, from the PostgreSQL source in third_party/postgres:
   src/include/catalog/pg_control.h, catversion.h
                                    the control file pg_basebackup copies and
                                    backup tools read
+  src/include/nodes/parsenodes.h, src/include/utils/acl.h,
+  src/backend/utils/adt/acl.c      the privileges, their letters and names,
+                                   and what each object type's owner and
+                                   PUBLIC hold by default
   meson.build                      the version server_version and PG_VERSION
                                    report
 
@@ -26,11 +30,16 @@ create them, from FirstUnpinnedObjectId.
 
 SereneDB's own choices live in scripts/pg_catalog/config.py (which PostgreSQL
 objects SereneDB names), in server/pg/types/mapping.cpp (which PostgreSQL
-types SereneDB supports), in server/pg/catalog/tables/<schema>/<table>.cpp (which
+types SereneDB supports), in server/catalog/entry/role.cpp (what each
+predefined role allows), in server/pg/catalog/tables/<schema>/<table>.cpp (which
 views are tables), in server/pg/catalog/table_functions/pg_catalog/<name>.cpp
-(the set-returning functions behind PostgreSQL views) and in
-server/pg/catalog/views/<schema>/<view>.cpp (view bodies SereneDB writes).
-Those outputs are server/pg/catalog/generated/*.gen.inc.
+(the set-returning functions behind PostgreSQL views), in
+server/pg/catalog/views/<schema>/<view>.cpp (view bodies SereneDB writes) and
+in scripts/pg_catalog/privileges.py (which PostgreSQL object type each of
+DuckDB's catalog entry types is, and where SereneDB keeps it).
+Those outputs are server/pg/catalog/generated/*.gen.inc, and the DuckDB fork's
+src/include/duckdb/catalog/privileges.hpp and
+src/include/duckdb/common/enums/role_capability.hpp.
 
 Three outputs come from this repository alone: generated/registry.gen.inc,
 which registers each file in server/pg/catalog/tables, table_functions and
@@ -45,8 +54,8 @@ import argparse
 import os
 import sys
 
-from pg_catalog import (builtins, claims, control, functions, relations,
-                        source, views)
+from pg_catalog import (builtins, claims, control, functions, privileges,
+                        relations, roles, source, views)
 from pg_catalog.common import REPO_ROOT, write
 from pg_catalog.generator import Generator
 
@@ -59,6 +68,8 @@ def outputs():
         constants, types = builtins.generate(gen)
         relations.generate(gen, constants, types)
         functions.generate(gen, constants, types, views.generate(gen))
+        roles.generate(gen)
+        privileges.generate(gen)
         control.generate(gen)
         out.update(gen.outputs)
     return out

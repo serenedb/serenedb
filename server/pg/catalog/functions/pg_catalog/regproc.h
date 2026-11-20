@@ -22,6 +22,7 @@
 
 #include <cstdint>
 #include <duckdb/catalog/catalog_entry/macro_catalog_entry.hpp>
+#include <duckdb/function/macro_function.hpp>
 #include <duckdb/parser/qualified_name.hpp>
 #include <iresearch/utils/pg/sql_error.hpp>
 #include <optional>
@@ -73,8 +74,12 @@ std::optional<uint64_t> RegIn(const Session& session, RegKind kind,
                               std::string_view text,
                               irs::pg::SqlErrorData* soft_error);
 
-const duckdb::MacroCatalogEntry* FindMacro(const Session& session,
-                                           uint64_t oid);
+struct MacroOverload {
+  const duckdb::MacroCatalogEntry* entry = nullptr;
+  const duckdb::MacroFunction* macro = nullptr;
+};
+
+MacroOverload FindMacro(const Session& session, uint64_t oid);
 
 std::optional<uint64_t> SchemaOid(const Session& session,
                                   std::string_view schema,

@@ -1,6 +1,6 @@
 # Column-level SELECT enforcement reached THROUGH subqueries, CTEs, derived
 # tables, LATERAL, and scalar subqueries. PG (parse-analyze) and SereneDB
-# (pre-optimize plan walk) both charge SELECT on EVERY referenced column and
+# both charge SELECT on EVERY referenced column and
 # relation, regardless of whether the optimizer later prunes it -- a ungranted
 # column anywhere in the statement refuses the whole read with
 # "permission denied for table <t>". A read touching only granted sources

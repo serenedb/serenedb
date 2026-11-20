@@ -1,0 +1,112 @@
+statement ok
+DROP ROLE IF EXISTS see_owner;
+
+
+statement ok
+DROP ROLE IF EXISTS see_user;
+
+
+statement ok
+CREATE ROLE see_owner LOGIN PASSWORD 'see_pw';
+
+
+statement ok
+CREATE ROLE see_user LOGIN PASSWORD 'see_pw';
+
+
+statement ok
+GRANT CREATE ON SCHEMA public TO see_owner;
+
+
+connection c_owner user=see_owner password=see_pw
+statement ok
+CREATE FUNCTION see_positive(x int) RETURNS boolean LANGUAGE sql IMMUTABLE AS 'SELECT x > 0';
+
+
+connection c_owner user=see_owner password=see_pw
+statement ok
+REVOKE EXECUTE ON FUNCTION see_positive(int) FROM PUBLIC;
+
+
+connection c_owner user=see_owner password=see_pw
+statement ok
+CREATE FUNCTION see_seven() RETURNS int LANGUAGE sql AS 'SELECT 7';
+
+
+connection c_owner user=see_owner password=see_pw
+statement ok
+REVOKE EXECUTE ON FUNCTION see_seven() FROM PUBLIC;
+
+
+connection c_owner user=see_owner password=see_pw
+statement ok
+CREATE TABLE see_checked (a int CHECK (see_positive(a)));
+
+
+connection c_owner user=see_owner password=see_pw
+statement ok
+CREATE TABLE see_defaulted (a int DEFAULT see_seven(), b int);
+
+
+connection c_owner user=see_owner password=see_pw
+statement ok
+GRANT INSERT, SELECT ON see_checked, see_defaulted TO see_user;
+
+
+connection c_owner user=see_owner password=see_pw
+statement ok
+INSERT INTO see_checked VALUES (1);
+
+
+connection c_user user=see_user password=see_pw
+statement error
+INSERT INTO see_checked VALUES (2);
+----
+db error: ERROR: permission denied for function see_positive
+
+
+connection c_user user=see_user password=see_pw
+statement error
+INSERT INTO see_defaulted (b) VALUES (1);
+----
+db error: ERROR: permission denied for function see_seven
+
+
+connection c_user user=see_user password=see_pw
+statement ok
+INSERT INTO see_defaulted (a, b) VALUES (3, 1);
+
+
+connection c_owner user=see_owner password=see_pw
+statement ok
+GRANT EXECUTE ON FUNCTION see_positive(int), see_seven() TO see_user;
+
+
+connection c_user user=see_user password=see_pw
+statement ok
+INSERT INTO see_checked VALUES (2);
+
+
+connection c_user user=see_user password=see_pw
+statement ok
+INSERT INTO see_defaulted (b) VALUES (2);
+
+
+connection c_user user=see_user password=see_pw
+query
+SELECT (SELECT count(*) FROM see_checked) AS checked, (SELECT sum(a) FROM see_defaulted) AS defaulted;
+----
+checked	defaulted
+2	10
+
+
+statement ok
+DROP OWNED BY see_owner, see_user;
+
+
+statement ok
+DROP ROLE see_owner;
+
+
+statement ok
+DROP ROLE see_user;

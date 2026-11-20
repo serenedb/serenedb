@@ -92,6 +92,8 @@ bool FileExists(const std::string& path);
 
 ConnInfo ParseConnInfo(std::string_view conninfo);
 
+bool NamesServerFiles(std::string_view conninfo);
+
 std::string PasswordFromFile(const ConnInfo& conninfo, const ConnHost& host);
 
 void ArrangeHosts(ConnInfo& conninfo, uint64_t seed, bool any_session);

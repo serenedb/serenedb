@@ -146,6 +146,8 @@ Return the current value of the configuration setting.
 
 <SqlLogicTest id="sql/functions/utility/current_setting" />
 
+The setting can also be a [custom parameter](../statements/set/index.md#custom-parameters) such as `app.tenant`. `current_setting('setting_name', true)` returns `NULL` instead of failing when no such setting exists.
+
 #### `currval('sequence_name')`
 
 Return the current value of the sequence. Note that `nextval` must be called at least once prior to calling `currval`.

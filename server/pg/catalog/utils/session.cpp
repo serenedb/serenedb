@@ -24,6 +24,7 @@
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_search_path.hpp>
+#include <duckdb/catalog/permissions.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <iresearch/utils/static_strings.hpp>
@@ -34,9 +35,11 @@
 
 namespace sdb::pg {
 
-Session MakeSession(duckdb::ClientContext* context) {
+Session MakeSession(duckdb::ClientContext* context,
+                    duckdb::optional_idx caller) {
   Session session{
     .context = context,
+    .role = context ? context->CallerAccess(caller) : duckdb::RoleAccess{},
     .database =
       context ? catalog::DefaultSereneDBCatalog(*context).get() : nullptr,
     .transaction = std::nullopt,
@@ -58,12 +61,16 @@ Session MakeSession(duckdb::ClientContext* context) {
         })) {
       return;
     }
+    auto entry = session.database
+                   ? session.database->GetSchema(
+                       *session.transaction, duckdb::Identifier{name},
+                       duckdb::OnEntryNotFound::RETURN_NULL)
+                   : nullptr;
+    if (entry && !duckdb::CanUseSchema(session.role, *entry)) {
+      return;
+    }
     session.search_path.emplace_back(
-      std::string{name},
-      session.database ? session.database->GetSchema(
-                           *session.transaction, duckdb::Identifier{name},
-                           duckdb::OnEntryNotFound::RETURN_NULL)
-                       : nullptr,
+      std::string{name}, entry,
       static_cast<bool>(FindSystemObject(kSystemNamespaces, name)));
   };
   const auto& search_path =

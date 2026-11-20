@@ -1,0 +1,196 @@
+statement ok
+DROP DATABASE IF EXISTS rtd_db;
+
+
+statement ok
+DROP ROLE IF EXISTS rtd_owner, rtd_reader, rtd_writer, rtd_group1, rtd_group2;
+
+
+statement ok
+CREATE ROLE rtd_owner;
+
+
+statement ok
+CREATE ROLE rtd_reader;
+
+
+statement ok
+CREATE ROLE rtd_writer;
+
+
+statement ok
+CREATE ROLE rtd_group1;
+
+
+statement ok
+CREATE ROLE rtd_group2;
+
+
+statement ok
+CREATE TABLE rtd_t1 (a integer);
+
+
+statement ok
+CREATE TABLE rtd_t2 (a integer);
+
+
+statement ok
+CREATE FUNCTION rtd_f(x integer) RETURNS integer LANGUAGE sql AS 'SELECT x';
+
+
+statement ok
+SET SESSION debug_verify_statement = 'REPARSE_STATEMENT';
+
+
+statement ok
+CREATE DATABASE rtd_db OWNER rtd_owner;
+
+
+statement ok
+CREATE DATABASE IF NOT EXISTS rtd_db;
+
+
+statement ok
+CREATE SCHEMA rtd_s AUTHORIZATION rtd_owner;
+
+
+statement ok
+CREATE SUBSCRIPTION rtd_sub CONNECTION 'host=127.0.0.1 port=1 dbname=rtd' PUBLICATION rtd_pub WITH (connect = false, slot_name = NONE, binary = true);
+
+
+statement ok
+ALTER ROLE rtd_owner SET search_path = 'a,b', c;
+
+
+statement ok
+ALTER ROLE rtd_owner SET standard_conforming_strings = on;
+
+
+statement ok
+ALTER FUNCTION rtd_f(integer) SET search_path = '';
+
+
+statement ok
+GRANT SET ON PARAMETER rtd_ext.a.b TO rtd_owner;
+
+
+statement ok
+GRANT SELECT, INSERT ON TABLE rtd_t1, rtd_t2 TO rtd_reader, rtd_writer WITH GRANT OPTION;
+
+
+statement ok
+REVOKE GRANT OPTION FOR INSERT ON TABLE rtd_t1, rtd_t2 FROM rtd_reader, rtd_writer CASCADE;
+
+
+statement ok
+GRANT SELECT ON ALL TABLES IN SCHEMA rtd_s, public TO rtd_reader, rtd_writer;
+
+
+statement ok
+GRANT rtd_group1, rtd_group2 TO rtd_reader, rtd_writer WITH ADMIN OPTION;
+
+
+statement ok
+REVOKE ADMIN OPTION FOR rtd_group1, rtd_group2 FROM rtd_reader, rtd_writer;
+
+
+statement ok
+ALTER GROUP rtd_group1 DROP USER rtd_reader, rtd_writer;
+
+
+statement ok
+ALTER GROUP rtd_group1 ADD USER rtd_reader, rtd_writer;
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE rtd_group1, rtd_group2 IN SCHEMA rtd_s, public GRANT SELECT ON TABLES TO rtd_reader, rtd_writer;
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE rtd_group1, rtd_group2 IN SCHEMA rtd_s, public REVOKE SELECT ON TABLES FROM rtd_reader, rtd_writer;
+
+
+statement ok
+RESET debug_verify_statement;
+
+
+query
+SELECT pg_get_userbyid(datdba) AS owner FROM pg_database WHERE datname = 'rtd_db';
+----
+owner
+rtd_owner
+
+
+query
+SELECT pg_get_userbyid(nspowner) AS owner FROM pg_namespace WHERE nspname = 'rtd_s';
+----
+owner
+rtd_owner
+
+
+query
+SELECT subslotname IS NULL AS no_slot, subenabled, subbinary FROM pg_subscription WHERE subname = 'rtd_sub';
+----
+no_slot	subenabled	subbinary
+t	f	t
+
+
+query
+SELECT unnest(s.setconfig) AS setting
+FROM pg_db_role_setting s JOIN pg_roles r ON r.oid = s.setrole
+WHERE r.rolname = 'rtd_owner' AND s.setdatabase = 0
+ORDER BY setting;
+----
+setting
+search_path="a,b", c
+standard_conforming_strings=on
+
+
+query
+SELECT proconfig FROM pg_proc WHERE proname = 'rtd_f';
+----
+proconfig
+{search_path=}
+
+
+query
+SELECT parname FROM pg_parameter_acl WHERE parname LIKE 'rtd_ext.%';
+----
+parname
+rtd_ext.a.b
+
+
+statement ok
+DROP SUBSCRIPTION rtd_sub;
+
+
+statement ok
+DROP SCHEMA rtd_s;
+
+
+statement ok
+DROP DATABASE rtd_db;
+
+
+statement ok
+REVOKE SET ON PARAMETER rtd_ext.a.b FROM rtd_owner;
+
+
+statement ok
+DROP FUNCTION rtd_f(integer);
+
+
+statement ok
+SET SESSION debug_verify_statement = 'REPARSE_STATEMENT';
+
+
+statement ok
+DROP TABLE rtd_t1, rtd_t2;
+
+
+statement ok
+DROP ROLE rtd_owner, rtd_reader, rtd_writer, rtd_group1, rtd_group2;
+
+
+statement ok
+RESET debug_verify_statement;

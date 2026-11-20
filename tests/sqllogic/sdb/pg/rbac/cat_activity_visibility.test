@@ -52,6 +52,17 @@ t	t
 
 connection spy user=pudge_activity_spy password=pudge_activity_pw
 query
+SELECT bool_and(usesysid IS NOT NULL) AS identity_kept,
+       bool_and(query = '<insufficient privilege>') AS hidden
+FROM pg_stat_get_activity(NULL)
+WHERE usesysid <> (SELECT oid FROM pg_roles WHERE rolname = current_user);
+----
+identity_kept	hidden
+t	t
+
+
+connection spy user=pudge_activity_spy password=pudge_activity_pw
+query
 SELECT query LIKE '%pudge_activity_self%' AS own_query, state
 FROM pg_stat_activity
 WHERE pid = pg_backend_pid();

@@ -85,7 +85,8 @@ connection default
 statement error
 REVOKE SELECT ON dgrc_clickclack FROM dgrc_alice RESTRICT;
 ----
-db error: ERROR: dependent privileges exist<slt:ignore>
+db error: ERROR: dependent privileges exist
+HINT: Use CASCADE to revoke them too.
 
 
 # The refused revoke changed nothing: both rows survive.

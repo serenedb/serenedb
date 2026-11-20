@@ -1,0 +1,189 @@
+statement ok
+DROP DATABASE IF EXISTS dcl_db;
+
+
+statement ok
+DROP ROLE IF EXISTS dcl_owner;
+
+
+statement ok
+DROP ROLE IF EXISTS dcl_user;
+
+
+statement ok
+DROP ROLE IF EXISTS dcl_super;
+
+
+statement ok
+CREATE ROLE dcl_owner LOGIN PASSWORD 'dcl_pw';
+
+
+statement ok
+CREATE ROLE dcl_user LOGIN PASSWORD 'dcl_pw';
+
+
+statement ok
+CREATE ROLE dcl_super SUPERUSER LOGIN PASSWORD 'dcl_pw';
+
+
+statement error
+CREATE DATABASE dcl_db CONNECTION LIMIT -2;
+----
+db error: ERROR: invalid connection limit: -2
+
+
+statement error
+CREATE DATABASE dcl_db CONNECTION LIMIT 1 CONNECTION LIMIT 2;
+----
+db error: ERROR: conflicting or redundant options
+
+
+statement ok
+CREATE DATABASE dcl_db WITH CONNECTION LIMIT 1 OWNER = dcl_owner ALLOW_CONNECTIONS = TRUE;
+
+
+query
+SELECT pg_get_userbyid(datdba) AS owner, datconnlimit, datallowconn
+FROM pg_database
+WHERE datname = 'dcl_db';
+----
+owner	datconnlimit	datallowconn
+dcl_owner	1	t
+
+
+connection c_first user=dcl_user password=dcl_pw database=dcl_db
+query
+SELECT current_database();
+----
+current_database
+dcl_db
+
+
+connection c_second user=dcl_user password=dcl_pw database=dcl_db
+statement error
+SELECT 1;
+----
+db error: FATAL: too many connections for database "dcl_db"
+
+
+connection c_super user=dcl_super password=dcl_pw database=dcl_db
+query
+SELECT current_user;
+----
+current_user
+dcl_super
+
+
+connection c_user user=dcl_user password=dcl_pw
+statement error
+ALTER DATABASE dcl_db CONNECTION LIMIT 5;
+----
+db error: ERROR: must be owner of database dcl_db
+
+
+statement error
+ALTER DATABASE dcl_missing CONNECTION LIMIT 5;
+----
+db error: ERROR: database "dcl_missing" does not exist
+
+
+statement error
+ALTER DATABASE dcl_db CONNECTION LIMIT -5;
+----
+db error: ERROR: invalid connection limit: -5
+
+
+statement error
+ALTER DATABASE dcl_db ALLOW_CONNECTIONS TRUE ALLOW_CONNECTIONS FALSE;
+----
+db error: ERROR: conflicting or redundant options
+
+
+connection c_owner user=dcl_owner password=dcl_pw
+statement ok
+ALTER DATABASE dcl_db CONNECTION LIMIT = 3;
+
+
+connection c_third user=dcl_user password=dcl_pw database=dcl_db
+query
+SELECT current_user;
+----
+current_user
+dcl_user
+
+
+connection c_fourth user=dcl_user password=dcl_pw database=dcl_db
+statement error
+SELECT 1;
+----
+db error: FATAL: too many connections for database "dcl_db"
+
+
+connection c_owner user=dcl_owner password=dcl_pw
+statement ok
+ALTER DATABASE dcl_db WITH ALLOW_CONNECTIONS FALSE CONNECTION LIMIT -1;
+
+
+query
+SELECT datconnlimit, datallowconn FROM pg_database WHERE datname = 'dcl_db';
+----
+datconnlimit	datallowconn
+-1	f
+
+
+connection c_super_second user=dcl_super password=dcl_pw database=dcl_db
+statement error
+SELECT 1;
+----
+db error: FATAL: database "dcl_db" is not currently accepting connections
+
+
+connection c_super user=dcl_super password=dcl_pw database=dcl_db
+statement error
+ALTER DATABASE dcl_db ALLOW_CONNECTIONS FALSE;
+----
+db error: ERROR: cannot disallow connections for current database
+
+
+connection c_super user=dcl_super password=dcl_pw database=dcl_db
+statement ok
+ALTER DATABASE dcl_db ALLOW_CONNECTIONS TRUE;
+
+
+connection c_fifth user=dcl_user password=dcl_pw database=dcl_db
+query
+SELECT current_user;
+----
+current_user
+dcl_user
+
+
+query
+SELECT datconnlimit, datallowconn FROM pg_database WHERE datname = 'dcl_db';
+----
+datconnlimit	datallowconn
+-1	t
+
+
+query
+SELECT count(*) > 0 AS terminated FROM pg_stat_activity
+WHERE CASE WHEN datname = 'dcl_db' THEN pg_terminate_backend(pid) ELSE false END;
+----
+terminated
+t
+
+
+statement ok retry 40 backoff 250ms
+DROP DATABASE dcl_db;
+
+
+statement ok
+DROP ROLE dcl_owner;
+
+
+statement ok
+DROP ROLE dcl_user;
+
+
+statement ok
+DROP ROLE dcl_super;

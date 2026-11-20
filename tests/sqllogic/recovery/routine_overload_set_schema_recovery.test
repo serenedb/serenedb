@@ -1,0 +1,46 @@
+control substitution on
+
+statement ok
+CREATE SCHEMA ross_src;
+
+statement ok
+CREATE SCHEMA ross_dst;
+
+statement ok
+CREATE FUNCTION ross_src.f(x INTEGER) RETURNS INTEGER AS 'SELECT x + 1' LANGUAGE SQL;
+
+statement ok
+CREATE FUNCTION ross_src.f(x TEXT) RETURNS TEXT AS 'SELECT x || x' LANGUAGE SQL;
+
+statement ok
+ALTER FUNCTION ross_src.f(INTEGER) SET SCHEMA ross_dst;
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT oid::regprocedure::text AS f FROM pg_proc WHERE proname = 'f' AND pronamespace IN ('ross_src'::regnamespace, 'ross_dst'::regnamespace) ORDER BY 1;
+----
+f
+ross_dst.f(integer)
+ross_src.f(text)
+
+connection after_crash
+query
+SELECT ross_dst.f(1) AS moved, ross_src.f('a') AS kept;
+----
+moved	kept
+2	aa
+
+connection after_crash
+statement ok
+DROP SCHEMA ross_src CASCADE;
+
+connection after_crash
+statement ok
+DROP SCHEMA ross_dst CASCADE;

@@ -1,0 +1,71 @@
+statement ok
+DROP ROLE IF EXISTS edr_login;
+
+
+statement ok
+DROP ROLE IF EXISTS edr_target;
+
+
+statement ok
+CREATE ROLE edr_login LOGIN PASSWORD 'edr_pw';
+
+
+statement ok
+CREATE ROLE edr_target;
+
+
+statement ok
+GRANT edr_target TO edr_login;
+
+
+connection c_edr user=edr_login password=edr_pw
+statement ok
+SET ROLE edr_target;
+
+
+connection c_edr user=edr_login password=edr_pw
+query
+SELECT current_user AS current, session_user AS session;
+----
+current	session
+edr_target	edr_login
+
+
+connection c_edr user=edr_login password=edr_pw
+statement ok
+DISCARD ALL;
+
+
+connection c_edr user=edr_login password=edr_pw
+query
+SELECT current_user AS current, session_user AS session;
+----
+current	session
+edr_login	edr_login
+
+
+statement ok
+SET SESSION AUTHORIZATION edr_login;
+
+
+statement ok
+SET ROLE edr_target;
+
+
+statement ok
+DISCARD ALL;
+
+
+query
+SELECT current_user AS current, session_user AS session;
+----
+current	session
+postgres	postgres
+
+
+statement ok
+DROP ROLE edr_target;
+
+
+statement ok
+DROP ROLE edr_login;

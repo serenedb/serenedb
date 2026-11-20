@@ -100,7 +100,7 @@ JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'ceo'
 WHERE c.relname = 't';
 ----
 owner	acl
-ceo_owner	ceo_owner=r/ceo_owner
+ceo_owner	ceo_owner=arwdDxtm/ceo_owner
 
 # What the restart must also carry is the allocator, not just the ids it
 # already handed out: the log records how far duckdb's oid counter had been

@@ -41,6 +41,8 @@ class DatabaseCatalogEntry final : public duckdb::InCatalogEntry {
 
   duckdb::unique_ptr<duckdb::CatalogEntry> Copy(
     duckdb::ClientContext& context) const final;
+  duckdb::unique_ptr<duckdb::CatalogEntry> AlterEntry(
+    duckdb::ClientContext& context, duckdb::AlterInfo& info) final;
   duckdb::unique_ptr<duckdb::CreateInfo> GetInfo() const final;
   std::string ToSQL() const final { return GetInfo()->ToString(); }
   void Rollback(duckdb::CatalogEntry& prev_entry) final;
@@ -49,6 +51,12 @@ class DatabaseCatalogEntry final : public duckdb::InCatalogEntry {
   const duckdb::case_insensitive_map_t<duckdb::Value>& Options() const {
     return _options;
   }
+  const duckdb::vector<duckdb::DatabaseSetting>& Settings() const {
+    return _settings;
+  }
+  const duckdb::vector<std::string>* SettingsOf(duckdb::idx_t role) const;
+  int32_t ConnLimit() const { return _conn_limit; }
+  bool AllowConnections() const { return _allow_connections; }
   const std::shared_ptr<DatabaseDirectory>& Directory() const {
     return _directory;
   }
@@ -57,6 +65,9 @@ class DatabaseCatalogEntry final : public duckdb::InCatalogEntry {
  private:
   duckdb::case_insensitive_map_t<duckdb::Value> _options;
   duckdb::idx_t _tablespace;
+  duckdb::vector<duckdb::DatabaseSetting> _settings;
+  int32_t _conn_limit;
+  bool _allow_connections;
   std::shared_ptr<DatabaseDirectory> _directory;
 };
 

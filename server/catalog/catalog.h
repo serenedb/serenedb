@@ -26,6 +26,8 @@
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
+#include <duckdb/parser/parsed_data/alter_table_info.hpp>
+#include <filesystem>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <memory>
@@ -88,14 +90,17 @@ class SereneDBCatalog final : public BaseCatalog {
   CatalogSnapshots& Snapshots() noexcept { return _snapshots; }
   EntrySet& Servers() noexcept { return _servers; }
   EntrySet& Subscriptions() noexcept { return _subscriptions; }
+  void ScanEntries(duckdb::CatalogTransaction transaction,
+                   absl::FunctionRef<void(duckdb::CatalogEntry&)> callback);
 
+  bool SupportsSubscriptions() const final { return true; }
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateSubscription(
     duckdb::CatalogTransaction transaction,
-    duckdb::CreateSubscriptionInfo& info);
+    duckdb::CreateSubscriptionInfo& info) final;
   void DropSubscription(duckdb::CatalogTransaction transaction,
-                        duckdb::DropInfo& info);
+                        duckdb::DropInfo& info) final;
 
-  EntrySet& Set(duckdb::CatalogType type) final;
+  EntrySet* FindSet(duckdb::CatalogType type) final;
 
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateForeignServer(
     duckdb::CatalogTransaction transaction,
@@ -206,10 +211,17 @@ class SereneDBCatalog final : public BaseCatalog {
     duckdb::BoundCreateTableInfo& info) final;
 
  private:
+  void AlterSubscription(duckdb::CatalogTransaction transaction,
+                         duckdb::AlterInfo& info);
+  void ReassignOwned(duckdb::CatalogTransaction transaction,
+                     const duckdb::ReassignOwnedInfo& info);
+  void DropOwned(duckdb::CatalogTransaction transaction,
+                 const duckdb::DropOwnedInfo& info);
+
   std::shared_ptr<DatabaseDirectory> _directory;
   CatalogSnapshots _snapshots{*this};
-  EntrySet _servers{true, _oids};
-  EntrySet _subscriptions{true, _oids};
+  EntrySet _servers{true, _oids, 0, true};
+  EntrySet _subscriptions{true, _oids, 0, true};
   bool _durable;
   std::unique_ptr<ForeignLog> _foreign;
   std::atomic_bool _detached{false};

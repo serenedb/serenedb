@@ -4,12 +4,14 @@ target_sources(
         base_catalog.cpp
         boot.cpp
         catalog.cpp
+        catalog_subscription.cpp
         cluster.cpp
         database_directory.cpp
         dependency.cpp
         entry_set.cpp
         foreign_database.cpp
         log.cpp
+        owned.cpp
         record.cpp
         schema.cpp
         secret_store.cpp

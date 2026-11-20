@@ -50,6 +50,29 @@ async def conn():
 
 
 @pytest.mark.asyncio
+async def test_a_startup_role_needs_the_right_to_set_it():
+    kw = conn_kwargs()
+    admin = await asyncpg.connect(
+        host=kw["host"], port=kw["port"],
+        database=kw["dbname"], user=kw["user"],
+    )
+    try:
+        await admin.execute("CREATE ROLE asp_vedernikoff LOGIN PASSWORD 'asp_pw'")
+        try:
+            with pytest.raises(asyncpg.InsufficientPrivilegeError,
+                               match='permission denied to set role "postgres"'):
+                await asyncpg.connect(
+                    host=kw["host"], port=kw["port"], database=kw["dbname"],
+                    user="asp_vedernikoff", password="asp_pw",
+                    server_settings={"role": "postgres"},
+                )
+        finally:
+            await admin.execute("DROP ROLE asp_vedernikoff")
+    finally:
+        admin.terminate()
+
+
+@pytest.mark.asyncio
 async def test_smoke_select_one(conn):
     v = await conn.fetchval("SELECT 1")
     assert v == 1

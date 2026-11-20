@@ -27,6 +27,7 @@
 #include <fast_float/fast_float.h>
 
 #include <duckdb/catalog/catalog.hpp>
+#include <duckdb/catalog/catalog_entry_retriever.hpp>
 #include <duckdb/main/database.hpp>
 #include <iresearch/analysis/classification_tokenizer.hpp>
 #include <iresearch/analysis/collation_tokenizer.hpp>
@@ -252,6 +253,18 @@ class CreateTSDictionaryOptions : public OptionsParser {
       }
     };
     if (OptionsParser::HasOption(Info.name)) {
+      if constexpr (&Info == &tokenizer_options::kStopwordsPath ||
+                    &Info == &tokenizer_options::kModelLocation) {
+        if (!_context.CurrentRole().Has(
+              duckdb::RoleCapability::ReadServerFiles)) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+            ERR_MSG("permission denied to use option \"", Info.name, "\""),
+            ERR_DETAIL("Only roles with privileges of the "
+                       "\"pg_read_server_files\" role may reference server "
+                       "files."));
+        }
+      }
       auto raw = OptionsParser::EraseOptionOrDefault<Info>();
       if (!raw.empty()) {
         assign(field, std::move(raw));
@@ -731,15 +744,17 @@ class CreateTSDictionaryOptions : public OptionsParser {
 
   void BuildDictionary(irs::analysis::TokenizerConfig& out) {
     std::string from = Value<tokenizer_options::kFrom>();
-    auto tokenizer = duckdb::Catalog::GetEntry<catalog::TokenizerCatalogEntry>(
-      _context, duckdb::QualifiedName::Parse(from),
+    auto tokenizer = duckdb::CatalogEntryRetriever{_context}.GetEntry(
+      duckdb::EntryLookupInfo{duckdb::CatalogType::TOKENIZER_ENTRY,
+                              duckdb::QualifiedName::Parse(from)},
       duckdb::OnEntryNotFound::RETURN_NULL);
     if (!tokenizer) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
         ERR_MSG("text search dictionary \"", from, "\" does not exist"));
     }
-    out = irs::analysis::Clone(tokenizer->Config());
+    out = irs::analysis::Clone(
+      tokenizer->Cast<catalog::TokenizerCatalogEntry>().Config());
   }
 
   irs::analysis::TokenizerConfig _config;

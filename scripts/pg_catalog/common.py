@@ -5,6 +5,8 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))))
 CATALOG_DIR = os.path.join(REPO_ROOT, 'server', 'pg', 'catalog')
 GENERATED_DIR = os.path.join(CATALOG_DIR, 'generated')
+DUCKDB_INCLUDE = os.path.join(REPO_ROOT, 'third_party', 'duckdb', 'src',
+                              'include', 'duckdb')
 
 PG_CATALOG = '11'
 

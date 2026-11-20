@@ -1,0 +1,57 @@
+statement ok
+DROP SCHEMA IF EXISTS edsp_own CASCADE;
+
+
+statement ok
+DROP FUNCTION IF EXISTS edsp_f();
+
+
+statement ok
+DROP ROLE IF EXISTS edsp_vedernikoff;
+
+
+statement ok
+CREATE ROLE edsp_vedernikoff LOGIN PASSWORD 'edsp_pw';
+
+
+statement ok
+CREATE SCHEMA edsp_own AUTHORIZATION edsp_vedernikoff;
+
+
+statement ok
+GRANT CREATE ON SCHEMA public TO edsp_vedernikoff;
+
+
+connection c_edsp user=edsp_vedernikoff password=edsp_pw
+statement ok
+CREATE FUNCTION edsp_f() RETURNS integer LANGUAGE sql AS 'SELECT 1';
+
+
+statement ok
+REVOKE CREATE ON SCHEMA public FROM edsp_vedernikoff;
+
+
+connection c_edsp user=edsp_vedernikoff password=edsp_pw
+statement error
+ALTER FUNCTION edsp_f RENAME TO edsp_g;
+----
+db error: ERROR: permission denied for schema public
+
+
+query
+SELECT proname FROM pg_proc WHERE proname IN ('edsp_f', 'edsp_g') ORDER BY proname;
+----
+proname
+edsp_f
+
+
+statement ok
+DROP FUNCTION edsp_f();
+
+
+statement ok
+DROP SCHEMA edsp_own CASCADE;
+
+
+statement ok
+DROP ROLE edsp_vedernikoff;

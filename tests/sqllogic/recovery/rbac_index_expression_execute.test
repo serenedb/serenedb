@@ -1,0 +1,102 @@
+control substitution on
+
+statement ok
+DROP TABLE IF EXISTS riee_items;
+
+
+statement ok
+DROP ROLE IF EXISTS riee_vedernikoff;
+
+
+statement ok
+CREATE ROLE riee_vedernikoff LOGIN;
+
+
+statement ok
+CREATE FUNCTION riee_double(x integer) RETURNS integer LANGUAGE sql IMMUTABLE AS 'SELECT x * 2';
+
+
+statement ok
+CREATE TABLE riee_items (a integer, b integer);
+
+
+statement ok
+CREATE INDEX riee_items_double ON riee_items (riee_double(a));
+
+
+statement ok
+GRANT SELECT, INSERT, UPDATE ON riee_items TO riee_vedernikoff;
+
+
+statement ok
+REVOKE EXECUTE ON FUNCTION riee_double(integer) FROM PUBLIC;
+
+
+statement ok
+INSERT INTO riee_items VALUES (1, 1);
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_crash
+statement ok
+SET ROLE riee_vedernikoff;
+
+
+connection after_crash
+statement error
+INSERT INTO riee_items VALUES (2, 2);
+----
+db error: ERROR: permission denied for function riee_double
+
+
+connection after_crash
+statement error
+UPDATE riee_items SET a = 3;
+----
+db error: ERROR: permission denied for function riee_double
+
+
+connection after_crash
+statement ok
+UPDATE riee_items SET b = 4;
+
+
+connection after_crash
+statement ok
+RESET ROLE;
+
+
+connection after_crash
+statement ok
+GRANT EXECUTE ON FUNCTION riee_double(integer) TO riee_vedernikoff;
+
+
+connection after_crash
+statement ok
+SET ROLE riee_vedernikoff;
+
+
+connection after_crash
+statement ok
+INSERT INTO riee_items VALUES (5, 5);
+
+
+connection after_crash
+query
+SELECT a FROM riee_items ORDER BY a;
+----
+a
+1
+5

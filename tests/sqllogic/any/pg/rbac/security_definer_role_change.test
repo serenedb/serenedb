@@ -1,0 +1,237 @@
+statement ok
+DROP FUNCTION IF EXISTS sdr_set_role;
+
+
+statement ok
+DROP FUNCTION IF EXISTS sdr_set_auth;
+
+
+statement ok
+DROP FUNCTION IF EXISTS sdr_set;
+
+
+statement ok
+DROP FUNCTION IF EXISTS sdr_rows;
+
+
+statement ok
+DROP FUNCTION IF EXISTS sdr_echo;
+
+
+statement ok
+DROP FUNCTION IF EXISTS sdr_invoker;
+
+
+statement ok
+DROP FUNCTION IF EXISTS sdr_own;
+
+
+statement ok
+DROP FUNCTION IF EXISTS sdr_own_echo;
+
+
+statement ok
+DROP ROLE IF EXISTS sdr_target;
+
+
+statement ok
+DROP ROLE IF EXISTS sdr_owner;
+
+
+statement ok
+CREATE ROLE sdr_target;
+
+
+statement ok
+CREATE ROLE sdr_owner;
+
+
+statement ok
+GRANT sdr_target TO sdr_owner;
+
+
+statement ok
+CREATE FUNCTION sdr_set_role() RETURNS text LANGUAGE sql SECURITY DEFINER AS $$ SELECT set_config('role', 'sdr_target', false) $$;
+
+
+statement ok
+ALTER FUNCTION sdr_set_role() OWNER TO sdr_owner;
+
+
+statement error
+SELECT sdr_set_role();
+----
+db error: ERROR: cannot set parameter "role" within security-definer function
+
+
+statement ok
+CREATE FUNCTION sdr_set_auth() RETURNS text LANGUAGE sql SECURITY DEFINER AS $$ SELECT set_config('session_authorization', 'sdr_target', false) $$;
+
+
+statement ok
+ALTER FUNCTION sdr_set_auth() OWNER TO sdr_owner;
+
+
+statement error
+SELECT sdr_set_auth();
+----
+db error: ERROR: cannot set parameter "session_authorization" within security-definer function
+
+
+statement ok
+CREATE FUNCTION sdr_set(name text) RETURNS text LANGUAGE sql SECURITY DEFINER AS $$ SELECT set_config(name, 'sdr_target', false) $$;
+
+
+statement ok
+ALTER FUNCTION sdr_set(text) OWNER TO sdr_owner;
+
+
+statement error
+SELECT sdr_set('ROLE');
+----
+db error: ERROR: cannot set parameter "role" within security-definer function
+
+
+query
+SELECT sdr_set('application_name') AS value;
+----
+value
+sdr_target
+
+
+statement ok
+RESET application_name;
+
+
+statement ok
+CREATE FUNCTION sdr_rows() RETURNS TABLE (value text) LANGUAGE sql SECURITY DEFINER AS $$ SELECT set_config('role', 'sdr_target', false) $$;
+
+
+statement ok
+ALTER FUNCTION sdr_rows() OWNER TO sdr_owner;
+
+
+statement error
+SELECT * FROM sdr_rows();
+----
+db error: ERROR: cannot set parameter "role" within security-definer function
+
+
+query
+SELECT current_user AS role;
+----
+role
+postgres
+
+
+statement ok
+CREATE FUNCTION sdr_echo(value text) RETURNS text LANGUAGE sql SECURITY DEFINER AS $$ SELECT value $$;
+
+
+statement ok
+ALTER FUNCTION sdr_echo(text) OWNER TO sdr_owner;
+
+
+query
+SELECT sdr_echo(set_config('role', 'sdr_target', false)) AS value;
+----
+value
+sdr_target
+
+
+query
+SELECT current_user AS role;
+----
+role
+sdr_target
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+CREATE FUNCTION sdr_own() RETURNS text LANGUAGE sql SECURITY DEFINER AS $$ SELECT set_config('role', 'sdr_target', false) $$;
+
+
+statement error
+SELECT sdr_own();
+----
+db error: ERROR: cannot set parameter "role" within security-definer function
+
+
+statement ok
+CREATE FUNCTION sdr_own_echo(value text) RETURNS text LANGUAGE sql SECURITY DEFINER AS $$ SELECT value $$;
+
+
+query
+SELECT sdr_own_echo(set_config('role', 'sdr_target', false)) AS value;
+----
+value
+sdr_target
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+CREATE FUNCTION sdr_invoker() RETURNS text LANGUAGE sql AS $$ SELECT set_config('role', 'sdr_target', false) $$;
+
+
+query
+SELECT sdr_invoker() AS value;
+----
+value
+sdr_target
+
+
+query
+SELECT current_user AS role;
+----
+role
+sdr_target
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP FUNCTION sdr_set_role;
+
+
+statement ok
+DROP FUNCTION sdr_set_auth;
+
+
+statement ok
+DROP FUNCTION sdr_set;
+
+
+statement ok
+DROP FUNCTION sdr_rows;
+
+
+statement ok
+DROP FUNCTION sdr_echo;
+
+
+statement ok
+DROP FUNCTION sdr_invoker;
+
+
+statement ok
+DROP FUNCTION sdr_own;
+
+
+statement ok
+DROP FUNCTION sdr_own_echo;
+
+
+statement ok
+DROP ROLE sdr_target;
+
+
+statement ok
+DROP ROLE sdr_owner;

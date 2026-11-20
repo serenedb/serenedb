@@ -60,9 +60,17 @@ Revoking the membership takes the inherited privileges with it:
 
 <SqlLogicTest id="security/role_membership/example_005" />
 
+## Grantors
+
+Each grant of a membership records the role that made it, shown in `pg_auth_members.grantor`. A superuser's grant is recorded as made by `postgres`, the bootstrap superuser; anyone else's as made by the role through which they hold `ADMIN OPTION` on the granted role. `GRANTED BY role` names the grantor instead: a role whose privileges the current role has and that holds `ADMIN OPTION` itself. Two grantors granting the same membership make two grants, and the member keeps the membership while either one remains.
+
+`REVOKE` removes only the grant made by the revoking role, or by the role `GRANTED BY` names, and warns `role "..." has not been granted membership in role "..." by role "..."` when there is none. Revoking a grant that carries `ADMIN OPTION`, or `REVOKE ADMIN OPTION FOR` it, fails with `dependent privileges exist` while the member has granted the membership on and holds `ADMIN OPTION` through no other grant; with `CASCADE` those grants are revoked too. A role that made grants cannot be dropped while they remain; `DROP OWNED` revokes them.
+
+A role with `CREATEROLE` that creates a role is granted the new role `WITH ADMIN OPTION`, recorded as granted by `postgres`. The [`createrole_self_grant`](../configuration/overview.md#security) setting, `set`, `inherit` or both, also grants it the new role with those options, recorded as granted by itself, so that it can `SET ROLE` to the role or use its privileges.
+
 ## Notes
 
-- Granting membership requires `ADMIN OPTION` on the role, the `CREATEROLE` attribute, or superuser.
+- Granting membership requires `ADMIN OPTION` on the role, or superuser.
 - Membership is not cyclic: a role cannot be granted to itself, directly or through a chain.
 - Groups usually have no `LOGIN` — they exist to be granted, not to connect.
 - A `NOINHERIT` member does not use the group's privileges implicitly; it must [`SET ROLE`](../sql/statements/set_role/index.md) to the group first, as in PostgreSQL.

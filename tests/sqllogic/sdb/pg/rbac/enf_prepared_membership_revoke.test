@@ -1,0 +1,135 @@
+statement ok
+DROP ROLE IF EXISTS epod_user;
+
+
+statement ok
+DROP ROLE IF EXISTS epod_group;
+
+
+statement ok
+CREATE ROLE epod_group;
+
+
+statement ok
+CREATE ROLE epod_user LOGIN PASSWORD 'epod_pw';
+
+
+statement ok
+GRANT epod_group TO epod_user;
+
+
+statement ok
+CREATE TABLE epod_t (a INTEGER);
+
+
+statement ok
+INSERT INTO epod_t VALUES (1);
+
+
+statement ok
+GRANT SELECT ON epod_t TO epod_group;
+
+
+connection c_epod_on user=epod_user password=epod_pw
+statement ok
+PREPARE epod_q(integer) AS SELECT a FROM epod_t WHERE a = $1;
+
+
+connection c_epod_on user=epod_user password=epod_pw
+query
+EXECUTE epod_q(1);
+----
+a
+1
+
+
+connection c_epod_off user=epod_user password=epod_pw
+statement ok
+SET SESSION enable_optimizer = false;
+
+
+connection c_epod_off user=epod_user password=epod_pw
+statement ok
+PREPARE epod_q(integer) AS SELECT a FROM epod_t WHERE a = $1;
+
+
+connection c_epod_off user=epod_user password=epod_pw
+query
+EXECUTE epod_q(1);
+----
+a
+1
+
+
+connection c_epod_explain user=epod_user password=epod_pw
+statement ok
+PREPARE epod_q(integer) AS SELECT a FROM epod_t WHERE a = $1;
+
+
+connection c_epod_explain user=epod_user password=epod_pw
+query
+EXECUTE epod_q(1);
+----
+a
+1
+
+
+statement ok
+INSERT INTO epod_t VALUES (2);
+
+
+connection c_epod_explain user=epod_user password=epod_pw
+statement ok
+EXPLAIN EXECUTE epod_q(2);
+
+
+statement ok
+REVOKE epod_group FROM epod_user;
+
+
+connection c_epod_on user=epod_user password=epod_pw
+statement error
+EXECUTE epod_q(1);
+----
+db error: ERROR: permission denied for table epod_t
+
+
+connection c_epod_off user=epod_user password=epod_pw
+statement error
+EXECUTE epod_q(1);
+----
+db error: ERROR: permission denied for table epod_t
+
+
+connection c_epod_explain user=epod_user password=epod_pw
+statement error
+EXECUTE epod_q(2);
+----
+db error: ERROR: permission denied for table epod_t
+
+
+connection c_epod_on user=epod_user password=epod_pw
+statement ok
+DEALLOCATE ALL;
+
+
+connection c_epod_off user=epod_user password=epod_pw
+statement ok
+DEALLOCATE ALL;
+
+
+connection c_epod_explain user=epod_user password=epod_pw
+statement ok
+DEALLOCATE ALL;
+
+
+statement ok
+DROP TABLE epod_t;
+
+
+statement ok
+DROP ROLE epod_user;
+
+
+statement ok
+DROP ROLE epod_group;

@@ -21,6 +21,8 @@
 #pragma once
 
 #include <cstdint>
+#include <duckdb/common/enums/catalog_type.hpp>
+#include <duckdb/common/enums/role_capability.hpp>
 #include <duckdb/common/types.hpp>
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/search/scorers/scorer_options.hpp>
@@ -76,12 +78,21 @@ struct UniqueKeyRecord {
   std::vector<std::string> expressions;
 };
 
+struct FunctionCallRecord {
+  duckdb::CatalogType type = duckdb::CatalogType::INVALID;
+  std::string name;
+  duckdb::RoleCapability capability = duckdb::RoleCapability::None;
+  std::string catalog;
+  duckdb::idx_t macro_overload = 0;
+};
+
 struct InvertedIndexData {
   PkColumnKind pk = PkColumnKind::Has;
   std::vector<KeyRecord> keys;
   irs::containers::NodeHashMap<irs::field_id, FieldRecord> fields;
   std::optional<irs::ScorerOptions> top_k_scorer;
   std::optional<UniqueKeyRecord> unique_key;
+  std::vector<FunctionCallRecord> calls;
 };
 
 }  // namespace sdb::catalog::persistence

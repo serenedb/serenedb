@@ -114,7 +114,7 @@ JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'cei'
 WHERE s.schema_name = 'cei' AND s.entry_type = 'Table' AND s.name = 't'
 ----
 oid_kept	owner	acl
-t	cei_owner	cei_grantee=r/cei_owner
+t	cei_owner	cei_owner=arwdDxtm/cei_owner|cei_grantee=r/cei_owner
 
 
 statement ok
@@ -122,14 +122,14 @@ REVOKE SELECT ON cei.t FROM cei_grantee
 
 
 query
-SELECT (s.entry_oid = c.oid) AS oid_kept, c.relacl IS NULL AS no_acl
+SELECT (s.entry_oid = c.oid) AS oid_kept, array_to_string(c.relacl, '|') AS acl
 FROM sdb_catalog_sets() s
 JOIN pg_class c ON c.relname = s.name
 JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'cei'
 WHERE s.schema_name = 'cei' AND s.entry_type = 'Table' AND s.name = 't'
 ----
-oid_kept	no_acl
-t	t
+oid_kept	acl
+t	cei_owner=arwdDxtm/cei_owner
 
 
 # Three alters later the entry is still the same logical object.
@@ -157,12 +157,12 @@ ROLLBACK
 
 
 query
-SELECT relacl IS NULL AS no_acl FROM pg_class c
+SELECT array_to_string(relacl, '|') AS acl FROM pg_class c
 JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'cei'
 WHERE c.relname = 't'
 ----
-no_acl
-t
+acl
+cei_owner=arwdDxtm/cei_owner
 
 
 statement ok

@@ -127,11 +127,12 @@ class JsonParser {
     size_t index;
     const auto size = Unwrap(arr.count_elements());
     if (relative_index < 0) {
-      if (static_cast<size_t>(-relative_index) > size) {
+      const auto back = 0 - static_cast<uint64_t>(relative_index);
+      if (back > size) {
         return simdjson::simdjson_result<simdjson::ondemand::value>(
           simdjson::OUT_OF_BOUNDS);
       }
-      index = size + relative_index;
+      index = size - back;
     } else {
       index = static_cast<size_t>(relative_index);
     }

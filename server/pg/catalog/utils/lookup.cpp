@@ -37,7 +37,6 @@
 #include <iresearch/utils/static_strings.hpp>
 #include <vector>
 
-#include "auth/enforce.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
 #include "catalog/entry/subscription.h"
@@ -47,36 +46,6 @@
 #include "pg/catalog/utils/columns.h"
 
 namespace sdb::pg {
-
-duckdb::idx_t CatalogClassOid(duckdb::CatalogType type) {
-  using enum duckdb::CatalogType;
-  switch (type) {
-    case TABLE_ENTRY:
-    case VIEW_ENTRY:
-    case INDEX_ENTRY:
-    case SEQUENCE_ENTRY:
-      return kPgClassTable;
-    case MACRO_ENTRY:
-    case TABLE_MACRO_ENTRY:
-      return kPgProcTable;
-    case TYPE_ENTRY:
-      return kPgTypeTable;
-    case SCHEMA_ENTRY:
-      return kPgNamespaceTable;
-    case DATABASE_ENTRY:
-      return kPgDatabaseTable;
-    case ROLE_ENTRY:
-      return kPgAuthidTable;
-    case FOREIGN_SERVER_ENTRY:
-      return kPgForeignServerTable;
-    case TOKENIZER_ENTRY:
-      return kPgTsDictTable;
-    case SUBSCRIPTION_ENTRY:
-      return kPgSubscriptionTable;
-    default:
-      return kInvalidOid;
-  }
-}
 
 duckdb::optional_ptr<duckdb::CatalogEntry> EntryByOid(const Session& session,
                                                       uint64_t oid) {
@@ -88,6 +57,14 @@ duckdb::optional_ptr<duckdb::CatalogEntry> EntryByOid(const Session& session,
     return nullptr;
   }
   return entry;
+}
+
+void EntriesByOid(
+  const Session& session, std::span<const duckdb::idx_t> oids,
+  std::span<duckdb::optional_ptr<duckdb::CatalogEntry>> entries) {
+  for (size_t i = 0; i < oids.size(); ++i) {
+    entries[i] = EntryByOid(session, oids[i]);
+  }
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> TemporaryEntryByOid(
@@ -159,8 +136,14 @@ std::vector<duckdb::reference<duckdb::CatalogEntry>> Databases(
 }
 
 std::optional<Relation> FindRelation(const Session& session, uint64_t oid) {
-  if (const auto entry = EntryByOid(session, oid)) {
-    if (CatalogClassOid(entry->type) != kPgClassTable &&
+  return FindRelation(session, oid, EntryByOid(session, oid));
+}
+
+std::optional<Relation> FindRelation(
+  const Session& session, uint64_t oid,
+  duckdb::optional_ptr<duckdb::CatalogEntry> entry) {
+  if (entry) {
+    if (duckdb::ObjectKindOf(entry->type).pg_class != kPgClassTable &&
         (entry->type != duckdb::CatalogType::TYPE_ENTRY ||
          !duckdb::StructType::IsStruct(
            entry->Cast<duckdb::TypeCatalogEntry>().user_type))) {
@@ -178,7 +161,7 @@ std::optional<Relation> FindRelation(const Session& session, uint64_t oid) {
     return Relation{key.table, key.constraint, nullptr, nullptr};
   }
   if (const auto entry = TemporaryEntryByOid(session, oid);
-      entry && CatalogClassOid(entry->type) == kPgClassTable) {
+      entry && duckdb::ObjectKindOf(entry->type).pg_class == kPgClassTable) {
     return Relation{entry, nullptr, nullptr, nullptr};
   }
   return std::nullopt;
@@ -230,7 +213,13 @@ const duckdb::ColumnList* TableColumns(const Relation& relation) {
 
 std::optional<RelationAccess> RelationByOid(const Session& session,
                                             uint64_t oid) {
-  auto relation = FindRelation(session, oid);
+  return RelationByOid(session, oid, EntryByOid(session, oid));
+}
+
+std::optional<RelationAccess> RelationByOid(
+  const Session& session, uint64_t oid,
+  duckdb::optional_ptr<duckdb::CatalogEntry> entry) {
+  auto relation = FindRelation(session, oid, entry);
   if (!relation) {
     return std::nullopt;
   }
@@ -271,7 +260,7 @@ std::optional<RelationAccess> RelationByOid(const Session& session,
 const duckdb::Permissions& PrivilegePermissions(
   const duckdb::CatalogEntry& entry) {
   static const duckdb::Permissions kUnowned{.owner = kInvalidOid};
-  return auth::Unowned(entry) ? kUnowned : entry.permissions;
+  return duckdb::IsUnowned(entry) ? kUnowned : entry.permissions;
 }
 
 std::string ArrayTypeName(duckdb::CatalogTransaction transaction,

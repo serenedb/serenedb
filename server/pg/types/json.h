@@ -39,12 +39,24 @@ class JsonInput {
   std::string _buffer;
 };
 
+#if defined(__has_feature)
+#if __has_feature(memory_sanitizer)
+inline constexpr bool kZeroJsonPadding = true;
+#else
+inline constexpr bool kZeroJsonPadding = false;
+#endif
+#else
+inline constexpr bool kZeroJsonPadding = false;
+#endif
+
 inline simdjson::padded_string_view PadJson(std::string_view json,
                                             std::string& buffer) {
   buffer.resize_and_overwrite(
     json.size() + simdjson::SIMDJSON_PADDING, [&](char* data, size_t size) {
       std::memcpy(data, json.data(), json.size());
-      std::memset(data + json.size(), 0, simdjson::SIMDJSON_PADDING);
+      if constexpr (kZeroJsonPadding) {
+        std::memset(data + json.size(), 0, simdjson::SIMDJSON_PADDING);
+      }
       return size;
     });
   return simdjson::padded_string_view{buffer.data(), json.size(),

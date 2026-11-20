@@ -34,6 +34,7 @@
 #include "iresearch/search/detail/lazy_bitset.hpp"
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/bit_utils.hpp"
 
 namespace irs {
 namespace {
@@ -326,20 +327,14 @@ duckdb::idx_t ColFilterChain::DenseMask(
       std::fill_n(chunk, chunk_words, uint64_t{0});
     } else if (z == duckdb::FilterPropagateResult::FILTER_ALWAYS_TRUE) {
       f.reader->Skip(f.scan, n);
-      if (const auto tail = n % 64; tail != 0) {
-        chunk[chunk_words - 1] &= (uint64_t{1} << tail) - 1;
-      }
-      for (duckdb::idx_t w = 0; w < chunk_words; ++w) {
-        kept += static_cast<duckdb::idx_t>(std::popcount(chunk[w]));
-      }
+      chunk[chunk_words - 1] &= TailMask(n);
+      kept = CountBits(chunk, chunk_words);
     } else {
       auto& values = f.scratch->Reset();
       f.reader->Scan(f.scan, values, n);
       values.Flatten(n);
       _dense->FilterMask(values, n, chunk);
-      for (duckdb::idx_t w = 0; w < chunk_words; ++w) {
-        kept += static_cast<duckdb::idx_t>(std::popcount(chunk[w]));
-      }
+      kept = CountBits(chunk, chunk_words);
     }
     if constexpr (!Keep) {
       std::fill_n(chunk, chunk_words, uint64_t{0});

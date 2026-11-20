@@ -154,7 +154,6 @@ inline void PrefetchDocs(const duckdb::InputFile& file,
   }
 }
 
-
 template<size_t N, typename Visitor>
 IRS_FORCE_INLINE void VisitDocs(uint32_t size, Visitor&& visit) {
   if constexpr (N == std::dynamic_extent) {

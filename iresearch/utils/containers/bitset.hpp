@@ -230,7 +230,7 @@ class DynamicBitset {
       return 0;
     }
     SDB_ASSERT(end_word <= _words);
-    return math::Popcount(begin() + first_word, begin() + end_word);
+    return CountBits(data() + first_word, end_word - first_word);
   }
 
   Alloc& get_allocator() { return _data.get_deleter().alloc(); }

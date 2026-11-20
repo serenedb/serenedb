@@ -145,6 +145,11 @@ void ColumnDataCheckpointData::FlushSegment(CodecType codec,
                                             std::string_view bytes,
                                             std::string_view shared_bytes) {
   const auto physical = type.InternalType();
+  if (type.id() == duckdb::LogicalTypeId::VALIDITY && !stats.CanHaveNull()) {
+    flush(*GetCodec(CodecType::Empty, physical),
+          duckdb::BaseStatistics::CreateEmpty(type), rows, {});
+    return;
+  }
   if (stats.IsConstant() &&
       !disabled.test(std::to_underlying(CodecType::Constant))) {
     if (const auto* constant = GetCodec(CodecType::Constant, physical)) {

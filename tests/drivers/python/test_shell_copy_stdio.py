@@ -345,6 +345,56 @@ def test_backslash_copy_from_a_directory(shell, tmp_path):
     result.check_stderr("Is a directory")
 
 
+def test_copy_from_a_large_piped_stdin(shell):
+    data = "".join(f"{i}\n" for i in range(300000))
+    test = ShellTest(shell).add_argument(
+        "-csv", "-c", "CREATE TABLE t(i INTEGER); COPY t FROM STDIN (FORMAT csv); SELECT count(*) AS n, sum(i) AS total FROM t;"
+    )
+    result = test.run_raw(data)
+    result.check_stdout("300000,44999850000")
+
+
+def test_copy_from_stdin_inline_rows_longer_than_a_read(shell, tmp_path):
+    script = tmp_path / "copy.sql"
+    script.write_text(
+        "CREATE TABLE t(i INTEGER);\n"
+        "COPY t FROM STDIN (FORMAT csv);\n"
+        + "".join(f"{i}\n" for i in range(300000))
+        + "\\.\n"
+        "SELECT count(*) AS n, sum(i) AS total FROM t;\n"
+    )
+    result = ShellTest(shell).add_argument("-csv", "-f", script.as_posix()).run()
+    result.check_stdout("300000,44999850000")
+
+
+def test_copy_from_stdin_binary_in_a_piped_script(shell):
+    rows = b"".join(struct.pack(">hii", 1, 4, value) for value in (5, 6))
+    data = b"PGCOPY\n\xff\r\n\x00" + struct.pack(">ii", 0, 0) + rows + struct.pack(">h", -1)
+    script = b"CREATE TABLE t(i INTEGER);\n.changes on\nCOPY t FROM STDIN (FORMAT binary);\n"
+    result = ShellTest(shell).run_raw(script + data)
+    result.check_stdout("changes:   2   total_changes: 2")
+
+
+def test_read_parquet_from_a_piped_stdin_fails(shell):
+    result = ShellTest(shell).add_argument("-c", "SELECT * FROM read_parquet('/dev/stdin');").run_raw(b"PAR1")
+    assert result.status_code == 1, result.stdout
+    result.check_stderr("Reading parquet files from a FIFO stream is not supported")
+
+
+def test_copy_parquet_to_stdout_follows_backslash_o(shell, tmp_path):
+    target = tmp_path / "out.parquet"
+    result = run_script(
+        shell,
+        f"\\o '{target.as_posix()}'",
+        "COPY (SELECT 42 AS a) TO STDOUT (FORMAT parquet);",
+        "\\o",
+        f"SELECT a + 1 AS b FROM read_parquet('{target.as_posix()}');",
+    )
+    result.check_stdout("43")
+    data = target.read_bytes()
+    assert data[:4] == b"PAR1" and data[-4:] == b"PAR1", data[:16]
+
+
 @pytest.mark.skipif(not Path("/dev/full").exists(), reason="needs /dev/full")
 def test_backslash_copy_reports_a_failed_write(shell):
     result = run_script(

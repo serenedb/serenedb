@@ -318,3 +318,63 @@ def test_unknown_mode_lists_psql(shell):
 def test_list_databases_flag(shell):
     result = ShellTest(shell).add_argument("-l").run()
     result.check_stdout("database_name")
+
+
+def test_aligned_delete_character(shell):
+    result = run_script(shell, ".mode psql", "SELECT 'a' || chr(127) AS d;")
+    result.check_stdout(" a\\x7F")
+
+
+def test_expanded_border_zero_single_line_headers(shell):
+    result = run_script(shell, ".mode psql", "\\pset border 0", "\\x", "SELECT 1 AS a, 2 AS b;")
+    result.check_stdout("* Record 1")
+    result.check_stdout("\na 1\nb 2")
+
+
+def test_expanded_without_rows_header_or_footer(shell):
+    result = run_script(
+        shell,
+        ".mode psql",
+        "\\x",
+        "\\t on",
+        "SELECT 1 AS a WHERE false;",
+        "\\t off",
+        "\\pset footer off",
+        "SELECT 1 AS a WHERE false;",
+    )
+    result.check_stdout("Default footer is off.")
+    result.check_not_exist("(0 rows)")
+
+
+def test_csv_quoting_rules(shell):
+    result = run_script(
+        shell,
+        ".mode psql",
+        "\\pset format csv",
+        "\\pset null XX",
+        "SELECT '\\.' AS m, '\\x' AS n, 'ab' AS o, 'XX' AS p, 'a' || chr(13) || 'b' AS q;",
+        "\\t on",
+        "SELECT 1 AS a;",
+        "\\t off",
+        "\\pset csv_fieldsep '\\\\'",
+        "SELECT 1 AS a, 2 AS b;",
+        "\\pset csv_fieldsep .",
+        "SELECT 3 AS c;",
+    )
+    result.check_stdout('m,n,o,p,q\n"\\.",\\x,ab,"XX","a\rb"')
+    result.check_stdout("Tuples only is on.\n1\nTuples only is off.")
+    result.check_stdout('Field separator for CSV is "\\".\n"a"\\"b"\n"1"\\"2"')
+    result.check_stdout('Field separator for CSV is ".".\n"c"\n"3"')
+
+
+def test_unaligned_footer_off_and_empty_tuples_only(shell):
+    result = run_script(
+        shell,
+        "\\pset format unaligned",
+        "\\pset footer off",
+        "SELECT 1 AS a;",
+        "\\t on",
+        "SELECT 1 AS a WHERE false;",
+        "SELECT 'last' AS b;",
+    )
+    result.check_stdout("a\n1\nTuples only is on.\nlast")

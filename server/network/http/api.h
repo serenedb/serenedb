@@ -26,6 +26,7 @@
 #include <string_view>
 
 #include "network/http/handler.h"
+#include "network/listen_protocol.h"
 #include "network/listen_spec.h"
 #include "server/utils/registry.h"
 

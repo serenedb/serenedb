@@ -32,7 +32,7 @@
 namespace sdb::pg {
 namespace {
 
-constexpr SystemSqlColumn kSdbSettingsColumns[] = {
+constexpr SystemSqlColumn kSdbFlagsColumns[] = {
   {"name", kText, 0, false, false, kCCollation, 0, SystemKey::None},
   {"setting", kText, 0, false, false, kCCollation, 0, SystemKey::None},
   {"unit", kText, 0, false, false, kCCollation, 0, SystemKey::None},
@@ -48,12 +48,14 @@ constexpr SystemSqlColumn kSdbSettingsColumns[] = {
   {"pending_restart", kBool, 0, false, false, 0, 0, SystemKey::None},
 };
 
-constexpr SystemSql kSdbSettingsSql{.oid = kSdbSettingsTable,
-                                    .schema = "pg_catalog",
-                                    .name = "sdb_settings",
-                                    .relkind = 'r',
-                                    .replident = 'n',
-                                    .columns = kSdbSettingsColumns};
+constexpr SystemSql kSdbFlagsSql{
+  .oid = kSdbFlagsTable,
+  .schema = "pg_catalog",
+  .name = "sdb_flags",
+  .relkind = 'r',
+  .replident = 'n',
+  .columns = kSdbFlagsColumns,
+};
 
 std::string_view VarType(const absl::CommandLineFlag& flag) {
   if (flag.IsOfType<bool>()) {
@@ -105,7 +107,7 @@ struct Flag {
   }
 };
 
-class SdbSettings final : public SystemTableScan<kSdbSettingsSql> {
+class SdbFlags final : public SystemTableScan<kSdbFlagsSql> {
  public:
   using SystemTableScan::SystemTableScan;
 
@@ -138,6 +140,6 @@ class SdbSettings final : public SystemTableScan<kSdbSettingsSql> {
 
 }  // namespace
 
-SystemTable gSdbSettings = SystemTableOf<SdbSettings>();
+SystemTable gSdbFlags = SystemTableOf<SdbFlags>();
 
 }  // namespace sdb::pg

@@ -205,7 +205,7 @@ std::optional<AuthContext> FlagApiKeyValidator::Validate(
   const bool id_ok = SecureEquals(id, _id);
   const bool key_ok = SecureEquals(key, _key);
   if (id_ok && key_ok) {
-    return AuthContext{.user = _user};
+    return AuthContext{.user = std::string{irs::StaticStrings::kDefaultUser}};
   }
   return std::nullopt;
 }
@@ -213,7 +213,7 @@ std::optional<AuthContext> FlagApiKeyValidator::Validate(
 std::optional<AuthContext> FlagBearerValidator::Validate(
   std::string_view token) const {
   if (SecureEquals(token, _token)) {
-    return AuthContext{.user = _user};
+    return AuthContext{.user = std::string{irs::StaticStrings::kDefaultUser}};
   }
   return std::nullopt;
 }

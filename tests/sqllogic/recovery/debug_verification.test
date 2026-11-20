@@ -15,3 +15,44 @@ SELECT current_setting('debug_verification') AS verification, sum(i) AS total FR
 ----
 verification	total
 off	499500
+
+# Verification compares the operators of every two pipelines: two scans of the same columns are the same scan only
+# when they read them from the same table over the same row groups
+statement ok
+CREATE TABLE dv_a (id BIGINT PRIMARY KEY, s TEXT) WITH (compaction_interval = 0, row_group_size = 2048);
+
+statement ok
+CREATE TABLE dv_b (id BIGINT PRIMARY KEY, s TEXT) WITH (compaction_interval = 0, row_group_size = 2048);
+
+statement ok
+INSERT INTO dv_a SELECT i, 'v' || i FROM range(10000) t(i);
+
+statement ok
+INSERT INTO dv_b SELECT i, 'w' || i FROM range(5000) t(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) dv_a;
+
+statement ok
+SET debug_verification = true;
+
+query
+SELECT count(*) AS n FROM dv_a a JOIN dv_a b ON a.id = b.id;
+----
+n
+10000
+
+query
+SELECT count(*) AS n FROM dv_a a JOIN dv_b b ON a.id = b.id;
+----
+n
+5000
+
+query
+SELECT count(*) AS n FROM (SELECT id FROM dv_a ORDER BY id LIMIT 3) a JOIN dv_a b USING (id);
+----
+n
+3
+
+statement ok
+RESET debug_verification;

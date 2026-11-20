@@ -23,7 +23,7 @@ CREATE INDEX IF NOT EXISTS ck_inv ON ck_t USING inverted (id);
 
 
 query
-SELECT expressions FROM duckdb_indexes() WHERE index_name = 'ck_inv';
+SELECT expressions FROM sdb_indexes() WHERE index_name = 'ck_inv';
 ----
 expressions
 [body]

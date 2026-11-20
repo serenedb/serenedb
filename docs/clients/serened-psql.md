@@ -100,7 +100,7 @@ serenedb psql -h localhost -p 7890 -d postgres -c "SELECT path, title FROM postg
 | `-f`, `--file=FILENAME`      | Execute commands from a file, then exit                      |
 | `-l`, `--list`               | List the available databases, then exit                      |
 | `-1`, `--single-transaction` | Run the `-c` / `-f` batch inside a single transaction        |
-| `-X`, `--no-psqlrc`          | Do not read the startup file (`~/.duckdbrc`)                 |
+| `-X`, `--no-psqlrc`          | Do not read the startup file (`~/.sdbrc`)                    |
 | `-q`, `--quiet`              | Suppress startup and informational messages                  |
 | `-V`, `--version`            | Print the SereneDB version and exit                          |
 | `-?`, `--help`               | Show the help message and exit                               |

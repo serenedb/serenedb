@@ -112,7 +112,7 @@ def test_psql_env_vars() -> None:
 
 def test_psql_user_default_falls_back_to_os_user() -> None:
     # psql defaults USERNAME to the OS user (via getpwuid / $USER); mirror
-    # that. duckdb_databases().path exposes the libpq DSN we synthesised
+    # that. sdb_databases().path exposes the libpq DSN we synthesised
     # so we can read the user value back directly. Login as an unknown role
     # is rejected, so the sentinel role must exist for the connection to
     # come up.
@@ -141,7 +141,7 @@ def test_psql_user_default_falls_back_to_os_user() -> None:
         })
         r = subprocess.run(
             [SERENEDB_BIN, "psql", "-c",
-             "SELECT path FROM duckdb_databases() WHERE database_name='postgres';"],
+             "SELECT path FROM sdb_databases() WHERE database_name='postgres';"],
             capture_output=True, text=True, timeout=20, env=env,
         )
         assert r.returncode == 0, r.stderr
@@ -551,7 +551,7 @@ def test_psql_pguser_overrides_user_env() -> None:
         "PGUSER": k["user"],
         "USER": "this_should_be_ignored",
     }
-    r = _run(["-c", "SELECT path FROM duckdb_databases() "
+    r = _run(["-c", "SELECT path FROM sdb_databases() "
                     "WHERE database_name <> 'memory' AND path IS NOT NULL;"],
              env_extra=env_extra)
     assert r.returncode == 0, r.stderr
@@ -1269,7 +1269,7 @@ class _Terminal:
         self._pid, self._fd = pty.fork()
         if self._pid == 0:
             env = {**os.environ, "TERM": "xterm-256color", "HOME": str(home),
-                   "DUCKDB_PAGER": "echo PAGER_USED; cat"}
+                   "SDB_PAGER": "echo PAGER_USED; cat"}
             env.pop("NO_COLOR", None)
             os.execve(SERENEDB_BIN,
                       [SERENEDB_BIN, "shell", "-dark-mode", "--no-init"], env)

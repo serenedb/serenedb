@@ -30,7 +30,7 @@ COPY (SELECT * FROM (VALUES (3, 'lina burns pudge')) t(id, body))
 TO '${__TEST_DIR__}/vrek/b.parquet' (FORMAT PARQUET);
 
 query
-SELECT * FROM serenedb_reindex('vrek_idx');
+SELECT * FROM sdb_reindex('vrek_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	1	0	0	0
@@ -54,7 +54,7 @@ COPY (SELECT * FROM (VALUES (1, 'pudge stays mid'), (2, 'anchin reads manga')) t
 TO '${__TEST_DIR__}/vrek/a.parquet' (FORMAT PARQUET);
 
 statement ok
-SELECT * FROM serenedb_reindex('vrek_idx');
+SELECT * FROM sdb_reindex('vrek_idx');
 
 query
 SELECT id FROM vrek_idx WHERE upper(body) @@ 'STAYS' ORDER BY id;

@@ -51,7 +51,7 @@ id	v
 
 connection t1
 query
-SELECT (SELECT count(*) FROM duckdb_tables() WHERE table_name = 'crc_side') AS t, (SELECT count(*) FROM duckdb_sequences() WHERE sequence_name = 'crc_seq') AS s;
+SELECT (SELECT count(*) FROM sdb_tables() WHERE table_name = 'crc_side') AS t, (SELECT count(*) FROM sdb_sequences() WHERE sequence_name = 'crc_seq') AS s;
 ----
 t	s
 0	0
@@ -110,7 +110,7 @@ COMMIT;
 
 connection t1
 query
-SELECT (SELECT count(*) FROM crc_t) AS t, (SELECT count(*) FROM crc_side) AS s, (SELECT count(*) FROM duckdb_tables() WHERE table_name = 'crc_side2') AS s2;
+SELECT (SELECT count(*) FROM crc_t) AS t, (SELECT count(*) FROM crc_side) AS s, (SELECT count(*) FROM sdb_tables() WHERE table_name = 'crc_side2') AS s2;
 ----
 t	s	s2
 3	0	0
@@ -138,7 +138,7 @@ COMMIT;
 
 connection t2
 query
-SELECT (SELECT count(*) FROM crc_t) AS t, (SELECT count(*) FROM duckdb_tables() WHERE table_name = 'crc_side2') AS s2;
+SELECT (SELECT count(*) FROM crc_t) AS t, (SELECT count(*) FROM sdb_tables() WHERE table_name = 'crc_side2') AS s2;
 ----
 t	s2
 2	1

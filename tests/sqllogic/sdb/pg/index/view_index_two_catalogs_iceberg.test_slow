@@ -84,13 +84,13 @@ statement count 1
 INSERT INTO srv_b_${__DATABASE__}.${__DATABASE__}_b.docs VALUES (4, 'mines in catalog b');
 
 query
-SELECT * FROM serenedb_reindex('vtc_a_idx');
+SELECT * FROM sdb_reindex('vtc_a_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0
 
 query
-SELECT * FROM serenedb_reindex('vtc_b_idx');
+SELECT * FROM sdb_reindex('vtc_b_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	1	0	0	0
@@ -114,13 +114,13 @@ statement count 1
 DELETE FROM srv_a_${__DATABASE__}.${__DATABASE__}_a.docs WHERE id = 2;
 
 query
-SELECT action, files_changed FROM serenedb_reindex('vtc_a_idx');
+SELECT action, files_changed FROM sdb_reindex('vtc_a_idx');
 ----
 action	files_changed
 delta	1
 
 query
-SELECT * FROM serenedb_reindex('vtc_b_idx');
+SELECT * FROM sdb_reindex('vtc_b_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0

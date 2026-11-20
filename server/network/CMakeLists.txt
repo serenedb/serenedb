@@ -5,6 +5,7 @@ target_sources(
         ada_re2_provider.cpp
         tls_context.cpp
         listen_spec.cpp
+        listen_protocol.cpp
         proxy_protocol.cpp
         http/auth.cpp
         http/common.cpp

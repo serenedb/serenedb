@@ -533,7 +533,7 @@ colacl
 
 connection after_crash
 query
-SELECT comment FROM duckdb_views() WHERE view_name = 'rbd_keep_v';
+SELECT comment FROM sdb_views() WHERE view_name = 'rbd_keep_v';
 ----
 comment
 orig
@@ -541,7 +541,7 @@ orig
 
 connection after_crash
 query
-SELECT comment FROM duckdb_columns()
+SELECT comment FROM sdb_columns()
 WHERE table_name = 'rbd_keep_v' AND column_name = 'vb';
 ----
 comment
@@ -633,7 +633,7 @@ rbd_grantee=r/rbd_owner
 
 connection after_crash
 query
-SELECT comment FROM duckdb_views() WHERE view_name = 'rbd_move_v';
+SELECT comment FROM sdb_views() WHERE view_name = 'rbd_move_v';
 ----
 comment
 committed
@@ -641,7 +641,7 @@ committed
 
 connection after_crash
 query
-SELECT comment FROM duckdb_columns()
+SELECT comment FROM sdb_columns()
 WHERE table_name = 'rbd_move_v' AND column_name = 'vb';
 ----
 comment

@@ -820,7 +820,7 @@ constexpr std::pair<std::string_view, VariableDescription>
       "debug_verification",
       {
         LogicalTypeId::BOOLEAN,
-        "Toggle DuckDB's debug Verify() calls. SET debug_verification = "
+        "Toggle the engine's debug Verify() calls. SET debug_verification = "
         "false to disable verification projections in EXPLAIN and speed "
         "up tests in debug builds. Default: false.",
         [] { return duckdb::Value::BOOLEAN(false); },

@@ -46,10 +46,10 @@ statement ok
 CREATE TABLE dlc_oids AS
   SELECT 'db' AS name, oid FROM pg_database WHERE datname = 'dlc_db'
   UNION ALL
-  SELECT table_name, table_oid FROM duckdb_tables()
+  SELECT table_name, table_oid FROM sdb_tables()
   WHERE database_name = 'dlc_db' AND table_name IN ('st', 'tt')
   UNION ALL
-  SELECT index_name, index_oid FROM duckdb_indexes()
+  SELECT index_name, index_oid FROM sdb_indexes()
   WHERE database_name = 'dlc_db' AND index_name IN ('tt_inv', 'tv_inv');
 
 
@@ -75,7 +75,7 @@ DROP INDEX dlc_db.public.tt_inv;
 
 connection after_index_drop
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SELECT count(*) AS indexes FROM duckdb_indexes() WHERE database_name = 'dlc_db';
+SELECT count(*) AS indexes FROM sdb_indexes() WHERE database_name = 'dlc_db';
 ----
 indexes
 1
@@ -93,7 +93,7 @@ DROP TABLE dlc_db.public.st;
 
 connection after_table_drop
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SELECT count(*) AS tables FROM duckdb_tables() WHERE database_name = 'dlc_db' AND table_name = 'st';
+SELECT count(*) AS tables FROM sdb_tables() WHERE database_name = 'dlc_db' AND table_name = 'st';
 ----
 tables
 0
@@ -123,7 +123,7 @@ CREATE TABLE dlc_db.public.lost(id BIGINT PRIMARY KEY, v INTEGER)
 
 connection after_lost_create
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SELECT count(*) AS tables FROM duckdb_tables() WHERE database_name = 'dlc_db' AND table_name = 'lost';
+SELECT count(*) AS tables FROM sdb_tables() WHERE database_name = 'dlc_db' AND table_name = 'lost';
 ----
 tables
 0
@@ -135,9 +135,9 @@ SELECT list_sort(list(DISTINCT regexp_extract(file, '/engine_v1/store/([0-9]+)/'
        = list_sort([(SELECT oid FROM dlc_oids WHERE name = 'tt'), (SELECT oid FROM dlc_oids WHERE name = 'tv_inv')]) AS only_live_relations
 FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*/*')
 WHERE regexp_extract(file, '/engine_v1/store/([0-9]+)/', 1)::BIGINT NOT IN (
-  SELECT table_oid FROM duckdb_tables() WHERE database_name <> 'dlc_db'
+  SELECT table_oid FROM sdb_tables() WHERE database_name <> 'dlc_db'
   UNION ALL
-  SELECT index_oid FROM duckdb_indexes() WHERE database_name <> 'dlc_db');
+  SELECT index_oid FROM sdb_indexes() WHERE database_name <> 'dlc_db');
 ----
 only_live_relations
 t
@@ -210,7 +210,7 @@ VACUUM (FLUSH_TABLE) dlc_db2.public.st;
 
 connection dropper
 statement ok
-INSERT INTO dlc_oids SELECT 'st2', table_oid FROM duckdb_tables() WHERE database_name = 'dlc_db2' AND table_name = 'st';
+INSERT INTO dlc_oids SELECT 'st2', table_oid FROM sdb_tables() WHERE database_name = 'dlc_db2' AND table_name = 'st';
 
 
 connection dropper

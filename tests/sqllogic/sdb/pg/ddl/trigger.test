@@ -4,7 +4,7 @@
 # the relation, so every step here (CREATE, the DML that fires it, DROP, and the
 # catalog projection) has to reach the named entry: creating it against the
 # store table put it in a schema the user cannot address, made DROP TRIGGER
-# report it missing, and left duckdb_triggers() empty.
+# report it missing, and left sdb_triggers() empty.
 #
 # Search-backed tables take triggers too. Trigger expansion reads the affected
 # rows through RETURNING, which the search write operators now project, so both
@@ -39,7 +39,7 @@ CREATE TRIGGER trg_upd AFTER UPDATE ON trg_t FOR EACH STATEMENT
 query
 SELECT schema_name, trigger_name, table_name, action_timing,
        event_manipulation, for_each
-  FROM duckdb_triggers() WHERE table_name = 'trg_t' ORDER BY trigger_name;
+  FROM sdb_triggers() WHERE table_name = 'trg_t' ORDER BY trigger_name;
 ----
 schema_name	trigger_name	table_name	action_timing	event_manipulation	for_each
 public	trg_del	trg_t	AFTER	DELETE	ROW
@@ -105,7 +105,7 @@ DROP TRIGGER trg_upd ON trg_t;
 
 
 query
-SELECT trigger_name FROM duckdb_triggers() WHERE table_name = 'trg_t'
+SELECT trigger_name FROM sdb_triggers() WHERE table_name = 'trg_t'
   ORDER BY trigger_name;
 ----
 trigger_name
@@ -168,7 +168,7 @@ CREATE TRIGGER trg_sstmt AFTER INSERT ON trg_s FOR EACH STATEMENT
 
 
 query
-SELECT trigger_name, for_each FROM duckdb_triggers()
+SELECT trigger_name, for_each FROM sdb_triggers()
   WHERE table_name = 'trg_s' ORDER BY trigger_name;
 ----
 trigger_name	for_each
@@ -258,7 +258,7 @@ DROP TABLE trg_t;
 
 
 query
-SELECT count(*) FROM duckdb_triggers() WHERE table_name = 'trg_t';
+SELECT count(*) FROM sdb_triggers() WHERE table_name = 'trg_t';
 ----
 count
 0

@@ -18,7 +18,7 @@ CREATE SCHEMA srv_${__DATABASE__}.${__DATABASE__}_gone;
 
 
 query
-SELECT count(*) AS listed FROM duckdb_schemas()
+SELECT count(*) AS listed FROM sdb_schemas()
 WHERE database_name = 'srv2_${__DATABASE__}' AND schema_name = '${__DATABASE__}_gone';
 ----
 listed
@@ -30,7 +30,7 @@ DROP SCHEMA srv_${__DATABASE__}.${__DATABASE__}_gone;
 
 
 query
-SELECT count(*) AS listed FROM duckdb_schemas()
+SELECT count(*) AS listed FROM sdb_schemas()
 WHERE database_name = 'srv2_${__DATABASE__}' AND schema_name = '${__DATABASE__}_gone';
 ----
 listed

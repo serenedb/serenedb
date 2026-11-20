@@ -144,7 +144,7 @@ In denormalized logging, the log context information is appended directly to eac
 | `file`      | configurable |
 | `stdout`    | no           |
 
-For file storage, a path ending in `.csv` writes one denormalized file at that path, and any other path names a directory that receives the normalized `duckdb_log_contexts.csv` and `duckdb_log_entries.csv`. Normalized logging writes each context once instead of on every entry, so its files are smaller. To configure normalization of `file` log storage:
+For file storage, a path ending in `.csv` writes one denormalized file at that path, and any other path names a directory that receives the normalized `sdb_log_contexts.csv` and `sdb_log_entries.csv`. Normalized logging writes each context once instead of on every entry, so its files are smaller. To configure normalization of `file` log storage:
 
 <SqlLogicTest id="configuration/logging/index/example_012" />
 

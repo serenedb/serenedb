@@ -504,7 +504,8 @@ bool ScanBindData::Equals(const duckdb::FunctionData& other) const {
   if (view.has_value() != o.view.has_value()) {
     return false;
   }
-  if (columns.ids != o.columns.ids) {
+  if (columns.ids != o.columns.ids ||
+      partitions_to_scan != o.partitions_to_scan) {
     return false;
   }
   if (view) {

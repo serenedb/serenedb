@@ -43,7 +43,6 @@
 #include "connector/functions/array.h"
 #include "connector/functions/backup.h"
 #include "connector/functions/catalog_introspect.h"
-#include "connector/functions/duckdb_aliases.h"
 #include "connector/functions/encode_key.h"
 #include "connector/functions/es.h"
 #include "connector/functions/formatting.h"
@@ -70,6 +69,8 @@
 #include "query/config_variable_names.h"
 #include "replication/functions.h"
 #include "replication/repl_source.h"
+#include "server/utils/build.h"
+#include "server/utils/build_info.h"
 #include "server/utils/file_utils.h"
 #include "server/utils/lifecycle.h"
 #include "server/utils/number_of_cores.h"
@@ -94,6 +95,11 @@ namespace {
 void ConfigureEngineDBConfig(duckdb::DBConfig& config,
                              const std::string& datadir) {
   duckdb::FunctionExpression::SetBuiltinPrefix({});
+  config.options.system_object_prefix = "sdb_";
+  config.options.product_name = "SereneDB";
+  config.options.product_version = SERENEDB_VERSION;
+  config.options.product_source_id = build::Commit();
+  config.options.manage_extensions = false;
   config.create_internal_catalog =
     [layout = catalog::DataDirectory{datadir}](duckdb::AttachedDatabase& db) {
       return catalog::CreateInternalCatalog(db, layout);
@@ -127,9 +133,6 @@ void ConfigureServerDBConfig(duckdb::DBConfig& config) {
   config.SetOptionByName(
     "secret_directory",
     duckdb::Value{utils::file_utils::BuildFilename(datadir, "secrets")});
-  config.SetOptionByName(
-    "extension_directory",
-    duckdb::Value{utils::file_utils::BuildFilename(datadir, "extensions")});
   // DuckDB's own auto-detect uses std::thread::hardware_concurrency(), which
   // ignores cgroup CPU limits and would over-thread in a container. Pin it to
   // our cgroup-aware logical core count when unset, and publish the resolved
@@ -176,8 +179,6 @@ void RegisterEngineModules(duckdb::DatabaseInstance& db) {
   connector::RegisterMarkdownRenderFunctions(db);
 
   docs::RegisterDocsFunctions(db);
-
-  connector::RegisterDuckDBAliases(db);
 
   connector::RegisterAIFunctions(db);
 }

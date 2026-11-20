@@ -213,8 +213,8 @@ duckdb::optional_ptr<const duckdb::CompressionFunction> ColumnWriter::PickCodec(
     });
   }
 
-  duckdb::CompressionAnalyzeContext actx{
-    ctx, db, duckdb::StorageVersion::SERENEDB_LATEST};
+  duckdb::CompressionAnalyzeContext actx{ctx, db,
+                                         duckdb::StorageVersion::SDB_LATEST};
   std::vector<duckdb::unique_ptr<duckdb::AnalyzeState>> states(
     candidates.size());
   for (size_t i = 0; i < candidates.size(); ++i) {
@@ -334,7 +334,7 @@ void ColumnWriter::Compress(const duckdb::CompressionFunction& picked,
   duckdb::ColumnDataCheckpointData ckp{
     codec_type,
     db,
-    duckdb::StorageVersion::SERENEDB_LATEST,
+    duckdb::StorageVersion::SDB_LATEST,
     overflow_writer,
     stream_writer,
     std::move(flush_fn),

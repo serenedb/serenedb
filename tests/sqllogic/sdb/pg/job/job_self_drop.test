@@ -68,7 +68,7 @@ jobs
 
 
 query
-SELECT count(*) AS schemas FROM duckdb_schemas() WHERE database_name = current_database() AND schema_name = 'jsd_schema';
+SELECT count(*) AS schemas FROM sdb_schemas() WHERE database_name = current_database() AND schema_name = 'jsd_schema';
 ----
 schemas
 0

@@ -56,7 +56,7 @@ id	body
 2	beta
 
 query
-SELECT readonly FROM duckdb_databases() WHERE database_name = 'dfw_ro_${__DATABASE__}';
+SELECT readonly FROM sdb_databases() WHERE database_name = 'dfw_ro_${__DATABASE__}';
 ----
 readonly
 t
@@ -127,7 +127,7 @@ statement ok
 INSERT INTO dfw_rw_${__DATABASE__}.main.docs VALUES (2, 'beta');
 
 query
-SELECT readonly FROM duckdb_databases() WHERE database_name = 'dfw_rw_${__DATABASE__}';
+SELECT readonly FROM sdb_databases() WHERE database_name = 'dfw_rw_${__DATABASE__}';
 ----
 readonly
 f

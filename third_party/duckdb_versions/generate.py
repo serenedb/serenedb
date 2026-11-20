@@ -27,21 +27,21 @@ def to_enum_name(version_name):
 # In version_map.json duckdb versions keep their real numbers and a serenedb entry holds
 # just its sequence; the shifting happens here. A serenedb entry is built on the duckdb
 # version listed above it, so entries interleave in the order they were added:
-#     "v2.0.0": 69, "serenedb_v1": 1, "serenedb_v2": 2, "v2.1.0": 70, "serenedb_v3": 3
+#     "v2.0.0": 69, "sdb_v1": 1, "sdb_v2": 2, "v2.1.0": 70, "sdb_v3": 3
 # Appending never disturbs an earlier entry's value, which matters because those values are
-# on disk -- re-basing serenedb_v1 on a duckdb bump would leave every existing datadir
+# on disk -- re-basing sdb_v1 on a duckdb bump would leave every existing datadir
 # holding a number that no longer matches any enumerator.
 STORAGE_VERSION_SHIFT = 32
 
 
 def is_serenedb_version(version_name):
-    return version_name.startswith('serenedb')
+    return version_name.startswith('sdb_')
 
 
 # "the latest version" is two different things, so the enum names both: DUCKDB_LATEST is
 # what the "latest" string resolves to (a database duckdb can still read), while
-# SERENEDB_LATEST is what our own writers target. Anything meaning "through the newest
-# version we support" must name SERENEDB_LATEST.
+# SDB_LATEST is what our own writers target. Anything meaning "through the newest
+# version we support" must name SDB_LATEST.
 def shifted_value(duckdb_version):
     return f"{duckdb_version}ULL << {STORAGE_VERSION_SHIFT}"
 
@@ -76,7 +76,7 @@ def generate_storage_enum(storage_versions):
         result.append(f"    {duckdb_latest} = {value},")
         duckdb_latest_at = len(result)
     result.insert(duckdb_latest_at, f"    DUCKDB_LATEST = {duckdb_latest},")
-    result.append(f"    SERENEDB_LATEST = {serenedb_latest or 'DUCKDB_LATEST'},")
+    result.append(f"    SDB_LATEST = {serenedb_latest or 'DUCKDB_LATEST'},")
     result.append(f"    DEPRECATED = {shifted_value(999)},")
     result.append("    INVALID = 0")
     result.append("};")
@@ -110,7 +110,7 @@ def generate_storage_array(storage_versions):
         if not is_serenedb_version(version_name):
             latest_at = len(result)
     result.insert(latest_at, '\t{"latest", StorageVersion::DUCKDB_LATEST},')
-    result.append('\t{"serenedb_latest", StorageVersion::SERENEDB_LATEST},')
+    result.append('\t{"sdb_latest", StorageVersion::SDB_LATEST},')
     result.append("\t{nullptr, StorageVersion::INVALID}")
     result.append("};")
     return "\n".join(result)
@@ -132,9 +132,9 @@ def generate_serialization_array(serialization_versions):
 
 
 def readable_from(storage):
-    lowest = storage["serenedb_readable_from"]
+    lowest = storage["sdb_readable_from"]
     if not is_serenedb_version(lowest) or lowest not in storage["values"]:
-        sys.exit(f"serenedb_readable_from names {lowest}, which is not a serenedb version of version_map.json")
+        sys.exit(f"sdb_readable_from names {lowest}, which is not a serenedb version of version_map.json")
     return to_enum_name(lowest)
 
 
@@ -155,8 +155,8 @@ def enum_header(version_map):
             generate_serialization_enum(version_map["serialization"]["values"]),
             "// clang-format on",
             "",
-            f"inline constexpr auto SERENEDB_VERSION_LOWER = StorageVersion::{readable_from(storage)};",
-            "inline constexpr auto SERENEDB_VERSION_UPPER = StorageVersion::SERENEDB_LATEST;",
+            f"inline constexpr auto SDB_VERSION_LOWER = StorageVersion::{readable_from(storage)};",
+            "inline constexpr auto SDB_VERSION_UPPER = StorageVersion::SDB_LATEST;",
             "",
             "} // namespace duckdb",
             "",

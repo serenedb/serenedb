@@ -35,7 +35,7 @@ INSERT INTO cdd_marker VALUES (1);
 
 
 query
-SELECT count(*) AS n FROM duckdb_databases() WHERE database_name = 'cdd_db';
+SELECT count(*) AS n FROM sdb_databases() WHERE database_name = 'cdd_db';
 ----
 n
 0
@@ -51,7 +51,7 @@ SELECT 1;
 
 connection after_crash
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SELECT (SELECT count(*) FROM duckdb_databases() WHERE database_name = 'cdd_db') AS d, (SELECT count(*) FROM cdd_marker) AS m;
+SELECT (SELECT count(*) FROM sdb_databases() WHERE database_name = 'cdd_db') AS d, (SELECT count(*) FROM cdd_marker) AS m;
 ----
 d	m
 0	1
@@ -64,7 +64,7 @@ CREATE DATABASE cdd_db;
 
 connection after_crash
 query
-SELECT count(*) AS n FROM duckdb_tables() WHERE database_name = 'cdd_db' AND table_name = 't';
+SELECT count(*) AS n FROM sdb_tables() WHERE database_name = 'cdd_db' AND table_name = 't';
 ----
 n
 0

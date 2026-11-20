@@ -102,7 +102,7 @@ def test_a_role_that_cannot_log_in_is_refused(role, http_conn):
 def test_the_bearer_token_is_masked_in_settings():
     with psycopg.connect(**conn_kwargs(), autocommit=True) as conn:
         setting = conn.execute(
-            "SELECT setting FROM sdb_settings WHERE name = 'auth_bearer_token'"
+            "SELECT setting FROM sdb_flags WHERE name = 'auth_bearer_token'"
         ).fetchone()[0]
     assert setting == "***"
 

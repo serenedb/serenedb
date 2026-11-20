@@ -239,7 +239,6 @@ Wire-protocol and session state that PostgreSQL clients read or set.
 | `default_transaction_isolation` | Sets the transaction isolation level of each new transaction. | `VARCHAR` | `SESSION` | `repeatable read` |
 | `default_transaction_read_only` | Sets the default read-only status of new transactions. | `BOOLEAN` | `SESSION` | `off` |
 | `dialect_compatibility_mode` | Enable SQL dialect compatibility for a certain engine (e.g. `SET dialect_compatibility_mode='spark'`). | `VARCHAR` | `SESSION` | `NONE` |
-| `duckdb_api` | The API name the server reports in its user agent (see `PRAGMA user_agent`). | `VARCHAR` | `GLOBAL` | `cpp` |
 | `error_on_division_by_zero` | Deprecated. Throw an error instead of returning NULL when dividing by zero. | `BOOLEAN` | `SESSION` | `true` |
 | `errors_as_json` | Output error messages as structured `JSON` instead of as a raw string | `BOOLEAN` | `SESSION` | `false` |
 | `extra_float_digits` | Sets the number of digits displayed for floating-point values. | `INTEGER` | `SESSION` | `1` |
@@ -294,11 +293,8 @@ Authentication, authorization and what the server is allowed to reach.
 | Name | Description | Type | Scope | Default value |
 | --- | --- | --- | --- | --- |
 | `allow_asterisks_in_http_paths` | Allow '\*' character in URLs users can query | `BOOLEAN` | `SESSION` | `false` |
-| `allow_community_extensions` | Allow to load community built extensions | `BOOLEAN` | `GLOBAL` | `true` |
-| `allow_extensions_metadata_mismatch` | Allow to load extensions with not compatible metadata | `BOOLEAN` | `GLOBAL` | `false` |
 | `allow_persistent_secrets` | Allow the creation of persistent secrets, that are stored and loaded on restarts | `BOOLEAN` | `GLOBAL` | `true` |
 | `allow_unredacted_secrets` | Allow printing unredacted secrets | `BOOLEAN` | `GLOBAL` | `false` |
-| `allow_unsigned_extensions` | Allow to load extensions with invalid or missing signatures | `BOOLEAN` | `GLOBAL` | `false` |
 | `enable_external_access` | Allow the database to access external state (through e.g., loading/installing modules, COPY TO/FROM, CSV readers, pandas replacement scans, etc) | `BOOLEAN` | `GLOBAL` | `true` |
 | `enable_macro_dependencies` | Enable created MACROs to create dependencies on the referenced objects (such as tables) | `BOOLEAN` | `GLOBAL` | `true` |
 | `hba` | Host-based authentication ruleset (pg_hba.conf syntax) as a single string: one rule per line, first match wins, applied to connections opened after the SET. A rule that lets the `postgres` superuser in without a password over local and loopback (127.0.0.1, ::1) connections always comes first, so a bad ruleset cannot lock the superuser out; other roles follow the ruleset. An empty value restores the default (SCRAM for every role). Server-global. | `VARCHAR` | `GLOBAL` |  |
@@ -350,7 +346,6 @@ Local paths, remote object stores and the external file cache.
 | `cache_local_files` | Whether the external file cache also caches local files (remote files are always cached). | `BOOLEAN` | `GLOBAL` | `off` |
 | `enable_fsst_vectors` | Allow scans on FSST compressed segments to emit compressed vectors to utilize late decompression | `BOOLEAN` | `GLOBAL` | `false` |
 | `enable_server_cert_verification` | Enable server side certificate verification. | `BOOLEAN` | `SESSION` | `false` |
-| `extension_directory` | Deprecated: use `extension_directories` instead. The directory to store extensions in. | `VARCHAR` | `GLOBAL` | `<datadir>/extensions` |
 | `external_file_cache_local_max_block_size` | Maximum size in bytes of an external file cache block for local (non-remote) files. Larger reads are split into blocks of this size, which are fetched in parallel. | `UBIGINT` | `GLOBAL` | `16384` |
 | `external_file_cache_remote_max_block_size` | Maximum size in bytes of an external file cache block for remote files (e.g. HTTP/S3). Larger reads are split into blocks of this size, which are fetched in parallel. | `UBIGINT` | `GLOBAL` | `2097152` |
 | `external_file_cache_remote_min_block_size` | Reads of remote files are rounded out to aligned blocks of this size, so tiny reads do not each cost a request. | `UBIGINT` | `GLOBAL` | `4096` |
@@ -477,13 +472,6 @@ Installing and loading extensions.
 
 | Name | Description | Type | Scope | Default value |
 | --- | --- | --- | --- | --- |
-| `allow_extension_repositories` | Whether custom trusted extension repositories are `allowed`, `forbidden` (which also distrusts existing repositories) or `undecided` (blocks adding new repositories but keeps trusting existing ones). While the server runs, it can only move from `undecided` to `allowed` or `forbidden`, or from `allowed` to `forbidden`. | `VARCHAR` | `GLOBAL` | `undecided` |
-| `autoinstall_extension_repository` | Overrides the custom endpoint for extension installation on autoloading | `VARCHAR` | `GLOBAL` |  |
-| `autoinstall_known_extensions` | Whether known extensions are allowed to be automatically installed when a query depends on them | `BOOLEAN` | `GLOBAL` | `false` |
-| `autoload_known_extensions` | Whether known extensions are allowed to be automatically loaded when a query depends on them | `BOOLEAN` | `GLOBAL` | `false` |
-| `custom_extension_repository` | Overrides the custom endpoint for remote extension installation | `VARCHAR` | `GLOBAL` |  |
-| `extension_directories` | Set the directories to store extensions in | `VARCHAR[]` | `GLOBAL` | `[]` |
-| `extension_repository_directory` | The directory that stores trusted extension repositories. While signature checking is on (`allow_unsigned_extensions = false`), it can only be set at start. | `VARCHAR` | `GLOBAL` |  |
 
 ### Debugging and unsafe options
 

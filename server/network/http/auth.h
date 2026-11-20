@@ -56,29 +56,26 @@ class BearerValidator {
 // Default flag-configured backends (one static credential each), the same
 // shape as the flag-configured Basic password. The "real" stores (a catalog
 // table of keys / service tokens) can replace these behind the same seam.
-// Constant-time compared; authenticate as the configured user.
+// Constant-time compared; authenticate as the default user.
 class FlagApiKeyValidator final : public ApiKeyValidator {
  public:
-  FlagApiKeyValidator(std::string id, std::string key, std::string user)
-    : _id{std::move(id)}, _key{std::move(key)}, _user{std::move(user)} {}
+  FlagApiKeyValidator(std::string id, std::string key)
+    : _id{std::move(id)}, _key{std::move(key)} {}
   std::optional<AuthContext> Validate(std::string_view id,
                                       std::string_view key) const override;
 
  private:
   std::string _id;
   std::string _key;
-  std::string _user;
 };
 
 class FlagBearerValidator final : public BearerValidator {
  public:
-  FlagBearerValidator(std::string token, std::string user)
-    : _token{std::move(token)}, _user{std::move(user)} {}
+  explicit FlagBearerValidator(std::string token) : _token{std::move(token)} {}
   std::optional<AuthContext> Validate(std::string_view token) const override;
 
  private:
   std::string _token;
-  std::string _user;
 };
 
 struct AuthResult {

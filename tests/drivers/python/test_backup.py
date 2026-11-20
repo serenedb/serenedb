@@ -276,7 +276,7 @@ def _read_state(server: Serened) -> State:
                 "WHERE table_catalog = 'postgres' AND starts_with(table_name, 'ddl_')"):
             ddl[int(name[4:])] = [x for (x,) in conn.execute(f"SELECT x FROM {name}")]
         names = [name for (name,) in conn.execute(
-            "SELECT database_name FROM duckdb_databases() "
+            "SELECT database_name FROM sdb_databases() "
             "WHERE starts_with(database_name, 'db_')")]
     databases: dict[int, list[int] | None] = {}
     for name in names:

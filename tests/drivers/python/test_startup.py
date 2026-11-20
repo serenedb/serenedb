@@ -206,7 +206,7 @@ def test_a_component_failing_to_start_stops_the_ones_before_it(
 def _setting(server: _Server, name: str) -> str:
     with psycopg.connect(host="127.0.0.1", port=server.port, user="postgres",
                          dbname="postgres") as conn:
-        return conn.execute("SELECT setting FROM sdb_settings WHERE name = %s",
+        return conn.execute("SELECT setting FROM sdb_flags WHERE name = %s",
                             (name,)).fetchone()[0]
 
 

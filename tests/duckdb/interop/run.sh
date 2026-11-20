@@ -44,7 +44,10 @@ failed=()
 
 engine() {
 	case "$1" in
-	fork) "$SERENEDB" shell -bail -csv :memory: ;;
+	fork)
+		sed -E 's/\bduckdb_(schemas|tables|columns|views|indexes|constraints|sequences|types|functions)\(/sdb_\1(/g' |
+			"$SERENEDB" shell -bail -csv :memory:
+		;;
 	vanilla) "$VANILLA_DUCKDB" -bail -csv :memory: ;;
 	esac
 }

@@ -676,7 +676,7 @@ void Transactions::MaintainLog(Lsn end) {
     }
     return;
   }
-  if (!_log->HasNext() && end - _log->NewestChunk() > Log::kChunkBytes / 2 &&
+  if (_log->ShouldPrepareNext(end) &&
       !_preparing_next.exchange(true, std::memory_order_acq_rel)) {
     Runtime::Get()
       .Run([this] {

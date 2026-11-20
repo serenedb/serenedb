@@ -269,8 +269,7 @@ void Locate(benchmark::State& state, const std::string& base, bool hit) {
   }
   state.SetItemsProcessed(
     static_cast<int64_t>(state.iterations() * padded.probes.size()));
-  state.counters["bytes"] =
-    static_cast<double>(field.Index().Trie().MemoryBytes());
+  state.counters["bytes"] = static_cast<double>(field.Index().MemoryBytes());
   state.counters["blocks"] = static_cast<double>(field.Blocks());
   state.counters["ns_per_probe"] = benchmark::Counter(
     static_cast<double>(state.iterations() * padded.probes.size()),
@@ -342,6 +341,27 @@ void Seek(benchmark::State& state, const std::string& base) {
     benchmark::Counter::kIsRate | benchmark::Counter::kInvert);
 }
 
+bytes_view WordOf(bytes_view key) {
+  constexpr size_t kMinWord = 5;
+  constexpr size_t kMaxWord = 12;
+  const auto lower = [&](size_t at) { return key[at] >= 'a' && key[at] <= 'z'; };
+  for (size_t begin = 0; begin != key.size();) {
+    if (!lower(begin)) {
+      ++begin;
+      continue;
+    }
+    size_t end = begin;
+    while (end != key.size() && lower(end)) {
+      ++end;
+    }
+    if (end - begin >= kMinWord && end - begin <= kMaxWord) {
+      return key.substr(begin, end - begin);
+    }
+    begin = end;
+  }
+  return {};
+}
+
 void Fuzzy(benchmark::State& state, const std::string& base, uint8_t distance) {
   constexpr size_t kTargets = 32;
   const auto& data = Load(base);
@@ -355,13 +375,12 @@ void Fuzzy(benchmark::State& state, const std::string& base, uint8_t distance) {
   const size_t step = std::max<size_t>(1, data.keys.size() / (8 * kTargets));
   for (size_t i = 0; i < data.keys.size() && targets.size() != kTargets;
        i += step) {
-    const auto& key = data.keys[i];
-    if (key.size() >= 5 && key.size() <= 12 &&
-        absl::c_all_of(key,
-                       [](irs::byte_type b) { return b >= 'a' && b <= 'z'; })) {
-      targets.push_back(key);
+    if (const auto word = WordOf(data.keys[i]);
+        !word.empty() && absl::c_find(targets, word) == targets.end()) {
+      targets.emplace_back(word);
     }
   }
+  state.counters["targets"] = static_cast<double>(targets.size());
   const auto& description = irs::DefaultPDP(distance, false);
   std::vector<std::shared_ptr<const irs::LevenshteinAcceptor>> fuzzy;
   std::vector<std::shared_ptr<const irs::FuzzyConjunction>> dfas;

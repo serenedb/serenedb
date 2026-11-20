@@ -1031,7 +1031,7 @@ void Schema::Move(duckdb::CatalogTransaction transaction, EntrySet& set,
   }
   std::vector<PendingDefault> defaults;
   if (!replay) {
-    if (IsNested(transaction, *this) || IsNested(transaction, target)) {
+    if (IsNested(transaction, *this)) {
       std::vector<duckdb::CatalogEntry*> entries;
       for (const auto& item : moving) {
         entries.push_back(&item.entry);

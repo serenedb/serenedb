@@ -94,6 +94,63 @@ Drop the dependent entries first and recreate them after the change.
 
 
 statement ok
+CREATE TABLE nss_i4.nss_i3.nss_j (a INT);
+
+
+statement ok
+CREATE VIEW nss_i4.nss_i3.nss_v2 AS SELECT nss_i.a FROM nss_i4.nss_i3.nss_i JOIN nss_i4.nss_i3.nss_j ON nss_i.a = nss_j.a;
+
+
+statement error
+ALTER SCHEMA nss_i4 RENAME TO nss_i9;
+----
+db error: ERROR: Cannot alter entry "nss_i4" because there are entries that depend on it.
+view "nss_v" depends on table "nss_i".
+view "nss_v2" depends on table "nss_i".
+Drop the dependent entries first and recreate them after the change.
+
+
+statement ok
+CREATE TABLE nss_i4.nss_i3.nss_plain (a INT);
+
+
+statement ok
+ALTER TABLE nss_i4.nss_i3.nss_plain SET SCHEMA public;
+
+
+statement ok
+INSERT INTO nss_plain VALUES (1);
+
+
+statement ok
+CREATE SCHEMA nss_g1;
+
+
+statement ok
+CREATE SCHEMA nss_g1.nss_g2;
+
+
+statement ok
+CREATE TABLE nss_g1.nss_g2.nss_src (v INT);
+
+
+statement ok
+CREATE TABLE nss_g1.nss_g2.nss_log (v INT);
+
+
+statement ok
+CREATE TRIGGER nss_trg AFTER INSERT ON nss_g1.nss_g2.nss_src FOR EACH ROW INSERT INTO nss_g1.nss_g2.nss_log VALUES (NEW.v);
+
+
+statement error
+ALTER SCHEMA nss_g1.nss_g2 RENAME TO nss_g3;
+----
+db error: ERROR: Cannot alter entry "nss_g2" because there are entries that depend on it.
+trigger "nss_trg" on table "nss_src" depends on table "nss_log".
+Drop the dependent entries first and recreate them after the change.
+
+
+statement ok
 CREATE TABLE nss_top (id SERIAL, a INT);
 
 
@@ -174,6 +231,14 @@ INSERT INTO nss_c1.nss_c2.nss_w (a) VALUES (1);
 
 
 statement ok
+CREATE TYPE nss_c1.nss_c2.nss_mood AS ENUM ('ok', 'bad');
+
+
+statement ok
+CREATE TABLE nss_c1.nss_c2.nss_m (m TEXT CHECK (m::nss_c1.nss_c2.nss_mood IS NOT NULL));
+
+
+statement ok
 USE ${__DATABASE__};
 
 
@@ -191,6 +256,17 @@ USE nss_dst_${__DATABASE__};
 
 statement ok
 INSERT INTO nss_c1.nss_c2.nss_w (a) VALUES (2);
+
+
+statement ok
+INSERT INTO nss_c1.nss_c2.nss_m VALUES ('ok');
+
+
+query
+SELECT m FROM nss_c1.nss_c2.nss_m;
+----
+m
+ok
 
 
 statement error

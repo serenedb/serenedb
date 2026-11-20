@@ -532,9 +532,6 @@ void ConnectionContext::ReportIdle() {
 }
 
 void ConnectionContext::ReportQuery(std::string query) {
-  if (_internal_statements != 0) {
-    return;
-  }
   _progress->BeginQuery(std::move(query),
                         duckdb::Timestamp::GetCurrentTimestamp().value,
                         _query_in_transaction);

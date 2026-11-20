@@ -151,4 +151,29 @@ t	_RETURN	rule _RETURN on view vrd.vn	1	i
 
 
 statement ok
+CREATE FUNCTION vrd.twice(x int) RETURNS int LANGUAGE sql AS 'SELECT x * 2';
+
+
+statement ok
+CREATE VIEW vrd.vo AS SELECT vrd.twice(kg) AS k FROM vrd.meat;
+
+
+query
+SELECT d.refclassid::regclass::text AS refclass, d.deptype, count(*) AS n
+FROM pg_rewrite r JOIN pg_depend d ON d.classid = 'pg_rewrite'::regclass AND d.objid = r.oid
+WHERE r.ev_class = 'vrd.vo'::regclass AND d.refclassid = 'pg_proc'::regclass
+GROUP BY 1, 2;
+----
+refclass	deptype	n
+pg_proc	n	1
+
+
+query
+SELECT type, schema, name, identity FROM pg_identify_object('pg_rewrite'::regclass, 4294967295, 0);
+----
+type	schema	name	identity
+rule	NULL	NULL	NULL
+
+
+statement ok
 DROP SCHEMA vrd CASCADE;

@@ -350,3 +350,10 @@ SELECT id, substring(s similar p escape '#') AS column_pattern FROM similar_subs
 
 statement ok
 DROP TABLE similar_substring
+
+
+query
+SELECT E'\x1b' SIMILAR TO '#e' ESCAPE '#' AS esc, 'ab' SIMILAR TO 'a#Yb' ESCAPE '#' AS no_boundary, 'a b' SIMILAR TO 'a#Y b' ESCAPE '#' AS boundary, 'ab' SIMILAR TO 'ab#Z' ESCAPE '#' AS string_end
+----
+esc	no_boundary	boundary	string_end
+t	t	f	t

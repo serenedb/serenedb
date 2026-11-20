@@ -221,6 +221,20 @@ s	a	t
 NaN	NaN	NaN
 
 
+query
+SELECT cosd('NaN'::float8) AS c, asind('NaN'::float8) AS a, atand('NaN'::float8) AS t;
+----
+c	a	t
+NaN	NaN	NaN
+
+
+query
+SELECT sind(270) AS s270, sind(210) AS s210, cosd(270) AS c270, cosd(240) AS c240, tand(225) AS t225, tand(315) AS t315, cotd(225) AS ct225;
+----
+s270	s210	c270	c240	t225	t315	ct225
+-1	-0.5	0	-0.5	1	-1	1
+
+
 statement error
 SELECT sind('Infinity'::float8);
 ----

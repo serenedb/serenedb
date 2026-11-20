@@ -434,6 +434,22 @@ def test_value_dependent_result_types_are_described(conn):
     assert all_fields(msgs) == [b"1.23", b"1.25"]
 
 
+def test_typed_value_dependent_parameters_are_described(conn):
+    conn.parse(
+        "typed_value_dependent",
+        "SELECT round(1.2345::numeric, $1) AS r, $2 AS d",
+        oids=(23, 1082),
+    )
+    conn.describe("S", "typed_value_dependent")
+    conn.sync()
+    msgs = conn.drain_to_ready()
+    assert not errors(msgs), errors(msgs)
+    assert [(n, oid) for n, oid, _ in row_description(msgs)] == [
+        ("r", 1700),
+        ("d", 1082),
+    ]
+
+
 def test_text_parameters_take_postgres_input_forms(conn):
     conn.parse(
         "input_forms",

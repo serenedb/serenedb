@@ -22,6 +22,7 @@
 
 #include <simdjson.h>
 
+#include <cstring>
 #include <string>
 #include <string_view>
 
@@ -37,6 +38,18 @@ class JsonInput {
   simdjson::ondemand::parser _parser;
   std::string _buffer;
 };
+
+inline simdjson::padded_string_view PadJson(std::string_view json,
+                                            std::string& buffer) {
+  buffer.resize_and_overwrite(
+    json.size() + simdjson::SIMDJSON_PADDING, [&](char* data, size_t size) {
+      std::memcpy(data, json.data(), json.size());
+      std::memset(data + json.size(), 0, simdjson::SIMDJSON_PADDING);
+      return size;
+    });
+  return simdjson::padded_string_view{buffer.data(), json.size(),
+                                      buffer.size()};
+}
 
 [[noreturn]] void ThrowInvalidJson(simdjson::error_code error);
 

@@ -662,6 +662,7 @@ std::unique_ptr<byte_type[]> Decompress(const Packed& packed,
 }
 
 void WritePacked(duckdb::BinarySerializer& object, const Compressed& packed) {
+  SDB_ASSERT(FrameStarts(packed.frames).back().raw == packed.frames.raw_bytes);
   object.WriteObject(kPackedFrames.id, kPackedFrames.tag,
                      [&](duckdb::BinarySerializer& frames) {
                        WriteFrames(frames, packed.frames);
@@ -674,13 +675,36 @@ void WritePacked(duckdb::BinarySerializer& object, const Compressed& packed) {
     });
 }
 
-bool Pays(const Compressed& packed) {
+uint64_t PackedBytes(const Compressed& packed) {
   CountingStream counter;
   duckdb::BinarySerializer serializer{counter};
   serializer.Begin();
   WritePacked(serializer, packed);
   serializer.End();
-  return counter.Bytes() < packed.frames.raw_bytes;
+  return counter.Bytes();
+}
+
+bool Pays(const Compressed& packed) {
+  return PackedBytes(packed) < packed.frames.raw_bytes;
+}
+
+void KeepPlain(Compressed& packed, const FrameWriter& raw) {
+  SDB_ASSERT(raw.RawBytes() == packed.frames.raw_bytes);
+  auto* slot = packed.slots.get();
+  size_t frame = 0;
+  raw.ForEachFrame([&](bytes_view in) {
+    if (packed.frames.sizes[frame] != in.size()) {
+      std::memcpy(slot, in.data(), in.size());
+    }
+    slot += in.size();
+    ++frame;
+  });
+  packed.frames.sizes.clear();
+  packed.frames.raw_sizes.clear();
+}
+
+bool IsPlain(const Compressed& packed) noexcept {
+  return packed.frames.sizes.empty();
 }
 
 Packed ReadPacked(duckdb::BinaryDeserializer& object,

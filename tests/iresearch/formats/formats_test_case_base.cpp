@@ -24,6 +24,7 @@
 #include "formats_test_case_base.hpp"
 
 #include <absl/cleanup/cleanup.h>
+#include <absl/strings/str_cat.h>
 
 #include <algorithm>
 #include <cstddef>
@@ -663,6 +664,60 @@ TEST_P(FormatTestCase, format_utils_footer_keeps_a_small_meta_plain) {
     write("unpacked");
   }
   EXPECT_EQ(small, read("unpacked"));
+}
+
+TEST_P(FormatTestCase, format_utils_footer_is_never_larger_packed) {
+  constexpr std::string_view kUnpacked = "irs::FooterMetaUnpacked";
+  if (!duckdb::FaultPoints::Arm(kUnpacked)) {
+    GTEST_SKIP() << "this build has no fault injection";
+  }
+  duckdb::FaultPoints::Disarm(kUnpacked);
+  const auto write = [&](std::string_view name, uint32_t count,
+                         uint32_t period) {
+    auto stream = dir().create(name);
+    ASSERT_NE(nullptr, stream);
+    irs::format_utils::WriteFooter(
+      *stream, [&](duckdb::BinarySerializer& meta) {
+        meta.WriteList(
+          0, "values", count,
+          [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+            list.WriteElement<uint32_t>(static_cast<uint32_t>(i % period));
+          });
+      });
+  };
+  const auto read = [&](std::string_view name, uint32_t count,
+                        uint32_t period) -> uint64_t {
+    auto stream = dir().open(name, irs::IOAdvice::RANDOM);
+    EXPECT_NE(nullptr, stream);
+    std::vector<uint32_t> values;
+    irs::format_utils::ReadFooter(
+      *stream, name, [&](duckdb::BinaryDeserializer& meta, uint64_t) {
+        meta.ReadList(
+          0, "values",
+          [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
+            values.push_back(list.ReadElement<uint32_t>());
+          });
+      });
+    EXPECT_EQ(values.size(), count);
+    for (uint32_t i = 0; i != values.size(); ++i) {
+      EXPECT_EQ(values[i], i % period) << name << " value " << i;
+    }
+    return stream->Length();
+  };
+  for (const uint32_t period : {1U, 3U, 7U, 16U}) {
+    for (uint32_t count = 0; count != 160; ++count) {
+      const auto packed = absl::StrCat("packed_", period, "_", count);
+      const auto unpacked = absl::StrCat("unpacked_", period, "_", count);
+      write(packed, count, period);
+      {
+        ASSERT_TRUE(duckdb::FaultPoints::Arm(kUnpacked));
+        absl::Cleanup disarm = [&] { duckdb::FaultPoints::Disarm(kUnpacked); };
+        write(unpacked, count, period);
+      }
+      EXPECT_LE(read(packed, count, period), read(unpacked, count, period))
+        << "period " << period << ", " << count << " values";
+    }
+  }
 }
 
 TEST_P(FormatTestCase, format_utils_footer_damaged) {

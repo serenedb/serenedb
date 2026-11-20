@@ -187,6 +187,8 @@ TEST(Compression, PaysOnlyWhenThePackedFormIsSmaller) {
       for (const auto& raw : {Text(size), Noise(size)}) {
         const auto compressed =
           compression::Compress(method, View(raw), kFrame);
+        EXPECT_EQ(compression::PackedBytes(compressed),
+                  WritePacked(compressed).size());
         EXPECT_EQ(compression::Pays(compressed),
                   WritePacked(compressed).size() < raw.size())
           << magic_enum::enum_name(method.codec) << " " << size;
@@ -289,6 +291,28 @@ TEST(Compression, FrameWriterFramesRoundTrip) {
       EXPECT_EQ(compressed.frames.sizes.size(), frames.size());
       EXPECT_EQ(PackedRoundTrip(compressed), raw)
         << magic_enum::enum_name(method.codec) << " " << size;
+    }
+  }
+}
+
+TEST(Compression, KeepPlainTurnsTheSlotsBackIntoTheStream) {
+  auto mixed = Text(size_t{kFrame} * 2 + 9);
+  const auto noise = Noise(size_t{kFrame} + 100);
+  mixed.insert(mixed.end(), noise.begin(), noise.end());
+  for (const auto method : kMethods) {
+    for (const auto& raw : {Noise(100), Noise(size_t{kFrame} * 3 + 17),
+                            Text(size_t{kFrame} * 3 + 17), mixed}) {
+      compression::FrameWriter writer{kFrame};
+      WriteInPieces(writer, raw);
+      auto compressed = CompressOne(method, writer);
+      ASSERT_FALSE(compression::IsPlain(compressed));
+      compression::KeepPlain(compressed, writer);
+      EXPECT_TRUE(compression::IsPlain(compressed));
+      EXPECT_TRUE(compressed.frames.raw_sizes.empty());
+      ASSERT_EQ(compressed.frames.raw_bytes, raw.size());
+      EXPECT_EQ(
+        Bytes(compressed.slots.get(), compressed.slots.get() + raw.size()), raw)
+        << magic_enum::enum_name(method.codec) << " " << raw.size();
     }
   }
 }

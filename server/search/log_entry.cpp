@@ -83,6 +83,26 @@ void WriteValues(duckdb::BinarySerializer& values,
   duckdb::Vector::SerializeParts(values, patch.Type(), parts);
 }
 
+struct Property {
+  duckdb::field_id_t field = 0;
+  const char* tag = nullptr;
+};
+
+void WriteStaged(duckdb::BinarySerializer& object, catalog::RecordBuffer& out,
+                 Property plain, Property packed,
+                 const irs::compression::Compressed& staged) {
+  if (irs::compression::IsPlain(staged)) {
+    object.OnPropertyBegin(plain.field, plain.tag);
+    out.WriteData(staged.slots.get(), staged.frames.raw_bytes);
+    object.OnPropertyEnd();
+    return;
+  }
+  object.WriteObject(packed.field, packed.tag,
+                     [&](duckdb::BinarySerializer& frames) {
+                       irs::compression::WritePacked(frames, staged);
+                     });
+}
+
 void WritePatches(duckdb::BinarySerializer& unit, catalog::RecordBuffer& out,
                   const UnitDelta& changed) {
   const auto& patches = changed.patches;
@@ -118,19 +138,14 @@ void WritePatches(duckdb::BinarySerializer& unit, catalog::RecordBuffer& out,
           [&](duckdb::BinarySerializer::List& columns, duckdb::idx_t c) {
             const auto f = group[c];
             const auto& [field, patch] = patches[f];
-            const auto* packed =
-              f < changed.packed.size() ? changed.packed[f].get() : nullptr;
-            if (packed && !packed->slots) {
-              packed = nullptr;
-            }
+            const auto* staged =
+              f < changed.staged.size() ? changed.staged[f].get() : nullptr;
             columns.WriteObject([&](duckdb::BinarySerializer& column) {
               column.WriteProperty<uint64_t>(100, "field", field);
               column.WriteProperty(101, "type", patch->Type());
-              if (packed) {
-                column.WriteObject(
-                  103, "packed_values", [&](duckdb::BinarySerializer& object) {
-                    irs::compression::WritePacked(object, *packed);
-                  });
+              if (staged) {
+                WriteStaged(column, out, {.field = 102, .tag = "values"},
+                            {.field = 103, .tag = "packed_values"}, *staged);
               } else {
                 column.WriteObject(102, "values",
                                    [&](duckdb::BinarySerializer& values) {
@@ -162,25 +177,23 @@ void WriteUnits(duckdb::BinarySerializer& object, catalog::RecordBuffer& out,
 
 struct PackJob {
   const irs::ColumnPatch* patch = nullptr;
-  std::shared_ptr<const irs::compression::Compressed>* packed = nullptr;
+  std::shared_ptr<const irs::compression::Compressed>* staged = nullptr;
 };
 
-void AddPackJobs(std::span<const irs::FieldPatch> fields, PackedValues& packed,
+void AddPackJobs(std::span<const irs::FieldPatch> fields, StagedValues& staged,
                  std::vector<PackJob>& jobs) {
   if (fields.empty()) {
     return;
   }
-  packed.resize(fields.size());
+  staged.resize(fields.size());
   for (size_t f = 0; f != fields.size(); ++f) {
-    if (!packed[f]) {
-      jobs.push_back({.patch = fields[f].patch.get(), .packed = &packed[f]});
+    if (!staged[f]) {
+      jobs.push_back({.patch = fields[f].patch.get(), .staged = &staged[f]});
     }
   }
 }
 
-void WriteChunks(duckdb::BinarySerializer& object, duckdb::field_id_t field,
-                 const LoggedRows& rows) {
-  object.OnPropertyBegin(field, "chunks");
+void WriteChunks(duckdb::BinarySerializer& object, const LoggedRows& rows) {
   object.OnListBegin(rows.chunks);
   size_t written = 0;
   if (rows.chunks != 0) {
@@ -193,7 +206,6 @@ void WriteChunks(duckdb::BinarySerializer& object, duckdb::field_id_t field,
   }
   SDB_ASSERT(written == rows.chunks);
   object.OnListEnd();
-  object.OnPropertyEnd();
 }
 
 void PackBlobs(std::span<LoggedRows* const> runs,
@@ -210,44 +222,46 @@ void PackBlobs(std::span<LoggedRows* const> runs,
   }
   parallel(blobs, [&](size_t i) {
     duckdb::BinarySerializer serializer{raws[i]};
-    serializer.Begin();
     if (i < runs.size()) {
-      WriteChunks(serializer, 100, *runs[i]);
+      WriteChunks(serializer, *runs[i]);
     } else {
+      serializer.Begin();
       WriteValues(serializer, *values[i - runs.size()].patch);
+      serializer.End();
     }
-    serializer.End();
   });
-  auto packed =
+  auto staged =
     irs::compression::Compress(irs::compression::kZstd1, raws, parallel);
-  for (size_t i = 0; i != runs.size(); ++i) {
-    if (irs::compression::Pays(packed[i])) {
-      runs[i]->packed = std::move(packed[i]);
-      runs[i]->scan = nullptr;
+  for (size_t i = 0; i != blobs; ++i) {
+    if (!irs::compression::Pays(staged[i])) {
+      irs::compression::KeepPlain(staged[i], raws[i]);
     }
   }
+  for (size_t i = 0; i != runs.size(); ++i) {
+    runs[i]->staged = std::move(staged[i]);
+    runs[i]->scan = nullptr;
+  }
   for (size_t j = 0; j != values.size(); ++j) {
-    auto& value = packed[runs.size() + j];
-    *values[j].packed = std::make_shared<const irs::compression::Compressed>(
-      irs::compression::Pays(value) ? std::move(value)
-                                    : irs::compression::Compressed{});
+    *values[j].staged = std::make_shared<const irs::compression::Compressed>(
+      std::move(staged[runs.size() + j]));
   }
 }
 
-void WriteRows(duckdb::BinarySerializer& run, const LoggedRows& rows) {
+void WriteRows(duckdb::BinarySerializer& run, catalog::RecordBuffer& out,
+               const LoggedRows& rows) {
   run.WriteProperty<uint64_t>(100, "first", rows.first);
   run.WriteList(101, "columns", rows.columns.size(),
                 [&](duckdb::BinarySerializer::List& columns, duckdb::idx_t c) {
                   columns.WriteElement<uint64_t>(rows.columns[c]);
                 });
-  if (rows.packed.slots) {
-    run.WriteObject(103, "packed_chunks",
-                    [&](duckdb::BinarySerializer& packed) {
-                      irs::compression::WritePacked(packed, rows.packed);
-                    });
+  if (rows.staged.slots) {
+    WriteStaged(run, out, {.field = 102, .tag = "chunks"},
+                {.field = 103, .tag = "packed_chunks"}, rows.staged);
     return;
   }
-  WriteChunks(run, 102, rows);
+  run.OnPropertyBegin(102, "chunks");
+  WriteChunks(run, rows);
+  run.OnPropertyEnd();
 }
 
 duckdb::unique_ptr<duckdb::DataChunk> ReadChunk(
@@ -317,13 +331,13 @@ class RowsReader {
       auto row = run.first;
       duckdb::MemoryStream stream{raw[i].get(), run.packed.frames.raw_bytes};
       duckdb::BinaryDeserializer deserializer{stream};
-      deserializer.Begin();
-      deserializer.ReadList(
-        100, "chunks",
+      deserializer.ReadListInternal(
         [&](duckdb::BinaryDeserializer::List& chunks, duckdb::idx_t) {
           Append(row, run.columns, ReadChunk(chunks));
         });
-      deserializer.End();
+      if (stream.GetPosition() != run.packed.frames.raw_bytes) {
+        Corrupted("rows longer than their chunks");
+      }
       raw[i].reset();
     }
     _pending.clear();
@@ -478,7 +492,7 @@ void PackPatches(std::span<UnitPatch> patches, uint32_t frame_bytes,
                  irs::ParallelFor parallel) {
   std::vector<PackJob> jobs;
   for (auto& patch : patches) {
-    AddPackJobs(patch.fields, patch.packed, jobs);
+    AddPackJobs(patch.fields, patch.staged, jobs);
   }
   PackBlobs({}, jobs, frame_bytes, parallel);
 }
@@ -492,7 +506,7 @@ void PackDelta(TableDelta& delta, uint32_t frame_bytes,
   }
   std::vector<PackJob> jobs;
   for (auto& unit : delta.segments) {
-    AddPackJobs(unit.patches, unit.packed, jobs);
+    AddPackJobs(unit.patches, unit.staged, jobs);
   }
   PackBlobs(runs, jobs, frame_bytes, parallel);
 }
@@ -519,8 +533,9 @@ void WriteTableDelta(duckdb::BinarySerializer& object,
   object.WriteOptionalList(
     103, "rows", delta.rows.size(),
     [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-      list.WriteObject(
-        [&](duckdb::BinarySerializer& run) { WriteRows(run, delta.rows[i]); });
+      list.WriteObject([&](duckdb::BinarySerializer& run) {
+        WriteRows(run, out, delta.rows[i]);
+      });
     });
   WriteUnits(object, out, 104, "segments", delta.segments);
   WriteUnits(object, out, 105, "pieces", delta.pieces);

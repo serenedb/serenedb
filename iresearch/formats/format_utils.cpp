@@ -46,7 +46,8 @@ namespace {
 constexpr duckdb::field_id_t kFieldDataCrc32c = 0;
 constexpr duckdb::field_id_t kFieldMeta = 1;
 
-void WritePackedMeta(duckdb::BinarySerializer& meta, FooterWriter write) {
+void WritePackedMeta(duckdb::BinarySerializer& meta, duckdb::WriteStream& out,
+                     FooterWriter write) {
   duckdb::MemoryStream raw;
   duckdb::BinarySerializer serializer{raw};
   serializer.Begin();
@@ -54,8 +55,9 @@ void WritePackedMeta(duckdb::BinarySerializer& meta, FooterWriter write) {
   serializer.End();
   const auto packed = compression::Compress(compression::kLz4,
                                             {raw.GetData(), raw.GetPosition()});
-  if (!compression::Pays(packed)) {
-    write(meta);
+  const auto plain = raw.GetPosition() - sizeof(duckdb::field_id_t);
+  if (sizeof(duckdb::field_id_t) + compression::PackedBytes(packed) >= plain) {
+    out.WriteData(raw.GetData(), plain);
     return;
   }
   meta.WriteObject(kMetaFieldPacked, "packed",
@@ -97,7 +99,7 @@ void WriteFooterImpl(IndexOutput& out, const FooterWriter* write) {
                                (*write)(meta);
                                return;
                              }
-                             WritePackedMeta(meta, *write);
+                             WritePackedMeta(meta, footer, *write);
                            });
   }
   serializer.End();

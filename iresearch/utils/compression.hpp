@@ -144,7 +144,13 @@ Frames ReadFrames(duckdb::BinaryDeserializer& deserializer);
 
 void WritePacked(duckdb::BinarySerializer& object, const Compressed& packed);
 
+uint64_t PackedBytes(const Compressed& packed);
+
 bool Pays(const Compressed& packed);
+
+void KeepPlain(Compressed& packed, const FrameWriter& raw);
+
+bool IsPlain(const Compressed& packed) noexcept;
 
 Packed ReadPacked(duckdb::BinaryDeserializer& object,
                   duckdb::MemoryStream& stream);

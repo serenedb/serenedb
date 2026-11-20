@@ -591,7 +591,7 @@ void MergeUnitPatches(std::vector<UnitPatch>& into,
     } else {
       it->rows.clear();
     }
-    it->packed.clear();
+    it->staged.clear();
     MergePatches(it->fields, patch.fields, 0);
   }
 }
@@ -1135,10 +1135,10 @@ TableDelta Table::CommitDelta(const TableCommit& commit,
       target->patches.empty() && patch.same_rows && patch.rows.size() == 1
         ? patch.rows.front()
         : nullptr;
-    if (!patch.packed.empty()) {
-      SDB_ASSERT(patch.packed.size() == patch.fields.size());
-      target->packed.resize(target->patches.size());
-      absl::c_copy(patch.packed, std::back_inserter(target->packed));
+    if (!patch.staged.empty()) {
+      SDB_ASSERT(patch.staged.size() == patch.fields.size());
+      target->staged.resize(target->patches.size());
+      absl::c_copy(patch.staged, std::back_inserter(target->staged));
     }
     absl::c_copy(patch.fields, std::back_inserter(target->patches));
   }

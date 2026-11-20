@@ -116,10 +116,10 @@ struct LoggedRows {
   std::vector<connector::ColumnId> columns;
   size_t chunks = 0;
   absl::AnyInvocable<void(ChunkVisit visit) const> scan;
-  irs::compression::Compressed packed;
+  irs::compression::Compressed staged;
 };
 
-using PackedValues =
+using StagedValues =
   std::vector<std::shared_ptr<const irs::compression::Compressed>>;
 
 struct UnitDelta {
@@ -127,7 +127,7 @@ struct UnitDelta {
   std::shared_ptr<const irs::DocumentMask> deleted;
   std::vector<irs::FieldPatch> patches;
   std::shared_ptr<const irs::DocumentMask> patched;
-  PackedValues packed;
+  StagedValues staged;
 };
 
 struct TableDelta {
@@ -147,7 +147,7 @@ struct UnitPatch {
   std::vector<irs::FieldPatch> fields;
   bool same_rows = false;
   std::vector<std::shared_ptr<const irs::DocumentMask>> rows;
-  PackedValues packed;
+  StagedValues staged;
 };
 
 void UniteRows(UnitPatch& patch);

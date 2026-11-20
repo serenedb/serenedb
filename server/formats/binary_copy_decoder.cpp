@@ -33,6 +33,7 @@
 #include <source_location>
 #include <utility>
 
+#include "pg/copy_binary.h"
 #include "pg/input_error.h"
 
 namespace sdb::formats {
@@ -99,7 +100,6 @@ void BinaryCopyDecoder::ThrowError(uint64_t line) const {
 size_t BinaryCopyDecoder::Walk(std::string_view data, size_t max_rows) {
   constexpr size_t kFieldCountBytes = sizeof(int16_t);
   constexpr size_t kFieldLengthBytes = sizeof(int32_t);
-  constexpr int32_t kNullFieldLength = -1;
   const auto columns = _decoders.size();
   const char* p = data.data() + _pos;
   const char* const end = data.data() + data.size();
@@ -115,7 +115,7 @@ size_t BinaryCopyDecoder::Walk(std::string_view data, size_t max_rows) {
       const auto length = static_cast<int32_t>(absl::big_endian::Load32(p));
       p += kFieldLengthBytes;
       auto& field = Column(column, rows + 1)[rows];
-      if (length == kNullFieldLength) {
+      if (length == pg::kPgCopyNull) {
         field = {};
         continue;
       }

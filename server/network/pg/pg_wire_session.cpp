@@ -35,6 +35,7 @@
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/timestamp.hpp>
+#include <duckdb/formats/copy_fields.hpp>
 #include <duckdb/formats/copy_options.hpp>
 #include <duckdb/formats/row_stream.hpp>
 #include <duckdb/formats/value_codecs.hpp>
@@ -55,7 +56,6 @@
 
 #include "catalog/cluster.h"
 #include "network/pg/bind_decoder.h"
-#include "network/pg/copy_eod_scanner.h"
 #include "network/pg/hba.h"
 #include "network/pg/login.h"
 #include "network/pg/scram_messages.h"
@@ -1742,7 +1742,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
     }
   };
   constexpr size_t kHeader = 1 + sizeof(uint32_t);
-  CopyEodScanner scanner;
+  duckdb::CopyEndMarkerScanner scanner;
   sdb::pg::CopyBatchBuilder builder{format == CopyFormat::Binary
                                       ? sdb::pg::CopyBatchFormat::Binary
                                       : sdb::pg::CopyBatchFormat::Raw,

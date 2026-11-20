@@ -159,37 +159,27 @@ void NormColumnWriter::CloseRegion() {
                "norm column ", _id, " has ", exceptions, " exceptions");
     region.exceptions = static_cast<uint32_t>(exceptions);
     region.overflow = static_cast<uint32_t>(_overflow_rows.size());
+    region.table_offset = _blocks->Position();
     _bases.resize(NormBuckets(region), static_cast<uint32_t>(_direct.size()));
-    const auto bytes = NormTableSize(region);
-    if (_staging.size() < bytes) {
-      _staging.resize(bytes);
-    }
-    auto* at = _staging.data();
-    const auto put32 = [&at](uint32_t v) {
-      absl::little_endian::Store32(at, v);
-      at += sizeof(uint32_t);
-    };
     for (const auto base : _bases) {
-      put32(base);
+      _blocks->WriteU32(base);
     }
     for (const auto row : _overflow_rows) {
-      put32(row);
+      _blocks->WriteU32(row);
     }
     for (const auto v : _overflow_values) {
-      put32(v);
+      _blocks->WriteU32(v);
     }
     for (const auto v : _direct) {
       if (region.exception_bytes == 2) {
-        absl::little_endian::Store16(at, static_cast<uint16_t>(v));
-        at += sizeof(uint16_t);
+        _blocks->WriteU16(static_cast<uint16_t>(v));
       } else {
-        put32(v);
+        _blocks->WriteU32(v);
       }
     }
-    put32(0);
-    SDB_ASSERT(at == _staging.data() + bytes);
-    region.table_offset = _blocks->Position();
-    _blocks->WriteData(_staging.data(), bytes);
+    _blocks->WriteU32(0);
+    SDB_ASSERT(_blocks->Position() - region.table_offset ==
+               NormTableSize(region));
   }
   _meta.row_count += region.stats.rows;
   _meta.regions.push_back(region);

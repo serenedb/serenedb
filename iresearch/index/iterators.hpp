@@ -180,11 +180,9 @@ class LoserScoreCollector {
       auto word = take(i);
       _count += std::popcount(word);
       const doc_id_t doc_base = min + i * BitsRequired<uint64_t>();
-      while (word != 0) {
-        const doc_id_t bit = std::countr_zero(word);
-        word = PopBit(word);
+      ForEachSetBit(word, [&](uint32_t bit) IRS_FORCE_INLINE {
         TryPush(new_threshold, score, doc_base + bit);
-      }
+      });
     }
     uint64_t count = 0;
     for (; i != num_blocks; ++i) {

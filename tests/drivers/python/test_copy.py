@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gzip
 import io
 import json
 import os
@@ -133,6 +134,89 @@ def test_copy_from_stdin_json_error_names_its_line(conn: psycopg.Connection,
                 with cur.copy(f'COPY public."{table_name}" FROM STDIN '
                               "(FORMAT json)") as cp:
                     cp.write(_stream_payload("json", bad_line=300_001))
+    finally:
+        _drop(conn, table_name)
+
+
+@pytest.mark.parametrize(
+    "compression", ["none", "uncompressed", "auto", "auto_detect", "gzip"])
+def test_copy_from_stdin_json_compression(conn: psycopg.Connection,
+                                          table_name: str,
+                                          compression: str) -> None:
+    payload = b'{"x": 1, "label": "one"}\n{"x": 2, "label": "two"}\n'
+    if compression == "gzip":
+        payload = gzip.compress(payload)
+    _create_int_varchar(conn, table_name)
+    try:
+        with conn.cursor() as cur:
+            with cur.copy(f'COPY public."{table_name}" FROM STDIN '
+                          f"(FORMAT json, COMPRESSION {compression})") as cp:
+                cp.write(payload)
+            cur.execute(f'SELECT x, label FROM public."{table_name}" ORDER BY x')
+            assert cur.fetchall() == [(1, "one"), (2, "two")]
+    finally:
+        _drop(conn, table_name)
+
+
+@pytest.mark.parametrize("encoding,codec", [("utf-8", "utf-8"),
+                                            ("latin-1", "latin-1")])
+def test_copy_from_stdin_csv_reader_option_and_encoding(
+        conn: psycopg.Connection, table_name: str, encoding: str,
+        codec: str) -> None:
+    _create_int_varchar(conn, table_name)
+    try:
+        with conn.cursor() as cur:
+            with cur.copy(f'COPY public."{table_name}" FROM STDIN '
+                          f"(FORMAT csv, HEADER, SAMPLE_SIZE 10, "
+                          f"ENCODING '{encoding}')") as cp:
+                cp.write("x,label\n1,café\n".encode(codec))
+            cur.execute(f'SELECT x, label FROM public."{table_name}"')
+            assert cur.fetchall() == [(1, "café")]
+    finally:
+        _drop(conn, table_name)
+
+
+def test_copy_from_stdin_format_without_a_reader(conn: psycopg.Connection,
+                                                 table_name: str) -> None:
+    _create_int_varchar(conn, table_name)
+    try:
+        with conn.cursor() as cur:
+            with pytest.raises(psycopg.Error,
+                               match='COPY FROM is not supported for FORMAT "blob"'):
+                with cur.copy(f'COPY public."{table_name}" FROM STDIN '
+                              "(FORMAT blob)") as cp:
+                    cp.write(b"1\tone\n")
+            cur.execute(f'SELECT count(*) FROM public."{table_name}"')
+            assert cur.fetchone() == (0,)
+    finally:
+        _drop(conn, table_name)
+
+
+def test_copy_from_stdin_csv_record_across_messages(conn: psycopg.Connection,
+                                                    table_name: str) -> None:
+    label = "y" * 200
+    _create_int_varchar(conn, table_name)
+    try:
+        with conn.cursor() as cur:
+            with cur.copy(f'COPY public."{table_name}" FROM STDIN '
+                          "(FORMAT csv)") as cp:
+                cp.write(f'1,"{label[:10]}'.encode())
+                cp.write(f'{label[10:]}"\n2,"two"\n'.encode())
+            cur.execute(f'SELECT x, label FROM public."{table_name}" ORDER BY x')
+            assert cur.fetchall() == [(1, label), (2, "two")]
+    finally:
+        _drop(conn, table_name)
+
+
+def test_copy_from_stdin_end_marker_inside_a_field(conn: psycopg.Connection,
+                                                   table_name: str) -> None:
+    _create_int_varchar(conn, table_name)
+    try:
+        with conn.cursor() as cur:
+            with pytest.raises(psycopg.errors.BadCopyFileFormat,
+                               match="end-of-copy marker is not alone on its line"):
+                with cur.copy(f'COPY public."{table_name}" FROM STDIN') as cp:
+                    cp.write(b"1\tsi\\.x\n")
     finally:
         _drop(conn, table_name)
 

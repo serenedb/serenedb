@@ -223,3 +223,14 @@ SELECT count(*) AS n FROM cenc_one;
 ----
 n
 0
+
+
+statement count 1
+COPY (SELECT 'é' AS t) TO '${__TEST_DIR__}/cenc_expression.txt' (FORMAT text, ENCODING lower('LATIN1'));
+
+
+query
+SELECT hex(content) AS bytes FROM read_blob('${__TEST_DIR__}/cenc_expression.txt');
+----
+bytes
+E90A

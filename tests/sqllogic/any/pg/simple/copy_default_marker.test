@@ -240,3 +240,24 @@ statement error
 COPY cdm FROM '${__TEST_DIR__}/cdm.csv' (FORMAT csv, DEFAULT '"D');
 ----
 db error: ERROR: CSV quote character must not appear in the DEFAULT specification
+
+
+statement ok
+CREATE TABLE cdm_param (id INTEGER, b TEXT DEFAULT 'dflt');
+
+
+statement count 1
+COPY (SELECT '1' || chr(9) AS l) TO '${__TEST_DIR__}/cdm_param.txt' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+statement error
+COPY cdm_param FROM '${__TEST_DIR__}/cdm_param.txt' (DEFAULT);
+----
+db error: ERROR: default requires a parameter
+
+
+query
+SELECT count(*) AS n FROM cdm_param;
+----
+n
+0

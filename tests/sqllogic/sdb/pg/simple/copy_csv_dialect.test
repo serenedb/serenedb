@@ -185,3 +185,156 @@ COPY (SELECT 'mr,beast'::BLOB) TO '${__TEST_DIR__}/header_only.csv' (FORMAT BLOB
 
 statement count 0
 COPY beast_two FROM '${__TEST_DIR__}/header_only.csv' (FORMAT csv, HEADER MATCH);
+
+
+statement count 1
+COPY (SELECT 'six' AS mr, 'seven' AS beast) TO '${__TEST_DIR__}/beast_delim.csv' (FORMAT csv, DELIM '|');
+
+
+query
+SELECT replace(content, chr(10), '/') AS content FROM read_text('${__TEST_DIR__}/beast_delim.csv');
+----
+content
+six|seven/
+
+
+statement ok
+DELETE FROM beast_two;
+
+
+statement count 1
+COPY beast_two FROM '${__TEST_DIR__}/beast_delim.csv' (FORMAT csv, SEPARATOR '|');
+
+
+query
+SELECT mr, beast FROM beast_two;
+----
+mr	beast
+six	seven
+
+
+statement count 1
+COPY (SELECT DATE '2024-01-02' AS d, TIMESTAMP '2024-01-02 03:04:05' AS t)
+TO '${__TEST_DIR__}/beast_formats.csv' (FORMAT csv, date_format '%d/%m/%Y', timestamp_format '%Y%m%d %H%M%S');
+
+
+query
+SELECT replace(content, chr(10), '|') AS content FROM read_text('${__TEST_DIR__}/beast_formats.csv');
+----
+content
+02/01/2024,20240102 030405|
+
+
+statement count 1
+COPY (SELECT 1.5::REAL AS r, true AS b, 'xy' AS s, TIME '01:02:03' AS tm)
+TO '${__TEST_DIR__}/beast_unquoted.csv' (FORMAT csv, QUOTE '', FORCE_QUOTE *);
+
+
+query
+SELECT replace(content, chr(10), '|') AS content FROM read_text('${__TEST_DIR__}/beast_unquoted.csv');
+----
+content
+1.5,t,xy,01:02:03|
+
+
+statement count 1
+COPY (SELECT 'a"b' AS s, 7 AS n) TO '${__TEST_DIR__}/beast_no_escape.csv' (FORMAT csv, ESCAPE '', FORCE_QUOTE (n));
+
+
+query
+SELECT replace(content, chr(10), '|') AS content FROM read_text('${__TEST_DIR__}/beast_no_escape.csv');
+----
+content
+"a"b","7"|
+
+
+statement count 1
+COPY (SELECT 1 AS "a,b") TO '${__TEST_DIR__}/beast_header_unquoted.csv' (FORMAT csv, HEADER, QUOTE '');
+
+
+query
+SELECT replace(content, chr(10), '|') AS content FROM read_text('${__TEST_DIR__}/beast_header_unquoted.csv');
+----
+content
+a,b|1|
+
+
+statement count 1
+COPY (SELECT 'six' AS mr, 'seven' AS beast) TO '${__TEST_DIR__}/beast_compression.csv' (FORMAT csv, COMPRESSION);
+
+
+query
+SELECT replace(content, chr(10), '|') AS content FROM read_text('${__TEST_DIR__}/beast_compression.csv');
+----
+content
+six,seven|
+
+
+statement ok
+SET TimeZone = 'UTC';
+
+
+statement ok
+CREATE TABLE beast_alias (n cardinal_number, ts time_stamp);
+
+
+statement ok
+INSERT INTO beast_alias VALUES (7, '2024-01-02 03:04:05+00');
+
+
+statement count 1
+COPY beast_alias TO '${__TEST_DIR__}/beast_alias.csv' (FORMAT csv, FORCE_QUOTE *);
+
+
+query
+SELECT replace(content, chr(10), '|') AS content FROM read_text('${__TEST_DIR__}/beast_alias.csv');
+----
+content
+"7","2024-01-02 03:04:05+00"|
+
+
+statement ok
+RESET TimeZone;
+
+
+statement ok
+COPY (SELECT repeat('six,seven' || chr(13), 120000)::BLOB) TO '${__TEST_DIR__}/cr_only_ranges.csv' (FORMAT BLOB);
+
+
+statement ok
+DELETE FROM beast_two;
+
+
+statement count 120000
+COPY beast_two FROM '${__TEST_DIR__}/cr_only_ranges.csv' (FORMAT csv);
+
+
+query
+SELECT count(*) AS n FROM beast_two WHERE mr = 'six' AND beast = 'seven';
+----
+n
+120000
+
+
+statement error
+EXPORT DATABASE '${__TEST_DIR__}/beast_export_reject' (FORMAT csv, REJECT_LIMIT 5);
+----
+db error: ERROR: COPY REJECT_LIMIT requires ON_ERROR to be set to IGNORE
+
+
+statement error
+EXPORT DATABASE '${__TEST_DIR__}/beast_export_limit' (FORMAT csv, REJECT_LIMIT '5x');
+----
+db error: ERROR: invalid input syntax for type bigint: "5x"
+
+
+statement error
+EXPORT DATABASE '${__TEST_DIR__}/beast_export_force' (FORMAT csv, FORCE_QUOTE);
+----
+db error: ERROR: FORCE_QUOTE expects a column list or * as parameter
+
+
+statement error
+EXPORT DATABASE '${__TEST_DIR__}/beast_export_default' (FORMAT csv, DEFAULT);
+----
+db error: ERROR: COPY DEFAULT cannot be used with COPY TO

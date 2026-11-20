@@ -136,6 +136,12 @@ db error: ERROR: reject_limit requires a numeric value
 
 
 statement error
+COPY cto_ints FROM '${__TEST_DIR__}/cto_mixed.txt' (FORMAT text, ON_ERROR IGNORE, REJECT_LIMIT 2.5);
+----
+db error: ERROR: invalid input syntax for type bigint: "2.5"
+
+
+statement error
 COPY cto_ints FROM '${__TEST_DIR__}/cto_mixed.txt' (FORMAT text, REJECT_LIMIT 5);
 ----
 db error: ERROR: COPY REJECT_LIMIT requires ON_ERROR to be set to IGNORE

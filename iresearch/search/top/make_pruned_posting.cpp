@@ -59,7 +59,7 @@ Root::ptr MakePrunedPosting(
   }
   const auto& doc = *irs::detail::DocOf(own);
   const auto args = posting.Args(&ctx.fetcher);
-  return irs::detail::ResolveInput(doc, [&]<typename Input> -> Root::ptr {
+  return Resolve(doc, [&]<typename Input> -> Root::ptr {
     if (excludes.empty() && exclude_filters.empty()) {
       return MakeShape<PrunedPosting, Input, utils::Empty>(
         ctx, std::forward_as_tuple(), meta, doc, irs::detail::LayoutOf(own),

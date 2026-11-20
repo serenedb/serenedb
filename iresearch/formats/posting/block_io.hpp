@@ -29,6 +29,7 @@
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/bit_utils.hpp"
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/system_compiler.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -44,11 +45,7 @@ inline constexpr uint32_t kEncWords =
 inline constexpr uint32_t kStreamAhead = 128;
 inline constexpr uint32_t kHoleWords = 8;
 inline constexpr uint32_t kFreqBias = 1;
-inline constexpr block_codec::EncodeOptions kFreqOptions{
-  .exception_cost_eighths = 12,
-  .narrow_highs = true,
-};
-
+static_assert(kFreqBias < block_codec::kValueBiases);
 static_assert(kBlock == doc_limits::kBlockSize);
 static_assert(kBlock == pos_limits::kBlockSize);
 static_assert(block_codec::kOutSlack <= doc_limits::kDocsSlack);
@@ -116,44 +113,6 @@ IRS_FORCE_INLINE void End(InputType& in, const byte_type* begin,
     PrefetchStream(end);
     view->ReadStable(static_cast<uint64_t>(end - begin));
   }
-}
-
-template<typename Output>
-void WriteSlack(Output& out) {
-  static constexpr byte_type kZeros[block_codec::kInSlack]{};
-  out.WriteData(kZeros, sizeof(kZeros));
-}
-
-template<typename Output>
-IRS_FORCE_INLINE void WriteTailDelta(uint32_t len, Output& out,
-                                     const uint32_t* in, uint32_t prev,
-                                     uint32_t* buf) {
-  SDB_ASSERT(1 <= len && len <= kBlock);
-  SDB_ASSERT(std::is_sorted(in, in + len));
-  SDB_ASSERT(std::adjacent_find(in, in + len) == in + len);
-  SDB_ASSERT(prev < in[0]);
-  auto* const bytes = reinterpret_cast<byte_type*>(buf);
-  out.WriteData(bytes, len == kBlock
-                         ? Codec::EncodeDeltaBlock(in, prev, bytes)
-                         : Codec::EncodeDeltaTail(in, len, prev, bytes));
-}
-
-IRS_FORCE_INLINE inline uint32_t EncodeBlock(
-  const uint32_t* in, uint32_t* buf,
-  const block_codec::EncodeOptions& options = {}) {
-  return Codec::EncodeValuesBlock(in, reinterpret_cast<byte_type*>(buf),
-                                  options);
-}
-
-template<typename Output>
-IRS_FORCE_INLINE void WriteTail(
-  uint32_t len, Output& out, const uint32_t* in, uint32_t* buf,
-  const block_codec::EncodeOptions& options = {}) {
-  SDB_ASSERT(1 <= len && len <= kBlock);
-  auto* const bytes = reinterpret_cast<byte_type*>(buf);
-  out.WriteData(bytes, len == kBlock
-                         ? Codec::EncodeValuesBlock(in, bytes, options)
-                         : Codec::EncodeValuesTail(in, len, bytes, options));
 }
 
 struct FillLeaf {
@@ -263,9 +222,11 @@ inline uint64_t HolesToBitset(const byte_type* in, uint32_t len,
 
 inline uint64_t HolesToBitset(const byte_type* in, uint32_t len,
                               uint64_t* IRS_RESTRICT bitset) noexcept {
-  return in[0] == block_codec::Code(block_codec::DeltaEncoding::PatchByte)
-           ? HolesToBitset<true>(in, len, bitset)
-           : HolesToBitset<false>(in, len, bitset);
+  return Resolve(
+    in[0] == block_codec::Code(block_codec::DeltaEncoding::PatchByte),
+    [&]<bool Patched> IRS_FORCE_INLINE {
+      return HolesToBitset<Patched>(in, len, bitset);
+    });
 }
 
 IRS_FORCE_INLINE inline doc_id_t BitsetMax(

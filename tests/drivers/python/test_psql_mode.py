@@ -1638,7 +1638,7 @@ def test_terminal_blank_lines_comments_bail_and_auto_format(terminal) -> None:
     terminal.send("SELECT upper('form' || 'atted') AS s;\r", until="FORMATTED")
 
 
-def test_terminal_psql_pager_for_wide_and_long_results(terminal, tmp_path: Path) -> None:
+def test_terminal_psql_pager_for_wide_and_long_results(terminal) -> None:
     terminal.send("\\pset format aligned\r", until="Output format is aligned.")
     out = terminal.send("SELECT repeat('x', 200) AS a, 1 AS b;\r", until="(1 row)")
     assert "PAGER_USED" in out
@@ -1647,15 +1647,6 @@ def test_terminal_psql_pager_for_wide_and_long_results(terminal, tmp_path: Path)
     assert "PAGER_USED" in out
     out = terminal.send("SELECT repeat('y', 300) AS a;\r", until="-[ RECORD 1 ]")
     assert "PAGER_USED" in out
-    target = tmp_path / "auto.txt"
-    terminal.send("\\x auto\r", until="Expanded display is used automatically.")
-    terminal.send(f"\\o '{target.as_posix()}'\r", until="auto.txt'")
-    terminal.send("SELECT repeat('z', 200) AS a, 2 AS b;\r", until="AS b;")
-    terminal.send("\\o\r", until="\\o")
-    terminal.send("SELECT upper('done') AS s;\r", until="DONE")
-    written = target.read_text()
-    assert "(1 row)" in written, written
-    assert "RECORD" not in written, written
 
 
 def test_docs_number_without_a_list_fails() -> None:

@@ -63,11 +63,12 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <duckdb/common/file_system.hpp>
 #include <duckdb/main/database.hpp>
 #include <filesystem>
 #include <iresearch/analysis/delimited_tokenizer.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
-#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/composite_reader.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/count/make.hpp>
@@ -77,7 +78,6 @@
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/lead/node.hpp>
-#include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/string.hpp>
@@ -217,7 +217,7 @@ struct BodyField {
     return irs::IndexFeatures::Freq;
   }
 
-  bool Write(irs::DataOutput&) const { return true; }
+  bool Write(duckdb::WriteStream&) const { return true; }
 
   std::string value;
   mutable irs::analysis::DelimitedTokenizer stream{" "};
@@ -225,8 +225,7 @@ struct BodyField {
 
 struct Index {
   std::filesystem::path path;
-  std::unique_ptr<irs::MMapDirectory> dir;
-  irs::DirectoryReader reader;
+  irs::CompositeReader reader;
 };
 
 // One segment, one commit, no compaction: the block encodings a query walks are
@@ -244,15 +243,15 @@ const Index& IndexOf(size_t docs, bool zipf = false) {
                 std::to_string(docs));
   std::filesystem::remove_all(index.path);
   std::filesystem::create_directories(index.path);
-  index.dir = std::make_unique<irs::MMapDirectory>(index.path);
-
   auto* db = &irs::DuckDBEngine::Instance().instance();
+  auto& fs = duckdb::FileSystem::GetFileSystem(*db);
+  const auto root = index.path.string();
+  tests::IndexDir dir{*db, fs, root};
+
   irs::IndexWriterOptions opts;
-  opts.db = db;
-  opts.reader_options.db = db;
   opts.column_options = [](irs::field_id) -> irs::ColumnOptions { return {}; };
   auto writer =
-    tests::IndexWriter::Make(*index.dir, tests::kOmCreate, std::move(opts));
+    tests::IndexWriter::Make(dir, tests::kOmCreate, std::move(opts));
 
   {
     auto trx = writer->GetBatch();
@@ -266,8 +265,7 @@ const Index& IndexOf(size_t docs, bool zipf = false) {
   }
   writer->RefreshCommit();
 
-  index.reader =
-    tests::OpenReader(*index.dir, irs::IndexReaderOptions{.db = db});
+  index.reader = tests::OpenReader(dir, irs::IndexReaderOptions{});
   SDB_ASSERT(index.reader.size() == 1,
              "corpus must be one segment or the encodings get mixed");
   return index;

@@ -21,6 +21,7 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <duckdb/common/serializer/memory_stream.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
@@ -32,8 +33,6 @@
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/search/scorers/tfidf.hpp>
-#include <iresearch/store/store_utils.hpp>
-#include <iresearch/utils/bytes_output.hpp>
 #include <iresearch/utils/type_limits.hpp>
 
 #include "filter_test_case_base.hpp"
@@ -164,7 +163,7 @@ void TfidfTestCase::TestQueryNorms() {
       7, 0, 3, 1, 5,
     };
 
-    irs::BytesViewInput in;
+    duckdb::MemoryReader in;
     tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
 
     fetcher.Clear();
@@ -176,7 +175,7 @@ void TfidfTestCase::TestQueryNorms() {
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
-      in.reset(values.Get(docs->Value()));
+      in = duckdb::MemoryReader{values.Get(docs->Value())};
 
       auto str_seq = irs::ReadString<std::string>(in);
       auto seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -214,7 +213,7 @@ void TfidfTestCase::TestQueryNorms() {
       0, 7, 5, 2, 3, 1,
     };
 
-    irs::BytesViewInput in;
+    duckdb::MemoryReader in;
     tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
 
     fetcher.Clear();
@@ -228,7 +227,7 @@ void TfidfTestCase::TestQueryNorms() {
       irs::score_t score_value{};
       score.Score(&score_value, 1);
       scores.emplace_back(score_value);
-      in.reset(values.Get(docs->Value()));
+      in = duckdb::MemoryReader{values.Get(docs->Value())};
 
       auto str_seq = irs::ReadString<std::string>(in);
       auto seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -395,8 +394,8 @@ TEST_P(TfidfTestCase, test_phrase) {
       irs::score_t score_value{};
       score.Score(&score_value, 1);
 
-      irs::BytesViewInput in;
-      in.reset(values.Get(docs->Value()));
+      duckdb::MemoryReader in;
+      in = duckdb::MemoryReader{values.Get(docs->Value())};
       sorted.emplace(score_value, irs::ReadString<std::string>(in));
     }
 
@@ -458,8 +457,8 @@ TEST_P(TfidfTestCase, test_phrase) {
       irs::score_t score_value{};
       score.Score(&score_value, 1);
 
-      irs::BytesViewInput in;
-      in.reset(values.Get(docs->Value()));
+      duckdb::MemoryReader in;
+      in = duckdb::MemoryReader{values.Get(docs->Value())};
       sorted.emplace(score_value, irs::ReadString<std::string>(in));
     }
 
@@ -518,7 +517,7 @@ TEST_P(TfidfTestCase, test_query) {
     std::multimap<irs::score_t, uint64_t, std::greater<>> sorted;
     std::vector<uint64_t> expected{0, 1, 5, 7};
 
-    irs::BytesViewInput in;
+    duckdb::MemoryReader in;
     tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
 
     fetcher.Clear();
@@ -528,7 +527,7 @@ TEST_P(TfidfTestCase, test_query) {
     while (!irs::doc_limits::eof(docs->Next())) {
       fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
-      in.reset(values.Get(docs->Value()));
+      in = duckdb::MemoryReader{values.Get(docs->Value())};
 
       irs::score_t score_value{};
       score.Score(&score_value, 1);
@@ -622,7 +621,7 @@ TEST_P(TfidfTestCase, test_query) {
       5      // segment 1
     };
 
-    irs::BytesViewInput in;
+    duckdb::MemoryReader in;
     tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
 
     for (size_t i = 0; auto& segment : reader) {
@@ -636,7 +635,7 @@ TEST_P(TfidfTestCase, test_query) {
       for (irs::score_t score_value{}; !irs::doc_limits::eof(docs->Next());) {
         fetcher.Fetch(docs->Value());
         docs->FetchScoreArgs(0);
-        in.reset(values.Get(docs->Value()));
+        in = duckdb::MemoryReader{values.Get(docs->Value())};
 
         auto str_seq = irs::ReadString<std::string>(in);
         auto seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -745,7 +744,7 @@ TEST_P(TfidfTestCase, test_query) {
       0, 2, 5  // same value in 3 documents
     };
 
-    irs::BytesViewInput in;
+    duckdb::MemoryReader in;
     tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
 
     for (size_t i = 0; auto& segment : reader) {
@@ -759,7 +758,7 @@ TEST_P(TfidfTestCase, test_query) {
       while (!irs::doc_limits::eof(docs->Next())) {
         fetcher.Fetch(docs->Value());
         docs->FetchScoreArgs(0);
-        in.reset(values.Get(docs->Value()));
+        in = duckdb::MemoryReader{values.Get(docs->Value())};
 
         irs::score_t score_value{};
         score.Score(&score_value, 1);
@@ -859,7 +858,7 @@ TEST_P(TfidfTestCase, test_query) {
                // smaller tfidf() + reverse)
     };
 
-    irs::BytesViewInput in;
+    duckdb::MemoryReader in;
     tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
 
     for (size_t i = 0; auto& segment : reader) {
@@ -873,7 +872,7 @@ TEST_P(TfidfTestCase, test_query) {
       while (!irs::doc_limits::eof(docs->Next())) {
         fetcher.Fetch(docs->Value());
         docs->FetchScoreArgs(0);
-        in.reset(values.Get(docs->Value()));
+        in = duckdb::MemoryReader{values.Get(docs->Value())};
 
         irs::score_t score_value{};
         score.Score(&score_value, 1);
@@ -914,7 +913,7 @@ TEST_P(TfidfTestCase, test_query) {
     std::multimap<irs::score_t, uint64_t, std::greater<>> sorted;
     std::vector<uint64_t> expected{0, 1, 5, 7};
 
-    irs::BytesViewInput in;
+    duckdb::MemoryReader in;
     tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
     fetcher.Clear();
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
@@ -923,7 +922,7 @@ TEST_P(TfidfTestCase, test_query) {
     for (irs::score_t score_value{}; !irs::doc_limits::eof(docs->Next());) {
       fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
-      in.reset(values.Get(docs->Value()));
+      in = duckdb::MemoryReader{values.Get(docs->Value())};
 
       auto str_seq = irs::ReadString<std::string>(in);
       auto seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -960,7 +959,7 @@ TEST_P(TfidfTestCase, test_query) {
     std::multimap<irs::score_t, uint64_t, std::greater<>> sorted;
     std::vector<uint64_t> expected{3, 7};
 
-    irs::BytesViewInput in;
+    duckdb::MemoryReader in;
     tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
     fetcher.Clear();
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
@@ -969,7 +968,7 @@ TEST_P(TfidfTestCase, test_query) {
     for (irs::score_t score_value{}; !irs::doc_limits::eof(docs->Next());) {
       fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
-      in.reset(values.Get(docs->Value()));
+      in = duckdb::MemoryReader{values.Get(docs->Value())};
 
       auto str_seq = irs::ReadString<std::string>(in);
       auto seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -1006,7 +1005,7 @@ TEST_P(TfidfTestCase, test_query) {
     std::multimap<irs::score_t, uint64_t, std::greater<>> sorted;
     std::vector<uint64_t> expected{7, 0, 1, 3, 5};
 
-    irs::BytesViewInput in;
+    duckdb::MemoryReader in;
     tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
     fetcher.Clear();
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
@@ -1015,7 +1014,7 @@ TEST_P(TfidfTestCase, test_query) {
     for (irs::score_t score_value{}; !irs::doc_limits::eof(docs->Next());) {
       fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
-      in.reset(values.Get(docs->Value()));
+      in = duckdb::MemoryReader{values.Get(docs->Value())};
 
       auto str_seq = irs::ReadString<std::string>(in);
       auto seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -1052,7 +1051,7 @@ TEST_P(TfidfTestCase, test_query) {
     std::multimap<irs::score_t, uint64_t, std::greater<>> sorted;
     std::vector<uint64_t> expected{0, 7, 5, 1, 3, 2};
 
-    irs::BytesViewInput in;
+    duckdb::MemoryReader in;
     tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
     fetcher.Clear();
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
@@ -1061,7 +1060,7 @@ TEST_P(TfidfTestCase, test_query) {
     for (irs::score_t score_value{}; !irs::doc_limits::eof(docs->Next());) {
       fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
-      in.reset(values.Get(docs->Value()));
+      in = duckdb::MemoryReader{values.Get(docs->Value())};
 
       auto str_seq = irs::ReadString<std::string>(in);
       auto seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -1098,7 +1097,7 @@ TEST_P(TfidfTestCase, test_query) {
       {-1, 7},
     };
 
-    irs::BytesViewInput in;
+    duckdb::MemoryReader in;
     tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
     fetcher.Clear();
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
@@ -1107,7 +1106,7 @@ TEST_P(TfidfTestCase, test_query) {
     for (irs::score_t score_value{}; !irs::doc_limits::eof(docs->Next());) {
       fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
-      in.reset(values.Get(docs->Value()));
+      in = duckdb::MemoryReader{values.Get(docs->Value())};
 
       auto str_seq = irs::ReadString<std::string>(in);
       auto seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -1253,7 +1252,7 @@ TEST_P(TfidfTestCase, test_order) {
     std::multimap<irs::score_t, uint64_t, std::greater<>> sorted;
     std::vector<uint64_t> expected{0, 1, 5, 7};
 
-    irs::BytesViewInput in;
+    duckdb::MemoryReader in;
     tests::PreparedFilter prepared{query, reader, &scorer, counter};
     fetcher.Clear();
     auto docs = prepared.ExecuteScored(0, fetcher);
@@ -1262,7 +1261,7 @@ TEST_P(TfidfTestCase, test_order) {
     for (irs::score_t score_value{}; !irs::doc_limits::eof(docs->Next());) {
       fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
-      in.reset(values.Get(docs->Value()));
+      in = duckdb::MemoryReader{values.Get(docs->Value())};
 
       auto str_seq = irs::ReadString<std::string>(in);
       seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -1282,7 +1281,7 @@ TEST_P(TfidfTestCase, test_order) {
   counter.Reset();
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 TEST_P(TfidfTestCase, test_query_norms) { TestQueryNorms(); }
 

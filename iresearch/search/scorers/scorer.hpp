@@ -27,6 +27,7 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <duckdb/common/serializer/write_stream.hpp>
 #include <limits>
 #include <optional>
 #include <span>
@@ -44,10 +45,10 @@
 #include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/math_utils.hpp"
+#include "iresearch/utils/string.hpp"
 
 namespace irs {
 
-class DataOutput;
 struct IndexReader;
 struct SubReader;
 struct ScorerOptions;
@@ -90,7 +91,7 @@ struct TermCollector;
 struct ScoreBoundSource : AttributeProvider {
   using ptr = std::unique_ptr<ScoreBoundSource>;
 
-  virtual void Read(DataInput& in, size_t size) = 0;
+  virtual void Read(bytes_view bytes) = 0;
 
   virtual void Set(uint32_t freq, uint32_t norm) = 0;
 };
@@ -108,7 +109,7 @@ struct ScoreBoundWriter {
   virtual void Update(std::span<const doc_id_t> docs,
                       const uint32_t* freqs) = 0;
 
-  virtual void WriteRoot(DataOutput& out) = 0;
+  virtual void WriteRoot(duckdb::WriteStream& out) = 0;
   virtual void Take(size_t level, uint32_t* out) = 0;
 
   virtual byte_type SizeRoot() const = 0;

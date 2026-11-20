@@ -189,6 +189,8 @@ class BooleanFilter final : public FilterWithType<BooleanFilter> {
   void ExplainTerms(const SubReader& segment,
                     explain::TermNames& out) const final;
 
+  bool Prefetch(const SubReader& segment) const final;
+
  protected:
   PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer,
                                           StatsArena& stats,

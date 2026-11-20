@@ -1,0 +1,113 @@
+# A term that occurs more often in a document than 16 bits count keeps its
+# score bounds in full, and top-k queries rank that document by them.
+
+statement ok
+CREATE TABLE wide_bounds (id INT, body TEXT) WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY wide_words AS split_text(case := 'lower') WITH (frequency, norm);
+
+
+statement ok
+CREATE INDEX wide_idx ON wide_bounds USING inverted(body wide_words);
+
+
+statement ok
+INSERT INTO wide_bounds
+SELECT i, CASE WHEN i = 7 THEN repeat('fox ', 70000) ELSE 'fox number ' || i END FROM range(300) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) wide_bounds;
+
+
+query
+SELECT id FROM wide_idx WHERE body @@ 'fox' ORDER BY BM25(wide_idx.tableoid) DESC, id LIMIT 3;
+----
+id
+7
+0
+1
+
+
+# BM25 with k1 = 0 keeps no score bounds: top-k queries rank by the scores alone
+statement ok
+CREATE TABLE no_bounds (id INT, body TEXT) WITH (optimize_top_k = 'bm25(0, 0.75)');
+
+
+statement ok
+CREATE INDEX no_bounds_idx ON no_bounds USING inverted(body wide_words);
+
+
+statement ok
+INSERT INTO no_bounds SELECT i, CASE WHEN i % 3 = 0 THEN 'fox fox ' || i ELSE 'fox ' || i END FROM range(50) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) no_bounds;
+
+
+query
+SELECT id FROM no_bounds_idx WHERE body @@ 'fox' ORDER BY BM25(no_bounds_idx.tableoid, 0, 0.75) DESC, id LIMIT 3;
+----
+id
+0
+1
+2
+
+
+query
+SELECT id FROM no_bounds_idx WHERE body @@ ('fox' || ts_phrase('3'))
+ORDER BY BM25(no_bounds_idx.tableoid, 0, 0.75) DESC, id LIMIT 3;
+----
+id
+3
+0
+1
+
+
+# Scores of every match: raw term frequencies, and BM25 with k1 = 0, which is
+# the same for every document of a term
+query
+SELECT id, raw_tf(no_bounds_idx.tableoid) AS s FROM no_bounds_idx WHERE body @@ 'fox' ORDER BY id LIMIT 4;
+----
+id	s
+0	2
+1	1
+2	1
+3	2
+
+
+query
+SELECT id, round(BM25(no_bounds_idx.tableoid, 0, 0.75), 4) AS s FROM no_bounds_idx WHERE body @@ 'fox'
+ORDER BY id LIMIT 4;
+----
+id	s
+0	0.0099
+1	0.0099
+2	0.0099
+3	0.0099
+
+
+query
+SELECT id, round(BM25(no_bounds_idx.tableoid, 0, 0.75), 4) AS s FROM no_bounds_idx
+WHERE body @@ ('fox' || ts_phrase('3')) ORDER BY id LIMIT 4;
+----
+id	s
+0	0.0099
+1	0.0099
+2	0.0099
+3	3.5362
+
+
+statement ok
+DROP TABLE no_bounds;
+
+
+statement ok
+DROP TABLE wide_bounds;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY wide_words;

@@ -86,8 +86,9 @@ inline constexpr FoldEmit kFoldEmit<docs::Root::ptr>{0.0, 1.0, true};
 template<>
 struct BitsetNode<docs::Root::ptr> {
   template<typename P>
-  static docs::Root::ptr Make(BitsetBuckets&& buckets, const IndexInput& doc,
-                              doc_id_t docs_count, TableFilter*) {
+  static docs::Root::ptr Make(BitsetBuckets&& buckets,
+                              const duckdb::InputFile& doc, doc_id_t docs_count,
+                              TableFilter*) {
     return memory::make_managed<docs::BooleanBitset>(
       BuildBitset<P>(buckets, doc, docs_count));
   }

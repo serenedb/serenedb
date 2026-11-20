@@ -20,12 +20,12 @@
 
 #pragma once
 
+#include <duckdb/storage/external_file_cache/external_file_cache.hpp>
 #include <span>
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/offsets/root.hpp"
-#include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -34,9 +34,9 @@ namespace irs::offsets {
 template<typename Leaf>
 class Posting {
  public:
-  Posting(const PostingMeta& meta, const IndexInput& doc_in,
-          IndexFeatures layout, const IndexInput& pos_in,
-          const IndexInput* pay_in) {
+  Posting(const PostingMeta& meta, const duckdb::InputFile& doc_in,
+          IndexFeatures layout, const duckdb::InputFile& pos_in,
+          const duckdb::InputFile* pay_in) {
     _leaf.Prepare(meta, doc_in, layout, pos_in, pay_in);
   }
 

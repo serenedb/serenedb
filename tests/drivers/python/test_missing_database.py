@@ -1,8 +1,9 @@
 """What boot does with a data directory that lost files.
 
-A table or index whose directory is missing refuses to start, since coming
+A table or index whose files are missing refuses to start, since coming
 back without its data would turn a lost file into silent data loss. A missing
-catalog log beside table directories refuses to start too.
+catalog log beside the index files refuses to start too, and so does a data
+directory of an earlier layout, which boot leaves as it found it.
 """
 
 from __future__ import annotations
@@ -76,9 +77,12 @@ def test_missing_catalog_log(tmp_path: Path) -> None:
         with server.connect() as conn:
             conn.execute("CREATE TABLE kept(a INTEGER)")
             conn.execute("INSERT INTO kept VALUES (1)")
-        storage = _search_table_dir(server, datadir, "postgres", "kept")
+            conn.execute("VACUUM (FLUSH_TABLE) kept")
     finally:
         server.stop()
+    store = datadir / "engine_v1" / "store"
+    files = sorted(store.iterdir())
+    assert files
     shutil.rmtree(datadir / "engine_v1" / "wal")
 
     refused = _Server(datadir)
@@ -88,20 +92,10 @@ def test_missing_catalog_log(tmp_path: Path) -> None:
         assert "holds no catalog log" in refused.output()
     finally:
         refused.stop()
-    assert storage.is_dir()
+    assert sorted(store.iterdir()) == files
 
 
-def _search_table_dir(server: _Server, datadir: Path, database: str,
-                      table: str) -> Path:
-    with server.connect() as conn:
-        table_oid = conn.execute(
-            "SELECT table_oid FROM sdb_tables() "
-            "WHERE database_name = %s AND table_name = %s",
-            (database, table)).fetchone()[0]
-    return datadir / "engine_v1" / "store" / str(table_oid)
-
-
-def test_missing_storage_directory(tmp_path: Path) -> None:
+def test_missing_segment_file(tmp_path: Path) -> None:
     datadir = tmp_path / "data"
     server = _Server(datadir)
     try:
@@ -110,19 +104,51 @@ def test_missing_storage_directory(tmp_path: Path) -> None:
             conn.execute(
                 "CREATE TABLE docs(id BIGINT PRIMARY KEY, body TEXT) ")
             conn.execute("INSERT INTO docs VALUES (1, 'kept')")
-        storage = _search_table_dir(server, datadir, "postgres", "docs")
+            conn.execute("VACUUM (FLUSH_TABLE) docs")
+            oid = conn.execute(
+                "SELECT table_oid FROM sdb_tables() "
+                "WHERE table_name = 'docs'").fetchone()[0]
     finally:
         server.stop()
-    assert storage.is_dir()
-    for path in storage.iterdir():
-        path.unlink()
-    storage.rmdir()
+    lost = min((datadir / "engine_v1" / "store").iterdir())
+    lost.unlink()
 
     refused = _Server(datadir)
     try:
         assert not refused.wait_ready(timeout=30)
         assert refused.proc.wait(timeout=30) != 0
-        assert f"'{storage}' of docs" in refused.output()
-        assert "is missing" in refused.output()
+        assert f"cannot open the files of relation {oid}" in refused.output()
+        assert str(lost) in refused.output()
     finally:
         refused.stop()
+
+
+def _contents(root: Path) -> dict[str, bytes]:
+    return {str(path.relative_to(root)): path.read_bytes()
+            for path in sorted(root.rglob("*")) if path.is_file()}
+
+
+def test_a_data_directory_of_an_earlier_layout_is_refused_untouched(
+        tmp_path: Path) -> None:
+    datadir = tmp_path / "data"
+    server = _Server(datadir)
+    try:
+        assert server.wait_ready(), server.output()
+        with server.connect() as conn:
+            conn.execute("CREATE TABLE docs(id BIGINT PRIMARY KEY, body TEXT)")
+            conn.execute("INSERT INTO docs VALUES (1, 'kept')")
+            conn.execute("VACUUM (FLUSH_TABLE) docs")
+    finally:
+        server.stop()
+    (datadir / "engine_v1" / "wal" / "snapshot").write_bytes(b"")
+    engine = _contents(datadir / "engine_v1")
+
+    refused = _Server(datadir)
+    try:
+        assert not refused.wait_ready(timeout=30)
+        assert refused.proc.wait(timeout=30) != 0
+        assert "was written with an earlier layout of the data directory" in \
+            refused.output()
+    finally:
+        refused.stop()
+    assert _contents(datadir / "engine_v1") == engine

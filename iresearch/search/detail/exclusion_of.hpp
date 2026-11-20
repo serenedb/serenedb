@@ -45,7 +45,8 @@ namespace irs::detail {
 template<typename Term>
 bool ExcludeTerms(std::span<const Term> terms,
                   std::span<const QueryBuilder::ptr> filters,
-                  const TermReader* field, const IndexInput*& doc) noexcept {
+                  const TermReader* field,
+                  const duckdb::InputFile*& doc) noexcept {
   if (!filters.empty() || terms.empty()) {
     return false;
   }
@@ -299,7 +300,7 @@ Result BuildExcludeProbes(std::span<const Term> metas,
                           const TermReader* field, const SubReader& segment,
                           uint64_t candidates, Make&& make) {
   if constexpr (kConcrete) {
-    const IndexInput* doc = nullptr;
+    const duckdb::InputFile* doc = nullptr;
     if (ExcludeTerms(metas, filters, field, doc)) {
       const auto concrete = [&]<typename In> -> Result {
         using Probe = PostingProbe<In>;
@@ -522,7 +523,7 @@ template<typename Result, typename P = NoPins, typename Term, typename Make>
 Result BuildExcludeBitset(std::span<const Term> metas,
                           std::span<const QueryBuilder::ptr> filters,
                           const TermReader* field, const SubReader& segment,
-                          const IndexInput& doc, Make&& make) {
+                          const duckdb::InputFile& doc, Make&& make) {
   BitsetBuckets buckets;
   auto& clause = buckets.must.emplace_back();
   clause.reserve(metas.size());

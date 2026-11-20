@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <absl/container/inlined_vector.h>
 #include <absl/functional/function_ref.h>
 #include <absl/synchronization/mutex.h>
 
@@ -31,8 +32,12 @@
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/filter/table_filter_functions.hpp>
 #include <duckdb/planner/table_filter.hpp>
+#include <duckdb/planner/table_filter_state.hpp>
+#include <duckdb/storage/external_file_cache/external_file_cache.hpp>
 #include <duckdb/storage/table/row_group_reorderer.hpp>
 #include <duckdb/storage/table/scan_state.hpp>
+#include <iresearch/formats/column/col_reader.hpp>
+#include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/index/column_extract.hpp>
 #include <iresearch/index/docs_mask/docs_mask.hpp>
 #include <iresearch/index/hit_batcher.hpp>
@@ -41,13 +46,17 @@
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/index/table_filter_iterator.hpp>
 #include <iresearch/search/ann/collector.hpp>
+#include <iresearch/search/ann/root.hpp>
 #include <iresearch/search/ann/shared_floor.hpp>
+#include <iresearch/search/count/root.hpp>
 #include <iresearch/search/detail/vector_slots.hpp>
 #include <iresearch/search/explain/explanation.hpp>
 #include <iresearch/search/explain/stats.hpp>
 #include <iresearch/search/filters/filter.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
+#include <iresearch/search/top/root.hpp>
 #include <iresearch/types.hpp>
+#include <iresearch/utils/blocking_once.hpp>
 #include <iresearch/utils/containers/bitset.hpp>
 #include <limits>
 #include <memory>
@@ -81,6 +90,18 @@ enum class ScanShape : uint8_t {
   ColScan,
   Stream,
 };
+
+constexpr uint64_t PackRange(uint32_t next, uint32_t end) noexcept {
+  return uint64_t{end} << 32 | next;
+}
+
+constexpr uint32_t RangeNext(uint64_t range) noexcept {
+  return static_cast<uint32_t>(range);
+}
+
+constexpr uint32_t RangeEnd(uint64_t range) noexcept {
+  return static_cast<uint32_t>(range >> 32);
+}
 
 struct ScanUnit {
   uint32_t seg = 0;
@@ -141,11 +162,6 @@ struct ABSL_CACHELINE_ALIGNED SegmentWork {
   static constexpr uint8_t kWhole = 1;
   static constexpr uint8_t kSplit = 2;
 
-  static constexpr uint8_t kUnprepared = 0;
-  static constexpr uint8_t kPreparing = 1;
-  static constexpr uint8_t kReady = 2;
-  static constexpr uint8_t kAwaited = 3;
-
   SegmentRowGroups groups;
   uint32_t rg_count = 0;
   uint32_t run_end = 0;
@@ -153,7 +169,7 @@ struct ABSL_CACHELINE_ALIGNED SegmentWork {
   uint32_t first_start = 0;
   uint32_t start_count = 0;
   std::atomic_uint8_t claim{kUnclaimed};
-  std::atomic_uint8_t prepare{kUnprepared};
+  irs::BlockingOnce prepare;
   bool dead = false;
   bool skips = false;
   std::unique_ptr<OrderedUnits> ordered;
@@ -222,6 +238,7 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   const irs::IndexReader* reader = nullptr;
   search::ReadView view;
   size_t total_segments = 0;
+  bool remote = false;
   const VectorScorerOptions* vector_scorer = nullptr;
   std::optional<size_t> top_k;
   size_t top_offset = 0;
@@ -307,6 +324,7 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   std::atomic_uint32_t thread_slots{0};
 
   bool stats_stage = false;
+  uint32_t head_prefetch_min = 0;
   std::atomic_uint32_t prepare_next{0};
   ScanBarrier stats_barrier;
 
@@ -315,6 +333,13 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   uint32_t workers = 1;
   uint64_t rg_size = 0;
   uint64_t fold_rgs = 0;
+  std::vector<irs::field_id> ahead_fields;
+  std::vector<irs::field_id> ahead_projections;
+  bool ahead_projected = false;
+  uint64_t ahead_bytes = 0;
+  uint32_t ahead_rgs = 0;
+  uint32_t ahead_worker_rgs = 0;
+  std::vector<uint64_t> ahead_before;
   std::atomic_uint32_t worker_count{0};
 
   std::vector<uint32_t> segment_order;
@@ -331,7 +356,9 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   bool ordered = false;
   ABSL_CACHELINE_ALIGNED std::atomic_uint32_t arrivals{0};
   ABSL_CACHELINE_ALIGNED std::atomic_uint32_t next_segment{0};
+  std::atomic_uint32_t ahead_segment{0};
   ABSL_CACHELINE_ALIGNED std::atomic_uint32_t done_segments{0};
+  ABSL_CACHELINE_ALIGNED std::atomic_uint64_t counted{0};
   ABSL_CACHELINE_ALIGNED absl::Mutex ordered_mutex;
   ABSL_CACHELINE_ALIGNED std::atomic_bool ordered_exhausted{false};
   duckdb::LogicalType order_type;
@@ -422,9 +449,16 @@ struct RowGroupCheck {
   irs::BlockWindow window;
 };
 
-struct MultiColumnCheck {
-  const duckdb::ExpressionFilter* filter;
-  std::vector<const irs::ColumnReader*> readers;
+struct RowGroupChecks {
+  std::vector<RowGroupCheck> columns;
+  std::vector<MultiColumnCheck> multi;
+  duckdb::vector<duckdb::BaseStatistics> stats;
+
+  void Clear() noexcept {
+    columns.clear();
+    multi.clear();
+  }
+  bool Empty() const noexcept { return columns.empty() && multi.empty(); }
 };
 
 struct ScanLocalState : public duckdb::LocalTableFunctionState {
@@ -436,9 +470,7 @@ struct ScanLocalState : public duckdb::LocalTableFunctionState {
   irs::ColFilterClassification seg_cls;
   irs::ColFilterClassification column_form_cls;
   uint32_t checked_seg = std::numeric_limits<uint32_t>::max();
-  std::vector<RowGroupCheck> rg_checks;
-  std::vector<MultiColumnCheck> multi_checks;
-  duckdb::vector<duckdb::BaseStatistics> multi_stats;
+  RowGroupChecks rg_checks;
   uint32_t current_seg = std::numeric_limits<uint32_t>::max();
   uint32_t owned_seg = std::numeric_limits<uint32_t>::max();
   uint32_t claimed_end = 0;
@@ -454,6 +486,21 @@ struct ScanLocalState : public duckdb::LocalTableFunctionState {
   uint64_t produced_rows = 0;
   duckdb::RandomEngine sample_random{-1};
   bool sample_seeded = false;
+  uint64_t ahead_check = std::numeric_limits<uint64_t>::max();
+  uint32_t ahead_seg = std::numeric_limits<uint32_t>::max();
+  uint32_t ahead_from = 0;
+  uint32_t ahead_rg = 0;
+  uint32_t projected_rg = 0;
+  uint64_t ahead_rgs = 0;
+  uint64_t ahead_produced = 0;
+  uint64_t projected_until = std::numeric_limits<uint64_t>::max();
+  uint64_t projected_rgs = 0;
+  uint32_t ahead_batch = 0;
+  irs::ColFilterClassification ahead_cls;
+  RowGroupChecks ahead_checks;
+  RowGroupChecks declare_checks;
+  std::vector<uint32_t> ahead_live;
+  std::vector<duckdb::FileRange> ahead_extents;
 
   void Classify(ScanGlobalState& g, uint32_t seg);
 
@@ -479,9 +526,9 @@ struct FetchLocalState {
 
 struct CountLocalState final : public ScanLocalState {
   uint64_t local_count = 0;
-  bool whole_backlog = false;
+  uint64_t to_emit = 0;
   ColFilterVerify col_verify;
-  irs::memory::managed_ptr<irs::memory::Managed> root;
+  irs::count::Root::ptr root;
   uint32_t root_seg = std::numeric_limits<uint32_t>::max();
   irs::doc_id_t root_end = 0;
 };
@@ -499,7 +546,6 @@ struct ColScanLocalState final : public ScanLocalState {
 
 struct StreamLocalState final : public ScanLocalState, FetchLocalState {
   irs::memory::managed_ptr<irs::memory::Managed> root;
-  uint32_t root_seg = std::numeric_limits<uint32_t>::max();
   bool scored = false;
   irs::ColumnArgsFetcher score_fetcher;
   uint64_t next_row = 0;
@@ -515,9 +561,6 @@ struct StreamLocalState final : public ScanLocalState, FetchLocalState {
 struct RankedLocalState : public ScanLocalState, FetchLocalState {
   irs::ColumnArgsFetcher score_fetcher;
   ColFilterVerify col_verify;
-  irs::memory::managed_ptr<irs::memory::Managed> root;
-  uint32_t root_seg = std::numeric_limits<uint32_t>::max();
-  irs::doc_id_t root_end = 0;
   bool claimed = false;
   bool published = false;
   bool emitter = false;
@@ -527,18 +570,22 @@ struct RankedLocalState : public ScanLocalState, FetchLocalState {
   std::vector<uint32_t> answer_order;
   duckdb::SelectionVector emit_sel;
   duckdb::buffer_ptr<duckdb::SelectionData> emit_sel_data;
-
-  void ReleasePlans() final { root = nullptr; }
 };
 
 struct TopKLocalState final : public RankedLocalState {
   std::span<irs::ScoreDoc> hit_slice;
   std::optional<irs::LoserScoreCollector> collector;
+  irs::top::Root::ptr root;
+  uint32_t root_seg = std::numeric_limits<uint32_t>::max();
+  irs::doc_id_t root_end = 0;
+
+  void ReleasePlans() final { root = nullptr; }
 };
 
 struct AnnLocalState final : public RankedLocalState {
   std::optional<irs::ann::SharedFloor> segment_floor;
   std::optional<irs::ann::Collector> collector;
+  irs::ann::Root::ptr root;
   uint32_t pool_seg = std::numeric_limits<uint32_t>::max();
   std::vector<irs::ScoreDoc> pending;
   std::vector<irs::ScoreDoc> rescored;
@@ -548,6 +595,8 @@ struct AnnLocalState final : public RankedLocalState {
   ColFilterVerify column_verify;
   irs::ColFilterClassification dual_cls;
   std::vector<irs::ColFilterSpec> column_specs;
+
+  void ReleasePlans() final { root = nullptr; }
 };
 
 struct TsDictLocalState;
@@ -562,6 +611,23 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context);
 bool ClaimUnit(ScanGlobalState& g, ScanLocalState& l);
 bool NextLiveUnit(ScanGlobalState& g, ScanLocalState& l);
 bool FinishUnit(ScanGlobalState& g, ScanLocalState& l);
+void BuildRowGroupChecks(const ScanGlobalState& g,
+                         const irs::ColReader& col_reader,
+                         std::span<const irs::ColFilterSpec> active,
+                         duckdb::ClientContext& context,
+                         irs::ColFilterStateCache& states,
+                         RowGroupChecks& checks);
+void BuildMultiColumnChecks(const ScanGlobalState& g,
+                            const irs::ColReader& col_reader,
+                            std::vector<MultiColumnCheck>& checks);
+bool RowGroupLive(duckdb::ClientContext& context, RowGroupChecks& checks,
+                  uint64_t begin, uint64_t end);
+uint32_t OwnedEnd(ScanGlobalState& g, ScanLocalState& l) noexcept;
+void PlanReadAhead(ScanGlobalState& g, duckdb::ClientContext& context);
+void StartReadAhead(ScanGlobalState& g, ScanLocalState& l);
+void MoveReadAhead(ScanGlobalState& g, ScanLocalState& l, uint64_t row);
+void DeclareProjected(const ScanGlobalState& g, ScanLocalState& l,
+                      uint64_t row);
 
 void ClassifySegmentColFilters(
   const irs::SubReader& seg, ScanGlobalState& g,
@@ -638,7 +704,11 @@ struct FetchedHits {
 void SortByAddress(std::span<irs::ScoreDoc> hits);
 std::vector<ScanGlobalState::TopKState::FetchUnit> FetchUnitsOf(
   const ScanGlobalState& g, std::span<const irs::ScoreDoc> hits);
-void PlanFetch(ScanGlobalState& g);
+void PrefetchColumns(
+  const ScanGlobalState& g, FetchLocalState& l,
+  std::span<const irs::ScoreDoc> hits,
+  std::span<const ScanGlobalState::TopKState::FetchUnit> units);
+void PlanFetch(ScanGlobalState& g, FetchLocalState& l);
 FetchedHits FetchHits(duckdb::ClientContext& ctx, ScanGlobalState& g,
                       FetchLocalState& l, duckdb::DataChunk& tmp, uint32_t seg,
                       std::span<const irs::ScoreDoc> hits, bool rebind);

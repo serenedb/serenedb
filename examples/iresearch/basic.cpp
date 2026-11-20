@@ -30,7 +30,7 @@
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/column_writer.hpp>
-#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/composite_reader.hpp>
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/norm.hpp>
@@ -40,8 +40,6 @@
 #include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/async.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
@@ -52,7 +50,7 @@
 #include "segments.h"
 
 // This example demonstrates the core iresearch workflow:
-//   1. Create a directory and index writer
+//   1. Create an index writer over a memory:// root
 //   2. Define fields and index documents (inverted index + cs stored values)
 //   3. Parse Lucene-syntax queries and execute them (count + top-K with BM25)
 
@@ -130,7 +128,7 @@ void IndexDocument(irs::IndexWriter::Transaction& ctx, TextField& title_field,
 
   auto* cs = doc.GetColWriter();
   if (cs == nullptr) {
-    return;  // cs disabled (no `options.db` plumbed through).
+    return;
   }
   if (title_cw == nullptr) {
     title_cw = &cs->OpenColumn(kTitleColumnId, duckdb::LogicalType::BLOB);
@@ -167,7 +165,7 @@ irs::Filter::ptr ParseQuery(std::string_view query_str,
 }
 
 // Helper: count documents matching a filter across all segments.
-size_t CountMatches(const irs::DirectoryReader& reader,
+size_t CountMatches(const irs::CompositeReader& reader,
                     const irs::Filter& filter) {
   // Counting does not score, so there is no collector and no statistics.
   std::vector<irs::QueryBuilder::ptr> queries;
@@ -192,7 +190,7 @@ size_t CountMatches(const irs::DirectoryReader& reader,
 
 // Helper: the documents matching a filter, as a removal of their positions.
 std::shared_ptr<const irs::DocRemoval> MatchingDocs(
-  const irs::DirectoryReader& reader, const irs::Filter& filter) {
+  const irs::CompositeReader& reader, const irs::Filter& filter) {
   irs::DocRemovalBuilder removal;
   for (uint32_t index = 0; index != reader.size(); ++index) {
     auto query = filter.PrepareSegment(reader[index], {});
@@ -260,7 +258,7 @@ void BuildIndex(irs::IndexWriter& writer, examples::Segments& segments) {
 }
 
 // Print basic index statistics.
-void PrintIndexStats(const irs::DirectoryReader& reader) {
+void PrintIndexStats(const irs::CompositeReader& reader) {
   std::cout << "=== Index Stats ===\n";
   std::cout << "Total documents: " << reader.docs_count() << "\n";
   std::cout << "Live documents:  " << reader.live_docs_count() << "\n";
@@ -268,7 +266,7 @@ void PrintIndexStats(const irs::DirectoryReader& reader) {
 }
 
 // Search for a single term using Lucene syntax.
-void QuerySingleTerm(const irs::DirectoryReader& reader,
+void QuerySingleTerm(const irs::CompositeReader& reader,
                      irs::analysis::Tokenizer& tokenizer) {
   std::cout << "=== Single Term Query ===\n";
   auto filter = ParseQuery("search", kBodyColumnId, tokenizer);
@@ -278,7 +276,7 @@ void QuerySingleTerm(const irs::DirectoryReader& reader,
 }
 
 // Retrieve top-K results ranked by BM25 score.
-void QueryTopK(const irs::DirectoryReader& reader, const irs::Scorer& scorer,
+void QueryTopK(const irs::CompositeReader& reader, const irs::Scorer& scorer,
                irs::analysis::Tokenizer& tokenizer) {
   std::cout << "=== Top-K with BM25 Scoring ===\n";
   auto filter = ParseQuery("search", kBodyColumnId, tokenizer, /*scored=*/true);
@@ -299,7 +297,7 @@ void QueryTopK(const irs::DirectoryReader& reader, const irs::Scorer& scorer,
 }
 
 // Search with boolean AND: both terms must be present.
-void QueryBooleanAnd(const irs::DirectoryReader& reader,
+void QueryBooleanAnd(const irs::CompositeReader& reader,
                      irs::analysis::Tokenizer& tokenizer) {
   std::cout << "=== Boolean AND Query ===\n";
   auto filter = ParseQuery("+index +search", kBodyColumnId, tokenizer);
@@ -308,7 +306,7 @@ void QueryBooleanAnd(const irs::DirectoryReader& reader,
 }
 
 // Search with boolean OR: either term may match.
-void QueryBooleanOr(const irs::DirectoryReader& reader,
+void QueryBooleanOr(const irs::CompositeReader& reader,
                     irs::analysis::Tokenizer& tokenizer) {
   std::cout << "=== Boolean OR Query ===\n";
   auto filter = ParseQuery("database retrieval", kBodyColumnId, tokenizer);
@@ -317,7 +315,7 @@ void QueryBooleanOr(const irs::DirectoryReader& reader,
 }
 
 // Search for an exact phrase.
-void QueryPhrase(const irs::DirectoryReader& reader,
+void QueryPhrase(const irs::CompositeReader& reader,
                  irs::analysis::Tokenizer& tokenizer) {
   std::cout << "=== Phrase Query ===\n";
   auto filter = ParseQuery(R"("search engine")", kBodyColumnId, tokenizer);
@@ -326,7 +324,7 @@ void QueryPhrase(const irs::DirectoryReader& reader,
 }
 
 // Search using a prefix wildcard.
-void QueryPrefix(const irs::DirectoryReader& reader,
+void QueryPrefix(const irs::CompositeReader& reader,
                  irs::analysis::Tokenizer& tokenizer) {
   std::cout << "=== Prefix Query ===\n";
   auto filter = ParseQuery("rank*", kBodyColumnId, tokenizer);
@@ -335,7 +333,7 @@ void QueryPrefix(const irs::DirectoryReader& reader,
 }
 
 // Search with exclusion: require one term, exclude another.
-void QueryExclusion(const irs::DirectoryReader& reader,
+void QueryExclusion(const irs::CompositeReader& reader,
                     irs::analysis::Tokenizer& tokenizer) {
   std::cout << "=== Exclusion Query ===\n";
   auto filter = ParseQuery("+documents -database", kBodyColumnId, tokenizer);
@@ -346,7 +344,7 @@ void QueryExclusion(const irs::DirectoryReader& reader,
 // Read back stored field values from the per-segment .col writer. Title
 // and body live as BLOB columns at `kTitleColumnId` / `kBodyColumnId`;
 // each doc-id maps to row `doc_id - doc_limits::min()` in the column.
-void ReadStoredFields(const irs::DirectoryReader& reader) {
+void ReadStoredFields(const irs::CompositeReader& reader) {
   std::cout << "=== Stored Fields ===\n";
   for (size_t seg_idx = 0; seg_idx < reader.size(); ++seg_idx) {
     auto& segment = reader[seg_idx];
@@ -437,17 +435,17 @@ int BasicMain() {
     auto tokenizer = irs::analysis::TextTokenizer::Make(
       irs::analysis::TextTokenizer::Options{});
 
-    irs::MemoryDirectory dir;
+    auto& fs = duckdb::FileSystem::GetFileSystem(Db());
+    constexpr std::string_view kRoot = "memory://basic";
     irs::IndexWriterOptions options;
-    options.db = &Db();
-    options.reader_options.db = &Db();
+    options.released = std::make_shared<irs::ReleasedSegments>();
     options.norm_column_id =
       [next = std::make_shared<std::atomic<irs::field_id>>(0)](
         irs::field_id) -> irs::field_id {
       return next->fetch_add(1, std::memory_order_relaxed);
     };
-    examples::Segments segments{dir, options.reader_options};
-    auto writer = irs::IndexWriter::Make(dir, std::move(options));
+    examples::Segments segments{fs, kRoot, options.released};
+    auto writer = irs::IndexWriter::Make(Db(), fs, kRoot, std::move(options));
 
     BuildIndex(*writer, segments);
 

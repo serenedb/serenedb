@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
 #include <absl/random/distributions.h>
 
 #include <algorithm>
@@ -25,17 +26,18 @@
 #include <duckdb.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <iresearch/formats/ann_build_env.hpp>
+#include <iresearch/formats/format_utils.hpp>
 #include <iresearch/formats/hnsw/hnsw_graph.hpp>
 #include <iresearch/formats/hnsw/hnsw_reader.hpp>
 #include <iresearch/formats/index/idx_reader.hpp>
-#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/composite_reader.hpp>
+#include <iresearch/index/file_names.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/ann/family.hpp>
 #include <iresearch/search/detail/doc_collector.hpp>
 #include <iresearch/search/filters/vector_similarity_filter.hpp>
 #include <iresearch/search/scorers/vector_similarity_scorer.hpp>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/store/store_utils.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <numeric>
 #include <random>
@@ -44,6 +46,7 @@
 #include <yaclib/runtime/fair_thread_pool.hpp>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "index_dir.hpp"
 #include "search/filter_test_case_base.hpp"
 #include "tests_shared.hpp"
 
@@ -129,7 +132,7 @@ void WriteNullAt(irs::ColWriter& cs, irs::doc_id_t doc, float payload) {
             /*count=*/1);
 }
 
-irs::DirectoryReader BuildIndex(irs::Directory& dir,
+irs::CompositeReader BuildIndex(const tests::IndexDir& dir,
                                 const std::vector<std::vector<float>>& vecs,
                                 irs::VectorMetric metric,
                                 irs::VectorQuantization quant,
@@ -189,7 +192,7 @@ std::vector<irs::doc_id_t> BruteForceTopK(
   return out;
 }
 
-std::vector<irs::doc_id_t> RunKnn(const irs::DirectoryReader& reader,
+std::vector<irs::doc_id_t> RunKnn(const irs::CompositeReader& reader,
                                   irs::ByVectorSimilarity& filter,
                                   size_t k = 128) {
   irs::VectorSimilarityScorer scorer;
@@ -242,35 +245,6 @@ std::vector<irs::doc_id_t> RunKnn(const irs::DirectoryReader& reader,
   return docs;
 }
 
-class ZeroDupInput final : public irs::BytesViewInput {
- public:
-  explicit ZeroDupInput(irs::bstring bytes)
-    : _bytes{std::move(bytes)}, _zeros(_bytes.size(), 0) {
-    reset(_bytes);
-  }
-
-  ptr Dup() const final {
-    return std::make_unique<irs::BytesViewInput>(_zeros);
-  }
-
- private:
-  irs::bstring _bytes;
-  irs::bstring _zeros;
-};
-
-class ZeroDupDirectory final : public tests::DirectoryMock {
- public:
-  using tests::DirectoryMock::DirectoryMock;
-
-  irs::IndexInput::ptr open(std::string_view name,
-                            irs::IOAdvice advice) const final {
-    auto in = tests::DirectoryMock::open(name, advice);
-    irs::bstring bytes(in->Length(), 0);
-    in->ReadData(0, bytes.data(), bytes.size());
-    return std::make_unique<ZeroDupInput>(std::move(bytes));
-  }
-};
-
 // (quant, nb_bits, recall floor). TurboQuant needs its bit width spelled out --
 // TQ accepts 1-5 -- and estimates a shorter code than the scalar quantizers
 // do, so it carries its own floor.
@@ -308,7 +282,8 @@ TEST_P(HnswIndexTest, RecallAgainstBruteForce) {
   constexpr size_t kK = 10;
 
   const auto vecs = MakeVectors(kRows, 7);
-  irs::MemoryDirectory dir;
+  tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
   auto reader = BuildIndex(dir, vecs, metric, Quant(), NbBits());
   ASSERT_EQ(1U, reader.size());
   ASSERT_EQ(kRows, reader.docs_count());
@@ -347,7 +322,8 @@ TEST_P(HnswIndexTest, RecallAcrossManyRowBatches) {
   constexpr uint32_t kEf = 64;
 
   const auto vecs = MakeVectors(kRows, 21);
-  irs::MemoryDirectory dir;
+  tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
   auto reader = BuildIndex(dir, vecs, metric, Quant(), NbBits());
   ASSERT_EQ(kRows, reader.docs_count());
 
@@ -382,7 +358,8 @@ TEST_P(HnswIndexTest, MergeReusesDonorGraph) {
 
   auto vecs = MakeVectors(kBig + kSmall, 31);
 
-  irs::MemoryDirectory dir;
+  tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
   auto writer =
     tests::IndexWriter::Make(dir, tests::kOmCreate, WriterOptions());
   ASSERT_NE(nullptr, writer);
@@ -404,7 +381,8 @@ TEST_P(HnswIndexTest, MergeReusesDonorGraph) {
   ASSERT_EQ(1U, merged.size());
   ASSERT_EQ(kBig + kSmall, merged.docs_count());
 
-  irs::MemoryDirectory fresh_dir;
+  tests::IndexDir fresh_dir{irs::DuckDBEngine::Instance().instance(),
+                            TestEnv::MemoryRoot()};
   auto fresh = BuildIndex(fresh_dir, vecs, metric, Quant(), NbBits());
 
   size_t total = 0;
@@ -441,7 +419,8 @@ TEST_P(HnswIndexTest, NullRowsStayOutOfTrainingAndResults) {
   constexpr size_t kK = 10;
   const auto vecs = MakeVectors(2 * kRows, 41);
 
-  irs::MemoryDirectory dir;
+  tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
   auto writer =
     tests::IndexWriter::Make(dir, tests::kOmCreate, WriterOptions());
   ASSERT_NE(nullptr, writer);
@@ -465,7 +444,7 @@ TEST_P(HnswIndexTest, NullRowsStayOutOfTrainingAndResults) {
   }
 
   const auto queries = MakeVectors(20, 43);
-  const auto check = [&](const irs::DirectoryReader& reader, size_t count,
+  const auto check = [&](const irs::CompositeReader& reader, size_t count,
                          std::string_view stage) {
     const std::span<const std::vector<float>> rows{vecs.data(), count};
     const std::span<const irs::doc_id_t> want_docs{docs.data(), count};
@@ -520,7 +499,8 @@ TEST_P(HnswIndexTest, MergeOfManySourcesMatchesRebuild) {
 
   auto vecs = MakeVectors(kRows, 41);
 
-  irs::MemoryDirectory dir;
+  tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
   auto writer =
     tests::IndexWriter::Make(dir, tests::kOmCreate, WriterOptions());
   ASSERT_NE(nullptr, writer);
@@ -542,7 +522,8 @@ TEST_P(HnswIndexTest, MergeOfManySourcesMatchesRebuild) {
   ASSERT_EQ(1U, merged.size());
   ASSERT_EQ(kRows, merged.docs_count());
 
-  irs::MemoryDirectory fresh_dir;
+  tests::IndexDir fresh_dir{irs::DuckDBEngine::Instance().instance(),
+                            TestEnv::MemoryRoot()};
   auto fresh = BuildIndex(fresh_dir, vecs, metric, Quant(), NbBits());
 
   size_t total = 0;
@@ -575,7 +556,8 @@ TEST_P(HnswIndexTest, MergeOfManySourcesMatchesRebuild) {
 TEST_P(HnswIndexTest, SerializedGraphSurvivesReopen) {
   const auto metric = Metric();
   const auto vecs = MakeVectors(200, 11);
-  irs::MemoryDirectory dir;
+  tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
   auto reader = BuildIndex(dir, vecs, metric, Quant(), NbBits());
 
   auto filter = MakeKnnFilter(vecs[0], metric, Quant(), 64);
@@ -590,7 +572,8 @@ TEST_P(HnswIndexTest, SerializedGraphSurvivesReopen) {
 TEST_P(HnswIndexTest, QueryVectorFindsItself) {
   const auto metric = Metric();
   const auto vecs = MakeVectors(300, 13);
-  irs::MemoryDirectory dir;
+  tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
   auto reader = BuildIndex(dir, vecs, metric, Quant(), NbBits());
 
   size_t found = 0;
@@ -606,14 +589,31 @@ TEST_P(HnswIndexTest, QueryVectorFindsItself) {
 TEST_P(HnswIndexTest, OpenReadsTheHeaderFromTheFooter) {
   constexpr size_t kRows = 200;
   const auto vecs = MakeVectors(kRows, 17);
-  irs::MemoryDirectory dir;
+  tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
   auto reader = BuildIndex(dir, vecs, Metric(), Quant(), NbBits());
   const auto& segment = (reader)[0];
   const auto& built =
     static_cast<const irs::HnswIndex&>(*segment.Ann(kVec)).Header();
 
-  ZeroDupDirectory zeroed{dir};
-  const irs::IdxReader idx{zeroed, segment.Meta().name, nullptr};
+  const auto name = irs::FileName(segment.Meta().name, irs::kIdxFormatExt);
+  auto bytes = dir.ReadWhole(name);
+  duckdb::MemoryReader trailer{irs::bytes_view{bytes}.substr(
+    bytes.size() - irs::format_utils::kTrailerLen)};
+  trailer.Read<uint32_t>();
+  const auto footer_len = trailer.Read<uint32_t>();
+  absl::c_fill_n(bytes,
+                 bytes.size() - irs::format_utils::kTrailerLen - footer_len,
+                 irs::byte_type{0});
+  tests::IndexDir zeroed{irs::DuckDBEngine::Instance().instance(),
+                         TestEnv::MemoryRoot()};
+  {
+    auto out = zeroed.Create(name);
+    out->WriteData(bytes.data(), bytes.size());
+    out->Close();
+  }
+  const irs::IdxReader idx{zeroed.Fs(), zeroed.Root(), segment.Meta().name,
+                           true, nullptr};
   const auto& header =
     static_cast<const irs::HnswIndex&>(*idx.Ann(kVec)).Header();
   EXPECT_EQ(kDim, header.d);
@@ -786,11 +786,11 @@ std::vector<std::vector<float>> MakeDecayingVectors(size_t n, uint32_t seed,
 }
 
 std::vector<std::shared_ptr<const std::vector<float>>> SegmentBases(
-  const irs::DirectoryReader& reader) {
+  const irs::CompositeReader& reader) {
   std::vector<std::shared_ptr<const std::vector<float>>> out;
   for (const auto& segment : reader) {
     const auto* ann = static_cast<const irs::HnswIndex*>(segment.Ann(kVec));
-    out.push_back(ann->Load(segment)->rotation);
+    out.push_back(ann->Load()->rotation);
   }
   return out;
 }
@@ -956,7 +956,8 @@ TEST(HnswPanoramaBasisTest, SegmentsOfAnIndexShareOneBasis) {
     const auto vecs = MakeDecayingVectors(3 * kBatch, 41, kD);
     const std::span all{vecs};
     const std::vector indexed(vecs.begin(), vecs.begin() + 2 * kBatch);
-    irs::MemoryDirectory dir;
+    tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
     {
       auto writer = tests::IndexWriter::Make(
         dir, tests::kOmCreate,
@@ -1014,7 +1015,8 @@ TEST(HnswPanoramaBasisTest, Sq8CodesRotateIntoTheSharedBasis) {
   constexpr auto kQuant = irs::VectorQuantization::SQ8;
   const auto vecs = MakeDecayingVectors(2 * kBatch, 47, kD);
   const std::span all{vecs};
-  irs::MemoryDirectory dir;
+  tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
   auto writer = tests::IndexWriter::Make(
     dir, tests::kOmCreate, MakeWriterOptions(kMetric, kQuant, 0, kD));
   ASSERT_NE(nullptr, writer);
@@ -1026,7 +1028,7 @@ TEST(HnswPanoramaBasisTest, Sq8CodesRotateIntoTheSharedBasis) {
   EXPECT_EQ(flushed[0], flushed[1]);
   for (const auto& segment : writer->GetSnapshot()) {
     const auto* ann = static_cast<const irs::HnswIndex*>(segment.Ann(kVec));
-    EXPECT_EQ(ann->Load(segment)->tails.size(),
+    EXPECT_EQ(ann->Load()->tails.size(),
               size_t{kBatch} * irs::HnswCodeTails(kD));
   }
 
@@ -1560,7 +1562,8 @@ TEST_P(HnswBuildWorkersTest, BuildTakesWorkersAsTheyFreeUp) {
                });
   opts.ann_env = &env;
 
-  irs::MemoryDirectory dir;
+  tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
   auto writer =
     tests::IndexWriter::Make(dir, tests::kOmCreate, std::move(opts));
   ASSERT_NE(nullptr, writer);
@@ -1617,7 +1620,8 @@ TEST(HnswPqGraphTest, CoarseCodesLinkNodesAsTheVectorsDo) {
                    .m = 8,
                    .ef_construction = 64,
                  });
-    irs::MemoryDirectory dir;
+    tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
     auto writer =
       tests::IndexWriter::Make(dir, tests::kOmCreate, std::move(opts));
     EXPECT_NE(nullptr, writer);
@@ -1626,7 +1630,7 @@ TEST(HnswPqGraphTest, CoarseCodesLinkNodesAsTheVectorsDo) {
     EXPECT_EQ(1U, reader.size());
     const auto& segment = (reader)[0];
     const auto* ann = static_cast<const irs::HnswIndex*>(segment.Ann(kVec));
-    const auto data = ann->Load(segment);
+    const auto data = ann->Load();
     const auto& graph = data->graph;
     size_t links = 0;
     size_t near = 0;

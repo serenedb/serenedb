@@ -31,9 +31,7 @@
 #include <vector>
 
 #include "iresearch/formats/index/term_dict_root.hpp"
-#include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/bytes_output.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/string_utils.hpp"
@@ -167,27 +165,28 @@ void AppendEntry(VarColumns& columns, bool restart, size_t lcp,
   columns.suffixes.append(suffix);
 }
 
-void WriteColumn(DataOutput& out, std::span<const uint32_t> values,
+void WriteColumn(duckdb::WriteStream& out, std::span<const uint32_t> values,
                  uint32_t width) {
   for (const auto value : values) {
     switch (width) {
       case 1:
-        out.WriteByte(static_cast<byte_type>(value));
+        out.Write(static_cast<byte_type>(value));
         break;
       case 2:
-        out.WriteU16(static_cast<uint16_t>(value));
+        out.Write<uint16_t>(static_cast<uint16_t>(value));
         break;
       default:
-        out.WriteU32(value);
+        out.Write<uint32_t>(value);
         break;
     }
   }
 }
 
-void WriteHeads(DataOutput& out, const BlockBuilder& block, size_t step,
-                size_t skip) {
+void WriteHeads(duckdb::WriteStream& out, const BlockBuilder& block,
+                size_t step, size_t skip) {
   for (size_t i = 0; i < block.ends.size(); i += step) {
-    out.WriteU32(static_cast<uint32_t>(HeadAt(KeyAt(block, i), skip) >> 32));
+    out.Write<uint32_t>(
+      static_cast<uint32_t>(HeadAt(KeyAt(block, i), skip) >> 32));
   }
 }
 
@@ -195,45 +194,46 @@ uint64_t SerializedSize(const BlockBuilder& block) noexcept {
   return block.kind == BlockKind::VarFsst ? block.coded_size : block.size;
 }
 
-void Serialize(const BlockBuilder& block, DataOutput& out) {
+void Serialize(const BlockBuilder& block, duckdb::WriteStream& out) {
   const auto count = static_cast<uint32_t>(block.ends.size());
   SDB_ASSERT(block.record_starts.size() == RecordGroups(count));
-  out.WriteByte(static_cast<byte_type>(block.kind));
-  out.WriteV32(count);
+  out.Write(static_cast<byte_type>(block.kind));
+  out.WriteVarint<uint32_t>(count);
   const bool coded = block.kind == BlockKind::VarFsst;
   if (block.kind != BlockKind::FixedStride) {
     const auto& columns = coded ? block.coded : block.raw;
     const uint32_t width = ColumnWidth(columns.max);
-    out.WriteV32(static_cast<uint32_t>(columns.restarts.size()));
-    out.WriteByte(static_cast<byte_type>(width));
-    out.WriteV64(columns.suffixes.size());
-    out.WriteV32(block.head_skip);
+    out.WriteVarint<uint32_t>(static_cast<uint32_t>(columns.restarts.size()));
+    out.Write(static_cast<byte_type>(width));
+    out.WriteVarint<uint64_t>(columns.suffixes.size());
+    out.WriteVarint<uint32_t>(block.head_skip);
     for (const auto restart : columns.restarts) {
-      out.WriteU16(restart);
+      out.Write<uint16_t>(restart);
     }
     WriteHeads(out, block, kRestartInterval, block.head_skip);
     for (const auto start : block.record_starts) {
-      out.WriteU16(start);
+      out.Write<uint16_t>(start);
     }
     WriteColumn(out, columns.lcps, width);
     WriteColumn(out, columns.lens, width);
     for (uint32_t i = 0; i != count; ++i) {
       const auto key = KeyAt(block, i);
-      out.WriteByte(key.empty() ? 0 : key.back());
+      out.Write<byte_type>(key.empty() ? 0 : key.back());
     }
     for (uint32_t i = 0; i != count; ++i) {
       const auto lcp = columns.lcps[i];
-      out.WriteByte(lcp == 0 ? 0 : KeyAt(block, i)[lcp - 1]);
+      out.Write<byte_type>(lcp == 0 ? 0 : KeyAt(block, i)[lcp - 1]);
     }
     out.WriteData(columns.suffixes.data(), columns.suffixes.size());
   } else {
     const uint32_t stride = block.width - block.prefix;
-    out.WriteV32(static_cast<uint32_t>(block.record_starts.size()));
-    out.WriteV32(stride);
-    out.WriteV32(block.prefix);
+    out.WriteVarint<uint32_t>(
+      static_cast<uint32_t>(block.record_starts.size()));
+    out.WriteVarint<uint32_t>(stride);
+    out.WriteVarint<uint32_t>(block.prefix);
     out.WriteData(block.keys.data(), block.prefix);
     for (const auto start : block.record_starts) {
-      out.WriteU16(start);
+      out.Write<uint16_t>(start);
     }
     WriteHeads(out, block, kRecordInterval, block.prefix);
     for (size_t i = 0; i != count; ++i) {
@@ -245,12 +245,6 @@ void Serialize(const BlockBuilder& block, DataOutput& out) {
 }
 
 }  // namespace
-
-void RecordOutput::WriteDirect(const byte_type*, size_t) {
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                  ERR_MSG("term dictionary: posting record exceeds ",
-                          kMaxRecordBytes, " bytes"));
-}
 
 void FsstEncoderDelete::operator()(
   duckdb_fsst_encoder_t* encoder) const noexcept {
@@ -519,7 +513,7 @@ bool FieldWriter::Append(bytes_view term, const PostingMeta& meta) {
   _record.Clear();
   _pw.Encode(_record, meta);
   if (meta.inline_size != 0 && !_group_inline) {
-    _record.WriteV64(_inline.size());
+    _record.WriteVarint<uint64_t>(_inline.size());
     _group_inline = true;
   }
   const auto record = _record.View();
@@ -636,13 +630,16 @@ void FieldWriter::Cut() {
     const auto separator =
       first.substr(0, CommonPrefixLength(bytes_view{_last}, first) + 1);
     const auto shared = CommonPrefixLength(bytes_view{_separator}, separator);
-    StringOutput out{_separators};
-    out.WriteV32(static_cast<uint32_t>(shared));
-    WriteStr(out, separator.substr(shared));
+    const auto suffix = separator.substr(shared);
+    auto out = std::back_inserter(_separators);
+    WriteVarint(static_cast<uint32_t>(shared), out);
+    WriteVarint(static_cast<uint32_t>(suffix.size()), out);
+    _separators.append(ViewCast<char>(suffix));
     _separator.assign(separator);
   }
   WriteBlock();
-  StringOutput{_inline_starts}.WriteV64(_inline_start - _inline_last);
+  auto starts = std::back_inserter(_inline_starts);
+  WriteVarint(_inline_start - _inline_last, starts);
   _inline_last = _inline_start;
   _inline_start = _inline.size();
   _last.assign(KeyAt(_block, _block.ends.size() - 1));

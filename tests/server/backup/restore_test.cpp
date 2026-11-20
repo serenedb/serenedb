@@ -49,7 +49,7 @@ namespace {
 
 constexpr uint64_t kSystemIdentifier = 4242;
 constexpr uint64_t kStartLsn = 1000;
-constexpr duckdb::idx_t kStore = 77;
+constexpr std::string_view kSegmentFile = "0000000000000001.doc";
 constexpr size_t kPayload = 100;
 
 std::string Payload(char fill) { return std::string(kPayload, fill); }
@@ -82,17 +82,15 @@ class RestoreTest : public ::testing::Test {
     std::filesystem::remove_all(_root);
     std::filesystem::create_directory(_root);
     _layout = std::make_unique<catalog::DataDirectory>(_root.string());
-    WritePgControl(_root, {.system_identifier = kSystemIdentifier});
+    WritePgControl(_root.string(), {.system_identifier = kSystemIdentifier});
     BackUpLog(false);
     std::filesystem::create_directories(_layout->LogDir());
     WriteFile(Chunk(0), 500, 'X');
     std::filesystem::create_directories(StoreDir());
-    WriteFile(StoreDir() / "_1.data", 4, 'S');
+    WriteFile(StoreDir() / kSegmentFile, 4, 'S');
     WriteFile(_root / "recovery.signal", 0, ' ');
     WriteFile(_root / "standby.signal", 0, ' ');
-    _cut.log_link = std::filesystem::path{"engine_v1"} / kBackupDir;
     _cut.log_size = _ends[2];
-    _cut.stores.push_back({.oid = kStore});
   }
 
   void TearDown() final { std::filesystem::remove_all(_root); }
@@ -104,7 +102,7 @@ class RestoreTest : public ::testing::Test {
     _ends.clear();
     {
       const auto fs = duckdb::FileSystem::CreateLocal();
-      catalog::Log log{*fs, source};
+      catalog::Log log{*fs, source.string()};
       log.Replay([](std::span<uint8_t>) {},
                  [](std::span<uint8_t> payload) { return payload; });
       _ends.push_back(log.Append(Bytes(Payload('A'))));
@@ -117,7 +115,7 @@ class RestoreTest : public ::testing::Test {
         log.DropCovered();
       }
       _ends.push_back(log.Append(Bytes(Payload('D'))));
-      log.Link(Link());
+      log.Link(Link().string());
     }
     std::filesystem::remove_all(source);
   }
@@ -142,15 +140,16 @@ class RestoreTest : public ::testing::Test {
     return std::string(std::istreambuf_iterator<char>{in}, {});
   }
 
-  std::filesystem::path Link() const {
-    return _layout->EngineDir() / kBackupDir;
-  }
+  std::filesystem::path EngineDir() const { return _layout->engine; }
+
+  std::filesystem::path Link() const { return EngineDir() / kBackupDir; }
 
   std::filesystem::path Chunk(uint64_t number) const {
-    return _layout->LogDir() / catalog::Log::ChunkName(number);
+    return std::filesystem::path{_layout->LogDir()} /
+           catalog::Log::ChunkName(number);
   }
 
-  std::filesystem::path StoreDir() const { return _layout->StorageDir(kStore); }
+  std::filesystem::path StoreDir() const { return _layout->StoreDir(); }
 
   void WriteLabel(uint64_t system_identifier = kSystemIdentifier) const {
     std::ofstream out{_root / kBackupLabelFile, std::ios::trunc};
@@ -204,7 +203,7 @@ class RestoreTest : public ::testing::Test {
 
     Prepare();
     EXPECT_EQ(Tree(_root), Tree(reference));
-    const auto control = ReadPgControl(_root);
+    const auto control = ReadPgControl(_root.string());
     ASSERT_TRUE(control);
     EXPECT_EQ(control->checkpoint, kStartLsn);
   }
@@ -220,14 +219,14 @@ TEST_F(RestoreTest, AppliesEveryFixupAndRetiresTheLabel) {
   Prepare();
 
   EXPECT_EQ(Records(), (std::vector{Payload('A'), Half('B'), Half('C')}));
-  EXPECT_FALSE(Exists(_layout->EngineDir() / kBackupDir));
+  EXPECT_FALSE(Exists(Link()));
 
-  EXPECT_TRUE(Exists(StoreDir() / "_1.data"));
+  EXPECT_TRUE(Exists(StoreDir() / kSegmentFile));
 
   EXPECT_FALSE(Exists(_root / "recovery.signal"));
   EXPECT_FALSE(Exists(_root / "standby.signal"));
-  EXPECT_TRUE(Exists(_layout->EngineDir() / "subscriptions.hold"));
-  const auto control = ReadPgControl(_root);
+  EXPECT_TRUE(Exists(EngineDir() / "subscriptions.hold"));
+  const auto control = ReadPgControl(_root.string());
   ASSERT_TRUE(control);
   EXPECT_EQ(control->system_identifier, kSystemIdentifier);
   EXPECT_EQ(control->checkpoint, kStartLsn);
@@ -251,6 +250,29 @@ TEST_F(RestoreTest, ARestartedRestoreFinishes) {
   Prepare();
   EXPECT_EQ(Records(), (std::vector{Payload('A'), Half('B'), Half('C')}));
   EXPECT_TRUE(Exists(_root / "backup_label.old"));
+}
+
+TEST_F(RestoreTest, ARestoreThatMovedPartOfTheLogFinishes) {
+  std::filesystem::rename(Link() / catalog::Log::ChunkName(1), Chunk(1));
+  WriteLabel();
+  Prepare();
+  EXPECT_EQ(Records(), (std::vector{Payload('A'), Half('B'), Half('C')}));
+  EXPECT_FALSE(Exists(Link()));
+}
+
+TEST_F(RestoreTest, ARestoreThatMovedAllOfTheLogFinishes) {
+  BackUpLog(true);
+  _cut.log_size = _ends[3];
+  for (const auto& entry : std::filesystem::directory_iterator{Link()}) {
+    std::filesystem::rename(
+      entry.path(),
+      std::filesystem::path{_layout->LogDir()} / entry.path().filename());
+  }
+  WriteLabel();
+  Prepare();
+  EXPECT_EQ(Records(),
+            (std::vector{Payload('A'), Half('B'), Half('C'), Payload('D')}));
+  EXPECT_FALSE(Exists(Link()));
 }
 
 TEST_F(RestoreTest, TheRestoredLogStartsAtItsSnapshot) {
@@ -286,11 +308,11 @@ TEST_F(RestoreTest, ACrashBeforeTheLabelIsRetiredIsFinishedByTheNextBoot) {
 TEST_F(RestoreTest, WithoutALabelOnlyTheLeftoverBackupDirectoryGoes) {
   std::filesystem::remove(_root / kPgControlFile);
   Prepare();
-  EXPECT_FALSE(Exists(_layout->EngineDir() / kBackupDir));
+  EXPECT_FALSE(Exists(Link()));
   EXPECT_EQ(Content(Chunk(0)), std::string(500, 'X'));
-  EXPECT_TRUE(Exists(StoreDir() / "_1.data"));
+  EXPECT_TRUE(Exists(StoreDir() / kSegmentFile));
   EXPECT_TRUE(Exists(_root / "recovery.signal"));
-  EXPECT_TRUE(ReadPgControl(_root));
+  EXPECT_TRUE(ReadPgControl(_root.string()));
 }
 
 TEST_F(RestoreTest, RefusesATamperedLabel) {

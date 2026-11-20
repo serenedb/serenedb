@@ -18,7 +18,7 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/composite_reader.hpp>
 #include <iresearch/index/field_meta.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/iterators.hpp>
@@ -26,12 +26,12 @@
 #include <iresearch/search/filters/geo_filter.hpp>
 #include <iresearch/search/scorers/score_function.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/store/store_utils.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <set>
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "geo_test_helpers.hpp"
+#include "index_dir.hpp"
 #include "insert_field.hpp"
 #include "s2/s2point_region.h"
 #include "s2/s2polygon.h"
@@ -409,8 +409,9 @@ TEST(GeoDistanceFilterTest, query) {
     { "name": "2", "geometry": { "type": "Point", "coordinates": [ 37.525177, 55.802825 ] } }
   ])");
 
-  irs::MemoryDirectory dir;
-  irs::DirectoryReader reader;
+  ::tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
+  irs::CompositeReader reader;
 
   // index data
   {
@@ -918,8 +919,9 @@ TEST(GeoDistanceFilterTest, checkScorer) {
     { "name": "2", "geometry": { "type": "Point", "coordinates": [ 37.525177, 55.802825 ] } }
   ])");
 
-  irs::MemoryDirectory dir;
-  irs::DirectoryReader reader;
+  ::tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
+  irs::CompositeReader reader;
 
   // index data
   {

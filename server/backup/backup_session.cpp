@@ -23,58 +23,47 @@
 #include <absl/cleanup/cleanup.h>
 #include <absl/time/clock.h>
 
-#include <duckdb/main/attached_database.hpp>
-#include <duckdb/main/database_manager.hpp>
-#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
-#include <span>
+#include <optional>
 #include <utility>
 
 #include "backup/backup_label.h"
 #include "backup/commit_gate.h"
 #include "backup/pg_control.h"
-#include "catalog/boot.h"
-#include "catalog/catalog.h"
 #include "catalog/cluster.h"
 #include "catalog/database_directory.h"
-#include "catalog/entry/inverted_index.h"
-#include "catalog/entry/search_table.h"
 #include "catalog/log.h"
 #include "catalog/transaction.h"
 #include "search/engine.h"
 #include "search/store.h"
 #include "search/task.h"
-#include "utils/file_utils.h"
 
 namespace sdb::backup {
 namespace {
 
-void CollectStores(catalog::SereneDBCatalog& catalog,
-                   std::vector<StoreCut>& stores) {
-  catalog::ForEachSearchStorage(
-    catalog,
-    [&](catalog::SearchTableEntry& table) { stores.push_back({table.oid}); },
-    [&](catalog::InvertedIndexEntry& index) { stores.push_back({index.oid}); });
-}
-
-Cut RecordCut(
-  duckdb::ClientContext& context, const std::filesystem::path& backup_dir,
-  std::span<const duckdb::shared_ptr<duckdb::AttachedDatabase>> pins,
-  pg::ProgressMetrics& progress) {
+Cut RecordCut(duckdb::ClientContext& context, const std::string& backup_dir,
+              pg::ProgressMetrics& progress) {
   Cut cut;
   progress.SetPhase(pg::progress_phase::BaseBackup::WaitingForCommits);
   const auto commits = CommitGate().Close(context);
   auto* log = catalog::Transactions::Get().GetLog();
   SDB_ENSURE(log, "cannot start a backup of a server without a log");
-  cut.log_link = backup_dir;
-  cut.log_size = log->Link(cut.log_link);
-  for (const auto& db : pins) {
-    CollectStores(db->GetCatalog().Cast<catalog::SereneDBCatalog>(),
-                  cut.stores);
-  }
+  cut.log_size = log->Link(backup_dir);
   return cut;
+}
+
+std::optional<duckdb::Identifier> UserTablespace() {
+  std::optional<duckdb::Identifier> found;
+  catalog::ClusterOf()
+    .Set(duckdb::CatalogType::TABLESPACE_ENTRY)
+    .ScanCommitted([&](duckdb::CatalogEntry& entry) {
+      if (!found && !entry.internal) {
+        found = entry.name;
+      }
+    });
+  return found;
 }
 
 }  // namespace
@@ -101,20 +90,17 @@ uint64_t BackupSession::Begin(duckdb::ClientContext& context, BackupOwner owner,
       ERR_MSG("a backup is already in progress"),
       ERR_DETAIL("It is held by the session with PID ", holder, "."));
   }
-  auto pins = catalog::SereneDBDatabases(
-    duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance()));
-  std::erase_if(pins,
-                [](const auto& db) { return db->GetCatalog().InMemory(); });
-  const auto& layout = catalog::ClusterOf().Layout();
-  auto backup_dir = layout.EngineDir() / kBackupDir;
-  if (!catalog::Log::Remove(backup_dir)) {
+  auto& fs = catalog::StorageFileSystem();
+  auto backup_dir =
+    fs.JoinPath(catalog::ClusterOf().Layout().engine, kBackupDir);
+  if (!catalog::Log::Remove(fs, backup_dir)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
                     ERR_MSG("could not remove the leftover backup directory '",
-                            backup_dir.string(), "'"));
+                            backup_dir, "'"));
   }
   catalog::CreateDirectory(backup_dir);
   absl::Cleanup remove_backup_dir = [&]() noexcept {
-    catalog::Log::Remove(backup_dir);
+    catalog::Log::Remove(fs, backup_dir);
   };
 
   progress.SetPhase(pg::progress_phase::BaseBackup::WaitingForCheckpoint);
@@ -124,10 +110,16 @@ uint64_t BackupSession::Begin(duckdb::ClientContext& context, BackupOwner owner,
   progress.SetPhase(pg::progress_phase::BaseBackup::WaitingForMaintenance);
   absl::Cleanup resume_cleanups = [] { search::RequestCleanups(); };
   auto maintenance = search::GetSearchEngine().Maintenance().Close(context);
-  auto cut = RecordCut(context, backup_dir, pins, progress);
+  auto cut = RecordCut(context, backup_dir, progress);
+  if (const auto tablespace = UserTablespace()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("cannot start a backup: tablespace \"",
+                            tablespace->GetIdentifierName(),
+                            "\" keeps its files outside the data directory"),
+                    ERR_DETAIL("A backup copies only the data directory."));
+  }
   auto& positions = PositionSource::Instance();
   const auto start_lsn = positions.Issue();
-  cut.log_link = cut.log_link.lexically_relative(layout.directory);
   auto label_file = BuildBackupLabel(
     label, start_lsn, positions.SystemIdentifier(), absl::Now(), cut);
   std::move(resume_cleanups).Cancel();
@@ -137,7 +129,6 @@ uint64_t BackupSession::Begin(duckdb::ClientContext& context, BackupOwner owner,
   // Noexcept committing of backup start
   _checkpoints = std::move(checkpoints);
   _maintenance = std::move(maintenance);
-  _pins = std::move(pins);
   _backup_dir = std::move(backup_dir);
   _owner = owner;
   _label_file = std::move(label_file);
@@ -179,8 +170,7 @@ void BackupSession::Stop() noexcept {
   search::RequestCleanups();
   _checkpoints.reset();
   catalog::ResumeRemovals();
-  _pins.clear();
-  catalog::Log::Remove(_backup_dir);
+  catalog::Log::Remove(catalog::StorageFileSystem(), _backup_dir);
   _backup_dir.clear();
   _owner = {};
   _label_file.clear();

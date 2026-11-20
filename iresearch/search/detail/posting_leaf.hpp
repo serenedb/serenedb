@@ -38,9 +38,7 @@
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/score_provider.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
-#include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
-#include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/shared.hpp"
@@ -239,13 +237,11 @@ class PostingLeaf {
   }
 
  protected:
-  static constexpr bool kEnc = Shape.enc || !InputType::kVolatileAlways;
+  static constexpr bool kEnc = Shape.enc || !InputType::CONTIGUOUS;
   static constexpr uint32_t kBlock = doc_limits::kBlockSize;
   static constexpr auto kBits = BitsRequired<uint64_t>();
 
-  IRS_FORCE_INLINE InputType& In() const noexcept {
-    return irs::utils::downCast<InputType>(*_in);
-  }
+  IRS_FORCE_INLINE InputType& In() noexcept { return _in; }
 
   IRS_FORCE_INLINE uint32_t* Enc() noexcept {
     if constexpr (kEnc) {
@@ -285,14 +281,16 @@ class PostingLeaf {
     return block_io::StableBitset<InputType>(leaf, _docs.begin());
   }
 
-  void OpenInput(const PostingMeta& meta, const IndexInput& doc_in,
-                 bool bounds) {
-    _in = OpenDocInput(meta, doc_in);
+  void OpenInput(const PostingMeta& meta, const duckdb::InputFile& doc_in,
+                 bool bounds, bool scans = false) {
+    _in = OpenDocInput<InputType>(meta, doc_in,
+                                  scans ? duckdb::ReadAheadSteps::SCANNING
+                                  : Shape.reads == LeafReads::Grows
+                                    ? duckdb::ReadAheadSteps::SKIPPING
+                                    : duckdb::ReadAheadSteps::NONE);
     auto& in = In();
     if constexpr (Shape.reads == LeafReads::Whole) {
-      PrefetchDocs(in, meta);
-    } else if constexpr (Shape.reads == LeafReads::Grows) {
-      _hint.Arm(meta);
+      PrefetchDocs(doc_in, meta);
     }
     if (meta.docs_count <= kBlock) {
       SkipScoreBounds(bounds, in);
@@ -306,24 +304,24 @@ class PostingLeaf {
     }
   }
 
-  bool OpenList(const PostingMeta& meta, const IndexInput& doc_in,
-                IndexFeatures layout, bool bounds) {
+  bool OpenList(const PostingMeta& meta, const duckdb::InputFile& doc_in,
+                IndexFeatures layout, bool bounds, bool scans = false) {
     SDB_ASSERT(meta.docs_count != 0);
     if (meta.docs_count == 1) {
       return false;
     }
-    OpenInput(meta, doc_in, bounds);
+    OpenInput(meta, doc_in, bounds, scans);
     ArmWalk(meta, layout, bounds);
     return true;
   }
 
   IRS_FORCE_INLINE bool Armed() const noexcept { return _walk.Armed(); }
 
-  IRS_FORCE_INLINE BlockCursor& Walk() noexcept { return _walk; }
+  IRS_FORCE_INLINE BlockCursor<InputType>& Walk() noexcept { return _walk; }
 
   IRS_NO_INLINE void Land(doc_id_t min) {
     auto& walk = Walk();
-    const auto left = walk.Seek(min, *_in);
+    const auto left = walk.Seek(min, _in);
     _left_in_leaf = 0;
     _left_in_list = left;
     if (left == 0) [[unlikely]] {
@@ -410,7 +408,7 @@ class PostingLeaf {
     }
     auto& in = In();
     if constexpr (Shape.reads == LeafReads::Grows) {
-      _hint.Advance(in, in.Position());
+      in.Advance();
     }
     if (_left_in_list >= kBlock) [[likely]] {
       block_io::ReadBlockDelta(in, Enc(), _docs, prev);
@@ -553,7 +551,7 @@ class PostingLeaf {
       }
     }
 
-    _left_in_list = _walk.Seek(target, *_in);
+    _left_in_list = _walk.Seek(target, _in);
     if (_left_in_list == 0) [[unlikely]] {
       return false;
     }
@@ -579,8 +577,8 @@ class PostingLeaf {
       _walk.Index(),
       {.block = block, .next = block, .upper = _last, .cap = kBlock}, in, n,
       blocks, [&](uint32_t landed) IRS_FORCE_INLINE {
-        if constexpr (InputType::kVolatileAlways) {
-          const auto* const at = In().At(_walk.BlockStart(landed));
+        if constexpr (InputType::CONTIGUOUS) {
+          const auto* const at = In().Data() + _walk.BlockStart(landed);
           __builtin_prefetch(at, 0, 2);
           __builtin_prefetch(at + ABSL_CACHELINE_SIZE, 0, 2);
         }
@@ -609,7 +607,7 @@ class PostingLeaf {
   IRS_FORCE_INLINE FillRead ReadLeafFill(doc_id_t prev) {
     static_assert(Shape.cursor && !Shape.delta);
     auto& in = In();
-    _hint.Advance(in, in.Position());
+    in.Advance();
     const auto len = std::min(_left_in_list, kBlock);
     const auto leaf =
       block_io::ReadTailForFill(len, in, Enc(), Holes(), _docs, prev);
@@ -626,7 +624,7 @@ class PostingLeaf {
   [[no_unique_address]] utils::Need<Shape.freqs, FreqBuf> _freqs;
   [[no_unique_address]] utils::Need<Shape.gather, GatherBuf> _gather;
   [[no_unique_address]] utils::Need<Shape.docs, DocsBuf> _docs;
-  IndexInput::ptr _in;
+  InputType _in;
   doc_id_t _doc = doc_limits::invalid();
   doc_id_t _last = doc_limits::invalid();
   uint32_t _left_in_leaf = 0;
@@ -637,9 +635,7 @@ class PostingLeaf {
     _provider;
   [[no_unique_address]] utils::Need<Shape.defer, LeafRecipe> _recipe;
   [[no_unique_address]] utils::Need<Shape.cursor, LeafCursor> _cursor;
-  [[no_unique_address]] utils::Need<Shape.reads == LeafReads::Grows,
-                                    GrowingHint> _hint;
-  BlockCursor _walk;
+  BlockCursor<InputType> _walk;
 };
 
 }  // namespace irs::detail

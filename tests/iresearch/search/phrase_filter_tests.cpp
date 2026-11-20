@@ -7473,7 +7473,7 @@ TEST_P(PhraseFilterTestCase, sequential_negation_regression) {
   }
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(phrase_filter_test, PhraseFilterTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),
@@ -9234,7 +9234,7 @@ class OverlapField : public tests::FieldBase {
   std::string_view Value() const final { return _value; }
 
  private:
-  bool Write(irs::DataOutput&) const final { return false; }
+  bool Write(duckdb::WriteStream&) const final { return false; }
 
   std::string _value{"foo"};
   irs::analysis::Tokenizer::ptr _stream;
@@ -9443,7 +9443,7 @@ class RepeatOverlapField : public tests::FieldBase {
   std::string_view Value() const final { return {}; }
 
  private:
-  bool Write(irs::DataOutput&) const final { return false; }
+  bool Write(duckdb::WriteStream&) const final { return false; }
 
   static constexpr std::array<FixedTokensStream::Token, 3> kTokens{{
     {"foo", 1, 0, 3},
@@ -9631,7 +9631,7 @@ class OverlapPrefixField : public tests::FieldBase {
   std::string_view Value() const final { return _value; }
 
  private:
-  bool Write(irs::DataOutput&) const final { return false; }
+  bool Write(duckdb::WriteStream&) const final { return false; }
 
   std::string _value{"foo"};
   irs::analysis::Tokenizer::ptr _stream;
@@ -9735,7 +9735,7 @@ class VariadicOverlapField : public tests::FieldBase {
   std::string_view Value() const final { return {}; }
 
  private:
-  bool Write(irs::DataOutput&) const final { return false; }
+  bool Write(duckdb::WriteStream&) const final { return false; }
 
   static constexpr std::array<FixedTokensStream::Token, 3> kTokens{{
     {"aa", 1, 0, 2},

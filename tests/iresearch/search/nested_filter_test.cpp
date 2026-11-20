@@ -1464,7 +1464,7 @@ TEST_P(NestedFilterTestCase, JoinNone3) {
   }
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 static const auto kDirectories = ::testing::ValuesIn(kTestDirs);
 

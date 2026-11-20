@@ -1,0 +1,29 @@
+control substitution on
+
+# A backup copies only the data directory, so it does not start while a
+# tablespace keeps files outside it.
+
+statement ok
+CREATE TABLESPACE brt_space LOCATION '${__TEST_DIR__}/brt';
+
+statement error
+SELECT pg_backup_start('with a tablespace');
+----
+db error: ERROR: cannot start a backup: tablespace "brt_space" keeps its files outside the data directory
+DETAIL: A backup copies only the data directory.
+
+
+statement ok
+DROP TABLESPACE brt_space;
+
+query
+SELECT pg_backup_start('without tablespaces') IS NOT NULL AS started;
+----
+started
+t
+
+query
+SELECT lsn IS NOT NULL AS stopped FROM pg_backup_stop();
+----
+stopped
+t

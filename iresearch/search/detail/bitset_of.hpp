@@ -331,7 +331,7 @@ template<typename Leaf>
 inline constexpr size_t kWindowLeafBytes =
   sizeof(Leaf) + sizeof(Leaf*) + sizeof(doc_id_t);
 
-inline bool FoldIsSmaller(size_t terms, const IndexInput& doc,
+inline bool FoldIsSmaller(size_t terms, const duckdb::InputFile& doc,
                           doc_id_t docs_count) noexcept {
   const uint64_t leaf = Resolve(doc, []<typename Input> -> uint64_t {
     return kWindowLeafBytes<PostingFill<Input>>;
@@ -339,7 +339,7 @@ inline bool FoldIsSmaller(size_t terms, const IndexInput& doc,
   return terms * leaf >= (uint64_t{docs_count} + doc_limits::min()) / 8;
 }
 
-inline bool TakeFold(bool faster, size_t terms, const IndexInput& doc,
+inline bool TakeFold(bool faster, size_t terms, const duckdb::InputFile& doc,
                      doc_id_t docs_count) noexcept {
   if (!faster || !FoldReachesSegment(docs_count)) {
     return false;
@@ -351,7 +351,8 @@ inline bool TakeFold(bool faster, size_t terms, const IndexInput& doc,
 }
 
 template<typename Result, typename Terms>
-bool TakeBitset(Terms terms, const IndexInput& doc, doc_id_t docs_count) {
+bool TakeBitset(Terms terms, const duckdb::InputFile& doc,
+                doc_id_t docs_count) {
   static_assert(kFoldPostings<Result> != 0,
                 "this position has not said what a window costs it; a probed "
                 "one is decided by TakeProbeBitset");
@@ -370,8 +371,8 @@ inline bool FoldProbeIsFaster(uint64_t interrogations, size_t terms,
 }
 
 template<typename Terms>
-bool TakeProbeBitset(Terms terms, const IndexInput& doc, doc_id_t docs_count,
-                     uint64_t interrogations) noexcept {
+bool TakeProbeBitset(Terms terms, const duckdb::InputFile& doc,
+                     doc_id_t docs_count, uint64_t interrogations) noexcept {
   if (terms.size() < 2) {
     return false;
   }
@@ -410,7 +411,8 @@ inline uint64_t WalkConjunctionCost(
 }
 
 inline bool TakeConjunctionFold(const BitsetBuckets& buckets,
-                                const IndexInput& doc, doc_id_t docs_count,
+                                const duckdb::InputFile& doc,
+                                doc_id_t docs_count,
                                 uint64_t candidates) noexcept {
   if (!buckets.NeedsSet()) {
     return false;
@@ -433,8 +435,9 @@ struct BitsetNode;
 template<>
 struct BitsetNode<FillNode::ptr> {
   template<typename P>
-  static FillNode::ptr Make(BitsetBuckets&& buckets, const IndexInput& doc,
-                            doc_id_t docs_count, TableFilter*) {
+  static FillNode::ptr Make(BitsetBuckets&& buckets,
+                            const duckdb::InputFile& doc, doc_id_t docs_count,
+                            TableFilter*) {
     return memory::make_managed<fill::Impl<fill::BitsetDocs>>(
       BuildBitset<P>(buckets, doc, docs_count));
   }
@@ -443,8 +446,9 @@ struct BitsetNode<FillNode::ptr> {
 template<>
 struct BitsetNode<ProbeNode::ptr> {
   template<typename P>
-  static ProbeNode::ptr Make(BitsetBuckets&& buckets, const IndexInput& doc,
-                             doc_id_t docs_count, TableFilter*) {
+  static ProbeNode::ptr Make(BitsetBuckets&& buckets,
+                             const duckdb::InputFile& doc, doc_id_t docs_count,
+                             TableFilter*) {
     return memory::make_managed<probe::Impl<probe::BitsetDocs>>(
       BuildBitset<P>(buckets, doc, docs_count));
   }
@@ -453,15 +457,16 @@ struct BitsetNode<ProbeNode::ptr> {
 template<>
 struct BitsetNode<LeadNode::ptr> {
   template<typename P>
-  static LeadNode::ptr Make(BitsetBuckets&& buckets, const IndexInput& doc,
-                            doc_id_t docs_count, TableFilter*) {
+  static LeadNode::ptr Make(BitsetBuckets&& buckets,
+                            const duckdb::InputFile& doc, doc_id_t docs_count,
+                            TableFilter*) {
     return memory::make_managed<lead::Impl<lead::BitsetDocs>>(
       BuildBitset<P>(buckets, doc, docs_count));
   }
 };
 
 template<typename Result, typename P = NoPins>
-Result MakeBitsetNode(BitsetBuckets&& buckets, const IndexInput& doc,
+Result MakeBitsetNode(BitsetBuckets&& buckets, const duckdb::InputFile& doc,
                       doc_id_t docs_count, TableFilter* table) {
   return BitsetNode<Result>::template Make<P>(std::move(buckets), doc,
                                               docs_count, table);
@@ -481,7 +486,7 @@ BitsetBuckets DisjunctionBuckets(std::span<const Term> terms,
 
 template<typename Result, typename P = NoPins, typename Term>
 Result MakeBitsetOf(std::span<const Term> terms, const TermReader* field,
-                    const IndexInput& doc, doc_id_t docs_count,
+                    const duckdb::InputFile& doc, doc_id_t docs_count,
                     TableFilter* table) {
   if (!TakeBitset<Result>(terms, doc, docs_count)) {
     return {};
@@ -496,8 +501,9 @@ struct ConstantBitsetNode;
 template<>
 struct ConstantBitsetNode<ProbeNode::ptr> {
   template<typename P>
-  static ProbeNode::ptr Make(BitsetBuckets&& buckets, const IndexInput& doc,
-                             doc_id_t docs_count, score_t value) {
+  static ProbeNode::ptr Make(BitsetBuckets&& buckets,
+                             const duckdb::InputFile& doc, doc_id_t docs_count,
+                             score_t value) {
     return memory::make_managed<probe::ConstantScoredImpl<probe::BitsetDocs>>(
       value, BuildBitset<P>(buckets, doc, docs_count));
   }
@@ -506,16 +512,18 @@ struct ConstantBitsetNode<ProbeNode::ptr> {
 template<>
 struct ConstantBitsetNode<LeadNode::ptr> {
   template<typename P>
-  static LeadNode::ptr Make(BitsetBuckets&& buckets, const IndexInput& doc,
-                            doc_id_t docs_count, score_t value) {
+  static LeadNode::ptr Make(BitsetBuckets&& buckets,
+                            const duckdb::InputFile& doc, doc_id_t docs_count,
+                            score_t value) {
     return memory::make_managed<lead::ConstantScoredImpl<lead::BitsetDocs>>(
       value, BuildBitset<P>(buckets, doc, docs_count));
   }
 };
 
 template<typename Result, typename P = NoPins>
-Result MakeConstantBitsetNode(BitsetBuckets&& buckets, const IndexInput& doc,
-                              doc_id_t docs_count, score_t value) {
+Result MakeConstantBitsetNode(BitsetBuckets&& buckets,
+                              const duckdb::InputFile& doc, doc_id_t docs_count,
+                              score_t value) {
   return ConstantBitsetNode<Result>::template Make<P>(std::move(buckets), doc,
                                                       docs_count, value);
 }

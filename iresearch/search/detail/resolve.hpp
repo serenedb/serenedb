@@ -23,12 +23,11 @@
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
-#include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/dispatch.hpp"
 
 namespace irs::detail {
 
-inline const IndexInput* DocOf(const TermReader& field) noexcept {
+inline const duckdb::InputFile* DocOf(const TermReader& field) noexcept {
   return field.Handles().doc;
 }
 
@@ -85,9 +84,9 @@ struct ArityAxis : ArrayAxis<ArityKeys<Max, Min>()> {
 };
 
 struct PhraseHandles {
-  const IndexInput* doc = nullptr;
-  const IndexInput* pos = nullptr;
-  const IndexInput* pay = nullptr;
+  const duckdb::InputFile* doc = nullptr;
+  const duckdb::InputFile* pos = nullptr;
+  const duckdb::InputFile* pay = nullptr;
   IndexFeatures features = IndexFeatures::None;
   bool bounds = false;
 
@@ -100,7 +99,7 @@ struct PhraseHandles {
   }
 };
 
-inline const IndexInput* SegmentDoc(const SubReader& segment) {
+inline const duckdb::InputFile* SegmentDoc(const SubReader& segment) {
   for (const auto id : segment.field_ids()) {
     for (const auto* reader : segment.fields(id)) {
       if (const auto* doc = reader->Handles().doc) {

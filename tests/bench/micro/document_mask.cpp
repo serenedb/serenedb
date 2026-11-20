@@ -28,6 +28,7 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <duckdb/common/serializer/memory_stream.hpp>
 #include <map>
 #include <memory>
 #include <random>
@@ -43,7 +44,6 @@
 #include "iresearch/search/detail/bitset_storage.hpp"
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/search/probe/bitset_docs.hpp"
-#include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/containers/bitset.hpp"
 #include "iresearch/utils/string.hpp"
 
@@ -1072,8 +1072,9 @@ void BmDeserializeFrozen(benchmark::State& state) {
   const auto blob = SerializeMask(mask.Set());
 
   for (auto _ : state) {
-    irs::BytesViewInput in{
-      irs::ViewCast<irs::byte_type>(std::string_view{blob})};
+    duckdb::MemoryStream in{
+      reinterpret_cast<duckdb::data_ptr_t>(const_cast<char*>(blob.data())),
+      blob.size()};
     auto restored = irs::DocumentMask::ReadFrozen(in, blob.size());
     benchmark::DoNotOptimize(restored.Count());
   }

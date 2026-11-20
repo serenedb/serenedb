@@ -418,6 +418,22 @@ void BooleanFilter::ExplainTerms(const SubReader& segment,
     });
 }
 
+bool BooleanFilter::Prefetch(const SubReader& segment) const {
+  bool fetching = false;
+  for (const auto occur : kAllOccur) {
+    const auto& bucket = Bucket(occur);
+    for (const auto& clause : bucket.terms) {
+      if (const auto* reader = segment.field(clause.field)) {
+        fetching |= reader->Prefetch(clause.term);
+      }
+    }
+    for (const auto& child : bucket.filters) {
+      fetching |= child->Prefetch(segment);
+    }
+  }
+  return fetching;
+}
+
 QueryBuilder::ptr BooleanFilter::PrepareSegment(
   const SubReader& segment, const PrepareContext& ctx) const {
   SDB_ASSERT(Valid());
@@ -478,7 +494,7 @@ QueryBuilder::ptr BooleanFilter::PrepareSegment(
             collector->Term(ctx.thread, i).Collect(meta);
           }
           if (const auto extent = DocExtent(meta); extent != 0) {
-            AppendRange(docs, meta.doc_start, meta.doc_start + extent);
+            docs.push_back({.offset = meta.doc_start, .size = extent});
           }
           add(i, meta);
           ++next;
@@ -487,7 +503,7 @@ QueryBuilder::ptr BooleanFilter::PrepareSegment(
         add(next, kNoPosting);
       }
       if (const auto* doc = reader->Handles().doc; doc && run.size() > 1) {
-        HintRanges(*doc, docs);
+        doc->Hint(docs);
       }
     },
     [&](const Filter& filter, Occur occur) {

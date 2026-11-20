@@ -313,11 +313,13 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
         state->search_backfill = std::move(backfill);
       } else {
         const auto options = catalog::ResolveSettings(index_entry.options);
+        auto& serene = index_entry.catalog.Cast<catalog::SereneDBCatalog>();
         auto storage = std::make_shared<search::Store>(
-          index_entry.catalog.Cast<catalog::SereneDBCatalog>().Directory(),
-          index_entry.catalog.InMemory(), false, index_entry.catalog.GetOid(),
-          index_entry.oid, options, index_entry.Config()->top_k_scorer,
-          /*is_new=*/true);
+          serene.Directory(),
+          serene.StoragePath(transaction, index_entry,
+                             index_entry.Tablespace()),
+          serene.InMemory(), false, serene.GetOid(), index_entry.oid, options,
+          index_entry.Config()->top_k_scorer, /*is_new=*/true);
         storage->ApplyOptions(options);
         index_entry.AdoptStorage(storage);
         storage->StartTasks();

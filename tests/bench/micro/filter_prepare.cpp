@@ -24,11 +24,12 @@
 #include <array>
 #include <atomic>
 #include <duckdb/common/allocator.hpp>
+#include <duckdb/common/file_system.hpp>
 #include <duckdb/main/database.hpp>
 #include <filesystem>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
-#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/composite_reader.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/detail/search_range.hpp>
@@ -42,7 +43,6 @@
 #include <iresearch/search/filters/wildcard_filter.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/search/scorers/tfidf.hpp>
-#include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/string.hpp>
 #include <iresearch/utils/type_limits.hpp>
@@ -76,7 +76,7 @@ struct KeywordField {
     return irs::IndexFeatures::Freq | irs::IndexFeatures::Norm;
   }
 
-  bool Write(irs::DataOutput&) const { return true; }
+  bool Write(duckdb::WriteStream&) const { return true; }
 
   irs::field_id id{irs::field_limits::invalid()};
   std::string_view value;
@@ -95,7 +95,7 @@ struct TextField {
            irs::IndexFeatures::Norm;
   }
 
-  bool Write(irs::DataOutput&) const { return true; }
+  bool Write(duckdb::WriteStream&) const { return true; }
 
   irs::field_id id{irs::field_limits::invalid()};
   std::string_view value;
@@ -141,8 +141,7 @@ class FilterPrepareFixture : public benchmark::Fixture {
   }
 
   void TearDown(const ::benchmark::State&) override {
-    _reader = irs::DirectoryReader{};
-    _dir.reset();
+    _reader = irs::CompositeReader{};
     if (!_dir_path.empty()) {
       std::error_code ec;
       std::filesystem::remove_all(_dir_path, ec);
@@ -153,9 +152,8 @@ class FilterPrepareFixture : public benchmark::Fixture {
  protected:
   void BuildIndex(size_t num_segments);
 
-  std::unique_ptr<irs::MMapDirectory> _dir;
   std::filesystem::path _dir_path;
-  irs::DirectoryReader _reader;
+  irs::CompositeReader _reader;
 
   irs::BM25 _bm25;
   irs::TFIDF _tfidf;
@@ -183,8 +181,7 @@ class FilterPrepareFixtureT : public FilterPrepareFixture {
 };
 
 void FilterPrepareFixture::BuildIndex(size_t num_segments) {
-  _reader = irs::DirectoryReader{};
-  _dir.reset();
+  _reader = irs::CompositeReader{};
 
   if (_dir_path.empty()) {
     _dir_path =
@@ -192,12 +189,12 @@ void FilterPrepareFixture::BuildIndex(size_t num_segments) {
   }
   std::filesystem::remove_all(_dir_path);
   std::filesystem::create_directories(_dir_path);
-  _dir = std::make_unique<irs::MMapDirectory>(_dir_path);
-
   auto* db = &irs::DuckDBEngine::Instance().instance();
+  auto& fs = duckdb::FileSystem::GetFileSystem(*db);
+  const auto root = _dir_path.string();
+  tests::IndexDir dir{*db, fs, root};
+
   irs::IndexWriterOptions writer_opts;
-  writer_opts.db = db;
-  writer_opts.reader_options.db = db;
   writer_opts.column_options = [](irs::field_id) -> irs::ColumnOptions {
     return {};
   };
@@ -207,7 +204,7 @@ void FilterPrepareFixture::BuildIndex(size_t num_segments) {
     return next->fetch_add(1, std::memory_order_relaxed);
   };
   auto writer =
-    tests::IndexWriter::Make(*_dir, tests::kOmCreate, std::move(writer_opts));
+    tests::IndexWriter::Make(dir, tests::kOmCreate, std::move(writer_opts));
 
   KeywordField kw_field{.id = kKwFieldId};
   TextField body_field{.id = kBodyFieldId};
@@ -229,7 +226,7 @@ void FilterPrepareFixture::BuildIndex(size_t num_segments) {
     writer->RefreshCommit();
   }
 
-  _reader = tests::OpenReader(*_dir, irs::IndexReaderOptions{.db = db});
+  _reader = tests::OpenReader(dir, irs::IndexReaderOptions{});
 }
 
 void ApplyArgs(benchmark::internal::Benchmark* b) {
@@ -342,7 +339,7 @@ void SetUpNot(irs::BooleanFilter& n) {
 }
 
 void RunPrepare(const irs::Filter::ptr& filter,
-                const irs::DirectoryReader& reader, const irs::Scorer* scorer) {
+                const irs::CompositeReader& reader, const irs::Scorer* scorer) {
   // No scorer means this variant does not score, so it builds no collector at
   // all -- which is what an unscored prepare now costs.
   auto& allocator = duckdb::Allocator::DefaultAllocator();

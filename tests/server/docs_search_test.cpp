@@ -360,11 +360,10 @@ TEST_F(DocsIndex, LayoutMustNameTheTermsOfEveryIndexedColumn) {
       line = line.substr(0, line.rfind(' '));
     }
   }
-  const auto layout = absl::StrJoin(lines, "\n");
+  auto layout = absl::StrJoin(lines, "\n");
   const IndexFile file{
     .name = kLayoutFile,
-    .bytes = {reinterpret_cast<const std::uint8_t*>(layout.data()),
-              layout.size()}};
+    .bytes = {reinterpret_cast<std::uint8_t*>(layout.data()), layout.size()}};
   try {
     CheckLayout({&file, 1});
     FAIL() << "a layout without the title terms was accepted";

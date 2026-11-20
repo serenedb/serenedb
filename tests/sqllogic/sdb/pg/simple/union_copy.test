@@ -61,3 +61,51 @@ id	u
 2	two
 3	three
 4	4
+
+
+statement count 4
+COPY union_src TO '${__TEST_DIR__}/union.bin' (FORMAT binary);
+
+
+statement error
+COPY union_pq FROM '${__TEST_DIR__}/union.bin' (FORMAT binary);
+----
+db error: ERROR: incorrect binary data format
+
+
+statement ok
+CREATE TABLE union_list (id INTEGER, l UNION(num INTEGER, str VARCHAR)[]);
+
+
+statement count 2
+INSERT INTO union_list VALUES (1, [union_value(num := 1)]), (2, [union_value(str := 'two')]);
+
+
+statement ok
+CREATE TABLE union_list_back (id INTEGER, l UNION(num INTEGER, str VARCHAR)[]);
+
+
+statement count 2
+COPY union_list TO '${__TEST_DIR__}/union_list.txt' (FORMAT text);
+
+
+statement count 2
+COPY union_list_back FROM '${__TEST_DIR__}/union_list.txt' (FORMAT text);
+
+
+query
+SELECT id, len(l) AS n, l[1]::VARCHAR AS e FROM union_list_back ORDER BY id;
+----
+id	n	e
+1	1	1
+2	1	two
+
+
+statement count 2
+COPY union_list TO '${__TEST_DIR__}/union_list.bin' (FORMAT binary);
+
+
+statement error
+COPY union_list_back FROM '${__TEST_DIR__}/union_list.bin' (FORMAT binary);
+----
+db error: ERROR: incorrect binary data format

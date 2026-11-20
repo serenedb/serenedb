@@ -255,3 +255,48 @@ statement error
 COPY huge_dst FROM '${__TEST_DIR__}/copy_text_huge_bad.txt' (FORMAT text);
 ----
 db error: ERROR: value "340282366920938463463374607431768211456" is out of range for type uhugeint
+
+
+statement ok
+CREATE TABLE copy_text_ts (s TIMESTAMP_S, m TIMESTAMP_MS, n TIMESTAMP_NS);
+
+
+statement ok
+COPY (SELECT 'x'::BLOB) TO '${__TEST_DIR__}/copy_text_ts_bad.txt' (FORMAT BLOB);
+
+
+statement error
+COPY copy_text_ts (s) FROM '${__TEST_DIR__}/copy_text_ts_bad.txt' (FORMAT text);
+----
+db error: ERROR: invalid input syntax for type timestamp: "x"
+
+
+statement error
+COPY copy_text_ts (m) FROM '${__TEST_DIR__}/copy_text_ts_bad.txt' (FORMAT text);
+----
+db error: ERROR: invalid input syntax for type timestamp: "x"
+
+
+statement error
+COPY copy_text_ts (n) FROM '${__TEST_DIR__}/copy_text_ts_bad.txt' (FORMAT text);
+----
+db error: ERROR: invalid input syntax for type timestamp: "x"
+
+
+statement ok
+SET TimeZone = 'Asia/Kolkata';
+
+
+statement count 1
+COPY (SELECT '294247-01-10 04:00:54.775806+00'::TIMESTAMPTZ AS t) TO '${__TEST_DIR__}/copy_text_tz_max.txt' (FORMAT text);
+
+
+query
+SELECT replace(content, chr(10), '|') AS content FROM read_text('${__TEST_DIR__}/copy_text_tz_max.txt');
+----
+content
+294247-01-10 04:00:54.775806+00|
+
+
+statement ok
+RESET TimeZone;

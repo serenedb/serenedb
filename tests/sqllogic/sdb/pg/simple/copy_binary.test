@@ -142,6 +142,21 @@ n
 0
 
 
+statement ok
+COPY (SELECT ('\x5047434f50590aff0d0a00' || '0000000000000000' || '0001' || '00000065' || repeat('80', 101) || 'ffff')::BLOB)
+TO '${__TEST_DIR__}/copy_binary_long_int.bin' (FORMAT BLOB);
+
+
+statement ok
+CREATE TABLE copy_binary_int (a INTEGER);
+
+
+statement error
+COPY copy_binary_int FROM '${__TEST_DIR__}/copy_binary_long_int.bin' (FORMAT binary);
+----
+db error: ERROR: incorrect binary data format
+
+
 statement count 1
 COPY (SELECT ARRAY[ARRAY['a & b'::tsquery]] AS q) TO '${__TEST_DIR__}/copy_binary_tsquery.bin' (FORMAT binary);
 
@@ -151,3 +166,78 @@ SELECT hex(content) AS bytes FROM read_blob('${__TEST_DIR__}/copy_binary_tsquery
 ----
 bytes
 5047434F50590AFF0D0A00000000000000000000010000002500000002000000000000001900000001000000010000000100000001000000056120262062FFFF
+
+
+statement ok
+SET TimeZone = 'UTC';
+
+
+statement ok
+CREATE TABLE cbd_src AS
+SELECT g::INTEGER AS id,
+  [g::TINYINT, NULL] AS ti,
+  [g::UTINYINT] AS uti,
+  [g::USMALLINT] AS usi,
+  [g::UINTEGER] AS ui,
+  [g::UBIGINT] AS ubi,
+  [g::HUGEINT] AS hi,
+  [g::UHUGEINT] AS uhi,
+  ['01:02:03.123456'::TIME_NS] AS tns,
+  ['2024-01-02 03:04:05'::TIMESTAMP_S] AS tss,
+  ['2024-01-02 03:04:05.123'::TIMESTAMP_MS] AS tsm,
+  ['2024-01-02 03:04:05.123456'::TIMESTAMP_NS] AS tsn,
+  ['2024-01-02 03:04:05.123456+00'::TIMESTAMPTZ_NS] AS tzn,
+  array_value(g::INTEGER, g::INTEGER + 1) AS fa,
+  {'m': MAP {'k': g::INTEGER}, 'a': array_value(g::INTEGER, g::INTEGER + 1)} AS r
+FROM generate_series(1, 3) t(g);
+
+
+statement ok
+CREATE TABLE cbd_bin AS SELECT * FROM cbd_src WHERE false;
+
+
+statement count 3
+COPY cbd_src TO '${__TEST_DIR__}/copy_binary_duckdb.bin' (FORMAT binary);
+
+
+statement count 3
+COPY cbd_bin FROM '${__TEST_DIR__}/copy_binary_duckdb.bin' (FORMAT binary);
+
+
+query
+SELECT count(*) AS mismatched FROM cbd_src x JOIN cbd_bin y USING (id)
+WHERE x.ti IS DISTINCT FROM y.ti OR x.uti IS DISTINCT FROM y.uti OR x.usi IS DISTINCT FROM y.usi
+   OR x.ui IS DISTINCT FROM y.ui OR x.ubi IS DISTINCT FROM y.ubi OR x.hi IS DISTINCT FROM y.hi
+   OR x.uhi IS DISTINCT FROM y.uhi OR x.tns IS DISTINCT FROM y.tns OR x.tss IS DISTINCT FROM y.tss
+   OR x.tsm IS DISTINCT FROM y.tsm OR x.tsn IS DISTINCT FROM y.tsn OR x.tzn IS DISTINCT FROM y.tzn
+   OR x.fa IS DISTINCT FROM y.fa OR x.r IS DISTINCT FROM y.r;
+----
+mismatched
+0
+
+
+statement ok
+CREATE TABLE cbd_maps AS SELECT g::INTEGER AS id, [MAP {'k': g::INTEGER}, NULL] AS ml FROM generate_series(1, 3) t(g);
+
+
+statement ok
+CREATE TABLE cbd_maps_txt AS SELECT * FROM cbd_maps WHERE false;
+
+
+statement count 3
+COPY cbd_maps TO '${__TEST_DIR__}/copy_binary_maps.txt' (FORMAT text);
+
+
+statement count 3
+COPY cbd_maps_txt FROM '${__TEST_DIR__}/copy_binary_maps.txt' (FORMAT text);
+
+
+query
+SELECT count(*) AS mismatched FROM cbd_maps x JOIN cbd_maps_txt y USING (id) WHERE x.ml IS DISTINCT FROM y.ml;
+----
+mismatched
+0
+
+
+statement ok
+RESET TimeZone;

@@ -412,6 +412,22 @@ line
 
 
 statement ok
+COPY (SELECT ROW('2024-01-15 12:00:00'::TIMESTAMP, 1) AS r)
+TO '${__TEST_DIR__}/ctd_ts_space_record.txt' (FORMAT text, DELIMITER ' ');
+
+
+statement ok
+COPY ctd_raw FROM '${__TEST_DIR__}/ctd_ts_space_record.txt' (FORMAT csv, DELIMITER E'\x01', QUOTE E'\x02');
+
+
+query
+DELETE FROM ctd_raw RETURNING line;
+----
+line
+("2024-01-15\\ 12:00:00",1)
+
+
+statement ok
 CREATE TABLE ctd_escapes (id INTEGER, v TEXT);
 
 

@@ -75,6 +75,66 @@ COPY back FROM '${__TEST_DIR__}/rendered_pg.csv' (FORMAT csv, RENDERING sql);
 db error: ERROR: RENDERING must be 'duckdb' or 'postgres', got 'sql'
 
 
+statement ok
+CREATE TABLE rendered_ints (a int, b text);
+
+
+statement ok
+COPY (SELECT ('1' || chr(9) || 'x' || chr(10) || '\\N' || chr(9) || 'y' || chr(10) || 'abc' || chr(9) || 'z' || chr(10))::BLOB)
+TO '${__TEST_DIR__}/rendered_ints.txt' (FORMAT BLOB);
+
+
+statement error (Could not convert string 'abc' to INT32|invalid input syntax for type integer: "abc")
+COPY rendered_ints FROM '${__TEST_DIR__}/rendered_ints.txt' (FORMAT text, RENDERING duckdb);
+
+
+statement count 2
+COPY rendered_ints FROM '${__TEST_DIR__}/rendered_ints.txt' (FORMAT text, RENDERING duckdb, ON_ERROR ignore);
+
+
+query
+SELECT a, b FROM rendered_ints ORDER BY b;
+----
+a	b
+1	x
+NULL	y
+
+
+statement count 1
+COPY (SELECT 'x y' AS s, [1, 2] AS l) TO '${__TEST_DIR__}/rendered_varchar.csv' (FORMAT csv, RENDERING duckdb);
+
+
+query
+SELECT replace(content, chr(10), '|') AS content FROM read_text('${__TEST_DIR__}/rendered_varchar.csv');
+----
+content
+x y,"[1, 2]"|
+
+
+statement ok
+COPY (SELECT ('1,' || chr(10) || '2,x' || chr(10) || '3,y' || chr(10) || '4,5' || chr(10))::BLOB)
+TO '${__TEST_DIR__}/rendered_pg_bad.csv' (FORMAT BLOB);
+
+
+query
+SELECT id, v FROM read_csv('${__TEST_DIR__}/rendered_pg_bad.csv', header = false, columns = {'id': 'INTEGER', 'v': 'INTEGER'}, rendering = 'postgres', ignore_errors = true) ORDER BY id;
+----
+id	v
+1	NULL
+4	5
+
+
+statement ok
+COPY (SELECT ('1|[1]' || chr(10) || '2|{' || chr(10))::BLOB) TO '${__TEST_DIR__}/rendered_pg_json.csv' (FORMAT BLOB);
+
+
+query
+SELECT id, j FROM read_csv('${__TEST_DIR__}/rendered_pg_json.csv', header = false, delim = '|', columns = {'id': 'INTEGER', 'j': 'JSON'}, rendering = 'postgres', ignore_errors = true) ORDER BY id;
+----
+id	j
+1	[1]
+
+
 query
 SELECT id, l, b, d FROM read_csv('${__TEST_DIR__}/rendered_pg.csv', header = false, columns = {'id': 'INTEGER', 'l': 'INTEGER[]', 'b': 'BOOLEAN', 'd': 'DATE'}, rendering = 'postgres') ORDER BY id;
 ----
@@ -133,6 +193,22 @@ SELECT ARRAY[1, 2] AS l, true AS b, ROW(1, 'a') AS r;
 ----
 l	b	r
 {1,2}	t	(1,a)
+
+
+skipif pg-wire-extended
+query
+SELECT ARRAY[1, 2] AS l, 'x y' AS s;
+----
+l	s
+[1, 2]	x y
+
+
+onlyif pg-wire-extended
+query
+SELECT ARRAY[1, 2] AS l, 'x y' AS s;
+----
+l	s
+{1,2}	x y
 
 
 statement ok

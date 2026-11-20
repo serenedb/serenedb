@@ -335,7 +335,7 @@ inline bool IsTemporaryCreate(const duckdb::SQLStatement& statement) {
 // STDIN through the batch queue. The other formats (json/parquet/...) go
 // through DuckDB's own CopyFunction instead.
 inline bool ScansCopyStream(const duckdb::CopyInfo& info) {
-  if (info.format != "csv" && info.format != "json") {
+  if (info.format != "csv" && info.format != "text" && info.format != "json") {
     return false;
   }
   for (const auto& [name, values] : info.options) {
@@ -347,7 +347,7 @@ inline bool ScansCopyStream(const duckdb::CopyInfo& info) {
         value != "auto" && value != "auto_detect") {
       return false;
     }
-    if (name == "encoding" && value != "utf-8") {
+    if (name == "encoding" && value != "utf-8" && value != "utf8") {
       return false;
     }
   }
@@ -1640,20 +1640,17 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
   // CopyInResponse's column count: the explicit COPY column list, else the
   // target table's column count (PG sends natts + one per-column format code).
   const auto& copy_info = *statement->Cast<duckdb::CopyStatement>().info;
-  sdb::formats::CsvDialect dialect;
-  auto encoding = sdb::formats::TextEncoding::Utf8;
   const auto bound_info =
     sdb::connector::BindCopyOptions(*_connection_ctx, copy_info);
   if (format == CopyFormat::Binary) {
     sdb::connector::CheckBinaryCopyOptions(*bound_info, true);
   } else if (format == CopyFormat::Text || format == CopyFormat::Csv) {
-    const auto options = sdb::connector::ResolveCopyOptions(
-      format == CopyFormat::Csv ? sdb::connector::CopyMode::Csv
-                                : sdb::connector::CopyMode::Text,
-      true, bound_info->options);
-    sdb::connector::CheckCopyOptions(options, true);
-    dialect = {options.delim, options.quote, options.escape};
-    encoding = options.encoding;
+    duckdb::CheckCopyFormatOptions(
+      duckdb::ParseCopyFormatOptions(format == CopyFormat::Csv
+                                       ? duckdb::CopyTextFormat::CSV
+                                       : duckdb::CopyTextFormat::TEXT,
+                                     true, bound_info->options),
+      true);
   }
   auto copy_columns = static_cast<int16_t>(copy_info.select_list.size());
   if (copy_columns == 0) {
@@ -1664,32 +1661,22 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
     }
   }
   const bool scans_stream =
-    format == CopyFormat::Other && ScansCopyStream(*bound_info);
+    format != CopyFormat::Binary && ScansCopyStream(*bound_info);
   const auto window = duckdb::TaskScheduler::QueryThreads(*_conn->context) *
                       (scans_stream ? sdb::pg::kCopyStreamBatchesPerThread
                                     : sdb::pg::kCopyBatchesPerThread);
   sdb::pg::CopyInBatches batches{window};
   batches.OnStarve([this] { _copy_gate.Kick(); });
   _connection_ctx->SetSideChannel(&batches);
-  const auto stream_key = duckdb::RowStreamKey(copy_info.file_path);
+  std::optional<sdb::pg::CopyInStreamOffer> stream;
   if (scans_stream) {
-    duckdb::ClientContext& client = *_connection_ctx;
-    client.registered_state->Insert(
-      stream_key,
-      duckdb::make_shared_ptr<duckdb::RowStreamState>(
-        duckdb::make_shared_ptr<sdb::pg::CopyInStream>(batches, window)));
+    stream.emplace(*_connection_ctx, copy_info.file_path, batches, window);
   }
-  absl::Cleanup unregister_stream = [&] {
-    if (scans_stream) {
-      duckdb::ClientContext& client = *_connection_ctx;
-      client.registered_state->Remove(stream_key);
-    }
-  };
   _feeder_done.store(false, std::memory_order_relaxed);
   _copy_route.store(true, std::memory_order_release);
   WriteCopyInResponse(this->_send, IsBinaryWireFormat(format), copy_columns);
   this->KickSend();
-  RunCopyInFeeder(batches, format, dialect, encoding).Detach();
+  RunCopyInFeeder(batches, format).Detach();
 
   // The feeder join below is an async park (co_await), so the cleanup that must
   // run on every exit cannot live in a destructor (no RAII guard /
@@ -1710,6 +1697,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
   } catch (...) {
     error = std::current_exception();
   }
+  stream.reset();
   // Always join the feeder before the queue (a local) is destroyed; Abort
   // wakes it if the worker errored without draining the client's CopyData.
   // The join is a park (the feeder's last act is RequestRun), keeping the
@@ -1722,7 +1710,6 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
   _copy_route.store(false, std::memory_order_release);
   _copy_room.Kick();
   _connection_ctx->SetSideChannel<sdb::pg::CopyInBatches>(nullptr);
-  std::move(unregister_stream).Invoke();
   if (error) {
     std::rethrow_exception(error);
   }
@@ -1744,17 +1731,17 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyToStdout(
   // the PG text formats.
   const bool binary = format == CopyFormat::Binary;
   auto& copy = statement->Cast<duckdb::CopyStatement>();
-  sdb::connector::PgCopyOptions options;
+  duckdb::CopyFormatOptions options;
   const auto bound_info =
     sdb::connector::BindCopyOptions(*_connection_ctx, *copy.info);
   if (binary) {
     sdb::connector::CheckBinaryCopyOptions(*bound_info, false);
   } else {
-    options = sdb::connector::ResolveCopyOptions(
-      format == CopyFormat::Csv ? sdb::connector::CopyMode::Csv
-                                : sdb::connector::CopyMode::Text,
-      false, bound_info->options);
-    sdb::connector::CheckCopyOptions(options, false);
+    options = duckdb::ParseCopyFormatOptions(format == CopyFormat::Csv
+                                               ? duckdb::CopyTextFormat::CSV
+                                               : duckdb::CopyTextFormat::TEXT,
+                                             false, bound_info->options);
+    duckdb::CheckCopyFormatOptions(options, false);
   }
   auto inner = ExtractCopyToQuery(copy);
   auto prepared = PrepareInternal(std::move(inner));
@@ -1857,16 +1844,10 @@ yaclib::Task<> PgWireSession<Kind>::WaitCopyInput() {
 
 template<SocketKind Kind>
 yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
-  sdb::pg::CopyInBatches& batches, CopyFormat format,
-  sdb::formats::CsvDialect dialect, sdb::formats::TextEncoding encoding) {
+  sdb::pg::CopyInBatches& batches, CopyFormat format) {
   // Only the PG text format has the "\." end-of-data marker to scan for; binary
   // and csv stream straight through.
   const bool is_text = format == CopyFormat::Text;
-  std::optional<sdb::formats::Utf8Decoder> decoder;
-  if (encoding != sdb::formats::TextEncoding::Utf8) {
-    decoder.emplace(encoding);
-  }
-  std::string decoded;
   absl::Cleanup done_guard = [this, task = this->_task] {
     _feeder_done.store(true, std::memory_order_release);
     _copy_room.Kick();
@@ -1892,20 +1873,10 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
   };
   constexpr size_t kHeader = 1 + sizeof(uint32_t);
   CopyEodScanner scanner;
-  const auto batch_format = [&] {
-    switch (format) {
-      case CopyFormat::Text:
-        return sdb::pg::CopyBatchFormat::Text;
-      case CopyFormat::Csv:
-        return sdb::pg::CopyBatchFormat::Csv;
-      case CopyFormat::Binary:
-        return sdb::pg::CopyBatchFormat::Binary;
-      default:
-        return sdb::pg::CopyBatchFormat::Raw;
-    }
-  }();
-  sdb::pg::CopyBatchBuilder builder{batch_format, sdb::pg::kCopyBatchBytes,
-                                    false, dialect};
+  sdb::pg::CopyBatchBuilder builder{format == CopyFormat::Binary
+                                      ? sdb::pg::CopyBatchFormat::Binary
+                                      : sdb::pg::CopyBatchFormat::Raw,
+                                    sdb::pg::kCopyBatchBytes};
   bool eod = false;
   bool failed = false;
   message::Chain retained;
@@ -1988,20 +1959,13 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
         const auto take = std::min<uint64_t>(body, chunk.size());
         if (feeding()) {
           guarded([&] {
-            auto piece = chunk.substr(0, take);
-            bool stable = true;
-            if (decoder) {
-              decoded.clear();
-              decoder->Decode(piece, decoded);
-              piece = decoded;
-              stable = false;
-            }
+            const auto piece = chunk.substr(0, take);
             if (is_text) {
               const auto scanned = scanner.Scan(piece);
               builder.Feed(scanned.carry, false);
-              builder.Feed(scanned.data, stable);
+              builder.Feed(scanned.data, true);
             } else {
-              builder.Feed(piece, stable);
+              builder.Feed(piece, true);
             }
           });
           if (is_text && scanner.Ended() && feeding()) {
@@ -2020,9 +1984,6 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
     } else if (type == PQ_MSG_COPY_DONE) {
       if (feeding()) {
         guarded([&] {
-          if (decoder) {
-            decoder->Finish();
-          }
           if (is_text) {
             builder.Feed(scanner.Finish(), false);
           }

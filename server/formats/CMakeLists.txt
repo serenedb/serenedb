@@ -1,10 +1,4 @@
 target_sources(
     sereneserver
-    PRIVATE
-        copy_decoder.cpp
-        csv_splitter.cpp
-        lexed_unit.cpp
-        pg_value_decoder.cpp
-        text_encoding.cpp
-        text_splitter.cpp
+    PRIVATE binary_copy_decoder.cpp pg_value_decoder.cpp text_encoding.cpp
 )

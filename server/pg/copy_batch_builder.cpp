@@ -41,12 +41,6 @@ constexpr int32_t kNullFieldLength = -1;
                   ERR_MSG("COPY FROM: ", message));
 }
 
-bool EndsRow(std::string_view bytes, size_t pos,
-             size_t backslashes_before) noexcept {
-  const auto run = TrailingBackslashes(bytes.substr(0, pos));
-  return (run == pos ? run + backslashes_before : run) % 2 == 0;
-}
-
 size_t WalkBinaryRows(std::string_view bytes, size_t pos) noexcept {
   const char* const data = bytes.data();
   const size_t size = bytes.size();
@@ -81,189 +75,36 @@ size_t WalkBinaryRows(std::string_view bytes, size_t pos) noexcept {
   }
 }
 
-size_t BlankLines(std::string_view rows, char line_break) noexcept {
-  size_t blank = 0;
-  for (;;) {
-    const auto rest = rows.substr(blank);
-    if (rest.starts_with(line_break)) {
-      blank += 1;
-    } else if (line_break == '\n' && rest.starts_with("\r\n")) {
-      blank += 2;
-    } else {
-      return blank;
-    }
-  }
-}
-
 }  // namespace
-
-size_t TrailingBackslashes(std::string_view bytes) noexcept {
-  const auto last = bytes.find_last_not_of('\\');
-  return last == std::string_view::npos ? bytes.size()
-                                        : bytes.size() - last - 1;
-}
-
-size_t FindRowEnd(std::string_view bytes, size_t from,
-                  size_t backslashes_before, char line_break) noexcept {
-  for (auto pos = bytes.find(line_break, from); pos != std::string_view::npos;
-       pos = bytes.find(line_break, pos + 1)) {
-    if (EndsRow(bytes, pos, backslashes_before)) {
-      return pos;
-    }
-  }
-  return std::string_view::npos;
-}
-
-size_t FindLastRowEnd(std::string_view bytes, char line_break) noexcept {
-  for (auto end = bytes.size(); end != 0;) {
-    const auto pos = bytes.rfind(line_break, end - 1);
-    if (pos == std::string_view::npos) {
-      break;
-    }
-    if (EndsRow(bytes, pos, 0)) {
-      return pos;
-    }
-    end = pos;
-  }
-  return std::string_view::npos;
-}
 
 CopyBatch& CopyBatchBuilder::Current() {
   if (!_batch) {
     _batch = std::make_unique<CopyBatch>();
-    _batch->line_break = _line_break == '\0' ? '\n' : _line_break;
   }
   return *_batch;
 }
 
 std::unique_ptr<CopyBatch> CopyBatchBuilder::Take() {
-  return std::move(_sealed ? _sealed : _batch);
+  return std::move(_batch);
 }
 
 void CopyBatchBuilder::AddRows(std::string_view rows, bool stable) {
   if (rows.empty()) {
     return;
   }
-  const auto add = [stable](CopyBatch& batch, std::string_view part) {
-    if (stable) {
-      batch.AddView(part);
-    } else {
-      batch.AddOwned(std::string{part});
-    }
-  };
-  if (_join_blank_lines && !_sealed && Full()) {
-    const auto blank = BlankLines(rows, _batch->line_break);
-    if (blank != 0) {
-      add(*_batch, rows.substr(0, blank));
-      rows.remove_prefix(blank);
-      if (rows.empty()) {
-        return;
-      }
-    }
-    _sealed = std::move(_batch);
+  if (stable) {
+    Current().AddView(rows);
+  } else {
+    Current().AddOwned(std::string{rows});
   }
-  add(Current(), rows);
-}
-
-void CopyBatchBuilder::AddRow(std::string row) {
-  if (_join_blank_lines && !_sealed && Full()) {
-    if (BlankLines(row, _batch->line_break) == row.size()) {
-      _batch->AddOwned(std::move(row));
-      return;
-    }
-    _sealed = std::move(_batch);
-  }
-  Current().AddOwned(std::move(row));
 }
 
 void CopyBatchBuilder::Feed(std::string_view bytes, bool stable) {
-  switch (_format) {
-    case CopyBatchFormat::Text:
-      FeedText(bytes, stable);
-      break;
-    case CopyBatchFormat::Binary:
-      FeedBinary(bytes, stable);
-      break;
-    case CopyBatchFormat::Csv:
-      FeedCsv(bytes, stable);
-      break;
-    case CopyBatchFormat::Raw:
-      AddRows(bytes, stable);
-      break;
+  if (_format == CopyBatchFormat::Binary) {
+    FeedBinary(bytes, stable);
+  } else {
+    AddRows(bytes, stable);
   }
-}
-
-bool CopyBatchBuilder::DecideLineBreak(std::string_view bytes, bool complete) {
-  const bool csv = _format == CopyBatchFormat::Csv;
-  if (_partial.empty()) {
-    _line_break = formats::DetectLineBreak(bytes, csv, _csv, complete);
-    if (_line_break == '\0') {
-      _partial.assign(bytes);
-      return false;
-    }
-    _csv.line_break = _line_break;
-    return true;
-  }
-  _partial.append(bytes);
-  _line_break = formats::DetectLineBreak(_partial, csv, _csv, complete);
-  if (_line_break == '\0') {
-    return false;
-  }
-  _csv.line_break = _line_break;
-  const auto head = std::exchange(_partial, {});
-  Feed(head, false);
-  return false;
-}
-
-void CopyBatchBuilder::FeedText(std::string_view bytes, bool stable) {
-  if (_line_break == '\0' && !DecideLineBreak(bytes, false)) {
-    return;
-  }
-  while (!bytes.empty()) {
-    if (!_partial.empty()) {
-      const auto end =
-        FindRowEnd(bytes, 0, TrailingBackslashes(_partial), _line_break);
-      if (end == std::string_view::npos) {
-        _partial.append(bytes);
-        return;
-      }
-      _partial.append(bytes.data(), end + 1);
-      AddRow(std::exchange(_partial, {}));
-      bytes.remove_prefix(end + 1);
-      continue;
-    }
-    const auto last = FindLastRowEnd(bytes, _line_break);
-    if (last == std::string_view::npos) {
-      _partial.assign(bytes);
-      return;
-    }
-    AddRows(bytes.substr(0, last + 1), stable);
-    _partial.assign(bytes.substr(last + 1));
-    return;
-  }
-}
-
-void CopyBatchBuilder::FeedCsv(std::string_view bytes, bool stable) {
-  if (_line_break == '\0' && !DecideLineBreak(bytes, false)) {
-    return;
-  }
-  if (!_partial.empty()) {
-    const auto end = formats::CsvRecordEnd(bytes, 0, _csv, _quote_state);
-    if (end == std::string_view::npos) {
-      _partial.append(bytes);
-      return;
-    }
-    _partial.append(bytes.data(), end + 1);
-    AddRow(std::exchange(_partial, {}));
-    bytes.remove_prefix(end + 1);
-  }
-  const auto last = formats::CsvLastRecordEnd(bytes, _csv, _quote_state);
-  if (last == std::string_view::npos) {
-    _partial.assign(bytes);
-    return;
-  }
-  AddRows(bytes.substr(0, last + 1), stable);
-  _partial.assign(bytes.substr(last + 1));
 }
 
 size_t CopyBatchBuilder::FeedHeader(std::string_view bytes) {
@@ -434,20 +275,14 @@ void CopyBatchBuilder::FeedBinary(std::string_view bytes, bool stable) {
 }
 
 void CopyBatchBuilder::Finish() {
-  if (_format == CopyBatchFormat::Binary) {
-    if (!_header_done && !_header.empty()) {
-      ThrowFormat("invalid PGCOPY signature");
-    }
-    if (_open) {
-      ThrowFormat("truncated row");
-    }
+  if (_format != CopyBatchFormat::Binary) {
     return;
   }
-  if (_line_break == '\0' && _format != CopyBatchFormat::Raw) {
-    DecideLineBreak({}, true);
+  if (!_header_done && !_header.empty()) {
+    ThrowFormat("invalid PGCOPY signature");
   }
-  if (!_partial.empty()) {
-    AddRow(std::exchange(_partial, {}));
+  if (_open) {
+    ThrowFormat("truncated row");
   }
 }
 

@@ -31,6 +31,7 @@
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/execution/operator/helper/physical_set.hpp>
+#include <duckdb/formats/copy_from.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/config.hpp>
@@ -119,6 +120,19 @@ void LogRollbackFailure(std::string_view database,
 } catch (...) {
 }
 
+class CopyNotices final : public duckdb::CopyNotices {
+ public:
+  explicit CopyNotices(ConnectionContext& context) : _context{context} {}
+
+  void Notice(const std::string& message) final {
+    _context.AddNotice(SQL_ERROR_DATA(ERR_CODE(ERRCODE_SUCCESSFUL_COMPLETION),
+                                      ERR_MSG(message)));
+  }
+
+ private:
+  ConnectionContext& _context;
+};
+
 }  // namespace
 
 ConnectionContext::ConnectionContext(duckdb::DatabaseInstance& db,
@@ -145,6 +159,8 @@ ConnectionContext::ConnectionContext(duckdb::DatabaseInstance& db,
   _progress->backend_start_us = duckdb::Timestamp::GetCurrentTimestamp().value;
   _progress->status.Write({.state_change_us = _progress->backend_start_us});
   _progress->ctx = this;
+  registered_state->Insert(duckdb::CopyNotices::NAME,
+                           duckdb::make_shared_ptr<CopyNotices>(*this));
   if (_database_name.empty()) {
     return;
   }

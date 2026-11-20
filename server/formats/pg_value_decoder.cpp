@@ -32,15 +32,28 @@
 
 #include "pg/deserialize.h"
 #include "pg/input_error.h"
+#include "pg/sql_utils.h"
 
 namespace sdb::formats {
 namespace {
 
-std::string ErrorText(const std::exception_ptr& error) {
+duckdb::ErrorData DecodeError(const std::exception_ptr& error) {
   try {
     std::rethrow_exception(error);
   } catch (const std::exception& e) {
-    return irs::pg::ToSqlError(e).errmsg;
+    const auto sql = irs::pg::ToSqlError(e);
+    std::string sqlstate(pg::kSqlStateSize, '\0');
+    pg::UnpackSqlState(sqlstate, sql.errcode);
+    duckdb::unordered_map<std::string, std::string> extra_info{
+      {"sqlstate", std::move(sqlstate)}};
+    if (!sql.errdetail.empty()) {
+      extra_info.emplace("detail", sql.errdetail);
+    }
+    if (!sql.errhint.empty()) {
+      extra_info.emplace("hint", sql.errhint);
+    }
+    return duckdb::ErrorData{
+      duckdb::InvalidInputException{extra_info, sql.errmsg}};
   }
 }
 
@@ -56,7 +69,7 @@ class PostgresDecoder final : public duckdb::ValueDecoder {
   }
 
   bool Decode(duckdb::Vector& text, duckdb::Vector& out, duckdb::idx_t count,
-              std::string& error) final {
+              duckdb::ErrorData& error) final {
     duckdb::UnifiedVectorFormat format;
     text.ToUnifiedFormat(count, format);
     const auto* values =
@@ -81,9 +94,9 @@ class PostgresDecoder final : public duckdb::ValueDecoder {
           word * 64 + static_cast<size_t>(std::countr_zero(bits));
         duckdb::FlatVector::SetNull(out, row, true);
         if (std::exchange(first, false)) {
-          error = ErrorText(_dctx.column_error
-                              ? _dctx.column_error
-                              : pg::InputError(_context, _type, _fields[row]));
+          error = DecodeError(
+            _dctx.column_error ? _dctx.column_error
+                               : pg::InputError(_context, _type, _fields[row]));
         }
       }
     }

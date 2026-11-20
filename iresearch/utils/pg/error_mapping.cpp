@@ -97,6 +97,11 @@ int DuckExceptionToErrcode(duckdb::ExceptionType type) {
 // counterparts) into one code each, which PG distinguishes.
 int DuckExceptionToErrcode(const duckdb::ErrorData& error) {
   const auto& extra = error.ExtraInfo();
+  if (const auto sqlstate = extra.find("sqlstate");
+      sqlstate != extra.end() && sqlstate->second.size() == 5) {
+    const auto& code = sqlstate->second;
+    return MAKE_SQLSTATE(code[0], code[1], code[2], code[3], code[4]);
+  }
   const auto subtype_it = extra.find("error_subtype");
   const std::string_view subtype =
     subtype_it != extra.end() ? subtype_it->second : std::string_view{};
@@ -282,6 +287,10 @@ SqlErrorData DuckErrorToSqlData(const duckdb::ErrorData& error) {
   }
   if (auto it = error.ExtraInfo().find("hint"); it != error.ExtraInfo().end()) {
     data.errhint = it->second;
+  }
+  if (auto it = error.ExtraInfo().find("context");
+      it != error.ExtraInfo().end()) {
+    data.context = it->second;
   }
   return data;
 }

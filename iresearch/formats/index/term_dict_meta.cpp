@@ -43,11 +43,10 @@ constexpr duckdb::field_id_t kTermsRestartInterval = 0;
 constexpr duckdb::field_id_t kTermsBlocks = 1;
 constexpr duckdb::field_id_t kTermsFirstPage = 2;
 constexpr duckdb::field_id_t kTermsSpans = 3;
-constexpr duckdb::field_id_t kTermsInlineOffset = 4;
-constexpr duckdb::field_id_t kTermsInlineSize = 5;
+constexpr duckdb::field_id_t kTermsBlocksEnd = 4;
 constexpr duckdb::field_id_t kTermsFields = 7;
-constexpr duckdb::field_id_t kTermsInlineStarts = 8;
 constexpr duckdb::field_id_t kTermsOrdinalBytes = 9;
+constexpr duckdb::field_id_t kTermsSeparators = 10;
 
 constexpr duckdb::field_id_t kSpanBlock = 0;
 constexpr duckdb::field_id_t kSpanExtraPages = 1;
@@ -84,8 +83,6 @@ constexpr duckdb::field_id_t kDictFirstEntry = 9;
 constexpr duckdb::field_id_t kDictFirstRecord = 10;
 constexpr duckdb::field_id_t kDictLastBlock = 11;
 constexpr duckdb::field_id_t kDictLastEntry = 12;
-constexpr duckdb::field_id_t kDictInlineBase = 13;
-constexpr duckdb::field_id_t kDictInlineSize = 14;
 constexpr duckdb::field_id_t kDictText = 15;
 constexpr duckdb::field_id_t kDictSingleValued = 17;
 constexpr duckdb::field_id_t kDictFsst = 18;
@@ -165,10 +162,6 @@ void WriteKeyed(duckdb::BinarySerializer& out, const FieldHead& head) {
                                            head.first_record, 0);
     out.WriteProperty<uint32_t>(kDictLastBlock, "last_block", head.last_block);
     out.WriteProperty<uint32_t>(kDictLastEntry, "last_entry", head.last_entry);
-    out.WritePropertyWithDefault<uint64_t>(kDictInlineBase, "inline_base",
-                                           head.inline_base, 0);
-    out.WritePropertyWithDefault<uint64_t>(kDictInlineSize, "inline_size",
-                                           head.inline_size, 0);
   }
   out.WriteOptionalObject(
     kDictText, "text", !Empty(head.text),
@@ -273,10 +266,6 @@ void ReadKeyed(duckdb::BinaryDeserializer& in, FieldHead& head) {
       kDictFirstRecord, "first_record", 0);
     head.last_block = in.ReadProperty<uint32_t>(kDictLastBlock, "last_block");
     head.last_entry = in.ReadProperty<uint32_t>(kDictLastEntry, "last_entry");
-    head.inline_base = in.ReadPropertyWithExplicitDefault<uint64_t>(
-      kDictInlineBase, "inline_base", 0);
-    head.inline_size = in.ReadPropertyWithExplicitDefault<uint64_t>(
-      kDictInlineSize, "inline_size", 0);
   }
   if (head.member == DictMember::Strings) {
     in.ReadOptionalObject(
@@ -373,10 +362,8 @@ void WriteTerms(duckdb::BinarySerializer& out, const TermsMeta& terms) {
                                      terms.spans[i].extra);
       });
     });
-  out.WritePropertyWithDefault<uint64_t>(kTermsInlineOffset, "inline_offset",
-                                         terms.inline_offset, 0);
-  out.WritePropertyWithDefault<uint64_t>(kTermsInlineSize, "inline_size",
-                                         terms.inline_size, 0);
+  out.WritePropertyWithDefault<uint64_t>(kTermsBlocksEnd, "blocks_end",
+                                         terms.blocks_end, 0);
   const std::span<const FieldHead> heads{terms.fields};
   size_t fields = 0;
   for (size_t i = 0; i != heads.size(); ++i) {
@@ -395,10 +382,9 @@ void WriteTerms(duckdb::BinarySerializer& out, const TermsMeta& terms) {
                   });
                   at = end;
                 });
-  WriteOptionalBytes(out, kTermsInlineStarts, "inline_starts",
-                     terms.inline_starts);
   out.WritePropertyWithDefault<uint32_t>(kTermsOrdinalBytes, "ordinal_bytes",
                                          terms.ordinal_bytes, 1);
+  WriteOptionalBytes(out, kTermsSeparators, "separators", terms.separators);
 }
 
 TermsMeta ReadTerms(duckdb::BinaryDeserializer& in, uint64_t data_size) {
@@ -422,20 +408,18 @@ TermsMeta ReadTerms(duckdb::BinaryDeserializer& in, uint64_t data_size) {
         });
       });
     });
-  terms.inline_offset = in.ReadPropertyWithExplicitDefault<uint64_t>(
-    kTermsInlineOffset, "inline_offset", 0);
-  terms.inline_size = in.ReadPropertyWithExplicitDefault<uint64_t>(
-    kTermsInlineSize, "inline_size", 0);
+  terms.blocks_end = in.ReadPropertyWithExplicitDefault<uint64_t>(
+    kTermsBlocksEnd, "blocks_end", 0);
   in.ReadList(kTermsFields, "fields",
               [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
                 list.ReadObject([&](duckdb::BinaryDeserializer& field) {
                   ReadField(field, terms.fields);
                 });
               });
-  terms.inline_starts = in.ReadPropertyWithDefault<std::string>(
-    kTermsInlineStarts, "inline_starts");
   terms.ordinal_bytes = in.ReadPropertyWithExplicitDefault<uint32_t>(
     kTermsOrdinalBytes, "ordinal_bytes", 1);
+  terms.separators =
+    in.ReadPropertyWithDefault<std::string>(kTermsSeparators, "separators");
   if (terms.ordinal_bytes == 0 || terms.ordinal_bytes > kMaxOrdinalBytes) {
     Unsupported("ordinal width", terms.ordinal_bytes);
   }
@@ -446,9 +430,8 @@ TermsMeta ReadTerms(duckdb::BinaryDeserializer& in, uint64_t data_size) {
   if (keyed > OrdinalLimit(terms.ordinal_bytes)) {
     Corrupted("ordinal width");
   }
-  if (terms.inline_offset > data_size ||
-      terms.inline_size > data_size - terms.inline_offset) {
-    Corrupted("inline postings");
+  if (terms.blocks_end > data_size) {
+    Corrupted("block directory");
   }
   return terms;
 }

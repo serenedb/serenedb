@@ -51,6 +51,7 @@ struct TrieCursor {
   uint32_t hi = 0;
   uint16_t fanout = 0;
   uint8_t width = 0;
+  bool terminal = false;
 };
 
 inline constexpr uint32_t kTrieBelow = std::numeric_limits<uint32_t>::max();
@@ -58,17 +59,14 @@ inline constexpr uint32_t kTrieMissing = kTrieBelow - 1;
 inline constexpr TrieCursor kTrieUngated{
   .node = kTrieBelow, .labels = 0, .matched = 0};
 
-struct Located {
-  uint32_t block;
-  bool absent;
-};
-
 enum class TrieKind : uint8_t {
   Leaf = 0,
   Inner = 1,
 };
 
 inline constexpr uint32_t kTrieWidths[]{0, 1, 2, 4};
+inline constexpr byte_type kTrieWidthMask = 3;
+inline constexpr byte_type kTrieTerminal = 4;
 
 struct TrieNode {
   const byte_type* edge;
@@ -79,6 +77,7 @@ struct TrieNode {
   uint32_t edge_size;
   uint32_t fanout;
   uint32_t width;
+  bool terminal;
 
   TrieKind KindAt(uint32_t slot) const noexcept {
     return static_cast<TrieKind>(kinds[slot / 4] >> (2 * (slot % 4)) & 3);
@@ -151,8 +150,6 @@ class PrefixTrie {
 
   uint32_t Blocks() const noexcept { return _blocks; }
 
-  Located Locate(bytes_view key) const noexcept;
-
   TrieCursor Root() const noexcept {
     return _nodes.empty() ? kTrieUngated : At(_root, 0, _blocks - 1);
   }
@@ -163,7 +160,8 @@ class PrefixTrie {
   }
 
   static bool MayEnd(TrieCursor cursor) noexcept {
-    return cursor.matched == cursor.edge_size;
+    return !Gates(cursor) ||
+           (cursor.terminal && cursor.matched == cursor.edge_size);
   }
 
   bytes_view Labels(TrieCursor cursor) const noexcept {
@@ -217,6 +215,7 @@ class PrefixTrie {
       .edge_size = cursor.edge_size,
       .fanout = cursor.fanout,
       .width = cursor.width,
+      .terminal = cursor.terminal,
     };
   }
   TrieNode Node(uint32_t offset) const noexcept;
@@ -248,6 +247,7 @@ class PrefixTrieBuilder {
     uint32_t edge_start;
     uint16_t fanout;
     bool spans;
+    bool terminal;
   };
 
   struct Frame {
@@ -267,7 +267,15 @@ class PrefixTrieBuilder {
   static constexpr Rank kKeepAll{.level = std::numeric_limits<uint32_t>::max(),
                                  .count = 0};
 
-  static bool Prunable(const Built& node) noexcept { return !node.spans; }
+  static bool Prunable(const Built& node) noexcept {
+    return node.edge_start != 0;
+  }
+
+  static size_t BytesOf(const Built& node, uint32_t edge_size,
+                        uint32_t inner) noexcept {
+    return PrefixTrie::NodeBytes(node.fanout, edge_size, inner) +
+           (node.spans ? node.fanout : 0);
+  }
 
   static bool PrunedBefore(Rank lhs, Rank rhs) noexcept {
     return lhs.level != rhs.level ? lhs.level > rhs.level

@@ -43,8 +43,15 @@ void FieldReader::prepare(const ReaderState& state) {
   }
 
   const auto& heads = terms.fields;
+  Separators separators;
   if (!heads.empty()) {
     _store.Bind(terms);
+    if (const auto blocks = _store.BlockCount(); blocks != 0) {
+      separators = DecodeSeparators(
+        ViewCast<byte_type>(std::string_view{terms.separators}), blocks - 1);
+    } else if (!terms.separators.empty()) {
+      Corrupted("separators");
+    }
   }
 
   IndexFeatures features = IndexFeatures::None;
@@ -75,12 +82,13 @@ void FieldReader::prepare(const ReaderState& state) {
       for (const auto& level : head.levels) {
         prefix.clear();
         AppendOrdinal(prefix, ordinal++, terms.ordinal_bytes);
-        levels.push_back(&_keyed.emplace_back(*this, level, prefix));
+        levels.push_back(
+          &_keyed.emplace_back(*this, level, prefix, separators));
       }
       prefix.clear();
       AppendOrdinal(prefix, own, terms.ordinal_bytes);
-      _dicts.push_back(
-        &_keyed.emplace_back(*this, head, prefix, std::move(levels)));
+      _dicts.push_back(&_keyed.emplace_back(*this, head, prefix, separators,
+                                            std::move(levels)));
     }
     ++_by_id
         .try_emplace(

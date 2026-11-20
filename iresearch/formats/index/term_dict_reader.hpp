@@ -44,6 +44,7 @@ class FieldReader;
 class TermReaderImpl final : public TermReader {
  public:
   TermReaderImpl(FieldReader& owner, const FieldHead& head, bytes_view prefix,
+                 const Separators& separators,
                  std::vector<const TermReaderImpl*> levels = {});
 
   SeekTermIterator::ptr iterator() const final;

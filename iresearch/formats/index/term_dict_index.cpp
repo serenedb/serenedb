@@ -28,7 +28,8 @@
 
 namespace irs::term_dict {
 
-DictIndex::DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks)
+DictIndex::DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks,
+                     const Separators& separators)
   : _prefix_size{static_cast<uint32_t>(prefix.size())},
     _blocks{blocks},
     _gated{GatesTerms(head.member, head.width)} {
@@ -39,10 +40,19 @@ DictIndex::DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks)
   if (_max_key <= _min_key) {
     Corrupted("record", head.id);
   }
-  if (blocks == 1) {
+  if (blocks == 1 || !_gated) {
     if (!head.prefix_trie.empty() || !head.block_masks.empty()) {
       Corrupted("record", head.id);
     }
+  }
+  if (blocks == 1) {
+    return;
+  }
+  if (size_t{head.first_block} + blocks > separators.offsets.size()) {
+    Corrupted("separators", head.id);
+  }
+  _root = Root{Slice(separators, head.first_block, blocks - 1), head.width != 0};
+  if (!_gated) {
     return;
   }
   _trie = PrefixTrie{ViewCast<byte_type>(std::string_view{head.prefix_trie}),
@@ -68,7 +78,7 @@ DictIndex::DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks)
 }
 
 size_t DictIndex::MemoryBytes() const noexcept {
-  return (Small() ? 0 : _trie.MemoryBytes()) +
+  return (Small() ? 0 : _root.MemoryBytes() + _trie.MemoryBytes()) +
          _masks.capacity() * sizeof(BlockMask);
 }
 

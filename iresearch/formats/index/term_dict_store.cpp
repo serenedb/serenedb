@@ -86,10 +86,9 @@ void BlockStore::FillCopies() {
 void BlockStore::Bind(const TermsMeta& terms) {
   _block_count = terms.blocks;
   _first_page = terms.first_page;
-  _blocks_end = terms.inline_offset;
+  _blocks_end = terms.blocks_end;
   const auto blocks = _block_count;
-  if (terms.inline_size != 0 || !terms.inline_starts.empty() ||
-      _blocks_end > _in->Length()) {
+  if (_blocks_end > _in->Length()) {
     Corrupted("block directory");
   }
   if (terms.spans.size() > blocks) {

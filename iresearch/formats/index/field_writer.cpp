@@ -24,6 +24,7 @@
 #include <cstring>
 #include <span>
 
+#include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/bytes_output.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -300,6 +301,17 @@ void FieldWriter::Cut() {
   if (_encoder.Empty()) {
     return;
   }
+  const auto first = _encoder.Key(0);
+  if (_blocks != 0) {
+    const auto separator =
+      first.substr(0, CommonPrefixLength(bytes_view{_last}, first) + 1);
+    const auto shared = CommonPrefixLength(bytes_view{_separator}, separator);
+    StringOutput out{_separators};
+    out.WriteV32(static_cast<uint32_t>(shared));
+    WriteStr(out, separator.substr(shared));
+    _separator.assign(separator);
+  }
+  _last.assign(_encoder.Key(_encoder.Count() - 1));
   CloseRun();
   const uint64_t size = _encoder.Seal(_records.bytes.size());
   WriteBlock(size);
@@ -403,6 +415,9 @@ void FieldWriter::Reset() noexcept {
   _records.inline_bytes = 0;
   _spans.clear();
   _heads.clear();
+  _last.clear();
+  _separator.clear();
+  _separators.clear();
   _first_page = 0;
   _blocks = 0;
   _ordinal = 0;
@@ -420,8 +435,9 @@ void FieldWriter::end() {
       .blocks = _blocks,
       .first_page = _first_page,
       .spans = std::move(_spans),
-      .inline_offset = out.Position(),
+      .blocks_end = out.Position(),
       .fields = std::move(_heads),
+      .separators = std::move(_separators),
       .ordinal_bytes = _ordinal_bytes,
     };
     _idx->SetTerms(std::move(terms));

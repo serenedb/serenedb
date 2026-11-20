@@ -72,12 +72,12 @@ PrefixTrie::PrefixTrie(bytes_view encoded, field_id id) {
     at += 2;
     const auto edge_size = ReadVarint<uint32_t>(at, limit);
     const uint32_t kind_bytes = (fanout + 3) / 4;
-    if (!edge_size || flags >= std::size(kTrieWidths) ||
+    if (!edge_size || flags > (kTrieWidthMask | kTrieTerminal) ||
         static_cast<size_t>(limit - at) <
           *edge_size + size_t{fanout} + kind_bytes) {
       corrupted();
     }
-    const uint32_t width = kTrieWidths[flags];
+    const uint32_t width = kTrieWidths[flags & kTrieWidthMask];
     const bytes_view labels{at + *edge_size, fanout};
     const bytes_view kinds{at + *edge_size + fanout, kind_bytes};
     at += *edge_size + size_t{fanout} + kind_bytes;
@@ -111,9 +111,7 @@ PrefixTrie::PrefixTrie(bytes_view encoded, field_id id) {
       const uint64_t hi = last ? uint64_t{range.hi}
                                : uint64_t{node.BlockAt(slot + 1, range.lo)};
       if (lo < range.lo || hi > range.hi || lo > hi ||
-          (slot == 0 && lo > range.lo + 1) ||
-          (node.KindAt(slot) == TrieKind::Leaf &&
-           hi > lo + uint64_t{!exact_hi})) {
+          (slot == 0 && lo > range.lo + 1)) {
         corrupted();
       }
       if (node.KindAt(slot) == TrieKind::Inner) {
@@ -147,7 +145,8 @@ TrieNode PrefixTrie::Node(uint32_t offset) const noexcept {
   const auto* p = _nodes.data() + offset;
   TrieNode node;
   node.fanout = uint32_t{p[0]} + 1;
-  node.width = kTrieWidths[p[1]];
+  node.width = kTrieWidths[p[1] & kTrieWidthMask];
+  node.terminal = (p[1] & kTrieTerminal) != 0;
   p += 2;
   node.edge_size = vread<uint32_t>(p);
   node.edge = p;
@@ -173,7 +172,8 @@ TrieCursor PrefixTrie::At(uint32_t offset, uint32_t lo,
           .lo = lo,
           .hi = hi,
           .fanout = static_cast<uint16_t>(node.fanout),
-          .width = static_cast<uint8_t>(node.width)};
+          .width = static_cast<uint8_t>(node.width),
+          .terminal = node.terminal};
 }
 
 uint32_t PrefixTrie::SlotReaching(TrieCursor cursor, uint32_t slot,
@@ -193,48 +193,6 @@ uint32_t PrefixTrie::SlotReaching(TrieCursor cursor, uint32_t slot,
     }
   }
   return slot + 1 == node.fanout && cursor.hi < block ? node.fanout : slot;
-}
-
-Located PrefixTrie::Locate(bytes_view key) const noexcept {
-  SDB_ASSERT(!_nodes.empty());
-  uint32_t offset = _root;
-  uint32_t self = 0;
-  uint32_t after = _blocks - 1;
-  size_t depth = 0;
-  for (;;) {
-    const auto node = Node(offset);
-    if (node.edge_size != 0) {
-      const bytes_view edge{node.edge, node.edge_size};
-      const auto rest = key.substr(depth);
-      const size_t common = CommonPrefixLength(edge, rest);
-      if (common != edge.size()) {
-        const bool below = common == rest.size() || rest[common] < edge[common];
-        return {.block = below ? self : after, .absent = true};
-      }
-      depth += edge.size();
-    }
-    if (depth == key.size()) {
-      return {.block = self, .absent = false};
-    }
-    const bytes_view labels{node.labels, node.fanout};
-    const auto label = key[depth];
-    const auto slot = static_cast<uint32_t>(absl::c_lower_bound(labels, label) -
-                                            labels.begin());
-    if (slot == node.fanout) {
-      return {.block = after, .absent = true};
-    }
-    const uint32_t block = node.BlockAt(slot, self);
-    if (labels[slot] != label) {
-      return {.block = block, .absent = true};
-    }
-    if (node.KindAt(slot) == TrieKind::Leaf) {
-      return {.block = block, .absent = false};
-    }
-    after = slot + 1 == node.fanout ? after : node.BlockAt(slot + 1, self);
-    self = block;
-    offset = node.ChildAt(slot);
-    ++depth;
-  }
 }
 
 void PrefixTrieBuilder::Add(bytes_view key, uint32_t block) {
@@ -310,9 +268,8 @@ void PrefixTrieBuilder::CloseTo(size_t depth) {
     parent.last_block = frame.last_block;
     Child slot{
       .node = kLeaf, .block = frame.first_block, .label = _prev[at - 1]};
-    if (frame.first_block == frame.last_block &&
-        (_pending.size() == frame.begin ||
-         Drops({.level = frame.level, .count = frame.count}))) {
+    if (_pending.size() == frame.begin ||
+        Drops({.level = frame.level, .count = frame.count})) {
       SDB_ASSERT(_carry == kLeaf);
       SDB_ASSERT(absl::c_all_of(
         std::span{_pending}.subspan(frame.begin),
@@ -354,6 +311,7 @@ uint32_t PrefixTrieBuilder::MakeNode(size_t depth, const Frame& frame) {
     .edge_start = static_cast<uint32_t>(depth),
     .fanout = static_cast<uint16_t>(children.size()),
     .spans = frame.first_block != frame.last_block,
+    .terminal = frame.terminal,
   });
   for (const auto& child : children) {
     _labels.push_back(child.label);
@@ -363,7 +321,7 @@ uint32_t PrefixTrieBuilder::MakeNode(size_t depth, const Frame& frame) {
   _pending.resize(frame.begin);
   const auto& node = _built.back();
   if (Prunable(node)) {
-    _bytes += PrefixTrie::NodeBytes(node.fanout, 0, InnerOf(from, node.fanout));
+    _bytes += BytesOf(node, 0, InnerOf(from, node.fanout));
   }
   return id;
 }
@@ -425,7 +383,7 @@ void PrefixTrieBuilder::Prune(uint64_t target) {
     if (Prunable(node)) {
       candidates.push_back({
         .rank = {.level = levels[i], .count = node.count},
-        .bytes = PrefixTrie::NodeBytes(node.fanout, EdgeSize(node), 0) +
+        .bytes = BytesOf(node, EdgeSize(node), 0) +
                  4 * uint64_t{counted[i]},
       });
     }
@@ -471,7 +429,7 @@ void PrefixTrieBuilder::Prune(uint64_t target) {
     }
     edges.append(edge);
     if (Prunable(node)) {
-      bytes += PrefixTrie::NodeBytes(node.fanout, EdgeSize(node), inner);
+      bytes += BytesOf(node, EdgeSize(node), inner);
     }
     built.push_back(node);
   }
@@ -580,7 +538,8 @@ void PrefixTrieBuilder::Encode(uint32_t root, std::string& out) const {
     const auto width = kTrieWidths[code];
     SDB_ASSERT(node.fanout != 0 && node.fanout <= 256);
     out.push_back(static_cast<char>(node.fanout - 1));
-    out.push_back(static_cast<char>(code));
+    out.push_back(
+      static_cast<char>(code | (node.terminal ? kTrieTerminal : 0)));
     WriteVarint(EdgeSize(node), it);
     out.append(ViewCast<char>(
       bytes_view{_edges}.substr(offsets[id].edge, EdgeSize(node))));

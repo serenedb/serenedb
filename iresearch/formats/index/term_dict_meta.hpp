@@ -55,8 +55,6 @@ struct FieldHead {
   uint32_t first_record = 0;
   uint32_t last_block = 0;
   uint32_t last_entry = 0;
-  uint64_t inline_base = 0;
-  uint64_t inline_size = 0;
   std::string fsst_table;
   std::string prefix_trie;
   std::string block_masks;
@@ -74,10 +72,9 @@ struct TermsMeta {
   uint32_t blocks = 0;
   uint64_t first_page = 0;
   std::vector<SpanningBlock> spans;
-  uint64_t inline_offset = 0;
-  uint64_t inline_size = 0;
+  uint64_t blocks_end = 0;
   std::vector<FieldHead> fields;
-  std::string inline_starts;
+  std::string separators;
   uint32_t ordinal_bytes = 1;
 };
 

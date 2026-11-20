@@ -793,32 +793,23 @@ struct PendingSuffix {
   bool restart = false;
 };
 
-struct Found {
-  uint32_t entry;
-  bool past;
-};
-
-inline Found Find(const BlockView& view, Probe key,
-                  const duckdb_fsst_decoder_t* fsst, uint32_t& from) noexcept {
+inline uint32_t Find(const BlockView& view, Probe key,
+                     const duckdb_fsst_decoder_t* fsst,
+                     uint32_t& from) noexcept {
   if (!view.fixed) {
     const auto bound = VarLowerBound(view, key, fsst, from);
     from = bound.restarts == 0 ? 0 : bound.restarts - 1;
-    return {.entry = bound.equal ? bound.entry : kNoEntry,
-            .past = bound.entry == view.count};
+    return bound.equal ? bound.entry : kNoEntry;
   }
-  if (key.size != size_t{view.prefix} + view.stride) {
-    return {.entry = kNoEntry, .past = false};
-  }
-  const auto prefix = Prefix(view);
-  if (const size_t common =
-        PaddedMismatch(prefix.data(), key.data, view.prefix);
-      common != view.prefix) {
-    return {.entry = kNoEntry, .past = prefix[common] < key.data[common]};
+  if (key.size != size_t{view.prefix} + view.stride ||
+      PaddedMismatch(Prefix(view).data(), key.data, view.prefix) !=
+        view.prefix) {
+    return kNoEntry;
   }
   const auto [entry, at] = FixedLowerBound(view, key, from);
   from = entry / kFixedHeadInterval;
   if (entry == view.count) {
-    return {.entry = kNoEntry, .past = true};
+    return kNoEntry;
   }
   const auto* rest = key.data + view.prefix;
   const bool equal =
@@ -827,7 +818,7 @@ inline Found Find(const BlockView& view, Probe key,
           LoadStride(rest, view.stride)
       : PaddedMismatch(view.keys + uint64_t{entry} * view.stride, rest,
                        view.stride) == view.stride;
-  return {.entry = equal ? entry : kNoEntry, .past = false};
+  return equal ? entry : kNoEntry;
 }
 
 class BlockCursor {

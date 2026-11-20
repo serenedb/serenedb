@@ -101,6 +101,9 @@ class FieldWriter final : public FieldSink {
   DictIndexBuilder _index;
   bstring _key_prefix;
   bstring _min;
+  bstring _last;
+  bstring _separator;
+  std::string _separators;
   PostingMeta _single;
   std::array<byte_type, PostingMeta::kInlineBytes> _single_inline{};
   IdxWriter* _idx = nullptr;

@@ -28,6 +28,7 @@
 #include "iresearch/formats/index/term_dict_key.hpp"
 #include "iresearch/formats/index/term_dict_meta.hpp"
 #include "iresearch/formats/index/term_dict_prefixes.hpp"
+#include "iresearch/formats/index/term_dict_root.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/byte_set.hpp"
 #include "iresearch/utils/string.hpp"
@@ -44,7 +45,8 @@ constexpr bool GatesTerms(DictMember member, uint32_t width) noexcept {
 
 class DictIndex {
  public:
-  DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks);
+  DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks,
+            const Separators& separators);
 
   uint32_t Blocks() const noexcept { return _blocks; }
   bool Small() const noexcept { return _blocks == 1; }
@@ -63,12 +65,15 @@ class DictIndex {
     return bytes_view{_max_key}.substr(_prefix_size);
   }
 
-  Located Locate(Probe key) const noexcept {
-    SDB_ASSERT(!Small() && key.size >= _prefix_size);
-    return _trie.Locate({key.data + _prefix_size, key.size - _prefix_size});
-  }
   uint32_t BlockOf(Probe key) const noexcept {
-    return Small() ? 0 : Locate(key).block;
+    return Small() ? 0 : static_cast<uint32_t>(_root.Find(key));
+  }
+  uint32_t BlockFrom(uint32_t last, Probe key, SeparatorBuffer& buffer) const {
+    if (last + 1 == _blocks ||
+        KeyOf(key) < _root.Separator(last + 1, buffer)) {
+      return last;
+    }
+    return static_cast<uint32_t>(_root.FindFrom(last + 1, key, buffer));
   }
   uint32_t BlockEnd(bytes_view upper) const;
 
@@ -94,6 +99,7 @@ class DictIndex {
  private:
   bstring _min_key;
   bstring _max_key;
+  Root _root;
   PrefixTrie _trie;
   std::vector<BlockMask> _masks;
   uint32_t _prefix_size;
@@ -113,10 +119,6 @@ class DictIndexBuilder {
   void Add(uint32_t block, uint32_t count, TermAt&& term_at) {
     SDB_ASSERT(count != 0);
     if (!_gated) {
-      _trie.Add(term_at(0), block);
-      if (count != 1) {
-        _trie.Add(term_at(count - 1), block);
-      }
       return;
     }
     ByteSet seen;

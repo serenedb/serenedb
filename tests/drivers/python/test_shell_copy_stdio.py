@@ -1,5 +1,6 @@
 # fmt: off
 
+import gzip
 import struct
 from pathlib import Path
 
@@ -184,10 +185,33 @@ def test_read_csv_reads_a_piped_stdin(shell):
     assert result.stdout.splitlines()[1:] == ["3,6"], result.stdout
 
 
+@pytest.mark.parametrize("reader, payload", [
+    ("read_csv('/dev/stdin', compression = 'gzip', header = false, columns = {'a': 'INTEGER'})", b"1\n2\n3\n"),
+    ("read_json('/dev/stdin', compression = 'gzip', columns = {'a': 'INTEGER'})", b'{"a": 1}\n{"a": 2}\n{"a": 3}\n'),
+])
+def test_compressed_piped_stdin_is_decompressed(shell, reader, payload):
+    query = f"SELECT count(*) AS n, sum(a) AS total FROM {reader}"
+    result = ShellTest(shell).add_argument("-csv", "-c", query).run_raw(gzip.compress(payload))
+    assert result.status_code == 0, result.stderr
+    assert result.stdout.splitlines()[1:] == ["3,6"], result.stdout
+
+
 def test_read_text_reads_a_piped_stdin(shell):
     result = ShellTest(shell).add_argument("-csv", "-c", "SELECT * FROM read_text('/dev/stdin');").run_raw("piped text")
     assert result.status_code == 0, result.stderr
     assert result.stdout.splitlines()[1].startswith("/dev/stdin,piped text,"), result.stdout
+
+
+def test_copy_to_stdout_compresses_what_it_writes(shell, tmp_path):
+    target = tmp_path / "copy.csv.gz"
+    result = run_script(
+        shell,
+        f".output '{target.as_posix()}'",
+        "COPY (SELECT 42 AS answer) TO STDOUT (FORMAT csv, COMPRESSION gzip);",
+        ".output",
+    )
+    assert result.status_code == 0, result.stderr
+    assert gzip.decompress(target.read_bytes()) == b"42\n"
 
 
 def test_read_csv_of_dev_stdout_fails(shell):

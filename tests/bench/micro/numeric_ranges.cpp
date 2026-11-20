@@ -648,7 +648,6 @@ void Build(benchmark::State& state, const Shape& shape, Ladder ladder) {
   fs.RemoveDirectory(plain);
   state.counters["levels"] = Levels(data);
   state.SetLabel(absl::StrJoin(data.shifts, ","));
-  fs.RemoveDirectory(root);
 }
 
 void Search(benchmark::State& state, const Shape& shape, Ladder ladder,

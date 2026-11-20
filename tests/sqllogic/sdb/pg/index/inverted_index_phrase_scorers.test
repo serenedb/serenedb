@@ -150,6 +150,96 @@ ORDER BY id;
 id	score	sum_of_terms
 3	-3.818	-3.818
 
+query
+SELECT shape, scorer, id, same FROM (
+    SELECT 'any' AS shape, 'lm_jm' AS scorer, id, abs(lm_jm(phrase_idx.tableoid) - (ts_explain(phrase_idx.tableoid)::JSON->>'value')::DOUBLE) < 1e-5 AS same FROM phrase_idx WHERE body @@ 'red' OR body @@ 'fox'
+    UNION ALL
+    SELECT 'any' AS shape, 'lm_dirichlet' AS scorer, id, abs(lm_dirichlet(phrase_idx.tableoid, 10) - (ts_explain(phrase_idx.tableoid)::JSON->>'value')::DOUBLE) < 1e-5 AS same FROM phrase_idx WHERE body @@ 'red' OR body @@ 'fox'
+    UNION ALL
+    SELECT 'any' AS shape, 'indri_dirichlet' AS scorer, id, abs(indri_dirichlet(phrase_idx.tableoid, 10) - (ts_explain(phrase_idx.tableoid)::JSON->>'value')::DOUBLE) < 1e-5 AS same FROM phrase_idx WHERE body @@ 'red' OR body @@ 'fox'
+    UNION ALL
+    SELECT 'any' AS shape, 'dfi' AS scorer, id, abs(dfi(phrase_idx.tableoid) - (ts_explain(phrase_idx.tableoid)::JSON->>'value')::DOUBLE) < 1e-5 AS same FROM phrase_idx WHERE body @@ 'red' OR body @@ 'fox'
+    UNION ALL
+    SELECT 'any' AS shape, 'dfi saturated' AS scorer, id, abs(dfi(phrase_idx.tableoid, 'saturated') - (ts_explain(phrase_idx.tableoid)::JSON->>'value')::DOUBLE) < 1e-5 AS same FROM phrase_idx WHERE body @@ 'red' OR body @@ 'fox'
+    UNION ALL
+    SELECT 'any' AS shape, 'dfi chi_squared' AS scorer, id, abs(dfi(phrase_idx.tableoid, 'chi_squared') - (ts_explain(phrase_idx.tableoid)::JSON->>'value')::DOUBLE) < 1e-5 AS same FROM phrase_idx WHERE body @@ 'red' OR body @@ 'fox'
+    UNION ALL
+    SELECT 'best' AS shape, 'lm_jm' AS scorer, id, abs(lm_jm(phrase_idx.tableoid) - (ts_explain(phrase_idx.tableoid)::JSON->>'value')::DOUBLE) < 1e-5 AS same FROM phrase_idx WHERE (body @@ 'red' OR body @@ 'fox')::merge('max')
+    UNION ALL
+    SELECT 'best' AS shape, 'lm_dirichlet' AS scorer, id, abs(lm_dirichlet(phrase_idx.tableoid, 10) - (ts_explain(phrase_idx.tableoid)::JSON->>'value')::DOUBLE) < 1e-5 AS same FROM phrase_idx WHERE (body @@ 'red' OR body @@ 'fox')::merge('max')
+    UNION ALL
+    SELECT 'best' AS shape, 'indri_dirichlet' AS scorer, id, abs(indri_dirichlet(phrase_idx.tableoid, 10) - (ts_explain(phrase_idx.tableoid)::JSON->>'value')::DOUBLE) < 1e-5 AS same FROM phrase_idx WHERE (body @@ 'red' OR body @@ 'fox')::merge('max')
+    UNION ALL
+    SELECT 'best' AS shape, 'dfi' AS scorer, id, abs(dfi(phrase_idx.tableoid) - (ts_explain(phrase_idx.tableoid)::JSON->>'value')::DOUBLE) < 1e-5 AS same FROM phrase_idx WHERE (body @@ 'red' OR body @@ 'fox')::merge('max')
+    UNION ALL
+    SELECT 'best' AS shape, 'dfi saturated' AS scorer, id, abs(dfi(phrase_idx.tableoid, 'saturated') - (ts_explain(phrase_idx.tableoid)::JSON->>'value')::DOUBLE) < 1e-5 AS same FROM phrase_idx WHERE (body @@ 'red' OR body @@ 'fox')::merge('max')
+    UNION ALL
+    SELECT 'best' AS shape, 'dfi chi_squared' AS scorer, id, abs(dfi(phrase_idx.tableoid, 'chi_squared') - (ts_explain(phrase_idx.tableoid)::JSON->>'value')::DOUBLE) < 1e-5 AS same FROM phrase_idx WHERE (body @@ 'red' OR body @@ 'fox')::merge('max')
+    UNION ALL
+    SELECT 'fuzzy' AS shape, 'lm_jm' AS scorer, id, abs(lm_jm(phrase_idx.tableoid) - (ts_explain(phrase_idx.tableoid)::JSON->>'value')::DOUBLE) < 1e-5 AS same FROM phrase_idx WHERE body @@ ts_levenshtein('fax', 1)
+    UNION ALL
+    SELECT 'fuzzy' AS shape, 'lm_dirichlet' AS scorer, id, abs(lm_dirichlet(phrase_idx.tableoid, 10) - (ts_explain(phrase_idx.tableoid)::JSON->>'value')::DOUBLE) < 1e-5 AS same FROM phrase_idx WHERE body @@ ts_levenshtein('fax', 1)
+    UNION ALL
+    SELECT 'fuzzy' AS shape, 'indri_dirichlet' AS scorer, id, abs(indri_dirichlet(phrase_idx.tableoid, 10) - (ts_explain(phrase_idx.tableoid)::JSON->>'value')::DOUBLE) < 1e-5 AS same FROM phrase_idx WHERE body @@ ts_levenshtein('fax', 1)
+    UNION ALL
+    SELECT 'fuzzy' AS shape, 'dfi' AS scorer, id, abs(dfi(phrase_idx.tableoid) - (ts_explain(phrase_idx.tableoid)::JSON->>'value')::DOUBLE) < 1e-5 AS same FROM phrase_idx WHERE body @@ ts_levenshtein('fax', 1)
+    UNION ALL
+    SELECT 'fuzzy' AS shape, 'dfi saturated' AS scorer, id, abs(dfi(phrase_idx.tableoid, 'saturated') - (ts_explain(phrase_idx.tableoid)::JSON->>'value')::DOUBLE) < 1e-5 AS same FROM phrase_idx WHERE body @@ ts_levenshtein('fax', 1)
+    UNION ALL
+    SELECT 'fuzzy' AS shape, 'dfi chi_squared' AS scorer, id, abs(dfi(phrase_idx.tableoid, 'chi_squared') - (ts_explain(phrase_idx.tableoid)::JSON->>'value')::DOUBLE) < 1e-5 AS same FROM phrase_idx WHERE body @@ ts_levenshtein('fax', 1)
+) t
+ORDER BY shape, scorer, id;
+----
+shape	scorer	id	same
+any	dfi	1	t
+any	dfi	2	t
+any	dfi	3	t
+any	dfi chi_squared	1	t
+any	dfi chi_squared	2	t
+any	dfi chi_squared	3	t
+any	dfi saturated	1	t
+any	dfi saturated	2	t
+any	dfi saturated	3	t
+any	indri_dirichlet	1	t
+any	indri_dirichlet	2	t
+any	indri_dirichlet	3	t
+any	lm_dirichlet	1	t
+any	lm_dirichlet	2	t
+any	lm_dirichlet	3	t
+any	lm_jm	1	t
+any	lm_jm	2	t
+any	lm_jm	3	t
+best	dfi	1	t
+best	dfi	2	t
+best	dfi	3	t
+best	dfi chi_squared	1	t
+best	dfi chi_squared	2	t
+best	dfi chi_squared	3	t
+best	dfi saturated	1	t
+best	dfi saturated	2	t
+best	dfi saturated	3	t
+best	indri_dirichlet	1	t
+best	indri_dirichlet	2	t
+best	indri_dirichlet	3	t
+best	lm_dirichlet	1	t
+best	lm_dirichlet	2	t
+best	lm_dirichlet	3	t
+best	lm_jm	1	t
+best	lm_jm	2	t
+best	lm_jm	3	t
+fuzzy	dfi	1	t
+fuzzy	dfi	3	t
+fuzzy	dfi chi_squared	1	t
+fuzzy	dfi chi_squared	3	t
+fuzzy	dfi saturated	1	t
+fuzzy	dfi saturated	3	t
+fuzzy	indri_dirichlet	1	t
+fuzzy	indri_dirichlet	3	t
+fuzzy	lm_dirichlet	1	t
+fuzzy	lm_dirichlet	3	t
+fuzzy	lm_jm	1	t
+fuzzy	lm_jm	3	t
+
 statement ok
 CREATE TABLE long_docs (id INTEGER PRIMARY KEY, body VARCHAR);
 

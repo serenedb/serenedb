@@ -132,7 +132,7 @@ template<typename Visit>
 void VisitSegmentFiles(const TableState& state, Visit&& visit) {
   for (const auto& unit : state.units) {
     if (!unit->piece) {
-      for (auto& file : irs::SegmentFiles(unit->meta.name, unit->meta.kinds)) {
+      for (auto& file : irs::SegmentFiles(unit->meta)) {
         visit(std::move(file));
       }
     }
@@ -380,8 +380,7 @@ void Store::Pack() {
       continue;
     }
     duckdb::vector<std::string> paths;
-    for (const auto& name :
-         irs::SegmentFiles(unit->meta.name, unit->meta.kinds)) {
+    for (const auto& name : irs::SegmentFiles(unit->meta)) {
       paths.push_back(fs.JoinPath(_root, name));
     }
     if (fs.OpenBlockFile(paths.front())) {

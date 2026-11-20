@@ -1439,13 +1439,23 @@ void Table::Reopen(Tick tick, std::span<const uint64_t> units) {
       continue;
     }
     auto unit = std::make_shared<TableUnit>(*next->units[i]);
-    irs::SegmentMeta meta;
-    meta.name = irs::FileName(id);
-    meta.kinds = unit->meta.kinds;
-    meta.docs_count = unit->docs;
-    meta.live_docs_count = unit->docs;
-    unit->reader = irs::SegmentReaderImpl::Open(db, _fs, _root, meta, _options,
-                                                unit->reader->Files());
+    const auto attachments = unit->reader->Attachments();
+    SDB_ASSERT(attachments.size() == unit->meta.attachments.size());
+    std::vector<std::shared_ptr<const irs::SegmentReaderImpl>> attached;
+    attached.reserve(attachments.size());
+    for (size_t a = 0; a != attachments.size(); ++a) {
+      const auto& files = unit->meta.attachments[a];
+      attached.push_back(irs::SegmentReaderImpl::Open(
+        db, _fs, _root, FilesMeta(files.id, files.kinds, unit->docs), _options,
+        attachments[a]->Files()));
+    }
+    auto reader = irs::SegmentReaderImpl::Open(
+      db, _fs, _root, FilesMeta(id, unit->meta.kinds, unit->docs), _options,
+      unit->reader->Files());
+    if (!attached.empty()) {
+      reader = reader->WithAttachments(attached);
+    }
+    unit->reader = std::move(reader);
     if (unit->deleted) {
       unit->reader = unit->reader->WithDocsMask(unit->deleted);
     }

@@ -91,10 +91,6 @@ same_segments	more_files
 t	t
 
 
-statement ok
-ALTER TABLE sat ADD CONSTRAINT sat_id_key UNIQUE (id);
-
-
 query
 SELECT count(*) AS rows, sum(c) AS c, sum(n) AS n, pg_typeof(sum(n)) AS t
 FROM sat;
@@ -128,13 +124,6 @@ id	n	c
 251	101	42
 
 
-statement error
-INSERT INTO sat (id, n, body) VALUES (5, 0, 'dup');
-----
-db error: ERROR: duplicate key value violates unique constraint "sat_id_key"
-DETAIL: Key (id)=(5) already exists.
-
-
 statement ok
 SET sdb_faults = 'crash_on_packet';
 
@@ -162,14 +151,6 @@ SELECT count(*) AS hits FROM sat WHERE body @@ 'w3';
 ----
 hits
 707
-
-
-connection restarted
-statement error
-INSERT INTO sat (id, n, body) VALUES (5, 0, 'dup');
-----
-db error: ERROR: duplicate key value violates unique constraint "sat_id_key"
-DETAIL: Key (id)=(5) already exists.
 
 
 connection restarted
@@ -206,6 +187,27 @@ SELECT count(*) AS hits FROM sat WHERE body @@ 'w3';
 ----
 hits
 707
+
+
+connection checkpointed
+query
+SELECT id, n, c FROM sat WHERE body @@ 'x251';
+----
+id	n	c
+251	101	42
+
+
+connection checkpointed
+statement ok
+ALTER TABLE sat ADD CONSTRAINT sat_id_key UNIQUE (id);
+
+
+connection checkpointed
+statement error
+INSERT INTO sat (id, n, body) VALUES (5, 0, 'dup');
+----
+db error: ERROR: duplicate key value violates unique constraint "sat_id_key"
+DETAIL: Key (id)=(5) already exists.
 
 
 connection checkpointed

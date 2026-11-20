@@ -110,6 +110,13 @@ class SegmentReaderImpl final : public SubReader {
   const std::shared_ptr<const FileTracker>& Files() const noexcept {
     return _files;
   }
+  std::span<const std::shared_ptr<const SegmentReaderImpl>> Attachments()
+    const noexcept {
+    if (!_root) {
+      return {};
+    }
+    return _root->attached;
+  }
   std::span<const FieldPatch> Patches() const noexcept { return _patches; }
 
   lead::Node::ptr docs_iterator() const final;

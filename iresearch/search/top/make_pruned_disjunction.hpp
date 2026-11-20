@@ -93,7 +93,8 @@ Root::ptr PrunedDisjunctionMaker<kExcludes, Term, P>::Make(
   SDB_IF_FAILURE("irs::PruningIterator") {
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
-  if (!filters.empty()) {
+  const auto* const doc = irs::detail::SharedDoc(terms, field);
+  if (!filters.empty() || !doc) {
     std::vector<UnionMember::ptr> members;
     std::vector<uint32_t> costs;
     members.reserve(terms.size() + filters.size());
@@ -103,11 +104,11 @@ Root::ptr PrunedDisjunctionMaker<kExcludes, Term, P>::Make(
       const auto posting =
         irs::detail::ClauseOf(terms[i], field, scorer, boost);
       const auto& own = *posting.state.reader;
-      const auto* const doc = irs::detail::DocOf(own);
+      const auto* const own_doc = irs::detail::DocOf(own);
       members.push_back(
-        Resolve<P>(*doc, [&]<typename Input> -> UnionMember::ptr {
+        Resolve<P>(*own_doc, [&]<typename Input> -> UnionMember::ptr {
           return memory::make_managed<TermUnionMember<Input>>(
-            posting.state.cookie, *doc, irs::detail::LayoutOf(own), segment,
+            posting.state.cookie, *own_doc, irs::detail::LayoutOf(own), segment,
             own, posting.Args(&ctx.fetcher));
         }));
       costs.push_back(posting.state.cookie.docs_count);
@@ -129,8 +130,6 @@ Root::ptr PrunedDisjunctionMaker<kExcludes, Term, P>::Make(
     return MakeDisjunctionOf<kExcludes, ErasedUnionLeaf, P>(
       init, members.size(), postings, excludes, exclude_filters, segment, ctx);
   }
-  const auto* const doc =
-    irs::detail::DocOf(irs::detail::FieldOf(terms.front(), field));
   return Resolve<P>(*doc, [&]<typename Input> -> Root::ptr {
     using Leaf = PostingPrunedDisj<Input>;
     const auto init = [&](Leaf& leaf, size_t i) {

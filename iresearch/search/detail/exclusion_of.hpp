@@ -50,7 +50,7 @@ bool ExcludeTerms(std::span<const Term> terms,
   if (!filters.empty() || terms.empty()) {
     return false;
   }
-  doc = DocOf(FieldOf(terms.front(), field));
+  doc = SharedDoc(terms, field);
   return doc != nullptr;
 }
 
@@ -374,8 +374,7 @@ template<typename Term>
 const duckdb::InputFile* ExcludeDoc(std::span<const Term> metas,
                                     const TermReader* field,
                                     const SubReader& segment) {
-  return metas.empty() ? SegmentDoc(segment)
-                       : DocOf(FieldOf(metas.front(), field));
+  return metas.empty() ? SegmentDoc(segment) : SharedDoc(metas, field);
 }
 
 template<typename Result, typename Input, bool kConcrete, typename P = NoPins,

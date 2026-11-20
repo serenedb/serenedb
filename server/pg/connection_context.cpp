@@ -143,6 +143,7 @@ ConnectionContext::ConnectionContext(duckdb::DatabaseInstance& db,
   _progress->database = _database_name;
   _progress->client_backend = identity.client_backend;
   _progress->backend_start_us = duckdb::Timestamp::GetCurrentTimestamp().value;
+  _progress->status.Write({.state_change_us = _progress->backend_start_us});
   _progress->ctx = this;
   if (_database_name.empty()) {
     return;
@@ -424,8 +425,24 @@ bool ConnectionContext::EmitWarning(const char* message) {
 
 bool ConnectionContext::IsSettingVisible(const std::string& name) {
   static const irs::containers::FlatHashSet<std::string_view> kHidden = {
-    "sdb_faults", "debug_verification", "is_superuser", "role",
-    "session_authorization"};
+    "sdb_faults",
+    "debug_verification",
+    "duckdb_api",
+    "is_superuser",
+    "session_authorization",
+    "role",
+    "allow_community_extensions",
+    "allow_extension_repositories",
+    "allow_extensions_metadata_mismatch",
+    "allow_unsigned_extensions",
+    "autoinstall_extension_repository",
+    "autoinstall_known_extensions",
+    "autoload_known_extensions",
+    "custom_extension_repository",
+    "extension_directories",
+    "extension_directory",
+    "extension_repository_directory",
+  };
   return !kHidden.contains(name);
 }
 
@@ -469,9 +486,10 @@ void ConnectionContext::OnQueryBegin() {
       !transaction.IsAutoCommit()) {
     transaction.ActiveTransaction().RefreshStartTime();
   }
-  if (_internal_statements == 0) {
-    _query_in_transaction = true;
+  if (_internal_statements != 0) {
+    return;
   }
+  _query_in_transaction = true;
   _progress->BeginQuery(GetCurrentQuery());
   if (pending_copy_command != pg::ProgressCommand::None) {
     auto& metrics = _progress->metrics;
@@ -491,11 +509,17 @@ void ConnectionContext::OnQueryBegin() {
 void ConnectionContext::OnQueryEnd() {
   copy_stdin_open_count = 0;
   copy_stdin_done = false;
-  _progress->EndQuery();
+  if (!_progress->client_backend && _internal_statements == 0) {
+    ReportIdle();
+  }
   RefreshCatalogEpoch();
   if (_transaction) {
     _transaction->ResetSearchPins(!IsStableSnapshot());
   }
+}
+
+void ConnectionContext::ReportIdle() {
+  _progress->ReportIdle(pg::IdleState(transaction));
 }
 
 void ConnectionContext::OnTransactionPreCommit(duckdb::MetaTransaction& meta) {

@@ -68,6 +68,8 @@ add_custom_command(
         $<TARGET_FILE_DIR:serenedb>/serened
     VERBATIM
 )
+include(Licenses)
+cmake_language(DEFER DIRECTORY ${serenedb_SOURCE_DIR} CALL sdb_licenses)
 
 install(TARGETS serenedb RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} OPTIONAL)
 install(

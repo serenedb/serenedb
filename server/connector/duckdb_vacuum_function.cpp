@@ -502,7 +502,7 @@ void VacuumExecute(duckdb::ClientContext& context,
   output.SetCardinality(0);
 }
 
-// PRAGMA serenedb_vacuum('option', 'name', 'schema', 'catalog')
+// PRAGMA sdb_vacuum('option', 'name', 'schema', 'catalog')
 // Called when DuckDB transforms VACUUM (COMPACT_*|...) into this
 // PRAGMA. The parameter positions mirror the BaseTableRef qualification
 // produced by the parser.
@@ -533,12 +533,12 @@ void RegisterVacuumFunction(duckdb::DatabaseInstance& db) {
 
   duckdb::FunctionSignature signature;
   signature.AddArgs("args", duckdb::LogicalType::VARCHAR);
-  duckdb::TableFunction func("serenedb_vacuum", std::move(signature),
-                             VacuumExecute, VacuumBind);
+  duckdb::TableFunction func("sdb_vacuum", std::move(signature), VacuumExecute,
+                             VacuumBind);
   loader.RegisterFunction(func);
 
   auto pragma = duckdb::PragmaFunction::PragmaCall(
-    "serenedb_vacuum", VacuumPragma, {duckdb::LogicalType::VARCHAR},
+    "sdb_vacuum", VacuumPragma, {duckdb::LogicalType::VARCHAR},
     duckdb::LogicalType::VARCHAR);
   loader.RegisterFunction(pragma);
 }

@@ -48,7 +48,7 @@ TO '${__TEST_DIR__}/rvhi/color=green/c.parquet' (FORMAT PARQUET);
 
 connection writer
 query
-SELECT * FROM serenedb_reindex('rvhi_idx');
+SELECT * FROM sdb_reindex('rvhi_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	1	0	0	0

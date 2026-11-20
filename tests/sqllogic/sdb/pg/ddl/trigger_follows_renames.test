@@ -27,7 +27,7 @@ x
 
 
 query
-SELECT sql FROM duckdb_triggers() WHERE trigger_name = 'tfr_row';
+SELECT sql FROM sdb_triggers() WHERE trigger_name = 'tfr_row';
 ----
 sql
 CREATE TRIGGER tfr_row AFTER INSERT ON tfr_t FOR EACH ROW INSERT INTO tfr_a (VALUES ("new".w));
@@ -119,7 +119,7 @@ n
 
 
 query
-SELECT table_name, trigger_name, sql FROM duckdb_triggers()
+SELECT table_name, trigger_name, sql FROM sdb_triggers()
 WHERE trigger_name IN ('tfr_row', 'tfr_cols', 'tfr_join')
 ORDER BY trigger_name;
 ----
@@ -172,7 +172,7 @@ ALTER TABLE tfr_u RENAME COLUMN v TO w;
 
 
 query
-SELECT columns FROM duckdb_triggers() WHERE trigger_name = 'tfr_upd';
+SELECT columns FROM sdb_triggers() WHERE trigger_name = 'tfr_upd';
 ----
 columns
 {w}
@@ -207,7 +207,7 @@ ALTER TABLE tfr_s DROP COLUMN w CASCADE;
 
 
 query
-SELECT count(*) AS n FROM duckdb_triggers() WHERE trigger_name = 'tfr_stmt';
+SELECT count(*) AS n FROM sdb_triggers() WHERE trigger_name = 'tfr_stmt';
 ----
 n
 0

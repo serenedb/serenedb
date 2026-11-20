@@ -63,7 +63,7 @@
 #include <type_traits>
 #include <utility>
 
-#include "connector/functions/duckdb_aliases.h"
+#include "connector/functions/function_alias.h"
 
 namespace sdb::connector {
 namespace {

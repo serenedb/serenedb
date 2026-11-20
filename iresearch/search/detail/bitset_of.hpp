@@ -37,7 +37,9 @@
 #include "iresearch/search/detail/posting_fill.hpp"
 #include "iresearch/search/fill/bitset_docs.hpp"
 #include "iresearch/search/lead/bitset_docs.hpp"
+#include "iresearch/search/lead/constant_scored.hpp"
 #include "iresearch/search/probe/bitset_docs.hpp"
+#include "iresearch/search/probe/constant_scored.hpp"
 
 namespace irs::detail {
 
@@ -433,6 +435,26 @@ Result MakeBitsetOf(std::span<const Term> terms, const TermReader* field,
   }
   return MakeBitsetNode<Result>(DisjunctionBuckets(terms, field), doc,
                                 docs_count, span, table);
+}
+
+template<typename Result>
+Result MakeConstantBitsetNode(BitsetBuckets&& buckets, const IndexInput& doc,
+                              doc_id_t docs_count, score_t value);
+
+template<>
+inline ProbeNode::ptr MakeConstantBitsetNode<ProbeNode::ptr>(
+  BitsetBuckets&& buckets, const IndexInput& doc, doc_id_t docs_count,
+  score_t value) {
+  return memory::make_managed<probe::ConstantScoredImpl<probe::BitsetDocs>>(
+    value, BuildBitset(buckets, doc, docs_count));
+}
+
+template<>
+inline LeadNode::ptr MakeConstantBitsetNode<LeadNode::ptr>(
+  BitsetBuckets&& buckets, const IndexInput& doc, doc_id_t docs_count,
+  score_t value) {
+  return memory::make_managed<lead::ConstantScoredImpl<lead::BitsetDocs>>(
+    value, BuildBitset(buckets, doc, docs_count));
 }
 
 }  // namespace irs::detail

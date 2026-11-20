@@ -146,7 +146,7 @@ psql "${PSQL_CONN}" -v ON_ERROR_STOP=1 -X \
 
 INCLUDE_LIST=$(psql "${PSQL_CONN}" -At -v ON_ERROR_STOP=1 -X -c "
 SELECT string_agg('\"' || column_name || '\"', ', ' ORDER BY column_index)
-FROM duckdb_columns()
+FROM sdb_columns()
 WHERE table_name = 'hits_view';
 ")
 

@@ -20,14 +20,20 @@
 
 #pragma once
 
-#include <duckdb/main/database.hpp>
-#include <duckdb/main/extension/extension_loader.hpp>
+#include <span>
 #include <string_view>
 
-namespace sdb::connector {
+namespace sdb::credits {
 
-void RegisterScalarAlias(duckdb::ExtensionLoader& loader,
-                         std::string_view source_name, std::string_view alias);
-void RegisterDuckDBAliases(duckdb::DatabaseInstance& db);
+struct License {
+  std::string_view name;
+  std::string_view license;
+  std::string_view url;
+  std::string_view file;
+  std::string_view text;
+};
 
-}  // namespace sdb::connector
+std::span<const License> Licenses() noexcept;
+std::span<const std::string_view> Contributors() noexcept;
+
+}  // namespace sdb::credits

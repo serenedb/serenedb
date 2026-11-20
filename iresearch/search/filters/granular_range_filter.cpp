@@ -120,7 +120,7 @@ QueryBuilder::ptr ByGranularRange::PrepareSegment(const SubReader& segment,
   const bstring from = has_min ? RangeLower(rng.min, rng.min_type) : bstring{};
   const bstring to = has_max ? RangeUpper(rng.max, rng.max_type) : bstring{};
   auto query = memory::make_tracked<MultiTermQuery>(
-    ctx.memory, segment, ctx.memory, ctx.boost, ScoreMergeType::Sum);
+    ctx.memory, segment, ctx.memory, ctx.boost, ScoreMergeType::Max);
   const auto inside = VisitInto(*query, ctx, *reader, from, to);
   if (auto complement = Complement(segment, ctx, *reader, from, to, inside)) {
     return complement;

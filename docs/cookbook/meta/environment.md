@@ -23,6 +23,18 @@ Using a `PRAGMA`:
 
 <SqlLogicTest id="cookbook/meta/environment/example_002" />
 
+## Build
+
+`serenedb --version` prints the release and the commit the binary was built from, such as `serenedb (SereneDB) 26.11.0 (3f9c2a7d41b0e8c56d2f1a9b7e4c3d2a1f0e9b8c)`; `serened --version` prints the same line naming `serened`. The commit ends in `-dirty` when the source the binary was built from differed from it.
+
+The `pg_config` view, which superusers can read, lists the same and how the server was built: the compilers, their flags and the CMake options of the build. The [system table compatibility](../../compatibility/system-table-compatibility.md) page lists its rows.
+
+<SqlLogicTest id="cookbook/meta/environment/example_005" />
+
+## Server Flags
+
+The `sdb_flags` table lists the command-line flags of the server, those `serenedb server --help` prints, in the columns of `pg_settings`: `setting` is the value the server runs with, `boot_val` the default, and `context` is always `postmaster`, since a flag changes only when the server restarts. The values of `auth_api_key` and `auth_bearer_token` show as `***`. SQL settings, the ones `SET` changes, are in `pg_settings` and `sdb_settings()`.
+
 ## Platform
 
 The platform information consists of the operating system, system architecture, and, optionally, the compiler.
@@ -32,6 +44,16 @@ To retrieve the platform, use the following `PRAGMA`:
 
 The platform string combines the operating system and architecture — for example `osx_arm64` on macOS with Apple Silicon, `windows_amd64` on Windows on AMD64, or `linux_arm64` on Ubuntu Linux on ARM64.
 
+## Licenses and Contributors
+
+The `sdb_licenses` table lists SereneDB and the third-party libraries the server was built with: each one's name, its license as an SPDX expression, its home page, and one row per license file with the file's path in the SereneDB source tree and its text. A library without a license file has the license `NOASSERTION` and no file or text.
+
+<SqlLogicTest id="cookbook/meta/environment/example_006" />
+
+The `sdb_contributors` table lists the names of the people who wrote SereneDB's commits.
+
+<SqlLogicTest id="cookbook/meta/environment/example_007" />
+
 ## Meta Table Functions
 
 SereneDB has the following built-in table functions to obtain metadata about available catalog objects:
@@ -40,7 +62,6 @@ SereneDB has the following built-in table functions to obtain metadata about ava
 * [`sdb_constraints()`](../../sql/functions/metadata.md#sdb_constraints): constraints
 * [`sdb_databases()`](../../sql/functions/metadata.md#sdb_databases): lists the databases that are accessible from within the current SereneDB process
 * [`sdb_dependencies()`](../../sql/functions/metadata.md#sdb_dependencies): dependencies between objects
-* [`sdb_extensions()`](../../sql/functions/metadata.md#sdb_extensions): extensions
 * [`sdb_functions()`](../../sql/functions/metadata.md#sdb_functions): functions
 * [`sdb_indexes()`](../../sql/functions/metadata.md#sdb_indexes): secondary indexes
 * [`sdb_keywords()`](../../sql/functions/metadata.md#sdb_keywords): SereneDB's keywords and reserved words

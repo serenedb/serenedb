@@ -44,7 +44,7 @@ count
 
 connection after_crash
 query
-SELECT * FROM serenedb_reindex('vetr_idx');
+SELECT * FROM sdb_reindex('vetr_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0
@@ -62,7 +62,7 @@ INSERT INTO vetr.${__DATABASE__}.t VALUES (1, 'pudge goes mid'), (2, 'arrives be
 
 connection after_crash
 query
-SELECT * FROM serenedb_reindex('vetr_idx');
+SELECT * FROM sdb_reindex('vetr_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	1	0	0	0
@@ -104,7 +104,7 @@ DELETE FROM vetr.${__DATABASE__}.t;
 
 connection after_second_crash
 query
-SELECT * FROM serenedb_reindex('vetr_idx');
+SELECT * FROM sdb_reindex('vetr_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	0	1	0	0
@@ -133,7 +133,7 @@ count
 
 connection after_third_crash
 query
-SELECT * FROM serenedb_reindex('vetr_idx');
+SELECT * FROM sdb_reindex('vetr_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0
@@ -144,7 +144,7 @@ INSERT INTO vetr.${__DATABASE__}.t VALUES (3, 'lands after the restart');
 
 connection after_third_crash
 query
-SELECT * FROM serenedb_reindex('vetr_idx');
+SELECT * FROM sdb_reindex('vetr_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	1	0	0	0

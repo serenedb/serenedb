@@ -65,9 +65,9 @@ via_view	via_macro	via_sequence
 connection s2
 query
 SELECT (SELECT count(*) FROM pg_namespace WHERE nspname = 'cst_a') AS schemas,
-       (SELECT count(*) FROM duckdb_tables() WHERE schema_name = 'cst_a') AS tables,
-       (SELECT count(*) FROM duckdb_indexes() WHERE schema_name = 'cst_a') AS indexes,
-       (SELECT count(*) FROM duckdb_sequences() WHERE schema_name = 'cst_a') AS sequences
+       (SELECT count(*) FROM sdb_tables() WHERE schema_name = 'cst_a') AS tables,
+       (SELECT count(*) FROM sdb_indexes() WHERE schema_name = 'cst_a') AS indexes,
+       (SELECT count(*) FROM sdb_sequences() WHERE schema_name = 'cst_a') AS sequences
 ----
 schemas	tables	indexes	sequences
 0	0	0	0
@@ -88,10 +88,10 @@ ROLLBACK
 connection s1
 query
 SELECT (SELECT count(*) FROM pg_namespace WHERE nspname = 'cst_a') AS schemas,
-       (SELECT count(*) FROM duckdb_tables() WHERE schema_name = 'cst_a') AS tables,
-       (SELECT count(*) FROM duckdb_indexes() WHERE schema_name = 'cst_a') AS indexes,
-       (SELECT count(*) FROM duckdb_sequences() WHERE schema_name = 'cst_a') AS sequences,
-       (SELECT count(*) FROM duckdb_functions() WHERE schema_name = 'cst_a') AS functions
+       (SELECT count(*) FROM sdb_tables() WHERE schema_name = 'cst_a') AS tables,
+       (SELECT count(*) FROM sdb_indexes() WHERE schema_name = 'cst_a') AS indexes,
+       (SELECT count(*) FROM sdb_sequences() WHERE schema_name = 'cst_a') AS sequences,
+       (SELECT count(*) FROM sdb_functions() WHERE schema_name = 'cst_a') AS functions
 ----
 schemas	tables	indexes	sequences	functions
 0	0	0	0	0
@@ -293,7 +293,7 @@ n
 connection s2
 query
 SELECT (SELECT count(*) FROM cst_d.v) AS via_view,
-       (SELECT count(*) FROM duckdb_indexes() WHERE schema_name = 'cst_d') AS indexes
+       (SELECT count(*) FROM sdb_indexes() WHERE schema_name = 'cst_d') AS indexes
 ----
 via_view	indexes
 2	1
@@ -331,7 +331,7 @@ connection s2
 query
 SELECT (SELECT count(*) FROM cst_d.v) AS via_view,
        nextval('cst_d.sq') AS via_sequence,
-       (SELECT count(*) FROM duckdb_indexes() WHERE schema_name = 'cst_d') AS indexes
+       (SELECT count(*) FROM sdb_indexes() WHERE schema_name = 'cst_d') AS indexes
 ----
 via_view	via_sequence	indexes
 3	1	1
@@ -345,9 +345,9 @@ DROP SCHEMA cst_d CASCADE
 connection s2
 query
 SELECT (SELECT count(*) FROM pg_namespace WHERE nspname = 'cst_d') AS schemas,
-       (SELECT count(*) FROM duckdb_tables() WHERE schema_name = 'cst_d') AS tables,
-       (SELECT count(*) FROM duckdb_indexes() WHERE schema_name = 'cst_d') AS indexes,
-       (SELECT count(*) FROM duckdb_sequences() WHERE schema_name = 'cst_d') AS sequences
+       (SELECT count(*) FROM sdb_tables() WHERE schema_name = 'cst_d') AS tables,
+       (SELECT count(*) FROM sdb_indexes() WHERE schema_name = 'cst_d') AS indexes,
+       (SELECT count(*) FROM sdb_sequences() WHERE schema_name = 'cst_d') AS sequences
 ----
 schemas	tables	indexes	sequences
 0	0	0	0

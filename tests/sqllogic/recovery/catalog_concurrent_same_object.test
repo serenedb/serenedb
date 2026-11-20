@@ -164,7 +164,7 @@ COMMIT
 
 
 query
-SELECT comment FROM duckdb_tables() WHERE table_name = 'ccso_v'
+SELECT comment FROM sdb_tables() WHERE table_name = 'ccso_v'
 ----
 comment
 kept
@@ -205,7 +205,7 @@ ALTER TABLE ccso_r RENAME TO ccso_r2
 
 
 query
-SELECT comment IS NULL AS no_comment FROM duckdb_tables()
+SELECT comment IS NULL AS no_comment FROM sdb_tables()
 WHERE table_name = 'ccso_r2'
 ----
 no_comment
@@ -344,7 +344,7 @@ ccso_owner
 
 connection after_crash
 query
-SELECT comment FROM duckdb_tables() WHERE table_name = 'ccso_v'
+SELECT comment FROM sdb_tables() WHERE table_name = 'ccso_v'
 ----
 comment
 kept
@@ -352,7 +352,7 @@ kept
 
 connection after_crash
 query
-SELECT comment IS NULL AS no_comment FROM duckdb_tables()
+SELECT comment IS NULL AS no_comment FROM sdb_tables()
 WHERE table_name = 'ccso_r2'
 ----
 no_comment

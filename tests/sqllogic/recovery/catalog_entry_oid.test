@@ -1,7 +1,7 @@
 control substitution on
 
 # duckdb's `oid` on a serenedb catalog entry is the object's stable serenedb id,
-# so pg_class.oid and duckdb_tables().table_oid are one number. Nothing writes
+# so pg_class.oid and sdb_tables().table_oid are one number. Nothing writes
 # it down twice: every entry is built from the object, including the ones boot
 # builds off the catalog log, so the identity survives a restart by
 # construction. This asserts that it does -- the ids recorded before the crash

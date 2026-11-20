@@ -24,15 +24,21 @@
 #include <typeinfo>
 
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/detail/bitset_of.hpp"
 #include "iresearch/search/detail/fold_reach.hpp"
 #include "iresearch/search/detail/make.hpp"
 #include "iresearch/search/detail/make_term.hpp"
 #include "iresearch/search/detail/phrase_match.hpp"
 #include "iresearch/search/filters/query_profile.hpp"
+#include "iresearch/search/lead/bitset_docs.hpp"
+#include "iresearch/search/lead/impl.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
 #include "iresearch/search/queries/phrase_query.hpp"
 #include "iresearch/search/queries/term_query.hpp"
 #include "iresearch/search/queries/token_phrase_query.hpp"
+#include "iresearch/search/scorers/all_docs_score.hpp"
+#include "iresearch/search/scorers/constant_score.hpp"
+#include "iresearch/search/top/constant_union_member.hpp"
 #include "iresearch/search/top/empty.hpp"
 #include "iresearch/search/top/family.hpp"
 
@@ -167,15 +173,48 @@ Result MakePhraseOf(const QueryBuilder& query, Make&& make) {
   return resolve(utils::downCast<VariadicPhraseQuery>(query));
 }
 
+UnionMember::ptr MakeConstantMember(const QueryBuilder& query,
+                                    const Context& ctx) {
+  if (query.Kind() != QueryKind::Terms) {
+    return {};
+  }
+  const auto& multi = utils::downCast<MultiTermQuery>(query);
+  if (multi.MergeType() != ScoreMergeType::Max ||
+      !IsConstantScore(multi.Stats(ScoredOf(ctx)).scorer)) {
+    return {};
+  }
+  const auto score = irs::detail::AllDocsScoreOf(multi, ScoredOf(ctx));
+  const auto& state = multi.State();
+  const auto* const field = state.Reader();
+  const std::span<const MultiTermState::Entry> terms{state.Terms()};
+  const auto* const doc = irs::detail::DocOf(*field);
+  const auto docs_count = static_cast<doc_id_t>(multi.Segment().docs_count());
+  if (doc && irs::detail::TakeBitset<irs::detail::LeadNode::ptr>(terms, *doc,
+                                                                 docs_count)) {
+    auto buckets = irs::detail::DisjunctionBuckets(terms, field);
+    return memory::make_managed<ConstantUnionMember<lead::BitsetDocs>>(
+      score, irs::detail::BuildBitset(buckets, *doc, docs_count));
+  }
+  auto docs = multi.PlanLead({});
+  if (!docs) {
+    return {};
+  }
+  return memory::make_managed<ConstantUnionMember<lead::Erased>>(
+    score, std::move(docs));
+}
+
 }  // namespace
 
 UnionMember::ptr MakeUnionMember(const QueryBuilder& query,
                                  const Context& ctx) {
-  return ProfileMember<ProfiledMember>(
-    query, MakePhraseOf<UnionMember::ptr>(
-             query, [&]<irs::detail::PhraseMatch M>(const auto& phrase) {
-               return MakePhraseMember<M>(phrase, ctx);
-             }));
+  auto member = MakePhraseOf<UnionMember::ptr>(
+    query, [&]<irs::detail::PhraseMatch M>(const auto& phrase) {
+      return MakePhraseMember<M>(phrase, ctx);
+    });
+  if (!member) {
+    member = MakeConstantMember(query, ctx);
+  }
+  return ProfileMember<ProfiledMember>(query, std::move(member));
 }
 
 PrunedClause::ptr MakeConjunctionClause(const QueryBuilder& query,
@@ -232,12 +271,17 @@ Root::ptr Family::Make(const TermQuery& query, const Context& ctx) {
 }
 
 Root::ptr Family::Make(const MultiTermQuery& query, const Context& ctx) {
+  const auto& state = query.State();
+  const auto* const scorer = query.Stats(ScoredOf(ctx)).scorer;
+  const std::span<const MultiTermState::Entry> terms{state.Terms()};
+  if (ctx.prune && terms.size() > 1 &&
+      query.MergeType() == ScoreMergeType::Max && IsConstantScore(scorer)) {
+    return irs::detail::PlanConstant<Family>(
+      query, irs::detail::AllDocsScoreOf(query, ScoredOf(ctx)), ctx);
+  }
   if (PruneByBounds(ctx)) {
-    const auto& state = query.State();
     const auto* const field = state.Reader();
-    const auto* const scorer = query.Stats(ScoredOf(ctx)).scorer;
     const auto boost = query.Boost();
-    const std::span<const MultiTermState::Entry> terms{state.Terms()};
     if (terms.size() == 1) {
       const auto posting =
         irs::detail::ClauseOf(terms.front(), field, scorer, boost);

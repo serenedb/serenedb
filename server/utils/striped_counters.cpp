@@ -50,7 +50,9 @@ int64_t StripedCounters::Read(size_t counter) const noexcept {
 void StripedCounters::Reset() noexcept {
   for (auto& line : _lines) {
     for (auto& value : line.values) {
-      value.store(0, std::memory_order_relaxed);
+      if (value.load(std::memory_order_relaxed) != 0) {
+        value.store(0, std::memory_order_relaxed);
+      }
     }
   }
 }

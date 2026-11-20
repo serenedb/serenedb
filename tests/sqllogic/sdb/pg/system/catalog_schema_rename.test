@@ -200,8 +200,8 @@ db error: ERROR: could not serialize access due to concurrent update of "csr_b"
 connection s1
 query
 SELECT t.schema_name AS t, c.schema_name AS c, i.schema_name AS i, s.schema_name AS s
-FROM duckdb_tables() t, (SELECT DISTINCT schema_name FROM duckdb_columns() WHERE table_name = 't' AND schema_name LIKE 'csr%') c,
-     duckdb_indexes() i, duckdb_sequences() s
+FROM sdb_tables() t, (SELECT DISTINCT schema_name FROM sdb_columns() WHERE table_name = 't' AND schema_name LIKE 'csr%') c,
+     sdb_indexes() i, sdb_sequences() s
 WHERE t.table_name = 't' AND t.schema_name LIKE 'csr%' AND i.index_name = 'csr_a_t_v' AND s.sequence_name = 's' AND s.schema_name LIKE 'csr%';
 ----
 t	c	i	s
@@ -210,8 +210,8 @@ csr_c	csr_c	csr_c	csr_c
 connection s2
 query
 SELECT t.schema_name AS t, c.schema_name AS c, i.schema_name AS i, s.schema_name AS s
-FROM duckdb_tables() t, (SELECT DISTINCT schema_name FROM duckdb_columns() WHERE table_name = 't' AND schema_name LIKE 'csr%') c,
-     duckdb_indexes() i, duckdb_sequences() s
+FROM sdb_tables() t, (SELECT DISTINCT schema_name FROM sdb_columns() WHERE table_name = 't' AND schema_name LIKE 'csr%') c,
+     sdb_indexes() i, sdb_sequences() s
 WHERE t.table_name = 't' AND t.schema_name LIKE 'csr%' AND i.index_name = 'csr_a_t_v' AND s.sequence_name = 's' AND s.schema_name LIKE 'csr%';
 ----
 t	c	i	s
@@ -231,7 +231,7 @@ n
 
 connection s2
 query
-SELECT schema_name FROM duckdb_tables() WHERE table_name = 't' AND schema_name LIKE 'csr%';
+SELECT schema_name FROM sdb_tables() WHERE table_name = 't' AND schema_name LIKE 'csr%';
 ----
 schema_name
 csr_c

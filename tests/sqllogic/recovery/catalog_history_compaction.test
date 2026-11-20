@@ -395,7 +395,7 @@ dbs
 
 connection after_crash
 query
-SELECT count(*) AS secrets FROM duckdb_secrets() WHERE name = 'chc_secret';
+SELECT count(*) AS secrets FROM sdb_secrets() WHERE name = 'chc_secret';
 ----
 secrets
 0

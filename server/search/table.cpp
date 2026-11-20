@@ -209,8 +209,10 @@ void Follow(const TableState& state, uint64_t id, const irs::DocumentMask& docs,
 
 bool PatchedAfter(const TableUnit& unit, const irs::DocumentMask& docs,
                   Tick snapshot) {
+  const auto first = docs.Min();
+  const auto last = docs.Max();
   return absl::c_any_of(unit.patched, [&](const PatchedRows& entry) {
-    return entry.tick > snapshot && docs.Intersects(*entry.rows);
+    return entry.tick > snapshot && entry.Intersects(docs, first, last);
   });
 }
 
@@ -376,6 +378,37 @@ bool DeletesAll(const irs::DocumentMask* deleted, const irs::DocumentMask& docs,
 }
 
 }  // namespace
+
+PatchedRows::PatchedRows(Tick tick_p,
+                         std::shared_ptr<const irs::DocumentMask> rows_p)
+  : tick{tick_p}, first{rows_p->Min()}, last{rows_p->Max()} {
+  if (rows_p->Count() > 2) {
+    rows = std::move(rows_p);
+  }
+}
+
+bool PatchedRows::Intersects(const irs::DocumentMask& docs,
+                             irs::doc_id_t docs_first,
+                             irs::doc_id_t docs_last) const noexcept {
+  if (first > docs_last || docs_first > last) {
+    return false;
+  }
+  if (rows) {
+    return docs.Intersects(*rows);
+  }
+  return docs.Contains(first) || docs.Contains(last);
+}
+
+std::shared_ptr<const irs::DocumentMask> PatchedRows::Rows() const {
+  if (rows) {
+    return rows;
+  }
+  irs::DocumentMaskBuilder built;
+  built.Add(first);
+  built.Add(last);
+  return std::make_shared<const irs::DocumentMask>(
+    std::move(built).Finish(irs::DocumentMaskBuilder::kCanonical));
+}
 
 void MergePatches(std::vector<irs::FieldPatch>& patches,
                   std::span<const irs::FieldPatch> added, Tick tick,
@@ -1164,7 +1197,7 @@ bool Table::Apply(duckdb::ClientContext& context, Tick tick,
     if (change.patch) {
       ApplyPatches(*unit, change.patch->fields, tick, parallel);
       if (change.index < committed) {
-        unit->patched.push_back({.tick = tick, .rows = RowsOf(*change.patch)});
+        unit->patched.emplace_back(tick, RowsOf(*change.patch));
       }
     }
     change.rewritten = std::move(unit);
@@ -1240,13 +1273,14 @@ Table::Replacement Table::PrepareReplace(
         }
       }
     }
-    for (const auto& [tick, rows] : source->patched) {
-      if (tick <= oldest) {
+    for (const auto& entry : source->patched) {
+      if (entry.tick <= oldest) {
         continue;
       }
       for (const auto& map : replacement.maps) {
         if (map.source == replaced[r]) {
-          irs::MapDocs(map, *rows, carried_rows[map.target][tick]);
+          irs::MapDocs(map, *entry.Rows(),
+                       carried_rows[map.target][entry.tick]);
         }
       }
     }
@@ -1270,10 +1304,10 @@ Table::Replacement Table::PrepareReplace(
     if (auto it = carried_rows.find(unit->id); it != carried_rows.end()) {
       for (auto& [tick, rows] : it->second) {
         if (!rows.Empty()) {
-          unit->patched.push_back(
-            {.tick = tick,
-             .rows = std::make_shared<const irs::DocumentMask>(
-               std::move(rows).Finish(irs::DocumentMaskBuilder::kCanonical))});
+          unit->patched.emplace_back(
+            tick,
+            std::make_shared<const irs::DocumentMask>(
+              std::move(rows).Finish(irs::DocumentMaskBuilder::kCanonical)));
         }
       }
     }

@@ -49,7 +49,7 @@ ALTER TABLE rnf.s.t RENAME TO t2;
 
 
 query
-SELECT schema_name, table_name FROM duckdb_tables() WHERE database_name = 'rnf' ORDER BY table_name;
+SELECT schema_name, table_name FROM sdb_tables() WHERE database_name = 'rnf' ORDER BY table_name;
 ----
 schema_name	table_name
 s	plain2
@@ -57,7 +57,7 @@ s	t
 
 
 query
-SELECT schema_name, index_name, table_name FROM duckdb_indexes() WHERE database_name = 'rnf';
+SELECT schema_name, index_name, table_name FROM sdb_indexes() WHERE database_name = 'rnf';
 ----
 schema_name	index_name	table_name
 s	rnf_i	t
@@ -72,7 +72,7 @@ ATTACH '${__TEST_DIR__}/rename_attached.duckdb' AS rnf;
 
 
 query
-SELECT schema_name, table_name FROM duckdb_tables() WHERE database_name = 'rnf' ORDER BY table_name;
+SELECT schema_name, table_name FROM sdb_tables() WHERE database_name = 'rnf' ORDER BY table_name;
 ----
 schema_name	table_name
 s	plain2
@@ -120,7 +120,7 @@ ALTER SCHEMA rnm.s RENAME TO s2;
 
 
 query
-SELECT schema_name, index_name, table_name FROM duckdb_indexes() WHERE database_name = 'rnm' ORDER BY index_name;
+SELECT schema_name, index_name, table_name FROM sdb_indexes() WHERE database_name = 'rnm' ORDER BY index_name;
 ----
 schema_name	index_name	table_name
 s	rnm_i	t2

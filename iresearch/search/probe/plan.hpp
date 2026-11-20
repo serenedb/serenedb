@@ -34,7 +34,9 @@
 #include "iresearch/search/probe/leaves.hpp"
 #include "iresearch/search/probe/make.hpp"
 #include "iresearch/search/probe/single_posting.hpp"
+#include "iresearch/search/queries/multiterm_query.hpp"
 #include "iresearch/search/scorers/score_policy.hpp"
+#include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/empty.hpp"
 
 namespace irs::probe {
@@ -121,6 +123,35 @@ Node::ptr MakeWindowDisjunction(std::span<const Term> terms,
     });
 }
 
+template<typename Term>
+bool TakeTermSetsWindow(std::span<const Term> terms,
+                        std::span<const QueryBuilder::ptr> filters,
+                        const TermReader* field, doc_id_t docs_count,
+                        uint64_t interrogations) {
+  const IndexInput* doc =
+    terms.empty() ? nullptr
+                  : detail::DocOf(detail::FieldOf(terms.front(), field));
+  size_t leaves = terms.size();
+  uint64_t docs = detail::SumDocs(terms);
+  for (const auto& child : filters) {
+    if (child->Kind() != QueryKind::Terms) {
+      return false;
+    }
+    if (!doc) {
+      doc = detail::DocOf(
+        *irs::utils::downCast<MultiTermQuery>(*child).State().Reader());
+    }
+    leaves += child->Leaves();
+    docs += child->Postings();
+  }
+  if (!doc) {
+    return false;
+  }
+  return detail::TakeFold(
+    detail::FoldProbeIsFaster(interrogations, leaves, docs, docs_count), leaves,
+    *doc, docs_count);
+}
+
 template<typename Term, typename Scoring>
 Node::ptr MakeDisjunction(std::span<const Term> terms,
                           std::span<const QueryBuilder::ptr> filters,
@@ -128,6 +159,17 @@ Node::ptr MakeDisjunction(std::span<const Term> terms,
                           uint64_t interrogations, const Scoring& scoring,
                           const detail::ScoredCtx& ctx, score_t absorbed = 0) {
   SDB_ASSERT(terms.size() + filters.size() > 1);
+  if constexpr (detail::kScores<Scoring>) {
+    if (!filters.empty() &&
+        TakeTermSetsWindow(terms, filters, field,
+                           static_cast<doc_id_t>(segment.docs_count()),
+                           interrogations)) {
+      if (auto windowed = MakeWindowDisjunction(terms, filters, field, scoring,
+                                                ctx, absorbed)) {
+        return windowed;
+      }
+    }
+  }
   if (filters.empty() && !terms.empty()) {
     const auto* const doc =
       detail::DocOf(detail::FieldOf(terms.front(), field));

@@ -79,7 +79,7 @@ statement ok
 CREATE TABLE sfd_again.public.t AS SELECT 2 AS v;
 
 statement ok
-COPY (SELECT table_oid FROM duckdb_tables() WHERE database_name = 'sfd_shop' AND table_name = 'notes') TO '${__TEST_DIR__}/sfd_notes.oid' (FORMAT csv, HEADER false);
+COPY (SELECT table_oid FROM sdb_tables() WHERE database_name = 'sfd_shop' AND table_name = 'notes') TO '${__TEST_DIR__}/sfd_notes.oid' (FORMAT csv, HEADER false);
 
 connection holder
 query
@@ -141,8 +141,8 @@ n
 
 query
 SELECT
-  (SELECT count(*) FROM duckdb_indexes() WHERE database_name = 'sfd_snap' AND index_name IN ('gone_idx', 'gone_id_idx')) AS indexes,
-  (SELECT count(*) FROM duckdb_tables() WHERE database_name = 'sfd_snap' AND table_name IN ('gone', 'gone_notes')) AS tables;
+  (SELECT count(*) FROM sdb_indexes() WHERE database_name = 'sfd_snap' AND index_name IN ('gone_idx', 'gone_id_idx')) AS indexes,
+  (SELECT count(*) FROM sdb_tables() WHERE database_name = 'sfd_snap' AND table_name IN ('gone', 'gone_notes')) AS tables;
 ----
 indexes	tables
 0	0
@@ -180,7 +180,7 @@ db error: ERROR: the directory "<slt:ignore>" of notes (oid <slt:ignore>) is mis
 
 
 query
-SELECT count(*) AS n FROM duckdb_databases() WHERE database_name IN ('sfd_snap', 'sfd_again_snap', 'sfd_torn');
+SELECT count(*) AS n FROM sdb_databases() WHERE database_name IN ('sfd_snap', 'sfd_again_snap', 'sfd_torn');
 ----
 n
 0

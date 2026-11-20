@@ -221,7 +221,7 @@ CREATE TABLE ctas_before AS
 # --- restart ---
 connection ctas_before_conn
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SELECT count(*) AS n FROM duckdb_tables() WHERE table_name = 'ctas_before';
+SELECT count(*) AS n FROM sdb_tables() WHERE table_name = 'ctas_before';
 ----
 n
 0

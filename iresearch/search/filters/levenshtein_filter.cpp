@@ -310,7 +310,7 @@ QueryBuilder::ptr PrepareLevenshteinSegment(
   }
 
   auto query = memory::make_tracked<MultiTermQuery>(
-    ctx.memory, segment, ctx.memory, ctx.boost * boost, ScoreMergeType::Max);
+    ctx.memory, segment, ctx.memory, ctx.boost * boost, options.merge);
   auto* collector =
     ctx.collector ? &irs::utils::downCast<BlendedTermsCollector>(*ctx.collector)
                   : nullptr;
@@ -395,7 +395,8 @@ LevenshteinAutomatonOptions::LevenshteinAutomatonOptions(
 
 Filter::ptr LowerLevenshtein(irs::field_id id, DictRef dict,
                              const ByEditDistanceOptions& opts, score_t boost) {
-  const FieldTarget target{.id = id, .dict = dict, .boost = boost};
+  const FieldTarget target{
+    .id = id, .dict = dict, .boost = boost, .merge = opts.merge};
   return ExecuteLevenshtein(
     opts.max_distance, opts.provider, opts.with_transpositions, opts.prefix,
     opts.term, [] -> Filter::ptr { return std::make_unique<Empty>(); },
@@ -413,6 +414,7 @@ Filter::ptr LowerLevenshtein(irs::field_id id, DictRef dict,
       *filter->mutable_options() = LevenshteinAutomatonOptions{
         d,      opts.provider, opts.with_transpositions,
         prefix, term,          opts.max_terms};
+      filter->mutable_options()->merge = target.merge;
       return filter;
     });
 }

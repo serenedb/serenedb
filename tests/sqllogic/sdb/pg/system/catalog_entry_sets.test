@@ -7,7 +7,7 @@
 # itself under its own name.
 #
 # An index appears twice, as the projection also produced it twice: an Index
-# entry for DROP INDEX and duckdb_indexes(), and a Table entry for the
+# entry for DROP INDEX and sdb_indexes(), and a Table entry for the
 # `SELECT * FROM <index>` scan, whose name is in the relation namespace.
 #
 # The set is keyed by the exact name, not by duckdb's case-insensitive

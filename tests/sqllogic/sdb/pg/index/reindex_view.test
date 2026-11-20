@@ -2,7 +2,7 @@ control substitution on
 
 hash-threshold 100
 
-# REINDEX (refresh) of view-backed inverted indexes: serenedb_reindex()
+# REINDEX (refresh) of view-backed inverted indexes: sdb_reindex()
 # rebuilds the index from the current source state and atomically swaps the
 # result in. Until it is called the index stays static (pinned by the
 # inverted_index_view*.test siblings); after it returns, all read classes
@@ -51,7 +51,7 @@ count
 2
 
 statement ok
-CALL serenedb_reindex('reindex_idx');
+CALL sdb_reindex('reindex_idx');
 
 query
 SELECT count(*) FROM reindex_idx WHERE body @@ ts_phrase('pudge');
@@ -76,7 +76,7 @@ id
 # REINDEX against an unchanged source detects it via the manifest
 # fingerprints and is a no-op.
 query
-SELECT * FROM serenedb_reindex('reindex_idx');
+SELECT * FROM sdb_reindex('reindex_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0
@@ -102,7 +102,7 @@ statement ok
 REINDEX INDEX ${__DATABASE__}.reindex_idx;
 
 query
-SELECT * FROM serenedb_reindex('reindex_idx', 'public');
+SELECT * FROM sdb_reindex('reindex_idx', 'public');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0
@@ -172,7 +172,7 @@ count
 # as a delta: only the new file is scanned, docs of the untouched files stay
 # in place (their materialisation below proves the file_id keys survived).
 query
-SELECT * FROM serenedb_reindex('reindex_glob_idx');
+SELECT * FROM sdb_reindex('reindex_glob_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	1	0	0	0
@@ -213,7 +213,7 @@ COPY (SELECT 3 AS id, 'pudge plays support' AS body
 TO '${__TEST_DIR__}/reindex_glob_b.parquet' (FORMAT PARQUET);
 
 query
-SELECT * FROM serenedb_reindex('reindex_glob_idx');
+SELECT * FROM sdb_reindex('reindex_glob_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	0	1	0	1
@@ -247,7 +247,7 @@ count
 8
 
 query
-SELECT * FROM serenedb_reindex('reindex_glob_idx');
+SELECT * FROM sdb_reindex('reindex_glob_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0
@@ -258,7 +258,7 @@ system ok
 rm $__TEST_DIR__/reindex_glob_b.parquet
 
 query
-SELECT * FROM serenedb_reindex('reindex_glob_idx');
+SELECT * FROM sdb_reindex('reindex_glob_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	0	0	1	0
@@ -315,7 +315,7 @@ count
 1
 
 statement ok
-CALL serenedb_reindex('reindex_union_idx');
+CALL sdb_reindex('reindex_union_idx');
 
 query
 SELECT count(*) FROM reindex_union_idx WHERE body @@ ts_phrase('pudge');
@@ -327,7 +327,7 @@ count
 # Errors.
 
 statement error
-CALL serenedb_reindex('no_such_idx');
+CALL sdb_reindex('no_such_idx');
 ----
 db error: ERROR: index "no_such_idx" does not exist
 
@@ -336,7 +336,7 @@ statement ok
 BEGIN;
 
 statement ok
-CALL serenedb_reindex('reindex_idx');
+CALL sdb_reindex('reindex_idx');
 
 statement ok
 ROLLBACK;
@@ -348,7 +348,7 @@ statement ok
 CREATE INDEX reindex_table_idx ON reindex_base_t USING inverted(body reindex_en);
 
 statement error
-CALL serenedb_reindex('reindex_table_idx');
+CALL sdb_reindex('reindex_table_idx');
 ----
 db error: ERROR: REINDEX is only supported for view-backed inverted indexes
 
@@ -428,7 +428,7 @@ COPY (SELECT 5 AS id, 'pudge buys blink' AS body
 TO '${__TEST_DIR__}/reindex_part_c.parquet' (FORMAT PARQUET);
 
 query
-SELECT * FROM serenedb_reindex('reindex_part_idx');
+SELECT * FROM sdb_reindex('reindex_part_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	1	0	0	0
@@ -460,7 +460,7 @@ COPY (SELECT 8 AS id, 'vedernikoff confirms the rebuild' AS body
 TO '${__TEST_DIR__}/reindex_part_b.parquet' (FORMAT PARQUET);
 
 query
-SELECT * FROM serenedb_reindex('reindex_part_idx');
+SELECT * FROM sdb_reindex('reindex_part_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	0	2	0	2
@@ -487,7 +487,7 @@ COPY (SELECT 106 AS id, 'pudge stays outside' AS body
 TO '${__TEST_DIR__}/reindex_part_d.parquet' (FORMAT PARQUET);
 
 query
-SELECT * FROM serenedb_reindex('reindex_part_idx');
+SELECT * FROM sdb_reindex('reindex_part_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	1	0	0	0
@@ -496,7 +496,7 @@ system ok
 rm $__TEST_DIR__/reindex_part_d.parquet
 
 query
-SELECT * FROM serenedb_reindex('reindex_part_idx');
+SELECT * FROM sdb_reindex('reindex_part_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	0	0	1	0
@@ -536,7 +536,7 @@ COPY (SELECT 2 AS id, 'pudge stays in' AS body
 TO '${__TEST_DIR__}/reindex_fold_b.parquet' (FORMAT PARQUET);
 
 query
-SELECT * FROM serenedb_reindex('reindex_fold_idx');
+SELECT * FROM sdb_reindex('reindex_fold_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	1	0	0	0
@@ -560,13 +560,13 @@ COPY (SELECT 20 AS id, 'pudge comments code' AS body
 TO '${__TEST_DIR__}/reindex_single.parquet' (FORMAT PARQUET);
 
 query
-SELECT * FROM serenedb_reindex('reindex_idx');
+SELECT * FROM sdb_reindex('reindex_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 rebuild	0	1	0	1
 
 query
-SELECT comment FROM duckdb_indexes() WHERE index_name = 'reindex_idx';
+SELECT comment FROM sdb_indexes() WHERE index_name = 'reindex_idx';
 ----
 comment
 vedernikoff approves
@@ -614,7 +614,7 @@ COPY (SELECT 5 AS id, 'io survives the sweep' AS body)
 TO '${__TEST_DIR__}/reindex_cov/f3.parquet' (FORMAT PARQUET);
 
 query
-SELECT * FROM serenedb_reindex('reindex_cov_idx');
+SELECT * FROM sdb_reindex('reindex_cov_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	1	0	2	0
@@ -626,7 +626,7 @@ id	body
 5	io survives the sweep
 
 query
-SELECT action FROM serenedb_reindex('reindex_cov_idx');
+SELECT action FROM sdb_reindex('reindex_cov_idx');
 ----
 action
 up_to_date

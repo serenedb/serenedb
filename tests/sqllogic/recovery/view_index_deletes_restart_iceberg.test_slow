@@ -33,7 +33,7 @@ statement count 1
 DELETE FROM vidr.${__DATABASE__}.t WHERE id = 2;
 
 query
-SELECT action, files_added, files_changed FROM serenedb_reindex('vidr_idx');
+SELECT action, files_added, files_changed FROM sdb_reindex('vidr_idx');
 ----
 action	files_added	files_changed
 delta	0	1
@@ -42,7 +42,7 @@ statement count 1
 UPDATE vidr.${__DATABASE__}.t SET body = 'pudge alpha prime' WHERE id = 1;
 
 query
-SELECT action FROM serenedb_reindex('vidr_idx');
+SELECT action FROM sdb_reindex('vidr_idx');
 ----
 action
 delta
@@ -100,7 +100,7 @@ count
 
 connection after_crash
 query
-SELECT * FROM serenedb_reindex('vidr_idx');
+SELECT * FROM sdb_reindex('vidr_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0
@@ -111,7 +111,7 @@ DELETE FROM vidr.${__DATABASE__}.t WHERE id IN (3, 4);
 
 connection after_crash
 query
-SELECT action FROM serenedb_reindex('vidr_idx');
+SELECT action FROM sdb_reindex('vidr_idx');
 ----
 action
 delta

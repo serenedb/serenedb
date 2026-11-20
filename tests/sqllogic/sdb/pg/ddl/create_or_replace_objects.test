@@ -103,7 +103,7 @@ n
 
 
 query
-SELECT count(*) AS n FROM duckdb_triggers()
+SELECT count(*) AS n FROM sdb_triggers()
 WHERE table_name = 'coro_t' AND database_name = current_database();
 ----
 n
@@ -112,7 +112,7 @@ n
 
 # The comments were the old table's; the grant is carried over.
 query
-SELECT comment IS NULL OR comment = '' AS no_comment FROM duckdb_tables()
+SELECT comment IS NULL OR comment = '' AS no_comment FROM sdb_tables()
 WHERE table_name = 'coro_t' AND database_name = current_database();
 ----
 no_comment
@@ -120,7 +120,7 @@ t
 
 
 query
-SELECT count(*) AS n FROM duckdb_columns()
+SELECT count(*) AS n FROM sdb_columns()
 WHERE table_name = 'coro_t' AND database_name = current_database()
   AND comment IS NOT NULL AND comment <> '';
 ----
@@ -903,7 +903,7 @@ CREATE OR REPLACE TEMP TABLE coro_shadow (c INT);
 
 
 query
-SELECT database_name = 'temp' AS in_temp, temporary FROM duckdb_tables()
+SELECT database_name = 'temp' AS in_temp, temporary FROM sdb_tables()
 WHERE table_name = 'coro_shadow' AND database_name IN (current_database(), 'temp')
 ORDER BY temporary;
 ----
@@ -913,7 +913,7 @@ t	t
 
 
 query
-SELECT column_name FROM duckdb_columns()
+SELECT column_name FROM sdb_columns()
 WHERE table_name = 'coro_shadow' AND database_name IN (current_database(), 'temp')
 ORDER BY column_name;
 ----
@@ -1140,7 +1140,7 @@ coro_tx_idx
 
 
 query
-SELECT comment FROM duckdb_tables()
+SELECT comment FROM sdb_tables()
 WHERE table_name = 'coro_tx' AND database_name = current_database();
 ----
 comment
@@ -1257,7 +1257,7 @@ id	v
 
 
 query
-SELECT count(*) AS n FROM duckdb_functions()
+SELECT count(*) AS n FROM sdb_functions()
 WHERE function_name = 'coro_tx_m' AND database_name = current_database();
 ----
 n
@@ -2505,7 +2505,7 @@ CREATE OR REPLACE TABLE coro_s (id INT PRIMARY KEY, body TEXT);
 
 
 query
-SELECT count(*) AS n FROM duckdb_triggers()
+SELECT count(*) AS n FROM sdb_triggers()
 WHERE table_name = 'coro_s' AND database_name = current_database();
 ----
 n
@@ -3306,7 +3306,7 @@ CREATE OR REPLACE MACRO coro_m(z) AS z + 1000;
 
 
 query
-SELECT parameters, macro_definition FROM duckdb_functions()
+SELECT parameters, macro_definition FROM sdb_functions()
 WHERE function_name = 'coro_m' AND database_name = current_database() ORDER BY parameters;
 ----
 parameters	macro_definition
@@ -3650,7 +3650,7 @@ RESET search_path;
 
 
 query
-SELECT schema_name, coro_sch.coro_sm(0) AS r FROM duckdb_functions()
+SELECT schema_name, coro_sch.coro_sm(0) AS r FROM sdb_functions()
 WHERE function_name = 'coro_sm' AND database_name = current_database();
 ----
 schema_name	r
@@ -3719,7 +3719,7 @@ DROP MACRO coro_mx;
 
 
 query
-SELECT count(*) AS n FROM duckdb_functions()
+SELECT count(*) AS n FROM sdb_functions()
 WHERE function_name = 'coro_mx' AND database_name = current_database();
 ----
 n
@@ -4474,7 +4474,7 @@ CREATE OR REPLACE SECRET coro_sec (TYPE s3, KEY_ID 'coro_k2', SECRET 'coro_s2', 
 query
 SELECT name, type, scope, secret_string LIKE '%key_id=coro_k2%' AS new_key,
        secret_string LIKE '%coro_r1%' AS old_region
-FROM duckdb_secrets() WHERE name = 'coro_sec';
+FROM sdb_secrets() WHERE name = 'coro_sec';
 ----
 name	type	scope	new_key	old_region
 coro_sec	s3	{s3://coro-objects-bucket}	t	f
@@ -4493,7 +4493,7 @@ CREATE OR REPLACE SECRET coro_sec (TYPE gcs, KEY_ID 'coro_k3', SECRET 'coro_s3',
 
 
 query
-SELECT name, type FROM duckdb_secrets() WHERE name = 'coro_sec';
+SELECT name, type FROM sdb_secrets() WHERE name = 'coro_sec';
 ----
 name	type
 coro_sec	gcs
@@ -4509,7 +4509,7 @@ CREATE OR REPLACE SECRET coro_sec (TYPE s3, KEY_ID 'coro_k4', SECRET 'coro_s4', 
 
 
 query
-SELECT type FROM duckdb_secrets() WHERE name = 'coro_sec';
+SELECT type FROM sdb_secrets() WHERE name = 'coro_sec';
 ----
 type
 s3
@@ -4520,7 +4520,7 @@ ROLLBACK;
 
 
 query
-SELECT name, type FROM duckdb_secrets() WHERE name = 'coro_sec';
+SELECT name, type FROM sdb_secrets() WHERE name = 'coro_sec';
 ----
 name	type
 coro_sec	gcs
@@ -4540,7 +4540,7 @@ DROP SECRET coro_sec;
 
 
 query
-SELECT count(*) AS n FROM duckdb_secrets() WHERE name = 'coro_sec';
+SELECT count(*) AS n FROM sdb_secrets() WHERE name = 'coro_sec';
 ----
 n
 0
@@ -4552,7 +4552,7 @@ ROLLBACK;
 
 query
 SELECT name, type, secret_string LIKE '%key_id=coro_k3%' AS committed_key
-FROM duckdb_secrets() WHERE name = 'coro_sec';
+FROM sdb_secrets() WHERE name = 'coro_sec';
 ----
 name	type	committed_key
 coro_sec	gcs	t
@@ -4572,7 +4572,7 @@ CREATE OR REPLACE SECRET coro_sec (TYPE s3, KEY_ID 'coro_k6', SECRET 'coro_s6', 
 
 connection s2
 query
-SELECT type FROM duckdb_secrets() WHERE name = 'coro_sec';
+SELECT type FROM sdb_secrets() WHERE name = 'coro_sec';
 ----
 type
 gcs
@@ -4593,7 +4593,7 @@ COMMIT;
 connection s2
 query
 SELECT type, secret_string LIKE '%key_id=coro_k6%' AS committed_key
-FROM duckdb_secrets() WHERE name = 'coro_sec';
+FROM sdb_secrets() WHERE name = 'coro_sec';
 ----
 type	committed_key
 s3	t
@@ -4637,7 +4637,7 @@ old	1
 
 
 query
-SELECT trigger_name, event_manipulation, for_each FROM duckdb_triggers()
+SELECT trigger_name, event_manipulation, for_each FROM sdb_triggers()
 WHERE table_name = 'coro_trg_t' AND database_name = current_database();
 ----
 trigger_name	event_manipulation	for_each
@@ -4670,7 +4670,7 @@ del	1
 
 
 query
-SELECT trigger_name, event_manipulation, for_each FROM duckdb_triggers()
+SELECT trigger_name, event_manipulation, for_each FROM sdb_triggers()
 WHERE table_name = 'coro_trg_t' AND database_name = current_database();
 ----
 trigger_name	event_manipulation	for_each
@@ -4689,7 +4689,7 @@ CREATE OR REPLACE TRIGGER coro_trg AFTER INSERT ON coro_trg_t2 FOR EACH STATEMEN
 
 
 query
-SELECT table_name, event_manipulation FROM duckdb_triggers()
+SELECT table_name, event_manipulation FROM sdb_triggers()
 WHERE trigger_name = 'coro_trg' AND database_name = current_database() ORDER BY table_name;
 ----
 table_name	event_manipulation
@@ -4728,7 +4728,7 @@ ROLLBACK;
 
 
 query
-SELECT event_manipulation, for_each FROM duckdb_triggers()
+SELECT event_manipulation, for_each FROM sdb_triggers()
 WHERE table_name = 'coro_trg_t' AND database_name = current_database();
 ----
 event_manipulation	for_each
@@ -4770,7 +4770,7 @@ DROP TRIGGER coro_trg ON coro_trg_t;
 
 
 query
-SELECT count(*) AS n FROM duckdb_triggers()
+SELECT count(*) AS n FROM sdb_triggers()
 WHERE table_name = 'coro_trg_t' AND database_name = current_database();
 ----
 n
@@ -4782,7 +4782,7 @@ ROLLBACK;
 
 
 query
-SELECT table_name, event_manipulation FROM duckdb_triggers()
+SELECT table_name, event_manipulation FROM sdb_triggers()
 WHERE trigger_name = 'coro_trg' AND database_name = current_database() ORDER BY table_name;
 ----
 table_name	event_manipulation

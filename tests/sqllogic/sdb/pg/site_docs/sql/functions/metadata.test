@@ -121,21 +121,6 @@ statement ok
 SELECT *
 FROM sdb_dependencies();
 
-# DOCS_TEST: example_010
-
-# DOCS_TEST_BODY
-
-query
-SELECT extension_name
-FROM sdb_extensions()
-WHERE extension_name IN ('icu', 'json', 'parquet')
-ORDER BY extension_name;
-----
-extension_name
-icu
-json
-parquet
-
 # DOCS_TEST: example_011
 
 # DOCS_TEST_BODY

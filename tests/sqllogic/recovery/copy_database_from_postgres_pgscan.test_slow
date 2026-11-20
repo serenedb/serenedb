@@ -31,7 +31,7 @@ statement ok
 CALL pg_clear_cache();
 
 query
-SELECT type_name, internal FROM duckdb_types() WHERE database_name = 'cdpg_${__DATABASE__}' AND schema_name = 'cdpg_s' ORDER BY type_name;
+SELECT type_name, internal FROM sdb_types() WHERE database_name = 'cdpg_${__DATABASE__}' AND schema_name = 'cdpg_s' ORDER BY type_name;
 ----
 type_name	internal
 pair	f
@@ -45,19 +45,19 @@ statement ok
 COPY FROM DATABASE cdpg_${__DATABASE__} TO cdpg_dst_${__DATABASE__} (SCHEMA);
 
 query
-SELECT schema_name FROM duckdb_schemas() WHERE database_name = 'cdpg_dst_${__DATABASE__}' AND schema_name = 'cdpg_s';
+SELECT schema_name FROM sdb_schemas() WHERE database_name = 'cdpg_dst_${__DATABASE__}' AND schema_name = 'cdpg_s';
 ----
 schema_name
 cdpg_s
 
 query
-SELECT type_name FROM duckdb_types() WHERE database_name = 'cdpg_dst_${__DATABASE__}' AND schema_name = 'cdpg_s' ORDER BY type_name;
+SELECT type_name FROM sdb_types() WHERE database_name = 'cdpg_dst_${__DATABASE__}' AND schema_name = 'cdpg_s' ORDER BY type_name;
 ----
 type_name
 pair
 
 query
-SELECT table_name FROM duckdb_tables() WHERE database_name = 'cdpg_dst_${__DATABASE__}' AND schema_name = 'cdpg_s' ORDER BY table_name;
+SELECT table_name FROM sdb_tables() WHERE database_name = 'cdpg_dst_${__DATABASE__}' AND schema_name = 'cdpg_s' ORDER BY table_name;
 ----
 table_name
 t1

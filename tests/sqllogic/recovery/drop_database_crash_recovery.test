@@ -64,7 +64,7 @@ n
 
 connection after_crash
 query
-SELECT count(*) AS n FROM duckdb_databases() WHERE database_name = 'ddtr_gone';
+SELECT count(*) AS n FROM sdb_databases() WHERE database_name = 'ddtr_gone';
 ----
 n
 0
@@ -90,7 +90,7 @@ n
 
 connection after_shutdown
 query
-SELECT count(*) AS n FROM duckdb_databases() WHERE database_name = 'ddtr_gone';
+SELECT count(*) AS n FROM sdb_databases() WHERE database_name = 'ddtr_gone';
 ----
 n
 0

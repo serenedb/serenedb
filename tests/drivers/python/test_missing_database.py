@@ -95,7 +95,7 @@ def _search_table_dir(server: _Server, datadir: Path, database: str,
                       table: str) -> Path:
     with server.connect() as conn:
         table_oid = conn.execute(
-            "SELECT table_oid FROM duckdb_tables() "
+            "SELECT table_oid FROM sdb_tables() "
             "WHERE database_name = %s AND table_name = %s",
             (database, table)).fetchone()[0]
     return datadir / "engine_v1" / "store" / str(table_oid)

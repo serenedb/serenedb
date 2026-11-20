@@ -27,7 +27,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
-#include <duckdb/common/array_ptr.hpp>
 #include <duckdb/common/bitpacking.hpp>
 #include <duckdb/common/constants.hpp>
 #include <duckdb/common/exception.hpp>
@@ -45,7 +44,6 @@
 
 #include "iresearch/formats/column/codecs/numeric/alp_primitives.hpp"
 #include "iresearch/formats/column/codecs/numeric/alp_scan.tpp"
-#include "iresearch/formats/column/codecs/numeric/segment_reader.hpp"
 #include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
@@ -56,6 +54,7 @@
 namespace irs::codecs {
 namespace {
 
+using alp::kMetadataPointerSize;
 using alp::kVectorSize;
 using duckdb::idx_t;
 
@@ -66,7 +65,6 @@ constexpr uint32_t kDictionaryElementSize = sizeof(uint16_t);
 constexpr uint32_t kMaxDictionarySizeBytes =
   kMaxDictionarySize * kDictionaryElementSize;
 constexpr uint32_t kExceptionSize = sizeof(uint16_t);
-constexpr uint32_t kMetadataPointerSize = sizeof(uint32_t);
 constexpr uint32_t kExceptionsCountSize = sizeof(uint16_t);
 constexpr uint16_t kUncompressedModeSentinel =
   std::numeric_limits<uint16_t>::max();
@@ -76,10 +74,6 @@ constexpr uint32_t kLeftBitWidthSize = sizeof(uint8_t);
 constexpr uint32_t kNDictionaryElementsSize = sizeof(uint8_t);
 constexpr uint32_t kHeaderSize = kMetadataPointerSize + kRightBitWidthSize +
                                  kLeftBitWidthSize + kNDictionaryElementsSize;
-
-[[noreturn]] IRS_NO_INLINE void ThrowAlpRdMetadataBeforeHeader() {
-  ThrowCorrupted("ALPRD", "metadata ends before the segment header");
-}
 
 [[noreturn]] IRS_NO_INLINE void ThrowAlpRdRightBitWidthOutOfRange(
   uint8_t bit_width, uint8_t max_bit_width) {
@@ -97,18 +91,6 @@ constexpr uint32_t kHeaderSize = kMetadataPointerSize + kRightBitWidthSize +
   ThrowCorrupted("ALPRD", "dictionary size exceeds maximum");
 }
 
-[[noreturn]] IRS_NO_INLINE void ThrowAlpRdMetadataTableOutOfBounds() {
-  ThrowCorrupted("ALPRD", "metadata offset table exceeds the segment");
-}
-
-[[noreturn]] IRS_NO_INLINE void ThrowAlpRdVectorOffsetOutOfBounds() {
-  ThrowCorrupted("ALPRD", "vector offset is outside the data region");
-}
-
-[[noreturn]] IRS_NO_INLINE void ThrowAlpRdVectorOffsetsInvalid() {
-  ThrowCorrupted("ALPRD", "vector offsets do not describe a data range");
-}
-
 [[noreturn]] IRS_NO_INLINE void ThrowAlpRdExceptionCountOutOfRange(
   uint16_t exception_count, idx_t vector_size) {
   ThrowCorrupted("ALPRD", absl::StrCat("exception count ", exception_count,
@@ -120,6 +102,18 @@ constexpr uint32_t kHeaderSize = kMetadataPointerSize + kRightBitWidthSize +
   ThrowCorrupted("ALPRD",
                  absl::StrCat("exception position ", position,
                               " is outside vector size ", vector_size));
+}
+
+[[noreturn]] IRS_NO_INLINE void ThrowAlpRdVectorOutOfRange() {
+  ThrowCorrupted("ALPRD", "vector exceeds its data range");
+}
+
+[[noreturn]] IRS_NO_INLINE void ThrowAlpRdVector(uint16_t exceptions_count,
+                                                 idx_t vector_size) {
+  if (exceptions_count > vector_size) {
+    ThrowAlpRdExceptionCountOutOfRange(exceptions_count, vector_size);
+  }
+  ThrowAlpRdVectorOutOfRange();
 }
 
 struct AlpRdLeftPartInfo {
@@ -654,97 +648,95 @@ struct AlpRdVectorState {
   Exact decoded_values[kVectorSize];
   uint16_t exceptions[kVectorSize];
   uint16_t exceptions_positions[kVectorSize];
-  uint16_t exceptions_count = 0;
   uint8_t right_bit_width = 0;
   uint8_t left_bit_width = 0;
   uint16_t left_parts_dict[kMaxDictionarySize];
 };
 
-struct AlpRdSegmentLayout {
-  SegmentReader data;
-  duckdb::unsafe_array_ptr<const uint32_t> vector_offsets;
-  idx_t data_start = 0;
-};
-
 template<typename T>
-AlpRdSegmentLayout ReadAlpRdSegmentLayout(duckdb::const_data_ptr_t base,
+alp::SegmentLayout ReadAlpRdSegmentLayout(duckdb::const_data_ptr_t base,
                                           idx_t size, idx_t count,
                                           AlpRdVectorState<T>& vector_state) {
   constexpr auto kMaxRightBitWidth =
     static_cast<uint8_t>(sizeof(alp::ExactType<T>) * 8 - 1);
-  SegmentReader reader{base, size, "ALPRD segment"};
-  const auto metadata_end = reader.Read<uint32_t>();
-  if (metadata_end < kHeaderSize) {
-    ThrowAlpRdMetadataBeforeHeader();
-  }
-  reader = reader.GetSubReader(0, metadata_end, "ALPRD segment");
-  reader.Skip(kMetadataPointerSize);
+  const auto metadata_end = alp::MetadataEnd(base, size, kHeaderSize, "ALPRD");
+  const auto* at = base + kMetadataPointerSize;
 
-  vector_state.right_bit_width = reader.Read<uint8_t>();
+  vector_state.right_bit_width = duckdb::Load<uint8_t>(at);
   if (vector_state.right_bit_width > kMaxRightBitWidth) {
     ThrowAlpRdRightBitWidthOutOfRange(vector_state.right_bit_width,
                                       kMaxRightBitWidth);
   }
+  at += kRightBitWidthSize;
 
-  vector_state.left_bit_width = reader.Read<uint8_t>();
+  vector_state.left_bit_width = duckdb::Load<uint8_t>(at);
   if (vector_state.left_bit_width > kMaxDictionaryBitWidth) {
     ThrowAlpRdLeftBitWidthOutOfRange(vector_state.left_bit_width);
   }
+  at += kLeftBitWidthSize;
 
-  const auto dictionary_count = reader.Read<uint8_t>();
+  const auto dictionary_count = duckdb::Load<uint8_t>(at);
   if (dictionary_count > kMaxDictionarySize) {
     ThrowAlpRdDictionarySizeExceedsMaximum();
   }
-  reader.ReadIntoArray(vector_state.left_parts_dict, dictionary_count);
+  const uint32_t dictionary_size = dictionary_count * kDictionaryElementSize;
+  const auto layout = alp::ReadLayout(base, kHeaderSize + dictionary_size,
+                                      metadata_end, count, "ALPRD");
+  std::memcpy(vector_state.left_parts_dict, base + kHeaderSize,
+              dictionary_size);
   std::memset(vector_state.left_parts_dict + dictionary_count, 0,
-              (kMaxDictionarySize - dictionary_count) * kDictionaryElementSize);
-
-  const idx_t data_start = reader.Position();
-  const idx_t vector_count = count / kVectorSize + (count % kVectorSize != 0);
-  if (vector_count > (metadata_end - data_start) / kMetadataPointerSize) {
-    ThrowAlpRdMetadataTableOutOfBounds();
-  }
-  const idx_t metadata_size = vector_count * kMetadataPointerSize;
-  const idx_t metadata_start = metadata_end - metadata_size;
-  return {
-    .data = reader.GetSubReader(data_start, metadata_start - data_start,
-                                "ALPRD data"),
-    .vector_offsets = reader.GetArray<uint32_t>(metadata_start, vector_count),
-    .data_start = data_start,
-  };
+              kMaxDictionarySizeBytes - dictionary_size);
+  return layout;
 }
 
-uint32_t GetVectorOffset(const AlpRdSegmentLayout& layout, idx_t vector_index) {
-  SDB_ASSERT(vector_index < layout.vector_offsets.size());
-  return layout.vector_offsets[layout.vector_offsets.size() - 1 - vector_index];
-}
+struct AlpRdVector {
+  duckdb::const_data_ptr_t values = nullptr;
+  duckdb::const_data_ptr_t left = nullptr;
+  duckdb::const_data_ptr_t right = nullptr;
+  duckdb::const_data_ptr_t exceptions = nullptr;
+  duckdb::const_data_ptr_t positions = nullptr;
+  uint16_t exceptions_count = 0;
+};
 
-SegmentReader GetVectorReader(const AlpRdSegmentLayout& layout,
-                              idx_t vector_index) {
-  const auto vector_start = GetVectorOffset(layout, vector_index);
-  if (vector_start < layout.data_start) {
-    ThrowAlpRdVectorOffsetOutOfBounds();
-  }
-  const idx_t data_start = vector_start - layout.data_start;
-
-  idx_t data_end = layout.data.Size();
-  if (vector_index + 1 < layout.vector_offsets.size()) {
-    const auto vector_end = GetVectorOffset(layout, vector_index + 1);
-    if (vector_end < layout.data_start) {
-      ThrowAlpRdVectorOffsetOutOfBounds();
+template<typename T>
+IRS_FORCE_INLINE AlpRdVector OpenVector(const alp::SegmentLayout& layout,
+                                        uint8_t left_bit_width,
+                                        uint8_t right_bit_width,
+                                        idx_t vector_index, idx_t vector_size) {
+  const auto bytes =
+    alp::VectorBytes(layout, vector_index, kExceptionsCountSize, "ALPRD");
+  const auto* at = bytes.data() + kExceptionsCountSize;
+  AlpRdVector vector{.exceptions_count = duckdb::Load<uint16_t>(bytes.data())};
+  if (vector.exceptions_count == kUncompressedModeSentinel) {
+    if (bytes.size() < kExceptionsCountSize +
+                         vector_size * sizeof(alp::ExactType<T>)) [[unlikely]] {
+      ThrowAlpRdVectorOutOfRange();
     }
-    data_end = vector_end - layout.data_start;
+    vector.values = at;
+    return vector;
   }
-  if (data_start > data_end || data_end > layout.data.Size()) {
-    ThrowAlpRdVectorOffsetsInvalid();
+  const idx_t left_size =
+    duckdb::BitpackingPrimitives::GetRequiredSize(vector_size, left_bit_width);
+  const idx_t right_size =
+    duckdb::BitpackingPrimitives::GetRequiredSize(vector_size, right_bit_width);
+  const idx_t exceptions_size = vector.exceptions_count * kExceptionSize;
+  if (!(vector.exceptions_count <= vector_size &&
+        kExceptionsCountSize + left_size + right_size + exceptions_size +
+            vector.exceptions_count * kExceptionPositionSize <=
+          bytes.size())) [[unlikely]] {
+    ThrowAlpRdVector(vector.exceptions_count, vector_size);
   }
-  return layout.data.GetSubReader(data_start, data_end - data_start,
-                                  "ALPRD vector");
+  vector.left = at;
+  vector.right = at + left_size;
+  vector.exceptions = vector.right + right_size;
+  vector.positions = vector.exceptions + exceptions_size;
+  return vector;
 }
 
 template<typename T>
 struct AlpRdScanState final : SegmentScanState {
   using Value = alp::ExactType<T>;
+  using Vector = AlpRdVector;
 
   AlpRdScanState(duckdb::BufferHandle handle_p, const ColumnSegment& segment)
     : handle{std::move(handle_p)},
@@ -755,9 +747,17 @@ struct AlpRdScanState final : SegmentScanState {
   duckdb::BufferHandle handle;
   idx_t count = 0;
   AlpRdVectorState<T> vector_state;
-  AlpRdSegmentLayout layout;
+  alp::SegmentLayout layout;
   idx_t total_value_count = 0;
 };
+
+template<typename T>
+AlpRdVector OpenVector(const AlpRdScanState<T>& state, idx_t vector_index) {
+  return OpenVector<T>(
+    state.layout, state.vector_state.left_bit_width,
+    state.vector_state.right_bit_width, vector_index,
+    std::min<idx_t>(kVectorSize, state.count - vector_index * kVectorSize));
+}
 
 template<typename T>
 alp::ExactType<T>* ResultValues(const AlpRdScanState<T>&,
@@ -770,41 +770,31 @@ void LoadVector(AlpRdScanState<T>& state, alp::ExactType<T>* value_buffer) {
   auto& vector_state = state.vector_state;
   vector_state.index = 0;
 
-  const auto vector_index = state.total_value_count / kVectorSize;
-  SegmentReader vector_reader = GetVectorReader(state.layout, vector_index);
   const idx_t vector_size =
     std::min<idx_t>(kVectorSize, state.count - state.total_value_count);
-
-  vector_state.exceptions_count = vector_reader.Read<uint16_t>();
-  if (vector_state.exceptions_count == kUncompressedModeSentinel) {
-    vector_reader.ReadBytesInto(
-      reinterpret_cast<duckdb::data_ptr_t>(value_buffer),
-      sizeof(T) * vector_size);
+  const auto vector = OpenVector<T>(
+    state.layout, vector_state.left_bit_width, vector_state.right_bit_width,
+    state.total_value_count / kVectorSize, vector_size);
+  if (vector.exceptions_count == kUncompressedModeSentinel) {
+    std::memcpy(value_buffer, vector.values, sizeof(T) * vector_size);
     return;
   }
 
-  if (vector_state.exceptions_count > vector_size) {
-    ThrowAlpRdExceptionCountOutOfRange(vector_state.exceptions_count,
-                                       vector_size);
-  }
-
-  const auto left_bp_size = duckdb::BitpackingPrimitives::GetRequiredSize(
-    vector_size, vector_state.left_bit_width);
-  const auto right_bp_size = duckdb::BitpackingPrimitives::GetRequiredSize(
-    vector_size, vector_state.right_bit_width);
-  vector_reader.ReadBytesIntoArray(vector_state.left_encoded, left_bp_size);
-  vector_reader.ReadBytesIntoArray(vector_state.right_encoded, right_bp_size);
-
-  if (vector_state.exceptions_count) {
-    vector_reader.ReadIntoArray(vector_state.exceptions,
-                                vector_state.exceptions_count);
-    vector_reader.ReadIntoArray(vector_state.exceptions_positions,
-                                vector_state.exceptions_count);
-    for (idx_t i = 0; i < vector_state.exceptions_count; ++i) {
-      if (vector_state.exceptions_positions[i] >= vector_size) {
-        ThrowAlpRdExceptionPositionOutOfRange(
-          vector_state.exceptions_positions[i], vector_size);
-      }
+  static_assert(kVectorSize * kMaxDictionaryBitWidth / 8 <=
+                sizeof(vector_state.left_encoded));
+  static_assert(sizeof(vector_state.right_encoded) == kVectorSize * sizeof(T));
+  std::memcpy(vector_state.left_encoded, vector.left,
+              vector.right - vector.left);
+  std::memcpy(vector_state.right_encoded, vector.right,
+              vector.exceptions - vector.right);
+  std::memcpy(vector_state.exceptions, vector.exceptions,
+              vector.exceptions_count * kExceptionSize);
+  std::memcpy(vector_state.exceptions_positions, vector.positions,
+              vector.exceptions_count * kExceptionPositionSize);
+  for (idx_t i = 0; i < vector.exceptions_count; ++i) {
+    if (vector_state.exceptions_positions[i] >= vector_size) {
+      ThrowAlpRdExceptionPositionOutOfRange(
+        vector_state.exceptions_positions[i], vector_size);
     }
   }
 
@@ -812,62 +802,39 @@ void LoadVector(AlpRdScanState<T>& state, alp::ExactType<T>* value_buffer) {
     reinterpret_cast<duckdb::const_data_ptr_t>(vector_state.left_encoded),
     reinterpret_cast<duckdb::const_data_ptr_t>(vector_state.right_encoded),
     vector_state.left_parts_dict, value_buffer, vector_size,
-    vector_state.exceptions_count, vector_state.exceptions,
+    vector.exceptions_count, vector_state.exceptions,
     vector_state.exceptions_positions, vector_state.left_bit_width,
     vector_state.right_bit_width);
 }
 
 template<typename T>
-IRS_NO_INLINE alp::ExactType<T> FetchValue(const AlpRdScanState<T>& scan_state,
-                                           idx_t row) {
+IRS_FORCE_INLINE alp::ExactType<T> ValueAt(const AlpRdScanState<T>& state,
+                                           const AlpRdVector& vector,
+                                           idx_t index) {
   using Exact = alp::ExactType<T>;
-  SDB_ASSERT(row < scan_state.count);
-  const idx_t vector_index = row / kVectorSize;
-  const idx_t index = row % kVectorSize;
-  SegmentReader reader = GetVectorReader(scan_state.layout, vector_index);
-  const idx_t vector_size =
-    std::min<idx_t>(kVectorSize, scan_state.count - vector_index * kVectorSize);
-  const auto exceptions_count = reader.Read<uint16_t>();
-  if (exceptions_count == kUncompressedModeSentinel) {
-    return reader.Get<Exact>(reader.Position() + index * sizeof(Exact));
+  const auto& vector_state = state.vector_state;
+  if (vector.exceptions_count == kUncompressedModeSentinel) {
+    return duckdb::Load<Exact>(vector.values + index * sizeof(Exact));
   }
-  if (exceptions_count > vector_size) {
-    ThrowAlpRdExceptionCountOutOfRange(exceptions_count, vector_size);
-  }
-  const auto& vector_state = scan_state.vector_state;
-  const auto left =
-    reader.ReadBytes(duckdb::BitpackingPrimitives::GetRequiredSize(
-      vector_size, vector_state.left_bit_width));
-  const auto right =
-    reader.ReadBytes(duckdb::BitpackingPrimitives::GetRequiredSize(
-      vector_size, vector_state.right_bit_width));
   const auto right_value = duckdb::BitpackingPrimitives::UnPackValue<Exact>(
-    right.data(), index, vector_state.right_bit_width);
-  if (exceptions_count) {
-    const auto exceptions = reader.ReadBytes(exceptions_count * kExceptionSize);
-    const auto positions =
-      reader.ReadBytes(exceptions_count * kExceptionPositionSize);
+    vector.right, index, vector_state.right_bit_width);
+  if (vector.exceptions_count) {
     const auto position_at = [&](idx_t i) {
-      return duckdb::Load<uint16_t>(positions.data() +
+      return duckdb::Load<uint16_t>(vector.positions +
                                     i * kExceptionPositionSize);
     };
-    const auto found = PartitionIndex(
-      0, exceptions_count, [&](size_t i) { return position_at(i) < index; });
-    if (found < exceptions_count) {
-      const auto position = position_at(found);
-      if (position >= vector_size) {
-        ThrowAlpRdExceptionPositionOutOfRange(position, vector_size);
-      }
-      if (position == index) {
-        const auto exception =
-          duckdb::Load<uint16_t>(exceptions.data() + found * kExceptionSize);
-        return (static_cast<Exact>(exception) << vector_state.right_bit_width) |
-               right_value;
-      }
+    const auto found =
+      PartitionIndex(0, vector.exceptions_count,
+                     [&](size_t i) { return position_at(i) < index; });
+    if (found < vector.exceptions_count && position_at(found) == index) {
+      const auto exception =
+        duckdb::Load<uint16_t>(vector.exceptions + found * kExceptionSize);
+      return (static_cast<Exact>(exception) << vector_state.right_bit_width) |
+             right_value;
     }
   }
   const auto code = duckdb::BitpackingPrimitives::UnPackValue<uint16_t>(
-    left.data(), index, vector_state.left_bit_width);
+    vector.left, index, vector_state.left_bit_width);
   const auto left_value = vector_state.left_parts_dict[code];
   return (static_cast<Exact>(left_value) << vector_state.right_bit_width) |
          right_value;
@@ -892,7 +859,7 @@ void AlpRdFetchRows(const ColumnSegment& segment, ColumnFetchState& state,
     if (vector_index != fetch_state.decoded_vector) {
       if (alp::Alone(fetch_state, rows, i, count)) {
         result_data[result_offset + result_sel.get_index(i)] =
-          FetchValue(scan_state, rows[i]);
+          alp::FetchValue(fetch_state, rows[i]);
         continue;
       }
       scan_state.total_value_count = vector_index * kVectorSize;

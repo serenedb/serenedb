@@ -24,19 +24,80 @@
 #include <cstring>
 #include <duckdb/common/constants.hpp>
 #include <duckdb/common/enums/scan_vector_type.hpp>
+#include <duckdb/common/helper.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <memory>
+#include <span>
+#include <string_view>
 #include <utility>
 
 #include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/numeric/alp_primitives.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/shared.hpp"
 
 namespace irs::codecs::alp {
 
 inline constexpr duckdb::idx_t kDecodeDistance = kVectorSize / 64;
+
+struct SegmentLayout {
+  duckdb::const_data_ptr_t base = nullptr;
+  uint32_t data_start = 0;
+  uint32_t data_end = 0;
+  uint32_t vector_count = 0;
+};
+
+inline uint32_t MetadataEnd(duckdb::const_data_ptr_t base, duckdb::idx_t size,
+                            uint32_t header_size, std::string_view codec) {
+  const uint32_t metadata_end =
+    size < kMetadataPointerSize ? 0 : duckdb::Load<uint32_t>(base);
+  if (metadata_end < header_size) [[unlikely]] {
+    ThrowCorrupted(codec, "metadata ends before the segment header");
+  }
+  if (metadata_end > size) [[unlikely]] {
+    ThrowCorrupted(codec, "metadata offset table exceeds the segment");
+  }
+  return metadata_end;
+}
+
+inline SegmentLayout ReadLayout(duckdb::const_data_ptr_t base,
+                                uint32_t data_start, uint32_t metadata_end,
+                                duckdb::idx_t count, std::string_view codec) {
+  const duckdb::idx_t vector_count =
+    count / kVectorSize + (count % kVectorSize != 0);
+  if (data_start > metadata_end ||
+      vector_count > (metadata_end - data_start) / kMetadataPointerSize)
+    [[unlikely]] {
+    ThrowCorrupted(codec, "metadata offset table exceeds the segment");
+  }
+  return {
+    .base = base,
+    .data_start = data_start,
+    .data_end =
+      static_cast<uint32_t>(metadata_end - vector_count * kMetadataPointerSize),
+    .vector_count = static_cast<uint32_t>(vector_count),
+  };
+}
+
+IRS_FORCE_INLINE inline std::span<const uint8_t> VectorBytes(
+  const SegmentLayout& layout, duckdb::idx_t vector_index, uint32_t min_size,
+  std::string_view codec) {
+  SDB_ASSERT(vector_index < layout.vector_count);
+  const auto* entry =
+    layout.base + layout.data_end +
+    (layout.vector_count - 1 - vector_index) * kMetadataPointerSize;
+  const auto start = duckdb::Load<uint32_t>(entry);
+  const auto end = vector_index + 1 < layout.vector_count
+                     ? duckdb::Load<uint32_t>(entry - kMetadataPointerSize)
+                     : layout.data_end;
+  if (!(layout.data_start <= start && start <= end && end <= layout.data_end &&
+        min_size <= end - start)) [[unlikely]] {
+    ThrowCorrupted(codec, "vector offsets do not describe a data range");
+  }
+  return {layout.base + start, end - start};
+}
 
 template<typename State>
 duckdb::idx_t LeftInVector(const State& state) {
@@ -139,9 +200,30 @@ struct FetchState final : SegmentScanState {
     : scan_state{std::move(handle), segment} {}
 
   State scan_state;
+  typename State::Vector opened;
+  duckdb::idx_t opened_vector = duckdb::DConstants::INVALID_INDEX;
   duckdb::idx_t decoded_vector = duckdb::DConstants::INVALID_INDEX;
   duckdb::idx_t previous_row = duckdb::DConstants::INVALID_INDEX;
 };
+
+template<typename State>
+IRS_NO_INLINE auto OpenAndFetchValue(FetchState<State>& fetch_state,
+                                     duckdb::idx_t row) {
+  const auto vector_index = row / kVectorSize;
+  const auto vector = OpenVector(fetch_state.scan_state, vector_index);
+  fetch_state.opened = vector;
+  fetch_state.opened_vector = vector_index;
+  return ValueAt(fetch_state.scan_state, vector, row % kVectorSize);
+}
+
+template<typename State>
+IRS_NO_INLINE auto FetchValue(FetchState<State>& fetch_state,
+                              duckdb::idx_t row) {
+  if (row / kVectorSize != fetch_state.opened_vector) {
+    return OpenAndFetchValue(fetch_state, row);
+  }
+  return ValueAt(fetch_state.scan_state, fetch_state.opened, row % kVectorSize);
+}
 
 inline bool Near(duckdb::idx_t row, duckdb::idx_t other) {
   return other != duckdb::DConstants::INVALID_INDEX &&

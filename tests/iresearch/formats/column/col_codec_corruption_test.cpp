@@ -22,6 +22,7 @@
 #include <absl/strings/str_join.h>
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <duckdb.hpp>
@@ -381,9 +382,7 @@ TEST_F(ColCodecCorruptionTest, SmallSegmentsRejectDamagedHeaders) {
          },
          {"Corrupted ALP segment: bit width # exceeds #",
           "Corrupted ALP segment: exponent # exceeds the maximum #",
-          "Corrupted ALP segment: requested range extends past the end of the "
-          "segment",
-          "Corrupted ALP segment: vector offset is outside the data region",
+          "Corrupted ALP segment: metadata offset table exceeds the segment",
           "Corrupted ALP segment: vector offsets do not describe a data range"},
          /*validity=*/false,
          /*rows=*/300});
@@ -398,14 +397,78 @@ TEST_F(ColCodecCorruptionTest, SmallSegmentsRejectDamagedHeaders) {
       "Corrupted ALPRD segment: exception count # exceeds vector size #",
       "Corrupted ALPRD segment: exception position # is outside vector size #",
       "Corrupted ALPRD segment: left bit width # exceeds #",
-      "Corrupted ALPRD segment: requested range extends past the end of the "
-      "segment",
+      "Corrupted ALPRD segment: metadata offset table exceeds the segment",
       "Corrupted ALPRD segment: right bit width # exceeds #",
-      "Corrupted ALPRD segment: vector offset is outside the data region",
-      "Corrupted ALPRD segment: vector offsets do not describe a data range",
-      "Corrupted ALPRD vector: attempted to read past the end of the segment"},
+      "Corrupted ALPRD segment: vector exceeds its data range",
+      "Corrupted ALPRD segment: vector offsets do not describe a data range"},
      /*validity=*/false,
      /*rows=*/300});
+  Sweep({"alp few values",
+         LogicalType::DOUBLE,
+         CodecType::Alp,
+         [](uint64_t g) { return Value::DOUBLE(static_cast<double>(g) / 10); },
+         {"Corrupted ALP segment: bit width # exceeds #",
+          "Corrupted ALP segment: exception count # exceeds vector size #",
+          "Corrupted ALP segment: factor # exceeds exponent #",
+          "Corrupted ALP segment: metadata ends before the segment header",
+          "Corrupted ALP segment: metadata offset table exceeds the segment",
+          "Corrupted ALP segment: vector exceeds its data range",
+          "Corrupted ALP segment: vector offsets do not describe a data range"},
+         /*validity=*/false,
+         /*rows=*/8});
+  Sweep(
+    {"alprd few values",
+     LogicalType::DOUBLE,
+     CodecType::Alprd,
+     [](uint64_t g) {
+       return Value::DOUBLE(std::sqrt(static_cast<double>(g + 2)));
+     },
+     {"Corrupted ALPRD segment: dictionary size exceeds maximum",
+      "Corrupted ALPRD segment: exception count # exceeds vector size #",
+      "Corrupted ALPRD segment: left bit width # exceeds #",
+      "Corrupted ALPRD segment: metadata ends before the segment header",
+      "Corrupted ALPRD segment: metadata offset table exceeds the segment",
+      "Corrupted ALPRD segment: right bit width # exceeds #",
+      "Corrupted ALPRD segment: vector offsets do not describe a data range"},
+     /*validity=*/false,
+     /*rows=*/8});
+  Sweep(
+    {"alp last vector of one value",
+     LogicalType::DOUBLE,
+     CodecType::Alp,
+     [](uint64_t g) {
+       return g == 100 || g == 200 || g == 300
+                ? Value::DOUBLE(std::sqrt(static_cast<double>(g)) * 1.000001)
+                : Value::DOUBLE(static_cast<double>(g % 1000) / 100.0);
+     },
+     {"Corrupted ALP segment: bit width # exceeds #",
+      "Corrupted ALP segment: exception count # exceeds vector size #",
+      "Corrupted ALP segment: exception position # is outside vector size #",
+      "Corrupted ALP segment: exponent # exceeds the maximum #",
+      "Corrupted ALP segment: factor # exceeds exponent #",
+      "Corrupted ALP segment: metadata offset table exceeds the segment",
+      "Corrupted ALP segment: vector exceeds its data range",
+      "Corrupted ALP segment: vector offsets do not describe a data range"},
+     /*validity=*/false,
+     /*rows=*/1025});
+  Sweep(
+    {"alprd vectors stored as is",
+     LogicalType::DOUBLE,
+     CodecType::Alprd,
+     [](uint64_t g) {
+       auto bits = Mix(g);
+       if ((bits >> 52 & 0x7FF) == 0x7FF) {
+         bits ^= uint64_t{1} << 52;
+       }
+       return Value::DOUBLE(std::bit_cast<double>(bits));
+     },
+     {"Corrupted ALPRD segment: dictionary size exceeds maximum",
+      "Corrupted ALPRD segment: exception count # exceeds vector size #",
+      "Corrupted ALPRD segment: left bit width # exceeds #",
+      "Corrupted ALPRD segment: metadata offset table exceeds the segment",
+      "Corrupted ALPRD segment: right bit width # exceeds #",
+      "Corrupted ALPRD segment: vector exceeds its data range",
+      "Corrupted ALPRD segment: vector offsets do not describe a data range"}});
 }
 
 TEST_F(ColCodecCorruptionTest, RleRejectsDamagedSegments) {
@@ -461,12 +524,8 @@ TEST_F(ColCodecCorruptionTest, AlpCodecsRejectDamagedSegments) {
       "Corrupted ALP segment: exponent # exceeds the maximum #",
       "Corrupted ALP segment: factor # exceeds exponent #",
       "Corrupted ALP segment: metadata offset table exceeds the segment",
-      "Corrupted ALP segment: requested range extends past the end of the "
-      "segment",
-      "Corrupted ALP segment: vector offset is outside the data region",
-      "Corrupted ALP segment: vector offsets do not describe a data range",
-      "Corrupted ALP vector: attempted to read past the end of the segment",
-      "Corrupted ALP vector: offset is outside the segment"}});
+      "Corrupted ALP segment: vector exceeds its data range",
+      "Corrupted ALP segment: vector offsets do not describe a data range"}});
   Sweep(
     {"alp float",
      LogicalType::FLOAT,
@@ -481,12 +540,9 @@ TEST_F(ColCodecCorruptionTest, AlpCodecsRejectDamagedSegments) {
       "Corrupted ALP segment: exception position # is outside vector size #",
       "Corrupted ALP segment: exponent # exceeds the maximum #",
       "Corrupted ALP segment: factor # exceeds exponent #",
-      "Corrupted ALP segment: requested range extends past the end of the "
-      "segment",
-      "Corrupted ALP segment: vector offset is outside the data region",
-      "Corrupted ALP segment: vector offsets do not describe a data range",
-      "Corrupted ALP vector: attempted to read past the end of the segment",
-      "Corrupted ALP vector: offset is outside the segment"}});
+      "Corrupted ALP segment: metadata offset table exceeds the segment",
+      "Corrupted ALP segment: vector exceeds its data range",
+      "Corrupted ALP segment: vector offsets do not describe a data range"}});
   Sweep(
     {"alprd double",
      LogicalType::DOUBLE,
@@ -499,13 +555,10 @@ TEST_F(ColCodecCorruptionTest, AlpCodecsRejectDamagedSegments) {
       "Corrupted ALPRD segment: exception count # exceeds vector size #",
       "Corrupted ALPRD segment: exception position # is outside vector size #",
       "Corrupted ALPRD segment: left bit width # exceeds #",
-      "Corrupted ALPRD segment: requested range extends past the end of the "
-      "segment",
+      "Corrupted ALPRD segment: metadata offset table exceeds the segment",
       "Corrupted ALPRD segment: right bit width # exceeds #",
-      "Corrupted ALPRD segment: vector offset is outside the data region",
-      "Corrupted ALPRD segment: vector offsets do not describe a data range",
-      "Corrupted ALPRD vector: attempted to read past the end of the "
-      "segment"}});
+      "Corrupted ALPRD segment: vector exceeds its data range",
+      "Corrupted ALPRD segment: vector offsets do not describe a data range"}});
   Sweep(
     {"alprd float",
      LogicalType::FLOAT,
@@ -519,13 +572,10 @@ TEST_F(ColCodecCorruptionTest, AlpCodecsRejectDamagedSegments) {
       "Corrupted ALPRD segment: exception count # exceeds vector size #",
       "Corrupted ALPRD segment: exception position # is outside vector size #",
       "Corrupted ALPRD segment: left bit width # exceeds #",
-      "Corrupted ALPRD segment: requested range extends past the end of the "
-      "segment",
+      "Corrupted ALPRD segment: metadata offset table exceeds the segment",
       "Corrupted ALPRD segment: right bit width # exceeds #",
-      "Corrupted ALPRD segment: vector offset is outside the data region",
-      "Corrupted ALPRD segment: vector offsets do not describe a data range",
-      "Corrupted ALPRD vector: attempted to read past the end of the "
-      "segment"}});
+      "Corrupted ALPRD segment: vector exceeds its data range",
+      "Corrupted ALPRD segment: vector offsets do not describe a data range"}});
 }
 
 TEST_F(ColCodecCorruptionTest, ValidityCodecsRejectDamagedSegments) {

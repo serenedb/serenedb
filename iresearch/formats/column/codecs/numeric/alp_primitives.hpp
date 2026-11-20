@@ -34,6 +34,7 @@
 namespace irs::codecs::alp {
 
 inline constexpr uint32_t kVectorSize = 1024;
+inline constexpr uint32_t kMetadataPointerSize = sizeof(uint32_t);
 inline constexpr uint32_t kRowGroupSamples = 8;
 inline constexpr uint16_t kSamplesPerVector = 32;
 inline constexpr uint32_t kRowGroupSamplesJump =

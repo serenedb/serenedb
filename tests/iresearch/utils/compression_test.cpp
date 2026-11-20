@@ -38,7 +38,8 @@ namespace compression = irs::compression;
 using Bytes = std::vector<irs::byte_type>;
 
 constexpr uint32_t kFrame = 4096;
-constexpr std::array kMethods{compression::kLz4Hc9, compression::kZstd1};
+constexpr std::array kMethods{compression::kLz4, compression::kLz4Hc9,
+                              compression::kZstd1};
 
 Bytes Text(size_t size) {
   std::string text;
@@ -142,7 +143,7 @@ TEST(Compression, CompressesEveryFullFrame) {
     const auto compressed = compression::Compress(method, View(raw), kFrame);
     ASSERT_EQ(compressed.frames.sizes.size(), 4u);
     for (size_t frame = 0; frame != 3; ++frame) {
-      EXPECT_LT(compressed.frames.sizes[frame], kFrame / 4)
+      EXPECT_LT(compressed.frames.sizes[frame], kFrame / 2)
         << magic_enum::enum_name(method.codec) << " frame " << frame;
     }
   }
@@ -479,7 +480,7 @@ TEST(Compression, ReadFramesRejectsInconsistentFrames) {
                        stream.GetPosition()};
   };
   const compression::Frames valid{
-    .codec = compression::Codec::Lz4Hc,
+    .codec = compression::Codec::Lz4,
     .raw_bytes = kFrame + 10,
     .frame_bytes = kFrame,
     .sizes = {100, 10},

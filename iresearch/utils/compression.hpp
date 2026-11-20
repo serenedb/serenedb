@@ -39,7 +39,7 @@
 namespace irs::compression {
 
 enum class Codec : uint8_t {
-  Lz4Hc = 0,
+  Lz4 = 0,
   Zstd = 1,
   Strip = 2,
 };
@@ -49,7 +49,8 @@ struct Method {
   int level = 0;
 };
 
-inline constexpr Method kLz4Hc9{.codec = Codec::Lz4Hc, .level = 9};
+inline constexpr Method kLz4{.codec = Codec::Lz4};
+inline constexpr Method kLz4Hc9{.codec = Codec::Lz4, .level = 9};
 inline constexpr Method kZstd1{.codec = Codec::Zstd, .level = 1};
 inline constexpr uint32_t kStripPadding = std::numeric_limits<uint32_t>::max();
 

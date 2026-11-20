@@ -265,10 +265,15 @@ size_t Encode(Method method, bytes_view in, byte_type* out) noexcept {
       size =
         EncodeStrip(static_cast<uint32_t>(method.level), in, out, capacity);
       break;
-    case Codec::Lz4Hc: {
-      const auto written = LZ4_compress_HC(
-        reinterpret_cast<const char*>(in.data()), reinterpret_cast<char*>(out),
-        static_cast<int>(in.size()), static_cast<int>(capacity), method.level);
+    case Codec::Lz4: {
+      const auto* src = reinterpret_cast<const char*>(in.data());
+      auto* dst = reinterpret_cast<char*>(out);
+      const auto src_size = static_cast<int>(in.size());
+      const auto dst_capacity = static_cast<int>(capacity);
+      const auto written =
+        method.level > 0
+          ? LZ4_compress_HC(src, dst, src_size, dst_capacity, method.level)
+          : LZ4_compress_default(src, dst, src_size, dst_capacity);
       size = written > 0 ? static_cast<size_t>(written) : 0;
       break;
     }
@@ -293,7 +298,7 @@ void Decode(Codec codec, bytes_view in, std::span<byte_type> out) {
   }
   bool decoded = false;
   switch (codec) {
-    case Codec::Lz4Hc:
+    case Codec::Lz4:
       decoded = LZ4_decompress_safe(reinterpret_cast<const char*>(in.data()),
                                     reinterpret_cast<char*>(out.data()),
                                     static_cast<int>(in.size()),

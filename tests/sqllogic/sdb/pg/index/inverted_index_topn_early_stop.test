@@ -498,10 +498,6 @@ r
 30
 
 
-statement ok
-SET sdb_scan_split = 'never'
-
-
 query
 SELECT id FROM ess WHERE body @@ 'fox3' ORDER BY ts DESC LIMIT 5;
 ----
@@ -595,10 +591,6 @@ r
 13
 16
 30
-
-
-statement ok
-RESET sdb_scan_split
 
 
 statement ok

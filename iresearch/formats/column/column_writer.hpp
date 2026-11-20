@@ -103,7 +103,7 @@ class ColumnWriter final {
     }
     duckdb::FlatVector::SetSize(back.data, back.count);
     ++_staged_rows;
-    if (!_deferred && _staged_rows == _options.row_group_size) {
+    if (!_deferred && _staged_rows == _rg_rows) {
       SealRowGroup();
     }
   }
@@ -155,6 +155,7 @@ class ColumnWriter final {
 
   void SealRowGroup();
   void SealStaged(std::span<WriteChunk> chunks, uint64_t rows);
+  void OpenRowGroup() noexcept;
 
   bool Compress(const duckdb::LogicalType& type,
                 std::span<const WriteChunk> chunks, codecs::CodecType method,
@@ -217,6 +218,7 @@ class ColumnWriter final {
   duckdb::idx_t _staged_chunks = 0;
   uint64_t _staged_rows = 0;
   uint64_t _row_start = 0;
+  uint64_t _rg_rows = 0;
   const ReadContext* _shared_source = nullptr;
   uint64_t _shared_from = 0;
   uint64_t _shared_to = 0;

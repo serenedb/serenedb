@@ -46,7 +46,7 @@ v
 
 connection after_restart
 query
-SELECT index_name FROM duckdb_indexes() WHERE database_name = 'cdsr_dst';
+SELECT index_name FROM sdb_indexes() WHERE database_name = 'cdsr_dst';
 ----
 index_name
 t_v

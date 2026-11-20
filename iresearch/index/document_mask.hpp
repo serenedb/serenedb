@@ -33,6 +33,7 @@
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/parallel_for.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -89,7 +90,8 @@ class DocumentMask final {
   static DocumentMask ReadFrozen(IndexInput& in, uint64_t size);
 
   static DocumentMask Union(const std::shared_ptr<const DocumentMask>& base,
-                            const DocumentMask& added);
+                            const DocumentMask& added,
+                            ParallelFor parallel = SerialFor);
 
   size_t FrozenSize() const noexcept {
     return roaring::api::roaring_bitmap_frozen_size_in_bytes(&_set);
@@ -126,6 +128,10 @@ class DocumentMask final {
   size_t Count() const noexcept { return _count; }
 
   bool Empty() const noexcept { return _count == 0; }
+
+  doc_id_t Min() const noexcept {
+    return roaring::api::roaring_bitmap_minimum(&_set);
+  }
 
   doc_id_t Max() const noexcept {
     return roaring::api::roaring_bitmap_maximum(&_set);
@@ -207,6 +213,9 @@ class DocumentMaskBuilder final {
   void AddShifted(const DocumentMaskBuilder& other, doc_id_t offset);
   void Merge(const DocumentMaskBuilder& other);
   void Merge(const DocumentMask& published);
+  static std::vector<DocumentMaskBuilder> Union(
+    std::span<std::vector<DocumentMaskBuilder>> groups,
+    ParallelFor parallel = SerialFor);
   void Subtract(const DocumentMask& mask);
 
   using Bitset = roaring::internal::bitset_container_t;

@@ -921,7 +921,6 @@ auto MergeWriter::Flush(SegmentMeta& segment,
     co_return false;
   }
 
-  std::unique_ptr<ColReader> col_reader;
   MergedNormProvider norm_provider;
   IdxWriter idx{track_dir, segment.name};
 
@@ -933,9 +932,8 @@ auto MergeWriter::Flush(SegmentMeta& segment,
     co_return false;
   }
   auto ann_writers = col_writer->TakeAnnWriters();
+  auto col_reader = col_writer->TakeReader();
   if (segment.docs_count != 0) {
-    col_reader = std::make_unique<ColReader>(track_dir, segment.name, _db,
-                                             IOAdvice::SEQUENTIAL);
     norm_provider.reader = col_reader.get();
   }
   std::optional<ReadContext> ivf_ctx;
@@ -957,6 +955,7 @@ auto MergeWriter::Flush(SegmentMeta& segment,
     .doc_count = segment.docs_count,
     .index_features = index_features,
   };
+  PostingsInputs postings;
   if (segment.docs_count != 0) {
     auto field_writer =
       std::make_unique<term_dict::FieldWriter>(/*compaction=*/true);
@@ -965,6 +964,7 @@ auto MergeWriter::Flush(SegmentMeta& segment,
                      cluster_readers, KeyedDicts(field_meta_map))) {
       co_return false;
     }
+    postings = field_writer->TakePostings();
   }
 
   for (const auto& w : ann_writers) {
@@ -973,7 +973,11 @@ auto MergeWriter::Flush(SegmentMeta& segment,
     }
   }
 
-  idx.Commit();
+  _inputs = {
+    .col = std::move(col_reader),
+    .idx = idx.Commit(_hnsw_bases),
+    .postings = std::move(postings),
+  };
 
   if (!progress_callback()) {
     co_return false;
@@ -1031,16 +1035,18 @@ std::shared_ptr<const SegmentReaderImpl> MergeWriter::FlushPiece(
     segment.byte_size += utils::downCast<HotColumnReader>(*column).Bytes();
   }
   segment.byte_size += fields->Bytes();
-  fields->Open(ReaderState{.dir = &scratch, .meta = &segment},
-               field_writer.Features());
-  IndexInput::ptr norms_in;
-  if (!norms.empty()) {
-    norms_in = scratch.open(FileName(segment.name), IOAdvice::RANDOM);
-  }
+  auto postings = field_writer.TakePostings();
+  fields->Open(
+    ReaderState{
+      .dir = &scratch,
+      .meta = &segment,
+      .postings = postings.doc ? &postings : nullptr,
+    },
+    field_writer.Features());
   return SegmentReaderImpl::OpenPiece(
     segment, id,
-    std::make_unique<ColReader>(_db, std::move(columns), std::move(norms_in),
-                                std::move(norms)),
+    std::make_unique<ColReader>(_db, std::move(columns), std::move(norms.in),
+                                std::move(norms.columns)),
     std::move(fields));
 }
 

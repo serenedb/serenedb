@@ -19,7 +19,7 @@ statement ok
 COPY FROM DATABASE cdst_src_${__DATABASE__} TO cdst_dst_${__DATABASE__} (SCHEMA);
 
 query
-SELECT table_name FROM duckdb_tables() WHERE database_name = 'cdst_dst_${__DATABASE__}' AND schema_name = 'public' ORDER BY 1;
+SELECT table_name FROM sdb_tables() WHERE database_name = 'cdst_dst_${__DATABASE__}' AND schema_name = 'public' ORDER BY 1;
 ----
 table_name
 cdst
@@ -61,7 +61,7 @@ statement ok
 COPY FROM DATABASE cdst_seq_src_${__DATABASE__} TO cdst_seq_dst_${__DATABASE__} (SCHEMA);
 
 query
-SELECT sequence_name FROM duckdb_sequences() WHERE database_name = 'cdst_seq_dst_${__DATABASE__}' ORDER BY 1;
+SELECT sequence_name FROM sdb_sequences() WHERE database_name = 'cdst_seq_dst_${__DATABASE__}' ORDER BY 1;
 ----
 sequence_name
 cdst_serial_id_seq

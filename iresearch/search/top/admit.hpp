@@ -83,18 +83,19 @@ class Admit {
 
   IRS_FORCE_INLINE void Window(LoserScoreCollector& collector, score_t* scores,
                                uint64_t* mask, doc_id_t min, size_t words) {
-    if constexpr (kTable) {
-      std::array<uint64_t, irs::detail::kWindowWords> keep;
-      SDB_ASSERT(words <= keep.size());
-      if (_staged != 0) {
-        Drain(collector);
-      }
-      _table.Window(min, mask, keep.data(), scores,
-                    static_cast<uint32_t>(words));
-      collector.ConsumeWindow<true>(scores, mask, min, words, keep.data());
-    } else {
-      collector.ConsumeWindow(scores, mask, min, words, {});
-    }
+    Narrow(collector, scores, mask, min, words,
+           [&](auto keep) IRS_FORCE_INLINE {
+             collector.ConsumeWindow<kTable>(scores, mask, min, words, keep);
+           });
+  }
+
+  IRS_FORCE_INLINE void Constant(LoserScoreCollector& collector, score_t score,
+                                 score_t* scores, uint64_t* mask, doc_id_t min,
+                                 size_t words) {
+    Narrow(collector, scores, mask, min, words,
+           [&](auto keep) IRS_FORCE_INLINE {
+             collector.ConsumeConstant<kTable>(score, mask, min, words, keep);
+           });
   }
 
   IRS_FORCE_INLINE void Flush(LoserScoreCollector& collector) {
@@ -106,6 +107,24 @@ class Admit {
   }
 
  private:
+  template<typename Consume>
+  IRS_FORCE_INLINE void Narrow(LoserScoreCollector& collector, score_t* scores,
+                               uint64_t* mask, doc_id_t min, size_t words,
+                               Consume&& consume) {
+    if constexpr (kTable) {
+      std::array<uint64_t, irs::detail::kWindowWords> keep;
+      SDB_ASSERT(words <= keep.size());
+      if (_staged != 0) {
+        Drain(collector);
+      }
+      _table.Window(min, mask, keep.data(), scores,
+                    static_cast<uint32_t>(words));
+      consume(static_cast<const uint64_t*>(keep.data()));
+    } else {
+      consume(utils::Empty{});
+    }
+  }
+
   void Drain(LoserScoreCollector& collector) {
     const auto live = _table.Run(_docs.data(), _scores.data(), _staged);
     if (live != 0) {

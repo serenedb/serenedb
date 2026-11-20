@@ -1,0 +1,38 @@
+statement ok
+SET threads = 1;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ispr_dict AS split_text() WITH (frequency, position, norm);
+
+
+statement ok
+CREATE TABLE ispr (id INTEGER PRIMARY KEY, body VARCHAR) WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+
+
+statement ok
+INSERT INTO ispr
+SELECT i, CASE WHEN i = 6504 THEN 'a a' WHEN hash(i) % 8 = 0 THEN 'a b' ELSE 'b b' END
+FROM generate_series(0, 19999) AS g(i);
+
+
+statement ok
+CREATE INDEX ispr_idx ON ispr USING inverted(id, body ispr_dict);
+
+
+query
+SELECT id FROM ispr_idx
+WHERE body @@ 'a' AND id < 6600
+ORDER BY BM25(ispr_idx.tableoid) DESC
+LIMIT 1;
+----
+id
+6504
+
+
+statement ok
+RESET threads;
+
+
+statement ok
+DROP TABLE ispr;

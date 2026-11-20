@@ -5,6 +5,7 @@ target_sources(
         ada_re2_provider.cpp
         tls_context.cpp
         listen_spec.cpp
+        listen_protocol.cpp
         proxy_protocol.cpp
         http/auth.cpp
         http/common.cpp
@@ -42,3 +43,15 @@ target_sources(
 )
 
 target_link_libraries(sereneserver PUBLIC ada::ada simdutf::simdutf re2::re2)
+
+add_library(
+    serene_listeners
+    OBJECT
+    pg/listen.cpp
+    http/listen.cpp
+    http/es/api.cpp
+    http/mcp/api.cpp
+    http/otel/api.cpp
+    http/test/api.cpp
+)
+target_link_libraries(serene_listeners PRIVATE sereneserver)

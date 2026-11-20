@@ -104,6 +104,8 @@ class IndexWriter : private util::Noncopyable {
   struct FlushedSegment {
     SegmentMeta meta;
     DocumentMaskBuilder docs_mask;
+    std::shared_ptr<const SegmentReaderImpl> reader;
+    std::vector<IndexInput::ptr> files;
   };
 
   class Document : private util::Noncopyable {
@@ -322,6 +324,7 @@ class IndexWriter : private util::Noncopyable {
 
   struct Replacement {
     SegmentMeta meta;
+    std::shared_ptr<const SegmentReaderImpl> reader;
     std::vector<DocMap> absorbed;
   };
 
@@ -343,6 +346,7 @@ class IndexWriter : private util::Noncopyable {
     ManagedVector<FlushedSegment> flushed;
     std::unique_ptr<SegmentWriter> writer;
     SegmentMeta writer_meta;
+    IndexReaderOptions reader_options;
 
     static ptr make(Directory& dir, const SegmentWriterOptions& options);
 

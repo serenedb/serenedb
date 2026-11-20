@@ -1,6 +1,8 @@
 #ifndef JEMALLOC_H_
 #define JEMALLOC_H_
+#if defined(__GNUC__) || defined(__clang__)
 #pragma GCC system_header
+#endif
 
 /* Defined if __attribute__((...)) syntax is supported. */
 #define JEMALLOC_HAVE_ATTR
@@ -55,6 +57,15 @@
  */
 #define JEMALLOC_CONFIG_ENV
 #define JEMALLOC_CONFIG_FILE
+
+/*
+ * Whether throwing operator new aborts on OOM instead of throwing
+ * std::bad_alloc.  This is always defined to either 0 or 1.
+ */
+/* #undef JEMALLOC_INFALLIBLE_NEW */
+#ifndef JEMALLOC_INFALLIBLE_NEW
+#  define JEMALLOC_INFALLIBLE_NEW 0
+#endif
 
 #ifdef _MSC_VER
 #  ifdef _WIN64
@@ -354,6 +365,36 @@ extern "C" {
 #endif
 
 typedef struct extent_hooks_s extent_hooks_t;
+
+/*
+ * Extent alloc flags.  A custom extent_alloc hook may OR these into the
+ * returned pointer; jemalloc strips the low bits before use.  Safe because
+ * returned addresses are at least page-aligned (PAGE >= 256).
+ *
+ * EXTENT_ALLOC_FLAG_PINNED: backing memory is non-reclaimable.
+ * Pinned extents are excluded from decay/purging and cached separately for
+ * preferential reuse.  A hook returning this flag must also set *commit to
+ * true: pinned memory bypasses jemalloc's commit/decommit machinery.
+ *
+ * The pinned attribute is per-extent: a single hook may return pinned and
+ * non-pinned extents in different calls.  Pinned and non-pinned extents are
+ * never merged together (the merge would change the reclamation policy of
+ * one half), so pinned-ness is set at allocation and inherited through
+ * splits, but never changes after that.
+ *
+ * Example (HugeTLB alloc hook):
+ *   void *my_alloc(extent_hooks_t *h, void *new_addr, size_t size,
+ *       size_t alignment, bool *zero, bool *commit, unsigned arena_ind) {
+ *       void *addr = mmap(NULL, size, PROT_READ|PROT_WRITE,
+ *           MAP_PRIVATE|MAP_ANONYMOUS|MAP_HUGETLB, -1, 0);
+ *       if (addr == MAP_FAILED) return NULL;
+ *       *zero = true;
+ *       *commit = true;
+ *       return (void *)((uintptr_t)addr | EXTENT_ALLOC_FLAG_PINNED);
+ *   }
+ */
+#define EXTENT_ALLOC_FLAG_PINNED    0x1U
+#define EXTENT_ALLOC_FLAG_MASK      0xFFU
 
 /*
  * void *

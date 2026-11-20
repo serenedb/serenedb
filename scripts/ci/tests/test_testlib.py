@@ -169,14 +169,14 @@ def test_a_changed_test_source_picks_the_compiled_tests_it_defines(monkeypatch, 
 
 
 @pytest.mark.parametrize("config,args,targets", [
-    ("perf", [], "serened iresearch-examples serenedb-bench-micro search-benchmark-game"),
-    ("dev", [], "serened iresearch-examples serenedb-bench-micro search-benchmark-game "
+    ("perf", [], "serenedb iresearch-examples serenedb-bench-micro search-benchmark-game"),
+    ("dev", [], "serenedb iresearch-examples serenedb-bench-micro search-benchmark-game "
                 "croaring-tests iresearch-load-tests iresearch-tests re2-tests serenedb-tests "
                 "unittest"),
     ("asan", ["--suite", "sqllogic", "--suite", "gtest", "--changed", "origin/main"],
-     "serened serenedb-tests"),
+     "serenedb serenedb-tests"),
     ("tsan", ["--suite", "gtest", "--suite", "re2", "--suite", "duckdb", "--duckdb-suite", "core"],
-     "serened re2-tests serenedb-tests unittest"),
+     "serenedb re2-tests serenedb-tests unittest"),
 ])
 def test_a_build_makes_only_the_binaries_of_the_suites_it_tests(config, args, targets):
     script = 'source scripts/ci/config.sh && sdb_config "$@" && echo "${TARGETS[*]}"'
@@ -274,6 +274,26 @@ def test_an_inference_test_waits_for_the_shared_model_server(monkeypatch, tmp_pa
     units = {u.id: u for u in sqllogic.sqllogic_units(ctx, args, [])}
     assert units["sqllogic:pg-wire-simple:sdb/a.test"].timeout == 180.0
     assert units["sqllogic:pg-wire-simple:sdb/b_ollama.test_slow"].timeout == sqllogic.INFERENCE_TIMEOUT
+
+
+def test_an_override_has_time_to_run_every_retry_of_its_file_to_the_end(monkeypatch, tmp_path):
+    base = tmp_path / "tests" / "sqllogic"
+    (base / "sdb").mkdir(parents=True)
+    (base / "recovery").mkdir()
+    (base / "sdb" / "a.test").write_text(
+        "statement ok retry 4 backoff 250ms\nSELECT 1\n\n"
+        "query ok retry 2 backoff 1s500ms\nSELECT 2\n----\n?column?\n2\n")
+    (base / "recovery" / "b.test").write_text(
+        "query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION\nSELECT 1\n----\n?column?\n1\n")
+    monkeypatch.setattr(sqllogic.subprocess, "run", lambda *args, **kwargs: None)
+    ctx = SimpleNamespace(root=tmp_path, timing=Timing({}), skips=[], timeout_floor=180.0,
+                          config=SimpleNamespace(slowdown=1.0))
+    args = SimpleNamespace(server=None, corpus=False, fast=False, biglake=False, override=True)
+    assert [u.timeout for u in sqllogic.sqllogic_units(ctx, args, [])] == [180.0 + 4 * 0.25 + 2 * 1.5]
+    assert [u.timeout for u in sqllogic.recovery_units(ctx, args, [])] == [180.0 + 60 * 0.5]
+    args.override = False
+    assert [u.timeout for u in sqllogic.sqllogic_units(ctx, args, [])] == [180.0, 180.0]
+    assert [u.timeout for u in sqllogic.recovery_units(ctx, args, [])] == [180.0]
 
 
 def test_extension_test_ids_do_not_depend_on_the_checkout():

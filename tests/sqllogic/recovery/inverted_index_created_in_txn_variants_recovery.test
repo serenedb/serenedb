@@ -171,7 +171,7 @@ x	y
 
 connection after_crash
 query
-SELECT (SELECT count(*) FROM iciv_gone) AS t, (SELECT count(*) FROM duckdb_indexes() WHERE index_name = 'iciv_gone_idx') AS i;
+SELECT (SELECT count(*) FROM iciv_gone) AS t, (SELECT count(*) FROM sdb_indexes() WHERE index_name = 'iciv_gone_idx') AS i;
 ----
 t	i
 2	0

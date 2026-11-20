@@ -476,7 +476,6 @@ bool PgWireSession<Kind>::SetupConnection() {
   _txn_state.emplace(_conn->context->transaction);
   _connection_ctx = &ConnectionContext::Get(*_conn->context);
   _progress = sdb::pg::ProgressRegistration{_connection_ctx->ProgressSource()};
-  _connection_ctx->protocol_state = &_proto;
   auto& client_config = duckdb::ClientConfig::GetConfig(*_conn->context);
   client_config.get_result_collector = MakeWireCollector;
   client_config.enable_progress_bar = true;
@@ -487,10 +486,8 @@ bool PgWireSession<Kind>::SetupConnection() {
   client_config.sink_progress_callback =
     [state = _connection_ctx](duckdb::idx_t rows, duckdb::idx_t bytes) {
       auto& metrics = state->Progress();
-      sdb::pg::ProgressMetrics::Add(metrics.tuples_processed,
-                                    static_cast<int64_t>(rows));
-      sdb::pg::ProgressMetrics::Add(metrics.bytes_processed,
-                                    static_cast<int64_t>(bytes));
+      metrics.AddProcessed(static_cast<int64_t>(rows),
+                           static_cast<int64_t>(bytes));
       const auto command = static_cast<sdb::pg::ProgressCommand>(
         metrics.command.load(std::memory_order_relaxed));
       SDB_IF_FAILURE("pause_copy_from_mid_stream") {
@@ -513,8 +510,17 @@ bool PgWireSession<Kind>::SetupConnection() {
       }
     };
 
+  const auto keep_as_default = [&](std::string_view name) {
+    duckdb::Identifier setting{name};
+    duckdb::Value value;
+    if (_conn->context->TryGetCurrentSetting(setting, value)) {
+      client_config.session_defaults.insert_or_assign(std::move(setting),
+                                                      std::move(value));
+    }
+  };
   _connection_ctx->SetSetting("session_authorization", std::string{UserName()},
                               false);
+  keep_as_default("session_authorization");
   _connection_ctx->SetSetting("is_superuser", superuser ? "on" : "off", false);
 
   const auto apply = [&](const std::string& name, const std::string& value) {
@@ -533,30 +539,36 @@ bool PgWireSession<Kind>::SetupConnection() {
       WriteFatalResponse(this->_send, irs::pg::ToSqlError(exception));
       return false;
     }
+    keep_as_default(name);
     return true;
   };
+  std::vector<StartupSetting> settings;
   if (const auto options = _params.find("options"); options != _params.end()) {
-    std::vector<StartupSetting> settings;
     if (auto error = ParseStartupOptions(options->second, settings)) {
       WriteFatalResponse(this->_send, *error);
       return false;
     }
+  }
+  bool applied = true;
+  _conn->context->RunFunctionInTransaction([&] {
     for (const auto& [name, value] : settings) {
       if (!apply(name, value)) {
-        return false;
+        applied = false;
+        return;
       }
     }
-  }
-  for (const auto& [name, value] : _params) {
-    if (name == "user" || name == "database" || name == "replication" ||
-        name == "options") {
-      continue;
+    for (const auto& [name, value] : _params) {
+      if (name == "user" || name == "database" || name == "replication" ||
+          name == "options") {
+        continue;
+      }
+      if (!apply(name, value)) {
+        applied = false;
+        return;
+      }
     }
-    if (!apply(name, value)) {
-      return false;
-    }
-  }
-  return true;
+  });
+  return applied;
 }
 
 template<SocketKind Kind>
@@ -866,8 +878,8 @@ void PgWireSession<Kind>::CommitAndReportReady() {
   // overlay, so reporting afterwards tells the client the value it actually
   // keeps (and a set-then-reverted SET LOCAL nets to no message).
   ReportChangedParameters();
-  const auto status = _txn_state->StatusByte();
-  WriteReadyForQuery(this->_send, status);
+  _connection_ctx->ReportIdle();
+  WriteReadyForQuery(this->_send, _txn_state->StatusByte());
   this->KickSend();
 }
 
@@ -992,19 +1004,12 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
   }
 
   // A password method matched: verify against the stored credential. A role
-  // with no usable verifier fails, as in PostgreSQL. Passwordless trust is
+  // with no usable verifier, or no role at all, fails after the same exchange
+  // a real one gets, as in PostgreSQL. Passwordless trust is
   // expressed entirely in HBA (the superuser's loopback `trust` rules) and is
   // therefore already decided above, before this point.
   const auto credential =
     _credentials ? _credentials->LookupCredential(UserName()) : std::nullopt;
-  if (!credential) {
-    WriteFatalResponse(
-      this->_send,
-      SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_PASSWORD),
-                     ERR_MSG("password authentication failed for user \"",
-                             UserName(), "\"")));
-    co_return false;
-  }
 
   // Method (from HBA) x stored form, matching PostgreSQL:
   //  scram    : only a SCRAM secret works (md5 storage cannot do SCRAM).
@@ -1013,38 +1018,26 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
   //             cleartext (flag) secret is hashed to the md5 form.
   //  password : cleartext exchange verified against whatever is stored.
   bool ok = false;
-  bool method_ok = true;
-  if (hba_method == hba::Method::Scram) {
-    if (credential->scram) {
-      ok = co_await AuthenticateScram(*credential->scram);
-    } else {
-      method_ok = false;
-    }
-  } else if (hba_method == hba::Method::Md5) {
-    if (credential->md5) {
-      ok = co_await AuthenticateMd5(*credential->md5);
-    } else if (credential->scram) {
-      ok = co_await AuthenticateScram(*credential->scram);
-    } else if (credential->cleartext) {
-      ok = co_await AuthenticateMd5(
-        BuildMd5Verifier(UserName(), *credential->cleartext));
-    } else {
-      method_ok = false;
-    }
-  } else if (hba_method == hba::Method::Password) {
-    ok = co_await AuthenticateCleartext(*credential);
+  if (hba_method == hba::Method::Password) {
+    ok =
+      co_await AuthenticateCleartext(credential ? *credential : Credential{});
+  } else if (hba_method == hba::Method::Md5 && credential && credential->md5) {
+    ok = co_await AuthenticateMd5(*credential->md5);
+  } else if (hba_method == hba::Method::Md5 && credential &&
+             !credential->scram && credential->cleartext) {
+    ok = co_await AuthenticateMd5(
+      BuildMd5Verifier(UserName(), *credential->cleartext));
+  } else if (credential && credential->scram) {
+    SDB_ASSERT(hba_method == hba::Method::Scram ||
+               hba_method == hba::Method::Md5);
+    ok = co_await AuthenticateScram(*credential->scram, false);
   } else {
-    method_ok = false;
-  }
-  if (!method_ok) {
-    WriteFatalResponse(
-      this->_send,
-      SQL_ERROR_DATA(
-        ERR_CODE(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
-        ERR_MSG("authentication method \"", hba::MethodName(hba_method),
-                "\" cannot verify the stored password for user \"", UserName(),
-                "\"")));
-    co_return false;
+    SDB_ASSERT(hba_method == hba::Method::Scram ||
+               hba_method == hba::Method::Md5);
+    ok = co_await AuthenticateScram(_credentials
+                                      ? _credentials->MockScram(UserName())
+                                      : MockScramVerifier(UserName(), {}),
+                                    true);
   }
   if (!ok) {
     co_return false;
@@ -1177,7 +1170,7 @@ yaclib::Task<bool> PgWireSession<Kind>::AuthenticateMd5(
 
 template<SocketKind Kind>
 yaclib::Task<bool> PgWireSession<Kind>::AuthenticateScram(
-  const ScramVerifier& verifier) {
+  ScramVerifier verifier, bool doomed) {
   const auto fail = [&](int code, auto&&... msg) {
     WriteFatalResponse(
       this->_send,
@@ -1349,7 +1342,7 @@ yaclib::Task<bool> PgWireSession<Kind>::AuthenticateScram(
   }
   const std::string auth_message =
     absl::StrCat(client_first_bare, ",", server_first, ",", without_proof);
-  if (!VerifyClientProof(verifier, auth_message, *proof)) {
+  if (!VerifyClientProof(verifier, auth_message, *proof) || doomed) {
     fail(ERRCODE_INVALID_PASSWORD, "password authentication failed for user \"",
          UserName(), "\"");
     co_return false;
@@ -1683,12 +1676,6 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyToStdout(
   wire->row_encoding = binary ? RowEncoding::CopyBinary : RowEncoding::CopyText;
   wire->copy_binary_header = binary;
   if (!binary) {
-    // COPY text fields escape inline through the reused Text serializers
-    // (SerializationContext::copy_text); backslash_count = 2 is the COPY
-    // base (a literal backslash -> \\), which array/record depth doubling
-    // composes on top of.
-    wire->proto.copy_text = true;
-    wire->proto.backslash_count = 2;
     // The parser splits COPY options: value-form options (DELIMITER '|') land
     // in info->options, while NULL / HEADER / FORCE_* land in parsed_options.
     // Consult both before bind so every text option (and the csv-only
@@ -1697,8 +1684,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyToStdout(
       sdb::connector::ResolveTextCopyOptions(copy.info->parsed_options);
     sdb::connector::ResolveTextCopyOptions(copy.info->options, opts);
     sdb::connector::CheckTextCopyOptions(opts, false);
-    wire->proto.copy_delim = opts.delim;
-    wire->proto.copy_null = opts.null_str;
+    sdb::pg::SetCopyText(wire->proto, opts.delim, std::move(opts.null_str));
     // PG-compat: COPY ... TO STDOUT (FORMAT text, HEADER) emits the column-name
     // header line before the rows (committed here, before the drive arms).
     if (opts.header) {
@@ -2101,7 +2087,10 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
     statement.SetPrepared(std::move(prepared), bind_epoch);
     statement.SetTypeHints(std::move(type_hints));
     statement.SetParamOids(std::move(param_oids));
-    statement.SetAlias(statement_name);
+    if (!statement_name.empty()) {
+      statement.SetEntry(
+        duckdb::ClientData::Get(*_conn->context).prepared_statements.at(alias));
+    }
   } else {
     // One user command expanded into several statements (wrap_multi=false left
     // the body bare, no BEGIN/COMMIT). Keep them UNPREPARED: a later
@@ -2220,21 +2209,12 @@ void PgWireSession<Kind>::RevalidatePlan(Statement& stmt) {
   auto rebind = source->Copy();
   stmt.ReleaseUnusedPlan();
   const auto& hints = stmt.TypeHints();
-  auto prepared =
-    PrepareInternal(std::move(rebind), hints.empty() ? nullptr : &hints);
+  auto prepared = PrepareInternal(
+    std::move(rebind), hints.empty() ? nullptr : &hints, stmt.Entry());
   if (prepared->HasError()) {
     // The statement keeps its source, so the next Bind retries the re-plan
     // (PG's revalidation likewise fails per attempt, not once and for all).
     prepared->GetErrorObject().Throw();
-  }
-  if (!stmt.Alias().empty()) {
-    auto& statements =
-      duckdb::ClientData::Get(*_conn->context).prepared_statements;
-    const auto alias = statements.find(stmt.Alias());
-    const auto handle = statements.find(prepared->GetName());
-    if (alias != statements.end() && handle != statements.end()) {
-      alias->second = handle->second;
-    }
   }
   stmt.SetPrepared(std::move(prepared), epoch);
 }
@@ -2246,7 +2226,7 @@ void PgWireSession<Kind>::DropDeallocated(std::string_view name) {
   }
   auto& named = _proto.statements.Named();
   const auto it = named.find(name);
-  if (it != named.end() && !it->second->Alias().empty() &&
+  if (it != named.end() && it->second->Entry() &&
       !duckdb::ClientData::Get(*_conn->context)
          .prepared_statements.contains(name)) {
     named.erase(it);
@@ -2254,11 +2234,45 @@ void PgWireSession<Kind>::DropDeallocated(std::string_view name) {
 }
 
 template<SocketKind Kind>
+StatementPtr& PgWireSession<Kind>::FindStatement(std::string_view name) {
+  if (name.empty()) {
+    return _proto.statements.FindOrThrow(name);
+  }
+  auto& statements =
+    duckdb::ClientData::Get(*_conn->context).prepared_statements;
+  auto& named = _proto.statements.Named();
+  if (const auto it = named.find(name); it != named.end()) {
+    if (!it->second->Entry() || statements.contains(name)) {
+      return it->second;
+    }
+    named.erase(it);
+  }
+  const auto sql = statements.find(name);
+  if (sql == statements.end() || !sql->second->plan->unbound_statement) {
+    return _proto.statements.FindOrThrow(name);
+  }
+  const auto entry = sql->second;
+  auto hints = entry->plan->parameter_type_hints;
+  _connection_ctx->RefreshCatalogEpoch();
+  const auto bind_epoch = _connection_ctx->CatalogEpoch();
+  auto prepared = PrepareInternal(entry->plan->unbound_statement->Copy(),
+                                  hints.empty() ? nullptr : &hints, entry);
+  if (prepared->HasError()) {
+    prepared->GetErrorObject().Throw();
+  }
+  auto& slot = _proto.statements.Create(name);
+  slot->SetPrepared(std::move(prepared), bind_epoch);
+  slot->SetTypeHints(std::move(hints));
+  slot->SetEntry(entry);
+  return slot;
+}
+
+template<SocketKind Kind>
 void PgWireSession<Kind>::ReleaseDeallocated() {
   const auto& statements =
     duckdb::ClientData::Get(*_conn->context).prepared_statements;
-  absl::erase_if(_proto.statements.Named(), [&](const auto& entry) {
-    return !entry.second->Alias().empty() && !statements.contains(entry.first);
+  absl::erase_if(_proto.statements.Named(), [&](const auto& named) {
+    return named.second->Entry() && !statements.contains(named.first);
   });
 }
 
@@ -2274,9 +2288,8 @@ void PgWireSession<Kind>::RegisterUnprepared(
     unbound->statements.push_back(part->Copy());
   }
   unbound->query = query;
-  _conn->context->RegisterPreparedStatement(duckdb::Identifier{name},
-                                            std::move(unbound));
-  statement.SetAlias(name);
+  statement.SetEntry(_conn->context->RegisterPreparedStatement(
+    duckdb::Identifier{name}, std::move(unbound)));
 }
 
 template<SocketKind Kind>
@@ -2294,8 +2307,7 @@ void PgWireSession<Kind>::HandleBind(std::string_view payload) {
     payload.substr(portal_end + 1, statement_end - portal_end - 1);
   payload.remove_prefix(statement_end + 1);
 
-  DropDeallocated(statement_name);
-  auto& slot = _proto.statements.FindOrThrow(statement_name);
+  auto& slot = FindStatement(statement_name);
   auto& statement = *slot;
   if (!statement.Bound()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_SQL_STATEMENT_NAME),
@@ -2435,7 +2447,8 @@ PlanPtr PgWireSession<Kind>::ResolvePlan(
   if (auto cached = stmt.Resolution(plan, hints)) {
     return cached;
   }
-  auto resolved = PrepareInternal(stmt.Source()->Copy(), &hints);
+  auto resolved = PrepareInternal(stmt.Source()->Copy(), &hints, stmt.Entry(),
+                                  /*custom=*/true);
   if (resolved->HasError()) {
     return plan;
   }
@@ -2452,9 +2465,16 @@ PgWireSession<Kind>::PrepareInternal(
   duckdb::unique_ptr<duckdb::SQLStatement> statement,
   duckdb::optional_ptr<
     const duckdb::case_insensitive_map_t<duckdb::LogicalType>>
-    hints) {
+    hints,
+  const duckdb::shared_ptr<duckdb::PreparedStatementEntry>& entry,
+  bool custom) {
   const auto internal = _connection_ctx->InternalStatements();
-  return _conn->Prepare(std::move(statement), hints);
+  if (!entry) {
+    return _conn->Prepare(std::move(statement), hints);
+  }
+  return custom ? _conn->context->PrepareCustomPlan(entry, std::move(statement),
+                                                    hints)
+                : _conn->context->Replan(entry, std::move(statement), hints);
 }
 
 template<SocketKind Kind>
@@ -2468,8 +2488,7 @@ void PgWireSession<Kind>::HandleDescribe(std::string_view payload) {
   const char what = payload.front();
   const std::string_view name = payload.substr(1, name_end - 1);
   if (what == 'S') {
-    DropDeallocated(name);
-    DescribeStatement(*_proto.statements.FindOrThrow(name));
+    DescribeStatement(*FindStatement(name));
   } else if (what == 'P') {
     // Find (not FindOrThrow): the anon slot always exists but an unbound anon
     // portal (no stmt) is "does not exist" too, so both misses share one throw.
@@ -2518,9 +2537,11 @@ yaclib::Task<> PgWireSession<Kind>::HandleExecute(std::string_view payload) {
     case Statement::Kind::Unbound:
       SDB_UNREACHABLE();
     case Statement::Kind::Empty:
+      portal.stmt->CountExecution(false);
       WriteEmptyFrame(this->_send, PQ_MSG_EMPTY_QUERY_RESPONSE);
       co_return {};
     case Statement::Kind::Copy: {
+      portal.stmt->CountExecution(true);
       portal.exec.state = PortalState::Done;
       auto statement = portal.stmt->GetCopy().Copy();
       const auto copy = ClassifyCopy(*statement);
@@ -2539,6 +2560,7 @@ yaclib::Task<> PgWireSession<Kind>::HandleExecute(std::string_view payload) {
       // (ExecuteCompound); ExecutePrepared then drives that last one --
       // emitting the single CommandComplete and honoring max_rows.
       if (portal.exec.state == PortalState::Unstarted) {
+        portal.stmt->CountExecution(true);
         co_await ExecuteCompound(portal);
       }
       co_await ExecutePrepared(portal, max_rows);
@@ -3070,9 +3092,6 @@ yaclib::Future<> PgWireSession<Kind>::SessionMain() {
   // Teardown runs where everything was created: results/portals die on a duck
   // worker; their cleanup may emit notices that must be stolen before
   // ~ConnectionContext asserts an empty queue.
-  if (_connection_ctx) {
-    _connection_ctx->protocol_state = nullptr;
-  }
   _proto.Clear();
   if (_txn_state) {
     _txn_state->Rollback();

@@ -303,7 +303,7 @@ class Workload:
             action = None
             for _ in range(60):
                 try:
-                    action = one(cur, f"SELECT action FROM serenedb_reindex({lit(self.index)})")
+                    action = one(cur, f"SELECT action FROM sdb_reindex({lit(self.index)})")
                 except psycopg.errors.ObjectInUse:
                     time.sleep(0.5)
                     continue

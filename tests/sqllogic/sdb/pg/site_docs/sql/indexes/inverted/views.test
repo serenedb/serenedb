@@ -125,7 +125,7 @@ count
 # DOCS_TEST_BODY
 
 query
-SELECT * FROM serenedb_reindex('app_logs_idx');
+SELECT * FROM sdb_reindex('app_logs_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0
@@ -196,7 +196,7 @@ DROP JOB app_logs_search_idx;
 query
 SELECT
     (SELECT count(*) FROM sdb_jobs() WHERE database_name = current_database() AND job_name LIKE 'app_logs%') AS jobs,
-    (SELECT count(*) FROM duckdb_indexes() WHERE database_name = current_database() AND index_name = 'app_logs_search_idx') AS indexes;
+    (SELECT count(*) FROM sdb_indexes() WHERE database_name = current_database() AND index_name = 'app_logs_search_idx') AS indexes;
 ----
 jobs	indexes
 0	1

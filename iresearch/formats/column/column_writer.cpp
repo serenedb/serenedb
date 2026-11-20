@@ -509,6 +509,7 @@ ColumnWriter::ColumnWriter(ColWriter& owner, field_id id,
   if (_options.distinct != DistinctStats::None) {
     _meta.distinct = duckdb::make_shared_ptr<duckdb::DistinctStatistics>();
   }
+  OpenRowGroup();
   if (options.distinct != DistinctStats::None || deferred) {
     return;
   }
@@ -528,6 +529,10 @@ ColumnWriter::ColumnWriter(ColWriter& owner, field_id id,
     _ingest[i] =
       std::make_unique<ListIngest>(fields[i].second, /*borrow=*/false);
   }
+}
+
+void ColumnWriter::OpenRowGroup() noexcept {
+  _rg_rows = _owner->RowGroupRows(_row_start, _options.row_group_size);
 }
 
 WriteChunk& ColumnWriter::OpenChunk() {
@@ -557,7 +562,7 @@ void ColumnWriter::Stage(uint64_t count, Fill&& fill) {
   while (off < count) {
     auto& back = OpenChunk();
     const uint64_t rg_room =
-      _deferred ? STANDARD_VECTOR_SIZE : _options.row_group_size - _staged_rows;
+      _deferred ? STANDARD_VECTOR_SIZE : _rg_rows - _staged_rows;
     const auto take = static_cast<duckdb::idx_t>(std::min(
       {count - off, STANDARD_VECTOR_SIZE - uint64_t{back.count}, rg_room}));
     fill(back, static_cast<duckdb::idx_t>(off), take);
@@ -573,7 +578,7 @@ void ColumnWriter::Stage(uint64_t count, Fill&& fill) {
     duckdb::FlatVector::SetSize(back.data, back.count);
     _staged_rows += take;
     off += take;
-    if (!_deferred && _staged_rows == _options.row_group_size) {
+    if (!_deferred && _staged_rows == _rg_rows) {
       SealRowGroup();
     }
   }
@@ -778,6 +783,7 @@ bool ColumnWriter::CopyBlocks(const ColumnReader& column, ReadContext& source,
   }
   CopyValidity(column, source, 0, column.RowCount(), buffer);
   _row_start += column.RowCount();
+  OpenRowGroup();
   return true;
 }
 
@@ -874,11 +880,16 @@ void ColumnWriter::CopyRows(uint64_t start_row, const ColumnReader& column,
       }
       if (written < block_first) {
         DecodeRows(column, source, written, block_first - written);
+        written = block_first;
+      }
+      if (blocks[b].tuple_count > _rg_rows - _staged_rows) {
+        continue;
       }
       SealRowGroup();
       CopyBlock(blocks[b], source, _meta.data, buffer);
       CopyValidity(column, source, block_first, block_end, buffer);
       _row_start += blocks[b].tuple_count;
+      OpenRowGroup();
       written = block_end;
     }
   }
@@ -937,6 +948,7 @@ void ColumnWriter::SealRowGroup() {
   }
   _staged_chunks = 0;
   _staged_rows = 0;
+  OpenRowGroup();
 }
 
 std::vector<WriteChunk> ColumnWriter::Snapshot(uint64_t rows) const {

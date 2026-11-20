@@ -84,6 +84,9 @@ QueryBuilder::ptr WithDocsMask(QueryBuilder::ptr query,
   }
 
   auto mask = memory::make_tracked<MaskQuery>(ctx.memory, segment, masked);
+  auto* const profile = query->Profile();
+  const auto node = query->ProfileNode();
+  QueryBuilder::ptr result;
   if (ctx.collector != nullptr && query->Kind() == QueryKind::Boolean) {
     const auto& nested = irs::utils::downCast<BooleanQuery>(*query);
     const auto stats = nested.Stats();
@@ -93,19 +96,22 @@ QueryBuilder::ptr WithDocsMask(QueryBuilder::ptr query,
       ctx.needs_terms};
     builder.Inherit(nested);
     builder.Add(std::move(mask), Occur::MustNot);
-    auto flat = builder.Finish();
-    if (flat && flat->Kind() == QueryKind::Boolean) {
-      const_cast<QueryBuilder&>(*flat).SetStats(stats);
+    result = builder.Finish();
+    if (result && result->Kind() == QueryKind::Boolean) {
+      const_cast<QueryBuilder&>(*result).SetStats(stats);
     }
-    return flat;
+  } else {
+    BooleanBuilder builder{segment,        ctx.memory,          0,
+                           kNoBoost,       ScoreMergeType::Sum, ctx.collector,
+                           ctx.needs_terms};
+    builder.Add(std::move(query), Occur::Must);
+    builder.Add(std::move(mask), Occur::MustNot);
+    result = builder.Finish();
   }
-
-  BooleanBuilder builder{segment,        ctx.memory,          0,
-                         kNoBoost,       ScoreMergeType::Sum, ctx.collector,
-                         ctx.needs_terms};
-  builder.Add(std::move(query), Occur::Must);
-  builder.Add(std::move(mask), Occur::MustNot);
-  return builder.Finish();
+  if (profile && !QueryBuilder::IsEmpty(*result)) {
+    result->SetProfile(*profile, node);
+  }
+  return result;
 }
 
 }  // namespace irs

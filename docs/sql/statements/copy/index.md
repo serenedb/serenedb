@@ -117,6 +117,8 @@ In the `text` format a line holding only `\.` ends the data. Over STDIN anything
 
 In the `text` format `ON_ERROR IGNORE` skips a row whose value cannot be converted to its column's type, and `REJECT_LIMIT n` fails the `COPY` with `skipped more than REJECT_LIMIT (n) rows due to data type incompatibility` once more than `n` rows are skipped. A row with more or fewer values than the table has columns fails the `COPY` either way. `REJECT_LIMIT` requires `ON_ERROR IGNORE`, and neither is allowed in `COPY ... TO`. The `binary` format allows only `ON_ERROR STOP` and no `DELIMITER`, `NULL`, `HEADER` or CSV option.
 
+In the `text` format `DELIMITER` is one character other than a backslash, a period, a lowercase letter, a digit, a newline or a carriage return, and it must not appear in the `NULL` string. `COPY ... TO` writes a backslash before every character of a value that equals the delimiter, whatever the column's type, so the file reads back with the same `DELIMITER`.
+
 ### Syntax
 
 <RailroadDiagram source={RailroadSource} production="rrdiagram1" />
@@ -253,7 +255,7 @@ The below options are applicable when writing CSV files.
 | `DELIM` or `SEP`  | The character that is written to separate columns within each row.                                                                                                                                                                                   | `VARCHAR`   | `,`     |
 | `ESCAPE`          | The character that should appear before a character that matches the `quote` value.                                                                                                                                                                  | `VARCHAR`   | `"`     |
 | `FORCE_QUOTE`     | The list of columns to always add quotes to, even if not required.                                                                                                                                                                                   | `VARCHAR[]` | `[]`    |
-| `HEADER`          | Whether or not to write a header for the CSV file. A server writes none unless you pass `HEADER`, following the `copy_csv_header_default` setting; `serened shell` writes one. | `BOOL`      | `false` on a server  |
+| `HEADER`          | Whether or not to write a header for the CSV file. A server writes none unless you pass `HEADER`, following the `copy_csv_header_default` setting; `serenedb shell` writes one. | `BOOL`      | `false` on a server  |
 | `NULLSTR`         | The string that is written to represent a `NULL` value.                                                                                                                                                                                              | `VARCHAR`   | (empty) |
 | `PREFIX`          | Prefixes the CSV file with a specified string. This option must be used in conjunction with `SUFFIX` and requires `HEADER` to be set to `false`.                                                                                                     | `VARCHAR`   | (empty) |
 | `SUFFIX`          | Appends a specified string as a suffix to the CSV file. This option must be used in conjunction with `PREFIX` and requires `HEADER` to be set to `false`.                                                                                            | `VARCHAR`   | (empty) |

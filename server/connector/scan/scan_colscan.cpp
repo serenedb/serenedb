@@ -49,9 +49,28 @@ void OpenScanner(ScanGlobalState& g, ColScanLocalState& l) {
   l.scanner = slot.get();
 }
 
+duckdb::idx_t SampleRows(const ScanGlobalState& g, ColScanLocalState& l,
+                         duckdb::idx_t take, duckdb::idx_t live) {
+  const bool every_row = live == take;
+  if (every_row) {
+    l.live_sel.Initialize(l.live_sel_data);
+  }
+  duckdb::idx_t kept = 0;
+  for (duckdb::idx_t i = 0; i != live; ++i) {
+    const auto row = every_row ? i : l.live_sel.get_index(i);
+    if (g.sampling.KeepsRow(l.doc_cursor + row)) {
+      l.live_sel.set_index(kept++, row);
+    }
+  }
+  return kept;
+}
+
 duckdb::idx_t EmitFromUnit(ScanGlobalState& g, ColScanLocalState& l,
                            duckdb::DataChunk& output) {
   auto& scanner = *l.scanner;
+  const bool sampled = g.sampling.do_system_sample;
+  const bool sample_rows =
+    sampled && !g.sampling.is_percentage && g.sampling.sample_rate < 1;
   while (l.doc_cursor < l.doc_end) {
     const auto dead_end = scanner.DeadUntil(l.doc_cursor);
     if (dead_end > l.doc_cursor) {
@@ -60,19 +79,30 @@ duckdb::idx_t EmitFromUnit(ScanGlobalState& g, ColScanLocalState& l,
     }
     const auto take = static_cast<duckdb::idx_t>(
       std::min<uint64_t>(STANDARD_VECTOR_SIZE, l.doc_end - l.doc_cursor));
+    if (sampled && g.sampling.is_percentage &&
+        !g.sampling.KeepsVector(SampleRandom(g, l))) {
+      l.doc_cursor += take;
+      continue;
+    }
     const auto first =
       irs::doc_limits::min() + static_cast<irs::doc_id_t>(l.doc_cursor);
-    duckdb::idx_t produced;
+    duckdb::idx_t live = take;
     if (l.has_mask) {
       l.live_sel.Initialize(l.live_sel_data);
-      const auto live =
+      live =
         l.mask.FillLive(first, static_cast<uint32_t>(take), l.live_sel.data());
-      produced = live == take ? scanner.Scan(l.doc_cursor, take, output)
-                              : scanner.Scan(l.doc_cursor, take, output,
-                                             &l.live_sel, live);
-    } else {
-      produced = scanner.Scan(l.doc_cursor, take, output);
     }
+    if (sample_rows) {
+      live = SampleRows(g, l, take, live);
+      if (live == 0) {
+        l.doc_cursor += take;
+        continue;
+      }
+    }
+    const auto produced =
+      live == take
+        ? scanner.Scan(l.doc_cursor, take, output)
+        : scanner.Scan(l.doc_cursor, take, output, &l.live_sel, live);
     l.doc_cursor += take;
     if (produced != 0) {
       WriteRowPositions(g, l.unit.seg, first, scanner.Selection(), produced,

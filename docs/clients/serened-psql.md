@@ -1,23 +1,23 @@
 ---
-title: serened psql
+title: serenedb psql
 sidebar_position: 9
 split: headings
 ---
 
-# serened psql
+# serenedb psql
 
-`serened psql` is a PostgreSQL-compatible command-line client built into the `serened` binary — no separate installation required. It connects to a running SereneDB server over the PostgreSQL wire protocol and behaves like the standard [`psql`](./psql.md) client: on startup it attaches to the server and switches to the requested database, so you can run queries interactively or in batch.
+`serenedb psql` is a PostgreSQL-compatible command-line client built into the `serenedb` binary — no separate installation required. It connects to a running SereneDB server over the PostgreSQL wire protocol and behaves like the standard [`psql`](./psql.md) client: on startup it attaches to the server and switches to the requested database, so you can run queries interactively or in batch.
 
-To work with a local database file directly, without a running server, use [`serened shell`](./serened-shell.md) instead. Both speak the same [SQL dialect](./serened-shell.md#sql-dialect).
+To work with a local database file directly, without a running server, use [`serenedb shell`](./serened-shell.md) instead. Both speak the same [SQL dialect](./serened-shell.md#sql-dialect).
 
 ## Connect
 
 ```sh
-serened psql -h localhost -p 7890 -d postgres
+serenedb psql -h localhost -p 7890 -d postgres
 ```
 
 :::note
-`serened psql` follows the PostgreSQL convention and defaults to port **`5432`**, while a SereneDB server listens on **`7890`** by default. Pass `-p 7890` (or set `PGPORT`) so the client reaches the server.
+`serenedb psql` follows the PostgreSQL convention and defaults to port **`5432`**, while a SereneDB server listens on **`7890`** by default. Pass `-p 7890` (or set `PGPORT`) so the client reaches the server.
 :::
 
 When an option is omitted, the client falls back to the corresponding environment variable, then a built-in default:
@@ -32,7 +32,7 @@ When an option is omitted, the client falls back to the corresponding environmen
 The first two positional arguments are taken as `DBNAME` and `USERNAME` when the matching flags are not given:
 
 ```sh
-serened psql -h localhost -p 7890 postgres alice
+serenedb psql -h localhost -p 7890 postgres alice
 ```
 
 The bootstrap superuser `postgres` connects locally without a password; other roles (and remote connections) authenticate with their [role password](../security/client_authentication.md). `-W` forces a password prompt, `-w` never prompts.
@@ -42,7 +42,7 @@ The bootstrap superuser `postgres` connects locally without a password; other ro
 Use `-c` to run one statement and exit:
 
 ```sh
-serened psql -h localhost -p 7890 -d postgres -c "SELECT 1 + 1 AS sum;"
+serenedb psql -h localhost -p 7890 -d postgres -c "SELECT 1 + 1 AS sum;"
 ```
 
 ```text
@@ -57,29 +57,29 @@ serened psql -h localhost -p 7890 -d postgres -c "SELECT 1 + 1 AS sum;"
 ## Browsing the documentation
 
 `.docs` renders this documentation set inside the client, exactly as it does in
-[`serened shell`](./serened-shell.md#browsing-the-documentation) — same arguments, same
-output. The pages come from the index compiled into the `serened` binary rather than from
+[`serenedb shell`](./serened-shell.md#browsing-the-documentation) — same arguments, same
+output. The pages come from the index compiled into the `serenedb` binary rather than from
 the server, so a newer client shows its own documentation when connected to an older
 server. That holds for `--search` too: it ranks in-process and never queries the
 connected server.
 
 ```sh
-serened psql -h localhost -p 7890 -d postgres -c ".docs BM25"
+serenedb psql -h localhost -p 7890 -d postgres -c ".docs BM25"
 ```
 
 The [`sdb_docs` tables and functions](../sql/functions/docs.md) answer from that same
-copy when you query them in `serened psql`, because queries run in the client. To read
+copy when you query them in `serenedb psql`, because queries run in the client. To read
 the server's copy instead, the version that server actually runs, pass the query
 through `postgres_query` with the database you connected to:
 
 ```sh
-serened psql -h localhost -p 7890 -d postgres -c "SELECT path, title FROM postgres_query('postgres', 'SELECT path, title FROM sdb_docs.search(''vacuum'', 5)')"
+serenedb psql -h localhost -p 7890 -d postgres -c "SELECT path, title FROM postgres_query('postgres', 'SELECT path, title FROM sdb_docs.search(''vacuum'', 5)')"
 ```
 
 ## Dot commands
 
-`serened psql` accepts the same [dot commands](./serened-shell.md#dot-commands) as
-`serened shell`, from `.mode` and `.timer` to `.docs`. `.help` lists them.
+`serenedb psql` accepts the same [dot commands](./serened-shell.md#dot-commands) as
+`serenedb shell`, from `.mode` and `.timer` to `.docs`. `.help` lists them.
 
 ## Connection options
 
@@ -100,7 +100,7 @@ serened psql -h localhost -p 7890 -d postgres -c "SELECT path, title FROM postgr
 | `-f`, `--file=FILENAME`      | Execute commands from a file, then exit                      |
 | `-l`, `--list`               | List the available databases, then exit                      |
 | `-1`, `--single-transaction` | Run the `-c` / `-f` batch inside a single transaction        |
-| `-X`, `--no-psqlrc`          | Do not read the startup file (`~/.duckdbrc`)                 |
+| `-X`, `--no-psqlrc`          | Do not read the startup file (`~/.sdbrc`)                    |
 | `-q`, `--quiet`              | Suppress startup and informational messages                  |
 | `-V`, `--version`            | Print the SereneDB version and exit                          |
 | `-?`, `--help`               | Show the help message and exit                               |
@@ -127,19 +127,19 @@ The default output is the aligned `duckbox` table. These options change how resu
 List the databases on the server:
 
 ```sh
-serened psql -h localhost -p 7890 -l
+serenedb psql -h localhost -p 7890 -l
 ```
 
 Run a SQL script and exit:
 
 ```sh
-serened psql -h localhost -p 7890 -d postgres -f schema.sql
+serenedb psql -h localhost -p 7890 -d postgres -f schema.sql
 ```
 
 Export a query result as CSV:
 
 ```sh
-serened psql -h localhost -p 7890 -d postgres --csv -c "SELECT 'a' AS x, 1 AS y;"
+serenedb psql -h localhost -p 7890 -d postgres --csv -c "SELECT 'a' AS x, 1 AS y;"
 ```
 
 ```text
@@ -150,5 +150,5 @@ a,1
 Run a script as a single transaction, writing the output to a file:
 
 ```sh
-serened psql -h localhost -p 7890 -d postgres -1 -f migrate.sql -o result.txt
+serenedb psql -h localhost -p 7890 -d postgres -1 -f migrate.sql -o result.txt
 ```

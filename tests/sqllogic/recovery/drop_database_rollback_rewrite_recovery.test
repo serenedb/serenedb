@@ -44,7 +44,7 @@ SELECT 1;
 
 connection after_crash
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SELECT count(*) AS n FROM duckdb_databases() WHERE database_name = 'ddrr_db';
+SELECT count(*) AS n FROM sdb_databases() WHERE database_name = 'ddrr_db';
 ----
 n
 1

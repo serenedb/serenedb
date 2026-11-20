@@ -10,12 +10,8 @@ allocator_background_threads	off	Whether to enable the allocator background thre
 allocator_bulk_deallocation_flush_threshold	512.0 MiB	If a bulk deallocation larger than this occurs, flush outstanding allocations.
 allocator_flush_threshold	134217728B	Peak allocation threshold at which to flush the allocator after completing a task.
 allow_asterisks_in_http_paths	off	Allow '*' character in URLs users can query
-allow_community_extensions	on	Allow loading extensions build by the community.
-allow_extension_repositories	undecided	Whether custom trusted extension repositories are 'allowed', 'forbidden' (which also distrusts existing repositories) or 'undecided' (the default: blocks adding new repositories, but keeps trusting existing ones). While the database is running the setting can only move from 'undecided' to 'allowed' or 'forbidden', or from 'allowed' to 'forbidden'.
-allow_extensions_metadata_mismatch	off	Allow to load extensions with no compatible metadata.
 allow_persistent_secrets	on	Allow the creation of persistent secrets that are stored and loaded on restarts.
 allow_unredacted_secrets	off	Allow printing unredacted secrets.
-allow_unsigned_extensions	off	Allow to load extensions with invalid or missing signatures.
 allowed_configs	[]	List of configuration options that are ALWAYS allowed to be changed, even when lock_configuration is true.
 allowed_directories	[]	List of directories, and directory prefixes, that are ALWAYS allowed to be queried, even when enable_external_access is false.
 allowed_paths	[]	List of files that are ALWAYS allowed to be queried, even when enable_external_access is false.
@@ -24,16 +20,13 @@ approximate_join_order_threshold	12	The minimum number of tables in a join to de
 archive_command	(empty)	Not used. Added for PostgreSQL compatibility only.
 archive_mode	off	Not used. Added for PostgreSQL compatibility only.
 arrow_large_buffer_size	off	Whether Arrow buffers for strings, blobs, UUIDs and bits should be exported using large buffers.
-arrow_lossless_conversion	off	Whenever a DuckDB type does not have a clear native or canonical extension match in Arrow, export the types with a duckdb.type_name extension name.
+arrow_lossless_conversion	off	Whenever a type does not have a clear native or canonical extension match in Arrow, export the types with a duckdb.type_name extension name.
 arrow_output_list_view	off	Whether the export to the Arrow format should use ListView as the physical layout for LIST columns.
-arrow_output_version	1.0	Whether strings should be produced by DuckDB in Utf8View format instead of Utf8.
+arrow_output_version	1.0	Whether strings should be produced in Utf8View format instead of Utf8.
 asof_loop_join_threshold	64	The maximum number of rows we need on the left side of an ASOF join to use a nested loop join.
 async_threads	<slt:ignore>	The number of async tasks, such as I/O, a query runs at once. -1 = automatic, four times the number of CPU cores, at most 256; 0 runs the I/O on the threads that run the query.
 auto_checkpoint_skip_wal_threshold	100000	The estimated WAL write size at which point we will skip writing to the WAL and only checkpoint. Skipping writing to the WAL means concurrent commits are blocked while the checkpoint is happening.
 auto_fallback_to_full_download	on	Allows automatically falling back to full file downloads when possible.
-autoinstall_extension_repository	(empty)	Overrides the custom endpoint for extension installation on autoloading. Falls back to custom_extension_repository, if not specified.
-autoinstall_known_extensions	off	Whether known extensions are allowed to be automatically installed when a query depends on them.
-autoload_known_extensions	off	Whether known extensions are allowed to be automatically loaded when a query depends on them.
 azure_account_name	NULL	Azure account name, when set, the extension will attempt to automatically detect credentials
 azure_context_caching	1	Enable/disable the caching of some context when performing queries. This cache is by default enable, and will for a given connection keep a local context when performing a query. If you suspect that the caching is causing some side effect you can try to disable it by setting this option to false.
 azure_credential_chain	NULL	Ordered list of Azure credential providers, in string format separated by ';'. E.g. 'cli;workload_identity;managed_identity;env'
@@ -77,8 +70,7 @@ compaction_max_segments	10	Maximum segments of a table or of an inverted index o
 compaction_max_segments_bytes	5368709120	Byte budget of one background compaction of a table or of an inverted index over a view (the tier target size). Their WITH (compaction_max_segments_bytes = ...) overrides it. Default 5368709120 (5GB).
 copy_csv_header_default	off	Whether COPY ... TO a CSV file writes a header line when HEADER is not specified
 current_transaction_invalidation_policy	STANDARD_POLICY	Which types of exceptions invalidate the database for the current transaction.
-custom_extension_repository	(empty)	Overrides the custom endpoint for extension installation.
-custom_user_agent	(empty)	HTTP request metadata that can be set by callers/wrappers to tag their own traffic when DuckDB makes a request.
+custom_user_agent	(empty)	HTTP request metadata that can be set by callers/wrappers to tag their own traffic in the requests the database makes.
 data_directory	<slt:ignore>	Shows the data directory.
 DateStyle	ISO, MDY	Sets the display format for date and time values.
 debug_checkpoint_scan_sleep_ms	0	DEBUG SETTING: time to sleep after a checkpoint has written a table's row groups, before it installs them
@@ -94,14 +86,13 @@ default_transaction_isolation	repeatable read	Sets the transaction isolation lev
 default_transaction_read_only	off	Sets the default read-only status of new transactions.
 delim_join_as_cte	on	Rewrite delim joins to materialized CTEs during dependent join flattening.
 dialect_compatibility_mode	NONE	Enable SQL dialect compatibility for a certain engine, e.g. `SET dialect_compatibility_mode='spark'`.
-disable_database_invalidation	on	Disables invalidating the database instance when encountering a fatal error. Should be used with great care, as DuckDB cannot guarantee correct behavior after a fatal error.
+disable_database_invalidation	on	Disables invalidating the database instance when encountering a fatal error. Should be used with great care, as correct behavior cannot be guaranteed after a fatal error.
 disable_parquet_prefetching	off	Disable the prefetching mechanism in Parquet
 disable_timestamptz_casts	off	Disable casting from timestamp to timestamptz.
 disabled_compression_methods	(empty)	Disable a specific, comma-separated set of compression methods.
 disabled_filesystems	(empty)	Disable specific file systems, thereby preventing their access, e.g. LocalFileSystem.
 disabled_log_types	(empty)	Sets the list of disabled log types.
 disabled_optimizers	(empty)	Disable a specific, comma-separated set of optimizers.
-duckdb_api	cpp	Specifies which client API/binding opened the database connection, e.g. cpp, capi, cli. The value gets folded into the HTTP User-Agent string DuckDB sends on any HTTP request.
 dynamic_or_filter_threshold	50	The maximum amount of OR filters that are generated dynamically from a hash join.
 enable_curl_server_cert_verification	on	Enable server side certificate verification for CURL backend.
 enable_external_access	on	Allow the database to access external state, e.g. through loading/installing modules, COPY TO/FROM, CSV readers, pandas replacement scans, etc.
@@ -124,14 +115,12 @@ error_on_division_by_zero	on	Throw an error instead of returning NULL when divid
 errors_as_json	off	Output error messages as structured JSON instead of as a raw string.
 experimental_metadata_reuse	on	EXPERIMENTAL: Re-use row group and table metadata when checkpointing.
 explain_output	PHYSICAL_ONLY	Configure the output of EXPLAIN statements (ALL, OPTIMIZED_ONLY, PHYSICAL_ONLY).
-explain_output_format	PG	Column shape of EXPLAIN output (DUCKDB_NATIVE = native two-column key/value, PG = single QUERY PLAN column with one row per line of a text or compact plan and one row per plan in other formats)
-extension_directories	[]	Set the directories to store extensions in.
-extension_repository_directory	(empty)	Set the directory in which trusted extension repositories are stored. This is the trust anchor for user-provided repositories, so while signature checking is enabled (allow_unsigned_extensions=false) it can only be set at startup, not while the database is running.
+explain_output_format	SERVER	Column shape of EXPLAIN output (CLI = two columns, key and value, SERVER = single QUERY PLAN column with one row per line of a text or compact plan and one row per plan in other formats)
 external_file_cache_local_max_block_size	16384	Maximum size in bytes of an external file cache block for local (non-remote) files. Larger reads are split into blocks of this size, which are fetched in parallel.
 external_file_cache_remote_max_block_size	2097152	Maximum size in bytes of an external file cache block for remote files (e.g. HTTP/S3). Larger reads are split into blocks of this size, which are fetched in parallel.
 external_file_cache_remote_min_block_size	4096	Reads of remote files are rounded out to aligned blocks of this size, so tiny reads do not each cost a request.
 external_file_cache_spill	off	Whether evicted external file cache blocks of remote files spill to the temporary directory instead of being dropped, so that they are re-read from there rather than re-fetched from the source.
-external_threads	0	The number of external threads that work on DuckDB tasks.
+external_threads	0	The number of external threads that work on the database's tasks.
 extra_float_digits	1	Sets the number of digits displayed for floating-point values.
 extra_http_headers	{}	Extra HTTP headers added to every request
 file_search_path	(empty)	A comma separated list of directories to search for input files.
@@ -182,7 +171,7 @@ IntervalStyle	postgres	Sets the display format for interval values.
 json_geometry_format	wkt	How GEOMETRY values are written to JSON: 'wkt' for Well-Known Text, or 'geojson' for GeoJSON geometry objects. COPY ... TO ... (FORMAT GEOJSON) always writes GeoJSON regardless of this setting.
 late_materialization_lookup_max_rows	2048	The maximum amount of rows in the LIMIT/TOP_N/SAMPLE operator for which a scan that can look up rows by their row id is late materialized through a LOOKUP_JOIN. 0 disables the LOOKUP_JOIN: late materialization then joins on the row ids, up to late_materialization_max_rows.
 late_materialization_max_rows	50	The maximum amount of rows in the LIMIT/SAMPLE operator for which we trigger late materialization.
-legacy_disable_null_type	off	When enabled, prevent the NULL type from leaving the binder. This was the default behavior prior to DuckDB v2.0.
+legacy_disable_null_type	off	When enabled, prevent the NULL type from leaving the binder.
 lock_configuration	off	Whether configurations can be altered.
 lock_timeout	0	Not used. Added for PostgreSQL compatibility only.
 log_query_path	(empty)	Specifies the path to which queries should be logged. The default is NULL, meaning queries are not logged.
@@ -296,6 +285,7 @@ sdb_disable_top_k_optimization	off	When true, the optimizer skips pulling `ORDER
 sdb_hnsw_column_filter	auto	How an HNSW graph walk answers a predicate the columnstore can evaluate: 'fold' evaluates one only the columnstore answers over the whole segment before the walk, and takes one the index answers from the index; 'read' reads the columns of each row the walk reaches, including for predicates the index answers; 'auto' reads while the walk is expected to reach few enough rows for that to cost less than the fold, or than the index where the index answers the predicate, weighing what one read costs in the columns' encodings. Default 'auto'.
 sdb_hnsw_ef_search	-1	Search-time beam width (ef) of each segment's HNSW search. Higher values improve recall at the cost of latency. A value is used as written, floored only at what a segment must return for the query's LIMIT. -1 (the default) lets the engine choose: the index's ef_construction or the LIMIT, whichever is larger, so an untuned query keeps its recall at any LIMIT. With a quantized index every hit of the beam is rescored exactly.
 sdb_hnsw_filter_mode	auto	How an HNSW vector index answers a query with a WHERE: 'auto' picks by the predicate's estimated selectivity, and walks as 'twohop' where a vector's code is long enough that crossing a rejected row costs less than scoring it; 'scan' scores every row the predicate admits; 'walk' walks the graph scoring every neighbour and passing through rejected rows; 'prune' walks scoring and expanding admitted rows only; 'twohop' walks expanding a rejected row's neighbours in its place; 'bridge' walks scoring every neighbour but expanding a rejected row into admitted ones only. Default 'auto'.
+sdb_index_profile_nodes	off	When true, a profiled inverted-index scan also times the nested parts of its execution plans, at a cost per document. Default: false.
 sdb_ivf_max_search_fanout	-1	Upper bound on the beam of the descent through a multi-level IVF centroid tree, where each level keeps the beam's worth of its nearest centroids and scores only their children. The beam follows sdb_ivf_search_nprobe as the query resolves it; a narrower one scores fewer centroids at some recall cost. Applied after sdb_ivf_min_search_fanout. -1 (the default) leaves the beam unbounded.
 sdb_ivf_min_search_fanout	-1	Lower bound on the beam of the descent through a multi-level IVF centroid tree, where each level keeps the beam's worth of its nearest centroids and scores only their children. The beam follows sdb_ivf_search_nprobe as the query resolves it; a wider one reaches clusters a narrow descent misses, and one as wide as the segment's list count makes the descent exact. -1 (the default) leaves the beam unbounded.
 sdb_ivf_posting_size	1024	Target IVF posting-list size (leaf cap t), captured into the index config at CREATE INDEX. Smaller values force deeper multi-level centroid trees (useful for testing). Default 1024.
@@ -307,9 +297,6 @@ sdb_levenshtein_max_terms	50	The maximum number of dictionary terms a fuzzy pred
 sdb_lookup_join_source_hop	off	When true, a LOOKUP_JOIN over an inverted index that returns only source columns reads the row keys from the index in one LOOKUP_JOIN and the source columns in a second one. Default: false.
 sdb_object_cache_size	0	Bytes the database's object cache may hold: decoded columnstore dictionaries, idle tokenizers and other reusable objects, evicted least recently used. 0 = an eighth of memory_limit, at least 256MB. Default 0. Server-global; only a superuser may change it.
 sdb_pattern_cache_size	0	Bytes of compiled search patterns (`ts_regexp`, `ts_like`, LIKE and fused alternations over an inverted index) kept across queries, so a pattern is compiled once per server rather than once per query. The least recently used patterns are dropped first; a pattern in use by a running query stays alive until it finishes. 0, the default, keeps nothing: each query compiles its own patterns. Server-global.
-sdb_scan_no_split_row_groups	1	A segment with at most this many row groups is always one unit of an inverted-index scan and is never split across workers. Default 1.
-sdb_scan_order	auto	The order an inverted-index scan claims its segments in: 'smallest_first' and 'largest_first' order them by live document count; 'order' is best-first by the ORDER BY column's row-group statistics when the query has a scan order (and 'largest_first' otherwise); 'auto' (default) is 'order' under a scan order and 'largest_first' otherwise.
-sdb_scan_split	auto	How an inverted-index scan shares a segment between workers: 'tail' gives each worker its own segment and lets an idle worker join the segment with the most row groups left only once no segment is unclaimed; 'always' puts every worker on the same segment until it is claimed; 'never' scans each segment whole on one worker; 'auto' (default) is 'always' under an ORDER BY scan order and 'tail' otherwise.
 search_backfill_group_bytes	1073741824	Bytes of existing segments a CREATE INDEX on a table rewrites before swapping them in and moving on. Bounds the build's peak disk (~2x one group) and the length of each publish; a value above the table's size means a single swap. 0 = no limit (one swap for the whole table). Default 1073741824 (1GB).
 search_path	<slt:ignore>	Sets the default catalog search path as a comma-separated list of values.
 secret_directory	<slt:ignore>	Set the directory in which persistent secrets are stored.
@@ -324,7 +311,7 @@ standard_conforming_strings	on	Causes '...' strings to treat backslashes literal
 standard_vector_size	2048	The compiled-in STANDARD_VECTOR_SIZE (read-only).
 statement_timeout	0	Aborts any statement that takes more than the specified amount of time (milliseconds without a unit). 0 disables the timeout.
 storage_block_prefetch	REMOTE_ONLY	Configures the scenario in which to use storage block prefetching.
-storage_compatibility_version	latest	Sets the DuckDB version for which data is serialized to the DuckDB file during checkpointing. Can differ from the version of the DuckDB instance.
+storage_compatibility_version	latest	Sets the DuckDB version for which data is serialized to the DuckDB file during checkpointing. Can differ from the version of the running database.
 streaming_buffer_size	10.0 MiB	The maximum number of bytes a streaming query result buffers (e.g. 1GB). Queued output stays under this cap, and each engine thread may hold, beyond the queue, the units it is still building or handing over from its current chunk.
 synchronize_seqscans	on	Not used. Added for PostgreSQL compatibility only.
 table_function_identifier_conversion	DISABLE_IMPLICIT_STRING	Configures the use of deprecated implicit conversion of unbound identifiers to strings in table function arguments.
@@ -368,12 +355,8 @@ allocator_background_threads	off	Whether to enable the allocator background thre
 allocator_bulk_deallocation_flush_threshold	512.0 MiB	If a bulk deallocation larger than this occurs, flush outstanding allocations.
 allocator_flush_threshold	134217728B	Peak allocation threshold at which to flush the allocator after completing a task.
 allow_asterisks_in_http_paths	off	Allow '*' character in URLs users can query
-allow_community_extensions	on	Allow loading extensions build by the community.
-allow_extension_repositories	undecided	Whether custom trusted extension repositories are 'allowed', 'forbidden' (which also distrusts existing repositories) or 'undecided' (the default: blocks adding new repositories, but keeps trusting existing ones). While the database is running the setting can only move from 'undecided' to 'allowed' or 'forbidden', or from 'allowed' to 'forbidden'.
-allow_extensions_metadata_mismatch	off	Allow to load extensions with no compatible metadata.
 allow_persistent_secrets	on	Allow the creation of persistent secrets that are stored and loaded on restarts.
 allow_unredacted_secrets	off	Allow printing unredacted secrets.
-allow_unsigned_extensions	off	Allow to load extensions with invalid or missing signatures.
 allowed_configs	[]	List of configuration options that are ALWAYS allowed to be changed, even when lock_configuration is true.
 allowed_directories	[]	List of directories, and directory prefixes, that are ALWAYS allowed to be queried, even when enable_external_access is false.
 allowed_paths	[]	List of files that are ALWAYS allowed to be queried, even when enable_external_access is false.
@@ -382,16 +365,13 @@ approximate_join_order_threshold	12	The minimum number of tables in a join to de
 archive_command	(empty)	Not used. Added for PostgreSQL compatibility only.
 archive_mode	off	Not used. Added for PostgreSQL compatibility only.
 arrow_large_buffer_size	off	Whether Arrow buffers for strings, blobs, UUIDs and bits should be exported using large buffers.
-arrow_lossless_conversion	off	Whenever a DuckDB type does not have a clear native or canonical extension match in Arrow, export the types with a duckdb.type_name extension name.
+arrow_lossless_conversion	off	Whenever a type does not have a clear native or canonical extension match in Arrow, export the types with a duckdb.type_name extension name.
 arrow_output_list_view	off	Whether the export to the Arrow format should use ListView as the physical layout for LIST columns.
-arrow_output_version	1.0	Whether strings should be produced by DuckDB in Utf8View format instead of Utf8.
+arrow_output_version	1.0	Whether strings should be produced in Utf8View format instead of Utf8.
 asof_loop_join_threshold	64	The maximum number of rows we need on the left side of an ASOF join to use a nested loop join.
 async_threads	<slt:ignore>	The number of async tasks, such as I/O, a query runs at once. -1 = automatic, four times the number of CPU cores, at most 256; 0 runs the I/O on the threads that run the query.
 auto_checkpoint_skip_wal_threshold	100000	The estimated WAL write size at which point we will skip writing to the WAL and only checkpoint. Skipping writing to the WAL means concurrent commits are blocked while the checkpoint is happening.
 auto_fallback_to_full_download	on	Allows automatically falling back to full file downloads when possible.
-autoinstall_extension_repository	(empty)	Overrides the custom endpoint for extension installation on autoloading. Falls back to custom_extension_repository, if not specified.
-autoinstall_known_extensions	off	Whether known extensions are allowed to be automatically installed when a query depends on them.
-autoload_known_extensions	off	Whether known extensions are allowed to be automatically loaded when a query depends on them.
 azure_account_name	NULL	Azure account name, when set, the extension will attempt to automatically detect credentials
 azure_context_caching	1	Enable/disable the caching of some context when performing queries. This cache is by default enable, and will for a given connection keep a local context when performing a query. If you suspect that the caching is causing some side effect you can try to disable it by setting this option to false.
 azure_credential_chain	NULL	Ordered list of Azure credential providers, in string format separated by ';'. E.g. 'cli;workload_identity;managed_identity;env'
@@ -435,8 +415,7 @@ compaction_max_segments	10	Maximum segments of a table or of an inverted index o
 compaction_max_segments_bytes	5368709120	Byte budget of one background compaction of a table or of an inverted index over a view (the tier target size). Their WITH (compaction_max_segments_bytes = ...) overrides it. Default 5368709120 (5GB).
 copy_csv_header_default	off	Whether COPY ... TO a CSV file writes a header line when HEADER is not specified
 current_transaction_invalidation_policy	STANDARD_POLICY	Which types of exceptions invalidate the database for the current transaction.
-custom_extension_repository	(empty)	Overrides the custom endpoint for extension installation.
-custom_user_agent	(empty)	HTTP request metadata that can be set by callers/wrappers to tag their own traffic when DuckDB makes a request.
+custom_user_agent	(empty)	HTTP request metadata that can be set by callers/wrappers to tag their own traffic in the requests the database makes.
 data_directory	<slt:ignore>	Shows the data directory.
 DateStyle	ISO, MDY	Sets the display format for date and time values.
 debug_checkpoint_scan_sleep_ms	0	DEBUG SETTING: time to sleep after a checkpoint has written a table's row groups, before it installs them
@@ -452,14 +431,13 @@ default_transaction_isolation	read committed	Sets the transaction isolation leve
 default_transaction_read_only	off	Sets the default read-only status of new transactions.
 delim_join_as_cte	on	Rewrite delim joins to materialized CTEs during dependent join flattening.
 dialect_compatibility_mode	NONE	Enable SQL dialect compatibility for a certain engine, e.g. `SET dialect_compatibility_mode='spark'`.
-disable_database_invalidation	on	Disables invalidating the database instance when encountering a fatal error. Should be used with great care, as DuckDB cannot guarantee correct behavior after a fatal error.
+disable_database_invalidation	on	Disables invalidating the database instance when encountering a fatal error. Should be used with great care, as correct behavior cannot be guaranteed after a fatal error.
 disable_parquet_prefetching	off	Disable the prefetching mechanism in Parquet
 disable_timestamptz_casts	off	Disable casting from timestamp to timestamptz.
 disabled_compression_methods	(empty)	Disable a specific, comma-separated set of compression methods.
 disabled_filesystems	(empty)	Disable specific file systems, thereby preventing their access, e.g. LocalFileSystem.
 disabled_log_types	(empty)	Sets the list of disabled log types.
 disabled_optimizers	(empty)	Disable a specific, comma-separated set of optimizers.
-duckdb_api	cpp	Specifies which client API/binding opened the database connection, e.g. cpp, capi, cli. The value gets folded into the HTTP User-Agent string DuckDB sends on any HTTP request.
 dynamic_or_filter_threshold	50	The maximum amount of OR filters that are generated dynamically from a hash join.
 enable_curl_server_cert_verification	on	Enable server side certificate verification for CURL backend.
 enable_external_access	on	Allow the database to access external state, e.g. through loading/installing modules, COPY TO/FROM, CSV readers, pandas replacement scans, etc.
@@ -482,14 +460,12 @@ error_on_division_by_zero	on	Throw an error instead of returning NULL when divid
 errors_as_json	off	Output error messages as structured JSON instead of as a raw string.
 experimental_metadata_reuse	on	EXPERIMENTAL: Re-use row group and table metadata when checkpointing.
 explain_output	PHYSICAL_ONLY	Configure the output of EXPLAIN statements (ALL, OPTIMIZED_ONLY, PHYSICAL_ONLY).
-explain_output_format	PG	Column shape of EXPLAIN output (DUCKDB_NATIVE = native two-column key/value, PG = single QUERY PLAN column with one row per line of a text or compact plan and one row per plan in other formats)
-extension_directories	[]	Set the directories to store extensions in.
-extension_repository_directory	(empty)	Set the directory in which trusted extension repositories are stored. This is the trust anchor for user-provided repositories, so while signature checking is enabled (allow_unsigned_extensions=false) it can only be set at startup, not while the database is running.
+explain_output_format	SERVER	Column shape of EXPLAIN output (CLI = two columns, key and value, SERVER = single QUERY PLAN column with one row per line of a text or compact plan and one row per plan in other formats)
 external_file_cache_local_max_block_size	16384	Maximum size in bytes of an external file cache block for local (non-remote) files. Larger reads are split into blocks of this size, which are fetched in parallel.
 external_file_cache_remote_max_block_size	2097152	Maximum size in bytes of an external file cache block for remote files (e.g. HTTP/S3). Larger reads are split into blocks of this size, which are fetched in parallel.
 external_file_cache_remote_min_block_size	4096	Reads of remote files are rounded out to aligned blocks of this size, so tiny reads do not each cost a request.
 external_file_cache_spill	off	Whether evicted external file cache blocks of remote files spill to the temporary directory instead of being dropped, so that they are re-read from there rather than re-fetched from the source.
-external_threads	0	The number of external threads that work on DuckDB tasks.
+external_threads	0	The number of external threads that work on the database's tasks.
 extra_float_digits	1	Sets the number of digits displayed for floating-point values.
 extra_http_headers	{}	Extra HTTP headers added to every request
 file_search_path	(empty)	A comma separated list of directories to search for input files.
@@ -540,7 +516,7 @@ IntervalStyle	postgres	Sets the display format for interval values.
 json_geometry_format	wkt	How GEOMETRY values are written to JSON: 'wkt' for Well-Known Text, or 'geojson' for GeoJSON geometry objects. COPY ... TO ... (FORMAT GEOJSON) always writes GeoJSON regardless of this setting.
 late_materialization_lookup_max_rows	2048	The maximum amount of rows in the LIMIT/TOP_N/SAMPLE operator for which a scan that can look up rows by their row id is late materialized through a LOOKUP_JOIN. 0 disables the LOOKUP_JOIN: late materialization then joins on the row ids, up to late_materialization_max_rows.
 late_materialization_max_rows	50	The maximum amount of rows in the LIMIT/SAMPLE operator for which we trigger late materialization.
-legacy_disable_null_type	off	When enabled, prevent the NULL type from leaving the binder. This was the default behavior prior to DuckDB v2.0.
+legacy_disable_null_type	off	When enabled, prevent the NULL type from leaving the binder.
 lock_configuration	off	Whether configurations can be altered.
 lock_timeout	0	Not used. Added for PostgreSQL compatibility only.
 log_query_path	(empty)	Specifies the path to which queries should be logged. The default is NULL, meaning queries are not logged.
@@ -654,6 +630,7 @@ sdb_disable_top_k_optimization	off	When true, the optimizer skips pulling `ORDER
 sdb_hnsw_column_filter	auto	How an HNSW graph walk answers a predicate the columnstore can evaluate: 'fold' evaluates one only the columnstore answers over the whole segment before the walk, and takes one the index answers from the index; 'read' reads the columns of each row the walk reaches, including for predicates the index answers; 'auto' reads while the walk is expected to reach few enough rows for that to cost less than the fold, or than the index where the index answers the predicate, weighing what one read costs in the columns' encodings. Default 'auto'.
 sdb_hnsw_ef_search	-1	Search-time beam width (ef) of each segment's HNSW search. Higher values improve recall at the cost of latency. A value is used as written, floored only at what a segment must return for the query's LIMIT. -1 (the default) lets the engine choose: the index's ef_construction or the LIMIT, whichever is larger, so an untuned query keeps its recall at any LIMIT. With a quantized index every hit of the beam is rescored exactly.
 sdb_hnsw_filter_mode	auto	How an HNSW vector index answers a query with a WHERE: 'auto' picks by the predicate's estimated selectivity, and walks as 'twohop' where a vector's code is long enough that crossing a rejected row costs less than scoring it; 'scan' scores every row the predicate admits; 'walk' walks the graph scoring every neighbour and passing through rejected rows; 'prune' walks scoring and expanding admitted rows only; 'twohop' walks expanding a rejected row's neighbours in its place; 'bridge' walks scoring every neighbour but expanding a rejected row into admitted ones only. Default 'auto'.
+sdb_index_profile_nodes	off	When true, a profiled inverted-index scan also times the nested parts of its execution plans, at a cost per document. Default: false.
 sdb_ivf_max_search_fanout	-1	Upper bound on the beam of the descent through a multi-level IVF centroid tree, where each level keeps the beam's worth of its nearest centroids and scores only their children. The beam follows sdb_ivf_search_nprobe as the query resolves it; a narrower one scores fewer centroids at some recall cost. Applied after sdb_ivf_min_search_fanout. -1 (the default) leaves the beam unbounded.
 sdb_ivf_min_search_fanout	-1	Lower bound on the beam of the descent through a multi-level IVF centroid tree, where each level keeps the beam's worth of its nearest centroids and scores only their children. The beam follows sdb_ivf_search_nprobe as the query resolves it; a wider one reaches clusters a narrow descent misses, and one as wide as the segment's list count makes the descent exact. -1 (the default) leaves the beam unbounded.
 sdb_ivf_posting_size	1024	Target IVF posting-list size (leaf cap t), captured into the index config at CREATE INDEX. Smaller values force deeper multi-level centroid trees (useful for testing). Default 1024.
@@ -665,9 +642,6 @@ sdb_levenshtein_max_terms	50	The maximum number of dictionary terms a fuzzy pred
 sdb_lookup_join_source_hop	off	When true, a LOOKUP_JOIN over an inverted index that returns only source columns reads the row keys from the index in one LOOKUP_JOIN and the source columns in a second one. Default: false.
 sdb_object_cache_size	0	Bytes the database's object cache may hold: decoded columnstore dictionaries, idle tokenizers and other reusable objects, evicted least recently used. 0 = an eighth of memory_limit, at least 256MB. Default 0. Server-global; only a superuser may change it.
 sdb_pattern_cache_size	0	Bytes of compiled search patterns (`ts_regexp`, `ts_like`, LIKE and fused alternations over an inverted index) kept across queries, so a pattern is compiled once per server rather than once per query. The least recently used patterns are dropped first; a pattern in use by a running query stays alive until it finishes. 0, the default, keeps nothing: each query compiles its own patterns. Server-global.
-sdb_scan_no_split_row_groups	1	A segment with at most this many row groups is always one unit of an inverted-index scan and is never split across workers. Default 1.
-sdb_scan_order	auto	The order an inverted-index scan claims its segments in: 'smallest_first' and 'largest_first' order them by live document count; 'order' is best-first by the ORDER BY column's row-group statistics when the query has a scan order (and 'largest_first' otherwise); 'auto' (default) is 'order' under a scan order and 'largest_first' otherwise.
-sdb_scan_split	auto	How an inverted-index scan shares a segment between workers: 'tail' gives each worker its own segment and lets an idle worker join the segment with the most row groups left only once no segment is unclaimed; 'always' puts every worker on the same segment until it is claimed; 'never' scans each segment whole on one worker; 'auto' (default) is 'always' under an ORDER BY scan order and 'tail' otherwise.
 search_backfill_group_bytes	1073741824	Bytes of existing segments a CREATE INDEX on a table rewrites before swapping them in and moving on. Bounds the build's peak disk (~2x one group) and the length of each publish; a value above the table's size means a single swap. 0 = no limit (one swap for the whole table). Default 1073741824 (1GB).
 search_path	<slt:ignore>	Sets the default catalog search path as a comma-separated list of values.
 secret_directory	<slt:ignore>	Set the directory in which persistent secrets are stored.
@@ -682,7 +656,7 @@ standard_conforming_strings	on	Causes '...' strings to treat backslashes literal
 standard_vector_size	2048	The compiled-in STANDARD_VECTOR_SIZE (read-only).
 statement_timeout	0	Aborts any statement that takes more than the specified amount of time (milliseconds without a unit). 0 disables the timeout.
 storage_block_prefetch	REMOTE_ONLY	Configures the scenario in which to use storage block prefetching.
-storage_compatibility_version	latest	Sets the DuckDB version for which data is serialized to the DuckDB file during checkpointing. Can differ from the version of the DuckDB instance.
+storage_compatibility_version	latest	Sets the DuckDB version for which data is serialized to the DuckDB file during checkpointing. Can differ from the version of the running database.
 streaming_buffer_size	10.0 MiB	The maximum number of bytes a streaming query result buffers (e.g. 1GB). Queued output stays under this cap, and each engine thread may hold, beyond the queue, the units it is still building or handing over from its current chunk.
 synchronize_seqscans	on	Not used. Added for PostgreSQL compatibility only.
 table_function_identifier_conversion	DISABLE_IMPLICIT_STRING	Configures the use of deprecated implicit conversion of unbound identifiers to strings in table function arguments.

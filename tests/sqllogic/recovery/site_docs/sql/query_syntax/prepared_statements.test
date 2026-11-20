@@ -1,0 +1,47 @@
+# DOCS_TEST: plan_counts
+
+statement ok
+CREATE TABLE accounts (id INT PRIMARY KEY, owner TEXT, balance INT);
+
+statement ok
+INSERT INTO accounts VALUES (1, 'Alice', 100), (2, 'Bob', 50);
+
+# DOCS_TEST_BODY
+
+statement ok
+PREPARE balance_of(INT) AS
+    SELECT balance
+    FROM accounts
+    WHERE id = $1;
+
+statement ok
+PREPARE total AS
+    SELECT sum(balance) AS total
+    FROM accounts;
+
+statement ok
+EXECUTE balance_of(1);
+
+statement ok
+EXECUTE total;
+
+statement ok
+INSERT INTO accounts VALUES (3, 'Carol', 75);
+
+statement ok
+EXECUTE balance_of(3);
+
+statement ok
+EXECUTE total;
+
+statement ok
+EXECUTE total;
+
+query
+SELECT name, generic_plans, custom_plans
+FROM pg_prepared_statements
+ORDER BY name;
+----
+name	generic_plans	custom_plans
+balance_of	2	0
+total	2	1

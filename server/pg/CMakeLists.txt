@@ -22,6 +22,7 @@ target_sources(
         catalog/functions/pg_catalog/ruleutils.cpp
         catalog/functions/pg_catalog/sequence.cpp
         catalog/functions/pg_catalog/subscription.cpp
+        catalog/table_functions/pg_catalog/pg_config.cpp
         catalog/table_functions/pg_catalog/pg_hba_file_rules.cpp
         catalog/table_functions/pg_catalog/pg_prepared_statement.cpp
         catalog/table_functions/pg_catalog/pg_show_all_settings.cpp
@@ -65,7 +66,9 @@ target_sources(
         catalog/tables/pg_catalog/pg_type.cpp
         catalog/tables/sdb/sdb_metrics.cpp
         catalog/tables/sdb/sdb_progress.cpp
-        catalog/tables/sdb/sdb_settings.cpp
+        catalog/tables/sdb/sdb_flags.cpp
+        catalog/tables/sdb/sdb_contributors.cpp
+        catalog/tables/sdb/sdb_licenses.cpp
         catalog/utils/acl.cpp
         catalog/utils/columns.cpp
         catalog/utils/lookup.cpp

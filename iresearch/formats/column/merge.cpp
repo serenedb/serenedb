@@ -74,6 +74,91 @@ class DistinctMerger {
   duckdb::Vector _hashes{duckdb::LogicalType::HASH, nullptr};
 };
 
+std::vector<uint64_t> SourceRowGroupStarts(const MergeSource& source,
+                                           uint64_t row_group_size) {
+  if (const auto recorded = source.col_reader->RowGroupStarts();
+      !recorded.empty()) {
+    return {recorded.begin(), recorded.end()};
+  }
+  std::vector<uint64_t> starts;
+  for (uint64_t start = 0; start < source.alive_count;
+       start += row_group_size) {
+    starts.push_back(start);
+  }
+  return starts;
+}
+
+struct RowGroupPlan {
+  std::vector<uint64_t> starts;
+  std::vector<std::vector<uint64_t>> kept;
+};
+
+RowGroupPlan PlanRowGroups(std::span<const MergeSource> sources,
+                           uint64_t row_group_size) {
+  RowGroupPlan plan{.starts = {0}, .kept = {}};
+  plan.kept.resize(sources.size());
+  uint64_t pos = 0;
+  uint64_t open = 0;
+  for (size_t si = 0; si < sources.size(); ++si) {
+    const auto& source = sources[si];
+    const uint64_t rows = source.alive_count;
+    if (source.col_reader && !HasRemovals(source.reader->Meta()) &&
+        rows >= row_group_size) {
+      auto starts = SourceRowGroupStarts(source, row_group_size);
+      if (open != 0) {
+        plan.starts.push_back(pos);
+        open = 0;
+      }
+      for (size_t i = 1; i != starts.size(); ++i) {
+        plan.starts.push_back(pos + starts[i]);
+      }
+      pos += rows;
+      plan.starts.push_back(pos);
+      plan.kept[si] = std::move(starts);
+      continue;
+    }
+    for (uint64_t left = rows; left != 0;) {
+      const auto take = std::min(left, row_group_size - open);
+      open += take;
+      pos += take;
+      left -= take;
+      if (open == row_group_size) {
+        plan.starts.push_back(pos);
+        open = 0;
+      }
+    }
+  }
+  if (plan.starts.back() != pos) {
+    plan.starts.push_back(pos);
+  }
+  bool uniform = true;
+  for (size_t i = 0; uniform && i + 1 < plan.starts.size(); ++i) {
+    uniform = plan.starts[i] == i * row_group_size;
+  }
+  if (uniform) {
+    plan.starts.clear();
+  }
+  return plan;
+}
+
+bool BlocksStartAt(const ColumnReader& column,
+                   std::span<const uint64_t> starts) {
+  BlockWindow w;
+  for (const auto start : starts) {
+    if (start == 0) {
+      continue;
+    }
+    if (start >= column.RowCount()) {
+      break;
+    }
+    w = column.Locate(start, w);
+    if (w.begin != start) {
+      return false;
+    }
+  }
+  return true;
+}
+
 std::vector<std::pair<field_id, const ColumnReader*>> OrderedColumns(
   std::span<const MergeSource> sources,
   const IndexFieldOptions* field_options) {
@@ -160,6 +245,8 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
   if (field_options) {
     row_group_size = field_options->row_group_size;
   }
+  auto plan = PlanRowGroups(sources, row_group_size);
+  output.SetRowGroupStarts(std::move(plan.starts));
   for (const auto& [field_id_v, first_col] : ordered_cols) {
     const auto opts = field_options
                         ? field_options->GetColumnOptions(field_id_v)
@@ -213,7 +300,8 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
                                    distinct_merger.MergeStored(*col);
 
       if (!has_mask && !annotated && (!distinct || stored_distinct) &&
-          cw.CopyableFrom(*col)) {
+          !plan.kept[si].empty() && cw.CopyableFrom(*col) &&
+          BlocksStartAt(*col, plan.kept[si])) {
         cw.PadNullsTo(out_doc);
         if (!cw.CopyBlocks(*col, *source_ctxs[si], progress)) {
           return false;

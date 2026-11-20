@@ -40,7 +40,7 @@ CREATE INDEX vch_lookup_idx ON vch_v USING inverted(id, body vch_en) WITH (compa
 
 statement ok
 CREATE TABLE vch_http_mark AS
-SELECT count(*) AS n FROM duckdb_logs_parsed('HTTP') WHERE connection_id = current_connection_id();
+SELECT count(*) AS n FROM sdb_logs_parsed('HTTP') WHERE connection_id = current_connection_id();
 
 query
 SELECT id, body FROM vch_stored_idx WHERE body @@ ts_phrase('pudge');
@@ -64,7 +64,7 @@ id
 
 query
 SELECT count(*) - (SELECT n FROM vch_http_mark) AS http_requests
-FROM duckdb_logs_parsed('HTTP') WHERE connection_id = current_connection_id();
+FROM sdb_logs_parsed('HTTP') WHERE connection_id = current_connection_id();
 ----
 http_requests
 0
@@ -83,7 +83,7 @@ QUERY PLAN
 
 statement ok
 CREATE TABLE vch_cache_mark AS
-SELECT count(*) AS n FROM duckdb_logs_parsed('HTTPFSInfo')
+SELECT count(*) AS n FROM sdb_logs_parsed('HTTPFSInfo')
 WHERE connection_id = current_connection_id() AND message LIKE '%connection_cache_hit%';
 
 query
@@ -100,7 +100,7 @@ count
 
 query
 SELECT count(*) > (SELECT n FROM vch_cache_mark) AS reused
-FROM duckdb_logs_parsed('HTTPFSInfo')
+FROM sdb_logs_parsed('HTTPFSInfo')
 WHERE connection_id = current_connection_id() AND message LIKE '%connection_cache_hit%';
 ----
 reused
@@ -136,7 +136,7 @@ WITH (compaction_interval=0);
 
 statement ok
 CREATE TABLE meme_http_mark AS
-SELECT count(*) AS n FROM duckdb_logs_parsed('HTTP') WHERE connection_id = current_connection_id();
+SELECT count(*) AS n FROM sdb_logs_parsed('HTTP') WHERE connection_id = current_connection_id();
 
 query
 WITH fused AS (
@@ -231,7 +231,7 @@ DEALLOCATE meme_dense;
 
 query
 SELECT count(*) - (SELECT n FROM meme_http_mark) AS http_requests
-FROM duckdb_logs_parsed('HTTP') WHERE connection_id = current_connection_id();
+FROM sdb_logs_parsed('HTTP') WHERE connection_id = current_connection_id();
 ----
 http_requests
 0
@@ -253,7 +253,7 @@ SET search_path = srv_${__DATABASE__}.${__DATABASE__}, public;
 
 statement ok
 CREATE TABLE ${__DATABASE__}.public.meme_local_mark AS
-SELECT count(*) AS n FROM duckdb_logs_parsed('HTTP') WHERE connection_id = current_connection_id();
+SELECT count(*) AS n FROM sdb_logs_parsed('HTTP') WHERE connection_id = current_connection_id();
 
 query
 SELECT id, body FROM ${__DATABASE__}.public.meme_local_idx WHERE body @@ 'doge';
@@ -266,14 +266,14 @@ RESET search_path;
 
 query
 SELECT count(*) - (SELECT n FROM meme_local_mark) AS http_requests
-FROM duckdb_logs_parsed('HTTP') WHERE connection_id = current_connection_id();
+FROM sdb_logs_parsed('HTTP') WHERE connection_id = current_connection_id();
 ----
 http_requests
 0
 
 statement ok
 CREATE TABLE meme_hit_mark AS
-SELECT count(*) AS n FROM duckdb_logs_parsed('HTTPFSInfo') WHERE message LIKE '%connection_cache_hit%';
+SELECT count(*) AS n FROM sdb_logs_parsed('HTTPFSInfo') WHERE message LIKE '%connection_cache_hit%';
 
 connection meme_s1
 query
@@ -312,7 +312,7 @@ count
 
 query
 SELECT count(*) - (SELECT n FROM meme_hit_mark) >= 4 AS shared
-FROM duckdb_logs_parsed('HTTPFSInfo') WHERE message LIKE '%connection_cache_hit%';
+FROM sdb_logs_parsed('HTTPFSInfo') WHERE message LIKE '%connection_cache_hit%';
 ----
 shared
 t

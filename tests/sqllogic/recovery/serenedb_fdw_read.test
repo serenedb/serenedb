@@ -65,7 +65,7 @@ CREATE SERVER sfr_snap FOREIGN DATA WRAPPER serenedb_fdw
   OPTIONS (path '${__TEST_DIR__}/sfr_snap', database '${__DATABASE__}');
 
 query
-SELECT type, readonly FROM duckdb_databases() WHERE database_name = 'sfr_snap';
+SELECT type, readonly FROM sdb_databases() WHERE database_name = 'sfr_snap';
 ----
 type	readonly
 serenedb	t
@@ -222,7 +222,7 @@ DROP SERVER sfr_snap;
 
 connection after_restart
 query
-SELECT count(*) AS n FROM duckdb_databases() WHERE database_name = 'sfr_snap';
+SELECT count(*) AS n FROM sdb_databases() WHERE database_name = 'sfr_snap';
 ----
 n
 0

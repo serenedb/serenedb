@@ -40,6 +40,7 @@
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
+#include <duckdb/planner/filter/table_filter_functions.hpp>
 #include <duckdb/planner/table_filter_set.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -103,6 +104,34 @@ duckdb::unique_ptr<duckdb::TableFilter> MakeNotNullReplacement(
     duckdb::make_uniq<duckdb::BoundReferenceExpression>(type, 0ULL),
     duckdb::ExpressionType::OPERATOR_IS_NOT_NULL);
   return duckdb::make_uniq<duckdb::ExpressionFilter>(std::move(not_null));
+}
+
+duckdb::unique_ptr<duckdb::Expression> EvaluateDynamicFilters(
+  const duckdb::Expression& expr) {
+  if (expr.GetExpressionType() == duckdb::ExpressionType::CONJUNCTION_AND) {
+    auto result = duckdb::make_uniq<duckdb::BoundConjunctionExpression>(
+      duckdb::ExpressionType::CONJUNCTION_AND);
+    for (const auto& child :
+         expr.Cast<duckdb::BoundConjunctionExpression>().GetChildren()) {
+      result->GetChildrenMutable().push_back(EvaluateDynamicFilters(*child));
+    }
+    return result;
+  }
+  if (!duckdb::ExpressionFilter::GetOptionalDynamicFilterData(expr)) {
+    return expr.Copy();
+  }
+  const auto child = duckdb::ExpressionFilter::GetOptionalFilterChild(expr);
+  float threshold = 0;
+  duckdb::idx_t vectors_to_check = 0;
+  duckdb::GetThresholdAndVectorsToCheck(
+    duckdb::SelectivityOptionalFilterType::MIN_MAX, threshold,
+    vectors_to_check);
+  return duckdb::CreateSelectivityOptionalFilterExpression(
+    child->Copy(),
+    expr.Cast<duckdb::BoundFunctionExpression>()
+      .GetChildren()[0]
+      ->GetReturnType(),
+    threshold, vectors_to_check);
 }
 
 irs::NullCheckKind DetectNullCheck(const duckdb::Expression& expr) {
@@ -199,25 +228,9 @@ void BuildTableFilter(ScanGlobalState& state, const ScanBindData& bind_data,
     }
     state.col_filters.push_back(
       {.field = 0, .filter = pushed, .is_score = true});
-    const auto& expr = *duckdb::ExpressionFilter::GetExpressionFilter(
-                          *pushed, "BuildTableFilter")
-                          .expr;
     if (auto dyn =
-          duckdb::ExpressionFilter::GetOptionalDynamicFilterData(expr)) {
+          duckdb::ExpressionFilter::GetOptionalDynamicFilterData(*pushed)) {
       state.score_dynamic_filter = std::move(dyn);
-      return;
-    }
-    if (expr.GetExpressionClass() ==
-          duckdb::ExpressionClass::BOUND_CONJUNCTION &&
-        expr.GetExpressionType() == duckdb::ExpressionType::CONJUNCTION_AND) {
-      for (const auto& child :
-           expr.Cast<duckdb::BoundConjunctionExpression>().GetChildren()) {
-        if (auto dyn =
-              duckdb::ExpressionFilter::GetOptionalDynamicFilterData(*child)) {
-          state.score_dynamic_filter = std::move(dyn);
-          return;
-        }
-      }
     }
   };
   for (const auto& entry : filters) {
@@ -246,9 +259,18 @@ void BuildTableFilter(ScanGlobalState& state, const ScanBindData& bind_data,
                             .expr;
       cf.is_dynamic = duckdb::ExpressionFilter::ContainsInternalFunction(
         expr, duckdb::DynamicFilterScalarFun::NAME);
-      cf.zonemap_only =
+      cf.optional =
         duckdb::ExpressionFilter::IsRootNonSelectivityOptionalFilter(
           entry.Filter());
+      if (duckdb::ExpressionFilter::GetOptionalDynamicFilterData(expr)) {
+        const auto& per_row = state.dynamic_filters.emplace_back(
+          duckdb::make_uniq<duckdb::ExpressionFilter>(
+            EvaluateDynamicFilters(expr),
+            duckdb::ExpressionFilter::GetExpressionFilter(entry.Filter(),
+                                                          "BuildTableFilter")
+              .column_indexes));
+        cf.filter = per_row.get();
+      }
       cf.null_check = DetectNullCheck(expr);
       cf.type = bind_data.columns.types[bind_index];
       if (proj_idx < state.projected_column_indexes.size()) {
@@ -323,7 +345,7 @@ void AddDeferredColumnFilter(ScanGlobalState& state,
   using ColFilter = ScanGlobalState::ColFilter;
   auto existing = absl::c_find_if(state.col_filters, [&](const ColFilter& cf) {
     return cf.field == deferred.column && !cf.is_score && !cf.is_dynamic &&
-           !cf.zonemap_only && !cf.row_gather && cf.extract_path.empty() &&
+           !cf.optional && !cf.row_gather && cf.extract_path.empty() &&
            cf.row_fields.empty();
   });
   if (existing != state.col_filters.end()) {
@@ -728,19 +750,25 @@ bool IsStoreServed(const ScanBindData& bind,
 }
 
 ScanShape DecideShape(const ScanGlobalState& g, const ScanBindData& ss) {
+  const bool sampled = g.sampling.do_system_sample;
   if (ss.ts_dict.Active()) {
+    if (sampled) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("TABLESAMPLE cannot be combined with ts_dict_agg()"));
+    }
     return ScanShape::TsDict;
   }
   const bool score_filter = absl::c_any_of(
     g.col_filters,
     [](const ScanGlobalState::ColFilter& f) { return f.is_score; });
-  if (!g.has_output_column && !g.needs_lookup && !score_filter) {
+  if (!sampled && !g.has_output_column && !g.needs_lookup && !score_filter) {
     return ScanShape::Count;
   }
-  if (g.top_k && ss.score.vector && ss.score.order) {
+  if (!sampled && g.top_k && ss.score.vector && ss.score.order) {
     return ScanShape::Ann;
   }
-  if (g.top_k && ss.score.text && !g.has_lookup_filter) {
+  if (!sampled && g.top_k && ss.score.text && !g.has_lookup_filter) {
     return ScanShape::TopK;
   }
   if (ss.IsMatchAll() && !ss.offsets.Active() && !ss.score.text &&
@@ -758,8 +786,8 @@ void WriteVirtualColumns(ScanGlobalState& g, duckdb::idx_t num_rows,
     std::fill_n(tableoid_data, num_rows, g.tableoid_value);
   }
   if (g.empty_output_idx != duckdb::DConstants::INVALID_INDEX) {
-    output.data[g.empty_output_idx].Reference(
-      duckdb::Value{duckdb::LogicalType::BOOLEAN}, duckdb::count_t(num_rows));
+    duckdb::ConstantVector::SetNull(output.data[g.empty_output_idx],
+                                    duckdb::count_t(num_rows));
   }
   if (!g.ScanScore()) {
     return;
@@ -918,10 +946,12 @@ duckdb::idx_t FinalizeBatch(duckdb::ClientContext& ctx, ScanGlobalState& g,
     return collected;
   }
   if (!f.index_source) {
-    f.index_source = MakeIndexSource(
-      ctx, g.Bind(), g.view.manifest, g.lookup_projected_columns,
-      g.projected_types, g.Bind().columns.ids,
-      const_cast<duckdb::TableFilterSet*>(g.pushed_filters));
+    f.index_source = ProfileLookup(
+      g.profile.get(),
+      MakeIndexSource(ctx, g.Bind(), g.view.manifest,
+                      g.lookup_projected_columns, g.projected_types,
+                      g.Bind().columns.ids,
+                      const_cast<duckdb::TableFilterSet*>(g.pushed_filters)));
   }
   SDB_ASSERT(f.pk_column);
   const auto rows =

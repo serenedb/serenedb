@@ -20,10 +20,7 @@
 
 #include "docs/docs_bootstrap.h"
 
-#include <absl/flags/flag.h>
-
 #include <cstdint>
-#include <cstdlib>
 #include <cstring>
 #include <exception>
 #include <iresearch/utils/log.hpp>
@@ -33,16 +30,6 @@
 
 #include "docs/builder/docs_loader.h"
 #include "utils/file_utils.h"
-
-ABSL_FLAG(std::string, build_docs_index, "",
-          "Index the documentation corpus named by --docs_corpus into this "
-          "directory and exit, without starting a listener. The build runs it "
-          "on the freshly linked binary and writes the index into that "
-          "binary; see CONTRIBUTING.md.");
-
-ABSL_FLAG(std::string, docs_corpus, "",
-          "The documentation corpus --build_docs_index reads, as written by "
-          "scripts/generate_docs.py --corpus.");
 
 namespace sdb::docs {
 namespace {
@@ -69,25 +56,22 @@ bool ParseCorpus(std::string_view data, std::vector<Doc>& docs) {
 
 }  // namespace
 
-std::optional<int> RunDocsBootstrap() {
-  const auto out = absl::GetFlag(FLAGS_build_docs_index);
-  if (out.empty()) {
-    return std::nullopt;
-  }
-  const auto path = absl::GetFlag(FLAGS_docs_corpus);
-  std::string corpus;
+bool BuildDocsIndex(const std::filesystem::path& corpus,
+                    const std::filesystem::path& index) {
+  std::string data;
   try {
-    corpus = utils::file_utils::Slurp(path);
+    data = utils::file_utils::Slurp(corpus.string());
   } catch (const std::exception& e) {
-    SDB_ERROR(STARTUP, "cannot read the docs corpus '", path, "': ", e.what());
-    return EXIT_FAILURE;
+    SDB_ERROR(STARTUP, "cannot read the docs corpus '", corpus.string(),
+              "': ", e.what());
+    return false;
   }
   std::vector<Doc> docs;
-  if (!ParseCorpus(corpus, docs)) {
-    SDB_ERROR(STARTUP, "the docs corpus '", path, "' is truncated");
-    return EXIT_FAILURE;
+  if (!ParseCorpus(data, docs)) {
+    SDB_ERROR(STARTUP, "the docs corpus '", corpus.string(), "' is truncated");
+    return false;
   }
-  return BuildEmbeddedIndex(out, docs) ? EXIT_SUCCESS : EXIT_FAILURE;
+  return BuildEmbeddedIndex(index, docs);
 }
 
 }  // namespace sdb::docs

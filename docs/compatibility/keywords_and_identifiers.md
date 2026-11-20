@@ -66,7 +66,7 @@ Because unquoted names fold, the column below is stored as `cosineofpi`:
 
 <SqlLogicTest id="sql/dialect/keywords_and_identifiers/preserve_identifier_case/example_005" />
 
-`serened shell` keeps DuckDB's behavior instead: identifiers are case-insensitive even when quoted, and they keep the case they were created with. A server session gets the same by setting the `preserve_identifier_case` [configuration option](../configuration/overview.md#configuration-reference) to `preserve_case`.
+`serenedb shell` behaves differently: identifiers are case-insensitive even when quoted, and they keep the case they were created with. A server session gets the same by setting the `preserve_identifier_case` [configuration option](../configuration/overview.md#configuration-reference) to `preserve_case`.
 
 ### Case-Sensitivity of Keys in Nested Data Structures
 

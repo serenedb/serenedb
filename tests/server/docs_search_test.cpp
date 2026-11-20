@@ -530,10 +530,10 @@ TEST(DocsRender, ShallowNestingKeepsItsLayout) {
 }
 
 TEST(DocsRender, LinkLabelPrecedesItsResolvedTarget) {
-  const auto out =
-    connector::RenderMarkdown("see [`serened shell`](./serened-shell.md#x) now",
-                              80, false, "clients/serened-psql.md");
-  EXPECT_NE(out.find("see serened shell (clients/serened-shell.md) now"),
+  const auto out = connector::RenderMarkdown(
+    "see [`serenedb shell`](./serened-shell.md#x) now", 80, false,
+    "clients/serened-psql.md");
+  EXPECT_NE(out.find("see serenedb shell (clients/serened-shell.md) now"),
             std::string::npos);
 }
 

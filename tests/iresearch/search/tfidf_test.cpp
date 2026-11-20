@@ -151,6 +151,7 @@ void TfidfTestCase::TestQueryNorms() {
     irs::ByRange filter;
     *filter.mutable_field_id() = kField;
     filter.SetScorer(&scorer);
+    filter.mutable_options()->merge = irs::ScoreMergeType::Sum;
     filter.mutable_options()->range.min =
       irs::ViewCast<irs::byte_type>(std::string_view("6"));
     filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
@@ -200,6 +201,7 @@ void TfidfTestCase::TestQueryNorms() {
     irs::ByRange filter;
     *filter.mutable_field_id() = kField;
     filter.SetScorer(&scorer);
+    filter.mutable_options()->merge = irs::ScoreMergeType::Sum;
     filter.mutable_options()->range.min =
       irs::ViewCast<irs::byte_type>(std::string_view("6"));
     filter.mutable_options()->range.min_type = irs::BoundType::Inclusive;
@@ -219,7 +221,7 @@ void TfidfTestCase::TestQueryNorms() {
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
 
-    std::vector<float_t> scores;
+    std::vector<float> scores;
     while (!irs::doc_limits::eof(docs->Next())) {
       fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
@@ -845,6 +847,7 @@ TEST_P(TfidfTestCase, test_query) {
     irs::ByPrefix filter;
     *filter.mutable_field_id() = kPrefix;
     filter.SetScorer(&scorer);
+    filter.mutable_options()->merge = irs::ScoreMergeType::Sum;
     filter.mutable_options()->term =
       irs::ViewCast<irs::byte_type>(std::string_view(""));
 
@@ -900,6 +903,7 @@ TEST_P(TfidfTestCase, test_query) {
     irs::ByRange filter;
     *filter.mutable_field_id() = kField;
     filter.SetScorer(&scorer);
+    filter.mutable_options()->merge = irs::ScoreMergeType::Sum;
     filter.mutable_options()->range.min =
       irs::ViewCast<irs::byte_type>(std::string_view("6"));
     filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
@@ -945,6 +949,7 @@ TEST_P(TfidfTestCase, test_query) {
     irs::ByRange filter;
     *filter.mutable_field_id() = kField;
     filter.SetScorer(&scorer);
+    filter.mutable_options()->merge = irs::ScoreMergeType::Sum;
     filter.mutable_options()->range.min =
       irs::ViewCast<irs::byte_type>(std::string_view("8"));
     filter.mutable_options()->range.min_type = irs::BoundType::Inclusive;
@@ -990,6 +995,7 @@ TEST_P(TfidfTestCase, test_query) {
     irs::ByRange filter;
     *filter.mutable_field_id() = kField;
     filter.SetScorer(&scorer);
+    filter.mutable_options()->merge = irs::ScoreMergeType::Sum;
     filter.mutable_options()->range.min =
       irs::ViewCast<irs::byte_type>(std::string_view("6"));
     filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
@@ -1035,6 +1041,7 @@ TEST_P(TfidfTestCase, test_query) {
     irs::ByRange filter;
     *filter.mutable_field_id() = kField;
     filter.SetScorer(&scorer);
+    filter.mutable_options()->merge = irs::ScoreMergeType::Sum;
     filter.mutable_options()->range.min =
       irs::ViewCast<irs::byte_type>(std::string_view("6"));
     filter.mutable_options()->range.min_type = irs::BoundType::Inclusive;
@@ -1084,7 +1091,7 @@ TEST_P(TfidfTestCase, test_query) {
       irs::ViewCast<irs::byte_type>(std::string_view("7"));
 
     std::multimap<irs::score_t, uint64_t, std::greater<>> sorted;
-    std::vector<std::pair<float_t, uint64_t>> expected = {
+    std::vector<std::pair<float, uint64_t>> expected = {
       {-1, 0},
       {-1, 1},
       {-1, 5},

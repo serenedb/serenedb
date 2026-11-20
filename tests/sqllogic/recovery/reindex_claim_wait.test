@@ -22,7 +22,7 @@ SET sdb_faults = 'pause_reindex_claimed';
 
 connection holder
 statement async ok
-SELECT * FROM serenedb_reindex('rcw_idx');
+SELECT * FROM sdb_reindex('rcw_idx');
 
 connection default
 query ok retry 40 backoff 250ms
@@ -33,7 +33,7 @@ refreshing index
 
 connection canceled
 statement async error canceling
-SELECT * FROM serenedb_reindex('rcw_idx');
+SELECT * FROM sdb_reindex('rcw_idx');
 
 connection default
 query ok retry 40 backoff 250ms
@@ -58,7 +58,7 @@ COPY (SELECT i AS id, 'doc ' || i AS body FROM range(5, 8) t(i)) TO '${__TEST_DI
 
 connection waiter
 statement async ok
-SELECT * FROM serenedb_reindex('rcw_idx');
+SELECT * FROM sdb_reindex('rcw_idx');
 
 connection default
 query ok retry 40 backoff 250ms
@@ -86,7 +86,7 @@ count
 0
 
 query
-SELECT * FROM serenedb_reindex('rcw_idx');
+SELECT * FROM sdb_reindex('rcw_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0

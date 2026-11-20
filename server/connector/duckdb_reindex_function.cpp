@@ -162,7 +162,7 @@ ReindexTarget ResolveTarget(duckdb::ClientContext& context,
                             const std::string& catalog_p) {
   if (name.empty()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                    ERR_MSG("serenedb_reindex requires an index name"));
+                    ERR_MSG("sdb_reindex requires an index name"));
   }
   ReindexTarget target;
   target.name = name;
@@ -1210,12 +1210,12 @@ void RegisterReindexFunction(duckdb::DatabaseInstance& db) {
 
   duckdb::FunctionSignature signature;
   signature.AddArgs("args", duckdb::LogicalType::VARCHAR);
-  duckdb::TableFunction func("serenedb_reindex", std::move(signature),
+  duckdb::TableFunction func("sdb_reindex", std::move(signature),
                              ReindexExecute, ReindexBind, ReindexInitGlobal);
   loader.RegisterFunction(func);
 
   auto pragma = duckdb::PragmaFunction::PragmaCall(
-    "serenedb_reindex", ReindexPragma, {duckdb::LogicalType::VARCHAR},
+    "sdb_reindex", ReindexPragma, {duckdb::LogicalType::VARCHAR},
     duckdb::LogicalType::VARCHAR);
   loader.RegisterFunction(pragma);
 

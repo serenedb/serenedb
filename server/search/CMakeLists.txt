@@ -1,8 +1,10 @@
 target_sources(
     sereneserver
     PRIVATE
+        engine.cpp
         hot_keys.cpp
         log_entry.cpp
+        parallel.cpp
         store.cpp
         store_stats.cpp
         search_analyzer_impl.cpp

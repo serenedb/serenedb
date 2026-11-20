@@ -36,7 +36,7 @@ class MinHash {
  public:
   // Returns number of hashes required to preserve probabilistic error
   // threshold.
-  static constexpr size_t MaxSize(double_t err) noexcept {
+  static constexpr size_t MaxSize(double err) noexcept {
     return err > 0. && err < 1.
              ? math::Ceil64(1. / (err * err))
              : (err < 1. ? std::numeric_limits<size_t>::max() : 0);
@@ -44,9 +44,9 @@ class MinHash {
 
   // Returns expected probabilistic error according
   // the size of MinHash signature.
-  static constexpr double_t Error(size_t size) noexcept {
+  static constexpr double Error(size_t size) noexcept {
     return size ? 1. / std::sqrt(size)
-                : std::numeric_limits<double_t>::infinity();
+                : std::numeric_limits<double>::infinity();
   }
 
   explicit MinHash(size_t size)

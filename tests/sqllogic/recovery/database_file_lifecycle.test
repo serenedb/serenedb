@@ -22,7 +22,7 @@ CREATE DATABASE dbfile_rolled;
 # Inside the transaction the attachment is real and the database entry is in
 # the set, so the schemas seeded on it have somewhere to be.
 query
-SELECT count(*) FROM duckdb_databases() WHERE database_name = 'dbfile_rolled';
+SELECT count(*) FROM sdb_databases() WHERE database_name = 'dbfile_rolled';
 ----
 count
 1
@@ -49,7 +49,7 @@ count
 # The attachment went with it, which is what makes the system-transaction
 # schemas unreachable rather than merely invisible.
 query
-SELECT count(*) FROM duckdb_databases() WHERE database_name = 'dbfile_rolled';
+SELECT count(*) FROM sdb_databases() WHERE database_name = 'dbfile_rolled';
 ----
 count
 0
@@ -100,7 +100,7 @@ dbfile_keep
 # carried it, so there is no record to replay and no attachment to rebuild.
 connection after_crash
 query
-SELECT count(*) FROM duckdb_databases() WHERE database_name = 'dbfile_rolled';
+SELECT count(*) FROM sdb_databases() WHERE database_name = 'dbfile_rolled';
 ----
 count
 0
@@ -110,7 +110,7 @@ connection after_crash
 query
 SELECT count(*) AS orphans FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*/*')
 WHERE regexp_extract(file, '/engine_v1/store/([0-9]+)/', 1)::BIGINT NOT IN (
-  SELECT table_oid FROM duckdb_tables() UNION ALL SELECT index_oid FROM duckdb_indexes());
+  SELECT table_oid FROM sdb_tables() UNION ALL SELECT index_oid FROM sdb_indexes());
 ----
 orphans
 0
@@ -138,7 +138,7 @@ connection after_drop_crash
 query
 SELECT count(*) AS orphans FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*/*')
 WHERE regexp_extract(file, '/engine_v1/store/([0-9]+)/', 1)::BIGINT NOT IN (
-  SELECT table_oid FROM duckdb_tables() UNION ALL SELECT index_oid FROM duckdb_indexes());
+  SELECT table_oid FROM sdb_tables() UNION ALL SELECT index_oid FROM sdb_indexes());
 ----
 orphans
 0

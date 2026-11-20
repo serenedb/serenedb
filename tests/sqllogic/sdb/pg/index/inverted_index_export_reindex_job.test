@@ -59,6 +59,14 @@ ALTER JOB exrj_monthly_idx SET SCHEDULE AFTER 1 MONTH;
 
 
 statement ok
+CREATE INDEX exrj_case_idx ON exrj_v USING inverted (id, body) WITH (reindex_interval = 600000);
+
+
+statement ok
+ALTER JOB exrj_case_idx RENAME TO "EXRJ_CASE_IDX";
+
+
+statement ok
 CREATE MACRO exrj_refresh() AS TABLE SELECT * FROM execute_job('exrj_idx');
 
 
@@ -70,6 +78,7 @@ query
 SELECT job_name, schedule, suspended FROM sdb_jobs() WHERE database_name = current_database() ORDER BY job_name;
 ----
 job_name	schedule	suspended
+EXRJ_CASE_IDX	AFTER INTERVAL '00:10:00'	f
 exrj_every_idx	EVERY INTERVAL '00:30:00'	f
 exrj_idx	AFTER INTERVAL '01:00:00'	f
 exrj_monthly_idx	AFTER INTERVAL '1 mon'	f
@@ -92,6 +101,7 @@ WHERE line LIKE 'CREATE INDEX %'
 ORDER BY 1;
 ----
 index_name	reindex_interval
+exrj_case_idx	600000
 exrj_every_idx	1800000
 exrj_idx	3600000
 exrj_manual_idx	0
@@ -110,6 +120,8 @@ WHERE line LIKE '%JOB %'
 ORDER BY 1;
 ----
 line
+ALTER JOB public.EXRJ_CASE_IDX SET SCHEDULE AFTER INTERVAL '00:10:00';
+ALTER JOB public.exrj_case_idx RENAME TO EXRJ_CASE_IDX;
 ALTER JOB public.exrj_every_idx SET SCHEDULE EVERY INTERVAL '00:30:00';
 ALTER JOB public.exrj_idx SET SCHEDULE AFTER INTERVAL '01:00:00';
 ALTER JOB public.exrj_monthly_idx SET SCHEDULE AFTER INTERVAL '1 mon';
@@ -152,6 +164,7 @@ query
 SELECT job_name, schedule, suspended FROM sdb_jobs() WHERE database_name = current_database() ORDER BY job_name;
 ----
 job_name	schedule	suspended
+EXRJ_CASE_IDX	AFTER INTERVAL '00:10:00'	f
 exrj_every_idx	EVERY INTERVAL '00:30:00'	f
 exrj_idx	AFTER INTERVAL '01:00:00'	f
 exrj_monthly_idx	AFTER INTERVAL '1 mon'	f
@@ -167,8 +180,8 @@ arelav is skuf
 
 
 query
-SELECT (SELECT count(*) FROM duckdb_functions() WHERE database_name = current_database() AND function_name = 'exrj_refresh') AS macros,
-       (SELECT count(*) FROM duckdb_views() WHERE database_name = current_database() AND view_name = 'exrj_paused_run') AS views;
+SELECT (SELECT count(*) FROM sdb_functions() WHERE database_name = current_database() AND function_name = 'exrj_refresh') AS macros,
+       (SELECT count(*) FROM sdb_views() WHERE database_name = current_database() AND view_name = 'exrj_paused_run') AS views;
 ----
 macros	views
 1	1

@@ -133,6 +133,7 @@ class NormColumnWriter final {
   }
 
   const NormColumnMeta& Meta() const noexcept { return _meta; }
+  NormColumnMeta TakeMeta() noexcept { return std::move(_meta); }
 
  private:
   void FlushRowGroup();

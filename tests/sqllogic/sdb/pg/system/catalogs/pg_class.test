@@ -895,13 +895,13 @@ sql_parts	d
 
 query
 SELECT relname, relreplident FROM pg_class
-WHERE relname IN ('sdb_metrics', 'sdb_progress', 'sdb_settings')
+WHERE relname IN ('sdb_flags', 'sdb_metrics', 'sdb_progress')
 ORDER BY 1;
 ----
 relname	relreplident
+sdb_flags	n
 sdb_metrics	n
 sdb_progress	n
-sdb_settings	n
 
 
 query

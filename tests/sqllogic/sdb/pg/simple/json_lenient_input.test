@@ -5,46 +5,25 @@ a	b	c
 [1,]	{"a":1,}	[NaN, Infinity]
 
 
-statement error
-SELECT '[1,]'::json -> 5;
+query
+SELECT '[1,]'::json -> 5 AS a, '[1,]'::json ->> 0 AS b, '[1,]'::json #>> '{0}' AS c, json_strip_nulls('{"a":1,"b":null,}'::json) AS s, json_array_length('[1,2,]'::json) AS l;
 ----
-db error: ERROR: invalid input syntax for type json
-DETAIL: <slt:ignore>
-
-
-statement error
-SELECT '[1,]'::json ->> 0;
-----
-db error: ERROR: invalid input syntax for type json
-DETAIL: <slt:ignore>
-
-
-statement error
-SELECT '[1,]'::json #>> '{0}';
-----
-db error: ERROR: invalid input syntax for type json
-DETAIL: <slt:ignore>
-
-
-statement error
-SELECT json_strip_nulls('{"a":1,}'::json);
-----
-db error: ERROR: invalid input syntax for type json
-DETAIL: <slt:ignore>
-
-
-statement error
-SELECT count(*) FROM json_array_elements('[1,2,]'::json);
-----
-db error: ERROR: invalid input syntax for type json
-DETAIL: <slt:ignore>
+a	b	c	s	l
+NULL	1	1	{"a":1}	2
 
 
 query
-SELECT '[NaN]'::json -> 0 AS nan, '[1,]'::json ->> 'a' AS field, json_typeof('[1,]'::json) AS type;
+SELECT count(*) AS n FROM json_array_elements('[1,2,]'::json);
 ----
-nan	field	type
-NaN	NULL	array
+n
+2
+
+
+query
+SELECT '[NaN]'::json -> 0 AS nan, '[1,]'::json ->> 'a' AS field, json_typeof('[1,]'::json) AS type, json_typeof('[NaN]'::json -> 0) AS nan_type, '[-Infinity,]'::json ->> 0 AS ninf;
+----
+nan	field	type	nan_type	ninf
+NaN	NULL	array	number	-Infinity
 
 
 statement ok
@@ -52,11 +31,12 @@ CREATE TABLE json_lenient (v json);
 
 
 statement ok
-INSERT INTO json_lenient VALUES ('[1,]');
+INSERT INTO json_lenient VALUES ('[1,]'), ('{"a":[2,],}');
 
 
-statement error
-SELECT v -> 0 FROM json_lenient;
+query
+SELECT v -> 0 AS first, v -> 'a' ->> 0 AS a0 FROM json_lenient ORDER BY v::text;
 ----
-db error: ERROR: invalid input syntax for type json
-DETAIL: <slt:ignore>
+first	a0
+1	NULL
+NULL	2

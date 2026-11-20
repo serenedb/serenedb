@@ -752,7 +752,7 @@ statement ok
 TRUNCATE ri_serial, ri_generated RESTART IDENTITY;
 
 query
-SELECT sequence_name, last_value IS NOT NULL AS used FROM duckdb_sequences()
+SELECT sequence_name, last_value IS NOT NULL AS used FROM sdb_sequences()
 WHERE database_name = current_database() AND sequence_name LIKE 'ri_%' ORDER BY sequence_name;
 ----
 sequence_name	used

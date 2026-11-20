@@ -57,12 +57,12 @@
 #include "catalog/cluster.h"
 #include "catalog/entry/role.h"
 #include "catalog/transaction.h"
+#include "jobs/scheduler.h"
 #include "pg/connection_context.h"
 #include "pg/types/xml.h"
 #include "pg/version.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
-#include "scheduler/job_scheduler.h"
 
 namespace sdb {
 namespace {
@@ -439,12 +439,14 @@ void SetSessionAuthCallback(duckdb::ClientContext& ctx, duckdb::SetScope,
       ERR_MSG("permission denied to set session authorization \"", name, "\""));
   }
   conn.SetSessionRole(role.oid);
+  conn.SetSetting("role", "none", false);
   RefreshSuperuser(conn);
 }
 
 void ResetSessionAuthCallback(duckdb::ClientContext& ctx, duckdb::SetScope) {
   auto& conn = ConnectionContext::Get(ctx);
   conn.ResetIdentity();
+  conn.SetSetting("role", "none", false);
   RefreshSuperuser(conn);
 }
 
@@ -804,7 +806,7 @@ constexpr std::pair<std::string_view, VariableDescription>
       "debug_verification",
       {
         LogicalTypeId::BOOLEAN,
-        "Toggle DuckDB's debug Verify() calls. SET debug_verification = "
+        "Toggle the engine's debug Verify() calls. SET debug_verification = "
         "false to disable verification projections in EXPLAIN and speed "
         "up tests in debug builds. Default: false.",
         [] { return duckdb::Value::BOOLEAN(false); },
@@ -1110,6 +1112,17 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
+      "sdb_index_profile_nodes",
+      {
+        LogicalTypeId::BOOLEAN,
+        "When true, a profiled inverted-index scan also times the nested "
+        "parts of its execution plans, at a cost per document. Default: "
+        "false.",
+        [] { return duckdb::Value::BOOLEAN(false); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      },
+    },
+    {
       "sdb_lookup_join_source_hop",
       {
         LogicalTypeId::BOOLEAN,
@@ -1118,75 +1131,6 @@ constexpr std::pair<std::string_view, VariableDescription>
         "and the source columns in a second one. Default: false.",
         [] { return duckdb::Value::BOOLEAN(false); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
-      },
-    },
-    {
-      "sdb_scan_split",
-      {
-        LogicalTypeId::VARCHAR,
-        "How an inverted-index scan shares a segment between workers: 'tail' "
-        "gives each worker its own segment and lets an idle worker join the "
-        "segment with the most row groups left only once no segment is "
-        "unclaimed; 'always' puts every worker on the same segment until it "
-        "is claimed; 'never' scans each segment whole on one worker; 'auto' "
-        "(default) is 'always' under an ORDER BY scan order and 'tail' "
-        "otherwise.",
-        [] { return duckdb::Value{"auto"}; },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          const auto mode = value.ToString();
-          if (!absl::EqualsIgnoreCase(mode, "auto") &&
-              !absl::EqualsIgnoreCase(mode, "tail") &&
-              !absl::EqualsIgnoreCase(mode, "always") &&
-              !absl::EqualsIgnoreCase(mode, "never")) {
-            THROW_SQL_ERROR(
-              ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-              ERR_MSG("invalid value for parameter \"sdb_scan_split\": \"",
-                      mode, "\" (auto, tail, always or never)"));
-          }
-        },
-      },
-    },
-    {
-      "sdb_scan_order",
-      {
-        LogicalTypeId::VARCHAR,
-        "The order an inverted-index scan claims its segments in: "
-        "'smallest_first' and 'largest_first' order them by live document "
-        "count; 'order' is best-first by the ORDER BY column's row-group "
-        "statistics when the query has a scan order (and 'largest_first' "
-        "otherwise); 'auto' (default) is 'order' under a scan order and "
-        "'largest_first' otherwise.",
-        [] { return duckdb::Value{"auto"}; },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          const auto mode = value.ToString();
-          if (!absl::EqualsIgnoreCase(mode, "auto") &&
-              !absl::EqualsIgnoreCase(mode, "smallest_first") &&
-              !absl::EqualsIgnoreCase(mode, "largest_first") &&
-              !absl::EqualsIgnoreCase(mode, "order")) {
-            THROW_SQL_ERROR(
-              ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-              ERR_MSG("invalid value for parameter \"sdb_scan_order\": \"",
-                      mode,
-                      "\" (auto, smallest_first, largest_first or order)"));
-          }
-        },
-      },
-    },
-    {
-      "sdb_scan_no_split_row_groups",
-      {
-        LogicalTypeId::INTEGER,
-        "A segment with at most this many row groups is always one unit of "
-        "an inverted-index scan and is never split across workers. "
-        "Default 1.",
-        [] { return duckdb::Value::INTEGER(1); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          if (value.GetValue<int32_t>() < 1) {
-            THROW_SQL_ERROR(
-              ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-              ERR_MSG("sdb_scan_no_split_row_groups must be at least 1"));
-          }
-        },
       },
     },
     {
@@ -1633,21 +1577,24 @@ constexpr std::pair<std::string_view, VariableDescription>
     {
       "session_authorization",
       {
-        LogicalTypeId::VARCHAR,
-        "Sets the current session's user name.",
-        [] { return duckdb::Value{irs::StaticStrings::kDefaultUser}; },
-        SetSessionAuthCallback,
-        ResetSessionAuthCallback,
+        .type = LogicalTypeId::VARCHAR,
+        .description = "Sets the current session's user name.",
+        .default_value =
+          [] { return duckdb::Value{irs::StaticStrings::kDefaultUser}; },
+        .set_callback = SetSessionAuthCallback,
+        .reset_callback = ResetSessionAuthCallback,
+        .no_reset_all = true,
       },
     },
     {
       "role",
       {
-        LogicalTypeId::VARCHAR,
-        "Sets the current role.",
-        [] { return duckdb::Value{"none"}; },
-        SetRoleCallback,
-        ResetRoleCallback,
+        .type = LogicalTypeId::VARCHAR,
+        .description = "Sets the current role.",
+        .default_value = [] { return duckdb::Value{"none"}; },
+        .set_callback = SetRoleCallback,
+        .reset_callback = ResetRoleCallback,
+        .no_reset_all = true,
       },
     },
     {
@@ -1783,7 +1730,7 @@ void TryRegister(duckdb::DBConfig& config, std::string_view name,
     setting, std::string{desc.description}, duckdb::LogicalType{desc.type},
     desc.default_value ? desc.default_value() : duckdb::Value{},
     desc.set_callback, desc.reset_callback, desc.scope,
-    IsUnchangeableSetting(name), desc.rebind);
+    desc.no_reset_all || IsUnchangeableSetting(name), desc.rebind);
 }
 
 }  // namespace

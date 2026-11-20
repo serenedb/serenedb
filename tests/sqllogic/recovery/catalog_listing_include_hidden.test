@@ -14,10 +14,10 @@ connection listing_hidden_lister
 query async
 SELECT count(*) AS listings, bool_and(listed) AS all_listed
 FROM (
-  SELECT count(*) > 0 AS listed FROM duckdb_schemas()
+  SELECT count(*) > 0 AS listed FROM sdb_schemas()
   WHERE to_regprocedure(database_name || '(integer)') IS NULL
   UNION ALL
-  SELECT count(*) > 0 FROM (SELECT pg_sleep(2) AS z) d, duckdb_schemas(include_hidden := true) s
+  SELECT count(*) > 0 FROM (SELECT pg_sleep(2) AS z) d, sdb_schemas(include_hidden := true) s
   WHERE d.z IS NULL
 ) u;
 ----
@@ -43,7 +43,7 @@ SET sdb_faults = 'pause_procedure_in_after_find:release';
 wait
 
 query
-SELECT count(*) > 0 AS listed FROM duckdb_schemas();
+SELECT count(*) > 0 AS listed FROM sdb_schemas();
 ----
 listed
 t

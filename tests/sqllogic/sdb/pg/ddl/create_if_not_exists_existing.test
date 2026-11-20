@@ -252,7 +252,7 @@ CREATE SECRET IF NOT EXISTS ine_sec_${__DATABASE__} (TYPE s3, KEY_ID 'k2');
 
 
 query
-SELECT secret_string LIKE '%k1%' AS kept FROM duckdb_secrets() WHERE name = 'ine_sec_${__DATABASE__}';
+SELECT secret_string LIKE '%k1%' AS kept FROM sdb_secrets() WHERE name = 'ine_sec_${__DATABASE__}';
 ----
 kept
 t

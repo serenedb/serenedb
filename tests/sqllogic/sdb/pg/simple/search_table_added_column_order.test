@@ -1,0 +1,89 @@
+statement ok
+CREATE TABLE sac (id BIGINT, v INTEGER) WITH (compaction_interval = 0, row_group_size = 2048);
+
+
+statement ok
+INSERT INTO sac SELECT i, i FROM range(5000) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) sac;
+
+
+statement ok
+ALTER TABLE sac ADD COLUMN k INTEGER;
+
+
+statement ok
+ALTER TABLE sac ADD COLUMN tag VARCHAR;
+
+
+statement ok
+INSERT INTO sac SELECT i, i, i % 100, 't' || (i % 7) || '_a_suffix_longer_than_twelve' FROM range(5000, 10000) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) sac;
+
+
+query
+SELECT id, k FROM sac ORDER BY k DESC, id LIMIT 3;
+----
+id	k
+5099	99
+5199	99
+5299	99
+
+
+query
+SELECT id, k FROM sac ORDER BY k NULLS FIRST, id LIMIT 3;
+----
+id	k
+0	NULL
+1	NULL
+2	NULL
+
+
+query
+SELECT id, k FROM sac ORDER BY k, id LIMIT 3;
+----
+id	k
+5000	0
+5100	0
+5200	0
+
+
+query
+SELECT count(*) AS n, bool_and(c = (SELECT count(*) FROM sac s WHERE s.k IS NOT DISTINCT FROM r.k)) AS exact FROM (SELECT k, count(*) AS c FROM sac GROUP BY k LIMIT 3) r;
+----
+n	exact
+3	t
+
+
+query
+SELECT k, count(*) AS c FROM sac GROUP BY k ORDER BY k DESC LIMIT 2;
+----
+k	c
+99	50
+98	50
+
+
+query
+SELECT count(*) AS n FROM sac WHERE tag IN ('t1_a_suffix_longer_than_twelve', 't2_a_suffix_longer_than_twelve', 't3_a_suffix_longer_than_twelve');
+----
+n
+2144
+
+
+query
+SELECT count(*) AS n, min(id) AS lo, max(id) AS hi FROM sac WHERE k IS NULL;
+----
+n	lo	hi
+5000	0	4999
+
+
+query
+SELECT count(*) AS n FROM sac WHERE k IS NULL OR k = 7;
+----
+n
+5050

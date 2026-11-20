@@ -136,7 +136,7 @@ mismatches
 0
 
 query
-SELECT split_part(sql, ' WITH', 1) AS columns FROM duckdb_tables() WHERE table_name = 'alc';
+SELECT split_part(sql, ' WITH', 1) AS columns FROM sdb_tables() WHERE table_name = 'alc';
 ----
 columns
 CREATE TABLE public.alc(a INTEGER PRIMARY KEY, v VARCHAR, n INTEGER)
@@ -267,7 +267,7 @@ compression
 RLE
 
 query
-SELECT sql FROM duckdb_tables() WHERE table_name = 'alt_tx';
+SELECT sql FROM sdb_tables() WHERE table_name = 'alt_tx';
 ----
 sql
 CREATE TABLE public.alt_tx(a INTEGER, b INTEGER USING COMPRESSION RLE);

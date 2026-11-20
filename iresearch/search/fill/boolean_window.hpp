@@ -133,16 +133,10 @@ class BooleanWindow : detail::WindowClauses<Lead, Others, Optional, Excludes> {
                                score_t* IRS_RESTRICT scores,
                                size_t words) noexcept {
     for (size_t w = 0; w != words; ++w) {
-      auto bits = std::exchange(_own[w], uint64_t{0});
-      mask[w] |= bits;
-      const size_t base = w * detail::kWindowBits;
-      while (bits != 0) {
-        irs::Merge<Inner>(
-          scores[base + static_cast<uint32_t>(std::countr_zero(bits))],
-          _score.absorbed);
-        bits = PopBit(bits);
-      }
+      mask[w] |= _own[w];
     }
+    irs::MergeAtBits<Inner>(scores, _own.data(), words, _score.absorbed);
+    detail::Clear(_own.data(), words);
   }
 
   template<ScoreMergeType Inner>

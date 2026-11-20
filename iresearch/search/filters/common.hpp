@@ -69,8 +69,7 @@ inline bool ScoreIsConstant(const Filter& node,
   if (!ctx.scored) {
     return false;
   }
-  const auto* const scorer = ScorerOf(node, ctx);
-  return scorer != nullptr && scorer->type() == irs::Type<ConstantScore>::id();
+  return IsConstantScore(ScorerOf(node, ctx));
 }
 
 inline void FoldBoost(Filter& survivor, score_t boost, bool scored) {

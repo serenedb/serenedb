@@ -20,45 +20,23 @@
 
 #include "network/listen_spec.h"
 
-#include <absl/algorithm/container.h>
 #include <absl/strings/ascii.h>
+#include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 #include <absl/strings/str_split.h>
 #include <ada.h>
 #include <fast_float/fast_float.h>
 
+#include <algorithm>
 #include <charconv>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/string_utils.hpp>
-#include <set>
+
+#include "network/listen_protocol.h"
 
 namespace sdb::network {
 namespace {
-
-std::string PercentDecode(std::string_view s) {
-  return ada::unicode::percent_decode(s, s.find('%'));
-}
-
-bool ParseBoolParam(std::string_view v, std::string_view key,
-                    std::string_view url) {
-  if (const auto parsed = irs::utils::ParseBool(v)) {
-    return *parsed;
-  }
-  SDB_FATAL(GENERAL, "invalid boolean for '", key, "' in endpoint '", url,
-            "': '", v, "'");
-}
-
-uint32_t ParseUintParam(std::string_view v, std::string_view key,
-                        std::string_view url, int base = 10) {
-  uint32_t value = 0;
-  const auto* end = v.data() + v.size();
-  const auto [ptr, ec] = fast_float::from_chars(v.data(), end, value, base);
-  if (ec != std::errc{} || ptr != end) {
-    SDB_FATAL(GENERAL, "invalid number for '", key, "' in endpoint '", url,
-              "': '", v, "'");
-  }
-  return value;
-}
 
 uint16_t ParsePort(std::string_view port_str, std::string_view url) {
   uint16_t port = 0;
@@ -70,52 +48,14 @@ uint16_t ParsePort(std::string_view port_str, std::string_view url) {
   return port;
 }
 
-SslMode ParseSslMode(std::string_view v, std::string_view url) {
-  if (v == "disable") {
-    return SslMode::Disable;
-  }
-  if (v == "allow") {
-    return SslMode::Allow;
-  }
-  if (v == "prefer") {
-    return SslMode::Prefer;
-  }
-  if (v == "require") {
-    return SslMode::Require;
-  }
-  if (v == "verify-ca") {
-    return SslMode::VerifyCa;
-  }
-  if (v == "verify-full") {
-    return SslMode::VerifyFull;
-  }
-  SDB_FATAL(GENERAL, "invalid sslmode in endpoint '", url, "': '", v, "'");
-}
-
-void ApplyParam(ListenSpec& spec, std::string_view key,
-                std::string_view value) {
+void ApplyParam(ListenSpec& spec, std::string_view key, std::string_view value,
+                std::vector<ListenParam>& own) {
   const std::string_view url = spec.url;
-  const bool is_http = spec.protocol == ListenProtocol::Http;
   const bool is_unix = spec.transport == ListenTransport::Unix;
-  if (key == "sslmode") {
-    if (is_http) {
-      SDB_FATAL(GENERAL, "'sslmode' is not valid on an http endpoint '", url,
-                "' (http TLS is the scheme: use https://)");
-    }
-    if (is_unix) {
-      SDB_FATAL(GENERAL, "'sslmode' is not valid on a unix endpoint '", url,
-                "' (unix sockets never use TLS)");
-    }
-    spec.sslmode = ParseSslMode(value, url);
-  } else if (key == "cert" || key == "key" || key == "ca") {
+  if (key == "cert" || key == "key" || key == "ca") {
     if (is_unix) {
       SDB_FATAL(GENERAL, "TLS material is not valid on a unix endpoint '", url,
                 "'");
-    }
-    if (is_http && !spec.https) {
-      SDB_FATAL(GENERAL,
-                "TLS material is not valid on a plaintext http endpoint '", url,
-                "' (use https://)");
     }
     if (key == "cert") {
       spec.cert = PercentDecode(value);
@@ -124,49 +64,6 @@ void ApplyParam(ListenSpec& spec, std::string_view key,
     } else {
       spec.ca = PercentDecode(value);
     }
-  } else if (key == "api") {
-    if (!is_http) {
-      SDB_FATAL(GENERAL, "'api' is only valid on an http endpoint '", url, "'");
-    }
-    for (std::string_view a : absl::StrSplit(value, ',', absl::SkipEmpty())) {
-      const auto it = absl::c_find_if(
-        kHttpApis, [&](const auto& api) { return api.first == a; });
-      if (it == kHttpApis.end()) {
-        SDB_FATAL(GENERAL, "unknown api '", a, "' in endpoint '", url,
-                  "' (known: ",
-                  absl::StrJoin(kHttpApis, ", ",
-                                [](std::string* out, const auto& api) {
-                                  absl::StrAppend(out, api.first);
-                                }),
-                  ")");
-      }
-      if (!absl::c_linear_search(spec.apis, it->second)) {
-        spec.apis.push_back(it->second);
-      }
-    }
-  } else if (key == "db") {
-    if (!is_http) {
-      SDB_FATAL(GENERAL, "'db' is only valid on an http endpoint '", url, "'");
-    }
-    spec.database = PercentDecode(value);
-    if (spec.database.empty()) {
-      SDB_FATAL(GENERAL, "empty 'db' in endpoint '", url, "'");
-    }
-  } else if (key == "schema") {
-    if (!is_http) {
-      SDB_FATAL(GENERAL, "'schema' is only valid on an http endpoint '", url,
-                "'");
-    }
-    spec.schema = PercentDecode(value);
-    if (spec.schema.empty()) {
-      SDB_FATAL(GENERAL, "empty 'schema' in endpoint '", url, "'");
-    }
-  } else if (key == "create_schema") {
-    if (!is_http) {
-      SDB_FATAL(GENERAL, "'create_schema' is only valid on an http endpoint '",
-                url, "'");
-    }
-    spec.create_schema = ParseBoolParam(value, key, url);
   } else if (key == "mode") {
     if (!is_unix) {
       SDB_FATAL(GENERAL, "'mode' is only valid on a unix endpoint '", url, "'");
@@ -178,14 +75,6 @@ void ApplyParam(ListenSpec& spec, std::string_view key,
                 "'");
     }
     spec.unix_group = PercentDecode(value);
-  } else if (key == "port") {
-    if (!is_unix) {
-      SDB_FATAL(GENERAL,
-                "'port' query is only for a unix pg socket (tcp uses "
-                "host:port) in endpoint '",
-                url, "'");
-    }
-    spec.unix_port = static_cast<uint16_t>(ParseUintParam(value, key, url));
   } else if (key == "backlog") {
     spec.backlog = static_cast<int>(ParseUintParam(value, key, url));
   } else if (key == "reuseport") {
@@ -216,7 +105,7 @@ void ApplyParam(ListenSpec& spec, std::string_view key,
                 value, "' (off|optional|require)");
     }
   } else {
-    SDB_FATAL(GENERAL, "unknown parameter '", key, "' in endpoint '", url, "'");
+    own.push_back({.key = std::string{key}, .value = value});
   }
 }
 
@@ -275,21 +164,17 @@ void ParseOne(std::string_view url, asio_ns::io_context& resolve_ctx,
 
   ListenSpec base;
   base.url = url;
-  if (scheme == "postgres" || scheme == "postgresql") {
-    base.protocol = ListenProtocol::Pg;
-  } else if (scheme == "http") {
-    base.protocol = ListenProtocol::Http;
-  } else if (scheme == "https") {
-    base.protocol = ListenProtocol::Http;
-    base.https = true;
-  } else {
+  base.protocol = Registry<ListenProtocol>::Find(scheme);
+  if (!base.protocol) {
     SDB_FATAL(GENERAL, "unsupported scheme '", scheme, "' in endpoint '", url,
-              "' (postgres, postgresql, http, https)");
+              "' (", absl::StrJoin(Registry<ListenProtocol>::Names(), ", "),
+              ")");
   }
 
   const auto parse_query = [&] {
     std::string_view search = parsed->get_search();
     search.remove_prefix(std::min<size_t>(search.size(), 1));
+    std::vector<ListenParam> own;
     for (std::string_view pair :
          absl::StrSplit(search, '&', absl::SkipEmpty())) {
       const auto eq = pair.find('=');
@@ -297,12 +182,10 @@ void ParseOne(std::string_view url, asio_ns::io_context& resolve_ctx,
         SDB_FATAL(GENERAL, "malformed parameter '", pair, "' in endpoint '",
                   url, "'");
       }
-      ApplyParam(base, PercentDecode(pair.substr(0, eq)), pair.substr(eq + 1));
+      ApplyParam(base, PercentDecode(pair.substr(0, eq)), pair.substr(eq + 1),
+                 own);
     }
-    if (base.protocol == ListenProtocol::Http && base.apis.empty()) {
-      SDB_FATAL(GENERAL, "http endpoint '", url,
-                "' requires ?api= (e.g. ?api=es); there is no default api");
-    }
+    base.options = base.protocol->parse(base, own);
   };
 
   if (parsed->has_empty_hostname()) {
@@ -342,6 +225,32 @@ void ParseOne(std::string_view url, asio_ns::io_context& resolve_ctx,
 }
 
 }  // namespace
+
+std::string PercentDecode(std::string_view value) {
+  return ada::unicode::percent_decode(value, value.find('%'));
+}
+
+bool ParseBoolParam(std::string_view value, std::string_view key,
+                    std::string_view url) {
+  if (const auto parsed = irs::utils::ParseBool(value)) {
+    return *parsed;
+  }
+  SDB_FATAL(GENERAL, "invalid boolean for '", key, "' in endpoint '", url,
+            "': '", value, "'");
+}
+
+uint32_t ParseUintParam(std::string_view value, std::string_view key,
+                        std::string_view url, int base) {
+  uint32_t parsed = 0;
+  const auto* end = value.data() + value.size();
+  const auto [ptr, ec] =
+    fast_float::from_chars(value.data(), end, parsed, base);
+  if (ec != std::errc{} || ptr != end) {
+    SDB_FATAL(GENERAL, "invalid number for '", key, "' in endpoint '", url,
+              "': '", value, "'");
+  }
+  return parsed;
+}
 
 std::vector<ListenSpec> ParseListenSpecs(
   const std::vector<std::string>& urls_in) {

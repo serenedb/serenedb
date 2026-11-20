@@ -32,11 +32,11 @@ You can use globbing to read from multiple databases.
 To illustrate this, let's create two tables:
 
 ```bash
-serened shell my-1.duckdb \
+serenedb shell my-1.duckdb \
     -c "CREATE TABLE numbers AS SELECT 42 AS x;" \
     -c "CREATE TABLE letters AS SELECT 'm' AS a;"
 
-serened shell my-2.duckdb \
+serenedb shell my-2.duckdb \
     -c "CREATE TABLE numbers AS SELECT 43 AS x;"
 ```
 

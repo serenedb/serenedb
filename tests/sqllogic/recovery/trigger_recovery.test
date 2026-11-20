@@ -90,7 +90,7 @@ a
 connection after_crash
 query
 SELECT schema_name, table_name, trigger_name
-FROM duckdb_triggers() WHERE table_name = 'trec_t';
+FROM sdb_triggers() WHERE table_name = 'trec_t';
 ----
 schema_name	table_name	trigger_name
 public	trec_t	trec_del

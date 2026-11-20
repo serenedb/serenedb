@@ -44,7 +44,7 @@ INSERT INTO use_default_t VALUES (1, 'alpha');
 
 
 statement error
-CALL serenedb_reindex('use_default_idx');
+CALL sdb_reindex('use_default_idx');
 ----
 db error: ERROR: REINDEX is only supported for view-backed inverted indexes
 

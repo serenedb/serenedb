@@ -109,17 +109,14 @@ class SessionTransaction final {
   }
 
   duckdb::idx_t CatalogEpoch() const noexcept {
-    const auto changes = _change_count.load(std::memory_order_acquire);
-    return changes == 0 ? _catalog_epoch.load(std::memory_order_acquire)
-                        : duckdb::TRANSACTION_ID_START + changes;
+    return _change_count.load(std::memory_order_acquire) == 0
+             ? _catalog_epoch.load(std::memory_order_acquire)
+             : _change_epoch.load(std::memory_order_acquire);
   }
 
   void Refresh();
 
-  void Push(Change change) {
-    _changes.push_back(std::move(change));
-    _change_count.store(_changes.size(), std::memory_order_release);
-  }
+  void Push(Change change);
   bool HasChanges() const noexcept {
     return _change_count.load(std::memory_order_acquire) != 0;
   }
@@ -173,6 +170,7 @@ class SessionTransaction final {
   std::optional<duckdb::transaction_t> _held;
   std::vector<Change> _changes;
   std::atomic<size_t> _change_count{0};
+  std::atomic<duckdb::idx_t> _change_epoch{0};
   std::vector<LsnUpdate> _lsn_updates;
   absl::Mutex _mutex;
   std::vector<duckdb::reference<duckdb::AttachedDatabase>> _attached
@@ -215,7 +213,7 @@ class Transactions final {
 
   void Commit(SessionTransaction& transaction, duckdb::ClientContext& context);
   void CommitStorage(absl::Mutex& table,
-                     absl::FunctionRef<std::vector<uint8_t>()> build,
+                     absl::FunctionRef<std::optional<RecordBuffer>()> build,
                      absl::FunctionRef<void(duckdb::transaction_t)> apply);
   void AwaitPublished(duckdb::transaction_t commit) const;
 

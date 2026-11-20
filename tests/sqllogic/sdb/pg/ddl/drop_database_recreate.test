@@ -15,7 +15,7 @@ DROP DATABASE ddt_a;
 
 
 query
-SELECT count(*) AS n FROM duckdb_databases() WHERE database_name = 'ddt_a';
+SELECT count(*) AS n FROM sdb_databases() WHERE database_name = 'ddt_a';
 ----
 n
 0
@@ -38,7 +38,7 @@ CREATE DATABASE ddt_a;
 
 
 query
-SELECT count(*) AS n FROM duckdb_tables() WHERE database_name = 'ddt_a' AND table_name = 't';
+SELECT count(*) AS n FROM sdb_tables() WHERE database_name = 'ddt_a' AND table_name = 't';
 ----
 n
 0
@@ -64,7 +64,7 @@ DROP DATABASE ddt_a;
 
 
 query
-SELECT count(*) AS n FROM duckdb_databases() WHERE database_name = 'ddt_a';
+SELECT count(*) AS n FROM sdb_databases() WHERE database_name = 'ddt_a';
 ----
 n
 0

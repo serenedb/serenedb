@@ -342,7 +342,13 @@ CREATE TABLE search_auto_numeric (a INTEGER PRIMARY KEY, g BIGINT, d BIGINT, h U
   WITH (compaction_interval = 0);
 
 statement ok
+SET threads = 1;
+
+statement ok
 INSERT INTO search_auto_numeric SELECT a, ((a * 7919) % 5000) * 1000000, (a % 7) * 1000000007 + 123456789012, hash(a % 100) FROM range(5000) t(a);
+
+statement ok
+RESET threads;
 
 statement ok
 VACUUM (FLUSH_TABLE) search_auto_numeric;

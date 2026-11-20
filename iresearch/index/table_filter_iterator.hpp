@@ -76,12 +76,7 @@ struct ColFilterSpec {
   // a dynamic filter's bound tightens while the scan runs -- its zonemap
   // verdict is re-evaluated per window instead of cached.
   bool is_dynamic = false;
-  // Root non-selectivity optional filter (e.g. the TOP_N dynamic filter):
-  // advisory, so classification keeps it active on ALWAYS_TRUE (a dynamic
-  // bound may tighten) and never swaps it for IS NOT NULL (it must not drop
-  // null order keys). Evaluation is a no-op pass-through; the win is the
-  // codec filters' group-granular consult of the live bound.
-  bool zonemap_only = false;
+  bool optional = false;
   // Bare IS [NOT] NULL: evaluated on the validity child alone where the block
   // codec keeps validity separate (see ColumnReader::GatherFilter).
   irs::NullCheckKind null_check = irs::NullCheckKind::None;
@@ -110,6 +105,9 @@ class ColFilterStateCache {
  public:
   duckdb::TableFilterState& State(duckdb::ClientContext& context,
                                   const duckdb::TableFilter& filter);
+  bool AdmitsNull(duckdb::ClientContext& context,
+                  const duckdb::TableFilter& filter,
+                  const duckdb::LogicalType& type);
   irs::ColumnReader::VectorScratch& Scratch(const duckdb::TableFilter& filter,
                                             const duckdb::LogicalType& type);
   duckdb::DataChunk& Chunk(duckdb::ClientContext& context,
@@ -126,6 +124,7 @@ class ColFilterStateCache {
     std::unique_ptr<irs::ColumnReader::VectorScratch> scratch;
     std::unique_ptr<duckdb::DataChunk> chunk;
     std::vector<ColFilterLeaf> leaves;
+    std::optional<bool> admits_null;
   };
 
   Entry& Find(const duckdb::TableFilter& filter);
@@ -312,12 +311,6 @@ class ColFilterChain {
     std::conditional_t<Keep, const uint64_t*, uint64_t*> mask,
     duckdb::idx_t words, utils::Need<Keep, uint64_t*> out);
 
-  struct DenseRange {
-    duckdb::PhysicalType type = duckdb::PhysicalType::INVALID;
-    int64_t lo = std::numeric_limits<int64_t>::min();
-    int64_t hi = std::numeric_limits<int64_t>::max();
-  };
-
   template<bool Keep>
   duckdb::idx_t DenseMask(
     irs::doc_id_t base,
@@ -342,7 +335,7 @@ class ColFilterChain {
 
   std::vector<Col> _cols;
   std::vector<Row> _rows;
-  std::optional<DenseRange> _dense;
+  duckdb::ExpressionFilterExecutor* _dense = nullptr;
   detail::PointRead _point_reads = detail::PointRead::None;
   duckdb::SelectionVector _row_sel{STANDARD_VECTOR_SIZE};
   // FilterDocs' block-run selection. FilterSelection repoints `_sel` to a

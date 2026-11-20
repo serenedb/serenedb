@@ -110,10 +110,10 @@ class BooleanWindow
   score_t MaxScore(doc_id_t last) const noexcept
     requires kBounded
   {
-    if (_filled && last < _min + detail::kWindowDocs) {
+    if (_filled && (_spent || last < _min + detail::kWindowDocs)) {
       return _max;
     }
-    return _spent ? score_t{0} : _bound;
+    return _bound;
   }
 
   IRS_FORCE_INLINE void FetchScoreArgs(uint32_t slot)

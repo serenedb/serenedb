@@ -35,11 +35,25 @@ statement error
 INSTALL sqlite_scanner;
 ----
 db error: ERROR: INSTALL is not supported by SereneDB: extensions are compiled into the server binary and cannot be installed at runtime.
-If you need the "sqlite_scanner" extension, please open an issue at https://github.com/serenedb/serenedb/issues/887.
+If you need the "sqlite_scanner" extension, tell us in https://github.com/serenedb/serenedb/issues/887.
 
 
 statement error
 UPDATE EXTENSIONS;
 ----
 db error: ERROR: UPDATE EXTENSIONS is not supported by SereneDB: extensions are compiled into the server binary and cannot be updated at runtime.
-If you are missing an extension, please open an issue at https://github.com/serenedb/serenedb/issues/887.
+If you are missing an extension, tell us in https://github.com/serenedb/serenedb/issues/887.
+
+
+statement error
+CREATE EXTENSION REPOSITORY my_repo PREFIX 'https://example.com';
+----
+db error: ERROR: CREATE EXTENSION REPOSITORY is not supported by SereneDB: extensions are compiled into the server binary and cannot be installed at runtime.
+If you are missing an extension, tell us in https://github.com/serenedb/serenedb/issues/887.
+
+
+statement error
+DROP EXTENSION REPOSITORY my_repo;
+----
+db error: ERROR: DROP EXTENSION REPOSITORY is not supported by SereneDB: extensions are compiled into the server binary and cannot be installed at runtime.
+If you are missing an extension, tell us in https://github.com/serenedb/serenedb/issues/887.

@@ -23,7 +23,7 @@ COPY (SELECT i AS id, 'doc ' || i AS body FROM range(10, 20) t(i)) TO '${__TEST_
 
 
 query
-SELECT action FROM serenedb_reindex('ivbc_idx');
+SELECT action FROM sdb_reindex('ivbc_idx');
 ----
 action
 delta
@@ -34,7 +34,7 @@ COPY (SELECT i AS id, 'doc ' || i AS body FROM range(20, 30) t(i)) TO '${__TEST_
 
 
 query
-SELECT action FROM serenedb_reindex('ivbc_idx');
+SELECT action FROM sdb_reindex('ivbc_idx');
 ----
 action
 delta
@@ -45,7 +45,7 @@ COPY (SELECT i AS id, 'doc ' || i AS body FROM range(30, 40) t(i)) TO '${__TEST_
 
 
 query
-SELECT action FROM serenedb_reindex('ivbc_idx');
+SELECT action FROM sdb_reindex('ivbc_idx');
 ----
 action
 delta

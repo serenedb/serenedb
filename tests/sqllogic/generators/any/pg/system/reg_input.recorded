@@ -894,10 +894,10 @@ c91a48a2bc629c6f
 	relation
 	NULL
 feeba8625a3d6316	error	db error: ERROR: value "18446744073709551616" is out of range for type oid
-15d79bde998d46d1
+0e50bffed57d16a0
 	relation
 	NULL
-cde954cb3df4eeff	error	db error: ERROR: relation "duckdb_tables" does not exist
+d0fff6522f3d5e9f	error	db error: ERROR: relation "sdb_tables" does not exist
 8eafe75ce533a689
 	relation
 	NULL

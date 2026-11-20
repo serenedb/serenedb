@@ -53,7 +53,8 @@ fi
 if [[ $test_rc -eq 0 ]]; then
 	echo "=== HBA network tests ==="
 	serened_container=$(docker create ${SDB_DOCKER_OWNER:+--label "serenedb.owner=$SDB_DOCKER_OWNER"} "$DOCKER_TEST_IMAGE")
-	docker cp "$serened_container:/usr/bin/serened" "${WORKSPACE}/out/docker-rta-serened"
+	mkdir -p "${WORKSPACE}/out/docker-rta"
+	docker cp -L "$serened_container:/usr/bin/serened" "${WORKSPACE}/out/docker-rta/serened"
 	docker rm -v "$serened_container" >/dev/null
 	docker compose -p "$PREFIX" -f "$COMPOSE_FILE" run --rm network-tests \
 		2>&1 | tee "${WORKSPACE}/out/logs/docker-rta-network.log" || test_rc=$?

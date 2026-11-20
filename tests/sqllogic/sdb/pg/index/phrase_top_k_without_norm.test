@@ -1,0 +1,38 @@
+statement ok
+SET threads = 1;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ptkn_words AS split_text() WITH (frequency, position);
+
+
+statement ok
+CREATE TABLE ptkn (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+INSERT INTO ptkn
+SELECT i, CASE WHEN i = 301 THEN repeat('red fox ', 6) ELSE 'red fox red fox' END
+FROM generate_series(1, 301) AS g(i);
+
+
+statement ok
+CREATE INDEX ptkn_idx ON ptkn USING inverted(id, body ptkn_words);
+
+
+query
+SELECT id FROM ptkn_idx
+WHERE body @@ ts_phrase('red fox')
+ORDER BY BM25(ptkn_idx.tableoid) DESC
+LIMIT 1;
+----
+id
+301
+
+
+statement ok
+RESET threads;
+
+
+statement ok
+DROP TABLE ptkn;

@@ -78,14 +78,50 @@ FileRefs GetRefs(const Directory& dir, const SegmentMeta& meta) {
 
 }  // namespace
 
+std::vector<IndexInput::ptr> WrittenFiles(const SegmentInputs& inputs) {
+  std::vector<IndexInput::ptr> files;
+  const auto add = [&](IndexInput::ptr in) {
+    if (in) {
+      files.push_back(std::move(in));
+    }
+  };
+  if (inputs.col) {
+    add(inputs.col->ReopenIn());
+  }
+  if (inputs.idx) {
+    add(inputs.idx->ReopenIn());
+  }
+  for (const auto* in : {inputs.postings.doc.get(), inputs.postings.pos.get(),
+                         inputs.postings.pay.get()}) {
+    if (in) {
+      add(in->Dup());
+    }
+  }
+  return files;
+}
+
 std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::Open(
   const Directory& dir, const SegmentMeta& meta,
   const IndexReaderOptions& options) {
+  SDB_ASSERT(options.db);
+  SegmentInputs inputs{
+    .col = std::make_unique<ColReader>(dir, meta.name, *options.db,
+                                       IOAdvice::RANDOM),
+    .idx = std::make_unique<IdxReader>(dir, meta.name, options.hnsw_bases,
+                                       options.index),
+  };
+  return Open(dir, meta, options, std::move(inputs));
+}
+
+std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::Open(
+  const Directory& dir, const SegmentMeta& meta,
+  const IndexReaderOptions& options, SegmentInputs inputs) {
   auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
   reader->_refs = GetRefs(dir, meta);
   ParseSegmentId(meta.name, reader->_id);
   reader->_data = std::make_shared<ColumnData>();
-  reader->_data->Open(dir, meta, options, options.index);
+  reader->_data->col_reader = std::move(inputs.col);
+  reader->_data->idx_reader = std::move(inputs.idx);
   reader->_field_reader =
     std::make_shared<term_dict::FieldReader>(*dir.ResourceManager().readers);
   if (options.index) {
@@ -93,6 +129,7 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::Open(
       .dir = &dir,
       .meta = &meta,
       .idx = reader->_data->idx_reader.get(),
+      .postings = inputs.postings.doc ? &inputs.postings : nullptr,
     });
   }
   return reader;
@@ -129,6 +166,7 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::WithDocsMask(
   reader->_id = _id;
   reader->_patch_tick = _patch_tick;
   reader->_patched_docs = _patched_docs;
+  reader->_patches = _patches;
   reader->_field_reader = _field_reader;
   reader->_pieces = _pieces;
   reader->_data = _data;
@@ -150,6 +188,7 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::WithPatches(
     reader->_data = root;
     return reader;
   }
+  reader->_patches.assign(patches.begin(), patches.end());
   std::vector<std::shared_ptr<const ColumnReader>> replaced;
   replaced.reserve(patches.size());
   for (const auto& [field, patch] : patches) {
@@ -226,17 +265,6 @@ lead::Node::ptr SegmentReaderImpl::docs_iterator() const {
       return memory::make_managed<lead::Impl<detail::LiveDocs<Mask>>>(
         std::move(docs_mask), live_end);
     });
-}
-
-void SegmentReaderImpl::ColumnData::Open(const Directory& dir,
-                                         const SegmentMeta& meta,
-                                         const IndexReaderOptions& options,
-                                         bool keep_terms) {
-  SDB_ASSERT(options.db);
-  col_reader =
-    std::make_unique<ColReader>(dir, meta.name, *options.db, IOAdvice::RANDOM);
-  idx_reader =
-    std::make_unique<IdxReader>(dir, meta.name, options.hnsw_bases, keep_terms);
 }
 
 }  // namespace irs

@@ -83,6 +83,9 @@ struct Directory : private util::Noncopyable {
   virtual IndexInput::ptr open(std::string_view name,
                                IOAdvice advice) const = 0;
 
+  virtual IndexInput::ptr Finish(IndexOutput::ptr out,
+                                 IOAdvice advice) const = 0;
+
   // Removes the file specified by the given name from directory
   // name - name of the file
   // Rreturns true if file has been removed
@@ -93,11 +96,6 @@ struct Directory : private util::Noncopyable {
   // dst - final name of the file
   // Returns true if file has been renamed
   virtual bool rename(std::string_view src, std::string_view dst) noexcept = 0;
-
-  // Ensures that all modification have been sucessfully persisted
-  // files - files to sync
-  // Returns call success
-  virtual bool sync(std::span<const std::string_view> files) noexcept = 0;
 
   // Applies the specified 'visitor' to every filename in a directory
   // visitor - visitor to be applied

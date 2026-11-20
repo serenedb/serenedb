@@ -25,14 +25,8 @@
 #include <array>
 #include <bit>
 #include <duckdb/common/vector/list_vector.hpp>
-#include <duckdb/planner/expression/bound_comparison_expression.hpp>
-#include <duckdb/planner/expression/bound_conjunction_expression.hpp>
-#include <duckdb/planner/expression/bound_constant_expression.hpp>
-#include <duckdb/planner/expression/bound_operator_expression.hpp>
-#include <duckdb/planner/expression/bound_reference_expression.hpp>
+#include <duckdb/optimizer/expression_heuristics.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
-#include <duckdb/planner/filter/table_filter_functions.hpp>
-#include <duckdb/storage/statistics/numeric_stats.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 
 #include "iresearch/formats/column/codecs/registry.hpp"
@@ -54,140 +48,6 @@ bool AllWordsSet(const uint64_t* words, duckdb::idx_t count) noexcept {
     }
   }
   return true;
-}
-
-bool IsColumnRef(const duckdb::Expression& expr) {
-  return expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_REF &&
-         expr.Cast<duckdb::BoundReferenceExpression>().Index() == 0;
-}
-
-bool IsDenseType(duckdb::PhysicalType type) {
-  switch (type) {
-    case duckdb::PhysicalType::INT8:
-    case duckdb::PhysicalType::INT16:
-    case duckdb::PhysicalType::INT32:
-    case duckdb::PhysicalType::INT64:
-      return true;
-    default:
-      return false;
-  }
-}
-
-int64_t StoredValue(const duckdb::Value& value, duckdb::PhysicalType type) {
-  switch (type) {
-    case duckdb::PhysicalType::INT8:
-      return value.GetValueUnsafe<int8_t>();
-    case duckdb::PhysicalType::INT16:
-      return value.GetValueUnsafe<int16_t>();
-    case duckdb::PhysicalType::INT32:
-      return value.GetValueUnsafe<int32_t>();
-    default:
-      return value.GetValueUnsafe<int64_t>();
-  }
-}
-
-bool NarrowRange(const duckdb::Expression& expr, duckdb::PhysicalType type,
-                 int64_t& lo, int64_t& hi) {
-  if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_CONJUNCTION) {
-    if (expr.GetExpressionType() != duckdb::ExpressionType::CONJUNCTION_AND) {
-      return false;
-    }
-    for (const auto& child :
-         expr.Cast<duckdb::BoundConjunctionExpression>().GetChildren()) {
-      if (!NarrowRange(*child, type, lo, hi)) {
-        return false;
-      }
-    }
-    return true;
-  }
-  if (!duckdb::BoundComparisonExpression::IsComparison(expr)) {
-    return false;
-  }
-  const auto& cmp = expr.Cast<duckdb::BoundFunctionExpression>();
-  const auto* column = &duckdb::BoundComparisonExpression::Left(cmp);
-  const auto* constant = &duckdb::BoundComparisonExpression::Right(cmp);
-  auto op = expr.GetExpressionType();
-  if (!IsColumnRef(*column)) {
-    std::swap(column, constant);
-    op = duckdb::FlipComparisonExpression(op);
-  }
-  if (!IsColumnRef(*column) || constant->GetExpressionClass() !=
-                                 duckdb::ExpressionClass::BOUND_CONSTANT) {
-    return false;
-  }
-  const auto& value =
-    constant->Cast<duckdb::BoundConstantExpression>().GetValue();
-  if (value.IsNull() || value.type().InternalType() != type) {
-    return false;
-  }
-  const auto c = StoredValue(value, type);
-  switch (op) {
-    case duckdb::ExpressionType::COMPARE_EQUAL:
-      lo = std::max(lo, c);
-      hi = std::min(hi, c);
-      return true;
-    case duckdb::ExpressionType::COMPARE_GREATERTHANOREQUALTO:
-      lo = std::max(lo, c);
-      return true;
-    case duckdb::ExpressionType::COMPARE_LESSTHANOREQUALTO:
-      hi = std::min(hi, c);
-      return true;
-    case duckdb::ExpressionType::COMPARE_GREATERTHAN:
-      if (c == std::numeric_limits<int64_t>::max()) {
-        lo = c;
-        hi = c - 1;
-        return true;
-      }
-      lo = std::max(lo, c + 1);
-      return true;
-    case duckdb::ExpressionType::COMPARE_LESSTHAN:
-      if (c == std::numeric_limits<int64_t>::min()) {
-        lo = c + 1;
-        hi = c;
-        return true;
-      }
-      hi = std::min(hi, c - 1);
-      return true;
-    default:
-      return false;
-  }
-}
-
-template<typename T>
-duckdb::idx_t KeepInRange(const duckdb::Vector& values, duckdb::idx_t count,
-                          int64_t lo, int64_t hi, uint64_t* words) {
-  using U = std::make_unsigned_t<T>;
-  const auto n_words = (count + 63) / 64;
-  if (lo > hi || lo > std::numeric_limits<T>::max() ||
-      hi < std::numeric_limits<T>::min()) {
-    std::fill_n(words, n_words, uint64_t{0});
-    return 0;
-  }
-  const auto base = static_cast<U>(
-    static_cast<T>(std::max<int64_t>(lo, std::numeric_limits<T>::min())));
-  const auto span =
-    static_cast<U>(static_cast<U>(static_cast<T>(
-                     std::min<int64_t>(hi, std::numeric_limits<T>::max()))) -
-                   base);
-  const auto* data = duckdb::FlatVector::GetData<T>(values);
-  const auto* validity = duckdb::FlatVector::Validity(values).GetData();
-  duckdb::idx_t total = 0;
-  for (duckdb::idx_t w = 0; w < n_words; ++w) {
-    const auto first = w * 64;
-    const auto m = std::min<duckdb::idx_t>(64, count - first);
-    uint64_t bits = 0;
-    for (duckdb::idx_t j = 0; j < m; ++j) {
-      const auto shifted =
-        static_cast<U>(static_cast<U>(data[first + j]) - base);
-      bits |= uint64_t{shifted <= span} << j;
-    }
-    if (validity) {
-      bits &= validity[w];
-    }
-    words[w] &= bits;
-    total += static_cast<duckdb::idx_t>(std::popcount(words[w]));
-  }
-  return total;
 }
 
 void SetNullColumn(duckdb::Vector& vector) {
@@ -226,6 +86,23 @@ duckdb::TableFilterState& ColFilterStateCache::State(
     e.state = duckdb::TableFilterState::Initialize(context, filter);
   }
   return *e.state;
+}
+
+bool ColFilterStateCache::AdmitsNull(duckdb::ClientContext& context,
+                                     const duckdb::TableFilter& filter,
+                                     const duckdb::LogicalType& type) {
+  auto& e = Find(filter);
+  if (!e.admits_null) {
+    duckdb::Vector null_row{type, 1};
+    null_row.SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
+    duckdb::ConstantVector::SetNull(null_row, true);
+    duckdb::SelectionVector sel;
+    duckdb::idx_t approved = 1;
+    duckdb::ColumnSegment::FilterSelection(sel, null_row,
+                                           State(context, filter), 1, approved);
+    e.admits_null = approved != 0;
+  }
+  return *e.admits_null;
 }
 
 irs::ColumnReader::VectorScratch& ColFilterStateCache::Scratch(
@@ -380,23 +257,25 @@ void ColFilterChain::FinishBind() {
   if (can_reorder) {
     // The learned order survives rebinding onto the next segment as long as
     // the active filter count is unchanged.
+    absl::c_stable_sort(_cols, [](const Col& lhs, const Col& rhs) {
+      return duckdb::ExpressionHeuristics::Cost(*lhs.filter) <
+             duckdb::ExpressionHeuristics::Cost(*rhs.filter);
+    });
     if (!_adaptive || _adaptive->GetPermutation().size() != _cols.size()) {
       _adaptive = duckdb::make_uniq<duckdb::AdaptiveFilter>(_cols.size());
     }
   } else {
     _adaptive.reset();
   }
-  _dense.reset();
+  _dense = nullptr;
   if (_rows.empty() && _cols.size() == 1) {
     const auto& c = _cols.front();
-    const auto type = c.reader->Type().InternalType();
-    if (!c.nested && !c.list_like && !c.row_gather && !c.extract &&
-        !c.is_dynamic && c.output_slots.empty() &&
-        c.null_check == NullCheckKind::None && IsDenseType(type)) {
-      DenseRange range{.type = type};
-      if (NarrowRange(*c.expr->expr, type, range.lo, range.hi)) {
-        _dense = range;
-      }
+    const auto& executor =
+      c.state->Cast<duckdb::ExpressionFilterState>().fast_executor;
+    if (executor && executor->FiltersMasks() && !c.nested && !c.list_like &&
+        !c.row_gather && !c.extract && c.output_slots.empty() &&
+        c.null_check == NullCheckKind::None) {
+      _dense = executor.get();
     }
   }
   _point_reads = ClassifyPointReads();
@@ -458,19 +337,9 @@ duckdb::idx_t ColFilterChain::DenseMask(
       auto& values = f.scratch->Reset();
       f.reader->Scan(f.scan, values, n);
       values.Flatten(n);
-      switch (_dense->type) {
-        case duckdb::PhysicalType::INT8:
-          kept = KeepInRange<int8_t>(values, n, _dense->lo, _dense->hi, chunk);
-          break;
-        case duckdb::PhysicalType::INT16:
-          kept = KeepInRange<int16_t>(values, n, _dense->lo, _dense->hi, chunk);
-          break;
-        case duckdb::PhysicalType::INT32:
-          kept = KeepInRange<int32_t>(values, n, _dense->lo, _dense->hi, chunk);
-          break;
-        default:
-          kept = KeepInRange<int64_t>(values, n, _dense->lo, _dense->hi, chunk);
-          break;
+      _dense->FilterMask(values, n, chunk);
+      for (duckdb::idx_t w = 0; w < chunk_words; ++w) {
+        kept += static_cast<duckdb::idx_t>(std::popcount(chunk[w]));
       }
     }
     if constexpr (!Keep) {

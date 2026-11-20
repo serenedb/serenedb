@@ -69,7 +69,11 @@ class BooleanWindow
       _admit{table},
       _constant{merge == ScoreMergeType::Max ? std::max(score_t{0}, absorbed)
                                              : absorbed},
-      _prune{prune} {}
+      _prune{prune} {
+    if constexpr (kConstant && Admit<Table>::kTable) {
+      std::fill_n(_window, irs::detail::kWindowDocs, _constant);
+    }
+  }
 
   void Run(doc_id_t begin, doc_id_t end, LoserScoreCollector& collector) final {
     doc_id_t next = begin;
@@ -101,8 +105,14 @@ class BooleanWindow
           _excludes.Remove(min, max, _mask, _window, score_t{0});
         }
       }
-      _score.Apply(_window, _mask, irs::detail::kWindowWords);
-      _admit.Window(collector, _window, _mask, min, irs::detail::kWindowWords);
+      if constexpr (kConstant) {
+        _admit.Constant(collector, _constant, _window, _mask, min,
+                        irs::detail::kWindowWords);
+      } else {
+        _score.Apply(_window, _mask, irs::detail::kWindowWords);
+        _admit.Window(collector, _window, _mask, min,
+                      irs::detail::kWindowWords);
+      }
     }
     _admit.Flush(collector);
   }

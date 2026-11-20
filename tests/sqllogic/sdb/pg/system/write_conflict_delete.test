@@ -1,0 +1,109 @@
+statement ok
+CREATE TABLE wcd (id INTEGER PRIMARY KEY, v TEXT)
+
+
+statement ok
+INSERT INTO wcd VALUES (5, 'five'), (7, 'seven')
+
+
+statement ok
+CREATE TABLE wcd_nokey (id INTEGER, v TEXT)
+
+
+statement ok
+INSERT INTO wcd_nokey VALUES (5, 'five')
+
+
+connection a
+statement ok
+BEGIN
+
+
+connection a
+statement count 1
+UPDATE wcd SET v = 'local' WHERE id = 5
+
+
+connection b
+statement count 1
+DELETE FROM wcd WHERE id = 5
+
+
+connection a
+statement error
+COMMIT
+----
+db error: ERROR: could not serialize access due to concurrent update
+
+
+query
+SELECT id, v FROM wcd ORDER BY id
+----
+id	v
+7	seven
+
+
+connection a
+statement ok
+BEGIN
+
+
+connection a
+statement count 1
+UPDATE wcd SET v = 'local' WHERE id = 7
+
+
+connection b
+statement count 1
+UPDATE wcd SET id = 8, v = 'remote' WHERE id = 7
+
+
+connection a
+statement error
+COMMIT
+----
+db error: ERROR: could not serialize access due to concurrent update
+
+
+query
+SELECT id, v FROM wcd ORDER BY id
+----
+id	v
+8	remote
+
+
+connection a
+statement ok
+BEGIN
+
+
+connection a
+statement count 1
+UPDATE wcd_nokey SET v = 'local' WHERE id = 5
+
+
+connection b
+statement count 1
+DELETE FROM wcd_nokey WHERE id = 5
+
+
+connection a
+statement error
+COMMIT
+----
+db error: ERROR: could not serialize access due to concurrent update
+
+
+query
+SELECT count(*) AS n FROM wcd_nokey
+----
+n
+0
+
+
+statement ok
+DROP TABLE wcd
+
+
+statement ok
+DROP TABLE wcd_nokey

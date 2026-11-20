@@ -44,7 +44,7 @@ USE postgres;
 
 
 query
-SELECT count(*) AS n FROM duckdb_databases()
+SELECT count(*) AS n FROM sdb_databases()
 WHERE database_name IN ('dbsrv_a_${__DATABASE__}', 'dbsrv_b_${__DATABASE__}');
 ----
 n
@@ -56,7 +56,7 @@ DROP DATABASE dbsrv_${__DATABASE__};
 
 
 query
-SELECT count(*) AS n FROM duckdb_databases()
+SELECT count(*) AS n FROM sdb_databases()
 WHERE database_name IN ('dbsrv_${__DATABASE__}', 'dbsrv_a_${__DATABASE__}', 'dbsrv_b_${__DATABASE__}');
 ----
 n

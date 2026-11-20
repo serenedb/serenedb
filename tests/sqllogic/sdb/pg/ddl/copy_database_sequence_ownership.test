@@ -97,7 +97,7 @@ DROP TABLE cdso_owner;
 
 
 query
-SELECT count(*) AS sequences FROM duckdb_sequences() WHERE database_name = current_database();
+SELECT count(*) AS sequences FROM sdb_sequences() WHERE database_name = current_database();
 ----
 sequences
 0

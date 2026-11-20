@@ -23,7 +23,7 @@ BEGIN;
 
 connection holder
 query
-SELECT count(*) > 0 AS listed FROM duckdb_tables() WHERE database_name = 'aadw_${__DATABASE__}';
+SELECT count(*) > 0 AS listed FROM sdb_tables() WHERE database_name = 'aadw_${__DATABASE__}';
 ----
 listed
 t
@@ -36,7 +36,7 @@ DETACH aadw_${__DATABASE__};
 
 connection holder
 query
-SELECT count(*) > 0 AS listed FROM duckdb_tables() WHERE database_name = 'aadw_${__DATABASE__}';
+SELECT count(*) > 0 AS listed FROM sdb_tables() WHERE database_name = 'aadw_${__DATABASE__}';
 ----
 listed
 f

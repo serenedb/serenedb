@@ -51,7 +51,7 @@ count
 
 connection after_crash
 query
-SELECT * FROM serenedb_reindex('vilm_idx');
+SELECT * FROM sdb_reindex('vilm_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 rebuild	0	0	0	0
@@ -66,7 +66,7 @@ id
 
 connection after_crash
 query
-SELECT * FROM serenedb_reindex('vilm_idx');
+SELECT * FROM sdb_reindex('vilm_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0

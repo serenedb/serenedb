@@ -69,6 +69,10 @@ inline bool IsConstScoreSingleton(const Scorer* scorer) noexcept {
   return scorer == &ForceConstScore() || scorer == &DefaultConstScore();
 }
 
+inline bool IsConstantScore(const Scorer* scorer) noexcept {
+  return scorer && scorer->type() == Type<ConstantScore>::id();
+}
+
 inline bool NeedsTermStats(const Scorer& scorer) {
   return scorer.stats_size() != 0 ||
          scorer.GetIndexFeatures() != IndexFeatures::None;

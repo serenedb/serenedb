@@ -164,7 +164,7 @@ ROLLBACK;
 
 
 query
-SELECT count(*) FROM duckdb_tables() WHERE table_name IN ('cdw_ddl_t', 'other_ddl_t');
+SELECT count(*) FROM sdb_tables() WHERE table_name IN ('cdw_ddl_t', 'other_ddl_t');
 ----
 count
 0

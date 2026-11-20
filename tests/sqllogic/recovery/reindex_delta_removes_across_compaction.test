@@ -28,7 +28,7 @@ COPY (SELECT i AS id, 'doc ' || i AS body FROM range(5, 8) t(i)) TO '${__TEST_DI
 
 
 query
-SELECT * FROM serenedb_reindex('rdrc_idx');
+SELECT * FROM sdb_reindex('rdrc_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	1	0	0	0
@@ -44,7 +44,7 @@ SET sdb_faults = 'reindex_delta_removes_resolved';
 
 connection reindexer
 statement async ok
-SELECT * FROM serenedb_reindex('rdrc_idx');
+SELECT * FROM sdb_reindex('rdrc_idx');
 
 
 connection default
@@ -81,7 +81,7 @@ n
 
 connection default
 query
-SELECT * FROM serenedb_reindex('rdrc_idx');
+SELECT * FROM sdb_reindex('rdrc_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0

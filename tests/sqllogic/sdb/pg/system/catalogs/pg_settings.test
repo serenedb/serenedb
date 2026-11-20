@@ -127,7 +127,7 @@ listed
 
 query
 SELECT count(*) AS listed
-FROM duckdb_settings()
+FROM sdb_settings()
 WHERE name IN ('is_superuser', 'role', 'session_authorization');
 ----
 listed

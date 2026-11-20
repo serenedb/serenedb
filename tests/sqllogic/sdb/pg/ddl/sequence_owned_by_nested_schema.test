@@ -58,7 +58,7 @@ DROP TABLE obns_inner.t;
 
 
 query
-SELECT sequence_name FROM duckdb_sequences() WHERE database_name = current_database() AND schema_name = 'obns_inner' ORDER BY 1;
+SELECT sequence_name FROM sdb_sequences() WHERE database_name = current_database() AND schema_name = 'obns_inner' ORDER BY 1;
 ----
 sequence_name
 altered
@@ -71,7 +71,7 @@ DROP TABLE obns_outer.obns_inner.t;
 
 
 query
-SELECT count(*) AS sequences FROM duckdb_sequences() WHERE database_name = current_database() AND schema_name = 'obns_inner';
+SELECT count(*) AS sequences FROM sdb_sequences() WHERE database_name = current_database() AND schema_name = 'obns_inner';
 ----
 sequences
 0
@@ -134,7 +134,7 @@ DROP TABLE obns_duck_${__DATABASE__}.a.b.t;
 
 
 query
-SELECT sequence_name FROM duckdb_sequences() WHERE database_name = 'obns_duck_${__DATABASE__}' ORDER BY 1;
+SELECT sequence_name FROM sdb_sequences() WHERE database_name = 'obns_duck_${__DATABASE__}' ORDER BY 1;
 ----
 sequence_name
 by_create
@@ -146,7 +146,7 @@ DROP TABLE obns_duck_${__DATABASE__}.b.t;
 
 
 query
-SELECT count(*) AS sequences FROM duckdb_sequences() WHERE database_name = 'obns_duck_${__DATABASE__}';
+SELECT count(*) AS sequences FROM sdb_sequences() WHERE database_name = 'obns_duck_${__DATABASE__}';
 ----
 sequences
 0

@@ -878,8 +878,8 @@ void PgWireSession<Kind>::CommitAndReportReady() {
   // overlay, so reporting afterwards tells the client the value it actually
   // keeps (and a set-then-reverted SET LOCAL nets to no message).
   ReportChangedParameters();
-  const auto status = _txn_state->StatusByte();
-  WriteReadyForQuery(this->_send, status);
+  _connection_ctx->ReportIdle();
+  WriteReadyForQuery(this->_send, _txn_state->StatusByte());
   this->KickSend();
 }
 

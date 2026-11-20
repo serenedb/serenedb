@@ -48,7 +48,7 @@ id	v
 
 connection t2
 query
-SELECT count(*) AS n FROM duckdb_tables() WHERE table_name = 'cru_ddl';
+SELECT count(*) AS n FROM sdb_tables() WHERE table_name = 'cru_ddl';
 ----
 n
 0
@@ -82,7 +82,7 @@ id	v	c
 
 connection after_crash
 query
-SELECT count(*) AS n FROM duckdb_tables() WHERE table_name = 'cru_ddl';
+SELECT count(*) AS n FROM sdb_tables() WHERE table_name = 'cru_ddl';
 ----
 n
 0

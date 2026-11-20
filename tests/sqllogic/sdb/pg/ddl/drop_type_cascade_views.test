@@ -73,7 +73,7 @@ payload
 
 
 query
-SELECT view_name FROM duckdb_views() WHERE schema_name = 'dtc' ORDER BY 1;
+SELECT view_name FROM sdb_views() WHERE schema_name = 'dtc' ORDER BY 1;
 ----
 view_name
 v_payload
@@ -96,7 +96,7 @@ ALTER TABLE dtc.records DROP COLUMN payload CASCADE;
 
 
 query
-SELECT view_name FROM duckdb_views() WHERE schema_name = 'dtc' ORDER BY 1;
+SELECT view_name FROM sdb_views() WHERE schema_name = 'dtc' ORDER BY 1;
 ----
 view_name
 v_id

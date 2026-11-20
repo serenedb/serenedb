@@ -97,7 +97,7 @@ int RunCLI(int argc, char* argv[], duckdb_shell::ShellSubcommand subcommand) {
   docs::RegisterShellDocsBackend();
   return duckdb_shell::Run(
     argc, argv, subcommand,
-    {.open = &OpenShellEngine, .close = &CloseShellEngine});
+    {.open = &OpenShellEngine, .close = &CloseShellEngine, .name = "sdb"});
 }
 
 int RunShell(int argc, char* argv[]) {

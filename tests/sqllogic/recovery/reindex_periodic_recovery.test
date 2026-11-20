@@ -82,7 +82,7 @@ count
 
 connection e1_after
 statement ok
-CALL serenedb_reindex('rpr_quiet_idx');
+CALL sdb_reindex('rpr_quiet_idx');
 
 connection e1_after
 query
@@ -149,7 +149,7 @@ count
 # has no caller and stays gated on the GLOBAL.
 connection e2_after
 statement ok
-CALL serenedb_reindex('rpr_ice_idx');
+CALL sdb_reindex('rpr_ice_idx');
 
 connection e2_after
 query

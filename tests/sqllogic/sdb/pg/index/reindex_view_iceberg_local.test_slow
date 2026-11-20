@@ -47,7 +47,7 @@ count
 5
 
 query
-SELECT action FROM serenedb_reindex('reil_plain_idx');
+SELECT action FROM sdb_reindex('reil_plain_idx');
 ----
 action
 up_to_date
@@ -59,7 +59,7 @@ ln -sfn ${RESOURCES}/tests/iceberg/plain_v2 $__TEST_DIR__/reil_plain && ln -sfn 
 # Partition rung: only partition a's two files (of four) count as changed;
 # the rescan goes through the iceberg reader, which applies the delete.
 query
-SELECT * FROM serenedb_reindex('reil_part_idx');
+SELECT * FROM sdb_reindex('reil_part_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	0	2	0	0
@@ -82,7 +82,7 @@ id	body
 # Global rung: unpartitioned, so the delete invalidates every file -- the
 # delta rescans the whole listing.
 query
-SELECT * FROM serenedb_reindex('reil_plain_idx');
+SELECT * FROM sdb_reindex('reil_plain_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	0	2	0	0
@@ -104,13 +104,13 @@ id
 # the delta on its rescans, a rebuild via its manifest capture (a refresh
 # that re-observed as changed would refresh forever).
 query
-SELECT action FROM serenedb_reindex('reil_plain_idx');
+SELECT action FROM sdb_reindex('reil_plain_idx');
 ----
 action
 up_to_date
 
 query
-SELECT action FROM serenedb_reindex('reil_part_idx');
+SELECT action FROM sdb_reindex('reil_part_idx');
 ----
 action
 up_to_date
@@ -139,7 +139,7 @@ system ok
 ln -sfn ${RESOURCES}/tests/iceberg/plain_v3 $__TEST_DIR__/reil_plain
 
 query
-SELECT * FROM serenedb_reindex('reil_plain_idx');
+SELECT * FROM sdb_reindex('reil_plain_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	1	2	0	0
@@ -164,7 +164,7 @@ id
 1
 
 query
-SELECT action FROM serenedb_reindex('reil_plain_idx');
+SELECT action FROM sdb_reindex('reil_plain_idx');
 ----
 action
 up_to_date
@@ -174,7 +174,7 @@ up_to_date
 # own scan over the STORED id values -- removed by pk, nothing rescanned
 # but the genuinely new data file.
 query
-SELECT * FROM serenedb_reindex('reil_plain_inc_idx');
+SELECT * FROM sdb_reindex('reil_plain_inc_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	1	2	0	0
@@ -188,7 +188,7 @@ id	body
 NULL	techies invisible
 
 query
-SELECT action FROM serenedb_reindex('reil_plain_inc_idx');
+SELECT action FROM sdb_reindex('reil_plain_inc_idx');
 ----
 action
 up_to_date
@@ -201,7 +201,7 @@ CREATE INDEX reil_plain_np_idx ON reil_plain_v USING inverted(body reil_en)
   INCLUDE (id) WITH (store_pk='none');
 
 query
-SELECT action FROM serenedb_reindex('reil_plain_np_idx');
+SELECT action FROM sdb_reindex('reil_plain_np_idx');
 ----
 action
 up_to_date
@@ -214,7 +214,7 @@ system ok
 ln -sfn ${RESOURCES}/tests/iceberg/plain_v4 $__TEST_DIR__/reil_plain
 
 query
-SELECT * FROM serenedb_reindex('reil_plain_idx');
+SELECT * FROM sdb_reindex('reil_plain_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	0	3	0	0
@@ -227,7 +227,7 @@ id	body
 3	vedernikoff pins snapshots
 
 query
-SELECT action FROM serenedb_reindex('reil_plain_idx');
+SELECT action FROM sdb_reindex('reil_plain_idx');
 ----
 action
 up_to_date
@@ -236,7 +236,7 @@ up_to_date
 # scan road too (`id IS NULL` over the stored values) -- and only the NEW
 # delete translates (the seq bound skips snapshot 3's applied one).
 query
-SELECT * FROM serenedb_reindex('reil_plain_inc_idx');
+SELECT * FROM sdb_reindex('reil_plain_inc_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	0	3	0	0
@@ -249,7 +249,7 @@ id	body
 3	vedernikoff pins snapshots
 
 query
-SELECT action FROM serenedb_reindex('reil_plain_inc_idx');
+SELECT action FROM sdb_reindex('reil_plain_inc_idx');
 ----
 action
 up_to_date
@@ -258,7 +258,7 @@ up_to_date
 # terms, so the index is not delta-capable at all -- every change takes
 # the rebuild road (the always-correct fallback below the scan road).
 query
-SELECT * FROM serenedb_reindex('reil_plain_np_idx');
+SELECT * FROM sdb_reindex('reil_plain_np_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 rebuild	0	3	0	3
@@ -272,7 +272,7 @@ id
 3
 
 query
-SELECT action FROM serenedb_reindex('reil_plain_np_idx');
+SELECT action FROM sdb_reindex('reil_plain_np_idx');
 ----
 action
 up_to_date
@@ -286,7 +286,7 @@ system ok
 ln -sfn ${RESOURCES}/tests/iceberg/plain_v5 $__TEST_DIR__/reil_plain
 
 query
-SELECT * FROM serenedb_reindex('reil_plain_idx');
+SELECT * FROM sdb_reindex('reil_plain_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	0	3	0	0
@@ -298,7 +298,7 @@ id	body
 1	pudge reborn
 
 query
-SELECT action FROM serenedb_reindex('reil_plain_idx');
+SELECT action FROM sdb_reindex('reil_plain_idx');
 ----
 action
 up_to_date
@@ -307,7 +307,7 @@ up_to_date
 # (id included, body analyzed) -- the whole row evaluates via the scan
 # road; same result as the keyed sibling.
 query
-SELECT * FROM serenedb_reindex('reil_plain_inc_idx');
+SELECT * FROM sdb_reindex('reil_plain_inc_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	0	3	0	0
@@ -324,7 +324,7 @@ system ok
 ln -sfn ${RESOURCES}/tests/iceberg/plain_v6 $__TEST_DIR__/reil_plain
 
 query
-SELECT * FROM serenedb_reindex('reil_plain_idx');
+SELECT * FROM sdb_reindex('reil_plain_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	1	3	0	0
@@ -342,7 +342,7 @@ system ok
 ln -sfn ${RESOURCES}/tests/iceberg/plain_v7 $__TEST_DIR__/reil_plain
 
 query
-SELECT * FROM serenedb_reindex('reil_plain_idx');
+SELECT * FROM sdb_reindex('reil_plain_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	0	4	0	0
@@ -355,7 +355,7 @@ id	body
 12	sniper stays back
 
 query
-SELECT action FROM serenedb_reindex('reil_plain_idx');
+SELECT action FROM sdb_reindex('reil_plain_idx');
 ----
 action
 up_to_date
@@ -368,7 +368,7 @@ system ok
 ln -sfn ${RESOURCES}/tests/iceberg/plain_v8 $__TEST_DIR__/reil_plain
 
 query
-SELECT action FROM serenedb_reindex('reil_plain_idx');
+SELECT action FROM sdb_reindex('reil_plain_idx');
 ----
 action
 up_to_date
@@ -382,7 +382,7 @@ id
 12
 
 query
-SELECT action FROM serenedb_reindex('reil_plain_idx');
+SELECT action FROM sdb_reindex('reil_plain_idx');
 ----
 action
 up_to_date
@@ -396,7 +396,7 @@ system ok
 ln -sfn ${RESOURCES}/tests/iceberg/part_v3 $__TEST_DIR__/reil_part
 
 query
-SELECT * FROM serenedb_reindex('reil_part_idx');
+SELECT * FROM sdb_reindex('reil_part_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	0	4	0	0
@@ -409,7 +409,7 @@ id	body
 3	vedernikoff reviews part b
 
 query
-SELECT action FROM serenedb_reindex('reil_part_idx');
+SELECT action FROM sdb_reindex('reil_part_idx');
 ----
 action
 up_to_date
@@ -421,7 +421,7 @@ system ok
 ln -sfn ${RESOURCES}/tests/iceberg/part_v4 $__TEST_DIR__/reil_part
 
 query
-SELECT * FROM serenedb_reindex('reil_part_idx');
+SELECT * FROM sdb_reindex('reil_part_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	0	2	0	0
@@ -433,7 +433,7 @@ id	body
 3	vedernikoff reviews part b
 
 query
-SELECT action FROM serenedb_reindex('reil_part_idx');
+SELECT action FROM sdb_reindex('reil_part_idx');
 ----
 action
 up_to_date
@@ -457,7 +457,7 @@ system ok
 ln -sfn ${RESOURCES}/tests/iceberg/part_v5 $__TEST_DIR__/reil_part
 
 query
-SELECT * FROM serenedb_reindex('reil_part_idx');
+SELECT * FROM sdb_reindex('reil_part_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	0	2	0	0
@@ -469,7 +469,7 @@ count
 0
 
 query
-SELECT action FROM serenedb_reindex('reil_part_idx');
+SELECT action FROM sdb_reindex('reil_part_idx');
 ----
 action
 up_to_date
@@ -479,7 +479,7 @@ up_to_date
 # road can evaluate it: the covered files demote to the rescan road, the
 # always-correct floor.
 query
-SELECT * FROM serenedb_reindex('reil_part_proj_idx');
+SELECT * FROM sdb_reindex('reil_part_proj_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	0	2	0	2
@@ -491,7 +491,7 @@ count
 0
 
 query
-SELECT action FROM serenedb_reindex('reil_part_proj_idx');
+SELECT action FROM sdb_reindex('reil_part_proj_idx');
 ----
 action
 up_to_date

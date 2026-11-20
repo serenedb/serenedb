@@ -46,6 +46,7 @@
 
 #include "network/pg/wire_frames.h"
 #include "pg/command_tag.h"
+#include "pg/progress_registry.h"
 #include "pg/serialize.h"
 
 namespace sdb::network::pg {
@@ -394,14 +395,14 @@ class ImplicitTxnState {
   // The ReadyForQuery status byte: 'I'dle (autocommit), in a 'T'ransaction
   // block, or 'E'rror (an aborted block, rejecting all but COMMIT/ROLLBACK).
   char StatusByte() const {
-    if (_txn.IsAutoCommit()) {
-      return 'I';
+    switch (sdb::pg::IdleState(_txn)) {
+      case sdb::pg::BackendState::Idle:
+        return 'I';
+      case sdb::pg::BackendState::IdleInTransactionAborted:
+        return 'E';
+      default:
+        return 'T';
     }
-    if (_txn.HasActiveTransaction() &&
-        duckdb::ValidChecker::IsInvalidated(_txn.ActiveTransaction())) {
-      return 'E';
-    }
-    return 'T';
   }
 
   // May this statement run? In an aborted block PG rejects everything except

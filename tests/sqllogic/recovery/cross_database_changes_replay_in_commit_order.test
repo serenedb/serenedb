@@ -71,7 +71,7 @@ n
 
 connection after_crash
 query
-SELECT count(*) AS n FROM duckdb_views() WHERE database_name = 'ccr_app' AND view_name = 'sales_report';
+SELECT count(*) AS n FROM sdb_views() WHERE database_name = 'ccr_app' AND view_name = 'sales_report';
 ----
 n
 0

@@ -37,7 +37,7 @@ COMMIT;
 
 connection t2
 query
-SELECT count(*) AS n FROM duckdb_tables() WHERE database_name = 'cfpr_a' AND table_name = 'x';
+SELECT count(*) AS n FROM sdb_tables() WHERE database_name = 'cfpr_a' AND table_name = 'x';
 ----
 n
 0

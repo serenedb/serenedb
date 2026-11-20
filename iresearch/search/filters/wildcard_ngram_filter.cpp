@@ -192,8 +192,7 @@ class GramQueryPreparer {
     if (grams.size() == 1) {
       const auto& part = grams.begin()->part;
       if (const auto* prefix = std::get_if<ByPrefixOptions>(&part)) {
-        return ByPrefix::PrepareSegment(_segment, _sub_ctx, _reader,
-                                        prefix->term);
+        return ByPrefix::PrepareSegment(_segment, _sub_ctx, _reader, *prefix);
       }
       return ByTerm::PrepareSegment(_segment, _sub_ctx, _reader,
                                     std::get<ByTermOptions>(part).term);

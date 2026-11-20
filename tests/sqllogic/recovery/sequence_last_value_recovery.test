@@ -63,7 +63,7 @@ SELECT 1;
 
 connection after_crash
 query
-SELECT last_value >= 128 AS ahead, nextval('slv_q') = last_value + 7 AS follows FROM duckdb_sequences() WHERE sequence_name = 'slv_q';
+SELECT last_value >= 128 AS ahead, nextval('slv_q') = last_value + 7 AS follows FROM sdb_sequences() WHERE sequence_name = 'slv_q';
 ----
 ahead	follows
 t	t
@@ -71,7 +71,7 @@ t	t
 
 connection after_crash
 query
-SELECT last_value IS NOT NULL AS known FROM duckdb_sequences() WHERE sequence_name = 'slv_c';
+SELECT last_value IS NOT NULL AS known FROM sdb_sequences() WHERE sequence_name = 'slv_c';
 ----
 known
 t
@@ -124,7 +124,7 @@ SELECT 1;
 
 connection after_second_crash
 query
-SELECT last_value >= 12 AS ahead, nextval('slv_k') = last_value + 1 AS follows FROM duckdb_sequences() WHERE sequence_name = 'slv_k';
+SELECT last_value >= 12 AS ahead, nextval('slv_k') = last_value + 1 AS follows FROM sdb_sequences() WHERE sequence_name = 'slv_k';
 ----
 ahead	follows
 t	t

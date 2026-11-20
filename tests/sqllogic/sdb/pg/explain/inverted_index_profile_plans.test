@@ -547,6 +547,221 @@ QUERY PLAN
 ╰──────────────────────────────────────────────────────────────────────────────────────╯
 
 
+# A pattern scores its constant once per row: a pruned disjunction takes it as
+# a member bounded by that constant.
+query
+EXPLAIN ANALYZE
+SELECT id
+FROM plans_idx
+WHERE body @@ ts_phrase('york city') OR body @@ ts_like('%w%')
+ORDER BY bm25(plans_idx.tableoid) DESC
+LIMIT 3;
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TABLE_SCAN ───────────────────────────────────────────────────────────╮
+│ Index: plans_idx                                                       │
+│ Lookup: search                                                         │
+│ Score: bm25(k1=1.2, b=0.75)                                            │
+│ Top: 3, optimized                                                      │
+│ Projections: id                                                        │
+│                                                                        │
+├─ Index Filter Prepare ─────────────────────────────────────────────────┤
+│                                                                        │
+│ Total: 0µs                                                             │
+│ Snapshot: 0µs                                                          │
+│ Segments: 1 of 1                                                       │
+│ Stats: 0µs                                                             │
+│                                                                        │
+│ ╭─ Or ───────────────────────────────╮                                 │
+│ │ Estimated Matches: 100,000         │                                 │
+│ │ Total: 0µs                         │                                 │
+│ │ Time: 0µs                          │                                 │
+│ ╰──────────────────┬─────────────────╯                                 │
+│                    ├───────────────────────────────────╮               │
+│ ╭─ Phrase ─────────┴─────────────────╮  ╭─ Automaton ──┴─────────────╮ │
+│ │ Field: body(string)                │  │ Field: body(string)        │ │
+│ │ Parts:                             │  │ Pattern: %w%               │ │
+│ │ Term:york(0, 0); Term:city(1, 1);  │  │ Posting Lists: 3           │ │
+│ │ Posting Lists: 2                   │  │ Estimated Matches: 100,000 │ │
+│ │ Estimated Matches: 27,368          │  │ Postings: 101,816          │ │
+│ │ Postings: 91,430                   │  │ Time: 0µs                  │ │
+│ │ Time: 0µs                          │  ╰────────────────────────────╯ │
+│ ╰────────────────────────────────────╯                                 │
+│                                                                        │
+├─ Index Filter Execute ─────────────────────────────────────────────────┤
+│                                                                        │
+│ Total: 0µs                                                             │
+│ Rows: 39,718                                                           │
+│                                                                        │
+│ ╭─ top::PrunedDisjunction ─╮                                           │
+│ │ Plans: 1                 │                                           │
+│ │ Calls: 1                 │                                           │
+│ │ Plan: 0µs                │                                           │
+│ │ Total: 0µs               │                                           │
+│ │ Time: 0µs                │                                           │
+│ │ Rows: 39,718             │                                           │
+│ ╰─────────────┬────────────╯                                           │
+│               ├──────────────────────────────╮                         │
+│ ╭─ top::PhraseUnionMember ─╮  ╭─ top::ConstantUnionMember ─╮           │
+│ │ Filter: Phrase           │  │ Filter: Automaton          │           │
+│ │ Plans: 1                 │  │ Plans: 1                   │           │
+│ │ Calls: 8                 │  │ Calls: 1,120               │           │
+│ │ Timed: 2                 │  │ Timed: 1,115               │           │
+│ │ Time: 0µs                │  │ Time: 0µs                  │           │
+│ │ Rows: 36,473             │  │ Rows: 38,869               │           │
+│ ╰──────────────────────────╯  ╰────────────────────────────╯           │
+│                                                                        │
+├────────────────────────────────────────────────────────────────────────┤
+│ 3 rows                                                             0µs │
+╰────────────────────────────────────────────────────────────────────────╯
+
+
+# Next to a word without score bounds (the column keeps no norms), the pattern
+# is a row of its own in the window: the union of its words, given its constant
+# once per row.
+query
+EXPLAIN ANALYZE
+SELECT id
+FROM plans_idx
+WHERE body @@ 'city' OR body @@ ts_like('%o%')
+ORDER BY bm25(plans_idx.tableoid) DESC
+LIMIT 3;
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TABLE_SCAN ──────────────────────────────────────────────────────────────╮
+│ Index: plans_idx                                                          │
+│ Lookup: search                                                            │
+│ Score: bm25(k1=1.2, b=0.75)                                               │
+│ Top: 3, optimized                                                         │
+│ Projections: id                                                           │
+│                                                                           │
+├─ Index Filter Prepare ────────────────────────────────────────────────────┤
+│                                                                           │
+│ Total: 0µs                                                                │
+│ Snapshot: 0µs                                                             │
+│ Segments: 1 of 1                                                          │
+│ Stats: 0µs                                                                │
+│                                                                           │
+│ ╭─ Or ───────────────────────╮                                            │
+│ │ Posting Lists: 1           │                                            │
+│ │ Estimated Matches: 100,000 │                                            │
+│ │ Postings: 37,144           │                                            │
+│ │ Total: 0µs                 │                                            │
+│ │ Time: 0µs                  │                                            │
+│ ╰──────────────┬─────────────╯                                            │
+│                ├───────────────────────────────╮                          │
+│ ╭─ Terms ──────┴─────────────╮  ╭─ Automaton ──┴─────────────╮            │
+│ │ Field: body(string)        │  │ Field: body(string)        │            │
+│ │ Values: 'city'             │  │ Pattern: %o%               │            │
+│ ╰────────────────────────────╯  │ Posting Lists: 4           │            │
+│                                 │ Estimated Matches: 100,000 │            │
+│                                 │ Postings: 170,388          │            │
+│                                 │ Time: 0µs                  │            │
+│                                 ╰────────────────────────────╯            │
+│                                                                           │
+├─ Index Filter Execute ────────────────────────────────────────────────────┤
+│                                                                           │
+│ Total: 0µs                                                                │
+│ Rows: 100,000                                                             │
+│                                                                           │
+│ ╭─ top::BooleanWindow ───────────╮                                        │
+│ │ Plans: 1                       │                                        │
+│ │ Calls: 1                       │                                        │
+│ │ Plan: 0µs                      │                                        │
+│ │ Total: 0µs                     │                                        │
+│ │ Time: 0µs                      │                                        │
+│ │ Rows: 100,000                  │                                        │
+│ ╰────────────────┬───────────────╯                                        │
+│                  ├────────────────────────────────────╮                   │
+│ ╭─ fill::Impl<fill::BitsetDocs> ─╮  ╭─ fill::Impl<fill::BooleanWindow> ─╮ │
+│ │ Filter: Automaton              │  │ Filter: Automaton                 │ │
+│ │ Plans: 1                       │  │ Plans: 1                          │ │
+│ │ Calls: 25                      │  │ Calls: 25                         │ │
+│ │ Time: 0µs                      │  │ Time: 0µs                         │ │
+│ │ Rows: 100,000                  │  │ Rows: 62,856                      │ │
+│ ╰────────────────────────────────╯  ╰───────────────────────────────────╯ │
+│                                                                           │
+├───────────────────────────────────────────────────────────────────────────┤
+│ 3 rows                                                                0µs │
+╰───────────────────────────────────────────────────────────────────────────╯
+
+
+# A scored stream over a pattern reads its rows from the union of the
+# pattern's words and gives each the constant.
+query
+EXPLAIN ANALYZE
+SELECT id
+FROM plans_idx
+WHERE body @@ ts_like('%o%') AND bm25(plans_idx.tableoid) > 0.5
+ORDER BY id
+LIMIT 3;
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TOP_N ──────────────────────────────────────────────────────────────╮
+│ Top: 3                                                               │
+│ Order By: id ASC                                                     │
+│ 3 rows                                                           0µs │
+╰───────────────────────────────────┒┎─────────────────────────────────╯
+╭─ TABLE_SCAN ──────────────────────┚┖─────────────────────────────────╮
+│ Index: plans_idx                                                     │
+│ Lookup: search                                                       │
+│ Score: bm25(k1=1.2, b=0.75)                                          │
+│ Min Score: 0.5                                                       │
+│ Projections: id                                                      │
+│                                                                      │
+├─ Index Filter Prepare ───────────────────────────────────────────────┤
+│                                                                      │
+│ Total: 0µs                                                           │
+│ Snapshot: 0µs                                                        │
+│ Segments: 1 of 1                                                     │
+│ Stats: 0µs                                                           │
+│                                                                      │
+│ ╭─ Automaton ────────────────╮                                       │
+│ │ Field: body(string)        │                                       │
+│ │ Pattern: %o%               │                                       │
+│ │ Posting Lists: 4           │                                       │
+│ │ Estimated Matches: 100,000 │                                       │
+│ │ Postings: 170,388          │                                       │
+│ │ Time: 0µs                  │                                       │
+│ ╰────────────────────────────╯                                       │
+│                                                                      │
+├─ Index Filter Execute ───────────────────────────────────────────────┤
+│                                                                      │
+│ Total: 0µs                                                           │
+│ Rows: 100,000                                                        │
+│                                                                      │
+│ ╭─ hits::BooleanWindow ─╮                                            │
+│ │ Plans: 1              │                                            │
+│ │ Calls: 49             │                                            │
+│ │ Plan: 0µs             │                                            │
+│ │ Time: 0µs             │                                            │
+│ │ Rows: 100,000         │                                            │
+│ ╰───────────────────────╯                                            │
+│                                                                      │
+├─ Column Filter ──────────────────────────────────────────────────────┤
+│                                                                      │
+│ ╭─ And ────────────────────────────────────╮                         │
+│ ╰─────────────────────┬────────────────────╯                         │
+│                       ├──────────────────────────────────╮           │
+│ ╭─ Dynamic Column ────┴────────────────────╮  ╭─ Score ──┴─────────╮ │
+│ │ Field: id                                │  │ Field: score       │ │
+│ │ Check: optional: Dynamic Filter (id < ?) │  │ Check: score > 0.5 │ │
+│ ╰──────────────────────────────────────────╯  ╰────────────────────╯ │
+│                                                                      │
+├──────────────────────────────────────────────────────────────────────┤
+│ 2,048 rows                                                       0µs │
+╰──────────────────────────────────────────────────────────────────────╯
+
+
 query
 EXPLAIN ANALYZE
 SELECT id

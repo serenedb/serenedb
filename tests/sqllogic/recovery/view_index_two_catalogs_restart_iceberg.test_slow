@@ -99,14 +99,14 @@ count
 
 connection after_crash
 query
-SELECT * FROM serenedb_reindex('vtcr_a_idx');
+SELECT * FROM sdb_reindex('vtcr_a_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0
 
 connection after_crash
 query
-SELECT * FROM serenedb_reindex('vtcr_b_idx');
+SELECT * FROM sdb_reindex('vtcr_b_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0
@@ -117,14 +117,14 @@ INSERT INTO vtcr_b.${__DATABASE__}_b.docs VALUES (4, 'mines in catalog b');
 
 connection after_crash
 query
-SELECT * FROM serenedb_reindex('vtcr_a_idx');
+SELECT * FROM sdb_reindex('vtcr_a_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0
 
 connection after_crash
 query
-SELECT * FROM serenedb_reindex('vtcr_b_idx');
+SELECT * FROM sdb_reindex('vtcr_b_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	1	0	0	0

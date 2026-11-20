@@ -131,7 +131,7 @@ n
 
 
 query
-SELECT index_name FROM duckdb_indexes()
+SELECT index_name FROM sdb_indexes()
 WHERE index_name IN ('irb_ok_sec', 'irb_ok_inv', 'irb_rb_sec', 'irb_rb_inv')
 ORDER BY 1;
 ----
@@ -178,7 +178,7 @@ db error: ERROR: Table with name irb_rb_inv does not exist!<slt:ignore>
 # The committed ones did, with the comment the rollback left them.
 connection after_crash
 query
-SELECT index_name || ' ' || comment AS c FROM duckdb_indexes()
+SELECT index_name || ' ' || comment AS c FROM sdb_indexes()
 WHERE index_name IN ('irb_ok_sec', 'irb_ok_inv') ORDER BY 1;
 ----
 c

@@ -31,13 +31,8 @@ namespace irs::detail {
 template<typename Family>
 typename Family::Result MakeApprox(const ApproxQuery& query,
                                    const typename Family::ScoredContext& ctx) {
-  using Result = typename Family::Result;
-  auto node = PlanApprox<Result>(query.Approx(), Family::Interrogations(ctx));
-  if (!node) {
-    return {};
-  }
-  return Family::template Constant<ApproxNode<Result>>(
-    ctx, AllDocsScoreOf(query, Family::Scoring(ctx)), std::move(node));
+  return PlanConstant<Family>(query.Approx(),
+                              AllDocsScoreOf(query, Family::Scoring(ctx)), ctx);
 }
 
 }  // namespace irs::detail

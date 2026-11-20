@@ -22,7 +22,7 @@ DROP DATABASE "DdqMixed";
 
 
 query
-SELECT count(*) AS n FROM duckdb_databases() WHERE database_name = 'DdqMixed';
+SELECT count(*) AS n FROM sdb_databases() WHERE database_name = 'DdqMixed';
 ----
 n
 0

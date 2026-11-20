@@ -155,6 +155,7 @@ void Bm25TestCase::TestQueryNorms() {
     irs::ByRange filter;
     *filter.mutable_field_id() = kField;
     filter.SetScorer(&scorer);
+    filter.mutable_options()->merge = irs::ScoreMergeType::Sum;
     filter.mutable_options()->range.min =
       irs::ViewCast<irs::byte_type>(std::string_view("6"));
     filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
@@ -203,6 +204,7 @@ void Bm25TestCase::TestQueryNorms() {
     irs::ByRange filter;
     *filter.mutable_field_id() = kField;
     filter.SetScorer(&scorer);
+    filter.mutable_options()->merge = irs::ScoreMergeType::Sum;
     filter.mutable_options()->range.min =
       irs::ViewCast<irs::byte_type>(std::string_view("6"));
     filter.mutable_options()->range.min_type = irs::BoundType::Inclusive;
@@ -959,6 +961,7 @@ TEST_P(Bm25TestCase, test_query) {
     irs::ByPrefix filter;
     *filter.mutable_field_id() = kPrefix;
     filter.SetScorer(&scorer);
+    filter.mutable_options()->merge = irs::ScoreMergeType::Sum;
     filter.mutable_options()->term =
       irs::ViewCast<irs::byte_type>(std::string_view(""));
 
@@ -1014,6 +1017,7 @@ TEST_P(Bm25TestCase, test_query) {
     irs::ByRange filter;
     *filter.mutable_field_id() = kField;
     filter.SetScorer(&scorer);
+    filter.mutable_options()->merge = irs::ScoreMergeType::Sum;
     filter.mutable_options()->range.min =
       irs::ViewCast<irs::byte_type>(std::string_view("6"));
     filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
@@ -1060,6 +1064,7 @@ TEST_P(Bm25TestCase, test_query) {
     irs::ByRange filter;
     *filter.mutable_field_id() = kField;
     filter.SetScorer(&scorer);
+    filter.mutable_options()->merge = irs::ScoreMergeType::Sum;
     filter.mutable_options()->range.min =
       irs::ViewCast<irs::byte_type>(std::string_view("8"));
     filter.mutable_options()->range.min_type = irs::BoundType::Inclusive;
@@ -1106,6 +1111,7 @@ TEST_P(Bm25TestCase, test_query) {
     irs::ByRange filter;
     *filter.mutable_field_id() = kField;
     filter.SetScorer(&scorer);
+    filter.mutable_options()->merge = irs::ScoreMergeType::Sum;
     filter.mutable_options()->range.min =
       irs::ViewCast<irs::byte_type>(std::string_view("6"));
     filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
@@ -1152,6 +1158,7 @@ TEST_P(Bm25TestCase, test_query) {
     irs::ByRange filter;
     *filter.mutable_field_id() = kField;
     filter.SetScorer(&scorer);
+    filter.mutable_options()->merge = irs::ScoreMergeType::Sum;
     filter.mutable_options()->range.min =
       irs::ViewCast<irs::byte_type>(std::string_view("6"));
     filter.mutable_options()->range.min_type = irs::BoundType::Inclusive;

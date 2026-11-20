@@ -659,7 +659,8 @@ def phase_bulk(args, out, blobs):
         drop_cache(args.hits)
         log("bulk: flush and compact")
         res["flush"], _ = server.timed("VACUUM (FLUSH_TABLE) hits")
-        res["compact"], _ = server.timed("VACUUM (COMPACT_TABLE) hits")
+        if args.bulk_compact:
+            res["compact"], _ = server.timed("VACUUM (COMPACT_TABLE) hits")
         res["table"] = server.relation_metrics("hits")
         rows = server.sql("SELECT count(*) FROM hits")[0][0]
         url = server.sql("SELECT \"URL\" FROM hits WHERE \"URL\" <> '' LIMIT 1")[0][0]
@@ -775,6 +776,7 @@ SUMMARY = [
     ("bulk: compact s", "bulk.compact.s"),
     ("bulk: compact cpu s", "bulk.compact.cpu_s"),
     ("bulk: data dir bytes", "bulk.data_dir_bytes"),
+    ("bulk: segments", "bulk.files.hits.col.files"),
     ("bulk: .col bytes", "bulk.files.hits.col.bytes"),
     ("bulk: .col footer bytes", "bulk.files.hits.col.footer_bytes"),
     ("bulk: .idx bytes", "bulk.files.hits.idx.bytes"),
@@ -895,6 +897,12 @@ def main():
     r.add_argument("--update-rows", type=int, default=1000000)
     r.add_argument("--update-commits", type=int, default=20)
     r.add_argument("--bulk-rows", type=int, default=0, help="0 loads the whole parquet")
+    r.add_argument(
+        "--bulk-compact",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="merge the loaded segments into one before the cold open",
+    )
     r.add_argument("--hnsw-rows", type=int, default=100000)
     r.add_argument("--hnsw-m", type=int, default=16)
     r.add_argument("--dim", type=int, default=1536)

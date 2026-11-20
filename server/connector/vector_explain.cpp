@@ -20,7 +20,6 @@
 
 #include "connector/vector_explain.h"
 
-#include <absl/algorithm/container.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/substitute.h>
@@ -40,19 +39,17 @@ struct DistanceFunction {
 };
 
 DistanceFunction DistanceFunctionOf(const VectorScorerOptions& vs) {
-  const bool norm =
-    absl::c_all_of(vs.query_vector, [](float value) { return value == 0.f; });
   switch (vs.metric) {
     case irs::VectorMetric::L2Sqr:
       if (vs.score_emit == ScoreEmit::ZeroMinus) {
         return {kL2SqrDistance, "sum(($0[i] - query[i])^2)"};
       }
-      if (norm) {
+      if (vs.norm) {
         return {kL2Norm, "sqrt(sum($0[i]^2))"};
       }
       return {kL2Distance, "sqrt(sum(($0[i] - query[i])^2))"};
     case irs::VectorMetric::L1:
-      if (norm) {
+      if (vs.norm) {
         return {kL1Norm, "sum(abs($0[i]))"};
       }
       return {kL1Distance, "sum(abs($0[i] - query[i]))"};

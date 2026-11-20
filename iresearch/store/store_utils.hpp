@@ -30,6 +30,7 @@
 #include "iresearch/utils/attributes.hpp"
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/number_utils.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/std.hpp"
@@ -247,6 +248,35 @@ class BytesViewInput : public IndexInput {
 
   bytes_view _data;
   const byte_type* _pos = _data.data();
+};
+
+enum class InputKey : uint8_t {
+  Mapped,
+  Stream,
+};
+
+struct InputAxis : Axis<InputKey::Mapped, InputKey::Stream> {
+  static InputKey Of(const IndexInput& in) noexcept {
+    return in.GetType() == DataInput::Type::BytesViewInput ? InputKey::Mapped
+                                                           : InputKey::Stream;
+  }
+
+  static InputKey Of(const IndexInput* in) noexcept {
+    return in ? Of(*in) : InputKey::Stream;
+  }
+
+  template<InputKey K, typename F>
+  IRS_FORCE_INLINE static decltype(auto) Call(F&& f) {
+    using Input =
+      std::conditional_t<K == InputKey::Mapped, BytesViewInput, IndexInput>;
+    return std::forward<F>(f).template operator()<Input>();
+  }
+};
+
+template<typename T>
+  requires std::derived_from<T, IndexInput>
+struct AxisFor<T> {
+  using Type = InputAxis;
 };
 
 // same as BytesViewInput but with support of adress remapping

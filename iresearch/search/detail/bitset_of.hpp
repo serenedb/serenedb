@@ -333,7 +333,7 @@ inline constexpr size_t kWindowLeafBytes =
 
 inline bool FoldIsSmaller(size_t terms, const IndexInput& doc,
                           doc_id_t docs_count) noexcept {
-  const uint64_t leaf = ResolveInput(doc, []<typename Input> -> uint64_t {
+  const uint64_t leaf = Resolve(doc, []<typename Input> -> uint64_t {
     return kWindowLeafBytes<PostingFill<Input>>;
   });
   return terms * leaf >= (uint64_t{docs_count} + doc_limits::min()) / 8;
@@ -428,34 +428,43 @@ inline bool TakeConjunctionFold(const BitsetBuckets& buckets,
 }
 
 template<typename Result>
+struct BitsetNode;
+
+template<>
+struct BitsetNode<FillNode::ptr> {
+  template<typename P>
+  static FillNode::ptr Make(BitsetBuckets&& buckets, const IndexInput& doc,
+                            doc_id_t docs_count, TableFilter*) {
+    return memory::make_managed<fill::Impl<fill::BitsetDocs>>(
+      BuildBitset<P>(buckets, doc, docs_count));
+  }
+};
+
+template<>
+struct BitsetNode<ProbeNode::ptr> {
+  template<typename P>
+  static ProbeNode::ptr Make(BitsetBuckets&& buckets, const IndexInput& doc,
+                             doc_id_t docs_count, TableFilter*) {
+    return memory::make_managed<probe::Impl<probe::BitsetDocs>>(
+      BuildBitset<P>(buckets, doc, docs_count));
+  }
+};
+
+template<>
+struct BitsetNode<LeadNode::ptr> {
+  template<typename P>
+  static LeadNode::ptr Make(BitsetBuckets&& buckets, const IndexInput& doc,
+                            doc_id_t docs_count, TableFilter*) {
+    return memory::make_managed<lead::Impl<lead::BitsetDocs>>(
+      BuildBitset<P>(buckets, doc, docs_count));
+  }
+};
+
+template<typename Result, typename P = NoPins>
 Result MakeBitsetNode(BitsetBuckets&& buckets, const IndexInput& doc,
-                      doc_id_t docs_count, TableFilter* table);
-
-template<>
-inline FillNode::ptr MakeBitsetNode<FillNode::ptr>(BitsetBuckets&& buckets,
-                                                   const IndexInput& doc,
-                                                   doc_id_t docs_count,
-                                                   TableFilter*) {
-  return memory::make_managed<fill::Impl<fill::BitsetDocs>>(
-    BuildBitset(buckets, doc, docs_count));
-}
-
-template<>
-inline ProbeNode::ptr MakeBitsetNode<ProbeNode::ptr>(BitsetBuckets&& buckets,
-                                                     const IndexInput& doc,
-                                                     doc_id_t docs_count,
-                                                     TableFilter*) {
-  return memory::make_managed<probe::Impl<probe::BitsetDocs>>(
-    BuildBitset(buckets, doc, docs_count));
-}
-
-template<>
-inline LeadNode::ptr MakeBitsetNode<LeadNode::ptr>(BitsetBuckets&& buckets,
-                                                   const IndexInput& doc,
-                                                   doc_id_t docs_count,
-                                                   TableFilter*) {
-  return memory::make_managed<lead::Impl<lead::BitsetDocs>>(
-    BuildBitset(buckets, doc, docs_count));
+                      doc_id_t docs_count, TableFilter* table) {
+  return BitsetNode<Result>::template Make<P>(std::move(buckets), doc,
+                                              docs_count, table);
 }
 
 template<typename Term>
@@ -470,35 +479,45 @@ BitsetBuckets DisjunctionBuckets(std::span<const Term> terms,
   return buckets;
 }
 
-template<typename Result, typename Term>
+template<typename Result, typename P = NoPins, typename Term>
 Result MakeBitsetOf(std::span<const Term> terms, const TermReader* field,
                     const IndexInput& doc, doc_id_t docs_count,
                     TableFilter* table) {
   if (!TakeBitset<Result>(terms, doc, docs_count)) {
     return {};
   }
-  return MakeBitsetNode<Result>(DisjunctionBuckets(terms, field), doc,
-                                docs_count, table);
+  return MakeBitsetNode<Result, P>(DisjunctionBuckets(terms, field), doc,
+                                   docs_count, table);
 }
 
 template<typename Result>
+struct ConstantBitsetNode;
+
+template<>
+struct ConstantBitsetNode<ProbeNode::ptr> {
+  template<typename P>
+  static ProbeNode::ptr Make(BitsetBuckets&& buckets, const IndexInput& doc,
+                             doc_id_t docs_count, score_t value) {
+    return memory::make_managed<probe::ConstantScoredImpl<probe::BitsetDocs>>(
+      value, BuildBitset<P>(buckets, doc, docs_count));
+  }
+};
+
+template<>
+struct ConstantBitsetNode<LeadNode::ptr> {
+  template<typename P>
+  static LeadNode::ptr Make(BitsetBuckets&& buckets, const IndexInput& doc,
+                            doc_id_t docs_count, score_t value) {
+    return memory::make_managed<lead::ConstantScoredImpl<lead::BitsetDocs>>(
+      value, BuildBitset<P>(buckets, doc, docs_count));
+  }
+};
+
+template<typename Result, typename P = NoPins>
 Result MakeConstantBitsetNode(BitsetBuckets&& buckets, const IndexInput& doc,
-                              doc_id_t docs_count, score_t value);
-
-template<>
-inline ProbeNode::ptr MakeConstantBitsetNode<ProbeNode::ptr>(
-  BitsetBuckets&& buckets, const IndexInput& doc, doc_id_t docs_count,
-  score_t value) {
-  return memory::make_managed<probe::ConstantScoredImpl<probe::BitsetDocs>>(
-    value, BuildBitset(buckets, doc, docs_count));
-}
-
-template<>
-inline LeadNode::ptr MakeConstantBitsetNode<LeadNode::ptr>(
-  BitsetBuckets&& buckets, const IndexInput& doc, doc_id_t docs_count,
-  score_t value) {
-  return memory::make_managed<lead::ConstantScoredImpl<lead::BitsetDocs>>(
-    value, BuildBitset(buckets, doc, docs_count));
+                              doc_id_t docs_count, score_t value) {
+  return ConstantBitsetNode<Result>::template Make<P>(std::move(buckets), doc,
+                                                      docs_count, value);
 }
 
 }  // namespace irs::detail

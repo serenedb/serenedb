@@ -33,7 +33,6 @@
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/memory.hpp"
-#include "iresearch/utils/misc.hpp"
 
 namespace irs {
 namespace {

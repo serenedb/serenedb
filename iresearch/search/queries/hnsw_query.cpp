@@ -38,7 +38,7 @@
 #include "iresearch/search/docs/make.hpp"
 #include "iresearch/search/queries/vector_similarity_query.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
-#include "iresearch/utils/misc.hpp"
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -142,24 +142,22 @@ void WithHnswDist(const HnswData& data, std::span<const float> query,
     fn(dist);
     return;
   }
-  ResolveEnum<VectorMetric>(
-    EffectiveQuantMetric(metric), [&]<VectorMetric M>() {
-      if constexpr (M == VectorMetric::L2Sqr ||
-                    M == VectorMetric::InnerProduct) {
-        if (panorama) {
-          HnswPanoramaDist<M> dist{.base = data.vectors.data(),
-                                   .d = d,
-                                   .q = panorama->rotated.data(),
-                                   .tails = panorama->tails.data(),
-                                   .norms = data.norms.data()};
-          fn(dist);
-          return;
-        }
+  Resolve(EffectiveQuantMetric(metric), [&]<VectorMetric M>() {
+    if constexpr (M == VectorMetric::L2Sqr || M == VectorMetric::InnerProduct) {
+      if (panorama) {
+        HnswPanoramaDist<M> dist{.base = data.vectors.data(),
+                                 .d = d,
+                                 .q = panorama->rotated.data(),
+                                 .tails = panorama->tails.data(),
+                                 .norms = data.norms.data()};
+        fn(dist);
+        return;
       }
-      HnswQueryDist<M> dist{
-        .base = data.vectors.data(), .d = d, .q = query.data()};
-      fn(dist);
-    });
+    }
+    HnswQueryDist<M> dist{
+      .base = data.vectors.data(), .d = d, .q = query.data()};
+    fn(dist);
+  });
 }
 
 std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
@@ -601,7 +599,7 @@ HnswQuery::HnswQuery(const SubReader& segment,
 template<typename Dist>
 void HnswQuery::RunRadius(Dist& dist, detail::TableFilter* table,
                           HnswSearchScratch& scratch) const {
-  ResolveBool(_inclusive, [&]<bool Inclusive>() {
+  Resolve(_inclusive, [&]<bool Inclusive>() {
     if (!_inner && !table) {
       HnswSearchRadius<Inclusive>(_data->graph, dist, _threshold, _max_results,
                                   scratch);
@@ -685,7 +683,7 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
   const auto run = [&](const auto& acc) {
     bool done = false;
     if (plan.walks) {
-      ResolveEnum<HnswWalk>(plan.walk, [&]<HnswWalk Walk>() {
+      Resolve(plan.walk, [&]<HnswWalk Walk>() {
         done =
           walked(HnswSearchTopK<Walk>(graph, dist, _ef, scratch, acc, budget));
       });

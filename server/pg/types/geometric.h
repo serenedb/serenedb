@@ -27,6 +27,7 @@
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/function/cast/cast_function_set.hpp>
+#include <iresearch/utils/dispatch.hpp>
 #include <iresearch/utils/pg/sql_error.hpp>
 #include <iresearch/utils/system_compiler.hpp>
 #include <optional>
@@ -64,26 +65,37 @@ duckdb::LogicalType CIRCLE();
 
 std::optional<Geometric> GeometricOf(const duckdb::LogicalType& type);
 
-template<typename Visit>
-decltype(auto) VisitGeometric(Geometric kind, Visit&& visit) {
-  switch (kind) {
-    case Geometric::Point:
-      return visit.template operator()<Geometric::Point>();
-    case Geometric::Line:
-      return visit.template operator()<Geometric::Line>();
-    case Geometric::Lseg:
-      return visit.template operator()<Geometric::Lseg>();
-    case Geometric::Box:
-      return visit.template operator()<Geometric::Box>();
-    case Geometric::Path:
-      return visit.template operator()<Geometric::Path>();
-    case Geometric::Polygon:
-      return visit.template operator()<Geometric::Polygon>();
-    case Geometric::Circle:
-      return visit.template operator()<Geometric::Circle>();
+struct GeometricAxis : irs::EnumAxis<Geometric> {
+  template<typename Visit>
+  static decltype(auto) Dispatch(Geometric kind, Visit&& visit) {
+    switch (kind) {
+      case Geometric::Point:
+        return visit.template operator()<Geometric::Point>();
+      case Geometric::Line:
+        return visit.template operator()<Geometric::Line>();
+      case Geometric::Lseg:
+        return visit.template operator()<Geometric::Lseg>();
+      case Geometric::Box:
+        return visit.template operator()<Geometric::Box>();
+      case Geometric::Path:
+        return visit.template operator()<Geometric::Path>();
+      case Geometric::Polygon:
+        return visit.template operator()<Geometric::Polygon>();
+      case Geometric::Circle:
+        return visit.template operator()<Geometric::Circle>();
+    }
+    SDB_UNREACHABLE();
   }
-  SDB_UNREACHABLE();
-}
+};
+
+}  // namespace sdb::pg
+
+template<>
+struct irs::AxisFor<sdb::pg::Geometric> {
+  using Type = sdb::pg::GeometricAxis;
+};
+
+namespace sdb::pg {
 
 std::optional<irs::pg::SqlErrorData> ParseGeometric(Geometric kind,
                                                     std::string_view text,

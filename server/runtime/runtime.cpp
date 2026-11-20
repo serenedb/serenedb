@@ -23,6 +23,7 @@
 #include <absl/flags/flag.h>
 
 #include <duckdb/parallel/task_scheduler.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <yaclib/async/contract.hpp>
 

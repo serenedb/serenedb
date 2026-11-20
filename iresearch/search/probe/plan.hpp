@@ -41,7 +41,7 @@
 
 namespace irs::probe {
 
-template<typename Result, typename Make>
+template<typename Result, typename P = NoPins, typename Make>
 Result ResolvePostingDocs(const detail::PostingClause& posting, Make&& make) {
   const auto& meta = posting.state.cookie;
   SDB_ASSERT(meta.docs_count != 0);
@@ -49,12 +49,10 @@ Result ResolvePostingDocs(const detail::PostingClause& posting, Make&& make) {
     return make.template operator()<SinglePostingDocs>(meta);
   }
   const auto& own = *posting.state.reader;
-  return detail::ResolveInput(
-    *detail::DocOf(own), [&]<typename Input> -> Result {
-      return make.template operator()<detail::PostingProbe<Input>>(
-        meta, *detail::DocOf(own), detail::LayoutOf(own),
-        detail::BoundsOf(own));
-    });
+  return Resolve<P>(*detail::DocOf(own), [&]<typename Input> -> Result {
+    return make.template operator()<detail::PostingProbe<Input>>(
+      meta, *detail::DocOf(own), detail::LayoutOf(own), detail::BoundsOf(own));
+  });
 }
 
 template<typename Scoring>
@@ -85,7 +83,7 @@ Node::ptr MakeSparseDisjunction(
     terms, filters, field, segment, interrogations, detail::ProbeOrder::Densest,
     scoring, ClauseFor(segment, ctx, scoring),
     [&]<typename Leaf>(size_t size, auto&& init) -> Node::ptr {
-      return detail::ResolveArity<detail::kRunArity, detail::kRunFloor>(
+      return Resolve<detail::ArityAxis<detail::kRunArity, detail::kRunFloor>>(
         size, [&]<size_t N> -> Node::ptr {
           return MakeSparse<utils::Empty,
                             OrLeaves<Leaf, N, detail::kScores<Scoring>>,
@@ -202,7 +200,7 @@ Node::ptr MakeSparseThreshold(std::span<const detail::PostingClause> terms,
     terms, filters, nullptr, segment, interrogations,
     detail::ProbeOrder::Densest, scoring, ClauseFor(segment, ctx, scoring),
     [&]<typename Leaf>(size_t size, auto&& init) -> Node::ptr {
-      return detail::ResolveArity<detail::kRunArity, detail::kRunFloor>(
+      return Resolve<detail::ArityAxis<detail::kRunArity, detail::kRunFloor>>(
         size, [&]<size_t N> -> Node::ptr {
           return MakeSparse<utils::Empty,
                             ThresholdLeaves<Leaf, N, detail::kScores<Scoring>>,

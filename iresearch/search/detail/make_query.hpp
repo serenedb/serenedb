@@ -77,7 +77,15 @@ typename Family::Result MakeQuery(const RangeVectorQuery& query,
                                   const Ctx& ctx);
 
 template<typename Family, typename Ctx>
-typename Family::Result MakeQuery(const BooleanQuery& query, const Ctx& ctx);
+struct BooleanMaker {
+  static typename Family::Result Make(const BooleanQuery& query,
+                                      const Ctx& ctx);
+};
+
+template<typename Family, typename Ctx>
+typename Family::Result MakeQuery(const BooleanQuery& query, const Ctx& ctx) {
+  return BooleanMaker<Family, Ctx>::Make(query, ctx);
+}
 
 template<typename Family, typename Parser, typename Acceptor, typename Ctx>
 typename Family::Result MakeQuery(const GeoQuery<Parser, Acceptor>& query,

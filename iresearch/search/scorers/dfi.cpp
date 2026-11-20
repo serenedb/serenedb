@@ -37,9 +37,9 @@
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/search/scorers/scorer_options.hpp"
 #include "iresearch/store/data_output.hpp"
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/empty.hpp"
-#include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/string.hpp"
 
@@ -99,7 +99,7 @@ template<DFIMeasure M>
 ScoreFunction MakeScoreMeasure(const ScoreContext& ctx, const DFIStats& stats,
                                const FreqBlockAttr* freq, const uint32_t* norm,
                                const score_t* scale) {
-  return ResolveBool(scale != nullptr, [&]<bool HasScale>() {
+  return Resolve(scale != nullptr, [&]<bool HasScale>() {
     return ScoreFunction::Make<DFIScore<M, HasScale>>(ctx.boost, stats, freq,
                                                       norm, scale);
   });
@@ -134,18 +134,9 @@ ScoreFunction DFI::PrepareScorer(const ScoreContext& ctx) const {
 
   const auto* scale = ScaleOf(ctx);
 
-  switch (_measure) {
-    case DFIMeasure::Standardized:
-      return MakeScoreMeasure<DFIMeasure::Standardized>(ctx, *stats, freq, norm,
-                                                        scale);
-    case DFIMeasure::Saturated:
-      return MakeScoreMeasure<DFIMeasure::Saturated>(ctx, *stats, freq, norm,
-                                                     scale);
-    case DFIMeasure::ChiSquared:
-      return MakeScoreMeasure<DFIMeasure::ChiSquared>(ctx, *stats, freq, norm,
-                                                      scale);
-  }
-  return ScoreFunction::Default();
+  return Resolve(_measure, [&]<DFIMeasure M> {
+    return MakeScoreMeasure<M>(ctx, *stats, freq, norm, scale);
+  });
 }
 
 std::string DFI::ToString() const {

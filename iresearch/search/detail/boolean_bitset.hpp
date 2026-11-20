@@ -94,7 +94,7 @@ inline const IndexInput* BucketsDoc(const BitsetBuckets& buckets) noexcept {
   return same(buckets.must_not) ? doc : nullptr;
 }
 
-template<typename Result, typename Term>
+template<typename Result, typename P = NoPins, typename Term>
 Result MakeConjunctionBitset(std::span<const Term> terms,
                              std::span<const QueryBuilder::ptr> filters,
                              const TermReader* field, const SubReader& segment,
@@ -113,7 +113,7 @@ Result MakeConjunctionBitset(std::span<const Term> terms,
                            HeadEstimate(terms, filters))) {
     return {};
   }
-  return MakeBitsetNode<Result>(std::move(buckets), *doc, docs_count, table);
+  return MakeBitsetNode<Result, P>(std::move(buckets), *doc, docs_count, table);
 }
 
 struct ExcludeFills {
@@ -194,7 +194,7 @@ inline bool TakeExclusionFold(const BitsetBuckets& buckets,
   return TakeFold(cost < walk, terms, doc, docs_count);
 }
 
-template<typename Result>
+template<typename Result, typename P = NoPins>
 Result MakeBooleanBitset(const BooleanGroups& groups, const SubReader& segment,
                          TableFilter* table, doc_id_t span) {
   const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
@@ -215,7 +215,8 @@ Result MakeBooleanBitset(const BooleanGroups& groups, const SubReader& segment,
     if (groups.should_fills != nullptr) {
       buckets.fills = std::move(*groups.should_fills);
     }
-    return MakeBitsetNode<Result>(std::move(buckets), *doc, docs_count, table);
+    return MakeBitsetNode<Result, P>(std::move(buckets), *doc, docs_count,
+                                     table);
   }
   if (!groups.should.empty() || !groups.should_filters.empty()) {
     return {};
@@ -236,7 +237,8 @@ Result MakeBooleanBitset(const BooleanGroups& groups, const SubReader& segment,
                              HeadEstimate(groups.must, groups.must_filters))) {
       return {};
     }
-    return MakeBitsetNode<Result>(std::move(buckets), *doc, docs_count, table);
+    return MakeBitsetNode<Result, P>(std::move(buckets), *doc, docs_count,
+                                     table);
   }
   const auto candidates =
     IncludeCandidates(groups.must, groups.must_filters, segment);
@@ -259,7 +261,7 @@ Result MakeBooleanBitset(const BooleanGroups& groups, const SubReader& segment,
       !PlanExcludeFills(fills, buckets)) {
     return {};
   }
-  return MakeBitsetNode<Result>(std::move(buckets), *doc, docs_count, table);
+  return MakeBitsetNode<Result, P>(std::move(buckets), *doc, docs_count, table);
 }
 
 }  // namespace irs::detail

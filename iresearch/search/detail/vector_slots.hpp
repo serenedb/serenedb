@@ -55,7 +55,6 @@
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/file_utils_ext.hpp"
 #include "iresearch/utils/memory.hpp"
-#include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {

@@ -24,6 +24,7 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/store/store_utils.hpp"
+#include "iresearch/utils/dispatch.hpp"
 
 namespace irs::detail {
 
@@ -43,26 +44,11 @@ inline bool FreqOf(const TermReader& field) noexcept {
   return FeaturesHaveFreq(field.meta().index_features);
 }
 
-template<typename F>
-auto ResolveInput(const IndexInput& in, F&& f) {
-  if (in.GetType() == DataInput::Type::BytesViewInput) {
-    return f.template operator()<BytesViewInput>();
-  }
-  return f.template operator()<IndexInput>();
-}
+struct BoundsAxis : BoolAxis {};
 
-template<typename F>
-auto ResolveBool(bool value, F&& f) {
-  if (value) {
-    return f.template operator()<true>();
-  }
-  return f.template operator()<false>();
-}
+struct MaskedAxis : BoolAxis {};
 
-template<typename F>
-auto ResolveBounds(bool has_bounds, F&& f) {
-  return ResolveBool(has_bounds, std::forward<F>(f));
-}
+struct PerDocAxis : BoolAxis {};
 
 inline constexpr size_t kTailArity = 1;
 inline constexpr size_t kTailFloor = 1;
@@ -73,18 +59,30 @@ inline constexpr size_t kSlotFloor = 2;
 inline constexpr size_t kRunArity = 2;
 inline constexpr size_t kRunFloor = 2;
 
-template<size_t Max, size_t Min, typename F>
-auto ResolveArity(size_t count, F&& f) {
-  SDB_ASSERT(count != 0);
-  if constexpr (Max >= Min && Max != 0) {
-    if (count == Max) {
-      return f.template operator()<Max>();
-    }
-    return ResolveArity<Max - 1, Min>(count, std::forward<F>(f));
-  } else {
-    return f.template operator()<0>();
+inline constexpr size_t kAnyArity = 0;
+
+template<size_t Max, size_t Min>
+consteval auto ArityKeys() {
+  static_assert(Min != kAnyArity && Min <= Max);
+  std::array<size_t, Max - Min + 2> keys{};
+  for (size_t i = 0; i + 1 < keys.size(); ++i) {
+    keys[i] = Max - i;
   }
+  keys.back() = kAnyArity;
+  return keys;
 }
+
+template<size_t Max, size_t Min>
+struct ArityAxis : ArrayAxis<ArityKeys<Max, Min>()> {
+  static constexpr size_t Of(size_t count) noexcept {
+    SDB_ASSERT(count != kAnyArity);
+    return count;
+  }
+
+  static constexpr bool Matches(size_t count, size_t key) noexcept {
+    return key != kAnyArity ? count == key : count < Min || Max < count;
+  }
+};
 
 struct PhraseHandles {
   const IndexInput* doc = nullptr;

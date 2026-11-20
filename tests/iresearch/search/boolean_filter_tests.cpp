@@ -386,7 +386,7 @@ class FillScored : public irs::fill::Node {
       .boost = _boost,
     });
     const auto value = score.Score();
-    irs::ResolveMergeType(_merge, [&]<irs::ScoreMergeType Merge> {
+    irs::Resolve(_merge, [&]<irs::ScoreMergeType Merge> {
       for (size_t w = 0; w != words; ++w) {
         auto word = _own[w];
         mask[w] |= word;

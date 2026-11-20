@@ -120,3 +120,26 @@ ORDER BY id;
 ----
 id	score	sum_of_terms
 1	-121.663	-121.663
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY phrase_words_no_norm AS split_text(case := 'lower') WITH (frequency, position);
+
+statement ok
+CREATE TABLE repeated_docs (id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+CREATE INDEX repeated_idx ON repeated_docs USING inverted (id, body phrase_words_no_norm);
+
+statement ok
+INSERT INTO repeated_docs SELECT 1, repeat('a b c d e f g h i j k l m n o p q r s t ', 100);
+
+query
+SELECT id,
+       round(indri_dirichlet(repeated_idx.tableoid, 0.01), 3) AS score,
+       round(20 * ln((100 + 0.01 * 101.0 / 2001) / (1 + 0.01)), 3) AS sum_of_terms
+FROM repeated_idx
+WHERE body @@ ts_phrase('a b c d e f g h i j k l m n o p q r s t')
+ORDER BY id;
+----
+id	score	sum_of_terms
+1	91.904	91.904

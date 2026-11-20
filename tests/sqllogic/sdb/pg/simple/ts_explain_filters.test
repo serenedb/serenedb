@@ -97,6 +97,15 @@ id	why
 query
 SELECT id, ts_explain(xf_idx.tableoid) AS why
 FROM xf_idx
+WHERE body @@ 'red' AND NOT w @@ ts_like('%alpha%')
+ORDER BY BM25(xf_idx.tableoid) DESC, id;
+----
+id	why
+2	{"clauses":[{"column":"body","expression":"boost * idf * tf","inputs":{"idf":{"expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":3},"df":{"value":2}},"value":0.47000363},"tf":{"expression":"freq / (freq + k1 * (1 - b + b * dl / avgdl))","inputs":{"avgdl":{"expression":"L / N","inputs":{"L":{"value":6},"N":{"value":3}},"value":2},"b":{"value":0.75},"dl":{"value":2},"freq":{"value":1},"k1":{"value":1.2}},"value":0.45454544}},"scorer":"bm25(k1=1.2, b=0.75)","term":"red","value":0.21363801}],"expression":"sum","value":0.21363801}
+
+query
+SELECT id, ts_explain(xf_idx.tableoid) AS why
+FROM xf_idx
 WHERE net >> '10.0.0.1'::INET
 ORDER BY BM25(xf_idx.tableoid) DESC, id;
 ----

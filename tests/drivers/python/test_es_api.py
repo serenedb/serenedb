@@ -904,10 +904,15 @@ def test_search_explain(conn, corpus):
         assert hit["_score"] is None
         assert hit["_explanation"]["value"] > 0
 
-    status, body = _request(
-        conn, "POST", f"/{corpus}/_search?scroll=1m",
-        {"query": {"match": {"title": "quick"}}, "explain": True})
-    assert status == 400, body
+    for extra in ({"explain": True}, {"sort": [{"year": {"order": "desc"}}]},
+                  {"aggs": {"years": {"terms": {"field": "year"}}}},
+                  {"from": 1}):
+        status, body = _request(
+            conn, "POST", f"/{corpus}/_search?scroll=1m",
+            {"query": {"match": {"title": "quick"}}, **extra})
+        assert status == 400, body
+        assert body["error"]["reason"] == (
+            "scroll supports only plain _doc-ordered requests yet")
 
     status, body = _search(conn, corpus, {"explain": "yes"})
     assert status == 400, body

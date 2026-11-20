@@ -128,6 +128,15 @@ SCORER_QUERIES = {
     "column without frequency": "b @@ 'fox'",
     "column without positions": "a @@ 'fox'",
     "ngram": "g @@ ts_ngram('hello', 0.5)",
+    "one ngram in the column": "g @@ ts_ngram('hezz', 0.3)",
+    "phrase under or": "body @@ ts_phrase('quick brown') OR body @@ 'fox'",
+    "phrase under max": "(body @@ ts_phrase('quick brown') OR body @@ 'fox')::merge('max')",
+    "sloppy phrase under or": "body @@ ts_phrase('quick fox', slop := 1) OR body @@ 'dog'",
+    "sloppy phrase under max": "(body @@ ts_phrase('quick fox', slop := 1) OR body @@ 'dog')::merge('max')",
+    "ngram under or": "g @@ ts_ngram('hello', 0.5) OR body @@ 'fox'",
+    "ngram under max": "(g @@ ts_ngram('hello', 0.5) OR body @@ 'fox')::merge('max')",
+    "one ngram under or": "g @@ ts_ngram('hezz', 0.3) OR body @@ 'fox'",
+    "one ngram under max": "(g @@ ts_ngram('hezz', 0.3) OR body @@ 'fox')::merge('max')",
 }
 
 QUERY = "[1, 0.2]::FLOAT[2]"

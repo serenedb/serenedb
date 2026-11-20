@@ -77,6 +77,15 @@ id	score	why
 query
 SELECT id, BM25(tx_idx.tableoid) AS score, ts_explain(tx_idx.tableoid) AS why
 FROM tx_idx
+WHERE body @@ 'fox' AND NOT g @@ ts_like('%el%')
+ORDER BY score DESC, id;
+----
+id	score	why
+3	0.29845488	{"clauses":[{"column":"body","expression":"boost * idf * tf","inputs":{"idf":{"expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":9},"df":{"value":4}},"value":0.7985077},"tf":{"expression":"freq / (freq + k1 * (1 - b + b * dl / avgdl))","inputs":{"avgdl":{"expression":"L / N","inputs":{"L":{"value":53},"N":{"value":9}},"value":5.888889},"b":{"value":0.75},"dl":{"value":9},"freq":{"value":1},"k1":{"value":1.2}},"value":0.37376586}},"scorer":"bm25(k1=1.2, b=0.75)","term":"fox","value":0.29845488}],"expression":"sum","value":0.29845488}
+
+query
+SELECT id, BM25(tx_idx.tableoid) AS score, ts_explain(tx_idx.tableoid) AS why
+FROM tx_idx
 WHERE (body @@ 'fox' OR body @@ 'dog') AND body @@ 'quick'
 ORDER BY score DESC, id
 LIMIT 2;
@@ -665,6 +674,34 @@ id	score	why
 7	5.360178	{"clauses":[{"column":"body","expression":"boost * idf * tf","inputs":{"idf":{"expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":9},"df":{"value":4}},"value":0.7985077},"tf":{"expression":"freq / (freq + k1 * (1 - b + b * dl / avgdl))","inputs":{"avgdl":{"expression":"L / N","inputs":{"L":{"value":53},"N":{"value":9}},"value":5.888889},"b":{"value":0.75},"dl":{"value":6},"freq":{"value":1},"k1":{"value":1.2}},"value":0.4510638}},"scorer":"bm25(k1=1.2, b=0.75)","term":"fox","value":0.36017793}],"expression":"sum","inputs":{"constant":{"value":5}},"value":5.360178}
 
 query
+SELECT id, BM25(tx_idx.tableoid) AS score, ts_explain(tx_idx.tableoid) AS why
+FROM tx_idx
+WHERE body @@ 'fox' AND (body @@ ts_between(NULL, NULL, true, true))::score('constant(5)')
+ORDER BY score DESC, id
+LIMIT 2;
+----
+id	score	why
+2	5.5680656	{"clauses":[{"column":"body","expression":"boost * idf * tf","inputs":{"idf":{"expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":9},"df":{"value":4}},"value":0.7985077},"tf":{"expression":"freq / (freq + k1 * (1 - b + b * dl / avgdl))","inputs":{"avgdl":{"expression":"L / N","inputs":{"L":{"value":53},"N":{"value":9}},"value":5.888889},"b":{"value":0.75},"dl":{"value":6},"freq":{"value":3},"k1":{"value":1.2}},"value":0.71140945}},"scorer":"bm25(k1=1.2, b=0.75)","term":"fox","value":0.5680659}],"expression":"sum","inputs":{"constant":{"value":5}},"value":5.5680656}
+7	5.360178	{"clauses":[{"column":"body","expression":"boost * idf * tf","inputs":{"idf":{"expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":9},"df":{"value":4}},"value":0.7985077},"tf":{"expression":"freq / (freq + k1 * (1 - b + b * dl / avgdl))","inputs":{"avgdl":{"expression":"L / N","inputs":{"L":{"value":53},"N":{"value":9}},"value":5.888889},"b":{"value":0.75},"dl":{"value":6},"freq":{"value":1},"k1":{"value":1.2}},"value":0.4510638}},"scorer":"bm25(k1=1.2, b=0.75)","term":"fox","value":0.36017793}],"expression":"sum","inputs":{"constant":{"value":5}},"value":5.360178}
+
+query
+SELECT id, BM25(tx_idx.tableoid) AS score, ts_explain(tx_idx.tableoid) AS why
+FROM tx_idx
+WHERE body @@ 'fox' OR (g @@ ts_like('%el%'))::score(NULL)
+ORDER BY score DESC, id;
+----
+id	score	why
+2	0.5680659	{"clauses":[{"column":"g","scored":false,"term":"el","value":0},{"column":"body","expression":"boost * idf * tf","inputs":{"idf":{"expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":9},"df":{"value":4}},"value":0.7985077},"tf":{"expression":"freq / (freq + k1 * (1 - b + b * dl / avgdl))","inputs":{"avgdl":{"expression":"L / N","inputs":{"L":{"value":53},"N":{"value":9}},"value":5.888889},"b":{"value":0.75},"dl":{"value":6},"freq":{"value":3},"k1":{"value":1.2}},"value":0.71140945}},"scorer":"bm25(k1=1.2, b=0.75)","term":"fox","value":0.5680659}],"expression":"sum","value":0.5680659}
+7	0.36017793	{"clauses":[{"column":"g","scored":false,"term":"el","value":0},{"column":"body","expression":"boost * idf * tf","inputs":{"idf":{"expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":9},"df":{"value":4}},"value":0.7985077},"tf":{"expression":"freq / (freq + k1 * (1 - b + b * dl / avgdl))","inputs":{"avgdl":{"expression":"L / N","inputs":{"L":{"value":53},"N":{"value":9}},"value":5.888889},"b":{"value":0.75},"dl":{"value":6},"freq":{"value":1},"k1":{"value":1.2}},"value":0.4510638}},"scorer":"bm25(k1=1.2, b=0.75)","term":"fox","value":0.36017793}],"expression":"sum","value":0.36017793}
+1	0.29845488	{"clauses":[{"column":"g","scored":false,"term":"el","value":0},{"column":"body","expression":"boost * idf * tf","inputs":{"idf":{"expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":9},"df":{"value":4}},"value":0.7985077},"tf":{"expression":"freq / (freq + k1 * (1 - b + b * dl / avgdl))","inputs":{"avgdl":{"expression":"L / N","inputs":{"L":{"value":53},"N":{"value":9}},"value":5.888889},"b":{"value":0.75},"dl":{"value":9},"freq":{"value":1},"k1":{"value":1.2}},"value":0.37376586}},"scorer":"bm25(k1=1.2, b=0.75)","term":"fox","value":0.29845488}],"expression":"sum","value":0.29845488}
+3	0.29845488	{"clauses":[{"column":"body","expression":"boost * idf * tf","inputs":{"idf":{"expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":9},"df":{"value":4}},"value":0.7985077},"tf":{"expression":"freq / (freq + k1 * (1 - b + b * dl / avgdl))","inputs":{"avgdl":{"expression":"L / N","inputs":{"L":{"value":53},"N":{"value":9}},"value":5.888889},"b":{"value":0.75},"dl":{"value":9},"freq":{"value":1},"k1":{"value":1.2}},"value":0.37376586}},"scorer":"bm25(k1=1.2, b=0.75)","term":"fox","value":0.29845488}],"expression":"sum","value":0.29845488}
+4	0	{"clauses":[{"column":"g","scored":false,"term":"el","value":0}],"expression":"sum","value":0}
+5	0	{"clauses":[{"column":"g","scored":false,"term":"el","value":0}],"expression":"sum","value":0}
+6	0	{"clauses":[{"column":"g","scored":false,"term":"el","value":0}],"expression":"sum","value":0}
+8	0	{"clauses":[{"column":"g","scored":false,"term":"el","value":0}],"expression":"sum","value":0}
+9	0	{"clauses":[{"column":"g","scored":false,"term":"el","value":0}],"expression":"sum","value":0}
+
+query
 SELECT id, round(dfi(tx_idx.tableoid), 4) AS score, regexp_replace(ts_explain(tx_idx.tableoid)::JSON::VARCHAR, '(\.[0-9]{4})[0-9]+', '\1', 'g') AS why
 FROM tx_idx
 WHERE body @@ 'the'
@@ -776,6 +813,17 @@ id	score	why
 3	0.8	{"column":"emb","expression":"sqrt(sum((emb[i] - query[i])^2))","inputs":{"dims":{"value":2},"exact":{"value":0.8},"radius":{"note":"the largest distance the search returns","value":1.5}},"note":"found by an ivf search over sq8 codes","scorer":"l2_distance","value":0.8}
 4	1.0198039	{"column":"emb","expression":"sqrt(sum((emb[i] - query[i])^2))","inputs":{"dims":{"value":2},"exact":{"value":1.0198039},"radius":{"note":"the largest distance the search returns","value":1.5}},"note":"found by an ivf search over sq8 codes","scorer":"l2_distance","value":1.0198039}
 2	1.2806249	{"column":"emb","expression":"sqrt(sum((emb[i] - query[i])^2))","inputs":{"dims":{"value":2},"exact":{"value":1.2806249},"radius":{"note":"the largest distance the search returns","value":1.5}},"note":"found by an ivf search over sq8 codes","scorer":"l2_distance","value":1.2806249}
+
+query
+SELECT id, emb <-> [1, 0.2]::FLOAT[2] AS score, ts_explain(tx_vl2.tableoid) AS why
+FROM tx_vl2
+WHERE emb <-> [1, 0.2]::FLOAT[2] <= 1.5
+ORDER BY emb <-> [1, 0.2]::FLOAT[2]
+LIMIT 2;
+----
+id	score	why
+1	0.2	{"column":"emb","expression":"sqrt(sum((emb[i] - query[i])^2))","inputs":{"dims":{"value":2},"exact":{"value":0.2},"k":{"value":2},"radius":{"note":"the largest distance the search returns","value":1.5}},"note":"found by an ivf search over sq8 codes","scorer":"l2_distance","value":0.2}
+3	0.8	{"column":"emb","expression":"sqrt(sum((emb[i] - query[i])^2))","inputs":{"dims":{"value":2},"exact":{"value":0.8},"k":{"value":2},"radius":{"note":"the largest distance the search returns","value":1.5}},"note":"found by an ivf search over sq8 codes","scorer":"l2_distance","value":0.8}
 
 statement ok
 SET sdb_ann_force_exact = true;

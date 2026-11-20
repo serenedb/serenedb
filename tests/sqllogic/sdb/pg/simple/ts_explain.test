@@ -292,6 +292,16 @@ id	lucene
 1	{"value":0.49780935,"description":"weight(body:\\"quick fox\\"~1) [bm25(k1=1.2, b=0.75)], computed as boost * idf * tf from:","details":[{"value":1.4144652,"description":"idf, sum of:","details":[{"value":0.87546873,"description":"idf(body:quick), computed as log(1 + (N - df + 0.5) / (df + 0.5)) from:","details":[{"value":5,"description":"N, number of rows with the column","details":[]},{"value":2,"description":"df, number of rows containing the term","details":[]}]},{"value":0.5389965,"description":"idf(body:fox), computed as log(1 + (N - df + 0.5) / (df + 0.5)) from:","details":[{"value":5,"description":"N, number of rows with the column","details":[]},{"value":3,"description":"df, number of rows containing the term","details":[]}]}]},{"value":0.35194176,"description":"tf, computed as freq / (freq + k1 * (1 - b + b * dl / avgdl)) from:","details":[{"value":5.8,"description":"avgdl, average length of the column, computed as L / N from:","details":[{"value":29,"description":"L, total length of the column over all rows","details":[]},{"value":5,"description":"N, number of rows with the column","details":[]}]},{"value":0.75,"description":"b, length normalization parameter","details":[]},{"value":4,"description":"dl, length of the column in the row","details":[]},{"value":0.5,"description":"freq, occurrences of the term in the row, computed as count * scale from:","details":[{"value":1,"description":"count, matches in the row before scaling","details":[]},{"value":0.5,"description":"scale, the weight of this row's match within the clause","details":[]}]},{"value":1.2,"description":"k1, term saturation parameter","details":[]}]}]}
 
 query
+SELECT id, ts_explain_json(ts_explain(explain_idx.tableoid)) AS lucene
+FROM explain_idx
+WHERE (body @@ ts_starts_with('t'))::score('bm25()')
+ORDER BY BM25(explain_idx.tableoid) DESC, id
+LIMIT 1;
+----
+id	lucene
+3	{"value":0.51409894,"description":"max of:","details":[{"value":0.10668518,"description":"weight(body:the) [bm25(k1=1.2, b=0.75)], computed as boost * idf * tf from:","details":[{"value":0.2876821,"description":"idf, computed as log(1 + (N - df + 0.5) / (df + 0.5)) from:","details":[{"value":5,"description":"N, number of rows with the column","details":[]},{"value":4,"description":"df, number of rows containing the term","details":[]}]},{"value":0.37084398,"description":"tf, computed as freq / (freq + k1 * (1 - b + b * dl / avgdl)) from:","details":[{"value":5.8,"description":"avgdl, average length of the column, computed as L / N from:","details":[{"value":29,"description":"L, total length of the column over all rows","details":[]},{"value":5,"description":"N, number of rows with the column","details":[]}]},{"value":0.75,"description":"b, length normalization parameter","details":[]},{"value":9,"description":"dl, length of the column in the row","details":[]},{"value":1,"description":"freq, occurrences of the term in the row","details":[]},{"value":1.2,"description":"k1, term saturation parameter","details":[]}]}]},{"value":0.51409894,"description":"weight(body:two) [bm25(k1=1.2, b=0.75)], computed as boost * idf * tf from:","details":[{"value":1.3862944,"description":"idf, computed as log(1 + (N - df + 0.5) / (df + 0.5)) from:","details":[{"value":5,"description":"N, number of rows with the column","details":[]},{"value":1,"description":"df, number of rows containing the term","details":[]}]},{"value":0.37084398,"description":"tf, computed as freq / (freq + k1 * (1 - b + b * dl / avgdl)) from:","details":[{"value":5.8,"description":"avgdl, average length of the column, computed as L / N from:","details":[{"value":29,"description":"L, total length of the column over all rows","details":[]},{"value":5,"description":"N, number of rows with the column","details":[]}]},{"value":0.75,"description":"b, length normalization parameter","details":[]},{"value":9,"description":"dl, length of the column in the row","details":[]},{"value":1,"description":"freq, occurrences of the term in the row","details":[]},{"value":1.2,"description":"k1, term saturation parameter","details":[]}]}]}]}
+
+query
 SELECT ts_explain(NULL) IS NULL AS is_null, ts_explain_json(NULL) IS NULL AS json_is_null;
 ----
 is_null	json_is_null
@@ -308,6 +318,12 @@ SELECT ts_explain_json('{"column":"body","terms":[1,"fox"],"parts":[2,{"value":3
 ----
 lucene
 {"value":null,"description":"unexplained(body:(fox))","details":[{"value":3,"description":"unexplained","details":[]}]}
+
+query
+SELECT ts_explain_json('{"value":2,"scorer":"best","expression":"max","inputs":{"a":{"value":2},"b":{"value":1}}}'::JSON::VARIANT) AS lucene;
+----
+lucene
+{"value":2,"description":"weight [best], max of:","details":[{"value":2,"description":"a","details":[]},{"value":1,"description":"b, length normalization parameter","details":[]}]}
 
 statement error
 SELECT ts_explain_json('[1]'::JSON::VARIANT);
@@ -489,3 +505,99 @@ ORDER BY constant(explain_labels_idx.tableoid, 1) DESC, id;
 ----
 id	why
 1	{"clauses":[{"column":"n","expression":"boost * value","inputs":{"value":{"value":1}},"scorer":"constant(value=1)","term":"42","value":1},{"column":"big","expression":"boost * value","inputs":{"value":{"value":1}},"scorer":"constant(value=1)","term":"9000000000","value":1},{"column":"d","expression":"boost * value","inputs":{"value":{"value":1}},"scorer":"constant(value=1)","term":"1.5","value":1},{"column":"net","expression":"boost * value","inputs":{"value":{"value":1}},"scorer":"constant(value=1)","term":"10.0.0.0/8","value":1},{"column":"txt","expression":"boost * value","inputs":{"value":{"value":1}},"scorer":"constant(value=1)","term":"Crème","value":1},{"column":"(doc ->> 'host')","expression":"boost * value","inputs":{"value":{"value":1}},"scorer":"constant(value=1)","term":"web-01","value":1},{"column":"lower(txt)","expression":"boost * value","inputs":{"value":{"value":1}},"scorer":"constant(value=1)","term":"crème","value":1},{"column":"g","expression":"boost * value","inputs":{"value":{"value":1}},"scorer":"constant(value=1)","term":"420","value":1}],"expression":"sum","value":8}
+
+statement ok
+CREATE TABLE explain_many (id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+CREATE INDEX explain_many_idx ON explain_many USING inverted (id, body explain_en);
+
+statement ok
+INSERT INTO explain_many SELECT i, 'row ' || i FROM range(3000) t(i);
+
+query
+SELECT count(*) AS explained,
+       count(*) FILTER (WHERE abs(score - why.inputs.idf.value::FLOAT * why.inputs.tf.value::FLOAT) > 1e-6) AS off
+FROM (SELECT BM25(explain_many_idx.tableoid) AS score, ts_explain(explain_many_idx.tableoid) AS why
+      FROM explain_many_idx
+      WHERE body @@ 'row');
+----
+explained	off
+3000	0
+
+statement ok
+CREATE TABLE explain_gaps (id INTEGER PRIMARY KEY, body VARCHAR, tag VARCHAR);
+
+statement ok
+CREATE INDEX explain_gaps_idx ON explain_gaps USING inverted (id, body explain_en, tag);
+
+statement ok
+INSERT INTO explain_gaps VALUES (1, 'red fox', 'animal');
+
+statement ok
+INSERT INTO explain_gaps VALUES (2, 'grey fox', NULL);
+
+query
+SELECT id, ts_explain(explain_gaps_idx.tableoid) AS why
+FROM explain_gaps_idx
+WHERE body @@ 'fox' OR tag @@ 'animal'
+ORDER BY BM25(explain_gaps_idx.tableoid) DESC, id;
+----
+id	why
+1	{"clauses":[{"column":"body","expression":"boost * idf * tf","inputs":{"idf":{"expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":2},"df":{"value":2}},"value":0.18232156},"tf":{"expression":"freq / (freq + k1 * (1 - b + b * dl / avgdl))","inputs":{"avgdl":{"expression":"L / N","inputs":{"L":{"value":4},"N":{"value":2}},"value":2},"b":{"value":0.75},"dl":{"value":2},"freq":{"value":1},"k1":{"value":1.2}},"value":0.45454544}},"scorer":"bm25(k1=1.2, b=0.75)","term":"fox","value":0.082873434},{"column":"tag","expression":"boost * idf * tf","inputs":{"idf":{"expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":1},"df":{"value":1}},"value":0.2876821},"tf":{"expression":"freq / (freq + k1 * (1 - b + b * dl / avgdl))","inputs":{"avgdl":{"expression":"L / N","inputs":{"L":{"value":1},"N":{"value":1}},"value":1},"b":{"value":0.75},"dl":{"note":"the column records no lengths, so every row counts as 1","value":1},"freq":{"value":1},"k1":{"value":1.2}},"value":0.45454544}},"scorer":"bm25(k1=1.2, b=0.75)","term":"animal","value":0.13076459}],"expression":"sum","value":0.21363802}
+2	{"column":"body","expression":"boost * idf * tf","inputs":{"idf":{"expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":2},"df":{"value":2}},"value":0.18232156},"tf":{"expression":"freq / (freq + k1 * (1 - b + b * dl / avgdl))","inputs":{"avgdl":{"expression":"L / N","inputs":{"L":{"value":4},"N":{"value":2}},"value":2},"b":{"value":0.75},"dl":{"value":2},"freq":{"value":1},"k1":{"value":1.2}},"value":0.45454544}},"scorer":"bm25(k1=1.2, b=0.75)","term":"fox","value":0.082873434}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY explain_bytes AS generate_ngrams(2, 2, input_type := 'binary') WITH (frequency, position);
+
+statement ok
+CREATE TABLE explain_grams (id INTEGER PRIMARY KEY, word VARCHAR);
+
+statement ok
+CREATE INDEX explain_grams_idx ON explain_grams USING inverted (id, word explain_bytes);
+
+statement ok
+INSERT INTO explain_grams VALUES (1, 'hé'), (2, 'ha');
+
+query
+SELECT id, ts_explain(explain_grams_idx.tableoid) AS why
+FROM explain_grams_idx
+WHERE word @@ ts_ngram('hé', 0.5)
+ORDER BY BM25(explain_grams_idx.tableoid) DESC, id;
+----
+id	why
+1	{"column":"word","expression":"boost * idf * tf","inputs":{"idf":{"expression":"sum","parts":[{"column":"word","expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":2},"df":{"value":1}},"term":"h\\\\xc3","value":0.6931472},{"column":"word","expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":2},"df":{"value":1}},"term":"é","value":0.6931472}],"value":1.3862944},"tf":{"expression":"freq / (freq + k1 * (1 - b + b * dl / avgdl))","inputs":{"avgdl":{"expression":"L / N","inputs":{"L":{"value":3},"N":{"value":2}},"value":1.5},"b":{"value":0.75},"dl":{"note":"the column records no lengths, so every row counts as 1","value":1},"freq":{"expression":"count * scale","inputs":{"count":{"value":1},"scale":{"value":1}},"value":1},"k1":{"value":1.2}},"value":0.52631575}},"scorer":"bm25(k1=1.2, b=0.75)","terms":["h\\\\xc3","é"],"value":0.7296286}
+
+statement ok
+CREATE INDEX explain_vec_idx ON explain_docs USING inverted (id, emb ivf (metric = 'l2'));
+
+query
+SELECT id, emb <-> [1, 0.2]::FLOAT[2] AS distance, ts_explain(explain_vec_idx.tableoid) AS why
+FROM explain_vec_idx
+ORDER BY emb <-> [1, 0.2]::FLOAT[2]
+LIMIT 2;
+----
+id	distance	why
+1	0.2	{"column":"emb","expression":"sqrt(sum((emb[i] - query[i])^2))","inputs":{"dims":{"value":2},"exact":{"value":0.2},"k":{"value":2},"rescore_width":{"value":2}},"note":"found by an ivf search over sq8 codes","scorer":"l2_distance","value":0.2}
+3	0.8	{"column":"emb","expression":"sqrt(sum((emb[i] - query[i])^2))","inputs":{"dims":{"value":2},"exact":{"value":0.8},"k":{"value":2},"rescore_width":{"value":2}},"note":"found by an ivf search over sq8 codes","scorer":"l2_distance","value":0.8}
+
+statement ok
+CREATE TABLE explain_sparse (id INTEGER PRIMARY KEY, emb FLOAT[2]);
+
+statement ok
+CREATE INDEX explain_sparse_idx ON explain_sparse USING inverted (id, emb ivf (metric = 'l2'));
+
+statement ok
+INSERT INTO explain_sparse VALUES (1, [1, 0]);
+
+statement ok
+INSERT INTO explain_sparse VALUES (2, NULL);
+
+query
+SELECT id, emb <-> [1, 0.2]::FLOAT[2] AS distance, ts_explain(explain_sparse_idx.tableoid) AS why
+FROM explain_sparse_idx
+ORDER BY distance, id;
+----
+id	distance	why
+1	0.2	{"column":"emb","expression":"sqrt(sum((emb[i] - query[i])^2))","inputs":{"dims":{"value":2}},"note":"computed from the row's stored vector","scorer":"l2_distance","value":0.2}
+2	NULL	{"column":"emb","note":"emb is NULL in the row","scorer":"l2_distance","value":null}

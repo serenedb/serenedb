@@ -52,9 +52,9 @@
 #include <duckdb/inet/inet_ipaddress.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <icu-zone-lut.hpp>
+#include <iresearch/utils/dispatch.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
-#include <iresearch/utils/dispatch.hpp>
 #include <limits>
 #include <string>
 #include <string_view>
@@ -2529,9 +2529,9 @@ DeserializationFunction<Sink> GetDeserialization(
                              Nested<DeserializeTextRange>, Sink>(binary);
       }
       if (const auto geometric = GeometricOf(type)) {
-        return irs::Resolve(*geometric, [&]<Geometric kKind>() {
-          return SelectDecoder<Nested<DeserializeBinaryGeometric<kKind>>,
-                               Nested<DeserializeTextGeometric<kKind>>, Sink>(
+        return irs::Resolve(*geometric, [&]<Geometric Kind>() {
+          return SelectDecoder<Nested<DeserializeBinaryGeometric<Kind>>,
+                               Nested<DeserializeTextGeometric<Kind>>, Sink>(
             binary);
         });
       }

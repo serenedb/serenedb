@@ -73,16 +73,20 @@ decltype(auto) ResolveExcludePins(std::span<const QueryBuilder::ptr> filters,
     std::forward<Make>(make));
 }
 
-template<typename P, typename Result, typename Unmasked, typename Masked>
+template<typename P, typename Result, typename Unmasked, typename Make>
 Result ResolveMask(bool masked, const SubReader& segment, Unmasked&& unmasked,
-                   Masked&& make) {
-  return ResolveKey<MaskedAxis, P>(masked, [&]<bool kMasked> -> Result {
-    if constexpr (kMasked) {
-      return ResolveDocsMask<P>(segment, make);
-    } else {
-      return unmasked();
-    }
-  });
+                   Make&& make) {
+  if constexpr (P::template Pinned<MaskedAxis>(false)) {
+    SDB_ASSERT(!masked);
+    return unmasked();
+  } else if constexpr (P::template Pinned<MaskedAxis>(true)) {
+    SDB_ASSERT(masked);
+    return ResolveDocsMask<P>(segment, make);
+  } else if (masked) {
+    return ResolveDocsMask<P>(segment, make);
+  } else {
+    return unmasked();
+  }
 }
 
 template<DocsMaskType Mask>

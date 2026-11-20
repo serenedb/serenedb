@@ -48,7 +48,7 @@ class VectorChain : public Root {
   }
 
   void Run(Collector& collector) final {
-    Resolve(_width > 0.f, [&]<bool kWidth> { Scan<kWidth>(collector); });
+    Resolve(_width > 0.f, [&]<bool Width> { Scan<Width>(collector); });
   }
 
  private:
@@ -180,10 +180,7 @@ ann::Root::ptr KnnVectorQuery::PlanAnn(const ann::Context& ctx) const {
 }
 
 ann::Root::ptr RangeVectorQuery::PlanAnn(const ann::Context& ctx) const {
-  return Resolve(Inclusive(), [&]<bool Inclusive>() {
-    return detail::MakeVectorScored<ann::Family, detail::RadiusGate<Inclusive>>(
-      *this, ctx, Threshold());
-  });
+  return detail::MakeQuery<ann::Family>(*this, ctx);
 }
 
 }  // namespace irs

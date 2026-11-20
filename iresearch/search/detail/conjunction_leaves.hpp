@@ -31,10 +31,10 @@
 #include <utility>
 
 #include "iresearch/utils/containers/fixed.hpp"
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
-#include "iresearch/utils/dispatch.hpp"
 
 namespace irs::detail {
 
@@ -209,8 +209,8 @@ class ConjunctionLeaves {
   }
 
   doc_id_t Agree(doc_id_t doc) {
-    return Resolve(Merges(), [&]<bool kMerging> IRS_FORCE_INLINE {
-      return AgreeOf<kMerging>(doc);
+    return Resolve(Merges(), [&]<bool Merging> IRS_FORCE_INLINE {
+      return AgreeOf<Merging>(doc);
     });
   }
 
@@ -247,8 +247,8 @@ class ConjunctionLeaves {
 
   template<typename Consult>
   doc_id_t Agree(doc_id_t doc, doc_id_t end, Consult& consult) {
-    return Resolve(Merges(), [&]<bool kMerging> IRS_FORCE_INLINE {
-      return AgreeOf<kMerging>(doc, end, consult);
+    return Resolve(Merges(), [&]<bool Merging> IRS_FORCE_INLINE {
+      return AgreeOf<Merging>(doc, end, consult);
     });
   }
 

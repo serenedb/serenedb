@@ -78,7 +78,7 @@ Naming is in `.clang-tidy` (clangd shows it), formatting and include order in `.
 
 - **A new C++ file:** add it to its target in the nearest `CMakeLists.txt` (`scripts/find_unused_sources.py` lists the files nothing builds).
 - **A new template instantiation** (a query kind, phrase match, input type, deletion-mask kind, codec): add a value to its `sdb_instantiation_axis`, or a new `sdb_instantiate` over the axes it varies on, in its target's `CMakeLists.txt` (`cmake/SereneDBUtils.cmake`); never a hand-written `.cpp` per instantiation or a macro list.
-- **A runtime choice between template arguments:** `Resolve(value, f)` over an axis from `iresearch/utils/dispatch.hpp` (a `bool`, an enum, or your own axis with `Of` and `Call`); never a hand-written switch or if-chain that calls a template.
+- **A runtime choice between template arguments:** `Resolve(value, f)` over an axis from `iresearch/utils/dispatch.hpp` (a `bool`, an enum, or your own axis with `Of` and `Call`); never a hand-written switch or if-chain that calls a template. The lambda is `IRS_FORCE_INLINE` where it runs during execution (per block, doc, batch or value), plain in one-time paths such as plan building and factories.
 - **A setting:** define it in `server/query/config_variables.cpp` and document it in the table in `docs/configuration/overview.md`.
 - **A serened flag:** `python3 tests/drivers/python/cli_help.py override --bin <build>/bin/serened` regenerates the CLI reference the docs render.
 - **What pg_catalog and information_schema support:** update `docs/compatibility/system-table-compatibility.md`; a test generated from it checks its claims.

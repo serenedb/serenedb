@@ -43,9 +43,8 @@
 
 namespace irs::detail {
 
-template<typename Result, typename P = NoPins, typename Term,
-         typename Scoring, typename ProbeClause, typename LeadClause,
-         typename Make>
+template<typename Result, typename P = NoPins, typename Term, typename Scoring,
+         typename ProbeClause, typename LeadClause, typename Make>
 Result BuildConjunction(std::span<const Term> terms,
                         std::span<const QueryBuilder::ptr> filters,
                         const TermReader* field, const SubReader& segment,
@@ -94,7 +93,7 @@ Result BuildConjunction(std::span<const Term> terms,
         if constexpr (N == 1) {
           return make.template operator()<Head, Probe>(
             std::forward<decltype(head)>(head), probe_args(rest.front()));
-        } else if constexpr (N != 0) {
+        } else if constexpr (N != kAnyArity) {
           return [&]<size_t... I>(std::index_sequence<I...>) {
             return make.template operator()<Head, probe::AndLeaves<Probe, N>>(
               std::forward<decltype(head)>(head),
@@ -155,7 +154,7 @@ Result BuildConjunction(std::span<const Term> terms,
             return make.template operator()<Head, probe::Erased>(
               std::forward<decltype(head)>(head),
               std::forward_as_tuple(std::move(probes.front())));
-          } else if constexpr (N != 0) {
+          } else if constexpr (N != kAnyArity) {
             return [&]<size_t... I>(std::index_sequence<I...>) {
               return make
                 .template operator()<Head, probe::AndLeaves<probe::Erased, N>>(

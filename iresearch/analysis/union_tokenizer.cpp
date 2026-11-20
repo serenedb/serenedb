@@ -143,8 +143,8 @@ bool UnionTokenizer::Fill(const duckdb::string_t& value, TokenSink& sink,
                           FillCtx ctx) {
   Prepare();
   CollectSubs(value);
-  Resolve(ctx.layout,
-                [&]<TokenLayout Layout>() { EmitMerged<Layout>(sink, value); });
+  Resolve(ctx.layout, [&]<TokenLayout Layout>()
+                        IRS_FORCE_INLINE { EmitMerged<Layout>(sink, value); });
   return true;
 }
 
@@ -154,7 +154,7 @@ void UnionTokenizer::Fill(const duckdb::UnifiedVectorFormat& fmt,
   Prepare();
   const auto* data =
     duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(fmt);
-  Resolve(ctx.layout, [&]<TokenLayout Layout>() {
+  Resolve(ctx.layout, [&]<TokenLayout Layout>() IRS_FORCE_INLINE {
     ForEachValidRow(fmt, count, [&](uint32_t i, uint32_t idx) IRS_FORCE_INLINE {
       sink.BeginValue(first_doc + i, data[idx].GetSize());
       CollectSubs(data[idx]);

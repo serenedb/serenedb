@@ -40,6 +40,7 @@
 
 #include "catalog/base_catalog.h"
 #include "catalog/record.h"
+#include "iresearch/utils/log.hpp"
 #include "pg/connection_context.h"
 #include "runtime/runtime.h"
 #include "search/engine.h"

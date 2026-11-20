@@ -59,21 +59,28 @@ inline constexpr size_t kSlotFloor = 2;
 inline constexpr size_t kRunArity = 2;
 inline constexpr size_t kRunFloor = 2;
 
-template<size_t Max, size_t Min,
-         typename = std::make_index_sequence<
-           Max >= Min && Max != 0 ? Max - Min + 1 : 0>>
-struct ArityAxis;
+inline constexpr size_t kAnyArity = 0;
 
-template<size_t Max, size_t Min, size_t... I>
-struct ArityAxis<Max, Min, std::index_sequence<I...>>
-  : Axis<(Max - I)..., size_t{0}> {
+template<size_t Max, size_t Min>
+consteval auto ArityKeys() {
+  static_assert(Min != kAnyArity && Min <= Max);
+  std::array<size_t, Max - Min + 2> keys{};
+  for (size_t i = 0; i + 1 < keys.size(); ++i) {
+    keys[i] = Max - i;
+  }
+  keys.back() = kAnyArity;
+  return keys;
+}
+
+template<size_t Max, size_t Min>
+struct ArityAxis : ArrayAxis<ArityKeys<Max, Min>()> {
   static constexpr size_t Of(size_t count) noexcept {
-    SDB_ASSERT(count != 0);
+    SDB_ASSERT(count != kAnyArity);
     return count;
   }
 
   static constexpr bool Matches(size_t count, size_t key) noexcept {
-    return key != 0 ? count == key : count < Min || Max < count;
+    return key != kAnyArity ? count == key : count < Min || Max < count;
   }
 };
 
@@ -103,7 +110,6 @@ inline const IndexInput* SegmentDoc(const SubReader& segment) {
   }
   return nullptr;
 }
-
 
 inline bool ResolvePhrase(const TermReader* reader, PhraseHandles& out) {
   if (reader == nullptr) {

@@ -33,10 +33,10 @@
 #include <memory>
 #include <utility>
 
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/geo/s2/multi_point_region.hpp"
 #include "iresearch/utils/geo/s2/multi_polyline_region.hpp"
 #include "iresearch/utils/geo/shape_container.hpp"
-#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::geo {
@@ -181,7 +181,7 @@ void WithGeometryReader(WkbCursor& cursor, Func&& func) {
   if (b > 1) {
     THROW_SQL_ERROR(ERR_MSG("WKB: bad byte-order byte"));
   }
-  Resolve(b == 1, [&]<bool LittleEndian> {
+  Resolve(b == 1, [&]<bool LittleEndian> IRS_FORCE_INLINE {
     WkbReader<LittleEndian> r{cursor};
     std::forward<Func>(func).template operator()<WkbReader<LittleEndian>>(r);
   });

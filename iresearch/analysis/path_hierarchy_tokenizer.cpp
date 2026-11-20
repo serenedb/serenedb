@@ -23,8 +23,8 @@
 #include <cstring>
 #include <string_view>
 
-#include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/dispatch.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::analysis {
 
@@ -339,13 +339,13 @@ Tokenizer::ptr PathHierarchyTokenizer::Make(Options opts) {
   const bool single_char = (opts.delimiter.size() == 1);
   const bool no_replacement = (opts.delimiter == opts.replacement);
 
-  return Resolve(opts.reverse, [&]<bool kReverse> {
-    return Resolve(single_char, [&]<bool kSingleChar> {
-      return Resolve(
-        no_replacement, [&]<bool kNoReplacement> -> Tokenizer::ptr {
-          return std::make_unique<PathHierarchyTokenizerImpl<
-            kReverse, kSingleChar, kNoReplacement>>(std::move(opts));
-        });
+  return Resolve(opts.reverse, [&]<bool Reverse> {
+    return Resolve(single_char, [&]<bool SingleChar> {
+      return Resolve(no_replacement, [&]<bool NoReplacement> -> Tokenizer::ptr {
+        return std::make_unique<
+          PathHierarchyTokenizerImpl<Reverse, SingleChar, NoReplacement>>(
+          std::move(opts));
+      });
     });
   });
 }

@@ -26,6 +26,7 @@
 #include "iresearch/formats/basic_term_reader.hpp"
 #include "iresearch/formats/flush_state.hpp"
 #include "iresearch/formats/format_utils.hpp"
+#include "iresearch/formats/posting/block_encode.hpp"
 #include "iresearch/formats/posting/block_index.hpp"
 #include "iresearch/formats/posting/block_io.hpp"
 #include "iresearch/formats/posting/common.hpp"
@@ -37,8 +38,8 @@
 #include "iresearch/store/directory.hpp"
 #include "iresearch/utils/bytes_output.hpp"
 #include "iresearch/utils/containers/bitset.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/dispatch.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
 
@@ -883,8 +884,8 @@ inline void PostingsWriter::Write(TermPostings& docs, PostingMeta& meta,
       _doc.last = docs_out[take - 1];
 
       if (has_pos) {
-        Resolve(has_offs, [&]<bool kOffs> IRS_FORCE_INLINE {
-          PushDeltas<kOffs>(docs, positions);
+        Resolve(has_offs, [&]<bool Offs> IRS_FORCE_INLINE {
+          PushDeltas<Offs>(docs, positions);
         });
       }
       total_freq += static_cast<uint32_t>(positions);
@@ -942,7 +943,7 @@ inline void PostingsWriter::WritePostings(const PostingRows& postings,
   SDB_ASSERT(!has_pos || !has_offs || postings.span.offs_start != nullptr ||
              postings.offs_start_blocks != nullptr);
   if (has_pos) {
-    Resolve(has_offs, [&]<bool HasOffs> {
+    Resolve(has_offs, [&]<bool HasOffs> IRS_FORCE_INLINE {
       const auto emit_positions =
         [&](const uint32_t* pos, const uint32_t* offs_start,
             const uint32_t* offs_end, size_t n) IRS_FORCE_INLINE {

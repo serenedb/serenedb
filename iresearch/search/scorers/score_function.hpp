@@ -50,18 +50,8 @@ enum class ScoreMergeType {
   Max,
 };
 
-struct MergeAxis : Axis<ScoreMergeType::Max, ScoreMergeType::Sum> {
-  static constexpr ScoreMergeType Of(ScoreMergeType type) noexcept {
-    SDB_ASSERT(type != ScoreMergeType::Noop);
-    return type;
-  }
-
-  static constexpr bool Matches(ScoreMergeType type,
-                                ScoreMergeType key) noexcept {
-    return key == ScoreMergeType::Max ? type == key
-                                      : type != ScoreMergeType::Max;
-  }
-};
+using MergeAxis =
+  ArrayAxis<std::array{ScoreMergeType::Max, ScoreMergeType::Sum}>;
 
 template<>
 struct AxisFor<ScoreMergeType> {

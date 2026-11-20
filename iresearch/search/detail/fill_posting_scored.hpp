@@ -35,8 +35,8 @@ Result ResolveFillScored(const IndexInput& doc, bool per_doc,
   return Resolve<P>(doc, [&]<typename Input> -> Result {
     using Plain = PlainFillScored<Input>;
     return Resolve<P>(merge, [&]<ScoreMergeType M> -> Result {
-      return Resolve<PerDocAxis, P>(per_doc, [&]<bool kPerDoc> -> Result {
-        using Leaf = std::conditional_t<kPerDoc, PostingFillScored<Input, M>,
+      return Resolve<PerDocAxis, P>(per_doc, [&]<bool PerDoc> -> Result {
+        using Leaf = std::conditional_t<PerDoc, PostingFillScored<Input, M>,
                                         ConstFillScored<Input, M>>;
         return make.template operator()<Leaf, Plain>();
       });
@@ -50,8 +50,8 @@ Result ResolveCountScored(const IndexInput& doc, bool per_doc,
   return Resolve<P>(doc, [&]<typename Input> -> Result {
     using Plain = PlainCountScored<Input>;
     return Resolve<P>(merge, [&]<ScoreMergeType M> -> Result {
-      return Resolve<PerDocAxis, P>(per_doc, [&]<bool kPerDoc> -> Result {
-        using Leaf = std::conditional_t<kPerDoc, PostingCountScored<Input, M>,
+      return Resolve<PerDocAxis, P>(per_doc, [&]<bool PerDoc> -> Result {
+        using Leaf = std::conditional_t<PerDoc, PostingCountScored<Input, M>,
                                         ConstCountScored<Input, M>>;
         return make.template operator()<Leaf, Plain>();
       });

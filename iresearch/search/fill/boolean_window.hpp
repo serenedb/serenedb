@@ -104,7 +104,7 @@ class BooleanWindow : detail::WindowClauses<Lead, Others, Optional, Excludes> {
     if constexpr (kRetracts) {
       const auto next = _optional.Fill(min, max, _own.data(), _scores);
       const auto words = detail::WindowWords(min, max);
-      Resolve(_score.inner, [&]<ScoreMergeType Inner> {
+      Resolve(_score.inner, [&]<ScoreMergeType Inner> IRS_FORCE_INLINE {
         Fold<Inner>(mask, scores, words);
       });
       return next;
@@ -114,7 +114,7 @@ class BooleanWindow : detail::WindowClauses<Lead, Others, Optional, Excludes> {
       }
       const auto next = _optional.Fill(min, max, _own.data(), scores);
       const auto words = detail::WindowWords(min, max);
-      Resolve(_score.inner, [&]<ScoreMergeType Inner> {
+      Resolve(_score.inner, [&]<ScoreMergeType Inner> IRS_FORCE_INLINE {
         Absorb<Inner>(mask, scores, words);
       });
       return next;

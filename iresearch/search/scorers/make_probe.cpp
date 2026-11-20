@@ -155,9 +155,9 @@ ScoreFunction MakeProbeScore(ScoreMergeType inner, ScoreFunction&& required,
       return ScoreFunction::Constant(constant);
     }
   }
-  return Resolve(constant != 0, [&]<bool kHasConst> {
+  return Resolve(constant != 0, [&]<bool HasConst> {
     return Resolve(inner, [&]<ScoreMergeType M> {
-      return ScoreFunction::Make<ProbeScore<M, kHasConst>>(
+      return ScoreFunction::Make<ProbeScore<M, HasConst>>(
         std::move(required), std::move(probed), held, constant);
     });
   });

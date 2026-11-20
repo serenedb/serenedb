@@ -29,8 +29,8 @@
 #include <functional>
 #include <variant>
 
-#include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/dispatch.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
 namespace {
@@ -116,7 +116,7 @@ void ScatteredField::Reset(const FieldInverter& field) {
   SDB_ASSERT(nocc == field.Log().Size());
   field.VisitLog([&](const auto& log) {
     Resolve(log.Refs().Size() != 0,
-            [&]<bool kRefs> { Scatter<kRefs>(log, nocc); });
+            [&]<bool Refs> { Scatter<Refs>(log, nocc); });
   });
 }
 

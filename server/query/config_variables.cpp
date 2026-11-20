@@ -55,6 +55,7 @@
 #include "catalog/cluster.h"
 #include "catalog/entry/role.h"
 #include "catalog/transaction.h"
+#include "iresearch/utils/log.hpp"
 #include "jobs/scheduler.h"
 #include "pg/connection_context.h"
 #include "pg/types/xml.h"

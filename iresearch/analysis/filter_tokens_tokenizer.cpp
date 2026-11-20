@@ -112,8 +112,8 @@ bool FilterTokensTokenizer::ProcessTokens(TokenBatch& batch, BatchCtx& ctx) {
   SDB_ASSERT(ctx.valid);
   bool all_kept = true;
   if (_by_length) {
-    all_kept = Resolve(ctx.traits.ascii, [&]<bool kAscii> {
-      return DropByLength<kAscii>(batch, ctx.valid);
+    all_kept = Resolve(ctx.traits.ascii, [&]<bool Ascii> IRS_FORCE_INLINE {
+      return DropByLength<Ascii>(batch, ctx.valid);
     });
   }
   if (_predicate) {

@@ -125,7 +125,6 @@ sdb_instantiation_axis(
     "all TYPE=AllQuery MAKE=iresearch/search/detail/all_of.hpp"
     "approx TYPE=ApproxQuery MAKE=iresearch/search/detail/approx_of.hpp"
     "boolean TYPE=BooleanQuery MAKE=iresearch/search/detail/make_query.hpp HEADER=iresearch/search/queries/boolean_query.hpp"
-    "multi_term TYPE=MultiTermQuery MAKE=iresearch/search/detail/make_term.hpp HEADER=iresearch/search/queries/multiterm_query.hpp"
     "ngram_similarity TYPE=NGramSimilarityQuery MAKE=iresearch/search/detail/ngram_of.hpp"
     "phrase TYPE=FixedPhraseQuery,PhraseQuery MAKE=iresearch/search/detail/phrase_of.hpp"
     "phrase_variadic TYPE=VariadicPhraseQuery,PhraseQuery MAKE=iresearch/search/detail/phrase_of.hpp"
@@ -137,26 +136,38 @@ sdb_instantiation_axis(
 sdb_instantiate(
     iresearch
     DIR search/boolean
+    PREFIX boolean
     NAMESPACE irs::detail
     INCLUDE
         iresearch/search/detail/boolean_planner.hpp
         @PLAN.INCLUDE@
         @PLAN.PLANNER@
     CALL "template struct BooleanMaker<@PLAN.FAMILY@, @PLAN.CTX@>;"
-    AXES PLAN=IRS_PLANS
+    EXPAND PLAN=IRS_PLANS
+)
+set(irs_required_call
+    "template struct RequiredMaker<@PLAN.FAMILY@, @PLAN.CTX@, ${irs_input_slice}>;"
 )
 sdb_instantiate(
     iresearch
     DIR search/boolean
     PREFIX required
     NAMESPACE irs::detail::builder
-    INCLUDE
-        iresearch/search/detail/boolean_required.hpp
-        @PLAN.INCLUDE@
-    CALL
-        "template struct RequiredMaker<@PLAN.FAMILY@, @PLAN.CTX@, ${irs_input_slice}>;"
+    INCLUDE iresearch/search/detail/boolean_required.hpp @PLAN.INCLUDE@
+    CALL "${irs_required_call}"
     AXES PLAN=IRS_PLANS INPUT=IRS_INPUTS
-    SKIP probe_docs probe_scored
+    SKIP count docs fill_docs lead_docs probe_docs probe_scored
+)
+sdb_instantiate(
+    iresearch
+    DIR search/boolean
+    PREFIX required
+    NAMESPACE irs::detail::builder
+    INCLUDE iresearch/search/detail/boolean_required.hpp @PLAN.INCLUDE@
+    CALL "${irs_required_call}"
+    AXES PLAN=IRS_PLANS
+    EXPAND INPUT=IRS_INPUTS
+    SKIP fill_scored hits lead_scored top probe_docs probe_scored
 )
 sdb_instantiate(
     iresearch
@@ -168,21 +179,34 @@ sdb_instantiate(
         @PLAN.INCLUDE@
     CALL
         "template struct ExclusionMaker<@PLAN.FAMILY@, @PLAN.CTX@, ${irs_slice}>;"
-    AXES PLAN=IRS_PLANS MASK=IRS_MASK_SLICES INPUT=IRS_INPUTS
+    AXES PLAN=IRS_PLANS MASK=IRS_MASK_SLICES
+    EXPAND INPUT=IRS_INPUTS
     SKIP probe_docs probe_scored
+)
+set(irs_exclusion_window_call
+    "template struct ExclusionWindowMaker<@PLAN.FAMILY@, @PLAN.CTX@, ${irs_slice}>;"
 )
 sdb_instantiate(
     iresearch
     DIR search/boolean
     PREFIX exclusion_window
     NAMESPACE irs::detail::builder
-    INCLUDE
-        iresearch/search/detail/boolean_exclusion_window.hpp
-        @PLAN.INCLUDE@
-    CALL
-        "template struct ExclusionWindowMaker<@PLAN.FAMILY@, @PLAN.CTX@, ${irs_slice}>;"
+    INCLUDE iresearch/search/detail/boolean_exclusion_window.hpp @PLAN.INCLUDE@
+    CALL "${irs_exclusion_window_call}"
     AXES PLAN=IRS_PLANS MASK=IRS_MASK_SLICES INPUT=IRS_INPUTS
-    SKIP fill_scored lead_scored probe_docs probe_scored
+    SKIP count docs fill_docs fill_scored lead_docs lead_scored probe_docs
+         probe_scored
+)
+sdb_instantiate(
+    iresearch
+    DIR search/boolean
+    PREFIX exclusion_window
+    NAMESPACE irs::detail::builder
+    INCLUDE iresearch/search/detail/boolean_exclusion_window.hpp @PLAN.INCLUDE@
+    CALL "${irs_exclusion_window_call}"
+    AXES PLAN=IRS_PLANS MASK=IRS_MASK_SLICES
+    EXPAND INPUT=IRS_INPUTS
+    SKIP fill_scored hits lead_scored top probe_docs probe_scored
 )
 sdb_instantiate(
     iresearch
@@ -193,7 +217,7 @@ sdb_instantiate(
         iresearch/search/detail/boolean_negation.hpp
         @PLAN.INCLUDE@
     CALL "template struct NegationMaker<@PLAN.FAMILY@, @PLAN.CTX@>;"
-    AXES PLAN=IRS_PLANS
+    EXPAND PLAN=IRS_PLANS
     SKIP count fill_scored hits lead_scored probe_docs probe_scored top
 )
 sdb_instantiate(
@@ -203,7 +227,8 @@ sdb_instantiate(
     NAMESPACE irs::probe
     INCLUDE iresearch/search/probe/boolean_exclusion.hpp
     CALL "template struct ExclusionMaker<@SCORING.SCORING@, ${irs_slice}>;"
-    AXES SCORING=IRS_SCORING MASK=IRS_MASK_SLICES INPUT=IRS_INPUTS
+    AXES SCORING=IRS_SCORING MASK=IRS_MASK_SLICES
+    EXPAND INPUT=IRS_INPUTS
 )
 sdb_instantiate(
     iresearch
@@ -212,7 +237,7 @@ sdb_instantiate(
     NAMESPACE irs::probe
     INCLUDE iresearch/search/probe/boolean_optional.hpp
     CALL "template struct OptionalMaker<@SCORING.SCORING@>;"
-    AXES SCORING=IRS_SCORING
+    EXPAND SCORING=IRS_SCORING
 )
 sdb_instantiate(
     iresearch
@@ -304,13 +329,25 @@ sdb_instantiate(
 sdb_instantiate(
     iresearch
     DIR search/query
+    PREFIX builders
     NAMESPACE irs
     INCLUDE
         iresearch/search/queries/query_builder_impl.tpp
         @QUERY.MAKE@
         @QUERY.HEADER@
     CALL "template class QueryBuilderImpl<@QUERY.TYPE@>;"
-    AXES QUERY=IRS_QUERY_BUILDERS
+    EXPAND QUERY=IRS_QUERY_BUILDERS
+)
+sdb_instantiate(
+    iresearch
+    DIR search/query
+    PREFIX multi_term
+    NAMESPACE irs
+    INCLUDE
+        iresearch/search/queries/query_builder_impl.tpp
+        iresearch/search/detail/make_term.hpp
+        iresearch/search/queries/multiterm_query.hpp
+    CALL "template class QueryBuilderImpl<MultiTermQuery>;"
 )
 
 if(IRESEARCH_BENCH)

@@ -56,12 +56,12 @@
 #include <icu-helpers.hpp>
 #include <icu-zone-lut.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/dispatch.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/misc.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/system_compiler.hpp>
-#include <iresearch/utils/dispatch.hpp>
 #include <limits>
 #include <span>
 #include <string_view>
@@ -2835,19 +2835,17 @@ SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
       return MakeArraySerializer<UhugeintTextCore, UhugeintBinCore, kNumeric>(
         format, context, kind);
     case FLOAT:
-      return irs::Resolve(
-        context.extra_float_digits > 0, [&]<bool Precise> {
-          return MakeArraySerializer<FloatTextCore<float, Precise>,
-                                     FloatBinCore<float>, kFloat4>(
-            format, context, kind);
-        });
+      return irs::Resolve(context.extra_float_digits > 0, [&]<bool Precise> {
+        return MakeArraySerializer<FloatTextCore<float, Precise>,
+                                   FloatBinCore<float>, kFloat4>(format,
+                                                                 context, kind);
+      });
     case DOUBLE:
-      return irs::Resolve(
-        context.extra_float_digits > 0, [&]<bool Precise> {
-          return MakeArraySerializer<FloatTextCore<double, Precise>,
-                                     FloatBinCore<double>, kFloat8>(
-            format, context, kind);
-        });
+      return irs::Resolve(context.extra_float_digits > 0, [&]<bool Precise> {
+        return MakeArraySerializer<FloatTextCore<double, Precise>,
+                                   FloatBinCore<double>, kFloat8>(
+          format, context, kind);
+      });
     case DECIMAL:
       if (IsMoney(type)) {
         return MakeArraySerializer<MoneyTextCore, MoneyBinCore, kMoney>(
@@ -2976,10 +2974,10 @@ SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
                                                               kind);
       }
       if (const auto geometric = GeometricOf(type)) {
-        return irs::Resolve(*geometric, [&]<Geometric kKind>() {
+        return irs::Resolve(*geometric, [&]<Geometric Kind>() {
           return MakeArraySerializer<
-            GeometricTextCore<kKind, WrapContext::Array>,
-            GeometricBinCore<kKind>, kDynamicOid>(format, context, kind);
+            GeometricTextCore<Kind, WrapContext::Array>, GeometricBinCore<Kind>,
+            kDynamicOid>(format, context, kind);
         });
       }
       // Element OID is resolved per-row by Type2Oid: anonymous ROW(...) yields
@@ -3221,19 +3219,17 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
       return SelectFieldSerializer<UhugeintTextCore, UhugeintTextCore,
                                    UhugeintBinCore>(format, context);
     case FLOAT:
-      return irs::Resolve(
-        context.extra_float_digits > 0, [&]<bool Precise> {
-          return SelectFieldSerializer<FloatTextCore<float, Precise>,
-                                       FloatTextCore<float, Precise>,
-                                       FloatBinCore<float>>(format, context);
-        });
+      return irs::Resolve(context.extra_float_digits > 0, [&]<bool Precise> {
+        return SelectFieldSerializer<FloatTextCore<float, Precise>,
+                                     FloatTextCore<float, Precise>,
+                                     FloatBinCore<float>>(format, context);
+      });
     case DOUBLE:
-      return irs::Resolve(
-        context.extra_float_digits > 0, [&]<bool Precise> {
-          return SelectFieldSerializer<FloatTextCore<double, Precise>,
-                                       FloatTextCore<double, Precise>,
-                                       FloatBinCore<double>>(format, context);
-        });
+      return irs::Resolve(context.extra_float_digits > 0, [&]<bool Precise> {
+        return SelectFieldSerializer<FloatTextCore<double, Precise>,
+                                     FloatTextCore<double, Precise>,
+                                     FloatBinCore<double>>(format, context);
+      });
     case DECIMAL:
       if (IsMoney(type)) {
         return SelectFieldSerializer<MoneyTextCore, MoneyTextCore,
@@ -3372,11 +3368,11 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
                                      RangeBinCore>(format, context);
       }
       if (const auto geometric = GeometricOf(type)) {
-        return irs::Resolve(*geometric, [&]<Geometric kKind>() {
+        return irs::Resolve(*geometric, [&]<Geometric Kind>() {
           return SelectFieldSerializer<
-            GeometricTextCore<kKind, WrapContext::None>,
-            GeometricTextCore<kKind, WrapContext::Record>,
-            GeometricBinCore<kKind>>(format, context);
+            GeometricTextCore<Kind, WrapContext::None>,
+            GeometricTextCore<Kind, WrapContext::Record>,
+            GeometricBinCore<Kind>>(format, context);
         });
       }
       return SelectFieldSerializer<RecordTextCore<WrapContext::None>,

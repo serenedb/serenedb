@@ -37,9 +37,9 @@
 #include <duckdb/main/client_context.hpp>
 #include <functional>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/dispatch.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
-#include <iresearch/utils/dispatch.hpp>
 #include <limits>
 #include <numbers>
 #include <span>
@@ -2166,9 +2166,11 @@ class TextWriter {
 
   void Number(double value) {
     char buffer[kNumberStrMaxLen];
-    _write({buffer, irs::Resolve(_extra_float_digits > 0, [&]<bool kExtra> {
-              return WriteFloat<kExtra>(value, _extra_float_digits, buffer);
-            })});
+    _write(
+      {buffer,
+       irs::Resolve(_extra_float_digits > 0, [&]<bool Extra> IRS_FORCE_INLINE {
+         return WriteFloat<Extra>(value, _extra_float_digits, buffer);
+       })});
   }
 
   void Pair(const Point& point) {

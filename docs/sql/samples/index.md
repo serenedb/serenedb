@@ -76,7 +76,7 @@ SereneDB supports three different types of sampling methods: `reservoir`, `berno
 
 Samples require a *sample size*, which is an indication of how many elements will be sampled from the total population. Samples can either be given as a percentage (`10%` or `10 PERCENT`) or as a fixed number of rows (`10` or `10 ROWS`). All three sampling methods support sampling over a percentage, but **only** reservoir sampling supports sampling a fixed number of rows. In `system (10)` and `bernoulli (10)`, a number without a unit is a percentage.
 
-Samples are probabilistic, that is to say, samples can be different between runs *unless* the seed is specifically specified. Specifying the seed *only* guarantees that the sample is the same if multi-threading is not enabled (i.e., `SET threads = 1`). In the case of multiple threads running over a sample, samples are not necessarily consistent even with a fixed seed.
+Samples are probabilistic, that is to say, samples can be different between runs *unless* the seed is specifically specified. Specifying the seed *only* guarantees that the sample is the same if multi-threading is not enabled (i.e., `SET threads = 1`). In the case of multiple threads running over a sample, samples are not necessarily consistent even with a fixed seed. The exception is a `system` sample given as a percentage with a seed and taken directly from a SereneDB table or from Parquet files: it is the same with any number of threads, as the scan that takes it runs on one thread.
 
 ## Sampling Methods
 

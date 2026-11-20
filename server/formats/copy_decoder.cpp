@@ -911,10 +911,7 @@ duckdb::idx_t CopyDecoder::DecodeColumn(size_t column,
         ++failures;
       }
     }
-    if (failures != 0 && !_dctx.column_error) {
-      _dctx.column_error =
-        CopyError(ERRCODE_INVALID_TEXT_REPRESENTATION, error);
-    }
+    _dctx.column_error = CopyError(ERRCODE_INVALID_TEXT_REPRESENTATION, error);
   }
   duckdb::VectorOperations::Copy(decoded, out, count, 0, row);
   return failures;

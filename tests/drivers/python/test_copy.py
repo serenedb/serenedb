@@ -230,10 +230,10 @@ def test_copy_from_stdin_csv_record_across_messages(conn: psycopg.Connection,
         with conn.cursor() as cur:
             with cur.copy(f'COPY public."{table_name}" FROM STDIN '
                           "(FORMAT csv)") as cp:
-                cp.write(f'1,"{label[:10]}'.encode())
+                cp.write(f'0,"zero"\n1,"{label[:10]}'.encode())
                 cp.write(f'{label[10:]}"\n2,"two"\n'.encode())
             cur.execute(f'SELECT x, label FROM public."{table_name}" ORDER BY x')
-            assert cur.fetchall() == [(1, label), (2, "two")]
+            assert cur.fetchall() == [(0, "zero"), (1, label), (2, "two")]
     finally:
         _drop(conn, table_name)
 

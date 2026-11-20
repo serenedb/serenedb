@@ -105,8 +105,7 @@ SegmentWriter::SegmentWriter(ConstructToken, Directory& dir,
     _db{DerefDb(options.db)},
     _fallback_field_options{options.field_options},
     _ann_env{options.ann_env},
-    _hnsw_bases{options.hnsw_bases},
-    _parallel{options.parallel} {}
+    _hnsw_bases{options.hnsw_bases} {}
 
 void SegmentWriter::FlushFields(FlushState& state,
                                 std::span<const BasicTermReader* const> extra) {
@@ -168,7 +167,7 @@ SegmentInputs SegmentWriter::flush(SegmentMeta& meta,
 
   SegmentInputs inputs{
     .col = std::move(_col_reader),
-    .idx = idx.Commit(_hnsw_bases, _parallel),
+    .idx = idx.Commit(_hnsw_bases),
     .postings = std::move(postings),
   };
 
@@ -330,7 +329,7 @@ void SegmentWriter::reset(const SegmentMeta& meta) {
   _col_writer = std::make_unique<ColWriter>(_dir, meta.name, _db);
   _col_writer->SetDeferredSeal(_deferred_columns);
   _col_writer->SetFieldOptions(active);
-  _col_writer->SetHnsw(_hnsw_bases, _parallel);
+  _col_writer->SetHnswBases(_hnsw_bases);
   _fields.SetColWriter(_col_writer.get());
   _fields.SetFieldOptions(active);
 

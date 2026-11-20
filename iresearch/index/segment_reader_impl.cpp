@@ -108,7 +108,7 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::Open(
     .col = std::make_unique<ColReader>(dir, meta.name, *options.db,
                                        IOAdvice::RANDOM),
     .idx = std::make_unique<IdxReader>(dir, meta.name, options.hnsw_bases,
-                                       options.index, options.parallel),
+                                       options.index),
   };
   return Open(dir, meta, options, std::move(inputs));
 }

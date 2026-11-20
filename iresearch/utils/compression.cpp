@@ -369,52 +369,67 @@ namespace {
 using FrameSource =
   absl::FunctionRef<void(absl::FunctionRef<void(bytes_view)>)>;
 
-Frames CompressFrames(Method method, uint32_t frame_bytes,
-                      FrameSource for_each_frame,
-                      absl::FunctionRef<byte_type*(uint64_t)> slots,
-                      ParallelFor parallel) {
-  SDB_ASSERT(frame_bytes != 0 && frame_bytes <= kMaxFrameBytes);
+struct Plan {
+  Frames frames;
   absl::InlinedVector<bytes_view, 1> raws;
   absl::InlinedVector<uint64_t, 1> offsets;
+  byte_type* slots = nullptr;
+};
+
+Plan PlanFrames(Method method, uint32_t frame_bytes,
+                FrameSource for_each_frame) {
+  SDB_ASSERT(frame_bytes != 0 && frame_bytes <= kMaxFrameBytes);
+  Plan plan;
   uint64_t raw_bytes = 0;
   bool full = true;
   for_each_frame([&](bytes_view raw) {
     SDB_ASSERT(!raw.empty() && raw.size() <= frame_bytes);
-    full = full && (raws.empty() || raws.back().size() == frame_bytes);
-    raws.push_back(raw);
-    offsets.push_back(raw_bytes);
+    full =
+      full && (plan.raws.empty() || plan.raws.back().size() == frame_bytes);
+    plan.raws.push_back(raw);
+    plan.offsets.push_back(raw_bytes);
     raw_bytes += raw.size();
   });
-  Frames frames{
+  plan.frames = {
     .codec = method.codec,
     .raw_bytes = raw_bytes,
     .frame_bytes = frame_bytes,
   };
-  frames.sizes.resize(raws.size());
+  plan.frames.sizes.resize(plan.raws.size());
   if (!full) {
-    for (const auto raw : raws) {
-      frames.raw_sizes.push_back(static_cast<uint32_t>(raw.size()));
+    for (const auto raw : plan.raws) {
+      plan.frames.raw_sizes.push_back(static_cast<uint32_t>(raw.size()));
     }
   }
-  auto* out = slots(raw_bytes);
-  parallel(raws.size(), [&](size_t frame) {
-    frames.sizes[frame] =
-      static_cast<uint32_t>(Encode(method, raws[frame], out + offsets[frame]));
-  });
-  return frames;
+  return plan;
 }
 
-Compressed CompressOwned(Method method, uint32_t frame_bytes,
-                         FrameSource for_each_frame, ParallelFor parallel) {
-  Compressed out;
-  out.frames = CompressFrames(
-    method, frame_bytes, for_each_frame,
-    [&](uint64_t raw_bytes) {
-      out.slots = std::make_unique_for_overwrite<byte_type[]>(raw_bytes);
-      return out.slots.get();
-    },
-    parallel);
-  return out;
+void EncodeFrame(Method method, Plan& plan, size_t frame) noexcept {
+  plan.frames.sizes[frame] = static_cast<uint32_t>(
+    Encode(method, plan.raws[frame], plan.slots + plan.offsets[frame]));
+}
+
+struct FrameRef {
+  size_t plan = 0;
+  size_t frame = 0;
+};
+
+void EncodePlans(Method method, std::span<Plan> plans, ParallelFor parallel) {
+  if (plans.size() == 1) {
+    auto& plan = plans.front();
+    parallel(plan.raws.size(),
+             [&](size_t frame) { EncodeFrame(method, plan, frame); });
+    return;
+  }
+  std::vector<FrameRef> refs;
+  for (size_t p = 0; p != plans.size(); ++p) {
+    for (size_t frame = 0; frame != plans[p].raws.size(); ++frame) {
+      refs.push_back({.plan = p, .frame = frame});
+    }
+  }
+  parallel(refs.size(), [&](size_t i) {
+    EncodeFrame(method, plans[refs[i].plan], refs[i].frame);
+  });
 }
 
 class CountingStream final : public duckdb::WriteStream {
@@ -499,34 +514,51 @@ uint64_t StoredBytes(const Frames& frames) noexcept {
 
 Compressed Compress(Method method, bytes_view raw, uint32_t frame_bytes,
                     ParallelFor parallel) {
-  return CompressOwned(
-    method, frame_bytes,
-    [&](absl::FunctionRef<void(bytes_view)> visit) {
-      SplitFrames(raw, frame_bytes, visit);
-    },
-    parallel);
+  auto plan = PlanFrames(method, frame_bytes,
+                         [&](absl::FunctionRef<void(bytes_view)> visit) {
+                           SplitFrames(raw, frame_bytes, visit);
+                         });
+  Compressed out;
+  out.slots = std::make_unique_for_overwrite<byte_type[]>(raw.size());
+  plan.slots = out.slots.get();
+  EncodePlans(method, {&plan, 1}, parallel);
+  out.frames = std::move(plan.frames);
+  return out;
 }
 
-Compressed Compress(Method method, const FrameWriter& raw,
-                    ParallelFor parallel) {
-  return CompressOwned(
-    method, raw.FrameBytes(),
-    [&](absl::FunctionRef<void(bytes_view)> visit) { raw.ForEachFrame(visit); },
-    parallel);
+std::vector<Compressed> Compress(Method method,
+                                 std::span<const FrameWriter> raws,
+                                 ParallelFor parallel) {
+  std::vector<Plan> plans;
+  plans.reserve(raws.size());
+  std::vector<Compressed> out(raws.size());
+  for (size_t i = 0; i != raws.size(); ++i) {
+    const auto& raw = raws[i];
+    auto& plan = plans.emplace_back(PlanFrames(
+      method, raw.FrameBytes(), [&](absl::FunctionRef<void(bytes_view)> visit) {
+        raw.ForEachFrame(visit);
+      }));
+    out[i].slots =
+      std::make_unique_for_overwrite<byte_type[]>(plan.frames.raw_bytes);
+    plan.slots = out[i].slots.get();
+  }
+  EncodePlans(method, plans, parallel);
+  for (size_t i = 0; i != raws.size(); ++i) {
+    out[i].frames = std::move(plans[i].frames);
+  }
+  return out;
 }
 
 Frames Compress(Method method, bytes_view raw, uint32_t frame_bytes,
                 std::span<byte_type> slots, ParallelFor parallel) {
-  return CompressFrames(
-    method, frame_bytes,
-    [&](absl::FunctionRef<void(bytes_view)> visit) {
-      SplitFrames(raw, frame_bytes, visit);
-    },
-    [&](uint64_t raw_bytes) {
-      SDB_ASSERT(raw_bytes <= slots.size());
-      return slots.data();
-    },
-    parallel);
+  auto plan = PlanFrames(method, frame_bytes,
+                         [&](absl::FunctionRef<void(bytes_view)> visit) {
+                           SplitFrames(raw, frame_bytes, visit);
+                         });
+  SDB_ASSERT(plan.frames.raw_bytes <= slots.size());
+  plan.slots = slots.data();
+  EncodePlans(method, {&plan, 1}, parallel);
+  return std::move(plan.frames);
 }
 
 void ForEachStored(const Frames& frames, const byte_type* slots,

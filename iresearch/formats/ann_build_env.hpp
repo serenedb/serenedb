@@ -22,15 +22,27 @@
 
 #include <absl/functional/function_ref.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <yaclib/exe/executor.hpp>
 
 namespace irs {
+
+inline constexpr uint32_t kHnswMaxWorkers = 64;
 
 struct AnnBuildEnv {
   yaclib::IExecutor* executor = nullptr;
   absl::FunctionRef<uint32_t(uint32_t, uint32_t)> acquire;
   absl::FunctionRef<void(uint32_t)> release;
 };
+
+void FanOut(const AnnBuildEnv* env, size_t tasks,
+            absl::FunctionRef<void(size_t)> task);
+
+inline auto AnnParallelFor(const AnnBuildEnv* env) {
+  return [env](size_t count, absl::FunctionRef<void(size_t)> body) {
+    FanOut(env, count, body);
+  };
+}
 
 }  // namespace irs

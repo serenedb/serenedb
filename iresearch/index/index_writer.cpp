@@ -225,7 +225,6 @@ IndexWriter::SegmentContext::SegmentContext(Directory& dir,
       .scorer = options.scorer,
       .db = options.db,
       .hnsw_bases = options.hnsw_bases,
-      .parallel = options.parallel,
     } {}
 
 IndexWriter::SegmentContext::ptr IndexWriter::SegmentContext::make(
@@ -523,7 +522,6 @@ SegmentWriterOptions IndexWriter::GetSegmentWriterOptions(
     .field_options = field_options ? field_options : _field_options.get(),
     .ann_env = compaction ? nullptr : _ann_env,
     .hnsw_bases = _reader_options.hnsw_bases,
-    .parallel = _reader_options.parallel,
   };
 }
 

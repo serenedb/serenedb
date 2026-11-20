@@ -78,8 +78,7 @@ struct IdxReader::Impl {
 };
 
 IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
-                     HnswBases* hnsw_bases, bool keep_terms,
-                     ParallelForFn parallel)
+                     HnswBases* hnsw_bases, bool keep_terms)
   : _impl{std::make_unique<Impl>()} {
   const auto filename = absl::StrCat(segment_name, ".", kIdxFormatExt);
   bool exists = false;
@@ -160,18 +159,17 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
           }
         });
     });
-  Adopt(std::move(footer), hnsw_bases, parallel);
+  Adopt(std::move(footer), hnsw_bases);
 }
 
 IdxReader::IdxReader(IndexInput::ptr in, IdxFooter footer,
-                     HnswBases* hnsw_bases, ParallelForFn parallel)
+                     HnswBases* hnsw_bases)
   : _impl{std::make_unique<Impl>()} {
   _impl->in = std::move(in);
-  Adopt(std::move(footer), hnsw_bases, parallel);
+  Adopt(std::move(footer), hnsw_bases);
 }
 
-void IdxReader::Adopt(IdxFooter footer, HnswBases* hnsw_bases,
-                      ParallelForFn parallel) {
+void IdxReader::Adopt(IdxFooter footer, HnswBases* hnsw_bases) {
 #ifndef IRESEARCH_NO_VECTOR
   for (const auto& [id, meta] : footer.ivf) {
     _impl->ann_ends.push_back(meta.tree_offset + meta.tree_byte_size);
@@ -188,8 +186,7 @@ void IdxReader::Adopt(IdxFooter footer, HnswBases* hnsw_bases,
     _impl->ann_ends.push_back(meta.offset + meta.byte_size);
     _impl->ann_by_id.emplace(id, _impl->ann_entries.size());
     _impl->ann_entries.emplace_back(
-      id,
-      std::make_unique<HnswIndex>(std::move(meta), id, hnsw_bases, parallel));
+      id, std::make_unique<HnswIndex>(std::move(meta), id, hnsw_bases));
   }
 #else
   SDB_ASSERT(footer.ivf.empty() && footer.hnsw.empty());

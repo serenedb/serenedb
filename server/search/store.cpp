@@ -280,7 +280,6 @@ irs::IndexReaderOptions Store::ReaderOptions() const {
   options.db = &irs::DuckDBEngine::Instance().instance();
   options.scorer = _topk_scorer.get();
   options.hnsw_bases = _hnsw_bases.get();
-  options.parallel = EngineParallelFor;
   return options;
 }
 
@@ -662,7 +661,8 @@ std::shared_ptr<const TableState> Store::SnapshotState(
   return version.tick <= snapshot ? version.state : nullptr;
 }
 
-catalog::RecordBuffer Store::SnapshotRecord(const TableState& state) const {
+catalog::RecordBuffer Store::SnapshotRecord(const TableState& state,
+                                            irs::ParallelFor parallel) const {
   irs::containers::FlatHashSet<irs::field_id> stored;
   {
     absl::ReaderMutexLock lock{&_layout_mutex};
@@ -727,10 +727,7 @@ catalog::RecordBuffer Store::SnapshotRecord(const TableState& state) const {
     };
   }
   if (catalog::Transactions::Get().LogCompression()) {
-    auto& db = irs::DuckDBEngine::Instance().instance();
-    const auto parallel = ParallelOn(db);
-    PackRows(delta.rows, irs::compression::kFrameBytes, parallel);
-    PackPatches(delta.segments, irs::compression::kFrameBytes, parallel);
+    PackDelta(delta, irs::compression::kFrameBytes, parallel);
   }
   delta.manifest = state.manifest;
   return catalog::SearchRecord(_db_id, _id, delta);

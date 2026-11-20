@@ -2032,7 +2032,7 @@ void Writes::PrepareCommit(duckdb::ClientContext& context) {
           ForEachLiveChunk(*collection, removed.get(), visit);
         };
         if (catalog::Transactions::Get().LogCompression()) {
-          PackRows({&w.rows, 1}, kLogFrameBytes, parallel);
+          PackRows(w.rows, kLogFrameBytes, parallel);
         }
       }
       const auto docs = PieceDocs(piece.trx);

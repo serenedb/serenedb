@@ -46,6 +46,6 @@ bool RecoverSearchStorages(
 void StartSearchStorageTasks();
 std::vector<TableSnapshot> CaptureSnapshot(const catalog::CommittedView& view);
 std::vector<catalog::RecordBuffer> SnapshotRecords(
-  std::span<const TableSnapshot> tables);
+  std::span<const TableSnapshot> tables, duckdb::ClientContext* context);
 
 }  // namespace sdb::search

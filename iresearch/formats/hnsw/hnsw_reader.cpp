@@ -51,8 +51,8 @@ std::vector<float> NormalizedQuery(std::span<const float> query,
 
 }  // namespace
 
-std::shared_ptr<const HnswData> HnswIndex::Load(
-  const SubReader& segment) const {
+std::shared_ptr<const HnswData> HnswIndex::Load(const SubReader& segment,
+                                                ParallelFor parallel) const {
   absl::call_once(_once, [&] {
     auto in = segment.ReopenAnn();
     if (!in) {
@@ -61,7 +61,7 @@ std::shared_ptr<const HnswData> HnswIndex::Load(
     in->Seek(_meta.offset);
     auto data = std::make_shared<HnswData>();
     data->graph = _meta.graph.Packed()
-                    ? HnswGraph::DeserializePacked(*in, _meta.graph, _parallel)
+                    ? HnswGraph::DeserializePacked(*in, _meta.graph, parallel)
                     : HnswGraph::Deserialize(*in);
     const auto read_floats = [&](auto& out, size_t count) {
       out.resize(count);
@@ -152,7 +152,7 @@ QueryBuilder::ptr HnswIndex::PrepareSearch(const SubReader& segment,
   if (Empty()) {
     return QueryBuilder::Empty();
   }
-  auto data = Load(segment);
+  auto data = Load(segment, ctx.parallel);
   if (!data || data->graph.Empty()) {
     return QueryBuilder::Empty();
   }
@@ -175,6 +175,7 @@ QueryBuilder::ptr HnswIndex::PrepareSearch(const SubReader& segment,
 }
 
 AnnExactCodes HnswIndex::PrepareExact(const SubReader& segment,
+                                      const PrepareContext& ctx,
                                       std::span<const float> query,
                                       VectorMetric metric) const {
   if (Empty() || query.size() != _meta.header.d ||
@@ -182,7 +183,7 @@ AnnExactCodes HnswIndex::PrepareExact(const SubReader& segment,
         (_meta.header.metric == VectorMetric::Cosine)) {
     return {};
   }
-  auto data = Load(segment);
+  auto data = Load(segment, ctx.parallel);
   if (!data || !data->stats || data->codes.empty()) {
     return {};
   }

@@ -249,6 +249,13 @@ std::vector<Bytes> WrittenFrames(const compression::FrameWriter& writer) {
   return frames;
 }
 
+compression::Compressed CompressOne(compression::Method method,
+                                    const compression::FrameWriter& writer) {
+  return std::move(
+    compression::Compress(method, std::span{&writer, size_t{1}}, Threads)
+      .front());
+}
+
 Bytes PackedRoundTrip(const compression::Compressed& compressed) {
   auto bytes = WritePacked(compressed);
   const auto packed = ReadPacked(bytes);
@@ -275,7 +282,7 @@ TEST(Compression, FrameWriterFramesRoundTrip) {
         joined.insert(joined.end(), frame.begin(), frame.end());
       }
       EXPECT_EQ(joined, raw);
-      const auto compressed = compression::Compress(method, writer, Threads);
+      const auto compressed = CompressOne(method, writer);
       EXPECT_EQ(compressed.frames.raw_bytes, raw.size());
       EXPECT_EQ(compressed.frames.frame_bytes, kFrame);
       EXPECT_EQ(compressed.frames.sizes.size(), frames.size());
@@ -309,10 +316,31 @@ TEST(Compression, FrameWriterEndsFramesWithTheirPiece) {
     EXPECT_EQ(frames[frame], Bytes(begin, begin + expected[frame])) << frame;
     at += expected[frame];
   }
-  const auto compressed =
-    compression::Compress(compression::kZstd1, writer, Threads);
+  const auto compressed = CompressOne(compression::kZstd1, writer);
   EXPECT_EQ(compressed.frames.raw_sizes, expected);
   EXPECT_EQ(PackedRoundTrip(compressed), raw);
+}
+
+TEST(Compression, CompressesEveryWriterInOnePass) {
+  for (const auto method : kMethods) {
+    std::vector<Bytes> raws{Text(size_t{kFrame} * 3 + 17), Text(1),
+                            Noise(size_t{kFrame} * 2),
+                            Text(size_t{kFrame} * 5)};
+    std::vector<compression::FrameWriter> writers;
+    writers.reserve(raws.size());
+    for (const auto& raw : raws) {
+      WriteInPieces(writers.emplace_back(kFrame), raw);
+    }
+    const auto together = compression::Compress(method, writers, Threads);
+    ASSERT_EQ(together.size(), writers.size());
+    for (size_t i = 0; i != writers.size(); ++i) {
+      const auto alone = CompressOne(method, writers[i]);
+      EXPECT_EQ(together[i].frames.sizes, alone.frames.sizes) << i;
+      EXPECT_EQ(together[i].frames.raw_sizes, alone.frames.raw_sizes) << i;
+      EXPECT_TRUE(Stored(together[i]) == Stored(alone)) << i;
+      EXPECT_EQ(PackedRoundTrip(together[i]), raws[i]) << i;
+    }
+  }
 }
 
 Bytes Lists(uint32_t slots, size_t lists, uint32_t max_id, uint64_t seed) {

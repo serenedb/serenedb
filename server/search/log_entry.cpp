@@ -178,22 +178,6 @@ void AddPackJobs(std::span<const irs::FieldPatch> fields, PackedValues& packed,
   }
 }
 
-void RunPackJobs(std::span<const PackJob> jobs, uint32_t frame_bytes,
-                 irs::ParallelFor parallel) {
-  parallel(jobs.size(), [&](size_t j) {
-    irs::compression::FrameWriter raw{frame_bytes};
-    duckdb::BinarySerializer serializer{raw};
-    serializer.Begin();
-    WriteValues(serializer, *jobs[j].patch);
-    serializer.End();
-    auto packed =
-      irs::compression::Compress(irs::compression::kZstd1, raw, parallel);
-    *jobs[j].packed = std::make_shared<const irs::compression::Compressed>(
-      irs::compression::Pays(packed) ? std::move(packed)
-                                     : irs::compression::Compressed{});
-  });
-}
-
 void WriteChunks(duckdb::BinarySerializer& object, duckdb::field_id_t field,
                  const LoggedRows& rows) {
   object.OnPropertyBegin(field, "chunks");
@@ -210,6 +194,44 @@ void WriteChunks(duckdb::BinarySerializer& object, duckdb::field_id_t field,
   SDB_ASSERT(written == rows.chunks);
   object.OnListEnd();
   object.OnPropertyEnd();
+}
+
+void PackBlobs(std::span<LoggedRows* const> runs,
+               std::span<const PackJob> values, uint32_t frame_bytes,
+               irs::ParallelFor parallel) {
+  const auto blobs = runs.size() + values.size();
+  if (blobs == 0) {
+    return;
+  }
+  std::vector<irs::compression::FrameWriter> raws;
+  raws.reserve(blobs);
+  for (size_t i = 0; i != blobs; ++i) {
+    raws.emplace_back(frame_bytes);
+  }
+  parallel(blobs, [&](size_t i) {
+    duckdb::BinarySerializer serializer{raws[i]};
+    serializer.Begin();
+    if (i < runs.size()) {
+      WriteChunks(serializer, 100, *runs[i]);
+    } else {
+      WriteValues(serializer, *values[i - runs.size()].patch);
+    }
+    serializer.End();
+  });
+  auto packed =
+    irs::compression::Compress(irs::compression::kZstd1, raws, parallel);
+  for (size_t i = 0; i != runs.size(); ++i) {
+    if (irs::compression::Pays(packed[i])) {
+      runs[i]->packed = std::move(packed[i]);
+      runs[i]->scan = nullptr;
+    }
+  }
+  for (size_t j = 0; j != values.size(); ++j) {
+    auto& value = packed[runs.size() + j];
+    *values[j].packed = std::make_shared<const irs::compression::Compressed>(
+      irs::compression::Pays(value) ? std::move(value)
+                                    : irs::compression::Compressed{});
+  }
 }
 
 void WriteRows(duckdb::BinarySerializer& run, const LoggedRows& rows) {
@@ -446,22 +468,10 @@ void ReadUnits(duckdb::BinaryDeserializer& object, duckdb::MemoryStream& stream,
 
 }  // namespace
 
-void PackRows(std::span<LoggedRows> runs, uint32_t frame_bytes,
+void PackRows(LoggedRows& rows, uint32_t frame_bytes,
               irs::ParallelFor parallel) {
-  parallel(runs.size(), [&](size_t i) {
-    auto& rows = runs[i];
-    irs::compression::FrameWriter raw{frame_bytes};
-    duckdb::BinarySerializer serializer{raw};
-    serializer.Begin();
-    WriteChunks(serializer, 100, rows);
-    serializer.End();
-    auto packed =
-      irs::compression::Compress(irs::compression::kZstd1, raw, parallel);
-    if (irs::compression::Pays(packed)) {
-      rows.packed = std::move(packed);
-      rows.scan = nullptr;
-    }
-  });
+  LoggedRows* const runs[] = {&rows};
+  PackBlobs(runs, {}, frame_bytes, parallel);
 }
 
 void PackPatches(std::span<UnitPatch> patches, uint32_t frame_bytes,
@@ -470,16 +480,21 @@ void PackPatches(std::span<UnitPatch> patches, uint32_t frame_bytes,
   for (auto& patch : patches) {
     AddPackJobs(patch.fields, patch.packed, jobs);
   }
-  RunPackJobs(jobs, frame_bytes, parallel);
+  PackBlobs({}, jobs, frame_bytes, parallel);
 }
 
-void PackPatches(std::span<UnitDelta> units, uint32_t frame_bytes,
-                 irs::ParallelFor parallel) {
+void PackDelta(TableDelta& delta, uint32_t frame_bytes,
+               irs::ParallelFor parallel) {
+  std::vector<LoggedRows*> runs;
+  runs.reserve(delta.rows.size());
+  for (auto& rows : delta.rows) {
+    runs.push_back(&rows);
+  }
   std::vector<PackJob> jobs;
-  for (auto& unit : units) {
+  for (auto& unit : delta.segments) {
     AddPackJobs(unit.patches, unit.packed, jobs);
   }
-  RunPackJobs(jobs, frame_bytes, parallel);
+  PackBlobs(runs, jobs, frame_bytes, parallel);
 }
 
 void WriteTableDelta(duckdb::BinarySerializer& object,

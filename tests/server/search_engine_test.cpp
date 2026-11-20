@@ -20,6 +20,9 @@
 
 #include <gtest/gtest.h>
 
+#include <iresearch/formats/ann_build_env.hpp>
+#include <thread>
+
 #include "runtime/runtime.h"
 #include "search/engine.h"
 
@@ -39,6 +42,47 @@ TEST(SearchEngineTest, ManualCompactionKeepsAnnWorkersWhenEverySlotIsBusy) {
     EXPECT_TRUE(slot.AnnEnv());
   }
   for (; held != 0; --held) {
+    engine.ReleaseCompaction();
+  }
+}
+
+TEST(SearchEngineTest, SnapshotWorkersTakeOnlyFreeCompactionSlots) {
+  Runtime runtime{1};
+  SearchEngine engine{runtime};
+  const auto& env = engine.SnapshotEnv();
+  const auto slots =
+    static_cast<uint32_t>(SearchEngine::MaxConcurrentCompactions());
+  ASSERT_TRUE(engine.TryAcquireCompaction());
+
+  const auto held = env.acquire(slots + 8, 0);
+  EXPECT_EQ(held, slots);
+  EXPECT_EQ(engine.FreeCompactionSlots(), 0);
+  EXPECT_EQ(env.acquire(4, held), 0U);
+
+  engine.ReleaseCompaction();
+  EXPECT_EQ(env.acquire(4, held), 1U);
+  EXPECT_EQ(engine.FreeCompactionSlots(), 0);
+
+  env.release(held + 1);
+  EXPECT_EQ(engine.FreeCompactionSlots(), static_cast<int>(slots));
+}
+
+TEST(SearchEngineTest, SnapshotRunsOnItsOwnThreadWhenEverySlotIsBusy) {
+  Runtime runtime{1};
+  SearchEngine engine{runtime};
+  int busy = 0;
+  while (engine.TryAcquireCompaction()) {
+    ++busy;
+  }
+  const auto caller = std::this_thread::get_id();
+  size_t tasks = 0;
+  irs::FanOut(&engine.SnapshotEnv(), 16, [&](size_t) {
+    EXPECT_EQ(std::this_thread::get_id(), caller);
+    ++tasks;
+  });
+  EXPECT_EQ(tasks, 16U);
+  EXPECT_EQ(engine.FreeCompactionSlots(), 0);
+  for (; busy != 0; --busy) {
     engine.ReleaseCompaction();
   }
 }

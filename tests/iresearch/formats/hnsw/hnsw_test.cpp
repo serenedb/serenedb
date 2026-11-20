@@ -651,7 +651,8 @@ struct WideGraph {
 };
 
 WideGraph BuildWideGraph(irs::Directory& dir,
-                         const std::vector<std::vector<float>>& vecs) {
+                         const std::vector<std::vector<float>>& vecs,
+                         const irs::AnnBuildEnv& env) {
   auto opts = irs::tests::DefaultWriterOptions();
   SetAnn(opts, irs::AnnInfo{
                  .kind = irs::AnnKind::Hnsw,
@@ -663,7 +664,7 @@ WideGraph BuildWideGraph(irs::Directory& dir,
                  .m = 2048,
                  .ef_construction = 2048,
                });
-  opts.reader_options.parallel = ThreadsFor;
+  opts.ann_env = &env;
   auto writer = tests::IndexWriter::Make(dir, tests::kOmCreate, opts);
   EXPECT_NE(nullptr, writer);
   {
@@ -687,17 +688,32 @@ TEST(HnswGraphFormatTest, PackedGraphLoadsAsTheRawGraph) {
     GTEST_SKIP() << "this build has no fault injection";
   }
   absl::Cleanup clear = [] { duckdb::FaultPoints::Clear(); };
+  auto pool = yaclib::MakeFairThreadPool(4);
+  absl::Cleanup stop = [&] {
+    pool->SoftStop();
+    pool->Wait();
+  };
+  std::atomic<uint32_t> held{0};
+  const auto acquire = [&](uint32_t want, uint32_t) {
+    held.fetch_add(want);
+    return want;
+  };
+  const auto release = [&](uint32_t n) { held.fetch_sub(n); };
+  const irs::AnnBuildEnv env{
+    .executor = pool.Get(), .acquire = acquire, .release = release};
   const auto vecs = MakeVectors(2000, 29);
   irs::MemoryDirectory raw_dir;
-  const auto raw = BuildWideGraph(raw_dir, vecs);
+  const auto raw = BuildWideGraph(raw_dir, vecs, env);
   duckdb::FaultPoints::Disarm(kRawGraph);
   irs::MemoryDirectory packed_dir;
-  const auto packed = BuildWideGraph(packed_dir, vecs);
+  const auto packed = BuildWideGraph(packed_dir, vecs, env);
   EXPECT_LT(packed.idx_bytes * 4, raw.idx_bytes);
+  EXPECT_EQ(held.load(), 0U);
 
   const auto load = [](const irs::DirectoryReader& reader) {
     const auto& segment = reader[0];
-    return static_cast<const irs::HnswIndex&>(*segment.Ann(kVec)).Load(segment);
+    return static_cast<const irs::HnswIndex&>(*segment.Ann(kVec))
+      .Load(segment, ThreadsFor);
   };
   const auto from_raw = load(raw.reader);
   const auto from_packed = load(packed.reader);
@@ -883,7 +899,7 @@ std::vector<std::shared_ptr<const std::vector<float>>> SegmentBases(
   std::vector<std::shared_ptr<const std::vector<float>>> out;
   for (const auto& segment : reader) {
     const auto* ann = static_cast<const irs::HnswIndex*>(segment.Ann(kVec));
-    out.push_back(ann->Load(segment)->rotation);
+    out.push_back(ann->Load(segment, irs::SerialFor)->rotation);
   }
   return out;
 }
@@ -1119,7 +1135,7 @@ TEST(HnswPanoramaBasisTest, Sq8CodesRotateIntoTheSharedBasis) {
   EXPECT_EQ(flushed[0], flushed[1]);
   for (const auto& segment : writer->GetSnapshot()) {
     const auto* ann = static_cast<const irs::HnswIndex*>(segment.Ann(kVec));
-    EXPECT_EQ(ann->Load(segment)->tails.size(),
+    EXPECT_EQ(ann->Load(segment, irs::SerialFor)->tails.size(),
               size_t{kBatch} * irs::HnswCodeTails(kD));
   }
 
@@ -1719,7 +1735,7 @@ TEST(HnswPqGraphTest, CoarseCodesLinkNodesAsTheVectorsDo) {
     EXPECT_EQ(1U, reader.size());
     const auto& segment = (reader)[0];
     const auto* ann = static_cast<const irs::HnswIndex*>(segment.Ann(kVec));
-    const auto data = ann->Load(segment);
+    const auto data = ann->Load(segment, irs::SerialFor);
     const auto& graph = data->graph;
     size_t links = 0;
     size_t near = 0;

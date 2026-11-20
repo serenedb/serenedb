@@ -117,8 +117,9 @@ Compressed Compress(Method method, bytes_view raw,
                     uint32_t frame_bytes = kFrameBytes,
                     ParallelFor parallel = SerialFor);
 
-Compressed Compress(Method method, const FrameWriter& raw,
-                    ParallelFor parallel = SerialFor);
+std::vector<Compressed> Compress(Method method,
+                                 std::span<const FrameWriter> raws,
+                                 ParallelFor parallel = SerialFor);
 
 Frames Compress(Method method, bytes_view raw, uint32_t frame_bytes,
                 std::span<byte_type> slots, ParallelFor parallel = SerialFor);

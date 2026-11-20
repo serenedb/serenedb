@@ -99,11 +99,9 @@ bool IdxWriter::Empty() const noexcept {
          _impl->footer.terms.fields.empty();
 }
 
-std::unique_ptr<IdxReader> IdxWriter::Commit(HnswBases* hnsw_bases,
-                                             ParallelForFn parallel) {
+std::unique_ptr<IdxReader> IdxWriter::Commit(HnswBases* hnsw_bases) {
   if (Empty() && !_impl->out) {
-    return std::make_unique<IdxReader>(nullptr, IdxFooter{}, hnsw_bases,
-                                       parallel);
+    return std::make_unique<IdxReader>(nullptr, IdxFooter{}, hnsw_bases);
   }
 
   EnsureOut();
@@ -158,7 +156,7 @@ std::unique_ptr<IdxReader> IdxWriter::Commit(HnswBases* hnsw_bases,
   });
   return std::make_unique<IdxReader>(
     _impl->dir->Finish(std::move(_impl->out), IOAdvice::RANDOM),
-    std::move(_impl->footer), hnsw_bases, parallel);
+    std::move(_impl->footer), hnsw_bases);
 }
 
 }  // namespace irs

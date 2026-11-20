@@ -36,7 +36,6 @@
 #include "iresearch/types.hpp"
 #include "iresearch/utils/bytes_utils.hpp"  // bstring
 #include "iresearch/utils/compression.hpp"
-#include "iresearch/utils/parallel_for.hpp"
 #include "iresearch/utils/type_limits.hpp"  // field_limits
 
 namespace irs {
@@ -108,10 +107,8 @@ struct IdxFooter {
 class IdxReader final {
  public:
   IdxReader(const Directory& dir, std::string_view segment_name,
-            HnswBases* hnsw_bases, bool keep_terms = true,
-            ParallelForFn parallel = SerialFor);
-  IdxReader(IndexInput::ptr in, IdxFooter footer, HnswBases* hnsw_bases,
-            ParallelForFn parallel = SerialFor);
+            HnswBases* hnsw_bases, bool keep_terms = true);
+  IdxReader(IndexInput::ptr in, IdxFooter footer, HnswBases* hnsw_bases);
   ~IdxReader();
 
   IdxReader(const IdxReader&) = delete;
@@ -127,7 +124,7 @@ class IdxReader final {
   IndexInput::ptr ReopenIn() const;
 
  private:
-  void Adopt(IdxFooter footer, HnswBases* hnsw_bases, ParallelForFn parallel);
+  void Adopt(IdxFooter footer, HnswBases* hnsw_bases);
 
   struct Impl;
   std::unique_ptr<Impl> _impl;

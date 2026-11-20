@@ -44,6 +44,7 @@
 #include <iresearch/search/scorers/scorer_options.hpp>
 #include <iresearch/store/directory.hpp>
 #include <iresearch/utils/async.hpp>
+#include <iresearch/utils/parallel_for.hpp>
 #include <iresearch/utils/resource_manager.hpp>
 #include <limits>
 #include <memory>
@@ -328,7 +329,8 @@ class Store final : public std::enable_shared_from_this<Store>,
 
   std::shared_ptr<const TableState> SnapshotState(Tick snapshot,
                                                   catalog::WalkCounters& walks);
-  catalog::RecordBuffer SnapshotRecord(const TableState& state) const;
+  catalog::RecordBuffer SnapshotRecord(const TableState& state,
+                                       irs::ParallelFor parallel) const;
 
   // One REINDEX at a time per index, across all connections: claim the
   // store for the whole refresh (observe -> delta/rebuild -> publish).

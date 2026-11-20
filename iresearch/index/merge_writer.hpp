@@ -89,8 +89,7 @@ class MergeWriter : public util::Noncopyable {
         return *db;
       }()},
       _field_options{options.field_options},
-      _hnsw_bases{options.hnsw_bases},
-      _parallel{options.parallel} {}
+      _hnsw_bases{options.hnsw_bases} {}
   MergeWriter(MergeWriter&&) = default;
   MergeWriter& operator=(MergeWriter&&) = delete;
 
@@ -124,7 +123,6 @@ class MergeWriter : public util::Noncopyable {
   // Non-owning; the caller pins it for the whole merge.
   const IndexFieldOptions* _field_options = nullptr;
   HnswBases* _hnsw_bases = nullptr;
-  ParallelForFn _parallel = SerialFor;
   SegmentInputs _inputs;
 };
 

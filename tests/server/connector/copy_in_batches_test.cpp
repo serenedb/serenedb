@@ -206,6 +206,38 @@ TEST(PgCopyBatchBuilder, FirstLineBreakDecidesTheRowEnds) {
   }
 }
 
+TEST(PgCopyBatchBuilder, BlankLinesJoinTheBatchBeforeThemInEitherLineBreak) {
+  struct Case {
+    std::string input;
+    std::vector<std::string> batches;
+  };
+  const std::vector<Case> cases{
+    {"1\ta\r\r\r2\tb\r\r3\tc\r", {"1\ta\r\r\r", "2\tb\r\r", "3\tc\r"}},
+    {"1\ta\r\n\r\n2\tb\n\n3\tc\n", {"1\ta\r\n\r\n", "2\tb\n\n", "3\tc\n"}},
+  };
+  for (const auto& [input, expected] : cases) {
+    for (const size_t piece : {1, 2, 3, 64}) {
+      CopyBatchBuilder builder{CopyBatchFormat::Text, 1, true};
+      std::vector<std::string> batches;
+      for (size_t pos = 0; pos < input.size(); pos += piece) {
+        builder.Feed(std::string_view{input}.substr(pos, piece), false);
+        while (builder.Ready()) {
+          batches.push_back(Join(*builder.Take()));
+        }
+      }
+      builder.Finish();
+      while (builder.HasRows()) {
+        batches.push_back(Join(*builder.Take()));
+      }
+      if (piece == 64) {
+        EXPECT_EQ(absl::StrJoin(batches, ""), input);
+        continue;
+      }
+      EXPECT_EQ(batches, expected) << "piece=" << piece;
+    }
+  }
+}
+
 TEST(PgCopyBatchBuilder, TextBatchesEndOnRowBoundaries) {
   const std::string input = "aa\nbbb\ncccc\nd\n";
   CopyBatchBuilder builder{CopyBatchFormat::Text, 1};

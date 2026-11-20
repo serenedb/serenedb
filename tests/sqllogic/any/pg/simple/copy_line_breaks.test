@@ -61,6 +61,32 @@ DELETE FROM clb;
 
 onlyif postgres
 statement ok
+COPY (SELECT 1) TO PROGRAM 'printf ''1,"a\\"b\\\\c\\d"\r2,two\r'' > ${__TEST_DIR__}/clb_esc.csv';
+
+
+skipif postgres
+statement ok
+COPY (SELECT ('1,"a\\"b\\\\c\\d"' || chr(13) || '2,two' || chr(13))::BLOB) TO '${__TEST_DIR__}/clb_esc.csv' (FORMAT BLOB);
+
+
+statement ok
+COPY clb FROM '${__TEST_DIR__}/clb_esc.csv' (FORMAT csv, ESCAPE '\');
+
+
+query
+SELECT id, replace(label, chr(92), '<BS>') AS label, length(label) AS n FROM clb ORDER BY id;
+----
+id	label	n
+1	a"b<BS>c<BS>d	7
+2	two	3
+
+
+statement ok
+DELETE FROM clb;
+
+
+onlyif postgres
+statement ok
 COPY (SELECT 1) TO PROGRAM 'printf ''1,one\r\n2,two\r\n'' > ${__TEST_DIR__}/clb_crlf.csv';
 
 

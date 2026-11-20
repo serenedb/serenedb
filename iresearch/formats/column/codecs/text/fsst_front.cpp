@@ -55,16 +55,18 @@ namespace irs::codecs::text::fsst_front {
 
 constexpr uint64_t kChainGroupCost = 180;
 constexpr uint64_t kChainMinRowBytes = 8;
-constexpr uint64_t kCopyChunk = 16;
+constexpr uint64_t kCopyChunk = 32;
 static_assert(kCopyChunk > fsst::kPrefixSlack);
 
 IRS_FORCE_INLINE void CopyChunks(char* to, const char* from,
                                  uint64_t bytes) noexcept {
-  for (uint64_t at = 0; at < bytes; at += kCopyChunk) {
+  uint64_t at = 0;
+  do {
     char chunk[kCopyChunk];
     std::memcpy(chunk, from + at, kCopyChunk);
     std::memcpy(to + at, chunk, kCopyChunk);
-  }
+    at += kCopyChunk;
+  } while (at < bytes);
 }
 
 struct ChainEnd {

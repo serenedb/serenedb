@@ -43,7 +43,7 @@
 namespace irs::codecs::text::fsst {
 
 inline constexpr size_t kMaxExpansion = 8;
-inline constexpr size_t kPrefixSlack = 15;
+inline constexpr size_t kPrefixSlack = 31;
 
 struct Fsst8 {
   static constexpr ByteCodec kCodec = ByteCodec::Fsst;

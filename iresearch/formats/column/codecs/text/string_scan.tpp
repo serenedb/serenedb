@@ -33,6 +33,7 @@
 #include <duckdb/planner/table_filter.hpp>
 #include <duckdb/planner/table_filter_state.hpp>
 #include <duckdb/storage/buffer/buffer_handle.hpp>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string_view>
@@ -256,7 +257,7 @@ struct EntryFrames {
   }
 
   void Keep(uint32_t e, std::string_view v) noexcept {
-    values[e] = string_t{v.data(), static_cast<uint32_t>(v.size())};
+    std::construct_at(values + e, v.data(), static_cast<uint32_t>(v.size()));
   }
 
   uint64_t CacheBytes() const noexcept {

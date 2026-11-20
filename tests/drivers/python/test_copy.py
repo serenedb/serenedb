@@ -139,11 +139,7 @@ def test_copy_from_stdin_json_error_names_its_line(conn: psycopg.Connection,
 
 
 @pytest.mark.parametrize(
-    "compression",
-    ["none", "uncompressed", "auto", "auto_detect",
-     pytest.param("gzip", marks=pytest.mark.xfail(
-         reason="issue pending, see PR Findings: a compressed pipe is read "
-                "without decompression", strict=True))])
+    "compression", ["none", "uncompressed", "auto", "auto_detect", "gzip"])
 def test_copy_from_stdin_json_compression(conn: psycopg.Connection,
                                           table_name: str,
                                           compression: str) -> None:

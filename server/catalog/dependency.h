@@ -78,6 +78,13 @@ void FollowSchemaMove(duckdb::CatalogTransaction transaction,
                       std::span<const duckdb::idx_t> moving,
                       std::vector<PendingDefault>& defaults);
 
+bool IsNested(duckdb::CatalogTransaction transaction,
+              const duckdb::CatalogEntry& schema);
+
+void RefuseNestedMove(duckdb::CatalogTransaction transaction,
+                      const duckdb::CatalogEntry& subject,
+                      std::span<duckdb::CatalogEntry* const> moving);
+
 void SetDefaults(duckdb::CatalogTransaction transaction,
                  duckdb::Catalog& catalog,
                  std::vector<PendingDefault>& defaults);

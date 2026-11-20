@@ -1,0 +1,21 @@
+query
+SELECT count(s) AS n
+FROM (
+  SELECT set_config('application_name', i::text, false) AS s FROM range(2000000) t(i)
+  UNION ALL
+  SELECT set_config('application_name', i::text, false) FROM range(2000000) t(i)
+);
+----
+n
+4000000
+
+
+query
+SELECT current_setting('application_name') IN ('1999999') AS last;
+----
+last
+t
+
+
+statement ok
+RESET application_name;

@@ -173,6 +173,8 @@ class ColumnReader {
   uint64_t RowCount() const noexcept { return _row_count; }
   bool InMemory() const noexcept { return _in_memory; }
   bool Patched() const noexcept { return _patched; }
+  const ColReader* Owner() const noexcept { return _owner; }
+  virtual void SetOwner(const ColReader* owner) noexcept;
   size_t DataRgCount() const noexcept { return _segments.size(); }
   bool HasValidity() const noexcept { return _validity_view != nullptr; }
   const ColumnReader* Validity() const noexcept { return _validity_view; }
@@ -397,6 +399,7 @@ class ColumnReader {
   uint64_t _array_size = 0;
   duckdb::shared_ptr<duckdb::DistinctStatistics> _distinct;
   duckdb::unique_ptr<duckdb::BaseStatistics> _stats;
+  const ColReader* _owner = nullptr;
   bool _in_memory = false;
   bool _patched = false;
 

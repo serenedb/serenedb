@@ -119,7 +119,8 @@ class RawVectorReader {
  public:
   RawVectorReader(const ColumnReader& vector_column,
                   const ColReader& col_reader, uint32_t d)
-    : _read_ctx{col_reader, true},
+    : _read_ctx{vector_column.Owner() ? *vector_column.Owner() : col_reader,
+                true},
       _vreader{vector_column, _read_ctx},
       _column{&vector_column},
       _d{d},

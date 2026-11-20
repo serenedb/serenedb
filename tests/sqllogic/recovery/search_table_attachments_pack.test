@@ -1,0 +1,69 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+
+statement ok
+SET sdb_faults = 'IndexWriter::CompactOutOfMemory';
+
+
+statement ok
+CREATE TEMPORARY TABLE sap (id INT, v INT)
+WITH (compaction_interval = 0, compaction_floor_segment_bytes = 1);
+
+
+statement ok
+INSERT INTO sap SELECT i, i % 10 FROM range(3000) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) sap;
+
+
+statement ok
+ALTER TABLE sap ADD COLUMN c INT DEFAULT 42;
+
+
+statement ok
+CREATE INDEX sap_idx ON sap USING inverted (v);
+
+
+query
+SELECT count(*) AS n, sum(c) AS c FROM sap;
+----
+n	c
+3000	126000
+
+
+query
+SELECT count(*) AS hits FROM sap_idx WHERE v = 3;
+----
+hits
+300
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+VACUUM (PACK_TABLE) sap;
+
+
+query
+SELECT count(*) AS n, sum(c) AS c FROM sap;
+----
+n	c
+3000	126000
+
+
+query
+SELECT count(*) AS hits FROM sap_idx WHERE v = 3;
+----
+hits
+300
+
+
+statement ok
+DROP TABLE sap;

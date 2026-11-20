@@ -69,6 +69,17 @@ VariantColumnReader::VariantColumnReader(field_id id, duckdb::LogicalType type,
   FinishStats(std::move(stats));
 }
 
+void VariantColumnReader::SetOwner(const ColReader* owner) noexcept {
+  ColumnReader::SetOwner(owner);
+  for (const auto& rg : _variant_rgs) {
+    SDB_ASSERT(rg.unshredded);
+    rg.unshredded->SetOwner(owner);
+    if (rg.shredded) {
+      rg.shredded->SetOwner(owner);
+    }
+  }
+}
+
 void VariantColumnReader::CollectBlocks(
   uint64_t first, uint64_t last, std::vector<duckdb::FileRange>& out) const {
   ColumnReader::CollectBlocks(first, last, out);

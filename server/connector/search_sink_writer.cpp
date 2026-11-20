@@ -1074,20 +1074,30 @@ void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
                             std::span<const ColumnId> column_ids,
                             duckdb::idx_t table_id,
                             duckdb::ClientContext& context,
-                            std::span<const ColumnId> copied) {
+                            std::span<const ColumnId> copied,
+                            const irs::SubReader* attach_to) {
+  const auto has_field = [&](irs::field_id field) {
+    return attach_to && !attach_to->fields(field).empty();
+  };
   const auto num_rows = chunk.size();
   sink.InitImpl(num_rows);
   for (size_t col = 0; col < column_ids.size(); ++col) {
     const auto& vec = chunk.data[col];
     const auto& type = vec.GetType();
-    if (!absl::c_linear_search(copied, column_ids[col])) {
+    if (!absl::c_linear_search(copied, column_ids[col]) &&
+        !(attach_to && attach_to->Column(column_ids[col]))) {
       sink.AppendToColumn(column_ids[col], type, vec, num_rows);
     }
     for (const auto term_field : sink.TermFieldsForColumn(column_ids[col])) {
-      sink.SwitchFieldImpl(term_field, type, vec, num_rows);
+      if (!has_field(term_field)) {
+        sink.SwitchFieldImpl(term_field, type, vec, num_rows);
+      }
     }
   }
   for (const auto& indexed_expr : sink.IndexedExpressions()) {
+    if (has_field(indexed_expr.field_id)) {
+      continue;
+    }
     EvaluatedExpression evaluated{*indexed_expr.normalized_expr, chunk,
                                   table_id, column_ids, context};
     auto& result = evaluated.Result();
@@ -1095,6 +1105,9 @@ void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
                               num_rows);
   }
   for (auto& key : sink.ConstraintKeys()) {
+    if (has_field(key.Key().field)) {
+      continue;
+    }
     const auto& keys = key.Encode(chunk, column_ids);
     sink.SwitchFieldImpl(key.Key().field, duckdb::LogicalType::BLOB, keys,
                          num_rows);

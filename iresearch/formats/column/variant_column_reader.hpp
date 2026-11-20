@@ -124,6 +124,8 @@ class VariantColumnReader final : public ColumnReader {
 
   void NewOutputVector(ScanState& s) const final;
 
+  void SetOwner(const ColReader* owner) noexcept final;
+
  private:
   struct VariantRg {
     std::unique_ptr<ColumnReader> unshredded;

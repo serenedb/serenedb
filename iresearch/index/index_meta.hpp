@@ -45,14 +45,23 @@ struct SegmentInfo {
 static_assert(std::is_nothrow_move_constructible_v<SegmentInfo>);
 static_assert(std::is_nothrow_move_assignable_v<SegmentInfo>);
 
+struct SegmentAttachment {
+  bool operator==(const SegmentAttachment&) const = default;
+
+  uint64_t id = 0;
+  uint8_t kinds = 0;
+};
+
 struct SegmentMeta : SegmentInfo {
   bool operator==(const SegmentMeta& rhs) const {
     return SegmentInfo::operator==(rhs) && kinds == rhs.kinds &&
+           attachments == rhs.attachments &&
            (docs_mask == rhs.docs_mask ||
             (docs_mask && rhs.docs_mask && *docs_mask == *rhs.docs_mask));
   }
 
   uint8_t kinds = 0;
+  std::vector<SegmentAttachment> attachments;
   std::shared_ptr<const DocumentMask> docs_mask;
 };
 

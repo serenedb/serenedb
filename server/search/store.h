@@ -312,6 +312,10 @@ class Store final : public std::enable_shared_from_this<Store>,
   std::shared_ptr<const TableState> ReplaceSegments(
     std::span<const irs::SubReader* const> replaced,
     std::vector<irs::IndexWriter::Replacement> replacements);
+  std::shared_ptr<const TableState> AttachSegments(
+    std::span<const Table::Attachment> attachments);
+  OwnSegment JoinSegments(
+    std::span<const irs::IndexWriter::FlushedSegment* const> parts);
 
   TableReplay* Replay();
   void CollectFiles(absl::flat_hash_set<std::string>& files) const;

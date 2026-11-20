@@ -76,6 +76,7 @@ class ColReader final {
             std::vector<NormColumnSpec> norms);
   ColReader(const ColReader& base,
             std::vector<std::shared_ptr<const ColumnReader>> replaced);
+  ColReader(const ColReader& base, std::span<const ColReader* const> attached);
   ~ColReader();
 
   ColReader(const ColReader&) = delete;
@@ -89,6 +90,9 @@ class ColReader final {
 
   const NormColumnReader* NormColumn(field_id id) const noexcept;
   ReadContext& Ctx() noexcept { return _ctx; }
+  const ColReader& Owner() const noexcept {
+    return _base ? _base->Owner() : *this;
+  }
 
   const duckdb::InputFile* File() const noexcept {
     return _base ? _base->File() : _file.get();

@@ -369,9 +369,20 @@ bool ColumnReader::NextSegment(BlockWindow& w) const noexcept {
   return true;
 }
 
+void ColumnReader::SetOwner(const ColReader* owner) noexcept {
+  _owner = owner;
+  if (_validity) {
+    _validity->SetOwner(owner);
+  }
+  for (const auto& child : _children) {
+    child->SetOwner(owner);
+  }
+}
+
 std::unique_ptr<duckdb::ColumnSegment> ColumnReader::Open(const BlockWindow& w,
-                                                          ReadContext& ctx,
+                                                          ReadContext& caller,
                                                           ScanState* s) const {
+  auto& ctx = caller.For(_owner);
   Readahead(w.block, ctx, s);
   const auto& m = _segments[w.block];
   auto& db = ctx.Database();

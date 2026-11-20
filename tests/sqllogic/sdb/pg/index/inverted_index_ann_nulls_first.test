@@ -52,7 +52,7 @@ statement ok
 VACUUM (FLUSH_TABLE) annfc;
 
 statement ok
-SET default_null_order = 'NULLS_LAST_ON_ASC_FIRST_ON_DESC';
+SET SESSION default_null_order = 'NULLS_LAST_ON_ASC_FIRST_ON_DESC';
 
 query
 SELECT pk FROM (
@@ -64,4 +64,4 @@ pk
 4
 
 statement ok
-RESET default_null_order;
+RESET SESSION default_null_order;

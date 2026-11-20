@@ -296,6 +296,7 @@ struct Meaning {
 constexpr std::array kMeanings{
   Meaning{"boost", "the query's weight for this clause"},
   Meaning{"scale", "the weight of this row's match within the clause"},
+  Meaning{"score", "the score before scaling"},
   Meaning{"freq", "occurrences of the term in the row"},
   Meaning{"count", "matches in the row before scaling"},
   Meaning{"dl", "length of the column in the row"},

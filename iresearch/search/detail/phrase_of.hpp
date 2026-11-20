@@ -138,10 +138,10 @@ Result Build(PhraseKind<M>, const Query& query, uint64_t, F&& f) {
 }
 
 template<PhraseMatch M, typename Query>
-std::optional<score_t> ConstantOf(PhraseKind<M>, const Query& query,
-                                  const ScoreArgs& args) {
-  return ConstantOf(query.Segment(), *query.state.reader, args,
-                    M == PhraseMatch::Slop || !query.state.boosts.empty());
+std::optional<ConstantScore> ConstantOf(PhraseKind<M>, const Query& query,
+                                        const ScoreArgs& args) {
+  return ConstantScoreOf(query.Segment(), *query.state.reader, args,
+                         M == PhraseMatch::Slop || !query.state.boosts.empty());
 }
 
 template<PhraseMatch M, typename Query>

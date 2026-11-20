@@ -367,6 +367,7 @@ The names in `inputs` are:
 | `expected` | For DFI, the term's occurrences in the row if they were spread evenly, `p * dl`. |
 | `value` | The score of `constant(value)`. |
 | `count`, `scale` | For a sloppy phrase or an n-gram similarity match, `freq` is computed as `count * scale`: the matches in the row weighted by how well they match. A scorer without `freq` multiplies by `scale` directly. |
+| `scale`, `score` | For an n-gram similarity match that needs every n-gram of the query the column contains, the clause scores `scale * score`: the scorer's `score`, weighted by `scale`, the share of the query's n-grams the column contains. |
 | `constant` | In a `sum` or `max`, the score of clauses every row matches. |
 
 - The top `value` is the row's score, exactly as the scorer function returns it for that row.

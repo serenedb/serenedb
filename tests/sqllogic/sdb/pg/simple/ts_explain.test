@@ -569,6 +569,48 @@ id	why
 1	{"column":"word","expression":"boost * idf * tf","inputs":{"idf":{"expression":"sum","parts":[{"column":"word","expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":2},"df":{"value":1}},"term":"h\\\\xc3","value":0.6931472},{"column":"word","expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":2},"df":{"value":1}},"term":"é","value":0.6931472}],"value":1.3862944},"tf":{"expression":"freq / (freq + k1 * (1 - b + b * dl / avgdl))","inputs":{"avgdl":{"expression":"L / N","inputs":{"L":{"value":3},"N":{"value":2}},"value":1.5},"b":{"value":0.75},"dl":{"note":"the column records no lengths, so every row counts as 1","value":1},"freq":{"expression":"count * scale","inputs":{"count":{"value":1},"scale":{"value":1}},"value":1},"k1":{"value":1.2}},"value":0.52631575}},"scorer":"bm25(k1=1.2, b=0.75)","terms":["h\\\\xc3","é"],"value":0.7296286}
 
 statement ok
+CREATE TEXT SEARCH DICTIONARY explain_bigrams AS generate_ngrams(2, 2) WITH (frequency, position);
+
+statement ok
+CREATE TABLE explain_present (id INTEGER PRIMARY KEY, word VARCHAR);
+
+statement ok
+CREATE INDEX explain_present_idx ON explain_present USING inverted (id, word explain_bigrams);
+
+statement ok
+INSERT INTO explain_present VALUES (1, 'hello'), (2, 'help'), (3, 'xyz');
+
+query
+SELECT id, raw_boost(explain_present_idx.tableoid) AS score, ts_explain(explain_present_idx.tableoid) AS why
+FROM explain_present_idx
+WHERE word @@ ts_ngram('helz', 0.6)
+ORDER BY id;
+----
+id	score	why
+1	0.6666667	{"column":"word","expression":"scale * score","inputs":{"scale":{"value":0.6666667},"score":{"expression":"boost","inputs":{"boost":{"value":1}},"value":1}},"scorer":"raw_boost()","terms":["he","el"],"value":0.6666667}
+2	0.6666667	{"column":"word","expression":"scale * score","inputs":{"scale":{"value":0.6666667},"score":{"expression":"boost","inputs":{"boost":{"value":1}},"value":1}},"scorer":"raw_boost()","terms":["he","el"],"value":0.6666667}
+
+query
+SELECT id, BM25(explain_present_idx.tableoid, 0, 0.75) AS score, ts_explain(explain_present_idx.tableoid) AS why
+FROM explain_present_idx
+WHERE word @@ ts_ngram('helz', 0.6)
+ORDER BY id;
+----
+id	score	why
+1	0.62667155	{"column":"word","expression":"scale * score","inputs":{"scale":{"value":0.6666667},"score":{"expression":"boost * idf","inputs":{"idf":{"expression":"sum","parts":[{"column":"word","expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":3},"df":{"value":2}},"term":"he","value":0.47000363},{"column":"word","expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":3},"df":{"value":2}},"term":"el","value":0.47000363}],"value":0.94000727}},"value":0.94000727}},"scorer":"bm25(k1=0, b=0.75)","terms":["he","el"],"value":0.62667155}
+2	0.62667155	{"column":"word","expression":"scale * score","inputs":{"scale":{"value":0.6666667},"score":{"expression":"boost * idf","inputs":{"idf":{"expression":"sum","parts":[{"column":"word","expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":3},"df":{"value":2}},"term":"he","value":0.47000363},{"column":"word","expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":3},"df":{"value":2}},"term":"el","value":0.47000363}],"value":0.94000727}},"value":0.94000727}},"scorer":"bm25(k1=0, b=0.75)","terms":["he","el"],"value":0.62667155}
+
+query
+SELECT id, ts_explain_json(ts_explain(explain_present_idx.tableoid)) AS why
+FROM explain_present_idx
+WHERE word @@ ts_ngram('helz', 0.6)
+ORDER BY BM25(explain_present_idx.tableoid, 0, 0.75) DESC, id
+LIMIT 1;
+----
+id	why
+1	{"value":0.62667155,"description":"weight(word:(he el)) [bm25(k1=0, b=0.75)], computed as scale * score from:","details":[{"value":0.6666667,"description":"scale, the weight of this row's match within the clause","details":[]},{"value":0.94000727,"description":"score, the score before scaling, computed as boost * idf from:","details":[{"value":0.94000727,"description":"idf, sum of:","details":[{"value":0.47000363,"description":"idf(word:he), computed as log(1 + (N - df + 0.5) / (df + 0.5)) from:","details":[{"value":3,"description":"N, number of rows with the column","details":[]},{"value":2,"description":"df, number of rows containing the term","details":[]}]},{"value":0.47000363,"description":"idf(word:el), computed as log(1 + (N - df + 0.5) / (df + 0.5)) from:","details":[{"value":3,"description":"N, number of rows with the column","details":[]},{"value":2,"description":"df, number of rows containing the term","details":[]}]}]}]}]}
+
+statement ok
 CREATE INDEX explain_vec_idx ON explain_docs USING inverted (id, emb ivf (metric = 'l2'));
 
 query

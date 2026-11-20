@@ -65,8 +65,8 @@ typename Family::Result ScoredMaker<Family, Kind, Query>::Make(
                          .stats = record.stats,
                          .fetcher = scoring.fetcher,
                          .boost = query.Boost()};
-    if (const auto value = ConstantOf(Kind{}, query, args)) {
-      return MakeConstant<Family, Kind>(query, ctx, *value);
+    if (const auto constant = ConstantOf(Kind{}, query, args)) {
+      return MakeConstant<Family, Kind>(query, ctx, ScoreOf(*constant));
     }
     return Build<typename Family::Result, true>(
       Kind{}, query, Family::Interrogations(ctx),

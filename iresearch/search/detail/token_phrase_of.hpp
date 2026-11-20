@@ -58,10 +58,11 @@ Result Build(TokenPhraseKind, const TokenPhraseQuery& query,
   }
 }
 
-inline std::optional<score_t> ConstantOf(TokenPhraseKind,
-                                         const TokenPhraseQuery& query,
-                                         const ScoreArgs& args) {
-  return ConstantOf(query.Segment(), query.Reader(), args, IsSloppy(query));
+inline std::optional<ConstantScore> ConstantOf(TokenPhraseKind,
+                                               const TokenPhraseQuery& query,
+                                               const ScoreArgs& args) {
+  return ConstantScoreOf(query.Segment(), query.Reader(), args,
+                         IsSloppy(query));
 }
 
 inline const TermReader& FieldOf(TokenPhraseKind,

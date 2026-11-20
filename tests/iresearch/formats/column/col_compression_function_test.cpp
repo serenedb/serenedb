@@ -395,11 +395,11 @@ TEST_F(ColCompressionFunctionTest, OnlyTheFrameOptionThatBidWritesText) {
   duckdb::Vector strings{duckdb::LogicalType::VARCHAR, kStrings};
   strings.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
   auto* values = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(strings);
-  uint64_t state = 1;
   for (uint64_t i = 0; i < kStrings; ++i) {
-    state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+    const auto item =
+      (i % (kStrings / 4)) * 6364136223846793005ULL + 1442695040888963407ULL;
     values[i] = duckdb::StringVector::AddString(
-      strings, absl::StrCat("https://example.org/items/", state >> 40));
+      strings, absl::StrCat("https://example.org/items/", item >> 40));
   }
   duckdb::FlatVector::SetSize(strings, kStrings);
   std::vector<irs::WriteChunk> chunks;
@@ -409,7 +409,7 @@ TEST_F(ColCompressionFunctionTest, OnlyTheFrameOptionThatBidWritesText) {
   uint64_t segments = 0;
   const auto flush = [&](const irs::codecs::Codec& codec,
                          duckdb::BaseStatistics, uint64_t, std::string_view) {
-    EXPECT_EQ(codec.type, CodecType::Lz4);
+    EXPECT_EQ(codec.type, CodecType::DictLz4);
     ++segments;
   };
   ColumnDataCheckpointData data{
@@ -422,7 +422,7 @@ TEST_F(ColCompressionFunctionTest, OnlyTheFrameOptionThatBidWritesText) {
     .rows = kStrings,
   };
   const auto contenders =
-    irs::codecs::Contenders(CodecType::Lz4, duckdb::PhysicalType::VARCHAR);
+    irs::codecs::Contenders(CodecType::DictLz4, duckdb::PhysicalType::VARCHAR);
   ASSERT_EQ(contenders.size(), 3U);
   const CompressionFunction* bidder = nullptr;
   for (const auto* contender : contenders) {

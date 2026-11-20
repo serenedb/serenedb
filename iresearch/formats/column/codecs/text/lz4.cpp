@@ -48,14 +48,14 @@ double AnalyzeFrames(ColumnDataCheckpointData& data, double bound) {
   auto& encoder = data.Get<text::TextEncoder<Compression>>();
   auto& lz4 = encoder.Codec();
   const auto score = lz4.AnalyzedOnce([&] {
-    if (!encoder.Contests(data)) {
+    auto& values = data.Get<text::Values>();
+    if (!values.Repeats() || !encoder.Contests(data)) {
       return kNoScore;
     }
-    auto& values = data.Get<text::Values>();
     const auto price =
       data.preferences->text_lz4_price[std::to_underlying(Compression::kShape)];
     const auto priced = [&](uint64_t bytes) {
-      return text::Score(values, price, bytes);
+      return text::Score(values, Compression::kShape, price, bytes);
     };
     const auto measured =
       lz4.Measure(encoder, values, data.params.tier, bound, priced);
@@ -68,8 +68,10 @@ double AnalyzeFrames(ColumnDataCheckpointData& data, double bound) {
 template<typename Compression, FrameDictionary kFrames>
 bool CompressFrames(ColumnDataCheckpointData& data) {
   auto& encoder = data.Get<text::TextEncoder<Compression>>();
-  const auto* config = encoder.Chosen(data.Get<text::Values>());
-  return config && config->layout == kFrames && encoder.Compress(data);
+  auto& values = data.Get<text::Values>();
+  const auto* config = encoder.Chosen(values);
+  return values.Repeats() && config && config->layout == kFrames &&
+         encoder.Compress(data);
 }
 
 template<FrameDictionary kFrames>

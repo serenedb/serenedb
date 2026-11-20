@@ -41,10 +41,19 @@
 namespace irs::codecs::text {
 
 inline constexpr double kContestMove = 2.0;
+inline constexpr double kOtherShapeWinsBelow = 0.9;
+inline constexpr double kOtherShapeMinSaving = 4096;
 
-inline double Score(Values& values, double price, uint64_t bytes) {
-  return static_cast<double>(bytes) * price /
-         static_cast<double>(std::max<uint64_t>(values.trial.input, 1));
+inline double ShapeCost(Shape shape, bool repeats, double bytes) noexcept {
+  return shape == (repeats ? Shape::Dictionary : Shape::Plain)
+           ? bytes
+           : std::max(bytes / kOtherShapeWinsBelow,
+                      bytes + kOtherShapeMinSaving);
+}
+
+inline double Score(Values& values, Shape shape, double price, uint64_t bytes) {
+  return ShapeCost(shape, values.Repeats(), static_cast<double>(bytes)) *
+         price / static_cast<double>(std::max<uint64_t>(values.trial.input, 1));
 }
 
 inline uint64_t PlainStorageBytes(const Segment& seg) noexcept {
@@ -88,7 +97,7 @@ class TextEncoder final : public State {
         _tuning.config->shape == kShape && _tuning.config->leaf == kLeaf) {
       Trial(*_tuning.config, values);
     }
-    return ContestedShape(data) == kShape;
+    return Contends(data, kShape);
   }
 
   void Contest(const Config& config) noexcept { _config = config; }
@@ -258,7 +267,8 @@ double AnalyzeTrial(ColumnDataCheckpointData& data, double) {
     return kNoScore;
   }
   auto& values = data.Get<Values>();
-  return Score(values, 1.0, encoder.Trial(encoder.Contested(), values).Size());
+  return Score(values, Compression::kShape, 1.0,
+               encoder.Trial(encoder.Contested(), values).Size());
 }
 
 template<typename Compression>

@@ -5162,11 +5162,12 @@ TEST_F(ColumnReaderTest, VariantRowGroupsKeepTheirStringTuning) {
       absl::StrCat(
         "SELECT CASE WHEN i < ", kRowGroup,
         " THEN array_to_string(list_transform(range(40), lambda k: "
-        "substr(md5((((hash(i * 40 + k) % 3000) * (hash(i * 40 + k) % 3000)) "
-        "// 3000)::VARCHAR), 1, 3 + (hash(i * 40 + k) % 8)::BIGINT)), ' ') "
-        "ELSE repeat(to_base64(unhex(md5(i::VARCHAR))), 8) END::VARIANT "
-        "FROM range(",
-        begin, ", ", end, ") t(i)"),
+        "substr(md5((((hash(v * 40 + k) % 3000) * (hash(v * 40 + k) % 3000)) "
+        "// 3000)::VARCHAR), 1, 3 + (hash(v * 40 + k) % 8)::BIGINT)), ' ') "
+        "ELSE repeat(to_base64(unhex(md5(w::VARCHAR))), 4) END::VARIANT "
+        "FROM (SELECT i, i % ",
+        kRowGroup / 4, " AS v, i % ", kRowGroup / 32, " AS w FROM range(",
+        begin, ", ", end, ") t(i))"),
       kRowGroup, expected);
     EXPECT_EQ(expected.size(), end - begin);
     irs::ColReader r{dir, "vtune", Db(), irs::IOAdvice::SEQUENTIAL};

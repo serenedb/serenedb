@@ -1040,8 +1040,9 @@ TEST_F(ColCodecsTest, AutoTrainsADictionaryWhereItPays) {
     templates.emplace_back(Pseudo(t, 100));
   }
   const Value value = [&](uint64_t g) -> std::optional<std::string> {
-    return templates[(g * 0x9E3779B97F4A7C15ULL >> 40) % templates.size()] +
-           std::to_string(g);
+    const auto v = g % (kRows / 4);
+    return absl::StrCat(
+      v, " ", templates[(v * 0x9E3779B97F4A7C15ULL >> 40) % templates.size()]);
   };
   for (const auto tier : {irs::WriteTier::Flush, irs::WriteTier::Merge}) {
     SCOPED_TRACE(tier == irs::WriteTier::Merge ? "merge" : "flush");
@@ -1304,8 +1305,9 @@ TEST_F(ColCodecsTest, AutoLeavesDisabledTextCodecsOut) {
   using irs::codecs::CodecType;
   using irs::codecs::Shape;
   const Value urls = [](uint64_t g) -> std::optional<std::string> {
-    return "https://example.org/section/" + std::to_string(g % 5000) +
-           "/page?id=" + std::to_string((g * 7919) % 100003);
+    const auto page = g % 1500;
+    return "https://example.org/section/" + std::to_string(page % 50) +
+           "/page?id=" + std::to_string((page * 7919) % 100003);
   };
   const auto chunks = Chunks(4 * STANDARD_VECTOR_SIZE, urls);
   const auto write_chunks = WriteChunks(chunks);
@@ -1808,7 +1810,10 @@ TEST_F(ColCodecsTest, AutoLevelsFollowTheData) {
     }
     return level;
   };
-  const auto text = levels(kVocabulary, 8000);
+  const Value vocabulary = [](uint64_t g) -> std::optional<std::string> {
+    return kVocabulary(g % 2000);
+  };
+  const auto text = levels(vocabulary, 8000);
   ASSERT_FALSE(text.empty());
   EXPECT_GT(top(text), 1) << ::testing::PrintToString(text);
 }
@@ -1831,7 +1836,10 @@ TEST_F(ColCodecsTest, AutoTunesLevelsOnTheFirstRowGroupWithData) {
   const Value constant = [](uint64_t) -> std::optional<std::string> {
     return "n/a";
   };
-  const auto text = Chunks(kRowGroup, kVocabulary);
+  const Value vocabulary = [](uint64_t g) -> std::optional<std::string> {
+    return kVocabulary(g % (kRowGroup / 4));
+  };
+  const auto text = Chunks(kRowGroup, vocabulary);
   const auto nulls = Chunks(kRowGroup, kAllNull);
   const auto constants = Chunks(kRowGroup, constant);
 
@@ -4524,6 +4532,9 @@ TEST_F(ColCodecsTest, FsstSegmentsFollowAChangeInCompressibility) {
 
 TEST_F(ColCodecsTest, TheWritersTierDecidesOverTheColumnsParams) {
   constexpr uint64_t kRows = 8000;
+  const Value vocabulary = [](uint64_t g) -> std::optional<std::string> {
+    return kVocabulary(g % (kRows / 4));
+  };
   for (const auto tier : {irs::WriteTier::Flush, irs::WriteTier::Merge}) {
     SCOPED_TRACE(tier == irs::WriteTier::Flush ? "flush" : "merge");
     irs::MemoryDirectory dir{};
@@ -4534,7 +4545,7 @@ TEST_F(ColCodecsTest, TheWritersTierDecidesOverTheColumnsParams) {
                      {.compression = irs::codecs::CodecType::Auto,
                       .codec_params = {.segment_target = 64 * 1024,
                                        .tier = irs::WriteTier::Merge}});
-      AppendValues(cw, kRows, kVocabulary);
+      AppendValues(cw, kRows, vocabulary);
       ASSERT_TRUE(w.Commit(0));
     }
     bool above_fast = false;
@@ -4542,7 +4553,7 @@ TEST_F(ColCodecsTest, TheWritersTierDecidesOverTheColumnsParams) {
       above_fast |= !level.empty() && level != "0" && level != "1";
     }
     EXPECT_EQ(tier == irs::WriteTier::Merge, above_fast);
-    Verify(dir, irs::codecs::CodecType::Auto, kRows, kVocabulary);
+    Verify(dir, irs::codecs::CodecType::Auto, kRows, vocabulary);
   }
 }
 
@@ -4588,11 +4599,8 @@ TEST_F(ColCodecsTest, CompactionsPreferFsstForTextThatSeldomRepeats) {
   Write(dir, irs::codecs::CodecType::Auto, {.tier = irs::WriteTier::Merge},
         kRows, DEFAULT_ROW_GROUP_SIZE, value);
   const auto codecs = SegmentInfo(dir, "codec");
-  const auto shapes = SegmentInfo(dir, "shape");
   ASSERT_GT(codecs.size(), 4u);
-  ASSERT_EQ(codecs.size(), shapes.size());
   for (size_t i = 0; i < codecs.size(); ++i) {
-    EXPECT_EQ(shapes[i], "plain") << i;
     EXPECT_EQ(codecs[i], "fsst") << i;
   }
   Verify(dir, irs::codecs::CodecType::Auto, kRows, value);

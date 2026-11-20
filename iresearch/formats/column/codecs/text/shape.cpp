@@ -31,18 +31,8 @@
 namespace irs::codecs::text {
 namespace {
 
-constexpr double kPlainWinsBelow = 0.9;
-constexpr uint64_t kPlainMinSaving = 4096;
 constexpr uint64_t kLz4MaxRatio = 255;
 constexpr double kShapeSlack = 0.08;
-
-bool PlainWins(bool repeats, double dictionary, double plain) noexcept {
-  if (!repeats) {
-    return plain <= dictionary;
-  }
-  return plain < dictionary * kPlainWinsBelow &&
-         plain + static_cast<double>(kPlainMinSaving) <= dictionary;
-}
 
 constexpr Config Fast(Shape shape) noexcept {
   return {.shape = shape, .leaf = ByteCodec::Lz4, .level = blob::kLz4Fast};
@@ -58,60 +48,45 @@ auto& Lz4Of(ColumnDataCheckpointData& data) {
   return data.Get<TextEncoder<blob::Lz4CompressionState<Rows>>>();
 }
 
-template<typename Rows>
-double Slack(ColumnDataCheckpointData& data) {
-  return Lz4Of<Rows>(data).Find(Fast(Rows::kShape)) ? 0.0 : kShapeSlack;
-}
-
-Shape MeasuredShape(ColumnDataCheckpointData& data, Values& values) {
-  if (values.trial.rows == 0) {
-    if (values.Repeats()) {
-      Lz4Of<DictionaryRows>(data).Trial(Fast(Shape::Dictionary), values);
-    } else {
-      Lz4Of<PlainRows>(data).Trial(Fast(Shape::Plain), values);
-    }
+void MeasureShapes(ColumnDataCheckpointData& data, Values& values) {
+  auto& dictionary = values.contends[std::to_underlying(Shape::Dictionary)];
+  auto& plain = values.contends[std::to_underlying(Shape::Plain)];
+  dictionary = Contested(data.disabled, Shape::Dictionary);
+  plain = Contested(data.disabled, Shape::Plain);
+  if (!dictionary || !plain || !values.Repeats()) {
+    return;
   }
-  const bool repeats = values.TrialRepeats();
-  auto dictionary = static_cast<double>(
+  if (values.trial.rows == 0) {
+    Lz4Of<DictionaryRows>(data).Trial(Fast(Shape::Dictionary), values);
+  }
+  const auto dictionary_cost = static_cast<double>(
     Lz4Of<DictionaryRows>(data).Size(Fast(Shape::Dictionary), values));
   const auto& trial = values.trial;
   const auto least =
     static_cast<double>(kHeaderSize + Packed(trial.rows, trial.max_len) +
                         trial.input / kLz4MaxRatio);
-  if (!PlainWins(repeats, dictionary * (1.0 + Slack<DictionaryRows>(data)),
-                 least)) {
-    return Shape::Dictionary;
+  if (ShapeCost(Shape::Plain, true, least) >=
+      dictionary_cost * (1.0 + kShapeSlack)) {
+    plain = false;
+    return;
   }
-  auto plain = static_cast<double>(
-    Lz4Of<PlainRows>(data).Size(Fast(Shape::Plain), values));
-  const auto margin =
-    std::max(Slack<DictionaryRows>(data), Slack<PlainRows>(data));
-  if (PlainWins(repeats, dictionary * (1.0 - margin), plain) !=
-      PlainWins(repeats, dictionary * (1.0 + margin), plain)) {
-    dictionary = static_cast<double>(Lz4Of<DictionaryRows>(data)
-                                       .Trial(Fast(Shape::Dictionary), values)
-                                       .Size());
-    plain = static_cast<double>(
-      Lz4Of<PlainRows>(data).Trial(Fast(Shape::Plain), values).Size());
-  }
-  return PlainWins(repeats, dictionary, plain) ? Shape::Plain
-                                               : Shape::Dictionary;
+  const auto plain_cost =
+    ShapeCost(Shape::Plain, true,
+              static_cast<double>(
+                Lz4Of<PlainRows>(data).Size(Fast(Shape::Plain), values)));
+  plain = plain_cost < dictionary_cost * (1.0 + kShapeSlack);
+  dictionary = dictionary_cost * (1.0 - kShapeSlack) <= plain_cost;
 }
 
 }  // namespace
 
-Shape ContestedShape(ColumnDataCheckpointData& data) {
+bool Contends(ColumnDataCheckpointData& data, Shape shape) {
   auto& values = data.Get<Values>();
-  if (!values.shape) {
-    if (!Contested(data.disabled, Shape::Plain)) {
-      values.shape = Shape::Dictionary;
-    } else if (!Contested(data.disabled, Shape::Dictionary)) {
-      values.shape = Shape::Plain;
-    } else {
-      values.shape = MeasuredShape(data, values);
-    }
+  if (!values.shapes_measured) {
+    values.shapes_measured = true;
+    MeasureShapes(data, values);
   }
-  return *values.shape;
+  return values.contends[std::to_underlying(shape)];
 }
 
 }  // namespace irs::codecs::text

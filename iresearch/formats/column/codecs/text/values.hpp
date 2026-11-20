@@ -29,7 +29,6 @@
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
 #include <duckdb/storage/statistics/base_statistics.hpp>
-#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -99,10 +98,6 @@ class Values final : public State {
     return distinct.size() * kMinRepeat <= Rows() - null_count;
   }
 
-  bool TrialRepeats() {
-    return TrialEntries() * kMinRepeat <= trial.rows - trial.nulls;
-  }
-
   uint64_t CodesSize(ShapeRows& rows);
 
   static std::string_view Bytes(ShapeRows& rows);
@@ -110,7 +105,8 @@ class Values final : public State {
   static const blob::FrameSpans& Split(ShapeRows& rows, blob::FrameShape frame);
 
   Trial trial;
-  std::optional<Shape> shape;
+  bool shapes_measured = false;
+  bool contends[kTextShapeCount] = {};
   uint64_t null_count = 0;
   uint64_t raw = 0;
   std::vector<const duckdb::string_t*> distinct;

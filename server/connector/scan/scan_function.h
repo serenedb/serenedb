@@ -21,6 +21,7 @@
 #pragma once
 
 #include <absl/algorithm/container.h>
+#include <absl/functional/function_ref.h>
 
 #include <algorithm>
 #include <duckdb.hpp>
@@ -130,8 +131,10 @@ struct SegmentRowGroups {
   uint64_t docs = 0;
 };
 
-std::vector<ScanRowGroup> OffsetSkippedRowGroups(
-  const ScanBindData& bind, const irs::IndexReader& reader);
+void SelectScannedRowGroups(const ScanBindData& bind,
+                            const irs::IndexReader& reader, bool order_prunes,
+                            bool limit_prunes,
+                            absl::FunctionRef<void(ScanRowGroup)> scan);
 
 duckdb::vector<duckdb::column_t> IResearchGetRowIdColumns(
   duckdb::ClientContext& context,

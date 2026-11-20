@@ -21,6 +21,7 @@
 #pragma once
 
 #include <duckdb/common/identifier.hpp>
+#include <duckdb/formats/copy_options.hpp>
 #include <duckdb/main/database.hpp>
 #include <span>
 #include <string>
@@ -37,13 +38,13 @@ namespace sdb::connector {
 void RegisterPgTextCopyFunctions(duckdb::DatabaseInstance& db);
 
 void SetCopyFormat(sdb::pg::SerializationContext& context,
-                   const PgCopyOptions& options, size_t columns);
+                   const duckdb::CopyFormatOptions& options, size_t columns);
 
 std::vector<sdb::pg::VarFormat> CopyFieldFormats(
-  const PgCopyOptions& options, std::span<const std::string> names);
+  const duckdb::CopyFormatOptions& options, std::span<const std::string> names);
 
 void SerializeCopyHeader(sdb::pg::SerializationContext& context,
-                         const PgCopyOptions& options,
+                         const duckdb::CopyFormatOptions& options,
                          std::span<const duckdb::Identifier> names);
 
 std::vector<std::string> CopyNames(std::span<const duckdb::Identifier> names);

@@ -124,12 +124,12 @@ std::string BinaryRows() {
   return rows;
 }
 
-TEST(PgCopyBatchBuilder, TextKeepsEveryByteAcrossPieces) {
+TEST(PgCopyBatchBuilder, RawKeepsEveryByteAcrossPieces) {
   const std::string input = "1\ta\n22\tbb\n333\tccc\n\n4444\tdddd";
   for (const size_t piece : {1, 2, 3, 5, 7, 64}) {
     for (const bool stable : {true, false}) {
       for (const size_t target : {1, 8, 1 << 20}) {
-        CopyBatchBuilder builder{CopyBatchFormat::Text, target};
+        CopyBatchBuilder builder{CopyBatchFormat::Raw, target};
         EXPECT_EQ(Drain(builder, input, piece, stable), input)
           << "piece=" << piece << " stable=" << stable << " target=" << target;
       }
@@ -137,146 +137,9 @@ TEST(PgCopyBatchBuilder, TextKeepsEveryByteAcrossPieces) {
   }
 }
 
-TEST(PgCopyBatchBuilder, JoinedBlankLinesStayWithTheRowsBeforeThem) {
-  const std::string input = "a\n\n\r\n\nb\n\n";
-  for (const size_t piece : {1, 2, 3, 5, 64}) {
-    CopyBatchBuilder builder{CopyBatchFormat::Text, 1, true};
-    std::vector<std::string> batches;
-    for (size_t pos = 0; pos < input.size(); pos += piece) {
-      builder.Feed(std::string_view{input}.substr(pos, piece), false);
-      while (builder.Ready()) {
-        batches.push_back(Join(*builder.Take()));
-      }
-    }
-    builder.Finish();
-    while (builder.HasRows()) {
-      batches.push_back(Join(*builder.Take()));
-    }
-    EXPECT_EQ(absl::StrJoin(batches, ""), input) << "piece=" << piece;
-    for (size_t i = 1; i < batches.size(); ++i) {
-      EXPECT_FALSE(batches[i].starts_with('\n') ||
-                   batches[i].starts_with("\r\n"))
-        << "piece=" << piece << " batch=" << i;
-    }
-    if (piece < input.size()) {
-      EXPECT_EQ(batches.back(), "b\n\n") << "piece=" << piece;
-    }
-  }
-}
-
-TEST(PgCopyBatchBuilder, FirstLineBreakDecidesTheRowEnds) {
-  struct Case {
-    CopyBatchFormat format;
-    std::string input;
-    char line_break;
-  };
-  const std::vector<Case> cases{
-    {CopyBatchFormat::Text, "1\ta\r22\tb\\\rb\r333\tc\r", '\r'},
-    {CopyBatchFormat::Text, "1\ta\r\n2\tb\r\n", '\n'},
-    {CopyBatchFormat::Text, "1\\\na\n2\tb\r", '\n'},
-    {CopyBatchFormat::Csv, "\"x\ny\",1\r\"z\rw\",2\r3,3", '\r'},
-    {CopyBatchFormat::Csv, "\"x\ry\",1\n2,2\n", '\n'},
-    {CopyBatchFormat::Csv, "a,b", '\n'},
-  };
-  for (const auto& [format, input, line_break] : cases) {
-    for (const size_t piece : {1, 2, 3, 5, 64}) {
-      for (const bool stable : {true, false}) {
-        CopyBatchBuilder builder{format, 1};
-        std::string out;
-        const auto take = [&] {
-          const auto batch = builder.Take();
-          EXPECT_EQ(batch->line_break, line_break)
-            << input << " piece=" << piece;
-          out += Join(*batch);
-          return out;
-        };
-        for (size_t pos = 0; pos < input.size(); pos += piece) {
-          builder.Feed(std::string_view{input}.substr(pos, piece), stable);
-          while (builder.Ready()) {
-            EXPECT_EQ(take().back(), line_break) << input << " piece=" << piece;
-          }
-        }
-        builder.Finish();
-        while (builder.HasRows()) {
-          take();
-        }
-        EXPECT_EQ(out, input) << "piece=" << piece << " stable=" << stable;
-      }
-    }
-  }
-}
-
-TEST(PgCopyBatchBuilder, BlankLinesJoinTheBatchBeforeThemInEitherLineBreak) {
-  struct Case {
-    std::string input;
-    std::vector<std::string> batches;
-  };
-  const std::vector<Case> cases{
-    {"1\ta\r\r\r2\tb\r\r3\tc\r", {"1\ta\r\r\r", "2\tb\r\r", "3\tc\r"}},
-    {"1\ta\r\n\r\n2\tb\n\n3\tc\n", {"1\ta\r\n\r\n", "2\tb\n\n", "3\tc\n"}},
-  };
-  for (const auto& [input, expected] : cases) {
-    for (const size_t piece : {1, 2, 3, 64}) {
-      CopyBatchBuilder builder{CopyBatchFormat::Text, 1, true};
-      std::vector<std::string> batches;
-      for (size_t pos = 0; pos < input.size(); pos += piece) {
-        builder.Feed(std::string_view{input}.substr(pos, piece), false);
-        while (builder.Ready()) {
-          batches.push_back(Join(*builder.Take()));
-        }
-      }
-      builder.Finish();
-      while (builder.HasRows()) {
-        batches.push_back(Join(*builder.Take()));
-      }
-      if (piece == 64) {
-        EXPECT_EQ(absl::StrJoin(batches, ""), input);
-        continue;
-      }
-      EXPECT_EQ(batches, expected) << "piece=" << piece;
-    }
-  }
-}
-
-TEST(PgCopyBatchBuilder, TextBatchesEndOnRowBoundaries) {
-  const std::string input = "aa\nbbb\ncccc\nd\n";
-  CopyBatchBuilder builder{CopyBatchFormat::Text, 1};
-  for (size_t pos = 0; pos < input.size(); pos += 3) {
-    builder.Feed(std::string_view{input}.substr(pos, 3), true);
-    if (builder.Ready()) {
-      const auto batch = builder.Take();
-      const auto bytes = Join(*batch);
-      ASSERT_FALSE(bytes.empty());
-      EXPECT_EQ(bytes.back(), '\n');
-    }
-  }
-}
-
-TEST(PgCopyBatchBuilder, TextBatchesSkipEscapedNewlines) {
-  const std::string input = "a\\\nb\nc\\\\\n\\\\\\\nd\n\ne";
-  const std::vector<size_t> row_ends{4, 8, 14, 15};
-  for (const size_t piece : {1, 2, 3, 5, 7}) {
-    CopyBatchBuilder builder{CopyBatchFormat::Text, 1};
-    std::string out;
-    for (size_t pos = 0; pos < input.size(); pos += piece) {
-      builder.Feed(std::string_view{input}.substr(pos, piece), false);
-      if (builder.Ready()) {
-        out += Join(*builder.Take());
-        EXPECT_NE(absl::c_find(row_ends, out.size() - 1), row_ends.end())
-          << "piece=" << piece << " batch end=" << out.size();
-      }
-    }
-    builder.Finish();
-    if (builder.HasRows()) {
-      out += Join(*builder.Take());
-    }
-    EXPECT_EQ(out, input) << "piece=" << piece;
-  }
-}
-
-TEST(PgCopyBatchBuilder, TextStableBytesAreBorrowed) {
+TEST(PgCopyBatchBuilder, RawStableBytesAreBorrowed) {
   const std::string input = "row one\nrow two\npartial";
-  CopyBatchBuilder builder{CopyBatchFormat::Text, 1 << 20};
+  CopyBatchBuilder builder{CopyBatchFormat::Raw, 1 << 20};
   builder.Feed(input, true);
   const auto batch = builder.Take();
   ASSERT_EQ(batch->segments.size(), 1);

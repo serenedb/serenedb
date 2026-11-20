@@ -24,7 +24,6 @@
 
 #include "iresearch/search/detail/scale_score.hpp"
 #include "iresearch/search/explain/factors.hpp"
-#include "iresearch/search/scorers/score_inputs.hpp"
 #include "iresearch/utils/down_cast.hpp"
 
 namespace irs {

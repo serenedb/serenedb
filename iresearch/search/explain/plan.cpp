@@ -24,11 +24,15 @@
 #include <absl/functional/any_invocable.h>
 
 #include <algorithm>
+#include <cstdint>
+#include <memory>
 #include <optional>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/probe/family.hpp"
@@ -45,7 +49,11 @@
 namespace irs::explain {
 namespace {
 
-using Outcome = Part::Outcome;
+enum class Outcome : uint8_t {
+  None,
+  Matched,
+  Scored,
+};
 
 const SlotStats* StatsOf(const StatsIndex& index, const byte_type* slot) {
   const auto it = index.find(slot);
@@ -123,7 +131,7 @@ struct Cursor {
   doc_id_t last = doc_limits::invalid();
 };
 
-class LeafPart final : public Part {
+class LeafPart {
  public:
   LeafPart(Planner plan, ColumnArgsFetcher& fetcher, const StatsIndex& stats,
            Subject subject, Fallback fallback)
@@ -131,9 +139,13 @@ class LeafPart final : public Part {
       _fetcher{fetcher},
       _stats{stats},
       _subject{std::move(subject)},
-      _fallback{std::move(fallback)} {}
+      _fallback{std::move(fallback)} {
+    if (Scored() && _fallback.field) {
+      _fetcher.AddNorms(*_fallback.segment, _fallback.field->norm);
+    }
+  }
 
-  Outcome Explain(doc_id_t doc, Node& out) final {
+  Outcome Explain(doc_id_t doc, Node& out) {
     if (_cursor.Seek(doc)) {
       _score =
         Scored() ? _cursor.node->PrepareScore() : ScoreFunction::Default();
@@ -163,7 +175,7 @@ class LeafPart final : public Part {
                },
                _stats, out);
     } else {
-      DescribeConstant(doc, out);
+      DescribeConstant(out);
     }
     return Outcome::Scored;
   }
@@ -178,7 +190,7 @@ class LeafPart final : public Part {
     return _scorer;
   }
 
-  void DescribeConstant(doc_id_t doc, Node& out) {
+  void DescribeConstant(Node& out) {
     const auto& args = _fallback.args;
     if (!_fallback.field) {
       Describe(*args.scorer, ScorerName(*args.scorer),
@@ -194,10 +206,6 @@ class LeafPart final : public Part {
       return;
     }
     const auto& field = *_fallback.field;
-    if (field_limits::valid(field.norm)) {
-      _fetcher.AddNorms(field.norm, _fallback.segment->norms(field.norm));
-      _fetcher.Fetch(doc);
-    }
     uint32_t freq = _fallback.freq;
     detail::LeafProvider provider;
     provider.freq.value = &freq;
@@ -222,58 +230,68 @@ class LeafPart final : public Part {
   ScoreFunction _score;
 };
 
-class GroupPart final : public Part {
+class GroupPart;
+
+using Part = std::variant<LeafPart, GroupPart>;
+
+class GroupPart {
  public:
   GroupPart(Planner plan, bool max, std::optional<score_t> absorbed)
     : _cursor{.plan = std::move(plan)}, _max{max}, _absorbed{absorbed} {}
 
-  void Add(std::unique_ptr<Part> part) {
-    SDB_ASSERT(part);
-    _parts.push_back(std::move(part));
-  }
+  void Add(Part part);
 
-  Outcome Explain(doc_id_t doc, Node& out) final {
-    if (_cursor.plan) {
-      _cursor.Seek(doc);
-      if (!_cursor.Matches(doc)) {
-        return Outcome::None;
-      }
-    }
-    out.key = _max ? "max" : "sum";
-    out.expression = out.key;
-    bool scored = false;
-    score_t total = 0;
-    const auto add = [&](Node&& child, Outcome outcome) {
-      if (outcome == Outcome::Scored) {
-        const auto value = std::get<score_t>(child.value);
-        total = _max ? std::max(total, value) : total + value;
-        scored = true;
-      }
-      out.details.push_back(std::move(child));
-    };
-    for (auto& part : _parts) {
-      Node child;
-      if (const auto outcome = part->Explain(doc, child);
-          outcome != Outcome::None) {
-        add(std::move(child), outcome);
-      }
-    }
-    if (!_cursor.plan && out.details.empty()) {
-      return Outcome::None;
-    }
-    if (_absorbed) {
-      add({.key = "constant", .value = *_absorbed}, Outcome::Scored);
-    }
-    out.value = total;
-    return scored ? Outcome::Scored : Outcome::Matched;
-  }
+  Outcome Explain(doc_id_t doc, Node& out);
 
  private:
   Cursor _cursor;
-  std::vector<std::unique_ptr<Part>> _parts;
+  std::vector<Part> _parts;
   bool _max;
   std::optional<score_t> _absorbed;
 };
+
+Outcome ExplainPart(Part& part, doc_id_t doc, Node& out) {
+  return std::visit(
+    [&](auto& alternative) { return alternative.Explain(doc, out); }, part);
+}
+
+void GroupPart::Add(Part part) { _parts.push_back(std::move(part)); }
+
+Outcome GroupPart::Explain(doc_id_t doc, Node& out) {
+  if (_cursor.plan) {
+    _cursor.Seek(doc);
+    if (!_cursor.Matches(doc)) {
+      return Outcome::None;
+    }
+  }
+  out.key = _max ? "max" : "sum";
+  out.expression = out.key;
+  bool scored = false;
+  score_t total = 0;
+  const auto add = [&](Node&& child, Outcome outcome) {
+    if (outcome == Outcome::Scored) {
+      const auto value = std::get<score_t>(child.value);
+      total = _max ? std::max(total, value) : total + value;
+      scored = true;
+    }
+    out.details.push_back(std::move(child));
+  };
+  for (auto& part : _parts) {
+    Node child;
+    if (const auto outcome = ExplainPart(part, doc, child);
+        outcome != Outcome::None) {
+      add(std::move(child), outcome);
+    }
+  }
+  if (!_cursor.plan && out.details.empty()) {
+    return Outcome::None;
+  }
+  if (_absorbed) {
+    add({.key = "constant", .value = *_absorbed}, Outcome::Scored);
+  }
+  out.value = total;
+  return scored ? Outcome::Scored : Outcome::Matched;
+}
 
 class Builder {
  public:
@@ -281,10 +299,8 @@ class Builder {
           ColumnArgsFetcher& fetcher) noexcept
     : _scorer{scorer}, _stats{stats}, _names{names}, _fetcher{fetcher} {}
 
-  std::unique_ptr<Part> Make(const QueryBuilder& query) {
-    if (QueryBuilder::IsEmpty(query)) {
-      return nullptr;
-    }
+  Part Make(const QueryBuilder& query) {
+    SDB_ASSERT(!QueryBuilder::IsEmpty(query));
     switch (query.Kind()) {
       case QueryKind::Boolean:
         return MakeBoolean(utils::downCast<BooleanQuery>(query));
@@ -305,8 +321,8 @@ class Builder {
     return {.scorer = &_scorer, .fetcher = &_fetcher};
   }
 
-  std::unique_ptr<Part> MakeClause(const SubReader& segment,
-                                   const detail::PostingClause& clause) {
+  LeafPart MakeClause(const SubReader& segment,
+                      const detail::PostingClause& clause) {
     SDB_ASSERT(clause.state.reader);
     const auto& field = *clause.state.reader;
     const bool scored = clause.stats.stats != nullptr;
@@ -328,24 +344,24 @@ class Builder {
         subject.terms.push_back(*name);
       }
     }
-    return std::make_unique<LeafPart>(
-      [clause, segment = &segment, scoring = Scoring(),
-       scored]() -> probe::Node::ptr {
-        if (scored) {
-          return probe::Family::MakePosting(
-            clause, *segment,
-            probe::Family::ScoredContext{.scored = scoring,
-                                         .interrogations = 1},
-            ScoreMergeType::Noop);
-        }
-        return probe::Family::MakePosting(
-          clause, *segment, probe::Family::DocsContext{.interrogations = 1},
-          ScoreMergeType::Noop);
-      },
-      _fetcher, _stats, std::move(subject), std::move(fallback));
+    return LeafPart{[clause, segment = &segment, scoring = Scoring(),
+                     scored]() -> probe::Node::ptr {
+                      if (scored) {
+                        return probe::Family::MakePosting(
+                          clause, *segment,
+                          probe::Family::ScoredContext{.scored = scoring,
+                                                       .interrogations = 1},
+                          ScoreMergeType::Noop);
+                      }
+                      return probe::Family::MakePosting(
+                        clause, *segment,
+                        probe::Family::DocsContext{.interrogations = 1},
+                        ScoreMergeType::Noop);
+                    },
+                    _fetcher, _stats, std::move(subject), std::move(fallback)};
   }
 
-  std::unique_ptr<Part> MakeLeaf(const QueryBuilder& query) {
+  LeafPart MakeLeaf(const QueryBuilder& query) {
     const auto record = query.Stats(Scoring());
     const TermReader* reader = nullptr;
     Subject subject;
@@ -372,7 +388,7 @@ class Builder {
         subject = SubjectOf(_stats, record.stats, nullptr);
         break;
     }
-    return std::make_unique<LeafPart>(
+    return LeafPart{
       [&query, scoring = Scoring(), scored = record.stats != nullptr] {
         return query.PlanProbe(scored ? scoring : detail::ScoredCtx{}, 1);
       },
@@ -388,23 +404,23 @@ class Builder {
             .fetcher = &_fetcher,
             .boost = query.Boost(),
           },
-      });
+      }};
   }
 
-  std::unique_ptr<Part> MakeTerms(const MultiTermQuery& query) {
+  GroupPart MakeTerms(const MultiTermQuery& query) {
     const auto& state = query.State();
-    auto group = std::make_unique<GroupPart>(
-      Planner{}, query.MergeType() == ScoreMergeType::Max, std::nullopt);
+    GroupPart group{Planner{}, query.MergeType() == ScoreMergeType::Max,
+                    std::nullopt};
     const auto* const scorer = query.Stats(Scoring()).scorer;
     for (const auto& entry : state.Terms()) {
-      group->Add(MakeClause(
+      group.Add(MakeClause(
         query.Segment(),
         detail::ClauseOf(entry, state.Reader(), scorer, query.Boost())));
     }
     return group;
   }
 
-  std::unique_ptr<Part> MakeBoolean(const BooleanQuery& query) {
+  GroupPart MakeBoolean(const BooleanQuery& query) {
     const auto scores_all = [](const BooleanQuery::PreparedBucket& bucket) {
       return absl::c_any_of(bucket.all_docs, [](const auto& clause) {
         return clause.stats.stats != nullptr;
@@ -415,16 +431,16 @@ class Builder {
         scores_all(query.Bucket(Occur::Should))) {
       absorbed = query.Absorbed(_fetcher);
     }
-    auto group = std::make_unique<GroupPart>(
+    GroupPart group{
       [&query] { return query.PlanProbe(detail::ScoredCtx{}, 1); },
-      query.MergeType() == ScoreMergeType::Max, absorbed);
+      query.MergeType() == ScoreMergeType::Max, absorbed};
     for (const auto occur : {Occur::Must, Occur::Should}) {
       const auto& bucket = query.Bucket(occur);
       for (const auto& clause : bucket.postings) {
-        group->Add(MakeClause(query.Segment(), clause));
+        group.Add(MakeClause(query.Segment(), clause));
       }
       for (const auto& child : bucket.filters) {
-        group->Add(Make(*child));
+        group.Add(Make(*child));
       }
     }
     return group;
@@ -436,21 +452,41 @@ class Builder {
   ColumnArgsFetcher& _fetcher;
 };
 
+class Plan final : public Explainer {
+ public:
+  Plan(const QueryBuilder& query, const Scorer& scorer, const StatsIndex& stats,
+       const TermNames& names) {
+    if (!QueryBuilder::IsEmpty(query)) {
+      _root.emplace(Builder{scorer, stats, names, _fetcher}.Make(query));
+    }
+  }
+
+  Plan(const Plan&) = delete;
+  Plan& operator=(const Plan&) = delete;
+
+  Node Explain(doc_id_t doc, std::optional<score_t> executed) final {
+    SDB_ASSERT(_root);
+    Node root;
+    [[maybe_unused]] const auto outcome = ExplainPart(*_root, doc, root);
+    SDB_ASSERT(outcome != Outcome::None);
+    if (executed) {
+      root.value = *executed;
+    }
+    return root;
+  }
+
+ private:
+  ColumnArgsFetcher _fetcher;
+  std::optional<Part> _root;
+};
+
 }  // namespace
 
-Plan::Plan(const QueryBuilder& query, const Scorer& scorer,
-           const StatsIndex& stats, const TermNames& names)
-  : _root{Builder{scorer, stats, names, _fetcher}.Make(query)} {}
-
-Node Plan::Explain(doc_id_t doc, std::optional<score_t> executed) {
-  SDB_ASSERT(_root);
-  Node root;
-  [[maybe_unused]] const auto outcome = _root->Explain(doc, root);
-  SDB_ASSERT(outcome != Outcome::None);
-  if (executed) {
-    root.value = *executed;
-  }
-  return root;
+std::unique_ptr<Explainer> MakePlan(const QueryBuilder& query,
+                                    const Scorer& scorer,
+                                    const StatsIndex& stats,
+                                    const TermNames& names) {
+  return std::make_unique<Plan>(query, scorer, stats, names);
 }
 
 }  // namespace irs::explain

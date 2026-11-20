@@ -883,8 +883,8 @@ std::unique_ptr<irs::explain::Explainer> MakeExplainer(const ScanGlobalState& g,
   SDB_ASSERT(seg_query && g.scorer_obj);
   irs::explain::TermNames names;
   g.filter->ExplainTerms(seg_query->Segment(), names);
-  return std::make_unique<irs::explain::Plan>(*seg_query, *g.scorer_obj,
-                                              g.explain_stats, names);
+  return irs::explain::MakePlan(*seg_query, *g.scorer_obj, g.explain_stats,
+                                names);
 }
 
 void WriteChunkExplain(FetchLocalState& f, const ScanGlobalState& g,

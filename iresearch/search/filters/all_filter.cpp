@@ -22,7 +22,6 @@
 
 #include "all_filter.hpp"
 
-#include "iresearch/search/explain/describe.hpp"
 #include "iresearch/search/filters/automaton_filter.hpp"
 
 namespace irs {
@@ -44,11 +43,6 @@ PrepareCollector::ptr All::MakeCollectorImpl(const Scorer* scorer,
                                              StatsArena& stats,
                                              uint32_t) const {
   return std::make_unique<AllCollector>(scorer, stats);
-}
-
-void All::ExplainStats(const PrepareCollector* collector,
-                       explain::StatsIndex& out) const {
-  explain::DescribeSlot(collector, field_limits::invalid(), out);
 }
 
 TermIterator::ptr All::CompileTermIterator(const TermReader& reader) const {

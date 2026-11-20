@@ -23,7 +23,6 @@
 #include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/detail/scale_score.hpp"
 #include "iresearch/search/scorers/bm25.hpp"
-#include "iresearch/search/scorers/score_inputs.hpp"
 #include "iresearch/utils/assert.hpp"
 
 namespace irs {

@@ -20,11 +20,8 @@
 
 #pragma once
 
-#include <cstdint>
 #include <memory>
-#include <optional>
 
-#include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/explain/explanation.hpp"
 #include "iresearch/search/explain/names.hpp"
 #include "iresearch/search/explain/stats.hpp"
@@ -33,32 +30,9 @@
 
 namespace irs::explain {
 
-class Part {
- public:
-  enum class Outcome : uint8_t {
-    None,
-    Matched,
-    Scored,
-  };
-
-  virtual ~Part() = default;
-
-  virtual Outcome Explain(doc_id_t doc, Node& out) = 0;
-};
-
-class Plan final : public Explainer {
- public:
-  Plan(const QueryBuilder& query, const Scorer& scorer, const StatsIndex& stats,
-       const TermNames& names);
-
-  Plan(const Plan&) = delete;
-  Plan& operator=(const Plan&) = delete;
-
-  Node Explain(doc_id_t doc, std::optional<score_t> executed) final;
-
- private:
-  ColumnArgsFetcher _fetcher;
-  std::unique_ptr<Part> _root;
-};
+std::unique_ptr<Explainer> MakePlan(const QueryBuilder& query,
+                                    const Scorer& scorer,
+                                    const StatsIndex& stats,
+                                    const TermNames& names);
 
 }  // namespace irs::explain

@@ -95,7 +95,7 @@ void LMJelinekMercer::collect(byte_type* stats_buf, const FieldCollector* field,
 }
 
 ScoreFunction LMJelinekMercer::PrepareScorer(const ScoreContext& ctx) const {
-  return PrepareLMScorer(
+  return PrepareShareScorer(
     ctx, *stats_cast(ctx.stats),
     [&](score_t share) { return LmJmOf(ctx.boost, _lambda, share); },
     [&](std::span<const score_t> shares) {

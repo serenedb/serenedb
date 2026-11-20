@@ -129,9 +129,7 @@ bool IsString(const LogicalType& type) {
   }
 }
 
-}  // namespace
-
-std::string TermValue(bytes_view term, const duckdb::LogicalType& type) {
+std::string TermValue(bytes_view term, const LogicalType& type) {
   if (type.id() == LogicalTypeId::BOOLEAN) {
     return !term.empty() && term[0] ? "true" : "false";
   }
@@ -143,6 +141,8 @@ std::string TermValue(bytes_view term, const duckdb::LogicalType& type) {
   }
   return TermToString(term);
 }
+
+}  // namespace
 
 std::string DictTermValue(DictRef dict, bytes_view term,
                           const LogicalType& type) {

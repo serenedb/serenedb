@@ -39,8 +39,6 @@ using FieldTypeResolver =
   std::function<duckdb::LogicalType(sdb::connector::ColumnId, DictRef)>;
 using FieldKeyResolver = std::function<bool(sdb::connector::ColumnId)>;
 
-std::string TermValue(bytes_view term, const duckdb::LogicalType& type);
-
 std::string DictTermValue(DictRef dict, bytes_view term,
                           const duckdb::LogicalType& type);
 

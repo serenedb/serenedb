@@ -100,7 +100,7 @@ ScoreFunction LMDirichlet::PrepareScorer(const ScoreContext& ctx) const {
   if (_mu <= 0.f) {
     return ScoreFunction::Default();
   }
-  return PrepareLMScorer(
+  return PrepareShareScorer(
     ctx, *stats_cast(ctx.stats),
     [&](score_t share) { return LmDirOf(ctx.boost, _mu, share); },
     [&](std::span<const score_t> shares) {

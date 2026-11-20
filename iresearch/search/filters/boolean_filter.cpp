@@ -403,24 +403,23 @@ void BooleanFilter::ExplainStats(const PrepareCollector* collector,
 
 void BooleanFilter::ExplainTerms(const SubReader& segment,
                                  explain::TermNames& out) const {
-  for (const auto occur : {Occur::Must, Occur::Should}) {
-    const TermClause* opened = nullptr;
-    const TermReader* reader = nullptr;
-    SeekTermIterator::ptr terms;
-    for (const auto& clause : Terms(occur)) {
-      if (!opened || !SameField(*opened, clause)) {
-        opened = &clause;
-        reader = segment.field(clause.field, clause.dict);
-        terms = reader ? reader->iterator() : SeekTermIterator::ptr{};
+  WalkClauses(
+    *this,
+    [&](std::span<const TermClause> run, Occur occur) {
+      if (occur == Occur::MustNot) {
+        return;
       }
-      if (terms && terms->seek(clause.term)) {
-        out.Add(*reader, terms->cookie(), clause.term);
+      const auto& front = run.front();
+      if (const auto* reader = segment.field(front.field, front.dict)) {
+        TermsIterator terms{*reader, run};
+        out.AddAll(*reader, terms);
       }
-    }
-    for (const auto& child : Filters(occur)) {
-      child->ExplainTerms(segment, out);
-    }
-  }
+    },
+    [&](const Filter& filter, Occur occur) {
+      if (occur != Occur::MustNot) {
+        filter.ExplainTerms(segment, out);
+      }
+    });
 }
 
 QueryBuilder::ptr BooleanFilter::PrepareSegment(

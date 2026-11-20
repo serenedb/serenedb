@@ -213,12 +213,12 @@ class ExplainTest : public IndexTestBase {
       }
       irs::explain::TermNames names;
       filter.ExplainTerms(query->Segment(), names);
-      irs::explain::Plan plan{*query, scorer, stats, names};
+      const auto plan = irs::explain::MakePlan(*query, scorer, stats, names);
       for (const auto& row : rows) {
         if (row.segment != segment) {
           continue;
         }
-        auto node = plan.Explain(row.doc, std::nullopt);
+        auto node = plan->Explain(row.doc, std::nullopt);
         if (tolerance == 0) {
           EXPECT_EQ(row.score, ValueOf(node)) << node.expression;
         } else {
@@ -608,14 +608,15 @@ TEST_P(ExplainTest, rows_in_any_order_are_explained) {
   for (size_t segment = 0; segment != prepared.size(); ++segment) {
     irs::explain::TermNames names;
     filter->ExplainTerms(prepared.Query(segment)->Segment(), names);
-    irs::explain::Plan plan{*prepared.Query(segment), bm25, stats, names};
+    const auto plan =
+      irs::explain::MakePlan(*prepared.Query(segment), bm25, stats, names);
     for (auto it = rows.rbegin(); it != rows.rend(); ++it) {
       if (it->segment != segment) {
         continue;
       }
-      EXPECT_NEAR(it->score, ValueOf(plan.Explain(it->doc, std::nullopt)),
+      EXPECT_NEAR(it->score, ValueOf(plan->Explain(it->doc, std::nullopt)),
                   1e-5f);
-      EXPECT_EQ(it->score, ValueOf(plan.Explain(it->doc, it->score)));
+      EXPECT_EQ(it->score, ValueOf(plan->Explain(it->doc, it->score)));
     }
   }
 }

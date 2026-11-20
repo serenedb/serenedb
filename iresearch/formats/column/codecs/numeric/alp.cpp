@@ -966,17 +966,20 @@ template<typename T>
 struct AlpScanState final : SegmentScanState {
   using Value = T;
   using Vector = AlpVector;
+  using VectorState = AlpVectorState<T>;
 
-  AlpScanState(duckdb::BufferHandle handle_p, const ColumnSegment& segment)
+  AlpScanState(duckdb::BufferHandle handle_p, const ColumnSegment& segment,
+               std::unique_ptr<VectorState> vector_state_p = nullptr)
     : handle{std::move(handle_p)},
       count{segment.count},
-      layout{ReadAlpSegmentLayout(handle.Ptr(), segment.size, count)} {}
+      layout{ReadAlpSegmentLayout(handle.Ptr(), segment.size, count)},
+      vector_state{std::move(vector_state_p)} {}
 
   duckdb::BufferHandle handle;
   idx_t count = 0;
   alp::SegmentLayout layout;
   idx_t total_value_count = 0;
-  AlpVectorState<T> vector_state;
+  std::unique_ptr<VectorState> vector_state;
   duckdb::unique_ptr<duckdb::BaseStatistics> filter_group_stats;
 };
 
@@ -994,7 +997,7 @@ T* ResultValues(const AlpScanState<T>&, duckdb::Vector& result) {
 
 template<typename T>
 void LoadVector(AlpScanState<T>& state, T* value_buffer) {
-  auto& vector_state = state.vector_state;
+  auto& vector_state = *state.vector_state;
   vector_state.index = 0;
 
   const idx_t vector_size =
@@ -1148,8 +1151,9 @@ IRS_FORCE_INLINE T ValueAt(const AlpScanState<T>&, const AlpVector& vector,
       return duckdb::Load<T>(vector.exceptions + found * sizeof(T));
     }
   }
-  const auto encoded = duckdb::BitpackingPrimitives::UnPackValue<uint64_t>(
-    vector.packed, index, vector.bit_width);
+  static_assert(kHeaderSize + kVectorHeaderSize >= alp::kWordReach);
+  const auto encoded =
+    alp::PackedValue<uint64_t>(vector.packed, index, vector.bit_width);
   return DecodeValue<T>(
     static_cast<int64_t>(encoded + vector.frame_of_reference),
     {.exponent = vector.exponent, .factor = vector.factor});
@@ -1166,25 +1170,22 @@ void AlpFetchRows(const ColumnSegment& segment, ColumnFetchState& state,
       return std::make_unique<alp::FetchState<AlpScanState<T>>>(segment.Pin(),
                                                                 segment);
     });
-  auto& scan_state = fetch_state.scan_state;
   auto* result_data =
-    duckdb::FlatVector::GetDataMutableUnsafe<alp::ExactType<T>>(result);
-  for (idx_t i = 0; i < count; ++i) {
-    const auto vector_index = rows[i] / kVectorSize;
-    if (vector_index != fetch_state.decoded_vector) {
-      if (alp::Alone(fetch_state, rows, i, count)) {
-        const auto value = alp::FetchValue(fetch_state, rows[i]);
-        std::memcpy(result_data + result_offset + result_sel.get_index(i),
-                    &value, sizeof(T));
-        continue;
-      }
-      scan_state.total_value_count = vector_index * kVectorSize;
-      LoadVector(scan_state, scan_state.vector_state.decoded_values);
-      fetch_state.decoded_vector = vector_index;
+    duckdb::FlatVector::GetDataMutableUnsafe<T>(result) + result_offset;
+  if (alp::CopyOneDecoded(fetch_state, rows, count, result_data, result_sel)) {
+    return;
+  }
+  const idx_t last_vector = count ? rows[count - 1] / kVectorSize : 0;
+  for (idx_t i = 0; i < count;) {
+    if (rows[i] / kVectorSize == fetch_state.decoded_vector ||
+        alp::Dense(fetch_state, rows, i, count, last_vector)) {
+      i =
+        alp::CopyDecoded(fetch_state, rows, i, count, result_data, result_sel);
+      continue;
     }
-    std::memcpy(result_data + result_offset + result_sel.get_index(i),
-                scan_state.vector_state.decoded_values + rows[i] % kVectorSize,
-                sizeof(T));
+    result_data[result_sel.get_index(i)] =
+      alp::FetchValue(fetch_state, rows[i]);
+    ++i;
   }
 }
 

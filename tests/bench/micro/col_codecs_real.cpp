@@ -167,8 +167,14 @@ const std::vector<uint64_t>& ScatteredRows() {
     if (const char* e = std::getenv("SDB_BENCH_STRIDE")) {
       stride = std::max<uint64_t>(1, std::strtoull(e, nullptr, 10));
     }
+    uint64_t run = 1;
+    if (const char* e = std::getenv("SDB_BENCH_RUN")) {
+      run = std::clamp<uint64_t>(std::strtoull(e, nullptr, 10), 1, stride);
+    }
     for (uint64_t r = 0; r < Data().rows; r += stride) {
-      out.push_back(r);
+      for (uint64_t k = 0; k < run && r + k < Data().rows; ++k) {
+        out.push_back(r + k);
+      }
     }
     return out;
   }();

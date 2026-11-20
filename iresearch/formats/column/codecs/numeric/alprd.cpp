@@ -648,6 +648,9 @@ struct AlpRdVectorState {
   Exact decoded_values[kVectorSize];
   uint16_t exceptions[kVectorSize];
   uint16_t exceptions_positions[kVectorSize];
+};
+
+struct AlpRdHeader {
   uint8_t right_bit_width = 0;
   uint8_t left_bit_width = 0;
   uint16_t left_parts_dict[kMaxDictionarySize];
@@ -656,22 +659,22 @@ struct AlpRdVectorState {
 template<typename T>
 alp::SegmentLayout ReadAlpRdSegmentLayout(duckdb::const_data_ptr_t base,
                                           idx_t size, idx_t count,
-                                          AlpRdVectorState<T>& vector_state) {
+                                          AlpRdHeader& header) {
   constexpr auto kMaxRightBitWidth =
     static_cast<uint8_t>(sizeof(alp::ExactType<T>) * 8 - 1);
   const auto metadata_end = alp::MetadataEnd(base, size, kHeaderSize, "ALPRD");
   const auto* at = base + kMetadataPointerSize;
 
-  vector_state.right_bit_width = duckdb::Load<uint8_t>(at);
-  if (vector_state.right_bit_width > kMaxRightBitWidth) {
-    ThrowAlpRdRightBitWidthOutOfRange(vector_state.right_bit_width,
+  header.right_bit_width = duckdb::Load<uint8_t>(at);
+  if (header.right_bit_width > kMaxRightBitWidth) {
+    ThrowAlpRdRightBitWidthOutOfRange(header.right_bit_width,
                                       kMaxRightBitWidth);
   }
   at += kRightBitWidthSize;
 
-  vector_state.left_bit_width = duckdb::Load<uint8_t>(at);
-  if (vector_state.left_bit_width > kMaxDictionaryBitWidth) {
-    ThrowAlpRdLeftBitWidthOutOfRange(vector_state.left_bit_width);
+  header.left_bit_width = duckdb::Load<uint8_t>(at);
+  if (header.left_bit_width > kMaxDictionaryBitWidth) {
+    ThrowAlpRdLeftBitWidthOutOfRange(header.left_bit_width);
   }
   at += kLeftBitWidthSize;
 
@@ -682,9 +685,8 @@ alp::SegmentLayout ReadAlpRdSegmentLayout(duckdb::const_data_ptr_t base,
   const uint32_t dictionary_size = dictionary_count * kDictionaryElementSize;
   const auto layout = alp::ReadLayout(base, kHeaderSize + dictionary_size,
                                       metadata_end, count, "ALPRD");
-  std::memcpy(vector_state.left_parts_dict, base + kHeaderSize,
-              dictionary_size);
-  std::memset(vector_state.left_parts_dict + dictionary_count, 0,
+  std::memcpy(header.left_parts_dict, base + kHeaderSize, dictionary_size);
+  std::memset(header.left_parts_dict + dictionary_count, 0,
               kMaxDictionarySizeBytes - dictionary_size);
   return layout;
 }
@@ -737,25 +739,29 @@ template<typename T>
 struct AlpRdScanState final : SegmentScanState {
   using Value = alp::ExactType<T>;
   using Vector = AlpRdVector;
+  using VectorState = AlpRdVectorState<T>;
 
-  AlpRdScanState(duckdb::BufferHandle handle_p, const ColumnSegment& segment)
+  AlpRdScanState(duckdb::BufferHandle handle_p, const ColumnSegment& segment,
+                 std::unique_ptr<VectorState> vector_state_p = nullptr)
     : handle{std::move(handle_p)},
       count{segment.count},
-      layout{ReadAlpRdSegmentLayout(handle.Ptr(), segment.size, count,
-                                    vector_state)} {}
+      layout{
+        ReadAlpRdSegmentLayout<T>(handle.Ptr(), segment.size, count, header)},
+      vector_state{std::move(vector_state_p)} {}
 
   duckdb::BufferHandle handle;
   idx_t count = 0;
-  AlpRdVectorState<T> vector_state;
+  AlpRdHeader header;
   alp::SegmentLayout layout;
   idx_t total_value_count = 0;
+  std::unique_ptr<VectorState> vector_state;
 };
 
 template<typename T>
 AlpRdVector OpenVector(const AlpRdScanState<T>& state, idx_t vector_index) {
   return OpenVector<T>(
-    state.layout, state.vector_state.left_bit_width,
-    state.vector_state.right_bit_width, vector_index,
+    state.layout, state.header.left_bit_width, state.header.right_bit_width,
+    vector_index,
     std::min<idx_t>(kVectorSize, state.count - vector_index * kVectorSize));
 }
 
@@ -767,14 +773,15 @@ alp::ExactType<T>* ResultValues(const AlpRdScanState<T>&,
 
 template<typename T>
 void LoadVector(AlpRdScanState<T>& state, alp::ExactType<T>* value_buffer) {
-  auto& vector_state = state.vector_state;
+  auto& vector_state = *state.vector_state;
+  const auto& header = state.header;
   vector_state.index = 0;
 
   const idx_t vector_size =
     std::min<idx_t>(kVectorSize, state.count - state.total_value_count);
-  const auto vector = OpenVector<T>(
-    state.layout, vector_state.left_bit_width, vector_state.right_bit_width,
-    state.total_value_count / kVectorSize, vector_size);
+  const auto vector =
+    OpenVector<T>(state.layout, header.left_bit_width, header.right_bit_width,
+                  state.total_value_count / kVectorSize, vector_size);
   if (vector.exceptions_count == kUncompressedModeSentinel) {
     std::memcpy(value_buffer, vector.values, sizeof(T) * vector_size);
     return;
@@ -801,10 +808,9 @@ void LoadVector(AlpRdScanState<T>& state, alp::ExactType<T>* value_buffer) {
   AlpRdDecompress<T>(
     reinterpret_cast<duckdb::const_data_ptr_t>(vector_state.left_encoded),
     reinterpret_cast<duckdb::const_data_ptr_t>(vector_state.right_encoded),
-    vector_state.left_parts_dict, value_buffer, vector_size,
-    vector.exceptions_count, vector_state.exceptions,
-    vector_state.exceptions_positions, vector_state.left_bit_width,
-    vector_state.right_bit_width);
+    header.left_parts_dict, value_buffer, vector_size, vector.exceptions_count,
+    vector_state.exceptions, vector_state.exceptions_positions,
+    header.left_bit_width, header.right_bit_width);
 }
 
 template<typename T>
@@ -812,12 +818,13 @@ IRS_FORCE_INLINE alp::ExactType<T> ValueAt(const AlpRdScanState<T>& state,
                                            const AlpRdVector& vector,
                                            idx_t index) {
   using Exact = alp::ExactType<T>;
-  const auto& vector_state = state.vector_state;
+  const auto& header = state.header;
   if (vector.exceptions_count == kUncompressedModeSentinel) {
     return duckdb::Load<Exact>(vector.values + index * sizeof(Exact));
   }
-  const auto right_value = duckdb::BitpackingPrimitives::UnPackValue<Exact>(
-    vector.right, index, vector_state.right_bit_width);
+  static_assert(kHeaderSize + kExceptionsCountSize >= alp::kWordReach);
+  const auto right_value =
+    alp::PackedValue<Exact>(vector.right, index, header.right_bit_width);
   if (vector.exceptions_count) {
     const auto position_at = [&](idx_t i) {
       return duckdb::Load<uint16_t>(vector.positions +
@@ -829,14 +836,14 @@ IRS_FORCE_INLINE alp::ExactType<T> ValueAt(const AlpRdScanState<T>& state,
     if (found < vector.exceptions_count && position_at(found) == index) {
       const auto exception =
         duckdb::Load<uint16_t>(vector.exceptions + found * kExceptionSize);
-      return (static_cast<Exact>(exception) << vector_state.right_bit_width) |
+      return (static_cast<Exact>(exception) << header.right_bit_width) |
              right_value;
     }
   }
-  const auto code = duckdb::BitpackingPrimitives::UnPackValue<uint16_t>(
-    vector.left, index, vector_state.left_bit_width);
-  const auto left_value = vector_state.left_parts_dict[code];
-  return (static_cast<Exact>(left_value) << vector_state.right_bit_width) |
+  const auto code =
+    alp::PackedValue<uint16_t>(vector.left, index, header.left_bit_width);
+  const auto left_value = header.left_parts_dict[code];
+  return (static_cast<Exact>(left_value) << header.right_bit_width) |
          right_value;
 }
 
@@ -851,23 +858,23 @@ void AlpRdFetchRows(const ColumnSegment& segment, ColumnFetchState& state,
       return std::make_unique<alp::FetchState<AlpRdScanState<T>>>(segment.Pin(),
                                                                   segment);
     });
-  auto& scan_state = fetch_state.scan_state;
   auto* result_data =
-    duckdb::FlatVector::GetDataMutableUnsafe<alp::ExactType<T>>(result);
-  for (idx_t i = 0; i < count; ++i) {
-    const auto vector_index = rows[i] / kVectorSize;
-    if (vector_index != fetch_state.decoded_vector) {
-      if (alp::Alone(fetch_state, rows, i, count)) {
-        result_data[result_offset + result_sel.get_index(i)] =
-          alp::FetchValue(fetch_state, rows[i]);
-        continue;
-      }
-      scan_state.total_value_count = vector_index * kVectorSize;
-      LoadVector(scan_state, scan_state.vector_state.decoded_values);
-      fetch_state.decoded_vector = vector_index;
+    duckdb::FlatVector::GetDataMutableUnsafe<alp::ExactType<T>>(result) +
+    result_offset;
+  if (alp::CopyOneDecoded(fetch_state, rows, count, result_data, result_sel)) {
+    return;
+  }
+  const idx_t last_vector = count ? rows[count - 1] / kVectorSize : 0;
+  for (idx_t i = 0; i < count;) {
+    if (rows[i] / kVectorSize == fetch_state.decoded_vector ||
+        alp::Dense(fetch_state, rows, i, count, last_vector)) {
+      i =
+        alp::CopyDecoded(fetch_state, rows, i, count, result_data, result_sel);
+      continue;
     }
-    result_data[result_offset + result_sel.get_index(i)] =
-      scan_state.vector_state.decoded_values[rows[i] % kVectorSize];
+    result_data[result_sel.get_index(i)] =
+      alp::FetchValue(fetch_state, rows[i]);
+    ++i;
   }
 }
 

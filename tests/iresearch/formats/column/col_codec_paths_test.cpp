@@ -950,6 +950,12 @@ TEST_F(ColCodecPathsTest, AlpCodecsReadFloatsAndDoubles) {
              }});
     }
     if (type.id() == duckdb::LogicalTypeId::DOUBLE) {
+      Check({name("alprd right parts that span nine bytes"), type,
+             CodecType::Alprd, All, [&](uint64_t g) {
+               const auto bits = g * 0x9E3779B97F4A7C15ULL;
+               return item(std::bit_cast<double>(
+                 (bits & ((uint64_t{1} << 59) - 1)) | bits >> 61 << 60));
+             }});
       Check({name("alp digits near the limit"), type, CodecType::Alp, All,
              [&](uint64_t g) {
                return item(0x1p63 - 0x1p20 * static_cast<double>(1 + g % 1000));

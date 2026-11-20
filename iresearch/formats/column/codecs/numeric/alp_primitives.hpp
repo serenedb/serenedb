@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <duckdb/common/helper.hpp>
 #include <duckdb/common/numeric_utils.hpp>
 #include <duckdb/common/typedefs.hpp>
 #include <duckdb/common/vector_size.hpp>
@@ -30,11 +31,14 @@
 #include <type_traits>
 
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/shared.hpp"
 
 namespace irs::codecs::alp {
 
 inline constexpr uint32_t kVectorSize = 1024;
 inline constexpr uint32_t kMetadataPointerSize = sizeof(uint32_t);
+inline constexpr uint8_t kMaxWordBitWidth = 57;
+inline constexpr uint32_t kWordReach = sizeof(uint64_t) - 1;
 inline constexpr uint32_t kRowGroupSamples = 8;
 inline constexpr uint16_t kSamplesPerVector = 32;
 inline constexpr uint32_t kRowGroupSamplesJump =
@@ -50,6 +54,29 @@ struct SamplingParameters {
   uint32_t n_sampled_increments = 0;
   uint32_t n_sampled_values = 0;
 };
+
+template<typename T>
+IRS_FORCE_INLINE T PackedValue(duckdb::const_data_ptr_t packed,
+                               duckdb::idx_t index, uint8_t bit_width) {
+  if (!bit_width) {
+    return T{0};
+  }
+  const duckdb::idx_t first_bit = index * bit_width;
+  const uint64_t mask = ~uint64_t{0} >> (64 - bit_width);
+  if (bit_width <= kMaxWordBitWidth) {
+    const duckdb::idx_t end_byte = (first_bit + bit_width + 7) / 8;
+    const auto word =
+      duckdb::Load<uint64_t>(packed + end_byte - sizeof(uint64_t));
+    return static_cast<T>((word >> (64 - (end_byte * 8 - first_bit))) & mask);
+  }
+  const auto* first_byte = packed + first_bit / 8;
+  const auto shift = first_bit % 8;
+  const auto low = duckdb::Load<uint64_t>(first_byte) >> shift;
+  const auto high =
+    uint64_t{duckdb::Load<uint8_t>(first_byte + sizeof(uint64_t))}
+    << 1 << (63 - shift);
+  return static_cast<T>((low | high) & mask);
+}
 
 inline SamplingParameters GetSamplingParameters(
   duckdb::idx_t current_vector_n_values) {

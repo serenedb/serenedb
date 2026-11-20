@@ -5,6 +5,7 @@ import {
     defaultConfig,
     defaultProvider,
     describeSource,
+    generatePassword,
     generateToken,
     parseInterval,
 } from "../src/defaults";
@@ -37,6 +38,15 @@ describe("generateToken", () => {
         const a = generateToken();
         const b = generateToken();
         expect(a).toMatch(/^sk-local-[0-9a-f]{24}$/);
+        expect(a).not.toBe(b);
+    });
+});
+
+describe("generatePassword", () => {
+    it("emits 32 hex characters and does not repeat", () => {
+        const a = generatePassword();
+        const b = generatePassword();
+        expect(a).toMatch(/^[0-9a-f]{32}$/);
         expect(a).not.toBe(b);
     });
 });

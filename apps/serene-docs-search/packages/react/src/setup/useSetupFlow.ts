@@ -3,6 +3,7 @@ import {
     DEFAULT_BACKEND_PORT,
     SereneSearchClient,
     defaultConfig,
+    generatePassword,
     generateToken,
     type SereneSearchConfig,
     type SyncProgress,
@@ -30,6 +31,7 @@ export interface SetupFlow {
     update: (mutate: (c: SereneSearchConfig) => void) => void;
     /** Admin token generated for this wizard run (baked into the compose file). */
     token: string;
+    dbPassword: string;
     backendUrl: string;
     setBackendUrl: (v: string) => void;
     tokenInput: string;
@@ -57,6 +59,7 @@ export function useSetupFlow({ search, setup, pinnedBackend, toast }: UseSetupFl
         defaultConfig({ type: "git", url: "", branch: "main" }),
     );
     const wizardToken = useRef<string>("");
+    const wizardDbPassword = useRef<string>("");
     const [backendUrl, setBackendUrl] = useState("");
     const [tokenInput, setTokenInput] = useState("");
     const [conn, setConn] = useState<ConnState>({ kind: "idle" });
@@ -79,8 +82,10 @@ export function useSetupFlow({ search, setup, pinnedBackend, toast }: UseSetupFl
             setConfig(draft.config);
             setStep(Math.min(Math.max(draft.step, 1), 4));
             wizardToken.current = draft.token;
+            wizardDbPassword.current = draft.dbPassword || generatePassword();
         } else if (!wizardToken.current) {
             wizardToken.current = generateToken();
+            wizardDbPassword.current = generatePassword();
         }
         setTokenInput((t) => t || wizardToken.current);
         setBackendUrl((u) => u || `http://localhost:${config.server?.port ?? DEFAULT_BACKEND_PORT}`);
@@ -93,7 +98,12 @@ export function useSetupFlow({ search, setup, pinnedBackend, toast }: UseSetupFl
             setConfig((prev) => {
                 const next = JSON.parse(JSON.stringify(prev)) as SereneSearchConfig;
                 mutate(next);
-                search.storage.saveDraft({ config: next, step, token: wizardToken.current });
+                search.storage.saveDraft({
+                    config: next,
+                    step,
+                    token: wizardToken.current,
+                    dbPassword: wizardDbPassword.current,
+                });
                 return next;
             });
         },
@@ -103,7 +113,12 @@ export function useSetupFlow({ search, setup, pinnedBackend, toast }: UseSetupFl
     const goStep = useCallback(
         (next: number) => {
             setStep(next);
-            search.storage.saveDraft({ config, step: next, token: wizardToken.current });
+            search.storage.saveDraft({
+                config,
+                step: next,
+                token: wizardToken.current,
+                dbPassword: wizardDbPassword.current,
+            });
         },
         [config, search.storage],
     );
@@ -187,6 +202,7 @@ export function useSetupFlow({ search, setup, pinnedBackend, toast }: UseSetupFl
         setConfig(defaultConfig({ type: "git", url: "", branch: "main" }));
         setStep(1);
         wizardToken.current = generateToken();
+        wizardDbPassword.current = generatePassword();
         setTokenInput(wizardToken.current);
         setConn({ kind: "idle" });
         setProgress(null);
@@ -201,6 +217,7 @@ export function useSetupFlow({ search, setup, pinnedBackend, toast }: UseSetupFl
         config,
         update,
         token: wizardToken.current,
+        dbPassword: wizardDbPassword.current,
         backendUrl,
         setBackendUrl,
         tokenInput,

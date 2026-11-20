@@ -23,7 +23,7 @@ Git / folder / website / S3  ── pulls ────────────�
 browser widget  ── HTTP /v1/search, /v1/ask ──>  search backend  ──>  SereneDB
 ```
 
-The generated stack contains SereneDB and `serenedb/docs-search-backend:latest`. Depending on your choices, it also adds Ollama and/or `serenedb/docs-search-mcp:latest`. The MCP service is optional and is only for external AI agents; the widget and its Ask AI tab do not require it.
+The generated stack contains SereneDB and the search backend image `serenedb/docs-search-backend`. Depending on your choices, it also adds Ollama and/or the MCP image `serenedb/docs-search-mcp`. Both images are tagged with the version of the configurator that generated the file. The MCP service is optional and is only for external AI agents; the widget and its Ask AI tab do not require it.
 
 ## Configure and deploy
 
@@ -38,7 +38,11 @@ The generated stack contains SereneDB and `serenedb/docs-search-backend:latest`.
 docker compose up -d
 ```
 
-The compose generator creates a random `SERENE_SEARCH_TOKEN` for administrative setup and sync endpoints. Keep that token on the backend; public search, health, and Ask AI requests do not require it. For a local-folder source, the compose file mounts the path selected in the wizard read-only at `/data/docs`, and the downloaded config is rewritten to use that in-container path.
+The compose generator creates a random `SERENE_SEARCH_TOKEN` for administrative setup and sync endpoints. Keep that token on the backend; public search, health, and Ask AI requests do not require it.
+
+It also creates a random password for SereneDB's `postgres` role and writes it twice: as `POSTGRES_PASSWORD` on the SereneDB service and as `SERENEDB_PASSWORD` on the backend. SereneDB sets the password only when the `serene-data` volume is first created, so editing `POSTGRES_PASSWORD` later has no effect on an existing volume: change the password with `ALTER ROLE postgres PASSWORD '...'` and set the same value in `SERENEDB_PASSWORD`.
+
+For a local-folder source, the compose file mounts the path selected in the wizard read-only at `/data/docs`, and the downloaded config is rewritten to use that in-container path.
 
 Back in the wizard, enter the backend URL (by default `http://localhost:7700`) and generated token, select **Test connection**, then start the initial index build. After indexing finishes, the widget saves that connection in browser storage.
 
@@ -140,15 +144,15 @@ codex mcp add serenedb-docs --url https://api.serenedb.com/mcp
 
 The generated compose file always defines:
 
-- `serenedb/serenedb:latest`, with a persistent `serene-data` volume;
-- `serenedb/docs-search-backend:latest`, with the config mounted read-only at `/etc/serene/config.json`;
-- the backend port from `server.port` (default `7700`) and a generated `SERENE_SEARCH_TOKEN`.
+- `serenedb/serenedb:latest`, with a persistent `serene-data` volume and a generated `POSTGRES_PASSWORD`;
+- `serenedb/docs-search-backend`, tagged with the configurator's version, with the config mounted read-only at `/etc/serene/config.json`;
+- the backend port from `server.port` (default `7700`), a generated `SERENE_SEARCH_TOKEN` and `SERENEDB_PASSWORD`, the same password as `POSTGRES_PASSWORD`.
 
 It conditionally defines:
 
 - a read-only `/data/docs` mount for a folder source;
 - `ollama/ollama:latest` and `ollama-data` when an AI provider points to `http://ollama:11434`;
-- `serenedb/docs-search-mcp:latest` on port `7710` when `mcp.enabled` is true;
+- `serenedb/docs-search-mcp`, tagged like the backend, on port `7710` when `mcp.enabled` is true;
 - environment-variable forwarding for provider keys written as `${ENV_VAR}`.
 
 ### `serene-search.config.json`

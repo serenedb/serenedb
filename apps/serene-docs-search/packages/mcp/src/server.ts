@@ -4,6 +4,7 @@ import {
     READ_SECTION_DESCRIPTION,
     SEARCH_DOCS_DESCRIPTION,
     SereneSearchClient,
+    VERSION,
 } from "@serenedb/docs-search-core";
 import { formatHits, formatSection } from "./format";
 
@@ -41,7 +42,7 @@ export function buildServer(opts: McpOptions): McpServer {
 
     const server = new McpServer({
         name: "serene-docs-search",
-        version: "0.9.1",
+        version: VERSION,
     });
 
     server.tool(

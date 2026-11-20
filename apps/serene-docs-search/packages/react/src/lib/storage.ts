@@ -9,6 +9,7 @@ export interface WizardDraft {
     config: SereneSearchConfig;
     step: number;
     token: string;
+    dbPassword?: string;
 }
 
 const safe = {

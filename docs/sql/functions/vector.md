@@ -35,7 +35,7 @@ A vector is a list (`FLOAT[]`, `DOUBLE[]`) or a fixed-size array (`FLOAT[N]`, `D
 | [`l2_normalize(a)`](#norms) | L2 | -- | Scale to a unit vector. |
 | [`l1_normalize(a)`](#norms) | L1 | -- | Scale to a unit vector. |
 
-DuckDB's names for the same functions take lists and arrays alike, and use the index the same way: `list_distance` and `array_distance` are `l2_distance`; `list_cosine_distance` and `array_cosine_distance` are `cosine_distance`; `list_cosine_similarity` and `array_cosine_similarity` are `cosine_similarity`; `list_inner_product`, `array_inner_product`, `list_dot_product` and `array_dot_product` are `inner_product`; `list_negative_inner_product`, `array_negative_inner_product`, `list_negative_dot_product` and `array_negative_dot_product` are `negative_inner_product`; `vector_norm` is `l2_norm`.
+The `list_` and `array_` names for the same functions take lists and arrays alike, and use the index the same way: `list_distance` and `array_distance` are `l2_distance`; `list_cosine_distance` and `array_cosine_distance` are `cosine_distance`; `list_cosine_similarity` and `array_cosine_similarity` are `cosine_similarity`; `list_inner_product`, `array_inner_product`, `list_dot_product` and `array_dot_product` are `inner_product`; `list_negative_inner_product`, `array_negative_inner_product`, `list_negative_dot_product` and `array_negative_dot_product` are `negative_inner_product`; `vector_norm` is `l2_norm`.
 
 ## Choosing a metric {#choosing-a-metric}
 

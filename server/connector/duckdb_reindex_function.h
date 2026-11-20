@@ -36,9 +36,9 @@ namespace sdb::connector {
 
 struct SereneDBCreateIndexInfo;
 
-inline constexpr std::string_view kReindexByIdPragma = "serenedb_reindex_by_id";
+inline constexpr std::string_view kReindexByIdPragma = "sdb_reindex_by_id";
 
-// serenedb_reindex('index'[, schema[, catalog]]) -- REFRESH of a view-backed
+// sdb_reindex('index'[, schema[, catalog]]) -- REFRESH of a view-backed
 // inverted index: bring it to the current source state and publish the
 // result atomically. Registered as both a table function and a PRAGMA (the
 // REINDEX INDEX grammar lowers to the PRAGMA form).

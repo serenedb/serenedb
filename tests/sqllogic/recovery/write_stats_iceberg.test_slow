@@ -52,7 +52,7 @@ INSERT INTO iceberg_${__DATABASE__}.${__DATABASE__}.stats VALUES
 
 query
 SELECT count(*) AS unknown_stats
-FROM duckdb_logs() AS l JOIN duckdb_log_contexts() AS c ON l.context_id = c.context_id
+FROM sdb_logs() AS l JOIN sdb_log_contexts() AS c ON l.context_id = c.context_id
 WHERE c.connection_id = current_connection_id() AND l.message LIKE 'Did not write column stats%';
 ----
 unknown_stats

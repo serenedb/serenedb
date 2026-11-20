@@ -157,7 +157,7 @@ r	n
 
 
 query
-SELECT index_name FROM duckdb_indexes() WHERE database_name = 'eik_dst' ORDER BY 1;
+SELECT index_name FROM sdb_indexes() WHERE database_name = 'eik_dst' ORDER BY 1;
 ----
 index_name
 eik_child_body
@@ -166,7 +166,7 @@ eik_st_inv
 
 
 query
-SELECT sequence_name FROM duckdb_sequences() WHERE database_name = 'eik_dst' ORDER BY 1;
+SELECT sequence_name FROM sdb_sequences() WHERE database_name = 'eik_dst' ORDER BY 1;
 ----
 sequence_name
 child_id_seq

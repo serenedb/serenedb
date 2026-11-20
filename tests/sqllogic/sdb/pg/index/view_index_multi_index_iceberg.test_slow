@@ -74,7 +74,7 @@ statement count 1
 INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.vmi_t VALUES (4, 'fourth title', 'after the restart too');
 
 query
-SELECT * FROM serenedb_reindex('vmi_idx_body');
+SELECT * FROM sdb_reindex('vmi_idx_body');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	1	0	0	0
@@ -85,7 +85,7 @@ SELECT id FROM vmi_idx_title WHERE title @@ ts_phrase('fourth');
 id
 
 query
-SELECT * FROM serenedb_reindex('vmi_idx_title');
+SELECT * FROM sdb_reindex('vmi_idx_title');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	1	0	0	0
@@ -97,7 +97,7 @@ id
 4
 
 query
-SELECT * FROM serenedb_reindex('vmi_idx_u');
+SELECT * FROM sdb_reindex('vmi_idx_u');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0
@@ -117,7 +117,7 @@ statement count 1
 DELETE FROM srv_${__DATABASE__}.${__DATABASE__}.vmi_t WHERE id = 2;
 
 query
-SELECT action, files_changed FROM serenedb_reindex('vmi_idx_body');
+SELECT action, files_changed FROM sdb_reindex('vmi_idx_body');
 ----
 action	files_changed
 delta	1
@@ -141,7 +141,7 @@ id	title
 4	fourth title
 
 query
-SELECT * FROM serenedb_reindex('vmi_idx_title');
+SELECT * FROM sdb_reindex('vmi_idx_title');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0
@@ -150,7 +150,7 @@ statement count 1
 DELETE FROM srv_${__DATABASE__}.${__DATABASE__}.vmi_u WHERE id = 11;
 
 query
-SELECT action, files_changed FROM serenedb_reindex('vmi_idx_u');
+SELECT action, files_changed FROM sdb_reindex('vmi_idx_u');
 ----
 action	files_changed
 delta	1
@@ -162,7 +162,7 @@ id	body
 10	techies mines the jungle
 
 query
-SELECT * FROM serenedb_reindex('vmi_idx_body');
+SELECT * FROM sdb_reindex('vmi_idx_body');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0

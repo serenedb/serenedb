@@ -60,7 +60,7 @@ CHECKPOINT;
 
 
 statement ok
-INSERT INTO dsr_oids SELECT table_name, table_oid FROM duckdb_tables()
+INSERT INTO dsr_oids SELECT table_name, table_oid FROM sdb_tables()
 WHERE database_name = current_database() AND table_name = 'dsr_s';
 
 
@@ -152,7 +152,7 @@ VACUUM (FLUSH_TABLE) dsr_db.public.s;
 
 connection after_index
 statement ok
-INSERT INTO dsr_oids SELECT 'dsr_db', table_oid FROM duckdb_tables() WHERE database_name = 'dsr_db';
+INSERT INTO dsr_oids SELECT 'dsr_db', table_oid FROM sdb_tables() WHERE database_name = 'dsr_db';
 
 
 connection after_index
@@ -235,7 +235,7 @@ VACUUM (FLUSH_TABLE) dsr_r;
 
 connection after_database
 statement ok
-INSERT INTO dsr_oids SELECT 'dsr_r_old', table_oid FROM duckdb_tables()
+INSERT INTO dsr_oids SELECT 'dsr_r_old', table_oid FROM sdb_tables()
 WHERE database_name = current_database() AND table_name = 'dsr_r';
 
 
@@ -339,7 +339,7 @@ VACUUM (FLUSH_TABLE) dsr_si;
 
 connection after_replace
 statement ok
-INSERT INTO dsr_oids SELECT table_name, table_oid FROM duckdb_tables()
+INSERT INTO dsr_oids SELECT table_name, table_oid FROM sdb_tables()
 WHERE database_name = current_database() AND table_name = 'dsr_si';
 
 
@@ -420,7 +420,7 @@ CREATE INDEX dsr_ri ON dsr_rv USING inverted (body);
 
 connection after_search_index
 statement ok
-INSERT INTO dsr_oids SELECT 'dsr_ri_old', index_oid FROM duckdb_indexes()
+INSERT INTO dsr_oids SELECT 'dsr_ri_old', index_oid FROM sdb_indexes()
 WHERE database_name = current_database() AND index_name = 'dsr_ri';
 
 
@@ -461,7 +461,7 @@ SET sdb_faults = 'crash_on_packet';
 
 connection after_index_replace
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SELECT regexp_replace(sql, ' WITH \(.*', '') AS def FROM duckdb_indexes()
+SELECT regexp_replace(sql, ' WITH \(.*', '') AS def FROM sdb_indexes()
 WHERE database_name = current_database() AND index_name = 'dsr_ri';
 ----
 def
@@ -500,7 +500,7 @@ CREATE INDEX dsr_v_idx ON dsr_v USING inverted (body);
 
 connection after_index_replace
 statement ok
-INSERT INTO dsr_oids SELECT index_name, index_oid FROM duckdb_indexes()
+INSERT INTO dsr_oids SELECT index_name, index_oid FROM sdb_indexes()
 WHERE database_name = current_database() AND index_name = 'dsr_v_idx';
 
 
@@ -589,7 +589,7 @@ CREATE INDEX dsr_ri ON dsr_t2 USING inverted (body);
 
 connection after_view_index
 statement ok
-INSERT INTO dsr_oids SELECT table_name, table_oid FROM duckdb_tables()
+INSERT INTO dsr_oids SELECT table_name, table_oid FROM sdb_tables()
 WHERE database_name = current_database() AND table_name = 'dsr_t2';
 
 
@@ -700,8 +700,8 @@ VACUUM (FLUSH_TABLE) dsr_all.public.s;
 
 connection after_table_with_index
 statement ok
-INSERT INTO dsr_oids SELECT 'dsr_all', table_oid FROM duckdb_tables() WHERE database_name = 'dsr_all'
-UNION ALL SELECT 'dsr_all', index_oid FROM duckdb_indexes() WHERE database_name = 'dsr_all';
+INSERT INTO dsr_oids SELECT 'dsr_all', table_oid FROM sdb_tables() WHERE database_name = 'dsr_all'
+UNION ALL SELECT 'dsr_all', index_oid FROM sdb_indexes() WHERE database_name = 'dsr_all';
 
 
 connection after_table_with_index

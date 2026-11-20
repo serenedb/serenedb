@@ -44,7 +44,7 @@ INSERT INTO rcc_t VALUES (3, 30);
 
 connection after_crash
 query
-SELECT sql FROM duckdb_indexes() WHERE index_name = 'rcc_i';
+SELECT sql FROM sdb_indexes() WHERE index_name = 'rcc_i';
 ----
 sql
 CREATE UNIQUE INDEX rcc_i ON public.rcc_t USING inverted (c);

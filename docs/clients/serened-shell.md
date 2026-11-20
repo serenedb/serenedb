@@ -385,7 +385,7 @@ one and `.docs --kind command` lists them all.
 | `.shell` | `CMD ARGS...` | Run `CMD ARGS...` in a system shell. |
 | `.show` | | Show the current values of the shell settings. |
 | `.singleline` | | Render in single-line mode. |
-| `.startup_text` | `none\|version\|all` | Choose the text shown at start-up. Set it as the first line of `~/.duckdbrc`. |
+| `.startup_text` | `none\|version\|all` | Choose the text shown at start-up. Set it as the first line of `~/.sdbrc`. |
 | `.system` | `CMD ARGS...` | Run `CMD ARGS...` in a system shell. |
 | `.tables` | `?TABLE?` | List the tables whose names match the `LIKE` pattern `TABLE`. |
 | `.thousand_sep` | `SEP` | Set the thousands separator used to render numbers in `duckbox` mode. |
@@ -446,7 +446,7 @@ The interactive line editor takes these keys, which `.help shortcuts` also lists
 | `-s COMMAND`                 | Alias for `-c`                                               |
 | `-f`, `--file=FILENAME`      | Execute commands from a file, then exit                      |
 | `--cmd=COMMAND`              | Run a command before reading stdin (does not exit)           |
-| `--init=FILENAME`            | Pre-initialize from a file (overrides the default `~/.duckdbrc`) |
+| `--init=FILENAME`            | Pre-initialize from a file (overrides the default `~/.sdbrc`) |
 | `-X`, `--no-init`            | Do not read the startup file                                 |
 | `--bail`                     | Stop after hitting an error                                  |
 | `-1`, `--single-transaction` | Wrap the `-c` / `-f` batch in `BEGIN` / `COMMIT`             |
@@ -493,3 +493,12 @@ The interactive line editor takes these keys, which `.help shortcuts` also lists
 :::note
 The flags `-h`, `-l` and `-s` differ from [`serenedb psql`](./serened-psql.md): in the shell, `-h` shows the help message, `-l` selects list output mode, and `-s` is an alias for `-c`.
 :::
+
+### Environment variables
+
+| Variable         | Description                                                                                                     |
+| :--------------- | :-------------------------------------------------------------------------------------------------------------- |
+| `SDB_PAGER`      | The pager command, ahead of `PAGER`                                                                             |
+| `SDB_EDITOR`     | The editor `.edit` opens, ahead of `EDITOR` and `VISUAL`                                                        |
+| `SDB_HISTORY`    | The history file of an interactive session (default `~/.sdb_history`)                                           |
+| `SDB_AGENT_MODE` | `1` or `0` turns agent mode on or off, `auto` leaves it to detection; `-agent` and `-no-agent` take precedence |

@@ -8,7 +8,7 @@ CREATE DATABASE svb_first;
 
 
 query
-SELECT column_name, data_type FROM duckdb_columns()
+SELECT column_name, data_type FROM sdb_columns()
 WHERE database_name = 'svb_first' AND schema_name = 'pg_catalog' AND table_name = 'pg_tables'
 ORDER BY column_index;
 ----
@@ -28,7 +28,7 @@ CREATE DATABASE svb_later;
 
 
 query
-SELECT column_name, data_type FROM duckdb_columns()
+SELECT column_name, data_type FROM sdb_columns()
 WHERE database_name = 'svb_later' AND schema_name = 'pg_catalog' AND table_name = 'pg_tables'
 ORDER BY column_index;
 ----
@@ -44,7 +44,7 @@ rowsecurity	BOOLEAN
 
 
 query
-SELECT count(*) AS unbound FROM duckdb_columns()
+SELECT count(*) AS unbound FROM sdb_columns()
 WHERE database_name IN ('svb_first', 'svb_later') AND data_type = 'INVALID';
 ----
 unbound
@@ -53,16 +53,16 @@ unbound
 
 query
 SELECT count(*) AS differing FROM (
-  (SELECT schema_name, table_name, column_index, column_name, data_type FROM duckdb_columns()
+  (SELECT schema_name, table_name, column_index, column_name, data_type FROM sdb_columns()
    WHERE database_name = 'svb_first' AND schema_name IN ('pg_catalog', 'information_schema')
    EXCEPT ALL
-   SELECT schema_name, table_name, column_index, column_name, data_type FROM duckdb_columns()
+   SELECT schema_name, table_name, column_index, column_name, data_type FROM sdb_columns()
    WHERE database_name = 'svb_later' AND schema_name IN ('pg_catalog', 'information_schema'))
   UNION ALL
-  (SELECT schema_name, table_name, column_index, column_name, data_type FROM duckdb_columns()
+  (SELECT schema_name, table_name, column_index, column_name, data_type FROM sdb_columns()
    WHERE database_name = 'svb_later' AND schema_name IN ('pg_catalog', 'information_schema')
    EXCEPT ALL
-   SELECT schema_name, table_name, column_index, column_name, data_type FROM duckdb_columns()
+   SELECT schema_name, table_name, column_index, column_name, data_type FROM sdb_columns()
    WHERE database_name = 'svb_first' AND schema_name IN ('pg_catalog', 'information_schema'))
 );
 ----
@@ -78,7 +78,7 @@ t
 
 
 query
-SELECT column_name FROM duckdb_columns()
+SELECT column_name FROM sdb_columns()
 WHERE database_name = 'svb_first' AND schema_name = 'information_schema' AND table_name = 'schemata'
 ORDER BY column_index;
 ----

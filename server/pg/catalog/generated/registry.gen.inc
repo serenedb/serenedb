@@ -39,11 +39,14 @@ constexpr SystemTable* kSystemTables[] = {
   &gPgTrigger,
   &gPgTsDict,
   &gPgType,
+  &gSdbContributors,
+  &gSdbFlags,
+  &gSdbLicenses,
   &gSdbMetrics,
   &gSdbProgress,
-  &gSdbSettings,
 };
 constexpr SystemTable* kSystemTableFunctions[] = {
+  &gPgConfig,
   &gPgHbaFileRules,
   &gPgPreparedStatement,
   &gPgShowAllSettings,

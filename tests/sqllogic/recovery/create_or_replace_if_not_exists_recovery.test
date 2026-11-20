@@ -845,7 +845,7 @@ INSERT INTO coinr_trt4 VALUES (9);
 
 query
 SELECT trigger_name, table_name, event_manipulation, for_each
-  FROM duckdb_triggers() WHERE trigger_name LIKE 'coinr_trg%' ORDER BY trigger_name;
+  FROM sdb_triggers() WHERE trigger_name LIKE 'coinr_trg%' ORDER BY trigger_name;
 ----
 trigger_name	table_name	event_manipulation	for_each
 coinr_trg	coinr_trt	DELETE	ROW
@@ -1086,7 +1086,7 @@ CREATE PERSISTENT SECRET IF NOT EXISTS coinr_sec (TYPE s3, KEY_ID 'coinr_k3', SE
 
 query
 SELECT name, persistent, secret_string LIKE '%key_id=coinr_k2;%region=coinr_r2;%' AS second_def
-  FROM duckdb_secrets() WHERE name LIKE 'coinr%';
+  FROM sdb_secrets() WHERE name LIKE 'coinr%';
 ----
 name	persistent	second_def
 coinr_sec	t	t
@@ -1256,9 +1256,9 @@ ROLLBACK;
 
 query
 SELECT (SELECT count(*) FROM pg_class WHERE relname LIKE 'coinr_gone%') AS rels,
-       (SELECT count(*) FROM duckdb_functions() WHERE function_name LIKE 'coinr_gone%') AS funcs,
+       (SELECT count(*) FROM sdb_functions() WHERE function_name LIKE 'coinr_gone%') AS funcs,
        (SELECT count(*) FROM pg_type WHERE typname LIKE 'coinr_gone%') AS types,
-       (SELECT count(*) FROM duckdb_triggers() WHERE trigger_name LIKE 'coinr_gone%') AS trgs,
+       (SELECT count(*) FROM sdb_triggers() WHERE trigger_name LIKE 'coinr_gone%') AS trgs,
        (SELECT count(*) FROM pg_namespace WHERE nspname LIKE 'coinr_gone%') AS schemas;
 ----
 rels	funcs	types	trgs	schemas
@@ -1494,7 +1494,7 @@ INSERT INTO coinr_ixr VALUES (1, 1), (1, 2);
 
 
 query
-SELECT index_name, is_unique, sql FROM duckdb_indexes() WHERE index_name LIKE 'coinr_ixr%';
+SELECT index_name, is_unique, sql FROM sdb_indexes() WHERE index_name LIKE 'coinr_ixr%';
 ----
 index_name	is_unique	sql
 coinr_ixr_uq	f	CREATE INDEX coinr_ixr_uq ON public.coinr_ixr USING inverted (b);
@@ -1519,7 +1519,7 @@ INSERT INTO coinr_ser (v) VALUES ('new1');
 
 
 query
-SELECT id, v, (SELECT count(*) FROM duckdb_sequences() WHERE sequence_name LIKE 'coinr_ser%') AS seqs
+SELECT id, v, (SELECT count(*) FROM sdb_sequences() WHERE sequence_name LIKE 'coinr_ser%') AS seqs
   FROM coinr_ser;
 ----
 id	v	seqs
@@ -1552,7 +1552,7 @@ CREATE OR REPLACE TRIGGER coinr_tg AFTER INSERT ON coinr_tg_a FOR EACH STATEMENT
 
 
 query
-SELECT table_name, event_manipulation, for_each FROM duckdb_triggers()
+SELECT table_name, event_manipulation, for_each FROM sdb_triggers()
   WHERE trigger_name = 'coinr_tg' ORDER BY table_name;
 ----
 table_name	event_manipulation	for_each
@@ -1977,12 +1977,12 @@ kept across replace	t	t
 connection after_replay
 query
 SELECT (SELECT count(*) FROM pg_class WHERE relname = 'coinr_v') AS v,
-       (SELECT count(*) FROM duckdb_tables() WHERE table_name = 'coinr_t') AS t,
-       (SELECT count(*) FROM duckdb_functions() WHERE function_name = 'coinr_m') AS m,
-       (SELECT count(*) FROM duckdb_sequences() WHERE sequence_name = 'coinr_s') AS s,
+       (SELECT count(*) FROM sdb_tables() WHERE table_name = 'coinr_t') AS t,
+       (SELECT count(*) FROM sdb_functions() WHERE function_name = 'coinr_m') AS m,
+       (SELECT count(*) FROM sdb_sequences() WHERE sequence_name = 'coinr_s') AS s,
        (SELECT count(*) FROM pg_type WHERE typname = 'coinr_ty') AS ty,
-       (SELECT count(*) FROM duckdb_triggers() WHERE trigger_name = 'coinr_trg') AS trg,
-       (SELECT count(*) FROM duckdb_tables() WHERE table_name = 'coinr_st') AS st;
+       (SELECT count(*) FROM sdb_triggers() WHERE trigger_name = 'coinr_trg') AS trg,
+       (SELECT count(*) FROM sdb_tables() WHERE table_name = 'coinr_st') AS st;
 ----
 v	t	m	s	ty	trg	st
 1	1	1	1	1	1	1
@@ -2002,7 +2002,7 @@ v_rb	v_ine	v_twice	v_open	v_ww
 
 connection after_replay
 query
-SELECT column_name FROM duckdb_columns()
+SELECT column_name FROM sdb_columns()
   WHERE table_name = 'coinr_v_ine' ORDER BY column_index;
 ----
 column_name
@@ -2219,7 +2219,7 @@ on
 connection after_replay
 query
 SELECT trigger_name, table_name, event_manipulation, for_each
-  FROM duckdb_triggers() WHERE trigger_name LIKE 'coinr_trg%' ORDER BY trigger_name;
+  FROM sdb_triggers() WHERE trigger_name LIKE 'coinr_trg%' ORDER BY trigger_name;
 ----
 trigger_name	table_name	event_manipulation	for_each
 coinr_trg	coinr_trt	DELETE	ROW
@@ -2358,7 +2358,7 @@ searchable	plain
 connection after_replay
 query
 SELECT name, persistent, secret_string LIKE '%key_id=coinr_k2;%region=coinr_r2;%' AS second_def
-  FROM duckdb_secrets() WHERE name LIKE 'coinr%';
+  FROM sdb_secrets() WHERE name LIKE 'coinr%';
 ----
 name	persistent	second_def
 coinr_sec	t	t
@@ -2414,7 +2414,7 @@ id	body
 
 connection after_replay
 query
-SELECT trigger_name, event_manipulation FROM duckdb_triggers()
+SELECT trigger_name, event_manipulation FROM sdb_triggers()
   WHERE table_name = 'coinr_fr_trt' ORDER BY trigger_name;
 ----
 trigger_name	event_manipulation
@@ -2436,9 +2436,9 @@ DELETE FROM coinr_fr_trt WHERE a = 7;
 connection after_replay
 query
 SELECT (SELECT count(*) FROM pg_class WHERE relname LIKE 'coinr_gone%') AS rels,
-       (SELECT count(*) FROM duckdb_functions() WHERE function_name LIKE 'coinr_gone%') AS funcs,
+       (SELECT count(*) FROM sdb_functions() WHERE function_name LIKE 'coinr_gone%') AS funcs,
        (SELECT count(*) FROM pg_type WHERE typname LIKE 'coinr_gone%') AS types,
-       (SELECT count(*) FROM duckdb_triggers() WHERE trigger_name LIKE 'coinr_gone%') AS trgs,
+       (SELECT count(*) FROM sdb_triggers() WHERE trigger_name LIKE 'coinr_gone%') AS trgs,
        (SELECT count(*) FROM pg_namespace WHERE nspname LIKE 'coinr_gone%') AS schemas;
 ----
 rels	funcs	types	trgs	schemas
@@ -2526,7 +2526,7 @@ id	v
 # Only the new table's index came back: the old unique one no longer refuses.
 connection after_replay
 query
-SELECT index_name, is_unique, sql FROM duckdb_indexes() WHERE index_name LIKE 'coinr_ixr%';
+SELECT index_name, is_unique, sql FROM sdb_indexes() WHERE index_name LIKE 'coinr_ixr%';
 ----
 index_name	is_unique	sql
 coinr_ixr_uq	f	CREATE INDEX coinr_ixr_uq ON public.coinr_ixr USING inverted (b);
@@ -2552,7 +2552,7 @@ INSERT INTO coinr_ser (v) VALUES ('new2');
 
 connection after_replay
 query
-SELECT id, v, (SELECT count(*) FROM duckdb_sequences() WHERE sequence_name LIKE 'coinr_ser%') AS seqs
+SELECT id, v, (SELECT count(*) FROM sdb_sequences() WHERE sequence_name LIKE 'coinr_ser%') AS seqs
   FROM coinr_ser ORDER BY id;
 ----
 id	v	seqs
@@ -2562,7 +2562,7 @@ id	v	seqs
 
 connection after_replay
 query
-SELECT table_name, event_manipulation, for_each FROM duckdb_triggers()
+SELECT table_name, event_manipulation, for_each FROM sdb_triggers()
   WHERE trigger_name = 'coinr_tg' ORDER BY table_name;
 ----
 table_name	event_manipulation	for_each
@@ -3001,7 +3001,7 @@ VACUUM (FLUSH_TABLE) coinr_ac_st;
 connection after_after_commit
 query
 SELECT (SELECT count(*) FROM coinr_ac_st) AS docs,
-       (SELECT count(*) FROM duckdb_columns() WHERE table_name = 'coinr_ac_st') AS cols;
+       (SELECT count(*) FROM sdb_columns() WHERE table_name = 'coinr_ac_st') AS cols;
 ----
 docs	cols
 0	3
@@ -3490,7 +3490,7 @@ INSERT INTO coinr_ser (v) VALUES ('new3');
 connection after_checkpoint
 query
 SELECT max(id) AS id,
-       (SELECT count(*) FROM duckdb_sequences() WHERE sequence_name LIKE 'coinr_ser%') AS seqs
+       (SELECT count(*) FROM sdb_sequences() WHERE sequence_name LIKE 'coinr_ser%') AS seqs
   FROM coinr_ser;
 ----
 id	seqs
@@ -3510,7 +3510,7 @@ id	body	extra
 connection after_checkpoint
 query
 SELECT trigger_name, table_name, event_manipulation
-  FROM duckdb_triggers() WHERE trigger_name LIKE 'coinr_%' ORDER BY trigger_name, table_name;
+  FROM sdb_triggers() WHERE trigger_name LIKE 'coinr_%' ORDER BY trigger_name, table_name;
 ----
 trigger_name	table_name	event_manipulation
 coinr_c_trg	coinr_c_trt	DELETE
@@ -3755,7 +3755,7 @@ CREATE TABLE coinr_c_s_seen AS SELECT currval('coinr_c_s') AS n;
 
 connection after_tail
 query
-SELECT count(*) AS c FROM duckdb_functions() WHERE function_name = 'coinr_c_m_gone';
+SELECT count(*) AS c FROM sdb_functions() WHERE function_name = 'coinr_c_m_gone';
 ----
 c
 0
@@ -3887,7 +3887,7 @@ n	tag
 connection after_tail_checkpoint
 query
 SELECT name, persistent, secret_string LIKE '%key_id=coinr_k2;%region=coinr_r2;%' AS second_def
-  FROM duckdb_secrets() WHERE name LIKE 'coinr%';
+  FROM sdb_secrets() WHERE name LIKE 'coinr%';
 ----
 name	persistent	second_def
 coinr_sec	t	t

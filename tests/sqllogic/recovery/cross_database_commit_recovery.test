@@ -182,7 +182,7 @@ COMMIT;
 
 connection after_ddl_undecided
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SELECT count(*) FROM duckdb_tables() WHERE table_name IN ('xcr_ddl_local', 'xcr_ddl_remote');
+SELECT count(*) FROM sdb_tables() WHERE table_name IN ('xcr_ddl_local', 'xcr_ddl_remote');
 ----
 count
 0

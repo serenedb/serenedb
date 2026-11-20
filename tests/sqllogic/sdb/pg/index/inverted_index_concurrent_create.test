@@ -97,7 +97,7 @@ CREATE OR REPLACE INDEX ic_c ON ic USING inverted (id, body)
 
 query
 SELECT index_name, table_name, regexp_extract(regexp_replace(sql, ' WITH \(.*|;$', ''), 'USING inverted \((.*)\)$', 1) AS keys
-FROM duckdb_indexes()
+FROM sdb_indexes()
 WHERE database_name = current_database() AND table_name IN ('ic', 'icv') AND index_name <> 'ic_pkey'
 ORDER BY index_name
 ----

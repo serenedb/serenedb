@@ -4,7 +4,7 @@ control substitution on
 # keeps a REPEATABLE READ session open on it until the transaction ends. DETACH
 # only removes the name, so dropping the remote database is refused while that
 # transaction is open, and goes through once it ends. In the suite the touching
-# transaction is another test's catalog-wide listing (duckdb_tables(),
+# transaction is another test's catalog-wide listing (sdb_tables(),
 # information_schema, ...), which opens that session on every attached postgres
 # catalog; this is what made tstz_pushdown_pgscan's cleanup DROP DATABASE flaky.
 # Here the holder reads only its own catalog, so it does not do the same to

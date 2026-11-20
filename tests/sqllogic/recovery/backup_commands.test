@@ -108,7 +108,7 @@ CHECKPOINT bcmd_db;
 statement ok
 CREATE TEMP TABLE bcmd_oids AS
 SELECT
-  (SELECT table_oid FROM duckdb_tables() WHERE database_name = 'bcmd_db' AND table_name = 't') AS other,
+  (SELECT table_oid FROM sdb_tables() WHERE database_name = 'bcmd_db' AND table_name = 't') AS other,
   'bcmd_gone'::regclass::oid AS gone,
   'bcmd_docs'::regclass::oid AS docs;
 

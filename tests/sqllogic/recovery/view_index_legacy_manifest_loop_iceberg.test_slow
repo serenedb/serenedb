@@ -59,7 +59,7 @@ pudge goes mid
 
 connection after_crash
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SELECT * FROM serenedb_reindex('vilp_idx');
+SELECT * FROM sdb_reindex('vilp_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0

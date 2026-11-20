@@ -36,7 +36,7 @@ statement count 1
 INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.t VALUES (4, 'techies mines the jungle');
 
 query
-SELECT * FROM serenedb_reindex('vrm_call_idx');
+SELECT * FROM sdb_reindex('vrm_call_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	1	0	0	0
@@ -81,7 +81,7 @@ statement count 1
 DELETE FROM srv_${__DATABASE__}.${__DATABASE__}.t WHERE id = 2;
 
 query
-SELECT action, files_added, files_changed FROM serenedb_reindex('vrm_call_idx');
+SELECT action, files_added, files_changed FROM sdb_reindex('vrm_call_idx');
 ----
 action	files_added	files_changed
 delta	0	1
@@ -117,7 +117,7 @@ statement count 1
 UPDATE srv_${__DATABASE__}.${__DATABASE__}.t SET body = 'pudge goes mid prime' WHERE id = 1;
 
 query
-SELECT action FROM serenedb_reindex('vrm_call_idx');
+SELECT action FROM sdb_reindex('vrm_call_idx');
 ----
 action
 delta
@@ -158,19 +158,19 @@ count
 0
 
 query
-SELECT * FROM serenedb_reindex('vrm_call_idx');
+SELECT * FROM sdb_reindex('vrm_call_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0
 
 query
-SELECT * FROM serenedb_reindex('vrm_kw_idx');
+SELECT * FROM sdb_reindex('vrm_kw_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0
 
 query ok retry 200 backoff 500ms
-SELECT * FROM serenedb_reindex('vrm_loop_idx');
+SELECT * FROM sdb_reindex('vrm_loop_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0

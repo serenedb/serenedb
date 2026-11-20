@@ -34,9 +34,8 @@ Beside `engine_v1`, the root of the data directory holds:
 - `pg_hba.conf`: the [client authentication rules](../security/client_authentication.md#the-hba-ruleset) that `SET hba` writes, unless the `--hba_config` flag names another file.
 - `global/` and `PG_VERSION`: the files PostgreSQL backup tools look for; see [Backup](../operations/backup.md). A running server holds an exclusive lock on `PG_VERSION`, so that a second server does not start on the same data directory, and a read-only attachment through `serenedb_fdw` holds a shared one, so that neither starts while the other has the directory.
 - `tmp/`: temporary files of queries that spill to disk (the `temp_directory` setting).
-- `extensions/`: the extension directory (the `extension_directory` setting).
 
-`engine_v1` holds everything a server needs when it starts again except the authentication rules, so a copy of the data directory needs `pg_hba.conf` as well. `tmp/` and `extensions/` hold nothing a server needs when it starts again. Another server reads a database of the data directory with [`serenedb_fdw`](../sql/statements/create_server/index.md#read-only-serenedb-databases).
+`engine_v1` holds everything a server needs when it starts again except the authentication rules, so a copy of the data directory needs `pg_hba.conf` as well. `tmp/` holds nothing a server needs when it starts again. Another server reads a database of the data directory with [`serenedb_fdw`](../sql/statements/create_server/index.md#read-only-serenedb-databases).
 
 Dropping a table or an index, or the database that holds it, removes its files and its directory once no query uses them any more. If the server stops before that or in the middle of it, or crashes while an object is being created, it removes what is left of the directory when it starts again.
 

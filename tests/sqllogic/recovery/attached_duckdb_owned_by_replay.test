@@ -73,7 +73,7 @@ DROP TABLE adobr.a.b.t;
 
 connection after_restart
 query
-SELECT sequence_name FROM duckdb_sequences() WHERE database_name = 'adobr' ORDER BY 1;
+SELECT sequence_name FROM sdb_sequences() WHERE database_name = 'adobr' ORDER BY 1;
 ----
 sequence_name
 by_alter
@@ -87,7 +87,7 @@ DROP TABLE adobr.b.t;
 
 connection after_restart
 query
-SELECT count(*) AS sequences FROM duckdb_sequences() WHERE database_name = 'adobr';
+SELECT count(*) AS sequences FROM sdb_sequences() WHERE database_name = 'adobr';
 ----
 sequences
 0

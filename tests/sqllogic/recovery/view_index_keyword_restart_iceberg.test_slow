@@ -121,7 +121,7 @@ restart three prime
 
 connection after_crash
 query
-SELECT * FROM serenedb_reindex('vikr_idx');
+SELECT * FROM sdb_reindex('vikr_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0

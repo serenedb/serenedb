@@ -30,7 +30,7 @@ statement count 1
 DELETE FROM srv_${__DATABASE__}.${__DATABASE__}.v2 WHERE id = 1;
 
 query
-SELECT action, files_added, files_changed FROM serenedb_reindex('vml_v2_idx');
+SELECT action, files_added, files_changed FROM sdb_reindex('vml_v2_idx');
 ----
 action	files_added	files_changed
 delta	0	1
@@ -51,7 +51,7 @@ statement count 5
 DELETE FROM srv_${__DATABASE__}.${__DATABASE__}.v2 WHERE id IN (2, 700, 1500, 2300, 3000);
 
 query
-SELECT action, files_added, files_changed FROM serenedb_reindex('vml_v2_idx');
+SELECT action, files_added, files_changed FROM sdb_reindex('vml_v2_idx');
 ----
 action	files_added	files_changed
 delta	0	1
@@ -72,7 +72,7 @@ statement count 1
 UPDATE srv_${__DATABASE__}.${__DATABASE__}.v2 SET body = 'doc 5 prime' WHERE id = 5;
 
 query
-SELECT action FROM serenedb_reindex('vml_v2_idx');
+SELECT action FROM sdb_reindex('vml_v2_idx');
 ----
 action
 delta
@@ -103,7 +103,7 @@ statement count 2994
 DELETE FROM srv_${__DATABASE__}.${__DATABASE__}.v2;
 
 query
-SELECT action FROM serenedb_reindex('vml_v2_idx');
+SELECT action FROM sdb_reindex('vml_v2_idx');
 ----
 action
 delta
@@ -115,7 +115,7 @@ count
 0
 
 query
-SELECT * FROM serenedb_reindex('vml_v2_idx');
+SELECT * FROM sdb_reindex('vml_v2_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0
@@ -136,7 +136,7 @@ statement count 1
 DELETE FROM srv_${__DATABASE__}.${__DATABASE__}.v3 WHERE id = 1;
 
 query
-SELECT action, files_added, files_changed FROM serenedb_reindex('vml_v3_idx');
+SELECT action, files_added, files_changed FROM sdb_reindex('vml_v3_idx');
 ----
 action	files_added	files_changed
 delta	0	1
@@ -157,7 +157,7 @@ statement count 5
 DELETE FROM srv_${__DATABASE__}.${__DATABASE__}.v3 WHERE id IN (2, 700, 1500, 2300, 3000);
 
 query
-SELECT action FROM serenedb_reindex('vml_v3_idx');
+SELECT action FROM sdb_reindex('vml_v3_idx');
 ----
 action
 delta
@@ -178,7 +178,7 @@ statement count 1
 UPDATE srv_${__DATABASE__}.${__DATABASE__}.v3 SET body = 'doc 5 prime' WHERE id = 5;
 
 query
-SELECT action FROM serenedb_reindex('vml_v3_idx');
+SELECT action FROM sdb_reindex('vml_v3_idx');
 ----
 action
 delta
@@ -203,7 +203,7 @@ statement count 2994
 DELETE FROM srv_${__DATABASE__}.${__DATABASE__}.v3;
 
 query
-SELECT action FROM serenedb_reindex('vml_v3_idx');
+SELECT action FROM sdb_reindex('vml_v3_idx');
 ----
 action
 delta

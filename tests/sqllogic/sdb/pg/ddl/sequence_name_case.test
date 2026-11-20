@@ -14,7 +14,7 @@ N	C	S	Q
 
 
 query
-SELECT sequence_name FROM duckdb_sequences() WHERE database_name = current_database() AND sequence_name ILIKE 'snc%';
+SELECT sequence_name FROM sdb_sequences() WHERE database_name = current_database() AND sequence_name ILIKE 'snc%';
 ----
 sequence_name
 SNC_SEQ

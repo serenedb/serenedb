@@ -151,7 +151,7 @@ id
 
 connection victim
 query
-SELECT (SELECT count(*) FROM cfv_drop_me) AS d, (SELECT count(*) FROM cfv_other.public.cfv_remote) AS r, (SELECT count(*) FROM duckdb_tables() WHERE table_name = 'cfv_new') AS n, (SELECT count(*) FROM pg_roles WHERE rolname = 'cfv_role') AS ro, (SELECT count(*) FROM duckdb_indexes() WHERE index_name = 'cfv_body_idx') AS i;
+SELECT (SELECT count(*) FROM cfv_drop_me) AS d, (SELECT count(*) FROM cfv_other.public.cfv_remote) AS r, (SELECT count(*) FROM sdb_tables() WHERE table_name = 'cfv_new') AS n, (SELECT count(*) FROM pg_roles WHERE rolname = 'cfv_role') AS ro, (SELECT count(*) FROM sdb_indexes() WHERE index_name = 'cfv_body_idx') AS i;
 ----
 d	r	n	ro	i
 1	1	0	0	0
@@ -199,7 +199,7 @@ id
 
 connection after_crash
 query
-SELECT (SELECT count(*) FROM cfv_drop_me) AS d, (SELECT count(*) FROM cfv_other.public.cfv_remote) AS r, (SELECT count(*) FROM duckdb_tables() WHERE table_name = 'cfv_new') AS n, (SELECT count(*) FROM pg_roles WHERE rolname = 'cfv_role') AS ro, (SELECT count(*) FROM duckdb_indexes() WHERE index_name = 'cfv_body_idx') AS i, (SELECT count(*) FROM duckdb_tables() WHERE table_name = 'cfv_after') AS a;
+SELECT (SELECT count(*) FROM cfv_drop_me) AS d, (SELECT count(*) FROM cfv_other.public.cfv_remote) AS r, (SELECT count(*) FROM sdb_tables() WHERE table_name = 'cfv_new') AS n, (SELECT count(*) FROM pg_roles WHERE rolname = 'cfv_role') AS ro, (SELECT count(*) FROM sdb_indexes() WHERE index_name = 'cfv_body_idx') AS i, (SELECT count(*) FROM sdb_tables() WHERE table_name = 'cfv_after') AS a;
 ----
 d	r	n	ro	i	a
 1	1	0	0	0	1

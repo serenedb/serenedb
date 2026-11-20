@@ -188,6 +188,8 @@ The index holds a snapshot of the files. After files are added, changed or remov
 
 [Indexing External Data](../search/indexing-external-data.md) and the [external data reference](../../sql/indexes/inverted/external-data.md) cover phrase queries, filters, automatic refresh and indexes over S3.
 
+The same index can also hold an embedding column from the Parquet file, for nearest-neighbor and hybrid search next to BM25. Cast the column to a fixed-size array such as `FLOAT[384]` in the view, because Parquet stores it as a list; see [Vector Search](../../sql/indexes/inverted/vector-search.md) and [Hybrid Search](../search/hybrid-search.md).
+
 ## FAQ
 
 ### Is a Parquet file human-readable?

@@ -22,14 +22,18 @@
 
 #include <cstdint>
 #include <cstring>
+#include <duckdb/common/error_data.hpp>
+#include <duckdb/common/query_context.hpp>
+#include <duckdb/main/database.hpp>
 #include <exception>
+#include <iresearch/store/storage.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include "docs/builder/docs_loader.h"
-#include "utils/file_utils.h"
 
 namespace sdb::docs {
 namespace {
@@ -60,10 +64,13 @@ bool BuildDocsIndex(const std::filesystem::path& corpus,
                     const std::filesystem::path& index) {
   std::string data;
   try {
-    data = utils::file_utils::Slurp(corpus.string());
+    data = irs::ReadWhole<std::string>(
+      duckdb::QueryContext{},
+      irs::DuckDBEngine::Instance().instance().GetInternalFileSystem(),
+      corpus.string());
   } catch (const std::exception& e) {
     SDB_ERROR(STARTUP, "cannot read the docs corpus '", corpus.string(),
-              "': ", e.what());
+              "': ", duckdb::ErrorData{e}.RawMessage());
     return false;
   }
   std::vector<Doc> docs;

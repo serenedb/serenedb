@@ -23,15 +23,13 @@
 
 #include <absl/synchronization/notification.h>
 
-#include <iresearch/store/fs_directory.hpp>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/store/mmap_directory.hpp>
-#include <iresearch/utils/file_utils_ext.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <latch>
 #include <thread>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "index_dir.hpp"
 #include "index_tests.hpp"
 #include "insert_field.hpp"
 
@@ -333,7 +331,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
 
     out.close();
 
-    irs::file_utils::EnsureAbsolute(path);
+    path = std::filesystem::absolute(path);
     std::cout << "Path to timing log: " << path.string() << std::endl;
 
     auto reader = tests::OpenReader(dir(), irs::tests::DefaultReaderOptions());
@@ -375,7 +373,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
 
     std::jthread cleaner{[cleanup_interval, directory, &working]() -> void {
       while (working.load()) {
-        irs::DirectoryCleaner::clean(*directory);
+        directory->RemoveReleased();
         std::this_thread::sleep_for(
           std::chrono::milliseconds(cleanup_interval));
       }
@@ -521,7 +519,7 @@ TEST_P(IndexProfileTestCase, profile_bulk_index_multithread_update_batched_mt) {
   ProfileBulkIndex(16, 5, 10000);  // 5 does not divide evenly into 16
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(index_profile_test, IndexProfileTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),

@@ -32,8 +32,10 @@
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/exception.hpp>
+#include <duckdb/common/file_system.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/main/config.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/constraint.hpp>
 #include <duckdb/parser/constraints/foreign_key_constraint.hpp>
@@ -44,6 +46,7 @@
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
 #include <duckdb/parser/parsed_data/create_sequence_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
+#include <duckdb/parser/parsed_data/create_tablespace_info.hpp>
 #include <duckdb/parser/parsed_data/create_trigger_info.hpp>
 #include <duckdb/parser/parsed_data/detach_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
@@ -85,6 +88,7 @@
 #include "catalog/cluster.h"
 #include "catalog/dependency.h"
 #include "catalog/entry/role.h"
+#include "catalog/entry/tablespace.h"
 #include "connector/scan/scan_bind.h"
 #include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
@@ -124,6 +128,8 @@ std::string KindName(CatalogType type) {
       return "subscription";
     case CatalogType::JOB_ENTRY:
       return "job";
+    case CatalogType::TABLESPACE_ENTRY:
+      return "tablespace";
     default:
       return "object";
   }
@@ -240,6 +246,15 @@ duckdb::LogicalOperator& StatementRoot(duckdb::LogicalOperator& root) {
     return *root.children[0];
   }
   return root;
+}
+
+void RequireOutsideTransaction(duckdb::ClientContext& context,
+                               std::string_view statement) {
+  if (!context.transaction.IsAutoCommit()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
+      ERR_MSG(statement, " cannot run inside a transaction block"));
+  }
 }
 
 class Enforcer {
@@ -523,6 +538,31 @@ class Enforcer {
         info.permissions.owner = _caller;
         break;
       }
+      case LogicalOperatorType::LOGICAL_CREATE_TABLESPACE: {
+        auto& info = op.Cast<duckdb::LogicalCreate>()
+                       .info->Cast<duckdb::CreateTablespaceInfo>();
+        RequireOutsideTransaction(_context, "CREATE TABLESPACE");
+        if (_enforce) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+            ERR_MSG("permission denied to create tablespace \"",
+                    info.GetQualifiedName().Name().GetIdentifierName(), "\""),
+            ERR_HINT("Must be superuser to create a tablespace."));
+        }
+        if (!duckdb::DBConfig::GetConfig(_context).CanAccessFile(
+              duckdb::FileSystem::GetFileSystem(_context).CanonicalizePath(
+                info.location),
+              duckdb::FileType::FILE_TYPE_DIR)) {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                          ERR_MSG("cannot access directory \"", info.location,
+                                  "\": file system operations are disabled by "
+                                  "configuration"));
+        }
+        info.permissions.owner = info.owner.empty()
+                                   ? _caller
+                                   : RoleSpecId(info.owner.GetIdentifierName());
+        break;
+      }
       case LogicalOperatorType::LOGICAL_CREATE_FOREIGN_SERVER: {
         auto& create = op.Cast<duckdb::LogicalCreate>();
         Stamp(*create.info, CatalogType::FOREIGN_SERVER_ENTRY, nullptr);
@@ -560,20 +600,17 @@ class Enforcer {
       }
       case LogicalOperatorType::LOGICAL_DROP: {
         auto& info = *op.Cast<duckdb::LogicalDrop>().info;
-        if (info.type == CatalogType::DATABASE_ENTRY &&
-            !_context.transaction.IsAutoCommit()) {
-          THROW_SQL_ERROR(
-            ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
-            ERR_MSG("DROP DATABASE cannot run inside a transaction block"));
+        if (info.type == CatalogType::DATABASE_ENTRY) {
+          RequireOutsideTransaction(_context, "DROP DATABASE");
+        }
+        if (info.type == CatalogType::TABLESPACE_ENTRY) {
+          RequireOutsideTransaction(_context, "DROP TABLESPACE");
         }
         if (info.type == CatalogType::PREPARED_STATEMENT &&
             info.extra_drop_info &&
             info.extra_drop_info->Cast<duckdb::ExtraDropDiscardInfo>().target ==
-              duckdb::DiscardTarget::ALL &&
-            !_context.transaction.IsAutoCommit()) {
-          THROW_SQL_ERROR(
-            ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
-            ERR_MSG("DISCARD ALL cannot run inside a transaction block"));
+              duckdb::DiscardTarget::ALL) {
+          RequireOutsideTransaction(_context, "DISCARD ALL");
         }
         if (_enforce) {
           CheckDrop(info);
@@ -600,6 +637,8 @@ class Enforcer {
           if (_enforce) {
             CheckAlterRole(info.Cast<duckdb::AlterRoleInfo>());
           }
+        } else if (info.type == duckdb::AlterType::ALTER_TABLESPACE) {
+          CheckRenameTablespace(info);
         } else {
           if (const auto new_schema = info.GetNewSchema()) {
             if (auto target = duckdb::Catalog::GetSchema(
@@ -1158,6 +1197,13 @@ class Enforcer {
       }
       return;
     }
+    if (info.type == CatalogType::TABLESPACE_ENTRY) {
+      if (auto tablespace = ClusterEntry(CatalogType::TABLESPACE_ENTRY,
+                                         name.Name().GetIdentifierName())) {
+        RequireOwner(*tablespace);
+      }
+      return;
+    }
     if (info.type == CatalogType::SECRET_ENTRY) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                       ERR_MSG("permission denied: superuser required"));
@@ -1167,6 +1213,30 @@ class Enforcer {
     }
     if (auto entry = FindEntry(info.type, name)) {
       RequireOwner(*entry);
+    }
+  }
+
+  duckdb::CatalogEntry& AlterableTablespace(const duckdb::Identifier& name) {
+    auto& cluster = catalog::ClusterOf(_context);
+    auto& tablespace =
+      cluster.Tablespace(cluster.GetCatalogTransaction(_context), name);
+    if (tablespace.internal) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("tablespace \"", name.GetIdentifierName(),
+                "\" is a system tablespace"),
+        ERR_DETAIL("A system tablespace cannot be renamed, given to another "
+                   "owner or granted on."));
+    }
+    return tablespace;
+  }
+
+  void CheckRenameTablespace(const duckdb::AlterInfo& info) {
+    catalog::RequireUnreservedTablespaceName(
+      info.GetNewName()->GetIdentifierName());
+    auto& tablespace = AlterableTablespace(info.GetQualifiedName().Name());
+    if (_enforce) {
+      RequireOwner(tablespace);
     }
   }
 
@@ -1294,6 +1364,9 @@ class Enforcer {
 
   duckdb::CatalogEntry& ResolveTarget(duckdb::AlterPermissionsInfo& info) {
     const auto& name = info.GetQualifiedName();
+    if (info.entry_catalog_type == CatalogType::TABLESPACE_ENTRY) {
+      return AlterableTablespace(name.Name());
+    }
     if (info.entry_catalog_type == CatalogType::SCHEMA_ENTRY) {
       auto& schema =
         duckdb::Catalog::GetSchema(_context, name.Catalog(), name.Name());
@@ -1395,6 +1468,7 @@ class Enforcer {
                               _roles->NameOf(info.new_owner_id), "\""));
     }
     if (entry.type != CatalogType::SCHEMA_ENTRY &&
+        entry.type != CatalogType::TABLESPACE_ENTRY &&
         !ClosureOf(info.new_owner_id)
            .Can(CatalogType::SCHEMA_ENTRY,
                 entry.ParentSchema(_context).permissions, AclMode::Create)) {
@@ -1789,6 +1863,15 @@ void RequireSuperuser(duckdb::ClientContext& context,
 bool Unowned(const duckdb::CatalogEntry& entry) {
   return entry.permissions.owner == pg::kInvalidOid ||
          (!entry.internal && entry.ParentCatalog().GetAttached().IsReadOnly());
+}
+
+void RequireTablespaceCreate(duckdb::ClientContext& context,
+                             const duckdb::CatalogEntry& tablespace) {
+  if (const auto closure = SessionClosure(context);
+      closure &&
+      !closure->Can(tablespace.type, tablespace.permissions, AclMode::Create)) {
+    Denied(tablespace);
+  }
 }
 
 }  // namespace sdb::auth

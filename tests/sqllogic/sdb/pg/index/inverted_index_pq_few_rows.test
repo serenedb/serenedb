@@ -1,0 +1,39 @@
+# A product-quantized vector index over too few rows to train its codebook
+# keeps the vectors unquantized and still finds the nearest ones.
+
+statement ok
+CREATE TABLE pq_few (pk INTEGER PRIMARY KEY, emb FLOAT[8]);
+
+
+statement ok
+INSERT INTO pq_few VALUES (1, [1,0,0,0,0,0,0,0]), (2, [0,1,0,0,0,0,0,0]), (3, [0,0,1,0,0,0,0,0]);
+
+
+statement ok
+CREATE INDEX pq_few_hnsw ON pq_few USING inverted(pk, emb hnsw (metric = 'l2', quant = 'pq'));
+
+
+statement ok
+CREATE INDEX pq_few_ivf ON pq_few USING inverted(pk, emb ivf (metric = 'l2', quant = 'pq'));
+
+
+statement ok
+VACUUM (FLUSH_TABLE) pq_few;
+
+
+query
+SELECT pk FROM pq_few_hnsw ORDER BY emb <-> [0,1,0,0,0,0,0,0]::FLOAT[8] LIMIT 1;
+----
+pk
+2
+
+
+query
+SELECT pk FROM pq_few_ivf ORDER BY emb <-> [0,0,1,0,0,0,0,0]::FLOAT[8] LIMIT 1;
+----
+pk
+3
+
+
+statement ok
+DROP TABLE pq_few;

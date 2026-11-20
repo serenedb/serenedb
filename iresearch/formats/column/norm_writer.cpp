@@ -28,7 +28,6 @@
 #include <limits>
 #include <span>
 
-#include "iresearch/store/data_output.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
@@ -81,10 +80,6 @@ NormLayout PickNormLayout(const NormStats& stats) noexcept {
   }
   return {.bits = 32};
 }
-
-NormColumnWriter::NormColumnWriter(field_id id, uint32_t row_group_size,
-                                   IndexOutput& out)
-  : _id{id}, _out{&out}, _row_group_size{row_group_size} {}
 
 NormColumnWriter::NormColumnWriter(field_id id, uint32_t row_group_size,
                                    Open open)
@@ -250,22 +245,22 @@ void NormColumnWriter::End() {
     region.table_offset = _out->Position();
     _bases.resize(NormBuckets(region), static_cast<uint32_t>(_direct.size()));
     for (const auto base : _bases) {
-      _out->WriteU32(base);
+      _out->Write<uint32_t>(base);
     }
     for (const auto row : _overflow_rows) {
-      _out->WriteU32(row);
+      _out->Write<uint32_t>(row);
     }
     for (const auto v : _overflow_values) {
-      _out->WriteU32(v);
+      _out->Write<uint32_t>(v);
     }
     for (const auto v : _direct) {
       if (region.exception_bytes == 2) {
-        _out->WriteU16(static_cast<uint16_t>(v));
+        _out->Write<uint16_t>(static_cast<uint16_t>(v));
       } else {
-        _out->WriteU32(v);
+        _out->Write<uint32_t>(v);
       }
     }
-    _out->WriteU32(0);
+    _out->Write<uint32_t>(0);
   }
   _meta.row_count += region.stats.rows;
   _meta.regions.push_back(region);

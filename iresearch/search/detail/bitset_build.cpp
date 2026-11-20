@@ -22,7 +22,7 @@
 
 namespace irs::detail {
 
-void FillBitset(BitsetBuckets& buckets, const IndexInput& doc,
+void FillBitset(BitsetBuckets& buckets, const duckdb::InputFile& doc,
                 doc_id_t docs_count, BitsetStorage& bits) {
   auto* const words = bits.Words();
   const auto seed = buckets.Seed(docs_count);

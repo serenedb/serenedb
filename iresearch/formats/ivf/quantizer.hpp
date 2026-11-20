@@ -23,6 +23,8 @@
 #include <absl/functional/function_ref.h>
 
 #include <cstdint>
+#include <duckdb/common/serializer/write_stream.hpp>
+#include <duckdb/storage/external_file_cache/input_file_reader.hpp>
 #include <limits>
 #include <memory>
 #include <span>
@@ -35,8 +37,6 @@ namespace irs {
 
 class ColumnReader;
 class ReadContext;
-class DataOutput;
-class IndexOutput;
 
 struct PayloadBlockSetting {
   uint32_t group_size = 1;
@@ -74,7 +74,8 @@ class QuantizerWriter {
 
   virtual PayloadBlockSetting BlockSetting() const noexcept = 0;
 
-  virtual void Encode(IndexOutput& out, const float* vecs, size_t n) = 0;
+  virtual void Encode(duckdb::WriteStream& out, const float* vecs,
+                      size_t n) = 0;
 
   virtual bool EncodeInto(byte_type* /*dst*/, const float* /*vecs*/,
                           size_t /*n*/) {
@@ -87,11 +88,11 @@ class QuantizerWriter {
 
   virtual uint32_t EncodeWidth() const noexcept { return 1; }
 
-  virtual void Finish(IndexOutput& out) = 0;
+  virtual void Finish(duckdb::WriteStream& out) = 0;
 
   virtual uint32_t PendingLanes() const noexcept { return 0; }
 
-  virtual void Serialize(DataOutput& out) const = 0;
+  virtual void Serialize(duckdb::WriteStream& out) const = 0;
 
   virtual VectorQuantization Kind() const noexcept = 0;
 };
@@ -216,6 +217,10 @@ std::unique_ptr<QuantizerWriter> MakeQuantizerWriter(
 
 std::shared_ptr<const QuantizerStats> MakeQuantizerStats(
   VectorQuantization quant, uint32_t d, std::span<const byte_type> stats,
+  VectorMetric metric, bool row_major = false);
+
+std::shared_ptr<const QuantizerStats> ReadQuantizerStats(
+  duckdb::InputFileReader& in, VectorQuantization quant, uint32_t d,
   VectorMetric metric, bool row_major = false);
 
 std::unique_ptr<QuantizerReader> MakeQuantizerReader(

@@ -919,7 +919,7 @@ void BmBiasSink(benchmark::State& state) {
   irs::detail::HoleBuf holes;
   irs::DocsBuf buf;
   for (auto _ : state) {
-    irs::BytesViewInput in{
+    duckdb::MemoryReader in{
       irs::bytes_view{encoded.data(), encoded.size() - kSlack}};
     Sink sink{words.data()};
     irs::detail::ReadPosting(meta, in, nullptr, holes.data, buf.data(), false,

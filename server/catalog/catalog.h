@@ -26,7 +26,6 @@
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
-#include <filesystem>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <memory>
@@ -55,7 +54,7 @@ class LogicalMergeInto;
 namespace sdb::catalog {
 
 struct ForeignLog {
-  std::filesystem::path dir;
+  std::string dir;
   duckdb::idx_t database = 0;
   FileLock lock;
 };
@@ -81,6 +80,11 @@ class SereneDBCatalog final : public BaseCatalog {
   const std::shared_ptr<DatabaseDirectory>& Directory() const noexcept {
     return _directory;
   }
+  std::string StoragePath(duckdb::CatalogTransaction transaction,
+                          const duckdb::CatalogEntry& entry,
+                          duckdb::idx_t tablespace);
+  void Place(duckdb::CatalogTransaction transaction, duckdb::CreateInfo& info,
+             std::string_view refusal);
   CatalogSnapshots& Snapshots() noexcept { return _snapshots; }
   EntrySet& Servers() noexcept { return _servers; }
   EntrySet& Subscriptions() noexcept { return _subscriptions; }

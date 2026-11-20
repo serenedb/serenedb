@@ -43,6 +43,10 @@ As an alternative to reconnecting, switch to the new database within the current
 
 The options are stored with the database and become the defaults of the tables created in it; a table's own `WITH (block_size = …)` or `WITH (row_group_size = …)` overrides them. Any other option is refused.
 
+## Tablespace
+
+`[WITH] TABLESPACE [=] name` creates the database in a [tablespace](../create_tablespace/index.md): its tables and its inverted indexes on views go there unless they name another tablespace. Without `TABLESPACE`, a database is created in `pg_default`, the data directory. `pg_database.dattablespace` shows the tablespace of a database, and a tablespace holding a database cannot be dropped.
+
 A database created inside a transaction is visible to other sessions only once that transaction commits. Until then, creating a database of the same name from another session fails.
 
 ## Dropping a database

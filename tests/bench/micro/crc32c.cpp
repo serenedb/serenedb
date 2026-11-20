@@ -23,7 +23,6 @@
 #include <absl/crc/crc32c.h>
 #include <benchmark/benchmark.h>
 
-#include <iresearch/utils/crc.hpp>
 #include <string>
 
 #ifdef SDB_ENABLE_FOLLY
@@ -46,7 +45,7 @@ void BmCalculateAbseil(benchmark::State& state) {
   std::string data = TestString(len);
   for (auto s : state) {
     benchmark::DoNotOptimize(data);
-    auto crc = absl::ExtendCrc32c(absl::crc32c_t{2}, data, 0);
+    auto crc = absl::ExtendCrc32c(absl::crc32c_t{2}, data);
     benchmark::DoNotOptimize(crc);
   }
 }

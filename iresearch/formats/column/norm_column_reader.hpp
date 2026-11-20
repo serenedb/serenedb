@@ -23,20 +23,17 @@
 #include <absl/base/internal/endian.h>
 
 #include <cstdint>
-#include <memory>
+#include <duckdb/storage/external_file_cache/external_file_cache.hpp>
 #include <span>
 #include <vector>
 
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/file_utils_ext.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
-
-class IndexInput;
 
 inline constexpr uint32_t kNormWindowShift = 16;
 
@@ -98,7 +95,8 @@ struct NormRegion {
 
 class NormColumnReader final {
  public:
-  NormColumnReader(field_id id, const NormColumnMeta& meta, IndexInput& in);
+  NormColumnReader(field_id id, const NormColumnMeta& meta,
+                   const duckdb::InputFile& file);
 
   field_id Id() const noexcept { return _id; }
   uint64_t RowCount() const noexcept { return _row_count; }
@@ -107,6 +105,7 @@ class NormColumnReader final {
   size_t RegionCount() const noexcept { return _regions.size(); }
   size_t WindowCount() const noexcept { return _windows.size(); }
   size_t PageCount() const noexcept { return _pages; }
+  bool Paged() const noexcept { return _paged; }
 
   const NormRegion& Region(size_t i) const noexcept {
     SDB_ASSERT(i < _regions.size());
@@ -125,25 +124,33 @@ class NormColumnReader final {
     return _windows[i];
   }
 
-  const file_utils::ResidencyMap& Residency() const noexcept {
+  const duckdb::PageResidencyMap& Residency() const noexcept {
     return _residency;
+  }
+
+  void Prefetch(const byte_type* from, size_t size) const noexcept {
+    SDB_ASSERT(_paged);
+    _file->Prefetch(static_cast<uint64_t>(from - _file->Data()), size);
   }
 
   void Decode(doc_id_t first, size_t n, uint32_t* values) const;
 
  private:
-  const byte_type* Map(IndexInput& in, uint64_t offset, uint64_t size);
+  const byte_type* Map(const duckdb::InputFile& file, uint64_t offset,
+                       uint64_t size);
 
+  const duckdb::InputFile* _file;
   field_id _id;
   std::vector<NormRegion> _regions;
   std::vector<NormStats> _stats;
   std::vector<std::span<const byte_type>> _windows;
-  file_utils::ResidencyMap _residency;
-  std::vector<std::unique_ptr<byte_type[]>> _owned;
+  duckdb::PageResidencyMap _residency;
+  std::vector<duckdb::FilePin> _pins;
   uint64_t _row_count = 0;
   uint64_t _sum = 0;
   uint64_t _non_zero = 0;
   size_t _pages = 0;
+  bool _paged = false;
 };
 
 }  // namespace irs

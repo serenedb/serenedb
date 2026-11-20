@@ -26,7 +26,7 @@
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/common/vector/vector_iterator.hpp>
-#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/composite_reader.hpp>
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/segment_reader.hpp>
 #include <iresearch/utils/assert.hpp>
@@ -71,7 +71,7 @@ struct UnitRows {
 };
 
 inline void ForEachUnitRows(
-  const irs::DirectoryReader& reader, UnitRows& scratch,
+  const irs::CompositeReader& reader, UnitRows& scratch,
   absl::FunctionRef<void(uint64_t unit, std::span<const uint64_t> rows,
                          const duckdb::SelectionVector& sel)>
     visit) {

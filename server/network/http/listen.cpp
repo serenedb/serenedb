@@ -220,8 +220,8 @@ std::unique_ptr<AcceptorBase> ListenHttp(const ListenContext& context,
   const std::string_view database = options.database.empty()
                                       ? irs::StaticStrings::kDefaultDatabase
                                       : std::string_view{options.database};
-  if (!catalog::ReadDatabase(database,
-                             [](const catalog::DatabaseCatalogEntry&) {})) {
+  if (!catalog::ReadEntry<catalog::DatabaseCatalogEntry>(
+        database, [](const catalog::DatabaseCatalogEntry&) {})) {
     SDB_FATAL(GENERAL, "endpoint '", spec.url, "': database '", database,
               "' does not exist");
   }

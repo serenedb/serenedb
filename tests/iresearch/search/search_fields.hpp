@@ -20,12 +20,14 @@
 
 #pragma once
 
+#include <duckdb/common/serializer/write_stream.hpp>
 #include <iresearch/analysis/geo_tokenizer.hpp>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
-#include <iresearch/store/store_utils.hpp>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/geo/geo_json.hpp>
 #include <iresearch/utils/type_limits.hpp>
+
+#include "utils/write_helpers.hpp"
 
 namespace irs::tests {
 
@@ -37,8 +39,8 @@ struct StringField final {
 
   std::string_view Value() const noexcept { return value; }
 
-  bool Write(irs::DataOutput& out) const {
-    irs::WriteStr(out, value);
+  bool Write(duckdb::WriteStream& out) const {
+    ::tests::WriteStr(out, value);
     return true;
   }
 
@@ -62,7 +64,7 @@ struct GeoField final {
 
   // Source coding force-includes the indexed source column, so the stored
   // value is the original GeoJSON text the filter re-parses at query time.
-  bool Write(irs::DataOutput& out) const {
+  bool Write(duckdb::WriteStream& out) const {
     if (!value.empty()) {
       out.WriteData(reinterpret_cast<const irs::byte_type*>(value.data()),
                     value.size());

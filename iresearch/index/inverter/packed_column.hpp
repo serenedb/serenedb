@@ -26,7 +26,7 @@
 #include <span>
 
 #include "iresearch/formats/posting/block_codec.hpp"
-#include "iresearch/utils/bit_packing.hpp"
+#include "iresearch/utils/math_utils.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/resource_manager.hpp"
 #include "iresearch/utils/shared.hpp"
@@ -201,14 +201,14 @@ class PackedU32Column : util::Noncopyable {
       mn = std::min(mn, _staging[i]);
       mx = std::max(mx, _staging[i]);
     }
-    const auto bits = packed::Maxbits32(mx - mn);
+    const auto bits = math::MathTraits<uint32_t>::bits_required(mx - mn);
     const uint32_t* out = nullptr;
     if (bits == kRawBits) {
       auto* buf = Alloc16(kBlockValues * sizeof(uint32_t));
       std::memcpy(buf, _staging, kBlockValues * sizeof(uint32_t));
       out = buf;
     } else if (bits != 0) {
-      auto* buf = Alloc16(packed::BytesRequired32(kBlockValues, bits));
+      auto* buf = Alloc16(math::DivCeil64(kBlockValues * bits, 8));
       for (size_t i = 0; i != kBlockValues; ++i) {
         _staging[i] -= mn;
       }

@@ -3,20 +3,16 @@ target_sources(
     PRIVATE
         application_exit.cpp
         attributes.cpp
-        bit_packing.cpp
         conjunction_acceptor.cpp
         cpu_features.cpp
         crash_handler.cpp
-        directory_utils.cpp
         duckdb_engine.cpp
-        file_utils_ext.cpp
         huge_page_allocator.cpp
         index_utils.cpp
         levenshtein_default_pdp.cpp
         levenshtein_utils.cpp
         log.cpp
         log_flags.cpp
-        mmap_utils.cpp
         pg/error_mapping.cpp
         regexp_acceptor.cpp
         regexp_ngram.cpp

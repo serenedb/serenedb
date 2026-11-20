@@ -378,6 +378,23 @@ const catalog::RoleCatalogEntry& RoleNamed(duckdb::ClientContext& ctx,
   return entry->Cast<catalog::RoleCatalogEntry>();
 }
 
+void SetDefaultTablespace(duckdb::ClientContext& ctx, duckdb::SetScope,
+                          duckdb::Value& value) {
+  const auto name = value.ToString();
+  if (name.empty()) {
+    return;
+  }
+  auto& cluster = catalog::ClusterOf(ctx);
+  if (!cluster.Set(duckdb::CatalogType::TABLESPACE_ENTRY)
+         .Get(cluster.GetCatalogTransaction(ctx), duckdb::Identifier{name})) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("invalid value for parameter "
+                            "\"default_tablespace\": \"",
+                            name, "\""),
+                    ERR_DETAIL("Tablespace \"", name, "\" does not exist."));
+  }
+}
+
 void RefreshSuperuser(ConnectionContext& conn) {
   const bool superuser =
     auth::ClosureFor(&conn, conn.GetRoleId())->is_superuser;
@@ -1444,15 +1461,6 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
-      "default_tablespace",
-      {
-        LogicalTypeId::VARCHAR,
-        "Not used. Added for PostgreSQL compatibility only.",
-        [] { return duckdb::Value{""}; },
-        NoOverwrite<"default_tablespace">,
-      },
-    },
-    {
       "default_table_access_method",
       {
         LogicalTypeId::VARCHAR,
@@ -1563,6 +1571,16 @@ constexpr std::pair<std::string_view, VariableDescription>
         .set_callback = SetRoleCallback,
         .reset_callback = ResetRoleCallback,
         .no_reset_all = true,
+      },
+    },
+    {
+      kDefaultTablespaceSetting,
+      {
+        LogicalTypeId::VARCHAR,
+        "The tablespace tables and inverted indexes on views are created in "
+        "when CREATE names none. Default: '' (the database's own tablespace).",
+        [] { return duckdb::Value{""}; },
+        SetDefaultTablespace,
       },
     },
     {

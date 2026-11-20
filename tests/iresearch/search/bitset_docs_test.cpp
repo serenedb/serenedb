@@ -23,6 +23,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <duckdb/common/serializer/memory_stream.hpp>
 #include <iresearch/index/docs_mask/docs_mask.hpp>
 #include <iresearch/index/document_mask.hpp>
 #include <iresearch/search/count/make.hpp>
@@ -35,7 +36,6 @@
 #include <iresearch/search/fill/walk.hpp>
 #include <iresearch/search/lead/bitset_docs.hpp>
 #include <iresearch/search/probe/bitset_docs.hpp>
-#include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/bit_utils.hpp>
 #include <iresearch/utils/memory.hpp>
 #include <iresearch/utils/string.hpp>
@@ -1159,8 +1159,8 @@ TEST(docs_mask_test, mask_round_trips_and_mutates) {
   const auto round_trip = [](const irs::DocumentMask& source) {
     std::string blob(source.FrozenSize(), '\0');
     source.WriteFrozen(blob.data());
-    irs::BytesViewInput in{
-      irs::ViewCast<irs::byte_type>(std::string_view{blob})};
+    duckdb::MemoryStream in{reinterpret_cast<duckdb::data_ptr_t>(blob.data()),
+                            blob.size()};
     return irs::DocumentMask::ReadFrozen(in, blob.size());
   };
 

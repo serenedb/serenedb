@@ -337,7 +337,7 @@ class SegmentRemoves {
 }  // namespace
 
 irs::DocRemovalBuilder ResolveRemoves(
-  const irs::DirectoryReader& snapshot, std::vector<uint64_t> deleted_files,
+  const irs::CompositeReader& snapshot, std::vector<uint64_t> deleted_files,
   std::vector<IcebergObserve::DeleteMask> masks,
   std::vector<std::pair<uint64_t, int64_t>> eq_rows) {
   // Delete kind 1 -- deleted files: every row of the file.

@@ -21,7 +21,7 @@
 #pragma once
 
 #include <cstdint>
-#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/composite_reader.hpp>
 #include <iresearch/index/doc_removal.hpp>
 #include <memory>
 #include <utility>
@@ -32,7 +32,7 @@
 namespace sdb::connector {
 
 irs::DocRemovalBuilder ResolveRemoves(
-  const irs::DirectoryReader& snapshot, std::vector<uint64_t> deleted_files,
+  const irs::CompositeReader& snapshot, std::vector<uint64_t> deleted_files,
   std::vector<IcebergObserve::DeleteMask> masks,
   std::vector<std::pair<uint64_t, int64_t>> eq_rows);
 

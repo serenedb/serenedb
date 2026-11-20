@@ -40,10 +40,7 @@ constexpr uint64_t kStartLsn = (uint64_t{0x65DD1} << 32) | 0xB480E1C3;
 
 Cut MakeCut() {
   Cut cut;
-  cut.log_link = "engine_v1/backup/log";
   cut.log_size = 2876;
-  cut.stores.push_back({.oid = 69276});
-  cut.stores.push_back({.oid = 69261});
   return cut;
 }
 
@@ -68,13 +65,7 @@ TEST(BackupLabelTest, RoundTripKeepsEveryField) {
   ASSERT_TRUE(parsed.ok()) << parsed.status();
   EXPECT_EQ(parsed->system_identifier, kSystemIdentifier);
   EXPECT_EQ(parsed->start_lsn, kStartLsn);
-  const auto expected = MakeCut();
-  EXPECT_EQ(parsed->cut.log_link, expected.log_link);
-  EXPECT_EQ(parsed->cut.log_size, expected.log_size);
-  ASSERT_EQ(parsed->cut.stores.size(), expected.stores.size());
-  for (size_t i = 0; i < expected.stores.size(); ++i) {
-    EXPECT_EQ(parsed->cut.stores[i].oid, expected.stores[i].oid);
-  }
+  EXPECT_EQ(parsed->cut.log_size, MakeCut().log_size);
 }
 
 TEST(BackupLabelTest, StartsWithThePostgresHeader) {
@@ -89,9 +80,7 @@ TEST(BackupLabelTest, StartsWithThePostgresHeader) {
     "LABEL: nightly\n"
     "START TIMELINE: 1\n"))
     << text;
-  EXPECT_TRUE(
-    absl::StrContains(text, "SERENEDB LOG: engine_v1/backup/log 2876\n"));
-  EXPECT_TRUE(absl::StrContains(text, "SERENEDB STORE: 69276\n"));
+  EXPECT_TRUE(absl::StrContains(text, "SERENEDB LOG: 2876\n"));
 }
 
 TEST(BackupLabelTest, LabelLineBreaksBecomeSpaces) {
@@ -173,18 +162,13 @@ TEST(BackupLabelTest, RejectsMalformedLines) {
   constexpr Case kCases[] = {
     {"START WAL LOCATION: 65DD1/B480E1C3 ",
      "START WAL LOCATION: 65DD1-B480E1C3 "},
-    {"SERENEDB BACKUP FORMAT: 1\n", "SERENEDB BACKUP FORMAT: 1 1\n"},
-    {"SERENEDB BACKUP FORMAT: 1\n", "SERENEDB BACKUP FORMAT: x\n"},
+    {"SERENEDB BACKUP FORMAT: 2\n", "SERENEDB BACKUP FORMAT: 2 2\n"},
+    {"SERENEDB BACKUP FORMAT: 2\n", "SERENEDB BACKUP FORMAT: x\n"},
     {"SERENEDB SYSTEM IDENTIFIER: 7696604830604944365\n",
      "SERENEDB SYSTEM IDENTIFIER: x7696604830604944365\n"},
-    {"SERENEDB LOG: engine_v1/backup/log 2876\n",
-     "SERENEDB LOG: engine_v1/backup/log\n"},
-    {"SERENEDB LOG: engine_v1/backup/log 2876\n", "SERENEDB LOG:  2876\n"},
-    {"SERENEDB LOG: engine_v1/backup/log 2876\n",
-     "SERENEDB LOG: engine_v1/backup/log 28x6\n"},
-    {"SERENEDB STORE: 69276\n", "SERENEDB STORE: 5/69276\n"},
-    {"SERENEDB STORE: 69276\n", "SERENEDB STORE: x\n"},
-    {"SERENEDB STORE: 69276\n", "SERENEDB STORE: 69276 1\n"},
+    {"SERENEDB LOG: 2876\n", "SERENEDB LOG: \n"},
+    {"SERENEDB LOG: 2876\n", "SERENEDB LOG: 2876 12\n"},
+    {"SERENEDB LOG: 2876\n", "SERENEDB LOG: 28x6\n"},
   };
   for (const auto& c : kCases) {
     const auto body = absl::StrReplaceAll(Body(Build()), {{c.from, c.to}});
@@ -200,13 +184,13 @@ TEST(BackupLabelTest, RejectsMalformedLines) {
   }
 }
 
-TEST(BackupLabelTest, RejectsAnotherFormatVersion) {
+TEST(BackupLabelTest, RejectsALabelOfAnEarlierLayout) {
   const auto body = absl::StrReplaceAll(
     Body(Build()),
-    {{"SERENEDB BACKUP FORMAT: 1\n", "SERENEDB BACKUP FORMAT: 2\n"}});
+    {{"SERENEDB BACKUP FORMAT: 2\n", "SERENEDB BACKUP FORMAT: 1\n"}});
   const auto parsed = ParseBackupLabel(WithChecksum(body));
   ASSERT_FALSE(parsed.ok());
-  EXPECT_EQ(parsed.status().message(), "unsupported backup_label format 2");
+  EXPECT_EQ(parsed.status().message(), "unsupported backup_label format 1");
 }
 
 }  // namespace

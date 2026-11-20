@@ -26,6 +26,7 @@
 #include <array>
 #include <bit>
 #include <cstring>
+#include <duckdb/storage/external_file_cache/read_ahead_window.hpp>
 #include <limits>
 
 #include "iresearch/analysis/text/classify/block_masks.hpp"
@@ -473,33 +474,6 @@ inline void DecodeRecords(const byte_type*& record, uint32_t count,
   }
 }
 
-struct ReadWindow {
-  uint64_t ahead;
-  uint64_t issued;
-  uint64_t size;
-};
-
-struct HintSpan {
-  uint64_t from;
-  uint64_t to;
-};
-
-inline HintSpan Slide(ReadWindow& window, uint64_t at, uint64_t end,
-                      uint64_t max) noexcept {
-  if (at + window.issued / 2 < window.ahead) {
-    return {};
-  }
-  const uint64_t from = std::max(at, window.ahead);
-  const uint64_t to = std::min(end, from + window.size);
-  if (from >= to) {
-    return {};
-  }
-  window.ahead = to;
-  window.issued = to - from;
-  window.size = std::min(2 * window.size, max);
-  return {.from = from, .to = to};
-}
-
 inline const byte_type* FieldRecords(const TermReaderImpl& field,
                                      const BlockView& view, uint32_t block,
                                      uint32_t entry, uint32_t& count) noexcept {
@@ -523,11 +497,12 @@ struct ColdBlocks {
 
 class Cursor {
  public:
-  explicit Cursor(const TermReaderImpl& field) noexcept
-    : _field{&field}, _end{field.Blocks()} {}
+  explicit Cursor(const TermReaderImpl& field) noexcept : _field{&field} {
+    _blocks_ahead.Until(field.Blocks());
+  }
 
   void ReadaheadUntil(uint32_t end, bool eager) noexcept {
-    _end = std::min(end, _field->Blocks());
+    _blocks_ahead.Until(std::min(end, _field->Blocks()));
     _eager = eager;
     _inline_state = InlineState::Armed;
   }
@@ -709,17 +684,11 @@ class Cursor {
       ReadAhead(block);
       FetchLines(block + 1);
     } else if (_block != kNoEntry && block > _block) {
-      _blocks_ahead.ahead =
-        std::max<uint64_t>(_blocks_ahead.ahead, uint64_t{block} + 1);
-      _blocks_ahead.size =
-        std::max<uint64_t>(kFirstWindow, _blocks_ahead.size / 2);
+      _blocks_ahead.Halve(kFirstWindow);
     } else {
-      _blocks_ahead = {
-        .ahead = uint64_t{block} + 1,
-        .issued = 0,
-        .size = _eager ? kLastWindow : kFirstWindow,
-      };
-      _epoch = file_utils::ResidencyEpoch();
+      _blocks_ahead.Arm(uint64_t{block} + 1, _blocks_ahead.Stop(),
+                        _eager ? kLastWindow : kFirstWindow);
+      _epoch = duckdb::PageResidency::Epoch();
       if (_eager) {
         ReadAhead(block);
       }
@@ -731,7 +700,7 @@ class Cursor {
     if (!_field->Small()) {
       Watch(block);
     }
-    _view = Parse(_field->Block(block, _buffer), _field->Fsst());
+    _view = Parse(_field->Block(block, _pinned), _field->Fsst());
     _stop =
       block + 1 == _field->Blocks() ? _field->LastEntry() + 1 : _view.count;
     _block = block;
@@ -1066,9 +1035,8 @@ class Cursor {
     const auto& in = _field->Owner().Input();
     const uint64_t offset = _field->BlockOffset(block);
     const uint64_t size = _field->BlockOffset(block + 1) - offset;
-    if (file_utils::Evicted(in, offset, size, _epoch)) {
-      _blocks_ahead.ahead = uint64_t{block} + 1;
-      _blocks_ahead.issued = 0;
+    if (in.Evicted(offset, size, _epoch)) {
+      _blocks_ahead.Rewind(uint64_t{block} + 1);
       ReadAhead(block);
     }
     if (_cold && in.Warm(offset, size) != size) {
@@ -1078,27 +1046,27 @@ class Cursor {
   }
 
   void ReadAhead(uint32_t block) noexcept {
-    const auto span =
-      Slide(_blocks_ahead, uint64_t{block} + 1, _end, kLastWindow);
-    if (span.from < span.to) {
-      const uint64_t offset = _field->BlockOffset(span.from);
-      file_utils::Hint(_field->Owner().Input(), offset,
-                       _field->BlockOffset(span.to) - offset);
+    const auto blocks = _blocks_ahead.Extend(uint64_t{block} + 1, kLastWindow);
+    if (blocks.size != 0) {
+      const uint64_t offset = _field->BlockOffset(blocks.offset);
+      _field->Owner().Input().Hint(
+        offset, _field->BlockOffset(blocks.offset + blocks.size) - offset);
     }
   }
 
   void InlineAhead(uint64_t at) noexcept {
     if (_inline_state != InlineState::Running) {
       if (_inline_state == InlineState::Armed) {
-        _inline_ahead.ahead = at - at % file_utils::kPage + file_utils::kPage;
+        _inline_ahead.Arm(at - at % duckdb::PageResidency::PAGE_SIZE +
+                            duckdb::PageResidency::PAGE_SIZE,
+                          _field->InlineEnd(), duckdb::InputFile::HINT_CHUNK);
         _inline_state = InlineState::Running;
       }
       return;
     }
-    const auto span =
-      Slide(_inline_ahead, at, _field->InlineEnd(), file_utils::kMaxReadahead);
-    if (span.from < span.to) {
-      file_utils::Hint(_field->Owner().Input(), span.from, span.to - span.from);
+    const auto bytes = _inline_ahead.Extend(at, duckdb::InputFile::MAX_HINT);
+    if (bytes.size != 0) {
+      _field->Owner().Input().Hint(bytes.offset, bytes.size);
     }
   }
 
@@ -1110,7 +1078,7 @@ class Cursor {
 
   static constexpr uint32_t kFirstWindow = 4;
   static constexpr uint32_t kLastWindow =
-    file_utils::kMaxReadahead / file_utils::kPage;
+    duckdb::InputFile::MAX_HINT / duckdb::PageResidency::PAGE_SIZE;
 
   const TermReaderImpl* _field;
   BlockView _view{};
@@ -1133,14 +1101,9 @@ class Cursor {
   KeyBuffer _peek;
   size_t _peeked = 0;
   PaddedKey _probe;
-  BlockBuffer _buffer;
-  ReadWindow _blocks_ahead{.ahead = 0, .issued = 0, .size = kFirstWindow};
-  ReadWindow _inline_ahead{
-    .ahead = 0,
-    .issued = 0,
-    .size = file_utils::kPrefetchChunk,
-  };
-  uint32_t _end;
+  PinnedRange _pinned;
+  duckdb::ReadAheadWindow _blocks_ahead;
+  duckdb::ReadAheadWindow _inline_ahead;
   uint32_t _epoch = 0;
   ColdBlocks* _cold = nullptr;
   InlineState _inline_state = InlineState::Off;

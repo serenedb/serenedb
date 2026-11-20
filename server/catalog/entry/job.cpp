@@ -43,6 +43,7 @@ JobCatalogEntry::JobCatalogEntry(duckdb::Catalog& catalog,
     _suspended{info.suspended},
     _body{duckdb::CreateJobInfo::CopyBody(info.body)},
     _state{std::move(state)} {
+  temporary = info.temporary;
   comment = info.comment;
   tags = info.tags;
   dependencies = info.dependencies;
@@ -55,6 +56,7 @@ duckdb::unique_ptr<duckdb::CreateInfo> JobCatalogEntry::GetInfo() const {
   info->schedule = _schedule;
   info->suspended = _suspended;
   info->body = duckdb::CreateJobInfo::CopyBody(_body);
+  info->temporary = temporary;
   info->comment = comment;
   info->tags = tags;
   info->dependencies = dependencies;
@@ -116,8 +118,10 @@ void JobCatalogEntry::ScheduleAtCommit(duckdb::ClientContext& context) const {
 }
 
 void JobCatalogEntry::OnDrop() {
+  duckdb::shared_ptr<duckdb::AttachedDatabase> temporary;
   absl::MutexLock lock{&_state->mutex};
   _state->dropped = true;
+  temporary = std::move(_state->temporary);
   for (const auto& context : _state->contexts) {
     context->Interrupt();
   }

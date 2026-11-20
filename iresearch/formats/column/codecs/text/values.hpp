@@ -95,7 +95,8 @@ class Values final : public State {
   uint64_t TrialEntries() { return TrialRows(Shape::Dictionary).codes.size(); }
 
   bool Repeats() const noexcept {
-    return distinct.size() * kMinRepeat <= Rows() - null_count;
+    const uint64_t null_values = null_count != 0 ? 1 : 0;
+    return (distinct.size() + null_values) * kMinRepeat <= Rows();
   }
 
   uint64_t CodesSize(ShapeRows& rows);

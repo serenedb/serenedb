@@ -1291,7 +1291,7 @@ TEST_F(ColCodecsTest, AutoChoosesPerRowGroup) {
   const auto repeated = seal(10, 30);
   EXPECT_TRUE(all(repeated, Shape::Dictionary))
     << ::testing::PrintToString(repeated);
-  const auto mixed = seal(5, 15);
+  const auto mixed = seal(2, 12);
   EXPECT_GT(mixed.size(), 1u);
   EXPECT_TRUE(all(mixed, Shape::Plain)) << ::testing::PrintToString(mixed);
   ASSERT_TRUE(tuning.strings.config);
@@ -4669,6 +4669,30 @@ TEST_F(ColCodecsTest, RefreshMeasuresOnlyTheCheapLeaves) {
     }
   }
   Verify(dir, irs::codecs::CodecType::Auto, kRows, value);
+}
+
+TEST_F(ColCodecsTest, AutoKeepsTheDictionaryForTextThatIsMostlyNull) {
+  constexpr uint64_t kRows = 4 * 4096;
+  const Value value = [](uint64_t g) -> std::optional<std::string> {
+    if (g % 211 != 0) {
+      return std::nullopt;
+    }
+    return absl::StrCat("https://example.org/orders/", g * 7919, "/receipt");
+  };
+  for (const auto tier : {irs::WriteTier::Flush, irs::WriteTier::Merge}) {
+    SCOPED_TRACE(tier == irs::WriteTier::Merge ? "merge" : "flush");
+    irs::MemoryDirectory dir{};
+    Write(dir, irs::codecs::CodecType::Auto, {.tier = tier}, kRows, 4096,
+          value);
+    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+    const auto* col = r.Column(kField);
+    ASSERT_NE(col, nullptr);
+    EXPECT_FALSE(col->HasValidity());
+    for (const auto& shape : SegmentInfo(dir, "shape")) {
+      EXPECT_EQ(shape, "dictionary");
+    }
+    Verify(dir, irs::codecs::CodecType::Auto, kRows, value);
+  }
 }
 
 TEST_F(ColCodecsTest, CompactionsPreferFsstForTextThatSeldomRepeats) {

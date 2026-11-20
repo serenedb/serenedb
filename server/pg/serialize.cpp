@@ -3216,17 +3216,15 @@ ColumnSerializer GetColumnSerialization(const duckdb::LogicalType& type,
                                  IntBinCore<uint32_t, int64_t>>(format,
                                                                 context);
       case FLOAT:
-        return irs::ResolveBool(
-          context.extra_float_digits > 0, [&]<bool Precise> {
-            return SelectSizedColumn<FloatTextCore<float, Precise>,
-                                     FloatBinCore<float>>(format, context);
-          });
+        return irs::Resolve(context.extra_float_digits > 0, [&]<bool Precise> {
+          return SelectSizedColumn<FloatTextCore<float, Precise>,
+                                   FloatBinCore<float>>(format, context);
+        });
       case DOUBLE:
-        return irs::ResolveBool(
-          context.extra_float_digits > 0, [&]<bool Precise> {
-            return SelectSizedColumn<FloatTextCore<double, Precise>,
-                                     FloatBinCore<double>>(format, context);
-          });
+        return irs::Resolve(context.extra_float_digits > 0, [&]<bool Precise> {
+          return SelectSizedColumn<FloatTextCore<double, Precise>,
+                                   FloatBinCore<double>>(format, context);
+        });
       case DECIMAL:
         switch (type.InternalType()) {
           using enum duckdb::PhysicalType;

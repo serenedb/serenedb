@@ -6699,6 +6699,8 @@ e06c2a80ce792b16
 	pgonly.parent_pkey	parent_pkey	pgonly	-	-	postgres	NULL	0	f	f	p	i	1	0	f	f	f	f	f	t	n	f	0	NULL	NULL	NULL
 519befdde85d1883
 	oid	relname	relnamespace	reltype	reloftype	relowner	relam	reltablespace	relhasindex	relisshared	relpersistence	relkind	relnatts	relchecks	relhasrules	relhastriggers	relhassubclass	relrowsecurity	relforcerowsecurity	relispopulated	relreplident	relispartition	relrewrite	relacl	reloptions	relpartbound
+	pgonly.domain_tab	domain_tab	pgonly	pgonly.domain_tab	-	postgres	16685	0	t	f	p	r	2	0	f	f	f	f	f	t	d	f	0	NULL	NULL	NULL
+	pgonly.domain_tab_pkey	domain_tab_pkey	pgonly	-	-	postgres	NULL	0	f	f	p	i	1	0	f	f	f	f	f	t	n	f	0	NULL	NULL	NULL
 	pgonly.json_tab	json_tab	pgonly	pgonly.json_tab	-	postgres	16685	0	t	f	p	r	2	0	f	f	f	f	f	t	d	f	0	NULL	NULL	NULL
 	pgonly.json_tab_pkey	json_tab_pkey	pgonly	-	-	postgres	NULL	0	f	f	p	i	1	0	f	f	f	f	f	t	n	f	0	NULL	NULL	NULL
 	pgonly.parent	parent	pgonly	pgonly.parent	-	postgres	16685	0	t	f	p	r	1	0	f	f	f	f	f	t	d	f	0	NULL	NULL	NULL
@@ -6726,6 +6728,9 @@ e06c2a80ce792b16
 	pgonly.parent_pkey	id	4	1	0	t	i	p	(empty)	f	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL
 b1dc158b24a552b1
 	attrelid	attname	attlen	attnum	attndims	attbyval	attalign	attstorage	attcompression	attnotnull	atthasdef	atthasmissing	attidentity	attgenerated	attisdropped	attislocal	attinhcount	attcollation	attstattarget	attacl	attoptions	attfdwoptions
+	pgonly.domain_tab	id	4	1	0	t	i	p	(empty)	t	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL
+	pgonly.domain_tab	qty	4	2	0	t	i	p	(empty)	f	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL
+	pgonly.domain_tab_pkey	id	4	1	0	t	i	p	(empty)	f	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL
 	pgonly.json_tab	id	4	1	0	t	i	p	(empty)	t	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL
 	pgonly.json_tab	doc	-1	2	0	f	i	x	(empty)	f	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL
 	pgonly.json_tab_pkey	id	4	1	0	t	i	p	(empty)	f	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL
@@ -6754,6 +6759,9 @@ b1dc158b24a552b1
 	pgonly.parent_pkey	1	integer	-1
 f49712438f5ec800
 	attrelid	attnum	atttypid	atttypmod
+	pgonly.domain_tab	1	integer	-1
+	pgonly.domain_tab	2	pgonly.positive_int	-1
+	pgonly.domain_tab_pkey	1	integer	-1
 	pgonly.json_tab	1	integer	-1
 	pgonly.json_tab	2	json	-1
 	pgonly.json_tab_pkey	1	integer	-1
@@ -6775,10 +6783,14 @@ a77867acaaae5145
 	pgonly.positive_int[]	_positive_int	pgonly	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pgonly.positive_int	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
 a507aa10ba405f76
 	oid	typname	typnamespace	typowner	typlen	typbyval	typtype	typcategory	typispreferred	typisdefined	typdelim	typrelid	typsubscript	typelem	typarray	typinput	typoutput	typreceive	typsend	typmodin	typmodout	typanalyze	typalign	typstorage	typnotnull	typbasetype	typtypmod	typndims	typcollation	typdefault	typacl
+	pgonly.domain_tab	domain_tab	pgonly	postgres	-1	f	c	C	f	t	,	pgonly.domain_tab	-	-	pgonly.domain_tab[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+	pgonly.domain_tab[]	_domain_tab	pgonly	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pgonly.domain_tab	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
 	pgonly.json_tab	json_tab	pgonly	postgres	-1	f	c	C	f	t	,	pgonly.json_tab	-	-	pgonly.json_tab[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
 	pgonly.json_tab[]	_json_tab	pgonly	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pgonly.json_tab	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
 	pgonly.parent	parent	pgonly	postgres	-1	f	c	C	f	t	,	pgonly.parent	-	-	pgonly.parent[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
 	pgonly.parent[]	_parent	pgonly	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pgonly.parent	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+	pgonly.positive_int	positive_int	pgonly	postgres	4	t	d	N	f	t	,	-	-	-	pgonly.positive_int[]	domain_in	int4out	domain_recv	int4send	-	-	-	i	p	f	integer	-1	0	0	NULL	NULL
+	pgonly.positive_int[]	_positive_int	pgonly	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pgonly.positive_int	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
 2499473f6ffbafd0
 	conname	connamespace	contype	condeferrable	condeferred	conenforced	convalidated	conrelid	contypid	conindid	conparentid	confrelid	confupdtype	confdeltype	confmatchtype	conislocal	coninhcount	connoinherit	conperiod	conkey	confkey	conpfeqop	conppeqop	conffeqop	confdelsetcols	conexclop	conbin
 	cascade_child_id_not_null	pgonly	n	f	f	t	t	pgonly.cascade_child	-	-	t	-	_	_	_	t	0	f	f	{1}	NULL	NULL	NULL	NULL	NULL	NULL	NULL
@@ -6797,6 +6809,8 @@ a507aa10ba405f76
 	positive_int_check	pgonly	c	f	f	t	t	-	pgonly.positive_int	-	t	-	_	_	_	t	0	f	f	NULL	NULL	NULL	NULL	NULL	NULL	NULL	(VALUE > 0)
 1dabfc67bc64e383
 	conname	connamespace	contype	condeferrable	condeferred	conenforced	convalidated	conrelid	contypid	conindid	conparentid	confrelid	confupdtype	confdeltype	confmatchtype	conislocal	coninhcount	connoinherit	conperiod	conkey	confkey	conpfeqop	conppeqop	conffeqop	confdelsetcols	conexclop	conbin
+	domain_tab_id_not_null	pgonly	n	f	f	t	t	pgonly.domain_tab	-	-	t	-	_	_	_	t	0	f	f	{1}	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+	domain_tab_pkey	pgonly	p	f	f	t	t	pgonly.domain_tab	-	pgonly.domain_tab_pkey	t	-	_	_	_	t	0	t	f	{1}	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 	json_tab_id_not_null	pgonly	n	f	f	t	t	pgonly.json_tab	-	-	t	-	_	_	_	t	0	f	f	{1}	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 	json_tab_pkey	pgonly	p	f	f	t	t	pgonly.json_tab	-	pgonly.json_tab_pkey	t	-	_	_	_	t	0	t	f	{1}	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 	parent_id_not_null	pgonly	n	f	f	t	t	pgonly.parent	-	-	t	-	_	_	_	t	0	f	f	{1}	NULL	NULL	NULL	NULL	NULL	NULL	NULL
@@ -6870,18 +6884,27 @@ e6f6b41914025ec6
 	pg_type	pgonly.positive_int[]	0	pg_type	pgonly.positive_int	0	i
 3889cad3153ae3ee
 	classid	objid	objsubid	refclassid	refobjid	refobjsubid	deptype
+	pg_class	pgonly.domain_tab	0	pg_namespace	pgonly	0	n
+	pg_class	pgonly.domain_tab	2	pg_type	pgonly.positive_int	0	n
+	pg_class	pgonly.domain_tab_pkey	0	pg_constraint	domain_tab_pkey on pgonly.domain_tab	0	i
 	pg_class	pgonly.json_tab	0	pg_namespace	pgonly	0	n
 	pg_class	pgonly.json_tab_pkey	0	pg_constraint	json_tab_pkey on pgonly.json_tab	0	i
 	pg_class	pgonly.parent	0	pg_namespace	pgonly	0	n
 	pg_class	pgonly.parent_pkey	0	pg_constraint	parent_pkey on pgonly.parent	0	i
+	pg_constraint	domain_tab_id_not_null on pgonly.domain_tab	0	pg_class	pgonly.domain_tab	1	a
+	pg_constraint	domain_tab_pkey on pgonly.domain_tab	0	pg_class	pgonly.domain_tab	1	a
 	pg_constraint	json_tab_id_not_null on pgonly.json_tab	0	pg_class	pgonly.json_tab	1	a
 	pg_constraint	json_tab_pkey on pgonly.json_tab	0	pg_class	pgonly.json_tab	1	a
 	pg_constraint	parent_id_not_null on pgonly.parent	0	pg_class	pgonly.parent	1	a
 	pg_constraint	parent_pkey on pgonly.parent	0	pg_class	pgonly.parent	1	a
+	pg_type	pgonly.domain_tab	0	pg_class	pgonly.domain_tab	0	i
+	pg_type	pgonly.domain_tab[]	0	pg_type	pgonly.domain_tab	0	i
 	pg_type	pgonly.json_tab	0	pg_class	pgonly.json_tab	0	i
 	pg_type	pgonly.json_tab[]	0	pg_type	pgonly.json_tab	0	i
 	pg_type	pgonly.parent	0	pg_class	pgonly.parent	0	i
 	pg_type	pgonly.parent[]	0	pg_type	pgonly.parent	0	i
+	pg_type	pgonly.positive_int	0	pg_namespace	pgonly	0	n
+	pg_type	pgonly.positive_int[]	0	pg_type	pgonly.positive_int	0	i
 1beb09b9d04236f8
 	dbid	classid	objid	objsubid	refclassid	refobjid	deptype
 	t	pg_policy	parent_reader on pgonly.parent	0	pg_authid	conf_reader	r
@@ -6911,6 +6934,8 @@ aa01e099f1b9b28e
 	db	pgonly	parent	id	1	NO	32	2	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	db	pg_catalog	NULL	NULL	NULL	NULL	1	NO	NO	NULL	NULL	NULL	NULL	NULL	NO	NEVER	NULL	YES
 50ec0dc22bf8deb3
 	table_catalog	table_schema	table_name	column_name	ordinal_position	is_nullable	numeric_precision	numeric_precision_radix	numeric_scale	datetime_precision	interval_type	interval_precision	character_set_catalog	character_set_schema	character_set_name	collation_catalog	collation_schema	collation_name	domain_catalog	domain_schema	domain_name	udt_catalog	udt_schema	scope_catalog	scope_schema	scope_name	maximum_cardinality	dtd_identifier	is_self_referencing	is_identity	identity_generation	identity_start	identity_increment	identity_maximum	identity_minimum	identity_cycle	is_generated	generation_expression	is_updatable
+	db	pgonly	domain_tab	id	1	NO	32	2	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	db	pg_catalog	NULL	NULL	NULL	NULL	1	NO	NO	NULL	NULL	NULL	NULL	NULL	NO	NEVER	NULL	YES
+	db	pgonly	domain_tab	qty	2	YES	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	db	pgonly	NULL	NULL	NULL	NULL	2	NO	NO	NULL	NULL	NULL	NULL	NULL	NO	NEVER	NULL	YES
 	db	pgonly	json_tab	doc	2	YES	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	db	pg_catalog	NULL	NULL	NULL	NULL	2	NO	NO	NULL	NULL	NULL	NULL	NULL	NO	NEVER	NULL	YES
 	db	pgonly	json_tab	id	1	NO	32	2	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	db	pg_catalog	NULL	NULL	NULL	NULL	1	NO	NO	NULL	NULL	NULL	NULL	NULL	NO	NEVER	NULL	YES
 	db	pgonly	parent	id	1	NO	32	2	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	db	pg_catalog	NULL	NULL	NULL	NULL	1	NO	NO	NULL	NULL	NULL	NULL	NULL	NO	NEVER	NULL	YES
@@ -6928,6 +6953,8 @@ aa01e099f1b9b28e
 	pgonly	parent	id	NULL	integer	NULL	NULL	int4
 7d3136579b27d0d5
 	table_schema	table_name	column_name	column_default	data_type	character_maximum_length	character_octet_length	udt_name
+	pgonly	domain_tab	id	NULL	integer	NULL	NULL	int4
+	pgonly	domain_tab	qty	NULL	USER-DEFINED	NULL	NULL	positive_int
 	pgonly	json_tab	doc	NULL	json	NULL	NULL	json
 	pgonly	json_tab	id	NULL	integer	NULL	NULL	int4
 	pgonly	parent	id	NULL	integer	NULL	NULL	int4
@@ -6951,6 +6978,7 @@ ac04e23b903c958d
 	db	pgonly	positive_int	integer	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	32	2	0	NULL	NULL	NULL	NULL	db	pg_catalog	int4	NULL	NULL	NULL	NULL	1
 2ba93e58f70babbd
 	domain_catalog	domain_schema	domain_name	data_type	character_maximum_length	character_octet_length	character_set_catalog	character_set_schema	character_set_name	collation_catalog	collation_schema	collation_name	numeric_precision	numeric_precision_radix	numeric_scale	datetime_precision	interval_type	interval_precision	domain_default	udt_catalog	udt_schema	udt_name	scope_catalog	scope_schema	scope_name	maximum_cardinality	dtd_identifier
+	db	pgonly	positive_int	integer	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	32	2	0	NULL	NULL	NULL	NULL	db	pg_catalog	int4	NULL	NULL	NULL	NULL	1
 dd3026ed581e0b62
 	constraint_catalog	constraint_schema	constraint_name	domain_catalog	domain_schema	domain_name	is_deferrable	initially_deferred
 	db	pgonly	positive_int_check	db	pgonly	positive_int	NO	NO
@@ -6985,15 +7013,21 @@ c519a20f18528954
 c174119ab74cb41e
 	domain_regtype
 	pgonly.positive_int
-7d2134f6c2bc23f6	error	db error: ERROR: type "pgonly.positive_int" does not exist
+7d2134f6c2bc23f6
+	domain_regtype
+	pgonly.positive_int
 66e85a43d3122828
 	domain_format
 	pgonly.positive_int
-1cf9d3d09db48e59	error	db error: ERROR: type "pgonly.positive_int" does not exist
+1cf9d3d09db48e59
+	domain_format
+	pgonly.positive_int
 ec9a6bc39c705602
 	domain_check
 	CHECK ((VALUE > 0))
-8659ba1219e55731	error	db error: ERROR: type "pgonly.positive_int" does not exist
+8659ba1219e55731
+	domain_check
+	NULL
 6113c0ade5eb98c8
 	jsonb_column
 	jsonb
@@ -7038,6 +7072,7 @@ f8a42eb6ffcb4bff
 	integer	t	positive_int	f	pgonly	NULL	NULL
 4c6eb54102bb3b9a
 	attype	nullable	name	visible	schema	default	collname
+	integer	t	positive_int	f	pgonly	NULL	NULL
 947c83ffae14db64
 	oid	ns	name	kind	basetype	elemtype	elemdelim	range_subtype	attrtypoids	attrnames	depth	basetype_name	elemtype_name	range_subtype_name
 	app.address	app	address	c	NULL	0	NULL	NULL	{25,1043,23}	{street,city,zip}	0	NULL	-	NULL
@@ -7047,4 +7082,11 @@ f8a42eb6ffcb4bff
 	integer[]	pg_catalog	_int4	b	NULL	23	,	NULL	NULL	NULL	0	NULL	integer	NULL
 	pgonly.positive_int	pgonly	positive_int	d	23	0	NULL	NULL	NULL	NULL	0	integer	-	NULL
 	text	pg_catalog	text	b	NULL	0	NULL	NULL	NULL	NULL	1	NULL	-	NULL
-e99a78a6f0159176	error	db error: ERROR: type "pgonly.positive_int" does not exist
+e99a78a6f0159176
+	oid	ns	name	kind	basetype	elemtype	elemdelim	range_subtype	attrtypoids	attrnames	depth	basetype_name	elemtype_name	range_subtype_name
+	app.address	app	address	c	NULL	0	NULL	NULL	{25,25,23}	{street,city,zip}	0	NULL	-	NULL
+	app.mood	app	mood	e	NULL	0	NULL	NULL	NULL	NULL	0	NULL	-	NULL
+	integer	pg_catalog	int4	b	NULL	0	NULL	NULL	NULL	NULL	1	NULL	-	NULL
+	integer[]	pg_catalog	_int4	b	NULL	23	,	NULL	NULL	NULL	0	NULL	integer	NULL
+	pgonly.positive_int	pgonly	positive_int	d	23	0	NULL	NULL	NULL	NULL	0	integer	-	NULL
+	text	pg_catalog	text	b	NULL	0	NULL	NULL	NULL	NULL	1	NULL	-	NULL

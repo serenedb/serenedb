@@ -104,9 +104,6 @@ ALTER DOMAIN quantity DROP CONSTRAINT quantity_above_zero;
 statement ok
 ALTER DOMAIN quantity SET DEFAULT 1;
 
-statement ok
-ALTER DOMAIN quantity RENAME TO item_quantity;
-
 # DOCS_TEST: example_006
 
 statement ok

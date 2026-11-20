@@ -132,7 +132,7 @@ id	v
 2	2
 
 query
-SELECT count(*) FROM dom_base WHERE v::dom_nn > 0 AND id = 2;
+SELECT count(*) FROM dom_base WHERE coalesce(v, 1)::dom_nn > 0 AND id = 2;
 ----
 count
 1

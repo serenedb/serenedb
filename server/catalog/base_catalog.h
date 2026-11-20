@@ -151,7 +151,7 @@ class BaseCatalog : public duckdb::Catalog {
   OidIndex& Oids() noexcept { return _oids; }
 
   duckdb::optional_ptr<duckdb::CatalogEntry> LookupOid(
-    duckdb::CatalogTransaction transaction, duckdb::idx_t oid);
+    duckdb::CatalogTransaction transaction, duckdb::idx_t oid) override;
 
   duckdb::optional_ptr<duckdb::CatalogEntry> LookupOwner(
     duckdb::CatalogTransaction transaction, duckdb::idx_t oid);

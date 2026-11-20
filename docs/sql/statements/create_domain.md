@@ -25,7 +25,7 @@ A domain over another domain checks the constraints of both:
 
 <SqlLogicTest id="sql/statements/create_domain/example_004" />
 
-`ALTER DOMAIN` adds, renames and drops constraints, sets the default and renames the domain. A constraint added with `NOT VALID` checks new values only:
+`ALTER DOMAIN` adds, renames and drops constraints and sets the default. A constraint added with `NOT VALID` checks new values only:
 
 <SqlLogicTest id="sql/statements/create_domain/example_005" />
 
@@ -59,6 +59,7 @@ A column of a domain type is described to clients by the domain's base type, and
 
 - `ALTER DOMAIN ... ADD CONSTRAINT` without `NOT VALID`, `ALTER DOMAIN ... SET NOT NULL` and `ALTER DOMAIN ... VALIDATE CONSTRAINT` are not supported.
 - `ALTER DOMAIN ... SET SCHEMA` and `ALTER DOMAIN ... OWNER TO` are not supported.
+- `ALTER DOMAIN ... RENAME TO` fails while a column uses the domain.
 - `COPY ... FROM` does not check domain constraints.
 - Domain constraints are not listed in `pg_constraint` or `information_schema.domain_constraints`.
 - A domain defined in another database cannot be used.

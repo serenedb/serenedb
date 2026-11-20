@@ -274,9 +274,10 @@ irs::ByPhraseOptions Parse(std::string_view text,
       const auto comma = word.find(',');
       min += static_cast<uint32_t>(std::strtoul(
         std::string{word.substr(1, comma - 1)}.c_str(), nullptr, 10));
-      max += static_cast<uint32_t>(std::strtoul(
-        std::string{word.substr(comma + 1, word.size() - comma - 2)}.c_str(),
-        nullptr, 10));
+      const auto upper = word.substr(comma + 1, word.size() - comma - 2);
+      max = upper == "*" ? irs::pos_limits::kOpenGap
+                         : max + static_cast<uint32_t>(std::strtoul(
+                                   std::string{upper}.c_str(), nullptr, 10));
       continue;
     }
     if (phrase.empty()) {
@@ -494,6 +495,10 @@ bool RegisterAll() {
     "the %ity of california",
     "in {0,3} the {0,3} of {0,3} the {0,3} of",
     "the {0,80} of",
+    "the {0,*} of",
+    "united {0,*} states",
+    "united {0,*} states {0,*} census",
+    "america {0,*} of the",
     "states united the of",
     "th* {0,3} s* {0,3} of*",
     "%ity of* {0,2} cal*",

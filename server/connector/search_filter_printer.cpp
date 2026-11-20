@@ -48,6 +48,7 @@
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/type_limits.hpp>
 #include <magic_enum/magic_enum.hpp>
 
 #include "connector/constraint_keys.h"
@@ -319,8 +320,13 @@ struct FilterPrinter {
     for (const auto& part : options) {
       std::string part_str;
       part.part.visit(PhrasePartVisitor{.out = &part_str});
-      absl::StrAppend(&s, part_str, "(", part.offs_min, ", ", part.offs_max,
-                      ")", "; ");
+      absl::StrAppend(&s, part_str, "(", part.offs_min, ", ");
+      if (irs::pos_limits::IsOpenGap(part.offs_max)) {
+        absl::StrAppend(&s, "*");
+      } else {
+        absl::StrAppend(&s, part.offs_max);
+      }
+      absl::StrAppend(&s, ")", "; ");
     }
     return s;
   }

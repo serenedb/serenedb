@@ -35,6 +35,7 @@
 #include "iresearch/search/top/pruned_leaf.hpp"
 #include "iresearch/search/top/root.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
+#include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::top {
@@ -43,9 +44,25 @@ template<typename Slots, typename Table>
 class PrunedPhrase : public Root {
   static_assert(Slots::kHasFreqBound,
                 "a phrase with no bound cannot be pruned");
-  static_assert(
-    !requires(const Slots& slots) { slots.Scale(); },
-    "a bound on the frequency does not bound a scaled score");
+
+  static constexpr bool kHasScale = requires(const Slots& s) { s.Scale(); };
+
+  struct Provider final : AttributeProvider {
+    Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
+      if (type == irs::Type<FreqBlockAttr>::id()) {
+        return &freq;
+      }
+      if constexpr (kHasScale) {
+        if (type == irs::Type<ScaleBlockAttr>::id()) {
+          return &scale;
+        }
+      }
+      return nullptr;
+    }
+
+    FreqBlockAttr freq;
+    [[no_unique_address]] utils::Need<kHasScale, ScaleBlockAttr> scale;
+  };
 
   static constexpr uint32_t kWindow = 64;
   static constexpr uint32_t kMaxInterval = 64;
@@ -62,6 +79,9 @@ class PrunedPhrase : public Root {
       _admit{table},
       _normed{field_limits::valid(field.meta().norm)} {
     _provider.freq.value = _freqs;
+    if constexpr (kHasScale) {
+      _provider.scale.value = _scales;
+    }
     _score = irs::detail::PrepareScore(args, segment, field.meta(), _provider);
     _slots.Gate();
   }
@@ -135,6 +155,9 @@ class PrunedPhrase : public Root {
       }
       batch.docs[batch.size] = doc;
       _freqs[batch.size] = _slots.Freq();
+      if constexpr (kHasScale) {
+        _scales[batch.size] = _slots.Scale();
+      }
       if (++batch.size == kScoreBlock) {
         FetchAndScoreBlock(_fetcher, _score, batch.docs, batch.scores);
         _admit.AddDocs(collector, batch.docs, kScoreBlock, batch.scores);
@@ -174,8 +197,7 @@ class PrunedPhrase : public Root {
         fetched = candidate;
         _fetcher.Fetch(candidate);
       }
-      _freqs[0] = bound;
-      if (_score.Score() > collector.ScoreThreshold()) {
+      if (ScoreOne(bound) > collector.ScoreThreshold()) {
         return true;
       }
       ++_seen;
@@ -196,11 +218,10 @@ class PrunedPhrase : public Root {
       if (bound < least) {
         continue;
       }
-      _freqs[0] = bound;
       if (!Gated || fetched != doc) {
         _fetcher.Fetch(doc);
       }
-      auto score = _score.Score();
+      auto score = ScoreOne(bound);
       if (score <= threshold) {
         continue;
       }
@@ -208,10 +229,12 @@ class PrunedPhrase : public Root {
       if (!_slots.MatchOrdered(doc)) {
         continue;
       }
-      if (const auto freq = _slots.Freq(); freq != bound) {
-        SDB_ASSERT(freq < bound);
-        _freqs[0] = freq;
-        score = _score.Score();
+      const auto freq = _slots.Freq();
+      SDB_ASSERT(freq <= bound);
+      if constexpr (kHasScale) {
+        score = ScoreOne(freq, _slots.Scale());
+      } else if (freq != bound) {
+        score = ScoreOne(freq);
       }
       _admit.Add(collector, score, doc);
       threshold = collector.ScoreThreshold();
@@ -244,6 +267,14 @@ class PrunedPhrase : public Root {
     _least_score = std::numeric_limits<score_t>::max();
   }
 
+  score_t ScoreOne(uint32_t freq, [[maybe_unused]] score_t scale = kNoBoost) {
+    _freqs[0] = freq;
+    if constexpr (kHasScale) {
+      _scales[0] = scale;
+    }
+    return _score.Score();
+  }
+
   void FlushBatch(LoserScoreCollector& collector, Batch& batch) {
     if (batch.size != 0) {
       FetchAndScore(_fetcher, _score, batch.docs, batch.scores, batch.size);
@@ -253,8 +284,9 @@ class PrunedPhrase : public Root {
   }
 
   ABSL_CACHELINE_ALIGNED uint32_t _freqs[kScoreBlock];
+  [[no_unique_address]] utils::Need<kHasScale, score_t[kScoreBlock]> _scales{};
   Slots _slots;
-  irs::detail::LeafProvider _provider;
+  Provider _provider;
   ScoreFunction _score;
   PhraseBound _bound;
   ColumnArgsFetcher& _fetcher;

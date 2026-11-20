@@ -28,9 +28,14 @@
 
 #include "iresearch/analysis/shingle_tokenizer.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
 namespace {
+
+constexpr auto AddLag(auto offs, auto lag) noexcept {
+  return pos_limits::IsOpenGap(offs) ? offs : offs + lag;
+}
 
 bool Indexes(const analysis::ShingleTokenizer& tokenizer,
              std::span<const bytes_view> words) noexcept {
@@ -113,7 +118,7 @@ std::optional<ByPhraseOptions> ShingleCover(
     }
     const std::span<const bytes_view> words{run};
     auto offs_min = run_min + lag;
-    auto offs_max = run_max + lag;
+    auto offs_max = AddLag(run_max, lag);
     size_t prev = 0;
     for (size_t i = 0; i != words.size();) {
       auto start = i;
@@ -179,7 +184,8 @@ std::optional<ByPhraseOptions> ShingleCover(
     }
     std::visit(
       [&]<typename Part>(const Part& part) {
-        cover.push_back<Part>(info.offs_min + lag, info.offs_max + lag) = part;
+        cover.push_back<Part>(info.offs_min + lag, AddLag(info.offs_max, lag)) =
+          part;
       },
       info.part);
     lag = 0;

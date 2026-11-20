@@ -57,6 +57,7 @@
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/regexp_acceptor.hpp"
 #include "iresearch/utils/system_compiler.hpp"
+#include "iresearch/utils/type_limits.hpp"
 #include "iresearch/utils/utf8_utils.hpp"
 #include "iresearch/utils/wildcard_utils.hpp"
 
@@ -379,13 +380,15 @@ SlotCounts CountSlots(const ByPhraseOptions& options) {
 }
 
 PhraseQuery::Positions MakePositions(const ByPhraseOptions& options) {
+  SDB_ASSERT(options.MaxWidth() <= pos_limits::max());
   PhraseQuery::Positions positions(options.size());
   auto position = positions.begin();
   PosAttr::value_t look_back = 0;
   for (const auto& word : options) {
     position->offs_max = word.offs_max;
     position->offs_min = word.offs_min;
-    position->lead_offset = look_back += word.offs_max;
+    position->lead_offset = look_back +=
+      pos_limits::IsOpenGap(word.offs_max) ? word.offs_min : word.offs_max;
     ++position;
   }
   return positions;

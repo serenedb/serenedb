@@ -46,6 +46,7 @@ struct PhraseWordStat {
 
 bool IsStandalone(const ByPhraseOptions& phrase) noexcept;
 bool HasPatternParts(const ByPhraseOptions& phrase) noexcept;
+bool HasOpenGap(const ByPhraseOptions& phrase) noexcept;
 std::vector<PhraseWordStat> PhraseWordStats(const ByPhraseOptions& phrase,
                                             const TermReader& reader);
 std::vector<PhraseWordStat> PhraseWordStats(const ByPhraseOptions& phrase,
@@ -54,6 +55,7 @@ std::vector<PhraseWordStat> PhraseWordStats(const ByPhraseOptions& phrase,
 
 struct CompiledPhrase {
   static constexpr uint32_t kMaxBits = 64;
+  static constexpr uint32_t kMaxComparedSlots = 8;
 
   struct Slot {
     PosAttr::value_t offs_min = 0;
@@ -101,6 +103,8 @@ struct CompiledPhrase {
   std::vector<Slot> slots;
   std::vector<bstring> terms;
   Slop slop;
+  bool open = false;
+  bool compare_words = false;
   analysis::dict::StringMap<std::string_view, Accept> accept;
   std::vector<uint32_t> pattern_slots;
   std::optional<Anchor> anchor;
@@ -141,6 +145,21 @@ void ForEachSlot(const CompiledPhrase& phrase, const duckdb::string_t& term,
     }
   }
   ForEachPattern(phrase, term, visit);
+}
+
+template<typename Visitor>
+void ForEachAccepting(const CompiledPhrase& phrase,
+                      const duckdb::string_t& term, Visitor&& visit) {
+  if (!phrase.compare_words) {
+    ForEachSlot(phrase, term, visit);
+    return;
+  }
+  const auto n = static_cast<uint32_t>(phrase.slots.size());
+  for (uint32_t slot = 0; slot != n; ++slot) {
+    if (*phrase.slots[slot].word == term) {
+      visit(slot);
+    }
+  }
 }
 
 }  // namespace irs

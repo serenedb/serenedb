@@ -78,11 +78,22 @@ void PhraseCheck::AutomatonMatch::Reset() {
   _at = 0;
 }
 
-void PhraseCheck::PositionsMatch::Reset(size_t n) {
-  _slots.resize(n);
+PhraseCheck::PositionsMatch::PositionsMatch(const CompiledPhrase& phrase) {
+  if (phrase.open) {
+    for (const auto& slot : phrase.slots) {
+      _gaps.emplace_back(slot.offs_min, slot.offs_max);
+    }
+  }
+}
+
+void PhraseCheck::PositionsMatch::Reset(const CompiledPhrase& phrase,
+                                        uint32_t anchors) {
+  _slots.resize(phrase.slots.size());
   for (auto& slot : _slots) {
     slot.clear();
   }
+  _stop = std::numeric_limits<uint64_t>::max();
+  _anchor_freq = phrase.anchor ? anchors : 0;
 }
 
 PhraseCheck::PhraseCheck(const CompiledPhrase& phrase,
@@ -90,16 +101,24 @@ PhraseCheck::PhraseCheck(const CompiledPhrase& phrase,
                          bool count)
   : _tokenizer{tokenizer()},
     _anchor{_analyzer.Batch()},
+    _positions{phrase},
     _state{.phrase = &phrase, .count = count},
-    _dense{!_tokenizer->Traits().explicit_pos} {}
+    _dense{!_tokenizer->Traits().explicit_pos},
+    _all_open{phrase.open &&
+              absl::c_all_of(std::span{phrase.slots}.subspan(1),
+                             [](const auto& slot) {
+                               return pos_limits::IsOpenGap(slot.offs_max);
+                             })},
+    _anchored{phrase.anchor && !(phrase.open && count) &&
+              !(_all_open && phrase.anchor->slot + 1 != phrase.slots.size())} {}
 
 PhraseVerdict PhraseCheck::Check(duckdb::idx_t row, uint32_t anchors) {
-  Start(static_cast<bool>(_state.phrase->anchor), anchors);
+  Start(_anchored, anchors);
   Analyze(row);
   if (_route == Route::Anchor) {
     _anchor.Drain(_state);
     if (_anchor.Overran()) {
-      Start(false);
+      Start(false, anchors);
       Analyze(row);
     }
   }
@@ -125,9 +144,12 @@ void PhraseCheck::Start(bool anchored, uint32_t anchors) {
   } else if (phrase.automaton && !_state.count) {
     _route = Route::Automaton;
     _automaton.Reset();
+  } else if (_all_open && !_state.count) {
+    _route = Route::Earliest;
+    _earliest.Reset();
   } else {
     _route = Route::Positions;
-    _positions.Reset(phrase.slots.size());
+    _positions.Reset(phrase, anchors);
   }
 }
 
@@ -242,39 +264,69 @@ bool PhraseCheck::AnchorMatch::Hit(size_t at, State& state) {
 template<bool Right>
 uint64_t PhraseCheck::AnchorMatch::Ways(uint32_t slot, size_t at,
                                         State& state) {
-  const auto& phrase = *state.phrase;
-  if (slot == (Right ? phrase.slots.size() - 1 : 0)) {
+  const auto end_slot =
+    static_cast<uint32_t>(Right ? state.phrase->slots.size() - 1 : 0);
+  if (slot == end_slot) {
     return 1;
   }
-  const auto other = Right ? slot + 1 : slot - 1;
-  const auto& next = phrase.slots[other];
-  const auto& gap = Right ? next : phrase.slots[slot];
-  const uint64_t pos = PosAt(at);
-  uint64_t ways = 0;
-  uint64_t accepted = std::numeric_limits<uint64_t>::max();
-  for (auto j = at; Right ? ++j < _end : j-- > _carry_base;) {
-    const uint64_t p = PosAt(j);
-    const auto distance = Right ? p - pos : pos - p;
-    if (distance > gap.offs_max) {
-      break;
+  _frames.clear();
+  WaysFrame frame{.at = at, .cursor = at, .slot = slot};
+  while (true) {
+    if (NextNeighbor<Right>(frame, state)) {
+      const auto next = Right ? frame.slot + 1 : frame.slot - 1;
+      if (next != end_slot) {
+        _frames.push_back(frame);
+        frame = {.at = frame.cursor, .cursor = frame.cursor, .slot = next};
+        continue;
+      }
+      ++frame.ways;
+      if (state.count) {
+        continue;
+      }
     }
-    if (Over(state)) {
-      return 0;
-    }
-    if (distance < gap.offs_min || p == accepted ||
-        !Accepts(phrase, next, TermAt(j))) {
-      continue;
-    }
-    accepted = p;
-    ways += Ways<Right>(other, j, state);
     if (_overran) {
       return 0;
     }
-    if (!state.count && ways != 0) {
-      return 1;
+    if (!ResumeParent(frame, state.count)) {
+      return frame.ways;
     }
   }
-  return ways;
+}
+
+template<bool Right>
+bool PhraseCheck::AnchorMatch::NextNeighbor(WaysFrame& frame, State& state) {
+  const auto& phrase = *state.phrase;
+  const auto& next = phrase.slots[Right ? frame.slot + 1 : frame.slot - 1];
+  const auto& gap = Right ? next : phrase.slots[frame.slot];
+  const uint64_t pos = PosAt(frame.at);
+  for (auto j = frame.cursor; Right ? ++j < _end : j-- > _carry_base;) {
+    const uint64_t p = PosAt(j);
+    const auto distance = Right ? p - pos : pos - p;
+    if (distance > gap.offs_max || Over(state)) {
+      return false;
+    }
+    if (distance < gap.offs_min || p == frame.accepted ||
+        !Accepts(phrase, next, TermAt(j))) {
+      continue;
+    }
+    frame.accepted = p;
+    frame.cursor = j;
+    return true;
+  }
+  return false;
+}
+
+bool PhraseCheck::AnchorMatch::ResumeParent(WaysFrame& frame, bool count) {
+  while (!_frames.empty()) {
+    const auto ways = frame.ways;
+    frame = _frames.back();
+    _frames.pop_back();
+    frame.ways += ways;
+    if (count || frame.ways == 0) {
+      return true;
+    }
+  }
+  return false;
 }
 
 bool PhraseCheck::AnchorMatch::Over(State& state) noexcept {
@@ -337,14 +389,60 @@ void PhraseCheck::AutomatonMatch::Step(uint64_t mask, State& state) {
   }
 }
 
+void PhraseCheck::EarliestMatch::Resolve(State& state) {
+  const auto& slots = state.phrase->slots;
+  const auto n = static_cast<uint32_t>(slots.size());
+  while (_next < n && (_next == 0 || _at >= _last + slots[_next].offs_min) &&
+         absl::c_linear_search(_accepted, _next)) {
+    _last = _at;
+    ++_next;
+  }
+  _accepted.clear();
+  if (_next == n) {
+    state.freq = 1;
+    state.done = true;
+  }
+}
+
+void PhraseCheck::EarliestMatch::Feed(const TokenBatch& batch, uint32_t from,
+                                      State& state) {
+  for (auto i = from; i != batch.count; ++i) {
+    const auto pos = batch.pos[i];
+    if (pos != _at) {
+      Resolve(state);
+      if (state.done) {
+        return;
+      }
+      _at = pos;
+    }
+    ForEachAccepting(*state.phrase, batch.terms[i],
+                     [&](uint32_t slot) { _accepted.emplace_back(slot); });
+  }
+}
+
+PhraseVerdict PhraseCheck::EarliestMatch::Finish(State& state) {
+  if (!state.done) {
+    Resolve(state);
+  }
+  return Verdict(state);
+}
+
 void PhraseCheck::PositionsMatch::Feed(const TokenBatch& batch, uint32_t from,
                                        State& state) {
   for (auto i = from; i != batch.count; ++i) {
     const auto pos = batch.pos[i];
-    ForEachSlot(*state.phrase, batch.terms[i], [&](uint32_t slot) {
+    if (pos > _stop) {
+      state.done = true;
+      return;
+    }
+    ForEachAccepting(*state.phrase, batch.terms[i], [&](uint32_t slot) {
       auto& slot_positions = _slots[slot];
       if (slot_positions.empty() || slot_positions.back() != pos) {
         slot_positions.emplace_back(pos);
+        if (slot_positions.size() == _anchor_freq &&
+            slot == state.phrase->anchor->slot) {
+          _stop = uint64_t{pos} + state.phrase->anchor->right;
+        }
       }
     });
   }
@@ -356,11 +454,7 @@ PhraseVerdict PhraseCheck::PositionsMatch::Finish(State& state) {
   if (absl::c_any_of(_slots, [](const auto& slot) { return slot.empty(); })) {
     return {};
   }
-  if (n > 1 && phrase.slop.max != 0) {
-    detail::slop::SpanCursors cursors{_slots, _scratch};
-    const auto res =
-      detail::slop::Sweep<0>(cursors, phrase.slop.offsets, phrase.slop.max,
-                             phrase.slop.pairs, _scratch, !state.count, [] {});
+  const auto scaled = [&](const auto& res) -> PhraseVerdict {
     if (!res.any) {
       return {};
     }
@@ -371,6 +465,16 @@ PhraseVerdict PhraseCheck::PositionsMatch::Finish(State& state) {
       .freq = detail::slop::FreqOf(res),
       .scale = detail::slop::ScaleOf(res),
     };
+  };
+  if (phrase.open) {
+    return scaled(
+      detail::open_gap::Run(_slots, _gaps, !state.count, _open_gap));
+  }
+  if (n > 1 && phrase.slop.max != 0) {
+    detail::slop::SpanCursors cursors{_slots, _scratch};
+    return scaled(detail::slop::Sweep<0>(cursors, phrase.slop.offsets,
+                                         phrase.slop.max, phrase.slop.pairs,
+                                         _scratch, !state.count, [] {}));
   }
 
   _valid.clear();

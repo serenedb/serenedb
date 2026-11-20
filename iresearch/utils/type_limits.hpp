@@ -105,8 +105,15 @@ constexpr uint32_t eof() noexcept {
 }
 constexpr bool eof(uint32_t pos) noexcept { return eof() == pos; }
 constexpr uint32_t min() noexcept { return 1; }
+constexpr uint32_t max() noexcept {
+  return std::numeric_limits<int32_t>::max();
+}
 
 inline constexpr uint32_t kBlockSize = 256;
+inline constexpr uint32_t kOpenGap = std::numeric_limits<uint32_t>::max();
+constexpr bool IsOpenGap(uint32_t offs_max) noexcept {
+  return kOpenGap == offs_max;
+}
 
 }  // namespace pos_limits
 }  // namespace irs

@@ -1,0 +1,656 @@
+hash-threshold 100
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY og_words_pos AS split_text(case := 'lower') WITH (frequency, position);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY og_words AS split_text(case := 'lower') WITH (frequency);
+
+statement ok
+CREATE TABLE og (a INTEGER PRIMARY KEY, b VARCHAR);
+
+statement ok
+INSERT INTO og VALUES
+    (1, 'brown fox'),
+    (2, 'brown quick fox'),
+    (3, 'brown quick red fox'),
+    (4, 'fox brown'),
+    (5, 'brown cat dog eel fox'),
+    (6, 'brown'),
+    (7, 'fox quick brown red fox'),
+    (10, 'alpha beta gamma'),
+    (11, 'alpha x beta y y gamma'),
+    (12, 'alpha beta y gamma'),
+    (13, 'alpha x beta gamma'),
+    (14, 'beta alpha gamma'),
+    (15, 'alpha beta'),
+    (16, 'echo'),
+    (17, 'echo echo'),
+    (18, 'echo x echo'),
+    (20, 'sun moon pad pad pad pad pad pad'),
+    (21, 'sun pad pad pad pad pad pad moon'),
+    (22, 'sun pad pad moon pad pad pad pad');
+
+# ----------------------------------------------------------------------
+# Documents 8 and 9 are 20002 words long, with the two words at opposite ends.
+# ----------------------------------------------------------------------
+
+statement ok
+INSERT INTO og SELECT 8, 'brown ' || repeat('x ', 20000) || 'fox';
+
+statement ok
+INSERT INTO og SELECT 9, 'fox ' || string_agg('x', ' ') || ' brown' FROM range(20000);
+
+statement ok
+CREATE INDEX og_pos ON og USING inverted (a, b og_words_pos);
+
+statement ok
+CREATE INDEX og_txt ON og USING inverted (a, b og_words) INCLUDE (b);
+
+statement ok
+VACUUM (FLUSH_TABLE) og;
+
+# ----------------------------------------------------------------------
+# The long documents really are long.
+# ----------------------------------------------------------------------
+
+query
+SELECT a, array_length(string_split(b, ' ')) AS words FROM og WHERE a IN (8, 9) ORDER BY a;
+----
+a	words
+8	20002
+9	20002
+
+# ----------------------------------------------------------------------
+# [m, NULL]: the next word at least m inserted words after the previous one,
+# at any distance. Document by document, with 'brown' ... 'fox':
+#  1 adjacent (0 inserted)   2 one inserted   3 two inserted   4 reversed
+#  5 three inserted   6 no fox   7 'fox quick brown red fox': one inserted
+#  8 20000 inserted   9 reversed
+# ----------------------------------------------------------------------
+
+# ----------------------------------------------------------------------
+# [0, NULL]: anywhere after, adjacent included.
+# ----------------------------------------------------------------------
+
+query
+SELECT a FROM og_pos WHERE b @@ ts_phrase('brown', [0, NULL], 'fox') ORDER BY a;
+----
+a
+1
+2
+3
+5
+7
+8
+
+query
+SELECT a FROM og_txt WHERE b @@ ts_phrase('brown', [0, NULL], 'fox') ORDER BY a;
+----
+a
+1
+2
+3
+5
+7
+8
+
+query
+SELECT a FROM og_pos WHERE b @@ ('brown' ## [0, NULL] ## 'fox') ORDER BY a;
+----
+a
+1
+2
+3
+5
+7
+8
+
+query
+SELECT a FROM og_txt WHERE b @@ ('brown' ## [0, NULL] ## 'fox') ORDER BY a;
+----
+a
+1
+2
+3
+5
+7
+8
+
+# ----------------------------------------------------------------------
+# [1, NULL]: at least one inserted word.
+# ----------------------------------------------------------------------
+
+query
+SELECT a FROM og_pos WHERE b @@ ts_phrase('brown', [1, NULL], 'fox') ORDER BY a;
+----
+a
+2
+3
+5
+7
+8
+
+query
+SELECT a FROM og_txt WHERE b @@ ts_phrase('brown', [1, NULL], 'fox') ORDER BY a;
+----
+a
+2
+3
+5
+7
+8
+
+# ----------------------------------------------------------------------
+# [2, NULL]: document 3 has exactly two inserted words and matches,
+# documents 2 and 7 have exactly one and do not.
+# ----------------------------------------------------------------------
+
+query
+SELECT a FROM og_pos WHERE b @@ ts_phrase('brown', [2, NULL], 'fox') ORDER BY a;
+----
+a
+3
+5
+8
+
+query
+SELECT a FROM og_txt WHERE b @@ ts_phrase('brown', [2, NULL], 'fox') ORDER BY a;
+----
+a
+3
+5
+8
+
+query
+SELECT a FROM og_pos WHERE b @@ ('brown' ## [2, NULL] ## 'fox') ORDER BY a;
+----
+a
+3
+5
+8
+
+query
+SELECT a FROM og_txt WHERE b @@ ('brown' ## [2, NULL] ## 'fox') ORDER BY a;
+----
+a
+3
+5
+8
+
+query
+SELECT a FROM og_pos WHERE b @@ ts_phrase('brown', [3, NULL], 'fox') ORDER BY a;
+----
+a
+5
+8
+
+query
+SELECT a FROM og_txt WHERE b @@ ts_phrase('brown', [3, NULL], 'fox') ORDER BY a;
+----
+a
+5
+8
+
+# ----------------------------------------------------------------------
+# The other order: 'fox' before 'brown' (4, 7 and 9 only).
+# ----------------------------------------------------------------------
+
+query
+SELECT a FROM og_pos WHERE b @@ ts_phrase('fox', [0, NULL], 'brown') ORDER BY a;
+----
+a
+4
+7
+9
+
+query
+SELECT a FROM og_txt WHERE b @@ ts_phrase('fox', [0, NULL], 'brown') ORDER BY a;
+----
+a
+4
+7
+9
+
+# ----------------------------------------------------------------------
+# Lucene query string: "a N-* b" is distance at least N (1 = adjacent).
+# ----------------------------------------------------------------------
+
+query
+SELECT a FROM og_pos WHERE b @@ to_tsquery('"brown 1-* fox"') ORDER BY a;
+----
+a
+1
+2
+3
+5
+7
+8
+
+query
+SELECT a FROM og_txt WHERE b @@ to_tsquery('"brown 1-* fox"') ORDER BY a;
+----
+a
+1
+2
+3
+5
+7
+8
+
+query
+SELECT a FROM og_pos WHERE b @@ to_tsquery('"brown 2-* fox"') ORDER BY a;
+----
+a
+2
+3
+5
+7
+8
+
+query
+SELECT a FROM og_txt WHERE b @@ to_tsquery('"brown 2-* fox"') ORDER BY a;
+----
+a
+2
+3
+5
+7
+8
+
+query
+SELECT a FROM og_pos WHERE b @@ to_tsquery('"brown 3-* fox"') ORDER BY a;
+----
+a
+3
+5
+8
+
+query
+SELECT a FROM og_txt WHERE b @@ to_tsquery('"brown 3-* fox"') ORDER BY a;
+----
+a
+3
+5
+8
+
+query
+SELECT a FROM og_pos WHERE b @@ to_tsquery('"fox 1-* brown"') ORDER BY a;
+----
+a
+4
+7
+9
+
+query
+SELECT a FROM og_txt WHERE b @@ to_tsquery('"fox 1-* brown"') ORDER BY a;
+----
+a
+4
+7
+9
+
+# ----------------------------------------------------------------------
+# fn:ordered: the words in this order at any distance.
+# ----------------------------------------------------------------------
+
+query
+SELECT a FROM og_pos WHERE b @@ to_tsquery('fn:ordered(brown fox)') ORDER BY a;
+----
+a
+1
+2
+3
+5
+7
+8
+
+query
+SELECT a FROM og_txt WHERE b @@ to_tsquery('fn:ordered(brown fox)') ORDER BY a;
+----
+a
+1
+2
+3
+5
+7
+8
+
+query
+SELECT a FROM og_pos WHERE b @@ to_tsquery('fn:ordered(fox brown)') ORDER BY a;
+----
+a
+4
+7
+9
+
+query
+SELECT a FROM og_txt WHERE b @@ to_tsquery('fn:ordered(fox brown)') ORDER BY a;
+----
+a
+4
+7
+9
+
+# ----------------------------------------------------------------------
+# Three words, one exact and one open junction. Documents 10..15:
+#  10 alpha beta gamma        12 alpha beta y gamma   14 beta alpha gamma
+#  11 alpha x beta y y gamma  13 alpha x beta gamma   15 alpha beta
+# alpha, exactly one word, beta, anything, gamma: 11 and 13 only.
+# ----------------------------------------------------------------------
+
+query
+SELECT a FROM og_pos WHERE b @@ ts_phrase('alpha', 1, 'beta', [0, NULL], 'gamma') ORDER BY a;
+----
+a
+11
+13
+
+query
+SELECT a FROM og_txt WHERE b @@ ts_phrase('alpha', 1, 'beta', [0, NULL], 'gamma') ORDER BY a;
+----
+a
+11
+13
+
+query
+SELECT a FROM og_pos WHERE b @@ ('alpha' ## 1 ## 'beta' ## [0, NULL] ## 'gamma') ORDER BY a;
+----
+a
+11
+13
+
+query
+SELECT a FROM og_txt WHERE b @@ ('alpha' ## 1 ## 'beta' ## [0, NULL] ## 'gamma') ORDER BY a;
+----
+a
+11
+13
+
+query
+SELECT a FROM og_pos WHERE b @@ to_tsquery('"alpha 2-2 beta 1-* gamma"') ORDER BY a;
+----
+a
+11
+13
+
+query
+SELECT a FROM og_txt WHERE b @@ to_tsquery('"alpha 2-2 beta 1-* gamma"') ORDER BY a;
+----
+a
+11
+13
+
+# ----------------------------------------------------------------------
+# An open junction first, an exact one second: 'beta' anywhere after 'alpha', then exactly one word, then 'gamma'.
+# ----------------------------------------------------------------------
+
+query
+SELECT a FROM og_pos WHERE b @@ ts_phrase('alpha', [0, NULL], 'beta', 1, 'gamma') ORDER BY a;
+----
+a
+12
+
+query
+SELECT a FROM og_txt WHERE b @@ ts_phrase('alpha', [0, NULL], 'beta', 1, 'gamma') ORDER BY a;
+----
+a
+12
+
+# ----------------------------------------------------------------------
+# fn:ordered of three words: 10..13.
+# ----------------------------------------------------------------------
+
+query
+SELECT a FROM og_pos WHERE b @@ to_tsquery('fn:ordered(alpha beta gamma)') ORDER BY a;
+----
+a
+10
+11
+12
+13
+
+query
+SELECT a FROM og_txt WHERE b @@ to_tsquery('fn:ordered(alpha beta gamma)') ORDER BY a;
+----
+a
+10
+11
+12
+13
+
+# ----------------------------------------------------------------------
+# A repeated word needs two occurrences: 16 'echo', 17 'echo echo', 18 'echo x echo'.
+# ----------------------------------------------------------------------
+
+query
+SELECT a FROM og_pos WHERE b @@ to_tsquery('fn:ordered(echo echo)') ORDER BY a;
+----
+a
+17
+18
+
+query
+SELECT a FROM og_txt WHERE b @@ to_tsquery('fn:ordered(echo echo)') ORDER BY a;
+----
+a
+17
+18
+
+query
+SELECT a FROM og_pos WHERE b @@ ts_phrase('echo', [0, NULL], 'echo') ORDER BY a;
+----
+a
+17
+18
+
+query
+SELECT a FROM og_txt WHERE b @@ ts_phrase('echo', [0, NULL], 'echo') ORDER BY a;
+----
+a
+17
+18
+
+query
+SELECT a FROM og_pos WHERE b @@ ts_phrase('echo', [1, NULL], 'echo') ORDER BY a;
+----
+a
+18
+
+query
+SELECT a FROM og_txt WHERE b @@ ts_phrase('echo', [1, NULL], 'echo') ORDER BY a;
+----
+a
+18
+
+# ----------------------------------------------------------------------
+# Scoring: the same-size documents 20, 21, 22 hold 'sun' and 'moon' at distance
+# 1, 6 and 3 apart (spans of width 2, 8 and 4). Each minimal span weighs
+# 1 / (width - 2 + 1) = 1, 1/7 and 1/3, so the order is 20, 22, 21.
+# ----------------------------------------------------------------------
+
+query
+SELECT a FROM og_pos WHERE b @@ ts_phrase('sun', [0, NULL], 'moon') ORDER BY BM25(og_pos.tableoid) DESC, a;
+----
+a
+20
+22
+21
+
+query
+SELECT a FROM og_txt WHERE b @@ ts_phrase('sun', [0, NULL], 'moon') ORDER BY BM25(og_txt.tableoid) DESC, a;
+----
+a
+20
+22
+21
+
+query
+SELECT a FROM og_pos WHERE b @@ to_tsquery('fn:ordered(sun moon)') ORDER BY BM25(og_pos.tableoid) DESC, a;
+----
+a
+20
+22
+21
+
+query
+SELECT a FROM og_txt WHERE b @@ to_tsquery('fn:ordered(sun moon)') ORDER BY BM25(og_txt.tableoid) DESC, a;
+----
+a
+20
+22
+21
+
+# ----------------------------------------------------------------------
+# A fuzzy word scores by its strongest alignment in the span: both documents
+# hold an exact 'bx' within the same span, so they tie, whichever of 'bx' and
+# its fuzzy neighbour 'by' comes first.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE TABLE og_fuzzy (a INTEGER PRIMARY KEY, b VARCHAR);
+
+statement ok
+INSERT INTO og_fuzzy VALUES (1, 'red bx by fox'), (2, 'red by bx fox');
+
+statement ok
+CREATE INDEX og_fuzzy_pos ON og_fuzzy USING inverted (a, b og_words_pos);
+
+statement ok
+VACUUM (FLUSH_TABLE) og_fuzzy;
+
+query
+SELECT a FROM og_fuzzy_pos WHERE b @@ to_tsquery('"red 1-* bx~1 1-2 fox"') ORDER BY BM25(og_fuzzy_pos.tableoid) DESC, a;
+----
+a
+1
+2
+
+# ----------------------------------------------------------------------
+# Slop cannot be combined with an open gap.
+# ----------------------------------------------------------------------
+
+query error
+SELECT a FROM og_pos WHERE b @@ ts_phrase('brown', [0, NULL], 'fox', slop := 1);
+----
+db error: ERROR: slop is incompatible with interval gaps ([min, max])
+HINT: Use exact gaps (single INTEGER) with slop, or drop it.
+
+
+query error
+SELECT a FROM og_txt WHERE b @@ ts_phrase('brown', [0, NULL], 'fox', slop := 1);
+----
+db error: ERROR: slop is incompatible with interval gaps ([min, max])
+HINT: Use exact gaps (single INTEGER) with slop, or drop it.
+
+
+query error
+SELECT a FROM og_pos WHERE b @@ to_tsquery('"brown 1-* fox"~2');
+----
+db error: ERROR: slop is incompatible with interval gaps (min-max)
+HINT: Use exact gaps ("quick 2-2 fox") with ~N, or drop the slop.
+
+
+query error
+SELECT a FROM og_txt WHERE b @@ to_tsquery('"brown 1-* fox"~2');
+----
+db error: ERROR: slop is incompatible with interval gaps (min-max)
+HINT: Use exact gaps ("quick 2-2 fox") with ~N, or drop the slop.
+
+
+# ----------------------------------------------------------------------
+# An open lower bound is not allowed.
+# ----------------------------------------------------------------------
+
+query error
+SELECT a FROM og_pos WHERE b @@ ts_phrase('brown', [NULL, 3], 'fox');
+----
+db error: ERROR: ts_phrase gap must be a non-null non-negative integer, got NULL of type INTEGER (argument 1)
+HINT: Example: ts_phrase('quick brown fox') or ts_phrase('a', 1, 'b', slop := 2). INTEGER / INTEGER[] gap allowed between text args; `slop := N` is a non-negative budget for position rearrangements (incompatible with interval gaps).
+
+
+# ----------------------------------------------------------------------
+# A gap too large for a position offset is refused rather than narrowed.
+# ----------------------------------------------------------------------
+
+query error
+SELECT a FROM og_pos WHERE b @@ ts_phrase('brown', [4294967296, NULL], 'fox');
+----
+db error: ERROR: ts_phrase gap too large: 4294967296 (at most 2147483646) (argument 1)
+HINT: Example: ts_phrase('quick brown fox') or ts_phrase('a', 1, 'b', slop := 2). INTEGER / INTEGER[] gap allowed between text args; `slop := N` is a non-negative budget for position rearrangements (incompatible with interval gaps).
+
+
+query error
+SELECT a FROM og_txt WHERE b @@ ('brown' ## [0, 4294967294] ## 'fox');
+----
+db error: ERROR: No function matches the given name and argument types '##(STRING_LITERAL, BIGINT[])'. You might need to add explicit type casts.
+	Candidate functions:
+	"##"(col0 point, col1 line, /) -> point
+	"##"(col0 point, col1 lseg, /) -> point
+	"##"(col0 point, col1 box, /) -> point
+	"##"(col0 line, col1 lseg, /) -> point
+	"##"(col0 lseg, col1 lseg, /) -> point
+	"##"(col0 lseg, col1 box, /) -> point
+	"##"(col0 TSQUERY, col1 TSQUERY, /) -> TSQUERY
+	"##"(col0 VARCHAR, col1 VARCHAR, /) -> TSQUERY
+	"##"(col0 VARCHAR, col1 INTEGER, /) -> TSQUERY
+	"##"(col0 VARCHAR, col1 INTEGER[], /) -> TSQUERY
+
+
+# ----------------------------------------------------------------------
+# EXPLAIN prints an open gap as (min, *).
+# ----------------------------------------------------------------------
+
+query
+EXPLAIN SELECT a FROM og_pos WHERE b @@ ts_phrase('brown', [2, NULL], 'fox');
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────╮
+│ Index: og_pos                          │
+│ Lookup: search                         │
+│ Index Filter:                          │
+│ ╭─ Phrase ───────────────────────────╮ │
+│ │ Field: b(string)                   │ │
+│ │ Parts:                             │ │
+│ │ Term:brown(0, 0); Term:fox(3, *);  │ │
+│ ╰────────────────────────────────────╯ │
+│ Projections: a                         │
+│ ~4 rows                                │
+╰────────────────────────────────────────╯
+
+# ----------------------------------------------------------------------
+# The values of an array column are contiguous, so an open gap matches across elements.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE TABLE og_lists (a INTEGER PRIMARY KEY, tags VARCHAR[]);
+
+statement ok
+INSERT INTO og_lists VALUES
+    (1, ['brown pad', 'pad fox']),
+    (2, ['fox pad', 'pad brown']),
+    (3, ['brown', 'fox']),
+    (4, ['brown pad', 'pad']);
+
+statement ok
+CREATE INDEX og_lists_pos ON og_lists USING inverted (a, tags og_words_pos);
+
+statement ok
+CREATE INDEX og_lists_txt ON og_lists USING inverted (a, tags og_words) INCLUDE (tags);
+
+statement ok
+VACUUM (FLUSH_TABLE) og_lists;
+
+query
+SELECT a FROM og_lists_pos WHERE tags @@ ts_phrase('brown', [0, NULL], 'fox') ORDER BY a;
+----
+a
+1
+3
+
+query
+SELECT a FROM og_lists_txt WHERE tags @@ ts_phrase('brown', [0, NULL], 'fox') ORDER BY a;
+----
+a
+1
+3

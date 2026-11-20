@@ -38,6 +38,7 @@
 #include "iresearch/search/filters/term_filter.hpp"
 #include "iresearch/search/filters/wildcard_filter.hpp"
 #include "iresearch/utils/levenshtein_default_pdp.hpp"
+#include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
 
@@ -143,6 +144,15 @@ class ByPhraseOptions {
   bool empty() const noexcept { return _phrase.empty(); }
 
   size_t size() const noexcept { return _phrase.size(); }
+
+  uint64_t MaxWidth() const noexcept {
+    uint64_t width = 0;
+    for (const auto& info : _phrase) {
+      width +=
+        pos_limits::IsOpenGap(info.offs_max) ? info.offs_min : info.offs_max;
+    }
+    return width;
+  }
 
   auto begin() const noexcept { return _phrase.begin(); }
 

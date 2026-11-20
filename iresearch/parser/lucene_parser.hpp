@@ -159,7 +159,7 @@ union YYSTYPE
     // else, the same way a number is.
     struct { float value; StringSpan text; } flt;
     float fnum;
-    struct { int min; int max; } gap;
+    struct { uint32_t min; uint32_t max; } gap;
     irs::Filter* filter;
 
 #line 165 "iresearch/parser/lucene_parser.hpp"

@@ -36,6 +36,7 @@ class IvfCudaIndex : public faiss::Index {
 
   virtual void TrainClustering(faiss::Clustering& clustering,
                                faiss::idx_t count, const float* vectors) = 0;
+  virtual sdb_ivf_cuda_training_stats TrainingStats() const = 0;
 };
 
 std::unique_ptr<IvfCudaIndex> MakeIvfCudaIndex(uint32_t dimensions,

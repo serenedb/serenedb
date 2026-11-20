@@ -30,12 +30,23 @@ typedef struct {
   char message[512];
 } sdb_ivf_cuda_error;
 
+typedef struct {
+  uint64_t small_sample_bytes;
+  uint64_t large_sample_bytes;
+  uint64_t large_sample_uploads;
+  uint64_t paged_sample_bytes;
+  uint64_t largest_sample_bytes;
+  uint64_t large_cache_fallbacks;
+} sdb_ivf_cuda_training_stats;
+
 sdb_ivf_cuda_index* sdb_ivf_cuda_create(int32_t dimensions,
                                         sdb_ivf_cuda_error* error);
 void sdb_ivf_cuda_destroy(sdb_ivf_cuda_index* index);
 void sdb_ivf_cuda_begin_training(sdb_ivf_cuda_index* index, int64_t count,
                                  const float* vectors);
 void sdb_ivf_cuda_end_training(sdb_ivf_cuda_index* index);
+sdb_ivf_cuda_training_stats sdb_ivf_cuda_get_training_stats(
+  const sdb_ivf_cuda_index* index);
 int sdb_ivf_cuda_add(sdb_ivf_cuda_index* index, int64_t count,
                      const float* vectors, sdb_ivf_cuda_error* error);
 int sdb_ivf_cuda_reset(sdb_ivf_cuda_index* index, sdb_ivf_cuda_error* error);

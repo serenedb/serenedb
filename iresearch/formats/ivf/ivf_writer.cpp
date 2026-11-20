@@ -229,11 +229,19 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
   if (profile) {
     using std::chrono::duration_cast;
     using std::chrono::microseconds;
+    const auto stats =
+      assignment ? assignment->TrainingStats() : sdb_ivf_cuda_training_stats{};
     SDB_DEBUG(
       IRESEARCH, "IVF build profile rows=", valid_rows.size(),
       " train_us=", duration_cast<microseconds>(training_time).count(),
       " assign_us=", duration_cast<microseconds>(assignment_time).count(),
-      " gpu_batches=", gpu_batches);
+      " gpu_batches=", gpu_batches,
+      " small_sample_bytes=", stats.small_sample_bytes,
+      " large_sample_bytes=", stats.large_sample_bytes,
+      " large_sample_uploads=", stats.large_sample_uploads,
+      " paged_sample_bytes=", stats.paged_sample_bytes,
+      " largest_sample_bytes=", stats.largest_sample_bytes,
+      " large_cache_fallbacks=", stats.large_cache_fallbacks);
   }
   return result;
 }

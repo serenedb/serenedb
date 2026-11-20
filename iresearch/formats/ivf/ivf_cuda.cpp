@@ -54,6 +54,10 @@ class FaissGpuIndex final : public IvfCudaIndex {
     clustering.train(count, vectors, *this);
   }
 
+  sdb_ivf_cuda_training_stats TrainingStats() const final {
+    return sdb_ivf_cuda_get_training_stats(_index.get());
+  }
+
   void reset() final {
     sdb_ivf_cuda_error error;
     CheckCuda(sdb_ivf_cuda_reset(_index.get(), &error), error);

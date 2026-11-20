@@ -21,6 +21,8 @@
 #include <cuda_runtime_api.h>
 
 #include <algorithm>
+#include <atomic>
+#include <cstdlib>
 #include <exception>
 #include <memory>
 #include <string_view>
@@ -35,6 +37,8 @@
 namespace {
 
 constexpr size_t kMiB = 1024 * 1024;
+constexpr size_t kLargeSampleCacheBytes = 3072 * kMiB;
+std::atomic<size_t> large_sample_bytes{0};
 
 std::shared_ptr<faiss::gpu::GpuResources> MakeResources(
   size_t temporary = 64 * kMiB, size_t pinned = 16 * kMiB) {
@@ -53,6 +57,59 @@ void CheckBlas(cublasStatus_t status, const char* operation) {
   FAISS_THROW_IF_NOT_FMT(status == CUBLAS_STATUS_SUCCESS, "%s: %s", operation,
                          cublasGetStatusString(status));
 }
+
+class LargeTrainingSample {
+ public:
+  LargeTrainingSample() = default;
+  LargeTrainingSample(const LargeTrainingSample&) = delete;
+  LargeTrainingSample& operator=(const LargeTrainingSample&) = delete;
+  ~LargeTrainingSample() { Release(); }
+
+  bool Allocate(int device, size_t bytes) {
+    FAISS_ASSERT(!_data);
+    auto used = large_sample_bytes.load(std::memory_order_relaxed);
+    do {
+      if (bytes > kLargeSampleCacheBytes - used) {
+        return false;
+      }
+    } while (!large_sample_bytes.compare_exchange_weak(
+      used, used + bytes, std::memory_order_relaxed));
+
+    void* data = nullptr;
+    const auto status = cudaMalloc(&data, bytes);
+    if (status != cudaSuccess) {
+      large_sample_bytes.fetch_sub(bytes, std::memory_order_relaxed);
+      if (status == cudaErrorMemoryAllocation) {
+        cudaGetLastError();
+        return false;
+      }
+      CheckRuntime(status, "Allocating the large IVF training sample");
+    }
+    _data = data;
+    _device = device;
+    _bytes = bytes;
+    return true;
+  }
+
+  void Release() noexcept {
+    if (_data) {
+      faiss::gpu::DeviceScope scope{_device};
+      const auto status = cudaFree(_data);
+      FAISS_ASSERT_FMT(status == cudaSuccess,
+                       "Releasing IVF training sample: %s",
+                       cudaGetErrorString(status));
+      large_sample_bytes.fetch_sub(_bytes, std::memory_order_relaxed);
+      _data = nullptr;
+    }
+  }
+
+  void* Get() const noexcept { return _data; }
+
+ private:
+  void* _data = nullptr;
+  size_t _bytes = 0;
+  int _device = 0;
+};
 
 void SetError(sdb_ivf_cuda_error& error, std::string_view message) noexcept {
   const auto size = std::min(message.size(), sizeof(error.message) - 1);
@@ -83,36 +140,57 @@ struct sdb_ivf_cuda_index {
         count <= 0) {
       return vectors;
     }
-    if (!training_device.get()) {
-      const auto resources = index.getResources();
-      const auto device = index.getDevice();
-      const auto row_bytes = static_cast<size_t>(index.d) * sizeof(float);
-      const auto rows = static_cast<size_t>(count);
-      const auto paging_size = index.getMinPagingSize();
-      if (paging_size == 0 || rows > (paging_size - 1) / row_bytes) {
-        training_host = nullptr;
+    if (const auto* cached = static_cast<const float*>(large_sample.Get())) {
+      return cached;
+    }
+    if (const auto* cached = static_cast<const float*>(training_device.get())) {
+      return cached;
+    }
+    const auto bytes = static_cast<size_t>(count) * index.d * sizeof(float);
+    if (training_paged) {
+      training_stats.paged_sample_bytes += bytes;
+      return vectors;
+    }
+    const auto resources = index.getResources();
+    const auto device = index.getDevice();
+    const bool large = bytes >= index.getMinPagingSize();
+    static const bool cache_large =
+      std::getenv("SDB_IVF_CUDA_LARGE_TRAIN_CACHE") != nullptr;
+    faiss::gpu::DeviceScope scope{device};
+    const auto stream = resources->getDefaultStream(device);
+    void* destination;
+    if (large) {
+      training_stats.largest_sample_bytes =
+        std::max<uint64_t>(training_stats.largest_sample_bytes, bytes);
+      if (!cache_large || !large_sample.Allocate(device, bytes)) {
+        training_stats.large_cache_fallbacks += cache_large ? 1 : 0;
+        training_paged = true;
+        training_stats.paged_sample_bytes += bytes;
         return vectors;
       }
-      faiss::gpu::DeviceScope scope{device};
-      const auto stream = resources->getDefaultStream(device);
-      const auto bytes = rows * row_bytes;
-      auto sample = resources->allocMemoryHandle(
+      destination = large_sample.Get();
+      training_stats.large_sample_bytes += bytes;
+      ++training_stats.large_sample_uploads;
+    } else {
+      training_device = resources->allocMemoryHandle(
         {faiss::gpu::AllocType::Other, device,
          faiss::gpu::MemorySpace::Temporary, stream, bytes});
-      const auto status = cudaMemcpyAsync(sample.get(), vectors, bytes,
-                                          cudaMemcpyHostToDevice, stream);
-      FAISS_THROW_IF_NOT_FMT(status == cudaSuccess,
-                             "Copying IVF training data to CUDA failed: %s",
-                             cudaGetErrorString(status));
-      training_device = std::move(sample);
+      destination = training_device.get();
+      training_stats.small_sample_bytes += bytes;
     }
-    return static_cast<const float*>(training_device.get());
+    CheckRuntime(cudaMemcpyAsync(destination, vectors, bytes,
+                                 cudaMemcpyHostToDevice, stream),
+                 "Uploading IVF training sample");
+    return static_cast<const float*>(destination);
   }
 
   faiss::gpu::GpuIndexFlatIP index;
   const float* training_host = nullptr;
   int64_t training_count = 0;
+  bool training_paged = false;
   faiss::gpu::GpuMemoryReservation training_device;
+  LargeTrainingSample large_sample;
+  sdb_ivf_cuda_training_stats training_stats{};
 };
 
 struct sdb_ivf_cuda_pca {
@@ -204,8 +282,15 @@ void sdb_ivf_cuda_begin_training(sdb_ivf_cuda_index* index, int64_t count,
 
 void sdb_ivf_cuda_end_training(sdb_ivf_cuda_index* index) {
   index->training_device.release();
+  index->large_sample.Release();
   index->training_host = nullptr;
   index->training_count = 0;
+  index->training_paged = false;
+}
+
+sdb_ivf_cuda_training_stats sdb_ivf_cuda_get_training_stats(
+  const sdb_ivf_cuda_index* index) {
+  return index->training_stats;
 }
 
 int sdb_ivf_cuda_add(sdb_ivf_cuda_index* index, int64_t count,

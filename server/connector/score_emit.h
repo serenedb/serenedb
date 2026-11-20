@@ -91,7 +91,6 @@ struct VectorScorerOptions {
   bool exact = false;
   float radius = std::numeric_limits<float>::max();
   bool radius_inclusive = false;
-  bool norm = false;
 
   bool PerRow() const noexcept {
     return exact && top_k == 0 && radius == std::numeric_limits<float>::max();

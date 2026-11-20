@@ -90,10 +90,9 @@ TEST(vector_explain, names_the_function_the_query_ranks_by) {
 
 TEST(vector_explain, a_norm_names_no_query_vector) {
   auto l2 = Options(L2Sqr, SqrtNeg);
-  l2.query_vector = {0.f, 0.f};
   l2.exact = true;
   EXPECT_EQ("l2_distance", DistanceTextOf(l2, "emb").function);
-  l2.norm = true;
+  l2.query_vector = {0.f, 0.f};
   const auto text = DistanceTextOf(l2, "emb");
   const auto node = ExplainDistance(l2, text, -4.f, -4.f);
   EXPECT_EQ("l2_norm", node.scorer);
@@ -101,7 +100,6 @@ TEST(vector_explain, a_norm_names_no_query_vector) {
   auto l1 = Options(L1, ZeroMinus);
   l1.query_vector = {0.f, 0.f};
   l1.exact = true;
-  l1.norm = true;
   EXPECT_EQ("l1_norm", DistanceTextOf(l1, "emb").function);
 }
 
